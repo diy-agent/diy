@@ -82,8 +82,9 @@ import {
     type UsageBuckets,
     type UsageLike,
 } from "../../shared/usage";
-import { buildDelivery } from "../../shared/context/delivery";
+import { buildDelivery, isRuntimePlace, runtimeDiffDelivery, type Delivery } from "../../shared/context/delivery";
 import { renderBudgetNote } from "../../shared/context/budget-note";
+import { renderSummaryPart, tailEnvelope } from "../../shared/context/envelope";
 import { describeAnomalies, readLlmLog } from "../../shared/context/log-schema";
 import {
     autoCompactPolicyInput,
@@ -103,10 +104,9 @@ import {
 import { loadSystemPlaces } from "../core/context-config";
 import { appendContextStat } from "../core/context-stats";
 import { traffic } from "../core/traffic";
-import { appendCtxLog } from "../core/context-changelog";
+import { appendCtxLog, hasV2CtxLog, lastCtxLogSeq, readCtxLogEntries } from "../core/context-changelog";
 import { statFromStep } from "../../shared/context/stats";
-import { opsFromHashes } from "../../shared/context/changelog";
-import { previewOf } from "../../shared/context/render";
+import { atomicUnitPaths, changesOf, foldCtxTree, type CtxSnapshot } from "../../shared/context/changelog";
 import type { DeliveryStepRecord } from "../../shared/context/steps";
 import {
     budgetBytesOf,
@@ -409,24 +409,19 @@ function markShape(s: StepStreamShape, ch: "r" | "t" | "x"): void {
  * runtime 为空 → 原样返回（不硬塞空消息：白耗 token 且让模型困惑）。
  */
 /**
- * 摘要作为**首条上下文消息**插在历史之前（承接语义）：[摘要, ...历史, runtime, 新输入]。
- * 为什么是 user 而非 system：system 是稳定前缀（缓存友好），摘要是动态内容；放 user 段
- * 既不砸缓存，也符合"把上一段会话的结论交给你"的对话语义。
- */
-function withSummary(hist: ModelMessage[], summaryText: string): ModelMessage[] {
-    if (!summaryText.trim()) return hist;
-    return [{ role: "user" as const, content: summaryText }, ...hist];
-}
-
-/**
  * 合并**相邻的 user 消息**为一条。
  *
- * 为什么必须做：多家 OpenAI-compatible provider（含 zen/go 的部分路由）要求角色交替、
- * 或对连续同角色消息行为不一致（有的报错、有的静默丢弃）。而我们的投递**天然会造出连续 user**：
- *   · runtime 作为尾部 user 插在本轮输入之前 → [..., {user: runtime}, {user: 本轮输入}]
- *   · 摘要作为首条 user 插在历史之前 → [{user: 摘要}, ...{user: 历史首条}]
+ * ⚠️ 依据已实测订正（2026-10-16，##310）：**本仓在用的两家 provider 都不拒连续同角色**
+ * —— `goat`（`api.commandcode.ai`）与 `opencode-go`（`opencode.ai/inference/go`）对
+ * `[{user: A},{user: B}]` 以及 content 数组形式的连续 user 均返回 200。所以这条合并
+ * **不是**"provider 要求"，而是**收敛语义**：投递**天然会造出连续 user**
+ * （runtime / summary 作为尾部 user 插在本轮输入之前），合并成一条能让"给模型的这份信封"
+ * 只有一处 user，减少歧义、少一条消息。**若将来遇到真拒连续同角色的 provider，这里就是唯一改动点。**
+ *
  * 合并只动相邻 user、位置与总文本不变（前缀缓存不受影响：摘要/runtime 本就在变化段），
  * tool-call/tool-result 配对铁律也不涉及（只合并 user）。
+ *
+ * 依据实测记录：`bash /tmp/t310-role3.sh`（两家 × 纯文本/parts 各一条，全 200）。
  */
 /** user 消息的 content 形态：既可为纯字符串，也可为 part 数组（text/image/file） */
 type UserContent = Extract<ModelMessage, { role: "user" }>["content"];
@@ -452,13 +447,56 @@ export function normalizeUserRuns(msgs: ModelMessage[]): ModelMessage[] {
     return out;
 }
 
-function withRuntime(hist: ModelMessage[], runtime: string): ModelMessage[] {
-    if (!runtime.trim()) return hist;
+/**
+ * 把**尾部信封**拼进 messages：`summary:`（历史摘要素，可选）+ `history:`（压缩索引注记，可选）
+ * + `runtime:`（或 `runtimeDiff:`）+ `user:`（本轮输入），合成**一份**合法 YAML（`tailEnvelope`）。
+ *
+ * 为什么合成一份（##310 六轮拍板）：这些段与本轮输入是**相邻 user**，而
+ * `normalizeUserRuns` 必然把它们合并成一条（收敛成"一份信封一条 user"）。与其让合并
+ * 产出一段"YAML 后面跟着裸文本"的怪东西，不如**我们自己合成一份合法 YAML**：
+ *
+ *     summary:      ← 仅当有历史摘要（自动生成的元数据，自己的顶层键）
+ *       |-
+ *       …
+ *     history:      ← 仅当历史被压缩（自动生成的元数据，自己的顶层键）
+ *       kept: [[5, 8]]
+ *     runtime:      ← 或 runtimeDiff:
+ *       task: {…}
+ *     user:
+ *       message: '用户真正说的话'
+ *
+ * ⚠️ 自动生成的段**一律要有自己的顶层键**（##310 八/九轮）：注记曾与保留首条 user 被合并，
+ * 于是 `user.message` = 「history 索引 + 用户原话」拼在一起 —— 模型把它当成任务内容去查
+ * （tasks/5 实测：多烧 3 次 bash、5.6 万 prompt token 就为一个字）。摘要（`withSummary`）同坑，
+ * 九轮一并改成顶层键 `summary:`。
+ *
+ * 尾部不是 user（如自动续跑、纯工具轮）→ 不编 `user:` 段；三段全空 → 原样返回。
+ */
+function withRuntime(hist: ModelMessage[], runtime: string, historyNote = "", summaryPart = ""): ModelMessage[] {
+    const parts = [summaryPart, historyNote, runtime].filter((t) => t.trim());
+    if (parts.length === 0) return hist;
     const last = hist[hist.length - 1];
-    if (last && last.role === "user") {
-        return [...hist.slice(0, -1), { role: "user", content: runtime }, last];
+    if (last && last.role === "user" && typeof last.content === "string" && last.content.trim()) {
+        return [...hist.slice(0, -1), { role: "user", content: tailEnvelope(parts, last.content) }];
     }
-    return [...hist, { role: "user", content: runtime }];
+    // 没有可并的输入：只有 runtime 一段时保持旧形（逐字一致）；否则各段各有顶层键
+    if (parts.length === 1 && runtime.trim() && !historyNote.trim() && !summaryPart.trim()) {
+        return [...hist, { role: "user", content: runtime }];
+    }
+    return [...hist, { role: "user", content: tailEnvelope(parts) }];
+}
+
+/**
+ * 投递口径的历史 = **消息** + **压缩索引注记片段**（`history:` 一段，纯数据）。
+ *
+ * 为什么把注记拿出来（##310 八轮）：它进 messages 就必然被 `normalizeUserRuns` 合并进
+ * 相邻那条 user 的正文 —— 于是自动生成的元数据伪装成用户原话。改成"注记 = 独立顶层键片段"，
+ * 由调用方与 runtime 一起塞进**尾部信封**（`withRuntime`），`user.message` 只剩用户真说的那句。
+ */
+export interface HistoryDelivery {
+    messages: ModelMessage[];
+    /** 压缩索引注记片段（`history:` 一段；空串 = 本次没压缩，不投递） */
+    note: string;
 }
 
 /** 读某任务的投递快照（时间正序；文件不存在 = 还没真发过） */
@@ -1498,9 +1536,10 @@ export class LocalAgentManager {
      * **投递口径的历史**（真发 / 预览 / panel 三处唯一入口）。
      *
      * 未压缩 → 与历史行为逐字一致（全量投影）。
-     * 已压缩 → 被省区间渲染成一条 **user 索引注记**，拼在保留部分之前（形式 B）：
-     *   messages 保持原样（provider 最友好、前缀缓存不砸），结构化索引只出现在"被省的位置"。
-     *   注记与紧邻的保留首条 user 会被 normalizeUserRuns 合并成一条（provider 拒连续同角色）。
+     * 已压缩 → 被省区间渲染成一段 **`history:` 索引注记**（纯数据，解释在 `help.history`），
+     * 由调用方放进**尾部信封**（`withRuntime`）—— 见下 `HistoryDelivery.note`。
+     * **messages 保持原样**（provider 最友好、前缀缓存不砸）：注记不再拼进历史里，
+     * 免得被 `normalizeUserRuns` 并进某条 user 的正文（那是 ##310 八轮修掉的坑）。
      *
      * 行号口径：llm.jsonl 只增且**第 i 行 = 全量投影第 i 条**（加载时已对账/补齐），
      * 故此处用全量投影的序号当行号 —— 它是模型回取时的真实落点。
@@ -1509,7 +1548,7 @@ export class LocalAgentManager {
         taskUri: string,
         store: BlockStore,
         collect?: ClippedToolDetail[],
-    ): ModelMessage[] {
+    ): HistoryDelivery {
         // 【配置 / 历史分离，用户 2026-10-07】投递口径 = **当前配置**（期望值），每次请求实时算 ——
         // 改预算**本轮即生效**。压缩账（compact.jsonl）只是**历史快照**（不可变，供回溯/对比），
         // 不再决定投递（旧实现读 `resolveBoundary` → 没压过就不生效，违反直觉）。
@@ -1518,12 +1557,12 @@ export class LocalAgentManager {
     }
 
     /** 面板参数预览用（给定 policy + 边界现算，不读生效账本）—— 与真发同一条构造链 */
-    private deliveryHistoryForView(store: BlockStore, policy: CompactPolicy | null, taskUri: string): ModelMessage[] {
+    private deliveryHistoryForView(store: BlockStore, policy: CompactPolicy | null, taskUri: string): HistoryDelivery {
         return this.buildHistory(store, policy, undefined, taskUri);
     }
 
 /**
-     * 投递历史的**唯一构造**：原生投影 + 预算注记。
+     * 投递历史的**唯一构造**：原生投影 + 预算注记（注记**另作一段**，不拼进 messages）。
      * policy=null ⇒ 全量（未压缩，无注记）。
      */
     private buildHistory(
@@ -1532,23 +1571,22 @@ export class LocalAgentManager {
         collect?: ClippedToolDetail[],
         /** 原文路径用（注记里的 file 字段）；view 路径与真发同一个 taskUri */
         taskUriOf = "",
-    ): ModelMessage[] {
+    ): HistoryDelivery {
         const opts: DeliveryOpts = policy ? optsFor(policy, collect) : {};
         const kept = blocksToMessages(store, opts) as unknown as ModelMessage[];
-        if (!policy || !this.noteEnabled()) return kept;
+        if (!policy || !this.noteEnabled()) return { messages: kept, note: "" };
         // 预算注记：只列**保留区间**（gap 自明，不逐 gap 标注）
         const all = projectAll(store);
         const sel = selectHistoryByBudget(all, policy.modeData.budgetBytes, opts);
         const note = renderBudgetNote(
             {
-                about: "会话历史已按字节预算压缩：以下是**保留位置索引**，区间之间的行号即被省略的部分",
                 budgetBytes: policy.modeData.budgetBytes,
                 keptBytes: sel.keptBytes,
                 kept: sel.keptRuns,
             },
-            { file: llmLogRelPath(taskUriOf), absPath: llmFile(taskUriOf), legendInSystem: true },
+            { file: llmLogRelPath(taskUriOf), absPath: llmFile(taskUriOf) },
         );
-        return normalizeUserRuns([{ role: "user", content: note }, ...kept]);
+        return { messages: kept, note };
     }
 
     /** 索引注记开关（默认开；`DIY_CTX_HISTORY_NOTE=0` 关 —— 对照实验用，将来收编进 policy） */
@@ -1641,7 +1679,7 @@ export class LocalAgentManager {
      * **只读**：自己 replay ops，不加载会话、不落盘 —— 预览用，不应有副作用。
      * （不能用 llm.jsonl：那是 append-only 的**全量**日志，含已被压掉的轮。）
      */
-    deliveryMessages(taskUri: string): ModelMessage[] {
+    deliveryMessages(taskUri: string): HistoryDelivery {
         const store = new BlockStore();
         for (const op of readJsonl<Op>(opsFile(taskUri))) store.apply(op);
         return this.deliveryHistory(taskUri, store);
@@ -1867,12 +1905,12 @@ export class LocalAgentManager {
         const tools = buildTools(cwd, L, taskUri);
         const store = storeInput ?? replay(readJsonl<Op>(opsFile(taskUri)));
         // 与真发**同一条链**（含压缩注记）：面板里的"压缩后预览"就是这一份
-        const history = withRuntime(
-            this.deliveryHistoryForView(store, policy, taskUri),
-            delivery.runtime.text,
-        );
+        const histView = this.deliveryHistoryForView(store, policy, taskUri);
         const summaryText = summaryOverride !== undefined ? summaryOverride : this.effectiveSummary(taskUri);
-        const messages = normalizeUserRuns(withSummary(history, summaryText));
+        // 摘要与注记一样是**自动生成的段** → 各占顶层键，不进 user.message（##310 九轮）
+        const messages = normalizeUserRuns(
+            withRuntime(histView.messages, delivery.runtime.text, histView.note, renderSummaryPart(summaryText)),
+        );
         return {
             model: personaForTask(home, taskUri).model,
             system: delivery.system.text,
@@ -2152,6 +2190,64 @@ export class LocalAgentManager {
     }
 
     /**
+     * 变更历史的「起点重置」标记（##310）。
+     *
+     * 为什么需要它：`baseline` 的语义是**一段会话的起点**，理想触发点是「会话启动」。可会话注册表 /
+     * 关停启动机制还没落地，写起点的判据只能退化成「文件里还没有二版记录」—— 于是老任务升级后、
+     * 或想"从此刻重新起算"时，没有任何入口能让它再写一条起点。
+     *
+     * 这是**临时**入口，动作刻意做成与会话启动**完全一致**：置标记 → 下一步真发时写一条新 baseline。
+     * 等会话注册表/关停启动落地，把置标记的两处（`clear` 与 `rebaseline` 命令）换成「会话启动」一处即可，
+     * 命令本身留作调试口，不必回收。
+     *
+     * 只在内存里：**进程重启即失效** —— 重启不是会话边界（对话从盘上重建、继续），这点是刻意的；
+     * 真需要「重启后也算新起点」，那是会话注册表的语义，不该在这里假装实现。
+     */
+    private rebaselinePending = new Set<string>();
+
+    /** 标记：该任务下一步真发时写一条新 baseline（新会话起点）。会话注册表落地后由「会话启动」自动置位。 */
+    markRebaseline(taskUri: string): void {
+        this.rebaselinePending.add(taskUri);
+    }
+
+    /**
+     * **跨轮**的投递游标：该任务**上一次真发**的投递快照（tree + 值 hash），每任务一份。
+     *
+     * 为什么必须跨轮（实测的 bug）：变更是「**这次**请求的当前值 vs **上一次**请求的当前值」。
+     * 曾经把游标放成一轮一个局部量（`let ctxPrevSnap = 轮首那份`）—— 于是它只能看见一轮**之内**
+     * 的变化（step 2..N），而最常见的变化（用户改了正文/标题，再来问一句）发生在**两轮之间**：
+     * 新轮次的轮首值已经是改后的值，拿它当基准 ⇒ 永远 diff 出空 → 变更日志从不记录。
+     * 实测：真发改标题 → 下一轮落不出任何 `changed`（只有 baseline）。
+     *
+     * 内存里即可（`rule.core-log`：核心逻辑不依赖日志）；进程重启后为空 → 由 `seedCtxSnap`
+     * 从盘上**播种**上一次真发的值（steps 末条的 hash + changelog 重放出的值树），
+     * 播不出来（老任务没 baseline / 从没真发过）才退回"以轮首值为基准"——**少报不错报**。
+     */
+    private ctxSnap = new Map<string, CtxSnapshot>();
+
+    /**
+     * 跨进程重启后**播种**跨轮游标（`ctxSnap` 是内存 Map，重启即空）。
+     *
+     * 材料（都在盘上，且都是"上一次真发"的事实）：
+     *   · `valueHashes` ← `steps.jsonl` 末条 —— **真值 hash**，判定"变没变"足够精确；
+     *   · 值树 ← changelog 最后一条 `baseline` + 之后各 `changed` 的 `after`（`foldCtxTree`）——
+     *     只够产出 before **摘要**（长值在 changelog 里本就是截断摘要）。
+     * 缺任一份 → `null`，调用方退回"以轮首值为基准"（**少报不错报**）。
+     */
+    private seedCtxSnap(taskUri: string): CtxSnapshot | null {
+        try {
+            const lastStep = readDeliverySteps(taskUri).at(-1);
+            if (!lastStep) return null;
+            const tree = foldCtxTree(readCtxLogEntries(taskUri));
+            if (!tree) return null;
+            return { tree, valueHashes: lastStep.valueHashes };
+        } catch (e) {
+            console.warn(`[local-agent] 播种变更游标失败（退回轮首基准）${taskUri}:`, e);
+            return null;
+        }
+    }
+
+    /**
      * 清空会话：中断在途生成 + 清插话队列 + 删 ops/llm/raw 日志。
      *
      * 顺序原则：**先把所有可失败的事做完，最后才丢内存态**。
@@ -2204,6 +2300,11 @@ export class LocalAgentManager {
         // 会话内容已从盘上消失 → 换发 epoch、水位归零，并通知所有订阅方重建块树。
         // 少了它，订阅方拿着旧 since 会以为「新写入落进了旧会话」（epoch 不变 = 同一本史书）。
         opsFeed.reset(taskUri);
+        // 变更日志**故意不在上面的删除清单里**：它按任务存、是跨会话的**审计时间线**（"这个变量一共变过几次"
+        // 要求它活过清零），而本轮的对话（ops/llm/steps…）才是该销毁的东西。代价是旧条目引用的 turnId
+        // 没了 → `context changelog` 按 turnId join 不到投递快照/用量，徽章给 null（不谎报）。语义等价物：
+        // 「清对话」≠「清审计」。所以这里只**置起点标记**：下一次真发落一条新 baseline，等于给新会话另起一段。
+        this.rebaselinePending.add(taskUri);
         // 内存态无论如何都丢：留着它才是真的不一致（盘上文件仍在 → 重进会重新加载）
         this.sessions.delete(taskUri);
         // 折叠缓存同理：日志已删，留着就是读一份不存在的文件。
@@ -2810,6 +2911,38 @@ export class LocalAgentManager {
         // 划分规则读**真源**（$DIY_HOME/context.yaml；缺失/损坏则推荐名单 + 出声）——
         // 与上下文树页读的是同一份，所以页面上看到的 system/runtime 划分就是这里会用的划分。
         const delivery = buildDelivery(globals, loadSystemPlaces(diyHome()));
+
+        // ── 每步重算上下文（##310）──────────────────────────────────
+        // 轮首这份 delivery 原本整轮复用 → 长轮次里变量变了模型仍按旧值干活（几小时的 tool 循环
+        // 全建在过期数据上）。prepareStep 每步重算一次，**变了才注入**（没变不动 ⇒ 前缀缓存只在
+        // 真变那步失效）。system 与 runtime 各走各的通道（见 prepareStep）。
+        const rebuildDelivery = (): Delivery => {
+            const g = assembleGlobals(diyHome(), projectFromUri(taskUri), { taskUri }) as unknown as Record<string, unknown>;
+            return buildDelivery(g, loadSystemPlaces(diyHome()));
+        };
+        // 上一步投递的两个容器文本（比较基准；初值 = 轮首这份）
+        let prevSystemText = delivery.system.text;
+        let prevRuntimeText = delivery.runtime.text;
+        // runtimeDiff 的比较基准 = **本轮首步投出去的那份 runtime**（模型上下文里就是它）。
+        // 不用跨轮游标：跨轮变化已由本轮首步的**全量** runtime 带上，再说一遍是噪音。
+        let prevRunSnap: CtxSnapshot = { tree: delivery.tree, valueHashes: delivery.valueHashes };
+
+        // 变更历史（##310 二版）：每步**有变才写**；一段会话的起点 = 一条 baseline（整棵树）。
+        // 变更单位 = 原子单元（`chain` 整体一条，不下钻数组 —— 原子字段要变一起变）。
+        const ctxUnits = atomicUnitPaths();
+        let ctxSeq = lastCtxLogSeq(taskUri);
+        // 该不该写起点：还没有二版记录（新任务 / 从没写过的新格式），或有人显式要求重新起算
+        // （会话清零、`diy context rebaseline`）。**每轮只在轮首判一次**：轮中途置的标记下一轮生效。
+        let ctxBaselineWritten = hasV2CtxLog(taskUri) && !this.rebaselinePending.has(taskUri);
+        // 变更比较的基准 = **上一次真发**的值（跨轮游标；缺省才退回本轮的轮首值）。
+        // 用轮首值当基准就只能看见"轮内变化"，跨轮变化（改完正文再来问）会永远漏掉 —— 见字段注释。
+        // 内存里没有（进程刚起）= 尝试从盘上**播种**上一次真发的值；播不出来才退回本轮的轮首值。
+        let ctxPrevSnap: CtxSnapshot =
+            this.ctxSnap.get(taskUri) ??
+            this.seedCtxSnap(taskUri) ?? {
+                tree: delivery.tree,
+                valueHashes: delivery.valueHashes,
+            };
         // 预算判据与模版线**共用同一个函数**（services/prompt-registry 的 systemOverBudget）：
         // 曾经这里是内联的 `bytes > budget`，逻辑等价但两处各写一遍 —— 日后任何一侧改口径
         // （比如"等于预算算不算超"）都会悄悄分叉，而单测只覆盖得到被调用的那一侧（209 第 3 轮 R-1）。
@@ -2891,11 +3024,9 @@ export class LocalAgentManager {
                 systemBytes: delivery.system.bytes,
                 toolsBytes: JSON.stringify(tools).length,
             };
+            const hist = this.deliveryHistory(taskUri, sess.store);
             const sent: ModelMessage[] = normalizeUserRuns(
-                withSummary(
-                    withRuntime(this.deliveryHistory(taskUri, sess.store), delivery.runtime.text),
-                    this.effectiveSummary(taskUri),
-                ),
+                withRuntime(hist.messages, delivery.runtime.text, hist.note, renderSummaryPart(this.effectiveSummary(taskUri))),
             );
             // 本轮的**投递选择事实**（配置驱动压缩）：分表用它标注「本步（轮首）投递被压过」（##272 B1）。
             // 与 compact 事件解耦 —— 事件只在触发/手动时写；这里每轮首都有（投递本就无条件按当前配置筛选）。
@@ -2936,18 +3067,6 @@ export class LocalAgentManager {
             // 变更统计（**按项目**累计；只存变化路径 → 体积小、可长期留）。
             // 用途：跑几天后回答"这个节点到底变了几次" —— 划分位置的判据（见 task 178）。
             appendContextStat(projectDir(projectFromUri(taskUri)), statFromStep(step, prevStep?.valueHashes ?? null, taskUri));
-            // 变更历史（**按任务**一条时间线）：事件粒度 + 一行值预览，落 `local/<key>.changelog.jsonl`。
-            // 与投递快照同点写、同序 append ⇒ 轮序天然对齐（第 N 条 changelog = 第 N 步），
-            // 所以事件行能直接驱动"第 N 步 vs 上一步"的 diff（见 ContextLabPage 的变更历史）。
-            appendCtxLog(taskUri, {
-                ts: step.ts,
-                turnId,
-                model,
-                wireVersion: step.wireVersion,
-                ops: opsFromHashes(prevStep?.valueHashes ?? null, delivery.valueHashes, (p) =>
-                    previewOf(delivery.tree, p) || null,
-                ),
-            });
             this.noteTraffic(taskUri, turnId, rm, 2);
             const result = streamText({
                 model: this.modelFor(rm, key),
@@ -2991,11 +3110,78 @@ export class LocalAgentManager {
                 // 立刻发生**的轮次边界生效。让这一轮干净地结束、由 chat() 开下一轮（插话就是
                 // 下一轮的开场白）语义更准，轮次结构/usage/停止边界也不用为夹层做特例。
                 prepareStep: ({ messages, stepNumber }) => {
-                    if (signal.aborted || stepNumber === 0) return {};
-                    const items = claimStepSteers();
-                    return items.length === 0
-                        ? {}
-                        : { messages: [...messages, ...items.map((it) => ({ role: "user" as const, content: it.text }))] };
+                    if (signal.aborted) return {};
+                    let instructions: string | undefined;
+                    let nextMessages: ModelMessage[] | undefined;
+                    // ── 上下文及时刷新（##310）──
+                    // 每步重算；**变了才注入**（没变什么都不返回 ⇒ 不砸前缀缓存）：
+                    //   · system  −→ instructions（SDK 的 system 覆盖，carry forward 到后续步）
+                    //   · runtime −→ 就地替换尾部那条 user 容器（它是"当前值"，不是历史）
+                    try {
+                        const fresh = rebuildDelivery();
+                        // ── 变更历史（##310）：每步一条，**有变才写** ──
+                        // 首条写 baseline（整棵树，会话起点）；之后只写真变的步 —— "什么都没变"不落盘。
+                        const stepNo = stepNumber + 1;
+                        const ref = { turnId, stepId: `${turnId}_s${stepNo}`, step: stepNo };
+                        if (!ctxBaselineWritten) {
+                            appendCtxLog(taskUri, {
+                                seq: ++ctxSeq, type: "baseline", ts: new Date().toISOString(), model,
+                                wireVersion: fresh.wireVersion, ref, data: { tree: fresh.tree },
+                            });
+                            // 标记是一次性的：写完即销，下一步起走正常「有变才写」。
+                            this.rebaselinePending.delete(taskUri);
+                            ctxBaselineWritten = true;
+                        } else {
+                            const changes = changesOf(ctxPrevSnap, fresh, ctxUnits);
+                            if (changes.length > 0) {
+                                appendCtxLog(taskUri, {
+                                    seq: ++ctxSeq, type: "changed", ts: new Date().toISOString(), model,
+                                    wireVersion: fresh.wireVersion, ref, data: { changes },
+                                });
+                            }
+                        }
+                        ctxPrevSnap = { tree: fresh.tree, valueHashes: fresh.valueHashes };
+                        this.ctxSnap.set(taskUri, ctxPrevSnap);
+                        if (fresh.system.text !== prevSystemText) {
+                            prevSystemText = fresh.system.text;
+                            instructions = fresh.system.text;
+                        }
+                        if (fresh.runtime.text !== prevRuntimeText) {
+                            // runtime 变了 → **追加**一条只含 `runtimeDiff:` 的信封（用户 2026-10-15
+                            // 「runtime 变 → 追加什么变了，形态 = 与实际用户消息分离的 user 消息」）。
+                            // 为什么追加而不是就地把旧容器换掉：模型要的不只是新值，还要**知道哪几个
+                            // 单元变了** —— 就地替换只给一坨新值，变化本身看不见。
+                            // 基准 = **本轮首步投出去的那份**（模型上下文里的就是它），不是跨轮游标：
+                            // 跨轮的那些变化已由本轮首步的**全量** runtime 覆盖，重复说一遍是噪音。
+                            const changedRun = changesOf(prevRunSnap, fresh, ctxUnits)
+                                .map((c) => c.path)
+                                .filter((p) => isRuntimePlace(fresh.tree, p));
+                            const diff = runtimeDiffDelivery(fresh.tree, changedRun);
+                            prevRuntimeText = fresh.runtime.text;
+                            prevRunSnap = { tree: fresh.tree, valueHashes: fresh.valueHashes };
+                            if (diff.text) {
+                                nextMessages = [...messages, { role: "user" as const, content: diff.text }];
+                            }
+                        }
+                    } catch (e) {
+                        // 重算失败**不阻断**发送：这是增强（及时性），不是正确性前提 —— 沿用上一步的投递
+                        console.error(`[local-agent] 每步重算上下文失败（沿用上一步投递）${taskUri}:`, e);
+                    }
+                    // ── 插话注入（原逻辑；只在第二步及之后）──
+                    if (stepNumber > 0) {
+                        const items = claimStepSteers();
+                        if (items.length > 0) {
+                            nextMessages = [
+                                ...(nextMessages ?? messages),
+                                ...items.map((it) => ({ role: "user" as const, content: it.text })),
+                            ];
+                        }
+                    }
+                    if (instructions === undefined && nextMessages === undefined) return {};
+                    return {
+                        ...(instructions === undefined ? {} : { instructions }),
+                        ...(nextMessages === undefined ? {} : { messages: nextMessages }),
+                    };
                 },
             });
 
@@ -3413,15 +3599,18 @@ export async function previewSimulatedRequest(opts: {
     // 历史：优先用调用方传的；否则从块树现算（与真发同一条投影 —— 含压缩边界与工具裁剪）。
     // 全量下发（不再有截尾上限）：历史已被压缩边界裁过，再截尾会破坏「预览=真发」。
     const hist = opts.messages?.length
-        ? { messages: opts.messages }
-        : { messages: getLocalAgent().deliveryMessages(taskUri) };
-    // 与真发同样合并相邻 user（真发 = normalizeUserRuns(...本轮的 runtime + 输入)）——
-    // 否则预览会显示两条连续 user，而真发只有一条，破坏「预览看到的 = 发出去的」
-    const messages: ModelMessage[] = normalizeUserRuns([
-        ...hist.messages,
-        ...(opts.runtime ? [{ role: "user" as const, content: opts.runtime }] : []),
-        { role: "user", content: opts.lastUser ?? "[仿真占位]真实下一轮此处为用户输入" },
-    ]);
+        ? { messages: opts.messages, note: "" }
+        : getLocalAgent().deliveryMessages(taskUri);
+    // 与真发**逐字同形**：末条 user = 本轮输入 → 外面套**尾部信封**（history? + runtime + user），
+    // 再合并相邻 user。别各插一条消息 —— 那样合出来是「YAML + 裸文本」，预览会撒谎。
+    const messages: ModelMessage[] = normalizeUserRuns(
+        withRuntime(
+            [...hist.messages, { role: "user", content: opts.lastUser ?? "[仿真占位]真实下一轮此处为用户输入" }],
+            opts.runtime ?? "",
+            hist.note,
+            renderSummaryPart(getLocalAgent().effectiveSummary(taskUri)),
+        ),
+    );
     let body: Record<string, unknown> | null = null;
     simBodySink = (b) => {
         body = b;

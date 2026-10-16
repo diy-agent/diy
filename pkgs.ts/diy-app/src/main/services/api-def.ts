@@ -21,6 +21,7 @@ import { z } from "zod";
 // 引擎通用渲染器 id 的真源（别处不复制这份清单；内核加渲染器时这里的 schema 自动跟上）
 import { RENDERERS } from "@diy/flow";
 import { PromptEntrySchema, RequestPreviewSchema } from "../../shared/prompt-schema";
+import { TrafficRecordSchema } from "../../shared/traffic-record";
 import { ContextDiffSchema, CtxLogSchema, StatsSchema, StepsSchema } from "../../shared/context/schema";
 import { ContextLabSchema, ContextPlaceCandidateSchema } from "../../shared/context/schema";
 // agent 人物契约（纯 zod，renderer 同源）——模型/参数/行为指令的配置实体
@@ -71,51 +72,6 @@ const StatusDataTaskWrite = z.object({
 const StatusDataId = z.object({ status: z.string(), data: z.object({ id: z.string() }) });
 const StatusOk = z.object({ status: z.string() });
 
-/** 一条流量记录（一次 HTTP 往返；body 形状任意，故用 any） */
-const BodyCaptureSchema = z.object({
-  head: z.string().describe("首段文本（未截断时即全文）"),
-  tail: z.string().describe("尾段文本（只保留最后一段；未截断时为空串）"),
-  headBytes: z.number().describe("首段保留的字节数"),
-  tailBytes: z.number().describe("尾段保留的字节数"),
-  totalBytes: z.number().describe("正文完整字节数"),
-  truncated: z.boolean().describe("是否被截断（headBytes + tailBytes < totalBytes 即截断）"),
-});
-const LogLocSchema = z.object({
-  file: z.string().describe("日志文件（相对 DIY_HOME，如 log/network/2026-10-13.jsonl）"),
-  offset: z.number().describe("该条记录在文件中的起始字节"),
-  len: z.number().describe("该条记录的字节长度"),
-  line: z.number().describe("行号（1 起；一行 = 一条记录）"),
-  abs: z.string().describe("文件绝对路径（界面展示 / 打开文件位置用）"),
-});
-const TrafficRecordSchema = z.object({
-  id: z.number(),
-  ts: z.number().describe("请求发出时刻（epoch ms）"),
-  kind: z.enum(["llm", "probe", "http"]).describe("来源：LLM 对话 / 模型配置探测 / 其它"),
-  session: z.string().describe("x-opencode-session（归属键，反查 task/turn 用）；无归属则空串"),
-  taskUri: z.string().nullable().describe("归属任务；未知则 null"),
-  turnId: z.string().nullable().describe("归属轮次"),
-  provider: z.string().describe("provider id"),
-  model: z.string().describe("模型 id"),
-  baseUrl: z.string(),
-  method: z.string(),
-  url: z.string().describe("完整请求 URL"),
-  host: z.string().describe("主机名（含端口）"),
-  path: z.string(),
-  attempt: z.number().describe("本轮第几次请求（每次重试即一次 HTTP 往返，逐次自增）"),
-  maxRetries: z.number(),
-  status: z.number().nullable().describe("HTTP 状态码；null = 未收到响应（网络错 / 超时）"),
-  ms: z.number().describe("耗时 ms"),
-  reqBytes: z.number().describe("请求正文字节数（完整大小，不受截断影响）"),
-  resBytes: z.number().describe("响应正文字节数（完整大小；未收到为 0）"),
-  reqHeaders: z.record(z.string(), z.string()).describe("已脱敏（authorization 只留尾 4 位）"),
-  reqBody: BodyCaptureSchema.nullable().describe("请求正文（首尾法保留，见字段说明）"),
-  resHeaders: z.record(z.string(), z.string()),
-  resBody: BodyCaptureSchema.nullable().describe("响应正文（首尾法保留）；未捕获时为 null，原因见 resNote"),
-  resNote: z.string().nullable().describe("未能保留响应正文时的说明（如正文过大）"),
-  traceId: z.string().nullable().describe("上游追责凭据（响应头 x-trace-id / x-request-id / x-opencode-log-id）"),
-  err: z.string().nullable().describe("网络层异常消息"),
-  log: LogLocSchema.nullable().describe("该条落盘位置（界面按位置随机读；null = 未落盘）"),
-});
 const TrafficSnapshotSchema = z.object({
   fullCapture: z.boolean().describe("是否记录完整请求内容（正文不截断）"),
   cap: z.number().describe("内存里最多留多少条"),
@@ -1337,12 +1293,22 @@ export const apiDef = RpcSchema.router({
             output: StatsSchema,
           }),
           changelog: RpcSchema.unary({
-            desc: `变更历史：每轮真发一条变更事件（op + path + 一行值预览，old→new 由回放得出），附该轮 ref（当轮划分 / 缓存率 / 金额）`,
+            desc: `变更历史：每步**有变才写**（每段会话起点给一条 baseline 整棵树）；变更单位 = 原子单元，before/after 自带；附 ref（当轮划分 / 缓存率 / 金额）`,
             input: {
               taskUri: z.string().cliArg({ desc: "任务 URI" }),
               limit: z.number().optional().cliOption({ desc: "只看最近 N 轮（缺省全部）" }),
             },
             output: CtxLogSchema,
+          }),
+          rebaseline: RpcSchema.unary({
+            desc: `重置变更历史的起点：该任务**下一步真发**时写一条新 baseline（整棵树）。临时手工入口 —— 会话注册表/关停启动机制落地后改由「会话启动」自动触发，本命令留作调试`,
+            input: {
+              taskUri: z.string().cliArg({ desc: "任务 URI" }),
+            },
+            output: z.object({
+              ok: z.boolean().describe("是否已置位（true = 下一步真发落新起点）"),
+              message: z.string().describe("给用户看的一句话（本轮下次真发生效；当轮已开跑则下一轮）"),
+            }),
           }),
           diff: RpcSchema.unary({
             desc: `某步 vs 上一步的 diff；不给 --step 则是「当前变量树 vs 最后一步」（main 侧算完）`,

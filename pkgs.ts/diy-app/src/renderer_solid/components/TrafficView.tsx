@@ -3,6 +3,7 @@ import type { Accessor } from "solid-js";
 import { diyService } from "../lib/rpc";
 import { JsonViewer } from "./JsonViewer";
 import { findStore } from "../store/findStore";
+import type { TrafficFocus } from "../store/trafficStore";
 
 /**
  * 流量视图 —— 看「实际发出去的 HTTP 请求 / 响应」。
@@ -246,7 +247,7 @@ const PAGE_SIZE = 100;
  */
 export function createTrafficState(opts: {
     /** 打开时要定位的记录（优先 id，其次 trace_id；都没有则定位最近一次失败） */
-    focus?: Accessor<{ traceId?: string | null; reqId?: number | null } | null>;
+    focus?: Accessor<TrafficFocus | null>;
     /** focus 消费后回调（清掉，避免下次重开误定位） */
     onFocusConsumed?: () => void;
 } = {}) {
@@ -380,14 +381,34 @@ export function createTrafficState(opts: {
     };
 
     // 定位：优先 id → trace_id → 最近一次失败（在当前查询结果里找）
+    /** 已经应用过的筛选提示（`text\0date`）—— 防止每次重渲染都重设筛选 → 无限重查（##310） */
+    let focusFiltered: string | null = null;
     createEffect(() => {
         const f = opts.focus?.();
-        if (!f) return;
+        // ⚠️ 必须在**分支之前**读一次 rows：否则"先设筛选、提前 return"那一轮没订阅查询结果，
+        //    结果回来时本 effect 不会重跑 → 永远不定位（实测：跳过来只筛不选）。
         const all = rows();
+        if (!f) {
+            focusFiltered = null;
+            return;
+        }
+        // ① 先应用筛选提示（目标那条可能不在当前筛选结果里，列表默认只查当天）：
+        //    设条件 → 重查 → 等结果回来（rows 变化触发本 effect 重跑）再定位。
+        const hint = f.text !== undefined || f.date !== undefined ? `${f.text ?? ""}\u0000${f.date ?? ""}` : null;
+        if (hint && hint !== focusFiltered) {
+            focusFiltered = hint;
+            if (f.text !== undefined) setQText(f.text);
+            if (f.date !== undefined) setFDate(f.date);
+            scheduleQuery();
+            return;
+        }
+        // ② 在结果里定位
         if (all.length === 0) return;
         let r = f.reqId != null ? all.find((x) => x.id === f.reqId) : undefined;
         if (!r && f.traceId) r = all.find((x) => x.traceId === f.traceId);
-        if (!r) {
+        // 只有调用方**没给线索**时才退化成"最近一次失败"：给了 text/traceId 说明它知道要哪一条，
+        // 此时硬塞一条别的比空着更坏（会让人以为"就是这条"）。
+        if (!r && !hint && !f.traceId) {
             const fails = all.filter(isFail);
             r = fails[fails.length - 1];
         }
@@ -752,7 +773,7 @@ export function TrafficDetail(props: { st: TrafficState; inline?: boolean }) {
  * 页面形态见 `TrafficPage`（同样这份 state，交给 ViewGrid 摆成左右两个 viewset）。
  */
 export function TrafficView(props: {
-    focus?: { traceId?: string | null; reqId?: number | null } | null;
+    focus?: TrafficFocus | null;
     onFocusConsumed?: () => void;
     showIntro?: boolean;
 }) {

@@ -11,8 +11,10 @@
 
 import { describe, it, expect } from "vitest";
 import * as yaml from "js-yaml";
+
+/** 测试自有 preamble：`renderPathsTraced` 的"前面拼一段纯文本"能力仍要守（行号映射偏移） */
+const TEST_PREAMBLE = "# 测试说明头\n\n- 规则一\n";
 import {
-    CONTEXT_GUIDE,
     applyFact,
     applyFacts,
     canonical,
@@ -322,9 +324,9 @@ describe("恢复与边界（用例 16~20）", () => {
         // 领域侧对应断言：未 apply 任何事实时树保持空，投影也不假装有内容。
         const t = createTree();
         const { projection } = project(t, null);
-        // 空树：说明头仍在位（它说明"这是什么"），但**没有任何变量数据** ——
+        // 空树：信封的 help 段仍在位（它说明"这是什么"），但**没有任何变量数据** ——
         // 中断的更新不会让投影假装有内容
-        expect(projection.system).toContain(CONTEXT_GUIDE.trim().split("\n")[0]!);
+        expect(projection.system.startsWith("help:")).toBe(true);
         expect(systemData(t)).toBe("");
         expect(projection.runtime.kind).toBe("snapshot");
         if (projection.runtime.kind === "snapshot") expect(projection.runtime.text).toBe("");
@@ -380,24 +382,26 @@ describe("golden：同一组事实的投影稳定（108 换 adapter 后必须一
         t = setPlacement(t, "tasks", "runtime");
 
         // 纯 YAML：不再套 <context path="…"> 外壳（树形结构已表达 path 归属）。
-        // systemData 是纯数据；systemText 在它前面多一段说明头（见 guide.ts）
+        // systemData 是纯数据；systemText = 信封（`help:` + `system:`，见 envelope.ts）
         expect(systemData(t)).toBe("diy:\n  cli: /repo/diy.sh");
-        expect(systemText(t).startsWith(CONTEXT_GUIDE.trimEnd())).toBe(true);
-        expect(systemText(t)).toContain("diy:\n  cli: /repo/diy.sh");
+        expect(systemText(t).startsWith("help:")).toBe(true);
+        expect(systemText(t)).toContain("\nsystem:\n  diy:\n    cli: /repo/diy.sh");
+        // runtime 也是信封（只有 runtime 一段）
         expect(project(t, emptyCursor()).projection.runtimeText).toBe(
             [
-                "env:",
-                "  os:",
-                "    soft:",
-                "      - playwright-cli",
-                "      - rg",
-                "instructions:",
-                '  project: "<p>/repo/diy.sh</p>"',
-                "tasks:",
-                "  140:",
-                "    status: done",
-                "  141:",
-                "    status: doing",
+                "runtime:",
+                "  env:",
+                "    os:",
+                "      soft:",
+                "        - playwright-cli",
+                "        - rg",
+                "  instructions:",
+                '    project: "<p>/repo/diy.sh</p>"',
+                "  tasks:",
+                "    140:",
+                "      status: done",
+                "    141:",
+                "      status: doing",
             ].join("\n"),
         );
     });
@@ -418,7 +422,7 @@ describe("渲染行号映射（选中联动高亮的基础）", () => {
                 { path: "/home/proj/AGENTS.md", content: "第二层" },
             ] },
         ]);
-        const traced = renderPathsTraced(t, ["chain", "diy"], CONTEXT_GUIDE);
+        const traced = renderPathsTraced(t, ["chain", "diy"], TEST_PREAMBLE);
         const L = traced.text.split("\n");
         const at = (p: string) => {
             const r = traced.lines[p]!;
@@ -426,8 +430,8 @@ describe("渲染行号映射（选中联动高亮的基础）", () => {
         };
 
         // 说明头在位，且第一行数据（chain:）紧跟其后
-        expect(traced.text.startsWith("# 系统上下文")).toBe(true);
-        expect(traced.lines["chain"]!.from).toBeGreaterThan(CONTEXT_GUIDE.split("\n").length);
+        expect(traced.text.startsWith(TEST_PREAMBLE.split("\n")[0]!)).toBe(true);
+        expect(traced.lines["chain"]!.from).toBeGreaterThan(TEST_PREAMBLE.split("\n").length);
 
         // ★ 精度：每个 path 的行区间必须**只含该 path 的内容**
         expect(at("diy.cli")).toBe("  cli: /repo/diy.sh");
@@ -442,7 +446,7 @@ describe("渲染行号映射（选中联动高亮的基础）", () => {
         t = build(t, [{ type: "patch", path: "diy.cli", op: "set", value: "x" }]);
         const plain = renderPathsTraced(t, ["diy"]);
         expect(plain.lines["diy.cli"]).toEqual({ from: 2, to: 2 });
-        const withGuide = renderPathsTraced(t, ["diy"], CONTEXT_GUIDE);
+        const withGuide = renderPathsTraced(t, ["diy"], TEST_PREAMBLE);
         const offset = withGuide.lines["diy.cli"]!.from - plain.lines["diy.cli"]!.from;
         expect(offset).toBeGreaterThan(0); // 说明头行数
         expect(offset).toBe(withGuide.lines["diy"]!.from - plain.lines["diy"]!.from);

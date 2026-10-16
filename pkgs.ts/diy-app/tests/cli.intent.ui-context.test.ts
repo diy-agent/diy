@@ -47,10 +47,11 @@ async function a11yText(): Promise<string> {
   return collectText([(res.data as any)?.data?.tree]).join("\n");
 }
 
-/** 表格里某一行（a11y 文本按行）的**单元格序列**：定位含该 path 的整行，取其后 4 个非空行
- *  （变了 / 变化率 / 归属 / 最后）。比整页 substring 精确 —— 断言"这一行的这一列"，
- *  不会被别处文本满足（review RV-07）。 */
-function rowCells(text: string, needle: string, after?: string): string[] {
+/** 表格里某一行（a11y 文本按行）的**单元格序列**：定位含该 path 的整行，取其后 `n` 个非空行
+ *  （默认 4 = 变了 / 变化率 / 归属 / 最后）。比整页 substring 精确 —— 断言"这一行的这一列"，
+ *  不会被别处文本满足（review RV-07）。a11y 文本按 **text node** 分行，所以一格若由多个
+ *  span 拼成（如 `一` `→` `二`）会各占一行 —— `n` 就是给这种行留的。 */
+function rowCells(text: string, needle: string, after?: string, n = 4): string[] {
   // `after` = 作用域起点（如统计块标题）：同名文本可能出现在别处（steps 列表也列变化路径），
   // 不限定作用域会命中错行。
   let body = text;
@@ -61,7 +62,7 @@ function rowCells(text: string, needle: string, after?: string): string[] {
   const lines = body.split("\n").map((l) => l.trim());
   const i = lines.findIndex((l) => l === needle);
   if (i < 0) return [];
-  return lines.slice(i + 1).filter(Boolean).slice(0, 4);
+  return lines.slice(i + 1).filter(Boolean).slice(0, n);
 }
 
 /**
@@ -105,6 +106,7 @@ describe("上下文树：RPC 契约（真实数据）", () => {
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create 上下文树任务 ${pid}`);
     const uri = String((t.data as any)?.data?.uri);
+    clearLocal(uri); // 撞名残留会混进断言（见 clearLocal 头注）
     await fx.sh.run(`./diy.sh task edit ${uri} --body $'任务正文第一行\\n正文第二行'`);
 
     const res = await fx.sh.getJson(`./diy.sh context lab ${pid} --taskUri ${uri}`);
@@ -169,6 +171,7 @@ describe("上下文树：RPC 契约（真实数据）", () => {
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create 划分任务 ${pid}`);
     const uri = String((t.data as any)?.data?.uri);
+    clearLocal(uri); // 撞名残留会混进断言（见 clearLocal 头注）
 
     const base = (await fx.sh.getJson(`./diy.sh context lab ${pid} --taskUri ${uri}`)).data as any;
     expect(base.runtime.places).toContain("task.body");
@@ -205,6 +208,7 @@ describe("上下文树：划分规则（真源）", () => {
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create 划分任务 ${pid}`);
     const uri = String((t.data as any)?.data?.uri);
+    clearLocal(uri); // 撞名残留会混进断言（见 clearLocal 头注）
     // 正文有 10 字下限（`task edit` 会拒绝过短输入）
     await fx.sh.run(`./diy.sh task edit ${uri} --body $'划分验证正文\\n第二行也在这里'`);
 
@@ -258,6 +262,7 @@ describe("上下文树：投递快照（steps）", () => {
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create 快照任务 ${pid}`);
     const uri = String((t.data as any)?.data?.uri);
+    clearLocal(uri); // 撞名残留会混进断言（见 clearLocal 头注）
 
     const empty = await fx.sh.getJson(`./diy.sh context steps ${uri}`);
     expect((empty.data as any).total).toBe(0);
@@ -417,7 +422,7 @@ describe("上下文树：变更历史（事件粒度）", () => {
 
     const empty = await fx.sh.getJson(`./diy.sh context changelog ${uri}`);
     expect((empty.data as any).total).toBe(0);
-    expect((empty.data as any).turns).toEqual([]);
+    expect((empty.data as any).entries).toEqual([]);
 
     // 手写两条**真发投递快照**（老任务的样子：有快照、还没有变更日志）→ 读侧折算
     const rec = (over: Record<string, unknown>) => ({
@@ -447,18 +452,18 @@ describe("上下文树：变更历史（事件粒度）", () => {
     const dv = derived.data as any;
     expect(dv.source).toBe("derived");
     expect(dv.total).toBe(2);
-    expect(dv.turns.map((x: any) => x.index)).toEqual([1, 2]);
-    expect(dv.turns[0].baseline).toBe(true);
+    expect(dv.entries.map((x: any) => x.ref.step)).toEqual([1, 2]);
+    expect(dv.entries[0].type).toBe("baseline");
     // 折算拿不到值（快照不存值）→ 只到 path 粒度，不编预览
-    expect(dv.turns[1].changes).toEqual([
+    expect(dv.entries[1].changes).toEqual([
       { kind: "update", path: "task.body", before: null, after: null },
     ]);
     // ref 从投递快照按 turnId join：第 2 轮的划分 + 两份容器是否变
-    expect(dv.turns[1].systemPlaces).toEqual(["diy"]);
-    expect(dv.turns[1].systemDiffers).toBe(false);
-    expect(dv.turns[1].runtimeDiffers).toBe(true);
-    expect(dv.turns[1].incomparable).toBe(false);
-    expect(dv.turns[1].cost).toBeNull(); // 没有用量账本 → 不编数
+    expect(dv.entries[1].systemPlaces).toEqual(["diy"]);
+    expect(dv.entries[1].systemDiffers).toBe(false);
+    expect(dv.entries[1].runtimeDiffers).toBe(true);
+    expect(dv.entries[1].incomparable).toBe(false);
+    expect(dv.entries[1].cost).toBeNull(); // 没有用量账本 → 不编数
 
     const op = (over: Record<string, unknown>) => ({
       ts: "2026-09-30T00:00:00.000Z",
@@ -483,14 +488,19 @@ describe("上下文树：变更历史（事件粒度）", () => {
     expect(lv.source).toBe("log"); // 有日志就以日志为准（预览/方向只有它有）
     expect(lv.total).toBe(3);
     // 老→新由回放得出：落盘只存"改成了什么"
-    expect(lv.turns[0].changes).toEqual([{ kind: "add", path: "task.body", before: null, after: "一" }]);
-    expect(lv.turns[1].changes).toEqual([{ kind: "update", path: "task.body", before: "一", after: "二" }]);
-    expect(lv.turns[2].changes).toEqual([{ kind: "remove", path: "task.body", before: "二", after: null }]);
+    expect(lv.entries[0].changes).toEqual([{ kind: "add", path: "task.body", before: null, after: "一" }]);
+    expect(lv.entries[1].changes).toEqual([{ kind: "update", path: "task.body", before: "一", after: "二" }]);
+    expect(lv.entries[2].changes).toEqual([{ kind: "remove", path: "task.body", before: "二", after: null }]);
 
     // --limit 只截尾（total 仍是全部）
     const limited = await fx.sh.getJson(`./diy.sh context changelog ${uri} --limit 1`);
     expect((limited.data as any).total).toBe(3);
-    expect((limited.data as any).turns.map((x: any) => x.index)).toEqual([3]);
+    expect((limited.data as any).entries.map((x: any) => x.ref.step)).toEqual([3]);
+
+    // 重置起点：命令只**置位**（落盘要等下一次真发 —— 起点只能在轮首写），故这里只验契约
+    const rl = await fx.sh.getJson(`./diy.sh context rebaseline ${uri}`);
+    expect((rl.data as any).ok).toBe(true);
+    expect(String((rl.data as any).message)).toContain("baseline");
 
     // 清干净再走：后面还有用例会撞名（它们只覆盖写 steps，会被这份 changelog 压过）
     clearLocal(uri);
@@ -498,8 +508,8 @@ describe("上下文树：变更历史（事件粒度）", () => {
   }, 90_000);
 });
 
-describe("上下文树：变更历史上屏（事件行 + 旧→新）", () => {
-  it("左栏「变更历史」按事件列出 op/path/旧→新；点事件行选中该变量", async () => {
+describe("上下文树：变更历史**表格**上屏（轮次 | 步 | 实际请求）", () => {
+  it("三列表格：只到「步」这一层（不列具体变化字段）；点行选中该步", async () => {
     const repo = `${fx.HOME}/ctxlab-logui`;
     mkdirSync(repo, { recursive: true });
     const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label 变更历史上屏`);
@@ -531,36 +541,38 @@ describe("上下文树：变更历史上屏（事件行 + 旧→新）", () => {
     await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
     await fx.sh.getJson(`./diy.sh ui tab open ctxlab:${uri}`);
     await fx.sh.getJson(`./diy.sh ui page navigate ctxlab:${uri}`);
-    await fold("request", false);
-    await fold("change", false);
     await fold("history", true);
 
     const s = await waitUntil(
       a11yText,
-      (x) => x.includes("变更历史（真发轮次）") && x.includes("baseline（起点）") && x.includes("一 → 二"),
-      { label: "变更历史（事件行 + 旧→新）上屏" },
+      (x) => x.includes("变更历史（真发轮次）") && x.includes("实际请求") && x.includes("2 条记录"),
+      { label: "变更历史表格上屏" },
     );
-    // 折叠块口径：轮数 + 变更次数（基线不算"变更"）
-    expect(s).toContain("2 轮真发 · 1 次变更");
-    // 事件行：path + op + 值预览（旧→新由回放得出）
-    expect(s).toContain("task.body");
-    expect(s).toContain("一 → 二");
+    // 折叠块口径：记录数 + 变更次数（基线不算"变更"）
+    expect(s).toContain("2 条记录 · 1 次变更");
+    // 三列表格（表头）：轮次 | 步 | 实际请求
+    expect(s).toContain("轮次");
+    expect(s).toContain("实际请求");
+    // ★ 表格只到"步"这一层：**不列具体变化的值**（值预览在中栏「变量树变更」里；行 title 只有
+    //    路径级的"本步改了哪几处"，供鼠标悬停时按需查看 —— 不进表格正文、不占版面）
+    expect(s).not.toContain("一 → 二");
     // 有日志 → 不该出现折算的说明（那是降级路径）
-    expect(s).not.toContain("由投递快照的值 hash 折算");
+    expect(s).not.toContain("降级视图");
 
     const ui = await makeUiDriver(fx.electron.cdpUrl, async () => {
       const r = await fx.sh.getJson("./diy.sh ui inspect");
       return (r.data as any)?.data?.tree as A11yNode | undefined;
     });
     try {
-      // 点事件行（轮 → 事件的第二层按钮）→ 选中该变量：**顶栏的「取消选中」入口才是判据**
-      // （选中态没有别的稳定文本；DOM 里按 title 找比按 a11y 文本找可靠）。
-      await ui.clickSelector("ul.menu li ul li button", { nth: 0 });
+      // 点表格第一行（最新在前 = 第 2 步那条）→ 选中该步。
+      // ⚠️ 点 `<td>` 而不是 `tr`：行尾「查看实际请求」链接会 `stopPropagation`，
+      //    点它只弹抽屉、不选中行。判据 = 该行拿到选中态 class（`ring-primary`）。
+      await ui.clickSelector("table tbody tr td", { nth: 0 });
       const hasSel = async (): Promise<boolean> =>
         ui.query<boolean>(
-          "Array.from(document.querySelectorAll('button')).some((b) => (b.title || '').includes('取消选中'))",
+          "Array.from(document.querySelectorAll('table tbody tr')).some((r) => r.className.includes('ring-primary'))",
         );
-      const selWait = await waitUntil(hasSel, (x) => x === true, { label: "点事件行 → 选中该变量" });
+      const selWait = await waitUntil(hasSel, (x) => x === true, { label: "点行 → 选中该步" });
       expect(selWait).toBe(true);
     } finally {
       ui.close();
@@ -571,8 +583,8 @@ describe("上下文树：变更历史上屏（事件行 + 旧→新）", () => {
   }, 120_000);
 });
 
-describe("上下文树：UI 上屏（两列 + 请求预览）", () => {
-  it("结构树与请求预览上屏；单份视图已删；与提示词页互不干扰", async () => {
+describe("上下文树：UI 上屏（两列 + 信封原始数据 `<>`）", () => {
+  it("两列上屏；已删的「请求预览 / 变更详情」不复现；点行 → 两侧 diff；`<>` 切原始数据", async () => {
     const repo = `${fx.HOME}/ctxlab3`;
     mkdirSync(repo, { recursive: true });
     writeFileSync(join(repo, "AGENTS.md"), "## 本项目的规范\n- 精简\n");
@@ -580,24 +592,26 @@ describe("上下文树：UI 上屏（两列 + 请求预览）", () => {
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create 上屏任务 ${pid}`);
     const uri = String((t.data as any)?.data?.uri);
+    clearLocal(uri);
 
     await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
     await fx.sh.getJson(`./diy.sh ui tab open ctxlab:${uri}`);
 
-    // 两列：结构树（左）/ 请求预览（中）。单份视图（变量树 / system 份 / runtime 份 / 变更详情）
-    // 已删 —— 同一份文本的展开形态就在请求预览的树里，不必看两遍。
+    // 两列：结构树（左）/ 中栏（变量树变更 · system/runtime diff · 该步实际请求）
     const base = await waitUntil(
       a11yText,
-      (s) => s.includes("变量（契约）") && s.includes("请求预览"),
+      (s) => s.includes("变量（契约）") && s.includes("变量树变更（整棵树 + 标注）"),
       { label: "上下文树页两列上屏" },
     );
     expect(base).toContain("真实上下文");
-    // 判据用**被删视图自己的标题/栏位**（不用裸词"变量树"：说明头正文里就有「一棵变量树」）
-    for (const g of ["system 份（稳定", "runtime 份（易变", " 个变量\n"]) {
+    // 已删的两个 view 不该再上屏（##310 六轮：仿真请求体与错位的"变更详情"都不要了）
+    for (const g of ["请求预览（实际发送格式）", "变更详情", "system 份（稳定", "runtime 份（易变", "投递单元"]) {
       expect(base, `已删的视图不该再上屏：${g}`).not.toContain(g);
     }
-    // 「变更详情」回来了（数据换成真发快照）：标题常驻，默认收起
-    expect(base).toContain("变更详情");
+    // 中栏四块标题常驻
+    expect(base).toContain("system diff（逐行 · 真发全文）");
+    expect(base).toContain("runtime diff（逐行 · 真发全文）");
+    expect(base).toContain("该步实际请求（真发 · 流量）");
 
     // 真实 AGENTS.md 内容上屏（等 RPC；首帧 system 名单还没加载完）
     const withChain = await waitUntil(a11yText, (s) => s.includes("本项目的规范"), {
@@ -608,91 +622,80 @@ describe("上下文树：UI 上屏（两列 + 请求预览）", () => {
     expect(withChain).toContain("技能清单");
     // 与提示词页互不干扰：另一个 page 的块不该出现
     expect(withChain).not.toContain("_system.md");
-
-    // 链内容进了请求预览（真实数据：AGENTS.md 链 → system 段）
-    const withArray = await waitUntil(a11yText, (s) => s.includes("chain"), { label: "chain 上屏" });
-    expect(withArray).toContain("chain");
-
-    // 变更历史：左栏折叠块的标题常驻（默认收起；数据来自**变更日志**）
+    expect(withChain).toContain("chain");
     expect(withChain).toContain("变更历史（真发轮次）");
-    // 「投递单元」view 已删（划分结果已在请求预览里体现）
-    expect(withChain).not.toContain("投递单元");
 
-    // 请求预览（默认 YAML 形态）：内嵌的 system 文本**就地解析展开** ——
-    // 「`# 以下是…` 这类 token 只可能由（说明头 → 注释）产生」：整坨字符串/块标量下
-    // 这些行不带 `# ` 前缀，整段会是一个多行 token。这就是"展开"与"没展开"的判据。
-    await fold("request", true);
-    const yamlView = await waitUntil(
-      a11yText,
-      (s) => s.includes("# 以下是本次会话的系统上下文，以 YAML 序列化的一棵变量树呈现。"),
-      { label: "请求预览 YAML 上屏（内嵌 system 已解析展开）" },
-    );
-    expect(yamlView).toContain("# 系统上下文（Context Tree）");
-    // 说明头（guide.ts）的结构行：它随 wire 语义变（本次加了 behavior-contract 三个顶层键），
-    // 断言的是"说明头 → YAML 注释"这条渲染机制，故跟着说明头同步即可。
-    // ⚠️ 只断言到反引号之前：CM 的 a11y 树把 `` ` `` 拆成独立 token（行内代码会插进分隔节点），
-    // 带反引号的整行在 a11y 文本里不存在 —— 与下面 messages/input 那条"判据必须是整行"同一类坑。
-    expect(yamlView).toContain("# - 顶层键分两类");
-    // 顶层容器随 API 面变：chat 面 messages / responses 面 input（缺省模型 mimo = chat 面）。
-    // ⚠️ 判据必须是**整行**：CM 编辑器的 a11y 树把 token 拆成独立节点（键与 `:` 各一行），
-    // 连写的 `messages:` 在 a11y 文本里根本不存在。
-    expect(/^(messages|input)$/m.test(yamlView)).toBe(true);
-    expect(yamlView).toContain("model");
-
-    // 切「原文」= 真发 JSON（wire 一字不改）：JSON 的顶层键进屏（tool_choice / stream 是 YAML 里
-    // 排在很后面的键，只有 JSON 折叠视图能一眼看到）；再切回 YAML 复原。
-    // ⚠️ 键名随 API 面变（chat / responses 两套），下面两处断言都按两面写。
+    // ★ `<>` 原始数据（每个 view 都有）：结构树那一块切出来的是**契约 JSON**
     const ui = await makeUiDriver(fx.electron.cdpUrl, async () => {
       const r = await fx.sh.getJson("./diy.sh ui inspect");
       return (r.data as any)?.data?.tree as A11yNode | undefined;
     });
     try {
-      await ui.clickSelector('button[title*="原始 JSON"]');
-      const jsonView = await waitUntil(a11yText, (s) => s.includes("tool_choice"), {
-        label: "原文（真发 JSON）上屏",
+      await ui.clickSelector('button[title*="结构树"]');
+      const raw = await waitUntil(a11yText, (s) => s.includes('"name"') && s.includes("chain"), {
+        label: "结构树 `<>` 原始数据上屏",
       });
-      // 输出上限键名同样随 API 面变：chat 面 max_tokens / responses 面 max_output_tokens
-      expect(["max_tokens", "max_output_tokens"].some((k) => jsonView.includes(k))).toBe(true);
-      expect(jsonView).not.toContain("# - 顶层键是变量命名空间");
-      await ui.clickSelector('button[title*="内嵌的 system/runtime"]');
-      const back = await waitUntil(a11yText, (s) => s.includes("# - 顶层键是变量命名空间"), {
-        label: "切回 YAML 预览",
+      expect(raw).toContain('"name"');
+      // 再点一下切回视图
+      await ui.clickSelector('button[title*="结构树"]');
+      const back = await waitUntil(a11yText, (s) => s.includes("变量（契约）"), {
+        label: "切回结构树视图",
       });
-      expect(back).toContain("# 系统上下文（Context Tree）");
+      expect(back).toContain("变量（契约）");
     } finally {
       ui.close();
     }
 
-    // ★ 变更历史读的是**落盘文件**（变更日志；老任务由 main 从投递快照折算）——不是页面自己轮询攒的：
-    //   没有实时推送 —— 改任务文件后界面**不该自己变**（"不做轮询"的可观测判据），
-    //   按「⟳ 刷新」才会变。
-    await fold("history", true);
-    const taskFile = join(fx.HOME, uri, "AGENTS.md");
-    const before = await fx.sh.run(`cat ${taskFile}`);
-    writeFileSync(taskFile, `${before.stdout}\n\n<!-- 意图测试改动 -->\n`);
-    await new Promise((r) => setTimeout(r, 3000)); // 旧实现在这里是 2 秒轮询，改完 3 秒内必上屏
-    const noAuto = await a11yText();
-    expect(noAuto, "没有实时推送，界面不该自己变（轮询已删）").not.toContain("意图测试改动");
-    // 手写一条投递快照（真发需要 LLM key）→ 刷新后列表（折算）+ 变更详情都要到位
+    // 真发快照（手写）+ 变更日志 → 左栏表格一行；点行 → 中栏两侧 diff（轮级 · 文本级）
     const localDir = join(fx.HOME, "local");
     mkdirSync(localDir, { recursive: true });
     const rec = (over: Record<string, unknown>) => ({
-      ts: new Date().toISOString(),
+      ts: "2026-10-15T00:00:00.000Z",
       turnId: "t-intent",
       model: "mimo-v2.5",
       wireVersion: "aaaa1111",
       systemPlaces: ["diy"],
       runtimePlaces: ["task.body"],
       valueHashes: { diy: "h1", "task.body": "b1" },
-      systemText: "diy:\n  cli: /repo",
-      runtimeText: 'task:\n  body: "一"',
+      systemText: "help:\n  about: x\nsystem:\n  diy:\n    cli: /repo",
+      runtimeText: 'runtime:\n  task:\n    body: "一"',
       ...over,
     });
     writeFileSync(
       join(localDir, `${keyOf(uri)}.steps.jsonl`),
       [
         rec({}),
-        rec({ turnId: "t-intent-2", valueHashes: { diy: "h1", "task.body": "b2" }, runtimeText: 'task:\n  body: "二（意图测试）"' }),
+        rec({
+          turnId: "t-intent-2",
+          valueHashes: { diy: "h1", "task.body": "b2" },
+          systemText: "help:\n  about: x\nsystem:\n  diy:\n    cli: /repo/v2",
+          runtimeText: 'runtime:\n  task:\n    body: "二（意图测试）"',
+        }),
+      ]
+        .map((r) => JSON.stringify(r))
+        .join("\n") + "\n",
+    );
+    const clEntry = (over: Record<string, unknown>) => ({
+      seq: 0,
+      type: "baseline",
+      ts: "2026-10-15T00:00:00.000Z",
+      model: "mimo-v2.5",
+      wireVersion: "aaaa1111",
+      ref: { turnId: "t-intent", stepId: "t-intent_s1", step: 1 },
+      data: { tree: { values: { task: { body: "一" } }, renderers: {}, places: [], placement: {}, wireVersion: "aaaa1111" } },
+      ...over,
+    });
+    writeFileSync(
+      join(localDir, `${keyOf(uri)}.changelog.jsonl`),
+      [
+        clEntry({}),
+        clEntry({
+          seq: 1,
+          type: "changed",
+          ts: "2026-10-15T00:00:05.000Z",
+          ref: { turnId: "t-intent-2", stepId: "t-intent-2_s1", step: 1 },
+          data: { changes: [{ type: "update", path: "task.body", data: { before: "一", after: "二（意图测试）" } }] },
+        }),
       ]
         .map((r) => JSON.stringify(r))
         .join("\n") + "\n",
@@ -700,6 +703,10 @@ describe("上下文树：UI 上屏（两列 + 请求预览）", () => {
     // ⚠️ 别拿 `ui page navigate` 当"重挂页面"：App.tsx 的 `VALID_PAGES` 只收
     //    task / task-run / lab / llm / settings，`ctxlab:...` 会被**直接忽略**（no-op）。
     //    这里点页面自己的「⟳ 刷新」—— 也正是"没有实时推送"这条契约的正当用法。
+    await fold("history", true);
+    await fold("sysdiff", true);
+    await fold("rtdiff", true);
+    await fold("vardiff", true);
     const uiRefresh = await makeUiDriver(fx.electron.cdpUrl, async () => {
       const r = await fx.sh.getJson("./diy.sh ui inspect");
       return (r.data as any)?.data?.tree as A11yNode | undefined;
@@ -709,29 +716,47 @@ describe("上下文树：UI 上屏（两列 + 请求预览）", () => {
     } finally {
       uiRefresh.close();
     }
-    const withSteps = await waitUntil(a11yText, (s) => s.includes("2 轮真发"), {
+    const withSteps = await waitUntil(a11yText, (s) => s.includes("2 条记录"), {
       label: "刷新后真发轮次上屏",
     });
-    expect(withSteps).toContain("task.body");
+    // 表格只到"步"这一层：**不列具体变化的字段**
+    expect(withSteps).toContain("实际请求");
+    expect(withSteps).not.toContain("一 → 二（意图测试）");
 
-    // 点第 2 步 → 变更详情显示"第 2 步 vs 上一步"+ 行级 diff（详情块默认收起，先展开）
-    await fold("change", true);
+    // 点表格第一行（最新在前 = 第 2 步那条）→ 中栏两侧 diff 上屏
     const ui2 = await makeUiDriver(fx.electron.cdpUrl, async () => {
       const r = await fx.sh.getJson("./diy.sh ui inspect");
       return (r.data as any)?.data?.tree as A11yNode | undefined;
     });
     try {
-      // 变更历史里 reverse 过（最新在前）：nth=0 就是第 2 步那条**轮**（事件行是它的后代）
-      await ui2.clickSelector("ul.menu li button", { nth: 0 });
-      const detail = await waitUntil(a11yText, (s) => s.includes("第 2 步") && s.includes("第 1 步"), {
-        label: "变更详情（步 vs 步）上屏",
-      });
-      expect(detail).toContain("runtime 份变化");
-      expect(detail).toContain("二（意图测试）");
-      expect(detail).toContain("未变（可缓存）"); // system 份没变
+      await ui2.clickSelector("table tbody tr td", { nth: 0 });
     } finally {
       ui2.close();
     }
+    const detail = await waitUntil(a11yText, (s) => s.includes("第 2 轮") && s.includes("第 1 轮"), {
+      label: "两侧 diff（轮 vs 轮）上屏",
+    });
+    expect(detail).toContain("/repo/v2");
+    expect(detail).toContain('body: "二（意图测试）"');
+    expect(detail).toContain("绿 = 新增行，红 = 删除行");
+
+    // ★ `<>` 的说明走 view 顶的 **info bar**，**不掺进原始数据正文**（用户 2026-10-15：
+    // 「上面这一段不要出现，不要人误会这也是发出去的」）。判据：说明句在（info bar），
+    // 而带 `#` 前缀的那一份**不在**（正文只留真发字节）。
+    const ui3 = await makeUiDriver(fx.electron.cdpUrl, async () => {
+      const r = await fx.sh.getJson("./diy.sh ui inspect");
+      return (r.data as any)?.data?.tree as A11yNode | undefined;
+    });
+    try {
+      await ui3.clickSelector('button[title*="runtime diff"]');
+    } finally {
+      ui3.close();
+    }
+    const rawRt = await waitUntil(a11yText, (s) => s.includes("流量日志里找不到该步的请求"), {
+      label: "runtime `<>` 原始数据 + info bar 上屏",
+    });
+    expect(rawRt).not.toContain("# 流量日志里找不到该步的请求"); // 注释不再进正文
+    expect(rawRt).toContain('body: "二（意图测试）"'); // 正文 = 真发的组装产物
 
     await fx.sh.run(`./diy.sh project remove ${pid}`);
   }, 180_000);
@@ -745,6 +770,7 @@ describe("上下文树：可见性增强（统计接页 / 变更原因 / tab 标
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create 可见性任务 ${pid}`);
     const uri = String((t.data as any)?.data?.uri);
+    clearLocal(uri); // 撞名残留会混进断言（见 clearLocal 头注）
 
     // 手写两条快照：第二条 `chain.0` 值变 → system 全量重建；原因应收拢到投递单元 `chain`
     // （叶子 chain.0 → 单元 chain，见 ContextLabPage 的 sysCauses / attributionOf）。
@@ -808,8 +834,6 @@ describe("上下文树：可见性增强（统计接页 / 变更原因 / tab 标
       expect(nav).toMatch(/上下文树 #\d+/);
 
       // R1: 展开「变更统计」块 → 表头口径 + **该行单元格序列**（不是整页模糊匹配）
-      await fold("request", false);
-      await fold("change", false);
       await fold("stats", true);
       const st = await waitUntil(
         a11yText,
@@ -842,6 +866,7 @@ describe("上下文树：归属三态与中间容器折叠（review RV-01 / RV-0
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create 归属任务 ${pid}`);
     const uri = String((t.data as any)?.data?.uri);
+    clearLocal(uri); // 撞名残留会混进断言（见 clearLocal 头注）
 
     // 统计：task（中间容器，子字段横跨 system/runtime）/ persona.name（根本不在投递里）/
     // chain.0（system 单元 chain 的叶子）/ skills（runtime 单元）/ task.body（runtime 单元）
@@ -860,8 +885,6 @@ describe("上下文树：归属三态与中间容器折叠（review RV-01 / RV-0
     await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
     await fx.sh.getJson(`./diy.sh ui tab open ctxlab:${uri}`);
     await fx.sh.getJson(`./diy.sh ui page navigate ctxlab:${uri}`);
-    await fold("request", false);
-    await fold("change", false);
     await fold("stats", true);
 
     const st = await waitUntil(a11yText, (s) => s.includes("persona.name") && s.includes("变更统计（项目累计）"), {
@@ -890,6 +913,7 @@ describe("上下文树：sys 归因基于当轮快照（review RV-02）", () => 
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create 归因任务 ${pid}`);
     const uri = String((t.data as any)?.data?.uri);
+    clearLocal(uri); // 撞名残留会混进断言（见 clearLocal 头注）
 
     const rec = (over: Record<string, unknown>) => ({
       ts: "2026-09-29T00:00:00.000Z",
@@ -919,8 +943,6 @@ describe("上下文树：sys 归因基于当轮快照（review RV-02）", () => 
       await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
       await fx.sh.getJson(`./diy.sh ui tab open ctxlab:${uri}`);
       await fx.sh.getJson(`./diy.sh ui page navigate ctxlab:${uri}`);
-      await fold("request", false);
-      await fold("change", false);
       await fold("history", true);
     };
     const sysBadge = (text: string): string =>
@@ -957,6 +979,7 @@ describe("上下文树：统计与归因的边界（review RV-07 / RV-08）", ()
     const pidA = String((pa.data as any)?.data?.id);
     const ta = await fx.sh.getJson(`./diy.sh task create 空统计任务 ${pidA}`);
     const uriA = String((ta.data as any)?.data?.uri);
+    clearLocal(uriA); // 撞名残留会混进断言（见 clearLocal 头注）
     await fx.sh.getJson(`./diy.sh ui tab open ${uriA}`);
     await fx.sh.getJson(`./diy.sh ui tab open ctxlab:${uriA}`);
     await fx.sh.getJson(`./diy.sh ui page navigate ctxlab:${uriA}`);
@@ -974,6 +997,7 @@ describe("上下文树：统计与归因的边界（review RV-07 / RV-08）", ()
     const pidB = String((pb.data as any)?.data?.id);
     const tb = await fx.sh.getJson(`./diy.sh task create 无原因任务 ${pidB}`);
     const uriB = String((tb.data as any)?.data?.uri);
+    clearLocal(uriB); // 撞名残留会混进断言（见 clearLocal 头注）
     const rec = (over: Record<string, unknown>) => ({
       ts: "2026-09-30T00:00:00.000Z",
       turnId: "n1",
@@ -1019,6 +1043,7 @@ describe("上下文树：归属口径标注与 URI 解析失败出口（review R
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create 口径任务 ${pid}`);
     const uri = String((t.data as any)?.data?.uri);
+    clearLocal(uri); // 撞名残留会混进断言（见 clearLocal 头注）
     // 一条统计记录（有变化 → 表非空，块头 + 口径标注都渲染）
     mkdirSync(join(fx.HOME, "projects", pid), { recursive: true });
     writeFileSync(
@@ -1029,8 +1054,6 @@ describe("上下文树：归属口径标注与 URI 解析失败出口（review R
     await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
     await fx.sh.getJson(`./diy.sh ui tab open ctxlab:${uri}`);
     await fx.sh.getJson(`./diy.sh ui page navigate ctxlab:${uri}`);
-    await fold("request", false);
-    await fold("change", false);
     await fold("stats", true);
     const scoped = await waitUntil(a11yText, (s) => s.includes("归属列与折叠均按当前划分"), {
       label: "归属列口径标注上屏",
@@ -1050,4 +1073,196 @@ describe("上下文树：归属口径标注与 URI 解析失败出口（review R
 
     await fx.sh.run(`./diy.sh project remove ${pid}`);
   }, 120_000);
+});
+
+describe("上下文树：变量树变更 view + 该步实际请求（真发 · 流量）", () => {
+  /**
+   * 这一组钉住 ##310 的两条契约：
+   *   · 「变量树变更」由**被点/生效的那条记录**驱动（整棵树 + 命中节点标注），不再用"轮序"间接映射
+   *     —— 那是"点击 ↔ 详情对不上"的根因（review 意见 1）；
+   *   · 「该步实际请求」拿**流量日志**当地面真相（按 turnId + 记录时刻挑该步那条），
+   *     有 → 列出会话消息 + 可跳流量页；没有 → 明确提示（不编）。
+   *
+   * 两个任务分别覆盖"有流量"与"无流量"两条路（都**不点变更历史**就能到达：
+   * 未选中时展示最后一条**有变**的记录）—— 判定不依赖点击坐标，稳。
+   */
+  const state = {
+    values: { task: { title: "一" } },
+    renderers: {},
+    places: [],
+    placement: {},
+    wireVersion: "w1",
+    placementEpoch: 0,
+  };
+  const entry = (over: Record<string, unknown>) => ({
+    seq: 0,
+    type: "baseline",
+    ts: "2026-10-15T00:00:00.000Z",
+    model: "mimo-v2.5",
+    wireVersion: "w1",
+    ref: { turnId: "t-a", stepId: "t-a_s1", step: 1 },
+    data: { tree: state },
+    ...over,
+  });
+  const emptyAndWrite = async (label: string, entries: unknown[]) => {
+    const repo = `${fx.HOME}/ctxlab-${label}`;
+    mkdirSync(repo, { recursive: true });
+    const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label ${label}`);
+    const pid = String((p.data as any)?.data?.id);
+    const t = await fx.sh.getJson(`./diy.sh task create ${label}任务 ${pid}`);
+    const uri = String((t.data as any)?.data?.uri);
+    clearLocal(uri);
+    mkdirSync(join(fx.HOME, "local"), { recursive: true });
+    writeFileSync(
+      join(fx.HOME, "local", `${keyOf(uri)}.changelog.jsonl`),
+      entries.map((r) => JSON.stringify(r)).join("\n") + "\n",
+    );
+    return { pid, uri };
+  };
+  // 真发流量日志（traffic.query 直接扫这个文件）：同一个 turn 两条请求（第 1 步 / 第 2 步）。
+  // 两条用不同耗时区分（0.11s / 0.22s）—— 用来钉"挑中的是该步那条"，不是"随便挑了该轮第一条"。
+  const rec = (ts: number, attempt: number, uri: string) => ({
+    _fmt: "1.0",
+    id: attempt,
+    ts,
+    kind: "llm",
+    session: "s",
+    taskUri: uri,
+    turnId: "t-b",
+    provider: "x",
+    model: "mimo-v2.6-flash",
+    baseUrl: "https://x",
+    method: "POST",
+    url: "https://x/v1/chat/completions",
+    host: "x",
+    path: "/v1/chat/completions",
+    attempt,
+    maxRetries: 2,
+    status: 200,
+    ms: attempt * 111,
+    reqBytes: attempt,
+    resBytes: 1,
+    reqHeaders: {},
+    resHeaders: {},
+    resNote: null,
+    traceId: `tr-${attempt}`,
+    err: null,
+    reqBody: {
+      head: JSON.stringify({
+        messages: [
+          { role: "system", content: `SYS-MARK-310-${attempt}` },
+          { role: "user", content: `ASK-MARK-310-${attempt}` },
+        ],
+      }),
+      tail: "",
+      headBytes: 1,
+      tailBytes: 0,
+      totalBytes: 1,
+      truncated: false,
+    },
+    resBody: null,
+  });
+
+  it("整棵树标注该步变更（旧→新）；该步请求取自流量日志（挑中该步那条）+ 可跳流量页", async () => {
+    const { pid, uri } = await emptyAndWrite("treediff", [
+      entry({}),
+      entry({
+        seq: 1,
+        type: "changed",
+        ts: "2026-10-15T00:00:15.000Z",
+        ref: { turnId: "t-b", stepId: "t-b_s2", step: 2 },
+        data: { changes: [{ type: "update", path: "task.title", data: { before: "一", after: "二" } }] },
+      }),
+    ]);
+    const netDir = join(fx.HOME, "log", "network");
+    mkdirSync(netDir, { recursive: true });
+    writeFileSync(
+      join(netDir, "2026-10-15.jsonl"),
+      [rec(Date.parse("2026-10-15T00:00:10.000Z"), 1, uri), rec(Date.parse("2026-10-15T00:00:20.000Z"), 2, uri)]
+        .map((r) => JSON.stringify(r))
+        .join("\n") + "\n",
+    );
+
+    await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+    await fx.sh.getJson(`./diy.sh ui tab open ctxlab:${uri}`);
+    await fold("vardiff", true);
+    await fold("stepsess", true);
+
+    const s = await waitUntil(
+      a11yText,
+      (x) =>
+        x.includes("变量树变更（整棵树 + 标注）") &&
+        x.includes("该步实际请求（真发 · 流量）") &&
+        x.includes("SYS-MARK-310-2"),
+      { label: "变量树变更 + 该步实际请求上屏" },
+    );
+    // 变量树：整棵树都列出来，命中的节点标出来并带旧→新
+    expect(s).toContain("第 2 步 · 1 处变更");
+    // 该行：徽章 ~ / 当前值 / **旧 → 新**。✅ a11y 文本按 text node 分行，故格子里的三段各占一行
+    //   （写成 `toContain("一 → 二")` 会假失败 —— 那三种东西从来不在同一个 text node 里）
+    expect(rowCells(s, "task.title", "变量树变更（整棵树 + 标注）", 5).slice(-3)).toEqual(["一", "→", "二"]);
+    // 该步请求取的是**第 2 步**那条（时刻判据），不是第 1 步那条
+    expect(s).toContain("ASK-MARK-310-2");
+    expect(s).not.toContain("ASK-MARK-310-1");
+    expect(s).toContain("在流量页打开");
+
+    // 点「在流量页打开」→ 真跳到**导航栏「流量」页**并定位到那条请求。
+    // ⚠️ ##351 之后流量页走 ViewGrid（左列表 / 右详情两块 viewset），**不再是抽屉形态** ⇒
+    //    旧的「← 列表」返回键已不存在；判据改成：页面出现（页头副标题只此一处）+ 详情已选中该条
+    //    （`trace_id tr-2` 只在详情里出现 —— 列表不显示 traceId）。
+    //    ⚠️ 耗时文本是 `{(ms/1000).toFixed(2)}s`（数字与 `s` 是两个 text node）⇒ a11y 里是 `0.22 s`（带空格）。
+    const ui = await makeUiDriver(fx.electron.cdpUrl, async () => {
+      const r = await fx.sh.getJson("./diy.sh ui inspect");
+      return (r.data as any)?.data?.tree as A11yNode | undefined;
+    });
+    try {
+      await ui.click("在流量页打开");
+      const traffic = await waitUntil(
+        a11yText,
+        (x) =>
+          x.includes("跨会话查看应用发出的全部 HTTP 请求 / 响应") &&
+          x.includes("tr-2") &&
+          x.includes("0.22 s"),
+        { label: "流量页定位到该步请求" },
+      );
+      // `tr-2` = 详情已选中第 2 步那条（列表不显示 traceId）；耗时再钉一次"不是第 1 步那条"
+      expect(traffic).toContain("tr-2");
+      expect(traffic).toContain("0.22 s");
+    } finally {
+      ui.close();
+    }
+    rmSync(join(netDir, "2026-10-15.jsonl"), { force: true });
+    clearLocal(uri);
+    await fx.sh.run(`./diy.sh project remove ${pid}`);
+  }, 180_000);
+
+  it("该步在流量日志里没有记录 → 明确提示（不编）", async () => {
+    const { pid, uri } = await emptyAndWrite("treediff-miss", [
+      entry({}),
+      entry({
+        seq: 1,
+        type: "changed",
+        ts: "2026-10-15T00:00:05.000Z",
+        ref: { turnId: "t-nope", stepId: "t-nope_s1", step: 1 },
+        data: { changes: [{ type: "update", path: "task.body", data: { before: "一", after: "二" } }] },
+      }),
+    ]);
+    try {
+      await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+      await fx.sh.getJson(`./diy.sh ui tab open ctxlab:${uri}`);
+      await fold("vardiff", true);
+      await fold("stepsess", true);
+      const s = await waitUntil(a11yText, (x) => x.includes("未找到该步的实际请求"), {
+        label: "该步无流量记录 → 提示",
+      });
+      // 表头步数跟着**该条记录**（不再是"轮序"）：这条是第 1 步 · 1 处变更
+      expect(s).toContain("第 1 步 · 1 处变更");
+      expect(s).toContain("可能的原因");
+      // 变量树仍然有内容（整棵树 + 标注），不是空白页
+      expect(rowCells(s, "task.body", "变量树变更（整棵树 + 标注）", 5).slice(-3)).toEqual(["一", "→", "二"]);
+    } finally {
+      clearLocal(uri);
+      await fx.sh.run(`./diy.sh project remove ${pid}`);
+    }
+  }, 180_000);
 });

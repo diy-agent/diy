@@ -17,7 +17,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { renderSystemDsl, type AssembleGlobals } from '../../src/main/services/prompt-registry';
-import { historyIndexValue } from '../../src/shared/context/history-index';
+import { reqlogValue } from '../../src/shared/context/reqlog';
 
 const golden = readFileSync(join(__dirname, '..', 'fixtures', 'system.golden.txt'), 'utf-8');
 
@@ -55,8 +55,8 @@ const GLOBALS: AssembleGlobals = {
     identity: '',
     rules: '',
     guard: '',
-    // 同理：本用例只走模版线，historyIndex 不被引用（它进的是 Context Tree 投递，不是 _system.md）
-    historyIndex: historyIndexValue('local/projects_4_tasks_4-abcd1234.llm.jsonl'),
+    // 同理：reqlog 也进 Context Tree 投递（不是 _system.md），模版线用不到 —— 给一份合成值把契约补齐
+    reqlog: reqlogValue({ home: '/tmp/diy-home', dirRel: 'log/network', fileName: '2026-10-15.jsonl' }),
 };
 
 describe('DSL 装配 === 换引擎前的 system（逐字节，两处有意差异除外）', () => {
