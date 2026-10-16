@@ -345,9 +345,22 @@ export function bindAppHandlers(binding: ServerBinding): void {
     noteRendererTouch("diy.agent.local.chat", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
     const agent = getLocalAgent();
-    // --mode 给出 = 入队待投递（不启动轮次）；省略 = 立即开一轮。
+    // --mode 给出 = 入队待投递；省略 = 立即开一轮。
     if (input.mode) {
       agent.steerAdd(input.taskUri, input.mode, input.message);
+      // ##303：入队后若**没有活跃轮次**，立刻用它开一轮 —— 留言的语义就是"发一句话"，
+      // 空闲时它本就该像普通消息那样马上发出。否则没有任何机制会因它启动轮次，
+      // 留言会永远躺在 .diy/drafts.yaml 里（界面只有横条，用户以为已经发出去了）。
+      if (agent.hasActiveTurn(input.taskUri)) return;
+      try {
+        for await (const op of agent.chatQueued(input.taskUri, input.model, input.reasoningEffort)) {
+          yield JSON.stringify(op);
+        }
+      } catch (e) {
+        // 竞态：判定与开轮之间别人起了轮（chat 的互斥守卫拒发）→ 留言**安好在队列里**，
+        // 由那一轮的轮末带走。这里只能吞下错误：不能反手报"入队失败"（它已经入队了）。
+        console.warn(`[local-agent] 空闲留言唤醒轮次失败（留言仍在队列，等待投递）${input.taskUri}:`, e);
+      }
       return;
     }
     for await (const op of agent.chat(input.taskUri, input.message, input.model, input.reasoningEffort)) {
@@ -394,6 +407,16 @@ export function bindAppHandlers(binding: ServerBinding): void {
     noteRendererTouch("diy.agent.local.steer.reorder", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
     return getLocalAgent().steerReorder(input.taskUri, input.ids);
+  });
+  // 「立即发送」：把队列整批现在就送出去（##303 的 a 方案）。
+  // 差在"现在"能到达哪里：有轮次在跑 → 全部加急到下一步；空闲 → 立刻开一轮、队列作开场白。
+  // 与 chat 同为 serverStream：**只有"开了一轮"时才有 op 流**，加急分支不产 op（队列快照由 UI 自查）。
+  binding.on(app.agent.local.steer.flush, async function* ({ input }) {
+    noteRendererTouch("diy.agent.local.steer.flush", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    for await (const op of getLocalAgent().flushSteers(input.taskUri, input.model, input.reasoningEffort)) {
+      yield JSON.stringify(op);
+    }
   });
   binding.on(app.agent.local.models, async () => {
     const { getLocalAgent } = await import("./local-agent");

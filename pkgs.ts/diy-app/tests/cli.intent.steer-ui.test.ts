@@ -233,6 +233,12 @@ describe("插话界面 —— 生成中插嘴、横条、取消", () => {
     it("点「留言」→ 上方横条出现该条（左内容 + 右时机开关，默认排到下一轮） + 已落盘", async () => {
         await clickButton("留言");
         await waitUntil(steerBarRows, (n) => n === 1, { label: "横条出现（1 条）" });
+        // eslint-disable-next-line no-console
+        console.log("DBG bar=", await ui.query<string>("document.querySelector('[data-steer-bar]')?.outerHTML ?? 'NONE'"));
+        // eslint-disable-next-line no-console
+        console.log("DBG editor=", await ui.query<string>("document.querySelector('[data-agent-input] .cm-content')?.textContent ?? 'NONE'"));
+        // eslint-disable-next-line no-console
+        console.log("DBG list=", JSON.stringify((await fx.sh.getJson(`./diy.sh agent local steer list ${uri}`)).data));
         const text = await a11yText();
         expect(text).toContain("插一句：记得跑测试");
         // 默认态是「排到下一轮」：开关提示词说清点它会变成什么
@@ -368,4 +374,166 @@ describe("插话界面 —— 生成中插嘴、横条、取消", () => {
         // v4（##253）：时刻收敛到**轮尾状态行**一处，且直接显示到秒 —— 不再是 `MM-DD HH:MM` + hover title
         expect(shown.filter((t) => t === expTitle)).toHaveLength(1);
     }, 120_000); // 本用例要跑完「一轮收尾 → 自动续轮」，且每次断言都要一次 CLI 往返：给足预算
+});
+
+// ═══════════════════════════════════════════════════════════════
+// ##303 —— 留言的投递入口：不再"入队即成死消息"
+//
+// 背景（##266 实况）：留言在会话**没有活跃轮次**时入队 → 界面上只有横条
+// （拖拽手柄 / 时机开关 / ✕），没有任何发送入口；用户唯一能做的是"取消后重打"，
+// 或者赌下一次某轮恰好收尾把它带走。
+//
+// 三件事一起钉住：
+//   a) 横条「立即投递」——整批现在送出去（有轮次 → 加急到下一步；空闲 → 立刻开一轮）；
+//   c) 入队时若没有活跃轮次 → 服务端**立刻用队列开一轮**（留言 = 发一句话）；
+//   b) 每行「修改」——撤回编辑器（输入框已有内容时接在 `---` 之后，不冲掉正在打的字）。
+// ═══════════════════════════════════════════════════════════════
+
+describe("##303 —— 留言的投递入口", () => {
+    /** 编辑器里的文本（CodeMirror 的 .cm-content） */
+    const editorText = () =>
+        ui.query<string>("document.querySelector('[data-agent-input] .cm-content')?.textContent ?? ''");
+
+    /** CLI 视角的队列时机：权威在盘上，不看界面自己怎么画 */
+    const steerModes = async (u: string) =>
+        ((await fx.sh.getJson(`./diy.sh agent local steer list ${u}`)).data as Array<{ mode: string }>).map(
+            (i) => i.mode,
+        );
+
+    const newTask = async (label: string): Promise<string> => {
+        const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/steer303-${label} --label Steer303`);
+        const pid = String((p.data as any)?.data?.id);
+        const t = await fx.sh.getJson(`./diy.sh task create ${label} ${pid}`);
+        return String((t.data as any)?.data?.uri);
+    };
+
+    const openChat = async (u: string) => {
+        await fx.sh.getJson(`./diy.sh ui tab open ${u}`);
+        await fx.sh.getJson(`./diy.sh ui view set chat.local open --ctx ${u}`);
+        return waitUntil(a11yText, (s) => s.includes("发送"), { label: `打开 ${u} 的对话页` });
+    };
+
+    /** 收尾：停掉在跑的轮次 + 放开桩响应，别把悬挂留给下一条用例 */
+    const stopTurn = async () => {
+        if ((await a11yText()).includes("停止")) {
+            await clickButton("停止");
+            await waitUntil(a11yText, (s) => !s.includes("停止"), { label: "已停止" });
+        }
+        stub.release();
+    };
+
+    /** 造"生成中"：发一条消息让桩把请求挂住（上游不回 token，UI 停在 running） */
+    const startTurn = async (text: string) => {
+        await ui.clickSelector(".cm-content");
+        await ui.type(text);
+        await clickButton("发送");
+        await waitUntil(a11yText, (s) => s.includes("停止"), { label: "进入生成中" });
+    };
+
+    it("setup: 新任务的对话页", async () => {
+        if (!ui) {
+            ui = await makeUiDriver(fx.electron.cdpUrl, async () => {
+                const r = await fx.sh.getJson("./diy.sh ui inspect");
+                return (r.data as any)?.data?.tree as A11yNode | undefined;
+            });
+        }
+        await openChat(await newTask("投递入口"));
+    });
+
+    it("生成中点「立即投递」→ 整批加急为下一步（话没丢，只改了时机）", async () => {
+        const u = await newTask("加急");
+        await openChat(u);
+        await startTurn("先跑起来");
+        // 生成中打字 → 走「留言」（有活跃轮次：只入队，不会立刻开轮）
+        await ui.clickSelector(".cm-content");
+        await ui.type("排队的话");
+        await clickButton("留言");
+        await waitUntil(steerBarRows, (n) => n === 1, { label: "入队一条" });
+        expect(await steerModes(u)).toEqual(["next-turn"]);
+
+        // 立即投递：有轮次在跑 → 加急到下一步（不是开新一轮，那一轮正被桩挂着）
+        await ui.clickSelector("[data-steer-flush]");
+        await waitUntil(() => steerModes(u), (m) => m[0] === "next-step", { label: "已加急为下一步" });
+        expect(await steerBarRows()).toBe(1); // 条数不变
+        expect(await a11yText()).toContain("排队的话");
+        await stopTurn();
+    }, 60_000);
+
+    it("「修改」：输入框为空 → 内容直接回到编辑器，队列里那条消失", async () => {
+        const u = await newTask("撤回");
+        await openChat(u);
+        await startTurn("先跑起来");
+        await ui.clickSelector(".cm-content");
+        await ui.type("撤回这句话");
+        await clickButton("留言");
+        await waitUntil(steerBarRows, (n) => n === 1, { label: "入队一条" });
+
+        await ui.clickSelector("[data-steer-edit]");
+        await waitUntil(steerBarRows, (n) => n === 0, { label: "撤回后横条空" });
+        const t = await waitUntil(editorText, (s) => s.includes("撤回这句话"), { label: "内容回到编辑器" });
+        expect(t.trim()).toBe("撤回这句话");
+        // 盘上也没了（不是界面自己藏起来）：撤回 = 出队 + 交还给编辑器
+        expect(await steerModes(u)).toEqual([]);
+        await stopTurn();
+    }, 60_000);
+
+    it("「修改」：输入框已有内容时用 `---` 分隔追加（不冲掉正在打的那半句）", async () => {
+        const u = await newTask("接在分隔线后");
+        await openChat(u);
+        await startTurn("先跑起来");
+        await ui.clickSelector(".cm-content");
+        await ui.type("先撤回的话");
+        await clickButton("留言");
+        await waitUntil(steerBarRows, (n) => n === 1, { label: "入队一条" });
+
+        // 正在打的那半句（还没提交）：撤回时**不许**被冲掉
+        await ui.clickSelector(".cm-content");
+        await ui.type("半句在打");
+        await ui.clickSelector("[data-steer-edit]");
+        await waitUntil(steerBarRows, (n) => n === 0, { label: "撤回后横条空" });
+        const t = await waitUntil(
+            editorText,
+            (s) => s.includes("半句在打") && s.includes("先撤回的话"),
+            { label: "撤回内容与草稿并存" },
+        );
+        // 顺序：原有的半句在前，`---` 分隔，撤回的内容在后
+        const iDraft = t.indexOf("半句在打");
+        const iRule = t.indexOf("---");
+        const iBack = t.indexOf("先撤回的话");
+        expect(iDraft).toBeGreaterThanOrEqual(0);
+        expect(iRule).toBeGreaterThan(iDraft);
+        expect(iBack).toBeGreaterThan(iRule);
+        await stopTurn();
+    }, 60_000);
+
+    it("空闲会话：入队即开一轮 —— 留言作为开场白发出去，不再躺在队列里", async () => {
+        // 全新的任务（没发过任何消息）＝ 真的没有活跃轮次：这正是 ##266 的死消息场景
+        const u = await newTask("空闲入队");
+        await openChat(u);
+        expect(await a11yText()).not.toContain("停止"); // 前提：空闲
+
+        // CLI 入队（后台跑：这一轮会被桩挂住，前台会一直等）
+        await fx.sh.run(
+            `./diy.sh agent local chat ${u} ${JSON.stringify("空闲时的留言")} --mode next-turn >/dev/null 2>&1 &`,
+            10_000,
+        );
+
+        // 服务端立刻开了一轮 → 留言被投递出队（不是躺在队列里等一个永不到来的时机）
+        await waitUntil(
+            async () => ((await fx.sh.getJson(`./diy.sh agent local steer list ${u}`)).data as unknown[]).length,
+            (n) => n === 0,
+            { label: "队列已被投递", timeoutMs: 30_000 },
+        );
+        // UI 侧也看得见这一轮（main 真值轮询）：有「停止」= 直播中
+        await waitUntil(a11yText, (s) => s.includes("停止"), { label: "空闲入队唤醒了一轮", timeoutMs: 30_000 });
+
+        // 放开桩 → 本轮收尾 → 下降沿重放让它进对话流
+        stub.release();
+        const flow = await waitUntil(a11yText, (s) => s.includes("空闲时的留言"), {
+            label: "留言进了对话流",
+            timeoutMs: 60_000,
+        });
+        expect(flow).not.toContain("停止"); // 收尾了
+        expect(await steerBarRows()).toBe(0); // 横条始终没有它（它已经是历史消息，不是待投递）
+    }, 120_000);
 });

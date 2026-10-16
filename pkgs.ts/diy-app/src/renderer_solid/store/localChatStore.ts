@@ -425,45 +425,49 @@ async function open(taskUri: string) {
  * 流带 AbortSignal：点「停止」时本地立刻结束等待（不干等服务端 end 帧 —— main 还可能要
  * 收尾写 llm 日志、追加上游慢响应），按钮因此马上回到发送态（任务 194 现象二）。
  */
-async function send(taskUri: string, text: string): Promise<boolean> {
+/**
+ * 落地一条 op 行（send / 留言 / 立即发送三条路共用）。
+ *
+ * 坏行属数据层容错：跳过但必须留痕（main 侧日志重放同理，fold issues 另有计数）。
+ */
+function applyOpLine(taskUri: string, st: TaskState, raw: unknown): void {
+    let op: Op;
+    try {
+        op = (typeof raw === "string" ? JSON.parse(raw) : raw) as Op;
+    } catch (e) {
+        console.warn("[localChat] 丢弃无法解析的 op 行:", e, String(raw).slice(0, 120));
+        return;
+    }
+    st.store.apply(op);
+    scheduleRefresh(st);
+    // 插话被投递：main 落了带 steer 标记的 user 块（见 local-agent 的 runTurn 开场块）→
+    // 队列已经少了一条，立刻重拉快照。否则横条会一直挂着"待发送"，而模型其实已经看见了。
+    if (op.op === "start" && op.kind === "text" && op.meta?.["steer"]) void refreshSteers(taskUri);
+}
+
+/**
+ * 一条「可能开轮」的流的公共外壳：running / abort 的置位与收尾、错误分流、轮末真值对齐。
+ *
+ * 三条入口（发送 / 留言 / 立即发送）**都必须走它** —— 少走一处就会留下
+ * 「界面显示生成中而服务端早就结束」或「横条挂着已投递的留言」这类分叉。
+ *
+ * ⚠️ 不复用自己那轮的 abort 句柄：调用方若已有在途流（自己发起的轮次），**别用这个函数**
+ * （它会 setRunning 并覆盖 st.abort，把那轮的句柄抢走）。见 flushSteers 的自己的在途分支。
+ */
+async function runTurnStream(
+    taskUri: string,
+    start: (ctrl: AbortController) => Promise<AsyncIterable<unknown>>,
+): Promise<boolean> {
     const st = stateFor(taskUri);
-    const msg = text.trim();
-    if (!msg || !taskUri || st.running()) return false;
+    if (st.running()) return false;
     st.setError(null);
     st.setRunning(true);
     st.setStopRequestedAt(null);
     const ctrl = new AbortController();
     st.abort = ctrl;
     try {
-        // 不传 model/reasoningEffort：模型与参数由 main 按**任务绑定的人物**解析（配置真源唯一，
-        // 见 main/services/local-agent.ts 的 chat）。renderer 只决定"要谁干活"（persona 字段）。
-        const stream = await diyService.diy.agent.local.chat(
-            {
-                taskUri,
-                message: msg,
-                // 键必须出现（契约里 optional 字段也是必填键）：显式 undefined = 不覆盖人物配置；
-                // 这里不给 mode = 开一轮（给出 mode 则只入队，见 submitSteer）
-                mode: undefined,
-                model: undefined,
-                reasoningEffort: undefined,
-            },
-            { signal: ctrl.signal },
-        );
-        for await (const raw of stream) {
-            let op: Op;
-            try {
-                op = (typeof raw === "string" ? JSON.parse(raw) : raw) as Op;
-            } catch (e) {
-                // 坏行属数据层容错：跳过但必须留痕（main 侧日志重放同理，fold issues 另有计数）
-                console.warn("[localChat] 丢弃无法解析的 op 行:", e, String(raw).slice(0, 120));
-                continue;
-            }
-            st.store.apply(op);
-            scheduleRefresh(st);
-            // 插话被投递：main 落了带 steer 标记的 user 块（见 local-agent 的 steerBlockOps）→
-            // 队列已经少了一条，立刻重拉快照。否则横条会一直挂着"待发送"，而模型其实已经看见了。
-            if (op.op === "start" && op.kind === "text" && op.meta?.["steer"]) void refreshSteers(taskUri);
-        }
+        const stream = await start(ctrl);
+        for await (const raw of stream) applyOpLine(taskUri, st, raw);
         return true;
     } catch (e) {
         // 自己点的停止不算错误：signal 中断会让流正常收尾（不抛），这里只是防御
@@ -488,30 +492,136 @@ async function send(taskUri: string, text: string): Promise<boolean> {
 }
 
 /**
- * 提交一条插话：走 `chat --mode`，服务端只入队（不启动轮次），投递时机由 mode 决定。
+ * 「只入队 / 只加急」路径的公共消费：**不接管** running / abort。
+ *
+ * 用在自己那轮已经在途的时候（生成中插嘴、一键加急）：那条轮的取消句柄属于它自己，
+ * 提交留言的请求不许把它换掉（runTurnStream 会 setRunning + 覆盖 st.abort）。
+ * 此路径服务端只会入队 / 加急，正常情况下不产 op；真产了也 fold 进来，不许丢。
+ */
+async function consumeOwnTurnStream(
+    taskUri: string,
+    st: TaskState,
+    start: () => Promise<AsyncIterable<unknown>>,
+): Promise<boolean> {
+    try {
+        const stream = await start();
+        for await (const raw of stream) applyOpLine(taskUri, st, raw);
+        await refreshSteers(taskUri);
+        return true;
+    } catch (e) {
+        console.error(`[localChat] 队列提交失败 ${taskUri}:`, e);
+        return false;
+    }
+}
+
+async function send(taskUri: string, text: string): Promise<boolean> {
+    const st = stateFor(taskUri);
+    const msg = text.trim();
+    if (!msg || !taskUri || st.running()) return false;
+    // 不传 model/reasoningEffort：模型与参数由 main 按**任务绑定的人物**解析（配置真源唯一，
+    // 见 main/services/local-agent.ts 的 chat）。renderer 只决定"要谁干活"（persona 字段）。
+    // 不给 mode = 开一轮（给出 mode 则先入队，见 submitSteer）。
+    return runTurnStream(taskUri, (ctrl) =>
+        diyService.diy.agent.local.chat(
+            {
+                taskUri,
+                message: msg,
+                // 键必须出现（契约里 optional 字段也是必填键）：显式 undefined = 不覆盖人物配置
+                mode: undefined,
+                model: undefined,
+                reasoningEffort: undefined,
+            },
+            { signal: ctrl.signal },
+        ),
+    );
+}
+
+/**
+ * 提交一条插话：走 `chat --mode`，投递时机由 mode 决定（next-step / next-turn，都是整批投）。
+ *
+ * 服务端行为有**两种**，这里必须都能接住（##303）：
+ *   · 该任务已有活跃轮次 → 只入队（旧的唯一行为）；
+ *   · 没有活跃轮次       → 入队后**立刻用队列开一轮**（留言 = 发一句话，空闲时本就该马上发出）——
+ *     这时流里会有真的 op，界面要像普通发送那样实时显示、能停止。
+ * 所以不能再"只把流拉完就丢"（那样空闲入队会变成界面看不见的暗发送）。
  *
  * 必须把流消费到结束：服务端先回 ACK 再执行入队，只 await 调用会在落盘前就 refresh，
  * 横条会短暂看不到这条（见 channel-server-binding 的 _startServerStream）。
  */
 async function submitSteer(taskUri: string, mode: SteerMode, text: string): Promise<boolean> {
     const body = text.trim();
-    if (!body) return false;
-    try {
-        // 客户端类型要求每个键都在场：模型/推理只在开一轮时用，队列路径给 undefined
-        const stream = await diyService.diy.agent.local.chat({
-            taskUri,
-            message: body,
-            mode,
-            model: undefined,
-            reasoningEffort: undefined,
-        });
-        for await (const op of stream) void op; // 队列路径不产 op，走到 end 即入队完成
-        await refreshSteers(taskUri);
-        return true;
-    } catch (e) {
-        console.error(`[localChat] 插话提交失败 ${taskUri}:`, e);
+    if (!body || !taskUri) return false;
+    const st = stateFor(taskUri);
+    // 客户端类型要求每个键都在场：模型/推理只在开一轮时用，队列路径给 undefined
+    const call = (ctrl?: AbortController) =>
+        diyService.diy.agent.local.chat(
+            { taskUri, message: body, mode, model: undefined, reasoningEffort: undefined },
+            ctrl ? { signal: ctrl.signal } : undefined,
+        );
+
+    // 自己这轮在途 = **留言的主战场**（生成中插嘴）：只入队，不接管轮次的 running / abort。
+    // ⚠️ 这条路径不能走 runTurnStream —— 它的 `st.running()` 守卫会把留言本身拦掉
+    // （实测：点「留言」后毫无反应：输入框留着字、队列空、横条不出现）。
+    if (st.running()) {
+        const ok = await consumeOwnTurnStream(taskUri, st, () => call());
+        if (!ok) notificationStore.addToast("error", "插话提交失败（未能落盘），内容未排队");
+        return ok;
+    }
+    // 空闲：服务端可能**立刻用队列开一轮**（##303 的 c）→ 要像普通发送那样接管这一轮
+    const ok = await runTurnStream(taskUri, (ctrl) => call(ctrl));
+    if (!ok) {
+        // 走到这里 = **入队就没成**（服务端"入队成功但开轮失败"的情况已在 main 侧吞掉，
+        // 那种情况留言安好在队列里，不该报失败）→ 提示并保留输入框内容
         notificationStore.addToast("error", "插话提交失败（未能落盘），内容未排队");
-        return false;
+    }
+    return ok;
+}
+
+/**
+ * 「立即发送」：把队列整批**现在就送出去**（##303 的 a 方案），不等轮末 / 下一步的时机。
+ *
+ * 服务端两个分支：有活跃轮次 → 全部加急为 next-step；空闲 → 立刻开一轮（队列作开场白）。
+ */
+async function flushSteers(taskUri: string): Promise<boolean> {
+    const st = stateFor(taskUri);
+    if (st.steers().length === 0) return false;
+    // 自己这轮在途：**不能**走 runTurnStream（它会 setRunning 并抢走 st.abort 句柄，
+    // 把我正在消费的那一轮的取消入口换掉）。此时服务端只会走"加急"分支（我就是那个活跃轮次），
+    // 不产 op，故只需把流拉完 + 对齐快照。
+    if (st.running()) {
+        const ok = await consumeOwnTurnStream(taskUri, st, () =>
+            diyService.diy.agent.local.steer.flush({ taskUri, model: undefined, reasoningEffort: undefined }),
+        );
+        if (!ok) notificationStore.addToast("error", "立即发送失败，留言仍在队列里");
+        return ok;
+    }
+    return runTurnStream(taskUri, (ctrl) =>
+        diyService.diy.agent.local.steer.flush(
+            { taskUri, model: undefined, reasoningEffort: undefined },
+            { signal: ctrl.signal },
+        ),
+    );
+}
+
+/**
+ * 「修改」：把一条待投递留言**撤回编辑器** —— 从队列移除并返回它的内容（由调用方拼进输入框）。
+ *
+ * 失败返回 null 且队列原样保留：调用方**不得**在这种情况下改动输入框，
+ * 否则同一句话会同时出现在输入框与横条上（用户再发一次就是重复投递）。
+ */
+async function takeSteer(taskUri: string, id: string): Promise<SteerItem | null> {
+    const st = stateFor(taskUri);
+    const item = st.steers().find((it) => it.id === id);
+    if (!item) return null;
+    const seq = nextSteerSeq(taskUri);
+    try {
+        const items = (await diyService.diy.agent.local.steer.cancel({ taskUri, id })) as SteerItem[];
+        commitSteers(taskUri, seq, items);
+        return item;
+    } catch (e) {
+        console.error(`[localChat] 撤回留言失败 ${taskUri}#${id}:`, e);
+        notificationStore.addToast("error", "撤回失败，这条留言仍在队列里");
+        return null;
     }
 }
 
@@ -770,7 +880,11 @@ export const localChatStore = {
     /** 手动对一次真值（测试/调试用） */
     refreshActive,
     submitSteer,
+    /** 立即发送（整批）；自己这轮在途时只加急，空闲时立刻开一轮 */
+    flushSteers,
     cancelSteer,
+    /** 撤回一条到编辑器（返回其内容；失败 null = 队列没动） */
+    takeSteer,
     toggleSteerMode,
     reorderSteers,
     /** 时机切换失败计数：UI 订阅它把受控开关写回真实状态（见其定义处头注） */

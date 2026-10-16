@@ -20,7 +20,7 @@ import { diyHome } from "../../src/main/core/state";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
 import { LocalAgentManager, MAX_STEER_ROUNDS } from "../../src/main/services/local-agent";
-import { activeTurnList } from "../../src/main/services/runtime-context";
+import { activeTurnList, noteTurnEnd, noteTurnStart } from "../../src/main/services/runtime-context";
 import { readFileSync, existsSync, rmSync, writeFileSync } from "node:fs";
 import { SteerQueue } from "../../src/main/core/steer-queue";
 import { BlockStore, type Op } from "../../src/main/services/local-blocks";
@@ -579,4 +579,105 @@ describe("插话认领与落位分离（落位点 = start-step）", () => {
         expect(steerIdx).toBeGreaterThan(stepStarts[0]!.i); // 不在第一步之前
         expect(steerIdx).toBeLessThan(stepStarts[1]!.i); // 在第二步之前
     });
+});
+
+// ─── ##303：留言在**没有活跃轮次**时不再"入队即死" ────────────────
+//
+// 旧契约：steerAdd 只入队，两个投递点全寄生在"正在跑的轮次"内部（prepareStep / 轮末续轮）。
+// 于是空闲时入队的留言**没有任何机制会因它启动一轮** → 永远躺在 .diy/drafts.yaml 里
+// （界面只有横条，用户以为发出去了；唯一出路是下一次某轮恰好收尾把它带走）。
+//
+// 新契约：没有活跃轮次时，队列内容**立刻作为一轮的开场发出**。
+// 两个入口共用同一条路：chatQueued（入队后唤醒 / 立即发送时无轮次）与 flushSteers（立即发送）。
+
+describe("##303 空闲时的留言：chatQueued —— 队列内容作一轮开场", () => {
+  it("空闲时用队列开一轮：多条整批进开场（同一轮、模型真看见），投递后出队", async () => {
+    const uri = newUri();
+    const q = new SteerQueue();
+    q.add(uri, "next-turn", "第一句");
+    q.add(uri, "next-step", "第二句");
+    const model = stubModel([textReply("收到")]);
+    const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
+
+    // 前提断言：此刻确实**没有**活跃轮次（否则这条测的就不是"空闲"这条路径了）
+    expect(mgr.hasActiveTurn(uri)).toBe(false);
+
+    const ops: Op[] = [];
+    for await (const op of mgr.chatQueued(uri)) ops.push(op);
+
+    // 整批一次发：只打一次上游，两句话都在**第一次请求**里
+    expect(model.doStreamCalls).toHaveLength(1);
+    expect(promptText(model, 0)).toContain("第一句");
+    expect(promptText(model, 0)).toContain("第二句");
+    // 开场 user 块两条，各带自己的投递时机与队列 id（重放/排障能对号入座）
+    const openings = ops.filter(
+      (o) =>
+        o.op === "start" && o.kind === "text" &&
+        (o as { meta?: { role?: string } }).meta?.role === "user",
+    ) as Array<{ meta?: { steer?: string; steerId?: string } }>;
+    expect(openings.map((o) => o.meta?.steer)).toEqual(["next-turn", "next-step"]);
+    expect(openings.map((o) => o.meta?.steerId)).toEqual(["steer/1", "steer/2"]);
+    // 投递即出队：下一轮不会再投一遍
+    expect(q.list(uri)).toEqual([]);
+  });
+
+  it("队列为空：不产任何 op、不打上游（「开一轮」的前提是有话可说）", async () => {
+    const uri = newUri();
+    const model = stubModel([textReply("不该被调用")]);
+    const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
+    const ops: Op[] = [];
+    for await (const op of mgr.chatQueued(uri)) ops.push(op);
+    expect(ops).toEqual([]);
+    expect(model.doStreamCalls).toHaveLength(0);
+  });
+});
+
+describe("##303 flushSteers —— 立即发送（显式入口）", () => {
+  it("空闲：立刻开一轮，队列内容作开场白（与入队后唤醒同一条路）", async () => {
+    const uri = newUri();
+    new SteerQueue().add(uri, "next-turn", "立即发出去");
+    const model = stubModel([textReply("好")]);
+    const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
+
+    const ops: Op[] = [];
+    for await (const op of mgr.flushSteers(uri)) ops.push(op);
+
+    expect(model.doStreamCalls).toHaveLength(1);
+    expect(promptText(model, 0)).toContain("立即发出去");
+    expect(ops.some((o) => o.op === "start" && o.kind === "turn")).toBe(true);
+    expect(new SteerQueue().list(uri)).toEqual([]);
+  });
+
+  it("有活跃轮次：只加急（全部转 next-step），不开新轮、不打扰上游", async () => {
+    const uri = newUri();
+    const q = new SteerQueue();
+    q.add(uri, "next-turn", "加急这句");
+    const model = stubModel([textReply("答复")]);
+    const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
+
+    // 伪造"有活跃轮次"：真实场景里那是别人（CLI / 另一窗口）正在跑的轮次。
+    // 判据读的是 runtime-context（runTurn 入口/收尾登记的同一份权威），故这里直接登记即可。
+    noteTurnStart({ taskUri: uri });
+    expect(mgr.hasActiveTurn(uri)).toBe(true);
+    try {
+      const ops: Op[] = [];
+      for await (const op of mgr.flushSteers(uri)) ops.push(op);
+
+      expect(ops).toEqual([]); // 不开轮 → 不产 op
+      expect(model.doStreamCalls).toHaveLength(0); // "现在"能到达的点是下一步，不是新请求
+      expect(q.list(uri).map((i) => [i.mode, i.text])).toEqual([["next-step", "加急这句"]]);
+    } finally {
+      noteTurnEnd(uri);
+    }
+  });
+
+  it("队列为空：什么都不做（幂等）", async () => {
+    const uri = newUri();
+    const model = stubModel([textReply("不该被调用")]);
+    const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
+    const ops: Op[] = [];
+    for await (const op of mgr.flushSteers(uri)) ops.push(op);
+    expect(ops).toEqual([]);
+    expect(model.doStreamCalls).toHaveLength(0);
+  });
 });

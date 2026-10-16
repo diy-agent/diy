@@ -450,7 +450,7 @@ export const apiDef = RpcSchema.router({
                     .enum(["next-step", "next-turn"])
                     .optional()
                     .cliOption({
-                      desc: "给出则把消息入队（next-step=下一个模型步前生效；next-turn=本轮收尾后的下一轮开场；两者都整批投）；省略则立即开一轮",
+                      desc: "给出则把消息入队（next-step=下一个模型步前生效；next-turn=本轮收尾后的下一轮开场；两者都整批投；**该任务没有轮次在跑时，入队即用队列开一轮发出**）；省略则立即开一轮",
                     }),
                   // 下面两项是**临时覆盖**，不写配置：模型/参数的真源是任务绑定的人物
                   // （diy agent persona …）。UI 不传，留着是给 CLI/调试临时试模型用。
@@ -536,6 +536,22 @@ export const apiDef = RpcSchema.router({
                         .cliArg({ desc: `期望顺序（JSON 数组，如 '["steer/2","steer/1"]'）` }),
                     },
                     output: z.array(SteerItemSchema),
+                  }),
+                  flush: RpcSchema.serverStream({
+                    desc: `
+                    立即发送：把队列整批**现在就送出去**，不等下一轮 / 下一步的时机
+
+                    差在"现在"能到达哪里：
+                      · 有轮次在跑 → 全部加急为 next-step（下一个模型步之前注入）；
+                      · 没有轮次   → 立刻开一轮，队列内容作开场白。
+                    只有"开了一轮"时才有 Op 流（JSONL）；加急分支不产 op（队列快照另拉）。
+                    `,
+                    input: {
+                      taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                      model: z.string().optional().cliOption({ desc: `临时覆盖模型（缺省 = 任务当前人物的模型）` }),
+                      reasoningEffort: z.string().optional().cliOption({ desc: "临时覆盖推理强度（缺省 = 人物配置）" }),
+                    },
+                    output: z.string(),
                   }),
                 },
               }),
