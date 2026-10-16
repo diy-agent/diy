@@ -71,10 +71,11 @@
 
 ## model — 本地 agent 测试用什么模型
 
-- `model.allowed` — **测试只准用 `mimo-v2.6-flash` 与 `deepseek-v4.1-flash`**；其他模型一律不用（太贵）。确需验证某模型特有行为时，先取得用户许可再跑，且一次只跑一条用例
-- `model.default` — 缺省用 **`mimo-v2.6-flash`**（opencode-go，chat 面）：全表最便宜的带工具模型，$0.14 / $0.28 per 1M tokens
+- `model.allowed` — 测试只准用三类：**① 任何带 `free` 后缀的模型**（套餐内免费，优先）· ② `mimo-v2.5` · ③ `deepseek-v4.1-flash`；其余一律不用（太贵）。确需验证某模型特有行为时，先取得用户许可再跑，且一次只跑一条用例
+- `model.free` — **模型 id 带 `free` 后缀 = 套餐内免费（cost 全 0）→ 优先选它**。free 模型**上架 / 下架频繁**，用前必须：① 列 `https://opencode.ai/zen/go/v1/models` 筛 `free` ② **各实测一条**（真发必须带 `x-opencode-session` 头，否则 400 `MissingSessionID`；测法要覆盖**流式 + 工具**，二者齐备才算可用）③ 把可用清单连同**核对日期**写回本行，供其他 agent 直接复用。**最近核对 2026-10-17**：`beam-free` · `longcat-2.5-preview-free`（均流式 + 工具 OK）
+- `model.default` — 缺省**先挑 `model.free` 里的可用项**；没有则用 `mimo-v2.5`（opencode-go，chat 面，$0.14 / $0.28 per 1M）。**`mimo-v2.6-flash` 自 2026-10-17 起不作缺省** —— 上游不稳，实测会返回 `[model_coming_soon] This model is coming soon.`（preview 真跑命中过）
 - `model.reasoning` — 档位只有 `none/low/medium/high`（上游 400 拒绝 `minimal`/`xhigh`/`max`）
-- `model.truth` — 价目真源 `https://models.dev/api.json`（`opencode-go` 的 cost/limit）；可用清单 `$ZEN/v1/models`
+- `model.truth` — 价目真源 `https://models.dev/api.json`（`opencode-go` 的 cost/limit）；**可用清单** `https://opencode.ai/zen/go/v1/models`（真发需带 `x-opencode-session` 头）
 
 ## 历史归档
 
