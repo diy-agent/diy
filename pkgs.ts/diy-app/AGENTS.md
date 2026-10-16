@@ -29,7 +29,7 @@
 
 ## entry — 入口注入的环境变量
 
-> 三者辨析（谁是客户端、谁起 GUI、数据根差异）见**仓库根 AGENTS.md「entry」**。本节只记本包读到什么。
+> 入口辨析（谁是客户端、谁起 GUI、**启动器≠客户端**、**变体必须配对**、数据根差异）见**仓库根 AGENTS.md「entry」**。本节只记本包读到什么。
 
 入口脚本只负责**注入环境变量**，业务统一由 `src/runtime.ts readRuntimeConfig()` 读取组装，不做路径/模式派生。
 
@@ -61,7 +61,7 @@
 - `rule.agents-chain` — AGENTS.md 链**上界到 `$HOME` 为止**（不进 `/`、`/Users`）；不在 `$HOME` 下时只取工作目录一层
 - `rule.budget` — 系统提示词预算 `clamp(模型上下文 × 4B × 5%, 16KB, 64KB)`；超限**拒发不截断**，且早退也必须闭合轮次（stop + noteTurnEnd + 审计）
 - `rule.golden` — 改内置模版（`src/main/prompts/defaults.ts`）**必须同步** `tests/fixtures/system.golden.txt`（当前内置模版的逐字节快照）。⚠️ `./sha.sh check` **不含 vitest**，不会替你抓到这类失效 —— 改完模版跑 `npx vitest run tests/core/template-dsl-golden.test.ts`
-- `rule.steer-queue` — **会话生成中再发消息不拒绝、改排队**（##306）：入 `SteerQueue`（`next-turn`，本轮收尾后整批投），只回一条排队回执（`kind=error` + `meta.source=queue`，error 块不进 LLM 投影）；条数上限 `maxSteerQueue`（默认 1000，`local/limits.json` / `DIY_LOCAL_MAX_STEER_QUEUE`，超限在 `SteerQueue.add` **抛错**不静默丢）。**UI 两个入口**：输入框发送（`LocalChatPage` 的 `submit` 在 `live` 时本地早退 → 该路径目前只由 CLI / RPC 可达）与横条**留言**（`submitSteer`，同一队列、同一缺省时机 `shared/steer-mode.ts` 的 `DEFAULT_STEER_MODE`）
+- `rule.steer-queue` — **会话生成中再发消息不拒绝、改排队**（##306）：入 `SteerQueue`（缺省 **`next-step`** = 下一个模型步边界前整批投，横条可切回 `next-turn`），只回一条排队回执（`kind=error` + `meta.source=queue`，error 块不进 LLM 投影）；条数上限 `maxSteerQueue`（默认 1000，`local/limits.json` / `DIY_LOCAL_MAX_STEER_QUEUE`，超限在 `SteerQueue.add` **抛错**不静默丢）。**UI 两个入口**：输入框发送（`LocalChatPage` 的 `submit` 在 `live` 时本地早退 → 该路径目前只由 CLI / RPC 可达）与横条**留言**（`submitSteer`，同一队列、同一缺省时机 `shared/steer-mode.ts` 的 `DEFAULT_STEER_MODE`）
 - `rule.agents-injected` — **本文件会被 `chainOf` 注入 system 提示词**（受 64KB 预算 `SYSTEM_BUDGET_CAP_BYTES` 约束）：长文写 README / 独立文档，这里只留指针
 - `rule.turn-lifecycle` — **轮次生命周期独立于消费端连接**（##305）：`agent.local.chat` 虽是 `serverStream`，但**流只是订阅者** —— 驱动在 `LocalAgentManager.driveTurn`（`turns` 注册表持有，与生成器解耦），消费端断开（刷新/切页/关窗/杀 CLI）**只退订、不 abort**（旧行为"`finally` 里 `if(!done) ctrl.abort()`、无人消费即停"已废；改写这块别把生成器当驱动者）。无人消费**继续烧 token**（定案：窗口只是后端的使用窗口），开销由 **`maxSteps`（缺省 200，`DEFAULT_LIMITS.n`）步数上限**自然收口 —— **禁加时间维度的"无人即停"回收**（会误杀正常长任务）；真卡死由人在全局会话视图（导航「会话」`components/SessionOverviewPage.tsx`）手动中断（##308 已落地，见 `find.sessions`）。可见性 = `LocalAgentManager.watchers`（chat 流消费端 + `opsFeed` 订阅**都算**，UI 只走后者）→ `agent.local.running` 的 `subscribers`。⚠️ 摘除靠 **service 层听 RPC 注入的 `signal`**（`withCleanup` 第三参）：断开时 RPC 层调的是 `abort` + `void g.return()`，而 `return()` **排在悬挂的 `next()` 之后**（生成器卡在 `await inner.next()`）⇒ 无事件期间断开根本走不到 cleanup，订阅要等**下一条事件**才释放（`subscribers` 虚高）。**订阅类 serverStream 必须把 `signal` 一路传到 `withCleanup`**（`agent.local.chat` 的 `run.subs` / `ops-feed.subscribe` / `file-watcher.subscribe` **三处已接**，review1-R1 补齐 chat 那条），新增订阅源照办。重连追平走 ops 水位（读侧 ##307）
 - `rule.no-silent-catch` — 不要静默吞异常（如切模型曾一律 `catch {}` → 用户以为切了其实没切）

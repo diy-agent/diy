@@ -230,36 +230,38 @@ describe("插话界面 —— 生成中插嘴、横条、取消", () => {
         expect(text).not.toContain("发送");
     });
 
-    it("点「留言」→ 上方横条出现该条（左内容 + 右时机开关，默认排到下一轮） + 已落盘", async () => {
+    it("点「留言」→ 上方横条出现该条（左内容 + 右时机开关，默认排到下一步） + 已落盘", async () => {
         await clickButton("留言");
         await waitUntil(steerBarRows, (n) => n === 1, { label: "横条出现（1 条）" });
         const text = await a11yText();
         expect(text).toContain("插一句：记得跑测试");
-        // 默认态是「排到下一轮」：开关提示词说清点它会变成什么
-        expect(text).toContain("排到下一轮");
-        expect(await fx.sh.getJson(`./diy.sh agent local steer list ${uri}`).then((r) => (r.data as any[])[0].mode)).toBe("next-turn");
+        // 默认态是「排到下一步」（##360：缺省即时生效）：开关提示词说清点它会变成什么
+        expect(text).toContain("已加急");
+        expect(await fx.sh.getJson(`./diy.sh agent local steer list ${uri}`).then((r) => (r.data as any[])[0].mode)).toBe("next-step");
         // 输入框已清空 → 留言按钮随之收起（没内容就没得留）
         expect(text).not.toContain("留言");
         // 持久化：真落在任务目录里，而非只活在内存
         expect(draftsRaw()).toContain("插一句：记得跑测试");
-        expect(draftsRaw()).toContain("mode: next-turn");
+        expect(draftsRaw()).toContain("mode: next-step");
         // 契约层看到同一条（UI 与服务端同源）
         const list = await fx.sh.getJson(`./diy.sh agent local steer list ${uri}`);
         expect((list.data as any[]).map((i) => i.text)).toEqual(["插一句：记得跑测试"]);
     });
 
-    it("第二条留言：时机开关在「下一轮 ⇄ 下一步」间可逆切换", async () => {
+    it("第二条留言：时机开关在「下一步 ⇄ 下一轮」间可逆切换", async () => {
         await ui.clickSelector(".cm-content");
         await ui.type("再做一件事");
         await waitUntil(a11yText, (s) => s.includes("留言"), { label: "按钮再现" });
         await clickButton("留言");
         await waitUntil(steerBarRows, (n) => n === 2, { label: "两条并存" });
-        expect(await fx.sh.getJson(`./diy.sh agent local steer list ${uri}`).then((r) => (r.data as any[]).map((i) => i.mode))).toEqual(["next-turn", "next-turn"]);
-        await ui.clickSelector('[data-steer-id="steer/2"] [data-steer-toggle="steer/2"]');
-        expect(await ui.query<boolean>("document.querySelector('[data-steer-toggle=\"steer/2\"] input')?.checked === true")).toBe(true);
+        expect(await fx.sh.getJson(`./diy.sh agent local steer list ${uri}`).then((r) => (r.data as any[]).map((i) => i.mode))).toEqual(["next-step", "next-step"]);
+        // 点一下 → 切回「下一轮」（checkbox 灭）
         await ui.clickSelector('[data-steer-id="steer/2"] [data-steer-toggle="steer/2"]');
         expect(await ui.query<boolean>("document.querySelector('[data-steer-toggle=\"steer/2\"] input')?.checked === false")).toBe(true);
-        expect(await fx.sh.getJson(`./diy.sh agent local steer list ${uri}`).then((r) => (r.data as any[]).map((i) => i.mode))).toEqual(["next-turn", "next-turn"]);
+        // 再点一下 → 回到缺省「下一步」（checkbox 亮）
+        await ui.clickSelector('[data-steer-id="steer/2"] [data-steer-toggle="steer/2"]');
+        expect(await ui.query<boolean>("document.querySelector('[data-steer-toggle=\"steer/2\"] input')?.checked === true")).toBe(true);
+        expect(await fx.sh.getJson(`./diy.sh agent local steer list ${uri}`).then((r) => (r.data as any[]).map((i) => i.mode))).toEqual(["next-step", "next-step"]);
         const text = await a11yText();
         expect(text).toContain("插一句：记得跑测试");
         expect(text).toContain("再做一件事");

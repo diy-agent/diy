@@ -57,7 +57,7 @@ const FACE_OPTIONS = [
 
 /** 单价输入框（key 是 spec 的 snake_case；$/1M tokens）。逐档价格复用同一组控件。 */
 const COST_FIELDS: { key: CostField; ph: string; label: string }[] = [
-  { key: "input", ph: "in", label: "非缓存输入 $/1M（必填）" },
+  { key: "input", ph: "in", label: "非缓存 $/1M（必填）" },
   { key: "output", ph: "out", label: "输出 $/1M（必填）" },
   { key: "cache_read", ph: "读", label: "缓存读 $/1M（可选）" },
   { key: "cache_write", ph: "写", label: "缓存写 $/1M（可选）" },

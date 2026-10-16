@@ -55,8 +55,14 @@ interface Segment {
  * 为什么需要这个状态位：单通道化（chat 流不再 apply）之后，**实时输出 100% 依赖订阅送达**，
  * 而"订阅坏了"在界面上与"模型正在想"完全同形 —— 没有这个位，谁也说不出"这一轮为什么没有字"。
  * 它同时是轮末自检（settleOpsAfterTurn）的判据：`live` 却不前进 = 流连着但一个帧也不来。
+ *
+ * `down` 的呈现（##354 ③）：**会话区常驻条**（LocalChatPage 的 `data-ops-down`），不是一次性
+ * toast —— 故障瞬间切走窗口就错过，而"看不到实时字"这件事恰恰是那时最需要知道的。
+ * 故它必须是**信号**（组件要能订阅到变化）。
+ * ⚠️ `down` 是**粘性**的：一经置位，只有**真收到帧**（markOpsLive）才熄灭 —— 重连尝试期间
+ * 保持 down（重订不退回 connecting）。否则重连那一瞬会把常驻条抹掉，用户看到的仍是"静默冻结"。
  */
-type OpsState = "idle" | "connecting" | "live" | "down";
+export type OpsState = "idle" | "connecting" | "live" | "down";
 
 interface TaskState {
     /** 已加载的窗口段，**升序**（更早的在前）；尾部流式内容落在最后一段 */
@@ -122,8 +128,9 @@ interface TaskState {
     epoch: number;
     /** op 订阅的取消句柄（null = 未订阅）。切任务时取消，回来时按水位补发追平 */
     opsAbort: AbortController | null;
-    /** op 订阅健康度（见 OpsState 头注）：实时显示的唯一通道通不通 */
-    opsState: OpsState;
+    /** op 订阅健康度（信号；见 OpsState 头注）：实时显示的唯一通道通不通 */
+    opsState: () => OpsState;
+    setOpsState: (v: OpsState) => void;
     /** 本段故障是否已浮到界面（一段故障只提示一次；恢复时清，下段故障还能提示） */
     opsDownNotified: boolean;
     /**
@@ -157,6 +164,7 @@ function stateFor(taskUri: string): TaskState {
         const [error, setError] = createSignal<string | null>(null);
         const [steers, setSteers] = createSignal<SteerItem[]>([]);
         const [usage, setUsage] = createSignal<StepUsageRecord[]>([]);
+        const [opsState, setOpsState] = createSignal<OpsState>("idle");
         const [hasMore, setHasMore] = createSignal(false);
         const [olderBusy, setOlderBusy] = createSignal(false);
         s = {
@@ -165,7 +173,7 @@ function stateFor(taskUri: string): TaskState {
             active, setActive, stopRequestedAt, setStopRequestedAt, abort: null,
             error, setError, steers, setSteers, usage, setUsage, steerSeq: 0, steerSettled: 0,
             scroll: null, tab: "local", detailScroll: 0,
-            appliedSeq: 0, epoch: -1, opsAbort: null, opsState: "idle", opsDownNotified: false,
+            appliedSeq: 0, epoch: -1, opsAbort: null, opsState, setOpsState, opsDownNotified: false,
         };
         states.set(taskUri, s);
     }
@@ -640,7 +648,10 @@ function ensureOpsSubscription(taskUri: string): void {
     if (st.opsAbort) return;
     const ctrl = new AbortController();
     st.opsAbort = ctrl;
-    st.opsState = "connecting";
+    // ⚠️ 已是 down 就**不退回 connecting**（##354 ③）：重订在**收到帧之前**并没有改变事实
+    //   ——"通道断着"仍是真相，而"收到帧"才是恢复的唯一判据（见 markOpsLive）。
+    //   若退回 connecting，常驻条会在重连期间一闪就没，恰好在用户最需要它的时候消失。
+    if (st.opsState() !== "down") st.setOpsState("connecting");
     const since = st.appliedSeq;
     const epoch = st.epoch;
     void (async () => {
@@ -658,7 +669,7 @@ function ensureOpsSubscription(taskUri: string): void {
                 // "通了"的判据是**收到帧**，不是调用返回：RPC 收下订阅≠main 那条推送路是通的
                 // （subscribe 的首帧恒为 hello，见 ops-feed）。拿调用返回当健康，会在"流哑了"
                 // 时给出假的"已恢复" —— 那正是 R1 要防的自欺。
-                if (st.opsState !== "live") markOpsLive(st);
+                if (st.opsState() !== "live") markOpsLive(st);
                 applyOpsFrame(taskUri, frame as OpsFrame);
             }
             // 循环正常退出：要么被重订（句柄已换，自有新流接手），要么 main 把流关了 —— 后者
@@ -676,14 +687,13 @@ function ensureOpsSubscription(taskUri: string): void {
             if (st.opsAbort === ctrl) {
                 st.opsAbort = null;
                 if (broken) {
-                    st.opsState = "down";
-                    notifyOpsDown(st);
+                    notifyOpsDown(st); // 内含 setOpsState("down")
                     // ##307 review2 R3：非主动退订的中断若就此作罢，UI 会**静默冻结** ——
                     // reload 的触发源全是订阅事件，旧实现靠 2s 轮询兜底而轮询已删。
                     // 退避重订：从 appliedSeq 补发，断线期间的 op 不丢。
                     scheduleOpsReconnect(taskUri);
                 } else {
-                    st.opsState = "idle";
+                    st.setOpsState("idle");
                 }
             }
         }
@@ -695,7 +705,7 @@ function ensureOpsSubscription(taskUri: string): void {
  * （**有始有终** —— 用户才知道现在可以看实时了；只报故障不报恢复，等于把"要不要刷新"留给用户猜）。
  */
 function markOpsLive(st: TaskState): void {
-    st.opsState = "live";
+    st.setOpsState("live");
     if (st.opsDownNotified) {
         st.opsDownNotified = false;
         notificationStore.addToast("success", "会话实时更新已恢复");
@@ -703,16 +713,25 @@ function markOpsLive(st: TaskState): void {
 }
 
 /**
- * 显示通道不可用 → 浮到界面上（**每段故障一次**，恢复时由 markOpsLive 清）。
+ * 显示通道不可用 → 记账（**每段故障一次**，恢复时由 markOpsLive 清）。
  *
  * 为什么非做不可（##327 review1 R1）：单通道化后订阅不可用 = 用户**一个字也看不到**，
  * 而这件事在界面上与"模型还在想"完全同形，只有 console.warn 的话用户永远不知道。
- * 提示只负责"告诉他现在不实时"，真正的补齐由调用方负责（退避重订 / 轮末自检重订）。
+ * 真正的补齐由调用方负责（退避重订 / 轮末自检重订）。
+ *
+ * ⚠️ 呈现改由**界面常驻条**做（##354 ③，判据 = `opsState() === "down"`）：一次性 toast
+ * 在"故障瞬间切走窗口"时必然错过，且它按类型自会消失 —— 而那正是用户最需要知道"现在没有实时字"
+ * 的时刻。本函数退化为**记账 + 恢复提示的起点**（`opsDownNotified` 让 markOpsLive 知道
+ * 该不该报"已恢复"），不再自己弹提示。
  */
 function notifyOpsDown(st: TaskState): void {
+    // 先亮常驻条（幂等）：**两条发现路径**都从这里过 —— ①流断了（ensureOpsSubscription 的
+    // finally）②轮末自检发现水位没前进（settleOpsAfterTurn）。后者压根不经过 down 分支，
+    // 若只在那里置位，静默订阅下常驻条永远不会亮。
+    st.setOpsState("down");
     if (st.opsDownNotified) return;
     st.opsDownNotified = true;
-    notificationStore.addToast("error", "会话实时更新中断，正在自动重连…");
+    console.warn(`[localChat] 会话实时更新中断（常驻条已亮出，退回重连中）`);
 }
 
 /**
@@ -734,9 +753,9 @@ async function settleOpsAfterTurn(taskUri: string, baseSeq: number): Promise<voi
     if (!st) return;
     if (currentUri() !== taskUri) return; // 已切走：订阅本就该退订，别把它请回来
     if (st.running()) return; // 新一轮已在跑：它的轮末自检负责（别动在途那一条流）
-    if (st.opsState === "live" && st.appliedSeq > baseSeq) return; // 健康：这一轮经订阅送到了
+    if (st.opsState() === "live" && st.appliedSeq > baseSeq) return; // 健康：这一轮经订阅送到了
     console.warn(
-        `[localChat] 本轮 op 未经订阅送达 ${taskUri}：state=${st.opsState} applied=${st.appliedSeq} base=${baseSeq}，重订补发`,
+        `[localChat] 本轮 op 未经订阅送达 ${taskUri}：state=${st.opsState()} applied=${st.appliedSeq} base=${baseSeq}，重订补发`,
     );
     notifyOpsDown(st);
     // 重订 = abort 旧流 + 按 appliedSeq 重建：main 的 subscribe 会从该水位**连续补发**
@@ -783,7 +802,7 @@ function unsubscribeOps(taskUri: string): void {
     }
     st.opsAbort?.abort();
     st.opsAbort = null;
-    st.opsState = "idle"; // 主动退订（切任务/卸载）不是故障，不该留在 down 上
+    st.setOpsState("idle"); // 主动退订（切任务/卸载）不是故障，不该留在 down 上
 }
 
 /** 落地一帧增量（判据全在此处，见上方时序注） */
@@ -1311,6 +1330,13 @@ export const localChatStore = {
     /** 当前打开的会话 URI（null = 没选任务）。供组件触发 refreshUsage 时用 */
     get currentUri(): string | null {
         return currentUri();
+    },
+    /**
+     * op 订阅健康度（响应式）：`down` = 实时显示通道断了 —— 会话区的**常驻条**读它（##354 ③）。
+     * 单通道化后订阅是唯一通道，故这个位是"为什么一个字也不来"的唯一可见判据。
+     */
+    get opsState(): OpsState {
+        return cur()?.opsState() ?? "idle";
     },
     /** 手动刷新用量账本（看板打开/调试用） */
     refreshUsage,

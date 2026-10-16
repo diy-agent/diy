@@ -33,6 +33,19 @@ export interface TaskNode {
   module?: string;
   /** 优先级 P0-P3；缺省 = 未定级 */
   priority?: string;
+  /**
+   * 该任务**是否与 agent 对话过**（##355 的「干净任务」判据）。
+   * 真源 = 会话 Op 日志存在且非空（main/core/local-paths.ts 的 `hasConversation`）——
+   * 不是"注册表里有没有条目"（打开会话页就会建条目，见该函数注释）。
+   * 缺省（undefined）= 调用方没算这一项（旧载荷），读侧按"未知"处理，绝不默认成 false。
+   */
+  has_session?: boolean;
+  /**
+   * 该任务是否有**未发送的草稿**（agent 输入框；##355 的「有草稿」态）。
+   * 真源 = 任务目录 `.diy/drafts.yaml` 的 `agent_input` 字段（main/core/drafts.ts）。
+   * 缺省（undefined）= 调用方没算（旧载荷），读侧按"未知"处理。
+   */
+  has_draft?: boolean;
   children: TaskNode[];
 }
 

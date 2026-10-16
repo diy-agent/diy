@@ -9,14 +9,18 @@
 // 映射不了的（未来新值 / 手改的怪值）**原样呈现**，不猜 —— 显示得难看但不说谎。
 
 /**
- * 插话提交时的**缺省投递时机**：排到下一轮（提交后可在横条上切换）。
+ * 插话提交时的**缺省投递时机**：排到**下一步**（提交后可在横条上切回下一轮）。
+ *
+ * 为什么缺省是「下一步」：用户经验是 **95% 的插话都是"立刻补一句 / 纠正"**，要的是马上生效；
+ * 「排在这一轮之后」是少数派，留给横条开关（`toggleSteerMode`）去选。
+ * 「下一步」自带降级：本轮已收尾则作为下一轮开场立刻发出（不是丢回队列，见 `steerModeTip`）。
  *
  * 为什么这个常量放 shared 而不是写入侧 `main/core/drafts.ts`：同一队列有**两个入口**
  * —— UI 的「留言」按钮与「会话生成中再发消息」的自动排队（`local-agent.ts`），
  * 缺省时机必须一致（否则同一条队列里两种语义）。而 UI **不能**从 main 取运行时值
  * （main 模块碰 fs，进 renderer 包即破），故落跨层契约层，两处 import 同一份。
  */
-export const DEFAULT_STEER_MODE = "next-turn" as const;
+export const DEFAULT_STEER_MODE = "next-step" as const;
 
 /** 历史 mode 值 → 现值（只做展示归一；写入侧永远只写现值，见 core/drafts.ts）。 */
 export function normalizeSteerMode(mode: string): string {

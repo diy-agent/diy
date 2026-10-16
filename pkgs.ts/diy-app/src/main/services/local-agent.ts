@@ -142,7 +142,7 @@ import { renderSummarySection } from "./prompt-registry";
 import { assembleGlobals, systemOverBudget } from "./prompt-registry";
 import { readFileWindow, formatReadOutput, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
 import { SteerQueue, fileSteerPort } from "../core/steer-queue";
-import { DEFAULT_STEER_MODE } from "../../shared/steer-mode";
+import { DEFAULT_STEER_MODE, steerModeLabel } from "../../shared/steer-mode";
 import type { SteerItem, SteerMode } from "../core/drafts";
 
 import {
@@ -1281,11 +1281,13 @@ export class LocalAgentManager {
      * 入队失败（队列满 / 空消息）直接抛出 —— 那是"这条消息没送达"，调用方必须知道。
      */
     private *enqueueWhileRunning(taskUri: string, sess: LocalSession, message: string): Generator<Op> {
-        // ⚠️ 语义是 **steer 合并**（并入正在跑的轮次序列、轮末整批投），**不是**串行独立
+        // ⚠️ 语义是 **steer 合并**（并入正在跑的轮次序列、整批投），**不是**串行独立
         // 轮次排队 —— 与 review306 发现①对齐：入队后由续轮循环整批取走（见 chat 的轮末逻辑），
         // 多条排队消息 = 一次续轮请求消化，不逐条开轮。
-        // 用 `next-turn`（本轮收尾后整批投）而不是 `next-step`：排队语义是"排在这一轮
-        // **之后**"；`next-step` 会插进正在跑的轮次内部，把"谁先说话谁先投"的顺序打乱。
+        // 投递时机取 `DEFAULT_STEER_MODE`（现为 `next-step`，##360）：生成中再发消息，多数情形
+        // 就是"立刻补一句 / 纠正"，故插进正在跑的轮次、下一个模型步边界前整批投。代价是它排在
+        // 当前轮未说完的话前面（不再是"谁先说话谁先投"的严格顺序）—— 想"排在这一轮之后"的用户
+        // 可在横条上把该条切回 `next-turn`（切换只改这条队列项的 mode）。
         const items = this.queue.add(taskUri, DEFAULT_STEER_MODE, message);
         sessionRegistry.noteActivity(taskUri); // queue 变化 → 注册表订阅方即时可见
         // items 的末条就是刚入队的那条（`add` 返回整批快照）
@@ -1301,7 +1303,7 @@ export class LocalAgentManager {
                 op: "delta",
                 id: noticeId,
                 fields: {
-                    message: `会话正在生成中：这条消息已排队（队列第 ${items.length} 条），本轮结束后自动投递`,
+                    message: `会话正在生成中：这条消息已排队（队列第 ${items.length} 条，投递时机：${steerModeLabel(DEFAULT_STEER_MODE)}）`,
                 },
             },
             { op: "stop", id: noticeId },

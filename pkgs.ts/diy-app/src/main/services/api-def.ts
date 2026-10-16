@@ -163,6 +163,13 @@ export interface TaskNodeShape {
   change_type?: string;
   module?: string;
   priority?: string;
+  /**
+   * 该任务**是否与 agent 对话过**（##355「干净任务」态；真源 = 会话 Op 日志存在且非空，
+   * 见 core/local-paths.ts 的 hasConversation）。缺省 = 未算（旧载荷），读侧按"未知"处理。
+   */
+  has_session?: boolean;
+  /** 该任务是否有**未发送的草稿**（##355「有草稿」态；真源 = 任务目录 .diy/drafts.yaml 的 agent_input） */
+  has_draft?: boolean;
   children: TaskNodeShape[];
 }
 const TaskNodeSchema: z.ZodType<TaskNodeShape> = z.lazy(() =>
@@ -184,6 +191,10 @@ const TaskNodeSchema: z.ZodType<TaskNodeShape> = z.lazy(() =>
     change_type: z.string().optional(),
     module: z.string().optional(),
     priority: z.string().optional(),
+    // agent 面状态（##355）：两枚逐任务布尔（判据见 TaskNodeShape 上的注释）。
+    // 与上面的字段同样 optional —— 读侧宽容，缺了只是"这一项不知道"，不是错误。
+    has_session: z.boolean().optional(),
+    has_draft: z.boolean().optional(),
     children: z.array(TaskNodeSchema),
   }),
 );
@@ -563,7 +574,7 @@ export const apiDef = RpcSchema.router({
       // 于是 Electron 里 window.diy 为 undefined（可选链短路，永远卡在「加载中…」）、
       // serve 里方法不存在。走 RPC 后三种入口共用同一实现。
       getAppInfo: RpcSchema.unary({
-        desc: `查询运行环境详情（端口/目录/版本/系统）`,
+        desc: `查询运行环境详情（端口/目录/版本/系统/CDP 连接地址）`,
         input: {},
         output: z.object({
           port: z.number(),
@@ -582,6 +593,11 @@ export const apiDef = RpcSchema.router({
           branch: z.string(),
           cache: z.string(),
           userData: z.string(),
+          /** CDP 连接地址（`ws://127.0.0.1:<port>/devtools/browser/...`）—— 供
+           *  `playwright-cli attach --cdp=<它>` 驱动真实窗口（设置页「复制调试信息」用）。
+           *  Electron 以 `--remote-debugging-port=0` 启动时端口写在 userData/DevToolsActivePort；
+           *  未启用 CDP / 文件不在（serve 模式）时为空串，不编造。 */
+          cdp: z.string(),
           electron: z.string(),
           node: z.string(),
           chrome: z.string(),
@@ -1473,7 +1489,7 @@ export const apiDef = RpcSchema.router({
               provider: z.string().cliArg({ desc: "provider（裸 id 或 custom:<id>）" }),
               model: z.string().cliArg({ desc: "模型 id（见 llmConfig costs）" }),
               target: z.enum(["auto", "spec", "override"]).default("auto").cliOption({ desc: "落点：spec=providers.custom.yaml · override=model.yaml" }),
-              input: z.number().nonnegative().optional().cliOption({ desc: "非缓存输入 $/1M" }),
+              input: z.number().nonnegative().optional().cliOption({ desc: "非缓存 $/1M" }),
               output: z.number().nonnegative().optional().cliOption({ desc: "输出 $/1M" }),
               cacheRead: z.number().nonnegative().optional().cliOption({ desc: "缓存读 $/1M" }),
               cacheWrite: z.number().nonnegative().optional().cliOption({ desc: "缓存写 $/1M" }),
@@ -2120,6 +2136,13 @@ export const apiDef = RpcSchema.router({
                 },
                 output: StatusDataId,
               }),
+              remove: RpcSchema.unary({
+                desc: `删除项目（UI 入口；连带其下全部任务，不可恢复 —— 回收站见 ##138）`,
+                input: {
+                  id: z.string().cliArg({ desc: "project id" }),
+                },
+                output: StatusDataId,
+              }),
             },
           }),
 
@@ -2153,6 +2176,13 @@ export const apiDef = RpcSchema.router({
                 input: {
                   uri: z.string().cliArg({ desc: "任务 URI" }),
                   state: TaskStateSchema.cliArg({ desc: "新状态" }),
+                },
+                output: StatusDataUri,
+              }),
+              delete: RpcSchema.unary({
+                desc: `删除任务（UI 入口；仅删本条，子任务失父升为一级任务，不可恢复 —— 回收站见 ##138）`,
+                input: {
+                  uri: z.string().cliArg({ desc: "任务 URI" }),
                 },
                 output: StatusDataUri,
               }),

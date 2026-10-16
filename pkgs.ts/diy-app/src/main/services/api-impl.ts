@@ -16,6 +16,7 @@ import * as state from "../core/state";
 import * as taskTree from "../core/task-tree";
 import { AppConfig } from "../core/app-config";
 import { refreshModelRuntime } from "../core/model-runtime";
+import { hasConversation } from "../core/local-paths";
 import { autoSeedEnabled, seedHome } from "../core/seed";
 import { platform, arch, release, totalmem, freemem } from "node:os";
 import { currentGitBranch, homeDisplayOf, repoDisplayOf } from "../core/instance-identity";
@@ -180,9 +181,24 @@ export function bindAppHandlers(binding: ServerBinding): void {
   }));
 
   // ── getAppInfo（Electron / serve / CLI 三处共用，版本字段对非 Electron 环境降级）──
-  binding.on(app.getAppInfo, () => {
+  binding.on(app.getAppInfo, async () => {
     const ac = new AppConfig(state.diyHome());
     const gb = (n: number) => (n / 1024 / 1024 / 1024).toFixed(1);
+    // CDP 连接地址：Electron 以 `--remote-debugging-port=0` 启动，实际端口写进
+    // `userData/DevToolsActivePort`（首行端口、次行 path）—— renderer 读不到文件系统，
+    // 只能由 main 侧读出来回给「复制调试信息」（口径与 CLI 的 printCdpHint 同源，见 cli/index.ts）。
+    const cdp = await (async () => {
+      const { readFileSync } = await import("node:fs");
+      const { join } = await import("node:path");
+      try {
+        const [port, path] = readFileSync(join(ac.electronUserData, "DevToolsActivePort"), "utf-8")
+          .split("\n")
+          .map((x) => x.trim());
+        return port && path ? `ws://127.0.0.1:${port}${path}` : "";
+      } catch {
+        return ""; // CDP 未启用 / serve 模式无此文件
+      }
+    })();
     return {
       port: _rpcPort,
       diyHome: ac.diyHome,
@@ -196,6 +212,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
       branch: currentGitBranch() ?? "",
       cache: ac.cache,
       userData: ac.electronUserData,
+      cdp,
       // serve 模式是纯 Node，这两个版本字段不存在 —— 必须给可读的占位而不是 undefined，
       // 否则 zod output 校验直接失败，界面又变成一片空白
       electron: process.versions.electron ?? "—（非 Electron）",
@@ -252,6 +269,10 @@ export function bindAppHandlers(binding: ServerBinding): void {
         project_path: pinfo?.path,
         project_label: pinfo?.label,
         ui_drafts: d ? { base_updated: d.base_updated, saved: d.saved, fields: d.fields } : null,
+        // agent 面状态（##355）：与任务树节点同一判据、同一真源（见 shared/task-detail.ts 注释）。
+        // 草稿直接由上面读到的 `d`（readDrafts 的返回值）派生，不再二次读盘。
+        has_session: hasConversation(input.uri),
+        has_draft: d?.fields?.agent_input !== undefined,
       }),
     };
   });

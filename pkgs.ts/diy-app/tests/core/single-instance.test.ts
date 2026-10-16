@@ -109,12 +109,16 @@ describe("lockAdvice —— 按处境给下一步，不是「失败了」", () =
     expect(a).toContain("./diy.sh"); // 直接用它
     expect(a).toContain(lockPath); // 锁文件路径要能定位
     expect(a).toContain("常驻");
+    // 多行提示必须是**真换行**：模板里写成 \\n 会原样打印成一个字面「\n」（实测踩过，一条塞成一行）
+    expect(a).toContain("\n");
+    expect(a).not.toContain("\\n");
   });
 
   it("stale → 教用户「重试/删锁」", () => {
     const a = lockAdvice({ kind: "stale", holderPid: 7 }, lockPath);
     expect(a).toContain("陈旧");
     expect(a).toContain(lockPath);
+    expect(a).not.toContain("\\n");
   });
 
   it("free → 指向日志（不是锁的问题）", () => {
