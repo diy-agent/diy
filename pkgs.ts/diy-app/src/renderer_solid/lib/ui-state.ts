@@ -208,6 +208,27 @@ export const Caches = {
     serialize: (v) => String(v),
     defaultValue: NAV_W_DEFAULT,
   }),
+
+  /** nav 任务项的**置顶键集合**（##356 ②）。键 = tab key（`<pageId>:<ctx>`），
+   *  与 `diy_tabs_opened` 同源；顺序无意义（展示顺序由 tab 列表决定，见 shared/nav-pin）。
+   *
+   *  为什么落视图 cache 而不是任务数据：置顶是「我看哪些」的视图偏好，不是任务事实
+   *  （tabStore 的持久化契约只存 `{pageId, ctx}` 两个真输入）。丢了只是失去置顶，无数据损失。
+   *
+   *  ⚠️ 与 `diy_tabs_opened` 同款：这里只校验「是不是数组」，**不做元素级清洗**
+   *  （元素类型收敛在 store/navPinStore 读盘处）。 */
+  diy_nav_pinned: field<unknown[]>("diy_nav_pinned", {
+    parse: (raw) => {
+      try {
+        const a: unknown = JSON.parse(raw);
+        return Array.isArray(a) ? a : null;
+      } catch {
+        return null;
+      }
+    },
+    serialize: (v) => JSON.stringify(v),
+    defaultValue: [] as unknown[],
+  }),
   /** 打开的 tab。**只存真信息**：`{ pageId, ctx }[]`，顺序即显示顺序。
    *
    *  派生数据（key / parent / taskAncestors）**不落盘**，由 tabStore 从注册表与任务树

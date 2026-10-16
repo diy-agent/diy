@@ -1268,7 +1268,16 @@ export function UsageHoverCard(props: {
  *
  * `stat`（步数 · 耗时 · ⚙ n · 💭 n · ❌ n）本文件**只负责摆**，内容与判据见
  * `LocalChatPage.turnStatLine`。
+ *
+ * **截断纪律**（##298）：这一行的每一段都 `min-w-0 truncate`（见 `CLIP`），**不再有 `shrink-0`** ——
+ * 极窄栏（420px 窗口、侧栏占满后内容列只剩 ~88px）里几个 `shrink-0` 兄弟互不相让，行被顶破容器
+ * 36px、并从 21px 涨到 37px（文本在 span 内折行）。谁先退场由**容器宽度**（不是窗口宽度）排：
+ * 速度 → 统计 → 用量按钮 → 时刻，规则在 `index.css` 的状态行段（`@container`）。
  */
+/** 状态行每一段的**截断纪律**（##298）：可缩（flex-shrink）+ 会截（ellipsis）。
+ *  ⚠️ 极窄栏里**不要**给这些段 `shrink-0` —— 几个兄弟互不相让就把整行顶破容器。 */
+const CLIP = "min-w-0 truncate";
+
 export function TurnUsageBar(props: {
     /** 本轮 id（`t` + 毫秒）：时刻与速度分母的**唯一真源**（协议无块级 ts，见 fmtTurnClock） */
     turnId: string;
@@ -1288,16 +1297,20 @@ export function TurnUsageBar(props: {
 }) {
     // 时间与记录格式无关（turnId 里就带着开始时刻）—— 旧记录轮次同样要能定位时间
     const clock = fmtTurnClock(props.turnId);
-    /** 时刻：纯文本、无 hover、无点击（它没有"更多信息"可给，靠左却最容易误触） */
+    /** 时刻：纯文本、无 hover、无点击（它没有"更多信息"可给，靠左却最容易误触）。
+     *  `title` 是**截断后的出口**：极窄栏里 `truncate` 只留得住前几个字（`2026-10-…`），
+     *  完整时刻仍要能查到（DOM 文本也是完整的，见 intent 用例）。 */
     const Clock = () => (
         <Show when={clock != null}>
-            <span class="shrink-0 tabular-nums text-caption opacity-50">{clock}</span>
+            <span class={`${CLIP} tabular-nums text-caption opacity-50`} data-turn-clock title={clock!}>
+                {clock}
+            </span>
         </Show>
     );
     /** 本轮统计：与时刻同为**纯文本**（无 hover / 无点击）—— 它没有"更多信息"可给 */
     const Stat = () => (
         <Show when={props.stat}>
-            <span class="shrink-0 text-caption opacity-60" data-turn-stat>
+            <span class={`${CLIP} text-caption opacity-60`} data-turn-stat title={props.stat}>
                 {props.stat}
             </span>
         </Show>
@@ -1314,8 +1327,8 @@ export function TurnUsageBar(props: {
         <Show when={rate() != null}>
             <span
                 class={isLive()
-                    ? "shrink-0 tabular-nums text-caption text-accent animate-pulse"
-                    : "shrink-0 tabular-nums text-caption opacity-60"}
+                    ? `${CLIP} tabular-nums text-caption text-accent animate-pulse`
+                    : `${CLIP} tabular-nums text-caption opacity-60`}
                 data-turn-live-rate={isLive() ? "1" : undefined}
                 data-turn-rate={isLive() ? undefined : "1"}
                 title={isLive()
@@ -1359,7 +1372,7 @@ export function TurnUsageBar(props: {
                     <Stat />
                     <Rate />
                     <span
-                        class="text-caption opacity-40"
+                        class={`${CLIP} text-caption opacity-40`}
                         title="用量要等本步跑完（finish-step）才拿得到；时间是本轮开始时刻"
                     >
                         ⋯ 统计中
@@ -1382,7 +1395,10 @@ export function TurnUsageBar(props: {
                 <span class="flex-1" />
                 <Stat />
                 <Rate />
-                <span class="opacity-60">
+                <span
+                    class={`${CLIP} opacity-60`}
+                    title="旧记录：无四桶/金额"
+                >
                     tokens ↑{fmtInt(l().in ?? 0)} ↓{fmtInt(l().out ?? 0)}（Σ{fmtInt(l().total ?? 0)}）
                     <span class="ml-1">（旧记录：无四桶/金额）</span>
                 </span>
@@ -1403,9 +1419,12 @@ export function TurnUsageBar(props: {
                 <Rate />
                 <button
                     type="button"
-                    class="flex w-max cursor-pointer select-none items-center gap-x-3 rounded px-1 text-body opacity-70 transition-opacity hover:bg-base-200 hover:opacity-100"
+                    /* `w-max` 只是"不主动撑开"（宽度 = 内容），**不是"不可缩"** ——
+                       极窄栏里它仍要能退让，否则它自己是最后一个顶破容器的。内部两段各自截断。 */
+                    class={`flex min-w-0 cursor-pointer select-none items-center gap-x-3 rounded px-1 text-body opacity-70 transition-opacity hover:bg-base-200 hover:opacity-100 ${CLIP}`}
                     aria-haspopup="dialog"
                     aria-expanded={props.hover}
+                    data-turn-usage
                     aria-label="本轮用量（悬停看汇总，点击开逐步明细）"
                     title="各轮/各步累计（重发成本口径，非窗口占用）。悬停看汇总，点击开逐步明细"
                     onPointerEnter={(e) => props.onHover(e.currentTarget)}
@@ -1416,8 +1435,12 @@ export function TurnUsageBar(props: {
                     }}
                     onClick={props.onDetail}
                 >
-                    <span class="tabular-nums">{fmtTokens(p().total)} tok</span>
-                    <span class="tabular-nums">{p().cost ? `$${fmtCost(p().cost!.total)}` : "$—"}</span>
+                    <span class={`${CLIP} tabular-nums`} data-turn-usage-tok>
+                        {fmtTokens(p().total)} tok
+                    </span>
+                    <span class={`${CLIP} tabular-nums`} data-turn-usage-cost>
+                        {p().cost ? `$${fmtCost(p().cost!.total)}` : "$—"}
+                    </span>
                 </button>
             </div>
         );
