@@ -96,7 +96,10 @@ export function saveKeepConfig(home: string, rawKeep: unknown): { keep: KeepStag
     if (stages.length === 0) {
         throw new Error("keep 不能是空级列表（要清零请把预算 `policy.modeData.budgetBytes` 设为 0）");
     }
-    saveAutoCompact(home, { ...loadAutoCompact(home), history: { keep: stages } });
+    // ⚠️ 必须**保留 history 的其余字段**（`allowAgentWrite` 等）：整包换成 `{ keep }` 会顺手把闸关掉
+    // —— 那意味着「agent 写一次 set 就自动失去写权限」，闸等于一次性；##362 M3a 实测复现过。
+    const cur = loadAutoCompact(home);
+    saveAutoCompact(home, { ...cur, history: { ...(cur.history ?? {}), keep: stages } });
     return { keep: stages, issues };
 }
 
@@ -118,6 +121,8 @@ export function saveAutoCompact(home: string, cfg: unknown): AutoCompactConfig {
         "#     · budget：budgetBytes 历史字节上限（0=清零）· toolResult 工具结果呈现\n" +
         "#         toolResult.render: asis 原样 / headtail 头尾裁剪（私有参数在 renderData）/ callpath 只留调用\n" +
         "# history: 历史装配管道（##344 M2 起可从配置改；缺省 = 代码里的缺省管道）\n" +
+    "#   allowAgentWrite: 允许本地 agent 经 compact_plan 工具改写 plan（缺省 false = 只读；##362 M3a）\n" +
+    "#     agent 写闸只管 agent —— CLI `compact plan set` / UI 编辑器是用户自己的操作，不受它约束\n" +
         "#   keep[]: 级列表，**从上往下**生效（先声明的先挑）；形状 `{ type, must?, limit?, clip?, data }`\n" +
         "#     type: ladder 纵向阶梯（缺省兜底）/ role 某角色全部 / recent 最近 N 条 / steps 最近 N 步\n" +
         "#     must: true = 必保（不占预算）；limit: 最多几个单元（call+result=1）\n" +

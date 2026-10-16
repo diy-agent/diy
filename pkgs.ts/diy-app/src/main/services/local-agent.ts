@@ -60,6 +60,7 @@ import {
     seekWindowStart,
 } from "./local-ops-seek";
 import { appendAudit } from "./agent-audit";
+import { planCheck, planGet, planRestore, planSet, renderCheckView, renderPlanView } from "./compact-plan-io";
 import { capToolOutput, safeId, toolOutDir, toolOutRelPath } from "./tool-output";
 import { abortText } from "../../shared/turn-end";
 import { opsFeed } from "./ops-feed";
@@ -1036,6 +1037,50 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                     //   ⚠️「bash.execute 现在会抛」≠「它见错就抛」—— 判据细节全在 runBash 头注。
                     throw new Error(`[读取失败] ${e instanceof Error ? e.message : e}`);
                 }
+            },
+        }),
+        /**
+         * `compact_plan` —— 装配管道（plan）的**手**（##362 M3a）。
+         *
+         * 为什么是**单工具带 op** 而不是三个：三者共用同一份「全局配置 + 闸」语义，工具描述只写一遍
+         * （每个工具都占 prompt 预算）；调用方看到的是一件事「装配管道」而不是三个散命令。
+         * execute 不含任何 plan 逻辑 —— 一律走 `services/compact-plan-io`（与 RPC **同一实现**）：
+         * 「CLI 校验通过、工具绕过校验」这类分叉必现，不能两处各写。
+         */
+        compact_plan: tool({
+            description:
+                "读/校验/改写「历史装配管道」（plan）—— 它决定哪些历史消息发给模型。" +
+                "**这是全局配置：改动影响所有任务、所有 agent 的投递**。" +
+                "op=get 读当前生效 plan（含来源与预算）；op=check 校验一份级列表（可传 keep，缺省校验盘上配置）；" +
+                "op=set 写 history.keep[]（需用户在配置里开 history.allowAgentWrite=true，否则返回「没权限」而非报错）；" +
+                "op=restore 回滚到历史快照（缺省最近一份；回滚本身也可回滚）。" +
+                "级列表形状：`[{ type: ladder|role|recent|steps, must?, limit?, clip?, data }]`，从上往下生效（先声明的先挑）。",
+            inputSchema: z.object({
+                op: z.enum(["get", "check", "set", "restore"]).describe("要做什么"),
+                keep: z
+                    .string()
+                    .optional()
+                    .describe('op=check/set：级列表文本（YAML 或 JSON；数组，或 `{ keep: [...] }`）'),
+                snapshot: z.string().optional().describe("op=restore：快照 id（见 set 返回）；缺省最近一份"),
+            }),
+            execute: async ({ op, keep: keepText, snapshot }) => {
+                const home = diyHome();
+                // must 层实占字节要**量**（预算是管不到 must 的）—— 与 RPC 注入的是同一测量
+                const measure = (k: KeepStage[]): { mustBytes: number; hardCapBytes: number } =>
+                    getLocalAgent().measureMustStages(taskUri, k);
+                if (op === "get") return renderPlanView(planGet(home));
+                if (op === "check") {
+                    // 校验**不抛**（ok=false 也是有用信息）—— 与 set 的"写错就抛"不同向，理由见 compact-plan-io 头注
+                    return renderCheckView(planCheck({ home, taskUri, ...(keepText !== undefined ? { keepText } : {}), measure }));
+                }
+                if (op === "set") {
+                    if (!keepText || keepText.trim() === "") {
+                        throw new Error('op:"set" 需要 `keep`（级列表文本：YAML/JSON 数组，或 `{ keep: [...] }`）');
+                    }
+                    // 闸关 ⇒ 本调用返回**拒绝文本**（不抛）；非法 plan ⇒ 抛（那是模型写错了，该看到错在哪）
+                    return planSet({ home, taskUri, via: "agent", keepText, measure }).text;
+                }
+                return planRestore({ home, taskUri, via: "agent", ...(snapshot ? { snapshot } : {}), measure }).text;
             },
         }),
     };
