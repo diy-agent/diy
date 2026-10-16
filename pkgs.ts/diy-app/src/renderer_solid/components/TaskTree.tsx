@@ -13,6 +13,7 @@ import { deleteTaskViaUi, removeProjectViaUi } from "../lib/delete-entry";
 import { isAncestorOf } from "../lib/task-lineage";
 import { TASK_STATES, taskStateColor } from "../../main/core/task-state";
 import { CreateTaskSheet } from "./CreateTaskSheet";
+import { TaskAddMenu } from "./TaskParentControls";
 import { DynamicBar } from "./DynamicBar";
 import { SessionChip } from "./SessionChip";
 import { TaskAgentStateBadge } from "./TaskAgentState";
@@ -784,7 +785,9 @@ function TaskRow(props: {
                         待投递留言/上一轮异常收尾。判据与 nav chip、总览页**同一份**（sessionStore）。
                         chip 自身只在"有事"时渲染（空闲且无事 → 不占地方，见 shared/session-overview）。 */}
                     <SessionChip uri={row.key} />
-                    <CreateTaskSheet projectId={row.projectId} projectLabel={row.node.title ?? ""} parentUri={row.key} compact />
+                    {/* 层级菜单（##356 ①）：原先这里是「＋ = 直接开新建子任务对话框」，
+                        只有一条路 —— 已有任务要挂到它下面只能拖。改为菜单给两条路。 */}
+                    <TaskAddMenu projectId={row.projectId} projectLabel={row.node.title ?? ""} parentUri={row.key} />
                     <DeleteEntryButton
                         title="删除任务（子任务升为一级，不随删）"
                         onRequest={props.onRequestDelete}

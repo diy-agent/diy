@@ -1,4 +1,4 @@
-import { createSignal, createEffect, on, onMount, onCleanup, untrack, Show, For } from "solid-js";
+import { createSignal, createMemo, createEffect, on, onMount, onCleanup, untrack, Show, For } from "solid-js";
 import * as Tabs from "@kobalte/core/tabs";
 import { TaskTree } from "./components/TaskTree";
 import { TaskDetailPanel } from "./components/TaskDetailPanel";
@@ -21,6 +21,7 @@ import { ToastContainer } from "./components/ToastContainer";
 import { taskStore, type TreeNode } from "./store/taskStore";
 import { tabStore } from "./store/tabStore";
 import { staleTaskTabCtxs } from "../shared/tab-prune";
+import { navPinStore } from "./store/navPinStore";
 // 全局会话可见性（##308）：**唯一的注册表订阅**在这里起，nav / 任务表 / 总览页共读同一份。
 import { sessionStore } from "./store/sessionStore";
 import { layoutStore } from "./store/layoutStore";
@@ -28,6 +29,7 @@ import { diyService } from "./lib/rpc";
 import { notificationStore } from "./store/notificationStore";
 import { defaultBinding, findPage, findView, viewInstanceKey } from "../shared/view-registry";
 import { taskIndentOf } from "../shared/tab-order";
+import { partitionByPin } from "../shared/nav-pin";
 import { taskStateColor } from "../main/core/task-state";
 import { instanceTitle } from "../shared/instance-title";
 import { Caches, NAV_W_MIN, NAV_W_MAX, NAV_W_DEFAULT } from "./lib/ui-state";
@@ -273,6 +275,24 @@ export default function App() {
 
     /** ⌘K 快速打开会话的弹层开关（##254）。内容与键盘导航见 components/NavSearch.tsx */
     const [navSearchOpen, setNavSearchOpen] = createSignal(false);
+
+    /**
+     * nav 任务项列表 = **置顶项固定在前**（##356 ②）。
+     *
+     * 只**分区**、不排序：区内顺序仍是 `tabStore.opened` 的全局顺序（任务树序），
+     * 故置顶不会打乱父子相邻关系；缩进也照旧由全局层级算（置顶不改层级，
+     * 也不隐式把置顶项的祖先一起置顶）。规则本体是纯函数，见 shared/nav-pin。
+     */
+    const navTabs = createMemo(() => {
+        const { pinned, rest } = partitionByPin(tabStore.opened, (t) => t.key, new Set(navPinStore.keys));
+        return { all: [...pinned, ...rest], pinnedCount: pinned.length };
+    });
+
+    // 关掉的 tab（或其任务被删）不留置顶键：tab 列表一变就剪枝。
+    // 语义边界：只剪「键已不存在」的，**不管它现在指什么** —— 同 key 再打开仍是置顶。
+    createEffect(() => {
+        navPinStore.prune(tabStore.opened.map((t) => t.key));
+    });
 
     /**
      * 记下「切页前的当前任务」并请求树定位它。
@@ -1083,8 +1103,8 @@ export default function App() {
                                         **展开与收缩两态结构一致** —— 收缩态用「序号」图标承载同样的
                                         层级与选中语义（收缩态不显示标题与关闭按钮，装不下）。 */}
                                     <Show when={item.id === "task"}>
-                                        <For each={tabStore.opened}>
-                                            {(t) => {
+                                        <For each={navTabs().all}>
+                                            {(t, i) => {
                                                 const isActive = () => activeKey() === t.key;
                                                 /** 页面层次的子页面（lab 挂 task-run 下） */
                                                 const isSubPage = () => !!t.parent || !!findPage(t.pageId)?.parentPage;
@@ -1132,7 +1152,17 @@ export default function App() {
                                                     drag.ref(el);
                                                     drop.ref(el);
                                                 };
+                                                /** 置顶态（##356 ②）：投影自 navPinStore，切换即写视图 cache（跨重启保持） */
+                                                const pinned = () => navPinStore.has(t.key);
                                                 return (
+                                                    <>
+                                                        {/* 置顶区与普通区之间一条细分隔线（没有置顶项时不出现）：
+                                                            表达「上面这几项是我钉住的」，而不是让它们混在普通项里莫名的靠前 */}
+                                                        <Show when={navTabs().pinnedCount > 0 && i() === navTabs().pinnedCount}>
+                                                            <li class="px-1 py-0.5" aria-hidden="true">
+                                                                <div class="border-t border-base-content/15" />
+                                                            </li>
+                                                        </Show>
                                                     <li class="flex justify-center">
                                                         <Show
                                                             when={expanded()}
@@ -1228,6 +1258,24 @@ export default function App() {
                                                                 <Show when={t.ctx}>
                                                                     <SessionChip uri={t.ctx!} />
                                                                 </Show>
+                                                                {/* 置顶开关（##356 ②）：置顶项常显 📌（一眼看出为什么它在最上面），
+                                                                    普通项 hover 才显 📍。收起态（rail）不渲染 —— 40px 装不下，
+                                                                    但排序与缩进在 rail 态同样生效。 */}
+                                                                <button
+                                                                    class={`btn btn-ghost btn-xs px-1 shrink-0 ${
+                                                                        pinned()
+                                                                            ? "opacity-80 hover:!opacity-100"
+                                                                            : "opacity-0 group-hover:opacity-70 hover:!opacity-100"
+                                                                    }`}
+                                                                    title={pinned() ? "取消置顶" : "置顶（固定在上部）"}
+                                                                    data-testid="nav-tab-pin"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        navPinStore.toggle(t.key);
+                                                                    }}
+                                                                >
+                                                                    {pinned() ? "📌" : "📍"}
+                                                                </button>
                                                                 <button
                                                                     class="btn btn-ghost btn-xs px-1 opacity-0 group-hover:opacity-70 hover:!opacity-100 shrink-0"
                                                                     title={isSubPage() ? "关闭该子页面" : "关闭（暂时不理会，不影响任务状态）"}
@@ -1241,6 +1289,7 @@ export default function App() {
                                                             </div>
                                                         </Show>
                                                     </li>
+                                                    </>
                                                 );
                                             }}
                                         </For>
