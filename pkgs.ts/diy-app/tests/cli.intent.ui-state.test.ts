@@ -11,8 +11,8 @@
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
 import { join } from "node:path";
-import { HttpClientBinding } from "@diy/rpc/http";
-import { createTypedClient } from "@diy/rpc";
+import { HttpClientBinding } from "@diy-agent/rpc/http";
+import { createTypedClient } from "@diy-agent/rpc";
 import { apiDef } from "../src/main/services/api-def";
 import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";

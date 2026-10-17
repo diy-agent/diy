@@ -7,7 +7,7 @@
  * index.ts 造成分层倒置（环回依赖）。
  */
 
-import type { _AnyProcedureMeta, _Router } from './meta';
+import type { _AnyProcedureMeta, _Router } from './meta.js';
 
 /** @internal */
 export function _isProcedure(v: unknown): v is _AnyProcedureMeta {

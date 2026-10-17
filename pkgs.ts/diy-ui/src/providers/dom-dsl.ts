@@ -1,3 +1,4 @@
+/// <reference lib="dom" />
 /**
  * dom-dsl — DOM provider 的**纯 TS 声明式层**（不打 JSX）。
  *

@@ -18,12 +18,12 @@
  *   自动 destroy — 取消所有流、abort 所有在飞调用、清理所有消费者。
  */
 
-import type { _Envelope, _CancelMsg } from './types';
-import { _AsyncQueue } from './_async-queue';
-import { _toErrorPayload, _wireToReason, RpcError } from './error';
-import type { ServerBinding } from './server-binding';
-import type { EnvelopeTransport } from './types';
-import { ServerBindingCore } from './server-binding-core';
+import type { _Envelope, _CancelMsg } from './types.js';
+import { _AsyncQueue } from './_async-queue.js';
+import { _toErrorPayload, _wireToReason, RpcError } from './error.js';
+import type { ServerBinding } from './server-binding.js';
+import type { EnvelopeTransport } from './types.js';
+import { ServerBindingCore } from './server-binding-core.js';
 
 let _streamId = 0;
 

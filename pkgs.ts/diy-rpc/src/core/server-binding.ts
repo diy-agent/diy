@@ -9,9 +9,9 @@
  * 具体绑定（ChannelServerBinding / HttpServerBinding）各自把语义映射到协议常态。
  */
 
-import type { StreamHandle } from './types';
-import type { _ErrorPayload, _ErrorProtocolExt } from './error';
-import type { _AnyProcedureMeta, _HandlerForProc } from './meta';
+import type { StreamHandle } from './types.js';
+import type { _ErrorPayload, _ErrorProtocolExt } from './error.js';
+import type { _AnyProcedureMeta, _HandlerForProc } from './meta.js';
 
 // ═══════════════════════════════════════════════════
 //  CallOptions — 通用调用选项（取消/超时）

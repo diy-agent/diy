@@ -1,11 +1,29 @@
 {
-  "name": "diyui",
+  "name": "@diy-agent/ui",
   "version": "0.1.0",
-  "type": "module",
+  "description": "diyui —— 纯 TS / 零框架的声明式 UI 层：Signal / Scope / Component / Cell / Scheduler + provider（pi-tui / DOM）",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/diy-agent/diy.git",
+    "directory": "pkgs.ts/diy-ui"
+  },
+  "homepage": "https://github.com/diy-agent/diy/tree/main/pkgs.ts/diy-ui",
+  "keywords": ["ui", "diy", "declarative", "tui", "dom", "signals"],
   "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./host": "./src/host.ts",
+    "./dom": "./src/providers/dom.ts",
+    "./dom-dsl": "./src/providers/dom-dsl.ts",
+    "./dom-gen": "./src/providers/dom-gen.ts"
+  },
+  "files": ["src/"],
   "scripts": {
     "check": "tsc --noEmit",
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
     "check-pitui": "npx tsx tools/check-pitui.ts",
     "test": "vitest run",
     "web": "vite web",

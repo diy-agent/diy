@@ -9,8 +9,8 @@
  */
 
 import { z } from 'zod';
-import type { StreamHandle } from './types';
-import { toRpcError } from './error';
+import type { StreamHandle } from './types.js';
+import { toRpcError } from './error.js';
 
 /** 从 ProcedureMeta 的类型参数推导 handler 签名（四模式统一带 signal：调用级协作取消，任务 185） */
 type HandlerFor<TIn, TOut, TChIn, TChOut, TMode> =

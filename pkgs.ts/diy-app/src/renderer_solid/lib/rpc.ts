@@ -1,5 +1,5 @@
-import type { EnvelopeTransport } from "@diy/rpc";
-import { createTypedClient, ChannelClientBinding } from "@diy/rpc";
+import type { EnvelopeTransport } from "@diy-agent/rpc";
+import { createTypedClient, ChannelClientBinding } from "@diy-agent/rpc";
 import { apiDef } from "../../main/services/api-def";
 
 declare global {

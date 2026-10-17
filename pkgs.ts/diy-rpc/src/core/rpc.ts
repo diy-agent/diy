@@ -12,7 +12,7 @@
  */
 
 import { z } from 'zod';
-import { type ProcedureMeta, type _Router, type _AnyProcedureMeta } from './meta';
+import { type ProcedureMeta, type _Router, type _AnyProcedureMeta } from './meta.js';
 
 // ═══════════════════════════════════════════════════
 //  RpcSchema 配置类型（纯定义，无 call）
@@ -212,5 +212,5 @@ function _assignNames(node: _Router, prefix: string): void {
 //  Client 工厂（typed）与转发
 // ═══════════════════════════════════════════════════
 
-export { createTypedClient } from './typed-client';
-export type { TypedClient } from './typed-client';
+export { createTypedClient } from './typed-client.js';
+export type { TypedClient } from './typed-client.js';

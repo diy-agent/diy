@@ -1,4 +1,4 @@
-import type { EnvelopeTransport, _Envelope } from "./types";
+import type { EnvelopeTransport, _Envelope } from "./types.js";
 
 export function createMemTransportPair(): {
   serverTx: EnvelopeTransport;

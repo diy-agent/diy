@@ -7,10 +7,10 @@
  */
 
 import { z } from 'zod';
-import type { CallOptions } from './channel-client-binding';
-import type { StreamHandle } from './types';
-import type { ClientBinding } from './server-binding';
-import { _flattenRouter } from './_tree';
+import type { CallOptions } from './channel-client-binding.js';
+import type { StreamHandle } from './types.js';
+import type { ClientBinding } from './server-binding.js';
+import { _flattenRouter } from './_tree.js';
 
 // ═══════════════════════════════════════════════════
 //  类型工具 — 从 meta 的 zod schema 推导

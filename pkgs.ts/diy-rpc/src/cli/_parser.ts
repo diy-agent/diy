@@ -1,9 +1,9 @@
 import { z } from 'zod';
 import { readFileSync, statSync } from 'node:fs';
-import { resolve as resolvePath } from 'node:path';
 import { homedir } from 'node:os';
-import type { _AnyProcedureMeta } from '../core/meta';
-import { _getCliOptionMeta, _getCliArgMeta } from '../core/_cli-meta';
+import { resolve as resolvePath } from 'node:path';
+import type { _AnyProcedureMeta } from '../core/meta.js';
+import { _getCliOptionMeta, _getCliArgMeta } from '../core/_cli-meta.js';
 
 // ═══════════════════════════════════════════════════
 //  Schema 反射工具（CLI 专用）

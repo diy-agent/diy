@@ -1,6 +1,15 @@
 {
-  "name": "@diy/rpc",
+  "name": "@diy-agent/rpc",
   "version": "0.1.0",
+  "description": "diy RPC 协议内核：三层（Envelope 传输抽象 / Raw Client·Server / 声明式 RPC）+ http / ws / electron / CLI 四种传输绑定",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/diy-agent/diy.git",
+    "directory": "pkgs.ts/diy-rpc"
+  },
+  "homepage": "https://github.com/diy-agent/diy/tree/main/pkgs.ts/diy-rpc",
+  "keywords": ["rpc", "diy", "typescript", "streaming", "electron"],
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
@@ -18,6 +27,11 @@
   },
   "peerDependencies": {
     "electron": ">=33"
+  },
+  "peerDependenciesMeta": {
+    "electron": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/ws": "^8.18.1",

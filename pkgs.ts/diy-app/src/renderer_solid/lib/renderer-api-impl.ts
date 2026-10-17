@@ -1,5 +1,5 @@
-import type { EnvelopeTransport, ServerBinding } from "@diy/rpc";
-import { ChannelServerBinding } from "@diy/rpc";
+import type { EnvelopeTransport, ServerBinding } from "@diy-agent/rpc";
+import { ChannelServerBinding } from "@diy-agent/rpc";
 import { getRendererActions, type LayoutChanges } from "./renderer-actions";
 import type { ToastType } from "../store/notificationStore";
 import { apiDef } from "../../main/services/api-def";

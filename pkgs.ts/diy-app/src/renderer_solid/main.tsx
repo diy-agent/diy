@@ -13,7 +13,7 @@ applySkin(getSkin());
 
 declare global {
   interface Window {
-    transport: import("@diy/rpc").EnvelopeTransport;
+    transport: import("@diy-agent/rpc").EnvelopeTransport;
   }
 }
 

@@ -1,0 +1,22 @@
+{
+  // 发布构建：把 src/ 编成 Node 可直接 import 的 ESM + .d.ts（rootDir=src ⇒ dist/ 与 src/ 同构）。
+  // 与 tsconfig.json（noEmit 类型检查）并存：check 用那份，发布用这份，别合并。
+  // ⚠️ 产物只落 dist/，绝不落源码旁（见根 AGENTS.md rule.check 与 scripts/check-no-emit.sh）。
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "rootDir": "src",
+    "outDir": "dist",
+    "noEmit": false,
+    "composite": false,
+    "incremental": false,
+    "declaration": true,
+    "sourceMap": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["test/**/*"]
+}

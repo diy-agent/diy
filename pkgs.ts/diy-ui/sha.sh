@@ -47,6 +47,25 @@ check() {
   run npx tsc --noEmit
 }
 
+####################################################################################
+# 发布（npm → @diy-agent/ui）
+#
+# 仓内 package.json 的 main/exports 指 src/*.ts（vite demo 直接吃源码）且带 private:true
+# 当护栏；发行物另生成在 dist/（分发逻辑见 scripts/npm-publish.mjs）。
+# 认证：NPM_PUBLISH_TOKEN（环境变量，或 ~/.bashrc 里那份；脚本自己找，不必先 source）
+####################################################################################
+
+# build：编译 dist（ESM + d.ts）并生成发行版 package.json
+build() {
+  run npx tsc -p tsconfig.build.json
+  run node ../../scripts/npm-publish.mjs . --prepare-only
+}
+# publish：build 后发布到 npm（加 --dry-run 只演练：打包 + 校验，不上传）
+publish() {
+  build
+  run node ../../scripts/npm-publish.mjs . "$@"
+}
+
 # test：运行 vitest 单元测试
 #   ./sha.sh test                       # 全部测试
 #   ./sha.sh test test/cell.test.ts    # 单个测试文件
