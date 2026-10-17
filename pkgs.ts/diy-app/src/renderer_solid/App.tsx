@@ -40,7 +40,7 @@ import { setRendererActions, resetRendererActions, getRendererActions } from "./
 import { DragDropProvider, DragOverlay, useDraggable, useDroppable, PointerSensor } from "@dnd-kit/solid";
 import type { DragDropProviderProps } from "@dnd-kit/solid";
 import { findTaskProject } from "./components/TaskTree";
-import { isAncestorOf } from "./lib/task-lineage";
+import { allTaskUris, isAncestorOf } from "./lib/task-lineage";
 // 会话活动语汇（##358 D1/D2）：nav 的主角标 / 次角标 / 「后台活动」区**共用一份**判据
 //（纯函数在 shared/session-nav —— 位次仍出自 shared/session-overview，与任务表 / 总览同源）。
 import {
@@ -52,6 +52,9 @@ import {
 } from "../shared/session-nav";
 import type { NavRow, NavTone } from "../shared/session-nav";
 import { ALERT_ACTION_LABEL, alertsOf } from "../shared/session-alerts";
+// 「待你处理」区（##358 D5）：判据纯函数；行集仍是上面那份 navRows（两个区**不可能**给出不同结论）
+import { todoOf, todoTitleOf, todoWhenOf } from "../shared/session-todo";
+import { usageLedgerStore } from "./store/usageLedgerStore";
 import { alertPrefsStore } from "./store/alertPrefsStore";
 
 /**
@@ -435,16 +438,37 @@ export default function App() {
      * 判据（未读 / 停滞 / 异常）不在本文件算 —— 走 `navRowOf`（shared/session-nav），
      * 位次全部出自 shared/session-overview，于是 nav 与任务表、总览页**不可能给出不同结论**。
      */
+    /**
+     * 行集 = **任务树里的全部任务** ∪ 注册表（##358 D5/D4）。
+     *
+     * 为什么不是"只注册表"：注册表是**进程性**的（重启即空），而那正是用户的痛点
+     * ——「app 启动后丢了所有进度」。任务树是 renderer 本来就有的全量清单，
+     * 配上**账本**（落盘、跨启动）就能在启动那一刻回答"哪些会话我还没看"。
+     * 代价：开机扫一遍各任务账本（N 次小文件读，`usageLedgerStore` 有并发 4 + 永久缓存兜着）。
+     * ⚠️ 水位**不**给它们建基线（见 `sessionStore.ensureBaseline` 的调用点只在注册表入口）——
+     * 建了就等于"第一眼即已读"，历史欠账会当场清零。
+     */
+    const navUris = createMemo(() => {
+        const us = new Set<string>(allTaskUris(taskStore.nodes));
+        for (const { uri } of sessionStore.rows) us.add(uri);
+        return [...us];
+    });
+    createEffect(() => {
+        const us = navUris();
+        if (us.length > 0) usageLedgerStore.ensure(...us); // 幂等：已读到的跳过
+    });
+
     const navRows = createMemo(() => {
         const opened = new Set(tabStore.opened.filter((t) => t.ctx).map((t) => t.ctx!));
-        return sessionStore.rows.map(({ uri, entry }) =>
+        return navUris().map((uri) =>
             navRowOf({
                 uri,
                 label: tabLabel(uri),
                 opened: opened.has(uri),
-                entry,
+                entry: sessionStore.byUri(uri), // 账本独有行 → null（不是错误）
                 seenTurns: sessionStore.seenTurnsOf(uri),
                 totalTurns: sessionStore.turnsOf(uri),
+                lastTs: usageLedgerStore.lastTsOf(uri) ?? null,
                 maxSteps: sessionStore.maxSteps,
                 now: sessionStore.nowMs,
             }),
@@ -454,8 +478,17 @@ export default function App() {
     const navHero = createMemo(() => heroBadgeOf(navRows(), { collapsed: !expanded() }));
     /** 主角标之外的次角标（现在是队列：紫） */
     const navSecondary = createMemo(() => secondaryBadgeOf(navRows(), navHero()));
-    /** 「后台活动」区 = 没开着 tab、但有活态的会话（关掉 ≠ 消失） */
-    const navBackground = createMemo(() => backgroundOf(navRows()));
+    /** 「待你处理」区 = 有一笔账在等你（异常终止 / 卡住 / 有人在等 / 跑完没看） */
+    const navTodo = createMemo(() => todoOf(navRows()));
+    /**
+     * 「后台活动」区 = 没开着 tab、但有活态的会话（关掉 ≠ 消失）。
+     * **减掉已被「待你处理」收走的那批** —— 同一会话绝不两处同时出现（否则用户要数两遍）。
+     * 减完剩下的基本就是"在跑、不用你回话"（##305 关了也在跑）。
+     */
+    const navBackground = createMemo(() => {
+        const taken = new Set(navTodo().map((i) => i.row.uri));
+        return backgroundOf(navRows()).filter((r) => !taken.has(r.uri));
+    });
 
     /** 打开/聚焦某个会话（toast 的「回到」与 L2 自动拉回共用一跳） */
     const openSessionByUri = (uri: string) => {
@@ -1320,16 +1353,111 @@ export default function App() {
                                 </>
                             )}
                         </For>
+                        {/* ── 「待你处理」区（##358 D5）───────────────────────────────
+                            用户原话：「app 启动后丢了所有进度……我需要一种『我要接着工作、知道最近我在干啥』
+                            的提示，不然还要一个个点进去看」。
+                            与「后台活动」的区别只在**要不要你动手**：这里是有**一笔账在等你**
+                            （异常终止没看 / 卡住没动 / 有人在等你回话 / 跑完没看），所以每行都带
+                            **原因短语 + 最后活动时间** —— 「不点进去就知道」是这一区的全部意义。
+                            行集来自同一份 `navRows`（含**账本独有**行：重启后注册表为空，本区仍然不空）。
+                            后台区会减掉已被本区收走的行 ⇒ 同一会话不会两处同时出现。 */}
+                        <Show when={navTodo().length > 0}>
+                            <Show when={expanded()}>
+                                <li
+                                    class="flex items-center gap-2 px-3 pt-2 pb-0.5 text-caption opacity-60"
+                                    data-nav-todo-title
+                                >
+                                    <span>待你处理</span>
+                                    <span class="font-mono" title={todoTitleOf(navTodo())}>
+                                        {navTodo().length}
+                                    </span>
+                                </li>
+                            </Show>
+                            <For each={navTodo()}>
+                                {(i) => {
+                                    const b = () => rowBadgeOf(i.row);
+                                    const num = () => findNode(taskStore.nodes, i.row.uri)?.num;
+                                    const when = () => todoWhenOf(i);
+                                    const go = () => {
+                                        hideHoverLayers();
+                                        collapseRail();
+                                        getRendererActions().openTaskRun?.(i.row.uri);
+                                    };
+                                    const tip = () => `${i.row.label}\n${i.why}\n（点一下 → 回到这个会话）`;
+                                    return (
+                                        <li class="flex justify-center">
+                                            <Show
+                                                when={expanded()}
+                                                fallback={
+                                                    <button
+                                                        class="relative flex items-center justify-center h-8 w-8 rounded-lg text-caption font-mono opacity-90 hover:opacity-100 cursor-pointer bg-base-200/60"
+                                                        title={tip()}
+                                                        data-nav-todo={i.row.uri}
+                                                        data-nav-todo-kind={i.kind}
+                                                        onClick={go}
+                                                    >
+                                                        {num() ?? "•"}
+                                                        <Show when={b()}>
+                                                            {(bd) => (
+                                                                <span
+                                                                    class={`absolute -top-0.5 -right-0.5 px-1 rounded text-caption font-mono ${NAV_TONE_CLASS[bd().tone]} ${
+                                                                        bd().pulse ? "animate-pulse" : ""
+                                                                    }`}
+                                                                >
+                                                                    {bd().short}
+                                                                </span>
+                                                            )}
+                                                        </Show>
+                                                    </button>
+                                                }
+                                            >
+                                                <button
+                                                    class="flex flex-col gap-0.5 w-full px-2 py-1 rounded-lg bg-base-200/60 text-body cursor-pointer opacity-90 hover:opacity-100 hover:bg-base-300"
+                                                    title={tip()}
+                                                    data-nav-todo={i.row.uri}
+                                                    data-nav-todo-kind={i.kind}
+                                                    onClick={go}
+                                                >
+                                                    <span class="flex items-center gap-1 w-full">
+                                                        <span class="flex-1 truncate text-left">{i.row.label}</span>
+                                                        <Show when={b()}>
+                                                            {(bd) => (
+                                                                <span
+                                                                    class={`badge border badge-xs font-mono whitespace-nowrap ${NAV_TONE_CLASS[bd().tone]} ${
+                                                                        bd().pulse ? "animate-pulse" : ""
+                                                                    }`}
+                                                                    title={bd().tip}
+                                                                >
+                                                                    {bd().text}
+                                                                </span>
+                                                            )}
+                                                        </Show>
+                                                    </span>
+                                                    {/* 「不点进去就知道」的两件事：为什么找你 + 什么时候的事 */}
+                                                    <span class="flex items-center gap-2 w-full text-caption opacity-70">
+                                                        <span class="flex-1 truncate text-left">{i.why}</span>
+                                                        <Show when={when()}>
+                                                            <span class="font-mono shrink-0">{when()}</span>
+                                                        </Show>
+                                                    </span>
+                                                </button>
+                                            </Show>
+                                        </li>
+                                    );
+                                }}
+                            </For>
+                        </Show>
                         {/* ── 「后台活动」区（##358 D2）───────────────────────────────
                             用户原话：「session 正在跑 / 结果没看，但被我从 nav 关了，如何**提示并回到视线**」。
                             判据刻意**不记"谁关过什么"**（那要一份 renderer 私有台账，重启即丢）：
                             直接问"它现在有没有事" —— 没开着 tab、且有活态（在跑 / 跑完没看 / 有留言）
                             的会话就落在这里。**虚框幽灵条目**表达"它不在视线内，但仍活着"；
                             重开 tab 它自动离开（`opened`），点一下即回到视线。 */}
-                        <Show when={navBackground().length > 0 || !alertPrefsStore.autoPull}>
-                            <Show when={expanded()}>
-                                <li class="flex items-center gap-2 px-3 pt-2 pb-0.5 text-caption opacity-60">
-                                    <span>后台活动</span>
+                        {/* 标题行**只要展开态就渲染**（哪怕空）—— 它是「自动拉回」开关唯一的家：
+                            区一空就整行消失的话，用户关掉后（或本来就没动静时）**再没处打开**。 */}
+                        <Show when={expanded()}>
+                            <li class="flex items-center gap-2 px-3 pt-2 pb-0.5 text-caption opacity-60">
+                                <span>后台活动</span>
                                     <span class="font-mono">{navBackground().length}</span>
                                     {/* L2「自动拉回」的开关（缺省开）—— 关掉只降级成 L1 toast，不丢提示。
                                         区为空时这一行仍渲染（否则关了就没处开回来）。 */}
@@ -1343,11 +1471,11 @@ export default function App() {
                                         }
                                         onClick={() => alertPrefsStore.setAutoPull(!alertPrefsStore.autoPull)}
                                     >
-                                        自动拉回 {alertPrefsStore.autoPull ? "开" : "关"}
-                                    </button>
-                                </li>
-                            </Show>
-                            <For each={navBackground()}>
+                                    自动拉回 {alertPrefsStore.autoPull ? "开" : "关"}
+                                </button>
+                            </li>
+                        </Show>
+                        <For each={navBackground()}>
                                 {(r) => {
                                     const badge = () => rowBadgeOf(r);
                                     const num = () => findNode(taskStore.nodes, r.uri)?.num;
@@ -1407,7 +1535,6 @@ export default function App() {
                                     );
                                 }}
                             </For>
-                        </Show>
                     </div>
                     {/* 右缘拖拽条：调宽 + 双击复位。收起态（rail）没有可调的宽度，不渲染 */}
                     <Show when={expanded()}>
