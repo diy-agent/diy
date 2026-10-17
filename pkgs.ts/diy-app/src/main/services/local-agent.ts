@@ -2161,6 +2161,20 @@ export class LocalAgentManager {
     }
 
     /**
+     * 入队一条插话 —— **入队本身不开轮**（它只管"记下来"；正在跑的轮次按投递时机取走，
+     * 没有轮次在跑则留待下一轮）。
+     *
+     * 调用方（api-impl 的 chat handler）在入队后必须做「无活跃轮次则唤醒一轮」的判定
+     * （见同处的注释与 hasActiveTurn）：否则空闲时入队的留言**没有任何机制会因它启动一轮**，
+     * 永远躺在 .diy/drafts.yaml 里（##303：模型永远看不到，用户以为发出去了）。
+     */
+    steerAdd(taskUri: string, mode: SteerMode, text: string): SteerItem[] {
+        const r = this.queue.add(taskUri, mode, text);
+        sessionRegistry.noteActivity(taskUri); // queue 是注册表的活态属性
+        return r;
+    }
+
+    /**
      * 此刻本会话**是否有轮次在跑**（判据 = `chat()` 的排队判据，**同一个** `turns` 注册表）。
      *
      * 用途（##341 review1 P2-1）：替用户跑轮次的调用方（工作流驱动环）**起轮前**要先问这一句 ——
@@ -2185,11 +2199,56 @@ export class LocalAgentManager {
         return (this.turns.get(taskUri)?.subs.size ?? 0) + opsFeed.subscriberCount(taskUri);
     }
 
-    /** 入队一条插话（只入队，不唤醒轮次；正在跑的轮次按投递时机取走，没有则留待下一轮）。 */
-    steerAdd(taskUri: string, mode: SteerMode, text: string): SteerItem[] {
-        const r = this.queue.add(taskUri, mode, text);
-        sessionRegistry.noteActivity(taskUri); // queue 是注册表的活态属性
-        return r;
+    /**
+     * 用**队列现有内容**开一轮（不新增入队）—— 队列为空则不产任何 op。
+     *
+     * 这是「无活跃轮次时的留言」与「立即发送」共用的落点：留言的语义就是"发一句话"，
+     * 空闲时它本就该像普通消息一样立刻发出（##303 倾向的 c 方案）。
+     */
+    async *chatQueued(
+        taskUri: string,
+        modelOverride?: string,
+        reasoningEffortOverride?: ReasoningEffort,
+    ): AsyncGenerator<Op> {
+        const seed: TurnInput[] = this.queue.list(taskUri).map((it) => ({
+            text: it.text,
+            kind: it.mode,
+            steerId: it.id,
+        }));
+        if (seed.length === 0) return;
+        yield* this.chat(taskUri, "", modelOverride, reasoningEffortOverride, undefined, seed);
+    }
+
+    /**
+     * 「立即发送」：把队列整批**现在就送出去**，不等轮末 / 下一步的时机。
+     *
+     * 两个分支合起来才是"现在"：
+     *   · 有活跃轮次 → 全部转 next-step —— 那是这一轮里唯一还能到达的点（下一个模型步之前）；
+     *   · 没有轮次   → 立刻开一轮，队列内容作开场白。
+     *
+     * 无 op 产出（队列空 / 只是加急）不代表失败：调用方按需重拉队列快照即可。
+     */
+    async *flushSteers(
+        taskUri: string,
+        modelOverride?: string,
+        reasoningEffortOverride?: ReasoningEffort,
+    ): AsyncGenerator<Op> {
+        const items = this.queue.list(taskUri);
+        if (items.length === 0) return;
+        if (this.busy(taskUri)) {
+            // 加急：next-turn 的都改成 next-step（已是 next-step 的原样；用户拖过的顺序不动）
+            for (const it of items) {
+                if (it.mode === "next-step") continue;
+                try {
+                    this.queue.toggleMode(taskUri, it.id);
+                } catch (e) {
+                    // 单条写失败不放弃其余：用户在横条上能看见哪些没加急成功（仍是时钟图标）
+                    console.error(`[local-agent] 插话加急失败 ${taskUri}#${it.id}:`, e);
+                }
+            }
+            return;
+        }
+        yield* this.chatQueued(taskUri, modelOverride, reasoningEffortOverride);
     }
 
     /** 当前待投递的插话（FIFO，顺序即投递顺序） */
@@ -2364,7 +2423,15 @@ export class LocalAgentManager {
         message: string,
         modelOverride?: string,
         reasoningEffortOverride?: ReasoningEffort,
+        /** RPC 流的取消上下文：客户端断开（刷新/切页/杀 CLI）时即时退订 —— 见下方 `withCleanup`。 */
         signal?: AbortSignal,
+        /**
+         * 首轮输入（缺省 = 调用方这一条 message）。
+         *
+         * 给出时**用它开场**，message 忽略 —— 「用队列开一轮」走的就是这条路（见 chatQueued）：
+         * 不新增入队、直接把已有的待投递留言当开场白发出去（##303）。
+         */
+        seed?: TurnInput[],
     ): AsyncGenerator<Op> {
         const persona = personaForTask(diyHome(), taskUri);
         const model = modelOverride ?? persona.model;
@@ -2442,7 +2509,7 @@ export class LocalAgentManager {
             },
             signal,
         );
-        const driving = this.driveTurn(run, sess, message, model, reasoningEffort, key, rm, persona.id).catch((e) => {
+        const driving = this.driveTurn(run, sess, message, model, reasoningEffort, key, rm, persona.id, seed).catch((e) => {
             // 驱动异常按原语义经流上抛（RPC 层转 error 帧），由订阅端在流尾 rethrow
             run.error = e;
         });
@@ -2469,6 +2536,8 @@ export class LocalAgentManager {
         key: string,
         rm: ResolvedModel,
         personaId: string,
+        /** 首轮输入（缺省 = 调用方那一条 message）—— 「用队列开一轮」的落点，见 chatQueued（##303）。 */
+        seed?: TurnInput[],
     ): Promise<void> {
         const taskUri = run.taskUri;
         const ctrl = run.ctrl;
@@ -2523,7 +2592,8 @@ export class LocalAgentManager {
             // ── 轮次循环：首轮 = 调用方消息，之后各轮 = 插话队列喂进来的消息 ──
             // 轮末队列非空则自动开下一轮（用户不必再敲回车），且**一次把队列发完**：
             // 排队多条的心愿是"一起告诉它"，拆成多轮只会多几次请求、多个轮次边界。
-            let pending: TurnInput[] = [{ text: message, kind: "user" }];
+            // seed 给出 = 用调用方指定的开场（队列内容）；否则就是调用方这一条 message
+            let pending: TurnInput[] = seed && seed.length > 0 ? seed : [{ text: message, kind: "user" }];
             for (let round = 0; pending.length > 0 && !ctrl.signal.aborted; round++) {
                 // 手动驱动内层生成器（而不是 `yield*` 委托）：委托会把 op 直接交给消费端，
                 // 跳过这里的 `sess.store.apply` —— 而 store 是本模块的**单一权威**

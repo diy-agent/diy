@@ -1483,6 +1483,10 @@ function SteerBar(props: {
     onCancel: (id: string) => void;
     onToggleMode: (id: string) => void;
     onReorder: (ids: string[]) => void;
+    /** 「修改」：把某条撤回编辑器（队列里移除 + 内容回到输入框） */
+    onEdit: (id: string) => void;
+    /** 「立即发送」：整批现在送出去（不等下一轮/下一步） */
+    onFlush: () => void;
 }) {
     /**
      * 拖拽结束：把 source 放到 target 原来的位置，算出**完整的新顺序**再提交。
@@ -1518,10 +1522,31 @@ function SteerBar(props: {
                     /* 无可见标题，语义交给 aria-label：读屏与自动化仍能识别这是"待发送的插话" */
                     aria-label={`待发送插话 ${props.items.length} 条`}
                 >
+                    {/* 头部一行：条数 + 「立即投递」。没有它时队列只能"等时机"——
+                        空闲入队的留言曾因此永远躺着（##303）；入口必须显式存在，别指望用户去猜结果。
+                        ⚠️ 文案刻意不含「发送」二字：输入区的「发送」按钮也在这棵 a11y 树里，
+                        含同样的词会让"按文本点按钮"的定位（人读与自动化）两边都变模糊。 */}
+                    <div class="mb-1 flex items-center justify-between gap-2">
+                        <span class="opacity-60">待投递 {props.items.length} 条</span>
+                        <button
+                            class="btn btn-outline btn-xs"
+                            data-steer-flush
+                            aria-label="立即投递队列里的全部留言"
+                            data-tip="立即投递：有轮次在跑 → 全部加急到下一步；空闲 → 立刻作为新一轮发出"
+                            onClick={() => props.onFlush()}
+                        >
+                            立即投递
+                        </button>
+                    </div>
                     <ul class="max-h-24 space-y-0.5 overflow-y-auto">
                         <For each={props.items}>
                             {(it) => (
-                                <SteerRow item={it} onCancel={props.onCancel} onToggleMode={props.onToggleMode} />
+                                <SteerRow
+                                    item={it}
+                                    onCancel={props.onCancel}
+                                    onToggleMode={props.onToggleMode}
+                                    onEdit={props.onEdit}
+                                />
                             )}
                         </For>
                     </ul>
@@ -1548,6 +1573,7 @@ function SteerRow(props: {
     item: SteerItem;
     onCancel: (id: string) => void;
     onToggleMode: (id: string) => void;
+    onEdit: (id: string) => void;
 }) {
     // 行 = 拖拽源 + 放置目标；**只有手柄能发起拖拽**（整行可拖会让"想选中那句话"变成"拖走了它"）。
     // ⚠️ 手柄必须用 handleRef（内部是 signal + effect 驱动），不能用 `handle: el` 那种普通变量：
@@ -1638,6 +1664,17 @@ function SteerRow(props: {
                 <IconClock class="swap-off h-4 w-4" />
                 <IconBolt class="swap-on h-4 w-4 animate-pulse drop-shadow" />
             </label>
+            {/* 修改：撤回编辑器（队列里移除 + 内容回到输入框）。
+                与「取消」的区别是**话不丢**：取消是放弃这句话，修改是"我再改改"。 */}
+            <button
+                class="btn btn-ghost btn-xs shrink-0"
+                aria-label="修改这条插话（撤回编辑器）"
+                data-tip="撤回编辑器再改（输入框已有内容时接在 --- 之后）"
+                data-steer-edit={it().id}
+                onClick={() => props.onEdit(it().id)}
+            >
+                ✎
+            </button>
             <button
                 class="btn btn-ghost btn-xs shrink-0"
                 aria-label="取消这条插话"
@@ -2410,6 +2447,36 @@ export function LocalChatPage(props: { uri?: string }) {
         if (u) void localChatStore.reorderSteers(u, ids);
     };
 
+    /** 「立即发送」：整批现在送出去（服务端决定是加急到下一步还是立刻开一轮） */
+    const flushSteerQueue = () => {
+        const u = uri();
+        if (u) void localChatStore.flushSteers(u);
+    };
+
+    /**
+     * 「修改」：把一条待发送留言撤回编辑器。
+     *
+     * 输入框已有内容时**不覆盖**：接在一条 `---` 分隔线之后（用户要的是"补进来"；
+     * 直接覆盖就是把他正在打的那半句冲掉 —— 那也是"丢了 = 用户白打"的数据）。
+     * 撤回失败（RPC 错）时队列没动，此时**绝不改动输入框**：同一句话会同时出现在两处。
+     */
+    const editSteer = async (id: string) => {
+        const u = uri();
+        if (!u) return;
+        const item = await localChatStore.takeSteer(u, id);
+        if (!item) return;
+        const cur = inputValue();
+        const next = cur.trim() ? `${cur.replace(/\s+$/, "")}\n\n---\n\n${item.text}` : item.text;
+        setInputValue(next);
+        draftStore.set(u, "agent_input", next);
+        focusInput();
+    };
+
+    /** 焦点送回输入框（撤回留言后要能立刻改；MdEditor 是 CodeMirror，focus 它的 contenteditable 即可） */
+    const focusInput = () => {
+        rootRef?.querySelector<HTMLElement>("[data-agent-input] .cm-content")?.focus();
+    };
+
     return (
         <div
             ref={(el) => (rootRef = el)}
@@ -2662,6 +2729,8 @@ export function LocalChatPage(props: { uri?: string }) {
                     onCancel={cancelSteer}
                     onToggleMode={toggleSteerMode}
                     onReorder={reorderSteers}
+                    onEdit={(id) => void editSteer(id)}
+                    onFlush={flushSteerQueue}
                 />
             </Show>
 
@@ -2691,6 +2760,8 @@ export function LocalChatPage(props: { uri?: string }) {
                 <div
                     class={`rounded-field border border-base-content/20 bg-base-200 transition-colors focus-within:border-base-content ${fullscreen() ? "fixed inset-4 z-40 flex min-h-0 flex-col p-4" : "relative flex flex-col"}`}
                     style={fullscreen() ? undefined : { "max-height": inputMaxH() }}
+                    /* 焦点锚点：撤回留言后要把光标送回这里（见 editSteer / focusInput） */
+                    data-agent-input
                 >
                     {/* 全屏时横条挪进这块 fixed 区域顶部：正常态那份被遮罩盖住看不见，
                         同一时刻只有一处渲染（同一份数据不重复画） */}
@@ -2701,6 +2772,8 @@ export function LocalChatPage(props: { uri?: string }) {
                                 onCancel={cancelSteer}
                                 onToggleMode={toggleSteerMode}
                                 onReorder={reorderSteers}
+                                onEdit={(id) => void editSteer(id)}
+                                onFlush={flushSteerQueue}
                             />
                         </div>
                     </Show>
