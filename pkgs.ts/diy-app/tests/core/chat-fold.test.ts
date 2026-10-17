@@ -17,6 +17,7 @@ import {
     historyOpenOf,
     isFailedTool,
     isInterruptedToolBlock,
+    isReceiptTurn,
     isProc,
     isTurnLevel,
     isUserText,
@@ -29,6 +30,7 @@ import {
     sceneTailOf,
     turnEndNote,
     leavesOf,
+    liveTurnOf,
     liveTailOf,
     planOfLevel,
     procOpenOf,
@@ -693,5 +695,52 @@ describe("过程行状态：✗ 与失败块恒开（##329）", () => {
         expect(isFailedTool(tool("x1", true, "error"))).toBe(true);
         expect(isFailedTool(think("k1"))).toBe(false);
         expect(isInterruptedToolBlock(think("k1"), false)).toBe(false);
+    });
+});
+
+// ─── 直播轮的判定（用户 2026-10-17 实测假警报的回归） ───────────────
+//
+// 症状：会话**正在正常跑**，界面上却给它挂了「⚠ 本轮未完成（流中断/崩溃恢复）」。
+// 根因：排队回执（##306，`enqueueWhileRunning`）落的是**顶层 turn 块**，排在直播轮之后、
+// 且立刻 stop ⇒ "队尾那一轮"= 回执轮 ⇒ `liveTurnId` 判 null ⇒ 真正在跑的那轮不再算"直播中"，
+// 它的未收 stop 就被 `turnEndNote` 翻译成"本轮未完成"（未收 stop 的块恒带 `interrupted: true`，
+// 见 local-blocks.toTree）。
+describe("liveTurnOf：直播中的那一轮", () => {
+    const receipt = (id: string) => n("turn", id, { source: "queue", steerId: "steer/1" });
+
+    it("正常：队尾那个未收尾的真实轮次就是直播轮", () => {
+        const done = turn();
+        const live = n("turn", "t2", {}, [think("k1", false)], false);
+        expect(liveTurnOf([done, live])?.id).toBe("t2");
+    });
+
+    it("★ 回执轮排在直播轮之后也不夺位（假警报的回归）", () => {
+        const done = turn();
+        const live = n("turn", "t2", {}, [think("k1", false)], false);
+        const r = receipt("qt-steer/1");
+        expect(isReceiptTurn(r)).toBe(true);
+        expect(liveTurnOf([done, live, r])?.id).toBe("t2");
+    });
+
+    it("队尾只有回执轮（直播轮还没到）→ 不给直播轮，而不是把回执轮顶上", () => {
+        expect(liveTurnOf([turn(), receipt("qt-steer/1")])).toBeNull();
+    });
+
+    it("main 报活跃但队尾历史轮已收尾 → null（2026-10-11 的老护栏：别把历史轮画成直播）", () => {
+        expect(liveTurnOf([turn()])).toBeNull();
+    });
+
+    it("回执轮夹在中间同样不算数；收尾的（已 stop）不冒充直播", () => {
+        const live = n("turn", "t2", {}, [think("k1", false)], false);
+        expect(liveTurnOf([turn(), receipt("qt-steer/1"), live])?.id).toBe("t2");
+    });
+
+    it("★ 源码护栏：组件走这个纯函数，没把「最后一个 turn」抄回去", () => {
+        const src = readFileSync(
+            join(__dirname, "..", "..", "src", "renderer_solid", "components", "LocalChatPage.tsx"),
+            "utf-8",
+        );
+        expect(src).toContain("liveTurnOf(");
+        expect(src).not.toMatch(/const last = turns\[turns\.length - 1\]/);
     });
 });

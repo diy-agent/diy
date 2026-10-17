@@ -91,6 +91,7 @@ import {
     isUserText,
     leadUsers,
     leavesOf,
+    liveTurnOf,
     liveTailOf,
     planOfLevel,
     procOpenOf,
@@ -2023,12 +2024,11 @@ export function LocalChatPage(props: { uri?: string }) {
     // 正在跑的轮次同样是"直播中"，否则那一轮的未收 stop 会被显示成"流中断/崩溃恢复"。
     const liveTurnId = () => {
         if (!localChatStore.live) return null;
-        const turns = localChatStore.trees.filter((t) => t.tag === "turn");
-        const last = turns[turns.length - 1];
-        // ⚠️ 还要**这一轮自己没收尾**：外部（CLI / 另一窗口）刚起一轮而我们还没收到它的 ops 时，
-        // 上一轮早已 stop —— 拿"最后一轮"顶替会把一个正常收尾的历史轮渲染成直播
-        // （2026-10-11 实测：错误现场被画成"进行中"的红框）。真实的直播轮 turn 块必然未 stop。
-        return last && !last.stopped ? last.id : null;
+        // 判据（"最后一个未收尾的**真实**轮次"，机器回执轮不算）在 chat-fold.liveTurnOf：
+        // ⚠️ 收口在那儿之前，这里自己数"最后一个 turn"会被**排队回执轮**顶掉 —— 它排在直播轮
+        // 之后、且立刻 stop，于是 liveTurnId 判 null、真正在跑的那轮不再算"直播中"，
+        // 它的未收 stop 就被渲染成「⚠ 本轮未完成（流中断/崩溃恢复）」（用户 2026-10-17 实测假警报）。
+        return liveTurnOf(localChatStore.trees)?.id ?? null;
     };
     /**
      * ⚡ 总状态栏的速度 = **最近一次实测的步速度**（tok/s）。

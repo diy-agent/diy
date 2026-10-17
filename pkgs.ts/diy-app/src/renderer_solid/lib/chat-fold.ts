@@ -234,6 +234,40 @@ export function turnEndNote(turn: BlockNode): string | null {
     return turnEndText(r, notice);
 }
 
+/**
+ * **机器回执轮**：`enqueueWhileRunning` 为"这条消息已排队"的回执落的**顶层 turn 块**（##306）。
+ *
+ * 它长着 turn 的形状，内容却只是一条提示条（`meta.source === "queue"`，id 形如 `qt-steer/N`）：
+ * 不是人发起的一轮，也不会产出任何助理内容。判据与渲染那张提示条**同一处**
+ * （`LocalChatPage` 的 error 块分支读的就是 `attrs.source === "queue"`）—— 两处必须同源。
+ *
+ * ⚠️ 它**只能**靠这个标记认出来。曾经没有任何地方认得它，于是它被当成"正常一轮"参与
+ * 「最后一轮是谁」的判定（见 `liveTurnOf`）—— 用户 2026-10-17 实测：正在跑的轮次被
+ * 打上「⚠ 本轮未完成（流中断/崩溃恢复）」的假警报（回执轮排在它后面、且**已 stop**，
+ * 于是"最后一轮"= 回执轮、`liveTurnId` 判 null ⇒ 真正在跑的那轮不再算"直播中"）。
+ */
+export function isReceiptTurn(n: BlockNode): boolean {
+    return n.tag === "turn" && attrStr(n.attrs.source) === "queue";
+}
+
+/**
+ * **直播中的那一轮** = 最后一个未收尾的**真实**轮次（机器回执轮不算数）。
+ *
+ * 判据要两道，缺一不可：
+ *   ① 必须是**最后一个** turn（直播轮只会是队尾那个）；
+ *   ② 它自己**没收 stop** —— 外部（CLI / 另一窗口）刚起一轮、而我们还没收到它的 ops 时，
+ *      队尾是早已收尾的历史轮，拿它顶替会把一段正常历史渲染成"进行中"（2026-10-11 实测）。
+ *   ⚠️ 回执轮必须**先剔除**：它排在直播轮之后且立刻 stop（见 `isReceiptTurn`），
+ *      留着它 ① 会把直播轮顶掉（假警报"本轮未完成"）、② 会拿到一个 null。
+ *
+ * `live`（main 真值：该任务此刻是否有轮次在跑）由调用方传入 —— 本层不读 store（同 `isInterruptedToolBlock`）。
+ */
+export function liveTurnOf(nodes: BlockNode[]): BlockNode | null {
+    const turns = nodes.filter((n) => n.tag === "turn" && !isReceiptTurn(n));
+    const last = turns[turns.length - 1];
+    return last && !last.stopped ? last : null;
+}
+
 
 /**
  * 这一行**点开会不会多出东西** —— 决定行首给「展开箭头」还是「末级点」。
