@@ -114,6 +114,32 @@ export function interruptedToolPatches(store: BlockStore): Op[] {
 }
 
 /**
+ * 只收敛**本轮**遗留的 tool 块（`parent` 以 turnId 开头即属本轮）—— 与 interruptedToolPatches
+ * 同一套终态（status=interrupted + 契约文案 + stop），区别只在**范围**。
+ *
+ * 为什么需要「本轮」这个范围（##375）：用户在轮次中途点停止（`cancel()`）会掐断 LLM 流，
+ * SDK 再也发不出这条工具调用的 tool-result / tool-error ⇒ 块永远停在 `status:"running"`、
+ * 也收不到 stop（UI 上就是一行「停不掉的工具」）。此时**轮次正在收尾**，等不到下一轮开场的
+ * 残留收敛（那是给崩溃/杀进程兜底的，迟到 = 用户当场看见假"在跑"）。
+ *
+ * 与 interruptedToolPatches 的取舍：那个挑全库、给加载/开轮用（冷读兜底）；本函数挑本轮、
+ * 给轮次收口用（热路径）。两者都幂等：已终态 / 已 stop 的块不再返回。
+ */
+export function interruptedToolPatchesOfTurn(store: BlockStore, turnId: string): Op[] {
+    const out: Op[] = [];
+    for (const b of store.blocks.values()) {
+        if (b.kind !== "tool") continue;
+        if (!String(b.parent ?? "").startsWith(turnId)) continue; // 只碰本轮（tool 的 parent = 本轮的 step）
+        const status = String(b.status ?? "");
+        if (status === INTERRUPTED_STATUS || status === "done" || status === "error") continue;
+        if (b.stopped) continue;
+        out.push({ op: "patch", id: b.id, fields: { status: INTERRUPTED_STATUS, output: INTERRUPTED_TOOL_NOTICE } });
+        out.push({ op: "stop", id: b.id });
+    }
+    return out;
+}
+
+/**
  * 把**未收 stop 的块**补上 stop（崩溃/被杀留下的开口块），返回要落盘的 op。
  *
  * 与 interruptedToolPatches 的分工：
