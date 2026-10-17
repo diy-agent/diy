@@ -14,7 +14,9 @@
 //   · `data-proc-children` → 过程 bar 铺开后的子层容器（card 不另给位移、rail 给线+缩进）
 //   · `data-tail-box`（+ `data-failing`）/ `data-block-tag="proc-bar"[data-has-error]` → 结尾槽与出错态
 //   · `data-chat-list` → **每轮的过程历史容器**（rail 那条贯穿线的作用点；结尾槽与状态行在它之外）
-//   · `data-turn-status` → 状态行（末行恒显，两皮肤同一形态：上虚线 + 纯文本，不卡片化）
+//   · `data-turn-status` → 状态行（末行恒显，两皮肤同一形态：上虚线 + 纯文本，不卡片化）；
+//     其内的 `data-turn-stat` / `data-turn-live-rate` / `data-turn-rate` / `data-turn-usage`
+//     是**按容器宽逐档退场**的（`@container`，##298）—— 小样给两行（直播 ⚡ / 轮结束 ⌀）才两档齐
 // 一致性由 `tests/core/chat-skin-preview.test.ts` 守住：直接拿 index.css 里 `[data-skin]`
 // 段出现过的钩子来核对本文件 —— 以后加皮肤规则若忘了在小样补钩子，测试就红。
 //
@@ -33,6 +35,12 @@ export const SKIN_PREVIEW_HOOKS = [
   'data-row-band',
   'data-row-handle',
   'data-proc-children',
+  // 状态行三件套（##365）：CSS 的 `[data-turn-*]` 规则按容器宽逐档退场，小样两行覆盖两档
+  'data-turn-status',
+  'data-turn-stat',
+  'data-turn-live-rate',
+  'data-turn-rate',
+  'data-turn-usage',
 ] as const;
 
 /**
@@ -142,14 +150,34 @@ export function ChatSkinPreview() {
         </div>
       </div>
       {/* 状态行（末行恒显）：两皮肤同一形态 —— 上虚线 + 纯文本，✓/✗/⛔ 扛状态色；
-          折叠条列恒给一个静态点（草图 `.k-status` 的 `gut static`），左列才是齐的一列 */}
+          折叠条列恒给一个静态点（草图 `.k-status` 的 `gut static`），左列才是齐的一列。
+          **下面两行 = 同一条状态行的两个时刻**（##365）：直播中给实时档 ⚡（`data-turn-live-rate`）、
+          轮结束换成轮均档 ⌀（`data-turn-rate`）；两档在极窄栏（容器 < 20rem）一起退场、
+          用量条在 < 10rem 退场 —— 小样两行都给，这三条 `[data-turn-*]` 规则才都落在小样里。
+          速度 / 统计 / 用量三件套的形状与 `UsagePanel.LiveRow` 一致（同一钩子名，无各自的样式）。 */}
       <div class="flex items-center gap-2 text-body" data-turn-status="1">
         <Gutter can={false} />
         <span class="text-success">✓</span>
         <span class="opacity-50">2026-10-12 10:24:07</span>
         <span class="flex-1" />
-        <span class="opacity-70">3 步 · 12 秒 · ⚙ 2</span>
-        <span class="rounded bg-base-300/60 px-1 text-caption opacity-70">⚡ 38 tok/s</span>
+        <span class="text-caption opacity-60" data-turn-stat="1">3 步 · 12 秒 · ⚙ 2</span>
+        <span class="tabular-nums text-caption text-accent animate-pulse" data-turn-live-rate="1">⚡ 38 tok/s</span>
+        <span class="flex min-w-0 items-center gap-x-3 rounded px-1 text-body opacity-70" data-turn-usage="1">
+          <span class="tabular-nums" data-turn-usage-tok>12.3k tok</span>
+          <span class="tabular-nums" data-turn-usage-cost>$0.02</span>
+        </span>
+      </div>
+      <div class="flex items-center gap-2 text-body" data-turn-status="1">
+        <Gutter can={false} />
+        <span class="text-success">✓</span>
+        <span class="opacity-50">2026-10-12 10:25:31</span>
+        <span class="flex-1" />
+        <span class="text-caption opacity-60" data-turn-stat="1">5 步 · 41 秒 · ⚙ 7</span>
+        <span class="tabular-nums text-caption opacity-60" data-turn-rate="1">⌀ 27 tok/s</span>
+        <span class="flex min-w-0 items-center gap-x-3 rounded px-1 text-body opacity-70" data-turn-usage="1">
+          <span class="tabular-nums" data-turn-usage-tok>41.6k tok</span>
+          <span class="tabular-nums" data-turn-usage-cost>$0.07</span>
+        </span>
       </div>
     </div>
   );
