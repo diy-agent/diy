@@ -968,7 +968,9 @@ export function bindAppHandlers(binding: ServerBinding): void {
     files: traffic.listLogFiles(),
     dates: traffic.listLogDates(),
     bytes: traffic.logStats().bytes,
+    detail: traffic.listLogFileDetail(),
   }));
+  binding.on(app.traffic.cleanLogs, async ({ input }) => traffic.cleanLogs(input));
   binding.on(app.traffic.revealLog, async ({ input }) => {
     const abs = traffic.absLogFile(input.file);
     try {
