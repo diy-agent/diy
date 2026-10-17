@@ -187,6 +187,20 @@ describe("窗口占用 / 缓存命中率", () => {
         expect(patch.windowTotal).toBe(1550); // 最后一步（上下文压力）
         expect(patch.contextLimit).toBe(10_000);
     });
+
+    it("**无价目 ≠ 0**（##372）：cost 为 null 时原样下发 null，无价目步数走 unpriced", () => {
+        const step = bucketsOf({ inputTokens: 1000, inputTokenDetails: { noCacheTokens: 1000 }, outputTokens: 10 });
+        // 一步都没价目：cost 保持 null（早先这里改成过全 0 对象，UI 于是画成 $0.0000）
+        const none = turnUsagePatch(step, step, null, 10_000, 2, undefined, null, null, 2);
+        expect(none.cost).toBeNull();
+        expect(none.unpriced).toBe(2);
+        // 有价目的部分和：仍如实带上无价目步数（UI 打 * 且不把合计当完整值）
+        const partial = turnUsagePatch(step, step, { noCache: 0.1, cacheRead: 0, cacheWrite: null, text: 0.2, reasoning: 0, total: 0.3 }, 10_000, 3, undefined, null, null, 1);
+        expect(partial.cost?.total).toBeCloseTo(0.3, 9);
+        expect(partial.unpriced).toBe(1);
+        // 缺省（老调用点 / 全有价目）= 0，不是 undefined —— 读侧不必再兜一层
+        expect(turnUsagePatch(step, step, null, 10_000).unpriced).toBe(0);
+    });
 });
 
 describe("聚合（UI 明细/看板与 CLI 报表共用）", () => {

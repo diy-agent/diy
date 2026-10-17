@@ -154,8 +154,10 @@ import {
     costOf,
     effectiveMaxOutputTokens,
     findModel,
+    findPricedModel,
     getModelCatalog,
     MODEL_COST_AS_OF,
+    ratesOfModel,
     round3,
     isKnownModel,
     maxOutputTokensOf,
@@ -2894,7 +2896,12 @@ export class LocalAgentManager {
         let rateOutSum = 0;
         let rateMsSum = 0;
         let turnRate: number | null = null;
-        let turnCost: CostBreakdown = { noCache: 0, cacheRead: 0, cacheWrite: null, text: 0, reasoning: 0, total: 0 };
+        // 本轮累计金额。**一步都没价目 → 保持 null**（页脚显示「$—」）：
+        // 早先这里初始化成全 0 对象、并且把无价目的步按 0 计入 —— 于是"没价目"被画成"$0.0000"，
+        // 正是 ##372「会话金额恒为 0」的显示形态。
+        let turnCost: CostBreakdown | null = null;
+        // 本轮**无价目**的步数：只计数，由页脚标注"合计是部分和"（##372 附带要求 1）
+        let turnUnpriced = 0;
         // 收尾原因追踪：步数耗尽检测（最后动作是 tool 且 step 用满 = 模型还想干活被掐）
         let lastAct: "none" | "text" | "tool" = "none";
         /**
@@ -3515,11 +3522,17 @@ export class LocalAgentManager {
                                     rateMsSum += respMs;
                                 }
                                 turnRate = rateFromTotals(rateOutSum, rateMsSum);
-                                // **按 response.modelId 查价**：上游可能路由改写模型（##211 §四.4.4）
-                                const priceModel = fsPart.response?.modelId ?? model;
-                                const rates = costOf(priceModel, b.inputTotal);
+                                // **按 response.modelId 查价**：上游可能路由改写模型（##211 §四.4.4）。
+                                // 但回执多半是**裸 id**，裸 id 被 ≥2 个 provider 收录即歧义（##372）——
+                                // 故先把回执模型**限定到本请求的 provider/account** 再查。**查不到即无价目**：
+                                // 用户口径 2026-10-17「谁家的模型找谁家的价」——不回退、不猜 provider、
+                                // 不拿别的东西的价冒充；依据落账 `priceBasis`/`priceRef` 供事后翻账。
+                                const priced = findPricedModel(fsPart.response?.modelId, model);
+                                const rates = ratesOfModel(priced.model, b.inputTotal);
                                 const cost = rates ? costBreakdown(rates, b) : null;
-                                turnCost = sumCosts([turnCost, cost ?? { noCache: 0, cacheRead: 0, cacheWrite: b.cacheWrite == null ? null : 0, text: 0, reasoning: 0, total: 0 }]);
+                                // **无价目 ≠ 0**：只累加有价目的步，无价目的只计数（##372 附带要求 1）
+                                if (cost) turnCost = turnCost ? sumCosts([turnCost, cost]) : cost;
+                                else turnUnpriced++;
                                 sessionRegistry.noteTurnUsage(taskUri, acc.total);
                                 appendUsage(taskUri, {
                                     ts: new Date().toISOString(),
@@ -3541,6 +3554,10 @@ export class LocalAgentManager {
                                     ...(fsPart.performance ? { performance: fsPart.performance } : {}),
                                     rates: rates ? { ...rates, asOf: MODEL_COST_AS_OF } : null,
                                     cost,
+                                    // 计价依据（##372）：`response` 命中回执 / `request` 回执缺失→按本请求模型 /
+                                    // `none` 无价目（不回退）。**与 responseModel 同行**才能事后回答"这条 — 是怎么来的"
+                                    priceBasis: priced.basis,
+                                    ...(priced.model ? { priceRef: priced.model.ref } : {}),
                                     contextParts: ctxParts,
                                     // 投递选择事实**只在轮首**（stepN===1）：一轮只在轮首按当前配置重建投递，
                                     // 后续步复用同一份历史（##272 B1 / ##321）。
@@ -3549,7 +3566,7 @@ export class LocalAgentManager {
                                 yield* emit({
                                     op: "patch",
                                     id: turnId,
-                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts, lastStepRate, turnRate) },
+                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts, lastStepRate, turnRate, turnUnpriced) },
                                 });
                             }
                             if (stepId !== turnId) yield* emit({ op: "stop", id: stepId });
@@ -3578,7 +3595,7 @@ export class LocalAgentManager {
                                 yield* emit({
                                     op: "patch",
                                     id: turnId,
-                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts, lastStepRate, turnRate) },
+                                    fields: { usage: turnUsagePatch(turnBuckets, lastStepBuckets, turnCost, identity.contextLimit, stepN, ctxParts, lastStepRate, turnRate, turnUnpriced) },
                                 });
                             }
                             // turn 的 stop 由 closeTurn 发（finally 里那一处）：收尾必须闭合
