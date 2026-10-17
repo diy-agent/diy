@@ -12,10 +12,18 @@
 //   3. **不落明文密钥**：模型账号写 `$VAR` 引用；本机没有该变量时仍写引用（UI 标红提示，
 //      用户可以点「导入」或自己填）—— 保证种子是**真实可用**的形状，而不是假 key。
 //
-// 模型面按用户规则**只认 opencode-go**，人物模型 = `mimo-v2.6-flash`（允许清单内最便宜）。
+// 模型面按用户规则**只认 opencode-go**，人物模型 = **缺省模型口径**（free 优先 → 退兜底，
+// 真源 `src/shared/model-default.ts`）—— 本文件**不写死模型名**（写死过 `mimo-v2.6-flash`，
+// 上游下架后种出来的环境开箱即坏）。
+//
+// **职责边界**（与 `./sha.sh sync-dev-home` 分工，别再混）：
+//   seed = **示例 / 测试数据** —— 示例项目与任务、缺省人物、`$VAR` 占位凭据（形状真、值是假的）。
+//   真配置 = `~/.diy` 的真账号 / 真人物 / 投递划分，由 `./sha.sh sync` 投影进 `build/<variant>/home`
+//   （seed 遇到已同步的真 `model.yaml` / `personas.yaml` 一律不动 —— 现有幂等语义天然满足）。
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pickDefaultModel } from "../../shared/model-default";
 import { BUILTIN_PERSONA_ID } from "../../shared/persona";
 import { parseSeedFlag } from "../../runtime";
 import type { SeedReport } from "../../shared/model-config";
@@ -26,7 +34,7 @@ import { savePersonas } from "./persona";
 import { createProject, listProjects } from "./project";
 import { createTask, updateTask } from "./task";
 
-/** 种子只配这一家 provider（用户规则：测试用人物模型只指 opencode-go 的 mimo-v2.6-flash） */
+/** 种子只配这一家 provider（用户规则：本地 agent 测试的模型只指 opencode-go） */
 export const SEED_PROVIDER = "opencode-go";
 /**
  * 一次性标记：自动种入**只跑一次**。
@@ -36,10 +44,20 @@ export const SEED_PROVIDER = "opencode-go";
  */
 export const SEED_MARKER = ".seed-done";
 
-/** 种子人物模型（须在允许清单内：mimo-v2.6-flash / deepseek-v4.1-flash） */
-export const SEED_MODEL = "mimo-v2.6-flash";
-/** 人物模型限定名（account 段 0 = 首个无名字号） */
-export const SEED_PERSONA_MODEL = `0@${SEED_PROVIDER}/${SEED_MODEL}`;
+/** 种子 provider 的可用模型 id（models.dev 快照；provider 未收录 = 空表） */
+export function seedProviderModelIds(): string[] {
+    return Object.keys(snapshotProviders()[SEED_PROVIDER]?.models ?? {});
+}
+
+/**
+ * 种子人物模型（限定名 `0@opencode-go/<缺省模型>`；account 段 0 = 首个无名字号）。
+ * 口径 = free 优先 → 退兜底（真源 `src/shared/model-default.ts`，本文件不另抄一份字符串）；
+ * 候选还会**按快照实有模型筛一遍** —— 目录里没有的模型种进去只会显示「模型不可用」。
+ * `ids` 可注入（不传 = 读快照），便于单测钉住挑选语义。
+ */
+export function seedPersonaModel(ids: readonly string[] = seedProviderModelIds()): string {
+    return `0@${SEED_PROVIDER}/${pickDefaultModel(ids)}`;
+}
 
 /**
  * 自动种入开关：`DIY_SEED=0/false/off` 关，`=1/true/on` 开（任何变体都开），
@@ -123,7 +141,7 @@ export function seedHome(
         report.model = hit ? "imported" : "placeholder";
     }
 
-    // ── 2. personas.yaml：缺则建缺省人物，模型 = 0@opencode-go/mimo-v2.6-flash ──
+    // ── 2. personas.yaml：缺则建缺省人物，模型 = 缺省口径（free 优先 → 退兜底） ──
     const personaFile = join(home, "personas.yaml");
     if (!existsSync(personaFile)) {
         savePersonas(home, {
@@ -131,7 +149,7 @@ export function seedHome(
             personas: {
                 [BUILTIN_PERSONA_ID]: {
                     name: "大副（预览）",
-                    model: SEED_PERSONA_MODEL,
+                    model: seedPersonaModel(),
                     reasoningEffort: "default",
                     instructions: "",
                 },

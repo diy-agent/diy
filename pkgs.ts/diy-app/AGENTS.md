@@ -40,7 +40,8 @@
 | `scripts/electron-dev.mts`（preview / lab） | `build/<variant>/main/index.mjs` | `DIY_HOME=./build/<variant>/home`（继承来的生产根被拒，见 `env.home`）、`DIY_VARIANT`、`DIY_CLI`、`DIY_DEV_SERVER_URL`、`DIY_ENV=development` |
 
 - `env.home` — `DIY_HOME` 数据根（state/task/**app.port**），缺省 `~/.diy`；**preview/lab / `diy.sh` / `serve` 一律拒绝继承来的 `~/.diy`**（判据唯一定义处 `core/instance-identity.ts::isProdDataHome` ── 真实家目录；撞上后怎么回落见 `core/dev-home.ts::resolveDevHome`；放行需 `DIY_ALLOW_PROD_HOME=1`）。bash 侧（`diy.sh`）同口径归一写法（`cd <dir> && pwd -P`：尾斜杠 / `..` / `./` / 符号链接，是 TS `resolve` 的超集）
-- `env.seed` — `DIY_SEED` 三态开关（`0`/`false`/`off` 关 · `1`/`true`/`on` 开；未声明 = 仅 `DIY_VARIANT` 为 `preview`/`lab` 时开）→ `src/main/core/seed.ts`（契约 `src/runtime.ts`）。**自动种入只跑一次**（`.seed-done` 标记：删掉的 provider 不会被种回来），补缺项用 `diy seed run`；**生产根永不种入**
+- `env.seed` — `DIY_SEED` 三态开关（`0`/`false`/`off` 关 · `1`/`true`/`on` 开；未声明 = 仅 `DIY_VARIANT` 为 `preview`/`lab` 时开）→ `src/main/core/seed.ts`（契约 `src/runtime.ts`）。**自动种入只跑一次**（`.seed-done` 标记：删掉的 provider 不会被种回来），补缺项用 `diy seed run`；**生产根永不种入**。**职责 = 示例/测试数据**（示例项目与任务 + 缺省人物 + `$VAR` 占位凭据）；真配置见下条
+- `env.sync-home` — **真配置同步**（`./sha.sh sync` 末尾的 `sync-dev-home`，脚本侧非 TS）：把 `~/.diy` 的 `model.yaml` / `context.yaml` / `personas.yaml` / `providers.custom.yaml` 投影进 `build/<variant>/home/`（逐字覆盖这 4 份；`state.yaml` / `projects/` / `local/` 一律不碰）。变体随 `DIY_VARIANT`（缺省 preview），`DIY_SYNC_HOME=0` 关 · `DIY_SYNC_HOME_SRC` 换源。⚠️ 含真 key，落 build/**（已 gitignore）
 - `env.cli` — `DIY_CLI` 当前 CLI 入口绝对路径（提示词模版 `diy.md` 消费）；缺 → 提示词里告警，**不静默冒充 `diy`**
 - `env.env` — `DIY_ENV` = `production`/`development`/`test`，**dev/test 专属能力的唯一判据**（如窗口副屏定位）；缺省 = production（未声明即生产，能力全关）
 - `env.port` — `DIY_PORT` 首选端口（测试注 `0`=随机）；优先级 `DIY_PORT` > `app.port` 文件 > **按环境缺省**（`runtime.ts::defaultPort`：production=`18888` 门牌，development/test=`0` 随机）；裁决 `runtime.ts::resolvePort`（纯函数、可单测，**非生产不沿用记录里的 `18888`**）。**端口不承载身份** —— 别再往它上面挂「谁在跑」的判据
