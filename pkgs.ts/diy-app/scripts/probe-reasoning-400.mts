@@ -30,6 +30,12 @@ const arg = (name: string, dflt: number) => {
 };
 const ROUNDS = arg("rounds", 6);
 const CONCURRENCY = arg("concurrency", 12);
+/** 只跑指定组（`--only A,D`）—— 分组重跑用（一次全跑要几分钟，重跑单组省时间） */
+const only = (process.argv[process.argv.indexOf("--only") + 1] ?? "")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+const picked = (k: string) => only.length === 0 || only.includes(k);
 
 const tools = [
     {
@@ -46,9 +52,18 @@ const tools = [
     },
 ];
 
-/** 两轮工具调用的历史：第 1 次 assistant 在深历史、第 2 次 assistant 在末尾（各带 / 不带 rc 可调） */
-function history(opts: { first: boolean; last: boolean }) {
-    const assistant = (callId: string, cmd: string, withReasoning: boolean): Record<string, unknown> => {
+/**
+ * 一条 assistant 的 rc 形态：
+ *   false     —— 不带（旧行为：luminal 必 400）
+ *   true      —— 原样带（很短的一条推理）
+ *   "clipped" —— **被 ##374 T2 裁短的样子**（保头 600 字符 + marker；非空但比原文短）
+ *                —— 判据：裁短**不等于**没传 ⇒ luminal 应当 200（这一组就是 T2 的安全证明）
+ */
+type Rc = boolean | "clipped";
+
+/** 两轮工具调用的历史：第 1 次 assistant 在深历史、第 2 次 assistant 在末尾（rc 形态各自可调） */
+function history(opts: { first: Rc; last: Rc }) {
+    const assistant = (callId: string, cmd: string, rc: Rc): Record<string, unknown> => {
         const m: Record<string, unknown> = {
             role: "assistant",
             content: null,
@@ -56,7 +71,11 @@ function history(opts: { first: boolean; last: boolean }) {
                 { id: callId, type: "function", function: { name: "bash", arguments: JSON.stringify({ command: cmd }) } },
             ],
         };
-        if (withReasoning) m["reasoning_content"] = `用户要跑 ${cmd}，我调用 bash 工具。`;
+        if (rc === true) m["reasoning_content"] = `用户要跑 ${cmd}，我调用 bash 工具。`;
+        else if (rc === "clipped") {
+            // 形状 = clipReasoningText 的产物（`${head}\n[… 推理省略 N 字符 …]\n`）
+            m["reasoning_content"] = `用户要在项目里核对 ${cmd} 的输出，我先把调用发出去，再看结果决定下一步怎么做。`.repeat(12) + "\n[… 推理省略 5321 字符 …]\n";
+        }
         return m;
     };
     return [
@@ -74,7 +93,7 @@ interface Result {
     body?: string;
 }
 
-async function send(opts: { first: boolean; last: boolean }, session: string): Promise<Result> {
+async function send(opts: { first: Rc; last: Rc }, session: string): Promise<Result> {
     const res = await fetch(`${BASE}/chat/completions`, {
         method: "POST",
         headers: {
@@ -99,7 +118,14 @@ async function send(opts: { first: boolean; last: boolean }, session: string): P
     return { endpoint, status: res.status };
 }
 
-async function runGroup(label: string, opts: { first: boolean; last: boolean }) {
+const GROUPS: { key: string; label: string; first: Rc; last: Rc }[] = [
+    { key: "C", label: "C-末缺（正对照）", first: true, last: false },
+    { key: "A", label: "A-深缺末有", first: false, last: true },
+    { key: "B", label: "B-全带（对照）", first: true, last: true },
+    { key: "D", label: "D-深被裁短末有（T2 安全性）", first: "clipped", last: true },
+];
+
+async function runGroup(label: string, opts: { first: Rc; last: Rc }) {
     const stat = new Map<string, number>();
     const errSamples = new Map<string, string>();
     for (let round = 0; round < ROUNDS; round++) {
@@ -132,10 +158,9 @@ async function runGroup(label: string, opts: { first: boolean; last: boolean }) 
 
 console.log(`复现探针（##374 T1）：${ROUNDS} 轮 × ${CONCURRENCY} 并发，baseURL=${BASE}`);
 // 组 C 是原 ##371 的形状（末条缺 rc）—— 正对照：luminal 必 400，证明「这一轮确实撞上了校验型端点」
-await runGroup("C-末缺（正对照）", { first: true, last: false });
-await runGroup("A-深缺末有", { first: false, last: true });
-await runGroup("B-全带（对照）", { first: true, last: true });
+for (const g of GROUPS) if (picked(g.key)) await runGroup(g.label, { first: g.first, last: g.last });
 console.log(
     "\n读法：只看 luminal-dsv4.1flash 行。C 组 400 而 B 组全 200 ⇒ 探针有效；" +
-        "此时 A 组 400 ⇒ 逐条校验（只回传最近 K 步作废）；A 组 200 ⇒ 只校验末尾。",
+        "此时 A 组 400 ⇒ 逐条校验（只回传最近 K 步作废）；A 组 200 ⇒ 只校验末尾；" +
+        "D 组（被裁短的 rc）应当与 B 组同 200 ⇒ 裁短≠没传（##374 T2 的安全性）。",
 );
