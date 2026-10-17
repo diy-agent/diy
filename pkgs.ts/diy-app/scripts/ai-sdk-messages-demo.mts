@@ -33,7 +33,10 @@ const tools = {
     }),
 };
 
-async function run(label: string, model: string, messages: ModelMessage[]): Promise<void> {
+const ONLY = process.env["PROBE_ONLY"] ?? ""; // 只跑 label 含该子串的场景（调试用；空 = 全跑）
+
+async function run(label: string, model: string, messages: ModelMessage[], effort?: string): Promise<void> {
+    if (ONLY && !label.includes(ONLY)) return;
     let inner: unknown = null; // streamText 内部失败会走 onError；只 await 结果拿到的可能是外层包装错误
     try {
         const result = streamText({
@@ -45,6 +48,9 @@ async function run(label: string, model: string, messages: ModelMessage[]): Prom
             maxOutputTokens: 200,
             maxRetries: 0, // 关闭重试，避免掩盖 400
             headers: { "x-opencode-session": "demo-session-1" },
+            // 档位必须经 providerOptions 命名空间下发，否则上游收不到（##184 坑 4）；
+            // 不传 = 交上游默认（deepseek-v4.1-flash 的 models.dev 默认是 medium，即"思考档"）。
+            ...(effort ? { providerOptions: { openaiCompatible: { reasoningEffort: effort } } } : {}),
             onError: ({ error }) => { inner = error; },
         });
         const text = await result.text; // ⚠️ 必须 await 结果，否则校验错误只会变成 unhandled rejection
@@ -155,6 +161,36 @@ const wrongOrder: ModelMessage[] = [
     ] },
 ];
 
+// ─── H / I / J：thinking 档 × tool-call × reasoning 有无（##371 探针）───────
+// 判据问题：上游 400「The reasoning_content in the thinking mode must be passed back to the API」
+// 到底由**哪个组合**触发？diy 投递侧从不回传 reasoning（think 块被投影丢弃），
+// 而历史里 assistant 几乎都带 tool-call ⇒ 只要这个组合触发，它就是生产 400 的根因。
+const thinkToolNoReasoning: ModelMessage[] = [
+    { role: "user", content: "用 bash 跑一下 echo hi" },
+    { role: "assistant", content: [
+        { type: "tool-call", toolCallId: "call_1", toolName: "bash", input: { command: "echo hi" } },
+    ] },
+    { role: "tool", content: [
+        { type: "tool-result", toolCallId: "call_1", toolName: "bash", output: { type: "text", value: "hi" } },
+    ] },
+    { role: "user", content: "输出是什么？一个字回答" },
+];
+const thinkToolWithReasoning: ModelMessage[] = [
+    { role: "user", content: "用 bash 跑一下 echo hi" },
+    { role: "assistant", content: [
+        { type: "reasoning", text: "用户让我跑 echo hi，先调用 bash 工具。" },
+        { type: "tool-call", toolCallId: "call_1", toolName: "bash", input: { command: "echo hi" } },
+    ] },
+    { role: "tool", content: [
+        { type: "tool-result", toolCallId: "call_1", toolName: "bash", output: { type: "text", value: "hi" } },
+    ] },
+    { role: "user", content: "输出是什么？一个字回答" },
+];
+// 对照：纯文本 assistant（无 tool-call）缺 reasoning
+const thinkTextNoReasoning: ModelMessage[] = withoutReasoning;
+
+// ⚠️ 只测 zen/go 网关（它稳定路由到宽松端点）。要复现 ##371 的 400 必须命中
+// luminal 端点 —— 用 scripts/probe-reasoning-400.mts（并发撞端点，见其头注）。
 console.log("═══ 历史消息规则实测（zen/go）═══\n");
 await run("A 正确配对（tool-call + tool-result，glm-5.3-flash）", "glm-5.3-flash", paired);
 await run("B 孤立 tool-call，无 tool-result（glm-5.3-flash）", "glm-5.3-flash", orphan);
@@ -163,3 +199,8 @@ await run("D 不回传 reasoning（deepseek-v4-flash）", "deepseek-v4-flash", w
 await run("E 多步工具链：2× (tool-call + tool-result)（glm-5.3-flash）", "glm-5.3-flash", multiStep);
 await run("F 工具失败用 error-text 输出（glm-5.3-flash）", "glm-5.3-flash", failedTool);
 await run("G 顺序错乱：tool-result 放到下一条 user 之后（glm-5.3-flash）", "glm-5.3-flash", wrongOrder);
+console.log("── ##371：thinking 档 × tool-call × reasoning ──\n");
+await run("H thinking(high) + tool-call 缺 reasoning（deepseek-v4.1-flash）", "deepseek-v4.1-flash", thinkToolNoReasoning, "high");
+await run("I thinking(high) + tool-call 带 reasoning（deepseek-v4.1-flash）", "deepseek-v4.1-flash", thinkToolWithReasoning, "high");
+await run("J thinking(high) + 纯文本 assistant 缺 reasoning（deepseek-v4.1-flash）", "deepseek-v4.1-flash", thinkTextNoReasoning, "high");
+await run("K 不传档（上游默认 medium）+ tool-call 缺 reasoning（deepseek-v4.1-flash）", "deepseek-v4.1-flash", thinkToolNoReasoning);
