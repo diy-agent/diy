@@ -134,9 +134,10 @@ export const COST_SOURCE = "models.dev";
  * 一步的「计价依据」（##372）：查价用的是**哪个模型标识**，而不是"算出来多少"。
  *
  *   · `response` —— 命中**上游回执**的模型（正常路径；上游路由改写时按实际模型计价，##211 §四.4.4）
- *   · `request`  —— 回执缺 / 回执模型查不到价 → 退按**本请求**模型（留痕：配合 `responseModel`
- *                   就能看出"上游改了模型，但我们只能按原模型算"）
- *   · `none`     —— 两者都查不到 → 该行 `cost` 为 null（**不是 0**，UI 显示「—」）
+ *   · `request`  —— 回执**根本没报模型** → 按**本请求**模型（同 provider/account；用户口径 2026-10-17
+ *                   仍允许：请求的即用于计价，**不是**跨 provider 回退）
+ *   · `none`     —— 回执报的模型本家无报价 / 无从归属 provider → 该行 `cost` 为 null
+ *                   （**不是 0**，UI 显示「—」）。**用户口径：绝不回退**（不拿别家/别模型的价顶上）
  */
 export type PriceBasis = "response" | "request" | "none";
 

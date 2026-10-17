@@ -3524,8 +3524,9 @@ export class LocalAgentManager {
                                 turnRate = rateFromTotals(rateOutSum, rateMsSum);
                                 // **按 response.modelId 查价**：上游可能路由改写模型（##211 §四.4.4）。
                                 // 但回执多半是**裸 id**，裸 id 被 ≥2 个 provider 收录即歧义（##372）——
-                                // 故先把回执模型**限定到本请求的 provider/account** 再查；查不到再退本请求模型，
-                                // 且退没退**要留痕**（`priceBasis` 落账，不是静默按原模型算）。
+                                // 故先把回执模型**限定到本请求的 provider/account** 再查。**查不到即无价目**：
+                                // 用户口径 2026-10-17「谁家的模型找谁家的价」——不回退、不猜 provider、
+                                // 不拿别的东西的价冒充；依据落账 `priceBasis`/`priceRef` 供事后翻账。
                                 const priced = findPricedModel(fsPart.response?.modelId, model);
                                 const rates = ratesOfModel(priced.model, b.inputTotal);
                                 const cost = rates ? costBreakdown(rates, b) : null;
@@ -3553,8 +3554,8 @@ export class LocalAgentManager {
                                     ...(fsPart.performance ? { performance: fsPart.performance } : {}),
                                     rates: rates ? { ...rates, asOf: MODEL_COST_AS_OF } : null,
                                     cost,
-                                    // 计价依据（##372）：`response` 正常 / `request` 上游改写未命中退回 /
-                                    // `none` 无价目。**与 responseModel 同行**才能事后回答"这条 0 是怎么来的"
+                                    // 计价依据（##372）：`response` 命中回执 / `request` 回执缺失→按本请求模型 /
+                                    // `none` 无价目（不回退）。**与 responseModel 同行**才能事后回答"这条 — 是怎么来的"
                                     priceBasis: priced.basis,
                                     ...(priced.model ? { priceRef: priced.model.ref } : {}),
                                     contextParts: ctxParts,

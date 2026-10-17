@@ -9,7 +9,8 @@
 //   · 修法（限定到本请求的 provider/account）必须证明两件事：
 //       ① 多 provider 收录时**确实命中本请求那一家**（不是「随便挑一个」——同一 id 不同 provider
 //          是不同商品，价可能不同）；
-//       ② 查不到时**退回本请求模型且留痕**（不许静默按原模型算）。
+//       ② 查不到时**留痕为「无价目」**：用户口径（2026-10-17）「谁家的模型找谁家的价、不回退」——
+//          不拿本请求模型的价顶上，更不全局挑一家 provider 猜（两者都是「用别家的价冒充」）。
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
     costOf,
@@ -99,24 +100,50 @@ describe("findPricedModel：限定到**本请求的 provider**再查（修后的
     });
 });
 
-describe("回落与留痕（不许静默按原模型计价）", () => {
-    it("回执模型查不到 → 退按**本请求**模型，basis=request（账上看得见）", () => {
-        const p = findPricedModel("gpt-nope-9", `0@opencode-go/${AMBIGUOUS_ID}`);
-        expect(p.basis).toBe("request");
-        expect(p.model?.ref).toBe(`0@opencode-go/${AMBIGUOUS_ID}`);
-        expect(ratesOfModel(p.model, 1000)?.input).toBe(0.15);
-    });
-
-    it("回执缺省（上游没报模型）→ 同样按请求模型，basis=request", () => {
-        const p = findPricedModel(undefined, FIXTURE_DEFAULT_REF);
-        expect(p.basis).toBe("request");
-        expect(p.model?.ref).toBe(FIXTURE_DEFAULT_REF);
+describe("路由改写仍按**实际**模型计价（##211 §四.4.4 的意图保留）", () => {
+    it("回执改成**本家收录的另一个**模型 → 按它计价，basis=response", () => {
+        const p = findPricedModel("mimo-v2.6-flash", `0@opencode-go/${AMBIGUOUS_ID}`);
+        expect(p.basis).toBe("response");
+        expect(p.model?.id).toBe("mimo-v2.6-flash");
+        expect(ratesOfModel(p.model, 1000)?.input).toBe(0.14);
     });
 
     it("回执与请求同名（无改写）→ basis=response，金额与旧路径一致", () => {
         const p = findPricedModel(AMBIGUOUS_ID, `0@opencode-go/${AMBIGUOUS_ID}`);
         expect(p.basis).toBe("response");
         expect(ratesOfModel(p.model, 1000)?.input).toBe(costOf(`0@opencode-go/${AMBIGUOUS_ID}`, 1000)?.input);
+    });
+});
+
+// ── 用户口径 2026-10-17：「谁家的模型找谁家的价」「**不回退**，他们自己家没报价，就不算价格了」
+//    以下四例锁的就是「不回落」：查不到 ⇒ 无价目（basis=none、cost=null、UI 显示「—」），
+//    **不得**拿本请求模型的价顶上，也**不得**全局挑一家 provider 猜。 ──
+describe("无价目与留痕（不许静默按原模型计价；不许猜 provider）", () => {
+    it("回执报的模型**本家没收录**（改写未命中）⇒ 无价目：basis=none、rates null（**不得**退本请求价）", () => {
+        const p = findPricedModel("gpt-nope-9", `0@opencode-go/${AMBIGUOUS_ID}`);
+        expect(p.basis).toBe("none");
+        expect(p.model).toBeUndefined();
+        expect(ratesOfModel(p.model, 1000)).toBeNull();
+    });
+
+    it("回执缺省（上游**根本没报**模型）→ 按本请求模型，basis=request（同 provider，非跨家回退）", () => {
+        const p = findPricedModel(undefined, FIXTURE_DEFAULT_REF);
+        expect(p.basis).toBe("request");
+        expect(p.model?.ref).toBe(FIXTURE_DEFAULT_REF);
+        expect(p.model?.provider).toBe("opencode-go");
+    });
+
+    it("回执缺省且本请求模型不在目录 → basis=none（连请求价都没有）", () => {
+        expect(findPricedModel(undefined, "0@nope/whatever").basis).toBe("none");
+    });
+
+    it("请求 ref 不在目录且**无 provider 段**（裸 id / vendor-id）→ 不猜 provider：basis=none", () => {
+        // 本家查不到（`typo-model` 不在目录），回执给的 `mimo-v2.6-flash` 在目录里**唯一**（opencode-go）——
+        // 但请求侧无从归属 ⇒ 旧实现在这里会「全局 findModel 挑到那一家」并当成命中的价（= 猜 provider），
+        // 用户口径下必须收掉：宁可不计价，也不拿别家的价冒充。
+        const p = findPricedModel("mimo-v2.6-flash", "typo-model");
+        expect(p.basis).toBe("none");
+        expect(p.model).toBeUndefined();
     });
 
     it("请求模型本身不在目录 → basis=none，rates null（**不是 0**）", () => {

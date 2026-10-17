@@ -4,10 +4,12 @@
 // 用法（**只读**，不写任何数据根）：
 //   npx tsx scripts/probe-bare-id-cost.mts [--home ~/.diy] [--id deepseek-v4.1-flash] [--ref 0@opencode-go/deepseek-v4.1-flash]
 //
-// 判据（修前 / 修后的差别就在第 2 行）：
+// 判据（修前 / 修后的差别就在第 ①/② 行）：
 //   ① `costOf(<裸 id>)`            —— **修前 null**（裸 id 被 ≥2 家 provider 收录 → findModel 判歧义）
 //   ② `ratesOfModel(findPricedModel(<裸 id>, <本请求限定 ref>))` —— **修后非 null**（限定 provider 后命中）
 //     （① 是本任务的病灶调用点原先走的那条路；② 是修后的新路径。②仍为 null 说明真的无价目。）
+//   ④⑤ 锁「不回退」：改写到本家无报价的模型、或请求侧无从归属 provider ⇒ basis=none（**不许**猜）
+//     —— 这是用户 2026-10-17 口径（「谁家的模型找谁家的价」）。
 //
 // 为什么要用**当前 `~/.diy` 真配置**跑：歧义只在"同一 id 确实被两家 provider 收录"时出现，
 // 假数据造不出这个事实（真配置见 ~/.diy/model.yaml + models.dev 快照）。
@@ -50,6 +52,23 @@ const vp = findPricedModel(vendorShape, ref);
 const vr = ratesOfModel(vp.model, 1000);
 console.log(`\n③ vendor/id 形状 "${vendorShape}" → basis=${vp.basis} · model=${vp.model?.ref ?? "undefined"} · rates=${vr ? "非 null" : "null"}`);
 
-// ④ 结论行（给验收用）
-console.log(`\n结论：修前 costOf(裸 id) = ${bare ? "非 null" : "null"}；修后 ratesOfModel(findPricedModel(裸 id, 限定 ref)) = ${rates ? "非 null" : "null"}`);
-process.exit(bare === null && rates !== null ? 0 : 1);
+// ④ 用户口径（2026-10-17「谁家的模型找谁家的价、**不回退**」）：回执报了**本家没收录**的模型名
+//    （上游路由改写未命中）⇒ 无价目（basis=none / cost=null），**不得**拿本请求模型的价顶上。
+const own = priced.model?.provider;
+const foreign = getModelCatalog().find((m) => m.provider !== own && m.account === (priced.model?.account ?? m.account))?.id;
+const mp = foreign ? findPricedModel(foreign, ref) : undefined;
+console.log(
+    `\n④ 回执报别家模型 "${foreign ?? "(目录里找不出别家 id)"}"（本请求 ${ref}）→ basis=${mp?.basis ?? "n/a"} · rates=${mp ? (ratesOfModel(mp.model, 1000) ? "非 null" : "null") : "n/a"}   ← 必须 basis=none / null（不回退）`,
+);
+
+// ⑤ 请求侧连 provider 都不确定（裸/未知 ref）⇒ 不猜 provider：basis=none（旧实现的「全局 findModel」口子已收）
+const typo = findPricedModel(id, "typo-model-not-in-catalog");
+console.log(`⑤ 请求 ref 不在目录且无 provider 段（"typo-model-not-in-catalog"，回执 ${id}）→ basis=${typo.basis}   ← 必须 none（不猜 provider）`);
+
+// ⑥ 结论行（给验收用）
+const ok = bare === null && rates !== null && mp?.basis === "none" && typo.basis === "none";
+console.log(
+    `\n结论：修前 costOf(裸 id) = ${bare ? "非 null" : "null"}；修后 ratesOfModel(findPricedModel(裸 id, 限定 ref)) = ${rates ? "非 null" : "null"}` +
+        `；改写未命中 basis=${mp?.basis ?? "n/a"}；请求无从归属 basis=${typo.basis}`,
+);
+process.exit(ok ? 0 : 1);

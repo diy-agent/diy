@@ -188,11 +188,10 @@ export interface PricedModel {
     /** 用于查价的模型；undefined = 目录里查不到（调用方落 null，**不得当 0**） */
     model?: ResolvedModel;
     /**
-     * 计价依据：
+     * 计价依据（**语义见 PriceBasis（shared/usage.ts）**，2026-10-17 用户口径后收窄）：
      *   · `response` —— 命中**上游回执**的模型（正常；上游路由改写时按实际模型计价，##211 §四.4.4）
-     *   · `request`  —— 回执缺 / 回执模型查不到 → 退按**本请求**模型（**留痕**：与 `responseModel`
-     *                   对照即知「改写未命中、只能按原模型算」；绝不静默）
-     *   · `none`     —— 连本请求模型都不在目录里 → 无价目
+     *   · `request`  —— 回执**根本没报模型** → 按**本请求**模型（同 provider/account，非跨家回退）
+     *   · `none`     —— 其余（回执报的模型本家无报价 / 无从归属）→ **无价目**，不得回落
      */
     basis: PriceBasis;
 }
@@ -204,6 +203,10 @@ export interface PricedModel {
  * → `costOf` 静默 null → 金额被当 0 累加（`deepseek-v4.1-flash` 同时被 opencode-go 与 opencode 收录，
  * 于是 opencode-go 的会话金额恒为 0）。解法：**把回执模型限定到本请求的 provider/account 再查**
  * —— 同一 id 在不同 provider 下是**不同商品**，价也可能不同，故限定的是 provider 而不是「随便挑一个」。
+ *
+ * **谁家的模型找谁家的价**（用户口径 2026-10-17）：因此**没有跨家回退** —— 查不到就是查不到
+ * （`basis: "none"` → 调用方落 `cost: null`，UI 显示「—」），绝不拿另一个模型的价冒充、
+ * 也不做「全局挑一家 provider」的猜测。
  */
 export function findPricedModel(responded: string | null | undefined, requestRef: string): PricedModel {
     const req = findModel(requestRef);
@@ -220,15 +223,16 @@ export function findPricedModel(responded: string | null | undefined, requestRef
             if (m) return { model: m, basis: "response" };
         }
     }
-    // ② 无 provider 可限定（请求 ref 不在目录里）→ 退回目录的全局语义（仍有歧义就不猜）
-    if (!provider) {
-        for (const id of ids) {
-            const m = findModel(id);
-            if (m) return { model: m, basis: "response" };
-        }
-    }
-    // ③ 回执模型用不上 → 按本请求模型（**留痕**在 basis 上，见 PricedModel.basis）
-    if (req) return { model: req, basis: "request" };
+    // ② 回执**根本没报模型**（`response.modelId` 缺）→ 按本请求模型算。
+    //    这不是「回退到别家」：`req` 非空即证明请求 ref 就在目录里，价来自**同一 provider/account**，
+    //    只是回执没告诉我们它用了哪个（上游改写与否无从得知，故留痕 `basis:"request"` 供事后翻账）。
+    //    （实测 2026-10-17：`~/.diy` 43186 条 usage **全部**带 `responseModel`，此支目前不触发 ——
+    //     留着是防「某 provider 不回显 model」时把**已知**价目误判成未知。）
+    if (ids.length === 0 && req) return { model: req, basis: "request" };
+    // ③ 其余一律**无价目**（两处都不许猜，用户口径 2026-10-17）：
+    //    · 回执报了**另一个**模型（路由改写）而本家没收录它 —— 拿本请求模型的价顶上＝用别的东西的价冒充；
+    //    · 请求 ref 连 provider 段都没有（裸 id / vendor-id 且不在目录里）—— 无从归属，
+    //      全局 `findModel(id)` 等于「挑一家 provider 猜」（挑到的可能是别家），同禁。
     return { basis: "none" };
 }
 
