@@ -119,6 +119,19 @@ export const RoomEventSchema = z.object({
   error: z.string().optional(),
   /** 该回复来自哪个 task 会话（`reply` 事件带；审计用 —— 判据 3 的证据链） */
   sourceTask: z.string().optional(),
+  /**
+   * **这一轮的引用**（##166 §28.7 A1）：`reply` 事件带，指向成员会话里的那一轮。
+   *
+   * room **不新造进度数据源** —— 进度就是「成员会话的 `ops.jsonl` 按 `turnId` 切一刀」，
+   * 与任务对话看到的是同一条流、同一套渲染（§28.7 A：room 只需「对成员会话的引用 + 并列渲染」）。
+   * `memberUri` = 房间成员 id（`agent:dev`）；会话本体仍是 `sourceTask`（两者都带，读侧不必再查成员表）。
+   */
+  ref: z
+    .object({
+      memberUri: z.string().describe("成员 id（房间内，如 agent:dev）"),
+      turnId: z.string().describe("该成员会话里这一轮的 turnId（ops 流按它切片）"),
+    })
+    .optional(),
   /** 各收件人的投递状态（读侧投影 —— 落盘在 `deliveries.jsonl`，读时附上来） */
   deliveries: z.array(DeliveryStateSchema).optional(),
 });

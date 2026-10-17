@@ -13,7 +13,7 @@
  * 判据（`parseAddress` / `resolveRecipients` / `deliveryHint` / 头像 / 配色）与 main 侧**同一份实现**
  * （`shared/room.ts`）—— UI 的"将投递给谁"就是服务端真会投给谁，不存在两套 if。
  */
-import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { diyService } from "../lib/rpc";
 import { notificationStore } from "../store/notificationStore";
 import {
@@ -33,9 +33,25 @@ import {
     type RoomEvent,
     type RoomMember,
 } from "../../shared/room";
+// 进度消息（##166 §28.7 A）：**复用任务对话那套块渲染**，不为 room 另写一套 ——
+// `TurnView` + `ChatView` 就是任务对话页在用的同两个东西，这里只是把数据源换成"成员会话的那一轮"。
+import { ChatView, TurnView } from "./LocalChatPage";
+import type { BlockNode } from "../../main/services/local-blocks";
 
 function msgOf(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
+}
+
+/** 一条 reply 的进度快照（`room.turn` 的返回 + 取它的时刻） */
+interface TurnState {
+    /** 这一轮的块树（null = 成员会话里已找不到它） */
+    turn: BlockNode | null;
+    taskUri: string;
+    turnId: string;
+    /** 该成员此刻是否正有轮次在跑 */
+    live: boolean;
+    /** 取失败的原因（人话） */
+    error?: string;
 }
 
 /** 一行事件的时间（HH:MM:SS；解析不出就不显示，绝不用渲染时刻顶替） */
@@ -91,6 +107,17 @@ export function RoomsPage() {
     const [pendingPosts, setPendingPosts] = createSignal(0);
     const busy = () => pendingPosts() > 0;
     const [input, setInput] = createSignal("");
+    /**
+     * 每条 `reply` 的**进度**（##166 §28.7 A）—— key = 事件 id。
+     *
+     * 这里只存"取回来的那一轮"（块树）与它是否还在跑；真进度**不在这里**（在成员会话的 ops 流里），
+     * 本页只是它的一扇窗（room 不留进度数据 —— §28.7 A / §28.6 待决 74）。
+     */
+    const [turns, setTurns] = createSignal<Record<string, TurnState>>({});
+    /** 展开态（缺省展开：用户要的就是"看得见过程"）；显式收起过的记 false */
+    const [folded, setFolded] = createSignal<Record<string, boolean>>({});
+    /** 块的开合（TurnView 的 pin）：room 里点开合也照常能用（与任务对话同一套交互） */
+    const [pin, setPin] = createSignal<Record<string, boolean>>({});
     const [newId, setNewId] = createSignal("");
     const [newTitle, setNewTitle] = createSignal("");
     const [memberName_, setMemberName_] = createSignal("");
@@ -144,6 +171,30 @@ export function RoomsPage() {
             });
         } catch (e) {
             if (!opts.soft) setErr(`读房间失败：${msgOf(e)}`);
+        }
+    };
+
+    /**
+     * 取一条 reply 的进度（该成员会话的那一轮）。**不新造数据源** ——
+     * main 侧只是把 `ref = { memberUri, turnId }` 指向的那一轮从成员会话里切出来。
+     */
+    const loadTurn = async (eventId: string, opts: { soft?: boolean } = {}): Promise<void> => {
+        const id = roomId();
+        if (!id) return;
+        try {
+            const r = await diyService.diy.room.turn({ id, event: eventId });
+            setTurns((prev) => ({
+                ...prev,
+                [eventId]: {
+                    turn: r.turn as BlockNode | null,
+                    taskUri: r.taskUri,
+                    turnId: r.turnId,
+                    live: r.live,
+                },
+            }));
+        } catch (e) {
+            if (opts.soft) return; // 轮询里的失败不打断（下一轮还会再试）
+            setTurns((prev) => ({ ...prev, [eventId]: { turn: null, taskUri: "", turnId: "", live: false, error: msgOf(e) } }));
         }
     };
 
@@ -261,6 +312,8 @@ export function RoomsPage() {
             // 不做可见性判断：窗口在后台时"排队中 → 已投递"的变化照样要能看见（room.get 只是读文件）
             void loadRoom(id, { soft: true });
             void refreshRooms();
+            // 正在跑的那几轮：进度还在长，跟着刷（已完成的不再取 —— 它不会变了）
+            for (const [eid, st] of Object.entries(turns())) if (st.live) void loadTurn(eid, { soft: true });
         }, 2500);
         onCleanup(() => clearInterval(t));
     });
@@ -338,6 +391,13 @@ export function RoomsPage() {
                         {(e) => {
                             const mine = () => e.author === human()?.id;
                             const author = () => room()?.members.find((m) => m.id === e.author);
+                            // 进度：这条 reply 一出现就把它那一轮取回来（取不到就一直空着，下面如实说）
+                            const st = () => turns()[e.id];
+                            const isFolded = () => folded()[e.id] === true;
+                            createEffect(() => {
+                                if (e.kind !== "reply" || !e.ref || st()) return;
+                                void loadTurn(e.id);
+                            });
                             return (
                                 <div
                                     class={`flex ${mine() ? "justify-end" : "justify-start"}`}
@@ -405,6 +465,75 @@ export function RoomsPage() {
                                                 {e.deliveries?.find((d) => d.memberId === e.author)?.turnId
                                                     ? ` · 轮次 ${e.deliveries!.find((d) => d.memberId === e.author)!.turnId}`
                                                     : ""}
+                                            </div>
+                                        </Show>
+                                        {/* ── 过程进度（##166 §28.7 A）──────────────────────────────
+                                            展开的不是"room 自己攒的日志"，而是**那一轮本身**：
+                                            `ref = { memberUri, turnId }` → 成员会话的 ops 流切一刀 →
+                                            `TurnView`（任务对话页在用的同一个组件）画出来。
+                                            于是"room 里的进度"和"任务对话里的进度"是同一份数据、同一套渲染；
+                                            room 相对任务对话只多一件事：多条并列（见下方 @dev @review）。 */}
+                                        <Show when={e.kind === "reply" && e.ref}>
+                                            <div class="mt-1 rounded-lg border border-base-300 bg-base-100/60" data-room-progress={e.id}>
+                                                <button
+                                                    class="flex w-full items-center gap-1.5 px-2 py-1 text-left text-caption"
+                                                    onClick={() => setFolded((p) => ({ ...p, [e.id]: !isFolded() }))}
+                                                    data-room-progress-toggle={e.id}
+                                                >
+                                                    <span class="opacity-60">{isFolded() ? "▸" : "▾"}</span>
+                                                    <span>过程进度</span>
+                                                    <span class="opacity-50">{shortName(e.author)} · {st()?.turnId ?? e.ref!.turnId}</span>
+                                                    <Show when={st()?.live}>
+                                                        <span class="badge badge-xs badge-info" data-room-progress-live>
+                                                            直播中
+                                                        </span>
+                                                    </Show>
+                                                    <Show when={st() && !st()!.turn && !st()!.error}>
+                                                        <span class="opacity-50">（这一轮已不在会话里）</span>
+                                                    </Show>
+                                                </button>
+                                                <Show when={!isFolded()}>
+                                                    <div class="px-2 pb-2" data-room-progress-body={e.id}>
+                                                        <Show when={st()?.error}>
+                                                            <div class="text-caption text-error">{st()!.error}</div>
+                                                        </Show>
+                                                        <Show when={!st()}>
+                                                            <div class="text-caption opacity-60">正在取这一轮…</div>
+                                                        </Show>
+                                                        <Show when={st()?.turn}>
+                                                            <ChatView
+                                                                source={{
+                                                                    trees: () => {
+                                                                        const t = st()?.turn;
+                                                                        return t ? [t] : [];
+                                                                    },
+                                                                    live: () => st()?.live === true,
+                                                                }}
+                                                            >
+                                                                <TurnView
+                                                                    turnId={e.ref!.turnId}
+                                                                    pin={pin()}
+                                                                    level={2}
+                                                                    histOpen={true}
+                                                                    onCycle={() => undefined}
+                                                                    conclusionLines={3}
+                                                                    onResizeLines={() => undefined}
+                                                                    onToggle={(bid, force) =>
+                                                                        setPin((p) => ({ ...p, [bid]: force ?? !p[bid] }))
+                                                                    }
+                                                                    onFull={() => undefined}
+                                                                    liveTurnId={st()?.live ? e.ref!.turnId : null}
+                                                                    md={true}
+                                                                    usageHover={null}
+                                                                    onHoverUsage={() => undefined}
+                                                                    onHoverEndUsage={() => undefined}
+                                                                    usageDetail={null}
+                                                                    onDetailUsage={() => undefined}
+                                                                />
+                                                            </ChatView>
+                                                        </Show>
+                                                    </div>
+                                                </Show>
                                             </div>
                                         </Show>
                                     </div>

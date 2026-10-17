@@ -1321,6 +1321,28 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { postToRoom } = await import("./room-service");
     for await (const ev of postToRoom(input.id, input.text)) yield JSON.stringify(ev);
   });
+  /**
+   * 一条 reply 的进度（##166 §28.7 A）：**不新造数据源** ——
+   * 房间只存了引用（`ref = { memberUri, turnId }`），进度本身在成员会话的 ops 流里，
+   * 这里把它取回来交给渲染端（与任务对话同一个块树、同一个渲染器）。
+   */
+  binding.on(app.room.turn, async ({ input }) => {
+    const { readRoomView } = await import("../core/room");
+    const { getLocalAgent } = await import("./local-agent");
+    const { sessionRegistry } = await import("./session-registry");
+    const { events } = readRoomView(input.id, { limit: 0 });
+    const ev = events.find((e) => e.id === input.event);
+    if (!ev) throw new Error(`房间里没有这条事件：${input.event}（room get 看事件 id）`);
+    const ref = ev.ref;
+    if (!ref || !ev.sourceTask) throw new Error(`这条事件没有进度引用（不是被投递的 reply）：${input.event}`);
+    const turn = getLocalAgent().turnNode(ev.sourceTask, ref.turnId);
+    return {
+      turn,
+      taskUri: ev.sourceTask,
+      turnId: ref.turnId,
+      live: sessionRegistry.activeTurnList().some((t) => t.uri === ev.sourceTask),
+    };
+  });
 
   // ── instances（实例大盘；##366）──
   // 发现/聚合/唤起的实现在 services/instances.ts（纯规则在 core/instance-*），这里只做绑定。

@@ -1282,6 +1282,27 @@ export const apiDef = RpcSchema.router({
             },
             output: z.string(),
           }),
+          /**
+           * 一条 `reply` 的**进度**（##166 §28.7 A）—— room 不新造进度数据源：
+           * 它只是把「成员会话里的那一轮」取回来（`ref = { memberUri, turnId }`）。
+           * 渲染端拿到的是**块树**，与任务对话走同一个渲染器（`LocalChatPage` 的 `TurnView`）。
+           */
+          turn: RpcSchema.unary({
+            desc: `取一条 reply 事件对应那一轮的进度块树（成员会话的引用；room 自己不留进度数据）`,
+            input: {
+              id: z.string().cliArg({ desc: "房间 id" }),
+              event: z.string().cliArg({ desc: "reply 事件 id（room get 里给）" }),
+            },
+            output: z.object({
+              /** 那一轮的块树（找不到 = null，UI 如实显示"这一轮已不在会话里"） */
+              turn: z.any().nullable(),
+              /** 成员会话（task uri），供 UI 显示/跳转 */
+              taskUri: z.string(),
+              turnId: z.string(),
+              /** 该成员此刻是否正有轮次在跑（决定 UI 是"直播中"还是"已完成"） */
+              live: z.boolean(),
+            }),
+          }),
         },
       }),
 

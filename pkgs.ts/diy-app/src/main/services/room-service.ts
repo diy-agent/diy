@@ -305,6 +305,8 @@ function deliverOne(input: DeliverInput): Promise<void> {
             delivered: !r.error,
             ...(r.error ? { error: r.error } : {}),
             sourceTask: taskUri,
+            // 这一轮的引用（##166 §28.7 A1）：UI 据此去成员会话切出该轮 → 复用任务对话的块渲染
+            ...(r.turnId ? { ref: { memberUri: member.id, turnId: r.turnId } } : {}),
         });
         mark(r.error ? "failed" : "ok", {
             replyId,

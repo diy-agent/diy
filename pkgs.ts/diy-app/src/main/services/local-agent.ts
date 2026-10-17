@@ -38,6 +38,7 @@ import {
     BlockStore,
     blocksToMessages,
     compactOps,
+    toTree,
     danglingStopPatches,
     interruptedToolPatches,
     projectAll,
@@ -45,6 +46,7 @@ import {
     costOfWith,
     selectHistoryByBudget,
     selectForDelivery,
+    type BlockNode,
     type DeliveryOpts,
     type Op,
     type JSONVal,
@@ -1771,6 +1773,39 @@ export class LocalAgentManager {
      */
     history(taskUri: string): Op[] {
         return this.foldedOps(taskUri, opsFile(taskUri), 0);
+    }
+
+    /**
+     * **一轮的块树**（##166 §28.7 A：room 要的「进度消息」= 对成员会话的**引用**，不新造数据源）。
+     *
+     * room 侧只存 `ref = { memberUri, turnId }`（`reply` 事件上）；真进度在这里 ——
+     * 与任务对话**同一条 ops 流、同一次 fold**，渲染端拿回去走**同一个块渲染器**
+     * （`LocalChatPage` 的 `TurnView`）。于是"room 里的进度"与"任务对话里的进度"字面同源。
+     *
+     * 成本：走 `history()` 那条折叠缓存 —— 同一会话第二次取只读新增尾巴（不是重读整份日志）。
+     * 切片只 apply 本轮的 op（compactOps 的输出每块都显式带 parent，轮内自洽）。
+     *
+     * 找不到该轮（会话被清空 / compact 掉 / turnId 写错）⇒ `null`，UI 如实说"这一轮已不在会话里"。
+     */
+    turnNode(taskUri: string, turnId: string): BlockNode | null {
+        const ops = this.history(taskUri);
+        let from = -1;
+        for (let i = 0; i < ops.length; i++) {
+            const op = ops[i]!;
+            if (op.op === "start" && op.kind === "turn" && op.id === turnId) {
+                from = i;
+                break;
+            }
+        }
+        if (from < 0) return null;
+        const store = new BlockStore();
+        for (let i = from; i < ops.length; i++) {
+            const op = ops[i]!;
+            // 下一轮的 start 即本轮的界（compactOps 按 children 递归输出，轮之间不会交错）
+            if (i > from && op.op === "start" && op.kind === "turn") break;
+            store.apply(op);
+        }
+        return toTree(store, turnId);
     }
 
     /**
