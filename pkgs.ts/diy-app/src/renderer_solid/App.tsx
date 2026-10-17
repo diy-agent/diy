@@ -7,6 +7,7 @@ import { LabPage } from "./components/LabPage";
 import { LlmPage } from "./components/LlmPage";
 import { TrafficPage } from "./components/TrafficPage";
 import { SessionOverviewPage } from "./components/SessionOverviewPage";
+import { InstancesPage } from "./components/InstancesPage";
 import { SessionChip, SessionDot } from "./components/SessionChip";
 import { TaskAgentStateBadge, TaskAgentStateDot } from "./components/TaskAgentState";
 import { ModelConfigPage } from "./components/ModelConfigPage";
@@ -83,7 +84,7 @@ function topFindSurface(): HTMLElement | undefined {
  * 「任务执行页」不在顶级导航里 —— 它是**动态页面**：每打开一个任务就多一个，
  * 挂在导航「任务」之下（等同浏览器/编辑器开 tab）。故用 route 而不是扁平 page id。
  */
-type Section = "task" | "llm" | "traffic" | "sessions" | "settings";
+type Section = "task" | "llm" | "traffic" | "sessions" | "instances" | "settings";
 
 /**
  * 路由 = 顶级 section，或一个**已打开的 tab**（key 形如 `task-run:<uri>` / `lab:<uri>`）。
@@ -95,18 +96,22 @@ type Route = { kind: "section"; section: Section } | { kind: "tab"; key: string 
 type DragEndEvent = Parameters<NonNullable<DragDropProviderProps["onDragEnd"]>>[0];
 
 /** 顶级导航（一侧栏项 = 一类事情）。任务执行页不出现在这里，它是任务下的动态页面 */
-const NAV_ITEMS: Array<{ id: "task" | "llm" | "traffic" | "sessions" | "settings"; label: string; icon: string }> = [
+const NAV_ITEMS: Array<{ id: Section; label: string; icon: string }> = [
     { id: "task", label: "任务管理", icon: "📋" },
     { id: "llm", label: "LLM", icon: "🧠" },
     { id: "traffic", label: "流量", icon: "📡" },
     // 「会话」= 全局消费视图（##308）：不点进任何任务页，也能看到谁在跑、跑到第几步。
     // 放在导航里（而不是藏进某个任务页）正是本任务的验收语言 —— 它是**跨任务**的视图。
     { id: "sessions", label: "会话", icon: "🛰" },
+    // 「实例」= 本机 diy 实例大盘（##367）：跨**数据根**的视图，一眼看清现在跑着几个 diy、各自的根/变体/
+    // 在干什么，并能把某个窗口全屏请到前台。⚠️ icon 刻意与「任务」（📋）/「会话」（🛰）**明显不同**、
+    // 且**不挂任何任务状态**（##350 的教训：长得像任务的子页面会让人以为那是任务列表）。
+    { id: "instances", label: "实例", icon: "🖥" },
     { id: "settings", label: "设置", icon: "⚙️" },
 ];
 
 /** `ui page navigate` 的合法取值（非法值一律忽略：宁可不跳，也不能把主区打成白屏） */
-const VALID_PAGES = new Set(["task", "task-run", "lab", "llm", "traffic", "sessions", "settings"]);
+const VALID_PAGES = new Set(["task", "task-run", "lab", "llm", "traffic", "sessions", "instances", "settings"]);
 
 /**
  * 窄窗断点。**必须与 index.css 的 `@media (width < 1024px)`、daisyUI 的 `lg:` 分支
@@ -875,6 +880,9 @@ export default function App() {
                     </Show>
                     <Show when={route().kind === "section" && (route() as { section: Section }).section === "sessions"}>
                         <SessionOverviewPage />
+                    </Show>
+                    <Show when={route().kind === "section" && (route() as { section: Section }).section === "instances"}>
+                        <InstancesPage />
                     </Show>
                     <Show when={route().kind === "section" && (route() as { section: Section }).section === "settings"}>
                         <div class="flex flex-col h-full">

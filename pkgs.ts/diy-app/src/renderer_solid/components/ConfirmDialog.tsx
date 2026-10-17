@@ -50,11 +50,14 @@ export function ConfirmDialog(props: {
           <button
             class="btn btn-xs"
             ref={(el) => (cancelRef = el)}
+            data-confirm-cancel
             onClick={props.onCancel}
           >
             取消
           </button>
-          <button class="btn btn-error btn-xs" onClick={props.onConfirm}>
+          {/* data-confirm-ok：自动化的稳定落点（按钮文案随调用方变，如「删除」/「全屏并前置」——
+              按文案找按钮的测试会在文案改动时静默失效） */}
+          <button class="btn btn-error btn-xs" data-confirm-ok onClick={props.onConfirm}>
             {props.confirmLabel}
           </button>
         </div>
