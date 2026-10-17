@@ -33,6 +33,10 @@ process.env["DIY_HOME"] = testHome;
 process.env["DIY_PORT"] = "0";
 // 声明测试环境：runtime.ts 据此派生 dev/test 专属能力（窗口定位副屏等），生产能力一律关闭
 process.env["DIY_ENV"] = "test";
+// 实例注册表目录也隔离（##366）：缺省落 `<真实家目录>/.diy-instances`（跨数据根共享，生产正是靠它），
+// 测试里必须分开 —— 否则测试实例把条目写进真实家目录，而且各自 HOME 不同的实例互相看不见
+// （本任务的意图测试要的正是「同一测试里两个实例互相看得见」）。
+process.env["DIY_INSTANCE_REGISTRY"] = join(testHome, "instances-registry");
 // 变体根：测试实例独占 build/test/**（产物由 `sha.sh test-intent` 的 `DIY_VARIANT=test build` 出）。
 // 在这里兜底，直接跑 `npx vitest run tests/cli.intent` 也能命中（不必依赖外层 export）。
 process.env["DIY_VARIANT"] ??= "test";

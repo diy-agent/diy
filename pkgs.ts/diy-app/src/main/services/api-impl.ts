@@ -38,6 +38,8 @@ import * as flowThread from "../core/flow-thread";
 import { flowPrompt } from "./flow-prompt";
 import { AsyncQueue } from "./async-queue";
 import { modelNoticeHub } from "./model-notice";
+import { collectInstances, focusInstance, renderInstanceList, selfReport } from "./instances";
+import { revealSelf, windowState } from "./window-ops";
 
 /**
  * 实际 RPC 监听端口，由入口在绑定完成后回填。
@@ -1252,6 +1254,23 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const removed = removeSource(input.name);
     if (!removed) return { status: "error", msg: `未找到 source: ${input.name}` };
     return { status: "ok", data: { removed } };
+  });
+
+  // ── instances（实例大盘；##366）──
+  // 发现/聚合/唤起的实现在 services/instances.ts（纯规则在 core/instance-*），这里只做绑定。
+  // `ls` 与 `list` 是**同一份数据两种出口**：前者给人看（表格文本），后者给 UI/程序（结构化行）。
+  binding.on(app.instances.ls, async () => renderInstanceList());
+  binding.on(app.instances.list, async () => ({ rows: await collectInstances() }));
+  binding.on(app.instances.self, async () =>
+    selfReport({ window: windowState(), branch: currentGitBranch() ?? "", repoDisplay: repoDisplayOf() }),
+  );
+  binding.on(app.instances.reveal, async () => revealSelf());
+  binding.on(app.instances.focus, async ({ input }) => {
+    if (input.pid === undefined && input.port === undefined) {
+      throw new Error("必须给 --pid 或 --port（目标实例；先跑 diy instances ls 看当前有哪些）");
+    }
+    const r = await focusInstance({ pid: input.pid, port: input.port });
+    return { pid: r.pid, port: r.port, via: r.via, reason: r.reason };
   });
 
   // ── tool ──
