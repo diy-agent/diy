@@ -29,11 +29,13 @@ import * as yaml from "js-yaml";
 import {
     deleteKeepConfig,
     loadAutoCompact,
+    loadAutoCompactDetailed,
     parseKeepText,
     readAutoCompactText,
     saveKeepConfig,
 } from "../core/auto-compact-config";
 import { budgetBytesOf, fmtBytes } from "../../shared/context/compaction";
+import type { AutoCompactIssue } from "../../shared/context/auto-compact";
 import { DEFAULT_KEEP, clipLabel, keepStageLabel, type KeepIssue, type KeepStage } from "../../shared/context/compact-keep";
 import { checkKeep, formatCheckFailure, type PlanCheckReport } from "./compact-plan-service";
 
@@ -93,12 +95,20 @@ export interface PlanView {
     raw: string;
     /** agent 写闸是否开着（get/check 恒可用，此值只为让模型/用户知道 set 会不会被拒） */
     writeAllowed: boolean;
+    /**
+     * 读配置时的**出声条目**（##370）：空数组 = 干净读入；非空 = 有必填键缺失 / 类型错 / 值被归一，
+     * 每条说明「哪一层缺什么 + 已回落到什么」。
+     *
+     * 为什么在这里：`raw` 永远是**原文**、`source` 可能已是回落态 —— 没有这一栏，用户看到
+     * 「原文好好在那儿」却不知道**为什么**生效的不是它（旧行为：原因只写进应用日志）。
+     */
+    warnings: AutoCompactIssue[];
     scope: typeof PLAN_SCOPE;
     note: string;
 }
 
 export function planGet(home: string): PlanView {
-    const cfg = loadAutoCompact(home);
+    const { config: cfg, issues: warnings } = loadAutoCompactDetailed(home);
     const source = planSourceOf(cfg);
     return {
         source,
@@ -106,6 +116,7 @@ export function planGet(home: string): PlanView {
         budgetBytes: budgetBytesOf(cfg.policy),
         raw: readAutoCompactText(home),
         writeAllowed: cfg.history?.allowAgentWrite === true,
+        warnings,
         scope: PLAN_SCOPE,
         note: PLAN_SCOPE_NOTE,
     };
@@ -462,9 +473,22 @@ export function renderCheckView(r: PlanCheckView): string {
 export function renderPlanView(v: PlanView): string {
     return (
         `plan（来源：${v.source === "config" ? "配置" : "缺省回退"}）· 历史预算 ${fmtBytes(v.budgetBytes)}\n` +
+        renderWarnings(v.warnings) +
         `${renderKeep(v.keep)}\n` +
         `agent 写闸：${v.writeAllowed ? "已开启（history.allowAgentWrite=true）" : "关闭（history.allowAgentWrite=false ⇒ set/restore 会被拒）"}\n` +
         `scope: ${v.scope} —— ${v.note}。`
+    );
+}
+
+/**
+ * 出声条目 → 人读文本（**空则空串**，调用方直接拼）。CLI / 工具输出 / UI 同一份文案，不许两处各写。
+ * 没有这一段，用户只看到「来源：缺省回退」而不知道为什么（##370 的病根）。
+ */
+export function renderWarnings(warnings: readonly AutoCompactIssue[]): string {
+    if (warnings.length === 0) return "";
+    return (
+        `⚠ 读配置有 ${warnings.length} 条出声（已逐键回落缺省，配置里写对的部分仍在用）：\n` +
+        warnings.map((w) => `  · ${w.message}\n`).join("")
     );
 }
 

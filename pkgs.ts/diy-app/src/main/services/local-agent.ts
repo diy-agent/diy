@@ -92,8 +92,9 @@ import {
     TRIGGER_TEXT,
     type AutoCompactConfig,
     type AutoCompactFacts,
+    type AutoCompactIssue,
 } from "../../shared/context/auto-compact";
-import { autoCompactFile, loadAutoCompact, readAutoCompactText } from "../core/auto-compact-config";
+import { autoCompactFile, loadAutoCompact, loadAutoCompactDetailed, readAutoCompactText } from "../core/auto-compact-config";
 import { cacheTtlMsOf } from "../../shared/models";
 import {
     effectiveTtl,
@@ -1674,8 +1675,10 @@ export class LocalAgentManager {
         reasons: string[];
         /** 配置真源 `auto-compact.yaml` 的**原始全文**（含注释）—— 供 UI「原始配置」只读视图 */
         raw: { path: string; text: string };
+        /** 读配置时的**出声条目**（##370）：非空 = 有键缺失/非法（已逐键回落缺省）。UI 据此说「为什么」 */
+        warnings: AutoCompactIssue[];
     } {
-        const config = loadAutoCompact(diyHome());
+        const { config, issues: warnings } = loadAutoCompactDetailed(diyHome());
         // 系统上下文：与上次真发那份比（口径与 steps.jsonl 的 systemText 完全一致）
         const home = diyHome();
         const globals = assembleGlobals(home, projectFromUri(taskUri), { taskUri }) as unknown as Record<string, unknown>;
@@ -1700,7 +1703,7 @@ export class LocalAgentManager {
         };
         const triggers = detectAutoCompactTriggers(facts, config);
         const raw = { path: autoCompactFile(home), text: readAutoCompactText(home) };
-        return { config, facts, triggers, reasons: triggers.map((t) => TRIGGER_TEXT[t]), raw };
+        return { config, facts, triggers, reasons: triggers.map((t) => TRIGGER_TEXT[t]), raw, warnings };
     }
 
     /**

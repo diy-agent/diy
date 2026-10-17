@@ -5,11 +5,15 @@
 //   ① 判据全是**确定事实**（系统上下文变 / 缓存过期 / 窗口超限），不含任何"划不划算"的预测
 //      （那正是 230#25 放弃的评估；两者不冲突，别混为一谈）；
 //   ② 默认 `notify` —— **不静默改用户的会话**（静默丢历史与 rule.no-silent-catch 同族）；
-//   ③ 触发按**紧急度排序**（撞墙最急）；返回数组以便账本如实记下全部理由。
+//   ③ 触发按**紧急度排序**（撞墙最急）；返回数组以便账本如实记下全部理由；
+//   ④ 【##370】写漏必填键**不再整份静默作废** —— 逐键回落缺省 + **出声**（`loadAutoCompactDetailed`
+//      的 `issues`，供 plan get / UI 展示）。理由：这份 yaml 是手写/LLM 写的**全局配置**，
+//      "静默回退 + 只见结果不见因"与 ##338 同族。
 
 import { describe, it, expect, afterAll } from "vitest";
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import * as yaml from "js-yaml";
 import {
     DEFAULT_AUTO_COMPACT,
     DEFAULT_WINDOW_OVER_TOKENS,
@@ -17,12 +21,24 @@ import {
     detectAutoCompactTriggers,
     normalizeAutoCompact,
     TRIGGER_TEXT,
+    type AutoCompactConfig,
     type AutoCompactFacts,
 } from "../../src/shared/context/auto-compact";
 import { effectiveTtl, ttlBoundsFrom } from "../../src/shared/context/cache-ttl";
-import { loadAutoCompact, saveAutoCompact, autoCompactFile } from "../../src/main/core/auto-compact-config";
+import {
+    loadAutoCompact,
+    loadAutoCompactDetailed,
+    saveAutoCompact,
+    autoCompactFile,
+} from "../../src/main/core/auto-compact-config";
 import { diyHome } from "../../src/main/core/state";
-import { normalizePolicy } from "../../src/shared/context/compaction";
+import {
+    DEFAULT_BUDGET_BYTES,
+    DEFAULT_HEADTAIL,
+    budgetBytesOf,
+    normalizePolicy,
+    toolResultOf,
+} from "../../src/shared/context/compaction";
 
 const MIN = 60_000;
 /** 已知 TTL：(30min, 45min] —— 30 分钟内一定活着，超过 45 分钟一定过期 */
@@ -140,6 +156,171 @@ describe("配置文件层：真源落盘（不是 localStorage）", () => {
     it("坏文件 → 默认 + 出声（不崩、不用坏数据）", () => {
         writeFileSync(fp(), "mode: [不是对象\n", "utf-8");
         expect(loadAutoCompact(diyHome()).mode).toBe("notify");
+    });
+});
+
+// ─── ##370：写漏必填键 ⇒ 逐键回落缺省 + **出声**（不再整份静默作废）────────
+//
+// 病：`auto-compact.yaml` 漏**任一**必填键 ⇒ `safeParse` 失败 ⇒ `return DEFAULT_AUTO_COMPACT`（整份），
+// 而 `plan get` 的 `raw` 仍是原文、`source` 已是 `default` —— **看得见原文、看不见因**（原因只在应用日志一行）；
+// 用户精心写的 `history.keep[]` 一并「不见了」，二阶效应是 `allowAgentWrite` 静默变 false。
+// 修法：严格 schema 只当**探测器**（它才说得出缺了哪个必填键），值走 `normalizeAutoCompact`
+// （本就是为缺字段/越界写的宽松归一，旧代码把它挡在严格校验之后 ⇒ 缺键场景**永远跑不到** = 死代码），
+// 归一改过的地方进 `issues` 出声。
+describe("##370 缺必填键：逐键回落缺省 + 出声", () => {
+    const fp = () => autoCompactFile(diyHome());
+    afterAll(() => rmSync(fp(), { force: true }));
+
+    /** 一份**全合法**的配置（基线）：漏谁都不能牵连别人 —— 这正是本任务要钉的语义 */
+    const base = (): Record<string, unknown> => ({
+        mode: "auto",
+        triggers: { systemContextChanged: false, cacheExpired: true, contextWindowOver: 12345 },
+        policy: {
+            mode: "budget",
+            modeData: {
+                budgetBytes: 12345,
+                toolResult: { render: "headtail", renderData: { head: 1, tail: 2, maxLineChars: 111, maxKeepBytes: 1000 } },
+            },
+            summary: true,
+        },
+        history: { keep: [{ type: "recent", data: { n: 3 } }], allowAgentWrite: true },
+    });
+    /** 删掉点号路径上的那个键 —— 造「漏一个必填键」的现场 */
+    const without = (path: string): Record<string, unknown> => {
+        const o = base();
+        const parts = path.split(".");
+        let cur: Record<string, unknown> = o;
+        for (const k of parts.slice(0, -1)) cur = cur[k] as Record<string, unknown>;
+        delete cur[parts.at(-1)!];
+        return o;
+    };
+    const read = (doc: unknown) => {
+        writeFileSync(fp(), yaml.dump(doc), "utf-8");
+        return loadAutoCompactDetailed(diyHome());
+    };
+
+    /** 逐键一例（body 的必填键清单）：漏掉它 ⇒ 它回落缺省，**其余全部保留** + 出声报出它 */
+    const cases: Array<{ path: string; check: (c: AutoCompactConfig) => void }> = [
+        // policy 支
+        {
+            path: "policy.summary",
+            check: (c) => {
+                expect(c.policy.summary).toBe(false);
+                expect(budgetBytesOf(c.policy)).toBe(12345); // 用户写的预算没被牵连
+            },
+        },
+        {
+            path: "policy.modeData.budgetBytes",
+            check: (c) => {
+                expect(budgetBytesOf(c.policy)).toBe(DEFAULT_BUDGET_BYTES);
+                expect(c.policy.summary).toBe(true);
+            },
+        },
+        {
+            path: "policy.modeData.toolResult",
+            check: (c) => {
+                expect(toolResultOf(c.policy)).toEqual(DEFAULT_AUTO_COMPACT.policy.modeData.toolResult);
+                expect(budgetBytesOf(c.policy)).toBe(12345);
+            },
+        },
+        {
+            path: "policy.modeData.toolResult.renderData.maxLineChars",
+            check: (c) => {
+                // 只缺一个私有参数 ⇒ 只有它回落（head/tail 是用户写的 1/2），不是整包换掉
+                expect(toolResultOf(c.policy)).toEqual({
+                    render: "headtail",
+                    renderData: { head: 1, tail: 2, maxLineChars: DEFAULT_HEADTAIL.maxLineChars, maxKeepBytes: 1000 },
+                });
+            },
+        },
+        {
+            path: "policy.mode",
+            check: (c) => {
+                expect(c.policy.mode).toBe("budget");
+                expect(budgetBytesOf(c.policy)).toBe(12345);
+            },
+        },
+        { path: "policy", check: (c) => expect(c.policy).toEqual(DEFAULT_AUTO_COMPACT.policy) },
+        // triggers 支
+        {
+            path: "triggers.systemContextChanged",
+            check: (c) => {
+                expect(c.triggers.systemContextChanged).toBe(true);
+                expect(c.triggers.contextWindowOver).toBe(12345);
+            },
+        },
+        { path: "triggers.cacheExpired", check: (c) => expect(c.triggers.cacheExpired).toBe(true) },
+        {
+            path: "triggers.contextWindowOver",
+            check: (c) => expect(c.triggers.contextWindowOver).toBe(DEFAULT_WINDOW_OVER_TOKENS),
+        },
+        // 顶层
+        {
+            path: "mode",
+            check: (c) => {
+                expect(c.mode).toBe("notify");
+                expect(budgetBytesOf(c.policy)).toBe(12345);
+            },
+        },
+    ];
+
+    for (const cs of cases) {
+        it(`漏 \`${cs.path}\` ⇒ 该键回落缺省 + 出声，其余原样`, () => {
+            rmSync(fp(), { force: true });
+            const { config, issues } = read(without(cs.path));
+            // 出声：报出**哪一层**，且必须说清「回落成什么」
+            const hit = issues.find((i) => i.path === cs.path);
+            expect(hit, `issues=${JSON.stringify(issues)}`).toBeTruthy();
+            expect(hit!.message).toContain("已回落");
+            // 该键回落缺省
+            cs.check(config);
+            // 🔑 其余全部保留（旧行为：整份作废 —— 这两条正是用户「plan 不见了」的现场）
+            expect(config.history?.keep?.map((s) => s.type)).toEqual(["recent"]);
+            expect(config.history?.allowAgentWrite).toBe(true); // 二阶效应：闸不再被一个笔误静默关掉
+        });
+    }
+
+    it("合法配置 / 文件不存在 ⇒ **无出声**（出声只报真问题，不制造噪音）", () => {
+        rmSync(fp(), { force: true });
+        expect(loadAutoCompactDetailed(diyHome()).issues).toEqual([]); // 不存在 = 正常态
+        const { config, issues } = read(base());
+        expect(issues).toEqual([]);
+        expect(config.mode).toBe("auto");
+        expect(budgetBytesOf(config.policy)).toBe(12345);
+        expect(config.history?.keep?.map((s) => s.type)).toEqual(["recent"]);
+    });
+
+    it("YAML 语法坏 ⇒ 整份缺省 + 出声（这条口径**保留**：不崩、不用坏数据）", () => {
+        rmSync(fp(), { force: true });
+        writeFileSync(fp(), "mode: [不是对象\n", "utf-8");
+        const { config, issues } = loadAutoCompactDetailed(diyHome());
+        expect(config).toEqual(DEFAULT_AUTO_COMPACT);
+        expect(issues).toHaveLength(1);
+        expect(issues[0]!.message).toContain("YAML 解析失败");
+        expect(loadAutoCompact(diyHome())).toEqual(DEFAULT_AUTO_COMPACT);
+    });
+
+    it("**值**被归一也要出声（旧比例单位）—— 归一不再静默", () => {
+        rmSync(fp(), { force: true });
+        const doc = base();
+        (doc.triggers as Record<string, unknown>).contextWindowOver = 0.8;
+        const { config, issues } = read(doc);
+        expect(config.triggers.contextWindowOver).toBe(DEFAULT_WINDOW_OVER_TOKENS);
+        expect(issues.map((i) => i.path)).toContain("triggers.contextWindowOver");
+        // mode/预算照用（schema 层没失败，只有归一改了一处）
+        expect(config.mode).toBe("auto");
+        expect(budgetBytesOf(config.policy)).toBe(12345);
+    });
+
+    it("`history.keep` 坏 ⇒ **只丢 history**（口径保留）且同样出声", () => {
+        rmSync(fp(), { force: true });
+        const doc = base();
+        doc.history = { keep: [{ type: "nope" }] };
+        const { config, issues } = read(doc);
+        expect(config.history).toBeUndefined(); // 回落缺省管道
+        expect(config.mode).toBe("auto"); // 整份配置**没**被丢掉
+        expect(budgetBytesOf(config.policy)).toBe(12345);
+        expect(issues.map((i) => i.path)).toContain("history.keep");
     });
 });
 

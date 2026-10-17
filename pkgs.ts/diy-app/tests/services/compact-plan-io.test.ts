@@ -11,7 +11,7 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import * as yaml from "js-yaml";
 import { diyHome } from "../../src/main/core/state";
@@ -29,6 +29,7 @@ import {
     planReset,
     planRestore,
     planSet,
+    renderPlanView,
 } from "../../src/main/services/compact-plan-io";
 
 const HOME = join(diyHome(), "plan-io-home");
@@ -140,6 +141,39 @@ describe("plan 的手与闸（##362 M3a）", () => {
         });
         expect(r.ok).toBe(false);
         expect(r.issues.some((i) => i.code === "keep.mustOverCap")).toBe(true);
+    });
+});
+
+// ─── ##370：读侧**出声** —— 缺键不再整份作废，且「为什么」冒泡到 plan get ─────
+// 病：漏一个必填键 ⇒ `safeParse` 失败 ⇒ 整份回 DEFAULT（keep 一起没），而 `raw` 仍是原文
+// ⇒ 用户「plan 不见了」却查不到原因（只在应用日志一行）。这条钉「出声面」。
+describe("plan get 的出声（##370）", () => {
+    it("缺一个必填键 ⇒ keep 仍在（不再整份作废）+ warnings 说清缺哪一层、回落成什么", () => {
+        // 手写一份**只漏 `policy.summary`** 的配置（用户/LLM 手写 yaml 的典型漏法）
+        const doc = {
+            ...DEFAULT_AUTO_COMPACT,
+            history: { keep: [{ type: "recent", data: { n: 3 } }], allowAgentWrite: true },
+        };
+        const text = yaml.dump(doc, { indent: 2, noRefs: true }).replace(/^\s*summary:.*\n/m, "");
+        expect(text).not.toMatch(/^\s*summary:/m); // 确实漏了那个键
+        writeFileSync(autoCompactFile(HOME), text, "utf-8");
+
+        const v = planGet(HOME);
+        // 🔑 核心：旧行为是整份回默认（source=default、keep 丢、闸静默变 false）
+        expect(v.source).toBe("config");
+        expect(v.keep.map((s) => s.type)).toEqual(["recent"]);
+        expect(v.writeAllowed).toBe(true);
+        // 出声：哪一层 + 回落成什么
+        const w = v.warnings.find((x) => x.path === "policy.summary");
+        expect(w, JSON.stringify(v.warnings)).toBeTruthy();
+        expect(w!.message).toContain("已回落 false");
+        // 原文照旧可读（不是"没数据"）
+        expect(v.raw).toContain("keep:");
+        // 人读文本（工具输出 / CLI 共用）也要带出声
+        expect(renderPlanView(v)).toContain("出声");
+        // 干净读入时**不出声**（不留噪音）
+        saveAutoCompact(HOME, { ...DEFAULT_AUTO_COMPACT, history: { keep: [{ type: "recent", data: { n: 3 } }] } });
+        expect(planGet(HOME).warnings).toEqual([]);
     });
 });
 
