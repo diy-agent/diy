@@ -25,6 +25,7 @@ import { TrafficRecordSchema } from "../../shared/traffic-record";
 import { ContextDiffSchema, CtxLogSchema, StatsSchema, StepsSchema } from "../../shared/context/schema";
 import { ContextLabSchema, ContextPlaceCandidateSchema } from "../../shared/context/schema";
 // agent 人物契约（纯 zod，renderer 同源）——模型/参数/行为指令的配置实体
+import { FALLBACK_MODEL } from "../../shared/model-default";
 import { PersonaSchema } from "../../shared/persona";
 // 价格形状（camelCase 运行时口径）：与 UI/CLI 同一份 schema
 import { ModelCostSchema } from "../../shared/usage";
@@ -1531,10 +1532,10 @@ export const apiDef = RpcSchema.router({
       }),
 
       seed: RpcSchema.group({
-        desc: `初始数据种入（preview/lab 空数据根；幂等，已存在不动）`,
+        desc: `初始数据种入（preview/lab 空数据根；幂等，已存在不动）—— 只种**示例/测试数据**，真配置由 ./sha.sh sync 同步`,
         children: {
           run: RpcSchema.unary({
-            desc: `种入最小可用数据：opencode-go 模型配置 + 缺省人物（mimo-v2.6-flash）+ 示例项目与任务`,
+            desc: `种入最小可用数据：opencode-go 模型配置（$VAR 占位）+ 缺省人物（缺省模型：free 优先 → 退 ${FALLBACK_MODEL}）+ 示例项目与任务`,
             input: {},
             output: SeedReportSchema,
           }),
