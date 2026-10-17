@@ -1333,8 +1333,9 @@ async function autoCompactStatus(taskUri: string) {
  * 的 `config.history`；UI 写前用 shared 的 `validateKeepStages` **本地校验**（同一判据，不打空 RPC）。
  * 命令行那三条（`compact plan get|set|check`）是给 CLI/脚本用的，renderer 不绕那一圈。
  */
-async function autoCompactSetConfig(patch: Record<string, unknown>) {
-    return diyService.diy.agent.local.autoCompactSetConfig({ patch });
+async function autoCompactSetConfig(patch: Record<string, unknown>, taskUri?: string) {
+    // `taskUri` 只用于版本链记账（写 `history.keep[]` 时记下是谁改的），不影响配置本身
+    return diyService.diy.agent.local.autoCompactSetConfig({ patch, taskUri });
 }
 
 /**
@@ -1345,6 +1346,21 @@ async function autoCompactSetConfig(patch: Record<string, unknown>) {
  */
 async function compactPlanReset(taskUri: string) {
     return diyService.diy.agent.local.compact.plan.reset({ taskUri });
+}
+
+/** plan 版本链（##378）：只读 —— 当前版本 id + 版本列表（brief 够看，不必打开全文） */
+async function compactPlanVersions(taskUri: string) {
+    return diyService.diy.agent.local.compact.plan.versions({ taskUri });
+}
+
+/** 单版 plan 全文（+ 与上一版对比）；只读 */
+async function compactPlanVersion(taskUri: string, version: string) {
+    return diyService.diy.agent.local.compact.plan.version({ taskUri, version });
+}
+
+/** 回滚到某一版 plan（缺省上一版；旧快照 id 也兼容）—— 走闸外通道（via:"user"），与 set/reset 同一套校验 */
+async function compactPlanRestore(taskUri: string, version?: string) {
+    return diyService.diy.agent.local.compact.plan.restore({ taskUri, version });
 }
 
 /** 执行压缩（写边界账 + 落盘被裁原文 + 内存态重置）；成功后重建本地块树到新边界 */
@@ -1476,6 +1492,9 @@ export const localChatStore = {
     autoCompactStatus,
     autoCompactSetConfig,
     compactPlanReset,
+    compactPlanVersions,
+    compactPlanVersion,
+    compactPlanRestore,
     undoCompact,
     compactEvents,
     /** 上滚补一段更早的历史；返回是否真的插入了内容（调用方据此做滚动位置补偿） */

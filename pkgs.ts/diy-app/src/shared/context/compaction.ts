@@ -566,20 +566,25 @@ export type CompactTrigger =
     | "contextWindowOver";
 
 /**
- * **plan 快照**（##344 M2 · 事件账 v3）：压缩那一刻**整条装配管道**的原文（配置面形状）。
+ * **plan 快照**（##344 M2 · 事件账 v3；##378 M3b 起只记**版本指针**）。
  *
  * 为什么必须存：`policy` 只说明「旋钮拧到哪」（预算 / 全局裁法），说明不了「**为什么留这些**」——
  * 那是 `history.keep[]`（级列表）决定的。存下它，事后才能把某次压缩**回放**成「当时用的是哪套 plan」，
  * 也才能回答「换了 plan 之后，压缩后果变好还是变坏」（##340 量尺的 A/B 基线）。
- * 存**配置面**形状（`keep` 级列表）而不是可执行管道：前者是**人读、可 diff、可再喂回去**的原文。
+ *
+ * ##378 起：**不再内嵌全文**（同内容反复内嵌 = 去重 0，且没有版本链）。改为内容寻址指针
+ * `planVersion` —— 全文在 `$DIY_HOME/plan-store/plan-<sha12>.json`（CAS），按需取回。
+ * v3 旧事件里的 `keep` 全文**照旧可读**（不改写既有账本；UI 要能同时显示两种）。
  */
 export interface CompactPlanSnapshot {
     /** 当时的历史字节上限（= `policy.modeData.budgetBytes`） */
     budgetBytes: number;
-    /** 当时的级列表原文（`{ type, must?, limit?, clip?, data }`；见 shared/context/compact-keep.ts） */
-    keep: import("./compact-keep").KeepStage[];
     /** 这套 plan 从哪来：`config` = 用户/agent 配的；`default` = 配置没写、回落代码缺省管道 */
     source: "config" | "default";
+    /** **v4**：内容寻址版本 id（`plan-<sha12>`）—— 回查 = 去 CAS 取一份 */
+    planVersion?: string;
+    /** **v3 旧事件**的级列表原文（`{ type, must?, limit?, clip?, data }`）；新事件**不写**，读侧兼容 */
+    keep?: import("./compact-keep").KeepStage[];
 }
 
 /**
@@ -599,8 +604,8 @@ export interface CompactPlanSnapshot {
  */
 export interface CompactEventRecord {
     kind: "compact";
-    /** v2 = 只有 `policy`（旋钮）；**v3 = 多一条 `plan` 快照**（##344 M2）。读侧两版都收。 */
-    v: 2 | 3;
+    /** v2 = 只有 `policy`（旋钮）；v3 = 多一条 `plan` 快照（##344 M2）；**v4 = plan 只记版本指针**（##378）。读侧各版都收。 */
+    v: 2 | 3 | 4;
     /** 压缩 id（= ts，供 measure / undo 回指） */
     id: string;
     ts: string;
