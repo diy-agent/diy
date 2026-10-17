@@ -40,14 +40,6 @@
     "typescript": "^6.0.3",
     "vitest": "^4.1.10"
   },
-  "oxfmt": {
-    "indent": 2,
-    "lineWidth": 100,
-    "quotes": "single",
-    "ignore": [
-      "node_modules/"
-    ]
-  },
   "oxlint": {
     "rules": {
       "no-unused-vars": "warn",

@@ -11,6 +11,7 @@ import {
     replay,
     toTree,
     blocksToMessages,
+    projectAll,
     type Op,
     type ToolResultOrigin,
     type ToolResultOutput,
@@ -215,6 +216,133 @@ describe("replay 与 blocksToMessages", () => {
         expect((tool.content as Array<{ type: string; toolCallId?: string }>)[0]!.toolCallId).toBe(
             "call_1",
         );
+    });
+});
+
+describe("think 块 → assistant 的 reasoning part（##371）", () => {
+    /**
+     * 一个 turn：user → step1(think + tool) → step2(think + text)。
+     * 这就是生产里 400 的形状：assistant 消息带 tool_calls，上游（luminal 端点）要求它
+     * 同时带 `reasoning_content`（= ai-sdk 的 reasoning part），缺了整轮被拒。
+     */
+    function turnWithThink(): BlockStore {
+        return ops(
+            { op: "start", id: "t1", kind: "turn" },
+            { op: "start", id: "u1", kind: "text", parent: "t1", meta: { role: "user" } },
+            { op: "delta", id: "u1", fields: { content: "跑一下 date" } },
+            { op: "stop", id: "u1" },
+            { op: "start", id: "s1", kind: "step", parent: "t1" },
+            { op: "start", id: "r1", kind: "think", parent: "s1" },
+            { op: "delta", id: "r1", fields: { content: "先" } },
+            { op: "delta", id: "r1", fields: { content: "跑 date" } },
+            { op: "stop", id: "r1" },
+            { op: "start", id: "call_1", kind: "tool", parent: "s1", meta: { tool: "bash" } },
+            { op: "patch", id: "call_1", fields: { args: { command: "date" }, status: "running" } },
+            { op: "delta", id: "call_1", fields: { output: "20:30" } },
+            { op: "patch", id: "call_1", fields: { status: "done" } },
+            { op: "stop", id: "call_1" },
+            { op: "stop", id: "s1" },
+            { op: "start", id: "s2", kind: "step", parent: "t1" },
+            { op: "start", id: "r2", kind: "think", parent: "s2" },
+            { op: "delta", id: "r2", fields: { content: "汇报结果" } },
+            { op: "stop", id: "r2" },
+            { op: "start", id: "a1", kind: "text", parent: "s2", meta: { role: "assistant" } },
+            { op: "delta", id: "a1", fields: { content: "现在 20:30" } },
+            { op: "stop", id: "a1" },
+            { op: "stop", id: "s2" },
+            { op: "stop", id: "t1" },
+        );
+    }
+    type Part = { type: string; text?: string };
+
+    it("think → 本 step assistant 的 reasoning part，且在 tool-call / text 之前", () => {
+        const msgs = blocksToMessages(turnWithThink());
+        expect(msgs.map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant"]);
+        const call = msgs[1]!.content as Part[];
+        expect(call.map((p) => p.type)).toEqual(["reasoning", "tool-call"]);
+        expect(call[0]!.text).toBe("先跑 date"); // 同一步的多个 delta 累积成一条 reasoning
+        const reply = msgs[3]!.content as Part[];
+        expect(reply.map((p) => p.type)).toEqual(["reasoning", "text"]);
+        expect(reply[0]!.text).toBe("汇报结果");
+    });
+
+    it("多 think 块：按序全保留（provider 会拼成一条 reasoning_content）", () => {
+        const s = ops(
+            { op: "start", id: "t1", kind: "turn" },
+            { op: "start", id: "u1", kind: "text", parent: "t1", meta: { role: "user" } },
+            { op: "delta", id: "u1", fields: { content: "hi" } },
+            { op: "stop", id: "u1" },
+            { op: "start", id: "s1", kind: "step", parent: "t1" },
+            { op: "start", id: "r1", kind: "think", parent: "s1" },
+            { op: "delta", id: "r1", fields: { content: "第一段思考" } },
+            { op: "stop", id: "r1" },
+            { op: "start", id: "r2", kind: "think", parent: "s1" },
+            { op: "delta", id: "r2", fields: { content: "第二段思考" } },
+            { op: "stop", id: "r2" },
+            { op: "start", id: "a1", kind: "text", parent: "s1", meta: { role: "assistant" } },
+            { op: "delta", id: "a1", fields: { content: "好" } },
+            { op: "stop", id: "a1" },
+            { op: "stop", id: "s1" },
+            { op: "stop", id: "t1" },
+        );
+        const parts = blocksToMessages(s)[1]!.content as Part[];
+        expect(parts.map((p) => p.type)).toEqual(["reasoning", "reasoning", "text"]);
+        expect(parts.map((p) => p.text)).toEqual(["第一段思考", "第二段思考", "好"]);
+    });
+
+    it("空 think / 完全无 think：不产出 reasoning part（另外两态）", () => {
+        const s = ops(
+            { op: "start", id: "t1", kind: "turn" },
+            { op: "start", id: "u1", kind: "text", parent: "t1", meta: { role: "user" } },
+            { op: "delta", id: "u1", fields: { content: "hi" } },
+            { op: "stop", id: "u1" },
+            { op: "start", id: "s1", kind: "step", parent: "t1" },
+            { op: "start", id: "r1", kind: "think", parent: "s1" }, // 空 think：一个 delta 都没有
+            { op: "stop", id: "r1" },
+            { op: "start", id: "call_1", kind: "tool", parent: "s1", meta: { tool: "bash" } },
+            { op: "patch", id: "call_1", fields: { args: { command: "date" }, status: "running" } },
+            { op: "delta", id: "call_1", fields: { output: "20:30" } },
+            { op: "patch", id: "call_1", fields: { status: "done" } },
+            { op: "stop", id: "call_1" },
+            { op: "stop", id: "s1" },
+            { op: "stop", id: "t1" },
+        );
+        expect((blocksToMessages(s)[1]!.content as Part[]).map((p) => p.type)).toEqual(["tool-call"]);
+    });
+
+    it("条数 / 下标语义不变：think 只挂到**已有**消息上，不新增消息", () => {
+        const s = turnWithThink();
+        const before = projectAll(s);
+        // 对照：把 think 块的内容抹掉 —— 条数与下标必须逐条一致（只有 content 变）
+        for (const b of s.blocks.values()) if (b.kind === "think") b.content = "";
+        const after = projectAll(s);
+        expect(after.length).toBe(before.length);
+        expect(after.map((m) => m.role)).toEqual(before.map((m) => m.role));
+        expect(after.map((m) => m.content)).not.toEqual(before.map((m) => m.content));
+    });
+
+    it("只思考没输出（think 之后本 step 无 assistant 消息）：不新增消息、不跨步泄漏", () => {
+        const s = ops(
+            { op: "start", id: "t1", kind: "turn" },
+            { op: "start", id: "u1", kind: "text", parent: "t1", meta: { role: "user" } },
+            { op: "delta", id: "u1", fields: { content: "hi" } },
+            { op: "stop", id: "u1" },
+            { op: "start", id: "s1", kind: "step", parent: "t1" },
+            { op: "start", id: "r1", kind: "think", parent: "s1" },
+            { op: "delta", id: "r1", fields: { content: "想了但没输出" } },
+            { op: "stop", id: "r1" },
+            { op: "stop", id: "s1" },
+            // 下一步才有输出：上一步的思考**不许**挂到它头上（那是伪造推理）
+            { op: "start", id: "s2", kind: "step", parent: "t1" },
+            { op: "start", id: "a1", kind: "text", parent: "s2", meta: { role: "assistant" } },
+            { op: "delta", id: "a1", fields: { content: "好了" } },
+            { op: "stop", id: "a1" },
+            { op: "stop", id: "s2" },
+            { op: "stop", id: "t1" },
+        );
+        const msgs = blocksToMessages(s);
+        expect(msgs.map((m) => m.role)).toEqual(["user", "assistant"]);
+        expect((msgs[1]!.content as Part[]).map((p) => p.type)).toEqual(["text"]);
     });
 });
 

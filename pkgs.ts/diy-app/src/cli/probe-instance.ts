@@ -11,15 +11,8 @@
 // `app.port` / pid / startedAt 都只是缓存 —— 端口可能已被别人接管，文件可能陈旧，
 // 「谁在监听」这个问题只有监听者自己答得准。
 
-import { HttpClientBinding } from "@diy-agent/rpc/http";
+import { fetchAppInfo } from "../main/services/instance-probe";
 import { sameDataHome } from "../main/core/instance-identity";
-
-/** getAppInfo 里本判据要用到的字段（只取所需，避免依赖整份 schema） */
-interface AppInfoLite {
-  diyHome: string;
-  pid: number;
-  env: string;
-}
 
 /** 探活结果：mine = 本数据根的实例；other = 别人家的实例占着这个端口；none = 端口上没人应答 */
 export type InstanceProbe =
@@ -38,24 +31,10 @@ export async function probeInstance(
   home: string,
   timeoutMs = 1500,
 ): Promise<InstanceProbe> {
-  const client = new HttpClientBinding(`http://127.0.0.1:${port}`);
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<never>((_, rej) => {
-    timer = setTimeout(() => rej(new Error(`probe timeout ${timeoutMs}ms`)), timeoutMs);
-  });
   try {
-    await Promise.race([client.ready(), deadline]);
-    // 线协议要求 envelope 形态 `{ input, meta }`（`server-binding-core.ts::unwrap` 从这里解 input
-    // 再做 zod 校验）—— 不是裸 input。传裸 `{}` 会被解成 `input: undefined` → INVALID_ARGUMENT
-    // → 被下面的 catch 吞成 "none" → 认不出「端口上是别人」（正是本任务要修的那类静默误判）。
-    // getAppInfo 无入参（api-def `input: {}`），故 input 给 `{}`。
-    const info = await Promise.race([
-      client.invoke<{ input: Record<string, never>; meta: Record<string, never> }, AppInfoLite>(
-        "diy.getAppInfo",
-        { input: {}, meta: {} },
-      ),
-      deadline,
-    ]);
+    // 协议实现在 main/services/instance-probe.ts（**全仓唯一一份**）：连接、envelope 形态
+    // `{ input, meta }`、超时预算都在那里 —— 本函数只管「拿回来的是不是我的数据根」这条判据。
+    const info = await fetchAppInfo(port, timeoutMs);
     const common = { port, diyHome: info.diyHome, pid: info.pid, env: info.env };
     return sameDataHome(info.diyHome, home)
       ? { kind: "mine", ...common }
@@ -63,8 +42,5 @@ export async function probeInstance(
   } catch {
     // 连不上 / 超时 / 回包不合契约（如对端根本没有这个方法）→ 当作「这里没有可复用的实例」
     return { kind: "none", port };
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-    client.dispose();
   }
 }

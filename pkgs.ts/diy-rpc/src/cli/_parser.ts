@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { resolve as resolvePath } from 'node:path';
 import type { _AnyProcedureMeta } from '../core/meta.js';
 import { _getCliOptionMeta, _getCliArgMeta } from '../core/_cli-meta.js';
@@ -169,6 +170,13 @@ export function parseArgv(def: _AnyProcedureMeta, argv: string[], opts: ParseArg
       input[key] = val === 'true' || val === '1';
     } else if (unwrap(field) instanceof z.ZodArray) {
       try { input[key] = JSON.parse(val); } catch { /* 保留原字符串，让 zod 报错 */ }
+    } else if (_getCliOptionMeta(field)?.inlineText) {
+      // 「必须是内联文本」的选项（`_CliOptionMeta.inlineText`，##338）：形如单行文件路径的值一律拒绝，
+      // 并在报错里给出正确写法。解析期在这里做（不是 handler）—— handler 跑在 app 进程，
+      // cwd 不是用户敲命令的目录，相对路径的存在性判不出来。
+      const meta = _getCliOptionMeta(field)!;
+      const hit = pathLikeValue(val, opts.cwd ?? process.cwd());
+      if (hit) throw new CliParseError(inlineTextError(`--${kebabOf(key)}`, val, hit, meta.inlineText!));
     } else if (_getCliOptionMeta(field)?.readFile || _getCliArgMeta(field)?.readFile) {
       // 值来自文件：`-` = stdin，其余按调用方 cwd 解析成绝对路径后读。
       // 为什么在 parser 里读（而不是 handler）：handler 跑在 app 进程 —— 它的 stdin 不是用户的
@@ -197,6 +205,47 @@ export function parseArgv(def: _AnyProcedureMeta, argv: string[], opts: ParseArg
     }
     throw err;
   }
+}
+
+/**
+ * 「必须是内联文本」的选项（`inlineText`）收到的值，是否形如**单行文件路径**（##338）。
+ * 命中返回 `{ abs, exists }`（供报错文案用），否则 null。
+ *
+ * 判据两步，缺一不可：
+ *   ① **整体是一个 token**（去掉首尾空白后不含任何空白/换行）—— 多行正文天然不是路径，放行；
+ *   ② **形态像路径**（`/` `./` `../` `~/` 或盘符开头）**或** 按调用方 cwd 解析后**确实是存在的文件**
+ *      （覆盖 `--body AGENTS.md` 这种"裸文件名"写法 —— 实测三例里路径都是整值，故整值判据不漏）。
+ *
+ * 宁可拒绝也不静默：误判的代价是调用方改写成 `--body-text`（一次显式表达），
+ * 而漏判的代价是**原正文被路径串顶掉**（##290 / ##294 / ##87 的现场）。
+ */
+export function pathLikeValue(raw: string, cwd: string): { abs: string; exists: boolean } | null {
+  const v = raw.trim();
+  if (v === '' || /\s/.test(v)) return null; // 含空白 = 不是单个路径 token
+  // `~` 只有 shell 会展开，argv 里到的是字面 `~/x` —— 存在性检查要自己展开（报错文案里不编造绝对路径）
+  const expanded = v.startsWith('~/') ? resolvePath(homedir(), v.slice(2)) : v;
+  const abs = resolvePath(cwd, expanded);
+  let exists = false;
+  try {
+    exists = statSync(abs).isFile();
+  } catch {
+    exists = false; // 不存在 / 无权限 / 是个目录 —— 都不算"存在的文件"
+  }
+  const pathShaped = /^(\/|\.\.?\/|~\/|[A-Za-z]:[\\/])/.test(v);
+  if (!pathShaped && !exists) return null;
+  return { abs, exists };
+}
+
+/** `inlineText` 命中时的报错文案：说清"错在哪 + 该怎么写"（##338） */
+function inlineTextError(opt: string, raw: string, hit: { abs: string; exists: boolean }, names: { fileOpt: string; textOpt: string }): string {
+  const where = hit.exists ? `该文件确实存在：${hit.abs}` : `该路径不存在：${raw}`;
+  return [
+    `${opt} 只收**内联正文**，但收到的值形如文件路径 —— ${where}`,
+    `  收到: ${raw}`,
+    `  旧行为会把路径串当正文静默存下，**原正文就此丢失**（##290 / ##294 / ##87 三例现场）。`,
+    `  想传文件: ${names.fileOpt} <路径>      （等价写法: ${opt} "$(cat <路径>)"）`,
+    `  确为内联正文: ${names.textOpt} <文本>   （显式表达，不做路径护栏）`,
+  ].join('\n');
 }
 
 /**

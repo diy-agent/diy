@@ -18,6 +18,7 @@
 
 import { createSignal, createResource, createEffect, on, For, Show, createMemo, type JSX } from "solid-js";
 import { localChatStore } from "../store/localChatStore";
+import type { AutoCompactIssue } from "../../shared/context/auto-compact";
 import {
     DEFAULT_BUDGET_BYTES,
     DEFAULT_TOOL_RESULT_POLICY,
@@ -184,6 +185,8 @@ export interface CompactPanelCtl {
     auto: () => {
         config: { mode: "off" | "notify" | "auto"; policy: unknown; history?: { keep?: KeepStage[] } };
         raw?: { path: string; text: string };
+        /** 读配置的出声条目（##370）：非空 = 有键缺失/非法，已逐键回落缺省 */
+        warnings?: AutoCompactIssue[];
     } | undefined;
     autoBusy: () => boolean;
     patchAuto: (patch: Record<string, unknown>) => Promise<void>;
@@ -212,6 +215,9 @@ export interface CompactPanelCtl {
     /** 配置真源 `auto-compact.yaml` 原始全文（只读视图用） */
     rawText: () => string;
     rawPath: () => string;
+    // ─── ##370：读配置的出声（键缺/非法 ⇒ 已逐键回落缺省）───
+    /** 出声条目（空 = 干净读入）。UI 必须显示「为什么」——否则用户只看到"我的配置没生效" */
+    warnings: () => AutoCompactIssue[];
     // ─── M2（##344）：装配管道 `history.keep[]`（级列表）读写 ───
     /** 当前级列表（配置没写 ⇒ 缺省管道**回显成数据**，用户看得见"现在在用什么"） */
     keep: () => KeepStage[];
@@ -242,6 +248,7 @@ export function useCompactPanel(uri: () => string, visible: () => boolean = () =
             return (await localChatStore.autoCompactStatus(u)) as {
                 config: { mode: "off" | "notify" | "auto"; policy: unknown; history?: { keep?: KeepStage[] } };
                 raw?: { path: string; text: string };
+                warnings?: AutoCompactIssue[];
             };
         },
     );
@@ -300,6 +307,8 @@ export function useCompactPanel(uri: () => string, visible: () => boolean = () =
     const setSummary = (v: boolean) => patchAutoPolicy({ ...autoPolicy(), summary: v });
     const rawText = (): string => auto()?.raw?.text ?? "";
     const rawPath = (): string => auto()?.raw?.path ?? "";
+    /** 读配置的出声条目（##370）：**配置没生效时「为什么」就在这里**（不再只在应用日志里） */
+    const warnings = (): AutoCompactIssue[] => auto()?.warnings ?? [];
 
     // ─── M2：级列表（`history.keep[]`）───
     // 配置没写 ⇒ 回显**缺省管道**（与主进程 `planFromKeep` 的回落同一份 `DEFAULT_KEEP`）：
@@ -403,6 +412,7 @@ export function useCompactPanel(uri: () => string, visible: () => boolean = () =
     return {
         auto, autoBusy, patchAuto, autoPolicy, budgetBytes, kbDraft, setKbDraft, commitKb, pv, pvLoading, busy, err, apply,
         render, setRender, renderData: headtailData, setRenderData, summaryEnabled, setSummary, rawText, rawPath,
+        warnings,
         keep, keepSource, setKeep, resetKeep,
     };
 }
@@ -730,6 +740,17 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                         原始 YAML
                     </button>
                 </div>
+
+                {/* ##370 出声：配置里有键缺失/非法 ⇒ 已逐键回落缺省。
+                    没有这一块，用户只看到「我的配置没生效」，而原因只在应用日志里。 */}
+                <Show when={ctl.warnings().length > 0}>
+                    <div data-compact-warnings class="rounded-lg border border-warning/60 bg-warning/10 p-2 text-caption space-y-1">
+                        <div class="font-semibold">⚠ 配置有 {ctl.warnings().length} 处出声（已逐键回落缺省）</div>
+                        <ul class="m-0 list-disc pl-4 space-y-0.5">
+                            <For each={ctl.warnings()}>{(w) => <li>{w.message}</li>}</For>
+                        </ul>
+                    </div>
+                </Show>
 
                 <Show
                     when={panelView() === "form"}

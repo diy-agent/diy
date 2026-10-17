@@ -64,6 +64,55 @@ sync()  {
     run git submodule update --init --recursive
 
     _ws_run command ./sha.sh sync;
+
+    # 本 worktree 的变体数据根缺「真配置」（真账号 / 投递划分 / 真人物），
+    # 补齐它 —— 见下条 sync-dev-home
+    sync-dev-home
+}
+
+# ── dev 数据根配置同步 ────────────────────────────────────────────────────────
+# 把生产数据根（~/.diy）的**真配置**投影进本 worktree 的变体数据根 build/<variant>/home：
+#   model.yaml · context.yaml · personas.yaml · providers.custom.yaml（这 4 份 = 真配置的投影）
+# 与 seed 的分工：seed 只种**示例 / 测试数据**（示例项目与任务 + 缺省人物 + `$VAR` 占位凭据），
+# 真配置（真账号 / 投递划分 / 真人物）由这里来 —— 原先是手工 cp，漏一份实验结论就不可信。
+#   · 变体 `DIY_VARIANT`（缺省 preview；须与 ./sha.sh preview|lab 配对，见 AGENTS.md entry.variant-match）
+#   · **幂等**：每次都整份覆盖这 4 份（`cp -p`，mtime 也随源）；目标 home 的**其余内容**
+#     （state.yaml / projects / local / .seed-done）**一律不碰**
+#   · 目标 home 不存在则 mkdir -p；源缺某文件 → 跳过 + 提示，**不让 sync 整体失败**
+#   · `DIY_SYNC_HOME=0` 关掉这一步；`DIY_SYNC_HOME_SRC` 换源（测试 / 换机）
+# ⚠️ 这 4 份含真实 API key，落到 build/**（已 gitignore）：勿提交、勿外传。
+sync-dev-home() {
+    local variant="${DIY_VARIANT:-preview}"
+    local src="${DIY_SYNC_HOME_SRC:-$HOME/.diy}"
+    local dst="$ROOT_DIR/build/$variant/home"
+
+    case "$(printf '%s' "${DIY_SYNC_HOME:-1}" | tr '[:upper:]' '[:lower:]')" in
+        0 | false | off | no)
+            echo "${info}dev 数据根配置同步：已按 DIY_SYNC_HOME 关闭（跳过）${reset}"
+            return 0
+            ;;
+    esac
+
+    if [[ ! -d "$src" ]]; then
+        echo "${secondary}warn: 源数据根不存在（${src}）→ 跳过 dev 配置同步（seed 仍会种示例数据）${reset}"
+        return 0
+    fi
+
+    mkdir -p "$dst"
+    local f missing=()
+    for f in model.yaml context.yaml personas.yaml providers.custom.yaml; do
+        if [[ -f "$src/$f" ]]; then
+            run cp -p "$src/$f" "$dst/$f"
+        else
+            missing+=("$f")
+        fi
+    done
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        echo "${secondary}warn: 源缺 ${missing[*]}（${src}）→ 已跳过，其余照常${reset}"
+    fi
+    echo "${error}⚠️  已把真配置（含 API key）同步到 ${dst} —— 该目录在 .gitignore 内，勿提交、勿外传${reset}"
+    echo "${secondary}提示：配置是启动时读入的，已在跑的老实例要重启才看得到${reset}"
+    echo "${info}✅ 本 worktree 已可起 ./sha.sh preview|lab 做真 LLM 实验（变体 ${variant}）${reset}"
 }
 link() {      _ws_run command npm link; }
 unlink() {    _ws_run command npm unlink -g ; }

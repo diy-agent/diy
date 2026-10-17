@@ -25,9 +25,12 @@ import { TrafficRecordSchema } from "../../shared/traffic-record";
 import { ContextDiffSchema, CtxLogSchema, StatsSchema, StepsSchema } from "../../shared/context/schema";
 import { ContextLabSchema, ContextPlaceCandidateSchema } from "../../shared/context/schema";
 // agent 人物契约（纯 zod，renderer 同源）——模型/参数/行为指令的配置实体
+import { FALLBACK_MODEL } from "../../shared/model-default";
 import { PersonaSchema } from "../../shared/persona";
 // 价格形状（camelCase 运行时口径）：与 UI/CLI 同一份 schema
 import { ModelCostSchema } from "../../shared/usage";
+// 「模型不可用」通知契约（纯 zod，renderer 同源；判据函数也在同文件，见 ##369）
+import { ModelUnavailableNoticeSchema } from "../../shared/model-unavailable";
 import {
   CostUpdateResultSchema,
   ImportEnvResultSchema,
@@ -42,6 +45,8 @@ import {
 } from "../../shared/model-config";
 // 草稿与任务详情载荷的契约（纯 zod，renderer 同源）
 import { DraftFieldSchema, DraftFieldsSchema, DraftsData, TaskDetailSchema } from "../../shared/task-detail";
+// 实例大盘契约（shared，renderer 同源）：一行 = 一个实例
+import { InstanceRowSchema, InstanceSelfSchema, RevealResultSchema } from "../../shared/instance-row";
 
 // 任务状态枚举 — 单一真相源 task-state.ts（纯 zod，无 Node 依赖，浏览器安全） */
 import { TaskStateSchema } from "../core/task-state";
@@ -415,7 +420,16 @@ export const apiDef = RpcSchema.router({
             desc: `
             编辑任务
 
-            正文（body）语义分两种：\`--body\` **整篇覆盖**，\`--append-body\` **追加**（不必先读文件）。
+            正文（body）输入契约（##322 / ##338）—— **整篇覆盖三选一、追加三选一**，同时给多个会被拒
+            （不猜、不按顺序取）：
+              \`--body <文本>\`        整篇覆盖（内联正文；值形如**单行文件路径** → 直接报错并提示正确写法）
+              \`--body-text <文本>\`   整篇覆盖（显式内联文本，不做路径护栏 —— 正文本身就是一行路径时用它）
+              \`--body-file <file|->\` 整篇覆盖（从文件读，\`-\` = stdin；等价 \`--body "$(cat f)"\`，但不受 ARG_MAX 限制）
+              \`--append-body\` / \`--append-body-file\` / \`--append-body-text\`：追加的同样三态。
+            为什么把"传文件"和"传文本"分开：在此之前 \`--body\` 只收文本，而 \`--append-body\` 收 \`<file|->\` ——
+            两侧不对称，直觉上"都是传文件"，于是 \`diy task edit X --body /tmp/x.md\` 把**路径串当正文静默存下**、
+            原正文丢失且无告警（##290 / ##294 / ##87 三例现场）。
+
             两者都接受"整份任务文件"（frontmatter + 正文）作输入：头会被**剥离**后丢弃（文件头才是权威），
             在返回值里回报剥了哪些键与**被剥掉的原文** —— 于是 \`--body "$(cat AGENTS.md)"\` 不再产生双头。
             判据不对称：\`--append-body\` 更严（追加一份"带 front matter 的文档"是常态，只认已知键会把
@@ -428,15 +442,43 @@ export const apiDef = RpcSchema.router({
               body: z
                 .string()
                 .optional()
-                .cliOption({ desc: "新内容，整篇覆盖（至少 10 字符，拒绝空/过短以免误清空正文；传整份文件会自动剥头）" }),
+                .cliOption({
+                  placeholder: "<text>",
+                  inlineText: { fileOpt: "--body-file", textOpt: "--body-text" },
+                  desc: "新内容，整篇覆盖（**内联正文**，不是文件路径：值形如单行路径会被拒；至少 10 字符；传整份文件自动剥头）",
+                }),
+              bodyText: z
+                .string()
+                .optional()
+                .cliOption({ placeholder: "<text>", desc: "新内容，整篇覆盖（显式内联文本：与 `--body` 同义，但不做「形如路径」护栏）" }),
+              bodyFile: z
+                .string()
+                .optional()
+                .cliOption({
+                  placeholder: "<file|->",
+                  readFile: true,
+                  desc: "新内容，整篇覆盖：从**文件**读（`-` = stdin；相对路径按当前目录解析；传整份文件自动剥头）",
+                }),
               appendBody: z
                 .string()
                 .optional()
                 .cliOption({
                   placeholder: "<file|->",
                   readFile: true,
-                  desc: "追加内容：文件路径（相对路径按当前目录解析），`-` 读 stdin。追加在原正文之后（空行分隔），不必先读任务文件",
+                  desc: "追加内容：文件路径（相对路径按当前目录解析），`-` 读 stdin。追加在原正文之后（空行分隔），不必先读任务文件（= `--append-body-file`）",
                 }),
+              appendBodyFile: z
+                .string()
+                .optional()
+                .cliOption({
+                  placeholder: "<file|->",
+                  readFile: true,
+                  desc: "追加内容：文件路径（`-` = stdin）—— 与 `--append-body` 同义，是同一件事的显式名",
+                }),
+              appendBodyText: z
+                .string()
+                .optional()
+                .cliOption({ placeholder: "<text>", desc: "追加内容：**内联文本**（`--append-body` 的对称项：追加也能直接给文本，不必先落盘）" }),
               parent: z.string().optional().cliOption({ desc: "父任务 URI（空字符串=取消父子关系）" }),
               // 三态：不传=保持原绑定 / `default`（或空串）=**跟随缺省**（取消固定绑定）/ 值=换绑到该人物。
               // 换绑是续聊（会话与上下文不动），新模型**下一轮**生效。
@@ -678,7 +720,7 @@ export const apiDef = RpcSchema.router({
                     .enum(["next-step", "next-turn"])
                     .optional()
                     .cliOption({
-                      desc: "给出则把消息入队（next-step=下一个模型步前生效；next-turn=本轮收尾后的下一轮开场；两者都整批投）；省略则立即开一轮",
+                      desc: "给出则把消息入队（next-step=下一个模型步前生效；next-turn=本轮收尾后的下一轮开场；两者都整批投；**该任务没有轮次在跑时，入队即用队列开一轮发出**）；省略则立即开一轮",
                     }),
                   // 下面两项是**临时覆盖**，不写配置：模型/参数的真源是任务绑定的人物
                   // （diy agent persona …）。UI 不传，留着是给 CLI/调试临时试模型用。
@@ -845,6 +887,22 @@ export const apiDef = RpcSchema.router({
                         .cliArg({ desc: `期望顺序（JSON 数组，如 '["steer/2","steer/1"]'）` }),
                     },
                     output: z.array(SteerItemSchema),
+                  }),
+                  flush: RpcSchema.serverStream({
+                    desc: `
+                    立即发送：把队列整批**现在就送出去**，不等下一轮 / 下一步的时机
+
+                    差在"现在"能到达哪里：
+                      · 有轮次在跑 → 全部加急为 next-step（下一个模型步之前注入）；
+                      · 没有轮次   → 立刻开一轮，队列内容作开场白。
+                    只有"开了一轮"时才有 Op 流（JSONL）；加急分支不产 op（队列快照另拉）。
+                    `,
+                    input: {
+                      taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                      model: z.string().optional().cliOption({ desc: `临时覆盖模型（缺省 = 任务当前人物的模型）` }),
+                      reasoningEffort: z.string().optional().cliOption({ desc: "临时覆盖推理强度（缺省 = 人物配置）" }),
+                    },
+                    output: z.string(),
                   }),
                 },
               }),
@@ -1397,13 +1455,46 @@ export const apiDef = RpcSchema.router({
             }),
           }),
           logFiles: RpcSchema.unary({
-            desc: `列出磁盘上的流量日志文件、日期与总体积（头部「日志大小」/ 日期过滤用）`,
+            desc: `列出磁盘上的流量日志文件、日期与总体积（头部「日志大小」/ 日期过滤 / 清理面板用）`,
             input: {},
             output: z.object({
               dir: z.string(),
               files: z.array(z.string()),
               dates: z.array(z.string()).describe("出现过的日期（新的在前）"),
               bytes: z.number().describe("日志目录总字节数"),
+              detail: z
+                .array(
+                  z.object({
+                    file: z.string(),
+                    date: z.string(),
+                    bytes: z.number(),
+                    mtimeMs: z.number(),
+                    today: z.boolean().describe("当天文件（正在写入 → 不可清理）"),
+                  }),
+                )
+                .describe("逐文件详情（清理面板：列文件 + 显示占用）"),
+            }),
+          }),
+          cleanLogs: RpcSchema.unary({
+            desc: `清理磁盘流量日志（删整个按天文件）。files 或 keepDays 二选一；今天正在写入的文件一律不删；dryRun 只算不删`,
+            input: {
+              files: z
+                .array(z.string())
+                .optional()
+                .cliOption({ desc: `要删的文件（相对 DIY_HOME），JSON 数组如 '[\"log/network/2026-10-01.jsonl\"]'` }),
+              keepDays: z
+                .number()
+                .int()
+                .min(1)
+                .optional()
+                .cliOption({ desc: "只留最近 N 天（含今天），删更早的日期文件" }),
+              dryRun: z.boolean().optional().cliOption({ desc: "试运行：只统计将删什么 / 释放多少，不动磁盘" }),
+            },
+            output: z.object({
+              deleted: z.array(z.string()).describe("真删掉的文件"),
+              freedBytes: z.number().describe("释放的字节数"),
+              skipped: z.array(z.object({ file: z.string(), reason: z.string() })).describe("被跳过的（附原因）"),
+              remaining: z.object({ files: z.number(), bytes: z.number() }).describe("清理后剩余（文件数 / 字节）"),
             }),
           }),
           revealLog: RpcSchema.unary({
@@ -1515,10 +1606,10 @@ export const apiDef = RpcSchema.router({
       }),
 
       seed: RpcSchema.group({
-        desc: `初始数据种入（preview/lab 空数据根；幂等，已存在不动）`,
+        desc: `初始数据种入（preview/lab 空数据根；幂等，已存在不动）—— 只种**示例/测试数据**，真配置由 ./sha.sh sync 同步`,
         children: {
           run: RpcSchema.unary({
-            desc: `种入最小可用数据：opencode-go 模型配置 + 缺省人物（mimo-v2.6-flash）+ 示例项目与任务`,
+            desc: `种入最小可用数据：opencode-go 模型配置（$VAR 占位）+ 缺省人物（缺省模型：free 优先 → 退 ${FALLBACK_MODEL}）+ 示例项目与任务`,
             input: {},
             output: SeedReportSchema,
           }),
@@ -1819,6 +1910,58 @@ export const apiDef = RpcSchema.router({
       }),
 
       /**
+       * 实例大盘（Main 域）——「本机现在有哪些 diy 实例在跑、各自是谁、在干什么」。
+       *
+       * 发现靠**扫进程**（没有实例索引，见 services/instances.ts 文件头），
+       * 「谁开的」靠启动时写进注册表（`~/.diy-instances/<pid>.json`，事后再追父链追不出来），
+       * 数据根/端口靠**活体自报**（环境变量是继承来的，不等于真根）。
+       */
+      instances: RpcSchema.group({
+        desc: `实例大盘（扫描本机 diy 实例 + 唤起指定实例）`,
+        children: {
+          ls: RpcSchema.unary({
+            desc: `列出本机所有 diy 实例（对齐表格文本，供人读；程序读请用 instances.list）`,
+            input: {},
+            output: z.string().describe("表格文本（含表头与汇总行）"),
+          }),
+          list: RpcSchema.unary({
+            desc: `列出本机所有 diy 实例（结构化行，供 UI / 程序消费）`,
+            input: {},
+            output: z.object({ rows: z.array(InstanceRowSchema) }),
+          }),
+          self: RpcSchema.unary({
+            desc: `本实例自报身份 + 活跃会话 + 窗口状态（别的实例扫描时调用；无窗口实例 window=null）`,
+            input: {},
+            output: InstanceSelfSchema,
+          }),
+          reveal: RpcSchema.unary({
+            desc: `唤起**本**实例窗口（重建 + 前置 + 全屏；由别的实例的 instances.focus 调用）`,
+            input: {},
+            output: RevealResultSchema,
+          }),
+          focus: RpcSchema.unary({
+            desc: `
+            唤起指定实例（窗口前置 + 全屏）
+
+            主路 = 让目标实例**自己** show+focus+setFullScreen（RPC，确定且无需系统权限）；
+            RPC 不可用（无端口 / 无响应）时降级 osascript（需 Automation 权限，可能弹窗）。
+            两路都失败即报错 —— 不静默吞。
+            `,
+            input: {
+              pid: z.number().optional().cliOption({ desc: "目标实例 pid（与 --port 二选一）" }),
+              port: z.number().optional().cliOption({ desc: "目标实例 RPC 端口（与 --pid 二选一）" }),
+            },
+            output: z.object({
+              pid: z.number().nullable(),
+              port: z.number().nullable(),
+              via: z.string().describe("rpc（目标实例自己唤起）| osascript（系统级降级）"),
+              reason: z.string(),
+            }),
+          }),
+        },
+      }),
+
+      /**
        * 文件系统变更推送（Main 域）。
        *
        * ⚠️ 必须在 diy.* 而非 diy.ui.*：实现是 main 侧的 FileWatcher（renderer 只是订阅方），
@@ -1836,6 +1979,46 @@ export const apiDef = RpcSchema.router({
               event: z.string().describe("变更类型：task-change（projects/ 下任务树相关变更）"),
               ts: z.number().describe("变更发生时间戳（ms）"),
             }),
+          }),
+        },
+      }),
+
+      /**
+       * 「模型不可用」通知（##369 ①）。Main 本地域（判据在 main 侧：只有真发失败的那一刻
+       * 才拿得到状态码与上游原文），renderer 订阅 `watch` 出顶栏 bar。
+       *
+       * 数据定性 = cache（进程内存 ring，重启即空）：它描述"此刻有什么坏了"，不是历史账；
+       * 追溯去看会话流与 ~/.diy/log/network/*.jsonl。
+       */
+      notice: RpcSchema.group({
+        desc: `模型不可用通知（真发失败时产生；含人物 + 模型 + 上游原文）`,
+        children: {
+          /** 未关闭的通知，时间升序（CLI `diy notice list` 直接读它） */
+          list: RpcSchema.unary({
+            desc: `列出当前未关闭的「模型不可用」通知`,
+            input: {},
+            output: z.array(ModelUnavailableNoticeSchema),
+          }),
+          /**
+           * 关闭 = "我知道了"：从 ring 移除，此后重连不再回放。
+           * 为什么必须落 main 侧：只关界面的话，下一次重连的回放会把同一条又推回来 ——
+           * 用户点了 ✕ 却关不掉的提示等于没关（bar 上"可关闭"是硬要求）。
+           * 不给 id = **全关**（bar 一次只展示最新一条，点 ✕ 的语义就是"这波我都知道了"）。
+           */
+          dismiss: RpcSchema.unary({
+            desc: `关闭通知（给 id 关一条；不给 = 全部关闭）`,
+            input: { id: z.string().optional().cliArg({ desc: "通知 id（缺省 = 全部关闭）" }) },
+            output: StatusOk,
+          }),
+          /**
+           * 通知流：**订阅即回放**当前未关闭的通知，之后是增量。
+           * 回放是刻意的：页面重载 / 断线重连后 bar 要能自己回来（用户重开窗口正是最容易
+           * 错过提示的时刻），所以"当前事实"必须随订阅给全，而不是只推增量。
+           */
+          watch: RpcSchema.serverStream({
+            desc: `通知流（订阅回放现存 + 增量推送；顶栏 bar 的数据源）`,
+            input: {},
+            output: ModelUnavailableNoticeSchema,
           }),
         },
       }),

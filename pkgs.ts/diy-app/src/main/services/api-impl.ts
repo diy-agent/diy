@@ -37,6 +37,9 @@ import { requirePostText } from "../core/flow-store";
 import * as flowThread from "../core/flow-thread";
 import { flowPrompt } from "./flow-prompt";
 import { AsyncQueue } from "./async-queue";
+import { modelNoticeHub } from "./model-notice";
+import { collectInstances, focusInstance, renderInstanceList, selfReport } from "./instances";
+import { revealSelf, windowState } from "./window-ops";
 
 /**
  * 实际 RPC 监听端口，由入口在绑定完成后回填。
@@ -117,13 +120,16 @@ export function bindAppHandlers(binding: ServerBinding): void {
     };
   });
   binding.on(app.task.edit, async ({ input }) => {
-    const { uri, ...changes } = input;
+    // 正文输入的显式三态（##338）：`body|bodyText|bodyFile`、`appendBody|appendBodyFile|appendBodyText`
+    // 各自三选一 —— 求值收敛在 core（`resolveBodyInputs`），此处只负责把这两组从普通字段里摘出来。
+    const { uri, body, bodyText, bodyFile, appendBody, appendBodyFile, appendBodyText, ...changes } = input;
+    const bodyInputs = task.resolveBodyInputs({ body, bodyText, bodyFile, appendBody, appendBodyFile, appendBodyText });
     const filtered: Record<string, string> = {};
     for (const [k, v] of Object.entries(changes)) {
       if (v !== undefined) filtered[k] = v as string;
     }
     // 回报本次写入实际做了什么（剥头 / 追加）—— CLI 侧才有话可说，见 core/task.ts 的 TaskWriteReport
-    const report = task.updateTask(uri, filtered as task.UpdateTaskChanges);
+    const report = task.updateTask(uri, { ...filtered, ...bodyInputs } as task.UpdateTaskChanges);
     return { status: "ok", data: { uri, ...report } };
   });
   binding.on(app.task.move, async ({ input }) => {
@@ -375,9 +381,24 @@ export function bindAppHandlers(binding: ServerBinding): void {
     noteRendererTouch("diy.agent.local.chat", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
     const agent = getLocalAgent();
-    // --mode 给出 = 入队待投递（不启动轮次）；省略 = 立即开一轮。
+    // --mode 给出 = 入队待投递；省略 = 立即开一轮。
     if (input.mode) {
       agent.steerAdd(input.taskUri, input.mode, input.message);
+      // ##303：入队后若**没有活跃轮次**，立刻用它开一轮 —— 留言的语义就是"发一句话"，
+      // 空闲时它本就该像普通消息那样马上发出。否则没有任何机制会因它启动轮次，
+      // 留言会永远躺在 .diy/drafts.yaml 里（界面只有横条，用户以为已经发出去了）。
+      // 判据用 `busy()`（= chat 排队守卫的同一个 turns 注册表）：**判据与动作同源**，
+      // 不忙 ⇒ 紧接着的 chatQueued 一定走"真开一轮"，不会被自己的守卫悄悄退回排队。
+      if (agent.busy(input.taskUri)) return;
+      try {
+        for await (const op of agent.chatQueued(input.taskUri, input.model, input.reasoningEffort)) {
+          yield JSON.stringify(op);
+        }
+      } catch (e) {
+        // 竞态：判定与开轮之间别人起了轮（chat 的互斥守卫拒发）→ 留言**安好在队列里**，
+        // 由那一轮的轮末带走。这里只能吞下错误：不能反手报"入队失败"（它已经入队了）。
+        console.warn(`[local-agent] 空闲留言唤醒轮次失败（留言仍在队列，等待投递）${input.taskUri}:`, e);
+      }
       return;
     }
     // signal：客户端断开（刷新/切页/杀 CLI）时即时退订 run.subs —— 缺了它，「无 op 产出期间断开」要
@@ -462,6 +483,16 @@ export function bindAppHandlers(binding: ServerBinding): void {
     noteRendererTouch("diy.agent.local.steer.reorder", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
     return getLocalAgent().steerReorder(input.taskUri, input.ids);
+  });
+  // 「立即发送」：把队列整批现在就送出去（##303 的 a 方案）。
+  // 差在"现在"能到达哪里：有轮次在跑 → 全部加急到下一步；空闲 → 立刻开一轮、队列作开场白。
+  // 与 chat 同为 serverStream：**只有"开了一轮"时才有 op 流**，加急分支不产 op（队列快照由 UI 自查）。
+  binding.on(app.agent.local.steer.flush, async function* ({ input }) {
+    noteRendererTouch("diy.agent.local.steer.flush", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    for await (const op of getLocalAgent().flushSteers(input.taskUri, input.model, input.reasoningEffort)) {
+      yield JSON.stringify(op);
+    }
   });
   binding.on(app.agent.local.models, async () => {
     const { getLocalAgent } = await import("./local-agent");
@@ -940,7 +971,9 @@ export function bindAppHandlers(binding: ServerBinding): void {
     files: traffic.listLogFiles(),
     dates: traffic.listLogDates(),
     bytes: traffic.logStats().bytes,
+    detail: traffic.listLogFileDetail(),
   }));
+  binding.on(app.traffic.cleanLogs, async ({ input }) => traffic.cleanLogs(input));
   binding.on(app.traffic.revealLog, async ({ input }) => {
     const abs = traffic.absLogFile(input.file);
     try {
@@ -954,6 +987,17 @@ export function bindAppHandlers(binding: ServerBinding): void {
   });
   binding.on(app.traffic.events, async function* () {
     for await (const ev of traffic.events()) yield ev;
+  });
+
+  // ── notice（「模型不可用」通知；##369 ①）──
+  // 数据源是 main 侧通知中心（真发失败的 catch 里 push）：renderer 只订阅/关闭，不产生。
+  binding.on(app.notice.list, async () => modelNoticeHub.list());
+  binding.on(app.notice.dismiss, async ({ input }) => {
+    modelNoticeHub.dismiss(input.id);
+    return { status: "ok" };
+  });
+  binding.on(app.notice.watch, async function* ({ signal }) {
+    for await (const n of modelNoticeHub.subscribe(signal)) yield n;
   });
 
   // ── llmConfig（模型 provider 配置）──
@@ -1210,6 +1254,23 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const removed = removeSource(input.name);
     if (!removed) return { status: "error", msg: `未找到 source: ${input.name}` };
     return { status: "ok", data: { removed } };
+  });
+
+  // ── instances（实例大盘；##366）──
+  // 发现/聚合/唤起的实现在 services/instances.ts（纯规则在 core/instance-*），这里只做绑定。
+  // `ls` 与 `list` 是**同一份数据两种出口**：前者给人看（表格文本），后者给 UI/程序（结构化行）。
+  binding.on(app.instances.ls, async () => renderInstanceList());
+  binding.on(app.instances.list, async () => ({ rows: await collectInstances() }));
+  binding.on(app.instances.self, async () =>
+    selfReport({ window: windowState(), branch: currentGitBranch() ?? "", repoDisplay: repoDisplayOf() }),
+  );
+  binding.on(app.instances.reveal, async () => revealSelf());
+  binding.on(app.instances.focus, async ({ input }) => {
+    if (input.pid === undefined && input.port === undefined) {
+      throw new Error("必须给 --pid 或 --port（目标实例；先跑 diy instances ls 看当前有哪些）");
+    }
+    const r = await focusInstance({ pid: input.pid, port: input.port });
+    return { pid: r.pid, port: r.port, via: r.via, reason: r.reason };
   });
 
   // ── tool ──

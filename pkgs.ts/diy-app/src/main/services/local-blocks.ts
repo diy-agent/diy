@@ -475,13 +475,20 @@ export function toForest(store: BlockStore): BlockNode[] {
 //
 // 约定（与 local-agent adapter 对齐）：
 //  - text 块 meta.role='user'|'assistant'；content 为 Text 字段
-//  - think 块不回传给模型（推理是 agent 的内部产物）
+//  - think 块投影成**本 step 第一条 assistant 消息的 reasoning part**（挂 content 最前）；
+//    思考模式下上游要求把 `reasoning_content` 回传，缺则整轮 400（##371：luminal 端点必现，
+//    orcarouter / deepinfra 端点不校验 —— 所以是一半概率中招，不是偶发抖动）
 //  - tool 块 id = toolCallId；args=定稿入参对象，output=结果文本，status ∈ running|done|error
 //  - 每个 turn 的 step 子节点按序产出 assistant 消息（text+tool-call）与 tool 结果消息
 
 // 与 @ai-sdk 的 ModelMessage 结构对齐的最小类型（避免本模块依赖 ai 包）
 export interface LocalTextPart {
     type: "text";
+    text: string;
+}
+/** 推理内容（think 块的投影形态）—— ai-sdk `ModelMessage` 的 reasoning part */
+export interface LocalReasoningPart {
+    type: "reasoning";
     text: string;
 }
 export interface LocalToolCallPart {
@@ -526,7 +533,7 @@ export interface LocalToolResultPart {
 }
 export interface LocalModelMessage {
     role: "user" | "assistant" | "tool";
-    content: string | Array<LocalTextPart | LocalToolCallPart | LocalToolResultPart>;
+    content: string | Array<LocalTextPart | LocalReasoningPart | LocalToolCallPart | LocalToolResultPart>;
     /**
      * 索引位（仅 withIndex 时写；**落盘日志用**，投递不带）：这条消息属于哪一轮？
      * 只有 turn 是**必填** —— 开场 user 块（含插话）的 parent 就是 turn，不属于任何 step
@@ -617,18 +624,47 @@ export { HISTORY_LADDER, type HistoryRank, type BudgetSelection };
  */
 export function projectAll(store: BlockStore): LocalModelMessage[] {
     const out: LocalModelMessage[] = [];
+    /**
+     * 当前 step 积攒的 think 块（推理内容）——**不单独产出消息**，而是挂到本 step 第一条
+     * assistant 消息的 content **最前面**（顺序：reasoning part 在 tool-call / text 之前）。
+     *
+     * 为什么必须回传（##371）：思考模式下上游要求把 `reasoning_content` 带回
+     * （`The reasoning_content in the thinking mode must be passed back to the API`），
+     * 少了就**整轮 400**。实测同一请求体在不同上游端点上结果不同：
+     * luminal-dsv4.1flash 必 400，orcarouter / deepinfra 不校验 —— 这就是「只有时中招」的真相。
+     *
+     * 为什么是「挂上去」而不是「新增一条消息」：`projectAll` 的**下标 = llm.jsonl 行号**，
+     * 压缩注记 / 预览 / 记账全按它对齐；消息条数一变，这些的语义全错位。
+     */
+    let pendingThink: LocalReasoningPart[] = [];
+    const takePending = (): LocalReasoningPart[] => {
+        const p = pendingThink;
+        pendingThink = [];
+        return p;
+    };
     const walk = (id: string, turnId?: string, stepId?: string) => {
         const b = store.blocks.get(id)!;
         // turn 只认 turn 块自己；step 只认 step 块自己 —— 之后的叶块一路继承下来
         // （开场 user 的 parent 是 turn、assistant/tool 的 parent 是 step，继承即如实反映）
         const turn = b.kind === "turn" ? b.id : turnId;
         const step = b.kind === "step" ? b.id : stepId;
+        if (b.kind === "think") {
+            // 推理内容**不回退**成消息：本 step 没产出任何 assistant 消息时（只思考没输出）
+            // 它随换步被丢弃 —— 那样才不改变消息条数与下标语义。
+            const text = (b.content as string) ?? "";
+            if (text) pendingThink.push({ type: "reasoning", text });
+            return;
+        }
+        // 换轮 / 换步：上一步没挂上的思考没有归属了，丢弃（挂到下一步的 assistant 消息上
+        // 就是伪造「下一步的推理」）
+        if (b.kind === "turn" || b.kind === "step") pendingThink = [];
         if (b.kind === "text") {
             const role = (b.role as string) ?? "user";
             const text = (b.content as string) ?? "";
             if (!text) return;
             if (role === "user") out.push({ role: "user", content: text, turn, ...(step ? { step } : {}) });
             else {
+                const lead = takePending(); // 本 step 攒下的推理，随第一条 assistant 消息落地
                 // assistant 文本并入最近的 assistant 消息（若上一条正是纯文本 assistant 则拼接）
                 const last = out[out.length - 1];
                 if (
@@ -636,9 +672,17 @@ export function projectAll(store: BlockStore): LocalModelMessage[] {
                     typeof last.content !== "string" &&
                     !last.content.some((p) => p.type === "tool-call")
                 ) {
-                    (last.content as LocalTextPart[]).push({ type: "text", text });
+                    const parts = last.content as Array<LocalTextPart | LocalReasoningPart>;
+                    // 推理必须排在文本**之前**：think 块落到文本块后面时（罕见）插到最前
+                    parts.unshift(...lead);
+                    parts.push({ type: "text", text });
                 } else {
-                    out.push({ role: "assistant", content: [{ type: "text", text }], turn, ...(step ? { step } : {}) });
+                    out.push({
+                        role: "assistant",
+                        content: [...lead, { type: "text", text }],
+                        turn,
+                        ...(step ? { step } : {}),
+                    });
                 }
             }
             return;
@@ -656,9 +700,11 @@ export function projectAll(store: BlockStore): LocalModelMessage[] {
             // 对照组（必须保留）：args 有值但没跑完 = 指令已下达、命令可能真的执行过，
             // 这时靠下面的 INTERRUPTED_TOOL_NOTICE 钉死「已结束、别重试」（任务 92 的教训）。
             if (b.args == null) return;
+            const lead = takePending(); // 同上：推理挂到这条 tool-call 的 assistant 消息上
             out.push({
                 role: "assistant",
                 content: [
+                    ...lead,
                     {
                         type: "tool-call",
                         toolCallId: b.id,
@@ -859,7 +905,7 @@ export function selectForDelivery(
         : selectHistory(all, opts);
 }
 
-/** 块树 → 可发/可落盘的消息（选择 + 渲染；跳过 turn/step 容器与 think） */
+/** 块树 → 可发/可落盘的消息（选择 + 渲染；跳过 turn/step 容器 —— think 已挂进 assistant 消息） */
 export function blocksToMessages(store: BlockStore, opts?: DeliveryOpts): LocalModelMessage[] {
     const o = opts ?? {};
     const all = projectAll(store);

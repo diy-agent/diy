@@ -13,6 +13,7 @@
 - `find.cfg` — `pkgs.ts/diy-app/src/runtime.ts` —— **`DIY_*` 环境变量契约的唯一源**
 - `find.prompt` — 内置提示词 `pkgs.ts/diy-app/src/main/prompts/defaults.ts`（唯一真源）· 装配 `pkgs.ts/diy-app/src/main/services/prompt-registry.ts`
 - `find.intent` — **需求契约 = 意图测试**：`pkgs.ts/diy-app/tests/cli.intent.*.test.ts` + `pkgs.ts/diy-template/tests/intent.*` + `pkgs.ts/diy-talk/tests/intent.*` + `pkgs.ts/diy-flow/tests/intent.*`
+- `find.ui` — `pkgs.ts/diy-ui/`（包名 `diyui`）纯 TS / 零框架的**声明式 DOM 层**（原语 `Signal`/`Scope`/`Component`/`Cell`/`Scheduler` + provider `pi-tui`）；`web/`（Vite）是它的 demo 站
 - `find.docs` — `docs/` 架构与方案 · `scripts/` 辅助脚本与冒烟脚本 · `pkgs/` Python 归档（不演进）
 
 ## entry — 实例四态（**先问：操作谁的数据 / 谁看 UI**）
@@ -49,13 +50,14 @@
 ## tool — 命令
 
 - `tool.check` — `./sha.sh check` **提交前唯一检查**：`tsc -b tsconfig.all.json --noEmit` + oxlint + rpc 浏览器安全 + 产物护栏 + 可执行位护栏（shell 脚本索引 mode 必须 100755，见 `scripts/check-exec-bit.sh`）
+- `tool.fmt` — 格式化配置真源 = **各包 `.oxfmtrc.json`**（根 `.oxfmtrc.json` 兜底）：oxfmt **不读** `package.json` 里的 `oxfmt` 块，真实键名是 `tabWidth`/`printWidth`/`singleQuote`；根 `fix()` 扫 `pkgs.ts/` **全量（含 .md/.json）**；**fmt 未纳入 `check`**（存量 ~400 文件待规范化，见 ##323(oxfmt 配置腐坏)）
 - `tool.test` — `./sha.sh test` 全仓 · `./sha.sh test-unit` 快测（不起 Electron）· 意图测试 `pkgs.ts/diy-app/sha.sh test-intent [片段...]`：位置参数**过滤文件**（短名补 `tests/cli.intent.` 前缀，如 `test-intent ui-find`；带 `/` 或 `.test.ts` 原样传），无参才全量
 - `tool.model-import` — 环境变量 → provider 导入候选（只列不写；UI 模型页提示条 / `diy llmConfig scanEnv|importEnv`）→ `pkgs.ts/diy-app/src/main/core/model-import.ts`
 - `tool.confirm` — 破坏性操作的应用内二次确认走 `renderer_solid/components/ConfirmDialog.tsx`；**禁用原生 `window.confirm`**（窗口级模态：卡住整个渲染进程，且非 DOM 节点 —— 自动化点不到）
-- `tool.cli` — 查/改数据：全局 `diy <域> <命令>`（生产）· worktree 里 `./diy.sh <域> <命令>`（隔离）。**域名清单真源 = `diy --help`**（`task` `project` `agent` `tool` `context` `template` `llmConfig` `seed` `log` `ref` `watch` `ui` `doctor`…；本行曾只列 8 个，早已腐坏）
+- `tool.cli` — 查/改数据：全局 `diy <域> <命令>`（生产）· worktree 里 `./diy.sh <域> <命令>`（隔离）。**域名清单真源 = `diy --help`**（`task` `project` `agent` `tool` `context` `template` `llmConfig` `seed` `traffic` `flow` `log` `ref` `watch` `ui` `doctor`…；本行曾只列 8 个、后又漏 `traffic`/`flow` —— 别抄本行，去跑 `diy --help`）
 - `tool.pkg` — `pkgs.ts/diy-app/sha.sh preview|lab|build|test|cli` 单包动作
 - `tool.publish` — **npm 发布（`@diy-agent` scope）**：根 `./sha.sh publish [--dry-run]` → 清单 `_npm_publish_pkgs`（diy-rpc / diy-ui）各自 `./sha.sh publish`（= `tsc -p tsconfig.build.json` + `scripts/npm-publish.mjs` 在 `dist/` 生成发行版 package.json，再 `npm publish dist`）。仓内 package.json 恒指 `src/*.ts` 且留 `private:true`（护栏）；认证 `NPM_PUBLISH_TOKEN`（环境变量或 `~/.bashrc`），CI 无则跳过而非报错
-- `tool.sync` — **新开 worktree 先 `./sha.sh sync`**（`npm i --workspaces --include-workspace-root` + 子模块 + 各包 sync）；不跑则包没装、`node_modules` 缺。`--include-workspace-root` 不能省：光 `npm i --workspaces` 只装 workspace、漏装根 package.json 依赖（`remark-gfm` 等），干净 worktree 上必现 build 解析失败
+- `tool.sync` — **新开 worktree 先 `./sha.sh sync`**（`npm i --workspaces --include-workspace-root` + 子模块 + 各包 sync）；不跑则包没装、`node_modules` 缺。`--include-workspace-root` 不能省：光 `npm i --workspaces` 只装 workspace、漏装根 package.json 依赖（`remark-gfm` 等），干净 worktree 上必现 build 解析失败。**末尾顺带把 `~/.diy` 的真配置（`model.yaml` / `context.yaml` / `personas.yaml` / `providers.custom.yaml`）投影进 `build/<variant>/home/`**（`sync-dev-home` 一步；变体随 `DIY_VARIANT`，缺省 preview，`DIY_SYNC_HOME=0` 关）—— seed 只种示例数据，真配置归它
 - `tool.electron` — electron 43 **无 postinstall**，二进制改**惰性下载**：`require('electron')` / `npx electron` 时若 `node_modules/electron/dist` 缺，就在**当时那个进程里**同步下载，**且无超时** → 症状是静默卡死（与 npm 的 fetch 超时无关）。zip 缓存在 `~/Library/Caches/electron/`（实测 cache hit：5.5s 解压完、零网络）—— 所以每个 worktree 的真实代价是**解压 ~295MB 占磁盘**，不是下载。省法（本仓实测在用）：`ln -sfn <主仓>/node_modules/electron/dist <worktree>/node_modules/electron/dist`
 - `tool.ui` — 真实 UI 验证走 CDP：`playwright-cli attach --cdp=…`
 
@@ -66,15 +68,16 @@
 - `rule.probe` — 轮次中勿改 `src/**` 当探针（watch 重启打断自己的轮次）；探针写 `/tmp`
 - `rule.dev-concurrent` — **同一 variant** 的 `preview`/`lab` 运行中勿并发 `tsc -b` / `vite build` / 全量 vitest（抢同一 `outDir`，watcher 卡死）。跨 variant（preview vs test）各写 `build/<v>`，不抢
 - `rule.instance-lifecycle` — **实例起停权限与数据定性**：`test` / `lab` 由 agent **自由起停**（随便折腾，不用问）；`preview` 供**人机沟通·验证 UI**，亦可随便起停（给正当理由即可）；三者数据皆**临时非生产**（仓库根 `build/<variant>/home`，坏了就清，必要时可重置）。**唯全局 `diy`（prod / `~/.diy`）是日常实跑的生产 app** —— 不动其数据根、不杀其进程，重启留给用户手动
+- `rule.preview-owner` — **preview / lab 一律开在「自己任务的 worktree」里**（`_diy.worktrees/t<号>-*/` 内 `./sha.sh preview|lab`；数据根随之隔离在该 worktree 的 `build/<variant>/home`）。**根 worktree（`~/git/diy/diy`）的 `build/{preview,lab}/home` 是「无主」的** —— 只与用户联合使用（人在那儿看效果），**agent 不自己去开**：判别不了谁在用，撞 `SingletonLock` 或把种子 / 真配置写进用户正开着的根。要实验先给自己任务开 worktree
 - `rule.new-pkg` — 新增包检查单：`tsconfig.json`（composite + noEmit + include）+ `tsconfig.all.json` references
 - `rule.renderer` — UI 主线是 `renderer_solid/`（SolidJS）；React 版已删除
-- `rule.task-write` — **任务文件头是权威**（##322）：读侧 `task show` / `getTask` / 上下文 `task.*` 给的就是文件头 frontmatter **同一份**（确认任务不必 `cat` 任务文件）；写侧 `task edit --body`（整篇覆盖）与 `--append-body <file|->`（追加，不必先读文件）收到「整份文件」一律**剥头**（追加侧判据更严：须含 `state`/`created`/`updated`，故追加一份自带 front matter 的普通文档时其文档头**保留**），返回值回报剥掉的键与原文
+- `rule.task-write` — **任务文件头是权威**（##322）：读侧 `task show` / `getTask` / 上下文 `task.*` 给的就是文件头 frontmatter **同一份**（确认任务不必 `cat` 任务文件）；写侧 `task edit` 的整篇覆盖 `--body <文本>` / `--body-text <文本>` / `--body-file <file|->` 与追加 `--append-body <file|->` / `--append-body-file <file|->` / `--append-body-text <文本>`（各**三选一**，多给即报错；`--body` 只收**内联正文** —— 值形如单行路径即**拒**并提示，##338）收到「整份文件」一律**剥头**（追加侧判据更严：须含 `state`/`created`/`updated`，故追加一份自带 front matter 的普通文档时其文档头**保留**），返回值回报剥掉的键与原文 —— 契约原文见 `diy task edit --help`（##338）
 
 ## model — 本地 agent 测试用什么模型
 
 - `model.allowed` — 测试只准用三类：**① 任何带 `free` 后缀的模型**（套餐内免费，优先）· ② `mimo-v2.5` · ③ `deepseek-v4.1-flash`；其余一律不用（太贵）。确需验证某模型特有行为时，先取得用户许可再跑，且一次只跑一条用例
 - `model.free` — **模型 id 带 `free` 后缀 = 套餐内免费（cost 全 0）→ 优先选它**。free 模型**上架 / 下架频繁**，用前必须：① 列 `https://opencode.ai/zen/go/v1/models` 筛 `free` ② **各实测一条**（真发必须带 `x-opencode-session` 头，否则 400 `MissingSessionID`；测法要覆盖**流式 + 工具**，二者齐备才算可用）③ 把可用清单连同**核对日期**写回本行，供其他 agent 直接复用。**最近核对 2026-10-17**：`beam-free` · `longcat-2.5-preview-free`（均流式 + 工具 OK）
-- `model.default` — 缺省**先挑 `model.free` 里的可用项**；没有则用 `mimo-v2.5`（opencode-go，chat 面，$0.14 / $0.28 per 1M）。**`mimo-v2.6-flash` 自 2026-10-17 起不作缺省** —— 上游不稳，实测会返回 `[model_coming_soon] This model is coming soon.`（preview 真跑命中过）
+- `model.default` — 缺省**先挑 `model.free` 里的可用项**；没有则用 `mimo-v2.5`（opencode-go，chat 面，$0.14 / $0.28 per 1M）。**`mimo-v2.6-flash` 自 2026-10-17 起不作缺省** —— 上游不稳，实测会返回 `[model_coming_soon] This model is coming soon.`（preview 真跑命中过）。⚠️ **`seed.ts` 的 `SEED_MODEL` 仍写死 `mimo-v2.6-flash`**（`diy seed --help` 也这么写）—— 与本行口径不符，待修（规则先行、代码未跟）
 - `model.reasoning` — 档位只有 `none/low/medium/high`（上游 400 拒绝 `minimal`/`xhigh`/`max`）
 - `model.truth` — 价目真源 `https://models.dev/api.json`（`opencode-go` 的 cost/limit）；**可用清单** `https://opencode.ai/zen/go/v1/models`（真发需带 `x-opencode-session` 头）
 

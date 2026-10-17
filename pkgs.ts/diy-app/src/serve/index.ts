@@ -32,6 +32,8 @@ import { traffic } from "../main/core/traffic";
 import { readRuntimeConfig } from "../runtime";
 import { cliEntryForRepo, findRepoRoot, prodHomeAllowed } from "../main/core/instance-identity";
 import { resolveDevHome } from "../main/core/dev-home";
+// 实例注册表（##366）：serve 也是「一个 diy 实例」—— 大盘里该看得见它（只是没有窗口可唤起）
+import { dropSelfRecord, setSelfPort, writeSelfRecord } from "../main/services/instances";
 
 // 计算项目根目录：从 src/serve/index.ts 向上两级到 pkgs.ts/diy-app/
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -107,6 +109,18 @@ async function main() {
   }
 
   const appConfig = AppConfig.fromRuntime(cfg);
+  // 注册表：与 Electron 实例同一套（同一目录、同一形状）—— 让 `diy instances ls` 也能看见 serve。
+  // 它没有窗口，故 `instances.focus` 对它只会如实失败（不是「不列出来」的理由）。
+  try {
+    writeSelfRecord({
+      diyHome: appConfig.diyHome,
+      variant: process.env["DIY_VARIANT"] ?? "prod",
+      env: cfg.env,
+    });
+    process.once("exit", () => dropSelfRecord());
+  } catch (e) {
+    console.warn("[serve] 实例注册表写入失败（不影响启动）:", e);
+  }
 
   // 读取构建好的 index.html，注入 WebSocket bootstrap
   const indexHtml = fs.readFileSync(path.join(STATIC_DIR, "index.html"), "utf-8");
@@ -158,6 +172,7 @@ async function main() {
     const bound = httpServer.address();
     const realPort = typeof bound === "object" && bound ? bound.port : port;
     setRpcPort(realPort);
+    setSelfPort(realPort);
     console.log("═══════════════════════════════════════");
     console.log("  diy 管控台 — Web 模式");
     console.log("═══════════════════════════════════════");

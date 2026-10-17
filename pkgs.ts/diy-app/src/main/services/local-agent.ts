@@ -64,6 +64,8 @@ import { planCheck, planGet, planReset, planRestore, planSet, renderCheckView, r
 import { capToolOutput, safeId, toolOutDir, toolOutRelPath } from "./tool-output";
 import { abortText } from "../../shared/turn-end";
 import { opsFeed } from "./ops-feed";
+// 「模型不可用」通知（##369 ①）：判据在 shared/model-unavailable，通知中心在 model-notice
+import { modelNoticeHub, noticeFromError, unavailableNoticeFromLocal } from "./model-notice";
 import { AsyncQueue, withCleanup } from "./async-queue";
 import { sessionRegistry } from "./session-registry";
 import { addStepUsage, newUsageAcc, setTurnUsage, type TurnUsage } from "./turn-usage";
@@ -92,8 +94,9 @@ import {
     TRIGGER_TEXT,
     type AutoCompactConfig,
     type AutoCompactFacts,
+    type AutoCompactIssue,
 } from "../../shared/context/auto-compact";
-import { autoCompactFile, loadAutoCompact, readAutoCompactText } from "../core/auto-compact-config";
+import { autoCompactFile, loadAutoCompact, loadAutoCompactDetailed, readAutoCompactText } from "../core/auto-compact-config";
 import { cacheTtlMsOf } from "../../shared/models";
 import {
     effectiveTtl,
@@ -163,7 +166,7 @@ import {
     type ResolvedModel,
     type ReasoningEffort,
 } from "../../shared/models";
-import { personaForTask } from "../core/persona";
+import { personaByIdOrName, personaForTask } from "../core/persona";
 import { resolveModelKey } from "../core/model-runtime";
 
 // 模型查询函数抽到 shared/models.ts（core 不能被 services 反向依赖，否则循环 import）。
@@ -953,7 +956,16 @@ interface BashRun {
 }
 
 /**
- * bash：30s 超时；**命令级**失败也以文本回喂模型（错误是一等信息，不抛）。
+ * execFile 的错误形状（##332 ③ 的判据落点）。
+ *
+ * 只用一个类型服务两条到达路径（callback / 同步抛），判据也只有一处读它：
+ * **`code` 是数字** ⇒ 命令跑起来了（退出码）· **字符串** ⇒ spawn 层失败（ENOENT/EACCES/ENOTDIR…）。
+ */
+type BashExecError = { name?: string; code?: string | number | null; killed?: boolean; message?: string } | null;
+
+/**
+ * bash：30s 超时；**命令跑起来了**的失败以文本回喂模型（错误是一等信息，不抛），
+ * **命令没跑起来**的（spawn / IO 失败）则抛。
  *
  * ── ##353 复议（##332 ① 档）：「非零退出」不再一律当数据 ──
  *   ① **命令级非零退出**（`err.code` 是数字 ⇒ 命令确实跑起来了）：
@@ -962,10 +974,14 @@ interface BashRun {
  *          "失败"，是"没查到"；模型仍靠 `[退出码 N]` 改命令 ⇒ 保持 ✓）。
  *        · 正文一律 `[退出码 N]` + 输出，**不再兜底塞 `err.message`**：`Command failed: /bin/bash -c …`
  *          正是「✓ + Command failed」自相矛盾的来源（无输出时把 Node 的报错文案当成了命令输出）。
- *   ② **超时 / 取消**（`err.killed` / AbortError）⇒ 当数据（**保持现状**，不属本任务，见 ##332 ②）；
- *   ③ **spawn / IO 失败**（`err.code` ∈ ENOENT / EACCES / ENOTDIR…，**非数字**）⇒ **本任务不动**：
- *      现仍收敛成 `[退出码 ENOENT]` 文本 ⇒ 同样被标 done（**已知缺口**：命令没跑起来本该是失败，
- *      留 ##332 ③ 抛错、与 read 同口径）。
+ *   ② **超时 / 取消**（`err.killed` / AbortError）⇒ 当数据（**保持现状**，见 ##332 ②）；
+ *   ③ **spawn / IO 失败**（`err.code` ∈ ENOENT / EACCES / ENOTDIR…，**数字之外**）⇒ **失败**（##332）：
+ *      这不是"命令报了错"，是**命令根本没跑起来**（cwd 不存在 / 不可进入、`/bin/bash` 缺失）——
+ *      它没有退出码可言，也不该当结果。正文 `[命令未能启动 <code>] <Node 原文>（工作目录：…）`；
+ *      带 cwd 是因为 Node 的 message（`spawn /bin/bash ENOENT`）会把"目录进不去"掩盖成"bash 不在"。
+ *      ⚠️ 判据分界只有一条：**`err.code` 是数字 = 命令跑起来了（① 档）；否则 = 没跑起来（③ 档）**。
+ *      ⚠️ 两条到达路径都要接住：`err.code` 非数字的 **callback**，和 execFile 的**同步抛**
+ *      （cwd 是普通文件 ⇒ ENOTDIR，Node 在 spawn 内直接 throw、**不走 callback**；实测 node 24）。
  *    对照：`read` 的 execute 特意**相反**（读不到就抛），见 buildTools 里 read 的注释。
  */
 function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?: AbortSignal): Promise<BashRun> {
@@ -974,28 +990,43 @@ function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?
             resolve({ text: "[已取消]", failed: false });
             return;
         }
-        execFile(
-            "/bin/bash",
-            ["-c", command],
-            { cwd, timeout: limits.bashTimeoutMs, maxBuffer: BASH_MAX_BUFFER_BYTES, signal },
-            (err, stdout, stderr) => {
-                const out = [stdout, stderr].filter(Boolean).join("\n");
-                // ⚠️ 这里一律返回**完整**文本（不 clip）：发给模型的那一份由 `capToolOutput` 在
-                //    投递层现算（##127）—— 在 execute 里裁 = 落进 ops 的原文当场丢。
-                if (err?.name === "AbortError") resolve({ text: "[已取消]", failed: false });
-                else if (err?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" || err?.code === "ENOBUFS")
-                    resolve({
-                        text: `[输出超过 ${fmtBytes(BASH_MAX_BUFFER_BYTES)} 上限，命令已终止；以下是已收到的部分]\n${out}`,
-                        failed: false,
-                    });
-                else if (err?.killed) resolve({ text: `[命令超时被杀]\n${out}`, failed: false });
-                else if (typeof err?.code === "number")
-                    // 命令级非零退出（##353）：有 stderr = 失败，无 stderr = 查询未命中（数据）
-                    resolve({ text: `[退出码 ${err.code}]\n${out || "(无输出)"}`, failed: stderr.trim().length > 0 });
-                else if (err) resolve({ text: `[退出码 ${err.code ?? "?"}]\n${out || String(err.message)}`, failed: false });
-                else resolve({ text: out || "(无输出)", failed: false });
-            },
-        );
+        /** 全部结局只在这里落一次（成功 / 各失败档）；callback 与下面的同步 catch 共用同一判定 */
+        const settle = (err: BashExecError, stdout: string, stderr: string): void => {
+            const out = [stdout, stderr].filter(Boolean).join("\n");
+            // ⚠️ 这里一律返回**完整**文本（不 clip）：发给模型的那一份由 `capToolOutput` 在
+            //    投递层现算（##127）—— 在 execute 里裁 = 落进 ops 的原文当场丢。
+            if (err?.name === "AbortError") resolve({ text: "[已取消]", failed: false });
+            else if (err?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" || err?.code === "ENOBUFS")
+                resolve({
+                    text: `[输出超过 ${fmtBytes(BASH_MAX_BUFFER_BYTES)} 上限，命令已终止；以下是已收到的部分]\n${out}`,
+                    failed: false,
+                });
+            else if (err?.killed) resolve({ text: `[命令超时被杀]\n${out}`, failed: false });
+            else if (typeof err?.code === "number")
+                // 命令级非零退出（##353）：有 stderr = 失败，无 stderr = 查询未命中（数据）
+                resolve({ text: `[退出码 ${err.code}]\n${out || "(无输出)"}`, failed: stderr.trim().length > 0 });
+            else if (err)
+                // spawn / IO 失败（##332 ③）：命令**根本没跑起来** —— 失败档（execute 据此抛错）
+                resolve({
+                    text: `[命令未能启动 ${typeof err.code === "string" ? err.code : "?"}] ${err.message ?? ""}（工作目录：${cwd}）${out ? `\n${out}` : ""}`,
+                    failed: true,
+                });
+            else resolve({ text: out || "(无输出)", failed: false });
+        };
+        try {
+            execFile(
+                "/bin/bash",
+                ["-c", command],
+                { cwd, timeout: limits.bashTimeoutMs, maxBuffer: BASH_MAX_BUFFER_BYTES, signal },
+                (err, stdout, stderr) => settle(err, stdout, stderr),
+            );
+        } catch (e) {
+            // ⚠️ **同步抛是真实路径**，不是防御性代码：cwd 是普通文件时 Node 在 spawn 内直接
+            //    `throw new ErrnoException(err, "spawn")`（code=ENOTDIR），**不走 callback**（实测 node 24）。
+            //    漏接这条 catch 的后果不是"错误被吞"（executor 抛 = Promise reject，结果同向也是 ✗），
+            //    而是文案只剩裸 `spawn ENOTDIR`、落不进本函数的统一口径（带 cwd 的失败文案）。
+            settle(e as BashExecError, "", "");
+        }
     });
 }
 
@@ -1039,7 +1070,7 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                 // **正常工具结果** → SDK 走 tool-result 分支 → patch status:"done" → UI 画 ✓（就是
                 // 「✓ + Command failed」那种自相矛盾）；抛出 → SDK 发 tool-error → status:"error"
                 // → ✗ 且恒展开。失败文案随 error.message 落进 ops —— 模型侧照旧看得到（它要靠
-                // 退出码/诊断改命令）。判据（非零退出 + 有错误输出）全在 runBash 头注。
+                // 退出码/诊断改命令）。判据（① 非零退出 + 有错误输出 · ③ spawn/IO 失败）全在 runBash 头注。
                 if (run.failed) throw new Error(run.text);
                 return run.text;
             },
@@ -1070,7 +1101,8 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                     //   "正常结果" → status:"done" → ✓ 且不展开，就是 ##329 的形态）。
                     //   与 bash 的判据**不同向**，别互相抄（bash 侧 ##353 复议过）：bash 只在
                     //   **非零退出且有错误输出**时才抛（无输出的非零退出 = 查询未命中，是数据；
-                    //   超时/取消仍当数据，模型靠退出码改命令；spawn/IO 失败那档未抛 = 缺口，见 ##332 ③）。
+                    //   超时/取消仍当数据，模型靠退出码改命令；**spawn/IO 失败也抛**（##332 ③ 已落地，
+                    //   判据：`err.code` 非数字 = 命令没跑起来）。
                     //   read 则「读不到就是失败」：目标文件不存在没有"信息"可给，只有"这一步没做成"。
                     //   ⚠️「bash.execute 现在会抛」≠「它见错就抛」—— 判据细节全在 runBash 头注。
                     throw new Error(`[读取失败] ${e instanceof Error ? e.message : e}`);
@@ -1149,6 +1181,35 @@ function errText(e: unknown): string {
     const o = e as Record<string, unknown> | null;
     if (o && typeof o.message === "string") return o.message;
     return String(e ?? "未知错误");
+}
+
+/**
+ * 人物显示名（「模型不可用」bar 上要写清"谁在用这个模型"，用户据此知道去改哪个人物）。
+ * 查不到就退化回 id —— 文案查询失败不该连带把提示丢掉（宁可显示 id 也别静默）。
+ */
+function personaDisplayName(id: string): string {
+    return personaByIdOrName(diyHome(), id)?.name ?? id;
+}
+
+/**
+ * 判「这次失败是不是模型不可用」，是就推一条顶栏通知（##369 ①）。
+ *
+ * 判据是纯函数（shared/model-unavailable，表驱动单测）：命中四类（未上架 / id 不认识 /
+ * 认证失败 / 配额）才推；上游 5xx 与网络超时**不推** —— 那两类混进来会让 bar 天天亮
+ * （告警疲劳），且用户该做的动作完全不同（该等，不是该配模型）。
+ *
+ * 认知边界：真发的错误有**两条**产生路径（流内 `error` part 与抛异常），用户看起来
+ * 都是"一条错误块"，故两处都要过这个函数 —— 只在 catch 里做会漏掉最常见的那条
+ * （实测 `[model_coming_soon]` 走的是流内 error part）。
+ */
+function reportModelUnavailable(e: unknown, taskUri: string, personaId: string, model: string): void {
+    const n = noticeFromError(e, {
+        taskUri,
+        personaId,
+        personaName: personaDisplayName(personaId),
+        model,
+    });
+    if (n) modelNoticeHub.push(n);
 }
 
 // ─── 服务 ────────────────────────────────────────────
@@ -1645,8 +1706,10 @@ export class LocalAgentManager {
         reasons: string[];
         /** 配置真源 `auto-compact.yaml` 的**原始全文**（含注释）—— 供 UI「原始配置」只读视图 */
         raw: { path: string; text: string };
+        /** 读配置时的**出声条目**（##370）：非空 = 有键缺失/非法（已逐键回落缺省）。UI 据此说「为什么」 */
+        warnings: AutoCompactIssue[];
     } {
-        const config = loadAutoCompact(diyHome());
+        const { config, issues: warnings } = loadAutoCompactDetailed(diyHome());
         // 系统上下文：与上次真发那份比（口径与 steps.jsonl 的 systemText 完全一致）
         const home = diyHome();
         const globals = assembleGlobals(home, projectFromUri(taskUri), { taskUri }) as unknown as Record<string, unknown>;
@@ -1671,7 +1734,7 @@ export class LocalAgentManager {
         };
         const triggers = detectAutoCompactTriggers(facts, config);
         const raw = { path: autoCompactFile(home), text: readAutoCompactText(home) };
-        return { config, facts, triggers, reasons: triggers.map((t) => TRIGGER_TEXT[t]), raw };
+        return { config, facts, triggers, reasons: triggers.map((t) => TRIGGER_TEXT[t]), raw, warnings };
     }
 
     /**
@@ -2132,6 +2195,20 @@ export class LocalAgentManager {
     }
 
     /**
+     * 入队一条插话 —— **入队本身不开轮**（它只管"记下来"；正在跑的轮次按投递时机取走，
+     * 没有轮次在跑则留待下一轮）。
+     *
+     * 调用方（api-impl 的 chat handler）在入队后必须做「无活跃轮次则唤醒一轮」的判定
+     * （见同处的注释与 hasActiveTurn）：否则空闲时入队的留言**没有任何机制会因它启动一轮**，
+     * 永远躺在 .diy/drafts.yaml 里（##303：模型永远看不到，用户以为发出去了）。
+     */
+    steerAdd(taskUri: string, mode: SteerMode, text: string): SteerItem[] {
+        const r = this.queue.add(taskUri, mode, text);
+        sessionRegistry.noteActivity(taskUri); // queue 是注册表的活态属性
+        return r;
+    }
+
+    /**
      * 此刻本会话**是否有轮次在跑**（判据 = `chat()` 的排队判据，**同一个** `turns` 注册表）。
      *
      * 用途（##341 review1 P2-1）：替用户跑轮次的调用方（工作流驱动环）**起轮前**要先问这一句 ——
@@ -2156,11 +2233,56 @@ export class LocalAgentManager {
         return (this.turns.get(taskUri)?.subs.size ?? 0) + opsFeed.subscriberCount(taskUri);
     }
 
-    /** 入队一条插话（只入队，不唤醒轮次；正在跑的轮次按投递时机取走，没有则留待下一轮）。 */
-    steerAdd(taskUri: string, mode: SteerMode, text: string): SteerItem[] {
-        const r = this.queue.add(taskUri, mode, text);
-        sessionRegistry.noteActivity(taskUri); // queue 是注册表的活态属性
-        return r;
+    /**
+     * 用**队列现有内容**开一轮（不新增入队）—— 队列为空则不产任何 op。
+     *
+     * 这是「无活跃轮次时的留言」与「立即发送」共用的落点：留言的语义就是"发一句话"，
+     * 空闲时它本就该像普通消息一样立刻发出（##303 倾向的 c 方案）。
+     */
+    async *chatQueued(
+        taskUri: string,
+        modelOverride?: string,
+        reasoningEffortOverride?: ReasoningEffort,
+    ): AsyncGenerator<Op> {
+        const seed: TurnInput[] = this.queue.list(taskUri).map((it) => ({
+            text: it.text,
+            kind: it.mode,
+            steerId: it.id,
+        }));
+        if (seed.length === 0) return;
+        yield* this.chat(taskUri, "", modelOverride, reasoningEffortOverride, undefined, seed);
+    }
+
+    /**
+     * 「立即发送」：把队列整批**现在就送出去**，不等轮末 / 下一步的时机。
+     *
+     * 两个分支合起来才是"现在"：
+     *   · 有活跃轮次 → 全部转 next-step —— 那是这一轮里唯一还能到达的点（下一个模型步之前）；
+     *   · 没有轮次   → 立刻开一轮，队列内容作开场白。
+     *
+     * 无 op 产出（队列空 / 只是加急）不代表失败：调用方按需重拉队列快照即可。
+     */
+    async *flushSteers(
+        taskUri: string,
+        modelOverride?: string,
+        reasoningEffortOverride?: ReasoningEffort,
+    ): AsyncGenerator<Op> {
+        const items = this.queue.list(taskUri);
+        if (items.length === 0) return;
+        if (this.busy(taskUri)) {
+            // 加急：next-turn 的都改成 next-step（已是 next-step 的原样；用户拖过的顺序不动）
+            for (const it of items) {
+                if (it.mode === "next-step") continue;
+                try {
+                    this.queue.toggleMode(taskUri, it.id);
+                } catch (e) {
+                    // 单条写失败不放弃其余：用户在横条上能看见哪些没加急成功（仍是时钟图标）
+                    console.error(`[local-agent] 插话加急失败 ${taskUri}#${it.id}:`, e);
+                }
+            }
+            return;
+        }
+        yield* this.chatQueued(taskUri, modelOverride, reasoningEffortOverride);
     }
 
     /** 当前待投递的插话（FIFO，顺序即投递顺序） */
@@ -2335,11 +2457,36 @@ export class LocalAgentManager {
         message: string,
         modelOverride?: string,
         reasoningEffortOverride?: ReasoningEffort,
+        /** RPC 流的取消上下文：客户端断开（刷新/切页/杀 CLI）时即时退订 —— 见下方 `withCleanup`。 */
         signal?: AbortSignal,
+        /**
+         * 首轮输入（缺省 = 调用方这一条 message）。
+         *
+         * 给出时**用它开场**，message 忽略 —— 「用队列开一轮」走的就是这条路（见 chatQueued）：
+         * 不新增入队、直接把已有的待投递留言当开场白发出去（##303）。
+         */
+        seed?: TurnInput[],
     ): AsyncGenerator<Op> {
         const persona = personaForTask(diyHome(), taskUri);
         const model = modelOverride ?? persona.model;
-        const { rm, key } = this.resolveModel(model);
+        let rm: ResolvedModel;
+        let key: string;
+        try {
+            ({ rm, key } = this.resolveModel(model));
+        } catch (e) {
+            // 装配期就失败了（模型 id 不在清单里 / 人物没配模型）：**一句 error 都没有地抛**是
+            // 最容易被忽略的形态（用户只看到"点了发送没反应"，或会话里一条错）。本地这份事实
+            // 明确，直接组一条通知（不经文案判据），抛仍旧抛 —— 提示不改变失败语义。
+            modelNoticeHub.push(
+                unavailableNoticeFromLocal(errText(e), {
+                    taskUri,
+                    personaId: persona.id,
+                    personaName: personaDisplayName(persona.id),
+                    model,
+                }),
+            );
+            throw e;
+        }
         // 手写 personas.yaml 可能把档位留空：兜底到该模型自己的默认档，不把空档发给上游
         const reasoningEffort = reasoningEffortOverride ?? (persona.reasoningEffort || reasoningOf(model).default);
         let sess = this.getSession(taskUri);
@@ -2413,7 +2560,7 @@ export class LocalAgentManager {
             },
             signal,
         );
-        const driving = this.driveTurn(run, sess, message, model, reasoningEffort, key, rm, persona.id).catch((e) => {
+        const driving = this.driveTurn(run, sess, message, model, reasoningEffort, key, rm, persona.id, seed).catch((e) => {
             // 驱动异常按原语义经流上抛（RPC 层转 error 帧），由订阅端在流尾 rethrow
             run.error = e;
         });
@@ -2440,6 +2587,8 @@ export class LocalAgentManager {
         key: string,
         rm: ResolvedModel,
         personaId: string,
+        /** 首轮输入（缺省 = 调用方那一条 message）—— 「用队列开一轮」的落点，见 chatQueued（##303）。 */
+        seed?: TurnInput[],
     ): Promise<void> {
         const taskUri = run.taskUri;
         const ctrl = run.ctrl;
@@ -2494,7 +2643,8 @@ export class LocalAgentManager {
             // ── 轮次循环：首轮 = 调用方消息，之后各轮 = 插话队列喂进来的消息 ──
             // 轮末队列非空则自动开下一轮（用户不必再敲回车），且**一次把队列发完**：
             // 排队多条的心愿是"一起告诉它"，拆成多轮只会多几次请求、多个轮次边界。
-            let pending: TurnInput[] = [{ text: message, kind: "user" }];
+            // seed 给出 = 用调用方指定的开场（队列内容）；否则就是调用方这一条 message
+            let pending: TurnInput[] = seed && seed.length > 0 ? seed : [{ text: message, kind: "user" }];
             for (let round = 0; pending.length > 0 && !ctrl.signal.aborted; round++) {
                 // 手动驱动内层生成器（而不是 `yield*` 委托）：委托会把 op 直接交给消费端，
                 // 跳过这里的 `sess.store.apply` —— 而 store 是本模块的**单一权威**
@@ -3321,7 +3471,10 @@ export class LocalAgentManager {
                             break;
                         }
                         case "error": {
-                            const msg = errText((part as { error?: unknown }).error);
+                            const err = (part as { error?: unknown }).error;
+                            const msg = errText(err);
+                            // 模型不可用的**主路径**（实测：`[model_coming_soon]` 从这里来，不走 catch）
+                            reportModelUnavailable(err, taskUri, identity.persona, model);
                             setEndReason({ type: "error", data: { source: "llm", message: msg } });
                             // 把「这次失败对应哪条实际请求」一并记下：错误块据此直接跳到那条
                             // 请求/响应（能定位就定位，不靠用户猜 trace_id）。
@@ -3446,6 +3599,12 @@ export class LocalAgentManager {
                     yield* errorBlock("abort", abortText(src));
                 } else {
                     const msg = errText(e);
+                    // ── 「模型不可用」的可见性（##369 ①）──
+                    // 判据是 shared/model-unavailable 的**纯函数**（表驱动单测在同名 tests/core）：
+                    // 只挑四类（模型未上架 / id 不认识 / 认证失败 / 配额），**上游 5xx 与网络超时不算**
+                    // —— 那两类混进来会让 bar 天天亮（告警疲劳），且动作完全不同（该等，不是该配模型）。
+                    // 这里只**产生一条事实**给顶栏 bar，不阻断流程：轮次照旧收尾、会话照旧留 error 块。
+                    reportModelUnavailable(e, taskUri, identity.persona, model);
                     setEndReason({ type: "error", data: { source: "stream", message: msg } });
                     yield* errorBlock("stream", msg);
                     failed = true;
