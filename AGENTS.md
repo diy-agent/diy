@@ -71,7 +71,7 @@
 - `rule.preview-owner` — **preview / lab 一律开在「自己任务的 worktree」里**（`_diy.worktrees/t<号>-*/` 内 `./sha.sh preview|lab`；数据根随之隔离在该 worktree 的 `build/<variant>/home`）。**根 worktree（`~/git/diy/diy`）的 `build/{preview,lab}/home` 是「无主」的** —— 只与用户联合使用（人在那儿看效果），**agent 不自己去开**：判别不了谁在用，撞 `SingletonLock` 或把种子 / 真配置写进用户正开着的根。要实验先给自己任务开 worktree
 - `rule.new-pkg` — 新增包检查单：`tsconfig.json`（composite + noEmit + include）+ `tsconfig.all.json` references
 - `rule.renderer` — UI 主线是 `renderer_solid/`（SolidJS）；React 版已删除
-- `rule.task-write` — **任务文件头是权威**（##322）：读侧 `task show` / `getTask` / 上下文 `task.*` 给的就是文件头 frontmatter **同一份**（确认任务不必 `cat` 任务文件）；写侧 `task edit` 的整篇覆盖 `--body <文本>` / `--body-text <文本>` / `--body-file <file|->` 与追加 `--append-body <file|->` / `--append-body-file <file|->` / `--append-body-text <文本>`（各**三选一**，多给即报错；`--body` 只收**内联正文** —— 值形如单行路径即**拒**并提示，##338）收到「整份文件」一律**剥头**（追加侧判据更严：须含 `state`/`created`/`updated`，故追加一份自带 front matter 的普通文档时其文档头**保留**），返回值回报剥掉的键与原文 —— 契约原文见 `diy task edit --help`（##338）
+- `rule.task-write` — **任务文件头是权威**（##322）：读侧 `task show` / `getTask` / 上下文 `task.*` 给的就是文件头 frontmatter **同一份**（确认任务不必 `cat` 任务文件）；写侧 `task edit` 的整篇覆盖 `--body <文本>` / `--body-text <文本>` / `--body-file <file|->` 与追加 `--append-body <file|->` / `--append-body-file <file|->` / `--append-body-text <文本>`（各**三选一**，多给即报错；`--body` 只收**内联正文** —— 值形如单行路径即**拒**并提示，##338）收到「整份文件」一律**剥头**（追加侧判据更严：须含 `state`/`created`/`updated`，故追加一份自带 front matter 的普通文档时其文档头**保留**），返回值回报剥掉的键与原文 —— 契约原文见 `diy task edit --help`（##338）；**同族同护栏**（##376）：`task create --body` / `task drafts set --body` 也挂 `inlineText`（镜像 `resolveBodyOverride`，逃生口 `--body-text` / `--body-file` 同样可用），差别只有 create **不剥头**（新建无头可覆盖，传整份文件会把头写进正文）
 
 ## model — 本地 agent 测试用什么模型
 

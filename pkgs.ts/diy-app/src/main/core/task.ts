@@ -336,10 +336,21 @@ function pickOneOf(group: BodyInputs, field: string, keys: readonly (keyof BodyI
   ]);
 }
 
+/**
+ * 整篇覆盖那一组的「三选一」裁决（`body` / `bodyText` / `bodyFile`）—— **唯一裁决点**。
+ *
+ * 为什么单独导出（##376）：`task edit` / `task create` / `task drafts set` 三个命令都收"内联正文"，
+ * 护栏（`inlineText`）与逃生口（`--body-text` / `--body-file`）必须同源 —— 各写一遍必然分叉，
+ * 分叉的表现就是"某条命令漏了护栏"（##376 的来由正是 edit 挂了、create / drafts set 没挂）。
+ */
+export function resolveBodyOverride(input: BodyInputs): string | undefined {
+  return pickOneOf(input, "body", ["body", "bodyText", "bodyFile"]);
+}
+
 /** 把 `BodyInputs` 求值成 `UpdateTaskChanges` 的 `body` / `appendBody`（唯一裁决点）。 */
 export function resolveBodyInputs(input: BodyInputs): { body?: string; appendBody?: string } {
   return {
-    body: pickOneOf(input, "body", ["body", "bodyText", "bodyFile"]),
+    body: resolveBodyOverride(input),
     appendBody: pickOneOf(input, "append_body", ["appendBody", "appendBodyFile", "appendBodyText"]),
   };
 }
