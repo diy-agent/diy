@@ -53,7 +53,7 @@ export interface StreamHandle<T> {
 //  _ErrorPayload 定义在 rpc/error.ts（统一错误模型）
 // ═══════════════════════════════════════════════════
 
-import type { _ErrorPayload } from './error';
+import type { _ErrorPayload } from './error.js';
 
 /** 调用请求/响应（含流 init-ack） */
 /** @internal */
@@ -101,4 +101,4 @@ export type _Envelope = _CallMsg | _DataMsg | _EndMsg | _CancelMsg;
 
 // 错误模型（_ErrorPayload / RpcError / toRpcError / _toErrorPayload）见 ./error
 /** @internal */
-export type { _ErrorPayload } from './error';
+export type { _ErrorPayload } from './error.js';

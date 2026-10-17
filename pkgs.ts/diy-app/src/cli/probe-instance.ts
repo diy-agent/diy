@@ -11,7 +11,7 @@
 // `app.port` / pid / startedAt 都只是缓存 —— 端口可能已被别人接管，文件可能陈旧，
 // 「谁在监听」这个问题只有监听者自己答得准。
 
-import { HttpClientBinding } from "@diy/rpc/http";
+import { HttpClientBinding } from "@diy-agent/rpc/http";
 import { sameDataHome } from "../main/core/instance-identity";
 
 /** getAppInfo 里本判据要用到的字段（只取所需，避免依赖整份 schema） */

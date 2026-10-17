@@ -16,7 +16,7 @@
  * 所有 desc 用反引号模板字符串，便于扩展成多行（help 第一行作命令列表摘要）。
  */
 
-import { RpcSchema } from "@diy/rpc";
+import { RpcSchema } from "@diy-agent/rpc";
 import { z } from "zod";
 // 引擎通用渲染器 id 的真源（别处不复制这份清单；内核加渲染器时这里的 schema 自动跟上）
 import { RENDERERS } from "@diy/flow";

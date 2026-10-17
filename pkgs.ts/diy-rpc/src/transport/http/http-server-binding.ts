@@ -21,11 +21,11 @@
  */
 
 import type { ServerHttp2Stream, IncomingHttpHeaders } from 'node:http2';
-import { _AsyncQueue } from '../../core/_async-queue';
-import { RpcError, _toErrorPayload, type _ErrorPayload } from '../../core/error';
-import { httpStatusForCode } from './_codes';
-import type { ServerBinding } from '../../core/server-binding';
-import { ServerBindingCore } from '../../core/server-binding-core';
+import { _AsyncQueue } from '../../core/_async-queue.js';
+import { RpcError, _toErrorPayload, type _ErrorPayload } from '../../core/error.js';
+import { httpStatusForCode } from './_codes.js';
+import type { ServerBinding } from '../../core/server-binding.js';
+import { ServerBindingCore } from '../../core/server-binding-core.js';
 
 export class HttpServerBinding extends ServerBindingCore implements ServerBinding {
   destroy(): void {
