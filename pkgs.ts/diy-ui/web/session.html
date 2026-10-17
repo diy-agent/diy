@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="data:," />
+    <title>diy-ui · 真实大会话压测</title>
+    <style>
+      :root {
+        --bg: #0d1117;
+        --panel: #161b22;
+        --border: #30363d;
+        --fg: #e6edf3;
+        --muted: #8b949e;
+        --accent: #4493f8;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 32px;
+        background: var(--bg);
+        color: var(--fg);
+        font: 14px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      header { max-width: 1100px; margin: 0 auto 24px; }
+      header h1 { margin: 0 0 6px; font-size: 20px; }
+      header p { margin: 0; color: var(--muted); }
+      .nav { margin-top: 10px; }
+      main { max-width: 1100px; margin: 0 auto; }
+      .demo {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 16px;
+      }
+      /* ── diy-ui DOM 组件样式 ── */
+      .diy-column { display: flex; flex-direction: column; gap: 8px; }
+      .diy-row { display: flex; flex-direction: row; gap: 8px; flex-wrap: wrap; align-items: center; }
+      .diy-text { white-space: pre-wrap; }
+      .diy-button {
+        background: #21262d;
+        color: var(--fg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 4px 12px;
+        font: inherit;
+        cursor: pointer;
+      }
+      .diy-button:hover { border-color: var(--accent); color: var(--accent); }
+      .nav a { color: var(--accent); text-decoration: none; }
+      .nav a:hover { text-decoration: underline; }
+      /* ── 真实大会话压测 ── */
+      .session-scroll {
+        max-height: 520px;
+        overflow: auto;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 8px;
+        background: #0d1117;
+      }
+      .row-turn { color: #d2a8ff; font-weight: 600; margin-top: 8px; }
+      .row-step { color: #7ee787; }
+      .row-think { color: var(--muted); font-style: italic; }
+      .row-tool { color: #ffa657; }
+      .row-text { color: var(--fg); }
+      .row-error { color: #ff7b72; }
+      .row-d1 { margin-left: 12px; }
+      .row-d2 { margin-left: 24px; }
+      .row-d3 { margin-left: 36px; }
+      .row-d4 { margin-left: 48px; }
+      .row-d5 { margin-left: 60px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>diy-ui · 真实大会话压测</h1>
+      <p>
+        数据：mac 拷来的 DIY_HOME · <code>projects_4_tasks_262</code> ——
+        877,050 条 op / 85 万个 token 级 delta / 75.7MB（历史上拖死 SolidJS 端的那个）。
+        本页独立，不带其它 demo，避免计时互相干扰。
+      </p>
+      <p class="nav">← <a href="/">返回 index</a>　·　数据走 dev 中间件 <code>/sessions/*</code> 直读，不入库</p>
+    </header>
+    <main>
+      <section class="demo">
+        <div id="demo-session"></div>
+      </section>
+    </main>
+    <script type="module" src="/src/session-main.ts"></script>
+  </body>
+</html>

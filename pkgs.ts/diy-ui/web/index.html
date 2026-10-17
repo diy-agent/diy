@@ -3,6 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="data:," />
     <title>diy-ui · web 原型</title>
     <style>
       :root {
@@ -70,6 +71,9 @@
         min-width: 160px;
       }
       .diy-input:focus { outline: none; border-color: var(--accent); }
+      .nav { margin-top: 12px; }
+      .nav a { color: var(--accent); text-decoration: none; }
+      .nav a:hover { text-decoration: underline; }
     </style>
   </head>
   <body>
@@ -78,6 +82,10 @@
       <p>
         Signal / ScopeNode / Cell / Provider —— 直接操控 DOM，cell rerun 清空重建。
         core（signal/scope/cell/scheduler）复用老 TS 实现，本页只新增 <code>providers/dom.ts</code>。
+      </p>
+      <p class="nav">
+        → <a href="/chat.html">聊天界面复刻</a>（真实数据 · 模拟发送）
+        　·　<a href="/session.html">大会话压测</a>（877K ops / 75.7MB）
       </p>
     </header>
     <main>
