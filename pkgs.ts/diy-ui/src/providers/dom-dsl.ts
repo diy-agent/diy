@@ -41,6 +41,14 @@ export type StyleValue = string | Partial<CSSStyleDeclaration>;
 export interface Props {
   class?: Reactive<ClassValue>;
   style?: Reactive<StyleValue>;
+  /**
+   * 行级增量：身份令牌（任何 `===` 可比的）。同一父块里，同 key 的上一轮子节点会被
+   * **复用**而非重建；推荐直接给 item 对象（不可变数据下「同对象=没变」）。
+   * 不落 DOM。
+   */
+  key?: unknown;
+  /** 行级增量：变更令牌。给了就「同 key 但 rev 变 → 只重建这一行」；不给则同 key 一律复用。 */
+  rev?: unknown;
   /** 逃生口：拿到本元素真实节点（仅必须直操作 DOM 时用，如滚动）。 */
   ref?: (el: HTMLElement) => void;
   /** 叶子文本（唯一的文本入口）。不要与尾部函数同时用。 */
@@ -98,6 +106,72 @@ export function autoEffect(fn: () => void): void {
   const runner = effect(fn);
   addDisposer(() => stop(runner));
 }
+
+// ── keyed 对账（行级增量） ──────────────────────────────────
+
+/** 一个被 keyed 对账管理的直接子节点。 */
+export interface KeyedChild<H> {
+  el: HTMLElement;
+  handle: H;
+  rev: unknown;
+  /** 该子树的独立作用域（props 副作用 + 其重跑块）；移除/重建时释放。 */
+  scope: Disposer[];
+}
+
+/**
+ * 块重跑时的 keyed 对账：同 key 复用上一轮子节点，只动差量。
+ *
+ * - `reuse(key, rev)`：同 key 且 rev 未变 → 复用（调用方跳过重建 + 保留其作用域）；
+ * - `put(...)`：登记新建条目；`keep(...)`：登记复用条目；
+ * - `prune()`：上一轮没被本轮引用的条目 → 释放作用域 + 移除 DOM；
+ * - `reorder(container)`：按登记顺序校正 DOM（只在错位时移动 → 追加场景零移动）。
+ */
+export class Reconciler<H extends { el: HTMLElement }> {
+  readonly next = new Map<unknown, KeyedChild<H>>();
+  private readonly prev: Map<unknown, KeyedChild<H>>;
+
+  constructor(prev?: Map<unknown, KeyedChild<H>>) {
+    this.prev = prev ?? new Map();
+  }
+
+  reuse(key: unknown, rev: unknown): KeyedChild<H> | undefined {
+    const old = this.prev.get(key);
+    return old && old.rev === rev ? old : undefined;
+  }
+
+  keep(key: unknown, entry: KeyedChild<H>): void {
+    this.next.set(key, entry);
+  }
+
+  put(key: unknown, rev: unknown, handle: H, scope: Disposer[]): void {
+    this.next.set(key, { el: handle.el, handle, rev, scope });
+  }
+
+  prune(): void {
+    for (const [key, old] of this.prev) {
+      if (this.next.get(key) !== old) {
+        disposeAll(old.scope);
+        old.el.remove();
+      }
+    }
+  }
+
+  reorder(container: HTMLElement): void {
+    let cursor: ChildNode | null = null;
+    for (const e of this.next.values()) {
+      const want: ChildNode | null = cursor ? cursor.nextSibling : container.firstChild;
+      if (e.el !== want) container.insertBefore(e.el, want);
+      cursor = e.el;
+    }
+  }
+}
+
+/** 当前块的对账上下文（块重跑期间有效；createEl 用它判断「是不是本块的直接子节点」）。 */
+interface ReconcileCtx {
+  parent: El;
+  rec: Reconciler<El>;
+}
+const reconcileStack: ReconcileCtx[] = [];
 
 // ── 环境节点栈（ambient：让 `app.xxx()` 跟随当前组装节点） ──
 
@@ -196,6 +270,10 @@ export class El {
   rerunCell = false;
   /** 定义处（file:line，dev 诊断用）。 */
   loc?: string;
+  /** 本元素上一轮的 keyed 直接子节点（行级增量对账用）。 */
+  keyedChildren?: Map<unknown, KeyedChild<El>>;
+  /** 自身作用域（props 副作用 + `.unsafe` 块 + 子节点注册）；`removeSelf()` 时释放。 */
+  ownScope?: Disposer[];
 
   constructor(el: HTMLElement) {
     this.el = el;
@@ -254,6 +332,115 @@ export class El {
   onDispose(fn: Disposer): void {
     addDisposer(fn);
   }
+
+  // ── 节点方法（`.unsafe` 里用；也通用） ──────────────────
+
+  /**
+   * 反应式逃生块：像尾部函数一样自动追踪信号，但**不清空/不对账子节点**——
+   * 你在 `fn` 里用 `insert/remove/removeSelf` 自己驱动。
+   * 可与 `text` 共存（不占 children 通道）；与尾部函数互斥。
+   */
+  unsafe(fn: (n: El) => void): El {
+    const own = (this.ownScope ??= []);
+    let runScope: Disposer[] = [];
+    const runner = effect(() => {
+      disposeAll(runScope);
+      runScope = pushScope();
+      try {
+        fn(this);
+      } finally {
+        popScope();
+      }
+    });
+    own.push(() => {
+      stop(runner);
+      disposeAll(runScope);
+    });
+    return this;
+  }
+
+  /** 移除自身（+ 释放自身子树作用域），并从父节点的 key 表摘掉。 */
+  removeSelf(): void {
+    const p = this.parent();
+    if (p?.keyedChildren) {
+      for (const [k, e] of p.keyedChildren) if (e.el === this.el) p.keyedChildren.delete(k);
+    }
+    if (this.ownScope) disposeAll(this.ownScope);
+    this.el.remove();
+  }
+
+  /** 按 key 移除本节点里的一个子节点（释放其作用域）。 */
+  remove(key: unknown): void {
+    const t = this.keyedChildren;
+    const e = t?.get(key);
+    if (!t || !e) return;
+    t.delete(key);
+    disposeAll(e.scope);
+    e.el.remove();
+  }
+
+  /**
+   * 往本节点插一个子节点。`build` 收本节点为 slot、建出**一个**子元素并返回它。
+   * 带 `key` 时进本节点的 key 表（同 key 同 rev → 复用，不重建）。
+   */
+  insert(build: (slot: El) => El, opts: { key?: unknown; rev?: unknown; at?: number } = {}): El {
+    const key = opts.key;
+    const table = (this.keyedChildren ??= new Map<unknown, KeyedChild<El>>());
+    const rev = opts.rev ?? key ?? {};
+    if (key !== undefined) {
+      const old = table.get(key);
+      if (old && old.rev === rev) return old.handle;
+    }
+    const child = build(this);
+    const entry: KeyedChild<El> = { el: child.el, handle: child, rev, scope: child.ownScope ?? [] };
+    const slotKey = key !== undefined ? key : child.el;
+    const old = table.get(slotKey);
+    if (old) {
+      disposeAll(old.scope);
+      old.el.remove();
+    }
+    table.set(slotKey, entry);
+    if (opts.at !== undefined) {
+      const els = [...table.values()].map((e) => e.el);
+      const ref = els[opts.at + 1] ?? null;
+      this.el.insertBefore(child.el, ref);
+    }
+    return child;
+  }
+
+  /** 按 key 换序（把该项挪到第 to 位）。 */
+  move(key: unknown, to: number): void {
+    const t = this.keyedChildren;
+    const e = t?.get(key);
+    if (!t || !e) return;
+    const els = [...t.values()].map((x) => x.el);
+    const cur = els.indexOf(e.el);
+    if (cur < 0) return;
+    els.splice(cur, 1);
+    els.splice(Math.max(0, Math.min(to, els.length)), 0, e.el);
+    for (const el of els) this.el.appendChild(el);
+  }
+
+  get(key: unknown): El | undefined {
+    const e = this.keyedChildren?.get(key);
+    return e ? e.handle : undefined;
+  }
+
+  has(key: unknown): boolean {
+    return this.keyedChildren?.has(key) ?? false;
+  }
+
+  /** 最近的祖先节点（可选匹配选择器）。 */
+  parent(sel?: string): El | undefined {
+    let p = this.el.parentElement;
+    while (p) {
+      const n = nodeOf(p);
+      if (n && (!sel || p.matches(sel))) return n as unknown as El;
+      if (p === document.body) break;
+      p = p.parentElement;
+    }
+    return undefined;
+  }
 }
 
 // ── DslApp：根 + signal + ambient ───────────────────────────
@@ -306,16 +493,43 @@ function createEl(parent: El, tag: string, props?: Props, build?: Build): El {
   if (build && props && "text" in props) {
     throw new Error(`dom-dsl: <${tag}> 不能同时给 text 与尾部函数（文本是叶子）`);
   }
+
+  const ctx = reconcileStack[reconcileStack.length - 1];
+  const keyed = ctx !== undefined && ctx.parent === parent;
+
+  let key: unknown;
+  let rev: unknown;
+  if (keyed) {
+    const hasKey = props !== undefined && props.key !== undefined;
+    key = hasKey ? props!.key : {}; // 无 key → 每轮唯一 token（等价于每轮重建）
+    rev = props !== undefined && props.rev !== undefined ? props.rev : key;
+    if (hasKey) {
+      const old = ctx!.rec.reuse(key, rev);
+      if (old) {
+        ctx!.rec.keep(key, old); // 复用：不重建、不碰 DOM（顺序由 reorder 收尾）
+        return old.handle;
+      }
+    }
+  }
+
   const node = new El(document.createElement(tag));
   node.app = parent.app;
   trackNode(node);
+  // 每个元素自带作用域：removeSelf 才能释放自己；keyed 复用时它存活（状态保留）
+  const scope = pushScope();
+  node.ownScope = scope;
+  try {
+    if (props) applyProps(node.el, props);
+    if (build) attachBuild(node, build);
+  } finally {
+    popScope();
+  }
   parent.el.appendChild(node.el);
-  if (props) applyProps(node.el, props);
-  if (build) attachBuild(node, build);
+  if (keyed) ctx!.rec.put(key, rev, node, scope);
   return node;
 }
 
-/** 尾部函数 = 重跑块：effect 里跑；重跑时清空上轮子树并释放其 effect。 */
+/** 尾部函数 = 重跑块：effect 里跑；重跑时对 keyed 直接子节点做差量对账（未 keyed 的等价于全量重建）。 */
 function attachBuild(node: El, build: Build): void {
   node.rerunCell = true;
   node.loc = captureLoc();
@@ -323,23 +537,29 @@ function attachBuild(node: El, build: Build): void {
   const cleanup = (): void => void disposeAll(childScope);
 
   const runner = effect(() => {
-    cleanup(); // 丢掉上一轮的子树 + 副作用
-    node.el.replaceChildren();
+    cleanup(); // 丢掉上一轮的非 keyed 子树（keyed 子树的存活/释放交给对账）
+    const rec = new Reconciler<El>(node.keyedChildren);
+    node.keyedChildren = rec.next;
     const s = pushScope();
     nodeStack.push(node);
+    reconcileStack.push({ parent: node, rec });
     try {
       build(node);
     } finally {
+      reconcileStack.pop();
       nodeStack.pop();
       popScope();
     }
     childScope = s;
+    rec.prune(); // 上一轮没被引用的 keyed 子节点 → 释放 + 移除
+    rec.reorder(node.el); // 顺序校正（追加场景零移动）
     node.reruns++;
   });
 
   addDisposer(() => {
     stop(runner);
     cleanup();
+    node.keyedChildren?.forEach((e) => disposeAll(e.scope));
   });
 }
 
@@ -350,7 +570,9 @@ export function applyProps(el: HTMLElement, props: Props): void {
   for (const key of Object.keys(record)) {
     const v = record[key];
     if (v === undefined) continue;
-    if (key === "ref") {
+    if (key === "key" || key === "rev") {
+      continue; // 对账令牌，不落 DOM
+    } else if (key === "ref") {
       if (typeof v === "function") (v as (el: HTMLElement) => void)(el);
     } else if (key === "text") {
       bindText(el, v);

@@ -26,8 +26,11 @@ import {
   addDisposer,
   disposeAll,
   trackNode,
+  nodeOf,
   captureLoc,
   computeRerunStats,
+  Reconciler,
+  type KeyedChild,
   type Props,
 } from "./dom-dsl.js";
 
@@ -39,8 +42,16 @@ export interface Spec {
   readonly tag: string;
   readonly props: Props;
   readonly children?: ChildGen;
+  /** 行级增量：身份令牌（来自 props.key）。 */
+  readonly key?: unknown;
+  /** 行级增量：变更令牌（来自 props.rev）；不给则同 key 一律复用。 */
+  readonly rev?: unknown;
   /** 定义处（file:line，dev 诊断用；仅在 devtools 开启采集时才有值）。 */
   readonly loc?: string;
+  /** `.unsafe(fn)` 存的回调：反应式、不清子节点的逃生块。 */
+  readonly onUnsafe?: (n: GenNode) => void;
+  /** 逃生口：`html.div({...}).unsafe((n) => { ... })`。 */
+  unsafe(fn: (n: GenNode) => void): Spec;
 }
 
 /** 子节点生成器：pull 语义；收到父节点（可选，用作逃生口/测量）。 */
@@ -57,9 +68,94 @@ export class GenNode {
   rerunCell?: boolean;
   /** 定义处（file:line，dev 诊断用）。 */
   loc?: string;
+  /** 本元素上一轮的 keyed 子节点（行级增量对账用）。 */
+  keyedChildren?: Map<unknown, KeyedChild<GenNode>>;
+  /** 自身作用域（props 副作用 + `.unsafe` 块 + 子节点注册）；`removeSelf()` 时释放。 */
+  ownScope?: Disposer[];
   constructor(el: HTMLElement, app: GenApp) {
     this.el = el;
     this.app = app;
+  }
+
+  // ── 节点方法（`.unsafe` 里用；也通用） ──────────────────
+
+  /** 移除自身（+ 释放自身子树作用域），并从父节点的 key 表摘掉。 */
+  removeSelf(): void {
+    const p = this.parent();
+    if (p?.keyedChildren) {
+      for (const [k, e] of p.keyedChildren) if (e.el === this.el) p.keyedChildren.delete(k);
+    }
+    if (this.ownScope) disposeAll(this.ownScope);
+    this.el.remove();
+  }
+
+  /** 按 key 移除本节点里的一个子节点（释放其作用域）。 */
+  remove(key: unknown): void {
+    const t = this.keyedChildren;
+    const e = t?.get(key);
+    if (!t || !e) return;
+    t.delete(key);
+    disposeAll(e.scope);
+    e.el.remove();
+  }
+
+  /** 往本节点插一个子 Spec。带 `key` 时进本节点 key 表（同 key 同 rev → 复用）。 */
+  insert(spec: Spec, opts: { key?: unknown; rev?: unknown; at?: number } = {}): GenNode {
+    const key = opts.key ?? spec.key;
+    const table = (this.keyedChildren ??= new Map<unknown, KeyedChild<GenNode>>());
+    const rev = opts.rev ?? spec.rev ?? key ?? {};
+    if (key !== undefined) {
+      const old = table.get(key);
+      if (old && old.rev === rev) return old.handle;
+    }
+    const child = instantiate(spec, this.el, this.app);
+    const slotKey = key !== undefined ? key : child.el;
+    const old = table.get(slotKey);
+    if (old) {
+      disposeAll(old.scope);
+      old.el.remove();
+    }
+    table.set(slotKey, { el: child.el, handle: child, rev, scope: child.ownScope ?? [] });
+    if (opts.at !== undefined) {
+      const els = [...table.values()].map((e) => e.el);
+      const ref = els[opts.at + 1] ?? null;
+      this.el.insertBefore(child.el, ref);
+    }
+    return child;
+  }
+
+  /** 按 key 换序（把该项挪到第 to 位）。 */
+  move(key: unknown, to: number): void {
+    const t = this.keyedChildren;
+    const e = t?.get(key);
+    if (!t || !e) return;
+    const els = [...t.values()].map((x) => x.el);
+    const cur = els.indexOf(e.el);
+    if (cur < 0) return;
+    els.splice(cur, 1);
+    els.splice(Math.max(0, Math.min(to, els.length)), 0, e.el);
+    for (const el of els) this.el.appendChild(el);
+  }
+
+  get(key: unknown): GenNode | undefined {
+    const e = this.keyedChildren?.get(key);
+    return e ? e.handle : undefined;
+  }
+
+  has(key: unknown): boolean {
+    return this.keyedChildren?.has(key) ?? false;
+  }
+
+  /** 最近的祖先节点（可选匹配选择器）。 */
+  parent(sel?: string): GenNode | undefined {
+    let p = this.el.parentElement;
+    while (p) {
+      const n = nodeOf(p);
+      if (n && (!sel || p.matches(sel))) return n as unknown as GenNode;
+      if (p === document.body) break;
+      p = p.parentElement;
+    }
+    return undefined;
   }
 }
 
@@ -67,7 +163,22 @@ export class GenNode {
 
 function spec(tag: string, props?: Props, children?: ChildGen): Spec {
   // 只给「重跑块」（有子生成器）采 loc —— 静态叶子不需要，省成本
-  return { tag, props: props ?? {}, children, loc: children ? captureLoc() : undefined };
+  const base = {
+    tag,
+    props: props ?? {},
+    children,
+    key: props?.key,
+    rev: props?.rev,
+    loc: children ? captureLoc() : undefined,
+  };
+  const mk = (onUnsafe?: (n: GenNode) => void): Spec => ({
+    ...base,
+    onUnsafe,
+    unsafe(fn: (n: GenNode) => void): Spec {
+      return mk(fn);
+    },
+  });
+  return mk();
 }
 
 type Tag = (props?: Props, children?: ChildGen) => Spec;
@@ -156,13 +267,40 @@ function instantiate(spec: Spec, parent: Node, app: GenApp): GenNode {
   const node = new GenNode(document.createElement(spec.tag), app);
   node.loc = spec.loc;
   trackNode(node);
-  applyProps(node.el, spec.props);
-  if (spec.children) attachGen(node, spec.children);
+  // 每个元素自带作用域：removeSelf 才能释放自己；keyed 复用时它存活（状态保留）
+  const scope = pushScope();
+  node.ownScope = scope;
+  try {
+    applyProps(node.el, spec.props);
+    if (spec.children) attachGen(node, spec.children);
+    if (spec.onUnsafe) attachUnsafe(node, spec.onUnsafe);
+  } finally {
+    popScope();
+  }
   parent.appendChild(node.el);
   return node;
 }
 
-/** 元素的 children 生成器 = 重跑块：effect 里 drain；重跑时清空并释放。 */
+/** `.unsafe` 块：反应式、不清子节点的逃生块。 */
+function attachUnsafe(node: GenNode, fn: (n: GenNode) => void): void {
+  const own = (node.ownScope ??= []);
+  let runScope: Disposer[] = [];
+  const runner = effect(() => {
+    disposeAll(runScope);
+    runScope = pushScope();
+    try {
+      fn(node);
+    } finally {
+      popScope();
+    }
+  });
+  own.push(() => {
+    stop(runner);
+    disposeAll(runScope);
+  });
+}
+
+/** 元素的 children 生成器 = 重跑块：effect 里 drain；对 keyed 子节点做差量对账。 */
 function attachGen(node: GenNode, gen: ChildGen): void {
   node.rerunCell = true;
   let childScope: Disposer[] = [];
@@ -170,21 +308,42 @@ function attachGen(node: GenNode, gen: ChildGen): void {
 
   const runner = effect(() => {
     cleanup();
-    node.el.replaceChildren();
+    const rec = new Reconciler<GenNode>(node.keyedChildren);
+    node.keyedChildren = rec.next;
     const s = pushScope();
     try {
       for (const child of gen(node)) {
-        if (child) instantiate(child, node.el, node.app);
+        if (!child) continue;
+        reconcileChild(child, node, rec);
       }
     } finally {
       popScope();
     }
     childScope = s;
+    rec.prune();
+    rec.reorder(node.el);
     node.reruns++;
   });
 
   addDisposer(() => {
     stop(runner);
     cleanup();
+    node.keyedChildren?.forEach((e) => disposeAll(e.scope));
   });
+}
+
+/** 一个 yield 出来的子节点：keyed 的按 key 复用，否则新建（无 key = 每轮唯一 token）。 */
+function reconcileChild(spec: Spec, parent: GenNode, rec: Reconciler<GenNode>): void {
+  const hasKey = spec.key !== undefined;
+  const key = hasKey ? spec.key : {};
+  const rev = spec.rev !== undefined ? spec.rev : key;
+  if (hasKey) {
+    const old = rec.reuse(key, rev);
+    if (old) {
+      rec.keep(key, old);
+      return;
+    }
+  }
+  const gn = instantiate(spec, parent.el, parent.app);
+  rec.put(key, rev, gn, gn.ownScope ?? []);
 }
