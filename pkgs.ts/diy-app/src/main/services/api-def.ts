@@ -763,6 +763,37 @@ export const apiDef = RpcSchema.router({
                   ),
                 }),
               }),
+              /**
+               * **一轮的进度**（**形式无关**的读口；owner ##166 第三轮口径第 2 条）。
+               *
+               * 口径原话：给 `(memberUri, turnId)` 返回该轮的进度块流，「供 UI 渲染，且能复用任务对话那套」。
+               * 这里以 **taskUri** 为键 —— `memberUri` 是 room 侧的叫法（成员表负责映射），
+               * 读口本身**不绑 room**：五种「多 session 观察」布局、任务对话页、CLI 都吃同一份。
+               *
+               * 与 `room.turn` 的分工：那条是 room 的**便利口**（按事件 id 取，省得调用方自己查 ref），
+               * 这条是底座（任何持有 (会话, 轮次) 的消费方都能取）。
+               */
+              turn: RpcSchema.unary({
+                desc: `取某个会话某一轮的进度：块流 + L1 状态（在跑吗 / 在做什么 / 第几步）`,
+                input: {
+                  taskUri: z.string().cliArg({ desc: "任务 URI（= 会话）" }),
+                  turnId: z.string().cliArg({ desc: "轮次 id（如 t1792252594279；事件 ref 或会话流里给）" }),
+                },
+                output: z.object({
+                  taskUri: z.string(),
+                  turnId: z.string(),
+                  /** 该轮的块树（找不到 = null：会话被清空 / 被 compact / turnId 写错） */
+                  turn: z.any().nullable(),
+                  /** 该会话此刻是否有轮次在跑（会话注册表口径，不靠日志猜） */
+                  live: z.boolean(),
+                  /** 会话注册表条目（L1 真源：steps / tokens / startedAt / state / viewers / queue / lastEndReason） */
+                  entry: z.any().nullable(),
+                  /** 此刻在干什么（未闭合块的判据；空闲 = null） */
+                  action: z.object({ kind: z.string(), label: z.string() }).nullable(),
+                  /** 服务端时刻（epoch ms）：「已用时长」的基准，别用消费端时钟 */
+                  now: z.number(),
+                }),
+              }),
               history: RpcSchema.unary({
                 desc: `读取本地 agent 会话的块协议 Op 日志（UI 重放用；返回**折叠后**的等价流，大会话快路径）`,
                 input: {
@@ -1287,11 +1318,23 @@ export const apiDef = RpcSchema.router({
            * 它只是把「成员会话里的那一轮」取回来（`ref = { memberUri, turnId }`）。
            * 渲染端拿到的是**块树**，与任务对话走同一个渲染器（`LocalChatPage` 的 `TurnView`）。
            */
+          /**
+           * 取某一轮的进度块树（**两种寻址**：按 reply 事件 id，或按 `(成员, 轮次)`）。
+           *
+           * 口径（##166 第三轮第 2 条）：给 `(memberUri, turnId)` 返回该轮的进度块流。
+           * 事件寻址是 room 侧的便利形态（reply 事件自带 `ref`），`--member/--turn` 是口径的**字面形态**
+           * （调用方手上只有成员 + 轮次时不必先捞事件）。两者共用同一条底座（`agent.local.turn`）。
+           */
           turn: RpcSchema.unary({
-            desc: `取一条 reply 事件对应那一轮的进度块树（成员会话的引用；room 自己不留进度数据）`,
+            desc: `取某一轮的进度块树（成员会话的引用；room 自己不留进度数据）`,
             input: {
               id: z.string().cliArg({ desc: "房间 id" }),
-              event: z.string().cliArg({ desc: "reply 事件 id（room get 里给）" }),
+              event: z
+                .string()
+                .optional()
+                .cliArg({ desc: "reply 事件 id（room get 里给）；与 --member/--turn 二选一" }),
+              member: z.string().optional().cliOption({ desc: "成员 id / 名字（与 --turn 配对）" }),
+              turn: z.string().optional().cliOption({ desc: "轮次 id（与 --member 配对）" }),
             },
             output: z.object({
               /** 那一轮的块树（找不到 = null，UI 如实显示"这一轮已不在会话里"） */
@@ -1299,8 +1342,49 @@ export const apiDef = RpcSchema.router({
               /** 成员会话（task uri），供 UI 显示/跳转 */
               taskUri: z.string(),
               turnId: z.string(),
+              /** 命中的成员 id（按事件寻址时 = ref.memberUri；按成员寻址时 = 解析出的成员 id） */
+              memberUri: z.string().nullable(),
               /** 该成员此刻是否正有轮次在跑（决定 UI 是"直播中"还是"已完成"） */
               live: z.boolean(),
+              /** 会话注册表条目（L1；与 `agent.local.turn` 同一份真源） */
+              entry: z.any().nullable(),
+              /** 此刻在干什么（未闭合块；空闲 = null） */
+              action: z.object({ kind: z.string(), label: z.string() }).nullable(),
+            }),
+          }),
+          /**
+           * 成员**此刻**状态（**L1 状态数据**；owner ##166 第三轮口径第 3 条）。
+           *
+           * 口径原话：「成员此刻在干什么（正在跑哪一步 / 已用时长 / 状态）—— 服务端能给出，不靠 UI 猜」。
+           * 这里把**三份既有真源**合成一份视图，不新造状态：
+           *   · 会话侧 —— 会话注册表条目（`turn.steps` / `startedAt` / `state` / `viewers` …）
+           *   · 进度侧 —— 未闭合块 ⇒「正在 bash · rg -n …」（`local-agent.currentAction`）
+           *   · room 侧 —— 该成员的投递链（`queued` / `running` 条数）
+           *
+           * 纯读、无副作用；任何布局的「头像行状态」都吃这一份（L2 详情另走 `turn`）。
+           */
+          roster: RpcSchema.unary({
+            desc: `房间成员的此刻状态（L1：在跑吗 / 第几步 / 在做什么 / 已用时长 / 排队数）`,
+            input: { id: z.string().cliArg({ desc: "房间 id" }) },
+            output: z.object({
+              room: z.string(),
+              now: z.number().describe("服务端时刻（epoch ms）"),
+              members: z.array(
+                z.object({
+                  memberId: z.string(),
+                  name: z.string(),
+                  avatar: z.string(),
+                  color: z.string(),
+                  role: z.string(),
+                  isHuman: z.boolean(),
+                  focus: z.boolean(),
+                  taskUri: z.string().nullable(),
+                  entry: z.any().nullable().describe("会话注册表条目（人的 / 未绑任务的成员为 null）"),
+                  action: z.object({ kind: z.string(), label: z.string() }).nullable(),
+                  queued: z.number().describe("该成员在投递链上排队的条数（此刻）"),
+                  running: z.number().describe("该成员正在跑的投递条数（单成员串行 ⇒ 0 或 1）"),
+                }),
+              ),
             }),
           }),
         },

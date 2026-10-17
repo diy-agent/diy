@@ -423,6 +423,29 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const agent = getLocalAgent();
     return { active: activeTurnList().map((t) => ({ ...t, subscribers: agent.watchers(t.taskUri) })) };
   });
+  /**
+   * 一轮的进度（**形式无关读口**；##166 第三轮口径第 2 条：给 (会话, 轮次) 返回进度块流）。
+   *
+   * 三份真源合成一次返回，**不新造状态**：
+   *   · `turn`   —— 块流（成员会话 ops 流按 turnId 切片，走折叠缓存）
+   *   · `entry`  —— 会话注册表条目（L1：steps / startedAt / state / viewers …）
+   *   · `action` —— 未闭合块 ⇒「此刻在做什么」
+   * 与 `room.turn` 的分工：那条是 room 便利口（按事件 id），这条是底座（不绑 room）。
+   */
+  binding.on(app.agent.local.turn, async ({ input }) => {
+    const { getLocalAgent } = await import("./local-agent");
+    const { sessionRegistry } = await import("./session-registry");
+    const agent = getLocalAgent();
+    return {
+      taskUri: input.taskUri,
+      turnId: input.turnId,
+      turn: agent.turnNode(input.taskUri, input.turnId),
+      live: sessionRegistry.activeTurnList().some((t) => t.uri === input.taskUri),
+      entry: sessionRegistry.entryOf(input.taskUri),
+      action: agent.currentAction(input.taskUri),
+      now: Date.now(),
+    };
+  });
   binding.on(app.agent.local.history, async ({ input }) => {
     noteRendererTouch("diy.agent.local.history", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
@@ -1327,21 +1350,93 @@ export function bindAppHandlers(binding: ServerBinding): void {
    * 这里把它取回来交给渲染端（与任务对话同一个块树、同一个渲染器）。
    */
   binding.on(app.room.turn, async ({ input }) => {
-    const { readRoomView } = await import("../core/room");
+    const { readRoom, readRoomView } = await import("../core/room");
+    const { resolveMember } = await import("../../shared/room");
     const { getLocalAgent } = await import("./local-agent");
     const { sessionRegistry } = await import("./session-registry");
-    const { events } = readRoomView(input.id, { limit: 0 });
-    const ev = events.find((e) => e.id === input.event);
-    if (!ev) throw new Error(`房间里没有这条事件：${input.event}（room get 看事件 id）`);
-    const ref = ev.ref;
-    if (!ref || !ev.sourceTask) throw new Error(`这条事件没有进度引用（不是被投递的 reply）：${input.event}`);
-    const turn = getLocalAgent().turnNode(ev.sourceTask, ref.turnId);
+    // 两种寻址：`(成员, 轮次)` 字面口径 ｜ `reply 事件 id` room 便利形态（事件自带 ref）
+    let taskUri: string;
+    let turnId: string;
+    let memberUri: string | null = null;
+    if (input.member && input.turn) {
+      const room = readRoom(input.id);
+      if (!room) throw new Error(`房间不存在：${input.id}（先 diy room create）`);
+      const memberId = resolveMember(room, input.member);
+      const m = memberId ? room.members.find((x) => x.id === memberId) : undefined;
+      if (!m) throw new Error(`房间里没有这个成员：${input.member}（room get 看成员表）`);
+      const tu = m.backend?.type === "task" ? m.backend.data.taskUri : "";
+      if (!tu) throw new Error(`成员 ${m.id} 没绑任务会话，没有进度可取（backend 缺 taskUri）`);
+      taskUri = tu;
+      turnId = input.turn;
+      memberUri = m.id;
+    } else {
+      if (!input.event) throw new Error("要么给 --event（reply 事件 id），要么给 --member + --turn");
+      const { events } = readRoomView(input.id, { limit: 0 });
+      const ev = events.find((e) => e.id === input.event);
+      if (!ev) throw new Error(`房间里没有这条事件：${input.event}（room get 看事件 id）`);
+      const ref = ev.ref;
+      if (!ref || !ev.sourceTask) throw new Error(`这条事件没有进度引用（不是被投递的 reply）：${input.event}`);
+      taskUri = ev.sourceTask;
+      turnId = ref.turnId;
+      memberUri = ref.memberUri;
+    }
+    const agent = getLocalAgent();
     return {
-      turn,
-      taskUri: ev.sourceTask,
-      turnId: ref.turnId,
-      live: sessionRegistry.activeTurnList().some((t) => t.uri === ev.sourceTask),
+      turn: agent.turnNode(taskUri, turnId),
+      taskUri,
+      turnId,
+      memberUri,
+      live: sessionRegistry.activeTurnList().some((t) => t.uri === taskUri),
+      entry: sessionRegistry.entryOf(taskUri),
+      action: agent.currentAction(taskUri),
     };
+  });
+
+  /**
+   * 房间成员的**此刻状态**（L1；##166 第三轮口径第 3 条：服务端能给出，不靠 UI 猜）。
+   *
+   * 合成三份既有真源（不新造状态）：
+   *   · 会话侧 —— `sessionRegistry.entryOf(taskUri)`（steps / startedAt / state / viewers / lastEndReason）
+   *   · 进度侧 —— `local-agent.currentAction`（未闭合块 ⇒「正在 bash · rg -n …」）
+   *   · room 侧 —— 投递链上的 `queued` / `running` 条数（盘上 fold 出的投递快照，无状态）
+   * 纯读、无副作用；任何布局的「头像行状态」都吃这一份（详情另走 `turn`）。
+   */
+  binding.on(app.room.roster, async ({ input }) => {
+    const { readRoom, readRoomView } = await import("../core/room");
+    const { getLocalAgent } = await import("./local-agent");
+    const { sessionRegistry } = await import("./session-registry");
+    const { memberAvatar, memberColor, orderedMembers } = await import("../../shared/room");
+    const room = readRoom(input.id);
+    if (!room) throw new Error(`房间不存在：${input.id}（先 diy room create）`);
+    const { events } = readRoomView(input.id, { limit: 0 });
+    const agent = getLocalAgent();
+    const members = orderedMembers(room).map((m, i) => {
+      const taskUri = m.backend?.type === "task" ? m.backend.data.taskUri || null : null;
+      let queued = 0;
+      let running = 0;
+      for (const ev of events) {
+        for (const d of ev.deliveries ?? []) {
+          if (d.memberId !== m.id) continue;
+          if (d.status === "queued") queued++;
+          else if (d.status === "running") running++;
+        }
+      }
+      return {
+        memberId: m.id,
+        name: m.name,
+        avatar: memberAvatar(m, i),
+        color: memberColor(m),
+        role: m.role ?? (m.kind === "human" ? "人类（房间主人）" : "agent"),
+        isHuman: m.kind === "human",
+        focus: room.focus === m.id,
+        taskUri,
+        entry: taskUri ? sessionRegistry.entryOf(taskUri) : null,
+        action: taskUri ? agent.currentAction(taskUri) : null,
+        queued,
+        running,
+      };
+    });
+    return { room: room.id, now: Date.now(), members };
   });
 
   // ── instances（实例大盘；##366）──

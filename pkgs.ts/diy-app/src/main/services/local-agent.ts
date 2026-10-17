@@ -46,6 +46,7 @@ import {
     costOfWith,
     selectHistoryByBudget,
     selectForDelivery,
+    type BlockKind,
     type BlockNode,
     type DeliveryOpts,
     type Op,
@@ -1218,6 +1219,54 @@ function reportModelUnavailable(e: unknown, taskUri: string, personaId: string, 
 
 // ─── 服务 ────────────────────────────────────────────
 
+/** L1 状态扫描的尾部窗口（op 条数）：**当前进度必在尾部**，不必扫全量（见 currentAction） */
+const ACTION_SCAN_OPS = 4000;
+
+/**
+ * 未闭合块同时存在时，谁的语义更"当前"（index 越小越优先）。
+ *
+ * 依据：轮在跑时 turn / step / think / tool 会**同时**处于未闭合态（turn 一直开到轮末），
+ * 只按插入序取最后一个会得到"轮次收尾中"这种含糊话；按语义取最具体的才像人话。
+ * error 最高（出错时它在说最后一件事）。
+ */
+const ACTION_PRIORITY: BlockKind[] = ["error", "tool", "think", "text", "plan", "step", "turn"];
+
+/**
+ * 「此刻在干什么」的一句话（L1 状态的文案）。
+ *
+ * 为什么文案在**服务端**生成（##166 第三轮口径第 3 条：服务端能给，不靠 UI 猜）：
+ * 会话的块语义（tool / think / text / step）只有 main 侧知道，UI 拿到的只是一棵块树；
+ * 让每个消费端各自写一套"从块树推文案"的逻辑，就是**第二份真源**。
+ * 这里给一句人话，UI 只负责显示。
+ */
+export function actionLabel(kind: BlockKind, fields: Record<string, unknown>): string {
+    const str = (v: unknown): string => (typeof v === "string" ? v : "");
+    const clip = (s: string, n = 48): string => (s.length > n ? `${s.slice(0, n)}…` : s);
+    switch (kind) {
+        case "tool": {
+            const tool = str(fields.tool) || "工具";
+            const title = str(fields.title);
+            return clip(title ? `${tool} · ${title}` : tool);
+        }
+        case "think":
+            return "正在思考";
+        case "text":
+            return "正在写回答";
+        case "step":
+            return "模型步进行中";
+        case "turn":
+            // 实测（2026-10-18）：第 1 步**等模型响应**期间，op 流里只有 turn 是未闭合的
+            // （step 的 start 要等这一步真的开始跑）—— 此刻说"收尾中"是假话，说"进行中"才诚实。
+            return "轮次进行中";
+        case "plan":
+            return "正在列计划";
+        case "error":
+            return "出错收尾中";
+        default:
+            return kind;
+    }
+}
+
 export class LocalAgentManager {
     private sessions = new Map<string, LocalSession>();
     /**
@@ -1806,6 +1855,45 @@ export class LocalAgentManager {
             store.apply(op);
         }
         return toTree(store, turnId);
+    }
+
+    /**
+     * 此刻在干什么（**L1 状态**：owner ##166 第三轮口径第 3 条 ——「正在跑哪一步 / 在做什么」）。
+     *
+     * 判据用块树的**官方口径**：同一轮内「当前进度」= **最后一个未 stop 的块**
+     * （`Block.touched` 的头注，见 local-blocks）。这里不 replay 整棵树，只扫**尾部 op**
+     * 维护一张"开了没关"的表 —— 当前进度必在尾部，扫 ACTION_SCAN_OPS 条足够，
+     * 成本是 O(尾) 而不是 O(会话)（roster 会周期性调它，不能每次重放 1.8 万 op）。
+     *
+     * 返回 `null` = 没有未闭合的块（空闲 / 刚收尾 / 窗口切在块中间）。
+     * **纯读**：不落盘、不改状态、不注册观察者（L1 是状态查询，不是内容订阅）。
+     */
+    currentAction(taskUri: string): { kind: BlockKind; label: string } | null {
+        let ops: Op[];
+        try {
+            ops = this.history(taskUri);
+        } catch {
+            return null; // 会话不可读（不存在 / 盘上坏了）不是本读口的错 —— 如实说"不知道"，不抛
+        }
+        const open = new Map<string, { kind: BlockKind; fields: Record<string, unknown> }>();
+        for (let i = Math.max(0, ops.length - ACTION_SCAN_OPS); i < ops.length; i++) {
+            const op = ops[i]!;
+            if (op.op === "start") open.set(op.id, { kind: op.kind, fields: {} });
+            else if (op.op === "stop") open.delete(op.id);
+            else {
+                const e = open.get(op.id);
+                if (e) Object.assign(e.fields, op.fields);
+            }
+        }
+        // 未闭合块可能有好几个（turn / step / think …同时开着）—— 取**语义最具体**的那个：
+        // 轮在跑但模型还没回话时，turn 与 step 都开着，此时"模型步进行中"比"轮次收尾中"诚实得多；
+        // 跑工具时 tool 开着，就该说"正在 bash · …"。
+        let best: { kind: BlockKind; fields: Record<string, unknown> } | null = null;
+        for (const e of open.values()) {
+            if (!best || ACTION_PRIORITY.indexOf(e.kind) < ACTION_PRIORITY.indexOf(best.kind)) best = e;
+        }
+        if (!best) return null;
+        return { kind: best.kind, label: actionLabel(best.kind, best.fields) };
     }
 
     /**

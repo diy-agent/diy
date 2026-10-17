@@ -91,6 +91,30 @@ interface RoomSummary {
     last?: string;
 }
 
+/** 成员 L1 状态（`diy.room.roster` 的一行；**字段真源在 main** —— 这里只做显示，不推断） */
+interface RosterMemberL1 {
+    memberId: string;
+    isHuman: boolean;
+    queued: number;
+    running: number;
+    action: { kind: string; label: string } | null;
+    entry: {
+        turn: { turnId: string; steps: number; startedAt: string; state: string } | null;
+        turnCount: number;
+        totalSteps: number;
+    } | null;
+}
+
+/** 从 ISO 起始时刻算「已用多久」：**起点由服务端给**，滴答在本地（不必每秒问服务端） */
+const elapsedText = (iso: string | null | undefined): string => {
+    if (!iso) return "";
+    const ms = Date.now() - Date.parse(iso);
+    if (!Number.isFinite(ms) || ms < 0) return "";
+    const sec = Math.floor(ms / 1000);
+    if (sec < 60) return `${sec}s`;
+    return `${Math.floor(sec / 60)}m${String(sec % 60).padStart(2, "0")}s`;
+};
+
 export function RoomsPage() {
     const [rooms, setRooms] = createSignal<RoomSummary[]>([]);
     const [roomId, setRoomId] = createSignal<string | null>(null);
@@ -113,6 +137,12 @@ export function RoomsPage() {
      * 这里只存"取回来的那一轮"（块树）与它是否还在跑；真进度**不在这里**（在成员会话的 ops 流里），
      * 本页只是它的一扇窗（room 不留进度数据 —— §28.7 A / §28.6 待决 74）。
      */
+    /**
+     * 成员的**此刻状态**（L1；##166 第三轮口径第 3 条）—— **服务端给的，UI 不猜**。
+     *
+     * 随房间轮询（2.5s）一起刷；读失败只是这一块空着，不打断房间（L1 是附加信息）。
+     */
+    const [roster, setRoster] = createSignal<RosterMemberL1[]>([]);
     const [turns, setTurns] = createSignal<Record<string, TurnState>>({});
     /** 展开态（缺省展开：用户要的就是"看得见过程"）；显式收起过的记 false */
     const [folded, setFolded] = createSignal<Record<string, boolean>>({});
@@ -166,6 +196,7 @@ export function RoomsPage() {
             setEvents(r.events);
             setBadLines(r.badLines);
             if (!opts.soft) setErr(null);
+            void loadRoster(id);
             queueMicrotask(() => {
                 if (streamRef) streamRef.scrollTop = streamRef.scrollHeight;
             });
@@ -175,6 +206,23 @@ export function RoomsPage() {
     };
 
     /**
+     * 取成员的 L1 状态（此刻在干什么 / 第几步 / 多久 / 排几条队）。
+     *
+     * 口径（##166 第三轮第 3 条）：**服务端能给，不靠 UI 猜** —— 本函数只是把 main 合成的
+     * 那一行显示出来；"在跑吗 / 在做什么 / 多久"全部来自服务端（会话注册表 + 未闭合块 + 投递链）。
+     */
+    const loadRoster = async (id: string): Promise<void> => {
+        try {
+            const r = await diyService.diy.room.roster({ id });
+            setRoster(r.members as RosterMemberL1[]);
+        } catch {
+            /* L1 是附加信息：读不到就让状态行空着（下一轮还会再试） */
+        }
+    };
+
+    const rosterOf = (id: string): RosterMemberL1 | undefined => roster().find((m) => m.memberId === id);
+
+    /**
      * 取一条 reply 的进度（该成员会话的那一轮）。**不新造数据源** ——
      * main 侧只是把 `ref = { memberUri, turnId }` 指向的那一轮从成员会话里切出来。
      */
@@ -182,7 +230,7 @@ export function RoomsPage() {
         const id = roomId();
         if (!id) return;
         try {
-            const r = await diyService.diy.room.turn({ id, event: eventId });
+            const r = await diyService.diy.room.turn({ id, event: eventId, member: undefined, turn: undefined });
             setTurns((prev) => ({
                 ...prev,
                 [eventId]: {
@@ -635,6 +683,47 @@ export function RoomsPage() {
                                             </div>
                                             <Show when={taskOf(m)}>
                                                 <div class="text-caption opacity-50 truncate">{taskOf(m)}</div>
+                                            </Show>
+                                            <Show
+                                                when={m.kind !== "human"}
+                                                fallback={
+                                                    <div class="text-caption opacity-40 truncate mt-0.5" data-room-l1={m.id}>
+                                                        在线
+                                                    </div>
+                                                }
+                                            >
+                                                <div class="text-caption truncate mt-0.5 flex items-center gap-1" data-room-l1={m.id}>
+                                                    <Show
+                                                        when={rosterOf(m.id)?.entry?.turn}
+                                                        fallback={
+                                                            <Show
+                                                                when={(rosterOf(m.id)?.queued ?? 0) > 0}
+                                                                fallback={<span class="opacity-40">空闲</span>}
+                                                            >
+                                                                <span class="text-warning">
+                                                                    排队中 {rosterOf(m.id)?.queued ?? 0} 条
+                                                                </span>
+                                                            </Show>
+                                                        }
+                                                    >
+                                                        <span class="inline-block w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
+                                                        <span class="opacity-70 truncate">
+                                                            {rosterOf(m.id)?.action?.label ?? "运行中"}
+                                                        </span>
+                                                        <span class="opacity-40 shrink-0">
+                                                            · 第 {(rosterOf(m.id)?.entry?.turn?.steps ?? 0) + 1} 步
+                                                        </span>
+                                                        <span class="opacity-40 shrink-0">
+                                                            {elapsedText(rosterOf(m.id)?.entry?.turn?.startedAt)}
+                                                        </span>
+                                                        {/* 跑着也照样报排队数：单成员串行时"后面还压着几条"是用户最关心的状态之一 */}
+                                                        <Show when={(rosterOf(m.id)?.queued ?? 0) > 0}>
+                                                            <span class="text-warning shrink-0">
+                                                                +{rosterOf(m.id)?.queued ?? 0} 排队
+                                                            </span>
+                                                        </Show>
+                                                    </Show>
+                                                </div>
                                             </Show>
                                         </div>
                                         <button

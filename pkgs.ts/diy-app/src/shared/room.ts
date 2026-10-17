@@ -198,9 +198,15 @@ export function resolveRecipients(
   return { recipients: [], routing: "none" };
 }
 
-/** 名字或 id → 成员：`@dev` → `agent:dev`；不认得就原样返回（外部主体 / 未来扩展） */
+/**
+ * 名字或 id → 成员：`@dev` / `dev` / `agent:dev` 都认；不认得就原样返回（外部主体 / 未来扩展）。
+ *
+ * 前导 `@` 一律剥掉：命令行的 `--member @review` 与正文里的寻址写法是**同一个直觉**
+ * （实测踩到：不剥时 `@review` 会被当成一个陌生名字而报"房间里没有这个成员"）。
+ */
 export function resolveMember(room: Pick<Room, "members"> | null | undefined, nameOrId: string): string {
-  const hit = room?.members.find((m) => m.id === nameOrId || m.name === nameOrId);
+  const key = nameOrId.trim().replace(/^@+/, "");
+  const hit = room?.members.find((m) => m.id === key || m.name === key);
   return hit ? hit.id : nameOrId;
 }
 
