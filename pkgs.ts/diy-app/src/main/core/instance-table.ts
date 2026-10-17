@@ -64,7 +64,9 @@ export function padDisplay(s: string, width: number): string {
 }
 
 /** 一行的可读摘要：端口 / 状态 / 会话 三列都从这里派生，保持「表格只读展示」的定位 */
-function startedAtShort(iso: string | null): string {
+/** 启动时刻 → `MM-DD HH:mm`（本地）。导出给 UI 实例页用（##367）—— 同一句话只写一处：
+ *  表格文本与页面上的时间格式必须一致，复制第二份迟早对不上。 */
+export function startedAtShort(iso: string | null): string {
   if (!iso) return "-";
   // ISO（UTC）→ 本地 `MM-DD HH:mm`；手工格式化（不引 Intl，保持纯函数 + 确定性）
   const d = new Date(iso);
@@ -74,7 +76,7 @@ function startedAtShort(iso: string | null): string {
 }
 
 /** 会话摘要：「3 会话 · 2 跑轮」；完全没自报到 → `-` */
-function sessionSummary(r: InstanceRow): string {
+export function sessionSummary(r: InstanceRow): string {
   if (r.status !== "ready") return "-";
   const parts: string[] = [`${r.sessions} 会话`];
   if (r.running > 0) parts.push(`${r.running} 跑轮`);
