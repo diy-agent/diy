@@ -45,6 +45,8 @@ import {
 } from "../../shared/model-config";
 // 草稿与任务详情载荷的契约（纯 zod，renderer 同源）
 import { DraftFieldSchema, DraftFieldsSchema, DraftsData, TaskDetailSchema } from "../../shared/task-detail";
+// 实例大盘契约（shared，renderer 同源）：一行 = 一个实例
+import { InstanceRowSchema, InstanceSelfSchema, RevealResultSchema } from "../../shared/instance-row";
 
 // 任务状态枚举 — 单一真相源 task-state.ts（纯 zod，无 Node 依赖，浏览器安全） */
 import { TaskStateSchema } from "../core/task-state";
@@ -1903,6 +1905,58 @@ export const apiDef = RpcSchema.router({
               name: z.string().cliArg({ desc: "仓库标识（diy.yaml 中注册的 URL 或 host/owner/repo）" }),
             },
             output: z.object({ status: z.string(), data: z.object({ removed: z.any() }) }).or(z.object({ status: z.string(), msg: z.string() })),
+          }),
+        },
+      }),
+
+      /**
+       * 实例大盘（Main 域）——「本机现在有哪些 diy 实例在跑、各自是谁、在干什么」。
+       *
+       * 发现靠**扫进程**（没有实例索引，见 services/instances.ts 文件头），
+       * 「谁开的」靠启动时写进注册表（`~/.diy-instances/<pid>.json`，事后再追父链追不出来），
+       * 数据根/端口靠**活体自报**（环境变量是继承来的，不等于真根）。
+       */
+      instances: RpcSchema.group({
+        desc: `实例大盘（扫描本机 diy 实例 + 唤起指定实例）`,
+        children: {
+          ls: RpcSchema.unary({
+            desc: `列出本机所有 diy 实例（对齐表格文本，供人读；程序读请用 instances.list）`,
+            input: {},
+            output: z.string().describe("表格文本（含表头与汇总行）"),
+          }),
+          list: RpcSchema.unary({
+            desc: `列出本机所有 diy 实例（结构化行，供 UI / 程序消费）`,
+            input: {},
+            output: z.object({ rows: z.array(InstanceRowSchema) }),
+          }),
+          self: RpcSchema.unary({
+            desc: `本实例自报身份 + 活跃会话 + 窗口状态（别的实例扫描时调用；无窗口实例 window=null）`,
+            input: {},
+            output: InstanceSelfSchema,
+          }),
+          reveal: RpcSchema.unary({
+            desc: `唤起**本**实例窗口（重建 + 前置 + 全屏；由别的实例的 instances.focus 调用）`,
+            input: {},
+            output: RevealResultSchema,
+          }),
+          focus: RpcSchema.unary({
+            desc: `
+            唤起指定实例（窗口前置 + 全屏）
+
+            主路 = 让目标实例**自己** show+focus+setFullScreen（RPC，确定且无需系统权限）；
+            RPC 不可用（无端口 / 无响应）时降级 osascript（需 Automation 权限，可能弹窗）。
+            两路都失败即报错 —— 不静默吞。
+            `,
+            input: {
+              pid: z.number().optional().cliOption({ desc: "目标实例 pid（与 --port 二选一）" }),
+              port: z.number().optional().cliOption({ desc: "目标实例 RPC 端口（与 --pid 二选一）" }),
+            },
+            output: z.object({
+              pid: z.number().nullable(),
+              port: z.number().nullable(),
+              via: z.string().describe("rpc（目标实例自己唤起）| osascript（系统级降级）"),
+              reason: z.string(),
+            }),
           }),
         },
       }),
