@@ -37,6 +37,7 @@ import { requirePostText } from "../core/flow-store";
 import * as flowThread from "../core/flow-thread";
 import { flowPrompt } from "./flow-prompt";
 import { AsyncQueue } from "./async-queue";
+import { modelNoticeHub } from "./model-notice";
 
 /**
  * 实际 RPC 监听端口，由入口在绑定完成后回填。
@@ -984,6 +985,17 @@ export function bindAppHandlers(binding: ServerBinding): void {
   });
   binding.on(app.traffic.events, async function* () {
     for await (const ev of traffic.events()) yield ev;
+  });
+
+  // ── notice（「模型不可用」通知；##369 ①）──
+  // 数据源是 main 侧通知中心（真发失败的 catch 里 push）：renderer 只订阅/关闭，不产生。
+  binding.on(app.notice.list, async () => modelNoticeHub.list());
+  binding.on(app.notice.dismiss, async ({ input }) => {
+    modelNoticeHub.dismiss(input.id);
+    return { status: "ok" };
+  });
+  binding.on(app.notice.watch, async function* ({ signal }) {
+    for await (const n of modelNoticeHub.subscribe(signal)) yield n;
   });
 
   // ── llmConfig（模型 provider 配置）──
