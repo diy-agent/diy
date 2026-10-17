@@ -370,10 +370,11 @@ export default function App() {
     };
 
     /**
-     * 已读水位：**正在看**的那条会话追到当前步数 —— 它是"距上次看新增多少步"的基线（##308）。
+     * 已读水位：**正在看**的那条会话追到当前轮次 —— 它是"距上次看新增多少条未读消息"的基线
+     * （##308；##358 口径订正：1 轮 = 1 条消息，不是步数）。
      *
      * 只追激活的 task-run tab（不是"开着就算"）：`isTaskDisplayed` 的语义就是"在屏上"，
-     * 与 hover 覆盖层用的是同一条判据。读了 `entries` 让注册表帧到达时重跑（水位随步数前进）。
+     * 与 hover 覆盖层用的是同一条判据。读了 `entries` 让注册表帧到达时重跑（水位随轮次前进）。
      *
      * ⚠️ 本 effect 里**只许读**、不许写（自读自写会自我入队 → 无限递归，##308 review3 P1-1）：
      * `markViewed` 内部对水位读做了 `untrack`，故这里可以安全地在 tracked 作用域里调它。
@@ -383,7 +384,7 @@ export default function App() {
         const t = tabStore.activeTab();
         if (t?.pageId !== "task-run" || !t.ctx) return;
         // 读一次条目表 = **订阅注册表帧**：帧到了本 effect 就重跑，把水位追到最新
-        //（不读它的话，步数涨了水位还停在打开那一刻，"新增"会一路涨成假信号）。
+        //（不读它的话，轮次涨了水位还停在打开那一刻，"未读"会一路涨成假信号）。
         if (sessionStore.entries.length === 0) return;
         sessionStore.markViewed(t.ctx);
     });

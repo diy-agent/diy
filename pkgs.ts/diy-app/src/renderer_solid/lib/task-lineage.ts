@@ -103,3 +103,28 @@ export function isAncestorOf(nodes: TreeNode[], ancestor: string, uri: string): 
     if (!chain) return false;
     return chain.some((n) => n.uri === ancestor);
 }
+
+/**
+ * 任务树里**全部任务的 uri**（DFS 序，去重）。
+ *
+ * 用途 = 会话总览的**行集来源**（##358）：总览要能列「账本里有历史的会话」，
+ * 而账本属于任务 —— 于是先把树里的任务全列出来，再去各要各的账本。
+ *
+ * 刻意**不**用注册表条目当行集：注册表是进程性的（重启即空）—— 那正是用户
+ * 「app 启动后丢了所有进度」的根因（见 lib/session-mark 头注）。
+ */
+export function allTaskUris(nodes: TreeNode[]): string[] {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    const walk = (ns: TreeNode[]) => {
+        for (const n of ns) {
+            if (n.kind === "task" && n.uri && !seen.has(n.uri)) {
+                seen.add(n.uri);
+                out.push(n.uri);
+            }
+            if (n.children?.length) walk(n.children);
+        }
+    };
+    walk(nodes);
+    return out;
+}

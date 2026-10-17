@@ -153,6 +153,32 @@ export const Caches = {
     serialize: (v) => String(v),
     defaultValue: 0,
   }),
+  /** 会话总览：范围切片（`all` = 含账本历史 / `session` = 只看本次启动活跃过的）。
+   *  parse 只校验**形状**（这两个字面量），不校验它是不是"有意义的范围" ——
+   *  取值域属于业务知识（`src/shared/session-query.ts`），这里替下游判断会重现「parse 越权」的旧坑。 */
+  diy_session_overview_scope: field<string>("diy_session_overview_scope", {
+    parse: (raw) => (raw === "all" || raw === "session" ? raw : null),
+    serialize: (v) => v,
+    defaultValue: "all",
+  }),
+  /** 会话总览：状态切片（逗号分隔；空串 = 不按切片过滤）。认识的键由 session-query 收窄。 */
+  diy_session_overview_slices: field<string>("diy_session_overview_slices", {
+    parse: (raw) => (raw.length <= 200 ? raw : null),
+    serialize: (v) => v,
+    defaultValue: "",
+  }),
+  /** 会话总览：搜索词（视图 cache：丢了只是清掉搜索框，无数据损失） */
+  diy_session_overview_query: field<string>("diy_session_overview_query", {
+    parse: (raw) => (raw.length <= 200 ? raw : null),
+    serialize: (v) => v,
+    defaultValue: "",
+  }),
+  /** 会话总览：排序（`<键>:<asc|desc>`）。同 diy_task_tree_sort：只校验形状，键清单归 session-query。 */
+  diy_session_overview_sort: field<string>("diy_session_overview_sort", {
+    parse: (raw) => (/^[a-zA-Z_]+:(asc|desc)$/.test(raw) ? raw : null),
+    serialize: (v) => v,
+    defaultValue: "attention:asc",
+  }),
   /** 任务详情面板宽度（px，范围 360-4000；渲染时另受窗口上限约束，见 TaskDetailPanel.panelMax） */
   diy_task_detail_width: field("diy_task_detail_width", {
     parse: (raw) => {

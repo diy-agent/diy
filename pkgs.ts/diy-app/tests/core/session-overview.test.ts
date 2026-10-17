@@ -17,7 +17,7 @@ import {
     activityOf,
     fmtDuration,
     fmtTokens,
-    newStepsOf,
+    newTurnsOf,
     queueViewOf,
     sessionChipOf,
     stalledOf,
@@ -89,10 +89,10 @@ describe("主状态轴：working / idle", () => {
         expect(stalledOf(entry({ lastEndReason: { type: "completed", data: {} } }), NOW + STALL_MS * 99)).toBe(false);
     });
 
-    it("距上次看新增：水位缺失（没看过）算 0，不把历史步数算成「你不在时跑的」", () => {
-        expect(newStepsOf(running({ totalSteps: 40 }), null)).toBe(0);
-        expect(newStepsOf(running({ totalSteps: 40 }), 20)).toBe(23);
-        expect(newStepsOf(entry({ totalSteps: 5 }), 99)).toBe(0); // 水位比现在靠前（清过日志）→ 不出现负数
+    it("距上次看新增：**单位是轮次**（1 轮 = 1 条未读消息），水位缺失（没看过）算 0", () => {
+        expect(newTurnsOf(running({ turnCount: 4 }), null)).toBe(0);
+        expect(newTurnsOf(running({ turnCount: 4 }), 1)).toBe(3);
+        expect(newTurnsOf(entry({ turnCount: 0 }), 9)).toBe(0); // 水位比现在靠前 → 不出现负数
     });
 });
 
@@ -145,8 +145,8 @@ describe("异常退出 / chip", () => {
     });
 
     it("在跑 → ● 主色 chip，文案带 k/max 与排队 / 无人看 / 新增", () => {
-        const c = sessionChipOf(running({ queue: 1, viewers: 0, totalSteps: 7 }), {
-            seenSteps: 2,
+        const c = sessionChipOf(running({ queue: 1, viewers: 0, totalSteps: 7, turnCount: 5 }), {
+            seenTurns: 2,
             maxSteps: 200,
             now: NOW,
         });
@@ -155,12 +155,12 @@ describe("异常退出 / chip", () => {
         expect(c!.text).toContain("10/200");
         expect(c!.text).toContain("排队 1");
         expect(c!.text).toContain("无人看");
-        expect(c!.text).toContain("新增 8 步");
+        expect(c!.text).toContain("+3");
         expect(c!.tip).toContain("projects/4/tasks/308");
     });
 
     it("停滞 → 黄色 chip 并把「多久没动」说出来", () => {
-        const c = sessionChipOf(running(), { seenSteps: 0, maxSteps: 200, now: NOW + STALL_MS });
+        const c = sessionChipOf(running(), { seenTurns: 0, maxSteps: 200, now: NOW + STALL_MS });
         expect(c!.tone).toBe("warning");
         expect(c!.text).toContain("停滞");
     });
@@ -168,37 +168,38 @@ describe("异常退出 / chip", () => {
     it("空闲且无事 → 不发 chip（任务表几百行，不挂噪音）", () => {
         expect(
             sessionChipOf(entry({ turnCount: 3, lastEndReason: { type: "completed", data: {} } }), {
-                seenSteps: 100,
+                seenTurns: 100,
                 maxSteps: 200,
                 now: NOW,
             }),
         ).toBeNull();
     });
 
-    it("空闲但有未读新增 → ◎（##87「任务 agent 状态未体现」的那一面）", () => {
+    it("空闲但有未读新增 → **绿 `+N`**（##87「任务 agent 状态未体现」的那一面）", () => {
         const c = sessionChipOf(
-            entry({ totalSteps: 20, turnCount: 2, lastEndReason: { type: "completed", data: {} } }),
-            { seenSteps: 5, maxSteps: 200, now: NOW },
+            entry({ totalSteps: 20, turnCount: 4, lastEndReason: { type: "completed", data: {} } }),
+            { seenTurns: 1, maxSteps: 200, now: NOW },
         );
-        expect(c!.text).toContain("15");
+        expect(c!.tone).toBe("primary");
+        expect(c!.text).toBe("+3");
     });
 
     it("空闲 + 异常收尾 → 文案与图标与轮尾同源（endMarkOf / abortText）", () => {
         const userStop = sessionChipOf(
             entry({ turnCount: 1, lastEndReason: { type: "aborted", data: { source: "user" } } }),
-            { seenSteps: 0, maxSteps: 200, now: NOW },
+            { seenTurns: 0, maxSteps: 200, now: NOW },
         );
         expect(userStop!.text).toBe("生成已取消");
         const err = sessionChipOf(
             entry({ turnCount: 1, lastEndReason: { type: "error", data: { source: "llm", message: "boom" } } }),
-            { seenSteps: 0, maxSteps: 200, now: NOW },
+            { seenTurns: 0, maxSteps: 200, now: NOW },
         );
         expect(err!.tone).toBe("error");
         expect(err!.icon).toBe("✗");
     });
 
     it("待投递留言的空闲会话 → chip 说「什么时候投」（不是只说个数）", () => {
-        const c = sessionChipOf(entry({ queue: 2, viewers: 0 }), { seenSteps: 0, maxSteps: 200, now: NOW });
+        const c = sessionChipOf(entry({ queue: 2, viewers: 0 }), { seenTurns: 0, maxSteps: 200, now: NOW });
         expect(c!.tone).toBe("warning");
         expect(c!.text).toContain("已关闭");
     });

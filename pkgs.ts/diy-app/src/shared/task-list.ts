@@ -52,7 +52,34 @@ export type SortKey =
   | "state"
   | "change_type"
   | "module"
-  | "priority";
+  | "priority"
+  // 会话侧（##358）：任务 : 会话 = 1 : 1，故这几列是**任务属性**的延伸（用户原话第 4 条）
+  | "session"
+  | "tokens"
+  | "cost"
+  | "lastActivity";
+
+/**
+ * 会话侧的排序值 —— 由 renderer 现算后**注入**（本模块不认识 SessionEntry，也不认识账本）。
+ *
+ * 为什么不直接 import SessionEntry：纯视图逻辑不该依赖 main 的注册表契约；更要紧的是
+ * 排序只需要「几个可比的标量」，注入标量比注入整个条目更容易保持一致（判据仍在各 store）。
+ *
+ * 两个来源（都在 renderer 侧算好才进来）：
+ *   · `attention` / `tokens` / `lastActivity` —— 注册表（`sessionStore`，**进程内**事实）；
+ *   · `cost` —— 账本（`usageLedgerStore`，**跨启动**的历史累计）。
+ * 缺值一律用 `undefined`（= 未设置，`cmpField` 语义：**恒排最后**，与升/降序无关）。
+ */
+export interface SessionSortValues {
+  /** 该不该先看（越小越前）；无注册表条目 → undefined */
+  attention?: number;
+  /** 会话累计 token（账本跨启动，与注册表取大）；两源都无 → undefined */
+  tokens?: number;
+  /** 最后消息时刻 ISO（账本跨启动，与注册表取大）；两源都无 → undefined */
+  lastActivity?: string;
+  /** 账本累计消费（$）；未读到 / 账本无价 → undefined（"未知"不该混进 0 里） */
+  cost?: number;
+}
 
 export type SortDir = "asc" | "desc";
 
@@ -75,6 +102,11 @@ export const SORT_KEYS: readonly { key: SortKey; label: string; title: string }[
   { key: "num", label: "编号", title: "任务号（项目内自增）" },
   { key: "created", label: "创建", title: "创建时间" },
   { key: "updated", label: "修改", title: "最后修改时间" },
+  // 会话侧四列（##358，追加在右端，不动既有列序以免打乱肌肉记忆）
+  { key: "session", label: "会话", title: "会话状态（运行中 / 异常终止 / 未读 / 待投递 / 已开始）" },
+  { key: "tokens", label: "token", title: "会话累计 token（读账本 usage.jsonl 现算，跨启动；与注册表取大）" },
+  { key: "cost", label: "消费", title: "任务会话累计消费（$；读账本 usage.jsonl 现算，跨启动）" },
+  { key: "lastActivity", label: "最后消息", title: "会话最后一次消息时间（账本跨启动，与注册表取大）" },
 ];
 
 /** 默认排序：创建时间升序 = 任务号顺序 = 稳定时间线（用户选定的默认，勿随意改） */
@@ -112,8 +144,16 @@ export function formatSort(s: SortSpec): string {
  */
 export function toggleSort(cur: SortSpec, key: SortKey): SortSpec {
   if (cur.key === key) return { key, dir: cur.dir === "asc" ? "desc" : "asc" };
-  return { key, dir: key === "updated" ? "desc" : "asc" };
+  return { key, dir: DEFAULT_DESC_KEYS.has(key) ? "desc" : "asc" };
 }
+
+/**
+ * 默认**降序**的键（点一下先看"最要紧的那头"）：
+ *   · `updated` / `lastActivity` —— 问的是"最近动了什么"，升序会把陈旧项堆最前；
+ *   · `tokens` / `cost` —— 问的是"谁花得最多"，升序会把 0 排在最前，等于白排。
+ * 其余（含 `session`）走升序：位次类升序 = 按"该不该看"的正确顺序（见 toggleSort 头注）。
+ */
+const DEFAULT_DESC_KEYS = new Set<SortKey>(["updated", "lastActivity", "tokens", "cost"]);
 
 /**
  * 可空值比较：**未设置的值恒排最后**（与 asc/desc 无关）。
@@ -156,9 +196,14 @@ function cmpText(a: string, b: string): number {
  * 生成任务节点比较器。
  * 只在**同一父级的兄弟之间**使用 —— 跨层级排序会破坏父子结构（树是分类与分解的表达）。
  */
-export function taskComparator<T extends TaskListNode>(spec: SortSpec): (a: T, b: T) => number {
+export function taskComparator<T extends TaskListNode>(
+  spec: SortSpec,
+  /** 会话侧取值（可缺省：没有会话的表单/单测照样能排任务侧列） */
+  sessionOf?: (n: T) => SessionSortValues | null,
+): (a: T, b: T) => number {
   const sign = spec.dir === "asc" ? 1 : -1;
   const { key } = spec;
+  const sess = (n: T): SessionSortValues | null => (sessionOf ? sessionOf(n) : null);
   return (a, b) => {
     switch (key) {
       case "num":
@@ -178,6 +223,16 @@ export function taskComparator<T extends TaskListNode>(spec: SortSpec): (a: T, b
         return cmpField(a.module, b.module, sign, cmpText);
       case "title":
         return cmpField(a.title, b.title, sign, cmpText);
+      // 会话侧：没有会话（本次启动没活动过）→ undefined ⇒ 未设置恒排最后（cmpField 语义）
+      case "session":
+        return cmpField(sess(a)?.attention, sess(b)?.attention, sign, (x, y) => x - y);
+      case "tokens":
+        return cmpField(sess(a)?.tokens, sess(b)?.tokens, sign, (x, y) => x - y);
+      // 账本消费：`undefined`（未知）恒排最后 —— 任务表里"没花过钱/没读到"不该混进排序前列
+      case "cost":
+        return cmpField(sess(a)?.cost, sess(b)?.cost, sign, (x, y) => x - y);
+      case "lastActivity":
+        return cmpField(sess(a)?.lastActivity, sess(b)?.lastActivity, sign, (x, y) => (x < y ? -1 : x > y ? 1 : 0));
     }
   };
 }
@@ -190,8 +245,12 @@ function numValue(n: TaskListNode): number | undefined {
 }
 
 /** 同级排序（返回新数组，不改入参） */
-export function sortTasks<T extends TaskListNode>(nodes: T[], spec: SortSpec): T[] {
-  return [...nodes].sort(taskComparator<T>(spec));
+export function sortTasks<T extends TaskListNode>(
+  nodes: T[],
+  spec: SortSpec,
+  sessionOf?: (n: T) => SessionSortValues | null,
+): T[] {
+  return [...nodes].sort(taskComparator<T>(spec, sessionOf));
 }
 
 // ═══════════════════════════════════════
@@ -303,6 +362,8 @@ export interface BuildRowsOptions {
   query: string;
   /** 展开判定（由调用方给：项目的展开语义与任务相反，且有持久化视图 cache） */
   isExpanded: (node: TaskListNode) => boolean;
+  /** 会话侧排序取值（可缺省；见 SortKey 里的会话四列） */
+  sessionOf?: (node: TaskListNode) => SessionSortValues | null;
 }
 
 interface CollectCtx {
@@ -310,6 +371,7 @@ interface CollectCtx {
   searching: boolean;
   sort: SortSpec;
   isExpanded: (node: TaskListNode) => boolean;
+  sessionOf?: (node: TaskListNode) => SessionSortValues | null;
 }
 
 /**
@@ -324,7 +386,7 @@ function collect<T extends TaskListNode>(
 ): { rows: TaskListRow<T>[]; hit: boolean } {
   const rows: TaskListRow<T>[] = [];
   let hit = false;
-  for (const node of sortTasks<T>(kids, ctx.sort)) {
+  for (const node of sortTasks<T>(kids, ctx.sort, ctx.sessionOf)) {
     const match = ctx.searching ? matchTask(node, ctx.query) : null;
     const sub = collect<T>(node.children as T[], depth + 1, ctx, prune);
     if (match || sub.hit) hit = true;
@@ -346,7 +408,13 @@ function collect<T extends TaskListNode>(
  */
 export function buildTaskRows<T extends TaskListNode>(nodes: T[], opts: BuildRowsOptions): TaskListRow<T>[] {
   const searching = opts.query.trim().length > 0;
-  const ctx: CollectCtx = { query: opts.query, searching, sort: opts.sort, isExpanded: opts.isExpanded };
+  const ctx: CollectCtx = {
+    query: opts.query,
+    searching,
+    sort: opts.sort,
+    isExpanded: opts.isExpanded,
+    sessionOf: opts.sessionOf,
+  };
   const rows: TaskListRow<T>[] = [];
 
   for (const project of nodes) {

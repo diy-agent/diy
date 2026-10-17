@@ -58,6 +58,12 @@ const transport = {
             queueMicrotask(() => sink?.({ type: "call", id: msg.id, stream: STREAM_ID }));
         } else if (msg.method === "diy.agent.local.limits") {
             queueMicrotask(() => sink?.({ type: "call", id: msg.id, result: { maxSteps: 200 } }));
+        } else if (msg.method === "diy.agent.local.usage") {
+            // 账本（`<key>.usage.jsonl`）：**答空数组** = "读到且为空"。
+            // ##358 起水位钉的是 `max(注册表 turnCount, 账本唯一 turnId 数)`（`totalTurnsOf`）——
+            // 账本没到货时水位**挂起不写**（宁可不写也不写个会撒谎的数），故本用例必须让它有个
+            // 明确答案，否则断言的是"挂起"而不是"追平"。
+            queueMicrotask(() => sink?.({ type: "call", id: msg.id, result: [] }));
         } else {
             unhandled.push(msg.method);
         }
@@ -74,6 +80,19 @@ const transport = {
 };
 
 (globalThis as { window?: unknown }).window = { transport };
+
+/**
+ * 已读水位落盘在 renderer `localStorage`（`diy_sessions_seen`，##358 的**临时实现**）——
+ * 单测跑在 node 环境、没有它。不给桩的话 `loadSeen` 会打一条"读取已读水位失败"的
+ * error（真实现没错，是环境缺件），而本文件恰恰断言"没有多余日志"⇒ 会红。
+ * 桩只实现用到的那三个方法（get / set / remove），够水位读写与"清空重算"用。
+ */
+const store = new Map<string, string>();
+(globalThis as { localStorage?: unknown }).localStorage = {
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => void store.set(k, v),
+    removeItem: (k: string) => void store.delete(k),
+};
 
 const { sessionStore } = await import("../../src/renderer_solid/store/sessionStore");
 const { createEffect, createRoot, createSignal } = await import("solid-js");
@@ -103,7 +122,7 @@ function makeEntry(over: Partial<SessionEntry> = {}): SessionEntry {
         viewers: 0,
         firstSeenAt: at,
         lastActivity: at,
-        turnCount: 1,
+        turnCount: 5,
         lastEndReason: null,
         totalSteps: 0,
         totalTokens: 0,
@@ -169,10 +188,14 @@ describe("sessionStore —— 打开会话页不得把注册表订阅弄死（P1
         expect(sessionStore.connection).toBe("live");
         // ② 没有"[sessions] 注册表订阅中断"这类日志（P1 时必有一条退避重连）
         expect(warns).toEqual([]);
-        // ③ 水位追平到当前步数（effect 干了它该干的事，只是没自循环）
-        expect(sessionStore.seenStepsOf("projects/2/tasks/1")).toBe(5);
-        // ④ 跑的次数是**有界**的（自触发时这里会炸栈，根本到不了断言）
-        expect(runs()).toBe(1);
+        // ③ 水位追平到当前轮次（##358：1 轮 = 1 条未读消息；effect 干了它该干的事，只是没自循环）
+        expect(sessionStore.seenTurnsOf("projects/2/tasks/1")).toBe(5);
+        // ④ 跑的次数是**有界**的（自触发时这里会炸栈，根本到不了断言）。
+        //    2 次 = ① active 切过来（表还空，早退）→ ② 注册表帧到、表非空 + 水位那一步。
+        //    ##358 起水位要多读一份**账本**（`totalTurnsOf` 里 `usageLedgerStore.turnsOf` ⇒ 订阅
+        //    它的 version），账本到货会**合法地**再跑一次 —— 那是依赖变更，不是"读 seen → 写 seen"
+        //    的自触发。故上界放到 3（自触发是几十上百次起步，这个上界照样拦得住）。
+        expect(runs()).toBeLessThanOrEqual(3);
         expect(sessionStore.entries).toHaveLength(1);
         // ⑤ 没碰别的 RPC（新增调用 = 本用例的假 transport 须跟进）
         expect(unhandled).toEqual([]);
@@ -180,7 +203,7 @@ describe("sessionStore —— 打开会话页不得把注册表订阅弄死（P1
         dispose();
     });
 
-    it("水位跟随帧前进：新帧到达 → effect 重跑 → 水位追到新步数（订阅没受影响）", async () => {
+    it("水位跟随帧前进：新帧到达 → effect 重跑 → 水位追到新轮次（订阅没受影响）", async () => {
         vi.spyOn(console, "warn").mockImplementation(() => {});
         const [active] = createSignal<ActiveTab | undefined>({ pageId: "task-run", ctx: "projects/2/tasks/1" });
         const { runs, dispose } = mountFollowEffect(active);
@@ -189,20 +212,22 @@ describe("sessionStore —— 打开会话页不得把注册表订阅弄死（P1
         await settle();
         pushFrame({ kind: "snapshot", entries: [makeEntry()] });
         await settle();
-        expect(sessionStore.seenStepsOf("projects/2/tasks/1")).toBe(5);
+        expect(sessionStore.seenTurnsOf("projects/2/tasks/1")).toBe(5);
 
-        // 步数前进到 9（同一条目 upsert）→ 水位应随帧追平
+        // 轮次前进到 9（同一条目 upsert）→ 水位应随帧追平
         const e = makeEntry();
-        pushFrame({ kind: "upsert", entry: { ...e, turn: { ...e.turn!, steps: 9 } } });
+        pushFrame({ kind: "upsert", entry: { ...e, turnCount: 9 } });
         await settle();
 
-        expect(sessionStore.seenStepsOf("projects/2/tasks/1")).toBe(9);
+        expect(sessionStore.seenTurnsOf("projects/2/tasks/1")).toBe(9);
         expect(sessionStore.connection).toBe("live");
-        expect(runs()).toBe(2); // 快照一次 + 前进一次
+        // 快照一次 + 前进一次 + **账本到货一次**（##358：水位读账本 ⇒ 订阅它的 version；
+        // 这条依赖变更会合法地再跑一次，见上一个用例 ④ 的说明）。上界拦的是自触发。
+        expect(runs()).toBeLessThanOrEqual(3);
         dispose();
     });
 
-    it("会话不在注册表里（本次启动没活动过）→ 不写水位、也不循环", async () => {
+    it("会话不在注册表里（本次启动没活动过）→ 不虚报未读、也不循环", async () => {
         vi.spyOn(console, "warn").mockImplementation(() => {});
         const [active] = createSignal<ActiveTab | undefined>({ pageId: "task-run", ctx: "projects/9/tasks/9" });
         const { runs, dispose } = mountFollowEffect(active);
@@ -212,11 +237,16 @@ describe("sessionStore —— 打开会话页不得把注册表订阅弄死（P1
         pushFrame({ kind: "snapshot", entries: [makeEntry()] });
         await settle();
 
-        // markViewed 对"不在表里的 uri"是 no-op：不写水位（也不循环）
-        expect(sessionStore.seenStepsOf("projects/9/tasks/9")).toBeNull();
+        // 水位写的是**总轮次真值**（##358：注册表 ∪ 账本）。这条 uri 两头都没有 ⇒ 真值 = 0，
+        // 于是水位落成 0（= "读到第 0 轮"）。
+        // ⚠️ 0 与 null 的区别只在"有没有这条记录"，**可见结论相同**：未读 = 0（不虚报）。
+        //（旧断言写 null 是"账本没到货 → 挂起不写"的副作用，不是契约。）
+        expect(sessionStore.seenTurnsOf("projects/9/tasks/9")).toBe(0);
+        expect(sessionStore.unreadTurnsOf("projects/9/tasks/9")).toBe(0);
         // effect 仍会因"表由空变非空"重跑一次（它订阅的是整张表，不是某一条）——
         // 这是有意的：水位判据只需"帧到了就追平当前在看的那条"。
-        expect(runs()).toBe(1);
+        // + 账本到货那一次（见上两个用例：水位读账本 ⇒ 订阅它的 version）。上界拦自触发。
+        expect(runs()).toBeLessThanOrEqual(3);
         expect(sessionStore.connection).toBe("live");
         dispose();
     });
