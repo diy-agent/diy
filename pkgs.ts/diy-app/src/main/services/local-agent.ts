@@ -55,7 +55,7 @@ import {
     type JSONVal,
     type TurnEndReason,
 } from "./local-blocks";
-import { DEFAULT_KEEP, DEFAULT_MUST_HARD_CAP_BYTES, type KeepStage } from "../../shared/context/compact-keep";
+import { DEFAULT_KEEP, DEFAULT_MUST_HARD_CAP_BYTES, DEFAULT_REASONING_CLIP, type KeepStage } from "../../shared/context/compact-keep";
 import { keepStagesToPlan, runPlan } from "./compaction-plan";
 import {
     decodeCursor,
@@ -805,6 +805,9 @@ function optsFor(policy: CompactPolicy, collect?: ClippedToolDetail[], keep?: re
     const specs = keep !== undefined ? keep : loadAutoCompact(diyHome()).history?.keep;
     return {
         ...makeDeliveryTransform(policy, toolOutRelPath, collect),
+        // 推理的全局回落（##374 T2）：与工具侧的 `defaultClip` 对称 —— 级没声明 `reasoningClip`
+        // 就回落它（不然「不声明 ⇒ 不裁」，与工具轴反着来且静默多花字节）
+        defaultReasoningClip: DEFAULT_REASONING_CLIP,
         plan: keepStagesToPlan(specs, budgetBytesOf(policy), clipSpecOf(toolResultOf(policy))),
     };
 }
