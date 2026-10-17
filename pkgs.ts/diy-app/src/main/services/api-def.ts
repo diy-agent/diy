@@ -24,6 +24,8 @@ import { PromptEntrySchema, RequestPreviewSchema } from "../../shared/prompt-sch
 import { TrafficRecordSchema } from "../../shared/traffic-record";
 import { ContextDiffSchema, CtxLogSchema, StatsSchema, StepsSchema } from "../../shared/context/schema";
 import { ContextLabSchema, ContextPlaceCandidateSchema } from "../../shared/context/schema";
+// 多人房间契约（shared，renderer 同源）
+import { RoomEventSchema, RoomSchema } from "../../shared/room";
 // agent 人物契约（纯 zod，renderer 同源）——模型/参数/行为指令的配置实体
 import { FALLBACK_MODEL } from "../../shared/model-default";
 import { PersonaSchema } from "../../shared/persona";
@@ -1201,6 +1203,82 @@ export const apiDef = RpcSchema.router({
               last: z.number().optional().cliOption({ desc: "只看最近 N 步" }),
               cost: z.boolean().optional().cliOption({ desc: "展开金额细分列（非缓存/缓存读/缓存写/文本/思考）" }),
               byAgent: z.boolean().optional().cliOption({ desc: "按人物+模型+面+档位汇总（多 agent 多行）" }),
+            },
+            output: z.string(),
+          }),
+        },
+      }),
+
+      /**
+       * 多人房间（room）—— 人 + 多 agent 同室对话的**投递 + 汇总层**。
+       *
+       * 设计真源 ##166 §28：room ≠ session（不承载成员上下文）；成员各自独立会话
+       * （本切片按待决 72 的 (a)：agent 成员绑一个 task 的本地会话）；投递由 `@X` / `focus`
+       * 决定、**协议里没有广播**。开发日志 ##377。
+       */
+      room: RpcSchema.group({
+        desc: `多人房间（人 + 多 agent 同室；room 只做投递 + 汇总，各成员有自己的会话）`,
+        children: {
+          list: RpcSchema.unary({
+            desc: `列出全部房间（成员数 / 当前接受者 / 最后一条发言）`,
+            input: {},
+            output: z.object({
+              rooms: z.array(
+                z.object({
+                  id: z.string(),
+                  title: z.string().optional(),
+                  focus: z.string().nullable(),
+                  members: z.number(),
+                  last: z.string().optional().describe("最后一条发言摘要（无发言则缺省）"),
+                }),
+              ),
+            }),
+          }),
+          get: RpcSchema.unary({
+            desc: `读一个房间（成员表 + 最近事件流）`,
+            input: {
+              id: z.string().cliArg({ desc: "房间 id" }),
+              limit: z.number().optional().cliOption({ desc: "事件条数上限（缺省 200）" }),
+            },
+            output: z.object({
+              room: RoomSchema.nullable(),
+              events: z.array(RoomEventSchema),
+              /** 事件流里的坏行数（>0 = 有半截写入；不隐藏） */
+              badLines: z.number(),
+            }),
+          }),
+          create: RpcSchema.unary({
+            desc: `新建房间（已存在则原样返回；给 --human / --member 建初始成员）`,
+            input: {
+              id: z.string().cliArg({ desc: "房间 id（字母数字开头，允许 . _ -）" }),
+              title: z.string().optional().cliOption({ desc: "标题（给人看）" }),
+              human: z.string().optional().cliOption({ desc: "人的显示名（缺省 ccc）" }),
+            },
+            output: RoomSchema,
+          }),
+          addMember: RpcSchema.unary({
+            desc: `加 agent 成员（backend = 一个 task 的本地会话，复用现有一切）`,
+            input: {
+              id: z.string().cliArg({ desc: "房间 id" }),
+              name: z.string().cliArg({ desc: "成员名（@ 寻址用）" }),
+              task: z.string().cliOption({ desc: "该成员绑的任务 URI（其会话即它的 backend）" }),
+              role: z.string().optional().cliOption({ desc: "它是干什么的（喂 UI / 将来喂模型）" }),
+            },
+            output: RoomSchema,
+          }),
+          focus: RpcSchema.unary({
+            desc: `设置当前接受者（不给成员 = 清空；投递只由 @X / focus 决定，无第三方调度器）`,
+            input: {
+              id: z.string().cliArg({ desc: "房间 id" }),
+              member: z.string().optional().cliArg({ desc: "成员名或 id（省略 = 清空 focus）" }),
+            },
+            output: RoomSchema,
+          }),
+          post: RpcSchema.serverStream({
+            desc: `在房间里说一句 —— 解析收件人 → 投递给各 agent（在它自己的会话里真起一轮）→ 回复带署名回写；逐行输出事件（JSONL）`,
+            input: {
+              id: z.string().cliArg({ desc: "房间 id" }),
+              text: z.string().cliArg({ desc: "发言正文（开头 @名字 覆盖当前接受者）" }),
             },
             output: z.string(),
           }),

@@ -8,6 +8,7 @@ import { LlmPage } from "./components/LlmPage";
 import { TrafficPage } from "./components/TrafficPage";
 import { SessionOverviewPage } from "./components/SessionOverviewPage";
 import { InstancesPage } from "./components/InstancesPage";
+import { RoomsPage } from "./components/RoomsPage";
 import { SessionChip, SessionDot } from "./components/SessionChip";
 import { TaskAgentStateBadge, TaskAgentStateDot } from "./components/TaskAgentState";
 import { ModelConfigPage } from "./components/ModelConfigPage";
@@ -84,7 +85,7 @@ function topFindSurface(): HTMLElement | undefined {
  * 「任务执行页」不在顶级导航里 —— 它是**动态页面**：每打开一个任务就多一个，
  * 挂在导航「任务」之下（等同浏览器/编辑器开 tab）。故用 route 而不是扁平 page id。
  */
-type Section = "task" | "llm" | "traffic" | "sessions" | "instances" | "settings";
+type Section = "task" | "llm" | "traffic" | "sessions" | "rooms" | "instances" | "settings";
 
 /**
  * 路由 = 顶级 section，或一个**已打开的 tab**（key 形如 `task-run:<uri>` / `lab:<uri>`）。
@@ -106,12 +107,16 @@ const NAV_ITEMS: Array<{ id: Section; label: string; icon: string }> = [
     // 「实例」= 本机 diy 实例大盘（##367）：跨**数据根**的视图，一眼看清现在跑着几个 diy、各自的根/变体/
     // 在干什么，并能把某个窗口全屏请到前台。⚠️ icon 刻意与「任务」（📋）/「会话」（🛰）**明显不同**、
     // 且**不挂任何任务状态**（##350 的教训：长得像任务的子页面会让人以为那是任务列表）。
+    // 「房间」= 多人 room（##377 / 设计 ##166 §28）：人 + 多 agent 同室对话的**投递 + 汇总层**。
+    // 与「会话」的区别：会话页看的是**每个成员的独立会话**（谁在跑、跑到第几步），
+    // 房间看的是「谁对谁说了什么」—— 两者是不同层的东西，刻意并列而不是互相嵌套。
+    { id: "rooms", label: "房间", icon: "🏠" },
     { id: "instances", label: "实例", icon: "🖥" },
     { id: "settings", label: "设置", icon: "⚙️" },
 ];
 
 /** `ui page navigate` 的合法取值（非法值一律忽略：宁可不跳，也不能把主区打成白屏） */
-const VALID_PAGES = new Set(["task", "task-run", "lab", "llm", "traffic", "sessions", "instances", "settings"]);
+const VALID_PAGES = new Set(["task", "task-run", "lab", "llm", "traffic", "sessions", "rooms", "instances", "settings"]);
 
 /**
  * 窄窗断点。**必须与 index.css 的 `@media (width < 1024px)`、daisyUI 的 `lg:` 分支
@@ -880,6 +885,9 @@ export default function App() {
                     </Show>
                     <Show when={route().kind === "section" && (route() as { section: Section }).section === "sessions"}>
                         <SessionOverviewPage />
+                    </Show>
+                    <Show when={route().kind === "section" && (route() as { section: Section }).section === "rooms"}>
+                        <RoomsPage />
                     </Show>
                     <Show when={route().kind === "section" && (route() as { section: Section }).section === "instances"}>
                         <InstancesPage />

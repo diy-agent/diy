@@ -40,6 +40,7 @@ import { AsyncQueue } from "./async-queue";
 import { modelNoticeHub } from "./model-notice";
 import { collectInstances, focusInstance, renderInstanceList, selfReport } from "./instances";
 import { revealSelf, windowState } from "./window-ops";
+import { shortName } from "../../shared/room";
 
 /**
  * 实际 RPC 监听端口，由入口在绑定完成后回填。
@@ -1254,6 +1255,69 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const removed = removeSource(input.name);
     if (!removed) return { status: "error", msg: `未找到 source: ${input.name}` };
     return { status: "ok", data: { removed } };
+  });
+
+  // ── room（多人房间；开发日志 ##377，设计真源 ##166 §28）──
+  // room = **投递 + 汇总层**：成员各自独立会话，这里只负责"收一句话 → 投给谁 → 把回复带署名汇总回来"。
+  // 投递器在 services/room-service.ts（真起一轮的是它，不是本绑定层）；落盘层在 core/room.ts。
+  binding.on(app.room.list, async () => {
+    const { listRooms, readEvents } = await import("../core/room");
+    return {
+      rooms: listRooms().map((r) => {
+        const { events } = readEvents(r.id, { limit: 1 });
+        const last = events[events.length - 1];
+        return {
+          id: r.id,
+          ...(r.title ? { title: r.title } : {}),
+          focus: r.focus,
+          members: r.members.length,
+          ...(last ? { last: `${shortName(last.author)}: ${last.text.slice(0, 60)}` } : {}),
+        };
+      }),
+    };
+  });
+  binding.on(app.room.get, async ({ input }) => {
+    const { readRoom, readEvents } = await import("../core/room");
+    const { events, bad } = readEvents(input.id, { limit: input.limit ?? 200 });
+    return { room: readRoom(input.id), events, badLines: bad };
+  });
+  binding.on(app.room.create, async ({ input }) => {
+    const { ensureRoom, isValidRoomId, readRoom, writeRoom } = await import("../core/room");
+    if (!isValidRoomId(input.id)) throw new Error(`房间 id 不合法：${input.id}（字母数字开头，允许 . _ -）`);
+    const humanName = input.human?.trim() || "ccc";
+    const room = ensureRoom(input.id, { ...(input.title ? { title: input.title } : {}) });
+    if (room.members.length === 0) {
+      const next = {
+        ...room,
+        members: [{ id: `human:${humanName}`, name: humanName, kind: "human" as const, backend: null, role: "人类（房间主人）" }],
+      };
+      writeRoom(next);
+      return readRoom(input.id) ?? next;
+    }
+    return room;
+  });
+  binding.on(app.room.addMember, async ({ input }) => {
+    const { upsertMember } = await import("../core/room");
+    return upsertMember(input.id, {
+      id: `agent:${input.name}`,
+      name: input.name,
+      kind: "agent",
+      backend: { type: "task", data: { taskUri: input.task ?? "" } },
+      ...(input.role ? { role: input.role } : {}),
+    });
+  });
+  binding.on(app.room.focus, async ({ input }) => {
+    const { readRoom, setFocus } = await import("../core/room");
+    const { resolveMember } = await import("../../shared/room");
+    const room = readRoom(input.id);
+    if (!room) throw new Error(`房间不存在：${input.id}（先 diy room create）`);
+    const member = input.member ? resolveMember(room, input.member) : null;
+    if (member && !room.members.some((m) => m.id === member)) throw new Error(`房间里没有这个成员：${input.member}`);
+    return setFocus(input.id, member);
+  });
+  binding.on(app.room.post, async function* ({ input }) {
+    const { postToRoom } = await import("./room-service");
+    for await (const ev of postToRoom(input.id, input.text)) yield JSON.stringify(ev);
   });
 
   // ── instances（实例大盘；##366）──
