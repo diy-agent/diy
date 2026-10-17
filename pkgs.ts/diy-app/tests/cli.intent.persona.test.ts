@@ -858,7 +858,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
 
         const geo = await waitUntil(
             async () =>
-                ui!.eval<{ hRatio: number; leftRatio: number; models: string[] } | null>(`(() => {
+                ui!.eval<{ hRatio: number; leftRatio: number; leftW: number; rows: number; models: string[] } | null>(`(() => {
                     const d = document.querySelector('${sel(uri)}');
                     if (!d) return null;
                     const dr = d.getBoundingClientRect();
@@ -870,6 +870,8 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
                     return {
                         hRatio: dr.height / window.innerHeight,
                         leftRatio: lr ? lr.width / dr.width : -1,
+                        leftW: lr ? Math.round(lr.width) : 0,
+                        rows: list ? list.querySelectorAll('[data-persona-id]').length : -1,
                         models,
                     };
                 })()`),
@@ -878,6 +880,10 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         );
         // 66.666vh（小屏被 42rem 上限兜住，那时比例会偏小 —— 只断言"明显比原来大"）
         expect(geo!.hRatio).toBeGreaterThan(0.5);
+        // ##285：先锁"量到的确实是左列"，再看比例。否则取错元素时会伪装成"几何退化"——
+        // 面板头部「最大化」按钮也带 `data-tip`，拿首个 `[data-tip]` 的父当左列会量到 64px 的
+        // 按钮组（ratio 0.0629，与 ##272 N8 的实测值逐位相同），把排查引去视口/布局那条错路。
+        expect(geo!.rows).toBeGreaterThan(0); // 左列里装着人物条目（量到的是列表，不是别的 div）
         expect(geo!.leftRatio).toBeGreaterThan(0.3);
         expect(geo!.leftRatio).toBeLessThan(0.36);
         // 模型清单来自 snapshot（opencode-go 全量）→ 数量不再固定 4；
@@ -1194,26 +1200,36 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         // 2026-10-03 统一：提示改由 App 的全局 tooltip 委托渲染成 **fixed 浮层**（读 data-tip），
         // 不再用 daisyUI 的 `.tooltip`/`.tooltip-content`（那种绝对定位元素贴着 overflow 容器底边会被裁）。
         // 这里把列表滚到底、对最后一项派发 mouseover，量浮层是否完整落在视口内。
+        //
+        // ##285 加固（原 ##272 N8 三条里最脆的一条）：「滚到底」成立的前提有两件，缺哪件都测不到东西 ——
+        //   ① **列表真的撑满一屏**：人物只有两三个时列表不可滚，「最后一项」本来就在视口里，这条用例
+        //      退化成"什么都没测"（却仍然绿）。旧写法把前置交给「前序用例建了多少人物」= **顺序依赖**：
+        //      单跑绿、全量跑红。故这里自建足够占位人物（同「↗ 跳转缺省人物」用例的做法）。
+        //   ② **滚动容器是左列自己**（`[data-testid="persona-left-list"]`）：旧写法取『首个 `[data-tip]`
+        //      的父』，而面板头部「最大化」按钮也带 `data-tip` → 取到 64px 的头部按钮组（实测 ratio
+        //      0.0629，与 ##272 的失败值逐位相同）。`scrollTop = scrollHeight` 落在不可滚的 div 上，
+        //      列表纹丝不动、最后一项还在视口外一两千像素 → 浮层量到 visible=-1093/full=26 而判红。
+        //      **与 headless 视口无关**，是查询选错元素。
         const uri = await setupTask("tooltip裁剪任务");
+        for (let i = 0; i < 24; i++) await addPersona(uniq(`浮层占位${i}`), "mimo-v2.6-flash");
         await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
         await openPanel(uri);
 
         const r = await waitUntil(
             async () =>
-                ui!.eval<{ visible: number; full: number; text: string; inView: boolean } | null>(`(() => {
+                ui!.eval<{ visible: number; full: number; text: string; inView: boolean; scrolled: number } | null>(`(() => {
                     const d = document.querySelector('${sel(uri)}');
                     if (!d) return null;
-                    const wraps = [...d.querySelectorAll('[data-tip]')];
-                    if (wraps.length === 0) return null;
-                    const list = d.querySelector('[data-testid="persona-left-list"]');
-                    if (!list) return null;
+                    const list = d.querySelector('[data-testid="persona-left-list"]');  // 左列滚动容器（必须是它自己）
+                    if (!list || list.scrollHeight <= list.clientHeight) return null;  // 没撑满一屏 → 撑满了才有"滚到底"
                     list.scrollTop = list.scrollHeight;           // 滚到底：最后一项最贴近容器下沿
+                    const wraps = [...list.querySelectorAll('[data-tip]')];            // 查询收进左列，头部按钮不再混进来
                     const last = wraps[wraps.length - 1];
                     last.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
                     const tip = [...document.querySelectorAll('div')].find((x) =>
                         (x.className || '').includes('z-[200]'),
                     );
-                    if (!tip) return { visible: 0, full: 0, text: '', inView: false };
+                    if (!tip) return { visible: 0, full: 0, text: '', inView: false, scrolled: list.scrollTop };
                     const tr = tip.getBoundingClientRect();
                     const visible = Math.round(Math.min(tr.bottom, window.innerHeight) - Math.max(tr.top, 0));
                     return {
@@ -1221,11 +1237,13 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
                         full: Math.round(tr.height),
                         text: tip.textContent ?? '',
                         inView: tr.top >= 0 && tr.bottom <= window.innerHeight,
+                        scrolled: Math.round(list.scrollTop),
                     };
                 })()`),
             (v) => !!v && v.full > 0,
             { label: "量出全局 tooltip 浮层" },
         );
+        expect(r!.scrolled).toBeGreaterThan(0); // 前提：列表**确实滚动了**（否则上面那句"滚到底"是假的）
         expect(r!.text).toBe("双击选择此人物");
         expect(r!.full).toBeGreaterThan(0);
         expect(r!.visible).toBe(r!.full); // 完整可见（fixed 浮层不受列表 overflow 裁剪）
@@ -1272,6 +1290,8 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
                     const d = document.querySelector('${sel(uri)}');
                     const bar = d?.querySelector('[data-testid="persona-impact-bar"]');
                     if (!bar) return null;
+                    // 左列只能按 testid 取：拿 [data-tip] 的父会把面板头部的按钮组（64px、且不在
+                    // bar 之下）当左列 → aboveList 假红（##272 N8 三条里的第三条）。
                     const list = d.querySelector('[data-testid="persona-left-list"]');
                     return {
                         text: bar.innerText,
