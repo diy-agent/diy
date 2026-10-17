@@ -953,7 +953,16 @@ interface BashRun {
 }
 
 /**
- * bash：30s 超时；**命令级**失败也以文本回喂模型（错误是一等信息，不抛）。
+ * execFile 的错误形状（##332 ③ 的判据落点）。
+ *
+ * 只用一个类型服务两条到达路径（callback / 同步抛），判据也只有一处读它：
+ * **`code` 是数字** ⇒ 命令跑起来了（退出码）· **字符串** ⇒ spawn 层失败（ENOENT/EACCES/ENOTDIR…）。
+ */
+type BashExecError = { name?: string; code?: string | number | null; killed?: boolean; message?: string } | null;
+
+/**
+ * bash：30s 超时；**命令跑起来了**的失败以文本回喂模型（错误是一等信息，不抛），
+ * **命令没跑起来**的（spawn / IO 失败）则抛。
  *
  * ── ##353 复议（##332 ① 档）：「非零退出」不再一律当数据 ──
  *   ① **命令级非零退出**（`err.code` 是数字 ⇒ 命令确实跑起来了）：
@@ -962,10 +971,14 @@ interface BashRun {
  *          "失败"，是"没查到"；模型仍靠 `[退出码 N]` 改命令 ⇒ 保持 ✓）。
  *        · 正文一律 `[退出码 N]` + 输出，**不再兜底塞 `err.message`**：`Command failed: /bin/bash -c …`
  *          正是「✓ + Command failed」自相矛盾的来源（无输出时把 Node 的报错文案当成了命令输出）。
- *   ② **超时 / 取消**（`err.killed` / AbortError）⇒ 当数据（**保持现状**，不属本任务，见 ##332 ②）；
- *   ③ **spawn / IO 失败**（`err.code` ∈ ENOENT / EACCES / ENOTDIR…，**非数字**）⇒ **本任务不动**：
- *      现仍收敛成 `[退出码 ENOENT]` 文本 ⇒ 同样被标 done（**已知缺口**：命令没跑起来本该是失败，
- *      留 ##332 ③ 抛错、与 read 同口径）。
+ *   ② **超时 / 取消**（`err.killed` / AbortError）⇒ 当数据（**保持现状**，见 ##332 ②）；
+ *   ③ **spawn / IO 失败**（`err.code` ∈ ENOENT / EACCES / ENOTDIR…，**数字之外**）⇒ **失败**（##332）：
+ *      这不是"命令报了错"，是**命令根本没跑起来**（cwd 不存在 / 不可进入、`/bin/bash` 缺失）——
+ *      它没有退出码可言，也不该当结果。正文 `[命令未能启动 <code>] <Node 原文>（工作目录：…）`；
+ *      带 cwd 是因为 Node 的 message（`spawn /bin/bash ENOENT`）会把"目录进不去"掩盖成"bash 不在"。
+ *      ⚠️ 判据分界只有一条：**`err.code` 是数字 = 命令跑起来了（① 档）；否则 = 没跑起来（③ 档）**。
+ *      ⚠️ 两条到达路径都要接住：`err.code` 非数字的 **callback**，和 execFile 的**同步抛**
+ *      （cwd 是普通文件 ⇒ ENOTDIR，Node 在 spawn 内直接 throw、**不走 callback**；实测 node 24）。
  *    对照：`read` 的 execute 特意**相反**（读不到就抛），见 buildTools 里 read 的注释。
  */
 function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?: AbortSignal): Promise<BashRun> {
@@ -974,28 +987,43 @@ function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?
             resolve({ text: "[已取消]", failed: false });
             return;
         }
-        execFile(
-            "/bin/bash",
-            ["-c", command],
-            { cwd, timeout: limits.bashTimeoutMs, maxBuffer: BASH_MAX_BUFFER_BYTES, signal },
-            (err, stdout, stderr) => {
-                const out = [stdout, stderr].filter(Boolean).join("\n");
-                // ⚠️ 这里一律返回**完整**文本（不 clip）：发给模型的那一份由 `capToolOutput` 在
-                //    投递层现算（##127）—— 在 execute 里裁 = 落进 ops 的原文当场丢。
-                if (err?.name === "AbortError") resolve({ text: "[已取消]", failed: false });
-                else if (err?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" || err?.code === "ENOBUFS")
-                    resolve({
-                        text: `[输出超过 ${fmtBytes(BASH_MAX_BUFFER_BYTES)} 上限，命令已终止；以下是已收到的部分]\n${out}`,
-                        failed: false,
-                    });
-                else if (err?.killed) resolve({ text: `[命令超时被杀]\n${out}`, failed: false });
-                else if (typeof err?.code === "number")
-                    // 命令级非零退出（##353）：有 stderr = 失败，无 stderr = 查询未命中（数据）
-                    resolve({ text: `[退出码 ${err.code}]\n${out || "(无输出)"}`, failed: stderr.trim().length > 0 });
-                else if (err) resolve({ text: `[退出码 ${err.code ?? "?"}]\n${out || String(err.message)}`, failed: false });
-                else resolve({ text: out || "(无输出)", failed: false });
-            },
-        );
+        /** 全部结局只在这里落一次（成功 / 各失败档）；callback 与下面的同步 catch 共用同一判定 */
+        const settle = (err: BashExecError, stdout: string, stderr: string): void => {
+            const out = [stdout, stderr].filter(Boolean).join("\n");
+            // ⚠️ 这里一律返回**完整**文本（不 clip）：发给模型的那一份由 `capToolOutput` 在
+            //    投递层现算（##127）—— 在 execute 里裁 = 落进 ops 的原文当场丢。
+            if (err?.name === "AbortError") resolve({ text: "[已取消]", failed: false });
+            else if (err?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" || err?.code === "ENOBUFS")
+                resolve({
+                    text: `[输出超过 ${fmtBytes(BASH_MAX_BUFFER_BYTES)} 上限，命令已终止；以下是已收到的部分]\n${out}`,
+                    failed: false,
+                });
+            else if (err?.killed) resolve({ text: `[命令超时被杀]\n${out}`, failed: false });
+            else if (typeof err?.code === "number")
+                // 命令级非零退出（##353）：有 stderr = 失败，无 stderr = 查询未命中（数据）
+                resolve({ text: `[退出码 ${err.code}]\n${out || "(无输出)"}`, failed: stderr.trim().length > 0 });
+            else if (err)
+                // spawn / IO 失败（##332 ③）：命令**根本没跑起来** —— 失败档（execute 据此抛错）
+                resolve({
+                    text: `[命令未能启动 ${typeof err.code === "string" ? err.code : "?"}] ${err.message ?? ""}（工作目录：${cwd}）${out ? `\n${out}` : ""}`,
+                    failed: true,
+                });
+            else resolve({ text: out || "(无输出)", failed: false });
+        };
+        try {
+            execFile(
+                "/bin/bash",
+                ["-c", command],
+                { cwd, timeout: limits.bashTimeoutMs, maxBuffer: BASH_MAX_BUFFER_BYTES, signal },
+                (err, stdout, stderr) => settle(err, stdout, stderr),
+            );
+        } catch (e) {
+            // ⚠️ **同步抛是真实路径**，不是防御性代码：cwd 是普通文件时 Node 在 spawn 内直接
+            //    `throw new ErrnoException(err, "spawn")`（code=ENOTDIR），**不走 callback**（实测 node 24）。
+            //    漏接这条 catch 的后果不是"错误被吞"（executor 抛 = Promise reject，结果同向也是 ✗），
+            //    而是文案只剩裸 `spawn ENOTDIR`、落不进本函数的统一口径（带 cwd 的失败文案）。
+            settle(e as BashExecError, "", "");
+        }
     });
 }
 
@@ -1039,7 +1067,7 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                 // **正常工具结果** → SDK 走 tool-result 分支 → patch status:"done" → UI 画 ✓（就是
                 // 「✓ + Command failed」那种自相矛盾）；抛出 → SDK 发 tool-error → status:"error"
                 // → ✗ 且恒展开。失败文案随 error.message 落进 ops —— 模型侧照旧看得到（它要靠
-                // 退出码/诊断改命令）。判据（非零退出 + 有错误输出）全在 runBash 头注。
+                // 退出码/诊断改命令）。判据（① 非零退出 + 有错误输出 · ③ spawn/IO 失败）全在 runBash 头注。
                 if (run.failed) throw new Error(run.text);
                 return run.text;
             },
@@ -1070,7 +1098,8 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                     //   "正常结果" → status:"done" → ✓ 且不展开，就是 ##329 的形态）。
                     //   与 bash 的判据**不同向**，别互相抄（bash 侧 ##353 复议过）：bash 只在
                     //   **非零退出且有错误输出**时才抛（无输出的非零退出 = 查询未命中，是数据；
-                    //   超时/取消仍当数据，模型靠退出码改命令；spawn/IO 失败那档未抛 = 缺口，见 ##332 ③）。
+                    //   超时/取消仍当数据，模型靠退出码改命令；**spawn/IO 失败也抛**（##332 ③ 已落地，
+                    //   判据：`err.code` 非数字 = 命令没跑起来）。
                     //   read 则「读不到就是失败」：目标文件不存在没有"信息"可给，只有"这一步没做成"。
                     //   ⚠️「bash.execute 现在会抛」≠「它见错就抛」—— 判据细节全在 runBash 头注。
                     throw new Error(`[读取失败] ${e instanceof Error ? e.message : e}`);
