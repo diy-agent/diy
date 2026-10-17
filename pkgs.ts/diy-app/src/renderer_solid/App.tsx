@@ -41,6 +41,8 @@ import { DragDropProvider, DragOverlay, useDraggable, useDroppable, PointerSenso
 import type { DragDropProviderProps } from "@dnd-kit/solid";
 import { findTaskProject } from "./components/TaskTree";
 import { allTaskUris, isAncestorOf } from "./lib/task-lineage";
+// 开机扫账本的入队次序（##358 §10）：热点立即 / 冷账本 idle 切片，纯函数
+import { scanPlanOf, SCAN_SLICE } from "../shared/session-scan";
 // 会话活动语汇（##358 D1/D2）：nav 的主角标 / 次角标 / 「后台活动」区**共用一份**判据
 //（纯函数在 shared/session-nav —— 位次仍出自 shared/session-overview，与任务表 / 总览同源）。
 import {
@@ -453,9 +455,65 @@ export default function App() {
         for (const { uri } of sessionStore.rows) us.add(uri);
         return [...us];
     });
-    createEffect(() => {
-        const us = navUris();
-        if (us.length > 0) usageLedgerStore.ensure(...us); // 幂等：已读到的跳过
+
+    /**
+     * 开机扫账本的**入队次序**（##358 §10）：热点立即、冷账本 idle 切片慢慢补。
+     *
+     * 为什么不是"一次性全量入队"（上一版）：队列是 FIFO + 并发 4 ⇒ 第一眼要看的几行
+     * 排在几百个老账本之后，**数字迟到**（看着像没算）。次序由 `scanPlanOf`（纯函数）给，
+     * **不丢任何任务** —— 「待你处理」是全局聚合，砍掉冷任务 = 看不见历史欠账。
+     */
+    const scanPlan = createMemo(() => {
+        const opened = new Set(tabStore.opened.filter((t) => t.ctx).map((t) => t.ctx!));
+        const inRegistry = new Set(sessionStore.rows.map((r) => r.uri));
+        return scanPlanOf(
+            navUris().map((uri) => {
+                const n = findNode(taskStore.nodes, uri);
+                return {
+                    uri,
+                    opened: opened.has(uri),
+                    inRegistry: inRegistry.has(uri),
+                    state: n?.state,
+                    updated: n?.updated,
+                };
+            }),
+        );
+    });
+
+    // 冷账本补扫：idle 一次一片（幂等 —— 已读到的任务 `ensure` 自己会跳过，故不必记"扫到哪了"）
+    onMount(() => {
+        const scanned = new Set<string>();
+        let stopped = false;
+        let scheduled = false; // 防叠加：任务树连变时只保留一条待跑的定时链
+        const idle = (fn: () => void) => {
+            const ric = (window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number })
+                .requestIdleCallback;
+            if (ric) ric(fn, { timeout: 1200 });
+            else window.setTimeout(fn, 60);
+        };
+        const pending = () => scanPlan().cold.filter((u) => !scanned.has(u));
+        const schedule = () => {
+            if (stopped || scheduled) return;
+            scheduled = true;
+            idle(drain);
+        };
+        function drain() {
+            scheduled = false;
+            if (stopped) return;
+            const batch = pending().slice(0, SCAN_SLICE);
+            if (batch.length === 0) return; // 扫完一轮；navUris 再变时由下面的 effect 重新踢一脚
+            for (const u of batch) scanned.add(u);
+            usageLedgerStore.ensure(...batch);
+            schedule();
+        }
+        createEffect(() => {
+            const plan = scanPlan();
+            usageLedgerStore.ensure(...plan.hot); // 热点：立刻（幂等）
+            if (plan.cold.length > 0) schedule();
+        });
+        onCleanup(() => {
+            stopped = true;
+        });
     });
 
     const navRows = createMemo(() => {
