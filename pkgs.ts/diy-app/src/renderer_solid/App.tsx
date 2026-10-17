@@ -17,6 +17,7 @@ import { AppInfo } from "./components/AppInfo";
 import { LogPanel } from "./components/LogPanel";
 import { ThemeSettings } from "./components/ThemeSettings";
 import { ToastContainer } from "./components/ToastContainer";
+import { ConfirmDialog } from "./components/ConfirmDialog";
 import { taskStore, type TreeNode } from "./store/taskStore";
 import { tabStore } from "./store/tabStore";
 // 全局会话可见性（##308）：**唯一的注册表订阅**在这里起，nav / 任务表 / 总览页共读同一份。
@@ -49,7 +50,9 @@ import {
     rowBadgeOf,
     secondaryBadgeOf,
 } from "../shared/session-nav";
-import type { NavTone } from "../shared/session-nav";
+import type { NavRow, NavTone } from "../shared/session-nav";
+import { ALERT_ACTION_LABEL, alertsOf } from "../shared/session-alerts";
+import { alertPrefsStore } from "./store/alertPrefsStore";
 
 /**
  * 取"此刻最上面的可查找浮层"（##309）。
@@ -454,6 +457,42 @@ export default function App() {
     /** 「后台活动」区 = 没开着 tab、但有活态的会话（关掉 ≠ 消失） */
     const navBackground = createMemo(() => backgroundOf(navRows()));
 
+    /** 打开/聚焦某个会话（toast 的「回到」与 L2 自动拉回共用一跳） */
+    const openSessionByUri = (uri: string) => {
+        hideHoverLayers();
+        collapseRail(); // 窄窗：先把浮层收回，别让刚拉回的会话被盖住
+        getRendererActions().openTaskRun?.(uri);
+    };
+
+    /**
+     * ── D3 三级提示（L1 toast + [回到] / L2 自动拉回）─────────────────────────────
+     * L0（常驻角标、不打断）就是上面那两个 memo 的渲染；这里管的是**"该不该打断"**。
+     *
+     * 判据全在 `shared/session-alerts`（纯函数 + 单测）：只对**跃迁**出提示 ——
+     * 「现在有 3 条未读」是状态不是事件，拿状态当事件就会一启动糊一脸、且每 tick 反复弹。
+     * 谁配得上抢焦点（L2）也只有两种：**异常终止** 与 **有人在等你回复**（队列里刚出现留言）。
+     */
+    let alertPrev: Record<string, NavRow> = {};
+    createEffect(() => {
+        const rows = navRows();
+        const alerts = alertsOf(alertPrev, rows, { autoPull: alertPrefsStore.autoPull });
+        // ⚠️ 先落基线再动手：`openSessionByUri` 会改 tabStore ⇒ navRows 重算 ⇒ 本 effect 再跑一次，
+        // 那一跑必须看到"已处理过"的 prev，否则同一条提示弹两遍（真跑过的坑：自动拉回 = 无限弹）。
+        alertPrev = Object.fromEntries(rows.map((r) => [r.uri, r]));
+        for (const a of alerts) {
+            if (a.autoPull) openSessionByUri(a.uri); // L2：抢焦点（仅异常终止 / 有人在等）
+            notificationStore.addToast(
+                a.kind === "failed" ? "error" : a.kind === "finished" ? "success" : "info",
+                a.text,
+                a.level === "L2" && a.autoPull ? 0 : 10000, // 抢过焦点的那条必须被看见/点掉；其余 10s 自己走
+                { label: ALERT_ACTION_LABEL, onClick: () => openSessionByUri(a.uri) },
+            );
+        }
+    });
+
+    /** 关 tab 前要确认的那一个（在跑的会话：##305 轮次脱离连接，关掉只是不看） */
+    const [pendingClose, setPendingClose] = createSignal<{ key: string; label: string } | null>(null);
+
     let fsAbort: AbortController | undefined;
 
     onMount(() => {
@@ -757,7 +796,20 @@ export default function App() {
     };
 
     /** 关闭 tab：与任务状态无关（= 暂时不理会）。关父连带关子 */
-    const closeTab = (key: string) => {
+    const closeTab = (key: string, opts?: { skipConfirm?: boolean }) => {
+        // 关掉一个**正在跑**的会话：弹一次确认（##358 D3 / demo v4「① 关 tab 时若还在跑」）。
+        // 不是拦你 —— 是告诉你"关掉只是不看它，轮次照跑（##305）"，免得以为关了就停了。
+        // 走应用内 ConfirmDialog（**禁** window.confirm：窗口级模态会卡住整个渲染进程，且自动化点不到）。
+        const ctx = key.includes(":") ? key.slice(key.indexOf(":") + 1) : null;
+        if (!opts?.skipConfirm && ctx && sessionStore.byUri(ctx)?.turn !== null) {
+            setPendingClose({ key, label: tabLabel(ctx) });
+            return;
+        }
+        doCloseTab(key);
+    };
+
+    /** 真正执行关闭（确认过后走这里） */
+    const doCloseTab = (key: string) => {
         hideHoverLayers();
         // 关闭前记下它的 ctx：关掉最后一个 tab 会落回任务树，那时也应在树里定位到它（##160），
         // 但 tabStore.close 之后 activeTab 已变，取不到了
@@ -1274,11 +1326,25 @@ export default function App() {
                             直接问"它现在有没有事" —— 没开着 tab、且有活态（在跑 / 跑完没看 / 有留言）
                             的会话就落在这里。**虚框幽灵条目**表达"它不在视线内，但仍活着"；
                             重开 tab 它自动离开（`opened`），点一下即回到视线。 */}
-                        <Show when={navBackground().length > 0}>
+                        <Show when={navBackground().length > 0 || !alertPrefsStore.autoPull}>
                             <Show when={expanded()}>
                                 <li class="flex items-center gap-2 px-3 pt-2 pb-0.5 text-caption opacity-60">
                                     <span>后台活动</span>
                                     <span class="font-mono">{navBackground().length}</span>
+                                    {/* L2「自动拉回」的开关（缺省开）—— 关掉只降级成 L1 toast，不丢提示。
+                                        区为空时这一行仍渲染（否则关了就没处开回来）。 */}
+                                    <button
+                                        class="btn btn-ghost btn-xs ml-auto"
+                                        data-nav-autopull={alertPrefsStore.autoPull ? "on" : "off"}
+                                        title={
+                                            alertPrefsStore.autoPull
+                                                ? "自动拉回：开。只有「异常终止」和「有人在等你回复」会抢焦点开 tab；其余一律只提示。"
+                                                : "自动拉回：关。现在一律只弹提示（带「回到」按钮），不抢焦点。"
+                                        }
+                                        onClick={() => alertPrefsStore.setAutoPull(!alertPrefsStore.autoPull)}
+                                    >
+                                        自动拉回 {alertPrefsStore.autoPull ? "开" : "关"}
+                                    </button>
                                 </li>
                             </Show>
                             <For each={navBackground()}>
@@ -1378,6 +1444,22 @@ export default function App() {
                 onPick={(uri) => getRendererActions().openTaskRun?.(uri)}
             />
 
+            {/* 关掉在跑的会话前的确认（走应用内弹窗，见 closeTab 注释） */}
+            <Show when={pendingClose()}>
+                {(p) => (
+                    <ConfirmDialog
+                        title="它还在后台跑，确定关掉？"
+                        message={`${p().label} 这一轮还没跑完。关掉只是不看它 —— 轮次会照常在后台跑完（##305 轮次脱离连接），跑完会提示你。`}
+                        confirmLabel="关掉（不看）"
+                        onCancel={() => setPendingClose(null)}
+                        onConfirm={() => {
+                            const k = p().key;
+                            setPendingClose(null);
+                            closeTab(k, { skipConfirm: true });
+                        }}
+                    />
+                )}
+            </Show>
             <ToastContainer />
         </div>
     );
