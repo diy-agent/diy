@@ -23,6 +23,9 @@ export async function createTaskViaUi(input: CreateTaskViaUiInput): Promise<stri
     project: input.project,
     parent: input.parent,
     body: input.body,
+    // 正文的"传文件"形态是 CLI 侧能力（##376）；契约为「键必须出现」，故显式给 undefined
+    bodyText: undefined,
+    bodyFile: undefined,
     persona: input.persona,
     change_type: input.change_type as never,
     module: input.module,
