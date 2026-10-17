@@ -268,6 +268,25 @@ export function liveTurnOf(nodes: BlockNode[]): BlockNode | null {
     return last && !last.stopped ? last : null;
 }
 
+/**
+ * 排队回执条**此刻**该读作什么。
+ *
+ * 判据只有一条：它对应的队列条目（`steerId`，见 main 的 `enqueueWhileRunning`）**还在不在待投递队列里**。
+ * main 把插话投出去时会把它从队列摘掉 ⇒ 不在 = 已投递。用队列快照当尺子而不是比时间戳/步数：
+ * 队列是"还没投出去的东西"的**事实真源**，不依赖任何渲染侧的近似。
+ *
+ * ⚠️ 用户 2026-10-17 实测的毛病：提示条**投递之后**还挂在对话尾部（回执轮排在最末、下面没有更晚的块），
+ * 口气仍是"已排队…本轮结束后自动投递"—— 一条**早就发出去**的留言，读起来像还在排队。
+ *
+ * 缺 `steerId` 的回执（旧日志）判不出 ⇒ 保守返回 `queued`（维持原样，不撒谎）。
+ */
+export type ReceiptState = "queued" | "delivered";
+
+export function receiptStateOf(steerId: string, pendingSteerIds: readonly string[]): ReceiptState {
+    if (!steerId) return "queued";
+    return pendingSteerIds.includes(steerId) ? "queued" : "delivered";
+}
+
 
 /**
  * 这一行**点开会不会多出东西** —— 决定行首给「展开箭头」还是「末级点」。

@@ -86,6 +86,7 @@ import {
     expandableOf,
     isFailedTool,
     isInterruptedToolBlock,
+    isReceiptTurn,
     isTurnLevel,
     historyOpenOf,
     isUserText,
@@ -95,6 +96,7 @@ import {
     liveTailOf,
     planOfLevel,
     procOpenOf,
+    receiptStateOf,
     procStatusOf,
     tailOf,
     turnEndNote,
@@ -1146,7 +1148,17 @@ function traceIdOf(msg: string): string | null {
     return m ? m[1]! : null;
 }
 
-function ErrorBox(props: { node: BlockNode }) {
+function ErrorBox(props: {
+    node: BlockNode;
+    /**
+     * 该块所属回执轮的 `steerId`（`steer/N`）。
+     *
+     * 为什么要外部传：`steerId` 落在**轮块**上（`enqueueWhileRunning` 的 start op），
+     * 而本组件拿到的是**子** error 块（`<turnId>_queued`）—— `BlockNode` 没有父指针，
+     * 拿不到就是拿不到（渲染层不重建 main 的块树）。
+     */
+    receiptSteerId?: string;
+}) {
     const source = str(props.node.attrs.source);
     const msg = () => str(props.node.attrs.message);
     const tid = () => traceIdOf(msg());
@@ -1161,15 +1173,39 @@ function ErrorBox(props: { node: BlockNode }) {
     // 画成红色 + ❌ 会被读成失败：##307 让回执全体窗口可见后误读面更大，故按 source 降级成普通提示条。
     // （`meta` 由 BlockStore 摊平进块字段，故这里读的是 `attrs.source`。）
     if (source === "queue") {
+        // "已排队"只在那条留言**还在队列里**时才是实话（判据 `receiptStateOf`，同源可单测）。
+        // 投递之后它仍挂在对话尾部（回执轮排在最末），口气却还写着"本轮结束后自动投递"——
+        // 用户 2026-10-17：「留言已经发出去了，这个还在输入框上面悬着？」⇒ 降级成历史回执。
+        // `steerId` 优先取外部传来的（轮块上的那个），退到块自己的 attrs（若有）
+        const steerId = () =>
+            props.receiptSteerId ?? (typeof props.node.attrs.steerId === "string" ? (props.node.attrs.steerId as string) : "");
+        const delivered = () => receiptStateOf(steerId(), localChatStore.steers.map((s) => s.id)) === "delivered";
         return (
-            <div
-                class="rounded-lg border border-base-300 bg-base-200/60 px-3 py-2 text-body text-base-content/70 whitespace-pre-wrap"
-                data-block-id={props.node.id}
-                data-block-tag="error"
-                data-source="queue"
+            <Show
+                when={!delivered()}
+                fallback={
+                    <div
+                        class="rounded-lg border border-base-300/50 bg-base-200/25 px-3 py-1 text-caption text-base-content/40"
+                        title={msg()}
+                        data-block-id={props.node.id}
+                        data-block-tag="error"
+                        data-source="queue"
+                        data-receipt="delivered"
+                    >
+                        🗨 已投递
+                    </div>
+                }
             >
-                {`⏳ ${msg()}`}
-            </div>
+                <div
+                    class="rounded-lg border border-base-300 bg-base-200/60 px-3 py-2 text-body text-base-content/70 whitespace-pre-wrap"
+                    data-block-id={props.node.id}
+                    data-block-tag="error"
+                    data-source="queue"
+                    data-receipt="queued"
+                >
+                    {`⏳ ${msg()}`}
+                </div>
+            </Show>
         );
     }
     return (
@@ -1289,7 +1325,17 @@ function TurnView(props: {
                     <For each={rows()}>
                     {(row) => {
                         if (row.kind === "user") return <UserBubble node={row.node} />;
-                        if (row.kind === "error") return <ErrorBox node={row.node} />;
+                        if (row.kind === "error")
+                            return (
+                                <ErrorBox
+                                    node={row.node}
+                                    receiptSteerId={
+                                        isReceiptTurn(t()) && typeof t().attrs.steerId === "string"
+                                            ? (t().attrs.steerId as string)
+                                            : ""
+                                    }
+                                />
+                            );
                         if (row.kind === "text")
                             return (
                                 <TextRow

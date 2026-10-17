@@ -18,6 +18,7 @@ import {
     isFailedTool,
     isInterruptedToolBlock,
     isReceiptTurn,
+    receiptStateOf,
     isProc,
     isTurnLevel,
     isUserText,
@@ -742,5 +743,36 @@ describe("liveTurnOf：直播中的那一轮", () => {
         );
         expect(src).toContain("liveTurnOf(");
         expect(src).not.toMatch(/const last = turns\[turns\.length - 1\]/);
+    });
+});
+
+// ─── 排队回执条的"此刻该读作什么"（用户 2026-10-17：「留言已经发出去了，这个还在输入框上面悬着？」） ───
+//
+// 症状：回执条投递之后仍挂在对话尾部（回执轮排在最末、下面没有更晚的块），
+// 口气还写着"会话正在生成中：这条消息已排队…本轮结束后自动投递"—— 一条**早就发出去**的留言，
+// 读起来像还在排队。判据：它对应的队列条目还在不在 `localChatStore.steers` 里
+// （main 投递时会把它从队列摘掉）。
+describe("receiptStateOf：回执条是「待投递」还是「已投递」", () => {
+    it("还在待投递队列里 → queued（原样显示「⏳ …已排队」）", () => {
+        expect(receiptStateOf("steer/1", ["steer/1", "steer/2"])).toBe("queued");
+    });
+
+    it("★ 不在队列里 → delivered（投递后降级成历史回执，不再说「待投递」）", () => {
+        expect(receiptStateOf("steer/1", [])).toBe("delivered");
+        expect(receiptStateOf("steer/1", ["steer/2"])).toBe("delivered");
+    });
+
+    it("拿不到 steerId（旧日志 / 根级块）→ 保守当 queued，不谎称已投递", () => {
+        expect(receiptStateOf("", ["steer/1"])).toBe("queued");
+    });
+
+    it("源码护栏：组件用的是这个纯函数（判据只有一处）", () => {
+        const src = readFileSync(
+            join(__dirname, "..", "..", "src", "renderer_solid", "components", "LocalChatPage.tsx"),
+            "utf-8",
+        );
+        expect(src).toContain("receiptStateOf(");
+        // 回执轮上的 steerId 必须**从轮块取**（子 error 块自己没有它），经由 prop 传进去
+        expect(src).toContain("receiptSteerId");
     });
 });
