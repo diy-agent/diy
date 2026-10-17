@@ -1,35 +1,41 @@
 // src/main/services/room-service.ts — 多人房间的**投递器**（房间的心脏）
 //
 // 职责（##166 §28.5 A）：room 是「投递 + 汇总层」——
-//   ① 收下一条发言 → 解析收件人（`@X` 显式 / `focus` 隐式 / 都没有 = 只落盘）；
+//   ① 收下一条发言 → 解析收件人（`@X` / `@all` 显式 · `focus` 隐式 · 都没有 = 只落盘）；
 //   ② 对每个 agent 收件人，**在它自己的 task 会话里真起一轮**（复用 `LocalAgentManager.chat`，
 //      不是本进程自导自演 —— 验收判据 3 的证据就在那个任务的 ops 流里）；
-//   ③ 把它的回复**带署名**追加回房间事件流（判据 4）。
+//   ③ 把它的回复**带署名**追加回房间事件流（判据 4）；
+//   ④ 每个收件人一条**投递状态**（排队中 / 投递中 / 已投递 / 未投递），落 `deliveries.jsonl`。
 //
-// 三条实现口径：
+// 四条实现口径：
 //   · 投递文本走 `shared/room.deliveryText` 包装 —— agent 在**自己的会话**里看不到房间上下文，
 //     "谁在说 / 从哪来"只能压进正文（wire 层身份只有正文有效，##166 §16.2）；
 //   · 事件**先落盘再 yield**（与 local-agent 的 seal 同一条铁律：消费端断开不丢尾）；
-//   · 成员会话忙（已有轮次在跑）时**本切片不排队**：如实标「未投递 + 原因」，
-//     绝不静默丢弃、也不自作主张塞进插话队列（那是 §28.6 待决 73 的题）。
+//   · **同一成员串行、不同成员并行**（用户口径：消息对一个人是阻塞的）——
+//     同一 member 的投递排在同一条 promise 链上（后面的停在 `queued`，**不丢、不合并**），
+//     不同 member 各走各的链 ⇒ 「可以和 2 个 agent 同时说话」；
+//   · 成员会话被**房间之外**的轮次占着时如实标「未投递 + 原因」（不静默、不硬塞插话队列，
+//     后者是 §28.6 待决 73 的题）。
 
 import { getLocalAgent } from "./local-agent";
 import { sessionRegistry } from "./session-registry";
-import { appendEvent, nextEventId, readRoom } from "../core/room";
+import { appendDelivery, appendEvent, nextEventId, readRoom } from "../core/room";
 import {
     deliveryText,
+    isAllAddress,
     memberName,
     parseAddress,
     resolveMember,
     resolveRecipients,
     shortName,
+    type DeliveryState,
+    type DeliveryStatus,
     type Room,
     type RoomEvent,
     type RoomMember,
 } from "../../shared/room";
 import type { Op } from "./local-blocks";
 
-/** 投递轮次结束原因（给日志/事件附注用的一句话） */
 function errText(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
 }
@@ -39,9 +45,13 @@ function isBusy(taskUri: string): boolean {
     return sessionRegistry.activeTurnList().some((t) => t.uri === taskUri);
 }
 
-/** 该成员能不能被投递（有 backend 的 agent） */
-function deliverable(m: RoomMember | undefined): m is RoomMember & { backend: { type: "task"; data: { taskUri: string } } } {
-    return !!m && m.kind === "agent" && m.backend?.type === "task";
+/** 该成员能被投递吗（有 backend 的 agent）；不能的话给一句人话原因 */
+function whyNotDeliverable(m: RoomMember | undefined): string | null {
+    if (!m) return "房间里没有这个成员";
+    if (m.kind !== "agent") return "收件人是人（在场即送达），无需投给 agent";
+    if (m.backend?.type !== "task") return "该成员没有 backend（没有会话可投）";
+    if (!m.backend.data.taskUri) return "该成员没绑任务（backend 为空）";
+    return null;
 }
 
 /** 房间里的「人」（发消息的默认主体；最小切片一人一房） */
@@ -54,17 +64,17 @@ function humanOf(room: Room): RoomMember | undefined {
  *
  * 只收 `start.meta.role !== "user"` 的 text 块：开场 user 块同样是 text 块（##310 起两者同形），
  * 混进去会让"回复"里带上自己刚说的话（自问自答的假象）。
+ * `turnId` 一并带回（turn 块的 id）—— 判据 3 要拿它去那个任务的 ops 流里对账。
  */
-async function runAndCollect(
-    taskUri: string,
-    text: string,
-): Promise<{ reply: string; error?: string }> {
+async function runAndCollect(taskUri: string, text: string): Promise<{ reply: string; error?: string; turnId?: string }> {
     const agent = getLocalAgent();
     const texts = new Map<string, string>();
     const errs: string[] = [];
+    let turnId: string | undefined;
     try {
         for await (const op of agent.chat(taskUri, text) as AsyncGenerator<Op>) {
             if (op.op === "start") {
+                if (op.kind === "turn") turnId = op.id;
                 if (op.kind === "text" && op.meta?.["role"] !== "user") texts.set(op.id, "");
                 if (op.kind === "error") errs.push("");
             } else if (op.op === "delta") {
@@ -75,13 +85,17 @@ async function runAndCollect(
             }
         }
     } catch (e) {
-        return { reply: "", error: `投递失败：${errText(e)}` };
+        return { reply: "", error: `投递失败：${errText(e)}`, ...(turnId ? { turnId } : {}) };
     }
     const reply = [...texts.values()].join("\n").trim();
     if (!reply) {
-        return { reply: "", error: errs.filter(Boolean).length > 0 ? `对方会话报错：${errs.join("；")}` : "对方这一轮没有产出文本" };
+        return {
+            reply: "",
+            error: errs.filter(Boolean).length > 0 ? `对方会话报错：${errs.join("；")}` : "对方这一轮没有产出文本",
+            ...(turnId ? { turnId } : {}),
+        };
     }
-    return { reply };
+    return { reply, ...(turnId ? { turnId } : {}) };
 }
 
 /** 落盘 + 返回（事件流的唯一写入口 —— 先落盘再 yield，断开不丢尾） */
@@ -90,9 +104,25 @@ function record(roomId: string, ev: RoomEvent): RoomEvent {
     return ev;
 }
 
+// ─── 成员投递队列（**同一成员串行、不同成员并行**的唯一落点）─────────────
+
+interface MemberQueue {
+    /** 链尾：新投递接在它后面 */
+    tail: Promise<unknown>;
+    /** 链上还没跑完的条数（含正在跑的那条）—— >1 说明新的这条要排队 */
+    depth: number;
+}
+
+const queues = new Map<string, MemberQueue>();
+
+/** 队列里还有多少条没跑完（UI/CLI 想看"谁在排队"时用；0 = 空闲） */
+export function memberQueueDepth(roomId: string, memberId: string): number {
+    return queues.get(`${roomId}|${memberId}`)?.depth ?? 0;
+}
+
 /**
- * 发一条发言并投递。**逐条 yield 事件**（say → 各 agent 的 reply）——
- * RPC 侧把它当 serverStream 转发，UI 就能"发言一落盘就显示、回复一到就回显"。
+ * 发一条发言并投递。**逐条 yield 事件**（say → 各 agent 的 reply，按回复先后）——
+ * RPC 侧把它当 serverStream 转发，UI 就能"发言一落盘就显示、谁的回复先到先回显"。
  */
 export async function* postToRoom(roomId: string, rawText: string): AsyncGenerator<RoomEvent> {
     const room = readRoom(roomId);
@@ -104,78 +134,187 @@ export async function* postToRoom(roomId: string, rawText: string): AsyncGenerat
     const author = human?.id ?? "human:unknown";
     const fromName = human ? shortName(human.id) : "有人";
 
-    // ── ① 解析收件人（判据 2：@X 覆盖 focus）──
+    // ── ① 解析收件人（判据 2：@X 覆盖 focus；@all = 全体 agent）──
     const addr = parseAddress(text);
-    const explicit = addr.to ? [resolveMember(room, addr.to)] : [];
-    const { recipients, routing } = resolveRecipients(explicit, room.focus);
-    // 「人」不需要投递（他本来就在场，发言他自己看得见）—— 只有 agent 才要真起一轮
-    const targets = recipients.filter((id) => deliverable(room.members.find((m) => m.id === id)));
+    const explicit = addr.tos.map((t) => (isAllAddress(t) ? "all" : resolveMember(room, t)));
+    const { recipients, routing } = resolveRecipients(explicit, room.focus, room.members);
 
-    const sayEvent = record(roomId, {
-        id: nextEventId(),
+    const sayId = nextEventId();
+    const sayEvent: RoomEvent = {
+        id: sayId,
         ts: new Date().toISOString(),
         kind: "say",
         author,
         to: recipients,
         routing,
         text, // 存**原话**（含 @X）；投递时才剥
-        delivered: recipients.length > 0,
-        ...(recipients.length === 0
-            ? { error: "没有 @ 收件人、也没有当前接受者（只有自己能看到）" }
-            : {}),
-    });
+        delivered: false, // 读侧按投递状态 fold 真值（见 core/room.readRoomView）
+        ...(recipients.length === 0 ? { error: "没有 @ 收件人、也没有当前接受者（只有自己能看到）" } : {}),
+    };
+    record(roomId, sayEvent);
     yield sayEvent;
+    if (recipients.length === 0) return;
 
-    if (targets.length === 0 && recipients.length > 0) {
-        // 收件人全是人 / 或指向了不存在的成员：不投递，但如实说明（绝非静默）
-        const why = recipients.every((id) => room.members.some((m) => m.id === id && m.kind === "human"))
-            ? "收件人是人（在场即送达），无需投给 agent"
-            : `收件人不是可投递成员：${recipients.join(" / ")}`;
-        yield record(roomId, {
-            id: nextEventId(),
-            ts: new Date().toISOString(),
-            kind: "say",
-            author: author,
-            to: recipients,
-            routing,
-            text: `（路由说明）${why}`,
-            delivered: false,
-            error: why,
-        });
-        return;
-    }
+    // ── ②③④ 逐个投递（各自独立排队 / 并行）：状态变化 + 回复都**随流推** ──
+    //
+    // 两条通道：
+    //   progress  —— 同一个 say id 的**状态快照**（排队中 → 投递中 → 已投递）。UI 按 id 覆盖渲染，
+    //                这样"排队"是**看得见**的实时状态，不用等下一次轮询；
+    //   completed —— 一条实打实的回复（每个收件人恰好一条）。
+    const body = addr.tos.length > 0 ? addr.text : text; // 投递正文剥掉 @X 前缀
+    const toAll = routing === "all";
+    const progress: RoomEvent[] = [];
+    const completed: RoomEvent[] = [];
+    let wake: (() => void) | null = null;
+    const poke = (): void => {
+        wake?.();
+        wake = null;
+    };
+    const states = new Map<string, DeliveryState>();
+    /** 状态一落盘就顺手推一份 say 的快照（含本条目前所有收件人的状态） */
+    const markState = (st: DeliveryState): void => {
+        states.set(st.memberId, st);
+        progress.push({ ...sayEvent, deliveries: [...states.values()] });
+        poke();
+    };
 
-    // ── ②③ 逐个投递并回收回复 ──
-    const body = addr.to ? addr.text : text; // 投递正文剥掉 @X 前缀
-    for (const id of targets) {
-        const m = room.members.find((x) => x.id === id)!;
-        const taskUri = m.backend!.type === "task" ? m.backend!.data.taskUri : "";
-        const name = memberName(room, id);
-        if (isBusy(taskUri)) {
-            yield record(roomId, {
-                id: nextEventId(),
+    // 不可投递的收件人（人 / 成员不存在 / 没 backend）：先如实记状态 + 记说明事件，**不静默**
+    const immediate: RoomEvent[] = [];
+    const tasks: Promise<void>[] = [];
+    for (const id of recipients) {
+        const m = room.members.find((x) => x.id === id);
+        const why = whyNotDeliverable(m);
+        if (why) {
+            const replyId = nextEventId();
+            const skip = record(roomId, {
+                id: replyId,
                 ts: new Date().toISOString(),
                 kind: "reply",
                 author: id,
                 to: [author],
                 text: "",
                 delivered: false,
-                error: `${name} 的会话正有轮次在跑，本切片不排队（未投递）`,
-                sourceTask: taskUri,
+                error: why,
+                ...(m?.backend?.type === "task" && m.backend.data.taskUri ? { sourceTask: m.backend.data.taskUri } : {}),
             });
+            const st: DeliveryState = {
+                memberId: id,
+                status: "skipped",
+                error: why,
+                replyId,
+                ts: new Date().toISOString(),
+            };
+            appendDelivery(roomId, { eventId: sayId, ...st });
+            states.set(id, st);
+            immediate.push({ ...sayEvent, deliveries: [...states.values()] }, skip);
             continue;
         }
-        const r = await runAndCollect(taskUri, deliveryText({ roomId, fromName, text: body }));
-        yield record(roomId, {
-            id: nextEventId(),
+        tasks.push(deliverOne({ roomId, room, sayId, member: m!, author, fromName, body, toAll, markState, done: (ev) => {
+            completed.push(ev);
+            poke();
+        } }));
+    }
+    for (const ev of immediate) yield ev;
+
+    for (let finished = 0; finished < tasks.length; ) {
+        while (progress.length === 0 && completed.length === 0) await new Promise<void>((res) => (wake = res));
+        while (progress.length > 0) yield progress.shift()!;
+        if (completed.length > 0) {
+            yield completed.shift()!;
+            finished++;
+        }
+    }
+    while (progress.length > 0) yield progress.shift()!;
+}
+
+interface DeliverInput {
+    roomId: string;
+    room: Room;
+    sayId: string;
+    member: RoomMember;
+    author: string;
+    fromName: string;
+    body: string;
+    toAll: boolean;
+    /** 记一条投递状态（落盘 + 随流推快照） */
+    markState: (st: DeliveryState) => void;
+    /** 完成（一条回复事件） */
+    done: (ev: RoomEvent) => void;
+}
+
+/**
+ * 投给一个成员：入队 → 跑 → 落回复 + 状态。
+ *
+ * **串行的落点**：同一个 `(roomId, memberId)` 的调用接在前一条的链尾（`st.tail`）——
+ * 前一条没跑完，这一条就先标 `queued` 停在那儿（人看得见"排队中"，不是石沉大海）。
+ * 链的 key 带 roomId：同一成员在**不同房间**里是两条独立链（房间之间不该互相阻塞）。
+ */
+function deliverOne(input: DeliverInput): Promise<void> {
+    const { roomId, member, sayId, body, fromName, author, toAll } = input;
+    const taskUri = member.backend!.type === "task" ? member.backend!.data.taskUri : "";
+    const key = `${roomId}|${member.id}`;
+    const st = queues.get(key) ?? { tail: Promise.resolve(), depth: 0 };
+    queues.set(key, st);
+    st.depth++;
+    const ahead = st.depth - 1;
+
+    const mark = (status: DeliveryStatus, extra: Record<string, unknown> = {}): void => {
+        const st: DeliveryState = {
+            memberId: member.id,
+            status,
+            taskUri,
+            ts: new Date().toISOString(),
+            ...extra,
+        } as DeliveryState;
+        appendDelivery(roomId, { eventId: sayId, ...st });
+        input.markState(st);
+    };
+    mark("queued", ahead > 0 ? { error: `前面还有 ${ahead} 条在排队（本切片的队列只在内存里，重启即丢）` } : {});
+
+    const run = async (): Promise<void> => {
+        st.depth--;
+        mark("running");
+        const name = memberName(input.room, member.id);
+        if (isBusy(taskUri)) {
+            // 房间之外的轮次占着这个会话（别的客户端在跑 / 上一条异常没清）：如实标未投递，不硬塞
+            const replyId = nextEventId();
+            const ev = record(roomId, {
+                id: replyId,
+                ts: new Date().toISOString(),
+                kind: "reply",
+                author: member.id,
+                to: [author],
+                text: "",
+                delivered: false,
+                error: `${name} 的会话正有轮次在跑（不是本房间的），本次未投递`,
+                sourceTask: taskUri,
+            });
+            mark("failed", { error: `${name} 的会话忙`, replyId });
+            input.done(ev);
+            return;
+        }
+        const r = await runAndCollect(taskUri, deliveryText({ roomId, fromName, text: body, toAll }));
+        const replyId = nextEventId();
+        const ev = record(roomId, {
+            id: replyId,
             ts: new Date().toISOString(),
             kind: "reply",
-            author: id,
+            author: member.id,
             to: [author],
             text: r.reply,
             delivered: !r.error,
             ...(r.error ? { error: r.error } : {}),
             sourceTask: taskUri,
         });
-    }
+        mark(r.error ? "failed" : "ok", {
+            replyId,
+            ...(r.turnId ? { turnId: r.turnId } : {}),
+            ...(r.error ? { error: r.error } : {}),
+        });
+        input.done(ev);
+    };
+
+    const started = st.tail.then(run, run); // 前一条失败也照跑（队列不是"一个失败全停"）
+    st.tail = started.catch(() => undefined);
+    return started;
 }

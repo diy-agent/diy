@@ -1277,15 +1277,17 @@ export function bindAppHandlers(binding: ServerBinding): void {
     };
   });
   binding.on(app.room.get, async ({ input }) => {
-    const { readRoom, readEvents } = await import("../core/room");
-    const { events, bad } = readEvents(input.id, { limit: input.limit ?? 200 });
-    return { room: readRoom(input.id), events, badLines: bad };
+    // 走 readRoomView（不是裸 readEvents）：投递状态在 deliveries.jsonl 里，要 fold 上来
+    const { readRoomView } = await import("../core/room");
+    const { room, events, bad } = readRoomView(input.id, { limit: input.limit ?? 200 });
+    return { room, events, badLines: bad };
   });
   binding.on(app.room.create, async ({ input }) => {
     const { ensureRoom, isValidRoomId, readRoom, writeRoom } = await import("../core/room");
     if (!isValidRoomId(input.id)) throw new Error(`房间 id 不合法：${input.id}（字母数字开头，允许 . _ -）`);
-    const humanName = input.human?.trim() || "ccc";
-    const room = ensureRoom(input.id, { ...(input.title ? { title: input.title } : {}) });
+    const humanName = input.human?.trim() || "chen56";
+    const title = input.title?.trim();
+    const room = ensureRoom(input.id, title ? { title } : {});
     if (room.members.length === 0) {
       const next = {
         ...room,

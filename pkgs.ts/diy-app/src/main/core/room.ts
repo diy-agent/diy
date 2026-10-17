@@ -1,8 +1,11 @@
 // src/main/core/room.ts — 多人房间的**落盘层**（文件布局 + 读写）
 //
 // 落位（##166 §28.6 待决 74 的探索期取值）：`$DIY_HOME/rooms/<roomId>/`
-//   room.yaml     成员表 + focus —— **领域真源**（丢了 = 谁在房间里、在跟谁说话全没了）
-//   events.jsonl  事件流（append-only）—— **汇总层的正文**（人说的话 + agent 的回复）
+//   room.yaml        成员表 + focus —— **领域真源**（丢了 = 谁在房间里、在跟谁说话全没了）
+//   events.jsonl     事件流（append-only）—— **汇总层的正文**（人说的话 + agent 的回复）
+//   deliveries.jsonl 投递状态快照（append-only，每行一个 (eventId, memberId) 的状态）——
+//                    **事件本体仍只增不改**：状态变化不改写 events.jsonl，而是往这里追加一行，
+//                    读侧按 (eventId, memberId) 取最后一行 fold 成当前状态（`readRoomView`）。
 //
 // 为什么在 `rooms/` 而不是任务的 `local/`：room ≠ session（§28.5 A 连带结论 1）——
 // 一个房间可横跨多个成员的会话，塞进任一成员的会话目录都是"把汇总层寄存在某一个成员家里"。
@@ -16,7 +19,16 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renam
 import { join } from "node:path";
 import * as yaml from "js-yaml";
 import { diyHome } from "./state";
-import { ROOM_ID_RE, RoomEventSchema, RoomSchema, type Room, type RoomEvent, type RoomMember } from "../../shared/room";
+import {
+    ROOM_ID_RE,
+    DeliveryStateSchema,
+    RoomEventSchema,
+    RoomSchema,
+    type DeliveryState,
+    type Room,
+    type RoomEvent,
+    type RoomMember,
+} from "../../shared/room";
 
 /** 房间根目录（`$DIY_HOME/rooms`） */
 export function roomsRoot(): string {
@@ -119,6 +131,87 @@ export function setFocus(id: string, focus: string | null): Room {
     const next: Room = { ...room, focus };
     writeRoom(next);
     return next;
+}
+
+export function roomDeliveriesPath(id: string): string {
+    return join(roomDir(id), "deliveries.jsonl");
+}
+
+/**
+ * 追加一条投递状态（append-only）。
+ *
+ * 为什么单开一个文件而不是改写 events.jsonl：**事件本体一次写定、永不改**（审计要的是"当时说了什么"），
+ * 投递状态是**后到的、会变的**（排队中 → 投递中 → 已投递）。两者生命周期不同，混一个文件就得改写历史。
+ */
+export function appendDelivery(roomId: string, rec: DeliveryState & { eventId: string }): void {
+    mkdirSync(roomDir(roomId), { recursive: true });
+    appendFileSync(roomDeliveriesPath(roomId), `${JSON.stringify(rec)}\n`, "utf8");
+}
+
+/** 读投递状态：fold 成 `eventId → memberId → 最新状态`（坏行跳过并计数） */
+export function readDeliveries(roomId: string): { byEvent: Map<string, Map<string, DeliveryState>>; bad: number } {
+    const f = roomDeliveriesPath(roomId);
+    const byEvent = new Map<string, Map<string, DeliveryState>>();
+    if (!existsSync(f)) return { byEvent, bad: 0 };
+    let bad = 0;
+    for (const line of readFileSync(f, "utf8").split("\n")) {
+        const t = line.trim();
+        if (!t) continue;
+        let raw: unknown;
+        try {
+            raw = JSON.parse(t);
+        } catch {
+            bad++;
+            continue;
+        }
+        const parsed = DeliveryStateSchema.safeParse(raw);
+        const eventId = (raw as { eventId?: unknown }).eventId;
+        if (!parsed.success || typeof eventId !== "string") {
+            bad++;
+            continue;
+        }
+        const inner = byEvent.get(eventId) ?? new Map<string, DeliveryState>();
+        inner.set(parsed.data.memberId, parsed.data);
+        byEvent.set(eventId, inner);
+    }
+    return { byEvent, bad };
+}
+
+/**
+ * 读一个房间的**视图** = 成员表 + 事件流（已附上投递状态 + `delivered` 真值）。
+ *
+ * `delivered` 为什么要在读侧重算：落盘那一刻还没有投递结果（事件先落盘再 yield 的铁律），
+ * 盘上那份恒为 false；真值只有把 deliveries fold 上来才知道。
+ */
+export function readRoomView(
+    roomId: string,
+    opts: { limit?: number } = {},
+): { room: Room | null; events: RoomEvent[]; bad: number } {
+    const room = readRoom(roomId);
+    const { events, bad } = readEvents(roomId, opts);
+    const { byEvent, bad: badD } = readDeliveries(roomId);
+    // replyId → 状态：**回复事件**也要能查到"这一轮是谁投的、轮次 id 是什么"（UI 显示轮次用）
+    const byReply = new Map<string, DeliveryState>();
+    for (const inner of byEvent.values()) {
+        for (const d of inner.values()) {
+            if (d.replyId) byReply.set(d.replyId, d);
+        }
+    }
+    const folded = events.map((ev) => {
+        const inner = byEvent.get(ev.id);
+        if ((!inner || inner.size === 0) && ev.kind === "reply") {
+            const d = byReply.get(ev.id);
+            return d ? { ...ev, deliveries: [d] } : ev;
+        }
+        if (!inner || inner.size === 0) return ev;
+        const deliveries = [...inner.values()];
+        return {
+            ...ev,
+            deliveries,
+            delivered: deliveries.some((d) => d.status === "ok"),
+        };
+    });
+    return { room, events: folded, bad: bad + badD };
 }
 
 /** 追加一条事件（append-only；**不重写**整份 —— 事件流只增不改） */
