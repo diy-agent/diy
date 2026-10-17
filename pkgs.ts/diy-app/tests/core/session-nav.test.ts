@@ -68,7 +68,7 @@ function finished(patch: Partial<SessionEntry> = {}): SessionEntry {
 
 /** 直接造 nav 行（不经过 entry → 单测聚合与排序时更直白） */
 function row(patch: Partial<NavRow> & { uri: string }): NavRow {
-    return { label: patch.uri, running: false, stalled: false, abnormal: false, unread: 0, queue: 0, opened: false, ...patch };
+    return { label: patch.uri, running: false, stalled: false, abnormal: false, unread: 0, queue: 0, opened: false, lastTs: null, ...patch };
 }
 
 describe("navRowOf：判据全部出自 session-overview（不另写一套）", () => {

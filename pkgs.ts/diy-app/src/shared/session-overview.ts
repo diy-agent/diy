@@ -69,9 +69,11 @@ export function stalledOf(e: SessionEntry, now: number, thresholdMs = STALL_MS):
  * 水位是 renderer 本地量（谁在看、看到第几轮，见 sessionStore）—— 它**不回写 viewers**（R3）：
  * 这是"我读到了哪"，不是"有人在读"。
  */
-export function newTurnsOf(e: SessionEntry, seenTurns: number | null, totalTurns?: number): number {
+export function newTurnsOf(e: SessionEntry | null, seenTurns: number | null, totalTurns?: number): number {
     if (seenTurns === null) return 0;
-    return Math.max(0, (totalTurns ?? e.turnCount) - seenTurns);
+    // `e` 可为 null：**账本独有**的行（重启后注册表为空，但账本还记得这个任务聊过）没有注册表条目，
+    // 此时总轮次只能来自 `totalTurns`（账本那把跨启动的尺子）。缺了它就把历史未读算成 0。
+    return Math.max(0, (totalTurns ?? e?.turnCount ?? 0) - seenTurns);
 }
 
 /** 步数进度（`k/maxSteps`；`maxSteps` 未知时只给已跑步数，不编上限） */

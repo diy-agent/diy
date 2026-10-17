@@ -30,6 +30,7 @@ function row(over: Partial<NavRow> = {}): NavRow {
         unread: 0,
         queue: 0,
         opened: false,
+        lastTs: null,
         ...over,
     };
 }

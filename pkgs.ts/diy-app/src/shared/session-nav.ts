@@ -41,13 +41,22 @@ export interface NavRow {
     queue: number;
     /** 这个窗口开着它的 tab（开着 = 已在视线内，不必再提示） */
     opened: boolean;
+    /**
+     * 最后活动时刻（ISO）—— **跨启动**那一把尺子（账本最后一条账的 `ts`）。
+     * 用途 = 「待你处理」区每行都给个时间：不点进去就知道"这是什么时候的事"。
+     * `null` = 账本里没有（没聊过 / 还没读到）。
+     */
+    lastTs: string | null;
 }
 
 export interface NavRowInput {
     uri: string;
     label: string;
     opened: boolean;
-    entry: SessionEntry;
+    /** 注册表条目；**`null` = 注册表里没有**（账本独有：重启后仍然"聊过但没在跑"） */
+    entry: SessionEntry | null;
+    /** 账本最后活动时刻（跨启动）；用在 `NavRow.lastTs` */
+    lastTs?: string | null;
     /** 已读水位（轮次） */
     seenTurns: number | null;
     /** 跨启动总轮次（注册表 ∪ 账本）；缺了未读会用错尺子 */
@@ -62,12 +71,13 @@ export function navRowOf(i: NavRowInput): NavRow {
     return {
         uri: i.uri,
         label: i.label,
-        running: e.turn !== null,
-        stalled: stalledOf(e, i.now),
-        abnormal: abnormalEndOf(e),
+        running: !!e && e.turn !== null,
+        stalled: !!e && stalledOf(e, i.now),
+        abnormal: !!e && abnormalEndOf(e),
         unread: newTurnsOf(e, i.seenTurns, i.totalTurns),
-        queue: queueViewOf(e).count,
+        queue: e ? queueViewOf(e).count : 0,
         opened: i.opened,
+        lastTs: i.lastTs ?? null,
     };
 }
 
