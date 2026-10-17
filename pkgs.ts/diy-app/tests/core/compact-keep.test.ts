@@ -215,7 +215,7 @@ describe("④ 事件账 v3：plan 快照可回放；v2 旧行仍可读", () => {
         expect(compacts[0]!.plan).toBeUndefined();
         expect(compacts[1]!.v).toBe(3);
         expect(compacts[1]!.plan?.source).toBe("config");
-        expect(compacts[1]!.plan?.keep[0]).toMatchObject({ type: "steps", must: true });
+        expect(compacts[1]!.plan?.keep?.[0]).toMatchObject({ type: "steps", must: true });
     });
 });
 
