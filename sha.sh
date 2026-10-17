@@ -138,8 +138,23 @@ ci() {
     run ls -lh ./dist/
 }
 
+# 发布到 npm（@diy-agent scope）。清单单列：**只有**做了 npm 分发准备的包才有 publish 子命令，
+# 不能沿用 _ws_run（其余 workspace 包会以「未知命令」中止）。
+_npm_publish_pkgs=(pkgs.ts/diy-rpc pkgs.ts/diy-ui)
+
 publish() {
-  :
+  # CI（github-actions-cicd）里没有 ~/.bashrc 与 token ⇒ 跳过而非报错；本地有 token 照发
+  if [[ -z "${NPM_PUBLISH_TOKEN:-}" ]] && ! grep -q '^export NPM_PUBLISH_TOKEN=' "$HOME/.bashrc" 2>/dev/null; then
+    echo "${warning}跳过 npm 发布：未找到 NPM_PUBLISH_TOKEN（环境变量或 ~/.bashrc）${reset}"
+    return 0
+  fi
+  for ws in "${_npm_publish_pkgs[@]}"; do
+    (
+      cd "$ws"
+      echo "${info}publish: $ws${reset}"
+      run ./sha.sh publish "$@"
+    )
+  done
 }
 
 # mono所有workspace的ci持续集成,包括check;test;

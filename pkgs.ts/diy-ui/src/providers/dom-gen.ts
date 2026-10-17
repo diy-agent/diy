@@ -1,3 +1,4 @@
+/// <reference lib="dom" />
 /**
  * dom-gen — DOM provider 的 **generator/pull 声明式层**（B 风格）。
  *

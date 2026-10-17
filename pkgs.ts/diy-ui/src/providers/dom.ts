@@ -1,3 +1,4 @@
+/// <reference lib="dom" />
 /**
  * DomApp — 浏览器 DOM 的 App 实现（web 原型）。
  *

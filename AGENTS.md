@@ -5,7 +5,7 @@
 ## find — 去哪找
 
 - `find.app` — `pkgs.ts/diy-app/` Electron 管控台：`src/main` 主进程 · `src/cli` CLI · `src/preload` · `src/renderer_solid` UI（Solid，主线）· `src/serve` Web 模式 · `src/shared` 跨层契约。包内细节见 `pkgs.ts/diy-app/AGENTS.md`
-- `find.rpc` — `pkgs.ts/diy-rpc/` RPC 协议 + 传输（纯内核，零 Node/Electron 依赖）
+- `find.rpc` — `pkgs.ts/diy-rpc/` RPC 协议 + 传输（纯内核，零 Node/Electron 依赖）；**npm 发布名 `@diy-agent/rpc`**（见 `tool.publish`）
 - `find.template` — `pkgs.ts/diy-template/` 提示词模版引擎（零依赖）
 - `find.talk` — `pkgs.ts/diy-talk/` 对话容器内核（事件 / 锚点 / 反应原语 + role 铁律，零依赖；消费者 `@diy/flow`（`Event` 原语）；接 ##319 存储/装配）
 - `find.flow` — `pkgs.ts/diy-flow/` 工作流内核（定义 DSL + 泳道容器 + 插件槽 + 参数层 L2 + guard 求值 + 转移执行器 + 轨迹投影；零 IDE 依赖，唯一依赖 `@diy/talk` 的 `Event` 原语；接 ##319）
@@ -54,6 +54,7 @@
 - `tool.confirm` — 破坏性操作的应用内二次确认走 `renderer_solid/components/ConfirmDialog.tsx`；**禁用原生 `window.confirm`**（窗口级模态：卡住整个渲染进程，且非 DOM 节点 —— 自动化点不到）
 - `tool.cli` — 查/改数据：全局 `diy <域> <命令>`（生产）· worktree 里 `./diy.sh <域> <命令>`（隔离）。**域名清单真源 = `diy --help`**（`task` `project` `agent` `tool` `context` `template` `llmConfig` `seed` `log` `ref` `watch` `ui` `doctor`…；本行曾只列 8 个，早已腐坏）
 - `tool.pkg` — `pkgs.ts/diy-app/sha.sh preview|lab|build|test|cli` 单包动作
+- `tool.publish` — **npm 发布（`@diy-agent` scope）**：根 `./sha.sh publish [--dry-run]` → 清单 `_npm_publish_pkgs`（diy-rpc / diy-ui）各自 `./sha.sh publish`（= `tsc -p tsconfig.build.json` + `scripts/npm-publish.mjs` 在 `dist/` 生成发行版 package.json，再 `npm publish dist`）。仓内 package.json 恒指 `src/*.ts` 且留 `private:true`（护栏）；认证 `NPM_PUBLISH_TOKEN`（环境变量或 `~/.bashrc`），CI 无则跳过而非报错
 - `tool.sync` — **新开 worktree 先 `./sha.sh sync`**（`npm i --workspaces --include-workspace-root` + 子模块 + 各包 sync）；不跑则包没装、`node_modules` 缺。`--include-workspace-root` 不能省：光 `npm i --workspaces` 只装 workspace、漏装根 package.json 依赖（`remark-gfm` 等），干净 worktree 上必现 build 解析失败
 - `tool.electron` — electron 43 **无 postinstall**，二进制改**惰性下载**：`require('electron')` / `npx electron` 时若 `node_modules/electron/dist` 缺，就在**当时那个进程里**同步下载，**且无超时** → 症状是静默卡死（与 npm 的 fetch 超时无关）。zip 缓存在 `~/Library/Caches/electron/`（实测 cache hit：5.5s 解压完、零网络）—— 所以每个 worktree 的真实代价是**解压 ~295MB 占磁盘**，不是下载。省法（本仓实测在用）：`ln -sfn <主仓>/node_modules/electron/dist <worktree>/node_modules/electron/dist`
 - `tool.ui` — 真实 UI 验证走 CDP：`playwright-cli attach --cdp=…`

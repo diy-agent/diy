@@ -334,7 +334,7 @@ let currentApp: PiTuiApp | undefined;
  * PiTuiApp — pi-tui 框架的 App 入口
  *
  * 用法:
- *   import { App } from "diyui/providers/pi-tui";
+ *   import { App, ImmediateScheduler } from "@diy-agent/ui";
  *   const app = new App({ mode: "dev", scheduler: new ImmediateScheduler() });
  *   app.column(() => {
  *     app.label("hello");
