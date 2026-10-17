@@ -1028,6 +1028,7 @@ export default function App() {
                         「一律 32px 高、按钮区在右」的统一规格不符。现改为：左 ◉、右按钮区。
                         收起态（rail 40px）装不下按钮区，只留 ◉ 居中。 */}
                     <div
+                        data-testid="nav-viewbar"
                         class={`relative flex items-center ${VIEW_BAR_H} border-b shrink-0 ${expanded() ? "justify-between px-2" : "justify-center"}`}
                     >
                         {/* 窄窗（<1024）：◉ 就地变成**唯一的导航入口**（点击把 40px rail 展开成浮层）。
@@ -1337,7 +1338,14 @@ export default function App() {
                                                                             </span>
                                                                         </Show>
                                                                     </span>
-                                                                    <span class="truncate flex-1">{label()}</span>
+                                                                    {/* 内容（那行文字）。**语义钩子 `data-nav-label` 是给测试定点的**（##373）：
+                                                                        行内**绝对定位的装饰节点**（##302 项目色条 left-0、##355 状态点）都排在它前面，
+                                                                        而 `querySelector('span')` 取的是「第一个 span」= 实现序而非契约 ——
+                                                                        ##302 插色条后，缩进用例量到色条（恒等于行左缘）→ `12 > 12` 恒红。
+                                                                        要量内容的左边界就取它，别再按标签取第一个元素。 */}
+                                                                    <span class="truncate flex-1" data-nav-label>
+                                                                        {label()}
+                                                                    </span>
                                                                     {/* agent 面状态（##355）：四态单轴一句话。与任务表行、
                                                                         属性面板**同一份判据**（shared/task-agent-state + lib/agent-state）；
                                                                         两个逐任务真源取自任务树节点（main 侧算的）。 */}
