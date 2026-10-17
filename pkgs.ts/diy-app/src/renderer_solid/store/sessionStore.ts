@@ -147,7 +147,7 @@ function put(map: Map<string, SessionEntry>, e: SessionEntry): Map<string, Sessi
     if (prev && entryEqual(prev, e)) return map;
     const next = new Map(map);
     next.set(key, e);
-    if (prev === undefined) ensureBaseline(key);
+    if (prev === undefined) ensureBaseline(key, e);
     else if (ledgerMoved(prev, e)) usageLedgerStore.refresh(key);
     return next;
 }
@@ -196,10 +196,26 @@ usageLedgerStore.onFacts((uri) => {
  * 重启归零；账本落盘、含全历史。取大即"谁知道的更全用谁"，且跨启动单调递增（水位才有意义）。
  * `undefined` = **账本还没读到**（≠ 0！）：水位只在知道真值时写。
  */
-function totalTurnsOf(uri: string): number | undefined {
+function totalTurnsOf(uri: string, known?: SessionEntry | null): number | undefined {
     const ledger = usageLedgerStore.turnsOf(uri);
     if (ledger === undefined) return undefined;
-    return Math.max(table().get(uri)?.turnCount ?? 0, ledger);
+    /**
+     * ⚠️ `known` = 调用方手上那条**尚未落进 `table()`** 的条目。
+     * 为什么必须能传：`ensureBaseline` 是在 `put()` **插入新条目之前**调用的（那是它唯一的机会
+     * —— 条目一落表，`seen` 就该有基线了），此刻 `table().get(uri)` 还看不到它 ⇒ 在跑的轮次
+     * 减不掉、`turnCount` 也读成 0 ⇒ 基线算高（把在跑的那轮当成已收尾）⇒ 它真收尾时 `+N` 恒 0。
+     */
+    const e = known !== undefined ? known : table().get(uri);
+    /**
+     * ⚠️ **减掉在跑的那一轮**：账本每步一条账，所以**轮次还没收尾就已经被记进去了**
+     * （`turnId` 已出现）—— 直接采用就是"提前宣告一轮完成"。后果实测过（##358 轮 13 记的隐患 1）：
+     * 你此刻开着这个会话看，水位会把这**在跑的一轮**记成已读；等它真收尾（尤其**异常收尾**）时
+     * `+N` 恒为 0 —— 恰恰是"跑失败了却没提示"。
+     * 注册表的 `turnCount` 只数**已收尾**的轮次，故减 1 后两把尺子同口径（都只数收尾的）。
+     * 账本还没记这轮（第一步都没走完）时减多是**偏保守**：未读少算，不虚报。
+     */
+    const inflight = e && e.turn !== null ? 1 : 0;
+    return Math.max(e?.turnCount ?? 0, ledger - inflight);
 }
 
 /**
@@ -207,9 +223,9 @@ function totalTurnsOf(uri: string): number | undefined {
  * （否则"新增"会把开应用之前的轮次也算成"你不在时跑的"，那是假事实）。
  * 账本还没到货 → 挂起（`pendingSeen`），到货再钉。
  */
-function ensureBaseline(uri: string): void {
+function ensureBaseline(uri: string, known?: SessionEntry | null): void {
     if (untrack(seen).has(uri)) return;
-    const total = totalTurnsOf(uri);
+    const total = totalTurnsOf(uri, known);
     if (total === undefined) {
         pendingSeen.add(uri);
         usageLedgerStore.ensure(uri);
