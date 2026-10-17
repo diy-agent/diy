@@ -131,6 +131,16 @@ export interface EffectiveRates extends ModelRates {
 export const COST_SOURCE = "models.dev";
 
 /**
+ * 一步的「计价依据」（##372）：查价用的是**哪个模型标识**，而不是"算出来多少"。
+ *
+ *   · `response` —— 命中**上游回执**的模型（正常路径；上游路由改写时按实际模型计价，##211 §四.4.4）
+ *   · `request`  —— 回执缺 / 回执模型查不到价 → 退按**本请求**模型（留痕：配合 `responseModel`
+ *                   就能看出"上游改了模型，但我们只能按原模型算"）
+ *   · `none`     —— 两者都查不到 → 该行 `cost` 为 null（**不是 0**，UI 显示「—」）
+ */
+export type PriceBasis = "response" | "request" | "none";
+
+/**
  * 计费/展示四桶（+ 两个明细）。全部来自 ai-sdk 归一化后的 `LanguageModelUsage`：
  *   inputTokens.total  = noCacheTokens + cacheReadTokens + cacheWriteTokens
  *   outputTokens.total = textTokens + reasoningTokens
@@ -470,6 +480,13 @@ export interface StepUsageRecord {
     responseId?: string;
     /** 响应模型（**按它查价**：上游可能路由改写） */
     responseModel?: string;
+    /**
+     * 计价依据（##372）：实际查价用的是哪个模型标识。**必须落盘** —— 「无价目」与「金额 0」
+     * 在账上要能区分，否则事后翻账只能看到一排 0，无法回答「是没价目还是真没花钱」。
+     */
+    priceBasis?: PriceBasis;
+    /** 实际查价用的模型（完全限定名；`priceBasis === "none"` 时无此字段） */
+    priceRef?: string;
     finishReason?: string;
     /**
      * 上游**原始** finish_reason（未经 ai-sdk 归一，如 `tool_calls` / `stop` / `max_tokens` /
@@ -566,8 +583,16 @@ export type TurnUsagePatch = {
     turnRate?: number | null;
     /** 上下文窗口上限（未知 → null；UI 显示「—」而不是编一个百分比） */
     contextLimit: number | null;
-    /** 本轮累计金额 */
+    /**
+     * 本轮累计金额。**只累加有价目的步**（##372）：无价目的步不再塞一个全 0 对象进来 ——
+     * 那会让 UI 把「没价目」画成「$0.0000」，是本任务要修的静默形态。
+     * 全部步都无价目 → null（UI 显示「$—」）。
+     */
     cost: CostBreakdown | null;
+    /**
+     * 本轮**无价目**的步数（>0 = 上面的 cost 是部分和）。optional：本版之前的记录没有。
+     */
+    unpriced?: number;
     /** 该轮真发的构成字节（轮内各步相同；L2 构成卡实时源）。optional：老记录没有 → 三段 – */
     contextParts?: { systemBytes: number; toolsBytes: number };
 };
@@ -584,6 +609,8 @@ export function turnUsagePatch(
     lastStepRate: number | null = null,
     /** 轮均档：本轮 Σ总输出 ÷ Σ响应耗时（`avgRate`）；给不出 → 传 null（UI 回退逐步账本） */
     turnRate: number | null = null,
+    /** 本轮**无价目**的步数（##372）；>0 时 UI 要标注"合计是部分和"，不能当成完整的 $ */
+    unpriced = 0,
 ): TurnUsagePatch {
     return {
         inputTotal: cumulative.inputTotal,
@@ -602,6 +629,7 @@ export function turnUsagePatch(
         turnRate,
         contextLimit: contextLimit ?? null,
         cost,
+        unpriced,
         ...(contextParts ? { contextParts } : {}),
     };
 }

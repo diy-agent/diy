@@ -220,12 +220,15 @@ export interface SessionUsageAgg {
     total: number;
     /** null = 没有任何一轮有金额快照（不是 $0） */
     cost: CostBreakdown | null;
+    /** **无价目**的轮数（##372）：>0 时上面的 cost 是部分和，UI 要标注（「—」而不是 $0） */
+    unpriced: number;
 }
 
 export function aggregateSessionUsage(trees: BlockNode[]): SessionUsageAgg {
     const a: SessionUsageAgg = {
         turns: 0, legacyTurns: 0, noCache: 0, cacheRead: 0, cacheWrite: null,
         inputTotal: 0, text: 0, reasoning: 0, outputTotal: 0, total: 0, cost: null,
+        unpriced: 0,
     };
     const costs: CostBreakdown[] = [];
     for (const t of trees) {
@@ -255,6 +258,7 @@ export function aggregateSessionUsage(trees: BlockNode[]): SessionUsageAgg {
         a.outputTotal += p.outputTotal;
         a.total += p.total;
         if (p.cost) costs.push(p.cost);
+        else a.unpriced++;
     }
     a.cost = costs.length ? sumCosts(costs) : null;
     return a;
@@ -1438,8 +1442,12 @@ export function TurnUsageBar(props: {
                     <span class={`${CLIP} tabular-nums`} data-turn-usage-tok>
                         {fmtTokens(p().total)} tok
                     </span>
-                    <span class={`${CLIP} tabular-nums`} data-turn-usage-cost>
-                        {p().cost ? `$${fmtCost(p().cost!.total)}` : "$—"}
+                    <span
+                        class={`${CLIP} tabular-nums`}
+                        data-turn-usage-cost
+                        title={p().unpriced ? `本轮 ${p().unpriced} 步无价目：金额只是已计价部分之和` : undefined}
+                    >
+                        {p().cost ? `$${fmtCost(p().cost!.total)}` : "$—"}{p().cost && p().unpriced ? "*" : ""}
                     </span>
                 </button>
             </div>
@@ -1489,7 +1497,10 @@ export function SessionUsageChip(props: {
         const a = agg();
         // 无数据也要显示 0（不是 "—"）—— 用户 2026-10-07：「显示 --tok.$-- 本身是错误的，应该显示 0 tok」
         if (a.turns === 0) return "0 tok · $0";
-        return `${fmtTokens(a.total)} tok · ${a.cost ? `$${fmtCost(a.cost.total)}` : "$0"}`;
+        // **跑过但无价目**（##372）→ 「$—」：这不是"花了 0 元"，是"没价钱可算"。
+        // 混着有的（部分和）额外打 `*`，与页脚同口径。
+        if (!a.cost) return `${fmtTokens(a.total)} tok · $—`;
+        return `${fmtTokens(a.total)} tok · $${fmtCost(a.cost.total)}${a.unpriced > 0 ? "*" : ""}`;
     };
     return (
         <button
@@ -1578,7 +1589,7 @@ function turnDetailMd(g: TurnGroup | null, rows: StepUsageRecord[], clock: strin
     const out: string[] = [`## 本轮逐步用量${clock ? ` · ${clock}` : ""}`, ""];
     if (g) {
         out.push(
-            `- 窗口占用（最后一步）${pctText(g.last.windowRate)} · 步数 ${g.steps.length} · 缓存命中 ${pctText(cacheHitRate(g.buckets))} · 合计 $${fmtCost(g.cost?.total ?? 0)}`,
+            `- 窗口占用（最后一步）${pctText(g.last.windowRate)} · 步数 ${g.steps.length} · 缓存命中 ${pctText(cacheHitRate(g.buckets))} · 合计 ${g.cost ? `$${fmtCost(g.cost.total)}` : "n/a"}`,
             "",
         );
     }
