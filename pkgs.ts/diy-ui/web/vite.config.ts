@@ -56,6 +56,7 @@ export default defineConfig({
         session: resolve(ROOT, "session.html"),
         chat: resolve(ROOT, "chat.html"),
         gen: resolve(ROOT, "gen.html"),
+        unsafe: resolve(ROOT, "unsafe.html"),
       },
     },
   },

@@ -1,4 +1,5 @@
 import { DslApp, defineComps, type El } from "../../../src/providers/dom-dsl.js";
+import { Signal } from "../../../src/signal.js";
 import { installDevtools } from "../lib/devtools.js";
 import { BlockStore, toForest, type Op, type BlockNode } from "../lib/op-fold.js";
 
@@ -43,14 +44,27 @@ interface LiveTurn {
   done: boolean;
 }
 
+/** 归一化：外层只存「有序 id」（结构），每轮的内容各成一个 signal（内容）。 */
+interface TurnRef {
+  id: string;
+  sig: Signal<TurnVM>;
+}
+
 export function chatDslDemo(mount: HTMLElement): void {
   const app = new DslApp({ mount });
   const C = defineComps(app, { Turn, Head, Row, Live });
 
-  const turns = app.signal<TurnVM[]>([]);
+  // 结构 vs 内容分开：改一轮内容只通知那一轮；列表结构不变则外层不重跑
+  const turns = app.signal<string[]>([]);
+  const turnOf = new Map<string, Signal<TurnVM>>();
   const live = app.signal<LiveTurn | null>(null);
   const status = app.signal(`加载 ${DEFAULT_FILE} …`);
   const inputText = app.signal("");
+
+  const addTurn = (id: string, vm: TurnVM): void => {
+    turnOf.set(id, app.signal(vm));
+  };
+  const turnRef = (id: string): TurnRef => ({ id, sig: turnOf.get(id)! });
 
   // 唯一需要直接操作 DOM 的地方：滚到底（别处一律不碰 el）
   let scrollEl: HTMLElement | null = null;
@@ -71,9 +85,9 @@ export function chatDslDemo(mount: HTMLElement): void {
 
   app.div({ class: "chat-scroll" }, (d) => {
     scrollEl = d.el; // 逃生口：滚动定位
-    // 整表重算：读 turns → 一轮集合变了才重建
+    // 外层只读「有序 id」：结构变才重跑；每轮的内容订阅各自 signal
     d.div({ class: "chat-list" }, () => {
-      for (const t of turns.value) C.Turn(t);
+      for (const id of turns.value) C.Turn(turnRef(id));
     });
     // 流式直播轮：读 live → 每 token 只重建这一小块
     d.div({ class: "chat-list" }, () => {
@@ -100,6 +114,7 @@ export function chatDslDemo(mount: HTMLElement): void {
   // 暴露给 headless / 调试
   (window as unknown as { __chat: unknown }).__chat = {
     send: (t: string) => sendMessage(t),
+    edit: (i: number) => editTurn(i),
     state: () => ({ turns: turns.value.length, live: !!live.value, status: status.value }),
     stats: () => app.rerunStats(), // dev：rerun 计数分布（异常 rerun 排查）
   };
@@ -136,7 +151,18 @@ export function chatDslDemo(mount: HTMLElement): void {
     status.value = `${ops.toLocaleString()} ops · ${vms.length} 轮 · ${vms
       .reduce((n, t) => n + t.rows.length, 0)
       .toLocaleString()} 行`;
-    turns.value = vms;
+    for (const vm of vms) addTurn(vm.id, vm);
+    turns.value = vms.map((t) => t.id);
+    toBottom();
+  }
+
+  // ── 改一轮（演示「组级增量」：只重跑那一轮） ──────────
+  function editTurn(i: number): void {
+    const id = turns.value[i];
+    if (!id) return;
+    const sig = turnOf.get(id)!;
+    const t = sig.value;
+    sig.value = { ...t, rows: [...t.rows, { kind: "text", text: "✏️ 追加一行（只重跑这一轮）" }] };
     toBottom();
   }
 
@@ -152,8 +178,9 @@ export function chatDslDemo(mount: HTMLElement): void {
     await stream("text", REPLY, 12);
     const l = live.value!;
 
-    const t: TurnVM = {
-      id: "local_" + Date.now(),
+    const id = "local_" + Date.now();
+    addTurn(id, {
+      id,
       model: MODEL,
       rows: [
         { kind: "user", text },
@@ -162,8 +189,8 @@ export function chatDslDemo(mount: HTMLElement): void {
       ],
       errorCount: 0,
       foot: `✓ 刚刚 · 1 步 · ${(l.think.length + l.text.length).toLocaleString()} 字符 · 模拟`,
-    };
-    turns.value = [...turns.value, t];
+    });
+    turns.value = [...turns.value, id];
     live.value = null;
     toBottom();
   }
@@ -190,8 +217,9 @@ export function chatDslDemo(mount: HTMLElement): void {
 
 // ── 视图组件（纯函数：(父节点, 载荷) => void） ──────────────
 
-function Turn(d: El, t: TurnVM): void {
-  d.div({ class: "turn" }, (turn) => {
+function Turn(d: El, ref: TurnRef): void {
+  d.div({ key: ref.id, class: "turn" }, (turn) => {
+    const t = ref.sig.value; // 订阅本轮 signal → 只有这一轮变才重跑
     turn.mount(Head, { model: t.model, errors: t.errorCount });
     turn.div({ class: "turn-body" }, (body) => {
       for (const r of t.rows) body.mount(Row, r);
