@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="data:," />
+    <title>diy-ui · 聊天复刻（B · generator）</title>
+    <style>
+      :root {
+        --base-100: oklch(25.33% 0.016 252.42);
+        --base-200: oklch(23.26% 0.014 253.1);
+        --base-300: oklch(21.15% 0.012 254.09);
+        --content: oklch(97.807% 0.029 256.847);
+        --muted: color-mix(in oklab, var(--content) 55%, transparent);
+        --faint: color-mix(in oklab, var(--content) 40%, transparent);
+        --primary: oklch(58% 0.233 277.117);
+        --error: oklch(71% 0.194 13.428);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--base-100);
+        color: var(--content);
+        font: 14px/1.6 ui-sans-serif, system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+      }
+      a { color: var(--primary); text-decoration: none; }
+      a:hover { text-decoration: underline; }
+
+      /* 布局：默认 flex，方向按语义类声明 */
+      .chat-scroll, .chat-list, .turn, .turn-body, .tool-row, .err-card, .composer {
+        display: flex; flex-direction: column;
+      }
+      .chat-top, .turn-head, .think-row, .tool-head, .row-r, .composer-right, .turn-foot {
+        display: flex; flex-direction: row; align-items: center;
+      }
+
+      .page { max-width: 900px; margin: 0 auto; padding: 20px 16px 0; height: 100vh; display: flex; flex-direction: column; }
+      #chat { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+
+      /* 表单控件（显式 class，来自 props 的 class） */
+      .diy-button {
+        background: var(--primary); color: #fff; border: 0; border-radius: 8px;
+        padding: 6px 16px; font: inherit; font-weight: 600; cursor: pointer;
+      }
+      .diy-button:hover { filter: brightness(1.1); }
+      .diy-input {
+        background: var(--base-200); color: var(--content); border: 1px solid var(--base-300);
+        border-radius: 10px; padding: 8px 12px; font: inherit; width: 100%;
+      }
+      .diy-input:focus { outline: none; border-color: var(--primary); }
+
+      /* 顶部 */
+      .chat-top { justify-content: space-between; border-bottom: 1px solid var(--base-300); padding-bottom: 10px; }
+      .chat-title { font-weight: 700; }
+      .chat-status { color: var(--muted); font-size: 12px; }
+
+      /* 对话流 */
+      .chat-scroll { flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px; }
+      .chat-list { gap: 14px; }
+      .turn { gap: 6px; padding-bottom: 10px; border-bottom: 1px dashed color-mix(in oklab, var(--base-300) 80%, transparent); }
+      .turn-head { gap: 6px; color: var(--muted); font-size: 12px; }
+      .turn-head .avatar { display: inline-flex; width: 20px; height: 20px; align-items: center; justify-content: center; border-radius: 999px; background: color-mix(in oklab, var(--primary) 18%, transparent); }
+      .turn-head .sep { opacity: 0.4; }
+      .turn-head .model { opacity: 0.65; }
+      .err-badge { margin-left: 4px; border: 1px solid color-mix(in oklab, var(--error) 40%, transparent); background: color-mix(in oklab, var(--error) 12%, transparent); color: var(--error); border-radius: 4px; padding: 0 5px; font: 11px/1.5 ui-monospace, monospace; }
+      .turn-body { gap: 6px; padding-left: 2px; }
+
+      .row-r { justify-content: flex-end; width: 100%; }
+      .bubble { max-width: 85%; border-radius: 16px; padding: 8px 14px; }
+      .bubble-text { white-space: pre-wrap; word-break: break-word; }
+      .bubble-user { background: color-mix(in oklab, var(--primary) 12%, transparent); border: 1px solid color-mix(in oklab, var(--primary) 22%, transparent); }
+      .bubble-ai { background: var(--base-200); border: 1px solid var(--base-300); max-width: 95%; }
+
+      .think-row { gap: 6px; color: var(--faint); font-size: 12px; align-items: flex-start; }
+      .think-text { font-style: italic; max-height: 96px; overflow: hidden; }
+
+      .tool-row { gap: 4px; background: color-mix(in oklab, var(--base-200) 70%, transparent); border: 1px solid var(--base-300); border-radius: 10px; padding: 8px 10px; }
+      .tool-head { gap: 6px; }
+      .tool-name { font-family: ui-monospace, monospace; }
+      .tool-status { color: var(--muted); font-size: 12px; border: 1px solid var(--base-300); border-radius: 4px; padding: 0 5px; }
+      .tool-output { color: var(--faint); font-size: 12px; font-family: ui-monospace, monospace; max-height: 96px; overflow: hidden; white-space: pre-wrap; }
+
+      .err-card { gap: 4px; border: 1px solid color-mix(in oklab, var(--error) 45%, transparent); background: color-mix(in oklab, var(--error) 10%, transparent); border-radius: 10px; padding: 8px 12px; }
+      .err-title { color: var(--error); font-weight: 600; font-size: 13px; }
+      .err-body { color: color-mix(in oklab, var(--error) 85%, var(--content)); font-size: 12.5px; }
+
+      .turn-foot .foot { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+      .turn.live .turn-body { opacity: 0.95; }
+
+      /* 输入区 */
+      .composer { gap: 8px; padding: 10px 0 16px; border-top: 1px solid var(--base-300); }
+      .composer-right { justify-content: flex-end; width: 100%; gap: 10px; }
+      .persona-badge { font-size: 11px; color: var(--muted); border: 1px solid var(--base-300); border-radius: 4px; padding: 0 5px; flex: 0 0 auto; white-space: nowrap; }
+      .persona-name { color: var(--muted); font-size: 12px; flex: 0 0 auto; white-space: nowrap; }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <p style="margin: 0 0 8px">
+        <a href="/">← 返回 index</a> ·
+        <a href="/chat.html">A 风格（eager）</a>
+      </p>
+      <div id="chat"></div>
+    </div>
+    <script type="module" src="/src/gen-main.ts"></script>
+  </body>
+</html>
