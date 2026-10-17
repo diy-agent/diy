@@ -117,13 +117,16 @@ export function bindAppHandlers(binding: ServerBinding): void {
     };
   });
   binding.on(app.task.edit, async ({ input }) => {
-    const { uri, ...changes } = input;
+    // 正文输入的显式三态（##338）：`body|bodyText|bodyFile`、`appendBody|appendBodyFile|appendBodyText`
+    // 各自三选一 —— 求值收敛在 core（`resolveBodyInputs`），此处只负责把这两组从普通字段里摘出来。
+    const { uri, body, bodyText, bodyFile, appendBody, appendBodyFile, appendBodyText, ...changes } = input;
+    const bodyInputs = task.resolveBodyInputs({ body, bodyText, bodyFile, appendBody, appendBodyFile, appendBodyText });
     const filtered: Record<string, string> = {};
     for (const [k, v] of Object.entries(changes)) {
       if (v !== undefined) filtered[k] = v as string;
     }
     // 回报本次写入实际做了什么（剥头 / 追加）—— CLI 侧才有话可说，见 core/task.ts 的 TaskWriteReport
-    const report = task.updateTask(uri, filtered as task.UpdateTaskChanges);
+    const report = task.updateTask(uri, { ...filtered, ...bodyInputs } as task.UpdateTaskChanges);
     return { status: "ok", data: { uri, ...report } };
   });
   binding.on(app.task.move, async ({ input }) => {

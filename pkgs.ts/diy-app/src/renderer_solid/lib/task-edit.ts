@@ -34,7 +34,12 @@ export async function editTask(uri: string, patch: TaskEditPatch): Promise<void>
     priority: patch.priority,
     // agent 人物（换绑 = 只改本任务的引用；模型/参数由人物定义决定，见 shared/persona.ts）
     persona: patch.persona,
-    // 追加不由 UI 发起（见 TaskEditPatch 说明）：契约为「键必须出现」，故显式给 undefined
+    // 以下不入 UI 口径（见 TaskEditPatch 说明）—— 契约为「键必须出现」，故显式给 undefined：
+    // 正文的"传文件"形态与追加三态都是 CLI 侧能力（##338 / ##322）
+    bodyText: undefined,
+    bodyFile: undefined,
     appendBody: undefined,
+    appendBodyFile: undefined,
+    appendBodyText: undefined,
   });
 }

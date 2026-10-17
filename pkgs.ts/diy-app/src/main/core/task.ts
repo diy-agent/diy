@@ -303,6 +303,47 @@ export interface UpdateTaskChanges {
  *  故低于此长度一律拒绝 —— 宁可让调用方显式确认，也不让一次手滑毁掉内容。 */
 export const MIN_BODY_LENGTH = 10;
 
+/**
+ * 正文输入的**显式三态**（##338）：
+ *   整篇覆盖 `body` / `bodyText` / `bodyFile`，追加 `appendBody` / `appendBodyFile` / `appendBodyText`。
+ *   每组**三选一**（同时给多个 → 报错，不猜、也不按顺序取）。
+ *
+ * 为什么要把"传文本"和"传文件"拆成不同的键：CLI 上 `--body` 只收文本，而 `--append-body` 收 `<file|->`
+ * —— 两侧不对称，而直觉上"都是传文件"，于是 `diy task edit X --body /tmp/x.md` 把**路径串当正文静默存下**、
+ * 原正文丢失且无告警（##290 / ##294 / ##87 三例现场）。拆键让语义显式；「形如单行路径即拒」的护栏
+ * 只挂在旧的 `body` 上（`bodyText` 是它的逃逸口：正文本身就是一行路径时用它），
+ * 护栏实现在 CLI 解析期（`pkgs.ts/diy-rpc/src/cli/_parser.ts::pathLikeValue` —— cwd 是调用方的，判得准）。
+ *
+ * 注：`bodyFile` / `appendBodyFile` 到这里已经是**文件内容**（读取发生在调用方进程的 parser，
+ * 见 `_CliOptionMeta.readFile`）；本函数只做"哪个键被给了"的裁决。
+ */
+export interface BodyInputs {
+  body?: string;
+  bodyText?: string;
+  bodyFile?: string;
+  appendBody?: string;
+  appendBodyFile?: string;
+  appendBodyText?: string;
+}
+
+/** 一组「三选一」的取值：恰好一个 → 取它；多个 → ValidationError；零个 → undefined（未指定=保持原值）。 */
+function pickOneOf(group: BodyInputs, field: string, keys: readonly (keyof BodyInputs)[]): string | undefined {
+  const given = keys.filter((k) => group[k] !== undefined);
+  if (given.length === 0) return undefined;
+  if (given.length === 1) return group[given[0]!];
+  throw new ValidationError([
+    { field, code: "conflict", msg: `${keys.join(" / ")} 三选一（同时给了 ${given.join(" 与 ")}）` },
+  ]);
+}
+
+/** 把 `BodyInputs` 求值成 `UpdateTaskChanges` 的 `body` / `appendBody`（唯一裁决点）。 */
+export function resolveBodyInputs(input: BodyInputs): { body?: string; appendBody?: string } {
+  return {
+    body: pickOneOf(input, "body", ["body", "bodyText", "bodyFile"]),
+    appendBody: pickOneOf(input, "append_body", ["appendBody", "appendBodyFile", "appendBodyText"]),
+  };
+}
+
 const UpdateTaskSchema = z.object({
   title: z.string().min(1).max(200).optional(),
   state: TaskStateSchema.optional(),

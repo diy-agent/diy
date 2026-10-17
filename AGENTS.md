@@ -69,7 +69,7 @@
 - `rule.instance-lifecycle` — **实例起停权限与数据定性**：`test` / `lab` 由 agent **自由起停**（随便折腾，不用问）；`preview` 供**人机沟通·验证 UI**，亦可随便起停（给正当理由即可）；三者数据皆**临时非生产**（仓库根 `build/<variant>/home`，坏了就清，必要时可重置）。**唯全局 `diy`（prod / `~/.diy`）是日常实跑的生产 app** —— 不动其数据根、不杀其进程，重启留给用户手动
 - `rule.new-pkg` — 新增包检查单：`tsconfig.json`（composite + noEmit + include）+ `tsconfig.all.json` references
 - `rule.renderer` — UI 主线是 `renderer_solid/`（SolidJS）；React 版已删除
-- `rule.task-write` — **任务文件头是权威**（##322）：读侧 `task show` / `getTask` / 上下文 `task.*` 给的就是文件头 frontmatter **同一份**（确认任务不必 `cat` 任务文件）；写侧 `task edit --body`（整篇覆盖）与 `--append-body <file|->`（追加，不必先读文件）收到「整份文件」一律**剥头**（追加侧判据更严：须含 `state`/`created`/`updated`，故追加一份自带 front matter 的普通文档时其文档头**保留**），返回值回报剥掉的键与原文
+- `rule.task-write` — **任务文件头是权威**（##322）：读侧 `task show` / `getTask` / 上下文 `task.*` 给的就是文件头 frontmatter **同一份**（确认任务不必 `cat` 任务文件）；写侧 `task edit` 的整篇覆盖 `--body <文本>` / `--body-text <文本>` / `--body-file <file|->` 与追加 `--append-body <file|->` / `--append-body-file <file|->` / `--append-body-text <文本>`（各**三选一**，多给即报错；`--body` 只收**内联正文** —— 值形如单行路径即**拒**并提示，##338）收到「整份文件」一律**剥头**（追加侧判据更严：须含 `state`/`created`/`updated`，故追加一份自带 front matter 的普通文档时其文档头**保留**），返回值回报剥掉的键与原文 —— 契约原文见 `diy task edit --help`（##338）
 
 ## model — 本地 agent 测试用什么模型
 
