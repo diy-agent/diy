@@ -18,6 +18,8 @@ import { AppInfo } from "./components/AppInfo";
 import { LogPanel } from "./components/LogPanel";
 import { ThemeSettings } from "./components/ThemeSettings";
 import { ToastContainer } from "./components/ToastContainer";
+// 「模型不可用」顶栏 bar（##369 ①）：真发失败时把事实从会话流里提出来摆到最显眼处
+import { ModelUnavailableBar } from "./components/ModelUnavailableBar";
 import { taskStore, type TreeNode } from "./store/taskStore";
 import { tabStore } from "./store/tabStore";
 import { staleTaskTabCtxs } from "../shared/tab-prune";
@@ -27,6 +29,7 @@ import { sessionStore } from "./store/sessionStore";
 import { layoutStore } from "./store/layoutStore";
 import { diyService } from "./lib/rpc";
 import { notificationStore } from "./store/notificationStore";
+import { modelNoticeStore } from "./store/modelNoticeStore";
 import { defaultBinding, findPage, findView, viewInstanceKey } from "../shared/view-registry";
 import { taskIndentOf } from "../shared/tab-order";
 import { partitionByPin } from "../shared/nav-pin";
@@ -683,10 +686,14 @@ export default function App() {
         // 全局会话可见性（##308）：注册表订阅只此一处（R3：多一处订阅就多一份漂移源）；
         // 目的一 = nav 角标 / 任务表 chip / 总览页三处同源，二 = 不点进任务页也知道谁在跑。
         sessionStore.start();
+        // 「模型不可用」通知订阅（##369 ①）：main 侧真发失败时推一条 → 顶栏 bar。
+        // 只此一处订阅（与 sessionStore 同原则：多一处订阅 = 多一处漂移源）。
+        modelNoticeStore.start();
     });
     onCleanup(() => {
         fsAbort?.abort();
         sessionStore.stop();
+        modelNoticeStore.stop();
         resetRendererActions();
     });
 
@@ -798,7 +805,21 @@ export default function App() {
                         if (route().kind === "section" && (route() as { section: Section }).section === "task" && taskStore.selectedUri) taskStore.selectTask(null);
                     }}
                 >
-                    
+                    {/* 「模型不可用」顶栏 bar（##369 ①）：**页面最上方**（面包屑之上）——
+                        真 LLM 实验跑不成时，用户不必翻会话就该看到；可关闭、不挡内容、不中断流程。 */}
+                    <Show when={modelNoticeStore.notice}>
+                        {(n) => (
+                            <ModelUnavailableBar
+                                notice={n()}
+                                onDismiss={() => modelNoticeStore.dismissCurrent()}
+                                onConfigure={() => {
+                                    // "去配置模型" = 设置 → 模型（唯一要做的动作；顺带把 route 切过去）
+                                    goSection("settings");
+                                    setSubPage("models");
+                                }}
+                            />
+                        )}
+                    </Show>
                     {/* 面包屑导航：从当前页面回溯到根，每个非叶子节点带 ▾ 下拉（列出同级 tab） */}
                     <Breadcrumb
                         section={route().kind === "section" ? (route() as { kind: "section"; section: Section }).section : "task"}

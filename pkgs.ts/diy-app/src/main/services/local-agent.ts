@@ -64,6 +64,8 @@ import { planCheck, planGet, planReset, planRestore, planSet, renderCheckView, r
 import { capToolOutput, safeId, toolOutDir, toolOutRelPath } from "./tool-output";
 import { abortText } from "../../shared/turn-end";
 import { opsFeed } from "./ops-feed";
+// 「模型不可用」通知（##369 ①）：判据在 shared/model-unavailable，通知中心在 model-notice
+import { modelNoticeHub, noticeFromError, unavailableNoticeFromLocal } from "./model-notice";
 import { AsyncQueue, withCleanup } from "./async-queue";
 import { sessionRegistry } from "./session-registry";
 import { addStepUsage, newUsageAcc, setTurnUsage, type TurnUsage } from "./turn-usage";
@@ -163,7 +165,7 @@ import {
     type ResolvedModel,
     type ReasoningEffort,
 } from "../../shared/models";
-import { personaForTask } from "../core/persona";
+import { personaByIdOrName, personaForTask } from "../core/persona";
 import { resolveModelKey } from "../core/model-runtime";
 
 // 模型查询函数抽到 shared/models.ts（core 不能被 services 反向依赖，否则循环 import）。
@@ -1178,6 +1180,35 @@ function errText(e: unknown): string {
     const o = e as Record<string, unknown> | null;
     if (o && typeof o.message === "string") return o.message;
     return String(e ?? "未知错误");
+}
+
+/**
+ * 人物显示名（「模型不可用」bar 上要写清"谁在用这个模型"，用户据此知道去改哪个人物）。
+ * 查不到就退化回 id —— 文案查询失败不该连带把提示丢掉（宁可显示 id 也别静默）。
+ */
+function personaDisplayName(id: string): string {
+    return personaByIdOrName(diyHome(), id)?.name ?? id;
+}
+
+/**
+ * 判「这次失败是不是模型不可用」，是就推一条顶栏通知（##369 ①）。
+ *
+ * 判据是纯函数（shared/model-unavailable，表驱动单测）：命中四类（未上架 / id 不认识 /
+ * 认证失败 / 配额）才推；上游 5xx 与网络超时**不推** —— 那两类混进来会让 bar 天天亮
+ * （告警疲劳），且用户该做的动作完全不同（该等，不是该配模型）。
+ *
+ * 认知边界：真发的错误有**两条**产生路径（流内 `error` part 与抛异常），用户看起来
+ * 都是"一条错误块"，故两处都要过这个函数 —— 只在 catch 里做会漏掉最常见的那条
+ * （实测 `[model_coming_soon]` 走的是流内 error part）。
+ */
+function reportModelUnavailable(e: unknown, taskUri: string, personaId: string, model: string): void {
+    const n = noticeFromError(e, {
+        taskUri,
+        personaId,
+        personaName: personaDisplayName(personaId),
+        model,
+    });
+    if (n) modelNoticeHub.push(n);
 }
 
 // ─── 服务 ────────────────────────────────────────────
@@ -2435,7 +2466,24 @@ export class LocalAgentManager {
     ): AsyncGenerator<Op> {
         const persona = personaForTask(diyHome(), taskUri);
         const model = modelOverride ?? persona.model;
-        const { rm, key } = this.resolveModel(model);
+        let rm: ResolvedModel;
+        let key: string;
+        try {
+            ({ rm, key } = this.resolveModel(model));
+        } catch (e) {
+            // 装配期就失败了（模型 id 不在清单里 / 人物没配模型）：**一句 error 都没有地抛**是
+            // 最容易被忽略的形态（用户只看到"点了发送没反应"，或会话里一条错）。本地这份事实
+            // 明确，直接组一条通知（不经文案判据），抛仍旧抛 —— 提示不改变失败语义。
+            modelNoticeHub.push(
+                unavailableNoticeFromLocal(errText(e), {
+                    taskUri,
+                    personaId: persona.id,
+                    personaName: personaDisplayName(persona.id),
+                    model,
+                }),
+            );
+            throw e;
+        }
         // 手写 personas.yaml 可能把档位留空：兜底到该模型自己的默认档，不把空档发给上游
         const reasoningEffort = reasoningEffortOverride ?? (persona.reasoningEffort || reasoningOf(model).default);
         let sess = this.getSession(taskUri);
@@ -3420,7 +3468,10 @@ export class LocalAgentManager {
                             break;
                         }
                         case "error": {
-                            const msg = errText((part as { error?: unknown }).error);
+                            const err = (part as { error?: unknown }).error;
+                            const msg = errText(err);
+                            // 模型不可用的**主路径**（实测：`[model_coming_soon]` 从这里来，不走 catch）
+                            reportModelUnavailable(err, taskUri, identity.persona, model);
                             setEndReason({ type: "error", data: { source: "llm", message: msg } });
                             // 把「这次失败对应哪条实际请求」一并记下：错误块据此直接跳到那条
                             // 请求/响应（能定位就定位，不靠用户猜 trace_id）。
@@ -3545,6 +3596,12 @@ export class LocalAgentManager {
                     yield* errorBlock("abort", abortText(src));
                 } else {
                     const msg = errText(e);
+                    // ── 「模型不可用」的可见性（##369 ①）──
+                    // 判据是 shared/model-unavailable 的**纯函数**（表驱动单测在同名 tests/core）：
+                    // 只挑四类（模型未上架 / id 不认识 / 认证失败 / 配额），**上游 5xx 与网络超时不算**
+                    // —— 那两类混进来会让 bar 天天亮（告警疲劳），且动作完全不同（该等，不是该配模型）。
+                    // 这里只**产生一条事实**给顶栏 bar，不阻断流程：轮次照旧收尾、会话照旧留 error 块。
+                    reportModelUnavailable(e, taskUri, identity.persona, model);
                     setEndReason({ type: "error", data: { source: "stream", message: msg } });
                     yield* errorBlock("stream", msg);
                     failed = true;

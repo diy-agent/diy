@@ -29,6 +29,8 @@ import { FALLBACK_MODEL } from "../../shared/model-default";
 import { PersonaSchema } from "../../shared/persona";
 // 价格形状（camelCase 运行时口径）：与 UI/CLI 同一份 schema
 import { ModelCostSchema } from "../../shared/usage";
+// 「模型不可用」通知契约（纯 zod，renderer 同源；判据函数也在同文件，见 ##369）
+import { ModelUnavailableNoticeSchema } from "../../shared/model-unavailable";
 import {
   CostUpdateResultSchema,
   ImportEnvResultSchema,
@@ -1923,6 +1925,46 @@ export const apiDef = RpcSchema.router({
               event: z.string().describe("变更类型：task-change（projects/ 下任务树相关变更）"),
               ts: z.number().describe("变更发生时间戳（ms）"),
             }),
+          }),
+        },
+      }),
+
+      /**
+       * 「模型不可用」通知（##369 ①）。Main 本地域（判据在 main 侧：只有真发失败的那一刻
+       * 才拿得到状态码与上游原文），renderer 订阅 `watch` 出顶栏 bar。
+       *
+       * 数据定性 = cache（进程内存 ring，重启即空）：它描述"此刻有什么坏了"，不是历史账；
+       * 追溯去看会话流与 ~/.diy/log/network/*.jsonl。
+       */
+      notice: RpcSchema.group({
+        desc: `模型不可用通知（真发失败时产生；含人物 + 模型 + 上游原文）`,
+        children: {
+          /** 未关闭的通知，时间升序（CLI `diy notice list` 直接读它） */
+          list: RpcSchema.unary({
+            desc: `列出当前未关闭的「模型不可用」通知`,
+            input: {},
+            output: z.array(ModelUnavailableNoticeSchema),
+          }),
+          /**
+           * 关闭 = "我知道了"：从 ring 移除，此后重连不再回放。
+           * 为什么必须落 main 侧：只关界面的话，下一次重连的回放会把同一条又推回来 ——
+           * 用户点了 ✕ 却关不掉的提示等于没关（bar 上"可关闭"是硬要求）。
+           * 不给 id = **全关**（bar 一次只展示最新一条，点 ✕ 的语义就是"这波我都知道了"）。
+           */
+          dismiss: RpcSchema.unary({
+            desc: `关闭通知（给 id 关一条；不给 = 全部关闭）`,
+            input: { id: z.string().optional().cliArg({ desc: "通知 id（缺省 = 全部关闭）" }) },
+            output: StatusOk,
+          }),
+          /**
+           * 通知流：**订阅即回放**当前未关闭的通知，之后是增量。
+           * 回放是刻意的：页面重载 / 断线重连后 bar 要能自己回来（用户重开窗口正是最容易
+           * 错过提示的时刻），所以"当前事实"必须随订阅给全，而不是只推增量。
+           */
+          watch: RpcSchema.serverStream({
+            desc: `通知流（订阅回放现存 + 增量推送；顶栏 bar 的数据源）`,
+            input: {},
+            output: ModelUnavailableNoticeSchema,
           }),
         },
       }),
