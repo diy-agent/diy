@@ -60,7 +60,8 @@ function uriOf(e: SessionEntry): string {
 
 /** 状态切片 → 文字色（与 chip 同色义：绿=运行/未读 · 红=异常 · 黄=停滞/留言 · 灰=已对话） */
 const TONE_TEXT: Record<SessionChipView["tone"], string> = {
-    primary: "text-primary",
+    // 绿 = 未读 / 运行中（与 SessionChip.TONE_BADGE 同色义；本主题的 primary 是蓝紫，不是那个绿）
+    primary: "text-success",
     warning: "text-warning",
     error: "text-error",
     ghost: "opacity-60",

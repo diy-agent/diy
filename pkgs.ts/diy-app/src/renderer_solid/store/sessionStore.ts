@@ -309,6 +309,13 @@ export const sessionStore = {
     get entries(): SessionEntry[] {
         return entries();
     },
+    /**
+     * 条目 + 它的**对外键**（任务 uri）成对给出 —— 消费者（nav 行 / 任务表 / 总览）
+     * 此前各自拿 `refs.find(kind==="task")` 再算一遍，正是"同一个会话几处各算一遍 key"的分叉温床。
+     */
+    get rows(): Array<{ uri: string; entry: SessionEntry }> {
+        return entries().map((e) => ({ uri: keyOfEntry(e), entry: e }));
+    },
     get connection(): SessionConnection {
         return connection();
     },

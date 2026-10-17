@@ -1,4 +1,4 @@
-import { createSignal, createEffect, on, onMount, onCleanup, untrack, Show, For } from "solid-js";
+import { createSignal, createEffect, createMemo, on, onMount, onCleanup, untrack, Show, For } from "solid-js";
 import * as Tabs from "@kobalte/core/tabs";
 import { TaskTree } from "./components/TaskTree";
 import { TaskDetailPanel } from "./components/TaskDetailPanel";
@@ -40,6 +40,16 @@ import { DragDropProvider, DragOverlay, useDraggable, useDroppable, PointerSenso
 import type { DragDropProviderProps } from "@dnd-kit/solid";
 import { findTaskProject } from "./components/TaskTree";
 import { isAncestorOf } from "./lib/task-lineage";
+// 会话活动语汇（##358 D1/D2）：nav 的主角标 / 次角标 / 「后台活动」区**共用一份**判据
+//（纯函数在 shared/session-nav —— 位次仍出自 shared/session-overview，与任务表 / 总览同源）。
+import {
+    backgroundOf,
+    heroBadgeOf,
+    navRowOf,
+    rowBadgeOf,
+    secondaryBadgeOf,
+} from "../shared/session-nav";
+import type { NavTone } from "../shared/session-nav";
 
 /**
  * 取"此刻最上面的可查找浮层"（##309）。
@@ -98,6 +108,20 @@ const NAV_ITEMS: Array<{ id: "task" | "llm" | "traffic" | "sessions" | "settings
 ];
 
 /** `ui page navigate` 的合法取值（非法值一律忽略：宁可不跳，也不能把主区打成白屏） */
+/**
+ * nav 角标的**配色**（##358 D1）—— 用户给的口径就是颜色词：
+ *   绿 = 未读 / 运行中 · 红 = 未读且异常终止 · 黄 = 停滞 · 紫 = 队列待投递。
+ * 只在这里定义一次：主角标与次角标、展开与收起共用（两处各写一份必然漂移）。
+ * 绿用 daisyUI 的 `success`（`primary` 在本主题里是蓝紫 —— 与"绿=未读"的口径不符，
+ * 故 SessionChip 的颜色表也一并改到 success，见 components/SessionChip.tsx）。
+ */
+const NAV_TONE_CLASS: Record<NavTone, string> = {
+    green: "bg-success/20 text-success border-success/40",
+    amber: "bg-warning/20 text-warning border-warning/40",
+    red: "bg-error/20 text-error border-error/40",
+    purple: "bg-diy-queue/20 text-diy-queue border-diy-queue/40",
+};
+
 const VALID_PAGES = new Set(["task", "task-run", "lab", "llm", "traffic", "sessions", "settings"]);
 
 /**
@@ -400,6 +424,35 @@ export default function App() {
         const n = findNode(taskStore.nodes, uri);
         return n?.num ? `#${n.num} ${n.title ?? uri}` : (n?.title ?? uri);
     };
+
+    /**
+     * nav 视角下的会话行（##358 D1/D2 的输入）。
+     *
+     * `opened` 由**开着哪些 tab**决定：开着 = 已在视线内，不必再提示；关掉 = 才有「回到视线」这回事。
+     * 判据（未读 / 停滞 / 异常）不在本文件算 —— 走 `navRowOf`（shared/session-nav），
+     * 位次全部出自 shared/session-overview，于是 nav 与任务表、总览页**不可能给出不同结论**。
+     */
+    const navRows = createMemo(() => {
+        const opened = new Set(tabStore.opened.filter((t) => t.ctx).map((t) => t.ctx!));
+        return sessionStore.rows.map(({ uri, entry }) =>
+            navRowOf({
+                uri,
+                label: tabLabel(uri),
+                opened: opened.has(uri),
+                entry,
+                seenTurns: sessionStore.seenTurnsOf(uri),
+                totalTurns: sessionStore.turnsOf(uri),
+                maxSteps: sessionStore.maxSteps,
+                now: sessionStore.nowMs,
+            }),
+        );
+    });
+    /** nav 上那**一个**主角标（同一时刻只出一个；判据见 shared/session-nav::heroBadgeOf） */
+    const navHero = createMemo(() => heroBadgeOf(navRows(), { collapsed: !expanded() }));
+    /** 主角标之外的次角标（现在是队列：紫） */
+    const navSecondary = createMemo(() => secondaryBadgeOf(navRows(), navHero()));
+    /** 「后台活动」区 = 没开着 tab、但有活态的会话（关掉 ≠ 消失） */
+    const navBackground = createMemo(() => backgroundOf(navRows()));
 
     let fsAbort: AbortController | undefined;
 
@@ -1044,22 +1097,46 @@ export default function App() {
                                             class={`relative flex items-center gap-2 w-full transition-colors cursor-pointer ${expanded() ? "px-3 py-2 rounded-lg" : "h-8 w-8 rounded-lg justify-center"} ${navActive() === item.id ? "bg-primary/30 text-base-content font-semibold ring-1 ring-primary/40" : "hover:bg-base-300"}`}
                                             title={
                                                 item.id === "sessions"
-                                                    ? `会话（在跑 ${sessionStore.workingCount} / 本次启动活跃过 ${sessionStore.entries.length}）`
+                                                    ? `会话（在跑 ${sessionStore.workingCount} / 本次启动活跃过 ${sessionStore.entries.length}）` +
+                                                      (navHero() ? `\n${navHero()!.tip}` : "")
                                                     : item.label
                                             }
                                             onClick={() => goSection(item.id)}
                                         >
                                             <span>{item.icon}</span>
                                             {expanded() && <span>{item.label}</span>}
-                                            {/* 「会话」项的在跑数（##308）：不点进去就知道有没有东西在烧。
-                                                收起态（40px rail）装不下数字 → 退成一个角标点。 */}
-                                            <Show when={item.id === "sessions" && sessionStore.workingCount > 0}>
-                                                <span
-                                                    class={`badge badge-primary badge-xs font-mono ${expanded() ? "ml-auto" : "absolute -top-0.5 -right-0.5 px-1"}`}
-                                                    data-nav-working={sessionStore.workingCount}
-                                                >
-                                                    {sessionStore.workingCount}
-                                                </span>
+                                            {/* 「会话」项的**主角标**（##358 D1，取代 ##308 的"在跑数"）。
+                                                用户原话：`+23` 未读 · 绿色=未读 · 红色=未读异常终止 · **闪烁绿=运行中**。
+                                                同一时刻**只出一个**（收起态 40px rail 装不下第二个）——
+                                                优先级 停滞 > 运行中 > 异常未读 > 未读 > 队列，判据在 shared/session-nav。
+                                                其余信息进 tooltip（点标题可看），队列降成下面的次角标。 */}
+                                            <Show when={item.id === "sessions" && navHero()}>
+                                                {(hero) => (
+                                                    <span
+                                                        class={`badge border badge-xs font-mono whitespace-nowrap ${NAV_TONE_CLASS[hero().tone]} ${
+                                                            hero().pulse ? "animate-pulse" : ""
+                                                        } ${expanded() ? "ml-auto" : "absolute -top-0.5 -right-0.5 px-1"}`}
+                                                        title={hero().tip}
+                                                        data-nav-hero={hero().key}
+                                                    >
+                                                        {expanded() ? hero().text : hero().short}
+                                                    </span>
+                                                )}
+                                            </Show>
+                                            {/* 次角标：主角标之外还想让你知道的那件事（现在只有队列，紫）。
+                                                刻意只给数 —— 展开态也塞不下第二段文字。 */}
+                                            <Show when={item.id === "sessions" && navSecondary()}>
+                                                {(sec) => (
+                                                    <span
+                                                        class={`badge border badge-xs font-mono whitespace-nowrap ${NAV_TONE_CLASS[sec().tone]} ${
+                                                            expanded() ? "" : "absolute -bottom-0.5 -right-0.5 px-1"
+                                                        }`}
+                                                        title={sec().tip}
+                                                        data-nav-secondary={sec().key}
+                                                    >
+                                                        {sec().text}
+                                                    </span>
+                                                )}
                                             </Show>
                                         </button>
                                     </li>
@@ -1191,6 +1268,80 @@ export default function App() {
                                 </>
                             )}
                         </For>
+                        {/* ── 「后台活动」区（##358 D2）───────────────────────────────
+                            用户原话：「session 正在跑 / 结果没看，但被我从 nav 关了，如何**提示并回到视线**」。
+                            判据刻意**不记"谁关过什么"**（那要一份 renderer 私有台账，重启即丢）：
+                            直接问"它现在有没有事" —— 没开着 tab、且有活态（在跑 / 跑完没看 / 有留言）
+                            的会话就落在这里。**虚框幽灵条目**表达"它不在视线内，但仍活着"；
+                            重开 tab 它自动离开（`opened`），点一下即回到视线。 */}
+                        <Show when={navBackground().length > 0}>
+                            <Show when={expanded()}>
+                                <li class="flex items-center gap-2 px-3 pt-2 pb-0.5 text-caption opacity-60">
+                                    <span>后台活动</span>
+                                    <span class="font-mono">{navBackground().length}</span>
+                                </li>
+                            </Show>
+                            <For each={navBackground()}>
+                                {(r) => {
+                                    const badge = () => rowBadgeOf(r);
+                                    const num = () => findNode(taskStore.nodes, r.uri)?.num;
+                                    const go = () => {
+                                        hideHoverLayers();
+                                        collapseRail(); // 窄窗：浮层收回，把主区让给刚打开的会话
+                                        getRendererActions().openTaskRun?.(r.uri);
+                                    };
+                                    return (
+                                        <li class="flex justify-center">
+                                            <Show
+                                                when={expanded()}
+                                                fallback={
+                                                    <button
+                                                        class="relative flex items-center justify-center h-8 w-8 rounded-lg border border-dashed border-base-content/30 text-caption font-mono opacity-70 hover:opacity-100 cursor-pointer"
+                                                        title={`${r.label}\n（后台活动：没开窗口，但它还有动静）`}
+                                                        data-nav-background={r.uri}
+                                                        onClick={go}
+                                                    >
+                                                        {num() ?? "•"}
+                                                        <Show when={badge()}>
+                                                            {(b) => (
+                                                                <span
+                                                                    class={`absolute -top-0.5 -right-0.5 px-1 rounded text-caption font-mono ${NAV_TONE_CLASS[b().tone]} ${
+                                                                        b().pulse ? "animate-pulse" : ""
+                                                                    }`}
+                                                                >
+                                                                    {b().short}
+                                                                </span>
+                                                            )}
+                                                        </Show>
+                                                    </button>
+                                                }
+                                            >
+                                                <button
+                                                    class="flex items-center gap-1 w-full px-2 py-1 rounded-lg border border-dashed border-base-content/30 text-body cursor-pointer opacity-80 hover:opacity-100 hover:bg-base-300"
+                                                    title={`${r.label}\n（后台活动：没开窗口，但它还有动静）`}
+                                                    data-nav-background={r.uri}
+                                                    onClick={go}
+                                                >
+                                                    <span class="flex-1 truncate text-left">{r.label}</span>
+                                                    <Show when={badge()}>
+                                                        {(b) => (
+                                                            <span
+                                                                class={`badge border badge-xs font-mono whitespace-nowrap ${NAV_TONE_CLASS[b().tone]} ${
+                                                                    b().pulse ? "animate-pulse" : ""
+                                                                }`}
+                                                                title={b().tip}
+                                                            >
+                                                                {b().text}
+                                                            </span>
+                                                        )}
+                                                    </Show>
+                                                </button>
+                                            </Show>
+                                        </li>
+                                    );
+                                }}
+                            </For>
+                        </Show>
                     </div>
                     {/* 右缘拖拽条：调宽 + 双击复位。收起态（rail）没有可调的宽度，不渲染 */}
                     <Show when={expanded()}>

@@ -9,15 +9,22 @@ import { sessionMarkOf } from "../lib/session-mark";
 import { usageLedgerStore } from "../store/usageLedgerStore";
 import type { SessionChipView } from "../../shared/session-overview";
 
+/**
+ * tone → daisyUI badge 色（**按颜色说话**，用户 2026-10-16 给的就是颜色词）：
+ *   绿 = 未读 / 运行中 · 黄 = 停滞 / 留言 · 红 = 未读且异常终止 · 灰 = 已对话（弱标）。
+ *
+ * ⚠️ `primary` 落的是 **`badge-success`（绿）**，不是 `badge-primary` —— 本主题的 primary 是蓝紫，
+ * 与"绿色是未读"的口径不符。三处（nav / 任务表 / 总览）同走本表，改色只有这一处。
+ */
 export const TONE_BADGE: Record<SessionChipView["tone"], string> = {
-    primary: "badge-primary",
+    primary: "badge-success",
     warning: "badge-warning",
     error: "badge-error",
     ghost: "badge-ghost",
 };
 
 const TONE_DOT: Record<SessionChipView["tone"], string> = {
-    primary: "bg-primary",
+    primary: "bg-success",
     warning: "bg-warning",
     error: "bg-error",
     ghost: "bg-base-content/40",
