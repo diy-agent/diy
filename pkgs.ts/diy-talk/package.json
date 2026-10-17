@@ -17,13 +17,5 @@
     "oxlint": "^1.72.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.10"
-  },
-  "oxfmt": {
-    "indent": 4,
-    "lineWidth": 120,
-    "quotes": "single",
-    "ignore": [
-      "node_modules/"
-    ]
   }
 }
