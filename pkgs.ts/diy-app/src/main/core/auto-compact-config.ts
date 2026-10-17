@@ -2,7 +2,10 @@
 // 🎯 自动压缩配置的**文件层**：$DIY_HOME/auto-compact.yaml 的读写。
 //
 // 分层同 core/context-config.ts：契约与归一在 shared/context/auto-compact.ts（纯函数、可单测），
-// 本文件只做文件 I/O（existsSync → yaml.load → safeParse → 出声回落 → 原子写）。
+// 本文件只做文件 I/O（existsSync → yaml.load → safeParse **当探测器** → 宽松归一 → 出声回落 → 原子写）。
+//
+// 【##370】读侧不许"一失败就整份回默认"：缺键/类型错走 `normalizeAutoCompact` 逐键兜底，
+//   改过哪里由 `AutoCompactIssue` 出声（`loadAutoCompactDetailed`）—— 只在应用日志里说 = 没说。
 //
 // 为什么不放面板 localStorage（用户 2026-10-06 要"配置项"）：localStorage 是**有损**且
 // serve 与 Electron 各持一份（见 pit.localstorage）；而"要不要自动压"会**改用户的会话历史**，
@@ -14,8 +17,10 @@ import * as yaml from "js-yaml";
 import {
     AutoCompactConfigSchema,
     DEFAULT_AUTO_COMPACT,
+    autoCompactIssuesFromZod,
     normalizeAutoCompact,
     type AutoCompactConfig,
+    type AutoCompactIssue,
 } from "../../shared/context/auto-compact";
 import { validateKeepStages, type KeepIssue, type KeepStage } from "../../shared/context/compact-keep";
 
@@ -23,26 +28,61 @@ export function autoCompactFile(home: string): string {
     return join(home, "auto-compact.yaml");
 }
 
-/** 读自动压缩配置；缺失 → 默认（notify）；坏 → 默认 + 出声 */
-export function loadAutoCompact(home: string): AutoCompactConfig {
+/**
+ * 读配置的**详细结果**（##370）：配置本身 + **出声条目**。
+ *
+ * `issues` 空 = 干净读入（含"文件不存在 ⇒ 缺省"这种**正常态** —— 那不是问题）。
+ */
+export interface AutoCompactLoadResult {
+    config: AutoCompactConfig;
+    /** 出声条目：文件坏 / 必填键缺 / 值被归一（每条都带「已回落成什么」） */
+    issues: AutoCompactIssue[];
+}
+
+/**
+ * 读自动压缩配置（**带出声**）。三态：
+ *   · 文件不存在 → 缺省（notify），**不算问题**（issues 为空）；
+ *   · YAML 语法坏 → 整份缺省 + 出声（这条口径**保留**：语法坏 = 没得救，也绝不用坏数据）；
+ *   · YAML 能读但**结构不符**（缺必填键 / 类型错）→ **逐键宽松归一**（缺的补缺省、保留用户写对的部分）
+ *     + 出声报「哪一层缺什么、回落成什么」。
+ *
+ * 第三态是本任务（##370）改的：旧行为是 `safeParse` 一失败就 `return DEFAULT_AUTO_COMPACT` ——
+ * 用户只写漏 `policy.summary` 一个键，整份配置（含精心写的 `history.keep[]`）就没了，
+ * 而 `PlanView.raw` 仍是原文、`source` 已是 `default`：**看得见原文、看不见因**。
+ * 而 `normalizeAutoCompact` 本就是为「缺字段/越界」写的宽松归一，旧代码把它挡在严格校验**之后**
+ * ⇒ 缺键场景**永远跑不到**（等于死代码）。现在：严格 schema 只当**探测器**（它才说得出"缺了哪个必填键"），
+ * 值走宽松归一，归一改过的地方由 `issues` 出声。
+ */
+export function loadAutoCompactDetailed(home: string): AutoCompactLoadResult {
     const p = autoCompactFile(home);
-    if (!existsSync(p)) return DEFAULT_AUTO_COMPACT;
+    if (!existsSync(p)) return { config: DEFAULT_AUTO_COMPACT, issues: [] };
+    let raw: unknown;
     try {
-        const raw = yaml.load(readFileSync(p, "utf-8"));
-        const parsed = AutoCompactConfigSchema.safeParse(raw);
-        if (!parsed.success) {
-            console.warn(
-                `[auto-compact] ${p} 结构不符（${parsed.error.issues.map((i) => i.path.join(".")).join(",")}），用默认`,
-            );
-            return DEFAULT_AUTO_COMPACT;
-        }
-        // 读侧也走宽松归一：单位迁移（旧比例 → token 默认）等**只在归一里做一次**，
-        // 否则手改的旧配置文件会绕过迁移，被当成 token 阈值。
-        return normalizeAutoCompact(parsed.data);
+        raw = yaml.load(readFileSync(p, "utf-8"));
     } catch (e) {
-        console.warn(`[auto-compact] ${p} 解析失败，用默认:`, e);
-        return DEFAULT_AUTO_COMPACT;
+        const message = `YAML 解析失败（${e instanceof Error ? e.message : String(e)}）；整份回落缺省`;
+        console.warn(`[auto-compact] ${p} ${message}`);
+        return { config: DEFAULT_AUTO_COMPACT, issues: [{ path: "", message }] };
     }
+    const parsed = AutoCompactConfigSchema.safeParse(raw);
+    // 读侧也走宽松归一：单位迁移（旧比例 → token 默认）等**只在归一里做一次**，
+    // 否则手改的旧配置文件会绕过迁移，被当成 token 阈值。
+    const issues: AutoCompactIssue[] = [];
+    const config = normalizeAutoCompact(raw, issues);
+    if (!parsed.success) {
+        // zod 的问题排在前面（缺键/类型错是"更硬"的原因，归一的出声随后）
+        issues.unshift(...autoCompactIssuesFromZod(parsed.error, config));
+        console.warn(
+            `[auto-compact] ${p} 结构不符（${parsed.error.issues.map((i) => i.path.join(".") || "（根）").join("，")}），` +
+                `已逐键回落缺省（详见「compact plan get」/ UI 的出声）`,
+        );
+    }
+    return { config, issues };
+}
+
+/** 读自动压缩配置（只要配置本身；要「为什么」用 `loadAutoCompactDetailed`） */
+export function loadAutoCompact(home: string): AutoCompactConfig {
+    return loadAutoCompactDetailed(home).config;
 }
 
 /**
