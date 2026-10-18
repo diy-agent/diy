@@ -34,7 +34,7 @@
 > 测试 = 第三态，不是 CLI：`pkgs.ts/diy-app/sha.sh test-intent` 起隔离 Electron（`DIY_VARIANT=test` + `DIY_HOME=mkdtemp` + `DIY_ENV=test`），产物在 `build/test/**`。
 
 - `entry.choose` — **先问「操作谁的数据」**：真实任务/项目/agent → 全局 `diy`；worktree 改码·跑测试 → `./diy.sh`；人看 UI 效果 / agent 实验 → `./sha.sh lab`。**别拿 `./diy.sh` 查生产任务**（它的 `./build/<variant>/home` 里没有 → 报「任务 N 不存在」）
-- `entry.variant` — **`DIY_VARIANT` 是产物/数据分根的唯一轴**。vite 配置据此定 `outDir=build/<v>/*`；运行时据此选 `build/<v>/main`。缺省 `prod`（`./diy.sh` 缺省 `lab`）。`preview` 变体**已删除**（##381）：入口脚本（`diy.sh` / `pkgs.ts/diy-app/sha.sh` / `scripts/electron-dev.mts`）遇 `DIY_VARIANT=preview` **显式报错**，不静默落到 `build/preview/**`
+- `entry.variant` — **`DIY_VARIANT` 是产物/数据分根的唯一轴**。vite 配置据此定 `outDir=build/<v>/*`；运行时据此选 `build/<v>/main`。缺省 `prod`（`./diy.sh` 缺省 `lab`）。`preview` 变体**已删除**（##381）：**共 5 处**遇 `DIY_VARIANT=preview` **显式报错**，不静默落到 `build/preview/**` —— 三处入口（`diy.sh` / `pkgs.ts/diy-app/sha.sh` / `scripts/electron-dev.mts`）+ 根 `sha.sh`（dispatch 前）+ `src/serve/index.ts`（算数据根前）
 - `entry.prod` — 全局 `diy` 一般由 main 上 `npm link` 而来 → 跑的是 **main 的 `build/prod` 编译产物**；worktree 里改的码它看不到
 - `entry.client` — `diy` 与 `./diy.sh` **都是客户端、都不启动 GUI**：读 `$DIY_HOME/app.port` 探活并**验身份**（连上去问 `getAppInfo.diyHome` 比对，不是本数据根就拒绝复用、另起自己的，##328(实例身份只靠端口)），探不到才 spawn Electron（CLI 与 GUI 是两进程）。连哪个实例由 `DIY_HOME`（数据根）决定
 - `entry.port` — 端口**不承载身份**：`DIY_PORT` > `app.port` 文件 > `runtime.ts::defaultPort(env)`（production=`18888` 门牌；development/test=`0` 随机）；裁决在 `runtime.ts::resolvePort`（纯函数、可单测），**非生产不沿用记录里的 `18888`**（旧版遗留的生产门牌，沿用＝dev 又占生产门牌）。`serve` 例外（浏览器地址，仍兜 18888）
