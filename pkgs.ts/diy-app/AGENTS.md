@@ -27,7 +27,7 @@
 - `find.traffic` — **出站流量观测**（##309）：`src/main/core/traffic.ts`（订阅 undici `node:diagnostics_channel` 采集请求/响应 + 归属反查 + 正文首尾法有界保留）· `src/main/core/traffic-log.ts`（`log/network/YYYY-MM-DD.jsonl` 按天落盘 + 按位置随机读 + 全文查询；行首 `_fmt` 小版本兼容、大版本跳过）· 契约 `src/main/services/api-def.ts` 的 `traffic.*`（CLI `diy traffic …`）· UI `src/renderer_solid/components/TrafficView.tsx`（导航页与聊天侧抽屉共用同一份）+ `TrafficPage.tsx` / `TrafficDrawer.tsx` / `JsonViewer.tsx` / `JsonTree.tsx` · 日志清理面板 `TrafficLogCleanup.tsx`（##324：列文件 / 占用 / 「只留最近 N 天」/ 勾选删除）
 - `find.serve` — `src/serve/index.ts` 纯 Web 模式（无 Electron）
 - `find.tests` — `tests/`：`cli.intent.*` 意图测试（真实 UI / 隔离 Electron，**跑 `out/` 产物**）· `core/` `services/` 单测（vitest **直读 `src/`**）· 夹具 `electron-test.ts` · `ui-drive.ts` · `shell-test.ts` · `setup.ts`
-- `find.scripts` — 仓库 `scripts/`：`ui-smoke/`（CDP 冒烟）· `cdp-colorscheme-demo.mts` · `repro-epipe-dialog.mts` · `doctor-env.sh`
+- `find.scripts` — 仓库 `scripts/`：`ui-smoke/`（CDP 冒烟）· `cdp-colorscheme-demo.mts` · `repro-epipe-dialog.mts` · `doctor-env.sh` · `check-sync.mjs`（依赖同步快检，根 `sha.sh` 的 `ensure-sync` 入口闸门 + 本包 `build` 只读护栏共用）
 
 ## entry — 入口注入的环境变量
 
