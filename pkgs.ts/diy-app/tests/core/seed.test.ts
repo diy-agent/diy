@@ -1,6 +1,6 @@
 // tests/core/seed.test.ts
 // 🎯 初始种子的契约：幂等、只配 opencode-go、人物模型 = 缺省口径（free 优先 → 退兜底，
-// 真源 src/shared/model-default.ts）、示例项目/任务形态完整；触发开关只对 preview/lab 缺省开。
+// 真源 src/shared/model-default.ts）、示例项目/任务形态完整；触发开关只对 lab 缺省开。
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
@@ -25,15 +25,15 @@ vi.mock("../../src/main/core/instance-identity", () => ({
 }));
 
 describe("autoSeedEnabled", () => {
-    it("缺省：只 preview/lab 开，prod/test 关", () => {
-        expect(autoSeedEnabled({ DIY_VARIANT: "preview" })).toBe(true);
+    it("缺省：只 lab 开，prod/test 关", () => {
+        expect(autoSeedEnabled({ DIY_VARIANT: "lab" })).toBe(true);
         expect(autoSeedEnabled({ DIY_VARIANT: "lab" })).toBe(true);
         expect(autoSeedEnabled({ DIY_VARIANT: "prod" })).toBe(false);
         expect(autoSeedEnabled({ DIY_VARIANT: "test" })).toBe(false);
         expect(autoSeedEnabled({})).toBe(false);
     });
     it("DIY_SEED 显式覆盖（0 关 / 1 开）", () => {
-        expect(autoSeedEnabled({ DIY_VARIANT: "preview", DIY_SEED: "0" })).toBe(false);
+        expect(autoSeedEnabled({ DIY_VARIANT: "lab", DIY_SEED: "0" })).toBe(false);
         expect(autoSeedEnabled({ DIY_VARIANT: "prod", DIY_SEED: "1" })).toBe(true);
     });
 });

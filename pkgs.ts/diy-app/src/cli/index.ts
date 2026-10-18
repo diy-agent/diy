@@ -55,8 +55,8 @@ function appRoot(): string {
   return resolveAppRoot(fileURLToPath(import.meta.url));
 }
 
-/** 产物变体根（prod|test|preview|lab）：入口脚本经 DIY_VARIANT 注入，缺省 prod。
- * 决定 spawn 哪个 build/<variant>/main/index.mjs（测试=test、preview/lab 各占）。 */
+/** 产物变体根（prod|test|lab）：入口脚本经 DIY_VARIANT 注入，缺省 prod。
+ * 决定 spawn 哪个 build/<variant>/main/index.mjs（测试=test、lab 独占）。 */
 function variant(): string {
   return process.env["DIY_VARIANT"] ?? "prod";
 }

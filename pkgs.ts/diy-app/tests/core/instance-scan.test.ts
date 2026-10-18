@@ -25,7 +25,7 @@ const PS_SAMPLE = [
   ` 2404  2339 /Users/ccc/git/diy/diy/node_modules/electron/dist/Electron.app/Contents/Frameworks/Electron Helper.app/Contents/MacOS/Electron Helper --type=utility --utility-sub-type=network.mojom.NetworkService --user-data-dir=/Users/ccc/.diy/electron_user_data`,
   ` 2405  2339 /Users/ccc/git/diy/diy/node_modules/electron/dist/Electron.app/Contents/Frameworks/Electron Helper (Renderer).app/Contents/MacOS/Electron Helper (Renderer) --type=renderer --user-data-dir=/Users/ccc/.diy/electron_user_data --app-path=${REPO}/build/prod/main`,
   ` 6650     1 node ${REPO}/build/prod/cli/index.js agent local chat projects/4/tasks/366`,
-  ` 7777     1 node ${REPO}/build/preview/serve/index.mjs --port 18889`,
+  ` 7777     1 node ${REPO}/build/lab/serve/index.mjs --port 18889`,
   ` 8888     1 npx tsx ${REPO}/src/serve/index.ts --port 18890`,
   "  117     1 /usr/libexec/logd",
 ].join("\n");

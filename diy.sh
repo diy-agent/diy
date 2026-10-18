@@ -9,7 +9,7 @@
 #   2. GUI：CLI 通过 ensureAppPort() 复用或拉起 Electron 产物
 #      build/<variant>/main/index.mjs + .../preload/index.js + .../renderer/index.html
 #      → GUI 必须先构建才会存在，未构建直接报错（见下方检查）
-#   3. preview/lab 模式另走：cd pkgs.ts/diy-app && ./sha.sh preview | lab
+#   3. lab 模式另走：cd pkgs.ts/diy-app && ./sha.sh lab
 #      起 Vite dev server 并注入 DIY_DEV_SERVER_URL，走 loadURL 热更新（HMR），无需 build
 #   4. 数据隔离：DIY_HOME 默认 ./build/<variant>/home（本 worktree × 变体独立），注入后由
 #      src/runtime.ts readRuntimeConfig() 统一读取；测试用 mkdtemp 隔离
@@ -19,15 +19,20 @@
 # 前置要求：首次使用或改动 main/preload/renderer 后，需先构建：
 #   cd pkgs.ts/diy-app && ./sha.sh build
 # 否则 build/<variant>/main/index.mjs 不存在，CLI 会在 stderr 提示并退出（不污染 stdout JSON）。
-# 变体：DIY_VARIANT=prod|test|preview|lab（缺省 preview）。
+# 变体：DIY_VARIANT=prod|test|lab（缺省 lab）。
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$SCRIPT_DIR/pkgs.ts/diy-app"
-# 变体根：决定连/起哪个实例（prod 一般由全局 diy 负责，这里缺省 preview）。
-# preview / lab 共用 ./diy.sh 作为「通用 CLI 客户端」，连谁由 DIY_VARIANT + DIY_HOME 决定。
-DIY_VARIANT="${DIY_VARIANT:-preview}"
+# 变体根：决定连/起哪个实例（prod 一般由全局 diy 负责，这里缺省 lab）。
+# lab 与 prod 共用 ./diy.sh 作为「通用 CLI 客户端」，连谁由 DIY_VARIANT + DIY_HOME 决定。
+DIY_VARIANT="${DIY_VARIANT:-lab}"
 export DIY_VARIANT
+# preview 变体已删除（##381）：显式报错，别静默落到 build/preview/**（那个根已不存在）
+if [[ "$DIY_VARIANT" == "preview" ]]; then
+  echo "[diy.sh] ✗ preview 变体已删除，改用 lab：DIY_VARIANT=lab ./diy.sh $*" >&2
+  exit 1
+fi
 
 # 前置检查：GUI 产物必须存在（CLI 本身是 tsx 源码无需构建，但要拉起的 Electron 必须已构建）
 GUI_ENTRY="$APP_DIR/build/${DIY_VARIANT}/main/index.mjs"
@@ -35,7 +40,7 @@ if [[ ! -f "$GUI_ENTRY" ]]; then
   echo "[diy.sh] 未找到 Electron 产物: $GUI_ENTRY" >&2
   echo "[diy.sh] 机制: CLI(编译产物/tsx 源码) 需拉起 GUI 产物(build/<variant>/main)才能响应 RPC" >&2
   echo "[diy.sh] 请先构建（变体 ${DIY_VARIANT}）: DIY_VARIANT=${DIY_VARIANT} ./pkgs.ts/diy-app/sha.sh build" >&2
-  echo "[diy.sh] 或开发模式（HMR，无需 build）: cd pkgs.ts/diy-app && ./sha.sh preview | lab" >&2
+  echo "[diy.sh] 或开发模式（HMR，无需 build）: cd pkgs.ts/diy-app && ./sha.sh lab" >&2
   exit 1
 fi
 
@@ -218,7 +223,7 @@ fi
 
 # 机制提示（仅交互终端输出到 stderr，不污染 --json 的 stdout）
 if [[ -t 2 ]]; then
-  echo "[diy.sh] CLI=${DIY_CLI_MODE:-auto}(${DIY_CLI_EFFECTIVE:-?}) | VARIANT=${DIY_VARIANT} | GUI=build/${DIY_VARIANT}/main产物 | HOME=${DIY_HOME} | 需先 build（preview/lab 模式除外）" >&2
+  echo "[diy.sh] CLI=${DIY_CLI_MODE:-auto}(${DIY_CLI_EFFECTIVE:-?}) | VARIANT=${DIY_VARIANT} | GUI=build/${DIY_VARIANT}/main产物 | HOME=${DIY_HOME} | 需先 build（lab 模式除外）" >&2
 fi
 
 # DIY_CLI：当前生效的 CLI 入口（提示词模版 100-diy 用它告诉 agent 该敲哪个命令；

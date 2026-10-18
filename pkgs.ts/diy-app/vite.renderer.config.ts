@@ -3,7 +3,7 @@ import solid from "vite-plugin-solid";
 import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "node:path";
 
-const V = process.env.DIY_VARIANT ?? "prod"; // 变体产物根：prod|test|preview|lab
+const V = process.env.DIY_VARIANT ?? "prod"; // 变体产物根：prod|test|lab
 
 export default defineConfig({
   root: "src/renderer_solid",

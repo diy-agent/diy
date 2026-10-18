@@ -69,7 +69,7 @@ const app = apiDef.diy;
  * 或 ChannelServerBinding（测试）。转发 diy.ui.* 由调用方在 binding 上 onForward。
  */
 export function bindAppHandlers(binding: ServerBinding): void {
-  // 空数据根的初始种入（preview/lab；见 core/seed.ts）。必须在 refreshModelRuntime 之前 ——
+  // 空数据根的初始种入（lab；见 core/seed.ts）。必须在 refreshModelRuntime 之前 ——
   // 种子会写 model.yaml，晚于装配就看不见刚种下的 provider（要等下次刷新）。
   // 失败不阻断启动（种子只是便利，不是前提）。
   try {

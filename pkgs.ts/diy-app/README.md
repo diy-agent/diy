@@ -12,8 +12,8 @@ Vite 8 + Electron + shadcn/ui 桌面应用模板。
 
 ```bash
 npm install
-./sha.sh preview  # 预览实例（renderer dev server + watch main/preload + electron，HMR）
-./sha.sh lab      # 实验实例（同 preview，独占 build/lab，可与 preview 并行）
+./sha.sh lab      # 开发实例（renderer dev server + watch main/preload + electron，HMR）
+                  #   独占 build/lab，人看效果 / agent 实验都用它
 ./sha.sh build    # 生产构建
 ./sha.sh start    # 运行生产构建
 ./sha.sh clean    # 清理 out/
@@ -24,7 +24,7 @@ npm install
 两个入口只注入环境变量，业务侧由 `src/runtime.ts readRuntimeConfig()` 统一读取（详见 `AGENTS.md` 环境变量契约）：
 
 ```bash
-./diy.sh task list                    # worktree 开发（tsx 跑源码，数据根 ./build/preview/home）
+./diy.sh task list                    # worktree 开发（tsx 跑源码，数据根 ./build/lab/home）
 bin/diy task list                     # 发布后（node 跑 build/prod/cli/index.js，数据根 ~/.diy）
 ```
 

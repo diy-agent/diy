@@ -4,7 +4,7 @@
 // 为什么需要它（2026-10 实测，见 AGENTS.md `tool.electron`）：
 //   ① electron 43 的 package.json **没有 postinstall**（`scripts` 省略）：二进制由
 //      `node_modules/electron/index.js` 在 `require('electron')` 时**惰性下载、且无超时**
-//      ⇒ 缺 dist / path.txt 时，vitest / preview 起 Electron 会**静默卡死**（实测 3m40s、CPU 0%，
+//      ⇒ 缺 dist / path.txt 时，vitest / lab 起 Electron 会**静默卡死**（实测 3m40s、CPU 0%，
 //      日志看着像"在跑"）。`path.txt` 只在首次安装时写，光链 dist 不写它照样落进下载。
 //   ② `@electron/get` 的缓存键 = **下载 URL 目录**的 sha256（`Cache.js::getCacheDirectory`）：
 //      npm 安装时带 `npm_config_electron_mirror`（本机 `~/.npmrc` → npmmirror），而运行时直接

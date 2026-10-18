@@ -5,7 +5,7 @@
 // node_modules，症状是**远离根因**的错 —— 例如 `Rolldown failed to resolve import
 // "@diy-agent/rpc/electron"`、`Failed to resolve import "remark-gfm"`，人只会去看代码，
 // 不会想到去比 package-lock.json 与 node_modules。本脚本把这类「忘了 sync」变成一行结论，
-// 由根 sha.sh 的 ensure-sync 在 build/check/test/preview/lab 入口前置调用。
+// 由根 sha.sh 的 ensure-sync 在 build/check/test/lab 入口前置调用。
 //
 // 判据（三条，全部只读、毫秒级）：
 //   1. workspace 链接：`package-lock.json` 里 `link: true` 的条目必须在 node_modules 下存在、
@@ -310,6 +310,6 @@ if (warnings.length > 0 && !QUIET) {
 if (synced) {
   if (!QUIET) console.log(`[check-sync] ✅ node_modules 与 package-lock.json / 源树一致（印记 ${stamp.hash.slice(0, 8)}）`);
 } else {
-  console.log(`[check-sync] 处置：./sha.sh sync（build/check/test/preview/lab 入口会自动跑，DIY_AUTO_SYNC=0 关）`);
+  console.log(`[check-sync] 处置：./sha.sh sync（build/check/test/lab 入口会自动跑，DIY_AUTO_SYNC=0 关）`);
 }
 process.exit(synced ? 0 : 1);

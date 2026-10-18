@@ -70,10 +70,10 @@ sync-deps() {
 
     # electron 二进制：全机一份 store + 本 worktree 只留软链（细节见 scripts/ensure-electron.mjs
     # 头注）。这里**不联网**（--no-download）：构建/检查用不到二进制，缺就一行提示；
-    # 真起 Electron 的入口（pkgs.ts/diy-app/sha.sh 的 preview/lab/test-intent/start）会硬校验。
+    # 真起 Electron 的入口（pkgs.ts/diy-app/sha.sh 的 lab/test-intent/start）会硬校验。
     run node scripts/ensure-electron.mjs --no-download --soft --quiet
 
-    # 记下本次同步覆盖的 lock/manifest 指纹：build/check/test/preview/lab 入口的
+    # 记下本次同步覆盖的 lock/manifest 指纹：build/check/test/lab 入口的
     # ensure-sync 拿 scripts/check-sync.mjs 比对它，判「有没有落后」
     run node scripts/check-sync.mjs --write-stamp
 }
@@ -92,7 +92,7 @@ sync()  {
 # 残留的 `node_modules/@diy/rpc`）、sync 印记落后、submodule 未 init；electron 二进制的
 # dist/path.txt 缺失只提示不判定（它由 `sync-deps` 的 ensure-electron 补，见其末尾）。
 #   · 命中 → 自动 sync-deps 后继续；`DIY_AUTO_SYNC=0` 关掉自动修（改为报错停下）
-#   · 只挂 build/check/test/preview/lab 入口；**sync 自身不挂**（否则递归）
+#   · 只挂 build/check/test/lab 入口；**sync 自身不挂**（否则递归）
 # 为什么值得：包改名 / 加依赖后 node_modules 落后，症状是构建报**远离根因**的错，如
 # `Rolldown failed to resolve import "@diy-agent/rpc/electron"`（人只会去翻代码，
 # 不会想到比 package-lock.json 与 node_modules）。
@@ -119,14 +119,14 @@ sync-status() {  node scripts/check-sync.mjs "$@"; }
 #   model.yaml · context.yaml · personas.yaml · providers.custom.yaml（这 4 份 = 真配置的投影）
 # 与 seed 的分工：seed 只种**示例 / 测试数据**（示例项目与任务 + 缺省人物 + `$VAR` 占位凭据），
 # 真配置（真账号 / 投递划分 / 真人物）由这里来 —— 原先是手工 cp，漏一份实验结论就不可信。
-#   · 变体 `DIY_VARIANT`（缺省 preview；须与 ./sha.sh preview|lab 配对，见 AGENTS.md entry.variant-match）
+#   · 变体 `DIY_VARIANT`（缺省 lab；与 ./sha.sh lab 配对，见 AGENTS.md entry.variant-match）
 #   · **幂等**：每次都整份覆盖这 4 份（`cp -p`，mtime 也随源）；目标 home 的**其余内容**
 #     （state.yaml / projects / local / .seed-done）**一律不碰**
 #   · 目标 home 不存在则 mkdir -p；源缺某文件 → 跳过 + 提示，**不让 sync 整体失败**
 #   · `DIY_SYNC_HOME=0` 关掉这一步；`DIY_SYNC_HOME_SRC` 换源（测试 / 换机）
 # ⚠️ 这 4 份含真实 API key，落到 build/**（已 gitignore）：勿提交、勿外传。
 sync-dev-home() {
-    local variant="${DIY_VARIANT:-preview}"
+    local variant="${DIY_VARIANT:-lab}"
     local src="${DIY_SYNC_HOME_SRC:-$HOME/.diy}"
     local dst="$ROOT_DIR/build/$variant/home"
 
@@ -156,7 +156,7 @@ sync-dev-home() {
     fi
     echo "${error}⚠️  已把真配置（含 API key）同步到 ${dst} —— 该目录在 .gitignore 内，勿提交、勿外传${reset}"
     echo "${secondary}提示：配置是启动时读入的，已在跑的老实例要重启才看得到${reset}"
-    echo "${info}✅ 本 worktree 已可起 ./sha.sh preview|lab 做真 LLM 实验（变体 ${variant}）${reset}"
+    echo "${info}✅ 本 worktree 已可起 ./sha.sh lab 做真 LLM 实验（变体 ${variant}）${reset}"
 }
 link() {      _ws_run command npm link; }
 unlink() {    _ws_run command npm unlink -g ; }
@@ -261,13 +261,18 @@ github-actions-cicd()    {
     publish
 }
 
-# preview：HMR 预览实例（人看效果）；lab：agent 实验实例。各占 build/<variant>/**，可并行。
-preview() {  ensure-sync; pkgs.ts/diy-app/sha.sh preview; }
+# lab：HMR 开发实例（人看效果 / agent 实验都用它），独占 build/lab/**，与 test 互不干扰。
 lab()     {  ensure-sync; pkgs.ts/diy-app/sha.sh lab; }
 
 
 ####################################################
 # app entry script & _root cmd
 ####################################################
+
+# preview 变体已删除（##381）：显式报错，绝不静默落到 build/preview/**（本脚本只 sync-dev-home 用到它）
+if [[ "${DIY_VARIANT:-}" == "preview" ]]; then
+    echo "ERROR: preview 变体已删除，改用 lab（DIY_VARIANT=lab ./sha.sh <命令>）" >&2
+    exit 1
+fi
 
 sha "$@"

@@ -35,13 +35,13 @@ function record(over: Partial<InstanceRecord> = {}): InstanceRecord {
     pid: process.pid,
     port: null,
     diyHome: "/tmp/home",
-    variant: "preview",
+    variant: "lab",
     env: "development",
-    argv: ["/x/Electron", "/x/build/preview/main/index.mjs"],
+    argv: ["/x/Electron", "/x/build/lab/main/index.mjs"],
     cwd: "/x",
     startedAt: "2026-10-17T00:00:00.000Z",
     updatedAt: "2026-10-17T00:00:00.000Z",
-    parents: [{ pid: 42, command: "bash ./sha.sh preview" }],
+    parents: [{ pid: 42, command: "bash ./sha.sh lab" }],
     ...over,
   };
 }
@@ -49,8 +49,8 @@ function record(over: Partial<InstanceRecord> = {}): InstanceRecord {
 describe("parseRecord（宽松：拿不准就作废整条）", () => {
   it("合格对象原样通过", () => {
     const r = parseRecord(record({ pid: 7, port: 18888 }));
-    expect(r).toMatchObject({ pid: 7, port: 18888, diyHome: "/tmp/home", variant: "preview" });
-    expect(r?.parents).toEqual([{ pid: 42, command: "bash ./sha.sh preview" }]);
+    expect(r).toMatchObject({ pid: 7, port: 18888, diyHome: "/tmp/home", variant: "lab" });
+    expect(r?.parents).toEqual([{ pid: 42, command: "bash ./sha.sh lab" }]);
   });
 
   it("缺 pid / pid 非数 / 缺 diyHome / port 类型不对 → null（绝不拿半个对象去渲染）", () => {
@@ -136,11 +136,11 @@ describe("写 / 读 / 回填 / 删", () => {
 describe("snapshotParents（启动瞬间才拿得到的「谁开的」）", () => {
   it("逐级上溯到 depth / pid≤1 / 查不到为止", () => {
     const chain: Record<number, { hop: { pid: number; command: string }; ppid: number }> = {
-      100: { hop: { pid: 100, command: "bash ./sha.sh preview" }, ppid: 50 },
+      100: { hop: { pid: 100, command: "bash ./sha.sh lab" }, ppid: 50 },
       50: { hop: { pid: 50, command: "zsh" }, ppid: 1 },
     };
     expect(snapshotParents(100, (pid) => chain[pid] ?? null)).toEqual([
-      { pid: 100, command: "bash ./sha.sh preview" },
+      { pid: 100, command: "bash ./sha.sh lab" },
       { pid: 50, command: "zsh" },
     ]);
   });

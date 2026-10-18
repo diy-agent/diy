@@ -48,7 +48,7 @@ export function repoDisplayOf(startDir: string = HERE): string {
 /**
  * 生产数据根（发布态固定 `~/.diy`）。用**真实**家目录（不读 `$HOME`）—— 测试/隔离实例会改写 `$HOME`。
  *
- * **全仓「生产根是什么」的唯一定义处**：dev-home（preview/lab 守卫）、seed（永不种生产）、
+ * **全仓「生产根是什么」的唯一定义处**：dev-home（lab 守卫）、seed（永不种生产）、
  * serve / main（入口自证）、diy.sh / bin/diy（bash 侧，等价地用 `$HOME/.diy`）都以此为准。
  * 别在别处再写一份 `join(homedir(), ".diy")` —— 两份判据迟早分叉。
  */

@@ -47,7 +47,7 @@ const repoRoot = findRepoRoot(__dirname);
 if (repoRoot) {
   // 数据根：与静态产物**同一个 variant 轴**（静态产物在 `pkgs.ts/diy-app/build/<variant>/renderer`，
   // 数据根在 `<repo>/build/<variant>/home` —— **两者不同父目录**，但同取 `DIY_VARIANT`，见 AGENTS.md
-  // env.variant）—— 入口的默认值 + 生产根拒绝都交给 core/dev-home（与 preview/lab / diy.sh
+  // env.variant）—— 入口的默认值 + 生产根拒绝都交给 core/dev-home（与 lab / diy.sh
   // 同一判据，别在这里再写一套）。缺省 variant=prod（serve 独立跑时走 build/prod/home）。
   const variant = process.env["DIY_VARIANT"] ?? "prod";
   const decision = resolveDevHome({

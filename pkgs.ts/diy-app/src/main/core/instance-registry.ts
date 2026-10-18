@@ -34,7 +34,7 @@ export interface InstanceRecord {
   port: number | null;
   /** 实例自己认定的数据根（`AppConfig.diyHome`，**经 dev-home 纠正**后的那个） */
   diyHome: string;
-  /** 产物变体（prod|test|preview|lab） */
+  /** 产物变体（prod|test|lab） */
   variant: string;
   /** 运行环境（production|development|test） */
   env: string;

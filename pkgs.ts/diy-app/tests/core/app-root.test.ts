@@ -16,7 +16,7 @@ describe("resolveAppRoot", () => {
     });
 
     it("产物模式：build/<variant>/cli/index.js → 包根", () => {
-        for (const v of ["prod", "test", "preview", "lab"]) {
+        for (const v of ["prod", "test", "lab"]) {
             expect(resolveAppRoot(`${APP}/build/${v}/cli/index.js`, only(`${APP}/package.json`))).toBe(APP);
         }
     });

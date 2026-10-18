@@ -1658,7 +1658,7 @@ export const apiDef = RpcSchema.router({
       }),
 
       seed: RpcSchema.group({
-        desc: `初始数据种入（preview/lab 空数据根；幂等，已存在不动）—— 只种**示例/测试数据**，真配置由 ./sha.sh sync 同步`,
+        desc: `初始数据种入（lab 空数据根；幂等，已存在不动）—— 只种**示例/测试数据**，真配置由 ./sha.sh sync 同步`,
         children: {
           run: RpcSchema.unary({
             desc: `种入最小可用数据：opencode-go 模型配置（$VAR 占位）+ 缺省人物（缺省模型：free 优先 → 退 ${FALLBACK_MODEL}）+ 示例项目与任务`,

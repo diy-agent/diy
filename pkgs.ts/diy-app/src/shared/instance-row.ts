@@ -29,14 +29,14 @@ export const InstanceWindowSchema = z.object({
  * 一行实例。
  *
  * ⚠️ 「真数据根」的判据是**实例自报**（`instances.self.diyHome` / `getAppInfo.diyHome`），
- * 不是环境变量：实测 `ps eww` 里的 `DIY_HOME` 是**继承**来的（preview 的 launcher 带着
+ * 不是环境变量：实测 `ps eww` 里的 `DIY_HOME` 是**继承**来的（lab 的 launcher 带着
  * 用户 shell 的 `DIY_HOME=~/.diy`，它 spawn 的 Electron 真数据根却是 `build/<v>/home`）。
  * 故 `diyHome` + `homeSource` 成对出现：自报到了才叫真根，没自报到的只算线索（`hint`）。
  */
 export const InstanceRowSchema = z.object({
   pid: z.number().describe("实例主进程 pid"),
   kind: z.string().describe("electron | serve"),
-  variant: z.string().describe("产物变体（从入口路径推：prod|test|preview|lab）"),
+  variant: z.string().describe("产物变体（从入口路径推：prod|test|lab）"),
   diyHome: z.string().describe("数据根（自报优先；拿不到时是线索值或空串）"),
   diyHomeDisplay: z.string().describe("数据根的展示形式（相对真实家目录缩 ~）"),
   homeSource: z.string().describe("数据根来源：self（实例自报）| hint（继承环境变量）| unknown"),
