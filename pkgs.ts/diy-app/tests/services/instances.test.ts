@@ -16,7 +16,7 @@ const APP = "/repo/pkgs.ts/diy-app";
 
 const PS = [
   ` 10     1 ${ELECTRON} ${APP}/build/prod/main/index.mjs --remote-debugging-port=0`,
-  ` 11     1 ${ELECTRON} ${APP}/build/preview/main/index.mjs --remote-debugging-port=0`,
+  ` 11     1 ${ELECTRON} ${APP}/build/lab/main/index.mjs --remote-debugging-port=0`,
   ` 12     1 ${ELECTRON} ${APP}/build/prod/main/index.mjs --remote-debugging-port=0`,
 ].join("\n");
 
@@ -62,7 +62,7 @@ describe("collectInstances：注册表 ⊕ 进程 ⊕ 自报", () => {
       cwd: "/repo/pkgs.ts/diy-app",
       startedAt: "2026-10-17T08:00:00.000Z",
       updatedAt: "2026-10-17T08:00:00.000Z",
-      parents: [{ pid: 9, command: "bash ./sha.sh preview" }],
+      parents: [{ pid: 9, command: "bash ./sha.sh lab" }],
     });
     const rows = await collectInstances({
       ps: () => PS,
@@ -83,7 +83,7 @@ describe("collectInstances：注册表 ⊕ 进程 ⊕ 自报", () => {
       diyHome: "/Users/ccc/.diy",
       variant: "prod",
       branch: "main",
-      source: "bash ./sha.sh preview",
+      source: "bash ./sha.sh lab",
       sourceKind: "registry",
       sessions: 2,
       running: 1,
@@ -269,11 +269,11 @@ describe("psEnvironments / sourceSummary（小工具）", () => {
     const text = [
       "  PID   TT  STAT      TIME COMMAND",
       " 10   ??  Ss     0:01.00 /x/Electron /x/build/prod/main/index.mjs DIY_HOME=/Users/ccc/.diy DIY_ENV=production",
-      " 11   ??  Ss     0:02.00 /x/Electron /x/build/preview/main/index.mjs DIY_HOME=/Users/ccc/.diy DIY_VARIANT=preview",
+      " 11   ??  Ss     0:02.00 /x/Electron /x/build/lab/main/index.mjs DIY_HOME=/Users/ccc/.diy DIY_VARIANT=lab",
     ].join("\n");
     const envs = psEnvironments([10, 11], () => text);
     expect(envs.get(10)?.["DIY_HOME"]).toBe("/Users/ccc/.diy");
-    expect(envs.get(11)?.["DIY_VARIANT"]).toBe("preview");
+    expect(envs.get(11)?.["DIY_VARIANT"]).toBe("lab");
   });
 
   it("ps 失败 → 空表（老实例只是少一条线索，不该拖垮整表）", () => {

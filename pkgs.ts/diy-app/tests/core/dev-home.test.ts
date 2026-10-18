@@ -1,7 +1,7 @@
 // tests/core/dev-home.test.ts
-// 🎯 dev 变体（preview/lab）数据根的决策：恒为 build/<variant>/home，继承来的**生产根**必须被拒。
+// 🎯 dev 变体（lab）数据根的决策：恒为 build/<variant>/home，继承来的**生产根**必须被拒。
 // 这条守的是「别把示例数据写进用户真实数据根」（##286 实测：宿主 shell 的 DIY_HOME=~/.diy
-// 一路透传，preview 直奔生产）。
+// 一路透传，lab 直奔生产）。
 //
 // 「生产根」的定义在 instance-identity（单一定义处，见那里的单测）；本文件只测「撞上后怎么办」。
 
@@ -14,8 +14,8 @@ const REPO = "/repo";
 
 describe("resolveDevHome", () => {
     it("没有继承值 → build/<variant>/home", () => {
-        expect(resolveDevHome({ variant: "preview", repoRoot: REPO })).toEqual({
-            home: join(REPO, "build/preview/home"),
+        expect(resolveDevHome({ variant: "lab", repoRoot: REPO })).toEqual({
+            home: join(REPO, "build/lab/home"),
             rejected: null,
         });
         expect(resolveDevHome({ variant: "lab", repoRoot: REPO }).home).toBe(
@@ -25,11 +25,11 @@ describe("resolveDevHome", () => {
 
     it("继承生产根 → 拒绝并回落到本变体的 home", () => {
         const d = resolveDevHome({
-            variant: "preview",
+            variant: "lab",
             repoRoot: REPO,
             inherited: prodDataHome(),
         });
-        expect(d.home).toBe(join(REPO, "build/preview/home"));
+        expect(d.home).toBe(join(REPO, "build/lab/home"));
         expect(d.rejected).toBe(prodDataHome());
     });
 
@@ -44,7 +44,7 @@ describe("resolveDevHome", () => {
 
     it("DIY_ALLOW_PROD_HOME 显式放行时照旧透传", () => {
         const d = resolveDevHome({
-            variant: "preview",
+            variant: "lab",
             repoRoot: REPO,
             inherited: prodDataHome(),
             allowProdHome: true,

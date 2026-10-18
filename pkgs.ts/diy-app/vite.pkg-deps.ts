@@ -14,7 +14,7 @@ import { isAbsolute } from "node:path";
  */
 export const WORKSPACE_TS_DEPS = ["@diy-agent/rpc", "@diy/template", "@diy/flow", "@diy/talk"];
 
-/** 变体产物根：prod|test|preview|lab（见根 AGENTS.md「实例四态」） */
+/** 变体产物根：prod|test|lab（见根 AGENTS.md「实例三态」） */
 export const VARIANT = process.env.DIY_VARIANT ?? "prod";
 
 // Windows 上解析结果是 `C:/…`：既不以 `./` 也不以 `/` 开头 —— 按「裸 id」判会误判成外部依赖，

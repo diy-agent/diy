@@ -29,7 +29,7 @@ export interface InstanceProcess {
   command: string;
   /** 实例入口产物路径（`…/build/<variant>/main/index.mjs` 或 `…/serve/index.mjs`） */
   entry: string;
-  /** 从 entry 路径推出的产物变体（prod|test|preview|lab）；推不出为 null */
+  /** 从 entry 路径推出的产物变体（prod|test|lab）；推不出为 null */
   variant: string | null;
   kind: "electron" | "serve";
 }

@@ -17,7 +17,7 @@
 //                       CLI 若在探测超时时另起一个 detached 实例，测试无法回收 → 进程泄露。
 //                       生产不设，保持「敲 diy 命令顺手把 app 带起来」的既有体验。
 //   DIY_SEED            初始种入开关（空数据根种入 model/persona/示例项目·任务）。
-//                       0/false/off = 关，1/true/on = 开；缺省 = 仅 DIY_VARIANT 为 preview/lab 时开
+//                       0/false/off = 关，1/true/on = 开；缺省 = 仅 DIY_VARIANT 为 lab 时开
 //                       （prod 是用户真实数据，永不种）。
 //
 // 产物根（out/ 所在目录）由各进程自己通过 import.meta.url 计算，不需要环境变量注入。
@@ -28,7 +28,7 @@ import { join } from "node:path";
 /**
  * 运行环境枚举 —— DIY_ENV 的合法值。
  * - production: 发布态（bin/diy / npm 全局）。dev 便利能力全部关闭。缺省即此。
- * - development: worktree 开发（./diy.sh、./sha.sh preview|lab）。
+ * - development: worktree 开发（./diy.sh、./sha.sh lab）。
  * - test: 自动化测试（意图测试 harness）。
  * 刻意不借用 NODE_ENV：那是公共频段（Vite/Express/React 各有语义），DIY_ 前缀自管自用。
  */

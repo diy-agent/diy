@@ -1,5 +1,5 @@
 // src/main/core/seed.ts
-// 🎯 空数据根的**初始种子**：preview/lab 首次启动（或 `diy seed run`）时种入最小可用数据。
+// 🎯 空数据根的**初始种子**：lab 首次启动（或 `diy seed run`）时种入最小可用数据。
 //
 // 为什么需要：生产数据根 `~/.diy` 有完整的 model/persona/projects，而变体数据根
 // `./build/<variant>/home` 是空的 —— 起预览后是空壳（无模型、无项目、无任务），
@@ -7,7 +7,7 @@
 //
 // 三条约束（与任务书一致）：
 //   1. **幂等**：已存在的文件/项目一律不动、不覆盖（重复启动 = 无副作用）。
-//   2. **只对 preview/lab 自动跑**：prod 永不种（那是用户的真实数据）；test 也不自动
+//   2. **只对 lab 自动跑**：prod 永不种（那是用户的真实数据）；test 也不自动
 //      （测试 home 是 mkdtemp，自动种会污染断言）—— 需要时用 RPC/CLI 显式触发。
 //   3. **不落明文密钥**：模型账号写 `$VAR` 引用；本机没有该变量时仍写引用（UI 标红提示，
 //      用户可以点「导入」或自己填）—— 保证种子是**真实可用**的形状，而不是假 key。
@@ -61,13 +61,13 @@ export function seedPersonaModel(ids: readonly string[] = seedProviderModelIds()
 
 /**
  * 自动种入开关：`DIY_SEED=0/false/off` 关，`=1/true/on` 开（任何变体都开），
- * 缺省 = 仅 `DIY_VARIANT` 为 preview / lab 时开。prod 与 test 缺省关。
+ * 缺省 = 仅 `DIY_VARIANT` 为 lab 时开。prod 与 test 缺省关。
  */
 export function autoSeedEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
     const explicit = parseSeedFlag(env.DIY_SEED);
     if (explicit !== undefined) return explicit;
     const variant = (env.DIY_VARIANT ?? "prod").trim();
-    return variant === "preview" || variant === "lab";
+    return variant === "lab";
 }
 
 /** 种子的示例任务（覆盖列表/详情要看到的多态：active / done / 父子层级） */
@@ -113,7 +113,7 @@ export function seedHome(
     };
     // 硬护栏（与 dev 入口的「拒绝继承生产 DIY_HOME」是两道独立的门，但判据同源：
     // instance-identity::isProdDataHome）：变体开关只保证 prod **不自动**种，挡不住
-    // 「DIY_VARIANT=preview + DIY_HOME=~/.diy」这种显式组合 —— 那才是真会写坏生产数据的路径。
+    // 「DIY_VARIANT=lab + DIY_HOME=~/.diy」这种显式组合 —— 那才是真会写坏生产数据的路径。
     if (isProdDataHome(home)) {
         report.skipped = `生产数据根永不种入：${home}`;
         return report;

@@ -7,7 +7,7 @@
 // 候选路径按「bundle 所在深度」区分（见 diy/AGENTS.md 的实例四态）：
 //   · build/<V>/{main,cli}/data/<name>       sha.sh build 拷贝的产物
 //   · src/main/**/data 与 src/main/data      tsx 直跑
-//   · build/<V>/main|cli → 源树兜底          preview/lab 不拷贝时
+//   · build/<V>/main|cli → 源树兜底          lab 不拷贝时
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,7 +18,7 @@ function candidates(name: string): string[] {
     return [
         join(here, "data", name), // bundle 旁：build/<V>/main|cli/data（sha.sh build 拷贝）
         join(here, "../data", name), // src/main/** → src/main/data（tsx 直跑）
-        join(here, "../../../src/main/data", name), // build/<V>/main|cli → 源树兜底（preview/lab 未拷贝时）
+        join(here, "../../../src/main/data", name), // build/<V>/main|cli → 源树兜底（lab 未拷贝时）
         join(here, "../../src/main/data", name), // src/cli/** → src/main/data（tsx 直跑 CLI）
     ];
 }

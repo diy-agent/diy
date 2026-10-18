@@ -3,7 +3,7 @@
 //
 // 为什么需要：diy 允许多实例并行，各自的数据根（DIY_HOME）完全不同 ——
 //   生产     ~/.diy
-//   worktree <repo>/build/<variant>/home（`./diy.sh` / preview / lab 的隔离数据根）
+//   worktree <repo>/build/<variant>/home（`./diy.sh` / lab 的隔离数据根）
 //   测试     mkdtemp 临时目录
 // 此前标题只有 "diy solid"，切窗口 / macOS 标题栏 / dock 悬停全都认不出谁是谁，
 // 排查「我这条命令打到哪个实例的数据」时只能靠猜。
@@ -19,7 +19,7 @@
 // 不能直接用 $HOME —— 测试/隔离实例会把 HOME 指到临时目录，那时 DIY_HOME === $HOME，
 // 缩写产物是 `~`，标题里的数据根退化成 `~`：看着像用户家目录，其实是个 /tmp 临时根。
 //
-// 例：`~/git/diy/diy🔹~/git/diy/diy/build/preview/home🔹port:18888🔹pid:4242`
+// 例：`~/git/diy/diy🔹~/git/diy/diy/build/lab/home🔹port:18888🔹pid:4242`
 //     `~/git/diy/diy🔹/var/folders/…/diy-app-test-abc123🔹port:52341🔹pid:53087`
 
 /**

@@ -5,7 +5,7 @@
 //   源码模式 `src/cli/index.ts`          → 包根下 2 级
 //   产物模式 `build/<variant>/cli/index.js` → 包根下 4 级
 // 旧实现固定数 4 次 dirname（只对产物成立）：`DIY_CLI_MODE=tsx` 直跑源码时算到 `pkgs.ts/`，
-// spawn 报「diy 管控台未构建: <repo>/pkgs.ts/build/preview/main/index.mjs」（实测，少了 diy-app）。
+// spawn 报「diy 管控台未构建: <repo>/pkgs.ts/diy-app/build/prod/main/index.mjs」（实测，路径里少了 diy-app）。
 // 判据改为**包标记**（`package.json`）逐级上溯 —— 与文件放在哪一层无关，两种模式同一份代码。
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";

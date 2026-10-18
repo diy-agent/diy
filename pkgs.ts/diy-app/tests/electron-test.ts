@@ -201,7 +201,7 @@ export async function startElectronTest(): Promise<ElectronTest> {
   const env = { ...process.env, HOME: home, DIY_HOME: home, DIY_ENV: "test" };
   const appDir = join(__dirname, "..");
 
-  // 测试实例走 build/test/main（DIY_VARIANT=test 由 test-intent 注入），与 preview/lab 产物隔离
+  // 测试实例走 build/test/main（DIY_VARIANT=test 由 test-intent 注入），与 lab 产物隔离
   const args = [join("build", process.env["DIY_VARIANT"] ?? "test", "main", "index.mjs"), "--remote-debugging-port=0"];
   // 受限环境（Chromium sandbox 初始化被拒，如沙箱/容器）置 DIY_NO_SANDBOX=1 跑通测试；
   // 默认不传，与生产行为一致。
