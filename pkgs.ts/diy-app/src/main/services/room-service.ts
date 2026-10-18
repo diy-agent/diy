@@ -23,6 +23,7 @@ import { appendDelivery, appendEvent, ensureRoom, nextEventId, readRoom, setFocu
 import { diyHome, getTask } from "../core/state";
 import { defaultPersonaId, listPersonas } from "../core/persona";
 import {
+    DEFAULT_CHANNEL_ID,
     deliveryText,
     HUMAN_MEMBER_ID,
     MAIN_MEMBER_ID,
@@ -152,10 +153,17 @@ async function runAndCollect(taskUri: string, text: string): Promise<{ reply: st
     return { reply, ...(turnId ? { turnId } : {}) };
 }
 
-/** 落盘 + 返回（事件流的唯一写入口 —— 先落盘再 yield，断开不丢尾） */
-function record(roomId: string, ev: RoomEvent): RoomEvent {
-    appendEvent(roomId, ev);
-    return ev;
+/**
+ * 落盘 + 返回（事件流的**唯一写入口** —— 先落盘再 yield，断开不丢尾）。
+ *
+ * `channel` 在这里补（##166 §28.K ①）：本切片恒 `default`，调用方**不必逐处写** ——
+ * 只有一条流 ⇒ 零分支；将来多流时改这一处（channel 由调用上下文决定）即可，
+ * 而不是回头去补四个事件构造点。
+ */
+function record(roomId: string, ev: Omit<RoomEvent, "channel"> & { channel?: string }): RoomEvent {
+    const rec: RoomEvent = { ...ev, channel: ev.channel ?? DEFAULT_CHANNEL_ID };
+    appendEvent(roomId, rec);
+    return rec;
 }
 
 // ─── 成员投递队列（**同一成员串行、不同成员并行**的唯一落点）─────────────
@@ -194,7 +202,8 @@ export async function* postToRoom(roomId: string, rawText: string): AsyncGenerat
     const { recipients, routing } = resolveRecipients(explicit, room.focus, room.members);
 
     const sayId = nextEventId();
-    const sayEvent: RoomEvent = {
+    // record = 落盘 + 补 channel（唯一写入口）；返回的那份才是盘上的形状 ⇒ yield 它
+    const sayEvent = record(roomId, {
         id: sayId,
         ts: new Date().toISOString(),
         kind: "say",
@@ -204,8 +213,7 @@ export async function* postToRoom(roomId: string, rawText: string): AsyncGenerat
         text, // 存**原话**（含 @X）；投递时才剥
         delivered: false, // 读侧按投递状态 fold 真值（见 core/room.readRoomView）
         ...(recipients.length === 0 ? { error: "没有 @ 收件人、也没有当前接受者（只有自己能看到）" } : {}),
-    };
-    record(roomId, sayEvent);
+    });
     yield sayEvent;
     if (recipients.length === 0) return;
 

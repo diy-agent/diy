@@ -21,11 +21,14 @@ import * as yaml from "js-yaml";
 import { diyHome } from "./state";
 import {
     isValidRoomId,
+    defaultChannels,
+    DEFAULT_CHANNEL_ID,
     DeliveryStateSchema,
     RoomEventSchema,
     RoomSchema,
     type DeliveryState,
     type Room,
+    type RoomChannel,
     type RoomEvent,
     type RoomMember,
 } from "../../shared/room";
@@ -68,27 +71,51 @@ export function writeRoom(room: Room): void {
     mkdirSync(dir, { recursive: true });
     const f = roomYamlPath(room.id);
     const tmp = `${f}.tmp`;
-    const next: Room = { ...room, updated: new Date().toISOString() };
+    const next: Room = {
+        ...room,
+        // channel 表**恒有 `default`**（##166 §28.K ①）：老房间（占位符之前建的）与手改过的
+        // room.yaml 都可能没有这个键 —— 写回时补齐，别让"缺 channel"变成一种状态。
+        channels: room.channels?.length ? room.channels : defaultChannels(),
+        updated: new Date().toISOString(),
+    };
     writeFileSync(tmp, yaml.dump(next, { lineWidth: 200, noRefs: true }), "utf8");
     renameSync(tmp, f);
 }
 
-/** 列房间（扫目录；坏房间跳过 —— 一个坏目录不该打不开整张列表） */
+/**
+ * 列房间（**递归**扫 `room.yaml`；坏房间跳过 —— 一个坏目录不该打不开整张列表）。
+ *
+ * 为什么递归：自 ##166 §28.7 G 起 room id = **taskUri**（`projects/4/tasks/377`）——
+ * 目录是**嵌套**的（`rooms/projects/4/tasks/377/room.yaml`），只扫一层会把它们全漏掉
+ * （症状：CLI `room list` / UI 左栏只看得见旧的扁平 id 房间）。
+ * 判据是「目录里有 `room.yaml`」而不是"目录深度"—— 扁平老房间（`rooms/t377-demo`）照样命中。
+ */
 export function listRooms(): Room[] {
     const root = roomsRoot();
     if (!existsSync(root)) return [];
     const out: Room[] = [];
-    for (const ent of readdirSync(root, { withFileTypes: true })) {
-        if (!ent.isDirectory()) continue;
-        const r = readRoom(ent.name);
-        if (r) out.push(r);
-    }
+    const walk = (dir: string, rel: string): void => {
+        for (const ent of readdirSync(dir, { withFileTypes: true })) {
+            if (!ent.isDirectory()) continue;
+            const childRel = rel ? `${rel}/${ent.name}` : ent.name;
+            const childAbs = join(dir, ent.name);
+            if (existsSync(join(childAbs, "room.yaml"))) {
+                const r = readRoom(childRel);
+                if (r) out.push(r);
+                continue; // 一个 room 目录下不会再嵌一个 room
+            }
+            walk(childAbs, childRel);
+        }
+    };
+    walk(root, "");
     return out.sort((a, b) => (a.id < b.id ? -1 : 1));
 }
 
 export interface EnsureRoomInput {
     title?: string;
     members?: RoomMember[];
+    /** channel 表（缺省 = 恒有的那条 `default`；本切片没有调用方会传别的） */
+    channels?: RoomChannel[];
     /** 缺省接受者（宿主定案后 = 主人格，见 `room-service.ensureRoomForTask`） */
     focus?: string | null;
 }
@@ -109,6 +136,7 @@ export function ensureRoom(id: string, input: EnsureRoomInput = {}): Room {
         ...(input.title ? { title: input.title } : {}),
         focus: input.focus ?? null,
         members: input.members ?? [],
+        channels: input.channels ?? defaultChannels(),
         created: now,
         updated: now,
     };
@@ -231,7 +259,10 @@ export function readRoomView(
 /** 追加一条事件（append-only；**不重写**整份 —— 事件流只增不改） */
 export function appendEvent(roomId: string, ev: RoomEvent): void {
     mkdirSync(roomDir(roomId), { recursive: true });
-    appendFileSync(roomEventsPath(roomId), `${JSON.stringify(ev)}\n`, "utf8");
+    // channel **落盘**（##166 §28.K 待拍 17）：`?? DEFAULT_CHANNEL_ID` 只是兜底 ——
+    // 调用方（room-service）一律显式给值；这里防的是"将来多一个写入口忘了带"静默落个 undefined。
+    const rec = { ...ev, channel: ev.channel ?? DEFAULT_CHANNEL_ID };
+    appendFileSync(roomEventsPath(roomId), `${JSON.stringify(rec)}\n`, "utf8");
 }
 
 /**

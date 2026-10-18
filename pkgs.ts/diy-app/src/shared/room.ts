@@ -87,6 +87,33 @@ export const RoomMemberSchema = z.object({
 });
 export type RoomMember = z.infer<typeof RoomMemberSchema>;
 
+/**
+ * channel —— **room（空间）+ channel（流）两层**（##166 §28.J 三层模型 / §28.K ①）。
+ *
+ * Discord 模型：**成员表属空间、流属频道** —— 「我加入了这个服务器」与「我在听哪个频道」
+ * 是两件事。本切片 channel **只做占位符**（##166 §28.K 定案）：
+ *
+ *   · `Room.channels` **恒有一条 `default`**（名字「默认」）；
+ *   · 事件带 `channel`（**落盘** —— §28.K 待拍 17：将来多流才能按 channel 过滤历史）；
+ *   · **不做**：多流 / channel 订阅 / channel 级可见性（§28.J 三条边界，守死）。
+ *
+ * 判据 = **行为与今天逐字一致**：只有一条 channel ⇒ 零分支（不写 `if (channel === default)`）。
+ * room 内引用用**短式** `default`；全式 id `agent:channel:tasks/377`（§25）留给多流时用。
+ */
+export const DEFAULT_CHANNEL_ID = "default";
+export const DEFAULT_CHANNEL_NAME = "默认";
+
+export const RoomChannelSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+});
+export type RoomChannel = z.infer<typeof RoomChannelSchema>;
+
+/** 恒有的那一条 channel（新房间、以及老房间读出来补齐，都用它） */
+export function defaultChannels(): RoomChannel[] {
+  return [{ id: DEFAULT_CHANNEL_ID, name: DEFAULT_CHANNEL_NAME }];
+}
+
 export const RoomSchema = z.object({
   id: z.string(),
   title: z.string().optional(),
@@ -96,6 +123,13 @@ export const RoomSchema = z.object({
    */
   focus: z.string().nullable(),
   members: z.array(RoomMemberSchema),
+  /**
+   * channel 表 —— **恒有 `default`**（本切片只占位，见 `DEFAULT_CHANNEL_ID`）。
+   *
+   * `.default(...)` 是**读侧兼容**：占位符引入之前建的房间（room.yaml 里没有这个键）
+   * 照样读得出来并补上 `default` —— 不迁移存量、不产生"老房间读不出"的假故障。
+   */
+  channels: z.array(RoomChannelSchema).default(() => defaultChannels()),
   created: z.string(),
   updated: z.string(),
 });
@@ -135,6 +169,13 @@ export type DeliveryState = z.infer<typeof DeliveryStateSchema>;
 export const RoomEventSchema = z.object({
   id: z.string(),
   ts: z.string().describe("ISO 时刻"),
+  /**
+   * 这条事件属于哪条 channel（**落盘**，##166 §28.K 待拍 17）。
+   *
+   * 本切片恒为 `default`（只有一条流 ⇒ 零分支）；`.default(...)` 只兜**存量事件**
+   * （占位符之前写的事件行没有这个键）—— 新事件一律显式写盘。
+   */
+  channel: z.string().default(DEFAULT_CHANNEL_ID),
   kind: z.enum(["say", "reply"]),
   /** 发言者成员 id；解析不出成员时是原始名字（外部主体） */
   author: z.string(),

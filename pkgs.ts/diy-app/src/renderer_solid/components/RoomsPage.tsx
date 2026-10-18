@@ -16,6 +16,7 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { diyService } from "../lib/rpc";
 import { notificationStore } from "../store/notificationStore";
+import { personaStore } from "../store/personaStore";
 import {
     deliveryHint,
     deliveryStatusText,
@@ -152,6 +153,14 @@ export function RoomsPage() {
     const [newTitle, setNewTitle] = createSignal("");
     const [memberName_, setMemberName_] = createSignal("");
     const [memberTask, setMemberTask] = createSignal("");
+    /**
+     * 邀请面板（##166 §28.K ② / §28.7 F ②）：**从人物选**（不列 task）。
+     *
+     * 「人物」专指 agent 人格（`personas.yaml`）—— 人成员不走这条路（人 = 页面操作者本人，无 backend）。
+     */
+    const [invitePersona, setInvitePersona] = createSignal("");
+    /** 高级入口（手填名字 + 绑**已有** task）默认收起 —— §28.K 待拍 19：长留但不暴露 */
+    const [advanced, setAdvanced] = createSignal(false);
     let streamRef: HTMLDivElement | undefined;
 
     /** 成员展示顺序（人先、agent 后）—— 右栏顺序与头像位次同一份 */
@@ -269,6 +278,39 @@ export function RoomsPage() {
         }
     };
 
+    /**
+     * 已在房间的人物（护栏，##166 §28.7 F）：**同一 backend 不得挂两个人物**（A 帽子，§27 已否）。
+     *
+     * 注：**同一人物可进多个 room**（那是允许的）—— 这里禁的是"同一个房间里同一个人物再来一个"，
+     * 因为成员名是 `@` 寻址的键，重名会让寻址有歧义（`resolveMember` 取第一个）。
+     */
+    const invitedPersonas = createMemo(
+        () => new Set((room()?.members ?? []).map((m) => m.persona).filter((x): x is string => !!x)),
+    );
+
+    /**
+     * 人物清单 —— **直接用 `personaStore`**（人物管理页 / 任务详情面板同一份缓存），
+     * 不自己再拉一遍：清单是 `agent.persona.list` 的一次全库扫描（带引用计数），多拉一份纯浪费。
+     */
+    const personaOptions = createMemo(() => personaStore.personas.map((p) => ({ id: p.id, name: p.name })));
+
+    /** 邀请（主路径）：选人物 → 服务端配 backend（缺省自动建影子 task 作它的会话） */
+    const invite = async (): Promise<void> => {
+        const id = roomId();
+        const pid = invitePersona();
+        if (!id || !pid) return;
+        try {
+            const r = await diyService.diy.room.invite({ id, persona: pid, task: undefined, role: undefined });
+            notificationStore.addToast(
+                "info",
+                `已邀请 ${r.member.name}（${r.createdTask ? "新建影子任务" : "复用已有任务"} ${r.taskUri}）`,
+            );
+            await loadRoom(id);
+        } catch (e) {
+            notificationStore.addToast("error", `邀请失败：${msgOf(e)}`);
+        }
+    };
+
     const addMember = async (): Promise<void> => {
         const id = roomId();
         const name = memberName_().trim();
@@ -350,6 +392,7 @@ export function RoomsPage() {
 
     onMount(() => {
         void refreshRooms();
+        void personaStore.load();
     });
 
     // 轻量轮询：别的窗口 / CLI 往房间写的发言、以及**排队中/投递中**的状态变化都要能看见
@@ -745,24 +788,59 @@ export function RoomsPage() {
                     </For>
                 </div>
                 <div class="px-2.5 py-2 border-t shrink-0">
-                    <div class="text-caption opacity-70 mb-1">加 agent 成员</div>
-                    <input
-                        class="input input-xs input-bordered w-full mb-1"
-                        placeholder="名字（@ 寻址用）"
-                        value={memberName_()}
-                        onInput={(e) => setMemberName_(e.currentTarget.value)}
-                        data-room-member-name
-                    />
-                    <input
-                        class="input input-xs input-bordered w-full mb-1"
-                        placeholder="绑定任务 URI（projects/1/tasks/1）"
-                        value={memberTask()}
-                        onInput={(e) => setMemberTask(e.currentTarget.value)}
-                        data-room-member-task
-                    />
-                    <button class="btn btn-xs w-full" onClick={() => void addMember()} data-room-member-add>
-                        加入
+                    <div class="text-caption opacity-70 mb-1">邀请成员（从人物选）</div>
+                    <select
+                        class="select select-xs select-bordered w-full mb-1"
+                        value={invitePersona()}
+                        onChange={(e) => setInvitePersona(e.currentTarget.value)}
+                        data-room-invite-persona
+                    >
+                        <option value="">— 选人物 —</option>
+                        <For each={personaOptions()}>
+                            {(p) => (
+                                <option value={p.id} disabled={invitedPersonas().has(p.id)}>
+                                    {p.name}
+                                    {invitedPersonas().has(p.id) ? "（已在房间）" : ""}
+                                </option>
+                            )}
+                        </For>
+                    </select>
+                    <button
+                        class="btn btn-xs btn-primary w-full"
+                        disabled={!invitePersona() || invitedPersonas().has(invitePersona())}
+                        onClick={() => void invite()}
+                        data-room-invite
+                    >
+                        邀请（自动配一个会话）
                     </button>
+                    <button
+                        class="btn btn-xs btn-ghost w-full mt-1"
+                        onClick={() => setAdvanced(!advanced())}
+                        data-room-advanced-toggle
+                    >
+                        {advanced() ? "收起高级" : "高级：绑已有任务"}
+                    </button>
+                    <Show when={advanced()}>
+                        <div class="mt-1 pt-1 border-t">
+                            <input
+                                class="input input-xs input-bordered w-full mb-1"
+                                placeholder="名字（@ 寻址用）"
+                                value={memberName_()}
+                                onInput={(e) => setMemberName_(e.currentTarget.value)}
+                                data-room-member-name
+                            />
+                            <input
+                                class="input input-xs input-bordered w-full mb-1"
+                                placeholder="绑定任务 URI（projects/1/tasks/1）"
+                                value={memberTask()}
+                                onInput={(e) => setMemberTask(e.currentTarget.value)}
+                                data-room-member-task
+                            />
+                            <button class="btn btn-xs w-full" onClick={() => void addMember()} data-room-member-add>
+                                加入（绑已有任务）
+                            </button>
+                        </div>
+                    </Show>
                 </div>
             </div>
         </div>
