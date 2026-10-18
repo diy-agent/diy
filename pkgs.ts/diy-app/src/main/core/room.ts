@@ -20,7 +20,7 @@ import { join } from "node:path";
 import * as yaml from "js-yaml";
 import { diyHome } from "./state";
 import {
-    ROOM_ID_RE,
+    isValidRoomId,
     DeliveryStateSchema,
     RoomEventSchema,
     RoomSchema,
@@ -45,11 +45,6 @@ export function roomYamlPath(id: string): string {
 
 export function roomEventsPath(id: string): string {
     return join(roomDir(id), "events.jsonl");
-}
-
-/** 房间 id 合法性（同时也是目录名安全判据） */
-export function isValidRoomId(id: string): boolean {
-    return ROOM_ID_RE.test(id);
 }
 
 /** 读房间。不存在 / 解析失败 → null（调用方决定是"没建过"还是"坏了"） */
@@ -94,9 +89,17 @@ export function listRooms(): Room[] {
 export interface EnsureRoomInput {
     title?: string;
     members?: RoomMember[];
+    /** 缺省接受者（宿主定案后 = 主人格，见 `room-service.ensureRoomForTask`） */
+    focus?: string | null;
 }
 
-/** 取房间；没有就建一份（成员表由调用方给，缺省 = 只有人） */
+/**
+ * 取房间；没有就建一份（成员表由调用方给）。
+ *
+ * ⚠️ 自 ##166 §28.7 G 起 **room id = taskUri**，且**每个任务对话页恒是一个 room**
+ * （成员表至少含主人格）—— 所以正常路径都走 `room-service.ensureRoomForTask`，
+ * 本函数只负责"落盘那份"（不读 task、不猜成员）。
+ */
 export function ensureRoom(id: string, input: EnsureRoomInput = {}): Room {
     const existing = readRoom(id);
     if (existing) return existing;
@@ -104,7 +107,7 @@ export function ensureRoom(id: string, input: EnsureRoomInput = {}): Room {
     const room: Room = {
         id,
         ...(input.title ? { title: input.title } : {}),
-        focus: null,
+        focus: input.focus ?? null,
         members: input.members ?? [],
         created: now,
         updated: now,
@@ -112,6 +115,17 @@ export function ensureRoom(id: string, input: EnsureRoomInput = {}): Room {
     writeRoom(room);
     return room;
 }
+
+/** 移出成员（人/agent 一视同仁；主人格不允许移出 —— 它就是宿主本身） */
+export function removeMember(id: string, memberId: string): Room {
+    const room = ensureRoom(id);
+    const members = room.members.filter((m) => m.id !== memberId || m.main);
+    const next: Room = { ...room, members, focus: room.focus === memberId ? null : room.focus };
+    writeRoom(next);
+    return next;
+}
+
+export { isValidRoomId };
 
 /** 加/改成员（按 id 去重；同名冲突不处理 —— 名字只是寻址便利，id 才是键） */
 export function upsertMember(id: string, member: RoomMember): Room {

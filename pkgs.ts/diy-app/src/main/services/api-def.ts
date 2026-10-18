@@ -25,7 +25,7 @@ import { TrafficRecordSchema } from "../../shared/traffic-record";
 import { ContextDiffSchema, CtxLogSchema, StatsSchema, StepsSchema } from "../../shared/context/schema";
 import { ContextLabSchema, ContextPlaceCandidateSchema } from "../../shared/context/schema";
 // 多人房间契约（shared，renderer 同源）
-import { RoomEventSchema, RoomSchema } from "../../shared/room";
+import { RoomEventSchema, RoomMemberSchema, RoomSchema } from "../../shared/room";
 // agent 人物契约（纯 zod，renderer 同源）——模型/参数/行为指令的配置实体
 import { FALLBACK_MODEL } from "../../shared/model-default";
 import { PersonaSchema } from "../../shared/persona";
@@ -1248,7 +1248,7 @@ export const apiDef = RpcSchema.router({
        * 决定、**协议里没有广播**。开发日志 ##377。
        */
       room: RpcSchema.group({
-        desc: `多人房间（人 + 多 agent 同室；room 只做投递 + 汇总，各成员有自己的会话）`,
+        desc: `多人房间（人 + 多 agent 同室；room 只做投递 + 汇总，各成员有自己的会话）。**宿主定案（##166 §28.7 G）：room = 任务对话页的状态，id 就是 taskUri** —— 每个任务恒是一个 room（不加人 = 成员表只有主人格）`,
         children: {
           list: RpcSchema.unary({
             desc: `列出全部房间（成员数 / 当前接受者 / 最后一条发言）`,
@@ -1268,7 +1268,7 @@ export const apiDef = RpcSchema.router({
           get: RpcSchema.unary({
             desc: `读一个房间（成员表 + 最近事件流）`,
             input: {
-              id: z.string().cliArg({ desc: "房间 id" }),
+              id: z.string().cliArg({ desc: "任务 URI（= room id；宿主定案后就是任务对话页的那个任务）" }),
               limit: z.number().optional().cliOption({ desc: "事件条数上限（缺省 200）" }),
             },
             output: z.object({
@@ -1279,28 +1279,62 @@ export const apiDef = RpcSchema.router({
             }),
           }),
           create: RpcSchema.unary({
-            desc: `新建房间（已存在则原样返回；给 --human / --member 建初始成员）`,
+            desc: `确保一个任务的 room 存在（幂等；成员表恒含「我」+ 主人格，focus 缺省 = 主人格）`,
             input: {
-              id: z.string().cliArg({ desc: "房间 id（字母数字开头，允许 . _ -）" }),
-              title: z.string().optional().cliOption({ desc: "标题（给人看）" }),
-              human: z.string().optional().cliOption({ desc: "人的显示名（缺省 ccc）" }),
+              id: z.string().cliArg({ desc: "任务 URI（= room id）" }),
+              title: z.string().optional().cliOption({ desc: "标题（给人看；缺省取任务标题）" }),
+              human: z.string().optional().cliOption({ desc: "人的显示名（缺省 chen56）" }),
             },
             output: RoomSchema,
           }),
           addMember: RpcSchema.unary({
-            desc: `加 agent 成员（backend = 一个 task 的本地会话，复用现有一切）`,
+            desc: `加 agent 成员（**高级入口**：手填名字 + 绑一个已有 task；给人物请用 room invite）`,
             input: {
-              id: z.string().cliArg({ desc: "房间 id" }),
+              id: z.string().cliArg({ desc: "任务 URI（= room id）" }),
               name: z.string().cliArg({ desc: "成员名（@ 寻址用）" }),
               task: z.string().cliOption({ desc: "该成员绑的任务 URI（其会话即它的 backend）" }),
+              persona: z.string().optional().cliOption({ desc: "人物 id（决定它以什么身份/行为说话）" }),
               role: z.string().optional().cliOption({ desc: "它是干什么的（喂 UI / 将来喂模型）" }),
+            },
+            output: RoomSchema,
+          }),
+          /**
+           * **邀请 = 选人物**（##166 §28.7 F ② / D 的 B 方案）。
+           *
+           * 面板列**人物**（不列 task）：选中人物 ⇒ 为它分配 backend —— 缺省**自动建一个专属
+           * 「影子 task」**（复用现有一切：CLI/RPC/装配/UI，**零内核改动**）；`--task` 是**高级入口**
+           * （指定绑一个已有 task，即原来手填 taskUri 的做法）。
+           *
+           * 护栏：**同一 backend 不得挂两个人物**（= A 帽子，##166 §27 已否）；同一人物可进多个 room。
+           */
+          invite: RpcSchema.unary({
+            desc: `邀请一个**人物**进房间（缺省为它建影子 task 作 backend；--task = 高级入口，绑已有任务）`,
+            input: {
+              id: z.string().cliArg({ desc: "任务 URI（= room id）" }),
+              persona: z.string().cliArg({ desc: "人物 id 或名字（见 agent persona list）" }),
+              task: z.string().optional().cliOption({ desc: "高级：绑这个已有任务（不给则自动建影子 task）" }),
+              role: z.string().optional().cliOption({ desc: "它是干什么的（喂 UI / 将来喂模型）" }),
+            },
+            output: z.object({
+              room: RoomSchema,
+              member: RoomMemberSchema,
+              /** 影子 task（新建时回带 URI —— 成员会话的底座就是它） */
+              taskUri: z.string(),
+              createdTask: z.boolean().describe("backend 是新建的影子 task（false = 复用了已有任务）"),
+            }),
+          }),
+          removeMember: RpcSchema.unary({
+            desc: `移出成员（主人格不可移出 —— 它就是宿主任务本身）`,
+            input: {
+              id: z.string().cliArg({ desc: "任务 URI（= room id）" }),
+              member: z.string().cliArg({ desc: "成员名或 id" }),
             },
             output: RoomSchema,
           }),
           focus: RpcSchema.unary({
             desc: `设置当前接受者（不给成员 = 清空；投递只由 @X / focus 决定，无第三方调度器）`,
             input: {
-              id: z.string().cliArg({ desc: "房间 id" }),
+              id: z.string().cliArg({ desc: "任务 URI（= room id）" }),
               member: z.string().optional().cliArg({ desc: "成员名或 id（省略 = 清空 focus）" }),
             },
             output: RoomSchema,
@@ -1308,7 +1342,7 @@ export const apiDef = RpcSchema.router({
           post: RpcSchema.serverStream({
             desc: `在房间里说一句 —— 解析收件人 → 投递给各 agent（在它自己的会话里真起一轮）→ 回复带署名回写；逐行输出事件（JSONL）`,
             input: {
-              id: z.string().cliArg({ desc: "房间 id" }),
+              id: z.string().cliArg({ desc: "任务 URI（= room id）" }),
               text: z.string().cliArg({ desc: "发言正文（开头 @名字 覆盖当前接受者）" }),
             },
             output: z.string(),

@@ -19,9 +19,13 @@
 
 import { getLocalAgent } from "./local-agent";
 import { sessionRegistry } from "./session-registry";
-import { appendDelivery, appendEvent, nextEventId, readRoom } from "../core/room";
+import { appendDelivery, appendEvent, ensureRoom, nextEventId, readRoom, setFocus, upsertMember } from "../core/room";
+import { diyHome, getTask } from "../core/state";
+import { defaultPersonaId, listPersonas } from "../core/persona";
 import {
     deliveryText,
+    HUMAN_MEMBER_ID,
+    MAIN_MEMBER_ID,
     isAllAddress,
     memberName,
     parseAddress,
@@ -38,6 +42,56 @@ import type { Op } from "./local-blocks";
 
 function errText(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
+}
+
+/**
+ * 取（或补齐）**一个任务的 room** —— 宿主定案（##166 §28.7 G）的唯一入口。
+ *
+ * 宿主定案：**room 就是任务对话页的状态**，id = taskUri；**每个任务恒是一个 room**
+ * （不加人 = 成员表只有主人格）⇒ 单人任务与旧版行为一致，且**没有「单人/多人」两套分支**。
+ *
+ * 成员表恒有两条底：
+ *   · `human:chen56` —— 页面操作者本人（发言恒是他）；
+ *   · `agent:main`（`main: true`）—— **主人格**：`persona` = 任务的 persona（缺省则跟随缺省人物），
+ *     `backend` = **本 task**（所以"投递给主人格"= 在本任务会话里起一轮，与旧版同一条通道）。
+ *
+ * 为什么在服务层而不是 core：这里要读 task 元数据（标题 / persona）与人物表 —— core 只管落盘那份。
+ */
+export function ensureRoomForTask(taskUri: string): Room {
+    const task = getTask(taskUri);
+    const home = diyHome();
+    const personaId = task?.persona?.trim() ? task.persona.trim() : defaultPersonaId(home);
+    const personaName = listPersonas(home).find((p) => p.id === personaId)?.name;
+    const main: RoomMember = {
+        id: MAIN_MEMBER_ID,
+        name: personaName ?? "主 agent",
+        kind: "agent",
+        main: true,
+        ...(personaId ? { persona: personaId } : {}),
+        backend: { type: "task", data: { taskUri } },
+        role: "主人格",
+    };
+    const human: RoomMember = {
+        id: HUMAN_MEMBER_ID,
+        name: "chen56",
+        kind: "human",
+        backend: null,
+        role: "我",
+    };
+    let room = readRoom(taskUri);
+    if (!room) {
+        room = ensureRoom(taskUri, {
+            ...(task?.title ? { title: task.title } : {}),
+            members: [human, main],
+            focus: MAIN_MEMBER_ID,
+        });
+    }
+    // 补齐底成员（老房间 / 手改过成员表）：主人格与"我"恒在
+    if (!room.members.some((m) => m.main)) room = upsertMember(taskUri, main);
+    if (!room.members.some((m) => m.kind === "human")) room = upsertMember(taskUri, human);
+    // 缺省接受者 = 主人格（不加人时"打字就是对本任务说"）
+    if (!room.focus) room = setFocus(taskUri, MAIN_MEMBER_ID);
+    return readRoom(taskUri) ?? room;
 }
 
 /** 该成员的会话此刻是不是有轮次在跑（判据：会话注册表，主进程内存权威） */
@@ -125,8 +179,8 @@ export function memberQueueDepth(roomId: string, memberId: string): number {
  * RPC 侧把它当 serverStream 转发，UI 就能"发言一落盘就显示、谁的回复先到先回显"。
  */
 export async function* postToRoom(roomId: string, rawText: string): AsyncGenerator<RoomEvent> {
-    const room = readRoom(roomId);
-    if (!room) throw new Error(`房间不存在：${roomId}`);
+    // roomId 自 §28.7 G 起就是 taskUri：取房间 = 取那个任务的 room（缺则补齐主人格成员）
+    const room = ensureRoomForTask(roomId);
     const text = rawText.trim();
     if (!text) throw new Error("空发言：没内容可发（UI/CLI 应提前拦）");
 
@@ -293,7 +347,12 @@ function deliverOne(input: DeliverInput): Promise<void> {
             input.done(ev);
             return;
         }
-        const r = await runAndCollect(taskUri, deliveryText({ roomId, fromName, text: body, toAll }));
+        // 主人格（`main`）的会话 = **宿主任务自己的会话** ⇒ 正文就是原话，不包房间前缀
+        // （##166 §28.7 G 推论 4：「不加人时行为与旧版完全一致」的正文层落点）。
+        const r = await runAndCollect(
+            taskUri,
+            deliveryText({ roomId, fromName, text: body, toAll, plain: member.main === true }),
+        );
         const replyId = nextEventId();
         const ev = record(roomId, {
             id: replyId,

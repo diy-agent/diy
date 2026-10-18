@@ -282,6 +282,7 @@ export function RoomsPage() {
                 id,
                 name,
                 task: memberTask().trim(),
+                persona: undefined,
                 role: undefined,
             });
             setMemberName_("");

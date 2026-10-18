@@ -13,8 +13,37 @@
 
 import { z } from "zod";
 
-/** 房间 id（= 目录名，故限制字符集；中文标题走 `title`，不塞 id） */
-export const ROOM_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
+/**
+ * 房间 id —— **宿主定案（##166 §28.7 G）：就是 taskUri**（`projects/4/tasks/377`）。
+ *
+ * room 从「独立容器 + 独立页」降为「**任务对话页的一个状态**」：加人 = 成员表多一行，
+ * 单人任务 = 成员表只有主人格的 room（**向后兼容**，见 §28.7 G 推论 4）。
+ * 故 id 直接复用 taskUri（含 `/`）—— 它是**路径安全**的（tasks 目录下的一层），
+ * 校验只排除 `..` 与首尾斜杠（防越出 `rooms/` 根）。
+ */
+export const ROOM_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_./-]*$/;
+
+/** 房间 id 是否安全（同时是**目录名**判据：不许 `..` / 不许结尾 `/`） */
+export function isValidRoomId(id: string): boolean {
+  if (!ROOM_ID_RE.test(id)) return false;
+  if (id.includes("..")) return false;
+  if (id.endsWith("/")) return false;
+  return true;
+}
+
+/**
+ * **主人格**的成员 id（成员表第一行，##166 §28.7 G 推论 3）。
+ *
+ * 它是宿主任务**自己的** agent：`backend = 本 task`、`persona = 任务的 persona`。
+ * 不搞「主人特例」—— 它就是一条普通成员记录，只是 `main: true`：
+ *   · 投递给它 = 在本任务会话里起一轮（与旧版"直接在任务对话里说话"**同一条通道**）；
+ *   · 它的正文**不加房间包装**（见 `deliveryText.plain`）—— 对宿主而言那句话就是本人说的；
+ *   · UI 渲染时它的事件**不重复画**（本会话的块流里已经有那一轮）。
+ */
+export const MAIN_MEMBER_ID = "agent:main";
+
+/** 人的成员 id（发言人恒是页面操作者本人；沿用最小切片的名字） */
+export const HUMAN_MEMBER_ID = "human:chen56";
 
 export const RoomMemberKindSchema = z.enum(["human", "agent"]);
 export type RoomMemberKind = z.infer<typeof RoomMemberKindSchema>;
@@ -44,6 +73,13 @@ export const RoomMemberSchema = z.object({
   kind: RoomMemberKindSchema,
   /** 人的会话不在 task 里（§28.6 待决 76 未定案）—— 最小切片给 null */
   backend: RoomBackendSchema.nullable(),
+  /** **主人格**（= 宿主任务自己的 agent；成员表第一行，##166 §28.7 G 推论 3） */
+  main: z.boolean().optional(),
+  /**
+   * 人物 id（`core:persona:<id>`，§25 全式）—— 决定它以**什么身份 + 什么行为指令**说话。
+   * 与 backend（在哪说、有什么上下文）解耦：同一人物可进多个 room（§28.7 B）。
+   */
+  persona: z.string().optional(),
   role: z.string().optional(),
   color: z.string().optional(),
   /** 头像（emoji）。留空 = 按成员在房间里的位置自动分配（`memberAvatar`） */
@@ -143,13 +179,16 @@ export type RoomEvent = z.infer<typeof RoomEventSchema>;
  * 解析正文**开头**的 `@名字`（原型见 ##166 §27.3 可挑资产 / 搁置分支 `core/room.ts::parseAddress`）。
  *
  * 只认开头（不是"正文里出现过 @"）—— 否则「我觉得 @reviewer 说得对」会被误判成寻址。
- * 名字允许 `[A-Za-z0-9_.\-/:]`（够覆盖 `dev` / `human:chen56` / `agent:dev` / `all`）。
+ * 名字 = **一整段非空白、非分隔标点**（覆盖 `dev` / `all` / 中文人物名 `开发`）；
+ * 全式 id（`agent:dev` / `human:chen56`）请直接写名字那半（`@dev` / `@chen56`）—— 冒号留给正文标点。
  *
  * **可连写多个**（本切片按用户口径扩的）：`@dev @review 一起看下` ⇒ 两个收件人、正文「一起看下」。
  * 分隔只认空白 / 逗号 / 顿号（不认冒号 —— `@dev: 你好` 里的冒号是正文标点，历史上一直如此）。
  */
 export function parseAddress(text: string): { text: string; tos: string[] } {
-    const re = /^\s*@([A-Za-z0-9_.\-/:]+)\s*[,，、]?\s*/;
+    // 名字字符集：**除空白与分隔标点（含 `:`）以外的一整段** —— 于是中文人物名（`@开发`）也能寻址，
+    // 而 `@dev: 你好` 里的冒号仍是正文标点（历史行为不变，见头注）。
+    const re = /^\s*@([^\s@,，、:]+)\s*[,，、]?\s*/;
     const tos: string[] = [];
     let rest = text;
     for (;;) {
@@ -268,7 +307,21 @@ export function orderedMembers(room: Pick<Room, "members"> | null | undefined): 
  *
  * ⚠️ 本切片的临时形态（探索优先）：将来接 §24 四元组 / 结构化出口时换成正规载荷。
  */
-export function deliveryText(opts: { roomId: string; fromName: string; text: string; toAll?: boolean }): string {
+export function deliveryText(opts: {
+    roomId: string;
+    fromName: string;
+    text: string;
+    toAll?: boolean;
+    /**
+     * **主人格**投递（##166 §28.7 G 推论 3）：正文就是原话，**不加任何包装**。
+     *
+     * 理由：主人格的会话 = **宿主任务自己的会话**，而"直接在任务聊天里说话"本来就是
+     * 这个任务的人说的 —— 包一层「[多人房间 …] chen56 对你说」反而把它变成了外来消息。
+     * 这也是「不加人时行为与旧版完全一致」在**正文层**的落点（§28.7 G 推论 4）。
+     */
+    plain?: boolean;
+}): string {
+    if (opts.plain) return opts.text;
     const tag = opts.toAll ? `[多人房间 ${opts.roomId} · 群发]` : `[多人房间 ${opts.roomId}]`;
     return `${tag} ${opts.fromName} 对你说：\n${opts.text}`;
 }

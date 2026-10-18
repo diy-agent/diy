@@ -1302,40 +1302,109 @@ export function bindAppHandlers(binding: ServerBinding): void {
   binding.on(app.room.get, async ({ input }) => {
     // 走 readRoomView（不是裸 readEvents）：投递状态在 deliveries.jsonl 里，要 fold 上来
     const { readRoomView } = await import("../core/room");
+    const { ensureRoomForTask } = await import("./room-service");
+    // 宿主定案（§28.7 G）：id = taskUri，且**每个任务恒是一个 room** ⇒ 读之前先补齐成员表
+    ensureRoomForTask(input.id);
     const { room, events, bad } = readRoomView(input.id, { limit: input.limit ?? 200 });
     return { room, events, badLines: bad };
   });
   binding.on(app.room.create, async ({ input }) => {
-    const { ensureRoom, isValidRoomId, readRoom, writeRoom } = await import("../core/room");
-    if (!isValidRoomId(input.id)) throw new Error(`房间 id 不合法：${input.id}（字母数字开头，允许 . _ -）`);
-    const humanName = input.human?.trim() || "chen56";
-    const title = input.title?.trim();
-    const room = ensureRoom(input.id, title ? { title } : {});
-    if (room.members.length === 0) {
-      const next = {
-        ...room,
-        members: [{ id: `human:${humanName}`, name: humanName, kind: "human" as const, backend: null, role: "人类（房间主人）" }],
-      };
-      writeRoom(next);
-      return readRoom(input.id) ?? next;
-    }
-    return room;
+    const { isValidRoomId } = await import("../core/room");
+    const { ensureRoomForTask } = await import("./room-service");
+    if (!isValidRoomId(input.id)) throw new Error(`房间 id 不合法：${input.id}（room id = 任务 URI）`);
+    return ensureRoomForTask(input.id);
   });
   binding.on(app.room.addMember, async ({ input }) => {
     const { upsertMember } = await import("../core/room");
+    const { ensureRoomForTask } = await import("./room-service");
+    const room = ensureRoomForTask(input.id);
+    const taskUri = input.task ?? "";
+    // 护栏：**同一 backend 不得挂两个人物**（= A 帽子，##166 §27 已否）
+    const dup = room.members.find((m) => m.backend?.type === "task" && m.backend.data.taskUri === taskUri && taskUri);
+    if (dup) throw new Error(`会话 ${taskUri} 已挂了成员 ${dup.name}（同一 backend 不得挂两个人物）`);
     return upsertMember(input.id, {
       id: `agent:${input.name}`,
       name: input.name,
       kind: "agent",
-      backend: { type: "task", data: { taskUri: input.task ?? "" } },
+      backend: { type: "task", data: { taskUri } },
+      ...(input.persona ? { persona: input.persona } : {}),
       ...(input.role ? { role: input.role } : {}),
     });
   });
+
+  /**
+   * **邀请 = 选人物**（##166 §28.7 F ② / D 的 B 方案：影子 task）。
+   *
+   * 三条口径：
+   *   · 面板列**人物**（不列 task）：调用方给人物 id 或名字；
+   *   · backend 缺省**自动建一个专属影子 task**（复用现有一切，零内核改动）——`--task` 是高级入口；
+   *   · 护栏：同一 backend 不得挂两个人物（§27 已否 A 帽子）；同一人物可进多个 room。
+   */
+  binding.on(app.room.invite, async ({ input }) => {
+    const { upsertMember } = await import("../core/room");
+    const { ensureRoomForTask } = await import("./room-service");
+    const { createTask } = await import("../core/task");
+    const { listPersonas } = await import("../core/persona");
+    const { diyHome, getTask } = await import("../core/state");
+    const room = ensureRoomForTask(input.id);
+    const personas = listPersonas(diyHome());
+    const p = personas.find((x) => x.id === input.persona || x.name === input.persona);
+    if (!p) throw new Error(`没有这个人物：${input.persona}（diy agent persona list 看可用人物）`);
+    // 高级入口：指定绑已有 task；否则建影子 task（title 里带宿主任务，便于回溯）
+    const given = input.task?.trim();
+    let taskUri = given ?? "";
+    let createdTask = false;
+    if (!taskUri) {
+      const host = getTask(input.id);
+      // 影子 task 落在**宿主任务所在的 project**（宿主不在本数据根时回落到第一个可用 project）——
+      // "藏进专属 project"是 ##166 §28.7 D 的后话，探索期跑通优先。
+      const { listProjects } = await import("../core/project");
+      const project = host?.project ?? listProjects()[0]?.id ?? "";
+      if (!project) throw new Error("没有可用 project，建不了影子 task（先 diy project create）");
+      taskUri = createTask({
+        title: `[成员] ${p.name}`,
+        project,
+        persona: p.id,
+        body: `影子任务：房间成员「${p.name}」的会话底座（##166 §28.7 D 的 B 方案）。\n\n宿主任务：${input.id}\n`,
+      });
+      createdTask = true;
+    }
+    const dup = room.members.find((m) => m.backend?.type === "task" && m.backend.data.taskUri === taskUri);
+    if (dup) throw new Error(`会话 ${taskUri} 已挂了成员 ${dup.name}（同一 backend 不得挂两个人物）`);
+    // 成员 id 用**人物名**（`@` 寻址的直觉就是喊名字；重名时加序号）；name 同名 —— UI 显示用
+    const base = p.name.trim().replace(/\s+/g, "-");
+    let memberId = `agent:${base}`;
+    for (let n = 2; room.members.some((m) => m.id === memberId); n++) memberId = `agent:${base}-${n}`;
+    const member = {
+      id: memberId,
+      name: p.name,
+      kind: "agent" as const,
+      persona: p.id,
+      backend: { type: "task" as const, data: { taskUri } },
+      ...(input.role ? { role: input.role } : {}),
+    };
+    const next = upsertMember(input.id, member);
+    return { room: next, member, taskUri, createdTask };
+  });
+
+  binding.on(app.room.removeMember, async ({ input }) => {
+    const { readRoom, removeMember } = await import("../core/room");
+    const { resolveMember } = await import("../../shared/room");
+    const { ensureRoomForTask } = await import("./room-service");
+    ensureRoomForTask(input.id);
+    const room = readRoom(input.id);
+    if (!room) throw new Error(`房间不存在：${input.id}`);
+    const memberId = resolveMember(room, input.member);
+    if (!room.members.some((m) => m.id === memberId)) throw new Error(`房间里没有这个成员：${input.member}`);
+    return removeMember(input.id, memberId);
+  });
   binding.on(app.room.focus, async ({ input }) => {
     const { readRoom, setFocus } = await import("../core/room");
+    const { ensureRoomForTask } = await import("./room-service");
     const { resolveMember } = await import("../../shared/room");
+    ensureRoomForTask(input.id);
     const room = readRoom(input.id);
-    if (!room) throw new Error(`房间不存在：${input.id}（先 diy room create）`);
+    if (!room) throw new Error(`房间不存在：${input.id}`);
     const member = input.member ? resolveMember(room, input.member) : null;
     if (member && !room.members.some((m) => m.id === member)) throw new Error(`房间里没有这个成员：${input.member}`);
     return setFocus(input.id, member);
@@ -1351,6 +1420,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
    */
   binding.on(app.room.turn, async ({ input }) => {
     const { readRoom, readRoomView } = await import("../core/room");
+    const { ensureRoomForTask } = await import("./room-service");
     const { resolveMember } = await import("../../shared/room");
     const { getLocalAgent } = await import("./local-agent");
     const { sessionRegistry } = await import("./session-registry");
@@ -1359,8 +1429,9 @@ export function bindAppHandlers(binding: ServerBinding): void {
     let turnId: string;
     let memberUri: string | null = null;
     if (input.member && input.turn) {
+      ensureRoomForTask(input.id);
       const room = readRoom(input.id);
-      if (!room) throw new Error(`房间不存在：${input.id}（先 diy room create）`);
+      if (!room) throw new Error(`房间不存在：${input.id}`);
       const memberId = resolveMember(room, input.member);
       const m = memberId ? room.members.find((x) => x.id === memberId) : undefined;
       if (!m) throw new Error(`房间里没有这个成员：${input.member}（room get 看成员表）`);
@@ -1403,11 +1474,13 @@ export function bindAppHandlers(binding: ServerBinding): void {
    */
   binding.on(app.room.roster, async ({ input }) => {
     const { readRoom, readRoomView } = await import("../core/room");
+    const { ensureRoomForTask } = await import("./room-service");
     const { getLocalAgent } = await import("./local-agent");
     const { sessionRegistry } = await import("./session-registry");
     const { memberAvatar, memberColor, orderedMembers } = await import("../../shared/room");
+    ensureRoomForTask(input.id);
     const room = readRoom(input.id);
-    if (!room) throw new Error(`房间不存在：${input.id}（先 diy room create）`);
+    if (!room) throw new Error(`房间不存在：${input.id}`);
     const { events } = readRoomView(input.id, { limit: 0 });
     const agent = getLocalAgent();
     const members = orderedMembers(room).map((m, i) => {
