@@ -35,6 +35,12 @@ source "../../sha.common.sh"
 export DIY_VARIANT="${DIY_VARIANT:-prod}"
 _build_dir() { echo "build/${DIY_VARIANT:-prod}"; }
 
+# electron 二进制就绪（全机共享 store + 本 worktree 软链；缺则下载一次，带超时）。
+# 为什么**起 Electron 前必须过这一道**：electron 无 postinstall，dist/path.txt 缺时
+# `require('electron')` 会落进**无超时下载**（实测静默卡死 3m40s，日志看着像"在跑"）。
+# 实现 `scripts/ensure-electron.mjs`（根目录，头注有判据与 store 布局）。
+_ensure_electron() { run node ../../scripts/ensure-electron.mjs --quiet; }
+
 clean() {
   run rm -rf ./build ./dist
 }
@@ -89,9 +95,9 @@ test-unit() { run npx vitest run --exclude '**/cli.intent*'; }
 # 预览实例：renderer dev server + watch main/preload + electron（HMR，人看效果）。
 # 产物/数据根 build/preview/{main,preload,home} —— 与 lab / test 互不干扰，可同时运行。
 # 透传参数，如 --port 18888
-preview() { run env DIY_VARIANT=preview npx tsx scripts/electron-dev.mts "$@"; }
+preview() { _ensure_electron; run env DIY_VARIANT=preview npx tsx scripts/electron-dev.mts "$@"; }
 # 实验实例：同 preview 机制，但独占 build/lab/**（agent 快速验证/debug 用）。
-lab() { run env DIY_VARIANT=lab npx tsx scripts/electron-dev.mts "$@"; }
+lab() { _ensure_electron; run env DIY_VARIANT=lab npx tsx scripts/electron-dev.mts "$@"; }
 # 开发期跑 CLI 源码：./sha.sh cli task list
 cli() { run npx tsx src/cli/index.ts "$@"; }
 # 纯 Web 服务（先构建 renderer，透传参数，如 --port <port>）
@@ -108,6 +114,7 @@ build-renderer() { run npx vite build --config vite.renderer.config.ts; }
 # 运行生产构建（先构建，变体 prod）
 start() {
   build
+  _ensure_electron
   run npx electron "$(_build_dir)/main/index.mjs" "$@"
 }
 link() { run npm link; }
@@ -119,6 +126,7 @@ test-watch() { run npx vitest "$@"; }
 test-intent() {
   # 测试实例独占 build/test/**：与 preview/lab 的 watch 产物不撞（##184 实例分根）
   export DIY_VARIANT=test
+  _ensure_electron
   build
   export DIY_CLI_MODE="${DIY_CLI_MODE:-http}"
   # 位置参数 = 只跑匹配的文件（片段 / 相对路径 / 文件名），无参数 = 全量。

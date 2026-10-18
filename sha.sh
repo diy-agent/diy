@@ -68,6 +68,11 @@ sync-deps() {
 
     _ws_run command ./sha.sh sync;
 
+    # electron 二进制：全机一份 store + 本 worktree 只留软链（细节见 scripts/ensure-electron.mjs
+    # 头注）。这里**不联网**（--no-download）：构建/检查用不到二进制，缺就一行提示；
+    # 真起 Electron 的入口（pkgs.ts/diy-app/sha.sh 的 preview/lab/test-intent/start）会硬校验。
+    run node scripts/ensure-electron.mjs --no-download --soft --quiet
+
     # 记下本次同步覆盖的 lock/manifest 指纹：build/check/test/preview/lab 入口的
     # ensure-sync 拿 scripts/check-sync.mjs 比对它，判「有没有落后」
     run node scripts/check-sync.mjs --write-stamp
@@ -84,8 +89,8 @@ sync()  {
 
 # ── 同步闸门：入口前置「没 sync 就先 sync」 ────────────────────────────────────
 # 判据 = scripts/check-sync.mjs（只读快检、毫秒级）：workspace 链接缺失/过期（如包改名后
-# 残留的 `node_modules/@diy/rpc`）、sync 印记落后、submodule 未 init；electron dist/path.txt
-# 缺失只提示不判定（sync 修不了，见 AGENTS.md tool.electron）。
+# 残留的 `node_modules/@diy/rpc`）、sync 印记落后、submodule 未 init；electron 二进制的
+# dist/path.txt 缺失只提示不判定（它由 `sync-deps` 的 ensure-electron 补，见其末尾）。
 #   · 命中 → 自动 sync-deps 后继续；`DIY_AUTO_SYNC=0` 关掉自动修（改为报错停下）
 #   · 只挂 build/check/test/preview/lab 入口；**sync 自身不挂**（否则递归）
 # 为什么值得：包改名 / 加依赖后 node_modules 落后，症状是构建报**远离根因**的错，如

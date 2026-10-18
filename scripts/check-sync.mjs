@@ -16,9 +16,10 @@
 //      但没 sync。**不用**「lock vs node_modules/.package-lock.json 比对」：npm 不装其它平台的
 //      可选依赖（实测 101 条假阳，如 `@esbuild/darwin-x64`）
 //   3. submodule：`git submodule status` 首字符 `-` = 未 init（sync 会补）
-// 另有两条**只提示、不判定**（sync 修不了，故不计入退出码）：
-//   node_modules/electron/{dist,path.txt} 缺失 —— electron 无 postinstall，缺了会落进
-//   **无超时下载**（实测静默卡死 3m40s），见仓库根 AGENTS.md `tool.electron`
+// 另有几条**只提示、不判定**（不影响 build/check，故不计入退出码）：
+//   node_modules/electron/{dist,path.txt} 缺失 / dist 是实目录（未共享）—— electron 无
+//   postinstall，缺了 `require('electron')` 会落进**无超时下载**（实测静默卡死 3m40s）。
+//   修它的是 `scripts/ensure-electron.mjs`（sync-deps 末尾调、不联网），见 AGENTS.md `tool.electron`
 //
 // 退出码：0 = 已同步 · 1 = 需要 sync · 2 = 脚本自身出错（如 package-lock.json 缺失）
 // 用法：
@@ -214,17 +215,20 @@ function checkSubmodules() {
 }
 
 /**
- * 只提示项：electron 运行时（sync 修不了，见文件头；dist 与 path.txt 缺哪个起 Electron 都会
- * 落进**无超时下载**）。
+ * 只提示项：electron 二进制布局（修它的唯一入口是 scripts/ensure-electron.mjs，见文件头）。
+ * dist 在软链上 = 已收进全机 store；实目录 = 每个 worktree 各占一份（~300MB），可去重。
  */
 function collectWarnings() {
   const warnings = [];
-  if (!existsSync(abs(ELECTRON_REL))) return warnings;
-  if (!existsSync(abs(`${ELECTRON_REL}/dist`))) {
-    warnings.push(`${ELECTRON_REL}/dist 缺失 → 起 Electron 会落进**无超时下载**（静默卡死）。省法见 AGENTS.md tool.electron（软链主仓 dist）`);
-  }
-  if (!existsSync(abs(`${ELECTRON_REL}/path.txt`))) {
-    warnings.push(`${ELECTRON_REL}/path.txt 缺失 → 光链 dist 不够，getElectronPath() 取不到可执行名，仍会走无超时下载（见 AGENTS.md tool.electron）`);
+  const pkg = abs(ELECTRON_REL);
+  if (!existsSync(pkg)) return warnings;
+  const dist = abs(`${ELECTRON_REL}/dist`);
+  if (!existsSync(dist)) {
+    warnings.push(`${ELECTRON_REL}/dist 缺失 → 起 Electron 会落进**无超时下载**（静默卡死）。补：node scripts/ensure-electron.mjs（./sha.sh sync 会自动跑，不联网）`);
+  } else if (!existsSync(abs(`${ELECTRON_REL}/path.txt`))) {
+    warnings.push(`${ELECTRON_REL}/path.txt 缺失 → 光有 dist 不够，getElectronPath() 取不到可执行名，仍会走无超时下载 → node scripts/ensure-electron.mjs`);
+  } else if (process.env.DIY_ELECTRON_SHARED !== '0' && !lstatSync(dist).isSymbolicLink()) {
+    warnings.push(`${ELECTRON_REL}/dist 是实目录（每个 worktree 各占 ~300MB）→ node scripts/ensure-electron.mjs 收成共享软链（DIY_ELECTRON_SHARED=0 可关）`);
   }
   return warnings;
 }
