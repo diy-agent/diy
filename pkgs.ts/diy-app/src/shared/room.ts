@@ -21,7 +21,13 @@ import { z } from "zod";
  * 故 id 直接复用 taskUri（含 `/`）—— 它是**路径安全**的（tasks 目录下的一层），
  * 校验只排除 `..` 与首尾斜杠（防越出 `rooms/` 根）。
  */
-export const ROOM_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_./-]*$/;
+/**
+ * room id 允许的字符。
+ *
+ * **含 `:`** —— ##166 §31 待拍 82/85 拍板侧边栏 room 的 id 是
+ * `agent:room:ui/sidebar-<实例>`（id 直接当落盘目录名，实测 macOS 可建含冒号目录）。
+ */
+export const ROOM_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_:./-]*$/;
 
 /** 房间 id 是否安全（同时是**目录名**判据：不许 `..` / 不许结尾 `/`） */
 export function isValidRoomId(id: string): boolean {
@@ -40,6 +46,39 @@ export function isValidRoomId(id: string): boolean {
  *   · 它的正文**不加房间包装**（见 `deliveryText.plain`）—— 对宿主而言那句话就是本人说的；
  *   · UI 渲染时它的事件**不重复画**（本会话的块流里已经有那一轮）。
  */
+/**
+ * **侧边栏 room**（##166 §30：全局悬浮助手 room）的 id 前缀 —— §31 待拍 82/85 已拍。
+ *
+ * 与任务 room 的分工：任务 room 的 id = taskUri（§28.7 G）；侧边栏 room **不属任何任务**，
+ * 所以 id 自成一族（`agent:room:` 前缀 = "room 自己的命名空间"）。
+ */
+export const SIDEBAR_ROOM_PREFIX = "agent:room:ui/sidebar-";
+
+/** 稳定短哈希（djb2 → base36）。用途：把 diyHome 压成短且**确定**的实例标识（不是新身份体系，只是编码） */
+export function shortHash(s: string): string {
+    let h = 5381;
+    for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+    return h.toString(36).padStart(6, "0").slice(0, 6);
+}
+
+/**
+ * 侧边栏 room 的 id —— `<实例>` 由**现有实例身份**派生（##30 owner 口径：用 `getAppInfo` 那套，
+ * 不新造身份体系）：`env`（人一眼看出是哪个实例）+ `diyHome` 的短哈希
+ * （同一台机器上多个 worktree 各有自己的数据根 ⇒ 各自的侧边栏 room 互不串）。
+ *
+ * ⚠️ 用 **diyHome** 而不是 **port** 作哈希源：端口每次重启都会变（`resolvePort` 非生产随机），
+ * 拿它做 id 会让侧边栏 room **每次重启换一个**（成员表丢）。diyHome 是稳定的那个。
+ */
+export function sidebarRoomId(env: string, diyHome: string): string {
+    const e = env === "production" ? "prod" : env === "development" ? "dev" : env || "unknown";
+    return `${SIDEBAR_ROOM_PREFIX}${e}-${shortHash(diyHome)}`;
+}
+
+/** 这个 id 是不是侧边栏 room 的（决定"主人格 backend 从哪来" —— 它没有 task 可绑） */
+export function isSidebarRoomId(id: string): boolean {
+    return id.startsWith(SIDEBAR_ROOM_PREFIX);
+}
+
 export const MAIN_MEMBER_ID = "agent:main";
 
 /** 人的成员 id（发言人恒是页面操作者本人；沿用最小切片的名字） */

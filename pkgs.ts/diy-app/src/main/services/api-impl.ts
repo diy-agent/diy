@@ -1304,7 +1304,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { readRoomView } = await import("../core/room");
     const { ensureRoomForTask } = await import("./room-service");
     // 宿主定案（§28.7 G）：id = taskUri，且**每个任务恒是一个 room** ⇒ 读之前先补齐成员表
-    ensureRoomForTask(input.id);
+    await ensureRoomForTask(input.id);
     const { room, events, bad } = readRoomView(input.id, { limit: input.limit ?? 200 });
     return { room, events, badLines: bad };
   });
@@ -1312,12 +1312,12 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { isValidRoomId } = await import("../core/room");
     const { ensureRoomForTask } = await import("./room-service");
     if (!isValidRoomId(input.id)) throw new Error(`房间 id 不合法：${input.id}（room id = 任务 URI）`);
-    return ensureRoomForTask(input.id);
+    return await ensureRoomForTask(input.id);
   });
   binding.on(app.room.addMember, async ({ input }) => {
     const { upsertMember } = await import("../core/room");
     const { ensureRoomForTask } = await import("./room-service");
-    const room = ensureRoomForTask(input.id);
+    const room = await ensureRoomForTask(input.id);
     const taskUri = input.task ?? "";
     // 护栏：**同一 backend 不得挂两个人物**（= A 帽子，##166 §27 已否）
     const dup = room.members.find((m) => m.backend?.type === "task" && m.backend.data.taskUri === taskUri && taskUri);
@@ -1343,10 +1343,9 @@ export function bindAppHandlers(binding: ServerBinding): void {
   binding.on(app.room.invite, async ({ input }) => {
     const { upsertMember } = await import("../core/room");
     const { ensureRoomForTask } = await import("./room-service");
-    const { createTask } = await import("../core/task");
     const { listPersonas } = await import("../core/persona");
-    const { diyHome, getTask } = await import("../core/state");
-    const room = ensureRoomForTask(input.id);
+    const { diyHome } = await import("../core/state");
+    const room = await ensureRoomForTask(input.id);
     const personas = listPersonas(diyHome());
     const p = personas.find((x) => x.id === input.persona || x.name === input.persona);
     if (!p) throw new Error(`没有这个人物：${input.persona}（diy agent persona list 看可用人物）`);
@@ -1355,18 +1354,11 @@ export function bindAppHandlers(binding: ServerBinding): void {
     let taskUri = given ?? "";
     let createdTask = false;
     if (!taskUri) {
-      const host = getTask(input.id);
       // 影子 task 落在**宿主任务所在的 project**（宿主不在本数据根时回落到第一个可用 project）——
       // "藏进专属 project"是 ##166 §28.7 D 的后话，探索期跑通优先。
-      const { listProjects } = await import("../core/project");
-      const project = host?.project ?? listProjects()[0]?.id ?? "";
-      if (!project) throw new Error("没有可用 project，建不了影子 task（先 diy project create）");
-      taskUri = createTask({
-        title: `[成员] ${p.name}`,
-        project,
-        persona: p.id,
-        body: `影子任务：房间成员「${p.name}」的会话底座（##166 §28.7 D 的 B 方案）。\n\n宿主任务：${input.id}\n`,
-      });
+      // 建法与 §30 侧边栏主人格**同一份**（room-service::createShadowTask），不各写一遍。
+      const { createShadowTask } = await import("./room-service");
+      taskUri = await createShadowTask(input.id, p);
       createdTask = true;
     }
     const dup = room.members.find((m) => m.backend?.type === "task" && m.backend.data.taskUri === taskUri);
@@ -1391,7 +1383,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { readRoom, removeMember } = await import("../core/room");
     const { resolveMember } = await import("../../shared/room");
     const { ensureRoomForTask } = await import("./room-service");
-    ensureRoomForTask(input.id);
+    await ensureRoomForTask(input.id);
     const room = readRoom(input.id);
     if (!room) throw new Error(`房间不存在：${input.id}`);
     const memberId = resolveMember(room, input.member);
@@ -1402,7 +1394,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { readRoom, setFocus } = await import("../core/room");
     const { ensureRoomForTask } = await import("./room-service");
     const { resolveMember } = await import("../../shared/room");
-    ensureRoomForTask(input.id);
+    await ensureRoomForTask(input.id);
     const room = readRoom(input.id);
     if (!room) throw new Error(`房间不存在：${input.id}`);
     const member = input.member ? resolveMember(room, input.member) : null;
@@ -1429,7 +1421,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     let turnId: string;
     let memberUri: string | null = null;
     if (input.member && input.turn) {
-      ensureRoomForTask(input.id);
+      await ensureRoomForTask(input.id);
       const room = readRoom(input.id);
       if (!room) throw new Error(`房间不存在：${input.id}`);
       const memberId = resolveMember(room, input.member);
@@ -1478,7 +1470,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { getLocalAgent } = await import("./local-agent");
     const { sessionRegistry } = await import("./session-registry");
     const { memberAvatar, memberColor, orderedMembers } = await import("../../shared/room");
-    ensureRoomForTask(input.id);
+    await ensureRoomForTask(input.id);
     const room = readRoom(input.id);
     if (!room) throw new Error(`房间不存在：${input.id}`);
     const { events } = readRoomView(input.id, { limit: 0 });

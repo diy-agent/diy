@@ -9,6 +9,7 @@ import { TrafficPage } from "./components/TrafficPage";
 import { SessionOverviewPage } from "./components/SessionOverviewPage";
 import { InstancesPage } from "./components/InstancesPage";
 import { RoomsPage } from "./components/RoomsPage";
+import { SidebarRoom } from "./components/SidebarRoom";
 import { SessionChip, SessionDot } from "./components/SessionChip";
 import { TaskAgentStateBadge, TaskAgentStateDot } from "./components/TaskAgentState";
 import { ModelConfigPage } from "./components/ModelConfigPage";
@@ -792,6 +793,7 @@ export default function App() {
     return (
         // diy-nav-rail / diy-nav-rail-open：窄窗 rail 常驻占列 + 点开浮层（##297），
         // 覆盖规则见 index.css。宽窗不需要额外类：lg:drawer-open 已让侧栏占列。
+        <>
         <div
             class={`drawer lg:drawer-open ${
                 isNarrow() ? `diy-nav-rail${railOpen() ? " diy-nav-rail-open" : ""}` : ""
@@ -1448,5 +1450,9 @@ export default function App() {
 
             <ToastContainer />
         </div>
+        {/* 全局侧边栏助手 room（##166 §30 / §31）：**独立于路由** ——
+            挂在 drawer 之外，免得 drawer 的布局/变换影响它的 fixed 定位。 */}
+        <SidebarRoom />
+        </>
     );
 }

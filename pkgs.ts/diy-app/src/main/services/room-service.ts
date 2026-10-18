@@ -28,6 +28,7 @@ import {
     HUMAN_MEMBER_ID,
     MAIN_MEMBER_ID,
     isAllAddress,
+    isSidebarRoomId,
     memberName,
     parseAddress,
     resolveMember,
@@ -45,6 +46,73 @@ function errText(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
 }
 
+/** 人成员（「我」）—— 任务 room 与侧边栏 room 同一份（页面操作者本人，无 backend） */
+function humanMember(): RoomMember {
+    return { id: HUMAN_MEMBER_ID, name: "chen56", kind: "human", backend: null, role: "我" };
+}
+
+/**
+ * 建一个**影子 task** —— 给"没有本任务可绑"的成员做会话底座（##166 §28.7 D 的 B 方案）。
+ *
+ * 两处调用，同一条规则（别再各写一份）：
+ *   · `room.invite` —— 宿主是任务 room，影子 task 落它的 project；
+ *   · `ensureSidebarRoom` —— 宿主不是 task（§30 侧边栏），回落到第一个可用 project。
+ */
+export async function createShadowTask(hostId: string, p: { id: string; name: string }): Promise<string> {
+    // ⚠️ **必须动态 import**：顶层 import `core/task` 会把 `task-state`（`z.enum`）拖进共享 chunk，
+    // 打包器让它先于 zod 补丁（`_cli-meta`）求值 ⇒ 启动即
+    // `TypeError: TaskStateSchema.cliArg is not a function`（##322 实测过同型；我这一版就是踩了它）。
+    const { createTask } = await import("../core/task");
+    const { listProjects } = await import("../core/project");
+    const host = getTask(hostId);
+    const project = host?.project ?? listProjects()[0]?.id ?? "";
+    if (!project) throw new Error("没有可用 project，建不了影子 task（先 diy project create）");
+    return createTask({
+        title: `[成员] ${p.name}`,
+        project,
+        persona: p.id,
+        body: `影子任务：房间成员「${p.name}」的会话底座（##166 §28.7 D 的 B 方案）。\n\n宿主：${hostId}\n`,
+    });
+}
+
+/**
+ * 取（或补齐）**侧边栏 room** —— ##166 §30 的全局悬浮助手 room（id = `agent:room:ui/sidebar-<实例>`）。
+ *
+ * 与任务 room 的差别**只有一处**：它没有宿主 task ⇒ 主人格的 backend 无处可绑。
+ * 口径（##166 §30 owner 补拍 · 选 a）：**主人格 = 缺省人物 + 影子 task** ——
+ * 与被邀请成员**同一条规则**（不搞"主人格特例"）⇒ 成员表形态与任务 room 同构。
+ *
+ * ⚠️ 副作用（如实记）：**首次**调用会建一个影子 task（缺省人物的会话底座）。
+ */
+export async function ensureSidebarRoom(id: string): Promise<Room> {
+    const home = diyHome();
+    let room = readRoom(id);
+    if (!room) {
+        const personas = listPersonas(home);
+        const personaId = defaultPersonaId(home);
+        const p = personas.find((x) => x.id === personaId) ?? personas[0];
+        const members: RoomMember[] = [humanMember()];
+        if (p) {
+            members.push({
+                id: MAIN_MEMBER_ID,
+                name: p.name,
+                kind: "agent",
+                main: true,
+                persona: p.id,
+                backend: { type: "task", data: { taskUri: await createShadowTask(id, p) } },
+                role: "主人格",
+            });
+        }
+        room = ensureRoom(id, {
+            title: "侧边栏助手",
+            members,
+            focus: p ? MAIN_MEMBER_ID : null,
+        });
+    }
+    if (!room.members.some((m) => m.kind === "human")) room = upsertMember(id, humanMember());
+    return readRoom(id) ?? room;
+}
+
 /**
  * 取（或补齐）**一个任务的 room** —— 宿主定案（##166 §28.7 G）的唯一入口。
  *
@@ -58,7 +126,9 @@ function errText(e: unknown): string {
  *
  * 为什么在服务层而不是 core：这里要读 task 元数据（标题 / persona）与人物表 —— core 只管落盘那份。
  */
-export function ensureRoomForTask(taskUri: string): Room {
+export async function ensureRoomForTask(taskUri: string): Promise<Room> {
+    // 侧边栏 room（§30）没有宿主 task ⇒ 主人格的 backend 只能走影子 task（另一条 ensure 路径）
+    if (isSidebarRoomId(taskUri)) return await ensureSidebarRoom(taskUri);
     const task = getTask(taskUri);
     const home = diyHome();
     const personaId = task?.persona?.trim() ? task.persona.trim() : defaultPersonaId(home);
@@ -72,13 +142,7 @@ export function ensureRoomForTask(taskUri: string): Room {
         backend: { type: "task", data: { taskUri } },
         role: "主人格",
     };
-    const human: RoomMember = {
-        id: HUMAN_MEMBER_ID,
-        name: "chen56",
-        kind: "human",
-        backend: null,
-        role: "我",
-    };
+    const human = humanMember();
     let room = readRoom(taskUri);
     if (!room) {
         room = ensureRoom(taskUri, {
@@ -188,7 +252,7 @@ export function memberQueueDepth(roomId: string, memberId: string): number {
  */
 export async function* postToRoom(roomId: string, rawText: string): AsyncGenerator<RoomEvent> {
     // roomId 自 §28.7 G 起就是 taskUri：取房间 = 取那个任务的 room（缺则补齐主人格成员）
-    const room = ensureRoomForTask(roomId);
+    const room = await ensureRoomForTask(roomId);
     const text = rawText.trim();
     if (!text) throw new Error("空发言：没内容可发（UI/CLI 应提前拦）");
 
