@@ -3,7 +3,7 @@
 //    任务按项目聚合存放：$DIY_HOME/projects/<pid>/tasks/<tid>/AGENTS.md
 //    所有输入验证用 zod，收集全部错误再抛出（不短路）。
 
-import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import * as yaml from "js-yaml";
 import { z } from "zod";
@@ -23,6 +23,7 @@ import { projectExists } from "./project";
 // agent 人物：不传 = **跟随缺省**（不写键），传值则校验存在后固定绑定（人物定义见 core/persona.ts）
 import { personaById } from "./persona";
 import { isPersonaFollow } from "../../shared/persona";
+import { writeFileAtomic } from "./atomic-write";
 
 // ═══════════════════════════════════════
 // 字段验证 schema
@@ -266,7 +267,8 @@ export function createTask(params: CreateTaskParams): string {
     // 不写 project frontmatter —— project 由 URI 路径推导（路径即分组）
   };
 
-  writeFileSync(taskFilePath(uri), composeTaskFile(meta, body ?? ""), "utf-8");
+  // 原子写（##382）：低磁盘 / 写入失败时**原文件逐字不变**，绝不把正文清成 0 字节。
+  writeFileAtomic(taskFilePath(uri), composeTaskFile(meta, body ?? ""));
 
   return uri;
 }
@@ -523,7 +525,9 @@ export function updateTask(uri: string, changes: UpdateTaskChanges): TaskWriteRe
   let nextBody = (parsed.data.body ?? split.body).trim();
   if (appended) nextBody = nextBody ? `${nextBody}\n\n${appended}` : appended;
 
-  writeFileSync(fp, composeTaskFile(front, nextBody), "utf-8");
+  // 原子写（##382）：追加 / 覆盖正文失败时磁盘上的旧正文**逐字不变**（旧实现先清空再写，
+  // 低磁盘下把 253KB 正文写成了 0 字节）。
+  writeFileAtomic(fp, composeTaskFile(front, nextBody));
 
   return {
     // 头被剥掉了：键清单 + 与文件头不一致的键（后者**没有写回** —— 文件头是权威，

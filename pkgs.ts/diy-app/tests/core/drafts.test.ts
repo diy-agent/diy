@@ -3,7 +3,7 @@
 //    数据在 /tmp/diy-desktop-test-xxx/（setup.ts 隔离），不碰生产 ~/.diy/
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { diyHome, taskDir, taskSystemDir } from "../../src/main/core/state";
 import {
@@ -174,9 +174,12 @@ describe("drafts 健壮性", () => {
     expect(readDrafts(URI)!.fields.title).toBeUndefined();
   });
 
-  it("原子写：写完不留 .tmp", () => {
+  it("原子写：写完不留 tmp（原语见 core/atomic-write.ts，##382 收敛）", () => {
     writeDrafts(URI, { title: "T" });
     expect(existsSync(draftsFilePath(URI) + ".tmp")).toBe(false);
+    // tmp 名带 pid + 随机后缀（##382），故按**前缀**扫整个目录：任何 `drafts.yaml.tmp-*` 都算残留
+    const leftovers = readdirSync(taskSystemDir(URI)).filter((n) => n.startsWith("drafts.yaml.tmp"));
+    expect(leftovers).toEqual([]);
   });
 });
 

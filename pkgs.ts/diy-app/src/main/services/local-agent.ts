@@ -23,12 +23,12 @@ import {
     openSync,
     readFileSync,
     readSync,
-    renameSync,
     rmSync,
     statSync,
     writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { writeFileAtomic } from "../core/atomic-write";
 import { diyHome, projectDir, projectFromUri } from "../core/state";
 import { keyOf, llmFile, llmLogRelPath, localDir, opsFile, sessionIdOf } from "../core/local-paths";
 
@@ -1652,8 +1652,9 @@ export class LocalAgentManager {
         }
         console.warn(`[local-agent] llm 全量日志与 ops 投影不一致（第 ${k + 1} 条起），整份重建 ${fp}${why}`);
         try {
-            writeFileSync(`${fp}.tmp`, expect.map((l) => `${l}\n`).join(""), "utf-8");
-            renameSync(`${fp}.tmp`, fp);
+            // 原子写（##382 收敛）：整份重建也是「整文件覆盖」，与 core/atomic-write.ts 同语义。
+            // 注意**调用方**这里的 catch 仍是「降级返回 k」—— 那是重建路径的既有策略，非写侧行为。
+            writeFileAtomic(fp, expect.map((l) => `${l}\n`).join(""));
             return expect.length;
         } catch (e) {
             console.error(`[local-agent] llm 日志重建失败 ${fp}:`, e);
