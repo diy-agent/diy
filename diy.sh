@@ -39,6 +39,14 @@ if [[ ! -f "$GUI_ENTRY" ]]; then
   exit 1
 fi
 
+# ── electron 二进制就绪（缺/悬空就先补）──
+# CLI 顶层 `import electronPath from "electron"`（src/cli/index.ts）⇒ **每条命令**（连 task list）
+# 都经 electron 的 getElectronPath()；缺二进制时它既不提示也不报错（悬空软链→装不上、整个缺→静默下载数分钟）。
+# 判据、实测与开关见 scripts/ensure-electron-if-needed.sh（纯 bash 快检，就绪则零 node 开销）。
+if [[ -x "$SCRIPT_DIR/scripts/ensure-electron-if-needed.sh" ]]; then
+  "$SCRIPT_DIR/scripts/ensure-electron-if-needed.sh"
+fi
+
 # ── 生产数据保护 ──
 # agent / CI / 外层 shell 常导出 DIY_HOME=~/.diy。若直接透传，worktree 里一条
 # `./diy.sh project remove <id>` 就会操作生产数据（实测：removeProject 会按 meta.yaml
