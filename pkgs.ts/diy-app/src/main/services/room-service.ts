@@ -30,6 +30,7 @@ import {
     isAllAddress,
     isSidebarRoomId,
     memberName,
+    opsAuthorFor,
     parseAddress,
     resolveMember,
     resolveRecipients,
@@ -437,7 +438,11 @@ function deliverOne(input: DeliverInput): Promise<void> {
             // 署名（##166 §40 B）：值 = **发起投递的成员 id**（`agent:main` / `human:ccc`），
             // 不是自由字符串 —— 可追溯、可点开。对方会话里那条 user 块据此区分"谁在跟我说"，
             // 任务对话页据此把气泡翻到左侧并署名（C 块）。
-            author,
+            // ⚠️ 第 17 刀收窄（§44.2 A · D 判据 1/7）：**投给主人格且发起者是页面操作者本人 ⇒ 不署名** ——
+            //   主人格的会话就是任务页**自己的**会话，凭空带上 `human:chen56` 会让那条气泡翻到左侧并加署名
+            //   ⇒「无 @ 发送 = 与今天等价 / 单人任务逐字一致」当场破。判据在 `shared/room.opsAuthorFor`
+            //   （纯函数 + 单测），**别在这里另写一份**。
+            opsAuthorFor(member.main === true, author),
         );
         const replyId = nextEventId();
         const ev = record(roomId, {
