@@ -20,7 +20,7 @@
 import { createSignal } from "solid-js";
 import { diyService } from "../lib/rpc";
 import { notificationStore } from "./notificationStore";
-import { BlockStore, toForest, type BlockNode, type Op } from "../../main/services/local-blocks";
+import { BlockStore, applyOpsSafely, toForest, type BlockNode, type Op } from "../../main/services/local-blocks";
 import type { OpsFrame } from "../../shared/ops-frame";
 // 阅读位置锚点的形状（纯函数模块，零 DOM）：与滚动决策同源，故不在此另定一份
 import type { ChatAnchor } from "../lib/chat-scroll";
@@ -213,9 +213,9 @@ function turnIdsOf(ops: Op[]): string[] {
  * 触发面：首载与在途流式并发（`doReload` 有 `running()` 挡着，首载没有）。
  */
 function applyInto(seg: Segment, ops: Op[]): void {
-    // 重复 apply 会给"重复 start"记 issue；渲染端不消费 issues，但别让它无界堆积
-    if (seg.store.issues.length > 0) seg.store.issues.length = 0;
-    for (const op of ops) seg.store.apply(op);
+    // 逐条容错在 `applyOpsSafely`（##377 第 15 刀）：一条坏 op 不该吃掉它后面的所有记录。
+    // 纯函数抽在 main/services/local-blocks（与 BlockStore 同文件），故可单测。
+    applyOpsSafely(seg.store, ops);
 }
 
 /** `prefix` 是不是 `arr` 的前缀（前缀守卫的判据；空前缀恒真） */

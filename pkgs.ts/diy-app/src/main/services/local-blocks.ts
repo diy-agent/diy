@@ -489,6 +489,34 @@ function buildNode(store: BlockStore, rootId: string, cache: Map<string, TreeCac
 }
 
 /**
+ * **逐条容错地**把一批 op 应用到 store 上；返回失败条数（0 = 全成功）。
+ *
+ * 为什么需要它（##377 第 15 刀）：`BlockStore.apply` 对**结构损坏**的 op 会抛
+ * （未知块 / 坏模式走 `issues` 不抛，但 `op` 本身是 null、`fields` 不是对象这类会抛）。
+ * 调用方（渲染端的 `applyInto`）原来直接 `for (op of ops) store.apply(op)` ——
+ * **一条抛错就中断整批，且没有任何日志**：尾部那批 op 全不落地，
+ * 症状是"最新的几轮整段消失"，而界面上与"模型还没回"完全同形。
+ *
+ * 取舍：坏记录**不该吃掉它后面**的所有记录 ⇒ 出声、跳过、继续。
+ * 这不是"吞错"—— 坏 op 原样打出来（前 3 条）+ 总数汇总，排查时看得见。
+ */
+export function applyOpsSafely(store: BlockStore, ops: readonly Op[]): number {
+    // 重复 apply 会给"重复 start"记 issue；渲染端不消费 issues，但别让它无界堆积
+    if (store.issues.length > 0) store.issues.length = 0;
+    let failed = 0;
+    for (const op of ops) {
+        try {
+            store.apply(op);
+        } catch (e) {
+            failed++;
+            if (failed <= 3) console.warn("[local-blocks] op 应用失败（跳过，继续后续）:", op, e);
+        }
+    }
+    if (failed > 0) console.warn(`[local-blocks] 本批 op 有 ${failed}/${ops.length} 条应用失败（已跳过）`);
+    return failed;
+}
+
+/**
  * 导出块树。**同一次未变的子树返回同一对象**（见上方 TreeCache 的理由），
  * 调用方可安全用引用相等做 diff。
  */
