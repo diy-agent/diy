@@ -74,7 +74,7 @@ import { fmtClock } from "../../shared/date-format";
 import { diyService } from "../lib/rpc";
 import { layoutStore } from "../store/layoutStore";
 // 滚动决策（纯函数，可单测：跟随时序 / 锚点恢复）—— 本文件只负责 DOM 读写
-import { anchorScrollTop, anchorTick, clampScrollTop, followPlan, lastLeafId, type AnchorTickState, type ChatAnchor } from "../lib/chat-scroll";
+import { anchorScrollTop, anchorTick, clampScrollTop, followPlan, lastLeafId, nearBottom as libNearBottom, type AnchorTickState, type ChatAnchor } from "../lib/chat-scroll";
 // user 发言的时刻 label（纯函数：块 id → 所属轮起点时刻；数据源与降级口径见模块头注）
 import { userStamp } from "../lib/user-stamp";
 // 对话流的时间戳：真源是 turnId 内嵌的毫秒（shared/date-format 统一解析与格式化）
@@ -223,14 +223,12 @@ export function previewLines(text: string, head = 20, tail = 30): Preview {
 // 为什么不开 overflow-anchor：它是"防上方内容变形顶走视口"的保险丝，且会与
 // 我们主动赋值 scrollTop 抢位置。当前 Markdown 只在本块内增长、历史块 memo
 // 稳定不变高，Shiki 同步无异步撑高 → 用不上，反而添乱。
-const STICK_PX = 32;
-
 /** 距顶多少 px 内就算「滚到顶了」⇒ 触发补一段更早的历史（任务 293）。
  *  不取 0：滚动是像素级的，留一点余量才能在真的触顶前就把请求发出去（滚动手感更连续）。 */
 const TOP_TRIGGER_PX = 240;
-/** 是否已贴底（容差内即算底部，避免差 1px 永远跟不住） */
-const nearBottom = (el: HTMLElement) =>
-    el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_PX;
+// `STICK_PX` / `nearBottom` 已抽到 `lib/chat-scroll`（##377 第 19 刀：room 侧事件流
+// 也要同一套跟随判据，两处各写一份必然漂移）。
+const nearBottom = (el: HTMLElement) => libNearBottom(el);
 
 /** 块树里有没有这个 id（DFS；虚拟化下"块 → 行"的定位用，见 `anchorRowIndex`） */
 function containsBlockId(n: BlockNode, id: string): boolean {
@@ -2345,7 +2343,13 @@ export function LocalChatPage(props: {
      */
     const applyAnchor = (el: HTMLDivElement, a: ChatAnchor) => {
         const first = blockElOf(el, a.id);
-        if (first) writeScrollTop(el, anchorScrollTop(blockTopIn(el, first), a.offset, el.scrollHeight, el.clientHeight));
+        if (first) {
+            const target = anchorScrollTop(blockTopIn(el, first), a.offset, el.scrollHeight, el.clientHeight);
+            // 已经对齐就不写（##377 第 19 刀）：写入本身不带副作用，但"每 2.5s 校正一次"会
+            // 让布局/窗口来回重挂，用户看得见闪 —— 无事不发生才是稳。
+            if (Math.abs(target - el.scrollTop) < 1) return;
+            writeScrollTop(el, target);
+        }
         // 逐帧决策全在 `anchorTick`（纯函数，review1 R1 的 latch 在那）：组件只负责量 DOM 与写 scrollTop。
         let st: AnchorTickState = { lastSt: el.scrollTop, quiet: 0, userLeft: false };
         // 起始基准取**写后**的实际值：上面那次定位可能被浏览器收口（内容变矮），
@@ -2640,13 +2644,37 @@ export function LocalChatPage(props: {
         layoutStore.setAreaHiddenAuto(page, "right", otherAgents === 0);
     };
 
+    /**
+     * 软轮询的**引用稳定器**（##377 第 19 刀）：内容没变就不换引用。
+     *
+     * 为什么必须做：`roomFeed` 每 2.5s 换一次引用 ⇒ `roomRows → allRows → rowKeys → layout`
+     * 整条 memo 链重算 ⇒ 下游**视口锚定 effect** 被惊动 ⇒ 视口被甩到账面顶再校正回来。
+     * 实测（用户报的「任务会话时不时跳到某处」）：有 room 行的任务，视口每 2.5s 从
+     * 用户位置弹到 +1885px 再弹回；把 room 事件清空后 13 秒纹丝不动 ⇒ 因果坐实。
+     */
+    const feedSig = (es: RoomEvent[]): string =>
+        es.map((e) => `${e.id}:${(e.deliveries ?? []).map((d) => `${d.memberId}=${d.status}`).join(",")}:${e.error ?? ""}`).join("|");
+    const roomSig = (r: Room | null): string =>
+        r === null ? "none" : `${r.focus ?? ""}#${r.members.map((m) => `${m.id}:${m.name}:${m.main === true ? "main" : ""}`).join(",")}`;
+    let prevFeedSig: string | null = null;
+    let prevRoomSig: string | null = null;
+
     const loadRoomFeed = async (u: string, soft = false): Promise<void> => {
         try {
             const r = await diyService.diy.room.get({ id: u, limit: 200 });
-            setRoomMeta(r.room);
-            applyRosterAuto(r.room);
+            const rs = roomSig(r.room);
+            if (rs !== prevRoomSig) {
+                prevRoomSig = rs;
+                setRoomMeta(r.room);
+                applyRosterAuto(r.room);
+            }
             const mid = mainMemberId(r.room);
-            setRoomFeed(r.events.filter((e) => !opsOwnsEvent(e, mid)));
+            const shown = r.events.filter((e) => !opsOwnsEvent(e, mid));
+            const fs = feedSig(shown);
+            if (fs !== prevFeedSig) {
+                prevFeedSig = fs;
+                setRoomFeed(shown);
+            }
             if (!soft) setRoomNote(null);
         } catch (e) {
             if (!soft) setRoomNote(`读房间失败：${e instanceof Error ? e.message : String(e)}`);
@@ -2735,7 +2763,18 @@ export function LocalChatPage(props: {
         while (i < reps.length) out.push(reps[i++]!);
         return out;
     });
-    const rowKeys = createMemo(() => allRows().map((r) => r.key));
+    /**
+     * 行键序列 + **引用稳定器**（##377 第 19 刀）：`allRows()` 在有 room 行时每次返回新数组，
+     * 若这里无条件新建 keys 数组，`layout` 就会跟着每 2.5s 重算一次（假布局变化），
+     * 把视口锚定 effect 惊动 —— 用户看到"时不时跳到某处"。内容不变 ⇒ 复用同一数组引用。
+     */
+    let prevKeysRef: string[] = [];
+    const rowKeys = createMemo(() => {
+        const ks = allRows().map((r) => r.key);
+        if (ks.length === prevKeysRef.length && ks.every((k, i) => k === prevKeysRef[i])) return prevKeysRef;
+        prevKeysRef = ks;
+        return ks;
+    });
     /**
      * 前缀和布局。`heights` 与 `keys` 同长；未渲染过的行走**估算**（见 HeightLedger）。
      * 账不是信号，故显式依赖 `ledgerTick`（写账处 `touchLedger()`）。

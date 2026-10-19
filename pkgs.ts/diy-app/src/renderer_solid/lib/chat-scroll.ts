@@ -174,3 +174,55 @@ export function anchorTick(
     const quiet = st.quiet + 1;
     return { setTop: null, state: { lastSt: m.scrollTop, quiet, userLeft: false }, stop: quiet >= m.quietFrames };
 }
+
+
+// ─── 事件流（room 面板 / 房间页）的跟随态（##377 第 19 刀）─────────────────────
+//
+// 为什么需要它：这两处原先在**每次取数后**无条件 `streamRef.scrollTop = scrollHeight`，
+// 而取数是每 2.5s 一次轮询 —— 用户往上翻，最多 2.5 秒就被拽回底部（实测：滚到中段
+// 1.6s 后回到距底 0px），即用户报的「room 的会话根本无法翻越」。
+//
+// 语义与聊天页同一套（stick-to-bottom）：贴底 → 新事件自动到底；用户上滚 → 立刻停手，
+// 只有**人自己发的消息**（force）才把视口请回底部。
+// 判据抽在这里（纯函数、可单测）：**程序化写入也会触发 scroll 事件**，把它误判成
+// "用户在滚"会让跟随态乱掉（聊天页第 15 刀同一坑：钉底循环第一帧就把自己关掉）。
+
+/** 距底多少 px 内算「贴着底」（与聊天页同一取值） */
+export const STICK_PX = 32;
+
+export interface ScrollGeom {
+    scrollTop: number;
+    scrollHeight: number;
+    clientHeight: number;
+}
+
+/** 是否已贴底（容差内即算底部，避免差 1px 永远跟不住） */
+export function nearBottom(g: ScrollGeom, stickPx = STICK_PX): boolean {
+    return g.scrollHeight - g.scrollTop - g.clientHeight <= stickPx;
+}
+
+/** 事件流的跟随态 */
+export interface StreamFollowState {
+    /** true = 贴底（新事件自动到底）；用户上滚 ⇒ false（此后绝不打扰） */
+    stick: boolean;
+    /** 我们刚写下的 scrollTop（豁免紧随的一次 scroll 事件；null = 没有待豁免的） */
+    progWrite: number | null;
+}
+
+export const streamFollowInit: StreamFollowState = { stick: true, progWrite: null };
+
+/** 我们主动钉底之后的新状态：贴底 + 记下豁免位（紧随的那次 scroll 事件不算"人滚的"） */
+export function pinnedTo(top: number): StreamFollowState {
+    return { stick: true, progWrite: top };
+}
+
+/**
+ * 一帧 scroll 事件 → 新跟随态。**只有"人滚的"才改 `stick`**：
+ *   · 命中 `progWrite`（我们自己刚写下的位置）⇒ 跟随态原样保留；
+ *   · 其余 ⇒ 以"此刻是否贴底"为准（上滚 = 停手；滚回底部 = 恢复跟随）。
+ */
+export function onStreamScroll(st: StreamFollowState, g: ScrollGeom): StreamFollowState {
+    const ours = st.progWrite !== null && Math.abs(g.scrollTop - st.progWrite) < 1.5;
+    if (ours) return { stick: st.stick, progWrite: null };
+    return { stick: nearBottom(g), progWrite: null };
+}

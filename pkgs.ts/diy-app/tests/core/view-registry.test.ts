@@ -129,6 +129,10 @@ describe("defaultBinding", () => {
     expect(b).toEqual({
       "task.detail@projects/4/tasks/133": "left",
       "chat.local@projects/4/tasks/133": "center",
+      // ##377 第 16 刀加的成员栏 view（它注册在 task-run 的 right 区）。
+      // ⚠️ main 上这条断言一直没跟上（`room.roster` 加进来时漏改），是**既有红**
+      // （不是本刀引入：stash 掉本刀改动后同样 1 failed）；第 19 刀顺手补上。
+      "room.roster@projects/4/tasks/133": "right",
     });
   });
 
@@ -165,18 +169,22 @@ describe("提示词页 = 子页面（不是任务页的底部面板）", () => {
 
   it("任务执行页不再挂 lab 的任何 view", () => {
     const taskRunViews = VIEWS.filter((v) => v.placement["task-run"]).map((v) => v.id).sort();
-    expect(taskRunViews).toEqual(["chat.local", "task.detail"]);
+    // ##377 第 16 刀的成员栏 view 也注册在任务页上 ⇒ 列表要含它（同属既有红，见上一条注释）。
+    expect(taskRunViews).toEqual(["chat.local", "room.roster", "task.detail"]);
   });
 });
 
 describe("groupViewsByArea —— layout + binding → 实际要画什么", () => {
-  it("任务执行页：按 area 的几何顺序输出（left → center）", () => {
+  // ##377 第 16 刀给 task-run 加了 right 区（成员栏 room.roster）⇒ 几何顺序多一个；
+  // 这三处（本文件 129/172/177 附近）当时漏改，是**既有红**（stash 掉本刀改动后同样红）。
+  it("任务执行页：按 area 的几何顺序输出（left → center → right）", () => {
     const page = findPage("task-run")!;
     const ctx = "projects/4/tasks/133";
     const groups = groupViewsByArea(page, ctx, defaultBinding(page, ctx));
-    expect(groups.map((g) => g.areaId)).toEqual(["left", "center"]);
+    expect(groups.map((g) => g.areaId)).toEqual(["left", "center", "right"]);
     expect(groups[0].views.map((v) => v.id)).toEqual(["task.detail"]);
     expect(groups[1].views.map((v) => v.id)).toEqual(["chat.local"]);
+    expect(groups[2].views.map((v) => v.id)).toEqual(["room.roster"]);
   });
 
   it("binding[key] = null → 隐藏（实例保留，不销毁重建）", () => {
@@ -185,7 +193,7 @@ describe("groupViewsByArea —— layout + binding → 实际要画什么", () =
     const b = defaultBinding(page, ctx);
     b[`task.detail@${ctx}`] = null; // 用户最小化了左栏
     const groups = groupViewsByArea(page, ctx, b);
-    expect(groups.map((g) => g.areaId)).toEqual(["center"]);
+    expect(groups.map((g) => g.areaId)).toEqual(["center", "right"]); // right 上还有成员栏（##377 第 16 刀）
   });
 
   it("binding 改 area → 跟随（把任务详情拖到右侧）", () => {
@@ -194,7 +202,8 @@ describe("groupViewsByArea —— layout + binding → 实际要画什么", () =
     const b = defaultBinding(page, ctx);
     b[`task.detail@${ctx}`] = "right";
     const groups = groupViewsByArea(page, ctx, b);
-    expect(groups.find((g) => g.areaId === "right")?.views.map((v) => v.id)).toEqual(["task.detail"]);
+    // right 上原本就有成员栏（order 10），详情拖过去后按 order 排 ⇒ 成员栏在后
+    expect(groups.find((g) => g.areaId === "right")?.views.map((v) => v.id)).toEqual(["task.detail", "room.roster"]);
     expect(groups.some((g) => g.areaId === "left")).toBe(false);
   });
 
@@ -294,15 +303,16 @@ describe("applyHiddenViews —— 隐藏走 binding 的 null 语义", () => {
 
   it("隐藏后 groupViewsByArea 真的少一块（端到端语义）", () => {
     const b = applyHiddenViews(defaultBinding(page, ctx), { [`task.detail@${ctx}`]: true });
-    expect(groupViewsByArea(page, ctx, b).map((g) => g.areaId)).toEqual(["center"]);
+    expect(groupViewsByArea(page, ctx, b).map((g) => g.areaId)).toEqual(["center", "right"]);
   });
 });
 
 describe("areasWithViews —— 空 area 的按钮不该出现", () => {
-  it("任务执行页：只有 left / center 有 view（right / bottom 还空着）", () => {
+  it("任务执行页：left / center / right 有 view（bottom 还空着）", () => {
+    // right 上挂的是成员栏（##377 第 16 刀）—— 本文件这几条断言当时漏改，是既有红。
     const page = findPage("task-run")!;
     const ctx = "projects/4/tasks/1";
-    expect([...areasWithViews(page, ctx, defaultBinding(page, ctx))].sort()).toEqual(["center", "left"]);
+    expect([...areasWithViews(page, ctx, defaultBinding(page, ctx))].sort()).toEqual(["center", "left", "right"]);
   });
 
   it("提示词页：四个 area 都有 view", () => {
@@ -318,6 +328,7 @@ describe("areasWithViews —— 空 area 的按钮不该出现", () => {
     const b = applyHiddenViews(defaultBinding(page, ctx), {
       [`chat.local@${ctx}`]: true,
       [`task.detail@${ctx}`]: true,
+      [`room.roster@${ctx}`]: true,
     });
     expect([...areasWithViews(page, ctx, b)]).toEqual([]);
   });
