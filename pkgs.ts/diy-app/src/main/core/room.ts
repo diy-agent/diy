@@ -134,6 +134,7 @@ export function ensureRoom(id: string, input: EnsureRoomInput = {}): Room {
         focus: input.focus ?? null,
         members: input.members ?? [],
         channels: input.channels ?? defaultChannels(),
+        lastSeen: {},
         created: now,
         updated: now,
     };
@@ -170,6 +171,25 @@ export function setFocus(id: string, focus: string | null): Room {
     const next: Room = { ...room, focus };
     writeRoom(next);
     return next;
+}
+
+/**
+ * **水位前移**（##166 §44.6 四.1）：投递**成功**后调用 —— 把「该成员已看到 <eventId>」写进 room.yaml。
+ *
+ * 为什么用一条**按房间的 promise 链**串起来：同一条 say 投给 N 个成员时 N 个 `deliverOne` 并发跑，
+ * 各自"读 room.yaml → 改自己那一格 → 写回" ⇒ 后写的会把先写的整份覆盖掉（丢水位 = 下次重复注入）。
+ * 链按 roomId 分（不同房间不互相阻塞）；写失败不回滚投递（水位是优化，丢一次最坏是多注入一轮）。
+ */
+const seenChains = new Map<string, Promise<void>>();
+export function advanceLastSeen(roomId: string, updates: Record<string, string>): Promise<void> {
+    const run = async (): Promise<void> => {
+        const room = readRoom(roomId);
+        if (!room) return;
+        writeRoom({ ...room, lastSeen: { ...room.lastSeen, ...updates } });
+    };
+    const chain = (seenChains.get(roomId) ?? Promise.resolve()).then(run, run);
+    seenChains.set(roomId, chain.catch(() => undefined));
+    return chain;
 }
 
 export function roomDeliveriesPath(id: string): string {
