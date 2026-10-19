@@ -34,7 +34,7 @@ import {
     planVersions,
     renderPlanView,
 } from "../../src/main/services/compact-plan-io";
-import { listPlanVersions, planStoreDir, planVersionFile, readPlanVersion } from "../../src/main/services/plan-store";
+import { listPlanVersions, readPlanVersion } from "../../src/main/services/plan-store";
 
 const HOME = join(diyHome(), "plan-io-home");
 const TASK = "projects/1/tasks/1";

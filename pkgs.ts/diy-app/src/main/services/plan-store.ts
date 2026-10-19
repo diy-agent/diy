@@ -26,7 +26,8 @@
 //
 // ⚠️ 本模块**不做业务判断**（闸 / 校验 / 审计都在 `compact-plan-io`）—— 只做「算 id / 写 CAS / 记账 / 读回」。
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { writeFileAtomic } from "../core/atomic-write";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { keyOf } from "../core/local-paths";
@@ -126,8 +127,9 @@ export function writePlanVersion(home: string, doc: PlanVersionDoc): PlanVersion
     const version = planVersionId(doc);
     const file = planVersionFile(home, version);
     if (existsSync(file)) return { version, created: false };
-    mkdirSync(planStoreDir(home), { recursive: true });
-    writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`, "utf-8");
+    // 整文件覆盖写一律走原子写（##382 / `pkgs.ts/diy-app/AGENTS.md::rule.file-write`）：
+    // CAS 文件被低磁盘截断 = 版本链读到坏版本（writePlanVersion 的「重算 id 自校验」会把它判成坏版本，等于丢版本）。
+    writeFileAtomic(file, `${JSON.stringify(doc, null, 2)}\n`);
     return { version, created: true };
 }
 
