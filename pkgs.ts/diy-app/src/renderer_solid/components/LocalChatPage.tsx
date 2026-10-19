@@ -1985,6 +1985,14 @@ export function LocalChatPage(props: { uri?: string }) {
         for (const t of localChatStore.trees) {
             if (t.id === blockId || containsBlockId(t, blockId)) return layout().keys.indexOf(t.id);
         }
+        // ⚠️ **合成行键**（##377 第 15 刀）：过程 bar 那类"行"的 `data-block-id` 是
+        // `<首叶 id>_bar`（见 ProcBar），它**不是块 id** ⇒ 上面那条 `containsBlockId` 找不到，
+        // 锚点被判失效（实测 `ri=-1`）。而锚点正是 `pickAnchorIn` 从 `[data-block-id]` 里挑的
+        // ⇒ **只要视口顶落在过程 bar 上，阅读位置就永远恢复不了**（症状：切走再切回看不见最新轮）。
+        // 行粒度就是轮（`layout().keys` = 轮 id），故按轮前缀落位。
+        for (const t of localChatStore.trees) {
+            if (blockId.startsWith(`${t.id}_`)) return layout().keys.indexOf(t.id);
+        }
         return -1;
     };
 
@@ -1995,17 +2003,25 @@ export function LocalChatPage(props: { uri?: string }) {
         const el = scrollRef;
         if (!el) return;
         setStick(true);
-        let left = 30;
+        // ⚠️ **收敛判据要看高度，不能只看 scrollTop**（##377 第 15 刀实测）：
+        // 原判据是"连续 3 帧 scrollTop 不变"，而内容（长 Markdown / 实测高度回填）**在之后
+        // 才撑高** —— 位置短暂稳定就收敛，等高度涨上来时人已不在底部（实测：reload 后
+        // `st=3136` 而底在 `~7000`，视口停在第 2 轮，**最新轮根本不在窗口里**）。
+        // 故改成"位置**与**高度都稳定"才收敛，并把上限放宽到 ≈1.5s（30 帧 = 500ms 不够长回答用）。
+        let left = 90;
         let prev = -1;
+        let prevH = -1;
         let stable = 0;
         const tick = () => {
-            // ⚠️ 每一帧都要重读跟随态：用户（或测试）在这 30 帧里上滚了 ⇒ 立刻让位。
+            // ⚠️ 每一帧都要重读跟随态：用户（或测试）在这期间上滚了 ⇒ 立刻让位。
             // 少了这一条，本循环会把他的滚动**反复拽回底部** —— 实测表现为随机的
             // "滚到顶后又弹回底部"（谁抢到就在谁那一侧）。
             if (!stick()) return;
             const at = writeScrollTop(el, el.scrollHeight);
-            stable = at === prev ? stable + 1 : 0;
+            const h = el.scrollHeight;
+            stable = at === prev && h === prevH ? stable + 1 : 0;
             prev = at;
+            prevH = h;
             if (left-- > 0 && stable < 3) requestAnimationFrame(tick);
         };
         tick();
@@ -2107,9 +2123,22 @@ export function LocalChatPage(props: { uri?: string }) {
                         const ri = anchorRowIndex(a.id);
                         // 走 `writeScrollTop`：同步窗口信号，锚点行**这一帧就上屏**，
                         // 后面的 `applyAnchor` 才找得到它（只写元素的话窗口还按旧位置挂行）。
-                        if (ri >= 0) writeScrollTop(el, layout().tops[ri]!);
-                        applyAnchor(el, a);
-                        setStick(nearBottom(el)); // 上次停在底部 → 继续跟随；否则尊重阅读位置
+                        if (ri >= 0) {
+                            writeScrollTop(el, layout().tops[ri]!);
+                            applyAnchor(el, a);
+                            setStick(nearBottom(el)); // 上次停在底部 → 继续跟随；否则尊重阅读位置
+                        } else {
+                            // ⚠️ **锚点行不在账面布局里**（##377 第 15 刀）：锚点块既不在窗口里、
+                            // 也算不出它属于哪一行 ⇒ 什么都不做的话视口就留在**顶部**（新挂载的
+                            // 容器 scrollTop = 0），而窗口 `[0,4)` 根本不含最新轮 ——
+                            // 用户看到的正是"切走再切回就看不见 agent 刚说的话"。
+                            // 退化为**看最新**（与"无锚点"同一条路）：宁可丢一次阅读位置，
+                            // 也不能把用户扔回一段与刚才无关的历史。
+                            console.warn(
+                                `[localChat] 阅读位置锚点已失效（块 ${a.id} 不在账面布局里），改为看最新`,
+                            );
+                            gotoBottom();
+                        }
                     } else {
                         gotoBottom();
                     }
@@ -2703,10 +2732,18 @@ export function LocalChatPage(props: { uri?: string }) {
                     const at = e.currentTarget.scrollTop;
                     const ours = progWriteTop !== null && Math.abs(at - progWriteTop) < 1.5;
                     progWriteTop = null; // 只豁免**紧随的那一次**事件（见 `writeScrollTop`）
-                    if (!ours) captureAnchor(e.currentTarget);
+                    // ⚠️ **跟随态只由"人的滚动"决定**（##377 第 15 刀）：程序化滚动（`gotoBottom`
+                    // 的钉底循环 / 锚点连校 / 布局补偿）也走 `writeScrollTop` ⇒ 也会触发本事件。
+                    // 原来无条件 `setStick(nearBottom(...))` ⇒ 钉底循环**第一帧就把自己关掉**
+                    // （那一刻还在半路上，`nearBottom` 为假 ⇒ stick=false ⇒ 下一帧 `if (!stick()) return`）
+                    // —— 实测症状：打开会话/刷新后视口停在中段（`st=3136`，而底在 `~6974`），
+                    // 最新轮不在虚拟化窗口里 = "看不见 agent 刚说的话"。
+                    if (!ours) {
+                        captureAnchor(e.currentTarget);
+                        setStick(nearBottom(e.currentTarget));
+                    }
                     // 窗口的输入（虚拟化）：scrollTop 一变就重算该挂哪几行
                     setScrollTop(at);
-                    setStick(nearBottom(e.currentTarget));
                     maybeLoadOlder(e.currentTarget);
                 }}
             >
