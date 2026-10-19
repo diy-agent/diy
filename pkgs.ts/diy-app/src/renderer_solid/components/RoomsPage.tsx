@@ -37,6 +37,7 @@ import {
 // 进度消息（##166 §28.7 A）：**复用任务对话那套块渲染**，不为 room 另写一套 ——
 // `TurnView` + `ChatView` 就是任务对话页在用的同两个东西，这里只是把数据源换成"成员会话的那一轮"。
 import { ChatView, TurnView } from "./LocalChatPage";
+import { onStreamScroll, pinnedTo, streamFollowInit, type StreamFollowState } from "../lib/chat-scroll";
 import type { BlockNode } from "../../main/services/local-blocks";
 
 function msgOf(e: unknown): string {
@@ -163,6 +164,25 @@ export function RoomsPage() {
     const [advanced, setAdvanced] = createSignal(false);
     let streamRef: HTMLDivElement | undefined;
 
+    /**
+     * 事件流跟随态（##377 第 19 刀，与侧边栏同构）：**贴底才跟随**。
+     * 原先取数后无条件钉底，而取数是 2.5s 一次的轮询 ⇒ 用户往上翻就被拽回底部。
+     * 判据在 `lib/chat-scroll.onStreamScroll`（含"程序化滚动也会发 scroll 事件"这一坑）。
+     */
+    const [stick, setStick] = createSignal(true);
+    let progWrite: number | null = null;
+    const followNow = (): StreamFollowState => ({ stick: stick(), progWrite });
+    const setFollow = (s: StreamFollowState): void => {
+        progWrite = s.progWrite;
+        if (s.stick !== stick()) setStick(s.stick);
+    };
+    /** 唯一的程序化滚动出口；`force` = 用户明确意图（自己发言 / 打开房间 / 点「回到最新」） */
+    const pinBottom = (el: HTMLDivElement, force = false): void => {
+        if (!force && !stick()) return;
+        el.scrollTop = el.scrollHeight;
+        setFollow(pinnedTo(el.scrollTop));
+    };
+
     /** 成员展示顺序（人先、agent 后）—— 右栏顺序与头像位次同一份 */
     const ordered = createMemo(() => orderedMembers(room()));
     const human = createMemo(() => room()?.members.find((m) => m.kind === "human") ?? null);
@@ -205,10 +225,14 @@ export function RoomsPage() {
             setRoom(r.room);
             setEvents(r.events);
             setBadLines(r.badLines);
-            if (!opts.soft) setErr(null);
+            if (!opts.soft) {
+                setErr(null);
+                setFollow({ ...streamFollowInit }); // 起手 / 切房间：新房间从最新看起
+            }
             void loadRoster(id);
+            // 取数**不**无条件钉底（那正是「无法翻越」的根因）：贴底才跟随
             queueMicrotask(() => {
-                if (streamRef) streamRef.scrollTop = streamRef.scrollHeight;
+                if (streamRef) pinBottom(streamRef);
             });
         } catch (e) {
             if (!opts.soft) setErr(`读房间失败：${msgOf(e)}`);
@@ -377,8 +401,9 @@ export function RoomsPage() {
                     copy[i] = ev;
                     return copy;
                 });
+                // 自己发言：无论刚才在哪儿，都要看见自己这句与它的回复（`force`）
                 queueMicrotask(() => {
-                    if (streamRef) streamRef.scrollTop = streamRef.scrollHeight;
+                    if (streamRef) pinBottom(streamRef, true);
                 });
             }
         } catch (e) {
@@ -476,7 +501,27 @@ export function RoomsPage() {
                     </Show>
                 </div>
 
-                <div class="flex-1 overflow-auto px-3 py-2 space-y-2" ref={(el) => (streamRef = el)} data-room-events>
+                <div class="relative flex-1 min-h-0 flex flex-col">
+                <div
+                    class="flex-1 overflow-auto px-3 py-2 space-y-2"
+                    ref={(el) => {
+                        streamRef = el;
+                        setFollow({ ...streamFollowInit }); // 打开房间：从最新看起
+                        if (el) queueMicrotask(() => pinBottom(el, true));
+                    }}
+                    onScroll={(e) => {
+                        // ⚠️ 跟随态只由**人滚的**决定：钉底带出来的 scroll 事件不算
+                        const el = e.currentTarget;
+                        setFollow(
+                            onStreamScroll(followNow(), {
+                                scrollTop: el.scrollTop,
+                                scrollHeight: el.scrollHeight,
+                                clientHeight: el.clientHeight,
+                            }),
+                        );
+                    }}
+                    data-room-events
+                >
                     <Show when={events().length === 0}>
                         <div class="text-caption opacity-50">还没有发言。右栏点 @ 寻址，或直接打字（投给当前接受者）。</div>
                     </Show>
@@ -634,6 +679,19 @@ export function RoomsPage() {
                             );
                         }}
                     </For>
+                </div>
+                    {/* 上翻阅读时不打扰，但给一条「回去」的路 */}
+                    <Show when={!stick()}>
+                        <button
+                            class="absolute bottom-2 right-3 z-10 btn btn-xs"
+                            onClick={() => {
+                                if (streamRef) pinBottom(streamRef, true);
+                            }}
+                            data-room-tolatest
+                        >
+                            ↓ 回到最新
+                        </button>
+                    </Show>
                 </div>
 
                 <div class="border-t px-3 py-2 shrink-0">

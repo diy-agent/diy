@@ -50,6 +50,7 @@ import {
 import { ChatView, TurnView } from "./LocalChatPage";
 import { MdEditor } from "./MdEditor";
 import { memberCompletion, taskCompletion } from "../lib/completions";
+import { onStreamScroll, pinnedTo, streamFollowInit, type StreamFollowState } from "../lib/chat-scroll";
 import { RoomRoster, type RosterMemberL1 } from "./RoomRoster";
 import { PersonaDrawer } from "./PersonaDrawer";
 import type { BlockNode } from "../../main/services/local-blocks";
@@ -145,6 +146,30 @@ export function SidebarRoom() {
     const busy = () => pendingPosts() > 0;
     let streamRef: HTMLDivElement | undefined;
 
+    /**
+     * 事件流跟随态（##377 第 19 刀）：**贴底才跟随**。
+     *
+     * 原先取数后无条件 `streamRef.scrollTop = scrollHeight`，而取数是 2.5s 一次的轮询 ——
+     * 用户往上翻，最多 2.5 秒就被拽回底部（实测滚到中段 1.6s 后回到距底 0px）
+     * = 用户报的「room 的会话根本无法翻越」。语义与任务页同一套（stick-to-bottom），
+     * 判据（含"程序化滚动也会发 scroll 事件"这一坑）在 `lib/chat-scroll.onStreamScroll`。
+     */
+    const [stick, setStick] = createSignal(true);
+    /** 我们刚写下的 scrollTop（豁免紧随的一次 scroll 事件）—— 见 `StreamFollowState` */
+    let progWrite: number | null = null;
+    const followNow = (): StreamFollowState => ({ stick: stick(), progWrite });
+    const setFollow = (s: StreamFollowState): void => {
+        progWrite = s.progWrite;
+        if (s.stick !== stick()) setStick(s.stick);
+    };
+    /** 唯一的程序化滚动出口：钉到底并把跟随态记为贴底。
+     *  `force` = 用户的明确意图（自己发言 / 打开面板 / 点「回到最新」）—— 那时无视当前阅读位置。 */
+    const pinBottom = (el: HTMLDivElement, force = false): void => {
+        if (!force && !stick()) return;
+        el.scrollTop = el.scrollHeight;
+        setFollow(pinnedTo(el.scrollTop));
+    };
+
     const ordered = createMemo(() => orderedMembers(room()));
     /**
      * 输入框补全源（##377 第 11 刀）：`@` 成员 + `##` 任务。
@@ -195,10 +220,14 @@ export function SidebarRoom() {
             setRoom(r.room);
             setEvents(r.events);
             setBadLines(r.badLines);
-            if (!opts.soft) setErr(null);
+            if (!opts.soft) {
+                setErr(null);
+                setFollow({ ...streamFollowInit }); // 起手 / 切房间：新房间从最新看起
+            }
             void loadRoster(id);
+            // 取数**不**无条件钉底（那正是「无法翻越」的根因）：贴底才跟随
             queueMicrotask(() => {
-                if (streamRef) streamRef.scrollTop = streamRef.scrollHeight;
+                if (streamRef) pinBottom(streamRef);
             });
         } catch (e) {
             if (!opts.soft) setErr(`读房间失败：${msgOf(e)}`);
@@ -435,8 +464,9 @@ export function SidebarRoom() {
                     copy[i] = ev;
                     return copy;
                 });
+                // 自己发言：无论刚才在哪儿，都要看见自己这句与它的回复（`force`）
                 queueMicrotask(() => {
-                    if (streamRef) streamRef.scrollTop = streamRef.scrollHeight;
+                    if (streamRef) pinBottom(streamRef, true);
                 });
             }
         } catch (e) {
@@ -538,10 +568,27 @@ export function SidebarRoom() {
                     {/* 主体：只有会话区 —— 成员列表在**面板左缘的抽屉**里（下方），不挤压它 */}
                     <div class="flex-1 flex min-h-0">
                         <div class="flex-1 flex flex-col min-w-0">
-                            {/* 事件流 */}
+                            {/* 事件流（外层 relative：「回到最新」按钮的立足点，不随内容滚动） */}
+                            <div class="relative flex-1 min-h-0 flex flex-col">
                             <div
                                 class="flex-1 overflow-auto px-2.5 py-1.5 space-y-1.5"
-                                ref={(el) => (streamRef = el)}
+                                ref={(el) => {
+                                    streamRef = el;
+                                    setFollow({ ...streamFollowInit }); // 打开面板：从最新看起
+                                    if (el) queueMicrotask(() => pinBottom(el, true));
+                                }}
+                                onScroll={(e) => {
+                                    // ⚠️ 跟随态只由**人滚的**决定：钉底带出来的 scroll 事件不算
+                                    // （判据在 lib/chat-scroll.onStreamScroll）
+                                    const el = e.currentTarget;
+                                    setFollow(
+                                        onStreamScroll(followNow(), {
+                                            scrollTop: el.scrollTop,
+                                            scrollHeight: el.scrollHeight,
+                                            clientHeight: el.clientHeight,
+                                        }),
+                                    );
+                                }}
                                 data-sidebar-events
                             >
                                 <Show when={events().length === 0}>
@@ -708,6 +755,19 @@ export function SidebarRoom() {
                                         );
                                     }}
                                 </For>
+                            </div>
+                                {/* 上翻阅读时绝不打扰，但要给一条「回去」的路 —— 否则新消息会静默堆积 */}
+                                <Show when={!stick()}>
+                                    <button
+                                        class="absolute bottom-2 right-3 z-10 btn btn-xs"
+                                        onClick={() => {
+                                            if (streamRef) pinBottom(streamRef, true);
+                                        }}
+                                        data-sidebar-tolatest
+                                    >
+                                        ↓ 回到最新
+                                    </button>
+                                </Show>
                             </div>
 
                             {/* 输入区：**任务对话那台编辑器**（MdEditor，同一份实现）+ 底部工具条同框内 */}
