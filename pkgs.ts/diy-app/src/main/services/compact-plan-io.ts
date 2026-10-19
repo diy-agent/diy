@@ -37,7 +37,7 @@ import {
 } from "../core/auto-compact-config";
 import { budgetBytesOf, fmtBytes } from "../../shared/context/compaction";
 import type { AutoCompactIssue } from "../../shared/context/auto-compact";
-import { DEFAULT_KEEP, clipLabel, keepStageLabel, type KeepIssue, type KeepStage } from "../../shared/context/compact-keep";
+import { DEFAULT_KEEP, clipLabel, keepStageLabel, reasoningClipLabel, type KeepIssue, type KeepStage } from "../../shared/context/compact-keep";
 import { checkKeep, formatCheckFailure, type PlanCheckReport } from "./compact-plan-service";
 
 /** 所有写路径返回都带的人读影响面提示（M3b 要的就是模型**知道自己在动全局**） */
@@ -443,6 +443,9 @@ export function renderKeep(keep: readonly KeepStage[]): string {
                 s.must === true ? "必保（不占预算）" : "",
                 s.limit !== undefined ? `最多 ${s.limit} 单元` : "",
                 `clip=${clipLabel(s.clip)}`,
+                // 第二条裁剪轴（##374 T2）：只在该级**声明了**它时才显示 —— 没声明即回落缺省，
+                // 每级都打一行「回落缺省」只会把回显冲淡
+                ...(s.reasoningClip ? [`推理裁法=${reasoningClipLabel(s.reasoningClip)}`] : []),
             ]
                 .filter(Boolean)
                 .join(" · ");

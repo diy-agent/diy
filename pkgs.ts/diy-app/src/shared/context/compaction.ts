@@ -205,6 +205,76 @@ export function toToolResultPolicy(clip: ClipSpec): ToolResultPolicy {
     return { render: "headtail", renderData: { ...clip.data } };
 }
 
+// ── 推理文本裁剪（reasoning clip · ##374 T2）──
+//
+// 为什么另开一档、而不是复用 `ClipSpec`：`ClipSpec` 的语义与参数面是为**工具结果**定的 ——
+//   · `path`（只留调用 + 原文路径）对推理没有意义（推理没有"原文文件"）；
+//   · `headtail` 的参数是**行**（head/tail 行数），而推理是**散文**（常常一整段一行）——
+//     按行裁会在「一行 3000 字」时等于全留、在「30 行短句」时裁掉大半，两头都错。
+// 所以 reasoning 这一轴按**字符**裁，且参数面单独一支（遵 `rule.discriminated-union`）。
+//
+// ⚠️ **硬约束（##374 T1 实测）**：上游在 luminal 端点是**逐条校验** —— 任何一条带 `tool_calls`
+// 的 assistant 缺 `reasoning_content` 就整轮 400（`The reasoning_content in the thinking mode
+// must be passed back to the API.`）。⇒ 推理**只可裁短、不可裁空、更不可删 part**。
+// 于是 `headChars` 必须 ≥ 1（schema 层就拦住 0），且 `clipReasoningText` 对非空输入**永不返回空串**。
+
+/** headtail（推理）的私有参数：按**字符**保头（+可选尾） */
+export const ReasoningHeadTailParamsSchema = z.object({
+    headChars: z.number().int().positive().describe("保留头部字符数（≥1 —— 裁到空 = 等于没传 = 上游 400）"),
+    tailChars: z.number().int().nonnegative().describe("保留尾部字符数（0 = 只保头）"),
+});
+export type ReasoningHeadTailParams = z.infer<typeof ReasoningHeadTailParamsSchema>;
+
+/**
+ * 推理裁剪的真源 schema（zod）—— 与 `ClipSpecSchema` 同构：判别键 `type` 同级 = 公共字段，
+ * 分支私有参数进 `data`。它要**从配置读进来**（`history.keep[].reasoningClip`）⇒ 写盘前必须校验。
+ */
+export const ReasoningClipSpecSchema = z.discriminatedUnion("type", [
+    z.object({ type: z.literal("full").describe("不裁（保底级要的是推理字节保真）") }),
+    z.object({
+        type: z.literal("headtail").describe("保头（+可选尾）+ 中间 marker；按**字符**（推理是散文，不按行）"),
+        data: ReasoningHeadTailParamsSchema.describe("headtail 私有参数（只此支有）"),
+    }),
+]);
+export type ReasoningClipSpec = z.infer<typeof ReasoningClipSpecSchema>;
+
+/** 一条推理文本的裁剪账（供统计 / marker / 测试断言） */
+export interface ReasoningClipResult {
+    text: string;
+    clipped: boolean;
+    origChars: number;
+    keptChars: number;
+    droppedChars: number;
+}
+
+/**
+ * 推理文本裁剪（**纯函数**，与 `clipToolResult` 同一条原则）：
+ *   · 不触发阈值时**逐字符返回原文**（不"顺手规整"）；
+ *   · 触发时 = 头 `headChars` + marker + 尾 `tailChars`；
+ *   · **结果永不为空**（非空输入 ⇒ 非空输出）：head 至少 1 字符 + marker，兜住 ##374 T1 的 400。
+ */
+export function clipReasoningText(text: string, clip: ReasoningClipSpec | null | undefined): ReasoningClipResult {
+    const origChars = text.length;
+    const same = (): ReasoningClipResult => ({
+        text,
+        clipped: false,
+        origChars,
+        keptChars: origChars,
+        droppedChars: 0,
+    });
+    if (!clip || clip.type === "full" || text === "") return same();
+
+    const headN = Math.min(clip.data.headChars, origChars);
+    const tailN = Math.min(clip.data.tailChars, Math.max(0, origChars - headN));
+    const dropped = origChars - headN - tailN;
+    if (dropped <= 0) return same(); // 本来就短 ⇒ 不动（也保证"极短也不裁空"）
+
+    const marker = `\n[… 推理省略 ${dropped} 字符 …]\n`;
+    // head 至少留 1 字符（headChars ≥ 1 由 schema 保证）：空串 = 没传 = 400，这条断言是硬底线
+    const out = `${text.slice(0, Math.max(1, headN))}${marker}${tailN > 0 ? text.slice(origChars - tailN) : ""}`;
+    return { text: out, clipped: true, origChars, keptChars: out.length, droppedChars: dropped };
+}
+
 /**
  * 扁平（**输入面**）形状：RPC / CLI / UI state 用的紧凑契约（`flatPolicyOf` 是树 → 扁平），**不是**真源形状。
  *

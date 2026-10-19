@@ -26,8 +26,10 @@
 //   · **裁剪能力轴**（##343 M1）：每级可声明 `clip`（这条取法取中的消息**怎么裁**），
 //     **先选中它的级生效**（先声明者赢）；没声明 ⇒ 回落 `defaultClip`（全局策略的降级）。
 //     「保底最近 N 步全量」正是靠它：`exempt` 级 + `clip: full` ⇒ 这 N 步的工具结果字节保真。
+//   · **第二条裁剪轴 `reasoningClip`**（##374 T2）：同上语义，管 assistant 消息的**推理文本**。
+//     两轴独立（一条消息可以只被声明了推理轴），`reasoningClips` 字段各报各的。
 
-import type { ClipSpec } from "../../shared/context/compaction";
+import type { ClipSpec, ReasoningClipSpec } from "../../shared/context/compaction";
 import { DEFAULT_EXEMPT_STEPS, DEFAULT_KEEP, type KeepStage } from "../../shared/context/compact-keep";
 import type { LocalModelMessage } from "./local-blocks";
 
@@ -77,6 +79,13 @@ export interface BudgetSelection {
      * **只在有级声明 clip 时出现** —— 老消费者（与老断言）不必知道这条轴（读侧兼容）。
      */
     clips?: (ClipSpec | null)[];
+    /**
+     * 每条 assistant 消息的**推理裁法**（##374 T2；下标对齐 `all`；`null` = 没被任何级声明
+     * `reasoningClip` ⇒ 回落 `defaultReasoningClip`）。与 `clips` **各自独立**、同样「先选中者赢」——
+     * 只是判据按轴走（一条消息可以只被声明了推理轴）。
+     * 同样**只在有级声明时出现**（读侧兼容）。
+     */
+    reasoningClips?: (ReasoningClipSpec | null)[];
 }
 
 // ─── 装配上下文（一次选择内共用；把「分类 / 配对 / 成本」算一次）──────
@@ -88,10 +97,11 @@ export interface PickCtx {
     /** toolCallId → tool-result 消息下标（配对用） */
     resultOf: ReadonlyMap<string, number>;
     /**
-     * 单条消息在**给定 clip** 下的投递字节（渲染后口径；由调用方注入）。
+     * 单条消息在**给定裁法**下的投递字节（渲染后口径；由调用方注入）。
      * 必须按 clip 现算而不是预先算一份：保底级 `full` 的字节比裁过的多，算错就是预算算错。
+     * 两个轴各自一路（工具结果 / 推理文本，##374 T2）；`reasoningClip` 缺省 `null` ⇒ 渲染侧走全局缺省。
      */
-    costOf: (m: LocalModelMessage, clip: ClipSpec | null) => number;
+    costOf: (m: LocalModelMessage, clip: ClipSpec | null, reasoningClip?: ReasoningClipSpec | null) => number;
 }
 
 /** 一元的**挑选元件**：产出**有序**候选下标（越前越先考虑）。不给预算判断。 */
@@ -115,6 +125,11 @@ export interface PickStage {
      * 一条消息被多级选中时，**先选中它的那一级的 clip 生效**（先声明者赢）——见 runPlan。
      */
     clip?: ClipSpec;
+    /**
+     * 本级取中的 assistant 消息**推理文本**怎么裁（##374 T2 的第二条裁剪轴）。缺省 = 不声明 ⇒
+     * 回落 `defaultReasoningClip`。语义与 `clip` 一致（先选中者赢；两轴独立）。
+     */
+    reasoningClip?: ReasoningClipSpec;
 }
 
 /** 装配管道：有序若干级 + 总预算 */
@@ -134,15 +149,12 @@ export function classify(all: readonly LocalModelMessage[]): HistoryRank[] {
         const m = all[i]!;
         if (m.role === "assistant" && !hasToolCall(m)) lastTextIdx.set(m.turn ?? "", i);
     }
-    const rank = new Array<HistoryRank>(n);
-    for (let i = 0; i < n; i++) {
-        const m = all[i]!;
-        if (m.role === "user") rank[i] = "user";
-        else if (m.role === "tool") rank[i] = "result";
-        else if (hasToolCall(m)) rank[i] = "call";
-        else rank[i] = lastTextIdx.get(m.turn ?? "") === i ? "conclusion" : "text";
-    }
-    return rank;
+    return all.map((m, i): HistoryRank => {
+        if (m.role === "user") return "user";
+        if (m.role === "tool") return "result";
+        if (hasToolCall(m)) return "call";
+        return lastTextIdx.get(m.turn ?? "") === i ? "conclusion" : "text";
+    });
 }
 
 /** toolCallId → tool-result 下标（跨整份投影；配对铁律的依据） */
@@ -237,21 +249,29 @@ export const recentSteps = (count: number): Picker => ({
 // ─── 装配（把元件组成级 / 管道）───────────────────────────────
 
 /** 计入预算的一级 */
-export const stage = (picker: Picker, opts: { limit?: number; clip?: ClipSpec } = {}): PickStage => ({
+export const stage = (
+    picker: Picker,
+    opts: { limit?: number; clip?: ClipSpec; reasoningClip?: ReasoningClipSpec } = {},
+): PickStage => ({
     label: picker.label,
     picker,
     budget: "count",
     limit: opts.limit,
     ...(opts.clip ? { clip: opts.clip } : {}),
+    ...(opts.reasoningClip ? { reasoningClip: opts.reasoningClip } : {}),
 });
 
 /** **托底**一级（不计预算）：如「必带的最近 N 条工具完整历史」 */
-export const exemptStage = (picker: Picker, opts: { limit?: number; clip?: ClipSpec } = {}): PickStage => ({
+export const exemptStage = (
+    picker: Picker,
+    opts: { limit?: number; clip?: ClipSpec; reasoningClip?: ReasoningClipSpec } = {},
+): PickStage => ({
     label: `${picker.label}!`,
     picker,
     budget: "exempt",
     limit: opts.limit,
     ...(opts.clip ? { clip: opts.clip } : {}),
+    ...(opts.reasoningClip ? { reasoningClip: opts.reasoningClip } : {}),
 });
 
 /** 装配一条管道 */
@@ -289,7 +309,12 @@ export function pickerOf(s: KeepStage): Picker {
 export function keepStagesToPlan(
     keep: readonly KeepStage[] | undefined | null,
     budgetBytes: number,
-    defaultClip?: ClipSpec | null,
+    /**
+     * 工具结果的**全局回落**裁法。⚠️ 本函数**不直接用它**：回落发生在**渲染/计价**侧
+     * （`selection.clips[i] == null` ⇒ 用 `DeliveryOpts.defaultClip` / `costOf` 自己的缺省），
+     * 留参数只为不动调用方签名（##343 M1 起的既有形状）。
+     */
+    _defaultClip?: ClipSpec | null,
 ): CompactPlan {
     if (!(budgetBytes > 0)) return plan(0);
     const specs = keep && keep.length > 0 ? keep : DEFAULT_KEEP;
@@ -297,7 +322,11 @@ export function keepStagesToPlan(
         budgetBytes,
         ...specs.map((s) => {
             const picker = pickerOf(s);
-            const opts = { limit: s.limit, ...(s.clip ? { clip: s.clip } : {}) };
+            const opts = {
+                limit: s.limit,
+                ...(s.clip ? { clip: s.clip } : {}),
+                ...(s.reasoningClip ? { reasoningClip: s.reasoningClip } : {}),
+            };
             return s.must ? exemptStage(picker, opts) : stage(picker, opts);
         }),
     );
@@ -329,24 +358,29 @@ export const defaultBudgetPlan = (budgetBytes: number, defaultClip?: ClipSpec | 
 export function runPlan(
     all: readonly LocalModelMessage[],
     p: CompactPlan,
-    args: { costOf: (m: LocalModelMessage, clip: ClipSpec | null) => number },
+    args: { costOf: (m: LocalModelMessage, clip: ClipSpec | null, reasoningClip?: ReasoningClipSpec | null) => number },
 ): BudgetSelection {
     const n = all.length;
     if (n === 0) return { kept: [], dropped: [], keptRuns: [], keptBytes: 0 };
 
     const ctx = buildCtx(all, args.costOf);
-    const keep = new Array<boolean>(n).fill(false);
+    const keep = all.map(() => false);
     /** 每条消息的裁法：**先选中它的那一级**声明什么就是什么（后到的级改不动它） */
-    const clips = new Array<ClipSpec | null>(n).fill(null);
+    const clips = all.map((): ClipSpec | null => null);
+    /** 每条消息的**推理**裁法：与 `clips` 同一条「先选中者赢」，只是两个轴各自记（##374 T2） */
+    const rclips = all.map((): ReasoningClipSpec | null => null);
     let declared = false;
+    let rDeclared = false;
     let remaining = Math.max(0, p.budgetBytes);
 
     for (const st of p.stages) {
         let units = 0;
         const clip = st.clip ?? null;
+        const rclip = st.reasoningClip ?? null;
         if (clip) declared = true; // 有级声明 ⇒ clips 字段带出（`null` = 该消息没被声明过）
-        /** 本级的成本口径（含 clip）——成本与渲染必须同源，否则「按 A 算预算、发出去是 B」 */
-        const costOf = (i: number): number => ctx.costOf(all[i]!, clip);
+        if (rclip) rDeclared = true; // 同上（推理轴独立；两个字段各自按需带出）
+        /** 本级的成本口径（含两个轴的裁法）——成本与渲染必须同源，否则「按 A 算预算、发出去是 B」 */
+        const costOf = (i: number): number => ctx.costOf(all[i]!, clip, rclip);
         for (const i of st.picker.picks(ctx)) {
             if (keep[i]) continue; // 已被更前的级选中 ⇒ 连同它的 clip 一起保留（先声明者赢）
             if (ctx.rank[i] === "result") continue; // 结果只随其 call 一起选
@@ -373,6 +407,7 @@ export function runPlan(
                 for (const k of add) keep[k] = true; // 托底：不计预算
             }
             for (const k of add) clips[k] = clip;
+            for (const k of add) rclips[k] = rclip;
             units++;
         }
     }
@@ -385,12 +420,13 @@ export function runPlan(
     let prev = -2;
     let keptBytes = 0;
     for (const i of kept) {
-        keptBytes += ctx.costOf(all[i]!, clips[i] ?? null);
+        keptBytes += ctx.costOf(all[i]!, clips[i] ?? null, rclips[i] ?? null);
         if (i === prev + 1) keptRuns[keptRuns.length - 1]![1] = i + 1;
         else keptRuns.push([i + 1, i + 1]);
         prev = i;
     }
     const out: BudgetSelection = { kept, dropped, keptRuns, keptBytes };
     if (declared) out.clips = clips; // 无人声明 clip ⇒ 字段不出现（读侧兼容）
+    if (rDeclared) out.reasoningClips = rclips; // 同上（推理轴；两轴各报各的）
     return out;
 }

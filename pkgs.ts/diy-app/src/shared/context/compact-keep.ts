@@ -19,7 +19,7 @@
 // ⚠️ 该规格里 `type` 是**取法**、`must` 是公共字段（不是 `type: exempt`）——本文件按规格实现。
 
 import { z } from "zod";
-import { ClipSpecSchema } from "./compaction";
+import { ClipSpecSchema, ReasoningClipSpecSchema } from "./compaction";
 
 /** 取法能筛的消息角色（`tool` = 工具结果；工具**调用**属于 assistant 消息） */
 export const KeepRoleSchema = z.enum(["user", "assistant", "tool"]);
@@ -32,7 +32,15 @@ const common = {
     /** 本级最多取几个**单元**（单元 = tool-call 与它的 result 算一个）；缺省不限 */
     limit: z.number().int().nonnegative().optional().describe("最多取几个单元（call+result=1）；缺省不限"),
     /** 本级取中的消息**怎么裁**；缺省 = 不声明 ⇒ 回落策略的全局 clip（`policy.modeData.toolResult`） */
-    clip: ClipSpecSchema.optional().describe("本级取中的消息怎么裁；缺省回落全局策略"),
+    clip: ClipSpecSchema.optional().describe("本级取中的**工具结果**怎么裁；缺省回落全局策略"),
+    /**
+     * 本级取中的 assistant 消息**推理文本**怎么裁（##374 T2）—— 与 `clip` **同级**的第二个裁剪轴。
+     * 为什么不是一个字段：`clip` 的参数面是给工具结果的（`path` = 原文路径 / headtail 按**行**），
+     * 推理是散文、按**字符**裁，硬塞进同一支只会两头不讨好（见 compaction.ts 的 reasoning clip 段）。
+     * 缺省 = 不声明 ⇒ 回落 `DEFAULT_REASONING_CLIP`（DeliveryOpts.defaultReasoningClip）。
+     * ⚠️ 语义同 `clip`：**先选中它的那一级生效**（先到先得）；且**只可裁短不可裁空**（裁空 = 上游 400，见 ##374 T1）。
+     */
+    reasoningClip: ReasoningClipSpecSchema.optional().describe("本级取中的**推理文本**怎么裁（按字符）；缺省回落全局缺省"),
 };
 
 /**
@@ -77,16 +85,48 @@ export const KEEP_STAGE_TYPES_RESERVED: readonly string[] = ["summary"];
 /** 「保底最近 N 步全量」的 N（用户 2026-10-15 定：**6 步全量**）—— 缺省 plan 的步数 */
 export const DEFAULT_EXEMPT_STEPS = 6;
 
+/** 推理裁剪的**缺省 headtail 参数**：保头 600 字符、不保尾（##374 T2 定） */
+export const DEFAULT_REASONING_HEADTAIL_DATA = { headChars: 600, tailChars: 0 } as const;
+
+/**
+ * 推理的**保守缺省裁法**（##374 T2）—— 两处用它，故只此一份：
+ *   · `DEFAULT_KEEP` 的 `ladder` 级（显式声明，`plan get` 回显得出来）；
+ *   · `DeliveryOpts.defaultReasoningClip`（**没声明** `reasoningClip` 的级/自定义 plan 的回落）。
+ *
+ * 为什么是 600 字符（实测依据，样本 = 4 条真实长会话 `~/.diy/local/*.llm.jsonl`，
+ * 2163 条推理 part / 3.35 MiB）：字符数 p50=571 · p75=1362 · p90=2962。
+ * 保头 600 ⇒ 推理总字节降到 36.9%（裁掉 1051/2163 条的尾巴）；保头 300 ⇒ 23.0%。
+ * 取 600 = **保守**（保住约一段话的开头，含模型的判断依据），要更省可调这一个数（配置面可覆盖）。
+ */
+export const DEFAULT_REASONING_HEADTAIL = { type: "headtail", data: { ...DEFAULT_REASONING_HEADTAIL_DATA } } as const;
+
+/**
+ * 推理的**全局回落**裁法（= `DEFAULT_REASONING_HEADTAIL`）。
+ * 为什么有回落而不是"不声明就不裁"：工具侧不声明就回落全局策略（headtail 3/3）——
+ * 推理侧若"不声明 ⇒ 不裁"，同一份 plan 里两个轴的行为就反着来，且**静默多花字节**。
+ */
+export const DEFAULT_REASONING_CLIP = DEFAULT_REASONING_HEADTAIL;
+
 /**
  * **缺省 plan**（= `##343 M1` 的 `defaultBudgetPlan`，现以**数据**表达）——
- * ① 最近 6 步必保且 `clip: full`（字节保真：迷路的病灶是「留下的工具结果被裁成头尾」）；
- * ② 其余按纵向阶梯计预算、用全局 clip 裁。
+ * ① 最近 6 步必保且 `clip: full` / `reasoningClip: full`（字节保真：迷路的病灶是「留下的结果被裁成头尾」；
+ *    ##374 T2 起推理也在保真范围内）；
+ * ② 其余按纵向阶梯计预算、工具结果用全局 clip 裁、推理用 `DEFAULT_REASONING_CLIP`（保头 600 字符）裁。
  *
  * 单一真源：`compaction-plan.ts` 的 `defaultBudgetPlan()` 由它生成（代码与「配置面回显」不会分叉）。
  */
 export const DEFAULT_KEEP: readonly KeepStage[] = [
-    { type: "steps", must: true, clip: { type: "full" }, data: { n: DEFAULT_EXEMPT_STEPS } },
-    { type: "ladder" },
+    {
+        type: "steps",
+        must: true,
+        clip: { type: "full" },
+        // 必保的这几步：**推理也字节保真** —— 保底要的是「工作集一字不改」，推理是工作集的一部分
+        // （模型的下一步推理直接建立在它上面；##374 T1 又证明推理不能删、只能裁短）。
+        reasoningClip: { type: "full" },
+        data: { n: DEFAULT_EXEMPT_STEPS },
+    },
+    // 其余旧消息：工具结果用全局 clip（headtail 3/3），推理用保守裁法（保头 600 字符，不保尾）
+    { type: "ladder", reasoningClip: DEFAULT_REASONING_HEADTAIL },
 ];
 
 /**
@@ -151,6 +191,13 @@ export function validateKeepStages(raw: unknown): { stages: KeepStage[]; issues:
         if (entry["clip"] !== undefined) {
             const c = ClipSpecSchema.safeParse(entry["clip"]);
             if (!c.success) issues.push(at(`\`clip\` 形状不合法：${c.error.issues.map((x) => `${x.path.join(".") || "(根)"} ${x.message}`).join("；")}`));
+        }
+        if (entry["reasoningClip"] !== undefined) {
+            const c = ReasoningClipSpecSchema.safeParse(entry["reasoningClip"]);
+            if (!c.success)
+                issues.push(
+                    at(`\`reasoningClip\` 形状不合法：${c.error.issues.map((x) => `${x.path.join(".") || "(根)"} ${x.message}`).join("；")}（推理只可裁短不可裁空：headChars 必须 ≥ 1）`),
+                );
         }
         // 每支私有数据
         const d = entry["data"];
@@ -228,6 +275,7 @@ function commonOf(s: KeepStage): Record<string, unknown> {
     if (s.must !== undefined) c["must"] = s.must;
     if (s.limit !== undefined) c["limit"] = s.limit;
     if (s.clip !== undefined) c["clip"] = s.clip;
+    if (s.reasoningClip !== undefined) c["reasoningClip"] = s.reasoningClip;
     return c;
 }
 
@@ -263,6 +311,16 @@ export function withClip(s: KeepStage, clip: import("./compaction").ClipSpec | u
 
 /** headtail 的缺省参数（UI 从「回落」切到「headtail」时拿它初始化，避免半拉形状） */
 export const DEFAULT_HEADTAIL_CLIP_DATA = { head: 3, tail: 3, maxLineChars: 300, maxKeepBytes: 8192 };
+
+/**
+ * 推理裁法 → 人读短名（`reasoningClip` 回显用；与 `clipLabel` 并列）。
+ * `undefined` 在**读**侧 = 回落全局缺省（`DEFAULT_REASONING_CLIP`）——与 `clipLabel` 同一条口径。
+ */
+export function reasoningClipLabel(clip: import("./compaction").ReasoningClipSpec | undefined | null): string {
+    if (!clip) return `回落缺省（保头 ${DEFAULT_REASONING_HEADTAIL_DATA.headChars} 字符）`;
+    if (clip.type === "full") return "全量（不裁）";
+    return `保头 ${clip.data.headChars} 字符${clip.data.tailChars ? ` + 尾 ${clip.data.tailChars}` : ""}`;
+}
 
 /** clip → 人读短名 */
 export function clipLabel(clip: z.infer<typeof ClipSpecSchema> | undefined | null): string {
