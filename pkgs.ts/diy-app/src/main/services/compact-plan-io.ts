@@ -19,9 +19,16 @@
 // 另：`reset`（##363）= **删 `history.keep[]` 回出厂缺省** —— 与 restore 的本质差别是**不依赖快照**
 //   （快照全坏时它是唯一的逃生窗口）。它同样走闸 + 快照（旧 keep）+ 审计（`op:"reset"`）。
 //
+// ── 版本化（##378 M3b）──
+// 每次成功的 set / restore / reset 都**入版本链**（`plan-store.ts`：内容寻址 CAS + `local/plan/<key>/index.jsonl`）。
+// 版本 = 纯 plan 数据 `{ v, source, keep[] }`，id = `plan-<sha256(规范化 JSON) 前 12 位>` ⇒ 同内容同 id（天然去重）、
+// 内容变 id 必变（自校验）。全文存**不存 diff**（plan 几百字节，diff 换来的是链式依赖）。
+// 旧时间戳快照（`plan-history/<ISO>.yaml`）**保留且只读兼容**：restore 收到旧 id 时读到即转成版本入链。
+// 压缩事件账（`local/<key>.compact.jsonl`）从此只记 `planVersion` 指针（见 local-agent 的 compact()）。
+//
 // ── 分层 ──
 // 判据（validate / checkKeep）在 shared + compact-plan-service；文件 I/O 在 core/auto-compact-config；
-// 本模块只做**编排**（闸 → 校验 → 快照 → 写 → 审计）与人读文本。
+// 版本存储（CAS + 链）在 plan-store；本模块只做**编排**（闸 → 校验 → 快照 → 写 → 入链 → 审计）与人读文本。
 
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { writeFileAtomic } from "../core/atomic-write";
@@ -39,6 +46,19 @@ import { budgetBytesOf, fmtBytes } from "../../shared/context/compaction";
 import type { AutoCompactIssue } from "../../shared/context/auto-compact";
 import { DEFAULT_KEEP, clipLabel, keepStageLabel, reasoningClipLabel, type KeepIssue, type KeepStage } from "../../shared/context/compact-keep";
 import { checkKeep, formatCheckFailure, type PlanCheckReport } from "./compact-plan-service";
+import {
+    appendPlanVersion,
+    currentPlanVersion,
+    isPlanVersionId,
+    listPlanVersions,
+    planVersionDoc,
+    planVersionId,
+    readPlanVersion,
+    renderPlanVersionDiff,
+    type PlanScope,
+    type PlanVersionDoc,
+    type PlanVersionEntry,
+} from "./plan-store";
 
 /** 所有写路径返回都带的人读影响面提示（M3b 要的就是模型**知道自己在动全局**） */
 export const PLAN_SCOPE_NOTE = "本改动影响**所有任务**的投递（plan 是全局配置）";
@@ -106,11 +126,30 @@ export interface PlanView {
     warnings: AutoCompactIssue[];
     scope: typeof PLAN_SCOPE;
     note: string;
+    /** 当前生效 plan 的**内容寻址版本 id**（`plan-<sha12>`）—— 由生效内容现算，**不读链**
+     *  （手改 `auto-compact.yaml` 也能显示真值；链里有没有这一行是另一件事，见 `versions`） */
+    version: string;
+    /** 链里已有的版本数（0 = 这套内容还没入过链） */
+    versions: number;
+    /** 链尾（`null` = 空链）；`entry.version` 与 `version` 不同 = 配置被手改过、尚未入链 */
+    latest?: PlanVersionEntry;
+}
+
+/** 生效 plan → 版本文档（`source` 从配置形状推；`keep` 用生效的那份，不是缺省回显） */
+export function planDocOfEffective(home: string): PlanVersionDoc {
+    const { source, keep } = effectiveKeep(home);
+    return planVersionDoc({ source, keep });
+}
+
+/** 当前生效版本 id（内容寻址）—— 压缩事件与 UI 都靠它指回 CAS */
+export function currentPlanVersionId(home: string): string {
+    return planVersionId(planDocOfEffective(home));
 }
 
 export function planGet(home: string): PlanView {
     const { config: cfg, issues: warnings } = loadAutoCompactDetailed(home);
     const source = planSourceOf(cfg);
+    const latest = currentPlanVersion(home);
     return {
         source,
         keep: source === "config" ? cfg.history!.keep! : DEFAULT_KEEP,
@@ -120,7 +159,93 @@ export function planGet(home: string): PlanView {
         warnings,
         scope: PLAN_SCOPE,
         note: PLAN_SCOPE_NOTE,
+        version: currentPlanVersionId(home),
+        versions: listPlanVersions(home).length,
+        ...(latest ? { latest } : {}),
     };
+}
+
+// ─── 版本链（读：CLI / 工具 / UI 同一份）─────────────
+
+export interface PlanVersionsView {
+    scope: PlanScope;
+    /** 当前生效版本 id（由生效内容现算） */
+    current: string;
+    /** 链（**旧 → 新**） */
+    versions: PlanVersionEntry[];
+    /** 链尾版本（空链 = null） */
+    latest: PlanVersionEntry | null;
+    /** 配置内容尚未入链（手改过 / 版本化前配的）⇒ 下一次写或压缩会补录 */
+    pending: boolean;
+    note: string;
+}
+
+export function planVersions(home: string): PlanVersionsView {
+    const versions = listPlanVersions(home);
+    const current = currentPlanVersionId(home);
+    const latest = versions.at(-1) ?? null;
+    return {
+        scope: { type: "global" },
+        current,
+        versions,
+        latest,
+        pending: latest?.version !== current,
+        note: PLAN_SCOPE_NOTE,
+    };
+}
+
+export interface PlanVersionView {
+    entry: PlanVersionEntry;
+    doc: PlanVersionDoc;
+    /** 与上一版（`entry.parent`）的全文对比（无上一版 = 空串） */
+    diff: string;
+}
+
+/** 单版详情（含与上一版对比；`diff` 由相邻两版全文实时算 —— diff 只作视图） */
+export function planVersionView(home: string, version: string): PlanVersionView | null {
+    const clean = version.trim();
+    const entry = listPlanVersions(home).find((v) => v.version === clean);
+    const doc = readPlanVersion(home, clean);
+    if (!doc) return null;
+    const prevDoc = entry?.parent ? readPlanVersion(home, entry.parent) : null;
+    return {
+        entry: entry ?? {
+            version: clean,
+            ts: "",
+            op: "set",
+            via: "user",
+            taskUri: "",
+            parent: null,
+            brief: "（链里没有这一行：内容存在于 CAS，但没入链）",
+        },
+        doc,
+        diff: prevDoc ? renderPlanVersionDiff({ version: entry!.parent!, keep: prevDoc.keep }, { version: clean, keep: doc.keep }) : "",
+    };
+}
+
+/** 版本链的人读文本（工具输出 / CLI 同一份文案） */
+export function renderPlanVersionsView(v: PlanVersionsView): string {
+    const head =
+        `plan 版本链（作用域 ${v.scope.type}）：当前 ${v.current}` +
+        `${v.pending ? "（**链尾不同** —— 配置已手改，下一次写入 / 压缩会补录）" : ""}`;
+    if (v.versions.length === 0) return `${head}\n  （链为空：还没有过一次写入）`;
+    const lines = v.versions
+        .slice(-10)
+        .reverse()
+        .map((e) => `  ${e.version}${e.version === v.current ? " ←当前" : ""} · ${e.ts} · ${e.op}/${e.via} · ${e.brief}`)
+        .join("\n");
+    const more = v.versions.length > 10 ? `\n  …共 ${v.versions.length} 版（只显示最近 10 版）` : "";
+    return `${head}\n${lines}${more}`;
+}
+
+/** 单版详情的人读文本（级列表 + 与上一版对比） */
+export function renderPlanVersionView(v: PlanVersionView): string {
+    return (
+        `版本 ${v.entry.version} · ${v.entry.op}/${v.entry.via} · ${v.entry.ts || "（未入链）"}\n` +
+        `摘要：${v.entry.brief}\n` +
+        `内容（${v.doc.source === "config" ? "配置显式" : "缺省/删键"}）：\n${renderKeep(v.doc.keep)}\n` +
+        (v.diff ? `与上一版对比：\n${v.diff}` : "（无上一版：链首）")
+    );
 }
 
 // ─── 校验 ────────────────────────────────────────
@@ -166,7 +291,10 @@ export interface PlanWriteResult {
     blocked?: "agent-write-disabled";
     before?: readonly KeepStage[];
     after?: readonly KeepStage[];
+    /** 旧时间戳快照 id（`plan-history/<id>.yaml`；restore 仍兼容它） */
     snapshotId?: string;
+    /** 这次写入后的**内容寻址版本 id**（`plan-<sha12>`；回滚用 `restore(version:"plan-…")`） */
+    planVersion?: string;
     issues?: KeepIssue[];
     scope: typeof PLAN_SCOPE;
     note: string;
@@ -252,6 +380,8 @@ function appendPlanEdit(
         result: "ok" | "rejected" | "blocked";
         via: PlanWriteVia;
         snapshotId?: string;
+        /** 本次写入后的版本 id（`plan-<sha12>`；审计要能按版本回查） */
+        planVersion?: string;
         beforeKeep?: readonly KeepStage[];
         afterKeep?: readonly KeepStage[];
         issues?: KeepIssue[];
@@ -304,26 +434,61 @@ export function planSet(args: PlanWriteArgs & { keepText: string }): PlanWriteRe
     }
     const snapshotId = writePlanSnapshot(home, taskUri, "set", beforeList);
     saveKeepConfig(home, stages); // 不绕过校验的**唯一**写入口（此处已校验过一次，仍走它 —— 不许有第二条写路径）
-    appendPlanEdit(home, { taskUri, op: "set", result: "ok", via, snapshotId, beforeKeep: beforeList, afterKeep: stages, issues });
+    // 入链：**写完之后按生效内容**取版本（不是按入参 stages）—— 配置归一化若改了形状，链记的必须是真值
+    const { entry: versionEntry } = appendPlanVersion({
+        home,
+        doc: planDocOfEffective(home),
+        op: "set",
+        via,
+        taskUri,
+    });
+    appendPlanEdit(home, {
+        taskUri,
+        op: "set",
+        result: "ok",
+        via,
+        snapshotId,
+        planVersion: versionEntry.version,
+        beforeKeep: beforeList,
+        afterKeep: stages,
+        issues,
+    });
     return {
         ok: true,
         written: true,
         before: beforeList,
         after: stages,
         snapshotId,
+        planVersion: versionEntry.version,
         issues,
         scope: PLAN_SCOPE,
         note: PLAN_SCOPE_NOTE,
-        text: renderWriteResult("set", stages, snapshotId),
+        text: renderWriteResult("set", stages, snapshotId, versionEntry.version),
     };
 }
 
 /**
- * 回滚到某份快照（缺省最近一份）—— **走同一套校验 + 快照**：所以回滚本身也可回滚。
- * 目标快照的 keep 同样要过闸（agent 侧）与校验（快照可能是手改过的文件）。
+ * 回滚到**某个版本**（缺省 = 版本链上一版）—— **切指针**：把该版本内容写回 `auto-compact.yaml`。
+ *
+ * 仍走**同一套** 闸 → 校验 → 快照 → 写 → 审计（所以回滚本身也可回滚：本次写入也入链）。
+ *
+ * 目标三种写法（##378）：
+ *   · `version: "plan-<sha12>"` —— 版本 id（正路）；
+ *   · `version: "<ISO 时间戳>"`（= 旧快照 id，`plan-history/<id>.yaml`）—— **旧名兼容**：读到即转成版本入链；
+ *   · 都不给 —— 取**当前版本链的上一版**（`current.parent`）；链空 / 无上一版才回退「最近一份旧快照」。
+ *
+ * `source:"default"` 的版本（当时就是「删键回出厂缺省」）⇒ 还原时**删键**，而不是把缺省字面量写进配置
+ * —— 否则就把缺省冻结在了还原那一刻（丢失「跟随将来缺省演进」的语义）。
  */
-export function planRestore(args: PlanWriteArgs & { snapshot?: string }): PlanWriteResult {
-    const { home, taskUri, via, measure, snapshot } = args;
+export interface PlanRestoreArgs extends PlanWriteArgs {
+    /** 目标版本 id（`plan-<sha12>`）或**旧快照 id**；缺省 = 版本链上一版 */
+    version?: string;
+    /** 旧参数名（##362 的 `snapshot`）；语义同 `version`，保留兼容 */
+    snapshot?: string;
+}
+
+export function planRestore(args: PlanRestoreArgs): PlanWriteResult {
+    const { home, taskUri, via, measure } = args;
     const { source, keep: before } = effectiveKeep(home);
     const beforeList = source === "config" ? before : [];
     if (via === "agent" && !agentWriteAllowed(home)) {
@@ -338,34 +503,92 @@ export function planRestore(args: PlanWriteArgs & { snapshot?: string }): PlanWr
             text: `plan 写入未开启（history.allowAgentWrite=false）；回滚同样被闸挡住。\n${PLAN_SCOPE_NOTE}。`,
         };
     }
-    const ids = listPlanSnapshots(home);
-    const targetId = snapshot ?? ids.at(-1);
-    if (!targetId) {
-        throw new Error("没有可回滚的快照（plan-history/ 为空）—— 每次成功写入前才会留一份");
+    // 目标 → 版本文档（三种写法归一，见函数头注）
+    const target = args.version ?? args.snapshot;
+    let doc: PlanVersionDoc | null = null;
+    let targetLabel = "";
+    if (target !== undefined && target.trim() !== "") {
+        const id = target.trim();
+        if (isPlanVersionId(id)) {
+            doc = readPlanVersion(home, id);
+            if (!doc) {
+                const avail = listPlanVersions(home);
+                throw new Error(
+                    `版本不存在：${id}（链上 ${avail.length} 版${avail.length ? `，最近：${avail.slice(-3).map((v) => v.version).join(" / ")}` : ""}；见 op:"versions"）`,
+                );
+            }
+            targetLabel = `版本 ${id}`;
+        } else {
+            // 旧快照 id：读到即转成版本入链（不删旧文件 —— ##378 边界：只做读兼容）
+            const snap = readPlanSnapshot(home, id);
+            doc = planVersionDoc({ source: "config", keep: (snap.doc.keep ?? []) as KeepStage[] });
+            targetLabel = `旧快照 ${snap.id}`;
+        }
+    } else {
+        const cur = currentPlanVersion(home);
+        const prevVersion = cur?.parent;
+        if (prevVersion) {
+            doc = readPlanVersion(home, prevVersion);
+            if (doc) targetLabel = `上一版 ${prevVersion}`;
+        }
+        if (!doc) {
+            const ids = listPlanSnapshots(home);
+            const last = ids.at(-1);
+            if (!last) {
+                throw new Error("没有可回滚的版本（版本链为空，`plan-history/` 也为空）—— 每次成功写入才会入链");
+            }
+            const snap = readPlanSnapshot(home, last);
+            doc = planVersionDoc({ source: "config", keep: (snap.doc.keep ?? []) as KeepStage[] });
+            targetLabel = `旧快照 ${snap.id}`;
+        }
     }
-    const snap = readPlanSnapshot(home, targetId);
     let stages: KeepStage[];
     try {
-        const report = planCheck({ home, taskUri, keepText: yaml.dump(snap.doc.keep, { indent: 2, noRefs: true }), ...(measure ? { measure } : {}) });
-        if (!report.ok) throw new Error(`快照 ${snap.id} 的 keep 校验不通过：\n${formatCheckFailure(report)}`);
+        const report = planCheck({ home, taskUri, keepText: yaml.dump(doc.keep, { indent: 2, noRefs: true }), ...(measure ? { measure } : {}) });
+        if (!report.ok) throw new Error(`${targetLabel} 的 keep 校验不通过：\n${formatCheckFailure(report)}`);
         stages = report.keep;
     } catch (e) {
         appendPlanEdit(home, { taskUri, op: "restore", result: "rejected", via, beforeKeep: beforeList, reason: e instanceof Error ? e.message : String(e) });
         throw e;
     }
     const snapshotId = writePlanSnapshot(home, taskUri, "restore", beforeList);
-    saveKeepConfig(home, stages);
-    appendPlanEdit(home, { taskUri, op: "restore", result: "ok", via, snapshotId, beforeKeep: beforeList, afterKeep: stages });
+    // 切指针：`default` 版本 = 删键（跟随将来缺省），`config` 版本 = 写入级列表
+    if (doc.source === "default") deleteKeepConfig(home);
+    else saveKeepConfig(home, stages);
+    const { entry: versionEntry } = appendPlanVersion({
+        home,
+        doc: planDocOfEffective(home),
+        op: "restore",
+        via,
+        taskUri,
+        brief: `restore ← ${targetLabel}：${describeRestoreBrief(doc.keep)}`,
+    });
+    appendPlanEdit(home, {
+        taskUri,
+        op: "restore",
+        result: "ok",
+        via,
+        snapshotId,
+        planVersion: versionEntry.version,
+        beforeKeep: beforeList,
+        afterKeep: stages,
+    });
     return {
         ok: true,
         written: true,
         before: beforeList,
         after: stages,
         snapshotId,
+        planVersion: versionEntry.version,
         scope: PLAN_SCOPE,
         note: PLAN_SCOPE_NOTE,
-        text: `${renderWriteResult("restore", stages, snapshotId)}\n（已回滚到快照 ${snap.id}）`,
+        text: `${renderWriteResult("restore", stages, snapshotId, versionEntry.version)}\n（已回滚到${targetLabel}）`,
     };
+}
+
+/** restore 的一行摘要（源版本 → 目标内容；`describePlanChange` 从链尾推，这里是「还原自哪」） */
+function describeRestoreBrief(keep: readonly KeepStage[]): string {
+    return keep.map((s) => s.type).join(" / ") || "空级列表";
 }
 
 /**
@@ -419,16 +642,34 @@ export function planReset(args: PlanWriteArgs): PlanWriteResult {
     }
     const snapshotId = writePlanSnapshot(home, taskUri, "reset", beforeList);
     deleteKeepConfig(home);
-    appendPlanEdit(home, { taskUri, op: "reset", result: "ok", via, snapshotId, beforeKeep: beforeList, afterKeep: DEFAULT_KEEP });
+    // 入链：reset 也是一版（`source:"default"`）—— 但**逃生窗口本身不依赖链**（先删键，再入链）
+    const { entry: versionEntry } = appendPlanVersion({
+        home,
+        doc: planDocOfEffective(home),
+        op: "reset",
+        via,
+        taskUri,
+    });
+    appendPlanEdit(home, {
+        taskUri,
+        op: "reset",
+        result: "ok",
+        via,
+        snapshotId,
+        planVersion: versionEntry.version,
+        beforeKeep: beforeList,
+        afterKeep: DEFAULT_KEEP,
+    });
     return {
         ok: true,
         written: true,
         before: beforeList,
         after: DEFAULT_KEEP,
         snapshotId,
+        planVersion: versionEntry.version,
         scope: PLAN_SCOPE,
         note: PLAN_SCOPE_NOTE,
-        text: renderWriteResult("reset", DEFAULT_KEEP, snapshotId),
+        text: renderWriteResult("reset", DEFAULT_KEEP, snapshotId, versionEntry.version),
     };
 }
 
@@ -479,6 +720,7 @@ export function renderPlanView(v: PlanView): string {
         `plan（来源：${v.source === "config" ? "配置" : "缺省回退"}）· 历史预算 ${fmtBytes(v.budgetBytes)}\n` +
         renderWarnings(v.warnings) +
         `${renderKeep(v.keep)}\n` +
+        `版本：${v.version}（${v.versions > 0 ? `链上 ${v.versions} 版` : "尚未入链"}${v.latest && v.latest.version !== v.version ? "；配置已手改，尚未入链" : ""}）\n` +
         `agent 写闸：${v.writeAllowed ? "已开启（history.allowAgentWrite=true）" : "关闭（history.allowAgentWrite=false ⇒ set/restore 会被拒）"}\n` +
         `scope: ${v.scope} —— ${v.note}。`
     );
@@ -497,7 +739,12 @@ export function renderWarnings(warnings: readonly AutoCompactIssue[]): string {
 }
 
 /** set / restore / reset 成功的人读文本 */
-export function renderWriteResult(op: "set" | "restore" | "reset", keep: readonly KeepStage[], snapshotId: string): string {
+export function renderWriteResult(
+    op: "set" | "restore" | "reset",
+    keep: readonly KeepStage[],
+    snapshotId: string,
+    planVersion?: string,
+): string {
     const head =
         op === "reset"
             ? `plan reset 成功 —— history.keep[] 已删除，回落**出厂缺省管道**（未配置状态；将来缺省演进会自动跟随）`
@@ -505,7 +752,8 @@ export function renderWriteResult(op: "set" | "restore" | "reset", keep: readonl
     return (
         `${head}，当前级列表（从上往下生效）：\n` +
         `${renderKeep(keep)}\n` +
-        `快照：${snapshotId}（回滚用 op:"restore" snapshot:"${snapshotId}"）\n` +
+        (planVersion ? `版本：${planVersion}（回滚用 op:"restore" version:"${planVersion}"；列表见 op:"versions"）\n` : "") +
+        `快照：${snapshotId}（旧式快照 id 仍可 restore，读到即转成版本入链）\n` +
         `scope: ${PLAN_SCOPE} —— ${PLAN_SCOPE_NOTE}。`
     );
 }

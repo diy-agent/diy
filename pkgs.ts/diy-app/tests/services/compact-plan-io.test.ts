@@ -8,6 +8,7 @@
 //   ④ restore 回滚到上一份（且回滚本身也留快照 = 可回滚）
 //   ⑤⑥⑦⑧ reset（##363 M3a 补）：删键回出厂缺省 + 快照 + 闸 + 幂等
 // 另：审计落 `log/compact/plan-edits.jsonl`（set/restore/reset 各一行）。
+//     ##378 起每次成功写入**同时入版本链**（`plan-store.ts`：CAS + index.jsonl）—— 见文末 describe。
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { createHash } from "node:crypto";
@@ -21,6 +22,7 @@ import { budgetBytesOf } from "../../src/shared/context/compaction";
 import { DEFAULT_KEEP, type KeepStage } from "../../src/shared/context/compact-keep";
 import {
     agentWriteAllowed,
+    currentPlanVersionId,
     listPlanSnapshots,
     planCheck,
     planEditLogFile,
@@ -29,8 +31,10 @@ import {
     planReset,
     planRestore,
     planSet,
+    planVersions,
     renderPlanView,
 } from "../../src/main/services/compact-plan-io";
+import { listPlanVersions, readPlanVersion } from "../../src/main/services/plan-store";
 
 const HOME = join(diyHome(), "plan-io-home");
 const TASK = "projects/1/tasks/1";
@@ -286,5 +290,115 @@ describe("plan reset 逃生窗口（##363）", () => {
         expect(listPlanSnapshots(HOME).length).toBe(snapsBefore);
         // 闸不被幂等路径关掉（allowAgentWrite 原样）
         expect(loadAutoCompact(HOME).history?.allowAgentWrite).toBe(true);
+    });
+});
+
+
+// ─── ##378 M3b：版本化（CAS + 链）—— 每次成功写入都入链 ─────────────────
+// 钉住：set/restore/reset 入链 · `planVersion` 可回查 · 旧快照 id 仍可 restore（读到即转版本）·
+//      `restore` 按**版本 id** 切指针（不是按「最近一份时间戳快照」）· default 版本 ⇒ 删键。
+describe("plan 版本化（##378）", () => {
+    const chain = () => listPlanVersions(HOME);
+
+    it("set 入链：结果带 planVersion，planGet 报的当前版本 = 链尾，审计行带版本", () => {
+        seedConfig();
+        const r = planSet({ home: HOME, taskUri: TASK, via: "user", keepText: KEEP_B });
+        expect(r.written).toBe(true);
+        expect(r.planVersion).toMatch(/^plan-[0-9a-f]{12}$/);
+        // 链：一行，parent=null
+        expect(chain().map((e) => e.version)).toEqual([r.planVersion]);
+        expect(chain()[0]!.parent).toBeNull();
+        // 当前生效版本（现算）与链尾一致（不是「未入链」）
+        expect(planGet(HOME).version).toBe(r.planVersion);
+        expect(currentPlanVersionId(HOME)).toBe(r.planVersion);
+        expect(planVersions(HOME).pending).toBe(false);
+        // 全文真的在 CAS 里（内容 = 纯 plan 数据）
+        const doc = readPlanVersion(HOME, r.planVersion!);
+        expect(doc?.keep.map((k) => k.type)).toEqual(["recent"]);
+        expect(doc?.source).toBe("config");
+        // 审计行可按版本回查
+        const rows = readFileSync(planEditLogFile(HOME), "utf-8").trim().split("\n").map((l) => JSON.parse(l));
+        expect(rows.at(-1)).toMatchObject({ op: "set", result: "ok", planVersion: r.planVersion });
+        // 人读文本要给回滚写法
+        expect(r.text).toContain(`version:"${r.planVersion}"`);
+    });
+
+    it("restore 按**版本 id** 切指针（不是「最近一份快照」），且回滚本身也入链", () => {
+        seedConfig();
+        const a = planSet({ home: HOME, taskUri: TASK, via: "user", keepText: KEEP_A });
+        const b = planSet({ home: HOME, taskUri: TASK, via: "user", keepText: KEEP_B });
+        expect(planGet(HOME).version).toBe(b.planVersion);
+        // 明确回到 A 版（最新快照其实是 A 的旧 keep，但这里走的是**版本 id** 这条路）
+        const rb = planRestore({ home: HOME, taskUri: TASK, via: "user", version: a.planVersion });
+        expect(rb.written).toBe(true);
+        expect(planGet(HOME).keep.map((s) => s.type)).toEqual(["steps", "ladder"]);
+        expect(rb.planVersion).toBe(a.planVersion);
+        // 链：A(id=version a) → B → A（回滚 = 再记一行，parent = 链尾）
+        const rows = chain();
+        expect(rows.map((e) => e.op)).toEqual(["set", "set", "restore"]);
+        expect(rows[2]!.version).toBe(a.planVersion);
+        expect(rows[2]!.parent).toBe(b.planVersion);
+        expect(rows[2]!.brief).toContain("restore");
+    });
+
+    it("缺省 restore 目标 = **版本链上一版**（链空才回退最近一份旧快照）", () => {
+        seedConfig();
+        const a = planSet({ home: HOME, taskUri: TASK, via: "user", keepText: KEEP_A });
+        planSet({ home: HOME, taskUri: TASK, via: "user", keepText: KEEP_B });
+        const rb = planRestore({ home: HOME, taskUri: TASK, via: "user" });
+        expect(rb.written).toBe(true);
+        expect(rb.planVersion).toBe(a.planVersion);
+        expect(planGet(HOME).keep.map((s) => s.type)).toEqual(["steps", "ladder"]);
+    });
+
+    it("**旧快照 id** 仍可 restore：读到即转成版本入链（不删旧文件）", () => {
+        seedConfig();
+        const a = planSet({ home: HOME, taskUri: TASK, via: "user", keepText: KEEP_A });
+        const b = planSet({ home: HOME, taskUri: TASK, via: "user", keepText: KEEP_B });
+        const legacyId = b.snapshotId!; // 写 B 之前留的快照 = A 的 keep
+        expect(existsSync(snapshotFile(legacyId))).toBe(true);
+        const rb = planRestore({ home: HOME, taskUri: TASK, via: "user", snapshot: legacyId });
+        expect(rb.written).toBe(true);
+        expect(planGet(HOME).keep.map((s) => s.type)).toEqual(["steps", "ladder"]);
+        // 入链：链尾 op=restore，且 brief 点明来源是旧快照
+        const tail = chain().at(-1)!;
+        expect(tail.op).toBe("restore");
+        expect(tail.brief).toContain("旧快照");
+        // 旧文件**原样保留**（##378 边界：只做读兼容，不动 plan-history/ 存量）
+        expect(existsSync(snapshotFile(legacyId))).toBe(true);
+        // 版本内容也落在 CAS 里（转成版本 = 可回查、可再回滚）
+        expect(readPlanVersion(HOME, tail.version)?.keep.map((k) => k.type)).toEqual(["steps", "ladder"]);
+        void a;
+    });
+
+    it("restore 到 **default 版本** ⇒ 删键（不是把缺省字面量写进配置）", () => {
+        seedConfig();
+        planSet({ home: HOME, taskUri: TASK, via: "user", keepText: KEEP_B });
+        const reset = planReset({ home: HOME, taskUri: TASK, via: "user" });
+        expect(reset.planVersion).toBeTruthy();
+        expect(readPlanVersion(HOME, reset.planVersion!)?.source).toBe("default");
+        // 再写一版，然后回滚到 reset 那一版
+        planSet({ home: HOME, taskUri: TASK, via: "user", keepText: KEEP_B });
+        const rb = planRestore({ home: HOME, taskUri: TASK, via: "user", version: reset.planVersion });
+        expect(rb.written).toBe(true);
+        // 语义：配置里**没有 keep 键**（source 回落 default），不是「写了 DEFAULT_KEEP」
+        expect(planGet(HOME).source).toBe("default");
+        const doc = yaml.load(readFileSync(autoCompactFile(HOME), "utf-8")) as { history?: { keep?: unknown } };
+        expect(doc.history?.keep).toBeUndefined();
+        expect(planGet(HOME).keep.map((s) => s.type)).toEqual(DEFAULT_KEEP.map((s) => s.type));
+    });
+
+    it("reset 也入链（source:default 那一版），且**逃生窗口不依赖链**（链空也能 reset）", () => {
+        seedConfig();
+        const before = chain().length;
+        expect(before).toBe(0);
+        const r = planReset({ home: HOME, taskUri: TASK, via: "user" });
+        expect(r.written).toBe(true);
+        const rows = chain();
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.op).toBe("reset");
+        expect(readPlanVersion(HOME, rows[0]!.version)?.source).toBe("default");
+        // 逃生窗口语义不变：配置里没有 keep 键、source=default
+        expect(planGet(HOME).source).toBe("default");
     });
 });

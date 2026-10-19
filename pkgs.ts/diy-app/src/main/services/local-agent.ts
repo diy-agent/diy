@@ -64,7 +64,21 @@ import {
     seekWindowStart,
 } from "./local-ops-seek";
 import { appendAudit } from "./agent-audit";
-import { planCheck, planGet, planReset, planRestore, planSet, renderCheckView, renderPlanView } from "./compact-plan-io";
+import {
+    PLAN_SCOPE_NOTE,
+    planCheck,
+    planGet,
+    planReset,
+    planRestore,
+    planVersions,
+    planVersionView,
+    planSet,
+    renderCheckView,
+    renderPlanVersionsView,
+    renderPlanVersionView,
+    renderPlanView,
+} from "./compact-plan-io";
+import { appendPlanVersion, currentPlanVersion, planVersionDoc, planVersionId, writePlanVersion } from "./plan-store";
 import { capToolOutput, safeId, toolOutDir, toolOutRelPath } from "./tool-output";
 import { abortText } from "../../shared/turn-end";
 import { opsFeed } from "./ops-feed";
@@ -829,8 +843,10 @@ interface CompactPlan {
     rateSnap?: RateSnapshot;
     /** 账目（可缺；形状与账本的 `cost` 分组一致） */
     stats: NonNullable<CompactEventRecord["cost"]>;
-    /** 这次用的**整条 plan 原文**（含来源）—— 事件账 v3 的快照来源（##344 M2） */
+    /** 这次用的 plan 快照（##344 M2；##378 起只含**版本指针** + 标量，不含 keep 全文） */
     planSnapshot: CompactPlanSnapshot;
+    /** 这次实际生效的级列表（**只在本进程内用**：入链 / 补录要写全文，不进事件账） */
+    planKeep: readonly KeepStage[];
 }
 
 /** 压缩预览（只算不写）：panel「事实」行 + 预览页共用 */
@@ -1232,23 +1248,39 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                 "**这是全局配置：改动影响所有任务、所有 agent 的投递**。" +
                 "op=get 读当前生效 plan（含来源与预算）；op=check 校验一份级列表（可传 keep，缺省校验盘上配置）；" +
                 "op=set 写 history.keep[]（需用户在配置里开 history.allowAgentWrite=true，否则返回「没权限」而非报错）；" +
-                "op=restore 回滚到历史快照（缺省最近一份；回滚本身也可回滚）；" +
-                "op=reset 一键回**出厂缺省** plan（删 history.keep[]；**不依赖任何快照的逃生窗口** —— 快照全坏时用它）。" +
+                "op=versions 列出 plan 版本链（只读，恒可用）；op=version 看某一版全文（只读）；" +
+                "op=restore 回滚到**某一版**（缺省上一版；也兼容旧时间戳快照 id；回滚本身也可回滚）；" +
+                "op=reset 一键回**出厂缺省** plan（删 history.keep[]；**不依赖任何版本/快照的逃生窗口** —— 链全坏时用它）。" +
                 "级列表形状：`[{ type: ladder|role|recent|steps, must?, limit?, clip?, data }]`，从上往下生效（先声明的先挑）。",
             inputSchema: z.object({
-                op: z.enum(["get", "check", "set", "restore", "reset"]).describe("要做什么"),
+                op: z.enum(["get", "check", "set", "restore", "reset", "versions", "version"]).describe("要做什么"),
                 keep: z
                     .string()
                     .optional()
                     .describe('op=check/set：级列表文本（YAML 或 JSON；数组，或 `{ keep: [...] }`）'),
-                snapshot: z.string().optional().describe("op=restore：快照 id（见 set 返回）；缺省最近一份"),
+                version: z
+                    .string()
+                    .optional()
+                    .describe("op=version/restore：版本 id（`plan-<sha12>`；restore 也兼容旧快照 id）；缺省 = 上一版"),
+                snapshot: z.string().optional().describe("op=restore：旧参数名（= version；仅为兼容保留）"),
             }),
-            execute: async ({ op, keep: keepText, snapshot }) => {
+            execute: async ({ op, keep: keepText, version, snapshot }) => {
                 const home = diyHome();
                 // must 层实占字节要**量**（预算是管不到 must 的）—— 与 RPC 注入的是同一测量
                 const measure = (k: KeepStage[]): { mustBytes: number; hardCapBytes: number } =>
                     getLocalAgent().measureMustStages(taskUri, k);
                 if (op === "get") return renderPlanView(planGet(home));
+                // 只读两条（versions / version）**恒可用** —— 不受 allowAgentWrite 闸约束（同 get / check）
+                if (op === "versions") {
+                    const v = planVersions(home);
+                    return `${renderPlanVersionsView(v)}\n${PLAN_SCOPE_NOTE}。`;
+                }
+                if (op === "version") {
+                    if (!version) throw new Error('op:"version" 需要 `version`（`plan-<sha12>`；见 op:"versions"）');
+                    const v = planVersionView(home, version);
+                    if (!v) throw new Error(`版本不存在：${version}（见 op:"versions"）`);
+                    return `${renderPlanVersionView(v)}\n${PLAN_SCOPE_NOTE}。`;
+                }
                 if (op === "check") {
                     // 校验**不抛**（ok=false 也是有用信息）—— 与 set 的"写错就抛"不同向，理由见 compact-plan-io 头注
                     return renderCheckView(planCheck({ home, taskUri, ...(keepText !== undefined ? { keepText } : {}), measure }));
@@ -1261,7 +1293,14 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                     return planSet({ home, taskUri, via: "agent", keepText, measure }).text;
                 }
                 if (op === "reset") return planReset({ home, taskUri, via: "agent" }).text;
-                return planRestore({ home, taskUri, via: "agent", ...(snapshot ? { snapshot } : {}), measure }).text;
+                return planRestore({
+                    home,
+                    taskUri,
+                    via: "agent",
+                    ...(version ? { version } : {}),
+                    ...(snapshot ? { snapshot } : {}),
+                    measure,
+                }).text;
             },
         }),
     };
@@ -2124,10 +2163,12 @@ export class LocalAgentManager {
         // 装配管道 = **当前配置**的 `history.keep[]`；没配 ⇒ 缺省管道（回落，行为与 ##343 M1 一致）。
         const cfgKeep = loadAutoCompact(diyHome()).history?.keep;
         const keepUsed: readonly KeepStage[] = cfgKeep && cfgKeep.length > 0 ? cfgKeep : DEFAULT_KEEP;
+        const planSource: "config" | "default" = cfgKeep && cfgKeep.length > 0 ? "config" : "default";
+        // ##378：事件只记**版本指针**（内容寻址）—— 全文在 CAS，压缩账不再内嵌 keep
         const planSnapshot: CompactPlanSnapshot = {
             budgetBytes: policy.modeData.budgetBytes,
-            keep: keepUsed.map((k) => ({ ...k })),
-            source: cfgKeep && cfgKeep.length > 0 ? "config" : "default",
+            source: planSource,
+            planVersion: planVersionId(planVersionDoc({ source: planSource, keep: keepUsed })),
         };
         const scan = scanOpsFile(taskUri);
         const turnIds = listTurnIds(scan.ops);
@@ -2172,7 +2213,7 @@ export class LocalAgentManager {
               }
             : undefined;
         const stats = usageStats(readStepUsages(taskUri), after.estTokens, rateSnap);
-        return { policy, keptTurns, keptFromTurnId, keepFromOpIndex, droppedIds, keptRuns, scan, store, before, after, droppedDetail, clipped, rateSnap, stats, planSnapshot };
+        return { policy, keptTurns, keptFromTurnId, keepFromOpIndex, droppedIds, keptRuns, scan, store, before, after, droppedDetail, clipped, rateSnap, stats, planSnapshot, planKeep: keepUsed };
     }
 
     /**
@@ -2362,13 +2403,14 @@ export class LocalAgentManager {
         const ts = new Date().toISOString();
         const rec: CompactEventRecord = {
             kind: "compact",
-            v: 3,
+            v: 4,
             id: ts,
             ts,
             by,
             trigger,
             policy: p.policy,
-            // v3 新增：**当时整条 plan 的原文**（快照 ⇒ 事后可回放「那一刻用的是哪套 plan」）
+            // ##378：plan 只记**内容寻址版本指针**（`planVersion`）—— 全文在 `$DIY_HOME/plan-store/`，
+            // 不再内嵌（同内容反复内嵌 = 去重 0，且没有版本链）。
             plan: p.planSnapshot,
             // 锚点：只记**物理位置**（逻辑 id 只是 label）
             boundary: {
@@ -2395,7 +2437,24 @@ export class LocalAgentManager {
             ...(noop ? { noop: true } : {}),
         };
         // 空操作不写账（见上）；非空操作才 append。
-        if (!noop) appendCompactEvent(taskUri, rec);
+        if (!noop) {
+            // ##378：先把 plan 版本物化进 CAS；链尾不是它（手改配置 / 版本化前配的 plan）⇒ 补录一行，
+            // 保证账里的 `planVersion` 一定能被「列出来 / 回查 / 回滚」（否则是悬空指针）。
+            const home = diyHome();
+            const doc = planVersionDoc({ source: p.planSnapshot.source, keep: p.planKeep });
+            writePlanVersion(home, doc);
+            if (currentPlanVersion(home)?.version !== p.planSnapshot.planVersion) {
+                appendPlanVersion({
+                    home,
+                    doc,
+                    op: "set",
+                    via: "user",
+                    taskUri,
+                    brief: `压缩时补录：配置中的 plan 不在链上（${p.planKeep.map((k) => k.type).join(" / ") || "空级列表"}）`,
+                });
+            }
+            appendCompactEvent(taskUri, rec);
+        }
         return rec;
     }
 

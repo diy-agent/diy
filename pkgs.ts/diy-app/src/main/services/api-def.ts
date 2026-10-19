@@ -1202,8 +1202,36 @@ export const apiDef = RpcSchema.router({
                      * reset 前先把旧 keep 存一份快照 ⇒ reset 也能被 `restore` 回滚；其余字段不动。
                      */
                     reset: RpcSchema.unary({
-                      desc: `重置装配管道为**出厂缺省**（删 history.keep[]；不依赖快照的逃生窗口；mode/triggers/policy/allowAgentWrite 保留）`,
+                      desc: `重置装配管道为**出厂缺省**（删 history.keep[]；不依赖任何版本/快照的逃生窗口；mode/triggers/policy/allowAgentWrite 保留）`,
                       input: { taskUri: z.string().cliArg({ desc: "任务 URI" }) },
+                      output: z.any(),
+                    }),
+                    /**
+                     * 版本链（##378 M3b）：plan 的每次变化都入链（内容寻址 CAS + index.jsonl）。
+                     * 三条**只读之外**只有 restore 一条写路径 —— 且与 set/reset 共用同一套闸+校验+快照。
+                     */
+                    versions: RpcSchema.unary({
+                      desc: `列出 plan 版本链（当前版本 id + 版本列表 + brief；只读）`,
+                      input: { taskUri: z.string().cliArg({ desc: "任务 URI" }) },
+                      output: z.any(),
+                    }),
+                    version: RpcSchema.unary({
+                      desc: `看某一版 plan 全文（含与上一版的对比；只读）`,
+                      input: {
+                        taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                        version: z.string().cliArg({ desc: "版本 id（plan-<sha12>；见 plan versions）" }),
+                      },
+                      output: z.any(),
+                    }),
+                    restore: RpcSchema.unary({
+                      desc: `回滚到某一版 plan（缺省上一版；也兼容旧时间戳快照 id；走闸+校验+快照，回滚本身也可回滚）`,
+                      input: {
+                        taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                        version: z
+                          .string()
+                          .optional()
+                          .cliArg({ desc: "版本 id（plan-<sha12>）或旧快照 id；缺省 = 版本链上一版" }),
+                      },
                       output: z.any(),
                     }),
                   },
@@ -1264,6 +1292,10 @@ export const apiDef = RpcSchema.router({
                     .unknown()
                     .optional()
                     .cliOption({ desc: "部分配置（mode / triggers / policy），浅合并后写回" }),
+                  taskUri: z
+                    .string()
+                    .optional()
+                    .cliOption({ desc: "任务 URI（只用于版本链记账：写 history.keep[] 时记下是谁改的）" }),
                 },
                 output: z.any(),
               }),

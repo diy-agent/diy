@@ -181,6 +181,30 @@ export interface CompactPreviewModel {
     baseRequest: RequestView;
 }
 
+/** 版本链一行（RPC `compact.plan.versions` 的裁剪视图；形状真源 = main/services/plan-store.ts） */
+export interface PlanVersionEntryModel {
+    version: string;
+    ts: string;
+    op: "set" | "restore" | "reset";
+    via: "agent" | "user";
+    taskUri: string;
+    parent: string | null;
+    brief: string;
+}
+export interface PlanVersionsModel {
+    /** 当前**生效内容**的版本 id（可能尚未入链，见 `pending`） */
+    current: string;
+    versions: PlanVersionEntryModel[];
+    latest: PlanVersionEntryModel | null;
+    /** 配置内容与链尾不同（手改 / UI 编辑尚未记账） */
+    pending: boolean;
+}
+export interface PlanVersionDetailModel {
+    version: string;
+    text: string;
+    diff?: string;
+}
+
 export interface CompactPanelCtl {
     auto: () => {
         config: { mode: "off" | "notify" | "auto"; policy: unknown; history?: { keep?: KeepStage[] } };
@@ -228,6 +252,17 @@ export interface CompactPanelCtl {
     /** 重置为**出厂缺省**（##363）：删配置里的 `history.keep[]`（走 RPC `compact plan reset`）。
      *  ⚠️ 不是 `setKeep([...DEFAULT_KEEP])` —— 那是把缺省**写死**进配置；这里是**删键**（跟随将来缺省）。 */
     resetKeep: () => Promise<void>;
+    // ─── ##378：plan 版本链（只读展示 + 回滚）───
+    /** 版本链（当前 id + 列表）；`undefined` = 还没取到（抽屉关着 / 首帧） */
+    planVersions: () => PlanVersionsModel | undefined;
+    /** 当前版本 id（未取到 = 空串） */
+    planVersion: () => string;
+    /** 展开中的版本详情（`undefined` = 没展开） */
+    versionDetail: () => PlanVersionDetailModel | undefined;
+    /** 展开/收起某一版（点已展开的那版 = 收起） */
+    showVersion: (version: string) => Promise<void>;
+    /** 回滚到某一版（**切指针**：走闸+校验+快照，回滚本身也入链） */
+    restoreVersion: (version: string) => Promise<void>;
 }
 
 /**
@@ -252,12 +287,55 @@ export function useCompactPanel(uri: () => string, visible: () => boolean = () =
             };
         },
     );
+    // ─── ##378：版本链（只读 + 回滚）—— 与 auto / 预览同门槛：抽屉关着不查 ───
+    const [planVersionsRes, { refetch: refetchVersions }] = createResource(
+        () => (visible() ? uri() : null),
+        async (u) =>
+            u ? ((await localChatStore.compactPlanVersions(u)) as unknown as PlanVersionsModel) : undefined,
+    );
+    const planVersion = (): string => planVersionsRes()?.current ?? "";
+    const [versionDetail, setVersionDetail] = createSignal<PlanVersionDetailModel | undefined>(undefined);
+    /** 点某一版：展开全文 + 对比（再点同一版 = 收起） */
+    const showVersion = async (version: string): Promise<void> => {
+        if (versionDetail()?.version === version) {
+            setVersionDetail(undefined);
+            return;
+        }
+        setErr(null);
+        try {
+            const r = (await localChatStore.compactPlanVersion(uri(), version)) as unknown as {
+                text: string;
+                diff?: string;
+            };
+            setVersionDetail({ version, text: r.text, diff: r.diff });
+        } catch (e) {
+            setErr(String(e instanceof Error ? e.message : e));
+        }
+    };
+    /** 回滚到某一版（确认后由界面调；这里是纯副作用，不做二次确认 —— 确认归调用点） */
+    const restoreVersion = async (version: string): Promise<void> => {
+        setAutoBusy(true);
+        setErr(null);
+        try {
+            await localChatStore.compactPlanRestore(uri(), version);
+            setVersionDetail(undefined);
+            await refetchAuto();
+            await refetchVersions();
+        } catch (e) {
+            setErr(String(e instanceof Error ? e.message : e));
+        } finally {
+            setAutoBusy(false);
+        }
+    };
+
     const [autoBusy, setAutoBusy] = createSignal(false);
     const patchAuto = async (patch: Record<string, unknown>) => {
         setAutoBusy(true);
         try {
-            await localChatStore.autoCompactSetConfig(patch);
+            await localChatStore.autoCompactSetConfig(patch, uri());
             await refetchAuto();
+            // 写了 `history.keep` ⇒ 主进程会入版本链（##378）；这里同步刷新版本列表
+            if ((patch as { history?: unknown }).history) void refetchVersions();
         } finally {
             setAutoBusy(false);
         }
@@ -342,6 +420,7 @@ export function useCompactPanel(uri: () => string, visible: () => boolean = () =
         try {
             await localChatStore.compactPlanReset(uri());
             await refetchAuto();
+            await refetchVersions();
         } catch (e) {
             setErr(String(e instanceof Error ? e.message : e));
         } finally {
@@ -414,6 +493,7 @@ export function useCompactPanel(uri: () => string, visible: () => boolean = () =
         render, setRender, renderData: headtailData, setRenderData, summaryEnabled, setSummary, rawText, rawPath,
         warnings,
         keep, keepSource, setKeep, resetKeep,
+        planVersions: planVersionsRes, planVersion, versionDetail, showVersion, restoreVersion,
     };
 }
 
@@ -608,6 +688,8 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
     // 破坏性操作（删级 / 恢复缺省）走应用内 ConfirmDialog（禁原生 window.confirm，见 tool.confirm）
     const [pendingRemove, setPendingRemove] = createSignal<number | null>(null);
     const [pendingReset, setPendingReset] = createSignal(false);
+    /** ##378：待确认回滚的版本 id（确认弹窗读它；null = 无） */
+    const [pendingRestore, setPendingRestore] = createSignal<string | null>(null);
     /** headtail 私有参数的字段表（渲染顺序 + 文案一处定义） */
     const RENDER_DATA_FIELDS: { key: "head" | "tail" | "maxLineChars" | "maxKeepBytes"; hint: string }[] = [
         { key: "head", hint: "保留头部行数" },
@@ -827,6 +909,61 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                                     ? "真源 = auto-compact.yaml 的 history.keep[]（改动立即生效于下一轮投递）"
                                     : "配置里没有 history.keep[] ⇒ 用**代码缺省管道**（保底最近 6 步全量 + 纵向阶梯）；改任一字段即写入配置"}
                             </div>
+                            {/* ##378：版本链 —— 当前版本 id + 最近 5 版（点开看全文/对比；可回滚） */}
+                            <div data-plan-versions class="space-y-1 border-t border-base-300 pt-2">
+                                <div class="flex items-center gap-1">
+                                    <span class="font-mono opacity-50">version</span>
+                                    <span class="font-mono opacity-80" data-plan-version>{ctl.planVersion() || "（未取到）"}</span>
+                                    <Show when={ctl.planVersions()?.pending}>
+                                        <span
+                                            class="badge badge-warning badge-xs"
+                                            title="配置内容还没入链（下一次写入 / 压缩会补录）"
+                                        >
+                                            未入链
+                                        </span>
+                                    </Show>
+                                    <span class="ml-auto opacity-45">{ctl.planVersions()?.versions.length ?? 0} 版</span>
+                                </div>
+                                <For each={[...(ctl.planVersions()?.versions ?? [])].slice(-5).reverse()}>
+                                    {(v) => (
+                                        <div class="flex items-center gap-1">
+                                            <button
+                                                class="btn btn-xs btn-ghost font-mono"
+                                                data-plan-version-row={v.version}
+                                                aria-label={`查看版本 ${v.version}`}
+                                                disabled={ctl.autoBusy()}
+                                                onClick={() => void ctl.showVersion(v.version)}
+                                            >
+                                                {v.version}
+                                                {v.version === ctl.planVersion() ? " ←当前" : ""}
+                                            </button>
+                                            <span class="truncate opacity-60" title={v.brief}>
+                                                {v.brief}
+                                            </span>
+                                            <button
+                                                class="btn btn-xs btn-ghost ml-auto"
+                                                data-plan-version-restore={v.version}
+                                                aria-label={`回滚到版本 ${v.version}`}
+                                                disabled={ctl.autoBusy() || v.version === ctl.planVersion()}
+                                                onClick={() => setPendingRestore(v.version)}
+                                            >
+                                                回滚
+                                            </button>
+                                        </div>
+                                    )}
+                                </For>
+                                <Show when={ctl.versionDetail()}>
+                                    {(d) => (
+                                        <pre
+                                            data-plan-version-detail
+                                            class="m-0 max-h-40 overflow-auto rounded border border-base-300 p-2 text-caption font-mono whitespace-pre-wrap break-all"
+                                        >
+                                            {d().text}
+                                            {d().diff ? `\n${d().diff}` : ""}
+                                        </pre>
+                                    )}
+                                </Show>
+                            </div>
                             <For each={ctl.keep()}>
                                 {(stage, i) => (
                                     <KeepStageRow
@@ -941,6 +1078,19 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                                 setPendingRemove(null);
                                 if (i === null) return;
                                 void ctl.setKeep(ctl.keep().filter((_, k) => k !== i));
+                            }}
+                        />
+                    </Show>
+                    <Show when={pendingRestore()}>
+                        <ConfirmDialog
+                            title="回滚 plan 版本"
+                            message={`把 history.keep[] 切到 ${pendingRestore()}（影响所有任务的投递）。回滚本身也入链、可再回滚；历史不删，只改投递。`}
+                            confirmLabel="回滚"
+                            onCancel={() => setPendingRestore(null)}
+                            onConfirm={() => {
+                                const v = pendingRestore();
+                                setPendingRestore(null);
+                                if (v) void ctl.restoreVersion(v);
                             }}
                         />
                     </Show>
