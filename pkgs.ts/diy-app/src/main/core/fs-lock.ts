@@ -1,8 +1,9 @@
 // src/main/core/fs-lock.ts
 // 🎯 文件锁：pid 文件 + 原子 mkdir，防止多实例冲突
 
-import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { writeFileAtomic } from "./atomic-write";
 import { diyHome } from "./state";
 
 /**
@@ -16,7 +17,7 @@ export function tryLock(lockPath: string, timeout = 3000): { release(): void } |
       // 原子创建：mkdir 在已存在时会抛异常
       mkdirSync(lockPath, { recursive: false });
       // 写入 pid
-      writeFileSync(join(lockPath, "pid"), String(process.pid), "utf-8");
+      writeFileAtomic(join(lockPath, "pid"), String(process.pid));
       return {
         release: () => {
           try {
