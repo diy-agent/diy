@@ -51,6 +51,7 @@ import { ChatView, TurnView } from "./LocalChatPage";
 import { MdEditor } from "./MdEditor";
 import { memberCompletion, taskCompletion } from "../lib/completions";
 import { RoomRoster, type RosterMemberL1 } from "./RoomRoster";
+import { PersonaDrawer } from "./PersonaDrawer";
 import type { BlockNode } from "../../main/services/local-blocks";
 
 function msgOf(e: unknown): string {
@@ -66,14 +67,29 @@ interface TurnState {
     error?: string;
 }
 
-/** 三态（##377 第 9 刀） */
-type SidebarMode = "ball" | "normal" | "max";
+/**
+ * 两态（##377 第 13 刀）：球态 / 面板态。
+ *
+ * ⚠️ 第 9 刀那套「normal / max（max = 多出**右侧**成员栏）」已废 —— §39.2 ② 把成员列表
+ * 改到**面板左缘的抽屉**（向左拉出、不挤压会话区），于是"右侧成员栏"没有了，
+ * "最大化"这个模式也随之失去含义。成员抽屉是**独立开关**，不属于任何面板模式。
+ */
+type SidebarMode = "ball" | "normal";
 
 const W_KEY = "diy.room.sidebar.width";
-const W_DEFAULT = 420;
+/** 缺省宽（§39.2 ①：420 → 500，用户「右边空荡有点大，空间有点浪费」） */
+const W_DEFAULT = 500;
 const W_MIN = 320;
-/** 最大化态右侧成员栏宽度（会话区宽度不因此变窄：面板整体变宽） */
+/** 成员抽屉宽度（向左拉出、右边界 = 面板左边界） */
 const ROSTER_W = 240;
+/** 左缘成员抽屉把手宽度（§39.2 ②：≤ 现状球宽的 2/3） */
+const ROSTER_HANDLE_W = 20;
+/**
+ * hover 关闭的**滞回**延迟（§39.2 ④，本刀最容易翻车的一条）：
+ * 鼠标从把手移到面板/输入框的途中不能关 —— 没有它，鼠标一离开把手面板就没了、**根本没法打字**。
+ * 复用 §38.3 那套 `hoverHideTimer` 的现成模式（离开延迟关 + 进入即取消）。
+ */
+const HOVER_HIDE_MS = 400;
 
 function clampW(w: number): number {
     const max = Math.max(W_MIN + 100, window.innerWidth - 120);
@@ -99,8 +115,17 @@ function statusClass(s: DeliveryStatus): string {
 }
 
 export function SidebarRoom() {
-    /** 三态（缺省球态 —— 它常驻全局，不能一上来就挡住主界面） */
+    /** 两态（缺省球态 —— 它常驻全局，不能一上来就挡住主界面） */
     const [mode, setMode] = createSignal<SidebarMode>("ball");
+    /** 成员抽屉（左缘把手控制；独立开关，不挤压会话区） */
+    const [rosterOpen, setRosterOpen] = createSignal(false);
+    /** 固定态：点把手 = 常驻（否则 hover 开关，鼠标移走自动收）——§39.2 ④ 的逃生口 */
+    const [pinned, setPinned] = createSignal(false);
+    /** 三级披露：人物编辑半截页（复用 `PersonaDrawer`，不新写一套） */
+    const [personaOpen, setPersonaOpen] = createSignal(false);
+    const [personaTarget, setPersonaTarget] = createSignal<string | null>(null);
+    let panelRef: HTMLDivElement | undefined;
+    let hideTimer: number | undefined;
     /** 会话区宽度（拖宽改它；最大化态在它之外**另加**成员栏，故整体变宽而会话区不变） */
     const [width, setWidth] = createSignal<number>(
         Number(localStorage.getItem(W_KEY)) || W_DEFAULT,
@@ -134,8 +159,8 @@ export function SidebarRoom() {
     const completions = createMemo(() => [memberCompletion(() => room()?.members ?? []), taskCompletion]);
     const human = createMemo(() => room()?.members.find((m) => m.kind === "human") ?? null);
     const focusMember = createMemo(() => room()?.members.find((m) => m.id === room()?.focus) ?? null);
-    /** 面板总宽：最大化态 = 会话区 + 成员栏（"多出右侧边栏"，会话区宽度不受影响） */
-    const panelW = createMemo(() => width() + (mode() === "max" ? ROSTER_W : 0));
+    /** 面板宽（成员抽屉在它**左侧**另占地方，不从这里扣） */
+    const panelW = createMemo(() => width());
 
     const avatarOf = (id: string): string => {
         const list = ordered();
@@ -227,7 +252,23 @@ export function SidebarRoom() {
     // Esc 回球态（⚠️ 口径歧义处置，见文件头注：用户只说了"最大化和恢复的单个切换按钮"）
     onMount(() => {
         const onKey = (e: KeyboardEvent): void => {
-            if (e.key === "Escape" && mode() !== "ball") setMode("ball");
+            if (e.key !== "Escape") return;
+            // 逐层收：人物抽屉 → 成员抽屉 → 面板
+            // ⚠️ `PersonaDrawer` **自己不处理 Esc**（实测按了没反应）⇒ 这里必须自己关它
+            if (personaOpen()) {
+                setPersonaOpen(false);
+                const id = roomId();
+                if (id) void loadRoom(id, { soft: true }); // 待决 105：关闭即重取
+                return;
+            }
+            if (rosterOpen()) {
+                setRosterOpen(false);
+                return;
+            }
+            if (mode() !== "ball") {
+                setPinned(false);
+                setMode("ball");
+            }
         };
         window.addEventListener("keydown", onKey);
         onCleanup(() => window.removeEventListener("keydown", onKey));
@@ -263,9 +304,72 @@ export function SidebarRoom() {
         localStorage.setItem(W_KEY, String(W_DEFAULT));
     };
 
-    /** 单个切换按钮（用户明确要求）：普通 ⇄ 最大化 */
-    const toggleMax = (): void => {
-        setMode(mode() === "max" ? "normal" : "max");
+    // ── hover 开关 + **滞回**（§39.2 ④：本刀最容易翻车的一条）────────────────────
+    const cancelHide = (): void => {
+        if (hideTimer !== undefined) window.clearTimeout(hideTimer);
+        hideTimer = undefined;
+    };
+    /** 面板里还有焦点（正在打字）⇒ 鼠标移开也**不关**（"打字期间不会关"） */
+    const typingInside = (): boolean => !!panelRef && panelRef.contains(document.activeElement);
+    const scheduleHide = (): void => {
+        if (pinned()) return;
+        cancelHide();
+        hideTimer = window.setTimeout(() => {
+            if (pinned() || typingInside()) return;
+            setMode("ball");
+            setRosterOpen(false);
+        }, HOVER_HIDE_MS);
+    };
+    onCleanup(cancelHide);
+    /**
+     * 靠近（把手 hover）→ 开面板；已有面板则只是取消关闭。
+     *
+     * ⚠️ 加 120ms 小延迟，两个理由：
+     * ① 球一 hover 就卸载（面板把它盖住）⇒ 「靠近变亮」（§39.2 ④）**根本看不到**；
+     *    留出这个窗口，CSS `hover:opacity-100` 才有可观测的时间；
+     * ② 鼠标快速划过右缘时不误开面板。
+     */
+    let openTimer: number | undefined;
+    const hoverOpen = (): void => {
+        cancelHide();
+        if (mode() !== "ball") return;
+        if (openTimer !== undefined) window.clearTimeout(openTimer);
+        openTimer = window.setTimeout(() => {
+            openTimer = undefined;
+            setMode("normal");
+        }, 120);
+    };
+    /** 离开球：既取消"即将打开"，也排"延迟关闭" */
+    const hoverAway = (): void => {
+        if (openTimer !== undefined) {
+            window.clearTimeout(openTimer);
+            openTimer = undefined;
+        }
+        scheduleHide();
+    };
+    onCleanup(() => {
+        if (openTimer !== undefined) window.clearTimeout(openTimer);
+    });
+    /** 点把手 = 固定态切换（常驻 / 恢复 hover 开关）——§39.2 ④ 的逃生口 */
+    const pinToggle = (): void => {
+        cancelHide();
+        if (mode() === "ball") {
+            setMode("normal");
+            setPinned(true);
+            return;
+        }
+        setPinned((v) => !v);
+    };
+    /** 成员抽屉开关（左缘把手与 viewbar 按钮共用） */
+    const toggleRoster = (): void => {
+        cancelHide();
+        setRosterOpen((v) => !v);
+    };
+    /** 三级披露：打开人物编辑半截页（复用 `PersonaDrawer`） */
+    const openPersona = (personaId: string | null | undefined): void => {
+        if (!personaId) return;
+        setPersonaTarget(personaId);
+        setPersonaOpen(true);
     };
 
     const setFocus = async (m: RoomMember | null): Promise<void> => {
@@ -346,16 +450,18 @@ export function SidebarRoom() {
 
     return (
         <>
-            {/* ── 球态：**左缘**一颗悬浮球（用户要求：从右缘挪到左缘） ── */}
+            {/* ── 球态（##377 第 13 刀 ④）：**屏幕最右缘**（nav 式）—— 更小 · 低透明度（不遮下方文字）·
+                   靠近变亮；**hover 打开 · 移走关闭**（带滞回）；**点击 = 固定常驻**（逃生口） ── */}
             <Show when={mode() === "ball"}>
                 <button
-                    class="fixed left-0 top-1/3 z-40 rounded-r-lg border border-l-0 border-[var(--diy-overlay-edge)] bg-[var(--diy-surface-overlay)] px-2 py-3 shadow-lg hover:bg-[var(--diy-surface-inset)]"
-                    title="打开侧边栏助手（Esc 收起）"
-                    onClick={() => setMode("normal")}
+                    class="fixed right-0 top-1/3 z-40 rounded-l-lg border border-r-0 border-[var(--diy-overlay-edge)] bg-[var(--diy-surface-overlay)] px-1 py-2 opacity-40 shadow-lg transition-opacity hover:opacity-100"
+                    title="靠近打开侧边栏助手（移走自动收起）；要常驻请用面板里的 📌"
+                    onMouseEnter={hoverOpen}
+                    onMouseLeave={hoverAway}
                     data-sidebar-open
                 >
-                    <span class="text-lg">💬</span>
-                    <div class="text-caption opacity-70 [writing-mode:vertical-rl]">助手</div>
+                    <span class="text-base">💬</span>
+                    <div class="text-caption [writing-mode:vertical-rl]">助手</div>
                 </button>
             </Show>
 
@@ -364,8 +470,12 @@ export function SidebarRoom() {
                 <div
                     class="fixed right-0 top-0 z-40 h-full flex flex-col border-l [border-left-color:var(--diy-overlay-edge)] bg-[var(--diy-surface-overlay)] shadow-2xl"
                     style={{ width: `${panelW()}px`, "max-width": "96vw" }}
+                    ref={(el) => (panelRef = el)}
+                    onMouseEnter={cancelHide}
+                    onMouseLeave={scheduleHide}
                     data-sidebar-room
                     data-sidebar-mode={mode()}
+                    data-sidebar-pinned={pinned() ? "true" : "false"}
                 >
                     {/* 左缘拖宽条（复用既有模式；双击复位） */}
                     <div
@@ -405,15 +515,27 @@ export function SidebarRoom() {
                         <div class="flex-1" />
                         <button
                             class="btn btn-xs btn-ghost"
-                            title={mode() === "max" ? "恢复（Esc 收起为球）" : "最大化（多出成员栏）"}
-                            onClick={toggleMax}
+                            title={rosterOpen() ? "收起成员列表" : "展开成员列表（左缘抽屉）"}
+                            onClick={toggleRoster}
                             data-sidebar-toggle
                         >
-                            {mode() === "max" ? "⤡ 恢复" : "⤢ 最大化"}
+                            {rosterOpen() ? "⤡ 收起成员" : "⤢ 成员"}
+                        </button>
+                        <button
+                            class="btn btn-xs btn-ghost"
+                            title={
+                                pinned()
+                                    ? "取消固定（恢复「移走自动收起」）"
+                                    : "固定常驻（不随鼠标移走关闭）"
+                            }
+                            onClick={() => setPinned((v) => !v)}
+                            data-sidebar-pin
+                        >
+                            {pinned() ? "📌 已固定" : "📌"}
                         </button>
                     </div>
 
-                    {/* 主体：会话区（常驻）+ 成员栏（**只在最大化态**） */}
+                    {/* 主体：只有会话区 —— 成员列表在**面板左缘的抽屉**里（下方），不挤压它 */}
                     <div class="flex-1 flex min-h-0">
                         <div class="flex-1 flex flex-col min-w-0">
                             {/* 事件流 */}
@@ -473,7 +595,7 @@ export function SidebarRoom() {
                                                         </div>
                                                     </Show>
                                                     <div
-                                                        class={`rounded-lg px-2 py-1 text-body whitespace-pre-wrap ${
+                                                        class={`rounded-lg px-3 py-1.5 text-prose whitespace-pre-wrap ${
                                                             e.kind === "say" ? "bg-primary/15" : "bg-base-200"
                                                         }`}
                                                     >
@@ -648,21 +770,56 @@ export function SidebarRoom() {
                             </div>
                         </div>
 
-                        {/* 右侧成员栏 —— **只在最大化态出现**（用户要求："扩展为最大化后出现完整形态"） */}
-                        <Show when={mode() === "max"}>
-                            <RoomRoster
-                                class="shrink-0 border-l bg-[var(--diy-surface-inset)] [border-left-color:var(--diy-overlay-edge)]"
-                                room={room()}
-                                roster={roster()}
-                                onFocus={(m) => void setFocus(m)}
-                                onInvite={invite}
-                                onRemove={(m) => void removeMember(m)}
-                                onAddress={insertAddress}
-                            />
-                        </Show>
                     </div>
                 </div>
+
+                {/* ② 成员列表：**面板左缘的窄把手**（≤ 球宽 2/3）→ **向左**拉出抽屉。
+                    方案 (b)（§39.2 ② 待决 102 先做这条）：抽屉**贴面板左缘**、覆盖主内容区方向，
+                    **不挤压会话区**（会话区宽度 = 拖出来的宽度，与成员列表无关）。 */}
+                <button
+                    class={`fixed top-1/3 z-50 rounded-l-lg border border-r-0 border-[var(--diy-overlay-edge)] bg-[var(--diy-surface-inset)] shadow-lg transition-opacity ${
+                        rosterOpen() ? "" : "opacity-60 hover:opacity-100"
+                    }`}
+                    style={{ right: `${panelW()}px`, width: `${ROSTER_HANDLE_W}px` }}
+                    title={rosterOpen() ? "收起成员列表" : "展开成员列表（向左拉出）"}
+                    onClick={toggleRoster}
+                    data-sidebar-roster-handle
+                >
+                    <div class="text-caption py-2 [writing-mode:vertical-rl]">成员</div>
+                </button>
+                <Show when={rosterOpen()}>
+                    <div
+                        class="fixed top-0 z-40 h-full border-l bg-[var(--diy-surface-inset)] shadow-2xl [border-left-color:var(--diy-overlay-edge)]"
+                        style={{ right: `${panelW()}px`, width: `${ROSTER_W}px` }}
+                        onMouseEnter={cancelHide}
+                        onMouseLeave={scheduleHide}
+                        data-sidebar-roster-drawer
+                    >
+                        <RoomRoster
+                            class="w-full h-full"
+                            room={room()}
+                            roster={roster()}
+                            onFocus={(m) => void setFocus(m)}
+                            onInvite={invite}
+                            onRemove={(m) => void removeMember(m)}
+                            onAddress={insertAddress}
+                            onPersona={(m) => openPersona(m.persona)}
+                        />
+                    </div>
+                </Show>
             </Show>
+
+            {/* 三级披露（§39.2 ③）：点头像 → 人物编辑半截页（**复用** `PersonaDrawer`，不新写一套）；
+                待决 105：关闭即重取 roster（简单可靠，不做增量订阅） */}
+            <PersonaDrawer
+                open={personaOpen()}
+                initialPersona={personaTarget()}
+                onClose={() => {
+                    setPersonaOpen(false);
+                    const id = roomId();
+                    if (id) void loadRoom(id, { soft: true });
+                }}
+            />
         </>
     );
 }

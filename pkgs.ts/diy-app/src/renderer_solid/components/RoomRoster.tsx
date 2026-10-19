@@ -94,6 +94,11 @@ export interface RoomRosterProps {
     onRemove?: (m: RoomMember) => void | Promise<void>;
     /** 把 `@名` 塞进调用方输入框（浮层里的便捷操作）；**不传 ⇒ 不显示** */
     onAddress?: (name: string) => void;
+    /**
+     * **点头像** = 三级披露（##166 §39.2 ③）：打开人物编辑半截页。
+     * 调用方负责把 `m.persona` 交给 `PersonaDrawer`（本组件不碰抽屉）。
+     */
+    onPersona?: (m: RoomMember) => void;
     /** 外层 class（宽度由调用方定；缺省 `w-60`） */
     class?: string;
 }
@@ -198,28 +203,52 @@ export function RoomRoster(props: RoomRosterProps): JSX.Element {
                         const task = () => taskOf(m);
                         return (
                             <div
-                                class={`relative px-2 py-1 ${
-                                    isFocus() ? "bg-base-200/70" : "hover:bg-base-200/50"
-                                }`}
-                                onMouseEnter={(e) => {
-                                    cancelHide();
-                                    const r = e.currentTarget.getBoundingClientRect();
-                                    setHover({ id: m.id, left: r.left, top: r.top });
-                                }}
-                                onMouseLeave={scheduleHide}
+                                class={`relative px-2 py-1 ${isFocus() ? "bg-base-200/70" : ""}`}
                                 data-room-member={m.id}
                                 data-room-focus={isFocus() ? "true" : "false"}
                             >
                                 <div class="flex items-center gap-2">
+                                    {/* 二级：**hover 头像** → 高亮（daisyUI `.aura`，只在 hover 时挂 class ⇒ 不 hover 不耗）
+                                        + 二级浮窗；三级：**点头像** → 人物编辑半截页（复用 PersonaDrawer）。
+                                        ⚠️ `.aura` 带 2px padding ⇒ 用 `-m-[2px]` 抵消，**行高不因此变**（§39.2 紧凑护栏） */}
                                     <div
-                                        class="w-7 h-7 rounded-full flex items-center justify-center text-sm shrink-0"
-                                        style={{
-                                            background: `${memberColor(m)}33`,
-                                            border: `1px solid ${memberColor(m)}`,
-                                        }}
-                                        data-room-avatar={m.id}
+                                        class={
+                                            hover()?.id === m.id
+                                                ? "aura -m-[2px] shrink-0"
+                                                : "shrink-0"
+                                        }
+                                        style={{ color: memberColor(m) }}
                                     >
-                                        {memberAvatar(m, i())}
+                                        <div
+                                            class="w-7 h-7 rounded-full flex items-center justify-center text-sm"
+                                            style={{
+                                                background: `${memberColor(m)}33`,
+                                                border: `1px solid ${memberColor(m)}`,
+                                            }}
+                                            onMouseEnter={(e) => {
+                                                cancelHide();
+                                                const row = e.currentTarget
+                                                    .closest("[data-room-member]")
+                                                    ?.getBoundingClientRect();
+                                                setHover({
+                                                    id: m.id,
+                                                    left: row?.left ?? 0,
+                                                    top: row?.top ?? 0,
+                                                });
+                                            }}
+                                            onMouseLeave={scheduleHide}
+                                            onClick={() => {
+                                                if (m.persona) props.onPersona?.(m);
+                                            }}
+                                            title={
+                                                m.persona
+                                                    ? `打开人物编辑（${personaName(m.persona)}）`
+                                                    : "人成员（没有人物可编辑）"
+                                            }
+                                            data-room-avatar={m.id}
+                                        >
+                                            {memberAvatar(m, i())}
+                                        </div>
                                     </div>
                                     <div class="min-w-0 flex-1">
                                         {/* 行 1：`@` 在名字前（用户点名） + 焦点标记 + L1 状态 */}

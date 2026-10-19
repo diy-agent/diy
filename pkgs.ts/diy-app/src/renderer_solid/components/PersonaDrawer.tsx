@@ -120,7 +120,19 @@ function HighlightText(props: { text: string; query: () => string }) {
     );
 }
 
-export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
+/**
+ * 人物编辑半截页。
+ *
+ * `initialPersona`（##377 第 13 刀加）：**打开时**直接定位到某个人物（不传 = 老行为：
+ * 「跟随缺省」或本任务绑定的人物）。侧边栏 room 的成员没有"当前任务"上下文 ——
+ * 点某成员的头像要编辑**它的人物**，靠这个 prop 指定；同时置 `manualPick`，
+ * 否则下面那条"校准回本任务人物"的 effect 会立刻把它覆盖掉。
+ */
+export function PersonaDrawer(props: {
+    open: boolean;
+    onClose: () => void;
+    initialPersona?: string | null;
+}) {
     /** 右侧正在编辑的人物 id（空白态 = 新建，见 creating） */
     const [editing, setEditing] = createSignal<string | null>(null);
     const [creating, setCreating] = createSignal(false);
@@ -203,13 +215,17 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                 setNewName("");
                 setNewInstructions("");
                 setSearch("");
-                setManualPick(false);
+                // 指定了人物 ⇒ 听调用方的，并标记「用户已选」以免被下面的校准 effect 拉回本任务人物
+                setManualPick(!!props.initialPersona);
                 // 上次的高亮不跨"打开"存活（关面板即视为一次交互结束；timer 也一并掐掉）
                 if (flashTimer) clearTimeout(flashTimer);
                 setFlashId(null);
                 // 本任务跟随缺省时，右侧停在「跟随缺省」那一行（而不是解析出来的缺省人物 ——
                 // 那会让人以为"我固定绑了它"，而实际是"跟着缺省走"）
-                setEditing(personaStore.isFollowing() ? FOLLOW_DEFAULT : personaStore.idForTask());
+                setEditing(
+                    props.initialPersona ??
+                        (personaStore.isFollowing() ? FOLLOW_DEFAULT : personaStore.idForTask()),
+                );
                 void personaStore.load(true);
             },
         ),
