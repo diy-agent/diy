@@ -396,4 +396,9 @@ if (violations.length > 0) {
   console.error(`        批量生成物可进 scripts/atomic-write-allowlist.txt（须写理由）。`);
   process.exit(1);
 }
-console.log(`✓ 整文件覆盖写护栏通过（扫描 ${files.length} 个 .ts + renderer ${leaks.length === 0 ? "无 fs 导入" : "有泄漏"}）`);
+// R6：结论行必须与退出码同义 —— 有泄漏时打 ✗，绝不让 ✓ 与「有泄漏」同现（虚假的安全感）。
+if (leaks.length > 0) {
+  console.error(`✗ 整文件覆盖写护栏：renderer 有 fs 导入 ${leaks.length} 处`);
+  process.exit(1);
+}
+console.log(`✓ 整文件覆盖写护栏通过（扫描 ${files.length} 个 .ts + renderer 无 fs 导入）`);
