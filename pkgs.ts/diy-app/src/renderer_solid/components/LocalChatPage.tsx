@@ -2974,6 +2974,9 @@ export function LocalChatPage(props: { uri?: string }) {
             <div
                 ref={(el) => (scrollRef = el)}
                 class="diy-chat flex-1 overflow-y-auto px-4 py-3"
+                /* 诊断 + 不静默：room 侧读到几条外部行、读失败的原因（失败只影响这一层） */
+                data-room-replies={roomReplies().length}
+                data-room-note={roomNote() ?? ""}
                 onScroll={(e) => {
                     // 视口锚点：跟着**实际滚动**走（此刻布局还没变，正是"变化前"的基准）。
                     // 但**我们自己写的**滚动不重取（见 `writeScrollTop`）：那会把锚点挪到旧窗口
@@ -3086,6 +3089,11 @@ export function LocalChatPage(props: { uri?: string }) {
                         )}
                     </For>
                 </div>
+                <Show when={roomNote()}>
+                    <div class="text-warning text-caption mt-3" data-room-note-line>
+                        {roomNote()}（只影响「别人说的话」这一层，本会话不受影响）
+                    </div>
+                </Show>
                 <Show when={localChatStore.error}>
                     <div class="text-error text-body mt-3">{localChatStore.error}</div>
                 </Show>
