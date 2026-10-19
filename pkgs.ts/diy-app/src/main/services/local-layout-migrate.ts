@@ -122,31 +122,44 @@ function clippedIdsOf(uri: string): string[] {
 
 /** 单文件搬迁：copy → 校验 → 删源；返回动作 */
 function takeOver(from: string, to: string, dryRun: boolean): { action: LayoutMigrationEntry["action"]; note?: string } {
+    let note: string | undefined;
+    const srcSize = statSync(from).size;
     if (existsSync(to)) {
-        const a = statSync(from).size;
-        const b = statSync(to).size;
-        if (a === b) {
+        const dstSize = statSync(to).size;
+        if (srcSize === dstSize) {
             if (!dryRun) rmSync(from, { force: true }); // 已迁完的残留源：清掉（幂等收尾）
             return { action: "skip", note: "目标已存在且等大（已迁）" };
         }
-        return { action: "conflict", note: `目标已存在且不等大（源 ${a}B / 目标 ${b}B）` };
+        if (dstSize > srcSize) {
+            // 目标比源大：正常迁移只会产生「等大」目标 ⇒ 不是本命令的产物，留原地交人看。
+            return { action: "conflict", note: `目标已存在且比源大（源 ${srcSize}B / 目标 ${dstSize}B）` };
+        }
+        // 目标比源**小**：正常迁移不可能产生 ⇒ 只可能是旧实现（直接 copyFileSync 落目标）中断
+        // 留下的截断副本。读侧双认只判存在 ⇒ 它会**优先被认领**，历史照样腰斩（##266 review2 R1.1）。
+        // 故先备份残片再重做副本：源零丢失，读侧立刻恢复完整。
+        if (dryRun) {
+            return { action: "move", note: `目标疑为截断副本（源 ${srcSize}B / 目标 ${dstSize}B）；实迁将备份后重做` };
+        }
+        const backup = `${to}.conflict-${Date.now()}`;
+        renameSync(to, backup);
+        note = `目标疑为截断副本（${dstSize}B < 源 ${srcSize}B），已备份为 ${path.basename(backup)} 后重做`;
     }
     if (!dryRun) {
         mkdirSync(path.dirname(to), { recursive: true });
-        // 先写 `.part` 再同目录 `rename` —— 保证 `to` 只可能以**完整**形态出现（##266 review1 R1）。
+        // 先写 `to.tmp` 再同目录 `rename` —— 保证 `to` 只可能以**完整**形态出现（##266 review1 R1）。
         // 直接 copyFileSync(from, to) 的中断窗口（ENOSPC / 进程被杀）会留下截断副本，而读侧双认
         // 只判存在 ⇒ 会把截断那份当权威、后续 append 接在截断处，源尾部永久孤立（历史静默腰斩）。
-        // 与 ##383 的 `writeFileAtomic` 同范式。
-        const part = `${to}.part`;
-        copyFileSync(from, part);
-        if (statSync(part).size !== statSync(from).size) {
-            rmSync(part, { force: true });
+        // 与 ##383 的 `writeFileAtomic` 同范式（`check-atomic-write.mjs` 的豁免①只认 `.tmp` 腿）。
+        const tmp = `${to}.tmp`;
+        copyFileSync(from, tmp);
+        if (statSync(tmp).size !== statSync(from).size) {
+            rmSync(tmp, { force: true });
             return { action: "conflict", note: "复制后大小不符（已回滚，源保留）" };
         }
-        renameSync(part, to);
+        renameSync(tmp, to);
         rmSync(from, { force: true });
     }
-    return { action: "move" };
+    return { action: "move", note };
 }
 
 /**

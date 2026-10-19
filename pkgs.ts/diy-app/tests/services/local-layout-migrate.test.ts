@@ -4,7 +4,7 @@
 // 为什么单测必须真造盘：这个命令动的正是「删源文件」的活 —— 桩掉 fs 就等于没测。
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { diyHome } from "../../src/main/core/state";
 import { createProject } from "../../src/main/core/project";
@@ -84,35 +84,63 @@ describe("实迁：搬 + 幂等续跑", () => {
 describe("中途失败：截断副本不可见（##266 review1 R1）", () => {
     // 旧实现 `copyFileSync(from, to)` 直接落目标：copy 中途被杀会留下**截断的 to**，
     // 而读侧双认只判存在 ⇒ 把截断那份当权威、后续 append 接在截断处（历史静默腰斩）。
-    // 现实现先写 `to.part` 再同目录 rename：`to` 只可能以完整形态出现，`part` 永不被读侧认领。
-    it("上次中断留下的 `.part` 残留 → 重跑得到完整目标，`.part` 消失", () => {
+    // 现实现先写 `to.tmp` 再同目录 rename：`to` 只可能以完整形态出现，`.tmp` 永不被读侧认领。
+    it("上次中断留下的 `.tmp` 残留 → 重跑得到完整目标，`.tmp` 消失", () => {
         const uri = createTask({ title: "迁移-中断", project: createProject(join(diyHome(), "migrate-crash")) });
         const text = Array.from({ length: 50 }, (_, i) => `{"op":"append","i":${i}}`).join("\n") + "\n";
         const legacy = writeLegacy(uri, "ops", text);
         const to = sessionFile(uri, "ops");
         mkdirSync(dirname(to), { recursive: true });
-        writeFileSync(`${to}.part`, text.slice(0, 40), "utf-8"); // 模拟 copy 中途断电的残片
+        writeFileSync(`${to}.tmp`, text.slice(0, 40), "utf-8"); // 模拟 copy 中途断电的残片
 
         const r = migrateLocalLayout({ dryRun: false, toolout: false });
         const e = r.entries.find((x) => x.from === `local/${keyOf(uri)}.ops.jsonl`);
         expect(e?.action).toBe("move");
         expect(existsSync(legacy)).toBe(false);
-        expect(existsSync(`${to}.part`)).toBe(false);
+        expect(existsSync(`${to}.tmp`)).toBe(false);
         expect(readFileSync(to, "utf-8")).toBe(text); // 逐字节完整
         expect(readFileSync(to, "utf-8").split("\n").filter(Boolean)).toHaveLength(50);
     });
 
-    it("读侧永不认领 `.part`：只有残片时裁决仍走「旧平铺兜底」", () => {
+    it("读侧永不认领 `.tmp`：只有残片时裁决仍走「旧平铺兜底」", () => {
         const uri = createTask({ title: "迁移-残片", project: createProject(join(diyHome(), "migrate-part")) });
         const legacy = writeLegacy(uri, "ops", `{"op":"start"}\n`);
         const to = sessionFile(uri, "ops");
         mkdirSync(dirname(to), { recursive: true });
-        writeFileSync(`${to}.part`, "truncated", "utf-8"); // 残片存在，但目标不存在
+        writeFileSync(`${to}.tmp`, "truncated", "utf-8"); // 残片存在，但目标不存在
 
         expect(existsSync(to)).toBe(false); // 残片不冒充目标
         expect(resolveSessionFile(uri, "ops")).toBe(legacy); // 裁决看到的是旧平铺（完整那份）
         expect(readFileSync(resolveSessionFile(uri, "ops"), "utf-8")).toBe(`{"op":"start"}\n`);
-        rmSync(`${to}.part`, { force: true });
+        rmSync(`${to}.tmp`, { force: true });
+    });
+
+    it("目标已存在且比源小（旧实现留下的截断副本）→ 备份后重做，读侧立刻读到完整行数（##266 review2 R1.1）", () => {
+        // 新实现不再**产生**截断目标；但盘上可能已有旧版本留下的残迹。若只报 conflict「留原地」，
+        // 读侧双认仍会优先认领那份截断的 ⇒ 历史依旧腰斩。判据：正常迁移只产生「等大」目标，
+        // 故「目标 < 源」只可能是截断残迹 ⇒ 备份后重做（源零丢失）。
+        const uri = createTask({ title: "迁移-截断目标", project: createProject(join(diyHome(), "migrate-truncated-target")) });
+        const text = Array.from({ length: 50 }, (_, i) => `{"op":"append","i":${i}}`).join("\n") + "\n";
+        const legacy = writeLegacy(uri, "ops", text);
+        const to = sessionFile(uri, "ops");
+        mkdirSync(dirname(to), { recursive: true });
+        writeFileSync(to, text.slice(0, 40), "utf-8"); // 截断目标（比源小）
+
+        // 迁移前：读侧优先认领截断那份（R1.1 的风险）
+        const before = readFileSync(resolveSessionFile(uri, "ops"), "utf-8").split("\n").filter(Boolean);
+        expect(before.length).toBeLessThan(50);
+
+        const r = migrateLocalLayout({ dryRun: false, toolout: false });
+        const e = r.entries.find((x) => x.from === `local/${keyOf(uri)}.ops.jsonl`);
+        expect(e?.action).toBe("move");
+        expect(e?.note).toContain("截断副本");
+        expect(existsSync(legacy)).toBe(false);
+        expect(readFileSync(to, "utf-8")).toBe(text); // 读侧立刻恢复完整
+        expect(readFileSync(resolveSessionFile(uri, "ops"), "utf-8").split("\n").filter(Boolean)).toHaveLength(50);
+        // 残片备份留着（数据安全优先于搬干净）
+        const backups = readdirSync(dirname(to)).filter((n) => n.includes(".conflict-"));
+        expect(backups).toHaveLength(1);
+        expect(readFileSync(join(dirname(to), backups[0]), "utf-8")).toBe(text.slice(0, 40));
     });
 });
 
