@@ -780,6 +780,12 @@ export const apiDef = RpcSchema.router({
                   // （diy agent persona …）。UI 不传，留着是给 CLI/调试临时试模型用。
                   model: z.string().optional().cliOption({ desc: `临时覆盖模型（缺省 = 任务当前人物的模型）` }),
                   reasoningEffort: z.string().optional().cliOption({ desc: "临时覆盖推理强度（缺省 = 人物配置）" }),
+                  author: z
+                    .string()
+                    .optional()
+                    .cliOption({
+                      desc: "发言者署名（成员 id，如 agent:166 / human:ccc）—— 落该条 user 块 meta.author；省略 = 本任务本人（##166 §40 A）",
+                    }),
                 },
                 output: z.string(),
               }),

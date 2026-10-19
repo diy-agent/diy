@@ -185,13 +185,18 @@ function humanOf(room: Room): RoomMember | undefined {
  * 混进去会让"回复"里带上自己刚说的话（自问自答的假象）。
  * `turnId` 一并带回（turn 块的 id）—— 判据 3 要拿它去那个任务的 ops 流里对账。
  */
-async function runAndCollect(taskUri: string, text: string): Promise<{ reply: string; error?: string; turnId?: string }> {
+async function runAndCollect(
+    taskUri: string,
+    text: string,
+    /** 发起投递的成员 id（##166 §40 B）—— 落进对方会话那条 user 块的 `meta.author` */
+    author?: string,
+): Promise<{ reply: string; error?: string; turnId?: string }> {
     const agent = getLocalAgent();
     const texts = new Map<string, string>();
     const errs: string[] = [];
     let turnId: string | undefined;
     try {
-        for await (const op of agent.chat(taskUri, text) as AsyncGenerator<Op>) {
+        for await (const op of agent.chat(taskUri, text, undefined, undefined, undefined, undefined, author) as AsyncGenerator<Op>) {
             if (op.op === "start") {
                 if (op.kind === "turn") turnId = op.id;
                 if (op.kind === "text" && op.meta?.["role"] !== "user") texts.set(op.id, "");
@@ -427,6 +432,10 @@ function deliverOne(input: DeliverInput): Promise<void> {
         const r = await runAndCollect(
             taskUri,
             deliveryText({ roomId, fromName, text: body, toAll, plain: member.main === true }),
+            // 署名（##166 §40 B）：值 = **发起投递的成员 id**（`agent:main` / `human:ccc`），
+            // 不是自由字符串 —— 可追溯、可点开。对方会话里那条 user 块据此区分"谁在跟我说"，
+            // 任务对话页据此把气泡翻到左侧并署名（C 块）。
+            author,
         );
         const replyId = nextEventId();
         const ev = record(roomId, {

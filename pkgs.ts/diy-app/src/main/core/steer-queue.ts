@@ -78,7 +78,7 @@ export class SteerQueue {
   }
 
   /** 入队（FIFO 尾部）。空内容直接拒绝：空插话投进去只会污染提示词 */
-  add(uri: string, mode: SteerMode, text: string, now: Date = new Date()): SteerItem[] {
+  add(uri: string, mode: SteerMode, text: string, now: Date = new Date(), author?: string): SteerItem[] {
     const body = text.trim();
     if (!body) throw new Error("插话内容为空");
     if (!(STEER_MODES as readonly string[]).includes(mode)) {
@@ -97,7 +97,14 @@ export class SteerQueue {
           `也可调高上限（limits.json 的 maxSteerQueue / 环境变量 DIY_LOCAL_MAX_STEER_QUEUE）`,
       );
     }
-    const item: SteerItem = { id: newSteerId(existing), mode, text: body, created: now.toISOString() };
+    const item: SteerItem = {
+      id: newSteerId(existing),
+      mode,
+      text: body,
+      created: now.toISOString(),
+      // 署名随队列项一起落盘（##166 §40 A）：排队可能跨轮次，投递时再问"谁说的"已无从查起
+      ...(author ? { author } : {}),
+    };
     const items = [...existing, item];
     this.port.write(uri, items);
     return items;

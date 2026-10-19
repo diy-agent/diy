@@ -230,7 +230,9 @@ const labTheme = EditorView.theme(
         // ⚠️ 必须覆盖 CM 自带 tooltip 底色（默认是写死的浅灰 `#f5f5f5` 系），否则暗色主题下
         //    弹出个白板 —— 这也是"不写死色值"要覆盖的第一件事。
         ".cm-tooltip": {
-            backgroundColor: "var(--diy-surface-overlay)",
+            // 面板走**第四档** raised（##166 §40 D）：它浮在侧边栏面板（overlay）**之上**，
+            // 用同一档就只剩边框分界（第 11 刀实测 ΔRGB = 0）⇒ 浮不起来。
+            backgroundColor: "var(--diy-surface-raised)",
             color: "var(--color-base-content)",
             border: "1px solid var(--diy-overlay-edge)",
             borderRadius: "0.375rem",

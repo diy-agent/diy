@@ -300,7 +300,8 @@ export function RoomRoster(props: RoomRosterProps): JSX.Element {
                                             style={{
                                                 left: `${floatLeft()}px`,
                                                 top: `${Math.round(hover()?.top ?? 0)}px`,
-                                                background: "var(--diy-surface-overlay)",
+                                                // 二级浮窗浮在侧边栏面板（overlay）之上 ⇒ 第四档 raised
+                                                background: "var(--diy-surface-raised)",
                                                 "border-color": "var(--diy-overlay-edge)",
                                             }}
                                             onMouseEnter={cancelHide}

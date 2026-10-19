@@ -289,6 +289,15 @@ interface TurnInput {
     text: string;
     kind: "user" | SteerMode;
     steerId?: string;
+    /**
+     * 发言者署名（##166 §40 A）：**谁说的这句话** —— `agent:main` / `human:ccc` 这类成员 id，
+     * 不是自由字符串（可追溯、可点开）。省略 = 本任务本人（任务对话页的正常情形）。
+     *
+     * 落点 = 该条 user 块的 `meta.author`（写进去之前先确认块 schema 白名单里有它 —— 没有会被洗，
+     * 见 local-blocks 的 SCHEMA.text）。**在 TurnInput 上而不是整轮一个**：轮首批量可能多条，
+     * 每条来自不同的队列项（各自署名不同）。
+     */
+    author?: string;
 }
 
 interface LocalSession {
@@ -1527,7 +1536,7 @@ export class LocalAgentManager {
      *
      * 入队失败（队列满 / 空消息）直接抛出 —— 那是"这条消息没送达"，调用方必须知道。
      */
-    private *enqueueWhileRunning(taskUri: string, sess: LocalSession, message: string): Generator<Op> {
+    private *enqueueWhileRunning(taskUri: string, sess: LocalSession, message: string, author?: string): Generator<Op> {
         // ⚠️ 语义是 **steer 合并**（并入正在跑的轮次序列、整批投），**不是**串行独立
         // 轮次排队 —— 与 review306 发现①对齐：入队后由续轮循环整批取走（见 chat 的轮末逻辑），
         // 多条排队消息 = 一次续轮请求消化，不逐条开轮。
@@ -1535,7 +1544,7 @@ export class LocalAgentManager {
         // 就是"立刻补一句 / 纠正"，故插进正在跑的轮次、下一个模型步边界前整批投。代价是它排在
         // 当前轮未说完的话前面（不再是"谁先说话谁先投"的严格顺序）—— 想"排在这一轮之后"的用户
         // 可在横条上把该条切回 `next-turn`（切换只改这条队列项的 mode）。
-        const items = this.queue.add(taskUri, DEFAULT_STEER_MODE, message);
+        const items = this.queue.add(taskUri, DEFAULT_STEER_MODE, message, undefined, author);
         sessionRegistry.noteActivity(taskUri); // queue 变化 → 注册表订阅方即时可见
         // items 的末条就是刚入队的那条（`add` 返回整批快照）
         const item = items[items.length - 1]!;
@@ -2421,8 +2430,8 @@ export class LocalAgentManager {
      * （见同处的注释与 hasActiveTurn）：否则空闲时入队的留言**没有任何机制会因它启动一轮**，
      * 永远躺在 .diy/drafts.yaml 里（##303：模型永远看不到，用户以为发出去了）。
      */
-    steerAdd(taskUri: string, mode: SteerMode, text: string): SteerItem[] {
-        const r = this.queue.add(taskUri, mode, text);
+    steerAdd(taskUri: string, mode: SteerMode, text: string, author?: string): SteerItem[] {
+        const r = this.queue.add(taskUri, mode, text, undefined, author);
         sessionRegistry.noteActivity(taskUri); // queue 是注册表的活态属性
         return r;
     }
@@ -2467,6 +2476,8 @@ export class LocalAgentManager {
             text: it.text,
             kind: it.mode,
             steerId: it.id,
+            // 署名随队列项一起带进开场块（##166 §40 A）：排队跨轮次，投递时已无从查"谁说的"
+            ...(it.author ? { author: it.author } : {}),
         }));
         if (seed.length === 0) return;
         yield* this.chat(taskUri, "", modelOverride, reasoningEffortOverride, undefined, seed);
@@ -2685,6 +2696,11 @@ export class LocalAgentManager {
          * 不新增入队、直接把已有的待投递留言当开场白发出去（##303）。
          */
         seed?: TurnInput[],
+        /**
+         * 本轮 message 的发言者署名（##166 §40 A）—— room 投递时 = **发起投递的成员 id**。
+         * seed 给出的情形下忽略它（那些条各自带 author，见 chatQueued）。
+         */
+        author?: string,
     ): AsyncGenerator<Op> {
         const persona = personaForTask(diyHome(), taskUri);
         const model = modelOverride ?? persona.model;
@@ -2714,7 +2730,7 @@ export class LocalAgentManager {
         // 而该排进插话队列，由正在跑的轮次在轮末整批取走（见下方续轮循环）。
         // 判据是 `turns` 注册表而非生成器：轮次寿命不再等于这条流的寿命（##305）。
         if (this.turns.has(taskUri)) {
-            yield* this.enqueueWhileRunning(taskUri, sess, message);
+            yield* this.enqueueWhileRunning(taskUri, sess, message, author);
             return;
         }
 
@@ -2779,7 +2795,7 @@ export class LocalAgentManager {
             },
             signal,
         );
-        const driving = this.driveTurn(run, sess, message, model, reasoningEffort, key, rm, persona.id, seed).catch((e) => {
+        const driving = this.driveTurn(run, sess, message, model, reasoningEffort, key, rm, persona.id, seed, author).catch((e) => {
             // 驱动异常按原语义经流上抛（RPC 层转 error 帧），由订阅端在流尾 rethrow
             run.error = e;
         });
@@ -2808,6 +2824,8 @@ export class LocalAgentManager {
         personaId: string,
         /** 首轮输入（缺省 = 调用方那一条 message）—— 「用队列开一轮」的落点，见 chatQueued（##303）。 */
         seed?: TurnInput[],
+        /** 本轮 message 的发言者署名（seed 给出的情形下忽略 —— 那些条各自带，见 chat 的 author） */
+        author?: string,
     ): Promise<void> {
         const taskUri = run.taskUri;
         const ctrl = run.ctrl;
@@ -2863,7 +2881,8 @@ export class LocalAgentManager {
             // 轮末队列非空则自动开下一轮（用户不必再敲回车），且**一次把队列发完**：
             // 排队多条的心愿是"一起告诉它"，拆成多轮只会多几次请求、多个轮次边界。
             // seed 给出 = 用调用方指定的开场（队列内容）；否则就是调用方这一条 message
-            let pending: TurnInput[] = seed && seed.length > 0 ? seed : [{ text: message, kind: "user" }];
+            let pending: TurnInput[] =
+                seed && seed.length > 0 ? seed : [{ text: message, kind: "user", ...(author ? { author } : {}) }];
             for (let round = 0; pending.length > 0 && !ctrl.signal.aborted; round++) {
                 // 手动驱动内层生成器（而不是 `yield*` 委托）：委托会把 op 直接交给消费端，
                 // 跳过这里的 `sess.store.apply` —— 而 store 是本模块的**单一权威**
@@ -2944,7 +2963,12 @@ export class LocalAgentManager {
                 // ⚠️ 这里**只读不取**：真正的出队发生在 runTurn 开场块 sink 之后（先记账再出队）——
                 // 在这中间崩掉，最坏是下次重复投一遍，不会丢；反过来就是用户的话凭空消失。
                 try {
-                    pending = this.queue.list(taskUri).map((it) => ({ text: it.text, kind: it.mode, steerId: it.id }));
+                    pending = this.queue.list(taskUri).map((it) => ({
+                        text: it.text,
+                        kind: it.mode,
+                        steerId: it.id,
+                        ...(it.author ? { author: it.author } : {}),
+                    }));
                 } catch (e) {
                     console.error(`[local-agent] 插话队列读取失败，停止自动续轮 ${taskUri}:`, e);
                     break;
@@ -3157,7 +3181,12 @@ export class LocalAgentManager {
                     id,
                     kind: "text",
                     parent: turnId,
-                    meta: { role: "user", steer: item.mode, steerId: item.id },
+                    meta: {
+                        role: "user",
+                        steer: item.mode,
+                        steerId: item.id,
+                        ...(item.author ? { author: item.author } : {}),
+                    },
                 },
                 { op: "delta", id, fields: { content: item.text } },
                 { op: "stop", id },
@@ -3356,6 +3385,9 @@ export class LocalAgentManager {
                     meta: {
                         role: "user",
                         ...(item.kind === "user" ? {} : { steer: item.kind, ...(item.steerId ? { steerId: item.steerId } : {}) }),
+                        // 署名（##166 §40 A）：有则落，无则**不落键**（省略 = 本任务本人，
+                        // 老数据 / 任务页正常发言都不带，读侧据此区分左右气泡）
+                        ...(item.author ? { author: item.author } : {}),
                     },
                 },
                 { op: "delta", id: uid, fields: { content: item.text } },

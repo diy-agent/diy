@@ -777,7 +777,7 @@ export function SidebarRoom() {
                     方案 (b)（§39.2 ② 待决 102 先做这条）：抽屉**贴面板左缘**、覆盖主内容区方向，
                     **不挤压会话区**（会话区宽度 = 拖出来的宽度，与成员列表无关）。 */}
                 <button
-                    class={`fixed top-1/3 z-50 rounded-l-lg border border-r-0 border-[var(--diy-overlay-edge)] bg-[var(--diy-surface-inset)] shadow-lg transition-opacity ${
+                    class={`fixed top-1/3 z-50 rounded-l-lg border border-r-0 border-[var(--diy-overlay-edge)] bg-[var(--diy-surface-raised)] shadow-lg transition-opacity ${
                         rosterOpen() ? "" : "opacity-60 hover:opacity-100"
                     }`}
                     style={{ right: `${panelW()}px`, width: `${ROSTER_HANDLE_W}px` }}
@@ -789,7 +789,7 @@ export function SidebarRoom() {
                 </button>
                 <Show when={rosterOpen()}>
                     <div
-                        class="fixed top-0 z-40 h-full border-l bg-[var(--diy-surface-inset)] shadow-2xl [border-left-color:var(--diy-overlay-edge)]"
+                        class="fixed top-0 z-40 h-full border-l bg-[var(--diy-surface-raised)] shadow-2xl [border-left-color:var(--diy-overlay-edge)]"
                         style={{ right: `${panelW()}px`, width: `${ROSTER_W}px` }}
                         onMouseEnter={cancelHide}
                         onMouseLeave={scheduleHide}
