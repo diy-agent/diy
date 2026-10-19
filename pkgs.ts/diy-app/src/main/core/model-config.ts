@@ -3,9 +3,10 @@
 // 契约在 shared/model-config.ts；本文件只做文件 I/O。解析失败 fail-fast（save 侧同理）——
 // 配置文件是用户显式编辑的，静默降级只会让"改了没反应"。
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import * as yaml from "js-yaml";
+import { writeFileAtomic } from "./atomic-write";
 import {
     CustomSpecsFileSchema,
     ModelConfigFileSchema,
@@ -21,12 +22,9 @@ export function customSpecsFile(home: string): string {
     return join(home, "providers.custom.yaml");
 }
 
-/** 原子写（tmp → rename）：结构非法直接抛，写侧不允许存下坏数据 */
+/** 原子写（core/atomic-write.ts）：结构非法直接抛，写侧不允许存下坏数据 */
 function saveYaml(path: string, data: unknown): void {
-    mkdirSync(dirname(path), { recursive: true });
-    const tmp = `${path}.tmp`;
-    writeFileSync(tmp, yaml.dump(data, { indent: 2, noRefs: true }), "utf-8");
-    renameSync(tmp, path);
+    writeFileAtomic(path, yaml.dump(data, { indent: 2, noRefs: true }));
 }
 
 /** 读 model.yaml；不存在 = 空配置（默认无任何 provider） */
