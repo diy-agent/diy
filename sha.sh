@@ -173,7 +173,7 @@ check() {
   run bash scripts/check-exec-bit.sh
   # 原子写护栏：src/main 下整文件覆盖写必须走 core/atomic-write.ts 的 writeFileAtomic（实现见 scripts/check-atomic-write.sh，详见 ##383(整文件覆盖写加固)）
   run bash scripts/check-atomic-write.sh
-  # 各领域规范索引护栏（##388）：~/SPECS.md 的 key 唯一 / 指针可解析 / 链上未收录
+  # 各领域规范索引护栏（##388）：~/SPECS.md 的 key 唯一 / 指针可解析 / 链上新增未收录（ratchet：存量基线 scripts/specs-unindexed.txt）
   #（实现见 scripts/check-specs.mts；**总表缺失 = skip + 提示、不算失败**，跨机器 / CI 没有家目录那份文件）
   run npx tsx scripts/check-specs.mts
 }

@@ -2,12 +2,21 @@
 // scripts/check-specs.mts — 各领域规范索引总表 `~/SPECS.md` 的查重护栏（##388）。
 //
 // 为什么需要它：各层 AGENTS.md 里的跨领域规范（UI / 日志 / 环境感知 / 错误 …）要**集体
-// review**，却散在 5 份链文件 + 任务 body 里，光靠人记不出「这条是不是已经有了」。本脚本
-// 用机器保证**不重复**：
-//   G1 key 全链唯一            —— 总表里同一个中文 key 出现两次 = error
-//   G2 指针可解析              —— 每条的真源（文件 + 英文 key，或任务 + 锚文本）必须真在那儿 = error
-//   G3 AGENTS.md 链上的 key 未收录 —— 扫链上所有 `- \`<key>\` —` 行，没进总表的报出 = warning
-//                                   （先 warning：链上 ~237 条，一次录满不现实；稳定后再升 error）
+// review**，却散在链文件 + 任务 body 里，光靠人记不出「这条是不是已经有了」。本脚本用机器
+// 保证**不重复**：
+//   G1 key 全链唯一      —— 总表里同一个中文 key 出现两次 = error
+//   G2 指针可解析        —— 每条的真源（文件 + 英文 key，或任务 + 锚文本）必须真在那儿 = error
+//   G3 新增未收录        —— 链上有、表里没有、且**不在基线**的 key = warning（ratchet）
+//
+// G3 为什么是 ratchet（基线增量）而不是「全录」：链上 160+ 条 key，一次录满不现实，而报
+// 「未收录 N/全部」会让 warning 常驻 —— 人看两次就学会无视它，连 G1/G2 的真 error 一起被
+// 无视（warning 疲劳 >= 没有 warning）。故：
+//   · `scripts/specs-unindexed.txt`  = **存量基线**（一行一个 key，进 git）：存量欠账不响；
+//   · G3 只报 `missing − baseline` = **真·新增遗漏**（防「忘」）；
+//   · `--update-baseline` 把当前 missing 写进基线（批量补录后刷新一次）。
+//
+// 前缀白名单**只收跨领域规范**：`find.*`（去哪找）/ `pit.*`（坑）是**导航**不是规范，不收
+// —— 拿它们算「未收录」是拿错了尺子（review1 R1）。
 //
 // 总表**只做索引**，正文仍住各层 AGENTS.md —— 分层加载是刚需（cwd 决定加载哪些、读链即得
 // 全文），总表是给人 review 的视图。故 G2 是**硬**的：指针悬空 = 索引在撒谎。
@@ -15,12 +24,14 @@
 // 总表缺失（跨机器 / CI 没有家目录那份文件）⇒ 打印跳过提示、退出 0，不算失败。
 //
 // 用法：
-//   npx tsx scripts/check-specs.mts              默认查 ~/SPECS.md
-//   npx tsx scripts/check-specs.mts <specs.md>   指定总表（可测性 / 演练）
+//   npx tsx scripts/check-specs.mts                    默认查 ~/SPECS.md
+//   npx tsx scripts/check-specs.mts <specs.md>         指定总表（可测性 / 演练）
+//   npx tsx scripts/check-specs.mts --update-baseline  把当前 missing 写进 scripts/specs-unindexed.txt
 //   DIY_SPECS=<path> 同效
 //
 // 退出码：0 = 通过（含「总表缺失跳过」）· 1 = 有 error
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,17 +40,27 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const HOME = os.homedir();
 const DIY_HOME = process.env.DIY_HOME ?? path.join(HOME, '.diy');
 
-// 总表位置：家目录（与 ~/AGENTS.md 并列，跨项目 —— 索引对象本身跨项目）
-const SPECS = path.resolve(process.argv[2] ?? process.env.DIY_SPECS ?? path.join(HOME, 'SPECS.md'));
+const argv = process.argv.slice(2);
+const UPDATE_BASELINE = argv.includes('--update-baseline');
+const positional = argv.filter((a) => !a.startsWith('--'));
 
-// G3 的 key 前缀白名单：**按实测收口**（2026-10-19 扫 5 份链，实际只有这 10 个前缀）。
+// 总表位置：家目录（与 ~/AGENTS.md 并列，跨项目 —— 索引对象本身跨项目）
+const SPECS = path.resolve(positional[0] ?? process.env.DIY_SPECS ?? path.join(HOME, 'SPECS.md'));
+// 存量基线：与本脚本同处 scripts/，进 git（机制的一部分，不是数据）
+const BASELINE = path.join(ROOT, 'scripts', 'specs-unindexed.txt');
+
+// G3 的 key 前缀白名单：**只收跨领域规范**（按实测收口，2026-10-19 扫链）。
+// `find` / `pit` 是「包内去哪找 / 包内什么坑」= 导航，不是规范，故意不收。
 // 白名单外的前缀不静默吞掉 —— 见到就提示「是否该加进来」，否则新领域永远看不见。
-const PREFIXES = ['rule', 'tool', 'proj', 'data', 'find', 'dev', 'entry', 'model', 'pit', 'env'];
+const PREFIXES = ['rule', 'tool', 'proj', 'data', 'dev', 'entry', 'model', 'env'];
+// 明确**不收**的前缀（导航类，静默跳过 —— 不提示、不计入 G3）：
+//   `find` = 包内去哪找 · `pit` = 包内什么坑
+const IGNORED = ['find', 'pit'];
 
 // `- \`<key>\` — 值` 的行（链上与总表同构，唯一区别：总表多一段真源指针）
 const KEY_LINE = /^\s*[-*]\s+`([^`]+)`\s+—/;
 // 总表条目：`- \`<中文 key>\` — 一句话 → 真源 <指针>`
-const ENTRY = /^\s*[-*]\s+`([^`]+)`\s+—\s+(.+?)\s+→\s*真源\s+(.+?)\s*$/;
+const ENTRY = /^\s*[-*]\s+`([^`]+)`\s+—\s+(.+?)\s*→\s*真源\s+(.+?)\s*$/;
 // 指针两种形态：
 //   ① 正文已落 AGENTS.md：`<绝对路径>` 的 `<英文 key>`
 //   ② 规范已定、正文还散在任务 body（**待落位**）：任务 `<任务 URI>` 的 `<锚文本>`
@@ -49,7 +70,26 @@ const PTR_FILE = /^`?([^`]+?)`?\s+的\s+`(.+)`$/;
 const read = (p: string) => readFileSync(p, 'utf8');
 const expand = (p: string) => (p.startsWith('~/') ? path.join(HOME, p.slice(2)) : p);
 
-/** AGENTS.md 链：家目录 → 仓根逐层（深层同名 key 覆盖浅层）+ 包层 */
+/**
+ * 主仓所在的**容器目录**（`~/git/diy`）—— worktree 里 ROOT 是
+ * `~/git/diy.worktrees/t388-…`，沿路径上溯走不到它，但那一层的 AGENTS.md
+ * （`rule.gpg` / `dev.*` 等仓级规范）同样是本仓上下文，不扫 = 漏。
+ * 取法是 `git rev-parse --git-common-dir`（worktree 与主仓共享 .git）→ 上溯两级。
+ */
+function repoContainerDir(): string | null {
+  try {
+    const common = execFileSync('git', ['-C', ROOT, 'rev-parse', '--path-format=absolute', '--git-common-dir'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    const container = path.dirname(path.dirname(common)); // <仓>/.git → <仓> → 其父
+    return container === ROOT ? null : container; // 主仓里跑时容器就是 ROOT 的父，去重交给下面的 Set
+  } catch {
+    return null; // 非 git 检出（CI tarball / 导出目录）：跳过，不算失败
+  }
+}
+
+/** AGENTS.md 链：家目录 → 仓根逐层（深层同名 key 覆盖浅层）+ 主仓容器层 + 包层 */
 function agentsChain(): string[] {
   const dirs: string[] = [];
   let dir = ROOT;
@@ -61,6 +101,11 @@ function agentsChain(): string[] {
   }
   if (dirs[0] !== HOME) dirs.splice(0, 0, HOME); // 仓不在家目录下：家目录那条仍要算
   const files = dirs.map((d) => path.join(d, 'AGENTS.md')).filter((f) => existsSync(f));
+  const container = repoContainerDir();
+  if (container) {
+    const f = path.join(container, 'AGENTS.md');
+    if (existsSync(f) && !files.includes(f)) files.push(f);
+  }
   // 包层（pkgs.ts/<包>/AGENTS.md）
   const pkgsDir = path.join(ROOT, 'pkgs.ts');
   if (existsSync(pkgsDir)) {
@@ -83,6 +128,16 @@ function keysOf(file: string): { key: string; line: number }[] {
       if (m) out.push({ key: m[1], line: i + 1 });
     });
   return out;
+}
+
+/** 读基线（一行一个 key，`#` 注释与空行跳过） */
+function readBaseline(): Set<string> {
+  if (!existsSync(BASELINE)) return new Set();
+  const keys = read(BASELINE)
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l !== '' && !l.startsWith('#'));
+  return new Set(keys);
 }
 
 type Issue = { kind: 'G1' | 'G2'; msg: string };
@@ -150,7 +205,7 @@ for (const e of entries) {
   }
 }
 
-// ── G3：AGENTS.md 链上未收录（warning）─────────────────────────────────────────
+// ── G3：链上新增未收录（ratchet：只报基线外的）──────────────────────────────
 const indexed = new Set<string>();
 for (const e of entries) {
   const ptr = PTR_FILE.exec(e.pointer);
@@ -163,6 +218,7 @@ for (const f of chain) {
     // 只关心 `域.对象.方面` 形态的 key（`sha-py` / `pkgs/` 那种是普通反引号文本，不是 key）
     if (!/^[A-Za-z][\w./-]*\.[\w.-]+$/.test(k.key)) continue;
     const prefix = k.key.split('.')[0];
+    if (IGNORED.includes(prefix)) continue;
     if (!PREFIXES.includes(prefix)) {
       notes.push(`链上出现未登记前缀 \`${prefix}.\`（${f}:${k.line}）—— 是否该加进 PREFIXES？`);
       continue;
@@ -171,22 +227,26 @@ for (const f of chain) {
   }
 }
 const missing = [...onChain].filter((k) => !indexed.has(k));
-const missingByPrefix = new Map<string, string[]>();
-for (const k of missing) {
-  const p = k.split('.')[0];
-  missingByPrefix.set(p, [...(missingByPrefix.get(p) ?? []), k]);
-}
 
-// ── 报告 ──────────────────────────────────────────────────────────────────────
+let baseline = readBaseline();
+const baselineKnown = existsSync(BASELINE) || UPDATE_BASELINE;
+if (UPDATE_BASELINE) {
+  writeFileSync(BASELINE, `# G3 存量基线（ratchet）：链上有、总表还没有的 key（##388）；只报「基线外」的新增遗漏。\n# 批量补录后刷新：npx tsx scripts/check-specs.mts --update-baseline\n${missing.join('\n')}\n`);
+  baseline = new Set(missing);
+  console.log(`[check-specs] 基线已更新：scripts/specs-unindexed.txt（${missing.length} 条）`);
+}
+const fresh = missing.filter((k) => !baseline.has(k));
+
+// ── 报告（通过时 ≤3 行：摘要 · 可选「新增未收录」· 结论）─────────────────────
 const show = (s: string) => s.replace(HOME, '~');
-console.log(`[check-specs] 总表：${show(SPECS)}（${entries.length} 条 · 链上 ${onChain.size} 条 key · 已索引 ${indexed.size} 条）`);
+const shown = (keys: string[]) => (keys.length > 8 ? `${keys.slice(0, 8).join(' ')} …（共 ${keys.length} 条）` : keys.join(' '));
+console.log(
+  `[check-specs] 总表 ${show(SPECS)}（${entries.length} 条 · 链上 ${onChain.size} 条 key · 已索引 ${indexed.size} 条 · 基线 ${baseline.size} 条${baselineKnown ? '' : '（缺失）'}）`,
+);
 for (const i of errors) console.log(`  ✗ ${i.kind} ${show(i.msg)}`);
 for (const n of notes) console.log(`  ⚠ ${show(n)}`);
-if (missing.length > 0) {
-  console.log(`  ⚠ G3 未收录 ${missing.length}/${onChain.size} 条（warning：正文已在 AGENTS.md，本表还没有索引 —— 逐步补，稳定后升 error）`);
-  for (const [prefix, keys] of [...missingByPrefix].sort((a, b) => b[1].length - a[1].length)) {
-    console.log(`     ${prefix} (${keys.length}): ${keys.join(' ')}`);
-  }
+if (fresh.length > 0) {
+  console.log(`  ⚠ G3 新增未收录 ${fresh.length} 条（基线外，链上有、表里没有 —— 录进总表，或 --update-baseline 冻结）：${shown(fresh)}`);
 }
 if (entries.length === 0) console.log('  ⚠ 总表没有任何条目（格式：- `<中文 key>` — 一句话 → 真源 `<文件>` 的 `<key>`）');
 const errCount = errors.length;
