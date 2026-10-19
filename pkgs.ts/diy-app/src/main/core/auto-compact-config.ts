@@ -11,8 +11,9 @@
 // serve 与 Electron 各持一份（见 pit.localstorage）；而"要不要自动压"会**改用户的会话历史**，
 // 必须是真源、可版本管理、可手改。
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { writeFileAtomic } from "./atomic-write";
 import * as yaml from "js-yaml";
 import {
     AutoCompactConfigSchema,
@@ -188,8 +189,6 @@ export function saveAutoCompact(home: string, cfg: unknown): AutoCompactConfig {
         "#     data: 各取法私有参数（role: { role } · recent: { n, role? } · steps: { n }）\n" +
         "#   预算(**0 = 清零**，含 must 级) 在 policy.modeData.budgetBytes；校验/读写走 `diy ... compact plan`\n" +
         "# 契约：pkgs.ts/diy-app/src/shared/context/auto-compact.ts 的 AutoCompactConfigSchema\n";
-    const tmp = `${p}.tmp-${process.pid}`;
-    writeFileSync(tmp, header + yaml.dump(norm, { indent: 2, noRefs: true }), "utf-8");
-    renameSync(tmp, p);
+    writeFileAtomic(p, header + yaml.dump(norm, { indent: 2, noRefs: true }));
     return norm;
 }

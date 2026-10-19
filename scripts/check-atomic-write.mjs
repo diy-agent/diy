@@ -1,12 +1,13 @@
 #!/usr/bin/env node
-// scripts/check-atomic-write.mjs —— 整文件覆盖写护栏（草案，##383）
+// scripts/check-atomic-write.mjs —— 整文件覆盖写护栏（##383；已接 ./sha.sh check）
 //
 // 判据：`pkgs.ts/diy-app/src/main/**/*.ts` 里出现「直接把内容盖到目标文件」的调用即违规，
 // 除非满足下列任一豁免：
 //   ① 目标路径是临时文件腿（首参含 `.tmp` / `mkdtemp`）—— 即 tmp+rename 原子写；
 //   ② 调用行或紧邻上一行有 `// non-atomic-ok: <非空理由>`（append-only / 仅人读标记等）；
 //   ③ 调用行或紧邻上一行有 `// atomic-ok: <非空理由>`（极少数不能复用共享原语的原子实现）；
-//   ④ 命中 `scripts/atomic-write-allowlist.txt`（`<相对路径>\t<理由>`，条目失效会报错）。
+//   ④ 命中 `scripts/atomic-write-allowlist.txt`（`<相对路径>\t<理由>`；**列的文件不存在 = 报错**，
+//      防白名单腐坏。该文件本身不存在不算错 —— 一条不加是正常态）。
 // 共享原语 `writeFileAtomic(` 不在检查名单里，天然通过。
 //
 // 用法：
@@ -217,6 +218,8 @@ function selfTest() {
     ["import line", `import { writeFileSync } from "node:fs";`, 0],
     ["import alias", `import { writeFileSync as wfs } from "node:fs";\nwfs(p, x);`, 1],
     ["call inside template expression", "const s = `x${writeFileSync(p, v)}`;", 1],
+    ["fs namespace call", `fs.writeFileSync(p, x);`, 1],
+    ["tmp var via join", "const tmp = path.join(d, 'x.tmp');\nwriteFileSync(tmp, x);", 0],
   ];
   let bad = 0;
   for (const [name, src, want] of cases) {

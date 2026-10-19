@@ -12,8 +12,9 @@
 // 旧路径 ~/.config/diy-app / ~/.cache/diy-app 已废弃，首次启动时如存在可手动迁移。
 
 import { join } from "node:path";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import type { RuntimeConfig } from "../../runtime";
+import { writeFileAtomic } from "./atomic-write";
 
 export class AppConfig {
   readonly diyHome: string;
@@ -45,6 +46,6 @@ export class AppConfig {
   }
 
   writePort(port: number): void {
-    writeFileSync(join(this.diyHome, "app.port"), String(port), "utf-8");
+    writeFileAtomic(join(this.diyHome, "app.port"), String(port));
   }
 }

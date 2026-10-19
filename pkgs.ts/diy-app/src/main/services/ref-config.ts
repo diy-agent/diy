@@ -3,7 +3,8 @@
 //
 // 注意：diy.yaml 只是 ref 配置，不作为项目边界。
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync } from "node:fs";
+import { writeFileAtomic } from "../core/atomic-write";
 import { join, dirname } from "node:path";
 import { execFileSync } from "node:child_process";
 import * as yaml from "js-yaml";
@@ -143,7 +144,7 @@ function findOrCreateDiyYaml(yamlPath: string): string {
       "  source: []",
       "",
     ].join("\n");
-    writeFileSync(yamlPath, template, "utf-8");
+    writeFileAtomic(yamlPath, template);
   }
   return yamlPath;
 }
@@ -167,7 +168,7 @@ function writeDiyYamlRaw(
   if (Object.keys(existing.ref).length === 1 && existing.ref.source.length === 0) {
     delete existing.ref;
   }
-  writeFileSync(yamlPath, yaml.dump(existing, { indent: 2, noRefs: true }), "utf-8");
+  writeFileAtomic(yamlPath, yaml.dump(existing, { indent: 2, noRefs: true }));
 }
 
 function normalizeGitUrl(url: string): string {

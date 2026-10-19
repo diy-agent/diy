@@ -17,6 +17,7 @@
 //   · tmp 必须与目标**同目录** —— 跨目录 rename 退化 copy+unlink（丢原子性），跨设备直接 EXDEV。
 //   · tmp 名 = `<目标>.tmp-<pid>-<rand>`，**不用固定 `${path}.tmp`**：两处代码 / 两个进程同时写
 //     同一目标时固定名会互相踩（A 的 rename 可能搬走 B 的半个文件）。残留 tmp 是自家产物，可随时清。
+//   · 目标已存在 → tmp **继承其权限位**再 rename（否则默认 0644 会放宽 chmod 600 的私密文件，见 inheritMode）。
 //   · 缺省**不** fsync：本仓所有整文件写都是「可重建的投影 / 用户可见文本」，每次多一次磁盘同步不划算。
 //     要掉电耐久（写完就必须在盘上）传 `{ fsync: true }`。目录项不 fsync（同上，代价不值当）。
 //
@@ -26,7 +27,7 @@
 // 原子、有的不原子」，而**不原子的那些正是会毁正文的**。
 
 import { randomBytes } from "node:crypto";
-import { closeSync, fsyncSync, mkdirSync, openSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, fsyncSync, mkdirSync, openSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 export interface WriteFileAtomicOptions {
@@ -46,6 +47,7 @@ export function writeFileAtomic(path: string, content: string, opts: WriteFileAt
     const tmp = tempPathFor(path);
     try {
         writeFileSync(tmp, content, "utf-8");
+        inheritMode(path, tmp);
         if (opts.fsync) syncFile(tmp);
         // 覆盖目标：POSIX rename 是原子的。读者要么看到旧内容、要么看到新内容，绝无半截。
         // （Windows 上 rename 覆盖已存在文件会失败 —— 本仓只在 macOS / Linux 跑，不为它加平台分支。）
@@ -58,6 +60,19 @@ export function writeFileAtomic(path: string, content: string, opts: WriteFileAt
             /* 真正的错因在 e 里；清理失败至多是 tmp 已经不在了 */
         }
         throw e;
+    }
+}
+
+/**
+ * 让 tmp 继承目标**既有**的权限位（##383）：
+ * tmp 由 `writeFileSync` 按 umask 建成 0644，直接 rename 会把用户 `chmod 600` 的私密文件
+ * （如含 API key 的 `providers.custom.yaml`）**悄悄放宽**成 644。目标不存在（新建）/ stat 失败 → 用缺省。
+ */
+function inheritMode(target: string, tmp: string): void {
+    try {
+        chmodSync(tmp, statSync(target).mode & 0o777);
+    } catch {
+        /* 目标不存在（新建）或不可 stat —— 保持缺省权限，不影响写入本身 */
     }
 }
 
