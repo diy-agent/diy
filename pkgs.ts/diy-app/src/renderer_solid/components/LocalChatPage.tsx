@@ -56,6 +56,7 @@ import { HeightLedger, stackRows, windowRange } from "../lib/chat-virtual";
 import { MarkdownView } from "./MarkdownView";
 import { MdEditor } from "./MdEditor";
 import { taskCompletion } from "../lib/completions";
+import { bubbleAlignClass } from "../lib/user-bubble";
 import { bylineOf } from "../lib/assistant-byline";
 import { memberColor, shortName } from "../../shared/room";
 // 滚动决策（纯函数，可单测：跟随时序 / 锚点恢复）—— 本文件只负责 DOM 读写
@@ -1068,7 +1069,7 @@ function UserBubble(props: { node: BlockNode }) {
      *  取不到就不显示（绝不用渲染时刻顶替）—— 数据源与降级口径见 `lib/user-stamp` 头注。 */
     const stamp = () => userStamp(b().id);
     return (
-        <div class={author() ? "flex justify-start" : "flex justify-end"}>
+        <div class={bubbleAlignClass(author())}>
             <div class="max-w-[85%] bg-primary/10 border border-primary/20 rounded-2xl px-3.5 py-2 text-prose whitespace-pre-wrap break-words">
                 <Show when={author()}>
                     {(a) => (

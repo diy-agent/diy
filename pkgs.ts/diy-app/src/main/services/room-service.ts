@@ -196,6 +196,8 @@ async function runAndCollect(
     const errs: string[] = [];
     let turnId: string | undefined;
     try {
+        // 位次（##266 review1 R3.2）：① taskUri ② text ③ model ④ reasoningEffort ⑤ signal
+        // ⑥ seed ⑦ author —— 中间 4 个 `undefined` = "按任务绑定的人物解析、不开信号、不用 seed"。
         for await (const op of agent.chat(taskUri, text, undefined, undefined, undefined, undefined, author) as AsyncGenerator<Op>) {
             if (op.op === "start") {
                 if (op.kind === "turn") turnId = op.id;
