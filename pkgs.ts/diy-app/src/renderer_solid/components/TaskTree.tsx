@@ -3,6 +3,8 @@ import { createMutable } from "solid-js/store";
 import { DragDropProvider, DragOverlay, useDraggable, useDroppable, PointerSensor } from "@dnd-kit/solid";
 import type { DragDropProviderProps } from "@dnd-kit/solid";
 import { taskStore, type TreeNode } from "../store/taskStore";
+import { sessionStore } from "../store/sessionStore";
+import { usageLedgerStore } from "../store/usageLedgerStore";
 import { notificationStore } from "../store/notificationStore";
 import { diyService } from "../lib/rpc";
 import { Caches } from "../lib/ui-state";
@@ -15,8 +17,9 @@ import { TASK_STATES, taskStateColor } from "../../main/core/task-state";
 import { CreateTaskSheet } from "./CreateTaskSheet";
 import { TaskAddMenu } from "./TaskParentControls";
 import { DynamicBar } from "./DynamicBar";
-import { SessionChip } from "./SessionChip";
+import { SessionChip, TONE_BADGE } from "./SessionChip";
 import { TaskAgentStateBadge } from "./TaskAgentState";
+import { sessionMarkOf } from "../lib/session-mark";
 import { findNode } from "../lib/task-lineage";
 import { VIEW_BAR_H } from "../lib/layout-metrics";
 import {
@@ -29,7 +32,10 @@ import {
     type SortKey,
     type SortSpec,
     type SearchSnippet,
+    type SessionSortValues,
 } from "../../shared/task-list";
+import { fmtStamp, fmtTokens, mergeTs, sessionRowOf } from "../../shared/session-overview";
+import { fmtCost } from "../../shared/usage";
 
 // dnd-kit/solid 未直接导出 DragEndEvent，从 onDragEnd 回调参数提取
 type DragEndEvent = Parameters<NonNullable<DragDropProviderProps["onDragEnd"]>>[0];
@@ -177,19 +183,29 @@ function StateSelector(props: { uri: string; state: string }) {
 // 单元格渲染小工具
 // ═══════════════════════════════════════
 
-/** `2026-09-25T14:23:19.005Z` → `09-25 14:23`（本地时间）。
- *  列宽有限，完整时刻放 title（hover 可见），也放详情面板。 */
-function fmtTime(iso: string | undefined): string {
-    if (!iso) return "";
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return "";
-    const p = (n: number) => String(n).padStart(2, "0");
-    return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-}
-
 /** 可空字段的占位符：空值统一显示 "—"，让"没填"和"填了空"在视觉上一致地可辨 */
 function Dash() {
     return <span class="opacity-30">—</span>;
+}
+
+/**
+ * 「会话」列的**账本回退**：注册表没有这个会话的条目（本进程没活动过），但账本说它**已对话**。
+ *
+ * 为什么单列这个：注册表是进程性的，重启即空 —— 只有它的话，重启后所有行都成了"从没聊过"，
+ * 正是本任务的起点痛点。判据与行内 chip **同一份**（`lib/session-mark`），故两处不会打架。
+ */
+function LedgerStarted(props: { uri: string }) {
+    const mark = () => sessionMarkOf(props.uri);
+    return (
+        <Show when={mark()} fallback={<Dash />}>
+            {(c) => (
+                <span class={`badge badge-xs gap-0.5 font-normal ${TONE_BADGE[c().tone]}`} title={c().tip}>
+                    <span>{c().icon}</span>
+                    <span>{c().text}</span>
+                </span>
+            )}
+        </Show>
+    );
 }
 
 /** 优先级色：P0 最紧急 → error；P1 warning；P2/P3 中性 */
@@ -269,9 +285,62 @@ export function TaskTree(props: { reveal?: { uri: string; nonce: number } | null
     /** 搜索态：有查询词即为真（表格剪枝、动态条显示、命中高亮都由它决定） */
     const searching = () => query().trim().length > 0;
 
+    /** 树里全部任务 uri（会话侧取值 / 账本拉取都以它为准，含**没有注册表条目**的任务） */
+    const taskUris = createMemo(() => {
+        const out: string[] = [];
+        const walk = (ns: TreeNode[]) => {
+            for (const n of ns) {
+                if (n.kind === "task" && n.uri) out.push(n.uri);
+                if (n.children?.length) walk(n.children);
+            }
+        };
+        walk(taskStore.nodes);
+        return out;
+    });
+
+    /**
+     * 会话侧排序取值（uri → 几个标量）。判据在各 store（与 nav chip 同源），
+     * 这里只把**排序需要的标量**摊平成一张表 —— 排序是纯函数（shared/task-list），
+     * 不该反过来依赖注册表条目形状。
+     *
+     * 表按**树里的任务**建，不是按注册表条目建：消费（账本，跨启动）对"本次启动没活动过"
+     * 的任务同样有意义 —— 按条目建表会让这些行的消费列**排不了序**（值压根没进表）。
+     */
+    const sessionValues = createMemo(() => {
+        const m = new Map<string, SessionSortValues>();
+        for (const uri of taskUris()) {
+            const e = sessionStore.byUri(uri);
+            const row = e
+                ? sessionRowOf(e, sessionStore.seenTurnsOf(uri), sessionStore.maxSteps, sessionStore.nowMs, sessionStore.turnsOf(uri))
+                : null;
+            const cost = usageLedgerStore.costOf(uri);
+            // token / 最后消息：注册表（本进程）与账本（跨启动，含本进程）**取大** ——
+            // 账本是超集，但拉取是异步的（到货前先有注册表的数）；重启后注册表空、账本照给。
+            const facts = usageLedgerStore.factsOf(uri);
+            const started = facts?.started === true;
+            const tokens = started ? Math.max(row?.tokens ?? 0, facts!.tokens) : row?.tokens;
+            const lastActivity = started ? mergeTs(row?.lastActivity, facts!.lastTs ?? undefined) : row?.lastActivity;
+            if (!row && cost == null && tokens === undefined && lastActivity === undefined) continue; // 两源都无数据 → 不进表（未设置恒排最后）
+            m.set(uri, {
+                attention: row?.attention,
+                tokens,
+                lastActivity,
+                cost: cost ?? undefined,
+            });
+        }
+        return m;
+    });
+
     /** 构建结果（含命中信息）。rows 与 hits 都从这里派生 —— 不让 hits 再匹配一遍：
      *  匹配是 O(节点数 × 正文字符数) 的活，同一次渲染里做两遍纯属浪费。 */
-    const list = createMemo(() => buildTaskRows(taskStore.nodes, { sort: sort(), query: query(), isExpanded }));
+    const list = createMemo(() =>
+        buildTaskRows(taskStore.nodes, {
+            sort: sort(),
+            query: query(),
+            isExpanded,
+            sessionOf: (n) => (n.uri ? sessionValues().get(n.uri) ?? null : null),
+        }),
+    );
 
     const rows = createMemo(() => {
         const seen = new Set<string>();
@@ -561,7 +630,15 @@ export function TaskTree(props: { reveal?: { uri: string; nonce: number } | null
                                             sortKey={col.key}
                                             sort={sort()}
                                             onSort={applySort}
-                                            class={col.key === "title" ? "min-w-[220px]" : ""}
+                                            class={
+                                                col.key === "title"
+                                                    ? "min-w-[220px]"
+                                                    : col.key === "session"
+                                                      ? "min-w-[110px] whitespace-nowrap"
+                                                      : col.key === "tokens" || col.key === "cost" || col.key === "lastActivity"
+                                                        ? "whitespace-nowrap"
+                                                        : ""
+                                            }
                                         />
                                     )}
                                 </For>
@@ -700,7 +777,7 @@ function ProjectRow(props: {
                 </span>
             </td>
             {/* 项目行的其余列：项目路径（原 URI 列的语义，项目自身没有任务字段） */}
-            <td colspan={7} class="font-mono text-body opacity-60 truncate">
+            <td colspan={SORT_KEYS.length - 1} class="font-mono text-body opacity-60 truncate">
                 {row.node.project_path ?? ""}
             </td>
         </tr>
@@ -716,6 +793,57 @@ function TaskRow(props: {
 }) {
     const { row } = props;
     const isSelected = () => taskStore.selectedUri === row.key;
+    /**
+     * 会话侧展示（任务表四列）。判据 = sessionRowOf（与 nav chip 同源）；无会话条目 → null → 四列显示 "—"。
+     * 逐行调 store 而不是由父级传表：行对象是 rowCache 里的稳定引用（见 FlatRow 头注），
+     * 传函数 prop 会让所有行在每次注册表帧上都重渲染 —— 直接读 store 让 Solid 只更新真正变的那几行。
+     */
+    const sess = () => {
+        const e = sessionStore.byUri(row.key);
+        if (!e) return null;
+        return sessionRowOf(
+            e,
+            sessionStore.seenTurnsOf(row.key),
+            sessionStore.maxSteps,
+            sessionStore.nowMs,
+            sessionStore.turnsOf(row.key),
+        );
+    };
+    /** 账本累计消费（$）；`undefined` = 还没读到 → 显示 "—"（**不显示 $0**：未知 ≠ 没花钱） */
+    const cost = () => usageLedgerStore.costOf(row.key);
+    /**
+     * 累计 token / 最后消息：**跨启动**（用户 2026-10-17：「要存储会话的信息，不然重启后
+     * ……也不知道任务会话的最后消息时间，无法排序」）。
+     *
+     * 两源取大：注册表 = 本进程那一段（即时），账本 = 落盘全量（含本进程，但异步到货）。
+     * 取大即"谁的数更全用谁"，且不会因为账本晚到而把已有的数抹掉。
+     */
+    const ledger = () => usageLedgerStore.factsOf(row.key);
+    const tokens = () => {
+        const l = ledger();
+        // 账本**没有内容**（从没聊过）≠ 累计 0 token —— 不拿它的 0 冒充一个事实
+        if (!l?.started) return sess()?.tokens;
+        return Math.max(sess()?.tokens ?? 0, l.tokens);
+    };
+    const lastMsg = () => {
+        const l = ledger();
+        if (!l?.started) return sess()?.lastActivity;
+        return mergeTs(sess()?.lastActivity, l.lastTs ?? undefined);
+    };
+    /** 消费列的 hover 全文：三个状态（读取中 / 无带价记录 / 有金额）不许混成一句话 */
+    const costTip = () => {
+        const c = cost();
+        if (c === undefined) return "账本读取中…";
+        if (c === null) return "账本里没有一条带价的记录（免费模型 / 未登记单价）";
+        return `任务会话累计消费 $${fmtCost(c)}（读账本 usage.jsonl 现算，跨启动累计）`;
+    };
+    /** 会话列 tooltip：把判据说全（与 chip / 总览的 tipOf 同源） */
+    const sessionTip = () => {
+        const e = sessionStore.byUri(row.key);
+        return e ? `${e.id}
+最后活动 ${e.lastActivity}
+看客 ${e.viewers} · 待投递 ${e.queue}` : "";
+    };
     const drag = useDraggable({
         get id() {
             return row.key;
@@ -781,7 +909,7 @@ function TaskRow(props: {
                         判据在 shared/task-agent-state，组合在 lib/agent-state —— 与 nav 项、属性面板同一份。
                         两个逐任务真源（has_session / has_draft）随任务树载荷一起来，见 TaskNodeShape。 */}
                     <TaskAgentStateBadge uri={row.key} hasSession={row.node.has_session} hasDraft={row.node.has_draft} />
-                    {/* 会话状态（##308）：任务表行不点进去就知道谁在跑、跑到第几步、有没有未读步数/
+                    {/* 会话状态（##308）：任务表行不点进去就知道谁在跑、有没有未读轮次/
                         待投递留言/上一轮异常收尾。判据与 nav chip、总览页**同一份**（sessionStore）。
                         chip 自身只在"有事"时渲染（空闲且无事 → 不占地方，见 shared/session-overview）。 */}
                     <SessionChip uri={row.key} />
@@ -830,10 +958,42 @@ function TaskRow(props: {
             </td>
             <td class="text-body font-mono opacity-60">{row.node.num ?? ""}</td>
             <td class="text-body whitespace-nowrap opacity-70" title={row.node.created ?? ""}>
-                {fmtTime(row.node.created)}
+                {fmtStamp(row.node.created)}
             </td>
             <td class="text-body whitespace-nowrap opacity-70" title={row.node.updated ?? ""}>
-                {fmtTime(row.node.updated)}
+                {fmtStamp(row.node.updated)}
+            </td>
+            {/* ── 会话侧四列（##358）：任务表空间大 ⇒ 比 nav chip 多给状态 / token / 消费 / 最后消息。
+                   判据全走 sessionStore + usageLedgerStore（与 nav chip、总览页同一份），这里只负责画。
+
+                   「未读」列已删（用户 2026-10-17）：标题后面那个 chip 已经在说未读，列里再来一遍是重复，
+                   而且"按未读排序"没什么意义。 ── */}
+            <td class="text-body whitespace-nowrap">
+                <Show when={sess()} fallback={<LedgerStarted uri={row.key} />}>
+                    {(v) => (
+                        <span class={`badge badge-xs gap-0.5 font-normal ${TONE_BADGE[v().tone]}`} title={sessionTip()}>
+                            <Show when={v().icon}>
+                                <span>{v().icon}</span>
+                            </Show>
+                            <span>{v().state}</span>
+                        </span>
+                    )}
+                </Show>
+            </td>
+            <td class="text-body whitespace-nowrap font-mono opacity-80" title={`会话累计 ${fmtTokens(tokens() ?? 0)} tokens（账本 usage.jsonl 现算，跨启动；注册表口径只含本进程）`}>
+                <Show when={tokens() !== undefined} fallback={<Dash />}>
+                    {fmtTokens(tokens()!)}
+                </Show>
+            </td>
+            <td class="text-body whitespace-nowrap font-mono opacity-80" title={costTip()}>
+                <Show when={cost() != null} fallback={<Dash />}>
+                    ${fmtCost(cost()!)}
+                </Show>
+            </td>
+            <td class="text-body whitespace-nowrap opacity-70" title={lastMsg() ?? ""}>
+                <Show when={lastMsg()} fallback={<Dash />}>
+                    {fmtStamp(lastMsg())}
+                </Show>
             </td>
         </tr>
     );

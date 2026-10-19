@@ -21,6 +21,10 @@
  * 档位按「角色」命名、按值独立调整：改字号只动这一处。
  * 层级感用 weight/opacity/indent 表达，不用字号表达树层级（任务 208 的教训）。 */
 @theme {
+  /* 队列待投递的**紫**（##358 D1 的角标语汇：绿=未读/运行 · 红=未读异常 · 黄=停滞 · 紫=队列）。
+   * daisyUI 的 primary 在本主题是蓝紫、secondary 是品红，都不是口径里的那个紫 ——
+   * 自定义色按规范用 diy- 前缀（Tailwind v4 会据此生成 bg-/text-/border- 三件套）。 */
+  --color-diy-queue: oklch(70% 0.17 290);
   --text-caption: 0.625rem;
   --text-body: 0.6875rem;
   --text-prose: 0.875rem;

@@ -21,6 +21,7 @@ import { AppInfo } from "./components/AppInfo";
 import { LogPanel } from "./components/LogPanel";
 import { ThemeSettings } from "./components/ThemeSettings";
 import { ToastContainer } from "./components/ToastContainer";
+import { ConfirmDialog } from "./components/ConfirmDialog";
 // 「模型不可用」顶栏 bar（##369 ①）：真发失败时把事实从会话流里提出来摆到最显眼处
 import { ModelUnavailableBar } from "./components/ModelUnavailableBar";
 import { taskStore, type TreeNode } from "./store/taskStore";
@@ -50,7 +51,28 @@ import { setRendererActions, resetRendererActions, getRendererActions } from "./
 import { DragDropProvider, DragOverlay, useDraggable, useDroppable, PointerSensor } from "@dnd-kit/solid";
 import type { DragDropProviderProps } from "@dnd-kit/solid";
 import { findTaskProject } from "./components/TaskTree";
-import { isAncestorOf } from "./lib/task-lineage";
+import { allTaskUris, isAncestorOf } from "./lib/task-lineage";
+// 开机扫账本的入队次序（##358 §10）：热点立即 / 冷账本 idle 切片，纯函数
+import { scanPlanOf, SCAN_SLICE } from "../shared/session-scan";
+// 会话活动语汇（##358 D1/D2）：nav 的主角标 / 次角标 / 「后台活动」区**共用一份**判据
+//（纯函数在 shared/session-nav —— 位次仍出自 shared/session-overview，与任务表 / 总览同源）。
+import {
+    backgroundOf,
+    heroBadgeOf,
+    navRowOf,
+    rankOf,
+    rowBadgeOf,
+    secondaryBadgeOf,
+} from "../shared/session-nav";
+import type { NavRow, NavTone } from "../shared/session-nav";
+import { ALERT_ACTION_LABEL, alertsOf } from "../shared/session-alerts";
+// 「待你处理」区（##358 D5）：判据纯函数；行集仍是上面那份 navRows（两个区**不可能**给出不同结论）
+import { todoOf, todoWhenOf } from "../shared/session-todo";
+// 相对时间（`20h`）—— 纯函数在 shared/session-overview，与任务表 `fmtStamp` 同处（不另写时间格式）
+import { fmtAgo } from "../shared/session-overview";
+import { resumeOf, resumeWhenOf } from "../shared/session-resume";
+import { usageLedgerStore } from "./store/usageLedgerStore";
+import { alertPrefsStore } from "./store/alertPrefsStore";
 
 /**
  * 取"此刻最上面的可查找浮层"（##309）。
@@ -117,6 +139,31 @@ const NAV_ITEMS: Array<{ id: Section; label: string; icon: string }> = [
 ];
 
 /** `ui page navigate` 的合法取值（非法值一律忽略：宁可不跳，也不能把主区打成白屏） */
+/**
+ * nav 角标的**配色**（##358 D1）—— 用户给的口径就是颜色词：
+ *   绿 = 未读 / 运行中 · 红 = 未读且异常终止 · 黄 = 停滞 · 紫 = 队列待投递。
+ * 只在这里定义一次：主角标与次角标、展开与收起共用（两处各写一份必然漂移）。
+ * 绿用 daisyUI 的 `success`（`primary` 在本主题里是蓝紫 —— 与"绿=未读"的口径不符，
+ * 故 SessionChip 的颜色表也一并改到 success，见 components/SessionChip.tsx）。
+ */
+const NAV_TONE_CLASS: Record<NavTone, string> = {
+    green: "bg-success/20 text-success border-success/40",
+    amber: "bg-warning/20 text-warning border-warning/40",
+    red: "bg-error/20 text-error border-error/40",
+    purple: "bg-diy-queue/20 text-diy-queue border-diy-queue/40",
+};
+
+/** 同一套配色的**文字**形态（「会话」列表行内那个 `+N` 用它：一屏十几个 badge 就是噪声） */
+const NAV_TONE_TEXT: Record<NavTone, string> = {
+    green: "text-success",
+    amber: "text-warning",
+    red: "text-error",
+    purple: "text-diy-queue",
+};
+
+/** 「会话」列表最多列几行：nav 是"扫一眼"的地方，不是账页（更多的折成表尾一句纯文本） */
+const NAV_SESSION_LIMIT = 8;
+
 const VALID_PAGES = new Set(["task", "task-run", "lab", "llm", "traffic", "sessions", "rooms", "instances", "settings"]);
 
 /**
@@ -173,6 +220,17 @@ export default function App() {
     // 于是侧栏宽度**从不消失**：窄窗最窄 40px rail，宽窗 40px↔224px（##297）。
     const [isNarrow, setIsNarrow] = createSignal(false);
     const [railOpen, setRailOpen] = createSignal(false);
+    /**
+     * 相对时间的**心跳**（##358 用户 2026-10-19：「改为 20h？会更新吗？如果无法更新，就删掉吧」）。
+     *
+     * 时间字串本身是纯函数（`fmtAgo`）算出来的，**它自己不会走** —— 必须有东西让界面重算。
+     * 这里每分钟推一次 `nowMs`，凡是读了它的渲染就会跟着重算（nav 行的 `20h` → `21h` → `1d`）。
+     * 为什么要这个信号而不是在渲染里直接 `Date.now()`：那样只有**别的原因**引起重绘时才顺手更新，
+     * 界面静止时时间就冻住了 —— 正是用户担心的情况。1 分钟是刻意的粗粒度：
+     * 行内最小单位就是分钟（`刚刚`），再密也看不出差别，只是白烧 CPU。
+     */
+    const [nowMs, setNowMs] = createSignal(Date.now());
+
     // 展开宽度（px）：右缘可拖，落视图 cache（见 ui-state 的 diy_nav_width）
     const [navW, setNavW] = createSignal(Caches.diy_nav_width.get());
     // 拖拽中的标记：期间**必须强制展开**，否则鼠标一离开侧栏就 mouseleave 收拢，
@@ -422,10 +480,11 @@ export default function App() {
     };
 
     /**
-     * 已读水位：**正在看**的那条会话追到当前步数 —— 它是"距上次看新增多少步"的基线（##308）。
+     * 已读水位：**正在看**的那条会话追到当前轮次 —— 它是"距上次看新增多少条未读消息"的基线
+     * （##308；##358 口径订正：1 轮 = 1 条消息，不是步数）。
      *
      * 只追激活的 task-run tab（不是"开着就算"）：`isTaskDisplayed` 的语义就是"在屏上"，
-     * 与 hover 覆盖层用的是同一条判据。读了 `entries` 让注册表帧到达时重跑（水位随步数前进）。
+     * 与 hover 覆盖层用的是同一条判据。读了 `entries` 让注册表帧到达时重跑（水位随轮次前进）。
      *
      * ⚠️ 本 effect 里**只许读**、不许写（自读自写会自我入队 → 无限递归，##308 review3 P1-1）：
      * `markViewed` 内部对水位读做了 `untrack`，故这里可以安全地在 tracked 作用域里调它。
@@ -435,7 +494,7 @@ export default function App() {
         const t = tabStore.activeTab();
         if (t?.pageId !== "task-run" || !t.ctx) return;
         // 读一次条目表 = **订阅注册表帧**：帧到了本 effect 就重跑，把水位追到最新
-        //（不读它的话，步数涨了水位还停在打开那一刻，"新增"会一路涨成假信号）。
+        //（不读它的话，轮次涨了水位还停在打开那一刻，"未读"会一路涨成假信号）。
         if (sessionStore.entries.length === 0) return;
         sessionStore.markViewed(t.ctx);
     });
@@ -452,7 +511,205 @@ export default function App() {
         return n?.num ? `#${n.num} ${n.title ?? uri}` : (n?.title ?? uri);
     };
 
+    /**
+     * nav 视角下的会话行（##358 D1/D2 的输入）。
+     *
+     * `opened` 由**开着哪些 tab**决定：开着 = 已在视线内，不必再提示；关掉 = 才有「回到视线」这回事。
+     * 判据（未读 / 停滞 / 异常）不在本文件算 —— 走 `navRowOf`（shared/session-nav），
+     * 位次全部出自 shared/session-overview，于是 nav 与任务表、总览页**不可能给出不同结论**。
+     */
+    /**
+     * 行集 = **任务树里的全部任务** ∪ 注册表（##358 D5/D4）。
+     *
+     * 为什么不是"只注册表"：注册表是**进程性**的（重启即空），而那正是用户的痛点
+     * ——「app 启动后丢了所有进度」。任务树是 renderer 本来就有的全量清单，
+     * 配上**账本**（落盘、跨启动）就能在启动那一刻回答"哪些会话我还没看"。
+     * 代价：开机扫一遍各任务账本（N 次小文件读，`usageLedgerStore` 有并发 4 + 永久缓存兜着）。
+     * ⚠️ 水位**不**给它们建基线（见 `sessionStore.ensureBaseline` 的调用点只在注册表入口）——
+     * 建了就等于"第一眼即已读"，历史欠账会当场清零。
+     */
+    const navUris = createMemo(() => {
+        const us = new Set<string>(allTaskUris(taskStore.nodes));
+        for (const { uri } of sessionStore.rows) us.add(uri);
+        return [...us];
+    });
+
+    /**
+     * 开机扫账本的**入队次序**（##358 §10）：热点立即、冷账本 idle 切片慢慢补。
+     *
+     * 为什么不是"一次性全量入队"（上一版）：队列是 FIFO + 并发 4 ⇒ 第一眼要看的几行
+     * 排在几百个老账本之后，**数字迟到**（看着像没算）。次序由 `scanPlanOf`（纯函数）给，
+     * **不丢任何任务** —— 「待你处理」是全局聚合，砍掉冷任务 = 看不见历史欠账。
+     */
+    const scanPlan = createMemo(() => {
+        const opened = new Set(tabStore.opened.filter((t) => t.ctx).map((t) => t.ctx!));
+        const inRegistry = new Set(sessionStore.rows.map((r) => r.uri));
+        return scanPlanOf(
+            navUris().map((uri) => {
+                const n = findNode(taskStore.nodes, uri);
+                return {
+                    uri,
+                    opened: opened.has(uri),
+                    inRegistry: inRegistry.has(uri),
+                    state: n?.state,
+                    updated: n?.updated,
+                };
+            }),
+        );
+    });
+
+    // 冷账本补扫：idle 一次一片（幂等 —— 已读到的任务 `ensure` 自己会跳过，故不必记"扫到哪了"）
+    onMount(() => {
+        const scanned = new Set<string>();
+        let stopped = false;
+        let scheduled = false; // 防叠加：任务树连变时只保留一条待跑的定时链
+        const idle = (fn: () => void) => {
+            const ric = (window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number })
+                .requestIdleCallback;
+            if (ric) ric(fn, { timeout: 1200 });
+            else window.setTimeout(fn, 60);
+        };
+        const pending = () => scanPlan().cold.filter((u) => !scanned.has(u));
+        const schedule = () => {
+            if (stopped || scheduled) return;
+            scheduled = true;
+            idle(drain);
+        };
+        function drain() {
+            scheduled = false;
+            if (stopped) return;
+            const batch = pending().slice(0, SCAN_SLICE);
+            if (batch.length === 0) return; // 扫完一轮；navUris 再变时由下面的 effect 重新踢一脚
+            for (const u of batch) scanned.add(u);
+            usageLedgerStore.ensure(...batch);
+            schedule();
+        }
+        createEffect(() => {
+            const plan = scanPlan();
+            usageLedgerStore.ensure(...plan.hot); // 热点：立刻（幂等）
+            if (plan.cold.length > 0) schedule();
+        });
+        onCleanup(() => {
+            stopped = true;
+        });
+    });
+
+    const navRows = createMemo(() => {
+        const opened = new Set(tabStore.opened.filter((t) => t.ctx).map((t) => t.ctx!));
+        return navUris().map((uri) =>
+            navRowOf({
+                uri,
+                label: tabLabel(uri),
+                opened: opened.has(uri),
+                entry: sessionStore.byUri(uri), // 账本独有行 → null（不是错误）
+                seenTurns: sessionStore.seenTurnsOf(uri),
+                totalTurns: sessionStore.turnsOf(uri),
+                lastTs: usageLedgerStore.lastTsOf(uri) ?? null,
+                maxSteps: sessionStore.maxSteps,
+                now: sessionStore.nowMs,
+            }),
+        );
+    });
+    /** nav 上那**一个**主角标（同一时刻只出一个；判据见 shared/session-nav::heroBadgeOf） */
+    const navHero = createMemo(() => heroBadgeOf(navRows()));
+    /** 主角标之外的次角标（现在是队列：紫） */
+    const navSecondary = createMemo(() => secondaryBadgeOf(navRows(), navHero()));
+    /** 「待你处理」区 = 有一笔账在等你（异常终止 / 卡住 / 有人在等 / 跑完没看） */
+    const navTodo = createMemo(() => todoOf(navRows()));
+    /**
+     * 「后台活动」区 = 没开着 tab、但有活态的会话（关掉 ≠ 消失）。
+     * **减掉已被「待你处理」收走的那批** —— 同一会话绝不两处同时出现（否则用户要数两遍）。
+     * 减完剩下的基本就是"在跑、不用你回话"（##305 关了也在跑）。
+     */
+    const navBackground = createMemo(() => {
+        const taken = new Set(navTodo().map((i) => i.row.uri));
+        return backgroundOf(navRows()).filter((r) => !taken.has(r.uri));
+    });
+
+    /**
+     * 「继续工作」区（##358 D4）= **最近活动过、眼下没事**的会话，按最后活动时间倒序。
+     *
+     * 用户第一句原话就是它：「app 启动后丢了所有进度……我要接着工作、知道最近我在干啥」。
+     * 尺子是**账本最后一条账**（跨启动），所以**重启后本区不空** —— 这正是"进度没丢"的直接证据；
+     * `lastTs` 为空（没聊过）不进本区，也**不编时间**。
+     * 去重：前两区已收走的 uri 传进去（同一会话在 nav 只有一处）；开着 tab 的也不列。
+     */
+    const navResume = createMemo(() => {
+        const taken = [...navTodo().map((i) => i.row.uri), ...navBackground().map((r) => r.uri)];
+        return resumeOf(navRows(), taken);
+    });
+
+    /**
+     * **「会话」项下那一份列表**（用户 2026-10-19 合并口径）：上面三份数据取并集，按"值不值得看"排序。
+     *
+     * 判据**一个都没改**（`todoOf` / `backgroundOf` / `resumeOf` 仍是各自那件事的答案），
+     * 改的只是呈现：不再分三个带标题和计数的区（那些标题长得像按钮、点了没反应 —— 用户明确否掉）。
+     * 行 = 状态点 + 标题 + `+N` + 最后活动时间；`why` 只进 tooltip（不占行高，否则括号比内容还长）。
+     */
+    const navSessionList = createMemo(() => {
+        const rows: Array<{ row: NavRow; kind: "todo" | "running" | "recent"; why: string; when: string }> = [];
+        for (const i of navTodo()) rows.push({ row: i.row, kind: "todo", why: i.why, when: todoWhenOf(i) });
+        for (const r of navBackground())
+            rows.push({
+                row: r,
+                kind: "running",
+                why: r.stalled ? "在跑，但长时间没动静" : "在跑（没开窗口也在跑）",
+                when: resumeWhenOf(r),
+            });
+        for (const r of navResume().items)
+            rows.push({ row: r, kind: "recent", why: "最近在这儿干过", when: resumeWhenOf(r) });
+        rows.sort(
+            (a, b) =>
+                rankOf(a.row) - rankOf(b.row) ||
+                (b.row.lastTs ?? "").localeCompare(a.row.lastTs ?? "") ||
+                a.row.uri.localeCompare(b.row.uri),
+        );
+        return { items: rows.slice(0, NAV_SESSION_LIMIT), more: Math.max(0, rows.length - NAV_SESSION_LIMIT) };
+    });
+
+    /** 打开/聚焦某个会话（toast 的「回到」与 L2 自动拉回共用一跳） */
+    const openSessionByUri = (uri: string) => {
+        hideHoverLayers();
+        collapseRail(); // 窄窗：先把浮层收回，别让刚拉回的会话被盖住
+        getRendererActions().openTaskRun?.(uri);
+    };
+
+    /**
+     * ── D3 三级提示（L1 toast + [回到] / L2 自动拉回）─────────────────────────────
+     * L0（常驻角标、不打断）就是上面那两个 memo 的渲染；这里管的是**"该不该打断"**。
+     *
+     * 判据全在 `shared/session-alerts`（纯函数 + 单测）：只对**跃迁**出提示 ——
+     * 「现在有 3 条未读」是状态不是事件，拿状态当事件就会一启动糊一脸、且每 tick 反复弹。
+     * 谁配得上抢焦点（L2）也只有两种：**异常终止** 与 **有人在等你回复**（队列里刚出现留言）。
+     */
+    let alertPrev: Record<string, NavRow> = {};
+    createEffect(() => {
+        const rows = navRows();
+        const alerts = alertsOf(alertPrev, rows, { autoPull: alertPrefsStore.autoPull });
+        // ⚠️ 先落基线再动手：`openSessionByUri` 会改 tabStore ⇒ navRows 重算 ⇒ 本 effect 再跑一次，
+        // 那一跑必须看到"已处理过"的 prev，否则同一条提示弹两遍（真跑过的坑：自动拉回 = 无限弹）。
+        alertPrev = Object.fromEntries(rows.map((r) => [r.uri, r]));
+        for (const a of alerts) {
+            if (a.autoPull) openSessionByUri(a.uri); // L2：抢焦点（仅异常终止 / 有人在等）
+            notificationStore.addToast(
+                a.kind === "failed" ? "error" : a.kind === "finished" ? "success" : "info",
+                a.text,
+                a.level === "L2" && a.autoPull ? 0 : 10000, // 抢过焦点的那条必须被看见/点掉；其余 10s 自己走
+                { label: ALERT_ACTION_LABEL, onClick: () => openSessionByUri(a.uri) },
+            );
+        }
+    });
+
+    /** 关 tab 前要确认的那一个（在跑的会话：##305 轮次脱离连接，关掉只是不看） */
+    const [pendingClose, setPendingClose] = createSignal<{ key: string; label: string } | null>(null);
+
     let fsAbort: AbortController | undefined;
+
+    // 相对时间心跳（见 nowMs 的注释）：1 分钟推一次，界面静止时 `20h` 也会自己变 `21h`
+    onMount(() => {
+        const t = setInterval(() => setNowMs(Date.now()), 60_000);
+        onCleanup(() => clearInterval(t));
+    });
 
     onMount(() => {
         // 祖先链现算：任务树是父子关系的唯一真相源，tabStore 只存 { pageId, ctx }。
@@ -775,7 +1032,20 @@ export default function App() {
     };
 
     /** 关闭 tab：与任务状态无关（= 暂时不理会）。关父连带关子 */
-    const closeTab = (key: string) => {
+    const closeTab = (key: string, opts?: { skipConfirm?: boolean }) => {
+        // 关掉一个**正在跑**的会话：弹一次确认（##358 D3 / demo v4「① 关 tab 时若还在跑」）。
+        // 不是拦你 —— 是告诉你"关掉只是不看它，轮次照跑（##305）"，免得以为关了就停了。
+        // 走应用内 ConfirmDialog（**禁** window.confirm：窗口级模态会卡住整个渲染进程，且自动化点不到）。
+        const ctx = key.includes(":") ? key.slice(key.indexOf(":") + 1) : null;
+        if (!opts?.skipConfirm && ctx && sessionStore.byUri(ctx)?.turn !== null) {
+            setPendingClose({ key, label: tabLabel(ctx) });
+            return;
+        }
+        doCloseTab(key);
+    };
+
+    /** 真正执行关闭（确认过后走这里） */
+    const doCloseTab = (key: string) => {
         hideHoverLayers();
         // 关闭前记下它的 ctx：关掉最后一个 tab 会落回任务树，那时也应在树里定位到它（##160），
         // 但 tabStore.close 之后 activeTab 已变，取不到了
@@ -1137,22 +1407,46 @@ export default function App() {
                                             class={`relative flex items-center gap-2 w-full transition-colors cursor-pointer ${expanded() ? "px-3 py-2 rounded-lg" : "h-8 w-8 rounded-lg justify-center"} ${navActive() === item.id ? "bg-primary/30 text-base-content font-semibold ring-1 ring-primary/40" : "hover:bg-base-300"}`}
                                             title={
                                                 item.id === "sessions"
-                                                    ? `会话（在跑 ${sessionStore.workingCount} / 本次启动活跃过 ${sessionStore.entries.length}）`
+                                                    ? `会话（在跑 ${sessionStore.workingCount} / 本次启动活跃过 ${sessionStore.entries.length}）` +
+                                                      (navHero() ? `\n${navHero()!.tip}` : "")
                                                     : item.label
                                             }
                                             onClick={() => goSection(item.id)}
                                         >
                                             <span>{item.icon}</span>
                                             {expanded() && <span>{item.label}</span>}
-                                            {/* 「会话」项的在跑数（##308）：不点进去就知道有没有东西在烧。
-                                                收起态（40px rail）装不下数字 → 退成一个角标点。 */}
-                                            <Show when={item.id === "sessions" && sessionStore.workingCount > 0}>
-                                                <span
-                                                    class={`badge badge-primary badge-xs font-mono ${expanded() ? "ml-auto" : "absolute -top-0.5 -right-0.5 px-1"}`}
-                                                    data-nav-working={sessionStore.workingCount}
-                                                >
-                                                    {sessionStore.workingCount}
-                                                </span>
+                                            {/* 「会话」项的**主角标**（##358 D1，取代 ##308 的"在跑数"）。
+                                                用户原话：`+23` 未读 · 绿色=未读 · 红色=未读异常终止 · **闪烁绿=运行中**。
+                                                同一时刻**只出一个**（收起态 40px rail 装不下第二个）——
+                                                优先级 停滞 > 运行中 > 异常未读 > 未读 > 队列，判据在 shared/session-nav。
+                                                其余信息进 tooltip（点标题可看），队列降成下面的次角标。 */}
+                                            <Show when={item.id === "sessions" && navHero()}>
+                                                {(hero) => (
+                                                    <span
+                                                        class={`badge border badge-xs font-mono whitespace-nowrap ${NAV_TONE_CLASS[hero().tone]} ${
+                                                            hero().pulse ? "animate-pulse" : ""
+                                                        } ${expanded() ? "ml-auto" : "absolute -top-0.5 -right-0.5 px-1"}`}
+                                                        title={hero().tip}
+                                                        data-nav-hero={hero().key}
+                                                    >
+                                                        {expanded() ? hero().text : hero().short}
+                                                    </span>
+                                                )}
+                                            </Show>
+                                            {/* 次角标：主角标之外还想让你知道的那件事（现在只有队列，紫）。
+                                                刻意只给数 —— 展开态也塞不下第二段文字。 */}
+                                            <Show when={item.id === "sessions" && navSecondary()}>
+                                                {(sec) => (
+                                                    <span
+                                                        class={`badge border badge-xs font-mono whitespace-nowrap ${NAV_TONE_CLASS[sec().tone]} ${
+                                                            expanded() ? "" : "absolute -bottom-0.5 -right-0.5 px-1"
+                                                        }`}
+                                                        title={sec().tip}
+                                                        data-nav-secondary={sec().key}
+                                                    >
+                                                        {sec().text}
+                                                    </span>
+                                                )}
                                             </Show>
                                         </button>
                                     </li>
@@ -1362,13 +1656,14 @@ export default function App() {
                                                                     <Show when={t.ctx}>
                                                                         <TaskAgentStateBadge
                                                                             uri={t.ctx!}
+                                                                            iconOnly
                                                                             hasSession={findNode(taskStore.nodes, t.ctx!)?.has_session}
                                                                             hasDraft={findNode(taskStore.nodes, t.ctx!)?.has_draft}
                                                                         />
                                                                     </Show>
                                                                     {/* 会话状态 chip（##308）：与任务表行、总览页**同一份判据**（sessionStore.chipOf） */}
                                                                     <Show when={t.ctx}>
-                                                                        <SessionChip uri={t.ctx!} />
+                                                                        <SessionChip uri={t.ctx!} iconOnly />
                                                                     </Show>
                                                                     {/* 置顶开关（##356 ②）：置顶项常显 📌（一眼看出为什么它在最上面），
                                                                         普通项 hover 才显 📍。收起态（rail）不渲染 —— 40px 装不下，
@@ -1409,6 +1704,125 @@ export default function App() {
                                             )}
                                         </For>
                                     </Show>
+                                    {/* ── 「会话」项下的会话列表（##358 D1/D2/D4/D5 合成一份）──────
+                                        用户 2026-10-19 口径：「把待处理任务放到『会话』按钮下，去掉多余的修饰词
+                                        『待你处理』『3』」「后台活动是啥？……去掉吧，进行中任务直接列在会话下，
+                                        和待处理任务一起，**通过活动的状态来表达**」。
+                                        所以这里**没有分区、没有区标题、没有计数** —— 行本身就是状态：
+                                        status 圆点（在跑=绿+aura 流光 · 未读=绿 · 未读且异常终止=红 · 停滞=黄 · 其余=灰）
+                                        + 标题 + `+N`（仅未读时）+ 最后活动时间。
+                                        行集仍是三份数据的**并集**（有一笔账在等你 ∪ 在跑 ∪ 最近活动过 ——
+                                        判据各自没变，变的是"怎么摆"），按"值不值得看"排序（`rankOf`）。
+                                        收起态（rail 40px）不列行：那时主角标就是全部语义。 */}
+                                    <Show when={item.id === "sessions" && expanded()}>
+                                        <For each={navSessionList().items}>
+                                            {(i) => {
+                                                const r = () => i.row;
+                                                const b = () => rowBadgeOf(r());
+                                                const go = () => {
+                                                    hideHoverLayers();
+                                                    collapseRail(); // 窄窗：浮层收回，把主区让给刚打开的会话
+                                                    getRendererActions().openTaskRun?.(r().uri);
+                                                };
+                                                const dot = () =>
+                                                    r().stalled
+                                                        ? "status-warning"
+                                                        : r().abnormal && r().unread > 0
+                                                          ? "status-error"
+                                                          : r().unread > 0
+                                                            ? "status-success"
+                                                            : "";
+                                                const tip = () =>
+                                                    `${r().label}\n${i.why}${i.when ? `\n最后活动：${i.when}` : ""}\n（点一下 → 回到这个会话）`;
+                                                return (
+                                                    <li class="flex justify-center">
+                                                        <button
+                                                            class="group flex items-center gap-2 w-full pl-6 pr-2 py-1 rounded-lg text-body cursor-pointer hover:bg-base-300"
+                                                            title={tip()}
+                                                            data-nav-session={r().uri}
+                                                            data-nav-session-kind={i.kind}
+                                                            onClick={go}
+                                                        >
+                                                            {/* 在跑 = daisyUI 的 `aura`（一圈缓慢流转的光）+ 闪烁的 status。
+                                                                用户点名的表达方式：「通过活动的状态来表达，比如 …/components/aura/」。 */}
+                                                            <Show
+                                                                when={r().running}
+                                                                fallback={
+                                                                    <Show
+                                                                        when={dot()}
+                                                                        fallback={
+                                                                            /* 没有活态 = **已对话、没有新消息**（用户口径里的"灰色图标"）。
+                                                                               原来是一个无色 status 圆点 —— 实心灰点跟"离线/未开始"分不开，
+                                                                               用户直接问了「灰色图标和绿色图标啥区别？」
+                                                                               改成**暗色会话气泡**：形状说明"这是个会话"，
+                                                                               暗说明"聊过但没事"；亮色实心点则恒表示"有东西等你看"。 */
+                                                                            <span
+                                                                                class="shrink-0 opacity-40 inline-flex"
+                                                                                title={`${r().label}：已对话（没有新消息）`}
+                                                                                data-nav-session-idle="1"
+                                                                            >
+                                                                                <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                                                                                    <path d="M2.5 2h11A1.5 1.5 0 0 1 15 3.5v7A1.5 1.5 0 0 1 13.5 12H7l-3.6 2.7A.6.6 0 0 1 2.4 14V3.5A1.5 1.5 0 0 1 3.9 2z" />
+                                                                                </svg>
+                                                                            </span>
+                                                                        }
+                                                                    >
+                                                                        <span class={`status ${dot()}`} />
+                                                                    </Show>
+                                                                }
+                                                            >
+                                                                <span class="aura aura-dual text-success shrink-0">
+                                                                    <span class="status status-success animate-pulse" />
+                                                                </span>
+                                                            </Show>
+                                                            <span class="truncate flex-1 text-left">{r().label}</span>
+                                                            <Show when={b()}>
+                                                                {(bd) => (
+                                                                    <span
+                                                                        class={`font-mono text-caption shrink-0 ${NAV_TONE_TEXT[bd().tone]}`}
+                                                                        title={bd().tip}
+                                                                    >
+                                                                        {bd().short}
+                                                                    </span>
+                                                                )}
+                                                            </Show>
+                                                            {/* 时间用**相对格式**（`20h`），读 `nowMs()` ⇒ 每分钟自己往前走；
+                                                                tooltip 里仍给绝对时刻（要精确时看那里）。 */}
+                                                            <span
+                                                                class="font-mono text-caption opacity-50 shrink-0"
+                                                                title={i.when ? `最后活动：${i.when}` : undefined}
+                                                                data-nav-session-ago={fmtAgo(r().lastTs, nowMs())}
+                                                            >
+                                                                {fmtAgo(r().lastTs, nowMs())}
+                                                            </span>
+                                                        </button>
+                                                    </li>
+                                                );
+                                            }}
+                                        </For>
+                                        {/* 表尾这句是**纯文本**（不是按钮）：点了没反应的控件才是问题 */}
+                                        <Show when={navSessionList().more > 0}>
+                                            <li class="px-3 pb-1 text-caption opacity-50" data-nav-session-more>
+                                                还有 {navSessionList().more} 条
+                                            </li>
+                                        </Show>
+                                        {/* 「自动拉回」开关（D3 的 L2）——原先挂在「后台活动」区标题行上，区没了就搬到这里。
+                                            它是**真按钮**（点了会变），不是装饰。 */}
+                                        <li class="flex items-center px-3 pt-1 pb-0.5">
+                                            <button
+                                                class="text-caption opacity-50 hover:opacity-100 cursor-pointer"
+                                                data-nav-autopull={alertPrefsStore.autoPull ? "on" : "off"}
+                                                title={
+                                                    alertPrefsStore.autoPull
+                                                        ? "自动拉回：开。只有「异常终止」和「有人在等你回复」会抢焦点开 tab；其余一律只提示。"
+                                                        : "自动拉回：关。现在一律只弹提示（带「回到」按钮），不抢焦点。"
+                                                }
+                                                onClick={() => alertPrefsStore.setAutoPull(!alertPrefsStore.autoPull)}
+                                            >
+                                                自动拉回 {alertPrefsStore.autoPull ? "开" : "关"}
+                                            </button>
+                                        </li>
+                                    </Show>
                                 </>
                             )}
                         </For>
@@ -1448,6 +1862,22 @@ export default function App() {
                 onPick={(uri) => getRendererActions().openTaskRun?.(uri)}
             />
 
+            {/* 关掉在跑的会话前的确认（走应用内弹窗，见 closeTab 注释） */}
+            <Show when={pendingClose()}>
+                {(p) => (
+                    <ConfirmDialog
+                        title="它还在后台跑，确定关掉？"
+                        message={`${p().label} 这一轮还没跑完。关掉只是不看它 —— 轮次会照常在后台跑完（##305 轮次脱离连接），跑完会提示你。`}
+                        confirmLabel="关掉（不看）"
+                        onCancel={() => setPendingClose(null)}
+                        onConfirm={() => {
+                            const k = p().key;
+                            setPendingClose(null);
+                            closeTab(k, { skipConfirm: true });
+                        }}
+                    />
+                )}
+            </Show>
             <ToastContainer />
         </div>
         {/* 全局侧边栏助手 room（##166 §30 / §31）：**独立于路由** ——

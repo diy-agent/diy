@@ -22,7 +22,7 @@ import { fmtTokens } from "../../src/shared/usage";
 
 /** 输入基线：干净任务（没对话过、没跑、没未读、没草稿） */
 function input(patch: Partial<TaskAgentStateInput> = {}): TaskAgentStateInput {
-    return { inTurn: false, unreadSteps: 0, hasDraft: false, hasSession: false, ...patch };
+    return { inTurn: false, unreadTurns: 0, hasDraft: false, hasSession: false, ...patch };
 }
 
 describe("##355 四态判据", () => {
@@ -40,11 +40,11 @@ describe("##355 四态判据", () => {
         expect(v.label).toBe("对话中");
     });
 
-    it("对话已停止但有未读步数 → unread（带上步数）", () => {
-        const v = taskAgentStateOf(input({ hasSession: true, unreadSteps: 3 }));
+    it("对话已停止但有未读轮次 → unread（带上未读条数）", () => {
+        const v = taskAgentStateOf(input({ hasSession: true, unreadTurns: 3 }));
         expect(v.kind).toBe("unread");
         expect(v.label).toBe("有未读");
-        expect(v.tip).toContain("3 步");
+        expect(v.tip).toContain("3 条");
     });
 
     it("有未发送的草稿 → draft", () => {
@@ -62,13 +62,13 @@ describe("##355 四态判据", () => {
 
 describe("##355 优先级（单轴，必须互斥）", () => {
     it("在跑压过未读 / 草稿 / 干净", () => {
-        expect(taskAgentStateOf(input({ inTurn: true, unreadSteps: 9, hasDraft: true, hasSession: true })).kind).toBe("in-turn");
+        expect(taskAgentStateOf(input({ inTurn: true, unreadTurns: 9, hasDraft: true, hasSession: true })).kind).toBe("in-turn");
         // 甚至在"没历史"的输入上也以 in-turn 为准（真值来自注册表，不靠历史推）
         expect(taskAgentStateOf(input({ inTurn: true })).kind).toBe("in-turn");
     });
 
     it("未读压过草稿与干净（说「你还没看到新产出」比说「你有草稿」更要紧）", () => {
-        expect(taskAgentStateOf(input({ unreadSteps: 1, hasDraft: true, hasSession: true })).kind).toBe("unread");
+        expect(taskAgentStateOf(input({ unreadTurns: 1, hasDraft: true, hasSession: true })).kind).toBe("unread");
     });
 
     it("草稿压过干净（有草稿的任务不能报「未对话」）", () => {
@@ -77,17 +77,17 @@ describe("##355 优先级（单轴，必须互斥）", () => {
     });
 
     it("负数未读（水位比当前步数大，如刚清空会话）一律不算未读", () => {
-        expect(taskAgentStateOf(input({ unreadSteps: -3, hasSession: true })).kind).toBe("idle");
-        expect(taskAgentStateOf(input({ unreadSteps: -3 })).kind).toBe("clean");
+        expect(taskAgentStateOf(input({ unreadTurns: -3, hasSession: true })).kind).toBe("idle");
+        expect(taskAgentStateOf(input({ unreadTurns: -3 })).kind).toBe("clean");
     });
 
     it("四态两两互斥：任意输入只落一个 kind", () => {
         const kinds = new Set<string>();
         for (const inTurn of [false, true])
-            for (const unreadSteps of [0, 2, -1])
+            for (const unreadTurns of [0, 2, -1])
                 for (const hasDraft of [false, true])
                     for (const hasSession of [false, true])
-                        kinds.add(taskAgentStateOf(input({ inTurn, unreadSteps, hasDraft, hasSession })).kind);
+                        kinds.add(taskAgentStateOf(input({ inTurn, unreadTurns, hasDraft, hasSession })).kind);
         expect([...kinds].sort()).toEqual(["clean", "draft", "idle", "in-turn", "unread"]);
     });
 });

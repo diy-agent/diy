@@ -8,6 +8,7 @@ import { createResource, Show } from "solid-js";
 import { agentStateOf } from "../lib/agent-state";
 import { agentStateActive, windowUsageOf, type TaskAgentStateView } from "../../shared/task-agent-state";
 import { fmtTokens } from "../../shared/usage";
+import { ChatGlyph } from "./ChatGlyph";
 import { sessionStore } from "../store/sessionStore";
 import { localChatStore } from "../store/localChatStore";
 
@@ -38,19 +39,28 @@ export interface TaskAgentStateProps {
  * `idle` 不渲染 —— 几百行都挂个"空闲"等于噪音（与 ##308 chip 同取向）；
  * 要看"空闲"这个**明确结论**的地方用 `always`（任务属性面板那种单任务视图）。
  */
-export function TaskAgentStateBadge(props: TaskAgentStateProps & { always?: boolean }) {
+export function TaskAgentStateBadge(props: TaskAgentStateProps & { always?: boolean; iconOnly?: boolean }) {
     const st = () => agentStateOf(props.uri, { hasSession: props.hasSession, hasDraft: props.hasDraft });
     return (
         <Show when={props.always || agentStateActive(st())}>
-            <span
-                class={`badge badge-xs gap-0.5 font-normal whitespace-nowrap align-middle ${TONE_BADGE[st().tone]} ${props.class ?? ""}`}
-                title={st().tip}
-                data-task-agent-state={st().kind}
-                data-task-agent-uri={props.uri}
+            {/* `iconOnly`（##358，nav 专用）：**弱态**（`○ 未对话` / `· 空闲`）退成会话气泡图标。
+                「未对话 vs 已对话」于是由同一个图标的明暗表达（见 components/ChatGlyph），
+                不再出现 `○ 未对话 ◌ 已对话` 两个叠在一起的文字 chip（用户 2026-10-19 点名要改的）。
+                有事态（对话中 / 有未读 / 有草稿）仍走文字 badge —— 那几档要看得出"是什么事"。 */}
+            <Show
+                when={!(props.iconOnly && st().tone === "ghost")}
+                fallback={<ChatGlyph tone="never" tip={st().tip} class={props.class} />}
             >
-                <span>{st().icon}</span>
-                <span>{st().label}</span>
-            </span>
+                <span
+                    class={`badge badge-xs gap-0.5 font-normal whitespace-nowrap align-middle ${TONE_BADGE[st().tone]} ${props.class ?? ""}`}
+                    title={st().tip}
+                    data-task-agent-state={st().kind}
+                    data-task-agent-uri={props.uri}
+                >
+                    <span>{st().icon}</span>
+                    <span>{st().label}</span>
+                </span>
+            </Show>
         </Show>
     );
 }
