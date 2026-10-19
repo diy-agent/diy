@@ -444,7 +444,15 @@ export function opsAuthorFor(main: boolean, author: string): string | undefined 
 export function resolveMember(room: Pick<Room, "members"> | null | undefined, nameOrId: string): string {
   const key = nameOrId.trim().replace(/^@+/, "");
   const hit = room?.members.find((m) => m.id === key || m.name === key);
-  return hit ? hit.id : nameOrId;
+  if (hit) return hit.id;
+  if (!key) return nameOrId;
+  // **id 末段**也认（##377 第 20 刀）：成员在界面上显示的名字是**人物名**（`deepseek-4.1-flash`），
+  // 而它的 id 是 `agent:main` —— 用户凭直觉会打 `@main`，实测得到「房间里没有这个成员」。
+  // 只在**唯一命中**时才认：两个成员同末段时保持原样（宁可如实报"没有"，不猜错人）。
+  const byShort = (room?.members ?? []).filter(
+    (m) => m.kind === "agent" && m.id.split(":").pop() === key,
+  );
+  return byShort.length === 1 ? byShort[0]!.id : nameOrId;
 }
 
 /** 成员显示名（找不到就回落到 id —— 绝不显示空） */
@@ -612,6 +620,19 @@ export function deliveryHint(
 ): string {
     // 笔记（§38.2）：**中性**文案 —— 不是"未投递"，是"本来就没打算投"
     if (recipients.length === 0) return routing === "note" ? "笔记（不投递，只进房间历史）" : "未投递（没有 @ 收件人、也没有当前接受者）";
+    // 打错名字（##377 第 20 刀）：`@a` 这种解析不出来的会被原样放进 recipients ⇒ 别显示
+    // "将投递给 a"（实测会这样，与后端「房间里没有这个成员」自相矛盾）—— 当场给可选名。
+    const known = new Set((room?.members ?? []).map((m) => m.id));
+    const unknown = recipients.filter((r) => !known.has(r));
+    if (unknown.length > 0) {
+        const names = (room?.members ?? [])
+            .filter((m) => m.kind === "agent")
+            .slice(0, 4)
+            .map((m) => `@${m.name}`);
+        return names.length > 0
+            ? `${unknown.map((u) => `@${shortName(u)}`).join(" / ")} 不是房间成员（可选：${names.join(" / ")}）`
+            : `${unknown.map((u) => `@${shortName(u)}`).join(" / ")} 不是房间成员`;
+    }
     if (recipients.length === 1) return `将投递给 ${memberName(room, recipients[0]!)}`;
     const names = recipients.map((r) => memberName(room, r)).join(" / ");
     const head = routing === "all" ? "群发" : "将投递给";
