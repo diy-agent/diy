@@ -386,6 +386,9 @@ export function RoomsPage() {
         setPendingPosts((n) => n + 1);
         setErr(null);
         setInput(""); // 立刻清空：post 流会一直挂到所有收件人跑完（可能几十秒），不能让输入框跟着卡住
+        // 自己的发言：**发送瞬间**强制回到底部（用户的明确意图，只此一次）——
+        // 投递流之后的事件不再 force（见下方 for-await 内的注释）
+        if (streamRef) pinBottom(streamRef, true);
         try {
             // serverStream：先拿 handle，再迭代（StreamHandle 即 AsyncIterable）
             const stream = await diyService.diy.room.post({ id, text });
@@ -401,9 +404,12 @@ export function RoomsPage() {
                     copy[i] = ev;
                     return copy;
                 });
-                // 自己发言：无论刚才在哪儿，都要看见自己这句与它的回复（`force`）
+                // 事件到达后**只在贴底时**跟随（##377 第 20 刀）。
+                // 原来这里是 `force`（无视阅读位置）⇒ 一次投递会推多条事件（say → 排队 → 投递中 →
+                // 回复），用户趁 agent 干活时上翻看历史，会被下一条事件拽回底部 —— 与"无法翻越"同一个病。
+                // 自己的发言已在 `send` 开头 force 钉过一次；此后尊重阅读位置。
                 queueMicrotask(() => {
-                    if (streamRef) pinBottom(streamRef, true);
+                    if (streamRef) pinBottom(streamRef);
                 });
             }
         } catch (e) {

@@ -177,8 +177,17 @@ function isBusy(taskUri: string): boolean {
 }
 
 /** 该成员能被投递吗（有 backend 的 agent）；不能的话给一句人话原因 */
-function whyNotDeliverable(m: RoomMember | undefined): string | null {
-    if (!m) return "房间里没有这个成员";
+function whyNotDeliverable(m: RoomMember | undefined, room?: Pick<Room, "members">): string | null {
+    if (!m) {
+        // 打错名字是最常见的一类（成员在界面上显示**人物名**，凭直觉打的短名未必命中）⇒ 直接给可选名
+        const names = (room?.members ?? [])
+            .filter((x) => x.kind === "agent")
+            .slice(0, 4)
+            .map((x) => `@${x.name}`);
+        return names.length > 0
+            ? `房间里没有这个成员（可选：${names.join(" / ")}）`
+            : "房间里没有这个成员";
+    }
     if (m.kind !== "agent") return "收件人是人（在场即送达），无需投给 agent";
     if (m.backend?.type !== "task") return "该成员没有 backend（没有会话可投）";
     if (!m.backend.data.taskUri) return "该成员没绑任务（backend 为空）";
@@ -331,7 +340,7 @@ export async function* postToRoom(roomId: string, rawText: string): AsyncGenerat
     const tasks: Promise<void>[] = [];
     for (const id of recipients) {
         const m = room.members.find((x) => x.id === id);
-        const why = whyNotDeliverable(m);
+        const why = whyNotDeliverable(m, room);
         if (why) {
             const replyId = nextEventId();
             const skip = record(roomId, {
