@@ -2693,8 +2693,11 @@ export class LocalAgentManager {
                 ok = false;
             }
         }
-        // 被裁剪工具输出的原文：按本任务账本里引用过的 id 删（toolout/ 是多任务共享目录，
-        // 不能整个删 —— 同 id 也可能被别的任务引用）。
+        // 被裁剪工具输出的原文：按本任务账本里引用过的 id 删，命中**两个落位**——
+        // ① 本任务会话目录下那份（`<会话目录>/toolout/`，##379 起的落位）；
+        // ② legacy 共享目录 `local/toolout/` 兜底那份（迁移前写下的）。
+        // legacy 目录是跨任务共享的，同 id 撞名在旧布局下本就无解（只能都删）；
+        // 迁移后每会话一份，撞名面随之消失 —— 所以这里不再需要「只删自己的」这层猜想。
         for (const e of readCompactLog(taskUri)) {
             if (e.kind !== "compact") continue;
             for (const c of e.details?.clipped ?? []) {

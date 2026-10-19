@@ -9,7 +9,7 @@ import { dirname, join } from "node:path";
 import { diyHome } from "../../src/main/core/state";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
-import { keyOf, legacySessionFile, localDir, sessionDir, sessionFile } from "../../src/main/core/local-paths";
+import { keyOf, legacySessionFile, localDir, resolveSessionFile, sessionDir, sessionFile } from "../../src/main/core/local-paths";
 import { migrateLocalLayout } from "../../src/main/services/local-layout-migrate";
 
 let URI = "";
@@ -78,6 +78,41 @@ describe("实迁：搬 + 幂等续跑", () => {
         expect(r.unknown).toBeGreaterThan(0);
         expect(existsSync(orphan)).toBe(true);
         rmSync(orphan, { force: true });
+    });
+});
+
+describe("中途失败：截断副本不可见（##266 review1 R1）", () => {
+    // 旧实现 `copyFileSync(from, to)` 直接落目标：copy 中途被杀会留下**截断的 to**，
+    // 而读侧双认只判存在 ⇒ 把截断那份当权威、后续 append 接在截断处（历史静默腰斩）。
+    // 现实现先写 `to.part` 再同目录 rename：`to` 只可能以完整形态出现，`part` 永不被读侧认领。
+    it("上次中断留下的 `.part` 残留 → 重跑得到完整目标，`.part` 消失", () => {
+        const uri = createTask({ title: "迁移-中断", project: createProject(join(diyHome(), "migrate-crash")) });
+        const text = Array.from({ length: 50 }, (_, i) => `{"op":"append","i":${i}}`).join("\n") + "\n";
+        const legacy = writeLegacy(uri, "ops", text);
+        const to = sessionFile(uri, "ops");
+        mkdirSync(dirname(to), { recursive: true });
+        writeFileSync(`${to}.part`, text.slice(0, 40), "utf-8"); // 模拟 copy 中途断电的残片
+
+        const r = migrateLocalLayout({ dryRun: false, toolout: false });
+        const e = r.entries.find((x) => x.from === `local/${keyOf(uri)}.ops.jsonl`);
+        expect(e?.action).toBe("move");
+        expect(existsSync(legacy)).toBe(false);
+        expect(existsSync(`${to}.part`)).toBe(false);
+        expect(readFileSync(to, "utf-8")).toBe(text); // 逐字节完整
+        expect(readFileSync(to, "utf-8").split("\n").filter(Boolean)).toHaveLength(50);
+    });
+
+    it("读侧永不认领 `.part`：只有残片时裁决仍走「旧平铺兜底」", () => {
+        const uri = createTask({ title: "迁移-残片", project: createProject(join(diyHome(), "migrate-part")) });
+        const legacy = writeLegacy(uri, "ops", `{"op":"start"}\n`);
+        const to = sessionFile(uri, "ops");
+        mkdirSync(dirname(to), { recursive: true });
+        writeFileSync(`${to}.part`, "truncated", "utf-8"); // 残片存在，但目标不存在
+
+        expect(existsSync(to)).toBe(false); // 残片不冒充目标
+        expect(resolveSessionFile(uri, "ops")).toBe(legacy); // 裁决看到的是旧平铺（完整那份）
+        expect(readFileSync(resolveSessionFile(uri, "ops"), "utf-8")).toBe(`{"op":"start"}\n`);
+        rmSync(`${to}.part`, { force: true });
     });
 });
 

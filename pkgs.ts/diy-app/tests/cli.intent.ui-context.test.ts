@@ -9,10 +9,9 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
-import { sessionFileRel } from "../src/main/core/local-paths";
+import { legacySessionFileRel, sessionFileRel } from "../src/main/core/local-paths";
 import { dirname, join } from "node:path";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createHash } from "node:crypto";
 import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
 import { waitUntil } from "./wait";
@@ -82,7 +81,7 @@ function homeFile(uri: string, kind: "ops" | "llm" | "steps" | "compact" | "chan
 function clearLocal(uri: string): void {
   for (const kind of ["steps", "changelog", "usage"] as const) {
     rmSync(homeFile(uri, kind), { force: true }); // 新落位
-    rmSync(join(fx.HOME, "local", `${keyOf(uri)}.${kind}.jsonl`), { force: true }); // 旧平铺（读侧兜底会认它）
+    rmSync(join(fx.HOME, legacySessionFileRel(uri, kind)), { force: true }); // 旧平铺（读侧兜底会认它）
   }
 }
 
@@ -199,13 +198,6 @@ describe("上下文树：RPC 契约（真实数据）", () => {
     await fx.sh.run(`./diy.sh project remove ${pid}`);
   }, 90_000);
 });
-
-/** 与 main 的 keyOf 同算法（会话文件名的唯一性由 sha256 前 12 位负责） */
-function keyOf(taskUri: string): string {
-  const readable = taskUri.replace(/[^\w.-]+/g, "_").slice(0, 64);
-  const sum = createHash("sha256").update(taskUri).digest("hex").slice(0, 12);
-  return `${readable}-${sum}`;
-}
 
 describe("上下文树：划分规则（真源）", () => {
   it("默认读推荐名单；setConfig 落盘成 context.yaml；lab 不传名单时读的也是它", async () => {

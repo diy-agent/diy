@@ -90,6 +90,11 @@ export function sessionFileRel(taskUri: string, kind: SessionKind): string {
     return path.relative(diyHome(), sessionFile(taskUri, kind)).split(path.sep).join("/");
 }
 
+/** 旧平铺落位的相对 `$DIY_HOME` 路径（`local/<key>.<kind>.jsonl`）。用途同 `sessionFileRel`：跨进程预置 / 清理。 */
+export function legacySessionFileRel(taskUri: string, kind: SessionKind): string {
+    return path.relative(diyHome(), legacySessionFile(taskUri, kind)).split(path.sep).join("/");
+}
+
 /**
  * 会话文件解析 —— **读侧双认 + 写侧粘旧，同一裁决**（##379）：
  *   1. 新路径存在 → 新（迁移断点两侧并存时也取新：新是完整副本）；

@@ -17,12 +17,13 @@
 // 把 task 模块提升成**先于 `@diy-agent/rpc` 补丁求值**的共享 chunk —— 症状正是启动即
 // `TypeError: TaskStateSchema.cliArg is not a function`（##322 记过的坑，本次实测复现）。
 
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import { readRuntimeConfig } from "../../runtime";
 import { projectsRoot, diyHome } from "../core/state";
 import {
     keyOf,
+    legacySessionFile,
     localDir,
     SESSION_KINDS,
     sessionDir,
@@ -94,7 +95,7 @@ function scanLegacySessions(): { key: string; kind: SessionKind; file: string }[
  */
 function clippedIdsOf(uri: string): string[] {
     const ids = new Set<string>();
-    const files = [sessionFile(uri, "compact"), path.join(localDir(), `${keyOf(uri)}.compact.jsonl`)];
+    const files = [sessionFile(uri, "compact"), legacySessionFile(uri, "compact")];
     for (const file of files) {
         if (!existsSync(file)) continue;
         let text = "";
@@ -132,11 +133,17 @@ function takeOver(from: string, to: string, dryRun: boolean): { action: LayoutMi
     }
     if (!dryRun) {
         mkdirSync(path.dirname(to), { recursive: true });
-        copyFileSync(from, to);
-        if (statSync(to).size !== statSync(from).size) {
-            rmSync(to, { force: true });
+        // 先写 `.part` 再同目录 `rename` —— 保证 `to` 只可能以**完整**形态出现（##266 review1 R1）。
+        // 直接 copyFileSync(from, to) 的中断窗口（ENOSPC / 进程被杀）会留下截断副本，而读侧双认
+        // 只判存在 ⇒ 会把截断那份当权威、后续 append 接在截断处，源尾部永久孤立（历史静默腰斩）。
+        // 与 ##383 的 `writeFileAtomic` 同范式。
+        const part = `${to}.part`;
+        copyFileSync(from, part);
+        if (statSync(part).size !== statSync(from).size) {
+            rmSync(part, { force: true });
             return { action: "conflict", note: "复制后大小不符（已回滚，源保留）" };
         }
+        renameSync(part, to);
         rmSync(from, { force: true });
     }
     return { action: "move" };
