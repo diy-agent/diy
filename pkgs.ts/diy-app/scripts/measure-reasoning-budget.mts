@@ -21,7 +21,7 @@ import { join } from "node:path";
 import { loadAutoCompact } from "../src/main/core/auto-compact-config";
 import { blocksToMessages, costOfWith, projectAll, replay, selectHistoryByBudget, type LocalModelMessage, type Op } from "../src/main/services/local-blocks";
 import { keepStagesToPlan, runPlan } from "../src/main/services/compaction-plan";
-import { DEFAULT_KEEP, DEFAULT_MUST_HARD_CAP_BYTES, DEFAULT_REASONING_CLIP, type KeepStage } from "../src/shared/context/compact-keep";
+import { DEFAULT_KEEP, DEFAULT_REASONING_CLIP, type KeepStage } from "../src/shared/context/compact-keep";
 import { budgetBytesOf, clipSpecOf, fmtBytes, makeDeliveryTransform, toolResultOf, type ReasoningClipSpec } from "../src/shared/context/compaction";
 
 const argOf = (name: string): string | undefined => {
@@ -66,7 +66,6 @@ const ops: Op[] = readFileSync(OPS, "utf-8")
 const store = replay(ops);
 const all = projectAll(store);
 const policy = loadAutoCompact(HOME).policy;
-const budget = Number(argOf("budget") ?? budgetBytesOf(policy));
 const defaultClip = clipSpecOf(toolResultOf(policy));
 
 /** 投递后的推理统计：part 数 / 字节 / 被裁条数（marker 辨认） */

@@ -149,15 +149,12 @@ export function classify(all: readonly LocalModelMessage[]): HistoryRank[] {
         const m = all[i]!;
         if (m.role === "assistant" && !hasToolCall(m)) lastTextIdx.set(m.turn ?? "", i);
     }
-    const rank = new Array<HistoryRank>(n);
-    for (let i = 0; i < n; i++) {
-        const m = all[i]!;
-        if (m.role === "user") rank[i] = "user";
-        else if (m.role === "tool") rank[i] = "result";
-        else if (hasToolCall(m)) rank[i] = "call";
-        else rank[i] = lastTextIdx.get(m.turn ?? "") === i ? "conclusion" : "text";
-    }
-    return rank;
+    return all.map((m, i): HistoryRank => {
+        if (m.role === "user") return "user";
+        if (m.role === "tool") return "result";
+        if (hasToolCall(m)) return "call";
+        return lastTextIdx.get(m.turn ?? "") === i ? "conclusion" : "text";
+    });
 }
 
 /** toolCallId → tool-result 下标（跨整份投影；配对铁律的依据） */
@@ -312,7 +309,12 @@ export function pickerOf(s: KeepStage): Picker {
 export function keepStagesToPlan(
     keep: readonly KeepStage[] | undefined | null,
     budgetBytes: number,
-    defaultClip?: ClipSpec | null,
+    /**
+     * 工具结果的**全局回落**裁法。⚠️ 本函数**不直接用它**：回落发生在**渲染/计价**侧
+     * （`selection.clips[i] == null` ⇒ 用 `DeliveryOpts.defaultClip` / `costOf` 自己的缺省），
+     * 留参数只为不动调用方签名（##343 M1 起的既有形状）。
+     */
+    _defaultClip?: ClipSpec | null,
 ): CompactPlan {
     if (!(budgetBytes > 0)) return plan(0);
     const specs = keep && keep.length > 0 ? keep : DEFAULT_KEEP;
@@ -362,11 +364,11 @@ export function runPlan(
     if (n === 0) return { kept: [], dropped: [], keptRuns: [], keptBytes: 0 };
 
     const ctx = buildCtx(all, args.costOf);
-    const keep = new Array<boolean>(n).fill(false);
+    const keep = all.map(() => false);
     /** 每条消息的裁法：**先选中它的那一级**声明什么就是什么（后到的级改不动它） */
-    const clips = new Array<ClipSpec | null>(n).fill(null);
+    const clips = all.map((): ClipSpec | null => null);
     /** 每条消息的**推理**裁法：与 `clips` 同一条「先选中者赢」，只是两个轴各自记（##374 T2） */
-    const rclips = new Array<ReasoningClipSpec | null>(n).fill(null);
+    const rclips = all.map((): ReasoningClipSpec | null => null);
     let declared = false;
     let rDeclared = false;
     let remaining = Math.max(0, p.budgetBytes);

@@ -22,16 +22,7 @@ import {
     validateKeepStages,
 } from "../../src/shared/context/compact-keep";
 import { blocksToMessages, projectAll, replay, type Op } from "../../src/main/services/local-blocks";
-import {
-    CLIP_FULL,
-    byLadder,
-    defaultBudgetPlan,
-    exemptStage,
-    keepStagesToPlan,
-    recentSteps,
-    runPlan,
-    stage,
-} from "../../src/main/services/compaction-plan";
+import { CLIP_FULL, defaultBudgetPlan, keepStagesToPlan, runPlan } from "../../src/main/services/compaction-plan";
 
 const LONG = "推".repeat(2_000);
 const HEADTAIL_600: ReasoningClipSpec = { type: "headtail", data: { ...DEFAULT_REASONING_HEADTAIL_DATA } };
