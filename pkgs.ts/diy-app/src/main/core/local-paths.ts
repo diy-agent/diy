@@ -9,7 +9,7 @@
 // 约定：本模块只做主进程路径计算与目录创建，不含任何会话逻辑。
 
 import { createHash } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { diyHome } from "./state";
 
@@ -57,4 +57,24 @@ export function llmFile(taskUri: string): string {
 /** 会话日志的相对路径（相对 `$DIY_HOME`）——写进投递文本给模型/人照此回取 */
 export function llmLogRelPath(taskUri: string): string {
     return `local/${keyOf(taskUri)}.llm.jsonl`;
+}
+
+/**
+ * 该任务**是否对话过**（##355「干净任务」的判据）。
+ *
+ * 判据 = Op 日志存在且**非空**：`ops.jsonl` 是 append-only 的会话史书，只在真发起过轮次时
+ * 才有内容；而 `agent.local.clear` 会**物理删掉**它（见 local-agent 的 clear 文件清单）⇒
+ * 「存在且非空」与「对话过且没被清空」是同一件事。
+ *
+ * 为什么不做成读文件数行：本判据只服务列表展示（每任务一次 stat），要的是零成本的粗判；
+ * 真实行数走 `agent.local.opsWatermark`（那里才需要精确水位）。
+ * ⚠️ 不要拿「注册表里有没有该任务的条目」当本判据：**打开会话页**就会建条目（ops 订阅者
+ * 变化 → noteActivity），"打开过"不等于"说过话"。
+ */
+export function hasConversation(taskUri: string): boolean {
+    try {
+        return statSync(opsFile(taskUri)).size > 0;
+    } catch {
+        return false; // 不存在（没对话过）—— 与"读不到"同价：无证据即无对话
+    }
 }

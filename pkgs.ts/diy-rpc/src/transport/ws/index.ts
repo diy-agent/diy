@@ -1,10 +1,10 @@
 /**
  * websocket/index.ts — WebSocket EnvelopeTransport 实现（第1层）
  *
- * 依赖：@diy/rpc（EnvelopeTransport 类型）+ ws
+ * 依赖：@diy-agent/rpc（EnvelopeTransport 类型）+ ws
  */
 
-import type { EnvelopeTransport } from '../../core/types';
+import type { EnvelopeTransport } from '../../core/types.js';
 
 type WsLike = {
   send(data: string | Buffer): void;

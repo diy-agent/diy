@@ -383,7 +383,7 @@ function resolveGitUrl(pkgName: string, eco: "python" | "node"): string | null {
   const known = KNOWN_REPOS[pkgName];
   if (known) return known;
 
-  // 2. scoped npm packages (e.g. @diy/rpc, @fastify/cors)
+  // 2. scoped npm packages (e.g. @diy-agent/rpc, @fastify/cors)
   if (pkgName.startsWith("@") && eco === "node") {
     const parts = pkgName.split("/");
     if (parts.length >= 2) {

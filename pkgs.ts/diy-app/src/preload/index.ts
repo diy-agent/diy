@@ -1,5 +1,5 @@
 import { contextBridge } from "electron";
-import { createRendererTransport } from "@diy/rpc/electron";
+import { createRendererTransport } from "@diy-agent/rpc/electron";
 
 const transport = createRendererTransport();
 

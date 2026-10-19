@@ -1,12 +1,12 @@
 // src/main/core/dev-home.ts
-// 🎯 dev 变体（preview / lab）的**数据根决策**：`<repoRoot>/build/<variant>/home`，
+// 🎯 dev 变体（lab）的**数据根决策**：`<repoRoot>/build/<variant>/home`，
 // 并拒绝继承来的**生产根**。
 //
 // 为什么单独成文件：这条规则有两个消费者（`scripts/electron-dev.mts` 起实例、`core/seed.ts`
 // 种数据），而它守的是「别把演示数据写进用户真实数据根」—— 必须被测到，可脚本进程跑不进单测。
 //
-// 实测的坑：宿主 shell / agent / CI 常导出 `DIY_HOME=~/.diy`。preview 若照单全收，就开着
-// 生产数据根跑（只因 prod 实例占着单实例锁才没出事）；更糟的是 preview **缺省带初始种入**，
+// 实测的坑：宿主 shell / agent / CI 常导出 `DIY_HOME=~/.diy`。lab 若照单全收，就开着
+// 生产数据根跑（只因 prod 实例占着单实例锁才没出事）；更糟的是 lab **缺省带初始种入**，
 // 真跑起来会把示例项目与任务写进生产。
 //
 // 「生产根是什么」**只有一个定义处**：`core/instance-identity.ts::prodDataHome`（用**真实**

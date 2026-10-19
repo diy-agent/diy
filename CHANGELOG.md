@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+
+### ⚠ BREAKING CHANGES
+
+* **rpc:** 包名 `@diy/rpc` → `@diy-agent/rpc`（导入路径随之改变；仓内 diy-app / diy-dev 已同步）
+
+### Features
+
+* **release:** npm 发布能力 —— `@diy-agent/rpc@0.1.0` 与 `@diy-agent/ui@0.1.0` 首次发布到 npm（`./sha.sh publish`；dist 打包 + 发行版 package.json 见 `scripts/npm-publish.mjs`） ([327be71](https://github.com/diy-agent/diy/commit/327be710a000bba3fe44a7565e2e0a39f1e1f606))
+* **ui:** diy-ui 改名为 `@diy-agent/ui` 并补齐 main/exports/files；DOM provider 自取 DOM 类型；纳入 `tsconfig.all.json`（此前根 check 不覆盖它） ([327be71](https://github.com/diy-agent/diy/commit/327be710a000bba3fe44a7565e2e0a39f1e1f606))
+* **rpc:** 相对导入补显式 `.js` 扩展名（NodeNext 发布构建要求；vite/vitest 映回 `.ts`）；electron 改为可选 peer ([2079d04](https://github.com/diy-agent/diy/commit/2079d04870635811d84a305ce87dc8af5296c486))
+
+
 ## [0.1.24](https://github.com/diy-agent/diy/compare/diy-v0.1.23...diy-v0.1.24) (2026-09-10)
 
 

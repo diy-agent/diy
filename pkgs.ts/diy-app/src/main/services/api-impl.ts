@@ -6,9 +6,9 @@
  * 命名体系：diy.*（Main 进程域，本地处理）。diy.ui.* 由调用方 onForward 转发。
  */
 
-import type { ServerBinding } from "@diy/rpc";
-import { ChannelServerBinding } from "@diy/rpc";
-import type { EnvelopeTransport } from "@diy/rpc";
+import type { ServerBinding } from "@diy-agent/rpc";
+import { ChannelServerBinding } from "@diy-agent/rpc";
+import type { EnvelopeTransport } from "@diy-agent/rpc";
 import * as task from "../core/task";
 import { DRAFT_FIELDS, clearDrafts, readDrafts, writeDrafts, type DraftField } from "../core/drafts";
 import * as project from "../core/project";
@@ -16,6 +16,7 @@ import * as state from "../core/state";
 import * as taskTree from "../core/task-tree";
 import { AppConfig } from "../core/app-config";
 import { refreshModelRuntime } from "../core/model-runtime";
+import { hasConversation } from "../core/local-paths";
 import { autoSeedEnabled, seedHome } from "../core/seed";
 import { platform, arch, release, totalmem, freemem } from "node:os";
 import { currentGitBranch, homeDisplayOf, repoDisplayOf } from "../core/instance-identity";
@@ -28,7 +29,7 @@ import { apiDef } from "./api-def";
 import { TaskDetailSchema } from "../../shared/task-detail";
 import { noteRendererTouch } from "./runtime-context";
 import type { ToolResultMode } from "../../shared/context/compaction";
-import type { HistoryTurnView } from "../../shared/context/schema";
+import type { HistoryEntryView } from "../../shared/context/schema";
 import { readFileWindow, formatReadOutput, ReadWindowError } from "../core/file-read";
 import { resolve as resolvePath } from "node:path";
 import * as flow from "../core/flow";
@@ -36,6 +37,10 @@ import { requirePostText } from "../core/flow-store";
 import * as flowThread from "../core/flow-thread";
 import { flowPrompt } from "./flow-prompt";
 import { AsyncQueue } from "./async-queue";
+import { modelNoticeHub } from "./model-notice";
+import { collectInstances, focusInstance, renderInstanceList, selfReport } from "./instances";
+import { revealSelf, windowState } from "./window-ops";
+import { shortName } from "../../shared/room";
 
 /**
  * 实际 RPC 监听端口，由入口在绑定完成后回填。
@@ -65,7 +70,7 @@ const app = apiDef.diy;
  * 或 ChannelServerBinding（测试）。转发 diy.ui.* 由调用方在 binding 上 onForward。
  */
 export function bindAppHandlers(binding: ServerBinding): void {
-  // 空数据根的初始种入（preview/lab；见 core/seed.ts）。必须在 refreshModelRuntime 之前 ——
+  // 空数据根的初始种入（lab；见 core/seed.ts）。必须在 refreshModelRuntime 之前 ——
   // 种子会写 model.yaml，晚于装配就看不见刚种下的 provider（要等下次刷新）。
   // 失败不阻断启动（种子只是便利，不是前提）。
   try {
@@ -93,7 +98,11 @@ export function bindAppHandlers(binding: ServerBinding): void {
 
   // ── task ──
   binding.on(app.task.create, async ({ input }) => {
-    return { status: "ok", data: { uri: task.createTask(input as any) } };
+    // 正文输入的显式三态（##338 / ##376）：`body|bodyText|bodyFile` 三选一 —— 与 `task edit`
+    // 同一裁决点（core/task.ts::resolveBodyOverride），免得"某条命令漏了护栏"再次发生。
+    const { body, bodyText, bodyFile, ...rest } = input;
+    const resolvedBody = task.resolveBodyOverride({ body, bodyText, bodyFile });
+    return { status: "ok", data: { uri: task.createTask({ ...rest, body: resolvedBody } as any) } };
   });
   binding.on(app.task.list, async ({ input }) => {
     return { status: "ok", data: { tasks: task.listTasks(input.project) } };
@@ -116,13 +125,16 @@ export function bindAppHandlers(binding: ServerBinding): void {
     };
   });
   binding.on(app.task.edit, async ({ input }) => {
-    const { uri, ...changes } = input;
+    // 正文输入的显式三态（##338）：`body|bodyText|bodyFile`、`appendBody|appendBodyFile|appendBodyText`
+    // 各自三选一 —— 求值收敛在 core（`resolveBodyInputs`），此处只负责把这两组从普通字段里摘出来。
+    const { uri, body, bodyText, bodyFile, appendBody, appendBodyFile, appendBodyText, ...changes } = input;
+    const bodyInputs = task.resolveBodyInputs({ body, bodyText, bodyFile, appendBody, appendBodyFile, appendBodyText });
     const filtered: Record<string, string> = {};
     for (const [k, v] of Object.entries(changes)) {
       if (v !== undefined) filtered[k] = v as string;
     }
     // 回报本次写入实际做了什么（剥头 / 追加）—— CLI 侧才有话可说，见 core/task.ts 的 TaskWriteReport
-    const report = task.updateTask(uri, filtered as task.UpdateTaskChanges);
+    const report = task.updateTask(uri, { ...filtered, ...bodyInputs } as task.UpdateTaskChanges);
     return { status: "ok", data: { uri, ...report } };
   });
   binding.on(app.task.move, async ({ input }) => {
@@ -142,12 +154,16 @@ export function bindAppHandlers(binding: ServerBinding): void {
   });
   binding.on(app.task.drafts.set, async ({ input }) => {
     // undefined = 未提供（保持原值）；"" = 清除该字段 —— 由 writeDrafts 的 splitFields 落地
-    const { uri, base_updated, ...rest } = input;
+    const { uri, base_updated, body, bodyText, bodyFile, ...rest } = input;
     const fields: Partial<Record<DraftField, string>> = {};
     for (const f of DRAFT_FIELDS) {
       const v = (rest as Record<string, string | undefined>)[f];
       if (v !== undefined) fields[f] = v;
     }
+    // 正文草稿的显式三态（##376）：`--body` / `--body-text` / `--body-file` 三选一，
+    // 与 `task edit` 同一裁决点；三态都未给 = 不动该字段（与其它字段的"不传=保持"一致）。
+    const bodyDraft = task.resolveBodyOverride({ body, bodyText, bodyFile });
+    if (bodyDraft !== undefined) fields.body = bodyDraft;
     const r = writeDrafts(uri, fields, base_updated);
     return { status: "ok", data: { base_updated: r.base_updated, saved: r.saved, fields: r.fields } };
   });
@@ -180,9 +196,24 @@ export function bindAppHandlers(binding: ServerBinding): void {
   }));
 
   // ── getAppInfo（Electron / serve / CLI 三处共用，版本字段对非 Electron 环境降级）──
-  binding.on(app.getAppInfo, () => {
+  binding.on(app.getAppInfo, async () => {
     const ac = new AppConfig(state.diyHome());
     const gb = (n: number) => (n / 1024 / 1024 / 1024).toFixed(1);
+    // CDP 连接地址：Electron 以 `--remote-debugging-port=0` 启动，实际端口写进
+    // `userData/DevToolsActivePort`（首行端口、次行 path）—— renderer 读不到文件系统，
+    // 只能由 main 侧读出来回给「复制调试信息」（口径与 CLI 的 printCdpHint 同源，见 cli/index.ts）。
+    const cdp = await (async () => {
+      const { readFileSync } = await import("node:fs");
+      const { join } = await import("node:path");
+      try {
+        const [port, path] = readFileSync(join(ac.electronUserData, "DevToolsActivePort"), "utf-8")
+          .split("\n")
+          .map((x) => x.trim());
+        return port && path ? `ws://127.0.0.1:${port}${path}` : "";
+      } catch {
+        return ""; // CDP 未启用 / serve 模式无此文件
+      }
+    })();
     return {
       port: _rpcPort,
       diyHome: ac.diyHome,
@@ -196,6 +227,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
       branch: currentGitBranch() ?? "",
       cache: ac.cache,
       userData: ac.electronUserData,
+      cdp,
       // serve 模式是纯 Node，这两个版本字段不存在 —— 必须给可读的占位而不是 undefined，
       // 否则 zod output 校验直接失败，界面又变成一片空白
       electron: process.versions.electron ?? "—（非 Electron）",
@@ -252,6 +284,10 @@ export function bindAppHandlers(binding: ServerBinding): void {
         project_path: pinfo?.path,
         project_label: pinfo?.label,
         ui_drafts: d ? { base_updated: d.base_updated, saved: d.saved, fields: d.fields } : null,
+        // agent 面状态（##355）：与任务树节点同一判据、同一真源（见 shared/task-detail.ts 注释）。
+        // 草稿直接由上面读到的 `d`（readDrafts 的返回值）派生，不再二次读盘。
+        has_session: hasConversation(input.uri),
+        has_draft: d?.fields?.agent_input !== undefined,
       }),
     };
   });
@@ -354,9 +390,24 @@ export function bindAppHandlers(binding: ServerBinding): void {
     noteRendererTouch("diy.agent.local.chat", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
     const agent = getLocalAgent();
-    // --mode 给出 = 入队待投递（不启动轮次）；省略 = 立即开一轮。
+    // --mode 给出 = 入队待投递；省略 = 立即开一轮。
     if (input.mode) {
       agent.steerAdd(input.taskUri, input.mode, input.message);
+      // ##303：入队后若**没有活跃轮次**，立刻用它开一轮 —— 留言的语义就是"发一句话"，
+      // 空闲时它本就该像普通消息那样马上发出。否则没有任何机制会因它启动轮次，
+      // 留言会永远躺在 .diy/drafts.yaml 里（界面只有横条，用户以为已经发出去了）。
+      // 判据用 `busy()`（= chat 排队守卫的同一个 turns 注册表）：**判据与动作同源**，
+      // 不忙 ⇒ 紧接着的 chatQueued 一定走"真开一轮"，不会被自己的守卫悄悄退回排队。
+      if (agent.busy(input.taskUri)) return;
+      try {
+        for await (const op of agent.chatQueued(input.taskUri, input.model, input.reasoningEffort)) {
+          yield JSON.stringify(op);
+        }
+      } catch (e) {
+        // 竞态：判定与开轮之间别人起了轮（chat 的互斥守卫拒发）→ 留言**安好在队列里**，
+        // 由那一轮的轮末带走。这里只能吞下错误：不能反手报"入队失败"（它已经入队了）。
+        console.warn(`[local-agent] 空闲留言唤醒轮次失败（留言仍在队列，等待投递）${input.taskUri}:`, e);
+      }
       return;
     }
     // signal：客户端断开（刷新/切页/杀 CLI）时即时退订 run.subs —— 缺了它，「无 op 产出期间断开」要
@@ -379,6 +430,29 @@ export function bindAppHandlers(binding: ServerBinding): void {
     // runtime-context 只管"哪些任务在跑"（纯内存表，不依赖 agent 层）。
     const agent = getLocalAgent();
     return { active: activeTurnList().map((t) => ({ ...t, subscribers: agent.watchers(t.taskUri) })) };
+  });
+  /**
+   * 一轮的进度（**形式无关读口**；##166 第三轮口径第 2 条：给 (会话, 轮次) 返回进度块流）。
+   *
+   * 三份真源合成一次返回，**不新造状态**：
+   *   · `turn`   —— 块流（成员会话 ops 流按 turnId 切片，走折叠缓存）
+   *   · `entry`  —— 会话注册表条目（L1：steps / startedAt / state / viewers …）
+   *   · `action` —— 未闭合块 ⇒「此刻在做什么」
+   * 与 `room.turn` 的分工：那条是 room 便利口（按事件 id），这条是底座（不绑 room）。
+   */
+  binding.on(app.agent.local.turn, async ({ input }) => {
+    const { getLocalAgent } = await import("./local-agent");
+    const { sessionRegistry } = await import("./session-registry");
+    const agent = getLocalAgent();
+    return {
+      taskUri: input.taskUri,
+      turnId: input.turnId,
+      turn: agent.turnNode(input.taskUri, input.turnId),
+      live: sessionRegistry.activeTurnList().some((t) => t.uri === input.taskUri),
+      entry: sessionRegistry.entryOf(input.taskUri),
+      action: agent.currentAction(input.taskUri),
+      now: Date.now(),
+    };
   });
   binding.on(app.agent.local.history, async ({ input }) => {
     noteRendererTouch("diy.agent.local.history", input.taskUri);
@@ -442,6 +516,16 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { getLocalAgent } = await import("./local-agent");
     return getLocalAgent().steerReorder(input.taskUri, input.ids);
   });
+  // 「立即发送」：把队列整批现在就送出去（##303 的 a 方案）。
+  // 差在"现在"能到达哪里：有轮次在跑 → 全部加急到下一步；空闲 → 立刻开一轮、队列作开场白。
+  // 与 chat 同为 serverStream：**只有"开了一轮"时才有 op 流**，加急分支不产 op（队列快照由 UI 自查）。
+  binding.on(app.agent.local.steer.flush, async function* ({ input }) {
+    noteRendererTouch("diy.agent.local.steer.flush", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    for await (const op of getLocalAgent().flushSteers(input.taskUri, input.model, input.reasoningEffort)) {
+      yield JSON.stringify(op);
+    }
+  });
   binding.on(app.agent.local.models, async () => {
     const { getLocalAgent } = await import("./local-agent");
     return getLocalAgent().listModels();
@@ -484,8 +568,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
     },
     summary: i.summary as boolean | undefined,
   });
-  binding.on(app.agent.local.compact, async ({ input }) => {
-    noteRendererTouch("diy.agent.local.compact", input.taskUri);
+  binding.on(app.agent.local.compact.run, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.compact.run", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
     const summary =
       input.summaryText !== undefined
@@ -508,8 +592,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const patch = (input.patch ?? {}) as Record<string, unknown>;
     return saveAutoCompact(home, { ...cur, ...patch });
   });
-  binding.on(app.agent.local.summarize, async ({ input }) => {
-    noteRendererTouch("diy.agent.local.summarize", input.taskUri);
+  binding.on(app.agent.local.compact.summarize, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.compact.summarize", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
     return getLocalAgent().summarize(input.taskUri);
   });
@@ -518,21 +602,67 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { getLocalAgent } = await import("./local-agent");
     return getLocalAgent().requestView(input.taskUri);
   });
-  binding.on(app.agent.local.compactPreview, async ({ input }) => {
-    noteRendererTouch("diy.agent.local.compactPreview", input.taskUri);
+  binding.on(app.agent.local.compact.preview, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.compact.preview", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
     const txt = (input as { summaryText?: string }).summaryText;
     return getLocalAgent().compactPreview(input.taskUri, policyOf(input), txt);
   });
-  binding.on(app.agent.local.undoCompact, async ({ input }) => {
-    noteRendererTouch("diy.agent.local.undoCompact", input.taskUri);
+  binding.on(app.agent.local.compact.undo, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.compact.undo", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
     return { undone: getLocalAgent().undoCompact(input.taskUri, input.ref) };
   });
-  binding.on(app.agent.local.compactEvents, async ({ input }) => {
-    noteRendererTouch("diy.agent.local.compactEvents", input.taskUri);
+  binding.on(app.agent.local.compact.events, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.compact.events", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
     return getLocalAgent().compactEvents(input.taskUri);
+  });
+
+  // ── 装配管道 plan（##344 M2 读/写/校验；##362 M3a 起抽成 services/compact-plan-io，工具与 RPC **共用**）──
+  // 与 `autoCompactSetConfig`（写整份配置的任意子集）分开：这三条只谈 plan，且 set/check 会**校验**。
+  // ⚠️ `via:"user"`：CLI / UI 是用户自己的显式操作，**不受** agent 写闸（`history.allowAgentWrite`）约束。
+  //    （闸只管 agent 那条路，见 compact-plan-io 头注 —— 若闸也拦人，用户就没法给自己开闸了。）
+  binding.on(app.agent.local.compact.plan.get, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.compact.plan.get", input.taskUri);
+    const { planGet } = await import("./compact-plan-io");
+    const { diyHome } = await import("../core/state");
+    return planGet(diyHome());
+  });
+  binding.on(app.agent.local.compact.plan.set, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.compact.plan.set", input.taskUri);
+    const { planSet } = await import("./compact-plan-io");
+    const { getLocalAgent } = await import("./local-agent");
+    const { diyHome } = await import("../core/state");
+    return planSet({
+      home: diyHome(),
+      taskUri: input.taskUri,
+      via: "user",
+      keepText: input.keep,
+      measure: (keep) => getLocalAgent().measureMustStages(input.taskUri, keep),
+    });
+  });
+  binding.on(app.agent.local.compact.plan.check, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.compact.plan.check", input.taskUri);
+    const { planCheck } = await import("./compact-plan-io");
+    const { formatCheckFailure } = await import("./compact-plan-service");
+    const { getLocalAgent } = await import("./local-agent");
+    const { diyHome } = await import("../core/state");
+    const report = planCheck({
+      home: diyHome(),
+      taskUri: input.taskUri,
+      ...(input.keep !== undefined ? { keepText: input.keep } : {}),
+      measure: (keep) => getLocalAgent().measureMustStages(input.taskUri, keep),
+    });
+    if (!report.ok) throw new Error(formatCheckFailure(report));
+    return report;
+  });
+  binding.on(app.agent.local.compact.plan.reset, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.compact.plan.reset", input.taskUri);
+    const { planReset } = await import("./compact-plan-io");
+    const { diyHome } = await import("../core/state");
+    // `via:"user"`：这是用户显式操作（CLI / UI 按钮），不受 agent 写闸约束（同 set 口径）。
+    return planReset({ home: diyHome(), taskUri: input.taskUri, via: "user" });
   });
   // 会话用量报表（人读表格）：与 UI 同源同口径，只是在这里渲染成等宽文本
   binding.on(app.agent.usage, async ({ input }) => {
@@ -645,7 +775,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
         taskUri,
         system: lab.system.text,
         model,
-        // runtime 作为独立 user 消息插在末条之前 —— 与真发（runTurn 的 withRuntime）同形
+        // runtime 由 previewSimulatedRequest 经 withRuntime 拼进**尾部信封**（history? + runtime + user）
         runtime: lab.runtime.text,
       });
       request = { body: sim.body, note: sim.note, model };
@@ -680,51 +810,91 @@ export function bindAppHandlers(binding: ServerBinding): void {
 
   binding.on(app.context.changelog, async ({ input }) => {
     const { readCtxLog } = await import("../core/context-changelog");
-    const { foldCtxLog, opsFromHashes } = await import("../../shared/context/changelog");
+    const { isV2Entry, entryToRows, foldCtxLog, opsFromHashes } = await import("../../shared/context/changelog");
     const { readDeliverySteps, readStepUsages } = await import("./local-agent");
     const { groupByTurn } = await import("../../shared/usage");
     const steps = readDeliverySteps(input.taskUri);
-    let records = readCtxLog(input.taskUri);
-    let source: "log" | "derived" = "log";
-    // 折算（降级视图）：这版之前的任务真发过、却没有变更日志 → 用投递快照的值 hash 差还原事件。
-    // 拿不到值预览（快照不存值）—— 只到 path 粒度；方向由 hash 有无判定，仍然比只列 changed 强。
-    if (records.length === 0 && steps.length > 0) {
-      source = "derived";
-      records = steps.map((s, i) => ({
-        ts: s.ts,
-        turnId: s.turnId,
-        model: s.model,
-        wireVersion: s.wireVersion,
-        ops: opsFromHashes(i === 0 ? null : steps[i - 1]!.valueHashes, s.valueHashes),
-      }));
-    }
-    const turns = foldCtxLog(records);
-    // 该轮 ref：投递快照（划分 + 两份容器是否变）与用量账本（缓存率 + 金额）都按 turnId join。
+    // 每条 ref 的徽章：投递快照（划分 + 两份容器是否变）与用量账本（缓存率 + 金额）都按 turnId join。
     // 都**可能不可得**（快照被清、老账本没字段）→ 给 null，UI 不画徽章，不谎报"没变"。
     const stepIdx = new Map(steps.map((s, i) => [s.turnId, i]));
     const usage = new Map(groupByTurn(readStepUsages(input.taskUri)).map((g) => [g.turnId, g]));
-    const view: HistoryTurnView[] = turns.map((t) => {
-      const i = stepIdx.get(t.turnId);
+    const badges = (turnId: string) => {
+      const i = stepIdx.get(turnId);
       const cur = i === undefined ? undefined : steps[i];
       const prev = i !== undefined && i > 0 ? steps[i - 1] : undefined;
-      const g = usage.get(t.turnId);
-      const buckets = g?.buckets;
+      const buckets = usage.get(turnId)?.buckets;
       return {
-        ...t,
+        turnIndex: i === undefined ? null : i + 1,
         systemPlaces: cur?.systemPlaces ?? [],
         systemDiffers: cur && prev ? cur.systemText !== prev.systemText : null,
         runtimeDiffers: cur && prev ? cur.runtimeText !== prev.runtimeText : null,
         incomparable: cur && prev ? cur.wireVersion !== prev.wireVersion : null,
-        cacheHitRate:
-          buckets && buckets.inputTotal > 0 ? buckets.cacheRead / buckets.inputTotal : null,
-        cost: g?.cost ? g.cost.total : null,
+        cacheHitRate: buckets && buckets.inputTotal > 0 ? buckets.cacheRead / buckets.inputTotal : null,
+        cost: usage.get(turnId)?.cost ? usage.get(turnId)!.cost!.total : null,
       };
-    });
-    const total = view.length;
+    };
+
+    const raw = readCtxLog(input.taskUri);
+    const v2 = raw.filter(isV2Entry);
+    const entries: HistoryEntryView[] = [];
+    let source: "log" | "derived" = "log";
+    if (v2.length > 0) {
+      // 二版：before/after 自带 → 直接可渲染（不再回放）
+      for (const e of v2) {
+        entries.push({
+          seq: e.seq,
+          type: e.type,
+          ts: e.ts,
+          model: e.model,
+          wireVersion: e.wireVersion,
+          ref: e.ref,
+          changes: entryToRows(e),
+          ...badges(e.ref.turnId),
+        });
+      }
+    } else {
+      // 降级：老格式日志（一版回放）或纯折算（从投递快照的值 hash 差还原；无值预览）
+      const legacy = raw.filter((r) => !isV2Entry(r));
+      source = legacy.length > 0 ? "log" : "derived";
+      const records =
+        legacy.length > 0
+          ? (legacy as unknown as Parameters<typeof foldCtxLog>[0])
+          : steps.map((s, i) => ({
+              ts: s.ts,
+              turnId: s.turnId,
+              model: s.model,
+              wireVersion: s.wireVersion,
+              ops: opsFromHashes(i === 0 ? null : steps[i - 1]!.valueHashes, s.valueHashes),
+            }));
+      for (const t of foldCtxLog(records)) {
+        entries.push({
+          seq: t.index - 1,
+          type: t.baseline ? "baseline" : "changed",
+          ts: t.ts,
+          model: t.model,
+          wireVersion: t.wireVersion,
+          ref: { turnId: t.turnId, stepId: t.turnId, step: t.index },
+          changes: t.changes,
+          ...badges(t.turnId),
+        });
+      }
+    }
+    const total = entries.length;
     return {
       total,
       source,
-      turns: input.limit && input.limit > 0 ? view.slice(-input.limit) : view,
+      entries: input.limit && input.limit > 0 ? entries.slice(-input.limit) : entries,
+    };
+  });
+
+  binding.on(app.context.rebaseline, async ({ input }) => {
+    const { getLocalAgent } = await import("./local-agent");
+    getLocalAgent().markRebaseline(input.taskUri);
+    return {
+      ok: true,
+      message:
+        "已置位：该任务下一次真发时落一条新 baseline（起点）。" +
+        "（轮次中途置位则下一轮生效 —— 起点只能在轮首写）",
     };
   });
 
@@ -750,6 +920,10 @@ export function bindAppHandlers(binding: ServerBinding): void {
         runtimeDiffers: d?.runtimeDiffers ?? true,
         systemDiff: d?.systemDiff ?? [],
         runtimeDiff: d?.runtimeDiff ?? [],
+        systemText: cur.systemText,
+        runtimeText: cur.runtimeText,
+        baseSystemText: prev?.systemText ?? null,
+        baseRuntimeText: prev?.runtimeText ?? null,
       };
     }
     // 未选中：**当前变量树** vs 最后一步（"我现在改的东西会带来什么变化"）
@@ -778,6 +952,10 @@ export function bindAppHandlers(binding: ServerBinding): void {
       runtimeDiffers: d.runtimeDiffers,
       systemDiff: d.systemDiff,
       runtimeDiff: d.runtimeDiff,
+      systemText: now.system.text,
+      runtimeText: now.runtime.text,
+      baseSystemText: last.systemText,
+      baseRuntimeText: last.runtimeText,
     };
   });
 
@@ -825,7 +1003,9 @@ export function bindAppHandlers(binding: ServerBinding): void {
     files: traffic.listLogFiles(),
     dates: traffic.listLogDates(),
     bytes: traffic.logStats().bytes,
+    detail: traffic.listLogFileDetail(),
   }));
+  binding.on(app.traffic.cleanLogs, async ({ input }) => traffic.cleanLogs(input));
   binding.on(app.traffic.revealLog, async ({ input }) => {
     const abs = traffic.absLogFile(input.file);
     try {
@@ -839,6 +1019,17 @@ export function bindAppHandlers(binding: ServerBinding): void {
   });
   binding.on(app.traffic.events, async function* () {
     for await (const ev of traffic.events()) yield ev;
+  });
+
+  // ── notice（「模型不可用」通知；##369 ①）──
+  // 数据源是 main 侧通知中心（真发失败的 catch 里 push）：renderer 只订阅/关闭，不产生。
+  binding.on(app.notice.list, async () => modelNoticeHub.list());
+  binding.on(app.notice.dismiss, async ({ input }) => {
+    modelNoticeHub.dismiss(input.id);
+    return { status: "ok" };
+  });
+  binding.on(app.notice.watch, async function* ({ signal }) {
+    for await (const n of modelNoticeHub.subscribe(signal)) yield n;
   });
 
   // ── llmConfig（模型 provider 配置）──
@@ -1095,6 +1286,247 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const removed = removeSource(input.name);
     if (!removed) return { status: "error", msg: `未找到 source: ${input.name}` };
     return { status: "ok", data: { removed } };
+  });
+
+  // ── room（多人房间；开发日志 ##377，设计真源 ##166 §28）──
+  // room = **投递 + 汇总层**：成员各自独立会话，这里只负责"收一句话 → 投给谁 → 把回复带署名汇总回来"。
+  // 投递器在 services/room-service.ts（真起一轮的是它，不是本绑定层）；落盘层在 core/room.ts。
+  binding.on(app.room.list, async () => {
+    const { listRooms, readEvents } = await import("../core/room");
+    return {
+      rooms: listRooms().map((r) => {
+        const { events } = readEvents(r.id, { limit: 1 });
+        const last = events[events.length - 1];
+        return {
+          id: r.id,
+          ...(r.title ? { title: r.title } : {}),
+          focus: r.focus,
+          members: r.members.length,
+          ...(last ? { last: `${shortName(last.author)}: ${last.text.slice(0, 60)}` } : {}),
+        };
+      }),
+    };
+  });
+  binding.on(app.room.get, async ({ input }) => {
+    // 走 readRoomView（不是裸 readEvents）：投递状态在 deliveries.jsonl 里，要 fold 上来
+    const { readRoomView } = await import("../core/room");
+    const { ensureRoomForTask } = await import("./room-service");
+    // 宿主定案（§28.7 G）：id = taskUri，且**每个任务恒是一个 room** ⇒ 读之前先补齐成员表
+    await ensureRoomForTask(input.id);
+    const { room, events, bad } = readRoomView(input.id, { limit: input.limit ?? 200 });
+    return { room, events, badLines: bad };
+  });
+  binding.on(app.room.create, async ({ input }) => {
+    const { isValidRoomId } = await import("../core/room");
+    const { ensureRoomForTask } = await import("./room-service");
+    if (!isValidRoomId(input.id)) throw new Error(`房间 id 不合法：${input.id}（room id = 任务 URI）`);
+    return await ensureRoomForTask(input.id);
+  });
+  binding.on(app.room.addMember, async ({ input }) => {
+    const { upsertMember } = await import("../core/room");
+    const { ensureRoomForTask } = await import("./room-service");
+    const room = await ensureRoomForTask(input.id);
+    const taskUri = input.task ?? "";
+    // 护栏：**同一 backend 不得挂两个人物**（= A 帽子，##166 §27 已否）
+    const dup = room.members.find((m) => m.backend?.type === "task" && m.backend.data.taskUri === taskUri && taskUri);
+    if (dup) throw new Error(`会话 ${taskUri} 已挂了成员 ${dup.name}（同一 backend 不得挂两个人物）`);
+    return upsertMember(input.id, {
+      id: `agent:${input.name}`,
+      name: input.name,
+      kind: "agent",
+      backend: { type: "task", data: { taskUri } },
+      ...(input.persona ? { persona: input.persona } : {}),
+      ...(input.role ? { role: input.role } : {}),
+    });
+  });
+
+  /**
+   * **邀请 = 选人物**（##166 §28.7 F ② / D 的 B 方案：影子 task）。
+   *
+   * 三条口径：
+   *   · 面板列**人物**（不列 task）：调用方给人物 id 或名字；
+   *   · backend 缺省**自动建一个专属影子 task**（复用现有一切，零内核改动）——`--task` 是高级入口；
+   *   · 护栏：同一 backend 不得挂两个人物（§27 已否 A 帽子）；同一人物可进多个 room。
+   */
+  binding.on(app.room.invite, async ({ input }) => {
+    const { upsertMember } = await import("../core/room");
+    const { ensureRoomForTask } = await import("./room-service");
+    const { listPersonas } = await import("../core/persona");
+    const { diyHome } = await import("../core/state");
+    const room = await ensureRoomForTask(input.id);
+    const personas = listPersonas(diyHome());
+    const p = personas.find((x) => x.id === input.persona || x.name === input.persona);
+    if (!p) throw new Error(`没有这个人物：${input.persona}（diy agent persona list 看可用人物）`);
+    // 高级入口：指定绑已有 task；否则建影子 task（title 里带宿主任务，便于回溯）
+    const given = input.task?.trim();
+    let taskUri = given ?? "";
+    let createdTask = false;
+    if (!taskUri) {
+      // 影子 task 落在**宿主任务所在的 project**（宿主不在本数据根时回落到第一个可用 project）——
+      // "藏进专属 project"是 ##166 §28.7 D 的后话，探索期跑通优先。
+      // 建法与 §30 侧边栏主人格**同一份**（room-service::createShadowTask），不各写一遍。
+      const { createShadowTask } = await import("./room-service");
+      taskUri = await createShadowTask(input.id, p);
+      createdTask = true;
+    }
+    const dup = room.members.find((m) => m.backend?.type === "task" && m.backend.data.taskUri === taskUri);
+    if (dup) throw new Error(`会话 ${taskUri} 已挂了成员 ${dup.name}（同一 backend 不得挂两个人物）`);
+    // 成员 id 用**人物名**（`@` 寻址的直觉就是喊名字；重名时加序号）；name 同名 —— UI 显示用
+    const base = p.name.trim().replace(/\s+/g, "-");
+    let memberId = `agent:${base}`;
+    for (let n = 2; room.members.some((m) => m.id === memberId); n++) memberId = `agent:${base}-${n}`;
+    const member = {
+      id: memberId,
+      name: p.name,
+      kind: "agent" as const,
+      persona: p.id,
+      backend: { type: "task" as const, data: { taskUri } },
+      ...(input.role ? { role: input.role } : {}),
+    };
+    const next = upsertMember(input.id, member);
+    return { room: next, member, taskUri, createdTask };
+  });
+
+  binding.on(app.room.removeMember, async ({ input }) => {
+    const { readRoom, removeMember } = await import("../core/room");
+    const { resolveMember } = await import("../../shared/room");
+    const { ensureRoomForTask } = await import("./room-service");
+    await ensureRoomForTask(input.id);
+    const room = readRoom(input.id);
+    if (!room) throw new Error(`房间不存在：${input.id}`);
+    const memberId = resolveMember(room, input.member);
+    if (!room.members.some((m) => m.id === memberId)) throw new Error(`房间里没有这个成员：${input.member}`);
+    return removeMember(input.id, memberId);
+  });
+  binding.on(app.room.focus, async ({ input }) => {
+    const { readRoom, setFocus } = await import("../core/room");
+    const { ensureRoomForTask } = await import("./room-service");
+    const { resolveMember } = await import("../../shared/room");
+    await ensureRoomForTask(input.id);
+    const room = readRoom(input.id);
+    if (!room) throw new Error(`房间不存在：${input.id}`);
+    const member = input.member ? resolveMember(room, input.member) : null;
+    if (member && !room.members.some((m) => m.id === member)) throw new Error(`房间里没有这个成员：${input.member}`);
+    return setFocus(input.id, member);
+  });
+  binding.on(app.room.post, async function* ({ input }) {
+    const { postToRoom } = await import("./room-service");
+    for await (const ev of postToRoom(input.id, input.text)) yield JSON.stringify(ev);
+  });
+  /**
+   * 一条 reply 的进度（##166 §28.7 A）：**不新造数据源** ——
+   * 房间只存了引用（`ref = { memberUri, turnId }`），进度本身在成员会话的 ops 流里，
+   * 这里把它取回来交给渲染端（与任务对话同一个块树、同一个渲染器）。
+   */
+  binding.on(app.room.turn, async ({ input }) => {
+    const { readRoom, readRoomView } = await import("../core/room");
+    const { ensureRoomForTask } = await import("./room-service");
+    const { resolveMember } = await import("../../shared/room");
+    const { getLocalAgent } = await import("./local-agent");
+    const { sessionRegistry } = await import("./session-registry");
+    // 两种寻址：`(成员, 轮次)` 字面口径 ｜ `reply 事件 id` room 便利形态（事件自带 ref）
+    let taskUri: string;
+    let turnId: string;
+    let memberUri: string | null = null;
+    if (input.member && input.turn) {
+      await ensureRoomForTask(input.id);
+      const room = readRoom(input.id);
+      if (!room) throw new Error(`房间不存在：${input.id}`);
+      const memberId = resolveMember(room, input.member);
+      const m = memberId ? room.members.find((x) => x.id === memberId) : undefined;
+      if (!m) throw new Error(`房间里没有这个成员：${input.member}（room get 看成员表）`);
+      const tu = m.backend?.type === "task" ? m.backend.data.taskUri : "";
+      if (!tu) throw new Error(`成员 ${m.id} 没绑任务会话，没有进度可取（backend 缺 taskUri）`);
+      taskUri = tu;
+      turnId = input.turn;
+      memberUri = m.id;
+    } else {
+      if (!input.event) throw new Error("要么给 --event（reply 事件 id），要么给 --member + --turn");
+      const { events } = readRoomView(input.id, { limit: 0 });
+      const ev = events.find((e) => e.id === input.event);
+      if (!ev) throw new Error(`房间里没有这条事件：${input.event}（room get 看事件 id）`);
+      const ref = ev.ref;
+      if (!ref || !ev.sourceTask) throw new Error(`这条事件没有进度引用（不是被投递的 reply）：${input.event}`);
+      taskUri = ev.sourceTask;
+      turnId = ref.turnId;
+      memberUri = ref.memberUri;
+    }
+    const agent = getLocalAgent();
+    return {
+      turn: agent.turnNode(taskUri, turnId),
+      taskUri,
+      turnId,
+      memberUri,
+      live: sessionRegistry.activeTurnList().some((t) => t.uri === taskUri),
+      entry: sessionRegistry.entryOf(taskUri),
+      action: agent.currentAction(taskUri),
+    };
+  });
+
+  /**
+   * 房间成员的**此刻状态**（L1；##166 第三轮口径第 3 条：服务端能给出，不靠 UI 猜）。
+   *
+   * 合成三份既有真源（不新造状态）：
+   *   · 会话侧 —— `sessionRegistry.entryOf(taskUri)`（steps / startedAt / state / viewers / lastEndReason）
+   *   · 进度侧 —— `local-agent.currentAction`（未闭合块 ⇒「正在 bash · rg -n …」）
+   *   · room 侧 —— 投递链上的 `queued` / `running` 条数（盘上 fold 出的投递快照，无状态）
+   * 纯读、无副作用；任何布局的「头像行状态」都吃这一份（详情另走 `turn`）。
+   */
+  binding.on(app.room.roster, async ({ input }) => {
+    const { readRoom, readRoomView } = await import("../core/room");
+    const { ensureRoomForTask } = await import("./room-service");
+    const { getLocalAgent } = await import("./local-agent");
+    const { sessionRegistry } = await import("./session-registry");
+    const { memberAvatar, memberColor, orderedMembers } = await import("../../shared/room");
+    await ensureRoomForTask(input.id);
+    const room = readRoom(input.id);
+    if (!room) throw new Error(`房间不存在：${input.id}`);
+    const { events } = readRoomView(input.id, { limit: 0 });
+    const agent = getLocalAgent();
+    const members = orderedMembers(room).map((m, i) => {
+      const taskUri = m.backend?.type === "task" ? m.backend.data.taskUri || null : null;
+      let queued = 0;
+      let running = 0;
+      for (const ev of events) {
+        for (const d of ev.deliveries ?? []) {
+          if (d.memberId !== m.id) continue;
+          if (d.status === "queued") queued++;
+          else if (d.status === "running") running++;
+        }
+      }
+      return {
+        memberId: m.id,
+        name: m.name,
+        avatar: memberAvatar(m, i),
+        color: memberColor(m),
+        role: m.role ?? (m.kind === "human" ? "人类（房间主人）" : "agent"),
+        isHuman: m.kind === "human",
+        focus: room.focus === m.id,
+        taskUri,
+        entry: taskUri ? sessionRegistry.entryOf(taskUri) : null,
+        action: taskUri ? agent.currentAction(taskUri) : null,
+        queued,
+        running,
+      };
+    });
+    return { room: room.id, now: Date.now(), members };
+  });
+
+  // ── instances（实例大盘；##366）──
+  // 发现/聚合/唤起的实现在 services/instances.ts（纯规则在 core/instance-*），这里只做绑定。
+  // `ls` 与 `list` 是**同一份数据两种出口**：前者给人看（表格文本），后者给 UI/程序（结构化行）。
+  binding.on(app.instances.ls, async () => renderInstanceList());
+  binding.on(app.instances.list, async () => ({ rows: await collectInstances() }));
+  binding.on(app.instances.self, async () =>
+    selfReport({ window: windowState(), branch: currentGitBranch() ?? "", repoDisplay: repoDisplayOf() }),
+  );
+  binding.on(app.instances.reveal, async () => revealSelf());
+  binding.on(app.instances.focus, async ({ input }) => {
+    if (input.pid === undefined && input.port === undefined) {
+      throw new Error("必须给 --pid 或 --port（目标实例；先跑 diy instances ls 看当前有哪些）");
+    }
+    const r = await focusInstance({ pid: input.pid, port: input.port });
+    return { pid: r.pid, port: r.port, via: r.via, reason: r.reason };
   });
 
   // ── tool ──

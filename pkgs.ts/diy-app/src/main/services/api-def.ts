@@ -16,17 +16,23 @@
  * 所有 desc 用反引号模板字符串，便于扩展成多行（help 第一行作命令列表摘要）。
  */
 
-import { RpcSchema } from "@diy/rpc";
+import { RpcSchema } from "@diy-agent/rpc";
 import { z } from "zod";
 // 引擎通用渲染器 id 的真源（别处不复制这份清单；内核加渲染器时这里的 schema 自动跟上）
 import { RENDERERS } from "@diy/flow";
 import { PromptEntrySchema, RequestPreviewSchema } from "../../shared/prompt-schema";
+import { TrafficRecordSchema } from "../../shared/traffic-record";
 import { ContextDiffSchema, CtxLogSchema, StatsSchema, StepsSchema } from "../../shared/context/schema";
 import { ContextLabSchema, ContextPlaceCandidateSchema } from "../../shared/context/schema";
+// 多人房间契约（shared，renderer 同源）
+import { RoomEventSchema, RoomMemberSchema, RoomSchema } from "../../shared/room";
 // agent 人物契约（纯 zod，renderer 同源）——模型/参数/行为指令的配置实体
+import { FALLBACK_MODEL } from "../../shared/model-default";
 import { PersonaSchema } from "../../shared/persona";
 // 价格形状（camelCase 运行时口径）：与 UI/CLI 同一份 schema
 import { ModelCostSchema } from "../../shared/usage";
+// 「模型不可用」通知契约（纯 zod，renderer 同源；判据函数也在同文件，见 ##369）
+import { ModelUnavailableNoticeSchema } from "../../shared/model-unavailable";
 import {
   CostUpdateResultSchema,
   ImportEnvResultSchema,
@@ -41,6 +47,8 @@ import {
 } from "../../shared/model-config";
 // 草稿与任务详情载荷的契约（纯 zod，renderer 同源）
 import { DraftFieldSchema, DraftFieldsSchema, DraftsData, TaskDetailSchema } from "../../shared/task-detail";
+// 实例大盘契约（shared，renderer 同源）：一行 = 一个实例
+import { InstanceRowSchema, InstanceSelfSchema, RevealResultSchema } from "../../shared/instance-row";
 
 // 任务状态枚举 — 单一真相源 task-state.ts（纯 zod，无 Node 依赖，浏览器安全） */
 import { TaskStateSchema } from "../core/task-state";
@@ -71,51 +79,6 @@ const StatusDataTaskWrite = z.object({
 const StatusDataId = z.object({ status: z.string(), data: z.object({ id: z.string() }) });
 const StatusOk = z.object({ status: z.string() });
 
-/** 一条流量记录（一次 HTTP 往返；body 形状任意，故用 any） */
-const BodyCaptureSchema = z.object({
-  head: z.string().describe("首段文本（未截断时即全文）"),
-  tail: z.string().describe("尾段文本（只保留最后一段；未截断时为空串）"),
-  headBytes: z.number().describe("首段保留的字节数"),
-  tailBytes: z.number().describe("尾段保留的字节数"),
-  totalBytes: z.number().describe("正文完整字节数"),
-  truncated: z.boolean().describe("是否被截断（headBytes + tailBytes < totalBytes 即截断）"),
-});
-const LogLocSchema = z.object({
-  file: z.string().describe("日志文件（相对 DIY_HOME，如 log/network/2026-10-13.jsonl）"),
-  offset: z.number().describe("该条记录在文件中的起始字节"),
-  len: z.number().describe("该条记录的字节长度"),
-  line: z.number().describe("行号（1 起；一行 = 一条记录）"),
-  abs: z.string().describe("文件绝对路径（界面展示 / 打开文件位置用）"),
-});
-const TrafficRecordSchema = z.object({
-  id: z.number(),
-  ts: z.number().describe("请求发出时刻（epoch ms）"),
-  kind: z.enum(["llm", "probe", "http"]).describe("来源：LLM 对话 / 模型配置探测 / 其它"),
-  session: z.string().describe("x-opencode-session（归属键，反查 task/turn 用）；无归属则空串"),
-  taskUri: z.string().nullable().describe("归属任务；未知则 null"),
-  turnId: z.string().nullable().describe("归属轮次"),
-  provider: z.string().describe("provider id"),
-  model: z.string().describe("模型 id"),
-  baseUrl: z.string(),
-  method: z.string(),
-  url: z.string().describe("完整请求 URL"),
-  host: z.string().describe("主机名（含端口）"),
-  path: z.string(),
-  attempt: z.number().describe("本轮第几次请求（每次重试即一次 HTTP 往返，逐次自增）"),
-  maxRetries: z.number(),
-  status: z.number().nullable().describe("HTTP 状态码；null = 未收到响应（网络错 / 超时）"),
-  ms: z.number().describe("耗时 ms"),
-  reqBytes: z.number().describe("请求正文字节数（完整大小，不受截断影响）"),
-  resBytes: z.number().describe("响应正文字节数（完整大小；未收到为 0）"),
-  reqHeaders: z.record(z.string(), z.string()).describe("已脱敏（authorization 只留尾 4 位）"),
-  reqBody: BodyCaptureSchema.nullable().describe("请求正文（首尾法保留，见字段说明）"),
-  resHeaders: z.record(z.string(), z.string()),
-  resBody: BodyCaptureSchema.nullable().describe("响应正文（首尾法保留）；未捕获时为 null，原因见 resNote"),
-  resNote: z.string().nullable().describe("未能保留响应正文时的说明（如正文过大）"),
-  traceId: z.string().nullable().describe("上游追责凭据（响应头 x-trace-id / x-request-id / x-opencode-log-id）"),
-  err: z.string().nullable().describe("网络层异常消息"),
-  log: LogLocSchema.nullable().describe("该条落盘位置（界面按位置随机读；null = 未落盘）"),
-});
 const TrafficSnapshotSchema = z.object({
   fullCapture: z.boolean().describe("是否记录完整请求内容（正文不截断）"),
   cap: z.number().describe("内存里最多留多少条"),
@@ -163,6 +126,13 @@ export interface TaskNodeShape {
   change_type?: string;
   module?: string;
   priority?: string;
+  /**
+   * 该任务**是否与 agent 对话过**（##355「干净任务」态；真源 = 会话 Op 日志存在且非空，
+   * 见 core/local-paths.ts 的 hasConversation）。缺省 = 未算（旧载荷），读侧按"未知"处理。
+   */
+  has_session?: boolean;
+  /** 该任务是否有**未发送的草稿**（##355「有草稿」态；真源 = 任务目录 .diy/drafts.yaml 的 agent_input） */
+  has_draft?: boolean;
   children: TaskNodeShape[];
 }
 const TaskNodeSchema: z.ZodType<TaskNodeShape> = z.lazy(() =>
@@ -184,6 +154,10 @@ const TaskNodeSchema: z.ZodType<TaskNodeShape> = z.lazy(() =>
     change_type: z.string().optional(),
     module: z.string().optional(),
     priority: z.string().optional(),
+    // agent 面状态（##355）：两枚逐任务布尔（判据见 TaskNodeShape 上的注释）。
+    // 与上面的字段同样 optional —— 读侧宽容，缺了只是"这一项不知道"，不是错误。
+    has_session: z.boolean().optional(),
+    has_draft: z.boolean().optional(),
     children: z.array(TaskNodeSchema),
   }),
 );
@@ -376,12 +350,40 @@ export const apiDef = RpcSchema.router({
         desc: `任务管理`,
         children: {
           create: RpcSchema.unary({
-            desc: `创建任务`,
+            desc: `
+            创建任务
+
+            正文（body）输入契约（##338 / ##376）—— **三选一**，同时给多个会被拒（不猜、不按顺序取）：
+              \`--body <文本>\`        任务内容（内联正文；值形如**单行文件路径** → 直接报错并提示正确写法）
+              \`--body-text <文本>\`   任务内容（显式内联文本：与 \`--body\` 同义，但不做「形如路径」护栏）
+              \`--body-file <file|->\` 任务内容：从**文件**读（\`-\` = stdin；相对路径按当前目录解析）
+            与 \`task edit\` 同一套选项形状与同一条裁决（\`core/task.ts::resolveBodyOverride\`）。
+            注意：create 是新建任务，**不做「整份任务文件剥头」**（没头可覆盖），传整份文件会把头写进正文。
+            `,
             input: {
               title: z.string().min(1, "标题不能为空").max(200).cliArg({ desc: "任务标题" }),
               project: z.string().cliArg({ desc: "所属 project id" }),
               parent: z.string().optional().cliOption({ short: "p", desc: "父任务 URI" }),
-              body: z.string().optional().cliOption({ desc: "任务内容" }),
+              body: z
+                .string()
+                .optional()
+                .cliOption({
+                  placeholder: "<text>",
+                  inlineText: { fileOpt: "--body-file", textOpt: "--body-text" },
+                  desc: "任务内容（**内联正文**，不是文件路径：值形如单行路径会被拒）",
+                }),
+              bodyText: z
+                .string()
+                .optional()
+                .cliOption({ placeholder: "<text>", desc: "任务内容（显式内联文本：与 `--body` 同义，但不做「形如路径」护栏）" }),
+              bodyFile: z
+                .string()
+                .optional()
+                .cliOption({
+                  placeholder: "<file|->",
+                  readFile: true,
+                  desc: "任务内容：从**文件**读（`-` = stdin；相对路径按当前目录解析）—— **不剥 frontmatter**（新建任务无头可覆盖，传整份文件会把头写进正文）",
+                }),
               persona: z.string().optional().cliOption({ desc: "agent 人物 id（不传 = 跟随缺省；传值 = 固定绑定，人物决定模型/参数/行为指令）" }),
               change_type: ChangeTypeSchema.optional().cliOption({ desc: "变更性质（feat/fix/docs/…，见 conventional commits）" }),
               module: z.string().optional().cliOption({ desc: "模块（可 `/` 分层，如 agent/ui）" }),
@@ -422,11 +424,35 @@ export const apiDef = RpcSchema.router({
                 字段按白名单平铺，不用 JSON 参数：白名单固定且短，平铺后 --help 逐字段可见，
                 也免去 shell 里 JSON 引号的层层转义。传空字符串（如 --title ""）= 清除该字段；
                 不传 = 保持原值。已提交（保存/取消）后应显式清除，否则草稿会盖住新数据。
+
+                正文草稿（body）与 \`task edit\` 同一套输入契约（##338 / ##376）—— **三选一**：
+                  \`--body <文本>\`        内容草稿（内联正文；值形如**单行文件路径** → 直接报错）
+                  \`--body-text <文本>\`   内容草稿（显式内联文本：不做「形如路径」护栏）
+                  \`--body-file <file|->\` 内容草稿：从**文件**读（\`-\` = stdin）
                 `,
                 input: {
                   uri: z.string().cliArg({ desc: "任务 URI" }),
                   title: z.string().optional().cliOption({ desc: "标题草稿（空串=清除）" }),
-                  body: z.string().optional().cliOption({ desc: "内容草稿（空串=清除）" }),
+                  body: z
+                    .string()
+                    .optional()
+                    .cliOption({
+                      placeholder: "<text>",
+                      inlineText: { fileOpt: "--body-file", textOpt: "--body-text" },
+                      desc: "内容草稿（空串=清除；**内联正文**，不是文件路径：值形如单行路径会被拒）",
+                    }),
+                  bodyText: z
+                    .string()
+                    .optional()
+                    .cliOption({ placeholder: "<text>", desc: "内容草稿（显式内联文本：与 `--body` 同义，但不做「形如路径」护栏）" }),
+                  bodyFile: z
+                    .string()
+                    .optional()
+                    .cliOption({
+                      placeholder: "<file|->",
+                      readFile: true,
+                      desc: "内容草稿：从**文件**读（`-` = stdin；相对路径按当前目录解析）",
+                    }),
                   agent_input: z.string().optional().cliOption({ desc: "agent 输入框草稿（空串=清除）" }),
                   base_updated: z.string().optional().cliOption({ desc: "草稿基点：任务当前 updated（用于检测过期）" }),
                 },
@@ -448,7 +474,16 @@ export const apiDef = RpcSchema.router({
             desc: `
             编辑任务
 
-            正文（body）语义分两种：\`--body\` **整篇覆盖**，\`--append-body\` **追加**（不必先读文件）。
+            正文（body）输入契约（##322 / ##338）—— **整篇覆盖三选一、追加三选一**，同时给多个会被拒
+            （不猜、不按顺序取）：
+              \`--body <文本>\`        整篇覆盖（内联正文；值形如**单行文件路径** → 直接报错并提示正确写法）
+              \`--body-text <文本>\`   整篇覆盖（显式内联文本，不做路径护栏 —— 正文本身就是一行路径时用它）
+              \`--body-file <file|->\` 整篇覆盖（从文件读，\`-\` = stdin；等价 \`--body "$(cat f)"\`，但不受 ARG_MAX 限制）
+              \`--append-body\` / \`--append-body-file\` / \`--append-body-text\`：追加的同样三态。
+            为什么把"传文件"和"传文本"分开：在此之前 \`--body\` 只收文本，而 \`--append-body\` 收 \`<file|->\` ——
+            两侧不对称，直觉上"都是传文件"，于是 \`diy task edit X --body /tmp/x.md\` 把**路径串当正文静默存下**、
+            原正文丢失且无告警（##290 / ##294 / ##87 三例现场）。
+
             两者都接受"整份任务文件"（frontmatter + 正文）作输入：头会被**剥离**后丢弃（文件头才是权威），
             在返回值里回报剥了哪些键与**被剥掉的原文** —— 于是 \`--body "$(cat AGENTS.md)"\` 不再产生双头。
             判据不对称：\`--append-body\` 更严（追加一份"带 front matter 的文档"是常态，只认已知键会把
@@ -461,15 +496,43 @@ export const apiDef = RpcSchema.router({
               body: z
                 .string()
                 .optional()
-                .cliOption({ desc: "新内容，整篇覆盖（至少 10 字符，拒绝空/过短以免误清空正文；传整份文件会自动剥头）" }),
+                .cliOption({
+                  placeholder: "<text>",
+                  inlineText: { fileOpt: "--body-file", textOpt: "--body-text" },
+                  desc: "新内容，整篇覆盖（**内联正文**，不是文件路径：值形如单行路径会被拒；至少 10 字符；传整份文件自动剥头）",
+                }),
+              bodyText: z
+                .string()
+                .optional()
+                .cliOption({ placeholder: "<text>", desc: "新内容，整篇覆盖（显式内联文本：与 `--body` 同义，但不做「形如路径」护栏）" }),
+              bodyFile: z
+                .string()
+                .optional()
+                .cliOption({
+                  placeholder: "<file|->",
+                  readFile: true,
+                  desc: "新内容，整篇覆盖：从**文件**读（`-` = stdin；相对路径按当前目录解析；传整份文件自动剥头）",
+                }),
               appendBody: z
                 .string()
                 .optional()
                 .cliOption({
                   placeholder: "<file|->",
                   readFile: true,
-                  desc: "追加内容：文件路径（相对路径按当前目录解析），`-` 读 stdin。追加在原正文之后（空行分隔），不必先读任务文件",
+                  desc: "追加内容：文件路径（相对路径按当前目录解析），`-` 读 stdin。追加在原正文之后（空行分隔），不必先读任务文件（= `--append-body-file`）",
                 }),
+              appendBodyFile: z
+                .string()
+                .optional()
+                .cliOption({
+                  placeholder: "<file|->",
+                  readFile: true,
+                  desc: "追加内容：文件路径（`-` = stdin）—— 与 `--append-body` 同义，是同一件事的显式名",
+                }),
+              appendBodyText: z
+                .string()
+                .optional()
+                .cliOption({ placeholder: "<text>", desc: "追加内容：**内联文本**（`--append-body` 的对称项：追加也能直接给文本，不必先落盘）" }),
               parent: z.string().optional().cliOption({ desc: "父任务 URI（空字符串=取消父子关系）" }),
               // 三态：不传=保持原绑定 / `default`（或空串）=**跟随缺省**（取消固定绑定）/ 值=换绑到该人物。
               // 换绑是续聊（会话与上下文不动），新模型**下一轮**生效。
@@ -563,7 +626,7 @@ export const apiDef = RpcSchema.router({
       // 于是 Electron 里 window.diy 为 undefined（可选链短路，永远卡在「加载中…」）、
       // serve 里方法不存在。走 RPC 后三种入口共用同一实现。
       getAppInfo: RpcSchema.unary({
-        desc: `查询运行环境详情（端口/目录/版本/系统）`,
+        desc: `查询运行环境详情（端口/目录/版本/系统/CDP 连接地址）`,
         input: {},
         output: z.object({
           port: z.number(),
@@ -582,6 +645,11 @@ export const apiDef = RpcSchema.router({
           branch: z.string(),
           cache: z.string(),
           userData: z.string(),
+          /** CDP 连接地址（`ws://127.0.0.1:<port>/devtools/browser/...`）—— 供
+           *  `playwright-cli attach --cdp=<它>` 驱动真实窗口（设置页「复制调试信息」用）。
+           *  Electron 以 `--remote-debugging-port=0` 启动时端口写在 userData/DevToolsActivePort；
+           *  未启用 CDP / 文件不在（serve 模式）时为空串，不编造。 */
+          cdp: z.string(),
           electron: z.string(),
           node: z.string(),
           chrome: z.string(),
@@ -706,7 +774,7 @@ export const apiDef = RpcSchema.router({
                     .enum(["next-step", "next-turn"])
                     .optional()
                     .cliOption({
-                      desc: "给出则把消息入队（next-step=下一个模型步前生效；next-turn=本轮收尾后的下一轮开场；两者都整批投）；省略则立即开一轮",
+                      desc: "给出则把消息入队（next-step=下一个模型步前生效；next-turn=本轮收尾后的下一轮开场；两者都整批投；**该任务没有轮次在跑时，入队即用队列开一轮发出**）；省略则立即开一轮",
                     }),
                   // 下面两项是**临时覆盖**，不写配置：模型/参数的真源是任务绑定的人物
                   // （diy agent persona …）。UI 不传，留着是给 CLI/调试临时试模型用。
@@ -745,6 +813,37 @@ export const apiDef = RpcSchema.router({
                       subscribers: z.number().describe("此刻观察该会话的订阅者数（chat 流 + op 订阅）"),
                     }),
                   ),
+                }),
+              }),
+              /**
+               * **一轮的进度**（**形式无关**的读口；owner ##166 第三轮口径第 2 条）。
+               *
+               * 口径原话：给 `(memberUri, turnId)` 返回该轮的进度块流，「供 UI 渲染，且能复用任务对话那套」。
+               * 这里以 **taskUri** 为键 —— `memberUri` 是 room 侧的叫法（成员表负责映射），
+               * 读口本身**不绑 room**：五种「多 session 观察」布局、任务对话页、CLI 都吃同一份。
+               *
+               * 与 `room.turn` 的分工：那条是 room 的**便利口**（按事件 id 取，省得调用方自己查 ref），
+               * 这条是底座（任何持有 (会话, 轮次) 的消费方都能取）。
+               */
+              turn: RpcSchema.unary({
+                desc: `取某个会话某一轮的进度：块流 + L1 状态（在跑吗 / 在做什么 / 第几步）`,
+                input: {
+                  taskUri: z.string().cliArg({ desc: "任务 URI（= 会话）" }),
+                  turnId: z.string().cliArg({ desc: "轮次 id（如 t1792252594279；事件 ref 或会话流里给）" }),
+                },
+                output: z.object({
+                  taskUri: z.string(),
+                  turnId: z.string(),
+                  /** 该轮的块树（找不到 = null：会话被清空 / 被 compact / turnId 写错） */
+                  turn: z.any().nullable(),
+                  /** 该会话此刻是否有轮次在跑（会话注册表口径，不靠日志猜） */
+                  live: z.boolean(),
+                  /** 会话注册表条目（L1 真源：steps / tokens / startedAt / state / viewers / queue / lastEndReason） */
+                  entry: z.any().nullable(),
+                  /** 此刻在干什么（未闭合块的判据；空闲 = null） */
+                  action: z.object({ kind: z.string(), label: z.string() }).nullable(),
+                  /** 服务端时刻（epoch ms）：「已用时长」的基准，别用消费端时钟 */
+                  now: z.number(),
                 }),
               }),
               history: RpcSchema.unary({
@@ -874,6 +973,22 @@ export const apiDef = RpcSchema.router({
                     },
                     output: z.array(SteerItemSchema),
                   }),
+                  flush: RpcSchema.serverStream({
+                    desc: `
+                    立即发送：把队列整批**现在就送出去**，不等下一轮 / 下一步的时机
+
+                    差在"现在"能到达哪里：
+                      · 有轮次在跑 → 全部加急为 next-step（下一个模型步之前注入）；
+                      · 没有轮次   → 立刻开一轮，队列内容作开场白。
+                    只有"开了一轮"时才有 Op 流（JSONL）；加急分支不产 op（队列快照另拉）。
+                    `,
+                    input: {
+                      taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                      model: z.string().optional().cliOption({ desc: `临时覆盖模型（缺省 = 任务当前人物的模型）` }),
+                      reasoningEffort: z.string().optional().cliOption({ desc: "临时覆盖推理强度（缺省 = 人物配置）" }),
+                    },
+                    output: z.string(),
+                  }),
                 },
               }),
               models: RpcSchema.unary({
@@ -979,12 +1094,23 @@ export const apiDef = RpcSchema.router({
                 output: z.array(z.any()),
               }),
               /**
-               * 压缩会话上下文（**不删任何历史**）：写一条边界账 `<key>.compact.jsonl`，
-               * 投递时只发边界之后的轮 + 按策略裁工具输出。旧内容原地保留、可查、可撤销。
-               * 与 `clear`（物理删所有日志）语义正交 —— 这里是「少发」，那里是「销毁」。
+               * 压缩（compact）命令族。**升为 group 的理由**（##344 M2）：规格要求
+               * `compact plan get|set|check`（`docs/plans/2026-10-08-compact-plan-config.md` §⑦.1），
+               * 而 RPC 树的不变量是「一个节点要么是组、要么是叶子」—— 只有 `compact` 成为 group，
+               * 才能容下 `plan` 子命令。旧平铺名随之归位：`compact` → `compact.run`、
+               * `compactPreview` → `compact.preview`、`undoCompact` → `compact.undo`、
+               * `compactEvents` → `compact.events`、`summarize` → `compact.summarize`。
                */
-              compact: RpcSchema.unary({
-                desc: `压缩会话上下文（按字节预算保留历史 + 可选裁剪工具输出；历史原地保留可撤销）`,
+              compact: RpcSchema.group({
+                desc: `压缩会话上下文（按配置的装配管道保留历史 + 裁剪工具输出；历史原地保留可撤销）`,
+                children: {
+                /**
+                 * 压缩会话上下文（**不删任何历史**）：写一条压缩账 `<key>.compact.jsonl`，
+                 * 投递时只发管道挑选出的消息 + 按各级 clip 裁工具输出。旧内容原地保留、可查、可撤销。
+                 * 与 `clear`（物理删所有日志）语义正交 —— 这里是「少发」，那里是「销毁」。
+                 */
+                run: RpcSchema.unary({
+                desc: `执行压缩（按当前配置的装配管道保留历史 + 裁剪工具输出；历史原地保留可撤销）`,
                 input: {
                   taskUri: z.string().cliArg({ desc: "任务 URI" }),
                   budgetBytes: z
@@ -1007,16 +1133,109 @@ export const apiDef = RpcSchema.router({
                 },
                 output: z.any(),
               }),
-              /**
-               * 生成历史摘要（压缩承接）：对**将被丢弃的轮**做一次结构化抽取（一次模型调用，花钱）。
-               * 与 compact 分开：摘要是可选增强、且要用户显式掏钱；compact 本身不调模型。
-               */
-              summarize: RpcSchema.unary({
-                desc: `生成历史摘要（对将被丢弃的轮做结构化抽取；一次模型调用）`,
-                input: {
-                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                /** 压缩预览：只算不写（panel 的「事实」行与预览页都用它；与真发同一份纯函数） */
+                preview: RpcSchema.unary({
+                  desc: `预览压缩效果（只算不写；返回 base/mod 请求 / 前后规模 / 丢弃轮明细 / 裁剪明细 / 分层费用 facts）`,
+                  input: {
+                    taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                    budgetBytes: z
+                      .number()
+                      .optional()
+                      .cliOption({ desc: "【新】历史消息可占字节上限（0 = 清零）" }),
+                    toolResult: z.enum(["asis", "headtail", "callpath"]).optional().cliOption({ desc: "工具结果的处理方式（asis/headtail/callpath）" }),
+                    triggerLines: z.number().optional().cliOption({ desc: "头尾裁剪阈值行数" }),
+                    headLines: z.number().optional().cliOption({ desc: "头尾裁剪保留头行数" }),
+                    tailLines: z.number().optional().cliOption({ desc: "头尾裁剪保留尾行数" }),
+                    maxLineChars: z.number().optional().cliOption({ desc: "单行超长截断阈值" }),
+                    maxKeepBytes: z.number().optional().cliOption({ desc: "保留总量字节兜底" }),
+                    summary: z.boolean().optional().cliOption({ desc: "是否算摘要" }),
+                    summaryText: z.string().optional().cliOption({ desc: "已生成的摘要文本（缺省用占位骨架）" }),
+                  },
+                  output: z.any(),
+                }),
+                /**
+                 * 装配管道（plan）的**读写与校验**（##344 M2）：把「留什么 / 怎么裁」从代码内置
+                 * 升级为 `$DIY_HOME/auto-compact.yaml` 的 `history.keep[]`（级列表）。
+                 * 形状与校验真源：`shared/context/compact-keep.ts`；规格：
+                 * `docs/plans/2026-10-08-compact-plan-config.md` §③/§④。
+                 * 与 `autoCompactSetConfig`（写整份配置的任意子集）分开：这三条**只谈 plan**，
+                 * 且 `set` 走「校验后才写」（非法 ⇒ 拒绝且不动文件）。
+                 */
+                plan: RpcSchema.group({
+                  desc: `历史装配管道（级列表 history.keep[]）：读当前生效 plan / 校验后写入 / 合法性检查`,
+                  children: {
+                    get: RpcSchema.unary({
+                      desc: `读当前生效的装配管道（含来源：配置 or 缺省回落；附真源原文）`,
+                      input: { taskUri: z.string().cliArg({ desc: "任务 URI（真源是全局配置，此参数用于上下文与 check）" }) },
+                      output: z.any(),
+                    }),
+                    set: RpcSchema.unary({
+                      desc: `写入装配管道（YAML/JSON 级列表；**校验通过才写**，非法则拒绝且不改文件）`,
+                      input: {
+                        taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                        keep: z
+                          .string()
+                          .cliArg({ readFile: true, desc: "级列表**文件路径**（内容为 YAML/JSON 数组或 `{keep: [...]}`；`-` = 读 stdin）" }),
+                      },
+                      output: z.any(),
+                    }),
+                    check: RpcSchema.unary({
+                      desc: `校验装配管道（级类型 / clip 形状 / must 层是否撑爆硬上限）；不合法 ⇒ exit 1`,
+                      input: {
+                        taskUri: z.string().cliArg({ desc: "任务 URI（用于量 must 级实占字节）" }),
+                        keep: z
+                          .string()
+                          .optional()
+                          .cliArg({ readFile: true, desc: "待校验的级列表**文件路径**（缺省 = 校验盘上配置；`-` = 读 stdin）" }),
+                      },
+                      output: z.any(),
+                    }),
+                    /**
+                     * 重置为**出厂缺省**（##363 M3a 补）：删 `history.keep[]` 键（不写死缺省字面量 ——
+                     * 删键才能跟随将来缺省演进）。**不依赖任何快照**，是快照全坏时的逃生窗口。
+                     * reset 前先把旧 keep 存一份快照 ⇒ reset 也能被 `restore` 回滚；其余字段不动。
+                     */
+                    reset: RpcSchema.unary({
+                      desc: `重置装配管道为**出厂缺省**（删 history.keep[]；不依赖快照的逃生窗口；mode/triggers/policy/allowAgentWrite 保留）`,
+                      input: { taskUri: z.string().cliArg({ desc: "任务 URI" }) },
+                      output: z.any(),
+                    }),
+                  },
+                }),
+
+                /** 撤销一次压缩（append-only 的 undo 标记；不删账，可审计） */
+                undo: RpcSchema.unary({
+                  desc: `撤销一次压缩（按压缩 id；恢复为上一次生效边界）`,
+                  input: {
+                    taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                    ref: z.string().cliArg({ desc: "压缩 id（见 compactEvents 或 compact 返回）" }),
+                  },
+                  output: z.object({ undone: z.boolean() }),
+                }),
+                /**
+                 * 压缩事件账（历史页数据源）：**不可变快照列表**。
+                 * 每条自带**算法**（`policy.mode`）与**当时整条 plan**（v3 起：`plan` 快照 ⇒ 可回放
+                 * 「那一刻用的是哪套 plan」）。【用户 2026-10-07】取代 generations（连续分代不适合预算的分散保留）。
+                 */
+                events: RpcSchema.unary({
+                  desc: `读取压缩事件账（历史页快照列表：时间/算法/过滤器/前后规模/方式·理由）`,
+                  input: {
+                    taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                  },
+                  output: z.array(z.any()),
+                }),
+                /**
+                 * 生成历史摘要（压缩承接）：对**将被丢弃的轮**做一次结构化抽取（一次模型调用，花钱）。
+                 * 与 run 分开：摘要是可选增强、且要用户显式掏钱；压缩本身不调模型。
+                 */
+                summarize: RpcSchema.unary({
+                  desc: `生成历史摘要（对将被丢弃的轮做结构化抽取；一次模型调用）`,
+                  input: {
+                    taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                  },
+                  output: z.any(),
+                }),
                 },
-                output: z.any(),
               }),
               /**
                * 自动压缩检测（只读）：三个**确定事实**（系统上下文变 / 缓存过期 / 窗口超限）
@@ -1050,47 +1269,6 @@ export const apiDef = RpcSchema.router({
                 },
                 output: z.any(),
               }),
-              /** 压缩预览：只算不写（panel 的「事实」行与预览页都用它；与真发同一份纯函数） */
-              compactPreview: RpcSchema.unary({
-                desc: `预览压缩效果（只算不写；返回 base/mod 请求 / 前后规模 / 丢弃轮明细 / 裁剪明细 / 分层费用 facts）`,
-                input: {
-                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
-                  budgetBytes: z
-                    .number()
-                    .optional()
-                    .cliOption({ desc: "【新】历史消息可占字节上限（0 = 清零）" }),
-                  toolResult: z.enum(["asis", "headtail", "callpath"]).optional().cliOption({ desc: "工具结果的处理方式（asis/headtail/callpath）" }),
-                  triggerLines: z.number().optional().cliOption({ desc: "头尾裁剪阈值行数" }),
-                  headLines: z.number().optional().cliOption({ desc: "头尾裁剪保留头行数" }),
-                  tailLines: z.number().optional().cliOption({ desc: "头尾裁剪保留尾行数" }),
-                  maxLineChars: z.number().optional().cliOption({ desc: "单行超长截断阈值" }),
-                  maxKeepBytes: z.number().optional().cliOption({ desc: "保留总量字节兜底" }),
-                  summary: z.boolean().optional().cliOption({ desc: "是否算摘要" }),
-                  summaryText: z.string().optional().cliOption({ desc: "已生成的摘要文本（缺省用占位骨架）" }),
-                },
-                output: z.any(),
-              }),
-              /** 撤销一次压缩（append-only 的 undo 标记；不删账，可审计） */
-              undoCompact: RpcSchema.unary({
-                desc: `撤销一次压缩（按压缩 id；恢复为上一次生效边界）`,
-                input: {
-                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
-                  ref: z.string().cliArg({ desc: "压缩 id（见 compactEvents 或 compact 返回）" }),
-                },
-                output: z.object({ undone: z.boolean() }),
-              }),
-              /**
-               * 压缩事件账（历史页数据源）：**不可变快照列表**。
-               * 每条自带**算法**（`policy.mode`）与该算法的**过滤器表达** —— 换算法 = 新分支，不混淆。
-               * 【用户 2026-10-07】取代 generations（连续分代不适合预算的分散保留）。
-               */
-              compactEvents: RpcSchema.unary({
-                desc: `读取压缩事件账（历史页快照列表：时间/算法/过滤器/前后规模/方式·理由）`,
-                input: {
-                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
-                },
-                output: z.array(z.any()),
-              }),
             },
           }),
 
@@ -1110,6 +1288,190 @@ export const apiDef = RpcSchema.router({
               byAgent: z.boolean().optional().cliOption({ desc: "按人物+模型+面+档位汇总（多 agent 多行）" }),
             },
             output: z.string(),
+          }),
+        },
+      }),
+
+      /**
+       * 多人房间（room）—— 人 + 多 agent 同室对话的**投递 + 汇总层**。
+       *
+       * 设计真源 ##166 §28：room ≠ session（不承载成员上下文）；成员各自独立会话
+       * （本切片按待决 72 的 (a)：agent 成员绑一个 task 的本地会话）；投递由 `@X` / `focus`
+       * 决定、**协议里没有广播**。开发日志 ##377。
+       */
+      room: RpcSchema.group({
+        desc: `多人房间（人 + 多 agent 同室；room 只做投递 + 汇总，各成员有自己的会话）。**宿主定案（##166 §28.7 G）：room = 任务对话页的状态，id 就是 taskUri** —— 每个任务恒是一个 room（不加人 = 成员表只有主人格）`,
+        children: {
+          list: RpcSchema.unary({
+            desc: `列出全部房间（成员数 / 当前接受者 / 最后一条发言）`,
+            input: {},
+            output: z.object({
+              rooms: z.array(
+                z.object({
+                  id: z.string(),
+                  title: z.string().optional(),
+                  focus: z.string().nullable(),
+                  members: z.number(),
+                  last: z.string().optional().describe("最后一条发言摘要（无发言则缺省）"),
+                }),
+              ),
+            }),
+          }),
+          get: RpcSchema.unary({
+            desc: `读一个房间（成员表 + 最近事件流）`,
+            input: {
+              id: z.string().cliArg({ desc: "任务 URI（= room id；宿主定案后就是任务对话页的那个任务）" }),
+              limit: z.number().optional().cliOption({ desc: "事件条数上限（缺省 200）" }),
+            },
+            output: z.object({
+              room: RoomSchema.nullable(),
+              events: z.array(RoomEventSchema),
+              /** 事件流里的坏行数（>0 = 有半截写入；不隐藏） */
+              badLines: z.number(),
+            }),
+          }),
+          create: RpcSchema.unary({
+            desc: `确保一个任务的 room 存在（幂等；成员表恒含「我」+ 主人格，focus 缺省 = 主人格）`,
+            input: {
+              id: z.string().cliArg({ desc: "任务 URI（= room id）" }),
+              title: z.string().optional().cliOption({ desc: "标题（给人看；缺省取任务标题）" }),
+              human: z.string().optional().cliOption({ desc: "人的显示名（缺省 chen56）" }),
+            },
+            output: RoomSchema,
+          }),
+          addMember: RpcSchema.unary({
+            desc: `加 agent 成员（**高级入口**：手填名字 + 绑一个已有 task；给人物请用 room invite）`,
+            input: {
+              id: z.string().cliArg({ desc: "任务 URI（= room id）" }),
+              name: z.string().cliArg({ desc: "成员名（@ 寻址用）" }),
+              task: z.string().cliOption({ desc: "该成员绑的任务 URI（其会话即它的 backend）" }),
+              persona: z.string().optional().cliOption({ desc: "人物 id（决定它以什么身份/行为说话）" }),
+              role: z.string().optional().cliOption({ desc: "它是干什么的（喂 UI / 将来喂模型）" }),
+            },
+            output: RoomSchema,
+          }),
+          /**
+           * **邀请 = 选人物**（##166 §28.7 F ② / D 的 B 方案）。
+           *
+           * 面板列**人物**（不列 task）：选中人物 ⇒ 为它分配 backend —— 缺省**自动建一个专属
+           * 「影子 task」**（复用现有一切：CLI/RPC/装配/UI，**零内核改动**）；`--task` 是**高级入口**
+           * （指定绑一个已有 task，即原来手填 taskUri 的做法）。
+           *
+           * 护栏：**同一 backend 不得挂两个人物**（= A 帽子，##166 §27 已否）；同一人物可进多个 room。
+           */
+          invite: RpcSchema.unary({
+            desc: `邀请一个**人物**进房间（缺省为它建影子 task 作 backend；--task = 高级入口，绑已有任务）`,
+            input: {
+              id: z.string().cliArg({ desc: "任务 URI（= room id）" }),
+              persona: z.string().cliArg({ desc: "人物 id 或名字（见 agent persona list）" }),
+              task: z.string().optional().cliOption({ desc: "高级：绑这个已有任务（不给则自动建影子 task）" }),
+              role: z.string().optional().cliOption({ desc: "它是干什么的（喂 UI / 将来喂模型）" }),
+            },
+            output: z.object({
+              room: RoomSchema,
+              member: RoomMemberSchema,
+              /** 影子 task（新建时回带 URI —— 成员会话的底座就是它） */
+              taskUri: z.string(),
+              createdTask: z.boolean().describe("backend 是新建的影子 task（false = 复用了已有任务）"),
+            }),
+          }),
+          removeMember: RpcSchema.unary({
+            desc: `移出成员（主人格不可移出 —— 它就是宿主任务本身）`,
+            input: {
+              id: z.string().cliArg({ desc: "任务 URI（= room id）" }),
+              member: z.string().cliArg({ desc: "成员名或 id" }),
+            },
+            output: RoomSchema,
+          }),
+          focus: RpcSchema.unary({
+            desc: `设置当前接受者（不给成员 = 清空；投递只由 @X / focus 决定，无第三方调度器）`,
+            input: {
+              id: z.string().cliArg({ desc: "任务 URI（= room id）" }),
+              member: z.string().optional().cliArg({ desc: "成员名或 id（省略 = 清空 focus）" }),
+            },
+            output: RoomSchema,
+          }),
+          post: RpcSchema.serverStream({
+            desc: `在房间里说一句 —— 解析收件人 → 投递给各 agent（在它自己的会话里真起一轮）→ 回复带署名回写；逐行输出事件（JSONL）`,
+            input: {
+              id: z.string().cliArg({ desc: "任务 URI（= room id）" }),
+              text: z.string().cliArg({ desc: "发言正文（开头 @名字 覆盖当前接受者）" }),
+            },
+            output: z.string(),
+          }),
+          /**
+           * 一条 `reply` 的**进度**（##166 §28.7 A）—— room 不新造进度数据源：
+           * 它只是把「成员会话里的那一轮」取回来（`ref = { memberUri, turnId }`）。
+           * 渲染端拿到的是**块树**，与任务对话走同一个渲染器（`LocalChatPage` 的 `TurnView`）。
+           */
+          /**
+           * 取某一轮的进度块树（**两种寻址**：按 reply 事件 id，或按 `(成员, 轮次)`）。
+           *
+           * 口径（##166 第三轮第 2 条）：给 `(memberUri, turnId)` 返回该轮的进度块流。
+           * 事件寻址是 room 侧的便利形态（reply 事件自带 `ref`），`--member/--turn` 是口径的**字面形态**
+           * （调用方手上只有成员 + 轮次时不必先捞事件）。两者共用同一条底座（`agent.local.turn`）。
+           */
+          turn: RpcSchema.unary({
+            desc: `取某一轮的进度块树（成员会话的引用；room 自己不留进度数据）`,
+            input: {
+              id: z.string().cliArg({ desc: "房间 id" }),
+              event: z
+                .string()
+                .optional()
+                .cliArg({ desc: "reply 事件 id（room get 里给）；与 --member/--turn 二选一" }),
+              member: z.string().optional().cliOption({ desc: "成员 id / 名字（与 --turn 配对）" }),
+              turn: z.string().optional().cliOption({ desc: "轮次 id（与 --member 配对）" }),
+            },
+            output: z.object({
+              /** 那一轮的块树（找不到 = null，UI 如实显示"这一轮已不在会话里"） */
+              turn: z.any().nullable(),
+              /** 成员会话（task uri），供 UI 显示/跳转 */
+              taskUri: z.string(),
+              turnId: z.string(),
+              /** 命中的成员 id（按事件寻址时 = ref.memberUri；按成员寻址时 = 解析出的成员 id） */
+              memberUri: z.string().nullable(),
+              /** 该成员此刻是否正有轮次在跑（决定 UI 是"直播中"还是"已完成"） */
+              live: z.boolean(),
+              /** 会话注册表条目（L1；与 `agent.local.turn` 同一份真源） */
+              entry: z.any().nullable(),
+              /** 此刻在干什么（未闭合块；空闲 = null） */
+              action: z.object({ kind: z.string(), label: z.string() }).nullable(),
+            }),
+          }),
+          /**
+           * 成员**此刻**状态（**L1 状态数据**；owner ##166 第三轮口径第 3 条）。
+           *
+           * 口径原话：「成员此刻在干什么（正在跑哪一步 / 已用时长 / 状态）—— 服务端能给出，不靠 UI 猜」。
+           * 这里把**三份既有真源**合成一份视图，不新造状态：
+           *   · 会话侧 —— 会话注册表条目（`turn.steps` / `startedAt` / `state` / `viewers` …）
+           *   · 进度侧 —— 未闭合块 ⇒「正在 bash · rg -n …」（`local-agent.currentAction`）
+           *   · room 侧 —— 该成员的投递链（`queued` / `running` 条数）
+           *
+           * 纯读、无副作用；任何布局的「头像行状态」都吃这一份（L2 详情另走 `turn`）。
+           */
+          roster: RpcSchema.unary({
+            desc: `房间成员的此刻状态（L1：在跑吗 / 第几步 / 在做什么 / 已用时长 / 排队数）`,
+            input: { id: z.string().cliArg({ desc: "房间 id" }) },
+            output: z.object({
+              room: z.string(),
+              now: z.number().describe("服务端时刻（epoch ms）"),
+              members: z.array(
+                z.object({
+                  memberId: z.string(),
+                  name: z.string(),
+                  avatar: z.string(),
+                  color: z.string(),
+                  role: z.string(),
+                  isHuman: z.boolean(),
+                  focus: z.boolean(),
+                  taskUri: z.string().nullable(),
+                  entry: z.any().nullable().describe("会话注册表条目（人的 / 未绑任务的成员为 null）"),
+                  action: z.object({ kind: z.string(), label: z.string() }).nullable(),
+                  queued: z.number().describe("该成员在投递链上排队的条数（此刻）"),
+                  running: z.number().describe("该成员正在跑的投递条数（单成员串行 ⇒ 0 或 1）"),
+                }),
+              ),
+            }),
           }),
         },
       }),
@@ -1258,12 +1620,22 @@ export const apiDef = RpcSchema.router({
             output: StatsSchema,
           }),
           changelog: RpcSchema.unary({
-            desc: `变更历史：每轮真发一条变更事件（op + path + 一行值预览，old→new 由回放得出），附该轮 ref（当轮划分 / 缓存率 / 金额）`,
+            desc: `变更历史：每步**有变才写**（每段会话起点给一条 baseline 整棵树）；变更单位 = 原子单元，before/after 自带；附 ref（当轮划分 / 缓存率 / 金额）`,
             input: {
               taskUri: z.string().cliArg({ desc: "任务 URI" }),
               limit: z.number().optional().cliOption({ desc: "只看最近 N 轮（缺省全部）" }),
             },
             output: CtxLogSchema,
+          }),
+          rebaseline: RpcSchema.unary({
+            desc: `重置变更历史的起点：该任务**下一步真发**时写一条新 baseline（整棵树）。临时手工入口 —— 会话注册表/关停启动机制落地后改由「会话启动」自动触发，本命令留作调试`,
+            input: {
+              taskUri: z.string().cliArg({ desc: "任务 URI" }),
+            },
+            output: z.object({
+              ok: z.boolean().describe("是否已置位（true = 下一步真发落新起点）"),
+              message: z.string().describe("给用户看的一句话（本轮下次真发生效；当轮已开跑则下一轮）"),
+            }),
           }),
           diff: RpcSchema.unary({
             desc: `某步 vs 上一步的 diff；不给 --step 则是「当前变量树 vs 最后一步」（main 侧算完）`,
@@ -1352,13 +1724,46 @@ export const apiDef = RpcSchema.router({
             }),
           }),
           logFiles: RpcSchema.unary({
-            desc: `列出磁盘上的流量日志文件、日期与总体积（头部「日志大小」/ 日期过滤用）`,
+            desc: `列出磁盘上的流量日志文件、日期与总体积（头部「日志大小」/ 日期过滤 / 清理面板用）`,
             input: {},
             output: z.object({
               dir: z.string(),
               files: z.array(z.string()),
               dates: z.array(z.string()).describe("出现过的日期（新的在前）"),
               bytes: z.number().describe("日志目录总字节数"),
+              detail: z
+                .array(
+                  z.object({
+                    file: z.string(),
+                    date: z.string(),
+                    bytes: z.number(),
+                    mtimeMs: z.number(),
+                    today: z.boolean().describe("当天文件（正在写入 → 不可清理）"),
+                  }),
+                )
+                .describe("逐文件详情（清理面板：列文件 + 显示占用）"),
+            }),
+          }),
+          cleanLogs: RpcSchema.unary({
+            desc: `清理磁盘流量日志（删整个按天文件）。files 或 keepDays 二选一；今天正在写入的文件一律不删；dryRun 只算不删`,
+            input: {
+              files: z
+                .array(z.string())
+                .optional()
+                .cliOption({ desc: `要删的文件（相对 DIY_HOME），JSON 数组如 '[\"log/network/2026-10-01.jsonl\"]'` }),
+              keepDays: z
+                .number()
+                .int()
+                .min(1)
+                .optional()
+                .cliOption({ desc: "只留最近 N 天（含今天），删更早的日期文件" }),
+              dryRun: z.boolean().optional().cliOption({ desc: "试运行：只统计将删什么 / 释放多少，不动磁盘" }),
+            },
+            output: z.object({
+              deleted: z.array(z.string()).describe("真删掉的文件"),
+              freedBytes: z.number().describe("释放的字节数"),
+              skipped: z.array(z.object({ file: z.string(), reason: z.string() })).describe("被跳过的（附原因）"),
+              remaining: z.object({ files: z.number(), bytes: z.number() }).describe("清理后剩余（文件数 / 字节）"),
             }),
           }),
           revealLog: RpcSchema.unary({
@@ -1420,7 +1825,7 @@ export const apiDef = RpcSchema.router({
               provider: z.string().cliArg({ desc: "provider（裸 id 或 custom:<id>）" }),
               model: z.string().cliArg({ desc: "模型 id（见 llmConfig costs）" }),
               target: z.enum(["auto", "spec", "override"]).default("auto").cliOption({ desc: "落点：spec=providers.custom.yaml · override=model.yaml" }),
-              input: z.number().nonnegative().optional().cliOption({ desc: "非缓存输入 $/1M" }),
+              input: z.number().nonnegative().optional().cliOption({ desc: "非缓存 $/1M" }),
               output: z.number().nonnegative().optional().cliOption({ desc: "输出 $/1M" }),
               cacheRead: z.number().nonnegative().optional().cliOption({ desc: "缓存读 $/1M" }),
               cacheWrite: z.number().nonnegative().optional().cliOption({ desc: "缓存写 $/1M" }),
@@ -1470,10 +1875,10 @@ export const apiDef = RpcSchema.router({
       }),
 
       seed: RpcSchema.group({
-        desc: `初始数据种入（preview/lab 空数据根；幂等，已存在不动）`,
+        desc: `初始数据种入（lab 空数据根；幂等，已存在不动）—— 只种**示例/测试数据**，真配置由 ./sha.sh sync 同步`,
         children: {
           run: RpcSchema.unary({
-            desc: `种入最小可用数据：opencode-go 模型配置 + 缺省人物（mimo-v2.6-flash）+ 示例项目与任务`,
+            desc: `种入最小可用数据：opencode-go 模型配置（$VAR 占位）+ 缺省人物（缺省模型：free 优先 → 退 ${FALLBACK_MODEL}）+ 示例项目与任务`,
             input: {},
             output: SeedReportSchema,
           }),
@@ -1774,6 +2179,58 @@ export const apiDef = RpcSchema.router({
       }),
 
       /**
+       * 实例大盘（Main 域）——「本机现在有哪些 diy 实例在跑、各自是谁、在干什么」。
+       *
+       * 发现靠**扫进程**（没有实例索引，见 services/instances.ts 文件头），
+       * 「谁开的」靠启动时写进注册表（`~/.diy-instances/<pid>.json`，事后再追父链追不出来），
+       * 数据根/端口靠**活体自报**（环境变量是继承来的，不等于真根）。
+       */
+      instances: RpcSchema.group({
+        desc: `实例大盘（扫描本机 diy 实例 + 唤起指定实例）`,
+        children: {
+          ls: RpcSchema.unary({
+            desc: `列出本机所有 diy 实例（对齐表格文本，供人读；程序读请用 instances.list）`,
+            input: {},
+            output: z.string().describe("表格文本（含表头与汇总行）"),
+          }),
+          list: RpcSchema.unary({
+            desc: `列出本机所有 diy 实例（结构化行，供 UI / 程序消费）`,
+            input: {},
+            output: z.object({ rows: z.array(InstanceRowSchema) }),
+          }),
+          self: RpcSchema.unary({
+            desc: `本实例自报身份 + 活跃会话 + 窗口状态（别的实例扫描时调用；无窗口实例 window=null）`,
+            input: {},
+            output: InstanceSelfSchema,
+          }),
+          reveal: RpcSchema.unary({
+            desc: `唤起**本**实例窗口（重建 + 前置 + 全屏；由别的实例的 instances.focus 调用）`,
+            input: {},
+            output: RevealResultSchema,
+          }),
+          focus: RpcSchema.unary({
+            desc: `
+            唤起指定实例（窗口前置 + 全屏）
+
+            主路 = 让目标实例**自己** show+focus+setFullScreen（RPC，确定且无需系统权限）；
+            RPC 不可用（无端口 / 无响应）时降级 osascript（需 Automation 权限，可能弹窗）。
+            两路都失败即报错 —— 不静默吞。
+            `,
+            input: {
+              pid: z.number().optional().cliOption({ desc: "目标实例 pid（与 --port 二选一）" }),
+              port: z.number().optional().cliOption({ desc: "目标实例 RPC 端口（与 --pid 二选一）" }),
+            },
+            output: z.object({
+              pid: z.number().nullable(),
+              port: z.number().nullable(),
+              via: z.string().describe("rpc（目标实例自己唤起）| osascript（系统级降级）"),
+              reason: z.string(),
+            }),
+          }),
+        },
+      }),
+
+      /**
        * 文件系统变更推送（Main 域）。
        *
        * ⚠️ 必须在 diy.* 而非 diy.ui.*：实现是 main 侧的 FileWatcher（renderer 只是订阅方），
@@ -1791,6 +2248,46 @@ export const apiDef = RpcSchema.router({
               event: z.string().describe("变更类型：task-change（projects/ 下任务树相关变更）"),
               ts: z.number().describe("变更发生时间戳（ms）"),
             }),
+          }),
+        },
+      }),
+
+      /**
+       * 「模型不可用」通知（##369 ①）。Main 本地域（判据在 main 侧：只有真发失败的那一刻
+       * 才拿得到状态码与上游原文），renderer 订阅 `watch` 出顶栏 bar。
+       *
+       * 数据定性 = cache（进程内存 ring，重启即空）：它描述"此刻有什么坏了"，不是历史账；
+       * 追溯去看会话流与 ~/.diy/log/network/*.jsonl。
+       */
+      notice: RpcSchema.group({
+        desc: `模型不可用通知（真发失败时产生；含人物 + 模型 + 上游原文）`,
+        children: {
+          /** 未关闭的通知，时间升序（CLI `diy notice list` 直接读它） */
+          list: RpcSchema.unary({
+            desc: `列出当前未关闭的「模型不可用」通知`,
+            input: {},
+            output: z.array(ModelUnavailableNoticeSchema),
+          }),
+          /**
+           * 关闭 = "我知道了"：从 ring 移除，此后重连不再回放。
+           * 为什么必须落 main 侧：只关界面的话，下一次重连的回放会把同一条又推回来 ——
+           * 用户点了 ✕ 却关不掉的提示等于没关（bar 上"可关闭"是硬要求）。
+           * 不给 id = **全关**（bar 一次只展示最新一条，点 ✕ 的语义就是"这波我都知道了"）。
+           */
+          dismiss: RpcSchema.unary({
+            desc: `关闭通知（给 id 关一条；不给 = 全部关闭）`,
+            input: { id: z.string().optional().cliArg({ desc: "通知 id（缺省 = 全部关闭）" }) },
+            output: StatusOk,
+          }),
+          /**
+           * 通知流：**订阅即回放**当前未关闭的通知，之后是增量。
+           * 回放是刻意的：页面重载 / 断线重连后 bar 要能自己回来（用户重开窗口正是最容易
+           * 错过提示的时刻），所以"当前事实"必须随订阅给全，而不是只推增量。
+           */
+          watch: RpcSchema.serverStream({
+            desc: `通知流（订阅回放现存 + 增量推送；顶栏 bar 的数据源）`,
+            input: {},
+            output: ModelUnavailableNoticeSchema,
           }),
         },
       }),
@@ -2067,6 +2564,13 @@ export const apiDef = RpcSchema.router({
                 },
                 output: StatusDataId,
               }),
+              remove: RpcSchema.unary({
+                desc: `删除项目（UI 入口；连带其下全部任务，不可恢复 —— 回收站见 ##138）`,
+                input: {
+                  id: z.string().cliArg({ desc: "project id" }),
+                },
+                output: StatusDataId,
+              }),
             },
           }),
 
@@ -2100,6 +2604,13 @@ export const apiDef = RpcSchema.router({
                 input: {
                   uri: z.string().cliArg({ desc: "任务 URI" }),
                   state: TaskStateSchema.cliArg({ desc: "新状态" }),
+                },
+                output: StatusDataUri,
+              }),
+              delete: RpcSchema.unary({
+                desc: `删除任务（UI 入口；仅删本条，子任务失父升为一级任务，不可恢复 —— 回收站见 ##138）`,
+                input: {
+                  uri: z.string().cliArg({ desc: "任务 URI" }),
                 },
                 output: StatusDataUri,
               }),

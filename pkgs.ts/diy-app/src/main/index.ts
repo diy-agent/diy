@@ -31,8 +31,8 @@ setDefaultResultOrder("ipv4first");
 console.log('[net] 已钉死 IPv4 优先（setDefaultResultOrder("ipv4first")）：本机无 IPv6 出口，避免 AAAA 排头时 ENETUNREACH');
 import { fileURLToPath } from "node:url";
 import { mkdirSync } from "node:fs";
-import type { ServerBinding } from "@diy/rpc";
-import { createMainTransport } from "@diy/rpc/electron";
+import type { ServerBinding } from "@diy-agent/rpc";
+import { createMainTransport } from "@diy-agent/rpc/electron";
 import { RpcPortService } from "./services/rpc-port";
 import { AppConfig } from "./core/app-config";
 import { bindApi, bindAppHandlers, setRpcPort } from "./services/api-impl";
@@ -44,6 +44,11 @@ import { readRuntimeConfig, resolvePort } from "../runtime";
 import { instanceTitle } from "../shared/instance-title";
 import { cliEntryForRepo, findRepoRoot, homeDisplayOf, repoDisplayOf } from "./core/instance-identity";
 import { SINGLETON_LOCK, classifyLock, lockAdvice, readLock } from "./core/single-instance";
+// 实例注册表 + 窗口能力注入（##366）：注册表让「本机有哪些实例」可枚举、「谁开的」在启动瞬间落档；
+// window-ops 让 RPC 层能请出本实例窗口而不 import Electron（serve 模式不注入 ⇒ 如实报「无窗口」）。
+import { dropSelfRecord, setSelfPort, writeSelfRecord } from "./services/instances";
+import { setWindowOps } from "./services/window-ops";
+import type { InstanceSelf, RevealResult } from "../shared/instance-row";
 
 // Chromium 开关必须走 app.commandLine（ready 之前），跟在 app 路径后传 argv 无效。
 // 之前 cli/electron-dev 把 --disable-features=RustPng 放 spawn argv 里，Chromium 根本没吃到，rust_png 照崩。
@@ -100,6 +105,21 @@ installDiagnostics(appConfig.diyHome);
 traffic.init();
 // 原生崩溃采集：Crashpad minidump → <DIY_HOME>/log/crashes + 子进程消亡日志进 main.log
 installCrashReporting(appConfig.diyHome);
+
+// ── 1.5 实例注册表（##366）──
+// **启动瞬间**写自己那一条：「谁开的 / 从哪个 worktree / 什么变体」只有此刻能拿到 ——
+// 实测生产实例事后 `ppid=1`（启动它的 CLI 早退了、被 launchd 接管），父链永久丢失。
+// 端口未就绪，先记 null，startRpcPort 成功后回填（setSelfPort）。
+// 失败不阻断启动：注册表只服务「实例大盘」，不该成为起不来的理由。
+try {
+  writeSelfRecord({
+    diyHome: appConfig.diyHome,
+    variant: process.env["DIY_VARIANT"] ?? "prod",
+    env: cfg.env,
+  });
+} catch (e) {
+  console.warn("[diy] 实例注册表写入失败（不影响启动）:", e);
+}
 
 // GPU 防御性开关：诊断设施就绪后再探测，保证 [gpu] 日志进 main.log。仍在 ready 之前，appendSwitch 有效。
 try {
@@ -187,7 +207,7 @@ function mirrorWindowPos(
     // 命中时统一内缩一点，让窗口出生就是普通窗口。
     // ⚠️ 宽度**不**内缩，只内缩高度（##297）：宽度一旦掉到 Tailwind 的 lg 断点（1024）以下，
     // App 根节点的 `lg:drawer-open`（App.tsx）就失效 → DaisyUI 抽屉关闭、侧栏被挪到画面外
-    // （实测 x=-224 / visibility:hidden）。宽 1024 的屏上 dev/preview/lab 窗口正好 1024−48=976，
+    // （实测 x=-224 / visibility:hidden）。宽 1024 的屏上 dev/lab 窗口正好 1024−48=976，
     // 掉进去 —— 当时侧栏**没有任何可见的打开入口**，7 个 nav 意图测试全红。
     // 窄窗本身已有兜底（##297：`.diy-nav-rail` 让 rail 常驻占列 + ◉ 点开浮层，见 index.css
     // 与 App.tsx 的 NARROW_MQ），但窄窗终究只剩 40px rail，不如完整侧栏 —— 宽度没必要牺牲。
@@ -239,7 +259,7 @@ function applyWindowTitle(): void {
   console.log(`[diy] 窗口标题: ${title}`);
 }
 
-function createWindow(): { binding: ServerBinding; ipcTransport: import("@diy/rpc").EnvelopeTransport } {
+function createWindow(): { binding: ServerBinding; ipcTransport: import("@diy-agent/rpc").EnvelopeTransport } {
   const WIDTH = 1200;
   const HEIGHT = 800;
   // 窗口标题 = 实例标识（`diy(<数据根>) [dev|test] <分支> :<端口> pid <PID>`）。
@@ -336,7 +356,7 @@ app.on("render-process-gone", (_event, webContents, details) => {
 
 // ── RPC 端口服务（外部 CLI 接入） ──
 
-async function startRpcPort(ipcTransport: import("@diy/rpc").EnvelopeTransport): Promise<boolean> {
+async function startRpcPort(ipcTransport: import("@diy-agent/rpc").EnvelopeTransport): Promise<boolean> {
   // 裁决逻辑（含「非生产不沿用记录里的 18888」）在 runtime.ts::resolvePort —— 纯函数、可单测。
   const resolved = resolvePort({
     env: cfg.env,
@@ -358,6 +378,7 @@ async function startRpcPort(ipcTransport: import("@diy/rpc").EnvelopeTransport):
     await rpcPort.start(bindAppHandlers, appConfig, preferredPort, ipcTransport);
     httpPort = rpcPort.port;
     setRpcPort(httpPort); // getAppInfo 走 RPC，端口需回填给 api-impl
+    setSelfPort(httpPort); // 注册表回填端口：CLI / 别的实例据此找到我（##366）
     return true;
   } catch (err: any) {
     if (err?.code === "EADDRINUSE") {
@@ -372,6 +393,7 @@ async function startRpcPort(ipcTransport: import("@diy/rpc").EnvelopeTransport):
       await rpcPort.start(bindAppHandlers, appConfig, 0, ipcTransport);
       httpPort = rpcPort.port;
       setRpcPort(httpPort);
+      setSelfPort(httpPort);
       console.log(`  RPC Port:     http://127.0.0.1:${httpPort} (random)`);
       return true;
     } catch (e) {
@@ -388,6 +410,9 @@ app.whenReady().then(async () => {
   // CLI 连接时会桥接到 IPC transport，故 IPC 必须就绪
   const { binding, ipcTransport } = createWindow();
   ipcBinding = binding;
+  // 窗口能力注入（##366）：`instances.reveal`（跨实例唤起）与 `instances.self`（自报窗口状态）
+  // 走这里 —— RPC 层不 import Electron（serve 模式也要能加载 api-impl）。
+  setWindowOps({ reveal: () => revealWindow(), state: () => currentWindowState() });
 
   const ok = await startRpcPort(ipcTransport);
   // 端口已定（含 EADDRINUSE 后的随机端口兜底）→ 重设标题补上 `:<port>`
@@ -429,6 +454,9 @@ app.on("window-all-closed", () => {
 // 无需为「以后还要用」留口子（window-all-closed 才 destroy，因为那时进程还活着）。
 app.on("before-quit", () => {
   rpcPort?.stop();
+  // 注册表清理：正常退出即删自己的条目。**但不能只靠它** —— SIGKILL / 崩溃时这里不会跑，
+  // 故读侧（core/instance-registry.ts::readRecords）一律按 pid 存活过滤并顺手删死者。
+  dropSelfRecord();
 });
 
 /**
@@ -470,4 +498,33 @@ function ensureWindow(): void {
   rpcPort?.setRendererTransport(ipcTransport);
   loadMainApp();
   console.log("[diy] 窗口已重建（diy.ui.* 转发已切到新窗口）");
+}
+
+/** 当前窗口状态（`instances.self` 自报用）；无窗口 → null（serve 模式 / 窗口已关） */
+function currentWindowState(): InstanceSelf["window"] {
+  const win = BrowserWindow.getAllWindows()[0];
+  if (!win) return null;
+  return { visible: win.isVisible(), fullScreen: win.isFullScreen(), minimized: win.isMinimized() };
+}
+
+/**
+ * 请出本实例窗口（`instances.reveal`）—— 别的实例的 `instances.focus` 最终落到这里。
+ *
+ * 三件事缺一不可：① 窗口没了要**重建**（窗口关了但进程常驻是常态）；② `app.focus({steal:true})`
+ * 才能真正把 app 提到最前（只 `win.focus()` 在 app 非活动时不够）；③ 全屏（用户的诉求是「切过去」，
+ * 半屏的窗口切过去还得再点一次）。失败如实返回原因，不静默。
+ */
+function revealWindow(): RevealResult {
+  let win = BrowserWindow.getAllWindows()[0];
+  if (!win) {
+    ensureWindow();
+    win = BrowserWindow.getAllWindows()[0];
+  }
+  if (!win) return { ok: false, reason: "窗口不存在且重建失败", fullScreen: false };
+  if (win.isMinimized()) win.restore();
+  app.focus({ steal: true });
+  win.show();
+  win.focus();
+  if (!win.isFullScreen()) win.setFullScreen(true);
+  return { ok: true, reason: "已前置并全屏", fullScreen: true };
 }

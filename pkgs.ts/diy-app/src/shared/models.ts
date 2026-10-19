@@ -12,7 +12,8 @@
 // 约定：本文件禁止 import node:*（renderer 会打进包）。
 
 import type { CalendarTable } from "./calendars";
-import { ratesOf, type EffectiveRates, type ModelCost } from "./usage";
+import { splitQualified } from "./model-config";
+import { ratesOf, type EffectiveRates, type ModelCost, type PriceBasis } from "./usage";
 
 /**
  * 模型走的 API 面。**由 npm 字段解析**（provider 级 `npm` 默认 + 模型级 `provider.npm` 覆写）：
@@ -141,6 +142,100 @@ export function findModel(refOrId: string): ResolvedModel | undefined {
     return new Set(hits.map((h) => h.provider)).size === 1 ? hits[0] : undefined;
 }
 
+/**
+ * 上游回执的模型标识 → 候选模型 id（**先精确后宽松**，去重；匹配到第一个即止，不猜）。
+ *
+ * 回执给什么**不由我们决定**，实测三种形状都出现过（##372 取证）：
+ *   · 裸 id            `deepseek-v4.1-flash`
+ *   · vendor 前缀 id   `deepseek/deepseek-v4.1-flash`（目录里存的是 `deepseek-v4.1-flash`）
+ *   · 完全限定名       `0@opencode-go/deepseek-v4.1-flash`（目录里 id 是第三段）
+ * 故逐级剥壳：原样 → 去限定段（`acc@prov/x` → `x`）→ 去 vendor 前缀（`vendor/id` → `id`）。
+ * 原样排第一是关键：catalog 里自带 `/` 的 id（如 `xiaomi/mimo-v2.6-flash`）必须优先命中它自己。
+ */
+export function respondedIdCandidates(responded: string | null | undefined): string[] {
+    const s = (responded ?? "").trim();
+    if (!s) return [];
+    const out: string[] = [];
+    const push = (v: string): void => {
+        if (v && !out.includes(v)) out.push(v);
+    };
+    push(s);
+    const q = splitQualified(s);
+    if (q) {
+        push(q.model);
+        const j = q.model.lastIndexOf("/");
+        if (j > 0) push(q.model.slice(j + 1));
+    } else {
+        const i = s.lastIndexOf("/");
+        if (i > 0) push(s.slice(i + 1));
+    }
+    return out;
+}
+
+/** provider 域内按 id 查；同 provider 多账号 → 优先本账号，否则首个（元数据一致，见 findModel 头注） */
+function findInProvider(provider: string, id: string, account?: string): ResolvedModel | undefined {
+    const hits = _catalog.filter((m) => m.provider === provider && m.id === id);
+    if (hits.length === 0) return undefined;
+    if (account !== undefined) {
+        const own = hits.find((m) => m.account === account);
+        if (own) return own;
+    }
+    return hits[0];
+}
+
+/** 一步计价用了哪个模型（诊断 + 账本留痕） */
+export interface PricedModel {
+    /** 用于查价的模型；undefined = 目录里查不到（调用方落 null，**不得当 0**） */
+    model?: ResolvedModel;
+    /**
+     * 计价依据（**语义见 PriceBasis（shared/usage.ts）**，2026-10-17 用户口径后收窄）：
+     *   · `response` —— 命中**上游回执**的模型（正常；上游路由改写时按实际模型计价，##211 §四.4.4）
+     *   · `request`  —— 回执**根本没报模型** → 按**本请求**模型（同 provider/account，非跨家回退）
+     *   · `none`     —— 其余（回执报的模型本家无报价 / 无从归属）→ **无价目**，不得回落
+     */
+    basis: PriceBasis;
+}
+
+/**
+ * 定位**这一步按哪个模型计价**（##372）。
+ *
+ * 病灶：上游回执常给**裸 modelId**，而裸 id 被 ≥2 个 provider 收录时 `findModel` 判歧义 → undefined
+ * → `costOf` 静默 null → 金额被当 0 累加（`deepseek-v4.1-flash` 同时被 opencode-go 与 opencode 收录，
+ * 于是 opencode-go 的会话金额恒为 0）。解法：**把回执模型限定到本请求的 provider/account 再查**
+ * —— 同一 id 在不同 provider 下是**不同商品**，价也可能不同，故限定的是 provider 而不是「随便挑一个」。
+ *
+ * **谁家的模型找谁家的价**（用户口径 2026-10-17）：因此**没有跨家回退** —— 查不到就是查不到
+ * （`basis: "none"` → 调用方落 `cost: null`，UI 显示「—」），绝不拿另一个模型的价冒充、
+ * 也不做「全局挑一家 provider」的猜测。
+ */
+export function findPricedModel(responded: string | null | undefined, requestRef: string): PricedModel {
+    const req = findModel(requestRef);
+    const scope = splitQualified(requestRef);
+    const provider = req?.provider ?? scope?.provider;
+    const account = req?.account ?? scope?.account;
+    const ids = respondedIdCandidates(responded);
+    // ① 按本请求的 provider 限定回执模型（唯一能解歧义的一步）。
+    // 账号段一律取**本请求**的：我们就是拿它发的，回执里的 `acc@` 只是上游回声，不作准
+    //（同 provider 各账号的模型元数据一致，价相同 —— 见 findModel 头注）。
+    if (provider && ids.length > 0) {
+        for (const id of ids) {
+            const m = findInProvider(provider, id, account);
+            if (m) return { model: m, basis: "response" };
+        }
+    }
+    // ② 回执**根本没报模型**（`response.modelId` 缺）→ 按本请求模型算。
+    //    这不是「回退到别家」：`req` 非空即证明请求 ref 就在目录里，价来自**同一 provider/account**，
+    //    只是回执没告诉我们它用了哪个（上游改写与否无从得知，故留痕 `basis:"request"` 供事后翻账）。
+    //    （实测 2026-10-17：`~/.diy` 43186 条 usage **全部**带 `responseModel`，此支目前不触发 ——
+    //     留着是防「某 provider 不回显 model」时把**已知**价目误判成未知。）
+    if (ids.length === 0 && req) return { model: req, basis: "request" };
+    // ③ 其余一律**无价目**（两处都不许猜，用户口径 2026-10-17）：
+    //    · 回执报了**另一个**模型（路由改写）而本家没收录它 —— 拿本请求模型的价顶上＝用别的东西的价冒充；
+    //    · 请求 ref 连 provider 段都没有（裸 id / vendor-id 且不在目录里）—— 无从归属，
+    //      全局 `findModel(id)` 等于「挑一家 provider 猜」（挑到的可能是别家），同禁。
+    return { basis: "none" };
+}
+
 /** 按 model id 查 API 面；未知模型按 chat 处理（不静默换面） */
 export function apiOf(modelId: string): LocalModelApi {
     return findModel(modelId)?.api ?? "chat";
@@ -185,7 +280,15 @@ export function cacheTtlMsOf(modelId: string): number {
  * 见 shared/usage.ts ratesOf。
  */
 export function costOf(modelId: string, promptTokens: number, atMs?: number): EffectiveRates | null {
-    return ratesOf(findModel(modelId)?.cost, promptTokens, atMs, _calendars);
+    return ratesOfModel(findModel(modelId), promptTokens, atMs);
+}
+
+/**
+ * 生效单价（**已解析模型**版）。与 `costOf` 只差入参形状 —— 但**解过歧义的模型必须走这条**：
+ * 拿 `model.ref` 再进 `costOf` 是安全的，拿裸 id 或 `model.id` 回去会**再踩一次歧义**（##372）。
+ */
+export function ratesOfModel(m: ResolvedModel | undefined, promptTokens: number, atMs?: number): EffectiveRates | null {
+    return ratesOf(m?.cost, promptTokens, atMs, _calendars);
 }
 
 /** 该 id 是否在清单内（persona 校验用：写配置时就拦住打错的模型名） */

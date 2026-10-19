@@ -66,7 +66,7 @@ const h = vi.hoisted(() => ({
     silentUntil: 0,
     /** opsWatch 已被调用几次（重订 = 第 2 次） */
     opsWatchN: 0,
-    /** 界面提示（toast）间谍：##327 review1 R1 的"可见性"就断言在它上面 */
+    /** 界面提示（toast）间谍：**恢复**提示仍走它（##354 ③ 只把「故障」改成常驻条，恢复提示不变） */
     addToast: vi.fn(),
 }));
 
@@ -269,8 +269,9 @@ describe("订阅静默（R1）：显示通道坏了不许静默", () => {
         expect(texts(store.trees)).toEqual([]);
         // 但**不许就这样静默**：轮末自检必须发现并重订（main 从 appliedSeq 连续补发）
         expect(h.opsWatchN).toBe(2);
-        const toasts = h.addToast.mock.calls.map((c) => [c[0], String(c[1])] as const);
-        expect(toasts.some(([t, m]) => t === "error" && /实时/.test(m))).toBe(true);
+        // 「发现」的可见性 = 会话区**常驻条**（##354 ③：判据是状态位，不再是一次性 error toast
+        // —— toast 按类型自会消失，故障瞬间切走窗口就错过）。这里断言状态位本身。
+        expect(store.opsState).toBe("down");
     });
 
     it("重订的连续补发把这一轮补齐可见（用户最终看得到，一个字不丢）", async () => {
@@ -282,6 +283,8 @@ describe("订阅静默（R1）：显示通道坏了不许静默", () => {
         await settle(10); // 重订（第 2 次订阅）会立刻推来 (0, N] 的连续补发
 
         expect(texts(store.trees)).toEqual(["大王，先把现场看清楚。"]);
+        // 常驻条随之熄灭（##354 ③：状态位的生命周期与故障等长 —— 恢复了就不该还挂着）
+        expect(store.opsState).toBe("live");
         // 有始有终：恢复也要出声，否则用户不知道"现在可以看实时了"
         const toasts = h.addToast.mock.calls.map((c) => [c[0], String(c[1])] as const);
         expect(toasts.some(([t, m]) => t === "success" && /恢复/.test(m))).toBe(true);

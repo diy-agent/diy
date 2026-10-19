@@ -11,11 +11,11 @@
 
 import * as http2 from 'node:http2';
 import type { ClientHttp2Session, ClientHttp2Stream } from 'node:http2';
-import type { StreamHandle } from '../../core/types';
-import { _AsyncQueue } from '../../core/_async-queue';
-import { RpcError, _fromErrorPayload, _reasonToRpcError, type _ErrorPayload } from '../../core/error';
-import type { CallOptions, ClientBinding } from '../../core/server-binding';
-import { codeForHttpStatus } from './_codes';
+import type { StreamHandle } from '../../core/types.js';
+import { _AsyncQueue } from '../../core/_async-queue.js';
+import { RpcError, _fromErrorPayload, _reasonToRpcError, type _ErrorPayload } from '../../core/error.js';
+import type { CallOptions, ClientBinding } from '../../core/server-binding.js';
+import { codeForHttpStatus } from './_codes.js';
 
 interface HttpResp {
   status: number;

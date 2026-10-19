@@ -38,14 +38,19 @@ import {
     listDates,
     queryRecords,
     logStats,
+    listFileDetail,
+    cleanLogs,
     TrafficLogError,
     type LogLoc,
     type QueryOpts,
     type QueryResult,
     type LogStats,
+    type LogFileDetail,
+    type CleanOpts,
+    type CleanResult,
 } from "./traffic-log";
 
-export { TrafficLogError, type LogLoc, type QueryOpts, type QueryResult, type LogStats };
+export { TrafficLogError, type LogLoc, type QueryOpts, type QueryResult, type LogStats, type LogFileDetail, type CleanOpts, type CleanResult };
 
 const CH_CREATE = "undici:request:create";
 const CH_REQ_CHUNK = "undici:request:bodyChunkSent";
@@ -474,6 +479,16 @@ class Traffic {
     /** 日志总体积（文件数 + 字节总数）—— 头部「日志大小」指示用 */
     logStats(): LogStats {
         return logStats();
+    }
+
+    /** 日志文件详情（日期 + 占用 + 是否今天）—— 清理面板列文件用（##324） */
+    listLogFileDetail(): LogFileDetail[] {
+        return listFileDetail();
+    }
+
+    /** 清理磁盘日志（删整个按天文件；今天正在写入的不删）—— 见 core/traffic-log.ts 的说明（##324） */
+    cleanLogs(opts: CleanOpts): CleanResult {
+        return cleanLogs(opts);
     }
 
     /** 某个日志文件的绝对路径（界面「打开文件位置」用） */

@@ -94,6 +94,9 @@ async function flush(uri: string) {
             uri,
             title: pending.title,
             body: pending.body,
+            // 草稿正文的"传文件"形态是 CLI 侧能力（##376）；契约为「键必须出现」，故显式给 undefined
+            bodyText: undefined,
+            bodyFile: undefined,
             agent_input: pending.agent_input,
             base_updated: st.base_updated,
         });
@@ -217,6 +220,16 @@ export const draftStore = {
     /** 订阅用：在响应式上下文里读一次即可建立依赖 */
     get version() {
         return version();
+    },
+    /**
+     * 该任务的草稿**已经灌入过**吗（= 本 store 对它有没有权威）。
+     *
+     * 为什么必须问这一句（##355）：草稿是**按任务**的，而 seed 只发生在「看过这个任务」
+     * （task.show / getTask 带回 ui_drafts）时。没 seed 过 = 本 store 对它一无所知 ——
+     * 此时 `has()` 返回 false 只表示"我不知道"，**不能**当"它没有草稿"用（那是假事实）。
+     */
+    isSeeded(uri: string): boolean {
+        return states.get(uri)?.seeded === true;
     },
     /** 订阅用（仅 seed 时变化）：组件据此回填输入框，避免逐键回写打断光标 */
     get seedTick() {

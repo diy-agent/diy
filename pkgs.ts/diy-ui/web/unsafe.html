@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="data:," />
+    <title>diy-ui · unsafe（节点方法逃生口）</title>
+    <style>
+      :root { --bg: oklch(25% 0.02 252); --fg: oklch(97% 0.03 257); --muted: color-mix(in oklab, var(--fg) 55%, transparent); --primary: oklch(58% 0.233 277); }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.6 system-ui, "Microsoft YaHei", sans-serif; }
+      a { color: var(--primary); }
+      .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 1000px; margin: 0 auto; padding: 20px; }
+      .col { border: 1px solid color-mix(in oklab, var(--primary) 30%, transparent); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+      .col h3 { margin: 0 0 4px; font-size: 13px; color: var(--muted); }
+      .rows, .extra { display: flex; flex-direction: column; gap: 4px; min-height: 8px; }
+      .row { background: color-mix(in oklab, var(--primary) 14%, transparent); border: 1px solid color-mix(in oklab, var(--primary) 24%, transparent); border-radius: 6px; padding: 4px 8px; }
+      .row-ghost { background: color-mix(in oklab, orange 20%, transparent); border-color: orange; }
+      .note { background: color-mix(in oklab, var(--primary) 18%, transparent); border-radius: 6px; padding: 6px 10px; }
+      .bar { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+      .btn { background: var(--primary); color: #fff; border: 0; border-radius: 6px; padding: 4px 10px; font: inherit; cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <div class="cols">
+      <section class="col col-a" id="a"><h3>A 风格（dom-dsl）</h3></section>
+      <section class="col col-b" id="b"><h3>B 风格（dom-gen）</h3></section>
+    </div>
+    <div style="max-width: 1000px; margin: 0 auto; padding: 0 20px 20px">
+      <a href="/">← index</a> · <a href="/chat.html">A 聊天</a> · <a href="/gen.html">B 聊天</a>
+      <p style="color: var(--muted); font-size: 12px">
+        三用法：容器 insert/remove（＋行/－行）、自身 removeSelf（移除通知）、跨层 parent(".extra").insert（切换 ghost）。
+      </p>
+    </div>
+    <script type="module" src="/src/unsafe-main.ts"></script>
+  </body>
+</html>

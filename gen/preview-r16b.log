@@ -1,0 +1,751 @@
+[38;5;255;48;5;66;1m~/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/sha.sh:84 preview() [0m[38;5;255;48;5;31;1m~/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app [0m[38;5;255;48;5;55;1menv DIY_VARIANT=preview npx tsx scripts/electron-dev.mts[0m
+npm warn Unknown user config "electron_mirror". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+npm warn Unknown user config "electron_builder_binaries_mirror". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+npm notice run npx
+npm notice run 'tsx' scripts/electron-dev.mts
+[dev] 警告: 忽略继承的生产数据目录 DIY_HOME=/Users/ccc/.diy，改用本变体的 /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/build/preview/home
+[dev] 警告: 确需操作生产数据请显式声明 DIY_ALLOW_PROD_HOME=1 ./sha.sh preview
+[dev] starting renderer dev server...
+Port 5173 is in use, trying another one...
+[dev] renderer: http://localhost:5174/
+[dev] building main (watch)...
+vite v8.1.5 building client environment for production...
+
+watching for file changes...
+[dev] building preload (watch)...
+
+build started...
+[2Ktransforming...vite v8.1.5 building client environment for production...
+
+watching for file changes...
+[dev] waiting for main + preload to finish first build...
+
+build started...
+[2Ktransforming...✓ 3 modules transformed.
+rendering chunks...
+computing gzip size...
+build/preview/preload/index.js  3.32 kB │ gzip: 1.96 kB
+
+✓ 158 modules transformed.
+built in 60ms.
+[dev] preload built in 60ms
+rendering chunks...
+computing gzip size...
+build/preview/main/rolldown-runtime-BP_521ii.js       0.87 kB │ gzip:  0.50 kB
+build/preview/main/runtime-context-CXWwZn_Y.js        1.31 kB │ gzip:  0.84 kB
+build/preview/main/llm-proxy-B2X-S7-y.js              1.32 kB │ gzip:  0.68 kB
+build/preview/main/context-stats-k1wERHry.js          1.50 kB │ gzip:  0.84 kB
+build/preview/main/context-changelog-CKZ5MWo8.js      1.55 kB │ gzip:  0.88 kB
+build/preview/main/local-paths-C6GoqvXw.js            1.98 kB │ gzip:  1.22 kB
+build/preview/main/changelog-CX6iiXEA.js              2.60 kB │ gzip:  1.56 kB
+build/preview/main/async-queue-CItBMoVD.js            2.75 kB │ gzip:  1.52 kB
+build/preview/main/file-watcher-MUGNkUpU.js           3.05 kB │ gzip:  1.54 kB
+build/preview/main/preview-BpNyV4rW.js                3.15 kB │ gzip:  1.69 kB
+build/preview/main/steps-DI8GrfmM.js                  3.37 kB │ gzip:  1.54 kB
+build/preview/main/stats-BSd9j_Z3.js                  3.54 kB │ gzip:  2.04 kB
+build/preview/main/calendars-hb_iiUXv.js              3.74 kB │ gzip:  1.91 kB
+build/preview/main/model-import-ezHU_5I_.js           4.21 kB │ gzip:  2.00 kB
+build/preview/main/context-config-D-KNCDKs.js         4.29 kB │ gzip:  2.20 kB
+build/preview/main/project-BNMdW3Kx.js                4.38 kB │ gzip:  1.95 kB
+build/preview/main/usage-report-BMjxydwK.js           4.66 kB │ gzip:  2.21 kB
+build/preview/main/persona-DrAvZotk.js                4.89 kB │ gzip:  2.58 kB
+build/preview/main/models-yr7Kr-cr.js                 5.30 kB │ gzip:  2.63 kB
+build/preview/main/state-BGk3cNJe.js                  5.76 kB │ gzip:  2.81 kB
+build/preview/main/ops-feed-BAQpbIBs.js               6.14 kB │ gzip:  3.12 kB
+build/preview/main/persona-C11ILU6T.js                6.21 kB │ gzip:  2.90 kB
+build/preview/main/session-registry-CYavisej.js       7.22 kB │ gzip:  3.42 kB
+build/preview/main/model-registry-D6wzfyUK.js         8.61 kB │ gzip:  3.61 kB
+build/preview/main/usage-DqOItzd6.js                 14.42 kB │ gzip:  6.18 kB
+build/preview/main/flow-runner-BTYDi6KT.js           14.44 kB │ gzip:  6.20 kB
+build/preview/main/llm-cost-lY6GpVuz.js              15.01 kB │ gzip:  5.88 kB
+build/preview/main/auto-compact-config-CiZQaxTA.js   26.50 kB │ gzip: 10.70 kB
+build/preview/main/model-config-CgfkqXCu.js          30.47 kB │ gzip: 11.65 kB
+build/preview/main/delivery-DCFESGVl.js              36.50 kB │ gzip: 14.51 kB
+build/preview/main/render-Ddgvp5w7.js                39.91 kB │ gzip: 12.77 kB
+build/preview/main/agent-audit-BYgjXI3k.js           50.02 kB │ gzip: 20.14 kB
+build/preview/main/prompt-registry-BkzGgVfS.js       50.74 kB │ gzip: 20.31 kB
+build/preview/main/flow-DLaq2uef.js                 138.13 kB │ gzip: 45.50 kB
+build/preview/main/local-agent-wHjByZF7.js          147.85 kB │ gzip: 54.56 kB
+build/preview/main/index.mjs                        308.49 kB │ gzip: 93.71 kB
+
+[33m[INEFFECTIVE_DYNAMIC_IMPORT] [0msrc/main/core/task.ts is dynamically imported by src/main/services/api-impl.ts but also statically imported by src/main/core/seed.ts, src/main/services/api-impl.ts, dynamic import will not move module into another chunk.
+
+built in 217ms.
+[dev] main built in 217ms
+[dev] ⚠️ 单实例锁是陈旧的（指向的进程已不在）：/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/build/preview/home/electron_user_data/SingletonLock\n  · 通常重试一次即可（新实例会自建锁）；仍失败再 rm /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/build/preview/home/electron_user_data/SingletonLock
+[net] 已关闭 Happy Eyeballs（setDefaultAutoSelectFamily(false)）：本机双栈竞态致公网 HTTPS 超时，改回单地址顺序连接
+[net] 已钉死 IPv4 优先（setDefaultResultOrder("ipv4first")）：本机无 IPv6 出口，避免 AAAA 排头时 ENETUNREACH
+[crash] Crashpad 就绪，minidump 目录: /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/build/preview/home/log/crashes
+[gpu] GPU: Intel HD Graphics 530 (Metal GPUFamily macOS 2)
+[gpu] Metal GPUFamily < 3，添加 --use-gl=angle（防御性，非 rust_png 崩溃的修复）
+═══════════════════════════════════════
+  diy 管控台
+═══════════════════════════════════════
+  Electron:     43.1.1
+  Chrome:       150.0.7871.114
+  Node.js:      24.18.0
+  V8:           15.0.245.15-electron.0
+  Platform:     darwin x64 (21.6.0)
+  Hostname:     c-mac
+  User:         ccc
+  Home:         /Users/ccc
+  Memory:       16.0 GB total, 1.5 GB free
+  PID:          91173
+  CWD:          /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app
+  Home:         /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/build/preview/home
+─── AppDir ────────────────────────────
+  diyHome:      /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/build/preview/home
+  cache:        /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/build/preview/home/cache
+  userData:     /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/build/preview/home/electron_user_data
+───────────────────────────────────────
+  SingleInstanceLock: acquired
+
+DevTools listening on ws://127.0.0.1:58374/devtools/browser/903ba011-e683-43ca-9448-03f7c7c8d15e
+[win] created 1024×695@-1024,114 min=false max=false
+[seed] 跳过：已初始化过（自动种入只跑一次；补缺项用 `diy seed run`）
+[model-runtime] 装配 346 个模型引用
+  Port:         62006 (from /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/build/preview/home/app.port)
+[seed] 跳过：已初始化过（自动种入只跑一次；补缺项用 `diy seed run`）
+[model-runtime] 装配 346 个模型引用
+[seed] 跳过：已初始化过（自动种入只跑一次；补缺项用 `diy seed run`）
+[model-runtime] 装配 346 个模型引用
+[diy] RPC HTTP/2 端口: http://127.0.0.1:62006
+[diy] 窗口标题: ~/git/diy/diy/_diy.worktrees/t358-activity-tune🔹~/git/diy/diy/_diy.worktrees/t358-activity-tune/build/preview/home🔹port:62006🔹pid:91173
+═══════════════════════════════════════
+
+[dev] ═══════════════════════════════════════
+[dev]   CDP  ws://127.0.0.1:58374
+[dev]   连接: playwright-cli attach --cdp=ws://127.0.0.1:58374/devtools/browser/903ba011-e683-43ca-9448-03f7c7c8d15e
+[dev]   注意: attach 会注入 colorScheme:'light' 仿真（Playwright 默认）
+[dev] ═══════════════════════════════════════
+
+/*! 🌼 daisyUI 5.7.24 */
+(electron) 'console-message' arguments are deprecated and will be removed. Please use Event<WebContentsConsoleMessageEventParams> object instead.
+[local-agent] 生效运行限制: {"maxSteps":200,"maxOutputTokens":4000,"bashTimeoutMs":30000,"outputClipChars":6000,"readMaxBytes":51200,"maxSteerQueue":1000}
+[win] show 1024×695@-1024,114 min=false max=false
+[renderer:WARN] %cElectron Security Warning (Insecure Content-Security-Policy) font-weight: bold; This renderer process has either no Content Security
+  Policy set or a policy with "unsafe-eval" enabled. This exposes users of
+  this app to unnecessary security risks.
+
+For more information and help, consult
+https://electronjs.org/docs/tutorial/security.
+This warning will not show up
+once the app is packaged. (node:electron/js2c/sandbox_bundle:2)
+[win] show 1024×695@-1024,114 min=false max=false
+[win] show 1024×695@-1024,114 min=false max=false
+[win] maximize 1024×743@-1024,90 min=false max=true
+6:31:18 PM [vite] (client) hmr update /App.tsx, /index.css
+6:31:18 PM [vite] (client) hmr update /App.tsx
+[renderer:ERROR] Uncaught (in promise) RpcError: signal is aborted without reason (http://localhost:5174/@fs/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-rpc/src/core/error.ts:75)
+[win] show 1024×743@-1024,90 min=false max=true
+[win] show 1024×768@-1024,65 min=false max=false
+[renderer:ERROR] ResizeObserver loop completed with undelivered notifications. (http://localhost:5174/:0)
+[renderer:ERROR] ResizeObserver loop completed with undelivered notifications. (http://localhost:5174/:0)
+[renderer:ERROR] ResizeObserver loop completed with undelivered notifications. (http://localhost:5174/:0)
+[renderer:ERROR] Uncaught (in promise) Attempting to access a stale value from <Show> that could possibly be undefined. This may occur because you are reading the accessor returned from the component at a time where it has already been unmounted. We recommend cleaning up any stale timers or async, or reading from the initial condition. (http://localhost:5174/components/TaskDetailContent.tsx:786)
+[renderer:ERROR] ResizeObserver loop completed with undelivered notifications. (http://localhost:5174/:0)
+[win] show 1440×900@0,0 min=false max=false
+2026-10-19 21:22:52.985 Electron[91173:619220] TSM AdjustCapsLockLEDForKeyTransitionHandling - _ISSetPhysicalKeyboardCapsLockLED Inhibit
+[win] show 1024×768@-1024,65 min=false max=false
+[win] show 1024×768@-1024,65 min=false max=false
+
+build started...
+[2Ktransforming...9:25:57 PM [vite] (client) hmr update /components/ContextLabPage.tsx
+9:25:57 PM [vite] (client) Pre-transform error: Failed to load url /@fs/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/shared/context/guide.ts (resolved id: /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/shared/context/guide.ts) in /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/shared/context/request.ts. Does the file exist?
+9:25:57 PM [vite] (client) Pre-transform error: Failed to load url /@fs/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/shared/context/guide.ts (resolved id: /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/shared/context/guide.ts) in /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/shared/context/request.ts. Does the file exist?
+[renderer:ERROR] [vite] Failed to reload /components/ContextLabPage.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) (http://localhost:5174/@vite/client:929)
+9:25:57 PM [vite] (client) Pre-transform error: Failed to load url /@fs/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/shared/context/guide.ts (resolved id: /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/shared/context/guide.ts) in /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/shared/context/request.ts. Does the file exist?
+9:25:57 PM [vite] (client) hmr invalidate /components/ContextLabPage.tsx
+9:25:57 PM [vite] (client) hmr update /App.tsx
+✓ 151 modules transformed.
+Build failed with 3 errors:
+
+[31m[UNRESOLVED_IMPORT] [0mCould not resolve './guide' in src/shared/context/delivery.ts
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m src/shared/context/delivery.ts:4:31 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m4 │[0m [38;5;249mi[0m[38;5;249mm[0m[38;5;249mp[0m[38;5;249mo[0m[38;5;249mr[0m[38;5;249mt[0m[38;5;249m [0m[38;5;249m{[0m[38;5;249m [0m[38;5;249mC[0m[38;5;249mO[0m[38;5;249mN[0m[38;5;249mT[0m[38;5;249mE[0m[38;5;249mX[0m[38;5;249mT[0m[38;5;249m_[0m[38;5;249mG[0m[38;5;249mU[0m[38;5;249mI[0m[38;5;249mD[0m[38;5;249mE[0m[38;5;249m [0m[38;5;249m}[0m[38;5;249m [0m[38;5;249mf[0m[38;5;249mr[0m[38;5;249mo[0m[38;5;249mm[0m[38;5;249m [0m"./guide"[38;5;249m;[0m
+ [38;5;240m  │[0m                               ────┬────  
+ [38;5;240m  │[0m                                   ╰────── Module not found.
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mHelp[0m: 'src/shared/context/delivery.ts' is imported by the following path:
+ [38;5;240m  │[0m         - src/shared/context/delivery.ts
+ [38;5;240m  │[0m         - src/main/services/api-impl.ts
+ [38;5;240m  │[0m         - src/main/index.ts
+[38;5;246m───╯[0m
+
+[31m[UNRESOLVED_IMPORT] [0mCould not resolve '../../shared/context/history-index' in src/main/services/prompt-registry.ts
+    [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m src/main/services/prompt-registry.ts:18:35 [38;5;246m][0m
+    [38;5;246m│[0m
+ [38;5;246m18 │[0m [38;5;249mi[0m[38;5;249mm[0m[38;5;249mp[0m[38;5;249mo[0m[38;5;249mr[0m[38;5;249mt[0m[38;5;249m [0m[38;5;249m{[0m[38;5;249m [0m[38;5;249mh[0m[38;5;249mi[0m[38;5;249ms[0m[38;5;249mt[0m[38;5;249mo[0m[38;5;249mr[0m[38;5;249my[0m[38;5;249mI[0m[38;5;249mn[0m[38;5;249md[0m[38;5;249me[0m[38;5;249mx[0m[38;5;249mV[0m[38;5;249ma[0m[38;5;249ml[0m[38;5;249mu[0m[38;5;249me[0m[38;5;249m [0m[38;5;249m}[0m[38;5;249m [0m[38;5;249mf[0m[38;5;249mr[0m[38;5;249mo[0m[38;5;249mm[0m[38;5;249m [0m"../../shared/context/history-index"[38;5;249m;[0m
+ [38;5;240m   │[0m                                   ──────────────────┬─────────────────  
+ [38;5;240m   │[0m                                                     ╰─────────────────── Module not found.
+ [38;5;240m   │[0m 
+ [38;5;240m   │[0m [38;5;115mHelp[0m: 'src/main/services/prompt-registry.ts' is imported by the following path:
+ [38;5;240m   │[0m         - src/main/services/prompt-registry.ts
+ [38;5;240m   │[0m         - src/main/services/api-impl.ts
+ [38;5;240m   │[0m         - src/main/index.ts
+[38;5;246m────╯[0m
+
+[31m[UNRESOLVED_IMPORT] [0mCould not resolve './guide' in src/shared/context/projection.ts
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m src/shared/context/projection.ts:3:31 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m3 │[0m [38;5;249mi[0m[38;5;249mm[0m[38;5;249mp[0m[38;5;249mo[0m[38;5;249mr[0m[38;5;249mt[0m[38;5;249m [0m[38;5;249m{[0m[38;5;249m [0m[38;5;249mC[0m[38;5;249mO[0m[38;5;249mN[0m[38;5;249mT[0m[38;5;249mE[0m[38;5;249mX[0m[38;5;249mT[0m[38;5;249m_[0m[38;5;249mG[0m[38;5;249mU[0m[38;5;249mI[0m[38;5;249mD[0m[38;5;249mE[0m[38;5;249m [0m[38;5;249m}[0m[38;5;249m [0m[38;5;249mf[0m[38;5;249mr[0m[38;5;249mo[0m[38;5;249mm[0m[38;5;249m [0m"./guide"[38;5;249m;[0m
+ [38;5;240m  │[0m                               ────┬────  
+ [38;5;240m  │[0m                                   ╰────── Module not found.
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mHelp[0m: 'src/shared/context/projection.ts' is imported by the following path:
+ [38;5;240m  │[0m         - src/shared/context/projection.ts
+ [38;5;240m  │[0m         - src/shared/context/preview.ts
+ [38;5;240m  │[0m         - src/main/services/api-impl.ts
+ [38;5;240m  │[0m         - src/main/index.ts
+[38;5;246m───╯[0m
+
+[dev] main build error: Build failed with 3 errors:
+
+[31m[UNRESOLVED_IMPORT] [0mCould not resolve './guide' in src/shared/context/delivery.ts
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m src/shared/context/delivery.ts:4:31 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m4 │[0m [38;5;249mi[0m[38;5;249mm[0m[38;5;249mp[0m[38;5;249mo[0m[38;5;249mr[0m[38;5;249mt[0m[38;5;249m [0m[38;5;249m{[0m[38;5;249m [0m[38;5;249mC[0m[38;5;249mO[0m[38;5;249mN[0m[38;5;249mT[0m[38;5;249mE[0m[38;5;249mX[0m[38;5;249mT[0m[38;5;249m_[0m[38;5;249mG[0m[38;5;249mU[0m[38;5;249mI[0m[38;5;249mD[0m[38;5;249mE[0m[38;5;249m [0m[38;5;249m}[0m[38;5;249m [0m[38;5;249mf[0m[38;5;249mr[0m[38;5;249mo[0m[38;5;249mm[0m[38;5;249m [0m"./guide"[38;5;249m;[0m
+ [38;5;240m  │[0m                               ────┬────  
+ [38;5;240m  │[0m                                   ╰────── Module not found.
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mHelp[0m: 'src/shared/context/delivery.ts' is imported by the following path:
+ [38;5;240m  │[0m         - src/shared/context/delivery.ts
+ [38;5;240m  │[0m         - src/main/services/api-impl.ts
+ [38;5;240m  │[0m         - src/main/index.ts
+[38;5;246m───╯[0m
+
+[31m[UNRESOLVED_IMPORT] [0mCould not resolve '../../shared/context/history-index' in src/main/services/prompt-registry.ts
+    [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m src/main/services/prompt-registry.ts:18:35 [38;5;246m][0m
+    [38;5;246m│[0m
+ [38;5;246m18 │[0m [38;5;249mi[0m[38;5;249mm[0m[38;5;249mp[0m[38;5;249mo[0m[38;5;249mr[0m[38;5;249mt[0m[38;5;249m [0m[38;5;249m{[0m[38;5;249m [0m[38;5;249mh[0m[38;5;249mi[0m[38;5;249ms[0m[38;5;249mt[0m[38;5;249mo[0m[38;5;249mr[0m[38;5;249my[0m[38;5;249mI[0m[38;5;249mn[0m[38;5;249md[0m[38;5;249me[0m[38;5;249mx[0m[38;5;249mV[0m[38;5;249ma[0m[38;5;249ml[0m[38;5;249mu[0m[38;5;249me[0m[38;5;249m [0m[38;5;249m}[0m[38;5;249m [0m[38;5;249mf[0m[38;5;249mr[0m[38;5;249mo[0m[38;5;249mm[0m[38;5;249m [0m"../../shared/context/history-index"[38;5;249m;[0m
+ [38;5;240m   │[0m                                   ──────────────────┬─────────────────  
+ [38;5;240m   │[0m                                                     ╰─────────────────── Module not found.
+ [38;5;240m   │[0m 
+ [38;5;240m   │[0m [38;5;115mHelp[0m: 'src/main/services/prompt-registry.ts' is imported by the following path:
+ [38;5;240m   │[0m         - src/main/services/prompt-registry.ts
+ [38;5;240m   │[0m         - src/main/services/api-impl.ts
+ [38;5;240m   │[0m         - src/main/index.ts
+[38;5;246m────╯[0m
+
+[31m[UNRESOLVED_IMPORT] [0mCould not resolve './guide' in src/shared/context/projection.ts
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m src/shared/context/projection.ts:3:31 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m3 │[0m [38;5;249mi[0m[38;5;249mm[0m[38;5;249mp[0m[38;5;249mo[0m[38;5;249mr[0m[38;5;249mt[0m[38;5;249m [0m[38;5;249m{[0m[38;5;249m [0m[38;5;249mC[0m[38;5;249mO[0m[38;5;249mN[0m[38;5;249mT[0m[38;5;249mE[0m[38;5;249mX[0m[38;5;249mT[0m[38;5;249m_[0m[38;5;249mG[0m[38;5;249mU[0m[38;5;249mI[0m[38;5;249mD[0m[38;5;249mE[0m[38;5;249m [0m[38;5;249m}[0m[38;5;249m [0m[38;5;249mf[0m[38;5;249mr[0m[38;5;249mo[0m[38;5;249mm[0m[38;5;249m [0m"./guide"[38;5;249m;[0m
+ [38;5;240m  │[0m                               ────┬────  
+ [38;5;240m  │[0m                                   ╰────── Module not found.
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mHelp[0m: 'src/shared/context/projection.ts' is imported by the following path:
+ [38;5;240m  │[0m         - src/shared/context/projection.ts
+ [38;5;240m  │[0m         - src/shared/context/preview.ts
+ [38;5;240m  │[0m         - src/main/services/api-impl.ts
+ [38;5;240m  │[0m         - src/main/index.ts
+[38;5;246m───╯[0m
+
+    at aggregateBindingErrorsIntoJsError (file:///Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/rolldown/dist/shared/error-BHRSI0R7.mjs:48:18)
+    at file:///Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/rolldown/dist/shared/watch-B1b0gmVh.mjs:265:14 {
+  errors: [Getter/Setter]
+}
+9:25:59 PM [vite] (client) hmr update /index.css
+9:25:59 PM [vite] (client) hmr update /index.css, /components/TrafficView.tsx
+9:25:59 PM [vite] (client) page reload /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-rpc/src/core/_cli-meta.ts
+9:25:59 PM [vite] (client) page reload /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-rpc/src/core/_tree.ts
+9:25:59 PM [vite] (client) page reload /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-rpc/src/core/channel-client-binding.ts
+9:25:59 PM [vite] (client) page reload /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-rpc/src/core/channel-server-binding.ts
+9:25:59 PM [vite] (client) page reload /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-rpc/src/core/index.ts
+9:25:59 PM [vite] (client) page reload /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-rpc/src/core/mem.ts
+9:25:59 PM [vite] (client) page reload /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-rpc/src/core/meta.ts
+9:25:59 PM [vite] (client) page reload /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-rpc/src/core/rpc.ts
+9:25:59 PM [vite] (client) page reload /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-rpc/src/core/server-binding-core.ts
+9:25:59 PM [vite] (client) page reload /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-rpc/src/core/typed-client.ts
+9:25:59 PM [vite] (client) page reload /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-rpc/src/index.ts
+9:25:59 PM [vite] (client) hmr update /index.css
+9:25:59 PM [vite] (client) hmr update /index.css
+9:25:59 PM [vite] (client) hmr update /index.css
+9:25:59 PM [vite] (client) hmr update /index.css
+9:25:59 PM [vite] (client) hmr update /index.css
+9:25:59 PM [vite] (client) hmr update /index.css
+9:25:59 PM [vite] (client) hmr update /index.css
+9:25:59 PM [vite] (client) hmr update /index.css
+9:25:59 PM [vite] (client) hmr update /index.css
+9:25:59 PM [vite] (client) hmr update /index.css
+9:25:59 PM [vite] (client) hmr update /index.css
+9:25:59 PM [vite] (client) hmr update /index.css
+9:25:59 PM [vite] (client) hmr update /index.css
+9:25:59 PM [vite] (client) hmr update /index.css
+9:25:59 PM [vite] (client) hmr update /index.css
+9:25:59 PM [vite] (client) hmr update /index.css
+9:25:59 PM [vite] (client) hmr update /index.css
+9:25:59 PM [vite] (client) hmr update /index.css
+9:25:59 PM [vite] (client) hmr update /index.css
+9:25:59 PM [vite] (client) page reload /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/main/services/api-def.ts
+9:25:59 PM [vite] (client) hmr update /index.css
+9:25:59 PM [vite] (client) hmr update /index.css, /components/TaskDetailPanel.tsx, /components/LocalChatPage.tsx, /components/CompactSessionPanel.tsx, /components/UsagePanel.tsx
+9:25:59 PM [vite] (client) hmr update /index.css
+9:25:59 PM [vite] (client) hmr update /index.css
+9:25:59 PM [vite] (client) hmr update /index.css, /components/TaskDetailPanel.tsx, /components/LocalChatPage.tsx, /components/CompactSessionPanel.tsx, /components/UsagePanel.tsx
+9:25:59 PM [vite] (client) hmr update /index.css
+9:25:59 PM [vite] (client) hmr update /index.css
+9:25:59 PM [vite] (client) hmr update /index.css
+9:25:59 PM [vite] (client) hmr update /index.css
+9:25:59 PM [vite] (client) hmr update /index.css
+9:25:59 PM [vite] (client) hmr update /App.tsx, /index.css
+9:25:59 PM [vite] (client) hmr update /components/AppInfo.tsx, /index.css
+9:25:59 PM [vite] (client) hmr update /components/Breadcrumb.tsx, /index.css
+9:25:59 PM [vite] (client) hmr update /index.css, /components/ChatSkinPreview.tsx
+9:25:59 PM [vite] (client) hmr update /index.css, /components/CodeBlock.tsx
+9:25:59 PM [vite] (client) hmr update /index.css, /components/CompactSessionPanel.tsx
+9:25:59 PM [vite] (client) hmr update /components/ConfirmDialog.tsx, /index.css
+9:25:59 PM [vite] (client) hmr update /components/ContextLabPage.tsx, /index.css
+9:25:59 PM [vite] (client) hmr update /index.css, /components/CreateTaskSheet.tsx
+9:25:59 PM [vite] (client) hmr update /index.css, /components/LocalChatPage.tsx
+9:25:59 PM [vite] (client) hmr update /index.css, /components/MarkdownView.tsx
+9:25:59 PM [vite] (client) hmr update /index.css, /components/MdEditor.tsx
+9:25:59 PM [vite] (client) hmr update /components/ModelConfigPage.tsx, /index.css
+9:25:59 PM [vite] (client) hmr update /components/NavSearch.tsx, /index.css
+9:25:59 PM [vite] (client) hmr update /index.css, /components/PersonaDrawer.tsx
+9:25:59 PM [vite] (client) hmr update /index.css, /components/TaskDetailContent.tsx
+9:25:59 PM [vite] (client) hmr update /components/TaskDetailPanel.tsx, /index.css
+9:25:59 PM [vite] (client) hmr update /components/TaskTree.tsx, /index.css
+9:25:59 PM [vite] (client) hmr update /components/ToastContainer.tsx, /index.css
+9:25:59 PM [vite] (client) hmr update /components/TrafficPage.tsx, /index.css
+9:25:59 PM [vite] (client) hmr update /index.css, /components/UsagePanel.tsx
+9:25:59 PM [vite] (client) hmr update /index.css, /components/ViewGrid.tsx
+9:25:59 PM [vite] (client) hmr update /index.css, /components/icons.tsx
+9:25:59 PM [vite] (client) hmr update /index.css
+9:25:59 PM [vite] (client) page reload lib/chat-fold.ts
+9:25:59 PM [vite] (client) page reload lib/create-task.ts
+9:25:59 PM [vite] (client) page reload lib/renderer-api-impl.ts
+9:25:59 PM [vite] (client) page reload lib/rpc.ts
+9:25:59 PM [vite] (client) page reload lib/task-edit.ts
+9:25:59 PM [vite] (client) page reload lib/ui-state.ts
+9:25:59 PM [vite] (client) page reload main.tsx
+9:25:59 PM [vite] (client) page reload store/draftStore.ts
+9:25:59 PM [vite] (client) hmr update /index.css, /components/TaskDetailPanel.tsx, /components/LocalChatPage.tsx, /components/CompactSessionPanel.tsx, /components/UsagePanel.tsx
+9:25:59 PM [vite] (client) page reload store/taskStore.ts
+9:25:59 PM [vite] (client) hmr update /index.css, /components/LocalChatPage.tsx, /components/TrafficDrawer.tsx
+9:25:59 PM [vite] (client) hmr update /components/TaskDetailPanel.tsx, /components/LocalChatPage.tsx, /components/CompactSessionPanel.tsx, /components/UsagePanel.tsx
+9:25:59 PM [vite] (client) hmr update /components/ContextLabPage.tsx
+9:25:59 PM [vite] (client) hmr update /components/ContextLabPage.tsx
+9:25:59 PM [vite] (client) hmr update /components/ContextLabPage.tsx
+9:25:59 PM [vite] (client) hmr update /components/CompactSessionPanel.tsx
+9:25:59 PM [vite] (client) hmr update /components/ContextLabPage.tsx
+9:25:59 PM [vite] (client) page reload /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/shared/context/schema.ts
+9:25:59 PM [vite] (client) page reload /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/shared/grid-layout.ts
+9:25:59 PM [vite] (client) hmr update /App.tsx
+9:25:59 PM [vite] (client) page reload /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/shared/prompt-schema.ts
+9:25:59 PM [vite] (client) hmr update /components/LocalChatPage.tsx
+9:25:59 PM [vite] (client) page reload /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/shared/task-detail.ts
+9:25:59 PM [vite] (client) hmr update /components/PromptLabV4Page.tsx, /components/ContextLabPage.tsx
+9:25:59 PM [vite] (client) page reload /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/shared/usage.ts
+9:25:59 PM [vite] (client) page reload /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/shared/view-registry.ts
+9:25:59 PM [vite] vite.renderer.config.ts changed, restarting server...
+
+build started...
+[2Ktransforming...✓ 2 modules transformed.
+9:26:00 PM [vite] (client) Pre-transform error: /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/renderer_solid/components/TaskTree.tsx: Unexpected token (20:1)
+
+  18 | import { TaskAddMenu } from "./TaskParentControls";
+  19 | import { DynamicBar } from "./DynamicBar";
+> 20 | <<<<<<< HEAD
+     |  ^
+  21 | import { SessionChip, TONE_BADGE } from "./SessionChip";
+  22 | import { sessionMarkOf } from "../lib/session-mark";
+  23 | =======
+  Plugin: solid
+  File: /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/renderer_solid/components/TaskTree.tsx:20:1
+  18 |  import { TaskAddMenu } from "./TaskParentControls";
+  19 |  import { DynamicBar } from "./DynamicBar";
+  20 |  <<<<<<< HEAD
+     |   ^
+  21 |  import { SessionChip, TONE_BADGE } from "./SessionChip";
+  22 |  import { sessionMarkOf } from "../lib/session-mark";
+9:26:00 PM [vite] Internal server error: /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/renderer_solid/components/TaskTree.tsx: Unexpected token (20:1)
+
+  18 | import { TaskAddMenu } from "./TaskParentControls";
+  19 | import { DynamicBar } from "./DynamicBar";
+> 20 | <<<<<<< HEAD
+     |  ^
+  21 | import { SessionChip, TONE_BADGE } from "./SessionChip";
+  22 | import { sessionMarkOf } from "../lib/session-mark";
+  23 | =======
+  Plugin: solid
+  File: /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/renderer_solid/components/TaskTree.tsx:20:1
+  18 |  import { TaskAddMenu } from "./TaskParentControls";
+  19 |  import { DynamicBar } from "./DynamicBar";
+  20 |  <<<<<<< HEAD
+     |   ^
+  21 |  import { SessionChip, TONE_BADGE } from "./SessionChip";
+  22 |  import { sessionMarkOf } from "../lib/session-mark";
+      at toParseError (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parse-error.ts:95:45)
+      at TypeScriptParserMixin.raise (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/tokenizer/index.ts:1504:19)
+      at TypeScriptParserMixin.unexpected (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/tokenizer/index.ts:1544:16)
+      at TypeScriptParserMixin.jsxParseIdentifier (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/plugins/jsx/index.ts:278:14)
+      at TypeScriptParserMixin.jsxParseNamespacedName (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/plugins/jsx/index.ts:288:25)
+      at TypeScriptParserMixin.jsxParseElementName (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/plugins/jsx/index.ts:306:14)
+      at TypeScriptParserMixin.jsxParseOpeningElementAt (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/plugins/jsx/index.ts:429:24)
+      at TypeScriptParserMixin.jsxParseElementAt (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/plugins/jsx/index.ts:470:35)
+      at TypeScriptParserMixin.jsxParseElement (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/plugins/jsx/index.ts:559:19)
+      at TypeScriptParserMixin.parseExprAtom (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/plugins/jsx/index.ts:573:21)
+      at TypeScriptParserMixin.parseExprSubscripts (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:742:23)
+      at TypeScriptParserMixin.parseUpdate (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:721:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:683:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/plugins/typescript/index.ts:3893:20)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:417:14)
+      at TypeScriptParserMixin.parseExprOps (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:429:23)
+      at TypeScriptParserMixin.parseMaybeConditional (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:384:23)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:301:21)
+      at fn (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/plugins/typescript/index.ts:3745:23)
+      at TypeScriptParserMixin.tryParse (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/util.ts:174:20)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/plugins/typescript/index.ts:3744:20)
+      at TypeScriptParserMixin.parseExpressionBase (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:226:23)
+      at callback (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:217:39)
+      at TypeScriptParserMixin.allowInAnd (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:3192:16)
+      at TypeScriptParserMixin.parseExpression (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:217:17)
+      at TypeScriptParserMixin.parseStatementContent (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/statement.ts:688:23)
+      at TypeScriptParserMixin.parseStatementContent (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/plugins/typescript/index.ts:3220:20)
+      at TypeScriptParserMixin.parseStatementLike (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/statement.ts:482:17)
+      at TypeScriptParserMixin.parseModuleItem (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/statement.ts:419:17)
+      at TypeScriptParserMixin.parseBlockOrModuleBlockBody (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/statement.ts:1443:16)
+      at TypeScriptParserMixin.parseBlockBody (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/statement.ts:1417:10)
+      at TypeScriptParserMixin.parseProgram (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/statement.ts:229:10)
+      at TypeScriptParserMixin.parseTopLevel (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/statement.ts:203:25)
+      at TypeScriptParserMixin.parse (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/index.ts:83:25)
+      at TypeScriptParserMixin.parse (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/plugins/typescript/index.ts:4354:20)
+      at parse (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/index.ts:86:38)
+      at parser (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/core/src/parser/index.ts:29:19)
+      at parser.next (<anonymous>)
+      at normalizeFile (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/core/src/transformation/normalize-file.ts:49:24)
+      at normalizeFile.next (<anonymous>)
+      at run (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/core/src/transformation/index.ts:41:36)
+      at run.next (<anonymous>)
+      at transform (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/core/src/transform.ts:29:20)
+      at transform.next (<anonymous>)
+      at step (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/gensync/index.js:261:32)
+      at /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/gensync/index.js:273:13
+      at async.call.result.err.err (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/gensync/index.js:223:11)
+      at /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/gensync/index.js:189:28
+      at <anonymous> (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/core/src/gensync-utils/async.ts:90:7)
+      at /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/gensync/index.js:113:33
+9:26:00 PM [vite] (client) Pre-transform error: /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/renderer_solid/components/TaskTree.tsx: Unexpected token (20:1)
+
+  18 | import { TaskAddMenu } from "./TaskParentControls";
+  19 | import { DynamicBar } from "./DynamicBar";
+> 20 | <<<<<<< HEAD
+     |  ^
+  21 | import { SessionChip, TONE_BADGE } from "./SessionChip";
+  22 | import { sessionMarkOf } from "../lib/session-mark";
+  23 | =======
+  Plugin: solid
+  File: /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/renderer_solid/components/TaskTree.tsx:20:1
+  18 |  import { TaskAddMenu } from "./TaskParentControls";
+  19 |  import { DynamicBar } from "./DynamicBar";
+  20 |  <<<<<<< HEAD
+     |   ^
+  21 |  import { SessionChip, TONE_BADGE } from "./SessionChip";
+  22 |  import { sessionMarkOf } from "../lib/session-mark";
+[renderer:ERROR] [vite] Failed to reload /App.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) (http://localhost:5174/@vite/client:929)
+9:26:00 PM [vite] (client) Pre-transform error: /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/renderer_solid/components/LocalChatPage.tsx: Unexpected token (94:0)
+
+  92 |     leadUsers,
+  93 |     leavesOf,
+> 94 | <<<<<<< HEAD
+     | ^
+  95 |     liveTurnOf,
+  96 | =======
+  97 |     linesFromDrag,
+  Plugin: solid
+  File: /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/renderer_solid/components/LocalChatPage.tsx:94:0
+  92 |      leadUsers,
+  93 |      leavesOf,
+  94 |  <<<<<<< HEAD
+     |  ^
+  95 |      liveTurnOf,
+  96 |  =======
+9:26:00 PM [vite] (client) Pre-transform error: /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/renderer_solid/components/TaskDetailContent.tsx: Unexpected token (42:1)
+
+  40 | import { AgentWindowUsage, TaskAgentStateBadge } from "./TaskAgentState";
+  41 | import { taskStateColor } from "../../main/core/task-state";
+> 42 | <<<<<<< HEAD
+     |  ^
+  43 | import { SessionChip } from "./SessionChip";
+  44 | =======
+  45 | import { getTaskVerdict } from "../../shared/task-load";
+  Plugin: solid
+  File: /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/renderer_solid/components/TaskDetailContent.tsx:42:1
+  40 |  import { AgentWindowUsage, TaskAgentStateBadge } from "./TaskAgentState";
+  41 |  import { taskStateColor } from "../../main/core/task-state";
+  42 |  <<<<<<< HEAD
+     |   ^
+  43 |  import { SessionChip } from "./SessionChip";
+  44 |  =======
+9:26:05 PM [vite] (client) Pre-transform error: /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/renderer_solid/components/ToastContainer.tsx: Unexpected token (15:1)
+
+  13 |             <For each={notificationStore.toasts}>
+  14 |                 {(t) => (
+> 15 | <<<<<<< HEAD
+     |  ^
+  16 | =======
+  17 |                     // data-toast：自动化的稳定落点（按 `.toast .alert-*` 找也能找到，但那依赖 daisyUI 的类名）
+  18 | >>>>>>> origin/main
+  Plugin: solid
+  File: /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/renderer_solid/components/ToastContainer.tsx:15:1
+  13 |              <For each={notificationStore.toasts}>
+  14 |                  {(t) => (
+  15 |  <<<<<<< HEAD
+     |   ^
+  16 |  =======
+  17 |                      // data-toast：自动化的稳定落点（按 `.toast .alert-*` 找也能找到，但那依赖 daisyUI 的类名）
+9:26:07 PM [vite] (client) hmr invalidate /App.tsx
+9:26:07 PM [vite] (client) page reload App.tsx
+rendering chunks...
+computing gzip size...
+9:26:11 PM [vite] Internal server error: /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/renderer_solid/components/ToastContainer.tsx: Unexpected token (15:1)
+
+  13 |             <For each={notificationStore.toasts}>
+  14 |                 {(t) => (
+> 15 | <<<<<<< HEAD
+     |  ^
+  16 | =======
+  17 |                     // data-toast：自动化的稳定落点（按 `.toast .alert-*` 找也能找到，但那依赖 daisyUI 的类名）
+  18 | >>>>>>> origin/main
+  Plugin: solid
+  File: /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/renderer_solid/components/ToastContainer.tsx:15:1
+  13 |              <For each={notificationStore.toasts}>
+  14 |                  {(t) => (
+  15 |  <<<<<<< HEAD
+     |   ^
+  16 |  =======
+  17 |                      // data-toast：自动化的稳定落点（按 `.toast .alert-*` 找也能找到，但那依赖 daisyUI 的类名）
+      at toParseError (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parse-error.ts:95:45)
+      at TypeScriptParserMixin.raise (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/tokenizer/index.ts:1504:19)
+      at TypeScriptParserMixin.unexpected (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/tokenizer/index.ts:1544:16)
+      at TypeScriptParserMixin.jsxParseIdentifier (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/plugins/jsx/index.ts:278:14)
+      at TypeScriptParserMixin.jsxParseNamespacedName (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/plugins/jsx/index.ts:288:25)
+      at TypeScriptParserMixin.jsxParseElementName (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/plugins/jsx/index.ts:306:14)
+      at TypeScriptParserMixin.jsxParseOpeningElementAt (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/plugins/jsx/index.ts:429:24)
+      at TypeScriptParserMixin.jsxParseElementAt (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/plugins/jsx/index.ts:470:35)
+      at TypeScriptParserMixin.jsxParseElement (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/plugins/jsx/index.ts:559:19)
+      at TypeScriptParserMixin.parseExprAtom (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/plugins/jsx/index.ts:573:21)
+      at TypeScriptParserMixin.parseExprSubscripts (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:742:23)
+      at TypeScriptParserMixin.parseUpdate (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:721:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:683:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/plugins/typescript/index.ts:3893:20)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:417:14)
+      at TypeScriptParserMixin.parseExprOps (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:429:23)
+      at TypeScriptParserMixin.parseMaybeConditional (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:384:23)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:301:21)
+      at fn (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/plugins/typescript/index.ts:3745:23)
+      at TypeScriptParserMixin.tryParse (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/util.ts:174:20)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/plugins/typescript/index.ts:3744:20)
+      at callback (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:257:12)
+      at TypeScriptParserMixin.allowInAnd (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:3197:12)
+      at TypeScriptParserMixin.parseMaybeAssignAllowIn (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:256:17)
+      at TypeScriptParserMixin.parseMaybeAssignAllowInOrVoidPattern (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:3311:17)
+      at TypeScriptParserMixin.parseParenAndDistinguishExpression (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:1825:16)
+      at TypeScriptParserMixin.parseExprAtom (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:1170:21)
+      at TypeScriptParserMixin.parseExprAtom (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/plugins/jsx/index.ts:583:22)
+      at TypeScriptParserMixin.parseExprSubscripts (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:742:23)
+      at TypeScriptParserMixin.parseUpdate (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:721:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:683:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/plugins/typescript/index.ts:3893:20)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:417:14)
+      at TypeScriptParserMixin.parseExprOps (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:429:23)
+      at TypeScriptParserMixin.parseMaybeConditional (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:384:23)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:301:21)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/plugins/typescript/index.ts:3764:22)
+      at TypeScriptParserMixin.parseFunctionBody (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:2607:14)
+      at TypeScriptParserMixin.parseArrowExpression (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:2562:10)
+      at TypeScriptParserMixin.parseParenAndDistinguishExpression (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:1850:12)
+      at TypeScriptParserMixin.parseExprAtom (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:1170:21)
+      at TypeScriptParserMixin.parseExprAtom (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/plugins/jsx/index.ts:583:22)
+      at TypeScriptParserMixin.parseExprSubscripts (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:742:23)
+      at TypeScriptParserMixin.parseUpdate (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:721:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:683:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/plugins/typescript/index.ts:3893:20)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:417:14)
+      at TypeScriptParserMixin.parseExprOps (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:429:23)
+      at TypeScriptParserMixin.parseMaybeConditional (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:384:23)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/node_modules/@babel/parser/src/parser/expression.ts:301:21)
+build/preview/preload/index.js  0.22 kB │ gzip: 0.16 kB
+
+built in 11062ms.
+[dev] preload built in 11062ms
+[dev] restarting electron...
+[renderer:ERROR] Uncaught (in promise) RpcError: Client disposed (http://localhost:5174/@fs/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-rpc/src/core/error.ts:58)
+[dev] ⚠️ 单实例锁被运行中的实例占着 —— 关窗后它仍常驻（只占锁不显示窗口）。下一步二选一：\n  · 直接用它：./diy.sh <命令>（CLI 会连上这个实例）\n  · 要新开一个：先退出它，锁文件 /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/build/preview/home/electron_user_data/SingletonLock
+9:26:11 PM [vite] (client) [optimizer] bundling dependencies...
+9:26:11 PM [vite] (client) Pre-transform error: /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/renderer_solid/components/TaskDetailContent.tsx: Unexpected token (42:1)
+
+  40 | import { AgentWindowUsage, TaskAgentStateBadge } from "./TaskAgentState";
+  41 | import { taskStateColor } from "../../main/core/task-state";
+> 42 | <<<<<<< HEAD
+     |  ^
+  43 | import { SessionChip } from "./SessionChip";
+  44 | =======
+  45 | import { getTaskVerdict } from "../../shared/task-load";
+  Plugin: solid
+  File: /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/renderer_solid/components/TaskDetailContent.tsx:42:1
+  40 |  import { AgentWindowUsage, TaskAgentStateBadge } from "./TaskAgentState";
+  41 |  import { taskStateColor } from "../../main/core/task-state";
+  42 |  <<<<<<< HEAD
+     |   ^
+  43 |  import { SessionChip } from "./SessionChip";
+  44 |  =======
+[net] 已关闭 Happy Eyeballs（setDefaultAutoSelectFamily(false)）：本机双栈竞态致公网 HTTPS 超时，改回单地址顺序连接
+[net] 已钉死 IPv4 优先（setDefaultResultOrder("ipv4first")）：本机无 IPv6 出口，避免 AAAA 排头时 ENETUNREACH
+
+build started...
+[2Ktransforming...✓ 2 modules transformed.
+rendering chunks...
+computing gzip size...
+build/preview/preload/index.js  0.22 kB │ gzip: 0.16 kB
+
+[crash] Crashpad 就绪，minidump 目录: /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/build/preview/home/log/crashes
+built in 210ms.
+[dev] preload built in 210ms
+[dev] restarting electron...
+
+build started...
+[2Ktransforming...✓ 156 modules transformed.
+9:26:14 PM [vite] server restarted.
+rendering chunks...
+computing gzip size...
+build/preview/main/rolldown-runtime-BP_521ii.js        0.87 kB │ gzip:   0.50 kB
+build/preview/main/runtime-context-Dld5ZIAQ.js         1.31 kB │ gzip:   0.83 kB
+build/preview/main/llm-proxy-B2X-S7-y.js               1.32 kB │ gzip:   0.68 kB
+build/preview/main/atomic-write-BhRlEOb1.js            1.33 kB │ gzip:   0.84 kB
+build/preview/main/context-stats-k1wERHry.js           1.50 kB │ gzip:   0.84 kB
+build/preview/main/compact-plan-service-D1SSVTMy.js    1.61 kB │ gzip:   1.02 kB
+build/preview/main/model-config-DMh8b72A.js            2.40 kB │ gzip:   0.93 kB
+build/preview/main/async-queue-CItBMoVD.js             2.75 kB │ gzip:   1.52 kB
+build/preview/main/local-paths-CGJlYB28.js             2.92 kB │ gzip:   1.76 kB
+build/preview/main/context-changelog-BJL5PBxI.js       3.04 kB │ gzip:   1.67 kB
+build/preview/main/preview--QZgyn-L.js                 3.15 kB │ gzip:   1.70 kB
+build/preview/main/steps-DI8GrfmM.js                   3.37 kB │ gzip:   1.54 kB
+build/preview/main/stats-BSd9j_Z3.js                   3.54 kB │ gzip:   2.04 kB
+build/preview/main/calendars-hb_iiUXv.js               3.74 kB │ gzip:   1.91 kB
+build/preview/main/model-import-LUmyWUdP.js            4.21 kB │ gzip:   2.01 kB
+build/preview/main/context-config-mcP-DJVp.js          4.29 kB │ gzip:   2.20 kB
+build/preview/main/file-watcher-g27HFC83.js            4.53 kB │ gzip:   2.48 kB
+build/preview/main/usage-report-DvZmOgyz.js            4.65 kB │ gzip:   2.21 kB
+build/preview/main/project-C714yq39.js                 4.75 kB │ gzip:   2.06 kB
+build/preview/main/persona-DrAvZotk.js                 4.89 kB │ gzip:   2.58 kB
+build/preview/main/state-BGk3cNJe.js                   5.76 kB │ gzip:   2.81 kB
+build/preview/main/ops-feed-C9TPSasz.js                6.14 kB │ gzip:   3.12 kB
+build/preview/main/persona-BmkArYKg.js                 6.25 kB │ gzip:   2.91 kB
+build/preview/main/changelog-DDGCsJd7.js               7.16 kB │ gzip:   3.34 kB
+build/preview/main/session-registry-Bvl-vkgf.js        7.71 kB │ gzip:   3.63 kB
+build/preview/main/model-registry-qCgWJdR_.js          8.65 kB │ gzip:   3.61 kB
+build/preview/main/models-RqiFloxU.js                  8.90 kB │ gzip:   4.16 kB
+build/preview/main/room-B_Lov67H.js                    8.90 kB │ gzip:   3.87 kB
+build/preview/main/room-service-BokqgOBD.js           13.63 kB │ gzip:   5.75 kB
+build/preview/main/flow-runner-DsXOkUQg.js            14.44 kB │ gzip:   6.20 kB
+build/preview/main/usage-DqN3nxkB.js                  15.02 kB │ gzip:   6.39 kB
+build/preview/main/llm-cost-CrOQXjvJ.js               15.06 kB │ gzip:   5.90 kB
+build/preview/main/compact-plan-io-kaM2cQGy.js        16.59 kB │ gzip:   5.93 kB
+build/preview/main/room-07nsMd2K.js                   18.58 kB │ gzip:   8.44 kB
+build/preview/main/auto-compact-config-DiSnxsic.js    22.95 kB │ gzip:   9.81 kB
+build/preview/main/compact-keep-DxERy8Mf.js           24.59 kB │ gzip:   9.72 kB
+build/preview/main/model-config-DPmhaN-S.js           28.77 kB │ gzip:  11.21 kB
+build/preview/main/render-MjF7bsNj.js                 47.49 kB │ gzip:  16.16 kB
+build/preview/main/delivery-ZPybMPh7.js               49.34 kB │ gzip:  19.10 kB
+build/preview/main/prompt-registry-BQkqmqAu.js        51.42 kB │ gzip:  20.50 kB
+build/preview/main/agent-audit-BwhSBaBH.js            53.55 kB │ gzip:  22.15 kB
+build/preview/main/flow-CntyaN-H.js                  137.88 kB │ gzip:  45.40 kB
+build/preview/main/local-agent-CyHWTWXX.js           182.00 kB │ gzip:  68.26 kB
+build/preview/main/index.mjs                         320.05 kB │ gzip: 100.35 kB
+
+[33m[INEFFECTIVE_DYNAMIC_IMPORT] [0msrc/main/core/task.ts is dynamically imported by src/main/services/api-impl.ts, src/main/services/room-service.ts but also statically imported by src/main/core/seed.ts, src/main/services/api-impl.ts, dynamic import will not move module into another chunk.
+
+built in 843ms.
+[dev] main built in 843ms
+[dev] restarting electron...
+[gpu] GPU: Intel HD Graphics 530 (Metal GPUFamily macOS 2)
+[gpu] Metal GPUFamily < 3，添加 --use-gl=angle（防御性，非 rust_png 崩溃的修复）
+═══════════════════════════════════════
+  diy 管控台
+═══════════════════════════════════════
+  Electron:     43.1.1
+  Chrome:       150.0.7871.114
+  Node.js:      24.18.0
+  V8:           15.0.245.15-electron.0
+  Platform:     darwin x64 (21.6.0)
+  Hostname:     c-mac
+  User:         ccc
+  Home:         /Users/ccc
+  Memory:       16.0 GB total, 1.5 GB free
+  PID:          47830
+  CWD:          /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app
+  Home:         /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/build/preview/home
+─── AppDir ────────────────────────────
+  diyHome:      /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/build/preview/home
+  cache:        /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/build/preview/home/cache
+  userData:     /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/build/preview/home/electron_user_data
+───────────────────────────────────────
+  SingleInstanceLock: acquired
+[exit] 收到 SIGTERM，准备退出（现场: 无内存上下文（可能为启动期崩溃） | 审计尾部: 轮次 task=projects/1/tasks/11 model=fatfatjing@opencode-go/deepseek-v4.1-flash 起始=2026-10-19T13:23:17.184Z | 最近命令[bash-end] 2026-10-17T13:03:13.568Z cwd=/Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/build/preview/home/sample-project :: sleep 40; echo PASS40）
+
+DevTools listening on ws://127.0.0.1:64035/devtools/browser/71007fb8-2d60-4659-a7d3-b80fc63a5724
+[win] created 1024×695@-1024,114 min=false max=false
+[seed] 跳过：已初始化过（自动种入只跑一次；补缺项用 `diy seed run`）
+[model-runtime] 装配 336 个模型引用
+  Port:         62006 (from /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/build/preview/home/app.port)
+[seed] 跳过：已初始化过（自动种入只跑一次；补缺项用 `diy seed run`）
+[model-runtime] 装配 336 个模型引用
+[seed] 跳过：已初始化过（自动种入只跑一次；补缺项用 `diy seed run`）
+[model-runtime] 装配 336 个模型引用
+[diy] RPC HTTP/2 端口: http://127.0.0.1:62006
+[diy] 窗口标题: ~/git/diy/diy/_diy.worktrees/t358-activity-tune🔹~/git/diy/diy/_diy.worktrees/t358-activity-tune/build/preview/home🔹port:62006🔹pid:47830
+═══════════════════════════════════════
+App threw an error during load
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Users/ccc/git/diy/diy/pkgs.ts/diy-rpc/src/core/_cli-meta.js' imported from /Users/ccc/git/diy/diy/pkgs.ts/diy-rpc/src/index.ts
+    at finalizeResolution (node:internal/modules/esm/resolve:275:11)
+    at moduleResolve (node:internal/modules/esm/resolve:877:10)
+    at defaultResolve (node:internal/modules/esm/resolve:1004:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:701:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:721:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:759:56)
+    at #resolve (node:internal/modules/esm/loader:683:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:603:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:163:33)
+    at ModuleJob.link (node:internal/modules/esm/module_job:253:17)
+
+[dev] ═══════════════════════════════════════
+[dev]   CDP  ws://127.0.0.1:64035
+[dev]   连接: playwright-cli attach --cdp=ws://127.0.0.1:64035/devtools/browser/71007fb8-2d60-4659-a7d3-b80fc63a5724
+[dev]   注意: attach 会注入 colorScheme:'light' 仿真（Playwright 默认）
+[dev] ═══════════════════════════════════════
+
+
+[dev] ═══════════════════════════════════════
+[dev]   CDP  ws://127.0.0.1:64035
+[dev]   连接: playwright-cli attach --cdp=ws://127.0.0.1:64035/devtools/browser/71007fb8-2d60-4659-a7d3-b80fc63a5724
+[dev]   注意: attach 会注入 colorScheme:'light' 仿真（Playwright 默认）
+[dev] ═══════════════════════════════════════
+
+
+[dev] ═══════════════════════════════════════
+[dev]   CDP  ws://127.0.0.1:64035
+[dev]   连接: playwright-cli attach --cdp=ws://127.0.0.1:64035/devtools/browser/71007fb8-2d60-4659-a7d3-b80fc63a5724
+[dev]   注意: attach 会注入 colorScheme:'light' 仿真（Playwright 默认）
+[dev] ═══════════════════════════════════════
+
+9:26:16 PM [vite] (client) Pre-transform error: /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/renderer_solid/App.tsx: Unexpected token (1:1)
+
+> 1 | <<<<<<< HEAD
+    |  ^
+  2 | import { createSignal, createEffect, createMemo, on, onMount, onCleanup, untrack, Show, For } from "solid-js";
+  3 | =======
+  4 | import { createSignal, createMemo, createEffect, on, onMount, onCleanup, untrack, Show, For } from "solid-js";
+  Plugin: solid
+  File: /Users/ccc/git/diy/diy/_diy.worktrees/t358-activity-tune/pkgs.ts/diy-app/src/renderer_solid/App.tsx:1:1
+  1  |  <<<<<<< HEAD
+     |   ^
+  2  |  import { createSignal, createEffect, createMemo, on, onMount, onCleanup, untrack, Show, For } from "solid-js";
+  3  |  =======
+9:31:58 PM [vite] (client) hmr update /index.css
+9:31:58 PM [vite] (client) hmr update /index.css
+9:32:32 PM [vite] (client) hmr update /index.css
+9:36:24 PM [vite] (client) hmr update /index.css
+9:36:24 PM [vite] (client) hmr update /index.css

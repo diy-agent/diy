@@ -6,10 +6,10 @@
  * 各自只写协议 dispatch（envelope / http2 stream），不再重复注册机制。
  */
 
-import type { StreamHandle } from './types';
-import type { ClientBinding } from './server-binding';
-import { _validateInput, type _AnyProcedureMeta, type _HandlerForProc, type _Router } from './meta';
-import { _flattenRouter, _isProcedure } from './_tree';
+import type { StreamHandle } from './types.js';
+import type { ClientBinding } from './server-binding.js';
+import { _validateInput, type _AnyProcedureMeta, type _HandlerForProc, type _Router } from './meta.js';
+import { _flattenRouter, _isProcedure } from './_tree.js';
 
 type UnaryHandler = (params: unknown, signal: AbortSignal) => unknown;
 type ServerStreamHandler = (params: unknown, signal: AbortSignal) => AsyncGenerator<unknown>;

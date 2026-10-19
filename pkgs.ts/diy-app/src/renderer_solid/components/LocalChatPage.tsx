@@ -26,7 +26,7 @@
  * 「显示什么、按什么序、开到第几层」的语义全在 `lib/chat-fold.ts`（纯函数 + 单测），本文件只管画。
  * MD 渲染/原文是**正交**的显示偏好：摘要态同样按它渲染（见 TextRow）。
  */
-import { createEffect, createMemo, createSignal, For, Match, on, onCleanup, onMount, Show, Switch } from "solid-js";
+import { createContext, createEffect, createMemo, createSignal, For, Match, on, onCleanup, onMount, Show, Switch, useContext } from "solid-js";
 import type { JSX } from "solid-js";
 import { localChatStore } from "../store/localChatStore";
 import { personaStore } from "../store/personaStore";
@@ -36,8 +36,8 @@ import {
     TurnUsageDetailDrawer,
     SessionUsageChip,
     WindowRing,
-    StepRateChip,
-    sessionLastRate,
+    OverallRateChip,
+    sessionAvgRate,
     UsageDrawer,
     UsageHoverCard,
     armHoverClose,
@@ -51,10 +51,11 @@ import { draftStore } from "../store/draftStore";
 import { trafficStore } from "../store/trafficStore";
 import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
-import { Caches } from "../lib/ui-state";
+import { Caches, CONCLUSION_LINES_MAX, CONCLUSION_LINES_MIN } from "../lib/ui-state";
 import { HeightLedger, stackRows, windowRange } from "../lib/chat-virtual";
 import { MarkdownView } from "./MarkdownView";
 import { MdEditor } from "./MdEditor";
+import { taskCompletion } from "../lib/completions";
 import { bylineOf } from "../lib/assistant-byline";
 // 滚动决策（纯函数，可单测：跟随时序 / 锚点恢复）—— 本文件只负责 DOM 读写
 import { anchorScrollTop, anchorTick, clampScrollTop, followPlan, lastLeafId, type AnchorTickState, type ChatAnchor } from "../lib/chat-scroll";
@@ -65,11 +66,9 @@ import type { ReasoningEffort } from "../../main/services/local-agent";
 // 插话队列项：与草稿同文件存储（任务目录 .diy/drafts.yaml），类型只在 main 侧定义
 import type { SteerItem, SteerMode } from "../../main/core/drafts";
 import { reasoningEffortLabel } from "../../shared/reasoning-effort";
-// 速度口径与"最近一次实测"的取值（与轮尾状态行、用量表速度列**同一个函数**，见 shared/usage.stepRate）
-import { lastMeasuredRate, type TurnUsagePatch } from "../../shared/usage";
 import { DragDropProvider, DragOverlay, PointerSensor, useDraggable, useDroppable } from "@dnd-kit/solid";
 import type { DragDropProviderProps } from "@dnd-kit/solid";
-import { IconExpand, IconCompress, IconTrash, IconGrip, IconClock, IconBolt, IconChevron } from "./icons";
+import { IconExpand, IconCompress, IconTrash, IconGrip, IconClock, IconBolt, IconChevron, IconCode } from "./icons";
 import { RowGutter } from "./RowGutter";
 import { VIEW_BAR_H, chatInputMaxHeight } from "../lib/layout-metrics";
 import type { BlockNode } from "../../main/services/local-blocks";
@@ -92,6 +91,7 @@ import {
     isUserText,
     leadUsers,
     leavesOf,
+    linesFromDrag,
     liveTurnOf,
     liveTailOf,
     planOfLevel,
@@ -267,6 +267,39 @@ function MarkdownText(props: { text: string; streaming: boolean }) {
 }
 
 /**
+ * **会话渲染的数据源**（##166 §28.7 A 的落点）。
+ *
+ * 为什么要有它：块渲染器（`TurnView` 及其子树）原本直接读 `localChatStore` —— 那个 store
+ * 是**单当前会话**的（`currentUri` + 一份 trees），于是同一页里**只能画一个会话**。
+ * room 要的恰恰是**多个成员的进度并列**（一条发言投给 2 个 agent = 2 条进度同屏），
+ * 所以把"从哪取树 / 是否直播"提成一个可注入的作用域：
+ *   · 任务对话页 = 缺省（`localChatStore`），行为一字不变；
+ *   · room 的进度展开 = 注入那一轮自己的树（`ChatView` 包一层）。
+ * 渲染器**只有一份**（口径硬要求：不许为 room 另写一套），差别全在这层数据源。
+ */
+export interface ChatViewSource {
+    /** 该作用域下的轮次树（升序） */
+    trees: () => BlockNode[];
+    /** 该作用域下是否正有轮次在跑（决定"直播中"形态：活动块 / 等待响应 / 中断标记） */
+    live: () => boolean;
+}
+
+const ChatViewCtx = createContext<ChatViewSource>({
+    trees: () => localChatStore.trees,
+    live: () => localChatStore.live,
+});
+
+/** 给一段子树换数据源（room 的进度展开用它；任务对话页不包 = 走缺省） */
+export function ChatView(props: { source: ChatViewSource; children: JSX.Element }) {
+    return <ChatViewCtx.Provider value={props.source}>{props.children}</ChatViewCtx.Provider>;
+}
+
+/** 当前渲染作用域的"是否直播"（缺省即任务对话页那份真值） */
+function viewLive(): boolean {
+    return useContext(ChatViewCtx).live();
+}
+
+/**
  * 按 id 现取轮次节点。
  *
  * 为什么是"现取"而不是"把节点当值传下去"：行对象按 id 复用（见页面里 rootRows 的注释），
@@ -275,7 +308,7 @@ function MarkdownText(props: { text: string; streaming: boolean }) {
  */
 const EMPTY_TURN: BlockNode = { tag: "turn", id: "", stopped: true, touched: 0, attrs: {}, children: [] };
 function turnById(id: string): BlockNode {
-    return localChatStore.trees.find((t) => t.id === id) ?? EMPTY_TURN;
+    return useContext(ChatViewCtx).trees().find((t) => t.id === id) ?? EMPTY_TURN;
 }
 
 // ─── 树工具（文档序） ───────────────────────────────
@@ -365,7 +398,7 @@ function summaryOf(n: BlockNode, open = true): string {
         return firstLine(str(n.attrs.content)).trim() || (n.stopped ? "思考" : "思考中…");
     }
     if (n.tag === "tool") {
-        return `${str(n.attrs.tool) || "tool"}${toolCommand(n) ? ` · ${firstLine(toolCommand(n))}` : ""}${isInterruptedToolBlock(n, localChatStore.live) ? " · ⊘ 中断" : ""}`;
+        return `${str(n.attrs.tool) || "tool"}${toolCommand(n) ? ` · ${firstLine(toolCommand(n))}` : ""}${isInterruptedToolBlock(n, viewLive()) ? " · ⊘ 中断" : ""}`;
     }
     return n.tag;
 }
@@ -382,7 +415,7 @@ const STATUS_TONE_CLASS: Record<ProcTone, string> = {
 
 /** 行首状态灯：判据在 `lib/chat-fold.procStatusOf`（纯函数 + 单测），这里只画（见其头注） */
 function statusMark(node: BlockNode) {
-    const m = procStatusOf(node, localChatStore.live);
+    const m = procStatusOf(node, viewLive());
     if (!m.icon) return null;
     const cls = [STATUS_TONE_CLASS[m.tone], m.pulse ? "animate-pulse" : ""].filter(Boolean).join(" ");
     return (
@@ -421,13 +454,28 @@ function ToolBody(props: {
                 <pre class="text-base-content/70">$ {toolCommand(n)}</pre>
             </Show>
             <Show when={output()}>
-                {/* live：内层不设 max-h/overflow —— 外面那层就是唯一的滚动容器，
-                    两层各自滚动会出现"滚不动"的错觉（实测：内层吃掉滚轮） */}
-                <pre
-                    class={`whitespace-pre-wrap bg-base-100/60 rounded p-2 ${props.live ? "" : "max-h-72 overflow-auto"}`}
-                >
-                    {pv().text}
-                </pre>
+                {/* 相对定位容器：**最大化按钮**浮在框右上角（≠ 插一行按钮把正文挤下去，
+                    也不随内层滚动跑）。点了开全屏（`FullscreenModal`，那里给「恢复」）。
+                    恒显（不只超长时）：短输出也可能要整屏看/复制，判据不该是"有没有被截过"。 */}
+                <div class="relative">
+                    <button
+                        class="btn btn-ghost btn-xs absolute right-1 top-1 z-10 min-h-0 px-1 opacity-40 hover:opacity-100"
+                        data-tool-max="1"
+                        data-tip={`最大化（全屏查看 / 复制，共 ${pv().total} 行）`}
+                        aria-label="最大化工具输出"
+                        onClick={() => props.onFull(title(), output())}
+                    >
+                        <IconExpand class="h-3.5 w-3.5" />
+                    </button>
+                    {/* live：内层不设 max-h/overflow —— 外面那层就是唯一的滚动容器，
+                        两层各自滚动会出现"滚不动"的错觉（实测：内层吃掉滚轮）。
+                        `pr-8` 给右上角那个按钮让位，长行不钻到它下面。 */}
+                    <pre
+                        class={`whitespace-pre-wrap bg-base-100/60 rounded p-2 pr-8 ${props.live ? "" : "max-h-72 overflow-auto"}`}
+                    >
+                        {pv().text}
+                    </pre>
+                </div>
             </Show>
             {/* 工具返回前的结果区是**真空**（ai-sdk 只在 tool-result 一次给全量 stdout），
                 固定高度的框里说明白"在等什么"，否则看着像卡住 */}
@@ -435,18 +483,10 @@ function ToolBody(props: {
                 <div class="animate-pulse text-base-content/50">⋯ 执行中，等待工具返回…</div>
             </Show>
             {/* 中断遗留：正文显示与发往 LLM 完全同源的占位说明（不再是空白让人无从下手） */}
-            <Show when={isInterruptedToolBlock(n, localChatStore.live)}>
+            <Show when={isInterruptedToolBlock(n, viewLive())}>
                 <div class="alert alert-warning alert-soft text-body py-2 font-sans">
                     <span class="whitespace-pre-wrap">{INTERRUPTED_TOOL_NOTICE}</span>
                 </div>
-            </Show>
-            <Show when={pv().omitted > 0}>
-                <button
-                    class="btn btn-ghost btn-xs opacity-70"
-                    onClick={() => props.onFull(title(), output())}
-                >
-                    全屏查看（共 {pv().total} 行）
-                </button>
             </Show>
         </div>
     );
@@ -505,7 +545,7 @@ function ProcessRow(props: {
     const n = () => props.node;
     /** 这一行**点开会不会多出东西**（思考只有一行就不给展开能力，见 chat-fold.expandableOf） */
     const can = () => expandableOf(n());
-    const open = () => can() && procOpenOf(n(), props.pin, localChatStore.live);
+    const open = () => can() && procOpenOf(n(), props.pin, viewLive());
     const head = "flex w-full items-center gap-1.5 py-1.5 text-left";
     /**
      * 行头（三种行位共用同一份内容，只是外壳不同）：
@@ -588,7 +628,7 @@ function TailBox(props: {
     let bodyRef: HTMLDivElement | undefined;
     // 直播展开时跟随到底（订阅整树信号，每 op 重跑一次）；冻结/现场不跟随（用户翻上去就别拽他）
     createEffect(() => {
-        void localChatStore.trees;
+        void useContext(ChatViewCtx).trees();
         if (props.live && open() && !n().stopped && bodyRef) bodyRef.scrollTop = bodyRef.scrollHeight;
     });
     const title = () => {
@@ -898,8 +938,13 @@ function TextRow(props: {
     /** 结尾槽的「结论」形态：这一块**自己就是** `[data-tail-box=conclusion]`（草图 v4 的
         `.tailbox.k-conc` 就是这一块，不再包一层 —— 包一层就是槽里那张卡还套一张卡） */
     box?: "conclusion";
+    /** **仅结论行**：拖下缘改「可见行数」（= 1 级摘要的可视高度）。给了才渲染拖条 ——
+     *  过程历史里的正文行（`HISTORY_TEXT_FOLD_LINES` 固定）不给，它们的高度不归用户调。 */
+    onResizeLines?: (n: number) => void;
 }) {
     const b = () => props.node;
+    /** 正文宿主（拖拽时量它当前高度 —— 等比换算的基准，见 `linesFromDrag`） */
+    let bodyRef: HTMLDivElement | undefined;
     const raw = () => str(b().attrs.content);
     /** 能不能折 = **"点开真的会多出东西"**（review ##253 RV-6）。
      *  原来按**原始**行数判（`countLines(raw()) > lines`），而 `clampLines` 已跳过前导空行
@@ -916,6 +961,30 @@ function TextRow(props: {
     const fire = () => props.onToggle(b().id, !open());
     /** 折叠条的无障碍名：只读"展开 / 收起"听不出是**哪一行**（review ##253 小项6） */
     const foldLabel = () => `${folded() ? "展开" : "收起"}${props.box === "conclusion" ? "结论" : "正文"}`;
+    /** 结论下缘拖拽：改的是**全局**摘要行数（1 级所有轮次一起变 —— 它是"我习惯看几行"的偏好，
+     *  与顶部 `n/4 展开` 同级，不是逐轮覆盖；逐轮覆盖不落盘，见 ui-state 头注）。
+     *  起点量一次宿主高度，之后按等比换算出行数（纯函数 `linesFromDrag`）。 */
+    const startResize = (e: MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const onResize = props.onResizeLines;
+        const el = bodyRef;
+        if (!onResize || !el) return;
+        const h0 = el.getBoundingClientRect().height;
+        const n0 = props.lines;
+        const startY = e.clientY;
+        const move = (ev: MouseEvent) =>
+            onResize(linesFromDrag(n0, h0, ev.clientY - startY, CONCLUSION_LINES_MIN, CONCLUSION_LINES_MAX));
+        const up = () => {
+            window.removeEventListener("mousemove", move);
+            window.removeEventListener("mouseup", up);
+        };
+        window.addEventListener("mousemove", move);
+        window.addEventListener("mouseup", up);
+    };
+    /** 拖条只在**结论收起态**给（拖它 = 改"1 级看几行"）：展开态（2 级全看）没有高度可调；
+     *  未定稿（还在长）也不给 —— 高度每帧变，拖了没有稳定基准。 */
+    const canResize = () => props.box === "conclusion" && !!props.onResizeLines && !open() && b().stopped;
     return (
         <div
             data-block-id={b().id}
@@ -938,6 +1007,7 @@ function TextRow(props: {
                 sole={!cut()}
             />
             <div
+                ref={(el) => (bodyRef = el)}
                 style={
                     cut()
                         ? {
@@ -962,6 +1032,21 @@ function TextRow(props: {
                 >
                     ⋯ 已折叠 {view().omitted} 行 · 点击展开全部正文
                 </button>
+            </Show>
+            {/* 1 级「摘要结论」下缘拖条：往下拖 = 这一块画更多行（免在 1/2 级间来回切）。
+                全局偏好（所有轮次一起变），tooltip 说清；`data-concl-resize` 供 CDP 定位。 */}
+            <Show when={canResize()}>
+                <div
+                    class="group mt-1 flex h-2 cursor-row-resize items-center justify-center rounded hover:bg-primary/20 active:bg-primary/40"
+                    data-concl-resize={String(props.lines)}
+                    role="separator"
+                    aria-orientation="horizontal"
+                    aria-label={`拖动调整 1 级摘要高度（当前 ${props.lines} 行）`}
+                    title={`拖动调整「1 级摘要」高度（当前 ${props.lines} 行；往下拖看更多，全局生效）`}
+                    onMouseDown={startResize}
+                >
+                    <span class="h-0.5 w-10 rounded-full bg-base-content/20 group-hover:bg-base-content/50" />
+                </div>
             </Show>
         </div>
     );
@@ -1253,7 +1338,7 @@ function countTags(turn: BlockNode): { step: number; tool: number; think: number
     return { step, tool, think, error };
 }
 
-function TurnView(props: {
+export function TurnView(props: {
     /** 轮次 id（节点按 id 现取 —— 行对象按 id 复用，见文件头注） */
     turnId: string;
     /** 过程**详情**层的开合（用户自己点出来的那一下；与级别无关） */
@@ -1264,8 +1349,10 @@ function TurnView(props: {
     histOpen: boolean;
     /** 点轮次头 = **收拢 / 展开这一轮的历史**（不换层；层归顶部那个全局按钮） */
     onCycle: () => void;
-    /** 1 级结论摘要的行数 */
+    /** 1 级结论摘要的行数（拖结论下缘改它，见 `onResizeLines`） */
     conclusionLines: number;
+    /** 结论下缘拖拽 → 新的摘要行数（页面级：改全局偏好并落盘） */
+    onResizeLines: (n: number) => void;
     onToggle: (id: string, force?: boolean) => void;
     onFull: (title: string, content: string) => void;
     liveTurnId: string | null;
@@ -1381,6 +1468,7 @@ function TurnView(props: {
                                 onToggle={props.onToggle}
                                 md={props.md}
                                 box="conclusion"
+                                onResizeLines={props.onResizeLines}
                             />
                         </Match>
                         <Match when={tl().kind === "endleaf"}>
@@ -1465,7 +1553,7 @@ function TurnView(props: {
 // 用户刚按下「留言」，横条里就是那句话本身，含义不言自明）。
 // 每行分三列：**最左 = 拖拽手柄**（图标，按住拖 = 改顺序），**中 = 留言内容**（占满剩余宽度，
 // 要发出去的就是这句话），**右 = 排队时机两态开关（时钟 ⇄ 闪电）+ ✕**。
-// 默认留言排到下一轮；右侧那个开关可切到下一步，也可再次切回排队。
+// 默认留言排到下一步（马上生效，##360）；右侧那个开关可切回下一轮排队，也可再次切回来。
 //
 // 顺序：队列是 FIFO 且**顺序即投递顺序**，所以拖拽改的是真实的投递次序（不是显示偏好），
 // 松手即落盘（`steer.reorder` 提交完整顺序）。拖拽只认手柄：整行可拖会让"想选中那句话"
@@ -1476,6 +1564,10 @@ function SteerBar(props: {
     onCancel: (id: string) => void;
     onToggleMode: (id: string) => void;
     onReorder: (ids: string[]) => void;
+    /** 「修改」：把某条撤回编辑器（队列里移除 + 内容回到输入框） */
+    onEdit: (id: string) => void;
+    /** 「立即发送」：整批现在送出去（不等下一轮/下一步） */
+    onFlush: () => void;
 }) {
     /**
      * 拖拽结束：把 source 放到 target 原来的位置，算出**完整的新顺序**再提交。
@@ -1511,10 +1603,31 @@ function SteerBar(props: {
                     /* 无可见标题，语义交给 aria-label：读屏与自动化仍能识别这是"待发送的插话" */
                     aria-label={`待发送插话 ${props.items.length} 条`}
                 >
+                    {/* 头部一行：条数 + 「立即投递」。没有它时队列只能"等时机"——
+                        空闲入队的留言曾因此永远躺着（##303）；入口必须显式存在，别指望用户去猜结果。
+                        ⚠️ 文案刻意不含「发送」二字：输入区的「发送」按钮也在这棵 a11y 树里，
+                        含同样的词会让"按文本点按钮"的定位（人读与自动化）两边都变模糊。 */}
+                    <div class="mb-1 flex items-center justify-between gap-2">
+                        <span class="opacity-60">待投递 {props.items.length} 条</span>
+                        <button
+                            class="btn btn-outline btn-xs"
+                            data-steer-flush
+                            aria-label="立即投递队列里的全部留言"
+                            data-tip="立即投递：有轮次在跑 → 全部加急到下一步；空闲 → 立刻作为新一轮发出"
+                            onClick={() => props.onFlush()}
+                        >
+                            立即投递
+                        </button>
+                    </div>
                     <ul class="max-h-24 space-y-0.5 overflow-y-auto">
                         <For each={props.items}>
                             {(it) => (
-                                <SteerRow item={it} onCancel={props.onCancel} onToggleMode={props.onToggleMode} />
+                                <SteerRow
+                                    item={it}
+                                    onCancel={props.onCancel}
+                                    onToggleMode={props.onToggleMode}
+                                    onEdit={props.onEdit}
+                                />
                             )}
                         </For>
                     </ul>
@@ -1541,6 +1654,7 @@ function SteerRow(props: {
     item: SteerItem;
     onCancel: (id: string) => void;
     onToggleMode: (id: string) => void;
+    onEdit: (id: string) => void;
 }) {
     // 行 = 拖拽源 + 放置目标；**只有手柄能发起拖拽**（整行可拖会让"想选中那句话"变成"拖走了它"）。
     // ⚠️ 手柄必须用 handleRef（内部是 signal + effect 驱动），不能用 `handle: el` 那种普通变量：
@@ -1604,8 +1718,8 @@ function SteerRow(props: {
             <span class="min-w-0 flex-1 truncate" title={it().text}>{it().text}</span>
             {/* 右：排到哪一轮的两态开关（daisyUI swap，可逆）。
                 两态**同时改形状与颜色**，不能只换色 —— 小图标上"同一个形状换个颜色"扫一眼分不出：
-                  · 下一轮（默认）：时钟 + 弱色 = "还得等"
-                  · 下一步（加急）：闪电 + warning 高对比底色/描边 + 呼吸 = "马上插进去"
+                  · 下一轮：时钟 + 弱色 = "还得等"
+                  · 下一步（默认，加急）：闪电 + warning 高对比底色/描边 + 呼吸 = "马上插进去"
                 形状不同，不读 tooltip 也能分辨；动画只作用于图标，不动整行布局。 */}
             <label
                 class={`btn btn-xs shrink-0 swap ${ it().mode === "next-step" ? "border-warning/60 bg-warning/15 text-warning hover:bg-warning/25" : "btn-ghost text-base-content/45 hover:text-base-content/80" }`}
@@ -1631,6 +1745,17 @@ function SteerRow(props: {
                 <IconClock class="swap-off h-4 w-4" />
                 <IconBolt class="swap-on h-4 w-4 animate-pulse drop-shadow" />
             </label>
+            {/* 修改：撤回编辑器（队列里移除 + 内容回到输入框）。
+                与「取消」的区别是**话不丢**：取消是放弃这句话，修改是"我再改改"。 */}
+            <button
+                class="btn btn-ghost btn-xs shrink-0"
+                aria-label="修改这条插话（撤回编辑器）"
+                data-tip="撤回编辑器再改（输入框已有内容时接在 --- 之后）"
+                data-steer-edit={it().id}
+                onClick={() => props.onEdit(it().id)}
+            >
+                ✎
+            </button>
             <button
                 class="btn btn-ghost btn-xs shrink-0"
                 aria-label="取消这条插话"
@@ -1645,6 +1770,13 @@ function SteerRow(props: {
 
 // ─── 全屏输出 ───────────────────────────────────────
 
+/**
+ * 工具输出的**最大化**视图（过程内容框右上角那枚放大按钮点开）。
+ *
+ * 双态是「最大化 ⇄ 恢复」：框上是 `IconExpand`（最大化），进来后这里是 `IconCompress`
+ * （恢复）—— 与 ViewGrid 的 area chrome 同一套 swap 语汇，不另立一套。关闭的三条路
+ * （恢复按钮 / Esc / 点遮罩）等价：`onClose` 都回原处，全屏只是**看完即走**的临时层。
+ */
 function FullscreenModal(props: { title: string; content: string; onClose: () => void }) {
     const onKey = (e: KeyboardEvent) => {
         if (e.key === "Escape") {
@@ -1666,19 +1798,28 @@ function FullscreenModal(props: { title: string; content: string; onClose: () =>
     };
     return (
         <div
-            class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6"
+            class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-2"
+            data-fullscreen-modal
             onClick={(e) => {
                 if (e.target === e.currentTarget) props.onClose();
             }}
         >
-            <div class="bg-base-100 rounded-xl w-full max-w-4xl max-h-full flex flex-col">
+            {/* 真·全屏（`w-full h-full max-w-none`）：名字叫"最大化"，就该铺满内容区 ——
+                原来 `max-w-4xl` 只占 90% 宽、下面留白，看长输出反而更挤。 */}
+            <div class="bg-base-100 rounded-lg w-full h-full max-w-none flex flex-col">
                 <div class="flex items-center gap-2 px-4 py-2 border-b shrink-0">
                     <span class="font-mono text-body truncate flex-1">{props.title}</span>
                     <button class="btn btn-ghost btn-xs" onClick={copy}>
                         复制
                     </button>
-                    <button class="btn btn-ghost btn-xs" onClick={() => props.onClose()}>
-                        ✕
+                    <button
+                        class="btn btn-ghost btn-xs px-1"
+                        data-fullscreen-restore
+                        data-tip="恢复（退出最大化）"
+                        aria-label="恢复尺寸"
+                        onClick={() => props.onClose()}
+                    >
+                        <IconCompress class="h-4 w-4" />
                     </button>
                 </div>
                 <pre class="overflow-auto p-4 text-body font-mono whitespace-pre-wrap break-all flex-1">
@@ -2077,21 +2218,13 @@ export function LocalChatPage(props: { uri?: string }) {
         return liveTurnOf(localChatStore.trees)?.id ?? null;
     };
     /**
-     * ⚡ 总状态栏的速度 = **最近一次实测的步速度**（tok/s）。
+     * ⌀ 底部汇总行的速度 = **全局平均**（总均档，tok/s）。
      *
-     * 口径（用户 2026-10-12）：「没有执行新 step，老的速度留在 bar 上，就是最后一次速度」
-     * —— 从最新一轮往回找第一个有 `lastStepRate` 的（`shared/usage.lastMeasuredRate`：
-     * 一轮都没有 → null → 整块不画）。值随每步结束的 usage patch 更新，故这里读的就是真值，
-     * 不需要本地定时器（按步统计，值只在步结束时变）。
+     * 口径（##349，用户 2026-10-15）：「页面最下汇总行显示**总平均**速度，避免与上方重复同一数字」
+     * —— 上方轮尾那枚是"本轮"（⚡实时 / ⌀轮均），这里是"全部轮次"的 Σ总输出 ÷ Σ响应耗时。
+     * 数据源 = 逐步账本镜像（`localChatStore.usage`），随每步刷新；没有步 → null → 整块不画。
      */
-    const lastRate = () => {
-        const usages = localChatStore.trees
-            .filter((t) => t.tag === "turn")
-            .map((t) => t.attrs.usage as TurnUsagePatch | undefined);
-        // 主源 = 各轮 usage patch 的 `lastStepRate`；本版之前的 ops 没有该字段（那时还没这个数）
-        // ⇒ 回退到逐步账本镜像（打开会话时已对账刷新），老会话也看得见速度。
-        return lastMeasuredRate(usages) ?? sessionLastRate();
-    };
+    const overallRate = () => sessionAvgRate();
     // Markdown 渲染开关（视图 cache 持久化）：全局开关而非 per-message
     const [md, setMdRaw] = createSignal<boolean>(Caches.diy_chat_md.get());
     const setMd = (v: boolean) => {
@@ -2141,7 +2274,13 @@ export function LocalChatPage(props: { uri?: string }) {
         setPinned({});
     };
     /** 1 级摘要的行数 */
-    const conclusionLines = () => Caches.diy_chat_conclusion_lines.get();
+    /** 1 级摘要可视行数（全局偏好，落盘）—— 结论下缘拖拽改它（见 TextRow.startResize） */
+    const [conclusionLines, setConclusionLines] = createSignal(Caches.diy_chat_conclusion_lines.get());
+    const changeConclusionLines = (n: number) => {
+        const v = Math.min(CONCLUSION_LINES_MAX, Math.max(CONCLUSION_LINES_MIN, Math.round(n)));
+        setConclusionLines(v);
+        Caches.diy_chat_conclusion_lines.set(v);
+    };
     /** 清空确认：清空会删掉 main 侧 ops/llm 日志（rmSync，不可恢复），必须二次确认 */
     const [confirmClear, setConfirmClear] = createSignal(false);
     const [pinned, setPinned] = createSignal<Record<string, boolean>>({});
@@ -2388,11 +2527,45 @@ export function LocalChatPage(props: { uri?: string }) {
         if (u) void localChatStore.reorderSteers(u, ids);
     };
 
+    /** 「立即发送」：整批现在送出去（服务端决定是加急到下一步还是立刻开一轮） */
+    const flushSteerQueue = () => {
+        const u = uri();
+        if (u) void localChatStore.flushSteers(u);
+    };
+
+    /**
+     * 「修改」：把一条待发送留言撤回编辑器。
+     *
+     * 输入框已有内容时**不覆盖**：接在一条 `---` 分隔线之后（用户要的是"补进来"；
+     * 直接覆盖就是把他正在打的那半句冲掉 —— 那也是"丢了 = 用户白打"的数据）。
+     * 撤回失败（RPC 错）时队列没动，此时**绝不改动输入框**：同一句话会同时出现在两处。
+     */
+    const editSteer = async (id: string) => {
+        const u = uri();
+        if (!u) return;
+        const item = await localChatStore.takeSteer(u, id);
+        if (!item) return;
+        const cur = inputValue();
+        const next = cur.trim() ? `${cur.replace(/\s+$/, "")}\n\n---\n\n${item.text}` : item.text;
+        setInputValue(next);
+        draftStore.set(u, "agent_input", next);
+        focusInput();
+    };
+
+    /** 焦点送回输入框（撤回留言后要能立刻改；MdEditor 是 CodeMirror，focus 它的 contenteditable 即可） */
+    const focusInput = () => {
+        rootRef?.querySelector<HTMLElement>("[data-agent-input] .cm-content")?.focus();
+    };
+
     return (
         <div
             ref={(el) => (rootRef = el)}
             class="flex flex-col h-full overflow-hidden"
             data-testid="local-chat-page"
+            /* op 订阅健康度（idle|connecting|live|down）：**唯一**能一眼判"实时通道通不通"的位
+               （单通道化后订阅坏了 = 一个字也看不见，与"模型在想"同形）。落成 DOM 属性 = 可被
+               CDP/意图测试断言（`data-ops-down` 那条常驻条只是它的一个渲染分支）。 */
+            data-ops-state={localChatStore.opsState}
         >
             <PersonaDrawer open={personaPanelOpen()} onClose={() => setPersonaPanelOpen(false)} />
             {/* 打开时顺手对一次账本（轮次间隙别人跑的那几轮不该漏） */}
@@ -2450,26 +2623,26 @@ export function LocalChatPage(props: { uri?: string }) {
                     <IconChevron open={globalLevel() > 1} class="h-3.5 w-3.5 opacity-40" />
                     <span class="text-body leading-none">{`${globalLevel()}/${TURN_LEVEL_MAX} 展开`}</span>
                 </button>
-                {/* 显示方式二选一：两个选项都可见、当前态高亮 —— 单按钮式「MD」看不出
-                    处于哪一态（切回去要猜），且与破坏性按钮同形时易误点。 */}
-                <div class="join shrink-0" role="group" aria-label="Markdown 显示方式">
-                    <button
-                        class={`btn btn-xs join-item ${md() ? "btn-ghost" : "btn-active"}`}
-                        title="原文：按纯文本显示，不做 Markdown 渲染"
-                        aria-pressed={!md()}
-                        onClick={() => setMd(false)}
-                    >
-                        MD 原文
-                    </button>
-                    <button
-                        class={`btn btn-xs join-item ${md() ? "btn-active" : "btn-ghost"}`}
-                        title="渲染：按 Markdown 富文本显示"
-                        aria-pressed={md()}
-                        onClick={() => setMd(true)}
-                    >
-                        MD 渲染
-                    </button>
-                </div>
+                {/* 显示方式 = **一个开关的两态**，故用单个 `<>` 图标按钮（VSCode「切换源码」范式，##348 ④）。
+                    原先摆两个按钮（MD 原文 / MD 渲染）像两个动作，其实是同一开关的两面，白占两格。
+                    单按钮最容易犯的错是「看不出当前是哪态」，这里用三处一起说清，不靠用户猜：
+                      · 图标按钮的**按下态**（`btn-active` + `aria-pressed` = 正处于原文态）
+                      · tooltip 直接写**点一下会去哪**（不是描述当前态）
+                      · `data-md` 给测试/自动化一个不随皮肤变的口径
+                    用 daisyUI 的 `btn-active` 而不是 `swap`：swap 的两图标交替需要两块图标，
+                    而这里只有一个 `<>`（态由底色表达）。 */}
+                <button
+                    class="btn btn-xs btn-ghost shrink-0"
+                    classList={{ "btn-active": !md() }}
+                    data-testid="chat-md-toggle"
+                    data-md={md() ? "1" : "0"}
+                    aria-pressed={!md()}
+                    aria-label="Markdown 显示方式（原文 / 渲染）"
+                    data-tip={md() ? "查看 Markdown 原文（纯文本）" : "回到 Markdown 渲染（富文本）"}
+                    onClick={() => setMd(!md())}
+                >
+                    <IconCode class="h-3.5 w-3.5" />
+                </button>
                 {/* 「⋯」溢出菜单：低频/危险操作的收容处（学 VSCode 视图栏的 ... 附加菜单）。
                     清空历史破坏且不可恢复，常驻图标太显眼（防误删已改三轮：改名/确认/挪位，
                     本轮诉求是**位置/层级**）—— 收进来，点开才露出。
@@ -2521,6 +2694,26 @@ export function LocalChatPage(props: { uri?: string }) {
                     </div>
                 </Show>
             </div>
+
+            {/* 会话实时更新**中断常驻条**（##354 ③；判据 = `localChatStore.opsState === "down"`）。
+                单通道化（##327）之后 op 订阅是实时显示的唯一通道 ⇒ 它断了 = 用户**一个字都看不到**，
+                而那在界面上与"模型还在想"完全同形。旧实现是一条**一次性 toast**：故障瞬间切走窗口
+                就错过、也读不到"现在还没恢复"。故改为**常驻**：只要有 `down` 这条就在，
+                恢复（markOpsLive）才消失 —— 状态可见的生命周期与故障本身等长。
+                放在滚动区**之外**（不随消息滚走），"正在补历史"的补齐由 store 的退避重订负责。 */}
+            <Show when={localChatStore.opsState === "down"}>
+                <div
+                    data-ops-down="1"
+                    role="status"
+                    aria-live="polite"
+                    class="flex shrink-0 items-center gap-2 border-b border-error/40 bg-error/10 px-3 py-1.5 text-body text-error"
+                    title="实时通道断了：这段时间别人/模型写的字不会实时出现，重连后会整段补齐（历史一条不丢）"
+                >
+                    <span class="inline-block h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-error" />
+                    <span class="shrink-0 font-medium">会话实时更新中断</span>
+                    <span class="opacity-80">正在自动重连…（重连成功后补齐，历史不丢）</span>
+                </div>
+            </Show>
 
             {/* 块树滚动区 */}
             <div
@@ -2579,6 +2772,7 @@ export function LocalChatPage(props: { uri?: string }) {
                                         histOpen={histOpenOf(row.key)}
                                         onCycle={() => toggleTurn(row.key)}
                                         conclusionLines={conclusionLines()}
+                                        onResizeLines={changeConclusionLines}
                                         onToggle={togglePin}
                                         onFull={(title, content) => setFull({ title, content })}
                                         liveTurnId={liveTurnId()}
@@ -2615,6 +2809,8 @@ export function LocalChatPage(props: { uri?: string }) {
                     onCancel={cancelSteer}
                     onToggleMode={toggleSteerMode}
                     onReorder={reorderSteers}
+                    onEdit={(id) => void editSteer(id)}
+                    onFlush={flushSteerQueue}
                 />
             </Show>
 
@@ -2644,6 +2840,8 @@ export function LocalChatPage(props: { uri?: string }) {
                 <div
                     class={`rounded-field border border-base-content/20 bg-base-200 transition-colors focus-within:border-base-content ${fullscreen() ? "fixed inset-4 z-40 flex min-h-0 flex-col p-4" : "relative flex flex-col"}`}
                     style={fullscreen() ? undefined : { "max-height": inputMaxH() }}
+                    /* 焦点锚点：撤回留言后要把光标送回这里（见 editSteer / focusInput） */
+                    data-agent-input
                 >
                     {/* 全屏时横条挪进这块 fixed 区域顶部：正常态那份被遮罩盖住看不见，
                         同一时刻只有一处渲染（同一份数据不重复画） */}
@@ -2654,6 +2852,8 @@ export function LocalChatPage(props: { uri?: string }) {
                                 onCancel={cancelSteer}
                                 onToggleMode={toggleSteerMode}
                                 onReorder={reorderSteers}
+                                onEdit={(id) => void editSteer(id)}
+                                onFlush={flushSteerQueue}
                             />
                         </div>
                     </Show>
@@ -2699,6 +2899,8 @@ export function LocalChatPage(props: { uri?: string }) {
                                 if (u) draftStore.set(u, "agent_input", v);
                             }}
                             onEnter={submitByEnter}
+                            /* 不接 `@`：任务对话页没有成员概念（见 lib/completions 头注） */
+                            completions={[taskCompletion]}
                             wrap
                             lineNumbers={fullscreen()}
                             embedded
@@ -2747,10 +2949,10 @@ export function LocalChatPage(props: { uri?: string }) {
                         {/* L1 窗口占用环（chip 的 token/金额总量右侧）：hover 出构成卡（含「压缩」按钮 + 可降低窗口比较条）。
                             【用户 2026-10-07】压缩入口**移进 token 窗口的 card**（不再单独一个按钮）；生成中禁用+提示。 */}
                         <WindowRing uri={uri()} />
-                        {/* ⚡ 总状态栏的生成速度（R25 待办 B；口径见 lastRate）：与轮尾状态行、用量表速度列
-                            同一个数（最近一步的 `总输出 ÷ (响应耗时 − TTFT)`），放在**常驻**位置 ——
-                            轮尾那行会随滚屏移出视野，而"跑得快不快"恰恰在等待/想打断时最需要看见。 */}
-                        <StepRateChip rate={lastRate()} />
+                        {/* ⌀ 底部汇总行的总均速度（##349 三档之"总均"；口径见 overallRate）：与轮尾那枚
+                            不重复 —— 轮尾给"本轮"（⚡实时 / ⌀轮均），这里给"全局"。放在**常驻**位置 ——
+                            轮尾那行会随滚屏移出视野，而"整体跑得快不快"是常驻参考。 */}
+                        <OverallRateChip rate={overallRate()} />
                         <div class="flex-1" />
                         {/* 生成中的可见性：别人（CLI/另一窗口）发起时本地 running 全程为 false，
                             不显式说出来，界面看起来就像"什么都没发生"（任务 194 现象一的另一半） */}
@@ -2765,7 +2967,7 @@ export function LocalChatPage(props: { uri?: string }) {
                             <Show when={inputValue().trim()}>
                                 <button
                                     class="btn btn-outline btn-xs"
-                                    data-tip="留言：排到下一轮（回车同此）。想让它马上生效，提交后点上方那条的闪电图标"
+                                    data-tip="留言：排到下一步（回车同此）。想改成不打断本轮、等它跑完再说，提交后点上方那条的时钟图标"
                                     onClick={() => void submitSteer(DEFAULT_STEER_MODE)}
                                 >
                                     留言

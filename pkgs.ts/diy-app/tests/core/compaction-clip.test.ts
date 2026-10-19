@@ -83,7 +83,9 @@ describe("能力轴（runPlan 级）", () => {
         const stages = defaultBudgetPlan(1024, HEADTAIL).stages;
         expect(stages[0]!.budget).toBe("exempt");
         expect(stages[0]!.clip).toEqual(CLIP_FULL);
-        expect(stages[1]!.clip).toEqual(HEADTAIL);
+        // 阶梯级**不声明** clip ⇒ 渲染时回落 `defaultClip`（= HEADTAIL）——##344 M2 起缺省管道由
+        // `DEFAULT_KEEP`（数据）生成，「未声明」与「显式写 defaultClip」在渲染上同一件事（`clip ?? defaultClip`）。
+        expect(stages[1]!.clip).toBeUndefined();
     });
 });
 

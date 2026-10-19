@@ -120,7 +120,19 @@ function HighlightText(props: { text: string; query: () => string }) {
     );
 }
 
-export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
+/**
+ * 人物编辑半截页。
+ *
+ * `initialPersona`（##377 第 13 刀加）：**打开时**直接定位到某个人物（不传 = 老行为：
+ * 「跟随缺省」或本任务绑定的人物）。侧边栏 room 的成员没有"当前任务"上下文 ——
+ * 点某成员的头像要编辑**它的人物**，靠这个 prop 指定；同时置 `manualPick`，
+ * 否则下面那条"校准回本任务人物"的 effect 会立刻把它覆盖掉。
+ */
+export function PersonaDrawer(props: {
+    open: boolean;
+    onClose: () => void;
+    initialPersona?: string | null;
+}) {
     /** 右侧正在编辑的人物 id（空白态 = 新建，见 creating） */
     const [editing, setEditing] = createSignal<string | null>(null);
     const [creating, setCreating] = createSignal(false);
@@ -177,6 +189,23 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
      */
     const [manualPick, setManualPick] = createSignal(false);
 
+    /**
+     * 刚被「↗ 跳转到缺省人物」带到的那个条目（##350 ③ · review R2）。
+     *
+     * 光"滚到视野里 + 聚焦"还不够：左列十几个人物，滚动本身在密集列表里不显眼，
+     * 用户仍可能不知道"跳到了谁"（尤其条目只是刚进视野边缘时）。故给目标条目一段**短暂高亮**
+     * —— 它既是"就是这个人"的第三重信号，也是缺省人物**本身无特殊设置**时唯一可给的反馈。
+     */
+    const [flashId, setFlashId] = createSignal<string | null>(null);
+    let flashTimer: ReturnType<typeof setTimeout> | undefined;
+
+    /** 高亮 id 一段时间后自动熄灭（重入时重置计时，连点不会提前熄） */
+    const flashPersona = (id: string) => {
+        setFlashId(id);
+        if (flashTimer) clearTimeout(flashTimer);
+        flashTimer = setTimeout(() => setFlashId(null), 1200);
+    };
+
     createEffect(
         on(
             () => props.open,
@@ -186,10 +215,17 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                 setNewName("");
                 setNewInstructions("");
                 setSearch("");
-                setManualPick(false);
+                // 指定了人物 ⇒ 听调用方的，并标记「用户已选」以免被下面的校准 effect 拉回本任务人物
+                setManualPick(!!props.initialPersona);
+                // 上次的高亮不跨"打开"存活（关面板即视为一次交互结束；timer 也一并掐掉）
+                if (flashTimer) clearTimeout(flashTimer);
+                setFlashId(null);
                 // 本任务跟随缺省时，右侧停在「跟随缺省」那一行（而不是解析出来的缺省人物 ——
                 // 那会让人以为"我固定绑了它"，而实际是"跟着缺省走"）
-                setEditing(personaStore.isFollowing() ? FOLLOW_DEFAULT : personaStore.idForTask());
+                setEditing(
+                    props.initialPersona ??
+                        (personaStore.isFollowing() ? FOLLOW_DEFAULT : personaStore.idForTask()),
+                );
                 void personaStore.load(true);
             },
         ),
@@ -270,6 +306,55 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
             return;
         }
         setNewEffort(effort);
+    };
+
+    /**
+     * 跳转到「当前缺省人物」**本体**（##350 ③）。
+     *
+     * 「跟随缺省」那一行代表的是**绑定模式**（不固定），它自己不是一个可编辑的人物 ——
+     * 要看/改缺省人物的模型与行为指令，得到左边列表里那个真人物上去（条目上带「缺省」徽标）。
+     *
+     * 为什么要显式滚动：左列是 `overflow-y-auto` 容器，人物多时缺省那个人可能在视野之外。
+     * 只把右侧切过去 = 用户看见右边内容变了、却不知道"刚才那一下把我带到哪去了"（现象即"无有效跳转"）。
+     * 故三重信号齐上（R2 补齐后两条）：① 若搜索词把它滤掉了，先清搜索；② 把它**摆到视野正中**
+     * （不是"勉强露个边"—— 长列表里那等于没滚）；③ 短暂高亮一段，明确"就是这个人"；
+     * 焦点落在条目按钮上（键盘可达，"就在这儿"的第二重信号）。
+     */
+    const jumpToDefault = () => {
+        const id = personaStore.defaultPersona;
+        setManualPick(true);
+        setEditing(id);
+        if (filteredPersonas().every((p) => p.id !== id)) setSearch("");
+        // 先亮起来：高亮走 signal，与滚动解耦 —— 即使条目已在视野内、滚动无位移，
+        // 高亮仍会给出反馈（"点了没反应"的观感正是缺它）。
+        flashPersona(id);
+        // 清搜索后列表要重排，立刻查会拿到被卸载的旧节点；且容器几何（尤其"刚打开面板 /
+        // 刚改列宽"时）也未必稳定 —— 故延到下一帧，见 centerRowInList 的注释。
+        queueMicrotask(() => {
+            centerRowInList(id);
+            requestAnimationFrame(() => centerRowInList(id)); // 几何随后才稳定时补一次（幂等）
+        });
+    };
+
+    /**
+     * 把某条目滚到左列容器的**正中**（##350 ③ · review R2）。
+     *
+     * 不用 `row.scrollIntoView({ block: "center" })`：它按**调用瞬间**的容器几何算"居中"，
+     * 而本跳转正发生在"可能要清搜索 / 面板刚打开"的当口 —— 实测踩到过，同一行、同一个调用，
+     * 早一步（几何未稳定时）被打成"顶到容器上边"，晚一步才是正的居中值。既然要的是确定结果，
+     * 就自己按**当前** rect 差值算 scrollTop（差值与 offsetParent 无关，且逐次收敛、可重入）。
+     */
+    const centerRowInList = (id: string) => {
+        const list = leftListEl;
+        const row = list?.querySelector<HTMLElement>(`[data-persona-id="${id}"]`);
+        if (!list || !row) return;
+        const lr = list.getBoundingClientRect();
+        const rr = row.getBoundingClientRect();
+        if (lr.height === 0) return; // 还没上屏（下一帧再来）
+        const target = list.scrollTop + (rr.top + rr.height / 2) - (lr.top + lr.height / 2);
+        list.scrollTop = Math.max(0, Math.min(target, list.scrollHeight - list.clientHeight));
+        // 焦点落在条目按钮上（外层 div 不可聚焦；焦点 = "就在这儿"的第二重信号）
+        row.querySelector<HTMLElement>("button")?.focus({ preventScroll: true });
     };
 
     /**
@@ -361,6 +446,8 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
     const [drawerH, setDrawerH] = createSignal(Caches.diy_persona_drawer_height.get());
     const [leftW, setLeftW] = createSignal(Caches.diy_persona_left_width.get());
     let leftColEl: HTMLDivElement | undefined;
+    /** 左列滚动容器（##350 ③：跳转到缺省人物要把它的条目滚进视野） */
+    let leftListEl: HTMLDivElement | undefined;
 
     const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
     /** 当前高度（px）：拖过用缓存；否则 2/3 视口。最大化态见 heightStyle */
@@ -471,7 +558,11 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                 悬浮提示是绝对定位在条目内的，贴着容器底边的那一项下方没有余量就会被裁掉
                                 （daisyUI tooltip 被 overflow 容器裁剪是本项目踩过的坑）。
                                 留白放在滚动内容的末端，视觉上就是列表尾部一点空隙，不占布局。 */}
-                            <div class="flex-1 overflow-y-auto p-2 pb-9" data-testid="persona-left-list">
+                            <div
+                                ref={leftListEl}
+                                class="flex-1 overflow-y-auto p-2 pb-9"
+                                data-testid="persona-left-list"
+                            >
                                 <div class="mb-2 flex items-center gap-2">
                                     <input
                                         class="input input-sm input-bordered min-w-0 flex-1"
@@ -563,10 +654,8 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                                 class="btn btn-ghost btn-xs my-auto h-5 min-h-0 shrink-0 px-1"
                                                 aria-label="跳转到当前缺省人物"
                                                 data-tip="查看当前缺省人物的模型与行为指令"
-                                                onClick={() => {
-                                                    setManualPick(true);
-                                                    setEditing(personaStore.defaultPersona);
-                                                }}
+                                                data-testid="persona-jump-default"
+                                                onClick={jumpToDefault}
                                             >
                                                 ↗
                                             </button>
@@ -589,7 +678,12 @@ export function PersonaDrawer(props: { open: boolean; onClose: () => void }) {
                                         // daisyUI 的 `.tooltip`/`tooltip-content` 会被 overflow 容器裁掉，本行
                                         // 身处 `overflow-y-auto` 抽屉里正是踩坑场景（2026-10-03 统一替换）。
                                         // `block` 必需：不要它，每项会退化成 inline-block，行盒之间多出空隙。
-                                        <div class="group block w-full" data-tip="双击选择此人物">
+                                        <div
+                                            class={`group block w-full rounded-box transition-shadow ${flashId() === p.id ? "ring-2 ring-primary ring-offset-1 ring-offset-base-100" : ""}`}
+                                            data-tip="双击选择此人物"
+                                            data-persona-id={p.id}
+                                            data-jump-flash={flashId() === p.id ? "1" : undefined}
+                                        >
                                             <div class="mb-1 flex w-full items-stretch gap-1">
                                                 <button
                                                     class={`min-w-0 flex-1 flex-col items-start gap-0.5 rounded-box px-2 py-1.5 text-left transition-colors ${

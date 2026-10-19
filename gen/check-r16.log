@@ -1,0 +1,674 @@
+[38;5;255;48;5;66;1m./sha.sh:73 check() [0m[38;5;255;48;5;31;1m~/git/diy/diy/_diy.worktrees/t358-activity-tune [0m[38;5;255;48;5;55;1mnpx tsc -b tsconfig.all.json --noEmit[0m
+npm warn Unknown user config "electron_mirror". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+npm warn Unknown user config "electron_builder_binaries_mirror". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+npm notice run npx
+npm notice run 'tsc' -b tsconfig.all.json --noEmit
+[38;5;255;48;5;66;1m./sha.sh:74 check() [0m[38;5;255;48;5;31;1m~/git/diy/diy/_diy.worktrees/t358-activity-tune [0m[38;5;255;48;5;55;1mnpx oxlint pkgs.ts/[0m
+npm warn Unknown user config "electron_mirror". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+npm warn Unknown user config "electron_builder_binaries_mirror". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+npm notice run npx
+npm notice run 'oxlint' pkgs.ts/
+
+  ! eslint(no-unused-vars): Type 'VarNode' is imported but never used.
+   ,-[pkgs.ts/diy-app/tests/core/var-tree.test.ts:4:58]
+ 3 | import { AssembleGlobalsSchema } from "../../src/shared/prompt-schema";
+ 4 | import { buildValueTree, buildVarTree, flattenVars, type VarNode } from "../../src/shared/var-tree";
+   :                                                          ^^^|^^^
+   :                                                             `-- 'VarNode' is imported here
+ 5 | 
+   `----
+  help: Consider removing this import.
+
+  ! eslint(no-unused-vars): Variable '_op' is declared but never used.
+    ,-[pkgs.ts/diy-app/tests/core/local-agent-active-turn.test.ts:39:34]
+ 38 |             try {
+ 39 |                 for await (const _op of mgr.chat(uri, "你好")) {
+    :                                  ^|^
+    :                                   `-- '_op' is declared here
+ 40 |                     /* 起手就该失败，不该真的产出 op */
+    `----
+  help: Consider removing this declaration.
+
+  ! eslint(no-unused-vars): Interface 'Win' is declared but never used.
+    ,-[pkgs.ts/diy-app/tests/cli.intent.chat-virtualize.test.ts:22:11]
+ 21 | 
+ 22 | interface Win {
+    :           ^|^
+    :            `-- 'Win' is declared here
+ 23 |     ops: Array<{ op?: string; kind?: string; id?: string }>;
+    `----
+  help: Consider removing this declaration.
+
+  ! eslint(no-unused-vars): Variable 'allTurns' is assigned a value but never used.
+    ,-[pkgs.ts/diy-app/tests/cli.intent.chat-virtualize.test.ts:33:5]
+ 32 | let fp = "";
+ 33 | let allTurns: string[] = [];
+    :     ^^^^|^^^
+    :         `-- 'allTurns' is declared here
+ 34 | /** 48 轮会话"滚到顶"后的 DOM 节点数（小会话用例的对照基准） */
+    `----
+     ,-[pkgs.ts/diy-app/tests/cli.intent.chat-virtualize.test.ts:127:9]
+ 126 |         writeFileSync(fp, buildOps(), "utf-8");
+ 127 |         allTurns = Array.from({ length: TURNS }, (_, i) => `v${3001 + i}`);
+     :         ^^^^|^^^
+     :             `-- it was last assigned here
+ 128 |     }, 120_000);
+     `----
+  help: Did you mean to use this variable?
+
+  ! eslint(no-unused-vars): Identifier 'isFocusable' is imported but never used.
+    ,-[pkgs.ts/diy-ui/tools/check-pitui.ts:17:10]
+ 16 | import * as pi from "@mariozechner/pi-tui";
+ 17 | import { isFocusable, type Component } from "@mariozechner/pi-tui";
+    :          ^^^^^|^^^^^
+    :               `-- 'isFocusable' is imported here
+ 18 | 
+    `----
+  help: Consider removing this import.
+
+  ! eslint(no-unused-vars): Type 'Component' is imported but never used.
+    ,-[pkgs.ts/diy-ui/tools/check-pitui.ts:17:28]
+ 16 | import * as pi from "@mariozechner/pi-tui";
+ 17 | import { isFocusable, type Component } from "@mariozechner/pi-tui";
+    :                            ^^^^|^^^^
+    :                                `-- 'Component' is imported here
+ 18 | 
+    `----
+  help: Consider removing this import.
+
+  ! eslint(no-unused-vars): Parameter 'className' is declared but never used. Unused parameters should start with a '_'.
+    ,-[pkgs.ts/diy-ui/tools/check-pitui.ts:89:44]
+ 88 | /** 获取构造函数参数签名的文本表示 */
+ 89 | function getConstructorSignature(cls: any, className: string): string {
+    :                                            ^^^^|^^^^
+    :                                                `-- 'className' is declared here
+ 90 |   const src = cls.toString();
+    `----
+  help: Consider removing this parameter.
+
+  ! eslint(no-unassigned-vars): 'inputEl' is always 'undefined' because it's never assigned.
+    ,-[pkgs.ts/diy-app/src/renderer_solid/components/FindBar.tsx:22:9]
+ 21 | export function FindBar() {
+ 22 |     let inputEl: HTMLInputElement | undefined;
+    :         ^^^^^^^
+ 23 |     // 打开即聚焦输入框（⌘F 后直接打字；点按钮打开同理）
+    `----
+  help: Variable declared without assignment. Either assign a value or remove the declaration.
+
+  ! eslint(no-useless-escape): Unnecessary escape character '"'
+     ,-[pkgs.ts/diy-app/src/main/services/api-def.ts:441:124]
+ 440 |                   // 必须写 --fields '["title"]'，写 --fields title 会得到 "expected array"。renderer 侧传数组。
+ 441 |                   fields: z.array(DraftFieldSchema).optional().cliOption({ desc: `只清指定字段（JSON 数组，如 '[\"title\"]'）` }),
+     :                                                                                                                 ^^
+ 442 |                 },
+     `----
+  help: Replace `\"` with `"`.
+
+  ! eslint(no-useless-escape): Unnecessary escape character '"'
+     ,-[pkgs.ts/diy-app/src/main/services/api-def.ts:441:131]
+ 440 |                   // 必须写 --fields '["title"]'，写 --fields title 会得到 "expected array"。renderer 侧传数组。
+ 441 |                   fields: z.array(DraftFieldSchema).optional().cliOption({ desc: `只清指定字段（JSON 数组，如 '[\"title\"]'）` }),
+     :                                                                                                                        ^^
+ 442 |                 },
+     `----
+  help: Replace `\"` with `"`.
+
+  ! eslint(no-useless-escape): Unnecessary escape character '`'
+      ,-[pkgs.ts/diy-app/src/main/services/api-def.ts:1569:102]
+ 1568 |                   uri: z.string().cliArg({ desc: "任务 URI（projects/<pid>/tasks/<tid>）" }),
+ 1569 |                   thread: z.string().cliOption({ desc: "线程 id（形如 review->implement#2，见 \`flow thread list\`）" }),
+      :                                                                                               ^^
+ 1570 |                   text: z
+      `----
+  help: Replace `\`` with ```.
+
+  ! eslint(no-useless-escape): Unnecessary escape character '`'
+      ,-[pkgs.ts/diy-app/src/main/services/api-def.ts:1569:120]
+ 1568 |                   uri: z.string().cliArg({ desc: "任务 URI（projects/<pid>/tasks/<tid>）" }),
+ 1569 |                   thread: z.string().cliOption({ desc: "线程 id（形如 review->implement#2，见 \`flow thread list\`）" }),
+      :                                                                                                                 ^^
+ 1570 |                   text: z
+      `----
+  help: Replace `\`` with ```.
+
+  ! eslint(no-unused-vars): Parameter 'seq' is declared but never used. Unused parameters should start with a '_'.
+    ,-[pkgs.ts/diy-app/tests/core/flow-artifacts.test.ts:76:76]
+ 75 |         const visits = [visit("implement", 1), visit("review", 1), visit("ci", 1)];
+ 76 |         const out = await collectArtifacts(URI, visits, async (_uri, node, seq) => {
+    :                                                                            ^|^
+    :                                                                             `-- 'seq' is declared here
+ 77 |             if (node === "implement") return { ok: true, value: null }; // 该驻留确实没产物
+    `----
+  help: Consider removing this parameter.
+
+  ! eslint(no-unused-vars): Variable 'installedHome' is assigned a value but never used.
+    ,-[pkgs.ts/diy-app/src/main/services/diagnostics.ts:33:5]
+ 32 | let logFilePath = "";
+ 33 | let installedHome = "";
+    :     ^^^^^^|^^^^^^
+    :           `-- 'installedHome' is declared here
+ 34 | 
+    `----
+     ,-[pkgs.ts/diy-app/src/main/services/diagnostics.ts:100:3]
+  99 |   logFilePath = logFile(diyHome, name);
+ 100 |   installedHome = diyHome;
+     :   ^^^^^^|^^^^^^
+     :         `-- it was last assigned here
+ 101 |   try {
+     `----
+  help: Did you mean to use this variable?
+
+  ! eslint(no-unused-vars): Variable 'opsFileOf' is declared but never used.
+     ,-[pkgs.ts/diy-app/tests/core/local-agent-steer.test.ts:434:7]
+ 433 | }
+ 434 | const opsFileOf = (uri: string): Promise<string> => Promise.resolve(opsPathOf(uri));
+     :       ^^^^|^^^^
+     :           `-- 'opsFileOf' is declared here
+ 435 | 
+     `----
+  help: Consider removing this declaration.
+
+  ! eslint(no-unused-vars): Type 'TurnTail' is imported but never used.
+     ,-[pkgs.ts/diy-app/src/renderer_solid/components/LocalChatPage.tsx:109:10]
+ 108 |     type TurnRow,
+ 109 |     type TurnTail,
+     :          ^^^^|^^^
+     :              `-- 'TurnTail' is imported here
+ 110 | } from "../lib/chat-fold";
+     `----
+  help: Consider removing this import.
+
+  ! eslint(no-unused-vars): Parameter 'opts' is declared but never used. Unused parameters should start with a '_'.
+     ,-[pkgs.ts/diy-app/src/shared/session-nav.ts:144:45]
+ 143 |  */
+ 144 | export function heroBadgeOf(rows: NavRow[], opts: { collapsed: boolean }): NavBadge | null {
+     :                                             ^^|^
+     :                                               `-- 'opts' is declared here
+ 145 |     const running = rows.filter((r) => r.running);
+     `----
+  help: Consider removing this parameter.
+
+  ! unicorn(no-useless-fallback-in-spread): Empty fallbacks in spreads are unnecessary
+     ,-[pkgs.ts/diy-app/src/main/services/local-agent.ts:249:39]
+ 248 |         typeof v === "number" && Number.isFinite(v) && v > 0 ? v : d;
+ 249 |     const base = { ...DEFAULT_LIMITS, ...(file ?? {}) };
+     :                                       ^^^^^^^^^^^^^^^
+ 250 |     return {
+     `----
+  help: Spreading falsy values in object literals won't add any unexpected properties, so it's unnecessary to add an empty object as fallback.
+
+  ! unicorn(no-useless-spread): Using a spread operator here creates a new array unnecessarily.
+      ,-[pkgs.ts/diy-app/src/main/services/local-agent.ts:2088:26]
+ 2087 |         // 键是 `${taskUri}#${start}`（分页后一个 task 可能有多条窗口），按前缀清干净。
+ 2088 |         for (const k of [...this.historyCache.keys()]) {
+      :                          ^^^
+ 2089 |             if (k.startsWith(`${taskUri}#`)) this.historyCache.delete(k);
+      `----
+  help: `for…of` can iterate over iterable, it's unnecessary to convert to an array.
+
+  ! eslint(no-control-regex): Unexpected control characters
+    ,-[pkgs.ts/diy-app/src/shared/context/render.ts:72:24]
+ 71 |  */
+ 72 | const BLOCK_UNSAFE = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/;
+    :                        ^^^|^^ ^^^|^^^^^|^^ ^^^|^^
+    :                           |      |     |      `-- 'U+001F' is a control character.
+    :                           |      |     `-- 'U+000B' is a control character.
+    :                           |      `-- 'U+0008' is a control character.
+    :                           `-- 'U+0000' is a control character.
+ 73 | 
+    `----
+  help: Avoid matching control characters in regular expressions. If intentional, consider using a Unicode escape instead.
+
+  ! eslint(no-useless-escape): Unnecessary escape character '-'
+     ,-[pkgs.ts/diy-app/src/shared/context/render.ts:100:50]
+  99 |     if (typeof v !== "string") return JSON.stringify(v);
+ 100 |     const plain = /^[A-Za-z0-9_/][A-Za-z0-9_./@ :\-]*$/.test(v) && !YAML_RESERVED.has(v);
+     :                                                  ^^
+ 101 |     return plain ? v : JSON.stringify(v);
+     `----
+  help: Replace `\-` with `-`.
+
+  ! unicorn(no-new-array): Do not use `new Array(singleArgument)`.
+     ,-[pkgs.ts/diy-app/src/main/services/compaction-plan.ts:134:18]
+ 133 |     }
+ 134 |     const rank = new Array<HistoryRank>(n);
+     :                  ^^^^^^^^^^^^^^^^^^^^^^^^^
+ 135 |     for (let i = 0; i < n; i++) {
+     `----
+  help: It's not clear whether the argument is meant to be the length of the array or the only element. If the argument is the array's length, consider using `Array.from({ length: n })`. If the argument is the only element, use `[element]`.
+
+  ! unicorn(no-new-array): Do not use `new Array(singleArgument)`.
+     ,-[pkgs.ts/diy-app/src/main/services/compaction-plan.ts:302:18]
+ 301 |     const ctx = buildCtx(all, args.costOf);
+ 302 |     const keep = new Array<boolean>(n).fill(false);
+     :                  ^^^^^^^^^^^^^^^^^^^^^
+ 303 |     /** 每条消息的裁法：**先选中它的那一级**声明什么就是什么（后到的级改不动它） */
+     `----
+  help: It's not clear whether the argument is meant to be the length of the array or the only element. If the argument is the array's length, consider using `Array.from({ length: n })`. If the argument is the only element, use `[element]`.
+
+  ! unicorn(no-new-array): Do not use `new Array(singleArgument)`.
+     ,-[pkgs.ts/diy-app/src/main/services/compaction-plan.ts:304:19]
+ 303 |     /** 每条消息的裁法：**先选中它的那一级**声明什么就是什么（后到的级改不动它） */
+ 304 |     const clips = new Array<ClipSpec | null>(n).fill(null);
+     :                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ 305 |     let declared = false;
+     `----
+  help: It's not clear whether the argument is meant to be the length of the array or the only element. If the argument is the array's length, consider using `Array.from({ length: n })`. If the argument is the only element, use `[element]`.
+
+  ! eslint(no-unused-vars): Variable 'task' is declared but never used.
+     ,-[pkgs.ts/diy-app/src/main/services/prompt-registry.ts:526:9]
+ 525 |   const taskUri = opts.taskUri ?? "";
+ 526 |   const task = taskOf(home, taskUri);
+     :         ^^|^
+     :           `-- 'task' is declared here
+ 527 |   const cwdRes = resolveCwd(home, taskUri);
+     `----
+  help: Consider removing this declaration.
+
+  ! eslint(no-unused-vars): Variable 'cwdRes' is declared but never used.
+     ,-[pkgs.ts/diy-app/src/main/services/prompt-registry.ts:527:9]
+ 526 |   const task = taskOf(home, taskUri);
+ 527 |   const cwdRes = resolveCwd(home, taskUri);
+     :         ^^^|^^
+     :            `-- 'cwdRes' is declared here
+ 528 |   const warnings: string[] = [];
+     `----
+  help: Consider removing this declaration.
+
+  ! eslint(no-unused-vars): Variable '_kids' is declared but never used.
+     ,-[pkgs.ts/diy-app/src/main/services/local-blocks.ts:443:33]
+ 442 |     }
+ 443 |     const { id, kind, children: _kids, stopped, touched, ...attrs } = b;
+     :                                 ^^|^^
+     :                                   `-- '_kids' is declared here
+ 444 |     delete (attrs as Record<string, unknown>).parent; // parent 由 children 树表达，不进 attrs
+     `----
+  help: Consider removing this declaration.
+
+  ! unicorn(no-new-array): Do not use `new Array(singleArgument)`.
+     ,-[pkgs.ts/diy-app/src/main/services/local-blocks.ts:744:18]
+ 743 |     const n = all.length;
+ 744 |     const keep = new Array<boolean>(n).fill(true);
+     :                  ^^^^^^^^^^^^^^^^^^^^^
+ 745 |     if (since === null) {
+     `----
+  help: It's not clear whether the argument is meant to be the length of the array or the only element. If the argument is the array's length, consider using `Array.from({ length: n })`. If the argument is the only element, use `[element]`.
+
+  ! unicorn(no-empty-file): Empty files are not allowed.
+   ,-[pkgs.ts/diy-ui/examples/pi-tui-auto-test.ts:1:1]
+   `----
+  help: Delete this file or add some code to it.
+
+  ! unicorn(no-useless-fallback-in-spread): Empty fallbacks in spreads are unnecessary
+     ,-[pkgs.ts/diy-app/src/renderer_solid/components/ModelConfigPage.tsx:683:11]
+ 682 |         next[m.id] = {
+ 683 |           ...(prev ?? {}),
+     :           ^^^^^^^^^^^^^^^
+ 684 |           id: m.id,
+     `----
+  help: Spreading falsy values in object literals won't add any unexpected properties, so it's unnecessary to add an empty object as fallback.
+
+  ! unicorn(no-useless-fallback-in-spread): Empty fallbacks in spreads are unnecessary
+     ,-[pkgs.ts/diy-app/src/renderer_solid/components/ModelConfigPage.tsx:686:38]
+ 685 |           ...(m.name ? { name: m.name } : {}),
+ 686 |           ...(m.context ? { limit: { ...(prev?.limit ?? {}), context: m.context } } : {}),
+     :                                      ^^^^^^^^^^^^^^^^^^^^^^
+ 687 |           ...(faceNpm !== fallbackNpm ? { provider: { npm: faceNpm } } : {}),
+     `----
+  help: Spreading falsy values in object literals won't add any unexpected properties, so it's unnecessary to add an empty object as fallback.
+
+  ! eslint(no-unassigned-vars): 'leftColEl' is always 'undefined' because it's never assigned.
+     ,-[pkgs.ts/diy-app/src/renderer_solid/components/PersonaDrawer.tsx:363:9]
+ 362 |     const [leftW, setLeftW] = createSignal(Caches.diy_persona_left_width.get());
+ 363 |     let leftColEl: HTMLDivElement | undefined;
+     :         ^^^^^^^^^
+ 364 | 
+     `----
+  help: Variable declared without assignment. Either assign a value or remove the declaration.
+
+  ! eslint(no-unassigned-vars): 'btnRef' is always 'undefined' because it's never assigned.
+     ,-[pkgs.ts/diy-app/src/renderer_solid/components/Breadcrumb.tsx:150:9]
+ 149 |     const [open, setOpen] = createSignal(false);
+ 150 |     let btnRef: HTMLButtonElement | undefined;
+     :         ^^^^^^
+ 151 |     let menuRef: HTMLUListElement | undefined;
+     `----
+  help: Variable declared without assignment. Either assign a value or remove the declaration.
+
+  ! eslint(no-unassigned-vars): 'menuRef' is always 'undefined' because it's never assigned.
+     ,-[pkgs.ts/diy-app/src/renderer_solid/components/Breadcrumb.tsx:151:9]
+ 150 |     let btnRef: HTMLButtonElement | undefined;
+ 151 |     let menuRef: HTMLUListElement | undefined;
+     :         ^^^^^^^
+ 152 | 
+     `----
+  help: Variable declared without assignment. Either assign a value or remove the declaration.
+
+  ! eslint(no-unused-vars): Identifier 'diyHome' is imported but never used.
+   ,-[pkgs.ts/diy-app/src/main/core/fs-lock.ts:6:10]
+ 5 | import { join } from "node:path";
+ 6 | import { diyHome } from "./state";
+   :          ^^^|^^^
+   :             `-- 'diyHome' is imported here
+ 7 | 
+   `----
+  help: Consider removing this import.
+
+  ! eslint(no-unused-vars): Identifier 'onMount' is imported but never used.
+   ,-[pkgs.ts/diy-app/src/renderer_solid/components/TaskTree.tsx:1:76]
+ 1 | import { createSignal, createEffect, createMemo, on, For, Show, onCleanup, onMount } from "solid-js";
+   :                                                                            ^^^|^^^
+   :                                                                               `-- 'onMount' is imported here
+ 2 | import { createMutable } from "solid-js/store";
+   `----
+  help: Consider removing this import.
+
+  ! eslint(no-unused-vars): Variable 'searchRef' is assigned a value but never used.
+     ,-[pkgs.ts/diy-app/src/renderer_solid/components/TaskTree.tsx:249:9]
+ 248 |     const [focusIdx, setFocusIdx] = createSignal(0);
+ 249 |     let searchRef: HTMLInputElement | undefined;
+     :         ^^^^|^^^^
+     :             `-- 'searchRef' is declared here
+ 250 |     const bindSearch = (el: HTMLInputElement) => { searchRef = el; };
+     :                                                    ^^^^|^^^^
+     :                                                        `-- it was last assigned here
+ 251 | 
+     `----
+  help: Did you mean to use this variable?
+
+  ! eslint(no-unused-vars): Identifier 'TONE_BADGE' is imported but never used.
+    ,-[pkgs.ts/diy-app/src/renderer_solid/components/SessionOverviewPage.tsx:15:35]
+ 14 | import { createMemo, createSignal, createEffect, For, Show } from "solid-js";
+ 15 | import { SessionChip, SessionDot, TONE_BADGE } from "./SessionChip";
+    :                                   ^^^^^|^^^^
+    :                                        `-- 'TONE_BADGE' is imported here
+ 16 | import { ConfirmDialog } from "./ConfirmDialog";
+    `----
+  help: Consider removing this import.
+
+  ! unicorn(no-new-array): Do not use `new Array(singleArgument)`.
+    ,-[pkgs.ts/diy-app/src/renderer_solid/lib/chat-virtual.ts:31:18]
+ 30 |     const n = heights.length;
+ 31 |     const tops = new Array<number>(n);
+    :                  ^^^^^^^^^^^^^^^^^^^^
+ 32 |     let y = 0;
+    `----
+  help: It's not clear whether the argument is meant to be the length of the array or the only element. If the argument is the array's length, consider using `Array.from({ length: n })`. If the argument is the only element, use `[element]`.
+
+  ! unicorn(no-useless-spread): Using a spread operator here creates a new array unnecessarily.
+     ,-[pkgs.ts/diy-app/src/renderer_solid/lib/chat-virtual.ts:104:26]
+ 103 |         const keep = new Set(keys);
+ 104 |         for (const k of [...this.map.keys()]) {
+     :                          ^^^
+ 105 |             if (keep.has(k)) continue;
+     `----
+  help: `for…of` can iterate over iterable, it's unnecessary to convert to an array.
+
+  ! eslint(no-unused-vars): Variable 'sub' is declared but never used.
+     ,-[pkgs.ts/diy-app/tests/cli.intent.ui.task.test.ts:112:11]
+ 111 |     await fx.sh.getJson(`./diy.sh ui task create 父任务 ${pid}`);
+ 112 |     const sub = await fx.sh.getJson(`./diy.sh ui task create 子任务 ${pid} --parent ${uri}`);
+     :           ^|^
+     :            `-- 'sub' is declared here
+ 113 | 
+     `----
+  help: Consider removing this declaration.
+
+  ! eslint(no-unused-vars): Identifier 'statSync' is imported but never used.
+    ,-[pkgs.ts/diy-app/tests/core/local-agent-history-compact.test.ts:10:59]
+  9 | import { describe, it, expect, beforeAll } from "vitest";
+ 10 | import { appendFileSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+    :                                                           ^^^^|^^^
+    :                                                               `-- 'statSync' is imported here
+ 11 | import path from "node:path";
+    `----
+  help: Consider removing this import.
+
+  ! eslint(no-unused-vars): Variable '_catKey' is declared but never used.
+     ,-[pkgs.ts/diy-app/src/main/core/ref.ts:131:19]
+ 130 |     for (const categories of Object.values(scopes)) {
+ 131 |       for (const [_catKey, deps] of Object.entries(categories)) {
+     :                   ^^^|^^^
+     :                      `-- '_catKey' is declared here
+ 132 |         if (!deps) continue;
+     `----
+  help: Consider removing this declaration.
+
+  ! eslint(no-unused-vars): Identifier 'execFileSync' is imported but never used.
+   ,-[pkgs.ts/diy-app/tests/core/single-instance.test.ts:6:10]
+ 5 | import { describe, it, expect, afterEach } from "vitest";
+ 6 | import { execFileSync } from "node:child_process";
+   :          ^^^^^^|^^^^^
+   :                `-- 'execFileSync' is imported here
+ 7 | import { mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+   `----
+  help: Consider removing this import.
+
+  ! eslint(no-unused-vars): Identifier 'unlinkSync' is imported but never used.
+   ,-[pkgs.ts/diy-app/tests/core/single-instance.test.ts:7:44]
+ 6 | import { execFileSync } from "node:child_process";
+ 7 | import { mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+   :                                            ^^^^^|^^^^
+   :                                                 `-- 'unlinkSync' is imported here
+ 8 | import { hostname, tmpdir } from "node:os";
+   `----
+  help: Consider removing this import.
+
+  ! eslint(no-unused-vars): Identifier 'BUILTIN_PERSONA_NAME' is imported but never used.
+    ,-[pkgs.ts/diy-app/tests/core/persona.test.ts:24:30]
+ 23 | } from "../../src/main/core/persona";
+ 24 | import { BUILTIN_PERSONA_ID, BUILTIN_PERSONA_NAME } from "../../src/shared/persona";
+    :                              ^^^^^^^^^^|^^^^^^^^^
+    :                                        `-- 'BUILTIN_PERSONA_NAME' is imported here
+ 25 | import { FIXTURE_DEFAULT_REF } from "../fixtures/models";
+    `----
+  help: Consider removing this import.
+
+  ! eslint(require-yield): This generator function does not have `yield`
+    ,-[pkgs.ts/diy-ui/web/src/demos/async_cell_demo.ts:29:26]
+ 28 |           // 独立 cell：读全局 + 局部信号（首段同步读 → 自动成为依赖）
+ 29 | ,->       card.column().cell(async function* (n: DomColumn) {
+ 30 | |           const trigger = startAll.value + localRun.value;
+ 31 | |           if (trigger === 0) {
+ 32 | |             n.label("  等待启动...");
+ 33 | |             return;
+ 34 | |           }
+ 35 | |           n.label(`  ${color} **任务 #${trigger} 启动**`);
+ 36 | |           for (let i = 0; i < 5; i++) {
+ 37 | |             await sleep(delay);
+ 38 | |             n.label(`  ${color} ${name}: ${i + 1}/5 @ ${now()}`);
+ 39 | |           }
+ 40 | |           n.label(`  ✅ ${name} 完成`);
+ 41 | `->       });
+ 42 |         });
+    `----
+  help: Add a `yield` expression inside the generator body, or convert it to a regular function if iteration behavior is not needed.
+
+  ! eslint(no-unused-vars): Identifier 'ScopeConfig' is imported but never used.
+   ,-[pkgs.ts/diy-ui/test/components.test.ts:7:21]
+ 6 | import { describe, it, expect } from "vitest";
+ 7 | import { ScopeNode, ScopeConfig } from "../src/scope.js";
+   :                     ^^^^^|^^^^^
+   :                          `-- 'ScopeConfig' is imported here
+ 8 | import {
+   `----
+  help: Consider removing this import.
+
+  ! eslint(no-unused-vars): Identifier 'UIComponent' is imported but never used.
+    ,-[pkgs.ts/diy-ui/test/components.test.ts:9:3]
+  8 | import {
+  9 |   UIComponent,
+    :   ^^^^^|^^^^^
+    :        `-- 'UIComponent' is imported here
+ 10 |   ContainerComponent,
+    `----
+  help: Consider removing this import.
+
+  ! eslint(no-unused-vars): Identifier 'ScopeConfig' is imported but never used.
+   ,-[pkgs.ts/diy-ui/test/context.test.ts:7:21]
+ 6 | import { describe, it, expect } from "vitest";
+ 7 | import { ScopeNode, ScopeConfig, type ContextManager } from "../src/scope.js";
+   :                     ^^^^^|^^^^^
+   :                          `-- 'ScopeConfig' is imported here
+ 8 | 
+   `----
+  help: Consider removing this import.
+
+  ! eslint(no-unused-vars): Class 'DevScheduler' is declared but never used.
+    ,-[pkgs.ts/diy-ui/test/scope.test.ts:25:7]
+ 24 | 
+ 25 | class DevScheduler implements Scheduler {
+    :       ^^^^^^|^^^^^
+    :             `-- 'DevScheduler' is declared here
+ 26 |   schedule(_cell: unknown): void {}
+    `----
+  help: Consider removing this declaration.
+
+  ! eslint(no-unused-vars): Variable '_' is declared but never used.
+     ,-[pkgs.ts/diy-app/tests/core/serial-queue.test.ts:139:24]
+ 138 |     const consume = async () => {
+ 139 |       for await (const _ of stream) { /* 消费完 */ }
+     :                        |
+     :                        `-- '_' is declared here
+ 140 |     };
+     `----
+  help: Consider removing this declaration.
+
+  ! eslint(no-unused-vars): Type 'Scheduler' is imported but never used.
+    ,-[pkgs.ts/diy-ui/src/cell.ts:14:15]
+ 13 | import type { ContextManager } from "./scope.js";
+ 14 | import type { Scheduler, CellRef } from "./scheduler.js";
+    :               ^^^^|^^^^
+    :                   `-- 'Scheduler' is imported here
+ 15 | 
+    `----
+  help: Consider removing this import.
+
+  ! eslint(require-yield): This generator function does not have `yield`
+     ,-[pkgs.ts/diy-rpc/test/intent.cancel.test.ts:649:26]
+ 648 |         const cli = createTypedClient(client, api);
+ 649 | ,->     binding.on(api.chat, async function* () {
+ 650 | |         throw new RpcError('EARLY', '流未开始即失败');
+ 651 | `->     });
+ 652 |         const s = { next: 0, ret: 0 };
+     `----
+  help: Add a `yield` expression inside the generator body, or convert it to a regular function if iteration behavior is not needed.
+
+  ! eslint(no-unused-vars): Identifier 'systemText' is imported but never used.
+    ,-[pkgs.ts/diy-app/tests/core/context-legacy-adapter.test.ts:20:5]
+ 19 |     systemData,
+ 20 |     systemText,
+    :     ^^^^^|^^^^
+    :          `-- 'systemText' is imported here
+ 21 |     type ContextFact,
+    `----
+  help: Consider removing this import.
+
+  ! eslint(no-unused-vars): Type 'Component' is imported but never used.
+    ,-[pkgs.ts/diy-ui/src/providers/pi-tui.ts:18:15]
+ 17 | } from "@mariozechner/pi-tui";
+ 18 | import type { Component } from "@mariozechner/pi-tui";
+    :               ^^^^|^^^^
+    :                   `-- 'Component' is imported here
+ 19 | import { effect } from "@vue/reactivity";
+    `----
+  help: Consider removing this import.
+
+  ! typescript(no-this-alias): Unexpected aliasing of 'this' to local variable.
+     ,-[pkgs.ts/diy-ui/src/providers/pi-tui.ts:358:5]
+ 357 |     // 设置全局引用供 cell() 链式调用
+ 358 |     currentApp = this;
+     :     ^^^^^^^^^^
+ 359 | 
+     `----
+  help: Assigning a variable to this instead of properly using arrow lambdas may be a symptom of pre-ES2015 practices or not managing scope well.
+
+  ! eslint(no-unused-vars): Variable '_codes' is declared but never used.
+    ,-[pkgs.ts/diy-app/tests/services/health.test.ts:9:11]
+  8 |     const issues = runHealthCheck();
+  9 |     const _codes = issues.map((i) => i.code);
+    :           ^^^|^^
+    :              `-- '_codes' is declared here
+ 10 |     // 新目录没有 state.yaml 和 task/，返回 info
+    `----
+  help: Consider removing this declaration.
+
+  ! eslint(no-unused-vars): Function 'personaIdByName' is declared but never used.
+    ,-[pkgs.ts/diy-app/tests/cli.intent.persona.test.ts:90:16]
+ 89 | /** 按名字查人物 id（重试安全的寻址方式；找不到抛错，不静默） */
+ 90 | async function personaIdByName(name: string): Promise<string> {
+    :                ^^^^^^^|^^^^^^^
+    :                       `-- 'personaIdByName' is declared here
+ 91 |     const hit = (await personaList()).personas.find((p) => p.name === name);
+    `----
+  help: Consider removing this declaration.
+
+  ! eslint(no-unused-vars): Variable 'id' is declared but never used.
+      ,-[pkgs.ts/diy-app/tests/cli.intent.persona.test.ts:1126:15]
+ 1125 |         const 名 = uniq("缺省按钮");
+ 1126 |         const id = await addPersona(名, "mimo-v2.6-flash");
+      :               ^|
+      :                `-- 'id' is declared here
+ 1127 |         const uri = await setupTask("缺省按钮任务");
+      `----
+  help: Consider removing this declaration.
+
+  ! eslint(no-unused-vars): Parameter 'cfg' is declared but never used. Unused parameters should start with a '_'.
+    ,-[pkgs.ts/diy-app/src/cli/index.ts:69:20]
+ 68 | /** 启动 diy 管控台（Electron 主进程产物），作为独立进程持续运行 */
+ 69 | function launchApp(cfg: RuntimeConfig): ChildProcess {
+    :                    ^|^
+    :                     `-- 'cfg' is declared here
+ 70 |   const main = mainEntry();
+    `----
+  help: Consider removing this parameter.
+
+  ! unicorn(no-useless-fallback-in-spread): Empty fallbacks in spreads are unnecessary
+      ,-[pkgs.ts/diy-app/src/main/core/flow.ts:1008:19]
+ 1007 |         entered: state.position !== null,
+ 1008 |         values: { ...(state.params ?? {}) },
+      :                   ^^^^^^^^^^^^^^^^^^^^^^^
+ 1009 |         schema: [...spec.schema],
+      `----
+  help: Spreading falsy values in object literals won't add any unexpected properties, so it's unnecessary to add an empty object as fallback.
+
+  ! eslint(no-unused-vars): Variable 'navDragLabel' is declared but never used.
+     ,-[pkgs.ts/diy-app/src/renderer_solid/App.tsx:198:12]
+ 197 |     const [navDragging, setNavDragging] = createSignal(false);
+ 198 |     const [navDragLabel, setNavDragLabel] = createSignal("");
+     :            ^^^^^^|^^^^^
+     :                  `-- 'navDragLabel' is declared here
+ 199 |     let navEl: HTMLDivElement | undefined;
+     `----
+  help: Consider removing this declaration.
+
+  ! eslint(no-unused-vars): Variable 'setNavDragLabel' is declared but never used.
+     ,-[pkgs.ts/diy-app/src/renderer_solid/App.tsx:198:26]
+ 197 |     const [navDragging, setNavDragging] = createSignal(false);
+ 198 |     const [navDragLabel, setNavDragLabel] = createSignal("");
+     :                          ^^^^^^^|^^^^^^^
+     :                                 `-- 'setNavDragLabel' is declared here
+ 199 |     let navEl: HTMLDivElement | undefined;
+     `----
+  help: Consider removing this declaration.
+
+  ! eslint(no-unused-vars): Variable 'goto' is declared but never used.
+     ,-[pkgs.ts/diy-app/src/renderer_solid/App.tsx:896:11]
+ 895 |     /** 打开/聚焦某个 tab（含子页面） */
+ 896 |     const goto = (key: string) => {
+     :           ^^|^
+     :             `-- 'goto' is declared here
+ 897 |         hideHoverLayers();
+     `----
+  help: Consider removing this declaration.
+
+Found 65 warnings and 0 errors.
+Finished in 116ms on 577 files using 8 threads.
+[38;5;255;48;5;66;1m./sha.sh:75 check() [0m[38;5;255;48;5;31;1m~/git/diy/diy/_diy.worktrees/t358-activity-tune [0m[38;5;255;48;5;55;1mnpx tsc --noEmit -p pkgs.ts/diy-rpc/tsconfig.browser.json[0m
+npm warn Unknown user config "electron_mirror". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+npm warn Unknown user config "electron_builder_binaries_mirror". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+npm notice run npx
+npm notice run 'tsc' --noEmit -p pkgs.ts/diy-rpc/tsconfig.browser.json
+[38;5;255;48;5;66;1m./sha.sh:77 check() [0m[38;5;255;48;5;31;1m~/git/diy/diy/_diy.worktrees/t358-activity-tune [0m[38;5;255;48;5;55;1mbash scripts/check-no-emit.sh[0m
+[38;5;255;48;5;66;1m./sha.sh:79 check() [0m[38;5;255;48;5;31;1m~/git/diy/diy/_diy.worktrees/t358-activity-tune [0m[38;5;255;48;5;55;1mbash scripts/check-exec-bit.sh[0m
+CHECK_EXIT=0

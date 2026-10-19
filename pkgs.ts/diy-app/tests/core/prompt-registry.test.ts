@@ -391,6 +391,9 @@ describe("投递节点（模版节 → Context Tree）", () => {
       expect(g["identity"]).toContain("你现在的人物是");
       // 规范与保命契约：模版正文原样渲染（含标签）
       expect(g["rules"]).toContain("<rules>");
+      // 发现性（##357 ①）：跨任务协作命令必须随 rules 节**真发**出去 ——
+      // 光写在 defaults.ts 的 diy.md 里没用（DELIVERED_SECTIONS 只投 identity/rules/guard）
+      expect(g["rules"]).toContain("agent local chat");
       expect(g["guard"]).toContain("<guard>");
       expect(g["guard"]).toContain("生产实例");
       expect(g["guard"]).toContain("绝不可杀");
@@ -433,7 +436,9 @@ describe("diy.md 入口辨析（防回退）", () => {
     expect(t).toContain("不启动应用"); // 它是客户端，不是"启动 app"
     expect(t).toContain("生产"); // 纯 diy = 生产版 + ~/.diy
     expect(t).toContain("worktree"); // worktree 里别用裸 diy
-    expect(t).toContain("要起 GUI"); // 起 GUI 走 sha.sh dev，不是 CLI
+    expect(t).toContain("要起 GUI"); // 起 GUI 走 ./sha.sh lab，不是 CLI
+    expect(t).toContain("./sha.sh lab"); // 命令名必须真实存在（曾写死已改名的 sha.sh dev）
+    expect(t).toContain("agent local chat"); // 跨任务协作要能被发现（##357 ①）
     // 模版里不得出现裸反引号（会截断 TS 模版字符串）
     expect(t).not.toContain("\\`");
   });

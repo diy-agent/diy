@@ -24,7 +24,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
-import { WsTransport } from "@diy/rpc/ws";
+import { WsTransport } from "@diy-agent/rpc/ws";
 import { bindApi, setRpcPort } from "../main/services/api-impl";
 import { AppConfig } from "../main/core/app-config";
 import { installDiagnostics } from "../main/services/diagnostics";
@@ -32,9 +32,19 @@ import { traffic } from "../main/core/traffic";
 import { readRuntimeConfig } from "../runtime";
 import { cliEntryForRepo, findRepoRoot, prodHomeAllowed } from "../main/core/instance-identity";
 import { resolveDevHome } from "../main/core/dev-home";
+// 实例注册表（##366）：serve 也是「一个 diy 实例」—— 大盘里该看得见它（只是没有窗口可唤起）
+import { dropSelfRecord, setSelfPort, writeSelfRecord } from "../main/services/instances";
 
 // 计算项目根目录：从 src/serve/index.ts 向上两级到 pkgs.ts/diy-app/
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// preview 变体已删除（##381）：显式报错，不静默落到 build/preview/**（与 diy.sh / sha.sh / electron-dev.mts 同一口径）。
+// 必须**在算数据根与 STATIC_DIR 之前**拦 —— 那两者都取 `DIY_VARIANT`，先算再报错会给出误导性归因
+// （实测：落到「请先构建 renderer: ./sha.sh build-renderer」，真因却是变体已删）。
+if (process.env["DIY_VARIANT"] === "preview") {
+  console.error("✗ preview 变体已删除，改用 lab：DIY_VARIANT=lab ./sha.sh lab");
+  process.exit(1);
+}
 
 // ── 开发态入口自证（与 main/index.ts / diy.sh / electron-dev.mts 同一套判据）──
 // **必须在此独立做** —— serve 不 import main/index.ts，那条自证不覆盖本进程。
@@ -45,7 +55,7 @@ const repoRoot = findRepoRoot(__dirname);
 if (repoRoot) {
   // 数据根：与静态产物**同一个 variant 轴**（静态产物在 `pkgs.ts/diy-app/build/<variant>/renderer`，
   // 数据根在 `<repo>/build/<variant>/home` —— **两者不同父目录**，但同取 `DIY_VARIANT`，见 AGENTS.md
-  // env.variant）—— 入口的默认值 + 生产根拒绝都交给 core/dev-home（与 preview/lab / diy.sh
+  // env.variant）—— 入口的默认值 + 生产根拒绝都交给 core/dev-home（与 lab / diy.sh
   // 同一判据，别在这里再写一套）。缺省 variant=prod（serve 独立跑时走 build/prod/home）。
   const variant = process.env["DIY_VARIANT"] ?? "prod";
   const decision = resolveDevHome({
@@ -107,6 +117,18 @@ async function main() {
   }
 
   const appConfig = AppConfig.fromRuntime(cfg);
+  // 注册表：与 Electron 实例同一套（同一目录、同一形状）—— 让 `diy instances ls` 也能看见 serve。
+  // 它没有窗口，故 `instances.focus` 对它只会如实失败（不是「不列出来」的理由）。
+  try {
+    writeSelfRecord({
+      diyHome: appConfig.diyHome,
+      variant: process.env["DIY_VARIANT"] ?? "prod",
+      env: cfg.env,
+    });
+    process.once("exit", () => dropSelfRecord());
+  } catch (e) {
+    console.warn("[serve] 实例注册表写入失败（不影响启动）:", e);
+  }
 
   // 读取构建好的 index.html，注入 WebSocket bootstrap
   const indexHtml = fs.readFileSync(path.join(STATIC_DIR, "index.html"), "utf-8");
@@ -158,6 +180,7 @@ async function main() {
     const bound = httpServer.address();
     const realPort = typeof bound === "object" && bound ? bound.port : port;
     setRpcPort(realPort);
+    setSelfPort(realPort);
     console.log("═══════════════════════════════════════");
     console.log("  diy 管控台 — Web 模式");
     console.log("═══════════════════════════════════════");

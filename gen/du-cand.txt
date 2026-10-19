@@ -1,0 +1,8 @@
+ 12G  /Users/ccc/.cache/huggingface
+7.1G  /Users/ccc/Library/Caches
+ 24G  /Users/ccc/Library/Application Support
+ 19G  /Users/ccc/git
+ 24G  /Users/ccc/.diy
+ 22M  /Users/ccc/Downloads
+7.3G  /Users/ccc/.local
+5.0G  /private/var/folders

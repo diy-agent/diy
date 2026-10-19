@@ -536,6 +536,26 @@ export function planOfLevel(level: TurnLevel): LevelPlan {
 }
 
 /**
+ * 拖拽 1 级「摘要结论」下缘 → 新的可视行数（**纯函数 + 单测**，组件只负责量高度与算 delta）。
+ *
+ * 为什么是**等比**换算（高度翻倍 ≈ 行数翻倍）而不是 `dy / 行高`：结论是 Markdown 渲染的，
+ * 标题 / 代码块 / 列表各占不同高度，"一行"没有定长 —— 除以名义行高会跳变；等比只依赖
+ * 「已经画出来的这块有多高」，对任何内容都单调、无魔法常数。
+ * 结果夹在 [min,max]（上界防"拖成整篇"，下界至少一句）。
+ */
+export function linesFromDrag(
+    startLines: number,
+    startHeight: number,
+    dy: number,
+    min: number,
+    max: number,
+): number {
+    if (!(startHeight > 0)) return startLines;
+    const n = Math.round((startLines * (startHeight + dy)) / startHeight);
+    return Math.min(max, Math.max(min, n));
+}
+
+/**
  * 按可视行数截断正文（**1 级「摘要结论」**的摘要态；Markdown 不解析时也走这里）。
  *
  * 只截**行**不截字符：正文里代码块/列表被字符数切开比少几行更难看懂。

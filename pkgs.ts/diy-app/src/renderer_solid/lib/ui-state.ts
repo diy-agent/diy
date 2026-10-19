@@ -36,6 +36,10 @@ export type DiySkin = "rail" | "card";
 //   · 摘要行数 —— 1 级把结论压成几行（默认 3）
 // **单轮的手动覆盖不落盘**：轮次 id 会无限增长，逐轮写进 localStorage 只会越攒越脏。
 export const CONCLUSION_LINES_DEFAULT = 3;
+/** 1 级「摘要结论」可视行数的下限 / 上限。下限 1 = 至少一句；上限 40 = 「拖高」够用又不至于
+ *  把摘要拖成一整篇（真要全看就用 2 级）。拖拽换算与 parse 共用这一对值。 */
+export const CONCLUSION_LINES_MIN = 1;
+export const CONCLUSION_LINES_MAX = 40;
 
 // ─── 缓存字段（get/set/reset，内部吞异常 + 留痕） ─────────────
 
@@ -230,6 +234,27 @@ export const Caches = {
     serialize: (v) => String(v),
     defaultValue: NAV_W_DEFAULT,
   }),
+
+  /** nav 任务项的**置顶键集合**（##356 ②）。键 = tab key（`<pageId>:<ctx>`），
+   *  与 `diy_tabs_opened` 同源；顺序无意义（展示顺序由 tab 列表决定，见 shared/nav-pin）。
+   *
+   *  为什么落视图 cache 而不是任务数据：置顶是「我看哪些」的视图偏好，不是任务事实
+   *  （tabStore 的持久化契约只存 `{pageId, ctx}` 两个真输入）。丢了只是失去置顶，无数据损失。
+   *
+   *  ⚠️ 与 `diy_tabs_opened` 同款：这里只校验「是不是数组」，**不做元素级清洗**
+   *  （元素类型收敛在 store/navPinStore 读盘处）。 */
+  diy_nav_pinned: field<unknown[]>("diy_nav_pinned", {
+    parse: (raw) => {
+      try {
+        const a: unknown = JSON.parse(raw);
+        return Array.isArray(a) ? a : null;
+      } catch {
+        return null;
+      }
+    },
+    serialize: (v) => JSON.stringify(v),
+    defaultValue: [] as unknown[],
+  }),
   /** 打开的 tab。**只存真信息**：`{ pageId, ctx }[]`，顺序即显示顺序。
    *
    *  派生数据（key / parent / taskAncestors）**不落盘**，由 tabStore 从注册表与任务树
@@ -276,12 +301,13 @@ export const Caches = {
     serialize: (v) => v,
     defaultValue: "",
   }),
-  /** 1 级「摘要结论」的行数上限（**默认 3**；暂无 UI 入口，仅测试写入），parse 夹在 1-10。
+  /** 1 级「摘要结论」的可视行数（**默认 3**；结论下缘拖拽调整，见 LocalChatPage 的结论拖条），
+   *  parse 夹在 1-40。
    *  MD 渲染/原文开关对摘要同样生效（2026-10-11 反馈：摘要态强制原文是错的）。 */
   diy_chat_conclusion_lines: field<number>("diy_chat_conclusion_lines", {
     parse: (raw) => {
       const v = Number(raw);
-      return Number.isInteger(v) && v >= 1 && v <= 10 ? v : null;
+      return Number.isInteger(v) && v >= CONCLUSION_LINES_MIN && v <= CONCLUSION_LINES_MAX ? v : null;
     },
     serialize: (v) => String(v),
     defaultValue: CONCLUSION_LINES_DEFAULT,
@@ -321,8 +347,9 @@ export const Caches = {
     serialize: (v) => v,
     defaultValue: "diy",
   }),
-  /** 上下文树页（ctxlab）的折叠块展开态：key = steps/structure/request。
-   *  与提示词页 labViews 同性质（用户选择，切页/重开不该回到默认），故走同一入口。 */
+  /** 上下文树页（ctxlab）的折叠块展开态：key = history/stats/structure/vardiff/sysdiff/rtdiff/stepsess。
+   *  与提示词页 labViews 同性质（用户选择，切页/重开不该回到默认），故走同一入口。
+   *  （`ui view expand ctx.<key> open|closed` 也走这里；已删的 `change`/`request` 不再有键。） */
   diy_ctxlab_fold: field<Record<string, boolean>>("diy_ctxlab_fold", {
     parse: (raw) => {
       try {
@@ -334,11 +361,12 @@ export const Caches = {
     },
     serialize: (v) => JSON.stringify(v),
     defaultValue: {
-      // 中栏只留请求预览 → 默认展开（它就是这一页的主角）
-      request: true,
       // 左栏：结构树（划分操作）默认展开，变更列表收起（看变化时才展开）
       structure: true,
-      steps: false,
+      history: false,
+      // 中栏两块 diff 默认展开（它们是这一页的主角）
+      sysdiff: true,
+      rtdiff: true,
     },
   }),
   /** 试验场表格列宽（px 数组，按表分字段）。**表的列宽必须与容器宽度解耦**：

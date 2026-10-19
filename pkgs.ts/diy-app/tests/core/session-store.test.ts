@@ -30,7 +30,7 @@ import type { RegistryFrame, SessionEntry } from "../../src/shared/registry-fram
 vi.mock("solid-js", () => import("solid-js/dist/solid.js"));
 
 // ── 最小假 transport：只应答本用例真会走的两个 RPC ──────────────────
-// 形状照 `@diy/rpc` 的 EnvelopeTransport（send / on / onClose）；信封照 types.ts：
+// 形状照 `@diy-agent/rpc` 的 EnvelopeTransport（send / on / onClose）；信封照 types.ts：
 //   请求 {type:'call', id, method, params, stream?} · ack {type:'call', id, stream}
 //   流数据 {type:'data', stream, value} · unary 结果 {type:'call', id, result}
 interface Env {

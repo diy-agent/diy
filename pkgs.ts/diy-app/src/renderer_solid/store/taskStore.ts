@@ -4,6 +4,7 @@ import { diyService } from "../lib/rpc";
 import type { TaskDetail as ContractTaskDetail } from "../../shared/task-detail";
 import { editTask } from "../lib/task-edit";
 import { draftStore } from "./draftStore";
+import { getTaskVerdict } from "../../shared/task-load";
 
 /**
  * 任务树节点 —— 直接取 **RPC 契约的形状**（api-def 的 TaskNodeShape），不在 renderer 复制一份。
@@ -29,6 +30,22 @@ const [nodes, setNodes] = createSignal<TreeNode[]>([]);
 const [selectedUri, setSelectedUri] = createSignal<string | null>(null);
 const [selectedTask, setSelectedTask] = createSignal<TaskDetail | null>(null);
 const [loading, setLoading] = createSignal(false);
+/**
+ * 树是否**成功加载过至少一次**。
+ *
+ * 用途只有一个：区分「树还没到」（启动瞬间 nodes=[]）与「树里真的没有这个任务」——
+ * 后者才该剪 tab（App 的剪枝 effect 靠它，见 shared/tab-prune 的 ②）。
+ * 只在**成功**取到树时置位：RPC 失败（loadTree reject）不算加载过。
+ */
+const [treeLoaded, setTreeLoaded] = createSignal(false);
+/**
+ * 选中的任务**不存在**（可能已被删除）。
+ *
+ * 为什么需要这个显式终态：selectTask 曾对「拿不到数据」静默 return —— 详情面板
+ * 于是永远停在「加载中…」（与「异步还没回来」不可区分，无终态无出路，##361）。
+ * 现在 UI 能区分三态：加载中（selectedTask=null 且 !selectedMissing）/ 已就绪 / 不存在。
+ */
+const [selectedMissing, setSelectedMissing] = createSignal(false);
 
 let loadSeq = 0;
 async function loadTree() {
@@ -40,6 +57,7 @@ async function loadTree() {
     // 把树覆盖回旧快照 —— 树「短暂回退」会让下游的 diff（如 tab 清理）误判任务消失
     if (seq !== loadSeq) return;
     setNodes(r.data);
+    setTreeLoaded(true);
   } finally {
     if (seq === loadSeq) setLoading(false);
   }
@@ -48,9 +66,17 @@ async function loadTree() {
 async function selectTask(uri: string | null) {
   setSelectedUri(uri);
   setSelectedTask(null);
+  setSelectedMissing(false);
   if (!uri) return;
   const r = await diyService.diy.getTask({ uri });
-  if (!r.data) return;
+  // 期间用户切了别的任务 → 丢弃（否则 A 的响应会写到 B 的选中态上）
+  if (selectedUri() !== uri) return;
+  // 明确终态：任务不存在（判据在 shared/task-load，与契约同源）。**不静默 return** ——
+  // 面板据此显示「任务不存在」+ 出路，而不是一直「加载中…」。
+  if (getTaskVerdict(r) !== "ok" || !r.data) {
+    setSelectedMissing(true);
+    return;
+  }
   // 草稿先灌入再放行任务：详情面板是「选中任务即创建」的组件，构造时就要读到草稿
   // 来判定是否恢复编辑态；反过来则会以「无草稿」初始化，表现为草稿丢失。
   draftStore.seed(uri, r.data.ui_drafts ?? null, r.data.updated);
@@ -67,9 +93,17 @@ async function refreshSelected(): Promise<void> {
   const u = selectedUri();
   if (!u) return;
   const r = await diyService.diy.getTask({ uri: u });
-  if (!r.data || r.data.uri !== selectedUri()) return;
+  if (selectedUri() !== u) return;
+  // 刷新时任务已没了 → 同一个「不存在」终态（别把旧详情留在屏上假装还在）
+  if (getTaskVerdict(r) !== "ok" || !r.data) {
+    setSelectedTask(null);
+    setSelectedMissing(true);
+    return;
+  }
+  if (r.data.uri !== selectedUri()) return;
   draftStore.seed(u, r.data.ui_drafts ?? null, r.data.updated);
   setSelectedTask(r.data);
+  setSelectedMissing(false);
 }
 
 async function setState(uri: string, state: string) {
@@ -108,6 +142,10 @@ export const taskStore = {
   get selectedUri() { return selectedUri(); },
   get selectedTask() { return selectedTask(); },
   get loading() { return loading(); },
+  /** 树是否成功加载过（供剪枝判「树还没到」vs「任务真没了」） */
+  get treeLoaded() { return treeLoaded(); },
+  /** 选中任务不存在（详情面板据此渲染终态，而不是「加载中…」） */
+  get selectedMissing() { return selectedMissing(); },
   loadTree,
   ensureTasks,
   selectTask,

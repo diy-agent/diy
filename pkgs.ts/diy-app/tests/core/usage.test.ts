@@ -17,8 +17,8 @@ import {
     groupByTurn,
     ratesOf,
     snapshotUsage,
+    avgRate,
     fmtRate,
-    lastMeasuredRate,
     stepRate,
     sumBuckets,
     sumCosts,
@@ -187,6 +187,20 @@ describe("窗口占用 / 缓存命中率", () => {
         expect(patch.windowTotal).toBe(1550); // 最后一步（上下文压力）
         expect(patch.contextLimit).toBe(10_000);
     });
+
+    it("**无价目 ≠ 0**（##372）：cost 为 null 时原样下发 null，无价目步数走 unpriced", () => {
+        const step = bucketsOf({ inputTokens: 1000, inputTokenDetails: { noCacheTokens: 1000 }, outputTokens: 10 });
+        // 一步都没价目：cost 保持 null（早先这里改成过全 0 对象，UI 于是画成 $0.0000）
+        const none = turnUsagePatch(step, step, null, 10_000, 2, undefined, null, null, 2);
+        expect(none.cost).toBeNull();
+        expect(none.unpriced).toBe(2);
+        // 有价目的部分和：仍如实带上无价目步数（UI 打 * 且不把合计当完整值）
+        const partial = turnUsagePatch(step, step, { noCache: 0.1, cacheRead: 0, cacheWrite: null, text: 0.2, reasoning: 0, total: 0.3 }, 10_000, 3, undefined, null, null, 1);
+        expect(partial.cost?.total).toBeCloseTo(0.3, 9);
+        expect(partial.unpriced).toBe(1);
+        // 缺省（老调用点 / 全有价目）= 0，不是 undefined —— 读侧不必再兜一层
+        expect(turnUsagePatch(step, step, null, 10_000).unpriced).toBe(0);
+    });
 });
 
 describe("聚合（UI 明细/看板与 CLI 报表共用）", () => {
@@ -299,20 +313,25 @@ describe("模型表价格数据自洽", () => {
     });
 });
 
-describe("步速度（stepRate）", () => {
-    // 口径（用户 2026-10-12）：该步**总输出 ÷ (响应耗时 − TTFT)** —— 不是轮次平均、
-    // 不是"已输出 ÷ 已耗时"，也**不含**客户端工具执行耗时（那会让"模型写得多快"失真）。
+describe("速度（stepRate / avgRate；##349 口径 = token ÷ **总耗时**，含首字等待）", () => {
+    // 口径（用户 2026-10-15，第四次修正）：分子 = 该步总输出；分母 = 该步**总耗时** responseTimeMs
+    // （含 TTFT）—— 头 token 等很久的模型不再算出几万 tok/s 的假象。不含客户端工具执行。
     const perf = (o: Partial<StepPerformance>) => o as StepPerformance;
 
-    it("ai-sdk 已给 outputTokensPerSecond 时**直接取它**（真值来自上游计时）", () => {
-        // 实测形状：mimo 一步 stepTime 26.5s / response 26.5s / ttft 2.57s / out 1390 → 58.03 tok/s
-        expect(stepRate(perf({ stepTimeMs: 26542.9, responseTimeMs: 26518.8, timeToFirstOutputMs: 2565.5, outputTokensPerSecond: 58.029680429189284 }), 1390))
-            .toBeCloseTo(58.03, 1);
+    it("ai-sdk 已给 effectiveOutputTokensPerSecond 时**直接取它**（真值来自上游计时，口径逐字一致）", () => {
+        // 实测形状：mimo 一步 response 26.5s（含 ttft 2.57s）/ out 1390 → 52.42 tok/s
+        expect(stepRate(perf({ stepTimeMs: 26542.9, responseTimeMs: 26518.8, timeToFirstOutputMs: 2565.5, effectiveOutputTokensPerSecond: 52.421 }), 1390))
+            .toBeCloseTo(52.42, 1);
     });
 
-    it("缺 outputTokensPerSecond → 用 总输出 ÷ (响应耗时 − TTFT) 现算（同一口径的两条来源）", () => {
-        // (26518.8 − 2565.5) / 1000 = 23.9533s；1390 / 23.9533 = 58.03
-        expect(stepRate(perf({ responseTimeMs: 26518.8, timeToFirstOutputMs: 2565.5 }), 1390)).toBeCloseTo(58.03, 1);
+    it("缺 effectiveOutputTokensPerSecond → 用 总输出 ÷ 响应耗时 现算（同一口径的两条来源）", () => {
+        // 1390 / 26.5188s = 52.42；旧口径（减 TTFT）会是 58.03 —— 头 token 等待不再被抹掉
+        expect(stepRate(perf({ responseTimeMs: 26518.8, timeToFirstOutputMs: 2565.5 }), 1390)).toBeCloseTo(52.42, 1);
+    });
+
+    it("头 token 等很久也不再出假速度（旧口径的几万 tok/s 假象）", () => {
+        // 总共 60s：前 55s 等首字、后 5s 吐 1000 token → 新口径 1000/60s ≈ 16.7；旧口径 1000/5s = 200
+        expect(stepRate(perf({ responseTimeMs: 60000, timeToFirstOutputMs: 55000 }), 1000)).toBeCloseTo(16.67, 1);
     });
 
     it("分母用响应耗时而非 stepTimeMs（不含工具执行：工具跑得久不该把速度拉低）", () => {
@@ -322,30 +341,33 @@ describe("步速度（stepRate）", () => {
 
     it("前提缺一 → null（宁可不显示，也不给假数）", () => {
         expect(stepRate(undefined, 100)).toBeNull(); // 老记录：没有 performance
-        expect(stepRate(perf({ responseTimeMs: 1000 }), 100)).toBeNull(); // 没有 TTFT
-        expect(stepRate(perf({ responseTimeMs: 1000, timeToFirstOutputMs: 900 }), 0)).toBeNull(); // 没输出
-        expect(stepRate(perf({ responseTimeMs: 1000, timeToFirstOutputMs: 1000 }), 100)).toBeNull(); // 零生成时长
-        expect(stepRate(perf({ responseTimeMs: 500, timeToFirstOutputMs: 900 }), 100)).toBeNull(); // 时间倒流
-        expect(stepRate(perf({ outputTokensPerSecond: 0 }), 0)).toBeNull(); // 上游给 0 = 没数
+        expect(stepRate(perf({ timeToFirstOutputMs: 100 }), 100)).toBeNull(); // 没有响应耗时
+        expect(stepRate(perf({ responseTimeMs: 1000 }), 0)).toBeNull(); // 没输出
+        expect(stepRate(perf({ responseTimeMs: 0 }), 100)).toBeNull(); // 零耗时
+        expect(stepRate(perf({ effectiveOutputTokensPerSecond: 0 }), 100)).toBeNull(); // 上游给 0 = 没数
+    });
+
+    it("avgRate：Σ输出 ÷ Σ响应耗时（以耗时为权）= 单步式子的多步特例", () => {
+        // 步A 3s/300tok + 步B 10s/100tok = 400 / 13s = 30.77（算术平均会是 65 —— 必须不等）
+        expect(avgRate([
+            { performance: perf({ responseTimeMs: 3000 }), outputTokens: 300 },
+            { performance: perf({ responseTimeMs: 10000 }), outputTokens: 100 },
+        ])).toBeCloseTo(30.77, 1);
+    });
+
+    it("avgRate：没计时 / 没输出的步不进分母（不把「没数的步」当零耗时把均值抬高）", () => {
+        expect(avgRate([
+            { performance: perf({ responseTimeMs: 10000 }), outputTokens: 1000 },
+            { performance: undefined, outputTokens: 500 }, // 老记录没计时
+            { performance: perf({ responseTimeMs: 4000 }), outputTokens: 0 }, // 空步没输出
+        ])).toBeCloseTo(100, 5); // 只算第一步
+        expect(avgRate([])).toBeNull();
+        expect(avgRate([{ performance: perf({ responseTimeMs: 0 }), outputTokens: 1 }])).toBeNull();
     });
 
     it("fmtRate：给不出 → `–`（不写 0）；有值 → 取整", () => {
         expect(fmtRate(null)).toBe("–");
         expect(fmtRate(0)).toBe("–");
-        expect(fmtRate(58.03)).toBe("58 tok/s");
-    });
-});
-
-describe("最近一次实测速度（lastMeasuredRate）", () => {
-    // 状态栏口径（用户 2026-10-12）：「没有执行新 step，老的速度留在 bar 上，就是最后一次速度」
-    it("从最新一轮往回取第一个有值的", () => {
-        expect(lastMeasuredRate([{ lastStepRate: 40 }, { lastStepRate: 52 }])).toBe(52);
-        expect(lastMeasuredRate([{ lastStepRate: 40 }, { lastStepRate: null }, undefined])).toBe(40);
-    });
-
-    it("一轮都没有 / 全无值 → null（bar 不画，不拿假数占位）", () => {
-        expect(lastMeasuredRate([])).toBeNull();
-        expect(lastMeasuredRate([{ lastStepRate: null }, {}])).toBeNull();
-        expect(lastMeasuredRate([{ lastStepRate: 0 }])).toBeNull(); // 0 不是速度
+        expect(fmtRate(52.42)).toBe("52 tok/s");
     });
 });

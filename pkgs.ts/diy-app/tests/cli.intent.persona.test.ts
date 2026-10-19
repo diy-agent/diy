@@ -858,7 +858,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
 
         const geo = await waitUntil(
             async () =>
-                ui!.eval<{ hRatio: number; leftRatio: number; models: string[] } | null>(`(() => {
+                ui!.eval<{ hRatio: number; leftRatio: number; leftW: number; rows: number; models: string[] } | null>(`(() => {
                     const d = document.querySelector('${sel(uri)}');
                     if (!d) return null;
                     const dr = d.getBoundingClientRect();
@@ -870,6 +870,8 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
                     return {
                         hRatio: dr.height / window.innerHeight,
                         leftRatio: lr ? lr.width / dr.width : -1,
+                        leftW: lr ? Math.round(lr.width) : 0,
+                        rows: list ? list.querySelectorAll('[data-persona-id]').length : -1,
                         models,
                     };
                 })()`),
@@ -878,6 +880,10 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         );
         // 66.666vh（小屏被 42rem 上限兜住，那时比例会偏小 —— 只断言"明显比原来大"）
         expect(geo!.hRatio).toBeGreaterThan(0.5);
+        // ##285：先锁"量到的确实是左列"，再看比例。否则取错元素时会伪装成"几何退化"——
+        // 面板头部「最大化」按钮也带 `data-tip`，拿首个 `[data-tip]` 的父当左列会量到 64px 的
+        // 按钮组（ratio 0.0629，与 ##272 N8 的实测值逐位相同），把排查引去视口/布局那条错路。
+        expect(geo!.rows).toBeGreaterThan(0); // 左列里装着人物条目（量到的是列表，不是别的 div）
         expect(geo!.leftRatio).toBeGreaterThan(0.3);
         expect(geo!.leftRatio).toBeLessThan(0.36);
         // 模型清单来自 snapshot（opencode-go 全量）→ 数量不再固定 4；
@@ -949,6 +955,187 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         ).toBe(true);
     });
 
+    it("↗ 跳转缺省人物：滚到底后点它，缺省人物的条目被滚回视野（##350 ③）", async () => {
+        // 需求原文：「缺省人物条目点击无有效跳转」→「点击后滚动/跳转到它实际指向的人物」。
+        // 修前只 setEditing：右栏换了，左列（`overflow-y-auto`）纹丝不动 —— 人物一多，
+        // 用户看见右边变了却不知道"跳哪去了"，观感就是"没反应"。
+        const uri = await setupTask("缺省跳转任务");
+        // 两件事都得先备好，否则这条用例测不到它想测的东西：
+        //  ① 人物要多于一屏 —— 否则列表根本不可滚，"跳转"退化成"本来就看得见"。
+        //  ② 缺省人物得在列表**中部** —— seed 的 persona/1 在首位，而"摆到正中"对首项
+        //     物理上做不到（scrollTop 不能为负，只能顶到容器上边）。验 `block:"center"`
+        //     就必须让它有上下余量，故先把缺省挪到中间（用后恢复，不污染同文件其余用例）。
+        const 原缺省 = ((await fx.sh.getJson(`./diy.sh agent persona list`)).data as { default: string }).default;
+        const 占位: string[] = [];
+        for (let i = 0; i < 24; i++) 占位.push(await addPersona(uniq(`跳转占位${i}`), "mimo-v2.6-flash"));
+        const 中位 = 占位[11];
+        await fx.sh.run(`./diy.sh agent persona setDefault ${中位}`);
+        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+        await openPanel(uri);
+
+        /** 缺省人物条目相对左列滚动容器的位置（inView = 完整可见） */
+        const probe = `(() => {
+            const d = document.querySelector('${sel(uri)}');
+            const list = d?.querySelector('[data-testid="persona-left-list"]');
+            const def = d?.getAttribute('data-default') ?? '';
+            const row = list?.querySelector('[data-persona-id="' + def + '"]');
+            if (!list || !row) return null;
+            const lr = list.getBoundingClientRect(), rr = row.getBoundingClientRect();
+            return {
+                def,
+                editing: d?.getAttribute('data-editing') ?? null,
+                rowTop: Math.round(rr.top - lr.top),
+                inView: rr.top >= lr.top - 1 && rr.bottom <= lr.bottom + 1,
+            };
+        })()`;
+        const scrolled = await ui!.eval<number>(
+            `(() => {
+                const list = document.querySelector('${sel(uri)} [data-testid="persona-left-list"]');
+                if (!list) return -1;
+                list.scrollTop = list.scrollHeight;
+                return Math.round(list.scrollTop);
+            })()`,
+        );
+        expect(scrolled).toBeGreaterThan(0); // 列表确实能滚（否则这条用例测不到东西）
+        const before = await ui!.eval<{ inView: boolean } | null>(probe);
+        expect(before).toBeTruthy();
+        expect(before!.inView).toBe(false); // 前提：缺省人物条目此刻在视野之外
+
+        // 用 DOM click 而不是 clickIn：clickIn 会先 `scrollIntoView(block:"center")`，
+        // 那会把列表滚回顶部、把上面这个前提毁掉（跳转按钮就在列表首行）
+        await ui!.eval<boolean>(
+            `(() => {
+                const b = document.querySelector('${sel(uri)} [data-testid="persona-jump-default"]');
+                if (!b) return false;
+                b.click();
+                return true;
+            })()`,
+        );
+
+        const after = await waitUntil(
+            async () => ui!.eval<{ def: string; editing: string | null; inView: boolean } | null>(probe),
+            (v) => !!v && v.inView,
+            { label: "缺省人物条目被滚进视野" },
+        );
+        // 右侧编辑的也是那个人物本体（"跳转到它实际指向的人物"，不是一个特殊设置页）
+        expect(after!.editing).toBe(after!.def);
+        expect(after!.def).toBe(中位); // 且跳的确实是**刚设的中位缺省**（防"跳了个别的"误判成通过）
+
+        // R2-①：滚到**视野正中**（`block:"center"`），不是"勉强露个边"（nearest）
+        const centered = await ui!.eval<{ inView: boolean; centerGap: number } | null>(
+            `(() => {
+                const d = document.querySelector('${sel(uri)}');
+                const list = d?.querySelector('[data-testid="persona-left-list"]');
+                const def = d?.getAttribute('data-default') ?? '';
+                const row = list?.querySelector('[data-persona-id="' + def + '"]');
+                if (!list || !row) return null;
+                const lr = list.getBoundingClientRect(), rr = row.getBoundingClientRect();
+                return {
+                    inView: rr.top >= lr.top - 1 && rr.bottom <= lr.bottom + 1,
+                    // 条目中线与容器中线的距离（center 命中时远小于容器高的一半）
+                    centerGap: Math.round(Math.abs((rr.top + rr.bottom) / 2 - (lr.top + lr.bottom) / 2)),
+                };
+            })()`,
+        );
+        expect(centered!.inView).toBe(true);
+        // 摆到**正中**：中点偏差远小于容器高的一半（nearest 在这个位置只把它推到"刚露头"，
+        // 偏差会是容器高量级 —— 实测 102px，对着 ~400px 的容器就是"压根没滚"）
+        const listH = await ui!.eval<number>(
+            `Math.round(document.querySelector('${sel(uri)} [data-testid="persona-left-list"]')?.getBoundingClientRect().height ?? 0)`,
+        );
+        expect(centered!.centerGap).toBeLessThan(listH / 4);
+
+        // R2-②：目标条目**短暂高亮**（缺省人物本身无特殊设置 → 高亮是"跳到了谁"的唯一反馈）
+        const flashed = await ui!.eval<boolean>(
+            `(() => {
+                const d = document.querySelector('${sel(uri)}');
+                const def = d?.getAttribute('data-default') ?? '';
+                const row = d?.querySelector('[data-testid="persona-left-list"] [data-persona-id="' + def + '"]');
+                if (!row) return false;
+                return row.getAttribute('data-jump-flash') === "1"
+                    && (row.className || "").includes("ring-2");
+            })()`,
+        );
+        expect(flashed).toBe(true);
+
+        // 原缺省还回去（本文件共用同一个实例，别把"缺省是谁"留给后面的用例去撞）
+        await fx.sh.run(`./diy.sh agent persona setDefault ${原缺省}`);
+    });
+
+    it("↗ 跳转缺省人物：搜索词把它滤掉时先清搜索，仍能带到（##350 ③ · R2）", async () => {
+        // 上一版遗留的分支：缺省人物被搜索词滤掉时，左列**根本没有它的条目** ——
+        // 不清搜索，"跳转"就无从谈起（滚动无从下手）。故这跳的第一件事是把搜索清掉。
+        const uri = await setupTask("缺省跳转被滤任务");
+        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+        await openPanel(uri);
+        // 缺省人物 id 从**已挂载的面板**上读（顺序反了会拿到空串 → 后面永远查不到条目）
+        const 缺省 = await ui!.eval<string>(
+            `document.querySelector('${sel(uri)}')?.getAttribute('data-default') ?? ''`,
+        );
+        expect(缺省).not.toBe("");
+
+        // 快照：永不返回 null（返回 null 会让失败现场只剩一句"读不到属性"，白跑一轮）
+        const 快照 = `(() => {
+            const d = document.querySelector('${sel(uri)}');
+            const list = d?.querySelector('[data-testid="persona-left-list"]');
+            const row = list?.querySelector('[data-persona-id="${缺省}"]');
+            const input = d?.querySelector('[aria-label="搜索人物"]');
+            const lr = list?.getBoundingClientRect(), rr = row?.getBoundingClientRect();
+            return {
+                hasRow: !!row,
+                search: input ? input.value : "(无输入框)",
+                rows: list ? list.querySelectorAll('[data-persona-id]').length : -1,
+                editing: d?.getAttribute('data-editing') ?? null,
+                rowTopRel: lr && rr ? Math.round(rr.top - lr.top) : null,
+                rowBotRel: lr && rr ? Math.round(rr.bottom - lr.top) : null,
+                listH: lr ? Math.round(lr.height) : -1,
+                inView: !!(lr && rr && rr.top >= lr.top - 1 && rr.bottom <= lr.bottom + 1),
+            };
+        })()`;
+
+        // 搜索词选「跟随缺省」不是随手的：↗ 按钮本身就在 `<Show when={followMatchesSearch()}>` 里，
+        // 而两者用的是**同一组字段**（名字/模型/档位/行为指令）—— 所以"缺省人物被滤掉"与
+        // "按钮还在"通常互斥：随便填个滤不中的词，按钮连 DOM 都没有，点击是**静默空操作**
+        // （本用例第一版就是这么假通过的）。唯一同时成立的输入，是那个只命中"跟随缺省"
+        // 这行、不命中任何人物字段的字面词 —— 用它才真的走到"先清搜索"那条分支。
+        await ui!.eval<boolean>(
+            `(() => {
+                const i = document.querySelector('${sel(uri)} [aria-label="搜索人物"]');
+                if (!i) return false;
+                const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                set.call(i, '跟随缺省');
+                i.dispatchEvent(new Event('input', { bubbles: true }));
+                return true;
+            })()`,
+        );
+        await waitUntil(
+            async () => ui!.eval<{ hasRow: boolean; rows: number }>(快照),
+            (v) => v.hasRow === false && v.rows === 0,
+            { label: "缺省人物条目被搜索词滤掉（一个都不剩）" },
+        );
+
+        // 断言"点到了"：按钮此时**只能在**（上面那条 Show 的判据），拿不到就是用例的前提崩了，
+        // 不能让它退化成"什么都没点、然后等着断言去报一个看不懂的错"
+        const 点到 = await ui!.eval<boolean>(
+            `(() => {
+                const b = document.querySelector('${sel(uri)} [data-testid="persona-jump-default"]');
+                if (!b) return false;
+                b.click();
+                return true;
+            })()`,
+        );
+        expect(点到, "↗ 按钮应当就在（搜索词只命中「跟随缺省」这一行）").toBe(true);
+
+        const back = await waitUntil(
+            async () => ui!.eval<{ hasRow: boolean; inView: boolean; search: string }>(快照),
+            (v) => v.hasRow && v.inView,
+            { label: "清搜索后缺省人物条目回到视野" },
+        );
+        expect(back.hasRow, JSON.stringify(back)).toBe(true);
+        expect(back.search, JSON.stringify(back)).toBe(""); // 搜索词被清掉（否则条目根本不存在）
+        expect(back.inView, JSON.stringify(back)).toBe(true);
+    });
+
     it("**双击**左列人物 = 换绑本任务 + 关面板（只改引用，不改任何人物配置）", async () => {
         // 需求原文：「不需要用于本任务的按钮，双击就是改了人物并关掉窗口」。
         // 这条同时锁三件事：① 双击真的触发换绑（不是"两次单击"——那不会产生 dblclick）
@@ -1013,26 +1200,36 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         // 2026-10-03 统一：提示改由 App 的全局 tooltip 委托渲染成 **fixed 浮层**（读 data-tip），
         // 不再用 daisyUI 的 `.tooltip`/`.tooltip-content`（那种绝对定位元素贴着 overflow 容器底边会被裁）。
         // 这里把列表滚到底、对最后一项派发 mouseover，量浮层是否完整落在视口内。
+        //
+        // ##285 加固（原 ##272 N8 三条里最脆的一条）：「滚到底」成立的前提有两件，缺哪件都测不到东西 ——
+        //   ① **列表真的撑满一屏**：人物只有两三个时列表不可滚，「最后一项」本来就在视口里，这条用例
+        //      退化成"什么都没测"（却仍然绿）。旧写法把前置交给「前序用例建了多少人物」= **顺序依赖**：
+        //      单跑绿、全量跑红。故这里自建足够占位人物（同「↗ 跳转缺省人物」用例的做法）。
+        //   ② **滚动容器是左列自己**（`[data-testid="persona-left-list"]`）：旧写法取『首个 `[data-tip]`
+        //      的父』，而面板头部「最大化」按钮也带 `data-tip` → 取到 64px 的头部按钮组（实测 ratio
+        //      0.0629，与 ##272 的失败值逐位相同）。`scrollTop = scrollHeight` 落在不可滚的 div 上，
+        //      列表纹丝不动、最后一项还在视口外一两千像素 → 浮层量到 visible=-1093/full=26 而判红。
+        //      **与 headless 视口无关**，是查询选错元素。
         const uri = await setupTask("tooltip裁剪任务");
+        for (let i = 0; i < 24; i++) await addPersona(uniq(`浮层占位${i}`), "mimo-v2.6-flash");
         await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
         await openPanel(uri);
 
         const r = await waitUntil(
             async () =>
-                ui!.eval<{ visible: number; full: number; text: string; inView: boolean } | null>(`(() => {
+                ui!.eval<{ visible: number; full: number; text: string; inView: boolean; scrolled: number } | null>(`(() => {
                     const d = document.querySelector('${sel(uri)}');
                     if (!d) return null;
-                    const wraps = [...d.querySelectorAll('[data-tip]')];
-                    if (wraps.length === 0) return null;
-                    const list = d.querySelector('[data-testid="persona-left-list"]');
-                    if (!list) return null;
+                    const list = d.querySelector('[data-testid="persona-left-list"]');  // 左列滚动容器（必须是它自己）
+                    if (!list || list.scrollHeight <= list.clientHeight) return null;  // 没撑满一屏 → 撑满了才有"滚到底"
                     list.scrollTop = list.scrollHeight;           // 滚到底：最后一项最贴近容器下沿
+                    const wraps = [...list.querySelectorAll('[data-tip]')];            // 查询收进左列，头部按钮不再混进来
                     const last = wraps[wraps.length - 1];
                     last.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
                     const tip = [...document.querySelectorAll('div')].find((x) =>
                         (x.className || '').includes('z-[200]'),
                     );
-                    if (!tip) return { visible: 0, full: 0, text: '', inView: false };
+                    if (!tip) return { visible: 0, full: 0, text: '', inView: false, scrolled: list.scrollTop };
                     const tr = tip.getBoundingClientRect();
                     const visible = Math.round(Math.min(tr.bottom, window.innerHeight) - Math.max(tr.top, 0));
                     return {
@@ -1040,11 +1237,13 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
                         full: Math.round(tr.height),
                         text: tip.textContent ?? '',
                         inView: tr.top >= 0 && tr.bottom <= window.innerHeight,
+                        scrolled: Math.round(list.scrollTop),
                     };
                 })()`),
             (v) => !!v && v.full > 0,
             { label: "量出全局 tooltip 浮层" },
         );
+        expect(r!.scrolled).toBeGreaterThan(0); // 前提：列表**确实滚动了**（否则上面那句"滚到底"是假的）
         expect(r!.text).toBe("双击选择此人物");
         expect(r!.full).toBeGreaterThan(0);
         expect(r!.visible).toBe(r!.full); // 完整可见（fixed 浮层不受列表 overflow 裁剪）
@@ -1091,6 +1290,8 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
                     const d = document.querySelector('${sel(uri)}');
                     const bar = d?.querySelector('[data-testid="persona-impact-bar"]');
                     if (!bar) return null;
+                    // 左列只能按 testid 取：拿 [data-tip] 的父会把面板头部的按钮组（64px、且不在
+                    // bar 之下）当左列 → aboveList 假红（##272 N8 三条里的第三条）。
                     const list = d.querySelector('[data-testid="persona-left-list"]');
                     return {
                         text: bar.innerText,

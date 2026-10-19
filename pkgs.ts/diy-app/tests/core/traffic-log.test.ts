@@ -2,7 +2,19 @@
 // 流量日志落盘：按天切文件、追加并回读位置、版本兼容口径、失效提示。
 import { describe, it, expect } from "vitest";
 import { appendFileSync } from "node:fs";
-import { appendRecord, readRecord, queryRecords, dayFile, absOf, LOG_DIR_REL, LOG_FORMAT, TrafficLogError } from "../../src/main/core/traffic-log";
+import { existsSync } from "node:fs";
+import {
+    appendRecord,
+    readRecord,
+    queryRecords,
+    dayFile,
+    absOf,
+    listFileDetail,
+    cleanLogs,
+    LOG_DIR_REL,
+    LOG_FORMAT,
+    TrafficLogError,
+} from "../../src/main/core/traffic-log";
 
 describe("traffic-log", () => {
     it("按天切文件名（本地日期）", () => {
@@ -75,5 +87,96 @@ describe("traffic-log", () => {
         const r = queryRecords({ date: "all", limit: 1 });
         expect(r.records.length).toBeLessThanOrEqual(1);
         if (r.hits > 1) expect(r.truncated).toBe(true);
+    });
+});
+
+// ── 清理（##324 流量日志缓存清理界面）──────────────────────────────
+// 口径（任务 ##324 body）：单位 = 整个按天文件；**今天正在写入的不可删**；删除不可恢复。
+
+/** 本地日期偏移 n 天 → "YYYY-MM-DD" */
+function dayShift(n: number): string {
+    const d = new Date();
+    d.setDate(d.getDate() + n);
+    return dayFile(d).replace(".jsonl", "");
+}
+
+/** 造一个某日期的日志文件（1 行），返回相对路径 */
+function makeDay(n: number): string {
+    appendRecord({ url: "https://seed.example/warmup", status: 200 }); // 确保目录存在
+    const rel = `${LOG_DIR_REL}/${dayShift(n)}.jsonl`;
+    appendFileSync(absOf(rel), JSON.stringify({ _fmt: LOG_FORMAT, url: `https://d${n}.example/x` }) + "\n");
+    return rel;
+}
+
+describe("traffic-log 清理（##324）", () => {
+    it("listFileDetail：日期 / 占用 / 今天标记（新的在前）", () => {
+        const today = makeDay(0);
+        const old = makeDay(-3);
+        const detail = listFileDetail();
+        const files = detail.map((d) => d.file);
+        expect(files).toContain(today);
+        expect(files).toContain(old);
+        // 新的在前
+        expect(files.indexOf(today)).toBeLessThan(files.indexOf(old));
+        const t = detail.find((d) => d.file === today)!;
+        expect(t.today).toBe(true);
+        expect(t.date).toBe(dayShift(0));
+        expect(t.bytes).toBeGreaterThan(0);
+        expect(t.mtimeMs).toBeGreaterThan(0);
+        expect(detail.find((d) => d.file === old)!.today).toBe(false);
+    });
+
+    it("cleanLogs(files)：真删旧文件、回报释放字节与剩余", () => {
+        const old = makeDay(-4);
+        const before = listFileDetail().find((d) => d.file === old)!.bytes;
+        const r = cleanLogs({ files: [old] });
+        expect(r.deleted).toEqual([old]);
+        expect(r.freedBytes).toBe(before);
+        expect(existsSync(absOf(old))).toBe(false);
+        expect(r.remaining.files).toBe(listFileDetail().length);
+    });
+
+    it("今天（正在写入）的文件不可删 → skipped 带原因，文件还在", () => {
+        const today = makeDay(0);
+        const r = cleanLogs({ files: [today] });
+        expect(r.deleted).toEqual([]);
+        expect(r.skipped.some((s) => s.file === today && /今天/.test(s.reason))).toBe(true);
+        expect(existsSync(absOf(today))).toBe(true);
+    });
+
+    it("越界 / 名字不合规一律拒（绝不删日志目录外的东西）", () => {
+        const r = cleanLogs({ files: ["state.yaml", "log/network/../state.yaml", "log/network/notes.txt"] });
+        expect(r.deleted).toEqual([]);
+        expect(r.skipped.length).toBe(3);
+        expect(r.skipped.every((s) => s.reason.includes("不是日志目录"))).toBe(true);
+    });
+
+    it("keepDays：只留最近 N 天（含今天），更早的删掉", () => {
+        const keep1 = makeDay(-1);
+        const keep2 = makeDay(-2);
+        const gone1 = makeDay(-5);
+        const gone2 = makeDay(-30);
+        const r = cleanLogs({ keepDays: 3 }); // 保留今天 / -1 / -2
+        expect(r.deleted).toContain(gone1);
+        expect(r.deleted).toContain(gone2);
+        expect(r.deleted).not.toContain(keep1);
+        expect(r.deleted).not.toContain(keep2);
+        expect(existsSync(absOf(gone1))).toBe(false);
+        expect(existsSync(absOf(keep2))).toBe(true);
+    });
+
+    it("dryRun：只算不删", () => {
+        const old = makeDay(-6);
+        const before = listFileDetail().find((d) => d.file === old)!.bytes;
+        const r = cleanLogs({ files: [old], dryRun: true });
+        expect(r.deleted).toEqual([old]);
+        expect(r.freedBytes).toBe(before);
+        expect(existsSync(absOf(old))).toBe(true); // 磁盘没动
+    });
+
+    it("文件不存在 → skipped（不抛）", () => {
+        const r = cleanLogs({ files: [`${LOG_DIR_REL}/1997-01-01.jsonl`] });
+        expect(r.deleted).toEqual([]);
+        expect(r.skipped[0]!.reason).toContain("不存在");
     });
 });

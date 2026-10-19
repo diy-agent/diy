@@ -65,6 +65,37 @@ async function a11yText(): Promise<string> {
   return collectText([(res.data as any)?.data?.tree]).join("\n");
 }
 
+/**
+ * 侧栏任务行的**内容左边界**（x = 缩进）与**该行**（y = 纵向位置）。
+ *
+ * ⚠️ 两个坑，都踩过：
+ *   1. **别用 `el.querySelector('span')` 量内容** —— 「第一个 span」是实现序、不是契约：
+ *      ##302 起行首插了项目归属色条（`position:absolute; left:0`），量到的就是它
+ *      （恒等于行左缘）→ 缩进断言 `12 > 12` 恒红（##373）。改取**语义钩子**
+ *      `[data-nav-label]`（就是那行文字），装饰节点再怎么插、插哪儿都不影响。
+ *   2. **必须限定 `.drawer-side`** —— 主区也有 title=uri 的 div（如任务详情），
+ *      不限定会量到别的元素（226 实测踩过，假绿假红都出过）。
+ *
+ * x 取**内容**不取行：缩进走 padding-left，行的 border box x 不受它影响（量行则恒等 → 假绿）；
+ * y 取**行**：要断言的是「谁在谁上面」这种行间关系，与内容盒无关。
+ * 钩子缺失 → 返回 null（由 waitUntil / 断言显式报错），**不**退化成量行 ——
+ * 那种兜底会把「钩子被改名」静默变成「缩进量不出来」，等于把断言放回脆弱状态。
+ */
+const rowAnchor = (ui: UiDriver, title: string) =>
+  ui.query<{ x: number; y: number } | null>(`(() => {
+    const side = document.querySelector('.drawer-side');
+    const el = side ? [...side.querySelectorAll('div[title]')].find(d => d.getAttribute('title') === ${JSON.stringify(title)}) : undefined;
+    if (!el) return null;
+    const label = el.querySelector('[data-nav-label]');
+    if (!label) return null;
+    const r = el.getBoundingClientRect(), l = label.getBoundingClientRect();
+    return { x: l.x, y: r.y };
+  })()`);
+
+/** 只取内容左边界（x）；未上屏 / 无钩子 → null */
+const contentX = async (ui: UiDriver, title: string): Promise<number | null> =>
+  (await rowAnchor(ui, title))?.x ?? null;
+
 describe("任务 tab —— 打开 / 聚焦 / 关闭", () => {
   it("setup: 造任务", async () => {
     const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/tabs --label Tabs`);
@@ -423,15 +454,8 @@ describe("打开列表表达任务层次（排序 + 缩进）", () => {
     });
     try {
       await lockNavOpen(ui);
-      // 量**内容**的左边界，不是元素本身：缩进走 padding-left，而
-      // getBoundingClientRect().x 是 border box（padding 不改它）—— 量错了会假绿。
-      const xOf = async (title: string) =>
-        ui.query<number | null>(`(() => {
-          const el = [...document.querySelectorAll('div[title]')].find(d => d.getAttribute('title') === ${JSON.stringify(title)});
-          if (!el) return null;
-          const inner = el.querySelector('span');
-          return inner ? inner.getBoundingClientRect().x : el.getBoundingClientRect().x;
-        })()`);
+      // 量**内容**左边界（见 rowAnchor 的两个坑：别按标签取第一个元素、别漏了侧栏作用域）
+      const xOf = (title: string) => contentX(ui, title);
       const xa = await waitUntil(() => xOf(a), (v) => v !== null, { label: "父 tab 上屏" });
       const xc = await xOf(c);
       expect(xa).not.toBeNull();
@@ -485,14 +509,8 @@ describe("任务被移动 → 导航结构实时跟随（165 回归）", () => {
     });
     try {
       await lockNavOpen(ui);
-      // 量**内容**左边界：缩进走 padding-left，而 border box 的 x 不受 padding 影响
-      const xOf = (title: string) =>
-        ui.query<number | null>(`(() => {
-          const el = [...document.querySelectorAll('div[title]')].find(d => d.getAttribute('title') === ${JSON.stringify(title)});
-          if (!el) return null;
-          const inner = el.querySelector('span');
-          return inner ? inner.getBoundingClientRect().x : el.getBoundingClientRect().x;
-        })()`);
+      // 量**内容**左边界（见 rowAnchor）
+      const xOf = (title: string) => contentX(ui, title);
       const xb0 = await waitUntil(() => xOf(b), (v) => v !== null, { label: "父 tab 上屏" });
       const xc0 = await xOf(c);
       expect(xc0! > xb0!).toBe(true); // 移动前：孙比父更深一层
@@ -589,18 +607,8 @@ describe("关父 tab 后孤儿子任务不挂错（226 回归）", () => {
     });
     try {
       await lockNavOpen(ui);
-      // 量**内容**左边界（x，缩进走 padding-left）+ 元素纵向位置（y，判断上下相邻）
-      // 只在**侧栏**（.drawer-side）里找：主区也有 title=uri 的 div（如任务详情），
-      // 不限定作用域会量到别的元素 → 假绿（226 实测踩过）
-      const rectOf = (title: string) =>
-        ui.query<{ x: number; y: number } | null>(`(() => {
-          const side = document.querySelector('.drawer-side');
-          const el = side ? [...side.querySelectorAll('div[title]')].find(d => d.getAttribute('title') === ${JSON.stringify(title)}) : undefined;
-          if (!el) return null;
-          const inner = el.querySelector('span');
-          const r = (inner ?? el).getBoundingClientRect();
-          return { x: r.x, y: r.y };
-        })()`);
+      // x = 内容左边界（缩进）+ y = 行（判断上下相邻）；限定侧栏与语义钩子见 rowAnchor
+      const rectOf = (title: string) => rowAnchor(ui, title);
       const rg = await waitUntil(() => rectOf(g), (v) => v !== null, { label: "祖父 tab 上屏" });
       const rs = await rectOf(s);
       const ru = await rectOf(u);
@@ -652,5 +660,82 @@ describe("删除任务 → 打开列表摘掉幽灵 tab（dropCtx 接线）", ()
     expect(st.active).not.toBe(`task-run:${t}`); // active 落到右邻或 ""
     // active 要么落在仍存在的 tab 上，要么是空（回任务树）——不得悬空
     if (st.active) expect(st.opened).toContain(st.active);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// 页面标识与定位（##350）：子页面 tab 是「页面」不是「任务」；URI 贴在标题下
+// ═══════════════════════════════════════════════════════════
+
+describe("子页面 tab 的身份标记（##350 ①）", () => {
+  it("任务 tab 带任务状态圆点；子页面 tab 用页面图标、不标任务状态", async () => {
+    const ui = await makeUiDriver(fx.electron.cdpUrl, async () => {
+      const r = await fx.sh.getJson("./diy.sh ui inspect");
+      return (r.data as any)?.data?.tree as A11yNode | undefined;
+    });
+    try {
+      await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+      await fx.sh.getJson(`./diy.sh ui tab open ctxlab:${uri}`);
+      await lockNavOpen(ui); // 行首标记只在**展开态**渲染（收起 rail 装不下）
+      const st = await waitUntil(
+        () =>
+          ui.query<{ sub: { text: string; row: string }[]; dots: string[] }>(`(() => {
+            const rowOf = (el) => (el.closest('li')?.textContent ?? '').trim();
+            return {
+              sub: [...document.querySelectorAll('[data-subpage-icon]')].map((e) => ({
+                text: (e.textContent ?? '').trim(),
+                row: rowOf(e),
+              })),
+              dots: [...document.querySelectorAll('[data-task-state-dot]')].map(rowOf),
+            };
+          })()`),
+        (v) => !!v && v.sub.length >= 1 && v.dots.length >= 1,
+        { label: "侧栏两态标记上屏（子页面图标 + 任务状态圆点）" },
+      );
+      // 子页面那一行：行首是 registry 的页面图标（"C"），不是任务序号/状态圆点
+      const sub = st.sub.find((s) => s.row.includes("上下文树"));
+      expect(sub).toBeTruthy();
+      expect(sub!.text).toBe("C");
+      // 任务状态圆点只认**任务** tab：子页面行上不许有（有 = 又被读成"一个任务"）
+      expect(st.dots.some((r) => r.includes("上下文树"))).toBe(false);
+      await unlockNav(ui);
+    } finally {
+      ui.close();
+    }
+  });
+});
+
+describe("任务详情的 URI 位置（##350 ②）", () => {
+  it("URI 紧跟标题正下方（修复前压在元信息块最底部）", async () => {
+    const ui = await makeUiDriver(fx.electron.cdpUrl, async () => {
+      const r = await fx.sh.getJson("./diy.sh ui inspect");
+      return (r.data as any)?.data?.tree as A11yNode | undefined;
+    });
+    try {
+      await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+      await waitUntil(a11yText, (t) => t.includes("任务详情"), { label: "任务执行页上屏" });
+      const st = await waitUntil(
+        () =>
+          ui.query<{ order: string[]; titleBottom: number; uriTop: number; uriText: string } | null>(`(() => {
+            const rows = [...document.querySelectorAll('.task-field-row')];
+            const uriEl = document.querySelector('[data-testid="task-detail-uri"]');
+            if (!uriEl || rows.length === 0) return null;
+            return {
+              order: rows.map((r) => (r.textContent ?? '').trim().slice(0, 4)),
+              titleBottom: Math.round(rows[0].getBoundingClientRect().bottom),
+              uriTop: Math.round(uriEl.getBoundingClientRect().top),
+              uriText: (uriEl.textContent ?? '').trim(),
+            };
+          })()`),
+        (v) => !!v && v.order.length > 1 && v.order[0].startsWith("标题"),
+        { label: "任务属性面板就位" },
+      );
+      expect(st!.order[0].startsWith("标题")).toBe(true);
+      expect(st!.order[1].startsWith("URI")).toBe(true); // 标题的**下一个**字段就是它
+      expect(st!.uriTop).toBeGreaterThanOrEqual(st!.titleBottom); // 且真的落在标题下方
+      expect(st!.uriText).toContain(uri);
+    } finally {
+      ui.close();
+    }
   });
 });

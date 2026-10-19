@@ -5,7 +5,7 @@
 // ops.jsonl。不归一 → 旧的 `step` 落进 else → 显示成「下一轮」，语义正好相反。
 
 import { describe, it, expect } from "vitest";
-import { normalizeSteerMode, steerModeLabel, steerModeTip } from "../../src/shared/steer-mode";
+import { DEFAULT_STEER_MODE, normalizeSteerMode, steerModeLabel, steerModeTip } from "../../src/shared/steer-mode";
 
 describe("normalizeSteerMode", () => {
   it("历史枚举名 step/turn → 现值 next-step/next-turn", () => {
@@ -60,5 +60,26 @@ describe("steerModeTip", () => {
 
   it("认不出的值不给说明（不编造不存在的时机）", () => {
     expect(steerModeTip("weird")).toBe("");
+  });
+});
+
+// ##360：缺省时机本身是契约（用户经验 95% 的插话是"立刻补一句"，故缺省从 next-turn 改成 next-step）。
+// 断言必须钉在常量上：UI / main 的**两个入口**都 import 它，改错这里等于把两处一起改错。
+describe("DEFAULT_STEER_MODE（缺省投递时机）", () => {
+  it("缺省是 next-step（下一步）—— 不是 next-turn", () => {
+    expect(DEFAULT_STEER_MODE).toBe("next-step");
+  });
+
+  it("仍在枚举内（不是手写的野值）", () => {
+    expect(["next-step", "next-turn"]).toContain(DEFAULT_STEER_MODE);
+  });
+
+  it("缺省值直接可读 →「下一步」（横条上的缺省显示）", () => {
+    expect(steerModeLabel(DEFAULT_STEER_MODE)).toBe("下一步");
+  });
+
+  it("next-turn 仍是可选时机（切回下一轮照常工作）", () => {
+    expect(steerModeLabel("next-turn")).toBe("下一轮");
+    expect(steerModeTip("next-turn")).toContain("新一轮");
   });
 });

@@ -46,6 +46,41 @@ describe("注册表自洽", () => {
   });
 });
 
+describe("子页面必须带 icon（##350 ① · review R1）", () => {
+  // 现象：子页面 tab 行首若没有 registry icon，就退回"页面序号" —— 与任务 tab 的序号
+  // 一模一样，用户读成"又一个任务"，正是本任务要消解的错觉。
+  // R1 的教训：只补 ctxlab 一个页面治不了根（存量靠肉眼核、新页面靠人记），故升成不变量。
+  const subs = () => PAGES.filter((p) => p.parentPage);
+
+  it("存量：每个声明的子页面（parentPage 有值）都有非空 icon", () => {
+    expect(subs().map((p) => p.id)).toEqual(["lab", "ctxlab", "flow"]); // 子页面清单本身也钉住
+    for (const p of subs()) {
+      expect({ page: p.id, icon: p.icon }).toEqual({ page: p.id, icon: expect.any(String) });
+      expect(p.icon!.trim()).not.toBe("");
+    }
+  });
+
+  it("防复发：子页面不给 icon → 注册表报错（指向该页的 icon 字段）", () => {
+    const bare: PageDef = { id: "sub.x", title: "X", parentPage: "task-run", layout: TASK_RUN_LAYOUT };
+    const errs = validateRegistry(VIEWS, [...PAGES, bare]);
+    // 下标 = 传入数组的末尾（实现按传入下标生成 path，见 src/shared/view-registry.ts），
+    // 不写死数字：PAGES 再变长也不失效（##364 的教训）
+    expect(errs.some((e) => e.path === `pages[${PAGES.length}].icon` && e.msg.includes("sub.x"))).toBe(true);
+  });
+
+  it("子页面的 parentPage 指向不存在的页面 → 报错", () => {
+    const orphan: PageDef = {
+      id: "sub.y",
+      title: "Y",
+      icon: "Y",
+      parentPage: "nope",
+      layout: TASK_RUN_LAYOUT,
+    };
+    const errs = validateRegistry(VIEWS, [...PAGES, orphan]);
+    expect(errs.some((e) => e.msg.includes("父页面不存在: nope"))).toBe(true);
+  });
+});
+
 describe("View vs ViewInstance —— 状态归属", () => {
   it("global 实例键 = view id（单实例）", () => {
     const tree = VIEWS.find((v) => v.id === "task.tree")!;

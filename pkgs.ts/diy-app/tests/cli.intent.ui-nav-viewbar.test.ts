@@ -21,6 +21,19 @@ import { waitUntil } from "./wait";
 let fx: { sh: ShellTest; HOME: string; electron: ElectronTest };
 let ui: UiDriver;
 
+/**
+ * nav 顶栏（viewbar）锚点。
+ *
+ * ⚠️ 不用 `.drawer-side .menu` 的 `firstElementChild`（同族脆弱选择器，##373）：那是
+ * 「谁排在第一个」= **实现序**，不是契约 —— 一旦在顶栏之前插入任何节点（横幅 / 分组头 /
+ * 搜索条…），量到的高度就 silently 变成别的元素，断言照绿却什么都没守住。
+ * 取语义钩子 `[data-testid="nav-viewbar"]`，定点在**那个 bar**。
+ * （同款教训见 ui-nav-search：footer 不能取 `OVERLAY.lastElementChild`。）
+ */
+const VIEWBAR = '[data-testid="nav-viewbar"]';
+/** 注进 DOM 里跑的选择器（模板串是**浏览器侧代码**，必须插值；写裸标识符 = ReferenceError） */
+const VIEWBAR_Q = `document.querySelector(${JSON.stringify(VIEWBAR)})`;
+
 beforeAll(async () => {
   const electron = await startElectronTest();
   const HOME = electron.home;
@@ -53,7 +66,7 @@ describe("nav 顶栏：与面包屑同高 + pin 在顶栏", () => {
   it("顶栏高度 = 面包屑栏高度（32px，VIEW_BAR_H）", async () => {
     await pinOpen();
     const m = await ui.query<{ navBar: number; breadcrumb: number }>(`(() => {
-      const bar = document.querySelector('.drawer-side .menu').firstElementChild;
+      const bar = ${VIEWBAR_Q};
       const crumb = document.querySelector('main > nav');
       return {
         navBar: Math.round(bar.getBoundingClientRect().height),
@@ -68,7 +81,7 @@ describe("nav 顶栏：与面包屑同高 + pin 在顶栏", () => {
   it("pin 在顶栏内，且 nav 底部没有第二套按钮行", async () => {
     const r = await ui.query<{ pinInBar: boolean; pinCount: number; barsInNav: number }>(`(() => {
       const menu = document.querySelector('.drawer-side .menu');
-      const bar = menu.firstElementChild;
+      const bar = ${VIEWBAR_Q};
       const btn = document.querySelector('.drawer-side button[title*="锁定"]');
       // nav 内部的「bar」= 有 border-b 的直接子 div；应恰好 1 个（顶栏）
       const bars = [...menu.children].filter(el => el.tagName === 'DIV' && getComputedStyle(el).borderBottomWidth !== '0px');

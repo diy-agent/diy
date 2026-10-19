@@ -10,8 +10,8 @@
 // 所有 place 消失 → 必须发**显式清空**，不能只是「什么都不发」（用例 5）。
 
 import { hashText } from "./hash";
-import { placeText, renderPathsTraced, renderPlaces } from "./render";
-import { CONTEXT_GUIDE } from "./guide";
+import { placeText, renderPlaces } from "./render";
+import { runtimeEnvelope, systemEnvelope } from "./envelope";
 import { placesIn } from "./tree";
 import { WIRE_VERSION } from "./wire";
 import type {
@@ -37,26 +37,28 @@ export function renderedHashes(state: ContextTreeState): Record<ContextPath, str
 }
 
 /**
- * system 容器全量文本（每次请求重建，无状态）。
- * **带说明头**（结构 + 解读规则，纯文本，见 guide.ts）：这段就是"提示词"本体，
- * 要先告诉模型这是什么、怎么读，再给数据。
+ * system 容器全量文本（每次请求重建，无状态）= **信封**：`help:`（zod 派生的结构说明）
+ * + `system:`（变量树）。与真发**同一处产出**（`envelope.ts` 的 `systemEnvelope`）——
+ * 两处各造一份必然漂移。
  */
 export function systemText(state: ContextTreeState): string {
-    return renderPathsTraced(state, placesIn(state, "system"), CONTEXT_GUIDE).text;
+    return systemEnvelope(state, placesIn(state, "system"), placesIn(state, "runtime")).text;
 }
 
 /**
- * system 的**纯数据部分**（不带说明头）。
- * 存在的理由：说明头是固定长文，golden 比对/调试时只想看数据本身；
- * 也让「说明头是否在位」可以单独断言（systemText 以 CONTEXT_GUIDE 开头）。
+ * system 的**纯数据部分**（不带 help 段）。
+ * 存在的理由：help 是固定长文，golden 比对/调试时只想看数据本身。
  */
 export function systemData(state: ContextTreeState): string {
     return renderPlaces(state, placesIn(state, "system"));
 }
 
-/** runtime 容器全量文本（snapshot 内容 / 调试对照） */
+/**
+ * runtime 容器全量文本（snapshot 内容 / 调试对照）= **信封**：`runtime:` 一段。
+ * 与真发同一处产出（`envelope.ts` 的 `runtimeEnvelope`）。
+ */
 export function runtimeText(state: ContextTreeState): string {
-    return renderPlaces(state, placesIn(state, "runtime"));
+    return runtimeEnvelope(state, placesIn(state, "runtime")).text;
 }
 
 /**

@@ -15,9 +15,9 @@ const store = new Map<string, string>();
     length: 0,
 } as Storage;
 
-const h = vi.hoisted(() => ({ loadTaskTree: vi.fn() }));
+const h = vi.hoisted(() => ({ loadTaskTree: vi.fn(), getTask: vi.fn() }));
 vi.mock("../../src/renderer_solid/lib/rpc", () => ({
-    diyService: { diy: { loadTaskTree: h.loadTaskTree } },
+    diyService: { diy: { loadTaskTree: h.loadTaskTree, getTask: h.getTask } },
 }));
 
 /** 每个用例一份全新 store 单例（模块级 signal 只初始化一次） */
@@ -26,9 +26,12 @@ async function freshStore() {
     return (await import("../../src/renderer_solid/store/taskStore")).taskStore;
 }
 
+const { getTaskVerdict } = await import("../../src/shared/task-load");
+
 beforeEach(() => {
     store.clear();
     h.loadTaskTree.mockReset();
+    h.getTask.mockReset();
 });
 
 describe("loadTree —— 并发响应不回退", () => {
@@ -55,5 +58,68 @@ describe("loadTree —— 并发响应不回退", () => {
         await p1;
 
         expect(taskStore.nodes.map((n) => n.uri)).toEqual(["projects/1/tasks/new"]);
+    });
+});
+
+describe("selectTask —— 「任务不存在」是显式终态（不再是静默 return）", () => {
+    it("契约的「未找到」（status:error, data:null）→ selectedMissing=true、selectedTask=null", async () => {
+        const taskStore = await freshStore();
+        h.getTask.mockResolvedValueOnce({ status: "error", data: null });
+        await taskStore.selectTask("projects/1/tasks/gone");
+        expect(taskStore.selectedMissing).toBe(true);
+        expect(taskStore.selectedTask).toBeNull();
+        expect(taskStore.selectedUri).toBe("projects/1/tasks/gone");
+    });
+
+    it("正常返回 → selectedMissing 复位、selectedTask 是载荷", async () => {
+        const taskStore = await freshStore();
+        h.getTask.mockResolvedValueOnce({
+            status: "ok",
+            data: { uri: "projects/1/tasks/ok", updated: "2026-01-01T00:00:00.000Z" },
+        });
+        await taskStore.selectTask("projects/1/tasks/ok");
+        expect(taskStore.selectedMissing).toBe(false);
+        expect(taskStore.selectedTask?.uri).toBe("projects/1/tasks/ok");
+    });
+
+    it("切任务后迟到的「不存在」响应被丢弃（不污染新选中态）", async () => {
+        const taskStore = await freshStore();
+        let resolveSlow!: (v: unknown) => void;
+        h.getTask.mockReturnValueOnce(new Promise((r) => (resolveSlow = r))); // A 的慢响应
+        h.getTask.mockResolvedValueOnce({
+            status: "ok",
+            data: { uri: "projects/1/tasks/b", updated: "2026-01-01T00:00:00.000Z" },
+        }); // B 的快响应
+        const pa = taskStore.selectTask("projects/1/tasks/a");
+        await taskStore.selectTask("projects/1/tasks/b");
+        resolveSlow({ status: "error", data: null }); // A 已不在选中 → 丢弃
+        await pa;
+        expect(taskStore.selectedUri).toBe("projects/1/tasks/b");
+        expect(taskStore.selectedMissing).toBe(false);
+        expect(taskStore.selectedTask?.uri).toBe("projects/1/tasks/b");
+    });
+});
+
+describe("treeLoaded —— 区分「树还没到」与「树里真没有」（剪枝判据用它）", () => {
+    it("加载成功前置 false；成功一次后置 true", async () => {
+        const taskStore = await freshStore();
+        expect(taskStore.treeLoaded).toBe(false);
+        h.loadTaskTree.mockResolvedValueOnce({ data: [] });
+        await taskStore.loadTree();
+        expect(taskStore.treeLoaded).toBe(true);
+    });
+});
+
+describe("getTaskVerdict —— renderer「任务不存在」判定的唯一判据", () => {
+    it("status:error / data:null / 空响应 一律 missing", () => {
+        expect(getTaskVerdict({ status: "error", data: null })).toBe("missing");
+        expect(getTaskVerdict({ status: "ok", data: null })).toBe("missing");
+        expect(getTaskVerdict({ status: "ok" })).toBe("missing");
+        expect(getTaskVerdict(null)).toBe("missing");
+        expect(getTaskVerdict(undefined)).toBe("missing");
+    });
+    it("显式 ok + 载荷 才是 ok", () => {
+        expect(getTaskVerdict({ status: "ok", data: { uri: "projects/1/tasks/1" } })).toBe("ok");
+        expect(getTaskVerdict({ status: "weird", data: { uri: "x" } })).toBe("missing");
     });
 });

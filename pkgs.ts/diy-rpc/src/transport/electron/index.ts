@@ -1,7 +1,8 @@
+/// <reference lib="dom" />
 /**
  * electron/index.ts — Electron EnvelopeTransport 实现（第1层）
  *
- * 依赖：@diy/rpc（EnvelopeTransport/_Envelope 类型）+ electron
+ * 依赖：@diy-agent/rpc（EnvelopeTransport/_Envelope 类型）+ electron
  * 只在 Electron 主进程和 preload 中使用。
  *
  * 安全机制：
@@ -12,7 +13,7 @@
 
 import { ipcMain, ipcRenderer } from 'electron';
 import type { WebContents } from 'electron';
-import type { EnvelopeTransport, _Envelope } from '../../core/types';
+import type { EnvelopeTransport, _Envelope } from '../../core/types.js';
 
 /**
  * renderer 就绪前的 main→renderer 消息闸门上限（超出丢弃并计数，防页面永不加载时堆积）。

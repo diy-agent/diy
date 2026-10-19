@@ -11,10 +11,11 @@
 // 本模块只做组装与渲染，不发任何 LLM 请求（试验场试跑 = dry-run，看请求长什么样）。
 
 import * as yaml from "js-yaml";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync, rmdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, normalize, resolve, sep } from "node:path";
 import { analyze, renderWithTrace, type IncludeResolver, type TraceNode, type VarSpec } from "@diy/template";
+import { writeFileAtomic } from "../core/atomic-write";
 import { TASK_HEAD_FIELDS } from "../../shared/task-head";
 import { AssembleGlobalsSchema, type AssembleGlobals } from "../../shared/prompt-schema";
 
@@ -34,8 +35,8 @@ import { resolveCwd } from "../core/cwd";
 import { personaForTask } from "../core/persona";
 import { getProjectPath } from "../core/project";
 import { readRuntimeConfig } from "../../runtime";
-import { llmLogRelPath } from "../core/local-paths";
-import { historyIndexValue } from "../../shared/context/history-index";
+import { reqlogValue } from "../../shared/context/reqlog";
+import { LOG_DIR_REL, dayFile } from "../core/traffic-log";
 // 契约类型唯一源（shared/prompt-schema.ts，纯 zod）——renderer 也用它，避免手抄第二份
 import type { AssembledSystem, PromptEntry } from "../../shared/prompt-schema";
 
@@ -126,15 +127,6 @@ function readMeta(home: string, projectId: string): Record<string, { baseVersion
   } catch {
     return {};
   }
-}
-
-/** 原子写（tmp + rename）：同一份数据被预览读、被 UI 写，不能出现半截文件。
- *  与 core/drafts.ts 的做法一致。 */
-function writeFileAtomic(fp: string, content: string): void {
-  mkdirSync(dirname(fp), { recursive: true });
-  const tmp = `${fp}.tmp-${process.pid}`;
-  writeFileSync(tmp, content, "utf-8");
-  renameSync(tmp, fp);
 }
 
 /** 写 sidecar；内容为空则删文件（否则 restore 会留下一个 `{}` 空壳，看着像残留）。 */
@@ -649,8 +641,9 @@ export function assembleGlobals(
     rules: section(DELIVERED_SECTIONS.rules),
     guard: section(DELIVERED_SECTIONS.guard),
     // 压缩历史索引的**格式说明**（稳定项 → 进 system；易变的注记数据留在 messages）。
-    // 路径算法与 local-agent 共用 ../core/local-paths —— 两处各写一份 key 会让"模型照注释
-    // 取不到原文"（比不给索引更坏）。
-    historyIndex: historyIndexValue(llmLogRelPath(taskUri)),
+    // 真发请求的流量日志位置（稳定信息进变量树，模型才能自查"我上一步到底发出去了什么"）。
+    // 文件名用**当天**那份（`dayFile()`，与写入侧同一个算法）；解释（路径规则/定位命令/
+    // 字段表）全在 `ReqlogSchema` 的 `.describe()` → 信封的 `help.reqlog`（值节点只放数据）。
+    reqlog: reqlogValue({ home, dirRel: LOG_DIR_REL, fileName: dayFile() }),
   };
 }

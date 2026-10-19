@@ -1,14 +1,14 @@
-import type { _Router, _AnyProcedureMeta } from "../core/meta";
+import type { _Router, _AnyProcedureMeta } from "../core/meta.js";
 import {
   _buildRouteTree,
   _routeResolve,
   type _RouteNode,
   type _RouterNode,
-} from "../core/_tree";
-import type { ClientBinding } from "../core/server-binding";
-import { parseArgv, generateHelp, fmtUsageArgs, CliParseError } from "./_parser";
+} from "../core/_tree.js";
+import type { ClientBinding } from "../core/server-binding.js";
+import { parseArgv, generateHelp, fmtUsageArgs, CliParseError } from "./_parser.js";
 
-import "../core/_cli-meta";
+import "../core/_cli-meta.js";
 
 /** 按点分路径查找 _RouterNode（如 'diy.app' → diy 下 app 节点），找不到返回 null */
 function findNodeByPath(

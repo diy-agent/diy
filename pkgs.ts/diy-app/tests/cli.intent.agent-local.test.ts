@@ -139,9 +139,16 @@ function seedOps(taskUri: string, ops: Array<Record<string, unknown>>): string {
 
 // ─── 插话（steer）：对话中插嘴 ───────────────────────
 //
-// 入队走 `chat --mode`（唯一的提交入口）：给出 --mode 只入队、不启动轮次；不带则开一轮。
+// 入队走 `chat --mode`（唯一的提交入口）；不带 --mode 则直接开一轮。
+// ##303 之后：给出 --mode 时，**该任务没有活跃轮次就用队列立刻开一轮**（留言 = 发一句话），
+// 有活跃轮次才只是入队、由那一轮按时机取走。
 // 必须持久化（进程重启/切 Electron/serve 模式后队列仍在）—— 插话是"已提交但模型还没看见的
 // 用户输入"，丢了就是用户白打。存储与聊天草稿同文件（任务目录 .diy/drafts.yaml 的 steers）。
+//
+// ⚠️ 本套件（无网络、无桩上游）**不再用 `chat --mode` 准备队列状态**：那会触发上面那条
+// "立刻开一轮"的新契约 → 真打上游（CI 里没有 key，本机却可能真有）。队列语义（FIFO /
+// 取消 / 排序 / 持久化）与"入队怎么发生"无关，故直接种盘；入队路径的端到端（含"空闲入队
+// 立刻发出"）由 cli.intent.steer-ui.test.ts 用桩上游覆盖。
 
 /** 取 CLI JSON 的 data 字段（getJson 返回 Record<string, unknown>，这里按用例收窄） */
 async function cliData<T>(cmd: string): Promise<T> {
@@ -149,9 +156,31 @@ async function cliData<T>(cmd: string): Promise<T> {
   return r.data as T;
 }
 
-/** 入队一条插话：走 chat --mode，命令退出即已落盘（队列路径不产 op） */
-async function enqueueSteer(uri: string, mode: string, text: string): Promise<void> {
-  await fx.sh.run(`./diy.sh agent local chat ${uri} ${JSON.stringify(text)} --mode ${mode}`);
+/**
+ * 直接种队列（写任务目录 .diy/drafts.yaml）——**测试准备用**，不是产品路径。
+ *
+ * 为什么不走 `chat --mode`：入队路径现在空闲时会**立刻开一轮**（##303），
+ * 于是"入队后队列里看得见"这条前置状态在空闲任务上不再稳定，而且会真的打上游。
+ * 详见文件头的说明。
+ */
+function seedSteers(uri: string, items: Array<{ mode: string; text: string }>): string {
+  const dir = join(fx.HOME, uri, ".diy");
+  mkdirSync(dir, { recursive: true });
+  const rows = items
+    .map(
+      (it, i) =>
+        `  - id: steer/${i + 1}\n    mode: ${it.mode}\n    text: ${JSON.stringify(it.text)}\n    created: '2026-10-13T00:00:0${i}.000Z'`,
+    )
+    .join("\n");
+  const fp = join(dir, "drafts.yaml");
+  // ⚠️ 不带 frontmatter 的 `---` 分隔符：产品写侧是 yaml.dump 的**单文档**文本，
+  // 多一个 `---` 会被 js-yaml 当成第二个文档 → 整份草稿读不出来（readDrafts 返回 null）。
+  writeFileSync(
+    fp,
+    ["kind: diy.ui-drafts", "version: 3", `task: ${uri}`, "fields: {}", "steers:", rows, ""].join("\n"),
+    "utf-8",
+  );
+  return fp;
 }
 
 interface SteerRow {
@@ -161,9 +190,9 @@ interface SteerRow {
 }
 
 describe("agent.local — 插话 steer（无网络）", () => {
-  it("chat --mode 入队 → list 可见 → cancel 取消", async () => {
+  it("队列项 → list 可见（时机如实读出来）→ cancel 取消", async () => {
     const uri = await setup("插话任务");
-    await enqueueSteer(uri, "next-step", "插到下一步");
+    seedSteers(uri, [{ mode: "next-step", text: "插到下一步" }]);
     const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
     expect(list).toHaveLength(1);
     expect(list[0]).toMatchObject({ mode: "next-step", text: "插到下一步" });
@@ -175,8 +204,10 @@ describe("agent.local — 插话 steer（无网络）", () => {
 
   it("id 形如 steer/N（实体/序号）：CLI 里能直接手敲，不必复制粘贴随机串", async () => {
     const uri = await setup("id 格式");
-    await enqueueSteer(uri, "next-turn", "第一条");
-    await enqueueSteer(uri, "next-turn", "第二条");
+    seedSteers(uri, [
+      { mode: "next-turn", text: "第一条" },
+      { mode: "next-turn", text: "第二条" },
+    ]);
     const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
     expect(list.map((i) => i.id)).toEqual(["steer/1", "steer/2"]);
     // 用这个 id 取消（id 会进 shell，含 "/" 也没问题：它只做字符串匹配，不当路径解析）
@@ -187,8 +218,10 @@ describe("agent.local — 插话 steer（无网络）", () => {
 
   it("两种模式各自记住（next-step / next-turn 并存，FIFO 顺序即提交顺序）", async () => {
     const uri = await setup("两种插话");
-    await enqueueSteer(uri, "next-step", "第一步插话");
-    await enqueueSteer(uri, "next-turn", "下一轮插话");
+    seedSteers(uri, [
+      { mode: "next-step", text: "第一步插话" },
+      { mode: "next-turn", text: "下一轮插话" },
+    ]);
     const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
     expect(list.map((i) => [i.mode, i.text])).toEqual([
       ["next-step", "第一步插话"],
@@ -220,10 +253,9 @@ describe("agent.local — 插话 steer（无网络）", () => {
     await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
   });
 
-  it("落盘在任务目录 .diy/drafts.yaml（与聊天草稿同文件，可被 CLI 直接观察）", async () => {
+  it("队列落盘在任务目录 .diy/drafts.yaml（与聊天草稿同文件，可被 CLI 直接观察）", async () => {
     const uri = await setup("落盘检查");
-    await enqueueSteer(uri, "next-turn", "持久化的话");
-    const fp = join(fx.HOME, uri, ".diy", "drafts.yaml");
+    const fp = seedSteers(uri, [{ mode: "next-turn", text: "持久化的话" }]);
     expect(existsSync(fp)).toBe(true);
     const raw = readFileSync(fp, "utf-8");
     expect(raw).toContain("steers");
@@ -237,7 +269,7 @@ describe("agent.local — 插话 steer（无网络）", () => {
 
   it("与聊天草稿同文件互不干扰（清草稿不动插话）", async () => {
     const uri = await setup("共存检查");
-    await enqueueSteer(uri, "next-step", "排队的插话");
+    seedSteers(uri, [{ mode: "next-step", text: "排队的插话" }]);
     await fx.sh.getJson(`./diy.sh task drafts set ${uri} --agent_input "打到一半的草稿"`);
     // 清空草稿字段：插话队列必须还在（"清空输入框" ≠ "放弃排队中的插话"）
     await fx.sh.getJson(`./diy.sh task drafts clear ${uri}`);
@@ -274,8 +306,11 @@ describe("agent.local — 控制面（无网络）", () => {
     // 「形状 + 排队属性 + 写盘生效」，真发部分见下面 skipIf 的 watch 用例。
     it("sessions 快照：形状即契约 + 入队即建档（queue 可见、注册表自己的订阅不留痕）", async () => {
         const uri = await setup("注册表快照任务");
-        // 入队一条插话 = 一次真实活动（`chat --mode` 只入队不开轮，无网络）→ 必须建档
-        await enqueueSteer(uri, "next-turn", "排队等我");
+        // 队列变化 = 一次真实活动 → 必须建档。
+        // ⚠️ 不能用 `chat --mode` 造这条前置状态：##303 之后空闲任务的入队会**立刻开一轮**
+        //（留言 = 发一句话），那会真打上游。故种盘 + 走一个只动队列的 CLI 入口（reorder）。
+        seedSteers(uri, [{ mode: "next-turn", text: "排队等我" }]);
+        await fx.sh.getJson(`./diy.sh agent local steer reorder ${uri} '["steer/1"]'`);
         // ⚠️ streams 不套 `{ok,data}` 信封（`--json` 只改 unary 的输出形状）——
         // 这与 `running`/`history` 那类 unary 用 getJson 的读法不同，直接读原始帧。
         const r = await fx.sh.run(`./diy.sh agent local sessions`);
@@ -592,7 +627,7 @@ describe("agent.local — 压缩 compact（无网络）", () => {
         const fp = opsPath(uri);
         const before = readFileSync(fp, "utf-8");
 
-        const rec = (await fx.sh.getJson(`./diy.sh agent local compact ${uri} --budget-bytes 0`)).data as {
+        const rec = (await fx.sh.getJson(`./diy.sh agent local compact run ${uri} --budget-bytes 0`)).data as {
             boundary: { keptFromTurnId: string | null; keepFromOpIndex: number };
             policy: { mode?: string; modeData?: { budgetBytes?: number } };
             size: { keptTurns: number; droppedTurns: number; before: { bytes: number }; after: { bytes: number } };
@@ -610,7 +645,7 @@ describe("agent.local — 压缩 compact（无网络）", () => {
         expect(readFileSync(fp, "utf-8")).toBe(before);
 
         // 契约③：**事件快照**（取代旧的"分代"）—— 一条 compact，带算法 + 过滤器
-        const events = (await fx.sh.getJson(`./diy.sh agent local compactEvents ${uri}`)).data as Array<{
+        const events = (await fx.sh.getJson(`./diy.sh agent local compact events ${uri}`)).data as Array<{
             kind: string;
             id?: string;
             policy?: { mode?: string };
@@ -654,7 +689,7 @@ describe("agent.local — 压缩 compact（无网络）", () => {
         const big = Array.from({ length: 200 }, (_, i) => `row ${i}`).join("\n");
         seedOps(uri, [...turnOps("t9000", "只这一轮", big)]);
         const rec = (await fx.sh.getJson(
-            `./diy.sh agent local compact ${uri} --budget-bytes 1048576 --tool-result headtail`,
+            `./diy.sh agent local compact run ${uri} --budget-bytes 1048576 --tool-result headtail`,
         )).data as { details?: { clipped?: unknown[] } };
         // 被裁明细在 details.clipped（预算撑满 → 工具结果被保留，但按 headtail 裁）
         expect(rec.details?.clipped && rec.details.clipped.length).toBeGreaterThan(0);
@@ -665,22 +700,27 @@ describe("agent.local — 压缩 compact（无网络）", () => {
         await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
     });
 
-    it("摘要：compactPreview 勾选 summary → mod 请求首条消息是 <summary> 骨架；compact 落账保留摘要", async () => {
+    it("摘要：compactPreview 勾选 summary → mod 请求**尾条信封的 `summary:` 键**带 <summary> 骨架；compact 落账保留摘要", async () => {
         const uri = await seededSession("摘要落账");
-        // 勾选 summary（尚未生成）→ 预览里出现占位骨架（预算 0 → 全部轮被丢弃，摘要针对它们）
+        // 勾选 summary（尚未生成）→ 预览里出现占位骨架（预算 0 → 全部轮被丢弃，摘要针对它们）。
+        // 位置：摘要是**自动生成的段**（##310 九轮）→ 与 runtime / user 同处**尾部信封**的顶层键
+        // `summary:`，**不是**首条独立 user 消息（那样会被 normalizeUserRuns 并进 user.message 正文）。
         const pv = (await fx.sh.getJson(
-            `./diy.sh agent local compactPreview ${uri} --budget-bytes 0 --summary`,
+            `./diy.sh agent local compact preview ${uri} --budget-bytes 0 --summary`,
         )).data as { modRequest: { messages: unknown[] } };
-        const first = JSON.stringify(pv.modRequest.messages[0] ?? "");
-        expect(first).toContain("<summary");
-        expect(first).toContain("{{summary.conclusions}}"); // 占位里带变量名
+        const tail = JSON.stringify(pv.modRequest.messages.at(-1) ?? "");
+        expect(tail).toContain("summary:");
+        expect(tail).toContain("<summary");
+        expect(tail).toContain("{{summary.conclusions}}"); // 占位里带变量名
 
-        // 执行压缩并带一段摘要文本 → 账本里摘要可查，投递首条即该摘要
+        // 执行压缩并带一段摘要文本 → 账本里摘要可查，投递尾部信封的 summary 即该摘要
         await fx.sh.getJson(
-            `./diy.sh agent local compact ${uri} --budget-bytes 0 --summary --summary-text ${JSON.stringify('<summary turns="3">\n关键结论：\n- 已定稿\n</summary>')}`,
+            `./diy.sh agent local compact run ${uri} --budget-bytes 0 --summary --summary-text ${JSON.stringify('<summary turns="3">\n关键结论：\n- 已定稿\n</summary>')}`,
         );
         const rv = (await fx.sh.getJson(`./diy.sh agent local requestView ${uri}`)).data as { messages: unknown[] };
-        expect(JSON.stringify(rv.messages[0] ?? "")).toContain("关键结论");
+        const rvTail = JSON.stringify(rv.messages.at(-1) ?? "");
+        expect(rvTail).toContain("summary:");
+        expect(rvTail).toContain("关键结论");
         await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
     });
 
@@ -712,7 +752,7 @@ describe("agent.local — 压缩 compact（无网络）", () => {
         // 看**增量**才对；断言"目录里没有"会把同文件其它用例的合法落账算成预览的锅。
         const baseline = compactCount();
         const pv = (await fx.sh.getJson(
-            `./diy.sh agent local compactPreview ${uri} --budget-bytes 0`,
+            `./diy.sh agent local compact preview ${uri} --budget-bytes 0`,
         )).data as { before: { bytes: number }; after: { bytes: number } };
         expect(pv.after.bytes).toBeLessThan(pv.before.bytes);
         expect(compactCount()).toBe(baseline); // 预览不落账（不新增账本文件）
@@ -721,11 +761,11 @@ describe("agent.local — 压缩 compact（无网络）", () => {
 
     it("undoCompact：标记某次压缩作废（append-only，事件留痕可审计）", async () => {
         const uri = await seededSession("压缩撤销");
-        const rec = (await fx.sh.getJson(`./diy.sh agent local compact ${uri} --budget-bytes 0`)).data as { id: string };
-        const u = (await fx.sh.getJson(`./diy.sh agent local undoCompact ${uri} ${rec.id}`)).data as { undone: boolean };
+        const rec = (await fx.sh.getJson(`./diy.sh agent local compact run ${uri} --budget-bytes 0`)).data as { id: string };
+        const u = (await fx.sh.getJson(`./diy.sh agent local compact undo ${uri} ${rec.id}`)).data as { undone: boolean };
         expect(u.undone).toBe(true);
         // 事件账里出现一条 undo（不删原 compact 行 —— append-only、可审计）
-        const events = (await fx.sh.getJson(`./diy.sh agent local compactEvents ${uri}`)).data as Array<{
+        const events = (await fx.sh.getJson(`./diy.sh agent local compact events ${uri}`)).data as Array<{
             kind: string;
             ref?: string;
         }>;
@@ -738,7 +778,7 @@ describe("agent.local — 压缩 compact（无网络）", () => {
 
     it("clear 是「彻底删除」：连同 compact 账本一起清（与 compact 的正交语义）", async () => {
         const uri = await seededSession("压缩与彻底删除");
-        await fx.sh.getJson(`./diy.sh agent local compact ${uri} --budget-bytes 0`);
+        await fx.sh.getJson(`./diy.sh agent local compact run ${uri} --budget-bytes 0`);
         const dir = join(fx.HOME, "local");
         const key = localKey(uri);
         expect(readdirSync(dir).some((f) => f.startsWith(key) && f.endsWith(".compact.jsonl"))).toBe(true);
@@ -748,7 +788,7 @@ describe("agent.local — 压缩 compact（无网络）", () => {
         // 账本也删干净（否则删除后仍能查到本会话的压缩史）
         expect(readdirSync(dir).some((f) => f.startsWith(key) && f.endsWith(".compact.jsonl"))).toBe(false);
         // 清后：压缩事件账也没了（本会话的压缩史查不到）
-        const events = (await fx.sh.getJson(`./diy.sh agent local compactEvents ${uri}`)).data as unknown[];
+        const events = (await fx.sh.getJson(`./diy.sh agent local compact events ${uri}`)).data as unknown[];
         expect(events).toEqual([]);
         await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
     });

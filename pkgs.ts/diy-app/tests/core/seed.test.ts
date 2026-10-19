@@ -1,6 +1,6 @@
 // tests/core/seed.test.ts
-// 🎯 初始种子的契约：幂等、只配 opencode-go、人物模型 = 0@opencode-go/mimo-v2.6-flash、
-// 示例项目/任务形态完整；触发开关只对 preview/lab 缺省开。
+// 🎯 初始种子的契约：幂等、只配 opencode-go、人物模型 = 缺省口径（free 优先 → 退兜底，
+// 真源 src/shared/model-default.ts）、示例项目/任务形态完整；触发开关只对 lab 缺省开。
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
@@ -8,7 +8,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadModelConfig, saveModelConfig } from "../../src/main/core/model-config";
 import { loadPersonas } from "../../src/main/core/persona";
-import { autoSeedEnabled, SEED_PERSONA_MODEL, seedHome } from "../../src/main/core/seed";
+import { FALLBACK_MODEL, RETIRED_MODELS } from "../../src/shared/model-default";
+import { autoSeedEnabled, seedHome, seedPersonaModel } from "../../src/main/core/seed";
 import { getTask } from "../../src/main/core/state";
 
 const ENV = { OPENCODE_API_KEY: "sk-test-opencode" };
@@ -24,15 +25,15 @@ vi.mock("../../src/main/core/instance-identity", () => ({
 }));
 
 describe("autoSeedEnabled", () => {
-    it("缺省：只 preview/lab 开，prod/test 关", () => {
-        expect(autoSeedEnabled({ DIY_VARIANT: "preview" })).toBe(true);
+    it("缺省：只 lab 开，prod/test 关", () => {
+        expect(autoSeedEnabled({ DIY_VARIANT: "lab" })).toBe(true);
         expect(autoSeedEnabled({ DIY_VARIANT: "lab" })).toBe(true);
         expect(autoSeedEnabled({ DIY_VARIANT: "prod" })).toBe(false);
         expect(autoSeedEnabled({ DIY_VARIANT: "test" })).toBe(false);
         expect(autoSeedEnabled({})).toBe(false);
     });
     it("DIY_SEED 显式覆盖（0 关 / 1 开）", () => {
-        expect(autoSeedEnabled({ DIY_VARIANT: "preview", DIY_SEED: "0" })).toBe(false);
+        expect(autoSeedEnabled({ DIY_VARIANT: "lab", DIY_SEED: "0" })).toBe(false);
         expect(autoSeedEnabled({ DIY_VARIANT: "prod", DIY_SEED: "1" })).toBe(true);
     });
 });
@@ -63,7 +64,7 @@ describe("seedHome", () => {
         expect(cfg.stdProviders["opencode-go"]!.accounts[0]!.data.value).toBe("$OPENCODE_API_KEY");
 
         expect(loadPersonas(home).personas[loadPersonas(home).default]!.model).toBe(
-            SEED_PERSONA_MODEL,
+            seedPersonaModel(),
         );
 
         // 任务形态：active 有一条，且有一条子任务挂在它下面
@@ -104,6 +105,18 @@ describe("seedHome", () => {
         const r = seedHome(home, ENV);
         expect(r.model).toBe("imported");
         expect(loadModelConfig(home).stdProviders["opencode-go"]).toBeDefined();
+    });
+
+    it("种子人物模型 = 缺省口径，且绝不会是已下线模型（同源常量断言）", () => {
+        const r = seedHome(home, ENV);
+        expect(r.persona).toBe("written");
+        const model = loadPersonas(home).personas[loadPersonas(home).default]!.model;
+        const id = model.slice(model.lastIndexOf("/") + 1);
+        // 已下线（上游 `[model_coming_soon]`）的一律不许作缺省 —— 写进去 = 环境开箱即坏
+        expect(RETIRED_MODELS).not.toContain(id);
+        // 与挑选函数同源：快照里有实测过的 free 就选它，否则退兜底
+        expect(model).toBe(seedPersonaModel());
+        expect(id === FALLBACK_MODEL || id.endsWith("-free")).toBe(true);
     });
 
     it("幂等：重复种入不动已有数据", () => {

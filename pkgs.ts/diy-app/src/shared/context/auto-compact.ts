@@ -13,9 +13,14 @@
 //   expired（过期/时间） ≠ invalidated（作废/内容变） ≠ miss（未命中/观测结果）
 //   `systemContext` = `buildDelivery` 的 system 容器（不是 OS 的 system，本仓库里 system 是歧义词）
 //   `contextWindow` = 上下文窗口（对齐运行时模型目录的 contextLimit；不叫 tokenWindow，那会与"输出 token 数"混）
+//
+// ── 【##370】宽松归一**不是**兜底，是主路径：这份 yaml 是手写 / LLM 写的全局配置，
+//   严格 schema 只当**探测器**（它才说得出"缺了哪个必填键"）；值一律经 `normalizeAutoCompact`，
+//   凡被它改动过的键各推一条 `AutoCompactIssue`（`issues` 收集器）⇒ 归一改了什么，人看得见。──
 
 import { z } from "zod";
 import { cacheStateAfterGap, type EffectiveTtl } from "./cache-ttl";
+import { validateKeepStages, type KeepStage } from "./compact-keep";
 import {
     CompactPolicySchema,
     DEFAULT_BUDGET_BYTES,
@@ -37,6 +42,31 @@ export const AutoCompactTriggersSchema = z.object({
         ),
 });
 
+/**
+ * `history` —— 「留给模型的历史消息」怎么装配（##344 M2 新增；压缩的**作用对象**）。
+ *
+ * 与 `policy` 的分工：`policy` 是**旋钮**（预算 / 工具结果全局呈现），`history.keep[]` 是**管道**
+ * （级列表：每条取法留哪些、怎么裁）。缺 `keep` ⇒ 回落代码缺省管道（= ##343 M1 的 `defaultBudgetPlan`）。
+ * 形状与校验的真源：`shared/context/compact-keep.ts`（此处只保证「是个数组」，容错归一在 normalizeAutoCompact）。
+ */
+export const AutoCompactHistorySchema = z.object({
+    keep: z
+        .array(z.unknown())
+        .optional()
+        .describe("级列表 `{ type, must?, limit?, clip?, data }`（形状见 shared/context/compact-keep.ts）；缺省回落默认管道"),
+    /**
+     * **闸**：允许本地 agent 经 `compact_plan` 工具改写 plan（##362 M3a）。
+     *
+     * 缺省 `false` = agent 只读（get / check 始终可用）——plan 是**全局配置**，改它等于改所有任务、
+     * 所有 agent 的投递；给手的同时必须给闸，且闸的缺省方向只能是"关"（写坏 keep ⇒ 全库会话静默丢上下文）。
+     * 人工入口（CLI `compact plan set` / UI 编辑器）**不受此闸约束**：那是用户自己的显式操作。
+     */
+    allowAgentWrite: z
+        .boolean()
+        .optional()
+        .describe("允许本地 agent 写 plan（缺省 false；CLI/UI 不受此闸约束）"),
+});
+
 export const AutoCompactConfigSchema = z.object({
     mode: z
         .enum(["off", "notify", "auto"])
@@ -49,9 +79,91 @@ export const AutoCompactConfigSchema = z.object({
      * 各造一个形状必然分叉。
      */
     policy: CompactPolicySchema.describe("自动压时用的策略（与手动面板同一真源形状）"),
+    history: AutoCompactHistorySchema.optional().describe("历史装配管道（级列表）；缺省 = 回落代码缺省管道"),
 });
-export type AutoCompactConfig = z.infer<typeof AutoCompactConfigSchema>;
+/**
+ * 配置真源类型（**手写**而非 `z.infer`）：`history.keep` 在 schema 里是 `unknown[]`（容错由
+ * `normalizeAutoCompact` 用 `validateKeepStages` 做，非法级**只丢 history、不丢整份配置**），
+ * 而对外读到的必然是**校验过的** `KeepStage[]` —— 两者不同，不能靠 z.infer 硬凑。
+ */
+export interface AutoCompactConfig {
+    mode: "off" | "notify" | "auto";
+    triggers: AutoCompactTriggers;
+    policy: CompactPolicy;
+    /**
+     * 级列表（已校验；非法 / 空列表 ⇒ `keep` 缺席 = 回落缺省管道）+ agent 写闸。
+     * ⚠️ `keep` 缺席 ≠ `history` 缺席：只写了 `allowAgentWrite` 的配置也要能读到闸。
+     */
+    history?: { keep?: KeepStage[]; allowAgentWrite?: boolean };
+}
 export type AutoCompactTriggers = z.infer<typeof AutoCompactTriggersSchema>;
+
+/**
+ * 配置读入的**出声条目**（##370）：哪一层有问题 + 已回落成什么。
+ *
+ * 为什么要有这个类型：`auto-compact.yaml` 是**手写 / LLM 写的全局配置**，过去写漏一个必填键
+ * = 整份静默作废（只剩应用日志里一行 `console.warn`，而 CLI/UI 只看到 `source:"default"`，
+ * 用户精心写的 plan「不见了」）。这条类型是「原因」的载体 —— 让 `plan get` / UI 把**为什么**说出来。
+ * 与 ##338（`task edit --body` 静默丢正文）同一族病：**静默回退 + 只见结果不见因**。
+ */
+export interface AutoCompactIssue {
+    /** 出问题的键路径（点号连接，如 `policy.summary`）；整份级问题 = 空串 */
+    path: string;
+    /** 人读说明，**必带「已回落成什么」** —— CLI / UI / 工具输出原样展示 */
+    message: string;
+}
+
+/** zod issue 的**最小读面**（只取要展示的几个字段 —— 不绑 zod 内部类型，跨版本不炸） */
+interface ZodIssueLike {
+    code: string;
+    path: readonly PropertyKey[];
+    message: string;
+    expected?: unknown;
+    values?: readonly unknown[];
+}
+
+/** 按路径取值（出声条目要报出「回落成了哪份值」） */
+function valueAtPath(root: unknown, path: readonly PropertyKey[]): unknown {
+    let cur: unknown = root;
+    for (const k of path) {
+        if (cur === null || typeof cur !== "object") return undefined;
+        cur = (cur as Record<PropertyKey, unknown>)[k];
+    }
+    return cur;
+}
+
+/** 值 → 人读短串（对象只报"缺省值"：把一整包策略展开会把一行提示撑成十行） */
+function briefValue(v: unknown): string {
+    if (v === undefined) return "缺省值";
+    if (v === null) return "null";
+    if (Array.isArray(v)) return `[${v.length} 项]`;
+    if (typeof v === "object") return "缺省值";
+    return typeof v === "string" ? JSON.stringify(v) : String(v);
+}
+
+/** zod issue → 人读原因（英文 message 只作兜底：给人看的提示不留英文） */
+function describeZodIssue(i: ZodIssueLike): string {
+    if (i.code === "invalid_type") {
+        // zod v4 不单列「收到什么」，只把 `received undefined` 写进 message；缺键是最常见的一类，单独说清
+        return i.message.includes("received undefined") ? "缺失（必填）" : `类型不符（期望 ${String(i.expected)}）`;
+    }
+    if (i.code === "invalid_value") return `取值非法（合法值：${(i.values ?? []).map(String).join(" / ")}）`;
+    return i.message;
+}
+
+/**
+ * `AutoCompactConfigSchema` 的校验错误 → 出声条目（「哪一层缺什么 / 什么不对 + 已回落成什么」）。
+ *
+ * 纯函数（不碰 fs），与 schema 同处真源；文件层（`main/core/auto-compact-config.ts`）只负责把它接到
+ * `loadAutoCompactDetailed` 上。**回落值从归一后的配置里取** ⇒ 报的必须是真正生效的那份。
+ */
+export function autoCompactIssuesFromZod(error: z.ZodError, resolved: AutoCompactConfig): AutoCompactIssue[] {
+    return (error.issues as unknown as ZodIssueLike[]).map((i) => {
+        const path = i.path.map((k) => String(k)).join(".");
+        const where = path === "" ? "（整份配置）" : path;
+        return { path, message: `${where}：${describeZodIssue(i)}；已回落 ${briefValue(valueAtPath(resolved, i.path))}` };
+    });
+}
 
 /**
  * 窗口触发默认阈值（**token 域**，用户 2026-10-15 拍板 = 固定数字）：
@@ -72,12 +184,12 @@ export const DEFAULT_WINDOW_OVER_TOKENS = 38400;
  * 故把 `(0,1)` 视为**旧比例值**：出声告警并回落默认（38400），绝不静默把它当 token 用。
  * `0` = 关闭、`>=1` = 合法 token 阈值，原样保留。
  */
-export function normalizeWindowOver(v: unknown): number {
+export function normalizeWindowOver(v: unknown, issues?: AutoCompactIssue[]): number {
     if (typeof v !== "number" || !Number.isFinite(v) || v < 0) return DEFAULT_WINDOW_OVER_TOKENS;
     if (v > 0 && v < 1) {
-        console.warn(
-            `[auto-compact] contextWindowOver=${v} 疑似旧比例值；现单位为 **token 数**，已回落默认 ${DEFAULT_WINDOW_OVER_TOKENS}（≈150KB）`,
-        );
+        const message = `contextWindowOver=${v} 疑似旧比例值；现单位为 **token 数**，已回落默认 ${DEFAULT_WINDOW_OVER_TOKENS}（≈150KB）`;
+        console.warn(`[auto-compact] ${message}`);
+        issues?.push({ path: "triggers.contextWindowOver", message });
         return DEFAULT_WINDOW_OVER_TOKENS;
     }
     return v;
@@ -105,22 +217,66 @@ export const DEFAULT_AUTO_COMPACT: AutoCompactConfig = {
  *
  * 缺 `policy` 时用 `DEFAULT_AUTO_COMPACT.policy`（目标式预算 3KB），**不**用 `normalizePolicy({})`
  * 的缺省 —— 缺省值必须有依据，不能顺手取一个（见 `DEFAULT_AUTO_COMPACT` 的注释）。
+ *
+ * 可选的 `issues` 收集器：凡**本函数改动过**（缺键补缺省、旧单位迁移、坏 keep 丢弃）的地方各推一条
+ * 出声（##370）—— 归一**不再静默**，调用方（plan get / UI）据此把"为什么"说给用户。
  */
-export function normalizeAutoCompact(raw: unknown): AutoCompactConfig {
+export function normalizeAutoCompact(raw: unknown, issues?: AutoCompactIssue[]): AutoCompactConfig {
     const src = (raw ?? {}) as Record<string, unknown>;
     const t = (src["triggers"] ?? {}) as Record<string, unknown>;
     const mode = src["mode"] === "off" || src["mode"] === "auto" ? src["mode"] : "notify";
+    const history = normalizeHistory(src["history"], issues);
     return {
         mode,
         triggers: {
             systemContextChanged: t["systemContextChanged"] !== false,
             cacheExpired: t["cacheExpired"] !== false,
-            contextWindowOver: normalizeWindowOver(t["contextWindowOver"]),
+            contextWindowOver: normalizeWindowOver(t["contextWindowOver"], issues),
         },
         // 策略（自动 / 手动**同一套**）→ 交给 normalizePolicy 统一宽松归一；
         // 缺省用 DEFAULT_AUTO_COMPACT.policy（见本函数头注）。
         policy: src["policy"] !== undefined ? normalizePolicy(src["policy"]) : DEFAULT_AUTO_COMPACT.policy,
+        // history 只在**校验通过且非空**时出现（否则缺席 = 回落缺省管道）。见 normalizeHistory。
+        ...(history ? { history } : {}),
     };
+}
+
+/**
+ * `history` 的容错归一（**读侧宽松**，硬要求）：
+ *   · 缺 `history` / 缺 `keep` → 缺席（= 回落缺省管道）；
+ *   · `keep` 有**非法级** → 只丢 `history`（出声），**不丢整份配置**（mode/triggers/policy 照用）；
+ *   · `keep: []`（空级列表）→ 同样回落缺省 —— 空列表的字面后果是「什么都不留」（= 清零），
+ *     而"清空所有级"几乎都是编辑途中的手滑，不该静默把会话清掉。要清零请把预算设 0。
+ */
+function normalizeHistory(
+    raw: unknown,
+    issues?: AutoCompactIssue[],
+): { keep?: KeepStage[]; allowAgentWrite?: boolean } | undefined {
+    if (raw === null || typeof raw !== "object") return undefined;
+    const src = raw as Record<string, unknown>;
+    // 闸的**权威读法**：只有字面 `true` 才算开（`"yes"` / `1` 之类不算 —— 闸的缺省方向是关）。
+    const allowAgentWrite = src["allowAgentWrite"] === true ? (true as const) : undefined;
+    const withGate = allowAgentWrite ? { allowAgentWrite } : {};
+    const keepRaw = src["keep"];
+    if (keepRaw === undefined) return allowAgentWrite ? withGate : undefined;
+    // ⚠️ 局部名别叫 `issues`：与参数（出声收集器）撞名 —— oxc 会报「不能重复声明」
+    const checked = validateKeepStages(keepRaw);
+    const stages = checked.stages;
+    const errors = checked.issues.filter((i) => i.level === "error");
+    if (errors.length > 0) {
+        const message = `history.keep 非法（${errors.map((e) => e.message).join("；")}）→ 回落缺省管道`;
+        console.warn(`[auto-compact] ${message}`);
+        issues?.push({ path: "history.keep", message });
+        // 坏 keep 只丢 keep：闸是另一件事，不该被一并丢掉（否则用户开闸的意图会被一个笔误静默撤销）
+        return allowAgentWrite ? withGate : undefined;
+    }
+    if (stages.length === 0) {
+        const message = "history.keep 是空级列表 → 回落缺省管道（要清零请把 policy.modeData.budgetBytes 设为 0）";
+        console.warn(`[auto-compact] ${message}`);
+        issues?.push({ path: "history.keep", message });
+        return allowAgentWrite ? withGate : undefined;
+    }
+    return { keep: stages, ...withGate };
 }
 
 /** 判定所需的**事实**（全部可观测，不含预测） */

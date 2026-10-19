@@ -1,8 +1,8 @@
-import type { EnvelopeTransport, _ErrorPayload, StreamHandle } from './types';
-import type { _Envelope, _CallMsg } from './types';
-import { RpcError, _fromErrorPayload, _reasonToRpcError } from './error';
-import type { CallOptions, ClientBinding } from './server-binding';
-import { _AsyncQueue } from './_async-queue';
+import type { EnvelopeTransport, _ErrorPayload, StreamHandle } from './types.js';
+import type { _Envelope, _CallMsg } from './types.js';
+import { RpcError, _fromErrorPayload, _reasonToRpcError } from './error.js';
+import type { CallOptions, ClientBinding } from './server-binding.js';
+import { _AsyncQueue } from './_async-queue.js';
 
 export type { CallOptions };
 

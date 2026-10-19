@@ -367,6 +367,11 @@ function composeSubset(state: ContextTreeState, paths: readonly ContextPath[]): 
     return out;
 }
 
+/** 一组 path 对应的**值对象**（渲染单元的 JS 形态；信封要把它挂到顶层键下） */
+export function subsetOf(state: ContextTreeState, paths: readonly ContextPath[]): unknown {
+    return composeSubset(state, [...paths].sort());
+}
+
 /** 渲染一组 path → YAML 文本（空则空串；path 先排序保证输出稳定） */
 export function renderPaths(state: ContextTreeState, paths: readonly ContextPath[]): string {
     if (paths.length === 0) return "";

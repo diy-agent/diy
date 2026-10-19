@@ -12,9 +12,9 @@ import { isAbsolute } from "node:path";
  * 要**打包进来**的 workspace 包（它们只有 TS 源码；external 化 = 产物里留 `import "@diy/x"`，
  * node 加载 `.ts` 直接炸）。**新增 workspace 依赖必须同步加这里**。
  */
-export const WORKSPACE_TS_DEPS = ["@diy/rpc", "@diy/template", "@diy/flow", "@diy/talk"];
+export const WORKSPACE_TS_DEPS = ["@diy-agent/rpc", "@diy/template", "@diy/flow", "@diy/talk"];
 
-/** 变体产物根：prod|test|preview|lab（见根 AGENTS.md「实例四态」） */
+/** 变体产物根：prod|test|lab（见根 AGENTS.md「实例三态」） */
 export const VARIANT = process.env.DIY_VARIANT ?? "prod";
 
 // Windows 上解析结果是 `C:/…`：既不以 `./` 也不以 `/` 开头 —— 按「裸 id」判会误判成外部依赖，

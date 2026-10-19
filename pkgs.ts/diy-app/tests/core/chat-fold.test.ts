@@ -20,6 +20,7 @@ import {
     isReceiptTurn,
     receiptStateOf,
     isProc,
+    linesFromDrag,
     isTurnLevel,
     isUserText,
     conclusionOf,
@@ -774,5 +775,22 @@ describe("receiptStateOf：回执条是「待投递」还是「已投递」", ()
         expect(src).toContain("receiptStateOf(");
         // 回执轮上的 steerId 必须**从轮块取**（子 error 块自己没有它），经由 prop 传进去
         expect(src).toContain("receiptSteerId");
+    });
+});
+
+describe("linesFromDrag：1 级摘要下缘拖拽 → 行数（纯函数）", () => {
+    it("等比换算：高度翻倍 ≈ 行数翻倍（Markdown 各块行高不一，不除以名义行高）", () => {
+        // 起 3 行、宿主高 60px：往下拖 60px（高度翻倍）→ 约 6 行
+        expect(linesFromDrag(3, 60, 60, 1, 40)).toBe(6);
+        // 往上拖回原处 → 回 3 行
+        expect(linesFromDrag(3, 60, -30, 1, 40)).toBe(2);
+    });
+    it("夹在 [min,max]：往下拖过头不会变成整篇，往上拖到底至少 1 行", () => {
+        expect(linesFromDrag(3, 60, 100000, 1, 40)).toBe(40);
+        expect(linesFromDrag(3, 60, -100000, 1, 40)).toBe(1);
+    });
+    it("高度未量到（0 / 负）：原样返回，不产出 NaN", () => {
+        expect(linesFromDrag(3, 0, 50, 1, 40)).toBe(3);
+        expect(linesFromDrag(3, -1, 50, 1, 40)).toBe(3);
     });
 });

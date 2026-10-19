@@ -1,12 +1,23 @@
 {
   "extends": "../tsconfig.json",
   "compilerOptions": {
+    "composite": false,
     "lib": ["ES2024", "DOM", "DOM.Iterable"],
     "types": [],
     "noEmit": true,
     "declaration": false,
     "module": "ESNext",
-    "moduleResolution": "Bundler"
+    "moduleResolution": "Bundler",
+    "jsx": "react",
+    "jsxFactory": "h",
+    "jsxFragmentFactory": "Fragment"
   },
-  "include": ["src", "../src/providers/dom.ts", "../src/host.ts"]
+  "include": [
+    "src",
+    "../src/providers/dom.ts",
+    "../src/providers/dom-jsx.ts",
+    "../src/providers/dom-dsl.ts",
+    "../src/providers/dom-gen.ts",
+    "../src/host.ts"
+  ]
 }

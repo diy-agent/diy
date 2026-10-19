@@ -32,7 +32,7 @@ import { opsFile } from "../src/main/services/local-agent";
 
 const NL = String.fromCharCode(10);
 /** 被观测的 RPC：压缩预览（"抽屉关着时 main 完全不出现 compactPreview" 就是它） */
-const PREVIEW_METHOD = "diy.agent.local.compactPreview";
+const PREVIEW_METHOD = "diy.agent.local.compact.preview";
 
 /**
  * 主进程探针（`NODE_OPTIONS=--require`）：把 `ipcMain.on('rpc')` 的入站信封逐条落到文件。

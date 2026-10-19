@@ -6,8 +6,11 @@
  */
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { RpcSchema } from "../src/core/rpc";
-import { parseArgv, generateHelp } from "../src/cli/_parser";
+import { parseArgv, generateHelp, pathLikeValue } from "../src/cli/_parser";
 
 // 一个典型的 unary 命令：位置参数 title + 命名选项 --parent/-p --detail
 // description 可含多行（首行作命令列表简介，完整显示在单命令 help）
@@ -134,6 +137,69 @@ describe("parseArgv", () => {
 
   it("缺少必填位置参数，zod 校验失败抛错", () => {
     expect(() => parseArgv(taskCreate, [])).toThrow();
+  });
+});
+
+// ── inlineText 护栏（##338）：`--body` 的语义是文本，直觉是"传文件" ──
+// 现场写法 `diy task edit <uri> --body /tmp/x.md` 会把路径串当正文**静默存下**、原正文丢失。
+const inlineCmd = RpcSchema.unary({
+  desc: "值必须是内联文本的命令",
+  input: {
+    body: z
+      .string()
+      .optional()
+      .cliOption({ inlineText: { fileOpt: "--body-file", textOpt: "--body-text" }, desc: "内联正文" }),
+  },
+  output: z.string(),
+});
+
+describe("parseArgv — inlineText（形如单行文件路径即拒，##338）", () => {
+  const tmpFile = (name: string, text = "文件内容"): string => {
+    const dir = mkdtempSync(join(tmpdir(), "diy-338-"));
+    const f = join(dir, name);
+    writeFileSync(f, text, "utf-8");
+    return f;
+  };
+
+  it("已存在的绝对路径 → CliParseError，文案给出 --body-file / --body-text", () => {
+    const f = tmpFile("b.md");
+    expect(() => parseArgv(inlineCmd, ["--body", f])).toThrow(/内联正文/);
+    expect(() => parseArgv(inlineCmd, ["--body", f])).toThrow(/--body-file/);
+    expect(() => parseArgv(inlineCmd, ["--body", f])).toThrow(/--body-text/);
+  });
+
+  it("相对路径按**调用方 cwd** 判存在（存在即拒）", () => {
+    const f = tmpFile("rel338.md");
+    const dir = f.slice(0, f.lastIndexOf("/"));
+    expect(() => parseArgv(inlineCmd, ["--body", "rel338.md"], { cwd: dir })).toThrow(/内联正文/);
+    // 同一个值，cwd 换到别处（那里没有这个文件）→ 既不是路径形态也不是存在的文件 → 放行
+    expect(parseArgv(inlineCmd, ["--body", "rel338.md"], { cwd: tmpdir() }).input.body).toBe("rel338.md");
+  });
+
+  it("裸文件名（无分隔符）但确实存在 → 也拒（`--body AGENTS.md` 同型）", () => {
+    const f = tmpFile("AGENTS.md");
+    const dir = f.slice(0, f.lastIndexOf("/"));
+    expect(() => parseArgv(inlineCmd, ["--body", "AGENTS.md"], { cwd: dir })).toThrow(/内联正文/);
+  });
+
+  it("路径形态但文件不存在 → 同样拒（形态可疑就出声，不靠「文件在不在」）", () => {
+    expect(() => parseArgv(inlineCmd, ["--body", "/tmp/diy-338-绝不存在的文件.md"])).toThrow(/该路径不存在/);
+    expect(() => parseArgv(inlineCmd, ["--body", "./nope-338.md"])).toThrow(/内联正文/);
+    expect(() => parseArgv(inlineCmd, ["--body", "~/nope-338.md"])).toThrow(/内联正文/);
+  });
+
+  it("含空白 / 多行 → 放行（整体不是单个路径 token 就不是误传文件名）", () => {
+    expect(parseArgv(inlineCmd, ["--body", "见 /tmp/x.md 一节"]).input.body).toBe("见 /tmp/x.md 一节");
+    expect(parseArgv(inlineCmd, ["--body", "第一行\n/tmp/x.md"]).input.body).toBe("第一行\n/tmp/x.md");
+    expect(parseArgv(inlineCmd, ["--body", "普通正文"]).input.body).toBe("普通正文");
+    expect(parseArgv(inlineCmd, ["--body", ""]).input.body).toBe("");
+  });
+
+  it("pathLikeValue 是纯函数：命中给 {abs, exists}，未命中给 null", () => {
+    const f = tmpFile("c.md");
+    expect(pathLikeValue(f, "/")).toEqual({ abs: f, exists: true });
+    expect(pathLikeValue("内容 里有空格", "/")).toBeNull();
+    expect(pathLikeValue("/tmp/diy-338-唯一名.md", "/")).toEqual({ abs: "/tmp/diy-338-唯一名.md", exists: false });
   });
 });
 

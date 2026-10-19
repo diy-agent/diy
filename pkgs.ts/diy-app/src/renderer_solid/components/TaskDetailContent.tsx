@@ -24,19 +24,22 @@
 import { createSignal, createEffect, on, onMount, onCleanup, For, Show, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
 import { taskStore, type TaskDetail, type TreeNode } from "../store/taskStore";
-import { tabStore } from "../store/tabStore";
+import { tabStore, tabKeyOf } from "../store/tabStore";
 import { personaStore } from "../store/personaStore";
 import { draftStore } from "../store/draftStore";
 import { editTask } from "../lib/task-edit";
 import { diyService } from "../lib/rpc";
 import { getRendererActions } from "../lib/renderer-actions";
-import { lineageRows } from "../lib/task-lineage";
+import { findNode, lineageRows } from "../lib/task-lineage";
+import { TaskParentEditor } from "./TaskParentControls";
 import { notificationStore } from "../store/notificationStore";
 import { Caches, TASK_DETAIL_LEFT_MIN, TASK_DETAIL_LEFT_MAX } from "../lib/ui-state";
 import { MarkdownView } from "./MarkdownView";
 import { CodeBlock } from "./CodeBlock";
 import { StateSelect, TaskFieldSelect, TaskModuleInput } from "./TaskFieldControls";
+import { AgentWindowUsage, TaskAgentStateBadge } from "./TaskAgentState";
 import { taskStateColor } from "../../main/core/task-state";
+import { getTaskVerdict } from "../../shared/task-load";
 import { SessionChip } from "./SessionChip";
 
 /** 两列布局下正文的最小宽度（px）：拖左列时不许把正文压到比这更窄 */
@@ -230,6 +233,12 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
         }
     };
 
+    /** 父任务节点（树现查；父是「一级任务」或树未加载时为 undefined） */
+    const parentNode = () => {
+        const p = findNode(taskStore.nodes, props.uri)?.parentUri;
+        return p ? findNode(taskStore.nodes, p) : undefined;
+    };
+
     /** 改状态 / 分类字段：不进编辑态，改完即存 */
     const savePatch = async (patch: Record<string, string>) => {
         setSaving(true);
@@ -270,6 +279,20 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
                         </button>
                     </Show>
                 </div>
+            </div>
+
+            {/* 任务 URI（##350 ②）：紧贴标题**正下方** —— 「我在看哪个任务」最先要认的就是它。
+                历史：A 方案（2026-10-03）把它从任务执行页的 page 菜单条移进属性面板，
+                但落到了最下面的元信息块（夹在创建/修改时间之间），要扫到底才看得见。
+                「突出」靠位置 + mono + 浅底衬，不再靠字号抢戏（标题已经在抢了）。 */}
+            <div class="task-field-row" data-testid="task-detail-uri">
+                <span class="task-field-label text-body opacity-50">URI</span>
+                <span
+                    class="min-w-0 truncate rounded bg-base-200 px-1 font-mono text-body"
+                    title={props.uri}
+                >
+                    {props.uri}
+                </span>
             </div>
 
             {/* 字段**逐行**排（不是 flex-wrap 一行塞几个）：
@@ -334,17 +357,32 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
                         </For>
                     </select>
                 </div>
+                {/* agent 面状态（##355）：四态 + 空闲，单轴的**一句话**（判据见 shared/task-agent-state）。
+                    放这里而不是只放列表 chip：这里空间够，能同时给出**窗口占用**（下面一行）。
+                    数据源 = 注册表（在跑/未读）/ draftStore（草稿）/ 任务载荷（has_session 等），
+                    见 lib/agent-state.ts 与 components/TaskAgentState.tsx 的头注。 */}
+                <div class="task-field-row">
+                    <span class="task-field-label text-body opacity-50">agent 状态</span>
+                    <div class="flex min-w-0 items-center gap-1">
+                        {/* always：单任务视图里"空闲"是一个**明确结论**，比什么都不显示好 */}
+                        <TaskAgentStateBadge
+                            uri={props.uri}
+                            hasSession={props.task.has_session}
+                            hasDraft={props.task.has_draft}
+                            always
+                        />
+                    </div>
+                </div>
+                {/* 窗口占用（##339 阈值口径 / ##262 用量 UI）：最后一步实测 token ÷ 触发压缩阈值 */}
+                <div class="task-field-row">
+                    <span class="task-field-label text-body opacity-50">窗口</span>
+                    <div class="flex min-w-0 items-center gap-1">
+                        <AgentWindowUsage uri={props.uri} />
+                    </div>
+                </div>
             </div>
 
             <div class="flex flex-col gap-1 text-body opacity-60">
-                {/* 任务 URI：原在任务执行页 page 菜单条上，A 方案（2026-10-03）移入属性 ——
-                    page 条只留页面级入口（提示词/上下文树/area 开合），信息字段归属性面板 */}
-                <div class="task-field-row">
-                    <span class="task-field-label">URI</span>
-                    <span class="min-w-0 truncate font-mono" title={props.uri}>
-                        {props.uri}
-                    </span>
-                </div>
                 <Show when={props.task.project}>
                     <div class="task-field-row">
                         <span class="task-field-label">项目</span>
@@ -352,6 +390,15 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
                             📂 {props.task.project_label ?? props.task.project_path ?? props.task.project}
                         </span>
                     </div>
+                    {/* 父级（##356 ①）：此前只能靠任务表里拖动改父 —— 任务一多就没法同屏定位
+                        两个节点。这里就地重设（选一个已有任务 / 提升为一级）。
+                        父名**从任务树现查**：parentUri 才是父子关系的真相源，且树一刷新
+                        这里跟着变（不必等详情重取）。 */}
+                    <TaskParentEditor
+                        uri={props.uri}
+                        project={props.task.project ?? ""}
+                        parentTitle={parentNode()?.title ?? null}
+                    />
                 </Show>
                 <Show when={props.task.created}>
                     <div class="task-field-row">
@@ -660,6 +707,14 @@ export function TaskDetailContent(props: {
     /** 自取的那份（没给 props.task 时用；覆盖层 / 执行页左栏走这条路） */
     const [own, setOwn] = createSignal<TaskDetail | null>(null);
     /**
+     * 自取那份**不存在**（可能已被删除）。
+     *
+     * 为什么要显式终态（##361 的死路）：原来只在 `if (r.data)` 时 setOwn，
+     * data 为 null（= main 已按契约回 `status:"error"`）时什么都不做 —— own 恒 null →
+     * 永远走「加载中…」的 fallback。现在把「拿不到」也落成状态，UI 才有终态与出路。
+     */
+    const [ownMissing, setOwnMissing] = createSignal(false);
+    /**
      * 两列布局的左列宽度（px，落视图 cache）。
      *
      * 左列（属性 + 任务树）是「查资料」的窄栏，宽度由用户定；右列（正文）吃剩余。
@@ -667,13 +722,22 @@ export function TaskDetailContent(props: {
      */
     const [leftW, setLeftW] = createSignal(Caches.diy_task_detail_left_width.get());
     const task = () => props.task ?? own();
+    /** 是否「任务不存在」终态。props.task 分支由调用方（管理面板）自己判，见 TaskDetailPanel */
+    const missing = () => (props.task ? false : ownMissing());
 
     const load = async (uri: string) => {
         const r = await diyService.diy.getTask({ uri });
         // 响应回来时若 uri 已变（切得快）则丢弃，避免旧数据覆盖新的
         if (props.uri !== uri) return;
-        if (r.data) draftStore.seed(uri, r.data.ui_drafts ?? null, r.data.updated);
-        setOwn(r.data ?? null);
+        // 判据收在 shared/task-load（与 main 的契约同源），不再各处写 `if (r.data)`
+        if (getTaskVerdict(r) !== "ok" || !r.data) {
+            setOwn(null);
+            setOwnMissing(true);
+            return;
+        }
+        draftStore.seed(uri, r.data.ui_drafts ?? null, r.data.updated);
+        setOwnMissing(false);
+        setOwn(r.data);
     };
 
     createEffect(
@@ -682,6 +746,7 @@ export function TaskDetailContent(props: {
             (uri) => {
                 if (props.task) return; // 由调用方供数（任务管理详情面板）
                 setOwn(null);
+                setOwnMissing(false); // 先回「加载中」，请求回来才定 ok / missing
                 void load(uri);
             },
         ),
@@ -735,7 +800,21 @@ export function TaskDetailContent(props: {
     };
 
     return (
-        <Show when={task()} fallback={<div class="text-body opacity-60 p-1">加载中…</div>}>
+        <Show
+            when={task()}
+            fallback={
+                // 三态：有任务 → 内容；判明不存在 → 终态 + 出路；其余 → 加载中
+                <Show when={missing()} fallback={<div class="text-body opacity-60 p-1">加载中…</div>}>
+                    <TaskMissingNotice
+                        uri={props.uri}
+                        onRefresh={() => {
+                            void taskStore.loadTree();
+                            void load(props.uri);
+                        }}
+                    />
+                </Show>
+            }
+        >
             {(t) => (
                 <div class="task-flow">
                     {/* 左列宽度用 CSS 变量下发（只改宽度，不改结构：结构由容器查询按实测宽度切换）。
@@ -769,5 +848,57 @@ export function TaskDetailContent(props: {
                 </div>
             )}
         </Show>
+    );
+}
+
+// ═══════════════════════════════════════════
+// 任务不存在 —— 明确终态 + 出路
+// ═══════════════════════════════════════════
+
+/**
+ * 「任务 <uri> 不存在」的终态块：说清现状 + 给得出路（##361 要求 2）。
+ *
+ * 为什么三处复用同一个组件：详情内容有三个宿主（任务执行页左栏 / nav 悬停覆盖层 /
+ * 任务管理详情面板），"不存在"必须是同一句话、同一组出路 —— 各写一份必然漂移。
+ *
+ * 出路（按场景给，不硬塞）：
+ *   - 关闭该页面：仅当这个任务的 task-run tab 真的开着（否则按钮点了不成立），
+ *     走 `closeTab` 动作 —— 它会顺手把悬空 route 落到相邻 tab 或任务管理页；
+ *   - 刷新任务树：树可能是「还没刷到」而非真删（外部刚重建同名 URI 的极端情形）；
+ *   - 回到任务列表：兜底出口，任何宿主体下都成立。
+ */
+export function TaskMissingNotice(props: { uri: string; onRefresh?: () => void }) {
+    const tabKey = () => tabKeyOf("task-run", props.uri);
+    return (
+        <div data-task-missing class="text-body p-2 space-y-2">
+            <div class="opacity-80">
+                任务 <code class="font-mono break-all opacity-70">{props.uri}</code> 不存在（可能已被删除）
+            </div>
+            <div class="flex flex-wrap gap-2">
+                <Show when={!!tabStore.find(tabKey())}>
+                    <button
+                        class="btn btn-xs"
+                        data-task-missing-action="close-tab"
+                        onClick={() => getRendererActions().closeTab?.(tabKey())}
+                    >
+                        关闭该页面
+                    </button>
+                </Show>
+                <button
+                    class="btn btn-xs"
+                    data-task-missing-action="refresh"
+                    onClick={() => (props.onRefresh ? props.onRefresh() : void taskStore.loadTree())}
+                >
+                    刷新任务树
+                </button>
+                <button
+                    class="btn btn-xs"
+                    data-task-missing-action="back"
+                    onClick={() => getRendererActions().navigate?.("task")}
+                >
+                    回到任务列表
+                </button>
+            </div>
+        </div>
     );
 }

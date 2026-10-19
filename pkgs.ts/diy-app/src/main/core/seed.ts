@@ -1,5 +1,5 @@
 // src/main/core/seed.ts
-// 🎯 空数据根的**初始种子**：preview/lab 首次启动（或 `diy seed run`）时种入最小可用数据。
+// 🎯 空数据根的**初始种子**：lab 首次启动（或 `diy seed run`）时种入最小可用数据。
 //
 // 为什么需要：生产数据根 `~/.diy` 有完整的 model/persona/projects，而变体数据根
 // `./build/<variant>/home` 是空的 —— 起预览后是空壳（无模型、无项目、无任务），
@@ -7,15 +7,23 @@
 //
 // 三条约束（与任务书一致）：
 //   1. **幂等**：已存在的文件/项目一律不动、不覆盖（重复启动 = 无副作用）。
-//   2. **只对 preview/lab 自动跑**：prod 永不种（那是用户的真实数据）；test 也不自动
+//   2. **只对 lab 自动跑**：prod 永不种（那是用户的真实数据）；test 也不自动
 //      （测试 home 是 mkdtemp，自动种会污染断言）—— 需要时用 RPC/CLI 显式触发。
 //   3. **不落明文密钥**：模型账号写 `$VAR` 引用；本机没有该变量时仍写引用（UI 标红提示，
 //      用户可以点「导入」或自己填）—— 保证种子是**真实可用**的形状，而不是假 key。
 //
-// 模型面按用户规则**只认 opencode-go**，人物模型 = `mimo-v2.6-flash`（允许清单内最便宜）。
+// 模型面按用户规则**只认 opencode-go**，人物模型 = **缺省模型口径**（free 优先 → 退兜底，
+// 真源 `src/shared/model-default.ts`）—— 本文件**不写死模型名**（写死过 `mimo-v2.6-flash`，
+// 上游下架后种出来的环境开箱即坏）。
+//
+// **职责边界**（与 `./sha.sh sync-dev-home` 分工，别再混）：
+//   seed = **示例 / 测试数据** —— 示例项目与任务、缺省人物、`$VAR` 占位凭据（形状真、值是假的）。
+//   真配置 = `~/.diy` 的真账号 / 真人物 / 投递划分，由 `./sha.sh sync` 投影进 `build/<variant>/home`
+//   （seed 遇到已同步的真 `model.yaml` / `personas.yaml` 一律不动 —— 现有幂等语义天然满足）。
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pickDefaultModel } from "../../shared/model-default";
 import { BUILTIN_PERSONA_ID } from "../../shared/persona";
 import { parseSeedFlag } from "../../runtime";
 import type { SeedReport } from "../../shared/model-config";
@@ -26,7 +34,7 @@ import { savePersonas } from "./persona";
 import { createProject, listProjects } from "./project";
 import { createTask, updateTask } from "./task";
 
-/** 种子只配这一家 provider（用户规则：测试用人物模型只指 opencode-go 的 mimo-v2.6-flash） */
+/** 种子只配这一家 provider（用户规则：本地 agent 测试的模型只指 opencode-go） */
 export const SEED_PROVIDER = "opencode-go";
 /**
  * 一次性标记：自动种入**只跑一次**。
@@ -36,20 +44,30 @@ export const SEED_PROVIDER = "opencode-go";
  */
 export const SEED_MARKER = ".seed-done";
 
-/** 种子人物模型（须在允许清单内：mimo-v2.6-flash / deepseek-v4.1-flash） */
-export const SEED_MODEL = "mimo-v2.6-flash";
-/** 人物模型限定名（account 段 0 = 首个无名字号） */
-export const SEED_PERSONA_MODEL = `0@${SEED_PROVIDER}/${SEED_MODEL}`;
+/** 种子 provider 的可用模型 id（models.dev 快照；provider 未收录 = 空表） */
+export function seedProviderModelIds(): string[] {
+    return Object.keys(snapshotProviders()[SEED_PROVIDER]?.models ?? {});
+}
+
+/**
+ * 种子人物模型（限定名 `0@opencode-go/<缺省模型>`；account 段 0 = 首个无名字号）。
+ * 口径 = free 优先 → 退兜底（真源 `src/shared/model-default.ts`，本文件不另抄一份字符串）；
+ * 候选还会**按快照实有模型筛一遍** —— 目录里没有的模型种进去只会显示「模型不可用」。
+ * `ids` 可注入（不传 = 读快照），便于单测钉住挑选语义。
+ */
+export function seedPersonaModel(ids: readonly string[] = seedProviderModelIds()): string {
+    return `0@${SEED_PROVIDER}/${pickDefaultModel(ids)}`;
+}
 
 /**
  * 自动种入开关：`DIY_SEED=0/false/off` 关，`=1/true/on` 开（任何变体都开），
- * 缺省 = 仅 `DIY_VARIANT` 为 preview / lab 时开。prod 与 test 缺省关。
+ * 缺省 = 仅 `DIY_VARIANT` 为 lab 时开。prod 与 test 缺省关。
  */
 export function autoSeedEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
     const explicit = parseSeedFlag(env.DIY_SEED);
     if (explicit !== undefined) return explicit;
     const variant = (env.DIY_VARIANT ?? "prod").trim();
-    return variant === "preview" || variant === "lab";
+    return variant === "lab";
 }
 
 /** 种子的示例任务（覆盖列表/详情要看到的多态：active / done / 父子层级） */
@@ -95,7 +113,7 @@ export function seedHome(
     };
     // 硬护栏（与 dev 入口的「拒绝继承生产 DIY_HOME」是两道独立的门，但判据同源：
     // instance-identity::isProdDataHome）：变体开关只保证 prod **不自动**种，挡不住
-    // 「DIY_VARIANT=preview + DIY_HOME=~/.diy」这种显式组合 —— 那才是真会写坏生产数据的路径。
+    // 「DIY_VARIANT=lab + DIY_HOME=~/.diy」这种显式组合 —— 那才是真会写坏生产数据的路径。
     if (isProdDataHome(home)) {
         report.skipped = `生产数据根永不种入：${home}`;
         return report;
@@ -123,7 +141,7 @@ export function seedHome(
         report.model = hit ? "imported" : "placeholder";
     }
 
-    // ── 2. personas.yaml：缺则建缺省人物，模型 = 0@opencode-go/mimo-v2.6-flash ──
+    // ── 2. personas.yaml：缺则建缺省人物，模型 = 缺省口径（free 优先 → 退兜底） ──
     const personaFile = join(home, "personas.yaml");
     if (!existsSync(personaFile)) {
         savePersonas(home, {
@@ -131,7 +149,7 @@ export function seedHome(
             personas: {
                 [BUILTIN_PERSONA_ID]: {
                     name: "大副（预览）",
-                    model: SEED_PERSONA_MODEL,
+                    model: seedPersonaModel(),
                     reasoningEffort: "default",
                     instructions: "",
                 },
