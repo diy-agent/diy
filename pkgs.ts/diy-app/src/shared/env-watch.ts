@@ -224,6 +224,21 @@ export const EnvNoticeSchema = z.discriminatedUnion("type", [
 ]);
 export type EnvNotice = z.infer<typeof EnvNoticeSchema>;
 
+/**
+ * 通知的「槽」= **去重键**（main 与 renderer **同源**，故放在 shared；##384 review1 R1）。
+ *
+ * 磁盘按**挂载点**分槽（`disk:/`）—— 同一个卷的 `disk-full` / `disk-low` 是同一件事的两种
+ * 水位，必须互相替换而不是并存（并存会让 bar 上出现两条说同一件事的红条）；不同卷各占一槽
+ * （一个卷好了不该顺手撤掉另一个卷的）。其余 type 各占一槽（`network-down` 是全局事实）。
+ *
+ * 两侧必须用**同一个** `slotOf`：main 按槽去重/静音，renderer 若按 `type` 去重，v1 只盯一个
+ * 卷时不暴露，但「多卷」（本文件已留的口子：`resolveDisk(mount)` 按卷写）一开始用，界面就会
+ * 把两个卷合并成一条 —— 正是与 main 不一致造成的。故提上来共用。
+ */
+export function slotOf(n: EnvNotice): string {
+    return n.type === "disk-full" || n.type === "disk-low" ? `disk:${n.data.mount}` : n.type;
+}
+
 let seq = 0;
 /** 幂等 id（dismiss 用它）：`env-<type>-<ms>-<seq>` —— 同一毫秒内多条也不撞 */
 function nextId(type: EnvNoticeType, now: Date): string {

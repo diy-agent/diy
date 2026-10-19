@@ -7,14 +7,14 @@
 // 显示语义与 modelNoticeStore **刻意不同**：
 //   · 那边一次只显示最新一条（同一波失败原因必然相同）；
 //   · 这里**多条并存**——磁盘满与网断可以同时发生，只显示一条就会漏掉另一件同样急的事。
-//     故按 type 去重（同 type 只留最新，由 main 侧保证）、按时间升序堆叠，最多显示 3 条。
+//     故按**槽**去重（同槽只留最新，与 main 用同一个 `slotOf`；见 shared/env-watch.ts）、按时间升序堆叠，最多显示 3 条。
 //
 // 「自动消」靠 main 推 `resolve` 事件（不是本 store 猜）：条件恢复（腾出空间 / 网络通了）
 // 时红条必须自己消失 —— 这是硬要求，用户不该为"它已经好了"去点 ✕。
 
 import { createSignal } from "solid-js";
 import { diyService } from "../lib/rpc";
-import type { EnvNotice } from "../../shared/env-watch";
+import { slotOf, type EnvNotice } from "../../shared/env-watch";
 
 /** 最多同时展示几条（超出的折叠成计数）：再多人就不看了（告警疲劳） */
 export const MAX_BARS = 3;
@@ -42,7 +42,9 @@ function start(): void {
                     setNotices((prev) => prev.filter((n) => n.id !== id));
                 } else {
                     const n = ev.data;
-                    setNotices((prev) => [...prev.filter((x) => x.type !== n.type), n]);
+                    // 按**槽**去重（不是 type）：与 main 同源，多卷时才不会把两个卷合并成一条（##384 review1 R1）
+                    const slot = slotOf(n);
+                    setNotices((prev) => [...prev.filter((x) => slotOf(x) !== slot), n]);
                 }
             }
         })

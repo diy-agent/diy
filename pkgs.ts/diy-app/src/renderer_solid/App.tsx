@@ -35,7 +35,7 @@ import { layoutStore } from "./store/layoutStore";
 import { diyService } from "./lib/rpc";
 import { notificationStore } from "./store/notificationStore";
 import { modelNoticeStore } from "./store/modelNoticeStore";
-import { envWatchStore } from "./store/envWatchStore";
+import { MAX_BARS, envWatchStore } from "./store/envWatchStore";
 import { defaultBinding, findPage, findView, viewInstanceKey } from "../shared/view-registry";
 import { taskIndentOf } from "../shared/tab-order";
 import { partitionByPin } from "../shared/nav-pin";
@@ -1109,11 +1109,11 @@ export default function App() {
                         )}
                     </Show>
                     {/* 「环境感知」顶栏 bar（##384）：磁盘满 / 网断 —— 与上面那条同为**页面最上方**。
-                        多条并存时堆叠（磁盘满与网断可以同时发生），最多 3 条 + 超出折叠计数。
+                        多条并存时堆叠（磁盘满与网断可以同时发生），最多 MAX_BARS 条 + 超出折叠计数（同一常量，不写字面量）。
                         **自动消**：空间腾出来 / 网恢复时 main 推 resolve 事件，红条自己消失。 */}
                     <Show when={envWatchStore.notices.length > 0}>
                         <EnvStatusBar
-                            notices={envWatchStore.notices.slice(0, 3)}
+                            notices={envWatchStore.notices.slice(0, MAX_BARS)}
                             overflow={envWatchStore.overflow}
                             onDismiss={(id) => envWatchStore.dismiss(id)}
                         />

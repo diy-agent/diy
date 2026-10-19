@@ -38,6 +38,7 @@ import {
     probeNetworkError,
     classifyNetworkError,
     NETWORK_FAIL_STREAK,
+    slotOf,
     type DiskSample,
     type EnvNotice,
     type EnvNoticeEvent,
@@ -69,17 +70,6 @@ export async function realStatfs(path: string): Promise<DiskSample> {
 /**
  * 环境通知中心：ring + fan-out 订阅 + **按 type 自动消 / 静音**。
  */
-/**
- * 通知的「槽」= 去重键。
- *
- * 磁盘按**挂载点**分槽（`disk:/`）—— 同一个卷的 `disk-full` / `disk-low` 是同一件事的两种
- * 水位，必须互相替换而不是并存（并存会让 bar 上出现两条说同一件事的红条）；不同卷各占一槽
- * （一个卷好了不该顺手撤掉另一个卷的）。
- * 其余 type 各占一槽（`network-down` 是全局事实）。
- */
-function slotOf(n: EnvNotice): string {
-    return n.type === "disk-full" || n.type === "disk-low" ? `disk:${n.data.mount}` : n.type;
-}
 
 class EnvWatchHub {
     private notices: EnvNotice[] = [];

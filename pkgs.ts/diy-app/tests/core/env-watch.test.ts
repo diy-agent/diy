@@ -22,6 +22,7 @@ import {
     fmtDiskBytes,
     networkStreakVerdict,
     probeNetworkError,
+    slotOf,
     DISK_FULL_MAX_AVAIL_BYTES,
     DISK_LOW_MAX_AVAIL_BYTES,
     NETWORK_ERROR_CODES,
@@ -185,6 +186,29 @@ describe("通知组装（rule.discriminated-union：type 同级 = 公共字段�
             Array.from({ length: 5 }, () => envNoticeFromDisk(sample(10 * MiB), "poll", now)?.id),
         );
         expect(ids.size).toBe(5);
+    });
+});
+
+describe("slotOf（去重键 —— main 与 renderer **同源**，##384 review1 R1）", () => {
+    const disk = (mount: string, avail = 10 * MiB) => envNoticeFromDisk(sample(avail, 500 * GiB, mount), "poll")!;
+    const net = () => envNoticeFromNetwork({ code: "ENOTFOUND", message: "dns fail" }, NETWORK_FAIL_STREAK)!;
+
+    it("磁盘按**挂载点**分槽：两个卷各占一槽（多卷时界面不会把两条合成一条）", () => {
+        expect(slotOf(disk("/"))).toBe("disk:/");
+        expect(slotOf(disk("/Volumes/probe"))).toBe("disk:/Volumes/probe");
+        expect(slotOf(disk("/"))).not.toBe(slotOf(disk("/Volumes/probe")));
+    });
+
+    it("同一卷的 disk-full 与 disk-low **同槽**（同一件事的两种水位，互相替换而非并存）", () => {
+        const full = envNoticeFromDisk(sample(10 * MiB), "poll")!;
+        const low = envNoticeFromDisk(sample(1 * GiB), "poll")!;
+        expect(full.type).toBe("disk-full");
+        expect(low.type).toBe("disk-low");
+        expect(slotOf(full)).toBe(slotOf(low));
+    });
+
+    it("网络通知各占一槽（network-down 是全局事实，与卷无关）", () => {
+        expect(slotOf(net())).toBe("network-down");
     });
 });
 
