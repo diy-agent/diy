@@ -49,7 +49,7 @@
 
 ## tool — 命令
 
-- `tool.check` — `./sha.sh check` **提交前唯一检查**：`tsc -b tsconfig.all.json --noEmit` + oxlint + rpc 浏览器安全 + 产物护栏 + 可执行位护栏（shell 脚本索引 mode 必须 100755，见 `scripts/check-exec-bit.sh`）
+- `tool.check` — `./sha.sh check` **提交前唯一检查**：`tsc -b tsconfig.all.json --noEmit` + oxlint + rpc 浏览器安全 + 产物护栏 + 可执行位护栏（shell 脚本索引 mode 必须 100755，见 `scripts/check-exec-bit.sh`）+ 各领域规范索引护栏（`~/SPECS.md` 的 key 唯一 / 指针可解析，见 `scripts/check-specs.mts`；总表缺失 = 跳过不算失败，##388）
 - `tool.fmt` — 格式化配置真源 = **各包 `.oxfmtrc.json`**（根 `.oxfmtrc.json` 兜底）：oxfmt **不读** `package.json` 里的 `oxfmt` 块，真实键名是 `tabWidth`/`printWidth`/`singleQuote`；根 `fix()` 扫 `pkgs.ts/` **全量（含 .md/.json）**；**fmt 未纳入 `check`**（存量 ~400 文件待规范化，见 ##323(oxfmt 配置腐坏)）
 - `tool.test` — `./sha.sh test` 全仓 · `./sha.sh test-unit` 快测（不起 Electron）· 意图测试 `pkgs.ts/diy-app/sha.sh test-intent [片段...]`：位置参数**过滤文件**（短名补 `tests/cli.intent.` 前缀，如 `test-intent ui-find`；带 `/` 或 `.test.ts` 原样传），无参才全量
 - `tool.model-import` — 环境变量 → provider 导入候选（只列不写；UI 模型页提示条 / `diy llmConfig scanEnv|importEnv`）→ `pkgs.ts/diy-app/src/main/core/model-import.ts`
