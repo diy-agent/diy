@@ -16,6 +16,7 @@ import {
   writeSteers,
   type SteerItem,
 } from "../../src/main/core/drafts";
+import { SteerQueue } from "../../src/main/core/steer-queue";
 
 const URI = "projects/901/tasks/1";
 
@@ -320,5 +321,41 @@ describe("drafts 插话队列", () => {
     writeRaw(`kind: ${DRAFTS_KIND}\nversion: ${DRAFTS_VERSION}\nfields:\n  title: T\nsteers: 乱写\n`);
     expect(readDrafts(URI)!.steers).toEqual([]);
     expect(readDrafts(URI)!.fields.title).toBe("T");
+  });
+});
+
+/**
+ * 署名（`author`）的**读侧同步**（##377 第 14 刀 / ##166 §40 A；##266 review1 R2a 固化）。
+ *
+ * 为什么单独立一节：`parseSteers` 是**白名单重建**（逐字段挑），写侧加了 `author`
+ * 而读侧不跟 ⇒ 下一次「读 → 改 → 写」就把署名洗掉。症状极具迷惑性：
+ * 刚发的有署名、过一会儿没了。
+ *
+ * ⚠️ 这个用例的**来源是一次反证实验**（摘掉 `parseSteers` 的同步行 ⇒ `author` 消失）：
+ * 正向断言只能证明"这次在"，只有「读→改→写」这条路才能证明那一行是必需的。
+ */
+describe("插话署名（author）读写", () => {
+  it("add 带 author ⇒ 落盘且读回仍在（读侧白名单不洗字段）", () => {
+    const q = new SteerQueue();
+    const items = q.add(URI, "next-turn", "投递进来的话", new Date("2026-01-01T00:00:00.000Z"), "agent:166");
+    expect(items[0]!.author).toBe("agent:166");
+    // 走真实文件读回：这里过的正是 parseSteers 的白名单重建
+    expect(readDrafts(URI)!.steers[0]!.author).toBe("agent:166");
+  });
+
+  it("读→改→写（toggleMode）后 author 不被洗掉", () => {
+    const q = new SteerQueue();
+    const items = q.add(URI, "next-turn", "投递进来的话", new Date("2026-01-01T00:00:00.000Z"), "human:chen56");
+    q.toggleMode(URI, items[0]!.id); // 读 → 改（mode）→ 写
+    const after = readDrafts(URI)!.steers[0]!;
+    expect(after.mode).toBe("next-step"); // 改动生效（证明真的重写了）
+    expect(after.author).toBe("human:chen56"); // 署名跟着一起回来
+  });
+
+  it("无 author 的队列项不写该键（老数据 / 本人在任务页发言）", () => {
+    const q = new SteerQueue();
+    const items = q.add(URI, "next-turn", "本人发言");
+    expect("author" in items[0]!).toBe(false);
+    expect(readDrafts(URI)!.steers[0]!.author).toBeUndefined();
   });
 });
