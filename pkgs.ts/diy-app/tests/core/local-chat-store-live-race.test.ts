@@ -188,12 +188,15 @@ describe("A. 轮次 start 帧到达、真值（agent.local.running）还没回�
             return n === 1 ? stale.promise : new Promise(() => {}); // 第 1 次（open 那次）是旧答案
         });
         await store.open(URI);
-        stale.resolve({ active: [] }); // 还没放行…
         pushBatch([{ op: "start", id: "t1", kind: "turn" }]);
         await settle();
         expect(store.live).toBe(true);
 
-        await settle(); // 旧答案（发问时刻早于本轮 start）此刻才落地：必须被丢弃
+        // ⚠️ 顺序要紧（##266 review1 R1）：旧答案必须在**本轮 start 落地之后**才 resolve。
+        // 修前这里把 resolve 放在 pushBatch 之前 —— 微任务先跑，旧答案抢在乐观置位之前落地，
+        // 测的其实是"先旧后新"（本来就对），摘掉 `activeAsk` 闸门照样全绿（假测试）。
+        stale.resolve({ active: [] });
+        await settle(); // 此刻才落地：必须被 activeAsk 闸门丢弃
         expect(store.live).toBe(true);
         expect(liveTurnId(store)).toBe("t1");
     });
