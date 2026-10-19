@@ -282,6 +282,18 @@ class SessionRegistry {
       .map((e) => this.view(e));
   }
 
+  /**
+   * 单条会话的注册表视图（按 taskUri）。
+   *
+   * 存在理由：`snapshot()` 是"全库"（每个条目都要查 viewers / 读 queue 落盘），
+   * 而 room 的 roster / 单轮进度只关心**某几个会话** —— 不该为一条会话把全库都算一遍。
+   * 与 `activeTurnList()` 的分工：那个**不碰 deps**（崩溃钩子用），这个正常算活态属性。
+   */
+  entryOf(taskUri: string): SessionEntry | null {
+    const e = this.entries.get(taskUri);
+    return e ? this.view(e) : null;
+  }
+
   /** 注册表自身的订阅者数（测试用；**不许**混进 viewers，R3） */
   subscriberCount(): number {
     return this.subs.size;

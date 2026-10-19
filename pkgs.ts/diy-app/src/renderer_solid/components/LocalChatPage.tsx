@@ -26,7 +26,7 @@
  * 「显示什么、按什么序、开到第几层」的语义全在 `lib/chat-fold.ts`（纯函数 + 单测），本文件只管画。
  * MD 渲染/原文是**正交**的显示偏好：摘要态同样按它渲染（见 TextRow）。
  */
-import { createEffect, createMemo, createSignal, For, Match, on, onCleanup, onMount, Show, Switch } from "solid-js";
+import { createContext, createEffect, createMemo, createSignal, For, Match, on, onCleanup, onMount, Show, Switch, useContext } from "solid-js";
 import type { JSX } from "solid-js";
 import { localChatStore } from "../store/localChatStore";
 import { personaStore } from "../store/personaStore";
@@ -55,6 +55,7 @@ import { Caches, CONCLUSION_LINES_MAX, CONCLUSION_LINES_MIN } from "../lib/ui-st
 import { HeightLedger, stackRows, windowRange } from "../lib/chat-virtual";
 import { MarkdownView } from "./MarkdownView";
 import { MdEditor } from "./MdEditor";
+import { taskCompletion } from "../lib/completions";
 import { bylineOf } from "../lib/assistant-byline";
 // 滚动决策（纯函数，可单测：跟随时序 / 锚点恢复）—— 本文件只负责 DOM 读写
 import { anchorScrollTop, anchorTick, clampScrollTop, followPlan, lastLeafId, type AnchorTickState, type ChatAnchor } from "../lib/chat-scroll";
@@ -263,6 +264,39 @@ function MarkdownText(props: { text: string; streaming: boolean }) {
 }
 
 /**
+ * **会话渲染的数据源**（##166 §28.7 A 的落点）。
+ *
+ * 为什么要有它：块渲染器（`TurnView` 及其子树）原本直接读 `localChatStore` —— 那个 store
+ * 是**单当前会话**的（`currentUri` + 一份 trees），于是同一页里**只能画一个会话**。
+ * room 要的恰恰是**多个成员的进度并列**（一条发言投给 2 个 agent = 2 条进度同屏），
+ * 所以把"从哪取树 / 是否直播"提成一个可注入的作用域：
+ *   · 任务对话页 = 缺省（`localChatStore`），行为一字不变；
+ *   · room 的进度展开 = 注入那一轮自己的树（`ChatView` 包一层）。
+ * 渲染器**只有一份**（口径硬要求：不许为 room 另写一套），差别全在这层数据源。
+ */
+export interface ChatViewSource {
+    /** 该作用域下的轮次树（升序） */
+    trees: () => BlockNode[];
+    /** 该作用域下是否正有轮次在跑（决定"直播中"形态：活动块 / 等待响应 / 中断标记） */
+    live: () => boolean;
+}
+
+const ChatViewCtx = createContext<ChatViewSource>({
+    trees: () => localChatStore.trees,
+    live: () => localChatStore.live,
+});
+
+/** 给一段子树换数据源（room 的进度展开用它；任务对话页不包 = 走缺省） */
+export function ChatView(props: { source: ChatViewSource; children: JSX.Element }) {
+    return <ChatViewCtx.Provider value={props.source}>{props.children}</ChatViewCtx.Provider>;
+}
+
+/** 当前渲染作用域的"是否直播"（缺省即任务对话页那份真值） */
+function viewLive(): boolean {
+    return useContext(ChatViewCtx).live();
+}
+
+/**
  * 按 id 现取轮次节点。
  *
  * 为什么是"现取"而不是"把节点当值传下去"：行对象按 id 复用（见页面里 rootRows 的注释），
@@ -271,7 +305,7 @@ function MarkdownText(props: { text: string; streaming: boolean }) {
  */
 const EMPTY_TURN: BlockNode = { tag: "turn", id: "", stopped: true, touched: 0, attrs: {}, children: [] };
 function turnById(id: string): BlockNode {
-    return localChatStore.trees.find((t) => t.id === id) ?? EMPTY_TURN;
+    return useContext(ChatViewCtx).trees().find((t) => t.id === id) ?? EMPTY_TURN;
 }
 
 // ─── 树工具（文档序） ───────────────────────────────
@@ -361,7 +395,7 @@ function summaryOf(n: BlockNode, open = true): string {
         return firstLine(str(n.attrs.content)).trim() || (n.stopped ? "思考" : "思考中…");
     }
     if (n.tag === "tool") {
-        return `${str(n.attrs.tool) || "tool"}${toolCommand(n) ? ` · ${firstLine(toolCommand(n))}` : ""}${isInterruptedToolBlock(n, localChatStore.live) ? " · ⊘ 中断" : ""}`;
+        return `${str(n.attrs.tool) || "tool"}${toolCommand(n) ? ` · ${firstLine(toolCommand(n))}` : ""}${isInterruptedToolBlock(n, viewLive()) ? " · ⊘ 中断" : ""}`;
     }
     return n.tag;
 }
@@ -378,7 +412,7 @@ const STATUS_TONE_CLASS: Record<ProcTone, string> = {
 
 /** 行首状态灯：判据在 `lib/chat-fold.procStatusOf`（纯函数 + 单测），这里只画（见其头注） */
 function statusMark(node: BlockNode) {
-    const m = procStatusOf(node, localChatStore.live);
+    const m = procStatusOf(node, viewLive());
     if (!m.icon) return null;
     const cls = [STATUS_TONE_CLASS[m.tone], m.pulse ? "animate-pulse" : ""].filter(Boolean).join(" ");
     return (
@@ -446,7 +480,7 @@ function ToolBody(props: {
                 <div class="animate-pulse text-base-content/50">⋯ 执行中，等待工具返回…</div>
             </Show>
             {/* 中断遗留：正文显示与发往 LLM 完全同源的占位说明（不再是空白让人无从下手） */}
-            <Show when={isInterruptedToolBlock(n, localChatStore.live)}>
+            <Show when={isInterruptedToolBlock(n, viewLive())}>
                 <div class="alert alert-warning alert-soft text-body py-2 font-sans">
                     <span class="whitespace-pre-wrap">{INTERRUPTED_TOOL_NOTICE}</span>
                 </div>
@@ -508,7 +542,7 @@ function ProcessRow(props: {
     const n = () => props.node;
     /** 这一行**点开会不会多出东西**（思考只有一行就不给展开能力，见 chat-fold.expandableOf） */
     const can = () => expandableOf(n());
-    const open = () => can() && procOpenOf(n(), props.pin, localChatStore.live);
+    const open = () => can() && procOpenOf(n(), props.pin, viewLive());
     const head = "flex w-full items-center gap-1.5 py-1.5 text-left";
     /**
      * 行头（三种行位共用同一份内容，只是外壳不同）：
@@ -591,7 +625,7 @@ function TailBox(props: {
     let bodyRef: HTMLDivElement | undefined;
     // 直播展开时跟随到底（订阅整树信号，每 op 重跑一次）；冻结/现场不跟随（用户翻上去就别拽他）
     createEffect(() => {
-        void localChatStore.trees;
+        void useContext(ChatViewCtx).trees();
         if (props.live && open() && !n().stopped && bodyRef) bodyRef.scrollTop = bodyRef.scrollHeight;
     });
     const title = () => {
@@ -1267,7 +1301,7 @@ function countTags(turn: BlockNode): { step: number; tool: number; think: number
     return { step, tool, think, error };
 }
 
-function TurnView(props: {
+export function TurnView(props: {
     /** 轮次 id（节点按 id 现取 —— 行对象按 id 复用，见文件头注） */
     turnId: string;
     /** 过程**详情**层的开合（用户自己点出来的那一下；与级别无关） */
@@ -2819,6 +2853,8 @@ export function LocalChatPage(props: { uri?: string }) {
                                 if (u) draftStore.set(u, "agent_input", v);
                             }}
                             onEnter={submitByEnter}
+                            /* 不接 `@`：任务对话页没有成员概念（见 lib/completions 头注） */
+                            completions={[taskCompletion]}
                             wrap
                             lineNumbers={fullscreen()}
                             embedded
