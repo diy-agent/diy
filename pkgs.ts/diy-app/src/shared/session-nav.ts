@@ -231,7 +231,7 @@ export function rowBadgeOf(r: NavRow): NavBadge | null {
 }
 
 /** 排序位次（越小越该看）——「后台活动」区的行序 */
-function rankOf(r: NavRow): number {
+export function rankOf(r: NavRow): number {
     if (r.stalled) return 0;
     if (r.running) return 1;
     if (r.abnormal && r.unread > 0) return 2;

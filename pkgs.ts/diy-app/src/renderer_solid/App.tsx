@@ -49,14 +49,15 @@ import {
     backgroundOf,
     heroBadgeOf,
     navRowOf,
+    rankOf,
     rowBadgeOf,
     secondaryBadgeOf,
 } from "../shared/session-nav";
 import type { NavRow, NavTone } from "../shared/session-nav";
 import { ALERT_ACTION_LABEL, alertsOf } from "../shared/session-alerts";
 // 「待你处理」区（##358 D5）：判据纯函数；行集仍是上面那份 navRows（两个区**不可能**给出不同结论）
-import { todoOf, todoTitleOf, todoWhenOf } from "../shared/session-todo";
-import { resumeMoreTextOf, resumeOf, resumeWhenOf } from "../shared/session-resume";
+import { todoOf, todoWhenOf } from "../shared/session-todo";
+import { resumeOf, resumeWhenOf } from "../shared/session-resume";
 import { usageLedgerStore } from "./store/usageLedgerStore";
 import { alertPrefsStore } from "./store/alertPrefsStore";
 
@@ -130,6 +131,17 @@ const NAV_TONE_CLASS: Record<NavTone, string> = {
     red: "bg-error/20 text-error border-error/40",
     purple: "bg-diy-queue/20 text-diy-queue border-diy-queue/40",
 };
+
+/** 同一套配色的**文字**形态（「会话」列表行内那个 `+N` 用它：一屏十几个 badge 就是噪声） */
+const NAV_TONE_TEXT: Record<NavTone, string> = {
+    green: "text-success",
+    amber: "text-warning",
+    red: "text-error",
+    purple: "text-diy-queue",
+};
+
+/** 「会话」列表最多列几行：nav 是"扫一眼"的地方，不是账页（更多的折成表尾一句纯文本） */
+const NAV_SESSION_LIMIT = 8;
 
 const VALID_PAGES = new Set(["task", "task-run", "lab", "llm", "traffic", "sessions", "settings"]);
 
@@ -560,6 +572,34 @@ export default function App() {
     const navResume = createMemo(() => {
         const taken = [...navTodo().map((i) => i.row.uri), ...navBackground().map((r) => r.uri)];
         return resumeOf(navRows(), taken);
+    });
+
+    /**
+     * **「会话」项下那一份列表**（用户 2026-10-19 合并口径）：上面三份数据取并集，按"值不值得看"排序。
+     *
+     * 判据**一个都没改**（`todoOf` / `backgroundOf` / `resumeOf` 仍是各自那件事的答案），
+     * 改的只是呈现：不再分三个带标题和计数的区（那些标题长得像按钮、点了没反应 —— 用户明确否掉）。
+     * 行 = 状态点 + 标题 + `+N` + 最后活动时间；`why` 只进 tooltip（不占行高，否则括号比内容还长）。
+     */
+    const navSessionList = createMemo(() => {
+        const rows: Array<{ row: NavRow; kind: "todo" | "running" | "recent"; why: string; when: string }> = [];
+        for (const i of navTodo()) rows.push({ row: i.row, kind: "todo", why: i.why, when: todoWhenOf(i) });
+        for (const r of navBackground())
+            rows.push({
+                row: r,
+                kind: "running",
+                why: r.stalled ? "在跑，但长时间没动静" : "在跑（没开窗口也在跑）",
+                when: resumeWhenOf(r),
+            });
+        for (const r of navResume().items)
+            rows.push({ row: r, kind: "recent", why: "最近在这儿干过", when: resumeWhenOf(r) });
+        rows.sort(
+            (a, b) =>
+                rankOf(a.row) - rankOf(b.row) ||
+                (b.row.lastTs ?? "").localeCompare(a.row.lastTs ?? "") ||
+                a.row.uri.localeCompare(b.row.uri),
+        );
+        return { items: rows.slice(0, NAV_SESSION_LIMIT), more: Math.max(0, rows.length - NAV_SESSION_LIMIT) };
     });
 
     /** 打开/聚焦某个会话（toast 的「回到」与 L2 自动拉回共用一跳） */
@@ -1422,276 +1462,100 @@ export default function App() {
                                             }}
                                         </For>
                                     </Show>
+                                    {/* ── 「会话」项下的会话列表（##358 D1/D2/D4/D5 合成一份）──────
+                                        用户 2026-10-19 口径：「把待处理任务放到『会话』按钮下，去掉多余的修饰词
+                                        『待你处理』『3』」「后台活动是啥？……去掉吧，进行中任务直接列在会话下，
+                                        和待处理任务一起，**通过活动的状态来表达**」。
+                                        所以这里**没有分区、没有区标题、没有计数** —— 行本身就是状态：
+                                        status 圆点（在跑=绿+aura 流光 · 未读=绿 · 未读且异常终止=红 · 停滞=黄 · 其余=灰）
+                                        + 标题 + `+N`（仅未读时）+ 最后活动时间。
+                                        行集仍是三份数据的**并集**（有一笔账在等你 ∪ 在跑 ∪ 最近活动过 ——
+                                        判据各自没变，变的是"怎么摆"），按"值不值得看"排序（`rankOf`）。
+                                        收起态（rail 40px）不列行：那时主角标就是全部语义。 */}
+                                    <Show when={item.id === "sessions" && expanded()}>
+                                        <For each={navSessionList().items}>
+                                            {(i) => {
+                                                const r = () => i.row;
+                                                const b = () => rowBadgeOf(r());
+                                                const go = () => {
+                                                    hideHoverLayers();
+                                                    collapseRail(); // 窄窗：浮层收回，把主区让给刚打开的会话
+                                                    getRendererActions().openTaskRun?.(r().uri);
+                                                };
+                                                const dot = () =>
+                                                    r().stalled
+                                                        ? "status-warning"
+                                                        : r().abnormal && r().unread > 0
+                                                          ? "status-error"
+                                                          : r().unread > 0
+                                                            ? "status-success"
+                                                            : "";
+                                                const tip = () =>
+                                                    `${r().label}\n${i.why}${i.when ? `\n最后活动：${i.when}` : ""}\n（点一下 → 回到这个会话）`;
+                                                return (
+                                                    <li class="flex justify-center">
+                                                        <button
+                                                            class="group flex items-center gap-2 w-full pl-6 pr-2 py-1 rounded-lg text-body cursor-pointer hover:bg-base-300"
+                                                            title={tip()}
+                                                            data-nav-session={r().uri}
+                                                            data-nav-session-kind={i.kind}
+                                                            onClick={go}
+                                                        >
+                                                            {/* 在跑 = daisyUI 的 `aura`（一圈缓慢流转的光）+ 闪烁的 status。
+                                                                用户点名的表达方式：「通过活动的状态来表达，比如 …/components/aura/」。 */}
+                                                            <Show
+                                                                when={r().running}
+                                                                fallback={<span class={`status ${dot()}`} />}
+                                                            >
+                                                                <span class="aura aura-dual text-success shrink-0">
+                                                                    <span class="status status-success animate-pulse" />
+                                                                </span>
+                                                            </Show>
+                                                            <span class="truncate flex-1 text-left">{r().label}</span>
+                                                            <Show when={b()}>
+                                                                {(bd) => (
+                                                                    <span
+                                                                        class={`font-mono text-caption shrink-0 ${NAV_TONE_TEXT[bd().tone]}`}
+                                                                        title={bd().tip}
+                                                                    >
+                                                                        {bd().short}
+                                                                    </span>
+                                                                )}
+                                                            </Show>
+                                                            <span class="font-mono text-caption opacity-50 shrink-0">
+                                                                {i.when}
+                                                            </span>
+                                                        </button>
+                                                    </li>
+                                                );
+                                            }}
+                                        </For>
+                                        {/* 表尾这句是**纯文本**（不是按钮）：点了没反应的控件才是问题 */}
+                                        <Show when={navSessionList().more > 0}>
+                                            <li class="px-3 pb-1 text-caption opacity-50" data-nav-session-more>
+                                                还有 {navSessionList().more} 条
+                                            </li>
+                                        </Show>
+                                        {/* 「自动拉回」开关（D3 的 L2）——原先挂在「后台活动」区标题行上，区没了就搬到这里。
+                                            它是**真按钮**（点了会变），不是装饰。 */}
+                                        <li class="flex items-center px-3 pt-1 pb-0.5">
+                                            <button
+                                                class="text-caption opacity-50 hover:opacity-100 cursor-pointer"
+                                                data-nav-autopull={alertPrefsStore.autoPull ? "on" : "off"}
+                                                title={
+                                                    alertPrefsStore.autoPull
+                                                        ? "自动拉回：开。只有「异常终止」和「有人在等你回复」会抢焦点开 tab；其余一律只提示。"
+                                                        : "自动拉回：关。现在一律只弹提示（带「回到」按钮），不抢焦点。"
+                                                }
+                                                onClick={() => alertPrefsStore.setAutoPull(!alertPrefsStore.autoPull)}
+                                            >
+                                                自动拉回 {alertPrefsStore.autoPull ? "开" : "关"}
+                                            </button>
+                                        </li>
+                                    </Show>
                                 </>
                             )}
                         </For>
-                        {/* ── 「待你处理」区（##358 D5）───────────────────────────────
-                            用户原话：「app 启动后丢了所有进度……我需要一种『我要接着工作、知道最近我在干啥』
-                            的提示，不然还要一个个点进去看」。
-                            与「后台活动」的区别只在**要不要你动手**：这里是有**一笔账在等你**
-                            （异常终止没看 / 卡住没动 / 有人在等你回话 / 跑完没看），所以每行都带
-                            **原因短语 + 最后活动时间** —— 「不点进去就知道」是这一区的全部意义。
-                            行集来自同一份 `navRows`（含**账本独有**行：重启后注册表为空，本区仍然不空）。
-                            后台区会减掉已被本区收走的行 ⇒ 同一会话不会两处同时出现。 */}
-                        <Show when={navTodo().length > 0}>
-                            <Show when={expanded()}>
-                                <li
-                                    class="flex items-center gap-2 px-3 pt-2 pb-0.5 text-caption opacity-60"
-                                    data-nav-todo-title
-                                >
-                                    <span>待你处理</span>
-                                    <span class="font-mono" title={todoTitleOf(navTodo())}>
-                                        {navTodo().length}
-                                    </span>
-                                </li>
-                            </Show>
-                            <For each={navTodo()}>
-                                {(i) => {
-                                    const b = () => rowBadgeOf(i.row);
-                                    const num = () => findNode(taskStore.nodes, i.row.uri)?.num;
-                                    const when = () => todoWhenOf(i);
-                                    const go = () => {
-                                        hideHoverLayers();
-                                        collapseRail();
-                                        getRendererActions().openTaskRun?.(i.row.uri);
-                                    };
-                                    const tip = () => `${i.row.label}\n${i.why}\n（点一下 → 回到这个会话）`;
-                                    return (
-                                        <li class="flex justify-center">
-                                            <Show
-                                                when={expanded()}
-                                                fallback={
-                                                    <button
-                                                        class="relative flex items-center justify-center h-8 w-8 rounded-lg text-caption font-mono opacity-90 hover:opacity-100 cursor-pointer bg-base-200/60"
-                                                        title={tip()}
-                                                        data-nav-todo={i.row.uri}
-                                                        data-nav-todo-kind={i.kind}
-                                                        onClick={go}
-                                                    >
-                                                        {num() ?? "•"}
-                                                        <Show when={b()}>
-                                                            {(bd) => (
-                                                                <span
-                                                                    class={`absolute -top-0.5 -right-0.5 px-1 rounded text-caption font-mono ${NAV_TONE_CLASS[bd().tone]} ${
-                                                                        bd().pulse ? "animate-pulse" : ""
-                                                                    }`}
-                                                                >
-                                                                    {bd().short}
-                                                                </span>
-                                                            )}
-                                                        </Show>
-                                                    </button>
-                                                }
-                                            >
-                                                <button
-                                                    class="flex flex-col gap-0.5 w-full px-2 py-1 rounded-lg bg-base-200/60 text-body cursor-pointer opacity-90 hover:opacity-100 hover:bg-base-300"
-                                                    title={tip()}
-                                                    data-nav-todo={i.row.uri}
-                                                    data-nav-todo-kind={i.kind}
-                                                    onClick={go}
-                                                >
-                                                    <span class="flex items-center gap-1 w-full">
-                                                        <span class="flex-1 truncate text-left">{i.row.label}</span>
-                                                        <Show when={b()}>
-                                                            {(bd) => (
-                                                                <span
-                                                                    class={`badge border badge-xs font-mono whitespace-nowrap ${NAV_TONE_CLASS[bd().tone]} ${
-                                                                        bd().pulse ? "animate-pulse" : ""
-                                                                    }`}
-                                                                    title={bd().tip}
-                                                                >
-                                                                    {bd().text}
-                                                                </span>
-                                                            )}
-                                                        </Show>
-                                                    </span>
-                                                    {/* 「不点进去就知道」的两件事：为什么找你 + 什么时候的事 */}
-                                                    <span class="flex items-center gap-2 w-full text-caption opacity-70">
-                                                        <span class="flex-1 truncate text-left">{i.why}</span>
-                                                        <Show when={when()}>
-                                                            <span class="font-mono shrink-0">{when()}</span>
-                                                        </Show>
-                                                    </span>
-                                                </button>
-                                            </Show>
-                                        </li>
-                                    );
-                                }}
-                            </For>
-                        </Show>
-                        {/* ── 「后台活动」区（##358 D2）───────────────────────────────
-                            用户原话：「session 正在跑 / 结果没看，但被我从 nav 关了，如何**提示并回到视线**」。
-                            判据刻意**不记"谁关过什么"**（那要一份 renderer 私有台账，重启即丢）：
-                            直接问"它现在有没有事" —— 没开着 tab、且有活态（在跑 / 跑完没看 / 有留言）
-                            的会话就落在这里。**虚框幽灵条目**表达"它不在视线内，但仍活着"；
-                            重开 tab 它自动离开（`opened`），点一下即回到视线。 */}
-                        {/* 标题行**只要展开态就渲染**（哪怕空）—— 它是「自动拉回」开关唯一的家：
-                            区一空就整行消失的话，用户关掉后（或本来就没动静时）**再没处打开**。 */}
-                        <Show when={expanded()}>
-                            <li class="flex items-center gap-2 px-3 pt-2 pb-0.5 text-caption opacity-60">
-                                <span>后台活动</span>
-                                    <span class="font-mono">{navBackground().length}</span>
-                                    {/* L2「自动拉回」的开关（缺省开）—— 关掉只降级成 L1 toast，不丢提示。
-                                        区为空时这一行仍渲染（否则关了就没处开回来）。 */}
-                                    <button
-                                        class="btn btn-ghost btn-xs ml-auto"
-                                        data-nav-autopull={alertPrefsStore.autoPull ? "on" : "off"}
-                                        title={
-                                            alertPrefsStore.autoPull
-                                                ? "自动拉回：开。只有「异常终止」和「有人在等你回复」会抢焦点开 tab；其余一律只提示。"
-                                                : "自动拉回：关。现在一律只弹提示（带「回到」按钮），不抢焦点。"
-                                        }
-                                        onClick={() => alertPrefsStore.setAutoPull(!alertPrefsStore.autoPull)}
-                                    >
-                                    自动拉回 {alertPrefsStore.autoPull ? "开" : "关"}
-                                </button>
-                            </li>
-                        </Show>
-                        <For each={navBackground()}>
-                                {(r) => {
-                                    const badge = () => rowBadgeOf(r);
-                                    const num = () => findNode(taskStore.nodes, r.uri)?.num;
-                                    const go = () => {
-                                        hideHoverLayers();
-                                        collapseRail(); // 窄窗：浮层收回，把主区让给刚打开的会话
-                                        getRendererActions().openTaskRun?.(r.uri);
-                                    };
-                                    return (
-                                        <li class="flex justify-center">
-                                            <Show
-                                                when={expanded()}
-                                                fallback={
-                                                    <button
-                                                        class="relative flex items-center justify-center h-8 w-8 rounded-lg border border-dashed border-base-content/30 text-caption font-mono opacity-70 hover:opacity-100 cursor-pointer"
-                                                        title={`${r.label}\n（后台活动：没开窗口，但它还有动静）`}
-                                                        data-nav-background={r.uri}
-                                                        onClick={go}
-                                                    >
-                                                        {num() ?? "•"}
-                                                        <Show when={badge()}>
-                                                            {(b) => (
-                                                                <span
-                                                                    class={`absolute -top-0.5 -right-0.5 px-1 rounded text-caption font-mono ${NAV_TONE_CLASS[b().tone]} ${
-                                                                        b().pulse ? "animate-pulse" : ""
-                                                                    }`}
-                                                                >
-                                                                    {b().short}
-                                                                </span>
-                                                            )}
-                                                        </Show>
-                                                    </button>
-                                                }
-                                            >
-                                                <button
-                                                    class="flex items-center gap-1 w-full px-2 py-1 rounded-lg border border-dashed border-base-content/30 text-body cursor-pointer opacity-80 hover:opacity-100 hover:bg-base-300"
-                                                    title={`${r.label}\n（后台活动：没开窗口，但它还有动静）`}
-                                                    data-nav-background={r.uri}
-                                                    onClick={go}
-                                                >
-                                                    <span class="flex-1 truncate text-left">{r.label}</span>
-                                                    <Show when={badge()}>
-                                                        {(b) => (
-                                                            <span
-                                                                class={`badge border badge-xs font-mono whitespace-nowrap ${NAV_TONE_CLASS[b().tone]} ${
-                                                                    b().pulse ? "animate-pulse" : ""
-                                                                }`}
-                                                                title={b().tip}
-                                                            >
-                                                                {b().text}
-                                                            </span>
-                                                        )}
-                                                    </Show>
-                                                </button>
-                                            </Show>
-                                        </li>
-                                    );
-                                }}
-                            </For>
-                        {/* ── 「继续工作」区（##358 D4）───────────────────────────────
-                            用户原话：「app 启动后，丢了所有进度……我需要一种『**我要接着工作、
-                            知道最近我在干啥**』的提示，不然还要一个个点进去看」。
-                            这里是**第三顺位**：前两区是"有事"（要你动手 / 在动），本区是"没事但你最近
-                            在这儿干过" —— 按**最后活动时间**倒序，跨启动（尺子 = 账本最后一条账）。
-                            所以它是"进度没丢"的直接证据：重启后这里仍然列得出来。
-                            行不加 chip（"已对话"每行都写一遍就是噪声），只给**时间**；角标有则照常出
-                            （判据同一份 `rowBadgeOf`，只是本区多数行为空）。 */}
-                        <Show when={navResume().items.length > 0}>
-                            <Show when={expanded()}>
-                                <li
-                                    class="flex items-center gap-2 px-3 pt-2 pb-0.5 text-caption opacity-60"
-                                    data-nav-resume-title
-                                >
-                                    <span>继续工作</span>
-                                    <span class="font-mono">{navResume().items.length}</span>
-                                </li>
-                            </Show>
-                            <For each={navResume().items}>
-                                {(r) => {
-                                    const badge = () => rowBadgeOf(r);
-                                    const num = () => findNode(taskStore.nodes, r.uri)?.num;
-                                    const when = () => resumeWhenOf(r);
-                                    const go = () => {
-                                        hideHoverLayers();
-                                        collapseRail();
-                                        getRendererActions().openTaskRun?.(r.uri);
-                                    };
-                                    const tip = () => `${r.label}\n（最近在这儿干过${when() ? `：${when()}` : ""}）`;
-                                    return (
-                                        <li class="flex justify-center">
-                                            <Show
-                                                when={expanded()}
-                                                fallback={
-                                                    <button
-                                                        class="relative flex items-center justify-center h-8 w-8 rounded-lg text-caption font-mono opacity-60 hover:opacity-100 cursor-pointer"
-                                                        title={tip()}
-                                                        data-nav-resume={r.uri}
-                                                        onClick={go}
-                                                    >
-                                                        {num() ?? "•"}
-                                                        <Show when={badge()}>
-                                                            {(b) => (
-                                                                <span
-                                                                    class={`absolute -top-0.5 -right-0.5 px-1 rounded text-caption font-mono ${NAV_TONE_CLASS[b().tone]} ${
-                                                                        b().pulse ? "animate-pulse" : ""
-                                                                    }`}
-                                                                >
-                                                                    {b().short}
-                                                                </span>
-                                                            )}
-                                                        </Show>
-                                                    </button>
-                                                }
-                                            >
-                                                <button
-                                                    class="flex items-center gap-1 w-full px-2 py-1 rounded-lg text-body cursor-pointer opacity-60 hover:opacity-100 hover:bg-base-300"
-                                                    title={tip()}
-                                                    data-nav-resume={r.uri}
-                                                    onClick={go}
-                                                >
-                                                    <span class="flex-1 truncate text-left">{r.label}</span>
-                                                    <Show when={badge()}>
-                                                        {(b) => (
-                                                            <span
-                                                                class={`badge border badge-xs font-mono whitespace-nowrap ${NAV_TONE_CLASS[b().tone]}`}
-                                                                title={b().tip}
-                                                            >
-                                                                {b().text}
-                                                            </span>
-                                                        )}
-                                                    </Show>
-                                                    <span class="font-mono text-caption opacity-70 shrink-0">{when()}</span>
-                                                </button>
-                                            </Show>
-                                        </li>
-                                    );
-                                }}
-                            </For>
-                            <Show when={resumeMoreTextOf(navResume())}>
-                                <li class="px-3 pb-1 text-caption opacity-50" data-nav-resume-more>
-                                    {resumeMoreTextOf(navResume())}
-                                </li>
-                            </Show>
-                        </Show>
                     </div>
                     {/* 右缘拖拽条：调宽 + 双击复位。收起态（rail）没有可调的宽度，不渲染 */}
                     <Show when={expanded()}>
