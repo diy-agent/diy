@@ -82,6 +82,12 @@ export interface SteerItem {
   text: string;
   /** 入队时间（ISO） */
   created: string;
+  /**
+   * 发言者署名（##166 §40 A）：入队时是谁说的，投递时原样落到 user 块 `meta.author`。
+   * 省略 = 本任务本人。**存在队列项里而不是投递时才问** —— 排队可能跨轮次 / 跨小时，
+   * 那时"谁说的"早已无从查起。
+   */
+  author?: string;
 }
 
 /**
@@ -243,6 +249,10 @@ function parseSteers(raw: unknown): SteerItem[] {
       mode: mode as SteerMode,
       text: o["text"],
       created: typeof o["created"] === "string" ? o["created"] : "",
+      // ⚠️ 读侧是**白名单重建**：写侧（steer-queue.add）加了字段，这里必须同步，
+      // 否则下一次 `读→改→写`（add / remove / toggleMode / reorder）就把新字段洗掉 ——
+      // 症状是"刚发的有署名、过一会儿署名没了"（##166 §26.3 坑 1 实测：首条丢、次条在）。
+      ...(typeof o["author"] === "string" && o["author"] ? { author: o["author"] } : {}),
     });
   }
   return out;

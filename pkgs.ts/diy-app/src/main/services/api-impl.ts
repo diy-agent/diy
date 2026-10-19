@@ -392,7 +392,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const agent = getLocalAgent();
     // --mode 给出 = 入队待投递；省略 = 立即开一轮。
     if (input.mode) {
-      agent.steerAdd(input.taskUri, input.mode, input.message);
+      agent.steerAdd(input.taskUri, input.mode, input.message, input.author);
       // ##303：入队后若**没有活跃轮次**，立刻用它开一轮 —— 留言的语义就是"发一句话"，
       // 空闲时它本就该像普通消息那样马上发出。否则没有任何机制会因它启动轮次，
       // 留言会永远躺在 .diy/drafts.yaml 里（界面只有横条，用户以为已经发出去了）。
@@ -412,7 +412,15 @@ export function bindAppHandlers(binding: ServerBinding): void {
     }
     // signal：客户端断开（刷新/切页/杀 CLI）时即时退订 run.subs —— 缺了它，「无 op 产出期间断开」要
     // 等到下一条 op 才释放订阅（return() 排在悬挂的 next() 之后），`subscribers` 会虚高（[5] ##308）。
-    for await (const op of agent.chat(input.taskUri, input.message, input.model, input.reasoningEffort, signal)) {
+    for await (const op of agent.chat(
+      input.taskUri,
+      input.message,
+      input.model,
+      input.reasoningEffort,
+      signal,
+      undefined,
+      input.author,
+    )) {
       yield JSON.stringify(op);
     }
   });

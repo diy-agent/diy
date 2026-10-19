@@ -61,7 +61,15 @@ const SCHEMA: Record<BlockKind, Record<string, FieldKind>> = {
     // steer / steerId：用户"插嘴"写进对话流的标记（模式 next-step|next-turn，缺省 = 本轮开场的那次发言）
     // 与队列项 id（steer/N，回查用）。走 start 的 meta 落位（见 local-agent 的 steerBlockOps），
     // 声明在这里是给"它们是 text 块的合法字段"一个正式出处 —— 否则将来谁拿 patch 写它们会得到 issue。
-    text: { role: "Flag", content: "Text", steer: "Flag", steerId: "Flag" },
+    text: {
+        role: "Flag",
+        content: "Text",
+        steer: "Flag",
+        steerId: "Flag",
+        // author：发言者署名（##166 §40 A）—— 代发 / 多 agent 同席时 UI 据此区分发言者；
+        // 省略 = 本任务本人（沿用"我说过啥"的右侧气泡）。落位见 local-agent 的两处 user 块。
+        author: "Flag",
+    },
     think: { content: "Text" },
     tool: {
         tool: "Flag",

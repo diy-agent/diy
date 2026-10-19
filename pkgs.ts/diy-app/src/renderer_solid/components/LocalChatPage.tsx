@@ -57,6 +57,7 @@ import { MarkdownView } from "./MarkdownView";
 import { MdEditor } from "./MdEditor";
 import { taskCompletion } from "../lib/completions";
 import { bylineOf } from "../lib/assistant-byline";
+import { memberColor, shortName } from "../../shared/room";
 // 滚动决策（纯函数，可单测：跟随时序 / 锚点恢复）—— 本文件只负责 DOM 读写
 import { anchorScrollTop, anchorTick, clampScrollTop, followPlan, lastLeafId, type AnchorTickState, type ChatAnchor } from "../lib/chat-scroll";
 // user 发言的时刻 label（纯函数：块 id → 所属轮起点时刻；数据源与降级口径见模块头注）
@@ -1049,16 +1050,38 @@ function TextRow(props: {
     );
 }
 
-/** 用户发言气泡（右对齐）：一切档位/模式下都全文 —— 它就是"我说过啥"的脉络本体 */
+/**
+ * 用户发言气泡：一切档位/模式下都全文 —— 它就是"我说过啥"的脉络本体。
+ *
+ * 对齐 = **谁说的**（##166 §40 C）：
+ *   · **无 `author`**（本任务本人在任务对话页里发的）⇒ **右对齐，逐字不变**（老行为）；
+ *   · **有 `author`**（代发 / 多 agent 同席：room 投递、CLI `--author`、驱动环）⇒ **左对齐 + 署名行 + 色点**，
+ *     与助手气泡同侧 —— 因为那句话在本会话里**不是我说的**，右边那套语义（"我说过啥"）会撒谎。
+ * 色点走 `memberColor`（与房间成员栏**同一份**配色判据，同 id 到哪都一样色），不写死色值。
+ */
 function UserBubble(props: { node: BlockNode }) {
     const b = () => props.node;
     const steer = () => str(b().attrs.steer);
+    /** 发言者成员 id（`agent:166` / `human:ccc`）；空 = 本任务本人 */
+    const author = () => str(b().attrs.author);
     /** 这句话的时刻：块 id 自带所属轮（turnId 内嵌毫秒），格式复用 agent 侧那个 `fmtTurnStamp`。
      *  取不到就不显示（绝不用渲染时刻顶替）—— 数据源与降级口径见 `lib/user-stamp` 头注。 */
     const stamp = () => userStamp(b().id);
     return (
-        <div class="flex justify-end">
+        <div class={author() ? "flex justify-start" : "flex justify-end"}>
             <div class="max-w-[85%] bg-primary/10 border border-primary/20 rounded-2xl px-3.5 py-2 text-prose whitespace-pre-wrap break-words">
+                <Show when={author()}>
+                    {(a) => (
+                        <div class="mb-0.5 flex items-center gap-1.5 text-caption" data-user-author={a()}>
+                            <span
+                                class="h-1.5 w-1.5 shrink-0 rounded-full"
+                                style={{ background: memberColor({ id: a(), color: undefined }) }}
+                            />
+                            <span class="font-medium opacity-80">{shortName(a())}</span>
+                            <span class="opacity-40">{a()}</span>
+                        </div>
+                    )}
+                </Show>
                 <Show when={steer()}>
                     <span class="mb-0.5 block text-caption opacity-60">
                         ⤵ 插话（{steerModeLabel(steer())}）{steerModeTip(steer())}

@@ -1015,6 +1015,8 @@ async function send(taskUri: string, text: string): Promise<boolean> {
                 mode: undefined,
                 model: undefined,
                 reasoningEffort: undefined,
+                // 任务对话页 = 本任务本人在说话 ⇒ 无署名（##166 §40 C：无 author ⇒ 气泡右对齐，逐字不变）
+                author: undefined,
             },
             { signal: ctrl.signal },
         ),
@@ -1040,7 +1042,7 @@ async function submitSteer(taskUri: string, mode: SteerMode, text: string): Prom
     // 客户端类型要求每个键都在场：模型/推理只在开一轮时用，队列路径给 undefined
     const call = (ctrl?: AbortController) =>
         diyService.diy.agent.local.chat(
-            { taskUri, message: body, mode, model: undefined, reasoningEffort: undefined },
+            { taskUri, message: body, mode, model: undefined, reasoningEffort: undefined, author: undefined },
             ctrl ? { signal: ctrl.signal } : undefined,
         );
 
