@@ -70,8 +70,12 @@
      为什么必须再派生一档（##377 第 11 刀实测暴露）：daisyUI 两主题里 base-100 已是"最抬"的一档，
      overlay 又只比它抬一点 ⇒ 弹层浮在 overlay 面板上时**两者同色**（实测 dark 下补全面板与侧边栏
      面板都是 `oklab(0.362016)`，ΔRGB = 0），只剩 border + shadow 分界 —— 弹层"浮"不起来。
-     方向与 overlay 一致（继续偏离页面底），比例给到 17 个百分点（app→overlay 是 15）：
-     dark 侧同样的百分点换来的绝对 RGB 差更小（见上 overlay 那条的实测），必须多给一点才过 ≥10。 */
+     方向与 overlay 一致（继续偏离页面底），比例取 68/32。
+     ⚠️ **不是"17 个百分点才够"**（##266 review1 R1 更正；原文那半句是错的推理）：
+     本档实测 Δ(overlay→raised) = **dark 36 / light 43**（浏览器解析真值，非手算：
+     dark 55,62,71 → 87,96,107；light 216,216,216 → 173,173,174）—— 15 个百分点即 Δ≈34，
+     早已远超判据 ≥10。取 68/32 的真实理由：让 overlay→inset（9 个点）与 inset→raised（8 个点）
+     两段档距相当，且 inset→raised 的 Δ 也有 dark 17 / light 20 —— 三档都看得见，不是"刚好过线"。 */
   --diy-surface-raised: color-mix(in oklab, var(--color-base-100) 68%, var(--color-base-content) 32%);
   /* 浮层分界线 —— 比 `--diy-edge`(16%) 更清楚：它要跟**另一块面**切开，不是块内描边 */
   --diy-overlay-edge: color-mix(in oklab, var(--color-base-content) 22%, transparent);

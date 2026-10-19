@@ -2682,6 +2682,12 @@ export class LocalAgentManager {
      * 解析时机 = 每轮开始时。改人物因此天然是"下一轮生效"：在跑的轮次不受影响（不打断），
      * 也不必给用户一堆"立即/下步/下轮"的时机选项（step 中途换模型在语义上就不成立）。
      */
+    /**
+     * ⚠️ **参数位次**（##266 review1 R3.2）：① `taskUri` ② `message` ③ `modelOverride`
+     * ④ `reasoningEffortOverride` ⑤ `signal` ⑥ `seed` ⑦ `author`。
+     * 位置参数已有 7 个，且真实调用点常一次给 4 个 `undefined`（如 `room-service` 的投递）
+     * ⇒ **再加参数前先想 options 对象**；此刻至少照这行数位次，别靠肉眼对齐。
+     */
     async *chat(
         taskUri: string,
         message: string,
