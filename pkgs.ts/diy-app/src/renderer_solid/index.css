@@ -41,6 +41,35 @@
   color: var(--color-diy-link);
 }
 
+/* ── 浮层语义分层（##166 §36 · ##377 第 10 刀）─────────────────────────
+ * 【用户】「助手边栏的颜色底色换一下，和主页面区分开，**语义样式分层**那种」。
+ * 主内容区 = `base-100`，而侧边栏**也是** `base-100` ⇒ 完全同色，只靠 shadow 分界
+ * （不是颜色选得不好，是**根本没分层**）。
+ *
+ * 为什么不复用现成档位：daisyUI **两个主题里 base-100 都是「最抬」的一档**
+ * （dark：100 = oklch 25.33% > 200 = 23.26% > 300 = 21.15%；light 同理，100 最亮）
+ * ⇒ 浮层**没有更高一档可抬**，必须派生。
+ *
+ * 一条式子跨主题自动取对方向（关键）：`--color-base-content` 在 dark 是**浅色**、
+ * 在 light 是**深色** ⇒ 同一句在 dark **提亮**、light **压暗**，两主题都「偏离页面底」。
+ * ⇒ **不写主题分支、不写死色值**（与 `--diy-edge` / `--diy-card` / `--diy-rail` 同族）。
+ *
+ * 三档：`app` = base-100（主内容区，**不动**）· `overlay` = 浮层面板主体 / 球 ·
+ * `inset` = 浮层内次级块（viewbar / 成员栏 / 输入区容器）。
+ * 与主页面切开的三件套（缺一不可）：① 底色差 ② `--diy-overlay-edge` 分界线 ③ shadow-2xl。 */
+:root {
+  /* 浮层面板主体（侧边栏 / 球）—— 比页面底「再抬一档」。
+     比例 85/15（§36.3 原写 88/12）：实测 dark 下 88/12 的 ΔRGB 只有 **9**（判据要 ≥10，
+     dark 区 sRGB 值小 ⇒ 同样的 L 差换来的绝对 RGB 差更小），85/15 才过线；light 侧更宽裕。 */
+  --diy-surface-overlay: color-mix(in oklab, var(--color-base-100) 85%, var(--color-base-content) 15%);
+  /* 浮层内的次级块（viewbar / 成员栏 / 输入区容器）—— 再偏一档。
+     76/24（§36.3 原写 80/20）：overlay 提到 85/15 后，80/20 只剩 3.6 个百分点（判据下限 3%），
+     76/24 给到 ~6.5 个百分点，两主题都稳。 */
+  --diy-surface-inset: color-mix(in oklab, var(--color-base-100) 76%, var(--color-base-content) 24%);
+  /* 浮层分界线 —— 比 `--diy-edge`(16%) 更清楚：它要跟**另一块面**切开，不是块内描边 */
+  --diy-overlay-edge: color-mix(in oklab, var(--color-base-content) 22%, transparent);
+}
+
 /* ── 窄窗（<1024）导航：rail 常驻 + 点开浮层（##297） ─────────────────
  * daisyUI 把「侧栏占布局列」绑在 @media(width>=1024) 的 .lg:drawer-open 分支
  * （side 转 sticky 参与 grid、content 留第 2 列）；窄窗 side 恒为 position:fixed

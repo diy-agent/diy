@@ -336,7 +336,7 @@ export function SidebarRoom() {
             {/* ── 球态：**左缘**一颗悬浮球（用户要求：从右缘挪到左缘） ── */}
             <Show when={mode() === "ball"}>
                 <button
-                    class="fixed left-0 top-1/3 z-40 rounded-r-lg border border-l-0 border-base-300 bg-base-100/95 px-2 py-3 shadow-lg hover:bg-base-200"
+                    class="fixed left-0 top-1/3 z-40 rounded-r-lg border border-l-0 border-[var(--diy-overlay-edge)] bg-[var(--diy-surface-overlay)] px-2 py-3 shadow-lg hover:bg-[var(--diy-surface-inset)]"
                     title="打开侧边栏助手（Esc 收起）"
                     onClick={() => setMode("normal")}
                     data-sidebar-open
@@ -349,7 +349,7 @@ export function SidebarRoom() {
             {/* ── 普通态 / 最大化态：同一块面板（差别 = 宽度 + 有没有右侧成员栏） ── */}
             <Show when={mode() !== "ball"}>
                 <div
-                    class="fixed right-0 top-0 z-40 h-full flex flex-col border-l border-base-300 bg-base-100 shadow-2xl"
+                    class="fixed right-0 top-0 z-40 h-full flex flex-col border-l [border-left-color:var(--diy-overlay-edge)] bg-[var(--diy-surface-overlay)] shadow-2xl"
                     style={{ width: `${panelW()}px`, "max-width": "96vw" }}
                     data-sidebar-room
                     data-sidebar-mode={mode()}
@@ -365,7 +365,7 @@ export function SidebarRoom() {
 
                     {/* viewbar：一条细条 = 房间名 + **单个**切换按钮（用户要求"删除输入框以上的所有页面元素"） */}
                     <div
-                        class={`flex items-center gap-2 px-2 ${VIEW_BAR_H} border-b shrink-0`}
+                        class={`flex items-center gap-2 px-2 ${VIEW_BAR_H} border-b [border-bottom-color:var(--diy-overlay-edge)] bg-[var(--diy-surface-inset)] shrink-0`}
                         data-sidebar-viewbar
                     >
                         <span class="text-body shrink-0">💬</span>
@@ -560,7 +560,7 @@ export function SidebarRoom() {
                                     </div>
                                 </Show>
                                 <div
-                                    class="rounded-field border border-base-content/20 bg-base-200 transition-colors focus-within:border-base-content relative flex flex-col"
+                                    class="rounded-field border border-base-content/20 bg-[var(--diy-surface-inset)] transition-colors focus-within:border-base-content relative flex flex-col"
                                     style={{ "max-height": "42vh" }}
                                     data-sidebar-input
                                 >
@@ -608,7 +608,7 @@ export function SidebarRoom() {
                         {/* 右侧成员栏 —— **只在最大化态出现**（用户要求："扩展为最大化后出现完整形态"） */}
                         <Show when={mode() === "max"}>
                             <RoomRoster
-                                class="shrink-0 border-l"
+                                class="shrink-0 border-l bg-[var(--diy-surface-inset)] [border-left-color:var(--diy-overlay-edge)]"
                                 room={room()}
                                 roster={roster()}
                                 onFocus={(m) => void setFocus(m)}
