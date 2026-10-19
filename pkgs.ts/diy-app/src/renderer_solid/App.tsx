@@ -611,7 +611,7 @@ export default function App() {
         );
     });
     /** nav 上那**一个**主角标（同一时刻只出一个；判据见 shared/session-nav::heroBadgeOf） */
-    const navHero = createMemo(() => heroBadgeOf(navRows(), { collapsed: !expanded() }));
+    const navHero = createMemo(() => heroBadgeOf(navRows()));
     /** 主角标之外的次角标（现在是队列：紫） */
     const navSecondary = createMemo(() => secondaryBadgeOf(navRows(), navHero()));
     /** 「待你处理」区 = 有一笔账在等你（异常终止 / 卡住 / 有人在等 / 跑完没看） */

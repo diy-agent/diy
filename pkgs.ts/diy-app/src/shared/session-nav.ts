@@ -141,7 +141,7 @@ function badge(key: NavBadgeKey, text: string, short: string, tip: string): NavB
  * 同档多个会话 → **聚合**（`+7` = 一共 7 条未读，而不是"某一个会话的 7 条"），
  * 具体是谁进 tooltip 与「后台活动」区（nav 装不下名字，硬塞只会变成噪音）。
  */
-export function heroBadgeOf(rows: NavRow[], opts: { collapsed: boolean }): NavBadge | null {
+export function heroBadgeOf(rows: NavRow[]): NavBadge | null {
     const running = rows.filter((r) => r.running);
     if (running.length > 0) {
         const stalled = running.filter((r) => r.stalled);

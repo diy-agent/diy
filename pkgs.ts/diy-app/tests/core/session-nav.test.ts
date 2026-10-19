@@ -117,20 +117,18 @@ describe("navRowOf：判据全部出自 session-overview（不另写一套）", 
 });
 
 describe("heroBadgeOf：同一时刻只出一个主角标", () => {
-    const opt = { collapsed: false };
-
     it("无事发生 → null（**不给空闲发角标**：满屏角标等于没有角标）", () => {
-        expect(heroBadgeOf([row({ uri: "a" }), row({ uri: "b" })], opt)).toBeNull();
+        expect(heroBadgeOf([row({ uri: "a" }), row({ uri: "b" })])).toBeNull();
     });
 
     it("运行中 → 绿 + **闪**（用户原话：闪烁的绿色 = 运行中）", () => {
-        const b = heroBadgeOf([row({ uri: "a", running: true })], opt);
+        const b = heroBadgeOf([row({ uri: "a", running: true })]);
         expect(b).toMatchObject({ key: "running", tone: "green", pulse: true });
         expect(b!.short).toBe("●");
     });
 
     it("停滞是运行的子集 → 黄 ⚠ **优先于**运行中（更该被看见）", () => {
-        const b = heroBadgeOf([row({ uri: "a", running: true }), row({ uri: "b", running: true, stalled: true })], opt);
+        const b = heroBadgeOf([row({ uri: "a", running: true }), row({ uri: "b", running: true, stalled: true })]);
         expect(b).toMatchObject({ key: "stalled", tone: "amber", pulse: false });
         expect(b!.tip).toContain("1 个会话在跑但长时间没动静");
     });
@@ -145,32 +143,31 @@ describe("heroBadgeOf：同一时刻只出一个主角标", () => {
         const noRun = rows.filter((r) => !r.running);
         const noErr = noRun.filter((r) => !r.abnormal);
         const noUnread = noErr.filter((r) => r.unread === 0);
-        expect(heroBadgeOf(rows, opt)!.key).toBe("running");
-        expect(heroBadgeOf(noRun, opt)!.key).toBe("error");
-        expect(heroBadgeOf(noErr, opt)!.key).toBe("unread");
-        expect(heroBadgeOf(noUnread, opt)!.key).toBe("queue");
+        expect(heroBadgeOf(rows)!.key).toBe("running");
+        expect(heroBadgeOf(noRun)!.key).toBe("error");
+        expect(heroBadgeOf(noErr)!.key).toBe("unread");
+        expect(heroBadgeOf(noUnread)!.key).toBe("queue");
     });
 
     it("异常未读 → **红** + `+N`（用户原话：红色是未读异常终止）", () => {
-        const b = heroBadgeOf([row({ uri: "a", unread: 3, abnormal: true }), row({ uri: "b", unread: 4, abnormal: true })], opt);
+        const b = heroBadgeOf([row({ uri: "a", unread: 3, abnormal: true }), row({ uri: "b", unread: 4, abnormal: true })]);
         expect(b).toMatchObject({ key: "error", tone: "red", text: "+7", short: "+7" });
         expect(b!.tip).toContain("异常收尾");
     });
 
     it("未读 → **绿** `+N`，且同档**聚合**（+23 = 一共 23 条，不是某一个会话的）", () => {
-        const b = heroBadgeOf([row({ uri: "a", label: "A", unread: 20 }), row({ uri: "b", label: "B", unread: 3 })], opt);
+        const b = heroBadgeOf([row({ uri: "a", label: "A", unread: 20 }), row({ uri: "b", label: "B", unread: 3 })]);
         expect(b).toMatchObject({ key: "unread", tone: "green", text: "+23", pulse: false });
         expect(b!.tip).toContain("A、B");
     });
 
     it("已读的异常收尾**不当主角**（用户口径是「未读**且**异常」）", () => {
-        expect(heroBadgeOf([row({ uri: "a", abnormal: true, unread: 0 })], opt)).toBeNull();
+        expect(heroBadgeOf([row({ uri: "a", abnormal: true, unread: 0 })])).toBeNull();
     });
 
-    it("队列 → 紫；收起态给短文案（40px rail 只装得下 1~3 字符）", () => {
-        const expanded = heroBadgeOf([row({ uri: "a", queue: 2 })], { collapsed: false });
-        expect(expanded).toMatchObject({ key: "queue", tone: "purple", text: "队列 2", short: "2" });
-        expect(heroBadgeOf([row({ uri: "a", queue: 2 })], { collapsed: true })!.text).toBe("队列 2");
+    it("队列 → 紫；文案给全称，`short` 给 40px rail（只装得下 1~3 字符）", () => {
+        const b = heroBadgeOf([row({ uri: "a", queue: 2 })]);
+        expect(b).toMatchObject({ key: "queue", tone: "purple", text: "队列 2", short: "2" });
     });
 
     it("未读文案：统一 `+n`，超大值截断（rail 撑破就成噪音）", () => {
@@ -182,19 +179,19 @@ describe("heroBadgeOf：同一时刻只出一个主角标", () => {
 describe("secondaryBadgeOf：主角标之外的第二件事", () => {
     it("有运行中（主角）时，队列降级成次角标（紫，只给数）", () => {
         const rows = [row({ uri: "r", running: true }), row({ uri: "q", queue: 5 }), row({ uri: "q2", queue: 1 })];
-        const hero = heroBadgeOf(rows, { collapsed: false })!;
+        const hero = heroBadgeOf(rows)!;
         const sec = secondaryBadgeOf(rows, hero)!;
         expect(sec).toMatchObject({ key: "queue", tone: "purple", text: "6" });
     });
 
     it("主角标本身就是队列 → 不重复出次角标", () => {
         const rows = [row({ uri: "q", queue: 2 })];
-        expect(secondaryBadgeOf(rows, heroBadgeOf(rows, { collapsed: false }))).toBeNull();
+        expect(secondaryBadgeOf(rows, heroBadgeOf(rows))).toBeNull();
     });
 
     it("没有队列 → null", () => {
         const rows = [row({ uri: "r", running: true })];
-        expect(secondaryBadgeOf(rows, heroBadgeOf(rows, { collapsed: false }))).toBeNull();
+        expect(secondaryBadgeOf(rows, heroBadgeOf(rows))).toBeNull();
     });
 });
 

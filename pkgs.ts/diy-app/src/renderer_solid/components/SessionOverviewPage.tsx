@@ -12,7 +12,7 @@
 // 判据全在 shared/session-overview（行模型）与 shared/session-query（切片/过滤/排序）—— 本文件只做
 // 三件事：排版、把动作接到既有出口（进会话 / cancel / setLimits）、把"为什么这么显示"写进 tooltip。
 import { createMemo, createSignal, createEffect, For, Show } from "solid-js";
-import { SessionChip, SessionDot, TONE_BADGE } from "./SessionChip";
+import { SessionChip, SessionDot } from "./SessionChip";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { sessionStore } from "../store/sessionStore";
 import { taskStore } from "../store/taskStore";
@@ -60,7 +60,7 @@ function uriOf(e: SessionEntry): string {
 
 /** 状态切片 → 文字色（与 chip 同色义：绿=运行/未读 · 红=异常 · 黄=停滞/留言 · 灰=已对话） */
 const TONE_TEXT: Record<SessionChipView["tone"], string> = {
-    // 绿 = 未读 / 运行中（与 SessionChip.TONE_BADGE 同色义；本主题的 primary 是蓝紫，不是那个绿）
+    // 绿 = 未读 / 运行中（与 SessionChip 的配色同义；本主题的 primary 是蓝紫，不是那个绿）
     primary: "text-success",
     warning: "text-warning",
     error: "text-error",

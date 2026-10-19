@@ -909,7 +909,7 @@ function TaskRow(props: {
                         判据在 shared/task-agent-state，组合在 lib/agent-state —— 与 nav 项、属性面板同一份。
                         两个逐任务真源（has_session / has_draft）随任务树载荷一起来，见 TaskNodeShape。 */}
                     <TaskAgentStateBadge uri={row.key} hasSession={row.node.has_session} hasDraft={row.node.has_draft} />
-                    {/* 会话状态（##308）：任务表行不点进去就知道谁在跑、跑到第几步、有没有未读步数/
+                    {/* 会话状态（##308）：任务表行不点进去就知道谁在跑、有没有未读轮次/
                         待投递留言/上一轮异常收尾。判据与 nav chip、总览页**同一份**（sessionStore）。
                         chip 自身只在"有事"时渲染（空闲且无事 → 不占地方，见 shared/session-overview）。 */}
                     <SessionChip uri={row.key} />

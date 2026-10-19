@@ -40,11 +40,11 @@ describe("##355 四态判据", () => {
         expect(v.label).toBe("对话中");
     });
 
-    it("对话已停止但有未读步数 → unread（带上步数）", () => {
+    it("对话已停止但有未读轮次 → unread（带上未读条数）", () => {
         const v = taskAgentStateOf(input({ hasSession: true, unreadTurns: 3 }));
         expect(v.kind).toBe("unread");
         expect(v.label).toBe("有未读");
-        expect(v.tip).toContain("3 步");
+        expect(v.tip).toContain("3 条");
     });
 
     it("有未发送的草稿 → draft", () => {

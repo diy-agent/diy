@@ -57,7 +57,7 @@ export interface TaskAgentStateView {
 /**
  * 单轴判据（优先级见头注）。
  *
- * ⚠️ `unreadTurns <= 0` 一律不算未读 —— 负数（水位比当前步数还大，如刚清空会话）也必须落到
+ * ⚠️ `unreadTurns <= 0` 一律不算未读 —— 负数（水位比当前轮次还大，如刚清空会话）也必须落到
  * 后面的分支，不许出现"−3 条未读"这种荒谬显示。
  */
 export function taskAgentStateOf(i: TaskAgentStateInput): TaskAgentStateView {

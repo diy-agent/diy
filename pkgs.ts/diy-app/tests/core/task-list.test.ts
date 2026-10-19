@@ -303,6 +303,11 @@ describe("排序键清单（列顺序与可用键的唯一真相源）", () => {
       "num",
       "created",
       "updated",
+      // 会话侧四列（##358 追加在右端）
+      "session",
+      "tokens",
+      "cost",
+      "lastActivity",
     ]);
   });
 

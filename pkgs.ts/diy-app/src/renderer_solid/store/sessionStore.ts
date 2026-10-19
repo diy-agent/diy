@@ -58,9 +58,12 @@ const [table, setTable] = createSignal<Map<string, SessionEntry>>(new Map());
  *
  * ⚠️ **临时实现** —— 存 renderer `localStorage`（键 `diy_sessions_seen`，见 `Caches` 视图）。
  *
- *   · 「已读」是**全局**语义（用户拍板 ②）：localStorage 按 **profile** 共享，同 profile 的多窗口
- *     读写的本就是同一份 ⇒ **落盘即全局已读**，不需要任何跨窗口同步（同 ##306 多客户端语义：
- *     窗口 ≠ 独立的人）。
+ *   · 「已读」是**全局**语义（用户拍板 ②）：localStorage 按 **profile** 共享 ⇒ **落盘即全局已读**，
+ *     写入侧不需要任何跨窗口同步（同 ##306 多客户端语义：窗口 ≠ 独立的人）。
+ *     ⚠️ **已知限制（持久化 ≠ 同步）**：未监听 `storage` 事件 ⇒ A 窗口点开某会话后，
+ *     **B 窗口内存里的水位仍是旧的**，它的 `+N` 要等 B 重载才消失。
+ *     修法：`window.addEventListener("storage", …)` 收到后重载水位；本次不做（多窗口同盯一个会话
+ *     不是当前主场景），记在这里免得下一个人把"共享一份"误读成"实时一致"。
  *   · 为何不落 `$DIY_HOME` 侧车文件：本次只要"这台机器别再丢进度"。将来若要让 CLI / web 端点
  *     也读到同一份水位，**另开任务**升级为 `$DIY_HOME` 侧车文件，届时本 key 只作迁移源。
  *     **别在这里偷偷加 durable 语义**。
