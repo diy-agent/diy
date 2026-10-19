@@ -265,14 +265,20 @@ export type RoomEvent = z.infer<typeof RoomEventSchema>;
  * **可连写多个**（本切片按用户口径扩的）：`@dev @review 一起看下` ⇒ 两个收件人、正文「一起看下」。
  * 分隔只认空白 / 逗号 / 顿号（不认冒号 —— `@dev: 你好` 里的冒号是正文标点，历史上一直如此）。
  */
+/**
+ * 一个**已完整**的 `@名字` 地址（名字字符集：除空白与分隔标点（含 `:`）以外的一整段 ——
+ * 于是中文人物名（`@开发`）也能寻址，而 `@dev: 你好` 里的冒号仍是正文标点，历史行为不变）。
+ *
+ * **补全与投递共用这一份**：`addressQueryAt`（输入框弹面板）必须与 `parseAddress`（服务端真投递）
+ * 是同一条判据 —— 否则「弹了但没投递」比没有补全更坏（##166 §37.2 B）。
+ */
+const ADDRESS_RE = /^\s*@([^\s@,，、:]+)\s*[,，、]?\s*/;
+
 export function parseAddress(text: string): { text: string; tos: string[] } {
-    // 名字字符集：**除空白与分隔标点（含 `:`）以外的一整段** —— 于是中文人物名（`@开发`）也能寻址，
-    // 而 `@dev: 你好` 里的冒号仍是正文标点（历史行为不变，见头注）。
-    const re = /^\s*@([^\s@,，、:]+)\s*[,，、]?\s*/;
     const tos: string[] = [];
     let rest = text;
     for (;;) {
-        const m = re.exec(rest);
+        const m = ADDRESS_RE.exec(rest);
         if (!m) break;
         tos.push(m[1]!);
         rest = rest.slice(m[0].length);
@@ -280,6 +286,40 @@ export function parseAddress(text: string): { text: string; tos: string[] } {
     if (tos.length === 0) return { text, tos };
     // 只喊人、没正文（`@dev`）⇒ 保留原文，不产生空正文
     return rest.trim() ? { text: rest, tos } : { text, tos };
+}
+
+/**
+ * 「光标此刻是否处在**会生效的 `@` 寻址位**」—— 是则给出正在输入的名字片段与它的起点。
+ *
+ * 判据 = **把 `parseAddress` 的循环照跑一遍**，剥掉前面所有已完整的地址，再看剩下的部分
+ * 是不是「正好一个 `@` + 尚未输入完的名字」：
+ *
+ * ```
+ * "@dev @rev"   → 剥掉 @dev，剩 "@rev"  ⇒ 命中（query="rev"，可继续连写第二个收件人）
+ * "请 @dev 看"  → 开头不是 @ ⇒ 剩原文 ⇒ 不命中（**句中不弹** —— 服务端也不认，见 §37.2 B）
+ * "##377"       → 不命中（那是任务引用，不是寻址）
+ * ```
+ *
+ * ⚠️ 与 `parseAddress` **同一 regex**（`ADDRESS_RE`）：判据漂移 = 「弹了却不投递」，那是负价值。
+ */
+export function addressQueryAt(text: string): { query: string; from: number } | null {
+    // 只看**最后一个** `@`：前面的全是已敲完的地址，当前正在输的那个必是最后一段。
+    // （⚠️ 不能拿 ADDRESS_RE 去"剥到剩最后一个" —— 它会把**正在输的** `@dev` 也当成完整地址吃掉，
+    //   于是 `@dev` 反而不弹，正是补全最该弹的时刻。）
+    const at = text.lastIndexOf("@");
+    if (at < 0) return null;
+    const query = text.slice(at + 1);
+    // ① 当前片段必须尚未完结：不含空白 / 分隔标点 / 另一个 `@`（含则光标已离开这个地址）
+    if (/[\s@,，、:]/.test(query)) return null;
+    // ② 它前面的部分必须是**合法的地址序列**（用 ADDRESS_RE 循环剥完，剩下的只能全是空白）
+    let rest = text.slice(0, at);
+    for (;;) {
+        const m = ADDRESS_RE.exec(rest);
+        if (!m) break;
+        rest = rest.slice(m[0].length);
+    }
+    if (rest.trim()) return null;
+    return { query, from: at };
 }
 
 /** `@all` / `@*` 记号（群发）——单收件人寻址与它互斥，但可**并列**（`@all @dev` 仍是全体） */

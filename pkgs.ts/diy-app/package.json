@@ -14,6 +14,7 @@
     "@agentclientprotocol/sdk": "1.4.0",
     "@ai-sdk/openai": "^4.0.74",
     "@ai-sdk/openai-compatible": "^3.0.55",
+    "@codemirror/autocomplete": "^6.20.3",
     "@codemirror/commands": "^6.11.1",
     "@codemirror/lang-json": "^6.0.2",
     "@codemirror/lang-markdown": "^6.5.2",

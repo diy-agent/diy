@@ -49,6 +49,7 @@ import {
 } from "../../shared/room";
 import { ChatView, TurnView } from "./LocalChatPage";
 import { MdEditor } from "./MdEditor";
+import { memberCompletion, taskCompletion } from "../lib/completions";
 import { RoomRoster, type RosterMemberL1 } from "./RoomRoster";
 import type { BlockNode } from "../../main/services/local-blocks";
 
@@ -120,6 +121,17 @@ export function SidebarRoom() {
     let streamRef: HTMLDivElement | undefined;
 
     const ordered = createMemo(() => orderedMembers(room()));
+    /**
+     * 输入框补全源（##377 第 11 刀）：`@` 成员 + `##` 任务。
+     *
+     * ⚠️ 必须 `createMemo`：`memberCompletion(...)` 每次调用都返回**新函数**，直接写进 JSX 会让
+     * `MdEditor` 每次渲染都重配补全扩展（面板被重置，正选候选时列表消失）。
+     * memo 的元素引用稳定 ⇒ 只在真的换房间时才重配。
+     *
+     * `@` 源读的是**当前房间的成员**（与投递同一份数据）—— 成员变化（邀请 / 移出）时
+     * `room()` 变 ⇒ memo 重算 ⇒ 新闭包读到新成员表 ✓
+     */
+    const completions = createMemo(() => [memberCompletion(() => room()?.members ?? []), taskCompletion]);
     const human = createMemo(() => room()?.members.find((m) => m.kind === "human") ?? null);
     const focusMember = createMemo(() => room()?.members.find((m) => m.id === room()?.focus) ?? null);
     /** 面板总宽：最大化态 = 会话区 + 成员栏（"多出右侧边栏"，会话区宽度不受影响） */
@@ -570,6 +582,7 @@ export function SidebarRoom() {
                                             editable
                                             onChange={(v) => setInput(v)}
                                             onEnter={() => void send()}
+                                            completions={completions()}
                                             wrap
                                             embedded
                                         />

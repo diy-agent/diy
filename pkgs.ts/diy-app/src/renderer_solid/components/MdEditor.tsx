@@ -25,6 +25,12 @@ import { json } from "@codemirror/lang-json";
 import { defaultHighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { oneDarkHighlightStyle } from "@codemirror/theme-one-dark";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import {
+    acceptCompletion,
+    autocompletion,
+    completionStatus,
+    type CompletionSource,
+} from "@codemirror/autocomplete";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { themeSignal } from "../lib/theme";
 import { editorThemeKey, currentEditorTheme } from "../lib/editor-theme";
@@ -133,6 +139,48 @@ const labTheme = EditorView.theme(
             backgroundColor: "var(--md-active-line, var(--color-base-200))",
             color: "var(--color-base-content)",
         },
+        // ── 补全面板（`@` 成员 / `##` 任务，##377 第 11 刀）──────────────────
+        // 走 §36 的**语义色变量**（`--diy-surface-*` / `--diy-overlay-edge`），不写死色值：
+        // 同一句在 light / dark 两主题下都取到"比页面底再抬一档"的面板色，无需主题分支。
+        // ⚠️ 必须覆盖 CM 自带 tooltip 底色（默认是写死的浅灰 `#f5f5f5` 系），否则暗色主题下
+        //    弹出个白板 —— 这也是"不写死色值"要覆盖的第一件事。
+        ".cm-tooltip": {
+            backgroundColor: "var(--diy-surface-overlay)",
+            color: "var(--color-base-content)",
+            border: "1px solid var(--diy-overlay-edge)",
+            borderRadius: "0.375rem",
+            boxShadow: "0 4px 16px color-mix(in oklab, var(--color-base-content) 24%, transparent)",
+            overflow: "hidden",
+        },
+        ".cm-tooltip.cm-tooltip-autocomplete > ul": {
+            fontFamily: "var(--font-mono)",
+            fontSize: "var(--text-body)",
+            maxHeight: "14em",
+        },
+        ".cm-tooltip.cm-tooltip-autocomplete > ul > li": {
+            padding: "2px 6px",
+            lineHeight: "1.5",
+        },
+        // 高亮项：再偏一档（inset）+ 左侧主色条，键盘移动时一眼看出"当前选的是谁"
+        ".cm-tooltip-autocomplete ul li[aria-selected]": {
+            backgroundColor: "var(--diy-surface-inset)",
+            color: "var(--color-base-content)",
+            borderLeft: "2px solid var(--color-primary)",
+            paddingLeft: "4px",
+        },
+        // 匹配到的字符（CM 给 `.cm-completionMatchedText` 上色）
+        ".cm-completionMatchedText": {
+            color: "var(--color-primary)",
+            textDecoration: "none",
+            fontWeight: "bold",
+        },
+        // 右侧的 detail（成员 → 绑的会话 / 任务 → uri）：弱化，不抢 label
+        ".cm-completionDetail": {
+            color: "color-mix(in oklab, var(--color-base-content) 55%, transparent)",
+            fontStyle: "normal",
+            marginLeft: "0.75em",
+        },
+        ".cm-completionLabel": { color: "var(--color-base-content)" },
     },
     { dark: true },
 );
@@ -245,6 +293,14 @@ export function MdEditor(props: {
      *   2. 行高亮与滚动定位复用同一套装饰机制（选中结构树节点 → 滚到对应行）
      */
     lang?: "markdown" | "yaml" | "json";
+    /**
+     * 输入框补全的源（##377 第 11 刀 / ##166 §37.2 A）。**不传 = 行为逐字不变** ——
+     * 机制只有这一处，源由调用方注入：room 场景给 `[memberCompletion(...), taskCompletion]`，
+     * 任务对话页只给 `[taskCompletion]`，prompt lab 不给 ⇒ 完全不启用补全。
+     *
+     * 源本身住在 `lib/completions/`（触发判据必须与语义一致，见那边的头注）。
+     */
+    completions?: readonly CompletionSource[];
 }) {
     let host: HTMLDivElement | undefined;
     let view: EditorView | undefined;
@@ -253,6 +309,22 @@ export function MdEditor(props: {
     const styleCx = new Compartment();
     const lineNumbersCx = new Compartment();
     const langCx = new Compartment();
+    const completionsCx = new Compartment();
+    /**
+     * 补全扩展（##377 第 11 刀）：`autocompletion` + **Tab 接受键**。
+     *
+     * ⚠️ **Tab 必须自己绑**：CM6 的 `completionKeymap` 只含 `Enter` / 方向键 / `Esc`，
+     * **不含 `Tab`**（官方要求调用方自加）。实测漏了它 ⇒ 面板开着按 Tab 会**移动焦点**到下一个
+     * 可聚焦元素（`document.activeElement` 变成按钮），候选没接受、输入框失焦。
+     * `acceptCompletion` 在面板非活跃时返回 false ⇒ 不消费 Tab，原行为（焦点移动）不变。
+     */
+    const completionExt = (cs?: readonly CompletionSource[]): Extension =>
+        cs?.length
+            ? [
+                  autocompletion({ override: [...cs], activateOnTyping: true }),
+                  keymap.of([{ key: "Tab", run: acceptCompletion }]),
+              ]
+            : [];
     /** 第三方主题扩展（动态 import，选到才加载）；null = 还没加载好 → 先用内置方案 */
     const [themeExt, setThemeExt] = createSignal<Extension | null>(null);
     // 程序化换文档（切文件/保存/恢复）不回调 onChange：
@@ -273,12 +345,28 @@ export function MdEditor(props: {
                     // 否则 Enter 会被 CM 默认换行命令消费，聊天回调收不到。
                     keymap.of([
                         ...(props.onEnter
-                            ? [{ key: "Enter", run: () => { props.onEnter?.(); return true; } }]
+                            ? [
+                                  {
+                                      key: "Enter",
+                                      // ⚠️ 补全面板开着时**不能发送**（##166 §37.2 D）：用户按 Enter 是想选候选，
+                                      //    发出去 = 灾难。CM 的 `completionKeymap` 是 `Prec.highest`，实测会先吃掉
+                                      //    Enter（`acceptCompletion` 在无活跃面板时返回 false），但**不依赖那个实现细节**
+                                      //    —— 这里显式再挡一道：面板 active ⇒ 返回 false，把 Enter 让给补全。
+                                      run: (v: EditorView) => {
+                                          if (completionStatus(v.state) === "active") return false;
+                                          props.onEnter?.();
+                                          return true;
+                                      },
+                                  },
+                              ]
                             : []),
                         ...defaultKeymap,
                         ...historyKeymap,
                         ...searchKeymap,
                     ]),
+                    // 输入框补全（`@` / `##`）：**只在调用方给了源时才装** —— 不传 = 一个扩展都不加，
+                    // 行为与加补全之前逐字一致（prompt lab / 只读预览零影响）。
+                    completionsCx.of(completionExt(props.completions)),
                     // 不自动折行：与预览一致，长了横向滚（折行会让"第几行"对不上行号）
                     langCx.of(languageOf(props.lang)),
                     ...(props.wrap ? [EditorView.lineWrapping] : []),
@@ -343,6 +431,21 @@ export function MdEditor(props: {
     // 锁态切换（只读模板）→ 即时生效
     createEffect(() => {
         view?.dispatch({ effects: editableCx.reconfigure(EditorView.editable.of(props.editable)) });
+    });
+    // 补全源变化（调用方换了源）→ 重配。
+    // ⚠️ 按**元素**判等，不按数组引用：调用方写 `completions={[taskCompletion]}` 这种字面量是常态，
+    //    数组引用每渲染都新 ⇒ 按引用判等会每次渲染都 reconfigure，而 CM 重配 = **面板被重置**
+    //    （用户正在选候选时列表突然消失）。元素引用相同就不动。
+    let lastCompletions: readonly CompletionSource[] | undefined;
+    createEffect(() => {
+        const cs = props.completions;
+        const prev = lastCompletions;
+        if (prev && cs && prev.length === cs.length && prev.every((x, i) => x === cs[i])) return;
+        if (!prev && !cs) return;
+        lastCompletions = cs;
+        view?.dispatch({
+            effects: completionsCx.reconfigure(completionExt(cs)),
+        });
     });
     // 语言切换（同一实例被复用到别处时）→ 重配语法
     createEffect(() => {

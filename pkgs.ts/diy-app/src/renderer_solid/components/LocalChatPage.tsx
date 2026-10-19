@@ -55,6 +55,7 @@ import { Caches, CONCLUSION_LINES_MAX, CONCLUSION_LINES_MIN } from "../lib/ui-st
 import { HeightLedger, stackRows, windowRange } from "../lib/chat-virtual";
 import { MarkdownView } from "./MarkdownView";
 import { MdEditor } from "./MdEditor";
+import { taskCompletion } from "../lib/completions";
 import { bylineOf } from "../lib/assistant-byline";
 // 滚动决策（纯函数，可单测：跟随时序 / 锚点恢复）—— 本文件只负责 DOM 读写
 import { anchorScrollTop, anchorTick, clampScrollTop, followPlan, lastLeafId, type AnchorTickState, type ChatAnchor } from "../lib/chat-scroll";
@@ -2852,6 +2853,8 @@ export function LocalChatPage(props: { uri?: string }) {
                                 if (u) draftStore.set(u, "agent_input", v);
                             }}
                             onEnter={submitByEnter}
+                            /* 不接 `@`：任务对话页没有成员概念（见 lib/completions 头注） */
+                            completions={[taskCompletion]}
                             wrap
                             lineNumbers={fullscreen()}
                             embedded
