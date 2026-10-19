@@ -501,7 +501,54 @@ function deliverOne(input: DeliverInput): Promise<void> {
         input.done(ev);
     };
 
-    const started = st.tail.then(run, run); // 前一条失败也照跑（队列不是"一个失败全停"）
+    // ⚠️ **`input.done` 是这条链的不变量**（owner review P1）：`post` 的收尾循环是
+    // `for (let finished = 0; finished < tasks.length;)`，只靠 `completed` 计数收敛，而 `completed`
+    // 的**唯一**来源就是 `input.done`。所以 `run` 里任何一步抛错（`runAndCollect` / `record` /
+    // `mark` / `advanceLastSeen` / 未来的任何 await）都必须在这里兜住并**补一次 done** ——
+    // 否则那条 `room.post` 的 serverStream 永远不关闭（症状 = CLI/UI 挂住，不是报错）。
+    const started = st.tail
+        .then(run, run) // 前一条失败也照跑（队列不是"一个失败全停"）
+        .catch((e: unknown) => {
+            const msg = `投递异常：${String(e)}`;
+            // 落盘也可能失败（ENOSPC / 目录被删）—— 但**完成信号不能依赖落盘**：
+            // 事件写不进去就给一条内存事件，至少让流收尾、让 UI 看见失败。
+            let ev: RoomEvent | undefined;
+            try {
+                ev = record(roomId, {
+                    id: nextEventId(),
+                    ts: new Date().toISOString(),
+                    kind: "reply",
+                    author: member.id,
+                    to: [author],
+                    text: "",
+                    delivered: false,
+                    error: msg,
+                    ...(taskUri ? { sourceTask: taskUri } : {}),
+                });
+            } catch {
+                ev = undefined;
+            }
+            try {
+                mark("failed", { error: msg, ...(ev ? { replyId: ev.id } : {}) });
+            } catch {
+                // appendDelivery 也失败：状态徽章少一条，但仍不能堵死流
+            }
+            input.done(
+                ev ?? {
+                    id: nextEventId(),
+                    ts: new Date().toISOString(),
+                    // 盘写都失败时的**内存事件**：`room.post` 的流照样能收尾、UI 照样看得见失败
+                    channel: DEFAULT_CHANNEL_ID,
+                    kind: "reply",
+                    author: member.id,
+                    to: [author],
+                    text: "",
+                    delivered: false,
+                    error: msg,
+                    ...(taskUri ? { sourceTask: taskUri } : {}),
+                },
+            );
+        });
     st.tail = started.catch(() => undefined);
     return started;
 }

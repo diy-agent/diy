@@ -179,6 +179,11 @@ export function setFocus(id: string, focus: string | null): Room {
  * 为什么用一条**按房间的 promise 链**串起来：同一条 say 投给 N 个成员时 N 个 `deliverOne` 并发跑，
  * 各自"读 room.yaml → 改自己那一格 → 写回" ⇒ 后写的会把先写的整份覆盖掉（丢水位 = 下次重复注入）。
  * 链按 roomId 分（不同房间不互相阻塞）；写失败不回滚投递（水位是优化，丢一次最坏是多注入一轮）。
+ *
+ * ⚠️ 返回的 promise **永不 reject**（owner review P1）：`deliverOne` 里 `await` 它的下一行是
+ * `input.done(ev)` —— 一旦这里 reject 冒泡，`done` 不执行 ⇒ `post` 的 serverStream 永远等
+ * （`for (let finished = 0; finished < tasks.length;)` 靠 `completed` 计数收敛）⇒ **整条投递流挂死**，
+ * 不是"晚一点"。水位丢了最坏只是下次多注入一轮别人已说过的话，**绝不能把写盘失败传染给投递**。
  */
 const seenChains = new Map<string, Promise<void>>();
 export function advanceLastSeen(roomId: string, updates: Record<string, string>): Promise<void> {
@@ -188,8 +193,11 @@ export function advanceLastSeen(roomId: string, updates: Record<string, string>)
         writeRoom({ ...room, lastSeen: { ...room.lastSeen, ...updates } });
     };
     const chain = (seenChains.get(roomId) ?? Promise.resolve()).then(run, run);
-    seenChains.set(roomId, chain.catch(() => undefined));
-    return chain;
+    // 链尾存的与返回的**是同一个**（已消化失败）—— 否则下一次 `then(run, run)` 会拿到会 reject 的链，
+    // 失败就顺着链一直传下去。
+    const safe = chain.catch(() => undefined);
+    seenChains.set(roomId, safe);
+    return safe;
 }
 
 export function roomDeliveriesPath(id: string): string {
