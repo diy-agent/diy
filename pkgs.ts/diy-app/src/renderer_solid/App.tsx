@@ -56,6 +56,7 @@ import type { NavRow, NavTone } from "../shared/session-nav";
 import { ALERT_ACTION_LABEL, alertsOf } from "../shared/session-alerts";
 // 「待你处理」区（##358 D5）：判据纯函数；行集仍是上面那份 navRows（两个区**不可能**给出不同结论）
 import { todoOf, todoTitleOf, todoWhenOf } from "../shared/session-todo";
+import { resumeMoreTextOf, resumeOf, resumeWhenOf } from "../shared/session-resume";
 import { usageLedgerStore } from "./store/usageLedgerStore";
 import { alertPrefsStore } from "./store/alertPrefsStore";
 
@@ -546,6 +547,19 @@ export default function App() {
     const navBackground = createMemo(() => {
         const taken = new Set(navTodo().map((i) => i.row.uri));
         return backgroundOf(navRows()).filter((r) => !taken.has(r.uri));
+    });
+
+    /**
+     * 「继续工作」区（##358 D4）= **最近活动过、眼下没事**的会话，按最后活动时间倒序。
+     *
+     * 用户第一句原话就是它：「app 启动后丢了所有进度……我要接着工作、知道最近我在干啥」。
+     * 尺子是**账本最后一条账**（跨启动），所以**重启后本区不空** —— 这正是"进度没丢"的直接证据；
+     * `lastTs` 为空（没聊过）不进本区，也**不编时间**。
+     * 去重：前两区已收走的 uri 传进去（同一会话在 nav 只有一处）；开着 tab 的也不列。
+     */
+    const navResume = createMemo(() => {
+        const taken = [...navTodo().map((i) => i.row.uri), ...navBackground().map((r) => r.uri)];
+        return resumeOf(navRows(), taken);
     });
 
     /** 打开/聚焦某个会话（toast 的「回到」与 L2 自动拉回共用一跳） */
@@ -1593,6 +1607,91 @@ export default function App() {
                                     );
                                 }}
                             </For>
+                        {/* ── 「继续工作」区（##358 D4）───────────────────────────────
+                            用户原话：「app 启动后，丢了所有进度……我需要一种『**我要接着工作、
+                            知道最近我在干啥**』的提示，不然还要一个个点进去看」。
+                            这里是**第三顺位**：前两区是"有事"（要你动手 / 在动），本区是"没事但你最近
+                            在这儿干过" —— 按**最后活动时间**倒序，跨启动（尺子 = 账本最后一条账）。
+                            所以它是"进度没丢"的直接证据：重启后这里仍然列得出来。
+                            行不加 chip（"已对话"每行都写一遍就是噪声），只给**时间**；角标有则照常出
+                            （判据同一份 `rowBadgeOf`，只是本区多数行为空）。 */}
+                        <Show when={navResume().items.length > 0}>
+                            <Show when={expanded()}>
+                                <li
+                                    class="flex items-center gap-2 px-3 pt-2 pb-0.5 text-caption opacity-60"
+                                    data-nav-resume-title
+                                >
+                                    <span>继续工作</span>
+                                    <span class="font-mono">{navResume().items.length}</span>
+                                </li>
+                            </Show>
+                            <For each={navResume().items}>
+                                {(r) => {
+                                    const badge = () => rowBadgeOf(r);
+                                    const num = () => findNode(taskStore.nodes, r.uri)?.num;
+                                    const when = () => resumeWhenOf(r);
+                                    const go = () => {
+                                        hideHoverLayers();
+                                        collapseRail();
+                                        getRendererActions().openTaskRun?.(r.uri);
+                                    };
+                                    const tip = () => `${r.label}\n（最近在这儿干过${when() ? `：${when()}` : ""}）`;
+                                    return (
+                                        <li class="flex justify-center">
+                                            <Show
+                                                when={expanded()}
+                                                fallback={
+                                                    <button
+                                                        class="relative flex items-center justify-center h-8 w-8 rounded-lg text-caption font-mono opacity-60 hover:opacity-100 cursor-pointer"
+                                                        title={tip()}
+                                                        data-nav-resume={r.uri}
+                                                        onClick={go}
+                                                    >
+                                                        {num() ?? "•"}
+                                                        <Show when={badge()}>
+                                                            {(b) => (
+                                                                <span
+                                                                    class={`absolute -top-0.5 -right-0.5 px-1 rounded text-caption font-mono ${NAV_TONE_CLASS[b().tone]} ${
+                                                                        b().pulse ? "animate-pulse" : ""
+                                                                    }`}
+                                                                >
+                                                                    {b().short}
+                                                                </span>
+                                                            )}
+                                                        </Show>
+                                                    </button>
+                                                }
+                                            >
+                                                <button
+                                                    class="flex items-center gap-1 w-full px-2 py-1 rounded-lg text-body cursor-pointer opacity-60 hover:opacity-100 hover:bg-base-300"
+                                                    title={tip()}
+                                                    data-nav-resume={r.uri}
+                                                    onClick={go}
+                                                >
+                                                    <span class="flex-1 truncate text-left">{r.label}</span>
+                                                    <Show when={badge()}>
+                                                        {(b) => (
+                                                            <span
+                                                                class={`badge border badge-xs font-mono whitespace-nowrap ${NAV_TONE_CLASS[b().tone]}`}
+                                                                title={b().tip}
+                                                            >
+                                                                {b().text}
+                                                            </span>
+                                                        )}
+                                                    </Show>
+                                                    <span class="font-mono text-caption opacity-70 shrink-0">{when()}</span>
+                                                </button>
+                                            </Show>
+                                        </li>
+                                    );
+                                }}
+                            </For>
+                            <Show when={resumeMoreTextOf(navResume())}>
+                                <li class="px-3 pb-1 text-caption opacity-50" data-nav-resume-more>
+                                    {resumeMoreTextOf(navResume())}
+                                </li>
+                            </Show>
+                        </Show>
                     </div>
                     {/* 右缘拖拽条：调宽 + 双击复位。收起态（rail）没有可调的宽度，不渲染 */}
                     <Show when={expanded()}>
