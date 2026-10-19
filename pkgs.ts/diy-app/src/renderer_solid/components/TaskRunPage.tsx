@@ -16,6 +16,7 @@ import type { Layout } from "../../shared/grid-layout";
 import { ViewGrid } from "./ViewGrid";
 import { TaskSideView } from "./TaskSideView";
 import { LocalChatPage } from "./LocalChatPage";
+import { TaskRoomRoster } from "./TaskRoomRoster";
 import { taskStore } from "../store/taskStore";
 import { layoutStore } from "../store/layoutStore";
 import { getRendererActions } from "../lib/renderer-actions";
@@ -114,6 +115,10 @@ export function TaskRunPage(props: { uri: string }) {
                                 return <TaskSideView uri={props.uri} hoverPreview={true} chromeGap={true} />;
                             case "chat.local":
                                 return <LocalChatPage uri={props.uri} />;
+                            case "room.roster":
+                                // 右栏成员栏（##377 第 16 刀 / ##166 §43.3 A）：
+                                // 任务恒是一个 room（§28.7 G，id = taskUri）⇒ 这个 view 就是它的成员表
+                                return <TaskRoomRoster uri={props.uri} />;
                             default:
                                 return <div class="p-3 text-body opacity-60">未注册的 view: {viewId}</div>;
                         }

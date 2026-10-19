@@ -58,7 +58,18 @@ import { MdEditor } from "./MdEditor";
 import { taskCompletion } from "../lib/completions";
 import { bubbleAlignClass, hasAuthor } from "../lib/user-bubble";
 import { bylineOf } from "../lib/assistant-byline";
-import { memberColor, shortName } from "../../shared/room";
+import {
+    MAIN_MEMBER_ID,
+    memberAvatar,
+    memberColor,
+    memberName,
+    orderedMembers,
+    shortName,
+    type Room,
+    type RoomEvent,
+} from "../../shared/room";
+import { fmtClock } from "../../shared/date-format";
+import { diyService } from "../lib/rpc";
 // 滚动决策（纯函数，可单测：跟随时序 / 锚点恢复）—— 本文件只负责 DOM 读写
 import { anchorScrollTop, anchorTick, clampScrollTop, followPlan, lastLeafId, type AnchorTickState, type ChatAnchor } from "../lib/chat-scroll";
 // user 发言的时刻 label（纯函数：块 id → 所属轮起点时刻；数据源与降级口径见模块头注）
@@ -1536,6 +1547,153 @@ export function TurnView(props: {
 // 松手即落盘（`steer.reorder` 提交完整顺序）。拖拽只认手柄：整行可拖会让"想选中那句话"
 // 变成"拖走了它"，而手柄是明确的意图声明（与任务树整行可拖不同 —— 那里一行只有一个含义）。
 
+/**
+ * 「别人说的话」行（##377 第 16 刀 / ##166 §43.3 B）—— **只读回显**。
+ *
+ * 它是一条 room `reply` 事件（非主人格）在任务页时间线里的投影：**不是本任务会话的块**
+ * —— 正文与进度都仍住在那位成员的会话里，这里只有 `ref{memberUri, turnId}` 这条**引用**
+ * （§32.3 护栏：不把块流拷进 room 事件流）。展开 L2 时才按需读那一轮（`room.turn`），
+ * 渲染走**任务对话同一套**（`ChatView` + `TurnView`，§28.7 A：不许另写一套）。
+ */
+/** 空 pin 表：外部行不参与「过程 bar 开合」的页面级偏好（那份偏好键的是本会话的块 id） */
+const EMPTY_PIN: Record<string, boolean> = {};
+
+function RoomReplyRow(props: {
+    event: RoomEvent;
+    room: Room | null;
+    roomId: string;
+    /**
+     * 展开态**由页面持有**（受控）：虚拟化会把滚出视口的行从 DOM 摘掉 ⇒ 组件卸载 ⇒
+     * 组件内的 `open` 会丢（实测：展开后滚出去再滚回来，进度又收起来了）。
+     * 与本会话轮次的 `pin` / `histOpen` 同一个理由、同一种做法。
+     */
+    open: boolean;
+    onToggle: () => void;
+}) {
+    const [st, setSt] = createSignal<{ turn: BlockNode | null; turnId: string; live: boolean } | null>(
+        null,
+    );
+    const [err, setErr] = createSignal<string | null>(null);
+    /** 取过一次就不再重复取（展开/收起是纯前端两态；要刷新进度就再收开一次） */
+    let fetched = false;
+
+    const load = async (): Promise<void> => {
+        const e = props.event;
+        if (!e.ref || !props.roomId) return;
+        try {
+            const r = await diyService.diy.room.turn({
+                id: props.roomId,
+                event: e.id,
+                member: undefined,
+                turn: undefined,
+            });
+            setSt({ turn: r.turn as BlockNode | null, turnId: r.turnId, live: r.live });
+            setErr(null);
+        } catch (e2) {
+            setErr(e2 instanceof Error ? e2.message : String(e2));
+        }
+    };
+    // 首次展开时取那一轮（之后复用；要刷新进度就收开一次）
+    createEffect(() => {
+        if (props.open && !fetched) {
+            fetched = true;
+            void load();
+        }
+    });
+
+    const author = () => props.event.author;
+    /** 头像位次取房间展示序（与成员栏同一份 ⇒ 同一人两处头像一致） */
+    const avatarIdx = (): number => {
+        const i = orderedMembers(props.room).findIndex((m) => m.id === author());
+        return i >= 0 ? i : 0;
+    };
+
+    return (
+        <div class="flex flex-col gap-0.5" data-room-reply={props.event.id}>
+            {/* 署名行（与任务页的 user 署名同一形状：色点 + 名字 + 时刻）—— 别人的话一律左对齐 */}
+            <div class="flex items-center gap-1.5 text-caption">
+                <span class="text-base leading-none">{memberAvatar({ id: author() }, avatarIdx())}</span>
+                <span class="font-bold" style={{ color: memberColor({ id: author() }) }}>
+                    {memberName(props.room, author())}
+                </span>
+                <span class="opacity-50" title={props.event.ts}>
+                    {fmtClock(props.event.ts)}
+                </span>
+                <span class="opacity-40">→ 我</span>
+                <Show when={props.event.sourceTask}>
+                    <span class="opacity-40" data-room-reply-source>
+                        来自会话 {props.event.sourceTask}
+                    </span>
+                </Show>
+            </div>
+            <div class="rounded-lg bg-base-200 px-3 py-1.5 text-prose whitespace-pre-wrap">
+                {props.event.text || <span class="opacity-50">（无正文）</span>}
+            </div>
+            <Show when={props.event.ref}>
+                <div
+                    class="rounded-lg border border-base-300 bg-base-100/60"
+                    data-room-reply-progress={props.event.id}
+                >
+                    <button
+                        class="flex w-full items-center gap-1.5 px-2 py-0.5 text-left text-caption"
+                        onClick={() => props.onToggle()}
+                        data-room-reply-toggle={props.event.id}
+                    >
+                        <span class="opacity-60">{props.open ? "▾" : "▸"}</span>
+                        <span>过程进度</span>
+                        <span class="opacity-50" data-room-reply-turnid>
+                            {props.event.ref?.turnId}
+                        </span>
+                        <Show when={st()?.live}>
+                            <span class="badge badge-xs badge-info">直播中</span>
+                        </Show>
+                    </button>
+                    <Show when={props.open}>
+                        <div class="px-2 pb-1.5">
+                            <Show when={err()}>
+                                <div class="text-caption text-error">{err()}</div>
+                            </Show>
+                            <Show when={!st() && !err()}>
+                                <div class="text-caption opacity-60">正在取这一轮…</div>
+                            </Show>
+                            <Show when={st()?.turn}>
+                                <ChatView
+                                    source={{
+                                        trees: () => {
+                                            const t = st()?.turn;
+                                            return t ? [t] : [];
+                                        },
+                                        live: () => st()?.live === true,
+                                    }}
+                                >
+                                    <TurnView
+                                        turnId={st()!.turnId}
+                                        pin={EMPTY_PIN}
+                                        level={2}
+                                        histOpen={true}
+                                        onCycle={() => undefined}
+                                        conclusionLines={3}
+                                        onResizeLines={() => undefined}
+                                        onToggle={() => undefined}
+                                        onFull={() => undefined}
+                                        liveTurnId={st()?.live ? st()!.turnId : null}
+                                        md={true}
+                                        usageHover={null}
+                                        onHoverUsage={() => undefined}
+                                        onHoverEndUsage={() => undefined}
+                                        usageDetail={null}
+                                        onDetailUsage={() => undefined}
+                                    />
+                                </ChatView>
+                            </Show>
+                        </div>
+                    </Show>
+                </div>
+            </Show>
+        </div>
+    );
+}
+
 function SteerBar(props: {
     items: SteerItem[];
     onCancel: (id: string) => void;
@@ -2322,6 +2480,71 @@ export function LocalChatPage(props: { uri?: string }) {
      * （2026-10-11 CDP 实测：直播中点任何展开 bar 都无反应，全页连一个 click 事件都没有）。
      * 行对象按 id 复用后，只有真正变了的那一行才重建，DOM 留在原地。
      */
+    // ─── room：「别人说的话」（##377 第 16 刀 / ##166 §43.3 B）──────────────────────
+    // 任务页的时间线 = **本任务 ops 流**（主人格，逐字不变）+ room 事件流里「非主人格」的
+    // `reply`（只读回显）。三条边界：
+    //   · **只读**：本刀不碰发送路径（主输入框仍 `agent.local.chat`，第 17 刀才改走 room 的 post）；
+    //   · **不拷块流**（§32.3 护栏）：这里只拿 `ref{memberUri, turnId}` 定位，L2 展开时才按需
+    //     读那一轮（`room.turn`），数据始终只住在那位成员的会话里；
+    //   · **去重**：`ref.memberUri === MAIN_MEMBER_ID`（主人格）的事件**跳过** —— 它的那一轮
+    //     本来就在本任务的 ops 流里，再画一次就是两条（判据 5）。
+    const [roomMeta, setRoomMeta] = createSignal<Room | null>(null);
+    const [roomReplies, setRoomReplies] = createSignal<RoomEvent[]>([]);
+    /** room 侧读失败：只影响「别人说的话」这一层，**不动**本会话的错误位（会话本身是好的） */
+    const [roomNote, setRoomNote] = createSignal<string | null>(null);
+
+    const loadRoomReplies = async (u: string, soft = false): Promise<void> => {
+        try {
+            const r = await diyService.diy.room.get({ id: u, limit: 200 });
+            setRoomMeta(r.room);
+            setRoomReplies(
+                r.events.filter(
+                    (e) => e.kind === "reply" && !!e.ref && e.ref.memberUri !== MAIN_MEMBER_ID,
+                ),
+            );
+            if (!soft) setRoomNote(null);
+        } catch (e) {
+            if (!soft) setRoomNote(`读房间失败：${e instanceof Error ? e.message : String(e)}`);
+        }
+    };
+
+    /**
+     * 外部行（key = `room:<事件 id>`）—— **按 id 复用行对象**：`<For>` 按引用 diff，
+     * 轮询每 2.5s 给一批新事件对象，不复用就会把外部行每轮重建（展开态跟着丢）。
+     * `tsMs` 取事件的 ISO 时刻（同一事件不变 ⇒ 复用安全）。
+     */
+    let prevReplyRows: { key: string; tag: string; tsMs: number }[] = [];
+    const roomReplyRows = createMemo(() => {
+        const byKey = new Map(prevReplyRows.map((r) => [r.key, r]));
+        prevReplyRows = roomReplies()
+            .map((e) => byKey.get(`room:${e.id}`) ?? { key: `room:${e.id}`, tag: "room-reply", tsMs: Date.parse(e.ts) })
+            .filter((r) => Number.isFinite(r.tsMs))
+            .sort((a, b) => a.tsMs - b.tsMs);
+        return prevReplyRows;
+    });
+
+    const roomReplyOf = (key: string): RoomEvent | null =>
+        roomReplies().find((e) => `room:${e.id}` === key) ?? null;
+
+    /** 外部行的展开态（**页面级**：虚拟化摘行会卸载组件，放组件里会丢 —— 见 RoomReplyRow 头注） */
+    const [replyOpen, setReplyOpen] = createSignal<Record<string, boolean>>({});
+
+    // 取数：首挂 + 切任务 + 2.5s 轻量轮询（与侧边栏同一节奏；本切片无推送通道）
+    onMount(() => {
+        const u0 = uri();
+        if (u0) void loadRoomReplies(u0);
+        const t = setInterval(() => {
+            const u = uri();
+            if (u) void loadRoomReplies(u, true);
+        }, 2500);
+        onCleanup(() => clearInterval(t));
+    });
+    createEffect(
+        on(uri, (u) => {
+            if (u) void loadRoomReplies(u);
+        }),
+    );
+
     let prevRows: { key: string; tag: string }[] = [];
     const rootRows = createMemo(() => {
         const byKey = new Map(prevRows.map((r) => [r.key, r]));
@@ -2332,7 +2555,32 @@ export function LocalChatPage(props: { uri?: string }) {
         return prevRows;
     });
     // ─── 视口虚拟化的布局（##301）：行键 → 账面高度 → 前缀和 → 视口窗口 ────────────
-    const rowKeys = createMemo(() => rootRows().map((r) => r.key));
+    /**
+     * **合并行清单**（##377 第 16 刀）：本任务块树行（`rootRows`，对象按 id 复用、逐字不变）
+     * + room 的「别人说的话」行。没有外部行时**原样返回** `rootRows()` —— 单人任务因此
+     * 走的是与改动前**同一条**路径（判据 7）。
+     *
+     * 归位依据：本任务轮的**起始时刻** = turnId 内嵌毫秒（`t<ms>`，与 `userStamp` 同源），
+     * 与 reply 事件的 `ts` 比大小 ⇒ 插在「最后一个起始时刻 ≤ reply.ts」的轮**之后**。
+     * 不一律堆到末尾 —— 历史 reply 要与它发生时刻对应的那一轮相邻（口径「按 ts 归位」）。
+     */
+    const allRows = createMemo(() => {
+        const base = rootRows();
+        const reps = roomReplyRows();
+        if (reps.length === 0) return base;
+        const out: { key: string; tag: string }[] = [];
+        let i = 0;
+        for (const r of base) {
+            if (r.tag === "turn") {
+                const t0 = Number(r.key.slice(1));
+                while (i < reps.length && reps[i]!.tsMs <= t0) out.push(reps[i++]!);
+            }
+            out.push(r);
+        }
+        while (i < reps.length) out.push(reps[i++]!);
+        return out;
+    });
+    const rowKeys = createMemo(() => allRows().map((r) => r.key));
     /**
      * 前缀和布局。`heights` 与 `keys` 同长；未渲染过的行走**估算**（见 HeightLedger）。
      * 账不是信号，故显式依赖 `ledgerTick`（写账处 `touchLedger()`）。
@@ -2350,10 +2598,10 @@ export function LocalChatPage(props: { uri?: string }) {
         const L = layout();
         return windowRange(L.tops, L.heights, scrollTop(), chatVpH(), OVERSCAN_PX);
     });
-    /** 窗口内的行对象（仍是 rootRows 里按 id 复用的那份 ⇒ `<For>` 不重建未变的行） */
+    /** 窗口内的行对象（仍是合并清单里按 id 复用的那份 ⇒ `<For>` 不重建未变的行） */
     const windowRows = createMemo(() => {
         const [f, t] = win();
-        return rootRows().slice(f, t);
+        return allRows().slice(f, t);
     });
     /** 被摘出行列之外的行：保留实测高度（不清），滚回来时位置才稳定 */
 
@@ -2798,6 +3046,33 @@ export function LocalChatPage(props: { uri?: string }) {
                                         usageDetail={usageDetail()}
                                         onDetailUsage={(id) => setUsageDetail((d) => (d === id ? null : id))}
                                     />
+                                ) : row.tag === "room-reply" ? (
+                                    /* room 里「别人说的话」（##377 第 16 刀）：**只读回显**。
+                                       `roomReplyOf` 取不到 = 事件已滑出 limit 窗口（少见）——
+                                       如实标出，不静默留白 */
+                                    <Show
+                                        when={roomReplyOf(row.key)}
+                                        fallback={
+                                            <div class="text-body opacity-40">
+                                                [room 事件已不在窗口内]
+                                            </div>
+                                        }
+                                    >
+                                        {(ev) => (
+                                            <RoomReplyRow
+                                                event={ev()}
+                                                room={roomMeta()}
+                                                roomId={uri() ?? ""}
+                                                open={replyOpen()[ev().id] === true}
+                                                onToggle={() =>
+                                                    setReplyOpen((p) => ({
+                                                        ...p,
+                                                        [ev().id]: p[ev().id] !== true,
+                                                    }))
+                                                }
+                                            />
+                                        )}
+                                    </Show>
                                 ) : row.tag === "error" ? (
                                     /* 遗留的**根级** error 块（历史日志：旧版上限提示未挂 parent）。
                                        新日志已把提示挂进 turn（见 local-agent 的上限分支），但重放旧

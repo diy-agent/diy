@@ -144,6 +144,16 @@ export const VIEWS: ViewDef[] = [
     },
   },
   {
+    // 任务执行页右栏：**房间成员**（##166 §43.3 A / ##377 第 16 刀）。
+    // 任务恒是一个 room（§28.7 G）⇒ 房间 id 就是 taskUri；本 view 只负责取数
+    // （room.create 幂等 / room.get / room.roster）+ 三级的抽屉，成员列表本体复用
+    // `RoomRoster`（与侧边栏、房间页**同一份**，不复制）。
+    id: "room.roster",
+    title: "成员",
+    instanceScope: "context",
+    placement: { "task-run": { area: "right", order: 10 } },
+  },
+  {
     id: "llm.proxy",
     title: "LLM 代理",
     instanceScope: "global",
@@ -192,7 +202,7 @@ export const VIEWS: ViewDef[] = [
 /** 任务执行页：左详情 | 中 chat | 右预留 | 底 devtools */
 export const TASK_RUN_LAYOUT: Layout = {
   version: 1,
-  cols: [px(300), fr(1), px(0)], // 右栏初始 0（预留，未实现）
+  cols: [px(300), fr(1), px(320)], // 右栏 = 房间成员栏（##377 第 16 刀；原为 0 = 预留）
   rows: [fr(1), px(320)], // 底栏高度；默认收起由 layoutStore 的 hidden 表达（不是把尺寸写 0）
   areas: [
     { id: "left", col: 0, row: 0 },
@@ -204,7 +214,7 @@ export const TASK_RUN_LAYOUT: Layout = {
 
 /** 各 page 默认隐藏的 area（开发者默认布局的一部分：试验场是 devtools，默认不占地方） */
 export const DEFAULT_HIDDEN: Record<string, string[]> = {
-  "task-run": ["right", "bottom"],
+  "task-run": ["bottom"], // right（成员栏）默认可见；bottom（试验场）仍是 devtools
   lab: ["bottom"], // 提示词页的 chat 是卫星，默认不占地方
 };
 
