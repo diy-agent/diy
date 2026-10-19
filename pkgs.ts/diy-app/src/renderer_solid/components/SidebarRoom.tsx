@@ -150,7 +150,8 @@ export function SidebarRoom() {
         if (!r) return "";
         const addr = parseAddress(input());
         const explicit = addr.tos.map((t) => (isAllAddress(t) ? "all" : resolveMember(r, t)));
-        const { recipients, routing } = resolveRecipients(explicit, r.focus, r.members);
+        // self = 人成员（`@` 自己 = 笔记，##166 §38.2）—— 与服务端 `postToRoom` 同一份判据
+        const { recipients, routing } = resolveRecipients(explicit, r.focus, r.members, human()?.id);
         return deliveryHint(recipients, r, routing);
     });
 
@@ -387,6 +388,20 @@ export function SidebarRoom() {
                         <span class="badge badge-xs badge-ghost shrink-0">
                             {room()?.members.length ?? 0} 人
                         </span>
+                        {/* view 级操作（##166 §38.3）：room 的「当前接受者」在这里，不在成员行内 */}
+                        <span class="text-caption opacity-60 truncate" data-sidebar-focus>
+                            接受者 {focusMember()?.name ?? "（无）"}
+                        </span>
+                        <Show when={focusMember()}>
+                            <button
+                                class="btn btn-xs btn-ghost shrink-0"
+                                title="清空当前接受者（之后不写 @ 的发言 = 笔记）"
+                                onClick={() => void setFocus(null)}
+                                data-sidebar-focus-clear
+                            >
+                                清空
+                            </button>
+                        </Show>
                         <div class="flex-1" />
                         <button
                             class="btn btn-xs btn-ghost"
@@ -464,6 +479,20 @@ export function SidebarRoom() {
                                                     >
                                                         {e.text || <span class="opacity-50">（无正文）</span>}
                                                     </div>
+                                                    {/* 笔记（##166 §38.2）：**中性**标记 —— 不是投递失败，也不该像故障 */}
+                                                    <Show when={e.routing === "note"}>
+                                                        <div
+                                                            class="mt-0.5 flex items-center gap-1"
+                                                            data-sidebar-note={e.id}
+                                                        >
+                                                            <span class="badge badge-xs badge-ghost opacity-70">
+                                                                笔记
+                                                            </span>
+                                                            <span class="text-caption opacity-40">
+                                                                不投递，只进房间历史
+                                                            </span>
+                                                        </div>
+                                                    </Show>
                                                     <Show when={(e.deliveries?.length ?? 0) > 0}>
                                                         <div class="flex flex-wrap gap-1 mt-0.5">
                                                             <For each={e.deliveries}>
@@ -583,6 +612,7 @@ export function SidebarRoom() {
                                             onChange={(v) => setInput(v)}
                                             onEnter={() => void send()}
                                             completions={completions()}
+                                            mention
                                             wrap
                                             embedded
                                         />
@@ -613,7 +643,7 @@ export function SidebarRoom() {
                                     </div>
                                 </div>
                                 <div class="text-caption opacity-50 mt-1">
-                                    回车发送 / Shift+回车换行 · 当前接受者 {focusMember()?.name ?? "（无）"}
+                                    回车发送 / Shift+回车换行 · 不写 @ 且无接受者时 = 笔记（只进房间历史）
                                 </div>
                             </div>
                         </div>

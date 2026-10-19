@@ -94,6 +94,91 @@ const makeDslPlugin = (knownTags: ReadonlySet<string>) =>
     { decorations: (v) => v.decorations },
 );
 
+/* ── mention chip（##377 第 12 刀 / ##166 §38.1）─────────────────────────
+ * 【用户】「`@xxx` 后这个特殊的内容是否是个特殊格式？其他 agent 都是一个**单一的 UI 元素**，
+ * 用**后退键可以一键删除**，类似富文本，可否做到，是否需要换编辑器？」
+ *
+ * 结论：**不换编辑器**（CM6 原生支持），但**三件事要自己加**（CM6 不免费给）：
+ *   1. `Decoration.mark` —— chip 视觉（见 `index.css` 的 `.cm-mention-chip`，走语义色）；
+ *   2. `EditorView.atomicRanges` —— **光标跳过整块**（不能停在 chip 中间打字）；
+ *   3. **自定义 Backspace** —— ⚠️ `atomicRanges` **只管光标移动、不管删除粒度**
+ *      （`deleteCharBackward` → `deleteByChar` 只删一个字符）⇒ 一键删必须自己写。
+ *
+ * 关键分层（"是否特殊格式"的真答案）：
+ *   · **文档层**（CM doc = 落盘 = wire）= **纯文本** `@dev `，**不变**（可 diff / grep / 剪贴板）；
+ *   · **视图层** = chip（一个视觉单元），**纯装饰、不进文档**。
+ * ⇒ 同 Obsidian `[[link]]` / GitHub `@mention`：**看到的是 chip，存的是文本**。
+ *
+ * 位置判据与 `shared/room.ts::parseAddress` **同一份直觉**：地址只认**开头**、
+ * 连续地址之间只隔空白 ⇒ chip 也只在那种位置画（句中 `请 @dev 看下` 不是 chip，
+ * 因为它根本不是寻址 —— 画成 chip 等于告诉用户"投递了"，而服务端不会投）。
+ */
+const MENTION_NAME = "[A-Za-z0-9_.\\-/:]+";
+const MENTION_ONE = new RegExp(`@${MENTION_NAME}`, "y");
+
+/** 扫「合法地址位」上的 mention（顺序天然递增，可直接进 Decoration.set） */
+export function scanMentions(text: string): { from: number; to: number }[] {
+    const out: { from: number; to: number }[] = [];
+    let i = 0;
+    for (;;) {
+        while (i < text.length && /\s/.test(text[i]!)) i++;
+        MENTION_ONE.lastIndex = i;
+        const m = MENTION_ONE.exec(text);
+        if (!m) break;
+        out.push({ from: i, to: i + m[0].length });
+        i += m[0].length;
+    }
+    return out;
+}
+
+const chipMark = Decoration.mark({ class: "cm-mention-chip" });
+
+/** 装饰插件：范围 = **视觉**范围（不含尾随空格，右边界紧贴名字最后一个字符） */
+const makeMentionPlugin = () =>
+    ViewPlugin.fromClass(
+        class {
+            decorations: DecorationSet;
+            /** 给 Backspace 命令用（删除范围**含**尾随空格 —— 与视觉范围有意不同） */
+            spans: { from: number; to: number }[];
+            constructor(view: EditorView) {
+                this.decorations = Decoration.none;
+                this.spans = [];
+                this.build(view);
+            }
+            update(u: ViewUpdate) {
+                if (u.docChanged) this.build(u.view);
+            }
+            build(view: EditorView): void {
+                const spans = scanMentions(view.state.doc.toString());
+                this.spans = spans;
+                this.decorations = Decoration.set(
+                    spans.map((s) => chipMark.range(s.from, s.to)),
+                    true,
+                );
+            }
+        },
+        { decorations: (v) => v.decorations },
+    );
+
+/**
+ * 一键删整块（**核心判据**）：光标紧贴 chip 右端 ⇒ 一次 Backspace = 整块消失
+ * （含 `@` / 名字 / **尾随空格**）。
+ *
+ * **不接受**「先跳到开头、再删」的两段式 —— 那正是用户说的"其他 agent 都能一键删"的反面。
+ */
+function deleteMentionBackward(view: EditorView, spans: { from: number; to: number }[]): boolean {
+    const sel = view.state.selection.main;
+    if (!sel.empty) return false; // 有选区 ⇒ 交给默认行为
+    const pos = sel.head;
+    // 向前吃一个尾随空格（删除范围含它；视觉范围不含 ⇒ 两处口径在此显式分开）
+    let end = pos;
+    if (end > 0 && view.state.sliceDoc(end - 1, end) === " ") end--;
+    const hit = spans.find((s) => s.to === end);
+    if (!hit) return false;
+    view.dispatch({ changes: { from: hit.from, to: pos }, selection: { anchor: hit.from } });
+    return true;
+}
+
 /** 版式（与配色无关）：等宽 body 档、行号栏弱显 —— 第三方主题也保留这套版式 */
 const labLayout = {
     "&": { height: "100%", fontSize: "var(--text-body)" },
@@ -301,6 +386,12 @@ export function MdEditor(props: {
      * 源本身住在 `lib/completions/`（触发判据必须与语义一致，见那边的头注）。
      */
     completions?: readonly CompletionSource[];
+    /**
+     * mention chip（##377 第 12 刀 / ##166 §38.1）：把「合法地址位」上的 `@名` 画成一个视觉单元。
+     * **不传 = 逐字不变**（无装饰、无 atomicRanges、无自定义 Backspace）—— 与 `completions` 同一条口径：
+     * 机制在编辑器一处，是否启用由调用方决定（room 场景开、prompt lab 关）。
+     */
+    mention?: boolean;
 }) {
     let host: HTMLDivElement | undefined;
     let view: EditorView | undefined;
@@ -310,6 +401,7 @@ export function MdEditor(props: {
     const lineNumbersCx = new Compartment();
     const langCx = new Compartment();
     const completionsCx = new Compartment();
+    const mentionCx = new Compartment();
     /**
      * 补全扩展（##377 第 11 刀）：`autocompletion` + **Tab 接受键**。
      *
@@ -325,6 +417,24 @@ export function MdEditor(props: {
                   keymap.of([{ key: "Tab", run: acceptCompletion }]),
               ]
             : [];
+    /**
+     * mention chip 扩展：装饰插件 + `atomicRanges`。
+     * ⚠️ 插件实例必须**存下来**：`atomicRanges` 与自定义 Backspace 都要读它算出来的 `spans`
+     * （重新扫一遍文档也能算，但那就等于**两份判据**，迟早漂移）。
+     */
+    let mentionPlugin: ReturnType<typeof makeMentionPlugin> | null = null;
+    const mentionExt = (on?: boolean): Extension => {
+        if (!on) {
+            mentionPlugin = null;
+            return [];
+        }
+        const p = makeMentionPlugin();
+        mentionPlugin = p;
+        return [
+            p,
+            EditorView.atomicRanges.of((v) => v.plugin(p)?.decorations ?? Decoration.none),
+        ];
+    };
     /** 第三方主题扩展（动态 import，选到才加载）；null = 还没加载好 → 先用内置方案 */
     const [themeExt, setThemeExt] = createSignal<Extension | null>(null);
     // 程序化换文档（切文件/保存/恢复）不回调 onChange：
@@ -344,6 +454,16 @@ export function MdEditor(props: {
                     // keymap 比普通 DOM handler 更早处理 CM 的按键；自定义绑定放最前，
                     // 否则 Enter 会被 CM 默认换行命令消费，聊天回调收不到。
                     keymap.of([
+                        // ⚠️ 一键删整块必须**排在默认键位之前**（同 Enter 的理由：先到先得）
+                        {
+                            key: "Backspace",
+                            run: (v: EditorView) => {
+                                const p = mentionPlugin;
+                                if (!p) return false;
+                                const inst = v.plugin(p);
+                                return inst ? deleteMentionBackward(v, inst.spans) : false;
+                            },
+                        },
                         ...(props.onEnter
                             ? [
                                   {
@@ -367,6 +487,7 @@ export function MdEditor(props: {
                     // 输入框补全（`@` / `##`）：**只在调用方给了源时才装** —— 不传 = 一个扩展都不加，
                     // 行为与加补全之前逐字一致（prompt lab / 只读预览零影响）。
                     completionsCx.of(completionExt(props.completions)),
+                    mentionCx.of(mentionExt(props.mention)),
                     // 不自动折行：与预览一致，长了横向滚（折行会让"第几行"对不上行号）
                     langCx.of(languageOf(props.lang)),
                     ...(props.wrap ? [EditorView.lineWrapping] : []),
@@ -446,6 +567,11 @@ export function MdEditor(props: {
         view?.dispatch({
             effects: completionsCx.reconfigure(completionExt(cs)),
         });
+    });
+    // mention 开关变化 → 重配（装上/摘掉装饰 + atomicRanges）
+    createEffect(() => {
+        const on = props.mention;
+        view?.dispatch({ effects: mentionCx.reconfigure(mentionExt(on)) });
     });
     // 语言切换（同一实例被复用到别处时）→ 重配语法
     createEffect(() => {

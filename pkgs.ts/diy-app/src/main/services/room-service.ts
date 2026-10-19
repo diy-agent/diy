@@ -261,9 +261,10 @@ export async function* postToRoom(roomId: string, rawText: string): AsyncGenerat
     const fromName = human ? shortName(human.id) : "有人";
 
     // ── ① 解析收件人（判据 2：@X 覆盖 focus；@all = 全体 agent）──
+    // `self = author`（##166 §38.2）：`@` 自己 = **笔记**（零投递），不是投递、也不是故障。
     const addr = parseAddress(text);
     const explicit = addr.tos.map((t) => (isAllAddress(t) ? "all" : resolveMember(room, t)));
-    const { recipients, routing } = resolveRecipients(explicit, room.focus, room.members);
+    const { recipients, routing } = resolveRecipients(explicit, room.focus, room.members, author);
 
     const sayId = nextEventId();
     // record = 落盘 + 补 channel（唯一写入口）；返回的那份才是盘上的形状 ⇒ yield 它
@@ -276,7 +277,9 @@ export async function* postToRoom(roomId: string, rawText: string): AsyncGenerat
         routing,
         text, // 存**原话**（含 @X）；投递时才剥
         delivered: false, // 读侧按投递状态 fold 真值（见 core/room.readRoomView）
-        ...(recipients.length === 0 ? { error: "没有 @ 收件人、也没有当前接受者（只有自己能看到）" } : {}),
+        // ⚠️ 零收件人**不再报 error**（##166 §38.2）：那可能是**笔记**（routing:'note'，正常操作），
+        //    也可能是**打错名字**（`unknown-recipient`）—— 后者由 `whyNotDeliverable` 在投递环节
+        //    如实报出（它才是真故障）。把两者混成一个 error 字段 = 让人不敢写笔记。
     });
     yield sayEvent;
     if (recipients.length === 0) return;

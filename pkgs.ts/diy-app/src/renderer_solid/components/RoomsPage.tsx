@@ -185,7 +185,8 @@ export function RoomsPage() {
         if (!r) return "";
         const addr = parseAddress(input());
         const explicit = addr.tos.map((t) => (isAllAddress(t) ? "all" : resolveMember(r, t)));
-        const { recipients, routing } = resolveRecipients(explicit, r.focus, r.members);
+        // self = 人成员（`@` 自己 = 笔记，##166 §38.2）—— 与服务端 `postToRoom` 同一份判据
+        const { recipients, routing } = resolveRecipients(explicit, r.focus, r.members, human()?.id);
         return deliveryHint(recipients, r, routing);
     });
 

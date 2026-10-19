@@ -70,6 +70,18 @@
   --diy-overlay-edge: color-mix(in oklab, var(--color-base-content) 22%, transparent);
 }
 
+/* ── mention chip（##377 第 12 刀 / ##166 §38.1）──────────────────────
+ * 视图层装饰：文档里存的**仍是纯文本** `@dev `（落盘 / diff / 剪贴板全不变），
+ * 只是渲染成一个视觉单元。同 Obsidian `[[link]]` / GitHub `@mention`。
+ * 色走语义变量（`--color-primary` + `color-mix`）—— 零硬编码色值，light/dark 自动取对方向。 */
+.cm-mention-chip {
+  background: color-mix(in oklab, var(--color-primary) 22%, transparent);
+  color: var(--color-primary);
+  border-radius: 0.25rem;
+  padding: 0 0.15em;
+  font-weight: 600;
+}
+
 /* ── 窄窗（<1024）导航：rail 常驻 + 点开浮层（##297） ─────────────────
  * daisyUI 把「侧栏占布局列」绑在 @media(width>=1024) 的 .lg:drawer-open 分支
  * （side 转 sticky 参与 grid、content 留第 2 列）；窄窗 side 恒为 position:fixed

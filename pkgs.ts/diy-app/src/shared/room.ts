@@ -178,7 +178,17 @@ export type Room = z.infer<typeof RoomSchema>;
  * 一条发言的投递依据：`explicit` = 显式 `@X`；`all` = 显式 `@all`（群发）；
  * `focus` = 隐式当前接受者；`none` = 都没（只落盘）。
  */
-export const RoomRoutingSchema = z.enum(["explicit", "all", "focus", "none"]);
+/**
+ * 投递路由（##166 §35.2 + §38.2）：
+ *   · `explicit` 显式 `@` 了成员 · `all` `@all` 群发 · `focus` 无 `@` 但有当前接受者；
+ *   · **`note`** = 「这是一条**笔记**」（无 `@` 无 focus，或只 `@` 了自己）——
+ *     **零投递、正常落盘、不报错**（用户口径：「发送给自己的消息不要报错，就当成普通消息」）；
+ *   · `none` = 旧数据里的历史值（`note` 的前身，**保留以便读旧事件流**）。
+ *
+ * ⚠️ 与 `unknown-recipient`（**打错名字 = 真故障**，要报）的区分是本节的全部要点：
+ * 把「本来就没打算投」做成报错，**就是让人不敢写笔记**。
+ */
+export const RoomRoutingSchema = z.enum(["explicit", "all", "focus", "note", "none"]);
 export type RoomRouting = z.infer<typeof RoomRoutingSchema>;
 
 /**
@@ -345,16 +355,25 @@ export function resolveRecipients(
   to: readonly string[] | undefined,
   focus: string | null | undefined,
   members: readonly RoomMember[] = [],
+  /**
+   * 发言者本人（##166 §38.2）：`@` 自己 = **笔记**（不是投递）。
+   * 不传 = 与旧行为逐字一致（不知道"谁在说"时无法识别"@ 自己"）。
+   */
+  self?: string | null,
 ): { recipients: string[]; routing: RoomRouting } {
   const explicit = (to ?? []).filter((t) => !!t);
   if (explicit.length > 0) {
     const hasAll = explicit.some(isAllAddress);
-    const named = explicit.filter((t) => !isAllAddress(t));
+    // ⚠️ `@` 自己**不算收件人**：自己给自己投递没有意义（会在自己的会话里起一轮）
+    const named = explicit.filter((t) => !isAllAddress(t) && t !== self);
     const agents = members.filter((m) => m.kind === "agent").map((m) => m.id);
-    return { recipients: [...new Set([...named, ...(hasAll ? agents : [])])], routing: hasAll ? "all" : "explicit" };
+    const recipients = [...new Set([...named, ...(hasAll ? agents : [])])];
+    // 只剩自己 ⇒ 笔记（**不是** fallback 到 focus：用户显式 @ 了自己，就该照他说的做）
+    if (recipients.length === 0) return { recipients: [], routing: "note" };
+    return { recipients, routing: hasAll ? "all" : "explicit" };
   }
   if (focus) return { recipients: [focus], routing: "focus" };
-  return { recipients: [], routing: "none" };
+  return { recipients: [], routing: "note" };
 }
 
 /**
@@ -452,7 +471,8 @@ export function deliveryHint(
     room: Pick<Room, "members"> | null | undefined,
     routing: RoomRouting,
 ): string {
-    if (recipients.length === 0) return "未投递（没有 @ 收件人、也没有当前接受者）—— 只有自己能看到";
+    // 笔记（§38.2）：**中性**文案 —— 不是"未投递"，是"本来就没打算投"
+    if (recipients.length === 0) return routing === "note" ? "笔记（不投递，只进房间历史）" : "未投递（没有 @ 收件人、也没有当前接受者）";
     if (recipients.length === 1) return `将投递给 ${memberName(room, recipients[0]!)}`;
     const names = recipients.map((r) => memberName(room, r)).join(" / ");
     const head = routing === "all" ? "群发" : "将投递给";
