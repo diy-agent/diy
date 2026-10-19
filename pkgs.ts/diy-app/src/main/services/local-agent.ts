@@ -84,6 +84,7 @@ import { abortText } from "../../shared/turn-end";
 import { opsFeed } from "./ops-feed";
 // 「模型不可用」通知（##369 ①）：判据在 shared/model-unavailable，通知中心在 model-notice
 import { modelNoticeHub, noticeFromError, unavailableNoticeFromLocal } from "./model-notice";
+import { networkStreak } from "./env-watch";
 import { AsyncQueue, withCleanup } from "./async-queue";
 import { sessionRegistry } from "./session-registry";
 import { addStepUsage, newUsageAcc, setTurnUsage, type TurnUsage } from "./turn-usage";
@@ -3490,6 +3491,10 @@ export class LocalAgentManager {
         };
 
         let failed = false;
+        // 本轮是否出现过**流内 error part**（SDK 以 part 报错、**不抛异常**，见下面 `case "error"`）。
+        // 环境感知（##384）用它当闸门：这种失败之后流仍会**正常收尾**，若不设闸门就会在收尾处
+        // 把刚记下的连败清零 —— 连败永远到不了阈值，「网络不可达」红条永远不亮（实测踩过）。
+        let streamErrorPart = false;
         try {
             // 从块树重建 messages：本轮的 user 块 + 中途落下的插话块都在里面，
             // 「wire = store = UI = LLM」这条链对每一步都成立（prepareStep 注入的就是它）。
@@ -3804,6 +3809,11 @@ export class LocalAgentManager {
                             const msg = errText(err);
                             // 模型不可用的**主路径**（实测：`[model_coming_soon]` 从这里来，不走 catch）
                             reportModelUnavailable(err, taskUri, identity.persona, model);
+                            // 环境感知（##384）：网络层失败按**轮次**计连败（ENOTFOUND / ETIMEDOUT / …），
+                            // 连续 N 次 → 顶栏「网络不可达」红条。上游 5xx 不算（那是服务端故障，网络通着）。
+                            networkStreak.fail(err);
+                            // 记下"本轮失败过"：这条分支只是 `break`，流之后仍会正常收尾（见 streamErrorPart 声明）
+                            streamErrorPart = true;
                             setEndReason({ type: "error", data: { source: "llm", message: msg } });
                             // 把「这次失败对应哪条实际请求」一并记下：错误块据此直接跳到那条
                             // 请求/响应（能定位就定位，不靠用户猜 trace_id）。
@@ -3929,6 +3939,14 @@ export class LocalAgentManager {
                 // 流循环跑到这里 = 流**正常收尾**（无异常、无 return 展开）。置位供 closeTurn 兜底：
                 // 若各分支都没写 endReason（provider 连 finish 都没发），至少有"跑完了"这个事实。
                 streamDone = true;
+                // 环境感知（##384）：这一轮跑通了 ⇒ 网络层连败清零、`network-down` 红条自动消。
+                // 判据是"**轮次**成功"而不是"某个 HTTP 200"：一次请求成功不代表网络稳定，
+                // 而一轮对话完整收尾足以证明链路可用。
+                //
+                // `!streamErrorPart` 这道闸门是必需的（实测踩过）：SDK 的网络失败以 **error part** 形式
+                // 报出（不抛异常），流随后仍会正常收尾 —— 此时 `streamDone` 也是 true。若不设闸门，
+                // 上一行刚计的连败会被这里立刻清零，连败**永远到不了阈值**，红条永远不亮。
+                if (!streamErrorPart) networkStreak.succeed();
                 // LLM 历史由外层 chat() 从块树统一重建（见 chat 末尾），此处不操作
             } catch (e) {
                 // 取消（停止按钮 → cancel/abort；消费端断开不再走这里，##305）与真实错误分流：前者是预期收尾，后者记 error 块
@@ -3944,6 +3962,8 @@ export class LocalAgentManager {
                     // —— 那两类混进来会让 bar 天天亮（告警疲劳），且动作完全不同（该等，不是该配模型）。
                     // 这里只**产生一条事实**给顶栏 bar，不阻断流程：轮次照旧收尾、会话照旧留 error 块。
                     reportModelUnavailable(e, taskUri, identity.persona, model);
+                    // 环境感知（##384）：网络层失败连败计数（判据在 shared/env-watch 纯函数）
+                    networkStreak.fail(e);
                     setEndReason({ type: "error", data: { source: "stream", message: msg } });
                     yield* errorBlock("stream", msg);
                     failed = true;

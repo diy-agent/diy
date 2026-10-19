@@ -30,6 +30,24 @@ import { randomBytes } from "node:crypto";
 import { chmodSync, closeSync, fsyncSync, mkdirSync, openSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
+/**
+ * 写失败钩子（##384「环境感知」）：`writeFileAtomic` 失败时**先回调再上抛**。
+ *
+ * 为什么要有：磁盘满（ENOSPC）时用户看到的是"这次操作失败了"，但**机器已经满了**这件事
+ * 只有在这一刻是确知的（水位可能刚被腾出来）。让上层（services/env-watch）挂一个钩子，
+ * 就能把"写失败"立刻升级成顶栏红条 —— 而 core 层不反向依赖 services（依赖方向仍是 core ← services）。
+ *
+ * 契约：钩子**绝不能抛**（吞掉自己内部错误）—— 它只是观测，不能改变写失败的语义。
+ *
+ * `path` 是**失败的那个目标文件**：磁盘满只跟那个卷有关（写小镜像满 ≠ 根卷满），
+ * 报告里必须能说出"哪个卷"，否则数字是别的卷的，等于误导。
+ */
+let _onWriteError: ((e: unknown, path: string) => void) | null = null;
+
+export function setWriteErrorHook(fn: ((e: unknown, path: string) => void) | null): void {
+    _onWriteError = fn;
+}
+
 export interface WriteFileAtomicOptions {
     /** 写后 fsync 临时文件（掉电耐久）。缺省 false —— 与收敛前各处行为一致，只是多一次磁盘同步的代价。 */
     fsync?: boolean;
@@ -43,9 +61,11 @@ export interface WriteFileAtomicOptions {
  * @throws 目标不可写 / 磁盘满 / rename 失败等 —— **原样上抛**，调用方自己决定要不要降级
  */
 export function writeFileAtomic(path: string, content: string, opts: WriteFileAtomicOptions = {}): void {
-    mkdirSync(dirname(path), { recursive: true });
     const tmp = tempPathFor(path);
     try {
+        // mkdir 也放进 try：它同样可能因 ENOSPC 失败（父目录项要落盘），
+        // 而"磁盘满"这个事实必须无论在哪一步失败都能被观测到（##384）。
+        mkdirSync(dirname(path), { recursive: true });
         writeFileSync(tmp, content, "utf-8");
         inheritMode(path, tmp);
         if (opts.fsync) syncFile(tmp);
@@ -53,6 +73,12 @@ export function writeFileAtomic(path: string, content: string, opts: WriteFileAt
         // （Windows 上 rename 覆盖已存在文件会失败 —— 本仓只在 macOS / Linux 跑，不为它加平台分支。）
         renameSync(tmp, path);
     } catch (e) {
+        // 观测钩子先跑（##384）：磁盘满这类环境故障要立刻可见，别等下一轮轮询。
+        try {
+            _onWriteError?.(e, path);
+        } catch {
+            /* 钩子只观测，绝不改变写失败语义 */
+        }
         // 失败路径：清掉自己的 tmp，**目标文件不碰**（它从头到尾没被写过）。清理失败也抛原错误。
         try {
             rmSync(tmp, { force: true });
