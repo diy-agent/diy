@@ -11,6 +11,9 @@
  *   · remoteActive —— main 真值（agent.local.running）：这个任务此刻是否真有轮次在跑，
  *     **包含别人发起的**（CLI / 另一窗口）。只看本地 `running` 会把别人正在跑的轮次
  *     误报成「本轮未完成（流中断/崩溃恢复）」，也没有停止入口。
+ *     ##390 起，**轮次边界 op 可以先抢跑**（乐观置位，见 optimisticTurnStart / Stop）：
+ *     op 先到、真值后到的那几帧若仍按旧值渲染，就会闪一句「本轮未完成」。抢跑一律可被更晚的
+ *     真值改写 —— 判据仍在本文件与 shared/session-view.ts，且**不看块自己的 stopped 位**。
  *   · running —— 只是"我这轮在等自己的流"，是前者的子集；停止时按本地确定终态立刻复位。
  *
  * 模型与人物**不在这里**：模型属于人物（配置实体），本 store 只负责"某个任务的会话流"，
@@ -80,9 +83,33 @@ interface TaskState {
     setTrees: (v: BlockNode[]) => void;
     running: () => boolean;
     setRunning: (v: boolean) => void;
-    /** main 真值：本 task 此刻有活跃轮次（含别人发起的），由 agent.local.running 轮询刷新 */
+    /**
+     * 本 task 此刻**是否在跑**（UI 的唯一判据，见 shared/session-view.ts 的 `remoteActive`）。
+     *
+     * 两个写口，**都在这一刻的"现在"上取真**：
+     *   · `refreshActive`（main 真值，`agent.local.running`）；
+     *   · 轮次边界 op 的**乐观置位**（`optimisticTurnStart` / `optimisticTurnStop`，##390）——
+     *     事件（op）先到就先认态，不让"真值慢一拍"那段窗口渲染成假警报。
+     * 乐观值**一律**可被更晚的真值改写（它只是抢跑，不是新判据）。
+     */
     active: () => boolean;
     setActive: (v: boolean) => void;
+    /**
+     * 真值查询的**发起序号**：只认**最新一次发起**的结果，更早的响应一律丢弃。
+     *
+     * 为什么必须有（##390）：`agent.local.running` 是普通 RPC，响应可能**乱序**到达；而轮次
+     * 边界又会在查询途中把乐观值写进去。没有这道闸门时，一条"发问那一刻还没有轮次"的旧答案
+     * 晚到，会把刚起的轮次压回"不在跑" —— 用户看到的就是那一闪的黄字。
+     */
+    activeAsk: number;
+    /**
+     * 上一次**真值**结论（只由 `running` 的响应写；乐观置位不写）。
+     *
+     * 只服务**真值下降沿**的判定（`was && !active` ⇒ 轮末重放）：它必须与"界面上是否显示活着"
+     * 分开 —— 界面值可能被乐观置位抢跑到 true，而"main 刚收尾一轮、该重放磁盘终态"这件事
+     * 只认真值的上升下降，不认抢跑。
+     */
+    truthActive: boolean;
     /** 已请求停止的时刻（epoch ms）；null = 没点过。main 报不活跃后自动清掉 */
     stopRequestedAt: () => number | null;
     setStopRequestedAt: (v: number | null) => void;
@@ -170,7 +197,8 @@ function stateFor(taskUri: string): TaskState {
         s = {
             segments: [], tailCursor: null, hasMore, setHasMore, olderBusy, setOlderBusy,
             loaded: false, trees, setTrees, running, setRunning,
-            active, setActive, stopRequestedAt, setStopRequestedAt, abort: null,
+            active, setActive, activeAsk: 0, truthActive: false,
+            stopRequestedAt, setStopRequestedAt, abort: null,
             error, setError, steers, setSteers, usage, setUsage, steerSeq: 0, steerSettled: 0,
             scroll: null, tab: "local", detailScroll: 0,
             appliedSeq: 0, epoch: -1, opsAbort: null, opsState, setOpsState, opsDownNotified: false,
@@ -419,14 +447,57 @@ async function doReload(taskUri: string): Promise<void> {
     }
 }
 
+/**
+ * 轮次 **start** 边界 op 进树：乐观置 `active = true`（##390）。
+ *
+ * 为什么必须在这里置（而不是等 `refreshActive` 回来）：`applyOpsFrame` 先把 op 落进树，**之后**
+ * 才去问真值（异步）。这中间必然渲染至少一帧「新轮 = 队尾 + 未收 stop + 真值仍 saying 不在跑」，
+ * 而渲染判据是 `!isLiveTurn() && turnEndNote(...)`（LocalChatPage）⇒ 那一帧就是用户看到的
+ * 「⚠ 本轮未完成（流中断/崩溃恢复）」一闪。
+ *
+ * ⚠️ 这**不是**把"块未收 stop"当活跃（shared/session-view.ts 的铁律未动）：本函数只由
+ * **轮次边界 op**（main 真的开了这一轮）触发，不看块的 stopped 位；且它写的是"这一刻的在跑态"，
+ * 更晚的真值来了照样改写（含主进程崩溃后 closer 落的 `interrupted` 历史轮 —— 那些轮没有 start op
+ * 到达本窗口，永远走不到这里）。
+ */
+function optimisticTurnStart(st: TaskState): void {
+    // 作废在途真值查询：它们的结论**早于**这一刻，落地就会把乐观置位压回去（那一闪正是这个窗口）
+    st.activeAsk += 1;
+    // 边缘判据当作"真值上升过"：轮末真值回 false 时仍要触发下降沿重放（与未加乐观置位的旧行为一致）
+    st.truthActive = true;
+    st.setActive(true);
+}
+
+/**
+ * 轮次 **stop** 边界 op 进树：乐观复位 `active = false`（##390）。
+ *
+ * 为什么连"收敛"也要抢跑：短轮（start→stop 一瞬间）里，一次真值往返就足够让界面误读成
+ * 「还在生成」—— 输入框锁着、按钮显示"停止"，而服务端早就收尾了。stop op 本身是**确定事实**
+ * （main 在交还 stop 之前就已把轮次从注册表摘掉，见 local-blocks/closeTurn 的同步副作用顺序），
+ * 故本地立刻收口是对的；真值若说**还有别的轮次在跑**（队列下一轮已起跑），下一次
+ * `refreshActive` 会把它抬回去。
+ *
+ * ⚠️ 只调**降**不调**升**：stop 永远只说明"这一轮结束了"，不说明"什么都没在跑"。故它不改
+ * `truthActive`（下降沿判据留在真值那侧）。
+ */
+function optimisticTurnStop(st: TaskState): void {
+    st.activeAsk += 1; // 同上：作废在途查询，别让一条旧答案把收敛后的状态又抬回去
+    st.setActive(false);
+}
+
 /** 查一次 main 真值，写入该 task 的 active 标记（未建状态的 task 直接跳过：没人看就不必刷） */
 async function refreshActive(taskUri: string): Promise<void> {
     const st = states.get(taskUri);
     if (!st) return;
-    const was = st.active();
+    const asked = ++st.activeAsk;
     try {
         const r = await diyService.diy.agent.local.running({});
+        // 更晚的查询 / 更晚的轮次边界已经把结论写进去了 → 本条是**旧答案**，丢弃。
+        // 没有这道闸门时，响应乱序就能把刚起的轮次压回"不在跑"（##390 的一闪由此复现）。
+        if (asked !== st.activeAsk) return;
         const active = (r?.active ?? []).some((t) => t.taskUri === taskUri);
+        const was = st.truthActive;
+        st.truthActive = active;
         st.setActive(active);
         // main 说这轮已收尾 → 停止请求使命结束（否则宽限期后会把"停止中"又说成"正在生成"）
         if (!active) {
@@ -442,8 +513,9 @@ async function refreshActive(taskUri: string): Promise<void> {
     } catch (e) {
         // 查询失败不改既有判断：宁可留着上一次的真值，也不能当作"没人跑"（那正是误报中断的成因）
         console.warn(`[localChat] 运行态查询失败 ${taskUri}:`, e);
+    } finally {
+        setNowMs(Date.now());
     }
-    setNowMs(Date.now());
 }
 
 /**
@@ -861,10 +933,23 @@ function applyOpsFrame(taskUri: string, frame: OpsFrame): void {
     const seg = tailForWrite(st);
     for (const op of ops) {
         seg.store.apply(op);
-        if (op.op === "start" && op.kind === "turn") sawTurnBoundary = true;
+        if (op.op === "start" && op.kind === "turn") {
+            sawTurnBoundary = true;
+            // 轮次边界 op 直接写"此刻在跑"（##390）：等真值 RPC 回来之前的那几帧，
+            // 队尾是一轮"未收 stop"的新轮，若 active 仍为旧值就会被渲染成「本轮未完成」。
+            // ⚠️ 只在**这一轮确实还没收尾**时置位：补发/重放里的 start（该轮早已 stop）不许把死轮复活。
+            const b = seg.store.blocks.get(op.id);
+            if (b && !b.stopped) optimisticTurnStart(st);
+        }
         // stop 不带 kind：向块树查该 id 是不是轮次块（apply 后块仍在，仅 stopped 置位）
-        else if (op.op === "stop" && seg.store.blocks.get(op.id)?.kind === "turn") sawTurnBoundary = true;
-        else if (op.op === "start" && op.kind === "text" && op.meta?.["steer"]) sawSteerDelivered = true;
+        else if (op.op === "stop") {
+            const b = seg.store.blocks.get(op.id);
+            if (b?.kind === "turn") {
+                sawTurnBoundary = true;
+                // 收尾是**确定事实**（main 先摘注册表再交还 stop）⇒ 本地立刻收敛，不等真值往返（##390）。
+                optimisticTurnStop(st);
+            }
+        } else if (op.op === "start" && op.kind === "text" && op.meta?.["steer"]) sawSteerDelivered = true;
     }
     st.appliedSeq = frame.fromSeq + frame.ops.length - 1;
     scheduleRefresh(st);
