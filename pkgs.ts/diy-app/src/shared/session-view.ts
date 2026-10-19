@@ -29,7 +29,14 @@ export const STOP_GRACE_MS = 3000;
 export interface SessionSignals {
     /** 本地 send() 在途：我这轮自己发起、正等自己的流 */
     sending: boolean;
-    /** main 真值：该 task 此刻有活跃轮次（含别人发起的） */
+    /**
+     * "这个 task 此刻有活跃轮次"（含别人发起的）：main 真值（`agent.local.running`）。
+     *
+     * ⚠️ 喂进来的值允许是**抢跑**（##390）：轮次 start 边界 op 一到，store 就先按"活跃"算，
+     * 真值回来了再改写。抢跑只治"真值慢一拍"那一闪（否则新轮 + 未收 stop + live 仍旧值 =
+     * 一帧「本轮未完成」），**不改本文件的判据**：live 仍只由"main 报活跃 / 我这轮在途"决定，
+     * 而"抢跑"的证据本身就是 main 真的开了这一轮（轮次边界 op），与块自己的 stopped 位无关。
+     */
     remoteActive: boolean;
     /** 已请求停止的时刻（epoch ms）；null = 没点过停止 */
     stopRequestedAt: number | null;
