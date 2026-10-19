@@ -9,8 +9,9 @@
 // （开箱即用），且缺省人物是**数据**（用户可改）而不是代码里的硬编码回落 ——
 // 旧实现把默认模型硬编码进 chat()，正是"每次重启都回到同一个模型"的病灶。
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { writeFileAtomic } from "./atomic-write";
 import * as yaml from "js-yaml";
 import { isKnownModel, reasoningOf } from "../../shared/models";
 import {
@@ -61,11 +62,7 @@ export function loadPersonas(home: string): PersonasFile {
 
 /** 写入 personas.yaml（原子：tmp → rename）。结构非法直接抛（写侧不允许存下坏数据）。 */
 export function savePersonas(home: string, file: PersonasFile): void {
-  const p = personasFile(home);
-  mkdirSync(dirname(p), { recursive: true });
-  const tmp = `${p}.tmp-${process.pid}`;
-  writeFileSync(tmp, yaml.dump(PersonasFileSchema.parse(file), { indent: 2, noRefs: true }), "utf-8");
-  renameSync(tmp, p);
+  writeFileAtomic(personasFile(home), yaml.dump(PersonasFileSchema.parse(file), { indent: 2, noRefs: true }));
 }
 
 /**

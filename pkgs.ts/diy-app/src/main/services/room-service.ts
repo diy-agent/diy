@@ -19,7 +19,17 @@
 
 import { getLocalAgent } from "./local-agent";
 import { sessionRegistry } from "./session-registry";
-import { appendDelivery, appendEvent, ensureRoom, nextEventId, readRoom, setFocus, upsertMember } from "../core/room";
+import {
+    advanceLastSeen,
+    appendDelivery,
+    appendEvent,
+    ensureRoom,
+    nextEventId,
+    readEvents,
+    readRoom,
+    setFocus,
+    upsertMember,
+} from "../core/room";
 import { diyHome, getTask } from "../core/state";
 import { defaultPersonaId, listPersonas } from "../core/persona";
 import {
@@ -30,9 +40,11 @@ import {
     isAllAddress,
     isSidebarRoomId,
     memberName,
+    opsAuthorFor,
     parseAddress,
     resolveMember,
     resolveRecipients,
+    roomContextFor,
     shortName,
     type DeliveryState,
     type DeliveryStatus,
@@ -429,15 +441,40 @@ function deliverOne(input: DeliverInput): Promise<void> {
             input.done(ev);
             return;
         }
+        // 房间上下文（##166 §44.6）：**自上次它被投递以来、房间里别人说了什么** ——
+        // 不注入的话，被投递的 agent 只知道"这一句"，对刚才房间里发生过什么一无所知。
+        // 四条规则（水位 / 去重 / 不看自己 / 上限）全在 `shared/room.roomContextFor`（纯函数 + 单测），
+        // 这里只负责**现读**事件流与水印（不用投递开始时的快照：排队期间别人可能又说了话）。
+        const ctx = roomContextFor({
+            events: readEvents(roomId).events,
+            memberId: member.id,
+            sayId,
+            lastSeenId: readRoom(roomId)?.lastSeen[member.id],
+        });
         // 主人格（`main`）的会话 = **宿主任务自己的会话** ⇒ 正文就是原话，不包房间前缀
         // （##166 §28.7 G 推论 4：「不加人时行为与旧版完全一致」的正文层落点）。
+        // ⚠️ `plain` 只去掉**房间前缀**，「近期发言」段照加（判据 6：主人格也得知道别人说了话）；
+        //    上下文为空时 `contextBlock` 返回空串 ⇒ 单人任务 / 无别人发言时正文逐字不变（判据 1/7）。
         const r = await runAndCollect(
             taskUri,
-            deliveryText({ roomId, fromName, text: body, toAll, plain: member.main === true }),
+            deliveryText({
+                roomId,
+                fromName,
+                text: body,
+                toAll,
+                plain: member.main === true,
+                context: ctx.items,
+                contextOmitted: ctx.omitted,
+                nameOf: (id) => memberName(input.room, id),
+            }),
             // 署名（##166 §40 B）：值 = **发起投递的成员 id**（`agent:main` / `human:ccc`），
             // 不是自由字符串 —— 可追溯、可点开。对方会话里那条 user 块据此区分"谁在跟我说"，
             // 任务对话页据此把气泡翻到左侧并署名（C 块）。
-            author,
+            // ⚠️ 第 17 刀收窄（§44.2 A · D 判据 1/7）：**投给主人格且发起者是页面操作者本人 ⇒ 不署名** ——
+            //   主人格的会话就是任务页**自己的**会话，凭空带上 `human:chen56` 会让那条气泡翻到左侧并加署名
+            //   ⇒「无 @ 发送 = 与今天等价 / 单人任务逐字一致」当场破。判据在 `shared/room.opsAuthorFor`
+            //   （纯函数 + 单测），**别在这里另写一份**。
+            opsAuthorFor(member.main === true, author),
         );
         const replyId = nextEventId();
         const ev = record(roomId, {
@@ -458,10 +495,60 @@ function deliverOne(input: DeliverInput): Promise<void> {
             ...(r.turnId ? { turnId: r.turnId } : {}),
             ...(r.error ? { error: r.error } : {}),
         });
+        // 水位前移（##166 §44.6 四.1）：**只在真跑完时**前移 —— 失败 / 会话忙不前进，
+        // 下次投递时这段时间别人的话还能补给它（宁可重复一轮，不可静默漏掉）。
+        if (!r.error) await advanceLastSeen(roomId, { [member.id]: sayId });
         input.done(ev);
     };
 
-    const started = st.tail.then(run, run); // 前一条失败也照跑（队列不是"一个失败全停"）
+    // ⚠️ **`input.done` 是这条链的不变量**（owner review P1）：`post` 的收尾循环是
+    // `for (let finished = 0; finished < tasks.length;)`，只靠 `completed` 计数收敛，而 `completed`
+    // 的**唯一**来源就是 `input.done`。所以 `run` 里任何一步抛错（`runAndCollect` / `record` /
+    // `mark` / `advanceLastSeen` / 未来的任何 await）都必须在这里兜住并**补一次 done** ——
+    // 否则那条 `room.post` 的 serverStream 永远不关闭（症状 = CLI/UI 挂住，不是报错）。
+    const started = st.tail
+        .then(run, run) // 前一条失败也照跑（队列不是"一个失败全停"）
+        .catch((e: unknown) => {
+            const msg = `投递异常：${String(e)}`;
+            // 落盘也可能失败（ENOSPC / 目录被删）—— 但**完成信号不能依赖落盘**：
+            // 事件写不进去就给一条内存事件，至少让流收尾、让 UI 看见失败。
+            let ev: RoomEvent | undefined;
+            try {
+                ev = record(roomId, {
+                    id: nextEventId(),
+                    ts: new Date().toISOString(),
+                    kind: "reply",
+                    author: member.id,
+                    to: [author],
+                    text: "",
+                    delivered: false,
+                    error: msg,
+                    ...(taskUri ? { sourceTask: taskUri } : {}),
+                });
+            } catch {
+                ev = undefined;
+            }
+            try {
+                mark("failed", { error: msg, ...(ev ? { replyId: ev.id } : {}) });
+            } catch {
+                // appendDelivery 也失败：状态徽章少一条，但仍不能堵死流
+            }
+            input.done(
+                ev ?? {
+                    id: nextEventId(),
+                    ts: new Date().toISOString(),
+                    // 盘写都失败时的**内存事件**：`room.post` 的流照样能收尾、UI 照样看得见失败
+                    channel: DEFAULT_CHANNEL_ID,
+                    kind: "reply",
+                    author: member.id,
+                    to: [author],
+                    text: "",
+                    delivered: false,
+                    error: msg,
+                    ...(taskUri ? { sourceTask: taskUri } : {}),
+                },
+            );
+        });
     st.tail = started.catch(() => undefined);
     return started;
 }

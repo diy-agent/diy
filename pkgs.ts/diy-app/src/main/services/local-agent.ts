@@ -25,7 +25,6 @@ import {
     readSync,
     rmSync,
     statSync,
-    writeFileSync,
 } from "node:fs";
 import path from "node:path";
 import { writeFileAtomic } from "../core/atomic-write";
@@ -1519,7 +1518,7 @@ export class LocalAgentManager {
             // 非法值忽略（不写坏文件）：与 resolveLimits 同一判据（有限正数）
             if (typeof v === "number" && Number.isFinite(v) && v > 0) merged[k] = v;
         }
-        writeFileSync(limitsFile(), `${JSON.stringify(merged, null, 2)}\n`, "utf-8");
+        writeFileAtomic(limitsFile(), `${JSON.stringify(merged, null, 2)}\n`);
         this._limits = null; // 失效缓存：下一次 getLimits() 现读（含新值）
         return this.getLimits();
     }
@@ -2354,7 +2353,7 @@ export class LocalAgentManager {
             const b = p.store.blocks.get(c.id);
             c.tool = b?.tool ? String(b.tool) : c.tool;
             try {
-                writeFileSync(path.join(toolOutDir(), `${safeId(c.id)}.txt`), typeof b?.output === "string" ? b.output : "", "utf-8");
+                writeFileAtomic(path.join(toolOutDir(), `${safeId(c.id)}.txt`), typeof b?.output === "string" ? b.output : "");
             } catch (e) {
                 console.error(`[local-agent] 工具原文落盘失败 ${c.id}:`, e);
             }

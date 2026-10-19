@@ -169,6 +169,17 @@ export const RoomSchema = z.object({
    * 照样读得出来并补上 `default` —— 不迁移存量、不产生"老房间读不出"的假故障。
    */
   channels: z.array(RoomChannelSchema).default(() => defaultChannels()),
+  /**
+   * **成员水位**（##166 §44.6 四.1）：`成员 id → 该成员已经看到过的最后一条事件 id`。
+   *
+   * 用途只有一个 —— 投递时算「自上次以来房间里**别人**说了什么」，把那段上下文附进正文。
+   * 为什么记 **id** 而不记时间戳：同一毫秒可能落两条事件（`nextEventId` 的 ts 是毫秒）
+   * ⇒ 时间戳比较会在"同毫秒"上丢边界。而**也不能拿 id 比大小**（序号跨进程重来，踩坑 3）——
+   * 读侧一律按 `events.jsonl` 的**物理顺序**定位（append-only ⇒ 顺序就是因果顺序）。
+   *
+   * `.default({})` 兜存量：老房间没有这个键 ⇒ 第一次投递时按"从头看"处理（最多吐上限条）。
+   */
+  lastSeen: z.record(z.string(), z.string()).default({}),
   created: z.string(),
   updated: z.string(),
 });
@@ -382,6 +393,54 @@ export function resolveRecipients(
  * 前导 `@` 一律剥掉：命令行的 `--member @review` 与正文里的寻址写法是**同一个直觉**
  * （实测踩到：不剥时 `@review` 会被当成一个陌生名字而报"房间里没有这个成员"）。
  */
+/**
+ * 「这条事件该由 **ops 流**显示，还是由 **room 事件流**显示」（##377 第 17 刀 / ##166 §44.2 B）。
+ *
+ * 任务页的时间线是**两个源拼起来的**：本任务 ops 流（主人格，逐字不变）+ room 事件流。
+ * 主人格相关的东西**两边都有** —— room 投递给主人格 ⇒ 主人格会话里落一个 user 块；
+ * 主人格的回复 ⇒ 就是它自己会话里那一轮 ⇒ 必须有**一条**判据定死"谁负责显示"，
+ * 否则症状是"要么重复一条、要么少一条"（§44.2 B 押的正是这一点）。
+ *
+ * 判据的形状是「**ops 流里有没有这条**」，不是"说话人是谁"：
+ *   · `say`（人的发言）：投给了主人格 ⇒ 主人格会话里有个 user 块 ⇒ ops 有；
+ *     没投给主人格（`@dev`）⇒ 那句话不在**任何**本任务会话里 ⇒ room 事件流负责。
+ *   · `reply`（成员的回复）：**回复者就是主人格** ⇒ 那一轮本来就在本任务 ops 流里 ⇒ ops 有；
+ *     别人回复 ⇒ 只住在它自己的会话里 ⇒ room 事件流负责。
+ *
+ * ⚠️ 别按「事件 `to` 含主人格」一条打天下（§44.2 B 的行文）：`reply` 的 `to` 是**发起者**
+ * （人成员），永远不含主人格 ⇒ 主人格的回复会被画第二遍。两种 kind 的判据**不同源**，
+ * 这里合成一条函数正是为了让它只有一个落点（可单测、可复用）。
+ *
+ * 返回 true = **ops 流负责**（room 侧跳过，不重复渲染）。
+ */
+export function opsOwnsEvent(
+    e: Pick<RoomEvent, "kind" | "to" | "ref">,
+    mainMemberId: string = MAIN_MEMBER_ID,
+): boolean {
+    if (e.kind === "say") return e.to.includes(mainMemberId);
+    if (e.kind === "reply") return e.ref?.memberUri === mainMemberId;
+    return true; // 认不出的 kind 一律不画（白名单式：宁可少画，不可画错）
+}
+
+/**
+ * 投递时落进成员会话的**署名**（##166 §40 B 的收窄 —— 第 17 刀）。
+ *
+ * §40 B 原文 =「值 = 发起投递的成员 id」。第 17 刀把任务页主输入框改走 room 之后，
+ * 这条规则在**主人格**上会撞 §44.2 A「无 `@` = 投给主人格 = **与今天等价**」：
+ * 主人格的会话就是**本任务自己的会话**，而今天那条 user 块**没有 author**
+ * （右对齐、无署名 —— §40 C）。凭空带上 `human:chen56` ⇒ 气泡翻到左侧 + 加署名
+ * ⇒ 判据 1 / 判据 7（逐字一致）当场破。
+ *
+ * 规则：**投给主人格 且 发起者是页面操作者本人** ⇒ 不署名（"我对我自己的 agent 说话"，
+ * 与任务页今天的形状一致）。其它组合（agent 投给主人格 / 任何人投给别的成员）照旧署名。
+ *
+ * 溯源没丢：room 侧的 `say` 事件**恒有** `author`（那才是房间历史的溯源），
+ * 这里去掉的只是 **ops 块 meta 里那份冗余副本**。
+ */
+export function opsAuthorFor(main: boolean, author: string): string | undefined {
+    return main && author.startsWith("human:") ? undefined : author;
+}
+
 export function resolveMember(room: Pick<Room, "members"> | null | undefined, nameOrId: string): string {
   const key = nameOrId.trim().replace(/^@+/, "");
   const hit = room?.members.find((m) => m.id === key || m.name === key);
@@ -459,10 +518,90 @@ export function deliveryText(opts: {
      * 这也是「不加人时行为与旧版完全一致」在**正文层**的落点（§28.7 G 推论 4）。
      */
     plain?: boolean;
+    /** 自上次它被投递以来、**别人**说的话（`roomContextFor` 的结果）。空/缺省 ⇒ 正文逐字不变 */
+    context?: RoomContextItem[];
+    /** 因上限没带进来的条数（>0 时末尾标注「更早的 N 条已省略」） */
+    contextOmitted?: number;
+    /** 作者 id → 显示名（缺省 `shortName`） */
+    nameOf?: (id: string) => string;
 }): string {
-    if (opts.plain) return opts.text;
-    const tag = opts.toAll ? `[多人房间 ${opts.roomId} · 群发]` : `[多人房间 ${opts.roomId}]`;
-    return `${tag} ${opts.fromName} 对你说：\n${opts.text}`;
+    const head = opts.plain
+        ? opts.text
+        : `${opts.toAll ? `[多人房间 ${opts.roomId} · 群发]` : `[多人房间 ${opts.roomId}]`} ${opts.fromName} 对你说：\n${opts.text}`;
+    return `${head}${contextBlock(opts.context, opts.contextOmitted, opts.nameOf)}`;
+}
+
+/** 「近期发言」的一条（已在投递侧剥成纯文本，UI 只读不解析） */
+export interface RoomContextItem {
+    /** 发言者成员 id */
+    author: string;
+    text: string;
+}
+
+/**
+ * 「本房间近期发言」段的**上限**（##166 §44.6 四.4）。
+ *
+ * 与 §28.I 待拍 8「上层只透传 L1」同一取舍：**不让 room 噪声淹掉成员会话**。
+ * 两条同时生效，各自截断，都取**最近的**（旧的丢，末尾标注条数）。
+ */
+export const CONTEXT_MAX_EVENTS = 20;
+export const CONTEXT_MAX_CHARS = 4000;
+
+/**
+ * 算「自上次这个成员被投递以来，房间里**别人**说了什么」（##166 §44.6 四）。
+ *
+ * 四条判据全在这里（投递器只负责调用，不另写一份）：
+ *   ① 水位：从 `lastSeen[memberId]` **在流里的位置**往后取（不按 id 比大小，见 `RoomSchema.lastSeen`）；
+ *   ② 不重复：本条 `sayId` 已通过 `<text>` 给了收件人 ⇒ 跳过；
+ *   ③ 不看自己：`author === memberId` 的（它自己说过的话，它自己的会话里有）⇒ 跳过；
+ *   ④ 上限：最多 `CONTEXT_MAX_EVENTS` 条 / `CONTEXT_MAX_CHARS` 字符，超出取**最近的**。
+ *
+ * ⚠️ 空正文事件（失败的 reply）不占位 —— 它没有信息量，进了只会挤掉真的话。
+ */
+export function roomContextFor(opts: {
+    events: readonly RoomEvent[];
+    memberId: string;
+    /** 本次投递的那条 say */
+    sayId: string;
+    /** 该成员已看到过的事件 id（缺省 = 从头看） */
+    lastSeenId?: string;
+}): { items: RoomContextItem[]; omitted: number } {
+    const { events, memberId, sayId } = opts;
+    // 水位按**流内位置**定位：events.jsonl 是 append-only ⇒ 物理顺序即因果顺序；
+    // 找不到（老房间 / 事件被清过）⇒ 从头算，最多吐上限条。
+    const start = opts.lastSeenId ? events.findIndex((e) => e.id === opts.lastSeenId) : -1;
+    const tail = events
+        .slice(start + 1)
+        .filter((e) => e.id !== sayId)
+        .filter((e) => e.author !== memberId)
+        .filter((e) => e.text.trim().length > 0);
+    const items: RoomContextItem[] = [];
+    let chars = 0;
+    for (let i = tail.length - 1; i >= 0; i--) {
+        if (items.length >= CONTEXT_MAX_EVENTS) break;
+        const e = tail[i]!;
+        const cost = e.text.length + e.author.length + 8; // 8 ≈ 分隔符与名字开销的量级
+        if (chars + cost > CONTEXT_MAX_CHARS && items.length > 0) break;
+        items.unshift({ author: e.author, text: e.text });
+        chars += cost;
+    }
+    return { items, omitted: tail.length - items.length };
+}
+
+/**
+ * 渲染「本房间近期发言」段。**上下文为空 ⇒ 返回空串** ——
+ * 这是「单人任务 / 没有别人发言时正文逐字不变」（判据 1/7 的回归网）的唯一落点。
+ */
+export function contextBlock(
+    items: RoomContextItem[] | undefined,
+    omitted = 0,
+    nameOf?: (id: string) => string,
+): string {
+    if (!items || items.length === 0) return "";
+    const name = (id: string): string => (nameOf ? nameOf(id) : shortName(id));
+    const lines = items.map((it) => `${name(it.author)}: ${it.text}`);
+    const more = omitted > 0 ? `\n（更早的 ${omitted} 条已省略）` : "";
+    return `\n[本房间近期发言]\n${lines.join("\n")}${more}`;
 }
 
 /** 护栏文案（输入框上方那条）：本条将投递给谁 —— **@ 优先、focus 兜底、都没有 = 未投递** */

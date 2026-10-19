@@ -2,15 +2,14 @@
 // 把三处真源喂进 shared/task-agent-state 的纯判据。渲染组件只调本函数，不各自拼判据。
 //
 // 数据源（逐项指名，禁止猜测；判据本身在 shared/task-agent-state.ts 头注）：
-//   · inTurn / unread ← store/sessionStore（全局唯一的会话注册表订阅：`agent.local.sessions`，
-//     main 内存权威 session-registry）+ 本地已读水位（##308）
+//   · inTurn / unread ← store/sessionStore（全局唯一的会话注册表订阅 + 已读水位 + 账本，##308）；
+//     **未读的单位是轮次（1 轮 = 1 条消息）**，读口是 `unreadTurnsOf`（尺子 = max(注册表, 账本)）
 //   · hasDraft        ← store/draftStore（权威在任务目录 .diy/drafts.yaml；本 store 是内存镜像）
 //                       兜底用调用方给的**落盘快照**（任务树 / 任务详情载荷）
 //   · hasSession      ← 调用方给的落盘快照（任务树 / 任务详情载荷的 `has_session`，
 //                       main 侧 local-paths.hasConversation 算的）
 import { sessionStore } from "../store/sessionStore";
 import { draftStore } from "../store/draftStore";
-import { newStepsOf } from "../../shared/session-overview";
 import { taskAgentStateOf, type TaskAgentStateView } from "../../shared/task-agent-state";
 
 /** 渲染端能拿到的落盘快照（任务树行 / 任务详情二选一，字段同义） */
@@ -36,7 +35,7 @@ export function agentStateOf(uri: string, fallback: AgentStateFallback = {}): Ta
         : fallback.hasDraft === true;
     return taskAgentStateOf({
         inTurn: e?.turn != null,
-        unreadSteps: e ? newStepsOf(e, sessionStore.seenStepsOf(uri)) : 0,
+        unreadTurns: sessionStore.unreadTurnsOf(uri),
         hasDraft,
         hasSession: fallback.hasSession === true,
     });

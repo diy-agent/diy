@@ -4,7 +4,7 @@
  * 布局（见 133 与 shared/view-registry 的 TASK_RUN_LAYOUT）：
  *   左  任务详情（简化版，只读为主）
  *   中  chat
- *   右  预留（agent 参数状态，未实现，初始宽度 0）
+ *   右  房间成员栏（##377 第 16 刀；默认收起，成员 > 1 时自动展开）
  *   底  试验场（devtools viewarea，默认收起）
  *
  * 本组件不自己拼布局 —— 交给 ViewGrid 消费 layout + binding，
@@ -16,7 +16,9 @@ import type { Layout } from "../../shared/grid-layout";
 import { ViewGrid } from "./ViewGrid";
 import { TaskSideView } from "./TaskSideView";
 import { LocalChatPage } from "./LocalChatPage";
+import { TaskRoomRoster } from "./TaskRoomRoster";
 import { taskStore } from "../store/taskStore";
+import { diyService } from "../lib/rpc";
 import { layoutStore } from "../store/layoutStore";
 import { getRendererActions } from "../lib/renderer-actions";
 import { VIEW_BAR_H } from "../lib/layout-metrics";
@@ -27,20 +29,17 @@ export function TaskRunPage(props: { uri: string }) {
     // 子组件（chat / 试验场）当前沿用 taskStore.selectedUri；本页把「当前 tab」
     // 与「选中任务」对齐，故这里负责同步。将来做 tab 保活时再改为逐实例传 uri。
     onMount(() => void taskStore.selectTask(props.uri));
-    createEffect(
-        on(
-            () => props.uri,
-            (uri) => void taskStore.selectTask(uri),
-        ),
-    );
+    // 右栏（成员栏）的默认开合（##166 §44.1 ②）**不在这里**做 —— 挪到 `LocalChatPage`：
+    // 它（中心会话区）恒挂载、且成员表本来就在它手里；而"右栏收起时 `ViewGrid` 不挂载右栏 view"
+    // 这条死结（`groups()` 按 `plan().visibleAreaIds` 过滤）对中心区不成立。
+    // 本组件只把 pageId 递下去（自动开合要写布局，得知道写哪个 page）。
 
     const layout = (): Layout => PAGE.layout;
     const binding = () => layoutStore.bindingFor(PAGE, props.uri);
 
     /**
      * 菜单条上的 area 开合按钮 = **只列有点击价值的 area**（本 page 实例下有 view 的）。
-     * 本 page 的 right / bottom 还空着（right 预留 agent 参数状态、bottom 预留日志，见 133），
-     * 给它们渲染按钮就是「点了没反应」的噪音。
+     * 给空 area 渲染按钮就是「点了没反应」的噪音。
      * idx 保留 area 在 layout.areas 里的原始序号 —— 序号表达「第几个区域」，与网格位置对应。
      */
     const menuAreas = () => {
@@ -113,7 +112,13 @@ export function TaskRunPage(props: { uri: string }) {
                             case "task.detail":
                                 return <TaskSideView uri={props.uri} hoverPreview={true} chromeGap={true} />;
                             case "chat.local":
-                                return <LocalChatPage uri={props.uri} />;
+                                // `rosterAutoFor`：让会话区按"当前任务的成员数"决定右栏默认开合
+                                // （口径 §44.1 ②；见 LocalChatPage 的 applyRosterAuto）
+                                return <LocalChatPage uri={props.uri} rosterAutoFor={PAGE.id} />;
+                            case "room.roster":
+                                // 右栏成员栏（##377 第 16 刀 / ##166 §43.3 A）：
+                                // 任务恒是一个 room（§28.7 G，id = taskUri）⇒ 这个 view 就是它的成员表
+                                return <TaskRoomRoster uri={props.uri} />;
                             default:
                                 return <div class="p-3 text-body opacity-60">未注册的 view: {viewId}</div>;
                         }

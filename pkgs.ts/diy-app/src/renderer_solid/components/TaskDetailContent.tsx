@@ -40,6 +40,7 @@ import { StateSelect, TaskFieldSelect, TaskModuleInput } from "./TaskFieldContro
 import { AgentWindowUsage, TaskAgentStateBadge } from "./TaskAgentState";
 import { taskStateColor } from "../../main/core/task-state";
 import { getTaskVerdict } from "../../shared/task-load";
+import { SessionChip } from "./SessionChip";
 
 /** 两列布局下正文的最小宽度（px）：拖左列时不许把正文压到比这更窄 */
 const BODY_MIN_W = 160;
@@ -522,6 +523,10 @@ function LineageBlock(props: { uri: string; hoverPreview?: boolean; host?: "mana
                             两图标 + 文字的操作按钮，噪音大。**跳转任务管理**的入口已从树里删掉、
                             统一收在「任务详情」view 的 bar 上（见 TaskSideView），故这里只留
                             状态指示：已打开显示 💬，未打开不显示任何图标。 */}
+                        {/* 会话状态（##358 D7）：与 nav 标签 / 任务表行**同一份判据**
+                            （`lib/session-mark` → 注册表 chip × 账本「已对话」），不在这里另写一套。
+                            放标题后、💬 前：紧跟标题读成"这行的会话状态"，💬 仍靠 ml-auto 贴右。 */}
+                        <SessionChip uri={r.uri} class="shrink-0" />
                         <Show when={chatOpen(r.uri)}>
                             <span class="ml-auto shrink-0 text-body" title="已在对话中打开">💬</span>
                         </Show>

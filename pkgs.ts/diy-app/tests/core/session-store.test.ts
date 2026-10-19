@@ -46,6 +46,11 @@ const STREAM_ID = 7;
 const sent: Env[] = [];
 /** 假 transport 没答应答的调用（非空 = 被测代码新增了 RPC ⇒ 用例须显式跟进，别静默放过） */
 const unhandled: string[] = [];
+/**
+ * 账本的**可配答案**（缺省 `[]` = 读到且为空）。某些用例要它非空 —— 例如"账本已经在记
+ * **在跑的**那一轮"（每步一条账，故 `turnId` 先于收尾就出现了）。
+ */
+let ledgerRows: unknown[] = [];
 let sink: ((msg: Env) => void) | null = null;
 
 const transport = {
@@ -58,6 +63,12 @@ const transport = {
             queueMicrotask(() => sink?.({ type: "call", id: msg.id, stream: STREAM_ID }));
         } else if (msg.method === "diy.agent.local.limits") {
             queueMicrotask(() => sink?.({ type: "call", id: msg.id, result: { maxSteps: 200 } }));
+        } else if (msg.method === "diy.agent.local.usage") {
+            // 账本（`<key>.usage.jsonl`）：**答空数组** = "读到且为空"。
+            // ##358 起水位钉的是 `max(注册表 turnCount, 账本唯一 turnId 数)`（`totalTurnsOf`）——
+            // 账本没到货时水位**挂起不写**（宁可不写也不写个会撒谎的数），故本用例必须让它有个
+            // 明确答案，否则断言的是"挂起"而不是"追平"。
+            queueMicrotask(() => sink?.({ type: "call", id: msg.id, result: ledgerRows }));
         } else {
             unhandled.push(msg.method);
         }
@@ -75,6 +86,19 @@ const transport = {
 
 (globalThis as { window?: unknown }).window = { transport };
 
+/**
+ * 已读水位落盘在 renderer `localStorage`（`diy_sessions_seen`，##358 的**临时实现**）——
+ * 单测跑在 node 环境、没有它。不给桩的话 `loadSeen` 会打一条"读取已读水位失败"的
+ * error（真实现没错，是环境缺件），而本文件恰恰断言"没有多余日志"⇒ 会红。
+ * 桩只实现用到的那三个方法（get / set / remove），够水位读写与"清空重算"用。
+ */
+const store = new Map<string, string>();
+(globalThis as { localStorage?: unknown }).localStorage = {
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => void store.set(k, v),
+    removeItem: (k: string) => void store.delete(k),
+};
+
 const { sessionStore } = await import("../../src/renderer_solid/store/sessionStore");
 const { createEffect, createRoot, createSignal } = await import("solid-js");
 
@@ -85,11 +109,11 @@ function pushFrame(frame: RegistryFrame): void {
     sink?.({ type: "data", stream: STREAM_ID, value: frame });
 }
 
-function makeEntry(over: Partial<SessionEntry> = {}): SessionEntry {
+function makeEntry(over: Partial<SessionEntry> = {}, uri = "projects/2/tasks/1"): SessionEntry {
     const at = new Date().toISOString();
     return {
-        id: "local-projects_2_tasks_1",
-        refs: [{ kind: "task", uri: "projects/2/tasks/1" }],
+        id: "local-" + uri.replace(/\//g, "_"),
+        refs: [{ kind: "task", uri }],
         turn: {
             turnId: "turn-1",
             steps: 5,
@@ -103,7 +127,7 @@ function makeEntry(over: Partial<SessionEntry> = {}): SessionEntry {
         viewers: 0,
         firstSeenAt: at,
         lastActivity: at,
-        turnCount: 1,
+        turnCount: 5,
         lastEndReason: null,
         totalSteps: 0,
         totalTokens: 0,
@@ -139,6 +163,11 @@ function mountFollowEffect(active: () => ActiveTab | undefined): { runs: () => n
 beforeEach(() => {
     sent.length = 0;
     unhandled.length = 0;
+    ledgerRows = [];
+    // 水位**落盘**在 localStorage（`diy_sessions_seen`）⇒ 残值会跨用例串味
+    // （`stop()` 只清内存副本，按注释它**刻意**不动盘上那份）。
+    // 实测症状：本文件的用例单独跑全绿，一起跑就红 —— 后一个用例读到前一个用例写下的水位。
+    store.clear();
     sessionStore.stop();
 });
 afterEach(() => {
@@ -169,10 +198,14 @@ describe("sessionStore —— 打开会话页不得把注册表订阅弄死（P1
         expect(sessionStore.connection).toBe("live");
         // ② 没有"[sessions] 注册表订阅中断"这类日志（P1 时必有一条退避重连）
         expect(warns).toEqual([]);
-        // ③ 水位追平到当前步数（effect 干了它该干的事，只是没自循环）
-        expect(sessionStore.seenStepsOf("projects/2/tasks/1")).toBe(5);
-        // ④ 跑的次数是**有界**的（自触发时这里会炸栈，根本到不了断言）
-        expect(runs()).toBe(1);
+        // ③ 水位追平到当前轮次（##358：1 轮 = 1 条未读消息；effect 干了它该干的事，只是没自循环）
+        expect(sessionStore.seenTurnsOf("projects/2/tasks/1")).toBe(5);
+        // ④ 跑的次数是**有界**的（自触发时这里会炸栈，根本到不了断言）。
+        //    2 次 = ① active 切过来（表还空，早退）→ ② 注册表帧到、表非空 + 水位那一步。
+        //    ##358 起水位要多读一份**账本**（`totalTurnsOf` 里 `usageLedgerStore.turnsOf` ⇒ 订阅
+        //    它的 version），账本到货会**合法地**再跑一次 —— 那是依赖变更，不是"读 seen → 写 seen"
+        //    的自触发。故上界放到 3（自触发是几十上百次起步，这个上界照样拦得住）。
+        expect(runs()).toBeLessThanOrEqual(3);
         expect(sessionStore.entries).toHaveLength(1);
         // ⑤ 没碰别的 RPC（新增调用 = 本用例的假 transport 须跟进）
         expect(unhandled).toEqual([]);
@@ -180,7 +213,7 @@ describe("sessionStore —— 打开会话页不得把注册表订阅弄死（P1
         dispose();
     });
 
-    it("水位跟随帧前进：新帧到达 → effect 重跑 → 水位追到新步数（订阅没受影响）", async () => {
+    it("水位跟随帧前进：新帧到达 → effect 重跑 → 水位追到新轮次（订阅没受影响）", async () => {
         vi.spyOn(console, "warn").mockImplementation(() => {});
         const [active] = createSignal<ActiveTab | undefined>({ pageId: "task-run", ctx: "projects/2/tasks/1" });
         const { runs, dispose } = mountFollowEffect(active);
@@ -189,20 +222,22 @@ describe("sessionStore —— 打开会话页不得把注册表订阅弄死（P1
         await settle();
         pushFrame({ kind: "snapshot", entries: [makeEntry()] });
         await settle();
-        expect(sessionStore.seenStepsOf("projects/2/tasks/1")).toBe(5);
+        expect(sessionStore.seenTurnsOf("projects/2/tasks/1")).toBe(5);
 
-        // 步数前进到 9（同一条目 upsert）→ 水位应随帧追平
+        // 轮次前进到 9（同一条目 upsert）→ 水位应随帧追平
         const e = makeEntry();
-        pushFrame({ kind: "upsert", entry: { ...e, turn: { ...e.turn!, steps: 9 } } });
+        pushFrame({ kind: "upsert", entry: { ...e, turnCount: 9 } });
         await settle();
 
-        expect(sessionStore.seenStepsOf("projects/2/tasks/1")).toBe(9);
+        expect(sessionStore.seenTurnsOf("projects/2/tasks/1")).toBe(9);
         expect(sessionStore.connection).toBe("live");
-        expect(runs()).toBe(2); // 快照一次 + 前进一次
+        // 快照一次 + 前进一次 + **账本到货一次**（##358：水位读账本 ⇒ 订阅它的 version；
+        // 这条依赖变更会合法地再跑一次，见上一个用例 ④ 的说明）。上界拦的是自触发。
+        expect(runs()).toBeLessThanOrEqual(3);
         dispose();
     });
 
-    it("会话不在注册表里（本次启动没活动过）→ 不写水位、也不循环", async () => {
+    it("会话不在注册表里（本次启动没活动过）→ 不虚报未读、也不循环", async () => {
         vi.spyOn(console, "warn").mockImplementation(() => {});
         const [active] = createSignal<ActiveTab | undefined>({ pageId: "task-run", ctx: "projects/9/tasks/9" });
         const { runs, dispose } = mountFollowEffect(active);
@@ -212,12 +247,50 @@ describe("sessionStore —— 打开会话页不得把注册表订阅弄死（P1
         pushFrame({ kind: "snapshot", entries: [makeEntry()] });
         await settle();
 
-        // markViewed 对"不在表里的 uri"是 no-op：不写水位（也不循环）
-        expect(sessionStore.seenStepsOf("projects/9/tasks/9")).toBeNull();
+        // 水位写的是**总轮次真值**（##358：注册表 ∪ 账本）。这条 uri 两头都没有 ⇒ 真值 = 0，
+        // 于是水位落成 0（= "读到第 0 轮"）。
+        // ⚠️ 0 与 null 的区别只在"有没有这条记录"，**可见结论相同**：未读 = 0（不虚报）。
+        //（旧断言写 null 是"账本没到货 → 挂起不写"的副作用，不是契约。）
+        expect(sessionStore.seenTurnsOf("projects/9/tasks/9")).toBe(0);
+        expect(sessionStore.unreadTurnsOf("projects/9/tasks/9")).toBe(0);
         // effect 仍会因"表由空变非空"重跑一次（它订阅的是整张表，不是某一条）——
         // 这是有意的：水位判据只需"帧到了就追平当前在看的那条"。
-        expect(runs()).toBe(1);
+        // + 账本到货那一次（见上两个用例：水位读账本 ⇒ 订阅它的 version）。上界拦自触发。
+        expect(runs()).toBeLessThanOrEqual(3);
         expect(sessionStore.connection).toBe("live");
         dispose();
+    });
+});
+
+describe("sessionStore —— 总轮次 = 只数**已收尾**的轮（##358 D5 实测踩到的坑）", () => {
+    /** 账本一行（每步一条；本用例只关心 `turnId` / `ts`）。形状照 shared/usage.ts::StepUsageRecord */
+    function ledger(turnId: string, step: number): unknown {
+        return { ts: new Date().toISOString(), turnId, step, model: "mimo-v2.6-flash", apiFace: "chat" };
+    }
+
+    it("在跑的轮次已被账本记下 ⇒ **不减它**的话，收尾时未读恒 0（『跑失败了却没提示』）", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        // 账本：本轮 t2 已在记（第一步都走完了）+ 上一轮 t1 ⇒ 唯一 turnId = 2
+        ledgerRows = [ledger("t1", 3), ledger("t2", 1)];
+        sessionStore.start();
+        await settle();
+        // ⚠️ 用**冷** uri：账本事实是**永久缓存**的，前面用例已经把 projects/2/tasks/1 读成"空"，
+        // 复用同一条 uri 读到的是那份旧缓存（本用例要的正是"账本已经把在跑的这轮记下了"）。
+        const U = "projects/3/tasks/1";
+        // 注册表：在跑（turn 非空）、本进程**已收尾** 1 轮（t1）
+        pushFrame({ kind: "snapshot", entries: [makeEntry({ turnCount: 1 }, U)] });
+        await settle();
+
+        // 总轮次 = max(1 已收尾, 2 账本 − 1 在跑) = 1（❌ 不是 2：那等于提前宣告本轮完成）
+        expect(sessionStore.turnsOf(U)).toBe(1);
+
+        // 本轮收尾（turn=null、turnCount 前进到 2）⇒ 总轮次 2；此时"没看"就该有 +1
+        pushFrame({ kind: "upsert", entry: makeEntry({ turn: null, turnCount: 2, lastEndReason: { type: "completed", data: {} } }, U) });
+        await settle();
+        expect(sessionStore.turnsOf(U)).toBe(2);
+        // 水位是首帧（在跑时）钉下的 1 ⇒ 收尾那轮没被吃掉 ⇒ 未读 1
+        expect(sessionStore.seenTurnsOf(U)).toBe(1);
+        expect(sessionStore.unreadTurnsOf(U)).toBe(1);
+        expect(sessionStore.connection).toBe("live");
     });
 });

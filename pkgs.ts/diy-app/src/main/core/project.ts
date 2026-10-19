@@ -6,7 +6,8 @@
 //    任务数据按项目聚合在 $DIY_HOME/projects/<id>/tasks/，删项目连带任务一次清空。
 
 import * as yaml from "js-yaml";
-import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync, readdirSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, readdirSync, unlinkSync } from "node:fs";
+import { writeFileAtomic } from "./atomic-write";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { projectsRoot, projectDir, norm, nextNumericId } from "./state";
@@ -50,7 +51,7 @@ function writeNamecard(repoPath: string, id: string, name?: string): void {
   const yamlPath = join(target, "diy.yaml");
   const data = readYaml(yamlPath);
   data["project"] = { id, name: name ?? basename(target) };
-  writeFileSync(yamlPath, yaml.dump(data, { indent: 2, noRefs: true, sortKeys: false }), "utf-8");
+  writeFileAtomic(yamlPath, yaml.dump(data, { indent: 2, noRefs: true, sortKeys: false }));
 }
 
 /** 摘除目标仓库 diy.yaml 的 project 名片（连同 ref 等保留） */
@@ -66,7 +67,7 @@ function removeNamecard(repoPath: string): void {
   if (Object.keys(data).length === 0) {
     unlinkSync(yamlPath);
   } else {
-    writeFileSync(yamlPath, yaml.dump(data, { indent: 2, noRefs: true, sortKeys: false }), "utf-8");
+    writeFileAtomic(yamlPath, yaml.dump(data, { indent: 2, noRefs: true, sortKeys: false }));
   }
 }
 
@@ -96,7 +97,7 @@ export function createProject(
   if (opts.label !== undefined) meta["label"] = opts.label;
   if (opts.desc !== undefined) meta["desc"] = opts.desc;
   if (opts.state !== undefined) meta["state"] = opts.state;
-  writeFileSync(join(pid, "meta.yaml"), yaml.dump(meta, { indent: 2, noRefs: true }), "utf-8");
+  writeFileAtomic(join(pid, "meta.yaml"), yaml.dump(meta, { indent: 2, noRefs: true }));
 
   writeNamecard(path, id, opts.label);
   return id;

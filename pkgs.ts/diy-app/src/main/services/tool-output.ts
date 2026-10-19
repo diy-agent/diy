@@ -14,7 +14,8 @@
 //   旧行为：报错走 `clip(s, 6000)`、成功**裸 return**，唯一兜底是 `execFile` 的 `maxBuffer` 静默截断
 //   （ENOBUFS，模型与用户都拿不到信号）—— 风险正好反了：真正撑爆上下文的是成功的大输出。
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
+import { writeFileAtomic } from "../core/atomic-write";
 import path from "node:path";
 import { clipToolResult, type ToolResultPolicy } from "../../shared/context/compaction";
 import { localDir } from "../core/local-paths";
@@ -92,7 +93,7 @@ export function capToolOutput(text: string, toolCallId: string): CappedToolOutpu
     const origPath = toolOutFile(toolCallId);
     let hint: string | undefined;
     try {
-        writeFileSync(origPath, text, "utf-8");
+        writeFileAtomic(origPath, text);
         hint = origPath;
     } catch {
         hint = undefined; // 落盘失败 → 不给路径（不指向一个不存在的文件）

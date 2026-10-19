@@ -55,10 +55,24 @@ import { Caches, CONCLUSION_LINES_MAX, CONCLUSION_LINES_MIN } from "../lib/ui-st
 import { HeightLedger, stackRows, windowRange } from "../lib/chat-virtual";
 import { MarkdownView } from "./MarkdownView";
 import { MdEditor } from "./MdEditor";
-import { taskCompletion } from "../lib/completions";
+import { memberCompletion, taskCompletion } from "../lib/completions";
 import { bubbleAlignClass, hasAuthor } from "../lib/user-bubble";
 import { bylineOf } from "../lib/assistant-byline";
-import { memberColor, shortName } from "../../shared/room";
+import {
+    deliveryStatusText,
+    MAIN_MEMBER_ID,
+    memberAvatar,
+    memberColor,
+    memberName,
+    opsOwnsEvent,
+    orderedMembers,
+    shortName,
+    type Room,
+    type RoomEvent,
+} from "../../shared/room";
+import { fmtClock } from "../../shared/date-format";
+import { diyService } from "../lib/rpc";
+import { layoutStore } from "../store/layoutStore";
 // 滚动决策（纯函数，可单测：跟随时序 / 锚点恢复）—— 本文件只负责 DOM 读写
 import { anchorScrollTop, anchorTick, clampScrollTop, followPlan, lastLeafId, type AnchorTickState, type ChatAnchor } from "../lib/chat-scroll";
 // user 发言的时刻 label（纯函数：块 id → 所属轮起点时刻；数据源与降级口径见模块头注）
@@ -87,15 +101,18 @@ import {
     expandableOf,
     isFailedTool,
     isInterruptedToolBlock,
+    isReceiptTurn,
     isTurnLevel,
     historyOpenOf,
     isUserText,
     leadUsers,
     leavesOf,
     linesFromDrag,
+    liveTurnOf,
     liveTailOf,
     planOfLevel,
     procOpenOf,
+    receiptStateOf,
     procStatusOf,
     tailOf,
     turnEndNote,
@@ -1254,7 +1271,17 @@ function traceIdOf(msg: string): string | null {
     return m ? m[1]! : null;
 }
 
-function ErrorBox(props: { node: BlockNode }) {
+function ErrorBox(props: {
+    node: BlockNode;
+    /**
+     * 该块所属回执轮的 `steerId`（`steer/N`）。
+     *
+     * 为什么要外部传：`steerId` 落在**轮块**上（`enqueueWhileRunning` 的 start op），
+     * 而本组件拿到的是**子** error 块（`<turnId>_queued`）—— `BlockNode` 没有父指针，
+     * 拿不到就是拿不到（渲染层不重建 main 的块树）。
+     */
+    receiptSteerId?: string;
+}) {
     const source = str(props.node.attrs.source);
     const msg = () => str(props.node.attrs.message);
     const tid = () => traceIdOf(msg());
@@ -1269,15 +1296,39 @@ function ErrorBox(props: { node: BlockNode }) {
     // 画成红色 + ❌ 会被读成失败：##307 让回执全体窗口可见后误读面更大，故按 source 降级成普通提示条。
     // （`meta` 由 BlockStore 摊平进块字段，故这里读的是 `attrs.source`。）
     if (source === "queue") {
+        // "已排队"只在那条留言**还在队列里**时才是实话（判据 `receiptStateOf`，同源可单测）。
+        // 投递之后它仍挂在对话尾部（回执轮排在最末），口气却还写着"本轮结束后自动投递"——
+        // 用户 2026-10-17：「留言已经发出去了，这个还在输入框上面悬着？」⇒ 降级成历史回执。
+        // `steerId` 优先取外部传来的（轮块上的那个），退到块自己的 attrs（若有）
+        const steerId = () =>
+            props.receiptSteerId ?? (typeof props.node.attrs.steerId === "string" ? (props.node.attrs.steerId as string) : "");
+        const delivered = () => receiptStateOf(steerId(), localChatStore.steers.map((s) => s.id)) === "delivered";
         return (
-            <div
-                class="rounded-lg border border-base-300 bg-base-200/60 px-3 py-2 text-body text-base-content/70 whitespace-pre-wrap"
-                data-block-id={props.node.id}
-                data-block-tag="error"
-                data-source="queue"
+            <Show
+                when={!delivered()}
+                fallback={
+                    <div
+                        class="rounded-lg border border-base-300/50 bg-base-200/25 px-3 py-1 text-caption text-base-content/40"
+                        title={msg()}
+                        data-block-id={props.node.id}
+                        data-block-tag="error"
+                        data-source="queue"
+                        data-receipt="delivered"
+                    >
+                        🗨 已投递
+                    </div>
+                }
             >
-                {`⏳ ${msg()}`}
-            </div>
+                <div
+                    class="rounded-lg border border-base-300 bg-base-200/60 px-3 py-2 text-body text-base-content/70 whitespace-pre-wrap"
+                    data-block-id={props.node.id}
+                    data-block-tag="error"
+                    data-source="queue"
+                    data-receipt="queued"
+                >
+                    {`⏳ ${msg()}`}
+                </div>
+            </Show>
         );
     }
     return (
@@ -1399,7 +1450,17 @@ export function TurnView(props: {
                     <For each={rows()}>
                     {(row) => {
                         if (row.kind === "user") return <UserBubble node={row.node} />;
-                        if (row.kind === "error") return <ErrorBox node={row.node} />;
+                        if (row.kind === "error")
+                            return (
+                                <ErrorBox
+                                    node={row.node}
+                                    receiptSteerId={
+                                        isReceiptTurn(t()) && typeof t().attrs.steerId === "string"
+                                            ? (t().attrs.steerId as string)
+                                            : ""
+                                    }
+                                />
+                            );
                         if (row.kind === "text")
                             return (
                                 <TextRow
@@ -1535,6 +1596,215 @@ export function TurnView(props: {
 // 顺序：队列是 FIFO 且**顺序即投递顺序**，所以拖拽改的是真实的投递次序（不是显示偏好），
 // 松手即落盘（`steer.reorder` 提交完整顺序）。拖拽只认手柄：整行可拖会让"想选中那句话"
 // 变成"拖走了它"，而手柄是明确的意图声明（与任务树整行可拖不同 —— 那里一行只有一个含义）。
+
+/**
+ * 「别人说的话」行（##377 第 16 刀 / ##166 §43.3 B）—— **只读回显**。
+ *
+ * 它是一条 room `reply` 事件（非主人格）在任务页时间线里的投影：**不是本任务会话的块**
+ * —— 正文与进度都仍住在那位成员的会话里，这里只有 `ref{memberUri, turnId}` 这条**引用**
+ * （§32.3 护栏：不把块流拷进 room 事件流）。展开 L2 时才按需读那一轮（`room.turn`），
+ * 渲染走**任务对话同一套**（`ChatView` + `TurnView`，§28.7 A：不许另写一套）。
+ */
+/** 空 pin 表：外部行不参与「过程 bar 开合」的页面级偏好（那份偏好键的是本会话的块 id） */
+const EMPTY_PIN: Record<string, boolean> = {};
+
+/** 投递状态徽章的配色（与侧边栏 `statusClass` 同一套语义色，不另造） */
+function deliveryBadgeClass(s: string): string {
+    return s === "ok"
+        ? "badge-success"
+        : s === "failed"
+          ? "badge-error"
+          : s === "running"
+            ? "badge-info"
+            : s === "queued"
+              ? "badge-warning"
+              : "badge-ghost";
+}
+
+/**
+ * room 里「**我说的话**」（##377 第 17 刀 / ##166 §44.2 B）—— 指那些**没投给主人格**的发言
+ * （`@dev 帮我看看`）。它们不在任何本任务会话里 ⇒ ops 流里没有 ⇒ 只能由 room 事件流画。
+ *
+ * 形态与本人今天在任务页的气泡一致（右对齐、无署名 —— 说话人就是页面操作者本人），
+ * 下面挂**投递状态**：谁在排队 / 谁收到了 / 谁没投出去。
+ * `routing:'note'`（`@` 自己）按**中性**标记（不是故障 —— §38.2），
+ * 打错名则走 `deliveries[].error` + 那条空 reply 的红字（判据 8：不许被"笔记"吞掉）。
+ */
+function RoomSayRow(props: { event: RoomEvent; room: Room | null }) {
+    const deliveries = () => props.event.deliveries ?? [];
+    return (
+        <div class="flex flex-col items-end gap-0.5" data-room-say={props.event.id}>
+            <div class="max-w-[92%] rounded-lg bg-primary/15 px-3 py-1.5 text-prose whitespace-pre-wrap">
+                {props.event.text || <span class="opacity-50">（无正文）</span>}
+            </div>
+            <Show when={props.event.routing === "note"}>
+                <div class="flex items-center gap-1" data-room-say-note={props.event.id}>
+                    <span class="badge badge-xs badge-ghost opacity-70">笔记</span>
+                    <span class="text-caption opacity-40">不投递，只进房间历史</span>
+                </div>
+            </Show>
+            <Show when={deliveries().length > 0}>
+                <div class="flex flex-wrap justify-end gap-1">
+                    <For each={deliveries()}>
+                        {(d) => (
+                            <span
+                                class={`badge badge-xs ${deliveryBadgeClass(d.status)}`}
+                                title={d.error ?? ""}
+                                data-room-say-delivery={`${props.event.id}:${d.memberId}`}
+                                data-room-say-status={d.status}
+                            >
+                                {memberName(props.room, d.memberId)} · {deliveryStatusText(d.status)}
+                            </span>
+                        )}
+                    </For>
+                </div>
+            </Show>
+        </div>
+    );
+}
+
+function RoomReplyRow(props: {
+    event: RoomEvent;
+    room: Room | null;
+    roomId: string;
+    /**
+     * 展开态**由页面持有**（受控）：虚拟化会把滚出视口的行从 DOM 摘掉 ⇒ 组件卸载 ⇒
+     * 组件内的 `open` 会丢（实测：展开后滚出去再滚回来，进度又收起来了）。
+     * 与本会话轮次的 `pin` / `histOpen` 同一个理由、同一种做法。
+     */
+    open: boolean;
+    onToggle: () => void;
+}) {
+    const [st, setSt] = createSignal<{ turn: BlockNode | null; turnId: string; live: boolean } | null>(
+        null,
+    );
+    const [err, setErr] = createSignal<string | null>(null);
+    /** 取过一次就不再重复取（展开/收起是纯前端两态；要刷新进度就再收开一次） */
+    let fetched = false;
+
+    const load = async (): Promise<void> => {
+        const e = props.event;
+        if (!e.ref || !props.roomId) return;
+        try {
+            const r = await diyService.diy.room.turn({
+                id: props.roomId,
+                event: e.id,
+                member: undefined,
+                turn: undefined,
+            });
+            setSt({ turn: r.turn as BlockNode | null, turnId: r.turnId, live: r.live });
+            setErr(null);
+        } catch (e2) {
+            setErr(e2 instanceof Error ? e2.message : String(e2));
+        }
+    };
+    // 首次展开时取那一轮（之后复用；要刷新进度就收开一次）
+    createEffect(() => {
+        if (props.open && !fetched) {
+            fetched = true;
+            void load();
+        }
+    });
+
+    const author = () => props.event.author;
+    /** 头像位次取房间展示序（与成员栏同一份 ⇒ 同一人两处头像一致） */
+    const avatarIdx = (): number => {
+        const i = orderedMembers(props.room).findIndex((m) => m.id === author());
+        return i >= 0 ? i : 0;
+    };
+
+    return (
+        <div class="flex flex-col gap-0.5" data-room-reply={props.event.id}>
+            {/* 署名行（与任务页的 user 署名同一形状：色点 + 名字 + 时刻）—— 别人的话一律左对齐 */}
+            <div class="flex items-center gap-1.5 text-caption">
+                <span class="text-base leading-none">{memberAvatar({ id: author() }, avatarIdx())}</span>
+                <span class="font-bold" style={{ color: memberColor({ id: author() }) }}>
+                    {memberName(props.room, author())}
+                </span>
+                <span class="opacity-50" title={props.event.ts}>
+                    {fmtClock(props.event.ts)}
+                </span>
+                <span class="opacity-40">→ 我</span>
+                <Show when={props.event.sourceTask}>
+                    <span class="opacity-40" data-room-reply-source>
+                        来自会话 {props.event.sourceTask}
+                    </span>
+                </Show>
+            </div>
+            <div class="rounded-lg bg-base-200 px-3 py-1.5 text-prose whitespace-pre-wrap">
+                {props.event.text || <span class="opacity-50">（无正文）</span>}
+            </div>
+            {/* 未投递要**明确报错**（##166 §44.2 D 判据 8）：`@` 打错名走的就是这条路 ——
+                room-service 为"不可投递的收件人"记一条空 reply + error，不许静默留白 */}
+            <Show when={props.event.error}>
+                <div class="text-caption text-error" data-room-reply-error={props.event.id}>
+                    未投递：{props.event.error}
+                </div>
+            </Show>
+            <Show when={props.event.ref}>
+                <div
+                    class="rounded-lg border border-base-300 bg-base-100/60"
+                    data-room-reply-progress={props.event.id}
+                >
+                    <button
+                        class="flex w-full items-center gap-1.5 px-2 py-0.5 text-left text-caption"
+                        onClick={() => props.onToggle()}
+                        data-room-reply-toggle={props.event.id}
+                    >
+                        <span class="opacity-60">{props.open ? "▾" : "▸"}</span>
+                        <span>过程进度</span>
+                        <span class="opacity-50" data-room-reply-turnid>
+                            {props.event.ref?.turnId}
+                        </span>
+                        <Show when={st()?.live}>
+                            <span class="badge badge-xs badge-info">直播中</span>
+                        </Show>
+                    </button>
+                    <Show when={props.open}>
+                        <div class="px-2 pb-1.5">
+                            <Show when={err()}>
+                                <div class="text-caption text-error">{err()}</div>
+                            </Show>
+                            <Show when={!st() && !err()}>
+                                <div class="text-caption opacity-60">正在取这一轮…</div>
+                            </Show>
+                            <Show when={st()?.turn}>
+                                <ChatView
+                                    source={{
+                                        trees: () => {
+                                            const t = st()?.turn;
+                                            return t ? [t] : [];
+                                        },
+                                        live: () => st()?.live === true,
+                                    }}
+                                >
+                                    <TurnView
+                                        turnId={st()!.turnId}
+                                        pin={EMPTY_PIN}
+                                        level={2}
+                                        histOpen={true}
+                                        onCycle={() => undefined}
+                                        conclusionLines={3}
+                                        onResizeLines={() => undefined}
+                                        onToggle={() => undefined}
+                                        onFull={() => undefined}
+                                        liveTurnId={st()?.live ? st()!.turnId : null}
+                                        md={true}
+                                        usageHover={null}
+                                        onHoverUsage={() => undefined}
+                                        onHoverEndUsage={() => undefined}
+                                        usageDetail={null}
+                                        onDetailUsage={() => undefined}
+                                    />
+                                </ChatView>
+                            </Show>
+                        </div>
+                    </Show>
+                </div>
+            </Show>
+        </div>
+    );
+}
 
 function SteerBar(props: {
     items: SteerItem[];
@@ -1848,7 +2118,17 @@ function VirtRow(props: {
 
 // ─── 页面 ───────────────────────────────────────────
 
-export function LocalChatPage(props: { uri?: string }) {
+export function LocalChatPage(props: {
+    uri?: string;
+    /**
+     * 给了它 = 本会话区负责「右栏（成员栏）默认开合」（##166 §44.1 ②，值 = pageId）。
+     *
+     * 为什么落在这里（而不是右栏那个 view 里）：**右栏收起时 `ViewGrid` 根本不挂载它**
+     * （`groups()` 按 `plan().visibleAreaIds` 过滤）⇒ 由被收起者自己"发现自己该展开"是死结。
+     * 而本组件（中心会话区）恒挂载、且成员表本来就在它手里（`loadRoomFeed`）。
+     */
+    rosterAutoFor?: string;
+}) {
     // 执行页显式传入 uri；不能依赖全局 selectedUri，否则任务详情还在异步加载时，
     // 页面可能显示“选择任务”但聊天仍沿用上一个任务的会话，形成串台。
     const uri = () => props.uri ?? taskStore.selectedUri ?? null;
@@ -2217,12 +2497,11 @@ export function LocalChatPage(props: { uri?: string }) {
     // 正在跑的轮次同样是"直播中"，否则那一轮的未收 stop 会被显示成"流中断/崩溃恢复"。
     const liveTurnId = () => {
         if (!localChatStore.live) return null;
-        const turns = localChatStore.trees.filter((t) => t.tag === "turn");
-        const last = turns[turns.length - 1];
-        // ⚠️ 还要**这一轮自己没收尾**：外部（CLI / 另一窗口）刚起一轮而我们还没收到它的 ops 时，
-        // 上一轮早已 stop —— 拿"最后一轮"顶替会把一个正常收尾的历史轮渲染成直播
-        // （2026-10-11 实测：错误现场被画成"进行中"的红框）。真实的直播轮 turn 块必然未 stop。
-        return last && !last.stopped ? last.id : null;
+        // 判据（"最后一个未收尾的**真实**轮次"，机器回执轮不算）在 chat-fold.liveTurnOf：
+        // ⚠️ 收口在那儿之前，这里自己数"最后一个 turn"会被**排队回执轮**顶掉 —— 它排在直播轮
+        // 之后、且立刻 stop，于是 liveTurnId 判 null、真正在跑的那轮不再算"直播中"，
+        // 它的未收 stop 就被渲染成「⚠ 本轮未完成（流中断/崩溃恢复）」（用户 2026-10-17 实测假警报）。
+        return liveTurnOf(localChatStore.trees)?.id ?? null;
     };
     /**
      * ⌀ 底部汇总行的速度 = **全局平均**（总均档，tok/s）。
@@ -2322,6 +2601,105 @@ export function LocalChatPage(props: { uri?: string }) {
      * （2026-10-11 CDP 实测：直播中点任何展开 bar 都无反应，全页连一个 click 事件都没有）。
      * 行对象按 id 复用后，只有真正变了的那一行才重建，DOM 留在原地。
      */
+    // ─── room：本任务的时间线第二源（##377 第 16/17 刀 / ##166 §43.3 B · §44.2 B）──────
+    // 任务页的时间线 = **本任务 ops 流**（主人格，逐字不变）+ room 事件流里
+    // **ops 流没有的那部分**。谁归谁**只由一条判据定**（`shared/room.opsOwnsEvent`，纯函数有单测）：
+    //   · `say` 投给了主人格 ⇒ ops 里有 user 块 ⇒ room 跳过；`@dev` ⇒ 不在任何本任务会话里 ⇒ room 画；
+    //   · `reply` 来自主人格 ⇒ 就是它自己那一轮 ⇒ room 跳过；别人回的 ⇒ room 画。
+    // 三条边界（§32.3）：
+    //   · **不拷块流**：这里只拿 `ref{memberUri, turnId}` 定位，L2 展开时才按需读那一轮
+    //     （`room.turn`），数据始终只住在那位成员的会话里；
+    //   · **只读**：room 侧不写任何东西（发送走 `localChatStore.sendViaRoom` 的投递口）；
+    //   · **写侧只剩一处**：`submit` 走 room.post（第 17 刀），room 事件流里那部分由本层渲染。
+    const [roomMeta, setRoomMeta] = createSignal<Room | null>(null);
+    /** room 事件流里**该由本页画**的那些（say + reply，已按 opsOwnsEvent 过滤） */
+    const [roomFeed, setRoomFeed] = createSignal<RoomEvent[]>([]);
+    /** room 侧读失败：只影响「别人说的话」这一层，**不动**本会话的错误位（会话本身是好的） */
+    const [roomNote, setRoomNote] = createSignal<string | null>(null);
+
+    /** 主人格 member id：以房间成员表为准（缺则退回契约常量 —— 正常房间恒有它） */
+    const mainMemberId = (room: Room | null): string =>
+        room?.members.find((m) => m.main === true)?.id ?? MAIN_MEMBER_ID;
+
+    /**
+     * 右栏（成员栏）的**默认开合**（##166 §44.1 ②）：除主人格外还有 agent 成员 ⇒ 默认展开；
+     * 只有主人格（人成员不计）⇒ 默认收起
+     * （单人任务因此与改动前逐字一致 —— §43.3 C 判据 7 的原意）。
+     *
+     * 两条边界：
+     *   · **用户表过态就彻底停手**（`layoutStore.userTouched`：点过开合按钮 / 拖过线都算）；
+     *   · **每次进任务都按当前任务重算**（布局是**页级**的，所有任务 tab 共享一份 —— 只设一次的话
+     *     "打开过多人任务"会把单人任务的右栏也顶出来）。故走 `setAreaHiddenAuto`（不置 userTouched）。
+     */
+    const applyRosterAuto = (room: Room | null): void => {
+        const page = props.rosterAutoFor;
+        if (!page || !room || layoutStore.userTouched(page)) return;
+        // ⚠️「成员 > 1」= 除主人格之外**还有 agent 成员** —— **人成员不计**（否则单人任务
+        // = 人 + 主人格 = 2 条也会展开，判据 7「单人任务逐字不变」当场破；实测踩过）。
+        const otherAgents = room.members.filter((m) => m.kind === "agent" && m.main !== true).length;
+        layoutStore.setAreaHiddenAuto(page, "right", otherAgents === 0);
+    };
+
+    const loadRoomFeed = async (u: string, soft = false): Promise<void> => {
+        try {
+            const r = await diyService.diy.room.get({ id: u, limit: 200 });
+            setRoomMeta(r.room);
+            applyRosterAuto(r.room);
+            const mid = mainMemberId(r.room);
+            setRoomFeed(r.events.filter((e) => !opsOwnsEvent(e, mid)));
+            if (!soft) setRoomNote(null);
+        } catch (e) {
+            if (!soft) setRoomNote(`读房间失败：${e instanceof Error ? e.message : String(e)}`);
+        }
+    };
+
+    /** 输入框补全源（**memo 稳引用**：`memberCompletion` 每次调用返回新函数，见 MdEditor 的 prop 注释） */
+    const chatCompletions = createMemo(() => [
+        memberCompletion(() => roomMeta()?.members ?? []),
+        taskCompletion,
+    ]);
+
+    /**
+     * 外部行（key = `room:<事件 id>`）—— **按 id 复用行对象**：`<For>` 按引用 diff，
+     * 轮询每 2.5s 给一批新事件对象，不复用就会把外部行每轮重建（展开态跟着丢）。
+     * `tsMs` 取事件的 ISO 时刻（同一事件不变 ⇒ 复用安全）。
+     */
+    let prevRoomRows: { key: string; tag: string; tsMs: number }[] = [];
+    const roomRows = createMemo(() => {
+        const byKey = new Map(prevRoomRows.map((r) => [r.key, r]));
+        prevRoomRows = roomFeed()
+            .map(
+                (e) =>
+                    byKey.get(`room:${e.id}`) ??
+                    { key: `room:${e.id}`, tag: e.kind === "say" ? "room-say" : "room-reply", tsMs: Date.parse(e.ts) },
+            )
+            .filter((r) => Number.isFinite(r.tsMs))
+            .sort((a, b) => a.tsMs - b.tsMs);
+        return prevRoomRows;
+    });
+
+    const roomEventOf = (key: string): RoomEvent | null =>
+        roomFeed().find((e) => `room:${e.id}` === key) ?? null;
+
+    /** 外部行的展开态（**页面级**：虚拟化摘行会卸载组件，放组件里会丢 —— 见 RoomReplyRow 头注） */
+    const [replyOpen, setReplyOpen] = createSignal<Record<string, boolean>>({});
+
+    // 取数：首挂 + 切任务 + 2.5s 轻量轮询（与侧边栏同一节奏；本切片无推送通道）
+    onMount(() => {
+        const u0 = uri();
+        if (u0) void loadRoomFeed(u0);
+        const t = setInterval(() => {
+            const u = uri();
+            if (u) void loadRoomFeed(u, true);
+        }, 2500);
+        onCleanup(() => clearInterval(t));
+    });
+    createEffect(
+        on(uri, (u) => {
+            if (u) void loadRoomFeed(u);
+        }),
+    );
+
     let prevRows: { key: string; tag: string }[] = [];
     const rootRows = createMemo(() => {
         const byKey = new Map(prevRows.map((r) => [r.key, r]));
@@ -2332,7 +2710,32 @@ export function LocalChatPage(props: { uri?: string }) {
         return prevRows;
     });
     // ─── 视口虚拟化的布局（##301）：行键 → 账面高度 → 前缀和 → 视口窗口 ────────────
-    const rowKeys = createMemo(() => rootRows().map((r) => r.key));
+    /**
+     * **合并行清单**（##377 第 16 刀）：本任务块树行（`rootRows`，对象按 id 复用、逐字不变）
+     * + room 的「别人说的话」行。没有外部行时**原样返回** `rootRows()` —— 单人任务因此
+     * 走的是与改动前**同一条**路径（判据 7）。
+     *
+     * 归位依据：本任务轮的**起始时刻** = turnId 内嵌毫秒（`t<ms>`，与 `userStamp` 同源），
+     * 与 reply 事件的 `ts` 比大小 ⇒ 插在「最后一个起始时刻 ≤ reply.ts」的轮**之后**。
+     * 不一律堆到末尾 —— 历史 reply 要与它发生时刻对应的那一轮相邻（口径「按 ts 归位」）。
+     */
+    const allRows = createMemo(() => {
+        const base = rootRows();
+        const reps = roomRows();
+        if (reps.length === 0) return base;
+        const out: { key: string; tag: string }[] = [];
+        let i = 0;
+        for (const r of base) {
+            if (r.tag === "turn") {
+                const t0 = Number(r.key.slice(1));
+                while (i < reps.length && reps[i]!.tsMs <= t0) out.push(reps[i++]!);
+            }
+            out.push(r);
+        }
+        while (i < reps.length) out.push(reps[i++]!);
+        return out;
+    });
+    const rowKeys = createMemo(() => allRows().map((r) => r.key));
     /**
      * 前缀和布局。`heights` 与 `keys` 同长；未渲染过的行走**估算**（见 HeightLedger）。
      * 账不是信号，故显式依赖 `ledgerTick`（写账处 `touchLedger()`）。
@@ -2350,10 +2753,10 @@ export function LocalChatPage(props: { uri?: string }) {
         const L = layout();
         return windowRange(L.tops, L.heights, scrollTop(), chatVpH(), OVERSCAN_PX);
     });
-    /** 窗口内的行对象（仍是 rootRows 里按 id 复用的那份 ⇒ `<For>` 不重建未变的行） */
+    /** 窗口内的行对象（仍是合并清单里按 id 复用的那份 ⇒ `<For>` 不重建未变的行） */
     const windowRows = createMemo(() => {
         const [f, t] = win();
-        return rootRows().slice(f, t);
+        return allRows().slice(f, t);
     });
     /** 被摘出行列之外的行：保留实测高度（不清），滚回来时位置才稳定 */
 
@@ -2495,7 +2898,9 @@ export function LocalChatPage(props: { uri?: string }) {
         // 内容已作为消息发出，草稿使命结束：清掉，避免下次进入看到已发送的旧文本
         void draftStore.clear(uri()!, ["agent_input"]);
         setStick(true); // 刚发出，必然想看回复：无视之前是否在上方阅读
-        await localChatStore.send(uri()!, text);
+        // 走 **room 投递**（##377 第 17 刀 / ##166 §44.2 A）：无 `@` ⇒ focus（缺省 = 主人格）
+        // ⇒ 与今天等价；`@dev` ⇒ 投给那个成员。实时显示与停止语义都不变（见 sendViaRoom 头注）。
+        await localChatStore.sendViaRoom(uri()!, text);
     };
 
     /**
@@ -2726,6 +3131,11 @@ export function LocalChatPage(props: { uri?: string }) {
             <div
                 ref={(el) => (scrollRef = el)}
                 class="diy-chat flex-1 overflow-y-auto px-4 py-3"
+                /* 诊断 + 不静默：room 侧读到几条外部行、读失败的原因（失败只影响这一层） */
+                data-room-rows={roomRows().length}
+                data-room-says={roomFeed().filter((e) => e.kind === "say").length}
+                data-room-replies={roomFeed().filter((e) => e.kind === "reply").length}
+                data-room-note={roomNote() ?? ""}
                 onScroll={(e) => {
                     // 视口锚点：跟着**实际滚动**走（此刻布局还没变，正是"变化前"的基准）。
                     // 但**我们自己写的**滚动不重取（见 `writeScrollTop`）：那会把锚点挪到旧窗口
@@ -2798,6 +3208,46 @@ export function LocalChatPage(props: { uri?: string }) {
                                         usageDetail={usageDetail()}
                                         onDetailUsage={(id) => setUsageDetail((d) => (d === id ? null : id))}
                                     />
+                                ) : row.tag === "room-reply" ? (
+                                    /* room 里「别人说的话」（##377 第 16 刀）：**只读回显**。
+                                       `roomEventOf` 取不到 = 事件已滑出 limit 窗口（少见）——
+                                       如实标出，不静默留白 */
+                                    <Show
+                                        when={roomEventOf(row.key)}
+                                        fallback={
+                                            <div class="text-body opacity-40">
+                                                [room 事件已不在窗口内]
+                                            </div>
+                                        }
+                                    >
+                                        {(ev) => (
+                                            <RoomReplyRow
+                                                event={ev()}
+                                                room={roomMeta()}
+                                                roomId={uri() ?? ""}
+                                                open={replyOpen()[ev().id] === true}
+                                                onToggle={() =>
+                                                    setReplyOpen((p) => ({
+                                                        ...p,
+                                                        [ev().id]: p[ev().id] !== true,
+                                                    }))
+                                                }
+                                            />
+                                        )}
+                                    </Show>
+                                ) : row.tag === "room-say" ? (
+                                    /* room 里「我说的话」中**没投给主人格**的那些（##377 第 17 刀）：
+                                       `@dev 帮我看看` —— ops 流里没有它，只能由 room 事件流画 */
+                                    <Show
+                                        when={roomEventOf(row.key)}
+                                        fallback={
+                                            <div class="text-body opacity-40">
+                                                [room 事件已不在窗口内]
+                                            </div>
+                                        }
+                                    >
+                                        {(ev) => <RoomSayRow event={ev()} room={roomMeta()} />}
+                                    </Show>
                                 ) : row.tag === "error" ? (
                                     /* 遗留的**根级** error 块（历史日志：旧版上限提示未挂 parent）。
                                        新日志已把提示挂进 turn（见 local-agent 的上限分支），但重放旧
@@ -2811,6 +3261,11 @@ export function LocalChatPage(props: { uri?: string }) {
                         )}
                     </For>
                 </div>
+                <Show when={roomNote()}>
+                    <div class="text-warning text-caption mt-3" data-room-note-line>
+                        {roomNote()}（只影响「别人说的话」这一层，本会话不受影响）
+                    </div>
+                </Show>
                 <Show when={localChatStore.error}>
                     <div class="text-error text-body mt-3">{localChatStore.error}</div>
                 </Show>
@@ -2914,8 +3369,10 @@ export function LocalChatPage(props: { uri?: string }) {
                                 if (u) draftStore.set(u, "agent_input", v);
                             }}
                             onEnter={submitByEnter}
-                            /* 不接 `@`：任务对话页没有成员概念（见 lib/completions 头注） */
-                            completions={[taskCompletion]}
+                            /* 两个源：`##` 任务引用（第 11 刀）+ `@` 成员寻址（第 17 刀 —— 任务页
+                               从"没有成员概念"变成"有 room 了"，成员源 = **本任务 room 的成员**，
+                               与侧边栏各用各的）。`chatCompletions` 是 memo 稳引用（见其定义处）。 */
+                            completions={chatCompletions()}
                             wrap
                             lineNumbers={fullscreen()}
                             embedded

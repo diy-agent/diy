@@ -9,7 +9,8 @@
 //   5. 并发 git clone → ~/.diy/ref/
 //   6. 写 ref.lock.yaml v5
 
-import { existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync } from "node:fs";
+import { writeFileAtomic } from "../core/atomic-write";
 import { join, resolve, basename } from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import * as yaml from "js-yaml";
@@ -631,7 +632,7 @@ async function writeLockFile(
   const lockDir = join(root.rootDir, ".diy");
   mkdirSync(lockDir, { recursive: true });
   const lockPath = join(lockDir, "ref.lock.yaml");
-  writeFileSync(lockPath, yaml.dump(lockData, { indent: 2, noRefs: true }), "utf-8");
+  writeFileAtomic(lockPath, yaml.dump(lockData, { indent: 2, noRefs: true }));
 }
 
 // ═══════════════════════════════════════
