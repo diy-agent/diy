@@ -8,14 +8,9 @@
 //      任务 URI = projects/<pid>/tasks/<tid>，project 由路径推导
 
 import * as yaml from "js-yaml";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-  renameSync,
-} from "node:fs";
-import { join, resolve, dirname } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { writeFileAtomic } from "./atomic-write";
 import { homedir } from "node:os";
 
 // ═══════════════════════════════════════
@@ -190,11 +185,9 @@ export function saveState(data: {
     merged["subjects"] = Object.fromEntries(current.subjects);
   }
 
-  const p = stateFilePath();
-  mkdirSync(dirname(p), { recursive: true });
-  const tmp = p + ".tmp";
-  writeFileSync(tmp, yaml.dump(merged, { indent: 2, noRefs: true }), "utf-8");
-  renameSync(tmp, p);
+  // 收敛到共享原子写（##383）：state.yaml 是「运行中独占写」的高价值文件，
+  // 写坏 = 整个应用状态静默回默认。fsync: true —— 唯一值得掉电耐久的一份（写入节奏=人/agent 交互，非热路径）。
+  writeFileAtomic(stateFilePath(), yaml.dump(merged, { indent: 2, noRefs: true }), { fsync: true });
 }
 
 // ═══════════════════════════════════════

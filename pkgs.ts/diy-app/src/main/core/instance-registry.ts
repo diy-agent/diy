@@ -17,8 +17,9 @@
 //   并把死条目顺手删掉 —— 「关掉一个实例下次就不再出现」靠的是这条，不是退出钩子。
 
 import { execFileSync } from "node:child_process";
-import { closeSync, openSync, readdirSync, readFileSync, renameSync, unlinkSync, mkdirSync, writeSync } from "node:fs";
+import { readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { writeFileAtomic } from "./atomic-write";
 import { realHomeDir } from "./instance-identity";
 
 /** 启动时快照的一跳父进程（`parents[0]` = 直接父亲） */
@@ -112,16 +113,8 @@ export function pruneRecords(records: InstanceRecord[], alive: (pid: number) => 
 
 /** 写一条记录（**原子**：同目录临时文件 + rename —— 读侧可能与本进程并发，绝不能让读者看到半截 JSON） */
 export function writeRecord(dir: string, rec: InstanceRecord): void {
-  mkdirSync(dir, { recursive: true });
-  const path = recordPath(dir, rec.pid);
-  const tmp = `${path}.${process.pid}.tmp`;
-  const fd = openSync(tmp, "w");
-  try {
-    writeSync(fd, `${JSON.stringify(rec, null, 2)}\n`);
-  } finally {
-    closeSync(fd);
-  }
-  renameSync(tmp, path);
+  // 收敛到共享原子写（##383）：去掉自造 fd 旁路（第 5 种私有写法）
+  writeFileAtomic(recordPath(dir, rec.pid), `${JSON.stringify(rec, null, 2)}\n`);
 }
 
 /** 读一条记录；不存在/坏 JSON/字段不合格 → null */

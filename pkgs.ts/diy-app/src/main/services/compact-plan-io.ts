@@ -30,7 +30,8 @@
 // 判据（validate / checkKeep）在 shared + compact-plan-service；文件 I/O 在 core/auto-compact-config；
 // 版本存储（CAS + 链）在 plan-store；本模块只做**编排**（闸 → 校验 → 快照 → 写 → 入链 → 审计）与人读文本。
 
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { writeFileAtomic } from "../core/atomic-write";
 import { dirname, join } from "node:path";
 import * as yaml from "js-yaml";
 import {
@@ -43,7 +44,7 @@ import {
 } from "../core/auto-compact-config";
 import { budgetBytesOf, fmtBytes } from "../../shared/context/compaction";
 import type { AutoCompactIssue } from "../../shared/context/auto-compact";
-import { DEFAULT_KEEP, clipLabel, keepStageLabel, type KeepIssue, type KeepStage } from "../../shared/context/compact-keep";
+import { DEFAULT_KEEP, clipLabel, keepStageLabel, reasoningClipLabel, type KeepIssue, type KeepStage } from "../../shared/context/compact-keep";
 import { checkKeep, formatCheckFailure, type PlanCheckReport } from "./compact-plan-service";
 import {
     appendPlanVersion,
@@ -329,7 +330,7 @@ export function writePlanSnapshot(home: string, taskUri: string, op: "set" | "re
     // 同毫秒两次写（单测里常见）：追加序号，别互相覆盖（覆盖 = 悄悄少一份可回滚点）
     if (existsSync(join(dir, `${id}.yaml`))) id = `${id}-${Date.now() % 1000}`;
     const doc: PlanSnapshotDoc = { ts: new Date().toISOString(), taskUri, op, keep };
-    writeFileSync(join(dir, `${id}.yaml`), yaml.dump(doc, { indent: 2, noRefs: true }), "utf-8");
+    writeFileAtomic(join(dir, `${id}.yaml`), yaml.dump(doc, { indent: 2, noRefs: true }));
     prunePlanSnapshots(home);
     return id;
 }
@@ -683,6 +684,9 @@ export function renderKeep(keep: readonly KeepStage[]): string {
                 s.must === true ? "必保（不占预算）" : "",
                 s.limit !== undefined ? `最多 ${s.limit} 单元` : "",
                 `clip=${clipLabel(s.clip)}`,
+                // 第二条裁剪轴（##374 T2）：只在该级**声明了**它时才显示 —— 没声明即回落缺省，
+                // 每级都打一行「回落缺省」只会把回显冲淡
+                ...(s.reasoningClip ? [`推理裁法=${reasoningClipLabel(s.reasoningClip)}`] : []),
             ]
                 .filter(Boolean)
                 .join(" · ");

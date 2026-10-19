@@ -171,6 +171,8 @@ check() {
   run bash scripts/check-no-emit.sh
   # 可执行位护栏：shell 脚本在 git 索引里必须 100755（Windows 提交会静默丢位，实现见 scripts/check-exec-bit.sh，详见 ##304(Windows 提交丢可执行位)）
   run bash scripts/check-exec-bit.sh
+  # 原子写护栏：src/main 下整文件覆盖写必须走 core/atomic-write.ts 的 writeFileAtomic（实现见 scripts/check-atomic-write.sh，详见 ##383(整文件覆盖写加固)）
+  run bash scripts/check-atomic-write.sh
 }
 # 全仓唯一自动修复入口：格式化 + lint 可修项，能修的全修
 fix() {

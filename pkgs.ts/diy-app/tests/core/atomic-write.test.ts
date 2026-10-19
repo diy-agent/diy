@@ -170,3 +170,21 @@ describe("writeFileAtomic — 失败注入：原文件逐字不变 + tmp 清理 
         expect(entries(dir).filter((n) => n.includes(".tmp-"))).toEqual([]);
     });
 });
+
+describe("writeFileAtomic — 权限位继承（##383）", () => {
+    it("覆盖 chmod 600 的既有文件后仍是 600：绝不把私密文件放宽成 0644", () => {
+        writeFileAtomic(fp, OLD);
+        chmodSync(fp, 0o600); // 如含 API key 的 providers.custom.yaml
+        writeFileAtomic(fp, "新的正文");
+        expect(statSync(fp).mode & 0o777).toBe(0o600);
+        expect(readFileSync(fp, "utf-8")).toBe("新的正文");
+    });
+
+    it("目标不存在（新建）→ 权限同普通新建，不受继承逻辑影响", () => {
+        mkdirSync(dir, { recursive: true });
+        const control = join(dir, "control.txt");
+        writeFileSync(control, "");
+        writeFileAtomic(fp, OLD);
+        expect(statSync(fp).mode & 0o777).toBe(statSync(control).mode & 0o777);
+    });
+});

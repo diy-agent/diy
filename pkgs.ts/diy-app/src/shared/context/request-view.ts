@@ -43,13 +43,15 @@ export interface LayerRow {
 export interface MessageLayerBytes {
     user: number;
     assistantText: number;
+    /** 推理内容（thinking 模式回传的 `reasoning_content`；##374 T2 起可被裁短 —— 所以它必须单独成层） */
+    assistantReasoning: number;
     assistantTool: number;
     toolResult: number;
 }
 
 /** 单条 message 的字节按层归集（与 blocksToMessages 产出的形状对齐） */
 export function messageLayerBytes(messages: readonly unknown[]): MessageLayerBytes {
-    const acc: MessageLayerBytes = { user: 0, assistantText: 0, assistantTool: 0, toolResult: 0 };
+    const acc: MessageLayerBytes = { user: 0, assistantText: 0, assistantReasoning: 0, assistantTool: 0, toolResult: 0 };
     for (const m of messages) {
         const msg = m as { role?: string; content?: unknown };
         const content = msg.content;
@@ -62,6 +64,9 @@ export function messageLayerBytes(messages: readonly unknown[]): MessageLayerByt
         for (const part of content) {
             const p = part as { type?: string; text?: string; input?: unknown; output?: { value?: string } };
             if (p.type === "text") acc.assistantText += utf8Bytes(p.text ?? "");
+            // 推理**必须单独成层**：它既不是 text 也不是 tool-call，漏了它「合计」就会少算
+            // （思考模式下推理可比正文大一个量级 —— 表里看不见 = 账算不平 = 压缩调不对）
+            else if (p.type === "reasoning") acc.assistantReasoning += utf8Bytes(p.text ?? "");
             else if (p.type === "tool-call") acc.assistantTool += utf8Bytes(JSON.stringify(p.input ?? {}));
             else if (p.type === "tool-result") acc.toolResult += utf8Bytes(p.output?.value ?? "");
         }
@@ -86,6 +91,13 @@ export function layerFacts(base: RequestView, mod: RequestView, inputRate: numbe
         { key: "tools", name: "工具定义", label: "tools — bash / read 等函数 schema（压缩动不了它）", oldBytes: base.toolsBytes, newBytes: mod.toolsBytes },
         { key: "user", name: "用户消息", label: "user — 用户消息（含 runtime 任务正文 / 技能清单）", oldBytes: b.user, newBytes: m.user },
         { key: "assistant.text", name: "模型回复", label: "assistant.text — 模型回复正文", oldBytes: b.assistantText, newBytes: m.assistantText },
+        {
+            key: "assistant.reasoning",
+            name: "模型推理",
+            label: "assistant.reasoning — 思考模式的推理内容（可被裁短、不可裁空）",
+            oldBytes: b.assistantReasoning,
+            newBytes: m.assistantReasoning,
+        },
         { key: "assistant.tool", name: "工具调用", label: "assistant.tool — 模型发起的工具调用（命令 / 参数）", oldBytes: b.assistantTool, newBytes: m.assistantTool },
         { key: "tool.result", name: "工具结果", label: "tool.result — 工具执行结果（头尾裁剪作用于此）", oldBytes: b.toolResult, newBytes: m.toolResult },
     ];

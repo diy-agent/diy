@@ -21,7 +21,8 @@
 //   真配置 = `~/.diy` 的真账号 / 真人物 / 投递划分，由 `./sha.sh sync` 投影进 `build/<variant>/home`
 //   （seed 遇到已同步的真 `model.yaml` / `personas.yaml` 一律不动 —— 现有幂等语义天然满足）。
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
+import { writeFileAtomic } from "./atomic-write";
 import { join } from "node:path";
 import { pickDefaultModel } from "../../shared/model-default";
 import { BUILTIN_PERSONA_ID } from "../../shared/persona";
@@ -178,6 +179,6 @@ export function seedHome(
     }
 
     mkdirSync(home, { recursive: true });
-    writeFileSync(marker, `${new Date().toISOString()}\n`, "utf-8");
+    writeFileAtomic(marker, `${new Date().toISOString()}\n`);
     return report;
 }

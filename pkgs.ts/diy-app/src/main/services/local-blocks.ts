@@ -634,6 +634,12 @@ export interface DeliveryOpts {
      */
     defaultClip?: ClipSpec;
     /**
+     * **推理的全局回落裁法**（##374 T2）：某条 assistant 消息**没被任何级声明 `reasoningClip`** 时用它。
+     * 与 `defaultClip` 对称（工具侧不声明就回落全局策略）—— 否则同一份 plan 里两个轴的行为反着来。
+     * 缺省（不传）= 不裁（老调用点的行为逐字不变；真发/预览由 main 注入 `DEFAULT_REASONING_CLIP`）。
+     */
+    defaultReasoningClip?: ReasoningClipSpec;
+    /**
      * 工具结果渲染（由 main 注入：同一份纯函数既算预览也算真发，见 shared/context/compaction）。
      * **不带 title**：渲染只需要「谁的输出、输出是什么」，title 是 UI 的东西（曾经传了但没人用，
      * 留着等于撒谎说渲染依赖它）。
@@ -664,7 +670,7 @@ export interface DeliveryOpts {
 //   · **渲染**（怎么呈现）才涉及工具结果裁剪/origin 自证位等形状问题。
 // 于是：全量投影（= llm.jsonl 每行）→ 选择 → 渲染。预览与真发共用同一条链。
 
-import { utf8Bytes, type ClipSpec } from "../../shared/context/compaction";
+import { clipReasoningText, utf8Bytes, type ClipSpec, type ReasoningClipSpec } from "../../shared/context/compaction";
 // 选择算法（元件库 + 装配器）—— 见 compaction-plan.ts 头注。此处**转出**旧公开名以保持兼容。
 import {
     runPlan,
@@ -906,20 +912,46 @@ export function selectHistoryByBudget(
  * 抽出来是因为 ##344 M2 的 `plan check` 要**单独**跑「只有 must 级」的管道来量它占多少字节 ——
  * 测量若另写一份口径，「量出来的」与「真发的」就是两个数。
  */
-export function costOfWith(opts: Pick<DeliveryOpts, "transformToolResult" | "defaultClip">) {
-    return (m: LocalModelMessage, clip: ClipSpec | null): number => utf8Bytes(JSON.stringify(renderMessage(m, opts, clip)));
+export function costOfWith(opts: Pick<DeliveryOpts, "transformToolResult" | "defaultClip" | "defaultReasoningClip">) {
+    return (m: LocalModelMessage, clip: ClipSpec | null, reasoningClip: ReasoningClipSpec | null = null): number =>
+        utf8Bytes(JSON.stringify(renderMessage(m, opts, clip, reasoningClip)));
 }
 
 /**
  * **渲染**：保留下来的消息 → 可发/可落盘的形状。
- * 两件事：① 工具结果裁剪（只作用于**真实输出**，见 origin）；② 按 opts 决定写不写
+ * 三件事：① 工具结果裁剪（只作用于**真实输出**，见 origin）；② assistant 的**推理文本**裁剪
+ * （##374 T2；只裁短、绝不裁空 —— 见 clipReasoningText）；③ 按 opts 决定写不写
  * `turn`/`step`/`origin` 自证位（真发不带，落盘带）。
+ *
+ * ⚠️ 为什么推理走这里而不是投影期（`projectAll`）：裁剪只落**投递层** —— ops / 块树 / UI 永远是原文，
+ * 预算口径（`costOfWith`）与真发（`blocksToMessages`）都必须过这一个函数，才谈得上「按 A 算预算、发出去是 B」不存在。
  */
-function renderMessage(m: LocalModelMessage, opts: DeliveryOpts, clip: ClipSpec | null = null): LocalModelMessage {
+function renderMessage(
+    m: LocalModelMessage,
+    opts: DeliveryOpts,
+    clip: ClipSpec | null = null,
+    reasoningClip: ReasoningClipSpec | null = null,
+): LocalModelMessage {
     const out: LocalModelMessage = { role: m.role, content: m.content };
     if (opts.withIndex) {
         if (m.turn !== undefined) out.turn = m.turn;
         if (m.step !== undefined) out.step = m.step;
+    }
+    if (m.role === "assistant" && Array.isArray(m.content)) {
+        // 这一条消息的推理裁法：级声明优先，缺省回落全局缺省（`null`/undefined = 都不裁）
+        const eff = reasoningClip ?? opts.defaultReasoningClip ?? null;
+        if (eff) {
+            let changed = false;
+            const parts = m.content.map((p) => {
+                if (p.type !== "reasoning") return p;
+                const r = clipReasoningText(p.text, eff);
+                if (!r.clipped) return p;
+                changed = true;
+                return { type: "reasoning" as const, text: r.text }; // 只改文本；part **绝不删除/清空**（裁空 = 上游 400）
+            });
+            if (changed) out.content = parts; // 没裁动 ⇒ 引用原样（老断言的引用相等仍成立）
+        }
+        return out;
     }
     if (m.role !== "tool") return out;
     const transform = opts.transformToolResult;
@@ -961,7 +993,7 @@ function renderMessage(m: LocalModelMessage, opts: DeliveryOpts, clip: ClipSpec 
 export function selectForDelivery(
     all: readonly LocalModelMessage[],
     opts: DeliveryOpts = {},
-): { kept: number[]; dropped: number[]; clips?: (ClipSpec | null)[] } {
+): { kept: number[]; dropped: number[]; clips?: (ClipSpec | null)[]; reasoningClips?: (ReasoningClipSpec | null)[] } {
     return opts.budgetBytes !== undefined
         ? selectHistoryByBudget(all, opts.budgetBytes, opts)
         : selectHistory(all, opts);
@@ -973,5 +1005,5 @@ export function blocksToMessages(store: BlockStore, opts?: DeliveryOpts): LocalM
     const all = projectAll(store);
     const sel = selectForDelivery(all, o);
     // 选择 → 渲染：**把选择出的 clip 带过去**（两段分离不得破：选择只算下标与裁法，渲染才真裁）
-    return sel.kept.map((i) => renderMessage(all[i]!, o, sel.clips?.[i] ?? null));
+    return sel.kept.map((i) => renderMessage(all[i]!, o, sel.clips?.[i] ?? null, sel.reasoningClips?.[i] ?? null));
 }
