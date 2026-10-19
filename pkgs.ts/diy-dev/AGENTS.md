@@ -12,7 +12,7 @@
 ## rule — 硬约束
 
 - `rule.cwd-scope` — **cwd 即作用域**：`diy.yaml` 在哪个目录就在哪操作；`bin/dev` **刻意不 cd 到包根**（`node` 必须保持调用者当前目录）
-- `rule.lock-format` — `ref.lock.yaml` 本包写 **v1**：`{version:1, generated, source:{key:{url,version,dir,lastSync}}}`。⚠️ **与 `pkgs.ts/diy-app/src/main/services/ref-sync.ts` 写的 v5 格式不兼容**（v5 用 `ref.{python,node}.{scope}.{category}` 分组），两者都写仓库根的同一个 `.diy/ref.lock.yaml`，后者会覆盖前者且**互读为空、不报错**。改动任一侧的格式前先确认哪个是活的
+- `rule.lock-format` — `ref.lock.yaml` 本包写 **v1**：`{version:1, generated, source:{key:{url,version,dir,lastSync}}}`；diy-app 侧的 v5 写引擎**已删（##387）**，本格式是全仓唯一写入方，改动格式无需再比对另一侧
 - `rule.mirror-dir` — 镜像落 `$DIY_HOME/ref/<host>/<owner>/<repo>/<version>/`；`LockEntry.dir` 存**相对 `$DIY_HOME`** 的路径（跨 worktree 复用要拼当前 home）
 - `rule.version-pin` — `@` 后是 tag / sha（`isPinnedVersion`）则 sync 只检出不 pull；`null` 视作 `main`
 
