@@ -19,7 +19,17 @@
 
 import { getLocalAgent } from "./local-agent";
 import { sessionRegistry } from "./session-registry";
-import { appendDelivery, appendEvent, ensureRoom, nextEventId, readRoom, setFocus, upsertMember } from "../core/room";
+import {
+    advanceLastSeen,
+    appendDelivery,
+    appendEvent,
+    ensureRoom,
+    nextEventId,
+    readEvents,
+    readRoom,
+    setFocus,
+    upsertMember,
+} from "../core/room";
 import { diyHome, getTask } from "../core/state";
 import { defaultPersonaId, listPersonas } from "../core/persona";
 import {
@@ -34,6 +44,7 @@ import {
     parseAddress,
     resolveMember,
     resolveRecipients,
+    roomContextFor,
     shortName,
     type DeliveryState,
     type DeliveryStatus,
@@ -430,11 +441,32 @@ function deliverOne(input: DeliverInput): Promise<void> {
             input.done(ev);
             return;
         }
+        // 房间上下文（##166 §44.6）：**自上次它被投递以来、房间里别人说了什么** ——
+        // 不注入的话，被投递的 agent 只知道"这一句"，对刚才房间里发生过什么一无所知。
+        // 四条规则（水位 / 去重 / 不看自己 / 上限）全在 `shared/room.roomContextFor`（纯函数 + 单测），
+        // 这里只负责**现读**事件流与水印（不用投递开始时的快照：排队期间别人可能又说了话）。
+        const ctx = roomContextFor({
+            events: readEvents(roomId).events,
+            memberId: member.id,
+            sayId,
+            lastSeenId: readRoom(roomId)?.lastSeen[member.id],
+        });
         // 主人格（`main`）的会话 = **宿主任务自己的会话** ⇒ 正文就是原话，不包房间前缀
         // （##166 §28.7 G 推论 4：「不加人时行为与旧版完全一致」的正文层落点）。
+        // ⚠️ `plain` 只去掉**房间前缀**，「近期发言」段照加（判据 6：主人格也得知道别人说了话）；
+        //    上下文为空时 `contextBlock` 返回空串 ⇒ 单人任务 / 无别人发言时正文逐字不变（判据 1/7）。
         const r = await runAndCollect(
             taskUri,
-            deliveryText({ roomId, fromName, text: body, toAll, plain: member.main === true }),
+            deliveryText({
+                roomId,
+                fromName,
+                text: body,
+                toAll,
+                plain: member.main === true,
+                context: ctx.items,
+                contextOmitted: ctx.omitted,
+                nameOf: (id) => memberName(input.room, id),
+            }),
             // 署名（##166 §40 B）：值 = **发起投递的成员 id**（`agent:main` / `human:ccc`），
             // 不是自由字符串 —— 可追溯、可点开。对方会话里那条 user 块据此区分"谁在跟我说"，
             // 任务对话页据此把气泡翻到左侧并署名（C 块）。
@@ -463,6 +495,9 @@ function deliverOne(input: DeliverInput): Promise<void> {
             ...(r.turnId ? { turnId: r.turnId } : {}),
             ...(r.error ? { error: r.error } : {}),
         });
+        // 水位前移（##166 §44.6 四.1）：**只在真跑完时**前移 —— 失败 / 会话忙不前进，
+        // 下次投递时这段时间别人的话还能补给它（宁可重复一轮，不可静默漏掉）。
+        if (!r.error) await advanceLastSeen(roomId, { [member.id]: sayId });
         input.done(ev);
     };
 
