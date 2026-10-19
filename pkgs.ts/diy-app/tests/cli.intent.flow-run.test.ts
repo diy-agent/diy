@@ -27,6 +27,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
+import { sessionFileRel } from "../src/main/core/local-paths";
 import { createServer, type Server } from "node:http";
 import { AddressInfo } from "node:net";
 import { spawn } from "node:child_process";
@@ -249,7 +250,7 @@ interface OpLine {
 
 /** 盘上该会话的 ops（权威）—— 用来证明「轮次真的被中断了」 */
 function ops(uri: string): OpLine[] {
-    const fp = join(fx.HOME, "local", basename(opsFile(uri)));
+    const fp = join(fx.HOME, sessionFileRel(uri, "ops"));
     if (!existsSync(fp)) return [];
     return readFileSync(fp, "utf-8")
         .split("\n")

@@ -32,6 +32,8 @@ beforeAll(() => {
 afterAll(() => rmSync(workDir, { recursive: true, force: true }));
 
 const limits: LocalAgentLimits = { ...DEFAULT_LIMITS, bashTimeoutMs: 20_000, maxSteps: 1 };
+/** ##379：会话 uri（工具原文随会话分层，落 `<会话目录>/toolout/`） */
+const URI = "projects/1/tasks/379";
 
 const lines = (n: number) => Array.from({ length: n }, (_, i) => `line ${i + 1}`).join("\n");
 /** marker 行（`[... 中间省略 N 行 / X KB，完整输出见 <path> ...]`）——三路径格式一致的判据 */
@@ -39,19 +41,19 @@ const markerOf = (text: string) => text.split("\n").find((l) => l.includes("中�
 
 describe("capToolOutput：不超限即逐字符原样", () => {
     it("短输出：不动一个字，也不落盘", () => {
-        const r = capToolOutput("hello\nworld", "call_small");
+        const r = capToolOutput("hello\nworld", "call_small", URI);
         expect(r.clipped).toBe(false);
         expect(r.text).toBe("hello\nworld");
         expect(r.origPath).toBeUndefined();
     });
 
     it("阈值边界：正好 2000 行不裁（触发阈值 = 头 + 尾）", () => {
-        const r = capToolOutput(lines(TOOL_OUTPUT_MAX_LINES), "call_edge");
+        const r = capToolOutput(lines(TOOL_OUTPUT_MAX_LINES), "call_edge", URI);
         expect(r.clipped).toBe(false);
     });
 
     it("超一行即裁：头尾保留 + marker", () => {
-        const r = capToolOutput(lines(TOOL_OUTPUT_MAX_LINES + 1), "call_over");
+        const r = capToolOutput(lines(TOOL_OUTPUT_MAX_LINES + 1), "call_over", URI);
         expect(r.clipped).toBe(true);
         expect(markerOf(r.text)).toContain("中间省略 1 行");
         expect(r.origPath).toBeTruthy();
@@ -60,7 +62,7 @@ describe("capToolOutput：不超限即逐字符原样", () => {
 
 describe("capToolOutput：marker 格式 + 原文可 read 回取", () => {
     const text = lines(10_000);
-    const r = capToolOutput(text, "call_big");
+    const r = capToolOutput(text, "call_big", URI);
 
     it("marker 写明省略量与原文路径（**绝对路径**：模型只按 cwd 解析相对路径）", () => {
         expect(r.clipped).toBe(true);
@@ -68,6 +70,9 @@ describe("capToolOutput：marker 格式 + 原文可 read 回取", () => {
         expect(m).toMatch(/中间省略 \d+ 行 \/ \d+ KB/);
         expect(m).toContain(r.origPath!);
         expect(r.origPath!.startsWith("/")).toBe(true);
+        // ##379：不在共享的 local/toolout/ 里，而是本会话目录下（撞 id 不再互相覆盖）
+        expect(r.origPath).toContain("/local/projects/1/tasks/379/");
+        expect(r.origPath).toContain("/toolout/call_big.txt");
     });
 
     it("原文落盘 = 逐字符全文（不是「落了个裁过的」）", () => {
@@ -75,7 +80,7 @@ describe("capToolOutput：marker 格式 + 原文可 read 回取", () => {
     });
 
     it("被省略的中段可 `read` 取回（绝对路径 + offset 续读）", async () => {
-        const tools = buildTools(workDir, limits, "test/task");
+        const tools = buildTools(workDir, limits, URI);
         // 中段行（第 5000 行）不在投递文本里，但在原文文件里
         expect(r.text).not.toContain("line 5000");
         const out = await (tools as any).read.execute({ path: r.origPath!, offset: 4998, limit: 5 });
@@ -86,7 +91,7 @@ describe("capToolOutput：marker 格式 + 原文可 read 回取", () => {
 
 describe("bash 工具：截断落投递层（toModelOutput），execute 仍返回全文", () => {
     it("cat 大文件：execute 拿全文、toModelOutput 拿头尾 + marker + 路径", async () => {
-        const tools = buildTools(workDir, limits, "test/task") as any;
+        const tools = buildTools(workDir, limits, URI) as any;
         const out: string = await tools.bash.execute({ command: "cat big.txt" });
         // ① execute 的返回值 = 落进 ops 的**原文**（ops 原文永不动）
         expect(out.split("\n").length).toBe(BIG_LINES);
@@ -105,7 +110,7 @@ describe("bash 工具：截断落投递层（toModelOutput），execute 仍返�
     });
 
     it("bash 报错路径与成功路径**同一 marker 格式**（旧行为：报错裁 6000 字符、成功裸奔）", async () => {
-        const tools = buildTools(workDir, limits, "test/task") as any;
+        const tools = buildTools(workDir, limits, URI) as any;
         const failed: string = await tools.bash.execute({
             command: `for i in $(seq 1 10000); do echo "err $i"; done; exit 3`,
         });

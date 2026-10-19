@@ -139,7 +139,7 @@ export type Stats = z.infer<typeof StatsSchema>;
  * 变更历史的一条**记录视图**（##310 二版）：每步一条（有变才写；首条 = baseline）。
  * 附带的徽章两段来源不同、都可能不可得（→ null，UI 不画徽章，不谎报）：
  *   · 划分与两份容器是否变 ← 真发投递快照（按 turnId join；快照已被清理就没有）
- *   · 缓存率与金额 ← 用量账本（`local/<key>.usage.jsonl`，按 turnId join）
+ *   · 缓存率与金额 ← 用量账本（会话目录下的 `usage.jsonl`；##379 前是平铺 `local/<key>.usage.jsonl`，读侧双认），按 turnId join
  */
 export interface HistoryEntryView {
     seq: number;

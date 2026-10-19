@@ -15,8 +15,9 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
+import { sessionFileRel } from "../src/main/core/local-paths";
 import { createServer, type Server } from "node:http";
-import { basename, join } from "node:path";
+import { dirname, join } from "node:path";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { AddressInfo } from "node:net";
 import { ShellTest } from "./shell-test";
@@ -136,11 +137,11 @@ function turnOps(turnId: string, i: number): string[] {
 
 /** 种一份历史会话（UI 打开时走 historyWindow 读它） */
 function seedOps(taskUri: string, turns: number): void {
-    const dir = join(fx.HOME, "local");
-    mkdirSync(dir, { recursive: true });
     const lines: string[] = [];
     for (let i = 1; i <= turns; i++) lines.push(...turnOps(`t${1790000000000 + i * 1000}`, i));
-    writeFileSync(join(dir, basename(opsFile(taskUri))), `${lines.join("\n")}\n`, "utf-8");
+    const fp = join(fx.HOME, sessionFileRel(taskUri, "ops"));
+    mkdirSync(dirname(fp), { recursive: true });
+    writeFileSync(fp, `${lines.join("\n")}\n`, "utf-8");
 }
 
 /** a11y 树文本（ui inspect 是 DOM 树；ui tree 是任务树） */

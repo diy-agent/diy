@@ -22,10 +22,10 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
-import { join } from "node:path";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { createHash } from "node:crypto";
+import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { ShellTest, Session } from "./shell-test";
+import { sessionFileRel } from "../src/main/core/local-paths";
 import { startElectronTest, type ElectronTest } from "./electron-test";
 
 // 真实 LLM 用例：默认关闭（见文件头）。缺 key 时即使开了开关也跳过。
@@ -66,33 +66,19 @@ async function setup(taskTitle: string): Promise<string> {
     return `projects/${pid}/tasks/1`;
 }
 
-/** keyOf 文件名带 sha 后缀（防 a/b 与 a:b 碰撞）；find（允许缺）/path（必存在）/has 分离 */
-function findOpsFile(taskUri: string): string | undefined {
-    const dir = join(fx.HOME, "local");
-    const prefix = taskUri.replace(/[^\w.-]+/g, "_");
-    return existsSync(dir)
-        ? readdirSync(dir).find((f) => f.startsWith(`${prefix}-`) && f.endsWith(".ops.jsonl"))
-        : undefined;
+/**
+ * 会话文件的**绝对路径**（跨进程：本套件跑在 vitest 进程，产品跑在真 Electron 实例里，
+ * 两者 DIY_HOME 不同 —— 所以只能拿相对 `$DIY_HOME` 的产品路径再拼实例家的根）。
+ * ##379 起落位是 `local/<uri 路径>/<key>/<kind>.jsonl`；这里不再复制 keyOf、也不再扫平铺目录。
+ */
+function homeFile(taskUri: string, kind: "ops" | "llm" | "compact"): string {
+    return join(fx.HOME, sessionFileRel(taskUri, kind));
 }
 function opsPath(taskUri: string): string {
-    const hit = findOpsFile(taskUri);
-    if (!hit) throw new Error(`未找到 ops 日志：${taskUri}`);
-    return join(fx.HOME, "local", hit!);
+    return homeFile(taskUri, "ops");
 }
 function hasOpsFile(taskUri: string): boolean {
-    return findOpsFile(taskUri) !== undefined;
-}
-
-/**
- * 会话文件 basename 的完整键（可读前缀 + sha256 前 12 位）。
- * ⚠️ 这里是 keyOf 的**测试副本**：本套件通过 CLI 子进程验证（不 import 重依赖的 local-agent），
- * 拿不到那个实现。复制的唯一目的是「种一份历史对话」；一旦算法变了，文件找不到会**响亮报错**，
- * 不会静默漏测 —— 与产品路径共用同一套语义仍由 findOpsFile 的 readdir 断言兜底。
- */
-function localKey(taskUri: string): string {
-    const readable = taskUri.replace(/[^\w.-]+/g, "_").slice(0, 64);
-    const sum = createHash("sha256").update(taskUri).digest("hex").slice(0, 12);
-    return `${readable}-${sum}`;
+    return existsSync(opsPath(taskUri));
 }
 
 /** 造一轮的 op（user 文本 + 一个 bash 工具；outText 缺省给 n 行） */
@@ -130,9 +116,8 @@ function setConfigPolicy(budgetBytes: number, toolResult: Record<string, unknown
 
 /** 种一份 ops 日志（模拟「已有历史对话」，供无网络的压缩用例验证） */
 function seedOps(taskUri: string, ops: Array<Record<string, unknown>>): string {
-    const dir = join(fx.HOME, "local");
-    mkdirSync(dir, { recursive: true });
-    const fp = join(dir, `${localKey(taskUri)}.ops.jsonl`);
+    const fp = opsPath(taskUri);
+    mkdirSync(dirname(fp), { recursive: true });
     writeFileSync(fp, ops.map((o) => JSON.stringify(o)).join("\n") + "\n", "utf-8");
     return fp;
 }
@@ -389,7 +374,7 @@ describe("agent.local — 真实对话（zen/go）", () => {
             const h = await fx.sh.getJson(`./diy.sh agent local history ${uri}`);
             expect((h.data as unknown[]).length).toBe(ops.length);
             // LLM 侧日志含 user 与 assistant
-            const llm = readFileSync(opsPath(uri).replace(".ops.", ".llm."), "utf-8")
+            const llm = readFileSync(homeFile(uri, "llm"), "utf-8")
                 .split("\n")
                 .filter(Boolean)
                 .map((l) => JSON.parse(l));
@@ -464,7 +449,7 @@ describe("agent.local — 真实对话（zen/go）", () => {
                 ops.some((o) => o.op === "patch" && o.id === id && o.fields?.status === "done"),
             ).toBe(true);
             // llm 日志含工具链路（assistant tool-call + tool result）
-            const llm = readFileSync(opsPath(uri).replace(".ops.", ".llm."), "utf-8")
+            const llm = readFileSync(homeFile(uri, "llm"), "utf-8")
                 .split("\n")
                 .filter(Boolean)
                 .map((l) => JSON.parse(l));
@@ -743,9 +728,7 @@ describe("agent.local — 压缩 compact（无网络）", () => {
 
     it("compactPreview 只算不写：after<before 且不产生 compact 账本文件", async () => {
         const uri = await seededSession("压缩预览");
-        const dir = join(fx.HOME, "local");
-        const compactCount = () =>
-            readdirSync(dir).filter((f) => f.startsWith(localKey(uri)) && f.endsWith(".compact.jsonl")).length;
+        const compactCount = () => (existsSync(homeFile(uri, "compact")) ? 1 : 0);
         // 基线而不是"目录里没有"：**同文件的其它用例会真落账**（compact/undoCompact…），
         // 而 `project remove` 之后项目 id 会被**复用**（新项目又拿到 projects/1）——
         // 于是同一个 key 的账本文件可能已经存在。本用例断言的是「**预览**不落账」，
@@ -779,14 +762,12 @@ describe("agent.local — 压缩 compact（无网络）", () => {
     it("clear 是「彻底删除」：连同 compact 账本一起清（与 compact 的正交语义）", async () => {
         const uri = await seededSession("压缩与彻底删除");
         await fx.sh.getJson(`./diy.sh agent local compact run ${uri} --budget-bytes 0`);
-        const dir = join(fx.HOME, "local");
-        const key = localKey(uri);
-        expect(readdirSync(dir).some((f) => f.startsWith(key) && f.endsWith(".compact.jsonl"))).toBe(true);
+        expect(existsSync(homeFile(uri, "compact"))).toBe(true);
 
         await fx.sh.getJson(`./diy.sh agent local clear ${uri}`);
         expect(hasOpsFile(uri)).toBe(false);
         // 账本也删干净（否则删除后仍能查到本会话的压缩史）
-        expect(readdirSync(dir).some((f) => f.startsWith(key) && f.endsWith(".compact.jsonl"))).toBe(false);
+        expect(existsSync(homeFile(uri, "compact"))).toBe(false);
         // 清后：压缩事件账也没了（本会话的压缩史查不到）
         const events = (await fx.sh.getJson(`./diy.sh agent local compact events ${uri}`)).data as unknown[];
         expect(events).toEqual([]);

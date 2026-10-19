@@ -15,13 +15,21 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
+
+/** 会话文件的绝对路径（跨进程：产品在实例 home，本进程 home 是另一个）+ 建父目录 */
+function seedFile(uri: string, kind: "ops" | "llm" | "compact" | "usage" | "steps" | "changelog" | "raw"): string {
+    const fp = join(fx.HOME, sessionFileRel(uri, kind));
+    mkdirSync(dirname(fp), { recursive: true });
+    return fp;
+}
 import { basename, dirname, join } from "node:path";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
 import { waitUntil } from "./wait";
 import { makeUiDriver, type A11yNode, type UiDriver } from "./ui-drive";
-import { opsFile } from "../src/main/services/local-agent";
+import { compactFile, opsFile } from "../src/main/services/local-agent";
+import { keyOf, sessionFileRel } from "../src/main/core/local-paths";
 
 const NL = String.fromCharCode(10);
 
@@ -114,7 +122,7 @@ async function setBudgetKb(kb: number): Promise<void> {
 
 const autoYaml = () => readFileSync(join(fx.HOME, "auto-compact.yaml"), "utf-8");
 const compactLog = () =>
-  readFileSync(join(fx.HOME, "local", basename(opsFile(uri)).replace(".ops.jsonl", ".compact.jsonl")), "utf-8");
+  readFileSync(join(fx.HOME, sessionFileRel(uri, "compact")), "utf-8");
 const budgetMarks = () => (compactLog().match(/"mode":"budget"/g) || []).length;
 
 describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压缩 → 历史不销毁", () => {
@@ -125,7 +133,7 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
     uri = String((t.data as any)?.data?.uri);
     expect(uri).toMatch(new RegExp("^projects/.+/tasks/.+$"));
 
-    const file = join(fx.HOME, "local", basename(opsFile(uri)));
+    const file = join(fx.HOME, sessionFileRel(uri, "ops"));
     mkdirSync(dirname(file), { recursive: true });
     const ops: Array<Record<string, unknown>> = [];
     for (let i = 1; i <= 8; i++) {
@@ -321,7 +329,7 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
   });
 
   it("历史未销毁：ops 原文仍含全部 8 轮；压缩事件账有快照（算法 + 过滤器）", async () => {
-    const opsRaw = readFileSync(join(fx.HOME, "local", basename(opsFile(uri))), "utf-8");
+    const opsRaw = readFileSync(join(fx.HOME, sessionFileRel(uri, "ops")), "utf-8");
     for (let i = 1; i <= 8; i++) expect(opsRaw).toContain(`第${i}轮问题`);
     const events = (await fx.sh.getJson(`./diy.sh agent local compact events ${uri}`)).data as Array<{ kind: string; policy?: { mode?: string } }>;
     const compacts = events.filter((e) => e.kind === "compact");
@@ -351,9 +359,7 @@ describe("M4：分表压缩点位", () => {
     const t = await fx.sh.getJson(`./diy.sh task create "压缩点位" ${pid}`);
     uri2 = String((t.data as any)?.data?.uri);
 
-    const dir = join(fx.HOME, "local");
-    mkdirSync(dir, { recursive: true });
-    const key = basename(opsFile(uri2)).replace(/\.ops\.jsonl$/, "");
+    // 点位（uri2）的落盘状态；路径走产品实现 + 实例 home（本进程 DIY_HOME 是另一个）
     const evTs = new Date(Date.now()).toISOString();
     const t1 = new Date(Date.now() - 60_000).toISOString();
     const t2 = new Date(Date.now() + 60_000).toISOString();
@@ -376,7 +382,7 @@ describe("M4：分表压缩点位", () => {
       },
       details: { kept: [[1, 9]] },
     };
-    writeFileSync(join(dir, `${key}.compact.jsonl`), JSON.stringify(ev) + "\n", "utf-8");
+    writeFileSync(seedFile(uri2, "compact"), JSON.stringify(ev) + "\n", "utf-8");
 
     // 两步用量账：t1 在事件前、t2 在事件后
     const step = (turnId: string, s: number, ts: string) =>
@@ -388,9 +394,9 @@ describe("M4：分表压缩点位", () => {
         apiFace: "chat",
         usage: { inputTokens: 1000, outputTokens: 100 },
       });
-    writeFileSync(join(dir, `${key}.usage.jsonl`), [step("t1000", 1, t1), step("t2000", 1, t2)].join("\n") + "\n", "utf-8");
+    writeFileSync(seedFile(uri2, "usage"), [step("t1000", 1, t1), step("t2000", 1, t2)].join("\n") + "\n", "utf-8");
     // 让会话有 ops（免得历史区空）
-    const opsFile2 = join(dir, `${key}.ops.jsonl`);
+    const opsFile2 = seedFile(uri2, "ops");
     writeFileSync(
       opsFile2,
       [
@@ -452,9 +458,6 @@ describe("##339：分表投递徽标（配置驱动压缩的事实）", () => {
     const t = await fx.sh.getJson(`./diy.sh task create "投递徽标" ${pid}`);
     uri3 = String((t.data as any)?.data?.uri);
 
-    const dir = join(fx.HOME, "local");
-    mkdirSync(dir, { recursive: true });
-    const key = basename(opsFile(uri3)).replace(/\.ops\.jsonl$/, "");
     const ts = new Date().toISOString();
     const step = (turnId: string, s: number, extra: Record<string, unknown>) =>
       JSON.stringify({
@@ -467,7 +470,7 @@ describe("##339：分表投递徽标（配置驱动压缩的事实）", () => {
         ...extra,
       });
     writeFileSync(
-      join(dir, `${key}.usage.jsonl`),
+      seedFile(uri3, "usage"),
       [
         // 轮首步：投递被压过（丢 3 条、保留 1 段）+ 一条压缩事件命中的位置
         step("t3000", 1, {
@@ -478,7 +481,7 @@ describe("##339：分表投递徽标（配置驱动压缩的事实）", () => {
       ].join("\n") + "\n",
       "utf-8",
     );
-    const opsFile3 = join(dir, `${key}.ops.jsonl`);
+    const opsFile3 = seedFile(uri3, "ops");
     writeFileSync(
       opsFile3,
       [

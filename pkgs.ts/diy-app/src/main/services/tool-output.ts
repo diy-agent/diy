@@ -8,17 +8,19 @@
 //     ops 原文永不动（##343 的硬边界）。
 //
 // ── 三条路径同一条预算（不再有「报错被裁、成功裸奔」的不对称）──
-//   · bash 成功 / bash 报错 —— 本文件的 `capToolOutput`：头尾各半 + marker + 原文落 `local/toolout/`；
+//   · bash 成功 / bash 报错 —— 本文件的 `capToolOutput`：头尾各半 + marker + 原文落
+//     `<会话目录>/toolout/`（##379 起随会话分层；旧共享目录 `local/toolout/` 读侧兜底）；
 //   · read —— `core/file-read.ts` 的行窗口（`offset` 续读），**共用同一对常量**
 //     （`READ_MAX_LINES` / `READ_MAX_BYTES`）⇒ 三处的「一条输出能有多大」是同一个数。
 //   旧行为：报错走 `clip(s, 6000)`、成功**裸 return**，唯一兜底是 `execFile` 的 `maxBuffer` 静默截断
 //   （ENOBUFS，模型与用户都拿不到信号）—— 风险正好反了：真正撑爆上下文的是成功的大输出。
 
-import { mkdirSync } from "node:fs";
-import { writeFileAtomic } from "../core/atomic-write";
+import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
+import { writeFileAtomic } from "../core/atomic-write";
 import { clipToolResult, type ToolResultPolicy } from "../../shared/context/compaction";
-import { localDir } from "../core/local-paths";
+import { diyHome } from "../core/state";
+import { localDir, sessionDir } from "../core/local-paths";
 import { READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
 
 /** 单条工具输出的预算（**与 read 的窗口同一对常量**：三路径一个策略） */
@@ -49,25 +51,56 @@ export function safeId(id: string): string {
     return id.replace(/[^\w.-]+/g, "_");
 }
 
-/** 被裁剪工具输出的原文落盘目录（模型可回取；##127 的「原文可寻回」） */
-export function toolOutDir(): string {
-    const d = path.join(localDir(), "toolout");
+/**
+ * 旧共享目录（##379 之前：`local/toolout/`，全机一份、按 callId 平铺）。
+ * 保留**只读**：存量原文的兜底，不再往这里写（新落位见 `toolOutDir`）。
+ */
+export function legacyToolOutDir(): string {
+    return path.join(localDir(), "toolout");
+}
+
+/**
+ * 被裁剪工具输出的原文落盘目录（模型可回取；##127 的「原文可寻回」）。
+ * ##379：**随会话分层** —— 文件名只有 `safeId(callId)`、不含任务身份，共享一个目录时
+ * 两个任务撞同一 id（自造 id 如 `t1759_s1_r1`）会互相静默覆盖；分层后 clear 可整目录带走。
+ */
+export function toolOutDir(taskUri: string): string {
+    const d = path.join(sessionDir(taskUri), "toolout");
     mkdirSync(d, { recursive: true });
     return d;
 }
 
 /**
  * 落盘位置（**绝对路径**）。为什么不给相对路径：模型（与 read 工具）只按 **cwd** 解析相对路径，
- * `local/toolout/…` 它根本读不到 —— marker 里给一个读不到的路，等于没给。
+ * `local/…` 它根本读不到 —— marker 里给一个读不到的路，等于没给。
  * 账本里的 `origPath` 仍是相对路径（见 `toolOutRelPath`：那里要的是**可移植**，给人看）。
  */
-export function toolOutFile(id: string): string {
-    return path.join(toolOutDir(), `${safeId(id)}.txt`);
+export function toolOutFile(taskUri: string, id: string): string {
+    return path.join(toolOutDir(taskUri), `${safeId(id)}.txt`);
 }
 
-/** 相对 `$DIY_HOME` 的写法（**账本 / 投递 marker** 用：可移植，不随机器变） */
-export function toolOutRelPath(id: string): string {
-    return `local/toolout/${safeId(id)}.txt`;
+/** 读侧双认：新落位优先 → 旧共享目录兜底 → 新（还没落过盘时的默认） */
+export function resolveToolOutFile(taskUri: string, id: string): string {
+    const next = path.join(sessionDir(taskUri), "toolout", `${safeId(id)}.txt`);
+    const legacy = path.join(legacyToolOutDir(), `${safeId(id)}.txt`);
+    try {
+        if (existsSync(next)) return next;
+        if (existsSync(legacy)) return legacy;
+    } catch {
+        /* 读不到就当新路径（不阻断投递） */
+    }
+    return next;
+}
+
+/** 该 id 在新老两个落位下的候选文件（**不建目录**；clear / 迁移用） */
+export function toolOutFileCandidates(taskUri: string, id: string): string[] {
+    const name = `${safeId(id)}.txt`;
+    return [path.join(sessionDir(taskUri), "toolout", name), path.join(legacyToolOutDir(), name)];
+}
+
+/** 相对 `$DIY_HOME` 的写法（**账本 / 投递 marker** 用：可移植，不随机器变）——按实际存在的那份 */
+export function toolOutRelPath(taskUri: string, id: string): string {
+    return path.relative(diyHome(), resolveToolOutFile(taskUri, id)).split(path.sep).join("/");
 }
 
 export interface CappedToolOutput {
@@ -86,11 +119,11 @@ export interface CappedToolOutput {
  * 模型可 `read` 回取被省略的中段）。落盘失败（磁盘满/权限）不假装成功：退化成不带路径的 marker
  * （`完整输出已省略`），模型至少知道「被截了」。
  */
-export function capToolOutput(text: string, toolCallId: string): CappedToolOutput {
+export function capToolOutput(text: string, toolCallId: string, taskUri: string): CappedToolOutput {
     const probe = clipToolResult(text, TOOL_OUTPUT_POLICY);
     if (!probe.clipped) return { text, clipped: false };
 
-    const origPath = toolOutFile(toolCallId);
+    const origPath = toolOutFile(taskUri, toolCallId);
     let hint: string | undefined;
     try {
         writeFileAtomic(origPath, text);

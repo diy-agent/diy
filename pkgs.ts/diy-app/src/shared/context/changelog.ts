@@ -46,7 +46,7 @@ export interface CtxChangeItem {
     data: CtxValueSummary;
 }
 
-/** 一条变更记录（落盘形状：`$DIY_HOME/local/<key>.changelog.jsonl` 一行一条，append-only） */
+/** 一条变更记录（落盘形状：会话目录 `$DIY_HOME/local/<uri 路径>/<key>/changelog.jsonl`（##379 前是平铺 `local/<key>.changelog.jsonl`） 一行一条，append-only） */
 export interface CtxLogEntry {
     /** **文件内**单调序号（0-based；重启后从末行 +1 续） */
     seq: number;

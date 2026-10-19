@@ -8,6 +8,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
+import { sessionFileRel } from "../src/main/core/local-paths";
 import { basename, dirname, join } from "node:path";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { ShellTest } from "./shell-test";
@@ -121,7 +122,7 @@ describe("大会话 DOM 虚拟化（##301）：渲染端", () => {
         const pid = String((p.data as any)?.data?.id);
         const t = await fx.sh.getJson(`./diy.sh task create "大会话虚拟化" ${pid}`);
         uri = String((t.data as any)?.data?.uri);
-        fp = join(fx.HOME, "local", basename(opsFile(uri)));
+        fp = join(fx.HOME, sessionFileRel(uri, "ops"));
         mkdirSync(dirname(fp), { recursive: true });
         writeFileSync(fp, buildOps(), "utf-8");
         allTurns = Array.from({ length: TURNS }, (_, i) => `v${3001 + i}`);
@@ -173,7 +174,7 @@ describe("大会话 DOM 虚拟化（##301）：渲染端", () => {
         const pid = String((p.data as any)?.data?.id);
         const t = await fx.sh.getJson(`./diy.sh task create "小会话" ${pid}`);
         const uri2 = String((t.data as any)?.data?.uri);
-        const fp2 = join(fx.HOME, "local", basename(opsFile(uri2)));
+        const fp2 = join(fx.HOME, sessionFileRel(uri2, "ops"));
         mkdirSync(dirname(fp2), { recursive: true });
         writeFileSync(fp2, buildOps(12), "utf-8");
 

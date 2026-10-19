@@ -2,9 +2,9 @@
 // 🎯 本地自定义 agent 服务 — ai-sdk streamText 直连 zen/go，实时输出块协议 Op 流
 //
 // 与 ACP 通道（acp-sessions-v2）完全独立：独立会话、独立存储、独立取消。
-// 双日志（$DIY_HOME/local/）：
-//   <key>.ops.jsonl — Op 流（UI 重放的权威）
-//   <key>.llm.jsonl — **append-only 全量消息日志**（每行 1 条 ModelMessage，行号即消息序号；
+// 双日志（##379 起每个会话一个目录：`$DIY_HOME/local/<uri 路径>/<key>/`；旧平铺 `local/<key>.*` 读侧兜底）：
+//   ops.jsonl — Op 流（UI 重放的权威）
+//   llm.jsonl — **append-only 全量消息日志**（每行 1 条 ModelMessage，行号即消息序号；
 //                    续聊/索引的权威。压缩只做投递期投影，绝不写它 —— 见 appendLlm）
 //                    行内含 tool-result 的 origin 自证位（tool/interrupted/empty；真发前剥掉）
 // 密钥/上游收敛在 main：renderer 不接触 key；zen/go 无 CORS，代理是硬约束。
@@ -29,7 +29,7 @@ import {
 import path from "node:path";
 import { writeFileAtomic } from "../core/atomic-write";
 import { diyHome, projectDir, projectFromUri } from "../core/state";
-import { keyOf, llmFile, llmLogRelPath, localDir, opsFile, sessionIdOf } from "../core/local-paths";
+import { keyOf, llmFile, llmLogRelPath, localDir, opsFile, sessionFileForWrite, sessionFilesToClear, sessionIdOf } from "../core/local-paths";
 
 // 再导出：测试与产品共用同一路径实现（不把 key 算法复制到测试里）
 export { opsFile };
@@ -79,7 +79,7 @@ import {
     renderPlanView,
 } from "./compact-plan-io";
 import { appendPlanVersion, currentPlanVersion, planVersionDoc, planVersionId, writePlanVersion } from "./plan-store";
-import { capToolOutput, safeId, toolOutDir, toolOutRelPath } from "./tool-output";
+import { capToolOutput, toolOutFile, toolOutFileCandidates, toolOutRelPath } from "./tool-output";
 import { abortText } from "../../shared/turn-end";
 import { opsFeed } from "./ops-feed";
 // 「模型不可用」通知（##369 ①）：判据在 shared/model-unavailable，通知中心在 model-notice
@@ -379,7 +379,7 @@ function llmLogLines(store: BlockStore): string[] {
  * 导出供测试构造落盘状态（review RV-17：别让用例靠后缀反推路径 —— 改后缀会静默变成假绿）。
  */
 export function stepsFile(taskUri: string): string {
-    return path.join(localDir(), `${keyOf(taskUri)}.steps.jsonl`);
+    return sessionFileForWrite(taskUri, "steps");
 }
 
 /**
@@ -388,7 +388,7 @@ export function stepsFile(taskUri: string): string {
  * 掺进观测数据会让「投递了什么」与「花了多少」两件事互相污染（一个写失败拖累另一个）。
  */
 function usageFile(taskUri: string): string {
-    return path.join(localDir(), `${keyOf(taskUri)}.usage.jsonl`);
+    return sessionFileForWrite(taskUri, "usage");
 }
 
 /** 读取某任务的逐步用量（时间正序；文件不存在 = 还没实现落盘之前的会话） */
@@ -410,7 +410,7 @@ function appendUsage(taskUri: string, rec: StepUsageRecord): void {
 
 /** 原始流 dump（仅 DIY_RAW_STREAM_DUMP=1 时写）：ai-sdk 的 part 原样落盘，用于研究“Op 是否漏信息” */
 function rawFile(taskUri: string): string {
-    return path.join(localDir(), `${keyOf(taskUri)}.raw.jsonl`);
+    return sessionFileForWrite(taskUri, "raw");
 }
 
 /** 原始流开关（默认关；读取时快照一次，避免一处开一处关） */
@@ -673,7 +673,7 @@ function foldRange(fp: string, from: number, to: number): Op[] {
 /** 压缩账本（append-only：每行一条 compact/measure/undo 事件）。
  *  导出供测试构造「已压缩」的落盘状态（key 算法不复制到测试里）。 */
 export function compactFile(taskUri: string): string {
-    return path.join(localDir(), `${keyOf(taskUri)}.compact.jsonl`);
+    return sessionFileForWrite(taskUri, "compact");
 }
 
 
@@ -811,13 +811,13 @@ function sizeOfStore(store: BlockStore, opts?: Parameters<typeof blocksToMessage
  * 抽出来的理由：真发（deliveryOptsOf）与**预览/记账**（compact）必须用同一份构造逻辑，
  * 否则「预览说省 97%、真发却照旧」这种分叉根本测不出来。
  */
-function optsFor(policy: CompactPolicy, collect?: ClippedToolDetail[], keep?: readonly KeepStage[] | null): DeliveryOpts {
+function optsFor(policy: CompactPolicy, taskUri: string, collect?: ClippedToolDetail[], keep?: readonly KeepStage[] | null): DeliveryOpts {
     // 管道来自**当前配置**（config / history 分离：投递只读当前配置）—— 每个调用点都现读一次，
     // 于是「改配置本轮即生效」对 `history.keep[]` 与预算**同一条**（无需压缩事件、无需重启）。
     // `keep` 显式传入 = 调用方手里已有那一刻的配置（记账要快照，见 planCompact）。
     const specs = keep !== undefined ? keep : loadAutoCompact(diyHome()).history?.keep;
     return {
-        ...makeDeliveryTransform(policy, toolOutRelPath, collect),
+        ...makeDeliveryTransform(policy, (id) => toolOutRelPath(taskUri, id), collect),
         // 推理的全局回落（##374 T2）：与工具侧的 `defaultClip` 对称 —— 级没声明 `reasoningClip`
         // 就回落它（不然「不声明 ⇒ 不裁」，与工具轴反着来且静默多花字节）
         defaultReasoningClip: DEFAULT_REASONING_CLIP,
@@ -1165,7 +1165,7 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
             // 仍是全文（落进 ops 的原文永不动）。见 services/tool-output.ts。
             toModelOutput: ({ toolCallId, output }) => ({
                 type: "text" as const,
-                value: capToolOutput(String(output), toolCallId).text,
+                value: capToolOutput(String(output), toolCallId, taskUri).text,
             }),
             execute: async ({ command }, opts) => {
                 const home = diyHome();
@@ -1642,7 +1642,8 @@ export class LocalAgentManager {
      * 且只在特定路径（排队回执 / 崩溃自愈）复现 —— 所以只留这一份。
      */
     private opsSink(taskUri: string): (op: Op) => void {
-        const fp = opsFile(taskUri);
+        // ##379：写侧入口**建父目录**（分层落位下 `local/<uri>/<key>/` 可能还不存在）
+        const fp = sessionFileForWrite(taskUri, "ops");
         return (op) => {
             try {
                 appendFileSync(fp, `${JSON.stringify(op)}\n`, "utf-8");
@@ -1718,7 +1719,7 @@ export class LocalAgentManager {
      * 为什么不在运行期做：「只增」的价值是行号稳定（D2 的索引锚点），运行期永不回改已写内容。
      */
     private reconcileLlmLog(taskUri: string, s: LocalSession): number {
-        const fp = llmFile(taskUri);
+        const fp = sessionFileForWrite(taskUri, "llm");
         const expect = llmLogLines(s.store);
         let actual: string[] = [];
         if (existsSync(fp)) {
@@ -1768,7 +1769,7 @@ export class LocalAgentManager {
      * 起点 = 内存游标（加载时对账得出）；投影收缩（ops 被截/换机器）时回退到整份对账。
      */
     private appendLlm(taskUri: string, s: LocalSession): void {
-        const fp = llmFile(taskUri);
+        const fp = sessionFileForWrite(taskUri, "llm");
         let expect: string[];
         try {
             expect = llmLogLines(s.store);
@@ -1830,7 +1831,7 @@ export class LocalAgentManager {
         /** 原文路径用（注记里的 file 字段）；view 路径与真发同一个 taskUri */
         taskUriOf = "",
     ): HistoryDelivery {
-        const opts: DeliveryOpts = policy ? optsFor(policy, collect) : {};
+        const opts: DeliveryOpts = policy ? optsFor(policy, taskUriOf, collect) : {};
         const kept = blocksToMessages(store, opts) as unknown as ModelMessage[];
         if (!policy || !this.noteEnabled()) return { messages: kept, note: "" };
         // 预算注记：只列**保留区间**（gap 自明，不逐 gap 标注）
@@ -2176,7 +2177,7 @@ export class LocalAgentManager {
         for (const op of scan.ops) store.apply(op);
         // 保留 = 预算选择（实时算）。keptRuns = 预算的**过滤器表达**（存进事件，供历史回溯还原 diff）
         const all = projectAll(store);
-        const sel = selectHistoryByBudget(all, policy.modeData.budgetBytes, optsFor(policy, undefined, keepUsed));
+        const sel = selectHistoryByBudget(all, policy.modeData.budgetBytes, optsFor(policy, taskUri, undefined, keepUsed));
         const keptRuns = sel.keptRuns;
         const keptSet = new Set(sel.kept.map((i) => all[i]!.turn).filter((t): t is string => !!t));
         const keptTurns = keptSet.size;
@@ -2189,7 +2190,7 @@ export class LocalAgentManager {
 
         const clipped: ClippedToolDetail[] = [];
         const before = sizeOfStore(store);
-        const after = sizeOfStore(store, optsFor(policy, clipped));
+        const after = sizeOfStore(store, optsFor(policy, taskUri, clipped));
 
         const droppedDetail = droppedIds.map((id) =>
             describeTurn(store, id, scan.turnOffsets.get(id) ?? 0, scan.turnBytes.get(id) ?? 0),
@@ -2362,7 +2363,7 @@ export class LocalAgentManager {
         if (must.length === 0) return { mustBytes: 0, hardCapBytes };
         const all = projectAll(replay(readJsonl<Op>(opsFile(taskUri))));
         const p = keepStagesToPlan(must, Number.MAX_SAFE_INTEGER, clipSpecOf(toolResultOf(policy)));
-        const sel = runPlan(all, p, { costOf: costOfWith(optsFor(policy)) });
+        const sel = runPlan(all, p, { costOf: costOfWith(optsFor(policy, taskUri)) });
         return { mustBytes: sel.keptBytes, hardCapBytes };
     }
 
@@ -2394,7 +2395,7 @@ export class LocalAgentManager {
             const b = p.store.blocks.get(c.id);
             c.tool = b?.tool ? String(b.tool) : c.tool;
             try {
-                writeFileAtomic(path.join(toolOutDir(), `${safeId(c.id)}.txt`), typeof b?.output === "string" ? b.output : "");
+                writeFileAtomic(toolOutFile(taskUri, c.id), typeof b?.output === "string" ? b.output : "");
             } catch (e) {
                 console.error(`[local-agent] 工具原文落盘失败 ${c.id}:`, e);
             }
@@ -2681,14 +2682,9 @@ export class LocalAgentManager {
         }
         // 文件清单必须**穷举**：加新日志（如 usage / compact）时漏一处，就是「彻底删除」删不干净
         // （旧实现就漏了 usage.jsonl —— 用量账本按会话存，留着它会让删除后仍查到本会话的花费）。
-        for (const f of [
-            opsFile(taskUri),
-            llmFile(taskUri),
-            rawFile(taskUri),
-            stepsFile(taskUri),
-            usageFile(taskUri),
-            compactFile(taskUri),
-        ]) {
+        // ##379：新老两个落位都删（`sessionFilesToClear` 是唯一清单）——
+        // 只删 `opsFile` 命中的那一份，另一份会被读侧双认兜底重新认领 = 清空静默失效。
+        for (const f of sessionFilesToClear(taskUri)) {
             try {
                 rmSync(f, { force: true });
             } catch (e) {
@@ -2703,7 +2699,7 @@ export class LocalAgentManager {
             if (e.kind !== "compact") continue;
             for (const c of e.details?.clipped ?? []) {
                 try {
-                    rmSync(path.join(toolOutDir(), `${safeId(c.id)}.txt`), { force: true });
+                    for (const f of toolOutFileCandidates(taskUri, c.id)) rmSync(f, { force: true });
                 } catch (err) {
                     console.error(`[local-agent] 删除工具原文失败 ${c.id}:`, err);
                     ok = false;
@@ -3512,7 +3508,7 @@ export class LocalAgentManager {
             // 与 compact 事件解耦 —— 事件只在触发/手动时写；这里每轮首都有（投递本就无条件按当前配置筛选）。
             const selPolicy = loadAutoCompact(diyHome()).policy;
             const allMsgs = projectAll(sess.store);
-            const sel = selectHistoryByBudget(allMsgs, selPolicy.modeData.budgetBytes, optsFor(selPolicy));
+            const sel = selectHistoryByBudget(allMsgs, selPolicy.modeData.budgetBytes, optsFor(selPolicy, taskUri));
             const historySelection = {
                 budgetBytes: selPolicy.modeData.budgetBytes,
                 keptBytes: sel.keptBytes,

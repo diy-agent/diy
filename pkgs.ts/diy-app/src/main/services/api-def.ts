@@ -942,6 +942,43 @@ export const apiDef = RpcSchema.router({
                 },
                 output: z.object({ cleared: z.boolean() }),
               }),
+              /**
+               * 会话数据落位迁移（##379）：旧平铺 `local/<key>.<kind>.jsonl` → 分层
+               * `local/<uri 路径>/<key>/<kind>.jsonl`（工具输出原文一并按会话账本归属搬）。
+               * 幂等可中断续跑；目标已存在且不等大时记 conflict 留原地，绝不覆盖。
+               * **生产根（DIY_ENV=production）只允许 dry-run**：实迁会直接报错，请用户手动执行。
+               */
+              migrateLayout: RpcSchema.unary({
+                desc: `迁移会话数据落位（旧平铺 → 分层；默认 dry-run 演练）`,
+                input: {
+                  dryRun: z
+                    .boolean()
+                    .optional()
+                    .cliOption({ desc: "只出「源 → 目标」清单，不动盘（生产根唯一允许的模式；缺省 true）" }),
+                  toolout: z
+                    .boolean()
+                    .optional()
+                    .cliOption({ desc: "一并迁移工具输出原文 local/toolout/ → 各会话目录（按会话账本归属；缺省 true）" }),
+                },
+                output: z.object({
+                  dryRun: z.boolean(),
+                  moved: z.number(),
+                  skipped: z.number(),
+                  conflicts: z.number(),
+                  unknown: z.number(),
+                  total: z.number(),
+                  toolOut: z.object({ owned: z.number(), orphan: z.number() }),
+                  entries: z.array(
+                    z.object({
+                      from: z.string(),
+                      to: z.string(),
+                      action: z.enum(["move", "skip", "conflict", "unknown"]),
+                      note: z.string().optional(),
+                    }),
+                  ),
+                  truncated: z.boolean(),
+                }),
+              }),
               /** 插话队列管理（入队走 `chat --mode`）。step=下一个模型步前；turn=本轮结束后的下一轮。 */
               steer: RpcSchema.group({
                 desc: `插话队列：对话中追加的发言（入队走 chat --mode），落任务目录 .diy/drafts.yaml`,

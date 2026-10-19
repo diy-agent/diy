@@ -9,7 +9,8 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
-import { join } from "node:path";
+import { sessionFileRel } from "../src/main/core/local-paths";
+import { dirname, join } from "node:path";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { ShellTest } from "./shell-test";
@@ -73,9 +74,15 @@ function rowCells(text: string, needle: string, after?: string, n = 4): string[]
  * 同名 `local/<key>.jsonl` 就带着上一个用例的数据。多数用例是"覆盖写"（天然免疫），
  * 但断言"空任务 0 轮"、或写的是**另开的文件**（changelog）时，残留会真的把结论带偏。
  */
+/** 会话文件绝对路径（跨进程：产品在真 Electron 实例的 home 里，本进程 DIY_HOME 是另一个） */
+function homeFile(uri: string, kind: "ops" | "llm" | "steps" | "compact" | "changelog" | "usage" | "raw"): string {
+  return join(fx.HOME, sessionFileRel(uri, kind));
+}
+
 function clearLocal(uri: string): void {
-  for (const suf of ["steps.jsonl", "changelog.jsonl", "usage.jsonl"]) {
-    rmSync(join(fx.HOME, "local", `${keyOf(uri)}.${suf}`), { force: true });
+  for (const kind of ["steps", "changelog", "usage"] as const) {
+    rmSync(homeFile(uri, kind), { force: true }); // 新落位
+    rmSync(join(fx.HOME, "local", `${keyOf(uri)}.${kind}.jsonl`), { force: true }); // 旧平铺（读侧兜底会认它）
   }
 }
 
@@ -281,10 +288,10 @@ describe("上下文树：投递快照（steps）", () => {
       runtimeText: 'task:\n  body: "一"',
       ...over,
     });
-    const localDir = join(fx.HOME, "local");
-    mkdirSync(localDir, { recursive: true });
+    const stepsFile = homeFile(uri, "steps");
+    mkdirSync(dirname(stepsFile), { recursive: true });
     writeFileSync(
-      join(localDir, `${keyOf(uri)}.steps.jsonl`),
+      stepsFile,
       [
         rec({}),
         rec({ turnId: "t2", valueHashes: { diy: "h1", "task.body": "b2" }, runtimeText: 'task:\n  body: "二"' }),
@@ -437,10 +444,10 @@ describe("上下文树：变更历史（事件粒度）", () => {
       runtimeText: 'task:\n  body: "一"',
       ...over,
     });
-    const localDir = join(fx.HOME, "local");
-    mkdirSync(localDir, { recursive: true });
+    const stepsFile = homeFile(uri, "steps");
+    mkdirSync(dirname(stepsFile), { recursive: true });
     writeFileSync(
-      join(localDir, `${keyOf(uri)}.steps.jsonl`),
+      stepsFile,
       [
         rec({}),
         rec({ turnId: "t2", valueHashes: { diy: "h1", "task.body": "b2" }, runtimeText: 'task:\n  body: "二"' }),
@@ -473,8 +480,10 @@ describe("上下文树：变更历史（事件粒度）", () => {
       ops: [] as unknown[],
       ...over,
     });
+    const logFile = homeFile(uri, "changelog");
+    mkdirSync(dirname(logFile), { recursive: true });
     writeFileSync(
-      join(localDir, `${keyOf(uri)}.changelog.jsonl`),
+      logFile,
       [
         op({ ops: [{ kind: "add", path: "task.body", preview: "一" }] }),
         op({ turnId: "t2", ops: [{ kind: "update", path: "task.body", preview: "二" }] }),
@@ -527,9 +536,10 @@ describe("上下文树：变更历史**表格**上屏（轮次 | 步 | 实际请
       ops: [] as unknown[],
       ...over,
     });
-    mkdirSync(join(fx.HOME, "local"), { recursive: true });
+    const changelogFile = homeFile(uri, "changelog");
+    mkdirSync(dirname(changelogFile), { recursive: true });
     writeFileSync(
-      join(fx.HOME, "local", `${keyOf(uri)}.changelog.jsonl`),
+      changelogFile,
       [
         op({ ops: [{ kind: "add", path: "task.body", preview: "一" }] }),
         op({ turnId: "t2", ops: [{ kind: "update", path: "task.body", preview: "二" }] }),
@@ -647,8 +657,8 @@ describe("上下文树：UI 上屏（两列 + 信封原始数据 `<>`）", () =>
     }
 
     // 真发快照（手写）+ 变更日志 → 左栏表格一行；点行 → 中栏两侧 diff（轮级 · 文本级）
-    const localDir = join(fx.HOME, "local");
-    mkdirSync(localDir, { recursive: true });
+    const stepsFile = homeFile(uri, "steps");
+    mkdirSync(dirname(stepsFile), { recursive: true });
     const rec = (over: Record<string, unknown>) => ({
       ts: "2026-10-15T00:00:00.000Z",
       turnId: "t-intent",
@@ -662,7 +672,7 @@ describe("上下文树：UI 上屏（两列 + 信封原始数据 `<>`）", () =>
       ...over,
     });
     writeFileSync(
-      join(localDir, `${keyOf(uri)}.steps.jsonl`),
+      stepsFile,
       [
         rec({}),
         rec({
@@ -685,8 +695,10 @@ describe("上下文树：UI 上屏（两列 + 信封原始数据 `<>`）", () =>
       data: { tree: { values: { task: { body: "一" } }, renderers: {}, places: [], placement: {}, wireVersion: "aaaa1111" } },
       ...over,
     });
+    const logFile = homeFile(uri, "changelog");
+    mkdirSync(dirname(logFile), { recursive: true });
     writeFileSync(
-      join(localDir, `${keyOf(uri)}.changelog.jsonl`),
+      logFile,
       [
         clEntry({}),
         clEntry({
@@ -786,10 +798,10 @@ describe("上下文树：可见性增强（统计接页 / 变更原因 / tab 标
       runtimeText: 'task:\n  body: "一"',
       ...over,
     });
-    const localDir = join(fx.HOME, "local");
-    mkdirSync(localDir, { recursive: true });
+    const stepsFile = homeFile(uri, "steps");
+    mkdirSync(dirname(stepsFile), { recursive: true });
     writeFileSync(
-      join(localDir, `${keyOf(uri)}.steps.jsonl`),
+      stepsFile,
       [
         rec({}),
         rec({
@@ -927,10 +939,10 @@ describe("上下文树：sys 归因基于当轮快照（review RV-02）", () => 
       runtimeText: 'task:\n  body: "一"',
       ...over,
     });
-    const localDir = join(fx.HOME, "local");
-    mkdirSync(localDir, { recursive: true });
+    const stepsFile = homeFile(uri, "steps");
+    mkdirSync(dirname(stepsFile), { recursive: true });
     writeFileSync(
-      join(localDir, `${keyOf(uri)}.steps.jsonl`),
+      stepsFile,
       [
         rec({}),
         rec({ turnId: "v2", valueHashes: { "chain.0": "c2", "task.body": "b1" }, systemText: "chain:\n  - path: /b" }),
@@ -1010,9 +1022,10 @@ describe("上下文树：统计与归因的边界（review RV-07 / RV-08）", ()
       runtimeText: 'task:\n  body: "一"',
       ...over,
     });
-    mkdirSync(join(fx.HOME, "local"), { recursive: true });
+    const stepsFileB = homeFile(uriB, "steps");
+    mkdirSync(dirname(stepsFileB), { recursive: true });
     writeFileSync(
-      join(fx.HOME, "local", `${keyOf(uriB)}.steps.jsonl`),
+      stepsFileB,
       [
         rec({}),
         // systemText 变了，但变化的只有 runtime 的 task.body → 无 system 原因
@@ -1112,9 +1125,10 @@ describe("上下文树：变量树变更 view + 该步实际请求（真发 · �
     const t = await fx.sh.getJson(`./diy.sh task create ${label}任务 ${pid}`);
     const uri = String((t.data as any)?.data?.uri);
     clearLocal(uri);
-    mkdirSync(join(fx.HOME, "local"), { recursive: true });
+    const changelogFile = homeFile(uri, "changelog");
+    mkdirSync(dirname(changelogFile), { recursive: true });
     writeFileSync(
-      join(fx.HOME, "local", `${keyOf(uri)}.changelog.jsonl`),
+      changelogFile,
       entries.map((r) => JSON.stringify(r)).join("\n") + "\n",
     );
     return { pid, uri };

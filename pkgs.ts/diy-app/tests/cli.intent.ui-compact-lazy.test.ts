@@ -21,6 +21,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
+import { sessionFileRel } from "../src/main/core/local-paths";
 import { basename, dirname, join } from "node:path";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -138,7 +139,7 @@ const callsSince = (from: number, method = PREVIEW_METHOD): { uri: string | null
 
 /** 造一段会话（每轮一个可辨识文本 + 一条工具输出）—— 只验"算没算"，不追求大文件 */
 function seedSession(uri: string, tag: string, turns = 6): void {
-  const file = join(fx.HOME, "local", basename(opsFile(uri)));
+  const file = join(fx.HOME, sessionFileRel(uri, "ops"));
   mkdirSync(dirname(file), { recursive: true });
   const ops: Array<Record<string, unknown>> = [];
   for (let i = 1; i <= turns; i++) {

@@ -15,6 +15,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
+import { sessionFileRel } from "../src/main/core/local-paths";
 import { createServer, type Server } from "node:http";
 import { AddressInfo } from "node:net";
 import { basename, join } from "node:path";
@@ -127,7 +128,7 @@ const bodyText = () => ui.query<string>("document.body.textContent || ''");
 /** 盘上那份 ops 日志（权威事实）。文件名只取 basename：本进程的 DIY_HOME 是测试隔离根，
  *  而实例的数据根是 fx.HOME —— 两者不同，路径必须由 fx.HOME 拼。 */
 function readOps(): Array<Record<string, unknown>> {
-    const fp = join(fx.HOME, "local", basename(opsFile(uri)));
+    const fp = join(fx.HOME, sessionFileRel(uri, "ops"));
     return readFileSync(fp, "utf-8")
         .split("\n")
         .filter((l) => l.trim())
