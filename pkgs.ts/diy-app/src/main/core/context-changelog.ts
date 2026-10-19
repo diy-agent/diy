@@ -1,5 +1,6 @@
 // src/main/core/context-changelog.ts
-// 🎯 变更历史的**文件层**：按任务一份 `$DIY_HOME/local/<key>.changelog.jsonl`。
+// 🎯 变更历史的**文件层**：按任务一份 `$DIY_HOME/local/<uri 路径>/<key>/changelog.jsonl`
+//    （##379 分层落位；旧平铺 `local/<key>.changelog.jsonl` 由 `resolveSessionFile` 双认兜底）。
 //
 // 为什么按任务（与 context-stats.ts 按项目相反）：变更历史是**一条时间线**，问的是
 // 「这一步相对上一步改了什么」；跨任务拼接的时间线没有意义。长期统计走 context-stats.jsonl。
@@ -9,21 +10,19 @@
 //
 // 与 context-stats.ts 同一套做法：append-only + 读时出声跳过坏行（观测不能阻断发送）。
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { isV2Entry, type CtxLogEntry } from "../../shared/context/changelog";
-import { keyOf, localDir } from "./local-paths";
+import { sessionFileForWrite } from "./local-paths";
 
 /** 某任务的变更日志文件 */
 export function ctxLogFile(taskUri: string): string {
-    return join(localDir(), `${keyOf(taskUri)}.changelog.jsonl`);
+    return sessionFileForWrite(taskUri, "changelog");
 }
 
 /** 追加一条（append-only；写失败只出声 —— 观测不能阻断发送）。新旧形状都收（老文件不重写） */
 export function appendCtxLog(taskUri: string, rec: CtxLogEntry | Record<string, unknown>): void {
     const fp = ctxLogFile(taskUri);
     try {
-        mkdirSync(localDir(), { recursive: true });
         appendFileSync(fp, `${JSON.stringify(rec)}\n`, "utf-8");
     } catch (e) {
         console.error(`[context-changelog] 写入失败 ${fp}:`, e);

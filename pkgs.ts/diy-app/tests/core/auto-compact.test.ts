@@ -362,9 +362,9 @@ describe("自动压缩执行（真会话 + 桩模型）", () => {
         writeFileSync(opsFile(uri), lines.join("\n") + "\n", "utf-8");
         // 造一条用量账：窗口占用走**实测**口径（最后一步用量 token 数）。
         // 阈值判定要确定性，故不依赖真实模型：给一个足够大的 total（100010 token）。
-        const { localDir, keyOf } = await import("../../src/main/core/local-paths");
+        const { sessionFile } = await import("../../src/main/core/local-paths");
         writeFileSync(
-            join(localDir(), `${keyOf(uri)}.usage.jsonl`),
+            sessionFile(uri, "usage"),
             JSON.stringify({
                 ts: new Date().toISOString(),
                 turnId: "t7010",

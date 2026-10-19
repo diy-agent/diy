@@ -7,13 +7,14 @@
 //   ③ 崩溃自愈：加载时补 stop + 补齐日志（旧实现靠"下轮整份重写"糊过去，append 后不会自愈）
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import type { LanguageModelV3StreamPart, LanguageModelV3StreamResult, LanguageModelV3Usage } from "@ai-sdk/provider";
 import { MockLanguageModelV3 } from "ai/test";
 import type { LanguageModel } from "ai";
 import { diyHome } from "../../src/main/core/state";
+import { compactFile } from "../../src/main/services/local-agent";
+import { llmFile, opsFile } from "../../src/main/core/local-paths";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
 import { LocalAgentManager } from "../../src/main/services/local-agent";
@@ -56,15 +57,15 @@ async function run(mgr: LocalAgentManager, uri: string, message: string): Promis
     for await (const _op of mgr.chat(uri, message)) void _op;
 }
 
-/** 该任务的三份文件路径（keyOf 规则：字符净化前 64 + sha256 前 12） */
+/**
+ * 该任务的三份文件路径 —— **走产品同一份实现**（##379）。
+ * 旧版在这里复制了 keyOf 算法 + 硬拼平铺路径：落位一变就读不到产品写的文件。
+ */
 function filesOf(uri: string) {
-    const readable = uri.replace(/[^\w.-]+/g, "_").slice(0, 64);
-    const key = `${readable}-${createHash("sha256").update(uri).digest("hex").slice(0, 12)}`;
-    const dir = join(diyHome(), "local");
     return {
-        ops: join(dir, `${key}.ops.jsonl`),
-        llm: join(dir, `${key}.llm.jsonl`),
-        compact: join(dir, `${key}.compact.jsonl`),
+        ops: opsFile(uri),
+        llm: llmFile(uri),
+        compact: compactFile(uri),
     };
 }
 

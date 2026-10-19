@@ -15,6 +15,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
+import { sessionFileRel } from "../src/main/core/local-paths";
 import { basename, dirname, join } from "node:path";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { ShellTest } from "./shell-test";
@@ -157,7 +158,7 @@ describe("大会话分页：CLI 契约（真实 main）", () => {
         const pid = String((p.data as any)?.data?.id);
         const t = await fx.sh.getJson(`./diy.sh task create "大会话分页" ${pid}`);
         uri = String((t.data as any)?.data?.uri);
-        fp = join(fx.HOME, "local", basename(opsFile(uri)));
+        fp = join(fx.HOME, sessionFileRel(uri, "ops"));
         mkdirSync(dirname(fp), { recursive: true });
         writeFileSync(fp, buildOps(), "utf-8");
         allTurns = readFileSync(fp, "utf-8")
@@ -368,7 +369,7 @@ describe("大会话分页：渲染端（真实 UI）", () => {
         const pid = String((p.data as any)?.data?.id);
         const t = await fx.sh.getJson(`./diy.sh task create "点击补段" ${pid}`);
         const uri2 = String((t.data as any)?.data?.uri);
-        const fp2 = join(fx.HOME, "local", basename(opsFile(uri2)));
+        const fp2 = join(fx.HOME, sessionFileRel(uri2, "ops"));
         mkdirSync(dirname(fp2), { recursive: true });
         // 8 轮 ≈ 5.6MB ⇒ 2 段（首载 4MB 一段，剩下的一段等点击）
         writeFileSync(fp2, buildOps(8), "utf-8");

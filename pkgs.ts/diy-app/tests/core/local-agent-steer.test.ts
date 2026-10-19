@@ -11,13 +11,13 @@
 // 而不是只查 ops/队列 —— 后者只能证明"我们记了一笔"，前者才证明"模型真的看见了"。
 
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
-import { createHash } from "node:crypto";
 import type { LanguageModelV3StreamPart, LanguageModelV3StreamResult, LanguageModelV3Usage } from "@ai-sdk/provider";
 import { MockLanguageModelV3 } from "ai/test";
 import type { LanguageModel } from "ai";
 import { join } from "node:path";
 import { diyHome } from "../../src/main/core/state";
 import { createProject } from "../../src/main/core/project";
+import { opsFile } from "../../src/main/core/local-paths";
 import { createTask } from "../../src/main/core/task";
 import { LocalAgentManager, MAX_STEER_ROUNDS } from "../../src/main/services/local-agent";
 import { activeTurnList } from "../../src/main/services/runtime-context";
@@ -425,11 +425,13 @@ describe("插话不破坏既有会话语义", () => {
 // 断言口径仍选「**独立于生成器流本身**的落点」（ops.jsonl / activeTurnList / 审计）——
 // 断开之后没人再消费 op，只有这些副作用能证明轮次真的还在跑、并最终收尾。
 
-/** 该任务的 ops.jsonl 路径（keyOf 规则：字符净化前 64 + sha256 前 12） */
+/**
+ * 该任务的 ops.jsonl 路径 —— **走产品同一份实现**（##379）。
+ * 旧版在这里复制了 keyOf 算法并硬拼平铺路径：落位一变，测试就读不到产品写的文件
+ * （症状是"落盘失败 ENOENT"，看着像产品坏了，其实是测试的路径过期）。
+ */
 function opsPathOf(uri: string): string {
-  const readable = uri.replace(/[^\w.-]+/g, "_").slice(0, 64);
-  const sum = createHash("sha256").update(uri).digest("hex").slice(0, 12);
-  return join(diyHome(), "local", `${readable}-${sum}.ops.jsonl`);
+  return opsFile(uri);
 }
 const opsFileOf = (uri: string): Promise<string> => Promise.resolve(opsPathOf(uri));
 

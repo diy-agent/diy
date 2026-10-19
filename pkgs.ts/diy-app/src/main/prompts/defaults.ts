@@ -119,7 +119,7 @@ diy 是一个 Electron 桌面管控台。命令行入口 {{diy.cli}}，数据根
 
 - state.yaml 由运行中的应用独占写入 —— 不要直接编辑，改任务/项目一律走 CLI
 - projects/<pid>/tasks/<tid>/AGENTS.md 是任务本体（frontmatter + 正文）
-- local/*.jsonl 是会话与 LLM 日志，只读
+- local/projects/<pid>/tasks/<tid>/<key>/ 是会话与 LLM 日志（ops/llm/usage/…），只读；旧平铺 local/<key>.*.jsonl 也还在（未迁移的存量）
 
 用法：{{diy.cli}} --help；按域 {{diy.cli}} task --help；查环境 {{diy.cli}} getAppInfo
 </diy>

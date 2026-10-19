@@ -55,12 +55,11 @@ import { BlockStore, toTree, type Op } from "../../src/main/services/local-block
 import { activeTurnList, resetRuntimeContext } from "../../src/main/services/runtime-context";
 import { auditFile } from "../../src/main/services/agent-audit";
 import { diyHome } from "../../src/main/core/state";
+import { llmFile } from "../../src/main/core/local-paths";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const keyOf = (taskUri: string) =>
-    opsFile(taskUri).split("/").pop()!.replace(/\.ops\.jsonl$/, "");
 
 function readJsonl<T>(path: string): T[] {
     if (!existsSync(path)) return [];
@@ -98,7 +97,8 @@ function expectTerminal(taskUri: string, label: string): void {
     ).toBe(true);
 
     // ④ llm.jsonl 最后一轮 dump（仿真预览的历史来源）
-    const llmPath = join(diyHome(), "local", `${keyOf(taskUri)}.llm.jsonl`);
+    // ##379：路径走产品同一份实现（旧的「basename 反推 key + 拼平铺路径」在分层落位下会指错）
+    const llmPath = llmFile(taskUri);
     expect(existsSync(llmPath), `${label}: llm dump 应存在`).toBe(true);
     expect(statSync(llmPath).size, `${label}: llm dump 不应为空`).toBeGreaterThan(0);
 

@@ -11,7 +11,7 @@ import type { LanguageModel } from "ai";
 import { join } from "node:path";
 import { readFileSync, writeFileSync } from "node:fs";
 import { diyHome } from "../../src/main/core/state";
-import { localDir, keyOf } from "../../src/main/core/local-paths";
+import { localDir, keyOf, sessionFile } from "../../src/main/core/local-paths";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
 import { LocalAgentManager, opsFile } from "../../src/main/services/local-agent";
@@ -79,7 +79,7 @@ describe("投递压缩可见性：每轮首步的用量账带 historySelection",
         const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
         for await (const _op of mgr.chat(uri, "问一句")) void _op;
 
-        const recs = readFileSync(join(localDir(), `${keyOf(uri)}.usage.jsonl`), "utf-8")
+        const recs = readFileSync(sessionFile(uri, "usage"), "utf-8")
             .trim()
             .split("\n")
             .map((l) => JSON.parse(l) as StepUsageRecord);

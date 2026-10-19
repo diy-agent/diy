@@ -16,6 +16,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
+import { sessionFileRel } from "../src/main/core/local-paths";
 import { createServer, type Server } from "node:http";
 import { basename, join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
@@ -361,7 +362,7 @@ describe("插话界面 —— 生成中插嘴、横条、取消", () => {
         // "解析器"，没有一处对着 **main 真写出来的 id**。这里补上：从本轮真实的 ops.jsonl 里取
         // 最后一条 turn id（main 用 `t${Date.now()}` 写的那个），再要求界面上确实显示了它对应的时刻。
         // 换 id 形状（uuid / 改名 / 位数变化）时这条立刻红，而不是 UI 静默失去所有时间。
-        const opsRaw = readFileSync(join(fx.HOME, "local", basename(opsFile(uri))), "utf-8");
+        const opsRaw = readFileSync(join(fx.HOME, sessionFileRel(uri, "ops")), "utf-8");
         const turnIds = [...opsRaw.matchAll(/"id":"(t\d{13})"/g)].map((m) => m[1]!);
         expect(turnIds.length).toBeGreaterThan(0); // 真轮确实落盘了
         // 同一个 turn id 会随**每条** op 重复出现（start/delta/stop 各带 id）→ 唯一化保序

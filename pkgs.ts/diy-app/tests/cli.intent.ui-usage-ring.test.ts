@@ -15,8 +15,9 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
+import { sessionFileRel } from "../src/main/core/local-paths";
 import { createServer, type Server } from "node:http";
-import { basename, join } from "node:path";
+import { dirname, join } from "node:path";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { AddressInfo } from "node:net";
 import { ShellTest } from "./shell-test";
@@ -113,8 +114,6 @@ afterAll(async () => {
  * turnId 取**过去的固定时刻**：`currentWindow` 取 id 最大的轮，后续真轮次必须比它新。
  */
 function seedSixtyPercentTurn(taskUri: string): void {
-    const dir = join(fx.HOME, "local");
-    mkdirSync(dir, { recursive: true });
     const tid = "t1767225600000"; // 2026-01-01
     const usage = {
         inputTotal: 600000, outputTotal: 100, cacheRead: 500000, total: 600100, noCache: 100000,
@@ -134,7 +133,9 @@ function seedSixtyPercentTurn(taskUri: string): void {
         o({ op: "patch", id: tid, fields: { usage } }),
         o({ op: "stop", id: tid }),
     ];
-    writeFileSync(join(dir, basename(opsFile(taskUri))), `${lines.join(NL)}${NL}`, "utf-8");
+    const fp = join(fx.HOME, sessionFileRel(taskUri, "ops"));
+    mkdirSync(dirname(fp), { recursive: true });
+    writeFileSync(fp, `${lines.join(NL)}${NL}`, "utf-8");
 }
 
 /** 圆环探针：文字百分比 + 弧长百分比（从 ::before 的 conic-gradient 解析）+ `--value` */

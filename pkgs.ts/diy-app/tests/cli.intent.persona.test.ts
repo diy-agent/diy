@@ -13,10 +13,10 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
-import { join } from "node:path";
-import { createHash } from "node:crypto";
+import { dirname, join } from "node:path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { ShellTest } from "./shell-test";
+import { keyOf, sessionFileForWrite, sessionFileRel } from "../src/main/core/local-paths";
 import { startElectronTest, type ElectronTest } from "./electron-test";
 import { makeUiDriver, type UiDriver } from "./ui-drive";
 import { waitUntil } from "./wait";
@@ -70,13 +70,6 @@ afterAll(async () => {
     ui?.close();
     await fx?.electron?.stop();
 });
-
-/** 会话日志键（与 main/services/local-agent.ts 的 keyOf 同规则） */
-function sessionKey(taskUri: string): string {
-    const readable = taskUri.replace(/[^\w.-]+/g, "_").slice(0, 64);
-    const sum = createHash("sha256").update(taskUri).digest("hex").slice(0, 12);
-    return `${readable}-${sum}`;
-}
 
 /** 读任务 frontmatter 里的 persona（**人物 id**；直接读文件：锁的是"落盘事实"而非接口回显） */
 function personaOf(uri: string): string | undefined {
@@ -247,8 +240,8 @@ describe("任务 ↔ 人物绑定（引用存 id）", () => {
         const before = personaOf(b);
 
         // 预置一份"已有会话"的 ops 日志（键 = local-agent 的 keyOf 规则：可读前缀 + sha256 前 12 位）
-        const ops = join(fx.HOME, "local", `${sessionKey(a)}.ops.jsonl`);
-        mkdirSync(join(fx.HOME, "local"), { recursive: true });
+        const ops = join(fx.HOME, sessionFileRel(a, "ops"));
+        mkdirSync(dirname(ops), { recursive: true });
         writeFileSync(ops, `${JSON.stringify({ op: "start", id: "t1", kind: "turn" })}\n`, "utf-8");
 
         await fx.sh.run(`./diy.sh task edit ${a} --persona ${工兵}`);
@@ -660,8 +653,8 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         const uri = await setupTask("回复人展示任务");
         await fx.sh.run(`./diy.sh task edit ${uri} --persona ${id}`);
         // 造一段"已定稿"的会话（不依赖真实 LLM）：turn + assistant 文本块
-        const ops = join(fx.HOME, "local", `${sessionKey(uri)}.ops.jsonl`);
-        mkdirSync(join(fx.HOME, "local"), { recursive: true });
+        const ops = join(fx.HOME, sessionFileRel(uri, "ops"));
+        mkdirSync(dirname(ops), { recursive: true });
         const lines = [
             { op: "start", id: "t1", kind: "turn", meta: { model: "mimo-v2.6-flash" } },
             { op: "start", id: "t1_u", kind: "text", parent: "t1", meta: { role: "user" } },
@@ -700,8 +693,8 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         const id = await addPersona(名, "mimo-v2.6-flash");
         const uri = await setupTask("署名事实任务");
         await fx.sh.run(`./diy.sh task edit ${uri} --persona ${id}`);
-        const ops = join(fx.HOME, "local", `${sessionKey(uri)}.ops.jsonl`);
-        mkdirSync(join(fx.HOME, "local"), { recursive: true });
+        const ops = join(fx.HOME, sessionFileRel(uri, "ops"));
+        mkdirSync(dirname(ops), { recursive: true });
         const turn = (tid: string, model: string | undefined, say: string) => [
             {
                 op: "start",

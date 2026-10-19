@@ -504,6 +504,12 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { getLocalAgent } = await import("./local-agent");
     return { cleared: getLocalAgent().clear(input.taskUri) };
   });
+  // 落位迁移（##379）：**不碰会话运行时**，纯磁盘搬迁 —— 故不 noteRendererTouch（不是会话活动）。
+  // 生产根只允许 dry-run（拒绝在服务端，见 services/local-layout-migrate）。
+  binding.on(app.agent.local.migrateLayout, async ({ input }) => {
+    const { migrateLocalLayout } = await import("./local-layout-migrate");
+    return migrateLocalLayout({ dryRun: input.dryRun !== false, toolout: input.toolout });
+  });
   binding.on(app.agent.local.steer.list, async ({ input }) => {
     noteRendererTouch("diy.agent.local.steer.list", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");

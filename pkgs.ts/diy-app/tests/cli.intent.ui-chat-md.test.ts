@@ -17,6 +17,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
+import { sessionFileRel } from "../src/main/core/local-paths";
 import { basename, dirname, join } from "node:path";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { ShellTest } from "./shell-test";
@@ -73,7 +74,7 @@ describe("chat 正文：Markdown 原文 / 渲染两态切换", () => {
     uri = String((t.data as any)?.data?.uri);
     expect(uri).toMatch(/^projects\/.+\/tasks\/.+$/);
 
-    const file = join(fx.HOME, "local", basename(opsFile(uri)));
+    const file = join(fx.HOME, sessionFileRel(uri, "ops"));
     mkdirSync(dirname(file), { recursive: true });
     const ops = [
       { op: "start", id: "t1", kind: "turn", meta: { model: "test" } },
