@@ -15,8 +15,9 @@
 // ⚠️ 不写 `state.yaml`：那是运行中的应用独占写入的核心状态（data.state 约定），外部写它
 //    等于与运行中的 app 抢同一份文件（与 flow-store 同一条理由）。
 
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { writeFileAtomic } from "./atomic-write";
 import * as yaml from "js-yaml";
 import { diyHome } from "./state";
 import {
@@ -65,12 +66,9 @@ export function readRoom(id: string): Room | null {
     return parsed.success ? parsed.data : null;
 }
 
-/** 原子写（tmp → rename）：成员表是丢不起的数据，不做"半个文件" */
+/** 原子写：成员表是丢不起的数据，不做"半个文件" —— 原语收敛到 `core/atomic-write.ts`（##382） */
 export function writeRoom(room: Room): void {
-    const dir = roomDir(room.id);
-    mkdirSync(dir, { recursive: true });
     const f = roomYamlPath(room.id);
-    const tmp = `${f}.tmp`;
     const next: Room = {
         ...room,
         // channel 表**恒有 `default`**（##166 §28.K ①）：老房间（占位符之前建的）与手改过的
@@ -78,8 +76,7 @@ export function writeRoom(room: Room): void {
         channels: room.channels?.length ? room.channels : defaultChannels(),
         updated: new Date().toISOString(),
     };
-    writeFileSync(tmp, yaml.dump(next, { lineWidth: 200, noRefs: true }), "utf8");
-    renameSync(tmp, f);
+    writeFileAtomic(f, yaml.dump(next, { lineWidth: 200, noRefs: true }));
 }
 
 /**
