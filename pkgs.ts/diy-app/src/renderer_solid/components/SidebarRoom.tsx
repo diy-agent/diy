@@ -9,15 +9,26 @@
  * 除此之外**完全同构**（成员表 / 投递 / 署名 / 进度），所以复用同一批组件：
  *   · `RoomRoster` —— 成员栏 + 邀请（与房间页同一份）；
  *   · `ChatView` + `TurnView` —— 进度 = **任务对话那套块渲染**（§28.7 A 硬要求：不许另写一套）；
+ *   · `MdEditor` —— 输入区 = **任务对话那台编辑器**（##377 第 9 刀 C：别另写第二套）；
  *   · 判据（`parseAddress` / `resolveRecipients` / `deliveryHint`）全走 `shared/room`（与服务端同一份）。
  *
  * 主人格 backend（##166 §30 owner 补拍 · 选 a）：侧边栏没有宿主 task 可绑 ⇒
  * 主人格 = **缺省人物 + 影子 task**（与被邀请成员同一条规则，不搞特例）—— 由 main 侧
  * `room-service::ensureSidebarRoom` 在**首次**取房间时建好，UI 不参与。
+ *
+ * ##377 第 9 刀（owner 派活 · 用户三改）—— **三态**：
+ *   · `ball`  球态：**左缘**一颗悬浮球（用户要求从右缘挪过来）；
+ *   · `normal` 普通态：**viewbar 一条细条** + 会话流 + 输入框 —— 标题栏 / 成员栏 / 绑定任务入口全删；
+ *   · `max`   最大化态：**多出右侧边栏**（成员栏：成员 / 邀请（选人物）/ 当前接受者 / 移出）。
+ * 切换按钮**单个**（用户明确要求）：球 → 普通态；普通态 / 最大化态内点它 → 最大化 ⇄ 恢复。
+ * ⚠️ 口径歧义（已回报 owner）：用户只说「最大化和恢复的单个切换按钮」，**没说怎么回球态** ——
+ * 本实现额外给 `Esc`（键盘入口，不占 viewbar 元素）；owner 看过截图后再定。
+ * 宽度可拖（左缘 grip，复用 `TaskDetailPanel` 的既有模式）+ 宽度记忆（localStorage）。
  */
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { diyService } from "../lib/rpc";
 import { notificationStore } from "../store/notificationStore";
+import { VIEW_BAR_H } from "../lib/layout-metrics";
 import {
     deliveryHint,
     deliveryStatusText,
@@ -37,6 +48,7 @@ import {
     type RoomMember,
 } from "../../shared/room";
 import { ChatView, TurnView } from "./LocalChatPage";
+import { MdEditor } from "./MdEditor";
 import { RoomRoster, type RosterMemberL1 } from "./RoomRoster";
 import type { BlockNode } from "../../main/services/local-blocks";
 
@@ -51,6 +63,20 @@ interface TurnState {
     turnId: string;
     live: boolean;
     error?: string;
+}
+
+/** 三态（##377 第 9 刀） */
+type SidebarMode = "ball" | "normal" | "max";
+
+const W_KEY = "diy.room.sidebar.width";
+const W_DEFAULT = 420;
+const W_MIN = 320;
+/** 最大化态右侧成员栏宽度（会话区宽度不因此变窄：面板整体变宽） */
+const ROSTER_W = 240;
+
+function clampW(w: number): number {
+    const max = Math.max(W_MIN + 100, window.innerWidth - 120);
+    return Math.min(Math.max(w, W_MIN), max);
 }
 
 function hms(iso: string): string {
@@ -72,8 +98,12 @@ function statusClass(s: DeliveryStatus): string {
 }
 
 export function SidebarRoom() {
-    /** 开合（缺省收起 —— 它常驻全局，不能一上来就挡住主界面） */
-    const [open, setOpen] = createSignal(false);
+    /** 三态（缺省球态 —— 它常驻全局，不能一上来就挡住主界面） */
+    const [mode, setMode] = createSignal<SidebarMode>("ball");
+    /** 会话区宽度（拖宽改它；最大化态在它之外**另加**成员栏，故整体变宽而会话区不变） */
+    const [width, setWidth] = createSignal<number>(
+        Number(localStorage.getItem(W_KEY)) || W_DEFAULT,
+    );
     const [roomId, setRoomId] = createSignal<string | null>(null);
     const [room, setRoom] = createSignal<Room | null>(null);
     const [events, setEvents] = createSignal<RoomEvent[]>([]);
@@ -92,6 +122,8 @@ export function SidebarRoom() {
     const ordered = createMemo(() => orderedMembers(room()));
     const human = createMemo(() => room()?.members.find((m) => m.kind === "human") ?? null);
     const focusMember = createMemo(() => room()?.members.find((m) => m.id === room()?.focus) ?? null);
+    /** 面板总宽：最大化态 = 会话区 + 成员栏（"多出右侧边栏"，会话区宽度不受影响） */
+    const panelW = createMemo(() => width() + (mode() === "max" ? ROSTER_W : 0));
 
     const avatarOf = (id: string): string => {
         const list = ordered();
@@ -179,6 +211,50 @@ export function SidebarRoom() {
         onCleanup(() => clearInterval(t));
     });
 
+    // Esc 回球态（⚠️ 口径歧义处置，见文件头注：用户只说了"最大化和恢复的单个切换按钮"）
+    onMount(() => {
+        const onKey = (e: KeyboardEvent): void => {
+            if (e.key === "Escape" && mode() !== "ball") setMode("ball");
+        };
+        window.addEventListener("keydown", onKey);
+        onCleanup(() => window.removeEventListener("keydown", onKey));
+    });
+
+    // 窗口变窄时把宽度收回合法区间（否则面板会撑出屏幕）
+    onMount(() => {
+        const onResize = (): void => {
+            setWidth((w) => clampW(w));
+        };
+        window.addEventListener("resize", onResize);
+        onCleanup(() => window.removeEventListener("resize", onResize));
+    });
+
+    /** 左缘拖宽（复用 `TaskDetailPanel.tsx:106` 的既有模式：面板在右 ⇒ 鼠标左移 = 变宽） */
+    const onGripDown = (e: MouseEvent): void => {
+        e.preventDefault();
+        const startX = e.clientX;
+        const startW = width();
+        const move = (ev: MouseEvent): void => {
+            setWidth(clampW(startW + (startX - ev.clientX)));
+        };
+        const up = (): void => {
+            window.removeEventListener("mousemove", move);
+            window.removeEventListener("mouseup", up);
+            localStorage.setItem(W_KEY, String(width()));
+        };
+        window.addEventListener("mousemove", move);
+        window.addEventListener("mouseup", up);
+    };
+    const resetW = (): void => {
+        setWidth(W_DEFAULT);
+        localStorage.setItem(W_KEY, String(W_DEFAULT));
+    };
+
+    /** 单个切换按钮（用户明确要求）：普通 ⇄ 最大化 */
+    const toggleMax = (): void => {
+        setMode(mode() === "max" ? "normal" : "max");
+    };
+
     const setFocus = async (m: RoomMember | null): Promise<void> => {
         const id = roomId();
         if (!id) return;
@@ -211,14 +287,15 @@ export function SidebarRoom() {
         }
     };
 
-    const addMember = async (name: string, task: string): Promise<void> => {
+    const removeMember = async (m: RoomMember): Promise<void> => {
         const id = roomId();
-        if (!id || !name || !task) return;
+        if (!id) return;
         try {
-            await diyService.diy.room.addMember({ id, name, task, persona: undefined, role: undefined });
+            setRoom(await diyService.diy.room.removeMember({ id, member: m.id }));
+            notificationStore.addToast("info", `已把 ${m.name} 移出房间（影子任务保留）`);
             await loadRoom(id);
         } catch (e) {
-            notificationStore.addToast("error", `加成员失败：${msgOf(e)}`);
+            notificationStore.addToast("error", `移出失败：${msgOf(e)}`);
         }
     };
 
@@ -256,12 +333,12 @@ export function SidebarRoom() {
 
     return (
         <>
-            {/* 收起态：右缘一个小按钮（常驻，不挡内容） */}
-            <Show when={!open()}>
+            {/* ── 球态：**左缘**一颗悬浮球（用户要求：从右缘挪到左缘） ── */}
+            <Show when={mode() === "ball"}>
                 <button
-                    class="fixed right-0 top-1/3 z-40 rounded-l-lg border border-r-0 border-base-300 bg-base-100/95 px-2 py-3 shadow-lg hover:bg-base-200"
-                    title="打开侧边栏助手"
-                    onClick={() => setOpen(true)}
+                    class="fixed left-0 top-1/3 z-40 rounded-r-lg border border-l-0 border-base-300 bg-base-100/95 px-2 py-3 shadow-lg hover:bg-base-200"
+                    title="打开侧边栏助手（Esc 收起）"
+                    onClick={() => setMode("normal")}
                     data-sidebar-open
                 >
                     <span class="text-lg">💬</span>
@@ -269,236 +346,277 @@ export function SidebarRoom() {
                 </button>
             </Show>
 
-            <Show when={open()}>
+            {/* ── 普通态 / 最大化态：同一块面板（差别 = 宽度 + 有没有右侧成员栏） ── */}
+            <Show when={mode() !== "ball"}>
                 <div
-                    class="fixed right-0 top-0 z-40 h-full w-[400px] max-w-[92vw] flex flex-col border-l border-base-300 bg-base-100 shadow-2xl"
+                    class="fixed right-0 top-0 z-40 h-full flex flex-col border-l border-base-300 bg-base-100 shadow-2xl"
+                    style={{ width: `${panelW()}px`, "max-width": "96vw" }}
                     data-sidebar-room
+                    data-sidebar-mode={mode()}
                 >
-                    {/* 头 */}
-                    <div class="px-3 py-2 border-b shrink-0 flex items-center gap-2">
-                        <span class="font-medium text-sm">助手房间</span>
-                        <span class="badge badge-xs badge-ghost" title={roomId() ?? ""}>
+                    {/* 左缘拖宽条（复用既有模式；双击复位） */}
+                    <div
+                        class="absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize hover:bg-primary/40 active:bg-primary/60"
+                        title="拖动调整宽度（双击复位）"
+                        onMouseDown={onGripDown}
+                        onDblClick={resetW}
+                        data-sidebar-grip
+                    />
+
+                    {/* viewbar：一条细条 = 房间名 + **单个**切换按钮（用户要求"删除输入框以上的所有页面元素"） */}
+                    <div
+                        class={`flex items-center gap-2 px-2 ${VIEW_BAR_H} border-b shrink-0`}
+                        data-sidebar-viewbar
+                    >
+                        <span class="text-body shrink-0">💬</span>
+                        <span class="text-body font-medium truncate" title={roomId() ?? ""}>
                             {room()?.title || "侧边栏"}
+                        </span>
+                        <span class="badge badge-xs badge-ghost shrink-0">
+                            {room()?.members.length ?? 0} 人
                         </span>
                         <div class="flex-1" />
                         <button
                             class="btn btn-xs btn-ghost"
-                            title="收起"
-                            onClick={() => setOpen(false)}
-                            data-sidebar-close
+                            title={mode() === "max" ? "恢复（Esc 收起为球）" : "最大化（多出成员栏）"}
+                            onClick={toggleMax}
+                            data-sidebar-toggle
                         >
-                            收起 ▸
+                            {mode() === "max" ? "⤡ 恢复" : "⤢ 最大化"}
                         </button>
                     </div>
 
-                    {/* 成员栏（与房间页同一份组件）—— 高度受限，可滚 */}
-                    <RoomRoster
-                        class="w-full max-h-56 border-t-0 border-b"
-                        room={room()}
-                        roster={roster()}
-                        onFocus={(m) => void setFocus(m)}
-                        onInvite={invite}
-                        onAddMember={addMember}
-                        onAddress={insertAddress}
-                    />
-
-                    {/* 事件流 */}
-                    <div
-                        class="flex-1 overflow-auto px-3 py-2 space-y-2"
-                        ref={(el) => (streamRef = el)}
-                        data-sidebar-events
-                    >
-                        <Show when={events().length === 0}>
-                            <div class="text-caption opacity-50">
-                                还没有发言。上面点成员卡的 @ 寻址，或直接打字（投给当前接受者）。
-                            </div>
-                        </Show>
-                        <For each={events()}>
-                            {(e) => {
-                                const mine = () => e.author === human()?.id;
-                                const author = () => room()?.members.find((m) => m.id === e.author);
-                                const st = () => turns()[e.id];
-                                const isFolded = () => folded()[e.id] === true;
-                                createEffect(() => {
-                                    if (e.kind !== "reply" || !e.ref || st()) return;
-                                    void loadTurn(e.id);
-                                });
-                                return (
-                                    <div
-                                        class={`flex ${mine() ? "justify-end" : "justify-start"}`}
-                                        data-sidebar-event
-                                        data-sidebar-kind={e.kind}
-                                        data-sidebar-author={e.author}
-                                        data-sidebar-delivered={e.delivered ? "true" : "false"}
-                                    >
-                                        <div class="max-w-[88%] flex flex-col">
-                                            <Show when={!mine()}>
-                                                <div class="flex items-center gap-1.5 mb-0.5">
-                                                    <div
-                                                        class="w-5 h-5 rounded-full flex items-center justify-center text-xs shrink-0"
-                                                        style={{
-                                                            background: `${colorOf(e.author)}33`,
-                                                            border: `1px solid ${colorOf(e.author)}`,
-                                                        }}
-                                                        data-sidebar-avatar={e.author}
-                                                    >
-                                                        {avatarOf(e.author)}
-                                                    </div>
-                                                    <span class="text-sm font-medium" style={{ color: colorOf(e.author) }}>
-                                                        {author()?.name ?? shortName(e.author)}
-                                                    </span>
-                                                    <span class="text-caption opacity-50">{hms(e.ts)}</span>
-                                                    <Show when={e.to.length > 0}>
-                                                        <span class="text-caption opacity-50">
-                                                            → {e.to.map((t) => memberName(room(), t)).join(" / ")}
-                                                        </span>
-                                                    </Show>
-                                                </div>
-                                            </Show>
+                    {/* 主体：会话区（常驻）+ 成员栏（**只在最大化态**） */}
+                    <div class="flex-1 flex min-h-0">
+                        <div class="flex-1 flex flex-col min-w-0">
+                            {/* 事件流 */}
+                            <div
+                                class="flex-1 overflow-auto px-2.5 py-1.5 space-y-1.5"
+                                ref={(el) => (streamRef = el)}
+                                data-sidebar-events
+                            >
+                                <Show when={events().length === 0}>
+                                    <div class="text-caption opacity-50">
+                                        还没有发言。最大化后点成员卡的 @ 寻址，或直接打字（投给当前接受者）。
+                                    </div>
+                                </Show>
+                                <For each={events()}>
+                                    {(e) => {
+                                        const mine = () => e.author === human()?.id;
+                                        const author = () => room()?.members.find((m) => m.id === e.author);
+                                        const st = () => turns()[e.id];
+                                        const isFolded = () => folded()[e.id] === true;
+                                        createEffect(() => {
+                                            if (e.kind !== "reply" || !e.ref || st()) return;
+                                            void loadTurn(e.id);
+                                        });
+                                        return (
                                             <div
-                                                class={`rounded-lg px-2.5 py-1.5 text-sm whitespace-pre-wrap ${
-                                                    e.kind === "say" ? "bg-primary/15" : "bg-base-200"
-                                                }`}
+                                                class={`flex ${mine() ? "justify-end" : "justify-start"}`}
+                                                data-sidebar-event
+                                                data-sidebar-kind={e.kind}
+                                                data-sidebar-author={e.author}
+                                                data-sidebar-delivered={e.delivered ? "true" : "false"}
                                             >
-                                                {e.text || <span class="opacity-50">（无正文）</span>}
-                                            </div>
-                                            <Show when={(e.deliveries?.length ?? 0) > 0}>
-                                                <div class="flex flex-wrap gap-1 mt-0.5">
-                                                    <For each={e.deliveries}>
-                                                        {(d) => (
-                                                            <span
-                                                                class={`badge badge-xs ${statusClass(d.status)}`}
-                                                                title={d.error ?? ""}
-                                                                data-sidebar-delivery={`${e.id}:${d.memberId}`}
-                                                                data-sidebar-status={d.status}
+                                                <div class="max-w-[92%] flex flex-col">
+                                                    <Show when={!mine()}>
+                                                        <div class="flex items-center gap-1.5 mb-0.5">
+                                                            <div
+                                                                class="w-4 h-4 rounded-full flex items-center justify-center text-[10px] shrink-0"
+                                                                style={{
+                                                                    background: `${colorOf(e.author)}33`,
+                                                                    border: `1px solid ${colorOf(e.author)}`,
+                                                                }}
+                                                                data-sidebar-avatar={e.author}
                                                             >
-                                                                {memberName(room(), d.memberId)} · {deliveryStatusText(d.status)}
+                                                                {avatarOf(e.author)}
+                                                            </div>
+                                                            <span
+                                                                class="text-caption font-medium"
+                                                                style={{ color: colorOf(e.author) }}
+                                                            >
+                                                                {author()?.name ?? shortName(e.author)}
                                                             </span>
-                                                        )}
-                                                    </For>
-                                                </div>
-                                            </Show>
-                                            <Show when={e.error}>
-                                                <div class="text-caption text-error mt-0.5" data-sidebar-undelivered>
-                                                    {e.kind === "say" ? "未投递：" : ""}
-                                                    {e.error}
-                                                </div>
-                                            </Show>
-                                            {/* 过程进度：同一份数据（成员会话的那一轮）、同一套渲染（TurnView） */}
-                                            <Show when={e.kind === "reply" && e.ref}>
-                                                <div class="mt-1 rounded-lg border border-base-300 bg-base-100/60" data-sidebar-progress={e.id}>
-                                                    <button
-                                                        class="flex w-full items-center gap-1.5 px-2 py-1 text-left text-caption"
-                                                        onClick={() => setFolded((p) => ({ ...p, [e.id]: !isFolded() }))}
-                                                        data-sidebar-progress-toggle={e.id}
+                                                            <span class="text-caption opacity-40">{hms(e.ts)}</span>
+                                                            <Show when={e.to.length > 0}>
+                                                                <span class="text-caption opacity-40">
+                                                                    → {e.to.map((t) => memberName(room(), t)).join(" / ")}
+                                                                </span>
+                                                            </Show>
+                                                        </div>
+                                                    </Show>
+                                                    <div
+                                                        class={`rounded-lg px-2 py-1 text-body whitespace-pre-wrap ${
+                                                            e.kind === "say" ? "bg-primary/15" : "bg-base-200"
+                                                        }`}
                                                     >
-                                                        <span class="opacity-60">{isFolded() ? "▸" : "▾"}</span>
-                                                        <span>过程进度</span>
-                                                        <span class="opacity-50">
-                                                            {shortName(e.author)} · {st()?.turnId ?? e.ref!.turnId}
-                                                        </span>
-                                                        <Show when={st()?.live}>
-                                                            <span class="badge badge-xs badge-info">直播中</span>
-                                                        </Show>
-                                                    </button>
-                                                    <Show when={!isFolded()}>
-                                                        <div class="px-2 pb-2">
-                                                            <Show when={st()?.error}>
-                                                                <div class="text-caption text-error">{st()!.error}</div>
-                                                            </Show>
-                                                            <Show when={!st()}>
-                                                                <div class="text-caption opacity-60">正在取这一轮…</div>
-                                                            </Show>
-                                                            <Show when={st()?.turn}>
-                                                                <ChatView
-                                                                    source={{
-                                                                        trees: () => {
-                                                                            const t = st()?.turn;
-                                                                            return t ? [t] : [];
-                                                                        },
-                                                                        live: () => st()?.live === true,
-                                                                    }}
-                                                                >
-                                                                    <TurnView
-                                                                        turnId={e.ref!.turnId}
-                                                                        pin={pin()}
-                                                                        level={2}
-                                                                        histOpen={true}
-                                                                        onCycle={() => undefined}
-                                                                        conclusionLines={3}
-                                                                        onResizeLines={() => undefined}
-                                                                        onToggle={(bid, force) =>
-                                                                            setPin((p) => ({ ...p, [bid]: force ?? !p[bid] }))
-                                                                        }
-                                                                        onFull={() => undefined}
-                                                                        liveTurnId={st()?.live ? e.ref!.turnId : null}
-                                                                        md={true}
-                                                                        usageHover={null}
-                                                                        onHoverUsage={() => undefined}
-                                                                        onHoverEndUsage={() => undefined}
-                                                                        usageDetail={null}
-                                                                        onDetailUsage={() => undefined}
-                                                                    />
-                                                                </ChatView>
+                                                        {e.text || <span class="opacity-50">（无正文）</span>}
+                                                    </div>
+                                                    <Show when={(e.deliveries?.length ?? 0) > 0}>
+                                                        <div class="flex flex-wrap gap-1 mt-0.5">
+                                                            <For each={e.deliveries}>
+                                                                {(d) => (
+                                                                    <span
+                                                                        class={`badge badge-xs ${statusClass(d.status)}`}
+                                                                        title={d.error ?? ""}
+                                                                        data-sidebar-delivery={`${e.id}:${d.memberId}`}
+                                                                        data-sidebar-status={d.status}
+                                                                    >
+                                                                        {memberName(room(), d.memberId)} · {deliveryStatusText(d.status)}
+                                                                    </span>
+                                                                )}
+                                                            </For>
+                                                        </div>
+                                                    </Show>
+                                                    <Show when={e.error}>
+                                                        <div class="text-caption text-error mt-0.5" data-sidebar-undelivered>
+                                                            {e.kind === "say" ? "未投递：" : ""}
+                                                            {e.error}
+                                                        </div>
+                                                    </Show>
+                                                    {/* 过程进度：同一份数据（成员会话的那一轮）、同一套渲染（TurnView） */}
+                                                    <Show when={e.kind === "reply" && e.ref}>
+                                                        <div
+                                                            class="mt-0.5 rounded-lg border border-base-300 bg-base-100/60"
+                                                            data-sidebar-progress={e.id}
+                                                        >
+                                                            <button
+                                                                class="flex w-full items-center gap-1.5 px-2 py-0.5 text-left text-caption"
+                                                                onClick={() =>
+                                                                    setFolded((p) => ({ ...p, [e.id]: !isFolded() }))
+                                                                }
+                                                                data-sidebar-progress-toggle={e.id}
+                                                            >
+                                                                <span class="opacity-60">{isFolded() ? "▸" : "▾"}</span>
+                                                                <span>过程进度</span>
+                                                                <span class="opacity-50">
+                                                                    {shortName(e.author)} · {st()?.turnId ?? e.ref!.turnId}
+                                                                </span>
+                                                                <Show when={st()?.live}>
+                                                                    <span class="badge badge-xs badge-info">直播中</span>
+                                                                </Show>
+                                                            </button>
+                                                            <Show when={!isFolded()}>
+                                                                <div class="px-2 pb-1.5">
+                                                                    <Show when={st()?.error}>
+                                                                        <div class="text-caption text-error">{st()!.error}</div>
+                                                                    </Show>
+                                                                    <Show when={!st()}>
+                                                                        <div class="text-caption opacity-60">正在取这一轮…</div>
+                                                                    </Show>
+                                                                    <Show when={st()?.turn}>
+                                                                        <ChatView
+                                                                            source={{
+                                                                                trees: () => {
+                                                                                    const t = st()?.turn;
+                                                                                    return t ? [t] : [];
+                                                                                },
+                                                                                live: () => st()?.live === true,
+                                                                            }}
+                                                                        >
+                                                                            <TurnView
+                                                                                turnId={e.ref!.turnId}
+                                                                                pin={pin()}
+                                                                                level={2}
+                                                                                histOpen={true}
+                                                                                onCycle={() => undefined}
+                                                                                conclusionLines={3}
+                                                                                onResizeLines={() => undefined}
+                                                                                onToggle={(bid, force) =>
+                                                                                    setPin((p) => ({ ...p, [bid]: force ?? !p[bid] }))
+                                                                                }
+                                                                                onFull={() => undefined}
+                                                                                liveTurnId={st()?.live ? e.ref!.turnId : null}
+                                                                                md={true}
+                                                                                usageHover={null}
+                                                                                onHoverUsage={() => undefined}
+                                                                                onHoverEndUsage={() => undefined}
+                                                                                usageDetail={null}
+                                                                                onDetailUsage={() => undefined}
+                                                                            />
+                                                                        </ChatView>
+                                                                    </Show>
+                                                                </div>
                                                             </Show>
                                                         </div>
                                                     </Show>
                                                 </div>
-                                            </Show>
-                                        </div>
-                                    </div>
-                                );
-                            }}
-                        </For>
-                    </div>
-
-                    {/* 输入 */}
-                    <div class="border-t px-3 py-2 shrink-0">
-                        <Show when={err()}>
-                            <div class="text-caption text-error mb-1" data-sidebar-error>
-                                {err()}
+                                            </div>
+                                        );
+                                    }}
+                                </For>
                             </div>
-                        </Show>
-                        <Show when={badLines() > 0}>
-                            <div class="text-caption text-warning mb-1">事件流有 {badLines()} 行读不出来（已跳过）</div>
-                        </Show>
-                        <div class="flex items-center gap-2 mb-1">
-                            <span class="text-caption opacity-70" data-sidebar-hint>
-                                {hint()}
-                            </span>
-                            <div class="flex-1" />
-                            <Show when={busy()}>
-                                <span class="text-caption opacity-70">投递中…</span>
-                            </Show>
-                            <button class="btn btn-xs btn-ghost" onClick={() => insertAddress("all")}>
-                                @all
-                            </button>
+
+                            {/* 输入区：**任务对话那台编辑器**（MdEditor，同一份实现）+ 底部工具条同框内 */}
+                            <div class="border-t p-2 shrink-0">
+                                <Show when={err()}>
+                                    <div class="text-caption text-error mb-1" data-sidebar-error>
+                                        {err()}
+                                    </div>
+                                </Show>
+                                <Show when={badLines() > 0}>
+                                    <div class="text-caption text-warning mb-1">
+                                        事件流有 {badLines()} 行读不出来（已跳过）
+                                    </div>
+                                </Show>
+                                <div
+                                    class="rounded-field border border-base-content/20 bg-base-200 transition-colors focus-within:border-base-content relative flex flex-col"
+                                    style={{ "max-height": "42vh" }}
+                                    data-sidebar-input
+                                >
+                                    <div class="min-h-0 flex-auto overflow-auto px-2 pt-1.5">
+                                        <MdEditor
+                                            value={input()}
+                                            editable
+                                            onChange={(v) => setInput(v)}
+                                            onEnter={() => void send()}
+                                            wrap
+                                            embedded
+                                        />
+                                    </div>
+                                    <div class="flex shrink-0 items-center gap-2 px-2 py-1.5 text-body">
+                                        <span class="text-caption opacity-70 truncate" data-sidebar-hint>
+                                            {hint()}
+                                        </span>
+                                        <div class="flex-1" />
+                                        <Show when={busy()}>
+                                            <span class="text-caption opacity-70">投递中…</span>
+                                        </Show>
+                                        <button
+                                            class="btn btn-xs btn-ghost"
+                                            onClick={() => insertAddress("all")}
+                                            data-sidebar-all
+                                        >
+                                            @all
+                                        </button>
+                                        <button
+                                            class="btn btn-sm btn-primary"
+                                            disabled={!input().trim() || !roomId()}
+                                            onClick={() => void send()}
+                                            data-sidebar-send
+                                        >
+                                            {busy() ? "发送（会排队）" : "发送"}
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="text-caption opacity-50 mt-1">
+                                    回车发送 / Shift+回车换行 · 当前接受者 {focusMember()?.name ?? "（无）"}
+                                </div>
+                            </div>
                         </div>
-                        <div class="flex gap-2">
-                            <textarea
-                                class="textarea textarea-bordered flex-1 text-sm"
-                                rows="2"
-                                placeholder="打字… 开头 @名字 指定收件人（可连写 / @all）；不写则投给当前接受者"
-                                value={input()}
-                                onInput={(e) => setInput(e.currentTarget.value)}
-                                onKeyDown={(e) => {
-                                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                                        e.preventDefault();
-                                        void send();
-                                    }
-                                }}
-                                data-sidebar-input
+
+                        {/* 右侧成员栏 —— **只在最大化态出现**（用户要求："扩展为最大化后出现完整形态"） */}
+                        <Show when={mode() === "max"}>
+                            <RoomRoster
+                                class="shrink-0 border-l"
+                                room={room()}
+                                roster={roster()}
+                                onFocus={(m) => void setFocus(m)}
+                                onInvite={invite}
+                                onRemove={(m) => void removeMember(m)}
+                                onAddress={insertAddress}
                             />
-                            <button
-                                class="btn btn-sm btn-primary"
-                                disabled={!input().trim() || !roomId()}
-                                onClick={() => void send()}
-                                data-sidebar-send
-                            >
-                                {busy() ? "发送（会排队）" : "发送"}
-                            </button>
-                        </div>
-                        <div class="text-caption opacity-50 mt-1">Cmd/Ctrl+Enter 发送 · 当前接受者 {focusMember()?.name ?? "（无）"}</div>
+                        </Show>
                     </div>
                 </div>
             </Show>

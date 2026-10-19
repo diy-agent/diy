@@ -10,6 +10,10 @@
  * 所以同一个组件在 room 页与任务页都能用。
  *
  * 判据（头像 / 配色 / 顺序 / 人物护栏）与 main 侧同一份实现（`shared/room.ts`）。
+ *
+ * ##377 第 9 刀（owner 口径 · 用户要求）：
+ *   · **删掉「高级：绑已有任务」UI 入口**（"删除绑定任务功能"）—— 后端 `room.addMember` 保留不动；
+ *   · **新增「移出成员」**（`onRemove`）—— 侧边栏最大化态的成员栏要用。
  */
 import { createMemo, createSignal, For, onMount, Show, type JSX } from "solid-js";
 import {
@@ -58,8 +62,15 @@ export interface RoomRosterProps {
     onFocus: (m: RoomMember | null) => void;
     /** 邀请（主路径）：选人物 → 调用方去 `room.invite`（自动配影子 task 作 backend） */
     onInvite: (personaId: string) => void | Promise<void>;
-    /** 高级入口：手填名字 + 绑**已有** task（默认收起） */
-    onAddMember: (name: string, task: string) => void | Promise<void>;
+    /**
+     * 高级入口：手填名字 + 绑**已有** task。
+     * ⚠️ ##377 第 9 刀（owner 口径）：**UI 入口已删**（用户要求「删除绑定任务功能」）——
+     * 字段留着只为不破坏既有调用方（`RoomsPage` 仍传），**本组件不再渲染它**。
+     * 后端 `room.addMember` 也未动（等 §28.L 的 CLI 规范统一处理）。
+     */
+    onAddMember?: (name: string, task: string) => void | Promise<void>;
+    /** 移出成员（**不传 ⇒ 不显示按钮**）；主人格 / 人成员由本组件直接禁掉（服务端另有护栏） */
+    onRemove?: (m: RoomMember) => void | Promise<void>;
     /** 点成员卡上的 `@`（把 `@名` 塞进调用方输入框）；**不传 ⇒ 不显示该按钮** */
     onAddress?: (name: string) => void;
     /** 外层 class（宽度由调用方定；缺省 `w-60`） */
@@ -68,10 +79,6 @@ export interface RoomRosterProps {
 
 export function RoomRoster(props: RoomRosterProps): JSX.Element {
     const [invitePersona, setInvitePersona] = createSignal("");
-    /** 高级入口默认收起 —— §28.K 待拍 19：长留但不暴露 */
-    const [advanced, setAdvanced] = createSignal(false);
-    const [memberName_, setMemberName_] = createSignal("");
-    const [memberTask, setMemberTask] = createSignal("");
 
     /** 成员展示顺序（人先、agent 后）—— 顺序与头像位次同一份（同房间内头像不撞） */
     const ordered = createMemo(() => orderedMembers(props.room));
@@ -99,15 +106,6 @@ export function RoomRoster(props: RoomRosterProps): JSX.Element {
         if (!pid || invitedPersonas().has(pid)) return;
         await props.onInvite(pid);
         setInvitePersona("");
-    };
-
-    const doAdd = async (): Promise<void> => {
-        const name = memberName_().trim();
-        const task = memberTask().trim();
-        if (!name || !task) return;
-        await props.onAddMember(name, task);
-        setMemberName_("");
-        setMemberTask("");
     };
 
     onMount(() => void personaStore.load());
@@ -235,6 +233,21 @@ export function RoomRoster(props: RoomRosterProps): JSX.Element {
                                             @
                                         </button>
                                     </Show>
+                                    {/* 移出：主人格不可移出（它就是宿主本身，服务端也拦）；
+                                        人成员不走这条路（人 = 页面操作者本人，无 backend） */}
+                                    <Show when={props.onRemove && !m.main && m.kind !== "human"}>
+                                        <button
+                                            class="btn btn-xs btn-ghost opacity-50 hover:opacity-100 hover:text-error"
+                                            title={`把 ${m.name} 移出房间（影子任务保留，只是不再是成员）`}
+                                            onClick={(ev) => {
+                                                ev.stopPropagation();
+                                                void props.onRemove?.(m);
+                                            }}
+                                            data-room-remove={m.id}
+                                        >
+                                            ✕
+                                        </button>
+                                    </Show>
                                 </div>
                             </div>
                         );
@@ -267,38 +280,6 @@ export function RoomRoster(props: RoomRosterProps): JSX.Element {
                 >
                     邀请（自动配一个会话）
                 </button>
-                <button
-                    class="btn btn-xs btn-ghost w-full mt-1"
-                    onClick={() => setAdvanced(!advanced())}
-                    data-room-advanced-toggle
-                >
-                    {advanced() ? "收起高级" : "高级：绑已有任务"}
-                </button>
-                <Show when={advanced()}>
-                    <div class="mt-1 pt-1 border-t">
-                        <input
-                            class="input input-xs input-bordered w-full mb-1"
-                            placeholder="名字（@ 寻址用）"
-                            value={memberName_()}
-                            onInput={(e) => setMemberName_(e.currentTarget.value)}
-                            data-room-member-name
-                        />
-                        <input
-                            class="input input-xs input-bordered w-full mb-1"
-                            placeholder="绑定任务 URI（projects/1/tasks/1）"
-                            value={memberTask()}
-                            onInput={(e) => setMemberTask(e.currentTarget.value)}
-                            data-room-member-task
-                        />
-                        <button
-                            class="btn btn-xs w-full"
-                            onClick={() => void doAdd()}
-                            data-room-member-add
-                        >
-                            加入（绑已有任务）
-                        </button>
-                    </div>
-                </Show>
             </div>
         </div>
     );
