@@ -21,8 +21,8 @@
  * 【数据源（禁止 UI 猜测；每个输入都指名真源）】
  *   · `inTurn`      ← `SessionEntry.turn != null`（`agent.local.sessions`，main 内存权威，
  *                      见 main/services/session-registry.ts 的 noteTurnStart/noteTurnEnd）
- *   · `unreadSteps` ← `stepsNow(entry) − renderer 已读水位`（水位是本地量，见 ##308
- *                      shared/session-overview.ts 的 newStepsOf）
+ *   · `unreadTurns` ← `max(注册表 turnCount, 账本轮次) − renderer 已读水位`（##358 口径订正：
+ *                      单位是**轮次**，1 轮 = 1 条未读消息；读口 sessionStore.unreadTurnsOf）
  *   · `hasDraft`    ← 任务目录 `.diy/drafts.yaml` 的 `agent_input` 字段（未提交的输入；
  *                      main 侧 core/drafts.ts 的 DRAFT_FIELDS）
  *   · `hasSession`  ← 该任务的会话 **Op 日志是否存在且非空**（main/core/local-paths.ts
@@ -35,8 +35,8 @@ export type TaskAgentStateKind = "in-turn" | "unread" | "draft" | "clean" | "idl
 export interface TaskAgentStateInput {
     /** 此刻有轮次在跑（main 内存真值） */
     inTurn: boolean;
-    /** 自上次查看以来的新增步数（0 = 已读） */
-    unreadSteps: number;
+    /** 自上次查看以来的新增轮次（0 = 已读；1 轮 = 1 条消息） */
+    unreadTurns: number;
     /** 有未发送的草稿（agent 输入框） */
     hasDraft: boolean;
     /** 这个任务**有过**对话（会话日志非空）—— 「干净任务」的判据 */
@@ -57,8 +57,8 @@ export interface TaskAgentStateView {
 /**
  * 单轴判据（优先级见头注）。
  *
- * ⚠️ `unreadSteps <= 0` 一律不算未读 —— 负数（水位比当前步数还大，如刚清空会话）也必须落到
- * 后面的分支，不许出现"−3 步未读"这种荒谬显示。
+ * ⚠️ `unreadTurns <= 0` 一律不算未读 —— 负数（水位比当前轮次还大，如刚清空会话）也必须落到
+ * 后面的分支，不许出现"−3 条未读"这种荒谬显示。
  */
 export function taskAgentStateOf(i: TaskAgentStateInput): TaskAgentStateView {
     if (i.inTurn) {
@@ -70,13 +70,13 @@ export function taskAgentStateOf(i: TaskAgentStateInput): TaskAgentStateView {
             tip: "正在一轮对话中（main 内存真值：会话注册表该任务 turn 非空）",
         };
     }
-    if (i.unreadSteps > 0) {
+    if (i.unreadTurns > 0) {
         return {
             kind: "unread",
             label: "有未读",
             icon: "◎",
             tone: "info",
-            tip: `对话已停止，但有 ${i.unreadSteps} 步是你上次查看之后新跑的（会话已跑步数 − 你的已读水位）`,
+            tip: `对话已停止，但有 ${i.unreadTurns} 条是你上次查看之后新跑的（会话总轮次 − 你的已读水位；1 轮 = 1 条）`,
         };
     }
     if (i.hasDraft) {

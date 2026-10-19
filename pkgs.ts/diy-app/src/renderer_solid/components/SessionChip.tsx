@@ -3,38 +3,63 @@
 // 为什么是一个组件而不是两处各写一段：判据在 shared/session-overview（纯函数），渲染只负责画 ——
 // nav 上写一份、任务表里再写一份，"同一个会话两处显示不同状态"就只是时间问题。
 // 数据不从这里订阅：全局唯一订阅在 store/sessionStore（R3：多一处订阅就多一份漂移源）。
-import { Show } from "solid-js";
-import { sessionStore } from "../store/sessionStore";
+// 判据的**合成**在 lib/session-mark（注册表 chip × 账本「已对话」，##358）；本文件只管画。
+import { Show, createEffect } from "solid-js";
+import { ChatGlyph } from "./ChatGlyph";
+import { sessionMarkOf } from "../lib/session-mark";
+import { usageLedgerStore } from "../store/usageLedgerStore";
 import type { SessionChipView } from "../../shared/session-overview";
 
-const TONE_BADGE: Record<SessionChipView["tone"], string> = {
-    primary: "badge-primary",
+/**
+ * tone → daisyUI badge 色（**按颜色说话**，用户 2026-10-16 给的就是颜色词）：
+ *   绿 = 未读 / 运行中 · 黄 = 停滞 / 留言 · 红 = 未读且异常终止 · 灰 = 已对话（弱标）。
+ *
+ * ⚠️ `primary` 落的是 **`badge-success`（绿）**，不是 `badge-primary` —— 本主题的 primary 是蓝紫，
+ * 与"绿色是未读"的口径不符。三处（nav / 任务表 / 总览）同走本表，改色只有这一处。
+ */
+export const TONE_BADGE: Record<SessionChipView["tone"], string> = {
+    primary: "badge-success",
     warning: "badge-warning",
     error: "badge-error",
     ghost: "badge-ghost",
 };
 
 const TONE_DOT: Record<SessionChipView["tone"], string> = {
-    primary: "bg-primary",
+    primary: "bg-success",
     warning: "bg-warning",
     error: "bg-error",
     ghost: "bg-base-content/40",
 };
 
-/** 完整 chip（图标 + 一行文案）：展开态 nav 与任务表行用 */
-export function SessionChip(props: { uri: string; class?: string }) {
-    const chip = () => sessionStore.chipOf(props.uri);
+/**
+ * 完整 chip（图标 + 一行文案）：展开态 nav 与任务表行用。
+ *
+ * `iconOnly`（##358，nav 专用）：**弱标**（`◌ 已对话`）不出文字，退化成一个会话气泡图标
+ * （明暗在 `ChatGlyph` 里定）。理由 —— 用户 2026-10-19：「nav 上『已对话』改成状态图标，
+ * 会话聊天的图标暗色和亮色暗示对话状态」。**只有弱标降级**：`+N` / `●` 这些是真·有事，
+ * 变成图标就看不出"有几条"了。
+ */
+export function SessionChip(props: { uri: string; class?: string; iconOnly?: boolean }) {
+    // 谁渲染谁驱动：标记要看的账本事实由**这里**发起拉取（幂等、有缓存与并发上限）。
+    // 放组件里而不是全局 effect：只拉真正出现在界面上的任务，表几百行也不会开机就爆。
+    createEffect(() => usageLedgerStore.ensure(props.uri));
+    const chip = () => sessionMarkOf(props.uri);
     return (
         <Show when={chip()}>
             {(c) => (
-                <span
-                    class={`badge badge-xs gap-0.5 font-normal whitespace-nowrap align-middle ${TONE_BADGE[c().tone]} ${props.class ?? ""}`}
-                    title={c().tip}
-                    data-session-chip={props.uri}
+                <Show
+                    when={!(props.iconOnly && c().tone === "ghost")}
+                    fallback={<ChatGlyph tone="talked" tip={c().tip} class={props.class} />}
                 >
-                    <span>{c().icon}</span>
-                    <span>{c().text}</span>
-                </span>
+                    <span
+                        class={`badge badge-xs gap-0.5 font-normal whitespace-nowrap align-middle ${TONE_BADGE[c().tone]} ${props.class ?? ""}`}
+                        title={c().tip}
+                        data-session-chip={props.uri}
+                    >
+                        <span>{c().icon}</span>
+                        <span>{c().text}</span>
+                    </span>
+                </Show>
             )}
         </Show>
     );
@@ -46,7 +71,8 @@ export function SessionChip(props: { uri: string; class?: string }) {
  * 不省掉它是刻意的：rail 是"常驻可见"的那一态，任务栏里最该一眼看到的正是"有条会话在烧"。
  */
 export function SessionDot(props: { uri: string; class?: string }) {
-    const chip = () => sessionStore.chipOf(props.uri);
+    createEffect(() => usageLedgerStore.ensure(props.uri));
+    const chip = () => sessionMarkOf(props.uri);
     return (
         <Show when={chip()}>
             {(c) => (
