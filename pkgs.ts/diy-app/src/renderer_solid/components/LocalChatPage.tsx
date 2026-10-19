@@ -2576,7 +2576,8 @@ export function LocalChatPage(props: {
         room?.members.find((m) => m.main === true)?.id ?? MAIN_MEMBER_ID;
 
     /**
-     * 右栏（成员栏）的**默认开合**（##166 §44.1 ②）：成员 > 1 ⇒ 默认展开；只有主人格 ⇒ 默认收起
+     * 右栏（成员栏）的**默认开合**（##166 §44.1 ②）：除主人格外还有 agent 成员 ⇒ 默认展开；
+     * 只有主人格（人成员不计）⇒ 默认收起
      * （单人任务因此与改动前逐字一致 —— §43.3 C 判据 7 的原意）。
      *
      * 两条边界：
@@ -2587,7 +2588,10 @@ export function LocalChatPage(props: {
     const applyRosterAuto = (room: Room | null): void => {
         const page = props.rosterAutoFor;
         if (!page || !room || layoutStore.userTouched(page)) return;
-        layoutStore.setAreaHiddenAuto(page, "right", room.members.length <= 1);
+        // ⚠️「成员 > 1」= 除主人格之外**还有 agent 成员** —— **人成员不计**（否则单人任务
+        // = 人 + 主人格 = 2 条也会展开，判据 7「单人任务逐字不变」当场破；实测踩过）。
+        const otherAgents = room.members.filter((m) => m.kind === "agent" && m.main !== true).length;
+        layoutStore.setAreaHiddenAuto(page, "right", otherAgents === 0);
     };
 
     const loadRoomFeed = async (u: string, soft = false): Promise<void> => {
