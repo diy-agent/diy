@@ -382,6 +382,54 @@ export function resolveRecipients(
  * 前导 `@` 一律剥掉：命令行的 `--member @review` 与正文里的寻址写法是**同一个直觉**
  * （实测踩到：不剥时 `@review` 会被当成一个陌生名字而报"房间里没有这个成员"）。
  */
+/**
+ * 「这条事件该由 **ops 流**显示，还是由 **room 事件流**显示」（##377 第 17 刀 / ##166 §44.2 B）。
+ *
+ * 任务页的时间线是**两个源拼起来的**：本任务 ops 流（主人格，逐字不变）+ room 事件流。
+ * 主人格相关的东西**两边都有** —— room 投递给主人格 ⇒ 主人格会话里落一个 user 块；
+ * 主人格的回复 ⇒ 就是它自己会话里那一轮 ⇒ 必须有**一条**判据定死"谁负责显示"，
+ * 否则症状是"要么重复一条、要么少一条"（§44.2 B 押的正是这一点）。
+ *
+ * 判据的形状是「**ops 流里有没有这条**」，不是"说话人是谁"：
+ *   · `say`（人的发言）：投给了主人格 ⇒ 主人格会话里有个 user 块 ⇒ ops 有；
+ *     没投给主人格（`@dev`）⇒ 那句话不在**任何**本任务会话里 ⇒ room 事件流负责。
+ *   · `reply`（成员的回复）：**回复者就是主人格** ⇒ 那一轮本来就在本任务 ops 流里 ⇒ ops 有；
+ *     别人回复 ⇒ 只住在它自己的会话里 ⇒ room 事件流负责。
+ *
+ * ⚠️ 别按「事件 `to` 含主人格」一条打天下（§44.2 B 的行文）：`reply` 的 `to` 是**发起者**
+ * （人成员），永远不含主人格 ⇒ 主人格的回复会被画第二遍。两种 kind 的判据**不同源**，
+ * 这里合成一条函数正是为了让它只有一个落点（可单测、可复用）。
+ *
+ * 返回 true = **ops 流负责**（room 侧跳过，不重复渲染）。
+ */
+export function opsOwnsEvent(
+    e: Pick<RoomEvent, "kind" | "to" | "ref">,
+    mainMemberId: string = MAIN_MEMBER_ID,
+): boolean {
+    if (e.kind === "say") return e.to.includes(mainMemberId);
+    if (e.kind === "reply") return e.ref?.memberUri === mainMemberId;
+    return true; // 认不出的 kind 一律不画（白名单式：宁可少画，不可画错）
+}
+
+/**
+ * 投递时落进成员会话的**署名**（##166 §40 B 的收窄 —— 第 17 刀）。
+ *
+ * §40 B 原文 =「值 = 发起投递的成员 id」。第 17 刀把任务页主输入框改走 room 之后，
+ * 这条规则在**主人格**上会撞 §44.2 A「无 `@` = 投给主人格 = **与今天等价**」：
+ * 主人格的会话就是**本任务自己的会话**，而今天那条 user 块**没有 author**
+ * （右对齐、无署名 —— §40 C）。凭空带上 `human:chen56` ⇒ 气泡翻到左侧 + 加署名
+ * ⇒ 判据 1 / 判据 7（逐字一致）当场破。
+ *
+ * 规则：**投给主人格 且 发起者是页面操作者本人** ⇒ 不署名（"我对我自己的 agent 说话"，
+ * 与任务页今天的形状一致）。其它组合（agent 投给主人格 / 任何人投给别的成员）照旧署名。
+ *
+ * 溯源没丢：room 侧的 `say` 事件**恒有** `author`（那才是房间历史的溯源），
+ * 这里去掉的只是 **ops 块 meta 里那份冗余副本**。
+ */
+export function opsAuthorFor(main: boolean, author: string): string | undefined {
+    return main && author.startsWith("human:") ? undefined : author;
+}
+
 export function resolveMember(room: Pick<Room, "members"> | null | undefined, nameOrId: string): string {
   const key = nameOrId.trim().replace(/^@+/, "");
   const hit = room?.members.find((m) => m.id === key || m.name === key);

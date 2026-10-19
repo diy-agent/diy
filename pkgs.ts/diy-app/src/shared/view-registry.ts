@@ -212,9 +212,16 @@ export const TASK_RUN_LAYOUT: Layout = {
   ],
 };
 
-/** 各 page 默认隐藏的 area（开发者默认布局的一部分：试验场是 devtools，默认不占地方） */
+/**
+ * 各 page 默认隐藏的 area（开发者默认布局的一部分：试验场是 devtools，默认不占地方）。
+ *
+ * ⚠️ `task-run.right`（成员栏，##377 第 16 刀）**默认收起** —— 口径是「**成员 > 1 时默认展开**，
+ * 只有主人格时默认收起」（##166 §44.1 ②）：单人任务因此与改动前**逐字一致**（判据 7 的原意）。
+ * 那个条件判断**不在这里**（静态表表达不了"看房间成员数"），在 `TaskRunPage` 的自动展开里 ——
+ * 且只在"用户从未动过本页布局"时生效（`layoutStore.hasUserLayout`）。
+ */
 export const DEFAULT_HIDDEN: Record<string, string[]> = {
-  "task-run": ["bottom"], // right（成员栏）默认可见；bottom（试验场）仍是 devtools
+  "task-run": ["right", "bottom"], // right（成员栏，多人任务由 TaskRunPage 自动展开）；bottom = devtools
   lab: ["bottom"], // 提示词页的 chat 是卫星，默认不占地方
 };
 

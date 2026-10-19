@@ -1024,6 +1024,45 @@ async function send(taskUri: string, text: string): Promise<boolean> {
 }
 
 /**
+ * 任务页主输入框的发送（##377 第 17 刀 / ##166 §44.2 A）：改走 **room 投递**。
+ *
+ * 与 `send()` 的差别只在**谁驱动那一轮**：`send` 直调 `agent.local.chat`（本窗口驱动），
+ * 这里交给 room 投递器（main 侧驱动、投给 focus —— 缺省 = 主人格 ⇒ 与今天等价）。
+ *
+ * 三条设计决定（都不是随手写的）：
+ *   · **不接管 running**：投给非主人格时本任务**并没有在跑**，置 running 会让输入框误显示
+ *     "生成中"、回车被分流成"留言"（`submitByEnter` 看 `view.busy`）。主人格真开轮时，
+ *     main 侧注册表记活跃轮次 ⇒ opsWatch 的 turn 边界触发 `refreshActive` ⇒ `view.busy`
+ *     由**真值**驱动（与"别人在跑"同一条路，见 viewOf / sessionView）。
+ *   · **实时显示照旧**：块树 apply 的唯一通道是 opsWatch（##327），room 驱动的那一轮同样落
+ *     ops.jsonl ⇒ 同样经它进树。本流只当"这次请求还活着"的信号（`send` 也一样）。
+ *   · **停止照旧**：`LocalAgentManager.cancel(taskUri)` 是"用户停止"的**唯一来源**（不随消费端
+ *     断开触发）⇒ 停止按钮走的 `cancel()` 与本路径无关，改入口不影响停止语义。
+ */
+async function sendViaRoom(taskUri: string, text: string): Promise<boolean> {
+    const msg = text.trim();
+    const st = stateFor(taskUri);
+    if (!msg || !taskUri || st.running()) return false;
+    st.setError(null);
+    ensureOpsSubscription(taskUri); // 幂等；见 runTurnStream 同款兜底
+    const baseSeq = st.appliedSeq;
+    try {
+        const stream = await diyService.diy.room.post({ id: taskUri, text: msg });
+        // 服务端是独立驱动的（投递链在 main 里），本流只用来等"这次请求结束"
+        for await (const frame of stream) void frame;
+        return true;
+    } catch (e) {
+        st.setError(e instanceof Error ? e.message : String(e));
+        return false;
+    } finally {
+        void refreshActive(taskUri);
+        void refreshSteers(taskUri);
+        void refreshUsage(taskUri);
+        void settleOpsAfterTurn(taskUri, baseSeq);
+    }
+}
+
+/**
  * 提交一条插话：走 `chat --mode`，投递时机由 mode 决定（next-step / next-turn，都是整批投）。
  *
  * 服务端行为有**两种**，这里必须都能接住（##303）：
@@ -1453,6 +1492,8 @@ export const localChatStore = {
     refreshUsage,
     open,
     send,
+    /** 任务页主输入框：走 room 投递（##377 第 17 刀）；`send` 仍留给"直调 chat"的旧路径 */
+    sendViaRoom,
     cancel,
     /** 会话页挂载期间对 main 真值（返回停止函数，由调用方 cleanup） */
     watch,

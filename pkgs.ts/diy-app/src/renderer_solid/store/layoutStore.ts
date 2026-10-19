@@ -39,6 +39,14 @@ export interface PageLayoutState {
     /** 用户拖拽后的 track 覆盖（整份）。undefined = 用 page 默认 */
     cols?: TrackSize[];
     rows?: TrackSize[];
+    /**
+     * 用户**手动**动过这个页的布局没有（`setAreaHiddenAuto` 不置位 —— 见它）。
+     *
+     * 为什么要区分：任务页右栏要「成员 > 1 时默认展开」（##166 §44.1 ②），那是**程序**在改布局；
+     * 而用户点过开合按钮之后，程序就**不许**再改（用户为准）。两者都写 `hidden` 的话分不开，
+     * 于是「打开过多人任务」会把单人任务的右栏也顶出来 —— 判据 7（单人任务零变化）就破了。
+     */
+    userTouched?: boolean;
 }
 
 /** 开发者默认隐藏的 area（注册表声明；用户改过之后以用户态为准） */
@@ -92,6 +100,7 @@ function load(): Record<string, PageLayoutState> {
             maximized: typeof o.maximized === "string" ? o.maximized : null,
             cols: tracks(o.cols),
             rows: tracks(o.rows),
+            userTouched: o.userTouched === true,
         };
     }
     return out;
@@ -108,9 +117,15 @@ const [states, setStates] = createSignal<Record<string, PageLayoutState>>(load()
  */
 function patch(pageId: string, mut: (s: PageLayoutState) => PageLayoutState): void {
     setStates((all) => {
-        const next = { ...all, [pageId]: mut(all[pageId] ?? defaultState(pageId)) };
-        Caches.diy_layout_state.set(next as unknown as Record<string, unknown>);
-        return next;
+        const cur = all[pageId] ?? defaultState(pageId);
+        const next = mut(cur);
+        // ⚠️ **值没变就返回原引用**（`mut` 把入参原样返回即表示"无事发生"）：
+        // 换了引用 = 所有订阅布局的组件重渲染一遍。实测踩过 —— `setAreaHiddenAuto` 被
+        // 2.5s 轮询反复调用，即使每次都设成同一个值，也足以把页面拖到卡死（##377 第 17 刀）。
+        if (next === cur) return all;
+        const out = { ...all, [pageId]: next };
+        Caches.diy_layout_state.set(out as unknown as Record<string, unknown>);
+        return out;
     });
 }
 
@@ -120,6 +135,16 @@ export const layoutStore = {
         return states()[pageId] ?? defaultState(pageId);
     },
 
+    /**
+     * 用户**手动**动过这个页的布局没有（自动展开不算 —— 见 `setAreaHiddenAuto`）。
+     *
+     * 用途 = 区分「开发者/程序默认」与「用户改过」：任务页右栏「成员 > 1 时默认展开」
+     * 一旦被用户手动收起，程序就不许再顶出来（见 `TaskRunPage` 的右栏默认开合）。
+     */
+    userTouched(pageId: string): boolean {
+        return layoutStore.pageState(pageId).userTouched === true;
+    },
+
     /** 某 area 是否隐藏（最小化） */
     isHidden(pageId: string, areaId: string): boolean {
         return layoutStore.pageState(pageId).hidden[areaId] === true;
@@ -127,6 +152,24 @@ export const layoutStore = {
 
     setAreaHidden(pageId: string, areaId: string, hidden: boolean): void {
         patch(pageId, (s) => {
+            const h = { ...s.hidden };
+            if (hidden) h[areaId] = true;
+            else delete h[areaId];
+            return { ...s, hidden: h, userTouched: true };
+        });
+    },
+
+    /**
+     * 同上，但**程序**调用（不算用户改动）：不置 `userTouched`。
+     *
+     * 唯一的调用方是任务页的「成员 > 1 时默认展开」—— 它必须能在"用户没表过态"时自由改，
+     * 又必须在用户表过态之后彻底停手。
+     */
+    setAreaHiddenAuto(pageId: string, areaId: string, hidden: boolean): void {
+        patch(pageId, (s) => {
+            // 值没变 ⇒ 原样返回（`patch` 据此跳过 setStates）：本方法由 2.5s 轮询调用，
+            // 无脑换引用会把整页拖垮（见 patch 的注释）。
+            if ((s.hidden[areaId] === true) === hidden) return s;
             const h = { ...s.hidden };
             if (hidden) h[areaId] = true;
             else delete h[areaId];
