@@ -15,6 +15,10 @@
 //   · G3 只报 `missing − baseline` = **真·新增遗漏**（防「忘」）；
 //   · `--update-baseline` 把当前 missing 写进基线（批量补录后刷新一次）。
 //
+// **G3 扫描范围（一句话）**：`~/AGENTS.md` → `~/git/AGENTS.md` → `~/git/diy/AGENTS.md` → 仓根
+// `AGENTS.md` → `pkgs.ts/diy-app/AGENTS.md`，共 5 份；**不含** `pkgs.ts/` 其余各包（包内是
+// 包局部事实，不是跨领域规范 —— 扫进来只会制造常驻噪声，review1 裁决）。
+//
 // 前缀白名单**只收跨领域规范**：`find.*`（去哪找）/ `pit.*`（坑）是**导航**不是规范，不收
 // —— 拿它们算「未收录」是拿错了尺子（review1 R1）。
 //
@@ -31,7 +35,7 @@
 //
 // 退出码：0 = 通过（含「总表缺失跳过」）· 1 = 有 error
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -89,7 +93,16 @@ function repoContainerDir(): string | null {
   }
 }
 
-/** AGENTS.md 链：家目录 → 仓根逐层（深层同名 key 覆盖浅层）+ 主仓容器层 + 包层 */
+/**
+ * G3 的扫描范围（**一句话**）：`~/AGENTS.md` → `~/git/AGENTS.md` → `~/git/diy/AGENTS.md`
+ * → 仓根 `AGENTS.md` → `pkgs.ts/diy-app/AGENTS.md`，共 5 份；**不含** `pkgs.ts/` 其余各包。
+ *
+ * 为什么收窄到 5 份（review1 裁决）：本表是「**跨领域**规范索引」，包内 `find.*` / `pit.*`
+ * 是包局部事实（去哪找代码 / 这个包什么坑）。把 7 个包全扫进来只会让「265/300 未收录」这种
+ * 噪声长期常驻，而常驻 warning 等于没有 warning（告警疲劳）—— 剩下真没收录的才是真欠账，
+ * 值得逐条认领。故只保留**主线应用包**（`diy-app`，它承载 UI / 日志 / 环境感知等跨领域规范），
+ * 其余包一律不看：不扫、不计、不提示。
+ */
 function agentsChain(): string[] {
   const dirs: string[] = [];
   let dir = ROOT;
@@ -101,20 +114,15 @@ function agentsChain(): string[] {
   }
   if (dirs[0] !== HOME) dirs.splice(0, 0, HOME); // 仓不在家目录下：家目录那条仍要算
   const files = dirs.map((d) => path.join(d, 'AGENTS.md')).filter((f) => existsSync(f));
+  // 主仓容器层（worktree 里沿路径上溯走不到 `~/git/diy/AGENTS.md`，见 repoContainerDir）
   const container = repoContainerDir();
   if (container) {
     const f = path.join(container, 'AGENTS.md');
     if (existsSync(f) && !files.includes(f)) files.push(f);
   }
-  // 包层（pkgs.ts/<包>/AGENTS.md）
-  const pkgsDir = path.join(ROOT, 'pkgs.ts');
-  if (existsSync(pkgsDir)) {
-    for (const d of readdirSync(pkgsDir, { withFileTypes: true })) {
-      if (!d.isDirectory()) continue;
-      const f = path.join(pkgsDir, d.name, 'AGENTS.md');
-      if (existsSync(f)) files.push(f);
-    }
-  }
+  // 主线应用包（唯一纳入的包层；其余包故意不扫）
+  const app = path.join(ROOT, 'pkgs.ts', 'diy-app', 'AGENTS.md');
+  if (existsSync(app)) files.push(app);
   return files;
 }
 
@@ -231,7 +239,7 @@ const missing = [...onChain].filter((k) => !indexed.has(k));
 let baseline = readBaseline();
 const baselineKnown = existsSync(BASELINE) || UPDATE_BASELINE;
 if (UPDATE_BASELINE) {
-  writeFileSync(BASELINE, `# G3 存量基线（ratchet）：链上有、总表还没有的 key（##388）；只报「基线外」的新增遗漏。\n# 批量补录后刷新：npx tsx scripts/check-specs.mts --update-baseline\n${missing.join('\n')}\n`);
+  writeFileSync(BASELINE, `# G3 存量基线（ratchet）：链上有、总表还没有的 key（##388）；只报「基线外」的新增遗漏。\n# 扫描范围：~/AGENTS.md → ~/git/AGENTS.md → ~/git/diy/AGENTS.md → 仓根 AGENTS.md → pkgs.ts/diy-app/AGENTS.md（5 份，不含其余包）。\n# 批量补录后刷新：npx tsx scripts/check-specs.mts --update-baseline\n${missing.join('\n')}\n`);
   baseline = new Set(missing);
   console.log(`[check-specs] 基线已更新：scripts/specs-unindexed.txt（${missing.length} 条）`);
 }
