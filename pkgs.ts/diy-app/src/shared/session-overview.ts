@@ -335,6 +335,29 @@ export function fmtStamp(iso: string | null | undefined): string {
     return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+/**
+ * 相对时间（`刚刚` / `5m` / `20h` / `3d`；一周以上退回 `MM-DD`）—— **行内紧凑时长的唯一出处**。
+ *
+ * 为什么：绝对时间（`10-19 18:34`）在 224px 侧栏里比标题还占地方（用户原话：「nav 上活动会话后面的
+ * 日期时间太占地方了，改为 20h？」）。**它会跟着时间走** —— 靠调用方的 tick 信号重算 `nowMs`，
+ * 本函数是纯函数、不自己计时（纯函数才好测，也才不会在别处偷偷起一个 interval）。
+ *
+ * 一周以上退回绝对日期：`20d` 这种数字已经没有信息量了。
+ */
+export function fmtAgo(iso: string | null | undefined, nowMs: number = Date.now()): string {
+    if (!iso) return "";
+    const t = new Date(iso).getTime();
+    if (Number.isNaN(t)) return "";
+    const m = Math.floor(Math.max(0, nowMs - t) / 60000);
+    if (m < 1) return "刚刚";
+    if (m < 60) return `${m}m`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h`;
+    const d = Math.floor(h / 24);
+    if (d < 7) return `${d}d`;
+    return fmtStamp(iso).slice(0, 5);
+}
+
 /** 时长（ms → `12s` / `3m05s` / `1h02m`）：界面上只读个大概，不显示毫秒 */
 export function fmtDuration(ms: number): string {
     const s = Math.max(0, Math.floor(ms / 1000));

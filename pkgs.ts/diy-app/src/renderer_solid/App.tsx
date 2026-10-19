@@ -68,6 +68,8 @@ import type { NavRow, NavTone } from "../shared/session-nav";
 import { ALERT_ACTION_LABEL, alertsOf } from "../shared/session-alerts";
 // 「待你处理」区（##358 D5）：判据纯函数；行集仍是上面那份 navRows（两个区**不可能**给出不同结论）
 import { todoOf, todoWhenOf } from "../shared/session-todo";
+// 相对时间（`20h`）—— 纯函数在 shared/session-overview，与任务表 `fmtStamp` 同处（不另写时间格式）
+import { fmtAgo } from "../shared/session-overview";
 import { resumeOf, resumeWhenOf } from "../shared/session-resume";
 import { usageLedgerStore } from "./store/usageLedgerStore";
 import { alertPrefsStore } from "./store/alertPrefsStore";
@@ -218,6 +220,17 @@ export default function App() {
     // 于是侧栏宽度**从不消失**：窄窗最窄 40px rail，宽窗 40px↔224px（##297）。
     const [isNarrow, setIsNarrow] = createSignal(false);
     const [railOpen, setRailOpen] = createSignal(false);
+    /**
+     * 相对时间的**心跳**（##358 用户 2026-10-19：「改为 20h？会更新吗？如果无法更新，就删掉吧」）。
+     *
+     * 时间字串本身是纯函数（`fmtAgo`）算出来的，**它自己不会走** —— 必须有东西让界面重算。
+     * 这里每分钟推一次 `nowMs`，凡是读了它的渲染就会跟着重算（nav 行的 `20h` → `21h` → `1d`）。
+     * 为什么要这个信号而不是在渲染里直接 `Date.now()`：那样只有**别的原因**引起重绘时才顺手更新，
+     * 界面静止时时间就冻住了 —— 正是用户担心的情况。1 分钟是刻意的粗粒度：
+     * 行内最小单位就是分钟（`刚刚`），再密也看不出差别，只是白烧 CPU。
+     */
+    const [nowMs, setNowMs] = createSignal(Date.now());
+
     // 展开宽度（px）：右缘可拖，落视图 cache（见 ui-state 的 diy_nav_width）
     const [navW, setNavW] = createSignal(Caches.diy_nav_width.get());
     // 拖拽中的标记：期间**必须强制展开**，否则鼠标一离开侧栏就 mouseleave 收拢，
@@ -691,6 +704,12 @@ export default function App() {
     const [pendingClose, setPendingClose] = createSignal<{ key: string; label: string } | null>(null);
 
     let fsAbort: AbortController | undefined;
+
+    // 相对时间心跳（见 nowMs 的注释）：1 分钟推一次，界面静止时 `20h` 也会自己变 `21h`
+    onMount(() => {
+        const t = setInterval(() => setNowMs(Date.now()), 60_000);
+        onCleanup(() => clearInterval(t));
+    });
 
     onMount(() => {
         // 祖先链现算：任务树是父子关系的唯一真相源，tabStore 只存 { pageId, ctx }。
@@ -1637,13 +1656,14 @@ export default function App() {
                                                                     <Show when={t.ctx}>
                                                                         <TaskAgentStateBadge
                                                                             uri={t.ctx!}
+                                                                            iconOnly
                                                                             hasSession={findNode(taskStore.nodes, t.ctx!)?.has_session}
                                                                             hasDraft={findNode(taskStore.nodes, t.ctx!)?.has_draft}
                                                                         />
                                                                     </Show>
                                                                     {/* 会话状态 chip（##308）：与任务表行、总览页**同一份判据**（sessionStore.chipOf） */}
                                                                     <Show when={t.ctx}>
-                                                                        <SessionChip uri={t.ctx!} />
+                                                                        <SessionChip uri={t.ctx!} iconOnly />
                                                                     </Show>
                                                                     {/* 置顶开关（##356 ②）：置顶项常显 📌（一眼看出为什么它在最上面），
                                                                         普通项 hover 才显 📍。收起态（rail）不渲染 —— 40px 装不下，
@@ -1727,7 +1747,29 @@ export default function App() {
                                                                 用户点名的表达方式：「通过活动的状态来表达，比如 …/components/aura/」。 */}
                                                             <Show
                                                                 when={r().running}
-                                                                fallback={<span class={`status ${dot()}`} />}
+                                                                fallback={
+                                                                    <Show
+                                                                        when={dot()}
+                                                                        fallback={
+                                                                            /* 没有活态 = **已对话、没有新消息**（用户口径里的"灰色图标"）。
+                                                                               原来是一个无色 status 圆点 —— 实心灰点跟"离线/未开始"分不开，
+                                                                               用户直接问了「灰色图标和绿色图标啥区别？」
+                                                                               改成**暗色会话气泡**：形状说明"这是个会话"，
+                                                                               暗说明"聊过但没事"；亮色实心点则恒表示"有东西等你看"。 */
+                                                                            <span
+                                                                                class="shrink-0 opacity-40 inline-flex"
+                                                                                title={`${r().label}：已对话（没有新消息）`}
+                                                                                data-nav-session-idle="1"
+                                                                            >
+                                                                                <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                                                                                    <path d="M2.5 2h11A1.5 1.5 0 0 1 15 3.5v7A1.5 1.5 0 0 1 13.5 12H7l-3.6 2.7A.6.6 0 0 1 2.4 14V3.5A1.5 1.5 0 0 1 3.9 2z" />
+                                                                                </svg>
+                                                                            </span>
+                                                                        }
+                                                                    >
+                                                                        <span class={`status ${dot()}`} />
+                                                                    </Show>
+                                                                }
                                                             >
                                                                 <span class="aura aura-dual text-success shrink-0">
                                                                     <span class="status status-success animate-pulse" />
@@ -1744,8 +1786,14 @@ export default function App() {
                                                                     </span>
                                                                 )}
                                                             </Show>
-                                                            <span class="font-mono text-caption opacity-50 shrink-0">
-                                                                {i.when}
+                                                            {/* 时间用**相对格式**（`20h`），读 `nowMs()` ⇒ 每分钟自己往前走；
+                                                                tooltip 里仍给绝对时刻（要精确时看那里）。 */}
+                                                            <span
+                                                                class="font-mono text-caption opacity-50 shrink-0"
+                                                                title={i.when ? `最后活动：${i.when}` : undefined}
+                                                                data-nav-session-ago={fmtAgo(r().lastTs, nowMs())}
+                                                            >
+                                                                {fmtAgo(r().lastTs, nowMs())}
                                                             </span>
                                                         </button>
                                                     </li>
