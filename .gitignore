@@ -1,3 +1,8 @@
+# 任务产物落位（rule.task-artifacts）：仓库根 **不是**任务目录 —— 截图 / demo / 现场日志
+# 一律落 $DIY_HOME/projects/<pid>/tasks/<tid>/gen/。这里是兜底护栏（main 上已有
+# gen/demo/room-sidebar/*.png 被追踪，属 ##377 同类污染，不在本 PR 追溯范围）。
+/gen/
+
 # nodejs
 # 去尾斜杠：`node_modules/` 只匹配目录，而 linked worktree 里为省空间用的是
 # **符号链接**（node_modules -> <主仓库>/node_modules），符号链接不是目录 → 规则不生效
