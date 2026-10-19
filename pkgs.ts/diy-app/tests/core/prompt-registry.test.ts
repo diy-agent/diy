@@ -436,8 +436,8 @@ describe("diy.md 入口辨析（防回退）", () => {
     expect(t).toContain("不启动应用"); // 它是客户端，不是"启动 app"
     expect(t).toContain("生产"); // 纯 diy = 生产版 + ~/.diy
     expect(t).toContain("worktree"); // worktree 里别用裸 diy
-    expect(t).toContain("要起 GUI"); // 起 GUI 走 ./sha.sh preview|lab，不是 CLI
-    expect(t).toContain("./sha.sh preview"); // 命令名必须真实存在（曾写死已改名的 sha.sh dev）
+    expect(t).toContain("要起 GUI"); // 起 GUI 走 ./sha.sh lab，不是 CLI
+    expect(t).toContain("./sha.sh lab"); // 命令名必须真实存在（曾写死已改名的 sha.sh dev）
     expect(t).toContain("agent local chat"); // 跨任务协作要能被发现（##357 ①）
     // 模版里不得出现裸反引号（会截断 TS 模版字符串）
     expect(t).not.toContain("\\`");

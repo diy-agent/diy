@@ -94,6 +94,9 @@ async function flush(uri: string) {
             uri,
             title: pending.title,
             body: pending.body,
+            // 草稿正文的"传文件"形态是 CLI 侧能力（##376）；契约为「键必须出现」，故显式给 undefined
+            bodyText: undefined,
+            bodyFile: undefined,
             agent_input: pending.agent_input,
             base_updated: st.base_updated,
         });

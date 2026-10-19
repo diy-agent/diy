@@ -207,7 +207,7 @@ function mirrorWindowPos(
     // 命中时统一内缩一点，让窗口出生就是普通窗口。
     // ⚠️ 宽度**不**内缩，只内缩高度（##297）：宽度一旦掉到 Tailwind 的 lg 断点（1024）以下，
     // App 根节点的 `lg:drawer-open`（App.tsx）就失效 → DaisyUI 抽屉关闭、侧栏被挪到画面外
-    // （实测 x=-224 / visibility:hidden）。宽 1024 的屏上 dev/preview/lab 窗口正好 1024−48=976，
+    // （实测 x=-224 / visibility:hidden）。宽 1024 的屏上 dev/lab 窗口正好 1024−48=976，
     // 掉进去 —— 当时侧栏**没有任何可见的打开入口**，7 个 nav 意图测试全红。
     // 窄窗本身已有兜底（##297：`.diy-nav-rail` 让 rail 常驻占列 + ◉ 点开浮层，见 index.css
     // 与 App.tsx 的 NARROW_MQ），但窄窗终究只剩 40px rail，不如完整侧栏 —— 宽度没必要牺牲。

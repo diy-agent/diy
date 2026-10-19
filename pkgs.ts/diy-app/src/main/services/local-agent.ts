@@ -14,7 +14,8 @@ import type { LanguageModel, ModelMessage } from "ai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import {
     appendFileSync,
     closeSync,
@@ -22,12 +23,12 @@ import {
     openSync,
     readFileSync,
     readSync,
-    renameSync,
     rmSync,
     statSync,
     writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { writeFileAtomic } from "../core/atomic-write";
 import { diyHome, projectDir, projectFromUri } from "../core/state";
 import { keyOf, llmFile, llmLogRelPath, localDir, opsFile, sessionIdOf } from "../core/local-paths";
 
@@ -41,6 +42,7 @@ import {
     toTree,
     danglingStopPatches,
     interruptedToolPatches,
+    interruptedToolPatchesOfTurn,
     projectAll,
     replay,
     costOfWith,
@@ -961,12 +963,35 @@ interface BashRun {
 }
 
 /**
- * execFile 的错误形状（##332 ③ 的判据落点）。
+ * 子进程的错误形状（##332 ③ 的判据落点）。
  *
  * 只用一个类型服务两条到达路径（callback / 同步抛），判据也只有一处读它：
  * **`code` 是数字** ⇒ 命令跑起来了（退出码）· **字符串** ⇒ spawn 层失败（ENOENT/EACCES/ENOTDIR…）。
  */
 type BashExecError = { name?: string; code?: string | number | null; killed?: boolean; message?: string } | null;
+
+/**
+ * 杀**整个进程组**，不只是直接子进程（##375）。
+ *
+ * 前提是子进程以 `detached: true` 起（= `setsid`）：组 id 就等于它的 pid，于是 `-pid` 一发
+ * 带走命令树上的所有活口 —— `bash -c "sleep 1"` 里真正在跑的 `sleep`、后台子壳、管道各段。
+ * 不加 detached 就杀不了组（`-pid` 不是组 id ⇒ ESRCH），所以两者是一对，改一个必须改另一个。
+ *
+ * SIGKILL 而非 SIGTERM：取消是"立刻停"，不给忽略/捕获 TERM 的脚本留活口（Node 在 abort 时
+ * 已先给直接子进程发过 SIGTERM；我们补的是"连子孙一起、且不给商量"）。
+ * ESRCH（组已空）/ EPERM 都无害 —— 想杀的都已经不在了。
+ */
+function killProcessGroup(child: ChildProcess): void {
+    if (child.pid == null) return;
+    // ⚠️ 已收尸就不再动它：pid 是**可复用**的，此时 `-pid` 可能指向一个毫不相干的进程组
+    //    （取消信号比命令活得久是常态 —— 用户可能在这条命令早就跑完之后才点停止）。
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    try {
+        process.kill(-child.pid, "SIGKILL");
+    } catch {
+        // 组已空（子进程全收）或 pid 已回收：无可杀
+    }
+}
 
 /**
  * bash：30s 超时；**命令跑起来了**的失败以文本回喂模型（错误是一等信息，不抛），
@@ -979,13 +1004,18 @@ type BashExecError = { name?: string; code?: string | number | null; killed?: bo
  *          "失败"，是"没查到"；模型仍靠 `[退出码 N]` 改命令 ⇒ 保持 ✓）。
  *        · 正文一律 `[退出码 N]` + 输出，**不再兜底塞 `err.message`**：`Command failed: /bin/bash -c …`
  *          正是「✓ + Command failed」自相矛盾的来源（无输出时把 Node 的报错文案当成了命令输出）。
- *   ② **超时 / 取消**（`err.killed` / AbortError）⇒ 当数据（**保持现状**，见 ##332 ②）；
+ *   ② **超时 / 取消**（`err.killed` / AbortError）⇒ 当数据（**保持现状**，见 ##332 ②）——
+ *      **取消另有"真杀"这一半（##375）**：AbortError 只保证**直接子进程**（`/bin/bash`）被 kill，
+ *      命令真正干活的那一层（`bash -c "sleep 1"` 的 sleep、后台子壳、管道各段）是它的子孙，
+ *      Node（含 execFile 的 `timeout`）不会碰 ⇒ 取消后"命令照跑满"。故本函数把 bash 放到
+ *      **自己的进程组**（`detached`），取消 / 超时 / 输出溢出三种"我们主动杀"的时刻都按组补
+ *      一刀 SIGKILL（见 killProcessGroup）—— 三处原本是同一个孤儿缺口；
  *   ③ **spawn / IO 失败**（`err.code` ∈ ENOENT / EACCES / ENOTDIR…，**数字之外**）⇒ **失败**（##332）：
  *      这不是"命令报了错"，是**命令根本没跑起来**（cwd 不存在 / 不可进入、`/bin/bash` 缺失）——
  *      它没有退出码可言，也不该当结果。正文 `[命令未能启动 <code>] <Node 原文>（工作目录：…）`；
  *      带 cwd 是因为 Node 的 message（`spawn /bin/bash ENOENT`）会把"目录进不去"掩盖成"bash 不在"。
  *      ⚠️ 判据分界只有一条：**`err.code` 是数字 = 命令跑起来了（① 档）；否则 = 没跑起来（③ 档）**。
- *      ⚠️ 两条到达路径都要接住：`err.code` 非数字的 **callback**，和 execFile 的**同步抛**
+ *      ⚠️ 两条到达路径都要接住：`err.code` 非数字的 **'error' 事件**，和 spawn 的**同步抛**
  *      （cwd 是普通文件 ⇒ ENOTDIR，Node 在 spawn 内直接 throw、**不走 callback**；实测 node 24）。
  *    对照：`read` 的 execute 特意**相反**（读不到就抛），见 buildTools 里 read 的注释。
  */
@@ -995,8 +1025,18 @@ function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?
             resolve({ text: "[已取消]", failed: false });
             return;
         }
-        /** 全部结局只在这里落一次（成功 / 各失败档）；callback 与下面的同步 catch 共用同一判定 */
+        /** abort 补刀的注销器（settle 时解绑，避免监听器随轮次泄漏） */
+        let offAbort: (() => void) | undefined;
+        /** 超时定时器（settle 时清掉） */
+        let timeoutId: NodeJS.Timeout | undefined;
+        /** 全部结局只在这里落一次（成功 / 各失败档）；'close'/'error'/取消/同步 catch 共用同一判定 */
         const settle = (err: BashExecError, stdout: string, stderr: string): void => {
+            offAbort?.();
+            offAbort = undefined;
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+                timeoutId = undefined;
+            }
             const out = [stdout, stderr].filter(Boolean).join("\n");
             // ⚠️ 这里一律返回**完整**文本（不 clip）：发给模型的那一份由 `capToolOutput` 在
             //    投递层现算（##127）—— 在 execute 里裁 = 落进 ops 的原文当场丢。
@@ -1019,12 +1059,65 @@ function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?
             else resolve({ text: out || "(无输出)", failed: false });
         };
         try {
-            execFile(
-                "/bin/bash",
-                ["-c", command],
-                { cwd, timeout: limits.bashTimeoutMs, maxBuffer: BASH_MAX_BUFFER_BYTES, signal },
-                (err, stdout, stderr) => settle(err, stdout, stderr),
-            );
+            // ⚠️ 为什么不用 execFile（##375 实测，别改回去）：`execFile` 把选项**白名单**转发给
+            //    spawn（node 24 `lib/child_process.js`：只传 cwd/env/gid/shell/signal/uid/
+            //    windowsHide/windowsVerbatimArguments）—— **`detached` 被静默丢掉**，于是
+            //    "detached + 杀进程组"这条修法在 execFile 下失效（实测：pgid 仍是父进程那个组，
+            //    `kill(-pid)` 当场 ESRCH，子孙照样跑满）。要进程组就只能自己 spawn，并顺手接住
+            //    execFile 原本代劳的那几件事（攒输出 / maxBuffer / 超时 / 错误形状）——
+            //    形状与 execFile **逐字段同构**，判据仍只有 settle 那一处。
+            const child = spawn("/bin/bash", ["-c", command], { cwd, detached: true });
+            // 输出按**块**攒（不逐块拼字符串）：上限判据只要长度计数，逐块 `byteLength` 是 O(n²)
+            const chunks = { out: [] as Buffer[], err: [] as Buffer[] };
+            const len = { out: 0, err: 0 };
+            const dump = (side: "out" | "err"): string => Buffer.concat(chunks[side], len[side]).toString("utf8");
+            /** 结局是否已落（Promise 本身只认第一次，这里只是别再做无用功 / 别多杀） */
+            let done = false;
+            /** 我们主动杀的（超时 / 输出溢出）—— 对应 execFile 的 `killed` */
+            let killed = false;
+            const finish = (err: BashExecError, o: string, e: string): void => {
+                if (done) return; // settle 内部（唯一落点）负责解绑 abort 监听与超时定时器
+                done = true;
+                settle(err, o, e);
+            };
+            /** 攒输出 + 上限（与 execFile 同口径：stdout / stderr **各算各的**，超了即杀、留已收到的部分） */
+            const onData = (chunk: Buffer, side: "out" | "err"): void => {
+                if (done) return;
+                const keep = BASH_MAX_BUFFER_BYTES - len[side];
+                chunks[side].push(keep >= chunk.length ? chunk : chunk.subarray(0, keep));
+                len[side] += Math.min(chunk.length, keep);
+                if (len[side] < BASH_MAX_BUFFER_BYTES) return;
+                killed = true;
+                killProcessGroup(child); // 溢出也杀整组（原先 execFile 只杀直接子进程）
+                finish({ code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER", killed: true }, dump("out"), dump("err"));
+            };
+            child.stdout?.on("data", (c: Buffer) => onData(c, "out"));
+            child.stderr?.on("data", (c: Buffer) => onData(c, "err"));
+            // spawn 层失败（ENOENT / EACCES…）：execFile 把它转成 callback 的 err，这里接 'error' 事件。
+            // 同步抛（cwd 是普通文件 ⇒ ENOTDIR）两条路都到不了这里，由外层 catch 接（见下）。
+            child.on("error", (e: NodeJS.ErrnoException) => finish({ code: e.code, message: e.message }, dump("out"), dump("err")));
+            // 收尾唯一入口：'close'（stdio 全关之后）——与 execFile 同一事件，输出不会截尾。
+            child.on("close", (code) => {
+                if (code === 0) finish(null, dump("out"), dump("err"));
+                else
+                    finish({ code, killed, message: `Command failed: /bin/bash -c ${command}` }, dump("out"), dump("err"));
+            });
+            // 超时：自己计时（不用 execFile 的 timeout —— 它只杀直接子进程，同一类孤儿缺口）
+            timeoutId = setTimeout(() => {
+                killed = true;
+                killProcessGroup(child);
+            }, limits.bashTimeoutMs);
+            if (signal) {
+                // 取消（用户停止 → ctrl.abort）：**先**钉 AbortError 结局、**再**杀整组。
+                // 顺序有意：这是一条"肯定结束了"的路径，不必等 close 事件（组杀完 close 才到，
+                // 中间那段 UI 会显示"还在跑"）；而杀组要在 bash 还活着时发，组 id 才有效。
+                const onAbort = (): void => {
+                    finish({ name: "AbortError", code: "ABORT_ERR", message: "The operation was aborted" }, dump("out"), dump("err"));
+                    killProcessGroup(child);
+                };
+                signal.addEventListener("abort", onAbort, { once: true });
+                offAbort = () => signal.removeEventListener("abort", onAbort);
+            }
         } catch (e) {
             // ⚠️ **同步抛是真实路径**，不是防御性代码：cwd 是普通文件时 Node 在 spawn 内直接
             //    `throw new ErrnoException(err, "spawn")`（code=ENOTDIR），**不走 callback**（实测 node 24）。
@@ -1610,8 +1703,9 @@ export class LocalAgentManager {
         }
         console.warn(`[local-agent] llm 全量日志与 ops 投影不一致（第 ${k + 1} 条起），整份重建 ${fp}${why}`);
         try {
-            writeFileSync(`${fp}.tmp`, expect.map((l) => `${l}\n`).join(""), "utf-8");
-            renameSync(`${fp}.tmp`, fp);
+            // 原子写（##382 收敛）：整份重建也是「整文件覆盖」，与 core/atomic-write.ts 同语义。
+            // 注意**调用方**这里的 catch 仍是「降级返回 k」—— 那是重建路径的既有策略，非写侧行为。
+            writeFileAtomic(fp, expect.map((l) => `${l}\n`).join(""));
             return expect.length;
         } catch (e) {
             console.error(`[local-agent] llm 日志重建失败 ${fp}:`, e);
@@ -3144,6 +3238,13 @@ export class LocalAgentManager {
             // 轮次结束原因（该轮事实，##288）：正常分支已写好；没写 = 流没跑完（被中断 / 崩溃）
             // → `aborted{detached}` —— 生成器被 return 展开时唯一可证的事实。
             const reason: TurnEndReason = endReason ?? (streamDone ? { type: "completed", data: {} } : { type: "aborted", data: { source: "detached" } });
+            // ── 本轮的开口 tool 块先钉成终态（##375）──
+            // 取消（用户停止 → `cancel()` → ctrl.abort）会掐断 LLM 流：SDK 再也发不出这条工具
+            // 调用的 tool-result / tool-error ⇒ 块停在 `status:"running"`、收不到 stop（UI 上就是
+            // 一行「停不掉的工具」，且它会以"未完成"的形状进历史）。这里是**轮次唯一收口**
+            // （正常 / 中断 / 生成器被 return 展开三条路都走它），故在此收敛。
+            // 正常收尾时本轮没有开口 tool 块 → 恒为空批，不动既有语义。
+            ops.push(...interruptedToolPatchesOfTurn(sess.store, turnId));
             ops.push({ op: "patch", id: turnId, fields: { endReason: reason } });
             // 轮次耗时（该轮事实）：turnId 内嵌开始毫秒（`t${Date.now()}`）→ 收尾此刻
             const durationMs = Date.now() - Number(turnId.slice(1));

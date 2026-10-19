@@ -350,12 +350,40 @@ export const apiDef = RpcSchema.router({
         desc: `任务管理`,
         children: {
           create: RpcSchema.unary({
-            desc: `创建任务`,
+            desc: `
+            创建任务
+
+            正文（body）输入契约（##338 / ##376）—— **三选一**，同时给多个会被拒（不猜、不按顺序取）：
+              \`--body <文本>\`        任务内容（内联正文；值形如**单行文件路径** → 直接报错并提示正确写法）
+              \`--body-text <文本>\`   任务内容（显式内联文本：与 \`--body\` 同义，但不做「形如路径」护栏）
+              \`--body-file <file|->\` 任务内容：从**文件**读（\`-\` = stdin；相对路径按当前目录解析）
+            与 \`task edit\` 同一套选项形状与同一条裁决（\`core/task.ts::resolveBodyOverride\`）。
+            注意：create 是新建任务，**不做「整份任务文件剥头」**（没头可覆盖），传整份文件会把头写进正文。
+            `,
             input: {
               title: z.string().min(1, "标题不能为空").max(200).cliArg({ desc: "任务标题" }),
               project: z.string().cliArg({ desc: "所属 project id" }),
               parent: z.string().optional().cliOption({ short: "p", desc: "父任务 URI" }),
-              body: z.string().optional().cliOption({ desc: "任务内容" }),
+              body: z
+                .string()
+                .optional()
+                .cliOption({
+                  placeholder: "<text>",
+                  inlineText: { fileOpt: "--body-file", textOpt: "--body-text" },
+                  desc: "任务内容（**内联正文**，不是文件路径：值形如单行路径会被拒）",
+                }),
+              bodyText: z
+                .string()
+                .optional()
+                .cliOption({ placeholder: "<text>", desc: "任务内容（显式内联文本：与 `--body` 同义，但不做「形如路径」护栏）" }),
+              bodyFile: z
+                .string()
+                .optional()
+                .cliOption({
+                  placeholder: "<file|->",
+                  readFile: true,
+                  desc: "任务内容：从**文件**读（`-` = stdin；相对路径按当前目录解析）—— **不剥 frontmatter**（新建任务无头可覆盖，传整份文件会把头写进正文）",
+                }),
               persona: z.string().optional().cliOption({ desc: "agent 人物 id（不传 = 跟随缺省；传值 = 固定绑定，人物决定模型/参数/行为指令）" }),
               change_type: ChangeTypeSchema.optional().cliOption({ desc: "变更性质（feat/fix/docs/…，见 conventional commits）" }),
               module: z.string().optional().cliOption({ desc: "模块（可 `/` 分层，如 agent/ui）" }),
@@ -396,11 +424,35 @@ export const apiDef = RpcSchema.router({
                 字段按白名单平铺，不用 JSON 参数：白名单固定且短，平铺后 --help 逐字段可见，
                 也免去 shell 里 JSON 引号的层层转义。传空字符串（如 --title ""）= 清除该字段；
                 不传 = 保持原值。已提交（保存/取消）后应显式清除，否则草稿会盖住新数据。
+
+                正文草稿（body）与 \`task edit\` 同一套输入契约（##338 / ##376）—— **三选一**：
+                  \`--body <文本>\`        内容草稿（内联正文；值形如**单行文件路径** → 直接报错）
+                  \`--body-text <文本>\`   内容草稿（显式内联文本：不做「形如路径」护栏）
+                  \`--body-file <file|->\` 内容草稿：从**文件**读（\`-\` = stdin）
                 `,
                 input: {
                   uri: z.string().cliArg({ desc: "任务 URI" }),
                   title: z.string().optional().cliOption({ desc: "标题草稿（空串=清除）" }),
-                  body: z.string().optional().cliOption({ desc: "内容草稿（空串=清除）" }),
+                  body: z
+                    .string()
+                    .optional()
+                    .cliOption({
+                      placeholder: "<text>",
+                      inlineText: { fileOpt: "--body-file", textOpt: "--body-text" },
+                      desc: "内容草稿（空串=清除；**内联正文**，不是文件路径：值形如单行路径会被拒）",
+                    }),
+                  bodyText: z
+                    .string()
+                    .optional()
+                    .cliOption({ placeholder: "<text>", desc: "内容草稿（显式内联文本：与 `--body` 同义，但不做「形如路径」护栏）" }),
+                  bodyFile: z
+                    .string()
+                    .optional()
+                    .cliOption({
+                      placeholder: "<file|->",
+                      readFile: true,
+                      desc: "内容草稿：从**文件**读（`-` = stdin；相对路径按当前目录解析）",
+                    }),
                   agent_input: z.string().optional().cliOption({ desc: "agent 输入框草稿（空串=清除）" }),
                   base_updated: z.string().optional().cliOption({ desc: "草稿基点：任务当前 updated（用于检测过期）" }),
                 },
@@ -1823,7 +1875,7 @@ export const apiDef = RpcSchema.router({
       }),
 
       seed: RpcSchema.group({
-        desc: `初始数据种入（preview/lab 空数据根；幂等，已存在不动）—— 只种**示例/测试数据**，真配置由 ./sha.sh sync 同步`,
+        desc: `初始数据种入（lab 空数据根；幂等，已存在不动）—— 只种**示例/测试数据**，真配置由 ./sha.sh sync 同步`,
         children: {
           run: RpcSchema.unary({
             desc: `种入最小可用数据：opencode-go 模型配置（$VAR 占位）+ 缺省人物（缺省模型：free 优先 → 退 ${FALLBACK_MODEL}）+ 示例项目与任务`,

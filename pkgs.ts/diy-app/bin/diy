@@ -21,6 +21,12 @@ APP_DIR="$(dirname "$(_realpath "$0")")"
 CLI="$APP_DIR/build/prod/cli/index.js"
 [[ -f "$CLI" ]] || { echo "diy 未构建/未安装: ${CLI}（先 ./sha.sh build-cli）" >&2; exit 1; }
 
+# electron 二进制就绪（缺/悬空就先补；理由见 scripts/ensure-electron-if-needed.sh）。
+# 全局 diy 跑的是主仓 build/prod 的 CLI，而它顶层 `import electronPath from "electron"` ⇒
+# 这份二进制就是**生产**跑 GUI 用的那份。脚本不在（非仓库检出，如 npm 安装的另一份）则跳过。
+_ENSURE_EL_IF_NEEDED="$APP_DIR/../../scripts/ensure-electron-if-needed.sh"
+if [[ -x "$_ENSURE_EL_IF_NEEDED" ]]; then "$_ENSURE_EL_IF_NEEDED"; fi
+
 # DIY_CALLER_CWD：调用者敲命令时的目录（下面的 cd 会换掉它，见 diy.sh 同名注释）
 export DIY_CALLER_CWD="$PWD"
 

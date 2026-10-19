@@ -27,7 +27,7 @@
 - `find.traffic` — **出站流量观测**（##309）：`src/main/core/traffic.ts`（订阅 undici `node:diagnostics_channel` 采集请求/响应 + 归属反查 + 正文首尾法有界保留）· `src/main/core/traffic-log.ts`（`log/network/YYYY-MM-DD.jsonl` 按天落盘 + 按位置随机读 + 全文查询；行首 `_fmt` 小版本兼容、大版本跳过）· 契约 `src/main/services/api-def.ts` 的 `traffic.*`（CLI `diy traffic …`）· UI `src/renderer_solid/components/TrafficView.tsx`（导航页与聊天侧抽屉共用同一份）+ `TrafficPage.tsx` / `TrafficDrawer.tsx` / `JsonViewer.tsx` / `JsonTree.tsx` · 日志清理面板 `TrafficLogCleanup.tsx`（##324：列文件 / 占用 / 「只留最近 N 天」/ 勾选删除）
 - `find.serve` — `src/serve/index.ts` 纯 Web 模式（无 Electron）
 - `find.tests` — `tests/`：`cli.intent.*` 意图测试（真实 UI / 隔离 Electron，**跑 `out/` 产物**）· `core/` `services/` 单测（vitest **直读 `src/`**）· 夹具 `electron-test.ts` · `ui-drive.ts` · `shell-test.ts` · `setup.ts`
-- `find.scripts` — 仓库 `scripts/`：`ui-smoke/`（CDP 冒烟）· `cdp-colorscheme-demo.mts` · `repro-epipe-dialog.mts` · `doctor-env.sh`
+- `find.scripts` — 仓库 `scripts/`：`ui-smoke/`（CDP 冒烟）· `cdp-colorscheme-demo.mts` · `repro-epipe-dialog.mts` · `doctor-env.sh` · `check-sync.mjs`（依赖同步快检，根 `sha.sh` 的 `ensure-sync` 入口闸门 + 本包 `build` 只读护栏共用）· `ensure-electron.mjs`（electron 二进制收成「全机一份 store + worktree 软链」，由根 `sync-deps` 与 `_ensure_electron` 调用）· `ensure-electron-if-needed.sh`（CLI 入口快检：`diy.sh` / `bin/diy` 用，缺/悬空才起 node）
 
 ## entry — 入口注入的环境变量
 
@@ -37,13 +37,13 @@
 
 | 入口 | 跑什么 | 注入 |
 |------|--------|------|
-| `./diy.sh`（仓库根） | `auto`：`build/<variant>/cli/index.js` 优先，打包源比产物新回退 `tsx src/cli/index.ts`（`DIY_CLI_MODE`） | `DIY_HOME=./build/<variant>/home`、`DIY_VARIANT=preview`、`DIY_CLI` |
+| `./diy.sh`（仓库根） | `auto`：`build/<variant>/cli/index.js` 优先，打包源比产物新回退 `tsx src/cli/index.ts`（`DIY_CLI_MODE`） | `DIY_HOME=./build/<variant>/home`、`DIY_VARIANT=lab`（缺省）、`DIY_CLI` |
 | `bin/diy`（发布） | `node build/prod/cli/index.js` | `DIY_HOME=~/.diy`、`DIY_CLI=$0`、`DIY_ENV=production` |
-| `scripts/electron-dev.mts`（preview / lab） | `build/<variant>/main/index.mjs` | `DIY_HOME=./build/<variant>/home`（继承来的生产根被拒，见 `env.home`）、`DIY_VARIANT`、`DIY_CLI`、`DIY_DEV_SERVER_URL`、`DIY_ENV=development` |
+| `scripts/electron-dev.mts`（lab） | `build/<variant>/main/index.mjs` | `DIY_HOME=./build/<variant>/home`（继承来的生产根被拒，见 `env.home`）、`DIY_VARIANT`、`DIY_CLI`、`DIY_DEV_SERVER_URL`、`DIY_ENV=development` |
 
-- `env.home` — `DIY_HOME` 数据根（state/task/**app.port**），缺省 `~/.diy`；**preview/lab / `diy.sh` / `serve` 一律拒绝继承来的 `~/.diy`**（判据唯一定义处 `core/instance-identity.ts::isProdDataHome` ── 真实家目录；撞上后怎么回落见 `core/dev-home.ts::resolveDevHome`；放行需 `DIY_ALLOW_PROD_HOME=1`）。bash 侧（`diy.sh`）同口径归一写法（`cd <dir> && pwd -P`：尾斜杠 / `..` / `./` / 符号链接，是 TS `resolve` 的超集）
-- `env.seed` — `DIY_SEED` 三态开关（`0`/`false`/`off` 关 · `1`/`true`/`on` 开；未声明 = 仅 `DIY_VARIANT` 为 `preview`/`lab` 时开）→ `src/main/core/seed.ts`（契约 `src/runtime.ts`）。**自动种入只跑一次**（`.seed-done` 标记：删掉的 provider 不会被种回来），补缺项用 `diy seed run`；**生产根永不种入**。**职责 = 示例/测试数据**（示例项目与任务 + 缺省人物 + `$VAR` 占位凭据）；真配置见下条
-- `env.sync-home` — **真配置同步**（`./sha.sh sync` 末尾的 `sync-dev-home`，脚本侧非 TS）：把 `~/.diy` 的 `model.yaml` / `context.yaml` / `personas.yaml` / `providers.custom.yaml` 投影进 `build/<variant>/home/`（逐字覆盖这 4 份；`state.yaml` / `projects/` / `local/` 一律不碰）。变体随 `DIY_VARIANT`（缺省 preview），`DIY_SYNC_HOME=0` 关 · `DIY_SYNC_HOME_SRC` 换源。⚠️ 含真 key，落 build/**（已 gitignore）
+- `env.home` — `DIY_HOME` 数据根（state/task/**app.port**），缺省 `~/.diy`；**lab / `diy.sh` / `serve` 一律拒绝继承来的 `~/.diy`**（判据唯一定义处 `core/instance-identity.ts::isProdDataHome` ── 真实家目录；撞上后怎么回落见 `core/dev-home.ts::resolveDevHome`；放行需 `DIY_ALLOW_PROD_HOME=1`）。bash 侧（`diy.sh`）同口径归一写法（`cd <dir> && pwd -P`：尾斜杠 / `..` / `./` / 符号链接，是 TS `resolve` 的超集）
+- `env.seed` — `DIY_SEED` 三态开关（`0`/`false`/`off` 关 · `1`/`true`/`on` 开；未声明 = 仅 `DIY_VARIANT` 为 `lab` 时开）→ `src/main/core/seed.ts`（契约 `src/runtime.ts`）。**自动种入只跑一次**（`.seed-done` 标记：删掉的 provider 不会被种回来），补缺项用 `diy seed run`；**生产根永不种入**。**职责 = 示例/测试数据**（示例项目与任务 + 缺省人物 + `$VAR` 占位凭据）；真配置见下条
+- `env.sync-home` — **真配置同步**（`./sha.sh sync` 末尾的 `sync-dev-home`，脚本侧非 TS）：把 `~/.diy` 的 `model.yaml` / `context.yaml` / `personas.yaml` / `providers.custom.yaml` 投影进 `build/<variant>/home/`（逐字覆盖这 4 份；`state.yaml` / `projects/` / `local/` 一律不碰）。变体随 `DIY_VARIANT`（缺省 lab），`DIY_SYNC_HOME=0` 关 · `DIY_SYNC_HOME_SRC` 换源。⚠️ 含真 key，落 build/**（已 gitignore）
 - `env.cli` — `DIY_CLI` 当前 CLI 入口绝对路径（提示词模版 `diy.md` 消费）；缺 → 提示词里告警，**不静默冒充 `diy`**
 - `env.env` — `DIY_ENV` = `production`/`development`/`test`，**dev/test 专属能力的唯一判据**（如窗口副屏定位）；缺省 = production（未声明即生产，能力全关）
 - `env.port` — `DIY_PORT` 首选端口（测试注 `0`=随机）；优先级 `DIY_PORT` > `app.port` 文件 > **按环境缺省**（`runtime.ts::defaultPort`：production=`18888` 门牌，development/test=`0` 随机）；裁决 `runtime.ts::resolvePort`（纯函数、可单测，**非生产不沿用记录里的 `18888`**）。**端口不承载身份** —— 别再往它上面挂「谁在跑」的判据
@@ -51,7 +51,7 @@
 - `env.noLaunch` — `DIY_NO_LAUNCH=1` 禁止 CLI 自动拉起 app（测试专用，防实例逃逸）
 - `env.inject` — **入口自证，不继承**：`DIY_CLI` = 「跑的是谁」。各入口各声明自己（`diy.sh` → 自身；`bin/diy` → `$0`；`electron-dev.mts` → `<repo>/diy.sh`；`serve/index.ts` → 从自身位置找仓库根）。`main/index.ts` **只在未注入时**兜底自证（`||=`，按数据根推导：生产根 → `"diy"`，隔离 → `<repo>/diy.sh`）—— 无条件覆盖会误伤生产 GUI（把 `bin/diy` 注入的 `$0` 换成 `<repo>/diy.sh`）。`serve` 不 import main，故独立自证一次；它**无条件覆盖** `DIY_CLI`（没有上游入口为它声明，只能自证），与 main 的 `||=` 语义相反 —— 别照抄
 - `env.self-declare` — **三件套 `DIY_HOME`/`DIY_CLI`/`DIY_ENV` 都自证，不继承**（开发入口）。继承的生产值（agent 会话常带 `DIY_HOME=~/.diy`、`DIY_CLI=<全局 diy>`、`DIY_ENV=production`）会：操作生产数据 / 让模型敲错的 CLI / 误关 dev 能力。数据根判据：`core/instance-identity.ts`（`prodDataHome` / `isProdDataHome` / `cliEntryForRepo`，**全仓唯一**；dev 侧再经 `core/dev-home.ts::resolveDevHome` 回落 `build/<variant>/home`）；`DIY_ALLOW_PROD_HOME=1` 放行。数据根：未设置或指向生产根 → `<repo>/build/<variant>/home`（**与静态产物同一个 variant 轴**；`serve` 缺省 variant=`prod`）；`DIY_ENV`：`production` → `development`。`serve` 直接跑也走同一套（它不 import main），数据根经 `core/dev-home.ts::resolveDevHome` —— 不要在入口里另写一套回落
-- `env.variant` — `DIY_VARIANT` = `prod|test|preview|lab`，**产物/数据分根的唯一轴**：vite 配置据此定 `outDir=build/<variant>/*`，运行时据此选 `build/<variant>/main`，缺省 `prod`（`./diy.sh` 缺省 `preview`）。preview/lab 各占一根 → 可并行、互不打断 watch；test 独占 `build/test/**`
+- `env.variant` — `DIY_VARIANT` = `prod|test|lab`，**产物/数据分根的唯一轴**：vite 配置据此定 `outDir=build/<variant>/*`，运行时据此选 `build/<variant>/main`，缺省 `prod`（`./diy.sh` 缺省 `lab`）。lab 一根、test 独占 `build/test/**` → 两者可并行、互不打断 watch。`preview` **已删除**（##381）：**共 5 处**遇 `DIY_VARIANT=preview` **直接报错退出**，绝不静默落到 `build/preview/**` —— 三处入口（`diy.sh` / `pkgs.ts/diy-app/sha.sh` / `scripts/electron-dev.mts`）+ 根 `sha.sh`（dispatch 前）+ `src/serve/index.ts`（算数据根前）
 
 ## rule — 硬约束
 
@@ -60,7 +60,7 @@
 - `rule.test-home` — 隔离 HOME **用后即删**（`tests/temp-home.ts`）：两套前缀都要管 —— `diy-app-test-*`（electron-test，`stop()` 当场删）与 `diy-desktop-test-*`（`setup.ts` 每测试文件一个，`afterAll` 删；**`process.on("exit")` 在 vitest worker 里不触发** —— 被 tinypool SIGTERM 掐）。删除双校验：必须在 `os.tmpdir()` 下 + 带本套件前缀（`TEST_HOME_PREFIXES`），缺一不可；另有 `sweepStaleTestHomes`（>24h）兜强杀残留。历史代价：曾 4 天积 1583 个 / 2.9GB
 - `rule.test-render` — intent 用 `--no-file-parallelism` + `fileParallelism:false`：**单实例串行**（起→测→收），实测 app 并发恒为 1；别改成并发（多实例抢 CPU 会让墙钟判据假红）
 - `rule.renderer-io` — renderer **永不直接写文件**，一律经 RPC（如 `diy.task.drafts.*`）
-- `rule.check` — 类型检查只准 `./sha.sh check`；**同一变体**的 `preview`/`lab` 运行中勿并发 `tsc -b`/`vite build`/全量 vitest（抢同一 `outDir`，watcher 卡死）。跨变体（preview vs test）不抢——各写 `build/<variant>`
+- `rule.check` — 类型检查只准 `./sha.sh check`；**同一变体**的 `lab` 运行中勿并发 `tsc -b`/`vite build`/全量 vitest（抢同一 `outDir`，watcher 卡死）。跨变体（lab vs test）不抢——各写 `build/<variant>`
 - `rule.agents-chain` — AGENTS.md 链**上界到 `$HOME` 为止**（不进 `/`、`/Users`）；不在 `$HOME` 下时只取工作目录一层
 - `rule.budget` — 系统提示词预算 `clamp(模型上下文 × 4B × 5%, 16KB, 64KB)`；超限**拒发不截断**，且早退也必须闭合轮次（stop + noteTurnEnd + 审计）
 - `rule.golden` — 改内置模版（`src/main/prompts/defaults.ts`）**必须同步** `tests/fixtures/system.golden.txt`（当前内置模版的逐字节快照）。⚠️ `./sha.sh check` **不含 vitest**，不会替你抓到这类失效 —— 改完模版跑 `npx vitest run tests/core/template-dsl-golden.test.ts`
@@ -71,6 +71,7 @@
 - `rule.user-run-merge` — **「provider 拒连续同角色」是未验证假设，已于 2026-10-16 实测推翻**：`goat`（`api.commandcode.ai`）与 `opencode-go`（`opencode.ai/inference/go`）对 `[{user:A},{user:B}]` 及 content **parts** 形态**均 HTTP 200** ⇒ `local-agent.ts::normalizeUserRuns` 的合并是**收敛语义**（一份信封只留一条 user），**不是** provider 要求；真遇到拒的 provider，那里是唯一改动点（探针 ##310 的 `gen/probe/role-run-probe.sh`）
 - `rule.no-silent-catch` — 不要静默吞异常（如切模型曾一律 `catch {}` → 用户以为切了其实没切）
 - `rule.log-vs-config` — **落盘日志**（`local/*.jsonl`）读侧宽松（初版紧凑/扩展松散/缺必填即**异常数据**，见 `log-schema.ts`）；**配置真源**（`context.yaml` / `auto-compact.yaml`）读侧出声回落默认、写侧归一 + 原子写，且**不进 localStorage**（有损 + 两进程各持一份）
+- `rule.file-write` — **整文件覆盖写一律走** `src/main/core/atomic-write.ts::writeFileAtomic`（同目录 tmp → `rename`；失败 ⇒ 原文件**逐字不变** + tmp 清理 + 错误**原样上抛**）。禁直接 `writeFileSync(目标, …)` 覆盖已有内容的文件，也禁再添第二份私有 tmp+rename 副本 —— 前者在低磁盘下**先把目标清空**（2026-10-18 实测把 253KB 任务正文写成 0 字节，##382），后者必然分叉成「有的写点原子、有的不原子」。剩余写点收敛见 ##383
 - `rule.form-toggle` — **表单里的三态控件**：二态开/关用 daisyUI **toggle**、多选一用 **radio**（两者形态必须一眼可分，别都塞 checkbox）；**按钮位**（工具条 / view bar / 图标切换）用 **swap**（隐藏 checkbox + 图标双态，省地方）—— 三者各司其职，别互串
 - `pit.budget-compact` — 压缩 = **一个字节预算**（`budgetBytes`，UI 显示 KB，除固定开支外历史消息可占上限；`0`=清零，**且 0 时保底也不生效** —— 清零就是「全不要」）：缺省管道（##343 M1）= **保底最近 6 步 `clip: full`**（`exempt`，不计预算：只保下标不保字节治不了「留下的结果被裁成头尾」）+ 纵向优先级阶梯（`user > assistant结论 > assistant非结论 > tool-call > tool-result`，全局跨轮、同层新的先、call 与 result 同进退）计预算保留。**不是**「保留 N 轮」（横向会整轮陪葬前面重要的用户消息 —— 用户明确否决）
 - `pit.plan-gate` — **plan 写闸只管 agent**（##362 M3a）：`history.allowAgentWrite` 缺省 `false`，只拦 `compact_plan` 工具那条路 —— CLI `compact plan set` / UI 编辑器是用户**自己的**显式操作，若也拦就没人能开闸了。三条实测坑：① 改 `saveKeepConfig` 时**必须保留 `history` 的其余字段**（整包换成 `{ keep }` 等于顺手把闸关掉 ⇒ agent 写一次就永久失去权限）；② **reset 同走闸**（`planReset` 与 set/restore 一样先查 `history.allowAgentWrite`，闸关返回拒绝文本；##363）；③ 闸关时工具**返回拒绝文本而不抛错**（抛错会被当成工具失败、污染轮次信号，模型看不出"是没权限"），而**非法 plan 要抛**（那是调用方写错，该看到错在哪）—— 两者判据不同向，别互相抄
@@ -88,13 +89,14 @@
 - `pit.compact-note` — 预算压缩的历史标注 = **普通 YAML 文本塞进 messages**（同 system/runtime 变量树同一机制）：只列**保留区间** `kept: [[a,b],…]`，区间之间的行号即被省略（**不逐 gap 标注**）；字段说明走**信封的 `help.history`**（由 zod `HistoryNoteSchema` 派生；值节点里禁解释性字段）。⚠️ 标注是投递时现算的文本 ⇒ **本就在预算内**（无需为它另设封顶）
 - `pit.compact-lazy` — **压缩预览（`compactPreview`）= 成本 ∝ 会话字节的「只算不写」调用**（一份 78MB 会话整读 + 解析 + 折叠 ≈ 数秒，且 main 单线程期间所有 RPC 排队）⇒ **必须由可见性闸门保护**：控制器 `useCompactPanel(uri, visible)`（`CompactSessionPanel.tsx`）的**第二参即闸门**，调用方传 `() => props.open`；`ContextPartsDrawer` 由常挂的 `WindowRing` 持有（`open` 只控显隐、节点总在树上），漏传闸门 = 打开任何会话页都白算一次。source 另须用**当前页 `props.uri`**（勿读挂载瞬间的 `store.currentUri`，否则从大会话切走会对着旧会话再算一遍）。护栏单测 `tests/core/compact-preview-reuse.test.ts`
 - `pit.clip-axis` — **裁剪能力轴**（##343 M1）：每条取法（`PickStage`）可声明 `clip`（`full | path | headtail{head,tail,maxLineChars,maxKeepBytes}`，判别键 `type`、私有参数进 `data`），**先选中它的级生效**，没声明则回落 `defaultClip`（= 策略 `toolResult.render` 的降级）⇒ 选择结果带 `clips[]`，渲染阶段按**每条消息**取裁法（成本与渲染必须同源，否则「按 A 算预算、发出去是 B」）。配置化（`history.keep[]`）已由 ##344 M2 落地（见 `pit.compact-keep`）
-- `pit.tool-output-clip` — **单条工具输出的截断落投递层**（##127）：挂在 `tool.toModelOutput`（`main/services/tool-output.ts`），**不在 `execute`** —— `execute` 返回值是落进 ops 的原文（UI/日志/压缩都从它取），裁了原文当场丢。超 2000 行 / 50KB（= read 窗口的 `READ_MAX_LINES` / `READ_MAX_BYTES`，三路径同一预算）即头尾 + marker + 原文落 `$DIY_HOME/local/toolout/<toolCallId>.txt`（marker 写**绝对路径**：模型只按 cwd 解析相对路径）；`execFile` 的 `maxBuffer` 只当内存护栏（32MB）且触顶**显式**报（不再静默 ENOBUFS）
+- `pit.tool-output-clip` — **单条工具输出的截断落投递层**（##127）：挂在 `tool.toModelOutput`（`main/services/tool-output.ts`），**不在 `execute`** —— `execute` 返回值是落进 ops 的原文（UI/日志/压缩都从它取），裁了原文当场丢。超 2000 行 / 50KB（= read 窗口的 `READ_MAX_LINES` / `READ_MAX_BYTES`，三路径同一预算）即头尾 + marker + 原文落 `$DIY_HOME/local/toolout/<toolCallId>.txt`（marker 写**绝对路径**：模型只按 cwd 解析相对路径）；bash 工具的 `maxBuffer`（`runBash` 自持 spawn，32MB）只当内存护栏且触顶**显式**报（不再静默 ENOBUFS）
+- `pit.bash-kill-group` — **取消 / 超时 / 输出溢出三种"我们主动杀"一律杀整个进程组**（`killProcessGroup`，`main/services/local-agent.ts`），前提是 `runBash` **自持 `spawn` + `detached:true`**：`execFile` 把选项**白名单**转发给 spawn、**`detached` 被静默丢掉**（node 24 `lib/child_process.js`），所以「execFile + detached + `kill(-pid)`」是**假修法**（实测 pgid 仍属父进程组、`kill(-pid)` 直接 ESRCH、子孙照跑满）。组杀只在子进程**未收尸**时发（`exitCode`/`signalCode` 已置位即跳过）—— pid 可复用，取消信号可能比命令活得久
 - `pit.compact-triggers` — 自动压缩的三个触发（`systemContextChanged` / `cacheExpired` / `contextWindowOver`）**全是从现成数据可判定的确定事实**（零额外请求），**不含"划不划算"的预测** —— 后者是 ##230#25 明确放弃的评估；改动别把判据换成估算
 - `rule.schema-source` — 需自说明的结构（策略 / 投递注记 / 日志行）一律以 **zod 定义为唯一真源**：字段说明由 `src/shared/schema-doc.ts` 从 `.describe()` 派生，**禁止手写字段表**（手写 = 第二真源，改字段忘改注释就撒谎）；日志读侧校验走 `src/shared/context/log-schema.ts`（初版紧凑 / 扩展松散 / 缺必填即**异常数据**，不计入统计）
 
 ## pit — 坑（反直觉，代码看不出来）
 
-- `pit.watch-restart` — 改 `src/**` 会触发 preview/lab watch 重启 Electron，**正在跑的本机 agent 轮次会被打断**（tool 被标 `interrupted`）→ 轮次中别拿源码当探针，探针写 `/tmp`
+- `pit.watch-restart` — 改 `src/**` 会触发 lab watch 重启 Electron，**正在跑的本机 agent 轮次会被打断**（tool 被标 `interrupted`）→ 轮次中别拿源码当探针，探针写 `/tmp`
 - `pit.solid-ssr-test` — node 下 `solid-js` 解析到 **SSR 构建**（`createEffect` 是空实现、不追踪依赖）⇒ 响应式契约单测必须钉**客户端构建**（`vi.mock("solid-js", () => import("solid-js/dist/solid.js"))` + 类型垫片 `tests/types/solid-client.ts`，该 dist 无 types 映射、而 `check-no-emit.sh` 禁 `tests/**` 下的 `.d.ts`）；范式 `tests/core/session-store.test.ts`（真 store + 假 transport 从订阅真路径喂帧，断言**订阅是否还活着**而非 DOM —— "先 apply 后炸"只看 DOM 看不出来）
 - `pit.solid-show` — Solid 组件函数体里的 `if (props.x) return A; return B;` **对 props 变化不响应**（函数体只执行一次）→ 用 `<Show when=… fallback=…>`。反之，`<Show>` 内组件在 `onCleanup` 里读 `props` 会抛 `Stale read from <Show>` 并中断更新 → 需"卸载前落盘"的副作用放面板级组件
 - `pit.singleton-lock` — 隔离实例必须用**全新 `DIY_HOME`**（`mktemp -d`）：`SingletonLock` 写在 `electron_user_data/` 下，残留实例会抢锁 → 新实例打 `SingleInstanceLock: failed` 后直接退出。撞锁时换新 home，别动别人的进程
@@ -138,7 +140,7 @@
 - `pit.cli-kebab` — CLI 选项名默认取 schema 字段名（camelCase），parser 另注册 kebab 别名并**在 help 里显示 kebab**（`--by-agent`），两种写法都接受 —— 新增 camelCase 选项无需额外处理
 - `pit.zod-cli-meta-order` — **zod schema 必须在 `_cli-meta.ts` 补丁之后创建**（v4 实例创建即定死原型链，事后打补丁看不见）。打包会把**被多个 chunk 共用**的模块提升成独立 chunk 并**先于入口模块体求值** ⇒ 一个带 schema 的模块（`main/core/task-state.ts`）只要被拖进共享 chunk（如 `shared/task-head.ts` 之类共享常量模块一旦 import 了 `shared/task-detail.ts`），启动即 `TypeError: TaskStateSchema.cliArg is not a function`。判据：**共享常量模块必须零依赖**（清单归它、zod 形状归消费方）
 - `pit.cli-readfile` — CLI 的 `readFile` 选项（如 `task edit --append-body <file|->`）**在调用方进程的 parser 里读**（`pkgs.ts/diy-rpc/src/cli/_parser.ts`）：handler 跑在 app 进程，它的 fd 0 / cwd 都不是调用方的，在调用方读才两件事都对。故含 `-`（stdin）的调用必须**绕开 /cli 转发**（`diy.sh` 的 http 模式已按 argv 判定并落回直连 CLI）
-- `pit.cli-inline-text` — 「值必须是**内联文本**」的护栏（`_CliOptionMeta.inlineText`，##338）也判在**调用方进程**的 parser：整值单 token + 形如路径（`/` `./` `../` `~/` / 盘符）**或**该文件确实存在（`cli/_parser.ts::pathLikeValue`）→ `CliParseError`（exit=2）+ 提示改 `--body-file` / `--body-text`。存在性要看 cwd，只有调用方判得准；触发缘起：`--body` 收文本而 `--append-body` 收 `<file|->`，两侧不对称 → 三例把路径当正文静默存下（##290/##294/##87）。**三选一**裁决在 `main/core/task.ts::resolveBodyInputs`
+- `pit.cli-inline-text` — 「值必须是**内联文本**」的护栏（`_CliOptionMeta.inlineText`，##338）也判在**调用方进程**的 parser：整值单 token + 形如路径（`/` `./` `../` `~/` / 盘符）**或**该文件确实存在（`cli/_parser.ts::pathLikeValue`）→ `CliParseError`（exit=2）+ 提示改 `--body-file` / `--body-text`。存在性要看 cwd，只有调用方判得准；触发缘起：`--body` 收文本而 `--append-body` 收 `<file|->`，两侧不对称 → 三例把路径当正文静默存下（##290/##294/##87）。**三选一**裁决在 `main/core/task.ts::resolveBodyOverride`（`resolveBodyInputs` 是它在 edit 侧多带一组追加的壳）。**挂三处**：`task edit` / `task create` / `task drafts set` 的 `--body`（##376 补后两者；此前只有 edit 挂，同族静默收路径串）
 - `pit.head-note` — **关键设计理由都写在各自文件头注**（`src/main/core/steer-queue.ts` / `persona.ts` / `drafts.ts` / `src/main/services/local-agent.ts`）：改动前先读头注，别只看函数名
 
 - `pit.traffic-scope` — 流量观测**只覆盖 undici**（Electron 主进程 / serve 的 `fetch` 与 ai-sdk 发出的请求）：renderer 是 Chromium 栈（要看需 CDP）、`net.fetch` / 子进程 / native binding **看不到** —— 「某条请求怎么没记下」先问它走的是不是这条路。订阅必须早于任何请求（`traffic.init()` 在 `src/main/index.ts` 与 `src/serve/index.ts`，另有 `noteRun` 惰性兜底）
@@ -149,7 +151,7 @@
 - `tool.check` — `./sha.sh check`（提交前唯一检查）· `./sha.sh test` 全仓 · `npx vitest run tests/core/…` 单测
 - `tool.ui-verify` — **两层互补**：`diy.ui.*`（handler 层，CLI 经 RPC 直调 renderer 共享函数，测行为/契约，稳定但**测不到真实 DOM 事件链的 bug**）vs **Playwright/CDP 真实事件层**（`mouse.move/down/up` 驱动真实 renderer，抓 gesture bug —— UI 交互改动后必跑）
 - `tool.inspect` — `./diy.sh ui inspect` 遍历 renderer DOM 生成无障碍树，快速看 UI 全貌
-- `tool.cdp` — 取 CDP 地址：`cat "$DIY_HOME/electron_user_data/DevToolsActivePort"`（**读后校验**，见 `pit.cdp-port`）；`./sha.sh preview | lab` 启动日志会打印完整 `attach` 命令
+- `tool.cdp` — 取 CDP 地址：`cat "$DIY_HOME/electron_user_data/DevToolsActivePort"`（**读后校验**，见 `pit.cdp-port`）；`./sha.sh lab` 启动日志会打印完整 `attach` 命令
 - `tool.smoke` — `node scripts/ui-smoke/task-detail-smoke.mjs`（任务详情三块 + 拖宽落盘）· `python3 scripts/ui-smoke/dnd-smoke.py`（⚠️ 它的收尾用按名匹配的强杀，**会连正在用的 diy 一起收掉** —— 跑之前先改掉那段；且本机需 `pip install playwright`）
 - `tool.log` — 应用日志 `$DIY_HOME/log/`：`main.log` / `cli.log` / `serve.log` / `dev.jsonl`（`grep watch-stall-suspect` 判 watcher 卡死）/ `agent-bash.jsonl`（agent 命令审计，write-ahead）
 - `tool.isolate` — 起隔离实例：全新 `DIY_HOME`（`mktemp -d`）+ `export HOME=$H`；演示数据落 `/tmp`，不写用户 `~/.diy`

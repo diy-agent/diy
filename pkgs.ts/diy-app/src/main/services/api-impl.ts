@@ -70,7 +70,7 @@ const app = apiDef.diy;
  * 或 ChannelServerBinding（测试）。转发 diy.ui.* 由调用方在 binding 上 onForward。
  */
 export function bindAppHandlers(binding: ServerBinding): void {
-  // 空数据根的初始种入（preview/lab；见 core/seed.ts）。必须在 refreshModelRuntime 之前 ——
+  // 空数据根的初始种入（lab；见 core/seed.ts）。必须在 refreshModelRuntime 之前 ——
   // 种子会写 model.yaml，晚于装配就看不见刚种下的 provider（要等下次刷新）。
   // 失败不阻断启动（种子只是便利，不是前提）。
   try {
@@ -98,7 +98,11 @@ export function bindAppHandlers(binding: ServerBinding): void {
 
   // ── task ──
   binding.on(app.task.create, async ({ input }) => {
-    return { status: "ok", data: { uri: task.createTask(input as any) } };
+    // 正文输入的显式三态（##338 / ##376）：`body|bodyText|bodyFile` 三选一 —— 与 `task edit`
+    // 同一裁决点（core/task.ts::resolveBodyOverride），免得"某条命令漏了护栏"再次发生。
+    const { body, bodyText, bodyFile, ...rest } = input;
+    const resolvedBody = task.resolveBodyOverride({ body, bodyText, bodyFile });
+    return { status: "ok", data: { uri: task.createTask({ ...rest, body: resolvedBody } as any) } };
   });
   binding.on(app.task.list, async ({ input }) => {
     return { status: "ok", data: { tasks: task.listTasks(input.project) } };
@@ -150,12 +154,16 @@ export function bindAppHandlers(binding: ServerBinding): void {
   });
   binding.on(app.task.drafts.set, async ({ input }) => {
     // undefined = 未提供（保持原值）；"" = 清除该字段 —— 由 writeDrafts 的 splitFields 落地
-    const { uri, base_updated, ...rest } = input;
+    const { uri, base_updated, body, bodyText, bodyFile, ...rest } = input;
     const fields: Partial<Record<DraftField, string>> = {};
     for (const f of DRAFT_FIELDS) {
       const v = (rest as Record<string, string | undefined>)[f];
       if (v !== undefined) fields[f] = v;
     }
+    // 正文草稿的显式三态（##376）：`--body` / `--body-text` / `--body-file` 三选一，
+    // 与 `task edit` 同一裁决点；三态都未给 = 不动该字段（与其它字段的"不传=保持"一致）。
+    const bodyDraft = task.resolveBodyOverride({ body, bodyText, bodyFile });
+    if (bodyDraft !== undefined) fields.body = bodyDraft;
     const r = writeDrafts(uri, fields, base_updated);
     return { status: "ok", data: { base_updated: r.base_updated, saved: r.saved, fields: r.fields } };
   });

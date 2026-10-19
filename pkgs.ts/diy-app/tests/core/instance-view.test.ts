@@ -36,7 +36,7 @@ function row(over: Partial<InstanceRow> = {}): InstanceRow {
     branch: "main",
     repoDisplay: "diy",
     port: 18888,
-    source: "bash ./sha.sh preview",
+    source: "bash ./sha.sh lab",
     sourceKind: "registry",
     cmdline: "Electron /x/build/prod/main/index.mjs",
     cwd: "/x",

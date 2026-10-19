@@ -9,7 +9,7 @@ import { resolve } from "node:path";
  * 外部化所有运行时依赖（它们在 node_modules 里），
  * 只打包 TypeScript 源码到 JS。
  */
-const V = process.env.DIY_VARIANT ?? "prod"; // 变体产物根：prod|test|preview|lab
+const V = process.env.DIY_VARIANT ?? "prod"; // 变体产物根：prod|test|lab
 
 export default defineConfig({
   build: {

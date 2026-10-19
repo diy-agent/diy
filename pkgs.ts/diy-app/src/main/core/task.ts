@@ -3,7 +3,7 @@
 //    任务按项目聚合存放：$DIY_HOME/projects/<pid>/tasks/<tid>/AGENTS.md
 //    所有输入验证用 zod，收集全部错误再抛出（不短路）。
 
-import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import * as yaml from "js-yaml";
 import { z } from "zod";
@@ -23,6 +23,7 @@ import { projectExists } from "./project";
 // agent 人物：不传 = **跟随缺省**（不写键），传值则校验存在后固定绑定（人物定义见 core/persona.ts）
 import { personaById } from "./persona";
 import { isPersonaFollow } from "../../shared/persona";
+import { writeFileAtomic } from "./atomic-write";
 
 // ═══════════════════════════════════════
 // 字段验证 schema
@@ -266,7 +267,8 @@ export function createTask(params: CreateTaskParams): string {
     // 不写 project frontmatter —— project 由 URI 路径推导（路径即分组）
   };
 
-  writeFileSync(taskFilePath(uri), composeTaskFile(meta, body ?? ""), "utf-8");
+  // 原子写（##382）：低磁盘 / 写入失败时**原文件逐字不变**，绝不把正文清成 0 字节。
+  writeFileAtomic(taskFilePath(uri), composeTaskFile(meta, body ?? ""));
 
   return uri;
 }
@@ -336,10 +338,21 @@ function pickOneOf(group: BodyInputs, field: string, keys: readonly (keyof BodyI
   ]);
 }
 
+/**
+ * 整篇覆盖那一组的「三选一」裁决（`body` / `bodyText` / `bodyFile`）—— **唯一裁决点**。
+ *
+ * 为什么单独导出（##376）：`task edit` / `task create` / `task drafts set` 三个命令都收"内联正文"，
+ * 护栏（`inlineText`）与逃生口（`--body-text` / `--body-file`）必须同源 —— 各写一遍必然分叉，
+ * 分叉的表现就是"某条命令漏了护栏"（##376 的来由正是 edit 挂了、create / drafts set 没挂）。
+ */
+export function resolveBodyOverride(input: BodyInputs): string | undefined {
+  return pickOneOf(input, "body", ["body", "bodyText", "bodyFile"]);
+}
+
 /** 把 `BodyInputs` 求值成 `UpdateTaskChanges` 的 `body` / `appendBody`（唯一裁决点）。 */
 export function resolveBodyInputs(input: BodyInputs): { body?: string; appendBody?: string } {
   return {
-    body: pickOneOf(input, "body", ["body", "bodyText", "bodyFile"]),
+    body: resolveBodyOverride(input),
     appendBody: pickOneOf(input, "append_body", ["appendBody", "appendBodyFile", "appendBodyText"]),
   };
 }
@@ -512,7 +525,9 @@ export function updateTask(uri: string, changes: UpdateTaskChanges): TaskWriteRe
   let nextBody = (parsed.data.body ?? split.body).trim();
   if (appended) nextBody = nextBody ? `${nextBody}\n\n${appended}` : appended;
 
-  writeFileSync(fp, composeTaskFile(front, nextBody), "utf-8");
+  // 原子写（##382）：追加 / 覆盖正文失败时磁盘上的旧正文**逐字不变**（旧实现先清空再写，
+  // 低磁盘下把 253KB 正文写成了 0 字节）。
+  writeFileAtomic(fp, composeTaskFile(front, nextBody));
 
   return {
     // 头被剥掉了：键清单 + 与文件头不一致的键（后者**没有写回** —— 文件头是权威，

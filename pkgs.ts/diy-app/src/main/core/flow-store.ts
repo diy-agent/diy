@@ -21,8 +21,9 @@
 // 为什么是 `flow/` 而不是 `.diy/`：owner 计划 §2 明确指定（任务的系统自留地 `.diy/` 另有一套
 // 归属约定，见 core/state.ts 的 taskSystemDir）。
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { writeFileAtomic } from "./atomic-write";
 import {
     FlowError,
     advance,
@@ -94,14 +95,6 @@ export function artifactFile(uri: string, nodeId: string): string {
         throw new Error(`节点 id 不能用作产物袋文件名：${JSON.stringify(nodeId)}`);
     }
     return join(artifactDir(uri), `${nodeId}.json`);
-}
-
-/** 原子写（tmp + rename）：同目录内改名是原子操作，不会留半截文件 */
-function writeFileAtomic(path: string, content: string): void {
-    mkdirSync(dirname(path), { recursive: true });
-    const tmp = `${path}.tmp-${process.pid}`;
-    writeFileSync(tmp, content, "utf-8");
-    renameSync(tmp, path);
 }
 
 function readJson(path: string): unknown {

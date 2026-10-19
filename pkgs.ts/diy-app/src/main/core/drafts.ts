@@ -26,9 +26,10 @@
 //       打到一半的话
 
 import * as yaml from "js-yaml";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { taskSystemDir } from "./state";
+import { writeFileAtomic } from "./atomic-write";
 
 /** 文件格式标识（写时写入、读时校验，防止误读别的 yaml） */
 export const DRAFTS_KIND = "diy.ui-drafts";
@@ -307,10 +308,8 @@ function persist(
     fields,
     steers,
   };
-  mkdirSync(taskSystemDir(uri), { recursive: true });
-  const tmp = fp + ".tmp";
-  writeFileSync(tmp, yaml.dump(body, { indent: 2, noRefs: true, lineWidth: 120 }), "utf-8");
-  renameSync(tmp, fp);
+  // 原子写（##382 收敛到 core/atomic-write.ts）：草稿被 UI 读、被写侧写，不能出现半截文件
+  writeFileAtomic(fp, yaml.dump(body, { indent: 2, noRefs: true, lineWidth: 120 }));
   return { base_updated: body.base_updated, saved: now, fields, steers };
 }
 

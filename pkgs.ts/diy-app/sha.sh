@@ -30,10 +30,21 @@ source "../../sha.common.sh"
 # mono必备子命令（根 ./sha.sh check/fix/test/test-unit 组装这些）
 ####################################################################################
 
-# 产物变体根：prod|test|preview|lab。vite 配置读 DIY_VARIANT 决定输出目录；
+# 产物变体根：prod|test|lab。vite 配置读 DIY_VARIANT 决定输出目录；
 # build/<variant>/{main,preload,cli,renderer,serve} 各自独立（见根 AGENTS.md「实例/变体」）。
 export DIY_VARIANT="${DIY_VARIANT:-prod}"
+# preview 变体已删除（##381）：显式报错，不静默落到 build/preview/**
+if [[ "$DIY_VARIANT" == "preview" ]]; then
+  echo "✗ preview 变体已删除，改用 lab：DIY_VARIANT=lab ./sha.sh lab" >&2
+  exit 1
+fi
 _build_dir() { echo "build/${DIY_VARIANT:-prod}"; }
+
+# electron 二进制就绪（全机共享 store + 本 worktree 软链；缺则下载一次，带超时）。
+# 为什么**起 Electron 前必须过这一道**：electron 无 postinstall，dist/path.txt 缺时
+# `require('electron')` 会落进**无超时下载**（实测静默卡死 3m40s，日志看着像"在跑"）。
+# 实现 `scripts/ensure-electron.mjs`（根目录，头注有判据与 store 布局）。
+_ensure_electron() { run node ../../scripts/ensure-electron.mjs --quiet; }
 
 clean() {
   run rm -rf ./build ./dist
@@ -54,6 +65,14 @@ sync() { :; }
 # 本包构建：main + preload + renderer（根 build 调这个；cli 产物另见 build-cli）
 build() {
   local d; d="$(_build_dir)"
+  # 依赖没同步（包改名 / 加依赖后 node_modules 落后）时构建会报**远离根因**的 resolve 错
+  # （如 `Rolldown failed to resolve import "@diy-agent/rpc/electron"`）—— 先做一个只读快检。
+  # 同步是**根级**动作（要重装根 node_modules），故这里只拦不修：根目录 ./sha.sh sync，
+  # 或根 ./sha.sh build（它的 ensure-sync 会自动补）。判据实现见 scripts/check-sync.mjs。
+  if [[ -f ../../scripts/check-sync.mjs ]] && ! node ../../scripts/check-sync.mjs --quiet; then
+    echo "${error} ✗ 以上是依赖未同步（不是本包代码问题）→ 根目录跑：./sha.sh sync${reset}"
+    return 1
+  fi
   run npx vite build --config vite.main.config.ts
   # 内置数据三件（models.dev.json + models.dev.diy.json + calendars.json，均 fs 惰性读）
   # 随 main 产物走：build/<V>/main/data/（通配拷贝 —— 加文件不用改这里，但改名要同步）
@@ -78,12 +97,10 @@ test-unit() { run npx vitest run --exclude '**/cli.intent*'; }
 # 子项目自己的命令（原 package.json scripts）
 ####################################################################################
 
-# 预览实例：renderer dev server + watch main/preload + electron（HMR，人看效果）。
-# 产物/数据根 build/preview/{main,preload,home} —— 与 lab / test 互不干扰，可同时运行。
-# 透传参数，如 --port 18888
-preview() { run env DIY_VARIANT=preview npx tsx scripts/electron-dev.mts "$@"; }
-# 实验实例：同 preview 机制，但独占 build/lab/**（agent 快速验证/debug 用）。
-lab() { run env DIY_VARIANT=lab npx tsx scripts/electron-dev.mts "$@"; }
+# 开发实例：renderer dev server + watch main/preload + electron（HMR，免构建）——
+# 人看效果、agent 快速验证/debug 都用它。产物/数据根 build/lab/{main,preload,home}，
+# 与 test 互不干扰，可同时运行（单实例锁 per-home）。透传参数，如 --port 18888
+lab() { _ensure_electron; run env DIY_VARIANT=lab npx tsx scripts/electron-dev.mts "$@"; }
 # 开发期跑 CLI 源码：./sha.sh cli task list
 cli() { run npx tsx src/cli/index.ts "$@"; }
 # 纯 Web 服务（先构建 renderer，透传参数，如 --port <port>）
@@ -100,6 +117,7 @@ build-renderer() { run npx vite build --config vite.renderer.config.ts; }
 # 运行生产构建（先构建，变体 prod）
 start() {
   build
+  _ensure_electron
   run npx electron "$(_build_dir)/main/index.mjs" "$@"
 }
 link() { run npm link; }
@@ -109,8 +127,9 @@ test-watch() { run npx vitest "$@"; }
 # CLI 默认走 server /cli http 端点（单条 ~41ms vs 编译产物 ~300ms vs tsx ~600ms，intent 全量 ~140s vs ~300s）。
 # 无 app.port / curl 不支持 h2 时自动回退直连 CLI，不会失败。排查需要可覆盖：DIY_CLI_MODE=compiled|tsx ./sha.sh test-intent
 test-intent() {
-  # 测试实例独占 build/test/**：与 preview/lab 的 watch 产物不撞（##184 实例分根）
+  # 测试实例独占 build/test/**：与 lab 的 watch 产物不撞（##184 实例分根）
   export DIY_VARIANT=test
+  _ensure_electron
   build
   export DIY_CLI_MODE="${DIY_CLI_MODE:-http}"
   # 位置参数 = 只跑匹配的文件（片段 / 相对路径 / 文件名），无参数 = 全量。

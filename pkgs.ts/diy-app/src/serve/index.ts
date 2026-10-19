@@ -38,6 +38,14 @@ import { dropSelfRecord, setSelfPort, writeSelfRecord } from "../main/services/i
 // 计算项目根目录：从 src/serve/index.ts 向上两级到 pkgs.ts/diy-app/
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// preview 变体已删除（##381）：显式报错，不静默落到 build/preview/**（与 diy.sh / sha.sh / electron-dev.mts 同一口径）。
+// 必须**在算数据根与 STATIC_DIR 之前**拦 —— 那两者都取 `DIY_VARIANT`，先算再报错会给出误导性归因
+// （实测：落到「请先构建 renderer: ./sha.sh build-renderer」，真因却是变体已删）。
+if (process.env["DIY_VARIANT"] === "preview") {
+  console.error("✗ preview 变体已删除，改用 lab：DIY_VARIANT=lab ./sha.sh lab");
+  process.exit(1);
+}
+
 // ── 开发态入口自证（与 main/index.ts / diy.sh / electron-dev.mts 同一套判据）──
 // **必须在此独立做** —— serve 不 import main/index.ts，那条自证不覆盖本进程。
 // 外层 shell（agent 会话）常带 DIY_HOME=~/.diy、DIY_CLI=<全局 diy>、DIY_ENV=production；
@@ -47,7 +55,7 @@ const repoRoot = findRepoRoot(__dirname);
 if (repoRoot) {
   // 数据根：与静态产物**同一个 variant 轴**（静态产物在 `pkgs.ts/diy-app/build/<variant>/renderer`，
   // 数据根在 `<repo>/build/<variant>/home` —— **两者不同父目录**，但同取 `DIY_VARIANT`，见 AGENTS.md
-  // env.variant）—— 入口的默认值 + 生产根拒绝都交给 core/dev-home（与 preview/lab / diy.sh
+  // env.variant）—— 入口的默认值 + 生产根拒绝都交给 core/dev-home（与 lab / diy.sh
   // 同一判据，别在这里再写一套）。缺省 variant=prod（serve 独立跑时走 build/prod/home）。
   const variant = process.env["DIY_VARIANT"] ?? "prod";
   const decision = resolveDevHome({

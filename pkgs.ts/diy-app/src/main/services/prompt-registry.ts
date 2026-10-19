@@ -11,10 +11,11 @@
 // 本模块只做组装与渲染，不发任何 LLM 请求（试验场试跑 = dry-run，看请求长什么样）。
 
 import * as yaml from "js-yaml";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync, rmdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, normalize, resolve, sep } from "node:path";
 import { analyze, renderWithTrace, type IncludeResolver, type TraceNode, type VarSpec } from "@diy/template";
+import { writeFileAtomic } from "../core/atomic-write";
 import { TASK_HEAD_FIELDS } from "../../shared/task-head";
 import { AssembleGlobalsSchema, type AssembleGlobals } from "../../shared/prompt-schema";
 
@@ -126,15 +127,6 @@ function readMeta(home: string, projectId: string): Record<string, { baseVersion
   } catch {
     return {};
   }
-}
-
-/** 原子写（tmp + rename）：同一份数据被预览读、被 UI 写，不能出现半截文件。
- *  与 core/drafts.ts 的做法一致。 */
-function writeFileAtomic(fp: string, content: string): void {
-  mkdirSync(dirname(fp), { recursive: true });
-  const tmp = `${fp}.tmp-${process.pid}`;
-  writeFileSync(tmp, content, "utf-8");
-  renameSync(tmp, fp);
 }
 
 /** 写 sidecar；内容为空则删文件（否则 restore 会留下一个 `{}` 空壳，看着像残留）。 */

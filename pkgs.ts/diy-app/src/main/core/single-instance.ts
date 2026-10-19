@@ -3,7 +3,7 @@
 //
 // 为什么需要：关窗后进程常驻（见 main/index.ts 的 window-all-closed 注释）之后，
 // 「锁被一个看不见的实例占着」成了常态。dev 与 CLI 撞锁时的表现都是**沉默失败**：
-//   · ./sha.sh preview|lab → 子进程打印 `SingleInstanceLock: failed` 后 exit 0，
+//   · ./sha.sh lab → 子进程打印 `SingleInstanceLock: failed` 后 exit 0，
 //     dev 收尾成 `electron exited, shutting down...`，不说明原因（实测 dev.jsonl）
 //   · CLI → 30 秒「启动超时」，对陈旧锁 / 活实例占锁 / 构建缺失一视同仁
 // 这里给出「锁在哪、谁占着、是死是活」的判断与文案，把排查从猜变成读。
