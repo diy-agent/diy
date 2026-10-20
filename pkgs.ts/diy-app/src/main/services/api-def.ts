@@ -907,6 +907,79 @@ export const apiDef = RpcSchema.router({
                 }),
               }),
               /**
+               * **含指定位置的定长段**（##389 段跳）：命中落在某一轮，就从那一轮取一段读。
+               * 与 historyWindow（游标→文件尾）/ historyOlder（游标之前的预算段）区分见 main 侧注释。
+               */
+              historyAt: RpcSchema.unary({
+                desc: `从**指定轮**开始读一段 Op 流（数据层检索命中后的段跳；一次到位，不是"游标→文件尾"）`,
+                input: {
+                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                  at: z
+                    .number()
+                    .cliArg({ desc: "该轮 start 行的字节偏移（检索命中里带的 at）" }),
+                  budgetBytes: z
+                    .number()
+                    .optional()
+                    .cliOption({ desc: "段字节预算（缺省 0 = 只取一轮）" }),
+                },
+                output: z.object({
+                  ops: z.array(z.any()),
+                  cursor: z.string(),
+                  hasMore: z.boolean(),
+                  /** 后面还有未读内容（段尾 < 文件尾）⇒ 渲染端此刻显示的是**历史** */
+                  hasNewer: z.boolean(),
+                  /** 位置失效（不是轮首 / 文件被改写）⇒ 本次是退化全量 */
+                  stale: z.boolean(),
+                }),
+              }),
+              /**
+               * **会话数据层检索**（##389）：在 ops 原文里找字，与 DOM / 虚拟窗口无关
+               * ⇒ 未渲染的轮、被压缩掉的历史都能找到。
+               */
+              find: RpcSchema.unary({
+                desc: `在会话 Op 原文里检索（数据层；未渲染的轮与被压缩的历史都可命中）`,
+                input: {
+                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                  query: z.string().cliArg({ desc: "要找的文字（大小写不敏感）" }),
+                  text: z
+                    .boolean()
+                    .optional()
+                    .cliOption({ desc: "搜正文（缺省 true）" }),
+                  tool: z
+                    .boolean()
+                    .optional()
+                    .cliOption({ desc: "搜工具的输入/输出（缺省 true）" }),
+                  think: z
+                    .boolean()
+                    .optional()
+                    .cliOption({ desc: "搜推理（缺省 false）" }),
+                  maxTurns: z
+                    .number()
+                    .optional()
+                    .cliOption({ desc: "最多收集多少轮（组数上限，缺省 200）" }),
+                },
+                output: z.object({
+                  hits: z.array(
+                    z.object({
+                      turnId: z.string(),
+                      at: z.number(),
+                      blockId: z.string(),
+                      kind: z.string(),
+                      scope: z.string(),
+                      pre: z.string(),
+                      hit: z.string(),
+                      post: z.string(),
+                      label: z.string(),
+                      compacted: z.boolean(),
+                    }),
+                  ),
+                  turns: z.number(),
+                  more: z.boolean(),
+                  scannedTurns: z.number(),
+                  scannedBytes: z.number(),
+                }),
+              }),
+              /**
                * 会话 op 流水位（epoch + 行号）。订阅增量前用它校准起点：
                * 先取水位、再拉 history（history 覆盖范围 ≥ 水位），此后从水位起订阅。
                * seq = ops.jsonl 的物理行号（append-only，故行数即水位）；epoch 随 clear 换发。

@@ -14,7 +14,7 @@
  *     60~70   抽屉内下拉 / 人物配置抽屉          TrafficView · PersonaDrawer
  *    100~500  各类 tooltip / hover 卡 / 全局搜索  TaskDetailContent · NavSearch
  *   ───────   ───────────────────────────────   ─────────────────────────────
- *   9000      页内查找条（Z_FIND）              FindBar   ← 压在所有浮层之上
+ *   8500      会话检索面板（Z_CHAT_FIND）         ChatFindPanel（##389）← 低于查找条
  *   9999      Toast 通知                        ToastContainer
  *
  * 关键约定：**查找条是"顶层贴片"，不是流内元素** —— 它必须浮在一切浮层（含全屏抽屉）
@@ -34,6 +34,16 @@
  * 流内元素无法稳定压过 fixed 浮层，所以改为 **Portal 到 body + fixed + Z_FIND**。
  */
 export const Z_FIND = 9000;
+
+/**
+ * 会话检索面板层级（ChatFindPanel，##389）。
+ *
+ * 取 8500：**高过内容浮层**（抽屉 50 / 人物 70 / 全局搜索 500），**低于查找条 9000**
+ * —— 查找条是"页内找位置"的常驻贴片，必须始终可点；面板是"找数据"的侧栏，
+ * 两者同时开着时不该互相盖住输入框（查找条在顶部居中，面板在右侧，本就不重叠，
+ * 但层序按语义定死：页内入口永远在上）。
+ */
+export const Z_CHAT_FIND = 8500;
 
 /** Toast 通知层级（与 ToastContainer 的 `z-[9999]` 对应，供跨组件引用） */
 export const Z_TOAST = 9999;

@@ -47,6 +47,7 @@ import { Breadcrumb } from "./components/Breadcrumb";
 import { NAV_SEARCH_SHORTCUT, NavSearch } from "./components/NavSearch";
 import { FindBar } from "./components/FindBar";
 import { findStore } from "./store/findStore";
+import { chatFindStore } from "./store/chatFindStore";
 import { setRendererActions, resetRendererActions, getRendererActions } from "./lib/renderer-actions";
 import { DragDropProvider, DragOverlay, useDraggable, useDroppable, PointerSensor } from "@dnd-kit/solid";
 import type { DragDropProviderProps } from "@dnd-kit/solid";
@@ -735,6 +736,19 @@ export default function App() {
         const onFindKey = (e: KeyboardEvent) => {
             if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
                 e.preventDefault();
+                // **⌘⇧F = 会话数据层检索面板**（##389）：与 ⌘F 是两个动作，不是同一个动作的范围开关
+                // —— 页内查找回答"这一页哪儿写着"，面板回答"这个会话（含没渲染的轮、含已压缩的历史）
+                // 哪儿写着"。合在一个键里会让"找位置"变成"跳数据"，一次误用就滚到另一个世纪去。
+                if (e.shiftKey) {
+                    if (e.repeat) return;
+                    // 不在会话页（没有面板宿主）时如实说一声，别让快捷键静默失效
+                    if (!chatFindStore.taskUri) {
+                        notificationStore.addToast("info", "⌘⇧F 只在会话页可用（先在标签页里打开一个任务会话）");
+                        return;
+                    }
+                    chatFindStore.toggle();
+                    return;
+                }
                 // 全局搜索（⌘K 的 NavSearch）开着时让位：它是**自己的输入框**在等人打字，
                 // 再叠一层查找条只会打架。除此之外**一律可开** —— 查找条已上提到顶层
                 // （Z_FIND），流量/人物配置这类全屏抽屉不再盖住它（##309 修）。
