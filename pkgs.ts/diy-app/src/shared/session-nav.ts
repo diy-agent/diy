@@ -73,6 +73,21 @@ export interface NavRowInput {
     now: number;
 }
 
+/**
+ * **nav 行集** = 任务树里的全部任务 ∪ 注册表里的全部会话（用户 2：「运行中的会话立即放到 nav，
+ * 哪怕原来并未在导航上，作为有一种激活的概念」）。
+ *
+ * 为什么是纯函数、为什么钉单测：这条是**语义**（在跑就够得着），不是一次手工测量。
+ *   · 判据 = **注册表 `running`**，**不看 `opened`** —— 没打开过、窗口都没开，也得在行集里（##305）；
+ *   · 顺带兜住「任务树里没有」的会话（任务已删 / 换项目）：注册表有就是事实，不因查不到标题而丢行；
+ *   · 任务树在前（稳定序，nav 排序另由 `rankOf` 决定），注册表新增按出现序追加。
+ */
+export function navUrisOf(taskUris: readonly string[], registryUris: readonly string[]): string[] {
+    const us = new Set<string>(taskUris);
+    for (const uri of registryUris) us.add(uri);
+    return [...us];
+}
+
 /** 注册表条目 → nav 行（状态判据全走 session-state，一处定义） */
 export function navRowOf(i: NavRowInput): NavRow {
     const e = i.entry;

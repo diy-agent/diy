@@ -38,7 +38,9 @@
  *     · `defect`   ← 只来自**人为界定的判据**（assert / 不变量破坏 / 死锁检测），走独立信号通道，
  *                    本文件只留位（`Blame` 里有它），今天**恒不产生**；
  *     · `environment` ← 只来自 triage 裁定 / 新埋点，今天**恒不产生**；
- *     · `unknown`  ← 真正来自值域：`aborted:detached`（断流）/ `error:stream` / `interrupted`（崩溃恢复）
+ *     · `service`  ← 需要**具体码**（429 / 401 / 403）才认，而 `TurnEndReason` 里拿不到 ⇒ 今天**恒不产生**
+ *                    （见 `blameOf` 的 `error:llm` 分支：拿不到码就是 `unknown`，不冒充「已识别外部」）；
+ *     · `unknown`  ← 真正来自值域：`aborted:detached`（断流）/ `error`（非 budget）/ `interrupted`（崩溃恢复）
  *                    —— 「分不清是网络断、上游断还是被外部 kill」，按用户口径**弹给用户裁定**，不当 bug。
  */
 
@@ -188,7 +190,14 @@ export function blameOf(end: TurnEndReason | null | undefined): Blame {
                 case "budget":
                     return "limit"; // 预算用尽：我方限制，且这条根本没投给模型
                 case "llm":
-                    return "service"; // 上游服务（429 / 401 / model_coming_soon 原文）
+                    // ⚠️ **不归 `service`**（##266 review1 R1，与 ##394 `error-triage.ts::triageOfTurnEnd` 对齐）：
+                    // `error:llm` 今天的 message 多是 `[router_error] model request failed` / 流中断一类，
+                    // **拿不到具体码**；而 `service` = 已识别外部，入场门槛是「说得出哪个码 / 哪个 HTTP 状态」
+                    // （429 / 401 / 403）。用户口径「HTTP 5xx 与请求超时不算已识别外部」—— 上游回了 HTTP
+                    // 说明网络通着，那是服务端故障（##369 另一类，不归这里）。
+                    // 判成 recognized 会让 unknown 池失真、##394 的频次统计也拿不到这类样本 ⇒ 归 `unknown`。
+                    // 将来 ##394 刀 2 在**产生端**带 `code` 后按码细分（届时 429/401/403 才回 `service`）。
+                    return "unknown";
                 default:
                     return "unknown"; // stream 及未来新增的 source：先当"未识别外部"，不冒充 bug
             }

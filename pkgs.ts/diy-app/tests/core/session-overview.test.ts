@@ -196,7 +196,10 @@ describe("异常退出 / chip", () => {
             200,
             NOW,
         );
-        expect(err.glyph.tone).toBe("orange");
+        // ##266 review1 R1：`error:llm` 拿不到具体码 ⇒ 归 `unknown`（紫 + 虚线「等你裁定」），
+        // **不是** `service`（橙 = 已识别外部，须说得出 429/401/403）——与 ##394 triageOfTurnEnd 同结论
+        expect(err.glyph.tone).toBe("violet");
+        expect(err.glyph.line).toBe("dashed");
     });
 
     it("待投递留言的空闲会话 → 状态词说「什么时候投」（不是只说个数）", () => {

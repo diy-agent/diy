@@ -23,6 +23,7 @@ import {
     type SessionStateInput,
 } from "../../src/shared/session-state";
 import type { SessionEntry } from "../../src/shared/registry-frame";
+import { triageOfTurnEnd } from "../../src/shared/error-triage";
 import type { TurnEndReason } from "../../src/main/services/local-blocks";
 
 const T0 = "2026-10-15T10:00:00.000Z";
@@ -87,7 +88,10 @@ describe("blameOf：TurnEndReason 六个值逐一映射（不许漏、不许编�
         // 旧日志里的 "abort" = 旧版停止按钮（shared/turn-end.ts:15-19 头注原话）⇒ 也是「你按的」
         ["aborted:abort（旧版停止）", { type: "aborted", data: { source: "abort" } }, "user"],
         ["aborted:detached（断流）", { type: "aborted", data: { source: "detached" } }, "unknown"],
-        ["error:llm（上游）", { type: "error", data: { source: "llm", message: "429" } }, "service"],
+        // ##266 review1 R1：`error:llm` 拿不到具体码（message 多为 `[router_error] model request failed`）
+        // ⇒ **不归 service**（service = 已识别外部，须说得出 429/401/403），与 ##394 triageOfTurnEnd 一致
+        ["error:llm（上游故障，拿不到码）", { type: "error", data: { source: "llm", message: "[router_error] model request failed" } }, "unknown"],
+        ["error:llm（429 也一样，值域里没带码）", { type: "error", data: { source: "llm", message: "429" } }, "unknown"],
         ["error:budget（预算）", { type: "error", data: { source: "budget", message: "quota" } }, "limit"],
         ["error:stream（断流）", { type: "error", data: { source: "stream", message: "reset" } }, "unknown"],
         ["interrupted（崩溃恢复）", { type: "interrupted", data: {} }, "unknown"],
@@ -112,6 +116,28 @@ describe("blameOf：TurnEndReason 六个值逐一映射（不许漏、不许编�
         expect(isAbnormalBlame("user")).toBe(false);
         expect(isAbnormalBlame("limit")).toBe(true);
         expect(isAbnormalBlame("unknown")).toBe(true);
+    });
+
+    it("与 ##394 单一出口同结论：tierOf(blameOf(end)) === triageOfTurnEnd(end).triage（六个值 + 历史 source 全过）", () => {
+        const ends: TurnEndReason[] = [
+            { type: "completed", data: {} },
+            { type: "max-steps", data: { steps: 200, limit: 200 } },
+            { type: "max-tokens", data: { maxOutputTokens: 8000 } },
+            { type: "aborted", data: { source: "user" } },
+            { type: "aborted", data: { source: "abort" } }, // legacy 停止按钮
+            { type: "aborted", data: { source: "detached" } },
+            { type: "error", data: { source: "llm", message: "[router_error] model request failed" } },
+            { type: "error", data: { source: "budget", message: "quota" } },
+            { type: "error", data: { source: "stream", message: "socket hang up" } },
+            { type: "interrupted", data: {} },
+        ];
+        for (const end of ends) {
+            const mine = tierOf(blameOf(end));
+            const theirs = triageOfTurnEnd(end).triage ?? "expected"; // completed = null = 预期内
+            expect(`${end.type}:${"source" in end.data ? end.data.source : "-"} → ${mine}`).toBe(
+                `${end.type}:${"source" in end.data ? end.data.source : "-"} → ${theirs}`,
+            );
+        }
     });
 
     it("三档映射与 ##394 对齐：defect / external-recognized / external-unknown / expected", () => {

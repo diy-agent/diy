@@ -14,9 +14,11 @@
 
 import { describe, it, expect } from "vitest";
 import {
+    aliveOf,
     backgroundOf,
     heroBadgeOf,
     navRowOf,
+    navUrisOf,
     needsYouOf,
     rowBadgeOf,
     secondaryBadgeOf,
@@ -260,5 +262,62 @@ describe("rowBadgeOf：单行角标（后台活动区每行）", () => {
         expect(rowBadgeOf(row({ uri: "a", unread: 2 }))!.key).toBe("unread");
         expect(rowBadgeOf(row({ uri: "a", queue: 2 }))!.key).toBe("queue");
         expect(rowBadgeOf(row({ uri: "a" }))).toBeNull();
+    });
+});
+
+// ─── 用户 2：运行中的会话**必上 nav**（R2：把语义钉成护栏，不靠一次手工测量） ──────
+
+describe("navUrisOf：行集 = 任务树 ∪ 注册表（在跑就够得着，不看打开过）", () => {
+    it("注册表有、任务树没有（任务已删 / 换项目）→ **仍在**行集，不因查不到标题而丢行", () => {
+        expect(navUrisOf(["projects/4/tasks/1"], ["projects/4/tasks/1", "projects/9/tasks/77"])).toEqual([
+            "projects/4/tasks/1",
+            "projects/9/tasks/77",
+        ]);
+    });
+
+    it("任务树有、注册表没有（账本独有：重启后仍有进度）→ 仍在行集", () => {
+        expect(navUrisOf(["projects/4/tasks/1", "projects/4/tasks/2"], [])).toEqual([
+            "projects/4/tasks/1",
+            "projects/4/tasks/2",
+        ]);
+    });
+
+    it("去重：两边都有只出现一次（否则 nav 出现两行同一会话）", () => {
+        const out = navUrisOf(["a", "b"], ["b", "a", "a"]);
+        expect(out).toEqual(["a", "b"]);
+        expect(new Set(out).size).toBe(out.length);
+    });
+
+    it("**判据不看 `opened`**：没开 tab、`opened=false` 的在跑会话照样进行集，且判成 running", () => {
+        const uris = navUrisOf(["projects/4/tasks/1"], ["projects/4/tasks/77"]);
+        const r = navRowOf({
+            uri: "projects/4/tasks/77",
+            label: "#77 后台跑着的会话",
+            opened: false, // 从没被打开过
+            entry: running(),
+            seenTurns: 0,
+            totalTurns: 0,
+            maxSteps: 200,
+            now: NOW,
+        });
+        expect(uris).toContain(r.uri);
+        expect(r.running).toBe(true);
+        expect(r.state.run).toBe("running");
+        expect(aliveOf(r)).toBe(true); // 有活态 ⇒ nav 行集里必须留得住它
+    });
+
+    it("反向对照：已结束、且没有未读 / 队列的冷会话，`aliveOf` 为假（靠任务树那一路才在，不靠「有活态」）", () => {
+        const r = navRowOf({
+            uri: "projects/4/tasks/9",
+            label: "#9 很久以前",
+            opened: false,
+            entry: entry({ turnCount: 2, lastEndReason: { type: "completed", data: {} } }),
+            seenTurns: 2,
+            totalTurns: 2,
+            maxSteps: 200,
+            now: NOW,
+        });
+        expect(aliveOf(r)).toBe(false);
+        expect(navUrisOf(["projects/4/tasks/9"], [])).toContain(r.uri); // 任务树仍在 ⇒ 行仍在
     });
 });

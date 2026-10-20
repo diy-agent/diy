@@ -61,6 +61,7 @@ import { scanPlanOf, SCAN_SLICE } from "../shared/session-scan";
 //（纯函数在 shared/session-nav —— 位次仍出自 shared/session-overview，与任务表 / 总览同源）。
 import {
     backgroundOf,
+    navUrisOf,
     heroBadgeOf,
     navRowOf,
     rankOf,
@@ -529,11 +530,12 @@ export default function App() {
      * ⚠️ 水位**不**给它们建基线（见 `sessionStore.ensureBaseline` 的调用点只在注册表入口）——
      * 建了就等于"第一眼即已读"，历史欠账会当场清零。
      */
-    const navUris = createMemo(() => {
-        const us = new Set<string>(allTaskUris(taskStore.nodes));
-        for (const { uri } of sessionStore.rows) us.add(uri);
-        return [...us];
-    });
+    const navUris = createMemo(() =>
+        navUrisOf(
+            allTaskUris(taskStore.nodes),
+            sessionStore.rows.map((r) => r.uri),
+        ),
+    );
 
     /**
      * 开机扫账本的**入队次序**（##358 §10）：热点立即、冷账本 idle 切片慢慢补。
