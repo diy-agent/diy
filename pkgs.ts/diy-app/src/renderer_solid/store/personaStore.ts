@@ -104,7 +104,7 @@ async function setForTask(taskUri: string, id: string): Promise<boolean> {
         return true;
     } catch (e) {
         console.error(`[persona] 换绑失败 ${taskUri} → ${id}:`, e);
-        notificationStore.addToast(
+        notificationStore.addToastLegacy(
             "error",
             `切换人物失败：${e instanceof Error ? e.message : String(e)}`,
         );
@@ -137,7 +137,7 @@ async function save(patch: {
     } catch (e) {
         // 失败必须发声（如未知模型/档位不支持）：静默会让用户以为改成功了
         console.error(`[persona] 保存失败 ${patch.id ?? "(新建)"}:`, e);
-        notificationStore.addToast(
+        notificationStore.addToastLegacy(
             "error",
             `保存人物失败：${e instanceof Error ? e.message : String(e)}`,
         );
@@ -151,11 +151,11 @@ async function setDefault(id: string): Promise<boolean> {
         await diyService.diy.agent.persona.setDefault({ id });
         await load(true);
         const name = personas().find((p) => p.id === id)?.name ?? id;
-        notificationStore.addToast("success", `缺省人物已改为「${name}」（只影响之后新建的任务）`);
+        notificationStore.addToastLegacy("success", `缺省人物已改为「${name}」（只影响之后新建的任务）`);
         return true;
     } catch (e) {
         console.error("[persona] setDefault 失败:", e);
-        notificationStore.addToast(
+        notificationStore.addToastLegacy(
             "error",
             `设置缺省人物失败：${e instanceof Error ? e.message : String(e)}`,
         );
@@ -167,7 +167,7 @@ async function setDefault(id: string): Promise<boolean> {
 async function bindCurrentTask(id: string): Promise<boolean> {
     const uri = taskStore.selectedUri;
     if (!uri) {
-        notificationStore.addToast("error", "没有选中的任务");
+        notificationStore.addToastLegacy("error", "没有选中的任务");
         return false;
     }
     return setForTask(uri, id);
@@ -294,12 +294,12 @@ export const personaStore = {
     async followDefault(): Promise<boolean> {
         const uri = taskStore.selectedUri;
         if (!uri) {
-            notificationStore.addToast("error", "没有选中的任务");
+            notificationStore.addToastLegacy("error", "没有选中的任务");
             return false;
         }
         const ok = await setForTask(uri, "");
         if (ok)
-            notificationStore.addToast(
+            notificationStore.addToastLegacy(
                 "success",
                 "已改为跟随缺省人物（缺省改变时本任务下一轮跟着变）",
             );

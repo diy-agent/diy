@@ -23,6 +23,8 @@
 import { createSignal } from "solid-js";
 import { diyService } from "../lib/rpc";
 import { notificationStore } from "./notificationStore";
+import { opsLiveMeta } from "../lib/notice-ops";
+import { chatNotice, DETAIL_CANCEL, DETAIL_CLEAR, DETAIL_HISTORY, DETAIL_STEER } from "../lib/notice-chat";
 import { BlockStore, applyOpsSafely, toForest, type BlockNode, type Op } from "../../main/services/local-blocks";
 import type { OpsFrame } from "../../shared/ops-frame";
 // 阅读位置锚点的形状（纯函数模块，零 DOM）：与滚动决策同源，故不在此另定一份
@@ -161,6 +163,14 @@ interface TaskState {
     /** 本段故障是否已浮到界面（一段故障只提示一次；恢复时清，下段故障还能提示） */
     opsDownNotified: boolean;
     /**
+     * 本段故障的**起点时刻**（ms；`null` = 当前没有故障，##391）。
+     * 恢复提示要报「断了几秒（起点 → 终点）」—— 没有它就只剩一句「已恢复」，
+     * 用户既不知道断了多久，也不知道这话跟屏幕上的什么对应。
+     */
+    opsDownAt: number | null;
+    /** 本段故障内**已重订几次**（1s 退避，见 `OPS_RECONNECT_MS`）—— 恢复提示的「期间重订 N 次」 */
+    opsReconnects: number;
+    /**
      * **段跳态**（##389）：块树此刻显示的不是尾部窗口，而是检索定位过去的**一段历史**。
      *
      * 为什么需要这个位（而不是"跳完就当没事"）：
@@ -217,6 +227,7 @@ function stateFor(taskUri: string): TaskState {
             error, setError, steers, setSteers, usage, setUsage, steerSeq: 0, steerSettled: 0,
             scroll: null, tab: "local", detailScroll: 0,
             appliedSeq: 0, epoch: -1, opsAbort: null, opsState, setOpsState, opsDownNotified: false,
+            opsDownAt: null, opsReconnects: 0,
             detached, setDetached,
         };
         states.set(taskUri, s);
@@ -455,7 +466,15 @@ async function doReload(taskUri: string): Promise<void> {
         // 不重置的话，末段之外的更早段全是已然不存在于日志里的旧内容（见 mergeWindow 头注）。
         if (r.stale) {
             console.warn(`[localChat] 轮末重放游标失效，已重置块树 ${taskUri}`);
-            notificationStore.addToast("info", "会话日志已被改写，已重新加载最近一段");
+            notificationStore.addToast(
+                "info",
+                "会话日志已被改写，已重新加载最近一段",
+                chatNotice(
+                    "轮末重放 · 游标失效",
+                    `会话 ${taskUri} 重取末段时服务端报 stale（盘上已被改写/清空，内存游标 appliedSeq=${st.appliedSeq} 对不上行号）→ 块树整体重置为最近一段；更早的内容需上滚重新补`,
+                    DETAIL_HISTORY,
+                ),
+            );
         }
         // stale ⇒ 这份是全量，尾游标由 mergeWindow 统一丢弃（见其重置分支）；下一轮按预算重新 seek。
         mergeWindow(st, r.ops as Op[], r.cursor, r.hasMore, r.stale);
@@ -625,7 +644,15 @@ async function loadHistory(st: TaskState, taskUri: string): Promise<void> {
     } catch (e) {
         // 历史拉失败≠无历史：降级可见（toast）+ 不标 loaded（下次进入自动重试），绝不静默展示空会话
         console.warn(`[localChat] 历史加载失败 ${taskUri}:`, e);
-        notificationStore.addToast("error", "本地会话历史加载失败，将显示不完整并在下次进入时重试");
+        notificationStore.addToast(
+            "error",
+            "本地会话历史加载失败，将显示不完整并在下次进入时重试",
+            chatNotice(
+                "历史首载 · historyWindow",
+                `会话 ${taskUri} 首次拉取最近 4MB 历史失败（${e instanceof Error ? e.message : String(e)}）→ 块树可能为空/不完整；不标记已加载，下次进入或上滚会自动重试`,
+                DETAIL_HISTORY,
+            ),
+        );
     }
 }
 
@@ -677,7 +704,15 @@ async function refreshSteers(taskUri: string): Promise<void> {
                 commitSteers(taskUri, seq, items);
             } catch (e) {
                 console.error(`[localChat] 插话队列读取失败 ${taskUri}:`, e);
-                notificationStore.addToast("error", "插话队列读取失败，横条可能不是最新（详见控制台）");
+                notificationStore.addToast(
+                    "error",
+                    "插话队列读取失败，横条可能不是最新（详见控制台）",
+                    chatNotice(
+                        "插话队列 · steer.list",
+                        `会话 ${taskUri} 回读插话队列失败（${e instanceof Error ? e.message : String(e)}）→ 横条保留**上一次**成功读到的快照，不乐观清空（怕你以为留言已发出）`,
+                        DETAIL_STEER,
+                    ),
+                );
             }
             // 期间又有投递（dirty 被置上）→ 再拉一次对齐；没有则退出
         } while (steerRefreshDirty.has(taskUri));
@@ -737,6 +772,8 @@ async function fetchWatermark(taskUri: string): Promise<{ epoch: number; seq: nu
 function ensureOpsSubscription(taskUri: string): void {
     const st = stateFor(taskUri);
     if (st.opsAbort) return;
+    // 本段故障内的又一次重订（首建时 opsDownAt 还是 null，不计）：恢复提示要报「期间重订 N 次」（##391）
+    if (st.opsDownAt !== null) st.opsReconnects += 1;
     const ctrl = new AbortController();
     st.opsAbort = ctrl;
     // ⚠️ 已是 down 就**不退回 connecting**（##354 ③）：重订在**收到帧之前**并没有改变事实
@@ -799,7 +836,17 @@ function markOpsLive(st: TaskState): void {
     st.setOpsState("live");
     if (st.opsDownNotified) {
         st.opsDownNotified = false;
-        notificationStore.addToast("success", "会话实时更新已恢复");
+        // 恢复提示必须**有始有终且带数字**（##391 验收 1）：断了多久、哪段时间、重订几次。
+        // 只有一句「已恢复」时，用户根本不知道这提示跟屏幕上的什么有关（本条任务的起点）。
+        const from = st.opsDownAt;
+        const reconnects = st.opsReconnects;
+        st.opsDownAt = null;
+        st.opsReconnects = 0;
+        notificationStore.addToast(
+            "success",
+            "会话实时更新已恢复",
+            opsLiveMeta({ from, to: Date.now(), reconnects }),
+        );
     }
 }
 
@@ -820,6 +867,8 @@ function notifyOpsDown(st: TaskState): void {
     // finally）②轮末自检发现水位没前进（settleOpsAfterTurn）。后者压根不经过 down 分支，
     // 若只在那里置位，静默订阅下常驻条永远不会亮。
     st.setOpsState("down");
+    // 起点只记**第一次**（退避重订期间的再次发现不是新的故障段）—— 恢复时要报的是整段中断时长
+    if (st.opsDownAt === null) st.opsDownAt = Date.now();
     if (st.opsDownNotified) return;
     st.opsDownNotified = true;
     console.warn(`[localChat] 会话实时更新中断（常驻条已亮出，退回重连中）`);
@@ -1206,7 +1255,17 @@ async function submitSteer(taskUri: string, mode: SteerMode, text: string): Prom
     // （实测：点「留言」后毫无反应：输入框留着字、队列空、横条不出现）。
     if (st.running()) {
         const ok = await consumeOwnTurnStream(taskUri, st, () => call());
-        if (!ok) notificationStore.addToast("error", "插话提交失败（未能落盘），内容未排队");
+        if (!ok) {
+            notificationStore.addToast(
+                "error",
+                "插话提交失败（未能落盘），内容未排队",
+                chatNotice(
+                    "插话队列 · steer 提交",
+                    `会话 ${taskUri} 的留言入队 RPC 失败（${st.running() ? "本轮在途，经本轮的流收尾" : "本轮未在途，直接发起"}）→ 队列未变；输入框内容保留，可直接重试`,
+                    DETAIL_STEER,
+                ),
+            );
+        }
         return ok;
     }
     // 空闲：服务端可能**立刻用队列开一轮**（##303 的 c）→ 要像普通发送那样接管这一轮
@@ -1214,7 +1273,15 @@ async function submitSteer(taskUri: string, mode: SteerMode, text: string): Prom
     if (!ok) {
         // 走到这里 = **入队就没成**（服务端"入队成功但开轮失败"的情况已在 main 侧吞掉，
         // 那种情况留言安好在队列里，不该报失败）→ 提示并保留输入框内容
-        notificationStore.addToast("error", "插话提交失败（未能落盘），内容未排队");
+        notificationStore.addToast(
+            "error",
+            "插话提交失败（未能落盘），内容未排队",
+            chatNotice(
+                "插话队列 · steer 提交",
+                `会话 ${taskUri} 的留言提交流未能收尾（入队就没成，服务端未落盘）→ 队列未变；输入框内容保留，可直接重试`,
+                DETAIL_STEER,
+            ),
+        );
     }
     return ok;
 }
@@ -1234,7 +1301,17 @@ async function flushSteers(taskUri: string): Promise<boolean> {
         const ok = await consumeOwnTurnStream(taskUri, st, () =>
             diyService.diy.agent.local.steer.flush({ taskUri, model: undefined, reasoningEffort: undefined }),
         );
-        if (!ok) notificationStore.addToast("error", "立即发送失败，留言仍在队列里");
+        if (!ok) {
+            notificationStore.addToast(
+                "error",
+                "立即发送失败，留言仍在队列里",
+                chatNotice(
+                    "插话队列 · steer.flush 立即发送",
+                    `会话 ${taskUri} 的「立即发送」未能触发一次轮次（RPC/流收尾失败）→ 留言仍在队列里等下一次轮边界，没有丢`,
+                    DETAIL_STEER,
+                ),
+            );
+        }
         return ok;
     }
     return runTurnStream(taskUri, (ctrl) =>
@@ -1262,7 +1339,15 @@ async function takeSteer(taskUri: string, id: string): Promise<SteerItem | null>
         return item;
     } catch (e) {
         console.error(`[localChat] 撤回留言失败 ${taskUri}#${id}:`, e);
-        notificationStore.addToast("error", "撤回失败，这条留言仍在队列里");
+        notificationStore.addToast(
+            "error",
+            "撤回失败，这条留言仍在队列里",
+            chatNotice(
+                "插话队列 · steer.remove 撤回",
+                `会话 ${taskUri} 撤回留言 #${id} 失败（${e instanceof Error ? e.message : String(e)}）→ 它仍在队列中，模型下一轮**仍会看到它**；可再点一次撤回`,
+                DETAIL_STEER,
+            ),
+        );
         return null;
     }
 }
@@ -1275,7 +1360,15 @@ async function toggleSteerMode(taskUri: string, id: string): Promise<void> {
         commitSteers(taskUri, seq, items);
     } catch (e) {
         console.error(`[localChat] 插话时机切换失败 ${taskUri}#${id}:`, e);
-        notificationStore.addToast("error", "切换时机失败，留言仍保持原状态");
+        notificationStore.addToast(
+            "error",
+            "切换时机失败，留言仍保持原状态",
+            chatNotice(
+                "插话队列 · steer.toggleMode 切换时机",
+                `会话 ${taskUri} 切换留言 #${id} 的发送时机失败（${e instanceof Error ? e.message : String(e)}）→ 服务端仍是原值；界面开关被强制写回真实状态（不显示假的"已加急"）`,
+                DETAIL_STEER,
+            ),
+        );
         // 通知 UI 把受控开关写回真实状态（见 steerToggleTick 头注）
         setSteerToggleTick((t) => t + 1);
     }
@@ -1294,7 +1387,15 @@ async function reorderSteers(taskUri: string, ids: string[]): Promise<void> {
         commitSteers(taskUri, seq, items);
     } catch (e) {
         console.error(`[localChat] 插话重排失败 ${taskUri}:`, e);
-        notificationStore.addToast("error", "调整顺序失败，队列顺序未变");
+        notificationStore.addToast(
+            "error",
+            "调整顺序失败，队列顺序未变",
+            chatNotice(
+                "插话队列 · steer.reorder 调整顺序",
+                `会话 ${taskUri} 重排 ${ids.length} 条留言失败（${e instanceof Error ? e.message : String(e)}）→ 服务端顺序未变，横条回读的是原顺序`,
+                DETAIL_STEER,
+            ),
+        );
     }
 }
 
@@ -1306,7 +1407,15 @@ async function cancelSteer(taskUri: string, id: string): Promise<void> {
         commitSteers(taskUri, seq, items);
     } catch (e) {
         console.error(`[localChat] 插话取消失败 ${taskUri}#${id}:`, e);
-        notificationStore.addToast("error", "插话取消失败，仍在队列中");
+        notificationStore.addToast(
+            "error",
+            "插话取消失败，仍在队列中",
+            chatNotice(
+                "插话队列 · steer.cancel 取消",
+                `会话 ${taskUri} 取消留言 #${id} 失败（${e instanceof Error ? e.message : String(e)}）→ 它仍在队列里，模型下一轮仍会看到它`,
+                DETAIL_STEER,
+            ),
+        );
     }
 }
 
@@ -1328,7 +1437,15 @@ async function cancel(taskUri: string) {
     } catch (e) {
         // 能报错就只剩传输层故障：「停止」没生效必须让用户知道
         console.error(`[localChat] cancel RPC 失败 ${taskUri}:`, e);
-        notificationStore.addToast("error", "停止请求发送失败，生成可能仍在继续");
+        notificationStore.addToast(
+            "error",
+            "停止请求发送失败，生成可能仍在继续",
+            chatNotice(
+                "停止生成 · agent.local.cancel",
+                `会话 ${taskUri} 的 cancel RPC 失败（${e instanceof Error ? e.message : String(e)}）→ 请求没送达 main，本轮**可能仍在生成**；可再点一次停止，或看会话是否还在增长`,
+                DETAIL_CANCEL,
+            ),
+        );
     }
     // 立刻对一次：main 已收尾 → 直接回发送态；还在收尾 → 走"停止中"宽限期
     await refreshActive(taskUri);
@@ -1341,12 +1458,28 @@ async function clear(taskUri: string) {
         if (!r.cleared) {
             // 不抛错但业务失败（main 删日志遇真故障）：领域返回值也要检查，同样不许静默
             console.error(`[localChat] clear 返回失败 ${taskUri}`);
-            notificationStore.addToast("error", "服务端未能清空会话日志，界面未重置");
+            notificationStore.addToast(
+                "error",
+                "服务端未能清空会话日志，界面未重置",
+                chatNotice(
+                    "清空会话 · agent.local.clear",
+                    `会话 ${taskUri} 的 clear 返回 cleared=false（main 删日志遇真故障）→ 盘上会话未清空、界面也未重置；可再点一次`,
+                    DETAIL_CLEAR,
+                ),
+            );
             return;
         }
     } catch (e) {
         console.error(`[localChat] clear RPC 失败 ${taskUri}:`, e);
-        notificationStore.addToast("error", "清空会话失败，界面未重置");
+        notificationStore.addToast(
+            "error",
+            "清空会话失败，界面未重置",
+            chatNotice(
+                "清空会话 · agent.local.clear",
+                `会话 ${taskUri} 的 clear RPC 失败（${e instanceof Error ? e.message : String(e)}）→ 请求是否送达未知，界面保持原样；可再点一次`,
+                DETAIL_CLEAR,
+            ),
+        );
         return;
     }
     const st = stateFor(taskUri);
@@ -1411,7 +1544,15 @@ async function loadOlder(taskUri: string, beforeApply?: () => void): Promise<boo
         // 重置为这一段，并**说出来** —— 用户看到历史被复位，必须知道是为什么。
         if (r.stale || ids.some((id) => oldest.ids.includes(id))) {
             console.warn(`[localChat] 上滚补段游标失效/重叠，已重置块树 ${taskUri}`);
-            notificationStore.addToast("info", "会话日志已被改写，已重新加载最近一段");
+            notificationStore.addToast(
+                "info",
+                "会话日志已被改写，已重新加载最近一段",
+                chatNotice(
+                    "上滚补段 · 游标失效/重叠",
+                    `会话 ${taskUri} 上滚更早历史时游标失效或两段轮次重叠（片段 1 起点失效，${ids.length} 个轮次命中）= 日志被改写/清空 → 块树重置为这一段，视口移到新内容`,
+                    DETAIL_HISTORY,
+                ),
+            );
             st.segments = [];
             // stale 的全量游标由 mergeWindow 统一丢弃（见其重置分支）：别粘住 ⇒ 下次重新 seek。
             mergeWindow(st, ops, r.cursor, r.hasMore, r.stale);
@@ -1428,7 +1569,15 @@ async function loadOlder(taskUri: string, beforeApply?: () => void): Promise<boo
         return true;
     } catch (e) {
         console.warn(`[localChat] 上滚补段失败 ${taskUri}:`, e);
-        notificationStore.addToast("error", "更早的会话历史加载失败");
+        notificationStore.addToast(
+            "error",
+            "更早的会话历史加载失败",
+            chatNotice(
+                "上滚补段 · historyOlder",
+                `会话 ${taskUri} 上滚补更早一段失败（${e instanceof Error ? e.message : String(e)}）→ 已显示的部分不受影响，视口停在原处；继续上滚会重试`,
+                DETAIL_HISTORY,
+            ),
+        );
         return false;
     } finally {
         st.setOlderBusy(false);
@@ -1674,6 +1823,18 @@ export const localChatStore = {
      */
     get opsState(): OpsState {
         return cur()?.opsState() ?? "idle";
+    },
+    /**
+     * 当前会话本段 op 故障的**起点时刻**（ms；`null` = 没在故障中，##391）。
+     * 常驻条「详情」要用它说清「从几点开始断、已经断了多久」—— 没有时刻的中断提示
+     * 只能算"出事了"，说不出"出多久了"。
+     */
+    get opsDownSince(): number | null {
+        return cur()?.opsDownAt ?? null;
+    },
+    /** 当前会话本段 op 故障内**已自动重订几次**（##391；恢复 toast 与常驻条详情共用） */
+    get opsReconnects(): number {
+        return cur()?.opsReconnects ?? 0;
     },
     /** 手动刷新用量账本（看板打开/调试用） */
     refreshUsage,

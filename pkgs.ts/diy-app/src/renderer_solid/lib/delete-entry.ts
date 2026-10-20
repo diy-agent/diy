@@ -10,6 +10,7 @@
 // 本任务与 ##138 的分工：本任务只补「基础入口 + 二次确认」，可恢复性是 ##138 的事。
 
 import { diyService } from "./rpc";
+import { projectRemovedNotice, taskDeletedNotice } from "./notice-entity";
 import { taskStore } from "../store/taskStore";
 import { notificationStore } from "../store/notificationStore";
 import { findNode } from "./task-lineage";
@@ -38,12 +39,12 @@ async function afterRemoval(): Promise<void> {
 export async function deleteTaskViaUi(uri: string, title?: string): Promise<void> {
     await diyService.diy.task.delete({ uri });
     await afterRemoval();
-    notificationStore.addToast("success", title ? `已删除任务「${title}」` : "已删除任务");
+    notificationStore.addToast("success", title ? `已删除任务「${title}」` : "已删除任务", taskDeletedNotice(title));
 }
 
 /** 删除项目（连带其下全部任务；main 的 removeProject 摘名片 + 删数据目录，不可恢复）。 */
 export async function removeProjectViaUi(id: string, label?: string): Promise<void> {
     await diyService.diy.project.remove({ id });
     await afterRemoval();
-    notificationStore.addToast("success", `已删除项目${label ? `「${label}」` : ` #${id}`}`);
+    notificationStore.addToast("success", `已删除项目${label ? `「${label}」` : ` #${id}`}`, projectRemovedNotice({ id, label }));
 }

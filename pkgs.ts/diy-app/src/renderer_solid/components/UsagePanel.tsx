@@ -54,6 +54,8 @@ import {
 import type { BlockNode, TurnEndReason } from "../../main/services/local-blocks";
 import { VIEW_BAR_H } from "../lib/layout-metrics";
 import { notificationStore } from "../store/notificationStore";
+import { copyFailMeta, copyOkMeta } from "../lib/notice-copy";
+import { compactNotice } from "../lib/notice-compact";
 import { DEFAULT_BUDGET_BYTES } from "../../shared/context/compaction";
 import { useCompactPanel, CompactPanelContent } from "./CompactSessionPanel";
 import { RowGutter } from "./RowGutter";
@@ -559,11 +561,30 @@ export function WindowRing(props: { uri: string | null }) {
         setBusy(true);
         try {
             const rec = await localChatStore.compact(u, { budgetBytes: budget() ?? DEFAULT_BUDGET_BYTES } as never);
-            if (rec?.noop) notificationStore.addToast("info", "无需压缩（历史已在预算内）");
-            else notificationStore.addToast("success", "已压缩（历史保留、可撤销）");
+            if (rec?.noop) {
+                notificationStore.addToast(
+                    "info",
+                    "无需压缩（历史已在预算内）",
+                    compactNotice({
+                        kind: "noop",
+                        budgetBytes: budget() ?? DEFAULT_BUDGET_BYTES,
+                        uri: u,
+                    }),
+                );
+            } else {
+                notificationStore.addToast(
+                    "success",
+                    "已压缩（历史保留、可撤销）",
+                    compactNotice({ kind: "done", budgetBytes: budget() ?? DEFAULT_BUDGET_BYTES, uri: u }),
+                );
+            }
             setOpen(false);
         } catch (e) {
-            notificationStore.addToast("error", String(e instanceof Error ? e.message : e));
+            notificationStore.addToast(
+                "error",
+                String(e instanceof Error ? e.message : e),
+                compactNotice({ kind: "failed", budgetBytes: budget() ?? DEFAULT_BUDGET_BYTES, uri: u, error: e }),
+            );
         } finally {
             setBusy(false);
         }
@@ -1556,8 +1577,22 @@ function FmtToggle(props: { view: string; onView: (v: "md" | "raw") => void }) {
 /** md/源码文本视图：右上「复制」+ 等宽 pre（纯文本态，直接可选中） */
 function FmtBody(props: { text: () => string }) {
     const copy = () => {
-        void navigator.clipboard.writeText(props.text());
-        notificationStore.addToast("success", "已复制到剪贴板");
+        void navigator.clipboard
+            .writeText(props.text())
+            .then(() =>
+                notificationStore.addToast(
+                    "success",
+                    "已复制到剪贴板",
+                    copyOkMeta({ what: "格式化文本", text: props.text(), mech: "UsagePanel.tsx::FmtBody" }),
+                ),
+            )
+            .catch((e: unknown) =>
+                notificationStore.addToast(
+                    "error",
+                    "复制失败（剪贴板不可用）",
+                    copyFailMeta({ what: "格式化文本", mech: "UsagePanel.tsx::FmtBody", error: e }),
+                ),
+            );
     };
     return (
         <div>

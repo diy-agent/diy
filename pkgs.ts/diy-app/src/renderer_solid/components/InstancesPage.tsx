@@ -146,13 +146,13 @@ export function InstancesPage() {
         try {
             // pid 是权威定位（端口可能刚换）；port 一并带上只为满足契约形状（服务端优先用 pid）
             const r = await diyService.diy.instances.focus({ pid: row.pid, port: row.port ?? undefined });
-            notificationStore.addToast("success", `已唤起 pid=${r.pid ?? row.pid}（${r.via}）：${r.reason}`);
+            notificationStore.addToastLegacy("success", `已唤起 pid=${r.pid ?? row.pid}（${r.via}）：${r.reason}`);
             setError(null);
             void refresh(); // 全屏状态是目标实例自报的，紧接着取一次让它上屏
         } catch (e) {
             const m = msgOf(e);
             setError(`唤起 pid=${row.pid} 失败：${m}`);
-            notificationStore.addToast("error", `唤起失败：${m}`);
+            notificationStore.addToastLegacy("error", `唤起失败：${m}`);
         } finally {
             setFocusing(null);
         }

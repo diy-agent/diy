@@ -90,9 +90,9 @@ export function ModelConfigPage() {
       setSpecs(structuredClone(v.customSpecs));
       setDirty(false);
       // read 降级（配置结构非法）时仍打开页面，只提示原因（避免 RPC 抛错锁死，##275 R1-6）
-      if (v.error) notificationStore.addToast("error", `配置读取失败：${v.error}`);
+      if (v.error) notificationStore.addToastLegacy("error", `配置读取失败：${v.error}`);
     } catch (e) {
-      notificationStore.addToast("error", e instanceof Error ? e.message : "配置读取失败");
+      notificationStore.addToastLegacy("error", e instanceof Error ? e.message : "配置读取失败");
     } finally {
       setLoading(false);
     }
@@ -122,16 +122,16 @@ export function ModelConfigPage() {
       await reload();
       await scanEnv();
       if (r.imported.length > 0) {
-        notificationStore.addToast("success", `已导入 ${r.imported.join("、")}（账号写为 $VAR 引用）`);
+        notificationStore.addToastLegacy("success", `已导入 ${r.imported.join("、")}（账号写为 $VAR 引用）`);
       }
       if (r.skipped.length > 0) {
-        notificationStore.addToast(
+        notificationStore.addToastLegacy(
           "info",
           `跳过：${r.skipped.map((s) => `${s.provider}（${s.note}）`).join("；")}`,
         );
       }
     } catch (e) {
-      notificationStore.addToast("error", e instanceof Error ? e.message : "导入失败");
+      notificationStore.addToastLegacy("error", e instanceof Error ? e.message : "导入失败");
     }
   };
 
@@ -165,9 +165,9 @@ export function ModelConfigPage() {
       }
       await reload();
       await scanEnv();
-      notificationStore.addToast("success", "model.yaml 已保存");
+      notificationStore.addToastLegacy("success", "model.yaml 已保存");
     } catch (e) {
-      notificationStore.addToast("error", e instanceof Error ? e.message : "保存失败");
+      notificationStore.addToastLegacy("error", e instanceof Error ? e.message : "保存失败");
     } finally {
       setSaving(false);
     }
@@ -184,9 +184,9 @@ export function ModelConfigPage() {
     try {
       await diyService.diy.llmConfig.write({ modelFile: next });
       await reload();
-      notificationStore.addToast("success", `已添加 ${id}（请填密钥）`);
+      notificationStore.addToastLegacy("success", `已添加 ${id}（请填密钥）`);
     } catch (e) {
-      notificationStore.addToast("error", e instanceof Error ? e.message : "添加失败");
+      notificationStore.addToastLegacy("error", e instanceof Error ? e.message : "添加失败");
     }
   };
 
@@ -232,9 +232,9 @@ export function ModelConfigPage() {
       await diyService.diy.llmConfig.write({ modelFile: next });
       await reload();
       await scanEnv();
-      notificationStore.addToast("success", `已移除 ${kind === "custom" ? `custom:${key}` : key}`);
+      notificationStore.addToastLegacy("success", `已移除 ${kind === "custom" ? `custom:${key}` : key}`);
     } catch (e) {
-      notificationStore.addToast("error", e instanceof Error ? e.message : "移除失败");
+      notificationStore.addToastLegacy("error", e instanceof Error ? e.message : "移除失败");
     }
   };
 
@@ -349,7 +349,7 @@ export function ModelConfigPage() {
                 f.customProviders[id] = { accounts: [{ type: "apiKey", data: { value: keyValue } }], filter: { include: [], exclude: [] } };
               });
               setShowNewCustom(false);
-              notificationStore.addToast("success", `已添加 custom:${id}（点「保存全部」落盘）`);
+              notificationStore.addToastLegacy("success", `已添加 custom:${id}（点「保存全部」落盘）`);
             }}
           />
         </Show>
@@ -476,8 +476,8 @@ function StdCard(props: {
     setTesting(true);
     try {
       const r = await diyService.diy.llmConfig.probe({ baseUrl: s.api, apiKey: acc?.data.value ?? "" });
-      if (r.ok) notificationStore.addToast("success", `连通（HTTP ${r.status}，${r.models.length} 个模型）`);
-      else notificationStore.addToast("error", `不通：${r.error ?? "未知错误"}`);
+      if (r.ok) notificationStore.addToastLegacy("success", `连通（HTTP ${r.status}，${r.models.length} 个模型）`);
+      else notificationStore.addToastLegacy("error", `不通：${r.error ?? "未知错误"}`);
     } finally {
       setTesting(false);
     }
@@ -663,11 +663,11 @@ function CustomCard(props: {
   const testAndFetch = async () => {
     const s = spec();
     if (!s) return;
-    if (!s.api.trim()) { notificationStore.addToast("error", "先填 API 地址"); return; }
+    if (!s.api.trim()) { notificationStore.addToastLegacy("error", "先填 API 地址"); return; }
     setTesting(true);
     try {
       const r = await diyService.diy.llmConfig.probe({ baseUrl: s.api, apiKey: props.card.cfg.accounts[0]?.data.value ?? "" });
-      if (!r.ok) { notificationStore.addToast("error", `不通：${r.error ?? "未知错误"}`); return; }
+      if (!r.ok) { notificationStore.addToastLegacy("error", `不通：${r.error ?? "未知错误"}`); return; }
       const fallbackNpm = providerNpm();
       const prevModels = spec()?.models ?? {};
       const next: Record<string, SpecProvider["models"][string]> = {};
@@ -688,7 +688,7 @@ function CustomCard(props: {
         };
       }
       props.mutateSpec(props.card.key, (sp) => { sp.models = next; });
-      notificationStore.addToast(
+      notificationStore.addToastLegacy(
         "success",
         `连通（HTTP ${r.status}），同步 ${Object.keys(next).length} 个模型` + (skipped ? `（跳过 ${skipped} 个未支持面的模型）` : ""),
       );

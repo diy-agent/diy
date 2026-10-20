@@ -1,5 +1,6 @@
 import { diyService } from "./rpc";
 import { taskStore } from "../store/taskStore";
+import { taskCreatedNotice } from "./notice-entity";
 import { notificationStore } from "../store/notificationStore";
 
 export interface CreateTaskViaUiInput {
@@ -33,6 +34,10 @@ export async function createTaskViaUi(input: CreateTaskViaUiInput): Promise<stri
   });
   const uri: string = r?.data?.uri;
   await taskStore.loadTree();
-  notificationStore.addToast("success", input.parent ? "子任务已创建" : "任务已创建");
+  notificationStore.addToast(
+    "success",
+    input.parent ? "子任务已创建" : "任务已创建",
+    taskCreatedNotice({ uri, parent: input.parent, project: input.project }),
+  );
   return uri;
 }

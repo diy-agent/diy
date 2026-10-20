@@ -479,8 +479,8 @@ export function useCompactPanel(uri: () => string, visible: () => boolean = () =
             // ⚠️ 先把输入框里的预算落盘（blur 的写盘是异步的）——否则可能用**旧预算**压
             await commitKb();
             const rec = await localChatStore.compact(u, flatPolicyOf(autoPolicy()));
-            if (rec?.noop) notificationStore.addToast("info", "无需压缩（历史已在预算内）");
-            else notificationStore.addToast("success", "已压缩（历史保留、可撤销）");
+            if (rec?.noop) notificationStore.addToastLegacy("info", "无需压缩（历史已在预算内）");
+            else notificationStore.addToastLegacy("success", "已压缩（历史保留、可撤销）");
         } catch (e) {
             setErr(String(e instanceof Error ? e.message : e));
         } finally {

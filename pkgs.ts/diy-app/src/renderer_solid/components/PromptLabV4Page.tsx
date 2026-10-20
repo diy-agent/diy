@@ -895,7 +895,7 @@ export function PromptLabV4Page() {
             setEntries(list);
             if (!list.some((e) => e.relpath === selPath()) && list[0]) setSelPath(list[0].relpath);
         } catch (e) {
-            notificationStore.addToast("error", `模版加载失败: ${e instanceof Error ? e.message : e}`);
+            notificationStore.addToastLegacy("error", `模版加载失败: ${e instanceof Error ? e.message : e}`);
         }
     }
 
@@ -938,9 +938,9 @@ export function PromptLabV4Page() {
                 delete n[relpath];
                 return n;
             });
-            notificationStore.addToast("info", `${relpath} 已保存为项目级覆盖`);
+            notificationStore.addToastLegacy("info", `${relpath} 已保存为项目级覆盖`);
         } catch (e) {
-            notificationStore.addToast("error", `保存失败: ${e instanceof Error ? e.message : e}`);
+            notificationStore.addToastLegacy("error", `保存失败: ${e instanceof Error ? e.message : e}`);
         }
     }
 
@@ -954,9 +954,9 @@ export function PromptLabV4Page() {
                 delete n[relpath];
                 return n;
             });
-            notificationStore.addToast("info", `${relpath} 已恢复内置`);
+            notificationStore.addToastLegacy("info", `${relpath} 已恢复内置`);
         } catch (e) {
-            notificationStore.addToast("error", `恢复失败: ${e instanceof Error ? e.message : e}`);
+            notificationStore.addToastLegacy("error", `恢复失败: ${e instanceof Error ? e.message : e}`);
         }
     }
 

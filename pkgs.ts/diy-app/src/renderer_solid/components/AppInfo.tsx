@@ -1,6 +1,7 @@
 import { createSignal, onMount, Show } from "solid-js";
 import { diyService } from "../lib/rpc";
 import { notificationStore } from "../store/notificationStore";
+import { copyFailMeta, copyOkMeta } from "../lib/notice-copy";
 import { tabStore } from "../store/tabStore";
 import { taskStore } from "../store/taskStore";
 import { debugInfoText } from "../lib/debug-info";
@@ -51,11 +52,19 @@ export function AppInfo() {
         });
         try {
             await navigator.clipboard.writeText(text);
-            notificationStore.addToast("success", "已复制调试信息（CDP / app / page）");
+            notificationStore.addToast(
+                "success",
+                "已复制调试信息（CDP / app / page）",
+                copyOkMeta({ what: "调试信息", text, mech: "AppInfo.tsx::copyDebugInfo" }),
+            );
         } catch (e) {
             // 用户主动触发的动作：失败必须告知，不能假装成功
             console.error("[appInfo] 剪贴板写入失败：", e);
-            notificationStore.addToast("error", "复制失败（剪贴板不可用）");
+            notificationStore.addToast(
+                "error",
+                "复制失败（剪贴板不可用）",
+                copyFailMeta({ what: "调试信息", mech: "AppInfo.tsx::copyDebugInfo", error: e }),
+            );
         }
     };
     return (

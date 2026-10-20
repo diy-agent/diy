@@ -123,7 +123,7 @@ export function FlowPage(props: { uri: string }) {
             await load();
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
-            notificationStore.addToast("error", `${kind === "advance" ? "推进" : "打回"}失败：${msg}`);
+            notificationStore.addToastLegacy("error", `${kind === "advance" ? "推进" : "打回"}失败：${msg}`);
         } finally {
             setBusy(false);
         }

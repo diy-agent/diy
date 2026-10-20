@@ -29,7 +29,7 @@ export function CreateProjectSheet() {
 
     const submit = async () => {
         if (!path().trim()) {
-            notificationStore.addToast("error", "请先选择项目目录");
+            notificationStore.addToastLegacy("error", "请先选择项目目录");
             return;
         }
         setBusy(true);
@@ -39,7 +39,7 @@ export function CreateProjectSheet() {
             setPath(""); setLabel(""); setDesc("");
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
-            notificationStore.addToast("error", `创建失败: ${msg}`);
+            notificationStore.addToastLegacy("error", `创建失败: ${msg}`);
         } finally {
             setBusy(false);
         }

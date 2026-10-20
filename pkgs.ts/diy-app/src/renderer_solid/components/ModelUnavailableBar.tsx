@@ -13,6 +13,31 @@
  * **上游原话**（upstream）—— 少了任何一件，用户都得自己去翻日志才知道发生了什么。
  */
 import type { ModelUnavailableNotice } from "../../shared/model-unavailable";
+import { NoticeDetail } from "./NoticeDetail";
+import type { NoticeMeta } from "../lib/notice";
+
+/**
+ * 机制说明（##391 R2）：这条 bar 为什么存在 / 判据是什么 / 关掉意味着什么。
+ * 口径来源：`shared/model-unavailable.ts`（四类判据，纯函数）+ `main/services/model-notice.ts`（谁把失败送进来）。
+ */
+const DETAIL_MODEL = [
+    "在监测什么：真发（真 LLM 实验）失败那一刻的上游语义 —— 状态码 + 上游原文 + SDK 消息，交给 shared/model-unavailable.ts 的四类判据：模型未上架 / id 不认识 / 认证失败 / 配额限流（顺序即优先级）。",
+    "不在这里面的：上游 5xx、网络超时、连接中断 —— 那是「服务端此刻不稳」，不是「这个模型不能用」。混进来会让 bar 天天亮，用户就不看了，也分不清该去配模型还是等一会儿。",
+    "为什么会弹：这类失败原本只落在会话流里，你不看会话就不知道「实验其实一次都没跑成」，agent 也可能悄悄换模型乱试 —— 故把事实提到最显眼处，且**只提示不阻断**（不禁用按钮、不遮罩，实验该跑还跑）。",
+    "怎么消：点 ✕ /「知道了」= 关掉当前这一波（main 侧一并记住，重连回放不会再弹同一条）；模型恢复可用或换一个可用模型后自然不再出现。",
+    "对你的影响：顶栏出现它时，先按「去配置模型」处理（改 key / 换模型 id / 等配额）；期间真发不会成功，别再重复试同一件事。",
+].join("\n");
+
+/** 这条 bar 的二级信息（来源 / 原因 / 机制） */
+function metaOf(n: ModelUnavailableNotice): NoticeMeta {
+    return {
+        source: "模型可用性 · modelNotice（shared/model-unavailable.ts 四类判据 · main/services/model-notice.ts）",
+        reason:
+            `判据命中 ${n.kind}（${KIND_LABEL[n.kind]}）：模型 ${n.model} · 人物 ${n.personaName}` +
+            `${n.reason ? ` · ${n.reason}` : ""}${n.upstream ? ` · 上游原文「${n.upstream}」` : ""}`,
+        detail: DETAIL_MODEL,
+    };
+}
 
 /** 四类判据 → 一句话标签（用户不必知道判据名，只需知道"该干什么"） */
 const KIND_LABEL: Record<ModelUnavailableNotice["kind"], string> = {
@@ -47,6 +72,8 @@ export function ModelUnavailableBar(props: {
             <span class="max-w-[40%] truncate font-mono text-xs opacity-70" title={props.notice.upstream}>
                 {props.notice.upstream || "(上游未回正文)"}
             </span>
+            {/* ##391：一级说「哪个模型 / 谁在用 / 上游原话」，二级给判据口径与开关语义 */}
+            <NoticeDetail meta={metaOf(props.notice)} message={`${KIND_LABEL[props.notice.kind]} · ${props.notice.model}`} label="详情" />
             <button class="btn btn-xs ml-auto" onClick={props.onConfigure}>
                 去配置模型
             </button>

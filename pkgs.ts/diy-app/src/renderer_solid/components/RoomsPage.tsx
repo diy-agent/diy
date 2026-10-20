@@ -300,7 +300,7 @@ export function RoomsPage() {
             await refreshRooms();
             await openRoom(id);
         } catch (e) {
-            notificationStore.addToast("error", `建房间失败：${msgOf(e)}`);
+            notificationStore.addToastLegacy("error", `建房间失败：${msgOf(e)}`);
         }
     };
 
@@ -327,13 +327,13 @@ export function RoomsPage() {
         if (!id || !pid) return;
         try {
             const r = await diyService.diy.room.invite({ id, persona: pid, task: undefined, role: undefined });
-            notificationStore.addToast(
+            notificationStore.addToastLegacy(
                 "info",
                 `已邀请 ${r.member.name}（${r.createdTask ? "新建影子任务" : "复用已有任务"} ${r.taskUri}）`,
             );
             await loadRoom(id);
         } catch (e) {
-            notificationStore.addToast("error", `邀请失败：${msgOf(e)}`);
+            notificationStore.addToastLegacy("error", `邀请失败：${msgOf(e)}`);
         }
     };
 
@@ -342,7 +342,7 @@ export function RoomsPage() {
         const name = memberName_().trim();
         if (!id || !name) return;
         if (!memberTask().trim()) {
-            notificationStore.addToast("error", "agent 成员必须绑一个任务作为它的会话（backend 不能空）");
+            notificationStore.addToastLegacy("error", "agent 成员必须绑一个任务作为它的会话（backend 不能空）");
             return;
         }
         try {
@@ -357,7 +357,7 @@ export function RoomsPage() {
             setMemberTask("");
             await loadRoom(id);
         } catch (e) {
-            notificationStore.addToast("error", `加成员失败：${msgOf(e)}`);
+            notificationStore.addToastLegacy("error", `加成员失败：${msgOf(e)}`);
         }
     };
 
@@ -368,7 +368,7 @@ export function RoomsPage() {
             const r = await diyService.diy.room.focus({ id, member: m ? m.id : undefined });
             setRoom(r);
         } catch (e) {
-            notificationStore.addToast("error", `设当前接受者失败：${msgOf(e)}`);
+            notificationStore.addToastLegacy("error", `设当前接受者失败：${msgOf(e)}`);
         }
     };
 
@@ -416,7 +416,7 @@ export function RoomsPage() {
         } catch (e) {
             setInput(text); // 投递失败：把这句还给输入框（别让人白打）
             setErr(`投递失败：${msgOf(e)}`);
-            notificationStore.addToast("error", `房间投递失败：${msgOf(e)}`);
+            notificationStore.addToastLegacy("error", `房间投递失败：${msgOf(e)}`);
         } finally {
             setPendingPosts((n) => n - 1);
             await loadRoom(id, { soft: true });

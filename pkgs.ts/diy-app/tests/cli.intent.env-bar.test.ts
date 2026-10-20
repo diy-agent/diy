@@ -101,7 +101,8 @@ describe("##384 环境感知顶栏 bar", () => {
   });
 
   it("✕ 关掉后不再回放：条件不变再注入也不弹（否则 30s 轮询一次，✕ 等于没关）", async () => {
-    await ui.clickSelector(`[data-env-status-bar-item="disk-full"] button`);
+    // ✕ 有独立标记（##391 之后 bar 上多了「详情」按钮，别再靠"第一个 button"选中它）
+    await ui.clickSelector(`[data-env-status-bar-item="disk-full"] [data-env-dismiss="1"]`);
     await waitBar("disk-full", false);
 
     // 同一条件再注入一次：main 侧已静音该槽 → 不该重新弹
@@ -175,6 +176,53 @@ describe("##384 环境感知顶栏 bar", () => {
       { label: "重载后回放磁盘红条", timeoutMs: 20_000 },
     );
     expect(s.text).toContain("/probe-replay");
+  });
+
+  it("##391 详情：点「详情」展开来源 / 原因 / 机制三段（带数字与判据）", async () => {
+    // 屏上可能还堆着更早注入的 disk-full（按时间升序排），先按文本定位到**这一条**（/probe-replay）
+    await waitBar("disk-full", true);
+    const idx = await waitUntil(
+      () =>
+        ui.query<number>(`(() => {
+          const items = [...document.querySelectorAll('[data-env-status-bar-item=\\"disk-full\\"]')];
+          return items.findIndex((el) => (el.textContent || '').includes('/probe-replay'));
+        })()`),
+      (i) => i >= 0,
+      { timeoutMs: 8000, intervalMs: 100, label: "找到 /probe-replay 那条红条" },
+    );
+    const itemOf = (sel: string) => `[data-env-status-bar-item="disk-full"] ${sel}`;
+    const panelText = () =>
+      ui.query<string>(`(() => {
+        const items = [...document.querySelectorAll('[data-env-status-bar-item="disk-full"]')];
+        const el = items[${idx}];
+        return el?.querySelector('[data-notice-detail-panel]')?.textContent ?? '';
+      })()`);
+
+    // 一级不许铺术语：默认没有面板
+    expect(await panelText()).toBe("");
+    await ui.clickSelector(itemOf("[data-notice-detail-toggle]"), { nth: idx });
+    const panel = await waitUntil(panelText, (t) => t.length > 0, {
+      timeoutMs: 5000,
+      intervalMs: 100,
+      label: "详情面板展开",
+    });
+    // 三段齐全：来源（含代码位置）/ 原因（含数字与判据）/ 机制（含阈值与自动消）
+    expect(panel).toContain("来源");
+    expect(panel).toContain("env-watch.ts");
+    expect(panel).toContain("原因");
+    expect(panel).toContain("/probe-replay");
+    expect(panel).toContain("512 MiB");
+    expect(panel).toContain("机制");
+    expect(panel).toContain("30s");
+    expect(panel).toContain("自动撤掉");
+    // 可复制（便于反馈）：按钮存在且点了不炸
+    expect(await ui.query<boolean>(
+      `(() => {
+        const items = [...document.querySelectorAll('[data-env-status-bar-item="disk-full"]')];
+        return !!items[${idx}]?.querySelector('[data-notice-detail-copy]');
+      })()`,
+    )).toBe(true);
+    await ui.clickSelector(itemOf("[data-notice-detail-toggle]"), { nth: idx }); // 收起
   });
 
   it("`diy env ls` 人读表格带数字与 id（CLI 出口）", async () => {

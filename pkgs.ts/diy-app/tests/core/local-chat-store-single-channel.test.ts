@@ -286,8 +286,17 @@ describe("订阅静默（R1）：显示通道坏了不许静默", () => {
         // 常驻条随之熄灭（##354 ③：状态位的生命周期与故障等长 —— 恢复了就不该还挂着）
         expect(store.opsState).toBe("live");
         // 有始有终：恢复也要出声，否则用户不知道"现在可以看实时了"
-        const toasts = h.addToast.mock.calls.map((c) => [c[0], String(c[1])] as const);
-        expect(toasts.some(([t, m]) => t === "success" && /恢复/.test(m))).toBe(true);
+        const recover = h.addToast.mock.calls.find((c) => c[0] === "success" && /恢复/.test(String(c[1])));
+        expect(recover).toBeTruthy();
+        // ##391（验收 1）：恢复提示**不许只有一句结论** —— 必须带二级信息，且原因里有
+        // 「断了几秒 + 起止时刻 + 重订次数」。这里钉的是 store 真的把这三个数传下去了
+        //（文案的格式断言在 tests/core/notice-contract.test.ts，这条钉的是"有没有传"）。
+        const meta = recover![2] as { source: string; reason: string; detail: string };
+        expect(meta.source).toContain("opsWatch");
+        expect(meta.reason).toMatch(/中断 \d/);
+        expect(meta.reason).toContain("→");
+        expect(meta.reason).toMatch(/重订 \d+ 次/);
+        expect(meta.detail).toContain("补发");
     });
 });
 

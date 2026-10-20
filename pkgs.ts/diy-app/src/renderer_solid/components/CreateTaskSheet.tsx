@@ -24,7 +24,7 @@ export function CreateTaskDialog(props: {
 
     const submit = async () => {
         if (!title().trim()) {
-            notificationStore.addToast("error", "标题不能为空");
+            notificationStore.addToastLegacy("error", "标题不能为空");
             return;
         }
         setBusy(true);
@@ -38,7 +38,7 @@ export function CreateTaskDialog(props: {
             setTitle("");
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
-            notificationStore.addToast("error", `创建失败: ${msg}`);
+            notificationStore.addToastLegacy("error", `创建失败: ${msg}`);
         } finally {
             setBusy(false);
         }
