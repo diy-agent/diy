@@ -254,8 +254,13 @@ function isBusy(taskUri: string): boolean {
     return sessionRegistry.activeTurnList().some((t) => t.uri === taskUri);
 }
 
-/** `steerOrWake` 的两种结局：真插进了正在跑的一轮 / 醒来了一轮（这条作它的开场） */
-export type SteerOutcome = { kind: "steer" } | { kind: "wake"; r: RunResult };
+/**
+ * `steerOrWake` 的两种结局：真插进了正在跑的一轮 / 醒来了一轮（这条作它的开场）。
+ *
+ * `steer` 带上队列项 id（##377 第 29 刀）：投递状态里留这个键，读侧才能反查
+ * 「这句话被哪一轮消化了」（`local-agent.steerTurnId`），从而把 say 指到那一轮的回复。
+ */
+export type SteerOutcome = { kind: "steer"; steerId?: string } | { kind: "wake"; r: RunResult };
 
 /**
  * 忙时投递：**先入队，再复判**（##266 review1 R1）。
@@ -281,20 +286,29 @@ export async function steerOrWake(
     text: string,
     author: string | undefined,
     deps: {
-        steerAdd: (taskUri: string, mode: typeof DEFAULT_STEER_MODE, text: string, author?: string) => unknown;
+        /** 返回入队后的队列快照（生产 = `local-agent.steerAdd`，末项即本次新增的那条） */
+        steerAdd: (
+            taskUri: string,
+            mode: typeof DEFAULT_STEER_MODE,
+            text: string,
+            author?: string,
+        ) => readonly { id: string }[];
         busy: (taskUri: string) => boolean;
         runQueued: (taskUri: string) => Promise<RunResult>;
     },
 ): Promise<SteerOutcome> {
-    deps.steerAdd(taskUri, DEFAULT_STEER_MODE, text, author);
+    // 入队（FIFO 尾部 ⇒ 末项就是本次新增的那条）。它的 id 一路带回去：
+    // 投递状态里存 `steerId`，读侧据此反查「这句话被哪一轮消化了」（第 29 刀）。
+    const items = deps.steerAdd(taskUri, DEFAULT_STEER_MODE, text, author);
+    const steerId = items[items.length - 1]?.id;
     // 仍有人在跑 ⇒ 下一步必来认领（或轮末续轮带走）：插进那一轮，**没有属于这条的独立回复**。
-    if (deps.busy(taskUri)) return { kind: "steer" };
+    if (deps.busy(taskUri)) return steerId ? { kind: "steer", steerId } : { kind: "steer" };
     // 已经没人跑了 ⇒ 用**队列现有内容**开一轮（##303 的 c 方案：留言本就是"发一句话"）。
     // 队列里若有别的待投递项，一并作开场（轮末整批取走是同一个口径）。
     const r = await deps.runQueued(taskUri);
     // 竞态：复判之后、开轮之前别人起了轮（`chat` 的互斥守卫拒发）⇒ 这条**安好在队列里**，
     // 由那一轮带走。不能反手报「投递失败」（它没失败），如实回到 steer 口径。
-    if (r.error && deps.busy(taskUri)) return { kind: "steer" };
+    if (r.error && deps.busy(taskUri)) return steerId ? { kind: "steer", steerId } : { kind: "steer" };
     return { kind: "wake", r };
 }
 
@@ -668,7 +682,10 @@ function deliverOne(input: DeliverInput): Promise<void> {
                 },
             );
             if (steered.kind === "steer") {
-                mark("ok", { note: plan.note });
+                // `steerId` 落盘（第 29 刀）：这条投递**没有自己的回复**，但"它进了哪一轮"是可查的事实
+                // —— `room.get` 的读侧投影拿它反查 turnId（`local-agent.steerTurnId`），
+                // 于是房间页能把这条 say 指到"回复在你上面那一轮"（body 真缺陷第 1 条）。
+                mark("ok", { note: plan.note, ...(steered.steerId ? { steerId: steered.steerId } : {}) });
                 // 水位照常前移：这句话**确实送到了**（进了那一轮的插话队列，且有人在跑 ⇒
                 // 下一步 / 轮末续轮必来取走）⇒ 下一轮的房间上下文不该再把它当"没看过的新发言"
                 // 重投一遍（与"失败不前移"不冲突：失败是没送到）。

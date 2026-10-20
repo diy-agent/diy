@@ -231,6 +231,17 @@ export const DeliveryStateSchema = z.object({
    * ⚠️ 与 `error` 分开是因为语义相反：`error` = 没送到 / 送失败；`note` = 送到了，但方式不同。
    */
   note: z.string().optional(),
+  /**
+   * 忙时插话**入的是哪条队列项**（`steer/N`，##377 第 29 刀）。
+   *
+   * 它只有一个用途：给读侧留一个**键**。队列项落进某一轮之后，那个 user 块本来就带
+   * `meta.steerId`（`local-agent.steerBlockOps` / 轮首开场块），块的 `parent` 就是 turn id
+   * ⇒ 拿它对上"这句话被哪一轮消化了"。
+   *
+   * ⚠️ **别据此另存一份「回复映射」**：`turnId` 在 room 里已经有地方住（本 schema 上一行），
+   * 它填上之后 `ref: { memberUri, turnId }` 就够定位那一轮（owner 口径，第 29 刀）。
+   */
+  steerId: z.string().optional(),
   ts: z.string(),
 });
 export type DeliveryState = z.infer<typeof DeliveryStateSchema>;
@@ -707,6 +718,56 @@ export function mirrorMissingParts(
         say: !mine.some((e) => e.kind === "say"),
         reply: !mine.some((e) => e.kind === "reply"),
     };
+}
+
+/**
+ * 读侧投影：给「忙时插话」那条投递补上 `turnId`（##377 第 29 刀）。
+ *
+ * 病灶（body 真缺陷第 1 条）：忙时插话的回复**属于正在跑的那一轮**（`deliveryPlanFor` 的
+ * `steer` 分支），room 里于是只有 `say`、没有 `reply`。用户看到的证据只有「已投递（插进本轮）」
+ * 那个徽章 —— **看不出回复在哪**，而回复其实就在上面那一轮里。
+ *
+ * 判据不新造：插话块落盘时本来就带 `meta.steerId`，拿它反查那一轮即可
+ * （`resolve(taskUri, steerId)` 由 main 侧提供 —— UI 不查盘）。
+ *
+ * 三条边界：
+ *   · 只补 `turnId`，**不造 reply 映射**：turnId 是那一轮的地址，回复内容仍住在那位成员的会话里；
+ *   · 已有 `turnId`（空闲开轮那条）不覆盖；未落位（`queued` / `running`）不猜；
+ *   · 没有一处变化 ⇒ **返回原数组**（任务页 2.5s 轮询，换引用会惊动视口锚定，第 19 刀）。
+ */
+export function withSteerTurns(
+    events: readonly RoomEvent[],
+    resolve: (taskUri: string, steerId: string) => string | null,
+): readonly RoomEvent[] {
+    let changed = false;
+    const out = events.map((ev) => {
+        const ds = ev.deliveries;
+        if (!ds || ds.length === 0) return ev;
+        let touched = false;
+        const next = ds.map((d) => {
+            // 只有"真送到了的插话"才有那一轮可指；`queued` / `running` / `skipped` 不猜
+            if (d.turnId || !d.steerId || !d.taskUri || d.status !== "ok") return d;
+            const turnId = resolve(d.taskUri, d.steerId);
+            if (!turnId) return d;
+            touched = true;
+            return { ...d, turnId };
+        });
+        if (!touched) return ev;
+        changed = true;
+        return { ...ev, deliveries: next };
+    });
+    return changed ? out : events;
+}
+
+/** 一条 say 里「能指到某一轮」的投递（UI 展开入口的判据；纯函数 + 单测） */
+export function steerTurnRefs(
+    ev: Pick<RoomEvent, "deliveries">,
+): { memberId: string; turnId: string }[] {
+    const out: { memberId: string; turnId: string }[] = [];
+    for (const d of ev.deliveries ?? []) {
+        if (d.turnId) out.push({ memberId: d.memberId, turnId: d.turnId });
+    }
+    return out;
 }
 
 /** 房间页气泡上的「这条从哪来」标记；`null` = 本房间自己产生的，不画。 */

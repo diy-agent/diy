@@ -1476,6 +1476,21 @@ export class LocalAgentManager {
      * 它同时是「同 task 已有轮次在跑」的判据（据此改为**排队**，##306；原 `sess.running`）与消费端订阅者的挂载点。
      */
     private turns = new Map<string, TurnRun>();
+    /**
+     * 插话队列项 → 消化它的那一轮（`steer/N` → `turnId`）的**增量索引**（##377 第 29 刀）。
+     *
+     * 为什么是索引而不是新存一份映射：`meta.steerId` 与块的 `parent` 本来就落盘了
+     * （`steerBlockOps` / 轮首开场块），这一层只是把"按已有键反查"的成本摊到增量上 ——
+     * room 读侧（`room.get`）要对每条 say 的每个投递查一次，每次都全量扫 20k ops 太浪费。
+     *
+     * `scanned` = 已建索引的 op 条数（ops 只增）。历史变短（会话清零 / 换了文件）⇒ 重建；
+     * 同长度原地改写会被漏掉（`history()` 自己已有指纹判据，改写会重建 ops 数组，
+     * 这里只在长度变短时重建 —— 记一笔边界，别指望它覆盖"同长度覆盖"）。
+     */
+    private steerTurns = new Map<
+        string,
+        { scanned: number; pending: Map<string, string>; map: Map<string, string> }
+    >();
 
     /**
      * 语言模型解析的可注入出口（缺省按 API 面走 zen/go）。
@@ -2085,6 +2100,48 @@ export class LocalAgentManager {
         }
         if (!best) return null;
         return { kind: best.kind, label: actionLabel(best.kind, best.fields) };
+    }
+
+    /**
+     * 插话队列项 → **它被哪一轮消化了**（`steer/N` → `turnId`，##377 第 29 刀）。
+     *
+     * 用途（body 真缺陷第 1 条）：忙时插话的回复属于**正在跑的那一轮** ⇒ room 里只有 `say`、
+     * 没有 `reply`。有了这个 turnId，房间页 / 任务页就能把那条 say 指到"回复在你上面那一轮"，
+     * 用户不会以为这句话没回。
+     *
+     * 判据：还在队列里 / 被取消 / 从没落位 ⇒ `null`（如实说"还没进任何一轮"，不猜）。
+     * `taskUri` 必须与该队列项落进的会话一致（队列是按 task 隔离的，调用方拿投递状态里的 taskUri）。
+     */
+    steerTurnId(taskUri: string, steerId: string): string | null {
+        let ops: Op[];
+        try {
+            ops = this.history(taskUri);
+        } catch {
+            return null; // 会话不可读不是本读口的错（与 currentAction 同一条口径）
+        }
+        let idx = this.steerTurns.get(taskUri);
+        if (!idx || idx.scanned > ops.length) {
+            idx = { scanned: 0, pending: new Map(), map: new Map() };
+            this.steerTurns.set(taskUri, idx);
+        }
+        // ⚠️ `history()` 给的是**折叠后重新 emit** 的 op 流（`compactOps`），形状与原始日志不同：
+        //   · `start.meta` 的键被**平铺**进块字段（`BlockStore.apply`），compact 时进 `patch.fields`；
+        //   · 所以这里读 `patch.fields.steerId`，而不是 `start.meta.steerId`。
+        // 第一版按原始形态读 ⇒ 永远空，真链路用例（⑥）当场抓出。
+        for (let i = idx.scanned; i < ops.length; i++) {
+            const op = ops[i]!;
+            if (op.op === "start") {
+                if (op.kind === "text" && typeof op.parent === "string") idx.pending.set(op.id, op.parent);
+                continue;
+            }
+            if (op.op !== "patch") continue;
+            const parent = idx.pending.get(op.id);
+            if (!parent) continue;
+            const sid = op.fields["steerId"];
+            if (typeof sid === "string") idx.map.set(sid, parent);
+        }
+        idx.scanned = ops.length;
+        return idx.map.get(steerId) ?? null;
     }
 
     /**
