@@ -10,8 +10,8 @@ import { SessionOverviewPage } from "./components/SessionOverviewPage";
 import { InstancesPage } from "./components/InstancesPage";
 import { RoomsPage } from "./components/RoomsPage";
 import { SidebarRoom } from "./components/SidebarRoom";
-import { SessionChip, SessionDot } from "./components/SessionChip";
-import { TaskAgentStateBadge, TaskAgentStateDot } from "./components/TaskAgentState";
+import { SessionGlyph, SessionGlyphDot } from "./components/SessionGlyph";
+
 import { ModelConfigPage } from "./components/ModelConfigPage";
 // 折叠框展开态仍是 lab view 内部的局部状态（与「view 在哪个 area」是两件事）
 import { setLabView } from "./components/PromptLabV4Page";
@@ -64,10 +64,10 @@ import {
     heroBadgeOf,
     navRowOf,
     rankOf,
-    rowBadgeOf,
     secondaryBadgeOf,
 } from "../shared/session-nav";
-import type { NavRow, NavTone } from "../shared/session-nav";
+import type { NavRow } from "../shared/session-nav";
+import type { GlyphTone } from "../shared/session-state";
 import { ALERT_ACTION_LABEL, alertsOf } from "../shared/session-alerts";
 // 「待你处理」区（##358 D5）：判据纯函数；行集仍是上面那份 navRows（两个区**不可能**给出不同结论）
 import { todoOf, todoWhenOf } from "../shared/session-todo";
@@ -143,25 +143,23 @@ const NAV_ITEMS: Array<{ id: Section; label: string; icon: string }> = [
 
 /** `ui page navigate` 的合法取值（非法值一律忽略：宁可不跳，也不能把主区打成白屏） */
 /**
- * nav 角标的**配色**（##358 D1）—— 用户给的口径就是颜色词：
- *   绿 = 未读 / 运行中 · 红 = 未读且异常终止 · 黄 = 停滞 · 紫 = 队列待投递。
- * 只在这里定义一次：主角标与次角标、展开与收起共用（两处各写一份必然漂移）。
- * 绿用 daisyUI 的 `success`（`primary` 在本主题里是蓝紫 —— 与"绿=未读"的口径不符，
- * 故 SessionChip 的颜色表也一并改到 success，见 components/SessionChip.tsx）。
+ * nav 角标的**配色**（##358 D1 → ##393 收编到归因色板）。
+ *
+ * 颜色只表**归因**（唯一表 = `shared/session-state::TONE_OF_BLAME`，色值 = index.css 的
+ * `--color-diy-end-*`）：绿=运行中 · 琥珀=停滞/我方限制 · 橙=上游挂 · 青=已识别环境 ·
+ * 紫=未识别（待裁定）/ 队列 · 红=我方缺陷 · 蓝灰=你停止 · 灰绿=正常结束。
+ * 只定义一次：主角标与次角标、展开与收起共用（两处各写一份必然漂移）。
  */
-const NAV_TONE_CLASS: Record<NavTone, string> = {
+const NAV_TONE_CLASS: Record<GlyphTone, string> = {
+    muted: "bg-base-content/10 text-base-content/60 border-base-content/20",
+    ok: "bg-diy-end-normal/15 text-diy-end-normal border-diy-end-normal/40",
     green: "bg-success/20 text-success border-success/40",
+    slate: "bg-diy-end-user/20 text-diy-end-user border-diy-end-user/40",
     amber: "bg-warning/20 text-warning border-warning/40",
+    orange: "bg-diy-end-service/20 text-diy-end-service border-diy-end-service/40",
+    teal: "bg-diy-end-env/20 text-diy-end-env border-diy-end-env/40",
+    violet: "bg-diy-queue/20 text-diy-queue border-diy-queue/40",
     red: "bg-error/20 text-error border-error/40",
-    purple: "bg-diy-queue/20 text-diy-queue border-diy-queue/40",
-};
-
-/** 同一套配色的**文字**形态（「会话」列表行内那个 `+N` 用它：一屏十几个 badge 就是噪声） */
-const NAV_TONE_TEXT: Record<NavTone, string> = {
-    green: "text-success",
-    amber: "text-warning",
-    red: "text-error",
-    purple: "text-diy-queue",
 };
 
 /** 「会话」列表最多列几行：nav 是"扫一眼"的地方，不是账页（更多的折成表尾一句纯文本） */
@@ -1604,21 +1602,16 @@ export default function App() {
                                                                         <Show when={isNested()}>
                                                                             <span class="absolute left-0.5 bottom-0.5 text-caption opacity-50">↳</span>
                                                                         </Show>
-                                                                        {/* agent 面状态点（##355）：rail 装不下文案，退成一个点
-                                                                            （颜色即语义，全文在 title 里）。占**左上**角、与右上角的
-                                                                            ##308 会话点并存（两条轴各占一角，不互相盖）。 */}
+                                                                        {/* 会话状态点（##393）：rail 装不下文案，退成**一个点**（颜色+形状即语义，
+                                                                            全文在 title）。原来这里有**两个**点（##355 左上 / ##308 右上）—— 两条轴
+                                                                            各说一半，正是用户 3.3 说的"不一致"；现在判据只有 `shared/session-state`。 */}
                                                                         <Show when={t.ctx}>
-                                                                            <TaskAgentStateDot
+                                                                            <SessionGlyphDot
                                                                                 uri={t.ctx!}
                                                                                 hasSession={findNode(taskStore.nodes, t.ctx!)?.has_session}
                                                                                 hasDraft={findNode(taskStore.nodes, t.ctx!)?.has_draft}
-                                                                                class="absolute top-0.5 left-0.5"
+                                                                                class="absolute top-0.5 right-0.5"
                                                                             />
-                                                                        </Show>
-                                                                        {/* 会话状态点（##308）：rail 是常驻可见的那一态，
-                                                                            最该一眼看到的正是"这条会话在烧/有留言"。全文在 title（SessionDot 内）。 */}
-                                                                        <Show when={t.ctx}>
-                                                                            <SessionDot uri={t.ctx!} class="absolute top-0.5 right-0.5" />
                                                                         </Show>
                                                                     </button>
                                                                 }
@@ -1680,20 +1673,15 @@ export default function App() {
                                                                     <span class="truncate flex-1" data-nav-label>
                                                                         {label()}
                                                                     </span>
-                                                                    {/* agent 面状态（##355）：四态单轴一句话。与任务表行、
-                                                                        属性面板**同一份判据**（shared/task-agent-state + lib/agent-state）；
-                                                                        两个逐任务真源取自任务树节点（main 侧算的）。 */}
+                                                                    {/* 会话状态（##393）：nav 会话行、任务表行、详情、总览表格**同一个组件**
+                                                                        （components/SessionGlyph + lib/session-state）—— 用户 3.2 要的
+                                                                        「对话中与 nav 会话列表一样的动画图标」在这里，不再是一句文字。 */}
                                                                     <Show when={t.ctx}>
-                                                                        <TaskAgentStateBadge
+                                                                        <SessionGlyph
                                                                             uri={t.ctx!}
-                                                                            iconOnly
                                                                             hasSession={findNode(taskStore.nodes, t.ctx!)?.has_session}
                                                                             hasDraft={findNode(taskStore.nodes, t.ctx!)?.has_draft}
                                                                         />
-                                                                    </Show>
-                                                                    {/* 会话状态 chip（##308）：与任务表行、总览页**同一份判据**（sessionStore.chipOf） */}
-                                                                    <Show when={t.ctx}>
-                                                                        <SessionChip uri={t.ctx!} iconOnly />
                                                                     </Show>
                                                                     {/* 置顶开关（##356 ②）：置顶项常显 📌（一眼看出为什么它在最上面），
                                                                         普通项 hover 才显 📍。收起态（rail）不渲染 —— 40px 装不下，
@@ -1739,8 +1727,9 @@ export default function App() {
                                         『待你处理』『3』」「后台活动是啥？……去掉吧，进行中任务直接列在会话下，
                                         和待处理任务一起，**通过活动的状态来表达**」。
                                         所以这里**没有分区、没有区标题、没有计数** —— 行本身就是状态：
-                                        status 圆点（在跑=绿+aura 流光 · 未读=绿 · 未读且异常终止=红 · 停滞=黄 · 其余=灰）
-                                        + 标题 + `+N`（仅未读时）+ 最后活动时间。
+                                        会话状态图标（**唯一实现** = components/SessionGlyph，与任务表 / 详情 / 总览
+                                        同一个组件、同一套判据 —— ##393 用户 3.3）+ 标题 + `+N`（仅未读时）
+                                        + 最后活动时间。旧的手写 status 圆点 / aura / 暗色气泡 / 文字角标已删。
                                         行集仍是三份数据的**并集**（有一笔账在等你 ∪ 在跑 ∪ 最近活动过 ——
                                         判据各自没变，变的是"怎么摆"），按"值不值得看"排序（`rankOf`）。
                                         收起态（rail 40px）不列行：那时主角标就是全部语义。 */}
@@ -1748,20 +1737,11 @@ export default function App() {
                                         <For each={navSessionList().items}>
                                             {(i) => {
                                                 const r = () => i.row;
-                                                const b = () => rowBadgeOf(r());
                                                 const go = () => {
                                                     hideHoverLayers();
                                                     collapseRail(); // 窄窗：浮层收回，把主区让给刚打开的会话
                                                     getRendererActions().openTaskRun?.(r().uri);
                                                 };
-                                                const dot = () =>
-                                                    r().stalled
-                                                        ? "status-warning"
-                                                        : r().abnormal && r().unread > 0
-                                                          ? "status-error"
-                                                          : r().unread > 0
-                                                            ? "status-success"
-                                                            : "";
                                                 const tip = () =>
                                                     `${r().label}\n${i.why}${i.when ? `\n最后活动：${i.when}` : ""}\n（点一下 → 回到这个会话）`;
                                                 return (
@@ -1773,49 +1753,11 @@ export default function App() {
                                                             data-nav-session-kind={i.kind}
                                                             onClick={go}
                                                         >
-                                                            {/* 在跑 = daisyUI 的 `aura`（一圈缓慢流转的光）+ 闪烁的 status。
-                                                                用户点名的表达方式：「通过活动的状态来表达，比如 …/components/aura/」。 */}
-                                                            <Show
-                                                                when={r().running}
-                                                                fallback={
-                                                                    <Show
-                                                                        when={dot()}
-                                                                        fallback={
-                                                                            /* 没有活态 = **已对话、没有新消息**（用户口径里的"灰色图标"）。
-                                                                               原来是一个无色 status 圆点 —— 实心灰点跟"离线/未开始"分不开，
-                                                                               用户直接问了「灰色图标和绿色图标啥区别？」
-                                                                               改成**暗色会话气泡**：形状说明"这是个会话"，
-                                                                               暗说明"聊过但没事"；亮色实心点则恒表示"有东西等你看"。 */
-                                                                            <span
-                                                                                class="shrink-0 opacity-40 inline-flex"
-                                                                                title={`${r().label}：已对话（没有新消息）`}
-                                                                                data-nav-session-idle="1"
-                                                                            >
-                                                                                <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-                                                                                    <path d="M2.5 2h11A1.5 1.5 0 0 1 15 3.5v7A1.5 1.5 0 0 1 13.5 12H7l-3.6 2.7A.6.6 0 0 1 2.4 14V3.5A1.5 1.5 0 0 1 3.9 2z" />
-                                                                                </svg>
-                                                                            </span>
-                                                                        }
-                                                                    >
-                                                                        <span class={`status ${dot()}`} />
-                                                                    </Show>
-                                                                }
-                                                            >
-                                                                <span class="aura aura-dual text-success shrink-0">
-                                                                    <span class="status status-success animate-pulse" />
-                                                                </span>
-                                                            </Show>
+                                                            {/* 会话状态图标（##393）：**与任务表 / 详情 / 总览同一个组件、同一套判据**
+                                                               （components/SessionGlyph + lib/session-state）。用户 3.3 要的「所有出现会话状态的
+                                                               地方都一致」在这里是结构性的：nav 不再自己画圆点/光环。 */}
+                                                            <SessionGlyph uri={r().uri} size="sm" />
                                                             <span class="truncate flex-1 text-left">{r().label}</span>
-                                                            <Show when={b()}>
-                                                                {(bd) => (
-                                                                    <span
-                                                                        class={`font-mono text-caption shrink-0 ${NAV_TONE_TEXT[bd().tone]}`}
-                                                                        title={bd().tip}
-                                                                    >
-                                                                        {bd().short}
-                                                                    </span>
-                                                                )}
-                                                            </Show>
                                                             {/* 时间用**相对格式**（`20h`），读 `nowMs()` ⇒ 每分钟自己往前走；
                                                                 tooltip 里仍给绝对时刻（要精确时看那里）。 */}
                                                             <span

@@ -3,78 +3,38 @@
  *
  * 数据源 = `agent.local.sessions`（注册表，`shared/registry-frame.ts` 的 `SessionEntry`）：
  *   一条**全局**订阅的「快照 + delta」，只搬状态（R2）。本文件把它翻成"人看的东西"：
- *   活动标记 / 步数进度 / 待投递留言 / 谁在看 / 已跑多久 / 无进展 / 异常退出。
+ *   步数进度 / 待投递留言 / 谁在看 / 已跑多久 / 跨启动合并 / 总览行。
  *
- * 【三条约束（照 ##308 的定案）】
- *   ① **主状态轴只有一条**：`working`（有轮次在跑）/ `idle`。`queue` / `viewers` / `steps` /
- *      `lastActivity` 全是**属性**，挂在同一行上，不另开状态。
- *   ② **三种「排队」必须可区分**（用户明确要的可见性）：对话中排队 / 已打开未通讯排队 /
- *      已关闭待投递 —— 判据 = `turn != null` × `viewers > 0`（`queueViewOf` 一处定义）。
- *   ③ **观测不污染（R3）**：这些函数只读注册表条目；`viewers` 是**数据**不是我们能改的东西
- *      （总览 / nav / 任务表都不许把自己算进去 —— 那由 main 侧结构性保证，见 session-registry）。
+ * 【##393 收编：状态判据不在这里了】
+ *   运行状态 / 归因 / 图标语言 / 停滞 / 未读 / 排队 —— 唯一真源是 `shared/session-state`。
+ *   本文件只保留**表格形状**的视图（步数进度、tooltip、总览行），且一律从 `sessionStateOf` 派生；
+ *   改造前这里自有 `stalledOf` / `abnormalEndOf` / `sessionChipOf` 三份判据 + 一张配色表，
+ *   是用户 3.3「四处显示不一致」的来源之一 —— 已删除，别再加回来。
  *
- * 为什么是纯函数：三处消费者（总览页 / nav 标签 / 任务表行）必须**同一套判据**，
- * 否则"同一个会话在 nav 说在跑、在任务表说空闲"这类分叉必然发生。渲染只负责画。
+ * 【两条仍成立的约束】
+ *   · **观测不污染（R3）**：这些函数只读注册表条目；`viewers` 是**数据**不是我们能改的东西。
+ *   · **两源取大**：注册表（进程内）∪ 账本（跨启动）—— 谁更全用谁，不因账本晚到抹掉已有数字。
  */
 
 import { endMarkOf } from "./turn-end";
 import type { SessionEntry } from "./registry-frame";
-
-/** 主状态轴（唯一）：有轮次在跑 / 没有 */
-export type SessionActivity = "working" | "idle";
-
-export function activityOf(e: SessionEntry): SessionActivity {
-    return e.turn ? "working" : "idle";
-}
-
-/**
- * 无进展阈值：在跑的轮次**这么久没有心跳**（`turn.lastOpAt` 不动）就在界面上提示"疑似卡住"。
- *
- * 它只是**提示**，不是回收判据（##305 定案：无人值守继续烧，靠 `maxSteps` 收口；真卡死由人在
- * 这里手动中断）。取值 90s：一次工具调用（含 `sleep 20` 那类）久于它也不罕见，故宁可迟钝 ——
- * 假报警会训练用户忽略这个标记。
- */
-export const STALL_MS = 90_000;
+import {
+    abnormalEndOf,
+    glyphOf,
+    idleMsOf,
+    isAbnormalBlame,
+    newTurnsOf,
+    queueViewOf,
+    sessionStateOf,
+    stalledOf,
+    type SessionGlyphView,
+} from "./session-state";
 
 /** 此刻累计步数（在跑轮次的当前步 + 本进程内已收尾轮次的累计） */
 export function stepsNow(e: SessionEntry): number {
     return e.totalSteps + (e.turn?.steps ?? 0);
 }
 
-/** 在跑的轮次多久没动了（无在跑 → null） */
-export function idleMsOf(e: SessionEntry, now: number): number | null {
-    if (!e.turn) return null;
-    const t = Date.parse(e.turn.lastOpAt);
-    return Number.isFinite(t) ? Math.max(0, now - t) : null;
-}
-
-/** 疑似卡住：在跑、且心跳超过 `STALL_MS` 没动（判据只在"有没有在跑"之上加一层，不新开状态轴） */
-export function stalledOf(e: SessionEntry, now: number, thresholdMs = STALL_MS): boolean {
-    const idle = idleMsOf(e, now);
-    return idle !== null && idle >= thresholdMs;
-}
-
-/**
- * 「距上次看新增多少条消息」：以调用方给的**已读水位**为基线（`seenTurns`，单位 = **轮次**），
- * 算到此刻的差值。
- *
- * ⚠️ **口径订正（##358，用户拍板）**：未读 = 未读**消息**数，且 **1 个轮次 = 1 条消息** ——
- * **不是 step 数**。
- *
- * ⚠️ **总轮次必须用跨启动那把尺子**（`totalTurns`，缺省退回帧里的 `e.turnCount`）：
- * `e.turnCount` 是**本进程**计数、重启归零，而水位是**跨启动落盘**的 ⇒ 两者不同尺时
- * 未读会算错（重启后历史轮次看不见；水位写低了则点开也擦不掉，##358 微调轮 8 的 bug）。
- * 调用方（sessionStore / 任务表 / 总览）都传 `sessionStore.turnsOf(uri)`（注册表 ∪ 账本）。
- *
- * 水位是 renderer 本地量（谁在看、看到第几轮，见 sessionStore）—— 它**不回写 viewers**（R3）：
- * 这是"我读到了哪"，不是"有人在读"。
- */
-export function newTurnsOf(e: SessionEntry | null, seenTurns: number | null, totalTurns?: number): number {
-    if (seenTurns === null) return 0;
-    // `e` 可为 null：**账本独有**的行（重启后注册表为空，但账本还记得这个任务聊过）没有注册表条目，
-    // 此时总轮次只能来自 `totalTurns`（账本那把跨启动的尺子）。缺了它就把历史未读算成 0。
-    return Math.max(0, (totalTurns ?? e?.turnCount ?? 0) - seenTurns);
-}
 
 /** 步数进度（`k/maxSteps`；`maxSteps` 未知时只给已跑步数，不编上限） */
 export interface StepsProgress {
@@ -96,127 +56,7 @@ export function stepsProgressOf(e: SessionEntry, maxSteps: number | null): Steps
     };
 }
 
-/**
- * 待投递留言（`queue`）的三档 —— **三种「排队」的唯一判据**（#308 定案②）。
- *
- *   · `chatting`    —— 打开·对话中 + queue>0（##306：本轮收尾后整批投）
- *   · `opened-idle` —— 打开·未通讯 + queue>0（页面开着，但没在跑）
- *   · `closed-idle` —— 关闭·idle + queue>0（##303 的洞：没人看它，留言躺着等下次开口）
- *
- * 判据只用 `turn` / `viewers` 两个字段 —— 不允许再按"哪个页面开着"另算（那会让同一会话
- * 在总览与 nav 上显示不同档）。
- */
-export type QueueKind = "none" | "chatting" | "opened-idle" | "closed-idle";
 
-export interface QueueView {
-    kind: QueueKind;
-    count: number;
-    /** 短标签（chip 用）；kind="none" 时为空串 */
-    label: string;
-    /** 说清"这些留言什么时候会被投出去"——三档的差别正是"什么时候" */
-    tip: string;
-}
-
-export function queueViewOf(e: SessionEntry): QueueView {
-    const n = e.queue;
-    if (n <= 0) return { kind: "none", count: 0, label: "", tip: "" };
-    if (e.turn) {
-        return {
-            kind: "chatting",
-            count: n,
-            label: `排队 ${n}`,
-            tip: `${n} 条留言待投递：本轮收尾后整批投给模型（##306 插话队列）`,
-        };
-    }
-    if (e.viewers > 0) {
-        return {
-            kind: "opened-idle",
-            count: n,
-            label: `已打开·未通讯·排队 ${n}`,
-            tip: `${n} 条留言待投递：会话页开着但没在跑，下一次发言开场时投`,
-        };
-    }
-    return {
-        kind: "closed-idle",
-        count: n,
-        label: `已关闭·待投递 ${n}`,
-        tip: `${n} 条留言待投递：没有窗口在看它，留言躺在队列里，直到下次有人开口（##303）`,
-    };
-}
-
-/**
- * 「非正常收尾」：最后一轮的结束原因不是 `completed`。
- *
- * 用 `endReason.type` 判（##288 的事实位），**不猜**日志。`completed` 之外都值得一眼看见：
- * 错误 / 流中断 / 用户中断 / 撞上限。
- */
-export function abnormalEndOf(e: SessionEntry): boolean {
-    return e.turn === null && !!e.lastEndReason && e.lastEndReason.type !== "completed";
-}
-
-/** chip 文案（nav 标签与任务表行**同一份**，宽窄由调用方截断） */
-export interface SessionChipView {
-    /** daisyUI 语义色（badge-<tone>） */
-    tone: "primary" | "warning" | "error" | "ghost";
-    icon: string;
-    text: string;
-    /** tooltip：把判据说全（uri / 模型 / 步数 / 留言 / 看客 / 时长 / 上次结束） */
-    tip: string;
-}
-
-/**
- * 会话 chip：**一行说完**这个会话现在怎么了；`null` = 没什么可说的（调用方不渲染）。
- *
- * 刻意**不给空闲且无事的会话发 chip** —— 任务表几百行，人人都挂个"空闲"等于噪音；
- * chip 出现即"有事"（在跑 / 有留言 / 有未读新增 / 上一轮不是正常收尾）。
- *
- * ⚠️ 但「没 chip」**不等于**"不显示标记"：renderer 的 `lib/session-mark` 会在**注册表无话可说、
- * 而账本说"聊过"**时补一个弱色 `◌ 已对话`（##358，用户 2026-10-17 要的：聊过的要一直看得见，
- * 与"从未聊过"分开）。分层是刻意的 —— 本文件只认注册表（进程内事实），账本是 renderer 的合成层。
- */
-export function sessionChipOf(
-    e: SessionEntry,
-    opts: { seenTurns: number | null; maxSteps: number | null; now: number; /** 跨启动总轮次（见 newTurnsOf） */ totalTurns?: number },
-): SessionChipView | null {
-    const base = tipOf(e, opts.maxSteps, opts.now);
-    const q = queueViewOf(e);
-    const add = newTurnsOf(e, opts.seenTurns, opts.totalTurns);
-
-    if (e.turn) {
-        const prog = stepsProgressOf(e, opts.maxSteps);
-        const stalled = stalledOf(e, opts.now);
-        const bits: string[] = [prog.text];
-        if (stalled) bits.push(`停滞 ${fmtDuration(idleMsOf(e, opts.now) ?? 0)}`);
-        if (q.kind !== "none") bits.push(q.label);
-        if (e.viewers === 0) bits.push("无人看");
-        if (add > 0) bits.push(`+${add}`);
-        return {
-            tone: stalled ? "warning" : "primary",
-            icon: "●",
-            text: bits.join(" · "),
-            tip: base,
-        };
-    }
-
-    // 空闲：留言 / 异常收尾 / 未读新增，按"用户更该知道"排先后
-    if (q.kind !== "none") {
-        return { tone: "warning", icon: "⏸", text: q.label, tip: base };
-    }
-    if (abnormalEndOf(e)) {
-        const mark = endMarkOf(e.lastEndReason, false);
-        return {
-            tone: mark.tone === "err" ? "error" : "warning",
-            icon: mark.icon,
-            text: mark.tip,
-            tip: base,
-        };
-    }
-    // 未读 = **绿 `+N`**（N = 未读消息条数；##358 口径订正：1 轮 = 1 条，不是步数）
-    if (add > 0) {
-        return { tone: "primary", icon: "", text: `+${add}`, tip: base };
-    }
-    return null;
-}
 
 /**
  * 「该不该先看」的位次（**越小越该看**）——排序与分组用同一把尺子。
@@ -225,19 +65,19 @@ export function sessionChipOf(
 export type SessionAttention = 0 | 1 | 2 | 3 | 4;
 
 /**
- * 会话在**有空间的地方**（任务管理表）该说什么：比 chip 多给「状态位次 + token + 最后活动」，
+ * 会话在**有空间的地方**（任务管理表）该说什么：比 nav 多给「状态位次 + 步数 + token + 最后活动」，
  * 因为任务表空间大，不必像 nav 那样一个字一个字省。
  *
- * 判据与 chip **同源**（都在本文件），只是呈现粒度不同 —— 别在这里另起一套状态判断。
+ * 判据**不再本文件另起一套**：状态/归因走 `sessionStateOf`，图标走 `glyphOf`（与 nav / 详情 / 总览
+ * 同一个函数），本文件只说"这一格写哪几个字"。
  */
 export interface SessionRowView {
     /** 状态位次（排序用；越小越该看） */
     attention: SessionAttention;
-    /** 状态短标签（运行中 / 异常终止 / 未读 / 待投递 / 已对话） */
+    /** 状态短文案（`运行中 3/200` · `已结束 · 上游服务` …） */
     state: string;
-    /** 配色（与 chip 同色义：绿=运行/未读、红=异常、黄=停滞/留言） */
-    tone: SessionChipView["tone"];
-    icon: string;
+    /** 图标视图（四处同一份：形状=阶段，线型=待处理等级，颜色=归因） */
+    glyph: SessionGlyphView;
     /** 未读消息条数（##358：1 轮 = 1 条，不是步数；0 = 没有未读） */
     unread: number;
     /** 本进程内累计 token */
@@ -247,7 +87,7 @@ export interface SessionRowView {
 }
 
 /**
- * 会话在任务表里的「一行信息」（判据与 chip / 总览同源，粒度更粗但结论必须一致）。
+ * 会话在任务表里的「一行信息」（判据与 nav / 详情 / 总览**同源**，粒度更粗但结论必须一致）。
  * `totalTurns` = 跨启动总轮次（见 `newTurnsOf`）：不传就退回帧里的本进程计数。
  */
 export function sessionRowOf(
@@ -258,45 +98,40 @@ export function sessionRowOf(
     totalTurns?: number,
 ): SessionRowView {
     const unread = newTurnsOf(e, seenTurns, totalTurns);
-    const stalled = stalledOf(e, now);
-    const q = queueViewOf(e);
-    const base = { unread, tokens: e.totalTokens, lastActivity: e.lastActivity };
+    const state = sessionStateOf({ entry: e, totalTurns, unread, now });
+    // 传 uri 只为 tooltip 抬头（与 nav / 详情同一个图标视图，别让"同一会话四处说话"从 tip 开始）
+    const glyph = glyphOf(state, uriOf(e));
+    const base = { unread, tokens: e.totalTokens, lastActivity: e.lastActivity, glyph };
 
-    if (e.turn) {
+    if (state.run === "running") {
         const prog = stepsProgressOf(e, maxSteps);
         return {
             ...base,
             attention: 0,
-            state: stalled ? `停滞 ${fmtDuration(idleMsOf(e, now) ?? 0)}` : `运行中 ${prog.text}`,
-            tone: stalled ? "warning" : "primary",
-            icon: "●",
+            state: state.stalled ? `停滞 ${fmtDuration(idleMsOf(e, now) ?? 0)}` : `运行中 ${prog.text}`,
         };
     }
-    if (abnormalEndOf(e)) {
-        const mark = endMarkOf(e.lastEndReason, false);
-        // 异常终止**且未读** → 红（用户原话：红色 = 未读异常终止）；已读的异常仍是黄
-        return {
-            ...base,
-            attention: unread > 0 ? 1 : 4,
-            state: mark.tip,
-            tone: unread > 0 ? "error" : "warning",
-            icon: mark.icon,
-        };
+    if (state.run === "ended" && isAbnormalBlame(state.blame)) {
+        return { ...base, attention: unread > 0 ? 1 : 4, state: glyph.label };
     }
-    if (q.kind !== "none") {
-        return { ...base, attention: 3, state: q.label, tone: "warning", icon: "⏸" };
+    if (state.queued > 0) {
+        return { ...base, attention: 3, state: queueViewOf(e).label };
     }
     if (unread > 0) {
-        return { ...base, attention: 2, state: `未读 ${unread} 条`, tone: "primary", icon: "" };
+        return { ...base, attention: 2, state: `未读 ${unread} 条` };
     }
-    // 无事可报 ≠ 从没聊过：这里给**弱标「已对话」**（与 lib/session-mark 的 chip 用同一个词）。
-    // 一个词只能有一个意思 —— nav 说「已对话」而任务表说「空闲」就是同一类分叉。
-    return { ...base, attention: 4, state: "已对话", tone: "ghost", icon: "◌" };
+    // 无事可报 ≠ 从没聊过：「已对话」与 nav 的终态圆说的是同一件事（同一个词、同一个判据）。
+    return { ...base, attention: 4, state: "已对话" };
 }
 
 /** chip / 行的公用 tooltip：把这条会话的判据一次说全 */
+/** 会话指向的 task uri（tip 抬头用；没有就退回会话 id） */
+export function uriOf(e: SessionEntry): string {
+    return e.refs.find((r) => r.kind === "task")?.uri ?? e.id;
+}
+
 export function tipOf(e: SessionEntry, maxSteps: number | null, now: number): string {
-    const uri = e.refs.find((r) => r.kind === "task")?.uri ?? e.id;
+    const uri = uriOf(e);
     const lines = [`${uri}（会话 ${e.id}）`];
     if (e.turn) {
         const prog = stepsProgressOf(e, maxSteps);
@@ -408,7 +243,7 @@ export type SessionSlice = "working" | "stalled" | "error" | "unread" | "queued"
  *
  * 与 `SessionRowView` 的差别：那个是「任务表里的一行」（必须有注册表条目），
  * 这个是「会话总览里的一行」（**可以只有账本历史**，entry = null）—— 用户 2026-10-17 要的
- * 「重启后总览不能是空表」。判据仍出自本文件的同一批函数（chip / 未读 / 进度）。
+ * 「重启后总览不能是空表」。判据出自 `shared/session-state`（状态/归因/图标）+ 本文件的进度视图。
  */
 export interface SessionOverviewRow {
     uri: string;
@@ -417,8 +252,8 @@ export interface SessionOverviewRow {
     /** 账本里有历史（跨启动） */
     talked: boolean;
     slice: SessionSlice;
-    tone: SessionChipView["tone"];
-    icon: string;
+    /** 图标视图（与 nav / 任务表 / 详情**同一个函数**产出的同一份） */
+    glyph: SessionGlyphView;
     /** 状态短标签（`运行中 3/200` · `未读 2 条` · `已对话` …） */
     label: string;
     tip: string;
@@ -464,8 +299,7 @@ export interface OverviewRowInput {
 /**
  * 合成总览的一行；`null` = **两源都说不出话**（没聊过、也没注册表条目 → 不该出现在总览）。
  *
- * 判据不新造：注册表侧逐条走 `sessionChipOf / stalledOf / queueViewOf / abnormalEndOf`，
- * 账本侧走"跨启动轮次 − 已读水位"（与 `lib/session-mark` 的 chip 同一口径）。
+ * 判据不新造：状态/归因走 `sessionStateOf`（唯一真源），未读尺子 = "跨启动总轮次 − 已读水位"。
  * 两源都缺 → 不猜（返回 null，而不是编一个"空闲"）。
  */
 export function overviewRowOf(i: OverviewRowInput): SessionOverviewRow | null {
@@ -497,28 +331,28 @@ export function overviewRowOf(i: OverviewRowInput): SessionOverviewRow | null {
     };
 
     if (entry) {
-        const chip = sessionChipOf(entry, {
-            seenTurns: i.seenTurns,
-            maxSteps: i.maxSteps,
-            now: i.now,
-            totalTurns,
-        });
-        const running = entry.turn !== null;
-        const stalled = stalledOf(entry, i.now);
-        const q = queueViewOf(entry);
+        const state = sessionStateOf({ entry, totalTurns, unread, now: i.now });
+        const glyph = glyphOf(state, i.uri);
+        const running = state.run === "running";
         let slice: SessionSlice;
-        if (running) slice = stalled ? "stalled" : "working";
-        else if (abnormalEndOf(entry) && unread > 0) slice = "error";
-        else if (q.kind !== "none") slice = "queued";
+        if (running) slice = state.stalled ? "stalled" : "working";
+        else if (state.run === "ended" && isAbnormalBlame(state.blame) && unread > 0) slice = "error";
+        else if (state.queued > 0) slice = "queued";
         else if (unread > 0) slice = "unread";
         else slice = "talked";
+        // 状态列的话：在跑给步数进度，其余给根因短标签（与 glyph 同源，不另编词）
+        const label = running
+            ? state.stalled
+                ? `停滞 ${fmtDuration(idleMsOf(entry, i.now) ?? 0)}`
+                : `运行中 ${stepsProgressOf(entry, i.maxSteps).text}`
+            : state.run === "never"
+              ? "未运行"
+              : `已结束 · ${glyph.label}`;
         return {
             ...base,
             slice,
-            // 注册表无话可说（聊过但没事）→ 弱标「已对话」，与任务表 / 详情任务树**同一个词**
-            tone: chip?.tone ?? "ghost",
-            icon: chip?.icon ?? "◌",
-            label: chip?.text ?? "已对话",
+            glyph,
+            label,
             tip: tipOf(entry, i.maxSteps, i.now),
             running,
         };
@@ -528,8 +362,11 @@ export function overviewRowOf(i: OverviewRowInput): SessionOverviewRow | null {
     const tip =
         `${i.uri}：账本里有历史（**跨启动**），本进程还没活动过。\n` +
         `会话共 ${totalTurns} 轮 · 累计 ${steps ?? 0} 步 · ${fmtTokens(tokens ?? 0)} tokens`;
+    // 账本-only 行：状态判据同一套（有历史 + 没在跑 ⇒ ended；根因无记录 ⇒ 归因 none）
+    const state = sessionStateOf({ entry: null, hasSession: true, totalTurns, unread, now: i.now });
+    const glyph = glyphOf(state, i.uri);
     if (unread > 0) {
-        return { ...base, slice: "unread", tone: "primary", icon: "", label: `+${unread}`, tip, running: false };
+        return { ...base, slice: "unread", glyph, label: `未读 ${unread} 条`, tip, running: false };
     }
-    return { ...base, slice: "talked", tone: "ghost", icon: "◌", label: "已对话", tip, running: false };
+    return { ...base, slice: "talked", glyph, label: "已对话", tip, running: false };
 }

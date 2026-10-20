@@ -13,18 +13,13 @@
 
 import { describe, it, expect } from "vitest";
 import {
-    abnormalEndOf,
-    activityOf,
     fmtDuration,
     fmtTokens,
-    newTurnsOf,
-    queueViewOf,
-    sessionChipOf,
-    stalledOf,
+    sessionRowOf,
     stepsNow,
     stepsProgressOf,
-    STALL_MS,
 } from "../../src/shared/session-overview";
+import { abnormalEndOf, activityOf, newTurnsOf, queueViewOf, stalledOf, STALL_MS } from "../../src/shared/session-state";
 import type { SessionEntry } from "../../src/shared/registry-frame";
 
 const T0 = "2026-10-15T10:00:00.000Z";
@@ -135,73 +130,78 @@ describe("异常退出 / chip", () => {
         expect(
             abnormalEndOf(entry({ turnCount: 1, lastEndReason: { type: "error", data: { source: "llm", message: "x" } } })),
         ).toBe(true);
+        // ##393（##266 2026-10-20 拍板）：`aborted:user` / 旧版 `abort` 都是**你自己按的停止** ⇒ 预期内，
+        // 不算「异常退出」；真正分不清的那种是 `aborted:detached`（断流）
         expect(abnormalEndOf(entry({ turnCount: 1, lastEndReason: { type: "aborted", data: { source: "user" } } }))).toBe(
-            true,
+            false,
         );
+        expect(abnormalEndOf(entry({ turnCount: 1, lastEndReason: { type: "aborted", data: { source: "abort" } } }))).toBe(
+            false,
+        );
+        expect(
+            abnormalEndOf(entry({ turnCount: 1, lastEndReason: { type: "aborted", data: { source: "detached" } } })),
+        ).toBe(true);
         // 还在跑 → 不看上一轮（那是完成时才有意义的历史）
         expect(
             abnormalEndOf(running({ lastEndReason: { type: "error", data: { source: "llm", message: "x" } } })),
         ).toBe(false);
     });
 
-    it("在跑 → ● 主色 chip，文案带 k/max 与排队 / 无人看 / 新增", () => {
-        const c = sessionChipOf(running({ queue: 1, viewers: 0, totalSteps: 7, turnCount: 5 }), {
-            seenTurns: 2,
-            maxSteps: 200,
-            now: NOW,
-        });
-        expect(c).toBeTruthy();
-        expect(c!.tone).toBe("primary");
-        expect(c!.text).toContain("10/200");
-        expect(c!.text).toContain("排队 1");
-        expect(c!.text).toContain("无人看");
-        expect(c!.text).toContain("+3");
-        expect(c!.tip).toContain("projects/4/tasks/308");
+    it("在跑 → live 图标 + 状态词带 k/max（未读是**属性**，不拼进同一句话）", () => {
+        const row = sessionRowOf(running({ queue: 1, viewers: 0, totalSteps: 7, turnCount: 5 }), 2, 200, NOW);
+        expect(row.glyph.shape).toBe("live");
+        expect(row.glyph.tone).toBe("green");
+        expect(row.state).toContain("10/200");
+        expect(row.unread).toBe(3); // ##358：1 轮 = 1 条，不是步数
+        expect(row.glyph.tip).toContain("projects/4/tasks/308");
     });
 
-    it("停滞 → 黄色 chip 并把「多久没动」说出来", () => {
-        const c = sessionChipOf(running(), { seenTurns: 0, maxSteps: 200, now: NOW + STALL_MS });
-        expect(c!.tone).toBe("warning");
-        expect(c!.text).toContain("停滞");
+    it("停滞 → 同一个 live 图标，但动画放慢（运行健康度，不是第四种状态）", () => {
+        const row = sessionRowOf(running(), 0, 200, NOW + STALL_MS);
+        expect(row.glyph.shape).toBe("live");
+        expect(row.glyph.motion).toBe("slow");
+        expect(row.state).toContain("停滞");
     });
 
-    it("空闲且无事 → 不发 chip（任务表几百行，不挂噪音）", () => {
-        expect(
-            sessionChipOf(entry({ turnCount: 3, lastEndReason: { type: "completed", data: {} } }), {
-                seenTurns: 100,
-                maxSteps: 200,
-                now: NOW,
-            }),
-        ).toBeNull();
+    it("空闲且无事 → 已结束的终态圆（图标是状态，不是噪音：仍然渲染）", () => {
+        const row = sessionRowOf(entry({ turnCount: 3, lastEndReason: { type: "completed", data: {} } }), 100, 200, NOW);
+        expect(row.attention).toBe(4);
+        expect(row.glyph.shape).toBe("ended");
+        expect(row.state).toBe("已对话");
     });
 
-    it("空闲但有未读新增 → **绿 `+N`**（##87「任务 agent 状态未体现」的那一面）", () => {
-        const c = sessionChipOf(
+    it("空闲但有未读新增 → 未读计数与「已结束」图标同时成立（两条正交轴）", () => {
+        const row = sessionRowOf(
             entry({ totalSteps: 20, turnCount: 4, lastEndReason: { type: "completed", data: {} } }),
-            { seenTurns: 1, maxSteps: 200, now: NOW },
+            1,
+            200,
+            NOW,
         );
-        expect(c!.tone).toBe("primary");
-        expect(c!.text).toBe("+3");
+        expect(row.unread).toBe(3);
+        expect(row.glyph.shape).toBe("ended");
+        expect(row.glyph.tone).toBe("ok");
     });
 
     it("空闲 + 异常收尾 → 文案与图标与轮尾同源（endMarkOf / abortText）", () => {
-        const userStop = sessionChipOf(
+        const userStop = sessionRowOf(
             entry({ turnCount: 1, lastEndReason: { type: "aborted", data: { source: "user" } } }),
-            { seenTurns: 0, maxSteps: 200, now: NOW },
+            0,
+            200,
+            NOW,
         );
-        expect(userStop!.text).toBe("生成已取消");
-        const err = sessionChipOf(
+        expect(userStop.glyph.label).toBe("已结束 · 你停止");
+        const err = sessionRowOf(
             entry({ turnCount: 1, lastEndReason: { type: "error", data: { source: "llm", message: "boom" } } }),
-            { seenTurns: 0, maxSteps: 200, now: NOW },
+            0,
+            200,
+            NOW,
         );
-        expect(err!.tone).toBe("error");
-        expect(err!.icon).toBe("✗");
+        expect(err.glyph.tone).toBe("orange");
     });
 
-    it("待投递留言的空闲会话 → chip 说「什么时候投」（不是只说个数）", () => {
-        const c = sessionChipOf(entry({ queue: 2, viewers: 0 }), { seenTurns: 0, maxSteps: 200, now: NOW });
-        expect(c!.tone).toBe("warning");
-        expect(c!.text).toContain("已关闭");
+    it("待投递留言的空闲会话 → 状态词说「什么时候投」（不是只说个数）", () => {
+        const row = sessionRowOf(entry({ queue: 2, viewers: 0 }), 0, 200, NOW);
+        expect(row.state).toContain("已关闭");
     });
 });
 

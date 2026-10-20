@@ -29,7 +29,7 @@
 import { createSignal, untrack } from "solid-js";
 import { diyService } from "../lib/rpc";
 import { StopTicker } from "../lib/stop-ticker";
-import { sessionChipOf, stepsNow, type SessionChipView } from "../../shared/session-overview";
+import { stepsNow } from "../../shared/session-overview";
 import { usageLedgerStore } from "./usageLedgerStore";
 import type { RegistryFrame, SessionEntry } from "../../shared/registry-frame";
 
@@ -402,18 +402,6 @@ export const sessionStore = {
             return;
         }
         writeSeen(uri, total);
-    },
-    /** 三处消费者共用的 chip 判据（`null` = 没什么可说的，调用方不渲染） */
-    chipOf(uri: string): SessionChipView | null {
-        const e = table().get(uri);
-        if (!e) return null;
-        return sessionChipOf(e, {
-            seenTurns: seen().get(uri) ?? null,
-            maxSteps: maxSteps(),
-            now: nowMs(),
-            // 未读的尺子 = 跨启动总轮次（注册表 ∪ 账本）；缺了它，注册表口径会与账本口径打架
-            totalTurns: totalTurnsOf(uri),
-        });
     },
     /** 改单轮步数上限（走 [4] 的写 RPC：写文件 + 即时失效缓存 → **下一轮生效**） */
     async setMaxSteps(n: number): Promise<void> {

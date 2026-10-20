@@ -23,8 +23,9 @@ import {
     unreadText,
     type NavRow,
 } from "../../src/shared/session-nav";
-import { STALL_MS } from "../../src/shared/session-overview";
+import { STALL_MS } from "../../src/shared/session-state";
 import type { SessionEntry } from "../../src/shared/registry-frame";
+import { sessionStateOf } from "../../src/shared/session-state";
 
 const T0 = "2026-10-15T10:00:00.000Z";
 const NOW = Date.parse(T0) + 5_000;
@@ -68,7 +69,23 @@ function finished(patch: Partial<SessionEntry> = {}): SessionEntry {
 
 /** 直接造 nav 行（不经过 entry → 单测聚合与排序时更直白） */
 function row(patch: Partial<NavRow> & { uri: string }): NavRow {
-    return { label: patch.uri, running: false, stalled: false, abnormal: false, unread: 0, queue: 0, opened: false, lastTs: null, ...patch };
+    // 行的 state / 归因必须**自洽**（heroBadgeOf 从 state 取色，不是另读 abnormal 布尔）：
+    // abnormal=true 的行 = 已结束 + 一个「值得看一眼」的根因（interrupted → unknown）
+    const state =
+        patch.state ??
+        sessionStateOf({
+            entry: entry({
+                turnCount: 1,
+                lastEndReason: patch.abnormal
+                    ? { type: "interrupted", data: {} }
+                    : { type: "completed", data: {} },
+                queue: patch.queue ?? 0,
+            }),
+            hasSession: true,
+            unread: patch.unread ?? 0,
+            now: NOW,
+        });
+    return { label: patch.uri, state, running: false, stalled: false, abnormal: false, unread: 0, queue: 0, opened: false, lastTs: null, ...patch };
 }
 
 describe("navRowOf：判据全部出自 session-overview（不另写一套）", () => {
@@ -104,14 +121,14 @@ describe("navRowOf：判据全部出自 session-overview（不另写一套）", 
             uri: "u",
             label: "u",
             opened: false,
-            entry: entry({ lastEndReason: { type: "aborted", data: { source: "detached" } } }),
+            entry: entry({ turnCount: 1, lastEndReason: { type: "aborted", data: { source: "detached" } } }),
             seenTurns: 0,
             maxSteps: 200,
             now: NOW,
         });
         expect(bad.abnormal).toBe(true);
 
-        const q = navRowOf({ uri: "u", label: "u", opened: false, entry: entry({ queue: 2 }), seenTurns: 0, maxSteps: 200, now: NOW });
+        const q = navRowOf({ uri: "u", label: "u", opened: false, entry: entry({ turnCount: 1, queue: 2 }), seenTurns: 0, maxSteps: 200, now: NOW });
         expect(q.queue).toBe(2);
     });
 });
@@ -149,10 +166,11 @@ describe("heroBadgeOf：同一时刻只出一个主角标", () => {
         expect(heroBadgeOf(noUnread)!.key).toBe("queue");
     });
 
-    it("异常未读 → **红** + `+N`（用户原话：红色是未读异常终止）", () => {
+    it("异常未读 → 归因色（不是写死红）+ `+N`", () => {
         const b = heroBadgeOf([row({ uri: "a", unread: 3, abnormal: true }), row({ uri: "b", unread: 4, abnormal: true })]);
-        expect(b).toMatchObject({ key: "error", tone: "red", text: "+7", short: "+7" });
-        expect(b!.tip).toContain("异常收尾");
+        // 颜色 = 归因（##393）：`interrupted` → `unknown`（紫，"等你裁定"），不再是"红=异常"
+        expect(b).toMatchObject({ key: "error", tone: "violet", text: "+7", short: "+7" });
+        expect(b!.tip).toContain("未识别异常");
     });
 
     it("未读 → **绿** `+N`，且同档**聚合**（+23 = 一共 23 条，不是某一个会话的）", () => {
@@ -167,7 +185,7 @@ describe("heroBadgeOf：同一时刻只出一个主角标", () => {
 
     it("队列 → 紫；文案给全称，`short` 给 40px rail（只装得下 1~3 字符）", () => {
         const b = heroBadgeOf([row({ uri: "a", queue: 2 })]);
-        expect(b).toMatchObject({ key: "queue", tone: "purple", text: "队列 2", short: "2" });
+        expect(b).toMatchObject({ key: "queue", tone: "violet", text: "队列 2", short: "2" });
     });
 
     it("未读文案：统一 `+n`，超大值截断（rail 撑破就成噪音）", () => {
@@ -181,7 +199,7 @@ describe("secondaryBadgeOf：主角标之外的第二件事", () => {
         const rows = [row({ uri: "r", running: true }), row({ uri: "q", queue: 5 }), row({ uri: "q2", queue: 1 })];
         const hero = heroBadgeOf(rows)!;
         const sec = secondaryBadgeOf(rows, hero)!;
-        expect(sec).toMatchObject({ key: "queue", tone: "purple", text: "6" });
+        expect(sec).toMatchObject({ key: "queue", tone: "violet", text: "6" });
     });
 
     it("主角标本身就是队列 → 不重复出次角标", () => {

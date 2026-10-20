@@ -37,10 +37,12 @@ import { Caches, TASK_DETAIL_LEFT_MIN, TASK_DETAIL_LEFT_MAX } from "../lib/ui-st
 import { MarkdownView } from "./MarkdownView";
 import { CodeBlock } from "./CodeBlock";
 import { StateSelect, TaskFieldSelect, TaskModuleInput } from "./TaskFieldControls";
-import { AgentWindowUsage, TaskAgentStateBadge } from "./TaskAgentState";
+import { AgentWindowUsage } from "./AgentWindowUsage";
 import { taskStateColor } from "../../main/core/task-state";
 import { getTaskVerdict } from "../../shared/task-load";
-import { SessionChip } from "./SessionChip";
+import { SessionGlyph } from "./SessionGlyph";
+import { sessionStateFor } from "../lib/session-state";
+import { endReasonText, glyphOf } from "../../shared/session-state";
 
 /** 两列布局下正文的最小宽度（px）：拖左列时不许把正文压到比这更窄 */
 const BODY_MIN_W = 160;
@@ -196,6 +198,19 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
     // 人物/模型清单：本视图在会话页之外也会被渲染（详情抽屉、悬停覆盖层、试验场任务 tab），
     // 故在此按需加载，不依赖会话页先打开过。
     onMount(() => void personaStore.load());
+
+    /** 会话状态（##393）：唯一判据 `shared/session-state`；这里**只负责分列展示**，不另判 */
+    const sess = () => sessionStateFor(props.uri, { hasSession: props.task.has_session, hasDraft: props.task.has_draft });
+    const stateText = () => {
+        const st = sess();
+        if (st.run === "running") return st.stalled ? "运行中（停滞）" : "运行中";
+        if (st.run === "never") return "未运行";
+        return `已结束 · ${glyphOf(st).label}`;
+    };
+    const reasonText = () => {
+        const end = sess().end;
+        return end ? endReasonText(end) : "";
+    };
 
     const onInput = (v: string) => {
         setTitleDraft(v);
@@ -357,20 +372,26 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
                         </For>
                     </select>
                 </div>
-                {/* agent 面状态（##355）：四态 + 空闲，单轴的**一句话**（判据见 shared/task-agent-state）。
-                    放这里而不是只放列表 chip：这里空间够，能同时给出**窗口占用**（下面一行）。
-                    数据源 = 注册表（在跑/未读）/ draftStore（草稿）/ 任务载荷（has_session 等），
-                    见 lib/agent-state.ts 与 components/TaskAgentState.tsx 的头注。 */}
+                {/* 会话状态（##393）：与 nav / 任务表 / 总览**同一个判据 + 同一个图标**。
+                    这里空间够 → **分列**：状态图标 + 状态词 + 根因（用户 3.3：只是可展示地方大了，
+                    可以分列而已，值必须同源）。 */}
                 <div class="task-field-row">
-                    <span class="task-field-label text-body opacity-50">agent 状态</span>
-                    <div class="flex min-w-0 items-center gap-1">
-                        {/* always：单任务视图里"空闲"是一个**明确结论**，比什么都不显示好 */}
-                        <TaskAgentStateBadge
+                    <span class="task-field-label text-body opacity-50">会话状态</span>
+                    <div class="flex min-w-0 items-center gap-1.5 flex-wrap">
+                        <SessionGlyph
                             uri={props.uri}
                             hasSession={props.task.has_session}
                             hasDraft={props.task.has_draft}
-                            always
+                            size="md"
                         />
+                        <span class="text-body" title="运行状态只有三个值：未运行 / 运行中 / 已结束；结束原因是一个属性">
+                            {stateText()}
+                        </span>
+                        <Show when={reasonText()}>
+                            <span class="text-body opacity-60 truncate" title={reasonText()}>
+                                · {reasonText()}
+                            </span>
+                        </Show>
                     </div>
                 </div>
                 {/* 窗口占用（##339 阈值口径 / ##262 用量 UI）：最后一步实测 token ÷ 触发压缩阈值 */}
@@ -523,10 +544,9 @@ function LineageBlock(props: { uri: string; hoverPreview?: boolean; host?: "mana
                             两图标 + 文字的操作按钮，噪音大。**跳转任务管理**的入口已从树里删掉、
                             统一收在「任务详情」view 的 bar 上（见 TaskSideView），故这里只留
                             状态指示：已打开显示 💬，未打开不显示任何图标。 */}
-                        {/* 会话状态（##358 D7）：与 nav 标签 / 任务表行**同一份判据**
-                            （`lib/session-mark` → 注册表 chip × 账本「已对话」），不在这里另写一套。
+                        {/* 会话状态（##393）：与 nav / 任务表 / 总览**同一个图标实现**（SessionGlyph）。
                             放标题后、💬 前：紧跟标题读成"这行的会话状态"，💬 仍靠 ml-auto 贴右。 */}
-                        <SessionChip uri={r.uri} class="shrink-0" />
+                        <SessionGlyph uri={r.uri} size="xs" />
                         <Show when={chatOpen(r.uri)}>
                             <span class="ml-auto shrink-0 text-body" title="已在对话中打开">💬</span>
                         </Show>

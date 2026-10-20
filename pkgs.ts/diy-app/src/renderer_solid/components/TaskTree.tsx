@@ -17,9 +17,7 @@ import { TASK_STATES, taskStateColor } from "../../main/core/task-state";
 import { CreateTaskSheet } from "./CreateTaskSheet";
 import { TaskAddMenu } from "./TaskParentControls";
 import { DynamicBar } from "./DynamicBar";
-import { SessionChip, TONE_BADGE } from "./SessionChip";
-import { TaskAgentStateBadge } from "./TaskAgentState";
-import { sessionMarkOf } from "../lib/session-mark";
+import { SessionGlyph } from "./SessionGlyph";
 import { findNode } from "../lib/task-lineage";
 import { VIEW_BAR_H } from "../lib/layout-metrics";
 import {
@@ -192,20 +190,10 @@ function Dash() {
  * 「会话」列的**账本回退**：注册表没有这个会话的条目（本进程没活动过），但账本说它**已对话**。
  *
  * 为什么单列这个：注册表是进程性的，重启即空 —— 只有它的话，重启后所有行都成了"从没聊过"，
- * 正是本任务的起点痛点。判据与行内 chip **同一份**（`lib/session-mark`），故两处不会打架。
+ * 正是本任务的起点痛点。判据与行内图标**同一份**（`lib/session-state`），故两处不会打架。
  */
 function LedgerStarted(props: { uri: string }) {
-    const mark = () => sessionMarkOf(props.uri);
-    return (
-        <Show when={mark()} fallback={<Dash />}>
-            {(c) => (
-                <span class={`badge badge-xs gap-0.5 font-normal ${TONE_BADGE[c().tone]}`} title={c().tip}>
-                    <span>{c().icon}</span>
-                    <span>{c().text}</span>
-                </span>
-            )}
-        </Show>
-    );
+    return <SessionGlyph uri={props.uri} size="xs" class="opacity-70" />;
 }
 
 /** 优先级色：P0 最紧急 → error；P1 warning；P2/P3 中性 */
@@ -905,14 +893,12 @@ function TaskRow(props: {
                     >
                         {row.node.title}
                     </span>
-                    {/* agent 面状态（##355）：四态（对话中 / 有未读 / 有草稿 / 未对话）单轴一句话。
-                        判据在 shared/task-agent-state，组合在 lib/agent-state —— 与 nav 项、属性面板同一份。
-                        两个逐任务真源（has_session / has_draft）随任务树载荷一起来，见 TaskNodeShape。 */}
-                    <TaskAgentStateBadge uri={row.key} hasSession={row.node.has_session} hasDraft={row.node.has_draft} />
-                    {/* 会话状态（##308）：任务表行不点进去就知道谁在跑、有没有未读轮次/
-                        待投递留言/上一轮异常收尾。判据与 nav chip、总览页**同一份**（sessionStore）。
-                        chip 自身只在"有事"时渲染（空闲且无事 → 不占地方，见 shared/session-overview）。 */}
-                    <SessionChip uri={row.key} />
+                    {/* 会话状态（##393）：**一个图标**说完三态 + 归因 + 未读/草稿/排队。
+                        用户 3.1：这里原来并排两处都在说"未读"（`TaskAgentStateBadge` 的「有未读」+
+                        `SessionChip` 的 `+N`）—— 「有未读」那个文字 badge 已删，未读只留图标右侧的 `+N`。
+                        用户 3.2：「对话中」不再是文字，而是与 nav 会话列表**同一个动画图标**。
+                        判据 = shared/session-state（唯一真源），渲染 = components/SessionGlyph（唯一实现）。 */}
+                    <SessionGlyph uri={row.key} hasSession={row.node.has_session} hasDraft={row.node.has_draft} />
                     {/* 层级菜单（##356 ①）：原先这里是「＋ = 直接开新建子任务对话框」，
                         只有一条路 —— 已有任务要挂到它下面只能拖。改为菜单给两条路。 */}
                     <TaskAddMenu projectId={row.projectId} projectLabel={row.node.title ?? ""} parentUri={row.key} />
@@ -971,11 +957,11 @@ function TaskRow(props: {
             <td class="text-body whitespace-nowrap">
                 <Show when={sess()} fallback={<LedgerStarted uri={row.key} />}>
                     {(v) => (
-                        <span class={`badge badge-xs gap-0.5 font-normal ${TONE_BADGE[v().tone]}`} title={sessionTip()}>
-                            <Show when={v().icon}>
-                                <span>{v().icon}</span>
-                            </Show>
-                            <span>{v().state}</span>
+                        <span class="inline-flex items-center gap-1" title={sessionTip()}>
+                            {/* 图标与 nav / 详情 / 总览**同一个组件**；这里空间大，多给一句状态词（分列，
+                                不是另一份判据 —— 文字也出自 `sessionRowOf` 的同一个 state） */}
+                            <SessionGlyph uri={row.key} size="xs" withMarks={false} />
+                            <span class="text-body">{v().state}</span>
                         </span>
                     )}
                 </Show>
