@@ -161,6 +161,20 @@ interface TaskState {
     /** 本段故障是否已浮到界面（一段故障只提示一次；恢复时清，下段故障还能提示） */
     opsDownNotified: boolean;
     /**
+     * **段跳态**（##389）：块树此刻显示的不是尾部窗口，而是检索定位过去的**一段历史**。
+     *
+     * 为什么需要这个位（而不是"跳完就当没事"）：
+     *   · 段与尾部之间有一段没读的内容，块树里**没有**它 —— 此时若把 live op 照常 apply 进
+     *     末段（`tailForWrite` 写的就是跳过去的那一段），历史会被塞进不属于它的轮里，树直接失真；
+     *   · 轮末重放（`reload`）会把视图从历史**拽回最新**，用户正读的那一段凭空消失。
+     * 故段跳中：live op 只推进水位、不落树；`reload` 让位；尾部由显式出口 `returnToTail()` 回切。
+     *
+     * 是**信号**而非普通字段：界面那条「正在查看历史 / 回到最新」跟着它出现与消失
+     * （普通字段改了不会触发重渲染 —— 实测症状：跳过去了，但那条提示一直不出现）。
+     */
+    detached: () => boolean;
+    setDetached: (v: boolean) => void;
+    /**
      * 逐步用量账本（`<key>.usage.jsonl` 的结构化镜像）。
      * 权威在盘上；这里是快照，打开会话时拉一次，轮次收尾（含别人的轮次）时再拉一次。
      * 对话流页脚**不依赖它**（页脚用 turn 块属性，实时就有）——它服务于明细与看板。
@@ -192,6 +206,7 @@ function stateFor(taskUri: string): TaskState {
         const [steers, setSteers] = createSignal<SteerItem[]>([]);
         const [usage, setUsage] = createSignal<StepUsageRecord[]>([]);
         const [opsState, setOpsState] = createSignal<OpsState>("idle");
+        const [detached, setDetached] = createSignal(false);
         const [hasMore, setHasMore] = createSignal(false);
         const [olderBusy, setOlderBusy] = createSignal(false);
         s = {
@@ -202,6 +217,7 @@ function stateFor(taskUri: string): TaskState {
             error, setError, steers, setSteers, usage, setUsage, steerSeq: 0, steerSettled: 0,
             scroll: null, tab: "local", detailScroll: 0,
             appliedSeq: 0, epoch: -1, opsAbort: null, opsState, setOpsState, opsDownNotified: false,
+            detached, setDetached,
         };
         states.set(taskUri, s);
     }
@@ -407,6 +423,9 @@ function reload(taskUri: string): Promise<void> {
 async function doReload(taskUri: string): Promise<void> {
     const st = states.get(taskUri);
     if (!st) return;
+    // 段跳中（##389）：块树显示的是检索定位过去的那一段历史，重放会把用户拽回最新。
+    // 回到尾部有显式出口（`returnToTail`），别在这里"顺手"做掉他正看着的东西。
+    if (st.detached()) return;
     // ⚠️ 我自己这轮在途时**不能**重建：
     //   · main 报"不活跃"只说明**服务端**收尾了，我这条流可能还在消费尾巴，
     //     重建会把 store 整个换掉，而那些 op 之后仍 `apply` 到新 store 上 —— 丢帧/错序；
@@ -907,6 +926,13 @@ function applyOpsFrame(taskUri: string, frame: OpsFrame): void {
         st.appliedSeq = 0;
         st.epoch = frame.epoch;
     }
+    // 段跳中（##389）：这批 op 属于**我们没在显示的尾部**，落进跳过来的那一段就是串史。
+    // 水位照推（否则订阅会按缺口反复重订），树不动；退出段跳时由 loadHistory 整段重建。
+    if (st.detached()) {
+        st.appliedSeq = frame.fromSeq + frame.ops.length - 1;
+        if (frame.ops.some((o) => o.op === "start" && o.kind === "turn")) void refreshActive(taskUri);
+        return;
+    }
     let ops = frame.ops;
     if (frame.fromSeq <= st.appliedSeq) {
         const skip = st.appliedSeq - frame.fromSeq + 1;
@@ -1088,6 +1114,9 @@ async function send(taskUri: string, text: string): Promise<boolean> {
     const st = stateFor(taskUri);
     const msg = text.trim();
     if (!msg || !taskUri || st.running()) return false;
+    // 段跳中（##389）：先把视图切回最新再发 —— 否则自己这条新轮的 op 会被"段跳中不落树"丢掉，
+    // 用户发完看不到自己刚说的话（那种"发了等于没发"的错觉最伤信任）。
+    if (st.detached()) await returnToTail(taskUri);
     // 不传 model/reasoningEffort：模型与参数由 main 按**任务绑定的人物**解析（配置真源唯一，
     // 见 main/services/local-agent.ts 的 chat）。renderer 只决定"要谁干活"（persona 字段）。
     // 不给 mode = 开一轮（给出 mode 则先入队，见 submitSteer）。
@@ -1128,6 +1157,8 @@ async function sendViaRoom(taskUri: string, text: string): Promise<boolean> {
     const msg = text.trim();
     const st = stateFor(taskUri);
     if (!msg || !taskUri || st.running()) return false;
+    // 同 send：段跳中先把视图切回最新（理由见 send 内的注释）
+    if (st.detached()) await returnToTail(taskUri);
     st.setError(null);
     ensureOpsSubscription(taskUri); // 幂等；见 runTurnStream 同款兜底
     const baseSeq = st.appliedSeq;
@@ -1404,6 +1435,61 @@ async function loadOlder(taskUri: string, beforeApply?: () => void): Promise<boo
     }
 }
 
+/**
+ * **段跳到某一轮**（##389 定位的第三条路）：把块树换成「含 `at` 那一轮的一段」。
+ *
+ * 三条定位路的分工（判据是"目标轮在不在当前块树里"，见 LocalChatPage 的 locate）：
+ *   1. **在**块树里、只是窗口外 → 纯滚动（不碰数据，最省）；
+ *   2. **不在**块树里、但在已加载段的范围内 → 同上（理论上不会发生：段内轮一定在树里）；
+ *   3. **不在**块树里（早于最老段）→ 本函数：按命中带的字节偏移取一段回来。
+ * 为什么不"循环 loadOlder 一路补过去"：大会话里那可能是十几次 RPC + 十几次全段 fold
+ * （74MB 会话实测每段 ~60ms），而 `historyAt` 一次到位。
+ *
+ * 跳过去之后是**历史视图**（`detached`）：尾部不在树里，回到最新有 `returnToTail()`。
+ * `stale`（位置已失效：日志被改写 / 不是轮首）⇒ 不跳、如实返回 false（调用方提示，
+ * 绝不"随便跳到一个位置"——那会让人以为定位成功了）。
+ */
+async function jumpTo(taskUri: string, at: number): Promise<boolean> {
+    const st = states.get(taskUri);
+    if (!st) return false;
+    try {
+        const r = await diyService.diy.agent.local.historyAt({ taskUri, at, budgetBytes: HISTORY_WINDOW_BYTES });
+        if (r.stale) return false;
+        const seg: Segment = { store: new BlockStore(), ids: [], cursor: r.cursor };
+        applyInto(seg, r.ops as Op[]);
+        seg.ids = turnIdsOf(r.ops as Op[]);
+        st.segments = [seg];
+        // 段游标不留给"轮末重放"用：它的语义是「从这段起点重取到文件尾」，段跳后那就是几十 MB。
+        st.tailCursor = null;
+        st.setHasMore(r.hasMore);
+        st.setDetached(r.hasNewer); // 段尾 < 文件尾 ⇒ 尾部没读 ⇒ 历史视图（有显式回切出口）
+        st.loaded = true;
+        flushRefresh(st);
+        return true;
+    } catch (e) {
+        console.warn(`[localChat] 段跳失败 ${taskUri}@${at}:`, e);
+        return false;
+    }
+}
+
+/**
+ * **回切到最新**（段跳的出口）：丢掉历史段、按预算重新取尾部窗口。
+ *
+ * 与 `open()` 的区别：open 只在"没加载过"时取历史。这里必须**强制重建**，
+ * 故先清 loaded 让 open 走首载那条路（水位/订阅都是幂等的，重复调用无副作用）。
+ */
+async function returnToTail(taskUri: string): Promise<void> {
+    const st = states.get(taskUri);
+    if (!st || !st.detached()) return;
+    st.setDetached(false);
+    st.segments = [];
+    st.tailCursor = null;
+    st.setHasMore(false);
+    st.loaded = false;
+    flushRefresh(st);
+    await open(taskUri);
+}
+
 /** 记录某任务的阅读位置（切走会话时由组件保存「视口顶部块 + 块内偏移」，见 ChatAnchor） */
 function setScroll(taskUri: string, v: ChatAnchor | null): void {
     stateFor(taskUri).scroll = v;
@@ -1627,6 +1713,14 @@ export const localChatStore = {
     compactEvents,
     /** 上滚补一段更早的历史；返回是否真的插入了内容（调用方据此做滚动位置补偿） */
     loadOlder,
+    /** 段跳到「含字节偏移 at 的那一轮」（##389 定位；返回 false = 位置已失效，未动树） */
+    jumpTo,
+    /** 段跳后回切最新（丢掉历史段，重新取尾部窗口） */
+    returnToTail,
+    /** 段跳态：块树显示的是历史段，尾部不在树里（UI 的「回到最新」条读它） */
+    get detached(): boolean {
+        return cur()?.detached() ?? false;
+    },
     /** 更早还有没有轮次（响应式：UI 的「加载更早」提示条读它） */
     get hasOlder(): boolean {
         return cur()?.hasMore() ?? false;

@@ -520,6 +520,26 @@ export function bindAppHandlers(binding: ServerBinding): void {
       budgetBytes: input.budgetBytes,
     });
   });
+  // 段跳（##389）：检索命中落在某一轮 ⇒ 从该轮取一段（一次到位，不走"游标→文件尾"）
+  binding.on(app.agent.local.historyAt, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.historyAt", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    return getLocalAgent().historyAt(input.taskUri, {
+      at: input.at,
+      budgetBytes: input.budgetBytes,
+    });
+  });
+  // 数据层检索（##389）：扫 ops 原文 ⇒ 未渲染的轮、被压缩的历史都能命中
+  binding.on(app.agent.local.find, async ({ input, signal }) => {
+    noteRendererTouch("diy.agent.local.find", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    return getLocalAgent().findInSession(input.taskUri, {
+      query: input.query,
+      scopes: { text: input.text ?? true, tool: input.tool ?? true, think: input.think ?? false },
+      maxTurns: input.maxTurns,
+      signal,
+    });
+  });
   // 会话 op 增量（##307 读侧）：水位校准起点 + 订阅写侧推送 —— UI 不再轮询、不再等轮末重放。
   // opsFeed 是 main 侧唯一写盘点的广播总线（见 services/ops-feed.ts）；CLI / 他窗口 /
   // 自愈补写的 op 同样经过它 → 任何来源的写入对所有订阅窗口即时可见。

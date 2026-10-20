@@ -26,7 +26,21 @@
  * 「显示什么、按什么序、开到第几层」的语义全在 `lib/chat-fold.ts`（纯函数 + 单测），本文件只管画。
  * MD 渲染/原文是**正交**的显示偏好：摘要态同样按它渲染（见 TextRow）。
  */
-import { createContext, createEffect, createMemo, createSignal, For, Match, on, onCleanup, onMount, Show, Switch, useContext } from "solid-js";
+import {
+    createContext,
+    createEffect,
+    createMemo,
+    createSignal,
+    For,
+    Match,
+    on,
+    onCleanup,
+    onMount,
+    Show,
+    Switch,
+    untrack,
+    useContext,
+} from "solid-js";
 import type { JSX } from "solid-js";
 import { localChatStore } from "../store/localChatStore";
 import { personaStore } from "../store/personaStore";
@@ -53,6 +67,10 @@ import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
 import { Caches, CONCLUSION_LINES_MAX, CONCLUSION_LINES_MIN } from "../lib/ui-state";
 import { HeightLedger, stackRows, windowRange } from "../lib/chat-virtual";
+import { chatFindStore, type ChatFindHit } from "../store/chatFindStore";
+import { findStore } from "../store/findStore";
+import { ChatFindPanel } from "./ChatFindPanel";
+import { clearHitHighlight, paintHitHighlight } from "../lib/hit-highlight";
 import { MarkdownView } from "./MarkdownView";
 import { MdEditor } from "./MdEditor";
 import { memberCompletion, taskCompletion } from "../lib/completions";
@@ -2445,6 +2463,13 @@ export function LocalChatPage(props: {
         };
         const onKey = (e: KeyboardEvent) => {
             if (e.key === "Escape") {
+                // 检索面板在最上层：先关它，别顺手把别的浮层一起关了（##389）。
+                // **不影响 ⌘F**：查找条有它自己的 Esc（FindBar 的输入框 keydown），两者互不代劳。
+                if (chatFindStore.open) {
+                    chatFindStore.close();
+                    clearHitHighlight();
+                    return;
+                }
                 setMoreOpen(false);
                 setPersonaPanelOpen(false);
                 setFullscreen(false);
@@ -2456,6 +2481,7 @@ export function LocalChatPage(props: {
         };
         document.addEventListener("click", closePopovers);
         document.addEventListener("keydown", onKey, true);
+        // 数据层检索（##389）：面板只负责"找"，"跳"必须由会话页做（滚动容器/块树/虚拟窗口都在这）。
         // view 高度跟随窗口/布局变化（输入区封顶 = view 1/3，R5）
         const ro = new ResizeObserver(() => setViewH(rootRef?.clientHeight ?? 0));
         if (rootRef) ro.observe(rootRef);
@@ -2472,6 +2498,8 @@ export function LocalChatPage(props: {
             cro.disconnect();
             rowRO.disconnect(); // 组件卸载：RO 不 disconnect 会攥着整个窗口的行元素
             document.removeEventListener("click", closePopovers);
+            chatFindStore.release(ownerUri);
+            clearHitHighlight();
             document.removeEventListener("keydown", onKey, true);
         });
         const u = uri();
@@ -2797,6 +2825,165 @@ export function LocalChatPage(props: {
         const [f, t] = win();
         return allRows().slice(f, t);
     });
+    /** 已挂 DOM 的轮 id（探针要判「命中落在未渲染的轮上」，见 chatFindStore.probeDeep） */
+    const renderedTurnIds = createMemo(() => {
+        const out = new Set<string>();
+        for (const r of windowRows()) if (r.tag === "turn") out.add(r.key);
+        return out;
+    });
+
+    // ─── 数据层检索的定位（##389）──────────────────────────────────────────────
+    // 三条路（判据 = 目标轮在不在块树里 / 在不在窗口里）：
+    //   ① 在树、只在窗口外 → 纯滚动（`scrollToTurn`，不碰数据）；
+    //   ② 不在树（早于最老段）→ `localChatStore.jumpTo` 段跳取一段回来，再走 ①；
+    //   ③ 正在流式 → **不抢滚动**：记下目标，等这一轮收尾（`view.live` 下降沿）再定位。
+    // 到位后：目标轮高亮 800ms + 该轮内的命中字用 Highlight API 点亮（都不改 DOM、不改 store 数据）。
+    let pendingLocate: { turnId: string; hit: ChatFindHit } | null = null;
+    /** 定位闭环的"手"柄：用户一滚就收手（别和目标轮较劲） */
+    let locateLatch = 0;
+    /**
+     * 定位闭环上一拍**我们自己写的** scrollTop —— 跟它比对就知道这一拍是不是人滚的
+     * （`progWriteTop` 是同一思路：区分"谁写的滚动"）。`null` = 闭环没在跑。
+     */
+    let locateOwnTop: number | null = null;
+
+    const flashTurn = (turnId: string) => {
+        const el = scrollRef;
+        if (!el) return;
+        const node = el.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(turnId)}"]`);
+        if (!node) return;
+        node.setAttribute("data-hit-flash", "1");
+        paintHitHighlight(node, chatFindStore.query);
+        window.setTimeout(() => {
+            // 用户可能已经滚走/该轮已被虚拟化摘掉：属性留在离屏节点上无害，故不做存在性判断
+            node.removeAttribute("data-hit-flash");
+        }, 800);
+    };
+
+    /**
+     * 滚到某一轮（**闭环校正**，与 `applyAnchor` 同一手法）：
+     * 先按账面顶边把窗口挪过去（`writeScrollTop` 会同步窗口信号 ⇒ 那一轮这一帧就上屏），
+     * 再量真实位置、把偏差补掉，两三帧内收敛（未实测行的高度估算会在这儿被实测值替换）。
+     * 硬上限 12 帧（200ms）：收敛不了也不再拉扯（估算高度抖动的极端情形），宁可差几像素。
+     *
+     * **用户接管即收手**（R1）：每一拍拿 `locateOwnTop`（上一拍我们写的位置）与当前 `scrollTop`
+     * 比对 —— 对不上就是人滚了（滚轮 / 拖条 / 触控板），当场作废闭环，**不再把人拽回去、也不闪**。
+     * 唯一豁免：内容变矮时浏览器把 `scrollTop` **收口**到新的 max（那不是人滚的），否则
+     * 「定位到靠近末尾的轮」会被自己的布局变化取消掉。
+     */
+    const scrollToTurn = (turnId: string) => {
+        const el = scrollRef;
+        if (!el) return;
+        setStick(false); // 定位到历史 = 用户要看的那一轮，别让"贴底跟随"再把视口拽走
+        const token = ++locateLatch;
+        locateOwnTop = el.scrollTop; // 起点：第一拍之前（~16ms 内）人滚了也要能认出来
+        let stable = 0;
+        let left = 12;
+        const tick = () => {
+            if (token !== locateLatch) return; // 又点了一次结果 / 用户手动接管
+            // 用户接管：这一拍的位置不是我们上一拍写的那儿 ⇒ 收手（判据见函数头注）
+            const own = locateOwnTop;
+            if (own !== null && Math.abs(el.scrollTop - own) > 1.5) {
+                const max = el.scrollHeight - el.clientHeight;
+                const clamped = el.scrollTop < own && el.scrollTop >= max - 1;
+                if (!clamped) {
+                    locateLatch++;
+                    return;
+                }
+            }
+            const L = layout();
+            const ri = L.keys.indexOf(turnId);
+            if (ri < 0) return; // 这一轮已不在树里（日志被改写）⇒ 放弃，不猜位置
+            const node = el.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(turnId)}"]`);
+            if (node) {
+                // 目标轮顶离容器顶 8px：轮首的用户气泡整条可见，且明确"这一轮从这儿开始"
+                const top = node.getBoundingClientRect().top - el.getBoundingClientRect().top;
+                const d = top - 8;
+                if (Math.abs(d) > 1) writeScrollTop(el, el.scrollTop + d);
+                stable = Math.abs(d) <= 1 ? stable + 1 : 0;
+            } else {
+                // 还没上屏：按账面顶边把它挪进窗口（下一帧它就有 DOM 了）
+                writeScrollTop(el, L.tops[ri] ?? 0);
+                stable = 0;
+            }
+            if (stable >= 2 || left-- <= 0) {
+                flashTurn(turnId);
+                return;
+            }
+            locateOwnTop = el.scrollTop; // 下一拍拿它判「是不是人滚了」
+            requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+    };
+
+    const locateHit = (hit: ChatFindHit) => {
+        const u = uri();
+        if (!u) return;
+        clearHitHighlight();
+        // ③ 流式中：先稳态（口径 4）—— 此刻抢滚动会和"跟随新内容"互相拉扯
+        if (localChatStore.view.live) {
+            pendingLocate = { turnId: hit.turnId, hit };
+            notificationStore.addToast("info", "这一轮正在生成：结束后自动定位到命中处");
+            return;
+        }
+        void (async () => {
+            const inTree = localChatStore.trees.some((t) => t.id === hit.turnId);
+            if (!inTree) {
+                const ok = await localChatStore.jumpTo(u, hit.at);
+                if (!ok) {
+                    notificationStore.addToast(
+                        "error",
+                        "定位失败：会话日志已被改写（这一轮的字节位置不再有效），请重新检索",
+                    );
+                    return;
+                }
+            }
+            scrollToTurn(hit.turnId);
+        })();
+    };
+
+    /** 流式收尾后补做待定的定位（只做一次：轮末下降沿是"现在可以抢滚动"的唯一时机） */
+    createEffect(
+        on(
+            () => localChatStore.view.live,
+            (live) => {
+                if (live || !pendingLocate) return;
+                const p = pendingLocate;
+                pendingLocate = null;
+                locateHit(p.hit);
+            },
+        ),
+    );
+
+    // 面板归属哪个任务：跟着 uri 走（首挂时 uri 可能还没到，故不能只靠 onMount 那一次）。
+    // `ownerUri` 记下**本页认领过的**那个 uri：卸载时按它交还（不能拿卸载那一刻的 uri() 去比
+    // —— 那时 props 可能已被上层置空，会比不上，于是"永不清空"或者"错清别人"）。
+    let ownerUri: string | null = null;
+    createEffect(
+        on(uri, (u) => {
+            ownerUri = u;
+            chatFindStore.claim(u, locateHit);
+        }),
+    );
+
+    // 桥接探针（口径 1）：页内查找 0/0 时对数据层探一次，让 FindBar 能说出「本会话另有 N 处」。
+    // 只在「页内没找到**且**查询非空」时探 —— 页内找到了就没必要再扫一遍数据层。
+    createEffect(() => {
+        const q = findStore.query;
+        const n = findStore.count;
+        const open = findStore.open;
+        const u = uri();
+        // ⚠️ **untrack**：`renderedTurnIds()` 依赖虚拟窗口，直接读会让"每滚一帧就整份重扫"
+        // （74MB 会话 = 滚动时主进程反复从头读文件，且边滚边重扫永远探不出结论）。
+        // 「其中几处未渲染」只是**探针那一刻**的快照 —— 它是一句提示，不必逐帧精确。
+        const rendered = untrack(renderedTurnIds);
+        if (!open || !u || !q.trim() || n > 0) {
+            chatFindStore.clearProbe();
+            return;
+        }
+        chatFindStore.probeDeep(u, q, rendered, chatFindStore.scopes);
+    });
+
     /** 被摘出行列之外的行：保留实测高度（不清），滚回来时位置才稳定 */
 
     /** 会话用量看板（抽屉）开关 */
@@ -3145,6 +3332,29 @@ export function LocalChatPage(props: {
                     </div>
                 </Show>
             </div>
+
+            {/* 段跳（##389 定位）后显示的是**历史**：块树里没有尾部那一段，必须给出显式回切出口 ——
+                否则用户会以为"会话就到这里"，而其实新消息还在后面（且实时 op 此刻被丢弃，
+                不会自己冒出来）。与 ops 断线条同理：状态的生命周期与状态本身等长。 */}
+            <Show when={localChatStore.detached}>
+                <div
+                    data-chat-detached="1"
+                    role="status"
+                    class="flex shrink-0 items-center gap-2 border-b border-warning/40 bg-warning/10 px-3 py-1.5 text-body"
+                >
+                    <span class="shrink-0 font-medium text-warning">正在查看历史</span>
+                    <span class="opacity-70">检索定位到的那一段；新消息仍在继续写盘</span>
+                    <button
+                        class="btn btn-xs btn-warning ml-auto"
+                        onClick={() => {
+                            const u = uri();
+                            if (u) void localChatStore.returnToTail(u).then(() => gotoBottom());
+                        }}
+                    >
+                        回到最新
+                    </button>
+                </div>
+            </Show>
 
             {/* 会话实时更新**中断常驻条**（##354 ③；判据 = `localChatStore.opsState === "down"`）。
                 单通道化（##327）之后 op 订阅是实时显示的唯一通道 ⇒ 它断了 = 用户**一个字都看不到**，
@@ -3539,6 +3749,19 @@ export function LocalChatPage(props: {
 
             <Show when={gensOpen() && uri()}>
                 <CompactHistoryPanel uri={uri()!} onClose={() => setGensOpen(false)} />
+            </Show>
+            {/* 数据层检索面板（##389）：⌘⇧F 开合；「跳」走本组件的 locateHit（见其上注释） */}
+            {/* 只由**当前任务这一页**渲染：多开 tab 时本组件可能同时存活多份，而面板状态是
+                单例 store —— 不判归属就会出现两个面板（一个查 A、一个查 B），互相盖住。 */}
+            <Show when={chatFindStore.open && chatFindStore.taskUri === uri()}>
+                <ChatFindPanel
+                    taskUri={uri}
+                    onLocate={locateHit}
+                    onClose={() => {
+                        chatFindStore.close();
+                        clearHitHighlight();
+                    }}
+                />
             </Show>
             {/* 清空确认：破坏性且不可恢复，点击与执行之间隔一层确认 */}
             <Show when={confirmClear()}>

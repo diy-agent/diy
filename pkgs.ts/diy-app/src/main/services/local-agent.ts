@@ -28,6 +28,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { writeFileAtomic } from "../core/atomic-write";
+import { findInOpsFile, type FindResult, type FindScopes } from "./local-find";
 import { diyHome, projectDir, projectFromUri } from "../core/state";
 import { keyOf, llmFile, llmLogRelPath, localDir, opsFile, sessionFileForWrite, sessionFilesToClear, sessionIdOf } from "../core/local-paths";
 
@@ -2126,6 +2127,80 @@ export class LocalAgentManager {
         // 留着是防未来改动把「至少往前 1 字节」这条丢掉 —— 那时空转 = 渲染端死循环补同一段。
         if (start >= at) return { ops: [], cursor: encodeCursor(fp, at), hasMore: false, stale: false };
         return this.segmentOf(taskUri, fp, start, at);
+    }
+
+    /**
+     * **含指定位置的定长段**（##389 段跳）：命中落在 `at` 那一轮，就从该轮取一段开始读。
+     *
+     * 与 `historyWindow` / `historyOlder` 的分工（**别混用**）：
+     *   · `historyWindow({cursor})` = `[游标, **文件尾**)` —— 它是"重取尾部窗口"，拿它当中段跳
+     *     会把中段到文件尾几十 MB 全折一遍（正是本方法要避免的）；
+     *   · `historyOlder({cursor})` = `[cursor - budget, cursor)` —— 只能前进到**已知游标之前**，
+     *     要跳到远处得连补十几次；
+     *   · 本方法 = `[at, 下一个不早于 at+budget 的轮首)`，一次到位，`hasNewer` 告诉渲染端
+     *     "后面还有内容没读"（段跳后它显示的是**历史**，尾部要显式回切）。
+     *
+     * `at` 不是轮首（日志被改写 / 定位到了一条过时命中）⇒ 退全量 + `stale`（与游标失效同一取向：
+     * 宁可重放整份，也不给出错位的窗口）。
+     *
+     * ⚠️ `budgetBytes` 缺省（0 / 不传）= **取到文件尾**（`budget=1` 时 `floor` 返回 `at` 本身 ⇒ `to=size`）。
+     * 不是"只取一轮"—— 渲染端固定传 4MB，故这条缺省只影响 CLI 手敲。
+     */
+    historyAt(
+        taskUri: string,
+        opts: { at: number; budgetBytes?: number },
+    ): HistoryWindow & { hasNewer: boolean } {
+        const fp = opsFile(taskUri);
+        const fallback = { ...this.segmentOf(taskUri, fp, 0, undefined, true), hasNewer: false };
+        if (!isTurnStartAt(fp, opts.at)) return fallback;
+        let size = 0;
+        try {
+            size = statSync(fp).size;
+        } catch {
+            return fallback;
+        }
+        const budget = Math.max(1, opts.budgetBytes ?? 0);
+        // 段尾 = 「≤ at+budget 的最近一个轮首」（floor，复用上滚那条 seek）：边界永远是干净的轮首，
+        // 而 budget 至少 1 字节 ⇒ 只要中间还有轮首就一定 > at（没有就一路取到文件尾）
+        const ceiling = Math.min(size, opts.at + budget);
+        const floor = seekTurnStartAtOrBefore(fp, ceiling);
+        const to = floor > opts.at ? floor : size;
+        const w = this.segmentOf(taskUri, fp, opts.at, to);
+        return { ...w, hasNewer: to < size };
+    }
+
+    /**
+     * **会话数据层检索**（##389）：在 ops.jsonl 原文里找字，与渲染窗口 / DOM 无关。
+     *
+     * 为什么在 main 做：渲染端只有**一个窗口**的块树（首载 4MB + 上滚补段），窗口外的轮
+     * 根本不在内存里；而真相源（append-only 的 ops）在盘上，且压缩**不搬文件、不 rm**
+     * ⇒ 扫原文天然覆盖「已压缩掉的历史」（口径见 local-find 头注）。
+     *
+     * 「已压缩」判定取**最近一条** compact 账的保留边界：`keptFromOpsOffset`（字节偏移，
+     * 快路径）优先，旧账没有偏移时退 `keptFromTurnId`（按轮序）。两者都没有 = 从没压缩过。
+     */
+    async findInSession(
+        taskUri: string,
+        opts: { query: string; scopes?: Partial<FindScopes>; maxTurns?: number; signal?: AbortSignal },
+    ): Promise<FindResult> {
+        const fp = opsFile(taskUri);
+        let compactedBefore: number | null = null;
+        let compactedFromTurnId: string | null = null;
+        const events = readCompactLog(taskUri);
+        let latest: CompactEventRecord | null = null;
+        for (const e of events) if (e.kind === "compact") latest = e;
+        if (latest) {
+            compactedBefore = latest.boundary?.keptFromOpsOffset ?? null;
+            compactedFromTurnId = latest.boundary?.keptFromTurnId ?? null;
+        }
+        return findInOpsFile(fp, {
+            query: opts.query,
+            scopes: opts.scopes,
+            maxTurns: opts.maxTurns,
+            compactedBefore,
+            compactedFromTurnId,
+            signal: opts.signal,
+        });
     }
 
     /**
