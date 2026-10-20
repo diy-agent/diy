@@ -2,31 +2,9 @@
 //   ① 目标文件逐字不变（连 mtime 都不动）② tmp 已清理 ③ 错误原样上抛（同一个错误对象）。
 // 为什么必须注入而不是「真把磁盘填满」：填满磁盘不可复现、代价大，而 2026-10-18 的 ENOSPC 事故
 // 正是这么撞上的。这里两种注入都是**确定性**的：
-//   · 只读目录 / mock writeFileSync → 写临时文件失败（真实的 EACCES / 复刻 ENOSPC）
-//   · mock renameSync 抛固定错误对象 → rename 失败（并可断言「抛出的就是它本身」）
-const faults = vi.hoisted(() => ({
-    write: false,
-    rename: false,
-    // 固定实例：断言「错误原样上抛」靠的就是对象同一性
-    writeError: Object.assign(new Error("injected write failure"), { code: "ENOSPC" }),
-    renameError: Object.assign(new Error("injected rename failure"), { code: "EIO" }),
-}));
-
-vi.mock("node:fs", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("node:fs")>();
-    return {
-        ...actual,
-        default: actual,
-        writeFileSync: (...args: Parameters<typeof actual.writeFileSync>) => {
-            if (faults.write) throw faults.writeError;
-            return actual.writeFileSync(...args);
-        },
-        renameSync: (...args: Parameters<typeof actual.renameSync>) => {
-            if (faults.rename) throw faults.renameError;
-            return actual.renameSync(...args);
-        },
-    };
-});
+//   · 只读目录 / 注入的 writeFileSync 抛错 → 写临时文件失败（真实的 EACCES / 复刻 ENOSPC）
+//   · 注入的 renameSync 抛固定错误对象 → rename 失败（并可断言「抛出的就是它本身」）
+import * as nodeFs from "node:fs";
 
 import {
     chmodSync,
@@ -41,8 +19,31 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { writeFileAtomic } from "../../src/main/core/atomic-write";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { realFs, writeFileAtomic, type FsLike } from "../../src/main/core/atomic-write";
+
+// 故障注入**走依赖参数**（##402），不 mock 全局 `node:fs`：mock 改的是全局模块表，
+// `isolate:false` 下谁先加载了 fs 它就会静默失效。这里造一份「除故障点外全转发真 fs」的桩
+// —— 其余调用仍是**真盘**语义（tmp 真的落盘、真 rename、真 stat）。
+const faults = {
+    write: false,
+    rename: false,
+    // 固定实例：断言「错误原样上抛」靠的就是对象同一性
+    writeError: Object.assign(new Error("injected write failure"), { code: "ENOSPC" }),
+    renameError: Object.assign(new Error("injected rename failure"), { code: "EIO" }),
+};
+
+const faultyFs: FsLike = {
+    ...realFs,
+    writeFileSync: (...args: Parameters<typeof nodeFs.writeFileSync>) => {
+        if (faults.write) throw faults.writeError;
+        return nodeFs.writeFileSync(...args);
+    },
+    renameSync: (...args: Parameters<typeof nodeFs.renameSync>) => {
+        if (faults.rename) throw faults.renameError;
+        return nodeFs.renameSync(...args);
+    },
+};
 
 const OLD = "# 老正文\n\n第一段（必须逐字留在原地）。\n\n第二段：中文 + emoji 🐳 + \\n 转义。\n";
 
@@ -127,7 +128,7 @@ describe("writeFileAtomic — 失败注入：原文件逐字不变 + tmp 清理 
     it("写临时文件失败（注入 writeFileSync 抛 ENOSPC —— 复刻 2026-10-18 那次磁盘满）", () => {
         seedOld();
         faults.write = true;
-        expect(() => writeFileAtomic(fp, "x".repeat(64))).toThrow(faults.writeError);
+        expect(() => writeFileAtomic(fp, "x".repeat(64), { fs: faultyFs })).toThrow(faults.writeError);
         expect(readFileSync(fp, "utf-8")).toBe(OLD);
         expect(entries(dir)).toEqual(["AGENTS.md"]);
     });
@@ -137,7 +138,7 @@ describe("writeFileAtomic — 失败注入：原文件逐字不变 + tmp 清理 
         faults.rename = true;
         let caught: unknown;
         try {
-            writeFileAtomic(fp, "写不进去的正文");
+            writeFileAtomic(fp, "写不进去的正文", { fs: faultyFs });
         } catch (e) {
             caught = e;
         }
@@ -153,7 +154,7 @@ describe("writeFileAtomic — 失败注入：原文件逐字不变 + tmp 清理 
     it("失败后**再次**写入是干净的（上次的 tmp 不干扰本次）", () => {
         seedOld();
         faults.write = true;
-        expect(() => writeFileAtomic(fp, "失败的第一次")).toThrow();
+        expect(() => writeFileAtomic(fp, "失败的第一次", { fs: faultyFs })).toThrow();
         faults.write = false;
         writeFileAtomic(fp, "成功的第二次");
         expect(readFileSync(fp, "utf-8")).toBe("成功的第二次");

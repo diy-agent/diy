@@ -32,6 +32,12 @@ beforeAll(() => {
 let seq = 0;
 const newUri = (): string => createTask({ title: `轮首上下文 ${++seq}`, project: PROJECT });
 
+// 来源房间 id：**每个用例一份**（不共用固定 `tasks/9`）。水位（`lastSeen`）是**异步**写的
+// （promise 链），共用同一间房时，前一个用例的迟到写会落进后一个用例的 `before` 快照 ——
+// `--no-isolate` + `--sequence.shuffle` 下实测让用例 ⑥「投递轮不动水位」假红。
+let roomSeq = 0;
+const newRoomId = (): string => `projects/${PROJECT}/tasks/${900 + ++roomSeq}`;
+
 const usage: LanguageModelV3Usage = {
   inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
   outputTokens: { total: 5, text: 5, reasoning: 0 },
@@ -165,7 +171,7 @@ describe("房间上下文真的进了请求（runtime 单元）", () => {
 
   it("③ 投递来的 ⇒ 看的是**来源房间**，正文仍是原话（不含房间前缀/近期发言）", async () => {
     const uri = newUri(); // 收件人自己的任务
-    const src = `projects/${PROJECT}/tasks/9`;
+    const src = newRoomId();
     seedRoom(src, uri); // 来源房间里有个绑 uri 的成员
     const prompts = { prompts: [] as unknown[] };
     const { prompt, ops } = await run(
@@ -192,7 +198,7 @@ describe("房间上下文真的进了请求（runtime 单元）", () => {
     const uri = newUri();
     seedRoom(uri, uri);
     appendEvent(uri, mkSay("human:chen56", "本任务房间的一句无关内容", 3));
-    const src = `projects/${PROJECT}/tasks/9`;
+    const src = newRoomId();
     seedRoom(src, uri);
     const prompts = { prompts: [] as unknown[] };
     const { prompt, ops } = await run(
@@ -227,10 +233,15 @@ describe("房间上下文真的进了请求（runtime 单元）", () => {
 
   it("⑥ 投递轮**不动水位**（水位归 room-service；两边都动会把水位往回拨，review1 R3）", async () => {
     const uri = newUri();
-    const src = `projects/${PROJECT}/tasks/9`;
+    const src = newRoomId();
     seedRoom(src, uri);
     const before = { ...(readRoom(src)?.lastSeen ?? {}) };
+    // ⚠ `fromDelivery: true` 不能省：这是**投递轮**的判据（水位归 room-service）。漏了它就变成
+    //   自起轮 ⇒ 成轮后 `commitSelfStartContext` 本该前移水位，断言自然不成立。
+    //   此前它"能过"只是因为共用房间的上一例先把水位写成了同一个 tailId（空转断言），
+    //   `--sequence.shuffle` / 独立房间一验即现 —— 与本任务无关的老测试缺陷，顺手钉住。
     await run(uri, new LocalAgentManager(() => stubModel()), {
+      fromDelivery: true,
       author: "human:chen56",
       room: { roomId: src, sayId: "e_other" },
     });

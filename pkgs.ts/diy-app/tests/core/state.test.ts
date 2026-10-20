@@ -2,8 +2,8 @@
 // 🎯 核心意图测试：state.yaml 读写、AGENTS.md 解析
 //    所有测试数据在 /tmp/diy-desktop-test-xxx/ 下，不碰生产 ~/.diy/
 
-import { describe, it, expect, beforeAll } from "vitest";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { diyHome } from "../../src/main/core/state";
 import {
@@ -20,6 +20,13 @@ import {
 // ═══════════════════════════════════════
 
 describe("state.yaml 读写", () => {
+  // 本组第一条用例断言的是「**盘上没有** state.yaml」时的缺省。同一文件里后面的用例会
+  // saveState 写盘，`--sequence.shuffle` 打乱顺序后前者就变成「读到别人写的 2 个 subjects」。
+  // 每条用例自造前置：先删掉盘上那份，再断言缺省行为（不放宽断言）。
+  beforeEach(() => {
+    rmSync(join(diyHome(), "state.yaml"), { force: true });
+  });
+
   it("文件不存在时返回默认 profiles 和空 subjects", () => {
     const state = loadState();
 

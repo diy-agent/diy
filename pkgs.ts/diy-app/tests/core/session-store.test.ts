@@ -25,9 +25,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RegistryFrame, SessionEntry } from "../../src/shared/registry-frame";
 
-// 钉死 solid 的**客户端**构建（理由见头注）。vitest 会把它作用于本文件整张模块图，
-// 故 store 内部的 `createSignal` 与下面 harness 的 `createEffect` 是**同一份实现**。
-vi.mock("solid-js", () => import("solid-js/dist/solid.js"));
+// solid 的**客户端**构建由 vitest.config.ts 的 alias 钉死（理由见头注）：store 内部的
+// `createSignal` 与下面 harness 的 `createEffect` 是**同一份实现**。
 
 // ── 最小假 transport：只应答本用例真会走的两个 RPC ──────────────────
 // 形状照 `@diy-agent/rpc` 的 EnvelopeTransport（send / on / onClose）；信封照 types.ts：
@@ -99,7 +98,14 @@ const store = new Map<string, string>();
     removeItem: (k: string) => void store.delete(k),
 };
 
+// 本文件用的是**真** RPC 客户端（假 transport 只替传输层）。`--no-isolate` 下模块跨文件共享，
+// 别的 store 用例会把 `setDiyService(假实现)` 留在模块里 —— 这里显式回到真实现（首次访问才懒建，
+// 届时 `window.transport` 已由上面的最小假 transport 就位）。
+const { setDiyService } = await import("../../src/renderer_solid/lib/rpc");
+setDiyService(null);
+
 const { sessionStore } = await import("../../src/renderer_solid/store/sessionStore");
+const { usageLedgerStore } = await import("../../src/renderer_solid/store/usageLedgerStore");
 const { createEffect, createRoot, createSignal } = await import("solid-js");
 
 /** 一帧 = 一秒的让位（微任务 + 宏任务），足够让订阅循环把帧处理完 */
@@ -160,7 +166,11 @@ function mountFollowEffect(active: () => ActiveTab | undefined): { runs: () => n
     return { runs: () => runs, dispose };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+    // 先让上个用例的尾巴（微任务里的 transport 应答 / 账本 pump 的 finally 里 setVersion）
+    // 全部落地再清 —— 否则它们会在**下一条用例**里触发一次合法的 effect 重跑，
+    // 把 `runs()` 上界顶破（`--sequence.shuffle` 换个顺序即现）。订阅与 store 都已 stop。
+    await settle();
     sent.length = 0;
     unhandled.length = 0;
     ledgerRows = [];
@@ -169,6 +179,12 @@ beforeEach(() => {
     // 实测症状：本文件的用例单独跑全绿，一起跑就红 —— 后一个用例读到前一个用例写下的水位。
     store.clear();
     sessionStore.stop();
+    // 账本（usageLedgerStore）是本文件的**跨用例缓存**：拉到过就永久缓存、拉不到就每轮
+    // 再 ensure 一次 —— 于是同一条用例的 effect 重跑次数取决于"别人有没有先把它拉热"
+    // （`--sequence.shuffle` 换个顺序即现：冷启动 6 次 vs 热缓存 3 次）。
+    // 统一预热：先让它拉一次并等落地，后续不再因"账本到货"多跑（断言的上界才与顺序无关）。
+    usageLedgerStore.ensure("projects/2/tasks/1", "projects/9/tasks/9");
+    await settle();
 });
 afterEach(() => {
     sessionStore.stop();

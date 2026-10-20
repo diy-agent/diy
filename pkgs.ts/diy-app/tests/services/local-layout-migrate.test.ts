@@ -3,7 +3,7 @@
 //
 // 为什么单测必须真造盘：这个命令动的正是「删源文件」的活 —— 桩掉 fs 就等于没测。
 
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { diyHome } from "../../src/main/core/state";
@@ -11,6 +11,13 @@ import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
 import { keyOf, legacySessionFile, localDir, resolveSessionFile, sessionDir, sessionFile } from "../../src/main/core/local-paths";
 import { migrateLocalLayout } from "../../src/main/services/local-layout-migrate";
+
+// 每条用例从**空 local/ 目录**起步：`migrateLocalLayout` 是全盘扫描，断言 `moved/conflicts`
+// 是"本次搬了几份" —— 别的用例留在盘上的旧文件会让计数串味（`--sequence.shuffle` 打乱顺序即可现）。
+// 每个测试文件有独立 DIY_HOME（tests/setup.ts），清 `local/` 不影响别处。
+beforeEach(() => {
+    rmSync(localDir(), { recursive: true, force: true });
+});
 
 let URI = "";
 beforeAll(() => {

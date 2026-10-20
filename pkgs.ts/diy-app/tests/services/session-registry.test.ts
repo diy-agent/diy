@@ -15,6 +15,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { join } from "node:path";
+import { rmSync } from "node:fs";
 import { diyHome } from "../../src/main/core/state";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
@@ -173,6 +174,9 @@ describe("LocalAgentManager.setLimits — 写盘 + 失效缓存", () => {
       saved[k] = process.env[k];
       delete process.env[k]; // 环境变量优先级最高，会让写入值"不生效"而误判
     }
+    // 盘上的 limits.json 是**跨用例**真值：本组用例会 setLimits 写盘，用例顺序一变
+    // （`--sequence.shuffle`）就会把上一个用例的 150 读成"缺省"。每组从干净状态起步。
+    rmSync(join(diyHome(), "local", "limits.json"), { force: true });
   });
   afterEach(() => {
     for (const [k, v] of Object.entries(saved)) {

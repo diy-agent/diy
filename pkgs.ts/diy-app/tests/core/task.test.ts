@@ -328,8 +328,13 @@ describe("deleteTask", () => {
 // ═══════════════════════════════════════
 
 describe("listTasks", () => {
+  // 自造前置：旧注释靠「前面的 createTask 测试已经建了任务」—— `--sequence.shuffle` 下
+  // 那个前提不成立（本组可能先跑）。本组自己建一个，断言强度不变。
+  beforeAll(() => {
+    createTask({ title: "listTasks 前置任务", project: PROJECT });
+  });
+
   it("列出所有已创建的任务（不传 project）", () => {
-    // 前面的 createTask 测试已经创建了若干任务
     const all = listTasks();
     expect(all.length).toBeGreaterThanOrEqual(1);
   });

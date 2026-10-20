@@ -99,10 +99,21 @@ const SEED_TASKS: Array<{ title: string; body: string; state: string; parent?: n
  *        不补缺项（否则用户删掉的 provider 会被一次次种回来）。显式 `diy seed run`
  *        省略此参数 = 缺则补。
  */
+/**
+ * seed 的可注入依赖（**仅测试注入用**，##402）。缺省 = 真实现。
+ *
+ * 为什么做成参数：测试要验「撞上生产数据根 → 一个字节都不写」这条护栏，但不能真的指向
+ * `~/.diy`（写坏就是事故）。旧做法 `vi.mock("instance-identity")` 改的是全局模块表，
+ * `isolate:false` 下会被别的文件先加载的实现静默顶掉 —— 注入后「用哪份判据」由调用点决定。
+ */
+export interface SeedDeps {
+    isProdDataHome: (home: string) => boolean;
+}
+
 export function seedHome(
     home: string,
     env: NodeJS.ProcessEnv = process.env,
-    opts: { autoOnly?: boolean } = {},
+    opts: { autoOnly?: boolean; deps?: Partial<SeedDeps> } = {},
 ): SeedReport {
     const report: SeedReport = {
         home,
@@ -115,7 +126,8 @@ export function seedHome(
     // 硬护栏（与 dev 入口的「拒绝继承生产 DIY_HOME」是两道独立的门，但判据同源：
     // instance-identity::isProdDataHome）：变体开关只保证 prod **不自动**种，挡不住
     // 「DIY_VARIANT=lab + DIY_HOME=~/.diy」这种显式组合 —— 那才是真会写坏生产数据的路径。
-    if (isProdDataHome(home)) {
+    const isProd = opts.deps?.isProdDataHome ?? isProdDataHome;
+    if (isProd(home)) {
         report.skipped = `生产数据根永不种入：${home}`;
         return report;
     }

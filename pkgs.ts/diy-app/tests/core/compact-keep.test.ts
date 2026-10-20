@@ -9,7 +9,7 @@
 //   ⑤ `check` 的 must 层硬上限判据（测量注入 ⇒ 可确定性测）。
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { readFileSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import * as yaml from "js-yaml";
 import { join } from "node:path";
 import { diyHome } from "../../src/main/core/state";
@@ -40,6 +40,10 @@ import type { LocalModelMessage } from "../../src/main/services/local-blocks";
 
 const HOME = join(diyHome(), "keep-home");
 beforeAll(() => {
+    // 自造前置：本文件用独立的子数据根 `keep-home`。目录不先建出来的话，下面的
+    // 「直接写坏文件」用例（`writeFileSync(..., force:false)`）在**首次运行**就 ENOENT ——
+    // 旧顺序下只是碰巧有别的用例先 `saveAutoCompact`（它 mkdir）建了目录。
+    mkdirSync(HOME, { recursive: true });
     rmSync(autoCompactFile(HOME), { force: true });
 });
 
