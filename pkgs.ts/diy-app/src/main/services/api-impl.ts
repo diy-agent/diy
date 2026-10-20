@@ -38,6 +38,9 @@ import * as flowThread from "../core/flow-thread";
 import { flowPrompt } from "./flow-prompt";
 import { AsyncQueue } from "./async-queue";
 import { modelNoticeHub } from "./model-notice";
+import { envWatchHub, ensureDiskPoller, noteWriteError, realStatfs, simulateEnvFact } from "./env-watch";
+import { envNoticeFromDisk, fmtDiskBytes, type EnvNotice } from "../../shared/env-watch";
+import { setWriteErrorHook } from "../core/atomic-write";
 import { collectInstances, focusInstance, renderInstanceList, selfReport } from "./instances";
 import { revealSelf, windowState } from "./window-ops";
 import { shortName } from "../../shared/room";
@@ -69,7 +72,43 @@ const app = apiDef.diy;
  * apiDef 已 router() 包裹（全名回写），binding 可以是 HttpServerBinding（生产）
  * 或 ChannelServerBinding（测试）。转发 diy.ui.* 由调用方在 binding 上 onForward。
  */
+/**
+ * `diy env ls` 的人读表格（对齐 instances.ls 的口径：给人看，不是给程序解析）。
+ *
+ * 数字**一律给**（`rule`：更明确的识别 = 给数字，不是给形容词）：只写"磁盘可能满了"
+ * 对排查没有价值。
+ */
+function renderEnvList(rows: EnvNotice[]): string {
+  if (rows.length === 0) return "环境正常：磁盘水位充足、网络无连续失败。";
+  const lines = rows.map((n) => {
+    switch (n.type) {
+      case "disk-full":
+      case "disk-low": {
+        const d = n.data;
+        const size =
+          d.availBytes < 0 || d.totalBytes < 0
+            ? "可用空间读不到"
+            : `可用 ${fmtDiskBytes(d.availBytes)} / 共 ${fmtDiskBytes(d.totalBytes)}`;
+        const from = d.source === "write-error" ? "（写失败被动升级）" : "（轮询）";
+        return `[${n.level}] ${n.type}  ${d.mount || "?"}  ${size}${from}  ${d.reason}  (id=${n.id})`;
+      }
+      case "network-down": {
+        const d = n.data;
+        return `[${n.level}] ${n.type}  连续 ${d.streak} 次${d.code ? ` ${d.code}` : ""}  ${d.message}  ${d.reason}  (id=${n.id})`;
+      }
+    }
+  });
+  return lines.join("\n");
+}
+
 export function bindAppHandlers(binding: ServerBinding): void {
+  // 写失败 → 环境通知（##384）：ENOSPC 立刻升级成 disk-full，不等下一轮轮询（30s）。
+  // 挂在这里而不是 main/index.ts：Electron / serve / 测试三条入口都走 api-impl，不漏一处。
+  setWriteErrorHook((e, path) => {
+    void noteWriteError(e, path).catch(() => {
+      /* 观测路径，绝不改变写失败语义 */
+    });
+  });
   // 空数据根的初始种入（lab；见 core/seed.ts）。必须在 refreshModelRuntime 之前 ——
   // 种子会写 model.yaml，晚于装配就看不见刚种下的 provider（要等下次刷新）。
   // 失败不阻断启动（种子只是便利，不是前提）。
@@ -1092,6 +1131,58 @@ export function bindAppHandlers(binding: ServerBinding): void {
   });
   binding.on(app.notice.watch, async function* ({ signal }) {
     for await (const n of modelNoticeHub.subscribe(signal)) yield n;
+  });
+
+  // ── env（「环境感知」通知；##384）──
+  // 数据源 = main 侧环境通知中心（主动轮询磁盘水位 + 被动写失败/网络错误码）。
+  // 首次访问顺手起轮询器（懒加载：Electron / serve / 测试三条入口都走 api-impl，不漏一处）。
+  binding.on(app.env.list, async () => {
+    ensureDiskPoller();
+    return envWatchHub.list();
+  });
+  binding.on(app.env.ls, async () => {
+    ensureDiskPoller();
+    return renderEnvList(envWatchHub.list());
+  });
+  binding.on(app.env.dismiss, async ({ input }) => {
+    envWatchHub.dismiss(input.id);
+    return { status: "ok" };
+  });
+  binding.on(app.env.watch, async function* ({ signal }) {
+    ensureDiskPoller();
+    for await (const ev of envWatchHub.subscribe(signal)) yield ev;
+  });
+  binding.on(app.env.simulate, async ({ input }) => {
+    if (readRuntimeConfig().env === "production") {
+      throw new Error("env simulate 是探针命令，生产环境一律拒绝（DIY_ENV=production）");
+    }
+    if (input.diskAvail !== undefined) {
+      const notice = await simulateEnvFact({
+        kind: "disk",
+        availBytes: input.diskAvail,
+        totalBytes: input.diskTotal ?? 500 * 1024 ** 3,
+        mount: input.diskMount,
+      });
+      return { notice };
+    }
+    if (input.netCode !== undefined) {
+      const notice = await simulateEnvFact({
+        kind: "network",
+        code: input.netCode,
+        streak: input.netStreak,
+        message: input.netMessage,
+      });
+      return { notice };
+    }
+    throw new Error("至少给一个事实：--disk-avail <bytes> 或 --net-code <code>");
+  });
+  binding.on(app.env.probe, async ({ input }) => {
+    const target = input.path ?? process.env["DIY_ENV_WATCH_TARGET"] ?? "/";
+    const sample = await realStatfs(target);
+    const notice = envNoticeFromDisk(sample, "poll");
+    if (notice) envWatchHub.push(notice);
+    else envWatchHub.resolveDisk(sample);
+    return { sample, notice };
   });
 
   // ── llmConfig（模型 provider 配置）──
