@@ -194,6 +194,7 @@ import {
     type ReasoningEffort,
 } from "../../shared/models";
 import { personaByIdOrName, personaForTask } from "../core/persona";
+import { ensureReasoningReplay, isDeepSeekWire, type ReasoningReplayOpts } from "./reasoning-replay";
 import { resolveModelKey } from "../core/model-runtime";
 
 // 模型查询函数抽到 shared/models.ts（core 不能被 services 反向依赖，否则循环 import）。
@@ -217,6 +218,28 @@ export const MAX_STEER_ROUNDS = 8;
  */
 export function resolveBaseUrl(m: ResolvedModel): string {
     return process.env["DIY_ZEN_BASE_URL"] || m.baseUrl;
+}
+
+/**
+ * thinking 回放的归一开关（##398）：本次请求要补 `reasoning_content` 吗？
+ *
+ * 判据（body 里钉死的三条，别凭感觉）：
+ *   ① **本次是 thinking 模式**：档位非 `none`（`none` 是唯一显式关掉思考的语义）——
+ *      与真发发推理参数的条件同源（本文件 streamText 之前那段）。
+ *      **不按「模型是否支持该档」再收窄**：真发并不校验 supported（手写 personas 的档位不在
+ *      词表里也照发，见 `reasoningEffort` 的解析），这里收窄会漏补（漏补 = 继续 400），
+ *      而多补一个空串的成本为零（上游接受空串，实测见 scripts/probe-reasoning-400.mts 的 E 组）。
+ *      `default`（平台默认）也算 thinking：那只是"我们不发档位参数"，不是"关掉思考"。
+ *   ② **是不是 deepseek 系**：见 `reasoning-replay.ts::isDeepSeekWire`（收窄，别放宽）。
+ *   ③ **只对 chat 面**：`@ai-sdk/openai-compatible` 才把消息级 `providerOptions.openaiCompatible`
+ *      透传到 wire。responses 面（`@ai-sdk/openai`）命名空间是 `openai`、也没有 `reasoning_content`
+ *      这个字段 —— 在那里补既到不了 wire，还会塞进一个包里不认的键。
+ */
+export function reasoningReplayOptsOf(rm: ResolvedModel, reasoningEffort: ReasoningEffort): ReasoningReplayOpts {
+    const thinking = reasoningEffort !== "none";
+    const deepseek =
+        rm.api !== "responses" && isDeepSeekWire({ provider: rm.provider, model: rm.id, baseUrl: resolveBaseUrl(rm) });
+    return { thinking, deepseek };
 }
 
 // 解析「人物/覆盖里写的模型引用」→ 运行时模型 + 密钥：见 LocalAgentManager.resolveModel。
@@ -3691,8 +3714,20 @@ export class LocalAgentManager {
                 toolsBytes: JSON.stringify(tools).length,
             };
             const hist = this.deliveryHistory(taskUri, sess.store);
-            const sent: ModelMessage[] = normalizeUserRuns(
-                withRuntime(hist.messages, delivery.runtime.text, hist.note, renderSummaryPart(this.effectiveSummary(taskUri))),
+            // ── thinking 回放归一（##398）──
+            // 上游（DeepSeek thinking 模式 / luminal 严判端点）要求**每条回放的 assistant**都带
+            // `reasoning_content`；而生成侧不一定每步都有推理（实测 31% 的 assistant 无 think 块，
+            // ##266 会话），SDK 的 assistant 分支见"没有 reasoning part"就**连字段都不输出** ⇒ 整轮 400。
+            // 归一 = 给缺推理的 assistant 挂 `providerOptions.openaiCompatible.reasoning_content=""`
+            // （消息级 providerOptions 被 @ai-sdk/openai-compatible 整对象透传到 wire）。
+            // ⚠️ 只加 providerOptions：**不加 part、不加消息** —— 条数/下标仍 = llm.jsonl 行号（##371 铁律）。
+            // 顺序：归一在 rawSink **之前** ⇒ research raw dump（kind:"request"）记的就是**最终 wire 形状**
+            // （含这个补丁字段）；UI 预览 / llm.jsonl 仍看不到它 —— 那是块树投影（落盘真源），归一只属于投递侧。
+            const sent: ModelMessage[] = ensureReasoningReplay(
+                normalizeUserRuns(
+                    withRuntime(hist.messages, delivery.runtime.text, hist.note, renderSummaryPart(this.effectiveSummary(taskUri))),
+                ),
+                reasoningReplayOptsOf(rm, reasoningEffort),
             );
             // 本轮的**投递选择事实**（配置驱动压缩）：分表用它标注「本步（轮首）投递被压过」（##272 B1）。
             // 与 compact 事件解耦 —— 事件只在触发/手动时写；这里每轮首都有（投递本就无条件按当前配置筛选）。
@@ -4296,7 +4331,8 @@ export async function previewSimulatedRequest(opts: {
     }
     const taskUri = opts.taskUri;
     // 不传模型 = 按任务当前人物预览：这才是"下一轮真发会用的模型与上下文预算"
-    const model = opts.model ?? personaForTask(diyHome(), taskUri).model;
+    const persona = personaForTask(diyHome(), taskUri);
+    const model = opts.model ?? persona.model;
     const cwd = resolveCwdWithNote(diyHome(), taskUri).cwd;
     const L = getLocalAgent().getLimits();
     const modelMax = modelOutputTokens(model);
@@ -4307,13 +4343,21 @@ export async function previewSimulatedRequest(opts: {
         : getLocalAgent().deliveryMessages(taskUri);
     // 与真发**逐字同形**：末条 user = 本轮输入 → 外面套**尾部信封**（history? + runtime + user），
     // 再合并相邻 user。别各插一条消息 —— 那样合出来是「YAML + 裸文本」，预览会撒谎。
-    const messages: ModelMessage[] = normalizeUserRuns(
-        withRuntime(
-            [...hist.messages, { role: "user", content: opts.lastUser ?? "[仿真占位]真实下一轮此处为用户输入" }],
-            opts.runtime ?? "",
-            hist.note,
-            renderSummaryPart(getLocalAgent().effectiveSummary(taskUri)),
+    // thinking 回放归一（##398）也要在预览里跑：否则预览显示「没补 reasoning_content」而真发补了
+    // ⇒ 预览撒谎。档位取与真发同源（人物档位 || 模型默认档）。
+    const previewRm = findModel(model);
+    const messages: ModelMessage[] = ensureReasoningReplay(
+        normalizeUserRuns(
+            withRuntime(
+                [...hist.messages, { role: "user", content: opts.lastUser ?? "[仿真占位]真实下一轮此处为用户输入" }],
+                opts.runtime ?? "",
+                hist.note,
+                renderSummaryPart(getLocalAgent().effectiveSummary(taskUri)),
+            ),
         ),
+        previewRm
+            ? reasoningReplayOptsOf(previewRm, persona.reasoningEffort || reasoningOf(model).default)
+            : { thinking: false, deepseek: false },
     );
     let body: Record<string, unknown> | null = null;
     simBodySink = (b) => {
