@@ -664,3 +664,129 @@ export function procOpenOf(n: BlockNode, pin: Record<string, boolean>, live: boo
     if (n.id in pin) return pin[n.id]!;
     return false;
 }
+
+// ─── 活动框（TailBox）三件套：意图标题 / 等待语义 / 耗时字节（##399） ──────────
+
+/** 标题里"意图"这一截的字数上限（与 `firstLine` 的 90 同一口径；标题本身还有 CSS truncate） */
+const INTENT_MAX = 90;
+
+/** 取文本的**最后一行非空**（意图末行用；与 `firstLine` 对称） */
+export function lastLine(text: string, max = INTENT_MAX): string {
+    const lines = text.split("\n");
+    for (let i = lines.length - 1; i >= 0; i--) {
+        const t = lines[i]!.trim();
+        if (t) return t.length > max ? `${t.slice(0, max)}…` : t;
+    }
+    return "";
+}
+
+/** `node` 的**同层兄弟表**（哪一层含它就算哪一层：step / turn 都行） */
+function siblingsOf(container: BlockNode, node: BlockNode): BlockNode[] | null {
+    if (container.children.includes(node)) return container.children;
+    for (const c of container.children) {
+        const r = siblingsOf(c, node);
+        if (r) return r;
+    }
+    return null;
+}
+
+/**
+ * 工具行的**意图** = 同一步里、它前面最近那个 think 的**最后一行非空文本**。
+ *
+ * 为什么不是"命令首行"（用户 2026-10-20 拍板 B）：模型的思考末尾那句通常就是在自述
+ * "我为什么要动这一步"，天然短、且在工具**参数还没到**的 streaming 阶段就有内容可显示；
+ * 命令首行在那一刻根本不存在（`tool-call` 才写 `args`，见 main 的 `local-agent`）——
+ * 活动框标题于是只剩一个 `bash ·` 空尾巴。
+ *
+ * 判据边界（都有单测）：
+ *   · 前面没有 think ⇒ null（标题只写工具名，用户口径：「就只输出 'bash' 即可」）；
+ *   · 最近的 think 末行为空（全空白）⇒ 继续往前找；
+ *   · 同一步里的 `text` / 其它 `tool` 块 ⇒ 跳过（它们不是"思考已经结束"的信号）；
+ *   · **只看同层**（同一步）—— 跨步拿上一步的思考当意图就是编造理由；
+ *   · 命令不丢：`ToolBody` 首行恒给 `$ <完整命令>`（见 LocalChatPage 的 `cmdNeedsFull`）。
+ */
+export function intentOf(turn: BlockNode, node: BlockNode): string | null {
+    const sibs = siblingsOf(turn, node);
+    if (!sibs) return null;
+    const i = sibs.indexOf(node);
+    if (i < 0) return null;
+    for (let k = i - 1; k >= 0; k--) {
+        const s = sibs[k]!;
+        // 同一步里工具可能连着好几个（并行调用），工具与**正文**都是同一步的内容 —— 继续往前
+        // 穿过它们去找思考。正文必须跳过：真实流里"think → text（模型边想边说的一句）→ tool"
+        // 是常态（lab 实测 `_s3` 就是这形状），把 text 当"思考已经过去了"会让整条 B 方案在
+        // 最常见的形状上失效（标题退回只剩 `bash`）。
+        if (s.tag === "tool" || s.tag === "text") continue;
+        if (s.tag !== "think") return null; // 错误 / 未知块 = 这一步的思考确实已经过去了
+        const line = lastLine(attrStr(s.attrs.content));
+        if (line) return line;
+    }
+    return null;
+}
+
+/**
+ * 活动框**此刻该说自己在等什么**（三档；用户 2026-10-20 拍板）。
+ *
+ * 判据全部是块树里已有的事实，不动 main 侧 ops 契约：
+ *   · `streaming` —— `tool-input-start` 就建块了（`status="streaming"`、`args` 还空），
+ *     模型正在吐参数。用户口径：「不许再说"等工具返回"」。
+ *   · `running` 且无输出 —— 工具真在执行。
+ *   · **已 stop 但还没有下一块** —— 等下一个请求的首字（实测 P50 2.9s / P95 15s，见任务 399）。
+ *     这是用户体感"等几秒"的真凶，原本文案在这里只说"等待下一步"、完全没说在等**模型**。
+ *
+ * `live=false`（现场/历史行）恒 null：那些不是"在等"，是"停在那了"。
+ */
+export function waitTextOf(turn: BlockNode, node: BlockNode | null, live: boolean): string | null {
+    if (!live) return null;
+    // 空档（还没有任何助理内容）= 等模型开口，由页面的 loading-bars 负责
+    if (!node) return null;
+    if (!node.stopped) {
+        // 只有 tool 块有 status：streaming = 模型还在吐参数（args 还没到，框里没命令可显示）
+        if (node.tag === "tool") {
+            return attrStr(node.attrs.status) === "streaming" ? "⋯ 模型正在生成参数…" : "⋯ 工具执行中…";
+        }
+        if (node.tag === "think") return "⋯ 模型思考中…";
+        if (node.tag === "text") return "⋯ 输出中…";
+        return "⋯ 生成中…";
+    }
+    // 停住了但本轮还开着：最后一块已定稿 ⇒ 在等模型产出下一块（= 下一次请求的 TTFT）
+    if (turn.stopped) return null;
+    return "⋯ 等待模型响应…";
+}
+
+/** 一条 think/tool 的**开销观测**（右侧角标；用户 2026-10-20：「这是模型质量的观测」） */
+export interface Spent {
+    /** 该块耗时（ms）—— main 写在块上（think：生成时长；tool：执行时长）。旧日志没有 */
+    ms?: number;
+    /** 输出字节数（UTF-8）—— 思考正文 / 工具结果，客户端算得出，不占块字段 */
+    bytes: number;
+}
+
+const encoder = new TextEncoder();
+
+/**
+ * think/tool 块的耗时与字节数（其它块 null）。
+ *
+ * 为什么字节在客户端算：它是**内容的派生量**（`TextEncoder().encode(x).length`），
+ * 落进块字段就是每个 delta 都要重算同一件事。耗时则相反 —— 只有 main 知道起止时刻。
+ */
+export function spentOf(n: BlockNode): Spent | null {
+    if (n.tag !== "think" && n.tag !== "tool") return null;
+    const text = n.tag === "think" ? attrStr(n.attrs.content) : attrStr(n.attrs.output);
+    const ms = typeof n.attrs.ms === "number" && Number.isFinite(n.attrs.ms) ? n.attrs.ms : undefined;
+    return { ms, bytes: encoder.encode(text).length };
+}
+
+/** 字节数的人话（B / kB / MB；一位小数，够粗够稳） */
+export function fmtBytes(n: number): string {
+    if (n < 1000) return `${n} B`;
+    if (n < 1000 * 1000) return `${(n / 1000).toFixed(1)} kB`;
+    return `${(n / (1000 * 1000)).toFixed(1)} MB`;
+}
+
+/** 耗時的人话（<1s 给 ms、≥1s 给 s、≥60s 给 m） */
+export function fmtMs(ms: number): string {
+    if (ms < 1000) return `${Math.round(ms)} ms`;
+    if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`;
+    return `${Math.round(ms / 60_000)} m`;
+}

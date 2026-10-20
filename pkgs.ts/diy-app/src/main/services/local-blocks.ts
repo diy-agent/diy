@@ -74,7 +74,10 @@ const SCHEMA: Record<BlockKind, Record<string, FieldKind>> = {
         // （任务页本人发言 / 老数据）⇒ 气泡逐字不变。Δt 不适用 ⇒ Flag（整对象写一次）。
         room: "Flag",
     },
-    think: { content: "Text" },
+    // ms：这块**自己花掉的时间**（##399 活动框右侧角标）—— think = 从 reasoning-start 到
+    // reasoning-end（模型生成这段思考的时长），tool = 从 tool-call 到 tool-result（真执行时长，
+    // **不含**吐参数那段）。旧日志没有它 ⇒ 消费端必须按"没有就不显示"处理。
+    think: { content: "Text", ms: "Flag" },
     tool: {
         tool: "Flag",
         title: "Flag",
@@ -82,6 +85,8 @@ const SCHEMA: Record<BlockKind, Record<string, FieldKind>> = {
         input: "Text",
         args: "Flag",
         output: "Text",
+        /** 执行耗时（tool-call → tool-result，ms）；与 think.ms 同一口径 */
+        ms: "Flag",
     },
     plan: { items: "List" },
     error: { source: "Flag", message: "Text" },

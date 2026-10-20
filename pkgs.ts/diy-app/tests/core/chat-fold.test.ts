@@ -23,6 +23,12 @@ import {
     linesFromDrag,
     isTurnLevel,
     isUserText,
+    intentOf,
+    waitTextOf,
+    spentOf,
+    fmtBytes,
+    fmtMs,
+    lastLine,
     conclusionOf,
     composeTail,
     endLeafTip,
@@ -792,5 +798,102 @@ describe("linesFromDrag：1 级摘要下缘拖拽 → 行数（纯函数）", ()
     it("高度未量到（0 / 负）：原样返回，不产出 NaN", () => {
         expect(linesFromDrag(3, 0, 50, 1, 40)).toBe(3);
         expect(linesFromDrag(3, -1, 50, 1, 40)).toBe(3);
+    });
+});
+
+describe("intentOf：工具行标题的「意图」= 同一步里前一条 think 的末行（##399 B 版）", () => {
+    it("有 think：取末个非空行（不是首行 —— 末句才是「我为什么要动这一步」）", () => {
+        const k = n("think", "k1", { content: "先看看目录。\n然后我读一下这个文件" });
+        const x = tool("x1");
+        const t = turn(step("s1", [k, x]));
+        expect(intentOf(t, x)).toBe("然后我读一下这个文件");
+    });
+
+    it("think 末行全是空白：继续往前找上一条 think，不返回空串", () => {
+        const k1 = n("think", "k1", { content: "第一段的理由" });
+        const k2 = n("think", "k2", { content: "   \n\n  " });
+        const x = tool("x1");
+        expect(intentOf(turn(step("s1", [k1, k2, x])), x)).toBe("第一段的理由");
+    });
+
+    it("真实的流式形状 think → text（边想边说的一句）→ tool：跳过 text 仍能拿到思考", () => {
+        const k = n("think", "k1", { content: "直接 ls 大概率失败\n按原样跑" });
+        const sayWhat = n("text", "a1", { content: "直接 ls 大概率失败；按原样跑，失败再补仓库根。" });
+        const x = tool("x1");
+        expect(intentOf(turn(step("s1", [k, sayWhat, x])), x)).toBe("按原样跑");
+    });
+
+    it("前面没有 think（首步直接调工具）：null —— 标题只写工具名（用户口径「就只输出 'bash'」）", () => {
+        const x = tool("x1");
+        expect(intentOf(turn(step("s1", [x])), x)).toBeNull();
+    });
+
+    it("平行工具调用：跳过同层的另一个 tool，仍取到那一条 think", () => {
+        const k = n("think", "k1", { content: "两个文件一起读" });
+        const a = tool("x1");
+        const b = tool("x2");
+        expect(intentOf(turn(step("s1", [k, a, b])), b)).toBe("两个文件一起读");
+    });
+
+    it("**只看同一步**：上一步的思考不许拿来当这一步的理由（那是编造）", () => {
+        const k = n("think", "k1", { content: "上一段的理由" });
+        const x = tool("x2");
+        expect(intentOf(turn(step("s1", [k]), step("s2", [x])), x)).toBeNull();
+    });
+
+    it("长意图截断到 90 字 + 省略号（标题还有 CSS truncate，这里只管不会撑爆数据）", () => {
+        const k = n("think", "k1", { content: "啊".repeat(200) });
+        const x = tool("x1");
+        const got = intentOf(turn(step("s1", [k, x])), x)!;
+        expect(got.length).toBe(91);
+        expect(got.endsWith("…")).toBe(true);
+    });
+});
+
+describe("waitTextOf：活动框此刻在等什么（三档，##399）", () => {
+    const turnLive = (kids: BlockNode[], stopped = false) => n("turn", "t1", {}, kids, stopped);
+    it("streaming（模型在吐 tool 参数）→「模型正在生成参数」，不说「等工具返回」", () => {
+        const x = tool("x1", false, "streaming");
+        expect(waitTextOf(turnLive([step("s1", [x])]), x, true)).toBe("⋯ 模型正在生成参数…");
+    });
+    it("running（工具真在执行）→「工具执行中」", () => {
+        const x = tool("x1", false, "running");
+        expect(waitTextOf(turnLive([step("s1", [x])]), x, true)).toBe("⋯ 工具执行中…");
+    });
+    it("已停但本轮还没停 →「等待模型响应」：那 2.9~15 s 的 TTFT 才是用户体感的「等几秒」", () => {
+        const x = tool("x1", true, "done");
+        expect(waitTextOf(turnLive([step("s1", [x])]), x, true)).toBe("⋯ 等待模型响应…");
+    });
+    it("轮次也停了 = 收工，不再有「在等」（返回 null，不是恒 true 的「进行中」）", () => {
+        const x = tool("x1", true, "done");
+        expect(waitTextOf(turnLive([step("s1", [x])], true), x, true)).toBeNull();
+    });
+    it("非直播（历史行 / 现场）恒 null：那不是「在等」，是「停在那了」", () => {
+        const x = tool("x1", false, "running");
+        expect(waitTextOf(turnLive([step("s1", [x])]), x, false)).toBeNull();
+    });
+});
+
+describe("spentOf / fmtBytes / fmtMs：耗时与体积角标（##399）", () => {
+    it("tool：ms 取块字段，字节按 output 的 UTF-8 长度算", () => {
+        const x = n("tool", "x1", { tool: "bash", output: "abc中文", ms: 1234 });
+        expect(spentOf(x)).toEqual({ ms: 1234, bytes: 9 });
+    });
+    it("think 也认（内容在 content 上），但别的块一律 null（正文/错误不该有这枚角标）", () => {
+        expect(spentOf(n("think", "k1", { content: "hi", ms: 5 }))).toEqual({ ms: 5, bytes: 2 });
+        expect(spentOf(say("a1"))).toBeNull();
+        expect(spentOf(err("e1"))).toBeNull();
+    });
+    it("旧日志没有 ms ⇒ 不给 ms（绝不拿渲染时刻顶替），字节照算", () => {
+        const x = n("tool", "x1", { tool: "bash", output: "ok" });
+        expect(spentOf(x)).toEqual({ ms: undefined, bytes: 2 });
+    });
+    it("人话：B / kB / MB 与 ms / s / m 各自一档（粗到够稳，不追精度）", () => {
+        expect(fmtBytes(999)).toBe("999 B");
+        expect(fmtBytes(1500)).toBe("1.5 kB");
+        expect(fmtBytes(2_400_000)).toBe("2.4 MB");
+        expect(fmtMs(62)).toBe("62 ms");
+        expect(fmtMs(2888)).toBe("2.9 s");
+        expect(fmtMs(125_000)).toBe("2 m");
     });
 });
