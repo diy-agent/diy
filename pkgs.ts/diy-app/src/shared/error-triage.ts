@@ -279,7 +279,8 @@ export interface TurnEndTriage {
  *
  * 判据：
  *   · `max-steps` / `max-tokens` / `error:budget` —— 说得出「啥到上限了」⇒ recognized（限制类）
- *   · `aborted:user` / `completed` —— 预期内 ⇒ null（**不是** external-unknown）
+ *   · `completed` / `aborted:user` / `aborted:abort`(legacy 的用户停止) —— 预期内 ⇒ null
+ *     （**不是** external-unknown；判成可疑会把历史「用户点停止」整批灌进裁定池）
  *   · `aborted` 其余来源 / `interrupted` / `error:llm` / `error:stream` —— unknown（不猜是 bug）
  */
 export function triageOfTurnEnd(r: TurnEndReason): TurnEndTriage {
@@ -295,7 +296,24 @@ export function triageOfTurnEnd(r: TurnEndReason): TurnEndTriage {
                 reason: `输出到上限（${r.data.maxOutputTokens}）被截断`,
             };
         case "aborted": {
-            if (r.data.source === "user") return { triage: null, code: null, reason: "用户主动停止：预期收尾" };
+            // 「用户点了停止」= 预期收尾，**不是**可疑事件（铁律 2）。两个来源都归这里：
+            //   · "user"  —— 现版本 `cancel()` 显式 `abort({source:"user"})`
+            //   · "abort" —— legacy：旧版停止按钮**没带 reason**（`shared/turn-end.ts:15-19` 头注原文
+            //               「旧记录里用户停止也是 "abort"（当时没带 reason）」），历史数据里是停止的大头。
+            //               判成 unknown 会把「正常收尾」整批灌进裁定池 —— 那正是本规范要防的错判。
+            // 注意与 `turn-end.ts::abortText` 的**故意不同**：文案对 legacy 只说「被中断（未跑完）」
+            // （不冒充用户停止，那时确实分不出）；三档只回答「要不要当事处理」，同样分不出的
+            // 情况下前者宁可少断言、后者宁可少报警，两处口径各自成立。
+            if (r.data.source === "user" || r.data.source === "abort") {
+                return {
+                    triage: null,
+                    code: null,
+                    reason:
+                        r.data.source === "user"
+                            ? "用户主动停止：预期收尾"
+                            : "用户主动停止（legacy 记录：旧版停止按钮未带 reason）：预期收尾",
+                };
+            }
             const code = r.data.source === "detached" ? "agent/aborted-detached" : "agent/aborted";
             return { triage: "external-unknown", code, reason: `被中断（source=${r.data.source}）：来源无法判定` };
         }

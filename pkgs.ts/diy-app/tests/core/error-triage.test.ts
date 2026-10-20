@@ -141,6 +141,22 @@ describe("triageOf · external-unknown（未识别的外部：不猜）", () => 
         expect(v.reason).toContain("500");
     });
 
+    it("HTTP 请求超时（AbortError / 无 code 无 status）⇒ unknown —— 别与连接层 ETIMEDOUT 混同", () => {
+        // `ETIMEDOUT` 进 KNOWN_EXTERNAL 是因为「连接层**根本没应答**」= 说得出「对端不在」；
+        // 「请求超时」是对端接了、却没在时限内说完 —— 上游回了 HTTP 就说明网络通着（##369 口径），
+        // 那是服务端侧 / 未识别。没有 code、没有 status 时**不许**按 message 里的 "timeout" 猜成 recognized。
+        const abortErr = Object.assign(new Error("This operation was aborted"), { name: "AbortError" });
+        expect(triageOf(abortErr)).toMatchObject({ triage: "external-unknown", code: null });
+        expect(triageOf(abortErr).reason.trim().length).toBeGreaterThan(0);
+        const requestTimeout = new Error("The operation was aborted due to timeout");
+        expect(triageOf(requestTimeout)).toMatchObject({ triage: "external-unknown", code: null });
+        // 反面对照：连接层超时仍须是 recognized —— 两条口径同时绑住，改任一条都会红
+        expect(triageOf(errWith({ code: "ETIMEDOUT" }, "connect ETIMEDOUT"))).toMatchObject({
+            triage: "external-recognized",
+            code: "net/connect-timeout",
+        });
+    });
+
     it("错误被包在 cause 里也认得出来（SDK 的常态形状）", () => {
         const wrapped = errWith({ cause: errWith({ code: "ECONNRESET" }, "socket hang up") });
         expect(triageOf(wrapped)).toMatchObject({ triage: "external-recognized", code: "net/connection-reset" });
@@ -159,7 +175,9 @@ describe("triageOfTurnEnd · 轮末映射（只映射，不动值域）", () => 
         ["max-tokens", { type: "max-tokens", data: { maxOutputTokens: 8192 } }, "external-recognized", "llm/token-limit"],
         ["aborted:user", { type: "aborted", data: { source: "user" } }, null, null],
         ["aborted:detached", { type: "aborted", data: { source: "detached" } }, "external-unknown", "agent/aborted-detached"],
-        ["aborted:abort", { type: "aborted", data: { source: "abort" } }, "external-unknown", "agent/aborted"],
+        // legacy：旧版停止按钮没带 reason（`src/shared/turn-end.ts:15-19` 头注）⇒ 同样是用户停止，
+        // 判 null 而不是 unknown —— 否则历史「点停止」整批进裁定池（##266 review1 R1）。
+        ["aborted:abort(legacy 用户停止)", { type: "aborted", data: { source: "abort" } }, null, null],
         ["interrupted", { type: "interrupted", data: {} }, "external-unknown", "agent/interrupted"],
         ["error:budget", { type: "error", data: { source: "budget", message: "budget" } }, "external-recognized", "llm/budget-exceeded"],
         ["error:llm", { type: "error", data: { source: "llm", message: "boom" } }, "external-unknown", "llm/error"],
@@ -173,8 +191,16 @@ describe("triageOfTurnEnd · 轮末映射（只映射，不动值域）", () => 
         expect(v.reason.trim().length).toBeGreaterThan(0);
     });
 
-    it("预期内（completed / 用户停止）不算 external-unknown —— 别把「正常」标成可疑", () => {
+    it("预期内（completed / 用户停止，含 legacy abort）不算 external-unknown —— 别把「正常」标成可疑", () => {
         expect(triageOfTurnEnd({ type: "completed", data: {} }).triage).toBeNull();
         expect(triageOfTurnEnd({ type: "aborted", data: { source: "user" } }).triage).toBeNull();
+        // legacy：旧记录里用户停止也是 "abort"（src/shared/turn-end.ts:15-19）⇒ 同属预期内
+        const legacy = triageOfTurnEnd({ type: "aborted", data: { source: "abort" } });
+        expect(legacy.triage).toBeNull();
+        expect(legacy.code).toBeNull();
+        expect(legacy.reason).toContain("legacy");
+        // 对照："detached" / 未知来源仍须是 unknown —— 别顺手把「真未识别」也吞成预期内
+        expect(triageOfTurnEnd({ type: "aborted", data: { source: "detached" } }).triage).toBe("external-unknown");
+        expect(triageOfTurnEnd({ type: "aborted", data: { source: "??" } }).triage).toBe("external-unknown");
     });
 });
