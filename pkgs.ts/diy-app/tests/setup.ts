@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { afterAll } from "vitest";
@@ -61,7 +61,24 @@ writeFileSync(
 // 顺手清扫历史残留的隔离 HOME：删「系统临时目录下、超过 24h 未动」的本套件目录。
 // 按 mtime 判龄 → 并发跑的其它 worktree 的活跃目录不会被误删。失败静默。
 // 注：放在 env 隔离**之后**执行（本模块已把 HOME 指向隔离目录，不影响 tmpdir）。
+//
+// 节流（并行必需）：`test-unit` 开了 `--fileParallelism` 后，本文件在**每个** worker 里
+// 各执行一次 —— 全盘 readdir + stat 从「每文件一次」变成「每 worker 一次」，实测并行全量
+// setup 累计 40.8s，是启动开销的第二大头。用 tmpdir 下的时间戳文件节流到 60s 一次。
+// 竞态无害：多 worker 同时判旧 → 各自扫一遍（清扫本身 try/catch 容错、重复扫幂等）。
+// stamp 名不带本套件前缀 ⇒ 任何一次 sweep 都不会把它当目标。
 {
-  const n = sweepStaleTestHomes();
-  if (n > 0) console.log(`[setup] 清扫 ${n} 个过期测试临时目录（>24h）`);
+  const stamp = join(tmpdir(), ".diy-test-home-sweep-stamp");
+  const SWEEP_EVERY_MS = 60_000;
+  let due = true;
+  try {
+    due = Date.now() - statSync(stamp).mtimeMs > SWEEP_EVERY_MS;
+  } catch {
+    /* 没有 stamp / 读不了 → 该扫 */
+  }
+  if (due) {
+    try { writeFileSync(stamp, ""); } catch { /* 写不了不影响清扫；最多多扫几次 */ }
+    const n = sweepStaleTestHomes();
+    if (n > 0) console.log(`[setup] 清扫 ${n} 个过期测试临时目录（>24h）`);
+  }
 }

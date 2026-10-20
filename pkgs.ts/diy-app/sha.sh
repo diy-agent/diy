@@ -91,7 +91,13 @@ test() {
   test-intent
 }
 # 编程中快速验证：不构建，跳过意图测试
-test-unit() { run npx vitest run --exclude '**/cli.intent*'; }
+# 并行策略**与 intent 分开**（##266 测试提速）：
+#   · intent → 必须串行（真实 Electron 抢 CPU/端口，见 vitest.config.ts 注释），入口见 `test-intent`；
+#   · unit   → 可并行：不拉 Electron、各文件独立隔离 HOME。实测 40 个 core 文件 27.0s → 8.1s（3.3x），
+#              全量 98s → 约 30s。
+# 为什么在命令行给而**不改** vitest.config.ts 的 `fileParallelism: false`：裸跑 `npx vitest run`
+# 会同时命中 intent 文件，那份默认必须留给它。
+test-unit() { run npx vitest run --exclude '**/cli.intent*' --fileParallelism; }
 
 ####################################################################################
 # 子项目自己的命令（原 package.json scripts）

@@ -52,9 +52,14 @@ export function removeIsolatedHome(home: string): void {
  * 清扫历史残留：删掉系统临时目录下**超过 ageMs 未改动**的本套件 HOME。
  * 按 mtime 判龄 → 并发跑的其它 worktree 的活跃目录不会被误删。
  * 返回删除数量；任何 IO 异常都吞掉（清理是加分项，不是测试前提）。
+ *
+ * `root` 可注入 —— **并行跑测试时必需**：缺省扫 `os.tmpdir()` 是**全局可变状态**，
+ * 而 setup.ts 每个测试文件都扫一次；并行时 A worker 的 setup 会把 B worker 用例里
+ * 刚造好、被拨老 mtime 的目录删掉（实测 `temp-home.test.ts` 在并行下必红：
+ * `expected 0 to be greater than or equal to 1`）。用例传自己的沙箱根即可完全隔离。
  */
-export function sweepStaleTestHomes(ageMs = 24 * 60 * 60 * 1000): number {
-  const tmp = tmpdir();
+export function sweepStaleTestHomes(ageMs = 24 * 60 * 60 * 1000, root: string = tmpdir()): number {
+  const tmp = root;
   let removed = 0;
   let names: string[];
   try {
