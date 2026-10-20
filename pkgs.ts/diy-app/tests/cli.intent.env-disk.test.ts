@@ -19,7 +19,7 @@
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
 import { execFileSync } from "node:child_process";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ShellTest } from "./shell-test";
@@ -65,7 +65,7 @@ const envList = async () => JSON.parse((await fx.sh.run("./diy.sh env list")).st
   id: string;
   type: string;
   level: string;
-  data: { mount: string; availBytes: number; totalBytes: number };
+  data: { dev: number | null; mount: string; availBytes: number; totalBytes: number };
 }>;
 
 /** `df -k <卷>` 的可用 KB（**独立工具**核数字：不能只看自己算的 statfs，否则是自证） */
@@ -126,10 +126,14 @@ describe.skipIf(!HAS_HDIUTIL)("##384 真卷活体（hdiutil 小镜像，绝不�
       { label: "通知数字与 df 一致（等写入结束后的那次采样）", timeoutMs: 20_000 },
     );
     expect(row!.data.mount).toBe(MOUNT);
+    // 槽键是**卷标识**（review2 R1）：镜像挂在 /Volumes/t384-probe 上，dev 必须与根卷不同 ——
+    // 否则「多卷各占一槽」在真路径上不成立（而 bar 会把两个卷合并成一条）
+    expect(typeof row!.data.dev).toBe("number");
+    expect(row!.data.dev).not.toBe(statSync("/").dev);
     expect(kb * 1024).toBeLessThan(512 * 1024 ** 2); // 确实在 full 阈值之下
     // `env probe <path>`（探针入口，AGENTS.md 里写了它）：指定路径现采一次 —— 数字同样要对得上 df
     const p = await fx.sh.getJson(`./diy.sh env probe --path ${MOUNT}`);
-    const sample = (p as any).data?.sample as { mount: string; availBytes: number; totalBytes: number };
+    const sample = (p as any).data?.sample as { dev: number | null; mount: string; availBytes: number; totalBytes: number };
     expect(sample.mount).toBe(MOUNT);
     expect(Math.abs(sample.availBytes - kb * 1024)).toBeLessThan(64 * 1024);
     // 真 red bar

@@ -16,7 +16,13 @@ import { createSignal } from "solid-js";
 import { diyService } from "../lib/rpc";
 import { slotOf, type EnvNotice } from "../../shared/env-watch";
 
-/** 最多同时展示几条（超出的折叠成计数）：再多人就不看了（告警疲劳） */
+/**
+ * 最多同时展示几条（超出的折叠成计数）：再多人就不看了（告警疲劳）。
+ *
+ * 与 main 的 `MAX_NOTICES`（ring 长度 20）**不是同一个东西**（##384 review2 R6）：那个是
+ * 「留多少条给 CLI 排查」，这个是「界面上放几条」。改一个不影响另一个，别以为改这里就关掉
+ * 了 main 的去重。
+ */
 export const MAX_BARS = 3;
 
 const [notices, setNotices] = createSignal<EnvNotice[]>([]);

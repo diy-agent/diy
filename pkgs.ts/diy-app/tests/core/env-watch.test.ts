@@ -33,7 +33,8 @@ import {
 
 const GiB = 1024 ** 3;
 const MiB = 1024 ** 2;
-const sample = (availBytes: number, totalBytes = 500 * GiB, mount = "/"): DiskSample => ({
+const sample = (availBytes: number, totalBytes = 500 * GiB, mount = "/", dev: number | null = null): DiskSample => ({
+    dev,
     mount,
     availBytes,
     totalBytes,
@@ -193,7 +194,22 @@ describe("slotOf（去重键 —— main 与 renderer **同源**，##384 review1
     const disk = (mount: string, avail = 10 * MiB) => envNoticeFromDisk(sample(avail, 500 * GiB, mount), "poll")!;
     const net = () => envNoticeFromNetwork({ code: "ENOTFOUND", message: "dns fail" }, NETWORK_FAIL_STREAK)!;
 
-    it("磁盘按**挂载点**分槽：两个卷各占一槽（多卷时界面不会把两条合成一条）", () => {
+    it("磁盘按**卷**分槽：两个卷各占一槽（多卷时界面不会把两条合成一条）", () => {
+        const a = envNoticeFromDisk(sample(10 * MiB, 500 * GiB, "/Volumes/a", 11), "poll")!;
+        const b = envNoticeFromDisk(sample(10 * MiB, 500 * GiB, "/Volumes/b", 12), "poll")!;
+        expect(slotOf(a)).toBe("disk:11");
+        expect(slotOf(b)).toBe("disk:12");
+        expect(slotOf(a)).not.toBe(slotOf(b));
+    });
+
+    it("**同一卷的不同采样路径**同槽（mount 是采样点、dev 才是卷身份；##384 review2 R1）", () => {
+        // 反例现场：`/` 与 `/Users/ccc/.diy/projects/4/tasks/166` 在 macOS 上是同一个 dev
+        const polled = envNoticeFromDisk(sample(100 * MiB, 500 * GiB, "/", 16777220), "poll")!;
+        const werr = envNoticeFromDisk(sample(100 * MiB, 500 * GiB, "/Users/ccc/.diy/projects/4/tasks/166", 16777220), "poll")!;
+        expect(slotOf(polled)).toBe(slotOf(werr));
+    });
+
+    it("dev 未知（注入/探针）时退化成按路径分槽 —— 不比路径至少不会误撤别的卷", () => {
         expect(slotOf(disk("/"))).toBe("disk:/");
         expect(slotOf(disk("/Volumes/probe"))).toBe("disk:/Volumes/probe");
         expect(slotOf(disk("/"))).not.toBe(slotOf(disk("/Volumes/probe")));

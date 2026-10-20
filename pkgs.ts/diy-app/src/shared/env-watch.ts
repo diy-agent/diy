@@ -33,9 +33,20 @@ export const DISK_LOW_MAX_AVAIL_BYTES = 2 * 1024 * 1024 * 1024;
 
 export type DiskLevel = "ok" | "low" | "full";
 
-/** 一次磁盘水位采样（`statfs` 的可用/总量 + 挂载点，都是事实，不含判断） */
+/** 一次磁盘水位采样（`statfs` 的可用/总量 + 卷标识 + 采样路径，都是事实，不含判断） */
 export interface DiskSample {
-    /** 挂载点（bar 上要写「哪个卷」） */
+    /**
+     * **卷标识** = `statSync(path).dev`（##384 review2 R1）—— 去重/自动消的**槽键**。
+     *
+     * 为什么不能用 `mount`：`mount` 是**采样路径**，不是卷的身份。同一物理卷上
+     * `/`、`/Users/ccc/.diy`、`/tmp` 三个字符串是同一个 dev（macOS Data 卷 = 16777220），
+     * 按路径分槽会让「轮询采到的满盘」与「写失败升级的满盘」各占一槽 ⇒ 同一件事两条红条，
+     * 且水位恢复时只撤得掉一条（另一条永不自动消，违反验收 1）。
+     *
+     * `null` / 省略 = 未知（注入 / 探针 / stat 失败），此时退化用 `mount` 作槽键。
+     */
+    dev?: number | null;
+    /** 采样路径（bar 上写「哪个卷」用；**只作展示**，不参与去重） */
     mount: string;
     /** 可用字节数（`bavail * bsize`） */
     availBytes: number;
@@ -191,7 +202,9 @@ export type EnvNoticeType = z.infer<typeof EnvNoticeTypeSchema>;
 
 /** 磁盘分支的私有数据：**必须带数字**（"更明确的识别"= 给数字，不是给形容词） */
 export const EnvDiskDataSchema = z.object({
-    /** 哪个卷（挂载点） */
+    /** 卷标识（`statSync(path).dev`）—— 去重/自动消的槽键；null = 未知（退化用 mount） */
+    dev: z.number().nullable(),
+    /** 哪个卷（**采样路径**，展示用；不参与去重，见 DiskSample.dev） */
     mount: z.string(),
     /** 可用字节数 */
     availBytes: z.number(),
@@ -227,16 +240,44 @@ export type EnvNotice = z.infer<typeof EnvNoticeSchema>;
 /**
  * 通知的「槽」= **去重键**（main 与 renderer **同源**，故放在 shared；##384 review1 R1）。
  *
- * 磁盘按**挂载点**分槽（`disk:/`）—— 同一个卷的 `disk-full` / `disk-low` 是同一件事的两种
- * 水位，必须互相替换而不是并存（并存会让 bar 上出现两条说同一件事的红条）；不同卷各占一槽
- * （一个卷好了不该顺手撤掉另一个卷的）。其余 type 各占一槽（`network-down` 是全局事实）。
+ * 磁盘按**卷**分槽（`disk:<dev>`，见 {@link diskSlotKey}）—— 同一个卷的 `disk-full` / `disk-low`
+ * 是同一件事的两种水位，必须互相替换而不是并存（并存会让 bar 上出现两条说同一件事的红条）；
+ * 不同卷各占一槽（一个卷好了不该顺手撤掉另一个卷的）。其余 type 各占一槽（`network-down`
+ * 是全局事实）。**按 dev 而不是按路径**：路径是采样点，同一卷上 `/` 与 `/Users/x/y` 是两串
+ * 但同一个卷（##384 review2 R1 —— 按路径分槽会让轮询那条与写失败那条并存、且后者永不自动消）。
  *
  * 两侧必须用**同一个** `slotOf`：main 按槽去重/静音，renderer 若按 `type` 去重，v1 只盯一个
- * 卷时不暴露，但「多卷」（本文件已留的口子：`resolveDisk(mount)` 按卷写）一开始用，界面就会
+ * 卷时不暴露，但「多卷」（本文件已留的口子：`resolveDisk(target)` 按卷撤）一开始用，界面就会
  * 把两个卷合并成一条 —— 正是与 main 不一致造成的。故提上来共用。
  */
+export function isDiskNotice(n: EnvNotice): n is Extract<EnvNotice, { type: "disk-full" | "disk-low" }> {
+    return n.type === "disk-full" || n.type === "disk-low";
+}
+
 export function slotOf(n: EnvNotice): string {
-    return n.type === "disk-full" || n.type === "disk-low" ? `disk:${n.data.mount}` : n.type;
+    if (n.type === "disk-full" || n.type === "disk-low") return diskSlotKey(n.data);
+    return n.type;
+}
+
+/**
+ * 磁盘事实的槽键：**卷标识优先**（`dev`），拿不到才退化成采样路径。
+ *
+ * 退化分支是给注入/探针用的（`diy env simulate` 没有真卷可 stat）；真实采样一律有 dev，
+ * 故线上同一卷永远同一个键。
+ */
+export function diskSlotKey(v: { dev?: number | null; mount: string }): string {
+    return `disk:${v.dev ?? v.mount}`;
+}
+
+/**
+ * 两条磁盘事实是不是**同一个物理卷**（自动消 / 静音解除的判据）。
+ *
+ * 双方都有 dev 时比 dev（`/` 与 `/Users/x/y` 同卷也算）；任一方 dev 未知时退回比路径
+ * —— 那时没有更强的信息可用，比路径至少不会误撤别的卷。
+ */
+export function sameVolume(a: { dev?: number | null; mount: string }, b: { dev?: number | null; mount: string }): boolean {
+    if (a.dev != null && b.dev != null) return a.dev === b.dev;
+    return a.mount === b.mount;
 }
 
 let seq = 0;
@@ -253,7 +294,14 @@ export function envNoticeFromDisk(
 ): EnvNotice | null {
     const v = classifyDisk(sample);
     if (v.level === "ok") return null;
-    const data = { mount: sample.mount, availBytes: sample.availBytes, totalBytes: sample.totalBytes, source, reason: v.reason };
+    const data = {
+        dev: sample.dev ?? null,
+        mount: sample.mount,
+        availBytes: sample.availBytes,
+        totalBytes: sample.totalBytes,
+        source,
+        reason: v.reason,
+    };
     // 两个分支各自成字面量（判别联合要求 `type` 与 `level` 同时收窄，不能拼一个变量）
     if (v.level === "full") {
         return { id: nextId("disk-full", now), ts: now.toISOString(), type: "disk-full", level: "error", data };
@@ -304,6 +352,7 @@ export function envNoticeFromWriteError(sample: DiskSample | null, now = new Dat
         type: "disk-full",
         level: "error",
         data: {
+            dev: sample?.dev ?? null,
             mount: sample?.mount ?? "",
             availBytes: sample?.availBytes ?? -1,
             totalBytes: sample?.totalBytes ?? -1,

@@ -28,8 +28,8 @@
 //   ✕ 等于没关）；条件恢复后静音解除，下次再坏才重新提醒。升级不受静音影响
 //   （`disk-low` 静音了，恶化成 `disk-full` 仍然要亮 —— 那是另一件更急的事）。
 
-import { statfs } from "node:fs/promises";
-import { dirname } from "node:path";
+import { stat, statfs } from "node:fs/promises";
+import { dirname, resolve as resolvePath } from "node:path";
 import { AsyncQueue, withCleanup } from "./async-queue";
 import {
     envNoticeFromDisk,
@@ -38,6 +38,9 @@ import {
     probeNetworkError,
     classifyNetworkError,
     NETWORK_FAIL_STREAK,
+    diskSlotKey,
+    isDiskNotice,
+    sameVolume,
     slotOf,
     type DiskSample,
     type EnvNotice,
@@ -60,11 +63,30 @@ export interface EnvWatchProbe {
     intervalMs?: number;
 }
 
-/** 真实现：`fs.statfs`（Node 18.15+）。别 shell 出去跑 `df` —— 那是每 30s 起一个进程。 */
+/**
+ * 真实现：`fs.statfs`（Node 18.15+）。别 shell 出去跑 `df` —— 那是每 30s 起一个进程。
+ *
+ * `mount` 是**采样路径**（事实：我们从哪儿采的），`dev` 才是**卷的身份**（去重 / 自动消的
+ * 槽键，见 `DiskSample.dev`）。多一次 `stat` 换来的正确性：`/` 与 `/Users/x/y` 同卷同槽。
+ */
 export async function realStatfs(path: string): Promise<DiskSample> {
     const s = await statfs(path, { bigint: true });
     // bavail = 非特权用户可用块数（**不是** bfree：后者含 root 预留，会高估可用空间）
-    return { mount: path, availBytes: Number(s.bavail * s.bsize), totalBytes: Number(s.blocks * s.bsize) };
+    return {
+        dev: await volumeDev(path),
+        mount: path,
+        availBytes: Number(s.bavail * s.bsize),
+        totalBytes: Number(s.blocks * s.bsize),
+    };
+}
+
+/** 卷标识（`stat.dev`）。拿不到（路径不存在 / 无权限）= null → 调用方退化用 path 当槽键 */
+async function volumeDev(path: string): Promise<number | null> {
+    try {
+        return (await stat(path)).dev;
+    } catch {
+        return null;
+    }
 }
 
 /**
@@ -103,11 +125,10 @@ class EnvWatchHub {
      * 为什么按挂载点而不是按 type：进程可能同时盯着多个卷（探针可指向任意路径），
      * "这个卷好了"不能顺手把另一个卷的红条也撤掉。
      */
-    resolveDisk(mount: string): void {
-        this.muted.delete(`disk:${mount}`);
-        const gone = this.notices.filter(
-            (n) => (n.type === "disk-full" || n.type === "disk-low") && n.data.mount === mount,
-        );
+    resolveDisk(target: { dev?: number | null; mount: string }): void {
+        // 静音键必须与 push 时同一个键（卷标识优先，见 shared::diskSlotKey）
+        this.muted.delete(diskSlotKey(target));
+        const gone = this.notices.filter((n) => isDiskNotice(n) && sameVolume(n.data, target));
         if (gone.length === 0) return;
         this.notices = this.notices.filter((n) => !gone.includes(n));
         for (const n of gone) for (const q of this.queues) q.push({ kind: "resolve", data: { id: n.id } });
@@ -124,7 +145,10 @@ class EnvWatchHub {
 
     /**
      * 用户关掉（"我知道了"）：从 ring 移除 + **静音该槽**。
-     * 不给 id = 全关（bar 的批量语义）。
+     *
+     * ⚠️ 不给 id = 全关，且**当前所有槽一起静音**（##384 review2 R3）。v1 的 bar 只传单个 id，
+     * 这条批量语义只为 CLI / 测试方便；将来若加「全部关闭」按钮，必须先重想静音范围 ——
+     * 一次性静音掉全部槽，会让后续新出现的（用户没看过的）条件也不再提醒。
      *
      * 关掉也要**广播 `resolve`**：关闭可能来自**别处**（CLI `diy env dismiss`、另一个窗口），
      * 那些订阅者手上还挂着这条 —— 只改 ring 不推事件，它们会一直显示一条已不存在的通知
@@ -201,7 +225,7 @@ export class EnvDiskPoller {
             const n = envNoticeFromDisk(sample, "poll");
             if (n) envWatchHub.push(n);
             // 恢复即自动消：full / low 是同一个卷的两种水位，回 ok 时**这个卷**的两条都该消失
-            else envWatchHub.resolveDisk(sample.mount);
+            else envWatchHub.resolveDisk(sample);
         } catch (e) {
             // 采不到 = 卷可能已经不可访问：这不是"环境正常"，但也不该伪造数字。
             // 只在日志里留一句（"写失败"由被动路径负责亮红条）。
@@ -291,19 +315,20 @@ export const networkStreak = new NetworkStreak();
  */
 export async function simulateEnvFact(
     fact:
-        | { kind: "disk"; availBytes: number; totalBytes: number; mount?: string }
+        | { kind: "disk"; availBytes: number; totalBytes: number; mount?: string; dev?: number | null }
         | { kind: "network"; code: string | null; streak?: number; message?: string },
     now = new Date(),
 ): Promise<EnvNotice | null> {
     if (fact.kind === "disk") {
         const sample: DiskSample = {
+            dev: fact.dev ?? null,
             mount: fact.mount ?? process.env["DIY_ENV_WATCH_TARGET"] ?? "/",
             availBytes: fact.availBytes,
             totalBytes: fact.totalBytes,
         };
         const n = envNoticeFromDisk(sample, "poll", now);
         if (n) envWatchHub.push(n);
-        else envWatchHub.resolveDisk(sample.mount);
+        else envWatchHub.resolveDisk(sample);
         return n;
     }
     const probe = { code: fact.code, message: fact.message ?? "（探针注入）" };
@@ -328,7 +353,10 @@ export async function noteWriteError(e: unknown, path?: string): Promise<void> {
         // 采**失败的那个路径所在卷**（不是根卷）：满的是它，数字也必须说它。
         // 取 dirname：失败时目标文件可能根本不存在（新文件没写出来），
         // 而 `statfs` 对不存在的路径直接 ENOENT；父目录一定在（写之前已 mkdir -p）。
-        sample = await realStatfs(path ? dirname(path) : process.env["DIY_ENV_WATCH_TARGET"] || "/");
+        // `resolve` 顺带解掉相对路径（R4：`dirname("a.txt")` 得 `"."`，展示成「卷 .」很怪）
+        sample = await realStatfs(
+            path ? dirname(resolvePath(path)) : process.env["DIY_ENV_WATCH_TARGET"] || "/",
+        );
     } catch {
         /* 读不到水位也照发（见 envNoticeFromWriteError 的理由） */
     }

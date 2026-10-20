@@ -1181,7 +1181,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const sample = await realStatfs(target);
     const notice = envNoticeFromDisk(sample, "poll");
     if (notice) envWatchHub.push(notice);
-    else envWatchHub.resolveDisk(sample.mount);
+    else envWatchHub.resolveDisk(sample);
     return { sample, notice };
   });
 

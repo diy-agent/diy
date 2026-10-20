@@ -12,7 +12,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { envWatchHub, EnvDiskPoller, noteWriteError, type EnvWatchProbe } from "../../src/main/services/env-watch";
@@ -21,7 +21,15 @@ import { envNoticeFromDisk, envNoticeFromNetwork, type DiskSample, type EnvNotic
 
 const GiB = 1024 ** 3;
 const MiB = 1024 ** 2;
-const sample = (availBytes: number): DiskSample => ({ mount: "/probe", availBytes, totalBytes: 500 * GiB });
+const sample = (availBytes: number, dev: number | null = null, mount = "/probe"): DiskSample => ({
+    dev,
+    mount,
+    availBytes,
+    totalBytes: 500 * GiB,
+});
+
+/** 本进程所在卷的 dev（`noteWriteError` / `realStatfs` 采到的是同一个卷：/tmp 与 / 同卷） */
+const SAME_VOL_DEV = statSync("/").dev;
 
 /** 可编程假探针：`next` 决定下一次 statfs 返回什么（不碰真盘） */
 function fakeProbe(initial: DiskSample): EnvWatchProbe & { next: (s: DiskSample) => void } {
@@ -167,6 +175,57 @@ describe("dismiss 语义（✕ = 这个条件我知道了）", () => {
     });
 });
 
+describe("卷槽键（##384 review2 R1：mount 是采样路径，dev 才是卷身份）", () => {
+    it("① 同一卷的不同采样路径 ⇒ 一个槽，push 两条只留 1 条", () => {
+        // 现场：轮询采 `/`、写失败发生在 `~/.diy/projects/4/tasks/166` —— 同一个物理卷同一时刻的两个采样点
+        const polled = envNoticeFromDisk(sample(100 * MiB, SAME_VOL_DEV, "/"), "poll")!;
+        const werr = envNoticeFromDisk(
+            sample(100 * MiB, SAME_VOL_DEV, "/Users/ccc/.diy/projects/4/tasks/166"),
+            "write-error",
+        )!;
+        envWatchHub.push(polled);
+        envWatchHub.push(werr);
+        const rows = envWatchHub.list();
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.id).toBe(polled.id); // 同一条件：id 复用（✕ 不会打空）
+        expect(rows[0]!.type === "disk-full" && rows[0]!.data.source).toBe("write-error"); // 数字/来源取最新事实
+    });
+
+    it("② 写失败（真 statfs，失败路径在 /tmp）+ 轮询（同卷）并存 ⇒ ring 里 1 条", async () => {
+        const probe = fakeProbe(sample(100 * MiB, SAME_VOL_DEV, "/"));
+        const poller = new EnvDiskPoller(probe, "/");
+        await poller.tick();
+        expect(envWatchHub.list()).toHaveLength(1);
+        const err = Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+        await noteWriteError(err, "/tmp/t384-shared-volume.txt");
+        expect(envWatchHub.list()).toHaveLength(1);
+        const only = envWatchHub.list()[0]!;
+        const data = only.type === "disk-full" ? only.data : null;
+        expect(data?.source).toBe("write-error");
+        expect(data?.dev).toBe(SAME_VOL_DEV); // 写失败采到的是**真卷标识**，与轮询那条同槽
+    });
+
+    it("③ 轮询回 ok ⇒ ring 清空（**含写失败那条**：条件恢复自动消，验收 1）", async () => {
+        const probe = fakeProbe(sample(100 * MiB, SAME_VOL_DEV, "/"));
+        const poller = new EnvDiskPoller(probe, "/");
+        await poller.tick();
+        const err = Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+        await noteWriteError(err, "/tmp/t384-shared-volume.txt");
+        expect(envWatchHub.list()).toHaveLength(1);
+
+        probe.next(sample(100 * GiB, SAME_VOL_DEV, "/")); // 空间腾出来了
+        await poller.tick();
+        expect(envWatchHub.list()).toHaveLength(0);
+    });
+
+    it("不同卷不受牵连：撤 A 卷不撤 B 卷", async () => {
+        envWatchHub.push(envNoticeFromDisk(sample(100 * MiB, 11, "/Volumes/a"), "poll")!);
+        envWatchHub.push(envNoticeFromDisk(sample(100 * MiB, 12, "/Volumes/b"), "poll")!);
+        envWatchHub.resolveDisk({ dev: 11, mount: "/Volumes/a" });
+        expect(envWatchHub.list().map((n) => n.type === "disk-full" && n.data.dev)).toEqual([12]);
+    });
+});
+
 describe("写失败被动升级（ENOSPC → 立刻 disk-full，不等轮询）", () => {
     it("ENOSPC → 推 disk-full（source=write-error），数字来自失败路径所在卷", async () => {
         // 用 /tmp 当"失败路径"（真 statfs，不填盘）：验的是**接线**，不是真满盘
@@ -233,7 +292,7 @@ describe("订阅（订阅即回放 + 增量）", () => {
         const sub = envWatchHub.subscribe();
         const it = sub[Symbol.asyncIterator]();
         await it.next(); // 回放
-        envWatchHub.resolveDisk("/probe");
+        envWatchHub.resolveDisk({ mount: "/probe" });
         const r = await it.next();
         expect(r.value?.kind).toBe("resolve");
         await it.return?.();
