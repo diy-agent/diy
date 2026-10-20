@@ -2141,6 +2141,9 @@ export class LocalAgentManager {
      *
      * `at` 不是轮首（日志被改写 / 定位到了一条过时命中）⇒ 退全量 + `stale`（与游标失效同一取向：
      * 宁可重放整份，也不给出错位的窗口）。
+     *
+     * ⚠️ `budgetBytes` 缺省（0 / 不传）= **取到文件尾**（`budget=1` 时 `floor` 返回 `at` 本身 ⇒ `to=size`）。
+     * 不是"只取一轮"—— 渲染端固定传 4MB，故这条缺省只影响 CLI 手敲。
      */
     historyAt(
         taskUri: string,

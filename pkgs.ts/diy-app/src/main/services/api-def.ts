@@ -920,7 +920,7 @@ export const apiDef = RpcSchema.router({
                   budgetBytes: z
                     .number()
                     .optional()
-                    .cliOption({ desc: "段字节预算（缺省 0 = 只取一轮）" }),
+                    .cliOption({ desc: "段字节预算（缺省 0 = 取到文件尾；渲染端固定传 4MB）" }),
                 },
                 output: z.object({
                   ops: z.array(z.any()),

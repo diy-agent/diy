@@ -2802,6 +2802,11 @@ export function LocalChatPage(props: {
     let pendingLocate: { turnId: string; hit: ChatFindHit } | null = null;
     /** 定位闭环的"手"柄：用户一滚就收手（别和目标轮较劲） */
     let locateLatch = 0;
+    /**
+     * 定位闭环上一拍**我们自己写的** scrollTop —— 跟它比对就知道这一拍是不是人滚的
+     * （`progWriteTop` 是同一思路：区分"谁写的滚动"）。`null` = 闭环没在跑。
+     */
+    let locateOwnTop: number | null = null;
 
     const flashTurn = (turnId: string) => {
         const el = scrollRef;
@@ -2821,16 +2826,32 @@ export function LocalChatPage(props: {
      * 先按账面顶边把窗口挪过去（`writeScrollTop` 会同步窗口信号 ⇒ 那一轮这一帧就上屏），
      * 再量真实位置、把偏差补掉，两三帧内收敛（未实测行的高度估算会在这儿被实测值替换）。
      * 硬上限 12 帧（200ms）：收敛不了也不再拉扯（估算高度抖动的极端情形），宁可差几像素。
+     *
+     * **用户接管即收手**（R1）：每一拍拿 `locateOwnTop`（上一拍我们写的位置）与当前 `scrollTop`
+     * 比对 —— 对不上就是人滚了（滚轮 / 拖条 / 触控板），当场作废闭环，**不再把人拽回去、也不闪**。
+     * 唯一豁免：内容变矮时浏览器把 `scrollTop` **收口**到新的 max（那不是人滚的），否则
+     * 「定位到靠近末尾的轮」会被自己的布局变化取消掉。
      */
     const scrollToTurn = (turnId: string) => {
         const el = scrollRef;
         if (!el) return;
         setStick(false); // 定位到历史 = 用户要看的那一轮，别让"贴底跟随"再把视口拽走
         const token = ++locateLatch;
+        locateOwnTop = el.scrollTop; // 起点：第一拍之前（~16ms 内）人滚了也要能认出来
         let stable = 0;
         let left = 12;
         const tick = () => {
             if (token !== locateLatch) return; // 又点了一次结果 / 用户手动接管
+            // 用户接管：这一拍的位置不是我们上一拍写的那儿 ⇒ 收手（判据见函数头注）
+            const own = locateOwnTop;
+            if (own !== null && Math.abs(el.scrollTop - own) > 1.5) {
+                const max = el.scrollHeight - el.clientHeight;
+                const clamped = el.scrollTop < own && el.scrollTop >= max - 1;
+                if (!clamped) {
+                    locateLatch++;
+                    return;
+                }
+            }
             const L = layout();
             const ri = L.keys.indexOf(turnId);
             if (ri < 0) return; // 这一轮已不在树里（日志被改写）⇒ 放弃，不猜位置
@@ -2850,6 +2871,7 @@ export function LocalChatPage(props: {
                 flashTurn(turnId);
                 return;
             }
+            locateOwnTop = el.scrollTop; // 下一拍拿它判「是不是人滚了」
             requestAnimationFrame(tick);
         };
         requestAnimationFrame(tick);

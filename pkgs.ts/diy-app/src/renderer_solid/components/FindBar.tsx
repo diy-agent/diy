@@ -38,7 +38,7 @@ export function FindBar() {
         return p;
     });
     /** ⌘⇧F 的提示（只此一处解释为什么 ⌘F 找不到） */
-    const BRIDGE_HINT = "页内查找只覆盖**已渲染**的那几轮（虚拟滚动）。";
+    const BRIDGE_HINT = "页内查找只覆盖已渲染的那几轮（虚拟滚动）。";
     // 打开即聚焦输入框（⌘F 后直接打字；点按钮打开同理）
     createEffect(() => {
         if (findStore.open && inputEl) {

@@ -14,6 +14,8 @@
 //   ④ 面板关闭后 ⌘F 语义不变（##234 回归：仍是页内查找、命中数照旧）；
 //   ⑤ 段跳：目标轮**不在**已加载段里（5MB 会话，首载只读末尾 4MB）⇒ 点击后能跳过去，
 //      并出现「正在查看历史」条；「回到最新」能回来。
+//   ⑥ 定位闭环的**用户接管**（review1 R1）：点击结果后中途拖动 ⇒ 闭环当场作废，
+//      200ms 窗口内视口不被拽回、也不闪（否则注释「用户一滚就收手」是在说假话）。
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
@@ -393,4 +395,44 @@ describe("⑤ 段跳：目标轮不在已加载段里（>4MB 会话）", () => {
         );
         await waitUntil(domTurnIds, (ids) => ids.includes(BIG_LAST), { label: "回到末尾轮", timeoutMs: 20_000 });
     }, 180_000);
+});
+
+describe("⑥ 定位闭环的用户接管（review1 R1）", () => {
+    it("点击结果后中途拖动滚动条 ⇒ 视口不回弹、目标轮不闪", async () => {
+        await openTab(smallUri);
+        await waitUntil(domTurnIds, (ids) => ids.includes(turnIdOf(SMALL_TURNS)), {
+            label: "小会话首载（末尾轮上屏）",
+            timeoutMs: 20_000,
+        });
+        const MID = 20; // 中段那一轮：不在初始窗口里，且离顶部/底部都远（回弹一眼能看出来）
+        expect(await domTurnIds()).not.toContain(turnIdOf(MID));
+        const before = await ui.query<number>(`Math.round(document.querySelector('.diy-chat').scrollTop)`);
+        expect(before).toBeGreaterThan(200); // 前提：初始就在偏下的位置（否则"拖回顶部"分不出胜负）
+
+        await ui.press("Meta+Shift+f");
+        await waitUntil(panelPresent, (v) => v, { label: "开面板" });
+        await ui.press("Meta+A"); // 面板保留上次查询 ⇒ 先全选再打字（否则追加成别的词）
+        await ui.type(markerOf(MID));
+        const hits = await waitUntil(panelHitTexts, (v) => v.length > 0, { label: "面板出结果" });
+        expect(hits[0]).toContain(markerOf(MID));
+
+        // **同一个同步任务**里：点结果（定位闭环开始，`scrollToTurn` 记下我们的位置）
+        // → 立刻把视口拖回顶部并派发 scroll。两件事之间没有任何一帧，闭环一定还没跑过。
+        // 没有接管判据时，它会在接下来的 ~200ms 里一路把人拽回目标轮（本用例要钉的正是这个）。
+        const after = await ui.query<number>(`(() => {
+            const btn = document.querySelector('[data-chat-find] button[title="点击定位到这一轮"]');
+            btn.click();
+            const el = document.querySelector('.diy-chat');
+            el.scrollTop = 0;
+            el.dispatchEvent(new Event('scroll'));
+            return Math.round(el.scrollTop);
+        })()`);
+        expect(after).toBe(0);
+
+        await sleep(400); // 远长于闭环的 12 帧（~200ms）：若被拽回，这段时间足够拽到底
+        const rest = await ui.query<number>(`Math.round(document.querySelector('.diy-chat').scrollTop)`);
+        expect(rest).toBeLessThan(50); // 停在我们拖到的地方（顶部），没被拽回中段
+        // 收手 = 也不闪：别在用户已经离开的位置上闪给人看
+        expect(await ui.query<boolean>(`!!document.querySelector('[data-hit-flash]')`)).toBe(false);
+    }, 120_000);
 });
