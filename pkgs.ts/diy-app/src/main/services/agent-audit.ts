@@ -35,6 +35,13 @@ export interface AuditEntry {
   ms?: number;
   /** 结果摘要，截断（bash-end/拦截原因） */
   result?: string;
+  /**
+   * 轮末三档判据（##394，turn-end 专用）：`defect` / `external-recognized` / `external-unknown`。
+   * **预期内不写**（`completed` / 用户停止）—— 审计是"出过什么事"的账，不是每轮的流水。
+   */
+  triage?: string;
+  /** 上面那档的归一化 code（`llm/step-limit` 这类；无码不写） */
+  code?: string;
 }
 
 const MAX_BYTES = 5 * 1024 * 1024;

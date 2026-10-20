@@ -19,6 +19,8 @@ import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, relative, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { maskNonCode, matchingParen } from "./lib/source-scan.mjs";
+
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // 扫描范围：**Node 侧**（main / serve / preload，都能 `import fs`）。
 // 不扫 renderer_solid 的 `.tsx`：手写 lexer 不认 JSX（JSX 文本里的 `'`、闭合标签的 `</`
@@ -44,113 +46,6 @@ const TARGET_ARG = { copyFileSync: 1, copyFile: 1, cpSync: 1, cp: 1 };
 /** renderer 拿 fs 的唯一途径（nodeIntegration=false 下等于「不可能」）—— 真出现就是防线破了 */
 const FS_IMPORT = /(?:from\s*["'](?:node:)?fs(?:\/promises)?["']|require\(\s*["'](?:node:)?fs(?:\/promises)?["']\s*\))/;
 const ANNOTATION = /\/\/\s*(non-atomic-ok|atomic-ok)\s*:\s*(.*)$/;
-
-/** `/` 前一个非空白字符是这些 ⇒ 后面是**正则字面量**起点，不是除号 */
-const REGEX_PREFIX_PUNCT = new Set(["(", "[", "{", ",", ";", ":", "=", "!", "&", "|", "?", "+", "-", "*", "%", "<", ">", "~", "^", "}"]);
-/** `/` 前一个单词是这些 ⇒ 后面是正则起点（`return /x/`、`typeof /x/`） */
-const REGEX_PREFIX_WORDS = new Set(["return", "typeof", "case", "in", "of", "void", "delete", "instanceof", "new", "do", "else", "yield", "await"]);
-
-/** 判 `/` 是除号还是正则起点（按前一个可见 token 判，ECMAScript 语法的经典近似） */
-function regexAllowedBefore(src, i) {
-  let j = i - 1;
-  while (j >= 0 && /\s/.test(src[j])) j -= 1;
-  if (j < 0) return true;
-  const ch = src[j];
-  if (/[A-Za-z0-9_$]/.test(ch)) {
-    let k = j;
-    while (k >= 0 && /[A-Za-z0-9_$]/.test(src[k])) k -= 1;
-    return REGEX_PREFIX_WORDS.has(src.slice(k + 1, j + 1));
-  }
-  if (ch === ")" || ch === "]") return false; // `f(x) / 2`、`a[i] / 2`
-  return REGEX_PREFIX_PUNCT.has(ch) || ch === "/";
-}
-
-/** 把注释 / 字符串 / 模板字面量 / **正则字面量**替换成空格（保留换行与偏移），只留真代码。
- *  模板里的 `${…}` 仍按代码扫描（里面可以有真实调用）。
- *  正则字面量必须识别：`const re = /\/\//; writeFileSync(p, x)` 里的 `//` 若被当成行注释，
- *  该行后续会整段失明（假阴性）。 */
-export function maskNonCode(src) {
-  const out = src.split("");
-  const stack = []; // "template" | "code"
-  let i = 0;
-  const blank = (from, to) => {
-    for (let k = from; k < to; k += 1) if (out[k] !== "\n") out[k] = " ";
-  };
-  while (i < src.length) {
-    const c = src[i];
-    const top = stack[stack.length - 1];
-    if (top === "template") {
-      if (c === "\\") { i += 2; continue; }
-      if (c === "`") { stack.pop(); i += 1; continue; }
-      if (c === "$" && src[i + 1] === "{") { stack.push("code"); i += 2; continue; }
-      blank(i, i + 1);
-      i += 1;
-      continue;
-    }
-    // code 模式
-    if (c === "/" && src[i + 1] === "/") {
-      let j = src.indexOf("\n", i);
-      if (j < 0) j = src.length;
-      blank(i, j);
-      i = j;
-      continue;
-    }
-    if (c === "/" && src[i + 1] === "*") {
-      let j = src.indexOf("*/", i + 2);
-      j = j < 0 ? src.length : j + 2;
-      blank(i, j);
-      i = j;
-      continue;
-    }
-    if (c === "/" && regexAllowedBefore(src, i)) {
-      // 正则字面量：跳过转义、字符类，直到收尾的 `/`，再吃掉 flags
-      let j = i + 1;
-      let inClass = false;
-      while (j < src.length) {
-        const d = src[j];
-        if (d === "\\") { j += 2; continue; }
-        if (d === "\n") { j += 1; break; } // 未闭合：别吞掉后续行
-        if (d === "[") inClass = true;
-        else if (d === "]") inClass = false;
-        else if (d === "/" && !inClass) { j += 1; break; }
-        j += 1;
-      }
-      while (j < src.length && /[a-z]/.test(src[j])) j += 1;
-      blank(i, j);
-      i = j;
-      continue;
-    }
-    if (c === '"' || c === "'") {
-      const q = c;
-      let j = i + 1;
-      while (j < src.length) {
-        if (src[j] === "\\") { j += 2; continue; }
-        if (src[j] === q) { j += 1; break; }
-        j += 1;
-      }
-      blank(i, j);
-      i = j;
-      continue;
-    }
-    if (c === "`") { stack.push("template"); i += 1; continue; }
-    if (top === "code" && c === "}") { stack.pop(); i += 1; continue; }
-    i += 1;
-  }
-  return out.join("");
-}
-
-/** 从 `(` 起找配对的 `)`（在掩码后的代码上走，天然跳过字符串/注释） */
-function matchingParen(masked, openIdx) {
-  let depth = 0;
-  for (let i = openIdx; i < masked.length; i += 1) {
-    if (masked[i] === "(") depth += 1;
-    else if (masked[i] === ")") {
-      depth -= 1;
-      if (depth === 0) return i;
-    }
-  }
-  return -1;
-}
 
 /** 取第 n 个顶层实参（在掩码后文本上按逗号切）；越界返回 null */
 function nthArg(masked, openIdx, closeIdx, n = 0) {

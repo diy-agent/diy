@@ -82,6 +82,7 @@ import {
 import { appendPlanVersion, currentPlanVersion, planVersionDoc, planVersionId, writePlanVersion } from "./plan-store";
 import { capToolOutput, toolOutFile, toolOutFileCandidates, toolOutRelPath } from "./tool-output";
 import { abortText } from "../../shared/turn-end";
+import { triageOf, triageOfTurnEnd } from "../../shared/error-triage";
 import { opsFeed } from "./ops-feed";
 import type { DeliveryOrigin, TurnOrigin } from "../../shared/room";
 // 「模型不可用」通知（##369 ①）：判据在 shared/model-unavailable，通知中心在 model-notice
@@ -3496,6 +3497,9 @@ export class LocalAgentManager {
             // 轮次结束原因（该轮事实，##288）：正常分支已写好；没写 = 流没跑完（被中断 / 崩溃）
             // → `aborted{detached}` —— 生成器被 return 展开时唯一可证的事实。
             const reason: TurnEndReason = endReason ?? (streamDone ? { type: "completed", data: {} } : { type: "aborted", data: { source: "detached" } });
+            // 三档判据（##394）：轮末是「异常能到达用户 / 日志」的边界 —— 先分类，再随审计落痕。
+            // **只加映射、不动 `TurnEndReason` 值域**（判据归 shared/error-triage；预期内 = triage null）。
+            const endTriage = triageOfTurnEnd(reason);
             // ── 本轮的开口 tool 块先钉成终态（##375）──
             // 取消（用户停止 → `cancel()` → ctrl.abort）会掐断 LLM 流：SDK 再也发不出这条工具
             // 调用的 tool-result / tool-error ⇒ 块停在 `status:"running"`、收不到 stop（UI 上就是
@@ -3525,6 +3529,9 @@ export class LocalAgentManager {
                 taskUri,
                 model: model,
                 result: `steps=${steps} usage=${acc.in}/${acc.out} cached=${acc.cached}`,
+                // 三档判据（##394）：`null`（预期内）不写，别在审计里制造"每轮都是一件事"的假象
+                ...(endTriage.triage ? { triage: endTriage.triage } : {}),
+                ...(endTriage.code ? { code: endTriage.code } : {}),
             });
             // ② 尽力投递：消费端还在就让它看到 stop；已断开则在此停住 —— 状态早已一致（①已完成）
             for (const op of ops) yield op;
@@ -3964,6 +3971,10 @@ export class LocalAgentManager {
                             break;
                         case "tool-error": {
                             const id = (part as { toolCallId?: string }).toolCallId ?? stepId;
+                            // 三档判据（##394）：工具失败是**另一条边界**（异常在这里第一次变成"给用户看的东西"）。
+                            // 只分类 + 落痕，不改文案与状态语义（文案归 shared/turn-end，铁律 5）。
+                            const tv = triageOf((part as { error?: unknown }).error);
+                            console.warn(`[local-agent] tool-error triage=${tv.triage} code=${tv.code ?? "-"} ${tv.reason} (${taskUri})`);
                             if (id !== stepId) yield* ensure(id, "tool", stepId, { tool: "tool", status: "streaming" });
                             yield* seal([
                                 { op: "delta", id, fields: { output: errText((part as { error?: unknown }).error) } },
