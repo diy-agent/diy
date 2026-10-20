@@ -126,6 +126,54 @@ export const AssembleGlobalsSchema = z.object({
    * 行号给不出来：那条记录是请求发出**之后**才落盘的（UI 侧由流量日志反查）。
    */
   reqlog: ReqlogSchema,
+  /**
+   * **房间上下文**（##377 第 26 刀）：这一轮该看到的房间成员 + 近期别人的发言。
+   *
+   * 为什么拆成 `members` / `recent` **两个原子单元**：runtime 的增量判定是
+   * `renderedHash` **按 place 逐条比**（`shared/context/projection.ts`）—— 合成一个单元时，
+   * 成员改个名就会把整段 recent 重发一遍 diff（白烧 token、把上下文变成高频消息流）。
+   *
+   * 为什么不是一段拼好的中文：值是**结构化数据**，拼装归模版层（信封由通用渲染器出 YAML）。
+   * 拼好的话既没法裁、也没法 diff，还会退化成"与正文不可区分的机制文本"（压缩会当人话改写）。
+   *
+   * 缺席（`undefined`）= 这个任务没有房间（从没开过任务页、也没被投递过）⇒ 单人任务逐字不变。
+   */
+  room: z
+    .object({
+      members: z
+        .object({
+          roomId: z.string().describe("房间 id（本任务自己的房间 = 任务 URI；投递轮 = 来源房间）"),
+          name: z.string().describe("房间显示名（任务房间 = #任务号；侧边栏房间 = 实例短名）"),
+          list: z
+            .array(
+              z.object({
+                id: z.string().describe("成员 id（可 @ 寻址的全式）"),
+                name: z.string().describe("显示名（人物名 / 人名）"),
+                key: z.string().describe("此刻真能打中的 @ 键（提示与解析同一份判据）"),
+                main: z.boolean().describe("是否本任务自己的会话主人"),
+              }),
+            )
+            .describe("房间成员（按人先 agent 后排序）"),
+        })
+        .describe("房间成员：低频单元（谁在房里 / 别名 / 是否主人格；改成员才变）"),
+      recent: z
+        .object({
+          items: z
+            .array(
+              z.object({
+                from: z.string().describe("发言者的 @ 键"),
+                at: z.string().describe("发言时刻（ISO）"),
+                text: z.string().describe("发言正文"),
+              }),
+            )
+            .describe("自上次以来**别人**的发言（时间正序；不含自己说的、不含正文里这一条）"),
+          omitted: z.number().describe("因上限被省略的更早条数（>0 ⇒ 更早的没带进来）"),
+        })
+        .describe("房间近期发言：高频单元（有人说话就变；没有新发言时**整个单元缺席**）")
+        .optional(),
+    })
+    .optional()
+    .describe("房间上下文（没有房间时缺席）"),
 });
 export type AssembleGlobals = z.infer<typeof AssembleGlobalsSchema>;
 
@@ -134,6 +182,8 @@ export interface VarSpec {
   path: string;
   type: "string" | "number" | "boolean" | "array" | "object";
   desc?: string;
+  /** 该路径**可能缺席**（schema 里是 `.optional()`，或祖先可选）—— 校验器据此放过"没有这个键" */
+  optional?: boolean;
 }
 
 /** 渲染结构 trace 节点（试验场「模版结构树」：每个节点的产出字节 + :if 真假原因 + 迭代次数） */

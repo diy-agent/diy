@@ -360,7 +360,11 @@ describe("回归：评审修复项", () => {
     };
     // ① 契约 → 注入：每个声明路径都存在且类型相符
     for (const spec of SYSTEM_VARS) {
-      expect(typeOf(walk(g, spec.path)), spec.path).toBe(spec.type);
+      const v = walk(g, spec.path);
+      // 可选路径（schema 里 `.optional()`，如 `room`：任务没有房间时整个子树缺席）——
+      // 「没有这个键」是合法状态；一旦**在**就必须类型相符（下一行照样断言）
+      if (v === undefined && spec.optional) continue;
+      expect(typeOf(v), spec.path).toBe(spec.type);
     }
     // ② 注入 → 契约：注入里的每个叶子/集合路径都必须在契约里
     const declared = new Set(SYSTEM_VARS.map((v) => v.path));

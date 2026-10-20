@@ -48,7 +48,6 @@ import {
     mirrorMissingParts,
     resolveRecipients,
     shouldMirrorRoom,
-    roomContextFor,
     shortName,
     type DeliveryState,
     type DeliveryStatus,
@@ -515,20 +514,16 @@ function deliverOne(input: DeliverInput): Promise<void> {
             input.done(ev);
             return;
         }
-        // 房间上下文（##166 §44.6）：**自上次它被投递以来、房间里别人说了什么** ——
-        // 不注入的话，被投递的 agent 只知道"这一句"，对刚才房间里发生过什么一无所知。
-        // 四条规则（水位 / 去重 / 不看自己 / 上限）全在 `shared/room.roomContextFor`（纯函数 + 单测），
-        // 这里只负责**现读**事件流与水印（不用投递开始时的快照：排队期间别人可能又说了话）。
-        const ctx = roomContextFor({
-            events: readEvents(roomId).events,
-            memberId: member.id,
-            sayId,
-            lastSeenId: readRoom(roomId)?.lastSeen[member.id],
-        });
+        // 正文**只留人话**（##377 第 26 刀）：房间近期发言改走 `runtime.room.recent`
+        // （结构化变量单元，由 `local-agent` 在轮首装配），不再拼进这条 user 块。
+        // 拼在正文里的代价：① 进会话史即永留（压缩模型会把它当人话改写、回放分不清谁说的）；
+        // ② 与"投递这条 say 本身"混在一处，正文与机制文本不可区分。
+        //
+        // 看哪间房由 `driveTurn` 从 `origin.room.roomId`（= 本房间）+ `sayId` 推出来 ——
+        // 水位仍归这里（投递成功后按 `sayId` 前移，与投递状态同生共死；见下方 `advanceLastSeen`）。
+        //
         // 主人格（`main`）的会话 = **宿主任务自己的会话** ⇒ 正文就是原话，不包房间前缀
         // （##166 §28.7 G 推论 4：「不加人时行为与旧版完全一致」的正文层落点）。
-        // ⚠️ `plain` 只去掉**房间前缀**，「近期发言」段照加（判据 6：主人格也得知道别人说了话）；
-        //    上下文为空时 `contextBlock` 返回空串 ⇒ 单人任务 / 无别人发言时正文逐字不变（判据 1/7）。
         const r = await runAndCollect(
             taskUri,
             deliveryText({
@@ -537,20 +532,12 @@ function deliverOne(input: DeliverInput): Promise<void> {
                 text: body,
                 toAll,
                 plain: member.main === true,
-                context: ctx.items,
-                contextOmitted: ctx.omitted,
-                nameOf: (id) => memberName(input.room, id),
             }),
-            // 署名（##166 §40 B）：值 = **发起投递的成员 id**（`agent:main` / `human:ccc`），
-            // 不是自由字符串 —— 可追溯、可点开。对方会话里那条 user 块据此区分"谁在跟我说"，
-            // 任务对话页据此把气泡翻到左侧并署名（C 块）。
-            // 房间来源（第 23 刀）：`{ roomId, sayId }` 落进同一条 user 块的 `meta.room` ——
-            //   接收方据此知道「这句话是别的房间投过来的」，UI 画出「房间投递 · #N」标记。
-            // ⚠️ 第 17 刀收窄（§44.2 A · D 判据 1/7）：**投给主人格且发起者是页面操作者本人 ⇒ 不署名** ——
-            //   主人格的会话就是任务页**自己的**会话，凭空带上 `human:chen56` 会让那条气泡翻到左侧并加署名
-            //   ⇒「无 @ 发送 = 与今天等价 / 单人任务逐字一致」当场破。第 23 刀把这条口径原样扩到 `room`：
-            //   **不署名 ⇒ 整条随附事实都不落**（否则气泡上会多出「房间投递」标记，同一判据照样破）。
+            // 署名（##166 §40 B）+ 房间来源（第 23 刀）：落进那条 user 块的 `meta.author` / `meta.room`。
+            // ⚠ 第 17 刀收窄（§44.2 A · 判据 1/7）：**投给主人格且发起者是页面操作者本人 ⇒ 整条不落**
+            //   （不署名、也不带 `room`）—— 否则气泡翻边 + 多出「房间投递」标记，与"与今天等价"冲突。
             //   判据在 `shared/room.deliveryOriginFor`（纯函数 + 单测），**别在这里另写一份**。
+            //   `fromDelivery: true` 仍恒带（不落盘）：它表达「这一轮是投递」，与"落盘落什么"是两件事。
             deliveryOriginFor(member.main === true, author, { roomId, sayId }),
         );
         const replyId = nextEventId();

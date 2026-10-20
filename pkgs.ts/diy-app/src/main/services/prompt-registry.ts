@@ -10,6 +10,7 @@
 //   （项目覆盖 > 内置 + locked 标记 + 草稿）。
 // 本模块只做组装与渲染，不发任何 LLM 请求（试验场试跑 = dry-run，看请求长什么样）。
 
+import type { RoomRuntimeValue } from "./room-context";
 import * as yaml from "js-yaml";
 import { existsSync, readFileSync, readdirSync, rmSync, rmdirSync } from "node:fs";
 import { homedir } from "node:os";
@@ -581,6 +582,16 @@ export function assembleGlobals(
     diyCli?: string;
     /** 未存盘草稿（relpath → 正文）：模版编辑器里没保存的改动也即时反映到投递 */
     drafts?: Record<string, string>;
+    /**
+     * 房间上下文（##377 第 26 刀）：`roomRuntimeFact().value` 原样传进来。
+     *
+     * 为什么由调用方给、而不在这里现读：它依赖「这一轮看哪间房 / 排除哪条 say」——
+     * 自起轮 = 本任务的房间；投递轮 = **来源**房间 + 正文里那一条。装配层不知道这些。
+     * 传 `null` / 缺省 = 不注入（任务没有房间时与迁移前逐字不变）。
+     *
+     * ⚠ 类型走 `import type`：本文件不进 zod 补丁顺序的坑（##322），别改成值导入。
+     */
+    room?: RoomRuntimeValue | null;
   } = {},
 ): AssembleGlobals {
   const taskUri = opts.taskUri ?? "";
@@ -637,6 +648,9 @@ export function assembleGlobals(
   };
   return {
     ...core,
+    // 房间上下文（##377 第 26 刀）：**只在有房间时出现**（缺这个键 = 单人任务逐字不变）。
+    // 两个原子单元由 PLACE_CANDIDATES 的 `room.members` / `room.recent` 各自成一条 runtime 单元。
+    ...(opts.room ? { room: opts.room } : {}),
     identity: section(DELIVERED_SECTIONS.identity),
     rules: section(DELIVERED_SECTIONS.rules),
     guard: section(DELIVERED_SECTIONS.guard),

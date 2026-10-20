@@ -77,6 +77,10 @@ export const PLACE_CANDIDATES: PlaceCandidate[] = [
     { path: "reqlog", system: true, reason: "真发请求的流量日志在哪：稳定（仅文件名按天变）→ 可缓存" },
     { path: "task.body", system: false, reason: "任务正文：每次编辑正文就变 → 放 runtime，不污染 system 缓存" },
     { path: "skills", system: false, reason: "技能清单：安装/升级技能就变" },
+    // 房间上下文（##377 第 26 刀）：**两个原子单元，别合成一个** —— runtime 增量按 place 逐条比
+    // （`projection.ts` 的 renderedHash），合起来则"成员改个名"会把整段 recent 重发一遍。
+    { path: "room.members", system: false, reason: "房间成员：低频（改成员才变）" },
+    { path: "room.recent", system: false, reason: "房间近期发言：高频（有人说话就变）" },
 ];
 
 /** 默认 system 名单（真发与预览共用；用户可在页面上改，改动只影响该页面预览） */
@@ -181,8 +185,19 @@ export function buildDelivery(
     systemPlaces: readonly ContextPath[] = defaultSystemPlaces(),
 ): Delivery {
     // places 取「候选里存在的」+ system 名单（后者可能含候选外的手填 path）
-    const existing = new Set(Object.keys(globals));
-    const inTree = (p: ContextPath): boolean => existing.has(p.split(".")[0]);
+    //
+    // 判据是**整条 path 真的存在**，不是只看顶层键（##377 第 26 刀）：
+    // `room.recent` 在"没人说话"时整个单元缺席 —— 只看顶层 `room` 会把它留成 place，
+    // 于是它有个"空"的 renderedHash ⇒ 每步 diff 都报 `set room.recent: ''`，
+    // 把"上下文"变成噪声（还会砸前缀缓存）。同一形状的坑对任何可选子单元都成立。
+    const inTree = (p: ContextPath): boolean => {
+        let cur: unknown = globals;
+        for (const seg of p.split(".")) {
+            if (cur === null || typeof cur !== "object" || !(seg in (cur as Record<string, unknown>))) return false;
+            cur = (cur as Record<string, unknown>)[seg];
+        }
+        return true;
+    };
     const places = unitPathsOf(systemPlaces).filter(inTree).sort();
 
     let tree = treeOfGlobals(globals);

@@ -1051,7 +1051,12 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { buildDelivery } = await import("../../shared/context/delivery");
     const { loadSystemPlaces } = await import("../core/context-config");
     const project = projectFromUri(input.taskUri) || input.project;
-    const globals = assembleGlobals(diyHome(), project, { taskUri: input.taskUri }) as unknown as Record<string, unknown>;
+    // 房间上下文（##377 第 26 刀）：预览与真发同一份装配（取**本任务自己的房间**）
+    const { roomRuntimeFact } = await import("./room-context");
+    const globals = assembleGlobals(diyHome(), project, {
+      taskUri: input.taskUri,
+      room: roomRuntimeFact({ roomId: input.taskUri, taskUri: input.taskUri })?.value ?? null,
+    }) as unknown as Record<string, unknown>;
     const now = buildDelivery(globals, input.systemPlaces?.length ? input.systemPlaces : loadSystemPlaces(diyHome()));
     const last = records[records.length - 1]!;
     const d = diffSteps(last, {

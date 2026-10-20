@@ -9,13 +9,10 @@
 // 而它**不在 UI 上直接可见**（藏在 agent 的 user 消息正文里）⇒ 只能靠测试网兜。
 
 import { describe, it, expect } from "vitest";
-import {
-  contextBlock,
-  deliveryText,
-  roomContextFor,
-  CONTEXT_MAX_EVENTS,
-  type RoomEvent,
-} from "../../src/shared/room";
+import { deliveryText, roomContextFor, CONTEXT_MAX_EVENTS, type RoomEvent, type RoomContextItem } from "../../src/shared/room";
+
+/** 只看「谁说了什么」（items 现在还带 id / at，供 runtime 单元用） */
+const brief = (items: readonly RoomContextItem[]) => items.map((i) => ({ author: i.author, text: i.text }));
 
 const HUMAN = "human:chen56";
 const DEV = "agent:dev";
@@ -42,10 +39,13 @@ describe("roomContextFor：别人说的话进上下文", () => {
       memberId: MIMO,
       sayId: "e_say",
     });
-    expect(items).toEqual([
+    expect(brief(items)).toEqual([
       { author: HUMAN, text: "大家好" },
       { author: DEV, text: "我在" },
     ]);
+    // runtime 单元要结构化：id（水位/去重的外部键）与 at（时刻）都在
+    expect(items[0]!.id).toBeTruthy();
+    expect(items[0]!.at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(omitted).toBe(0);
   });
 
@@ -95,7 +95,7 @@ describe("roomContextFor：水位（lastSeen）", () => {
       sayId: "e_say",
       lastSeenId: "e_last",
     });
-    expect(items).toEqual([]);
+    expect(brief(items)).toEqual([]);
     expect(omitted).toBe(0);
   });
 });
@@ -120,51 +120,20 @@ describe("roomContextFor：上限（20 条 / 4000 字符，取最近的）", () 
   });
 });
 
-describe("deliveryText：空上下文 ⇒ 逐字不变（判据 1 / 7 的回归网）", () => {
-  it("非主人格：旧输出一字不差", () => {
-    const plainOut = deliveryText({ roomId: "r", fromName: "chen56", text: "hi" });
-    expect(plainOut).toBe("[多人房间 r] chen56 对你说：\nhi");
-    expect(deliveryText({ roomId: "r", fromName: "chen56", text: "hi", context: [], contextOmitted: 0 })).toBe(plainOut);
+describe("deliveryText：正文只留人话（##377 第 26 刀：近期发言已搬到 runtime）", () => {
+  it("非主人格：房间前缀 + 原话，**没有**近期发言段", () => {
+    const out = deliveryText({ roomId: "r", fromName: "chen56", text: "hi" });
+    expect(out).toBe("[多人房间 r] chen56 对你说：\nhi");
+    expect(out).not.toContain("本房间近期发言");
   });
 
-  it("主人格（plain）：正文就是原话，没有尾巴", () => {
+  it("群发：同一个正文，只是前缀标了「群发」", () => {
+    expect(deliveryText({ roomId: "r", fromName: "chen56", text: "hi", toAll: true })).toBe(
+      "[多人房间 r · 群发] chen56 对你说：\nhi",
+    );
+  });
+
+  it("主人格（plain）：正文就是原话，一字不差", () => {
     expect(deliveryText({ roomId: "r", fromName: "chen56", text: "hi", plain: true })).toBe("hi");
-    expect(deliveryText({ roomId: "r", fromName: "chen56", text: "hi", plain: true, context: [] })).toBe("hi");
-  });
-});
-
-describe("deliveryText：有上下文 ⇒ 尾部附段", () => {
-  it("非主人格：房间前缀 + 原话 + 近期发言（名字走 nameOf）", () => {
-    const out = deliveryText({
-      roomId: "r",
-      fromName: "chen56",
-      text: "给 mimo 的",
-      context: [{ author: DEV, text: "我在" }],
-      nameOf: (id) => (id === DEV ? "dev" : id),
-    });
-    expect(out).toBe("[多人房间 r] chen56 对你说：\n给 mimo 的\n[本房间近期发言]\ndev: 我在");
-  });
-
-  it("主人格（plain）：原话在前，段在后（判据 6）", () => {
-    const out = deliveryText({
-      roomId: "r",
-      fromName: "chen56",
-      text: "直接说",
-      plain: true,
-      context: [{ author: DEV, text: "别人说了" }],
-      nameOf: () => "dev",
-    });
-    expect(out).toBe("直接说\n[本房间近期发言]\ndev: 别人说了");
-  });
-
-  it("omitted > 0 ⇒ 末尾标注「更早的 N 条已省略」", () => {
-    const out = contextBlock([{ author: DEV, text: "x" }], 5, () => "dev");
-    expect(out).toContain("（更早的 5 条已省略）");
-  });
-
-  it("没给 nameOf ⇒ 退回 shortName（去掉 kind 前缀），不吐全式 id", () => {
-    const out = contextBlock([{ author: DEV, text: "x" }]);
-    expect(out).toContain("dev: x");
-    expect(out).not.toContain("agent:dev");
   });
 });

@@ -56,6 +56,12 @@ export interface VarSpec {
     type: 'string' | 'number' | 'boolean' | 'array' | 'object';
     /** 给人看的说明（试验场「可用变量」view 显示） */
     desc?: string;
+    /**
+     * 该路径**可能缺席**（宿主 schema 里是可选变量，或其祖先可选）。
+     * 引擎不据此放行/拒绝（缺了就是 undefined，走既有缺失语义）；它是给**宿主侧校验器**用的：
+     * 「声明了、这次却没有这个键」是合法状态，不该被当成"加了变量忘写契约"。
+     */
+    optional?: boolean;
 }
 
 export interface AnalyzeOptions extends ParseOptions {

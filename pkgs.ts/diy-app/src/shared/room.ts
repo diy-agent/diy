@@ -847,23 +847,23 @@ export function deliveryText(opts: {
      * 这也是「不加人时行为与旧版完全一致」在**正文层**的落点（§28.7 G 推论 4）。
      */
     plain?: boolean;
-    /** 自上次它被投递以来、**别人**说的话（`roomContextFor` 的结果）。空/缺省 ⇒ 正文逐字不变 */
-    context?: RoomContextItem[];
-    /** 因上限没带进来的条数（>0 时末尾标注「更早的 N 条已省略」） */
-    contextOmitted?: number;
-    /** 作者 id → 显示名（缺省 `shortName`） */
-    nameOf?: (id: string) => string;
 }): string {
     const head = opts.plain
         ? opts.text
         : `${opts.toAll ? `[多人房间 ${opts.roomId} · 群发]` : `[多人房间 ${opts.roomId}]`} ${opts.fromName} 对你说：\n${opts.text}`;
-    return `${head}${contextBlock(opts.context, opts.contextOmitted, opts.nameOf)}`;
+    // ⚠ 正文**只留人话**（##377 第 26 刀）：房间近期发言改走 `runtime.room.recent`（结构化变量单元），
+    //   不再拼在正文尾部 —— 拼在正文里会进会话史（压缩模型会当人话改写）、回放分不清谁说的。
+    return head;
 }
 
 /** 「近期发言」的一条（已在投递侧剥成纯文本，UI 只读不解析） */
 export interface RoomContextItem {
+    /** 事件 id（水位 / 去重的外部键） */
+    id: string;
     /** 发言者成员 id */
     author: string;
+    /** 发言时刻（ISO，事件原样） */
+    at: string;
     text: string;
 }
 
@@ -911,26 +911,69 @@ export function roomContextFor(opts: {
         const e = tail[i]!;
         const cost = e.text.length + e.author.length + 8; // 8 ≈ 分隔符与名字开销的量级
         if (chars + cost > CONTEXT_MAX_CHARS && items.length > 0) break;
-        items.unshift({ author: e.author, text: e.text });
+        items.unshift({ id: e.id, author: e.author, at: e.ts, text: e.text });
         chars += cost;
     }
     return { items, omitted: tail.length - items.length };
 }
 
 /**
- * 渲染「本房间近期发言」段。**上下文为空 ⇒ 返回空串** ——
- * 这是「单人任务 / 没有别人发言时正文逐字不变」（判据 1/7 的回归网）的唯一落点。
+ * 房间上下文的**两个 runtime 原子单元**（##377 第 26 刀）：
+ *   `room.members` —— 低频（谁在房里 / 别名 / 是否主人格；改成员才变）
+ *   `room.recent`  —— 高频（有人说话就变）
+ *
+ * 为什么**必须拆成两个 place**：runtime 的增量判定是 `renderedHash` **按 place 逐条比**
+ * （`shared/context/projection.ts`）。合成一个单元的话，某个成员改个名就会把整段 recent
+ * 一起重发一遍 diff —— 白烧 token，还把"房间上下文"变成高频消息流。
+ *
+ * ⚠ 这里只产出**结构化值**，不产出任何拼好的中文：拼装归模版层（信封由通用渲染器出 YAML）。
+ *   在值里塞一段拼好的话 = 没法裁、没法 diff、也没法与 ##268 的 plan 对齐。
  */
-export function contextBlock(
-    items: RoomContextItem[] | undefined,
-    omitted = 0,
-    nameOf?: (id: string) => string,
-): string {
-    if (!items || items.length === 0) return "";
-    const name = (id: string): string => (nameOf ? nameOf(id) : shortName(id));
-    const lines = items.map((it) => `${name(it.author)}: ${it.text}`);
-    const more = omitted > 0 ? `\n（更早的 ${omitted} 条已省略）` : "";
-    return `\n[本房间近期发言]\n${lines.join("\n")}${more}`;
+export interface RoomMembersValue {
+    /** 房间 id（本任务自己的房间 = 任务 URI；投递轮可能是**来源**房间） */
+    roomId: string;
+    /** 房间显示名（`#N` / 侧边栏短名，`roomDisplayName` 同一把尺） */
+    name: string;
+    /** 成员（**低频**）：`key` = 此刻真能打中的 `@` 键（`memberKey`，与补全/解析同一份判据）。
+     *  字段名用 `list` 而不是 `members`：单元本身已叫 `room.members`，再套一层会成
+     *  `room.members.members`（模型与人都会读糊涂）。 */
+    list: Array<{ id: string; name: string; key: string; main: boolean }>;
+}
+
+export interface RoomRecentValue {
+    /** 自上次以来**别人**的发言（时间正序；不含自己说的、不含正文里这一条） */
+    items: Array<{ from: string; at: string; text: string }>;
+    /** 因上限被省略的更早条数 */
+    omitted: number;
+}
+
+/** 成员单元的值（纯函数；单测钉「每个人的 key 都真能打中」） */
+export function roomMembersValue(room: Room): RoomMembersValue {
+    return {
+        roomId: room.id,
+        name: roomDisplayName(room.id),
+        list: orderedMembers(room).map((m) => ({
+            id: m.id,
+            name: m.name,
+            key: memberKey(room, m),
+            main: m.main === true,
+        })),
+    };
+}
+
+/** 近期发言单元的值（`from` 用**能 @ 的键**：模型读到谁说的，就能 @ 回去） */
+export function roomRecentValue(
+    room: Room,
+    items: readonly RoomContextItem[],
+    omitted: number,
+): RoomRecentValue {
+    return {
+        items: items.map((it) => {
+            const m = room.members.find((x) => x.id === it.author);
+            return { from: m ? memberKey(room, m) : shortName(it.author), at: it.at, text: it.text };
+        }),
+        omitted,
+    };
 }
 
 /** 护栏文案（输入框上方那条）：本条将投递给谁 —— **@ 优先、focus 兜底、都没有 = 未投递** */
