@@ -18,6 +18,11 @@
 //
 // 水位为什么在成轮之后才前移：与投递路径同一条口径（「成功后才前移，宁可重复不可漏」）。
 // 崩在注入与成轮之间 = 水位没动 ⇒ 下一轮再注入一遍（多几十到几百字），不会静默丢失。
+//
+// ⚠ **过渡态**：现在的落点是**拼进 user 正文尾部**（与第 18 刀投递路径同形），
+//   终局 = **`runtime.room` 变量单元**（不进会话历史、每轮全量、可吃 `runtimeDiff`）。
+//   见 ##377 第 26 刀（owner 口径 2026-10-20：两条路径同一 PR 一起搬）。
+//   在这之前**别在这条通道上加东西** —— 会变成搬的时候要改两处。
 
 import { advanceLastSeen, readEvents, readRoom } from "../core/room";
 import { contextBlock, memberName, roomContextFor } from "../../shared/room";
