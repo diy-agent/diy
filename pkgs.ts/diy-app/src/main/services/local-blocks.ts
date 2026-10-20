@@ -69,6 +69,10 @@ const SCHEMA: Record<BlockKind, Record<string, FieldKind>> = {
         // author：发言者署名（##166 §40 A）—— 代发 / 多 agent 同席时 UI 据此区分发言者；
         // 省略 = 本任务本人（沿用"我说过啥"的右侧气泡）。落位见 local-agent 的两处 user 块。
         author: "Flag",
+        // room：房间来源（##377 第 23 刀）—— `{ roomId, sayId }`，只有 room 投递带。
+        // 与 author 分工：author = 谁说的，room = 从哪来的。省略 = 不是投递来的
+        // （任务页本人发言 / 老数据）⇒ 气泡逐字不变。Δt 不适用 ⇒ Flag（整对象写一次）。
+        room: "Flag",
     },
     think: { content: "Text" },
     tool: {

@@ -458,7 +458,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
       input.reasoningEffort,
       signal,
       undefined,
-      input.author,
+      // 第 23 刀：第 7 参从「author 字符串」收成 `TurnOrigin`（再扩不必加第 8 个位次）
+      input.author ? { author: input.author } : undefined,
     )) {
       yield JSON.stringify(op);
     }

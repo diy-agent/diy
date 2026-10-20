@@ -442,6 +442,74 @@ export function opsAuthorFor(main: boolean, author: string): string | undefined 
 }
 
 /**
+ * 一条投递的**来源**（##377 第 23 刀）：这句话从哪个房间、哪一条 `say` 投过来的。
+ *
+ * 与 `author` 分工：`author` 说「**谁**说的」，`room` 说「**从哪**来的」。
+ * 二者都落进收件方会话那条 user 块的 meta（`meta.author` / `meta.room`）。
+ *
+ * 为什么需要它（用户报「有 bug、不能真正使用」的直接后果之一）：
+ * 今天投递进接收方会话是一条**普通 user 块** —— 它看起来「就是这个任务的人说的」，
+ * 接收方**分不清**「本任务的人在跟我说话」与「别的房间投过来的一句」。
+ * 有了来源，UI 才能标出来，未来「把这条写回接收方自己的 room」也有了键（双向可见的地基）。
+ */
+export type DeliveryOrigin = {
+    /** 房间 id（宿主任务的 room = taskUri；侧边栏 room = `agent:room:ui/sidebar-<实例>`） */
+    roomId: string;
+    /** 那条 `say` 事件的 id —— 拿着它回房间就能定位原话（事件流是 append-only） */
+    sayId: string;
+};
+
+/** 一条发言的**随附事实**（`chat` 的第 7 参 —— 替代原来单个 `author`，再扩不必加第 8 个位次）。 */
+export type TurnOrigin = {
+    /** 谁说的（同 `opsAuthorFor` 的语义；缺省 = 本任务本人） */
+    author?: string;
+    /** 从哪来的（只有 room 投递带） */
+    room?: DeliveryOrigin;
+};
+
+/**
+ * 投递时要落进成员会话的**随附事实**（`author` 的整条兜底 —— 第 23 刀）。
+ *
+ * 口径的落点只有一个：`opsAuthorFor` 说「不署名」时，**整条都不落**（含 `room`）。
+ *
+ * 为什么连 `room` 也要一起掐掉：投给主人格 + 发起者是页面操作者本人 = 「我对我自己的
+ * agent 说话」—— 那是任务页**自己的**会话，一旦落 `room`，UI 会给它画上「房间投递」标记
+ * ⇒ §44.2 A「无 @ 发送 = 与今天等价」/ 第 16 刀判据 7「单人任务逐字不变」当场破。
+ * 溯源没丢：room 侧的 `say` 事件恒在（那才是房间历史的溯源）。
+ */
+export function opsOriginFor(main: boolean, author: string, room: DeliveryOrigin): TurnOrigin | undefined {
+    const a = opsAuthorFor(main, author);
+    return a === undefined ? undefined : { author: a, room };
+}
+
+/**
+ * 房间 id → **人读得懂的短名**（气泡标记用）。
+ *
+ * `projects/1/tasks/3` ⇒ `#3`（任务号是房间里所有人都认识的称呼）；
+ * `agent:room:ui/sidebar-dev-ttipba` ⇒ `dev-ttipba`（侧边栏实例短名）；
+ * 其它形态退到末段。**纯函数 + 单测**：气泡上那个标记不许出现路径噪音。
+ */
+export function roomDisplayName(roomId: string): string {
+    const parts = roomId.split("/").filter(Boolean);
+    const last = parts[parts.length - 1] ?? roomId;
+    if (parts.length >= 3 && parts[parts.length - 2] === "tasks") return `#${last}`;
+    // ⚠️ 用**最后一个 `/` 段**而不是 `lastSegment`（那个按 `:` 切）：侧边栏 id 形如
+    // `agent:room:ui/sidebar-dev-ttipba` —— 按 `:` 切会得到 `ui/sidebar-dev-ttipba`（把路径带进气泡）。
+    return last.replace(/^sidebar-/, "") || roomId;
+}
+
+/**
+ * 气泡上的「房间投递」标记文案；`null` = 不画（老数据 / 本任务本人发言）。
+ *
+ * 只写**来源**不写原因：这条 user 块在接收方会话里的语义就是「有一条别的房间的话投进来了」。
+ */
+export function deliveryBadge(origin: DeliveryOrigin | null | undefined): string | null {
+    if (!origin || !origin.roomId) return null;
+    const name = roomDisplayName(origin.roomId);
+    return name ? `房间投递 · ${name}` : "房间投递";
+}
+
+/**
  * 「只要成员表」的入参形状 —— 比 `Pick<Room, "members">` 更宽：**接受只读数组**。
  *
  * 为什么需要它：UI 侧的成员表常是 `readonly RoomMember[]`（store 给的都是只读视图），
