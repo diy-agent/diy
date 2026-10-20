@@ -476,6 +476,18 @@ export type TurnOrigin = {
     author?: string;
     /** 从哪来的（只有 room 投递带） */
     room?: DeliveryOrigin;
+    /**
+     * **不落盘**：本轮是 room 投递发起的（判据用）。
+     *
+     * 为什么不能只看 `room`（##377 第 25 刀实测抓出的回归）：投给**主人格**且发起者是页面
+     * 操作者本人时，`opsOriginFor` 按 §44.2 A **整条不落**（不署名、也不带 `room`）
+     * —— 那正是「无 @ 发送 = 与今天等价」的代价。于是 `room` 有值与否**表达不了**
+     * 「这一轮是不是投递」，用它在轮首判「要不要注入房间上下文」⇒ 投给主人格时
+     * 注入两遍（`deliveryText` 一遍 + 轮首注入一遍）。
+     *
+     * ⇒ 「落不落盘」与「是不是投递」是**两件事**，各用一个字段，互不牵连。
+     */
+    fromDelivery?: boolean;
 };
 
 /**
@@ -491,6 +503,19 @@ export type TurnOrigin = {
 export function opsOriginFor(main: boolean, author: string, room: DeliveryOrigin): TurnOrigin | undefined {
     const a = opsAuthorFor(main, author);
     return a === undefined ? undefined : { author: a, room };
+}
+
+/**
+ * **投递发起**的一轮要带的随附事实（`deliverOne` 的唯一入口，##377 第 25 刀）。
+ *
+ * 与 `opsOriginFor` 的分工：那个只管「落盘落什么」（可能返回 `undefined` = 整条不落），
+ * 这个恒带 `fromDelivery: true` —— 轮首注入靠它判「正文已经带过房间上下文了，别再拼一遍」。
+ *
+ * ⚠️ 两件事必须分开看，否则必踩两个坑之一：只按 `room` 判 ⇒ 投给主人格时重复注入；
+ * 只按 `fromDelivery` 判 ⇒ 非投递的自起轮（任务页点跑 / 定时任务）拿不到上下文。
+ */
+export function deliveryOriginFor(main: boolean, author: string, room: DeliveryOrigin): TurnOrigin {
+    return { ...opsOriginFor(main, author, room), fromDelivery: true };
 }
 
 /**
@@ -600,6 +625,28 @@ export function mirrorEvents(input: MirrorInput): { say: RoomEvent; reply: RoomE
         origin: input.origin,
     };
     return { say, reply };
+}
+
+/**
+ * 写回幂等的**判据**（##377 review2 R1）：目标房间里，这条 say 的两份事件**各自**在不在。
+ *
+ * 为什么不能只看 `say`：`say` 与 `reply` 是**两次 append**（`record` 各写一行）——
+ * 进程崩在两次之间 / 磁盘满 / 第二次 append 抛错，都会留下「有 say 无 reply」。
+ * 若幂等判据是「这条 say 已经写回过 ⇒ 整体 return」，那条 reply **永远补不回来**：
+ * 房间里从此挂着一条「说了话、没人回」的事件，重跑一百次也一样。
+ *
+ * 口径与「水位是优化」同族：**补写比漏写安全** —— 重复写已存在的事件没有意义，
+ * 而少一条就是永久缺一块。故判据按**每条**算，调用方只补缺的那条。
+ */
+export function mirrorMissingParts(
+    events: readonly RoomEvent[],
+    sayId: string,
+): { say: boolean; reply: boolean } {
+    const mine = sayId ? events.filter((e) => e.origin?.sayId === sayId) : [];
+    return {
+        say: !mine.some((e) => e.kind === "say"),
+        reply: !mine.some((e) => e.kind === "reply"),
+    };
 }
 
 /** 房间页气泡上的「这条从哪来」标记；`null` = 本房间自己产生的，不画。 */

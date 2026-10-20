@@ -14,7 +14,7 @@
 //   ⑤ `originLabel` 给人读的短名（`#3` / 侧边栏实例名），不出现路径噪音
 
 import { describe, it, expect } from "vitest";
-import { mirrorEvents, opsOwnsEvent, originLabel, shouldMirrorRoom } from "../../src/shared/room";
+import { mirrorEvents, mirrorMissingParts, opsOwnsEvent, originLabel, shouldMirrorRoom } from "../../src/shared/room";
 
 const base = {
     origin: { roomId: "projects/1/tasks/1", sayId: "e1_say" },
@@ -103,5 +103,38 @@ describe("originLabel —— 气泡上的「从哪来」", () => {
     it("① 本房间产出的事件（无 origin）不画", () => {
         expect(originLabel(undefined)).toBeNull();
         expect(originLabel(null)).toBeNull();
+    });
+});
+
+describe("mirrorMissingParts —— 幂等按「每条」算（review2 R1）", () => {
+    // 病灶：`say` 与 `reply` 是两次 append。崩在两次之间 / 第二次 append 抛错 ⇒ 盘上只有 say。
+    // 若幂等判据是「这条 say 已经写回过 ⇒ 整体 return」，那条 reply **永远补不回来**
+    // （房间里从此挂着「说了话、没人回」，重跑一百次也一样）。
+    const both = mirrorEvents(base)!;
+
+    it("① 两条都不在 ⇒ 两条都缺（首次写回）", () => {
+        expect(mirrorMissingParts([], "e1_say")).toEqual({ say: true, reply: true });
+    });
+
+    it("② 只有 say 在 ⇒ **只缺 reply**（R1 的本体：补得上）", () => {
+        expect(mirrorMissingParts([both.say], "e1_say")).toEqual({ say: false, reply: true });
+    });
+
+    it("③ 只有 reply 在（反向半截）⇒ 只缺 say", () => {
+        expect(mirrorMissingParts([both.reply], "e1_say")).toEqual({ say: true, reply: false });
+    });
+
+    it("④ 两条都在 ⇒ 都不缺（重跑静默）", () => {
+        expect(mirrorMissingParts([both.say, both.reply], "e1_say")).toEqual({ say: false, reply: false });
+    });
+
+    it("⑤ 别的 say 的事件不算数（按 origin.sayId 精确匹配，不是「房间里有 say 就算」）", () => {
+        const other = mirrorEvents({ ...base, origin: { roomId: "projects/1/tasks/1", sayId: "e2_other" } })!;
+        expect(mirrorMissingParts([other.say, other.reply], "e1_say")).toEqual({ say: true, reply: true });
+    });
+
+    it("⑥ 空 sayId ⇒ 一律视为缺（防空串命中所有无 origin 事件造成的假幂等）", () => {
+        const plain = { ...both.say, origin: undefined } as typeof both.say;
+        expect(mirrorMissingParts([plain], "")).toEqual({ say: true, reply: true });
     });
 });

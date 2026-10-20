@@ -89,6 +89,9 @@ import { modelNoticeHub, noticeFromError, unavailableNoticeFromLocal } from "./m
 import { networkStreak } from "./env-watch";
 import { AsyncQueue, withCleanup } from "./async-queue";
 import { sessionRegistry } from "./session-registry";
+// 轮首房间上下文（##377 第 25 刀）：**只读盘 + 水位**，不 import room-service（那条是反方向，
+// 会造成循环 —— room-service 静态 import 本模块的 getLocalAgent）。
+import { commitSelfStartContext, selfStartContext } from "./room-context";
 import { addStepUsage, newUsageAcc, setTurnUsage, type TurnUsage } from "./turn-usage";
 import {
     bucketsOf,
@@ -3050,6 +3053,38 @@ export class LocalAgentManager {
                               ...(origin?.room ? { room: origin.room } : {}),
                           },
                       ];
+            // ── 轮首房间上下文（##377 第 25 刀）──────────────────────────────────
+            // 病灶：第 18 刀的「本房间近期发言」只在**被投递**时注入 ⇒ 成员**自己起一轮**
+            // （任务页点跑 / 定时任务 / CLI 一句话）读不到房间刚才聊了什么。
+            //
+            // 只拼进**第一条** input 的正文尾部（与投递路径同形：那段本来就贴在正文后面），
+            // 且**只在不是投递时**做 —— 投递的正文已由 `deliveryText` 带了同一段，
+            // 再拼一遍就是同一段话进两次（还会顶掉 `meta.room` 那条气泡判据）。
+            //
+            // 失败一律不阻断本轮（房间只是上下文，不是前提）：出声后照常发。
+            let ctxCommit: (() => void) | null = null;
+            // 判据 = `fromDelivery`（**不落盘**的那一位）**或** `room`：
+            //   · `room` 有值 ⇒ 一定是投递（它只由 `deliveryOriginFor` 从 room-service 传入）
+            //   · 但投给**主人格**时 `opsOriginFor` 按 §44.2 A 整条不落 ⇒ `room` 为空，
+            //     而它**仍然是投递**（正文已由 `deliveryText` 带了同一段）⇒ 只看 `room`
+            //     会把同一段注入两遍（第 25 刀 lab 实测：user 正文里两个 `[本房间近期发言]`）。
+            // `seed` 里带 `room` 的是「排队期间插进来的投递」，同属这一类。
+            const isDelivery =
+                Boolean(origin?.fromDelivery) || Boolean(origin?.room) || Boolean(seed?.some((it) => it.room));
+            if (!isDelivery && pending.length > 0) {
+                try {
+                    const ctx = selfStartContext(taskUri);
+                    if (ctx) {
+                        pending = [{ ...pending[0]!, text: `${pending[0]!.text}${ctx.text}` }, ...pending.slice(1)];
+                        ctxCommit = () => commitSelfStartContext(taskUri, ctx);
+                        console.log(
+                            `[local-agent] 轮首注入房间上下文 ${taskUri}：${ctx.items} 条 / 省略 ${ctx.omitted} 条`,
+                        );
+                    }
+                } catch (e) {
+                    console.error(`[local-agent] 房间上下文读取失败（本轮照常发送）${taskUri}:`, e);
+                }
+            }
             for (let round = 0; pending.length > 0 && !ctrl.signal.aborted; round++) {
                 // 手动驱动内层生成器（而不是 `yield*` 委托）：委托会把 op 直接交给消费端，
                 // 跳过这里的 `sess.store.apply` —— 而 store 是本模块的**单一权威**
@@ -3073,6 +3108,13 @@ export class LocalAgentManager {
                             failed = r.value.failed;
                             turnId = r.value.turnId;
                             break;
+                        }
+                        // 第一个 op（turn start）到 = 这一轮真开了 ⇒ 前移水位（见 `ctxCommit` 的注）。
+                        // 在此之前崩 / 早退（超预算不发）都不前移 —— 下一轮重复注入，不漏。
+                        if (ctxCommit) {
+                            const commit = ctxCommit;
+                            ctxCommit = null;
+                            commit();
                         }
                         sess.store.apply(r.value);
                         publish(r.value);
