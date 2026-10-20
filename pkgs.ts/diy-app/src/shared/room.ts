@@ -509,6 +509,14 @@ export type TurnOrigin = {
      * ⇒ 「看哪间房」（`sourceRoomId`）与「落盘落什么」（`author` / `room`）是两件事。
      */
     sourceRoomId?: string;
+    /**
+     * **不落盘**：来源房间里那条 `say` 的 id —— `runtime.room.recent` 要**排除**它。
+     *
+     * 为什么也要单独带：`room.sayId` 随 `room` 一起在「投给主人格 + 发起者是人」时被掐掉
+     * （§44.2 A），于是那一轮的 `recent` 里会出现**自己这条投递**（正文里已经有一份，
+     * 等于同一句话出现两次；lab 实测抓出）。排除判据与落盘判据分开就对了。
+     */
+    sourceSayId?: string;
 };
 
 /**
@@ -525,7 +533,7 @@ export function opsOriginFor(main: boolean, author: string, room: DeliveryOrigin
     const a = opsAuthorFor(main, author);
     // `sourceRoomId` **恒带**（不落盘）：它是"这一轮该看哪间房"的唯一来源，
     // 与"落盘落什么"分开 —— 否则投给主人格时那一轮会退回本任务自己的房间（review1 R1）。
-    const view = { sourceRoomId: room.roomId };
+    const view = { sourceRoomId: room.roomId, sourceSayId: room.sayId };
     return a === undefined ? view : { author: a, room, ...view };
 }
 

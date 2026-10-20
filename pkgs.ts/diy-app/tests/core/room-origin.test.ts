@@ -23,18 +23,18 @@ describe("opsOriginFor：投递落进成员会话的随附事实", () => {
   it("投给主人格 + 发起者是人 ⇒ **落盘那一份**整条不落（含 room —— 否则气泡多出投递标记）", () => {
     // ⚠ 第 27 刀（review1 R1）之后：`opsOriginFor` 恒返回一个对象，但**只有不落盘的
     //   `sourceRoomId`**（"这一轮该看哪间房"）—— `author` / `room` 仍然不在。
-    expect(opsOriginFor(true, HUMAN, ROOM)).toEqual({ sourceRoomId: ROOM.roomId });
+    expect(opsOriginFor(true, HUMAN, ROOM)).toEqual({ sourceRoomId: ROOM.roomId, sourceSayId: ROOM.sayId });
     expect(opsOriginFor(true, HUMAN, ROOM)).not.toHaveProperty("author");
     expect(opsOriginFor(true, HUMAN, ROOM)).not.toHaveProperty("room");
   });
 
   it("投给主人格 + 发起者是 agent ⇒ author 与 room 都落（且仍带 sourceRoomId）", () => {
-    expect(opsOriginFor(true, DEV, ROOM)).toEqual({ author: DEV, room: ROOM, sourceRoomId: ROOM.roomId });
+    expect(opsOriginFor(true, DEV, ROOM)).toEqual({ author: DEV, room: ROOM, sourceRoomId: ROOM.roomId, sourceSayId: ROOM.sayId });
   });
 
   it("投给别的成员 ⇒ 恒落（§40 B 原样，第 23 刀只加 room，不削 author）", () => {
-    expect(opsOriginFor(false, HUMAN, ROOM)).toEqual({ author: HUMAN, room: ROOM, sourceRoomId: ROOM.roomId });
-    expect(opsOriginFor(false, DEV, ROOM)).toEqual({ author: DEV, room: ROOM, sourceRoomId: ROOM.roomId });
+    expect(opsOriginFor(false, HUMAN, ROOM)).toEqual({ author: HUMAN, room: ROOM, sourceRoomId: ROOM.roomId, sourceSayId: ROOM.sayId });
+    expect(opsOriginFor(false, DEV, ROOM)).toEqual({ author: DEV, room: ROOM, sourceRoomId: ROOM.roomId, sourceSayId: ROOM.sayId });
   });
 
   it("room 逐字透传（sayId 是回到房间里找原话的唯一键，不许改写）", () => {
@@ -73,6 +73,8 @@ describe("opsOriginFor：投递落进成员会话的随附事实", () => {
       [false, DEV],
     ] as const) {
       expect(opsOriginFor(main, who, ROOM).sourceRoomId, `${main}/${who}`).toBe(ROOM.roomId);
+      // 排除 `recent` 里"自己这条投递"也要这把键（lab 实测：只看 `room.sayId` 会漏 ⇒ 同一句两遍）
+      expect(opsOriginFor(main, who, ROOM).sourceSayId, `${main}/${who}`).toBe(ROOM.sayId);
     }
   });
 });

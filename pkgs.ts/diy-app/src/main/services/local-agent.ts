@@ -3084,10 +3084,13 @@ export class LocalAgentManager {
             let ctxCommit: (() => void) | null = null;
             let roomValue: RoomRuntimeValue | null = null;
             try {
+                // 排除的那条 say 同样取不落盘的那份（`sourceSayId`）：投给主人格时 `room` 整条不落，
+                // 只看 `room.sayId` 会让 `recent` 里出现**自己这条投递**（正文已有一份 ⇒ 同一句话两遍）。
+                const sayId = origin?.sourceSayId ?? origin?.room?.sayId;
                 const fact = roomRuntimeFact({
                     roomId: origin?.sourceRoomId ?? origin?.room?.roomId ?? taskUri,
                     taskUri,
-                    ...(origin?.room?.sayId ? { sayId: origin.room.sayId } : {}),
+                    ...(sayId ? { sayId } : {}),
                 });
                 if (fact) {
                     roomValue = fact.value;

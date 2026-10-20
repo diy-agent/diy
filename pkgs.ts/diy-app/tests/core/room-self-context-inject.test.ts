@@ -203,6 +203,20 @@ describe("房间上下文真的进了请求（runtime 单元）", () => {
     );
     expect(prompt).toContain("先跑一下测试"); // 来源房间那句
     expect(prompt).not.toContain("本任务房间的一句无关内容"); // **没有**退回自己的房间
+
+    // ★ 投递的那条 say **不进 recent**（lab 实测抓出）：`room` 整条不落 ⇒ 只看 `room.sayId`
+    //   会漏掉排除，于是同一句话出现两次（正文一次 + recent 一次）。`sourceSayId` 专治这条。
+    const p2sink = { prompts: [] as unknown[] };
+    const { prompt: p2 } = await run(
+      newUri(),
+      new LocalAgentManager(() => stubModel(p2sink)),
+      { fromDelivery: true, sourceRoomId: src, sourceSayId: "e1_seed" },
+      p2sink,
+    );
+    // 本文件 seed 的两条：`e1_seed`（人说的）与 `e2_seed`（主人格自己说的）——
+    // 前者被 `sourceSayId` 排除，后者被"不看自己"排除 ⇒ recent 为空、只剩成员单元
+    expect(p2).not.toContain("先跑一下测试");
+    expect(p2).toContain("room:");
     const turnId = ops.find((o) => o.op === "start" && o.kind === "turn")?.id ?? "";
     const mine = ops
       .filter((o) => o.op === "delta" && o.id === `${turnId}_u`)
