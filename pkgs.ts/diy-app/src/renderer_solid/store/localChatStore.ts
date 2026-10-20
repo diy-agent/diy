@@ -1194,7 +1194,7 @@ async function send(taskUri: string, text: string): Promise<boolean> {
  *
  * 三条设计决定（都不是随手写的）：
  *   · **不接管 running**：投给非主人格时本任务**并没有在跑**，置 running 会让输入框误显示
- *     "生成中"、回车被分流成"留言"（`submitByEnter` 看 `view.busy`）。主人格真开轮时，
+ *     "生成中"（第 27 刀起回车不再因此分流，但"在途流归谁"这条仍是干净的）。主人格真开轮时，
  *     main 侧注册表记活跃轮次 ⇒ opsWatch 的 turn 边界触发 `refreshActive` ⇒ `view.busy`
  *     由**真值**驱动（与"别人在跑"同一条路，见 viewOf / sessionView）。
  *   · **实时显示照旧**：块树 apply 的唯一通道是 opsWatch（##327），room 驱动的那一轮同样落
@@ -1205,7 +1205,11 @@ async function send(taskUri: string, text: string): Promise<boolean> {
 async function sendViaRoom(taskUri: string, text: string): Promise<boolean> {
     const msg = text.trim();
     const st = stateFor(taskUri);
-    if (!msg || !taskUri || st.running()) return false;
+    // ⚠️ 这里**不再**因 `st.running()`（本窗口有在途流）或 `view.busy`（有轮次在跑）而拒发
+    // （##377 第 27 刀）：发送一律先落 room，忙不忙由 main 侧决定投递方式
+    // （`shared/room.deliveryPlanFor`：空闲开一轮 / 忙插进正在跑的那一轮）。
+    // 拒发才是 bug —— 任务页忙时按 Enter 静默什么都不发生，而侧边栏同一句话发得出去。
+    if (!msg || !taskUri) return false;
     // 同 send：段跳中先把视图切回最新（理由见 send 内的注释）
     if (st.detached()) await returnToTail(taskUri);
     st.setError(null);

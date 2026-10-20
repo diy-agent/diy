@@ -14,8 +14,13 @@
 //   · **同一成员串行、不同成员并行**（用户口径：消息对一个人是阻塞的）——
 //     同一 member 的投递排在同一条 promise 链上（后面的停在 `queued`，**不丢、不合并**），
 //     不同 member 各走各的链 ⇒ 「可以和 2 个 agent 同时说话」；
-//   · 成员会话被**房间之外**的轮次占着时如实标「未投递 + 原因」（不静默、不硬塞插话队列，
-//     后者是 §28.6 待决 73 的题）。
+//   · 成员会话**正有轮次在跑**（本房间的 / 任务页自己那一轮 / 别的客户端）时，这条投递
+//     **插进正在跑的那一轮**（`deliveryPlanFor` ⇒ `steer`，下一步生效），状态记 `ok` + 一句
+//     `note` 说明"为什么没有独立回复"。**不再**标「未投递」—— 那与任务页按 Enter 的插话
+//     行为自相矛盾，且会丢掉"agent 正在做错事时立刻纠正"的能力（##377 第 27 刀）。
+//   · 入队**只保证"记下来"**（`steerAdd` 不开轮，##303）⇒ 入队后必须**复判**一次：轮次恰好
+//     在收尾时没有人会来认领，立刻用队列内容醒来一轮（`steerOrWake`）。`ok` 的判据是
+//     「入队 且（仍在跑 或 已唤醒）」，不是"入队了"（##266 review1 R1）。
 
 import { getLocalAgent } from "./local-agent";
 import { sessionRegistry } from "./session-registry";
@@ -32,8 +37,10 @@ import {
 } from "../core/room";
 import { diyHome, getTask } from "../core/state";
 import { defaultPersonaId, listPersonas } from "../core/persona";
+import { DEFAULT_STEER_MODE } from "../../shared/steer-mode";
 import {
     DEFAULT_CHANNEL_ID,
+    deliveryPlanFor,
     deliveryText,
     HUMAN_MEMBER_ID,
     MAIN_MEMBER_ID,
@@ -41,6 +48,7 @@ import {
     isSidebarRoomId,
     memberName,
     deliveryOriginFor,
+    opsOriginFor,
     parseAddress,
     resolveMember,
     memberOptions,
@@ -195,7 +203,8 @@ async function mirrorIntoTarget(input: {
     targetTaskUri: string;
     author: string;
     text: string;
-    replyText: string;
+    /** 缺省 = 没有属于这条投递的回复（忙时插进正在跑的轮次，见 `deliveryPlanFor`） */
+    replyText?: string;
     turnId?: string;
     error?: string;
 }): Promise<void> {
@@ -228,15 +237,65 @@ async function mirrorIntoTarget(input: {
         if (!built) return;
         // 只补缺的那条（`mirrorMissingParts` 的判据）—— 两条都在时上面已 return
         if (miss.say) record(input.targetTaskUri, built.say);
-        if (miss.reply) record(input.targetTaskUri, built.reply);
+        // `built.reply` 缺席 = 这条投递本来就没有独立回复（忙时插话）⇒ 不去"补"
+        if (miss.reply && built.reply) record(input.targetTaskUri, built.reply);
     } catch (e) {
         console.warn(`[room] 写回接收方房间失败（不影响投递）：${errText(e)}`);
     }
 }
 
-/** 该成员的会话此刻是不是有轮次在跑（判据：会话注册表，主进程内存权威） */
+/**
+ * 该成员的会话此刻是不是有轮次在跑（判据：会话注册表，主进程内存权威）。
+ *
+ * 它现在只决定**投递方式**（开一轮 / 插进正在跑的那一轮，见 `deliveryPlanFor`），
+ * 不再决定"能不能投"。
+ */
 function isBusy(taskUri: string): boolean {
     return sessionRegistry.activeTurnList().some((t) => t.uri === taskUri);
+}
+
+/** `steerOrWake` 的两种结局：真插进了正在跑的一轮 / 醒来了一轮（这条作它的开场） */
+export type SteerOutcome = { kind: "steer" } | { kind: "wake"; r: RunResult };
+
+/**
+ * 忙时投递：**先入队，再复判**（##266 review1 R1）。
+ *
+ * 为什么入队后必须复判 —— 入队本身**不开轮**（`local-agent.steerAdd` 头注、##303）：
+ * 一条插话只有两个被取走的时机，**下一步之前**（`claimStepSteers`）或**轮末续轮的开场**
+ * （`chat()` 的续轮循环「轮末整批取走」）。轮次恰好在收尾时（续轮已取完队列 / 撞续轮上限 /
+ * `turns` 注销前那段窗口），这两个时机都不会再发生 ⇒ 那条话永远躺在 `drafts.yaml` 里，
+ * 而我们已经对外报了「已投递」。这正是本刀要消灭的那句假话（换了个位置）。
+ *
+ * 判据（写进注释钉死，别再漂）：**`ok` = 入队 且（仍在跑 或 已唤醒）**。
+ *
+ * `deps.busy` 的语义是「**队列还会不会有人来取走它**」—— 传 `agent.busy`（`chat()` 的互斥守卫
+ * 与轮末续轮用的同一张 `turns` 表），不是 `isBusy`（会话注册表的"正在生成"）：`runTurn` 收尾就
+ * 清了注册表的 turn，而"轮末整批取走"的续轮循环在那之后 —— 拿注册表判会把那段窗口误判成
+ * "没人取"。
+ *
+ * `deps` 可注入：复判那一刻「轮次刚收尾」是竞态，测试只能靠脚本化探针构造那一瞬
+ * （见 `tests/core/room-busy-steer.test.ts`）。
+ */
+export async function steerOrWake(
+    taskUri: string,
+    text: string,
+    author: string | undefined,
+    deps: {
+        steerAdd: (taskUri: string, mode: typeof DEFAULT_STEER_MODE, text: string, author?: string) => unknown;
+        busy: (taskUri: string) => boolean;
+        runQueued: (taskUri: string) => Promise<RunResult>;
+    },
+): Promise<SteerOutcome> {
+    deps.steerAdd(taskUri, DEFAULT_STEER_MODE, text, author);
+    // 仍有人在跑 ⇒ 下一步必来认领（或轮末续轮带走）：插进那一轮，**没有属于这条的独立回复**。
+    if (deps.busy(taskUri)) return { kind: "steer" };
+    // 已经没人跑了 ⇒ 用**队列现有内容**开一轮（##303 的 c 方案：留言本就是"发一句话"）。
+    // 队列里若有别的待投递项，一并作开场（轮末整批取走是同一个口径）。
+    const r = await deps.runQueued(taskUri);
+    // 竞态：复判之后、开轮之前别人起了轮（`chat` 的互斥守卫拒发）⇒ 这条**安好在队列里**，
+    // 由那一轮带走。不能反手报「投递失败」（它没失败），如实回到 steer 口径。
+    if (r.error && deps.busy(taskUri)) return { kind: "steer" };
+    return { kind: "wake", r };
 }
 
 /** 该成员能被投递吗（有 backend 的 agent）；不能的话给一句人话原因 */
@@ -260,30 +319,30 @@ function humanOf(room: Room): RoomMember | undefined {
     return room.members.find((m) => m.kind === "human");
 }
 
+/** 一轮的收获：回复正文 + 失败原因 + 那一轮的 turnId（判据 3 的对外键） */
+export interface RunResult {
+    reply: string;
+    error?: string;
+    turnId?: string;
+}
+
 /**
- * 跑一轮并把 assistant 文本收成一条回复。
+ * 跑一轮并把 assistant 文本收成一条回复（**任意一种开轮方式**）。
  *
  * 只收 `start.meta.role !== "user"` 的 text 块：开场 user 块同样是 text 块（##310 起两者同形），
  * 混进去会让"回复"里带上自己刚说的话（自问自答的假象）。
  * `turnId` 一并带回（turn 块的 id）—— 判据 3 要拿它去那个任务的 ops 流里对账。
+ *
+ * 抽成一层的原因（##377 第 27 刀 R1）：开轮方式现在有两种 —— 投递一条新消息（`chat`）、
+ * 用**队列现有内容**开一轮（`chatQueued`，##303 的 c 方案），而"这一轮说了什么"的判据
+ * 一模一样。两条各自实现一份，下一次改「什么算回复」就会漏掉一边。
  */
-async function runAndCollect(
-    taskUri: string,
-    text: string,
-    /**
-     * 随附事实（第 23 刀把原来的 `author` 字符串收成 `TurnOrigin`）——
-     * 落进对方会话那条 user 块的 `meta.author` / `meta.room`。
-     */
-    origin?: TurnOrigin,
-): Promise<{ reply: string; error?: string; turnId?: string }> {
-    const agent = getLocalAgent();
+async function collectTurn(run: () => AsyncGenerator<Op>): Promise<RunResult> {
     const texts = new Map<string, string>();
     const errs: string[] = [];
     let turnId: string | undefined;
     try {
-        // 位次（##266 review1 R3.2）：① taskUri ② text ③ model ④ reasoningEffort ⑤ signal
-        // ⑥ seed ⑦ origin —— 中间四个 `undefined` 依次是"按任务绑定的人物解析 / 不开信号 / 不用 seed"。
-        for await (const op of agent.chat(taskUri, text, undefined, undefined, undefined, undefined, origin) as AsyncGenerator<Op>) {
+        for await (const op of run()) {
             if (op.op === "start") {
                 if (op.kind === "turn") turnId = op.id;
                 if (op.kind === "text" && op.meta?.["role"] !== "user") texts.set(op.id, "");
@@ -307,6 +366,27 @@ async function runAndCollect(
         };
     }
     return { reply, ...(turnId ? { turnId } : {}) };
+}
+
+async function runAndCollect(
+    taskUri: string,
+    text: string,
+    /**
+     * 随附事实（第 23 刀把原来的 `author` 字符串收成 `TurnOrigin`）——
+     * 落进对方会话那条 user 块的 `meta.author` / `meta.room`。
+     */
+    origin?: TurnOrigin,
+): Promise<RunResult> {
+    return collectTurn(
+        // 位次（##266 review1 R3.2）：① taskUri ② text ③ model ④ reasoningEffort ⑤ signal
+        // ⑥ seed ⑦ origin —— 中间四个 `undefined` 依次是"按任务绑定的人物解析 / 不开信号 / 不用 seed"。
+        () => getLocalAgent().chat(taskUri, text, undefined, undefined, undefined, undefined, origin) as AsyncGenerator<Op>,
+    );
+}
+
+/** 用**队列现有内容**开一轮（不新增入队；队列空则不产任何 op）—— R1 的唤醒落点。 */
+async function runQueued(taskUri: string): Promise<RunResult> {
+    return collectTurn(() => getLocalAgent().chatQueued(taskUri));
 }
 
 /**
@@ -402,6 +482,8 @@ export async function* postToRoom(roomId: string, rawText: string): AsyncGenerat
     // 不可投递的收件人（人 / 成员不存在 / 没 backend）：先如实记状态 + 记说明事件，**不静默**
     const immediate: RoomEvent[] = [];
     const tasks: Promise<void>[] = [];
+    /** 已办完的收件人数（≠ 已产出的回复数：忙时插话没有独立回复，但也要算办完） */
+    let finished = 0;
     for (const id of recipients) {
         const m = room.members.find((x) => x.id === id);
         const why = whyNotDeliverable(m, room);
@@ -431,21 +513,29 @@ export async function* postToRoom(roomId: string, rawText: string): AsyncGenerat
             continue;
         }
         tasks.push(deliverOne({ roomId, room, sayId, member: m!, author, fromName, body, toAll, markState, done: (ev) => {
-            completed.push(ev);
+            // 完成信号与回复事件分开计数（##377 第 27 刀）：忙时插进正在跑的那一轮 ⇒
+            // 这条投递**没有**属于自己的回复，但"办完了"必须算数，否则流永远不关闭。
+            if (ev) completed.push(ev);
+            finished++;
             poke();
         } }));
     }
     for (const ev of immediate) yield ev;
 
-    for (let finished = 0; finished < tasks.length; ) {
-        while (progress.length === 0 && completed.length === 0) await new Promise<void>((res) => (wake = res));
-        while (progress.length > 0) yield progress.shift()!;
+    // 逐条推（状态快照与回复按到达顺序），**收尾判据 = 每个收件人都发了完成信号** ——
+    // 不是"每个收件人都产出了一条回复"（`done()` 不带事件也算办完）。
+    for (;;) {
+        if (progress.length > 0) {
+            yield progress.shift()!;
+            continue;
+        }
         if (completed.length > 0) {
             yield completed.shift()!;
-            finished++;
+            continue;
         }
+        if (finished >= tasks.length) break;
+        await new Promise<void>((res) => (wake = res));
     }
-    while (progress.length > 0) yield progress.shift()!;
 }
 
 interface DeliverInput {
@@ -459,8 +549,14 @@ interface DeliverInput {
     toAll: boolean;
     /** 记一条投递状态（落盘 + 随流推快照） */
     markState: (st: DeliveryState) => void;
-    /** 完成（一条回复事件） */
-    done: (ev: RoomEvent) => void;
+    /**
+     * 完成。**`ev` 缺省 = 这条投递没有属于自己的回复事件**（忙时插进了正在跑的那一轮）。
+     *
+     * ⚠️ 完成信号与回复事件是两件事（##377 第 27 刀）：`postToRoom` 的收尾只等"每个收件人
+     * 都发了完成信号"，别把计数绑在"产出了一条 reply"上 —— 否则没有回复的那条会让整条流
+     * 永远等下去（P1 那个挂死的同型故障）。
+     */
+    done: (ev?: RoomEvent) => void;
 }
 
 /**
@@ -492,26 +588,109 @@ function deliverOne(input: DeliverInput): Promise<void> {
     };
     mark("queued", ahead > 0 ? { error: `前面还有 ${ahead} 条在排队（本切片的队列只在内存里，重启即丢）` } : {});
 
+    /**
+     * 一轮跑完的收尾：落回复事件 + 投递状态 + 水位 + 双向可见 + 完成信号。
+     *
+     * **两条路径共用**（##377 第 27 刀 R1）：空闲开一轮、以及"轮次恰好在收尾 ⇒ 用队列内容醒来
+     * 一轮"—— 它们都是"真的跑了一轮、有属于这条的回复"，收尾口径必须逐字相同。
+     */
+    const settleTurn = async (r: RunResult): Promise<void> => {
+        const replyId = nextEventId();
+        const ev = record(roomId, {
+            id: replyId,
+            ts: new Date().toISOString(),
+            kind: "reply",
+            author: member.id,
+            to: [author],
+            text: r.reply,
+            delivered: !r.error,
+            ...(r.error ? { error: r.error } : {}),
+            sourceTask: taskUri,
+            // 这一轮的引用（##166 §28.7 A1）：UI 据此去成员会话切出该轮 → 复用任务对话的块渲染
+            ...(r.turnId ? { ref: { memberUri: member.id, turnId: r.turnId } } : {}),
+        });
+        mark(r.error ? "failed" : "ok", {
+            replyId,
+            ...(r.turnId ? { turnId: r.turnId } : {}),
+            ...(r.error ? { error: r.error } : {}),
+        });
+        // 水位前移（##166 §44.6 四.1）：**只在真跑完时**前移 —— 失败不前移，下次投递时这段时间
+        // 别人的话还能补给它（宁可重复一轮，不可静默漏掉）。
+        // ⚠ 「会话忙」自第 27 刀起已不是本函数的路径（忙 ⇒ 插进那一轮，见上方 steer 分支；
+        //   入队后还复判过一次，见 `steerOrWake`）—— 别把这两处的注释读成互相打脸。
+        if (!r.error) await advanceLastSeen(roomId, { [member.id]: sayId });
+        // 双向可见（第 24 刀）：**成轮之后**才写回 —— 失败的投递不该在接收方房间留下一条「说过的话」。
+        // 放在 `done` 之前：写回失败也不影响完成信号（函数内部全吞，见 mirrorIntoTarget ④）。
+        if (!r.error) {
+            await mirrorIntoTarget({
+                sourceRoomId: roomId,
+                sayId,
+                targetTaskUri: taskUri,
+                author,
+                text: body,
+                replyText: r.reply,
+                ...(r.turnId ? { turnId: r.turnId } : {}),
+            });
+        }
+        input.done(ev);
+    };
+
     const run = async (): Promise<void> => {
         st.depth--;
         mark("running");
         const name = memberName(input.room, member.id);
-        if (isBusy(taskUri)) {
-            // 房间之外的轮次占着这个会话（别的客户端在跑 / 上一条异常没清）：如实标未投递，不硬塞
-            const replyId = nextEventId();
-            const ev = record(roomId, {
-                id: replyId,
-                ts: new Date().toISOString(),
-                kind: "reply",
-                author: member.id,
-                to: [author],
-                text: "",
-                delivered: false,
-                error: `${name} 的会话正有轮次在跑（不是本房间的），本次未投递`,
-                sourceTask: taskUri,
-            });
-            mark("failed", { error: `${name} 的会话忙`, replyId });
-            input.done(ev);
+        // ── 忙时投递 = **插进正在跑的那一轮**（##377 第 27 刀）────────────────────────
+        // 修前：会话正有轮次在跑（任务页自己那一轮 / 别的客户端 / 侧边栏那条链）⇒ 直接标
+        //   「未投递」—— 而任务页同一句话按 Enter 会进**插话队列**（`_su*` 块），两个入口
+        //   对"忙"给出两种答案，且插话那条**不落 room**（房间页 / `room get` 里查不到）。
+        // 修后（`deliveryPlanFor` 的判据）：**每句话都先落 room**（本轮 `say` 已经在流里），
+        //   忙不忙只决定投递方式 —— 空闲开一轮（能拿到属于这条消息的回复）、忙则插进那一轮
+        //   （下一步生效，回复属于它）。插话能力**不能丢**：agent 正在做错事时，用户的纠正
+        //   不该等到三分钟后。
+        const plan = deliveryPlanFor(isBusy(taskUri));
+        if (plan.kind === "steer") {
+            const origin = opsOriginFor(member.main === true, author, { roomId, sayId });
+            // 正文与开一轮那条**同一份**（`deliveryText`）：agent 在自己的会话里看不到房间，
+            // "谁在说 / 从哪来"只能压进正文（wire 层身份只有正文有效，##166 §16.2）。
+            const steered = await steerOrWake(
+                taskUri,
+                deliveryText({ roomId, fromName, text: body, toAll, plain: member.main === true }),
+                origin.author,
+                {
+                    steerAdd: (u, mode, t, a) => getLocalAgent().steerAdd(u, mode, t, a),
+                    // 复判的判据不是 `isBusy`（注册表的"正在生成"），而是 `agent.busy`（`chat()` 的
+                    // 互斥守卫 + 轮末续轮用的是**同一张** `turns` 表）—— 这里问的是"队列还会不会有人
+                    // 来取走它"。两者在轮末有一段必然分岔：`runTurn` 收尾就把注册表的 turn 清了，
+                    // 而续轮循环（"轮末整批取走"）在那之后才决定要不要再开一轮 ⇒ 拿 `isBusy` 判，
+                    // 这段窗口里会误判"没人取"并去叫醒（叫不醒，反被判失败）。
+                    busy: (u) => getLocalAgent().busy(u),
+                    runQueued,
+                },
+            );
+            if (steered.kind === "steer") {
+                mark("ok", { note: plan.note });
+                // 水位照常前移：这句话**确实送到了**（进了那一轮的插话队列，且有人在跑 ⇒
+                // 下一步 / 轮末续轮必来取走）⇒ 下一轮的房间上下文不该再把它当"没看过的新发言"
+                // 重投一遍（与"失败不前移"不冲突：失败是没送到）。
+                await advanceLastSeen(roomId, { [member.id]: sayId });
+                // 双向可见（第 24 刀）：写回只带 `say` —— 这条投递**没有自己的回复**（它在
+                // 正在跑的那一轮里被消化），写一条空回复反而会造出"说了话、没人回"的假象。
+                await mirrorIntoTarget({
+                    sourceRoomId: roomId,
+                    sayId,
+                    targetTaskUri: taskUri,
+                    author,
+                    text: body,
+                });
+                console.log(`[room] ${name} 的会话正忙 ⇒ 这条插进正在跑的一轮（room ${roomId}）`);
+                input.done();
+                return;
+            }
+            // 复判发现**轮次已收尾**（那一瞬没有任何人会来取走这条）⇒ 已用队列内容醒来一轮：
+            // 这条从"没人认领"变成"真开了一轮"，于是它和空闲路径一样有回复、有 turnId。
+            // 收尾走**同一个** `settleTurn`（记录 reply / 水位 / 双向可见只有一份）。
+            console.log(`[room] ${name} 的轮次在收尾 ⇒ 用队列内容醒来一轮（room ${roomId}）`);
+            await settleTurn(steered.r);
             return;
         }
         // 正文**只留人话**（##377 第 26 刀）：房间近期发言改走 `runtime.room.recent`
@@ -540,42 +719,7 @@ function deliverOne(input: DeliverInput): Promise<void> {
             //   `fromDelivery: true` 仍恒带（不落盘）：它表达「这一轮是投递」，与"落盘落什么"是两件事。
             deliveryOriginFor(member.main === true, author, { roomId, sayId }),
         );
-        const replyId = nextEventId();
-        const ev = record(roomId, {
-            id: replyId,
-            ts: new Date().toISOString(),
-            kind: "reply",
-            author: member.id,
-            to: [author],
-            text: r.reply,
-            delivered: !r.error,
-            ...(r.error ? { error: r.error } : {}),
-            sourceTask: taskUri,
-            // 这一轮的引用（##166 §28.7 A1）：UI 据此去成员会话切出该轮 → 复用任务对话的块渲染
-            ...(r.turnId ? { ref: { memberUri: member.id, turnId: r.turnId } } : {}),
-        });
-        mark(r.error ? "failed" : "ok", {
-            replyId,
-            ...(r.turnId ? { turnId: r.turnId } : {}),
-            ...(r.error ? { error: r.error } : {}),
-        });
-        // 水位前移（##166 §44.6 四.1）：**只在真跑完时**前移 —— 失败 / 会话忙不前进，
-        // 下次投递时这段时间别人的话还能补给它（宁可重复一轮，不可静默漏掉）。
-        if (!r.error) await advanceLastSeen(roomId, { [member.id]: sayId });
-        // 双向可见（第 24 刀）：**成轮之后**才写回 —— 失败的投递不该在接收方房间留下一条「说过的话」。
-        // 放在 `done` 之前：写回失败也不影响完成信号（函数内部全吞，见 mirrorIntoTarget ④）。
-        if (!r.error) {
-            await mirrorIntoTarget({
-                sourceRoomId: roomId,
-                sayId,
-                targetTaskUri: taskUri,
-                author,
-                text: body,
-                replyText: r.reply,
-                ...(r.turnId ? { turnId: r.turnId } : {}),
-            });
-        }
-        input.done(ev);
+        await settleTurn(r);
     };
 
     // ⚠️ **`input.done` 是这条链的不变量**（owner review P1）：`post` 的收尾循环是

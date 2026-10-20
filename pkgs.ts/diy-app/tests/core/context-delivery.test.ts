@@ -13,6 +13,7 @@ import {
     PLACE_CANDIDATES,
 } from "../../src/shared/context/delivery";
 import { buildLab } from "../../src/shared/context/preview";
+import { project } from "../../src/shared/context/projection";
 
 const globals = {
     diy: { cli: "/repo/diy.sh", home: "/home/u/.diy" },
@@ -81,6 +82,32 @@ describe("投递构造：两个容器", () => {
         const d = buildDelivery(globals, ["diy", "nope.missing"]);
         expect(d.system.places).toEqual(["diy"]);
         expect(d.runtime.places).not.toContain("nope.missing");
+    });
+
+    it("★ 可选子单元缺席 ⇒ 不算 place（review1 R2：否则每步 diff 都报 set … ''，白烧 token 还砸缓存）", () => {
+        // 病灶（第 26 刀改 `inTree` 之前）：只看**顶层键**在不在 ⇒ `room` 在、`room.recent` 没有时
+        // 仍把 `room.recent` 当 place ⇒ 渲染成空串 ⇒ 每步 diff 一条 `set room.recent: ''`。
+        // 判据 =「整条 path 真的存在」，对**任何**可选子单元成立；`room.recent` 是当前唯一的
+        // 嵌套可选**候选**（`PLACE_CANDIDATES`），故这里用它当样本。
+        const room = { roomId: "projects/1/tasks/1", name: "#1", list: [] };
+        const full = { ...globals, room: { members: room, recent: { items: [{ from: "human:chen56", at: "t", text: "一" }] } } };
+        const partial = { ...globals, room: { members: room } };
+
+        const d1 = buildDelivery(full, defaultSystemPlaces());
+        expect(d1.runtime.places).toContain("room.members");
+        expect(d1.runtime.places).toContain("room.recent");
+        const { cursor } = project(d1.tree, null);
+
+        // ① 子单元缺席 ⇒ 不在 places 里（`room` 这个顶层键还在）
+        const d2 = buildDelivery(partial, defaultSystemPlaces());
+        expect(d2.runtime.places).toContain("room.members");
+        expect(d2.runtime.places).not.toContain("room.recent");
+        // ② 投影里**不存在**这个单元 —— 不是 `set room.recent: ''`
+        //   （place 集合变了 ⇒ 投影按 snapshot 兜底，这是既有语义；关键是空的单元不被造出来）
+        const rt = project(d2.tree, cursor).projection.runtime;
+        const touched = rt.kind === "patch" ? rt.ops.filter((o) => o.path === "room.recent") : [];
+        expect(touched).toEqual([]);
+        expect(rt.kind === "snapshot" ? rt.text : "").not.toContain("recent:");
     });
 
     it("list 里只有候选（没有人手填的怪路径）", () => {
