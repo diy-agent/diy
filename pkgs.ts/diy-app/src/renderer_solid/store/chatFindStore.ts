@@ -144,16 +144,25 @@ function runProbe(
     s: ChatFindScopes,
 ): void {
     if (!taskUri || !q.trim()) {
+        lastProbeKey = "";
         setProbe(null);
         return;
     }
+    // 同一份活别排第二次：effect 可能因**别的**信号抖动而重跑（面板开关、计数归零…），
+    // 而查询/范围没变就没必要再读一遍文件。"进行中"时同样跳过 —— 在途结果回来会自己填上。
+    const key = `${taskUri}\u0000${q}\u0000${s.text ? 1 : 0}${s.tool ? 1 : 0}${s.think ? 1 : 0}`;
+    if (key === lastProbeKey) return;
+    lastProbeKey = key;
     void (async () => {
         const r = await scan(taskUri, q, s, DEFAULT_TURNS);
-        if (!r) return;
+        if (!r || key !== lastProbeKey) return; // 期间换了查询/会话：旧结论作废（别用旧答案回答新问题）
         const unrendered = r.hits.filter((h) => !rendered.has(h.turnId)).length;
         setProbe({ query: q, hits: r.hits.length, turns: r.turns, unrendered });
     })();
 }
+
+/** 最近一次探针的 key（去重用；空串 = 没探过 / 已作废） */
+let lastProbeKey = "";
 
 export const chatFindStore = {
     get open(): boolean {

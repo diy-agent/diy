@@ -26,7 +26,21 @@
  * 「显示什么、按什么序、开到第几层」的语义全在 `lib/chat-fold.ts`（纯函数 + 单测），本文件只管画。
  * MD 渲染/原文是**正交**的显示偏好：摘要态同样按它渲染（见 TextRow）。
  */
-import { createContext, createEffect, createMemo, createSignal, For, Match, on, onCleanup, onMount, Show, Switch, useContext } from "solid-js";
+import {
+    createContext,
+    createEffect,
+    createMemo,
+    createSignal,
+    For,
+    Match,
+    on,
+    onCleanup,
+    onMount,
+    Show,
+    Switch,
+    untrack,
+    useContext,
+} from "solid-js";
 import type { JSX } from "solid-js";
 import { localChatStore } from "../store/localChatStore";
 import { personaStore } from "../store/personaStore";
@@ -2898,7 +2912,10 @@ export function LocalChatPage(props: {
         const n = findStore.count;
         const open = findStore.open;
         const u = uri();
-        const rendered = renderedTurnIds(); // 依赖窗口：窗口一变（滚动）"未渲染"那半句要跟着改
+        // ⚠️ **untrack**：`renderedTurnIds()` 依赖虚拟窗口，直接读会让"每滚一帧就整份重扫"
+        // （74MB 会话 = 滚动时主进程反复从头读文件，且边滚边重扫永远探不出结论）。
+        // 「其中几处未渲染」只是**探针那一刻**的快照 —— 它是一句提示，不必逐帧精确。
+        const rendered = untrack(renderedTurnIds);
         if (!open || !u || !q.trim() || n > 0) {
             chatFindStore.clearProbe();
             return;
