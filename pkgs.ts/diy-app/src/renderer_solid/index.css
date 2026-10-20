@@ -25,6 +25,15 @@
    * daisyUI 的 primary 在本主题是蓝紫、secondary 是品红，都不是口径里的那个紫 ——
    * 自定义色按规范用 diy- 前缀（Tailwind v4 会据此生成 bg-/text-/border- 三件套）。 */
   --color-diy-queue: oklch(70% 0.17 290);
+  /* 会话**结束归因**色（##393）：形状表阶段、颜色表归因 —— 两轴分开，
+   * 色弱用户靠形状 + 线型 + tooltip 三重兜底。语义唯一落点 = shared/session-state::TONE_OF_BLAME，
+   * 渲染唯一落点 = components/SessionGlyph.tsx::TONE_TEXT（别在页面里再写一张配色表）。 */
+  --color-diy-end-normal: oklch(70% 0.06 165); /* 正常结束：灰绿 */
+  --color-diy-end-user: oklch(70% 0.07 250); /* 你停止：蓝灰（不是故障） */
+  --color-diy-end-limit: oklch(78% 0.14 85); /* 我方限制：琥珀 */
+  --color-diy-end-service: oklch(70% 0.16 45); /* 上游服务：橙 */
+  --color-diy-end-env: oklch(72% 0.1 195); /* 已识别环境：青 */
+  --color-diy-end-unknown: oklch(70% 0.17 300); /* 未识别外部：紫 */
   --text-caption: 0.625rem;
   --text-body: 0.6875rem;
   --text-prose: 0.875rem;

@@ -18,12 +18,14 @@
 import { describe, it, expect } from "vitest";
 import { alertsOf, type SessionAlert } from "../../src/shared/session-alerts";
 import type { NavRow } from "../../src/shared/session-nav";
+import { sessionStateOf } from "../../src/shared/session-state";
 
 /** 造一行（缺省 = 安静的已读空闲会话；每个用例只改它关心的那几位） */
 function row(over: Partial<NavRow> = {}): NavRow {
     return {
         uri: "projects/1/tasks/308",
         label: "#308 会话可见性",
+        state: sessionStateOf({ entry: null, hasSession: false, unread: 0, now: 0 }),
         running: false,
         stalled: false,
         abnormal: false,

@@ -13,11 +13,13 @@
 
 import { describe, it, expect } from "vitest";
 import type { NavRow } from "../../src/shared/session-nav";
+import { sessionStateOf } from "../../src/shared/session-state";
 import { RESUME_LIMIT, resumeMoreTextOf, resumeOf, resumeWhenOf } from "../../src/shared/session-resume";
 
 function row(patch: Partial<NavRow> & { uri: string }): NavRow {
     return {
         label: patch.uri,
+        state: sessionStateOf({ entry: null, hasSession: false, unread: 0, now: 0 }),
         running: false,
         stalled: false,
         abnormal: false,

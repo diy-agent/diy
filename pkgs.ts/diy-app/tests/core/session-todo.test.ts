@@ -13,8 +13,9 @@
 
 import { describe, it, expect } from "vitest";
 import { navRowOf, type NavRow } from "../../src/shared/session-nav";
+import { sessionStateOf } from "../../src/shared/session-state";
 import { todoKindOf, todoOf, todoTitleOf, todoWhenOf } from "../../src/shared/session-todo";
-import { STALL_MS } from "../../src/shared/session-overview";
+import { STALL_MS } from "../../src/shared/session-state";
 import type { SessionEntry } from "../../src/shared/registry-frame";
 
 const T0 = "2026-10-15T10:00:00.000Z";
@@ -40,6 +41,7 @@ function entry(patch: Partial<SessionEntry> = {}): SessionEntry {
 function row(patch: Partial<NavRow> & { uri: string }): NavRow {
     return {
         label: patch.uri,
+        state: sessionStateOf({ entry: null, hasSession: false, unread: 0, now: 0 }),
         running: false,
         stalled: false,
         abnormal: false,

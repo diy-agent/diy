@@ -12,7 +12,7 @@
 // 判据全在 shared/session-overview（行模型）与 shared/session-query（切片/过滤/排序）—— 本文件只做
 // 三件事：排版、把动作接到既有出口（进会话 / cancel / setLimits）、把"为什么这么显示"写进 tooltip。
 import { createMemo, createSignal, createEffect, For, Show } from "solid-js";
-import { SessionChip, SessionDot } from "./SessionChip";
+import { SessionGlyph, TONE_TEXT } from "./SessionGlyph";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { sessionStore } from "../store/sessionStore";
 import { taskStore } from "../store/taskStore";
@@ -27,14 +27,12 @@ import {
     fmtDuration,
     fmtStamp,
     fmtTokens,
-    idleMsOf,
     overviewRowOf,
-    queueViewOf,
     stepsProgressOf,
-    type SessionChipView,
     type SessionOverviewRow,
     type SessionSlice,
 } from "../../shared/session-overview";
+import { idleMsOf, queueViewOf } from "../../shared/session-state";
 import {
     SESSION_SLICES,
     SESSION_SORT_KEYS,
@@ -57,15 +55,6 @@ import type { SessionEntry } from "../../shared/registry-frame";
 function uriOf(e: SessionEntry): string {
     return e.refs.find((r) => r.kind === "task")?.uri ?? e.id;
 }
-
-/** 状态切片 → 文字色（与 chip 同色义：绿=运行/未读 · 红=异常 · 黄=停滞/留言 · 灰=已对话） */
-const TONE_TEXT: Record<SessionChipView["tone"], string> = {
-    // 绿 = 未读 / 运行中（与 SessionChip 的配色同义；本主题的 primary 是蓝紫，不是那个绿）
-    primary: "text-success",
-    warning: "text-warning",
-    error: "text-error",
-    ghost: "opacity-60",
-};
 
 /**
  * 单轮步数上限（**全局**：`maxSteps` 是运行限制，不是某个会话的属性）。
@@ -461,16 +450,18 @@ export function SessionOverviewPage() {
                                         };
                                         return (
                                             <tr class="border-b hover:bg-base-200" title={r.tip}>
-                                                {/* 活动：状态点 + 切片文案（配色与 nav chip 同义） */}
+                                                {/* 活动：**图标 + 状态词**（##393 四处同一个组件 / 同一个判据）。
+                                                    表格空间大 ⇒ 「可展示地方大了，可以分列」：图标与文字一列、
+                                                    未读条数**单独一列**（值同出自 `overviewRowOf`，不是另一份判据）。 */}
                                                 <td class="whitespace-nowrap">
-                                                    <span class="inline-flex items-center gap-1">
-                                                        <SessionDot uri={r.uri} />
-                                                        <span class={TONE_TEXT[r.tone]}>
+                                                    <span class="inline-flex items-center gap-1" title={r.tip}>
+                                                        <SessionGlyph uri={r.uri} size="xs" withMarks={false} />
+                                                        <span class={TONE_TEXT[r.glyph.tone]}>
                                                             {sliceText(r, sessionStore.nowMs)}
                                                         </span>
                                                     </span>
                                                 </td>
-                                                {/* 任务：编号 + 标题 + 会话 chip（与 nav / 任务表同一份判据） */}
+                                                {/* 任务：编号 + 标题（会话状态已在活动列，不再挂第二个 chip —— 用户 3.1 反对重复） */}
                                                 <td class="text-body">
                                                     <span class="inline-flex items-center gap-1 flex-wrap">
                                                         <button
@@ -480,7 +471,6 @@ export function SessionOverviewPage() {
                                                             {r.num ? `#${r.num} ` : ""}
                                                             {r.title ?? r.uri}
                                                         </button>
-                                                        <SessionChip uri={r.uri} />
                                                     </span>
                                                     <div class="text-body opacity-50 font-mono truncate">
                                                         {r.project ? `${r.project} · ` : ""}
