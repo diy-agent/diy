@@ -40,11 +40,12 @@ import {
     isAllAddress,
     isSidebarRoomId,
     memberName,
-    opsOriginFor,
+    deliveryOriginFor,
     parseAddress,
     resolveMember,
     memberOptions,
     mirrorEvents,
+    mirrorMissingParts,
     resolveRecipients,
     shouldMirrorRoom,
     roomContextFor,
@@ -184,7 +185,9 @@ export async function ensureRoomForTask(taskUri: string): Promise<Room> {
  * 三条口径：
  *   ① **判据在 `shared/room`（纯函数 + 单测）**，这里只做「读写盘」；
  *   ② **同一房间不写回**（任务页对主人格自己说话 = 本来就在一条流里，写了就是重复）；
- *   ③ **幂等**：以 `origin.sayId` 去重 —— 投递重试 / 进程重启后重跑都不会把同一条写两遍；
+ *   ③ **幂等按「每条」算**（review2 R1）：`say` / `reply` 是两次 append，崩在两次之间会留下
+ *      「有 say 无 reply」—— 只看 say 就整体 return 的话那条 reply **永远补不回来**。
+ *      判据在 `shared/room.mirrorMissingParts`（纯函数 + 单测）：**缺哪条补哪条**；
  *   ④ **永不传染投递**：任何异常只吞掉（与「水位是优化」同一条口径，P1 的教训）。
  */
 async function mirrorIntoTarget(input: {
@@ -205,9 +208,11 @@ async function mirrorIntoTarget(input: {
             target.members.find((m) => m.main === true && m.backend?.type === "task" && m.backend.data.taskUri === input.targetTaskUri) ??
             target.members.find((m) => m.main === true);
         const targetMemberId = owner?.id ?? MAIN_MEMBER_ID;
-        // 幂等：这条 say 已经写回来过（重试 / 重启后重跑）⇒ 不再写第二遍
+        // 幂等（review2 R1）：判据是「两条**各自**在不在」，不是「say 在」——
+        // 补写比漏写安全（与「水位是优化」同族）：重复写没有意义，少一条就是永久缺一块。
         const { events } = readEvents(input.targetTaskUri);
-        if (events.some((e) => e.origin?.sayId === input.sayId)) return;
+        const miss = mirrorMissingParts(events, input.sayId);
+        if (!miss.say && !miss.reply) return;
         const built = mirrorEvents({
             origin: { roomId: input.sourceRoomId, sayId: input.sayId },
             targetRoomId: input.targetTaskUri,
@@ -222,8 +227,9 @@ async function mirrorIntoTarget(input: {
             ts: new Date().toISOString(),
         });
         if (!built) return;
-        record(input.targetTaskUri, built.say);
-        record(input.targetTaskUri, built.reply);
+        // 只补缺的那条（`mirrorMissingParts` 的判据）—— 两条都在时上面已 return
+        if (miss.say) record(input.targetTaskUri, built.say);
+        if (miss.reply) record(input.targetTaskUri, built.reply);
     } catch (e) {
         console.warn(`[room] 写回接收方房间失败（不影响投递）：${errText(e)}`);
     }
@@ -544,8 +550,8 @@ function deliverOne(input: DeliverInput): Promise<void> {
             //   主人格的会话就是任务页**自己的**会话，凭空带上 `human:chen56` 会让那条气泡翻到左侧并加署名
             //   ⇒「无 @ 发送 = 与今天等价 / 单人任务逐字一致」当场破。第 23 刀把这条口径原样扩到 `room`：
             //   **不署名 ⇒ 整条随附事实都不落**（否则气泡上会多出「房间投递」标记，同一判据照样破）。
-            //   判据在 `shared/room.opsOriginFor`（纯函数 + 单测），**别在这里另写一份**。
-            opsOriginFor(member.main === true, author, { roomId, sayId }),
+            //   判据在 `shared/room.deliveryOriginFor`（纯函数 + 单测），**别在这里另写一份**。
+            deliveryOriginFor(member.main === true, author, { roomId, sayId }),
         );
         const replyId = nextEventId();
         const ev = record(roomId, {
