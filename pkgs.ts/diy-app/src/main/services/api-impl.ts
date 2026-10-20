@@ -22,9 +22,6 @@ import { platform, arch, release, totalmem, freemem } from "node:os";
 import { currentGitBranch, homeDisplayOf, repoDisplayOf } from "../core/instance-identity";
 import { readRuntimeConfig } from "../../runtime";
 import * as health from "./health";
-import { refList, checkRefPaths } from "../core/ref";
-import { syncRefs } from "./ref-sync";
-import { addSource, removeSource } from "./ref-config";
 import { apiDef } from "./api-def";
 import { TaskDetailSchema } from "../../shared/task-detail";
 import { noteRendererTouch } from "./runtime-context";
@@ -522,6 +519,26 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return getLocalAgent().historyOlder(input.taskUri, {
       cursor: input.cursor,
       budgetBytes: input.budgetBytes,
+    });
+  });
+  // 段跳（##389）：检索命中落在某一轮 ⇒ 从该轮取一段（一次到位，不走"游标→文件尾"）
+  binding.on(app.agent.local.historyAt, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.historyAt", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    return getLocalAgent().historyAt(input.taskUri, {
+      at: input.at,
+      budgetBytes: input.budgetBytes,
+    });
+  });
+  // 数据层检索（##389）：扫 ops 原文 ⇒ 未渲染的轮、被压缩的历史都能命中
+  binding.on(app.agent.local.find, async ({ input, signal }) => {
+    noteRendererTouch("diy.agent.local.find", input.taskUri);
+    const { getLocalAgent } = await import("./local-agent");
+    return getLocalAgent().findInSession(input.taskUri, {
+      query: input.query,
+      scopes: { text: input.text ?? true, tool: input.tool ?? true, think: input.think ?? false },
+      maxTurns: input.maxTurns,
+      signal,
     });
   });
   // 会话 op 增量（##307 读侧）：水位校准起点 + 订阅写侧推送 —— UI 不再轮询、不再等轮末重放。
@@ -1411,35 +1428,6 @@ export function bindAppHandlers(binding: ServerBinding): void {
           return { raw: line };
         }
       });
-  });
-
-  // ── ref ──
-  binding.on(app.ref.sync, async ({ input }) => {
-    const result = await syncRefs({
-      all: input.all,
-      scope: input.scope,
-      concurrency: input.concurrency,
-    });
-    return { status: "ok", data: result };
-  });
-  binding.on(app.ref.list, async ({ input }) => {
-    return { status: "ok", data: refList(input.all) };
-  });
-  binding.on(app.ref.status, async () => {
-    const paths = checkRefPaths();
-    const missing = paths.filter((p) => !p.exists);
-    return {
-      status: "ok",
-      data: { total: paths.length, missing: missing.length, paths },
-    };
-  });
-  binding.on(app.ref.add, async ({ input }) => {
-    return { status: "ok", data: { added: addSource(input.url) } };
-  });
-  binding.on(app.ref.remove, async ({ input }) => {
-    const removed = removeSource(input.name);
-    if (!removed) return { status: "error", msg: `未找到 source: ${input.name}` };
-    return { status: "ok", data: { removed } };
   });
 
   // ── room（多人房间；开发日志 ##377，设计真源 ##166 §28）──
