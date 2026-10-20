@@ -15,7 +15,7 @@
  * 任务对话页 / prompt lab 不传 ⇒ 不接这个源（§37.2 A「不传 = 行为逐字不变」）。
  */
 import type { Completion, CompletionSource } from "@codemirror/autocomplete";
-import { addressQueryAt, isAllAddress, type RoomMember } from "../../../shared/room";
+import { addressQueryAt, isAllAddress, memberKey, memberKeys, type RoomMember } from "../../../shared/room";
 
 /** `@all` 的候选（群发是合法收件人写法，一并列出 —— §28.5 B） */
 const ALL_OPTION: Completion = {
@@ -35,19 +35,26 @@ export function memberCompletion(members: () => readonly RoomMember[]): Completi
 
         // 收件人只可能是 **agent** 成员：人成员不是投递目标（他本人在场，发言他自己看得见 ——
         // `resolveRecipients` 的 `@all` 也只展开 agent）。判据与投递同源。
-        const agents = members().filter((m) => m.kind === "agent");
-        const hit = agents.filter((m) => !q || m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q));
+        const all = members();
+        const room = { members: all };
+        const agents = all.filter((m) => m.kind === "agent");
+        // 匹配面 = 名字 + id + **所有可用键**（打 `@t3` 也要能选中那个成员）
+        const hit = agents.filter((m) =>
+            !q || [m.name, m.id, ...memberKeys(room, m)].some((k) => k.toLowerCase().includes(q)));
 
         const options: Completion[] = [];
         // `@all` 只在不与具体名字冲突时列（输入了具体前缀就别混进来）
         if (!q || isAllAddress(q) || "all".startsWith(q)) options.push(ALL_OPTION);
         for (const m of hit) {
+            // 插入的是**真能打中的键**（##377 第 22 刀）：两个任务 agent 同室时人物名相同
+            // ⇒ 插 `@<人物名>` 会被服务端判成歧义、静默投不出去。键由 `memberKey` 统一裁决。
+            const key = memberKey(room, m);
+            const other = memberKeys(room, m).filter((k) => k !== key);
             options.push({
-                label: `@${m.name}`,
-                // backend 是判别联合（`rule.discriminated-union`：公共字段同级、分支私有进 `data`）
-                detail: m.backend ? `→ ${m.backend.data.taskUri}` : m.id,
+                label: `@${key}`,
+                detail: [m.name, ...other.map((k) => `@${k}`), m.backend ? m.backend.data.taskUri : m.id].join(" · "),
                 type: "variable",
-                apply: `@${m.name} `,
+                apply: `@${key} `,
             });
         }
         if (options.length === 0) return null;

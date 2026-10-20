@@ -178,7 +178,7 @@ function isBusy(taskUri: string): boolean {
 }
 
 /** 该成员能被投递吗（有 backend 的 agent）；不能的话给一句人话原因 */
-function whyNotDeliverable(m: RoomMember | undefined, room?: Pick<Room, "members">): string | null {
+function whyNotDeliverable(m: RoomMember | undefined, room: Pick<Room, "members">): string | null {
     if (!m) {
         // 打错名字是最常见的一类（成员在界面上显示**人物名**，凭直觉打的短名未必命中）⇒ 直接给可选名
         // 候选清单走 `memberOptions`（一处真源，与 UI 提示同一份 —— ##377 review3 R1）

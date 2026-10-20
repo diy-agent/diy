@@ -34,6 +34,7 @@ import { Portal } from "solid-js/web";
 import {
     memberAvatar,
     memberColor,
+    memberKey,
     orderedMembers,
     type Room,
     type RoomMember,
@@ -255,11 +256,11 @@ export function RoomRoster(props: RoomRosterProps): JSX.Element {
                                         <div class="flex items-center gap-1.5 min-w-0">
                                             <button
                                                 class="text-body font-medium truncate hover:underline decoration-dotted underline-offset-2"
-                                                title={`设为当前接受者（@${m.name}）`}
+                                                title={`设为当前接受者（@${memberKey(props.room, m)}）`}
                                                 onClick={() => props.onFocus(m)}
                                                 data-room-name={m.id}
                                             >
-                                                @{m.name}
+                                                @{memberKey(props.room, m)}
                                             </button>
                                             <Show when={isFocus()}>
                                                 <span class="badge badge-xs badge-primary shrink-0">
@@ -382,8 +383,8 @@ export function RoomRoster(props: RoomRosterProps): JSX.Element {
                                             <Show when={props.onAddress}>
                                                 <button
                                                     class="btn btn-xs btn-ghost"
-                                                    title={`把 @${m.name} 塞进输入框`}
-                                                    onClick={() => props.onAddress?.(m.name)}
+                                                    title={`把 @${memberKey(props.room, m)} 塞进输入框`}
+                                                    onClick={() => props.onAddress?.(memberKey(props.room, m))}
                                                     data-room-address={m.id}
                                                 >
                                                     @ 寻址

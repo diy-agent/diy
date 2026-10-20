@@ -98,8 +98,10 @@ describe("memberLabel / memberOptions —— 提示文案", () => {
     expect(memberLabel(solo, "agent:main")).toBe("deepseek-4.1-flash");
   });
 
-  it("⑥' 多 agent 时带别名（人读得懂、也看得出是谁）", () => {
-    expect(memberLabel(SAME_NAME, "agent:deepseek-4.1-flash-2")).toBe("deepseek-4.1-flash·t3");
+  // 第 22 刀改格式：`name·t3` → `name（@t3）`（review3 R2 —— 别名得写成**能打的形态**，
+  // 光写 `t3` 没人知道要打 `@t3`）。断言随实现更新，语义未变：多 agent 必须露别名。
+  it("⑥' 多 agent 时带别名（人读得懂、也看得出该打什么）", () => {
+    expect(memberLabel(SAME_NAME, "agent:deepseek-4.1-flash-2")).toBe("deepseek-4.1-flash（@t3）");
   });
 
   it("⑦ memberOptions 给「可打的键(人名)」", () => {
