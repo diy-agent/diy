@@ -3432,6 +3432,10 @@ export class LocalAgentManager {
         };
         // part id → 块 id（think/text）；tool 块直接用 toolCallId
         const partBlock = new Map<string, string>();
+        // 块 id → 起始时刻（**只**给 think/tool 记耗时，##399 活动框右侧角标）：think 在
+        // reasoning-start 记、在 reasoning-end 结算；tool 在 tool-call（参数已齐、真要动手）
+        // 记、在 tool-result 结算 —— 刻意**不含**吐参数那段，那是模型的账、不是工具的账。
+        const blockT0 = new Map<string, number>();
         let stepId = turnId;
         let stepN = 0;
         let rN = 0;
@@ -3964,6 +3968,7 @@ export class LocalAgentManager {
                             markShape(shape, "r");
                             const id = `${turnId}_r${++rN}`;
                             partBlock.set(part.id, id);
+                            blockT0.set(id, Date.now());
                             yield* emit({ op: "start", id, kind: "think", parent: stepId });
                             break;
                         }
@@ -3972,6 +3977,7 @@ export class LocalAgentManager {
                             if (!id) {
                                 id = `${turnId}_r${++rN}`;
                                 partBlock.set(part.id, id);
+                                blockT0.set(id, Date.now());
                                 yield* ensure(id, "think", stepId);
                             }
                             yield* emit({ op: "delta", id, fields: { content: pick(part, "text", "delta") } });
@@ -3979,7 +3985,16 @@ export class LocalAgentManager {
                         }
                         case "reasoning-end": {
                             const id = partBlock.get(part.id);
-                            if (id) yield* emit({ op: "stop", id });
+                            if (id) {
+                                const t0 = blockT0.get(id);
+                                blockT0.delete(id);
+                                yield* seal([
+                                    ...(t0 === undefined
+                                        ? []
+                                        : [{ op: "patch" as const, id, fields: { ms: Date.now() - t0 } }]),
+                                    { op: "stop", id },
+                                ]);
+                            }
                             break;
                         }
                         case "text-start": {
@@ -4038,6 +4053,7 @@ export class LocalAgentManager {
                         }
                         case "tool-call": {
                             yield* ensure(part.toolCallId, "tool", stepId, { tool: part.toolName, status: "streaming" });
+                            blockT0.set(part.toolCallId, Date.now());
                             const input = (part as { input?: JSONVal }).input;
                             const title =
                                 input &&
@@ -4062,9 +4078,18 @@ export class LocalAgentManager {
                             yield* ensure(part.toolCallId, "tool", stepId, { tool: part.toolName ?? "tool" });
                             // 终态批（输出 + status + stop）原子落盘：切在中途会留下"状态已 done、
                             // 块还开着"的 tool 块，而自愈只补 stop，不补那句输出
+                            const execT0 = blockT0.get(part.toolCallId);
+                            blockT0.delete(part.toolCallId);
                             yield* seal([
                                 { op: "delta", id: part.toolCallId, fields: { output: outText(part.output) } },
-                                { op: "patch", id: part.toolCallId, fields: { status: "done" } },
+                                {
+                                    op: "patch",
+                                    id: part.toolCallId,
+                                    fields: {
+                                        status: "done",
+                                        ...(execT0 === undefined ? {} : { ms: Date.now() - execT0 }),
+                                    },
+                                },
                                 { op: "stop", id: part.toolCallId },
                             ]);
                             break;

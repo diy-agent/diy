@@ -122,6 +122,9 @@ import {
     endLeafTip,
     endReasonOf,
     expandableOf,
+    fmtBytes,
+    fmtMs,
+    intentOf,
     isFailedTool,
     isInterruptedToolBlock,
     isReceiptTurn,
@@ -137,11 +140,13 @@ import {
     procOpenOf,
     receiptStateOf,
     procStatusOf,
+    spentOf,
     tailOf,
     turnEndNote,
     turnFoldTip,
     turnLevelTip,
     turnRows,
+    waitTextOf,
     type ProcTone,
     type TurnLevel,
     type TurnRow,
@@ -412,11 +417,49 @@ function toolCommand(n: BlockNode): string {
 }
 
 /**
+ * **流式中的命令草稿**（`tool-input-delta` 阶段的 `attrs.input`）。
+ *
+ * `args` 要等 `tool-call` 才到（`main/services/local-agent.ts` 的 `tool-call` 分支，
+ * 与 `status="running"` 同一个 patch）—— 于是「模型正在生成参数」那几秒（实测 p50 125–372 ms、
+ * p95 905 ms）框里连命令都没有，用户只看到一片白。可 `attrs.input` 里**已经是**逐片拼起来的
+ * JSON 文本了（op `delta` → `fields.input`），命令就在里面，只是还是半截字符串。
+ *
+ * 这里只做一件事：把这半截的 `"command"` 值尽量完整地取出来（容忍未闭合、容忍转义断在中间）。
+ * 取不出就返回空 —— 宁可空着，也不猜。
+ */
+function partialCommand(n: BlockNode): string {
+    const raw = str(n.attrs.input);
+    if (!raw) return "";
+    const m = /"command"\s*:\s*"((?:[^"\\]|\\.)*)/.exec(raw);
+    if (!m) return "";
+    const frag = m[1]!;
+    // 完整且合法 ⇒ 直接解；被截断（转义断在末尾）⇒ 手工还原常见转义
+    try {
+        return JSON.parse(`"${frag}"`);
+    } catch {
+        return frag
+            .replace(/\\n/g, "\n")
+            .replace(/\\t/g, "\t")
+            .replace(/\\"/g, '"')
+            .replace(/\\\\/g, "\\")
+            .replace(/\\$/, "");
+    }
+}
+
+/** 框里该显示的完整命令：已定稿的优先，其次流式草稿（见 `partialCommand`） */
+function shownCommand(n: BlockNode): string {
+    return toolCommand(n) || partialCommand(n);
+}
+
+/**
  * 过程行的标题。`open` 参与：**思考行收起时预览首行**（一眼看出在琢磨什么），
  * 展开后只写"思考" —— 否则标题那句与下方正文的第一行是同一句，同一屏里看两遍
  *（2026-10-11 用户口径：展开后只显示"思考"）。
+ *
+ * `turn` 只给工具行用（算"意图"，见 `chat-fold.intentOf`）；不传就退回老口径（没有上下文时
+ * 宁可不编造理由，也不把别处的思考贴上来）。
  */
-function summaryOf(n: BlockNode, open = true): string {
+function summaryOf(n: BlockNode, open = true, turn?: BlockNode): string {
     if (n.tag === "text") {
         // 正文也是"收取中的数据"（2026-10-11）：收起预览首行、展开只写"输出中/正文"
         // —— 与 think 同款，避免标题那句与体里第一行同屏看两遍
@@ -435,9 +478,43 @@ function summaryOf(n: BlockNode, open = true): string {
         return firstLine(str(n.attrs.content)).trim() || (n.stopped ? "思考" : "思考中…");
     }
     if (n.tag === "tool") {
-        return `${str(n.attrs.tool) || "tool"}${toolCommand(n) ? ` · ${firstLine(toolCommand(n))}` : ""}${isInterruptedToolBlock(n, viewLive()) ? " · ⊘ 中断" : ""}`;
+        // 标题 = `<tool> · <意图>`（##399 用户 2026-10-20 拍板 B）：意图 = 同一步里前一条 think 的
+        // **末行**（模型自述"为什么动这一步"）。为什么不是命令首行：工具块在 `tool-input-start`
+        // 就建了，那时 `args` 还是空的 —— 命令首行在 streaming 阶段根本不存在，标题只剩 `bash ·`
+        // 空尾巴（实测占 P95 905ms 的窗口）。命令不丢：框体首行恒给 `$ <完整命令>`（见 ToolBody）。
+        // 前面没有 think ⇒ 只写工具名（用户口径：「就只输出 'bash' 即可」）。
+        const intent = turn ? intentOf(turn, n) : null;
+        return `${str(n.attrs.tool) || "tool"}${intent ? ` · ${intent}` : ""}${isInterruptedToolBlock(n, viewLive()) ? " · ⊘ 中断" : ""}`;
     }
     return n.tag;
+}
+
+/**
+ * think / tool 的**开销角标**（##399 用户 2026-10-20：「思考和工具的最右侧补上输出时间消耗和字节数，
+ * 这是模型质量的观测」）。
+ *
+ * 两半各自独立可有：`ms` 是 main 后加的块字段（旧日志没有 ⇒ 不显示，**不用渲染时刻顶替**），
+ * 字节数是客户端按正文/输出算的派生量（见 `chat-fold.spentOf`）。
+ */
+function SpentBadge(props: { node: BlockNode }) {
+    const sp = () => spentOf(props.node);
+    const text = () => {
+        const v = sp();
+        if (!v) return "";
+        const parts: string[] = [];
+        if (v.ms !== undefined) parts.push(fmtMs(v.ms));
+        if (v.bytes > 0) parts.push(fmtBytes(v.bytes));
+        return parts.join(" · ");
+    };
+    const tip = () =>
+        `${props.node.tag === "think" ? "思考生成耗时" : "工具执行耗时"} / ${props.node.tag === "think" ? "思考" : "输出"}体积（UTF-8）`;
+    return (
+        <Show when={text()}>
+            <span class="shrink-0 tabular-nums text-caption opacity-40" data-spent title={tip()}>
+                {text()}
+            </span>
+        </Show>
+    );
 }
 
 /** 状态灯档位 → class（**只有这里认 class**；"什么时候失败"的判据在 `procStatusOf`） */
@@ -472,23 +549,24 @@ function ToolBody(props: {
     /** true = 画在轮尾活动框里（活的那个工具）：命令行恒给出、内层不再自己滚 */
     live?: boolean;
 }) {
-    const n = props.node;
-    const output = () => str(n.attrs.output);
+    // ⚠ 必须是**访问器**：`props.node` 是连到 store 的 getter，`const n = props.node`
+    // 会在组件创建时把它拍平成一个引用 —— 里面的 `Show when={…}` 是 memo，读到的是普通
+    // 对象字段（非信号），**只算一次永不再算** ⇒ 直播中的工具框创建时空、之后一直空。
+    // 这是「工具执行中一片空白」的根因（##399 实测）；思考框没这问题，因为它把
+    // `props.node.attrs.content` 直接写在 JSX 表达式里（那是 effect，每帧重读）。
+    const n = () => props.node;
+    const output = () => str(n().attrs.output);
     const pv = () => previewLines(output());
-    const title = () => `${str(n.attrs.tool)} · ${toolCommand(n)}`;
-    // 命令行只在**多行或超长**时才在展开体重列：折叠行已显示命令首行，
-    // 单行短命令再列一遍就是同一句看两遍（用户 2026-10-04 反馈的重复）。
-    // 例外：活动框里**恒给**（那里没有"上一行标题"可看，且高度是固定的，
-    // 空着一块会以为坏了 —— 2026-10-11 反馈「工具输出没像思考那样进活动框」）。
-    const cmdNeedsFull = () => {
-        if (props.live) return true;
-        const c = toolCommand(n);
-        return c.includes("\n") || c.length > 80;
-    };
+    const title = () => `${str(n().attrs.tool)} · ${toolCommand(n())}`;
+    // 命令行**恒给**（##399 用户 2026-10-20）：折叠行的标题已改成 `<tool> · <意图>`
+    // （拍板 B），标题里**不再有命令** ⇒ "折叠行已显示命令首行，展开体别重复"这个前提失效了。
+    // 命令是"这一步到底跑了什么"的唯一事实源，必须留在体里；无命令（streaming 早期 / 中断）才省。
+    const cmd = () => shownCommand(n());
+    const cmdNeedsFull = () => !!cmd();
     return (
         <div class="space-y-1 font-mono" data-tool-body>
             <Show when={cmdNeedsFull()}>
-                <pre class="text-base-content/70">$ {toolCommand(n)}</pre>
+                <pre class="text-base-content/70">$ {cmd()}</pre>
             </Show>
             <Show when={output()}>
                 {/* 相对定位容器：**最大化按钮**浮在框右上角（≠ 插一行按钮把正文挤下去，
@@ -514,13 +592,18 @@ function ToolBody(props: {
                     </pre>
                 </div>
             </Show>
-            {/* 工具返回前的结果区是**真空**（ai-sdk 只在 tool-result 一次给全量 stdout），
-                固定高度的框里说明白"在等什么"，否则看着像卡住 */}
-            <Show when={props.live && !n.stopped && !output()}>
-                <div class="animate-pulse text-base-content/50">⋯ 执行中，等待工具返回…</div>
+            {/* **状态与输出分离**（##399 用户 2026-10-20 二轮）：框体是**输出区**，只放命令与结果；
+                "此刻在等什么"一律只说在标题栏那一格（`TailBox` 的 `data-live-state`），
+                这里**不再复述**（同一句话一处看两遍 = 用户说的"把状态和输出混在一起"）。
+                结果还没到就空着；连命令都还没有（参数还在流）时留一个终端提示符当锚，
+                避免定高框一片白（有命令后不再给，否则 `$ cmd` 与占位 `$` 上下各一行 = 重复）。 */}
+            <Show when={props.live && !output() && !cmd() && !isInterruptedToolBlock(n(), viewLive())}>
+                <pre class="text-base-content/25" data-live-idle>
+                    $
+                </pre>
             </Show>
             {/* 中断遗留：正文显示与发往 LLM 完全同源的占位说明（不再是空白让人无从下手） */}
-            <Show when={isInterruptedToolBlock(n, viewLive())}>
+            <Show when={isInterruptedToolBlock(n(), viewLive())}>
                 <div class="alert alert-warning alert-soft text-body py-2 font-sans">
                     <span class="whitespace-pre-wrap">{INTERRUPTED_TOOL_NOTICE}</span>
                 </div>
@@ -575,6 +658,8 @@ function ProcBody(props: {
  */
 function ProcessRow(props: {
     node: BlockNode;
+    /** 所在轮（算工具行的"意图"标题，见 `chat-fold.intentOf`） */
+    turn?: BlockNode;
     pin: Record<string, boolean>;
     onToggle: (id: string) => void;
     onFull: (title: string, content: string) => void;
@@ -592,7 +677,10 @@ function ProcessRow(props: {
     const title = () => (
         <>
             {statusMark(n())}
-            <span class="font-medium text-base-content/80 truncate flex-1">{summaryOf(n(), open())}</span>
+            <span class="font-medium text-base-content/80 truncate flex-1">
+                {summaryOf(n(), open(), props.turn)}
+            </span>
+            <SpentBadge node={n()} />
         </>
     );
     return (
@@ -647,6 +735,8 @@ function ProcessRow(props: {
 function TailBox(props: {
     /** 尾巴叶子（活动块 / 现场那个叶子）—— 行键与开合状态都挂在它 id 上 */
     node: BlockNode;
+    /** 所在轮（工具行标题的"意图"取自同一步前一条 think；等待文案要读本轮是否已停） */
+    turn: BlockNode;
     /** 错误条（末叶子是 error 块时） */
     error: BlockNode | null;
     /** 主体：当时正在跑的那个叶子（末叶子是 error 时取它前一个） */
@@ -674,8 +764,10 @@ function TailBox(props: {
             // 展开时体里就有红条全文，标题不再复述（同一屏看两遍）；收起时标题就是那一眼
             return open() ? "出错现场" : `❌ [${str(b.attrs.source)}] ${firstLine(str(b.attrs.message))}`;
         }
-        return summaryOf(b, open());
+        return summaryOf(b, open(), props.turn);
     };
+    /** 此刻在等什么（三档；只有直播才有这句话） */
+    const wait = () => waitTextOf(props.turn, n(), !!props.live);
     return (
         <div
             class="text-body"
@@ -699,10 +791,13 @@ function TailBox(props: {
                     <span class="text-error">✗</span>
                 </Show>
                 <span class="font-medium text-base-content/80 truncate flex-1">{title()}</span>
+                {/* 开销角标（用户 2026-10-20：「这是模型质量的观测」）：主体那一块自己的耗时 + 体积 */}
+                <Show when={props.body}>{(b) => <SpentBadge node={b()} />}</Show>
+                {/* 状态位**只说此刻在等什么**（三档），不再有"进行中"这种什么也没说的词 */}
                 <Show when={props.live}>
                     <span class="shrink-0 text-caption opacity-50" data-live-state>
-                        <Show when={!n().stopped} fallback={<span class="animate-pulse">⋯ 等待下一步…</span>}>
-                            <span class="animate-pulse">进行中</span>
+                        <Show when={wait()} fallback={<span class="opacity-0">·</span>}>
+                            {(w) => <span class="animate-pulse">{w()}</span>}
                         </Show>
                     </span>
                 </Show>
@@ -745,6 +840,8 @@ function EndLeafBox(props: {
      *  叶子身上没有 endReason ⇒ 组件内自算会恒走"结束原因未知"那一支，连新记录也这么说
      *  （review ##253 RV-5：纯函数绿、接线错）。 */
     tip: string;
+    /** 所在轮（`summaryOf` 算工具行"意图"用；与 `tip` 同源，都由调用方从 turn 喂） */
+    turn: BlockNode;
     pin: Record<string, boolean>;
     onToggle: (id: string, force?: boolean) => void;
     onFull: (title: string, content: string) => void;
@@ -764,8 +861,9 @@ function EndLeafBox(props: {
             >
                 {statusMark(n())}
                 <span class="font-medium text-base-content/80 truncate flex-1">
-                    {summaryOf(n(), open())}
+                    {summaryOf(n(), open(), props.turn)}
                 </span>
+                <SpentBadge node={n()} />
                 <span
                     class="shrink-0 rounded border border-dashed border-base-300 px-1 text-caption opacity-50"
                     data-tail-tag
@@ -1179,6 +1277,8 @@ function UserBubble(props: { node: BlockNode }) {
 function ProcBar(props: {
     /** 这一段连续的过程叶子（文档序）——数组引用稳定是 `<For>` 不重建的前提（见 reuseRows） */
     parts: BlockNode[];
+    /** 所在轮：透传给 `summaryOf` 算工具行标题的"意图" */
+    turn?: BlockNode;
     open: boolean;
     /** 点整行 = 切这一行的 pin（**不是**换级别：级别循环归顶部按钮） */
     onToggle: () => void;
@@ -1232,7 +1332,7 @@ function ProcBar(props: {
                         │
                     </span>
                     <span class="min-w-0 flex-1 truncate text-base-content/80">
-                        {summaryOf(props.parts[0], false)}
+                        {summaryOf(props.parts[0], false, props.turn)}
                     </span>
                 </Show>
             </DisclosureHead>
@@ -1245,6 +1345,7 @@ function ProcBar(props: {
                         {(n) => (
                             <PartRow
                                 node={n}
+                                turn={props.turn}
                                 pin={props.pin}
                                 onToggle={props.onToggleProc}
                                 onFull={props.onFull}
@@ -1265,6 +1366,8 @@ function ProcBar(props: {
  */
 function PartRow(props: {
     node: BlockNode;
+    /** 所在轮（见 `summaryOf` 的 `turn`） */
+    turn?: BlockNode;
     pin: Record<string, boolean>;
     onToggle: (id: string, force?: boolean) => void;
     onFull: (title: string, content: string) => void;
@@ -1274,6 +1377,7 @@ function PartRow(props: {
         return (
             <ProcessRow
                 node={b}
+                turn={props.turn}
                 pin={props.pin}
                 onToggle={props.onToggle}
                 onFull={props.onFull}
@@ -1511,6 +1615,7 @@ export function TurnView(props: {
                         return (
                             <ProcBar
                                 parts={row.parts}
+                                turn={t()}
                                 open={rowOpen(row.key)}
                                 /* **显式**给反值：`pin` 缺省时翻转出来是 `!undefined = true`，
                                    而 4 级这行**默认就是展开** —— 不显式传 force 的话第一次点
@@ -1551,6 +1656,7 @@ export function TurnView(props: {
                             <EndLeafBox
                                 node={leafById(props.turnId, tl().node.id)}
                                 tip={endLeafTip(t())}
+                                turn={t()}
                                 pin={props.pin}
                                 onToggle={props.onToggle}
                                 onFull={props.onFull}
@@ -1560,6 +1666,7 @@ export function TurnView(props: {
                             <div data-tail-row={tl().kind}>
                                 <TailBox
                                     node={leafById(props.turnId, tl().node.id)}
+                                    turn={t()}
                                     error={composed()?.error ?? null}
                                     body={composed()?.body ?? null}
                                     pin={props.pin}
