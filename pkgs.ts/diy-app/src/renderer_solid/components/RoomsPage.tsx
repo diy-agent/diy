@@ -23,6 +23,7 @@ import {
     isAllAddress,
     memberAvatar,
     memberColor,
+    originLabel,
     memberName,
     orderedMembers,
     parseAddress,
@@ -570,6 +571,13 @@ export function RoomsPage() {
                                                 <Show when={e.to.length > 0}>
                                                     <span class="text-caption opacity-50">→ {e.to.map((t) => memberName(room(), t)).join(" / ")}</span>
                                                 </Show>
+                                            </div>
+                                        </Show>
+                                        {/* 这条是**别的房间投进来的**（##377 第 24 刀 · 双向可见）：
+                                            源房间那条原话在别处，这里给一句「从哪来」，别让它看起来是本房间自己说的 */}
+                                        <Show when={originLabel(e.origin)}>
+                                            <div class="text-caption opacity-60 mb-0.5" data-room-origin={e.origin?.roomId}>
+                                                🫧 {originLabel(e.origin)}
                                             </div>
                                         </Show>
                                         <div

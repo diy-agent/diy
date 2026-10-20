@@ -44,7 +44,9 @@ import {
     parseAddress,
     resolveMember,
     memberOptions,
+    mirrorEvents,
     resolveRecipients,
+    shouldMirrorRoom,
     roomContextFor,
     shortName,
     type DeliveryState,
@@ -171,6 +173,60 @@ export async function ensureRoomForTask(taskUri: string): Promise<Room> {
     // 缺省接受者 = 主人格（不加人时"打字就是对本任务说"）
     if (!room.focus) room = setFocus(taskUri, MAIN_MEMBER_ID);
     return readRoom(taskUri) ?? room;
+}
+
+/**
+ * 把「这句」与「这一轮的回复」**写回接收方自己的房间**（##377 第 24 刀 · 双向可见）。
+ *
+ * 为什么必须做：投递过去只记在**源房间**的事件流里 ⇒ 接收方房间 `room get <它>` 恒为 0 事件，
+ * 切过去什么都没有（用户原话「不能真正使用」里最硬的一条）。
+ *
+ * 三条口径：
+ *   ① **判据在 `shared/room`（纯函数 + 单测）**，这里只做「读写盘」；
+ *   ② **同一房间不写回**（任务页对主人格自己说话 = 本来就在一条流里，写了就是重复）；
+ *   ③ **幂等**：以 `origin.sayId` 去重 —— 投递重试 / 进程重启后重跑都不会把同一条写两遍；
+ *   ④ **永不传染投递**：任何异常只吞掉（与「水位是优化」同一条口径，P1 的教训）。
+ */
+async function mirrorIntoTarget(input: {
+    sourceRoomId: string;
+    sayId: string;
+    targetTaskUri: string;
+    author: string;
+    text: string;
+    replyText: string;
+    turnId?: string;
+    error?: string;
+}): Promise<void> {
+    try {
+        if (!shouldMirrorRoom(input.sourceRoomId, input.targetTaskUri)) return;
+        const target = await ensureRoomForTask(input.targetTaskUri);
+        // 目标房间里「拥有那个会话」的成员 = 主人格（会话按 task 唯一 ⇒ 一轮跑在哪个 task，就归哪个房间的主人格）
+        const owner =
+            target.members.find((m) => m.main === true && m.backend?.type === "task" && m.backend.data.taskUri === input.targetTaskUri) ??
+            target.members.find((m) => m.main === true);
+        const targetMemberId = owner?.id ?? MAIN_MEMBER_ID;
+        // 幂等：这条 say 已经写回来过（重试 / 重启后重跑）⇒ 不再写第二遍
+        const { events } = readEvents(input.targetTaskUri);
+        if (events.some((e) => e.origin?.sayId === input.sayId)) return;
+        const built = mirrorEvents({
+            origin: { roomId: input.sourceRoomId, sayId: input.sayId },
+            targetRoomId: input.targetTaskUri,
+            targetMemberId,
+            author: input.author,
+            text: input.text,
+            replyText: input.replyText,
+            taskUri: input.targetTaskUri,
+            ...(input.turnId ? { turnId: input.turnId } : {}),
+            ...(input.error ? { error: input.error } : {}),
+            ids: { say: nextEventId(), reply: nextEventId() },
+            ts: new Date().toISOString(),
+        });
+        if (!built) return;
+        record(input.targetTaskUri, built.say);
+        record(input.targetTaskUri, built.reply);
+    } catch (e) {
+        console.warn(`[room] 写回接收方房间失败（不影响投递）：${errText(e)}`);
+    }
 }
 
 /** 该成员的会话此刻是不是有轮次在跑（判据：会话注册表，主进程内存权威） */
@@ -513,6 +569,19 @@ function deliverOne(input: DeliverInput): Promise<void> {
         // 水位前移（##166 §44.6 四.1）：**只在真跑完时**前移 —— 失败 / 会话忙不前进，
         // 下次投递时这段时间别人的话还能补给它（宁可重复一轮，不可静默漏掉）。
         if (!r.error) await advanceLastSeen(roomId, { [member.id]: sayId });
+        // 双向可见（第 24 刀）：**成轮之后**才写回 —— 失败的投递不该在接收方房间留下一条「说过的话」。
+        // 放在 `done` 之前：写回失败也不影响完成信号（函数内部全吞，见 mirrorIntoTarget ④）。
+        if (!r.error) {
+            await mirrorIntoTarget({
+                sourceRoomId: roomId,
+                sayId,
+                targetTaskUri: taskUri,
+                author,
+                text: body,
+                replyText: r.reply,
+                ...(r.turnId ? { turnId: r.turnId } : {}),
+            });
+        }
         input.done(ev);
     };
 
