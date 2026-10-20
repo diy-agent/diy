@@ -24,6 +24,15 @@
  * ⚠️ 口径歧义（已回报 owner）：用户只说「最大化和恢复的单个切换按钮」，**没说怎么回球态** ——
  * 本实现额外给 `Esc`（键盘入口，不占 viewbar 元素）；owner 看过截图后再定。
  * 宽度可拖（左缘 grip，复用 `TaskDetailPanel` 的既有模式）+ 宽度记忆（localStorage）。
+ *
+ * ##377 第 28 刀 —— **未读提示**（可用性收口第 3 条；用户复现：「侧边栏收起时别人说话 ⇒ 展开后无标记」）：
+ *   · 游标 = `room.yaml` 的 `lastSeen[<人成员 id>]`（与 agent 的投递水位**同一个字段**，见 `RoomSchema.lastSeen`）；
+ *   · 判据 = `shared/room::unreadSince`（只数**别人**说的；游标找不到就按"从头看"）；
+ *   · 球态：有未读 ⇒ 球不再半透明 + 角标条数（原先球恒 `opacity-40`，有消息也看不出来）；
+ *   · 面板：在**第一条未读**前画「新消息」分界线（进面板时的快照 —— 已读前移后分界线仍留着，
+ *     否则用户点开的那一瞬标记就消失了，等于没标）；
+ *   · 前移时机 = **面板开着 + 真的贴在底部 + 窗口可见**（上翻阅读时不前移 —— 否则看得见的历史
+ *     会把后面进来的消息也吞成已读）。
  */
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { diyService } from "../lib/rpc";
@@ -42,6 +51,7 @@ import {
     resolveRecipients,
     shortName,
     sidebarRoomId,
+    unreadSince,
     type DeliveryStatus,
     type Room,
     type RoomEvent,
@@ -141,6 +151,13 @@ export function SidebarRoom() {
     const [folded, setFolded] = createSignal<Record<string, boolean>>({});
     const [pin, setPin] = createSignal<Record<string, boolean>>({});
     const [input, setInput] = createSignal("");
+    /**
+     * 「新消息从这里开始」的分界线锚点（##377 第 28 刀）：**进面板那一刻**的第一条未读事件 id。
+     *
+     * 为什么是快照而不是实时值：已读游标在进面板后立刻前移到流尾，实时算出来的分界线会
+     * **在同一帧消失** —— 用户点开的那一瞬标记就没了，等于没标。快照留到本次面板关闭为止。
+     */
+    const [newFrom, setNewFrom] = createSignal<string | null>(null);
     /** 在飞的 post 条数（计数不是布尔：允许连发，同一成员在服务端排队 —— 用户口径「单成员串行」） */
     const [pendingPosts, setPendingPosts] = createSignal(0);
     const busy = () => pendingPosts() > 0;
@@ -183,6 +200,14 @@ export function SidebarRoom() {
      */
     const completions = createMemo(() => [memberCompletion(() => room()?.members ?? []), taskCompletion]);
     const human = createMemo(() => room()?.members.find((m) => m.kind === "human") ?? null);
+    /**
+     * 未读（##377 第 28 刀）：游标 = **人成员**在 `lastSeen` 里那一格，判据全在 `shared/room::unreadSince`。
+     *
+     * `room.get` 已经把 `lastSeen` 带回来（RoomSchema）⇒ 读不需要新口子；写走 `room.read`。
+     */
+    const unread = createMemo(() =>
+        unreadSince(events(), { cursorId: room()?.lastSeen?.[human()?.id ?? ""], viewerId: human()?.id }),
+    );
     const focusMember = createMemo(() => room()?.members.find((m) => m.id === room()?.focus) ?? null);
     /** 面板宽（成员抽屉在它**左侧**另占地方，不从这里扣） */
     const panelW = createMemo(() => width());
@@ -274,6 +299,7 @@ export function SidebarRoom() {
             if (!id) return;
             void loadRoom(id, { soft: true });
             for (const [eid, st] of Object.entries(turns())) if (st.live) void loadTurn(eid, { soft: true });
+            markReadIfSeen();
         }, 2500);
         onCleanup(() => clearInterval(t));
     });
@@ -365,7 +391,7 @@ export function SidebarRoom() {
         if (openTimer !== undefined) window.clearTimeout(openTimer);
         openTimer = window.setTimeout(() => {
             openTimer = undefined;
-            setMode("normal");
+            enterPanel();
         }, 120);
     };
     /** 离开球：既取消"即将打开"，也排"延迟关闭" */
@@ -379,11 +405,65 @@ export function SidebarRoom() {
     onCleanup(() => {
         if (openTimer !== undefined) window.clearTimeout(openTimer);
     });
+    /**
+     * 进面板：**先快照第一条未读**，再切态（##377 第 28 刀）。
+     *
+     * 顺序不能换：切态之后 `markReadIfSeen` 会立刻把游标推到流尾，那时再算"第一条未读"就是 null。
+     */
+    const enterPanel = (): void => {
+        const u = unread();
+        setNewFrom(u.count > 0 ? u.firstId : null);
+        markedFor = null; // 上次面板关着 / 上翻时长住的那次没前移成 ⇒ 重开再给一次机会
+        setMode("normal");
+    };
+
+    /**
+     * 已读前移（##377 第 28 刀）—— 判据：**面板开着 + 真的贴在底部 + 窗口可见 + 确有别人的新发言**。
+     *
+     * 为什么四条都要：
+     *   · 面板收起（球态）时人根本看不见，前移 = 把"你没读"改成"你读了"（正是本刀要消灭的谎）；
+     *   · 上翻阅读时同理（第 19 刀：贴底才跟随）—— 否则后来进来的消息会被历史阅读一并吞掉；
+     *   · `document.hidden` 时渲染停摆，看不见就不算看到（§42.3）；
+     *   · `count === 0` ⇒ 不动盘（`markRead` 自己也有这条护栏，两处都在：这里省一次 RPC）。
+     *
+     * 落点暴露给探针（`data-sidebar-read`）是**故意的**：判据要能问"现在游标推到哪了"。
+     */
+    let markedFor: string | null = null;
+    const markReadIfSeen = (): void => {
+        const id = roomId();
+        if (!id || mode() === "ball" || !stick() || document.hidden) return;
+        const u = unread();
+        if (u.count === 0 || !u.lastId) return;
+        if (markedFor === u.lastId) return; // 同一个落点别重复发（轮询 2.5s 一次）
+        markedFor = u.lastId;
+        void (async () => {
+            try {
+                const r = await diyService.diy.room.read({ id, event: u.lastId! });
+                if (r.room) setRoom(r.room); // 带回新游标 ⇒ 未读立刻归零（不等下一轮轮询）
+            } catch {
+                /* 游标是优化：写不进去最坏只是多提示一条"未读"，不弹错（与 advanceLastSeen 同口径） */
+            }
+        })();
+    };
+
+    // 面板关着 ⇒ 分界线快照作废（重开时按当时的未读重新取 —— 见 `enterPanel`）。
+    // 依赖只取开合：`unread()` 每次轮询都可能返回**新对象**，挂它会白跑（第 19 刀引用稳定器的教训）。
+    createEffect(() => {
+        if (mode() === "ball") setNewFrom(null);
+    });
+    // 贴底 / 开合 / 新落点 任一变化 ⇒ 试一次前移（轮询里也会兜一次：别的窗口发的消息进不来事件）
+    createEffect(() => {
+        void mode();
+        void stick();
+        void unread().lastId;
+        markReadIfSeen();
+    });
+
     /** 点把手 = 固定态切换（常驻 / 恢复 hover 开关）——§39.2 ④ 的逃生口 */
     const pinToggle = (): void => {
         cancelHide();
         if (mode() === "ball") {
-            setMode("normal");
+            enterPanel();
             setPinned(true);
             return;
         }
@@ -490,12 +570,29 @@ export function SidebarRoom() {
                    靠近变亮；**hover 打开 · 移走关闭**（带滞回）；**点击 = 固定常驻**（逃生口） ── */}
             <Show when={mode() === "ball"}>
                 <button
-                    class="fixed right-0 top-1/3 z-40 rounded-l-lg border border-r-0 border-[var(--diy-overlay-edge)] bg-[var(--diy-surface-overlay)] px-1 py-2 opacity-40 shadow-lg transition-opacity hover:opacity-100"
-                    title="靠近打开侧边栏助手（移走自动收起）；要常驻请用面板里的 📌"
+                    class={`fixed right-0 top-1/3 z-40 rounded-l-lg border border-r-0 border-[var(--diy-overlay-edge)] bg-[var(--diy-surface-overlay)] px-1 py-2 shadow-lg transition-opacity hover:opacity-100 ${
+                        // 有未读 ⇒ **不再半透明**（##377 第 28 刀）：原先恒 0.4，别人说了话也看不出来
+                        unread().count > 0 ? "opacity-100" : "opacity-40"
+                    }`}
+                    title={
+                        unread().count > 0
+                            ? `有 ${unread().count} 条新消息（靠近打开，移走自动收起）`
+                            : "靠近打开侧边栏助手（移走自动收起）；要常驻请用面板里的 📌"
+                    }
                     onMouseEnter={hoverOpen}
                     onMouseLeave={hoverAway}
                     data-sidebar-open
+                    data-sidebar-unread={unread().count}
                 >
+                    {/* 未读角标：球宽只有 ~35px，条数用最小的 badge；>99 收敛成 99+ */}
+                    <Show when={unread().count > 0}>
+                        <span
+                            class="absolute -left-2 -top-1.5 badge badge-xs badge-error font-bold"
+                            data-sidebar-unread-badge={String(unread().count)}
+                        >
+                            {unread().count > 99 ? "99+" : unread().count}
+                        </span>
+                    </Show>
                     <span class="text-base">💬</span>
                     <div class="text-caption [writing-mode:vertical-rl]">助手</div>
                 </button>
@@ -535,6 +632,9 @@ export function SidebarRoom() {
                             {room()?.members.length ?? 0} 人
                         </span>
                         {/* view 级操作（##166 §38.3）：room 的「当前接受者」在这里，不在成员行内 */}
+                        {/* 已读游标（探针用）：面板里"现在推到哪条了" —— 判据要能问出这句话。
+                            直接读服务端那份（`room.get` 带回的 `lastSeen`），不在前端另存一份。 */}
+                        <span class="hidden" data-sidebar-read={room()?.lastSeen?.[human()?.id ?? ""] ?? ""} />
                         <span class="text-caption opacity-60 truncate" data-sidebar-focus>
                             接受者 {focusMember()?.name ?? "（无）"}
                         </span>
@@ -613,6 +713,20 @@ export function SidebarRoom() {
                                             void loadTurn(e.id);
                                         });
                                         return (
+                                            <>
+                                                {/* 「新消息从这里开始」分界线（##377 第 28 刀）：
+                                                    `newFrom` 是**进面板那一刻**的快照 —— 已读前移后它仍留着，
+                                                    否则点开的那一瞬标记就消失了（等于没标）。 */}
+                                                <Show when={newFrom() !== null && e.id === newFrom()}>
+                                                    <div
+                                                        class="flex items-center gap-1.5 py-0.5"
+                                                        data-sidebar-newfrom={e.id}
+                                                    >
+                                                        <div class="h-px flex-1 bg-error/40" />
+                                                        <span class="text-caption text-error shrink-0">新消息</span>
+                                                        <div class="h-px flex-1 bg-error/40" />
+                                                    </div>
+                                                </Show>
                                             <div
                                                 class={`flex ${mine() ? "justify-end" : "justify-start"}`}
                                                 data-sidebar-event
@@ -758,6 +872,7 @@ export function SidebarRoom() {
                                                     </Show>
                                                 </div>
                                             </div>
+                                            </>
                                         );
                                     }}
                                 </For>

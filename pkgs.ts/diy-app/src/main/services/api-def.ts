@@ -1541,6 +1541,32 @@ export const apiDef = RpcSchema.router({
             },
             output: RoomSchema,
           }),
+          /**
+           * **人成员的未读 / 已读**（##377 第 28 刀）。
+           *
+           * 游标本身住在 `room.yaml` 的 `lastSeen[<人成员 id>]`（与 agent 的投递水位同一个字段，
+           * 见 `RoomSchema.lastSeen` 的注释）—— 所以**读**不需要新口子，`room get` 已经把
+           * `lastSeen` 带回来了；这里只补**写**（前移）。
+           *
+           * 判据（未读条数 / 第一条未读 / 流尾落点）唯一真源 = `shared/room::unreadSince`。
+           */
+          read: RpcSchema.unary({
+            desc: `标记房间已读（把**人成员**的阅读游标前移到最后一条事件，或指定 --event）`,
+            input: {
+              id: z.string().cliArg({ desc: "房间 id（= 任务 URI；侧边栏 room 用它的 id）" }),
+              event: z
+                .string()
+                .optional()
+                .cliOption({ desc: "前移到这条事件 id（缺省 = 事件流最后一条）" }),
+            },
+            output: z.object({
+              room: RoomSchema.nullable(),
+              /** 真的前移了（false = 已经是这一条 / 没有房间 / 没有人成员 —— 都不算失败） */
+              advanced: z.boolean(),
+              /** 前移后的游标（人成员是谁、前移到哪条） */
+              read: z.object({ member: z.string(), event: z.string() }).nullable(),
+            }),
+          }),
           post: RpcSchema.serverStream({
             desc: `在房间里说一句 —— 解析收件人 → 投递给各 agent（在它自己的会话里真起一轮）→ 回复带署名回写；逐行输出事件（JSONL）`,
             input: {

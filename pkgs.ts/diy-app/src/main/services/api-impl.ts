@@ -1556,6 +1556,24 @@ export function bindAppHandlers(binding: ServerBinding): void {
     if (member && !room.members.some((m) => m.id === member)) throw new Error(`房间里没有这个成员：${input.member}`);
     return setFocus(input.id, member);
   });
+  /**
+   * 人成员的阅读游标前移（##377 第 28 刀）。
+   *
+   * ⚠️ 只有人成员的游标能从这里动（判据在 `core/room.markRead`）—— agent 的水位归投递 / 成轮。
+   */
+  binding.on(app.room.read, async ({ input }) => {
+    const { readRoom, markRead } = await import("../core/room");
+    const advanced = await markRead(input.id, input.event);
+    const room = readRoom(input.id);
+    if (!room) return { room: null, advanced: false, read: null };
+    const human = room.members.find((m) => m.kind === "human");
+    const event = human ? room.lastSeen[human.id] : undefined;
+    return {
+      room,
+      advanced,
+      read: human && event ? { member: human.id, event } : null,
+    };
+  });
   binding.on(app.room.post, async function* ({ input }) {
     const { postToRoom } = await import("./room-service");
     for await (const ev of postToRoom(input.id, input.text)) yield JSON.stringify(ev);
