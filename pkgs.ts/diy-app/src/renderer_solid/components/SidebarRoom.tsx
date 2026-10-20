@@ -407,7 +407,7 @@ export function SidebarRoom() {
         try {
             setRoom(await diyService.diy.room.focus({ id, member: m ? m.id : undefined }));
         } catch (e) {
-            notificationStore.addToast("error", `设当前接受者失败：${msgOf(e)}`);
+            notificationStore.addToastLegacy("error", `设当前接受者失败：${msgOf(e)}`);
         }
     };
 
@@ -423,13 +423,13 @@ export function SidebarRoom() {
         if (!id || !personaId) return;
         try {
             const r = await diyService.diy.room.invite({ id, persona: personaId, task: undefined, role: undefined });
-            notificationStore.addToast(
+            notificationStore.addToastLegacy(
                 "info",
                 `已邀请 ${r.member.name}（${r.createdTask ? "新建影子任务" : "复用已有任务"} ${r.taskUri}）`,
             );
             await loadRoom(id);
         } catch (e) {
-            notificationStore.addToast("error", `邀请失败：${msgOf(e)}`);
+            notificationStore.addToastLegacy("error", `邀请失败：${msgOf(e)}`);
         }
     };
 
@@ -438,10 +438,10 @@ export function SidebarRoom() {
         if (!id) return;
         try {
             setRoom(await diyService.diy.room.removeMember({ id, member: m.id }));
-            notificationStore.addToast("info", `已把 ${m.name} 移出房间（影子任务保留）`);
+            notificationStore.addToastLegacy("info", `已把 ${m.name} 移出房间（影子任务保留）`);
             await loadRoom(id);
         } catch (e) {
-            notificationStore.addToast("error", `移出失败：${msgOf(e)}`);
+            notificationStore.addToastLegacy("error", `移出失败：${msgOf(e)}`);
         }
     };
 

@@ -440,7 +440,7 @@ export function ContextLabPage(props: { uri: string }) {
                 void refetchConfig();
             } catch (e) {
                 setSystemPlaces(null);
-                notificationStore.addToast(
+                notificationStore.addToastLegacy(
                     "error",
                     `划分规则写入失败：${e instanceof Error ? e.message : String(e)}`,
                 );
@@ -573,7 +573,7 @@ export function ContextLabPage(props: { uri: string }) {
                 t.ts ?? null,
             );
             if (!hit) {
-                notificationStore.addToast(
+                notificationStore.addToastLegacy(
                     "error",
                     `未找到这一步的实际请求（${t.ref.turnId} · 第 ${t.ref.step} 步）：可能没真发过 / 流量日志被清。`,
                 );
@@ -586,7 +586,7 @@ export function ContextLabPage(props: { uri: string }) {
                 date: dateOfLogFile(hit.record.log?.file ?? null) ?? "all",
             });
         } catch (e) {
-            notificationStore.addToast("error", `查流量日志失败：${e instanceof Error ? e.message : String(e)}`);
+            notificationStore.addToastLegacy("error", `查流量日志失败：${e instanceof Error ? e.message : String(e)}`);
         }
     };
 

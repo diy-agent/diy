@@ -227,7 +227,7 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
             // 保存失败必须出声：校验拒绝（标题为空等）只 console.error 的话，
             // 用户看到的是「点了保存没反应」，无从判断原因
             console.error("[TaskDetailContent] save title failed:", err);
-            notificationStore.addToast("error", `保存失败: ${err?.message ?? String(err)}`);
+            notificationStore.addToastLegacy("error", `保存失败: ${err?.message ?? String(err)}`);
         } finally {
             setSaving(false);
         }
@@ -246,7 +246,7 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
             await editTask(props.uri, patch);
             await props.refresh();
         } catch (err: any) {
-            notificationStore.addToast("error", `保存失败: ${err?.message ?? String(err)}`);
+            notificationStore.addToastLegacy("error", `保存失败: ${err?.message ?? String(err)}`);
         } finally {
             setSaving(false);
         }
@@ -624,7 +624,7 @@ function BodyBlock(props: { uri: string; task: TaskDetail; refresh: () => Promis
             setEditing(false);
         } catch (err: any) {
             console.error("[TaskDetailContent] save body failed:", err);
-            notificationStore.addToast("error", `保存失败: ${err?.message ?? String(err)}`);
+            notificationStore.addToastLegacy("error", `保存失败: ${err?.message ?? String(err)}`);
         } finally {
             setSaving(false);
         }

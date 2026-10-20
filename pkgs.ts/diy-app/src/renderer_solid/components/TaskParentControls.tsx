@@ -33,10 +33,10 @@ export function TaskAddMenu(props: {
         try {
             await diyService.diy.task.move({ uri: childUri, parent: props.parentUri });
             await taskStore.loadTree();
-            notificationStore.addToast("success", "已添加为子任务");
+            notificationStore.addToastLegacy("success", "已添加为子任务");
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
-            notificationStore.addToast("error", `添加失败: ${msg}`);
+            notificationStore.addToastLegacy("error", `添加失败: ${msg}`);
         } finally {
             setPickOpen(false);
         }
@@ -101,10 +101,10 @@ export function TaskParentEditor(props: { uri: string; project: string; parentTi
         try {
             await diyService.diy.task.move({ uri: props.uri, parent });
             await taskStore.loadTree();
-            notificationStore.addToast("success", parent ? "已重设父节点" : "已提升为一级任务");
+            notificationStore.addToastLegacy("success", parent ? "已重设父节点" : "已提升为一级任务");
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
-            notificationStore.addToast("error", `重设失败: ${msg}`);
+            notificationStore.addToastLegacy("error", `重设失败: ${msg}`);
         } finally {
             setOpen(false);
         }

@@ -14,6 +14,7 @@
  */
 
 import { createSignal } from "solid-js";
+import { draftFailedNotice } from "../lib/notice-entity";
 import { diyService } from "../lib/rpc";
 import { notificationStore } from "./notificationStore";
 
@@ -74,7 +75,11 @@ function reportError(err: unknown, uri: string) {
     const now = Date.now();
     if (now - lastErrorToastAt > ERROR_TOAST_THROTTLE_MS) {
         lastErrorToastAt = now;
-        notificationStore.addToast("error", "草稿保存失败，输入可能未落盘（详见控制台）");
+        notificationStore.addToast(
+            "error",
+            "草稿保存失败，输入可能未落盘（详见控制台）",
+            draftFailedNotice({ uri, error: err }),
+        );
     }
 }
 

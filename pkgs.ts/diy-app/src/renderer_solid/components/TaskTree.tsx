@@ -500,7 +500,7 @@ export function TaskTree(props: { reveal?: { uri: string; nonce: number } | null
         if (dropUri.startsWith("proj:")) {
             const projId = dropUri.slice(5);
             if (dragInfo.project !== projId) {
-                notificationStore.addToast("error", "只能移动到同一项目内");
+                notificationStore.addToastLegacy("error", "只能移动到同一项目内");
                 return;
             }
             if (!dragInfo.parent) return; // 已是一级任务，无需操作
@@ -513,10 +513,10 @@ export function TaskTree(props: { reveal?: { uri: string; nonce: number } | null
                     n.delete(dropUri);
                     return n;
                 });
-                notificationStore.addToast("success", "已提升为一级任务");
+                notificationStore.addToastLegacy("success", "已提升为一级任务");
             } catch (e) {
                 const msg = e instanceof Error ? e.message : String(e);
-                notificationStore.addToast("error", `提升失败: ${msg}`);
+                notificationStore.addToastLegacy("error", `提升失败: ${msg}`);
             }
             return;
         }
@@ -525,13 +525,13 @@ export function TaskTree(props: { reveal?: { uri: string; nonce: number } | null
         const dropInfo = findTaskProject(taskStore.nodes, dropUri);
         if (!dropInfo) return;
         if (dragInfo.project !== dropInfo.project) {
-            notificationStore.addToast("error", "只能在同一项目内拖动");
+            notificationStore.addToastLegacy("error", "只能在同一项目内拖动");
             return;
         }
         // RV-07（##245 review）：防环预检 —— 拖到自己的子孙下成环。main 有守卫
         // （task.ts 防环，数据安全无虞），客户端提前拦只为体验（非法落点当场报）。
         if (isAncestorOf(taskStore.nodes, dragUri, dropUri)) {
-            notificationStore.addToast("error", "不能拖到自己的子任务下");
+            notificationStore.addToastLegacy("error", "不能拖到自己的子任务下");
             return;
         }
         if (dropUri === dragInfo.parent) return; // 拖到直接父级：无需改动
@@ -539,10 +539,10 @@ export function TaskTree(props: { reveal?: { uri: string; nonce: number } | null
             await diyService.diy.task.move({ uri: dragUri, parent: dropUri });
             await taskStore.loadTree();
             setExpanded((prev) => new Set(prev).add(dropUri)); // 展开 drop 目标，子级立即可见
-            notificationStore.addToast("success", "已调整层级");
+            notificationStore.addToastLegacy("success", "已调整层级");
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
-            notificationStore.addToast("error", `调整失败: ${msg}`);
+            notificationStore.addToastLegacy("error", `调整失败: ${msg}`);
         }
     };
 
@@ -560,7 +560,7 @@ export function TaskTree(props: { reveal?: { uri: string; nonce: number } | null
             setPendingDelete(null);
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
-            notificationStore.addToast("error", `删除失败: ${msg}`);
+            notificationStore.addToastLegacy("error", `删除失败: ${msg}`);
         } finally {
             deleting = false;
         }

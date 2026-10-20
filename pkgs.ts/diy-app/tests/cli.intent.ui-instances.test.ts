@@ -259,6 +259,16 @@ describe("「显示」按钮：唤起目标窗口", () => {
     // 成功也要出声（页面上的 toast，不是静默）
     const toast = await ui.query<string>(`[...document.querySelectorAll('.toast [data-toast="success"]')].map(el => el.textContent).join("|")`);
     expect(toast).toContain(`已唤起 pid=${pidB}`);
+    // ##391：toast 上必须有「详情」入口 —— 连**未登记**的历史提示也要如实说「未登记」，
+    // 而不是装作有来源（装饰性按钮比没有按钮更糟）。这里直接 DOM click 只为验内容；
+    // 真人鼠标路径（坐标命中 / 遮挡）由 cli.intent.env-bar 的「详情」用例覆盖。
+    const detail = await ui.query<string>(`(() => {
+      const t = document.querySelector('.toast [data-toast="success"]');
+      t?.querySelector('[data-notice-detail-toggle]')?.click();
+      return t?.querySelector('[data-notice-detail-panel]')?.textContent ?? '';
+    })()`);
+    expect(detail).toContain("未登记");
+    expect(detail).toContain("##391");
   }, 120000);
 
   it("唤起失败必须看得见：目标退出后再确认 → 页面红条 + 错误 toast（禁静默）", async () => {

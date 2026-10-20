@@ -80,13 +80,13 @@ export function ParamForm(props: { view: FlowInstanceView; uri: string; onSaved?
         try {
             const kvs = props.view.paramsSchema.map((e) => paramKv(e, draft()[e.path] ?? e.default));
             const next = await saveParams(props.uri, kvs);
-            notificationStore.addToast("success", `参数已落盘（${kvs.length} 项）`);
+            notificationStore.addToastLegacy("success", `参数已落盘（${kvs.length} 项）`);
             setDraft(Object.fromEntries(next.paramsSchema.map((e) => [e.path, paramValueOf(next, e)])));
             props.onSaved?.(next);
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             setError(msg);
-            notificationStore.addToast("error", `参数未保存：${msg}`);
+            notificationStore.addToastLegacy("error", `参数未保存：${msg}`);
         } finally {
             setSaving(false);
         }

@@ -61,6 +61,9 @@ import {
 import { CompactHistoryPanel } from "./CompactSessionPanel";
 import { TrafficDrawer } from "./TrafficDrawer";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { OpsDownBar } from "./OpsDownBar";
+import { copyFailMeta, copyOkMeta } from "../lib/notice-copy";
+import { chatNotice, DETAIL_CHAT_FIND } from "../lib/notice-chat";
 import { draftStore } from "../store/draftStore";
 import { trafficStore } from "../store/trafficStore";
 import { notificationStore } from "../store/notificationStore";
@@ -2068,11 +2071,19 @@ function FullscreenModal(props: { title: string; content: string; onClose: () =>
     const copy = async () => {
         try {
             await navigator.clipboard.writeText(props.content);
-            notificationStore.addToast("success", "已复制到剪贴板");
+            notificationStore.addToast(
+                "success",
+                "已复制到剪贴板",
+                copyOkMeta({ what: "全屏面板内容", text: props.content, mech: "LocalChatPage.tsx::FullscreenModal" }),
+            );
         } catch (e) {
             // 用户主动触发的动作：失败必须告知，不能假装成功
             console.error("[localChat] 剪贴板写入失败：", e);
-            notificationStore.addToast("error", "复制失败（剪贴板不可用）");
+            notificationStore.addToast(
+                "error",
+                "复制失败（剪贴板不可用）",
+                copyFailMeta({ what: "全屏面板内容", mech: "LocalChatPage.tsx::FullscreenModal", error: e }),
+            );
         }
     };
     return (
@@ -2939,7 +2950,15 @@ export function LocalChatPage(props: {
         // ③ 流式中：先稳态（口径 4）—— 此刻抢滚动会和"跟随新内容"互相拉扯
         if (localChatStore.view.live) {
             pendingLocate = { turnId: hit.turnId, hit };
-            notificationStore.addToast("info", "这一轮正在生成：结束后自动定位到命中处");
+            notificationStore.addToast(
+                "info",
+                "这一轮正在生成：结束后自动定位到命中处",
+                chatNotice(
+                    "检索定位 · locateHit（##389）",
+                    `命中处落在本轮 ${hit.turnId} 尚未写完的内容里；此刻抢滚动会与「跟随新内容」互相拉扯 → 已记下命中位置，轮结束后自动滚过去`,
+                    DETAIL_CHAT_FIND,
+                ),
+            );
             return;
         }
         void (async () => {
@@ -2950,6 +2969,11 @@ export function LocalChatPage(props: {
                     notificationStore.addToast(
                         "error",
                         "定位失败：会话日志已被改写（这一轮的字节位置不再有效），请重新检索",
+                        chatNotice(
+                            "检索定位 · jumpTo（##389）",
+                            `命中记录的轮 ${hit.turnId} 在盘上的字节位置 ${hit.at} 已失效（日志被改写/清空）→ 视图**未移动**（不会跳到错的地方）；重新检索可拿到新位置`,
+                            DETAIL_CHAT_FIND,
+                        ),
                     );
                     return;
                 }
@@ -3374,22 +3398,12 @@ export function LocalChatPage(props: {
 
             {/* 会话实时更新**中断常驻条**（##354 ③；判据 = `localChatStore.opsState === "down"`）。
                 单通道化（##327）之后 op 订阅是实时显示的唯一通道 ⇒ 它断了 = 用户**一个字都看不到**，
-                而那在界面上与"模型还在想"完全同形。旧实现是一条**一次性 toast**：故障瞬间切走窗口
-                就错过、也读不到"现在还没恢复"。故改为**常驻**：只要有 `down` 这条就在，
-                恢复（markOpsLive）才消失 —— 状态可见的生命周期与故障本身等长。
-                放在滚动区**之外**（不随消息滚走），"正在补历史"的补齐由 store 的退避重订负责。 */}
+                而那在界面上与"模型还在想"完全同形。常驻：只要有 `down` 这条就在，恢复（markOpsLive）
+                才消失 —— 生命周期与故障本身等长；放在滚动区**之外**（不随消息滚走）。
+                ##391：条上内容（文案 + 「详情」三段 + 每秒刷新的"已断多久"）收口在 OpsDownBar，
+                与恢复 toast 共用同一份机制说明（`lib/notice-ops.ts`）—— 两处说法必须是一个故事。 */}
             <Show when={localChatStore.opsState === "down"}>
-                <div
-                    data-ops-down="1"
-                    role="status"
-                    aria-live="polite"
-                    class="flex shrink-0 items-center gap-2 border-b border-error/40 bg-error/10 px-3 py-1.5 text-body text-error"
-                    title="实时通道断了：这段时间别人/模型写的字不会实时出现，重连后会整段补齐（历史一条不丢）"
-                >
-                    <span class="inline-block h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-error" />
-                    <span class="shrink-0 font-medium">会话实时更新中断</span>
-                    <span class="opacity-80">正在自动重连…（重连成功后补齐，历史不丢）</span>
-                </div>
+                <OpsDownBar />
             </Show>
 
             {/* 块树滚动区 */}

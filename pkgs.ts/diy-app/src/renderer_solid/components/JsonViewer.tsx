@@ -1,6 +1,7 @@
 import { createSignal, Show } from "solid-js";
 import { JsonTree } from "./JsonTree";
 import { notificationStore } from "../store/notificationStore";
+import { copyFailMeta, copyOkMeta } from "../lib/notice-copy";
 
 /**
  * JSON 查看器：**树 ⇄ 原文** 两态切换（同一份 data，切态不丢上下文）。
@@ -27,9 +28,17 @@ export function JsonViewer(props: { data: unknown }) {
     const copy = async () => {
         try {
             await navigator.clipboard.writeText(text());
-            notificationStore.addToast("success", "已复制到剪贴板");
-        } catch {
-            notificationStore.addToast("error", "复制失败（剪贴板不可用）");
+            notificationStore.addToast(
+                "success",
+                "已复制到剪贴板",
+                copyOkMeta({ what: "JSON 原文", text: text(), mech: "JsonViewer.tsx::copy" }),
+            );
+        } catch (e) {
+            notificationStore.addToast(
+                "error",
+                "复制失败（剪贴板不可用）",
+                copyFailMeta({ what: "JSON 原文", mech: "JsonViewer.tsx::copy", error: e }),
+            );
         }
     };
     return (

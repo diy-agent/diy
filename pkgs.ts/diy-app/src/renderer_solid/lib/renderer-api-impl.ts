@@ -1,5 +1,6 @@
 import type { EnvelopeTransport, ServerBinding } from "@diy-agent/rpc";
 import { ChannelServerBinding } from "@diy-agent/rpc";
+import { taskStateNotice } from "./notice-entity";
 import { getRendererActions, type LayoutChanges } from "./renderer-actions";
 import type { ToastType } from "../store/notificationStore";
 import { apiDef } from "../../main/services/api-def";
@@ -232,7 +233,7 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
   binding.on(ui.task.setState, async ({ input }) => {
     await editTask(input.uri, { state: input.state });
     await taskStore.loadTree();
-    notificationStore.addToast("success", `状态已改为 ${input.state}`);
+    notificationStore.addToast("success", `状态已改为 ${input.state}`, taskStateNotice({ uri: input.uri, state: input.state }));
     return { status: "ok", data: { uri: input.uri } };
   });
 

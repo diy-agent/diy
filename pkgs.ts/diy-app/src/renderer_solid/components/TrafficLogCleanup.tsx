@@ -110,7 +110,7 @@ function LogCleanupPanel(props: { onClose: () => void; onDone?: () => void }) {
             await reload();
             setChecked(new Set<string>());
             const extra = res.skipped.length > 0 ? `，跳过 ${res.skipped.length} 个` : "";
-            notificationStore.addToast(
+            notificationStore.addToastLegacy(
                 res.deleted.length > 0 ? "success" : "info",
                 `已清理 ${res.deleted.length} 个日志文件，释放 ${fmtBytes(res.freedBytes)}${extra}`,
             );

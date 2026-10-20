@@ -264,23 +264,23 @@ export default function App() {
         const dropInfo = findTaskProject(taskStore.nodes, dropUri);
         if (!dragInfo || !dropInfo) return;
         if (dragInfo.project !== dropInfo.project) {
-            notificationStore.addToast("error", "只能在同一项目内拖动");
+            notificationStore.addToastLegacy("error", "只能在同一项目内拖动");
             return;
         }
         // RV-07：防环预检 —— 拖到自己的子孙下成环。main 有守卫（数据安全无虞），
         // 客户端提前拦只为体验：非法落点当场报，不等 main 抛错。
         if (isAncestorOf(taskStore.nodes, dragUri, dropUri)) {
-            notificationStore.addToast("error", "不能拖到自己的子任务下");
+            notificationStore.addToastLegacy("error", "不能拖到自己的子任务下");
             return;
         }
         if (dropUri === dragInfo.parent) return; // 拖到直接父级：无需改动
         try {
             await diyService.diy.task.move({ uri: dragUri, parent: dropUri });
             await taskStore.loadTree(); // 树变 → tabStore 祖先链重算 → nav 缩进/顺序自动跟上（##159 链路）
-            notificationStore.addToast("success", "已调整层级");
+            notificationStore.addToastLegacy("success", "已调整层级");
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
-            notificationStore.addToast("error", `调整失败: ${msg}`);
+            notificationStore.addToastLegacy("error", `调整失败: ${msg}`);
         }
     };
     let mainAreaEl: HTMLDivElement | undefined;
@@ -328,7 +328,7 @@ export default function App() {
                 const k = tabStore.active;
                 setRoute(k ? { kind: "tab", key: k } : { kind: "section", section: "task" });
             }
-            notificationStore.addToast(
+            notificationStore.addToastLegacy(
                 "info",
                 stale.length === 1
                     ? `任务 ${stale[0]} 已不存在，已关闭其页面`
@@ -694,7 +694,7 @@ export default function App() {
         alertPrev = Object.fromEntries(rows.map((r) => [r.uri, r]));
         for (const a of alerts) {
             if (a.autoPull) openSessionByUri(a.uri); // L2：抢焦点（仅异常终止 / 有人在等）
-            notificationStore.addToast(
+            notificationStore.addToastLegacy(
                 a.kind === "failed" ? "error" : a.kind === "finished" ? "success" : "info",
                 a.text,
                 a.level === "L2" && a.autoPull ? 0 : 10000, // 抢过焦点的那条必须被看见/点掉；其余 10s 自己走
@@ -745,7 +745,7 @@ export default function App() {
                     if (e.repeat) return;
                     // 不在会话页（没有面板宿主）时如实说一声，别让快捷键静默失效
                     if (!chatFindStore.taskUri) {
-                        notificationStore.addToast("info", "⌘⇧F 只在会话页可用（先在标签页里打开一个任务会话）");
+                        notificationStore.addToastLegacy("info", "⌘⇧F 只在会话页可用（先在标签页里打开一个任务会话）");
                         return;
                     }
                     chatFindStore.toggle();
@@ -943,7 +943,7 @@ export default function App() {
                 const next = tabStore.active;
                 setRoute(next ? { kind: "tab", key: next } : { kind: "section", section: "task" });
             },
-            toast: (msg, level) => notificationStore.addToast(level ?? "info", msg),
+            toast: (msg, level) => notificationStore.addToastLegacy(level ?? "info", msg),
         });
         // 窗口标题 = 实例标识（与 main 创建窗口时那个值同源同格式，见 shared/instance-title）。
         // main 侧拦了「页面标题 → 窗口标题」这条通路，故这里不是为了让窗口标题生效，

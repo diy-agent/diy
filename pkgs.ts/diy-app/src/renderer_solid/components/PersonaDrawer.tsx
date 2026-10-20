@@ -390,13 +390,13 @@ export function PersonaDrawer(props: {
             if (creating()) {
                 const name = newName().trim();
                 if (!name) {
-                    notificationStore.addToast("error", "人物名不能为空");
+                    notificationStore.addToastLegacy("error", "人物名不能为空");
                     return;
                 }
                 // model 必填（main 侧同样拦）：没有模型的人物等于把模型交回硬编码回落
                 const model = newModel();
                 if (!model) {
-                    notificationStore.addToast("error", "请先选一个模型（人物必须指定模型）");
+                    notificationStore.addToastLegacy("error", "请先选一个模型（人物必须指定模型）");
                     return;
                 }
                 const id = await personaStore.save({
@@ -412,7 +412,7 @@ export function PersonaDrawer(props: {
                     setCreating(false);
                     setEditing(id);
                     setNewName("");
-                    notificationStore.addToast("success", `人物「${name}」已创建`);
+                    notificationStore.addToastLegacy("success", `人物「${name}」已创建`);
                 }
                 return;
             }
@@ -430,7 +430,7 @@ export function PersonaDrawer(props: {
         if (!id) return;
         const next = nameDraft().trim();
         if (!next) {
-            notificationStore.addToast("error", "人物名不能为空");
+            notificationStore.addToastLegacy("error", "人物名不能为空");
             setNameDraft(current()?.name ?? "");
             return;
         }

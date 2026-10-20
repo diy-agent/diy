@@ -100,7 +100,7 @@ function MaxStepsEditor(props: { compact?: boolean }) {
     const apply = async () => {
         const n = Number(draft());
         if (!Number.isFinite(n) || n <= 0) {
-            notificationStore.addToast("error", "步数上限必须是正数");
+            notificationStore.addToastLegacy("error", "步数上限必须是正数");
             return;
         }
         setBusy(true);
@@ -108,9 +108,9 @@ function MaxStepsEditor(props: { compact?: boolean }) {
             await sessionStore.setMaxSteps(n);
             setEditing(false);
             setDraft("");
-            notificationStore.addToast("success", `单轮步数上限已设为 ${n}（下一轮生效）`);
+            notificationStore.addToastLegacy("success", `单轮步数上限已设为 ${n}（下一轮生效）`);
         } catch (e) {
-            notificationStore.addToast("error", `写运行限制失败：${e instanceof Error ? e.message : String(e)}`);
+            notificationStore.addToastLegacy("error", `写运行限制失败：${e instanceof Error ? e.message : String(e)}`);
         } finally {
             setBusy(false);
         }
@@ -309,12 +309,12 @@ export function SessionOverviewPage() {
         setConfirmFor(null);
         try {
             const res = await diyService.diy.agent.local.cancel({ taskUri: r.uri });
-            notificationStore.addToast(
+            notificationStore.addToastLegacy(
                 res.cancelled ? "success" : "info",
                 res.cancelled ? `已中断 ${r.uri} 的轮次` : "该会话此刻没有在跑的轮次（可能刚好收尾了）",
             );
         } catch (err) {
-            notificationStore.addToast("error", `中断失败：${err instanceof Error ? err.message : String(err)}`);
+            notificationStore.addToastLegacy("error", `中断失败：${err instanceof Error ? err.message : String(err)}`);
         }
     };
 

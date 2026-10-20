@@ -18,6 +18,51 @@
  */
 import { For, Show } from "solid-js";
 import { fmtDiskBytes, type EnvNotice } from "../../shared/env-watch";
+import { NoticeDetail } from "./NoticeDetail";
+import type { NoticeMeta } from "../lib/notice";
+
+/**
+ * 每类通知的**机制说明**（##391 R2：详情面板要能介绍机制，而不是只重复那一句结论）。
+ * 口径来源：`shared/env-watch.ts`（判据纯函数）+ `main/services/env-watch.ts`（轮询与自动消）。
+ */
+const DETAIL_DISK = [
+    "在监测什么：每 30s 用 `statfs` 采一次磁盘可用字节（不 shell 出去跑 `df`）。阈值定死在 shared/env-watch.ts：可用 < 512 MiB = `disk-full`，< 2 GiB = `disk-low`。",
+    "另一条触发路径：任何写入报 ENOSPC（磁盘满）时**立刻**升级为 disk-full，不必等下一次轮询 —— 那时文件可能已被写成 0 字节，提示里会点明「刚有写入失败」。",
+    "为什么会弹：磁盘满/将满会让「脚本说成功、文件里却没有」（本仓 2026-10 已踩过两次：正文被写成 0 字节）。所以它是**进程级**事实，与具体任务无关。",
+    "怎么消：腾出空间后 main 采到水位回到 ok 会**自动撤掉**这条（不用你手动关）；点 ✕ = 「这个条件我知道了」，条件不变不再弹（每 30s 重复弹等于没关），但条件恶化（low → full）仍会重新亮。",
+    "对你的影响：出现 disk-full 时，先别信「刚保存成功」—— 去确认文件是否完整；`diy env ls` 可看 main 侧当前全部环境事实。",
+].join("\n");
+
+const DETAIL_NET = [
+    "在监测什么：网络层错误码族（DNS / 连接被拒 / 不可达 / 超时 / 连接重置）**连续 3 次**才判为断网（阈值 `NETWORK_FAIL_STREAK`）。",
+    "为什么不用 `navigator.onLine`：它只反映网卡，不反映上游可达 —— 本仓实测过「网卡好着但上游连不上」（IPv6 ENETUNREACH）。故它只能当辅助。",
+    "为什么会弹：真发请求连续失败到阈值，说明此刻 app 做不了需要网络的事（模型调用 / 拉模型列表…），而这在界面上本来就只表现为「卡住」。",
+    "怎么消：一旦有一次请求成功（网络恢复）main 自动撤掉；点 ✕ = 该类静音（条件不变不再弹），恢复后再坏才会重新提醒。",
+    "对你的影响：`diy doctor` / `diy env ls` 可复核；别在这段时间里反复重试长任务 —— 会淹没真正的原因。",
+].join("\n");
+
+/** 一条 env bar 通知的二级信息（##391）：来源 / 原因（带数字与判据）/ 机制 */
+function metaOf(n: EnvNotice): NoticeMeta {
+    if (n.type === "network-down") {
+        const { code, streak, message } = n.data;
+        return {
+            source: "环境感知 · envWatch 网络（shared/env-watch.ts::classifyNetworkError · main/services/env-watch.ts）",
+            reason: `连续 ${streak} 次网络层失败（阈值 3）${code ? `，错误码 ${code}` : ""}${message ? `：${message}` : ""}`,
+            detail: DETAIL_NET,
+        };
+    }
+    const { mount, availBytes, totalBytes, source } = n.data;
+    const level = n.type === "disk-full" ? "可用 < 512 MiB（disk-full）" : "可用 < 2 GiB（disk-low）";
+    const evidence =
+        availBytes < 0 || totalBytes < 0
+            ? "可用空间读不到（卷可能已不可访问）"
+            : `可用 ${fmtDiskBytes(availBytes)} / 共 ${fmtDiskBytes(totalBytes)}`;
+    return {
+        source: "环境感知 · envWatch 磁盘水位（shared/env-watch.ts::envNoticeFromDisk · main/services/env-watch.ts）",
+        reason: `卷 ${mount} ${evidence}，命中 ${level}；采样来源 = ${source === "write-error" ? "写入失败 ENOSPC（被动升级）" : "30s 轮询 statfs"}`,
+        detail: DETAIL_DISK,
+    };
+}
 
 /** 一条通知的展示素材（标签 / 数字证据 / 该干什么），由 type + data 派生 */
 function describe(n: EnvNotice): { icon: string; title: string; evidence: string; action: string } {
@@ -83,8 +128,11 @@ export function EnvStatusBar(props: {
                                 {d.evidence}
                             </span>
                             <span class="ml-auto text-xs opacity-70">→ {d.action}</span>
+                            {/* ##391：一级只给结论（哪里坏 / 数字 / 该干什么），二级给来源·原因·机制 */}
+                            <NoticeDetail meta={metaOf(n)} message={`${d.title} · ${d.evidence}`} label="详情" />
                             <button
                                 class="btn btn-xs btn-ghost"
+                                data-env-dismiss="1"
                                 title="关闭提示（条件不变不再弹；条件恢复后自动消）"
                                 onClick={() => props.onDismiss(n.id)}
                             >

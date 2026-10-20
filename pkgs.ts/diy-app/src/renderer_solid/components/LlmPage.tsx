@@ -16,14 +16,14 @@ export function LlmPage() {
         try {
             if (running()) {
                 await diyService.diy.llmProxy.stop({});
-                notificationStore.addToast("success", "LLM 代理已停止");
+                notificationStore.addToastLegacy("success", "LLM 代理已停止");
             } else {
                 await diyService.diy.llmProxy.start({});
-                notificationStore.addToast("success", "LLM 代理已启动");
+                notificationStore.addToastLegacy("success", "LLM 代理已启动");
             }
         } catch (e) {
             const msg = e instanceof Error ? e.message : "操作失败";
-            notificationStore.addToast("error", msg);
+            notificationStore.addToastLegacy("error", msg);
         }
         await refresh();
     };
