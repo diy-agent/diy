@@ -3072,8 +3072,12 @@ export class LocalAgentManager {
             //   于是「自起 / 投递」两条路径在这里**同一处产出**，不再需要 `isDelivery` 那种
             //   「正文里是不是已经带了」的隐式判据（第 25 刀 lab 实测过它漏一次就注入两遍）。
             //
-            // 看哪间房：自起 = 本任务自己的房间；**投递 = 来源房间**（`origin.room.roomId`）——
-            // 那才是"刚才谁跟我说了什么"发生的地方。排除正文里那一条（`sayId`），避免同一句话出现两次。
+            // 看哪间房（判据唯一：`origin.sourceRoomId`，**不落盘**）：自起 = 本任务自己的房间；
+            // **投递 = 来源房间** —— 那才是"刚才谁跟我说了什么"发生的地方。
+            // ⚠ 不能只看 `origin.room`（review1 R1）：投给主人格 + 发起者是页面操作者本人时，
+            //   `opsOriginFor` 按 §44.2 A 把 `room` / `author` 整条掐掉（`meta.room` 不落盘），
+            //   而那**仍然是投递**（侧边栏 room 里 @ 某个任务的主人格就是这条路）—— 只看 `room`
+            //   会退回本任务自己的房间、看到无关内容。`sourceRoomId` 恒带，专门解决这件事。
             //
             // 水位：自起轮**成轮之后**前移到流尾（宁可重复不可漏，见 `commitSelfStartContext`）；
             // 投递轮**不在这里前移**（归 `room-service`，它按 `sayId` 前移）—— 两边都动会把水位往回拨。
@@ -3081,7 +3085,7 @@ export class LocalAgentManager {
             let roomValue: RoomRuntimeValue | null = null;
             try {
                 const fact = roomRuntimeFact({
-                    roomId: origin?.room?.roomId ?? taskUri,
+                    roomId: origin?.sourceRoomId ?? origin?.room?.roomId ?? taskUri,
                     taskUri,
                     ...(origin?.room?.sayId ? { sayId: origin.room.sayId } : {}),
                 });

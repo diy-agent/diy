@@ -59,7 +59,7 @@ describe("mirrorEvents —— 两条事件的形状", () => {
     });
 
     it("① reply：归到接收方主人格那一轮，带 turnId 与来源", () => {
-        const { reply } = mirrorEvents(base)!;
+        const reply = mirrorEvents(base)!.reply!;
         expect(reply.kind).toBe("reply");
         expect(reply.author).toBe("agent:main");
         expect(reply.to).toEqual(["human:chen56"]);
@@ -73,21 +73,37 @@ describe("mirrorEvents —— 两条事件的形状", () => {
     it("③ 形状让任务页**不重复画**（ops 流已经有这一轮）", () => {
         const ev = mirrorEvents(base)!;
         expect(opsOwnsEvent(ev.say)).toBe(true);
-        expect(opsOwnsEvent(ev.reply)).toBe(true);
+        expect(opsOwnsEvent(ev.reply!)).toBe(true);
         // 反证：换成别的成员 id（不是主人格）⇒ ops 不再认领 ⇒ 那个形状会让任务页多画一行
         const other = mirrorEvents({ ...base, targetMemberId: "agent:x" })!;
-        expect(opsOwnsEvent(other.reply)).toBe(false);
+        expect(opsOwnsEvent(other.reply!)).toBe(false);
     });
 
     it("④ 失败轮不伪装成功", () => {
-        const ev = mirrorEvents({ ...base, error: "对方这一轮没有产出文本" })!;
-        expect(ev.reply.delivered).toBe(false);
-        expect(ev.reply.error).toBe("对方这一轮没有产出文本");
+        const reply = mirrorEvents({ ...base, error: "对方这一轮没有产出文本" })!.reply!;
+        expect(reply.delivered).toBe(false);
+        expect(reply.error).toBe("对方这一轮没有产出文本");
     });
 
     it("② 没有 turnId 时不带 ref（不造一个空壳引用）", () => {
-        const ev = mirrorEvents({ ...base, turnId: undefined })!;
-        expect(ev.reply.ref).toBeUndefined();
+        const reply = mirrorEvents({ ...base, turnId: undefined })!.reply!;
+        expect(reply.ref).toBeUndefined();
+    });
+});
+
+describe("忙时插话：只写回 say（##377 第 27 刀）", () => {
+    // 忙时投递不是"开一轮"，而是插进**正在跑的那一轮** ⇒ 没有属于这条投递的回复。
+    // 写一条空回复会造出"说了话、没人回"的假象；不写又说不过去（话确实进了对方会话）。
+    const steered = mirrorEvents({ ...base, replyText: undefined })!;
+
+    it("① 只有 say，没有 reply", () => {
+        expect(steered.say.kind).toBe("say");
+        expect(steered.say.origin).toEqual({ roomId: "projects/1/tasks/1", sayId: "e1_say" });
+        expect(steered.reply).toBeUndefined();
+    });
+
+    it("② 判据：这条 say 写回后仍然只缺 reply（不会每跑一次都「补」一条假回复）", () => {
+        expect(mirrorMissingParts([steered.say], "e1_say")).toEqual({ say: false, reply: true });
     });
 });
 
@@ -121,16 +137,16 @@ describe("mirrorMissingParts —— 幂等按「每条」算（review2 R1）", (
     });
 
     it("③ 只有 reply 在（反向半截）⇒ 只缺 say", () => {
-        expect(mirrorMissingParts([both.reply], "e1_say")).toEqual({ say: true, reply: false });
+        expect(mirrorMissingParts([both.reply!], "e1_say")).toEqual({ say: true, reply: false });
     });
 
     it("④ 两条都在 ⇒ 都不缺（重跑静默）", () => {
-        expect(mirrorMissingParts([both.say, both.reply], "e1_say")).toEqual({ say: false, reply: false });
+        expect(mirrorMissingParts([both.say, both.reply!], "e1_say")).toEqual({ say: false, reply: false });
     });
 
     it("⑤ 别的 say 的事件不算数（按 origin.sayId 精确匹配，不是「房间里有 say 就算」）", () => {
         const other = mirrorEvents({ ...base, origin: { roomId: "projects/1/tasks/1", sayId: "e2_other" } })!;
-        expect(mirrorMissingParts([other.say, other.reply], "e1_say")).toEqual({ say: true, reply: true });
+        expect(mirrorMissingParts([other.say, other.reply!], "e1_say")).toEqual({ say: true, reply: true });
     });
 
     it("⑥ 空 sayId ⇒ 一律视为缺（防空串命中所有无 origin 事件造成的假幂等）", () => {

@@ -20,41 +20,60 @@ const DEV = "agent:dev";
 const ROOM: DeliveryOrigin = { roomId: "projects/1/tasks/9", sayId: "e1792423748105_12_ab3d" };
 
 describe("opsOriginFor：投递落进成员会话的随附事实", () => {
-  it("投给主人格 + 发起者是人 ⇒ 整条不落（含 room —— 否则气泡多出投递标记）", () => {
-    expect(opsOriginFor(true, HUMAN, ROOM)).toBeUndefined();
+  it("投给主人格 + 发起者是人 ⇒ **落盘那一份**整条不落（含 room —— 否则气泡多出投递标记）", () => {
+    // ⚠ 第 27 刀（review1 R1）之后：`opsOriginFor` 恒返回一个对象，但**只有不落盘的
+    //   `sourceRoomId`**（"这一轮该看哪间房"）—— `author` / `room` 仍然不在。
+    expect(opsOriginFor(true, HUMAN, ROOM)).toEqual({ sourceRoomId: ROOM.roomId });
+    expect(opsOriginFor(true, HUMAN, ROOM)).not.toHaveProperty("author");
+    expect(opsOriginFor(true, HUMAN, ROOM)).not.toHaveProperty("room");
   });
 
-  it("投给主人格 + 发起者是 agent ⇒ author 与 room 都落", () => {
-    expect(opsOriginFor(true, DEV, ROOM)).toEqual({ author: DEV, room: ROOM });
+  it("投给主人格 + 发起者是 agent ⇒ author 与 room 都落（且仍带 sourceRoomId）", () => {
+    expect(opsOriginFor(true, DEV, ROOM)).toEqual({ author: DEV, room: ROOM, sourceRoomId: ROOM.roomId });
   });
 
   it("投给别的成员 ⇒ 恒落（§40 B 原样，第 23 刀只加 room，不削 author）", () => {
-    expect(opsOriginFor(false, HUMAN, ROOM)).toEqual({ author: HUMAN, room: ROOM });
-    expect(opsOriginFor(false, DEV, ROOM)).toEqual({ author: DEV, room: ROOM });
+    expect(opsOriginFor(false, HUMAN, ROOM)).toEqual({ author: HUMAN, room: ROOM, sourceRoomId: ROOM.roomId });
+    expect(opsOriginFor(false, DEV, ROOM)).toEqual({ author: DEV, room: ROOM, sourceRoomId: ROOM.roomId });
   });
 
   it("room 逐字透传（sayId 是回到房间里找原话的唯一键，不许改写）", () => {
-    const o = opsOriginFor(false, HUMAN, ROOM)!;
+    const o = opsOriginFor(false, HUMAN, ROOM);
     expect(o.room?.sayId).toBe(ROOM.sayId);
     expect(o.room?.roomId).toBe(ROOM.roomId);
   });
 
   it("与 opsAuthorFor 同一把尺（两处不许分家）", () => {
     // 主人格 + 人：author 不落 ⇒ room 也不落
-    expect(opsOriginFor(true, HUMAN, ROOM)).toBeUndefined();
+    expect(opsOriginFor(true, HUMAN, ROOM).author).toBeUndefined();
+    expect(opsOriginFor(true, HUMAN, ROOM).room).toBeUndefined();
     // 其它组合：author 落 ⇒ room 落
     for (const [main, who] of [
       [true, DEV],
       [false, HUMAN],
       [false, DEV],
     ] as const) {
-      expect(opsOriginFor(main, who, ROOM)?.author).toBe(who);
+      expect(opsOriginFor(main, who, ROOM).author).toBe(who);
+      expect(opsOriginFor(main, who, ROOM).room).toEqual(ROOM);
     }
   });
 
   it("主人格 id 也照此规则（不是按字符串硬编码）", () => {
-    expect(opsOriginFor(true, HUMAN, ROOM)).toBeUndefined();
-    expect(opsOriginFor(true, MAIN_MEMBER_ID, ROOM)?.author).toBe(MAIN_MEMBER_ID);
+    expect(opsOriginFor(true, HUMAN, ROOM).author).toBeUndefined();
+    expect(opsOriginFor(true, MAIN_MEMBER_ID, ROOM).author).toBe(MAIN_MEMBER_ID);
+  });
+
+  it("★ 看哪间房与落不落盘**分开**：任何组合都带 sourceRoomId（review1 R1 的回归网）", () => {
+    // 病灶：源房间 ≠ 本任务 + 投给主人格 + 发起者是人 ⇒ 只看 `room` 的话这一轮会退回
+    // 本任务自己的房间，读不到来源房间里刚说的话（第 25 刀有、第 26 刀搬走正文后真空）。
+    for (const [main, who] of [
+      [true, HUMAN],
+      [true, DEV],
+      [false, HUMAN],
+      [false, DEV],
+    ] as const) {
+      expect(opsOriginFor(main, who, ROOM).sourceRoomId, `${main}/${who}`).toBe(ROOM.roomId);
+    }
   });
 });
 

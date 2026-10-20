@@ -221,6 +221,16 @@ export const DeliveryStateSchema = z.object({
   replyId: z.string().optional(),
   /** 失败/跳过原因（人话） */
   error: z.string().optional(),
+  /**
+   * **补充说明**（人话，不是错误）—— 只有 `status:"ok"` 时偶尔有值。
+   *
+   * 第一种用途（##377 第 27 刀）：会话正有轮次在跑 ⇒ 这条不"开一轮"，而是
+   * **插进正在跑的那一轮**（下一步生效）。消息确实送达了（`ok`），但拿不到一条属于
+   * 自己的回复 —— 不写这句，人看到"已投递"却没有回复会以为丢了。
+   *
+   * ⚠️ 与 `error` 分开是因为语义相反：`error` = 没送到 / 送失败；`note` = 送到了，但方式不同。
+   */
+  note: z.string().optional(),
   ts: z.string(),
 });
 export type DeliveryState = z.infer<typeof DeliveryStateSchema>;
@@ -488,6 +498,17 @@ export type TurnOrigin = {
      * ⇒ 「落不落盘」与「是不是投递」是**两件事**，各用一个字段，互不牵连。
      */
     fromDelivery?: boolean;
+    /**
+     * **不落盘**：这一轮该看哪间房（`runtime.room` 的来源）。
+     *
+     * 为什么不能只看 `room`（##377 第 26 刀 review1 R1）：`room` 是**落盘**判据
+     * （`meta.room`）—— 投给主人格 + 发起者是页面操作者本人时它整条不落（§44.2 A）。
+     * 于是"从侧边栏 room 里 @ 某个任务的主人格"这一轮会**退回本任务自己的房间**，
+     * 看不到来源房间里刚发生的事（第 25 刀时正文里还带着，第 26 刀搬走后就真空了 —— 回归）。
+     *
+     * ⇒ 「看哪间房」（`sourceRoomId`）与「落盘落什么」（`author` / `room`）是两件事。
+     */
+    sourceRoomId?: string;
 };
 
 /**
@@ -500,9 +521,12 @@ export type TurnOrigin = {
  * ⇒ §44.2 A「无 @ 发送 = 与今天等价」/ 第 16 刀判据 7「单人任务逐字不变」当场破。
  * 溯源没丢：room 侧的 `say` 事件恒在（那才是房间历史的溯源）。
  */
-export function opsOriginFor(main: boolean, author: string, room: DeliveryOrigin): TurnOrigin | undefined {
+export function opsOriginFor(main: boolean, author: string, room: DeliveryOrigin): TurnOrigin {
     const a = opsAuthorFor(main, author);
-    return a === undefined ? undefined : { author: a, room };
+    // `sourceRoomId` **恒带**（不落盘）：它是"这一轮该看哪间房"的唯一来源，
+    // 与"落盘落什么"分开 —— 否则投给主人格时那一轮会退回本任务自己的房间（review1 R1）。
+    const view = { sourceRoomId: room.roomId };
+    return a === undefined ? view : { author: a, room, ...view };
 }
 
 /**
@@ -516,6 +540,28 @@ export function opsOriginFor(main: boolean, author: string, room: DeliveryOrigin
  */
 export function deliveryOriginFor(main: boolean, author: string, room: DeliveryOrigin): TurnOrigin {
     return { ...opsOriginFor(main, author, room), fromDelivery: true };
+}
+
+/**
+ * 一条投递该怎么执行（纯函数，##377 第 27 刀 —— 忙时发送语义统一的唯一判据）。
+ *
+ * 背景：侧边栏忙时发言进**投递队列**（看得见的"排队中"），任务页忙时按 Enter 却进
+ * **插话队列**（`_su*` 块）且**不落 room** ⇒ 同一句话换一个入口就查不到（房间页 / `room get` 里没有）。
+ *
+ * 统一口径：**每一句话都先落 room**（`say` 事件 = 消息真源），忙不忙只决定**投递方式**：
+ *   · 空闲 ⇒ 开一轮（`turn`，能拿到属于这条消息的回复）；
+ *   · 忙   ⇒ **插进正在跑的那一轮**（`steer`，下一步生效；回复属于那一轮，不单列）。
+ *
+ * 为什么不用"排队等它跑完再开一轮"：那会**丢掉插话能力** —— agent 正在做错事时，
+ * 用户的纠正只能等三分钟。而插话正是这条会话本来就有的能力（`steer-queue`）。
+ */
+export type DeliveryPlan = { kind: "turn" } | { kind: "steer"; note: string };
+
+/** `steer` 计划的标准说明（UI 徽章的 title / 界面上的人话） */
+export const STEERED_NOTE = "已插入正在跑的轮次（下一步生效，回复见那一轮）";
+
+export function deliveryPlanFor(busy: boolean): DeliveryPlan {
+    return busy ? { kind: "steer", note: STEERED_NOTE } : { kind: "turn" };
 }
 
 /**
@@ -573,8 +619,13 @@ export type MirrorInput = {
     author: string;
     /** 对方看到的那句（已剥 `@` 前缀） */
     text: string;
-    /** 那一轮产出的回复 */
-    replyText: string;
+    /**
+     * 那一轮产出的回复。
+     *
+     * **缺省 = 没有属于这条投递的回复**（##377 第 27 刀）：忙时投递是**插进正在跑的那一轮**，
+     * 回复属于那一轮、不记在本次投递名下。此时只写回 `say`（写了话、没有独立回复是事实）。
+     */
+    replyText?: string;
     /** 会话（= targetRoomId 所对应的 task） */
     taskUri: string;
     turnId?: string;
@@ -597,7 +648,7 @@ export type MirrorInput = {
  * 于是任务页视觉**逐字不变**（第 16 刀判据 7 的回归网），而房间读口（`room get` / 房间页 /
  * 未来的未读与上下文）第一次能看见「这条是别的房间投进来的」。
  */
-export function mirrorEvents(input: MirrorInput): { say: RoomEvent; reply: RoomEvent } | null {
+export function mirrorEvents(input: MirrorInput): { say: RoomEvent; reply?: RoomEvent } | null {
     if (!shouldMirrorRoom(input.origin.roomId, input.targetRoomId)) return null;
     const say: RoomEvent = {
         id: input.ids.say,
@@ -610,6 +661,7 @@ export function mirrorEvents(input: MirrorInput): { say: RoomEvent; reply: RoomE
         delivered: true,
         origin: input.origin,
     };
+    if (input.replyText === undefined) return { say }; // 没有属于这条投递的回复（忙时插话）
     const reply: RoomEvent = {
         id: input.ids.reply,
         ts: input.ts,
@@ -1013,4 +1065,16 @@ export function deliveryStatusText(s: DeliveryStatus): string {
         case "skipped":
             return "未投递（不是可投递成员）";
     }
+}
+
+/** 徽章上的短标记（`note` 有值时补一句 —— 别让"已投递却没有回复"看起来像丢了） */
+const NOTE_SHORT = "插进本轮";
+
+/**
+ * 徽章文案 = 状态 +（`note` 有值时的短标记）。三处 UI（任务页 / 房间页 / 侧边栏）共用这一份，
+ * 别各自拼字符串（第 12 刀踩坑 37：同一句话写三遍，改一处漏两处）。
+ */
+export function deliveryStateText(d: Pick<DeliveryState, "status" | "note">): string {
+    const base = deliveryStatusText(d.status);
+    return d.note ? `${base}（${NOTE_SHORT}）` : base;
 }

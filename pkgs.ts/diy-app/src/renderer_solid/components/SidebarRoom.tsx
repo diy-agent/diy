@@ -31,7 +31,7 @@ import { notificationStore } from "../store/notificationStore";
 import { VIEW_BAR_H } from "../lib/layout-metrics";
 import {
     deliveryHint,
-    deliveryStatusText,
+    deliveryStateText,
     isAllAddress,
     memberAvatar,
     memberColor,
@@ -674,11 +674,11 @@ export function SidebarRoom() {
                                                                 {(d) => (
                                                                     <span
                                                                         class={`badge badge-xs ${statusClass(d.status)}`}
-                                                                        title={d.error ?? ""}
+                                                                        title={d.error ?? d.note ?? ""}
                                                                         data-sidebar-delivery={`${e.id}:${d.memberId}`}
                                                                         data-sidebar-status={d.status}
                                                                     >
-                                                                        {memberName(room(), d.memberId)} · {deliveryStatusText(d.status)}
+                                                                        {memberName(room(), d.memberId)} · {deliveryStateText(d)}
                                                                     </span>
                                                                 )}
                                                             </For>

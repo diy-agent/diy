@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { diyHome } from "../../src/main/core/state";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
-import { advanceLastSeen, appendEvent, ensureRoom, upsertMember } from "../../src/main/core/room";
+import { advanceLastSeen, appendEvent, ensureRoom, readRoom, upsertMember } from "../../src/main/core/room";
 import { LocalAgentManager } from "../../src/main/services/local-agent";
 import type { Op } from "../../src/main/services/local-blocks";
 
@@ -183,20 +183,46 @@ describe("房间上下文真的进了请求（runtime 单元）", () => {
     expect(mine).toBe("跑一下测试");
   });
 
-  it("④ 投递给**主人格**（`opsOriginFor` 整条不落 ⇒ 无 room）⇒ 退回本任务自己的房间", async () => {
+  it("④ 投递给**主人格**（落盘那一份整条不落）⇒ 仍看**来源房间**（`sourceRoomId`，review1 R1）", async () => {
     // 第 25 刀的回归（正文里两个 `[本房间近期发言]`）在新形状下不可能再发生：
-    // 注入点只有一个（runtime），正文不再参与。这里钉住"仍拿得到上下文"。
+    // 注入点只有一个（runtime），正文不再参与。这里钉住两件事：
+    //   ① 投给主人格时 `meta.author` / `meta.room` 仍不落（§44.2 A，不破"与今天等价"）；
+    //   ② 但"看哪间房"**不再跟着落盘判据走** —— 否则这一轮会退回本任务自己的房间，看不到
+    //      来源房间里刚发生的事（第 26 刀 review1 R1 的病灶，`sourceRoomId` 专治这一条）。
     const uri = newUri();
     seedRoom(uri, uri);
+    appendEvent(uri, mkSay("human:chen56", "本任务房间的一句无关内容", 3));
+    const src = `projects/${PROJECT}/tasks/9`;
+    seedRoom(src, uri);
     const prompts = { prompts: [] as unknown[] };
-    const { prompt, ops } = await run(uri, new LocalAgentManager(() => stubModel(prompts)), { fromDelivery: true }, prompts);
-    expect(prompt).toContain("先跑一下测试");
+    const { prompt, ops } = await run(
+      uri,
+      new LocalAgentManager(() => stubModel(prompts)),
+      { fromDelivery: true, sourceRoomId: src },
+      prompts,
+    );
+    expect(prompt).toContain("先跑一下测试"); // 来源房间那句
+    expect(prompt).not.toContain("本任务房间的一句无关内容"); // **没有**退回自己的房间
     const turnId = ops.find((o) => o.op === "start" && o.kind === "turn")?.id ?? "";
     const mine = ops
       .filter((o) => o.op === "delta" && o.id === `${turnId}_u`)
       .map((o) => (o as { fields?: { content?: string } }).fields?.content ?? "")
       .join("");
     expect(mine).toBe("跑一下测试");
+  });
+
+  it("⑥ 投递轮**不动水位**（水位归 room-service；两边都动会把水位往回拨，review1 R3）", async () => {
+    const uri = newUri();
+    const src = `projects/${PROJECT}/tasks/9`;
+    seedRoom(src, uri);
+    const before = { ...(readRoom(src)?.lastSeen ?? {}) };
+    await run(uri, new LocalAgentManager(() => stubModel()), {
+      author: "human:chen56",
+      room: { roomId: src, sayId: "e_other" },
+    });
+    // 水位是异步写的（promise 链）—— 串到链尾再看盘
+    await advanceLastSeen(src, {});
+    expect(readRoom(src)?.lastSeen ?? {}).toEqual(before);
   });
 
   it("⑤ 没开过房间的任务 ⇒ runtime 里没有 room 键（单人任务运行时逐字不变）", async () => {

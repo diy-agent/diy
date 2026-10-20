@@ -19,7 +19,7 @@ import { notificationStore } from "../store/notificationStore";
 import { personaStore } from "../store/personaStore";
 import {
     deliveryHint,
-    deliveryStatusText,
+    deliveryStateText,
     isAllAddress,
     memberAvatar,
     memberColor,
@@ -595,11 +595,11 @@ export function RoomsPage() {
                                                     {(d) => (
                                                         <span
                                                             class={`badge badge-xs ${statusClass(d.status)}`}
-                                                            title={d.error ?? ""}
+                                                            title={d.error ?? d.note ?? ""}
                                                             data-room-delivery={`${e.id}:${d.memberId}`}
                                                             data-room-status={d.status}
                                                         >
-                                                            {memberName(room(), d.memberId)} · {deliveryStatusText(d.status)}
+                                                            {memberName(room(), d.memberId)} · {deliveryStateText(d)}
                                                         </span>
                                                     )}
                                                 </For>

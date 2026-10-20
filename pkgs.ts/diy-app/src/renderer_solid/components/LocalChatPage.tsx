@@ -81,7 +81,7 @@ import { bubbleAlignClass, hasAuthor, roomOriginOf } from "../lib/user-bubble";
 import { bylineOf } from "../lib/assistant-byline";
 import {
     deliveryBadge,
-    deliveryStatusText,
+    deliveryStateText,
     MAIN_MEMBER_ID,
     memberAvatar,
     memberColor,
@@ -102,7 +102,7 @@ import { userStamp } from "../lib/user-stamp";
 // 对话流的时间戳：真源是 turnId 内嵌的毫秒（shared/date-format 统一解析与格式化）
 import type { ReasoningEffort } from "../../main/services/local-agent";
 // 插话队列项：与草稿同文件存储（任务目录 .diy/drafts.yaml），类型只在 main 侧定义
-import type { SteerItem, SteerMode } from "../../main/core/drafts";
+import type { SteerItem } from "../../main/core/drafts";
 import { reasoningEffortLabel } from "../../shared/reasoning-effort";
 import { DragDropProvider, DragOverlay, PointerSensor, useDraggable, useDroppable } from "@dnd-kit/solid";
 import type { DragDropProviderProps } from "@dnd-kit/solid";
@@ -148,7 +148,7 @@ import {
 } from "../lib/chat-fold";
 // 历史 mode 值归一与文案放 shared（纯函数、可单测）：ops 日志是 append-only 的史书，
 // 枚举改名前的 step/turn 与现值长期共存，读侧必须归一（详见 shared/steer-mode.ts）
-import { DEFAULT_STEER_MODE, steerModeLabel, steerModeTip } from "../../shared/steer-mode";
+import { steerModeLabel, steerModeTip } from "../../shared/steer-mode";
 
 // ─── 层级 ───────────────────────────────────────────
 
@@ -1684,11 +1684,11 @@ function RoomSayRow(props: { event: RoomEvent; room: Room | null }) {
                         {(d) => (
                             <span
                                 class={`badge badge-xs ${deliveryBadgeClass(d.status)}`}
-                                title={d.error ?? ""}
+                                title={d.error ?? d.note ?? ""}
                                 data-room-say-delivery={`${props.event.id}:${d.memberId}`}
                                 data-room-say-status={d.status}
                             >
-                                {memberName(props.room, d.memberId)} · {deliveryStatusText(d.status)}
+                                {memberName(props.room, d.memberId)} · {deliveryStateText(d)}
                             </span>
                         )}
                     </For>
@@ -3156,38 +3156,33 @@ export function LocalChatPage(props: {
 
     const submit = async () => {
         const text = inputValue().trim();
-        // live（含别人正在跑）= 这一轮不归本窗口管，本地先拦：拦的不是"服务端会拒发"
-        // （##306 起生成中再发消息改入队，不再拒发），而是"本窗口此刻不该接管这条流" ——
-        // 排队回执不属于本窗口那一轮。想往正在跑的轮次里说话走**留言**（submitSteer，同一队列）
-        if (!text || !uri() || localChatStore.live) return;
+        // ⚠️ 不再因"有轮次在跑"而拦（##377 第 27 刀）：那条守卫是**旧通道**的遗迹 ——
+        // 今天发送一律走 room（`sendViaRoom`），本窗口不接管任何流，忙不忙由 main 侧决定
+        // （忙 ⇒ 插进正在跑的那一轮，见 `shared/room.deliveryPlanFor`）。
+        // 拦掉它才是真 bug：任务页忙时按 Enter 什么都不发生（`live` 分支静默 return），
+        // 而侧边栏同一句话却能发出去、还能在房间里查到。
+        if (!text || !uri()) return;
+        const u = uri()!;
         setInputValue("");
         // 内容已作为消息发出，草稿使命结束：清掉，避免下次进入看到已发送的旧文本
-        void draftStore.clear(uri()!, ["agent_input"]);
+        void draftStore.clear(u, ["agent_input"]);
         setStick(true); // 刚发出，必然想看回复：无视之前是否在上方阅读
         // 走 **room 投递**（##377 第 17 刀 / ##166 §44.2 A）：无 `@` ⇒ focus（缺省 = 主人格）
         // ⇒ 与今天等价；`@dev` ⇒ 投给那个成员。实时显示与停止语义都不变（见 sendViaRoom 头注）。
-        await localChatStore.sendViaRoom(uri()!, text);
+        const ok = await localChatStore.sendViaRoom(u, text);
+        if (!ok) setInputValue(text); // 真失败（RPC 抛错）⇒ 把话还给用户，别"既没发出又被打字清空"
     };
 
     /**
-     * 提交插话：内容**不离开视野**——清空输入框，但队列横条立刻显示出这条待发送内容。
+     * 回车 = **发送**（不按"忙不忙"分流，##377 第 27 刀）。
      *
-     * 失败时保留输入框内容（用户的话不能既没进队列、又被打字清空）。
+     * 修前：生成中按 Enter 走 `submitSteer` ⇒ 进插话队列（`_su*` 块），**不落 room** ——
+     * 于是同一句话在任务页发过、却在房间页 / `room get` 里查不到，与侧边栏的"忙时进 room 排队"
+     * 两套语义。修后：一律 `submit()`（先落 room 的 `say`），忙时由投递层插进正在跑的那一轮
+     * （`deliveryPlanFor`，状态记 `ok` + 一句 note）。插话能力没丢，丢的只是"两条互不相认的通道"。
      */
-    const submitSteer = async (mode: SteerMode) => {
-        const text = inputValue().trim();
-        const u = uri();
-        if (!text || !u) return;
-        if (!(await localChatStore.submitSteer(u, mode, text))) return;
-        setInputValue("");
-        // 已入队：草稿使命结束（草稿语义是"还没提交的输入"，这条已经提交了）
-        void draftStore.clear(u, ["agent_input"]);
-    };
-
-    /** 回车分流：生成中 = 留言，否则正常发送 */
     const submitByEnter = () => {
-        if (localChatStore.view.busy) void submitSteer(DEFAULT_STEER_MODE); // 真值：别人的轮次在跑同样留言（回车分流同按钮）
-        else void submit();
+        void submit();
     };
 
     const cancelSteer = (id: string) => {
@@ -3712,22 +3707,13 @@ export function LocalChatPage(props: {
                                 其他端（CLI/窗口）正在生成…
                             </span>
                         </Show>
-                        {/* 留言（steer 插话）：只在**输入框有内容**时出现 —— 没打字就没得留。
-                            判据用真值 busy：别人的轮次在跑同样能排队留言。 */}
-                        <Show when={localChatStore.view.busy}>
-                            <Show when={inputValue().trim()}>
-                                <button
-                                    class="btn btn-outline btn-xs"
-                                    data-tip="留言：排到下一步（回车同此）。想改成不打断本轮、等它跑完再说，提交后点上方那条的时钟图标"
-                                    onClick={() => void submitSteer(DEFAULT_STEER_MODE)}
-                                >
-                                    留言
-                                </button>
-                            </Show>
-                        </Show>
-                        {/* 三态：停止中（已请求停止、main 收尾）→ 生成中（可停止）→ 发送。
+                        {/* 停止（两种观感：收尾中 / 生成中）+ **发送（恒在）**。
                             停止按钮**不分谁发起的**：main 报告活跃就给入口（含 CLI 那轮）；
-                            外观沿用 steer 分支的 aura 装饰。 */}
+                            外观沿用 steer 分支的 aura 装饰。
+                            ⚠️ 发送按钮不再藏起来（##377 第 27 刀）：忙时它照样能按 —— 那条发言
+                            先落 room，再由投递层插进正在跑的那一轮（与侧边栏同一套语义）。
+                            原来"忙时只给停止、另给一个小『留言』按钮"= 两个入口两套语义，
+                            而『留言』那条根本不进 room。 */}
                         <Switch>
                             <Match when={localChatStore.view.stopping}>
                                 {/* 收尾期间**不许**退回"生成中"：那样输入框会解锁、发送按钮出现，
@@ -3763,16 +3749,19 @@ export function LocalChatPage(props: {
                                     </button>
                                 </div>
                             </Match>
-                            <Match when={!localChatStore.live}>
-                                <button
-                                    class="btn btn-primary btn-sm"
-                                    data-tip="发送（回车发送 / Shift+回车换行）"
-                                    onClick={() => void submit()}
-                                >
-                                    发送
-                                </button>
-                            </Match>
                         </Switch>
+                        {/* 发送：**恒在**（忙时 = 排队/插话，见上） */}
+                        <button
+                            class="btn btn-primary btn-sm"
+                            data-tip={
+                                localChatStore.view.busy
+                                    ? "发送（回车）：本轮在跑 ⇒ 这句话投进当前这轮（下一步生效），并落进房间"
+                                    : "发送（回车发送 / Shift+回车换行）"
+                            }
+                            onClick={() => void submit()}
+                        >
+                            发送
+                        </button>
                     </div>
                 </div>
             </div>
