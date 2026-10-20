@@ -43,6 +43,7 @@ import {
     opsAuthorFor,
     parseAddress,
     resolveMember,
+    memberOptions,
     resolveRecipients,
     roomContextFor,
     shortName,
@@ -180,10 +181,8 @@ function isBusy(taskUri: string): boolean {
 function whyNotDeliverable(m: RoomMember | undefined, room?: Pick<Room, "members">): string | null {
     if (!m) {
         // 打错名字是最常见的一类（成员在界面上显示**人物名**，凭直觉打的短名未必命中）⇒ 直接给可选名
-        const names = (room?.members ?? [])
-            .filter((x) => x.kind === "agent")
-            .slice(0, 4)
-            .map((x) => `@${x.name}`);
+        // 候选清单走 `memberOptions`（一处真源，与 UI 提示同一份 —— ##377 review3 R1）
+        const names = memberOptions(room);
         return names.length > 0
             ? `房间里没有这个成员（可选：${names.join(" / ")}）`
             : "房间里没有这个成员";

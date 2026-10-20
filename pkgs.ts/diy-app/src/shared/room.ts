@@ -443,16 +443,66 @@ export function opsAuthorFor(main: boolean, author: string): string | undefined 
 
 export function resolveMember(room: Pick<Room, "members"> | null | undefined, nameOrId: string): string {
   const key = nameOrId.trim().replace(/^@+/, "");
-  const hit = room?.members.find((m) => m.id === key || m.name === key);
-  if (hit) return hit.id;
   if (!key) return nameOrId;
-  // **id 末段**也认（##377 第 20 刀）：成员在界面上显示的名字是**人物名**（`deepseek-4.1-flash`），
-  // 而它的 id 是 `agent:main` —— 用户凭直觉会打 `@main`，实测得到「房间里没有这个成员」。
-  // 只在**唯一命中**时才认：两个成员同末段时保持原样（宁可如实报"没有"，不猜错人）。
-  const byShort = (room?.members ?? []).filter(
-    (m) => m.kind === "agent" && m.id.split(":").pop() === key,
-  );
+  const members = room?.members ?? [];
+  // ① id 全式（`agent:main` / `human:chen56`）—— 精确，无歧义
+  const byId = members.find((m) => m.id === key);
+  if (byId) return byId.id;
+  // ② name（人物名）：**唯一命中才认**（##377 第 21 刀）
+  //    原来 `find(m => m.id === key || m.name === key)` 取第一个 —— 两个任务 agent 同室时
+  //    它们的 name **完全相同**（都来自人物名），第一个往往正好是主人格 ⇒ 后进来的成员**永远打不到**。
+  //    取不到时原样返回（上层报「没有这个成员」并在提示里给别名），**不猜**。
+  const byName = members.filter((m) => m.name === key);
+  if (byName.length === 1) return byName[0]!.id;
+  // name **有歧义 ⇒ 到此为止，不再往下猜**：否则会滑到「id 末段」那层，
+  // 恰好命中某个 id 与 name 同形的新成员（实测：`@deepseek-4.1-flash` 会打到 backend=tasks/2 的那个，
+  // 而用户想说的是主人格）—— 那比"报没有"更坏：静默投给了错的人。
+  if (byName.length > 1) return nameOrId;
+  // ③ 别名（`t3` ← backend 的 taskUri）—— 同类唯一才认
+  const byAlias = members.filter((m) => m.kind === "agent" && memberAlias(m) === key);
+  if (byAlias.length === 1) return byAlias[0]!.id;
+  // ④ **id 末段**也认（##377 第 20 刀）：id 是 `agent:main`，用户凭直觉会打 `@main`。
+  const byShort = members.filter((m) => m.kind === "agent" && m.id.split(":").pop() === key);
   return byShort.length === 1 ? byShort[0]!.id : nameOrId;
+}
+
+/**
+ * 成员短别名 —— **从 backend 派生**（`projects/1/tasks/3` → `t3`），不落盘。
+ *
+ * 为什么必须有它（##377 第 21 刀 lab 实测）：成员 `name` 来自**人物名**，
+ * 两个任务 agent 同室时 name **完全相同** ⇒ `@<name>` 打到的是第一个（往往正好是主人格），
+ * 而完整 id 里的 `:` 被 `ADDRESS_RE` 排除 ⇒ **没有任何写法能打到后进来的那个成员**（实测 `@agent:x` 被截成 `@agent`）。
+ * 别名跟着**会话**走（backend 是唯一真源），与人名正交：改人名不影响寻址，换人设也不影响寻址。
+ */
+export function memberAlias(m: RoomMember): string | undefined {
+    if (m.backend?.type !== "task") return undefined;
+    const tail = m.backend.data.taskUri.split("/").filter(Boolean).pop();
+    return tail ? `t${tail}` : undefined;
+}
+
+/** 成员的**可读标签**（`deepseek-4.1-flash·t3`）—— 气泡署名 / 提示用；无别名则回落 name */
+export function memberLabel(room: Pick<Room, "members"> | null | undefined, id: string): string {
+    const m = room?.members.find((x) => x.id === id);
+    if (!m) return shortName(id);
+    const a = memberAlias(m);
+    // 房间里只有主人格一个 agent 时，别名是噪声 —— 单人任务视图与旧版逐字一致（##377 第 17 刀判据 1/7）
+    const agentCount = (room?.members ?? []).filter((x) => x.kind === "agent").length;
+    return a && agentCount > 1 ? `${m.name}·${a}` : m.name;
+}
+
+/**
+ * 「该打什么名字」的候选清单（**一处真源**）—— 提示与报错共用，别各写一套
+ * （##377 review3 R1：两处拼装逐字重复，改一处漏一处）。
+ * 格式 `@t3(deepseek-4.1-flash)`：**前面是可打的键、括号里是人名**。
+ */
+export function memberOptions(room: Pick<Room, "members"> | null | undefined, limit = 4): string[] {
+    return (room?.members ?? [])
+        .filter((m) => m.kind === "agent")
+        .slice(0, limit)
+        .map((m) => {
+            const a = memberAlias(m);
+            return a ? `@${a}(${m.name})` : `@${m.name}`;
+        });
 }
 
 /** 成员显示名（找不到就回落到 id —— 绝不显示空） */
@@ -625,16 +675,13 @@ export function deliveryHint(
     const known = new Set((room?.members ?? []).map((m) => m.id));
     const unknown = recipients.filter((r) => !known.has(r));
     if (unknown.length > 0) {
-        const names = (room?.members ?? [])
-            .filter((m) => m.kind === "agent")
-            .slice(0, 4)
-            .map((m) => `@${m.name}`);
+        const names = memberOptions(room);
         return names.length > 0
             ? `${unknown.map((u) => `@${shortName(u)}`).join(" / ")} 不是房间成员（可选：${names.join(" / ")}）`
             : `${unknown.map((u) => `@${shortName(u)}`).join(" / ")} 不是房间成员`;
     }
-    if (recipients.length === 1) return `将投递给 ${memberName(room, recipients[0]!)}`;
-    const names = recipients.map((r) => memberName(room, r)).join(" / ");
+    if (recipients.length === 1) return `将投递给 ${memberLabel(room, recipients[0]!)}`;
+    const names = recipients.map((r) => memberLabel(room, r)).join(" / ");
     const head = routing === "all" ? "群发" : "将投递给";
     return `${head} ${names}（${recipients.length} 个成员 —— 显式多收件人 = ${recipients.length} 倍 token 成本）`;
 }
