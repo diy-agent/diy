@@ -1458,10 +1458,17 @@ export function bindAppHandlers(binding: ServerBinding): void {
     // 走 readRoomView（不是裸 readEvents）：投递状态在 deliveries.jsonl 里，要 fold 上来
     const { readRoomView } = await import("../core/room");
     const { ensureRoomForTask } = await import("./room-service");
+    const { withSteerTurns } = await import("../../shared/room");
+    const { getLocalAgent } = await import("./local-agent");
     // 宿主定案（§28.7 G）：id = taskUri，且**每个任务恒是一个 room** ⇒ 读之前先补齐成员表
     await ensureRoomForTask(input.id);
     const { room, events, bad } = readRoomView(input.id, { limit: input.limit ?? 200 });
-    return { room, events, badLines: bad };
+    // 忙时插话那条的 **turnId 是读侧投影**（##377 第 29 刀）：投递时只知道「插进了正在跑的那一轮」，
+    // 队列项落位之后才有块带 `meta.steerId` ⇒ 现在问 `local-agent` 反查得到。
+    // 不落盘：它不是事件事实，而是"拿着既有键（steerId）现算的地址"（owner 口径：别造回复映射）。
+    const agent = getLocalAgent();
+    const withTurns = withSteerTurns(events, (taskUri, steerId) => agent.steerTurnId(taskUri, steerId));
+    return { room, events: [...withTurns], badLines: bad };
   });
   binding.on(app.room.create, async ({ input }) => {
     const { isValidRoomId } = await import("../core/room");

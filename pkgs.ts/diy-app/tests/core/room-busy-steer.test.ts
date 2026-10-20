@@ -83,9 +83,9 @@ function flatten(prompt: unknown): string {
 function realDeps(mgr: LocalAgentManager, busyScript: boolean[]) {
   let i = 0;
   return {
-    steerAdd: (taskUri: string, mode: "next-step" | "next-turn", text: string, author?: string) => {
-      mgr.steerAdd(taskUri, mode, text, author);
-    },
+    // 返回队列快照（第 29 刀起 `steerOrWake` 要拿新入队那条的 id —— 末项即本次新增）
+    steerAdd: (taskUri: string, mode: "next-step" | "next-turn", text: string, author?: string) =>
+      mgr.steerAdd(taskUri, mode, text, author),
     busy: (): boolean => busyScript[Math.min(i++, busyScript.length - 1)]!,
     runQueued: async (taskUri: string): Promise<RunResult> => {
       // 与生产同一条路：`chatQueued`（用队列现有内容开一轮）—— 但 collectTurn 在模块内，
@@ -125,6 +125,8 @@ describe("忙时投递：入队后复判（`ok` = 入队 且（仍在跑 或 已
     const r = await steerOrWake(uri, "[多人房间 x] ccc 对你说：\n这句话", "human:ccc", realDeps(mgr, [true]));
 
     expect(r.kind).toBe("steer");
+    // 队列项 id 一路带回（##377 第 29 刀）：投递状态落 `steerId`，读侧才反查得到"这句话进了哪一轮"
+    expect(r.kind === "steer" ? r.steerId : undefined).toBe(mgr.steerList(uri)[0]?.id);
     expect(mgr.steerList(uri).map((it) => it.text)).toEqual(["[多人房间 x] ccc 对你说：\n这句话"]);
     expect(prompts.length).toBe(0); // 没开轮 —— 认领点不在这里
   });
@@ -150,7 +152,7 @@ describe("忙时投递：入队后复判（`ok` = 入队 且（仍在跑 或 已
     const busted: RunResult = { reply: "", error: "投递失败：会话正忙" };
     let i = 0;
     const r = await steerOrWake(uri, "这句话", "human:ccc", {
-      steerAdd: () => undefined,
+      steerAdd: () => [],
       busy: () => [false, true][i++] ?? true, // ①复判闲 ②开轮失败后再判：又忙了
       runQueued: async () => busted,
     });

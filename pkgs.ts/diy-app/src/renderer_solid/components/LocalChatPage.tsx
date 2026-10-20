@@ -89,6 +89,7 @@ import {
     opsOwnsEvent,
     orderedMembers,
     shortName,
+    steerTurnRefs,
     type Room,
     type RoomEvent,
 } from "../../shared/room";
@@ -1665,8 +1666,97 @@ function deliveryBadgeClass(s: string): string {
  * `routing:'note'`（`@` 自己）按**中性**标记（不是故障 —— §38.2），
  * 打错名则走 `deliveries[].error` + 那条空 reply 的红字（判据 8：不许被"笔记"吞掉）。
  */
-function RoomSayRow(props: { event: RoomEvent; room: Room | null }) {
+/**
+ * 「忙时插话」那条 say 指到的那一轮（##377 第 29 刀 · body 真缺陷第 1 条）。
+ *
+ * 忙时插话的回复**属于正在跑的那一轮**（`deliveryPlanFor` 的 `steer` 分支），room 里于是只有
+ * `say`、没有 `reply` —— 用户从前只能看见「已投递（插进本轮）」那个徽章，**看不出回复在哪**，
+ * 容易以为这句话没回。这里把它指到那一轮：地址不是另存的映射，而是投递状态里的 `turnId`
+ * （读侧由 `steerId` + 落盘块的 `meta.steerId` 反查得到）。
+ *
+ * 展开态**由页面持有**（与 `RoomReplyRow` 同一个理由：虚拟化摘行会卸载组件）。
+ */
+function RoomSteerTurn(props: {
+    roomId: string;
+    memberId: string;
+    memberLabel: string;
+    turnId: string;
+    open: boolean;
+    onToggle: () => void;
+}) {
+    const [st, setSt] = createSignal<{ turn: BlockNode | null; turnId: string; live: boolean } | null>(null);
+    const [err, setErr] = createSignal<string | null>(null);
+    /** 取过一次就不再重复取（与 reply 行同一口径：要刷新进度就收开一次） */
+    let fetched = false;
+    const load = async (): Promise<void> => {
+        try {
+            // 字面寻址（成员, 轮次）：这条 say 没有 reply 事件可借 `ref`（回复属于那一轮，不属它）
+            const r = await diyService.diy.room.turn({
+                id: props.roomId,
+                event: undefined,
+                member: props.memberId,
+                turn: props.turnId,
+            });
+            setSt({ turn: r.turn as BlockNode | null, turnId: r.turnId, live: r.live });
+            setErr(null);
+        } catch (e) {
+            setErr(e instanceof Error ? e.message : String(e));
+        }
+    };
+    createEffect(() => {
+        if (props.open && !fetched) {
+            fetched = true;
+            void load();
+        }
+    });
+    return (
+        <div
+            class="w-[92%] rounded-lg border border-base-300 bg-base-100/60"
+            data-room-say-turn={props.turnId}
+        >
+            <button
+                class="flex w-full items-center gap-1.5 px-2 py-0.5 text-left text-caption"
+                onClick={() => props.onToggle()}
+                data-room-say-turn-toggle={props.turnId}
+                title="这条被插进了正在跑的那一轮：回复属于那一轮，不单独成条"
+            >
+                <span class="opacity-60">{props.open ? "▾" : "▸"}</span>
+                <span>回复在 {props.memberLabel} 那一轮</span>
+                <span class="opacity-50" data-room-say-turnid>
+                    {props.turnId}
+                </span>
+                <Show when={st()?.live}>
+                    <span class="badge badge-xs badge-info">直播中</span>
+                </Show>
+            </button>
+            <Show when={props.open}>
+                <div class="px-2 pb-1.5">
+                    <Show when={err()}>
+                        <div class="text-caption text-error">{err()}</div>
+                    </Show>
+                    <Show when={!st() && !err()}>
+                        <div class="text-caption opacity-60">正在取这一轮…</div>
+                    </Show>
+                    <Show when={st()?.turn}>
+                        {(t) => <RoomTurnBody turn={t()} turnId={st()!.turnId} live={st()?.live === true} />}
+                    </Show>
+                </div>
+            </Show>
+        </div>
+    );
+}
+
+function RoomSayRow(props: {
+    event: RoomEvent;
+    room: Room | null;
+    roomId: string;
+    /** 展开态（页面级，key = `<sayId>:<memberId>`） */
+    openOf: (key: string) => boolean;
+    onToggleTurn: (key: string) => void;
+}) {
     const deliveries = () => props.event.deliveries ?? [];
+    /** 能指到某一轮的投递（忙时插话那条；`skipped` / 未落位的不在里面） */
+    const turnRefs = () => steerTurnRefs(props.event);
     return (
         <div class="flex flex-col items-end gap-0.5" data-room-say={props.event.id}>
             <div class="max-w-[92%] rounded-lg bg-primary/15 px-3 py-1.5 text-prose whitespace-pre-wrap">
@@ -1694,7 +1784,59 @@ function RoomSayRow(props: { event: RoomEvent; room: Room | null }) {
                     </For>
                 </div>
             </Show>
+            {/* 回复归属（##377 第 29 刀）：忙时插话没有属于自己的回复，但它被哪一轮消化了是可查的 */}
+            <Show when={turnRefs().length > 0}>
+                <div class="flex w-full flex-col items-end gap-0.5" data-room-say-turns={props.event.id}>
+                    <For each={turnRefs()}>
+                        {(r) => {
+                            const key = `${props.event.id}:${r.memberId}`;
+                            return (
+                                <RoomSteerTurn
+                                    roomId={props.roomId}
+                                    memberId={r.memberId}
+                                    memberLabel={memberName(props.room, r.memberId)}
+                                    turnId={r.turnId}
+                                    open={props.openOf(key)}
+                                    onToggle={() => props.onToggleTurn(key)}
+                                />
+                            );
+                        }}
+                    </For>
+                </div>
+            </Show>
         </div>
+    );
+}
+
+/**
+ * 一轮的块渲染（`reply` 行与「忙时插话指到那一轮」共用 —— 同一份 `ChatView`/`TurnView`，不复制）。
+ *
+ * 抽出来的理由（##377 第 29 刀）：同一条 room 里现在有两个入口要看"某一轮"——
+ * reply 行的过程进度、以及被插话那条 say 的「回复属于哪一轮」。两份各自写一遍
+ * ⇒ 下次改渲染参数必漏一处（第 27 刀 `collectTurn`/`settleTurn` 的同一条教训）。
+ */
+function RoomTurnBody(props: { turn: BlockNode; turnId: string; live: boolean }) {
+    return (
+        <ChatView source={{ trees: () => [props.turn], live: () => props.live }}>
+            <TurnView
+                turnId={props.turnId}
+                pin={EMPTY_PIN}
+                level={2}
+                histOpen={true}
+                onCycle={() => undefined}
+                conclusionLines={3}
+                onResizeLines={() => undefined}
+                onToggle={() => undefined}
+                onFull={() => undefined}
+                liveTurnId={props.live ? props.turnId : null}
+                md={true}
+                usageHover={null}
+                onHoverUsage={() => undefined}
+                onHoverEndUsage={() => undefined}
+                usageDetail={null}
+                onDetailUsage={() => undefined}
+            />
+        </ChatView>
     );
 }
 
@@ -1804,34 +1946,9 @@ function RoomReplyRow(props: {
                                 <div class="text-caption opacity-60">正在取这一轮…</div>
                             </Show>
                             <Show when={st()?.turn}>
-                                <ChatView
-                                    source={{
-                                        trees: () => {
-                                            const t = st()?.turn;
-                                            return t ? [t] : [];
-                                        },
-                                        live: () => st()?.live === true,
-                                    }}
-                                >
-                                    <TurnView
-                                        turnId={st()!.turnId}
-                                        pin={EMPTY_PIN}
-                                        level={2}
-                                        histOpen={true}
-                                        onCycle={() => undefined}
-                                        conclusionLines={3}
-                                        onResizeLines={() => undefined}
-                                        onToggle={() => undefined}
-                                        onFull={() => undefined}
-                                        liveTurnId={st()?.live ? st()!.turnId : null}
-                                        md={true}
-                                        usageHover={null}
-                                        onHoverUsage={() => undefined}
-                                        onHoverEndUsage={() => undefined}
-                                        usageDetail={null}
-                                        onDetailUsage={() => undefined}
-                                    />
-                                </ChatView>
+                                {(t) => (
+                                    <RoomTurnBody turn={t()} turnId={st()!.turnId} live={st()?.live === true} />
+                                )}
                             </Show>
                         </div>
                     </Show>
@@ -2708,7 +2825,11 @@ export function LocalChatPage(props: {
      * 用户位置弹到 +1885px 再弹回；把 room 事件清空后 13 秒纹丝不动 ⇒ 因果坐实。
      */
     const feedSig = (es: RoomEvent[]): string =>
-        es.map((e) => `${e.id}:${(e.deliveries ?? []).map((d) => `${d.memberId}=${d.status}`).join(",")}:${e.error ?? ""}`).join("|");
+        es.map((e) =>
+            // `turnId` 也进签名（##377 第 29 刀）：它是**读侧投影**，投递当下没有、队列项落位后才算得出来 ——
+            // 不进签名的话轮询永远认作"没变"，那条 say 的「回复在那一轮」入口就不会出现。
+            `${e.id}:${(e.deliveries ?? []).map((d) => `${d.memberId}=${d.status}=${d.turnId ?? ""}`).join(",")}:${e.error ?? ""}`,
+        ).join("|");
     const roomSig = (r: Room | null): string =>
         r === null ? "none" : `${r.focus ?? ""}#${r.members.map((m) => `${m.id}:${m.name}:${m.main === true ? "main" : ""}`).join(",")}`;
     let prevFeedSig: string | null = null;
@@ -2766,6 +2887,8 @@ export function LocalChatPage(props: {
 
     /** 外部行的展开态（**页面级**：虚拟化摘行会卸载组件，放组件里会丢 —— 见 RoomReplyRow 头注） */
     const [replyOpen, setReplyOpen] = createSignal<Record<string, boolean>>({});
+    /** 「忙时插话 → 那一轮」的展开态（key = `<sayId>:<memberId>`；与 reply 行同一条理由） */
+    const [steerOpen, setSteerOpen] = createSignal<Record<string, boolean>>({});
 
     // 取数：首挂 + 切任务 + 2.5s 轻量轮询（与侧边栏同一节奏；本切片无推送通道）
     onMount(() => {
@@ -3520,7 +3643,17 @@ export function LocalChatPage(props: {
                                             </div>
                                         }
                                     >
-                                        {(ev) => <RoomSayRow event={ev()} room={roomMeta()} />}
+                                        {(ev) => (
+                                            <RoomSayRow
+                                                event={ev()}
+                                                room={roomMeta()}
+                                                roomId={uri() ?? ""}
+                                                openOf={(k) => steerOpen()[k] === true}
+                                                onToggleTurn={(k) =>
+                                                    setSteerOpen((p) => ({ ...p, [k]: p[k] !== true }))
+                                                }
+                                            />
+                                        )}
                                     </Show>
                                 ) : row.tag === "error" ? (
                                     /* 遗留的**根级** error 块（历史日志：旧版上限提示未挂 parent）。
