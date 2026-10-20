@@ -320,7 +320,7 @@ export function norm(p: string): string {
  *   .diy/**    ← 系统独占，仅 main 进程经 RPC 写入，不承诺格式稳定
  *
  * 为什么用点前缀而非 `data/`：
- *   1. 仓库已有先例（pkgs.ts/diy-app/.diy/ref.lock.yaml，见 core/ref.ts）
+ *   1. 仓库已有先例（仓库根 `.diy/ref.lock.yaml`，diy-dev 写）
  *   2. `ls` / shell 通配 / Finder 默认跳过 dotfile → 用户脚本不会误吞系统文件
  *   3. `$` 前缀目录名（如 `$data`）在 shell 里会展开，是事故隐患
  *

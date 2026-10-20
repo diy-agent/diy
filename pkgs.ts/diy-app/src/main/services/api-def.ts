@@ -2207,54 +2207,6 @@ export const apiDef = RpcSchema.router({
         },
       }),
 
-      ref: RpcSchema.group({
-        desc: `仓库引用管理`,
-        children: {
-          sync: RpcSchema.unary({
-            desc: `同步镜像引用`,
-            input: {
-              all: z.boolean().optional().cliOption({ short: "a", desc: "sync 所有 scope" }),
-              scope: z.string().optional().cliOption({ desc: "指定 scope 名称" }),
-              concurrency: z.number().default(4).optional().cliOption({ desc: "并发克隆数" }),
-            },
-            output: z.object({ status: z.string(), data: z.any() }),
-          }),
-          list: RpcSchema.unary({
-            desc: `列出镜像引用`,
-            input: {
-              all: z.boolean().optional().cliOption({ short: "a", desc: "显示所有 scope" }),
-            },
-            output: z.object({ status: z.string(), data: z.any() }),
-          }),
-          status: RpcSchema.unary({
-            desc: `查询引用状态`,
-            input: {},
-            output: z.object({
-              status: z.string(),
-              data: z.object({
-                total: z.number(),
-                missing: z.number(),
-                paths: z.any(),
-              }),
-            }),
-          }),
-          add: RpcSchema.unary({
-            desc: `添加仓库引用`,
-            input: {
-              url: z.string().cliArg({ desc: "Git 仓库 URL" }),
-            },
-            output: z.object({ status: z.string(), data: z.object({ added: z.any() }) }),
-          }),
-          remove: RpcSchema.unary({
-            desc: `移除仓库引用`,
-            input: {
-              name: z.string().cliArg({ desc: "仓库标识（diy.yaml 中注册的 URL 或 host/owner/repo）" }),
-            },
-            output: z.object({ status: z.string(), data: z.object({ removed: z.any() }) }).or(z.object({ status: z.string(), msg: z.string() })),
-          }),
-        },
-      }),
-
       /**
        * 实例大盘（Main 域）——「本机现在有哪些 diy 实例在跑、各自是谁、在干什么」。
        *
