@@ -83,6 +83,7 @@ import { appendPlanVersion, currentPlanVersion, planVersionDoc, planVersionId, w
 import { capToolOutput, toolOutFile, toolOutFileCandidates, toolOutRelPath } from "./tool-output";
 import { abortText } from "../../shared/turn-end";
 import { opsFeed } from "./ops-feed";
+import type { DeliveryOrigin, TurnOrigin } from "../../shared/room";
 // 「模型不可用」通知（##369 ①）：判据在 shared/model-unavailable，通知中心在 model-notice
 import { modelNoticeHub, noticeFromError, unavailableNoticeFromLocal } from "./model-notice";
 import { networkStreak } from "./env-watch";
@@ -313,6 +314,14 @@ interface TurnInput {
      * 每条来自不同的队列项（各自署名不同）。
      */
     author?: string;
+    /**
+     * 这条消息的**房间来源**（##377 第 23 刀）：从哪个房间、哪一条 `say` 投过来的。
+     *
+     * 落点 = 该条 user 块的 `meta.room`（`{ roomId, sayId }`，见 `shared/room.DeliveryOrigin`）。
+     * 与 `author` 分工：`author` = 谁说的，`room` = 从哪来的。省略 = 不是投递来的
+     * （任务页本人发言 / 老数据）⇒ 气泡逐字不变。
+     */
+    room?: DeliveryOrigin;
 }
 
 interface LocalSession {
@@ -1580,6 +1589,9 @@ export class LocalAgentManager {
      * 入队失败（队列满 / 空消息）直接抛出 —— 那是"这条消息没送达"，调用方必须知道。
      */
     private *enqueueWhileRunning(taskUri: string, sess: LocalSession, message: string, author?: string): Generator<Op> {
+        // ⚠️ 这里**只接 author**（第 23 刀如实记）：投递走这条路的唯一情形是「会话正忙」的竞态窗口，
+        //    而 `room-service` 已在投递前用 `isBusy` 挡掉（标 failed 不投）；真撞进这里时那条插话块
+        //    没有 `meta.room`（只有 `meta.author`）—— 已知缺口，见 ##377 body 的边界节。
         // ⚠️ 语义是 **steer 合并**（并入正在跑的轮次序列、整批投），**不是**串行独立
         // 轮次排队 —— 与 review306 发现①对齐：入队后由续轮循环整批取走（见 chat 的轮末逻辑），
         // 多条排队消息 = 一次续轮请求消化，不逐条开轮。
@@ -2820,9 +2832,12 @@ export class LocalAgentManager {
      */
     /**
      * ⚠️ **参数位次**（##266 review1 R3.2）：① `taskUri` ② `message` ③ `modelOverride`
-     * ④ `reasoningEffortOverride` ⑤ `signal` ⑥ `seed` ⑦ `author`。
+     * ④ `reasoningEffortOverride` ⑤ `signal` ⑥ `seed` ⑦ `origin`。
      * 位置参数已有 7 个，且真实调用点常一次给 4 个 `undefined`（如 `room-service` 的投递）
      * ⇒ **再加参数前先想 options 对象**；此刻至少照这行数位次，别靠肉眼对齐。
+     *
+     * 第 23 刀按这句把 ⑦ 从「`author?: string`」收成「`origin?: TurnOrigin`」——
+     * 一个参数承载「这条消息的随附事实」（谁说的 + 从哪个房间来的），**再扩不必加第 8 个位次**。
      */
     async *chat(
         taskUri: string,
@@ -2839,10 +2854,11 @@ export class LocalAgentManager {
          */
         seed?: TurnInput[],
         /**
-         * 本轮 message 的发言者署名（##166 §40 A）—— room 投递时 = **发起投递的成员 id**。
-         * seed 给出的情形下忽略它（那些条各自带 author，见 chatQueued）。
+         * 本轮 message 的**随附事实**（##166 §40 A / ##377 第 23 刀）：
+         * `author` = 发言者成员 id（room 投递时 = **发起投递的成员 id**）· `room` = 房间来源。
+         * seed 给出的情形下忽略它（那些条各自带 author）。
          */
-        author?: string,
+        origin?: TurnOrigin,
     ): AsyncGenerator<Op> {
         const persona = personaForTask(diyHome(), taskUri);
         const model = modelOverride ?? persona.model;
@@ -2872,7 +2888,7 @@ export class LocalAgentManager {
         // 而该排进插话队列，由正在跑的轮次在轮末整批取走（见下方续轮循环）。
         // 判据是 `turns` 注册表而非生成器：轮次寿命不再等于这条流的寿命（##305）。
         if (this.turns.has(taskUri)) {
-            yield* this.enqueueWhileRunning(taskUri, sess, message, author);
+            yield* this.enqueueWhileRunning(taskUri, sess, message, origin?.author);
             return;
         }
 
@@ -2937,7 +2953,7 @@ export class LocalAgentManager {
             },
             signal,
         );
-        const driving = this.driveTurn(run, sess, message, model, reasoningEffort, key, rm, persona.id, seed, author).catch((e) => {
+        const driving = this.driveTurn(run, sess, message, model, reasoningEffort, key, rm, persona.id, seed, origin).catch((e) => {
             // 驱动异常按原语义经流上抛（RPC 层转 error 帧），由订阅端在流尾 rethrow
             run.error = e;
         });
@@ -2966,8 +2982,8 @@ export class LocalAgentManager {
         personaId: string,
         /** 首轮输入（缺省 = 调用方那一条 message）—— 「用队列开一轮」的落点，见 chatQueued（##303）。 */
         seed?: TurnInput[],
-        /** 本轮 message 的发言者署名（seed 给出的情形下忽略 —— 那些条各自带，见 chat 的 author） */
-        author?: string,
+        /** 本轮 message 的随附事实（seed 给出的情形下忽略 —— 那些条各自带，见 chat 的 origin） */
+        origin?: TurnOrigin,
     ): Promise<void> {
         const taskUri = run.taskUri;
         const ctrl = run.ctrl;
@@ -3024,7 +3040,16 @@ export class LocalAgentManager {
             // 排队多条的心愿是"一起告诉它"，拆成多轮只会多几次请求、多个轮次边界。
             // seed 给出 = 用调用方指定的开场（队列内容）；否则就是调用方这一条 message
             let pending: TurnInput[] =
-                seed && seed.length > 0 ? seed : [{ text: message, kind: "user", ...(author ? { author } : {}) }];
+                seed && seed.length > 0
+                    ? seed
+                    : [
+                          {
+                              text: message,
+                              kind: "user",
+                              ...(origin?.author ? { author: origin.author } : {}),
+                              ...(origin?.room ? { room: origin.room } : {}),
+                          },
+                      ];
             for (let round = 0; pending.length > 0 && !ctrl.signal.aborted; round++) {
                 // 手动驱动内层生成器（而不是 `yield*` 委托）：委托会把 op 直接交给消费端，
                 // 跳过这里的 `sess.store.apply` —— 而 store 是本模块的**单一权威**
@@ -3530,6 +3555,9 @@ export class LocalAgentManager {
                         // 署名（##166 §40 A）：有则落，无则**不落键**（省略 = 本任务本人，
                         // 老数据 / 任务页正常发言都不带，读侧据此区分左右气泡）
                         ...(item.author ? { author: item.author } : {}),
+                        // 房间来源（##377 第 23 刀）：`{ roomId, sayId }` —— 收件方据此知道这句话
+                        // **是别的房间投过来的**（不是本任务的人在说话）。同样有则落、无则不落键。
+                        ...(item.room ? { room: item.room } : {}),
                     },
                 },
                 { op: "delta", id: uid, fields: { content: item.text } },

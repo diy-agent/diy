@@ -74,9 +74,10 @@ import { clearHitHighlight, paintHitHighlight } from "../lib/hit-highlight";
 import { MarkdownView } from "./MarkdownView";
 import { MdEditor } from "./MdEditor";
 import { memberCompletion, taskCompletion } from "../lib/completions";
-import { bubbleAlignClass, hasAuthor } from "../lib/user-bubble";
+import { bubbleAlignClass, hasAuthor, roomOriginOf } from "../lib/user-bubble";
 import { bylineOf } from "../lib/assistant-byline";
 import {
+    deliveryBadge,
     deliveryStatusText,
     MAIN_MEMBER_ID,
     memberAvatar,
@@ -1098,12 +1099,27 @@ function UserBubble(props: { node: BlockNode }) {
     const steer = () => str(b().attrs.steer);
     /** 发言者成员 id（`agent:166` / `human:ccc`）；空 = 本任务本人 */
     const author = () => str(b().attrs.author);
+    /** 房间来源（`{ roomId, sayId }`）；空 = 不是投递来的（第 23 刀） */
+    const roomOrigin = () => roomOriginOf(b().attrs);
+    /** 「房间投递 · #N」文案；`null` = 不画 */
+    const deliveryNote = () => deliveryBadge(roomOrigin());
     /** 这句话的时刻：块 id 自带所属轮（turnId 内嵌毫秒），格式复用 agent 侧那个 `fmtTurnStamp`。
      *  取不到就不显示（绝不用渲染时刻顶替）—— 数据源与降级口径见 `lib/user-stamp` 头注。 */
     const stamp = () => userStamp(b().id);
     return (
-        <div class={bubbleAlignClass(author())}>
+        <div class={bubbleAlignClass(author(), roomOrigin())}>
             <div class="max-w-[85%] bg-primary/10 border border-primary/20 rounded-2xl px-3.5 py-2 text-prose whitespace-pre-wrap break-words">
+                {/* 房间投递标记（##377 第 23 刀）：这句话**不是本任务的人说的** —— 是别的房间投过来的。
+                    为什么要标：接收方原来分不清「本任务的人在跟我说话」与「别的房间投来的一句」，
+                    那条 user 块看起来就是这个任务自己的发言。标记只写来源（房间短名），不写原因。 */}
+                <Show when={deliveryNote()}>
+                    {(n) => (
+                        <div class="mb-0.5 flex items-center gap-1.5 text-caption opacity-70" data-user-room={roomOrigin()?.roomId}>
+                            <span class="shrink-0">🫧</span>
+                            <span class="font-medium">{n()}</span>
+                        </div>
+                    )}
+                </Show>
                 <Show when={hasAuthor(author()) ? author() : null}>
                     {(a) => (
                         <div class="mb-0.5 flex items-center gap-1.5 text-caption" data-user-author={a()}>

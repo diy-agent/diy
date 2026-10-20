@@ -40,9 +40,10 @@ import {
     isAllAddress,
     isSidebarRoomId,
     memberName,
-    opsAuthorFor,
+    opsOriginFor,
     parseAddress,
     resolveMember,
+    memberOptions,
     resolveRecipients,
     roomContextFor,
     shortName,
@@ -51,6 +52,7 @@ import {
     type Room,
     type RoomEvent,
     type RoomMember,
+    type TurnOrigin,
 } from "../../shared/room";
 import type { Op } from "./local-blocks";
 
@@ -177,13 +179,11 @@ function isBusy(taskUri: string): boolean {
 }
 
 /** 该成员能被投递吗（有 backend 的 agent）；不能的话给一句人话原因 */
-function whyNotDeliverable(m: RoomMember | undefined, room?: Pick<Room, "members">): string | null {
+function whyNotDeliverable(m: RoomMember | undefined, room: Pick<Room, "members">): string | null {
     if (!m) {
         // 打错名字是最常见的一类（成员在界面上显示**人物名**，凭直觉打的短名未必命中）⇒ 直接给可选名
-        const names = (room?.members ?? [])
-            .filter((x) => x.kind === "agent")
-            .slice(0, 4)
-            .map((x) => `@${x.name}`);
+        // 候选清单走 `memberOptions`（一处真源，与 UI 提示同一份 —— ##377 review3 R1）
+        const names = memberOptions(room);
         return names.length > 0
             ? `房间里没有这个成员（可选：${names.join(" / ")}）`
             : "房间里没有这个成员";
@@ -209,8 +209,11 @@ function humanOf(room: Room): RoomMember | undefined {
 async function runAndCollect(
     taskUri: string,
     text: string,
-    /** 发起投递的成员 id（##166 §40 B）—— 落进对方会话那条 user 块的 `meta.author` */
-    author?: string,
+    /**
+     * 随附事实（第 23 刀把原来的 `author` 字符串收成 `TurnOrigin`）——
+     * 落进对方会话那条 user 块的 `meta.author` / `meta.room`。
+     */
+    origin?: TurnOrigin,
 ): Promise<{ reply: string; error?: string; turnId?: string }> {
     const agent = getLocalAgent();
     const texts = new Map<string, string>();
@@ -218,8 +221,8 @@ async function runAndCollect(
     let turnId: string | undefined;
     try {
         // 位次（##266 review1 R3.2）：① taskUri ② text ③ model ④ reasoningEffort ⑤ signal
-        // ⑥ seed ⑦ author —— 中间 4 个 `undefined` = "按任务绑定的人物解析、不开信号、不用 seed"。
-        for await (const op of agent.chat(taskUri, text, undefined, undefined, undefined, undefined, author) as AsyncGenerator<Op>) {
+        // ⑥ seed ⑦ origin —— 中间四个 `undefined` 依次是"按任务绑定的人物解析 / 不开信号 / 不用 seed"。
+        for await (const op of agent.chat(taskUri, text, undefined, undefined, undefined, undefined, origin) as AsyncGenerator<Op>) {
             if (op.op === "start") {
                 if (op.kind === "turn") turnId = op.id;
                 if (op.kind === "text" && op.meta?.["role"] !== "user") texts.set(op.id, "");
@@ -479,11 +482,14 @@ function deliverOne(input: DeliverInput): Promise<void> {
             // 署名（##166 §40 B）：值 = **发起投递的成员 id**（`agent:main` / `human:ccc`），
             // 不是自由字符串 —— 可追溯、可点开。对方会话里那条 user 块据此区分"谁在跟我说"，
             // 任务对话页据此把气泡翻到左侧并署名（C 块）。
+            // 房间来源（第 23 刀）：`{ roomId, sayId }` 落进同一条 user 块的 `meta.room` ——
+            //   接收方据此知道「这句话是别的房间投过来的」，UI 画出「房间投递 · #N」标记。
             // ⚠️ 第 17 刀收窄（§44.2 A · D 判据 1/7）：**投给主人格且发起者是页面操作者本人 ⇒ 不署名** ——
             //   主人格的会话就是任务页**自己的**会话，凭空带上 `human:chen56` 会让那条气泡翻到左侧并加署名
-            //   ⇒「无 @ 发送 = 与今天等价 / 单人任务逐字一致」当场破。判据在 `shared/room.opsAuthorFor`
-            //   （纯函数 + 单测），**别在这里另写一份**。
-            opsAuthorFor(member.main === true, author),
+            //   ⇒「无 @ 发送 = 与今天等价 / 单人任务逐字一致」当场破。第 23 刀把这条口径原样扩到 `room`：
+            //   **不署名 ⇒ 整条随附事实都不落**（否则气泡上会多出「房间投递」标记，同一判据照样破）。
+            //   判据在 `shared/room.opsOriginFor`（纯函数 + 单测），**别在这里另写一份**。
+            opsOriginFor(member.main === true, author, { roomId, sayId }),
         );
         const replyId = nextEventId();
         const ev = record(roomId, {
