@@ -978,6 +978,50 @@ export function roomContextFor(opts: {
 }
 
 /**
+ * **人成员的未读**（##377 第 28 刀）—— 「自阅读游标以来，房间里**别人**说了几条」。
+ *
+ * 为什么游标复用 `RoomSchema.lastSeen`：它记的是「该成员**已看到过**的最后一条事件」——
+ * 对 agent 就是投递水位（成轮 / 投递成功后前移），对人就是**阅读游标**（真看到最新才前移）。
+ * **同一条事实**（流内位置水位），只是前移的节奏由各自的用途决定；再开一份 `read` 字段
+ * 就是同一个概念的两份真源，迟早漂移。
+ *
+ * 三条判据（本切片只要这三条，多一条都不加）：
+ *   ① **位置**按 `events.jsonl` 的物理顺序定位游标（不按 id 比大小 —— 序号跨进程重来）；
+ *      游标找不到（老房间 / 事件被清过）⇒ **当"从头看"处理**，不崩、不静默当已读。
+ *   ② **不算自己说的**（`author === viewerId`）—— 自己发的消息不需要提示"你没读"。
+ *   ③ `firstId` = 第一条未读的 id（UI 画「新消息从这里开始」的分界线用）；
+ *      `lastId` = 流尾事件 id（**标记已读的落点**，与作者无关：游标是位置，不是"谁说的"）。
+ *
+ * ⚠️ 空正文事件（失败的 reply）**照样计数**：它在事件流里就是一条看得见的行
+ *   （与 `roomContextFor` 丢掉空正文不同 —— 那条是"喂给模型的信息量"，这条是"人看到的行"）。
+ */
+export interface RoomUnread {
+    /** 未读条数（只含别人说的） */
+    count: number;
+    /** 第一条未读事件的 id（`count === 0` ⇒ null） */
+    firstId: string | null;
+    /** 流尾事件 id（标记已读时前移到它；空房间 ⇒ null） */
+    lastId: string | null;
+    /** 游标在流里找得到吗（false = 按"从头看"算；老房间第一次打开就是它） */
+    cursorFound: boolean;
+}
+
+export function unreadSince(
+    events: readonly RoomEvent[],
+    opts: { cursorId?: string | null; viewerId?: string | null },
+): RoomUnread {
+    const cursor = opts.cursorId ?? null;
+    const at = cursor ? events.findIndex((e) => e.id === cursor) : -1;
+    const tail = events.slice(at + 1).filter((e) => !opts.viewerId || e.author !== opts.viewerId);
+    return {
+        count: tail.length,
+        firstId: tail[0]?.id ?? null,
+        lastId: events[events.length - 1]?.id ?? null,
+        cursorFound: at >= 0,
+    };
+}
+
+/**
  * 房间上下文的**两个 runtime 原子单元**（##377 第 26 刀）：
  *   `room.members` —— 低频（谁在房里 / 别名 / 是否主人格；改成员才变）
  *   `room.recent`  —— 高频（有人说话就变）

@@ -200,6 +200,45 @@ export function advanceLastSeen(roomId: string, updates: Record<string, string>)
     return safe;
 }
 
+/**
+ * **人成员的阅读游标**前移（##377 第 28 刀）—— 「人已经看到 `<eventId>` 这一条了」。
+ *
+ * 为什么复用 `lastSeen`（而不是新开一个 `read` 字段）：它记的本来就是「该成员已看到过的
+ * 最后一条事件」，对 agent 是投递水位、对人是阅读游标 —— **同一条事实**，两个用途各按自己的
+ * 节奏前移（agent 在投递成功后，人在**真看到最新**后）。开第二个字段 = 同一概念两份真源。
+ *
+ * 三条边界：
+ *   · **只认人成员**（`kind === "human"`）：agent 的水位由投递 / 成轮负责，UI 不许替它前移
+ *     （前移了 = 下一轮少注入别人的话；那是**静默漏信息**，比多注入坏得多）。
+ *   · **没变化不写盘**：UI 每 2.5s 轮询一次，若每次都原子写 room.yaml 就是白烧 IO，
+ *     还会让文件 mtime 一直跳（队友的引用稳定器也会白重算）。
+ *   · 没有这个房间 / 没有人成员 ⇒ 静默不动（与 `advanceLastSeen` 同一条口径：游标是优化，
+ *     丢一次最坏是多提示一条"未读"，而不是把房间搞坏）。
+ *
+ * 事件 id **不做存在性校验**：游标是流内位置，读侧 `unreadSince` 找不到就按"从头看"处理
+ * （校验要读整条事件流，为一个位置水位付这份 IO 不值）。
+ */
+export async function markRead(roomId: string, eventId?: string): Promise<boolean> {
+    const room = readRoom(roomId);
+    if (!room) return Promise.resolve(false);
+    const humans = room.members.filter((m) => m.kind === "human").map((m) => m.id);
+    if (humans.length === 0) return Promise.resolve(false);
+    let target = eventId;
+    if (!target) {
+        const { events } = readEvents(roomId);
+        target = events[events.length - 1]?.id;
+    }
+    if (!target) return Promise.resolve(false);
+    if (humans.every((id) => room.lastSeen[id] === target)) return Promise.resolve(false);
+    const updates: Record<string, string> = {};
+    for (const id of humans) updates[id] = target;
+    await advanceLastSeen(roomId, updates);
+    // `advanceLastSeen` **永不 reject**（它把写盘失败吞掉了，见那条注释）⇒ 想知道"真前移了没"，
+    // 只能回读一次盘上那格。不这么做，写失败也会报 `advanced: true` —— 又是「报成功没验证」。
+    const after = readRoom(roomId);
+    return !!after && humans.every((id) => after.lastSeen[id] === target);
+}
+
 export function roomDeliveriesPath(id: string): string {
     return join(roomDir(id), "deliveries.jsonl");
 }
