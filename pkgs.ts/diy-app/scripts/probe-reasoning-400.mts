@@ -58,8 +58,12 @@ const tools = [
  *   true      —— 原样带（很短的一条推理）
  *   "clipped" —— **被 ##374 T2 裁短的样子**（保头 600 字符 + marker；非空但比原文短）
  *                —— 判据：裁短**不等于**没传 ⇒ luminal 应当 200（这一组就是 T2 的安全证明）
+ *   "empty"   —— **##398 的兜底形状**：字段存在但值为空串（`reasoning_content: ""`）
+ *                —— 判据：空串**算「传了」** ⇒ luminal 应当 200（＝「缺就补空串」这条修法成立的前提）。
+ *                读法要求成对跑：C 组（缺）能撞出 400 才说明这批请求真的覆盖到严判后端，
+ *                此时 E 组全 200 才算证据（单跑 E 全 200 也可能只是没撞上）。
  */
-type Rc = boolean | "clipped";
+type Rc = boolean | "clipped" | "empty";
 
 /** 两轮工具调用的历史：第 1 次 assistant 在深历史、第 2 次 assistant 在末尾（rc 形态各自可调） */
 function history(opts: { first: Rc; last: Rc }) {
@@ -72,6 +76,7 @@ function history(opts: { first: Rc; last: Rc }) {
             ],
         };
         if (rc === true) m["reasoning_content"] = `用户要跑 ${cmd}，我调用 bash 工具。`;
+        else if (rc === "empty") m["reasoning_content"] = "";
         else if (rc === "clipped") {
             // 形状 = clipReasoningText 的产物（`${head}\n[… 推理省略 N 字符 …]\n`）
             m["reasoning_content"] = `用户要在项目里核对 ${cmd} 的输出，我先把调用发出去，再看结果决定下一步怎么做。`.repeat(12) + "\n[… 推理省略 5321 字符 …]\n";
@@ -123,6 +128,7 @@ const GROUPS: { key: string; label: string; first: Rc; last: Rc }[] = [
     { key: "A", label: "A-深缺末有", first: false, last: true },
     { key: "B", label: "B-全带（对照）", first: true, last: true },
     { key: "D", label: "D-深被裁短末有（T2 安全性）", first: "clipped", last: true },
+    { key: "E", label: "E-末条空串（##398 兜底形状）", first: true, last: "empty" },
 ];
 
 async function runGroup(label: string, opts: { first: Rc; last: Rc }) {
