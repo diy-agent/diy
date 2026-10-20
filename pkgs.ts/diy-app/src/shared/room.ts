@@ -225,6 +225,14 @@ export const DeliveryStateSchema = z.object({
 });
 export type DeliveryState = z.infer<typeof DeliveryStateSchema>;
 
+export const DeliveryOriginSchema = z.object({
+    /** 房间 id（宿主任务的 room = taskUri；侧边栏 room = `agent:room:ui/sidebar-<实例>`） */
+    roomId: z.string(),
+    /** 那条 `say` 事件的 id —— 拿着它回房间就能定位原话（事件流是 append-only） */
+    sayId: z.string(),
+});
+export type DeliveryOrigin = z.infer<typeof DeliveryOriginSchema>;
+
 /** 事件：`say` = 人（或未来某个成员）发的一句话；`reply` = 被投递 agent 跑完一轮的回复 */
 export const RoomEventSchema = z.object({
   id: z.string(),
@@ -271,6 +279,14 @@ export const RoomEventSchema = z.object({
     .optional(),
   /** 各收件人的投递状态（读侧投影 —— 落盘在 `deliveries.jsonl`，读时附上来） */
   deliveries: z.array(DeliveryStateSchema).optional(),
+  /**
+   * **这条事件从别的房间投过来的**（##377 第 24 刀 · 双向可见）。
+   *
+   * 只有「投递写回接收方自己房间」的那两条事件（`say` + `reply`）带它 ——
+   * 目的是让接收方房间的读侧能答两个问题：这条是谁投的、源房间那条原话在哪。
+   * 不带 = 本房间自己产生的（绝大多数事件）。
+   */
+  origin: DeliveryOriginSchema.optional(),
 });
 export type RoomEvent = z.infer<typeof RoomEventSchema>;
 
@@ -452,12 +468,7 @@ export function opsAuthorFor(main: boolean, author: string): string | undefined 
  * 接收方**分不清**「本任务的人在跟我说话」与「别的房间投过来的一句」。
  * 有了来源，UI 才能标出来，未来「把这条写回接收方自己的 room」也有了键（双向可见的地基）。
  */
-export type DeliveryOrigin = {
-    /** 房间 id（宿主任务的 room = taskUri；侧边栏 room = `agent:room:ui/sidebar-<实例>`） */
-    roomId: string;
-    /** 那条 `say` 事件的 id —— 拿着它回房间就能定位原话（事件流是 append-only） */
-    sayId: string;
-};
+
 
 /** 一条发言的**随附事实**（`chat` 的第 7 参 —— 替代原来单个 `author`，再扩不必加第 8 个位次）。 */
 export type TurnOrigin = {
@@ -507,6 +518,94 @@ export function deliveryBadge(origin: DeliveryOrigin | null | undefined): string
     if (!origin || !origin.roomId) return null;
     const name = roomDisplayName(origin.roomId);
     return name ? `房间投递 · ${name}` : "房间投递";
+}
+
+/**
+ * 这条来源要不要**写回接收方自己的房间**（##377 第 24 刀 · 双向可见）。
+ *
+ * 判据只有一条：**源房间 ≠ 接收方房间**。同一个房间（任务页对主人格自己说话、
+ * 侧边栏里对侧边栏成员说话）本来就已经在同一份事件流里，再写一遍就是重复。
+ */
+export function shouldMirrorRoom(sourceRoomId: string, targetRoomId: string): boolean {
+    return Boolean(sourceRoomId) && Boolean(targetRoomId) && sourceRoomId !== targetRoomId;
+}
+
+/** 写回接收方房间的两条事件（`say` = 投进去的那句，`reply` = 那一轮的回复）。 */
+export type MirrorInput = {
+    /** 源房间 + 那条 say（第 23 刀留下的键 —— 投递时落在收件方 user 块的 `meta.room`） */
+    origin: DeliveryOrigin;
+    /** 接收方的房间 id（= 成员 backend 的 taskUri） */
+    targetRoomId: string;
+    /**
+     * 接收方房间里**拥有那个会话**的成员 id（`agent:main`）。
+     *
+     * 为什么不是源房间那个成员 id：会话是**按 task 唯一**的（一个 task 一条会话），
+     * 那一轮真跑在 `targetRoomId` 的会话里 ⇒ 在**这个房间**的视角，说话的就是它的主人格。
+     * （v1 边界：成员是另一个人物、绑同一个 task 时，这里的署名会显示成主人格的名字。）
+     */
+    targetMemberId: string;
+    /** 谁说的（源房间那条 say 的 author） */
+    author: string;
+    /** 对方看到的那句（已剥 `@` 前缀） */
+    text: string;
+    /** 那一轮产出的回复 */
+    replyText: string;
+    /** 会话（= targetRoomId 所对应的 task） */
+    taskUri: string;
+    turnId?: string;
+    error?: string;
+    /** 两条事件的 id（纯函数**不造 id、不取时间** —— 那是 main 侧的事，可测性在这里） */
+    ids: { say: string; reply: string };
+    ts: string;
+};
+
+/**
+ * 造「写回接收方房间」的两条事件；不该写回 ⇒ `null`。
+ *
+ * 为什么要有这一步（用户口径：**「不能真正使用」里最硬的一条」**）：
+ * 投递只记在**源房间**的事件流里 ⇒ 接收方房间 `room get <它>` 恒为 0 事件 ——
+ * 人在这边看见「投过去了」，切到接收方的房间却什么都没有（消息与房间脱节）。
+ *
+ * 两条事件的形状刻意选成**读侧不会重复画**：
+ *   · `say.to` 含接收方主人格 ⇒ `opsOwnsEvent` 判定「ops 流里有它」⇒ 任务页不另画一行；
+ *   · `reply.ref.memberUri` = 接收方主人格 ⇒ 同上。
+ * 于是任务页视觉**逐字不变**（第 16 刀判据 7 的回归网），而房间读口（`room get` / 房间页 /
+ * 未来的未读与上下文）第一次能看见「这条是别的房间投进来的」。
+ */
+export function mirrorEvents(input: MirrorInput): { say: RoomEvent; reply: RoomEvent } | null {
+    if (!shouldMirrorRoom(input.origin.roomId, input.targetRoomId)) return null;
+    const say: RoomEvent = {
+        id: input.ids.say,
+        ts: input.ts,
+        channel: DEFAULT_CHANNEL_ID,
+        kind: "say",
+        author: input.author,
+        to: [input.targetMemberId],
+        text: input.text,
+        delivered: true,
+        origin: input.origin,
+    };
+    const reply: RoomEvent = {
+        id: input.ids.reply,
+        ts: input.ts,
+        channel: DEFAULT_CHANNEL_ID,
+        kind: "reply",
+        author: input.targetMemberId,
+        to: [input.author],
+        text: input.replyText,
+        delivered: !input.error,
+        ...(input.error ? { error: input.error } : {}),
+        sourceTask: input.taskUri,
+        ...(input.turnId ? { ref: { memberUri: input.targetMemberId, turnId: input.turnId } } : {}),
+        origin: input.origin,
+    };
+    return { say, reply };
+}
+
+/** 房间页气泡上的「这条从哪来」标记；`null` = 本房间自己产生的，不画。 */
+export function originLabel(origin: DeliveryOrigin | null | undefined): string | null {
+    if (!origin || !origin.roomId) return null;
+    return `来自 ${roomDisplayName(origin.roomId)}`;
 }
 
 /**
@@ -566,14 +665,13 @@ export function memberAlias(m: RoomMember): string | undefined {
  */
 export function memberKeys(room: MemberBag, m: RoomMember): string[] {
   if (m.kind !== "agent") return [m.name];
-  const members = room?.members ?? [];
-  const out: string[] = [];
-  if (m.name && members.filter((x) => x.name === m.name).length === 1) out.push(m.name);
-  const a = memberAlias(m);
-  if (a) out.push(a);
-  const tail = lastSegment(m.id);
-  if (tail) out.push(tail);
-  return [...new Set(out)];
+  const cand = [m.name, memberAlias(m), lastSegment(m.id)].filter((k): k is string => Boolean(k));
+  // **按「真能打中」筛，不自己再写一遍唯一性判断**（##266 review1 R1）：
+  // 原来这里对别名 / id 末段无条件放行，而 `resolveMember` 的 ③④ 要求**同类唯一**才认 ⇒
+  // 候选里会躺着打不中的键（跨项目同号 `projects/1/tasks/3` + `projects/2/tasks/3` 实测：
+  // 两个成员都给出 `@t3`，照着敲被判歧义）。判据只能有一份 —— 就是 `resolveMember` 本身。
+  // ⇒ 以后新增寻址写法（如完整 id 形态）只改 `resolveMember` 一处，提示自动跟上。
+  return [...new Set(cand.filter((k) => resolveMember(room, k) === m.id))];
 }
 
 /** 首选寻址键（= `memberKeys[0]`；理论上恒有值，兜底回 name） */
@@ -601,6 +699,9 @@ export function memberLabel(room: MemberBag, id: string): string {
 export function memberOptions(room: MemberBag, limit = 4): string[] {
     return (room?.members ?? [])
         .filter((m) => m.kind === "agent")
+        // 一个键都打不中的成员（跨项目同号 + 同人物名，两条同时成立）**不进候选**：
+        // 给了也是白给，而且会让「可选：@t3」自己打不中（review1 R1 的原病灶）。
+        .filter((m) => memberKeys(room, m).length > 0)
         .slice(0, limit)
         .map((m) => {
             const k = memberKey(room, m);

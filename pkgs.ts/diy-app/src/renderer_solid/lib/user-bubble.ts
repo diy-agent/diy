@@ -17,7 +17,15 @@ export function bubbleAlignClass(author: string | null | undefined, room?: Deliv
     return author || room ? "flex justify-start" : "flex justify-end";
 }
 
-/** 是否画署名行（与对齐**同源**：有 author 才画 —— 两处判据分家就会出现"左对齐但没说是谁"） */
+/**
+ * 是否画署名行。
+ *
+ * ⚠️ 与对齐**不完全同源**（##266 review1 R2）：`bubbleAlignClass` 在 `author || room` 时左对齐，
+ * 这里只看 `author` ⇒ 「有 room 无 author」会左对齐但不署名。
+ * 今天不会出现这种块：`opsOriginFor`（`shared/room`）的不变量是「不署名 ⇒ 整条随附事实都不落」，
+ * 即 **room 恒伴 author**。这里判 room 只是为了兜底（万一以后有人放宽那条不变量），
+ * 别把它当成"两条判据一致"的证明。
+ */
 export function hasAuthor(author: string | null | undefined): boolean {
     return Boolean(author);
 }
@@ -38,7 +46,13 @@ export function roomOriginOf(attrs: Record<string, unknown> | null | undefined):
     return { roomId, sayId: typeof sayId === "string" ? sayId : "" };
 }
 
-/** 是否画「房间投递」标记（与左对齐**同源**：有来源就是"别的房间投过来的话"） */
+/**
+ * 是否画「房间投递」标记。
+ *
+ * 与 `hasAuthor` 是两个独立事实：一条块可以**有署名无来源**（人手打的 `--author`）——
+ * 那时左对齐 + 署名、但不画「房间投递」标记。今天 room 投递恒带 author + 来源
+ * （`opsOriginFor`），所以两者同行出现；**别据此把两个函数合并**。
+ */
 export function hasDelivery(attrs: Record<string, unknown> | null | undefined): boolean {
     return roomOriginOf(attrs) !== null;
 }

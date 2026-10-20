@@ -154,6 +154,46 @@ describe("deliveryHint —— 输入框上方那条提示（review3 R2）", () =
     }
   });
 
+  // ── review1 R1：**跨项目同号** + 同人物名 ⇒ 候选里不许有打不中的键 ──
+  // 原病灶：`memberKeys` 对别名 / id 末段无条件放行，而 `resolveMember` 的 ③④ 要求同类唯一
+  // ⇒ `memberOptions` 会给出两个一模一样的 `@t3(…)`，照着敲被判歧义（提示里那把钥匙开不了门）。
+  const CROSS_PROJECT_SAME_NAME = {
+    members: [
+      human("human:chen56", "chen56"),
+      m("agent:a", "deepseek-4.1-flash", "projects/1/tasks/3"),
+      m("agent:b", "deepseek-4.1-flash", "projects/2/tasks/3"),
+    ],
+  };
+
+  it("R1 同名 + 同号 ⇒ 歧义的键（name / 别名）一律不进候选，只剩真能打中的 id 末段", () => {
+    const [a, b] = [CROSS_PROJECT_SAME_NAME.members[1]!, CROSS_PROJECT_SAME_NAME.members[2]!];
+    expect(memberKeys(CROSS_PROJECT_SAME_NAME, a)).toEqual(["a"]);
+    expect(memberKeys(CROSS_PROJECT_SAME_NAME, b)).toEqual(["b"]);
+    // 反证：歧义键确实打不中（所以它没资格进候选 —— 这条把「为什么筛」钉死，不是拍脑袋）
+    expect(resolveMember(CROSS_PROJECT_SAME_NAME, "t3")).toBe("t3");
+    expect(resolveMember(CROSS_PROJECT_SAME_NAME, "deepseek-4.1-flash")).toBe("deepseek-4.1-flash");
+  });
+
+  it("R1 候选清单不再给出两个一样的键（原病灶的直接复现）", () => {
+    expect(memberOptions(CROSS_PROJECT_SAME_NAME)).toEqual(["@a(deepseek-4.1-flash)", "@b(deepseek-4.1-flash)"]);
+    const hint = deliveryHint(["t3"], CROSS_PROJECT_SAME_NAME, "explicit");
+    for (const k of hint.matchAll(/@([^\s（）()、]+)(?=\()/g)) {
+      expect(resolveMember(CROSS_PROJECT_SAME_NAME, k[1]!)).not.toBe(k[1]);
+    }
+  });
+
+  it("R1 同号但**不同名** ⇒ 名字仍是首选键，歧义别名被滤掉", () => {
+    const room = {
+      members: [
+        human("human:chen56", "chen56"),
+        m("agent:a", "alpha", "projects/1/tasks/3"),
+        m("agent:b", "beta", "projects/2/tasks/3"),
+      ],
+    };
+    expect(memberKeys(room, room.members[1]!)).toEqual(["alpha", "a"]);
+    expect(memberKeys(room, room.members[2]!)).toEqual(["beta", "b"]);
+  });
+
   it("单人房间照旧（不带别名、不带括号）", () => {
     expect(deliveryHint(["agent:main"], SINGLE, "focus")).toBe("将投递给 deepseek-4.1-flash");
   });
