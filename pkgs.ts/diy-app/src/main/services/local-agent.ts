@@ -91,7 +91,7 @@ import { AsyncQueue, withCleanup } from "./async-queue";
 import { sessionRegistry } from "./session-registry";
 // 轮首房间上下文（##377 第 25 刀）：**只读盘 + 水位**，不 import room-service（那条是反方向，
 // 会造成循环 —— room-service 静态 import 本模块的 getLocalAgent）。
-import { commitSelfStartContext, selfStartContext } from "./room-context";
+import { commitSelfStartContext, roomRuntimeFact, type RoomRuntimeValue } from "./room-context";
 import { addStepUsage, newUsageAcc, setTurnUsage, type TurnUsage } from "./turn-usage";
 import {
     bucketsOf,
@@ -1927,7 +1927,12 @@ export class LocalAgentManager {
         const { config, issues: warnings } = loadAutoCompactDetailed(diyHome());
         // 系统上下文：与上次真发那份比（口径与 steps.jsonl 的 systemText 完全一致）
         const home = diyHome();
-        const globals = assembleGlobals(home, projectFromUri(taskUri), { taskUri }) as unknown as Record<string, unknown>;
+        const globals = assembleGlobals(home, projectFromUri(taskUri), {
+            taskUri,
+            // 与真发同一条链（预览 = 会发出去的）：房间上下文取**本任务自己的房间**
+            // （自起轮的形状；投递轮看的是来源房间，这里给不出，边上注明即可）
+            room: roomRuntimeFact({ roomId: taskUri, taskUri })?.value ?? null,
+        }) as unknown as Record<string, unknown>;
         const delivery = buildDelivery(globals, loadSystemPlaces(home));
         const lastStep = readDeliverySteps(taskUri).at(-1) ?? null;
         const systemContextChanged = lastStep !== null && lastStep.systemText !== delivery.system.text;
@@ -2324,7 +2329,11 @@ export class LocalAgentManager {
         storeInput?: BlockStore,
     ): RequestView {
         const home = diyHome();
-        const globals = assembleGlobals(home, projectFromUri(taskUri), { taskUri }) as unknown as Record<string, unknown>;
+        const globals = assembleGlobals(home, projectFromUri(taskUri), {
+            taskUri,
+            // 同上：预览与真发同一份装配（房间取本任务自己的房间）
+            room: roomRuntimeFact({ roomId: taskUri, taskUri })?.value ?? null,
+        }) as unknown as Record<string, unknown>;
         const delivery = buildDelivery(globals, loadSystemPlaces(home));
         const { cwd } = resolveCwdWithNote(home, taskUri);
         const L = this.getLimits();
@@ -3053,41 +3062,41 @@ export class LocalAgentManager {
                               ...(origin?.room ? { room: origin.room } : {}),
                           },
                       ];
-            // ── 轮首房间上下文（##377 第 25 刀）──────────────────────────────────
-            // ⚠ **过渡态**：注入点是 **user 正文尾部**；终局 = `runtime.room` 变量单元
-            //   （结构化 `{roomId,name,members,recent,omitted}`，拼装归模版层，不进会话历史）。
-            //   见 ##377 第 26 刀（owner：自起 / 投递两条路径同一 PR 一起搬）。
-            //
+            // ── 房间上下文（##377 第 25/26 刀）──────────────────────────────────
             // 病灶：第 18 刀的「本房间近期发言」只在**被投递**时注入 ⇒ 成员**自己起一轮**
             // （任务页点跑 / 定时任务 / CLI 一句话）读不到房间刚才聊了什么。
             //
-            // 只拼进**第一条** input 的正文尾部（与投递路径同形：那段本来就贴在正文后面），
-            // 且**只在不是投递时**做 —— 投递的正文已由 `deliveryText` 带了同一段，
-            // 再拼一遍就是同一段话进两次（还会顶掉 `meta.room` 那条气泡判据）。
+            // ⚠ 第 26 刀起注入点是 **runtime 变量单元**（`room.members` / `room.recent`），
+            //   **不再拼进 user 正文**：正文是发送时刻快照、且进会话历史（压缩会当人话改写、
+            //   回放分不清谁说的）；runtime 是带类型的 YAML 信封，每轮现拼、按 place 增量。
+            //   于是「自起 / 投递」两条路径在这里**同一处产出**，不再需要 `isDelivery` 那种
+            //   「正文里是不是已经带了」的隐式判据（第 25 刀 lab 实测过它漏一次就注入两遍）。
             //
-            // 失败一律不阻断本轮（房间只是上下文，不是前提）：出声后照常发。
+            // 看哪间房：自起 = 本任务自己的房间；**投递 = 来源房间**（`origin.room.roomId`）——
+            // 那才是"刚才谁跟我说了什么"发生的地方。排除正文里那一条（`sayId`），避免同一句话出现两次。
+            //
+            // 水位：自起轮**成轮之后**前移到流尾（宁可重复不可漏，见 `commitSelfStartContext`）；
+            // 投递轮**不在这里前移**（归 `room-service`，它按 `sayId` 前移）—— 两边都动会把水位往回拨。
             let ctxCommit: (() => void) | null = null;
-            // 判据 = `fromDelivery`（**不落盘**的那一位）**或** `room`：
-            //   · `room` 有值 ⇒ 一定是投递（它只由 `deliveryOriginFor` 从 room-service 传入）
-            //   · 但投给**主人格**时 `opsOriginFor` 按 §44.2 A 整条不落 ⇒ `room` 为空，
-            //     而它**仍然是投递**（正文已由 `deliveryText` 带了同一段）⇒ 只看 `room`
-            //     会把同一段注入两遍（第 25 刀 lab 实测：user 正文里两个 `[本房间近期发言]`）。
-            // `seed` 里带 `room` 的是「排队期间插进来的投递」，同属这一类。
-            const isDelivery =
-                Boolean(origin?.fromDelivery) || Boolean(origin?.room) || Boolean(seed?.some((it) => it.room));
-            if (!isDelivery && pending.length > 0) {
-                try {
-                    const ctx = selfStartContext(taskUri);
-                    if (ctx) {
-                        pending = [{ ...pending[0]!, text: `${pending[0]!.text}${ctx.text}` }, ...pending.slice(1)];
-                        ctxCommit = () => commitSelfStartContext(taskUri, ctx);
-                        console.log(
-                            `[local-agent] 轮首注入房间上下文 ${taskUri}：${ctx.items} 条 / 省略 ${ctx.omitted} 条`,
-                        );
+            let roomValue: RoomRuntimeValue | null = null;
+            try {
+                const fact = roomRuntimeFact({
+                    roomId: origin?.room?.roomId ?? taskUri,
+                    taskUri,
+                    ...(origin?.room?.sayId ? { sayId: origin.room.sayId } : {}),
+                });
+                if (fact) {
+                    roomValue = fact.value;
+                    if (!origin?.fromDelivery) {
+                        const f = fact;
+                        ctxCommit = () => commitSelfStartContext(f.roomId, f);
                     }
-                } catch (e) {
-                    console.error(`[local-agent] 房间上下文读取失败（本轮照常发送）${taskUri}:`, e);
+                    console.log(
+                        `[local-agent] 房间上下文 ${fact.roomId} → runtime.room：${fact.items} 条 / 省略 ${fact.omitted} 条`,
+                    );
                 }
+            } catch (e) {
+                console.error(`[local-agent] 房间上下文读取失败（本轮照常发送）${taskUri}:`, e);
             }
             for (let round = 0; pending.length > 0 && !ctrl.signal.aborted; round++) {
                 // 手动驱动内层生成器（而不是 `yield*` 委托）：委托会把 op 直接交给消费端，
@@ -3101,6 +3110,7 @@ export class LocalAgentManager {
                     persona: personaId,
                     apiFace: apiOf(model),
                     contextLimit: contextLimitOf(model),
+                    room: roomValue,
                 });
                 let failed = false;
                 // 本轮 turn 块 id：上限提示要挂进**这一轮**（见下方上限分支），故从内层带回
@@ -3258,7 +3268,13 @@ export class LocalAgentManager {
         rm: ResolvedModel,
         sink: (op: Op) => void,
         /** 落盘身份（人物/面/窗口）：同一会话可换模型，故它是**行**的属性（##211 §六b.6） */
-        identity: { persona: string; apiFace: LocalModelApi; contextLimit?: number },
+        identity: {
+            persona: string;
+            apiFace: LocalModelApi;
+            contextLimit?: number;
+            /** 房间上下文（##377 第 26 刀）：`roomRuntimeFact().value`；`null` = 本任务没有房间 */
+            room?: RoomRuntimeValue | null;
+        },
     ): AsyncGenerator<Op, { failed: boolean; turnId: string }, void> {
         const turnId = `t${Date.now()}`;
         const cwd0 = resolveCwdWithNote(diyHome(), taskUri).cwd;
@@ -3527,10 +3543,10 @@ export class LocalAgentManager {
         // 系统上下文：Context Tree 投递（稳定项 → system 参数；易变项 → 尾部 user 消息）。
         // **与上下文树页的预览同一条链**（shared/context/delivery）：同一份 globals、同一份
         // system 名单、同一套渲染 —— 于是"预览看到的字节"就是这里发出去的字节。
-        const globals = assembleGlobals(diyHome(), projectFromUri(taskUri), { taskUri }) as unknown as Record<
-            string,
-            unknown
-        >;
+        const globals = assembleGlobals(diyHome(), projectFromUri(taskUri), {
+            taskUri,
+            room: identity.room ?? null,
+        }) as unknown as Record<string, unknown>;
         // 划分规则读**真源**（$DIY_HOME/context.yaml；缺失/损坏则推荐名单 + 出声）——
         // 与上下文树页读的是同一份，所以页面上看到的 system/runtime 划分就是这里会用的划分。
         const delivery = buildDelivery(globals, loadSystemPlaces(diyHome()));
@@ -3540,7 +3556,10 @@ export class LocalAgentManager {
         // 全建在过期数据上）。prepareStep 每步重算一次，**变了才注入**（没变不动 ⇒ 前缀缓存只在
         // 真变那步失效）。system 与 runtime 各走各的通道（见 prepareStep）。
         const rebuildDelivery = (): Delivery => {
-            const g = assembleGlobals(diyHome(), projectFromUri(taskUri), { taskUri }) as unknown as Record<string, unknown>;
+            const g = assembleGlobals(diyHome(), projectFromUri(taskUri), {
+                taskUri,
+                room: identity.room ?? null,
+            }) as unknown as Record<string, unknown>;
             return buildDelivery(g, loadSystemPlaces(diyHome()));
         };
         // 上一步投递的两个容器文本（比较基准；初值 = 轮首这份）

@@ -109,23 +109,25 @@ const COARSE: Record<string, VarSpec["type"]> = {
  * 扁平清单（引擎静态校验用）：对象自己也算一条（`{{diy}}` 应报"是对象，不能插值"），
  * 数组**不**下钻元素（引擎的粗类型不建模元素类型）。
  */
-export function flattenVars(schema: ZodType, prefix = ""): VarSpec[] {
-  const { schema: inner } = unwrap(schema);
+export function flattenVars(schema: ZodType, prefix = "", optionalUp = false): VarSpec[] {
+  const { schema: inner, optional } = unwrap(schema);
+  // 上层是可选的 ⇒ 整棵子树都可能缺席（`room: z.object({...}).optional()` 时 room / room.recent 都会缺）
+  const mayMiss = optionalUp || optional;
   const d = defOf(inner);
   const type = d.type ?? "unknown";
   const self = COARSE[type];
   if (type === "object" && d.shape) {
     // 对象自己也进契约（`{{diy}}` 应报"是对象，不能插值"），但**根对象不算路径**
-    const mine: VarSpec[] = self && prefix ? [{ path: prefix, type: self, desc: descOf(inner) }] : [];
+    const mine: VarSpec[] = self && prefix ? [{ path: prefix, type: self, desc: descOf(inner), ...(mayMiss ? { optional: true } : {}) }] : [];
     return [
       ...mine,
       ...Object.entries(d.shape).flatMap(([k, v]) =>
-        flattenVars(v, prefix ? `${prefix}.${k}` : k),
+        flattenVars(v, prefix ? `${prefix}.${k}` : k, mayMiss),
       ),
     ];
   }
   if (!self) return []; // unknown 之类不参与校验
-  return [{ path: prefix, type: self, desc: descOf(inner) }];
+  return [{ path: prefix, type: self, desc: descOf(inner), ...(mayMiss ? { optional: true } : {}) }];
 }
 
 // ── 值树（「变量值」view）───────────────────────────────────────────────
