@@ -29,6 +29,9 @@ subjects:
     description: worktree 的落地位置
     aliases:
       - worktree
+  entry:
+    description: 实例三态（**先问：操作谁的数据 / 谁看 UI**）
+    aliases: []
   env.diy-env:
     description: 运行环境（决定能力开关与缺省行为）
     aliases:
@@ -46,7 +49,19 @@ subjects:
       - DIY_VARIANT
   facts.cli:
     description: 事实库的写入口本身（agent 只经 CLI，不碰 YAML）
+  find:
+    description: 去哪找
+    aliases: []
+  model:
+    description: 本地 agent 测试用什么模型
+    aliases: []
   model.default:
     description: 未指定模型时的缺省选择规则
     aliases:
       - 缺省模型
+  rule:
+    description: 硬约束
+    aliases: []
+  tool:
+    description: 命令
+    aliases: []
