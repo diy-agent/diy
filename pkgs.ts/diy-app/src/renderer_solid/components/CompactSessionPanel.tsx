@@ -702,6 +702,11 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
     ];
 
     // 右栏视图控制
+    /** diff 闸（##406）：**缺省关闭**。
+     *  用户原话：「直接把里面的 diff 页面禁用掉，它的加载机理有问题，导致进不去，暂时不修了，就禁用掉」
+     *  —— 裁剪 + 缺省 2 层已经把「进不去」修好了（本 PR 刀 1），但那是**推出来**的边界；
+     *  先让人能进页面、按需再开，比「赌它够小」稳。开了才计算、才渲染。 */
+    const [diffEnabled, setDiffEnabled] = createSignal(false);
     const [sideBySide, setSideBySide] = createSignal(false);
     const [onlyDiff, setOnlyDiff] = createSignal(true);
     /** 展开层级：0 = 只露根行；N = 全展开。
@@ -713,6 +718,7 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
     /** 展示预算（##406）：裁剪只做一次，diff 与「已裁剪多少」都读它 ——
      *  否则同一份 4.95 MB 请求会被递归走两遍（纯浪费时间）。 */
     const previewPair = createMemo(() => {
+        if (!diffEnabled()) return null;
         const m = ctl.pv();
         if (!m) return null;
         const base = clipForPreview(requestViewYaml(m.baseRequest), PREVIEW_CLIP);
@@ -1146,6 +1152,19 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
 
             {/* ── 右栏：预览区（请求 YAML diff）─────────────── */}
             <div class="grow flex flex-col overflow-hidden">
+                <Show
+                    when={diffEnabled()}
+                    fallback={
+                        <div class="p-6 flex flex-col gap-3 text-caption">
+                            <div class="opacity-70">
+                                差异视图缺省关闭（##406）：大请求的 diff 计算与渲染曾把页面卡死。先保证页面能进，再按需开。
+                            </div>
+                            <button class="btn btn-xs btn-outline self-start" onClick={() => setDiffEnabled(true)}>
+                                计算并显示 diff（大会话可能要等数秒）
+                            </button>
+                        </div>
+                    }
+                >
                 <div class="px-3 py-1.5 border-b flex items-center gap-3 shrink-0 text-caption">
                     <div class="join">
                         <button
@@ -1275,6 +1294,7 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                         </div>
                     </Show>
                 </div>
+                </Show>
             </div>
         </div>
     );
