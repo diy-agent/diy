@@ -3,7 +3,7 @@
 
 ## find — 包内定位
 
-- `find.main` — `src/main/index.ts` 主进程入口（窗口 / 诊断 / 单实例）
+- `find.main-proc` — `src/main/index.ts` 主进程入口（窗口 / 诊断 / 单实例）
 - `find.core` — `src/main/core/` 状态与文件落位：`state.ts`（数据根/任务路径单一出口）· `task*.ts`（任务读写与字段）· `tree-format.ts` · `drafts.ts`（草稿 + 插话队列）· `steer-queue.ts` · `persona.ts` · `cwd.ts`
 - `find.svc` — `src/main/services/` RPC 与业务：`api-def.ts`（**契约**）· `api-impl.ts`（**实现**）· `local-agent.ts`（本地 agent 循环）· `local-blocks.ts`（op 流）· `ops-feed.ts`（会话 op 增量总线）· `async-queue.ts`（事件源 → `AsyncIterable` 桥接）· `usage-report.ts`（用量账本读取 + CLI 报表渲染，与 UI 同源）· `session-registry.ts`（**会话注册表**：本次启动后活跃过的会话 + turn/queue/viewers/lastEndReason 的唯一真源，读口 `agent.local.sessions`）· `prompt-registry.ts`（提示词装配）· `agent-guard.ts`（自毁命令拦截）· `diagnostics.ts`（日志/异常兜底）
 - `find.instances` — **实例大盘（##366）**：CLI `diy instances ls`（表格文本）/ `list`（结构化，UI 用）· `focus --pid <pid>`（唤起：目标实例自己 `show+focus+全屏`，降级 osascript）· `self`（自报身份 + 活跃会话 + 窗口，被别的实例探测）/ `reveal`（唤起本实例的入口）。实现：发现靠**扫进程** `src/main/core/instance-scan.ts`（纯函数：ps → 实例行；helper/crashpad/CLI **都不是**实例）·「谁开的」靠**启动时**写的注册表 `src/main/core/instance-registry.ts`（`<真实家目录>/.diy-instances/<pid>.json`，`DIY_INSTANCE_REGISTRY` 覆盖；退出即删 + **读侧按 pid 存活过滤**）· 聚合/唤起 `src/main/services/instances.ts` · 跨实例 HTTP 探测 `src/main/services/instance-probe.ts`（与 `src/cli/probe-instance.ts` **同一份协议**，禁两处各写）· 排版 `src/main/core/instance-table.ts`。UI 页 `src/renderer_solid/components/InstancesPage.tsx`（导航「实例」，##367：表格 + 「显示」唤起 + 3s 轮询；展示语义纯函数 `src/shared/instance-view.ts`，页面**不可见即停轮询**、刷新按 pid 保选中/展开；**只读**，无杀/停入口）。⚠️ 坑：`ps eww` 的 `DIY_HOME` 是**继承**来的 ≠ 真数据根（真根取实例自报；实测 pid=11419 反例）
@@ -53,7 +53,7 @@
 - `env.port` — `DIY_PORT` 首选端口（测试注 `0`=随机）；优先级 `DIY_PORT` > `app.port` 文件 > **按环境缺省**（`runtime.ts::defaultPort`：production=`18888` 门牌，development/test=`0` 随机）；裁决 `runtime.ts::resolvePort`（纯函数、可单测，**非生产不沿用记录里的 `18888`**）。**端口不承载身份** —— 别再往它上面挂「谁在跑」的判据
 - `env.instance-identity` — CLI 复用已运行实例前**必须问对方是谁**：连端口发 `diy.getAppInfo`，比 `diyHome`（同一性判据 `core/instance-identity.ts::sameDataHome` = 写法归一 + 解符号链接）→ 不是本数据根就拒绝复用、另起自己的（实现 `src/cli/probe-instance.ts`，等待循环里同样校验）。`app.port` 只是端口缓存、可能陈旧到别人的实例上（##328(实例身份只靠端口) 的串台就是这样发生的）
 - `env.noLaunch` — `DIY_NO_LAUNCH=1` 禁止 CLI 自动拉起 app（测试专用，防实例逃逸）
-- `env.inject` — **入口自证，不继承**：`DIY_CLI` = 「跑的是谁」。各入口各声明自己（`diy.sh` → 自身；`bin/diy` → `$0`；`electron-dev.mts` → `<repo>/diy.sh`；`serve/index.ts` → 从自身位置找仓库根）。`main/index.ts` **只在未注入时**兜底自证（`||=`，按数据根推导：生产根 → `"diy"`，隔离 → `<repo>/diy.sh`）—— 无条件覆盖会误伤生产 GUI（把 `bin/diy` 注入的 `$0` 换成 `<repo>/diy.sh`）。`serve` 不 import main，故独立自证一次；它**无条件覆盖** `DIY_CLI`（没有上游入口为它声明，只能自证），与 main 的 `||=` 语义相反 —— 别照抄
+- `env.inject` — **入口自证，不继承**：`DIY_CLI` = 「跑的是谁」。各入口各声明自己（`diy.sh` → 自身；`bin/diy` → `$0`；`electron-dev.mts` → `<repo>/diy.sh`；`serve/index.ts` → 从自身位置找仓库根）。`main/index.ts` **只在未注入时**兜底自证（`||=`，按数据根推导：生产根 → `"diy"`，隔离 → `<repo>/diy.sh`）—— 无条件覆盖会误伤生产 GUI（把 `bin/diy` 注入的 `$0` 换成 `<repo>/diy.sh`）。`serve` 不 import main，故独立自证一次；它**无条件覆盖** `DIY_CLI`（没有上游入口为它声明，只能自证），与 main 的 `||=` 语义相反 —— 别照抄。**三处入口（`diy.sh` / `bin/diy` / `electron-dev.mts`）漏一处注入，提示词就退化成裸 `diy`（→ 打到生产）**
 - `env.self-declare` — **三件套 `DIY_HOME`/`DIY_CLI`/`DIY_ENV` 都自证，不继承**（开发入口）。继承的生产值（agent 会话常带 `DIY_HOME=~/.diy`、`DIY_CLI=<全局 diy>`、`DIY_ENV=production`）会：操作生产数据 / 让模型敲错的 CLI / 误关 dev 能力。数据根判据：`core/instance-identity.ts`（`prodDataHome` / `isProdDataHome` / `cliEntryForRepo`，**全仓唯一**；dev 侧再经 `core/dev-home.ts::resolveDevHome` 回落 `build/<variant>/home`）；`DIY_ALLOW_PROD_HOME=1` 放行。数据根：未设置或指向生产根 → `<repo>/build/<variant>/home`（**与静态产物同一个 variant 轴**；`serve` 缺省 variant=`prod`）；`DIY_ENV`：`production` → `development`。`serve` 直接跑也走同一套（它不 import main），数据根经 `core/dev-home.ts::resolveDevHome` —— 不要在入口里另写一套回落
 - `env.variant` — `DIY_VARIANT` = `prod|test|lab`，**产物/数据分根的唯一轴**：vite 配置据此定 `outDir=build/<variant>/*`，运行时据此选 `build/<variant>/main`，缺省 `prod`（`./diy.sh` 缺省 `lab`）。lab 一根、test 独占 `build/test/**` → 两者可并行、互不打断 watch。`preview` **已删除**（##381）：**共 5 处**遇 `DIY_VARIANT=preview` **直接报错退出**，绝不静默落到 `build/preview/**` —— 三处入口（`diy.sh` / `pkgs.ts/diy-app/sha.sh` / `scripts/electron-dev.mts`）+ 根 `sha.sh`（dispatch 前）+ `src/serve/index.ts`（算数据根前）
 
@@ -67,7 +67,6 @@
 - `rule.test-fixture` — **提速靠跨文件共享 fixture，不靠合并测试文件**：文件边界跟**语义**走（一文件 = 一个被考察对象 / 一组不变量），**禁止**为省启动开销把不相干的测试并进一个文件。开销从 fixture 侧省：**只读且与测试无关**的准备数据（golden / 模型快照 / 造好的任务库与会话文件）放 `tests/fixtures/`，多文件直接读同一份；**被测试写**的状态一律隔离（`rule.test-home` 的 per-file `mkdtemp`），**不许**为了复用改成共享 —— 串味后失败点会漂到别的文件。现根/各包 `vitest.config.ts` 均无 `globalSetup`；需要一次性准备时按需引入，但**只准写 tmpdir、不写仓库**
 - `rule.test-bail` — **撞红即停（`bail:1` 刻意保留），但回报必须说清范围**：根与各包 `vitest.config.ts` 全为 `bail:1` —— 早停省墙钟，代价是「后面的没跑」。交付口径写「跑到第一个失败文件为止：N files / M passed / 其余未跑」，**不许**把早停报成「全量通过」（判据 = 末行 `Test Files N failed (总数)`；拿不准就单跑那个失败文件）。历史：`##379` review2 里 `bail:1` 让 162 个文件只跑了 38 例。⚠️ 此前「交付口径改 `--bail=0`」的建议**已作废**（用户 2026-10-20 定：红就停，别再跑）
 - `rule.renderer-io` — renderer **永不直接写文件**，一律经 RPC（如 `diy.task.drafts.*`）
-- `rule.check` — 类型检查只准 `./sha.sh check`；**同一变体**的 `lab` 运行中勿并发 `tsc -b`/`vite build`/全量 vitest（抢同一 `outDir`，watcher 卡死）。跨变体（lab vs test）不抢——各写 `build/<variant>`
 - `rule.agents-chain` — AGENTS.md 链**上界到 `$HOME` 为止**（不进 `/`、`/Users`）；不在 `$HOME` 下时只取工作目录一层
 - `rule.budget` — 系统提示词预算 `clamp(模型上下文 × 4B × 5%, 16KB, 64KB)`；超限**拒发不截断**，且早退也必须闭合轮次（stop + noteTurnEnd + 审计）
 - `rule.golden` — 改内置模版（`src/main/prompts/defaults.ts`）**必须同步** `tests/fixtures/system.golden.txt`（当前内置模版的逐字节快照）。⚠️ `./sha.sh check` **不含 vitest**，不会替你抓到这类失效 —— 改完模版跑 `npx vitest run tests/core/template-dsl-golden.test.ts`
@@ -160,7 +159,7 @@
 
 ## tool — 验证与调试
 
-- `tool.check` — `./sha.sh check`（提交前唯一检查）· `./sha.sh test` 全仓 · `npx vitest run tests/core/…` 单测
+- `tool.verify` — 本包验证入口：`./sha.sh test`（全仓）· `npx vitest run tests/core/…`（单测）；`./sha.sh check` 的口径见仓根 `AGENTS.md::tool.check`
 - `tool.ui-verify` — **两层互补**：`diy.ui.*`（handler 层，CLI 经 RPC 直调 renderer 共享函数，测行为/契约，稳定但**测不到真实 DOM 事件链的 bug**）vs **Playwright/CDP 真实事件层**（`mouse.move/down/up` 驱动真实 renderer，抓 gesture bug —— UI 交互改动后必跑）
 - `tool.inspect` — `./diy.sh ui inspect` 遍历 renderer DOM 生成无障碍树，快速看 UI 全貌
 - `tool.cdp` — 取 CDP 地址：`cat "$DIY_HOME/electron_user_data/DevToolsActivePort"`（**读后校验**，见 `pit.cdp-port`）；`./sha.sh lab` 启动日志会打印完整 `attach` 命令

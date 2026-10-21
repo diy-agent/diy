@@ -24,12 +24,11 @@ entry.verify
 entry.risk
 entry.home-guard
 entry.seed
-entry.inject
 tool.fmt
 tool.test
 tool.model-import
 tool.cli
-tool.pkg
+tool.pkg-action
 tool.publish
 tool.sync
 tool.sync-gate
@@ -45,6 +44,7 @@ model.truth
 dev.lab-model
 dev.lab-scope
 tool.sha
+tool.pkg
 data.state
 data.port
 data.tasks
@@ -76,6 +76,7 @@ rule.user-run-merge
 rule.file-write
 rule.form-toggle
 rule.schema-source
+tool.verify
 tool.ui-verify
 tool.inspect
 tool.cdp
