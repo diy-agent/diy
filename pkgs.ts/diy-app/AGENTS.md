@@ -103,6 +103,9 @@
 - `pit.compact-triggers` — 自动压缩的三个触发（`systemContextChanged` / `cacheExpired` / `contextWindowOver`）**全是从现成数据可判定的确定事实**（零额外请求），**不含"划不划算"的预测** —— 后者是 ##230#25 明确放弃的评估；改动别把判据换成估算
 - `rule.schema-source` — 需自说明的结构（策略 / 投递注记 / 日志行）一律以 **zod 定义为唯一真源**：字段说明由 `src/shared/schema-doc.ts` 从 `.describe()` 派生，**禁止手写字段表**（手写 = 第二真源，改字段忘改注释就撒谎）；日志读侧校验走 `src/shared/context/log-schema.ts`（初版紧凑 / 扩展松散 / 缺必填即**异常数据**，不计入统计）
 
+- `tool.ui-priority` — **UI 类改动的打法：lab 优先、叫醒优先、CDP 末位**。顺序是 ① `./sha.sh lab` 起来自己点一遍（本 worktree 数据根，非生产）② 判据能写成纯函数的部分补单测（##329 R1 教训：UI 语义抽纯函数）③ 只有「真实事件链 / 手势」这类 handler 层测不出的，才上 Playwright/CDP，且**只跑 1~2 条**。**不要**为一行样式跑几十轮 CDP 逐像素猜 —— UI 的可观测性有硬上限（动画、时序、观感），越猜越慢。见 `dev.wake-user`（`~/AGENTS.md`）。
+- `tool.wake-gap` — **agent 主动叫醒用户：机制尚未闭环（2026-10-21 核实）**。现有三级提示（`src/shared/session-alerts.ts`）全是**旁观者推断**（跑完 / 停滞 / 异常 / 等回复），agents 没有「主动发起一条提示」的出口（`notice.*` RPC 只有模型不可用）。⇒ 当前唯一可行喊法：**在本轮最后一条消息里写清三句话 + 结束本轮**（会触发 L1「跑完了」）。需要 L0 横幅 / L1 图标闪烁 + 跳会话的能力，得另立项（记录于此，勿在任务里绕路造）。
+
 ## pit — 坑（反直觉，代码看不出来）
 
 - `pit.err-triage` — **已识别的外部不许标红**（当 bug 会让缺陷率失真、把用户训练成忽略红色）：HTTP 5xx / 请求超时**不进** `KNOWN_EXTERNAL`（上游有响应 = 网络通着，那是 ##369(模型不可用) 的服务端故障）；`InvariantError` 之外**拿不到码就如实判 unknown**，别为「看着严重」判 defect，也别给未知码编一个假 code 凑统计（`triageOf` 对未知码原样带回）。`invariant` 只表达**人为判据**，别拿它做用户输入校验（那是预期内的世界，属 external-*）。改 `LEGACY_THROW_BASELINE` 只能往下调；**别改成整文件豁免**（那会让该文件以后的新 throw 永远不被拦）。
