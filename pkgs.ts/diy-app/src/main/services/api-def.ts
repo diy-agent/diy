@@ -33,6 +33,8 @@ import { PersonaSchema } from "../../shared/persona";
 import { ModelCostSchema } from "../../shared/usage";
 // 「模型不可用」通知契约（纯 zod，renderer 同源；判据函数也在同文件，见 ##369）
 import { ModelUnavailableNoticeSchema } from "../../shared/model-unavailable";
+// 事实库契约（##404）：形状在 shared/facts.ts，语义校验在内核 @diy/facts
+import { EnvSchema, FactsAffectedSchema, FactsGetSchema, FactsStatusSchema, FactsSubmitSchema } from "../../shared/facts";
 // 「环境感知」通知契约（##384）：磁盘满 / 网断 —— 与 notice.* 同形不同源
 import { EnvNoticeSchema, EnvNoticeEventSchema } from "../../shared/env-watch";
 import {
@@ -2057,6 +2059,47 @@ export const apiDef = RpcSchema.router({
             desc: `种入最小可用数据：opencode-go 模型配置（$VAR 占位）+ 缺省人物（缺省模型：free 优先 → 退 ${FALLBACK_MODEL}）+ 示例项目与任务`,
             input: {},
             output: SeedReportSchema,
+          }),
+        },
+      }),
+
+      facts: RpcSchema.group({
+        desc: `项目级事实库（##404）：agent **只经这里读写事实，不碰 YAML 文件**（手改必错）。真源 knowledge/facts/*.yaml，判据在 @diy/facts`,
+        children: {
+          status: RpcSchema.unary({
+            desc: `事实库体检：条目 / claim / 词表计数 + 全部问题（与 ./sha.sh check 同一套判据，不会出现"CLI 绿、CI 红"）`,
+            input: {
+              dir: z.string().optional().cliOption({ desc: "knowledge 目录（缺省自动向上找）" }),
+            },
+            output: FactsStatusSchema,
+          }),
+          get: RpcSchema.unary({
+            desc: `按 claim（subject#aspect）取当前作用域下的值；多个 claim 用逗号分隔。悬空 / 冲突带错误码返回，**不当成"没找到"**`,
+            input: {
+              claim: z.string().cliArg({ placeholder: "<subject#aspect>", desc: "claim（多个用逗号分隔）" }),
+              env: EnvSchema.optional().cliOption({ desc: "作用域：环境（production|development|test）" }),
+              path: z.string().optional().cliOption({ desc: "作用域：代码路径（多个用逗号分隔，仓库相对）" }),
+              task: z.string().optional().cliOption({ desc: "作用域：任务 URI" }),
+              dir: z.string().optional().cliOption({ desc: "knowledge 目录（缺省自动向上找）" }),
+            },
+            output: FactsGetSchema,
+          }),
+          submit: RpcSchema.unary({
+            desc: `整批写入事实（**全过才写**：一条不过整批拒，磁盘不动）。载荷 JSON \`{ facts: [...], subjects?: [...] }\`（field 值为 - 读 stdin）；--dry-run 只回显差异`,
+            input: {
+              file: z.string().cliOption({ readFile: true, placeholder: "<file|->", desc: "载荷 JSON 文件（- = stdin）" }),
+              dryRun: z.boolean().optional().cliOption({ desc: "只算不写：回显将新增 / 修改什么" }),
+              dir: z.string().optional().cliOption({ desc: "knowledge 目录（缺省自动向上找）" }),
+            },
+            output: FactsSubmitSchema,
+          }),
+          affected: RpcSchema.unary({
+            desc: `影响面：哪些事实的 scope.paths 覆盖这些文件（动代码前先问一句，比读整份文档便宜）`,
+            input: {
+              files: z.string().cliOption({ placeholder: "<path,...>", desc: "文件路径（逗号分隔，仓库相对）" }),
+              dir: z.string().optional().cliOption({ desc: "knowledge 目录（缺省自动向上找）" }),
+            },
+            output: FactsAffectedSchema,
           }),
         },
       }),

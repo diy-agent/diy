@@ -1,0 +1,15 @@
+# knowledge/facts/facts.yaml
+
+# 生成物式的真源：整篇由 `diy facts submit` 写入（字段顺序、条目排序都由程序定）。
+domain: facts
+facts:
+  - id: facts.cli
+    subject: facts.cli
+    aspect: entry
+    value: diy facts status · get <claim> [--env] · submit --file <json|-> [--dry-run] · affected --files a,b —— **agent 只走 CLI，不碰 YAML**（整批事务：一条不过整批拒）
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: scripts/facts-index.mts:1
+      verifiedAt: '2026-10-21'

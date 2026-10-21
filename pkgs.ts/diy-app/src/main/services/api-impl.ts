@@ -23,6 +23,7 @@ import { currentGitBranch, homeDisplayOf, repoDisplayOf } from "../core/instance
 import { readRuntimeConfig } from "../../runtime";
 import * as health from "./health";
 import { apiDef } from "./api-def";
+import * as factsStore from "./facts-store";
 import { TaskDetailSchema } from "../../shared/task-detail";
 import { noteRendererTouch } from "./runtime-context";
 import type { ToolResultMode } from "../../shared/context/compaction";
@@ -1405,6 +1406,24 @@ export function bindAppHandlers(binding: ServerBinding): void {
       .finally(() => queue.close());
     for await (const frame of queue) yield JSON.stringify(frame);
   });
+
+  // ── facts（##404：项目级事实库；agent 只经 RPC 读写，不碰 YAML）──
+  binding.on(app.facts.status, async ({ input }) => factsStore.status(input.dir));
+  binding.on(app.facts.get, async ({ input }) =>
+    factsStore.get(factsStore.splitList(input.claim), {
+      ...(input.dir === undefined ? {} : { dir: input.dir }),
+      ...(input.env === undefined ? {} : { env: input.env }),
+      ...(input.path === undefined ? {} : { paths: factsStore.splitList(input.path) }),
+      ...(input.task === undefined ? {} : { task: input.task }),
+    }),
+  );
+  binding.on(app.facts.submit, async ({ input }) =>
+    factsStore.submitPayload(factsStore.parseSubmitPayload(input.file), {
+      ...(input.dir === undefined ? {} : { dir: input.dir }),
+      dryRun: input.dryRun === true,
+    }),
+  );
+  binding.on(app.facts.affected, async ({ input }) => factsStore.affectedByFiles(factsStore.splitList(input.files), input.dir));
 
   // ── seed ──
   binding.on(app.seed.run, async () => {

@@ -1,4 +1,6 @@
 # knowledge/facts/model.yaml — 模型选择
+
+# 生成物式的真源：整篇由 `diy facts submit` 写入（字段顺序、条目排序都由程序定）。
 domain: model
 facts:
   - id: model.fallback
@@ -10,16 +12,14 @@ facts:
     evidence:
       source: code
       at: pkgs.ts/diy-app/src/shared/model-default.ts:15
-      verifiedAt: 2026-10-21
-
-  # 免费候选**上架/下架频繁**：名单本身易变，真源是常量；这里的 verifiedAt 只表示「人对过一遍」
+      verifiedAt: '2026-10-21'
   - id: model.free
     subject: model.default
     aspect: free-candidates
-    value: 'beam-free · longcat-2.5-preview-free（须流式 + 工具都通才算可用）'
+    value: beam-free · longcat-2.5-preview-free（须流式 + 工具都通才算可用）
     review: accepted
     lifecycle: active
     evidence:
       source: code
       at: pkgs.ts/diy-app/src/shared/model-default.ts:22
-      verifiedAt: 2026-10-17
+      verifiedAt: '2026-10-17'

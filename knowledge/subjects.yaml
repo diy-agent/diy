@@ -1,34 +1,52 @@
 # knowledge/subjects.yaml — subject 受控词表（##404）
 #
-# **新增 subject 必须先登记到这里**（`facts-index` 会拦未登记项）：图的关系有效性完全
-# 取决于主语规范化 —— 若 `端口` / `port` / `app.port` 混用，边立刻退化成噪声。
+# **新增 subject 必须走 `diy facts submit` 的 subjects 载荷**（会与本批事实同一事务校验）：
+# 图的关系有效性完全取决于主语规范化 —— 若 `端口` / `port` / `app.port` 混用，边立刻退化成噪声。
 # 别名只解决**命名归一**（人读），不进图（`same-as` 才是实体等价，别混用）。
 #
-# 字段：
-#   description —— 一句话说清这个对象是什么（必填）
-#   aliases     —— 人可能用的别名（选填；只做提示，不参与匹配）
+# 字段：description（必填，一句话说清这个对象）· aliases（选填，只做提示，不参与匹配）
 subjects:
   app.port:
     description: 应用实例的监听端口
-    aliases: [监听端口, 端口缺省]
-  env.variant:
-    description: 产物/数据分根用的变体（决定 build/<v> 与 build/<v>/home）
-    aliases: [变体, DIY_VARIANT]
-  env.diy-env:
-    description: 运行环境（决定能力开关与缺省行为）
-    aliases: [环境, DIY_ENV]
-  model.default:
-    description: 未指定模型时的缺省选择规则
-    aliases: [缺省模型]
+    aliases:
+      - 监听端口
+      - 端口缺省
   dev.check:
     description: 提交前唯一检查入口
-    aliases: [check]
-  dev.test:
-    description: 测试入口与测试纪律
-    aliases: [测试]
+    aliases:
+      - check
   dev.commit:
     description: 提交的硬性要求
-    aliases: [commit]
+    aliases:
+      - commit
+  dev.setup:
+    description: 开工前的环境准备（worktree / 依赖 / 任务文件写入规矩）
+  dev.test:
+    description: 测试入口与测试纪律
+    aliases:
+      - 测试
   dev.worktree:
     description: worktree 的落地位置
-    aliases: [worktree]
+    aliases:
+      - worktree
+  env.diy-env:
+    description: 运行环境（决定能力开关与缺省行为）
+    aliases:
+      - 环境
+      - DIY_ENV
+  env.switch:
+    description: 环境变量开关（README 里最容易漏写的一档）
+    aliases:
+      - 开关
+      - 环境变量
+  env.variant:
+    description: 产物/数据分根用的变体（决定 build/<v> 与 build/<v>/home）
+    aliases:
+      - 变体
+      - DIY_VARIANT
+  facts.cli:
+    description: 事实库的写入口本身（agent 只经 CLI，不碰 YAML）
+  model.default:
+    description: 未指定模型时的缺省选择规则
+    aliases:
+      - 缺省模型

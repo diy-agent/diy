@@ -1,60 +1,79 @@
 # knowledge/facts/dev.yaml — 开发流程纪律（判据 / 入口 / 硬要求）
+
+# 生成物式的真源：整篇由 `diy facts submit` 写入（字段顺序、条目排序都由程序定）。
 domain: dev
 facts:
   - id: dev.check
     subject: dev.check
     aspect: entry
-    value: './sha.sh check = tsc -b 全仓 + oxlint + rpc 浏览器安全 + 产物/可执行位/原子写/异常码/规范索引 五道护栏'
+    value: ./sha.sh check = tsc -b 全仓 + oxlint + rpc 浏览器安全 + 产物/可执行位/原子写/异常码/规范索引 五道护栏
     review: accepted
     lifecycle: active
     evidence:
       source: code
       at: sha.sh:165
-      verifiedAt: 2026-10-21
-
-  - id: dev.test
-    subject: dev.test
-    aspect: entry
-    value: './sha.sh test-unit 快测（不起 Electron）· diy-app 意图测试 pkgs.ts/diy-app/sha.sh test-intent [片段]'
-    review: accepted
-    lifecycle: active
-    evidence:
-      source: code
-      at: sha.sh:89
-      verifiedAt: 2026-10-21
-
-  # 路径型事实：只在动到测试目录时召回（常驻上下文里一条都不用留）
-  - id: dev.test-bail
-    subject: dev.test
-    aspect: bail
-    value: '红灯即停；回报如实写「跑到第一个失败为止：N files / M passed / 其余未跑」，不许报成全量通过'
-    scope:
-      paths: [pkgs.ts/diy-app/tests, pkgs.ts/diy-facts/tests]
-    review: accepted
-    lifecycle: active
-    evidence:
-      source: user
-      at: ~/AGENTS.md:68
-      verifiedAt: 2026-10-21
-
+      verifiedAt: '2026-10-21'
   - id: dev.commit-sign
     subject: dev.commit
     aspect: signing
-    value: '所有 git 操作必须 GPG 签名，失败即停并求助，禁 --no-gpg-sign'
+    value: 所有 git 操作必须 GPG 签名，失败即停并求助，禁 --no-gpg-sign
     review: accepted
     lifecycle: active
     evidence:
       source: user
       at: ~/git/diy/AGENTS.md:25
-      verifiedAt: 2026-10-21
-
+      verifiedAt: '2026-10-21'
+  - id: dev.sync
+    subject: dev.setup
+    aspect: sync
+    value: 新 worktree 先 ./sha.sh sync（npm i --workspaces --include-workspace-root + 子模块 + 各包 sync）；只跑 --workspaces 会漏装根依赖，干净 worktree 上必现 build 解析失败
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/git/diy/diy/AGENTS.md:60
+      verifiedAt: '2026-10-21'
+  - id: dev.task-write
+    subject: dev.setup
+    aspect: task-write
+    value: 任务文件头是权威：读侧 task show 给的就是 frontmatter；--body 只收内联正文（值形如单行路径即拒），整篇文件走 --body-file / 追加走 --append-body-file
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/git/diy/diy/AGENTS.md:75
+      verifiedAt: '2026-10-21'
+  - id: dev.test-bail
+    subject: dev.test
+    aspect: bail
+    value: 红灯即停；回报如实写「跑到第一个失败为止：N files / M passed / 其余未跑」，不许报成全量通过
+    scope:
+      paths:
+        - pkgs.ts/diy-app/tests
+        - pkgs.ts/diy-facts/tests
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:68
+      verifiedAt: '2026-10-21'
+  - id: dev.test
+    subject: dev.test
+    aspect: entry
+    value: ./sha.sh test-unit 快测（不起 Electron）· diy-app 意图测试 pkgs.ts/diy-app/sha.sh test-intent [片段]
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: sha.sh:89
+      verifiedAt: '2026-10-21'
   - id: dev.worktree
     subject: dev.worktree
     aspect: location
-    value: '放仓库外、原项目同级：<原项目>.worktrees/<标识>（禁放仓库内部）'
+    value: 放仓库外、原项目同级：<原项目>.worktrees/<标识>（禁放仓库内部）
     review: accepted
     lifecycle: active
     evidence:
       source: user
       at: ~/git/AGENTS.md:17
-      verifiedAt: 2026-10-21
+      verifiedAt: '2026-10-21'
