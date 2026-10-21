@@ -47,6 +47,7 @@ import { dateOfLogFile, pickStepTraffic, type TrafficStepRecord } from "../../sh
 import { trafficStore } from "../store/trafficStore";
 import { TrafficDrawer } from "./TrafficDrawer";
 import { getRendererActions } from "../lib/renderer-actions";
+import { LayoutAreaToggles } from "./LayoutAreaToggles";
 
 const PAGE = "ctxlab";
 
@@ -1378,8 +1379,9 @@ export function ContextLabPage(props: { uri: string }) {
                     ⟳ 刷新
                 </button>
                 <span class="opacity-60">{lab()?.source ?? "加载中…"}</span>
+                <div class="flex-1" />
                 <Show when={selected()}>
-                    <span class="ml-auto flex items-center gap-1">
+                    <span class="flex items-center gap-1">
                         <span class="opacity-60">选中</span>
                         <span class="badge badge-sm font-mono">{selected()}</span>
                         <button class="btn btn-ghost btn-xs px-1" title="取消选中" onClick={() => setSelected(null)}>
@@ -1387,6 +1389,12 @@ export function ContextLabPage(props: { uri: string }) {
                         </button>
                     </span>
                 </Show>
+                {/* 区域开合（2026-10-21 补）：`ViewGrid` 的 area 右上角**最小化是单向动作**，
+                    恢复入口只有这一组按钮 —— 本页此前漏接，最小化任一区域后 UI 上再也开不回来
+                    （用户：「有最小化 view 的按钮，但没有恢复按钮」）。 */}
+                <div class="flex items-center gap-1">
+                    <LayoutAreaToggles page={page} ctx={props.uri} />
+                </div>
             </div>
 
             <div class="min-h-0 flex-1">
