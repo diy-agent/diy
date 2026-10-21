@@ -261,7 +261,14 @@ export interface LocalAgentLimits {
     maxSteps: number;
     /** 单次模型请求输出上限（推理模型 reasoning 先吃预算） */
     maxOutputTokens: number;
-    /** 单条 bash 命令超时 */
+    /**
+     * 单条 bash 命令超时（缺省 300s = 5 分钟）。
+     *
+     * 曾经的 30s 是**反被利用**的：全量单测 / 构建这类命令本来就跑不完，必然被杀 ⇒
+     * agent 学会 `nohup … &` + `sleep N` 轮询，一次工作被切成十几步、每步还要重发整个上下文
+     * （##402 实测：87 分钟里约 20 分钟是 sleep 空转、18 次被超时杀）。宁给足时间，
+     * 也不要把「等」变成「轮询」—— 长任务的正式解法见 ##401（异步事件激活）。
+     */
     bashTimeoutMs: number;
     /** bash 输出回喂模型/展示的截断长度（字符） */
     outputClipChars: number;
@@ -280,7 +287,7 @@ export interface LocalAgentLimits {
 export const DEFAULT_LIMITS: LocalAgentLimits = {
     maxSteps: 200,
     maxOutputTokens: 4000,
-    bashTimeoutMs: 30_000,
+    bashTimeoutMs: 300_000,
     outputClipChars: 6000,
     readMaxBytes: READ_MAX_BYTES,
     maxSteerQueue: 1000,
@@ -1046,6 +1053,12 @@ type BashExecError = { name?: string; code?: string | number | null; killed?: bo
  * 已先给直接子进程发过 SIGTERM；我们补的是"连子孙一起、且不给商量"）。
  * ESRCH（组已空）/ EPERM 都无害 —— 想杀的都已经不在了。
  */
+/** 超时时长的人读文案：整秒不带小数、否则保留一位（400ms → 0.4s） */
+function fmtTimeout(ms: number): string {
+    const s = ms / 1000;
+    return `${Number.isInteger(s) ? s : s.toFixed(1)}s`;
+}
+
 function killProcessGroup(child: ChildProcess): void {
     if (child.pid == null) return;
     // ⚠️ 已收尸就不再动它：pid 是**可复用**的，此时 `-pid` 可能指向一个毫不相干的进程组
@@ -1059,7 +1072,7 @@ function killProcessGroup(child: ChildProcess): void {
 }
 
 /**
- * bash：30s 超时；**命令跑起来了**的失败以文本回喂模型（错误是一等信息，不抛），
+ * bash：300s（5 分钟）超时；**命令跑起来了**的失败以文本回喂模型（错误是一等信息，不抛），
  * **命令没跑起来**的（spawn / IO 失败）则抛。
  *
  * ── ##353 复议（##332 ① 档）：「非零退出」不再一律当数据 ──
@@ -1111,7 +1124,12 @@ function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?
                     text: `[输出超过 ${fmtBytes(BASH_MAX_BUFFER_BYTES)} 上限，命令已终止；以下是已收到的部分]\n${out}`,
                     failed: false,
                 });
-            else if (err?.killed) resolve({ text: `[命令超时被杀]\n${out}`, failed: false });
+            else if (err?.killed)
+                // 带上时长与出路：模型看到「30s 被杀」才会去 nohup / 分批，只写「超时」它会原样重试
+                resolve({
+                    text: `[命令超时被杀]（超过 ${fmtTimeout(limits.bashTimeoutMs)}，可用 DIY_LOCAL_BASH_TIMEOUT_MS 调整；长任务请后台跑 + 取增量日志）\n${out}`,
+                    failed: false,
+                });
             else if (typeof err?.code === "number")
                 // 命令级非零退出（##353）：有 stderr = 失败，无 stderr = 查询未命中（数据）
                 resolve({ text: `[退出码 ${err.code}]\n${out || "(无输出)"}`, failed: stderr.trim().length > 0 });
