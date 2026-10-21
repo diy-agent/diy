@@ -12,7 +12,7 @@
 //   · 密钥由人输入：输入框只给**占位提示**（env[0]），不预填 `$VAR`
 //   · 提供 [测试] 按钮（拉 /models 验连通 + 拿清单）
 //   · custom 模型不支持「覆盖」models.dev 参数（全球共用），故无覆盖列
-import { For, Index, Show, createMemo, createSignal, onMount } from "solid-js";
+import { For, Index, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import type {
   Account,
   CalendarChoice,
@@ -33,7 +33,10 @@ import { addUtcRangeTier, editCost, patchUtcRange, removeTier, setBaseLabel, set
 import { diyService } from "../lib/rpc";
 import { EnvImportBar, type EnvScanScope } from "./EnvImportBar";
 import { notificationStore } from "../store/notificationStore";
+import { modelNoticeStore } from "../store/modelNoticeStore";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { ANCHOR_MODEL_PICK, remedyOf, type Remedy } from "../../shared/error-remedy";
+import { MODEL_UNAVAILABLE_KIND_LABEL } from "../../shared/model-unavailable";
 
 type FilterMode = "all" | "include" | "exclude";
 
@@ -63,7 +66,30 @@ const COST_FIELDS: { key: CostField; ph: string; label: string }[] = [
   { key: "cache_write", ph: "写", label: "缓存写 $/1M（可选）" },
 ];
 
-export function ModelConfigPage() {
+/**
+ * 定位高亮的两个阶段（##407）：
+ *   · `flash` —— 刚跳过来：粗描边 + 脉冲 + 「👉 改这里」角标（用户原话「引导箭头标注」）；
+ *   · `rest`  —— 4s 后自动降级：细描边，仍在原位（**不锁死**，用户能正常点这个卡片）。
+ * 写在元素属性上（而不是 Solid 响应式状态）是因为目标是**任意 DOM 节点**（卡片由子组件渲染）。
+ */
+const FOCUS_FLASH_MS = 4000;
+const FOCUS_ATTR = "data-focus-phase";
+
+/** 按锚点找目标：**只按属性值比较**，不拼选择器（provider 名里可能有 `.` / `:` 之类） */
+function findByAnchor(anchor: string): HTMLElement | null {
+  for (const el of document.querySelectorAll<HTMLElement>("[data-focus-target]")) {
+    if (el.dataset.focusTarget === anchor) return el;
+  }
+  return null;
+}
+
+export function ModelConfigPage(props: {
+  /**
+   * 从提示跳过来的修复引导（##407）：`remedy` = 判据给出的目标 + 自足文案，`nonce` = 每次点击不同。
+   * 缺省 = 用户自己点进来的（不引导、不高亮）。
+   */
+  focus?: { remedy: Remedy; nonce: number } | null;
+} = {}) {
   const [loading, setLoading] = createSignal(true);
   const [saving, setSaving] = createSignal(false);
   const [dirty, setDirty] = createSignal(false);
@@ -81,6 +107,62 @@ export function ModelConfigPage() {
   const [envDismissed, setEnvDismissed] = createSignal(false);
   /** 待确认移除的 provider（null = 无弹窗）。用应用内 ConfirmDialog，不用原生 confirm（见其头注释） */
   const [pendingRemove, setPendingRemove] = createSignal<{ kind: "std" | "custom"; key: string } | null>(null);
+  /** 引导卡是否被用户关掉（换一条新引导时重新打开） */
+  const [guideOff, setGuideOff] = createSignal(false);
+  /** 当前要显示的引导（`remedy` 存在且没被收起才算） */
+  const guide = (): Remedy | null => (props.focus?.remedy && !guideOff() ? props.focus.remedy : null);
+
+  // ── 定位高亮（##407）：滚动到锚点 + flash 4s → rest ─────────────────
+  // 页面刚挂载时数据还没到（loading），目标元素可能还不存在 ⇒ 有限次重试（最多 ~2s）。
+  let focusTimer: ReturnType<typeof setTimeout> | undefined;
+  let focusTries = 0;
+  let focusedEl: HTMLElement | null = null;
+  const clearFocus = () => {
+    if (focusTimer !== undefined) clearTimeout(focusTimer);
+    focusTimer = undefined;
+    focusedEl?.removeAttribute(FOCUS_ATTR);
+    focusedEl = null;
+  };
+  /**
+   * 滚到目标（**幂等重试**）：刚切到本页时卡片还在加载，第一次 scrollIntoView 常常落空
+   * （容器内容还没长出来）；数据到了内容变高，位置又变了。故反复校正到真的在视口内为止。
+   * 首次用 smooth（看得见"跳过去"的过程），后续用 auto（不来回晃）。
+   */
+  const ensureVisible = (el: HTMLElement, tries = 0) => {
+    if (!el.isConnected) return;
+    const r = el.getBoundingClientRect();
+    if (r.top >= 0 && r.bottom <= window.innerHeight) return;
+    el.scrollIntoView({ block: "center", behavior: tries === 0 ? "smooth" : "auto" });
+    if (tries < 10) setTimeout(() => ensureVisible(el, tries + 1), 120);
+  };
+  const applyFocus = (anchor: string) => {
+    clearFocus();
+    focusTries = 0;
+    const tick = () => {
+      const el = findByAnchor(anchor);
+      if (!el) {
+        if (focusTries++ < 40) setTimeout(tick, 50);
+        return;
+      }
+      focusedEl = el;
+      el.setAttribute(FOCUS_ATTR, "flash");
+      ensureVisible(el);
+      focusTimer = setTimeout(() => {
+        // 不锁死：4s 后降为静态细描边，卡片照常可点
+        if (el.isConnected) el.setAttribute(FOCUS_ATTR, "rest");
+      }, FOCUS_FLASH_MS);
+    };
+    tick();
+  };
+  createEffect(() => {
+    const f = props.focus;
+    const nonce = f?.nonce ?? 0;
+    void nonce; // 显式读：同一条引导再点一次也要重新闪
+    if (!f) return;
+    setGuideOff(false);
+    applyFocus(f.remedy.target.anchor);
+  });
+  onCleanup(clearFocus);
 
   const reload = async () => {
     try {
@@ -249,6 +331,74 @@ export function ModelConfigPage() {
           </button>
         </div>
       </div>
+      {/* ##407 修复引导卡：**自足**（改哪个字段 / 填什么 / 为什么不能自动改），
+          纯静态文本 —— 不调用任何模型、不依赖网络（此刻 LLM 已经不可用）。
+          同时它是 `models-pick` 锚点：没有具体 provider 时，引导就把人带到这里。 */}
+      <Show when={guide()}>
+        {(r) => (
+          <div
+            class="rounded-box border-2 border-primary bg-primary/5 p-3 space-y-1"
+            data-remedy-guide
+            data-focus-target={ANCHOR_MODEL_PICK}
+            data-remedy-anchor={r().target.anchor}
+          >
+            <div class="flex items-center gap-2">
+              <span class="text-title font-bold">🛠 修复引导：{r().label}</span>
+              <button class="btn btn-ghost btn-xs ml-auto" title="收起引导（不改变任何配置）" onClick={() => setGuideOff(true)}>
+                ✕
+              </button>
+            </div>
+            <div class="whitespace-pre-wrap text-body leading-relaxed" data-remedy-guide-hint>
+              {r().hint}
+            </div>
+            <div class="text-xs opacity-60">
+              这条引导是**静态**的：不调用模型、断网可用；关掉顶栏提示后仍可从本页「最近的模型不可用提示」找回。
+            </div>
+          </div>
+        )}
+      </Show>
+
+      {/* ##407 可回看：顶栏提示关掉后，这里是同一批事实的去处（全局通知信箱尚未实现，见 tool.wake-gap）。 */}
+      <Show when={modelNoticeStore.history.length > 0}>
+        <div class="card border bg-base-100 p-3 space-y-1" data-notice-history>
+          <div class="flex items-center gap-2">
+            <span class="text-title font-semibold">🕘 最近的模型不可用提示</span>
+            <span class="text-xs opacity-50">（关掉顶栏提示后仍可回看；点「🛠」跳回该改的地方）</span>
+          </div>
+          <For each={modelNoticeStore.history.slice().reverse()}>
+            {(n) => {
+              const r = remedyOf({
+                reason: n.reason,
+                ctx: { kind: n.kind, provider: n.provider, model: n.model, httpStatus: n.statusCode },
+              });
+              return (
+                <div class="flex items-center gap-2 text-xs" data-notice-history-item data-notice-id={n.id}>
+                  <span class="opacity-60 font-mono">{new Date(n.ts).toLocaleTimeString()}</span>
+                  <span class="badge badge-sm badge-error">{MODEL_UNAVAILABLE_KIND_LABEL[n.kind]}</span>
+                  <code class="font-mono">{n.model}</code>
+                  <span class="opacity-60">人物 {n.personaName}</span>
+                  <Show when={r}>
+                    {(rr) => (
+                      <button
+                        class="btn btn-xs btn-primary ml-auto"
+                        data-notice-history-goto
+                        data-remedy-anchor={rr().target.anchor}
+                        onClick={() => {
+                          setGuideOff(false);
+                          applyFocus(rr().target.anchor);
+                        }}
+                      >
+                        🛠 {rr().label}
+                      </button>
+                    )}
+                  </Show>
+                </div>
+              );
+            }}
+          </For>
+        </div>
+      </Show>
+
       <div class="text-body opacity-60 text-xs">
         密钥支持 <code>$ENV</code> 插值（未定义会报错）；模型清单来自 models.dev snapshot（models.dev
         provider）或 providers.custom.yaml（自定义）。勾选即启用/隐藏，逐卡片「保存」落盘。
@@ -504,7 +654,7 @@ function StdCard(props: {
   };
 
   return (
-    <div class="card border bg-base-100 p-3 space-y-2 mt-2">
+    <div class="card border bg-base-100 p-3 space-y-2 mt-2" data-focus-target={`provider-std-${props.card.key}`}>
       <div class="flex items-center gap-2 flex-wrap">
         <span class="font-semibold">{props.card.key}</span>
         <code class="text-xs opacity-60">{props.card.key}</code>
@@ -739,7 +889,7 @@ function CustomCard(props: {
   };
 
   return (
-    <div class="card border bg-base-100 p-3 space-y-2 mt-2">
+    <div class="card border bg-base-100 p-3 space-y-2 mt-2" data-focus-target={`provider-custom-${props.card.key}`}>
       <div class="flex items-center gap-2 flex-wrap">
         <span class="font-semibold">{props.card.key}</span>
         <code class="text-xs opacity-60">custom:{props.card.key}</code>

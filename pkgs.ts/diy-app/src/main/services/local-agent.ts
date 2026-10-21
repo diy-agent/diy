@@ -1423,12 +1423,14 @@ function personaDisplayName(id: string): string {
  * 都是"一条错误块"，故两处都要过这个函数 —— 只在 catch 里做会漏掉最常见的那条
  * （实测 `[model_coming_soon]` 走的是流内 error part）。
  */
-function reportModelUnavailable(e: unknown, taskUri: string, personaId: string, model: string): void {
+function reportModelUnavailable(e: unknown, taskUri: string, personaId: string, model: string, provider: string): void {
     const n = noticeFromError(e, {
         taskUri,
         personaId,
         personaName: personaDisplayName(personaId),
         model,
+        // provider 段是 ##407 修复引导的定位依据（「去配 key」得知道去哪张卡上配）
+        provider,
     });
     if (n) modelNoticeHub.push(n);
 }
@@ -3064,6 +3066,8 @@ export class LocalAgentManager {
                     personaId: persona.id,
                     personaName: personaDisplayName(persona.id),
                     model,
+                    // 装配期就失败（模型 id 不在清单里 / 人物没配模型）⇒ 拿不到 provider
+                    provider: "",
                 }),
             );
             throw e;
@@ -4294,7 +4298,7 @@ export class LocalAgentManager {
                             const err = (part as { error?: unknown }).error;
                             const msg = errText(err);
                             // 模型不可用的**主路径**（实测：`[model_coming_soon]` 从这里来，不走 catch）
-                            reportModelUnavailable(err, taskUri, identity.persona, model);
+                            reportModelUnavailable(err, taskUri, identity.persona, model, rm.provider);
                             // 环境感知（##384）：网络层失败按**轮次**计连败（ENOTFOUND / ETIMEDOUT / …），
                             // 连续 N 次 → 顶栏「网络不可达」红条。上游 5xx 不算（那是服务端故障，网络通着）。
                             networkStreak.fail(err);
@@ -4447,7 +4451,7 @@ export class LocalAgentManager {
                     // 只挑四类（模型未上架 / id 不认识 / 认证失败 / 配额），**上游 5xx 与网络超时不算**
                     // —— 那两类混进来会让 bar 天天亮（告警疲劳），且动作完全不同（该等，不是该配模型）。
                     // 这里只**产生一条事实**给顶栏 bar，不阻断流程：轮次照旧收尾、会话照旧留 error 块。
-                    reportModelUnavailable(e, taskUri, identity.persona, model);
+                    reportModelUnavailable(e, taskUri, identity.persona, model, rm.provider);
                     // 环境感知（##384）：网络层失败连败计数（判据在 shared/env-watch 纯函数）
                     networkStreak.fail(e);
                     setEndReason({ type: "error", data: { source: "stream", message: msg } });

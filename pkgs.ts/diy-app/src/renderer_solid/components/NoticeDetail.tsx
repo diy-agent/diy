@@ -14,6 +14,7 @@
  */
 import { createSignal, For, Show } from "solid-js";
 import { noticeCopyText, NOTICE_FIELDS, NOTICE_FIELD_LABEL, type NoticeMeta } from "../lib/notice";
+import type { Remedy } from "../../shared/error-remedy";
 
 export function NoticeDetail(props: {
     meta: NoticeMeta;
@@ -23,9 +24,18 @@ export function NoticeDetail(props: {
     when?: number;
     /** 按钮文案（缺省「详情」；常驻条用它写「详情」即可） */
     label?: string;
+    /**
+     * 修复动作（##407）：**有才出现**「去修复」入口，null/缺省 = 不显示。
+     * 判据归 `shared/error-remedy.ts`（表驱动、纯函数）—— 这里只渲染，不猜该修什么。
+     */
+    remedy?: Remedy | null;
+    /** 点「去修复」/引导卡里的按钮：把目标交给壳层去导航（本组件不认识路由） */
+    onRemedy?: (remedy: Remedy) => void;
 }) {
     const [open, setOpen] = createSignal(false);
     const [copied, setCopied] = createSignal(false);
+    /** 可点的修复入口（有 remedy 且有人接导航才算；缺任一条 = 不显示，不造假入口） */
+    const activeRemedy = (): Remedy | null => (props.remedy && props.onRemedy ? props.remedy : null);
 
     const copy = async () => {
         try {
@@ -40,6 +50,21 @@ export function NoticeDetail(props: {
 
     return (
         <div class="relative shrink-0" data-notice-detail>
+            {/* ##407：修复入口放在**一级**（不必先展开详情）—— 模型挂掉时用户需要的是
+                「我该点哪里」，点两下才看到他就不点了。没有映射（remedy = null）就**不出现**按钮。 */}
+            <Show when={activeRemedy()}>
+                {(r) => (
+                    <button
+                        class="btn btn-xs btn-primary mr-1"
+                        data-notice-remedy="1"
+                        data-remedy-anchor={r().target.anchor}
+                        title={`${r().label}：跳过去并高亮该字段（纯静态引导，不调用模型）`}
+                        onClick={() => props.onRemedy?.(r())}
+                    >
+                        🛠 {r().label}
+                    </button>
+                )}
+            </Show>
             <button
                 class="btn btn-ghost btn-xs"
                 data-notice-detail-toggle="1"
@@ -67,6 +92,28 @@ export function NoticeDetail(props: {
                         <div class="mb-2 rounded-field bg-base-200 px-2 py-1 font-mono text-[11px] opacity-80">
                             {props.message}
                         </div>
+                    </Show>
+                    {/* ##407：引导卡**自足**（改哪个字段 / 填什么 / 为什么不能自动改），
+                        纯静态文本，断网也可用 —— 它不请求任何模型，也不依赖详情面板之外的状态。 */}
+                    <Show when={props.remedy}>
+                        {(r) => (
+                            <div class="mb-3 rounded-field border border-primary/40 bg-primary/5 p-2" data-notice-remedy-card="1">
+                                <div class="mb-1 flex items-center gap-2 font-semibold">
+                                    <span>🛠 怎么修</span>
+                                    <Show when={props.onRemedy}>
+                                        <button
+                                            class="btn btn-xs btn-primary ml-auto"
+                                            data-notice-remedy-card-goto="1"
+                                            data-remedy-anchor={r().target.anchor}
+                                            onClick={() => props.onRemedy?.(r())}
+                                        >
+                                            {r().label} →
+                                        </button>
+                                    </Show>
+                                </div>
+                                <div class="whitespace-pre-wrap leading-relaxed opacity-90">{r().hint}</div>
+                            </div>
+                        )}
                     </Show>
                     <For each={NOTICE_FIELDS}>
                         {(f) => (
