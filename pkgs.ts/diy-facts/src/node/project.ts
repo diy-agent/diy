@@ -49,6 +49,13 @@ export interface ProjectItem {
     readonly resolvedBy: string;
     /** 同 claim 的可读变体总数（>1 表示还有别的值存在） */
     readonly variants: number;
+    /**
+     * 最近一次验证日期（`evidence.verifiedAt`；空串 = 没记）。
+     * **只参与排序、不进投影文本**：预算裁剪时「最近验证过的」先留下 ——
+     * 否则被裁的是 gid 字母序靠后的，而 agent 刚写完的事实往往正排在后面
+     * （实测：写完 5 条 `kb.*`，下一轮投影里一条都看不到，omitted 51→56）。
+     */
+    readonly verifiedAt: string;
 }
 
 export interface ProjectProblem {
@@ -112,11 +119,27 @@ export function projectItems(input: ProjectInput): {
                 continue;
             }
             const variants = facts.filter((f) => claimOf(f) === claim && isReadable(f, includeProposed)).length;
-            items.push({ gid, claim, ns, value: r.value.value, resolvedBy: scopeKey(r.value.scope), variants });
+            items.push({
+                gid,
+                claim,
+                ns,
+                value: r.value.value,
+                resolvedBy: scopeKey(r.value.scope),
+                variants,
+                verifiedAt: r.value.evidence.verifiedAt ?? '',
+            });
         }
     }
 
-    items.sort((a, b) => nsRank(a.ns) - nsRank(b.ns) || a.gid.localeCompare(b.gid));
+    // 排序 = **保留优先级**（`project()` 从尾部裁）：ns 粗排（task > project > global），
+    // 同 ns 内「最近验证的在前」—— 没记 `verifiedAt` 的按空串算最旧。
+    // 为什么不只按 gid：字母序与重要性无关，会把刚写完的事实裁掉（见 ProjectItem.verifiedAt）。
+    items.sort(
+        (a, b) =>
+            nsRank(a.ns) - nsRank(b.ns) ||
+            (a.verifiedAt === b.verifiedAt ? 0 : a.verifiedAt < b.verifiedAt ? 1 : -1) ||
+            a.gid.localeCompare(b.gid),
+    );
     return { items, skipped, problems };
 }
 

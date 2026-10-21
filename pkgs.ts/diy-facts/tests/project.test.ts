@@ -10,6 +10,7 @@ function f(p: {
     env?: 'production' | 'development' | 'test';
     review?: 'proposed' | 'accepted' | 'rejected';
     lifecycle?: 'active' | 'superseded' | 'expired';
+    verifiedAt?: string;
 }): Fact {
     return {
         id: p.id,
@@ -19,7 +20,7 @@ function f(p: {
         ...(p.env === undefined ? {} : { scope: { env: p.env } }),
         review: p.review ?? 'accepted',
         lifecycle: p.lifecycle ?? 'active',
-        evidence: { source: 'code' },
+        evidence: { source: 'code', ...(p.verifiedAt === undefined ? {} : { verifiedAt: p.verifiedAt }) },
     };
 }
 
@@ -53,6 +54,40 @@ describe('projectItems', () => {
     it('排序：任务 > 项目 > 全局', () => {
         const { items } = projectItems({ entries: entries(), ctx: { env: 'production' } });
         expect(items.map((i) => i.ns.kind)).toEqual(['task', 'project', 'global']);
+    });
+
+    it('同 ns 内最近验证的排在前（预算从尾部裁，所以顺序 = 保留优先级）', () => {
+        const old = { ns: { kind: 'project' } as const, fact: f({ id: 'a.old', subject: 'dev.a', aspect: 'old', value: '1', verifiedAt: '2026-01-01' }) };
+        const fresh = { ns: { kind: 'project' } as const, fact: f({ id: 'z.fresh', subject: 'dev.z', aspect: 'fresh', value: '2', verifiedAt: '2026-10-22' }) };
+        const { items } = projectItems({ entries: [old, fresh], ctx: { env: 'production' } });
+        expect(items.map((i) => i.gid)).toEqual(['project:dev.z#fresh', 'project:dev.a#old']);
+    });
+
+    it('都没记 verifiedAt 时退化成 gid 字母序（老行为不变）', () => {
+        const a = { ns: { kind: 'project' } as const, fact: f({ id: 'x', subject: 'dev.zzz', aspect: 'a', value: '1' }) };
+        const b = { ns: { kind: 'project' } as const, fact: f({ id: 'y', subject: 'dev.aaa', aspect: 'b', value: '2' }) };
+        const { items } = projectItems({ entries: [a, b], ctx: { env: 'production' } });
+        expect(items.map((i) => i.gid)).toEqual(['project:dev.aaa#b', 'project:dev.zzz#a']);
+    });
+
+    it('没记 verifiedAt 的按空串算最旧（有日期的先留）', () => {
+        const dated = { ns: { kind: 'project' } as const, fact: f({ id: 'd', subject: 'dev.dated', value: '1', verifiedAt: '2026-01-01' }) };
+        const undated = { ns: { kind: 'project' } as const, fact: f({ id: 'u', subject: 'dev.undated', value: '2' }) };
+        const { items } = projectItems({ entries: [undated, dated], ctx: { env: 'production' } });
+        expect(items.map((i) => i.gid)).toEqual(['project:dev.dated#default', 'project:dev.undated#default']);
+    });
+
+    it('预算不够时先裁最旧的 —— 刚写完的（verifiedAt 最新）不会读不到自己', () => {
+        const all = { ns: { kind: 'project' } as const };
+        const batch = [
+            { ...all, fact: f({ id: 'a', subject: 'dev.a', value: 'aaaaaaaaaa', verifiedAt: '2026-01-01' }) },
+            { ...all, fact: f({ id: 'b', subject: 'dev.b', value: 'bbbbbbbbbb', verifiedAt: '2026-06-01' }) },
+            { ...all, fact: f({ id: 'c', subject: 'dev.c', value: 'cccccccccc', verifiedAt: '2026-10-22' }) },
+        ];
+        const full = project({ entries: batch, ctx: { env: 'production' } });
+        const cut = project({ entries: batch, ctx: { env: 'production' }, maxBytes: full.bytes - 1 });
+        expect(cut.shown).toContain('project:dev.c#default');
+        expect(cut.omitted).toEqual(['project:dev.a#default']);
     });
 
     it('冲突 / 悬空不静默：进 problems', () => {
