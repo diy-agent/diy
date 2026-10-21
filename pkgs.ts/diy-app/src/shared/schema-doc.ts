@@ -72,7 +72,14 @@ export function fieldNames(schema: ZodObject): string[] {
 //
 //   · 对象   → 只列子字段（`type` 省略：有子字段即对象）
 //   · 数组   → `type: array` + `items:`（元素结构）
+//   · record → `type: object` + `values:`（**值**的结构；key 是动态的，如 claim / gid）
 //   · 叶子   → `type`（string / number / boolean / null）
+//
+// record 为什么必须下钻（##404）：`z.record(z.string(), FactsCellSchema)` 从前只出
+// `type: object` —— 读 help 的人只知"是个 map"，**值里有什么完全看不到**（value /
+// resolvedBy / variants 三个字段全丢）。而"map 的值长什么样"恰恰是模型读这份投影时
+// 最需要的信息。判据见 `hasStructure()`：`additionalProperties` 有形状才下钻，
+// 裸 `z.unknown()` / 空对象照样只标类型（否则 help 会多出无意义的空节点）。
 //
 // 一切从 `z.toJSONSchema` 派生 —— 它已经处理好了 `.optional()` / `.default()` /
 // `.nullable()` 的解包与嵌套，自己写一遍 unwrap 必然漏（也必然随 zod 升级而坏）。
@@ -120,6 +127,19 @@ function deref(node: unknown, root: JsonSchemaBit, depth = 0): unknown {
     return out;
 }
 
+/**
+ * 这个 JSON Schema 片段**有没有可展示的结构**（对象有 properties / 数组有 items / 有明确 type）。
+ *
+ * 用来区分「record 的值是结构化对象」（要下钻成 `values:`）与「值是 any / 空对象」（只标类型）。
+ * 判据不用 `additionalProperties` 本身：`z.unknown()` 也会产出它，但那是"什么都没有"。
+ */
+function hasStructure(bit: JsonSchemaBit): boolean {
+    if (bit.properties && Object.keys(bit.properties).length > 0) return true;
+    if (typeof bit.type === "string") return true;
+    if (bit.items !== undefined || bit.prefixItems !== undefined) return true;
+    return false;
+}
+
 /** JSON Schema → 结构说明文档（`depth` 兜住自引用，超限就把子树折成 `…`） */
 function simplifyBit(bit: JsonSchemaBit, depth: number, maxDepth: number): SchemaDoc {
     const out: SchemaDoc = {};
@@ -136,8 +156,20 @@ function simplifyBit(bit: JsonSchemaBit, depth: number, maxDepth: number): Schem
         if (item && depth < maxDepth) out["items"] = simplifyBit(item, depth + 1, maxDepth);
         return out;
     }
-    // 空对象 / record / any → 只标类型，不再下钻（没有可下钻的结构）。
-    // 判据是"有没有可下钻的 properties"，不是 `additionalProperties` —— record/any 都没有形状。
+    // record（`z.record(k, v)` → `additionalProperties`）：**值的结构**要带上。
+    // 键是动态的（claim / gid），但"每个值里有什么字段"正是读 help 的人最缺的那块信息。
+    // 只下钻有形状的值；`z.unknown()` 这类照旧只标类型。
+    const ap = bit.additionalProperties;
+    if (type === "object" && ap && typeof ap === "object" && !Array.isArray(ap) && depth < maxDepth) {
+        // `$ref` 在 describeSchema 入口已由 deref 全量展开，这里拿到的就是实物。
+        const valueBit = ap as JsonSchemaBit;
+        if (hasStructure(valueBit)) {
+            out["type"] = "object";
+            out["values"] = simplifyBit(valueBit, depth + 1, maxDepth);
+            return out;
+        }
+    }
+    // 空对象 / 无形状 record / any → 只标类型，不再下钻。
     out["type"] = type ?? "object";
     return out;
 }
