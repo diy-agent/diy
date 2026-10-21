@@ -310,7 +310,7 @@ export function withClip(s: KeepStage, clip: import("./compaction").ClipSpec | u
 }
 
 /** headtail 的缺省参数（UI 从「回落」切到「headtail」时拿它初始化，避免半拉形状） */
-export const DEFAULT_HEADTAIL_CLIP_DATA = { head: 3, tail: 3, maxLineChars: 300, maxKeepBytes: 8192 };
+export const DEFAULT_HEADTAIL_CLIP_DATA = { head: 80, tail: 20, maxLineChars: 2000, maxKeepBytes: 100 * 1024 };
 
 /**
  * 推理裁法 → 人读短名（`reasoningClip` 回显用；与 `clipLabel` 并列）。

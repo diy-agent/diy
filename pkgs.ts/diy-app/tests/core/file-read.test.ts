@@ -163,9 +163,11 @@ describe("formatReadOutput — 续读提示", () => {
 
   it("字节截断：提示里说明已达上限", async () => {
     const p = join(dir, "fmt4.txt");
-    writeFileSync(p, Array.from({ length: 500 }, (_, i) => `${i + 1}:${"x".repeat(195)}`).join("\n"), "utf-8");
+    // 行长按预算算：500 行 × 300 字符 ≈ 150KB > 100KB 预算（写死 195 在预算提到 100KB 后不够触发）
+    writeFileSync(p, Array.from({ length: 500 }, (_, i) => `${i + 1}:${"x".repeat(300)}`).join("\n"), "utf-8");
     const out = formatReadOutput(await readFileWindow(p, p));
-    expect(out).toContain("已达 50KB 输出上限");
+    // 预算真源是 READ_MAX_BYTES（2026-10-21 由 50KB 提到 100KB）—— 断言跟常量走，不写死数字
+    expect(out).toContain(`已达 ${Math.round(READ_MAX_BYTES / 1024)}KB 输出上限`);
   });
 
   it("空文件：给出空文件提示", async () => {
@@ -179,7 +181,7 @@ describe("formatReadOutput — 续读提示", () => {
     // 中文 1 字符 3 字节：字符数 = 预算，字节数 = 3 倍预算 → 整行装不下
     writeFileSync(p, "中".repeat(READ_MAX_BYTES) + "\n", "utf-8");
     const out = formatReadOutput(await readFileWindow(p, p));
-    expect(out).toContain("超过 50KB 输出上限");
+    expect(out).toContain(`超过 ${Math.round(READ_MAX_BYTES / 1024)}KB 输出上限`);
     expect(out).toContain("sed -n '1p'");
   });
 
@@ -187,7 +189,7 @@ describe("formatReadOutput — 续读提示", () => {
     const p = join(dir, "fmt7.txt");
     writeFileSync(p, "z".repeat(READ_MAX_BYTES * 2) + "\n", "utf-8");
     const out = formatReadOutput(await readFileWindow(p, p));
-    expect(out).toContain(`[注：有 1 行超过 50KB，仅显示前 50KB]`);
+    expect(out).toContain(`[注：有 1 行超过 ${Math.round(READ_MAX_BYTES / 1024)}KB，仅显示前 ${Math.round(READ_MAX_BYTES / 1024)}KB]`);
   });
 });
 

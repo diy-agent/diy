@@ -24,8 +24,14 @@ import { createReadStream } from "node:fs";
 
 /** 单次读取的默认行数上限（对齐三家的 2000） */
 export const READ_MAX_LINES = 2000;
-/** 输出字节上限（对齐三家的 50KB） */
-export const READ_MAX_BYTES = 50 * 1024;
+/**
+ * 输出字节上限（100KB）。
+ *
+ * 曾对齐三家的 50KB；实测模型的分片读是**往返**的主要来源之一（##402：60 次 sed/rg 切片读），
+ * 而往返 = 一次完整请求（294KB 上下文）。放大到 100KB 让「一次性读完一个中等文件」成为常态，
+ * 用带宽换往返 —— 这比省上下文更值。行窗口（offset/limit）仍在，超出的仍可续读。
+ */
+export const READ_MAX_BYTES = 100 * 1024;
 /** 二进制探测的采样字节数（对齐 opencode 的 4KB 采样） */
 const BINARY_PROBE_BYTES = 4096;
 
