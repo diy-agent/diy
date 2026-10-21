@@ -167,6 +167,18 @@ describe("render / stats", () => {
         expect(text).toContain("refs: `abc123`");
     });
 
+    it("author / anchor 渲染在标题之下（「能不能当证据」应比正文先看到）", () => {
+        add({
+            title: "用户否决了方案 A",
+            author: { role: "human", name: "chen56" },
+            anchor: { type: "task-field", data: { field: "body" } },
+        });
+        const text = store.findJournal(TASK).text;
+        expect(text).toContain("author: `human:chen56`");
+        expect(text).toContain("anchor: `task-field:body`");
+        expect(text.indexOf("author:")).toBeLessThan(text.indexOf("用户否决了方案 A") + 200);
+    });
+
     it("stats 按 kind 计数且五个 kind 恒在（没有的记 0）", () => {
         store.addEntries(TASK, [
             { kind: "pitfall", title: "a" },
@@ -177,5 +189,73 @@ describe("render / stats", () => {
         expect(s.byKind.pitfall).toBe(2);
         expect(s.byKind.decision).toBe(0);
         expect(s.bytes).toBeGreaterThan(0);
+    });
+});
+
+// ── author / anchor（##404 待办 2：日志能否当证据的地基） ──────────────────────
+describe("author / anchor", () => {
+    it("--author 解析成 role[:name]，名字里可以再带冒号", () => {
+        expect(store.parseAuthorSpec("system")).toEqual({ role: "system" });
+        expect(store.parseAuthorSpec("agent:main")).toEqual({ role: "agent", name: "main" });
+        expect(store.parseAuthorSpec("human:chen56")).toEqual({ role: "human", name: "chen56" });
+        expect(store.parseAuthorSpec("agent:sub:worker")).toEqual({ role: "agent", name: "sub:worker" });
+    });
+
+    it("--author 的 role 不在三态里 → 报错（不做宽容猜测）", () => {
+        expect(() => store.parseAuthorSpec("robot")).toThrow(/role 必须是/);
+        expect(() => store.parseAuthorSpec("")).toThrow(/role 必须是/);
+    });
+
+    it("--anchor 四种都能解析，且 doc-range 的 quote 允许含冒号", () => {
+        expect(store.parseAnchorSpec("node:dev")).toEqual({ type: "node", data: { nodeId: "dev" } });
+        expect(store.parseAnchorSpec("message:m-1")).toEqual({ type: "message", data: { messageId: "m-1" } });
+        expect(store.parseAnchorSpec("task-field:body")).toEqual({ type: "task-field", data: { field: "body" } });
+        expect(store.parseAnchorSpec("doc-range:rev-7:42:注意：这里")).toEqual({
+            type: "doc-range",
+            data: { revisionId: "rev-7", offset: 42, quote: "注意：这里" },
+        });
+    });
+
+    it("--anchor 类型不认识 / offset 不是非负整数 → 报错", () => {
+        expect(() => store.parseAnchorSpec("thread:1")).toThrow(/类型必须是/);
+        expect(() => store.parseAnchorSpec("doc-range:rev-7:-1:x")).toThrow(/非负整数/);
+        expect(() => store.parseAnchorSpec("doc-range:rev-7:x:quote")).toThrow(/非负整数/);
+        expect(() => store.parseAnchorSpec("node:")).toThrow(/缺少/);
+    });
+
+    it("human 不带 anchor → 拒写（不许伪造「用户说」）", () => {
+        expect(() => add({ author: { role: "human", name: "chen56" } })).toThrow(/必须带 anchor/);
+        expect(store.readJournal(TASK).rows).toHaveLength(0);
+    });
+
+    it("human 带 anchor 可写，落盘后就等于 parseAnchor 的规范形态", () => {
+        add({
+            title: "用户口径",
+            author: { role: "human", name: "chen56" },
+            anchor: { type: "message", data: { messageId: "m-9" } },
+        });
+        const row = store.readJournal(TASK).rows[0]!;
+        expect(row.author).toEqual({ role: "human", name: "chen56" });
+        expect(row.anchor).toEqual({ type: "message", data: { messageId: "m-9" } });
+    });
+
+    it("anchor 带未知键 → 拒（严格，不静默丢弃未知字段）", () => {
+        expect(() => add({ anchor: { type: "message", data: { messageId: "m-9", junk: 1 } } as never })).toThrow();
+        expect(store.readJournal(TASK).rows).toHaveLength(0);
+    });
+
+    it("system / agent 不强制 anchor，但不给 author 就**不编造**（字段缺席而非默认 agent）", () => {
+        add({ title: "未标来源" });
+        const row = store.readJournal(TASK).rows[0]!;
+        expect(row.author).toBeUndefined();
+        expect(row.anchor).toBeUndefined();
+        expect(JSON.stringify(row)).not.toContain("author");
+    });
+
+    it("anchor 形状非法在写入前就拦住（磁盘不动）", () => {
+        expect(() =>
+            add({ anchor: { type: "node" } as never }),
+        ).toThrow();
+        expect(store.readJournal(TASK).rows).toHaveLength(0);
     });
 });

@@ -14,9 +14,12 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from "n
 import { join } from "node:path";
 import { ValidationError } from "../core/task";
 import { taskDir, taskFilePath } from "../core/state";
+import { docRangeAnchor, messageAnchor, nodeAnchor, parseAnchor, taskFieldAnchor, type Anchor } from "@diy/talk";
 import {
+  JOURNAL_AUTHOR_ROLES,
   JOURNAL_KINDS,
   JournalEntrySchema,
+  type JournalAuthor,
   type JournalEntry,
   type JournalKind,
   type JournalProblem,
@@ -52,6 +55,76 @@ export function splitRefs(text: string): string[] {
 /** kind 列表 → 枚举数组（非法值交给 validate 报，不在这里静默丢） */
 export function splitKinds(text: string): JournalKind[] {
   return splitRefs(text) as JournalKind[];
+}
+
+/**
+ * `--author <role>[:<name>]` → `{role, name?}`。
+ *
+ * 例：`system` / `agent:main` / `human:chen56`。
+ * 名字里允许再出现冒号（`agent:sub:worker`），只按**第一个**冒号切。
+ */
+export function parseAuthorSpec(text: string): JournalAuthor {
+  const idx = text.indexOf(":");
+  const role = (idx < 0 ? text : text.slice(0, idx)).trim();
+  const name = idx < 0 ? "" : text.slice(idx + 1).trim();
+  if (!(JOURNAL_AUTHOR_ROLES as readonly string[]).includes(role)) {
+    throw new ValidationError([
+      { field: "author", code: "journal/author-role", msg: `--author 的 role 必须是 ${JOURNAL_AUTHOR_ROLES.join(" | ")}（收到 ${JSON.stringify(role)}）` },
+    ]);
+  }
+  return name === "" ? { role: role as JournalAuthor["role"] } : { role: role as JournalAuthor["role"], name };
+}
+
+/**
+ * `--anchor <type>:<...>` → `@diy/talk` 的 Anchor。
+ *
+ *   node:<nodeId>
+ *   message:<messageId>
+ *   task-field:<field>
+ *   doc-range:<revisionId>:<offset>:<quote>   ← 只按前两个冒号切，quote 里可以有冒号
+ *
+ * **不提供"从当前上下文猜锚点"**：猜出来的锚点比没有更糟（指向错的东西还没人发现）。
+ */
+export function parseAnchorSpec(text: string): Anchor {
+  const idx = text.indexOf(":");
+  const type = idx < 0 ? text.trim() : text.slice(0, idx).trim();
+  const rest = idx < 0 ? "" : text.slice(idx + 1);
+  const need = (value: string, hint: string): string => {
+    if (value.trim() === "") {
+      throw new ValidationError([{ field: "anchor", code: "journal/anchor-spec", msg: `--anchor ${type} 缺少 ${hint}` }]);
+    }
+    return value.trim();
+  };
+  switch (type) {
+    case "node":
+      return nodeAnchor(need(rest, "<nodeId>"));
+    case "message":
+      return messageAnchor(need(rest, "<messageId>"));
+    case "task-field":
+      return taskFieldAnchor(need(rest, "<field>"));
+    case "doc-range": {
+      const a = rest.indexOf(":");
+      const b = a < 0 ? -1 : rest.indexOf(":", a + 1);
+      if (a < 0 || b < 0) {
+        throw new ValidationError([
+          { field: "anchor", code: "journal/anchor-spec", msg: "--anchor doc-range 需要 <revisionId>:<offset>:<quote>" },
+        ]);
+      }
+      const revisionId = need(rest.slice(0, a), "<revisionId>");
+      const offsetText = rest.slice(a + 1, b).trim();
+      const offset = Number(offsetText);
+      if (!Number.isInteger(offset) || offset < 0) {
+        throw new ValidationError([
+          { field: "anchor", code: "journal/anchor-spec", msg: `--anchor doc-range 的 offset 必须是非负整数（收到 ${JSON.stringify(offsetText)}）` },
+        ]);
+      }
+      return docRangeAnchor(revisionId, offset, need(rest.slice(b + 1), "<quote>"));
+    }
+    default:
+      throw new ValidationError([
+        { field: "anchor", code: "journal/anchor-spec", msg: `--anchor 类型必须是 node | message | task-field | doc-range（收到 ${JSON.stringify(type)}）` },
+      ]);
+  }
 }
 
 /**
@@ -106,6 +179,10 @@ export interface JournalAddInput {
   readonly body?: string;
   readonly refs?: readonly string[];
   readonly round?: string;
+  /** 谁写的（决定能否当证据；缺省 = 未标，**不默认成 agent**） */
+  readonly author?: JournalAuthor;
+  /** 指向哪（`@diy/talk` 的 Anchor 形状；写入时经 parseAnchor 规范化） */
+  readonly anchor?: Anchor;
   /** 仅在回灌历史时给（缺省 = 现在） */
   readonly ts?: string;
 }
@@ -123,6 +200,24 @@ function validateOne(input: JournalAddInput, index: number): JournalEntry {
   if (input.ts !== undefined && Number.isNaN(Date.parse(input.ts))) {
     errs.push({ field: "ts", code: "journal/ts", msg: `${where}.ts 不是合法时间：${input.ts}` });
   }
+  // 锚点：形状错在这里就拦住（z.custom 只保证 isAnchor，规范化交给 parseAnchor）
+  let anchor: Anchor | undefined;
+  if (input.anchor !== undefined) {
+    try {
+      anchor = parseAnchor(input.anchor);
+    } catch (e) {
+      errs.push({ field: "anchor", code: "journal/anchor", msg: `${where}.anchor 非法：${e instanceof Error ? e.message : String(e)}` });
+    }
+  }
+  // human 必须带 anchor —— 否则无法区分「用户真说过」与「模型替他说」。
+  // 这是 author 三态唯一硬约束：宁可不记，不许伪造来源。
+  if (input.author?.role === "human" && anchor === undefined) {
+    errs.push({
+      field: "author.anchor",
+      code: "journal/author-anchor",
+      msg: `${where} author.role=human 必须带 anchor（message / doc-range / task-field / node 任一）`,
+    });
+  }
   // error-code-ok: 字段级 code 在 errors 载荷里（journal/kind / journal/title / journal/ts），不进 err.code
   if (errs.length > 0) throw new ValidationError(errs);
 
@@ -134,6 +229,8 @@ function validateOne(input: JournalAddInput, index: number): JournalEntry {
     ...(input.refs === undefined || input.refs.length === 0 ? {} : { refs: [...input.refs] }),
     task: "",
     ...(input.round === undefined ? {} : { round: input.round }),
+    ...(input.author === undefined ? {} : { author: input.author }),
+    ...(anchor === undefined ? {} : { anchor }),
   });
   if (!parsed.success) {
     throw new ValidationError(
@@ -267,10 +364,35 @@ export function findJournal(
   };
 }
 
+/** 锚点渲染成一行短标签（人读 / CLI 打印用；不做 fuzzy 校正，那是装配侧的事） */
+function anchorLabel(anchor: Anchor): string {
+  const d = anchor.data;
+  switch (anchor.type) {
+    case "node":
+      return `node:${(d as { nodeId: string }).nodeId}`;
+    case "message":
+      return `message:${(d as { messageId: string }).messageId}`;
+    case "task-field":
+      return `task-field:${(d as { field: string }).field}`;
+    case "doc-range": {
+      const r = d as { revisionId: string; offset: number; quote: string };
+      const quote = r.quote.length > 40 ? `${r.quote.slice(0, 40)}…` : r.quote;
+      return `doc-range:${r.revisionId}@${r.offset} 「${quote}」`;
+    }
+  }
+}
+
 export function renderRow(row: JournalRow): string {
   const when = row.ts.replace("T", " ").slice(0, 16);
   const head = `### #${row.seq} · ${when} · ${row.kind} · ${row.title}`;
   const parts = [head];
+  // author 紧跟在标题后：它是「这条能不能当证据」的第一判据，比正文更该先看到
+  const meta: string[] = [];
+  if (row.author !== undefined) {
+    meta.push(`author: \`${row.author.name === undefined ? row.author.role : `${row.author.role}:${row.author.name}`}\``);
+  }
+  if (row.anchor !== undefined) meta.push(`anchor: \`${anchorLabel(row.anchor)}\``);
+  if (meta.length > 0) parts.push(meta.join(" · "));
   if (row.body !== undefined && row.body !== "") parts.push(row.body.trim());
   if (row.refs !== undefined && row.refs.length > 0) parts.push(`refs: ${row.refs.map((r) => `\`${r}\``).join(" · ")}`);
   return parts.join("\n");

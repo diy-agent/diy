@@ -26,6 +26,7 @@
         "@codemirror/view": "^6.43.12",
         "@diy/flow": "^0.1.0",
         "@diy-agent/rpc": "^0.1.0",
+        "@diy/talk": "^0.1.0",
         "@diy/template": "^0.1.0",
         "@dnd-kit/solid": "^0.5.0",
         "@fastify/cors": "^11.2.0",

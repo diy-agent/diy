@@ -1455,6 +1455,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
         ...(body === undefined ? {} : { body }),
         ...(input.refs === undefined ? {} : { refs: journalStore.splitRefs(input.refs) }),
         ...(input.round === undefined ? {} : { round: input.round }),
+        ...(input.author === undefined ? {} : { author: journalStore.parseAuthorSpec(input.author) }),
+        ...(input.anchor === undefined ? {} : { anchor: journalStore.parseAnchorSpec(input.anchor) }),
       },
     ]);
   });

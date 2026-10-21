@@ -2177,6 +2177,20 @@ export const apiDef = RpcSchema.router({
                 .cliOption({ readFile: true, placeholder: "<file|->", desc: "可选正文来自文件（- = stdin）" }),
               refs: z.string().optional().cliOption({ placeholder: "<a,b>", desc: "引用：commit / 任务 uri / 事实 gid / 路径:行（逗号分隔）" }),
               round: z.string().optional().cliOption({ desc: "会话轮次 id（可选）" }),
+              author: z
+                .string()
+                .optional()
+                .cliOption({
+                  placeholder: "<role[:name]>",
+                  desc: "谁写的：system（客观判定）/ agent:<名>（模型叙述）/ human:<名>（用户原话，**必须配 --anchor**）",
+                }),
+              anchor: z
+                .string()
+                .optional()
+                .cliOption({
+                  placeholder: "<type:...>",
+                  desc: "指向哪：node:<id> / message:<id> / task-field:<field> / doc-range:<rev>:<offset>:<quote>",
+                }),
             },
             output: JournalAddSchema,
           }),

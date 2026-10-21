@@ -15,6 +15,7 @@
  * 不是「每轮都读」 —— 这正是它能把 body 摘小的原因。它**不替代 git log**：git 记的是
  * 代码怎么变，journal 记的是当时为什么这么定、踩过什么、什么被否掉了。
  */
+import { isAnchor, type Anchor } from '@diy/talk';
 import { z } from 'zod';
 
 /**
@@ -25,6 +26,34 @@ import { z } from 'zod';
  *   progress 里程碑落地（通常带 commit）
  *   learn    查证到的新认识（不是决策，是发现）
  */
+/**
+ * 作者三态 —— **决定这条日志能不能当证据**（##404 定案）。
+ *
+ *   system  系统判定：flow 转移 / guard 失败 / 测试红灯 / 合并。**客观、可机械校验**
+ *   agent   模型叙述：「落地了 X」「发现 Y 已有实现」。**可能错，只当线索**
+ *   human   用户原话/明确表态。**必须带 anchor**（否则无法区分"用户真说过"与"模型替他说的"）
+ *
+ * 不写 author 的历史条目一律视为「未标」：**不猜、不默认成 agent** —— 伪造来源比缺字段更糟。
+ */
+export const JOURNAL_AUTHOR_ROLES = ['system', 'agent', 'human'] as const;
+export const JournalAuthorSchema = z.object({
+    role: z.enum(JOURNAL_AUTHOR_ROLES),
+    /** 具体是谁（`main` / `chen56` 等）；`system` 通常可省 */
+    name: z.string().optional(),
+});
+export type JournalAuthor = z.infer<typeof JournalAuthorSchema>;
+
+/**
+ * 锚点直接复用 `@diy/talk` 的 `Anchor`：`message` / `doc-range` / `task-field` / `node`。
+ *
+ * 为什么不自己定义一套（##404 待办 2）：仓里已有四套「作者+时间+引用」的记录
+ * （talk / room / journal / llm），talk 那套最完备且零依赖 —— 再发明第五套，
+ * 五套之间的漂移就是下一个"知识散落"。
+ */
+export const JournalAnchorSchema = z.custom<Anchor>((value) => isAnchor(value), {
+    message: '不是合法锚点（合法：message / doc-range / task-field / node，见 @diy/talk）',
+});
+
 export const JOURNAL_KINDS = ['decision', 'pitfall', 'review', 'progress', 'learn'] as const;
 export const JournalKindSchema = z.enum(JOURNAL_KINDS);
 export type JournalKind = z.infer<typeof JournalKindSchema>;
@@ -43,6 +72,10 @@ export const JournalEntrySchema = z.object({
     task: z.string(),
     /** 产生它的会话轮次（可选，便于对照 llm.jsonl） */
     round: z.string().optional(),
+    /** 谁写的 —— 决定能否当证据（见 JOURNAL_AUTHOR_ROLES） */
+    author: JournalAuthorSchema.optional(),
+    /** 指向哪 —— 形状复用 `@diy/talk` 的 Anchor */
+    anchor: JournalAnchorSchema.optional(),
 });
 export type JournalEntry = z.infer<typeof JournalEntrySchema>;
 
