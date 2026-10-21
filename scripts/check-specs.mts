@@ -43,6 +43,16 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const HOME = os.homedir();
 const DIY_HOME = process.env.DIY_HOME ?? path.join(HOME, '.diy');
+/**
+ * 任务指针（`真源 任务 \`projects/N/tasks/M\``）的解析基址候选。
+ *
+ * SPECS.md 住在 home（`~/`），它引用的任务通常在**生产**数据根（`~/.diy`）；
+ * 而 `check` 常在 worktree / lab 会话里跑（`DIY_HOME=<repo>/build/lab/home`）。
+ * 只认当前 DIY_HOME 的话，同一份代码在 lab 下必红、在干净 shell 下必绿 —— 环境敏感红灯，
+ * 会随机挡提交（实测：`projects/4/tasks/87` 生产存在、lab 不存在）。
+ * 判据保持「真悬空仍报错」：所有候选基址都找不到才算悬空。
+ */
+const TASK_HOME_CANDIDATES = [...new Set([DIY_HOME, path.join(HOME, '.diy')])];
 
 const argv = process.argv.slice(2);
 const UPDATE_BASELINE = argv.includes('--update-baseline');
@@ -189,9 +199,10 @@ for (const e of entries) {
   if (task) {
     const uri = task[1];
     const anchor = task[2];
-    const file = path.join(DIY_HOME, uri, 'AGENTS.md');
-    if (!existsSync(file)) {
-      errors.push({ kind: 'G2', msg: `第 ${e.line} 行 \`${e.key}\`：任务不存在 ${file}` });
+    const candidates = TASK_HOME_CANDIDATES.map((h) => path.join(h, uri, 'AGENTS.md'));
+    const file = candidates.find((f) => existsSync(f));
+    if (file === undefined) {
+      errors.push({ kind: 'G2', msg: `第 ${e.line} 行 \`${e.key}\`：任务不存在 ${candidates.join(' / ')}` });
     } else if (!read(file).includes(anchor)) {
       errors.push({ kind: 'G2', msg: `第 ${e.line} 行 \`${e.key}\`：锚文本不在 ${uri} 的 body 里：「${anchor}」` });
     }
