@@ -323,6 +323,16 @@ export function triageOfTurnEnd(r: TurnEndReason): TurnEndTriage {
             if (r.data.source === "budget") {
                 return { triage: "external-recognized", code: "llm/budget-exceeded", reason: "本轮金额/用量预算到上限" };
             }
+            // 上下文窗口越线（##406 刀 2）：**已识别** —— 说得出「啥到上限了」（窗口 token / 阈值 / 本轮估算）。
+            // 这不是我方缺陷，也不是未知外部：处置话术由调用点给（`local-agent` 的预检分支），
+            // 本函数只回答「要不要当事」（##394 判据：说得出上限 ⇒ recognized）。
+            if (r.data.source === "context-window") {
+                return {
+                    triage: "external-recognized",
+                    code: "llm/context-window",
+                    reason: "上下文超出模型窗口（发请求前预检拦下，未发出）",
+                };
+            }
             const code = r.data.source === "stream" ? "llm/stream-error" : "llm/error";
             return { triage: "external-unknown", code, reason: `上游/流报错（source=${r.data.source}）：未识别的外部` };
         }

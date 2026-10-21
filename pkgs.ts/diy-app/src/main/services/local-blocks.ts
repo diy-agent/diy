@@ -635,6 +635,12 @@ export interface DeliveryOpts {
      * 给了它就**按它选**（其中的 `budgetBytes` 即预算）；缺省 ⇒ `defaultBudgetPlan(budgetBytes, defaultClip)`。
      */
     plan?: CompactPlan;
+    /**
+     * 【##406 刀 2】**装配后硬上限**（字节）：装完量`keptBytes`，超了就把 `must` 级从
+     * `full` 降 `headtail`、必要时按上限逐单元收、最后整段丢弃（见 `runPlanBounded`）。
+     * 缺省（不传）= 不设上限，老调用点行为逐字不变。
+     */
+    hardCapBytes?: number;
     /** 只投递从这个 turn 起的块（压缩边界）；null = 一个都不投（全部清零）；缺省 = 全投 */
     sinceTurnId?: string | null;
     /**
@@ -683,6 +689,7 @@ import { clipReasoningText, utf8Bytes, type ClipSpec, type ReasoningClipSpec } f
 // 选择算法（元件库 + 装配器）—— 见 compaction-plan.ts 头注。此处**转出**旧公开名以保持兼容。
 import {
     runPlan,
+    runPlanBounded,
     defaultBudgetPlan,
     HISTORY_LADDER,
     type BudgetSelection,
@@ -909,10 +916,16 @@ export function selectHistory(
 export function selectHistoryByBudget(
     all: readonly LocalModelMessage[],
     budgetBytes: number,
-    opts: Pick<DeliveryOpts, "transformToolResult" | "defaultClip" | "plan"> = {},
+    opts: Pick<DeliveryOpts, "transformToolResult" | "defaultClip" | "plan" | "hardCapBytes"> = {},
 ): BudgetSelection {
     // 管道来源只有一个决策点：给了 `plan`（配置面）就用它，否则回落缺省管道。
-    return runPlan(all, opts.plan ?? defaultBudgetPlan(budgetBytes, opts.defaultClip), { costOf: costOfWith(opts) });
+    // 出口再套一道硬上限（##406 刀 2）：给了 `hardCapBytes` 才生效，缺省与老行为逐字相同。
+    return runPlanBounded(
+        all,
+        opts.plan ?? defaultBudgetPlan(budgetBytes, opts.defaultClip),
+        { costOf: costOfWith(opts) },
+        opts.hardCapBytes ?? 0,
+    );
 }
 
 /**
