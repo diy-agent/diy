@@ -81,6 +81,12 @@ export const PLACE_CANDIDATES: PlaceCandidate[] = [
     // （`projection.ts` 的 renderedHash），合起来则"成员改个名"会把整段 recent 重发一遍。
     { path: "room.members", system: false, reason: "房间成员：低频（改成员才变）" },
     { path: "room.recent", system: false, reason: "房间近期发言：高频（有人说话就变）" },
+    // 事实库投影（##404 待办 4）：**runtime 而不是 system** —— 它是"任务当前的真身"，
+    // 每轮都变（agent 自己在本轮里就可能 submit 一批）；放 system 会把前缀缓存砸掉。
+    // 与 `task.body` 同一道理：内容随工作推进而变，但变化**稀疏**（不是每轮都有新事实），
+    // 故单列一个原子单元比并进 body 更好 —— body 是 prose、facts 是结构化键值，
+    // 混在一起既不能按 claim diff，也没法在页面上分开看。
+    { path: "facts", system: false, reason: "事实库投影：随 submit 变（稀疏）；结构化，与 body 的散文分开" },
 ];
 
 /** 默认 system 名单（真发与预览共用；用户可在页面上改，改动只影响该页面预览） */

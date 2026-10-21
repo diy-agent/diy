@@ -58,6 +58,17 @@ export const ChainItemSchema = z
   })
   .meta({ id: "ChainEntry" });
 
+
+/** 事实投影的一个值（见 AssembleGlobalsSchema.facts 的说明） */
+export const FactsCellSchema = z
+  .object({
+    value: z.string().describe("已解析的值"),
+    resolvedBy: z.string().describe("按什么解析出这个值的（`env=development` / `paths=pkgs.ts/...`；空串 = 全局唯一）"),
+    variants: z.number().describe("同 claim 的可用变体总数（>1 ⇒ 还有别的值存在，当前环境之外的）"),
+  })
+  .meta({ id: "FactsCell" });
+export type FactsCell = z.infer<typeof FactsCellSchema>;
+
 /**
  * 注入 globals 的**契约（单一真源）**：
  *   · `flattenVars()` 派生出引擎静态校验用的扁平 VarSpec[]
@@ -138,6 +149,50 @@ export const AssembleGlobalsSchema = z.object({
    *
    * 缺席（`undefined`）= 这个任务没有房间（从没开过任务页、也没被投递过）⇒ 单人任务逐字不变。
    */
+  /**
+   * **事实库投影**（##404 待办 4）：任务库 + 项目库已解析后的值。
+   *
+   * 为什么进变量树而不是在投递处拼一段文本：与 identity / rules 同理 ——
+   * 拼好的文本既看不见（上下文树页无节点）、也没法 diff（改一条 = 整段重发），
+   * 还会退化成"与正文不可区分的机制文本"（压缩会当人话改写）。
+   *
+   * 为什么给**已解析值**而不是变体列表：让 agent 读到 `18888` 却不知道自己在哪个
+   * 环境，就会把 production 的端口当成 lab 的。故条目带 `resolvedBy` / `variants`，
+   * 由它自己判断要不要追问（`diy facts get <claim> --in task:<uri>`）。
+   *
+   * 为什么 claim 作 map 的 key 而不是数组里的 id 字段：`id` 可派生（= `subject#aspect`），
+   * 数组形式每个元素都要重复一遍 subject 与 aspect，且引用起来要遍历。
+   *
+   * 缺席（`undefined`）= 这个任务既没有任务级库、也没有项目级库 ⇒ 与未接入前逐字不变。
+   */
+  facts: z
+    .object({
+      algorithm: z
+        .enum(["yaml-nested", "flat-gid", "md-list"])
+        .describe(
+          "投影算法（与 `@diy/facts` 的 `PROJECTION_ALGORITHMS` 同名，别在此另起一套）：" +
+            "`yaml-nested` = claim 分组的 map（缺省）；`flat-gid` = gid 扁平 map；`md-list` = 一段 markdown 表",
+        ),
+      env: z.string().describe("解析变体用的环境（`DIY_ENV`）：production / development / test"),
+      task: z
+        .record(z.string(), FactsCellSchema)
+        .optional()
+        .describe("**任务级库**的已解析值（claim → 值）。本任务自己的结论，优先级最高"),
+      project: z
+        .record(z.string(), FactsCellSchema)
+        .optional()
+        .describe("**项目级库**的已解析值（claim → 值）。跨任务共享的结论"),
+      text: z
+        .string()
+        .optional()
+        .describe("**仅 `md` 算法**：整份投影的 markdown 表（此时 task/project 缺席 —— 同一种内容不给两种形状）"),
+      omitted: z.number().describe("因预算被裁掉的条目数（>0 ⇒ 还有没带进来的，用 `diy facts status` 看）"),
+      problems: z
+        .array(z.object({ gid: z.string().describe("哪一条（`<ns>:<claim>`）"), code: z.string().describe("机器码（`facts/*`）") }))
+        .describe("**真问题**：冲突 / 库内缺 claim。空数组 = 正常"),
+    })
+    .optional()
+    .describe("事实库投影（没有库时缺席）"),
   room: z
     .object({
       members: z
