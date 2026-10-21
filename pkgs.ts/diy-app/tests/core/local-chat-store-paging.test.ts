@@ -13,6 +13,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Op } from "../../src/main/services/local-blocks";
+import { installRpc, stubPersonaLoad, stubToasts } from "../helpers/renderer-deps";
 
 const h = vi.hoisted(() => ({
     historyWindow: vi.fn(),
@@ -26,30 +27,7 @@ const h = vi.hoisted(() => ({
     toasts: [] as Array<{ type: string; message: string }>,
 }));
 
-vi.mock("../../src/renderer_solid/lib/rpc", () => ({
-    diyService: {
-        diy: {
-            agent: {
-                local: {
-                    historyWindow: h.historyWindow,
-                    historyOlder: h.historyOlder,
-                    opsWatermark: h.opsWatermark,
-                    opsWatch: h.opsWatch,
-                    running: h.running,
-                    usage: h.usage,
-                    steer: { list: h.steerList },
-                },
-            },
-        },
-    },
-}));
 // 人物清单与本用例无关，切断它到 taskStore / task-edit 的引用链
-vi.mock("../../src/renderer_solid/store/personaStore", () => ({ personaStore: { load: async () => {} } }));
-vi.mock("../../src/renderer_solid/store/notificationStore", () => ({
-    notificationStore: {
-        addToast: (type: string, message: string) => void h.toasts.push({ type, message }),
-    },
-}));
 
 const URI = "projects/1/tasks/1";
 
@@ -70,8 +48,26 @@ const win = (ids: string[], cursor: string, hasMore: boolean, stale = false) => 
     stale,
 });
 
+/** 每个用例一份全新 store 单例；依赖走显式注入（先 resetModules 再注入，见 helpers）。 */
 async function freshStore() {
     vi.resetModules();
+    await installRpc({
+        diy: {
+            agent: {
+                local: {
+                    historyWindow: h.historyWindow,
+                    historyOlder: h.historyOlder,
+                    opsWatermark: h.opsWatermark,
+                    opsWatch: h.opsWatch,
+                    running: h.running,
+                    usage: h.usage,
+                    steer: { list: h.steerList },
+                },
+            },
+        },
+    });
+    await stubToasts((type, message) => void h.toasts.push({ type: type as string, message: message as string }));
+    await stubPersonaLoad();
     return (await import("../../src/renderer_solid/store/localChatStore")).localChatStore;
 }
 

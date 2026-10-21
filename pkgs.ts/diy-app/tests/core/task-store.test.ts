@@ -4,6 +4,7 @@
 // loadTree；RPC 响应乱序时**旧响应后到**，若照单 setNodes 树就回退成旧快照 ——
 // 树「短暂回退」会让下游按树 diff 的逻辑（如删除任务后摘 tab）误判任务消失。
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { installRpc } from "../helpers/renderer-deps";
 
 const store = new Map<string, string>();
 (globalThis as unknown as { localStorage: Storage }).localStorage = {
@@ -16,13 +17,12 @@ const store = new Map<string, string>();
 } as Storage;
 
 const h = vi.hoisted(() => ({ loadTaskTree: vi.fn(), getTask: vi.fn() }));
-vi.mock("../../src/renderer_solid/lib/rpc", () => ({
-    diyService: { diy: { loadTaskTree: h.loadTaskTree, getTask: h.getTask } },
-}));
 
 /** 每个用例一份全新 store 单例（模块级 signal 只初始化一次） */
+/** 每个用例一份全新 store 单例；RPC 走显式注入（先 resetModules 再注入，见 helpers）。 */
 async function freshStore() {
     vi.resetModules();
+    await installRpc({ diy: { loadTaskTree: h.loadTaskTree, getTask: h.getTask } });
     return (await import("../../src/renderer_solid/store/taskStore")).taskStore;
 }
 

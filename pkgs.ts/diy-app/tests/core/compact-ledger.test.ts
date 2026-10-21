@@ -242,11 +242,10 @@ describe("④ v3 分组形状：看 JSON 就知道每块回答什么（D5「结�
         expect(plan.source).toBe("default");
         expect(plan.keep).toBeUndefined();
         expect(plan.planVersion).toMatch(/^plan-[0-9a-f]{12}$/);
-        // 版本全文可从 CAS 取回（= 保底 6 步全量 + 阶梯），且**已入链**（否则是悬空指针）
-        const doc = readPlanVersion(diyHome(), plan.planVersion!);
-        expect(doc?.source).toBe("default");
-        expect(doc?.keep.map((k) => k.type)).toEqual(["steps", "ladder"]);
-        expect(listPlanVersions(diyHome()).some((v) => v.version === plan.planVersion)).toBe(true);
+        // ⚠️ 「CAS 可取回 + 已入链」不在这里断言：预算 1MB + asis ⇒ 本轮是**空操作**（noop），
+        //    压缩按设计**不落账也不物化版本**。旧写法把它写在本用例里，能过只是因为别的用例
+        //    先把同内容的版本写进了 CAS —— 那是顺序运气（`--sequence.shuffle` 即现）。
+        //    持久化断言搬去下面「非空操作」那条用例。
         // 锚点里**没有** keptTurns/droppedTurns（它们是结果，不是锚）
         const boundary = rec.boundary as Record<string, unknown>;
         expect(boundary).toHaveProperty("keepFromOpIndex");
@@ -258,6 +257,21 @@ describe("④ v3 分组形状：看 JSON 就知道每块回答什么（D5「结�
         const details = rec.details as Record<string, unknown>;
         expect(Array.isArray(details.clipped)).toBe(true);
         expect(Array.isArray(details.dropped)).toBe(true);
+    });
+
+    it("非空操作（真丢轮）才物化 plan 版本：CAS 可取回全文、且已入链（否则是悬空指针）", () => {
+        const uri = newUri();
+        seedOps(uri);
+        const rec = getLocalAgent().compact(uri, { budgetBytes: 0, toolResult: { render: "asis" } }, "cli") as unknown as Record<string, unknown>;
+        expect(rec.noop).toBeUndefined(); // 真压缩过，不是空操作
+        const plan = rec.plan as { source: string; planVersion?: string };
+        expect(plan.source).toBe("default");
+        expect(plan.planVersion).toMatch(/^plan-[0-9a-f]{12}$/);
+        // 版本全文可从 CAS 取回（= 保底 6 步全量 + 阶梯），且**已入链**
+        const doc = readPlanVersion(diyHome(), plan.planVersion!);
+        expect(doc?.source).toBe("default");
+        expect(doc?.keep.map((k) => k.type)).toEqual(["steps", "ladder"]);
+        expect(listPlanVersions(diyHome()).some((v) => v.version === plan.planVersion)).toBe(true);
     });
 
     it("① v1 平铺账照样能读（读侧归一，旧账本无需迁移）", async () => {

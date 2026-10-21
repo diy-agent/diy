@@ -97,7 +97,11 @@ test() {
 #              全量 98s → 约 30s。
 # 为什么在命令行给而**不改** vitest.config.ts 的 `fileParallelism: false`：裸跑 `npx vitest run`
 # 会同时命中 intent 文件，那份默认必须留给它。
-test-unit() { run npx vitest run --exclude '**/cli.intent*' --fileParallelism; }
+# `--no-isolate`（##402）：每个 worker 共享一份模块图，省掉**每文件**的
+# transform + setup + import 固定成本（实测占单文件工作量 ~71%：834ms 里 tests 只 344ms）。
+# 前提是**没有 vi.mock**（它改全局模块表，isolate:false 下会静默失效）——
+# `rg -l 'vi\.mock\(' tests --glob '*.test.ts'` 必须是 0 命中（tests/ 下有护栏注释说明替代注入法）。
+test-unit() { run npx vitest run --exclude '**/cli.intent*' --fileParallelism --no-isolate; }
 
 ####################################################################################
 # 子项目自己的命令（原 package.json scripts）

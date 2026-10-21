@@ -31,6 +31,41 @@ import { chmodSync, closeSync, fsyncSync, mkdirSync, openSync, renameSync, rmSyn
 import { basename, dirname, join } from "node:path";
 
 /**
+ * 本原语用到的文件系统面（**依赖注入口**，##402）。
+ *
+ * 为什么把它做成参数而不是让测试 `vi.mock("node:fs")`：mock 改的是**全局模块表**，
+ * `isolate:false` 下模块每 worker 只求值一次 —— 谁先 import 了 `node:fs`，后面的 mock
+ * 就**静默失效**（测试对错取决于文件落进哪个 worker / 什么顺序）。参数注入把「用哪份 fs」
+ * 变成**调用点的显式输入**，与进程调度无关。
+ *
+ * 生产路径零感知：所有调用点都不传，缺省 = 真 `node:fs`。
+ */
+export interface FsLike {
+    mkdirSync: typeof mkdirSync;
+    writeFileSync: typeof writeFileSync;
+    renameSync: typeof renameSync;
+    rmSync: typeof rmSync;
+    statSync: typeof statSync;
+    chmodSync: typeof chmodSync;
+    openSync: typeof openSync;
+    fsyncSync: typeof fsyncSync;
+    closeSync: typeof closeSync;
+}
+
+/** 缺省实现 = 真 fs（生产调用点用的就是它）。 */
+export const realFs: FsLike = {
+    mkdirSync,
+    writeFileSync,
+    renameSync,
+    rmSync,
+    statSync,
+    chmodSync,
+    openSync,
+    fsyncSync,
+    closeSync,
+};
+
+/**
  * 写失败钩子（##384「环境感知」）：`writeFileAtomic` 失败时**先回调再上抛**。
  *
  * 为什么要有：磁盘满（ENOSPC）时用户看到的是"这次操作失败了"，但**机器已经满了**这件事
@@ -51,6 +86,11 @@ export function setWriteErrorHook(fn: ((e: unknown, path: string) => void) | nul
 export interface WriteFileAtomicOptions {
     /** 写后 fsync 临时文件（掉电耐久）。缺省 false —— 与收敛前各处行为一致，只是多一次磁盘同步的代价。 */
     fsync?: boolean;
+    /**
+     * 文件系统面（**仅测试注入用**）。缺省 `realFs` = 真 `node:fs`；生产调用点一律不传。
+     * 用来在**真盘**上做确定性故障注入（如单次 write 抛 ENOSPC），见 `FsLike`。
+     */
+    fs?: FsLike;
 }
 
 /**
@@ -61,17 +101,18 @@ export interface WriteFileAtomicOptions {
  * @throws 目标不可写 / 磁盘满 / rename 失败等 —— **原样上抛**，调用方自己决定要不要降级
  */
 export function writeFileAtomic(path: string, content: string, opts: WriteFileAtomicOptions = {}): void {
+    const fs = opts.fs ?? realFs;
     const tmp = tempPathFor(path);
     try {
         // mkdir 也放进 try：它同样可能因 ENOSPC 失败（父目录项要落盘），
         // 而"磁盘满"这个事实必须无论在哪一步失败都能被观测到（##384）。
-        mkdirSync(dirname(path), { recursive: true });
-        writeFileSync(tmp, content, "utf-8");
-        inheritMode(path, tmp);
-        if (opts.fsync) syncFile(tmp);
+        fs.mkdirSync(dirname(path), { recursive: true });
+        fs.writeFileSync(tmp, content, "utf-8");
+        inheritMode(fs, path, tmp);
+        if (opts.fsync) syncFile(fs, tmp);
         // 覆盖目标：POSIX rename 是原子的。读者要么看到旧内容、要么看到新内容，绝无半截。
         // （Windows 上 rename 覆盖已存在文件会失败 —— 本仓只在 macOS / Linux 跑，不为它加平台分支。）
-        renameSync(tmp, path);
+        fs.renameSync(tmp, path);
     } catch (e) {
         // 观测钩子先跑（##384）：磁盘满这类环境故障要立刻可见，别等下一轮轮询。
         try {
@@ -81,7 +122,7 @@ export function writeFileAtomic(path: string, content: string, opts: WriteFileAt
         }
         // 失败路径：清掉自己的 tmp，**目标文件不碰**（它从头到尾没被写过）。清理失败也抛原错误。
         try {
-            rmSync(tmp, { force: true });
+            fs.rmSync(tmp, { force: true });
         } catch {
             /* 真正的错因在 e 里；清理失败至多是 tmp 已经不在了 */
         }
@@ -94,21 +135,21 @@ export function writeFileAtomic(path: string, content: string, opts: WriteFileAt
  * tmp 由 `writeFileSync` 按 umask 建成 0644，直接 rename 会把用户 `chmod 600` 的私密文件
  * （如含 API key 的 `providers.custom.yaml`）**悄悄放宽**成 644。目标不存在（新建）/ stat 失败 → 用缺省。
  */
-function inheritMode(target: string, tmp: string): void {
+function inheritMode(fs: FsLike, target: string, tmp: string): void {
     try {
-        chmodSync(tmp, statSync(target).mode & 0o777);
+        fs.chmodSync(tmp, fs.statSync(target).mode & 0o777);
     } catch {
         /* 目标不存在（新建）或不可 stat —— 保持缺省权限，不影响写入本身 */
     }
 }
 
 /** 把 tmp 的内容刷到盘上（耐久开关，见头注）；目录项不刷。 */
-function syncFile(p: string): void {
-    const fd = openSync(p, "r+");
+function syncFile(fs: FsLike, p: string): void {
+    const fd = fs.openSync(p, "r+");
     try {
-        fsyncSync(fd);
+        fs.fsyncSync(fd);
     } finally {
-        closeSync(fd);
+        fs.closeSync(fd);
     }
 }
 

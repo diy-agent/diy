@@ -1,7 +1,28 @@
+import { createRequire } from "node:module";
 import { defineConfig } from "vitest/config";
 
+// node 条件下 `solid-js` 解析到 **SSR 构建**（`createEffect` 是空实现、不追踪依赖），
+// 而本仓的单测要验的是 renderer 真跑的**客户端构建**。旧做法是在个别用例里
+// `vi.mock("solid-js", () => import("solid-js/dist/solid.js"))` —— 改的是全局模块表，
+// `isolate:false` 下会被先加载的实现静默顶掉（##402）。改成全局 alias：解析层就钉死，
+// 与文件顺序 / worker 划分无关，用例里也不用再 mock。
+const require = createRequire(import.meta.url);
+const solidClient = require.resolve("solid-js/dist/solid.js");
+
 export default defineConfig({
+  resolve: {
+    alias: [{ find: /^solid-js$/, replacement: solidClient }],
+  },
   test: {
+    // isolate:false（##402）下 `vi.resetModules()` 会重建**本项目**模块，但默认把
+    // node_modules 里的包当外部依赖（不重建）—— 于是同一 worker 里会出现「新 zod + 旧补丁」
+    // 这类**两份实例并存**的假故障（实测：`TaskStateSchema.cliArg is not a function`）。
+    // 这些 workspace 包本就在仓内、且带 side-effect 补丁，必须与项目模块同生共死 → 内联。
+    server: {
+      deps: {
+        inline: ["@diy-agent/rpc", "@diy/flow", "@diy/talk", "solid-js"],
+      },
+    },
     include: ["tests/**/*.test.ts"],
     environment: "node",
     setupFiles: ["tests/setup.ts"],

@@ -6,7 +6,7 @@
 //   ② 增量：append 后只读新增尾巴，结果与「整份重放」等价 —— 缓存不许把两份文件缝在一起，
 //      也不许重复 fold 已有轮次。
 // 缓存失效的两个哨兵各一条用例：文件变短（清空）、前 4KB 变（整文件覆盖且尺寸相同）。
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { appendFileSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { diyHome } from "../../src/main/core/state";
@@ -60,6 +60,11 @@ const parseAll = (text: string): Op[] =>
         .filter((l) => l.trim())
         .map((l) => JSON.parse(l) as Op);
 
+/** 基准夹具：TURNS 轮完整日志。每条用例从它起步（见下面的 beforeEach）——
+ *  后面的用例会 append / 截断 / 重写这个文件，`--sequence.shuffle` 打乱顺序后
+ *  「我是第一个读的人」这个隐含前提不成立。 */
+const CANON = Array.from({ length: 6 }, (_, k) => turnLines(k + 1).join("\n")).join("\n") + "\n";
+
 let manager: LocalAgentManager;
 let uri = "";
 let fp = "";
@@ -71,12 +76,14 @@ beforeAll(() => {
     uri = createTask({ title: "历史折叠", project });
     fp = opsFile(uri);
     mkdirSync(path.dirname(fp), { recursive: true });
-    writeFileSync(fp, Array.from({ length: TURNS }, (_, k) => turnLines(k + 1).join("\n")).join("\n") + "\n");
+    writeFileSync(fp, CANON);
 });
 
 const countTurns = (ops: Op[]): number => ops.filter((o) => o.op === "start" && o.kind === "turn").length;
 
 describe("history 折叠：块树等价、体积骤降", () => {
+    beforeEach(() => writeFileSync(fp, CANON));
+
     it("返回折叠流（无 delta），重放出的块树与原日志一致", () => {
         const raw = replay(parseAll(readFileSync(fp, "utf-8")));
         const h = manager.history(uri);
@@ -93,6 +100,8 @@ describe("history 折叠：块树等价、体积骤降", () => {
 });
 
 describe("history 增量：append 只读尾巴", () => {
+    beforeEach(() => writeFileSync(fp, CANON));
+
     it("新增一轮后：结果含新轮，且不重复已有轮", () => {
         appendFileSync(fp, turnLines(TURNS + 1).join("\n") + "\n");
         const h = manager.history(uri);
@@ -107,6 +116,8 @@ describe("history 增量：append 只读尾巴", () => {
     });
 
     it("尾部半行（写入中途）不被消费，补全后才进来", () => {
+        // 前置：第 7 轮已完整落盘（旧写法靠上一条用例 append 进来，shuffle 下不成立）
+        appendFileSync(fp, turnLines(TURNS + 1).join("\n") + "\n");
         // 追加一个**没有结尾换行**的 turn start = 写入中途的半行
         appendFileSync(fp, JSON.stringify({ op: "start", id: "t0009", kind: "turn", meta: { model: "m" } }));
         const h1 = manager.history(uri);

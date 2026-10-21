@@ -14,44 +14,19 @@
 //   ③ RPC 形态断开（卡在 `await next()`、无 op 窗口）→ chat 流订阅**即时**释放（不许滞留到
 //      下一帧）—— review1-R1：chat 自己那条订阅也接了 RPC 的 `signal`（与 ops-feed 同修法）。
 //
-// 无网络、无 Electron：vi.mock("ai") 吐两个 token 后挂起等 abort（与 stop-cut 同手法）。
+// 无网络、无 Electron：桩模型吐两个 token 后挂起等 abort（与 stop-cut 同手法）。
 // ═══════════════════════════════════════════════════════════════
 
-import { describe, it, expect, vi, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-
-vi.mock("ai", () => ({
-  tool: (cfg: unknown) => cfg,
-  stepCountIs: () => () => false,
-  streamText: (opts: { abortSignal?: AbortSignal }) => {
-    const sig = opts.abortSignal;
-    return {
-      fullStream: (async function* () {
-        yield { type: "start-step" };
-        yield { type: "text-start", id: "p1" };
-        yield { type: "text-delta", id: "p1", text: "挂住的生成" };
-        if (!sig) return;
-        // 挂到 abort 为止 —— 制造"无人观察但仍在跑"的窗口
-        await new Promise<void>((_resolve, reject) => {
-          const fail = () => reject(new DOMException("Aborted", "AbortError"));
-          if (sig.aborted) {
-            fail();
-            return;
-          }
-          sig.addEventListener("abort", fail, { once: true });
-        });
-      })(),
-    };
-  },
-}));
-
 import { LocalAgentManager, opsFile } from "../../src/main/services/local-agent";
 import { opsFeed } from "../../src/main/services/ops-feed";
 import { activeTurnList } from "../../src/main/services/runtime-context";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
+import { hangingModel } from "../helpers/hanging-model";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -116,7 +91,7 @@ async function parkOnNext(gen: AsyncGenerator<{ op: string }>): Promise<void> {
 describe("轮次不随消费端断开而死（##305）", () => {
   it("无观察者且长时间无进展 → **不回收**（不设时间超时）；仍由主动停止收尾且留痕", async () => {
     const uri = newUri();
-    const mgr = new LocalAgentManager();
+    const mgr = new LocalAgentManager(() => hangingModel("挂住的生成"));
     await startThenDetach(uri, mgr);
 
     // 断开之后没有任何观察者，等足"若真有超时早就触发"的时间
@@ -139,7 +114,7 @@ describe("轮次不随消费端断开而死（##305）", () => {
 
   it("可见性数据源（[5] ##308）：watchers 计入 op 订阅，chat 流退了仍算有人看", async () => {
     const uri = newUri();
-    const mgr = new LocalAgentManager();
+    const mgr = new LocalAgentManager(() => hangingModel("挂住的生成"));
     await startThenDetach(uri, mgr);
     expect(mgr.watchers(uri), "chat 流断开 + 无 op 订阅 = detached").toBe(0);
 
@@ -156,7 +131,7 @@ describe("轮次不随消费端断开而死（##305）", () => {
 
   it("RPC 形态断开（卡在 await next()、无 op 窗口）→ chat 流订阅**即时**释放（review1-R1/R7）", async () => {
     const uri = newUri();
-    const mgr = new LocalAgentManager();
+    const mgr = new LocalAgentManager(() => hangingModel("挂住的生成"));
     const ac = new AbortController();
     const gen = mgr.chat(uri, "会挂住的轮次", undefined, undefined, ac.signal) as unknown as AsyncGenerator<{ op: string }>;
 

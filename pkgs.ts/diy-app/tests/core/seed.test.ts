@@ -2,7 +2,7 @@
 // 🎯 初始种子的契约：幂等、只配 opencode-go、人物模型 = 缺省口径（free 优先 → 退兜底，
 // 真源 src/shared/model-default.ts）、示例项目/任务形态完整；触发开关只对 lab 缺省开。
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,13 +16,10 @@ const ENV = { OPENCODE_API_KEY: "sk-test-opencode" };
 
 // 「生产根」现在是**不可伪造**的（instance-identity::prodDataHome 用真实家目录，不读 $HOME）。
 // 要测 seed 的「撞上生产根 → 一个字节都不写」这条护栏，又不冒写坏真实 ~/.diy 的风险，
-// 就把判据 mock 成一个临时目录下的假生产根：护栏万一失效，写的也只是 tmp。
-const FAKE_PROD_HOME = vi.hoisted(
-    () => `${process.env["TMPDIR"] ?? "/tmp"}/diy-t255-fake-prod-home/.diy`,
-);
-vi.mock("../../src/main/core/instance-identity", () => ({
-    isProdDataHome: (home: string) => home === FAKE_PROD_HOME,
-}));
+// 就把**判据本身**作为依赖注入（##402：不走 vi.mock —— 那改的是全局模块表，
+// `isolate:false` 下会被先加载的实现静默顶掉）：护栏万一失效，写的也只是 tmp。
+const FAKE_PROD_HOME = `${process.env["TMPDIR"] ?? "/tmp"}/diy-t255-fake-prod-home/.diy`;
+const fakeIsProd = (home: string) => home === FAKE_PROD_HOME;
 
 describe("autoSeedEnabled", () => {
     it("缺省：只 lab 开，prod/test 关", () => {
@@ -83,7 +80,7 @@ describe("seedHome", () => {
     });
 
     it("生产数据根永不种入（即使被显式指到生产根）", () => {
-        const r = seedHome(FAKE_PROD_HOME, ENV); // 假生产根（见文件头 mock）
+        const r = seedHome(FAKE_PROD_HOME, ENV, { deps: { isProdDataHome: fakeIsProd } }); // 假生产根（见文件头）
         expect(r.skipped).toContain("生产数据根");
         expect(r.project).toBeNull();
         expect(r.tasks).toEqual([]);
