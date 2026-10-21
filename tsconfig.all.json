@@ -17,10 +17,13 @@
       "path": "pkgs.ts/diy-ui"
     },
     {
-      "path": "pkgs.ts/diy-app"
+      "path": "pkgs.ts/diy-dev"
     },
     {
-      "path": "pkgs.ts/diy-dev"
+      "path": "pkgs.ts/diy-facts"
+    },
+    {
+      "path": "pkgs.ts/diy-app"
     }
   ]
 }

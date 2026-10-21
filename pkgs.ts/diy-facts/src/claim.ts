@@ -1,0 +1,20 @@
+// claim.ts — claim = `subject#aspect`，纯派生
+//
+// 为什么 claim 可以派生而 fact id 不行（##404）：
+//   claim 只是**查询键** —— 重算无副作用，改名只影响检索不破坏审计；
+//   fact id 是**审计锚点** —— `supersedes.to` 指向它、证据与版本挂在它上。
+
+import type { Fact } from './types';
+
+/** claim 分隔符：`#` 不出现在 subject / aspect 里（校验器保证） */
+export const CLAIM_SEP = '#';
+
+export function claimOf(fact: Pick<Fact, 'subject' | 'aspect'>): string {
+    return `${fact.subject}${CLAIM_SEP}${fact.aspect}`;
+}
+
+export function parseClaim(claim: string): { subject: string; aspect: string } | null {
+    const at = claim.indexOf(CLAIM_SEP);
+    if (at <= 0 || at === claim.length - 1) return null;
+    return { subject: claim.slice(0, at), aspect: claim.slice(at + 1) };
+}

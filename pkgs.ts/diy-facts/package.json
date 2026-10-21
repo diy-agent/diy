@@ -1,0 +1,21 @@
+{
+  "name": "@diy/facts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "diy 事实库内核：事实身份 / 作用域解析 / claim 图 / 结构校验（零依赖纯内核，不做存储、不做 IO）",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src/"
+  ],
+  "dependencies": {},
+  "devDependencies": {
+    "oxfmt": "^0.57.0",
+    "oxlint": "^1.72.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  }
+}
