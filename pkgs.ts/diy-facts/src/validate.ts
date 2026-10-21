@@ -68,9 +68,15 @@ export function validateFacts(input: unknown): Validation {
         if (typeof subject === 'string' && subject.includes('#')) {
             bad('facts/schema', `${at}.subject`, '不得含 `#`（claim 分隔符）', ids);
         }
+        if (typeof subject === 'string' && subject.includes(':')) {
+            bad('facts/schema', `${at}.subject`, '不得含 `:`（命名空间/gid 分隔符）', ids);
+        }
         if (!nonEmpty(aspect)) bad('facts/schema', `${at}.aspect`, '必填非空字符串', ids);
         if (typeof aspect === 'string' && aspect.includes('#')) {
             bad('facts/schema', `${at}.aspect`, '不得含 `#`（claim 分隔符）', ids);
+        }
+        if (typeof aspect === 'string' && aspect.includes(':')) {
+            bad('facts/schema', `${at}.aspect`, '不得含 `:`（命名空间/gid 分隔符）', ids);
         }
         if (typeof value !== 'string') bad('facts/schema', `${at}.value`, '必填字符串', ids);
 

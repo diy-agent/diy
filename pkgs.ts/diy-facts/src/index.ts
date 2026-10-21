@@ -15,6 +15,7 @@
 
 export * from './types';
 export { CLAIM_SEP, claimOf, parseClaim } from './claim';
+export { NS_KINDS, formatGid, formatNs, nsRank, parseGid, parseNs, resolveRef, sameNs, type Ns } from './ns';
 export { pathCovers, scopeEqual, scopeKey, scopeMatches, scopeSpecificity, envsOf } from './scope';
 export { resolveClaim, resolveClaims, type ReadCtx, type Resolved } from './resolve';
 export { affected, buildIndex, refsOf, type Conflict, type FactsIndex, type Issue } from './index-build';

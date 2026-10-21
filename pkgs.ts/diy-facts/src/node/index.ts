@@ -20,6 +20,18 @@ import { dump, load } from 'js-yaml';
 import { buildIndex, validateFacts } from '../index.js';
 import type { Evidence, Fact, Ref, Scope } from '../types.js';
 
+export {
+    PROJECTION_ALGORITHMS,
+    project,
+    projectItems,
+    type ProjectEntry,
+    type ProjectionAlgorithm,
+    type ProjectInput,
+    type ProjectItem,
+    type ProjectOutput,
+    type ProjectProblem,
+} from './project';
+
 /** 校验问题（与 check 脚本 / CLI 同一形状；`level=warning` 不阻断） */
 export interface RepoProblem {
     readonly level: 'error' | 'warning';
