@@ -1,0 +1,42 @@
+# knowledge/facts/kb.yaml
+
+# 生成物式的真源：整篇由 `diy facts submit` 写入（字段顺序、条目排序都由程序定）。
+domain: kb
+facts:
+  kb.journal#anchor:
+    value: anchor 复用 @diy/talk 的 Anchor（message / doc-range 带 revisionId+offset+quote+fuzzy 校正 / task-field / node）+ causes 因果链，不另造第五套事件记录
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: pkgs.ts/diy-talk/src/anchor.ts:1
+      verifiedAt: '2026-10-21'
+  kb.journal#author:
+    value: author 三态决定能否当证据：system（flow 转移顺手写，客观可校验）/ agent:<名>（LLM 叙述，可能错，只当线索）/ human:<名>（用户原话，必须带 anchor 或 quote，否则拒写）
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: pkgs.ts/diy-talk/src/anchor.ts:1
+      verifiedAt: '2026-10-21'
+  kb.layer#attribution:
+    value: 四类内容归属：要求→facts · 待办→body · 做了啥→journal · 依据→facts。「台账」一词已废——它不是独立第四类，要么是 facts，要么是 journal
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-21'
+  kb.layer#body-budget:
+    value: 任务 body 只回答「接下来要做什么」（目标 / 待办 / 未定问题）；定案结论归 facts、过程归 journal。判断标准：删掉这句，任务还能不能工作
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  kb.layer#query-order:
+    value: 任何「现在是什么」先查 facts；facts 没有就补 facts 再回答，不许翻 llm.jsonl 自己回忆。优先级 facts > journal > ops.jsonl > llm.jsonl
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-21'

@@ -52,6 +52,10 @@ subjects:
   find:
     description: 去哪找
     aliases: []
+  kb.journal:
+    description: 任务日志 journal.jsonl 的写作约束（author / anchor / 只追加）
+  kb.layer:
+    description: 任务知识的三层划分与归属（body / facts / journal / 流水）
   model:
     description: 本地 agent 测试用什么模型
     aliases: []

@@ -3,130 +3,117 @@
 # 生成物式的真源：整篇由 `diy facts submit` 写入（字段顺序、条目排序都由程序定）。
 domain: tool
 facts:
-  - id: agents.tool.check
-    subject: tool
-    aspect: check
+  tool#check:
     value: '`./sha.sh check` 是**提交前唯一检查**（tsc `--noEmit` + oxlint + 产物 / 可执行位 / 规范索引护栏）；改一行只跑受影响测试，全量收工前一次'
+    id: agents.tool.check
     review: accepted
     lifecycle: active
     evidence:
       source: user
       at: AGENTS.md:34
       verifiedAt: '2026-10-21'
-  - id: agents.tool.cli
-    subject: tool
-    aspect: cli
+  tool#cli:
     value: 查/改数据：生产 `diy <域> <命令>` · worktree `./diy.sh <域> <命令>`；**域名清单真源 = `diy --help`**，别抄清单
+    id: agents.tool.cli
     review: accepted
     lifecycle: active
     evidence:
       source: user
       at: AGENTS.md:37
       verifiedAt: '2026-10-21'
-  - id: agents.tool.confirm
-    subject: tool
-    aspect: confirm
+  tool#confirm:
     value: 破坏性操作的应用内二次确认走 `ConfirmDialog.tsx`；**禁用原生 `window.confirm`**（窗口级模态，且自动化点不到）
+    id: agents.tool.confirm
     review: accepted
     lifecycle: active
     evidence:
       source: user
       at: AGENTS.md:44
       verifiedAt: '2026-10-21'
-  - id: agents.tool.electron-cache
-    subject: tool
-    aspect: electron-cache
+  tool#electron-cache:
     value: '**缓存里明明有 zip 却重下**的根因：`@electron/get` 缓存键 = **下载 URL 目录**的 sha256；`~/.npmrc` 的 `electron_mirror` 只在 npm 上下文生效（运行时直接 node 没有 `npm_config_electron_mirror`）⇒ 走 GitHub 键必 miss。`ensure-electron` 显式读 npmrc 把镜像传下去，键才与 npm 安装时一致'
+    id: agents.tool.electron-cache
     review: accepted
     lifecycle: active
     evidence:
       source: user
       at: docs/toolchain.md:51
       verifiedAt: '2026-10-21'
-  - id: agents.tool.electron
-    subject: tool
-    aspect: electron
+  tool#electron:
     value: electron 43 **无 postinstall**：缺二进制会在进程内**无超时**下载（症状＝静默卡死）；布局与校验收口 `scripts/ensure-electron.mjs` + `ensure-electron-if-needed.sh`
+    id: agents.tool.electron
     review: accepted
     lifecycle: active
     evidence:
       source: user
       at: AGENTS.md:42
       verifiedAt: '2026-10-21'
-  - id: agents.tool.fmt
-    subject: tool
-    aspect: fmt
+  tool#fmt:
     value: 格式真源 = 各包 `.oxfmtrc.json`（oxfmt **不读** `package.json` 的 `oxfmt` 块）；**fmt 未纳入 `check`**（##323(oxfmt 配置腐坏)）
+    id: agents.tool.fmt
     review: accepted
     lifecycle: active
     evidence:
       source: user
       at: AGENTS.md:35
       verifiedAt: '2026-10-21'
-  - id: agents.tool.model-import
-    subject: tool
-    aspect: model-import
+  tool#model-import:
     value: 环境变量 → provider 导入候选（只列不写）→ `pkgs.ts/diy-app/src/main/core/model-import.ts`
+    id: agents.tool.model-import
     review: accepted
     lifecycle: active
     evidence:
       source: user
       at: AGENTS.md:45
       verifiedAt: '2026-10-21'
-  - id: agents.tool.pkg-action
-    subject: tool
-    aspect: pkg-action
+  tool#pkg-action:
     value: '`pkgs.ts/diy-app/sha.sh lab|build|test|cli` 单包动作'
+    id: agents.tool.pkg-action
     review: accepted
     lifecycle: active
     evidence:
       source: user
       at: AGENTS.md:38
       verifiedAt: '2026-10-21'
-  - id: agents.tool.publish
-    subject: tool
-    aspect: publish
+  tool#publish:
     value: npm 发布（`@diy-agent`）：根 `./sha.sh publish [--dry-run]`，认证 `NPM_PUBLISH_TOKEN`；仓内 `package.json` 恒指 `src/*.ts` 且留 `private:true`（护栏）
+    id: agents.tool.publish
     review: accepted
     lifecycle: active
     evidence:
       source: user
       at: AGENTS.md:39
       verifiedAt: '2026-10-21'
-  - id: agents.tool.sync-gate
-    subject: tool
-    aspect: sync-gate
+  tool#sync-gate:
     value: build/check/test/lab 入口先过 `ensure-sync`，命中即自动 `sync-deps`；`DIY_AUTO_SYNC=0` 关掉改报错，`./sha.sh sync-status` 只看状态
+    id: agents.tool.sync-gate
     review: accepted
     lifecycle: active
     evidence:
       source: user
       at: AGENTS.md:41
       verifiedAt: '2026-10-21'
-  - id: agents.tool.sync
-    subject: tool
-    aspect: sync
+  tool#sync:
     value: '**新开 worktree 先 `./sha.sh sync`**（漏 `--include-workspace-root` 必现 build 解析失败）；末尾把 `~/.diy` 真配置投影进 `build/<variant>/home/`（`DIY_SYNC_HOME=0` 关）'
+    id: agents.tool.sync
     review: accepted
     lifecycle: active
     evidence:
       source: user
       at: AGENTS.md:40
       verifiedAt: '2026-10-21'
-  - id: agents.tool.test
-    subject: tool
-    aspect: test
+  tool#test:
     value: '`./sha.sh test` 全仓 · `test-unit` 不起 Electron · `pkgs.ts/diy-app/sha.sh test-intent [片段…]`（位置参数过滤文件，带 `/` 或 `.test.ts` 原样传，无参全量）'
+    id: agents.tool.test
     review: accepted
     lifecycle: active
     evidence:
       source: user
       at: AGENTS.md:36
       verifiedAt: '2026-10-21'
-  - id: agents.tool.ui
-    subject: tool
-    aspect: ui
+  tool#ui:
     value: 真实 UI 验证走 CDP：`playwright-cli attach --cdp=…`
+    id: agents.tool.ui
     review: accepted
     lifecycle: active
     evidence:

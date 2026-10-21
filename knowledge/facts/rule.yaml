@@ -3,80 +3,72 @@
 # 生成物式的真源：整篇由 `diy facts submit` 写入（字段顺序、条目排序都由程序定）。
 domain: rule
 facts:
-  - id: agents.rule.check
-    subject: rule
-    aspect: check
+  rule#check:
     value: '**类型检查只准 `./sha.sh check`**。各包 `noEmit:true`；一旦 emit，产物落在源码旁会被 `resolve.extensions` 优先命中（症状：改了没反应）'
+    id: agents.rule.check
     review: accepted
     lifecycle: active
     evidence:
       source: user
       at: AGENTS.md:49
       verifiedAt: '2026-10-21'
-  - id: agents.rule.dev-concurrent
-    subject: rule
-    aspect: dev-concurrent
+  rule#dev-concurrent:
     value: '**同一 variant** 的 `lab` 运行中勿并发 `tsc -b` / `vite build` / 全量 vitest（抢同一 `outDir`，watcher 卡死）。跨 variant（lab vs test）各写 `build/<v>`，不抢'
+    id: agents.rule.dev-concurrent
     review: accepted
     lifecycle: active
     evidence:
       source: user
       at: AGENTS.md:51
       verifiedAt: '2026-10-21'
-  - id: agents.rule.instance-lifecycle
-    subject: rule
-    aspect: instance-lifecycle
+  rule#instance-lifecycle:
     value: '**实例起停权限与数据定性**：`test` / `lab` 由 agent **自由起停**（随便折腾，不用问；`lab` 同时是人机沟通·验证 UI 的入口 —— 原 `preview` 的职责已并入它）；二者数据皆**临时非生产**（仓库根 `build/<variant>/home`，坏了就清，必要时可重置）。**唯全局 `diy`（prod / `~/.diy`）是日常实跑的生产 app** —— 不动其数据根、不杀其进程，重启留给用户手动'
+    id: agents.rule.instance-lifecycle
     review: accepted
     lifecycle: active
     evidence:
       source: user
       at: AGENTS.md:52
       verifiedAt: '2026-10-21'
-  - id: agents.rule.lab-owner
-    subject: rule
-    aspect: lab-owner
+  rule#lab-owner:
     value: '**lab 一律开在「自己任务的 worktree」里**（`~/git/diy.worktrees/t<号>-*/` 内 `./sha.sh lab`；数据根随之隔离在该 worktree 的 `build/lab/home`）。**根 worktree（`~/git/diy/diy`）的 `build/lab/home` 是「无主」的** —— 只与用户联合使用（人在那儿看效果），**agent 不自己去开**：判别不了谁在用，撞 `SingletonLock` 或把种子 / 真配置写进用户正开着的根。要实验先给自己任务开 worktree'
+    id: agents.rule.lab-owner
     review: accepted
     lifecycle: active
     evidence:
       source: user
       at: AGENTS.md:53
       verifiedAt: '2026-10-21'
-  - id: agents.rule.new-pkg
-    subject: rule
-    aspect: new-pkg
+  rule#new-pkg:
     value: 新增包检查单：`tsconfig.json`（composite + noEmit + include）+ `tsconfig.all.json` references
+    id: agents.rule.new-pkg
     review: accepted
     lifecycle: active
     evidence:
       source: user
       at: AGENTS.md:54
       verifiedAt: '2026-10-21'
-  - id: agents.rule.probe
-    subject: rule
-    aspect: probe
+  rule#probe:
     value: 轮次中勿改 `src/**` 当探针（watch 重启打断自己的轮次）；探针写 `/tmp`
+    id: agents.rule.probe
     review: accepted
     lifecycle: active
     evidence:
       source: user
       at: AGENTS.md:50
       verifiedAt: '2026-10-21'
-  - id: agents.rule.renderer
-    subject: rule
-    aspect: renderer
+  rule#renderer:
     value: UI 主线是 `renderer_solid/`（SolidJS）；React 版已删除
+    id: agents.rule.renderer
     review: accepted
     lifecycle: active
     evidence:
       source: user
       at: AGENTS.md:55
       verifiedAt: '2026-10-21'
-  - id: agents.rule.task-write
-    subject: rule
-    aspect: task-write
+  rule#task-write:
     value: '**任务文件头是权威**（##322）：读侧 `task show` / `getTask` / 上下文 `task.*` 就是 frontmatter 同一份（不必 `cat`）；写侧收到「整份文件」一律**剥头**，`--body` 只收内联正文（见路径样值即拒，##338）→ `docs/task-write-contract.md`（`--body-text` / `--body-file` / `--append-body*` 三选一、create 不剥头、##376 同族护栏）'
+    id: agents.rule.task-write
     review: accepted
     lifecycle: active
     evidence:
