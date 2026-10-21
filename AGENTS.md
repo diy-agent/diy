@@ -35,6 +35,7 @@
 - `tool.fmt` — 格式真源 = 各包 `.oxfmtrc.json`（oxfmt **不读** `package.json` 的 `oxfmt` 块）；**fmt 未纳入 `check`**（##323(oxfmt 配置腐坏)）
 - `tool.test` — `./sha.sh test` 全仓 · `test-unit` 不起 Electron · `pkgs.ts/diy-app/sha.sh test-intent [片段…]`（位置参数过滤文件，带 `/` 或 `.test.ts` 原样传，无参全量）
 - `tool.cli` — 查/改数据：生产 `diy <域> <命令>` · worktree `./diy.sh <域> <命令>`；**域名清单真源 = `diy --help`**，别抄清单
+- `tool.cli-stderr` — **CLI 的 stderr 是「环境警告」通道，不是错误噪音**（数据根被拒 / 变体被改 / `DIY_ENV` 被改都在里面），stdout 才是 JSON 数据。**禁止 `2>/dev/null`** —— 屏掉的恰是「你连的不是你以为的数据根」这类唯一提示（实测因此把正常输出误判成「命令没输出」）。要静音就 `2>/tmp/warn.log`，别丢
 - `tool.pkg-action` — `pkgs.ts/diy-app/sha.sh lab|build|test|cli` 单包动作
 - `tool.publish` — npm 发布（`@diy-agent`）：根 `./sha.sh publish [--dry-run]`，认证 `NPM_PUBLISH_TOKEN`；仓内 `package.json` 恒指 `src/*.ts` 且留 `private:true`（护栏）
 - `tool.sync` — **新开 worktree 先 `./sha.sh sync`**（漏 `--include-workspace-root` 必现 build 解析失败）；末尾把 `~/.diy` 真配置投影进 `build/<variant>/home/`（`DIY_SYNC_HOME=0` 关）

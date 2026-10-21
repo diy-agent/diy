@@ -5,7 +5,7 @@
 
 import { claimOf } from './claim';
 import { scopeMatches, scopeSpecificity } from './scope';
-import { fail, ok, type Fact, type Lifecycle, type Result, type Scope, type Env } from './types';
+import { fail, ok, type Env, type Evidence, type Fact, type Lifecycle, type Result, type Scope } from './types';
 
 export interface ReadCtx {
     readonly env?: Env;
@@ -21,6 +21,12 @@ export interface Resolved {
     readonly value: string;
     readonly scope?: Scope;
     readonly lifecycle: Lifecycle;
+    /**
+     * 被选中那条事实的证据（来源 / 定位 / 验证时间）。
+     * 投影要拿 `evidence.verifiedAt` 决定预算裁剪时的保留顺序 ——
+     * 只放 `Resolved` 里，**不进投影文本**（证据是给人核的，不是给模型读的）。
+     */
+    readonly evidence: Evidence;
 }
 
 function readable(fact: Fact, includeProposed: boolean): boolean {
@@ -89,6 +95,7 @@ export function resolveClaim(facts: readonly Fact[], claim: string, ctx: ReadCtx
         value: chosen.value,
         ...(chosen.scope === undefined ? {} : { scope: chosen.scope }),
         lifecycle: chosen.lifecycle,
+        evidence: chosen.evidence,
     });
 }
 
