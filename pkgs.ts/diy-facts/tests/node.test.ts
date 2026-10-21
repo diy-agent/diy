@@ -6,6 +6,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { buildIndex } from '../src/index';
 import { checkRepo, FactsRepoError, loadRepo, renderDoc, submit } from '../src/node/index';
 import type { Fact } from '../src/types';
 
@@ -82,9 +83,37 @@ describe('submit（整批事务）', () => {
         const back = loadRepo(dir).facts;
         expect(back.map((f) => `${f.id}=${f.value}`)).toEqual(['port.1=18888']);
         const text = readFileSync(path.join(dir, 'facts', 'app.yaml'), 'utf8');
-        // 头注由 note 生成 + 条目字段顺序固化
+        // 头注由 note 生成；真源是 claim map：key 携带 subject/aspect，
+        // 显式 id（≠ 派生值 `<subject>#<aspect>`）才写进条目
         expect(text.startsWith('# knowledge/facts/app.yaml')).toBe(true);
-        expect(text.indexOf('id: port.1') < text.indexOf('subject: app.port')).toBe(true);
+        expect(text).toContain('app.port#default:');
+        expect(text).not.toContain('subject:');
+    });
+
+    it('显式 id 跨 claim 撞车：map key 唯一但 id 重复 → 仍由程序报 facts/id-duplicate', () => {
+        // map 的 key 唯一只保证 claim 不重复；id 是**审计锚点**，跨 claim 撞车必须语义查重
+        const dir = makeRepo({
+            'app.yaml': [
+                'domain: app',
+                'facts:',
+                '  app.a#x:',
+                '    value: "1"',
+                '    id: same-id',
+                '    review: accepted',
+                '    lifecycle: active',
+                '    evidence: { source: code }',
+                '  app.b#y:',
+                '    value: "2"',
+                '    id: same-id',
+                '    review: accepted',
+                '    lifecycle: active',
+                '    evidence: { source: code }',
+                '',
+            ].join('\n'),
+        });
+        const idx = buildIndex(loadRepo(dir).facts);
+        expect(idx.issues.map((i) => i.code)).toContain('facts/id-duplicate');
+        expect(idx.issues.find((i) => i.code === 'facts/id-duplicate')?.detail).toContain('same-id');
     });
 
     it('改同一条 = 覆盖（审计锚点稳定），重复提交同一份 = unchanged', () => {

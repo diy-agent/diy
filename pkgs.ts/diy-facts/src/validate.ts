@@ -4,6 +4,7 @@
 // 理由：agent 提的是一批，逐条返工（改一条跑一次）比一次给全清单贵得多。
 // 未知字段一律报错（拼错 `verifedAt` 若被静默丢弃，探针就永远不跑）。
 
+import { derivedFactId } from './claim.js';
 import type { Issue } from './index-build';
 import type { Evidence, Fact, FactsErrorCode, Ref, Scope, Env } from './types';
 
@@ -55,11 +56,11 @@ export function validateFacts(input: unknown): Validation {
         }
 
         const id = raw.id;
-        if (!nonEmpty(id)) {
-            bad('facts/schema', `${at}.id`, '必填非空字符串（稳定审计锚点，不可派生）');
+        if (id !== undefined && !nonEmpty(id)) {
+            bad('facts/schema', `${at}.id`, '若给出必须是非空字符串（缺省 = `<subject>#<aspect>`）');
             return;
         }
-        const ids = [id];
+        const ids = nonEmpty(id) ? [id as string] : [];
 
         const subject = raw.subject;
         const aspect = raw.aspect;
@@ -80,8 +81,8 @@ export function validateFacts(input: unknown): Validation {
         }
         if (typeof value !== 'string') bad('facts/schema', `${at}.value`, '必填字符串', ids);
 
-        const review = raw.review;
-        const lifecycle = raw.lifecycle;
+        const review = raw.review ?? 'accepted';
+        const lifecycle = raw.lifecycle ?? 'active';
         if (typeof review !== 'string' || !(REVIEWS as readonly string[]).includes(review)) {
             bad('facts/schema', `${at}.review`, `必须是 ${REVIEWS.join(' | ')}`, ids);
         }
@@ -114,7 +115,7 @@ export function validateFacts(input: unknown): Validation {
         if (issues.length > 0) return;
 
         facts.push({
-            id: id as string,
+            id: nonEmpty(id) ? (id as string) : derivedFactId({ subject: subject as string, aspect: aspect as string, ...(scope === undefined ? {} : { scope }) }),
             subject: subject as string,
             aspect: aspect as string,
             value: value as string,

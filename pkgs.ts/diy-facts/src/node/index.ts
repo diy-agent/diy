@@ -17,6 +17,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFile
 import os from 'node:os';
 import path from 'node:path';
 import { dump, load } from 'js-yaml';
+import { claimOf, derivedFactId } from '../claim.js';
 import { buildIndex, validateFacts } from '../index.js';
 import type { Evidence, Fact, Ref, Scope } from '../types.js';
 
@@ -134,6 +135,35 @@ export interface LoadRepoOptions {
     readonly root?: string;
 }
 
+/**
+ * 真源 `facts` 的两种形态都认：
+ *   - **claim map**（现行）：`{ "<subject>#<aspect>": {value,...} | [{value,...}, ...] }`
+ *   - 旧数组：`[{ id, subject, aspect, value, ... }]`（迁移期兼容，写入一律产出 map）
+ * map 形态下 subject/aspect 由 key 拆出后注入，id 缺省由校验层派生。
+ */
+function expandClaims(rawFacts: unknown): unknown[] {
+    if (Array.isArray(rawFacts)) return rawFacts;
+    if (typeof rawFacts !== 'object' || rawFacts === null) return [];
+    const out: unknown[] = [];
+    for (const [key, body] of Object.entries(rawFacts as Record<string, unknown>)) {
+        const at = key.indexOf('#');
+        if (at <= 0 || at === key.length - 1) {
+            out.push(body); // 非法 key：原样交给校验层报错
+            continue;
+        }
+        const subject = key.slice(0, at);
+        const aspect = key.slice(at + 1);
+        for (const cell of Array.isArray(body) ? body : [body]) {
+            if (typeof cell !== 'object' || cell === null) {
+                out.push(cell);
+                continue;
+            }
+            out.push({ ...(cell as Record<string, unknown>), subject, aspect });
+        }
+    }
+    return out;
+}
+
 /** 词表读取：本地优先，缺省回落（任务级库继承仓库词表，见 LoadRepoOptions.subjectsFallback） */
 function readSubjects(localFile: string, fallbackFile?: string): { all: SubjectDef[]; local: SubjectDef[] } {
     const hasLocal = existsSync(localFile);
@@ -172,8 +202,11 @@ export function loadRepo(knowledgeDir: string, opts: LoadRepoOptions = {}): Repo
     for (const file of files) {
         const text = readFileSync(file, 'utf8');
         const doc = readYaml(file) as { domain?: string; note?: string; facts?: unknown[] } | unknown[] | null;
-        const list = Array.isArray(doc) ? doc : (doc?.facts ?? []);
-        if (!Array.isArray(list)) throw new FactsRepoError('facts/yaml-shape', `${file}: 期望 { domain, facts: [...] } 或裸数组`);
+        const rawFacts: unknown = Array.isArray(doc) ? doc : (doc?.facts ?? {});
+        if (typeof rawFacts !== 'object' || rawFacts === null) {
+            throw new FactsRepoError('facts/yaml-shape', `${file}: 期望 { domain, facts: {<subject>#<aspect>: ...} }（旧数组形态仍认）`);
+        }
+        const list = expandClaims(rawFacts);
         if (!Array.isArray(doc)) {
             // 空头注不落 map：留给 renderDoc 用「文件名」兜底（否则会写出一个空的 `#` 行）
             const note = typeof doc?.note === 'string' ? doc.note : leadingComments(text);
@@ -181,8 +214,12 @@ export function loadRepo(knowledgeDir: string, opts: LoadRepoOptions = {}): Repo
             if (typeof doc?.domain === 'string') domains.set(file, doc.domain);
         }
         for (const item of list) {
-            if (typeof item === 'object' && item !== null && typeof (item as { id?: unknown }).id === 'string') {
-                origin.set((item as { id: string }).id, file);
+            if (typeof item === 'object' && item !== null) {
+                const it = item as { id?: unknown; subject?: unknown; aspect?: unknown };
+                const id = typeof it.id === 'string'
+                    ? it.id
+                    : typeof it.subject === 'string' && typeof it.aspect === 'string' ? `${it.subject}#${it.aspect}` : undefined;
+                if (id !== undefined) origin.set(id, file);
             }
             raw.push(item);
         }
@@ -321,18 +358,57 @@ export function checkRepo(
 // ── 写入 ──────────────────────────────────────────────────────────────
 
 /** 字段顺序固化（少了它，谁先写谁定顺序，diff 会整篇翻红） */
-function canonicalFact(f: Fact): Record<string, unknown> {
-    const out: Record<string, unknown> = { id: f.id, subject: f.subject, aspect: f.aspect, value: f.value };
-    if (f.scope !== undefined) out['scope'] = canonicalScope(f.scope);
-    out['review'] = f.review;
-    out['lifecycle'] = f.lifecycle;
+function evidenceOf(f: Fact): Record<string, unknown> {
     const ev: Record<string, unknown> = { source: f.evidence.source };
     if (f.evidence.probe !== undefined) ev['probe'] = f.evidence.probe;
     if (f.evidence.probeDigest !== undefined) ev['probeDigest'] = f.evidence.probeDigest;
     if (f.evidence.at !== undefined) ev['at'] = f.evidence.at;
     if (f.evidence.verifiedAt !== undefined) ev['verifiedAt'] = f.evidence.verifiedAt;
-    out['evidence'] = ev;
+    return ev;
+}
+
+/** 比较用的完整形态（含 subject/aspect —— 改名但 id 不变也是一种变更） */
+function canonicalFact(f: Fact): Record<string, unknown> {
+    const out: Record<string, unknown> = { id: f.id, subject: f.subject, aspect: f.aspect, value: f.value };
+    if (f.scope !== undefined) out['scope'] = canonicalScope(f.scope);
+    out['review'] = f.review;
+    out['lifecycle'] = f.lifecycle;
+    out['evidence'] = evidenceOf(f);
     if (f.refs !== undefined && f.refs.length > 0) out['refs'] = f.refs.map(canonicalRef);
+    return out;
+}
+
+/**
+ * 落盘用的单条形态：**不含 subject / aspect**（由 claim key 携带），
+ * `id` 只在显式给出（≠ 派生值 `<subject>#<aspect>`）时才写。
+ */
+function factCell(f: Fact): Record<string, unknown> {
+    const out: Record<string, unknown> = { value: f.value };
+    if (f.scope !== undefined) out['scope'] = canonicalScope(f.scope);
+    if (f.id !== derivedFactId(f)) out['id'] = f.id;
+    out['review'] = f.review;
+    out['lifecycle'] = f.lifecycle;
+    out['evidence'] = evidenceOf(f);
+    if (f.refs !== undefined && f.refs.length > 0) out['refs'] = f.refs.map(canonicalRef);
+    return out;
+}
+
+/**
+ * 真源形态：`facts` 是 **map**，key = claim（`subject#aspect`）。
+ * 单条内联成对象；同 claim 的多个变体（不同 scope）成数组。
+ * 为什么 map 而不是数组：key 即身份，省掉重复的 subject/aspect/id；
+ * 且 js-yaml 遇重复 key 直接抛错（`duplicated mapping key`），不比数组查重弱。
+ */
+function claimMap(facts: readonly Fact[]): Record<string, unknown> {
+    const groups = new Map<string, unknown[]>();
+    for (const f of sortFacts(facts)) {
+        const key = claimOf(f);
+        const list = groups.get(key);
+        if (list === undefined) groups.set(key, [factCell(f)]);
+        else list.push(factCell(f));
+    }
+    const out: Record<string, unknown> = {};
+    for (const [key, cells] of groups) out[key] = cells.length === 1 ? cells[0] : cells;
     return out;
 }
 
@@ -377,7 +453,7 @@ export function renderDoc(opts: { note?: string; domain: string; facts: readonly
         .map((l) => `# ${l}`.trimEnd())
         .join('\n');
     const body = dump(
-        { domain: opts.domain, facts: sortFacts(opts.facts).map(canonicalFact) },
+        { domain: opts.domain, facts: claimMap(opts.facts) },
         { noRefs: true, lineWidth: -1, quoteStyle: 'single' },
     );
     return `${head}\n\n# 生成物式的真源：整篇由 \`diy facts submit\` 写入（字段顺序、条目排序都由程序定）。\n${body}`;

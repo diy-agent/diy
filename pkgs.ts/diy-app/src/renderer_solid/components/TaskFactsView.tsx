@@ -31,7 +31,8 @@ async function guard<T>(p: Promise<T>): Promise<Res<T>> {
 export function TaskFactsView(props: { uri: string }) {
     /** 任务级库的定位串（**显式给 uri**，不做"当前任务"推导 —— 同时干两个任务时无从判断） */
     const spec = () => `task:${props.uri}`;
-    const [mode, setMode] = createSignal<"raw" | "projection">("raw");
+    // 默认给**投影**（那就是 LLM 真看到的东西）；要看真源按 `<>`。
+    const [mode, setMode] = createSignal<"raw" | "projection">("projection");
     const [algo, setAlgo] = createSignal<Algo>("yaml-nested");
 
     // 客户端 input 的可选字段在类型上是「必给的 undefined」（见 TrafficLogCleanup 的同类写法），
@@ -87,22 +88,14 @@ export function TaskFactsView(props: { uri: string }) {
                         {fileCount()} 篇 · 词表 {rawData()!.subjects.length} 份
                     </span>
                 </Show>
-                <div class="join ml-auto">
-                    <button
-                        class={`btn btn-xs join-item ${mode() === "raw" ? "btn-active" : "btn-ghost"}`}
-                        aria-pressed={mode() === "raw"}
-                        onClick={() => setMode("raw")}
-                    >
-                        📄 原 YAML
-                    </button>
-                    <button
-                        class={`btn btn-xs join-item ${mode() === "projection" ? "btn-active" : "btn-ghost"}`}
-                        aria-pressed={mode() === "projection"}
-                        onClick={() => setMode("projection")}
-                    >
-                        🎯 投影
-                    </button>
-                </div>
+                <button
+                    class={`btn btn-xs ml-auto ${mode() === "raw" ? "btn-active" : "btn-ghost"}`}
+                    aria-pressed={mode() === "raw"}
+                    title={mode() === "raw" ? "回到投影" : "看源文件（knowledge/facts/*.yaml 原文）"}
+                    onClick={() => setMode(mode() === "raw" ? "projection" : "raw")}
+                >
+                    &lt;&gt;
+                </button>
                 <button
                     class="btn btn-ghost btn-xs opacity-60 hover:opacity-100"
                     title="刷新"

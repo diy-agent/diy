@@ -30,7 +30,8 @@ const KIND_LABEL: Record<string, string> = {
 };
 
 export function TaskJournalView(props: { uri: string }) {
-    const [mode, setMode] = createSignal<"raw" | "rendered">("raw");
+    // 默认给**渲染**（可读的那份）；要看落盘原文按 `<>`。
+    const [mode, setMode] = createSignal<"raw" | "rendered">("rendered");
     const [raw, { refetch: refetchRaw }] = createResource(
         () => props.uri,
         (t) => guard(diyService.diy.journal.raw({ task: t })),
@@ -96,22 +97,14 @@ export function TaskJournalView(props: { uri: string }) {
                         )}
                     </For>
                 </Show>
-                <div class="join ml-auto">
-                    <button
-                        class={`btn btn-xs join-item ${mode() === "raw" ? "btn-active" : "btn-ghost"}`}
-                        aria-pressed={mode() === "raw"}
-                        onClick={() => setMode("raw")}
-                    >
-                        📄 原 JSONL
-                    </button>
-                    <button
-                        class={`btn btn-xs join-item ${mode() === "rendered" ? "btn-active" : "btn-ghost"}`}
-                        aria-pressed={mode() === "rendered"}
-                        onClick={() => setMode("rendered")}
-                    >
-                        📖 渲染
-                    </button>
-                </div>
+                <button
+                    class={`btn btn-xs ml-auto ${mode() === "raw" ? "btn-active" : "btn-ghost"}`}
+                    aria-pressed={mode() === "raw"}
+                    title={mode() === "raw" ? "回到渲染视图" : "看源文件（journal.jsonl 原文，含坏行）"}
+                    onClick={() => setMode(mode() === "raw" ? "rendered" : "raw")}
+                >
+                    &lt;&gt;
+                </button>
                 <button
                     class="btn btn-ghost btn-xs opacity-60 hover:opacity-100"
                     title="刷新"

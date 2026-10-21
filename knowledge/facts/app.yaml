@@ -6,35 +6,28 @@
 # 生成物式的真源：整篇由 `diy facts submit` 写入（字段顺序、条目排序都由程序定）。
 domain: app
 facts:
-  - id: port.dev-test
-    subject: app.port
-    aspect: default
-    value: '0'
-    scope:
-      env:
-        - development
-        - test
-    review: accepted
-    lifecycle: active
-    evidence:
-      source: code
-      at: pkgs.ts/diy-app/src/runtime.ts:103
-      verifiedAt: '2026-10-21'
-  - id: port.production
-    subject: app.port
-    aspect: default
-    value: '18888'
-    scope:
-      env: production
-    review: accepted
-    lifecycle: active
-    evidence:
-      source: code
-      at: pkgs.ts/diy-app/src/runtime.ts:90
-      verifiedAt: '2026-10-21'
-  - id: port.resolution
-    subject: app.port
-    aspect: resolution
+  app.port#default:
+    - value: '0'
+      scope:
+        env:
+          - development
+          - test
+      review: accepted
+      lifecycle: active
+      evidence:
+        source: code
+        at: pkgs.ts/diy-app/src/runtime.ts:103
+        verifiedAt: '2026-10-21'
+    - value: '18888'
+      scope:
+        env: production
+      review: accepted
+      lifecycle: active
+      evidence:
+        source: code
+        at: pkgs.ts/diy-app/src/runtime.ts:90
+        verifiedAt: '2026-10-21'
+  app.port#resolution:
     value: DIY_PORT > <DIY_HOME>/app.port 记录 > defaultPort(env)
     review: accepted
     lifecycle: active
@@ -46,9 +39,7 @@ facts:
       - rel: depends-on
         data:
           toClaim: app.port#default
-  - id: diyenv.values
-    subject: env.diy-env
-    aspect: values
+  env.diy-env#values:
     value: production | development | test（无法识别的值一律按 production：宁可少开能力，不可误开）
     review: accepted
     lifecycle: active
@@ -56,9 +47,7 @@ facts:
       source: code
       at: pkgs.ts/diy-app/src/runtime.ts:38
       verifiedAt: '2026-10-21'
-  - id: variant.values
-    subject: env.variant
-    aspect: values
+  env.variant#values:
     value: prod | test | lab（preview 已删除：遇 DIY_VARIANT=preview 显式报错，不静默落 build/preview）
     review: accepted
     lifecycle: active
