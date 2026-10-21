@@ -11,6 +11,7 @@ import {
     TURN_DETAIL_LAYER,
     TURN_LEVEL_MAX,
     clampLines,
+    collapsedRows,
     contentItems,
     cycleTurnLevel,
     expandableOf,
@@ -516,6 +517,33 @@ describe("turnRows：过程历史行（**不含结尾槽**）", () => {
         const t = ended("error", {}, [step("s1", [say("a1"), err("e1")])]);
         expect(composeTail(t, sceneTailOf(t))!.body!.id).toBe("a1");
         expect(turnRows(t, null).some((r) => r.key === "a1")).toBe(false);
+    });
+});
+
+describe("collapsedRows：收起态仍要画的（用户发言恒显）", () => {
+    // 用户 2026-10-21：「1/2/3/4 级都没有我那条留言，我需要展开 1 就能看到 —— 这是用户级留言，
+    // 不应该被折叠放到深层」。收起态（1-2 级 / 手动收拢）藏过程，但自己说的话必须在。
+    const t = turn(
+        step("s1", [user("u1")]),
+        step("s2", [think("k1"), tool("x1"), user("u2")]),
+        step("s3", [say("a1")]),
+    );
+
+    it("只留用户发言（含轮内插话/投递那句），过程与正文一律不出", () => {
+        const rows = collapsedRows(turnRows(t, null));
+        expect(rows.map((r) => r.key)).toEqual(["u2"]);
+        expect(rows.every((r) => r.kind === "user")).toBe(true);
+    });
+
+    it("轮首那批不由这里出（与 leadUsers 不重叠，避免同一句画两遍）", () => {
+        expect(collapsedRows(turnRows(t, null)).some((r) => r.key === "u1")).toBe(false);
+        expect(leadUsers(t).map((n) => n.id)).toEqual(["u1"]);
+    });
+
+    it("同一路径只做过滤不重排：多句插话保持文档序", () => {
+        // 开头连续的 user 是轮首（leadUsers 取走），插话从过程之后才算
+        const t2 = turn(step("s1", [user("u1"), think("k1"), user("u2"), user("u3")]));
+        expect(collapsedRows(turnRows(t2, null)).map((r) => r.key)).toEqual(["u2", "u3"]);
     });
 });
 

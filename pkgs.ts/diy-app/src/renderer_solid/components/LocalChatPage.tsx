@@ -123,6 +123,7 @@ import {
     DEFAULT_TURN_LEVEL,
     TURN_LEVEL_MAX,
     clampLines,
+    collapsedRows,
     composeTail,
     cycleTurnLevel,
     endLeafTip,
@@ -1591,7 +1592,20 @@ export function TurnView(props: {
                 结尾是"顶级、自暴露、与状态同级"，不是历史的一部分）。
                 `pl-2`：箭头移到行首后，左列箭头的缩进就是层级刻度
                 （轮次头 → 过程 bar → 逐条过程），8px 才读得出"bar 在轮次头之下"。 */}
-            <Show when={props.histOpen}>
+            <Show
+                when={props.histOpen}
+                /* 收起态（1-2 级 / 用户手动收拢这一轮）：过程不显示，但**用户发言恒显**。
+                   用户 2026-10-21：「1/2/3/4 级都没有我那条留言，我需要展开 1 就能看到，
+                   这是用户级留言，不应该被折叠放到深层」—— 自己说的话是对话脉络本体，
+                   不是"过程细节"，收起来只会被读成"发出去了但丢了"。 */
+                fallback={
+                    <div class="space-y-1.5" data-chat-list="users-only">
+                        <For each={collapsedRows(rows())}>
+                            {(row) => (row.kind === "user" ? <UserBubble node={row.node} /> : null)}
+                        </For>
+                    </div>
+                }
+            >
                 <div class="space-y-1.5" data-chat-list>
                     <For each={rows()}>
                     {(row) => {
