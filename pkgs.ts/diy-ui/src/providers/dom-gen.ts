@@ -20,6 +20,8 @@
 
 import { effect, stop } from "@vue/reactivity";
 import { Signal } from "../signal.js";
+// 浏览器侧最常用的一对（声明式结构 + 响应式）从同一入口拿：html + Signal
+export { Signal };
 import {
   applyProps,
   pushScope,
