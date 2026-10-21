@@ -23,6 +23,10 @@
 // 编造推理内容会污染模型的自我上下文。opencode / pi 两家对 deepseek 做的也是这条兜底
 // （opencode `requireReasoning` 缺则补 ""，pi `requiresReasoningContentOnAssistantMessages`）。
 //
+// ⚠️ **轮内每一步都要跑**（##405）：首步之外，SDK 送上来的 assistant 是它用响应重建的，
+//   不带 providerOptions —— 只跑首步等于没修（实测同一轮第 1~84 步全 200、第 85 步 400）。
+//   调用点两处：首步（runTurn 的 `sent`）+ `prepareStep` 每步（同一个 `replayOpts`）。
+//
 // 铁律（不许破）：**只加 providerOptions，不加 part、不加消息** —— 消息条数与下标
 // 必须继续等于 llm.jsonl 行号（##371 定下的对齐语义，压缩注记 / 预览 / 记账全靠它）。
 import type { ModelMessage } from "ai";
@@ -63,6 +67,18 @@ function hasReasoningPart(m: Extract<ModelMessage, { role: "assistant" }>): bool
 }
 
 /**
+ * 这条 assistant 是否**已经**带上 wire 侧的 `reasoning_content`（真推理由 part 承载，这里只看 metadata）。
+ *
+ * 为什么要单独判：本函数现在**每一步**都跑（prepareStep，见 ##405），不判会把「上一轮补过的空串」
+ * 当成"还没补"再补一遍 ⇒ 每次返回新数组 ⇒ SDK 视为 messages 被替换。内容虽相同，
+ * 但「无变化就返回同一引用」这条契约会被打破（幂等是调用方判「要不要覆盖」的唯一依据）。
+ */
+function hasReplayMarker(m: Extract<ModelMessage, { role: "assistant" }>): boolean {
+    const compat = (m.providerOptions as Record<string, Record<string, unknown>> | undefined)?.["openaiCompatible"];
+    return typeof compat?.["reasoning_content"] === "string";
+}
+
+/**
  * 投递前归一：给「缺 reasoning 的 assistant 消息」挂 `providerOptions.openaiCompatible.reasoning_content = ""`。
  *
  * 三态（单测钉住）：
@@ -78,7 +94,7 @@ export function ensureReasoningReplay(msgs: readonly ModelMessage[], opts: Reaso
     let patched = false;
     const out = src.map((m) => {
         if (m.role !== "assistant") return m;
-        if (hasReasoningPart(m)) return m;
+        if (hasReasoningPart(m) || hasReplayMarker(m)) return m;
         patched = true;
         const prev = (m.providerOptions ?? {}) as Record<string, Record<string, unknown>>;
         const prevCompat = (prev["openaiCompatible"] ?? {}) as Record<string, unknown>;

@@ -114,6 +114,38 @@ describe("ensureReasoningReplay", () => {
             openaiCompatible: { bar: 2, reasoning_content: "" },
         });
     });
+
+    it("⑦ 幂等：已补过的再跑一次 ⇒ 返回**同一数组引用**（prepareStep 每步都跑，靠它判「要不要覆盖」）", () => {
+        const m = {
+            role: "assistant",
+            content: [{ type: "tool-call", toolCallId: "c1", toolName: "bash", input: {} }],
+        } as unknown as ModelMessage;
+        const input = [m];
+        const once = ensureReasoningReplay(input, { thinking: true, deepseek: true });
+        expect(once).not.toBe(input); // 首跑确实补了（新数组）
+        const twice = ensureReasoningReplay(once, { thinking: true, deepseek: true });
+        // 第二次原样返回 —— 否则 SDK 每步都看到「messages 变了」，前缀缓存与 stepMessages 语义被打乱
+        expect(twice).toBe(once);
+    });
+
+    it("⑧ 轮内多步：第二步新增的 assistant（SDK 重建、无 providerOptions）也补，第一步补过的不重造", () => {
+        const step1 = {
+            role: "assistant",
+            content: [{ type: "tool-call", toolCallId: "c1", toolName: "bash", input: {} }],
+        } as unknown as ModelMessage;
+        const first = ensureReasoningReplay([step1], { thinking: true, deepseek: true });
+        // 第 2 步：SDK 在首步消息后再挂一条它自己拼的 assistant（无 reasoning、无 providerOptions）
+        const step2 = {
+            role: "assistant",
+            content: [{ type: "tool-call", toolCallId: "c2", toolName: "read", input: {} }],
+        } as unknown as ModelMessage;
+        const second = ensureReasoningReplay([...first, step2], { thinking: true, deepseek: true });
+        // 首步那条对象**原样复用**（幂等，不重造）
+        expect(second[0]).toBe(first[0]);
+        expect((second[1] as { providerOptions?: unknown }).providerOptions).toEqual({
+            openaiCompatible: { reasoning_content: "" },
+        });
+    });
 });
 
 // ── wire 截获（确定性判据）：真跑 SDK 组装链，桩 fetch 接住定稿 body ──

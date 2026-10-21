@@ -3802,11 +3802,14 @@ export class LocalAgentManager {
             // ⚠️ 只加 providerOptions：**不加 part、不加消息** —— 条数/下标仍 = llm.jsonl 行号（##371 铁律）。
             // 顺序：归一在 rawSink **之前** ⇒ research raw dump（kind:"request"）记的就是**最终 wire 形状**
             // （含这个补丁字段）；UI 预览 / llm.jsonl 仍看不到它 —— 那是块树投影（落盘真源），归一只属于投递侧。
+            // 归一判据算**一次**：首步与 prepareStep 的每步都用同一份（两处判据分叉必出「首步补了、
+            // 后续步没补」的假修复 —— 正是 ##405 第 85 步 400 的形态）。
+            const replayOpts = reasoningReplayOptsOf(rm, reasoningEffort);
             const sent: ModelMessage[] = ensureReasoningReplay(
                 normalizeUserRuns(
                     withRuntime(hist.messages, delivery.runtime.text, hist.note, renderSummaryPart(this.effectiveSummary(taskUri))),
                 ),
-                reasoningReplayOptsOf(rm, reasoningEffort),
+                replayOpts,
             );
             // 本轮的**投递选择事实**（配置驱动压缩）：分表用它标注「本步（轮首）投递被压过」（##272 B1）。
             // 与 compact 事件解耦 —— 事件只在触发/手动时写；这里每轮首都有（投递本就无条件按当前配置筛选）。
@@ -3957,6 +3960,18 @@ export class LocalAgentManager {
                             ];
                         }
                     }
+                    // ── thinking 回放归一（##405 残留 · ##398 的一半）──
+                    // 首步的 messages 是我们构造的（上面 `sent` 已归一），但 **第 2 步起** SDK 送进来的是
+                    // 「原 input messages + 内部 stepMessages」—— 其中**上一步的 assistant** 是 SDK 用响应
+                    // 重新拼的，**不带我们挂的 providerOptions**。上一步没吐 reasoning（实测 31%）⇒ 本步
+                    // wire 上那条 assistant 连 `reasoning_content` 字段都没有 ⇒ 严判端点 400，且**整轮**死在
+                    // 半路（##405 实测：同一轮第 1~84 步全 200，第 85 步 400）。
+                    // ⇒ 归一必须**每一步**都跑，而不是只跑首步。
+                    // `?=` 语义由函数自己保证：无需补时返回**同一个数组引用**（SDK 看到 messages 未变，
+                    // 不砸前缀缓存、不重置 stepMessages）。
+                    const base = nextMessages ?? messages;
+                    const replayed = ensureReasoningReplay(base, replayOpts);
+                    if (replayed !== base) nextMessages = replayed;
                     if (instructions === undefined && nextMessages === undefined) return {};
                     return {
                         ...(instructions === undefined ? {} : { instructions }),
