@@ -29,8 +29,13 @@
 //   · **第二条裁剪轴 `reasoningClip`**（##374 T2）：同上语义，管 assistant 消息的**推理文本**。
 //     两轴独立（一条消息可以只被声明了推理轴），`reasoningClips` 字段各报各的。
 
-import type { ClipSpec, ReasoningClipSpec } from "../../shared/context/compaction";
-import { DEFAULT_EXEMPT_STEPS, DEFAULT_KEEP, type KeepStage } from "../../shared/context/compact-keep";
+import { DEFAULT_HEADTAIL, type ClipSpec, type ReasoningClipSpec } from "../../shared/context/compaction";
+import {
+    DEFAULT_EXEMPT_STEPS,
+    DEFAULT_KEEP,
+    DEFAULT_REASONING_HEADTAIL,
+    type KeepStage,
+} from "../../shared/context/compact-keep";
 import type { LocalModelMessage } from "./local-blocks";
 
 export { DEFAULT_EXEMPT_STEPS };
@@ -86,6 +91,31 @@ export interface BudgetSelection {
      * 同样**只在有级声明时出现**（读侧兼容）。
      */
     reasoningClips?: (ReasoningClipSpec | null)[];
+    /**
+     * **装配后硬上限**的裁决结果（##406 刀 2）——**只在调用方给了 `capBytes` 时出现**
+     * （老调用点 / 老断言不必知道这条轴）。
+     *
+     * 为什么要有它：`must` 级不占预算、且 `clip: full` 一字不裁 ⇒ 预算 20 KB 与实发 4.95 MB
+     * 可以同时成立（##401 会话死锁的机理）。硬上限是**出口闸**：装完量总量，超了就按
+     * `degradations` 记录的那几步逐级降级，绝不原样发。
+     */
+    hardCap?: HardCapVerdict;
+}
+
+/** 一级降级（人读说明 + 机器可判的类别） */
+export interface PlanDegradation {
+    /** `clip` = 保底级 `full` 改 `headtail`；`must-cap` = 保底级按上限逐单元收（≈缩 n）；`drop-must` = 整级丢弃 */
+    kind: "clip" | "must-cap" | "drop-must";
+    /** 说明（日志 / 提示用；含前后字节数） */
+    detail: string;
+}
+
+/** 硬上限裁决（`capBytes` ≤ 0 = 没设上限） */
+export interface HardCapVerdict {
+    capBytes: number;
+    /** 最终装配结果是否真的落在上限内（false = 降级到底仍超，只能放弃保底级 —— 或连预算级都超） */
+    withinCap: boolean;
+    degradations: PlanDegradation[];
 }
 
 // ─── 装配上下文（一次选择内共用；把「分类 / 配对 / 成本」算一次）──────
@@ -359,9 +389,18 @@ export function runPlan(
     all: readonly LocalModelMessage[],
     p: CompactPlan,
     args: { costOf: (m: LocalModelMessage, clip: ClipSpec | null, reasoningClip?: ReasoningClipSpec | null) => number },
+    /**
+     * 托底级（`exempt`）的**总字节上限**（缺省 undefined = 不设，老行为逐字不变）。
+     * 语义 = 「缩 n」的动态版：按取法给的顺序（step / recent 都是**新的先**）逐个尝试，
+     * 放不下就跳过，**至少留第一个单元**（一个都留不下时由外层 `runPlanBounded` 继续降级）。
+     */
+    bounds: { mustCapBytes?: number } = {},
 ): BudgetSelection {
     const n = all.length;
     if (n === 0) return { kept: [], dropped: [], keptRuns: [], keptBytes: 0 };
+    /** 托底级累计字节 / 单元数（跨级累计：整条 plan 的 exempt 部分共用一个上限） */
+    let mustBytes = 0;
+    let mustUnits = 0;
 
     const ctx = buildCtx(all, args.costOf);
     const keep = all.map(() => false);
@@ -404,7 +443,11 @@ export function runPlan(
                     remaining -= costOf(k);
                 }
             } else {
-                for (const k of add) keep[k] = true; // 托底：不计预算
+                // 托底：不计预算；但设了硬上限就按上限逐单元收（##406 刀 2）
+                if (bounds.mustCapBytes !== undefined && mustUnits > 0 && mustBytes + c > bounds.mustCapBytes) continue;
+                for (const k of add) keep[k] = true;
+                mustBytes += c;
+                mustUnits++;
             }
             for (const k of add) clips[k] = clip;
             for (const k of add) rclips[k] = rclip;
@@ -429,4 +472,101 @@ export function runPlan(
     if (declared) out.clips = clips; // 无人声明 clip ⇒ 字段不出现（读侧兼容）
     if (rDeclared) out.reasoningClips = rclips; // 同上（推理轴；两轴各报各的）
     return out;
+}
+
+// ─── 出口硬上限（##406 刀 2）────────────────────────────────────
+//
+// 病灶：`must` 级（保底最近 N 步）**不占预算、且 clip:full 一字不裁** ⇒ 「预算 20 KB」
+// 与「实发 4.95 MB」可以同时成立（##401 实测：会话被同一个 400 锁死，每次「？」都重发一遍）。
+// `main/services/compaction-plan.ts` 头注里那个 1 MiB 兜底原先只在 `plan check` 的**离线量**里成立，
+// 运行时装配完**没有闸**。本节就是那道闸：装完量 `keptBytes`，超了就按下面的次序降级。
+//
+// 降级次序（越往后越狠，**每一级都仍是「能发出去的请求」**）：
+//   ① 保底级的 `clip: full` → `headtail`（工具结果头尾保留 + 指针；推理 `full` → 保头 600 字符）；
+//   ② 保底级按上限**逐单元收**（≈「缩 n」：新的步先留，装不下就不留，至少留第一个）；
+//   ③ 仍超 ⇒ **整段丢掉保底级**，回到纯预算路径（预算是硬的）。
+//
+// 为什么不直接 `throw`：这是**降级**不是报错 —— 用户要的是「能继续说话」，不是一句漂亮的错误。
+
+/** 保底级降级后用的工具裁法（= 缺省 headtail：前 80 行 / 后 20 行 / 单行 2000 字符 / 单条 100 KB） */
+export const DEGRADED_TOOL_CLIP: ClipSpec = {
+    type: "headtail",
+    data: {
+        head: DEFAULT_HEADTAIL.headLines,
+        tail: DEFAULT_HEADTAIL.tailLines,
+        maxLineChars: DEFAULT_HEADTAIL.maxLineChars,
+        maxKeepBytes: DEFAULT_HEADTAIL.maxKeepBytes,
+    },
+};
+
+const fmtB = (n: number): string => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(2)} MB` : `${(n / 1024).toFixed(1)} KB`);
+
+/** ① 保底级的裁法降级（`full` → headtail；两个轴各自降，互不影响） */
+export function degradeMustClips(p: CompactPlan): { plan: CompactPlan; changed: boolean } {
+    let changed = false;
+    const stages = p.stages.map((st): PickStage => {
+        if (st.budget !== "exempt") return st;
+        let next = st;
+        if (st.clip?.type === "full") {
+            next = { ...next, clip: DEGRADED_TOOL_CLIP };
+            changed = true;
+        }
+        if (st.reasoningClip?.type === "full") {
+            next = { ...next, reasoningClip: DEFAULT_REASONING_HEADTAIL };
+            changed = true;
+        }
+        return next;
+    });
+    return { plan: changed ? { ...p, stages } : p, changed };
+}
+
+/** ③ 整段丢掉保底级（只剩计预算的级） */
+export function dropMustStages(p: CompactPlan): CompactPlan {
+    const stages = p.stages.filter((st) => st.budget !== "exempt");
+    return stages.length === p.stages.length ? p : { ...p, stages };
+}
+
+/**
+ * **带硬上限的装配**：先按原 plan 装；超了按 ①②③ 逐级降级，返回**落得下且降级最少**的那一份。
+ *
+ * `capBytes` ≤ 0 / 未给 ⇒ 与 `runPlan` 逐字节相同（老调用点行为不变）。
+ * 返回值多一个 `hardCap` 字段说明**降了哪些、最终是否落进上限** —— 调用方据此出声（日志 / 提示），
+ * 但**绝不**据此改投递内容（投递就是 `selection` 本身）。
+ */
+export function runPlanBounded(
+    all: readonly LocalModelMessage[],
+    p: CompactPlan,
+    args: { costOf: (m: LocalModelMessage, clip: ClipSpec | null, reasoningClip?: ReasoningClipSpec | null) => number },
+    capBytes: number,
+): BudgetSelection {
+    const base = runPlan(all, p, args);
+    if (!(capBytes > 0) || base.keptBytes <= capBytes) {
+        return { ...base, hardCap: { capBytes, withinCap: true, degradations: [] } };
+    }
+
+    const degradations: PlanDegradation[] = [];
+    // ①② 裁法降级 + 按上限逐单元收（一起做：先改裁法，再让装配按 cap 收）
+    const clipped = degradeMustClips(p);
+    if (clipped.changed) degradations.push({ kind: "clip", detail: "保底级 clip:full → headtail（推理同理）" });
+    const s1 = runPlan(all, clipped.plan, args, { mustCapBytes: capBytes });
+    if (s1.keptBytes < base.keptBytes) {
+        degradations.push({
+            kind: "must-cap",
+            detail: `保底级按硬上限 ${fmtB(capBytes)} 逐单元收：${fmtB(base.keptBytes)} → ${fmtB(s1.keptBytes)}`,
+        });
+    }
+    if (s1.keptBytes <= capBytes) return { ...s1, hardCap: { capBytes, withinCap: true, degradations } };
+
+    // ③ 仍超 ⇒ 整段丢掉保底级（回到纯预算路径）
+    const dropped = dropMustStages(clipped.plan);
+    if (dropped.stages.length !== clipped.plan.stages.length) {
+        degradations.push({
+            kind: "drop-must",
+            detail: `裁法/缩量后仍超硬上限（${fmtB(s1.keptBytes)} > ${fmtB(capBytes)}）⇒ 整段丢弃保底级`,
+        });
+        const s2 = runPlan(all, dropped, args);
+        return { ...s2, hardCap: { capBytes, withinCap: s2.keptBytes <= capBytes, degradations } };
+    }
+    // 没有保底级可降（plan 本就只有预算级）⇒ 超的是预算本身，如实报「没落进上限」
+    return { ...s1, hardCap: { capBytes, withinCap: false, degradations } };
 }

@@ -55,7 +55,7 @@ import {
     type JSONVal,
     type TurnEndReason,
 } from "./local-blocks";
-import { DEFAULT_KEEP, DEFAULT_MUST_HARD_CAP_BYTES, DEFAULT_REASONING_CLIP, type KeepStage } from "../../shared/context/compact-keep";
+import { DEFAULT_KEEP, DEFAULT_REASONING_CLIP, type KeepStage } from "../../shared/context/compact-keep";
 import { keepStagesToPlan, runPlan } from "./compaction-plan";
 import {
     decodeCursor,
@@ -111,6 +111,8 @@ import {
 } from "../../shared/usage";
 import { buildDelivery, isRuntimePlace, runtimeDiffDelivery, type Delivery } from "../../shared/context/delivery";
 import { renderBudgetNote } from "../../shared/context/budget-note";
+import { mustHardCapBytesOf } from "../../shared/context/compact-keep";
+import { estimateRequest, tighterHistoryCapBytes } from "../../shared/context/request-preflight";
 import { renderSummaryPart, tailEnvelope } from "../../shared/context/envelope";
 import { describeAnomalies, readLlmLog } from "../../shared/context/log-schema";
 import {
@@ -856,7 +858,17 @@ function sizeOfStore(store: BlockStore, opts?: Parameters<typeof blocksToMessage
  * 抽出来的理由：真发（deliveryOptsOf）与**预览/记账**（compact）必须用同一份构造逻辑，
  * 否则「预览说省 97%、真发却照旧」这种分叉根本测不出来。
  */
-function optsFor(policy: CompactPolicy, taskUri: string, collect?: ClippedToolDetail[], keep?: readonly KeepStage[] | null): DeliveryOpts {
+function optsFor(
+    policy: CompactPolicy,
+    taskUri: string,
+    collect?: ClippedToolDetail[],
+    keep?: readonly KeepStage[] | null,
+    /**
+     * 【##406 刀 2】装配后硬上限（字节）。缺省 = 按模型窗口算（`mustHardCapBytesOf`）；
+     * 预检要**再压一次**时由调用方传更小的值（`tighterHistoryCapBytes`）。
+     */
+    hardCapBytes?: number,
+): DeliveryOpts {
     // 管道来自**当前配置**（config / history 分离：投递只读当前配置）—— 每个调用点都现读一次，
     // 于是「改配置本轮即生效」对 `history.keep[]` 与预算**同一条**（无需压缩事件、无需重启）。
     // `keep` 显式传入 = 调用方手里已有那一刻的配置（记账要快照，见 planCompact）。
@@ -867,6 +879,9 @@ function optsFor(policy: CompactPolicy, taskUri: string, collect?: ClippedToolDe
         // 就回落它（不然「不声明 ⇒ 不裁」，与工具轴反着来且静默多花字节）
         defaultReasoningClip: DEFAULT_REASONING_CLIP,
         plan: keepStagesToPlan(specs, budgetBytesOf(policy), clipSpecOf(toolResultOf(policy))),
+        // 出口硬上限（##406 刀 2）：`must` 级不占预算 ⇒ 必须另有一道总量闸，
+        // 否则「预算 20 KB / 实发 4.95 MB」可以同时成立（##401）。
+        hardCapBytes: hardCapBytes ?? mustHardCapBytesOf(contextLimitOf(personaForTask(diyHome(), taskUri).model)),
     };
 }
 
@@ -1881,12 +1896,14 @@ export class LocalAgentManager {
         taskUri: string,
         store: BlockStore,
         collect?: ClippedToolDetail[],
+        /** 【##406 刀 2】更紧的装配后硬上限（预检发现越线时重压一次用）；缺省 = 按模型窗口算 */
+        hardCapBytes?: number,
     ): HistoryDelivery {
         // 【配置 / 历史分离，用户 2026-10-07】投递口径 = **当前配置**（期望值），每次请求实时算 ——
         // 改预算**本轮即生效**。压缩账（compact.jsonl）只是**历史快照**（不可变，供回溯/对比），
         // 不再决定投递（旧实现读 `resolveBoundary` → 没压过就不生效，违反直觉）。
         const policy = loadAutoCompact(diyHome()).policy;
-        return this.buildHistory(store, policy, collect, taskUri);
+        return this.buildHistory(store, policy, collect, taskUri, hardCapBytes);
     }
 
     /** 面板参数预览用（给定 policy + 边界现算，不读生效账本）—— 与真发同一条构造链 */
@@ -1904,8 +1921,10 @@ export class LocalAgentManager {
         collect?: ClippedToolDetail[],
         /** 原文路径用（注记里的 file 字段）；view 路径与真发同一个 taskUri */
         taskUriOf = "",
+        /** 【##406 刀 2】更紧的装配后硬上限；缺省 = 按模型窗口算 */
+        hardCapBytes?: number,
     ): HistoryDelivery {
-        const opts: DeliveryOpts = policy ? optsFor(policy, taskUriOf, collect) : {};
+        const opts: DeliveryOpts = policy ? optsFor(policy, taskUriOf, collect, undefined, hardCapBytes) : {};
         const kept = blocksToMessages(store, opts) as unknown as ModelMessage[];
         if (!policy || !this.noteEnabled()) return { messages: kept, note: "" };
         // 预算注记：只列**保留区间**（gap 自明，不逐 gap 标注）
@@ -2557,7 +2576,8 @@ export class LocalAgentManager {
     measureMustStages(taskUri: string, keep: readonly KeepStage[]): { mustBytes: number; hardCapBytes: number } {
         const policy = loadAutoCompact(diyHome()).policy;
         const capTokens = contextLimitOf(personaForTask(diyHome(), taskUri).model);
-        const hardCapBytes = capTokens !== undefined ? capTokens * 4 : DEFAULT_MUST_HARD_CAP_BYTES;
+        // 与运行时装配的出口闸**同一个判据**（`mustHardCapBytesOf`）——离线量出来的才会等于真发的
+        const hardCapBytes = mustHardCapBytesOf(capTokens);
         const must = keep.filter((s) => s.must === true);
         if (must.length === 0) return { mustBytes: 0, hardCapBytes };
         const all = projectAll(replay(readJsonl<Op>(opsFile(taskUri))));
@@ -3792,7 +3812,7 @@ export class LocalAgentManager {
                 systemBytes: delivery.system.bytes,
                 toolsBytes: JSON.stringify(tools).length,
             };
-            const hist = this.deliveryHistory(taskUri, sess.store);
+            let hist = this.deliveryHistory(taskUri, sess.store);
             // ── thinking 回放归一（##398）──
             // 上游（DeepSeek thinking 模式 / luminal 严判端点）要求**每条回放的 assistant**都带
             // `reasoning_content`；而生成侧不一定每步都有推理（实测 31% 的 assistant 无 think 块，
@@ -3805,17 +3825,90 @@ export class LocalAgentManager {
             // 归一判据算**一次**：首步与 prepareStep 的每步都用同一份（两处判据分叉必出「首步补了、
             // 后续步没补」的假修复 —— 正是 ##405 第 85 步 400 的形态）。
             const replayOpts = reasoningReplayOptsOf(rm, reasoningEffort);
-            const sent: ModelMessage[] = ensureReasoningReplay(
-                normalizeUserRuns(
-                    withRuntime(hist.messages, delivery.runtime.text, hist.note, renderSummaryPart(this.effectiveSummary(taskUri))),
-                ),
-                replayOpts,
-            );
+            // 一份 `hist` → 最终 wire 形状（尾部 runtime 信封 + 摘要 + 推理回放归一）。
+            // 抽成闭包：预检「再压一次」要按同一套拼装重算一遍 —— 两处各抄一遍必分叉（##227 老教训）。
+            const sentOf = (h: typeof hist): ModelMessage[] =>
+                ensureReasoningReplay(
+                    normalizeUserRuns(
+                        withRuntime(h.messages, delivery.runtime.text, h.note, renderSummaryPart(this.effectiveSummary(taskUri))),
+                    ),
+                    replayOpts,
+                );
+            let sent: ModelMessage[] = sentOf(hist);
+
+            // ── 发请求**前**的 token 预检（##406 刀 2 后半）────────────────────────
+            // 病灶（##401）：请求 4.95 MB 发出去才知道超了窗口，之后每次「？」都重发同一个 400，
+            // 会话被锁死。这里在**发之前**量一次：越 80% 线就按剩余额度重装一次（能压就压），
+            // 压不动才拒发并说清「啥到上限了」（`external-recognized`，见 shared/error-triage）。
+            // 窗口未知 ⇒ 跳过（没有判据就不报警；装配层的 1 MiB 硬上限照旧生效）。
+            const ctxLimitTokens = contextLimitOf(model) ?? null;
+            let historyCapOverride: number | undefined;
+            let preflightNotice: string | undefined;
+            {
+                const est0 = estimateRequest({
+                    systemBytes: delivery.system.bytes,
+                    toolsBytes: ctxParts.toolsBytes,
+                    messagesBytes: utf8Bytes(JSON.stringify(sent)),
+                    contextLimitTokens: ctxLimitTokens,
+                });
+                if (est0.over && ctxLimitTokens !== null) {
+                    // `tighterHistoryCapBytes` 返回 0 = 「system + tools 已顶满，历史一分不留」。
+                    // 但装配层的约定是 `capBytes <= 0` ⇒ **不设上限**（老调用点兼容），所以这里钳到 1 字节
+                    // —— 语义上等价于「历史全丢」，同时保住「必须降级」这条判据。
+                    const tightCap = Math.max(1, tighterHistoryCapBytes({
+                        contextLimitTokens: ctxLimitTokens,
+                        systemBytes: delivery.system.bytes,
+                        toolsBytes: ctxParts.toolsBytes,
+                    }));
+                    const hist2 = this.deliveryHistory(taskUri, sess.store, undefined, tightCap);
+                    const sent2 = sentOf(hist2);
+                    const est2 = estimateRequest({
+                        systemBytes: delivery.system.bytes,
+                        toolsBytes: ctxParts.toolsBytes,
+                        messagesBytes: utf8Bytes(JSON.stringify(sent2)),
+                        contextLimitTokens: ctxLimitTokens,
+                    });
+                    if (est2.estTokens < est0.estTokens) {
+                        // 压得动 ⇒ 直接换掉这份投递，并**告知**（轮尾 notice，不冒充错误）
+                        hist = hist2;
+                        sent = sent2;
+                        historyCapOverride = tightCap;
+                        preflightNotice =
+                            `上下文接近窗口上限（${est0.estTokens} tokens > 窗口 ${ctxLimitTokens} 的 80%），` +
+                            `已自动压缩到 ${est2.estTokens} tokens 后发送`;
+                        console.warn(`[local-agent] token 预检已自动压缩 ${taskUri}：${est0.estTokens} → ${est2.estTokens} tokens`);
+                    }
+                    if (est2.estTokens > (est0.thresholdTokens ?? Number.MAX_SAFE_INTEGER)) {
+                        // 压不动（system + tools 本身就顶满 / 历史已到不可再收）⇒ **不静默 400**
+                        const msg =
+                            `本轮请求约 ${est2.estTokens} tokens，超过模型 ${model} 窗口 ${ctxLimitTokens} 的 80%` +
+                            `（阈值 ${est0.thresholdTokens} tokens），压到极限仍超 ⇒ 本轮未发送。` +
+                            `处置：压缩/清理本会话历史，或换上下文窗口更大的模型。`;
+                        setEndReason({ type: "error", data: { source: "context-window", message: msg } });
+                        yield* errorBlock("context-window", msg);
+                        failed = true;
+                        return { failed, turnId };
+                    }
+                    if (preflightNotice) yield* emit({ op: "patch", id: turnId, fields: { notice: preflightNotice } });
+                }
+            }
             // 本轮的**投递选择事实**（配置驱动压缩）：分表用它标注「本步（轮首）投递被压过」（##272 B1）。
             // 与 compact 事件解耦 —— 事件只在触发/手动时写；这里每轮首都有（投递本就无条件按当前配置筛选）。
             const selPolicy = loadAutoCompact(diyHome()).policy;
             const allMsgs = projectAll(sess.store);
-            const sel = selectHistoryByBudget(allMsgs, selPolicy.modeData.budgetBytes, optsFor(selPolicy, taskUri));
+            const sel = selectHistoryByBudget(
+                allMsgs,
+                selPolicy.modeData.budgetBytes,
+                optsFor(selPolicy, taskUri, undefined, undefined, historyCapOverride),
+            );
+            // 装配层硬上限降级了 ⇒ 出声（这是「压缩与实发不一致」的现场证据，必须留痕）
+            if (sel.hardCap && sel.hardCap.degradations.length > 0) {
+                console.warn(
+                    `[local-agent] 装配后硬上限降级 ${taskUri}（cap=${sel.hardCap.capBytes}，kept=${sel.keptBytes}` +
+                        `，${sel.hardCap.withinCap ? "已落进上限" : "仍未落进上限"}）：` +
+                        sel.hardCap.degradations.map((d) => `${d.kind}(${d.detail})`).join("；"),
+                );
+            }
             const historySelection = {
                 budgetBytes: selPolicy.modeData.budgetBytes,
                 keptBytes: sel.keptBytes,
