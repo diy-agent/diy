@@ -140,3 +140,69 @@ export function requestViewYaml(v: RequestView): Record<string, unknown> {
         messages: v.messages,
     };
 }
+
+// ─── 预览预算（##406 刀 1）：把「给人看的副本」裁到有界 ────────────────
+//
+// 为什么要它：压缩预览面板对 **base / mod 两份完整请求**做节点级 diff 再全量渲染 DOM。
+// ##401 那种 4.95 MB 请求 = 数万行 diff + 数万个节点 ⇒ 渲染进程卡死（用户实测「一进去就卡住」）。
+// 裁剪**只作用于展示副本**：真发的内容一个字都不动，这里也不参与计价（计价另用原始请求）。
+//
+// 关键约束：**对称**。base 与 mod 用同一套阈值各裁各的 —— 于是「两侧都超长且内容相同」的块
+// 会裁成同一段文本（仍判 same），只有真正不同的部分才产生 diff 行；不会因为裁剪本身制造假差异。
+// （唯一的例外是占位文案里带了「原长度」：长度变了**本来就是**差异，保留它是有意的。）
+
+export interface PreviewClipOpts {
+    /** 单个字符串超过多少**字符**就裁（缺省 4000 —— 约 1 屏多，够看出是什么） */
+    maxChars?: number;
+    /** 数组元素上限（头尾各留一半；缺省 200） */
+    maxItems?: number;
+}
+
+export interface PreviewClipStats {
+    /** 被裁掉的字符总数（UI 报「预览已裁剪 X 字符」用） */
+    droppedChars: number;
+    /** 被裁掉的数组元素总数 */
+    droppedItems: number;
+}
+
+const PREVIEW_MAX_CHARS = 4000;
+const PREVIEW_MAX_ITEMS = 200;
+
+/** 递归裁剪一份**仅供展示**的副本（纯函数，不改入参） */
+export function clipForPreview(value: unknown, opts?: PreviewClipOpts): { value: unknown; stats: PreviewClipStats } {
+    const maxChars = opts?.maxChars ?? PREVIEW_MAX_CHARS;
+    const maxItems = opts?.maxItems ?? PREVIEW_MAX_ITEMS;
+    const stats: PreviewClipStats = { droppedChars: 0, droppedItems: 0 };
+
+    const walk = (v: unknown): unknown => {
+        if (typeof v === "string") {
+            if (v.length <= maxChars) return v;
+            // 头 70% / 尾 30%：开头通常说明「这是什么」，结尾常是结论 / 断点
+            const head = Math.max(1, Math.floor(maxChars * 0.7));
+            const tail = Math.max(0, maxChars - head);
+            const dropped = v.length - head - tail;
+            stats.droppedChars += dropped;
+            return v.slice(0, head) + `\n…[预览已裁掉 ${dropped} 字符，原文 ${v.length} 字符]…\n` + (tail > 0 ? v.slice(-tail) : "");
+        }
+        if (Array.isArray(v)) {
+            if (v.length <= maxItems) return v.map(walk);
+            const headN = Math.ceil(maxItems / 2);
+            const tailN = Math.floor(maxItems / 2);
+            const dropped = v.length - headN - tailN;
+            stats.droppedItems += dropped;
+            return [
+                ...v.slice(0, headN).map(walk),
+                { "…": `预览已裁掉 ${dropped} 项（共 ${v.length} 项）` },
+                ...v.slice(v.length - tailN).map(walk),
+            ];
+        }
+        if (v && typeof v === "object") {
+            const out: Record<string, unknown> = {};
+            for (const [k, val] of Object.entries(v as Record<string, unknown>)) out[k] = walk(val);
+            return out;
+        }
+        return v;
+    };
+
+    return { value: walk(value), stats };
+}

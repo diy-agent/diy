@@ -389,6 +389,29 @@ function truncLine(line: string, max: number): string {
 }
 
 /**
+ * **单条工具结果的不可绕过硬顶**（##406 刀 3，用户 2026-10-21 口径「单条工具结果封顶前置…必须有」）。
+ *
+ * 为什么需要它 —— 这道顶**不是**锦上添花，是 ##401 死锁的直接成因：
+ *   ① 投递层（`main/services/tool-output.ts` 的 `toModelOutput`）对**首次出洞**的单条输出有 50 KB 预算；
+ *   ② 但**历史重放**走的是本函数，`clip` 由**级声明**决定 —— 缺省 plan 的第一级是
+ *      `steps · must:true · clip:{type:"full"}`（`compact-keep.ts` 的 `DEFAULT_KEEP`），语义是「工作集逐字保真」；
+ *   ③ `full` 直接原样返回 ⇒ **① 的封顶被绕过**，几步之内累积出 4.95 MB 发了出去
+ *      （实测 `~/.diy/log/network/2026-10-21.jsonl`：16:34 一次 282 KB，16:57 直接跳到 4,946,910 B）。
+ *  ⇒ 结论：**「full」只能是「不额外裁」，不能是「无上限」**。上限由这道硬顶兜住，任何级声明都翻不过去。
+ *
+ * 为什么是 100 KB：单条正常的工具输出上限本来就是 `read` 的窗口（`READ_MAX_BYTES` = 50 KB），
+ * 硬顶给到 2 倍余量，既不误伤正常阅读，也把「MB 级单条」关在门外。
+ * `callpath`（只留调用）本身就是最小形态，不受影响。
+ */
+export const HARD_MAX_TOOL_RESULT_BYTES = 100 * 1024;
+
+/** 触及硬顶时强制使用的裁剪参数（头 2000 行 / 尾 2000 行 / 单行 4000 字符 / 总 100 KB） */
+const HARD_CAP_POLICY: ToolResultPolicy = {
+    render: "headtail",
+    renderData: { head: 2000, tail: 2000, maxLineChars: 4000, maxKeepBytes: HARD_MAX_TOOL_RESULT_BYTES },
+};
+
+/**
  * 按策略裁一段工具输出。
  *
  * 设计要点：
@@ -397,9 +420,13 @@ function truncLine(line: string, max: number): string {
  *   · marker 里**必须**给原文路径（##127 的「头尾保留 + marker + 原文可寻回」三件套），
  *     否则模型看到「中间省略」却无处可查，只能重跑一遍命令（那是真金白银）。
  */
-export function clipToolResult(text: string, toolResult: ToolResultPolicy, opts: ClipOpts = {}): ToolClipResult {
+export function clipToolResult(text: string, raw: ToolResultPolicy, opts: ClipOpts = {}): ToolClipResult {
     const origLines = text === "" ? 0 : text.split("\n").length;
     const origBytes = utf8Bytes(text);
+    // 硬顶（##406）：**先于**任何级声明生效 —— `full` / `asis` 都翻不过去。
+    // 不递归：把策略就地换成硬顶 headtail，继续走下面同一条路径。
+    const toolResult: ToolResultPolicy =
+        origBytes > HARD_MAX_TOOL_RESULT_BYTES && raw.render !== "callpath" ? HARD_CAP_POLICY : raw;
     const same = (): ToolClipResult => ({
         text,
         clipped: false,
