@@ -10,10 +10,10 @@
  * 为什么不在这里直接 `readFileSync` 真源：任何"第二个读取实现"都会与 check 脚本分叉，
  * 而"CLI 能写、CI 却红"正是本次要消除的病（见 scripts/facts-index.mts 头注）。
  */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import { affected, buildIndex, resolveClaim, validateFacts, type Env, type Fact, type Ref, type Scope } from "@diy/facts";
-import { checkRepo, loadRepo, submit, type SubjectDef, type SubmitReport } from "@diy/facts/node";
+import { affected, buildIndex, resolveClaim, validateFacts, type Env, type Fact, type Ns, type Ref, type Scope } from "@diy/facts";
+import { checkRepo, loadRepo, submit, project, type SubjectDef, type SubmitReport } from "@diy/facts/node";
 import type { z } from "zod";
 import { diyHome } from "../core/state";
 import type { FactSchema, RefSchema } from "../../shared/facts";
@@ -103,10 +103,23 @@ function walkUp(start: string): string | null {
  * 为什么要「包根向上」这一档：handler 跑在 app 进程，cwd 是应用根（`pkgs.ts/diy-app`），
  * 不是用户敲命令的目录 —— 只认 cwd 会让 `diy facts status` 在仓库里任何位置都报「找不到」。
  */
+/**
+ * 归一成 `knowledge/` 目录。为什么要这一层：调用方（人、脚本、CI）习惯把"仓库根"和
+ * "knowledge 目录"两种写法混着传，两者都合理 —— 但下游只认后者。不归一 = 传仓库根时
+ * 静默退回"没有词表"（继承关系当场失效且**不报错**，最难查的那种）。
+ */
+function normalizeKbDir(p: string): string {
+    const resolved = path.resolve(p);
+    if (existsSync(path.join(resolved, "subjects.yaml"))) return resolved;
+    const nested = path.join(resolved, "knowledge");
+    if (existsSync(path.join(nested, "subjects.yaml"))) return nested;
+    return resolved;
+}
+
 export function resolveFactsDir(explicit?: string): string {
-    if (explicit !== undefined && explicit !== "") return path.resolve(explicit);
+    if (explicit !== undefined && explicit !== "") return normalizeKbDir(explicit);
     const fromEnv = process.env["DIY_FACTS_DIR"];
-    if (fromEnv !== undefined && fromEnv !== "") return path.resolve(fromEnv);
+    if (fromEnv !== undefined && fromEnv !== "") return normalizeKbDir(fromEnv);
     const hit = walkUp(process.cwd()) ?? walkUp(path.resolve(import.meta.dirname, "../../../.."));
     if (hit === null) {
         throw new FactsStoreError(
@@ -161,10 +174,19 @@ export function resolveFactsTarget(opts: { dir?: string; in?: string } = {}): Fa
             throw new FactsStoreError("agent/facts-task-missing", `任务目录不存在：${taskDir}`);
         }
         const repoKb = resolveFactsDir(undefined);
+        const subjectsFallback = path.join(repoKb, "subjects.yaml");
+        if (!existsSync(subjectsFallback)) {
+            // 继承是任务库的硬前提：词表缺失时**继续跑**会让每条新 subject 都被判"未登记"，
+            // 症状像"我的 fact 写错了"，实际是环境不对 —— 所以这里直接亮出来。
+            throw new FactsStoreError(
+                "agent/facts-repo-missing",
+                `任务库要继承仓库词表，但没找到：${subjectsFallback} —— 用 --dir 指到仓库根或 set DIY_FACTS_DIR`,
+            );
+        }
         return {
             dir: path.join(taskDir, "knowledge"),
             // 任务库继承仓库词表：本地 subjects.yaml 存在则本地优先（局部扩词），否则用仓库的
-            subjectsFallback: path.join(repoKb, "subjects.yaml"),
+            subjectsFallback,
             allowMissing: true,
             root: path.dirname(repoKb),
         };
@@ -297,4 +319,75 @@ export function affectedByFiles(files: readonly string[], opts: { dir?: string; 
     const repo = loadRepo(kb, targetOpts(target));
     const index = buildIndex(repo.facts);
     return { ids: [...affected(index, files)] };
+}
+
+/**
+ * 真源的**原始文本**（UI 展示「原 YAML」用；不做解析、不做校验）。
+ *
+ * 为什么不复用 `loadRepo`：`raw` 的用途正是"看真源长什么样"——经过解析再 dump 回来
+ * 就变成了另一份文件（顺序、注释、空行全变），那看的就不是真源了。
+ * 词表若为继承（任务级库本地没有 `subjects.yaml`），把**仓库那份**一并给出来并标明来源，
+ * 否则 UI 上会出现"事实引用了一个词表里没有的 subject"的错觉。
+ */
+export function raw(opts: { dir?: string; in?: string } = {}) {
+    const target = resolveFactsTarget(opts);
+    const kb = target.dir;
+    const factsDir = path.join(kb, "facts");
+    const files = existsSync(factsDir)
+        ? readdirSync(factsDir)
+              .filter((f) => f.endsWith(".yaml") || f.endsWith(".yml"))
+              .sort()
+              .map((f) => ({ name: `facts/${f}`, text: readFileSync(path.join(factsDir, f), "utf8") }))
+        : [];
+    // 词表可能两份都在：本地那份是**局部扩词**，继承那份是仓库的全局词表。
+    // 只给一份会让人看串（"任务只用了 1 个 subject"的错觉），所以都列、由 name 标明来源。
+    const localSubjects = path.join(kb, "subjects.yaml");
+    const subjects: { name: string; text: string }[] = [];
+    if (existsSync(localSubjects)) subjects.push({ name: "subjects.yaml（本地）", text: readFileSync(localSubjects, "utf8") });
+    if (target.subjectsFallback !== undefined && target.subjectsFallback !== localSubjects && existsSync(target.subjectsFallback)) {
+        subjects.push({ name: "subjects.yaml（继承仓库）", text: readFileSync(target.subjectsFallback, "utf8") });
+    }
+    return { dir: kb, in: opts.in ?? "global", exists: files.length > 0, files, subjects };
+}
+
+/**
+ * 投影：真源 → 给 LLM 看的形态（可换算法 / 可按预算裁剪 / 变体解析成当前值）。
+ *
+ * 命名空间按 `--in` 推：`task:<uri>` → task 命名空间；否则 project。
+ * （`global` 库 = 设备级 `~/.diy/facts/`，尚无真源，暂不认。）
+ */
+export function projectFacts(
+    opts: { dir?: string; in?: string; algorithm?: "yaml-nested" | "flat-gid" | "md-list"; maxBytes?: number; env?: Env; paths?: string[]; task?: string; includeProposed?: boolean } = {},
+) {
+    const target = resolveFactsTarget(opts);
+    const kb = target.dir;
+    if (target.allowMissing && !existsSync(path.join(kb, "facts"))) {
+        throw new FactsStoreError(
+            "agent/facts-repo-missing",
+            `任务级库还没建：${kb} —— 第一次写入自动创建，先跑 \`diy facts submit --in ${opts.in ?? "task:<uri>"}\``,
+        );
+    }
+    const { repo } = checkRepo(kb, targetOpts(target));
+    const ns: Ns = opts.in?.startsWith("task:") ? { kind: "task", taskUri: opts.in.slice("task:".length) } : { kind: "project" };
+    const out = project({
+        entries: repo.facts.map((fact) => ({ ns, fact })),
+        ctx: {
+            ...(opts.env === undefined ? {} : { env: opts.env }),
+            ...(opts.paths === undefined ? {} : { paths: opts.paths }),
+            ...(opts.task === undefined ? {} : { task: opts.task }),
+            ...(opts.includeProposed === undefined ? {} : { includeProposed: opts.includeProposed }),
+        },
+        ...(opts.algorithm === undefined ? {} : { algorithm: opts.algorithm }),
+        ...(opts.maxBytes === undefined ? {} : { maxBytes: opts.maxBytes }),
+    });
+    // readonly → plain（同本文件其它 DTO 转换：摊开数组而不是 `as` 强转）
+    return {
+        algorithm: out.algorithm,
+        text: out.text,
+        bytes: out.bytes,
+        shown: [...out.shown],
+        omitted: [...out.omitted],
+        skipped: [...out.skipped],
+        problems: out.problems.map((p) => ({ gid: p.gid, code: p.code, ...(p.detail === undefined ? {} : { detail: p.detail }) })),
+    };
 }

@@ -118,6 +118,32 @@ export const FactsAffectedSchema = z.object({
     ids: z.array(z.string()),
 });
 
+
+/** 真源原文（UI「原 YAML」视图）：不解析、不校验，读什么给什么 */
+export const FactsRawSchema = z.object({
+    dir: z.string(),
+    in: z.string(),
+    exists: z.boolean(),
+    files: z.array(z.object({ name: z.string(), text: z.string() })),
+    /** 词表：可能有**两份**（本地局部扩词 + 继承仓库的全局词表），name 标明来源 */
+    subjects: z.array(z.object({ name: z.string(), text: z.string() })),
+});
+
+/** 投影结果：真源 → 给 LLM 看的形态（可换算法 / 按预算裁 / 变体解析成当前值） */
+export const FactsProjectSchema = z.object({
+    algorithm: z.enum(['yaml-nested', 'flat-gid', 'md-list']),
+    text: z.string(),
+    bytes: z.number(),
+    /** 真正渲染出来的 gid */
+    shown: z.array(z.string()),
+    /** 被预算裁掉的 gid（不是错误，超预算才会非空） */
+    omitted: z.array(z.string()),
+    /** 当前作用域不适用而跳过的（**正常**：路径型事实在别的目录就该消失） */
+    skipped: z.array(z.string()),
+    /** 真问题：冲突 / 库内无此 claim —— 这类必须让人看见 */
+    problems: z.array(z.object({ gid: z.string(), code: z.string(), detail: z.string().optional() })),
+});
+
 /**
  * 编译期护栏：schema 与内核 `Fact` 形状必须一致（不一致 → `tsc` 红，不用等运行时）。
  * 用 `extends` 而不是 `Equals`：schema 允许多出可选字段是无害的，**少了或类型不对**才是病。

@@ -38,6 +38,8 @@ import { MarkdownView } from "./MarkdownView";
 import { CodeBlock } from "./CodeBlock";
 import { StateSelect, TaskFieldSelect, TaskModuleInput } from "./TaskFieldControls";
 import { AgentWindowUsage } from "./AgentWindowUsage";
+import { TaskFactsView } from "./TaskFactsView";
+import { TaskJournalView } from "./TaskJournalView";
 import { taskStateColor } from "../../main/core/task-state";
 import { getTaskVerdict } from "../../shared/task-load";
 import { SessionGlyph } from "./SessionGlyph";
@@ -52,7 +54,7 @@ const BODY_MIN_W = 160;
  * 模块级而非组件内：同一个块会在多个实例里出现，折叠是「这类内容要不要看」的
  * 全局偏好，不该每开一个面板就变回默认。
  */
-const [blocks, setBlocks] = createSignal<Record<string, boolean>>({ attrs: true, lineage: true, body: true });
+const [blocks, setBlocks] = createSignal<Record<string, boolean>>({ attrs: true, lineage: true, body: true, facts: false, journal: false });
 const blockOpen = (k: string) => blocks()[k] !== false;
 
 /** 折叠框（VSCode 式：标题条整条可点，▾/▸ 指示） */
@@ -862,6 +864,14 @@ export function TaskDetailContent(props: {
                         <div class="task-flow-body">
                             <Block k="body" title="任务内容">
                                 <BodyBlock uri={props.uri} task={t()} refresh={refresh} />
+                            </Block>
+                            {/* ##404：知识与历史的两个**只读**视图。默认收起 —— 它们是"要查才看"
+                                的东西，展开会把 body 挤下去（而 body 才是每轮要读的那份）。 */}
+                            <Block k="facts" title="事实库" extra="diy facts">
+                                <TaskFactsView uri={props.uri} />
+                            </Block>
+                            <Block k="journal" title="操作日志" extra="diy journal">
+                                <TaskJournalView uri={props.uri} />
                             </Block>
                         </div>
                     </div>

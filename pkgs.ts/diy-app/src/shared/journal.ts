@@ -76,6 +76,18 @@ export const JournalFindSchema = z.object({
     problems: z.array(JournalProblemSchema),
 });
 
+
+/** 日志原文（UI「原 JSONL」视图）：只读字节、只数行 —— 坏行也要看得见 */
+export const JournalRawSchema = z.object({
+    task: z.string(),
+    path: z.string(),
+    exists: z.boolean(),
+    text: z.string(),
+    /** 非空行数（坏行也计入 —— 它确实占了一行） */
+    count: z.number(),
+    bytes: z.number(),
+});
+
 export const JournalStatsSchema = z.object({
     task: z.string(),
     total: z.number(),

@@ -299,3 +299,20 @@ export function journalStats(taskUri: string): {
     problems: [...all.problems],
   };
 }
+
+/**
+ * 日志文件**原文**（UI 展示「原 JSONL」用）。
+ *
+ * 为什么不复用 `findJournal`：那个会解析成行、丢掉坏行、重排成 markdown ——
+ * 而"原 JSONL"的用途恰恰相反：看得见真实落盘形态，包括**坏行**（半截写入是
+ * 这套存储最该暴露的故障）。所以这里只读字节、只数行，不解释。
+ */
+export function rawJournal(taskUri: string) {
+  const file = journalFile(taskUri);
+  if (!existsSync(file)) {
+    return { task: taskUri, path: file, exists: false, text: "", count: 0, bytes: 0 };
+  }
+  const text = readFileSync(file, "utf8");
+  const count = text.split("\n").filter((l) => l.trim() !== "").length;
+  return { task: taskUri, path: file, exists: true, text, count, bytes: Buffer.byteLength(text, "utf8") };
+}

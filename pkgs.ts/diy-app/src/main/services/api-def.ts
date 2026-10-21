@@ -34,9 +34,9 @@ import { ModelCostSchema } from "../../shared/usage";
 // 「模型不可用」通知契约（纯 zod，renderer 同源；判据函数也在同文件，见 ##369）
 import { ModelUnavailableNoticeSchema } from "../../shared/model-unavailable";
 // 事实库契约（##404）：形状在 shared/facts.ts，语义校验在内核 @diy/facts
-import { EnvSchema, FactsAffectedSchema, FactsGetSchema, FactsStatusSchema, FactsSubmitSchema } from "../../shared/facts";
+import { EnvSchema, FactsAffectedSchema, FactsGetSchema, FactsProjectSchema, FactsRawSchema, FactsStatusSchema, FactsSubmitSchema } from "../../shared/facts";
 // 任务日志契约（##404）：append-only 事件流，见 shared/journal.ts 头注（三分法）
-import { JournalAddSchema, JournalFindSchema, JournalImportSchema, JournalStatsSchema } from "../../shared/journal";
+import { JournalAddSchema, JournalFindSchema, JournalImportSchema, JournalRawSchema, JournalStatsSchema } from "../../shared/journal";
 // 「环境感知」通知契约（##384）：磁盘满 / 网断 —— 与 notice.* 同形不同源
 import { EnvNoticeSchema, EnvNoticeEventSchema } from "../../shared/env-watch";
 import {
@@ -2107,6 +2107,34 @@ export const apiDef = RpcSchema.router({
             },
             output: FactsSubmitSchema,
           }),
+          raw: RpcSchema.unary({
+            desc: `真源**原文**（UI「原 YAML」视图用）：不解析不校验，读什么给什么 —— 包括注释与字段顺序`,
+            input: {
+              dir: z.string().optional().cliOption({ desc: "knowledge 目录（缺省自动向上找）" }),
+              in: z
+                .string()
+                .optional()
+                .cliOption({ desc: "库的位置：缺省/global = 仓库 knowledge/；task:<taskUri> = 任务级库（词表继承仓库）" }),
+            },
+            output: FactsRawSchema,
+          }),
+          project: RpcSchema.unary({
+            desc: `**投影**：真源 → 给 LLM 看的形态（变体解析成当前值 / 按 ns 分组 / 可换算法 / 可按字节预算裁剪）`,
+            input: {
+              algorithm: z.enum(["yaml-nested", "flat-gid", "md-list"]).optional().cliOption({ desc: "渲染算法（缺省 yaml-nested）" }),
+              maxBytes: z.number().optional().cliOption({ desc: "字节预算（超了按 ns 优先级从尾部裁，不截断单条）" }),
+              env: EnvSchema.optional().cliOption({ desc: "解析上下文：环境（缺省不假设）" }),
+              path: z.string().optional().cliOption({ desc: "解析上下文：代码路径（逗号分隔）" }),
+              task: z.string().optional().cliOption({ desc: "解析上下文：任务 URI" }),
+              includeProposed: z.boolean().optional().cliOption({ desc: "把 proposed（未 accepted）也算进来" }),
+              dir: z.string().optional().cliOption({ desc: "knowledge 目录（缺省自动向上找）" }),
+              in: z
+                .string()
+                .optional()
+                .cliOption({ desc: "库的位置：缺省/global = 仓库 knowledge/；task:<taskUri> = 任务级库（词表继承仓库）" }),
+            },
+            output: FactsProjectSchema,
+          }),
           affected: RpcSchema.unary({
             desc: `影响面：哪些事实的 scope.paths 覆盖这些文件（动代码前先问一句，比读整份文档便宜）`,
             input: {
@@ -2151,6 +2179,13 @@ export const apiDef = RpcSchema.router({
               round: z.string().optional().cliOption({ desc: "会话轮次 id（可选）" }),
             },
             output: JournalAddSchema,
+          }),
+          raw: RpcSchema.unary({
+            desc: `日志文件**原文**（UI「原 JSONL」视图用）：只读字节、只数行 —— 坏行也照原样给出来`,
+            input: {
+              task: z.string().cliArg({ placeholder: "<projects/N/tasks/M>", desc: "任务 URI" }),
+            },
+            output: JournalRawSchema,
           }),
           find: RpcSchema.unary({
             desc: `查日志（缺省最近优先、全 kind）。\`--grep\` 搜 title/body/refs；输出是渲染好的 markdown`,

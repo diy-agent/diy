@@ -1426,6 +1426,20 @@ export function bindAppHandlers(binding: ServerBinding): void {
       dryRun: input.dryRun === true,
     }),
   );
+  binding.on(app.facts.raw, async ({ input }) => factsStore.raw({
+    ...(input.dir === undefined ? {} : { dir: input.dir }),
+    ...(input.in === undefined ? {} : { in: input.in }),
+  }));
+  binding.on(app.facts.project, async ({ input }) => factsStore.projectFacts({
+    ...(input.dir === undefined ? {} : { dir: input.dir }),
+    ...(input.in === undefined ? {} : { in: input.in }),
+    ...(input.algorithm === undefined ? {} : { algorithm: input.algorithm }),
+    ...(input.maxBytes === undefined ? {} : { maxBytes: input.maxBytes }),
+    ...(input.env === undefined ? {} : { env: input.env }),
+    ...(input.path === undefined ? {} : { paths: factsStore.splitList(input.path) }),
+    ...(input.task === undefined ? {} : { task: input.task }),
+    ...(input.includeProposed === undefined ? {} : { includeProposed: input.includeProposed }),
+  }));
   binding.on(app.facts.affected, async ({ input }) => factsStore.affectedByFiles(factsStore.splitList(input.files), {
       ...(input.dir === undefined ? {} : { dir: input.dir }),
       ...(input.in === undefined ? {} : { in: input.in }),
@@ -1444,6 +1458,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
       },
     ]);
   });
+  binding.on(app.journal.raw, async ({ input }) => journalStore.rawJournal(input.task));
   binding.on(app.journal.find, async ({ input }) =>
     journalStore.findJournal(input.task, {
       ...(input.kind === undefined ? {} : { kind: journalStore.splitKinds(input.kind) }),
