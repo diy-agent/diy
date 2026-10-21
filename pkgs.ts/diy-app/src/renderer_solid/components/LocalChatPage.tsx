@@ -68,6 +68,12 @@ import { draftStore } from "../store/draftStore";
 import { trafficStore } from "../store/trafficStore";
 import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
+import { NoticeDetail } from "./NoticeDetail";
+import {
+    isTerminalSessionState,
+    TERMINAL_STATE_REASON,
+    terminalSessionDetail,
+} from "../../shared/turn-gate";
 import { Caches, CONCLUSION_LINES_MAX, CONCLUSION_LINES_MIN } from "../lib/ui-state";
 import { HeightLedger, stackRows, windowRange } from "../lib/chat-virtual";
 import { chatFindStore, type ChatFindHit } from "../store/chatFindStore";
@@ -2175,6 +2181,53 @@ export function LocalChatPage(props: {
     // 执行页显式传入 uri；不能依赖全局 selectedUri，否则任务详情还在异步加载时，
     // 页面可能显示“选择任务”但聊天仍沿用上一个任务的会话，形成串台。
     const uri = () => props.uri ?? taskStore.selectedUri ?? null;
+    /**
+     * 本任务当前状态（##400 静态提示用）：树节点优先，详情面板兜底。
+     * 只做**显示**用途 —— 拒绝的真判据在 main（TurnGate）；前端的只读只是把"按了也没用"藏起来。
+     */
+    const taskState = createMemo<string | null>(() => {
+        const u = uri();
+        if (!u) return null;
+        const walk = (ns: readonly { uri?: string; state?: string; children?: readonly unknown[] }[]): string | null => {
+            for (const n of ns) {
+                if (n.uri === u && n.state) return n.state;
+                const hit = walk((n.children ?? []) as typeof ns) as string | null;
+                if (hit) return hit;
+            }
+            return null;
+        };
+        const fromTree = walk(taskStore.nodes);
+        if (fromTree) return fromTree;
+        const sel = taskStore.selectedTask;
+        return sel && sel.uri === u ? (sel.state ?? null) : null;
+    });
+    /** 终态（结案 / 取消 / 归档）⇒ 输入区只读 + 一条静态提示（##391 三问齐全） */
+    const closedInfo = createMemo(() => {
+        const u = uri();
+        const s = taskState();
+        if (!u || !isTerminalSessionState(s)) return null;
+        return {
+            reason: TERMINAL_STATE_REASON[s],
+            detail: terminalSessionDetail(u, s),
+        };
+    });
+    /** 静态提示的 ##391 二级信息（来源 / 原因 / 机制）—— 与拒绝回执是**同一件事**的两种呈现面 */
+    const closedMeta = createMemo(() => {
+        const c = closedInfo();
+        const s = taskState();
+        if (!c) return null;
+        return {
+            source: "任务状态 · 会话输入区（LocalChatPage.tsx / shared/turn-gate.ts）",
+            reason: `${c.reason}（当前状态 ${s ?? "?"}），本会话不再接受新的轮次`,
+            detail: [
+                "在监测什么：任务的 state 字段（done 结案 / cancelled 取消 / closed 归档）。三者是终态，会话不再开新轮次。",
+                "为什么只读：拒绝发生在服务端 —— main 的开轮准入（TurnGate，local-agent.chat 最开头）会在解析模型、自动压缩之前就返回，不建轮次、不落盘、不发请求。输入框只读只是省得你白打一句话，不是判据。",
+                "历史与队列：已发生的对话照常可翻阅；队列里的留言不会丢，任务恢复可续后仍会投递。",
+                `怎么续：${c.detail}`,
+                "含义：这不是故障，是任务生命周期（终态）的预期行为。",
+            ].join("\n"),
+        };
+    });
     const [inputValue, setInputValue] = createSignal("");
     /** 「⋯」溢出菜单：低频/危险操作（清空历史）默认不显示，点开才露出（VSCode 附加菜单式） */
     const [moreOpen, setMoreOpen] = createSignal(false);
@@ -3155,6 +3208,9 @@ export function LocalChatPage(props: {
     // 为什么不做成下拉快速切换：人物是**全局配置实体**，下拉只够"选"，看不见改动的波及面。
 
     const submit = async () => {
+        // 终态任务只读（##400）：服务端本就会拒（TurnGate），这里**不让用户白打一句话**
+        // —— 拒信仍由服务端给（前端的只读不是判据，别指望它兜底）。
+        if (closedInfo()) return;
         const text = inputValue().trim();
         // ⚠️ 不再因"有轮次在跑"而拦（##377 第 27 刀）：那条守卫是**旧通道**的遗迹 ——
         // 今天发送一律走 room（`sendViaRoom`），本窗口不接管任何流，忙不忙由 main 侧决定
@@ -3558,6 +3614,29 @@ export function LocalChatPage(props: {
                 />
             </Show>
 
+            {/* 终态任务（##400）：输入区只读 + 一条静态提示。**拒绝的判据在服务端**，
+                这里只是把"按了也没用"提前说出来，并给 ##391 三问详情。 */}
+            <Show when={!fullscreen() && closedInfo()}>
+                <div class="border-t px-3 py-2 shrink-0" data-session-closed>
+                    <div class="flex items-start gap-2 rounded-field border border-base-300 bg-base-200 p-2 text-body">
+                        <span class="opacity-70" aria-hidden="true">🔒</span>
+                        <div class="min-w-0 flex-1">
+                            <div class="font-semibold">
+                                {closedInfo()!.reason} · 本会话不再接受新消息（历史仍可查看）
+                            </div>
+                            <div class="whitespace-pre-wrap opacity-70">{closedInfo()!.detail}</div>
+                        </div>
+                        <Show when={closedMeta()}>
+                            {(m) => (
+                                <NoticeDetail
+                                    meta={m()}
+                                    message={`${closedInfo()!.reason} · 本会话不再接受新消息`}
+                                />
+                            )}
+                        </Show>
+                    </div>
+                </div>
+            </Show>
             {/* 输入框：Markdown 源码编辑、随内容增长，控制项置于框内底部。 */}
             <div class="border-t p-3 shrink-0">
                 {/* 定位类必须二选一：Tailwind 里 `relative` 排在 `fixed` 之后，
@@ -3636,7 +3715,7 @@ export function LocalChatPage(props: {
                                  ② 插话（"插嘴"）的前提就是**能打字**：旧行为把输入框锁死，
                                     等于强迫用户等模型跑完，本轮次的插话需求无从表达。
                                onEnter 按状态分流：生成中 = 留言，否则 = 发送（见 submitByEnter）。 */
-                            editable
+                            editable={!closedInfo()}
                             onChange={(v) => {
                                 setInputValue(v);
                                 const u = uri();

@@ -82,6 +82,7 @@ import {
 import { appendPlanVersion, currentPlanVersion, planVersionDoc, planVersionId, writePlanVersion } from "./plan-store";
 import { capToolOutput, toolOutFile, toolOutFileCandidates, toolOutRelPath } from "./tool-output";
 import { abortText } from "../../shared/turn-end";
+import type { TurnGate, TurnGateDecision } from "../../shared/turn-gate";
 import { triageOf, triageOfTurnEnd } from "../../shared/error-triage";
 import { opsFeed } from "./ops-feed";
 import type { DeliveryOrigin, TurnOrigin } from "../../shared/room";
@@ -194,6 +195,7 @@ import {
     type ReasoningEffort,
 } from "../../shared/models";
 import { personaByIdOrName, personaForTask } from "../core/persona";
+import { taskTurnGate } from "../core/turn-gate";
 import { ensureReasoningReplay, isDeepSeekWire, type ReasoningReplayOpts } from "./reasoning-replay";
 import { resolveModelKey } from "../core/model-runtime";
 
@@ -1448,6 +1450,36 @@ export function actionLabel(kind: BlockKind, fields: Record<string, unknown>): s
     }
 }
 
+/** 准入拒绝块的 id 序号（**不落盘**，只在本次流的消费端里区分两条拒绝对话） */
+let gateSeq = 0;
+
+/**
+ * 准入拒绝的 op（##400）：**沿用现有 error 块形状**（`start` / `delta` / `stop`，kind=`error`），
+ * 但**不建轮次、不落盘** —— 本轮次没有被开启，`ops.jsonl` 里不该出现一条"发生了的事"。
+ *
+ * `meta.code` 与 `fields.notice` 是给 ##391 的 notice 三问留的**结构化入口**：
+ *   来源 = 准入策略（`turn-gate`）· 原因 = 一句话（`reason`）· 详情 = 机制 + 怎么续（`detail`）。
+ * 消费端（CLI / room 投递回执）至少读到 `message`；有 notice 面板的渲染端可直接拿 `notice`。
+ */
+function* rejectionOps(decision: Extract<TurnGateDecision, { allow: false }>): Generator<Op> {
+    const id = `gate-${Date.now().toString(36)}-${++gateSeq}`;
+    const message = decision.detail ? `${decision.reason}。${decision.detail}` : decision.reason;
+    yield { op: "start", id, kind: "error", meta: { source: "turn-gate", code: decision.code } };
+    yield {
+        op: "delta",
+        id,
+        fields: {
+            message,
+            notice: {
+                source: `开轮准入 · TurnGate（local-agent.ts::chat → taskTurnGate）`,
+                reason: decision.reason,
+                detail: decision.detail ?? "",
+            },
+        },
+    };
+    yield { op: "stop", id };
+}
+
 export class LocalAgentManager {
     private sessions = new Map<string, LocalSession>();
     /**
@@ -1486,8 +1518,22 @@ export class LocalAgentManager {
      */
     private readonly modelResolver?: (id: string, key: string) => LanguageModel;
 
-    constructor(modelResolver?: (id: string, key: string) => LanguageModel) {
+    /**
+     * 开轮准入策略（##400，**可选的**依赖倒置扩展点）。
+     *
+     * 内核只问一句「这个会话现在能不能开轮」，判据全在注入方（生产 = `core/task.taskTurnGate`，
+     * 单测 = 假 gate）。不注入 ⇒ 一次都不问，行为与改动前一致。
+     * 为什么不在内核写「任务已结案就别干活」：那会让内核依赖任务域（方向反了），
+     * 也会把叙述上下文变成「每个 session 类型都要 agent 学一遍」（模型可以不遵守、无法测试）。
+     */
+    private readonly turnGate?: TurnGate;
+
+    constructor(
+        modelResolver?: (id: string, key: string) => LanguageModel,
+        turnGate?: TurnGate,
+    ) {
         this.modelResolver = modelResolver;
+        this.turnGate = turnGate;
         // 注册表（##240）的活态属性取值器：viewers 只由**内容**订阅者构成（R3 —— 注册表自身的
         // 订阅者不许计入，否则注册表一开全库会话都显示"有人看"）；queue = 待投递留言条数。
         // 这里是注册表缺省取值器的**超集**（多算 chat 流订阅者 `run.subs`）；manager 未构造时
@@ -2896,6 +2942,17 @@ export class LocalAgentManager {
          */
         origin?: TurnOrigin,
     ): AsyncGenerator<Op> {
+        // ── 开轮准入（##400）────────────────────────────────────────────
+        // 位置就是契约：**在 resolveModel / 自动压缩之前** —— 拒绝时连一次模型解析、一次
+        // 压缩检测（读盘）都不做；不建 TurnRun、不动水位、不落盘（这条 error 块只经流，
+        // 不进 ops.jsonl —— 它不是这个会话发生的事，而是一次"没发生"）。
+        const gate: TurnGateDecision | null = this.turnGate
+            ? this.turnGate({ sessionUri: taskUri, kind: seed && seed.length > 0 ? "queued" : "chat" })
+            : null;
+        if (gate && !gate.allow) {
+            yield* rejectionOps(gate);
+            return;
+        }
         const persona = personaForTask(diyHome(), taskUri);
         const model = modelOverride ?? persona.model;
         let rm: ResolvedModel;
@@ -4204,10 +4261,25 @@ export class LocalAgentManager {
     }
 }
 
+/**
+ * 生产装配（##400 的**唯一一处**）：内核只收一份策略，不认识任务域。
+ *
+ * 单测两个方向都能钉：
+ *   · 直接 `new LocalAgentManager(resolver, fakeGate)` —— 假 gate 全 allow / 全 deny；
+ *   · 走本工厂的**缺省参数** —— 拿到的就是生产策略，故「装配忘了注入」会红。
+ * 把缺省的 `taskTurnGate` 去掉 ⇒ `turn-gate.test.ts` 里「生产装配缺省 ⇒ done 被拦」必红。
+ */
+export function createLocalAgent(opts: {
+    modelResolver?: (id: string, key: string) => LanguageModel;
+    turnGate?: TurnGate;
+} = {}): LocalAgentManager {
+    return new LocalAgentManager(opts.modelResolver, opts.turnGate ?? taskTurnGate);
+}
+
 /** 单例（api-impl 懒加载，同 getSessionPool 模式） */
 let _manager: LocalAgentManager | null = null;
 export function getLocalAgent(): LocalAgentManager {
-    if (!_manager) _manager = new LocalAgentManager();
+    if (!_manager) _manager = createLocalAgent();
     return _manager;
 }
 
