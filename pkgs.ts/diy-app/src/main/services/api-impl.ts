@@ -24,6 +24,7 @@ import { readRuntimeConfig } from "../../runtime";
 import * as health from "./health";
 import { apiDef } from "./api-def";
 import * as factsStore from "./facts-store";
+import * as journalStore from "./journal-store";
 import { TaskDetailSchema } from "../../shared/task-detail";
 import { noteRendererTouch } from "./runtime-context";
 import type { ToolResultMode } from "../../shared/context/compaction";
@@ -1424,6 +1425,34 @@ export function bindAppHandlers(binding: ServerBinding): void {
     }),
   );
   binding.on(app.facts.affected, async ({ input }) => factsStore.affectedByFiles(factsStore.splitList(input.files), input.dir));
+
+  // ── journal（##404：任务日志 = append-only 事件流；把"发生过什么"从任务 body 里摘出来）──
+  binding.on(app.journal.add, async ({ input }) => {
+    const body = journalStore.resolveBody(input.body, input.bodyText, input.bodyFile);
+    return journalStore.addEntries(input.task, [
+      {
+        kind: input.kind,
+        title: input.title,
+        ...(body === undefined ? {} : { body }),
+        ...(input.refs === undefined ? {} : { refs: journalStore.splitRefs(input.refs) }),
+        ...(input.round === undefined ? {} : { round: input.round }),
+      },
+    ]);
+  });
+  binding.on(app.journal.find, async ({ input }) =>
+    journalStore.findJournal(input.task, {
+      ...(input.kind === undefined ? {} : { kind: journalStore.splitKinds(input.kind) }),
+      ...(input.since === undefined ? {} : { since: input.since }),
+      ...(input.until === undefined ? {} : { until: input.until }),
+      ...(input.grep === undefined ? {} : { grep: input.grep }),
+      ...(input.limit === undefined ? {} : { limit: input.limit }),
+      ...(input.order === undefined ? {} : { order: input.order }),
+    }),
+  );
+  binding.on(app.journal.stats, async ({ input }) => journalStore.journalStats(input.task));
+  binding.on(app.journal.import, async ({ input }) =>
+    journalStore.importEntries(input.task, journalStore.parseImportPayload(input.file), input.dryRun === true),
+  );
 
   // ── seed ──
   binding.on(app.seed.run, async () => {

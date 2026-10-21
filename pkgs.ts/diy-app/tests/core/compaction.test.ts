@@ -70,8 +70,12 @@ describe("clipToolResult", () => {
     });
 
     it("headtail：超阈值 → 前 3 + marker + 后 3，标记省略行数/字节/原文路径", () => {
+        // **显式给 head/tail**，不依赖 DEFAULT_HEADTAIL —— 缺省从 3/3 调到 80/20（0331eba2）时
+        // 这条断言曾因"硬编码别人的缺省值"而红（断言的是常量而不是行为）。
         const t = lines(1842);
-        const r = clipToolResult(t, pol("headtail"), { origPath: "local/toolout/x.txt" });
+        const r = clipToolResult(t, pol("headtail", { ...DEFAULT_HEADTAIL, headLines: 3, tailLines: 3 }), {
+            origPath: "local/toolout/x.txt",
+        });
         expect(r.clipped).toBe(true);
         const out = r.text.split("\n");
         expect(out[0]).toBe("line 0");
@@ -93,7 +97,8 @@ describe("clipToolResult", () => {
 
     it("headtail：行数没超但单行超长 → 只做单行截断，不写「中间省略」marker", () => {
         const t = `short\n${"A".repeat(500)}\nshort`;
-        const r = clipToolResult(t, pol("headtail"));
+        // 显式 maxLineChars（不借缺省值 2000 —— 它是随预算调整的常量，不是本用例的前提）
+        const r = clipToolResult(t, pol("headtail", { ...DEFAULT_HEADTAIL, maxLineChars: 100 }));
         expect(r.clipped).toBe(true);
         expect(r.droppedLines).toBe(0);
         expect(r.text).not.toContain("中间省略");
@@ -102,11 +107,12 @@ describe("clipToolResult", () => {
     });
 
     it("headtail：字节兜底（一行超长穿透 maxKeepBytes）→ 收缩到预算内", () => {
-        // 一行 = 100k 字符 > 8KB 兜底
+        // 一行 = 100k 字符 > 8KB 兜底（**预算显式给 8KB**：缺省已调成 100KB，不是本用例的前提）
         const t = `head\n${"B".repeat(100_000)}\ntail`;
-        const r = clipToolResult(t, pol("headtail", { ...DEFAULT_HEADTAIL, maxLineChars: 1_000_000 }));
+        const maxKeepBytes = 8 * 1024;
+        const r = clipToolResult(t, pol("headtail", { ...DEFAULT_HEADTAIL, maxLineChars: 1_000_000, maxKeepBytes }));
         expect(r.clipped).toBe(true);
-        expect(utf8Bytes(r.text)).toBeLessThanOrEqual(DEFAULT_HEADTAIL.maxKeepBytes);
+        expect(utf8Bytes(r.text)).toBeLessThanOrEqual(maxKeepBytes);
     });
 
     it("callpath：整段换成一句「只留调用」提示 + 原文路径", () => {
