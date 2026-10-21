@@ -56,7 +56,7 @@ const BASELINE = path.join(ROOT, 'scripts', 'specs-unindexed.txt');
 // G3 的 key 前缀白名单：**只收跨领域规范**（按实测收口，2026-10-19 扫链）。
 // `find` / `pit` 是「包内去哪找 / 包内什么坑」= 导航，不是规范，故意不收。
 // 白名单外的前缀不静默吞掉 —— 见到就提示「是否该加进来」，否则新领域永远看不见。
-const PREFIXES = ['rule', 'tool', 'proj', 'data', 'dev', 'entry', 'model', 'env'];
+const PREFIXES = ['rule', 'tool', 'proj', 'data', 'dev', 'entry', 'model', 'env', 'level'];
 // 明确**不收**的前缀（导航类，静默跳过 —— 不提示、不计入 G3）：
 //   `find` = 包内去哪找 · `pit` = 包内什么坑
 const IGNORED = ['find', 'pit'];
