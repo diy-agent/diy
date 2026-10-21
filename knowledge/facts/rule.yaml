@@ -11,7 +11,7 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:68
+      at: AGENTS.md:49
       verifiedAt: '2026-10-21'
   - id: agents.rule.dev-concurrent
     subject: rule
@@ -21,7 +21,7 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:70
+      at: AGENTS.md:51
       verifiedAt: '2026-10-21'
   - id: agents.rule.instance-lifecycle
     subject: rule
@@ -31,7 +31,7 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:71
+      at: AGENTS.md:52
       verifiedAt: '2026-10-21'
   - id: agents.rule.lab-owner
     subject: rule
@@ -41,7 +41,7 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:72
+      at: AGENTS.md:53
       verifiedAt: '2026-10-21'
   - id: agents.rule.new-pkg
     subject: rule
@@ -51,7 +51,7 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:73
+      at: AGENTS.md:54
       verifiedAt: '2026-10-21'
   - id: agents.rule.probe
     subject: rule
@@ -61,7 +61,7 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:69
+      at: AGENTS.md:50
       verifiedAt: '2026-10-21'
   - id: agents.rule.renderer
     subject: rule
@@ -71,15 +71,15 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:74
+      at: AGENTS.md:55
       verifiedAt: '2026-10-21'
   - id: agents.rule.task-write
     subject: rule
     aspect: task-write
-    value: '**任务文件头是权威**（##322）：读侧 `task show` / `getTask` / 上下文 `task.*` 给的就是文件头 frontmatter **同一份**（确认任务不必 `cat` 任务文件）；写侧 `task edit` 的整篇覆盖 `--body <文本>` / `--body-text <文本>` / `--body-file <file|->` 与追加 `--append-body <file|->` / `--append-body-file <file|->` / `--append-body-text <文本>`（各**三选一**，多给即报错；`--body` 只收**内联正文** —— 值形如单行路径即**拒**并提示，##338）收到「整份文件」一律**剥头**（追加侧判据更严：须含 `state`/`created`/`updated`，故追加一份自带 front matter 的普通文档时其文档头**保留**），返回值回报剥掉的键与原文 —— 契约原文见 `diy task edit --help`（##338）；**同族同护栏**（##376）：`task create --body` / `task drafts set --body` 也挂 `inlineText`（镜像 `resolveBodyOverride`，逃生口 `--body-text` / `--body-file` 同样可用），差别只有 create **不剥头**（新建无头可覆盖，传整份文件会把头写进正文）'
+    value: '**任务文件头是权威**（##322）：读侧 `task show` / `getTask` / 上下文 `task.*` 就是 frontmatter 同一份（不必 `cat`）；写侧收到「整份文件」一律**剥头**，`--body` 只收内联正文（见路径样值即拒，##338）→ `docs/task-write-contract.md`（`--body-text` / `--body-file` / `--append-body*` 三选一、create 不剥头、##376 同族护栏）'
     review: accepted
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:75
+      at: AGENTS.md:56
       verifiedAt: '2026-10-21'

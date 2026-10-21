@@ -31,7 +31,7 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/git/diy/diy/AGENTS.md:60
+      at: docs/toolchain.md:32
       verifiedAt: '2026-10-21'
   - id: dev.task-write
     subject: dev.setup
@@ -41,7 +41,7 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/git/diy/diy/AGENTS.md:75
+      at: docs/task-write-contract.md:1
       verifiedAt: '2026-10-21'
   - id: dev.test-bail
     subject: dev.test

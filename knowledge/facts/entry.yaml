@@ -6,22 +6,22 @@ facts:
   - id: agents.entry.choose
     subject: entry
     aspect: choose
-    value: '**先问「操作谁的数据」**：真实任务/项目/agent → 全局 `diy`；worktree 改码·跑测试 → `./diy.sh`；人看 UI 效果 / agent 实验 → `./sha.sh lab`。**别拿 `./diy.sh` 查生产任务**（它的 `./build/<variant>/home` 里没有 → 报「任务 N 不存在」）'
+    value: '**先问「操作谁的数据」**：真实任务/项目/agent → 全局 `diy`；worktree 改码·跑测试 → `./diy.sh`；人看 UI 效果 / agent 实验 → `./sha.sh lab`。**别拿 `./diy.sh` 查生产任务**（数据根不同 → 报「任务 N 不存在」）'
     review: accepted
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:37
+      at: AGENTS.md:24
       verifiedAt: '2026-10-21'
   - id: agents.entry.client
     subject: entry
     aspect: client
-    value: '`diy` 与 `./diy.sh` **都是客户端、都不启动 GUI**：读 `$DIY_HOME/app.port` 探活并**验身份**（连上去问 `getAppInfo.diyHome` 比对，不是本数据根就拒绝复用、另起自己的，##328(实例身份只靠端口)），探不到才 spawn Electron（CLI 与 GUI 是两进程）。连哪个实例由 `DIY_HOME`（数据根）决定'
+    value: '`diy` / `./diy.sh` **都是客户端**（不启 GUI）：探 `$DIY_HOME/app.port` + 验身份，连不上才 spawn；**起 GUI 的是启动器 `./sha.sh lab`，只 spawn、从不连已跑实例**'
     review: accepted
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:40
+      at: AGENTS.md:26
       verifiedAt: '2026-10-21'
   - id: agents.entry.gui
     subject: entry
@@ -31,7 +31,7 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:42
+      at: docs/instance-modes.md:35
       verifiedAt: '2026-10-21'
   - id: agents.entry.home-guard
     subject: entry
@@ -41,7 +41,7 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:47
+      at: docs/instance-modes.md:40
       verifiedAt: '2026-10-21'
   - id: agents.entry.launch-vs-client
     subject: entry
@@ -51,7 +51,7 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:43
+      at: docs/instance-modes.md:35
       verifiedAt: '2026-10-21'
   - id: agents.entry.port
     subject: entry
@@ -61,7 +61,7 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:41
+      at: docs/instance-modes.md:34
       verifiedAt: '2026-10-21'
   - id: agents.entry.prod
     subject: entry
@@ -71,17 +71,17 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:39
+      at: docs/instance-modes.md:36
       verifiedAt: '2026-10-21'
   - id: agents.entry.risk
     subject: entry
     aspect: risk
-    value: worktree 改码跑测一律 `./diy.sh`（隔离 `./build/<variant>/home`；会拒绝继承来的生产 `DIY_HOME`，需 `DIY_ALLOW_PROD_HOME=1` 放行）；**查/改真实数据才用全局 `diy`**
+    value: worktree 改码跑测一律 `./diy.sh`（隔离数据根）；**查/改真实数据才用全局 `diy`**。继承来的生产 `DIY_HOME` 一律拒（放行 `DIY_ALLOW_PROD_HOME=1`）
     review: accepted
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:46
+      at: AGENTS.md:28
       verifiedAt: '2026-10-21'
   - id: agents.entry.seed
     subject: entry
@@ -91,27 +91,27 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:48
+      at: docs/instance-modes.md:44
       verifiedAt: '2026-10-21'
   - id: agents.entry.variant-match
     subject: entry
     aspect: variant-match
-    value: '**客户端与服务端变体必须配对**：`./sha.sh lab` 起的配 `DIY_VARIANT=lab ./diy.sh`（与 `./diy.sh` 缺省同变体，故平常不必显式给）。不配对 = 对着**另一个数据根**敲命令（症状：任务不存在 / 改完没反应）。`./diy.sh` 能连上 HMR 实例，是因为 `electron-dev.mts` 的 watch 已把 `build/<v>/main` 产出来了'
+    value: '**客户端与服务端变体必须配对**，不配对 = 对着另一个数据根敲命令（症状：任务不存在 / 改完没反应）'
     review: accepted
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:44
+      at: AGENTS.md:27
       verifiedAt: '2026-10-21'
   - id: agents.entry.variant
     subject: entry
     aspect: variant
-    value: '**`DIY_VARIANT` 是产物/数据分根的唯一轴**（vite `outDir`、运行时 `build/<v>/main` 都由它定），缺省 `prod`（`./diy.sh` 缺省 `lab`）。`preview` 变体**已删除**（##381）：任何入口遇 `DIY_VARIANT=preview` 一律**显式报错**，不静默落 `build/preview/**`；报错落点清单见 `pkgs.ts/diy-app/AGENTS.md::env.variant`'
+    value: '`DIY_VARIANT`（`prod|test|lab`）是产物 / 数据分根的唯一轴，缺省 `prod`（`./diy.sh` 缺省 `lab`）；`preview` 已删除（##381），遇之显式报错 → `pkgs.ts/diy-app/AGENTS.md::env.variant`'
     review: accepted
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:38
+      at: AGENTS.md:25
       verifiedAt: '2026-10-21'
   - id: agents.entry.verify
     subject: entry
@@ -121,5 +121,5 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:45
+      at: docs/instance-modes.md:38
       verifiedAt: '2026-10-21'

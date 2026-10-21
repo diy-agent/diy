@@ -6,32 +6,32 @@ facts:
   - id: agents.tool.check
     subject: tool
     aspect: check
-    value: '`./sha.sh check` **提交前唯一检查**：`tsc -b tsconfig.all.json --noEmit` + oxlint + rpc 浏览器安全 + 产物护栏 + 可执行位护栏（shell 脚本索引 mode 必须 100755，见 `scripts/check-exec-bit.sh`）+ 各领域规范索引护栏（`~/SPECS.md` 的 key 唯一 / 指针可解析 / 链上**新增**未收录 —— 存量基线 `scripts/specs-unindexed.txt`，`--update-baseline` 刷新；见 `scripts/check-specs.mts`；总表缺失 = 跳过不算失败，##388）'
+    value: '`./sha.sh check` 是**提交前唯一检查**（tsc `--noEmit` + oxlint + 产物 / 可执行位 / 规范索引护栏）；改一行只跑受影响测试，全量收工前一次'
     review: accepted
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:52
+      at: AGENTS.md:34
       verifiedAt: '2026-10-21'
   - id: agents.tool.cli
     subject: tool
     aspect: cli
-    value: 查/改数据：全局 `diy <域> <命令>`（生产）· worktree 里 `./diy.sh <域> <命令>`（隔离）。**域名清单真源 = `diy --help`**（`task` `project` `agent` `tool` `context` `template` `llmConfig` `seed` `traffic` `flow` `log` `watch` `ui` `doctor`…；本行曾只列 8 个、后又漏 `traffic`/`flow` —— 别抄本行，去跑 `diy --help`）
+    value: 查/改数据：生产 `diy <域> <命令>` · worktree `./diy.sh <域> <命令>`；**域名清单真源 = `diy --help`**，别抄清单
     review: accepted
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:57
+      at: AGENTS.md:37
       verifiedAt: '2026-10-21'
   - id: agents.tool.confirm
     subject: tool
     aspect: confirm
-    value: 破坏性操作的应用内二次确认走 `renderer_solid/components/ConfirmDialog.tsx`；**禁用原生 `window.confirm`**（窗口级模态：卡住整个渲染进程，且非 DOM 节点 —— 自动化点不到）
+    value: 破坏性操作的应用内二次确认走 `ConfirmDialog.tsx`；**禁用原生 `window.confirm`**（窗口级模态，且自动化点不到）
     review: accepted
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:56
+      at: AGENTS.md:44
       verifiedAt: '2026-10-21'
   - id: agents.tool.electron-cache
     subject: tool
@@ -41,37 +41,37 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:63
+      at: docs/toolchain.md:51
       verifiedAt: '2026-10-21'
   - id: agents.tool.electron
     subject: tool
     aspect: electron
-    value: 'electron 43 **无 postinstall**：`require(''electron'')` 时二进制缺就在**当时进程里**下载、**无超时**（症状＝静默卡死数分钟、CPU 0%，日志看着像「在跑」）；`dist` 是**悬空软链**（store 被缓存清理工具删）时更糟 —— 自带 `install.js` 直接失败 `failed to create destination …: File exists` 并误导「删掉 node_modules/electron」，**不会自己重下**。布局收口在 `scripts/ensure-electron.mjs`（全机一份 store + worktree 的 `dist` 只留软链 + 补 `path.txt`）：`sync-deps` 末尾自动跑且**不联网**；`pkgs.ts/diy-app/sha.sh` 的 `lab|test-intent|start` 起 Electron 前硬校验；**CLI 两条入口**（`diy.sh` / `bin/diy`）先过 `scripts/ensure-electron-if-needed.sh`（纯 bash 快检，就绪零 node 开销）—— CLI 顶层 `import electronPath from "electron"`，**每条命令**都经它。开关 / store 位置 / 坑见脚本头注'
+    value: electron 43 **无 postinstall**：缺二进制会在进程内**无超时**下载（症状＝静默卡死）；布局与校验收口 `scripts/ensure-electron.mjs` + `ensure-electron-if-needed.sh`
     review: accepted
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:62
+      at: AGENTS.md:42
       verifiedAt: '2026-10-21'
   - id: agents.tool.fmt
     subject: tool
     aspect: fmt
-    value: '格式化配置真源 = **各包 `.oxfmtrc.json`**（根 `.oxfmtrc.json` 兜底）：oxfmt **不读** `package.json` 里的 `oxfmt` 块，真实键名是 `tabWidth`/`printWidth`/`singleQuote`；根 `fix()` 扫 `pkgs.ts/` **全量（含 .md/.json）**；**fmt 未纳入 `check`**（存量 ~400 文件待规范化，见 ##323(oxfmt 配置腐坏)）'
+    value: 格式真源 = 各包 `.oxfmtrc.json`（oxfmt **不读** `package.json` 的 `oxfmt` 块）；**fmt 未纳入 `check`**（##323(oxfmt 配置腐坏)）
     review: accepted
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:53
+      at: AGENTS.md:35
       verifiedAt: '2026-10-21'
   - id: agents.tool.model-import
     subject: tool
     aspect: model-import
-    value: 环境变量 → provider 导入候选（只列不写；UI 模型页提示条 / `diy llmConfig scanEnv|importEnv`）→ `pkgs.ts/diy-app/src/main/core/model-import.ts`
+    value: 环境变量 → provider 导入候选（只列不写）→ `pkgs.ts/diy-app/src/main/core/model-import.ts`
     review: accepted
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:55
+      at: AGENTS.md:45
       verifiedAt: '2026-10-21'
   - id: agents.tool.pkg-action
     subject: tool
@@ -81,47 +81,47 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:58
+      at: AGENTS.md:38
       verifiedAt: '2026-10-21'
   - id: agents.tool.publish
     subject: tool
     aspect: publish
-    value: '**npm 发布（`@diy-agent` scope）**：根 `./sha.sh publish [--dry-run]` → 清单 `_npm_publish_pkgs`（diy-rpc / diy-ui）各自 `./sha.sh publish`（= `tsc -p tsconfig.build.json` + `scripts/npm-publish.mjs` 在 `dist/` 生成发行版 package.json，再 `npm publish dist`）。仓内 package.json 恒指 `src/*.ts` 且留 `private:true`（护栏）；认证 `NPM_PUBLISH_TOKEN`（环境变量或 `~/.bashrc`），CI 无则跳过而非报错'
+    value: npm 发布（`@diy-agent`）：根 `./sha.sh publish [--dry-run]`，认证 `NPM_PUBLISH_TOKEN`；仓内 `package.json` 恒指 `src/*.ts` 且留 `private:true`（护栏）
     review: accepted
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:59
+      at: AGENTS.md:39
       verifiedAt: '2026-10-21'
   - id: agents.tool.sync-gate
     subject: tool
     aspect: sync-gate
-    value: '**build/check/test/lab 入口先过 `ensure-sync`**：只读快检 `scripts/check-sync.mjs`（workspace 链接缺失/过期 + sync 印记 `node_modules/.diy-sync.stamp` 落后 + submodule 未 init；electron `dist`/`path.txt` 只提示不判定 —— 由 `sync-deps` 的 `ensure-electron` 补；`npm i` 只补缺失、清不了改名残留，故 `sync-deps` 里另跑 `--fix` 精准清）命中即自动跑 `sync-deps`（= `sync` 去掉 dev 数据根投影）；`DIY_AUTO_SYNC=0` 关掉改报错，`./sha.sh sync-status` 只看状态'
+    value: build/check/test/lab 入口先过 `ensure-sync`，命中即自动 `sync-deps`；`DIY_AUTO_SYNC=0` 关掉改报错，`./sha.sh sync-status` 只看状态
     review: accepted
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:61
+      at: AGENTS.md:41
       verifiedAt: '2026-10-21'
   - id: agents.tool.sync
     subject: tool
     aspect: sync
-    value: '**新开 worktree 先 `./sha.sh sync`**（`npm i --workspaces --include-workspace-root` + 子模块 + 各包 sync + electron 二进制收成共享软链）；不跑则包没装、`node_modules` 缺。`--include-workspace-root` 不能省：光 `npm i --workspaces` 只装 workspace、漏装根 package.json 依赖（`remark-gfm` 等），干净 worktree 上必现 build 解析失败。**末尾顺带把 `~/.diy` 的真配置（`model.yaml` / `context.yaml` / `personas.yaml` / `providers.custom.yaml`）投影进 `build/<variant>/home/`**（`sync-dev-home` 一步；变体随 `DIY_VARIANT`，缺省 lab，`DIY_SYNC_HOME=0` 关）—— seed 只种示例数据，真配置归它'
+    value: '**新开 worktree 先 `./sha.sh sync`**（漏 `--include-workspace-root` 必现 build 解析失败）；末尾把 `~/.diy` 真配置投影进 `build/<variant>/home/`（`DIY_SYNC_HOME=0` 关）'
     review: accepted
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:60
+      at: AGENTS.md:40
       verifiedAt: '2026-10-21'
   - id: agents.tool.test
     subject: tool
     aspect: test
-    value: '`./sha.sh test` 全仓 · `./sha.sh test-unit` 快测（不起 Electron）· 意图测试 `pkgs.ts/diy-app/sha.sh test-intent [片段...]`：位置参数**过滤文件**（短名补 `tests/cli.intent.` 前缀，如 `test-intent ui-find`；带 `/` 或 `.test.ts` 原样传），无参才全量'
+    value: '`./sha.sh test` 全仓 · `test-unit` 不起 Electron · `pkgs.ts/diy-app/sha.sh test-intent [片段…]`（位置参数过滤文件，带 `/` 或 `.test.ts` 原样传，无参全量）'
     review: accepted
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:54
+      at: AGENTS.md:36
       verifiedAt: '2026-10-21'
   - id: agents.tool.ui
     subject: tool
@@ -131,5 +131,5 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:64
+      at: AGENTS.md:43
       verifiedAt: '2026-10-21'

@@ -36,7 +36,7 @@ facts:
   - id: agents.find.docs
     subject: find
     aspect: docs
-    value: '`docs/` 架构与方案 · `scripts/` 辅助脚本与冒烟脚本 · `pkgs/` Python 归档（不演进）'
+    value: '`docs/` 架构与方案 + **本文件细节的二次披露**（`instance-modes` · `toolchain` · `task-write-contract` · `model-testing`）· `scripts/` 辅助脚本与冒烟脚本 · `pkgs/` Python 归档（不演进）'
     review: accepted
     lifecycle: active
     evidence:
