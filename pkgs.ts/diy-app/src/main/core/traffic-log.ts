@@ -85,14 +85,24 @@ function countLines(abs: string): number {
 /** 写入器：保持当天文件的 fd 与写入位置，跨天自动切换 */
 class Writer {
     private fd: number | null = null;
+    /**
+     * fd 归属的数据根 + 天。**两者都要比**（##402）：本类实例是**模块级单例**，而
+     * `diyHome()` 每调用现读 `DIY_HOME` —— 运行中换数据根时只比天会把 fd 留在旧根上
+     * （`isolate:false` 的单测里实测：room/seed 之类用例会临时切 `DIY_HOME`，
+     * 回到原根后这里仍写进旧 fd ⇒ 记录"写成功"但盘上目标根没有那个文件，
+     * 回读报「日志文件已不存在」）。生产进程数据根固定，行为不变。
+     */
+    private home = "";
     private day = "";
     private pos = 0;
     private line = 0;
 
     private ensureFd(): void {
         const today = dayFile();
-        if (this.fd !== null && this.day === today) return;
+        const home = diyHome();
+        if (this.fd !== null && this.day === today && this.home === home) return;
         if (this.fd !== null) closeSync(this.fd);
+        this.home = home;
         const abs = join(dirAbs(), today);
         this.fd = openSync(abs, "a");
         this.day = today;

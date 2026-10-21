@@ -6,7 +6,7 @@
 // 首轮算不算变化、变化率的分母是什么、排序按什么 —— 都在这里锁住。
 // ═══════════════════════════════════════════════════════════════
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -169,6 +169,12 @@ describe("dropBaselineChanges：存量数据抹平（RV-15）", () => {
 });
 
 describe("文件层：context-stats.jsonl（按项目累计）", () => {
+    // 每条用例从**空文件**起步：本组用例都在同一个 dir 上 append，前一条留下的行会让
+    // 后一条的「两条 → 两条」「≥2 个 taskUri」不成立（`--sequence.shuffle` 换个顺序即现）。
+    beforeEach(() => {
+        rmSync(contextStatsFile(dir), { force: true });
+    });
+
     const dir = mkdtempSync(join(tmpdir(), "diy-ctx-stats-"));
     process.on("exit", () => {
         try {
@@ -199,6 +205,8 @@ describe("文件层：context-stats.jsonl（按项目累计）", () => {
     });
 
     it("跨任务累计在同一个文件里（按项目）", () => {
+        // 自造前置：本条要验"同一文件里有多个 taskUri"，旧写法靠上一条用例留下的那一行
+        appendContextStat(dir, rec("2026-09-26T02:00:00Z", ["b"], "projects/1/tasks/1"));
         appendContextStat(dir, rec("2026-09-26T03:00:00Z", ["c"], "projects/1/tasks/9"));
         const rows = readContextStats(dir);
         expect(new Set(rows.map((r) => r.taskUri)).size).toBeGreaterThan(1);

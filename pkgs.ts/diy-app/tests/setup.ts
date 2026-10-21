@@ -3,6 +3,15 @@ import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { afterAll } from "vitest";
 import { SETUP_HOME_PREFIX, removeIsolatedHome, sweepStaleTestHomes } from "./temp-home";
+// 模块图顺序护栏（##402 `--no-isolate`）：`@diy-agent/rpc` 的 `core/_cli-meta` 用**原型补丁**
+// 给 zod 装 `n` / `cliArg` / `cliOption`，而 zod v4 的 schema **在创建时**就把原型链定死 ——
+// 谁先建了 schema，谁就永远看不见补丁。生产靠打包顺序（入口先引 rpc）保证这一点，
+// 单测在 `isolate:false` 下模块跨文件共享：某文件先 import 了 `shared/prompt-schema` /
+// `main/core/task-state`（建 schema）而没引 rpc，同 worker 后续文件再 import `api-def` 就炸
+// `TypeError: TaskStateSchema.cliArg is not a function`（实测 seed=23 必现）。
+// 在 setup 里**先**引一次 = 把"补丁先于一切 schema"这条前提在测试进程里钉死（与生产入口同序），
+// 只装补丁、不改任何行为（`_cli-meta` 纯 side-effect）。
+import "@diy-agent/rpc";
 
 // ═══════════════════════════════════════════════
 // 🛡️ 安全：每个测试文件分配一次性临时目录
