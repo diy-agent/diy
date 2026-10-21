@@ -23,6 +23,7 @@ import { ThemeSettings } from "./components/ThemeSettings";
 import { ToastContainer } from "./components/ToastContainer";
 // 「模型不可用」顶栏 bar（##369 ①）：真发失败时把事实从会话流里提出来摆到最显眼处
 import { ModelUnavailableBar } from "./components/ModelUnavailableBar";
+import type { Remedy } from "../shared/error-remedy";
 import { EnvStatusBar } from "./components/EnvStatusBar";
 import { taskStore, type TreeNode } from "./store/taskStore";
 import { tabStore } from "./store/tabStore";
@@ -213,6 +214,11 @@ export default function App() {
         tabStore.active ? { kind: "tab", key: tabStore.active } : { kind: "section", section: "task" },
     );
     const [subPage, setSubPage] = createSignal("info");
+    /**
+     * 设置 → 模型页的**修复引导**（##407）：`{ remedy, nonce }`。
+     * nonce 每次点击都不同 —— 同一条引导连点两次也要重新滚动 + 重新闪（用户以为没反应就再点一次）。
+     */
+    const [modelFocus, setModelFocus] = createSignal<{ remedy: Remedy; nonce: number } | null>(null);
     // 侧栏默认紧缩（2.5rem 纯图标 rail 省空间）；悬停或锁定才展开，选导航后即回缩
     const [pinned, setPinned] = createSignal(false);
     const [hovered, setHovered] = createSignal(false);
@@ -1100,9 +1106,16 @@ export default function App() {
                                 notice={n()}
                                 onDismiss={() => modelNoticeStore.dismissCurrent()}
                                 onConfigure={() => {
-                                    // "去配置模型" = 设置 → 模型（唯一要做的动作；顺带把 route 切过去）
+                                    // 无修复映射时的兜底："去配置模型" = 设置 → 模型（只切页，不定位）
                                     goSection("settings");
                                     setSubPage("models");
+                                }}
+                                onRemedy={(r) => {
+                                    // 有映射（##407）：带到**具体锚点**去，页面里滚动 + 高亮该字段。
+                                    // 纯静态导航 —— 引导本身不调用任何模型（此刻 LLM 已经不可用）。
+                                    goSection("settings");
+                                    setSubPage("models");
+                                    setModelFocus({ remedy: r, nonce: Date.now() });
                                 }}
                             />
                         )}
@@ -1209,7 +1222,7 @@ export default function App() {
                                 <ThemeSettings />
                             </Show>
                             <Show when={subPage() === "models"}>
-                                <ModelConfigPage />
+                                <ModelConfigPage focus={modelFocus()} />
                             </Show>
                         </div>
                     </Show>

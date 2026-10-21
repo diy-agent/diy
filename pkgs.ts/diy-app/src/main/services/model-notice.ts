@@ -24,6 +24,8 @@ export interface ModelNoticeContext {
     personaId: string;
     personaName: string;
     model: string;
+    /** provider 段（std = models.dev id；custom = `custom:<key>`；拿不到 = ""）—— 修复引导的定位依据（##407） */
+    provider: string;
 }
 
 let seq = 0;
@@ -48,6 +50,7 @@ export function noticeFromError(e: unknown, ctx: ModelNoticeContext, now = new D
         personaId: ctx.personaId,
         personaName: ctx.personaName,
         model: ctx.model,
+        provider: ctx.provider,
         taskUri: ctx.taskUri,
     };
 }
@@ -73,6 +76,7 @@ export function unavailableNoticeFromLocal(message: string, ctx: ModelNoticeCont
         personaId: ctx.personaId,
         personaName: ctx.personaName,
         model: ctx.model,
+        provider: ctx.provider,
         taskUri: ctx.taskUri,
     };
 }
