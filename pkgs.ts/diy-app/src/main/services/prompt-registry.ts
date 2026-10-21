@@ -647,7 +647,13 @@ export function assembleGlobals(
     if (!hit) throw new Error(`缺少模版节：${relpath}`);
     return renderSystemDsl({ globals: core, templates: { [relpath]: hit.source }, entry: relpath, resolve });
   };
-  const factsValue = buildFactsContext({ home, taskUri });
+  // 事实投影（##404 待办 4）：带上 cwd 的**仓库相对路径**，让 `scope.paths` 型事实自动筛掉
+  // 与当前位置无关的那些（不传 = 不筛 = 65 条全进上下文，实测吃满 5.6 KB 预算）。
+  // 相对化在这里做而不是在 facts-context 里：`root` 的语义（证据/paths 按仓库根解析）
+  // 归内核，装配层只负责"我现在在哪"。
+  const repoRoot = getProjectPath(projectId);
+  const relCwd = repoRoot === undefined || !cwdRes.cwd.startsWith(`${repoRoot}/`) ? undefined : cwdRes.cwd.slice(repoRoot.length + 1);
+  const factsValue = buildFactsContext({ home, taskUri, ...(relCwd === undefined ? {} : { paths: [relCwd] }) });
   return {
     ...core,
     // 房间上下文（##377 第 26 刀）：**只在有房间时出现**（缺这个键 = 单人任务逐字不变）。

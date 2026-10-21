@@ -35,7 +35,7 @@ export interface FactsContextValue {
 }
 
 /** 投影默认预算：超了从尾部（project 侧）裁。不是硬上限 —— 只在条目异常多时兜底 */
-export const DEFAULT_FACTS_MAX_BYTES = 6000;
+export const DEFAULT_FACTS_MAX_BYTES = 4000;
 
 interface Loaded {
     ns: Ns;
