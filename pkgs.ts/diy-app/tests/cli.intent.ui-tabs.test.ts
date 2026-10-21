@@ -363,6 +363,9 @@ describe("真实 UI 操作 —— 点击（第二种测试能力）", () => {
 
   afterAll(() => ui?.close());
 
+  /** 应用内二次确认弹窗是否开着（ConfirmDialog 的稳定落点 `data-confirm-ok`，见其组件头注释） */
+  const confirmOpen = () => ui.query<boolean>(`!!document.querySelector('[data-confirm-ok]')`);
+
   it("点面包屑「任务管理」→ 真的回到任务树", async () => {
     // 这条曾经是假绿：面包屑的祖先项 onClick 写成空函数（注释「App 侧会处理」，
     // 实际没人处理），点击毫无反应 —— 但断言只查了「tab 列表」于是照样通过。
@@ -407,7 +410,37 @@ describe("真实 UI 操作 —— 点击（第二种测试能力）", () => {
     });
     expect(after.opened).not.toContain(`task-run:${uri}`);
     expect(after.active).toBe("");
+
+    // ##405：关闭**恒等于直接关**，中间不该冒出任何确认弹窗
+    expect(await confirmOpen()).toBe(false);
     await unlockNav(ui); // 还原，别影响后续用例
+  });
+
+  it("##405：连续关 3 个 tab —— 每次都直接消失，全程无确认弹窗", async () => {
+    // 用户口径：「关掉一个一个关注的会话不应该弹出…应该直接关掉，很麻烦。」
+    // 这里用 3 个普通任务 tab 验「关 = 立即关、不多问一句」这条路径本身没被重新接上确认；
+    // 「在跑的会话也不拦」由 closeTab 的**无条件**实现保证（原来那个 turn !== null 分支已删，
+    // 它需要真跑一轮才有 turn，本用例不为此付模型钱）。
+    // 自带数据（不靠前面用例的 fixture —— 单独 -t 跑也要能过）
+    const proj = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/close3 --label Close3`);
+    const pid = String((proj.data as any)?.data?.id);
+    expect(pid).not.toBe("");
+    const keys: string[] = [];
+    for (const i of [1, 2, 3]) {
+      const r = await fx.sh.getJson(`./diy.sh task create 连关验证-${i} ${pid}`);
+      keys.push(`task-run:${String((r.data as any)?.data?.uri)}`);
+    }
+    for (const k of keys) await fx.sh.getJson(`./diy.sh ui tab open ${k.slice("task-run:".length)}`);
+    await waitUntil(tabs, (t) => keys.every((k) => t.opened.includes(k)), { label: "3 个 tab 就位" });
+
+    await lockNavOpen(ui);
+    for (let n = keys.length; n > 0; n--) {
+      await ui.clickSelector(`button[title*='关闭']`); // 点第一个 ✕（关哪个都行，判据是「立即少一个」）
+      expect(await confirmOpen()).toBe(false); // 没有弹窗拦路
+      const after = await waitUntil(tabs, (t) => t.opened.length < n, { label: `第 ${keys.length - n + 1} 个 tab 直接关掉` });
+      expect(after.opened.length).toBe(n - 1);
+    }
+    await unlockNav(ui);
   });
 });
 

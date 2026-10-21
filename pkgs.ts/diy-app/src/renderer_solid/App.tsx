@@ -21,7 +21,6 @@ import { AppInfo } from "./components/AppInfo";
 import { LogPanel } from "./components/LogPanel";
 import { ThemeSettings } from "./components/ThemeSettings";
 import { ToastContainer } from "./components/ToastContainer";
-import { ConfirmDialog } from "./components/ConfirmDialog";
 // 「模型不可用」顶栏 bar（##369 ①）：真发失败时把事实从会话流里提出来摆到最显眼处
 import { ModelUnavailableBar } from "./components/ModelUnavailableBar";
 import { EnvStatusBar } from "./components/EnvStatusBar";
@@ -703,9 +702,6 @@ export default function App() {
         }
     });
 
-    /** 关 tab 前要确认的那一个（在跑的会话：##305 轮次脱离连接，关掉只是不看） */
-    const [pendingClose, setPendingClose] = createSignal<{ key: string; label: string } | null>(null);
-
     let fsAbort: AbortController | undefined;
 
     // 相对时间心跳（见 nowMs 的注释）：1 分钟推一次，界面静止时 `20h` 也会自己变 `21h`
@@ -1051,21 +1047,10 @@ export default function App() {
         setRoute({ kind: "tab", key });
     };
 
-    /** 关闭 tab：与任务状态无关（= 暂时不理会）。关父连带关子 */
-    const closeTab = (key: string, opts?: { skipConfirm?: boolean }) => {
-        // 关掉一个**正在跑**的会话：弹一次确认（##358 D3 / demo v4「① 关 tab 时若还在跑」）。
-        // 不是拦你 —— 是告诉你"关掉只是不看它，轮次照跑（##305）"，免得以为关了就停了。
-        // 走应用内 ConfirmDialog（**禁** window.confirm：窗口级模态会卡住整个渲染进程，且自动化点不到）。
-        const ctx = key.includes(":") ? key.slice(key.indexOf(":") + 1) : null;
-        if (!opts?.skipConfirm && ctx && sessionStore.byUri(ctx)?.turn !== null) {
-            setPendingClose({ key, label: tabLabel(ctx) });
-            return;
-        }
-        doCloseTab(key);
-    };
-
-    /** 真正执行关闭（确认过后走这里） */
-    const doCloseTab = (key: string) => {
+    /** 关闭 tab：与任务状态无关（= 暂时不理会）。关父连带关子。
+     *  **直接关，不确认**（##405）：在跑的会话关掉只是不看它，轮次照跑（##305 轮次脱离连接）——
+     *  那是既有语义，不需要再问一遍。 */
+    const closeTab = (key: string) => {
         hideHoverLayers();
         // 关闭前记下它的 ctx：关掉最后一个 tab 会落回任务树，那时也应在树里定位到它（##160），
         // 但 tabStore.close 之后 activeTab 已变，取不到了
@@ -1836,22 +1821,6 @@ export default function App() {
                 onPick={(uri) => getRendererActions().openTaskRun?.(uri)}
             />
 
-            {/* 关掉在跑的会话前的确认（走应用内弹窗，见 closeTab 注释） */}
-            <Show when={pendingClose()}>
-                {(p) => (
-                    <ConfirmDialog
-                        title="它还在后台跑，确定关掉？"
-                        message={`${p().label} 这一轮还没跑完。关掉只是不看它 —— 轮次会照常在后台跑完（##305 轮次脱离连接），跑完会提示你。`}
-                        confirmLabel="关掉（不看）"
-                        onCancel={() => setPendingClose(null)}
-                        onConfirm={() => {
-                            const k = p().key;
-                            setPendingClose(null);
-                            closeTab(k, { skipConfirm: true });
-                        }}
-                    />
-                )}
-            </Show>
             <ToastContainer />
         </div>
         {/* 全局侧边栏助手 room（##166 §30 / §31）：**独立于路由** ——
