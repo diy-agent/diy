@@ -2072,6 +2072,10 @@ export const apiDef = RpcSchema.router({
             desc: `事实库体检：条目 / claim / 词表计数 + 全部问题（与 ./sha.sh check 同一套判据，不会出现"CLI 绿、CI 红"）`,
             input: {
               dir: z.string().optional().cliOption({ desc: "knowledge 目录（缺省自动向上找）" }),
+              in: z
+                .string()
+                .optional()
+                .cliOption({ desc: "库的位置：缺省/global = 仓库 knowledge/；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）" }),
             },
             output: FactsStatusSchema,
           }),
@@ -2083,6 +2087,10 @@ export const apiDef = RpcSchema.router({
               path: z.string().optional().cliOption({ desc: "作用域：代码路径（多个用逗号分隔，仓库相对）" }),
               task: z.string().optional().cliOption({ desc: "作用域：任务 URI" }),
               dir: z.string().optional().cliOption({ desc: "knowledge 目录（缺省自动向上找）" }),
+              in: z
+                .string()
+                .optional()
+                .cliOption({ desc: "库的位置：缺省/global = 仓库 knowledge/；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）" }),
             },
             output: FactsGetSchema,
           }),
@@ -2092,6 +2100,10 @@ export const apiDef = RpcSchema.router({
               file: z.string().cliOption({ readFile: true, placeholder: "<file|->", desc: "载荷 JSON 文件（- = stdin）" }),
               dryRun: z.boolean().optional().cliOption({ desc: "只算不写：回显将新增 / 修改什么" }),
               dir: z.string().optional().cliOption({ desc: "knowledge 目录（缺省自动向上找）" }),
+              in: z
+                .string()
+                .optional()
+                .cliOption({ desc: "库的位置：缺省/global = 仓库 knowledge/；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）" }),
             },
             output: FactsSubmitSchema,
           }),
@@ -2100,6 +2112,10 @@ export const apiDef = RpcSchema.router({
             input: {
               files: z.string().cliOption({ placeholder: "<path,...>", desc: "文件路径（逗号分隔，仓库相对）" }),
               dir: z.string().optional().cliOption({ desc: "knowledge 目录（缺省自动向上找）" }),
+              in: z
+                .string()
+                .optional()
+                .cliOption({ desc: "库的位置：缺省/global = 仓库 knowledge/；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）" }),
             },
             output: FactsAffectedSchema,
           }),

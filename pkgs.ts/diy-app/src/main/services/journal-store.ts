@@ -73,7 +73,8 @@ export function parseImportPayload(text: string): JournalAddInput[] {
     const errs: { field: string; code: string; msg: string }[] = [];
     if (typeof o["kind"] !== "string") errs.push({ field: "kind", code: "journal/kind", msg: `第 ${i + 1} 条缺 kind` });
     if (typeof o["title"] !== "string") errs.push({ field: "title", code: "journal/title", msg: `第 ${i + 1} 条缺 title` });
-    if (errs.length > 0) throw new ValidationError(errs);
+    // error-code-ok: 字段级 code 在 errors 载荷里（journal/kind / journal/title / journal/ts），不进 err.code
+  if (errs.length > 0) throw new ValidationError(errs);
     return {
       kind: o["kind"] as JournalKind,
       title: o["title"] as string,
@@ -122,6 +123,7 @@ function validateOne(input: JournalAddInput, index: number): JournalEntry {
   if (input.ts !== undefined && Number.isNaN(Date.parse(input.ts))) {
     errs.push({ field: "ts", code: "journal/ts", msg: `${where}.ts 不是合法时间：${input.ts}` });
   }
+  // error-code-ok: 字段级 code 在 errors 载荷里（journal/kind / journal/title / journal/ts），不进 err.code
   if (errs.length > 0) throw new ValidationError(errs);
 
   const parsed = JournalEntrySchema.safeParse({

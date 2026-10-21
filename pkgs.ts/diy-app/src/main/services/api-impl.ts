@@ -1409,10 +1409,11 @@ export function bindAppHandlers(binding: ServerBinding): void {
   });
 
   // ── facts（##404：项目级事实库；agent 只经 RPC 读写，不碰 YAML）──
-  binding.on(app.facts.status, async ({ input }) => factsStore.status(input.dir));
+  binding.on(app.facts.status, async ({ input }) => factsStore.status({ ...(input.dir === undefined ? {} : { dir: input.dir }), ...(input.in === undefined ? {} : { in: input.in }) }));
   binding.on(app.facts.get, async ({ input }) =>
     factsStore.get(factsStore.splitList(input.claim), {
       ...(input.dir === undefined ? {} : { dir: input.dir }),
+      ...(input.in === undefined ? {} : { in: input.in }),
       ...(input.env === undefined ? {} : { env: input.env }),
       ...(input.path === undefined ? {} : { paths: factsStore.splitList(input.path) }),
       ...(input.task === undefined ? {} : { task: input.task }),
@@ -1421,10 +1422,14 @@ export function bindAppHandlers(binding: ServerBinding): void {
   binding.on(app.facts.submit, async ({ input }) =>
     factsStore.submitPayload(factsStore.parseSubmitPayload(input.file), {
       ...(input.dir === undefined ? {} : { dir: input.dir }),
+      ...(input.in === undefined ? {} : { in: input.in }),
       dryRun: input.dryRun === true,
     }),
   );
-  binding.on(app.facts.affected, async ({ input }) => factsStore.affectedByFiles(factsStore.splitList(input.files), input.dir));
+  binding.on(app.facts.affected, async ({ input }) => factsStore.affectedByFiles(factsStore.splitList(input.files), {
+      ...(input.dir === undefined ? {} : { dir: input.dir }),
+      ...(input.in === undefined ? {} : { in: input.in }),
+    }));
 
   // ── journal（##404：任务日志 = append-only 事件流；把"发生过什么"从任务 body 里摘出来）──
   binding.on(app.journal.add, async ({ input }) => {

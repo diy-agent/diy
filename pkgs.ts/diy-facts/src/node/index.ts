@@ -61,6 +61,15 @@ export interface Repo {
     /** 每篇的 domain（`note` 之外的第二个文件级字段） */
     readonly domains: ReadonlyMap<string, string>;
     readonly subjects: readonly SubjectDef[];
+    /**
+     * **本地** subjects.yaml 里声明过的 key（继承来的不算）。
+     *
+     * 两个用途：① `subject-unused` 的判定范围（任务级库继承仓库词表后，仓库里
+     * "已登记但本任务没用"的 subject 会刷出一屏假警告，把真问题淹掉）；
+     * ② **写回词表时只写本地的** —— 否则第一次 `submit` 就把继承来的整份词表
+     * 复制到任务目录，继承关系当场退化成快照（此后仓库加 subject，任务库看不到）。
+     */
+    readonly localSubjects: readonly SubjectDef[];
     readonly schemaIssues: readonly RepoProblem[];
 }
 
@@ -100,21 +109,56 @@ function readYaml(file: string): unknown {
     }
 }
 
-/** 装载真源。目录不存在 = 环境问题（不是"空库"）：静默当空库会让 `submit` 写到别处 */
-export function loadRepo(knowledgeDir: string): Repo {
+export interface LoadRepoOptions {
+    /**
+     * 词表缺省来源（另一份 `subjects.yaml` 的绝对路径）。
+     *
+     * 为**任务级库**而设：任务库只放本任务的事实，不该复制一份全局词表 ——
+     * 复制就会分叉（两处对同一 subject 的描述迟早不同），且新 subject 还得同步两遍。
+     * 继承语义只有一条：**本地有就本地优先，本地没有才回落**。
+     */
+    readonly subjectsFallback?: string;
+    /**
+     * facts 目录不存在时是否当空库（并在 `submit` 时建出来）。
+     * 缺省 `false` —— 仓库真源缺失是环境问题，静默当空库会让 `submit` 写到别处。
+     * 任务级库才开：它本来就是"第一次写入时诞生"。
+     */
+    readonly allowMissing?: boolean;
+    /**
+     * 覆盖 `root`（缺省 = `knowledge/` 的父目录）。
+     *
+     * 为**任务级库**而设：任务的库住在 `$DIY_HOME/projects/<p>/tasks/<t>/knowledge/`，
+     * 但它写的事实讲的是**代码仓**的事 —— `evidence.at` / `scope.paths` 都是相对仓库根的
+     * （`pkgs.ts/diy-app/src/x.ts:10`）。按"库目录的父目录"解析会让每一条证据都悬空。
+     */
+    readonly root?: string;
+}
+
+/** 词表读取：本地优先，缺省回落（任务级库继承仓库词表，见 LoadRepoOptions.subjectsFallback） */
+function readSubjects(localFile: string, fallbackFile?: string): { all: SubjectDef[]; local: SubjectDef[] } {
+    const hasLocal = existsSync(localFile);
+    const file = hasLocal ? localFile : fallbackFile !== undefined && existsSync(fallbackFile) ? fallbackFile : null;
+    if (file === null) return { all: [], local: [] };
+    const doc = readYaml(file) as { subjects?: Record<string, { description?: string; aliases?: string[] }> } | null;
+    const all = Object.entries(doc?.subjects ?? {}).map(([key, def]) => ({
+        key,
+        ...(def?.description ? { description: def.description } : {}),
+        ...(def?.aliases ? { aliases: def.aliases } : {}),
+    }));
+    return { all, local: hasLocal ? all : [] };
+}
+
+/** 装载真源。除非 `allowMissing`，目录不存在 = 环境问题（不是"空库"） */
+export function loadRepo(knowledgeDir: string, opts: LoadRepoOptions = {}): Repo {
     const dir = path.resolve(knowledgeDir);
     const factsDir = path.join(dir, 'facts');
     if (!existsSync(factsDir)) {
-        throw new FactsRepoError('facts/repo-missing', `事实库真源不存在：${factsDir}（--dir 指错？）`);
-    }
-    const subjectsFile = path.join(dir, 'subjects.yaml');
-    const subjects: SubjectDef[] = [];
-    if (existsSync(subjectsFile)) {
-        const doc = readYaml(subjectsFile) as { subjects?: Record<string, { description?: string; aliases?: string[] }> } | null;
-        for (const [key, def] of Object.entries(doc?.subjects ?? {})) {
-            subjects.push({ key, ...(def?.description ? { description: def.description } : {}), ...(def?.aliases ? { aliases: def.aliases } : {}) });
+        if (opts.allowMissing !== true) {
+            throw new FactsRepoError('facts/repo-missing', `事实库真源不存在：${factsDir}（--dir 指错？）`);
         }
+        mkdirSync(factsDir, { recursive: true });
     }
+    const { all: subjects, local: localSubjects } = readSubjects(path.join(dir, 'subjects.yaml'), opts.subjectsFallback);
 
     const files = readdirSync(factsDir)
         .filter((f) => f.endsWith('.yaml') || f.endsWith('.yml'))
@@ -147,13 +191,14 @@ export function loadRepo(knowledgeDir: string): Repo {
     const { facts, issues } = validateFacts(raw);
     return {
         dir,
-        root: path.dirname(dir),
+        root: opts.root === undefined ? path.dirname(dir) : path.resolve(opts.root),
         files,
         facts,
         origin,
         notes,
         domains,
         subjects,
+        localSubjects,
         schemaIssues: issues.map((i) => ({ level: 'error' as const, code: i.code, detail: i.detail, ...(i.facts ? { facts: i.facts } : {}) })),
     };
 }
@@ -169,7 +214,14 @@ function resolveEvidencePath(root: string, raw: string): string {
  */
 export function checkFacts(
     facts: readonly Fact[],
-    opts: { subjects: readonly SubjectDef[]; root: string; asOf?: Date; maxAgeDays?: number },
+    opts: {
+        subjects: readonly SubjectDef[];
+        root: string;
+        asOf?: Date;
+        maxAgeDays?: number;
+        /** `subject-unused` 的判定范围；缺省 = 全部词表（任务级库传本地声明的 key） */
+        subjectsUnusedScope?: readonly string[];
+    },
 ): RepoProblem[] {
     const problems: RepoProblem[] = [];
     const asOf = opts.asOf ?? new Date();
@@ -200,8 +252,9 @@ export function checkFacts(
             });
         }
     }
-    for (const s of vocab) {
-        if (!used.has(s)) problems.push({ level: 'warning', code: 'facts/subject-unused', detail: `词表里的 subject 无任何 fact 使用：${s}` });
+    const unusedScope = opts.subjectsUnusedScope ?? [...vocab];
+    for (const s of unusedScope) {
+        if (!used.has(s) && vocab.has(s)) problems.push({ level: 'warning', code: 'facts/subject-unused', detail: `词表里的 subject 无任何 fact 使用：${s}` });
     }
 
     // G4 / G5 / W1：证据可解析、probe 档齐备、证据陈旧
@@ -245,14 +298,22 @@ export function checkFacts(
 }
 
 /** 装载 + 全量校验（脚本与 CLI 都走这一个入口） */
-export function checkRepo(knowledgeDir: string, opts: { asOf?: Date; maxAgeDays?: number } = {}): {
+export function checkRepo(
+    knowledgeDir: string,
+    opts: { asOf?: Date; maxAgeDays?: number } & LoadRepoOptions = {},
+): {
     repo: Repo;
     problems: readonly RepoProblem[];
 } {
-    const repo = loadRepo(knowledgeDir);
+    const repo = loadRepo(knowledgeDir, opts);
     const problems = [
         ...repo.schemaIssues,
-        ...checkFacts(repo.facts, { subjects: repo.subjects, root: repo.root, ...opts }),
+        ...checkFacts(repo.facts, {
+            subjects: repo.subjects,
+            root: repo.root,
+            subjectsUnusedScope: repo.localSubjects.map((s) => s.key),
+            ...opts,
+        }),
     ];
     return { repo, problems };
 }
@@ -348,8 +409,12 @@ export interface SubmitInput {
  * 为什么原子：agent 一轮会提 3~10 条，第 4 条写错了却把前 3 条落了盘 —— 人看到的是
  * "部分生效"，下一轮 agent 读到半截状态又会重复提。宁可整批退，让它重提。
  */
-export function submit(knowledgeDir: string, input: SubmitInput): { report: SubmitReport; problems: readonly RepoProblem[] } {
-    const repo = loadRepo(knowledgeDir);
+export function submit(
+    knowledgeDir: string,
+    input: SubmitInput,
+    repoOpts: LoadRepoOptions = {},
+): { report: SubmitReport; problems: readonly RepoProblem[] } {
+    const repo = loadRepo(knowledgeDir, repoOpts);
 
     // 1) 候选事实集：同 id 覆盖（审计锚点稳定），新 id 追加
     const byId = new Map(repo.facts.map((f) => [f.id, f]));
@@ -370,12 +435,16 @@ export function submit(knowledgeDir: string, input: SubmitInput): { report: Subm
     }
 
     // 2) 候选词表
+    // 两份词表：`subjectMap` = 校验用（含继承），`localMap` = 写回用（只有本地 + 本次新增）。
+    // 两者混用就会出现"第一次 submit 把继承的整份词表复制成本地快照"。
     const subjectMap = new Map(repo.subjects.map((s) => [s.key, s]));
+    const localMap = new Map(repo.localSubjects.map((s) => [s.key, s]));
     const newSubjects: string[] = [];
     for (const s of input.subjects ?? []) {
         const prev = subjectMap.get(s.key);
         if (prev === undefined) newSubjects.push(s.key);
         subjectMap.set(s.key, { ...prev, ...s });
+        localMap.set(s.key, { ...localMap.get(s.key), ...s });
     }
     const subjects = [...subjectMap.values()];
 
@@ -384,7 +453,8 @@ export function submit(knowledgeDir: string, input: SubmitInput): { report: Subm
     const schema = validateFacts(candidate);
     const problems: RepoProblem[] = [
         ...schema.issues.map((i) => ({ level: 'error' as const, code: i.code, detail: i.detail, ...(i.facts ? { facts: i.facts } : {}) })),
-        ...checkFacts(schema.facts, { subjects, root: repo.root }),
+        // unused 的判定范围跟着**本地**词表走：本批新声明的 subject 也算本地
+        ...checkFacts(schema.facts, { subjects, root: repo.root, subjectsUnusedScope: [...localMap.keys()] }),
     ];
     // 词表条目必须有 description（人读的唯一入口，空词表等于没词表）
     for (const s of input.subjects ?? []) {
@@ -421,7 +491,7 @@ export function submit(knowledgeDir: string, input: SubmitInput): { report: Subm
     if (newSubjects.length > 0 || (input.subjects ?? []).length > 0) {
         const vocabFile = path.join(repo.dir, 'subjects.yaml');
         const vocab: Record<string, unknown> = {};
-        for (const s of [...subjects].sort((a, b) => a.key.localeCompare(b.key))) {
+        for (const s of [...localMap.values()].sort((a, b) => a.key.localeCompare(b.key))) {
             vocab[s.key] = { ...(s.description ? { description: s.description } : {}), ...(s.aliases ? { aliases: s.aliases } : {}) };
         }
         writes.push({ file: vocabFile, text: `${VOCAB_HEAD}\n${dump({ subjects: vocab }, { noRefs: true, lineWidth: -1, quoteStyle: 'single' })}` });

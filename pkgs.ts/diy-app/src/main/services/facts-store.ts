@@ -15,6 +15,7 @@ import path from "node:path";
 import { affected, buildIndex, resolveClaim, validateFacts, type Env, type Fact, type Ref, type Scope } from "@diy/facts";
 import { checkRepo, loadRepo, submit, type SubjectDef, type SubmitReport } from "@diy/facts/node";
 import type { z } from "zod";
+import { diyHome } from "../core/state";
 import type { FactSchema, RefSchema } from "../../shared/facts";
 
 /**
@@ -109,19 +110,94 @@ export function resolveFactsDir(explicit?: string): string {
     const hit = walkUp(process.cwd()) ?? walkUp(path.resolve(import.meta.dirname, "../../../.."));
     if (hit === null) {
         throw new FactsStoreError(
-            "facts/repo-missing",
+            "agent/facts-repo-missing",
             "找不到事实库真源（向上找 knowledge/subjects.yaml 未命中）——用 --dir 指到仓库根，或 set DIY_FACTS_DIR",
         );
     }
     return hit;
 }
 
-export function status(dir?: string) {
-    const kb = resolveFactsDir(dir);
-    const { repo, problems } = checkRepo(kb);
+/**
+ * 库的定位结果。**为什么不是单纯一个目录**：任务级库与仓库库的差别不在路径，
+ * 而在两条附加语义 —— ① 词表继承（否则每个任务复制一份 subjects.yaml 必然分叉）
+ * ② 首次写入即诞生（任务库第一次 `submit` 前目录根本不存在）。
+ * 把这两条塞进调用方，`submit` / `status` 就各写一遍，迟早不一致。
+ */
+export interface FactsTarget {
+    /** 库的 `knowledge/` 绝对路径 */
+    readonly dir: string;
+    /** 词表缺省来源（任务级库 → 仓库词表；仓库库自身 = 无） */
+    readonly subjectsFallback?: string;
+    /** 首次写入可建库（只有任务级库为 true） */
+    readonly allowMissing: boolean;
+    /**
+     * 证据 / paths 的解析根。任务级库指向**仓库根**而非任务目录 ——
+     * 任务写的事实讲的是代码仓的事（`pkgs.ts/diy-app/src/x.ts:10`），
+     * 按任务目录解析会让每条证据都悬空。
+     */
+    readonly root?: string;
+}
+
+const TASK_IN = /^task:(projects\/\d+\/tasks\/\d+)$/;
+
+/**
+ * `--in` 的语义：`task:<taskUri>` 指向任务级库，其余（含缺省）指向仓库库。
+ *
+ * 为什么不给任务库留「当前任务」缺省：agent 常常同时在两个任务里干活（父任务排期、
+ * 子任务开发），"当前"根本无从判断 —— 写错库比多敲十次 uri 危险得多。
+ */
+export function resolveFactsTarget(opts: { dir?: string; in?: string } = {}): FactsTarget {
+    const spec = opts.in?.trim();
+    if (spec !== undefined && spec !== "" && spec !== "global" && spec !== "project") {
+        const m = TASK_IN.exec(spec);
+        if (m === null) {
+            throw new FactsStoreError(
+                "agent/facts-bad-in",
+                `--in 只认 task:<taskUri>（如 task:projects/4/tasks/404）或 global —— 收到「${spec}」`,
+            );
+        }
+        const taskDir = path.join(diyHome(), m[1] as string);
+        if (!existsSync(taskDir)) {
+            throw new FactsStoreError("agent/facts-task-missing", `任务目录不存在：${taskDir}`);
+        }
+        const repoKb = resolveFactsDir(undefined);
+        return {
+            dir: path.join(taskDir, "knowledge"),
+            // 任务库继承仓库词表：本地 subjects.yaml 存在则本地优先（局部扩词），否则用仓库的
+            subjectsFallback: path.join(repoKb, "subjects.yaml"),
+            allowMissing: true,
+            root: path.dirname(repoKb),
+        };
+    }
+    return { dir: resolveFactsDir(opts.dir), allowMissing: false };
+}
+
+/**
+ * `FactsTarget` → 内核选项。`forWrite` 才允许"建库"：**读操作永不制造目录** ——
+ * `status` 顺手建出一个空库，会让"库在哪、建没建"这件事变得不可判定。
+ */
+function targetOpts(t: FactsTarget, forWrite = false) {
+    return {
+        allowMissing: forWrite && t.allowMissing,
+        ...(t.subjectsFallback === undefined ? {} : { subjectsFallback: t.subjectsFallback }),
+        ...(t.root === undefined ? {} : { root: t.root }),
+    };
+}
+
+export function status(opts: { dir?: string; in?: string } = {}) {
+    const target = resolveFactsTarget(opts);
+    const kb = target.dir;
+    if (target.allowMissing && !existsSync(path.join(kb, "facts"))) {
+        throw new FactsStoreError(
+            "agent/facts-repo-missing",
+            `任务级库还没建：${kb} —— 第一次写入自动创建，先跑 \`diy facts submit --in ${opts.in ?? "task:<uri>"}\``,
+        );
+    }
+    const { repo, problems } = checkRepo(kb, targetOpts(target));
     const claims = new Set(repo.facts.map((f) => `${f.subject}#${f.aspect}`));
     return {
         dir: kb,
+        in: opts.in ?? "global",
         facts: repo.facts.length,
         claims: claims.size,
         subjects: new Set(repo.facts.map((f) => f.subject)).size,
@@ -145,13 +221,14 @@ export interface GetResult {
 
 export function get(
     claims: readonly string[],
-    opts: { dir?: string; env?: Env; paths?: readonly string[]; task?: string } = {},
+    opts: { dir?: string; in?: string; env?: Env; paths?: readonly string[]; task?: string } = {},
 ): GetResult {
-    const kb = resolveFactsDir(opts.dir);
-    const repo = loadRepo(kb);
+    const target = resolveFactsTarget(opts);
+    const kb = target.dir;
+    const repo = loadRepo(kb, targetOpts(target));
     // schema 坏到解读不出事实时，`get` 不能"猜着答"：报错退出比给出可能错的值好
     if (repo.schemaIssues.length > 0) {
-        throw new FactsStoreError("facts/schema", `真源有 schema 问题（先跑 \`diy facts status\`）：${repo.schemaIssues[0]?.detail ?? ""}`);
+        throw new FactsStoreError("agent/facts-schema", `真源有 schema 问题（先跑 \`diy facts status\`）：${repo.schemaIssues[0]?.detail ?? ""}`);
     }
     const ctx = {
         ...(opts.env === undefined ? {} : { env: opts.env }),
@@ -186,32 +263,38 @@ export function parseSubmitPayload(text: string): SubmitPayload {
     try {
         doc = JSON.parse(text);
     } catch (err) {
-        throw new FactsStoreError("facts/payload-json", `--file 内容不是合法 JSON：${(err as Error).message}`);
+        throw new FactsStoreError("agent/facts-payload-json", `--file 内容不是合法 JSON：${(err as Error).message}`);
     }
     if (Array.isArray(doc)) return { facts: doc, subjects: [] };
     if (doc === null || typeof doc !== "object") {
-        throw new FactsStoreError("facts/payload-shape", "载荷期望 { facts: [...], subjects?: [...] } 或裸数组");
+        throw new FactsStoreError("agent/facts-payload-shape", "载荷期望 { facts: [...], subjects?: [...] } 或裸数组");
     }
     const obj = doc as { facts?: unknown[]; subjects?: SubjectDef[] };
     return { facts: obj.facts ?? [], subjects: obj.subjects ?? [] };
 }
 
-export function submitPayload(payload: SubmitPayload, opts: { dir?: string; dryRun?: boolean } = {}) {
-    const kb = resolveFactsDir(opts.dir);
+export function submitPayload(payload: SubmitPayload, opts: { dir?: string; in?: string; dryRun?: boolean } = {}) {
+    const target = resolveFactsTarget(opts);
+    const kb = target.dir;
     const { facts, issues } = validateFacts(payload.facts);
-    const { report, problems } = submit(kb, {
-        facts,
-        ...(payload.subjects.length > 0 ? { subjects: payload.subjects } : {}),
-        dryRun: opts.dryRun === true,
-    });
+    const { report, problems } = submit(
+        kb,
+        {
+            facts,
+            ...(payload.subjects.length > 0 ? { subjects: payload.subjects } : {}),
+            dryRun: opts.dryRun === true,
+        },
+        targetOpts(target, true),
+    );
     // zod 之外的语义问题由内核给（这里只把"形状都解析不出"的情况补上）
     const schemaProblems = issues.map((i) => ({ level: "error" as const, code: i.code, detail: i.detail, ...(i.facts ? { facts: i.facts } : {}) }));
     return { report: plainReport(report), problems: plainProblems([...schemaProblems, ...problems]) };
 }
 
-export function affectedByFiles(files: readonly string[], dir?: string): { ids: string[] } {
-    const kb = resolveFactsDir(dir);
-    const repo = loadRepo(kb);
+export function affectedByFiles(files: readonly string[], opts: { dir?: string; in?: string } = {}): { ids: string[] } {
+    const target = resolveFactsTarget(opts);
+    const kb = target.dir;
+    const repo = loadRepo(kb, targetOpts(target));
     const index = buildIndex(repo.facts);
     return { ids: [...affected(index, files)] };
 }
