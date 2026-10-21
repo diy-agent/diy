@@ -62,27 +62,31 @@ describe("clipToolResult", () => {
         expect(r.text).toBe(t);
     });
 
-    it("headtail：未超阈值（默认 6 行）不裁 —— 短输出原样走这条路径", () => {
-        const t = lines(6);
+    it("headtail：未超阈值（默认 triggerLines 行）不裁 —— 短输出原样走这条路径", () => {
+        const t = lines(DEFAULT_HEADTAIL.triggerLines);
         const r = clipToolResult(t, pol("headtail"));
         expect(r.clipped).toBe(false);
         expect(r.text).toBe(t);
     });
 
-    it("headtail：超阈值 → 前 3 + marker + 后 3，标记省略行数/字节/原文路径", () => {
-        const t = lines(1842);
+    it("headtail：超阈值 → 前 head + marker + 后 tail，标记省略行数/字节/原文路径（阈值跟常量走）", () => {
+        const head = DEFAULT_HEADTAIL.headLines;
+        const tail = DEFAULT_HEADTAIL.tailLines;
+        const n = DEFAULT_HEADTAIL.triggerLines + 1;
+        const t = lines(n);
         const r = clipToolResult(t, pol("headtail"), { origPath: "local/toolout/x.txt" });
         expect(r.clipped).toBe(true);
         const out = r.text.split("\n");
         expect(out[0]).toBe("line 0");
-        expect(out[2]).toBe("line 2");
-        expect(out[3]).toContain("中间省略 1836 行");
-        expect(out[3]).toContain("local/toolout/x.txt");
-        expect(out[out.length - 1]).toBe("line 1841");
-        expect(r.origLines).toBe(1842);
-        expect(r.droppedLines).toBe(1836);
-        // 头 3 + marker 1 + 尾 3
-        expect(r.keptLines).toBe(7);
+        expect(out[head - 1]).toBe(`line ${head - 1}`);
+        // marker 紧跟在头之后（第 head 行）
+        expect(out[head]).toContain(`中间省略 ${n - head - tail} 行`);
+        expect(out[head]).toContain("local/toolout/x.txt");
+        expect(out[out.length - 1]).toBe(`line ${n - 1}`);
+        expect(r.origLines).toBe(n);
+        expect(r.droppedLines).toBe(n - head - tail);
+        // 头 head + marker 1 + 尾 tail
+        expect(r.keptLines).toBe(head + tail + 1);
     });
 
     it("headtail：无 origPath 时 marker 不编造路径", () => {
@@ -93,7 +97,7 @@ describe("clipToolResult", () => {
 
     it("headtail：行数没超但单行超长 → 只做单行截断，不写「中间省略」marker", () => {
         const t = `short\n${"A".repeat(500)}\nshort`;
-        const r = clipToolResult(t, pol("headtail"));
+        const r = clipToolResult(t, pol("headtail", { ...DEFAULT_HEADTAIL, maxLineChars: 300 }));
         expect(r.clipped).toBe(true);
         expect(r.droppedLines).toBe(0);
         expect(r.text).not.toContain("中间省略");
@@ -102,8 +106,8 @@ describe("clipToolResult", () => {
     });
 
     it("headtail：字节兜底（一行超长穿透 maxKeepBytes）→ 收缩到预算内", () => {
-        // 一行 = 100k 字符 > 8KB 兜底
-        const t = `head\n${"B".repeat(100_000)}\ntail`;
+        // 一行 = maxKeepBytes + 1 字节 > 字节兜底（单行阈值调大以免先被行内截断）
+        const t = `head\n${"B".repeat(DEFAULT_HEADTAIL.maxKeepBytes + 1)}\ntail`;
         const r = clipToolResult(t, pol("headtail", { ...DEFAULT_HEADTAIL, maxLineChars: 1_000_000 }));
         expect(r.clipped).toBe(true);
         expect(utf8Bytes(r.text)).toBeLessThanOrEqual(DEFAULT_HEADTAIL.maxKeepBytes);
