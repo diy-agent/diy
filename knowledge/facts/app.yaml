@@ -1,0 +1,67 @@
+# knowledge/facts/app.yaml — 应用运行面（端口 / 变体 / 环境）
+#
+# 一行 = 一个 fact；同一 claim（subject#aspect）的差异靠 scope 表达，**不写嵌套的变体结构**
+# （嵌套会引入 upsert：写一条先得知道 base 在不在）。读侧由 `diy facts get app.port` 合并成组视图。
+domain: app
+facts:
+  - id: port.production
+    subject: app.port
+    aspect: default
+    value: '18888'
+    scope: { env: production }
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: pkgs.ts/diy-app/src/runtime.ts:90
+      verifiedAt: 2026-10-21
+
+  - id: port.dev-test
+    subject: app.port
+    aspect: default
+    value: '0'
+    scope: { env: [development, test] }
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: pkgs.ts/diy-app/src/runtime.ts:103
+      verifiedAt: 2026-10-21
+
+  # 端口裁决链 —— 依赖的是 **claim** `app.port#default`（跨环境取到正确变体），
+  # 不是某个 fact id（那会把 scope 写死成生产）
+  - id: port.resolution
+    subject: app.port
+    aspect: resolution
+    value: 'DIY_PORT > <DIY_HOME>/app.port 记录 > defaultPort(env)'
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: pkgs.ts/diy-app/src/runtime.ts:116
+      verifiedAt: 2026-10-21
+    refs:
+      - rel: depends-on
+        data: { toClaim: app.port#default }
+
+  - id: variant.values
+    subject: env.variant
+    aspect: values
+    value: 'prod | test | lab（preview 已删除：遇 DIY_VARIANT=preview 显式报错，不静默落 build/preview）'
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: pkgs.ts/diy-app/src/cli/index.ts:58
+      verifiedAt: 2026-10-21
+
+  - id: diyenv.values
+    subject: env.diy-env
+    aspect: values
+    value: 'production | development | test（无法识别的值一律按 production：宁可少开能力，不可误开）'
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: pkgs.ts/diy-app/src/runtime.ts:38
+      verifiedAt: 2026-10-21

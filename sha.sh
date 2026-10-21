@@ -179,6 +179,9 @@ check() {
   # 各领域规范索引护栏（##388）：~/SPECS.md 的 key 唯一 / 指针可解析 / 链上新增未收录（ratchet：存量基线 scripts/specs-unindexed.txt）
   #（实现见 scripts/check-specs.mts；**总表缺失 = skip + 提示、不算失败**，跨机器 / CI 没有家目录那份文件）
   run npx tsx scripts/check-specs.mts
+  # 事实库真源护栏（##404）：schema / claim 冲突 / 边悬空 / subject 词表 / 证据可解析（掉文件即 error）
+  #（实现见 scripts/facts-index.mts；真源 knowledge/facts/*.yaml，内核 pkgs.ts/diy-facts）
+  run npx tsx scripts/facts-index.mts
 }
 # 全仓唯一自动修复入口：格式化 + lint 可修项，能修的全修
 fix() {

@@ -14,6 +14,7 @@
 - `find.prompt` — 内置提示词 `pkgs.ts/diy-app/src/main/prompts/defaults.ts`（唯一真源）· 装配 `pkgs.ts/diy-app/src/main/services/prompt-registry.ts`
 - `find.intent` — **需求契约 = 意图测试**：`pkgs.ts/diy-app/tests/cli.intent.*.test.ts` + `pkgs.ts/diy-template/tests/intent.*` + `pkgs.ts/diy-talk/tests/intent.*` + `pkgs.ts/diy-flow/tests/intent.*`
 - `find.ui` — `pkgs.ts/diy-ui/`（包名 `diyui`）纯 TS / 零框架的**声明式 DOM 层**（原语 `Signal`/`Scope`/`Component`/`Cell`/`Scheduler` + provider `pi-tui`）；`web/`（Vite）是它的 demo 站
+- `find.facts` — 事实库真源 `knowledge/facts/*.yaml`（subject 词表 `knowledge/subjects.yaml`）· 护栏 `scripts/facts-index.mts`（已并入 `./sha.sh check`）· 内核 `pkgs.ts/diy-facts/`
 - `find.docs` — `docs/` 架构与方案 · `scripts/` 辅助脚本与冒烟脚本 · `pkgs/` Python 归档（不演进）
 
 ## entry — 实例三态（**先问：操作谁的数据 / 谁看 UI**）
