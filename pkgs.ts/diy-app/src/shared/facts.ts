@@ -80,10 +80,18 @@ export const ProblemSchema = z.object({
 
 export const FactsStatusSchema = z.object({
     dir: z.string(),
+    /** 顶层计数 = **本根**（不含额外只读库；额外库在 `extra`） */
     facts: z.number(),
     claims: z.number(),
     subjects: z.number(),
     files: z.number(),
+    /** 额外只读库（设备级）并入的量：读跨根、写不跨根 */
+    extra: z.object({
+        facts: z.number(),
+        claims: z.number(),
+        subjects: z.number(),
+        dirs: z.array(z.string()),
+    }),
     problems: z.array(ProblemSchema),
 });
 
@@ -162,6 +170,8 @@ export const FactsSubmitReportSchema = z.object({
     unchanged: z.array(z.string()),
     newSubjects: z.array(z.string()),
     files: z.array(z.object({ file: z.string(), before: z.number(), after: z.number() })),
+    /** 本批物理删除的 id（改名 = drop 旧 id + 写新 id，同批事务） */
+    dropped: z.array(z.string()),
 });
 
 export const FactsSubmitSchema = z.object({

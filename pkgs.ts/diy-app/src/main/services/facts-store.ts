@@ -14,7 +14,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { affected, buildIndex, resolveClaim, validateFacts, type Env, type Fact, type Ns, type Ref, type Scope } from "@diy/facts";
-import { checkRepo, loadRepo, submit, project, type SubjectDef, type SubmitReport } from "@diy/facts/node";
+import { checkFacts, checkRepo, loadRepo, readSubjectDefs, submit, project, type SubjectDef, type SubmitReport } from "@diy/facts/node";
 import type { z } from "zod";
 import { diyHome } from "../core/state";
 import type { FactSchema, RefSchema } from "../../shared/facts";
@@ -37,6 +37,7 @@ function plainReport(r: SubmitReport) {
         unchanged: [...r.unchanged],
         newSubjects: [...r.newSubjects],
         files: r.files.map((f) => ({ file: f.file, before: f.before, after: f.after })),
+        dropped: [...r.dropped],
     };
 }
 
@@ -277,18 +278,60 @@ export function status(opts: { dir?: string; in?: string } = {}) {
             `库还没建：${kb} —— 第一次写入自动创建，先跑 \`diy facts submit --in ${opts.in ?? "task:<uri>"}\``,
         );
     }
-    const { repo, problems } = checkRepo(kb, targetOpts(target));
-    const claims = new Set(repo.facts.map((f) => `${f.subject}#${f.aspect}`));
+    const repo = loadRepo(kb, targetOpts(target));
+    // 词表 = 本根 ∪ 额外库：额外库（设备级）独有的 subject 在本根词表里当然没有 ——
+    // 只认本根会把它们全判 `subject-unregistered`（实测 `skill` 只在设备库词表里，
+    // 于是 `diy facts status` 对着自己的库报"未登记"，看着像库坏了）。
+    const extraDirs = target.readExtra ?? [];
+    const extraSubjects = extraDirs.flatMap((d) => readSubjectDefs(d));
+    const vocab = new Map<string, SubjectDef>();
+    for (const s of [...repo.subjects, ...extraSubjects]) if (!vocab.has(s.key)) vocab.set(s.key, s);
+    const problems = [
+        ...repo.schemaIssues,
+        ...checkFacts(repo.facts, {
+            subjects: [...vocab.values()],
+            root: repo.root,
+            // unused 只看**本地声明**的 subject：继承来的不该因为"本库没用"就告警
+            subjectsUnusedScope: repo.localSubjects.map((s) => s.key),
+        }),
+    ];
+    // 计数分桶：本根 vs 额外库。混在一桶里会让"我什么都没干，项目库一夜多 19 条"
+    // 这种假象出现（实测 ##5 就这么被误导过）。
+    const mine = new Set(repo.files.map((f) => path.resolve(f)));
+    const isMine = (id: string): boolean => mine.has(path.resolve(repo.origin.get(id) ?? ""));
+    const local = repo.facts.filter((f) => isMine(f.id));
+    const extra = repo.facts.filter((f) => !isMine(f.id));
+    const countOf = (list: readonly Fact[]) => ({
+        facts: list.length,
+        claims: new Set(list.map((f) => `${f.subject}#${f.aspect}`)).size,
+        subjects: new Set(list.map((f) => f.subject)).size,
+    });
     return {
         dir: kb,
         // 缺省读仓库库 ⇒ 回报 project（`global` 是另一份真源，别混）
         in: opts.in ?? "project",
-        facts: repo.facts.length,
-        claims: claims.size,
-        subjects: new Set(repo.facts.map((f) => f.subject)).size,
+        // 顶层计数 = **本根**（与加分桶前口径一致：status 报的是"我的库")
+        ...countOf(local),
         files: repo.files.length,
+        /** 额外只读库的并入量（读跨根、写不跨根；`dirs` 为空时 `facts === 0`） */
+        extra: { ...countOf(extra), dirs: [...extraDirs] },
         problems: plainProblems(problems),
     };
+}
+
+/**
+ * 条目来源文件的**可读路径**：本根内给相对路径，跨库（设备级库在 `<数据根>/knowledge`）给绝对路径。
+ *
+ * 为什么不能一律 `path.relative(repo.root, file)`：额外库的文件在本根之外，相对化会得到
+ * `../../../../build/lab/home/knowledge/facts/level.yaml` —— 读的人得先倒推几层目录才敢用。
+ *
+ * ⚠️ 这里改的是显式路径，仍然不做任何"人到文件的猜谜"：路径必须能直接 `open`。
+ */
+function displayFile(repo: { readonly root: string; readonly origin: ReadonlyMap<string, string> }, id: string): string {
+    const abs = repo.origin.get(id) ?? "";
+    if (abs === "") return "";
+    const rel = path.relative(repo.root, abs);
+    return rel.startsWith("..") || path.isAbsolute(rel) ? abs : rel;
 }
 
 /** 逗号分隔 → 表（CLI 位置参数只能收一个串，见 diy-rpc 的 cliArg 实现） */
@@ -331,7 +374,7 @@ export function get(
         }
         const chosen = repo.facts.find((f) => f.id === r.value.factId);
         if (chosen === undefined) continue;
-        resolved.push({ claim, facts: [plainFact(chosen, path.relative(repo.root, repo.origin.get(chosen.id) ?? ""))] });
+        resolved.push({ claim, facts: [plainFact(chosen, displayFile(repo, chosen.id))] });
         notes.push(`${claim}: 取 ${r.value.factId}（${r.value.value}）`);
     }
     return { resolved, notes };
@@ -385,6 +428,11 @@ export interface BriefResult {
  * 同时管两个环境，比 `env: production` 更像通例。所以按覆盖数算宽窄，不是按"有没有 scope"。
  */
 function pickRepresentative(list: readonly Fact[]): Fact {
+    // lifecycle 必须是**第一维**：跨库并存时同 claim 会有两条（项目库 + 设备库），
+    // 只按 review 排 + id 字典序 ⇒ 永远选中 `agents.*`（项目库那条）。一旦它被标
+    // superseded，代表条目就成了"已失效的那条"，人/agent 读到 `lifecycle: superseded`
+    // 会以为这个 claim 没有可用值 —— 而值其实是好的，只是住在另一条上（实测 ##5 撞到）。
+    const stale = (f: Fact): number => (f.lifecycle === "active" ? 0 : 1);
     const rank = (f: Fact): number => (f.review === "accepted" ? 0 : f.review === "proposed" ? 1 : 2);
     const breadth = (f: Fact): number => {
         const s = f.scope;
@@ -394,7 +442,9 @@ function pickRepresentative(list: readonly Fact[]): Fact {
         const task = s.task === undefined ? 0 : 1;
         return 100 - (env + paths + task);
     };
-    return [...list].sort((a, b) => rank(a) - rank(b) || breadth(a) - breadth(b) || a.id.localeCompare(b.id))[0] as Fact;
+    return [...list].sort(
+        (a, b) => stale(a) - stale(b) || rank(a) - rank(b) || breadth(a) - breadth(b) || a.id.localeCompare(b.id),
+    )[0] as Fact;
 }
 
 /**
@@ -444,7 +494,7 @@ function briefOne(subjectIn: string, opts: { dir?: string; in?: string; maxChars
                 variants: list.length,
                 review: rep.review,
                 lifecycle: rep.lifecycle,
-                file: path.relative(repo.root, repo.origin.get(rep.id) ?? ""),
+                file: displayFile(repo, rep.id),
             };
         });
     return { subject, desc, claims: entries.length, facts: mine.length, entries, notes };
@@ -585,10 +635,18 @@ export function find(keywordIn: string, opts: { dir?: string; in?: string; limit
     return { keyword, hits, total: scored.length, notes };
 }
 
-/** 提交载荷的 JSON 形状：`{ facts: [...], subjects?: [...] }`（也接受裸数组 = 只交 facts） */
+/**
+ * 提交载荷的 JSON 形状：`{ facts: [...], subjects?: [...], drop?: [...] }`（也接受裸数组 = 只交 facts）。
+ *
+ * `drop` 是**物理删除**的 id 列表，与 `facts` 同批事务（见内核 `SubmitInput.drop` 的长注）。
+ * 典型用法 = 改名：`{ drop: ["agents.rule.lang"], facts: [{ id: "global.rule.lang", ... }] }`
+ * —— 删旧 + 写新 + 补 `supersedes` 边三件事必须原子，否则中间态是悬空边或断头事实。
+ */
 export interface SubmitPayload {
     facts: unknown[];
     subjects: SubjectDef[];
+    /** 选填：老载荷（`{facts, subjects}`）不带它也得能跑 —— 缺省 = 不删任何东西 */
+    drop?: string[];
 }
 
 export function parseSubmitPayload(text: string): SubmitPayload {
@@ -598,12 +656,18 @@ export function parseSubmitPayload(text: string): SubmitPayload {
     } catch (err) {
         throw new FactsStoreError("agent/facts-payload-json", `--file 内容不是合法 JSON：${(err as Error).message}`);
     }
-    if (Array.isArray(doc)) return { facts: doc, subjects: [] };
+    if (Array.isArray(doc)) return { facts: doc, subjects: [], drop: [] };
     if (doc === null || typeof doc !== "object") {
-        throw new FactsStoreError("agent/facts-payload-shape", "载荷期望 { facts: [...], subjects?: [...] } 或裸数组");
+        throw new FactsStoreError("agent/facts-payload-shape", "载荷期望 { facts: [...], subjects?: [...], drop?: [...] } 或裸数组");
     }
-    const obj = doc as { facts?: unknown[]; subjects?: SubjectDef[] };
-    return { facts: obj.facts ?? [], subjects: obj.subjects ?? [] };
+    const obj = doc as { facts?: unknown[]; subjects?: SubjectDef[]; drop?: unknown[] };
+    const drop = (obj.drop ?? []).map((id) => {
+        if (typeof id !== "string" || id.trim() === "") {
+            throw new FactsStoreError("agent/facts-payload-shape", `drop 只收 fact id 字符串，实际收到：${JSON.stringify(id)}`);
+        }
+        return id.trim();
+    });
+    return { facts: obj.facts ?? [], subjects: obj.subjects ?? [], drop };
 }
 
 export function submitPayload(payload: SubmitPayload, opts: { dir?: string; in?: string; dryRun?: boolean } = {}) {
@@ -615,6 +679,7 @@ export function submitPayload(payload: SubmitPayload, opts: { dir?: string; in?:
         {
             facts,
             ...(payload.subjects.length > 0 ? { subjects: payload.subjects } : {}),
+            ...((payload.drop ?? []).length > 0 ? { drop: payload.drop ?? [] } : {}),
             dryRun: opts.dryRun === true,
         },
         targetOpts(target, true),

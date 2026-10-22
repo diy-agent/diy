@@ -2097,7 +2097,7 @@ export const apiDef = RpcSchema.router({
         desc: `项目级事实库（##404）：agent **只经这里读写事实，不碰 YAML 文件**（手改必错）。真源 knowledge/facts/*.yaml，判据在 @diy/facts`,
         children: {
           status: RpcSchema.unary({
-            desc: `事实库体检：条目 / claim / 词表计数 + 全部问题（与 ./sha.sh check 同一套判据，不会出现"CLI 绿、CI 红"）`,
+            desc: `事实库体检：条目 / claim / 词表计数 + 全部问题（与 ./sha.sh check 同一套判据，不会出现"CLI 绿、CI 红"）。顶层计数 = **本根**，额外只读库（设备级）单列在 \`extra\` —— 混一桶会造出"我啥也没干库就暴涨"的假象`,
             input: {
               dir: z.string().optional().cliOption({ desc: "knowledge 目录（缺省自动向上找）" }),
               in: z
@@ -2151,7 +2151,7 @@ export const apiDef = RpcSchema.router({
             output: FactsGetSchema,
           }),
           submit: RpcSchema.unary({
-            desc: `整批写入事实（**全过才写**：一条不过整批拒，磁盘不动）。载荷 JSON \`{ facts: [...], subjects?: [...] }\`（field 值为 - 读 stdin）；--dry-run 只回显差异`,
+            desc: `整批写入事实（**全过才写**：一条不过整批拒，磁盘不动）。载荷 JSON \`{ facts: [...], subjects?: [...], drop?: [...] }\`（field 值为 - 读 stdin）；--dry-run 只回显差异。\`drop\` = 物理删除的 id，与写入**同批事务** —— 改名 = \`drop\` 旧 id + 写新 id + 补 supersedes 边，一次成型（分成两次 = 中间态悬空边或断头事实）；删完照样跑整套判据，删错了以「边悬空」当场拒写`,
             input: {
               file: z.string().cliOption({ readFile: true, placeholder: "<file|->", desc: "载荷 JSON 文件（- = stdin）" }),
               dryRun: z.boolean().optional().cliOption({ desc: "只算不写：回显将新增 / 修改什么" }),

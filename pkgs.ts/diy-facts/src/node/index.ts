@@ -187,6 +187,21 @@ function readSubjects(localFile: string, fallbackFile?: string): { all: SubjectD
     return { all, local: hasLocal ? all : [] };
 }
 
+/**
+ * 读一份库的**词表**（`<dir>/subjects.yaml`）；没有 / 坏了都返回空表。
+ *
+ * 为什么单独开一个口：`status` 跨库读时要判"这个 subject 在哪份词表里登记过" ——
+ * 只认主库词表会把额外库（设备级）独有的 subject 全判成"未登记"（实测 `skill` 就是这样）。
+ * 用 `loadRepo` 去读额外库不行：它带 `allowMissing` 会**顺手建目录**，读操作不该有副作用。
+ */
+export function readSubjectDefs(knowledgeDir: string): SubjectDef[] {
+    try {
+        return readSubjects(path.join(path.resolve(knowledgeDir), 'subjects.yaml')).all;
+    } catch {
+        return [];
+    }
+}
+
 /** 装载真源。除非 `allowMissing`，目录不存在 = 环境问题（不是"空库"） */
 export function loadRepo(knowledgeDir: string, opts: LoadRepoOptions = {}): Repo {
     const dir = path.resolve(knowledgeDir);
@@ -524,6 +539,8 @@ export interface SubmitReport {
     readonly newSubjects: readonly string[];
     /** 每篇的字节变化（`path → [before, after]`） */
     readonly files: readonly { readonly file: string; readonly before: number; readonly after: number }[];
+    /** 本批物理删除的 id（不存在于本库的 id 不在此列 —— 删不存在的东西不该算成功） */
+    readonly dropped: readonly string[];
 }
 
 export interface SubmitInput {
@@ -533,6 +550,21 @@ export interface SubmitInput {
     readonly subjects?: readonly SubjectDef[];
     /** subject 词表里的 description 缺失时是否允许落（缺省拒：description 是词表唯一人读信息） */
     readonly dryRun?: boolean;
+    /**
+     * 物理删除的 fact id（同批事务内生效）。
+     *
+     * 为什么需要它：id 是**审计锚点**，写错就没法用"覆盖同 id"修 —— 早期把设备级事实的
+     * id 写成 `agents.rule.lang`（与项目库同 id）就是这样卡死的：标 `superseded` 也消除不了
+     * `facts/id-duplicate`（唯一性对全部条目判），而 submit 只能按 id 覆盖。没有删除/改名入口，
+     * 这个冲突用现有 CLI **无法消解**。
+     *
+     * 为什么是 `drop` 而不是 `rename`：改名本质 = 删旧 + 写新 + 补 `supersedes` 边，
+     * 三件事本该在同一个事务里（否则中间态是"旧 id 悬空边"或"新 id 无来源"）。
+     * 给 `rename` 一条捷径就会造出第四种写法；给 `drop` 则一切组合都由 `facts + drop` 表达。
+     *
+     * 安全性：删完照样跑整套判据（`byId` 候选集）—— 删错了会以「边悬空」当场拒写，磁盘不动。
+     */
+    readonly drop?: readonly string[];
 }
 
 /**
@@ -550,6 +582,10 @@ export function submit(
 
     // 1) 候选事实集：同 id 覆盖（审计锚点稳定），新 id 追加
     const byId = new Map(repo.facts.map((f) => [f.id, f]));
+    const dropped: string[] = [];
+    for (const id of input.drop ?? []) {
+        if (byId.delete(id)) dropped.push(id);
+    }
     const added: string[] = [];
     const updated: { id: string; before: string; after: string }[] = [];
     const unchanged: string[] = [];
@@ -638,7 +674,7 @@ export function submit(
         }
     }
     return {
-        report: { dryRun: input.dryRun ?? false, added, updated, unchanged, newSubjects, files },
+        report: { dryRun: input.dryRun ?? false, added, updated, unchanged, newSubjects, files, dropped },
         problems,
     };
 }
@@ -651,13 +687,20 @@ const VOCAB_HEAD = `# knowledge/subjects.yaml — subject 受控词表（##404�
 #
 # 字段：description（必填，一句话说清这个对象）· aliases（选填，只做提示，不参与匹配）`;
 
-function emptyReport(added: readonly string[], updated: SubmitReport['updated'], unchanged: readonly string[], newSubjects: readonly string[], dryRun: boolean): SubmitReport {
-    return { dryRun, added, updated, unchanged, newSubjects, files: [] };
+function emptyReport(
+    added: readonly string[],
+    updated: SubmitReport['updated'],
+    unchanged: readonly string[],
+    newSubjects: readonly string[],
+    dryRun: boolean,
+): SubmitReport {
+    return { dryRun, added, updated, unchanged, newSubjects, files: [], dropped: [] };
 }
 
 /** 供 CLI 展示：把报告压成几行中文（渲染层不拼句子，句子归这里 —— 单处维护） */
 export function formatReport(r: SubmitReport): string {
     const lines: string[] = [];
+    if (r.dropped.length > 0) lines.push(`- 删除 ${r.dropped.length}：${r.dropped.join(', ')}`);
     if (r.added.length > 0) lines.push(`+ 新增 ${r.added.length}：${r.added.join(', ')}`);
     for (const u of r.updated) lines.push(`! 更新 ${u.id}：${u.before} → ${u.after}`);
     if (r.newSubjects.length > 0) lines.push(`+ 词表新增 ${r.newSubjects.length}：${r.newSubjects.join(', ')}`);

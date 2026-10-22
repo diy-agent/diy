@@ -337,6 +337,113 @@ describe("brief", () => {
     });
 });
 
+describe("跨库读的三个口径缺口（##5 第 6 轮 A/B/C）", () => {
+    let home = "";
+    let devKb = "";
+    const prevHome = process.env["DIY_HOME"];
+
+    /** 设备级库（`<DIY_HOME>/knowledge`）：跨库用例都靠它 */
+    const writeGlobal = (rel: string, text: string): void => {
+        const abs = path.join(devKb, rel);
+        mkdirSync(path.dirname(abs), { recursive: true });
+        writeFileSync(abs, text);
+    };
+    const factLine = (id: string, value: string, lifecycle = "active"): string[] => [
+        `  - id: ${id}`,
+        "    subject: app.port",
+        "    aspect: default",
+        `    value: '${value}'`,
+        "    review: accepted",
+        `    lifecycle: ${lifecycle}`,
+        "    evidence: { source: code, at: K.ts:1, verifiedAt: '2026-10-21' }",
+    ];
+
+    beforeEach(() => {
+        home = mkdtempSync(path.join(os.tmpdir(), "facts-global-"));
+        process.env["DIY_HOME"] = home;
+        devKb = path.join(home, "knowledge");
+        // 设备库独有的 subject（本根词表里没有）—— B 的口径靠它
+        writeGlobal("subjects.yaml", "subjects:\n  dev.test:\n    description: 测试\n");
+        process.env["DIY_FACTS_DIR"] = kb;
+    });
+    afterEach(() => {
+        if (prevHome === undefined) delete process.env["DIY_HOME"];
+        else process.env["DIY_HOME"] = prevHome;
+        rmSync(home, { recursive: true, force: true });
+    });
+
+    it("A: 主库那条被 superseded 时，brief 的代表条目取额外库那条（不是挑中已失效的）", () => {
+        // 主库 app.port#default 两条变体全标 superseded（= 让位给设备库）
+        write(
+            "facts/app.yaml",
+            ["domain: app", "facts:", ...factLine("port.production", "18888", "superseded"), ...factLine("port.dev", "0", "superseded"), ""].join("\n"),
+        );
+        writeGlobal("facts/app.yaml", ["domain: app", "facts:", ...factLine("global.port", "3000"), ""].join("\n"));
+        const b = store.brief("app.port");
+        const entry = b.subjects[0]?.entries.find((e) => e.aspect === "default");
+        expect(entry?.lifecycle).toBe("active");
+        expect(entry?.file.startsWith(home)).toBe(true);
+        expect(entry?.variants).toBe(3);
+    });
+
+    it("B: status 计数分桶，且额外库独有的 subject 不再被判「未登记」", () => {
+        // 设备库里有本根词表**没有**的 subject（真实情况：`skill` 只在设备库词表里）
+        writeGlobal("subjects.yaml", "subjects:\n  skill:\n    description: 技能\n");
+        writeGlobal(
+            "facts/skill.yaml",
+            [
+                "domain: skill",
+                "facts:",
+                "  - id: global.skill.prefix",
+                "    subject: skill",
+                "    aspect: prefix",
+                "    value: diy-*",
+                "    review: accepted",
+                "    lifecycle: active",
+                "    evidence: { source: user, verifiedAt: '2026-10-21' }",
+                "",
+            ].join("\n"),
+        );
+        const st = store.status();
+        // 顶层 = 本根（2 条）；额外库单列 —— 混一桶会造出"我啥也没干库就暴涨"的假象
+        expect(st.facts).toBe(2);
+        expect(st.extra.facts).toBe(1);
+        expect(st.extra.dirs).toEqual([devKb]);
+        // 词表用「本根 ∪ 额外库」并集：只认本根的话 `skill` 会被判未登记（对自家库报错）
+        expect(st.problems.filter((p) => p.code === "facts/subject-unregistered")).toEqual([]);
+    });
+
+    it("C: submit 的 drop 与写入同批事务 —— 改名（删旧 + 写新）一次成型", () => {
+        const payload = {
+            drop: ["port.production"],
+            facts: [
+                {
+                    id: "port.prod-renamed",
+                    subject: "app.port",
+                    aspect: "default",
+                    value: "18888",
+                    scope: { env: "production" },
+                    review: "accepted",
+                    lifecycle: "active",
+                    evidence: { source: "code", at: "K.ts:2", verifiedAt: "2026-10-21" },
+                },
+            ],
+            subjects: [],
+        };
+        const r = store.submitPayload(payload);
+        expect(r.problems.filter((p) => p.level === "error")).toEqual([]);
+        expect(r.report.dropped).toEqual(["port.production"]);
+        const text = readFileSync(path.join(kb, "facts/app.yaml"), "utf8");
+        expect(text).not.toContain("port.production");
+        expect(text).toContain("port.prod-renamed");
+    });
+
+    it("C: drop 一个不存在的 id 不算成功（不静默吞）", () => {
+        const r = store.submitPayload({ drop: ["no.such.fact"], facts: [], subjects: [] }, { dryRun: true });
+        expect(r.report.dropped).toEqual([]);
+    });
+});
+
 describe("brief 多主题 / 预算（##5 需求 3）", () => {
     it("逗号分隔多主题 ⇒ 一次调用返回各主题，形状恒为数组", () => {
         const r = store.brief("app.port,dev.test", { dir: kb });
