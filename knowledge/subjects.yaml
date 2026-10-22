@@ -129,6 +129,10 @@ subjects:
     description: 参考实现：三方 agent 框架源码位置（只读设计取舍，不抄代码）
   ref.diy:
     description: diy 自己的 ref 镜像实现（diy.yaml 注册 → clone/pull → lock）
+  rpc.find:
+    description: diy-rpc 包内定位：核 / 传输 / CLI 桥 / 发布形态（@diy-agent/rpc 协议内核）
+  rpc.rule:
+    description: diy-rpc 硬约束：ESM 扩展名 / 浏览器安全边界 / 发布流程
   rule:
     description: 硬约束
     aliases: []
