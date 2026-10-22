@@ -195,6 +195,8 @@ export const FactsSubmitReportSchema = z.object({
     updated: z.array(z.object({ id: z.string(), before: z.string(), after: z.string() })),
     unchanged: z.array(z.string()),
     newSubjects: z.array(z.string()),
+    /** 本批从**本地**词表删掉的 subject（`dropSubjects` 载荷；不存在于本库的不列） */
+    droppedSubjects: z.array(z.string()),
     files: z.array(z.object({ file: z.string(), before: z.number(), after: z.number() })),
     /** 本批物理删除的 id（改名 = drop 旧 id + 写新 id，同批事务） */
     dropped: z.array(z.string()),

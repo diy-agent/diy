@@ -109,7 +109,11 @@ export type FactsErrorCode =
     | 'facts/dangling-ref'
     | 'facts/supersede-cycle'
     | 'facts/vocab-unknown'
-    | 'facts/ns-invalid';
+    | 'facts/ns-invalid'
+    // 词表删除（`submit` 的 `dropSubjects`）：三条各自对应一种「删不得」
+    | 'facts/subject-drop-in-use'
+    | 'facts/subject-drop-not-local'
+    | 'facts/subject-drop-declared';
 
 /** 结构化结果（读取侧「悬空 / 冲突」是**可预期结果**，不是异常） */
 export type Result<T> =

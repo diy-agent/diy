@@ -64,6 +64,7 @@ function plainReport(r: SubmitReport) {
         updated: r.updated.map((u) => ({ id: u.id, before: u.before, after: u.after })),
         unchanged: [...r.unchanged],
         newSubjects: [...r.newSubjects],
+        droppedSubjects: [...r.droppedSubjects],
         files: r.files.map((f) => ({ file: f.file, before: f.before, after: f.after })),
         dropped: [...r.dropped],
     };
@@ -777,6 +778,14 @@ export interface SubmitPayload {
     subjects: SubjectDef[];
     /** 选填：老载荷（`{facts, subjects}`）不带它也得能跑 —— 缺省 = 不删任何东西 */
     drop?: string[];
+    /**
+     * 选填：从**本地**词表删除的 subject key（与 `facts` / `subjects` / `drop` **同批事务**）。
+     *
+     * 为什么要它（实测事故）：`subjects` 只有增没有删，写错一个 key 就永久占着词表；agent
+     * 不许手改 YAML ⇒ 唯一出路是 `git checkout knowledge/subjects.yaml` —— 那等于"写入口
+     * 有护栏、删入口绕过护栏"。删入口同样只有 `submit` 这一条。
+     */
+    dropSubjects?: string[];
     /** 暴露档修订（`subject → full|index|none`）；不给 = 不动 `expose.yaml` */
     expose?: Record<string, ExposeLevel>;
 }
@@ -788,19 +797,31 @@ export function parseSubmitPayload(text: string): SubmitPayload {
     } catch (err) {
         throw new FactsStoreError("agent/facts-payload-json", `--file 内容不是合法 JSON：${(err as Error).message}`);
     }
-    if (Array.isArray(doc)) return { facts: doc, subjects: [], drop: [] };
+    if (Array.isArray(doc)) return { facts: doc, subjects: [], drop: [], dropSubjects: [] };
     if (doc === null || typeof doc !== "object") {
         throw new FactsStoreError("agent/facts-payload-shape", "载荷期望 { facts: [...], subjects?: [...], drop?: [...] } 或裸数组");
     }
-    const obj = doc as { facts?: unknown[]; subjects?: SubjectDef[]; drop?: unknown[]; expose?: unknown };
+    const obj = doc as { facts?: unknown[]; subjects?: SubjectDef[]; drop?: unknown[]; dropSubjects?: unknown[]; expose?: unknown };
     const drop = (obj.drop ?? []).map((id) => {
         if (typeof id !== "string" || id.trim() === "") {
             throw new FactsStoreError("agent/facts-payload-shape", `drop 只收 fact id 字符串，实际收到：${JSON.stringify(id)}`);
         }
         return id.trim();
     });
+    const dropSubjects = (obj.dropSubjects ?? []).map((key) => {
+        if (typeof key !== "string" || key.trim() === "") {
+            throw new FactsStoreError("agent/facts-payload-shape", `dropSubjects 只收 subject key 字符串，实际收到：${JSON.stringify(key)}`);
+        }
+        return key.trim();
+    });
     const expose = parseExpose(obj.expose);
-    return { facts: obj.facts ?? [], subjects: parseSubjects(obj.subjects), drop, ...(expose === undefined ? {} : { expose }) };
+    return {
+        facts: obj.facts ?? [],
+        subjects: parseSubjects(obj.subjects),
+        drop,
+        dropSubjects,
+        ...(expose === undefined ? {} : { expose }),
+    };
 }
 
 /** `subjects` 元素允许的字段（写错字段名**必须当场报错**，见 `parseSubjects`） */
@@ -876,12 +897,34 @@ export function submitPayload(payload: SubmitPayload, opts: { dir?: string; in?:
     const target = resolveFactsTarget(opts);
     const kb = target.dir;
     const { facts, issues } = validateFacts(payload.facts);
+    // 事务边界在这一句上：**形状校验不过，一个字都不写**。
+    //
+    // 原先这里只是"把 issues 拼进返回值"，照样调用 `submit(facts)` —— 于是坏事实被过滤成空集，
+    // 内核愉快地写下了 subjects，最终返回"error：事实 0 条"，磁盘上却已经多了那个 subject
+    // （实测 ##5：`runtime.kb` 冒出 `flow.* — 6 个主题 / 0 条`，且没有任何 CLI 出口能撤）。
+    // 判据：`facts` 的 schema 错属于**载荷错误**，不是"部分可用"——整批退，让它重提。
+    if (issues.length > 0) {
+        return {
+            report: plainReport({
+                dryRun: opts.dryRun === true,
+                added: [],
+                updated: [],
+                unchanged: [],
+                newSubjects: [],
+                droppedSubjects: [],
+                files: [],
+                dropped: [],
+            }),
+            problems: plainProblems(issues.map((i) => ({ level: "error" as const, code: i.code, detail: i.detail, ...(i.facts ? { facts: i.facts } : {}) }))),
+        };
+    }
     const { report, problems } = submit(
         kb,
         {
             facts,
             ...(payload.subjects.length > 0 ? { subjects: payload.subjects } : {}),
             ...((payload.drop ?? []).length > 0 ? { drop: payload.drop ?? [] } : {}),
+            ...((payload.dropSubjects ?? []).length > 0 ? { dropSubjects: payload.dropSubjects ?? [] } : {}),
             ...(payload.expose === undefined ? {} : { expose: payload.expose }),
             dryRun: opts.dryRun === true,
         },

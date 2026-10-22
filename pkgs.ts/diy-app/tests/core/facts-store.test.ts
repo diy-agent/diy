@@ -163,6 +163,47 @@ describe("submit", () => {
         expect(text).toContain("id: test.entry");
     });
 
+    it("payload 里事实本身不合 schema ⇒ 词表也一个字不写（事务边界）", () => {
+        // 实测事故（##5）：这条返回 error「事实 0 条写入」，磁盘上 `subjects.yaml` 却已经多了
+        // `zz.txcheck` —— 坏事实被过滤成空集后照样调了内核 `submit`，词表跟着落了盘，
+        // 而 CLI 没有任何出口能撤（只能 `git checkout knowledge/subjects.yaml`）。
+        const subjectsBefore = readFileSync(path.join(kb, "subjects.yaml"), "utf8");
+        const payload = store.parseSubmitPayload(
+            JSON.stringify({
+                subjects: [{ key: "zz.txcheck", description: "自检" }],
+                facts: [
+                    {
+                        id: "zz.txcheck.one",
+                        subject: "zz.txcheck",
+                        aspect: "a",
+                        value: "x",
+                        evidence: { source: "nonsense", at: "K.ts:1" },
+                    },
+                ],
+            }),
+        );
+        const r = store.submitPayload(payload);
+        expect(r.problems.map((p) => p.code)).toContain("facts/schema");
+        expect(r.report.newSubjects).toEqual([]);
+        expect(readFileSync(path.join(kb, "subjects.yaml"), "utf8")).toBe(subjectsBefore);
+        expect(readFileSync(path.join(kb, "subjects.yaml"), "utf8")).not.toContain("zz.txcheck");
+    });
+
+    it("dropSubjects：删本地词表条目；删不掉的三条各自带码", () => {
+        const del = store.submitPayload(store.parseSubmitPayload(JSON.stringify({ facts: [], subjects: [], dropSubjects: ["dev.test"] })));
+        expect(del.problems.filter((p) => p.level === "error")).toEqual([]);
+        expect(del.report.droppedSubjects).toEqual(["dev.test"]);
+        expect(readFileSync(path.join(kb, "subjects.yaml"), "utf8")).not.toContain("dev.test");
+
+        const inUse = store.submitPayload(store.parseSubmitPayload(JSON.stringify({ facts: [], subjects: [], dropSubjects: ["app.port"] })));
+        expect(inUse.problems.map((p) => p.code)).toContain("facts/subject-drop-in-use");
+
+        const both = store.submitPayload(
+            store.parseSubmitPayload(JSON.stringify({ facts: [], subjects: [{ key: "x.y", description: "y" }], dropSubjects: ["x.y"] })),
+        );
+        expect(both.problems.map((p) => p.code)).toContain("facts/subject-drop-declared");
+    });
+
     it("冲突整批拒：磁盘不动，问题带码回", () => {
         const payload = store.parseSubmitPayload(
             JSON.stringify([

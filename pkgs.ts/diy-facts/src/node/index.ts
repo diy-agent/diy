@@ -665,6 +665,8 @@ export interface SubmitReport {
     readonly updated: readonly { readonly id: string; readonly before: string; readonly after: string }[];
     readonly unchanged: readonly string[];
     readonly newSubjects: readonly string[];
+    /** 本批从**本地**词表里删掉的 subject（不存在于本库的不在此列） */
+    readonly droppedSubjects: readonly string[];
     /** 每篇的字节变化（`path → [before, after]`） */
     readonly files: readonly { readonly file: string; readonly before: number; readonly after: number }[];
     /** 本批物理删除的 id（不存在于本库的 id 不在此列 —— 删不存在的东西不该算成功） */
@@ -701,6 +703,18 @@ export interface SubmitInput {
      * （它要拿整库的字节和跟预算比）。故档位也是一种"提交"，一样整批校验、整批落。
      */
     readonly expose?: ExposeMap;
+    /**
+     * 从**本地**词表删除的 subject key（同批事务内生效）。
+     *
+     * 为什么需要：`subjects` 原先只有增没有删 —— 写错一个 subject（拼错 / 试探）就永久占着
+     * 词表，而 agent 不许手改 YAML，于是唯一的修法变成 `git checkout knowledge/subjects.yaml`
+     * （实测 ##5 就这么干的）。写入口只有 submit，删入口也必须只有它。
+     *
+     * 两条判据：① 只能删**本地**声明过的（继承来的删不掉 —— 那要改上游库，属另一个事务）；
+     * ② 删掉的 subject 不能还有**可用事实**在用（`facts/subject-drop-in-use`，早于
+     * `subject-unregistered` 报出来 —— 后者看起来像词表丢了条目，指的却是同一件事）。
+     */
+    readonly dropSubjects?: readonly string[];
 }
 
 /**
@@ -750,6 +764,18 @@ export function submit(
         subjectMap.set(s.key, { ...prev, ...s });
         localMap.set(s.key, { ...localMap.get(s.key), ...s });
     }
+    // 2.5) 词表删除（同批事务）：只动**本地**那份 —— 继承来的删不掉，那要改上游库
+    const droppedSubjects: string[] = [];
+    const notLocalSubjects: string[] = [];
+    for (const key of input.dropSubjects ?? []) {
+        if (localMap.delete(key)) {
+            droppedSubjects.push(key);
+            subjectMap.delete(key);
+        } else if (subjectMap.has(key)) {
+            notLocalSubjects.push(key);
+        }
+        // 不存在的 key 静默忽略（与 `drop` 一致：删不存在的东西不该算成功）
+    }
     const subjects = [...subjectMap.values()];
 
     // 3) 候选集跑**同一套判据**（与 ./sha.sh check 一致）
@@ -760,6 +786,30 @@ export function submit(
         // unused 的判定范围跟着**本地**词表走：本批新声明的 subject 也算本地
         ...checkFacts(schema.facts, { subjects, root: repo.root, subjectsUnusedScope: [...localMap.keys()] }),
     ];
+    for (const key of notLocalSubjects) {
+        problems.push({
+            level: 'error',
+            code: 'facts/subject-drop-not-local',
+            detail: `subject 不在本库词表（继承来的，删不掉）：${key}`,
+        });
+    }
+    // 同批既声明又删除 = 语义自相矛盾（顺序不同结果不同，属载荷写错）
+    for (const s of input.subjects ?? []) {
+        if ((input.dropSubjects ?? []).includes(s.key)) {
+            problems.push({ level: 'error', code: 'facts/subject-drop-declared', detail: `subject 同一批里既声明又删除：${s.key}` });
+        }
+    }
+    for (const key of droppedSubjects) {
+        const used = candidate.filter((f) => f.subject === key);
+        if (used.length > 0) {
+            problems.push({
+                level: 'error',
+                code: 'facts/subject-drop-in-use',
+                detail: `subject 仍被 ${used.length} 条事实使用，先 drop 这些事实：${key}`,
+                facts: used.map((f) => f.id),
+            });
+        }
+    }
     // 词表条目必须有 description（人读的唯一入口，空词表等于没词表）
     for (const s of input.subjects ?? []) {
         if ((s.description ?? subjectMap.get(s.key)?.description ?? '') === '') {
@@ -782,7 +832,9 @@ export function submit(
         }
     }
     const errors = problems.filter((p) => p.level === 'error');
-    if (errors.length > 0) return { report: emptyReport(added, updated, unchanged, newSubjects, input.dryRun ?? false), problems };
+    if (errors.length > 0) {
+        return { report: emptyReport(added, updated, unchanged, newSubjects, droppedSubjects, input.dryRun ?? false), problems };
+    }
 
     // 4) 分组成篇：已有条目留在原篇，新条目按 subject 首段归档
     const fileOf = new Map<string, Fact[]>();
@@ -807,7 +859,7 @@ export function submit(
     }
 
     // 5) 词表也要写（新 subject 落在同一事务里）
-    if (newSubjects.length > 0 || (input.subjects ?? []).length > 0) {
+    if (newSubjects.length > 0 || (input.subjects ?? []).length > 0 || droppedSubjects.length > 0) {
         const vocabFile = path.join(repo.dir, 'subjects.yaml');
         const vocab: Record<string, unknown> = {};
         for (const s of [...localMap.values()].sort((a, b) => a.key.localeCompare(b.key))) {
@@ -835,7 +887,7 @@ export function submit(
         }
     }
     return {
-        report: { dryRun: input.dryRun ?? false, added, updated, unchanged, newSubjects, files, dropped },
+        report: { dryRun: input.dryRun ?? false, added, updated, unchanged, newSubjects, droppedSubjects, files, dropped },
         problems,
     };
 }
@@ -867,9 +919,10 @@ function emptyReport(
     updated: SubmitReport['updated'],
     unchanged: readonly string[],
     newSubjects: readonly string[],
+    droppedSubjects: readonly string[],
     dryRun: boolean,
 ): SubmitReport {
-    return { dryRun, added, updated, unchanged, newSubjects, files: [], dropped: [] };
+    return { dryRun, added, updated, unchanged, newSubjects, droppedSubjects, files: [], dropped: [] };
 }
 
 /** 供 CLI 展示：把报告压成几行中文（渲染层不拼句子，句子归这里 —— 单处维护） */
@@ -879,6 +932,7 @@ export function formatReport(r: SubmitReport): string {
     if (r.added.length > 0) lines.push(`+ 新增 ${r.added.length}：${r.added.join(', ')}`);
     for (const u of r.updated) lines.push(`! 更新 ${u.id}：${u.before} → ${u.after}`);
     if (r.newSubjects.length > 0) lines.push(`+ 词表新增 ${r.newSubjects.length}：${r.newSubjects.join(', ')}`);
+    if (r.droppedSubjects.length > 0) lines.push(`- 词表删除 ${r.droppedSubjects.length}：${r.droppedSubjects.join(', ')}`);
     if (lines.length === 0) lines.push(`= 无变化（${r.unchanged.length} 条与真源一致）`);
     for (const f of r.files) lines.push(`  ${f.file}: ${f.before} → ${f.after} B`);
     if (r.dryRun) lines.push('（--dry-run：以上均未落盘）');

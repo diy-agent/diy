@@ -3,7 +3,7 @@
 // 压的是**真场景**而不是构造的空库：词表 → 提交两条 → 改一条 → 提交一条冲突的。
 // 每条都在临时目录里跑（submit 真的落盘，不 mock fs —— mock 出来的通过等于没验）。
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -300,5 +300,63 @@ describe('evidence.at 钉版本（<rev>:<path>:<line>）', () => {
         const { dir, rev } = makeGitRepo('__REV__:SRC.md:9');
         writeFileSync(path.join(dir, 'facts', 'app.yaml'), readFileSync(path.join(dir, 'facts', 'app.yaml'), 'utf8').replace('__REV__', rev));
         expect(checkRepo(dir).problems.map((p) => p.code)).toContain('facts/evidence-line');
+    });
+});
+
+describe('submit · 词表删除（dropSubjects）', () => {
+    // 起因（##5 实测）：`subjects` 原先只有增没有删 —— 写错一个 key 就永久占着词表，
+    // 而 agent 不许手改 YAML，唯一出路是 `git checkout knowledge/subjects.yaml`。
+    // 删入口必须与写入口同一条、同一事务。
+
+    it('删掉无人使用的本地 subject：词表里消失，报告里列出', () => {
+        const dir = makeRepo();
+        const r = submit(dir, { facts: [], subjects: [{ key: 'app.tmp', description: '临时' }] });
+        expect(r.problems.filter((p) => p.level === 'error')).toEqual([]);
+        expect(loadRepo(dir).subjects.map((s) => s.key)).toContain('app.tmp');
+
+        const del = submit(dir, { facts: [], dropSubjects: ['app.tmp'] });
+        expect(del.report.droppedSubjects).toEqual(['app.tmp']);
+        expect(loadRepo(dir).subjects.map((s) => s.key)).not.toContain('app.tmp');
+        // 其余词表条目不受影响（删除不是"重写整份词表"）
+        expect(loadRepo(dir).subjects.map((s) => s.key)).toContain('app.port');
+    });
+
+    it('仍被事实使用的 subject → subject-drop-in-use，且磁盘不动', () => {
+        const dir = makeRepo();
+        writeFileSync(path.join(dir, '..', 'K.ts'), 'a\nb\n');
+        submit(dir, {
+            facts: [fact({ id: 'p1', subject: 'app.port', aspect: 'default', value: '1', evidence: { source: 'code', at: 'K.ts:1' } })],
+        });
+        const before = readFileSync(path.join(dir, 'subjects.yaml'), 'utf8');
+        const r = submit(dir, { facts: [], dropSubjects: ['app.port'] });
+        expect(r.problems.map((p) => p.code)).toContain('facts/subject-drop-in-use');
+        expect(readFileSync(path.join(dir, 'subjects.yaml'), 'utf8')).toBe(before);
+    });
+
+    it('继承来的 subject 删不掉（subject-drop-not-local）', () => {
+        // 「继承」的准确语义（读 `readSubjects` 才发现）：**本地 `subjects.yaml` 不存在时才回落**
+        // 到仓库那份；一旦本地文件存在（任务库首次写入就会建），继承当场断掉。所以要验
+        // not-local，必须构造「本地没有词表文件」这一个窗口。
+        const dir = makeRepo();
+        const fallback = path.join(dir, '..', 'repo-subjects.yaml');
+        writeFileSync(fallback, 'subjects:\n  app.port:\n    description: 应用监听端口\n');
+        rmSync(path.join(dir, 'subjects.yaml'));
+        const r = submit(dir, { facts: [], dropSubjects: ['app.port'] }, { subjectsFallback: fallback });
+        expect(r.problems.map((p) => p.code)).toContain('facts/subject-drop-not-local');
+        // 删失败 ⇒ 一个词表文件都不该被创建（"顺手把继承那份抄成快照"是最坏的副作用）
+        expect(readdirSync(dir)).not.toContain('subjects.yaml');
+    });
+
+    it('同批既声明又删除 → subject-drop-declared（顺序不同结果不同 = 载荷写错）', () => {
+        const dir = makeRepo();
+        const r = submit(dir, { facts: [], subjects: [{ key: 'app.x', description: 'x' }], dropSubjects: ['app.x'] });
+        expect(r.problems.map((p) => p.code)).toContain('facts/subject-drop-declared');
+    });
+
+    it('删不存在的 key 静默忽略（删不存在的东西不该算成功，也不该报错）', () => {
+        const dir = makeRepo();
+        const r = submit(dir, { facts: [], dropSubjects: ['app.nope'] });
+        expect(r.problems.filter((p) => p.level === 'error')).toEqual([]);
+        expect(r.report.droppedSubjects).toEqual([]);
     });
 });
