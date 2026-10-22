@@ -45,6 +45,14 @@ export interface ProcessSample {
     readonly childCount: number;
     /** TCP 连接（`lsof -nP -a -p <pid> -iTCP` 的产物）。 */
     readonly connections: readonly ConnectionInfo[];
+    /**
+     * root 进程常驻内存（KB，`ps -o rss=` 的产物）。
+     *
+     * ##408 刀 5 新增（job 生命周期是第一个消费者）：长时 job 收口时把**峰值**写进执行账，
+     * 「这个构建吃了几 GB」是「它为什么被杀 / 为什么机器卡」的第一手证据。
+     * 缺省（老样本 / 夹具）= undefined，判据不读它（判活只看 CPU / 输出 / 网络）。
+     */
+    readonly memoryRssKb?: number;
     /** 该命令历史耗时中位数（ms）；没有历史 = null。 */
     readonly historicalP50Ms: number | null;
 }

@@ -171,6 +171,9 @@ export function sampleProcess(input: SampleInput, deps: SamplerDeps = DEFAULT_SA
 
     const tree = parseProcessTree(deps.run("ps", ["-axo", "pid=,ppid=,pcpu=,comm="]), input.pid);
     const connections = parseLsofTcp(deps.run("lsof", ["-nP", "-a", "-p", pid, "-iTCP"]));
+    // 常驻内存（KB）：`ps -o rss=` 在 macOS / Linux 都以 KB 计。采不到就省略字段（不写 0 ——
+    // 「0 KB」会被当成事实，缺字段才是「没采到」）。
+    const rss = Number(deps.run("ps", ["-o", "rss=", "-p", pid]).trim());
     const silentMs = input.lastOutputAt === null ? runMs : Math.max(0, deps.now() - input.lastOutputAt);
 
     return {
@@ -182,6 +185,7 @@ export function sampleProcess(input: SampleInput, deps: SamplerDeps = DEFAULT_SA
         treeCpuPercent: tree.treeCpuPercent,
         childCount: tree.directChildCount,
         connections,
+        ...(Number.isFinite(rss) && rss > 0 ? { memoryRssKb: rss } : {}),
         historicalP50Ms: input.historicalP50Ms,
     };
 }

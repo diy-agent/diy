@@ -12,7 +12,7 @@
 //      绝不因为一行烂数据炸掉业务 —— 但也**不静默**（`console.warn` 一行，便于发现系统性腐坏）。
 //   ③ **不做保留策略**：清理 / 轮转属 ##410，越界会把「谁负责删」搅浑（本刀只 append + read）。
 
-import { appendFile, mkdir, readFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { readRuntimeConfig } from "../../runtime";
 import { assertJobId, normalizeRun, type JobRun, type JobRunState } from "../../shared/job-run";
@@ -147,3 +147,52 @@ export async function latestRun(jobId: string, opts: ReadRunsOptions = {}): Prom
 
 /** 类型再导出：消费方（刀 3/5）不必再引一层 `shared/job-run`。 */
 export type { JobRun, JobRunState };
+
+/** 一条跨文件的 run（`readAllRuns` 的产物）：带上它的 jobId 就是 `run.jobId`，这里不再重复。 */
+export interface AllRunsResult {
+    /** 按 `startedAt` **升序**（时间线顺序；同刻按写入顺序） */
+    readonly runs: readonly JobRun[];
+    /** 跳过多少坏行（跨全部文件累计） */
+    readonly skipped: number;
+    /** 读过几个账本文件 */
+    readonly files: number;
+}
+
+/**
+ * 读**所有** job 的 run（`diy job ls` 的口径：一次看完昨天跑了些什么）。
+ *
+ * 为什么不放在 CLI 里自己遍历：账本文件名 / 坏行容忍 / `ts` 摘壳三条口径只有这里一份，
+ * 复制出去必然分叉（第一版就会漏 `ts` ⇒ 每一行都判坏行）。
+ *
+ * 空目录 / 目录不存在 ⇒ 空列表。单个文件读失败（权限 / 被删）⇒ 跳过该文件并计入 `skipped`，
+ * **不**让一个坏文件拖垮整个列表（观测数据可腐烂）。
+ */
+export async function readAllRuns(opts: { home?: string } = {}): Promise<AllRunsResult> {
+    const dir = jobsDir(opts.home);
+    let names: string[];
+    try {
+        names = await readdir(dir);
+    } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === "ENOENT") return { runs: [], skipped: 0, files: 0 };
+        throw e;
+    }
+    const runs: JobRun[] = [];
+    let skipped = 0;
+    let files = 0;
+    for (const name of names.sort()) {
+        if (!name.endsWith(".jsonl")) continue;
+        files += 1;
+        const jobId = name.slice(0, -".jsonl".length);
+        try {
+            const r = await readRunsDetailed(jobId, opts);
+            runs.push(...r.runs);
+            skipped += r.skipped;
+        } catch {
+            skipped += 1; // 整个文件读不动 = 至少一条「取不到」的证据
+            console.warn(`[job-ledger] 跳过不可读账本 ${dir}/${name}`);
+        }
+    }
+    // 时间线顺序：startedAt 升序；同刻保持文件内写入顺序（稳定排序 + files 已排序）
+    runs.sort((a, b) => (a.startedAt < b.startedAt ? -1 : a.startedAt > b.startedAt ? 1 : 0));
+    return { runs, skipped, files };
+}

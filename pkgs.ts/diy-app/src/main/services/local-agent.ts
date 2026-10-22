@@ -206,6 +206,8 @@ import { personaByIdOrName, personaForTask } from "../core/persona";
 import { taskTurnGate } from "../core/turn-gate";
 import { ensureReasoningReplay, isDeepSeekWire, type ReasoningReplayOpts } from "./reasoning-replay";
 import { resolveModelKey } from "../core/model-runtime";
+import { spawnedJobs } from "./spawned-jobs";
+import type { RunOutcome } from "../../shared/spawned-job";
 
 // 模型查询函数抽到 shared/models.ts（core 不能被 services 反向依赖，否则循环 import）。
 // 这里**原样 re-export**：历史引用路径（tests/…/local-models-*.test.ts 等）保持不变。
@@ -1055,6 +1057,26 @@ interface BashRun {
     text: string;
     /** 是否应标失败（✗）。判据见 runBash。 */
     failed: boolean;
+    /**
+     * **怎么结束的**（##408 刀 5）：只给 job 账本用，`failed` 仍是工具行 ✓/✗ 的唯一判据
+     * （两件事不同向：超时 / 取消都不画 ✗，但用户在 job 面板要能区分它们）。
+     */
+    outcome: RunOutcome;
+    exitCode?: number;
+    signal?: string;
+}
+
+/**
+ * runBash 的**外部观察口**（##408 刀 5）：只被动接收事实，不影响判据。
+ *
+ * 为什么不做成 return 值的一部分：job 记账是**观测**，命令的成败判据（##332/##353）
+ * 不能因为「记账写没写成」而变化 —— 两条线在 `runBash` 里只有一个接触点就是这里。
+ */
+interface BashRunHooks {
+    /** 子进程起来了（采样 / 诊断要 pid） */
+    onSpawn?(pid: number): void;
+    /** 收到一块输出（stdout / stderr 都算，按到达顺序；已按 buffer 上限裁过） */
+    onChunk?(chunk: Buffer): void;
 }
 
 /**
@@ -1120,10 +1142,17 @@ function killProcessGroup(child: ChildProcess): void {
  *      （cwd 是普通文件 ⇒ ENOTDIR，Node 在 spawn 内直接 throw、**不走 callback**；实测 node 24）。
  *    对照：`read` 的 execute 特意**相反**（读不到就抛），见 buildTools 里 read 的注释。
  */
-function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?: AbortSignal): Promise<BashRun> {
+// 导出给单测：`outcome` 的映射（##408 刀 5）必须能被**真跑**验证，不能只有类型可信。
+export function runBash(
+    command: string,
+    cwd: string,
+    limits: LocalAgentLimits,
+    signal?: AbortSignal,
+    hooks?: BashRunHooks,
+): Promise<BashRun> {
     return new Promise((resolve) => {
         if (signal?.aborted) {
-            resolve({ text: "[已取消]", failed: false });
+            resolve({ text: "[已取消]", failed: false, outcome: "canceled" });
             return;
         }
         /** abort 补刀的注销器（settle 时解绑，避免监听器随轮次泄漏） */
@@ -1131,7 +1160,7 @@ function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?
         /** 超时定时器（settle 时清掉） */
         let timeoutId: NodeJS.Timeout | undefined;
         /** 全部结局只在这里落一次（成功 / 各失败档）；'close'/'error'/取消/同步 catch 共用同一判定 */
-        const settle = (err: BashExecError, stdout: string, stderr: string): void => {
+        const settle = (err: BashExecError, stdout: string, stderr: string, sig?: string | null): void => {
             offAbort?.();
             offAbort = undefined;
             if (timeoutId) {
@@ -1141,28 +1170,40 @@ function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?
             const out = [stdout, stderr].filter(Boolean).join("\n");
             // ⚠️ 这里一律返回**完整**文本（不 clip）：发给模型的那一份由 `capToolOutput` 在
             //    投递层现算（##127）—— 在 execute 里裁 = 落进 ops 的原文当场丢。
-            if (err?.name === "AbortError") resolve({ text: "[已取消]", failed: false });
+            //
+            // `outcome` 只给 job 账本（##408 刀 5），**不参与** ✓/✗ 判定（`failed` 的判据见文件头）
+            if (err?.name === "AbortError") resolve({ text: "[已取消]", failed: false, outcome: "canceled" });
             else if (err?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" || err?.code === "ENOBUFS")
                 resolve({
                     text: `[输出超过 ${fmtBytes(BASH_MAX_BUFFER_BYTES)} 上限，命令已终止；以下是已收到的部分]\n${out}`,
                     failed: false,
+                    outcome: "fail",
                 });
             else if (err?.killed)
                 // 带上时长与出路：模型看到「30s 被杀」才会去 nohup / 分批，只写「超时」它会原样重试
                 resolve({
                     text: `[命令超时被杀]（超过 ${fmtTimeout(limits.bashTimeoutMs)}，可用 DIY_LOCAL_BASH_TIMEOUT_MS 调整；长任务请后台跑 + 取增量日志）\n${out}`,
                     failed: false,
+                    outcome: "timeout",
+                    ...(sig ? { signal: sig } : {}),
                 });
             else if (typeof err?.code === "number")
                 // 命令级非零退出（##353）：有 stderr = 失败，无 stderr = 查询未命中（数据）
-                resolve({ text: `[退出码 ${err.code}]\n${out || "(无输出)"}`, failed: stderr.trim().length > 0 });
+                resolve({
+                    text: `[退出码 ${err.code}]\n${out || "(无输出)"}`,
+                    failed: stderr.trim().length > 0,
+                    outcome: err.code === 0 ? "ok" : "fail",
+                    exitCode: err.code,
+                    ...(sig ? { signal: sig } : {}),
+                });
             else if (err)
                 // spawn / IO 失败（##332 ③）：命令**根本没跑起来** —— 失败档（execute 据此抛错）
                 resolve({
                     text: `[命令未能启动 ${typeof err.code === "string" ? err.code : "?"}] ${err.message ?? ""}（工作目录：${cwd}）${out ? `\n${out}` : ""}`,
                     failed: true,
+                    outcome: "fail",
                 });
-            else resolve({ text: out || "(无输出)", failed: false });
+            else resolve({ text: out || "(无输出)", failed: false, outcome: "ok", exitCode: 0 });
         };
         try {
             // ⚠️ 为什么不用 execFile（##375 实测，别改回去）：`execFile` 把选项**白名单**转发给
@@ -1173,6 +1214,7 @@ function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?
             //    execFile 原本代劳的那几件事（攒输出 / maxBuffer / 超时 / 错误形状）——
             //    形状与 execFile **逐字段同构**，判据仍只有 settle 那一处。
             const child = spawn("/bin/bash", ["-c", command], { cwd, detached: true });
+            if (child.pid !== undefined) hooks?.onSpawn?.(child.pid);
             // 输出按**块**攒（不逐块拼字符串）：上限判据只要长度计数，逐块 `byteLength` 是 O(n²)
             const chunks = { out: [] as Buffer[], err: [] as Buffer[] };
             const len = { out: 0, err: 0 };
@@ -1184,14 +1226,17 @@ function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?
             const finish = (err: BashExecError, o: string, e: string): void => {
                 if (done) return; // settle 内部（唯一落点）负责解绑 abort 监听与超时定时器
                 done = true;
-                settle(err, o, e);
+                settle(err, o, e, child.signalCode);
             };
             /** 攒输出 + 上限（与 execFile 同口径：stdout / stderr **各算各的**，超了即杀、留已收到的部分） */
             const onData = (chunk: Buffer, side: "out" | "err"): void => {
                 if (done) return;
                 const keep = BASH_MAX_BUFFER_BYTES - len[side];
-                chunks[side].push(keep >= chunk.length ? chunk : chunk.subarray(0, keep));
-                len[side] += Math.min(chunk.length, keep);
+                const taken = keep >= chunk.length ? chunk : chunk.subarray(0, keep);
+                chunks[side].push(taken);
+                len[side] += taken.length;
+                // job 输出环（##408 刀 5）：喂**真实收到**的字节（超上限那部分本就没进内存）
+                if (taken.length > 0) hooks?.onChunk?.(taken);
                 if (len[side] < BASH_MAX_BUFFER_BYTES) return;
                 killed = true;
                 killProcessGroup(child); // 溢出也杀整组（原先 execFile 只杀直接子进程）
@@ -1234,7 +1279,19 @@ function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?
     });
 }
 
-export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: string) {
+/**
+ * 工具执行时的**轮内锚点**（##408 刀 5）：bash 起的后台 job 要能指回「哪一轮哪一步哪个工具调用」。
+ *
+ * 为什么用 getter 而不是值：一轮里会跑多步，`stepId` 在流中会变（见 `_s<N>` 的生成点），
+ * 而 tools 只构建一次 —— 传值等于把第一步的 id 焊死在后面所有步上。
+ */
+export interface TurnToolAnchor {
+    readonly turnId: string;
+    /** 当前步 id（`<turnId>_s<N>`；首批 = turnId） */
+    stepId(): string;
+}
+
+export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: string, anchor?: TurnToolAnchor) {
     return {
         bash: tool({
             description: "在项目目录执行 bash 命令并返回输出（查文件、跑命令、看系统信息）。",
@@ -1256,12 +1313,39 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                 // 现仅保留 write-ahead 审计：先落盘再执行，保证最后一幕不丢
                 appendAudit(home, { phase: "bash-start", taskUri, cwd, command });
                 const t0 = Date.now();
-                const run = await runBash(
-                    command,
-                    cwd,
-                    limits,
-                    (opts as { abortSignal?: AbortSignal } | undefined)?.abortSignal,
-                );
+                const execOpts = opts as { abortSignal?: AbortSignal; toolCallId?: string } | undefined;
+                // ── spawned job 登记（##408 刀 5）──
+                // 三条缺一不可：有轮内锚点（预览/仿真路径没有）、有 toolCallId（origin 的定位键）、
+                // 有 taskUri。缺任何一条就不登记 —— 宁可没有 job，也不落一条**指不回去**的账。
+                const job =
+                    anchor && execOpts?.toolCallId
+                        ? spawnedJobs.begin({
+                              taskUri,
+                              turnId: anchor.turnId,
+                              stepId: anchor.stepId(),
+                              toolCallId: execOpts.toolCallId,
+                              cmd: command,
+                              cwd,
+                          })
+                        : null;
+                const run = await runBash(command, cwd, limits, execOpts?.abortSignal, job
+                    ? { onSpawn: (pid) => job.setPid(pid), onChunk: (chunk) => job.noteOutput(chunk) }
+                    : undefined);
+                if (job) {
+                    // 记账是观测：**任何**失败都不许冒到工具结果（命令已经跑完了）
+                    try {
+                        await job.finish({
+                            outcome: run.outcome,
+                            ...(run.exitCode !== undefined ? { exitCode: run.exitCode } : {}),
+                            ...(run.signal !== undefined ? { signal: run.signal } : {}),
+                            ...(run.outcome !== "ok" ? { error: clip(run.text, 400) } : {}),
+                        });
+                    } catch (e) {
+                        console.warn("[local-agent] job 收口失败:", e);
+                    } finally {
+                        spawnedJobs.noteFinished(job);
+                    }
+                }
                 appendAudit(home, {
                     phase: "bash-end",
                     taskUri,
@@ -4007,7 +4091,7 @@ export class LocalAgentManager {
             // 真发 tools 只构建一次（raw dump / 构成字节 / streamText 共用）；
             // 构成字节 = 环形构成卡与构成报表的数据源（system 容器精确字节 + tools JSON 字节，
             // 消息段由账本每步 prompt 减法导出 —— 见 shared/usage StepUsageRecord.contextParts）。
-            const tools = buildTools(cwd, L, taskUri);
+            const tools = buildTools(cwd, L, taskUri, { turnId, stepId: () => stepId });
             const ctxParts = {
                 systemBytes: delivery.system.bytes,
                 toolsBytes: JSON.stringify(tools).length,

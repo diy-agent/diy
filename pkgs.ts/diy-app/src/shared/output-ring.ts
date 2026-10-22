@@ -7,6 +7,14 @@
  *   （`droppedBytes`）。少了这个数，UI 就分不清「没有输出」和「输出被截了」——
  *   那是最容易让人误判的一类显示。
  *
+ * ── 已知代价：`appendToRing` 是「每块复制整环」（##408 刀 4 review 记下，**暂不优化**）──
+ *   每来一个 chunk 都要 `new Uint8Array(len + chunk)` 再两次 `set` ⇒ 长时 job 高频输出
+ *   （`npm i` 每行一个 chunk）的代价是 **O(块数 × 环容量)**（≤256KB × 块数）。
+ *   现在**不动**它，判据写死在这里，别凭感觉重构：
+ *     · 触发条件：接上 bash 工具后**实测**出现面板卡顿 / 主进程掉帧（并给出数字），才改。
+ *     · 改法：固定 cap 缓冲 + 首尾索引回绕（写指针环行、读侧按两段 memcpy），对外接口不变。
+ *     · 反例：只因为「看着像 O(n²)」就重构 —— 未发生的问题不值得用 bug 风险换。
+ *
  * ── 为什么是**字节**不是字符串 ──
  *   输出是流式 chunk，chunk 边界天然可能落在多字节字符中间。若在字符串层截断，
  *   半截 UTF-8 会在 `JSON.stringify` / RPC 里变 `\uFFFD` 或直接抛 —— 下游任何一层都可能崩。
@@ -205,6 +213,9 @@ export function readOutput(ring: OutputRing, cursor: OutputCursor): OutputRead {
     const end = ringEndOffset(ring);
     const reset = cursor.offset > end;
     // 环头已越过 cursor：中间那段被容量上限吃掉了（含它自己可能切在码点中间）
+    // `lostBytes` 是**字节**口径，不是字符：丢头切在字符中间时 `head.skipped` 会算进
+    // 那半个字符的 1~3 个字节 ⇒ UI 可能说「丢了 1 字节」，其实是「半个汉字」。无害
+    // （下游只需要一个「不连续」的信号 + 一个量级），但别把它当字符数显示。
     const headLost = cursor.offset < ring.baseOffset ? ring.baseOffset - cursor.offset : 0;
     const fromRaw = Math.min(Math.max(cursor.offset, ring.baseOffset), end) - ring.baseOffset;
     const head = utf8HeadStart(ring.bytes, fromRaw);

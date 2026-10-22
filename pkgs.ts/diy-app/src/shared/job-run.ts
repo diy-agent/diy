@@ -25,6 +25,7 @@
 
 import { z } from "zod";
 import { invariant } from "./error-triage";
+import type { RunOutcome } from "./spawned-job";
 
 // ═══════════════════════════════════════════════
 //  枚举：kind / state
@@ -292,7 +293,12 @@ export function assertOwner(value: unknown, where = ""): JobOwner {
  *   · `origin`     来源锚点（硬约束 1：**必填**）。
  *   · `summary`    一句话结果（成功侧的「跑了多久、干了啥」）。
  *   · `error`      失败侧的可读原因（与 `summary` 分开：面板要一眼分出红/绿两栏）。
- *   · `logPath`    输出环落盘的绝对路径（刀 4 填）；没有它，点进详情只能看到 tail。
+ *   · `logPath`    输出环落盘的绝对路径（刀 5 填）；没有它，点进详情只能看到 tail。
+ *   · `outcome`    **怎么结束的**（刀 5 加）：`ok|fail|canceled|timeout`。
+ *                  四态 `state` 回答「收敛了没 / 成功吗」，「超时」与「用户取消」在它里面都落
+ *                  `failed`（刀 2 定稿：被信号杀 = failed + signal）—— 但这两件事**不是缺陷**，
+ *                  面板的失败率与「⊘ 取消 / 超时」必须能分开统计，否则人会去查一堆不是 bug 的失败。
+ *                  之所以不从 `error` 文案里猜：文案是给人看的、随时会改，判据不许依赖解析句子。
  */
 export interface JobRun {
     readonly id: string;
@@ -310,6 +316,7 @@ export interface JobRun {
     readonly summary?: string;
     readonly error?: string;
     readonly logPath?: string;
+    readonly outcome?: RunOutcome;
 }
 
 /** 除 origin 之外的形状（origin 单独走 `assertOrigin`，好让缺陷落在同一个 code 上）。 */
@@ -329,6 +336,7 @@ const runBodySchema = z
         summary: z.string().optional(),
         error: z.string().optional(),
         logPath: nonEmpty.optional(),
+        outcome: z.enum(["ok", "fail", "canceled", "timeout"]).optional(),
     })
     .strict();
 
@@ -386,7 +394,16 @@ export function runDurationMs(startedAt: string, endedAt?: string): number | und
  */
 export function settleRun(
     run: JobRun,
-    outcome: { state: Exclude<JobRunState, "running">; endedAt: string; exitCode?: number; signal?: string; summary?: string; error?: string; logPath?: string },
+    outcome: {
+        state: Exclude<JobRunState, "running">;
+        endedAt: string;
+        exitCode?: number;
+        signal?: string;
+        summary?: string;
+        error?: string;
+        logPath?: string;
+        outcome?: RunOutcome;
+    },
 ): JobRun {
     assertRunTransition(run.state, outcome.state);
     invariant(!isTerminalRunState(run.state), "agent/invalid-run-transition", `已终态 ${run.state} 不得再 settle（${run.id}）`);
@@ -400,5 +417,6 @@ export function settleRun(
         ...(outcome.summary !== undefined ? { summary: outcome.summary } : {}),
         ...(outcome.error !== undefined ? { error: outcome.error } : {}),
         ...(outcome.logPath !== undefined ? { logPath: outcome.logPath } : {}),
+        ...(outcome.outcome !== undefined ? { outcome: outcome.outcome } : {}),
     });
 }
