@@ -13,8 +13,33 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { affected, buildIndex, resolveClaim, validateFacts, type Env, type Fact, type Ns, type Ref, type Scope } from "@diy/facts";
-import { checkFacts, checkRepo, loadRepo, readSubjectDefs, submit, project, type SubjectDef, type SubmitReport } from "@diy/facts/node";
+import {
+    DEFAULT_FULL_BUDGET,
+    affected,
+    buildIndex,
+    checkExpose,
+    exposeOf,
+    resolveClaim,
+    validateFacts,
+    weightsOf,
+    type Env,
+    type ExposeLevel,
+    type Fact,
+    type Ns,
+    type Ref,
+    type Scope,
+} from "@diy/facts";
+import {
+    checkFacts,
+    checkRepo,
+    loadRepo,
+    readExpose,
+    readSubjectDefs,
+    submit,
+    project,
+    type SubjectDef,
+    type SubmitReport,
+} from "@diy/facts/node";
 import type { z } from "zod";
 import { diyHome } from "../core/state";
 import type { FactSchema, RefSchema } from "../../shared/facts";
@@ -306,6 +331,20 @@ export function status(opts: { dir?: string; in?: string } = {}) {
         claims: new Set(list.map((f) => `${f.subject}#${f.aspect}`)).size,
         subjects: new Set(list.map((f) => f.subject)).size,
     });
+    // 暴露档：跨库合并（越具体越优先：本根 > 额外库），并跑一次预算校验 ——
+    // 与 submit 的硬校验同一套判据（`checkExpose`），只是这里不阻断（读侧只报告）。
+    const expose = { ...Object.fromEntries(extraDirs.map((d) => Object.entries(readExpose(d))).flat()), ...readExpose(kb) };
+    const hasExposeFile = extraDirs.some((d) => existsSync(path.join(d, "expose.yaml"))) || existsSync(path.join(kb, "expose.yaml"));
+    const exposeProblems = hasExposeFile
+        ? checkExpose(repo.facts, expose, { budget: DEFAULT_FULL_BUDGET })
+        : [];
+    for (const p of exposeProblems) problems.push({ level: "error", code: p.code, detail: p.detail, ...(p.facts ? { facts: [...p.facts] } : {}) });
+
+    // 按 subject 的字节账：预算的单位是**字节**，而 status 原本只给 claims 数 ——
+    // 人看不到"这个话题占多少"就没法决定该把它放 full 还是 index（实测 `rule` 一个主题 9.3 KB）。
+    const weights = weightsOf(repo.facts);
+    const bySubject = weights.map((w) => ({ ...w, expose: exposeOf(expose, w.subject) }));
+
     return {
         dir: kb,
         // 缺省读仓库库 ⇒ 回报 project（`global` 是另一份真源，别混）
@@ -315,23 +354,27 @@ export function status(opts: { dir?: string; in?: string } = {}) {
         files: repo.files.length,
         /** 额外只读库的并入量（读跨根、写不跨根；`dirs` 为空时 `facts === 0`） */
         extra: { ...countOf(extra), dirs: [...extraDirs] },
+        /** 按 subject 的权重表（bytes = 可用事实的 value 字节和；按字节降序） */
+        bySubject,
+        /** `full` 档字节和 / 预算（>limit ⇒ problems 里有 `facts/expose-budget`） */
+        exposeBudget: { used: bySubject.filter((s) => s.expose === "full").reduce((n, s) => n + s.bytes, 0), limit: DEFAULT_FULL_BUDGET },
         problems: plainProblems(problems),
     };
 }
 
 /**
- * 条目来源文件的**可读路径**：本根内给相对路径，跨库（设备级库在 `<数据根>/knowledge`）给绝对路径。
+ * 条目来源文件的**可读路径**：一律绝对。
  *
- * 为什么不能一律 `path.relative(repo.root, file)`：额外库的文件在本根之外，相对化会得到
- * `../../../../build/lab/home/knowledge/facts/level.yaml` —— 读的人得先倒推几层目录才敢用。
+ * 为什么不再给相对路径：agent 的 cwd 是项目目录（`build/lab/home/sample-project`），
+ * 而 `repo.root` 是**库的**根（`build/lab/home` 或仓库根）—— 相对 `repo.root` 给出的
+ * `build/lab/home/knowledge/facts/rule.yaml` 在 cwd 下 `cat` 不到。上一版"逃逸才绝对"
+ * 的判据在 lab 里永远不触发（`build/lab/home` 就在 repo 内），于是这个 bug 只在生产现形。
  *
- * ⚠️ 这里改的是显式路径，仍然不做任何"人到文件的猜谜"：路径必须能直接 `open`。
+ * 判据只有一条：**路径必须能直接 `open`**。去掉"你得先知道自己在哪个目录"这个隐含前提。
  */
 function displayFile(repo: { readonly root: string; readonly origin: ReadonlyMap<string, string> }, id: string): string {
     const abs = repo.origin.get(id) ?? "";
-    if (abs === "") return "";
-    const rel = path.relative(repo.root, abs);
-    return rel.startsWith("..") || path.isAbsolute(rel) ? abs : rel;
+    return abs === "" ? "" : path.resolve(abs);
 }
 
 /** 逗号分隔 → 表（CLI 位置参数只能收一个串，见 diy-rpc 的 cliArg 实现） */
@@ -647,6 +690,8 @@ export interface SubmitPayload {
     subjects: SubjectDef[];
     /** 选填：老载荷（`{facts, subjects}`）不带它也得能跑 —— 缺省 = 不删任何东西 */
     drop?: string[];
+    /** 暴露档修订（`subject → full|index|none`）；不给 = 不动 `expose.yaml` */
+    expose?: Record<string, ExposeLevel>;
 }
 
 export function parseSubmitPayload(text: string): SubmitPayload {
@@ -660,14 +705,34 @@ export function parseSubmitPayload(text: string): SubmitPayload {
     if (doc === null || typeof doc !== "object") {
         throw new FactsStoreError("agent/facts-payload-shape", "载荷期望 { facts: [...], subjects?: [...], drop?: [...] } 或裸数组");
     }
-    const obj = doc as { facts?: unknown[]; subjects?: SubjectDef[]; drop?: unknown[] };
+    const obj = doc as { facts?: unknown[]; subjects?: SubjectDef[]; drop?: unknown[]; expose?: unknown };
     const drop = (obj.drop ?? []).map((id) => {
         if (typeof id !== "string" || id.trim() === "") {
             throw new FactsStoreError("agent/facts-payload-shape", `drop 只收 fact id 字符串，实际收到：${JSON.stringify(id)}`);
         }
         return id.trim();
     });
-    return { facts: obj.facts ?? [], subjects: obj.subjects ?? [], drop };
+    const expose = parseExpose(obj.expose);
+    return { facts: obj.facts ?? [], subjects: obj.subjects ?? [], drop, ...(expose === undefined ? {} : { expose }) };
+}
+
+/**
+ * `expose` 载荷：`{ "<subject>": "full" | "index" | "none" }`。
+ *
+ * 形状错在这里就拒（`agent/facts-payload-shape`）；**档位非法不在这里拒** —— 交给内核
+ * `checkExpose` 报 `facts/expose-level`，一处判据（否则两处会分叉）。
+ */
+function parseExpose(raw: unknown): Record<string, ExposeLevel> | undefined {
+    if (raw === undefined) return undefined;
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+        throw new FactsStoreError("agent/facts-payload-shape", `expose 期望 { subject: level } 对象，实际收到：${JSON.stringify(raw)}`);
+    }
+    if (Object.keys(raw).length === 0) return undefined;
+    const out: Record<string, ExposeLevel> = {};
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+        out[k] = (typeof v === "string" ? v : String(v)) as ExposeLevel;
+    }
+    return out;
 }
 
 export function submitPayload(payload: SubmitPayload, opts: { dir?: string; in?: string; dryRun?: boolean } = {}) {
@@ -680,6 +745,7 @@ export function submitPayload(payload: SubmitPayload, opts: { dir?: string; in?:
             facts,
             ...(payload.subjects.length > 0 ? { subjects: payload.subjects } : {}),
             ...((payload.drop ?? []).length > 0 ? { drop: payload.drop ?? [] } : {}),
+            ...(payload.expose === undefined ? {} : { expose: payload.expose }),
             dryRun: opts.dryRun === true,
         },
         targetOpts(target, true),

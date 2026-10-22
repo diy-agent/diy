@@ -14,8 +14,8 @@
  */
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { loadRepo, project, projectItems, type ProjectEntry, type ProjectionAlgorithm, type Repo } from "@diy/facts/node";
-import type { Ns } from "@diy/facts";
+import { loadRepo, project, projectItems, readExpose, type ProjectEntry, type ProjectionAlgorithm, type Repo } from "@diy/facts/node";
+import { DEFAULT_FULL_BUDGET, bytesOf, checkExpose, exposeOf, type ExposeMap, type Ns } from "@diy/facts";
 import { diyHome } from "../core/state";
 import { readRuntimeConfig } from "../../runtime";
 import { resolveFactsDir } from "./facts-store";
@@ -42,6 +42,23 @@ export const DEFAULT_FACTS_MAX_BYTES = 4000;
 interface Loaded {
     ns: Ns;
     repo: Repo;
+    /** 该库的暴露档（`<库>/expose.yaml`；空表 = 全走缺省 index） */
+    expose: ExposeMap;
+}
+
+/**
+ * 合并多库的 expose 档：**越具体越优先**（task > project > global）。
+ *
+ * 与投影合并同向：局部覆盖全局。注意 `loaded` 的读入顺序是 [task, global, project]
+ * （为了预算分配），所以这里不能直接顺序覆盖 —— 按 nsRank 反序写。
+ */
+function mergeExpose(loaded: readonly Loaded[]): ExposeMap {
+    const out: Record<string, string> = {};
+    const rank = (n: Ns): number => (n.kind === "task" ? 0 : n.kind === "project" ? 1 : 2);
+    for (const l of [...loaded].sort((a, b) => rank(b.ns) - rank(a.ns))) {
+        for (const [k, v] of Object.entries(l.expose)) out[k] = v;
+    }
+    return out as ExposeMap;
 }
 
 /**
@@ -54,6 +71,7 @@ function loadQuietly(dir: string, ns: Ns, opts: { subjectsFallback?: string; roo
     try {
         return {
             ns,
+            expose: readExpose(dir),
             repo: loadRepo(dir, {
                 allowMissing: opts.allowMissing === true,
                 ...(opts.subjectsFallback === undefined ? {} : { subjectsFallback: opts.subjectsFallback }),
@@ -129,15 +147,30 @@ export function buildFactsContext(opts: BuildFactsContextOptions = {}): FactsCon
     };
 
     // ── md 算法：整份渲染成一段 markdown（此时不再给 task/project 两棵树）──
+    // 暴露档：只有 `full` 进正文。`index` 在 kb 索引里（知道有、要值就查），`none` 两处都不给。
+    const expose = mergeExpose(loaded);
+    const full = (fact: { subject: string }): boolean => exposeOf(expose, fact.subject) === "full";
+    const budgetProblems = checkExpose(
+        loaded.flatMap((l) => l.repo.facts),
+        expose,
+        { budget: maxBytes },
+    ).map((p) => ({ gid: "facts.expose", code: p.code }));
+    // 缺省档是 index：新写的主题自动进索引、不抢正文预算。
+    //
+    // **兼容窗口**：库目录里根本**没有** `expose.yaml` ⇒ 回落到旧行为（全部进正文 + 按预算裁）。
+    // 否则升级当天所有存量库的正文会一起消失 —— 那不是"更省的投影"，是"知识静默丢失"。
+    // 一旦写了 expose.yaml（**哪怕只写一条**），声明式就生效：没列出的 subject = index。
+
     if (algorithm === "md-list") {
-        const entries: ProjectEntry[] = loaded.flatMap((l) => l.repo.facts.map((fact) => ({ ns: l.ns, fact })));
+        const all: ProjectEntry[] = loaded.flatMap((l) => l.repo.facts.map((fact) => ({ ns: l.ns, fact })));
+        const entries = Object.keys(expose).length === 0 ? all : all.filter((e) => full(e.fact));
         const out = project({ entries, ctx, algorithm: "md-list", maxBytes, shape: "auto" });
         return {
             algorithm,
             env,
             text: out.text,
             omitted: out.omitted.length,
-            problems: out.problems.map((p) => ({ gid: p.gid, code: p.code })),
+            problems: [...out.problems.map((p) => ({ gid: p.gid, code: p.code })), ...budgetProblems],
         };
     }
 
@@ -146,9 +179,12 @@ export function buildFactsContext(opts: BuildFactsContextOptions = {}): FactsCon
     // **必须一次传全部 entries**：`projectItems` 跨库去重（同 claim 取 ns 高层），
     // 每个库各自调一次就退化成"各出一条"—— 实测 16 条同 claim 在两库重复（`level` 6 /
     // `tool` 5 / `ref` 5），4 KB 预算里白占一倍。
-    const out: FactsContextValue = { algorithm, env, omitted: 0, problems: [] };
+    const out: FactsContextValue = { algorithm, env, omitted: 0, problems: [...budgetProblems] };
     const allEntries: ProjectEntry[] = loaded.flatMap((l) => l.repo.facts.map((fact) => ({ ns: l.ns, fact })));
-    const parsed = projectItems({ entries: allEntries, ctx });
+    const parsed = projectItems({
+        entries: Object.keys(expose).length === 0 ? allEntries : allEntries.filter((e) => full(e.fact)),
+        ctx,
+    });
     out.problems.push(...parsed.problems.map((p) => ({ gid: p.gid, code: p.code })));
     void parsed.skipped; // 当前 scope 下不适用（正常，不是裁掉）
 
@@ -215,6 +251,7 @@ export function buildKbIndex(opts: { home?: string } = {}): KbIndex | null {
         if (hit) loaded.push(hit);
     }
     if (loaded.length === 0) return null;
+    const expose = mergeExpose(loaded);
     let total = 0;
     // 按 subject 聚：多库同名合并成一条（`ns` 记来源数组、`claims` 求和）
     const merged = new Map<string, KbIndexEntry>();
@@ -225,6 +262,8 @@ export function buildKbIndex(opts: { home?: string } = {}): KbIndex | null {
         const ns = l.ns.kind === "global" ? ("global" as const) : ("project" as const);
         for (const sub of l.repo.subjects) {
             if ((sub.description ?? "") === "") continue;
+            // `none` = 连索引都不给（体量太大 / 临时性）：库里有，但 agent 得自己知道去查
+            if (Object.keys(expose).length > 0 && exposeOf(expose, sub.key) === "none") continue;
             const hit = merged.get(sub.key);
             const claims = counts.get(sub.key) ?? 0;
             if (hit === undefined) {

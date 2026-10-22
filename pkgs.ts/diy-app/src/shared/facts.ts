@@ -92,6 +92,23 @@ export const FactsStatusSchema = z.object({
         subjects: z.number(),
         dirs: z.array(z.string()),
     }),
+    /**
+     * 按 subject 的**字节账**（`bytes` = 可用事实的 value 字节和，按字节降序）。
+     *
+     * 为什么必须有它：预算的单位是字节，而计数只给 claims 数 —— 人看不到"这个话题占多少"
+     * 就没法决定该把它放 `full` 还是 `index`（实测 `rule` 一个主题就 9.3 KB）。
+     */
+    bySubject: z.array(
+        z.object({
+            subject: z.string(),
+            claims: z.number(),
+            facts: z.number(),
+            bytes: z.number(),
+            expose: z.enum(['full', 'index', 'none']),
+        }),
+    ),
+    /** `full` 档字节和 / 预算（`used > limit` ⇒ problems 里有 `facts/expose-budget`） */
+    exposeBudget: z.object({ used: z.number(), limit: z.number() }),
     problems: z.array(ProblemSchema),
 });
 

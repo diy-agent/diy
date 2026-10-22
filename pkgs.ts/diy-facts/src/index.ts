@@ -20,3 +20,17 @@ export { pathCovers, scopeEqual, scopeKey, scopeMatches, scopeSpecificity, envsO
 export { resolveClaim, resolveClaims, type ReadCtx, type Resolved } from './resolve';
 export { affected, buildIndex, refsOf, type Conflict, type FactsIndex, type Issue } from './index-build';
 export { validateFacts, type Validation } from './validate';
+export {
+    DEFAULT_EXPOSE,
+    DEFAULT_FULL_BUDGET,
+    EXPOSE_LEVELS,
+    bytesOf,
+    checkExpose,
+    exposeOf,
+    isUsable,
+    weightsOf,
+    type ExposeLevel,
+    type ExposeMap,
+    type ExposeProblem,
+    type SubjectWeight,
+} from './expose';

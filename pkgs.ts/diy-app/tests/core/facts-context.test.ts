@@ -189,3 +189,59 @@ describe("kb 索引", () => {
         expect(Object.keys(v.project ?? {}).length).toBe(kb.claims);
     });
 });
+
+describe("expose 暴露档（##5 第 7 轮：subject 级 = 正文预算的开关）", () => {
+    const twoSubjects = () =>
+        factsYaml([
+            "  app.port#default:",
+            "    value: '18888'",
+            "    review: accepted",
+            "    lifecycle: active",
+            "    evidence: { source: code, at: K.ts:2 }",
+            "  dev.test#cmd:",
+            "    value: 'npm test'",
+            "    review: accepted",
+            "    lifecycle: active",
+            "    evidence: { source: code, at: K.ts:3 }",
+        ]);
+
+    it("没写 expose.yaml ⇒ 回落到旧行为（全部进正文）", () => {
+        // 兼容窗口：升级当天不能把存量库的正文一起清空
+        write(path.join(repoKb, "facts", "app.yaml"), twoSubjects());
+        const v = buildFactsContext({ home, taskUri: "" });
+        expect(Object.keys(v?.project ?? {})).toEqual(["app.port#default", "dev.test#cmd"]);
+    });
+
+    it("写了 expose.yaml ⇒ 声明式生效：只有 full 进正文，没列出的是 index", () => {
+        write(path.join(repoKb, "facts", "app.yaml"), twoSubjects());
+        write(path.join(repoKb, "expose.yaml"), "expose:\n  app.port: full\n");
+        const v = buildFactsContext({ home, taskUri: "" });
+        expect(Object.keys(v?.project ?? {})).toEqual(["app.port#default"]);
+        // index 档仍在 kb 索引里（知道有、要值就查）
+        expect(buildKbIndex({ home })?.entries.map((e) => e.subject)).toContain("dev.test");
+    });
+
+    it("none ⇒ 索引也不给（两处都不出现）", () => {
+        write(path.join(repoKb, "facts", "app.yaml"), twoSubjects());
+        write(path.join(repoKb, "expose.yaml"), "expose:\n  app.port: full\n  dev.test: none\n");
+        const v = buildFactsContext({ home, taskUri: "" });
+        expect(Object.keys(v?.project ?? {})).toEqual(["app.port#default"]);
+        expect(buildKbIndex({ home })?.entries.map((e) => e.subject)).not.toContain("dev.test");
+    });
+
+    it("full 档字节和超预算 ⇒ 投影带 facts/expose-budget 问题（不抛：构造失败更糟）", () => {
+        write(
+            path.join(repoKb, "facts", "app.yaml"),
+            factsYaml([
+                "  app.port#default:",
+                `    value: '${"x".repeat(120)}'`,
+                "    review: accepted",
+                "    lifecycle: active",
+                "    evidence: { source: code, at: K.ts:2 }",
+            ]),
+        );
+        write(path.join(repoKb, "expose.yaml"), "expose:\n  app.port: full\n");
+        const v = buildFactsContext({ home, taskUri: "", maxBytes: 100 });
+        expect(v?.problems.map((p) => p.code)).toContain("facts/expose-budget");
+    });
+});

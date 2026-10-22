@@ -57,6 +57,28 @@ export function TaskFactsView(props: { uri: string }) {
             ),
     );
 
+    // 字节账：预算的单位是**字节**，而投影页只显示"这次投了多少" —— 看不出"哪个主题占了多少、
+    // 为什么它进不来"。所以另取一次 status（它按 subject 给 bytes + expose 档 + full 是否超预算）。
+    const [st, { refetch: refetchStatus }] = createResource(spec, (s) =>
+        guard(diyService.diy.facts.status({ in: s, dir: undefined })),
+    );
+    const statusData = () => {
+        const r = st();
+        return r !== undefined && r.ok ? r.data : null;
+    };
+    const exposeSummary = () => {
+        const d = statusData();
+        if (d === null) return null;
+        const count = (l: "full" | "index" | "none") => d.bySubject.filter((s) => s.expose === l).length;
+        return {
+            used: d.exposeBudget.used,
+            limit: d.exposeBudget.limit,
+            full: count("full"),
+            index: count("index"),
+            none: count("none"),
+        };
+    };
+
     /** 三个访问器（而不是在 JSX 里 `x()!.data!`）：联合类型只有一次收窄机会，取两次 TS 就窄不住 */
     // 取值**各调一次**（`x()?.ok ? x()!.data : null` 之所以不行：TS 不在两次调用之间收窄）
     const rawData = () => {
@@ -99,7 +121,10 @@ export function TaskFactsView(props: { uri: string }) {
                 <button
                     class="btn btn-ghost btn-xs opacity-60 hover:opacity-100"
                     title="刷新"
-                    onClick={() => void (mode() === "raw" ? refetchRaw() : refetchProj())}
+                    onClick={() => {
+                        void refetchStatus();
+                        void (mode() === "raw" ? refetchRaw() : refetchProj());
+                    }}
                 >
                     🔄
                 </button>
@@ -147,6 +172,18 @@ export function TaskFactsView(props: { uri: string }) {
             </Show>
 
             <Show when={mode() === "projection"}>
+                <Show when={exposeSummary()}>
+                    {(x) => (
+                        <div class="flex flex-wrap items-center gap-2 text-xs">
+                            <span class={`badge badge-sm ${x().used > x().limit ? "badge-error" : "badge-ghost"} font-mono`} title="full 档的字节和 / 预算（超了 submit 与 check 都会报错）">
+                                full {x().used} / {x().limit} B
+                            </span>
+                            <span class="opacity-70 font-mono">
+                                full {x().full} · index {x().index} · none {x().none}
+                            </span>
+                        </div>
+                    )}
+                </Show>
                 <div class="flex flex-wrap items-center gap-2">
                     <select
                         class="select select-xs select-bordered font-mono"

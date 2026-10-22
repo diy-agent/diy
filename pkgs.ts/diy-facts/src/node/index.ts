@@ -18,6 +18,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { dump, load } from 'js-yaml';
 import { claimOf, derivedFactId } from '../claim.js';
+import { DEFAULT_FULL_BUDGET, checkExpose, exposeOf, type ExposeLevel, type ExposeMap } from '../expose.js';
 import { buildIndex, validateFacts } from '../index.js';
 import type { Evidence, Fact, Ref, Scope } from '../types.js';
 
@@ -199,6 +200,33 @@ export function readSubjectDefs(knowledgeDir: string): SubjectDef[] {
         return readSubjects(path.join(path.resolve(knowledgeDir), 'subjects.yaml')).all;
     } catch {
         return [];
+    }
+}
+
+/**
+ * 读一份库的**暴露档**（`<dir>/expose.yaml`）：`{ expose: { <subject>: full|index|none } }`。
+ *
+ * 为什么单独一个文件而不是塞进 `subjects.yaml`：词表描述的是"这个对象是什么"（语义），
+ * 暴露档是"这个对象在上下文里露多少"（投递策略）—— 两者的 owner 和变更节奏都不同
+ * （词表随知识演进，档位随字节预算调整，频繁得多）。
+ *
+ * 读不到 / 坏了一律返回空表（= 全 index）：投递策略出问题不该让整轮上下文构造失败。
+ */
+export function readExpose(knowledgeDir: string): ExposeMap {
+    const file = path.join(path.resolve(knowledgeDir), 'expose.yaml');
+    if (!existsSync(file)) return {};
+    try {
+        const doc = readYaml(file) as { expose?: unknown } | null;
+        const raw = doc?.expose;
+        if (typeof raw !== 'object' || raw === null) return {};
+        const out: Record<string, ExposeLevel> = {};
+        for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+            // 非法值原样收下（字符串化）：让 `checkExpose` 报出来，而不是读到这儿就悄悄忽略
+            out[k] = (typeof v === 'string' ? v : String(v)) as ExposeLevel;
+        }
+        return out;
+    } catch {
+        return {};
     }
 }
 
@@ -414,7 +442,7 @@ export function checkRepo(
     problems: readonly RepoProblem[];
 } {
     const repo = loadRepo(knowledgeDir, opts);
-    const problems = [
+    const problems: RepoProblem[] = [
         ...repo.schemaIssues,
         ...checkFacts(repo.facts, {
             subjects: repo.subjects,
@@ -423,6 +451,13 @@ export function checkRepo(
             ...opts,
         }),
     ];
+    // 暴露档超预算 = **错误**（不是警告）：否则 `omitted: 131` 那种"装不下但没人说"
+    // 会一直沉默下去。只在写了 expose.yaml 的库上判（兼容窗口，见 `buildFactsContext`）。
+    if (existsSync(path.join(repo.dir, 'expose.yaml'))) {
+        for (const p of checkExpose(repo.facts, readExpose(repo.dir), { budget: DEFAULT_FULL_BUDGET })) {
+            problems.push({ level: 'error', code: p.code, detail: p.detail, ...(p.facts ? { facts: p.facts } : {}) });
+        }
+    }
     return { repo, problems };
 }
 
@@ -565,6 +600,14 @@ export interface SubmitInput {
      * 安全性：删完照样跑整套判据（`byId` 候选集）—— 删错了会以「边悬空」当场拒写，磁盘不动。
      */
     readonly drop?: readonly string[];
+    /**
+     * 暴露档修订（`subject → full|index|none`），与事实**同一事务**。
+     *
+     * 为什么由 `submit` 写而不是让人改 `expose.yaml`：与「agent 不碰 YAML」同一条纪律 ——
+     * 手改必错（漏引号 / 拼错档位 / 排序乱），而且**档位超预算这件事只有写入侧知道**
+     * （它要拿整库的字节和跟预算比）。故档位也是一种"提交"，一样整批校验、整批落。
+     */
+    readonly expose?: ExposeMap;
 }
 
 /**
@@ -630,6 +673,17 @@ export function submit(
             problems.push({ level: 'error', code: 'facts/subject-no-desc', detail: `subject 缺 description：${s.key}` });
         }
     }
+    // 3.5) 暴露档与预算：`full` 档字节和 > 预算 ⇒ **错误**（写不进去）。
+    // 不许沉默超限：`omitted: 131` 那种"装不下但没人说"的状态，正是配置与预算脱节的证据。
+    // 库目录里没有 `expose.yaml` 时不判（兼容窗口：升级当天不能把存量库卡死）。
+    const exposeFile = path.join(repo.dir, 'expose.yaml');
+    const hasExposeFile = existsSync(exposeFile);
+    const exposeMap: ExposeMap = { ...readExpose(repo.dir), ...(input.expose ?? {}) };
+    if (hasExposeFile || input.expose !== undefined) {
+        for (const p of checkExpose(schema.facts, exposeMap, { budget: DEFAULT_FULL_BUDGET })) {
+            problems.push({ level: 'error', code: p.code, detail: p.detail, ...(p.facts ? { facts: p.facts } : {}) });
+        }
+    }
     const errors = problems.filter((p) => p.level === 'error');
     if (errors.length > 0) return { report: emptyReport(added, updated, unchanged, newSubjects, input.dryRun ?? false), problems };
 
@@ -665,6 +719,16 @@ export function submit(
         writes.push({ file: vocabFile, text: `${VOCAB_HEAD}\n${dump({ subjects: vocab }, { noRefs: true, lineWidth: -1, quoteStyle: 'single' })}` });
     }
 
+    // 6) 暴露档：只在**真的给了** `expose` 时重写（未给不动文件 —— 空提交不该把档位洗成默认）
+    if (input.expose !== undefined) {
+        const merged: Record<string, string> = {};
+        for (const k of Object.keys(exposeMap).sort()) merged[k] = exposeOf(exposeMap, k);
+        writes.push({
+            file: exposeFile,
+            text: `${EXPOSE_HEAD}\n${dump({ expose: merged }, { noRefs: true, lineWidth: -1, quoteStyle: 'single' })}`,
+        });
+    }
+
     if (!(input.dryRun ?? false)) {
         for (const w of writes) {
             mkdirSync(path.dirname(w.file), { recursive: true });
@@ -686,6 +750,20 @@ const VOCAB_HEAD = `# knowledge/subjects.yaml — subject 受控词表（##404�
 # 别名只解决**命名归一**（人读），不进图（\`same-as\` 才是实体等价，别混用）。
 #
 # 字段：description（必填，一句话说清这个对象）· aliases（选填，只做提示，不参与匹配）`;
+
+export const EXPOSE_HEAD = `# knowledge/expose.yaml — 主题的**暴露档**（##404）
+#
+# 决定一个 subject 在上下文里露多少（值只有三档）：
+#   full  —— 正文进 runtime.facts（**常驻**：每一轮都付这个字节）
+#   index —— 只在 runtime.kb 一行（知道有这个话题，要值就 \`diy facts get\`）
+#   none  —— 两处都不给，只能 get / brief（临时性 / 体量太大）
+#
+# 缺省档 = index（没列出来的 subject 就是 index）：新写的主题自动进索引、不抢正文预算。
+# 硬约束：\`full\` 的字节和超过预算 ⇒ \`diy facts submit\` / \`./sha.sh check\` **报错**，
+# 不许沉默超限。改档位也走 \`diy facts submit\` 的 \`expose\` 载荷（**别手改本文件**）。
+#
+# 判据：搬走一条 X 字节的知识每轮省 X，但查它一次 ≈ 一次完整请求的前缀重发（约 41 KB）。
+# 故 full 给"每轮都要知道"的，index 给"知道有、偶尔查"的。`;
 
 function emptyReport(
     added: readonly string[],

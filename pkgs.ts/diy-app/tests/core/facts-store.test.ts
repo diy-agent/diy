@@ -499,3 +499,72 @@ describe("find", () => {
         expect(cut.notes.join(" ")).toContain("共");
     });
 });
+
+// ── 字节账与 expose 暴露档（##5 第 7 轮）────────────────────────────────────────
+//
+// 判据在 @diy/facts 的 checkExpose / weightsOf 已单测；这里只验**接线**：
+//   ① status 给出按 subject 的字节账（预算是字节单位，claims 数看不出来）
+//   ② submit 的 expose 载荷与事实**同一事务**（超预算 ⇒ 整批拒写，磁盘不动）
+describe("字节账 / expose 档", () => {
+    const fact = (id: string, subject: string, aspect: string, value: string) => ({
+        id,
+        subject,
+        aspect,
+        value,
+        review: "accepted",
+        lifecycle: "active",
+        evidence: { source: "code", at: "K.ts:1" },
+    });
+
+    it("status.bySubject 按字节降序给权重，并带上该主题的 expose 档", () => {
+        const st = store.status();
+        const port = st.bySubject.find((s) => s.subject === "app.port");
+        // 两条变体：'18888' + '0' = 6 字节（可用事实的 value 之和，不是文件大小）
+        expect(port?.bytes).toBe(6);
+        expect(port?.claims).toBe(1);
+        expect(port?.expose).toBe("index"); // 没写 expose.yaml ⇒ 缺省档
+        const sorted = [...st.bySubject].sort((a, b) => b.bytes - a.bytes);
+        expect(st.bySubject).toEqual(sorted);
+        expect(st.exposeBudget).toEqual({ used: 0, limit: 4000 });
+    });
+
+    it("submit 的 expose 载荷：与事实同批落盘，写出的档位可被 status 读到", () => {
+        const r = store.submitPayload({
+            facts: [fact("port.next", "app.port", "next", "1")],
+            subjects: [],
+            expose: { "app.port": "full" },
+        });
+        expect(r.problems.filter((p) => p.level === "error")).toEqual([]);
+        expect(store.status().bySubject.find((s) => s.subject === "app.port")?.expose).toBe("full");
+        // 档位文件是程序生成的（有头注），人不用手改那种形状
+        expect(readFileSync(path.join(kb, "expose.yaml"), "utf8")).toContain("暴露档");
+    });
+
+    it("full 档超预算 ⇒ 整批拒写（磁盘不动，问题码 facts/expose-budget）", () => {
+        const before = readFileSync(path.join(kb, "facts", "app.yaml"), "utf8");
+        const r = store.submitPayload({
+            facts: [fact("port.big", "app.port", "big", "x".repeat(5000))],
+            subjects: [],
+            expose: { "app.port": "full" },
+        });
+        expect(r.problems.map((p) => p.code)).toContain("facts/expose-budget");
+        // `added` 仍会列出"本来会加什么"（拒写的报告要能看出被拒的是哪条），但 `files` 必空 = 没落盘
+        expect(r.report.files).toEqual([]);
+        // 拒写 = 真源一字未动
+        expect(readFileSync(path.join(kb, "facts", "app.yaml"), "utf8")).toBe(before);
+        expect(existsSync(path.join(kb, "expose.yaml"))).toBe(false);
+    });
+
+    it("expose 载荷形状错 ⇒ 报 payload-shape，不静默当空", () => {
+        expect(() => store.parseSubmitPayload('{"facts":[],"expose":["app.port"]}')).toThrow(/expose 期望/);
+    });
+
+    it("get / brief 的 file 是绝对路径（cwd 是项目目录，相对 repo.root 的路径打不开）", () => {
+        const g = store.get(["app.port#default"], { env: "production" });
+        const file = g.resolved[0]?.facts[0]?.file ?? "";
+        expect(path.isAbsolute(file)).toBe(true);
+        expect(existsSync(file)).toBe(true);
+        // 且它指向 **repo.root 之外**时也一样能打开（lab 与生产的差别只在这里）
+        expect(file).toBe(path.join(kb, "facts", "app.yaml"));
+    });
+});
