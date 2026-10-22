@@ -15,25 +15,7 @@
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { readRuntimeConfig } from "../../runtime";
-import { invariant } from "../../shared/error-triage";
-import { normalizeRun, type JobRun, type JobRunState } from "../../shared/job-run";
-
-/**
- * jobId 是否可作**文件名**。
- *
- * jobId 来自代码里的定义（`models.refresh` / `watch.self` 这类），不是用户输入 ——
- * 故不合法属**编程错误**（`invariant`），不是「用户填错了」。
- * 但仍然要挡：jobId 一旦含 `/` 或 `..`，账就会写到 `$DIY_HOME` 之外去。
- */
-const JOB_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-
-export function isSafeJobId(id: string): boolean {
-    return id.length > 0 && id.length <= 120 && JOB_ID_RE.test(id) && !id.includes("..");
-}
-
-function assertJobId(jobId: string): void {
-    invariant(isSafeJobId(jobId), "agent/invalid-job-id", jobId);
-}
+import { assertJobId, normalizeRun, type JobRun, type JobRunState } from "../../shared/job-run";
 
 /** job 账本目录：`$DIY_HOME/jobs/`。 */
 export function jobsDir(home: string = readRuntimeConfig().home): string {

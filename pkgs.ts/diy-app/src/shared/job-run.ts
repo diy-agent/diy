@@ -40,6 +40,28 @@ export type JobKind = "spawned" | "scheduled" | "event";
 
 export const JOB_KINDS = ["spawned", "scheduled", "event"] as const;
 
+// ═══════════════════════════════════════════════
+//  jobId：唯一一份形状判据（账本文件名 / 注册表 id / CLI 入参共用）
+// ═══════════════════════════════════════════════
+
+/**
+ * jobId 的**唯一**形状判据（##408 刀 2 落账本、刀 3 落注册表 —— 两处必须同一份）。
+ *
+ * 为什么这么严：`$DIY_HOME/jobs/<jobId>.jsonl` 直接拿它当文件名。
+ * 含 `/` 或 `..` 就能把账写到 home 之外（穿越）；含空格 / 非 ASCII 会让 shell / URL / 文件名三方打架。
+ * 为什么用 `[A-Za-z0-9]` 开头：`-x` / `.x` 这类首字符在 CLI 里会被当参数或隐藏文件。
+ */
+const JOB_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+export function isSafeJobId(id: string): boolean {
+    return id.length > 0 && id.length <= 120 && JOB_ID_RE.test(id) && !id.includes("..");
+}
+
+/** 不合法的 jobId ⇒ `agent/invalid-job-id`（编程错误，不是用户输入校验）。 */
+export function assertJobId(jobId: string, where = ""): void {
+    invariant(isSafeJobId(jobId), "agent/invalid-job-id", `${jobId}${where ? ` @${where}` : ""}`);
+}
+
 /**
  * Run 的生命周期状态（四态）。
  *
@@ -229,6 +251,24 @@ const ownerSchema = z.discriminatedUnion("type", [
     z.object({ type: z.literal("task"), taskUri: nonEmpty }).strict(),
     z.object({ type: z.literal("global"), by: nonEmpty }).strict(),
 ]);
+
+/**
+ * 校验并收窄 owner —— job 定义（刀 3 注册表）与 Run 共用同一份判据。
+ *
+ * 与 `assertOrigin` 分开的原因：owner 是「它属于谁」，缺失同样不可接受（孤儿 job 无处溯源），
+ * 但它是**定义**的问题，不是单次执行的问题 ⇒ 独立 code，便于区分「注册写错」和「起 run 时丢了来源」。
+ */
+export function assertOwner(value: unknown, where = ""): JobOwner {
+    const parsed = ownerSchema.safeParse(value);
+    if (!parsed.success) {
+        const why =
+            value == null
+                ? "缺失"
+                : parsed.error.issues.map((i) => `${i.path.join(".") || "<root>"} ${i.message}`).join("; ");
+        invariant(false, "agent/invalid-job-owner", `JobOwner ${why}${where ? ` @${where}` : ""}`);
+    }
+    return parsed.data;
+}
 
 // ═══════════════════════════════════════════════
 //  JobRun
