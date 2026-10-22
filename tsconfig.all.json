@@ -24,6 +24,9 @@
     },
     {
       "path": "pkgs.ts/diy-app"
+    },
+    {
+      "path": "pkgs.ts/workbench-plugin"
     }
   ]
 }

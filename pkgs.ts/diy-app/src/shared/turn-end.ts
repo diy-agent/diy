@@ -17,6 +17,7 @@
 //   旧记录里用户停止也是 `"abort"`（当时没带 reason）⇒ 它们显示第三句，与当时一致，不算行为回归。
 
 import type { TurnEndReason } from "../main/services/local-blocks";
+import { codeOfInterruptedWhy } from "./interrupted-cause";
 
 /**
  * 中止的可见文案（**唯一一处**）。main 的 `error{abort}` 块与 renderer 的轮尾说明都调它。
@@ -51,8 +52,13 @@ export function turnEndText(r: TurnEndReason, notice?: string | null): string | 
             return abortText(r.data.source);
         case "error":
             return n; // 细节由 error 块 / 现场说，同一句不写两遍
-        case "interrupted":
+        case "interrupted": {
+            const code = codeOfInterruptedWhy(r.data.why);
+            // ##416：能命名就给具体说法（仍**一句话**，不爆栈）；查不到保持原兜底句。
+            if (code === "agent/app-restart") return "本轮未完成（进程重启）";
+            if (code === "agent/app-crash") return "本轮未完成（进程崩溃）";
             return "本轮未完成（流中断/崩溃恢复）";
+        }
     }
 }
 
@@ -84,8 +90,12 @@ export function endMarkOf(end: TurnEndReason | null, live: boolean): EndMark {
             return { icon: "⛔", tip: "输出长度上限", tone: "cut" };
         case "aborted":
             return { icon: "⛔", tip: abortText(end.data.source), tone: "cut" };
-        case "interrupted":
+        case "interrupted": {
+            const code = codeOfInterruptedWhy(end.data.why);
+            if (code === "agent/app-restart") return { icon: "⛔", tip: "未完成（进程重启）", tone: "cut" };
+            if (code === "agent/app-crash") return { icon: "⛔", tip: "未完成（进程崩溃）", tone: "cut" };
             return { icon: "⛔", tip: "未完成（流中断/崩溃恢复）", tone: "cut" };
+        }
         case "error":
             return { icon: "✗", tip: "错误终止", tone: "err" };
     }

@@ -12,19 +12,16 @@
 // 约束：只在 Electron 主进程调。serve / CLI 是纯 Node，没有 crashReporter。
 
 import { join } from "node:path";
-import { mkdirSync, readdirSync, appendFileSync } from "node:fs";
+import { mkdirSync, readdirSync } from "node:fs";
 import { app, crashReporter } from "electron";
 import { crashScene } from "./agent-audit";
+import { appendAppExit } from "./interrupted-cause";
 
-/** 进程级异常/信号落盘（崩溃诊断的主日志之外的结构化尾巴） */
+/** 进程级异常/信号落盘（崩溃诊断的主日志之外的结构化尾巴）。
+ *  格式与写盘在 `interrupted-cause.ts::appendAppExit` —— 冷读（##416）要按同一份格式消费，
+ *  且 watch 重启路径（`scripts/electron-dev.mts`）也写它，三处不许各写一份。 */
 function appendExitLog(home: string, kind: string, detail: string): void {
-  try {
-    mkdirSync(join(home, "log"), { recursive: true });
-    const row = { ts: new Date().toISOString(), kind, pid: process.pid, detail };
-    appendFileSync(join(home, "log", "app-exit.jsonl"), `${JSON.stringify(row)}\n`, "utf-8");
-  } catch {
-    /* 退出路径上尽力而为 */
-  }
+  appendAppExit(home, kind, detail);
 }
 
 export function installCrashReporting(home: string): void {

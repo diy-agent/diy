@@ -13,6 +13,7 @@ import {
   readLock,
 } from "../src/main/core/single-instance";
 import { resolveDevHome } from "../src/main/core/dev-home";
+import { appendAppExit } from "../src/main/services/interrupted-cause";
 import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, appendFileSync, type Dirent } from "node:fs";
 // 注：Chromium 开关（disable-features=RustPng / use-gl=angle）由 src/main/index.ts 经
 // app.commandLine.appendSwitch 生效，此处不再拼 argv（Chromium 不吃 app argv）。
@@ -292,12 +293,62 @@ function checkSingletonLock(phase: "spawn" | "exit"): void {
   console.error(`[dev] ⚠️ ${lockAdvice(situation, lockPath)}`);
 }
 
-function startElectron(url: string) {
+/**
+ * 重启串行化（##416）：旧实例的退出要**等**，不能「kill 完立刻 spawn 新的」——
+ * ① 抢同一个 home 的 SingletonLock（新实例可能被判成第二个而 exit 0）；
+ * ② 旧进程来不及走自己的 SIGTERM handler，`log/app-exit.jsonl` 就少了这条证据，
+ *    冷读补 `interrupted` 时只能退化成「流中断/崩溃恢复」兜底句（正是 ##404 的现象）。
+ */
+let restartChain: Promise<void> = Promise.resolve();
+
+function startElectron(url: string): void {
+  const next = restartChain.then(() => startElectronNow(url));
+  // 链上永不挂：一次重启失败不该毒死后续所有重启（错误已由 spawn 侧打印）
+  restartChain = next.catch((e) => devLog("electron-restart-failed", { error: String(e) }));
+}
+
+/** SIGTERM + 等退出（宽限后 SIGKILL）。宽限是给被杀进程留出写 `app-exit.jsonl` 的时间 */
+function stopElectron(proc: ChildProcess, graceMs = 5000): Promise<void> {
+  return new Promise((resolve) => {
+    if (proc.exitCode !== null || proc.signalCode !== null) {
+      resolve();
+      return;
+    }
+    let done = false;
+    const finish = (): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      devLog("electron-kill-timeout", { pid: proc.pid, graceMs });
+      try {
+        proc.kill("SIGKILL");
+      } catch {
+        /* 已退出 */
+      }
+    }, graceMs);
+    proc.once("close", finish);
+    try {
+      proc.kill("SIGTERM");
+    } catch {
+      finish();
+    }
+  });
+}
+
+async function startElectronNow(url: string): Promise<void> {
   if (electronProc) {
+    const old = electronProc;
     console.log("[dev] restarting electron...");
-    devLog("electron-restart", { oldPid: electronProc.pid });
-    electronProc.kill();
-    electronProc = null;
+    devLog("electron-restart", { oldPid: old.pid });
+    // **杀的一方亲手留痕**（##416）：不能指望被杀进程在死前把字写完 ——
+    // ##404 lab 的 app-exit.jsonl 里只有 1 条 SIGTERM，而期间重启了多次。
+    // 写成 `electron-dev-restart`（信号族）⇒ 冷读据此给出「本轮未完成（进程重启）」。
+    appendAppExit(process.env["DIY_HOME"]!, "electron-dev-restart", `watch 重建后替换旧实例 pid=${old.pid}`);
+    electronProc = null; // 先置空：其 close 事件属于「主动重启」，由下面 await 收尾
+    await stopElectron(old);
   }
 
   // CDP 端口 0 = 随机空闲端口。实际地址由 Chromium 写入 userData/DevToolsActivePort，
@@ -342,7 +393,11 @@ function cleanup() {
   if (cleaningUp) return;
   cleaningUp = true;
   devLog("cleanup", { reason: "sigint/sigterm/electron-exit" });
-  if (electronProc) electronProc.kill();
+  if (electronProc) {
+    // 与热重启同一份留痕口径（##416）：dev 脚本主动停实例同样会让在跑的那轮中断
+    appendAppExit(process.env["DIY_HOME"]!, "electron-dev-stop", `dev 脚本退出，停止实例 pid=${electronProc.pid}`);
+    electronProc.kill("SIGTERM");
+  }
   if (rendererServer) rendererServer.close();
   process.exit(0);
 }

@@ -25,6 +25,7 @@
  */
 
 import type { TurnEndReason } from "../main/services/local-blocks";
+import { codeOfInterruptedWhy } from "./interrupted-cause";
 import { NETWORK_ERROR_CODES, type NetworkErrorCode, probeNetworkError } from "./env-watch";
 
 // ═══════════════════════════════════════════════
@@ -317,8 +318,26 @@ export function triageOfTurnEnd(r: TurnEndReason): TurnEndTriage {
             const code = r.data.source === "detached" ? "agent/aborted-detached" : "agent/aborted";
             return { triage: "external-unknown", code, reason: `被中断（source=${r.data.source}）：来源无法判定` };
         }
-        case "interrupted":
+        case "interrupted": {
+            // ##416：冷读补 closer 时若现场证据能命名（`why`），就不再灌进 unknown 池 ——
+            // 「已识别的不许当 unknown」是 rule.err-triage 的硬口径。**认不出就回落**（SIGKILL / 断电说不出口）。
+            const code = codeOfInterruptedWhy(r.data.why);
+            if (code === "agent/app-restart") {
+                return {
+                    triage: "external-recognized",
+                    code,
+                    reason: `进程收到退出信号后退出/重启（${r.data.why}）：本轮随之中断`,
+                };
+            }
+            if (code === "agent/app-crash") {
+                return {
+                    triage: "external-recognized",
+                    code,
+                    reason: `进程异常退出（${r.data.why}）：本轮随之中断`,
+                };
+            }
             return { triage: "external-unknown", code: "agent/interrupted", reason: "流中断 / 崩溃恢复：未跑完的兜底" };
+        }
         case "error": {
             if (r.data.source === "budget") {
                 return { triage: "external-recognized", code: "llm/budget-exceeded", reason: "本轮金额/用量预算到上限" };

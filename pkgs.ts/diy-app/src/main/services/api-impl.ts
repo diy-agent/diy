@@ -43,6 +43,7 @@ import { setWriteErrorHook } from "../core/atomic-write";
 import { collectInstances, focusInstance, renderInstanceList, selfReport } from "./instances";
 import { revealSelf, windowState } from "./window-ops";
 import { shortName } from "../../shared/room";
+import { jobList, jobShow } from "./job-view";
 
 /**
  * 实际 RPC 监听端口，由入口在绑定完成后回填。
@@ -1125,6 +1126,28 @@ export function bindAppHandlers(binding: ServerBinding): void {
   });
 
   // ── traffic（流量观测；见 core/traffic.ts）──
+  binding.on(app.job.ls, async ({ input }) => ({
+    status: "ok",
+    data: await jobList({
+      ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      includeLive: input.live !== false,
+    }),
+  }));
+  binding.on(app.job.show, async ({ input }) => {
+    try {
+      const view = await jobShow(input.id, {
+        sample: input.sample === true,
+        ...(input.tail !== undefined ? { tailBytes: input.tail } : {}),
+      });
+      if (view.runs.length === 0 && !view.live) {
+        return { status: "error", msg: `没有这条 job：${input.id}（diy job ls 看有哪些）` };
+      }
+      return { status: "ok", data: view };
+    } catch (e) {
+      return { status: "error", msg: e instanceof Error ? e.message : String(e) };
+    }
+  });
+
   binding.on(app.traffic.snapshot, async ({ input }) => traffic.snapshot(input.withRecords ?? true));
   binding.on(app.traffic.clear, async () => {
     traffic.clear();

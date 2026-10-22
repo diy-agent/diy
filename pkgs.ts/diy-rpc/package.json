@@ -1,6 +1,6 @@
 {
   "name": "@diy-agent/rpc",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "diy RPC 协议内核：三层（Envelope 传输抽象 / Raw Client·Server / 声明式 RPC）+ http / ws / electron / CLI 四种传输绑定",
   "license": "MIT",
   "repository": {
@@ -22,7 +22,6 @@
   },
   "files": ["src/"],
   "dependencies": {
-    "ws": "^8.21.0",
     "zod": "^4.4.3"
   },
   "peerDependencies": {
@@ -37,8 +36,9 @@
     "@types/ws": "^8.18.1",
     "oxfmt": "^0.57.0",
     "oxlint": "^1.72.0",
-    "typescript": "^6.0.3",
-    "vitest": "^4.1.10"
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10",
+    "ws": "^8.21.0"
   },
   "oxlint": {
     "rules": {

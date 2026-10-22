@@ -36,7 +36,11 @@ export type TurnEndReason =
     // 直接放根因，但要说清「是我方 bug / 已识别外部 / 未识别外部」）。判据唯一出口 =
     // `shared/error-triage.ts::endReasonOf`，文案唯一源 = `shared/turn-end.ts`。
     | { type: "error"; data: { source: string; message: string; code?: string | null; triage?: Triage } } // llm / stream / budget / drive-turn
-    | { type: "interrupted"; data: { code?: string | null; triage?: Triage } };
+    // 崩溃/被杀后冷读补 closer（进程已死，不可能是正常收尾）。两条正交标注并存：
+    // - `code` / `triage`：##393 的三档性质归类（活进程也会写）
+    // - `why` / `evidence`：##416 冷读时按现场证据给出的**可命名原因**（`app-exit:<kind>` / `crash:minidump`），
+    //   语义由 `shared/interrupted-cause.ts::codeOfInterruptedWhy` 派生；**可选**，老记录没有 ⇒ unknown 兜底，不许猜。
+    | { type: "interrupted"; data: { code?: string | null; triage?: Triage; why?: string; evidence?: string } };
 
 export type Op =
     | { op: "start"; id: string; kind: BlockKind; parent?: string | null; meta?: Record<string, JSONVal> }
@@ -181,14 +185,31 @@ export function interruptedToolPatchesOfTurn(store: BlockStore, turnId: string):
  * 为什么 endReason 也在这里补（##288 拍板②）：`interrupted` 是**冷读合成**的 closer ——
  * 进程已死，真相只有一个"没跑完"，与 dsh 在同一位置（turn-end 的 interrupted）取同名。
  * 幂等：已有 `endReason`（正常收尾落过 / 之前已补过）不覆盖。
+ *
+ * `opts.interruptedData`（##416）：调用方按**时间窗口**查现场（`log/app-exit.jsonl` / minidump）
+ * 拿到的可命名原因；本函数保持纯函数（不读盘），查不到就写空 data ⇒ 三档仍归 unknown。
  */
-export function danglingStopPatches(store: BlockStore): Op[] {
+/** 冷读补 `interrupted` 时可选的「现场勘验」回调（##416）—— 纯函数不读盘，IO 留给调用方 */
+export interface InterruptedDataResolver {
+    /** 返回 null = 窗口内没有可命名证据 ⇒ 保持 `data:{}`（三档仍是 unknown，不猜） */
+    (turn: Block): { why: string; evidence?: string } | null;
+}
+
+export function danglingStopPatches(store: BlockStore, opts: { interruptedData?: InterruptedDataResolver } = {}): Op[] {
     const out: Op[] = [];
     const ids = [...store.blocks.values()].filter((b) => !b.stopped).map((b) => b.id);
     for (const id of ids.reverse()) {
         const b = store.blocks.get(id)!;
         if (b.kind === "turn" && b.endReason === undefined) {
-            out.push({ op: "patch", id, fields: { endReason: { type: "interrupted", data: {} } } });
+            // 能命名才命名（##416）：`why` 由调用方按 `log/app-exit.jsonl` / minidump 的**时间窗口**判定，
+            // 查不到就退回空 data —— 与改动前逐字一致，SIGKILL / 断电说不出就是不许猜。
+            const named = opts.interruptedData?.(b) ?? null;
+            const data: { why?: string; evidence?: string } = {};
+            if (named) {
+                data.why = named.why;
+                if (named.evidence) data.evidence = named.evidence;
+            }
+            out.push({ op: "patch", id, fields: { endReason: { type: "interrupted", data } } });
         }
         out.push({ op: "stop", id });
     }

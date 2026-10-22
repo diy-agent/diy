@@ -45,6 +45,7 @@
  */
 
 import type { TurnEndReason } from "../main/services/local-blocks";
+import { isNamedInterruptedWhy } from "./interrupted-cause";
 import type { SessionEntry } from "./registry-frame";
 import { abortText, turnEndText } from "./turn-end";
 
@@ -202,7 +203,10 @@ export function blameOf(end: TurnEndReason | null | undefined): Blame {
                     return "unknown"; // stream 及未来新增的 source：先当"未识别外部"，不冒充 bug
             }
         case "interrupted":
-            return "unknown"; // 崩溃 / 被杀 —— 不预设是我方 bug（可能是外部 kill / 磁盘 / 断电）
+            // 崩溃 / 被杀 —— 不预设是我方 bug（可能是外部 kill / 磁盘 / 断电）。
+            // ##416：冷读补 closer 时若能命名（`why` = 进程重启/崩溃），那就是**已识别的外部环境**；
+            // 认不出仍归 unknown。与 `error-triage.ts::triageOfTurnEnd` 同口径（##394 单一出口）。
+            return isNamedInterruptedWhy(end.data.why) ? "environment" : "unknown";
     }
 }
 

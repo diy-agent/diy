@@ -2516,6 +2516,53 @@ export const apiDef = RpcSchema.router({
         },
       }),
 
+      /**
+       * 后台 job（##408 v1：只有 spawned 型 —— 会话里跑出来的长时命令）：
+       * 定义在哪（哪个任务/轮/工具调用）、跑了多久、怎么结束的、输出尾巴。
+       *
+       * **只读**：本刀不做「运行 / 停用 / 取消」（刀 6 起接），故没有 run/cancel 子命令。
+       */
+      job: RpcSchema.group({
+        desc: `后台 job 可见性（spawned 型：会话里的长时命令；执行账 $DIY_HOME/jobs/）`,
+        children: {
+          ls: RpcSchema.unary({
+            desc: `
+            列出后台 job（执行账 + 进程内活体）。
+
+            返回：runs（按 startedAt 升序的 run 列表）· groups（同一 jobId 折叠，最近跑过的在前）·
+            live（在跑但可能还没落账的）· skippedRows（坏行数）· ledgerFiles（读过的账本数）。
+            `,
+            input: {
+              limit: z.number().optional().cliOption({ desc: "只看最近 N 条 run（缺省全部）" }),
+              live: z
+                .boolean()
+                .optional()
+                .cliOption({ desc: "是否带上进程内活体（缺省 true；--no-live 关掉）" }),
+            },
+            output: z.object({ status: z.string(), data: z.any() }),
+          }),
+          show: RpcSchema.unary({
+            desc: `
+            看一条 job 的详情（接受 **jobId** 或 **runId**）。
+
+            给 jobId ⇒ 该命令的 1:n 时间线；给 runId ⇒ 单条。
+            含 origin（指回 task/turn/step/toolCall ⟶ 可导航）· 输出双视角（live/settle）·
+            droppedBytes（被环丢掉的量）· settle 日志 tail。
+            \`--sample\` 会**真跑** top/ps/lsof 采一份现场（~1s，只在要看时用）。
+            `,
+            input: {
+              id: z.string().cliArg({ desc: "jobId（spawn-<slug>-<hash>）或 runId（r<epoch>-<rand>）" }),
+              sample: z
+                .boolean()
+                .optional()
+                .cliOption({ desc: "采一份现场（真跑 top/ps/lsof，约 1s；缺省不采 —— 查询无副作用）" }),
+              tail: z.number().optional().cliOption({ desc: "日志 tail 的字节上限（缺省 16384）" }),
+            },
+            output: z.object({ status: z.string(), data: z.any() }).or(z.object({ status: z.string(), msg: z.string() })),
+          }),
+        },
+      }),
+
       log: RpcSchema.group({
         desc: `日志`,
         children: {

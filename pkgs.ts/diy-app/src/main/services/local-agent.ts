@@ -86,6 +86,8 @@ import type { TurnGate, TurnGateDecision } from "../../shared/turn-gate";
 import { triageOf, triageOfTurnEnd } from "../../shared/error-triage";
 import { errText } from "../../shared/error-report";
 import { reportError } from "./error-report";
+import { readCauseEvidence } from "./interrupted-cause";
+import { classifyInterruptedCause, turnStartedAtOf } from "../../shared/interrupted-cause";
 import { opsFeed } from "./ops-feed";
 import type { DeliveryOrigin, TurnOrigin } from "../../shared/room";
 // 「模型不可用」通知（##369 ①）：判据在 shared/model-unavailable，通知中心在 model-notice
@@ -174,6 +176,8 @@ import {
 import { renderSummarySection } from "./prompt-registry";
 import { assembleGlobals, systemOverBudget } from "./prompt-registry";
 import { readFileWindow, formatReadOutput, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
+import { countsLabel, formatWriteResult, writeFileWhole, WRITE_MAX_BYTES } from "../core/file-write";
+import { describeEditResult, displayPath, editFile, resolveEditablePath, withFileEditQueue } from "../core/file-edit";
 import { SteerQueue, fileSteerPort } from "../core/steer-queue";
 import { DEFAULT_STEER_MODE, steerModeLabel } from "../../shared/steer-mode";
 import type { SteerItem, SteerMode } from "../core/drafts";
@@ -202,6 +206,8 @@ import { personaByIdOrName, personaForTask } from "../core/persona";
 import { taskTurnGate } from "../core/turn-gate";
 import { ensureReasoningReplay, isDeepSeekWire, type ReasoningReplayOpts } from "./reasoning-replay";
 import { resolveModelKey } from "../core/model-runtime";
+import { spawnedJobs } from "./spawned-jobs";
+import type { RunOutcome } from "../../shared/spawned-job";
 
 // 模型查询函数抽到 shared/models.ts（core 不能被 services 反向依赖，否则循环 import）。
 // 这里**原样 re-export**：历史引用路径（tests/…/local-models-*.test.ts 等）保持不变。
@@ -1051,6 +1057,26 @@ interface BashRun {
     text: string;
     /** 是否应标失败（✗）。判据见 runBash。 */
     failed: boolean;
+    /**
+     * **怎么结束的**（##408 刀 5）：只给 job 账本用，`failed` 仍是工具行 ✓/✗ 的唯一判据
+     * （两件事不同向：超时 / 取消都不画 ✗，但用户在 job 面板要能区分它们）。
+     */
+    outcome: RunOutcome;
+    exitCode?: number;
+    signal?: string;
+}
+
+/**
+ * runBash 的**外部观察口**（##408 刀 5）：只被动接收事实，不影响判据。
+ *
+ * 为什么不做成 return 值的一部分：job 记账是**观测**，命令的成败判据（##332/##353）
+ * 不能因为「记账写没写成」而变化 —— 两条线在 `runBash` 里只有一个接触点就是这里。
+ */
+interface BashRunHooks {
+    /** 子进程起来了（采样 / 诊断要 pid） */
+    onSpawn?(pid: number): void;
+    /** 收到一块输出（stdout / stderr 都算，按到达顺序；已按 buffer 上限裁过） */
+    onChunk?(chunk: Buffer): void;
 }
 
 /**
@@ -1116,10 +1142,17 @@ function killProcessGroup(child: ChildProcess): void {
  *      （cwd 是普通文件 ⇒ ENOTDIR，Node 在 spawn 内直接 throw、**不走 callback**；实测 node 24）。
  *    对照：`read` 的 execute 特意**相反**（读不到就抛），见 buildTools 里 read 的注释。
  */
-function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?: AbortSignal): Promise<BashRun> {
+// 导出给单测：`outcome` 的映射（##408 刀 5）必须能被**真跑**验证，不能只有类型可信。
+export function runBash(
+    command: string,
+    cwd: string,
+    limits: LocalAgentLimits,
+    signal?: AbortSignal,
+    hooks?: BashRunHooks,
+): Promise<BashRun> {
     return new Promise((resolve) => {
         if (signal?.aborted) {
-            resolve({ text: "[已取消]", failed: false });
+            resolve({ text: "[已取消]", failed: false, outcome: "canceled" });
             return;
         }
         /** abort 补刀的注销器（settle 时解绑，避免监听器随轮次泄漏） */
@@ -1127,7 +1160,7 @@ function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?
         /** 超时定时器（settle 时清掉） */
         let timeoutId: NodeJS.Timeout | undefined;
         /** 全部结局只在这里落一次（成功 / 各失败档）；'close'/'error'/取消/同步 catch 共用同一判定 */
-        const settle = (err: BashExecError, stdout: string, stderr: string): void => {
+        const settle = (err: BashExecError, stdout: string, stderr: string, sig?: string | null): void => {
             offAbort?.();
             offAbort = undefined;
             if (timeoutId) {
@@ -1137,28 +1170,40 @@ function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?
             const out = [stdout, stderr].filter(Boolean).join("\n");
             // ⚠️ 这里一律返回**完整**文本（不 clip）：发给模型的那一份由 `capToolOutput` 在
             //    投递层现算（##127）—— 在 execute 里裁 = 落进 ops 的原文当场丢。
-            if (err?.name === "AbortError") resolve({ text: "[已取消]", failed: false });
+            //
+            // `outcome` 只给 job 账本（##408 刀 5），**不参与** ✓/✗ 判定（`failed` 的判据见文件头）
+            if (err?.name === "AbortError") resolve({ text: "[已取消]", failed: false, outcome: "canceled" });
             else if (err?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" || err?.code === "ENOBUFS")
                 resolve({
                     text: `[输出超过 ${fmtBytes(BASH_MAX_BUFFER_BYTES)} 上限，命令已终止；以下是已收到的部分]\n${out}`,
                     failed: false,
+                    outcome: "fail",
                 });
             else if (err?.killed)
                 // 带上时长与出路：模型看到「30s 被杀」才会去 nohup / 分批，只写「超时」它会原样重试
                 resolve({
                     text: `[命令超时被杀]（超过 ${fmtTimeout(limits.bashTimeoutMs)}，可用 DIY_LOCAL_BASH_TIMEOUT_MS 调整；长任务请后台跑 + 取增量日志）\n${out}`,
                     failed: false,
+                    outcome: "timeout",
+                    ...(sig ? { signal: sig } : {}),
                 });
             else if (typeof err?.code === "number")
                 // 命令级非零退出（##353）：有 stderr = 失败，无 stderr = 查询未命中（数据）
-                resolve({ text: `[退出码 ${err.code}]\n${out || "(无输出)"}`, failed: stderr.trim().length > 0 });
+                resolve({
+                    text: `[退出码 ${err.code}]\n${out || "(无输出)"}`,
+                    failed: stderr.trim().length > 0,
+                    outcome: err.code === 0 ? "ok" : "fail",
+                    exitCode: err.code,
+                    ...(sig ? { signal: sig } : {}),
+                });
             else if (err)
                 // spawn / IO 失败（##332 ③）：命令**根本没跑起来** —— 失败档（execute 据此抛错）
                 resolve({
                     text: `[命令未能启动 ${typeof err.code === "string" ? err.code : "?"}] ${err.message ?? ""}（工作目录：${cwd}）${out ? `\n${out}` : ""}`,
                     failed: true,
+                    outcome: "fail",
                 });
-            else resolve({ text: out || "(无输出)", failed: false });
+            else resolve({ text: out || "(无输出)", failed: false, outcome: "ok", exitCode: 0 });
         };
         try {
             // ⚠️ 为什么不用 execFile（##375 实测，别改回去）：`execFile` 把选项**白名单**转发给
@@ -1169,6 +1214,7 @@ function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?
             //    execFile 原本代劳的那几件事（攒输出 / maxBuffer / 超时 / 错误形状）——
             //    形状与 execFile **逐字段同构**，判据仍只有 settle 那一处。
             const child = spawn("/bin/bash", ["-c", command], { cwd, detached: true });
+            if (child.pid !== undefined) hooks?.onSpawn?.(child.pid);
             // 输出按**块**攒（不逐块拼字符串）：上限判据只要长度计数，逐块 `byteLength` 是 O(n²)
             const chunks = { out: [] as Buffer[], err: [] as Buffer[] };
             const len = { out: 0, err: 0 };
@@ -1180,14 +1226,17 @@ function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?
             const finish = (err: BashExecError, o: string, e: string): void => {
                 if (done) return; // settle 内部（唯一落点）负责解绑 abort 监听与超时定时器
                 done = true;
-                settle(err, o, e);
+                settle(err, o, e, child.signalCode);
             };
             /** 攒输出 + 上限（与 execFile 同口径：stdout / stderr **各算各的**，超了即杀、留已收到的部分） */
             const onData = (chunk: Buffer, side: "out" | "err"): void => {
                 if (done) return;
                 const keep = BASH_MAX_BUFFER_BYTES - len[side];
-                chunks[side].push(keep >= chunk.length ? chunk : chunk.subarray(0, keep));
-                len[side] += Math.min(chunk.length, keep);
+                const taken = keep >= chunk.length ? chunk : chunk.subarray(0, keep);
+                chunks[side].push(taken);
+                len[side] += taken.length;
+                // job 输出环（##408 刀 5）：喂**真实收到**的字节（超上限那部分本就没进内存）
+                if (taken.length > 0) hooks?.onChunk?.(taken);
                 if (len[side] < BASH_MAX_BUFFER_BYTES) return;
                 killed = true;
                 killProcessGroup(child); // 溢出也杀整组（原先 execFile 只杀直接子进程）
@@ -1230,7 +1279,19 @@ function runBash(command: string, cwd: string, limits: LocalAgentLimits, signal?
     });
 }
 
-export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: string) {
+/**
+ * 工具执行时的**轮内锚点**（##408 刀 5）：bash 起的后台 job 要能指回「哪一轮哪一步哪个工具调用」。
+ *
+ * 为什么用 getter 而不是值：一轮里会跑多步，`stepId` 在流中会变（见 `_s<N>` 的生成点），
+ * 而 tools 只构建一次 —— 传值等于把第一步的 id 焊死在后面所有步上。
+ */
+export interface TurnToolAnchor {
+    readonly turnId: string;
+    /** 当前步 id（`<turnId>_s<N>`；首批 = turnId） */
+    stepId(): string;
+}
+
+export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: string, anchor?: TurnToolAnchor) {
     return {
         bash: tool({
             description: "在项目目录执行 bash 命令并返回输出（查文件、跑命令、看系统信息）。",
@@ -1252,12 +1313,39 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                 // 现仅保留 write-ahead 审计：先落盘再执行，保证最后一幕不丢
                 appendAudit(home, { phase: "bash-start", taskUri, cwd, command });
                 const t0 = Date.now();
-                const run = await runBash(
-                    command,
-                    cwd,
-                    limits,
-                    (opts as { abortSignal?: AbortSignal } | undefined)?.abortSignal,
-                );
+                const execOpts = opts as { abortSignal?: AbortSignal; toolCallId?: string } | undefined;
+                // ── spawned job 登记（##408 刀 5）──
+                // 三条缺一不可：有轮内锚点（预览/仿真路径没有）、有 toolCallId（origin 的定位键）、
+                // 有 taskUri。缺任何一条就不登记 —— 宁可没有 job，也不落一条**指不回去**的账。
+                const job =
+                    anchor && execOpts?.toolCallId
+                        ? spawnedJobs.begin({
+                              taskUri,
+                              turnId: anchor.turnId,
+                              stepId: anchor.stepId(),
+                              toolCallId: execOpts.toolCallId,
+                              cmd: command,
+                              cwd,
+                          })
+                        : null;
+                const run = await runBash(command, cwd, limits, execOpts?.abortSignal, job
+                    ? { onSpawn: (pid) => job.setPid(pid), onChunk: (chunk) => job.noteOutput(chunk) }
+                    : undefined);
+                if (job) {
+                    // 记账是观测：**任何**失败都不许冒到工具结果（命令已经跑完了）
+                    try {
+                        await job.finish({
+                            outcome: run.outcome,
+                            ...(run.exitCode !== undefined ? { exitCode: run.exitCode } : {}),
+                            ...(run.signal !== undefined ? { signal: run.signal } : {}),
+                            ...(run.outcome !== "ok" ? { error: clip(run.text, 400) } : {}),
+                        });
+                    } catch (e) {
+                        console.warn("[local-agent] job 收口失败:", e);
+                    } finally {
+                        spawnedJobs.noteFinished(job);
+                    }
+                }
                 appendAudit(home, {
                     phase: "bash-end",
                     taskUri,
@@ -1306,6 +1394,113 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                     //   read 则「读不到就是失败」：目标文件不存在没有"信息"可给，只有"这一步没做成"。
                     //   ⚠️「bash.execute 现在会抛」≠「它见错就抛」—— 判据细节全在 runBash 头注。
                     throw new Error(`[读取失败] ${e instanceof Error ? e.message : e}`);
+                }
+            },
+        }),
+        /**
+         * `write` —— 整文件写（##414）。
+         *
+         * 为什么要有：没有它时所有写文件都靠 bash（heredoc / python / sed），转义易错、
+         * 无 diff 反馈、无路径护栏、审计粒度只有一条命令行。
+         * 实现全在 core/file-write.ts（路径护栏 / 上限 / BOM / diff 摘要只有一份）——
+         * ##415 的 edit 会复用同一套，别在本文件里另写。
+         */
+        write: tool({
+            description:
+                "整文件写入（新建或覆盖；相对路径按项目目录解析）。" +
+                `**父目录不存在会自动创建**（mkdir -p），这不是错误。` +
+                `护栏：路径必须落在项目目录内（越界报 fs/path-escape）；content 上限 ${Math.round(WRITE_MAX_BYTES / 1024)}KB（报 fs/content-too-large）；` +
+                "目标是目录报 fs/is-directory。UTF-8 原样写：行尾不转换，原文件有 BOM 会保留。" +
+                "返回 `+N/-M 行` 与 unified diff 摘要。改几行不要用本工具重写整个文件。",
+            inputSchema: z.object({
+                path: z.string().describe("文件路径（相对项目目录解析）"),
+                content: z.string().describe("完整文件内容（UTF-8 文本；原样写入，不做转义处理）"),
+            }),
+            execute: async ({ path: filePath, content }) => {
+                const home = diyHome();
+                // **抛，不 return**（##414 / 与 read 的 ##329 同口径）：失败是工具错误（UI ✗ 且自动展开），
+                // 不是「正常结果里写一句失败」—— 后者会被画成 ✓。
+                const r = writeFileWhole(cwd, filePath, content);
+                appendAudit(home, {
+                    phase: "file-write",
+                    taskUri,
+                    cwd,
+                    command: filePath,
+                    result: countsLabel(r),
+                });
+                return formatWriteResult(r);
+            },
+        }),
+        /**
+         * `edit` —— **局部替换**（##415）。存在的唯一理由：改 3 行不该重写整个文件。
+         *
+         * 与 `write` 的分工：write 负责「整份文件是什么」，edit 负责「把这几处换成那几处」。
+         * 匹配 / 归一 / diff 全在 core/file-edit.ts（纯函数、可单测）；这里只管 I/O：
+         *   路径护栏 → 同文件队列 → 读改写 → 审计 → 抛错（不 return 失败）。
+         * 路径护栏 / 错误类 / diff 生成**与 write 共用一份**（`core/file-write.ts` +
+         * `core/unified-diff.ts`，##266 review2 去重）；本文件只做 I/O 与审计。
+         */
+        edit: tool({
+            description:
+                "对**单个已存在的文件**做局部替换（不要为了改几行就重写整个文件，那是 write 的事）。" +
+                "edits 是**有序**的：后一条基于前一条的结果匹配。每条 oldText 必须逐字来自文件且**唯一命中**" +
+                "（命中多处会报错并给出次数；确实要全改就传 replaceAll: true）。" +
+                "精确匹配失败时会做字符归一（全角/半角、弯直引号、行尾空白）再试，命中后在返回里**明确说明**用了归一；" +
+                "未命中的行逐字保留。返回 unified patch。",
+            inputSchema: z.object({
+                path: z.string().describe("目标文件路径（相对项目目录或绝对路径，必须在项目目录内）"),
+                edits: z
+                    .array(
+                        z.object({
+                            oldText: z
+                                .string()
+                                .describe("要替换的原文（逐字来自文件；必须唯一命中，除非 replaceAll: true）"),
+                            newText: z.string().describe("替换成什么（空串 = 删除这段原文）"),
+                            replaceAll: z.boolean().optional().describe("允许替换全部命中（缺省 false = 必须唯一）"),
+                        }),
+                    )
+                    .describe("有序的替换列表：后一条基于前一条的结果匹配"),
+            }),
+            execute: async ({ path: filePath, edits }) => {
+                const home = diyHome();
+                const abs = resolveEditablePath(cwd, filePath);
+                const label = displayPath(cwd, abs);
+                const t0 = Date.now();
+                // 写前审计：与 bash 同一口径（先落盘再执行，保证最后一幕不丢）
+                appendAudit(home, {
+                    phase: "file-edit-start",
+                    taskUri,
+                    cwd,
+                    path: label,
+                    result: `${edits.length} 条 edits`,
+                });
+                try {
+                    return await withFileEditQueue(abs, () => {
+                        const r = editFile(abs, label, edits, (p, c) => writeFileAtomic(p, c));
+                        const text = describeEditResult(label, r);
+                        appendAudit(home, {
+                            phase: "file-edit-end",
+                            taskUri,
+                            cwd,
+                            path: label,
+                            ms: Date.now() - t0,
+                            result: clip(text, 500),
+                        });
+                        // 返回「摘要 + unified patch」：摘要给模型确认命中/归一，patch 给人看改了什么
+                        return r.patch === "" ? text : `${text}\n\n${r.patch}`;
+                    });
+                } catch (e) {
+                    // **抛，不 return**（与 read / bash 同口径）：失败必须是 tool-error，
+                    // 否则 UI 画 ✓ 且不展开。这里只补一条审计，错误原样上抛（带 fs/ code）。
+                    appendAudit(home, {
+                        phase: "file-edit-end",
+                        taskUri,
+                        cwd,
+                        path: label,
+                        ms: Date.now() - t0,
+                        result: `失败：${clip(e instanceof Error ? e.message : String(e), 300)}`,
+                    });
+                    throw e;
                 }
             },
         }),
@@ -1827,8 +2022,40 @@ export class LocalAgentManager {
      * （chat() 开场，兜住"进程活着但上一轮没闭合"）—— 自愈原先只挂在加载（每进程一次），
      * 于是开口轮能一直挂到主进程重启：生产实测跨 9 轮、挂了 6 天。
      */
-    private healResidualOps(s: LocalSession): Op[] {
-        return [...interruptedToolPatches(s.store), ...danglingStopPatches(s.store)];
+    private healResidualOps(taskUri: string, s: LocalSession): Op[] {
+        // 现场勘验（##416）：一个开口轮怎么没跑完，先按**时间窗口**查 `log/app-exit.jsonl` 与 minidump。
+        // 每批读一次（量级是「每天几条」），查不到就 null ⇒ `danglingStopPatches` 退回空 data，
+        // 三档仍归 unknown（SIGKILL / 断电说不出口，不许猜）。
+        const evidence = readCauseEvidence(diyHome());
+        const now = Date.now();
+        return [
+            ...interruptedToolPatches(s.store),
+            ...danglingStopPatches(s.store, {
+                interruptedData: (turn) => {
+                    const since = turnStartedAtOf(turn.id);
+                    if (since == null) return null; // 没有窗口下界 ⇒ 不判（会把几天前的退出算进来）
+                    const cause = classifyInterruptedCause(since, now, evidence);
+                    if (!cause) return null;
+                    // 落盘（##411 reportError）：同一判定留一条，ctx 带 taskUri / turnId / why / 证据路径
+                    // —— 用户面仍只是一句话（`turnEndText`），细节在这里可回溯。
+                    reportError(
+                        Object.assign(new Error(`本轮未完成：${cause.why}`), {
+                            name: "TurnInterrupted",
+                            code: cause.code,
+                        }),
+                        {
+                            where: "agent/turn-interrupted",
+                            taskUri,
+                            turnId: turn.id,
+                            why: cause.why,
+                            evidence: cause.evidence,
+                            evidenceAt: new Date(cause.at).toISOString(),
+                        },
+                    );
+                    return { why: cause.why, evidence: cause.evidence };
+                },
+            }),
+        ];
     }
 
     private convergeOnLoad(taskUri: string, s: LocalSession): void {
@@ -1836,7 +2063,7 @@ export class LocalAgentManager {
         const sink = this.opsSink(taskUri);
         // 先补 tool 的业务终态（patch + stop），再补剩余结构开口（stop）—— 前者已 stop 的块
         // 不会被后者重复处理（danglingStopPatches 只挑未 stop 的）。
-        for (const op of this.healResidualOps(s)) {
+        for (const op of this.healResidualOps(taskUri, s)) {
             sink(op);
             s.store.apply(op);
         }
@@ -3217,7 +3444,7 @@ export class LocalAgentManager {
             // 开口 turn 跨越 9 轮、挂了 6 天）。此刻 sess.running 已由上方互斥守卫保证为空 ——
             // 上一轮真在跑的话新消息连这个函数都进不来 —— 所以未 stop 的块必是残留
             // （崩溃 / 被杀 / 轮次被中途 abort）。
-            for (const op of this.healResidualOps(sess)) {
+            for (const op of this.healResidualOps(taskUri, sess)) {
                 sink(op);
                 sess.store.apply(op);
                 publish(op);
@@ -3864,7 +4091,7 @@ export class LocalAgentManager {
             // 真发 tools 只构建一次（raw dump / 构成字节 / streamText 共用）；
             // 构成字节 = 环形构成卡与构成报表的数据源（system 容器精确字节 + tools JSON 字节，
             // 消息段由账本每步 prompt 减法导出 —— 见 shared/usage StepUsageRecord.contextParts）。
-            const tools = buildTools(cwd, L, taskUri);
+            const tools = buildTools(cwd, L, taskUri, { turnId, stepId: () => stepId });
             const ctxParts = {
                 systemBytes: delivery.system.bytes,
                 toolsBytes: JSON.stringify(tools).length,
