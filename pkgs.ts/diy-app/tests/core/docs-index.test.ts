@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildDocsIndex } from "../../src/main/services/docs-index";
+import { buildDocsIndex, summarizeDocsIndex } from "../../src/main/services/docs-index";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -102,5 +102,30 @@ describe("buildDocsIndex", () => {
         const idx = buildDocsIndex({ root, roots: ["docs"] });
         expect(idx?.roots).toEqual(["docs"]);
         expect(idx?.entries.map((e) => e.path).sort()).toEqual(["docs/a.md", "docs/plans/b.md"]);
+    });
+});
+
+describe("summarizeDocsIndex：变量树只给摘要（每轮成本见 shared/docs.ts 头注）", () => {
+    it("没有索引 / 空索引 ⇒ null（整节缺席，不留空对象）", () => {
+        expect(summarizeDocsIndex(null)).toBeNull();
+        expect(summarizeDocsIndex({ roots: ["docs/plans"], entries: [] })).toBeNull();
+    });
+
+    it("给根 + 篇数 + 最新改动日，不带逐篇条目", () => {
+        const s = summarizeDocsIndex({
+            roots: ["docs/plans"],
+            entries: [
+                { path: "docs/plans/a.md", title: "A", size: 1, touched: "26-07-19" },
+                { path: "docs/plans/b.md", title: "B", size: 2, touched: "26-10-21", docDate: "26-10-01" },
+            ],
+        });
+        expect(s).toEqual({ roots: ["docs/plans"], count: 2, newest: "26-10-21" });
+        // 关键判据：摘要里**没有** entries 这类逐篇字段（放进去就等于每轮付全量索引的字节）
+        expect(Object.keys(s!).sort()).toEqual(["count", "newest", "roots"]);
+    });
+
+    it("全都没 touched（非 git）⇒ newest 缺席，不是空串", () => {
+        const s = summarizeDocsIndex({ roots: ["docs"], entries: [{ path: "docs/a.md", title: "A", size: 0 }] });
+        expect(s).toEqual({ roots: ["docs"], count: 1 });
     });
 });

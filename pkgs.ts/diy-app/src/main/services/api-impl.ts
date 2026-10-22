@@ -19,12 +19,13 @@ import { refreshModelRuntime } from "../core/model-runtime";
 import { hasConversation } from "../core/local-paths";
 import { autoSeedEnabled, seedHome } from "../core/seed";
 import { platform, arch, release, totalmem, freemem } from "node:os";
-import { currentGitBranch, homeDisplayOf, repoDisplayOf } from "../core/instance-identity";
+import { currentGitBranch, findRepoRoot, homeDisplayOf, repoDisplayOf } from "../core/instance-identity";
 import { readRuntimeConfig } from "../../runtime";
 import * as health from "./health";
 import { apiDef } from "./api-def";
 import * as factsStore from "./facts-store";
 import * as journalStore from "./journal-store";
+import { buildDocsIndex, DEFAULT_DOCS_ROOTS } from "./docs-index";
 import { TaskDetailSchema } from "../../shared/task-detail";
 import { noteRendererTouch } from "./runtime-context";
 import type { ToolResultMode } from "../../shared/context/compaction";
@@ -1468,6 +1469,24 @@ export function bindAppHandlers(binding: ServerBinding): void {
       .catch((e: unknown) => queue.push({ kind: "stop", reason: "turn-error", message: e instanceof Error ? e.message : String(e) }))
       .finally(() => queue.close());
     for await (const frame of queue) yield JSON.stringify(frame);
+  });
+
+  // ── docs（##404 #3：仓库文档索引；变量树只放摘要，逐篇按需在这里取）──
+  binding.on(app.docs.index, async ({ input }) => {
+    const roots = input.roots === undefined
+      ? undefined
+      : input.roots.split(",").map((s) => s.trim()).filter((s) => s !== "");
+    // 缺省根 = **app 进程 cwd 向上找到的仓库根**（不是 process.cwd() 本身）：
+    // app 进程的 cwd 是包目录（`pkgs.ts/diy-app`），直接拿它扫 `docs/plans` 永远是空。
+    // 这也解释了为什么必须显式传 `--dir` 或依赖上溯 —— CLI 敲命令的 cwd 到不了这里。
+    const idx = buildDocsIndex({
+      root: input.dir ?? findRepoRoot(process.cwd()) ?? process.cwd(),
+      ...(roots === undefined ? {} : { roots }),
+      ...(input.max === undefined ? {} : { maxEntries: input.max }),
+    });
+    // 没有文档 = 空索引（不是 null）：CLI 的返回形状要稳定，空 = "这个根下没扫到"，
+    // 与"变量树里整节缺席"是两件事（后者是上下文层的纪律）。
+    return idx ?? { roots: roots ?? [...DEFAULT_DOCS_ROOTS], entries: [] };
   });
 
   // ── facts（##404：项目级事实库；agent 只经 RPC 读写，不碰 YAML）──

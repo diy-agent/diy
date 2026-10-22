@@ -229,39 +229,24 @@ export const AssembleGlobalsSchema = z.object({
     .optional()
     .describe("知识库索引（没有库时整节缺席）"),
   /**
-   * **仓库文档索引**（##404 / ##5 第 11 轮 B）：`docs/` 是设计的活真源，但它不在任何
-   * AGENTS.md 链上 —— 不列出来，agent 就不知道有哪些设计稿、哪篇还活着。
+   * **仓库文档索引（摘要）**（##404 / ##5 第 11 轮 B）：`docs/` 是设计的活真源，但它不在任何
+   * AGENTS.md 链上 —— 只给一句"有这些、怎么查"，agent 才知道去 `diy docs index` 看全表。
    *
-   * 为什么只给索引、不给正文：18 篇 100+ KB，全量注入不可能；"迁进 facts" 也不该是唯一
-   * 出路（设计稿的正文要**按需读**，索引才有意义）。一行一篇：路径 + 标题 + 字节 + 状态词 + 日期。
-   *
-   * 为什么两个日期都给：`docDate` 是文档**自述**日期（文件名 / 标题里），`touched` 是 git
-   * 最后改动日。实测一批计划的 git 日期全被一次全局重排刷成同一天，而它们自述更早 ——
-   * **不一致本身就是信号**（"文档说 7-10，实际 7-19 改过"）。只信 git 会得出假结论。
+   * 为什么变量树里**只有摘要**、逐篇条目归 CLI：实测逐篇 18 行 ≈ 2 KB/轮，全仓所有任务都付；
+   * 而"有哪些文档"是一次性好奇，不是每轮必需。按需 query 一次比每轮常驻更划算
+   * （判据与账在 `shared/docs.ts` 头注）。这也是它与 `kb` 的差别：kb 主题数有限且稳定，
+   * docs 的篇数随开发线性增长 —— 常驻那份必然越活越贵。
    *
    * 缺席（`undefined`）= 这个仓库没有可索引的文档 ⇒ 与未接入前逐字不变。
    */
   docs: z
     .object({
-      roots: z.array(z.string()).describe("扫描根（仓库相对）：缺省只有 `docs/plans`（设计稿正区），可扩到 `docs`"),
-      entries: z
-        .array(
-          z.object({
-            path: z.string().describe("仓库相对路径 —— 读它就 `cat <path>`（cwd 即仓库根）"),
-            title: z.string().describe("首个 `# ` 标题（去掉尾部日期括注），缺失写 `(无 H1)`"),
-            size: z.number().describe("字节数的 KB 取整（0 = 小于 1 KB）"),
-            docDate: z.string().optional().describe("文档**自述**日期（`YY-MM-DD`，取自文件名 / 标题）。与 `touched` 不一致 = 值得点开看看"),
-            touched: z.string().optional().describe("git 最后一次改动日（`YY-MM-DD`）；非 git 仓库 / 未提交过则缺席"),
-            status: z
-              .string()
-              .optional()
-              .describe("开篇引用块里的「状态：…」（启发式，≤20 字）。**抽不到就不给** —— 编出来的状态比没有更坏"),
-          }),
-        )
-        .describe("按路径排序的文档索引"),
+      roots: z.array(z.string()).describe("扫描根（仓库相对）：缺省只有 `docs/plans`（设计稿正区），可 `--roots` 扩到 `docs`"),
+      count: z.number().describe("可索引篇数"),
+      newest: z.string().optional().describe("全部文档里最新的 git 改动日（`YY-MM-DD`）；非 git / 未提交则缺席"),
     })
     .optional()
-    .describe("仓库文档索引（没有文档时整节缺席）"),
+    .describe("仓库文档索引**摘要**（没有文档时整节缺席）。逐篇索引（路径 / 标题 / 字节 / 状态词 / 两日期）按需取：`diy docs index`"),
   room: z
     .object({
       members: z

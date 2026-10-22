@@ -22,6 +22,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
+import type { DocsEntry, DocsIndex, DocsSummary } from "../../shared/docs";
 
 /** 缺省只扫 `docs/plans`（设计稿正区）。全 `docs/` 实测 ~2 KB，占预算且含已完成的手册类文档 */
 export const DEFAULT_DOCS_ROOTS: readonly string[] = ["docs/plans"];
@@ -32,27 +33,7 @@ const STATUS_MAX = 20;
 /** 状态词只在开篇这么多行里找（引用块 = 摘要区，写在正文深处的不是"这篇的现状"） */
 const STATUS_SCAN_LINES = 14;
 
-export interface DocsEntry {
-    /** 仓库相对路径（`docs/plans/2026-09-22-agent-event-protocol.md`） */
-    path: string;
-    /** 首个 `# ` 标题（去掉尾部日期括注），缺失 = `(无 H1)` */
-    title: string;
-    /** 字节数（渲染成 `19K` 是展示层的事） */
-    size: number;
-    /** 文档自述日期（`YY-MM-DD`）：取自文件名 / 标题里的日期，没有就不给 */
-    docDate?: string;
-    /** git 最后一次改动日（`YY-MM-DD`）；非 git 仓库 / 未提交过则不给 */
-    touched?: string;
-    /** 状态词（启发式，见头注）；抽不到就不给 */
-    status?: string;
-}
-
-export interface DocsIndex {
-    /** 实际扫过的根（仓库相对，给人看懂"这一节覆盖到哪"） */
-    roots: string[];
-    /** 按路径排序；`null` 表示这个仓库没有可索引的文档 */
-    entries: DocsEntry[];
-}
+export type { DocsEntry, DocsIndex, DocsSummary } from "../../shared/docs";
 
 export interface BuildDocsIndexOptions {
     /** 仓库根（绝对路径） */
@@ -179,4 +160,16 @@ function statusOf(text: string): string {
 function clip(s: string, max: number): string {
     const arr = [...s];
     return arr.length <= max ? s : `${arr.slice(0, max).join("")}…`;
+}
+
+/**
+ * 索引 → 变量树里的**摘要**（每轮上下文只给这一小块，见 shared/docs.ts 头注）。
+ * `null`（没有文档）→ `null`：整节缺席，不留空对象。
+ */
+export function summarizeDocsIndex(index: DocsIndex | null): DocsSummary | null {
+    if (index === null || index.entries.length === 0) return null;
+    const days = index.entries.map((e) => e.touched).filter((d): d is string => typeof d === "string");
+    const summary: DocsSummary = { roots: index.roots, count: index.entries.length };
+    if (days.length > 0) summary.newest = days.sort().at(-1)!;
+    return summary;
 }

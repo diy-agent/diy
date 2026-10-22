@@ -41,7 +41,7 @@ import { LOG_DIR_REL, dayFile } from "../core/traffic-log";
 // 契约类型唯一源（shared/prompt-schema.ts，纯 zod）——renderer 也用它，避免手抄第二份
 import type { AssembledSystem, PromptEntry } from "../../shared/prompt-schema";
 import { buildFactsContext, buildKbIndex } from "./facts-context";
-import { buildDocsIndex } from "./docs-index";
+import { buildDocsIndex, summarizeDocsIndex } from "./docs-index";
 
 export type { AssembledSystem, PromptEntry };
 
@@ -660,7 +660,9 @@ export function assembleGlobals(
   const kbValue = buildKbIndex();
   // 仓库文档索引（##5 第 11 轮 B）：真源是**仓库文件树**（`docs/plans`），故要仓库根；
   // 没有项目路径（任务不在仓库里）⇒ 整节缺席，与未接入前逐字不变。
-  const docsValue = repoRoot === undefined ? null : buildDocsIndex({ root: repoRoot });
+  // 变量树里只放**摘要**（根 / 篇数 / 最新改动日）；逐篇条目归 `diy docs index`（按需取）——
+  // 逐篇 18 行 ≈ 2 KB/轮 vs "一次性好奇"，账见 shared/docs.ts 头注。
+  const docsValue = repoRoot === undefined ? null : summarizeDocsIndex(buildDocsIndex({ root: repoRoot }));
   return {
     ...core,
     // 房间上下文（##377 第 26 刀）：**只在有房间时出现**（缺这个键 = 单人任务逐字不变）。
