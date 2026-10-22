@@ -82,8 +82,8 @@ export function refreshModelsOnStartup(deps: StartupRefreshDeps = {}): () => voi
     }
 
     let cancelled = false;
-    const handle = timer.setTimeout(() => void run(), Math.max(0, Number.isFinite(delay) ? delay : DEFAULT_STARTUP_DELAY_MS));
-
+    // `run` 必须在 `setTimeout` **之前**声明：同步触发的 fake timer（单测）会在事件循环之前就调用它，
+    // 声明在后面 = 命中 TDZ 的 ReferenceError（真 timer 侥幸没事，纯属调度延迟掩盖）。
     const run = async (): Promise<void> => {
         if (cancelled) return;
         try {
@@ -104,6 +104,11 @@ export function refreshModelsOnStartup(deps: StartupRefreshDeps = {}): () => voi
             warn(`[models-sync] 启动刷新异常（忽略）：${e instanceof Error ? e.message : String(e)}`);
         }
     };
+
+    const handle = timer.setTimeout(
+        () => void run(),
+        Math.max(0, Number.isFinite(delay) ? delay : DEFAULT_STARTUP_DELAY_MS),
+    );
 
     return () => {
         cancelled = true;

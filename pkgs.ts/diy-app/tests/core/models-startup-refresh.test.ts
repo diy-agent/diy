@@ -105,6 +105,32 @@ describe("refreshModelsOnStartup", () => {
         expect(warns.join("\n")).toMatch(/boom/);
     });
 
+    it("同步触发的 timer 也不炸（run 的声明必须先于 setTimeout，否则 TDZ ReferenceError）", async () => {
+        // 回归：`const run = …` 曾写在 `timer.setTimeout(() => run(), …)` 之后。真 timer 靠调度延迟侥幸躲过，
+        // 同步触发（fake timer 立即调用）就会在声明前引用 → ReferenceError 冒出 refreshModelsOnStartup。
+        const syncTimer: StartupTimer = {
+            setTimeout: (fn) => {
+                fn(); // 立刻执行，不给 run 声明「跑完」的机会
+                return 0;
+            },
+            clearTimeout: () => {},
+        };
+        let called = 0;
+        expect(() =>
+            refreshModelsOnStartup({
+                timer: syncTimer,
+                refresh: async () => {
+                    called++;
+                    return okResult(false);
+                },
+                log: () => {},
+                warn: () => {},
+            }),
+        ).not.toThrow();
+        await tick();
+        expect(called).toBe(1);
+    });
+
     it("失败结果不抛、只 warn（不弹窗轰炸的机制侧）", async () => {
         const { timer, timeouts } = fakeTimer();
         const warns: string[] = [];

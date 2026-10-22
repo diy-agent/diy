@@ -182,8 +182,8 @@ export function ModelConfigPage(props: {
   };
   /**
    * 模型目录刷新（##385 §3.3）：**常规入口**（顶栏 bar 不一定在屏幕上，所以这里必须有）。
-   * 成功后重读视图 —— snapshot 变了，provider 目录 / 价格 / 可用模型都可能变；
-   * 无 diff 时 `reload` 也照跑（代价一次 RPC，换来「界面与磁盘一致」的确定性）。
+   * **有 diff 才重读视图**：`changed=false` 意为磁盘与界面同源同内容（`diffSnapshot` 已是逐字比较），
+   * 再 `reload` 一次没有收益，只会白花一次 RPC。
    */
   const modelsSync = createModelsSync({
     onDone: (r) => {

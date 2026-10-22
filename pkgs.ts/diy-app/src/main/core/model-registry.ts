@@ -51,10 +51,12 @@ export function invalidateSnapshot(): void {
 }
 
 /**
- * 惰性加载 snapshot（进程内缓存**按文件路径**）：
+ * 惰性加载 snapshot（进程内缓存**按文件路径**，判据只看路径、不看 mtime —— 读侧不为此多做 stat）：
  *   · 同一路径 → 只解析一次（4MB / 6000+ 模型，热路径不能每次解析）；
- *   · 路径变了 → 重读 —— 这是「手工把快照放进 `$DIY_HOME/data/`」与「应用内刷新」都无需重启
- *     就生效的机制（##385；判据只看路径，不看 mtime：读侧不为此多做 stat）。
+ *   · 路径变了 → 重读。**注意这是「路径变了才重读」，不是「文件变了就重读」**：
+ *     · 应用内刷新（`refreshAndApply`）写盘后**会调 `invalidateSnapshot()`** ⇒ 同路径覆盖也立即生效；
+ *     · 手工往 `$DIY_HOME/data/` 放快照：**该文件原先不存在**（路径从源树/ bundle 切到 `$DIY_HOME`）
+ *       时天然生效；**原先已存在再手工覆盖**则要重启，或走一次 `diy llmConfig syncModels`（它自带失效）。
  */
 function snapshot(): Record<string, SpecProvider> {
     const path = dataFileOrThrow(MODELS_DEV_FILE);

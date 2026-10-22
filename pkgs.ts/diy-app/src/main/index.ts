@@ -48,7 +48,7 @@ import { SINGLETON_LOCK, classifyLock, lockAdvice, readLock } from "./core/singl
 // window-ops 让 RPC 层能请出本实例窗口而不 import Electron（serve 模式不注入 ⇒ 如实报「无窗口」）。
 import { dropSelfRecord, setSelfPort, writeSelfRecord } from "./services/instances";
 import { setWindowOps } from "./services/window-ops";
-import { refreshModelsOnStartup } from "./services/models-startup-refresh";
+import { refreshModelsOnStartup, startupRefreshEnabled } from "./services/models-startup-refresh";
 import type { InstanceSelf, RevealResult } from "../shared/instance-row";
 
 // Chromium 开关必须走 app.commandLine（ready 之前），跟在 app 路径后传 argv 无效。
@@ -420,8 +420,10 @@ app.whenReady().then(async () => {
   // 模型目录刷新（##385 §3.2 的一半）：**启动后一次**，后台不阻塞（延迟 15s 让窗口先出来）。
   // 定时（24h）与 job 可见性归 ##408 —— 这里只调用 `core/models-sync.ts::refreshModelsOnce` 那一次 tick。
   // test 变体一律不起 —— 自动化测试不该发外部请求（真抓取的行为由单测 + 意图测试的本地源覆盖）。
+  // ⚠️ 两个条件必须**叠加**（不是二选一）：`enabled` 一传进来，`refreshModelsOnStartup` 就不再读
+  //   `DIY_MODELS_STARTUP_REFRESH` —— 只写 `env !== "test"` 会让该环境变量的「关」在 prod/lab 失效。
   cancelModelsStartupRefresh = refreshModelsOnStartup({
-    enabled: readRuntimeConfig().env !== "test",
+    enabled: readRuntimeConfig().env !== "test" && startupRefreshEnabled(),
   });
 
   const ok = await startRpcPort(ipcTransport);

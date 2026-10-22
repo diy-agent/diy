@@ -138,7 +138,9 @@ export function diffSnapshot(prev: Record<string, SpecProvider> | null, next: Re
     let removedModels = 0;
     for (const k of prevModels) if (!nextModels.has(k)) removedModels++;
     return {
-        // 逐字比较：上游改个价、改个 context 上限都算变化（这正是刷新要落盘的理由）
+        // 逐字比较：上游改个价、改个 context 上限都算变化（这正是刷新要落盘的理由）。
+        // 副作用：上游仅**键顺序**变动也会判 changed 并重写盘 —— 无害（内容等价、只 mtime 会动），
+        // 刻意不做规范化排序（那要整份重建对象，4MB 数据的性价比不划算）。
         changed: prev === null || JSON.stringify(prev) !== JSON.stringify(next),
         addedProviders: nextIds.filter((id) => !prevSet.has(id)),
         removedProviders: prevIds.filter((id) => !nextSet.has(id)),
