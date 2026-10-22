@@ -93,6 +93,11 @@ export const PLACE_CANDIDATES: PlaceCandidate[] = [
     // 为什么单列而不并进 facts：二者字节量与变化频率差一个量级（索引 ~1.5 KB 随主题数，
     // 投影 4 KB 随条目数），合并后"改一个主题名"会把 4 KB 投影整段重发。
     { path: "kb", system: false, reason: "知识库索引：随库主题/条数变（低频）；与 facts 投影分开计价" },
+    // 仓库文档索引（##5 第 11 轮 B）：`docs/` 不在 AGENTS.md 链上，不列出来 agent 就不知道
+    // 有哪些设计稿。与 kb 同样进 runtime：**文档增删 / 改标题就变**，放 system 会砸前缀缓存。
+    // 为什么单列而不并进 kb：真源不同（文件树 vs 事实库），变更频率也不同（kb 随 submit 变、
+    // docs 随 git 提交变）。合并后"submit 一条事实"会把整段文档索引重发。
+    { path: "docs", system: false, reason: "仓库文档索引：随文档增删/改标题变（低频）；真源是文件树" },
 ];
 
 /** 默认 system 名单（真发与预览共用；用户可在页面上改，改动只影响该页面预览） */

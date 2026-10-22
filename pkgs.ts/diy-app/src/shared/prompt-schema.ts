@@ -228,6 +228,40 @@ export const AssembleGlobalsSchema = z.object({
     })
     .optional()
     .describe("知识库索引（没有库时整节缺席）"),
+  /**
+   * **仓库文档索引**（##404 / ##5 第 11 轮 B）：`docs/` 是设计的活真源，但它不在任何
+   * AGENTS.md 链上 —— 不列出来，agent 就不知道有哪些设计稿、哪篇还活着。
+   *
+   * 为什么只给索引、不给正文：18 篇 100+ KB，全量注入不可能；"迁进 facts" 也不该是唯一
+   * 出路（设计稿的正文要**按需读**，索引才有意义）。一行一篇：路径 + 标题 + 字节 + 状态词 + 日期。
+   *
+   * 为什么两个日期都给：`docDate` 是文档**自述**日期（文件名 / 标题里），`touched` 是 git
+   * 最后改动日。实测一批计划的 git 日期全被一次全局重排刷成同一天，而它们自述更早 ——
+   * **不一致本身就是信号**（"文档说 7-10，实际 7-19 改过"）。只信 git 会得出假结论。
+   *
+   * 缺席（`undefined`）= 这个仓库没有可索引的文档 ⇒ 与未接入前逐字不变。
+   */
+  docs: z
+    .object({
+      roots: z.array(z.string()).describe("扫描根（仓库相对）：缺省只有 `docs/plans`（设计稿正区），可扩到 `docs`"),
+      entries: z
+        .array(
+          z.object({
+            path: z.string().describe("仓库相对路径 —— 读它就 `cat <path>`（cwd 即仓库根）"),
+            title: z.string().describe("首个 `# ` 标题（去掉尾部日期括注），缺失写 `(无 H1)`"),
+            size: z.number().describe("字节数的 KB 取整（0 = 小于 1 KB）"),
+            docDate: z.string().optional().describe("文档**自述**日期（`YY-MM-DD`，取自文件名 / 标题）。与 `touched` 不一致 = 值得点开看看"),
+            touched: z.string().optional().describe("git 最后一次改动日（`YY-MM-DD`）；非 git 仓库 / 未提交过则缺席"),
+            status: z
+              .string()
+              .optional()
+              .describe("开篇引用块里的「状态：…」（启发式，≤20 字）。**抽不到就不给** —— 编出来的状态比没有更坏"),
+          }),
+        )
+        .describe("按路径排序的文档索引"),
+    })
+    .optional()
+    .describe("仓库文档索引（没有文档时整节缺席）"),
   room: z
     .object({
       members: z
