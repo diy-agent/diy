@@ -1024,11 +1024,17 @@ export function bindAppHandlers(binding: ServerBinding): void {
         });
       }
     }
-    const total = entries.length;
+    // **只要变化**：降级路径（老格式日志回放 / 从投递快照折算）会**每步**给一条 —— 没变的那步
+    // 落在时间线上就是一个空行，实测老任务里能占掉一多半（用户 2026-10-22：「变化步骤很多是空
+    // 步骤，只需要变化的步骤才记录和显示」）。v2 记录本身"有变才写"，这里的过滤对它无副作用，
+    // 对降级路径是**显示侧的兜底**（记录侧无从修：那些步的日志已经写死了）。
+    // baseline 不在过滤之列 —— 它是时间线的起点，不是"某一步的变化"。
+    const kept = entries.filter((e) => e.type === 'baseline' || e.changes.length > 0);
+    const total = kept.length;
     return {
       total,
       source,
-      entries: input.limit && input.limit > 0 ? entries.slice(-input.limit) : entries,
+      entries: input.limit && input.limit > 0 ? kept.slice(-input.limit) : kept,
     };
   });
 
