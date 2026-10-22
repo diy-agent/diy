@@ -29,8 +29,10 @@ export const ReqlogSchema = z
                     "本应用**每次真发 HTTP 请求**都往它追加一行（一行 = 一条 JSON，含请求体与响应）——" +
                     "自己刚发出去的那条就在里面。定位自己这一步的那条：" +
                     "`grep -n '\"taskUri\":\"<你的 task.uri>\"' <file> | tail -20`（行号 = 文件内第几行）；" +
-                    "一轮多步 = 同一个 turnId 多行，按 ts 升序即第 1/2/… 步；" +
-                    "⚠️ `attempt` 是**重试**序号、不是步序。字段表见日志行本身的键" +
+                    "一轮多步 = 同一个 turnId 多行；定位某一步用 `stepSeq`（逻辑步，1 起，同变更历史的 stepNo）、" +
+                    "这一步重试了几次看 `attemptInStep`（1 = 首试，2 = 第 1 次重试…；同一步多条按它排就是重试链）；" +
+                    "⚠️ 老字段 `attempt` 是**本 run 内的往返序号**（跨步累计、重试也 +1）—— 既不是步序也不是重试序号，" +
+                    "老记录没有 stepSeq / attemptInStep 时才退用它。字段表见日志行本身的键" +
                     "（真源 `pkgs.ts/diy-app/src/shared/traffic-record.ts`）。" +
                     "reqBody 默认只留首尾各一段（`truncated: true` 时 JSON 解不开）；要看全文先开" +
                     "「记录完整请求内容」（流量页右上角开关；CLI 侧 = 本应用 CLI 的 `traffic setFullCapture true`，" +

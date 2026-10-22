@@ -1620,7 +1620,8 @@ export class LocalAgentManager {
     /**
      * 发请求前登记归属 —— 流量观测（undici diagnostics_channel，见 core/traffic.ts）靠
      * 请求头里的 `x-opencode-session` 反查「这条记录属于谁」，因此每次真发（streamText /
-     * generateText）前必须登记一次：同时把 attempt 计数归零（重试即自增）。
+     * generateText）前必须登记一次：同时把计数归零（`attempt` 与步归属，见 ##409）。
+     * 之后的**逻辑步**由 prepareStep 里的 `traffic.noteStep` 逐个标出。
      */
     private noteTraffic(taskUri: string, turnId: string, rm: ResolvedModel, maxRetries: number): void {
         traffic.noteRun({
@@ -4042,6 +4043,11 @@ export class LocalAgentManager {
                 // 立刻发生**的轮次边界生效。让这一轮干净地结束、由 chat() 开下一轮（插话就是
                 // 下一轮的开场白）语义更准，轮次结构/usage/停止边界也不用为夹层做特例。
                 prepareStep: ({ messages, stepNumber }) => {
+                    // 流量观测（##409）：这一步的编号先登记进 traffic，然后才发这一步的请求 ——
+                    // 于是该步内的 SDK 重试（同一步的多次 HTTP 往返）在记录里带
+                    // stepSeq = 步号、attemptInStep = 该步第几次往返，重试链可复盘。
+                    // 编号与下面变更历史的 stepNo / stepId(`_s<N>`) 同一个（1 起）。
+                    traffic.noteStep(sessionIdOf(taskUri), turnId, stepNumber + 1);
                     if (signal.aborted) return {};
                     let instructions: string | undefined;
                     let nextMessages: ModelMessage[] | undefined;
