@@ -77,6 +77,8 @@ import {
 import { Caches, CONCLUSION_LINES_MAX, CONCLUSION_LINES_MIN } from "../lib/ui-state";
 import { HeightLedger, stackRows, windowRange } from "../lib/chat-virtual";
 import { chatFindStore, type ChatFindHit } from "../store/chatFindStore";
+import { jobRunsStore } from "../store/jobRunsStore";
+import type { JobNavTarget } from "../../shared/job-runs-view";
 import { findStore } from "../store/findStore";
 import { ChatFindPanel } from "./ChatFindPanel";
 import { clearHitHighlight, paintHitHighlight } from "../lib/hit-highlight";
@@ -3279,15 +3281,169 @@ export function LocalChatPage(props: {
         })();
     };
 
+    // ─── 作业来源定位（##408 刀 6）────────────────────────────────────────────
+    // 用户从「作业」面板点「来源」⇒ 这里把视口送到那次 tool_call 块并高亮。
+    // 与检索定位（##389）**同一套手法**（`anchorRowIndex` + 闭环校正 + 用户接管即收手），
+    // 差别只在终点粒度：检索要跳的是「这一轮的命中字」，作业要跳的是「这一轮里的某一个块」。
+    let pendingBlockLocate: JobNavTarget | null = null;
+
+    /** 高亮一个块（沿用 `data-hit-flash`：轮级高亮与块级高亮同一条通道，样式在 index.css） */
+    const flashBlock = (blockId: string) => {
+        const el = scrollRef;
+        if (!el) return;
+        const node = blockElOf(el, blockId);
+        if (!node) return;
+        node.setAttribute("data-hit-flash", "1");
+        window.setTimeout(() => node.removeAttribute("data-hit-flash"), 1600);
+    };
+
+    /**
+     * 滚到**某一块**（不是某一轮）：闭环校正的靶子是块顶，行索引用 `anchorRowIndex(blockId)`
+     * —— 它返回的是**包含该块的那一轮**的行号，故"轮还没上屏"时仍能按账面顶边把窗口挪过去。
+     * 用户接管即收手（与 `scrollToTurn` 同一判据，含「内容变矮被浏览器收口」的豁免）。
+     */
+    const scrollToBlock = (turnId: string, blockId: string) => {
+        const el = scrollRef;
+        if (!el) return;
+        setStick(false); // 定位到历史 = 用户要看的那一处，别让"贴底跟随"再把视口拽走
+        const token = ++locateLatch;
+        locateOwnTop = el.scrollTop;
+        let stable = 0;
+        let left = 12;
+        const tick = () => {
+            if (token !== locateLatch) return;
+            const own = locateOwnTop;
+            if (own !== null && Math.abs(el.scrollTop - own) > 1.5) {
+                const max = el.scrollHeight - el.clientHeight;
+                const clamped = el.scrollTop < own && el.scrollTop >= max - 1;
+                if (!clamped) {
+                    locateLatch++;
+                    return;
+                }
+            }
+            const L = layout();
+            const ri = anchorRowIndex(blockId);
+            const rowIdx = ri >= 0 ? ri : L.keys.indexOf(turnId);
+            if (rowIdx < 0) return; // 这一轮已不在树里（日志被改写）⇒ 放弃，不猜位置
+            const node = blockElOf(el, blockId);
+            if (node) {
+                // 块顶留 32px：过程行的行头（时间 / 工具名）整条可见——"从这儿开始"要看得见主语
+                const top = blockTopIn(el, node) - el.scrollTop;
+                const d = top - 32;
+                if (Math.abs(d) > 1) writeScrollTop(el, el.scrollTop + d);
+                stable = Math.abs(d) <= 1 ? stable + 1 : 0;
+            } else {
+                writeScrollTop(el, L.tops[rowIdx] ?? 0);
+                stable = 0;
+            }
+            if (stable >= 2 || left-- <= 0) {
+                flashBlock(blockId);
+                return;
+            }
+            locateOwnTop = el.scrollTop;
+            requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+    };
+
+    /**
+     * 定位到作业的来源块。
+     *
+     * 三级降级（与 job-run 的硬约束 2 一致：origin 是**引用**，点开时去读那边真源）：
+     *   ① 这一轮在块树里 → 滚过去 + 高亮该块；
+     *   ② 正在流式 → 记下，轮末再跳（此刻抢滚动会与"跟随新内容"打架）；
+     *   ③ 不在块树（历史被压缩 / 未加载 / 日志已轮转）→ **视图不动**，如实说"原文不可用"，
+     *      并指向作业面板里的落盘输出。绝不跳到一个"看起来像"的位置（那是假导航）。
+     */
+    const locateJobTarget = (t: JobNavTarget) => {
+        clearHitHighlight();
+        if (localChatStore.view.live) {
+            pendingBlockLocate = t;
+            notificationStore.addToast(
+                "info",
+                "这一轮正在生成：结束后自动定位到那次工具调用",
+                chatNotice(
+                    "作业来源 · locateJobTarget（##408）",
+                    `作业锚点落在本轮 ${t.turnId} 仍在写入的内容里 → 已记下，轮结束后再滚过去（流式中抢滚动会与跟随打架）`,
+                    DETAIL_CHAT_FIND,
+                ),
+            );
+            return;
+        }
+        const inTree = localChatStore.trees.some((tr) => tr.id === t.turnId || containsBlockId(tr, t.blockId));
+        if (!inTree) {
+            notificationStore.addToast(
+                "info",
+                "原文已不可用：这一轮不在当前窗口（历史被压缩或未加载）→ 输出请看作业详情",
+                chatNotice(
+                    "作业来源 · locateJobTarget（##408）",
+                    `锚点 轮 ${t.turnId} / 块 ${t.blockId} 不在已加载的块树里（压缩历史或日志轮转）⇒ 视图**未移动**；` +
+                        `作业面板里的 settle 输出与 logs/<runId>.log 才是这次的原文`,
+                    DETAIL_CHAT_FIND,
+                ),
+            );
+            return;
+        }
+        revealBlock(t.turnId, t.blockId);
+        scrollToBlock(t.turnId, t.blockId);
+    };
+
+    /**
+     * 让目标块**真的进 DOM**（否则滚动没靶子，高亮也无处可画）。
+     *
+     * 两道门（默认 3 级下都可能挡着）：
+     *   ① 过程历史整段关着（1-2 级，或用户收拢了这轮）⇒ 只把**这一轮**的历史打开；
+     *   ② 目标块在某个「过程 bar」里（3 级下 bar 是折叠的）⇒ pin 开**那一段**
+     *      （键 `row:<段首叶子 id>`，与组件里 `rowOpen` 同一口径）。
+     * 都不动全局级别 —— 为了看一条工具调用把整页铺成 4 级，会把用户正在读的地方全改掉。
+     */
+    const revealBlock = (turnId: string, blockId: string) => {
+        const turn = localChatStore.trees.find((tr) => tr.id === turnId || containsBlockId(tr, blockId));
+        if (!turn) return;
+        if (!histOpenOf(turnId)) setFoldMarks((p) => ({ ...p, [turnId]: false }));
+        for (const row of turnRows(turn, null)) {
+            if (row.kind !== "proc") continue;
+            if (!row.parts.some((n) => n.id === blockId)) continue;
+            setPinned((p) => ({ ...p, [`row:${row.key}`]: true }));
+            break;
+        }
+    };
+
+    /**
+     * 消费「作业面板发来的待定位请求」。
+     *
+     * 为什么放在会话页而不是面板里：只有这里拿得到滚动容器与块树（与 `chatFindStore.claim` 同一理由）。
+     * 三个条件（等任务切过来 + 等会话数据到位 + 等块树非空）都是必需的：
+     * 面板点「来源」时先 `openTaskRun` 切页，本页**可能整页新挂**，那一刻 trees 还是空的。
+     */
+    createEffect(() => {
+        const target = jobRunsStore.pendingNav;
+        if (!target) return;
+        const u = uri();
+        if (!u || u !== target.taskUri) return;
+        if (localChatStore.currentUri !== u) return;
+        if (localChatStore.trees.length === 0) return;
+        const taken = jobRunsStore.takeNav(u);
+        if (taken) locateJobTarget(taken);
+    });
+
     /** 流式收尾后补做待定的定位（只做一次：轮末下降沿是"现在可以抢滚动"的唯一时机） */
     createEffect(
         on(
             () => localChatStore.view.live,
             (live) => {
-                if (live || !pendingLocate) return;
-                const p = pendingLocate;
-                pendingLocate = null;
-                locateHit(p.hit);
+                if (live) return;
+                if (pendingLocate) {
+                    const p = pendingLocate;
+                    pendingLocate = null;
+                    locateHit(p.hit);
+                    return;
+                }
+                if (pendingBlockLocate) {
+                    const b = pendingBlockLocate;
+                    pendingBlockLocate = null;
+                    locateJobTarget(b);
+                }
             },
         ),
     );

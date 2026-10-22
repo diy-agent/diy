@@ -154,6 +154,16 @@ export const VIEWS: ViewDef[] = [
     placement: { "task-run": { area: "right", order: 10 } },
   },
   {
+    // 任务执行页**底栏**：作业（##408 刀 6）—— 会话里跑出来的长时命令的列表 + 来源导航。
+    // 为什么是底栏而不是右栏（成员栏）：作业行要横着放「标题 · 来源 · 状态 · 耗时 · 摘要」四段，
+    // 320px 的右栏每行都会被挤成三行换行；底栏跨三列（colSpan 3）才有 `git --stat` 那样的行感。
+    // 也不新开一级导航页：作业是**某任务的**后台活（origin 指回该任务的某一轮），离开任务页就没有主语。
+    id: "job.runs",
+    title: "作业",
+    instanceScope: "context",
+    placement: { "task-run": { area: "bottom", order: 10 } },
+  },
+  {
     id: "llm.proxy",
     title: "LLM 代理",
     instanceScope: "global",
