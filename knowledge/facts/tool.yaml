@@ -139,14 +139,13 @@ facts:
       at: ~/AGENTS.md:34
       verifiedAt: '2026-10-22'
   tool#skill-dir:
-    value: 共享 skills 真身在 `~/.agents/skills/`（`~/.hermes/skills/skills` 是它的 symlink，归档区 `~/.agents/skills.archive/` 同仓）；**自 2026-10-22 起是独立 git 仓**（首提交 `b961916`，279 文件 / 2.2 MB）—— 此前因磁盘满被手动删过 `.git`，单机仓只防误改、不防盘挂
+    value: 共享 skills 真身在 `~/.agents/skills/`（`~/.hermes/skills/skills` 是它的 symlink，归档区 `~/.agents/skills.archive/` 同仓）；**自 2026-10-22 起是独立 git 仓**（首提交 `b961916`，279 文件 / 2.2 MB）—— 此前因磁盘满被手动删过 `.git`，单机仓只防误改、不防盘挂。**`~` 本身不是 git 仓**（`git -C ~ rev-parse` 直接失败），要判归属就判 `~/.agents`
     id: agents.tool.skill-dir
     review: accepted
     lifecycle: active
     evidence:
       source: probe
       probe: git -C ~/.agents rev-parse --show-toplevel
-      at: ~/AGENTS.md:35
       verifiedAt: '2026-10-22'
   tool#skill-rule:
     value: 命名前缀完整规则见 `c-hermes` skill；摘要见下节
