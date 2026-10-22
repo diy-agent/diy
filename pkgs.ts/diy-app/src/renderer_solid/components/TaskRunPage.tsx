@@ -17,6 +17,8 @@ import { ViewGrid } from "./ViewGrid";
 import { TaskSideView } from "./TaskSideView";
 import { LocalChatPage } from "./LocalChatPage";
 import { TaskRoomRoster } from "./TaskRoomRoster";
+import { JobRunsPanel } from "./JobRunsPanel";
+import { jobRunsStore } from "../store/jobRunsStore";
 import { taskStore } from "../store/taskStore";
 import { diyService } from "../lib/rpc";
 import { layoutStore } from "../store/layoutStore";
@@ -29,6 +31,20 @@ export function TaskRunPage(props: { uri: string }) {
     // 子组件（chat / 试验场）当前沿用 taskStore.selectedUri；本页把「当前 tab」
     // 与「选中任务」对齐，故这里负责同步。将来做 tab 保活时再改为逐实例传 uri。
     onMount(() => void taskStore.selectTask(props.uri));
+    /**
+     * 底栏（作业）**按需自动展开**：本任务已经有作业时展开一次。
+     *
+     * 判据与右栏成员栏同源（##166 §44.1 ②）：用户从没手动动过本页布局时才自动；
+     * 而且只在**挂载/切任务**时判一次，不做「一出现新作业就弹面板」——
+     * 那会在用户正读会话时突然压掉 320px 的阅读区（比"要自己点一下"更烦人）。
+     * 说清楚代价：本次会话里**新**产生的作业不自动弹，但页面菜单条上有「④ bottom」可开，
+     * 且列表本身每 3s 自刷（面板可见时）。
+     */
+    void jobRunsStore.refresh({ limit: 200 }).then(() => {
+        if (layoutStore.userTouched(PAGE.id)) return;
+        if (jobRunsStore.runsFor(props.uri).length === 0) return;
+        layoutStore.setAreaHiddenAuto(PAGE.id, "bottom", false);
+    });
     // 右栏（成员栏）的默认开合（##166 §44.1 ②）**不在这里**做 —— 挪到 `LocalChatPage`：
     // 它（中心会话区）恒挂载、且成员表本来就在它手里；而"右栏收起时 `ViewGrid` 不挂载右栏 view"
     // 这条死结（`groups()` 按 `plan().visibleAreaIds` 过滤）对中心区不成立。
@@ -115,6 +131,9 @@ export function TaskRunPage(props: { uri: string }) {
                                 // `rosterAutoFor`：让会话区按"当前任务的成员数"决定右栏默认开合
                                 // （口径 §44.1 ②；见 LocalChatPage 的 applyRosterAuto）
                                 return <LocalChatPage uri={props.uri} rosterAutoFor={PAGE.id} />;
+                            case "job.runs":
+                                // 作业面板（##408 刀 6）：只读列表 + 来源导航
+                                return <JobRunsPanel uri={props.uri} />;
                             case "room.roster":
                                 // 右栏成员栏（##377 第 16 刀 / ##166 §43.3 A）：
                                 // 任务恒是一个 room（§28.7 G，id = taskUri）⇒ 这个 view 就是它的成员表
