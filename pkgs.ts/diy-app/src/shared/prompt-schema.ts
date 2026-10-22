@@ -181,7 +181,7 @@ export const AssembleGlobalsSchema = z.object({
       global: z
         .record(z.string(), FactsCellSchema)
         .optional()
-        .describe("**设备级库**（`~/.diy/knowledge/`）的已解析值（claim → 值）。跨项目的用户规则，优先级高于项目库"),
+        .describe("**设备级库**（`~/.diy/knowledge/`）的已解析值（claim → 值）。跨项目的用户规则；同名 claim 时**项目库优先于它**（task > project > global）"),
       project: z
         .record(z.string(), FactsCellSchema)
         .optional()

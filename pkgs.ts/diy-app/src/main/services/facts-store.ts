@@ -157,6 +157,22 @@ export interface FactsTarget {
     readonly readExtra?: readonly string[];
 }
 
+/**
+ * 设备级库的候选目录（**读**用）：本根 `<数据根>/knowledge` + 生产 `~/.diy/knowledge`。
+ *
+ * 为什么读要跨根、写不跨：设备级事实讲的是"这台机器 / 这个用户"，lab 里也该看到生产
+ * 积累的全局规则；而写生产数据根是 guard 禁区（agent 不碰），故只读。
+ */
+function globalKbDirs(): string[] {
+    const own = path.join(diyHome(), "knowledge");
+    const prod = path.join(os.homedir(), ".diy", "knowledge");
+    const out: string[] = [];
+    for (const d of [own, prod]) {
+        if (!out.includes(d) && existsSync(path.join(d, "facts"))) out.push(d);
+    }
+    return out;
+}
+
 const TASK_IN = /^task:(projects\/\d+\/tasks\/\d+)$/;
 
 /**
@@ -215,15 +231,27 @@ export function resolveFactsTarget(opts: { dir?: string; in?: string } = {}): Fa
                 `任务库要继承仓库词表，但没找到：${subjectsFallback} —— 用 --dir 指到仓库根或 set DIY_FACTS_DIR`,
             );
         }
+        // 读时并入低层库（project → global）：**三个读入口（get / brief / project）与
+        // runtime 投影必须同口径**，否则会出现"投影里看得到、CLI 查不到"的中间态
+        // （实测：把 project 侧同名 claim 标 superseded 后，投影正常而 `get` 报 scope-no-match）。
+        const taskExtra = [...globalKbDirs(), repoKb].filter((d) => d !== path.join(taskDir, "knowledge"));
         return {
             dir: path.join(taskDir, "knowledge"),
             // 任务库继承仓库词表：本地 subjects.yaml 存在则本地优先（局部扩词），否则用仓库的
             subjectsFallback,
             allowMissing: true,
             root: path.dirname(repoKb),
+            ...(taskExtra.length > 0 ? { readExtra: taskExtra } : {}),
         };
     }
-    return { dir: resolveFactsDir(opts.dir), allowMissing: false };
+    // 仓库库（缺省 / project）：读时同样并入设备级库 —— 与 runtime 投影同口径
+    const projectDir = resolveFactsDir(opts.dir);
+    const projectExtra = globalKbDirs().filter((d) => d !== projectDir);
+    return {
+        dir: projectDir,
+        allowMissing: false,
+        ...(projectExtra.length > 0 ? { readExtra: projectExtra } : {}),
+    };
 }
 
 /**

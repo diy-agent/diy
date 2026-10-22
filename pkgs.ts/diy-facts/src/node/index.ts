@@ -265,6 +265,11 @@ export function loadRepo(knowledgeDir: string, opts: LoadRepoOptions = {}): Repo
                     const k = claimKey(item);
                     if (k !== undefined && seen.has(k)) continue;
                     if (k !== undefined) seen.add(k);
+                    // 记来源：`get` 要报"这条在哪个文件"，额外库不记会让路径变成空串
+                    const id = typeof item === 'object' && item !== null && typeof (item as { id?: unknown }).id === 'string'
+                        ? (item as { id: string }).id
+                        : k;
+                    if (id !== undefined) origin.set(id, file);
                     raw.push(item);
                 }
             }
