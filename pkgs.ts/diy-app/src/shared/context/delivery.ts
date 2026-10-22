@@ -87,6 +87,12 @@ export const PLACE_CANDIDATES: PlaceCandidate[] = [
     // 故单列一个原子单元比并进 body 更好 —— body 是 prose、facts 是结构化键值，
     // 混在一起既不能按 claim diff，也没法在页面上分开看。
     { path: "facts", system: false, reason: "事实库投影：随 submit 变（稀疏）；结构化，与 body 的散文分开" },
+    // 知识库索引（##404 待办 1）：AGENTS.md 链里「按需才查」的条目迁进库后，agent 靠它知道
+    // **库里有什么**。为什么与 facts 同样进 runtime：索引里的 `claims` 计数**随 submit 变**
+    // （新增一条事实 → 那个主题的条数就变），放 system 同样会砸前缀缓存。
+    // 为什么单列而不并进 facts：二者字节量与变化频率差一个量级（索引 ~1.5 KB 随主题数，
+    // 投影 4 KB 随条目数），合并后"改一个主题名"会把 4 KB 投影整段重发。
+    { path: "kb", system: false, reason: "知识库索引：随库主题/条数变（低频）；与 facts 投影分开计价" },
 ];
 
 /** 默认 system 名单（真发与预览共用；用户可在页面上改，改动只影响该页面预览） */

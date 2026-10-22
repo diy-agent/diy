@@ -193,6 +193,32 @@ export const AssembleGlobalsSchema = z.object({
     })
     .optional()
     .describe("事实库投影（没有库时缺席）"),
+  /**
+   * **知识库索引**（##404）：知识库里**有什么**，正文不进上下文。
+   *
+   * 为什么必须有这一段：AGENTS.md 链占 system 81%（28.3 KB）且全量常驻，其中一大半是
+   * 「不查也行、查了才用得上」的说明性内容（三方源码位置、术语表、异常三档判据…）。
+   * 把那些迁进知识库、链上只留指针后，agent 仍要知道**有库、库里有什么**才谈得上"按需查"
+   * —— 这一段就是那个索引，也是迁移的**前提**（先给索引、再删正文，否则能力直接丢失）。
+   *
+   * 为什么只给 subject + description：字节量与**条目数无关**，只随主题数增长（26 主题 ≈ 1.5 KB），
+   * 拿它换掉 25 KB 常驻正文是唯一划算的量级。条目全文归 `facts` 投影（runtime，有 4 KB 硬预算）。
+   */
+  kb: z
+    .object({
+      claims: z.number().describe("全库条目总数（与索引里各主题的条数之和对不上 ⇒ 有主题缺 description 没进索引）"),
+      entries: z
+        .array(
+          z.object({
+            subject: z.string().describe("主题（`diy facts get <主题>#<方面>` 的前半）"),
+            desc: z.string().describe("一句话说清这个对象（直接取自 subject 词表的 description）"),
+            claims: z.number().describe("该主题下的条目数"),
+          }),
+        )
+        .describe("可查主题索引（按主题名排序）"),
+    })
+    .optional()
+    .describe("知识库索引（没有库时整节缺席）"),
   room: z
     .object({
       members: z

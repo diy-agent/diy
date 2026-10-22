@@ -165,3 +165,43 @@ export function buildFactsContext(opts: BuildFactsContextOptions = {}): FactsCon
     }
     return out;
 }
+
+/** 索引的一条：主题 + 一句话 + 条目数（正文**不进**索引） */
+export interface KbIndexEntry {
+    subject: string;
+    desc: string;
+    claims: number;
+}
+
+export interface KbIndex {
+    entries: KbIndexEntry[];
+    /** 全库条目总数（含没进索引的 subject —— 数字对不上时说明有 subject 缺 description） */
+    claims: number;
+}
+
+/**
+ * **知识库索引**（##404：AGENTS.md 的「按需」条目迁进 facts 后，靠它找回）。
+ *
+ * 为什么只给 subject 不给条目：条目全文是 `yaml-nested` 投影（runtime）的活，而 runtime 那段
+ * 有 4 KB 硬预算，实测溢出 120+ 条。索引要的是「**库里有什么**」，字节量与条目数无关 ——
+ * 26 个主题约 1.5 KB，迁走 25 KB 只留下这一个量级的常驻成本。
+ *
+ * 为什么 description 是索引唯一的人读信息：它已经是 subject 词表的必填字段（写词表时就要求
+ * 能一句话说清这个对象），索引直接复用它 —— 不新增一份要同步的说明。
+ *
+ * 读不到库 → `null`（缺席，与 `buildFactsContext` 同一纪律：读失败不炸整轮）。
+ */
+export function buildKbIndex(): KbIndex | null {
+    const repoDir = repoDirQuietly();
+    if (repoDir === null) return null;
+    const hit = loadQuietly(repoDir, { kind: "project" }, {});
+    if (!hit) return null;
+    const counts = new Map<string, number>();
+    for (const f of hit.repo.facts) counts.set(f.subject, (counts.get(f.subject) ?? 0) + 1);
+    const entries = hit.repo.subjects
+        .filter((s) => (s.description ?? "") !== "")
+        .map((s) => ({ subject: s.key, desc: s.description as string, claims: counts.get(s.key) ?? 0 }))
+        .sort((a, b) => a.subject.localeCompare(b.subject));
+    if (entries.length === 0) return null;
+    return { entries, claims: hit.repo.facts.length };
+}

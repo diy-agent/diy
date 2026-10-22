@@ -40,7 +40,7 @@ import { reqlogValue } from "../../shared/context/reqlog";
 import { LOG_DIR_REL, dayFile } from "../core/traffic-log";
 // 契约类型唯一源（shared/prompt-schema.ts，纯 zod）——renderer 也用它，避免手抄第二份
 import type { AssembledSystem, PromptEntry } from "../../shared/prompt-schema";
-import { buildFactsContext } from "./facts-context";
+import { buildFactsContext, buildKbIndex } from "./facts-context";
 
 export type { AssembledSystem, PromptEntry };
 
@@ -654,6 +654,9 @@ export function assembleGlobals(
   const repoRoot = getProjectPath(projectId);
   const relCwd = repoRoot === undefined || !cwdRes.cwd.startsWith(`${repoRoot}/`) ? undefined : cwdRes.cwd.slice(repoRoot.length + 1);
   const factsValue = buildFactsContext({ home, taskUri, ...(relCwd === undefined ? {} : { paths: [relCwd] }) });
+  // 知识库索引（##404 待办 1）：AGENTS.md 链里「按需」的条目迁进 facts 后，agent 靠这个索引
+  // 知道**库里有什么、怎么取**。与 facts 同一纪律：读不到库 = 整节缺席（不渲染空节）。
+  const kbValue = buildKbIndex();
   return {
     ...core,
     // 房间上下文（##377 第 26 刀）：**只在有房间时出现**（缺这个键 = 单人任务逐字不变）。
@@ -663,6 +666,7 @@ export function assembleGlobals(
     // （`{}` 会被渲染成 `facts: {}`，看着像"库在但没有事实"，与"没接库"不是一回事）。
     // 读失败降级为缺席而不是抛：上下文构造失败 = 人连消息都发不出去（见 facts-context 头注纪律 ②）。
     ...(factsValue ? { facts: factsValue } : {}),
+    ...(kbValue ? { kb: kbValue } : {}),
     identity: section(DELIVERED_SECTIONS.identity),
     rules: section(DELIVERED_SECTIONS.rules),
     guard: section(DELIVERED_SECTIONS.guard),
