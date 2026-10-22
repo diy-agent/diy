@@ -62,6 +62,12 @@ export interface VarSpec {
      * 「声明了、这次却没有这个键」是合法状态，不该被当成"加了变量忘写契约"。
      */
     optional?: boolean;
+    /**
+     * 该路径是**动态键容器**（zod `z.record`）：真实键来自数据（如 claim 名），静态契约穷举不了。
+     * 校验器对它的**子路径**改按前缀放行 —— 否则每个 claim 都会被判「契约里没有这个变量」。
+     * 容器自身仍按 `object` 判（`{{facts.task}}` 插值照样报错）。
+     */
+    dynamicKeys?: boolean;
 }
 
 export interface AnalyzeOptions extends ParseOptions {
@@ -110,6 +116,8 @@ export function analyze(source: string, opts: AnalyzeOptions = {}): Analysis {
  */
 function checkVars(a: Analysis, vars: VarSpec[]): LintIssue[] {
     const byPath = new Map(vars.map((v) => [v.path, v]));
+    // 动态键容器的子路径（`facts.task.<claim>` 之类）来自数据，静态契约穷举不了 → 按前缀放行
+    const dynamicPrefixes = vars.filter((v) => v.dynamicKeys).map((v) => `${v.path}.`);
     // 这些位置上的路径是"当表达式用"（可以是集合），不算插值
     const asExpr = new Set<string>([
         ...a.loops.map((l) => l.source),
@@ -122,6 +130,7 @@ function checkVars(a: Analysis, vars: VarSpec[]): LintIssue[] {
         if (p.scope !== "global") continue;
         const spec = byPath.get(p.path);
         if (!spec) {
+            if (dynamicPrefixes.some((pre) => p.path.startsWith(pre))) continue;
             if (seen.has(p.path)) continue;
             seen.add(p.path);
             out.push({

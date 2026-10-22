@@ -232,14 +232,10 @@ export const AssembleGlobalsSchema = z.object({
 });
 export type AssembleGlobals = z.infer<typeof AssembleGlobalsSchema>;
 
-/** 变量契约的扁平条目（引擎静态校验用；由 AssembleGlobalsSchema 派生） */
-export interface VarSpec {
-  path: string;
-  type: "string" | "number" | "boolean" | "array" | "object";
-  desc?: string;
-  /** 该路径**可能缺席**（schema 里是 `.optional()`，或祖先可选）—— 校验器据此放过"没有这个键" */
-  optional?: boolean;
-}
+/** 变量契约的扁平条目（引擎静态校验用；由 AssembleGlobalsSchema 派生）。
+ *  定义在 `@diy/template`：**引擎与宿主共用一份**（引擎校验读它、宿主 fork 出注入值产它）——
+ *  在这里再声明一份，引擎新加的字段（如 `dynamicKeys`）宿主侧就看不见。 */
+export type { VarSpec } from "@diy/template";
 
 /** 渲染结构 trace 节点（试验场「模版结构树」：每个节点的产出字节 + :if 真假原因 + 迭代次数） */
 export type TraceNode = {
