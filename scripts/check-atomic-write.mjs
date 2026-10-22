@@ -29,9 +29,21 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // renderer 若要落盘只能经 preload 的 contextBridge 暴露的方法（真正的防线是那个白名单
 // `src/preload/index.ts`）；为此本脚本另有一条精确检查：renderer 里出现 `fs` 导入即违规
 // （见 checkRendererFsImports）。
-const SCAN_DIRS = ["main", "serve", "preload"].map((d) => join(ROOT, "pkgs.ts/diy-app/src", d));
-const SCAN_DIR = SCAN_DIRS[0];
-const UTIL = join(SCAN_DIR, "core/atomic-write.ts");
+const SCAN_DIRS = [
+  ...["main", "serve", "preload"].map((d) => join(ROOT, "pkgs.ts/diy-app/src", d)),
+  // ##5 第 11 轮 A：事实库的落盘也在射程内。原先只扫 diy-app ⇒ `facts submit` 的
+  // 半截写（固定 tmp 名 / 不做两阶段 / 不继承权限）永远不会被 check 拦。
+  join(ROOT, "pkgs.ts/diy-facts/src"),
+];
+/**
+ * 共享原语（**豁免**：它们内部就是要直接调 `writeFileSync`）。
+ * 两份是有意的：依赖方向 `diy-app → diy-facts`，facts 不能 import diy-app 的 core，
+ * 故各自自持一份、语义必须一致（改一处要改两处）。
+ */
+const UTIL_FILES = new Set([
+  join(ROOT, "pkgs.ts/diy-app/src/main/core/atomic-write.ts"),
+  join(ROOT, "pkgs.ts/diy-facts/src/node/atomic-write.ts"),
+]);
 const ALLOWLIST = join(ROOT, "scripts/atomic-write-allowlist.txt");
 
 const RENDERER_DIR = join(ROOT, "pkgs.ts/diy-app/src/renderer_solid");
@@ -113,7 +125,7 @@ export function scanSource(src, file = "<fixture>") {
     if (name === "createWriteStream") {
       if (/flags\s*:\s*["']a["']/.test(argsRaw) || /^\s*["']a["']/.test(argsRaw.split(",")[1] ?? "")) continue;
     }
-    if (resolve(file) === UTIL) continue;
+    if (UTIL_FILES.has(resolve(file))) continue;
 
     // 豁免 ①：临时文件腿（**目标**是 `.tmp` 字面量或指向 tmp 的变量）
     // 注：`ftruncateSync(fd)` 的首参是 fd、看不到路径 ⇒ 拿不到 tmp 腿，一律报（该改就改）

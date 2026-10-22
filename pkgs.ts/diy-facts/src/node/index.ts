@@ -14,10 +14,11 @@
 // 改由文档里的 `note` 字段生成（真源里就不能只活在注释里）。这样 `git diff` 恒为
 // "条目级"变更，不会因为谁手工排了序而整篇翻红。
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { dump, load } from 'js-yaml';
+import { writeFilesAtomic } from './atomic-write.js';
 import { claimOf, derivedFactId } from '../claim.js';
 import { DEFAULT_FULL_BUDGET, checkExpose, checkExposeLeveled, defaultExposeOf, exposeOf, type ExposeLevel, type ExposeMap } from '../expose.js';
 import { buildIndex, validateFacts } from '../index.js';
@@ -252,7 +253,7 @@ export function loadRepo(knowledgeDir: string, opts: LoadRepoOptions = {}): Repo
     const { all: subjects, local: localSubjects } = readSubjects(path.join(dir, 'subjects.yaml'), opts.subjectsFallback);
 
     const files = readdirSync(factsDir)
-        .filter((f) => f.endsWith('.yaml') || f.endsWith('.yml'))
+        .filter(isFactFile)
         .sort()
         .map((f) => path.join(factsDir, f));
 
@@ -306,7 +307,7 @@ export function loadRepo(knowledgeDir: string, opts: LoadRepoOptions = {}): Repo
         for (const extra of opts.extraDirs) {
             const extraFactsDir = path.join(path.resolve(extra), 'facts');
             if (extraFactsDir === factsDir || !existsSync(extraFactsDir)) continue;
-            for (const f of readdirSync(extraFactsDir).filter((n) => n.endsWith('.yaml') || n.endsWith('.yml')).sort()) {
+            for (const f of readdirSync(extraFactsDir).filter(isFactFile).sort()) {
                 const file = path.join(extraFactsDir, f);
                 let doc: unknown;
                 try {
@@ -631,6 +632,11 @@ function canonicalRef(r: Ref): Record<string, unknown> {
     return { rel: r.rel, data };
 }
 
+/** 一章事实的扩展名；**排除 tmp 残骸**（原子写的 `.tmp-<pid>-<rand>` 后缀不是 .yaml，双保险） */
+function isFactFile(name: string): boolean {
+    return (name.endsWith('.yaml') || name.endsWith('.yml')) && !name.includes('.tmp-');
+}
+
 /** claim 的第一段 = 文件域（`app.port` → `app.yaml`）：省掉一个必须手填的字段 */
 export function domainOf(f: Fact): string {
     const head = f.subject.split('.')[0];
@@ -878,14 +884,11 @@ export function submit(
         });
     }
 
-    if (!(input.dryRun ?? false)) {
-        for (const w of writes) {
-            mkdirSync(path.dirname(w.file), { recursive: true });
-            const tmp = `${w.file}.tmp-${process.pid}`;
-            writeFileSync(tmp, w.text);
-            renameSync(tmp, w.file);
-        }
-    }
+    // 7) 落盘：**两阶段**（先把 N 份 tmp 全写出来，再逐个 rename）—— 见 node/atomic-write.ts 头注。
+    // 逐个「写 tmp → rename」在 ENOSPC 于第 5 个文件时，前 4 个已经换掉了：校验层刚做成的
+    // 「全过才写」在 IO 层漏成半截。两阶段把窗口压到「只剩下目录项替换」。
+    // 并发安全：tmp 名带 pid + rand（固定名会让同进程两批 submit 互相踩）。
+    if (!(input.dryRun ?? false)) writeFilesAtomic(writes);
     return {
         report: { dryRun: input.dryRun ?? false, added, updated, unchanged, newSubjects, droppedSubjects, files, dropped },
         problems,
