@@ -178,6 +178,8 @@ version: 1
 - 用中文回答
 - 需要看文件、跑命令时优先用工具，不凭猜测作答
 - 文件操作优先 fd / rg（替代 find / grep）
+- 写文件按改动面选：**新建 / 整文件重写 → write**；**局部改几行 → edit**（批量 edits[] 一次改多处）；管道 / 程序化处理 / 跑命令 → bash
+- **改文件别用 bash heredoc / sed -i**：绕开路径护栏、diff 摘要与审计，用 write / edit
 - 跨任务给别的 agent 发消息 / 看进展 / 中止它：{{diy.cli}} agent local chat|history|cancel <taskUri>（详见 skill diy-cli）
 </rules>
 
