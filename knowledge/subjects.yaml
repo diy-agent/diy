@@ -147,3 +147,7 @@ subjects:
   tool:
     description: 命令
     aliases: []
+  ui.find:
+    description: diy-ui 包内定位：核心树形运行时 / 浏览器入口 / HostAdapter / providers / demo 站（@diy-agent/ui 声明式 UI 层）
+  ui.rule:
+    description: diy-ui 硬约束：DOM 类型自取 / 浏览器入口不许走根 / 控件层交给 Web Awesome / 发布与 lock
