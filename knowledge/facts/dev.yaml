@@ -4,7 +4,8 @@
 domain: dev
 facts:
   dev.check#entry:
-    value: ./sha.sh check = tsc -b 全仓 + oxlint + rpc 浏览器安全 + 产物/可执行位/原子写/异常码/规范索引 五道护栏
+    value: |-
+      ./sha.sh check = tsc -b 全仓 + oxlint + rpc 浏览器安全 + 产物/可执行位/原子写/异常码/规范索引 五道护栏
     id: dev.check
     review: accepted
     lifecycle: active
@@ -13,7 +14,8 @@ facts:
       at: sha.sh:165
       verifiedAt: '2026-10-21'
   dev.commit#signing:
-    value: 所有 git 操作必须 GPG 签名，失败即停并求助，禁 --no-gpg-sign
+    value: |-
+      所有 git 操作必须 GPG 签名，失败即停并求助，禁 --no-gpg-sign
     id: dev.commit-sign
     review: accepted
     lifecycle: active
@@ -22,7 +24,8 @@ facts:
       at: ~/git/diy/AGENTS.md:25
       verifiedAt: '2026-10-21'
   dev.context#chain-share:
-    value: AGENTS.md 链瘦身前 28.3 KB 占 system 81%（~/AGENTS.md 17.0 · 仓库 9.5 · ~/git 1.6）；仓库那份 43 条正文 2026-10-22 迁进知识库后降到 1.9 KB，system 34.9→26.7 KB。**剩余大头是 ~/AGENTS.md 17.0 KB（占 system 64%）**：它是全局规则，塞项目库是 scope 错位，得先有 user 级库
+    value: |-
+      AGENTS.md 链瘦身前 28.3 KB 占 system 81%（~/AGENTS.md 17.0 · 仓库 9.5 · ~/git 1.6）；仓库那份 43 条正文 2026-10-22 迁进知识库后降到 1.9 KB，system 34.9→26.7 KB。**剩余大头是 ~/AGENTS.md 17.0 KB（占 system 64%）**：它是全局规则，塞项目库是 scope 错位，得先有 user 级库
     id: dev.context-chain-share
     review: accepted
     lifecycle: active
@@ -31,7 +34,8 @@ facts:
       probe: npx tsx build/lab/home/projects/1/tasks/5/gen/probe/measure-context.mts --home build/lab/home
       verifiedAt: '2026-10-22'
   dev.context#evidence-anchor:
-    value: '`evidence.at` 锚的是**当前文件行号**，源一瘦身就全烂：AGENTS.md 从 75 行改成 29 行后，43 条 `at: AGENTS.md:NN` 越界 → `facts submit` 整批被挡（全过才写），一条新事实都写不进去。迁移类事实不该锚在被搬空的原文件上：要么去掉 at（git 历史可追），要么 schema 支持 `<rev>:<path>:<line>`（未实现）'
+    value: |-
+      `evidence.at` 锚的是**当前文件行号**，源一瘦身就全烂：AGENTS.md 从 75 行改成 29 行后，43 条 `at: AGENTS.md:NN` 越界 → `facts submit` 整批被挡（全过才写），一条新事实都写不进去。迁移类事实不该锚在被搬空的原文件上：要么去掉 at（git 历史可追），要么 schema 支持 `<rev>:<path>:<line>`（未实现）
     id: dev.context-evidence-anchor
     review: accepted
     lifecycle: active
@@ -40,7 +44,8 @@ facts:
       probe: 'git log --oneline -- knowledge/facts/entry.yaml | head -1  # at 锚被移动后越界'
       verifiedAt: '2026-10-22'
   dev.context#help-share:
-    value: 信封 help 7.4 KB 里 `system`(3.2) + `runtime`(2.2) 两节占 73%，全是 zod 派生的结构说明；`about` 固定话术已从 1689 B 压到 724 B（占 10%）。再砍只能动描述文本（`descMaxDepth`）
+    value: |-
+      信封 help 7.4 KB 里 `system`(3.2) + `runtime`(2.2) 两节占 73%，全是 zod 派生的结构说明；`about` 固定话术已从 1689 B 压到 724 B（占 10%）。再砍只能动描述文本（`descMaxDepth`）
     id: dev.context-help-share
     review: accepted
     lifecycle: active
@@ -49,7 +54,8 @@ facts:
       probe: npx tsx build/lab/home/projects/1/tasks/5/gen/probe/measure-context.mts
       verifiedAt: '2026-10-22'
   dev.context#measure:
-    value: 量上下文别用 reqlog：请求体默认截断（head 8 KB / tail 16 KB），量出来偏小且缺中段。走与真发同一个组装函数 `assembleSystem` + `buildHelpDoc` 才算准（脚本见 evidence.probe）
+    value: |-
+      量上下文别用 reqlog：请求体默认截断（head 8 KB / tail 16 KB），量出来偏小且缺中段。走与真发同一个组装函数 `assembleSystem` + `buildHelpDoc` 才算准（脚本见 evidence.probe）
     id: dev.context-measure
     review: accepted
     lifecycle: active
@@ -58,7 +64,8 @@ facts:
       at: pkgs.ts/diy-app/src/main/services/prompt-registry.ts:503
       verifiedAt: '2026-10-22'
   dev.context#prefix-cost:
-    value: 每轮都付的固定前缀实测 46 KB 量级：system 34.9 KB + 信封 help 7.4 KB + facts 投影 ≤4 KB（runtime 首步）。基线日期 2026-10-22（lab，tasks/5）
+    value: |-
+      每轮都付的固定前缀实测 46 KB 量级：system 34.9 KB + 信封 help 7.4 KB + facts 投影 ≤4 KB（runtime 首步）。基线日期 2026-10-22（lab，tasks/5）
     id: dev.context-prefix-cost
     review: accepted
     lifecycle: active
@@ -67,7 +74,8 @@ facts:
       probe: npx tsx build/lab/home/projects/1/tasks/5/gen/probe/measure-context.mts
       verifiedAt: '2026-10-22'
   dev.context#query-cost:
-    value: '**搬走的账按收支算，不按字节线性相除**：搬走 1 KB 每轮省 1 KB；但要查它一次 ≈ 一次额外请求的前缀重发（`get` 全量 41 KB 量级：system 26.7 + help 8.1 + facts 4.0 + kb 索引 2.2；`brief` 单位 KB 成本低一个数量级）⇒ **回本 ≈ 20 轮 / KB**（原来按 41000/X 算出的「200 B = 205 轮」是把查询成本全押在 41 KB 全量重发上，brief 已把单次成本压掉一个量级）。**推论：<1 KB 的小条目搬走仍不划算**；只有大块低频参考才值得。减负优先序 = 删 > 压缩 > 搬'
+    value: |-
+      **搬走的账按收支算，不按字节线性相除**：搬走 1 KB 每轮省 1 KB；但要查它一次 ≈ 一次额外请求的前缀重发（`get` 全量 41 KB 量级：system 26.7 + help 8.1 + facts 4.0 + kb 索引 2.2；`brief` 单位 KB 成本低一个数量级）⇒ **回本 ≈ 20 轮 / KB**（原来按 41000/X 算出的「200 B = 205 轮」是把查询成本全押在 41 KB 全量重发上，brief 已把单次成本压掉一个量级）。**推论：<1 KB 的小条目搬走仍不划算**；只有大块低频参考才值得。减负优先序 = 删 > 压缩 > 搬
     id: dev.context-query-cost
     review: accepted
     lifecycle: active
@@ -76,7 +84,8 @@ facts:
       probe: npx tsx build/lab/home/projects/1/tasks/5/gen/probe/measure-context.mts --home build/lab/home
       verifiedAt: '2026-10-22'
   dev.context#resident-set:
-    value: 常驻集 = **会改变行为、且违背代价高**的（硬约束 / 反直觉坑 / 入口选择），少而硬；搬运集 = **大块（>2 KB）且查阅式**（参考实现路径 / 命令细节 / 历史决策）；删除集 = 从不用。按此体检 2026-10-22 迁走 AGENTS.md 43 条（均 220 B）：`rule` 8 + `entry` 5 属于前一类（本应常驻），`find` 12 / `tool` 22 / `model` 5 属于搬运集（搬走合理）。工具面缺「按 subject 标 expose，不靠人拍脑袋」
+    value: |-
+      常驻集 = **会改变行为、且违背代价高**的（硬约束 / 反直觉坑 / 入口选择），少而硬；搬运集 = **大块（>2 KB）且查阅式**（参考实现路径 / 命令细节 / 历史决策）；删除集 = 从不用。按此体检 2026-10-22 迁走 AGENTS.md 43 条（均 220 B）：`rule` 8 + `entry` 5 属于前一类（本应常驻），`find` 12 / `tool` 22 / `model` 5 属于搬运集（搬走合理）。工具面缺「按 subject 标 expose，不靠人拍脑袋」
     id: dev.context-resident-set
     review: accepted
     lifecycle: active
@@ -85,7 +94,8 @@ facts:
       probe: './diy.sh facts brief find|tool|model|rule|entry  # 逐主题看条目体量'
       verifiedAt: '2026-10-22'
   dev.setup#sync:
-    value: 新 worktree 先 ./sha.sh sync（npm i --workspaces --include-workspace-root + 子模块 + 各包 sync）；只跑 --workspaces 会漏装根依赖，干净 worktree 上必现 build 解析失败
+    value: |-
+      新 worktree 先 ./sha.sh sync（npm i --workspaces --include-workspace-root + 子模块 + 各包 sync）；只跑 --workspaces 会漏装根依赖，干净 worktree 上必现 build 解析失败
     id: dev.sync
     review: accepted
     lifecycle: active
@@ -94,7 +104,8 @@ facts:
       at: docs/toolchain.md:32
       verifiedAt: '2026-10-21'
   dev.setup#task-write:
-    value: 任务文件头是权威：读侧 task show 给的就是 frontmatter；--body 只收内联正文（值形如单行路径即拒），整篇文件走 --body-file / 追加走 --append-body-file
+    value: |-
+      任务文件头是权威：读侧 task show 给的就是 frontmatter；--body 只收内联正文（值形如单行路径即拒），整篇文件走 --body-file / 追加走 --append-body-file
     id: dev.task-write
     review: accepted
     lifecycle: active
@@ -103,7 +114,8 @@ facts:
       at: docs/task-write-contract.md:1
       verifiedAt: '2026-10-21'
   dev.test#bail:
-    value: 红灯即停；回报如实写「跑到第一个失败为止：N files / M passed / 其余未跑」，不许报成全量通过
+    value: |-
+      红灯即停；回报如实写「跑到第一个失败为止：N files / M passed / 其余未跑」，不许报成全量通过
     scope:
       paths:
         - pkgs.ts/diy-app/tests
@@ -116,7 +128,8 @@ facts:
       at: ~/AGENTS.md:68
       verifiedAt: '2026-10-21'
   dev.test#entry:
-    value: ./sha.sh test-unit 快测（不起 Electron）· diy-app 意图测试 pkgs.ts/diy-app/sha.sh test-intent [片段]
+    value: |-
+      ./sha.sh test-unit 快测（不起 Electron）· diy-app 意图测试 pkgs.ts/diy-app/sha.sh test-intent [片段]
     id: dev.test
     review: accepted
     lifecycle: active
@@ -125,7 +138,8 @@ facts:
       at: sha.sh:89
       verifiedAt: '2026-10-21'
   dev.turn-interrupt#blind:
-    value: 结局不可辨：interrupted.data 是空对象（local-blocks.ts:34），UI 一律显示「本轮未完成（流中断/崩溃恢复）」（turn-end.ts:55 / chat-fold.ts:232）—— 热重启 / 流断 / 进程被杀同形，人和 agent 都无法归因
+    value: |-
+      结局不可辨：interrupted.data 是空对象（local-blocks.ts:34），UI 一律显示「本轮未完成（流中断/崩溃恢复）」（turn-end.ts:55 / chat-fold.ts:232）—— 热重启 / 流断 / 进程被杀同形，人和 agent 都无法归因
     id: dev.turn-interrupt-blind
     review: accepted
     lifecycle: active
@@ -134,7 +148,8 @@ facts:
       at: pkgs.ts/diy-app/src/main/services/local-blocks.ts:34
       verifiedAt: '2026-10-22'
   dev.turn-interrupt#cause:
-    value: lab/dev 下「本轮未完成」的头号成因是 dev 热重启，不是服务器：main bundle 一变更 electron-dev.mts::startElectron 就 kill Electron，而轮次跑在 main 进程内存里 → 一起消失
+    value: |-
+      lab/dev 下「本轮未完成」的头号成因是 dev 热重启，不是服务器：main bundle 一变更 electron-dev.mts::startElectron 就 kill Electron，而轮次跑在 main 进程内存里 → 一起消失
     id: dev.turn-interrupt-cause
     review: accepted
     lifecycle: active
@@ -143,7 +158,8 @@ facts:
       at: pkgs.ts/diy-app/scripts/electron-dev.mts:295
       verifiedAt: '2026-10-22'
   dev.turn-interrupt#rate:
-    value: 实测 tasks/5 + tasks/7 共 37 个真发请求轮：HTTP 全 200；interrupted 12 起，12 起全部命中 electron-restart（末请求后 7.2~31.3s）；服务器侧成因 0 起，唯一 error 是流读 read ETIMEDOUT
+    value: |-
+      实测 tasks/5 + tasks/7 共 37 个真发请求轮：HTTP 全 200；interrupted 12 起，12 起全部命中 electron-restart（末请求后 7.2~31.3s）；服务器侧成因 0 起，唯一 error 是流读 read ETIMEDOUT
     id: dev.turn-interrupt-rate
     review: accepted
     lifecycle: active
@@ -152,7 +168,8 @@ facts:
       probe: DIY_HOME=<lab home> uv run <lab home>/projects/1/tasks/7/gen/probe/interrupt-cause.py projects/1/tasks/5 projects/1/tasks/7
       verifiedAt: '2026-10-22'
   dev.worktree#location:
-    value: 放仓库外、原项目同级：<原项目>.worktrees/<标识>（禁放仓库内部）
+    value: |-
+      放仓库外、原项目同级：<原项目>.worktrees/<标识>（禁放仓库内部）
     id: dev.worktree
     review: accepted
     lifecycle: active
@@ -179,7 +196,8 @@ facts:
       at: ~/AGENTS.md:70
       verifiedAt: '2026-10-22'
   dev#long-task:
-    value: '**长命令不靠 `sleep` 轮询**：bash 超时缺省 300s（`DIY_LOCAL_BASH_TIMEOUT_MS` 可调）；仍超长就 `nohup … &` **一次**，然后做别的事/汇报，用一次 `tail` 取增量 —— 绝不用「`sleep 30` → 看一眼 → 再 `sleep 30`」把一步工作切成十步（每步都是一次完整请求）。'
+    value: |-
+      **长命令不靠 `sleep` 轮询**：bash 超时缺省 300s（`DIY_LOCAL_BASH_TIMEOUT_MS` 可调）；仍超长就 `nohup … &` **一次**，然后做别的事/汇报，用一次 `tail` 取增量 —— 绝不用「`sleep 30` → 看一眼 → 再 `sleep 30`」把一步工作切成十步（每步都是一次完整请求）。
     id: agents.dev.long-task
     review: accepted
     lifecycle: active
@@ -188,7 +206,8 @@ facts:
       at: ~/AGENTS.md:81
       verifiedAt: '2026-10-22'
   dev#verify-budget:
-    value: '**验证预算按改动面走，不按习惯走**：改一个文件只跑受影响的 1~3 个测试文件；全量套件（`./sha.sh check` / `test-unit` / 全量 intent）**只在收工前跑一次**。禁止「改一行 → 全量」循环 —— 一次全量 30~120s（还可能触发 bash 超时），循环 N 次等于把 N 次完整请求赔进去。红灯即停（先修再看），但回报必须如实写「跑到第一个失败为止：N files / M passed / 其余未跑」，不许报成全量通过。'
+    value: |-
+      **验证预算按改动面走，不按习惯走**：改一个文件只跑受影响的 1~3 个测试文件；全量套件（`./sha.sh check` / `test-unit` / 全量 intent）**只在收工前跑一次**。禁止「改一行 → 全量」循环 —— 一次全量 30~120s（还可能触发 bash 超时），循环 N 次等于把 N 次完整请求赔进去。红灯即停（先修再看），但回报必须如实写「跑到第一个失败为止：N files / M passed / 其余未跑」，不许报成全量通过。
     id: agents.dev.verify-budget
     review: accepted
     lifecycle: active
@@ -197,7 +216,8 @@ facts:
       at: ~/AGENTS.md:69
       verifiedAt: '2026-10-22'
   dev#wake-user:
-    value: '**agent 的可观测性有上限，到了就喊人，不许硬啃**。判据：需要人看一眼（视觉/交互效果）/ 需要人做决定（方案取舍）/ 卡住超过一次尝试。喊法 = 在会话里写三句话（**要你做什么 / 现在卡在哪 / 我试过什么**），然后**结束本轮** —— 不要空转等，也不要指望用户盯着日志看。'
+    value: |-
+      **agent 的可观测性有上限，到了就喊人，不许硬啃**。判据：需要人看一眼（视觉/交互效果）/ 需要人做决定（方案取舍）/ 卡住超过一次尝试。喊法 = 在会话里写三句话（**要你做什么 / 现在卡在哪 / 我试过什么**），然后**结束本轮** —— 不要空转等，也不要指望用户盯着日志看。
     id: agents.dev.wake-user
     review: accepted
     lifecycle: active

@@ -4,7 +4,8 @@
 domain: ref
 facts:
   ref.diy#git-hardening:
-    value: git 调用防御：统一 `GIT_TERMINAL_PROMPT=0`（不卡在交互）；**clone / pull 不设硬超时**（曾上过 180 s 被故意删掉——会误杀大仓库，卡住靠 Ctrl+C）；`ls-remote` 15 s、单 ref fetch 60 s 超时；长命令走 `runStreaming` + ProgressRenderer（TTY 原地重绘 / 非 TTY 里程碑行），不再「跑完才 dump」黑屏。
+    value: |-
+      git 调用防御：统一 `GIT_TERMINAL_PROMPT=0`（不卡在交互）；**clone / pull 不设硬超时**（曾上过 180 s 被故意删掉——会误杀大仓库，卡住靠 Ctrl+C）；`ls-remote` 15 s、单 ref fetch 60 s 超时；长命令走 `runStreaming` + ProgressRenderer（TTY 原地重绘 / 非 TTY 里程碑行），不再「跑完才 dump」黑屏。
     id: ref.diy.git-hardening
     review: accepted
     lifecycle: active
@@ -13,7 +14,8 @@ facts:
       at: 8ef8f82a:pkgs.ts/diy-dev/src/ref/git.ts:20
       verifiedAt: '2026-10-22'
   ref.diy#layers:
-    value: 分层（改哪一处先看头注）：`api.ts` schema → `store.ts` URL 解析 + diy.yaml/lock 读写 → `git.ts` 子进程封装 → `impl.ts` 命令编排（add/sync/list/remove）→ `render.ts` 进度渲染 → `progress.ts`。
+    value: |-
+      分层（改哪一处先看头注）：`api.ts` schema → `store.ts` URL 解析 + diy.yaml/lock 读写 → `git.ts` 子进程封装 → `impl.ts` 命令编排（add/sync/list/remove）→ `render.ts` 进度渲染 → `progress.ts`。
     id: ref.diy.layers
     review: accepted
     lifecycle: active
@@ -22,7 +24,8 @@ facts:
       at: 8ef8f82a:pkgs.ts/diy-dev/src/ref/store.ts:1
       verifiedAt: '2026-10-22'
   ref.diy#simplified:
-    value: '**现行是「简化版」**：不做 py/node 依赖扫描，只处理人工写进 `diy.yaml` 的 source，`sync` 批量 clone 到 `$DIY_HOME/ref/<key>`（`_sync.py` 那种 lock 文件驱动整棵依赖树的逻辑没搬）。`docs/plans/2026-07-10-ref-rewrite.md` 里的 v2 设计（lock 文件判项目边界 / monorepo scope / `--all` `--scope`）**未实现**，别按文档推行为。'
+    value: |-
+      **现行是「简化版」**：不做 py/node 依赖扫描，只处理人工写进 `diy.yaml` 的 source，`sync` 批量 clone 到 `$DIY_HOME/ref/<key>`（`_sync.py` 那种 lock 文件驱动整棵依赖树的逻辑没搬）。`docs/plans/2026-07-10-ref-rewrite.md` 里的 v2 设计（lock 文件判项目边界 / monorepo scope / `--all` `--scope`）**未实现**，别按文档推行为。
     id: ref.diy.simplified
     review: accepted
     lifecycle: active
@@ -31,7 +34,8 @@ facts:
       at: 8ef8f82a:pkgs.ts/diy-dev/src/ref/store.ts:1
       verifiedAt: '2026-10-22'
   ref.diy#tree-ambiguity:
-    value: '`/tree/` 有天然歧义（分支 `feat/foo` 的根 vs 分支 `feat` 下的 `foo` 目录）：**一律按 ref 名整体解释** `/tree/` 后段；解析失败时提示改用 `@<分支>` 精确形式。`/tree` 结尾视作仓库根。'
+    value: |-
+      `/tree/` 有天然歧义（分支 `feat/foo` 的根 vs 分支 `feat` 下的 `foo` 目录）：**一律按 ref 名整体解释** `/tree/` 后段；解析失败时提示改用 `@<分支>` 精确形式。`/tree` 结尾视作仓库根。
     id: ref.diy.tree-ambiguity
     review: accepted
     lifecycle: active
@@ -40,7 +44,8 @@ facts:
       at: 8ef8f82a:pkgs.ts/diy-dev/src/ref/store.ts:110
       verifiedAt: '2026-10-22'
   ref.diy#url-shape:
-    value: '`diy ref` 认的 source 形状：`<url>@<branch|tag>`（精确形式，SSH 也用它）· `<url>/tree/<ref>`（浏览页，后段整体即 ref 名）· `<url>/commit/<40 位 sha>` · `<url>/releases/tag/<t>`。**不认的页面形态**（issues/pulls 等）直接报错并提示改用仓库根或 `@版本`。'
+    value: |-
+      `diy ref` 认的 source 形状：`<url>@<branch|tag>`（精确形式，SSH 也用它）· `<url>/tree/<ref>`（浏览页，后段整体即 ref 名）· `<url>/commit/<40 位 sha>` · `<url>/releases/tag/<t>`。**不认的页面形态**（issues/pulls 等）直接报错并提示改用仓库根或 `@版本`。
     id: ref.diy.url-shape
     review: accepted
     lifecycle: active
@@ -49,7 +54,8 @@ facts:
       at: 8ef8f82a:pkgs.ts/diy-dev/src/ref/store.ts:77
       verifiedAt: '2026-10-22'
   ref.diy#version-semantics:
-    value: 检出策略（决定后续 sync 会不会 pull）：**无版本 / main** → 保持默认分支 HEAD（track `origin/默认分支`，**可 pull**）；**SHA / tag** → detached 检出，**后续不 pull**（tag 含非 semver 如 `nightly`，以 clone 到的本地 `refs/tags/` 消歧）；**显式分支名**（`develop`、`feat.x`，斜杠分支整体作 ref 名）→ `checkout -B <v> origin/<v>` 本地 track，**可 pull**。
+    value: |-
+      检出策略（决定后续 sync 会不会 pull）：**无版本 / main** → 保持默认分支 HEAD（track `origin/默认分支`，**可 pull**）；**SHA / tag** → detached 检出，**后续不 pull**（tag 含非 semver 如 `nightly`，以 clone 到的本地 `refs/tags/` 消歧）；**显式分支名**（`develop`、`feat.x`，斜杠分支整体作 ref 名）→ `checkout -B <v> origin/<v>` 本地 track，**可 pull**。
     id: ref.diy.version-semantics
     review: accepted
     lifecycle: active
@@ -58,7 +64,8 @@ facts:
       at: 8ef8f82a:pkgs.ts/diy-dev/src/ref/git.ts:12
       verifiedAt: '2026-10-22'
   ref#dir:
-    value: 三方源码在 `~/git-ref/`：`deepseek-harness/`（= dsh）· `opencode/` · `pi/`。**带着问题去查**（「我要的是哪种取舍」），不通读。
+    value: |-
+      三方源码在 `~/git-ref/`：`deepseek-harness/`（= dsh）· `opencode/` · `pi/`。**带着问题去查**（「我要的是哪种取舍」），不通读。
     id: agents.ref.dir
     review: accepted
     lifecycle: active
@@ -67,7 +74,8 @@ facts:
       at: ~/AGENTS.md:46
       verifiedAt: '2026-10-22'
   ref#dsh:
-    value: DeepSeek 自家 harness；**编辑器式工具 + UI 呈现**：`packages/fs/tool-str-replace-editor/`（`str_replace_editor`：view / create / str_replace / insert）+ `packages/fs/tool-fs/{edit,write,read}.ts`。
+    value: |-
+      DeepSeek 自家 harness；**编辑器式工具 + UI 呈现**：`packages/fs/tool-str-replace-editor/`（`str_replace_editor`：view / create / str_replace / insert）+ `packages/fs/tool-fs/{edit,write,read}.ts`。
     id: agents.ref.dsh
     review: accepted
     lifecycle: active
@@ -76,7 +84,8 @@ facts:
       at: ~/AGENTS.md:49
       verifiedAt: '2026-10-22'
   ref#opencode:
-    value: TS + Effect 的完整 agent；**工具契约最全**：`packages/core/src/tool/plugin/*.ts`（edit / write / read / patch / glob / grep / shell），带权限审批、formatter 钩子、返回文件 diff。
+    value: |-
+      TS + Effect 的完整 agent；**工具契约最全**：`packages/core/src/tool/plugin/*.ts`（edit / write / read / patch / glob / grep / shell），带权限审批、formatter 钩子、返回文件 diff。
     id: agents.ref.opencode
     review: accepted
     lifecycle: active
@@ -85,7 +94,8 @@ facts:
       at: ~/AGENTS.md:47
       verifiedAt: '2026-10-22'
   ref#outcome:
-    value: 结论写回**任务 body 或 AGENTS.md**，别只留在会话里（同一轮调研会被压缩掉）。
+    value: |-
+      结论写回**任务 body 或 AGENTS.md**，别只留在会话里（同一轮调研会被压缩掉）。
     id: agents.ref.outcome
     review: accepted
     lifecycle: active
@@ -94,7 +104,8 @@ facts:
       at: ~/AGENTS.md:50
       verifiedAt: '2026-10-22'
   ref#pi:
-    value: 极简 durable agent；**参数容错与盘面细节最讲究**：`packages/durable/src/tools/edit.ts`（批量 `edits[]`、行尾 / BOM 归一、字符归一匹配、同文件变更队列、生成 unified patch）。
+    value: |-
+      极简 durable agent；**参数容错与盘面细节最讲究**：`packages/durable/src/tools/edit.ts`（批量 `edits[]`、行尾 / BOM 归一、字符归一匹配、同文件变更队列、生成 unified patch）。
     id: agents.ref.pi
     review: accepted
     lifecycle: active

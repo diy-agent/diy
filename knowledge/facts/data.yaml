@@ -4,7 +4,8 @@
 domain: data
 facts:
   data#diy-yaml:
-    value: '`diy.yaml` diy 的 vendor 依赖源列表'
+    value: |-
+      `diy.yaml` diy 的 vendor 依赖源列表
     id: agents.data.diy-yaml
     review: accepted
     lifecycle: active
@@ -13,7 +14,8 @@ facts:
       at: ~/git/AGENTS.md:11
       verifiedAt: '2026-10-22'
   data#workspace:
-    value: '`*.code-workspace` VS Code 工作区文件'
+    value: |-
+      `*.code-workspace` VS Code 工作区文件
     id: agents.data.workspace
     review: accepted
     lifecycle: active

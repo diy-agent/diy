@@ -4,7 +4,8 @@
 domain: diydev
 facts:
   diydev.find#cli:
-    value: '`src/cli/index.ts` 入口：**进程内 RPC**（`createMemTransportPair` + `ChannelServerBinding`），零网络零 Electron —— 只为复用 `diy-app` 同一套命令解析（zod schema + `cliArg`/`cliOption` → help / did-you-mean）'
+    value: |-
+      `src/cli/index.ts` 入口：**进程内 RPC**（`createMemTransportPair` + `ChannelServerBinding`），零网络零 Electron —— 只为复用 `diy-app` 同一套命令解析（zod schema + `cliArg`/`cliOption` → help / did-you-mean）
     review: accepted
     lifecycle: active
     evidence:
@@ -12,7 +13,8 @@ facts:
       at: 115d5522:pkgs.ts/diy-dev/AGENTS.md:7
       verifiedAt: '2026-10-23'
   diydev.find#entry:
-    value: '`bin/dev`（跑 `build/prod/cli/index.js` 产物）· `./sha.sh dev <args>`（跑源码，**不 cd**）'
+    value: |-
+      `bin/dev`（跑 `build/prod/cli/index.js` 产物）· `./sha.sh dev <args>`（跑源码，**不 cd**）
     review: accepted
     lifecycle: active
     evidence:
@@ -20,7 +22,8 @@ facts:
       at: 115d5522:pkgs.ts/diy-dev/AGENTS.md:10
       verifiedAt: '2026-10-23'
   diydev.find#ref:
-    value: '`src/ref/`：`api.ts`（RPC **纯定义**）· `impl.ts`（handler 绑定）· `git.ts`（git 调用）· `store.ts`（`diy.yaml` / `ref.lock.yaml` 读写 + URL 解析）· `render.ts`（输出）· `progress.ts`；另有 `src/git/`（通用 git 调用层，与 `ref/git.ts` 的 RPC 侧分工）'
+    value: |-
+      `src/ref/`：`api.ts`（RPC **纯定义**）· `impl.ts`（handler 绑定）· `git.ts`（git 调用）· `store.ts`（`diy.yaml` / `ref.lock.yaml` 读写 + URL 解析）· `render.ts`（输出）· `progress.ts`；另有 `src/git/`（通用 git 调用层，与 `ref/git.ts` 的 RPC 侧分工）
     review: accepted
     lifecycle: active
     evidence:
@@ -28,7 +31,8 @@ facts:
       at: 115d5522:pkgs.ts/diy-dev/AGENTS.md:8
       verifiedAt: '2026-10-23'
   diydev.find#runtime:
-    value: '`src/runtime.ts` 只读 `DIY_HOME`（镜像根 `$DIY_HOME/ref`）'
+    value: |-
+      `src/runtime.ts` 只读 `DIY_HOME`（镜像根 `$DIY_HOME/ref`）
     review: accepted
     lifecycle: active
     evidence:
@@ -36,7 +40,8 @@ facts:
       at: 115d5522:pkgs.ts/diy-dev/AGENTS.md:9
       verifiedAt: '2026-10-23'
   diydev.rule#cwd-scope:
-    value: '**cwd 即作用域**：`diy.yaml` 在哪个目录就在哪操作；`bin/dev` **刻意不 cd 到包根**（`node` 必须保持调用者当前目录）'
+    value: |-
+      **cwd 即作用域**：`diy.yaml` 在哪个目录就在哪操作；`bin/dev` **刻意不 cd 到包根**（`node` 必须保持调用者当前目录）
     review: accepted
     lifecycle: active
     evidence:
@@ -44,7 +49,8 @@ facts:
       at: 115d5522:pkgs.ts/diy-dev/AGENTS.md:14
       verifiedAt: '2026-10-23'
   diydev.rule#lock-format:
-    value: '`ref.lock.yaml` 本包写 **v1**：`{version:1, generated, source:{key:{url,version,dir,lastSync}}}`；diy-app 侧的 v5 写引擎**已删（##387）**，本格式是全仓唯一写入方 —— 改动格式无需再比对另一侧'
+    value: |-
+      `ref.lock.yaml` 本包写 **v1**：`{version:1, generated, source:{key:{url,version,dir,lastSync}}}`；diy-app 侧的 v5 写引擎**已删（##387）**，本格式是全仓唯一写入方 —— 改动格式无需再比对另一侧
     review: accepted
     lifecycle: active
     evidence:
@@ -52,7 +58,8 @@ facts:
       at: 115d5522:pkgs.ts/diy-dev/AGENTS.md:15
       verifiedAt: '2026-10-23'
   diydev.rule#mirror-dir:
-    value: 镜像落 `$DIY_HOME/ref/<host>/<owner>/<repo>/<version>/`；`LockEntry.dir` 存**相对 `$DIY_HOME`** 的路径（跨 worktree 复用要拼当前 home）
+    value: |-
+      镜像落 `$DIY_HOME/ref/<host>/<owner>/<repo>/<version>/`；`LockEntry.dir` 存**相对 `$DIY_HOME`** 的路径（跨 worktree 复用要拼当前 home）
     review: accepted
     lifecycle: active
     evidence:
@@ -60,7 +67,8 @@ facts:
       at: 115d5522:pkgs.ts/diy-dev/AGENTS.md:16
       verifiedAt: '2026-10-23'
   diydev.rule#version-pin:
-    value: '`@` 后是 tag / sha（`isPinnedVersion`）则 sync 只检出不 pull；`null` 视作 `main`'
+    value: |-
+      `@` 后是 tag / sha（`isPinnedVersion`）则 sync 只检出不 pull；`null` 视作 `main`
     review: accepted
     lifecycle: active
     evidence:
@@ -68,7 +76,8 @@ facts:
       at: 115d5522:pkgs.ts/diy-dev/AGENTS.md:17
       verifiedAt: '2026-10-23'
   diydev.tool#check:
-    value: '`./sha.sh check`（typecheck + lint）· `./sha.sh test`（本包全是快测，`test ≡ test-unit`）'
+    value: |-
+      `./sha.sh check`（typecheck + lint）· `./sha.sh test`（本包全是快测，`test ≡ test-unit`）
     review: accepted
     lifecycle: active
     evidence:
@@ -76,7 +85,8 @@ facts:
       at: 115d5522:pkgs.ts/diy-dev/AGENTS.md:22
       verifiedAt: '2026-10-23'
   diydev.tool#dev-cmd:
-    value: '`./sha.sh dev ref add|remove|sync|list`（源码）· `bin/dev ref …`（产物）—— 本包是独立的 `dev` 命令，**不是** diy 应用的一部分'
+    value: |-
+      `./sha.sh dev ref add|remove|sync|list`（源码）· `bin/dev ref …`（产物）—— 本包是独立的 `dev` 命令，**不是** diy 应用的一部分
     review: accepted
     lifecycle: active
     evidence:

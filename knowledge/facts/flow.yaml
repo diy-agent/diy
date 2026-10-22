@@ -4,7 +4,8 @@
 domain: flow
 facts:
   flow.define#bounce-no-node:
-    value: '**打回不新建节点**（##166 §14.2 推论 2）：`kind: ''bounce''` 只是让目标节点**再驻留一次**（`Visit.seq` 递增），边只影响画线与标注、**不改结构**'
+    value: |-
+      **打回不新建节点**（##166 §14.2 推论 2）：`kind: 'bounce'` 只是让目标节点**再驻留一次**（`Visit.seq` 递增），边只影响画线与标注、**不改结构**
     id: flow.bounce-no-node
     review: accepted
     lifecycle: active
@@ -12,7 +13,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:42
   flow.define#boundary:
-    value: '本包只做内核：不做事件存储 / 状态文件布局 / 参数值来源（归 ##319）、不渲染（归 ##320）、不调度（`notify` 只给回执）、不引入权限机制'
+    value: |-
+      本包只做内核：不做事件存储 / 状态文件布局 / 参数值来源（归 ##319）、不渲染（归 ##320）、不调度（`notify` 只给回执）、不引入权限机制
     id: flow.boundary
     review: accepted
     lifecycle: active
@@ -20,7 +22,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:67
   flow.define#id-guard:
-    value: '**唯一保留的结构护栏**：`edges[].from/to` 只能取节点 id 的字面量联合（`defineWorkflow` 的 `const` 元组泛型）—— 打错字 / 回退到泳道**编译期报错**'
+    value: |-
+      **唯一保留的结构护栏**：`edges[].from/to` 只能取节点 id 的字面量联合（`defineWorkflow` 的 `const` 元组泛型）—— 打错字 / 回退到泳道**编译期报错**
     id: flow.id-guard
     review: accepted
     lifecycle: active
@@ -28,7 +31,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:43
   flow.define#lane-1to1:
-    value: '**泳道 ≡ 节点，1:1**（##311 §一）：无 `lanes` 段，`name` 只是节点自带的泳道显示名'
+    value: |-
+      **泳道 ≡ 节点，1:1**（##311 §一）：无 `lanes` 段，`name` 只是节点自带的泳道显示名
     id: flow.lane-1to1
     review: accepted
     lifecycle: active
@@ -36,7 +40,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:41
   flow.domain#audit-adapter:
-    value: '`apply(def, state, event)` 是**审计 / 消息入口**（薄适配：解 `anchor.data.nodeId` 再调 `advance`），**不参与状态构造**；留它只为「从旧日志重建」（`project`）与老调用方兼容。事件的 `id` / `author` / `content` **一律不进领域态**；**重建不出 `done` / `Visit.ref` / `FlowState.params`**（日志里没有 / `apply` 只解 `nodeId` 与 `at`，且 `project` 从 `initialState()` 起步）—— 要它们只能读落盘的状态文件'
+    value: |-
+      `apply(def, state, event)` 是**审计 / 消息入口**（薄适配：解 `anchor.data.nodeId` 再调 `advance`），**不参与状态构造**；留它只为「从旧日志重建」（`project`）与老调用方兼容。事件的 `id` / `author` / `content` **一律不进领域态**；**重建不出 `done` / `Visit.ref` / `FlowState.params`**（日志里没有 / `apply` 只解 `nodeId` 与 `at`，且 `project` 从 `initialState()` 起步）—— 要它们只能读落盘的状态文件
     id: flow.audit-adapter
     review: accepted
     lifecycle: active
@@ -44,7 +49,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:32
   flow.domain#domain-first:
-    value: '**领域状态一等**（##333）：位置变更的正路是 `advance`（只吃 `{ to, at, ref?, params? }`，**不吃事件**）；`FlowState` 自成真源、可独立落盘读回。**正路必须产出完整真源**（`params` 也在请求里，否则用正路落盘的状态残缺，读回被 `invalid-param` 拒 —— ##333 review2 P1），且**不许静默换配置**（状态里已有参数值、请求又带不同的一份 ⇒ 拒，换配置 = 另起一次运行 —— review3 P2-1）。凡「让 core 依赖日志 / 为日志好看」的改动一律错'
+    value: |-
+      **领域状态一等**（##333）：位置变更的正路是 `advance`（只吃 `{ to, at, ref?, params? }`，**不吃事件**）；`FlowState` 自成真源、可独立落盘读回。**正路必须产出完整真源**（`params` 也在请求里，否则用正路落盘的状态残缺，读回被 `invalid-param` 拒 —— ##333 review2 P1），且**不许静默换配置**（状态里已有参数值、请求又带不同的一份 ⇒ 拒，换配置 = 另起一次运行 —— review3 P2-1）。凡「让 core 依赖日志 / 为日志好看」的改动一律错
     id: flow.domain-first
     review: accepted
     lifecycle: active
@@ -52,7 +58,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:31
   flow.domain#done-marker:
-    value: 终态（guard 全过且**没有 `next` 出边**）把 `FlowState.done = true` 记进**领域态**；重复 `step` 直接返回 `done`，**不求值、不重跑 `action:`**（##315 review2 §D）。判据是**结构事实**：**边上的 `when` 不参与**（`when` 管「这条边此刻能不能走」，不管「有没有下一步」）⇒ 有 `next` 边而 `when` 全不成立 = `stuck`（停在**边上**）；只有 `bounce` 出边的节点 guard 全过 = `done`
+    value: |-
+      终态（guard 全过且**没有 `next` 出边**）把 `FlowState.done = true` 记进**领域态**；重复 `step` 直接返回 `done`，**不求值、不重跑 `action:`**（##315 review2 §D）。判据是**结构事实**：**边上的 `when` 不参与**（`when` 管「这条边此刻能不能走」，不管「有没有下一步」）⇒ 有 `next` 边而 `when` 全不成立 = `stuck`（停在**边上**）；只有 `bounce` 出边的节点 guard 全过 = `done`
     id: flow.done-marker
     review: accepted
     lifecycle: active
@@ -60,7 +67,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:37
   flow.domain#event-optional:
-    value: '`EventSeed.id` 可选：**不给 = 不落审计事件**（`transition.event === undefined`），领域照样推进；`notify` 因此只在**落了事件**时才唤醒（无事件 = 无通知，`receipts` 为空）'
+    value: |-
+      `EventSeed.id` 可选：**不给 = 不落审计事件**（`transition.event === undefined`），领域照样推进；`notify` 因此只在**落了事件**时才唤醒（无事件 = 无通知，`receipts` 为空）
     id: flow.event-optional
     review: accepted
     lifecycle: active
@@ -68,7 +76,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:36
   flow.domain#no-human-text:
-    value: 内核**不编人类文本**：转移给 `Move{kind:'entry'|'next'|'bounce', from, to}` + `reason`，审计事件正文由宿主给（`seed.content`，缺省空串）。改 `execute.ts` 时别把文案加回去
+    value: |-
+      内核**不编人类文本**：转移给 `Move{kind:'entry'|'next'|'bounce', from, to}` + `reason`，审计事件正文由宿主给（`seed.content`，缺省空串）。改 `execute.ts` 时别把文案加回去
     id: flow.no-human-text
     review: accepted
     lifecycle: active
@@ -76,7 +85,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:35
   flow.domain#ref-passthrough:
-    value: '`ref?: Record<string,string>`（`taskUri` / `turnId` / `stepId`…）**开放袋**：键不封闭（宿主自己命名）、值必须是字符串；内核**只透传不解释**'
+    value: |-
+      `ref?: Record<string,string>`（`taskUri` / `turnId` / `stepId`…）**开放袋**：键不封闭（宿主自己命名）、值必须是字符串；内核**只透传不解释**
     id: flow.ref-passthrough
     review: accepted
     lifecycle: active
@@ -84,7 +94,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:34
   flow.domain#single-pointer:
-    value: 容器恒只有一个 `position`；`advance` / `apply` 是纯函数（返回新态，不改入参）；**不允许跳步**（无对应边即 `no-edge`）
+    value: |-
+      容器恒只有一个 `position`；`advance` / `apply` 是纯函数（返回新态，不改入参）；**不允许跳步**（无对应边即 `no-edge`）
     id: flow.single-pointer
     review: accepted
     lifecycle: active
@@ -92,7 +103,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:44
   flow.domain#state-file-not-here:
-    value: '**落盘位置 / 文件布局 / 事件存储 / 谁给参数值**全归 ##319；`done` / `params` / `Visit.ref` 三样**重建不出来**（日志里没有）⇒ 领域态必须自己落盘；##319 按正路落盘时**记得 `advance` 要带 `params`**（或由 runtime 产出）'
+    value: |-
+      **落盘位置 / 文件布局 / 事件存储 / 谁给参数值**全归 ##319；`done` / `params` / `Visit.ref` 三样**重建不出来**（日志里没有）⇒ 领域态必须自己落盘；##319 按正路落盘时**记得 `advance` 要带 `params`**（或由 runtime 产出）
     id: flow.state-file-not-here
     review: accepted
     lifecycle: active
@@ -100,7 +112,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:40
   flow.domain#state-serialize:
-    value: 落盘 / 读回只走 `serialize.ts`：写侧先校验规范化（键序固定、字段封闭）、读侧同样严格（`invalid-state` / `invalid-json`）。除形状外还兜**语义自洽**（`position` 与折线末端一致、每节点 `seq` 恰为 `1,2,3…`、`done === true` ⇒ 已进入过）与 `params` 的纯 JSON 性。两条**立场**：**`at` 不要求单调**（次序由 `path` 数组承载、`at` 只是信息 —— 要次序看下标，别信 `at`）；**`params` 只兜纯 JSON 性、不兜值语义**（读回路径不经过 `resolveParams` ⇒ 盘上可能脏，但脏值进不了运行态，唯一闸门是 `createRuntime`）。`allowUnknown` 是**只读检查闸**（放行不保留，别拿它读进来的对象写回）
+    value: |-
+      落盘 / 读回只走 `serialize.ts`：写侧先校验规范化（键序固定、字段封闭）、读侧同样严格（`invalid-state` / `invalid-json`）。除形状外还兜**语义自洽**（`position` 与折线末端一致、每节点 `seq` 恰为 `1,2,3…`、`done === true` ⇒ 已进入过）与 `params` 的纯 JSON 性。两条**立场**：**`at` 不要求单调**（次序由 `path` 数组承载、`at` 只是信息 —— 要次序看下标，别信 `at`）；**`params` 只兜纯 JSON 性、不兜值语义**（读回路径不经过 `resolveParams` ⇒ 盘上可能脏，但脏值进不了运行态，唯一闸门是 `createRuntime`）。`allowUnknown` 是**只读检查闸**（放行不保留，别拿它读进来的对象写回）
     id: flow.state-serialize
     review: accepted
     lifecycle: active
@@ -108,7 +121,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:39
   flow.domain#visit-fields:
-    value: '`Visit{node,seq,kind,at}` 四项全是领域事实 + 宿主 `ref?`；**没有日志 id**（旧 `eventId` 已删）。方向反转：审计侧要指回领域，用折线末端的 `{ node, seq }` 作坐标'
+    value: |-
+      `Visit{node,seq,kind,at}` 四项全是领域事实 + 宿主 `ref?`；**没有日志 id**（旧 `eventId` 已删）。方向反转：审计侧要指回领域，用折线末端的 `{ node, seq }` 作坐标
     id: flow.visit-fields
     review: accepted
     lifecycle: active
@@ -116,7 +130,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:33
   flow.exec#author:
-    value: '`declare` 的 `author` 必填非空且**不得等于内核保留字 `system`**（`invalid-declare`）；「谁能代表哪个 actor」是宿主知识（归 ##319），内核不校验'
+    value: |-
+      `declare` 的 `author` 必填非空且**不得等于内核保留字 `system`**（`invalid-declare`）；「谁能代表哪个 actor」是宿主知识（归 ##319），内核不校验
     id: flow.author
     review: accepted
     lifecycle: active
@@ -124,7 +139,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:49
   flow.exec#deadlock:
-    value: '**`actor: ''system''` 与不可观测 guard 不得共存** → 组合期 `invalid-def`（不留到运行期静默卡死）'
+    value: |-
+      **`actor: 'system'` 与不可观测 guard 不得共存** → 组合期 `invalid-def`（不留到运行期静默卡死）
     id: flow.deadlock
     review: accepted
     lifecycle: active
@@ -132,7 +148,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:56
   flow.exec#declare:
-    value: '`declare` 走 `next` 边时**先判边上的 `when`**（不可用 → `edge-unavailable`）再判节点 guard 可观测那半（`guard-failed`）；走 `bounce` 边不设闸门且**不跑 guard / `when`**（`guard.evaluated === false`）；`node.actor` 为 `system` 或 guard 全可观测时不许 actor 宣布（`not-declarable`）'
+    value: |-
+      `declare` 走 `next` 边时**先判边上的 `when`**（不可用 → `edge-unavailable`）再判节点 guard 可观测那半（`guard-failed`）；走 `bounce` 边不设闸门且**不跑 guard / `when`**（`guard.evaluated === false`）；`node.actor` 为 `system` 或 guard 全可观测时不许 actor 宣布（`not-declarable`）
     id: flow.declare
     review: accepted
     lifecycle: active
@@ -140,7 +157,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:48
   flow.exec#guard-and:
-    value: '**guard 数组 = 与**（用户 2026-10-13 修订）：全部满足才可转移，空数组 = 恒真；求值**短路**（`action:` 有副作用，不能在已知前项失败后仍执行它）'
+    value: |-
+      **guard 数组 = 与**（用户 2026-10-13 修订）：全部满足才可转移，空数组 = 恒真；求值**短路**（`action:` 有副作用，不能在已知前项失败后仍执行它）
     id: flow.guard-and
     review: accepted
     lifecycle: active
@@ -148,7 +166,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:45
   flow.exec#guard-fail:
-    value: guard 未过 → 有 `bounce` 出边就**打回**，没有则**停在原位**（「卡住」在**边上**，##101 结论四）
+    value: |-
+      guard 未过 → 有 `bounce` 出边就**打回**，没有则**停在原位**（「卡住」在**边上**，##101 结论四）
     id: flow.guard-fail
     review: accepted
     lifecycle: active
@@ -156,7 +175,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:47
   flow.exec#loud:
-    value: 非法定义 / 非法转移 / 非法快照一律抛 `FlowError`（带 `code` + 点路径 `path`），**绝不静默丢弃**
+    value: |-
+      非法定义 / 非法转移 / 非法快照一律抛 `FlowError`（带 `code` + 点路径 `path`），**绝不静默丢弃**
     id: flow.loud
     review: accepted
     lifecycle: active
@@ -164,7 +184,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:68
   flow.exec#no-downgrade:
-    value: 未注册插件 / 非法 guard 引用 / 非法状态快照一律抛 `FlowError`，**绝不降级**成「永远不通过」或静默丢弃
+    value: |-
+      未注册插件 / 非法 guard 引用 / 非法状态快照一律抛 `FlowError`，**绝不降级**成「永远不通过」或静默丢弃
     id: flow.no-downgrade
     review: accepted
     lifecycle: active
@@ -172,7 +193,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:58
   flow.exec#no-side-effect:
-    value: 只读查询（`status`）走 `classifyGuards` 静态分类，**不调用插件**
+    value: |-
+      只读查询（`status`）走 `classifyGuards` 静态分类，**不调用插件**
     id: flow.no-side-effect
     review: accepted
     lifecycle: active
@@ -180,7 +202,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:59
   flow.exec#observable-split:
-    value: 分水岭是**可观测性**而非节点类型（##166 §10.3）：`pred:`/`action:` → 系统求值并自动转移；含 `prompt:` → **只能 actor 宣布**；规则全表见 `src/execute.ts` 头注
+    value: |-
+      分水岭是**可观测性**而非节点类型（##166 §10.3）：`pred:`/`action:` → 系统求值并自动转移；含 `prompt:` → **只能 actor 宣布**；规则全表见 `src/execute.ts` 头注
     id: flow.observable-split
     review: accepted
     lifecycle: active
@@ -188,7 +211,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:46
   flow.exec#options-closed:
-    value: '`createRuntime` 的 `options`、`step` / `declare` 的入参一律**形状封闭**（未知字段 → `invalid-option`；`declare` 一套码 `invalid-declare`）'
+    value: |-
+      `createRuntime` 的 `options`、`step` / `declare` 的入参一律**形状封闭**（未知字段 → `invalid-option`；`declare` 一套码 `invalid-declare`）
     id: flow.options-closed
     review: accepted
     lifecycle: active
@@ -196,7 +220,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:54
   flow.exec#seq:
-    value: '**副作用次序铁律**（`action:` 是写外部世界的槽）：先分类（零副作用）后求值 · 先拒单后求值（含审计字段 / 事件形状）· 打回不求值。改 `step`/`declare` 的判定次序前先读 `src/execute.ts` 头注'
+    value: |-
+      **副作用次序铁律**（`action:` 是写外部世界的槽）：先分类（零副作用）后求值 · 先拒单后求值（含审计字段 / 事件形状）· 打回不求值。改 `step`/`declare` 的判定次序前先读 `src/execute.ts` 头注
     id: flow.seq
     review: accepted
     lifecycle: active
@@ -204,7 +229,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:51
   flow.exec#step-not-idempotent:
-    value: '`step` / `declare` 是**状态机驱动**，给同一个 `state` 再调一次就再推一次 ⇒ `action:` 插件**必须幂等**；**要轮询「能不能推进」用 `status()`**（零副作用）。唯一例外：`state.done` 后重复 `step` 是空转（见 `rule.done-marker`）'
+    value: |-
+      `step` / `declare` 是**状态机驱动**，给同一个 `state` 再调一次就再推一次 ⇒ `action:` 插件**必须幂等**；**要轮询「能不能推进」用 `status()`**（零副作用）。唯一例外：`state.done` 后重复 `step` 是空转（见 `rule.done-marker`）
     id: flow.step-not-idempotent
     review: accepted
     lifecycle: active
@@ -212,7 +238,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:53
   flow.exec#stuck-reason:
-    value: '`stuck` 的 `reason` 须区分「压根没有 `bounce` 出边」与「有 `bounce` 边、只是它此刻的 `when` 不成立」'
+    value: |-
+      `stuck` 的 `reason` 须区分「压根没有 `bounce` 出边」与「有 `bounce` 边、只是它此刻的 `when` 不成立」
     id: flow.stuck-reason
     review: accepted
     lifecycle: active
@@ -220,7 +247,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:52
   flow.exec#when:
-    value: 边上的 `when` 是**边的条件**（§14.4），与 `guard` 同一套前缀规则：**单出口也照判**，命中 > 1 → `ambiguous-edge`；**系统选边与 actor 宣布两侧共用同一套语义**
+    value: |-
+      边上的 `when` 是**边的条件**（§14.4），与 `guard` 同一套前缀规则：**单出口也照判**，命中 > 1 → `ambiguous-edge`；**系统选边与 actor 宣布两侧共用同一套语义**
     id: flow.when
     review: accepted
     lifecycle: active
@@ -228,7 +256,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:50
   flow.find#container:
-    value: '`src/container.ts`：**领域层** —— `advance(def, state, { to, at, ref?, params? }) → { state, kind }`（正路）+ `FlowState` / `Visit` / `parseRef`；`createContainer(def)` 是同时刻领域态的只读视图（`.position` / `.path` / `.params` / `.done`）；`apply(event)` 是同文件的**审计适配**（见 `rule.audit-adapter`）'
+    value: |-
+      `src/container.ts`：**领域层** —— `advance(def, state, { to, at, ref?, params? }) → { state, kind }`（正路）+ `FlowState` / `Visit` / `parseRef`；`createContainer(def)` 是同时刻领域态的只读视图（`.position` / `.path` / `.params` / `.done`）；`apply(event)` 是同文件的**审计适配**（见 `rule.audit-adapter`）
     id: flow.container
     review: accepted
     lifecycle: active
@@ -236,7 +265,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:17
   flow.find#define:
-    value: '`src/define.ts`：`defineWorkflow(def)`；节点 `{ id, name, actor, guard[], hint, art?, params? }`、边 `{ from, to, when?, kind }`'
+    value: |-
+      `src/define.ts`：`defineWorkflow(def)`；节点 `{ id, name, actor, guard[], hint, art?, params? }`、边 `{ from, to, when?, kind }`
     id: flow.define
     review: accepted
     lifecycle: active
@@ -244,7 +274,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:16
   flow.find#eval:
-    value: '`src/eval.ts`：`parseGuardRef`（`prompt:`/`pred:`/`action:`）+ `classifyGuards`（静态分类，无副作用）+ `evaluateGuards`（与 + 短路）+ `unevaluatedGuards`（打回声明用）+ `selectEdge`（边上的 `when` 消歧，**单出口也判**，系统选边与 actor 宣布两侧共用）'
+    value: |-
+      `src/eval.ts`：`parseGuardRef`（`prompt:`/`pred:`/`action:`）+ `classifyGuards`（静态分类，无副作用）+ `evaluateGuards`（与 + 短路）+ `unevaluatedGuards`（打回声明用）+ `selectEdge`（边上的 `when` 消歧，**单出口也判**，系统选边与 actor 宣布两侧共用）
     id: flow.eval
     review: accepted
     lifecycle: active
@@ -252,7 +283,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:22
   flow.find#examples:
-    value: '`examples/dev.ts`（**范例①：工作流开发包长什么样** —— 6 节点开发工作流声明）+ `examples/dev.plugins.ts`（`pred:ci_green` / `action:pr_mergeable` 假数据实现）+ `tests/examples.dev.test.ts`（跑 ##166 §14.3 轨迹：8 步 / 6 泳道 / 1 打回）。范例**只用公开 API**（`@diy/flow`）、不碰 fs、不引新依赖；`tsconfig.json` 的 `include` 含 `examples/**/*`（否则范例一个字符都不被 `tsc` 检查）'
+    value: |-
+      `examples/dev.ts`（**范例①：工作流开发包长什么样** —— 6 节点开发工作流声明）+ `examples/dev.plugins.ts`（`pred:ci_green` / `action:pr_mergeable` 假数据实现）+ `tests/examples.dev.test.ts`（跑 ##166 §14.3 轨迹：8 步 / 6 泳道 / 1 打回）。范例**只用公开 API**（`@diy/flow`）、不碰 fs、不引新依赖；`tsconfig.json` 的 `include` 含 `examples/**/*`（否则范例一个字符都不被 `tsc` 检查）
     id: flow.examples
     review: accepted
     lifecycle: active
@@ -260,7 +292,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:27
   flow.find#execute:
-    value: '`src/execute.ts`：`createRuntime(def, { registry, params?, maxBounces?, notify? })` → `step` / `declare` / `status`；`Transition` 带 `move`（结构化语义）+ 可选 `event` + `receipts` + `notifyErrors`；`params` 是 L2 的**唯一注入点**（##316）'
+    value: |-
+      `src/execute.ts`：`createRuntime(def, { registry, params?, maxBounces?, notify? })` → `step` / `declare` / `status`；`Transition` 带 `move`（结构化语义）+ 可选 `event` + `receipts` + `notifyErrors`；`params` 是 L2 的**唯一注入点**（##316）
     id: flow.execute
     review: accepted
     lifecycle: active
@@ -268,7 +301,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:23
   flow.find#intent:
-    value: '`tests/intent.*.test.ts`（素材取 ##166 §14.3 三场景 / 开发与金融真实轨迹 / ##311 §二 的三个参数例子）'
+    value: |-
+      `tests/intent.*.test.ts`（素材取 ##166 §14.3 三场景 / 开发与金融真实轨迹 / ##311 §二 的三个参数例子）
     id: flow.intent
     review: accepted
     lifecycle: active
@@ -276,7 +310,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:26
   flow.find#params:
-    value: '`src/params.ts`：参数层（L2）—— `paramsOf(def)` 出 `{ schema, defaults }` · `resolveParams(schema, values)` 校验 + 合并 · `parseParamsSchema` 快照反向校验 · `interpolate` / `renderHint` 做 `${节点 id.局部名}` 插值'
+    value: |-
+      `src/params.ts`：参数层（L2）—— `paramsOf(def)` 出 `{ schema, defaults }` · `resolveParams(schema, values)` 校验 + 合并 · `parseParamsSchema` 快照反向校验 · `interpolate` / `renderHint` 做 `${节点 id.局部名}` 插值
     id: flow.params
     review: accepted
     lifecycle: active
@@ -284,7 +319,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:24
   flow.find#plugins:
-    value: '`src/plugins.ts`：五个固定槽位（`guard`/`source`/`action`/`render`/`notify`）+ `PluginContext` + 返回值校验；**一个具体实现的字节都不写**'
+    value: |-
+      `src/plugins.ts`：五个固定槽位（`guard`/`source`/`action`/`render`/`notify`）+ `PluginContext` + 返回值校验；**一个具体实现的字节都不写**
     id: flow.plugins
     review: accepted
     lifecycle: active
@@ -292,7 +328,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:20
   flow.find#project:
-    value: '`src/project.ts`：`project(events, def) → { currentNode, path, visits }`（**审计侧重放**，不是领域态来源）'
+    value: |-
+      `src/project.ts`：`project(events, def) → { currentNode, path, visits }`（**审计侧重放**，不是领域态来源）
     id: flow.project
     review: accepted
     lifecycle: active
@@ -300,7 +337,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:19
   flow.find#registry:
-    value: '`src/registry.ts`：`createRegistry().register(slot, name, fn)` / `.resolve(slot, name)`；未注册即抛 `unknown-plugin`'
+    value: |-
+      `src/registry.ts`：`createRegistry().register(slot, name, fn)` / `.resolve(slot, name)`；未注册即抛 `unknown-plugin`
     id: flow.registry
     review: accepted
     lifecycle: active
@@ -308,7 +346,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:21
   flow.find#serialize:
-    value: '`src/serialize.ts`：`flowStateToJson` / `parseFlowState` / `flowStateFromJson` / `isFlowState`（读回可信，形状与 talk 的 `serialize.ts` 同形）'
+    value: |-
+      `src/serialize.ts`：`flowStateToJson` / `parseFlowState` / `flowStateFromJson` / `isFlowState`（读回可信，形状与 talk 的 `serialize.ts` 同形）
     id: flow.serialize
     review: accepted
     lifecycle: active
@@ -316,7 +355,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:18
   flow.find#validate:
-    value: '`src/validate.ts`：`rejectUnknown`（形状封闭）+ `isObject` + `isIsoString` + `sameJson`（键序无关比较）+ `callPlugin`（宿主插件抛错 → 包成 `plugin-threw`）'
+    value: |-
+      `src/validate.ts`：`rejectUnknown`（形状封闭）+ `isObject` + `isIsoString` + `sameJson`（键序无关比较）+ `callPlugin`（宿主插件抛错 → 包成 `plugin-threw`）
     id: flow.validate
     review: accepted
     lifecycle: active
@@ -324,7 +364,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:25
   flow.params#param-bag-when-undeclared:
-    value: '工作流**没声明任何参数**时 `params` 不校验、原样透传（##315 的袋口径）：形状封闭的前提是「形状已声明」。**冻结深度随之有差异**（##316 review1 H-1，已知并记录）：声明了参数 ⇒ `resolveParams` 逐项受管（袋与 `list` 都冻结）；没声明 ⇒ 只 `Object.freeze` **顶层**，内层仍是宿主那份、可被插件改。**不统一**的理由：引擎不知道透传袋里是什么（可能是类实例 / 回调 / 宿主的活对象）—— 原地深冻结会改到**宿主自己的对象**，深拷贝则破坏「原样透传」；要统一就得先替宿主定「袋里只准放纯 JSON」，那是 ##316 的口径变更'
+    value: |-
+      工作流**没声明任何参数**时 `params` 不校验、原样透传（##315 的袋口径）：形状封闭的前提是「形状已声明」。**冻结深度随之有差异**（##316 review1 H-1，已知并记录）：声明了参数 ⇒ `resolveParams` 逐项受管（袋与 `list` 都冻结）；没声明 ⇒ 只 `Object.freeze` **顶层**，内层仍是宿主那份、可被插件改。**不统一**的理由：引擎不知道透传袋里是什么（可能是类实例 / 回调 / 宿主的活对象）—— 原地深冻结会改到**宿主自己的对象**，深拷贝则破坏「原样透传」；要统一就得先替宿主定「袋里只准放纯 JSON」，那是 ##316 的口径变更
     id: flow.param-bag-when-undeclared
     review: accepted
     lifecycle: active
@@ -332,7 +373,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:65
   flow.params#param-export:
-    value: '`{ schema, defaults }` 快照**单向导出**（供 UI 生成表单 / 文档渲染）；`defaults` 只是派生视图（真源 = 每项 `default`）；`parseParamsSchema` 读回时守与定义期**同一组**不变量（`name`/`node` 不含 `.`、同 `path` 唯一）'
+    value: |-
+      `{ schema, defaults }` 快照**单向导出**（供 UI 生成表单 / 文档渲染）；`defaults` 只是派生视图（真源 = 每项 `default`）；`parseParamsSchema` 读回时守与定义期**同一组**不变量（`name`/`node` 不含 `.`、同 `path` 唯一）
     id: flow.param-export
     review: accepted
     lifecycle: active
@@ -340,7 +382,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:64
   flow.params#param-hint:
-    value: '`hint` 里 `${局部名}`（本节点）/ `${节点 id.局部名}` 由 `interpolate` 插值；`$$` = 字面量 `$`、空 `list` 插成空串（合法值）；**定义期**校验占位符（`parseWorkflow` 的 `checkHints`，仅工作流声明了 ≥1 参数时；拼错 / 未闭合 → `invalid-def @ workflow.nodes[i].hint`），运行期找不到参数 / 未闭合 → `unknown-param` / `invalid-param`；`renderHint` 出错定位 `nodes.<id>.hint`'
+    value: |-
+      `hint` 里 `${局部名}`（本节点）/ `${节点 id.局部名}` 由 `interpolate` 插值；`$$` = 字面量 `$`、空 `list` 插成空串（合法值）；**定义期**校验占位符（`parseWorkflow` 的 `checkHints`，仅工作流声明了 ≥1 参数时；拼错 / 未闭合 → `invalid-def @ workflow.nodes[i].hint`），运行期找不到参数 / 未闭合 → `unknown-param` / `invalid-param`；`renderHint` 出错定位 `nodes.<id>.hint`
     id: flow.param-hint
     review: accepted
     lifecycle: active
@@ -348,7 +391,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:66
   flow.params#param-no-shape:
-    value: '**参数只改值、不改形**：不许增删节点 / 边；「本次跳过某步」= 参数让 `guard` / 边上的 `when` 短路（##311 §二）'
+    value: |-
+      **参数只改值、不改形**：不许增删节点 / 边；「本次跳过某步」= 参数让 `guard` / 边上的 `when` 短路（##311 §二）
     id: flow.param-no-shape
     review: accepted
     lifecycle: active
@@ -356,7 +400,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:63
   flow.params#param-scope:
-    value: '**参数声明在节点上**（`NodeDef.params`，L1 代码）：局部名 + `type` + `default`（必填）；全限定名 = `节点 id.局部名`，实例值是同构嵌套 `{ 节点 id: { 局部名: 值 } }`；局部名与「声明了参数的节点 id」都不许含 `.`'
+    value: |-
+      **参数声明在节点上**（`NodeDef.params`，L1 代码）：局部名 + `type` + `default`（必填）；全限定名 = `节点 id.局部名`，实例值是同构嵌套 `{ 节点 id: { 局部名: 值 } }`；局部名与「声明了参数的节点 id」都不许含 `.`
     id: flow.param-scope
     review: accepted
     lifecycle: active
@@ -364,7 +409,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:60
   flow.params#param-types:
-    value: 类型全集 `string | number | boolean | enum | list` **只收引擎画得出控件的**（不支持嵌套对象）；`list` 只装标量；约束 `enum?`（仅 enum）/ `min?` `max?` `unit?`（仅 number），写错类型即 `invalid-def`
+    value: |-
+      类型全集 `string | number | boolean | enum | list` **只收引擎画得出控件的**（不支持嵌套对象）；`list` 只装标量；约束 `enum?`（仅 enum）/ `min?` `max?` `unit?`（仅 number），写错类型即 `invalid-def`
     id: flow.param-types
     review: accepted
     lifecycle: active
@@ -372,7 +418,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:61
   flow.params#param-value:
-    value: 实例值必须**纯 JSON**（标量 / 标量列表、有限数）；非法值 `invalid-param`、未知节点 / 未知参数名 `unknown-param`，**绝不静默忽略**；`resolveParams` 结果全量 + 冻结
+    value: |-
+      实例值必须**纯 JSON**（标量 / 标量列表、有限数）；非法值 `invalid-param`、未知节点 / 未知参数名 `unknown-param`，**绝不静默忽略**；`resolveParams` 结果全量 + 冻结
     id: flow.param-value
     review: accepted
     lifecycle: active
@@ -380,7 +427,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:62
   flow.params#params-in-state:
-    value: '**`params` 值属领域状态**（##311 §二 L3 / ##333 交付 G）：`createRuntime` 把本次用的那份写进产出的 `FlowState.params`（`commit` 随 `AdvanceRequest.params` 交下去；两条 `done` 返回原地加标记、由 `stampParams` 补）。**`advance` 自己也能收 `params`**（纯透传、不改不冻结、不校验值语义）：给了就用本次的、没给就继承入参那份 —— 正路闭环，见 `rule.domain-first`。三条不变量：① 状态带着**另一份**参数值（键序无关比较）⇒ 拒（`invalid-param @ state.params`）；② 状态**已进入却没记参数值**（`position !== null` 且 `params === undefined`，本次运行有参数值）⇒ 拒 —— **「缺省」≠「丢了」**，唯一放行的是尚未进入（`initialState()` 本就不带 `params`，那是另起一次运行的正路；消息里给修法）；③ **`advance` 请求带的参数值与状态里那份不一致** ⇒ 拒（`invalid-param @ request.params`）—— 折线上早先的驻留是拿旧配置跑的，换掉即混配状态、且落盘把旧值抹掉（事后无从发现）；**runtime 与正路同一条口径**（runtime 拒、正路也拒）。值的**语义**校验归 ##316，本包不重写'
+    value: |-
+      **`params` 值属领域状态**（##311 §二 L3 / ##333 交付 G）：`createRuntime` 把本次用的那份写进产出的 `FlowState.params`（`commit` 随 `AdvanceRequest.params` 交下去；两条 `done` 返回原地加标记、由 `stampParams` 补）。**`advance` 自己也能收 `params`**（纯透传、不改不冻结、不校验值语义）：给了就用本次的、没给就继承入参那份 —— 正路闭环，见 `rule.domain-first`。三条不变量：① 状态带着**另一份**参数值（键序无关比较）⇒ 拒（`invalid-param @ state.params`）；② 状态**已进入却没记参数值**（`position !== null` 且 `params === undefined`，本次运行有参数值）⇒ 拒 —— **「缺省」≠「丢了」**，唯一放行的是尚未进入（`initialState()` 本就不带 `params`，那是另起一次运行的正路；消息里给修法）；③ **`advance` 请求带的参数值与状态里那份不一致** ⇒ 拒（`invalid-param @ request.params`）—— 折线上早先的驻留是拿旧配置跑的，换掉即混配状态、且落盘把旧值抹掉（事后无从发现）；**runtime 与正路同一条口径**（runtime 拒、正路也拒）。值的**语义**校验归 ##316，本包不重写
     id: flow.params-in-state
     review: accepted
     lifecycle: active
@@ -388,7 +436,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:38
   flow.plugin#compose-order:
-    value: '**先注册齐、再 `createRuntime`**（组合期扫描要求名字此刻已注册；`prompt:` 不查）。界线 = **内核只校验自己 `resolve` 的槽**（`guard`/`action`/`notify`）；`render`/`source` 的名字**不查**'
+    value: |-
+      **先注册齐、再 `createRuntime`**（组合期扫描要求名字此刻已注册；`prompt:` 不查）。界线 = **内核只校验自己 `resolve` 的槽**（`guard`/`action`/`notify`）；`render`/`source` 的名字**不查**
     id: flow.compose-order
     review: accepted
     lifecycle: active
@@ -396,7 +445,8 @@ facts:
       source: code
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:55
   flow.plugin#notify-bypass:
-    value: '`notify` 是**旁路**：插件抛错 / 回执形状错只记进 `transition.notifyErrors`，**不作废**已落定的 `state` / `event`；插件异常统一包成 `plugin-threw`（带 `cause`）'
+    value: |-
+      `notify` 是**旁路**：插件抛错 / 回执形状错只记进 `transition.notifyErrors`，**不作废**已落定的 `state` / `event`；插件异常统一包成 `plugin-threw`（带 `cause`）
     id: flow.notify-bypass
     review: accepted
     lifecycle: active

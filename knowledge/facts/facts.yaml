@@ -4,7 +4,8 @@
 domain: facts
 facts:
   facts.cli#entry:
-    value: diy facts status · get <claim> [--env] · submit --file <json|-> [--dry-run] · affected --files a,b —— **agent 只走 CLI，不碰 YAML**（整批事务：一条不过整批拒）
+    value: |-
+      diy facts status · get <claim> [--env] · submit --file <json|-> [--dry-run] · affected --files a,b —— **agent 只走 CLI，不碰 YAML**（整批事务：一条不过整批拒）
     review: accepted
     lifecycle: active
     evidence:
@@ -12,7 +13,8 @@ facts:
       at: scripts/facts-index.mts:1
       verifiedAt: '2026-10-21'
   facts.find#atomic-write:
-    value: '`src/node/atomic-write.ts` 落盘原语：**两阶段**（先把 N 份 tmp 全写出来 → 再逐个 rename）；任一步失败清掉本批所有 tmp、目标保持原样、原错误上抛。tmp 名 `<目标>.tmp-<pid>-<rand>`（rand 防并发互踩；后缀不是 `.yaml`，`isFactFile` 另显式排除 `.tmp-`）。目标已存在 ⇒ tmp 继承权限位。**与 `diy-app` 的 `core/atomic-write.ts` 同范式、但各自持有一份**（依赖方向 `diy-app → diy-facts`，反向 import 会成环）；改语义两边一起改'
+    value: |-
+      `src/node/atomic-write.ts` 落盘原语：**两阶段**（先把 N 份 tmp 全写出来 → 再逐个 rename）；任一步失败清掉本批所有 tmp、目标保持原样、原错误上抛。tmp 名 `<目标>.tmp-<pid>-<rand>`（rand 防并发互踩；后缀不是 `.yaml`，`isFactFile` 另显式排除 `.tmp-`）。目标已存在 ⇒ tmp 继承权限位。**与 `diy-app` 的 `core/atomic-write.ts` 同范式、但各自持有一份**（依赖方向 `diy-app → diy-facts`，反向 import 会成环）；改语义两边一起改
     review: accepted
     lifecycle: active
     evidence:
@@ -20,7 +22,8 @@ facts:
       at: bfb9eaa0:pkgs.ts/diy-facts/src/node/atomic-write.ts:1
       verifiedAt: '2026-10-22'
   facts.find#entry:
-    value: '`src/index.ts` 导出面；消费者只看这一份，别直接摸子文件'
+    value: |-
+      `src/index.ts` 导出面；消费者只看这一份，别直接摸子文件
     review: accepted
     lifecycle: active
     evidence:
@@ -28,7 +31,8 @@ facts:
       at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:8
       verifiedAt: '2026-10-22'
   facts.find#fixtures:
-    value: '`tests/fixtures/real.ts` 取自仓库现有事实的真样例（判据压真数据，不编例子）'
+    value: |-
+      `tests/fixtures/real.ts` 取自仓库现有事实的真样例（判据压真数据，不编例子）
     review: accepted
     lifecycle: active
     evidence:
@@ -36,7 +40,8 @@ facts:
       at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:13
       verifiedAt: '2026-10-22'
   facts.find#index-build:
-    value: '`src/index-build.ts` claim 表 / 反查 / 冲突 / 影响面（全由程序生成）'
+    value: |-
+      `src/index-build.ts` claim 表 / 反查 / 冲突 / 影响面（全由程序生成）
     review: accepted
     lifecycle: active
     evidence:
@@ -44,7 +49,8 @@ facts:
       at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:11
       verifiedAt: '2026-10-22'
   facts.find#node:
-    value: '`src/node/index.ts`（`loadRepo` / `checkFacts` / `checkRepo` / `submit` / `renderDoc`）：**判据的唯二消费者共用这里** —— `check` 脚本与 `diy facts submit` 落盘前的候选集校验；两条路走同一份判据，杜绝「CLI 绿、CI 红」'
+    value: |-
+      `src/node/index.ts`（`loadRepo` / `checkFacts` / `checkRepo` / `submit` / `renderDoc`）：**判据的唯二消费者共用这里** —— `check` 脚本与 `diy facts submit` 落盘前的候选集校验；两条路走同一份判据，杜绝「CLI 绿、CI 红」
     review: accepted
     lifecycle: active
     evidence:
@@ -52,7 +58,8 @@ facts:
       at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:14
       verifiedAt: '2026-10-22'
   facts.find#resolve:
-    value: '`src/resolve.ts` 读取唯一入口（悬空与冲突**显式失败**，不返回 null）'
+    value: |-
+      `src/resolve.ts` 读取唯一入口（悬空与冲突**显式失败**，不返回 null）
     review: accepted
     lifecycle: active
     evidence:
@@ -60,7 +67,8 @@ facts:
       at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:10
       verifiedAt: '2026-10-22'
   facts.find#scope:
-    value: '`src/scope.ts` 三轴匹配 / 归一键 / 特定度'
+    value: |-
+      `src/scope.ts` 三轴匹配 / 归一键 / 特定度
     review: accepted
     lifecycle: active
     evidence:
@@ -68,7 +76,8 @@ facts:
       at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:9
       verifiedAt: '2026-10-22'
   facts.find#tasklib:
-    value: 任务级库：`--in task:<taskUri>` → `$DIY_HOME/<uri>/knowledge/`，与仓库库**同一套**判据与事务；差别只有两条（词表继承、首次写入即诞生），见 `LoadRepoOptions`
+    value: |-
+      任务级库：`--in task:<taskUri>` → `$DIY_HOME/<uri>/knowledge/`，与仓库库**同一套**判据与事务；差别只有两条（词表继承、首次写入即诞生），见 `LoadRepoOptions`
     review: accepted
     lifecycle: active
     evidence:
@@ -76,7 +85,8 @@ facts:
       at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:16
       verifiedAt: '2026-10-22'
   facts.find#validate:
-    value: '`src/validate.ts` 未知输入 → `Fact[]`，**一次报全部问题**（不中途返回）'
+    value: |-
+      `src/validate.ts` 未知输入 → `Fact[]`，**一次报全部问题**（不中途返回）
     review: accepted
     lifecycle: active
     evidence:
@@ -84,7 +94,8 @@ facts:
       at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:12
       verifiedAt: '2026-10-22'
   facts.find#writer:
-    value: 写入事务：**`validateFacts` 报任何 issue ⇒ 不进内核、不碰磁盘**（整批退，`problems` 带码可重提）—— 早期把坏事实过滤成空集后照样 submit，于是坏事实落成空集、词表成了唯一落盘物（中间态「6 主题 / 0 条」）；落盘本身两阶段（tmp + rename），一条不过则目标原样、tmp 清空
+    value: |-
+      写入事务：**`validateFacts` 报任何 issue ⇒ 不进内核、不碰磁盘**（整批退，`problems` 带码可重提）—— 早期把坏事实过滤成空集后照样 submit，于是坏事实落成空集、词表成了唯一落盘物（中间态「6 主题 / 0 条」）；落盘本身两阶段（tmp + rename），一条不过则目标原样、tmp 清空
     review: accepted
     lifecycle: active
     evidence:
@@ -92,7 +103,8 @@ facts:
       at: bfb9eaa0:pkgs.ts/diy-facts/src/node/index.ts:732
       verifiedAt: '2026-10-22'
   facts.rule#claim:
-    value: 边指向 **claim**（`subject#aspect`），`supersedes` 指向 **fact id**；claim 可派生、fact id 不可派生（审计锚点 —— `supersedes.to` 指着它，改了就是断边）
+    value: |-
+      边指向 **claim**（`subject#aspect`），`supersedes` 指向 **fact id**；claim 可派生、fact id 不可派生（审计锚点 —— `supersedes.to` 指着它，改了就是断边）
     review: accepted
     lifecycle: active
     evidence:
@@ -100,7 +112,8 @@ facts:
       at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:21
       verifiedAt: '2026-10-22'
   facts.rule#env-axis:
-    value: '`scope.env` 对齐 **`DIY_ENV`**（production / development / test），**不是** `DIY_VARIANT`（prod / test / lab）：`lab` 只是 development 的一种实例形态，混用两套轴会在 lab 与 development 之间打架'
+    value: |-
+      `scope.env` 对齐 **`DIY_ENV`**（production / development / test），**不是** `DIY_VARIANT`（prod / test / lab）：`lab` 只是 development 的一种实例形态，混用两套轴会在 lab 与 development 之间打架
     review: accepted
     lifecycle: active
     evidence:
@@ -108,7 +121,8 @@ facts:
       at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:20
       verifiedAt: '2026-10-22'
   facts.rule#generated:
-    value: 真源是**生成物式**：条目排序 / 字段顺序 / 头注（`note` 或文件开头注释块）全由 `renderDoc` 决定 ⇒ 手工改格式会被下一次 submit 冲掉；改内容只能走 `diy facts submit`
+    value: |-
+      真源是**生成物式**：条目排序 / 字段顺序 / 头注（`note` 或文件开头注释块）全由 `renderDoc` 决定 ⇒ 手工改格式会被下一次 submit 冲掉；改内容只能走 `diy facts submit`
     review: accepted
     lifecycle: active
     evidence:
@@ -116,7 +130,8 @@ facts:
       at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:25
       verifiedAt: '2026-10-22'
   facts.rule#intersect:
-    value: '匹配是**相交**不是包含：`env: [''development'',''test'']` 在 `{env:''test''}` 下命中（数组语义是析取，不是合取）'
+    value: |-
+      匹配是**相交**不是包含：`env: ['development','test']` 在 `{env:'test'}` 下命中（数组语义是析取，不是合取）
     review: accepted
     lifecycle: active
     evidence:
@@ -124,7 +139,8 @@ facts:
       at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:22
       verifiedAt: '2026-10-22'
   facts.rule#live:
-    value: 冲突 / 冗余只在 `review=accepted && lifecycle=active` 之间判；`superseded` 留档不算问题
+    value: |-
+      冲突 / 冗余只在 `review=accepted && lifecycle=active` 之间判；`superseded` 留档不算问题
     review: accepted
     lifecycle: active
     evidence:
@@ -132,7 +148,8 @@ facts:
       at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:23
       verifiedAt: '2026-10-22'
   facts.rule#no-throw:
-    value: 读取侧一律返回 `Result`（`facts/scope-no-match` / `facts/scope-conflict` 是可预期结果）；只有构造非法输入才 throw 带 code 的错误
+    value: |-
+      读取侧一律返回 `Result`（`facts/scope-no-match` / `facts/scope-conflict` 是可预期结果）；只有构造非法输入才 throw 带 code 的错误
     review: accepted
     lifecycle: active
     evidence:
@@ -140,7 +157,8 @@ facts:
       at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:29
       verifiedAt: '2026-10-22'
   facts.rule#single-impl:
-    value: '**判据只写一份**：CLI 与 check 脚本都调 `@diy/facts/node`，任一侧自己再实现一遍校验 = 分叉，正是本任务要治的病'
+    value: |-
+      **判据只写一份**：CLI 与 check 脚本都调 `@diy/facts/node`，任一侧自己再实现一遍校验 = 分叉，正是本任务要治的病
     review: accepted
     lifecycle: active
     evidence:
@@ -148,7 +166,8 @@ facts:
       at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:24
       verifiedAt: '2026-10-22'
   facts.rule#tasklib-inherit:
-    value: 任务级库**继承**仓库词表，且**写回只写本地的**：`loadRepo` 把「全量词表」与「本地声明的词表」分成两份（`subjects` / `localSubjects`），写回用后者 —— 混用会让第一次 `submit` 就把继承的整份词表复制成本地快照。⚠️ **继承只持续到本地文件诞生**：任务库首次写入就建出本地 `subjects.yaml`，继承当场断掉、此后**不再合并**仓库词表 ⇒ 任务库词表不是「仓库 ∪ 本地」的持续快照，别按那个前提设计
+    value: |-
+      任务级库**继承**仓库词表，且**写回只写本地的**：`loadRepo` 把「全量词表」与「本地声明的词表」分成两份（`subjects` / `localSubjects`），写回用后者 —— 混用会让第一次 `submit` 就把继承的整份词表复制成本地快照。⚠️ **继承只持续到本地文件诞生**：任务库首次写入就建出本地 `subjects.yaml`，继承当场断掉、此后**不再合并**仓库词表 ⇒ 任务库词表不是「仓库 ∪ 本地」的持续快照，别按那个前提设计
     review: accepted
     lifecycle: active
     evidence:
@@ -156,7 +175,8 @@ facts:
       at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:28
       verifiedAt: '2026-10-22'
   facts.rule#tasklib-root:
-    value: 任务级库的 `root`（证据 / `scope.paths` 的解析根）**是仓库根**，不是任务目录：任务写的事实讲的是代码仓的事（`pkgs.ts/diy-app/src/x.ts:10`），按任务目录解析会让每条证据都悬空
+    value: |-
+      任务级库的 `root`（证据 / `scope.paths` 的解析根）**是仓库根**，不是任务目录：任务写的事实讲的是代码仓的事（`pkgs.ts/diy-app/src/x.ts:10`），按任务目录解析会让每条证据都悬空
     review: accepted
     lifecycle: active
     evidence:
@@ -164,7 +184,8 @@ facts:
       at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:27
       verifiedAt: '2026-10-22'
   facts.rule#workspace-dep:
-    value: diy-app 新增 workspace 依赖**必须**同步 `pkgs.ts/diy-app/vite.pkg-deps.ts::WORKSPACE_TS_DEPS`，否则 main 产物留裸 `import "@diy/x"`、运行时加载 `.ts` 源码直接炸（本任务实测踩中一次）
+    value: |-
+      diy-app 新增 workspace 依赖**必须**同步 `pkgs.ts/diy-app/vite.pkg-deps.ts::WORKSPACE_TS_DEPS`，否则 main 产物留裸 `import "@diy/x"`、运行时加载 `.ts` 源码直接炸（本任务实测踩中一次）
     review: accepted
     lifecycle: active
     evidence:

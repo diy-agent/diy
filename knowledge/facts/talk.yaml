@@ -4,7 +4,8 @@
 domain: talk
 facts:
   talk.find#anchor:
-    value: '`src/anchor.ts`：`Anchor = message | doc-range | task-field | node`；`pinsRevision` 三态（`true|false|null`，null = 不在修订轴）；构造器一律自检'
+    value: |-
+      `src/anchor.ts`：`Anchor = message | doc-range | task-field | node`；`pinsRevision` 三态（`true|false|null`，null = 不在修订轴）；构造器一律自检
     review: accepted
     lifecycle: active
     evidence:
@@ -12,7 +13,8 @@ facts:
       at: c8e0eae4:pkgs.ts/diy-talk/AGENTS.md:8
       verifiedAt: '2026-10-23'
   talk.find#assemble:
-    value: '`src/assemble.ts`：`assemble({ sources, strategy, window, selfId }) → Message[]`；源 `reactions|trace|material`，三内置策略 `full|text-only|changes-only`（##166 结论 4）；**他人过程（tool/thinking）永不进入（`full` 也不，由 `role.ts` 最终把关）**；`window` 是宿主注入的**可信**裁剪钩子 —— 其输出不再复核铁律（内核不自作主张）'
+    value: |-
+      `src/assemble.ts`：`assemble({ sources, strategy, window, selfId }) → Message[]`；源 `reactions|trace|material`，三内置策略 `full|text-only|changes-only`（##166 结论 4）；**他人过程（tool/thinking）永不进入（`full` 也不，由 `role.ts` 最终把关）**；`window` 是宿主注入的**可信**裁剪钩子 —— 其输出不再复核铁律（内核不自作主张）
     review: accepted
     lifecycle: active
     evidence:
@@ -20,7 +22,8 @@ facts:
       at: c8e0eae4:pkgs.ts/diy-talk/AGENTS.md:13
       verifiedAt: '2026-10-23'
   talk.find#consumers:
-    value: '`@diy/flow`（##313 泳道容器）已依赖；装配器 `assemble` 供 ##319（宿主接入与提示词装配）消费'
+    value: |-
+      `@diy/flow`（##313 泳道容器）已依赖；装配器 `assemble` 供 ##319（宿主接入与提示词装配）消费
     review: accepted
     lifecycle: active
     evidence:
@@ -28,7 +31,8 @@ facts:
       at: c8e0eae4:pkgs.ts/diy-talk/AGENTS.md:14
       verifiedAt: '2026-10-23'
   talk.find#event:
-    value: '`src/event.ts`：`Event { id, author, anchor, content, causes, at }`（##166 §10.2 的容器无关泛化）'
+    value: |-
+      `src/event.ts`：`Event { id, author, anchor, content, causes, at }`（##166 §10.2 的容器无关泛化）
     review: accepted
     lifecycle: active
     evidence:
@@ -36,7 +40,8 @@ facts:
       at: c8e0eae4:pkgs.ts/diy-talk/AGENTS.md:9
       verifiedAt: '2026-10-23'
   talk.find#reaction:
-    value: '`src/reaction.ts`：`Reaction { …, turnId, target, replyTo, … }` + `assertThreadRefs`（悬空 / 自指 / 重号 / 异锚点）'
+    value: |-
+      `src/reaction.ts`：`Reaction { …, turnId, target, replyTo, … }` + `assertThreadRefs`（悬空 / 自指 / 重号 / 异锚点）
     review: accepted
     lifecycle: active
     evidence:
@@ -44,7 +49,8 @@ facts:
       at: c8e0eae4:pkgs.ts/diy-talk/AGENTS.md:10
       verifiedAt: '2026-10-23'
   talk.find#role:
-    value: '`src/role.ts`：`assemblyRole` + `assertRoleAssignments`（铁律：他人发言绝不能装配成 `assistant`）；非法 `kind` 报错'
+    value: |-
+      `src/role.ts`：`assemblyRole` + `assertRoleAssignments`（铁律：他人发言绝不能装配成 `assistant`）；非法 `kind` 报错
     review: accepted
     lifecycle: active
     evidence:
@@ -52,7 +58,8 @@ facts:
       at: c8e0eae4:pkgs.ts/diy-talk/AGENTS.md:11
       verifiedAt: '2026-10-23'
   talk.find#serialize:
-    value: '`src/serialize.ts`：JSON 出入口（写读两侧都校验；`{compact}` 单行供 jsonl，`{allowUnknown}` 读侧前向兼容）'
+    value: |-
+      `src/serialize.ts`：JSON 出入口（写读两侧都校验；`{compact}` 单行供 jsonl，`{allowUnknown}` 读侧前向兼容）
     review: accepted
     lifecycle: active
     evidence:
@@ -60,7 +67,8 @@ facts:
       at: c8e0eae4:pkgs.ts/diy-talk/AGENTS.md:12
       verifiedAt: '2026-10-23'
   talk.find#spec:
-    value: '`SPEC.md` **决策记录**（为什么锚点统一成 `{type,data}`、为什么 doc-range 必钉 revision、为什么 replyTo 是 id 而非文字、为什么 role 不留例外开关）；需求真源是意图测试（`tests/intent.talk.test.ts` R1–R7 / `tests/intent.assemble.test.ts` A1–A6）'
+    value: |-
+      `SPEC.md` **决策记录**（为什么锚点统一成 `{type,data}`、为什么 doc-range 必钉 revision、为什么 replyTo 是 id 而非文字、为什么 role 不留例外开关）；需求真源是意图测试（`tests/intent.talk.test.ts` R1–R7 / `tests/intent.assemble.test.ts` A1–A6）
     review: accepted
     lifecycle: active
     evidence:
@@ -68,7 +76,8 @@ facts:
       at: c8e0eae4:pkgs.ts/diy-talk/AGENTS.md:7
       verifiedAt: '2026-10-23'
   talk.rule#data-only:
-    value: 只做数据与纯函数：**不做存储**（不碰 fs）；装配是纯函数 `assemble`（不碰具体 LLM SDK、不拼 prompt 的具体形状）
+    value: |-
+      只做数据与纯函数：**不做存储**（不碰 fs）；装配是纯函数 `assemble`（不碰具体 LLM SDK、不拼 prompt 的具体形状）
     review: accepted
     lifecycle: active
     evidence:
@@ -76,7 +85,8 @@ facts:
       at: c8e0eae4:pkgs.ts/diy-talk/AGENTS.md:20
       verifiedAt: '2026-10-23'
   talk.rule#discriminated-union-landed:
-    value: 全局规则 `rule.discriminated-union`（`~/AGENTS.md`）的**首批落地**：`Anchor` / `Event` 都是 `{ type, 公共字段, data }`，分支私有数据只进 `data`、与判别键同级不放私有字段。改这两个类型前先读全局那条，别在此处另立判据
+    value: |-
+      全局规则 `rule.discriminated-union`（`~/AGENTS.md`）的**首批落地**：`Anchor` / `Event` 都是 `{ type, 公共字段, data }`，分支私有数据只进 `data`、与判别键同级不放私有字段。改这两个类型前先读全局那条，别在此处另立判据
     review: accepted
     lifecycle: active
     evidence:
@@ -84,7 +94,8 @@ facts:
       at: c8e0eae4:pkgs.ts/diy-talk/AGENTS.md:22
       verifiedAt: '2026-10-23'
   talk.rule#loud:
-    value: 非法 anchor / 悬空 `replyTo` / 异锚点混串 / role 违规 / **未知字段** 一律抛 `TalkError`（带 `code` + 点路径），**绝不静默丢弃** —— 静默的后果是「装配出来的历史少一条反驳」
+    value: |-
+      非法 anchor / 悬空 `replyTo` / 异锚点混串 / role 违规 / **未知字段** 一律抛 `TalkError`（带 `code` + 点路径），**绝不静默丢弃** —— 静默的后果是「装配出来的历史少一条反驳」
     review: accepted
     lifecycle: active
     evidence:
@@ -92,7 +103,8 @@ facts:
       at: c8e0eae4:pkgs.ts/diy-talk/AGENTS.md:21
       verifiedAt: '2026-10-23'
   talk.rule#no-time:
-    value: 包内**不许取时间**：`at` 由调用方传入（可重放、可测试）；判据同 R7 的正则（`Date.now` / `new Date(`）
+    value: |-
+      包内**不许取时间**：`at` 由调用方传入（可重放、可测试）；判据同 R7 的正则（`Date.now` / `new Date(`）
     review: accepted
     lifecycle: active
     evidence:
@@ -100,7 +112,8 @@ facts:
       at: c8e0eae4:pkgs.ts/diy-talk/AGENTS.md:19
       verifiedAt: '2026-10-23'
   talk.rule#zero-dep:
-    value: '**零依赖纯内核**：不 import `node:fs` / `electron` / `@diy/app`，不取时间 ⇒ 现在即可拆成单独项目。新增 import 前先问「这还能单独拆出去吗」—— 意图测试 R7 静态拦：`src/**` 匹配到 `import … from "node:|electron|@diy/app"` 或 `Date.now` / `new Date(` 即红，且断言 `package.json` 零 dependencies'
+    value: |-
+      **零依赖纯内核**：不 import `node:fs` / `electron` / `@diy/app`，不取时间 ⇒ 现在即可拆成单独项目。新增 import 前先问「这还能单独拆出去吗」—— 意图测试 R7 静态拦：`src/**` 匹配到 `import … from "node:|electron|@diy/app"` 或 `Date.now` / `new Date(` 即红，且断言 `package.json` 零 dependencies
     review: accepted
     lifecycle: active
     evidence:

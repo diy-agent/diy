@@ -4,7 +4,8 @@
 domain: proj
 facts:
   proj#cops:
-    value: '`cops/` 跨平台 dotfiles / shell 配置（macOS / WSL）'
+    value: |-
+      `cops/` 跨平台 dotfiles / shell 配置（macOS / WSL）
     id: agents.proj.cops
     review: accepted
     lifecycle: active
@@ -13,7 +14,8 @@ facts:
       at: ~/git/AGENTS.md:6
       verifiedAt: '2026-10-22'
   proj#diy:
-    value: '`diy/` diy 生态（主 monorepo + 研究 + 工具）→ 细节见 `diy/AGENTS.md`'
+    value: |-
+      `diy/` diy 生态（主 monorepo + 研究 + 工具）→ 细节见 `diy/AGENTS.md`
     id: agents.proj.diy
     review: accepted
     lifecycle: active
@@ -22,7 +24,8 @@ facts:
       at: ~/git/AGENTS.md:5
       verifiedAt: '2026-10-22'
   proj#map:
-    value: 项目都在 `~/git/` 下，见 `~/git/AGENTS.md`
+    value: |-
+      项目都在 `~/git/` 下，见 `~/git/AGENTS.md`
     id: agents.proj.map
     review: accepted
     lifecycle: active
@@ -31,7 +34,8 @@ facts:
       at: ~/AGENTS.md:97
       verifiedAt: '2026-10-22'
   proj#sha:
-    value: '`sha/` `sha.sh` shell 框架库（被各项目依赖）'
+    value: |-
+      `sha/` `sha.sh` shell 框架库（被各项目依赖）
     id: agents.proj.sha
     review: accepted
     lifecycle: active
