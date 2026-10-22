@@ -84,6 +84,16 @@ facts:
       source: user
       at: AGENTS.md:39
       verifiedAt: '2026-10-21'
+  tool#skill-dir:
+    value: 共享 skills 真身在 `~/.agents/skills/`（`~/.hermes/skills/skills` 是它的 symlink，归档区 `~/.agents/skills.archive/` 同仓）；**自 2026-10-22 起是独立 git 仓**（首提交 `b961916`，279 文件 / 2.2 MB）—— 此前因磁盘满被手动删过 `.git`，单机仓只防误改、不防盘挂
+    id: agents.tool.skill-dir
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: git -C ~/.agents rev-parse --show-toplevel
+      at: ~/AGENTS.md:35
+      verifiedAt: '2026-10-22'
   tool#sync-gate:
     value: build/check/test/lab 入口先过 `ensure-sync`，命中即自动 `sync-deps`；`DIY_AUTO_SYNC=0` 关掉改报错，`./sha.sh sync-status` 只看状态
     id: agents.tool.sync-gate

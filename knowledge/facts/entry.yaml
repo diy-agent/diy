@@ -12,6 +12,15 @@ facts:
       source: user
       at: AGENTS.md:24
       verifiedAt: '2026-10-21'
+  entry#client-data-root:
+    value: '`diy` / `./diy.sh` 作为客户端按 **`$DIY_HOME` 定位数据根**（读 `$DIY_HOME/app.port` 探活）：shell 里继承来的 `DIY_HOME` 会把它拉去连**那个数据根**的实例，症状是查生产任务报「任务不存在」而不是报错。判据 `diy getAppInfo` 看 `diyHome`；跨数据根操作显式 `env -u DIY_HOME -u DIY_VARIANT diy …`'
+    id: agents.entry.client-data-root
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: pkgs.ts/diy-app/src/cli/index.ts:113
+      verifiedAt: '2026-10-22'
   entry#client:
     value: '`diy` / `./diy.sh` **都是客户端**（不启 GUI）：探 `$DIY_HOME/app.port` + 验身份，连不上才 spawn；**起 GUI 的是启动器 `./sha.sh lab`，只 spawn、从不连已跑实例**'
     id: agents.entry.client
