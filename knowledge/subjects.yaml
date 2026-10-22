@@ -19,6 +19,11 @@ subjects:
     description: 提交的硬性要求
     aliases:
       - commit
+  dev.context:
+    description: 上下文固定前缀的规模与构成（每轮都付的字节，##404 减负主线）
+    aliases:
+      - 上下文预算
+      - 固定前缀
   dev.setup:
     description: 开工前的环境准备（worktree / 依赖 / 任务文件写入规矩）
   dev.test:

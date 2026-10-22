@@ -21,6 +21,42 @@ facts:
       source: user
       at: ~/git/diy/AGENTS.md:25
       verifiedAt: '2026-10-21'
+  dev.context#chain-share:
+    value: AGENTS.md 链 28.3 KB 占 system 81%（~/AGENTS.md 17.0 · 本 worktree 9.5 · ~/git 1.6）；~/AGENTS.md 内 `## rule` 一节 8.9 KB 就占该文件 51% —— 减负只有一个量级对象，就是链
+    id: dev.context-chain-share
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: npx tsx build/lab/home/projects/1/tasks/5/gen/probe/measure-context.mts
+      verifiedAt: '2026-10-22'
+  dev.context#help-share:
+    value: 信封 help 7.4 KB 里 `system`(3.2) + `runtime`(2.2) 两节占 73%，全是 zod 派生的结构说明；`about` 固定话术已从 1689 B 压到 724 B（占 10%）。再砍只能动描述文本（`descMaxDepth`）
+    id: dev.context-help-share
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: npx tsx build/lab/home/projects/1/tasks/5/gen/probe/measure-context.mts
+      verifiedAt: '2026-10-22'
+  dev.context#measure:
+    value: 量上下文别用 reqlog：请求体默认截断（head 8 KB / tail 16 KB），量出来偏小且缺中段。走与真发同一个组装函数 `assembleSystem` + `buildHelpDoc` 才算准（脚本见 evidence.probe）
+    id: dev.context-measure
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: pkgs.ts/diy-app/src/main/services/prompt-registry.ts:503
+      verifiedAt: '2026-10-22'
+  dev.context#prefix-cost:
+    value: 每轮都付的固定前缀实测 46 KB 量级：system 34.9 KB + 信封 help 7.4 KB + facts 投影 ≤4 KB（runtime 首步）。基线日期 2026-10-22（lab，tasks/5）
+    id: dev.context-prefix-cost
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: npx tsx build/lab/home/projects/1/tasks/5/gen/probe/measure-context.mts
+      verifiedAt: '2026-10-22'
   dev.setup#sync:
     value: 新 worktree 先 ./sha.sh sync（npm i --workspaces --include-workspace-root + 子模块 + 各包 sync）；只跑 --workspaces 会漏装根依赖，干净 worktree 上必现 build 解析失败
     id: dev.sync
