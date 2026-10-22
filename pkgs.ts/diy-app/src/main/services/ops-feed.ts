@@ -147,6 +147,11 @@ class OpsFeed {
     return this.feeds.get(taskUri)?.subs.size ?? 0;
   }
 
+  /** 仅测试用：清空 per-会话缓存（见 `__test.resetFeeds` 的注释）。 */
+  resetForTest(): void {
+    this.feeds.clear();
+  }
+
   /** 此刻水位（订阅前校准起点用） */
   watermark(taskUri: string): { epoch: number; seq: number } {
     const s = this.st(taskUri);
@@ -229,4 +234,16 @@ class OpsFeed {
 export const opsFeed = new OpsFeed();
 
 // 测试用：读某行区间（导出便于单测边界：UTF-8 跨块、脏行跳过、越界）
-export const __test = { readOpLines, countLines };
+/**
+ * 仅测试用：清空内存里的 per-会话 feed 缓存（水位/epoch/订阅者集合）。
+ *
+ * 为什么需要：`--no-isolate`（##402）下模块每个 worker 只求值一次，而各测试文件**自建数据根**
+ * （setup 每文件换 DIY_HOME）—— uri 字符串（`projects/1/tasks/1`）会跨文件重复，但盘上文件
+ * 已随数据根换了一份。不清缓存，水位就带着上一个文件的记忆。生产里 uri → 文件是一一对应
+ * 且进程内不变的，**不存在**这种场景，故这是纯测试钩子。
+ */
+function resetFeeds(): void {
+  opsFeed.resetForTest();
+}
+
+export const __test = { readOpLines, countLines, resetFeeds };

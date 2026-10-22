@@ -65,10 +65,8 @@ import {
     type TurnOrigin,
 } from "../../shared/room";
 import type { Op } from "./local-blocks";
-
-function errText(e: unknown): string {
-    return e instanceof Error ? e.message : String(e);
-}
+import { errText } from "../../shared/error-report";
+import { reportError } from "./error-report";
 
 /** 人成员（「我」）—— 任务 room 与侧边栏 room 同一份（页面操作者本人，无 backend） */
 function humanMember(): RoomMember {
@@ -240,6 +238,9 @@ async function mirrorIntoTarget(input: {
         // `built.reply` 缺席 = 这条投递本来就没有独立回复（忙时插话）⇒ 不去"补"
         if (miss.reply && built.reply) record(input.targetTaskUri, built.reply);
     } catch (e) {
+        // 出口落盘（##411）：这里原来只是 console.warn —— 跨房间镜像写不进去的事实随时间丢失。
+        // 只用 catch 作用域内可拿到的入参（`targetMemberId` 在 try 里算的，这里不能引）。
+        reportError(e, { where: "room/mirror-write-back", sourceRoomId: input.sourceRoomId, taskUri: input.targetTaskUri });
         console.warn(`[room] 写回接收方房间失败（不影响投递）：${errText(e)}`);
     }
 }
@@ -350,8 +351,11 @@ export interface RunResult {
  * 抽成一层的原因（##377 第 27 刀 R1）：开轮方式现在有两种 —— 投递一条新消息（`chat`）、
  * 用**队列现有内容**开一轮（`chatQueued`，##303 的 c 方案），而"这一轮说了什么"的判据
  * 一模一样。两条各自实现一份，下一次改「什么算回复」就会漏掉一边。
+ *
+ * 导出（##411）：投递失败落盘（`reportError`）就钉在它的 catch 里，验收要**真链路**跑这条分支
+ * （桩一个抛错的 run 生成器），所以这里不再私有。
  */
-async function collectTurn(run: () => AsyncGenerator<Op>): Promise<RunResult> {
+export async function collectTurn(run: () => AsyncGenerator<Op>): Promise<RunResult> {
     const texts = new Map<string, string>();
     const errs: string[] = [];
     let turnId: string | undefined;
@@ -369,6 +373,9 @@ async function collectTurn(run: () => AsyncGenerator<Op>): Promise<RunResult> {
             }
         }
     } catch (e) {
+        // 出口落盘（##411）：投递失败是**最黑的一口箱子** —— 用户只看到「投递失败：xxx」，
+        // 而 ops 流里根本没有这一条（异常在 collectTurn 里就被吃掉转成字符串了）。
+        reportError(e, { where: "room/deliver", turnId });
         return { reply: "", error: `投递失败：${errText(e)}`, ...(turnId ? { turnId } : {}) };
     }
     const reply = [...texts.values()].join("\n").trim();
@@ -747,7 +754,10 @@ function deliverOne(input: DeliverInput): Promise<void> {
     const started = st.tail
         .then(run, run) // 前一条失败也照跑（队列不是"一个失败全停"）
         .catch((e: unknown) => {
-            const msg = `投递异常：${String(e)}`;
+            // 出口落盘（##411）：链上任何一步抛错都在这里收敛成一条房间事件 —— 事件里只有一句话，
+            // 现场（stack / code）只能靠这里留下（`String(e)` 连 name 都不一定给）。
+            reportError(e, { where: "room/delivery-chain", roomId, member: member.id, taskUri });
+            const msg = `投递异常：${errText(e)}`;
             // 落盘也可能失败（ENOSPC / 目录被删）—— 但**完成信号不能依赖落盘**：
             // 事件写不进去就给一条内存事件，至少让流收尾、让 UI 看见失败。
             let ev: RoomEvent | undefined;

@@ -7,6 +7,7 @@
 //   ③ 剪枝只认**最新那一份**树：旧响应后到时由 taskStore.loadTree 丢弃，
 //      这里用一次真实并发请求证明「不会拿过期快照剪」。
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { installRpc } from "../helpers/renderer-deps";
 
 const store = new Map<string, string>();
 (globalThis as unknown as { localStorage: Storage }).localStorage = {
@@ -19,9 +20,6 @@ const store = new Map<string, string>();
 } as Storage;
 
 const h = vi.hoisted(() => ({ loadTaskTree: vi.fn() }));
-vi.mock("../../src/renderer_solid/lib/rpc", () => ({
-  diyService: { diy: { loadTaskTree: h.loadTaskTree } },
-}));
 
 const { staleTaskTabCtxs } = await import("../../src/shared/tab-prune");
 
@@ -70,6 +68,7 @@ describe("staleTaskTabCtxs —— 判据本身", () => {
 describe("剪枝挂在**最新**那份树上（过期快照不剪）", () => {
   it("旧响应后到被丢弃：alive 仍含 A → 不剪 A", async () => {
     vi.resetModules();
+    await installRpc({ diy: { loadTaskTree: h.loadTaskTree } });
     const { taskStore } = await import("../../src/renderer_solid/store/taskStore");
     let resolveOld!: (v: unknown) => void;
     let resolveNew!: (v: unknown) => void;

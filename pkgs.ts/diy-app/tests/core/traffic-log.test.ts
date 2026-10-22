@@ -1,7 +1,9 @@
 // tests/core/traffic-log.test.ts
 // 流量日志落盘：按天切文件、追加并回读位置、版本兼容口径、失效提示。
 import { describe, it, expect } from "vitest";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import { existsSync } from "node:fs";
 import {
     appendRecord,
@@ -33,6 +35,8 @@ describe("traffic-log", () => {
         // 手写一行格式大版本为 9 的记录，读它应当被拒
         const rel = `${LOG_DIR_REL}/1998-01-01.jsonl`;
         const abs = absOf(rel);
+        // 目录自己建：本用例不依赖「别的用例先跑过 appendRecord」——`--sequence.shuffle` 会打乱顺序
+        mkdirSync(dirname(abs), { recursive: true });
         appendFileSync(abs, JSON.stringify({ _fmt: "9.0", url: "x" }) + "\n");
         expect(() => readRecord({ file: rel, offset: 0, len: 999 })).toThrow(TrafficLogError);
     });
@@ -40,10 +44,41 @@ describe("traffic-log", () => {
     it("小版本差异仍可读（只忽略未知字段）", () => {
         const rel = `${LOG_DIR_REL}/1998-01-02.jsonl`;
         const abs = absOf(rel);
+        mkdirSync(dirname(abs), { recursive: true });
         const line = JSON.stringify({ _fmt: "1.7", url: "y", futureField: 1 }) + "\n";
         appendFileSync(abs, line);
         const back = readRecord({ file: rel, offset: 0, len: Buffer.byteLength(line) }) as Record<string, unknown>;
         expect(back.url).toBe("y");
+    });
+
+    it("换数据根后写入器跟着换根（不留旧 fd）：两个根里各写一条，各自可回读", () => {
+        // 回归（##402 实测）：`Writer` 是模块级单例、缓存的 fd 只按**天**换 ⇒ 前一个文件把
+        // `DIY_HOME` 临时切走再切回时，这里仍写进旧根的文件 ⇒ 目标根没有那个文件，
+        // 回读报「日志文件已不存在」。单测里切 `DIY_HOME` 是常规操作（room / seed 等），
+        // 故按「天 + 数据根」双键换 fd。
+        const a = mkdtempSync(join(tmpdir(), "traffic-log-rootA-"));
+        const b = mkdtempSync(join(tmpdir(), "traffic-log-rootB-"));
+        const prev = process.env["DIY_HOME"];
+        try {
+            process.env["DIY_HOME"] = a;
+            const locA = appendRecord({ url: "https://a.example/rootA" });
+            process.env["DIY_HOME"] = b;
+            const locB = appendRecord({ url: "https://b.example/rootB" });
+            // 回读各自那个根（位置里的 file 是相对路径，按当前 DIY_HOME 解析）
+            expect((readRecord(locB) as { url?: string }).url).toBe("https://b.example/rootB");
+            process.env["DIY_HOME"] = a;
+            const locA2 = appendRecord({ url: "https://a.example/rootA2" });
+            expect((readRecord(locA) as { url?: string }).url).toBe("https://a.example/rootA");
+            expect((readRecord(locA2) as { url?: string }).url).toBe("https://a.example/rootA2");
+            expect(existsSync(absOf(locA2.file))).toBe(true);
+            // 旧根的那份没被"续写"进 a 根的同名文件（= 没有把两条记录叠在一起）
+            expect((readRecord(locA) as { url?: string }).url).not.toBe("https://b.example/rootB");
+        } finally {
+            if (prev === undefined) delete process.env["DIY_HOME"];
+            else process.env["DIY_HOME"] = prev;
+            rmSync(a, { recursive: true, force: true });
+            rmSync(b, { recursive: true, force: true });
+        }
     });
 
     it("文件不存在 → 人话提示", () => {

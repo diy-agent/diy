@@ -1080,7 +1080,8 @@ export function ContextLabPage(props: { uri: string }) {
                         <div class="text-caption opacity-60">
                             {`查找规则：目录 log/network/（相对 $DIY_HOME，按天切分，一天一个 YYYY-MM-DD.jsonl）；` +
                                 `本任务是 grep '"taskUri":"${rec.taskUri ?? ""}"' 该文件，行号 = 文件内第几行；` +
-                                `一轮多步 = 同一 turnId 多行（按 ts 升序 = 第 1/2/… 步），attempt 是「重试」序号、不是步序。` +
+                                `一轮多步 = 同一 turnId 多行；某一步用 stepSeq 定位（1 起），该步第几次往返看 attemptInStep` +
+                                `（1 = 首试，>1 = 重试）；attempt 是本 run 内的往返序号（跨步累计），既不是步序也不是重试序号。` +
                                 `变量树里的 reqlog 节点给模型的就是这套（自查用）。`}
                         </div>
                     </div>

@@ -196,7 +196,14 @@ const COLUMNS: ColDef[] = [
     { key: "duration", label: "耗时", width: "w-20", align: "right", on: true },
     { key: "time", label: "时间", width: "w-40", on: true, tip: "完整日期时间（本地时区）" },
     { key: "source", label: "来源", width: "w-32", on: true, tip: "谁发起的（LLM 对话 / 模型配置探测 / 其它）" },
-    { key: "attempt", label: "第几次", width: "w-16", align: "right", on: false, tip: "本轮第几次 HTTP 尝试（每次重试 +1）" },
+    {
+        key: "attempt",
+        label: "步/次",
+        width: "w-16",
+        align: "right",
+        on: false,
+        tip: "步.次 = 本轮第几个逻辑步 · 该步第几次 HTTP 往返（2 起即重试）；没有步号的老记录只显示往返序号",
+    },
 ];
 
 /** 单元格取值（也用于排序） */
@@ -220,8 +227,14 @@ function cellValue(r: Rec, key: ColKey): { text: string; num?: number } {
             return { text: time(r.ts), num: r.ts };
         case "source":
             return { text: kindLabel(r.kind) + (r.model ? ` ${r.model.split("/").pop()}` : "") };
-        case "attempt":
-            return { text: r.kind === "llm" ? String(r.attempt) : "—", num: r.attempt };
+        case "attempt": {
+            if (r.kind !== "llm") return { text: "—", num: 0 };
+            // 步号 + 该步内第几次（##409）：这是判断「这步重试了几次」的读法
+            if (typeof r.stepSeq === "number" && typeof r.attemptInStep === "number") {
+                return { text: `${r.stepSeq}.${r.attemptInStep}`, num: r.attempt };
+            }
+            return { text: String(r.attempt), num: r.attempt };
+        }
     }
 }
 
@@ -704,8 +717,17 @@ export function TrafficDetail(props: { st: TrafficState; inline?: boolean }) {
                             <span class="text-body opacity-60">{r().model}</span>
                         </Show>
                         <Show when={r().kind === "llm"}>
-                            <span class="text-body opacity-60" title="本轮第几次 HTTP 尝试（每次重试 +1）">
-                                第 {r().attempt} 次
+                            <span
+                                class="text-body opacity-60"
+                                title={
+                                    typeof r().stepSeq === "number"
+                                        ? "第几个逻辑步 · 该步第几次 HTTP 往返（>1 即重试）"
+                                        : "本 run 内第几次 HTTP 往返（跨步累计；老记录没有步号）"
+                                }
+                            >
+                                {typeof r().stepSeq === "number" && typeof r().attemptInStep === "number"
+                                    ? `第 ${r().stepSeq} 步 · 第 ${r().attemptInStep} 次往返`
+                                    : `第 ${r().attempt} 次往返`}
                             </span>
                         </Show>
                         <span class="text-body opacity-60">{(r().ms / 1000).toFixed(2)}s</span>

@@ -33,16 +33,36 @@ import { dataFileOrThrow } from "./data-file";
 import { loadCustomSpecs, loadModelConfig } from "./model-config";
 
 let _snapshot: Record<string, SpecProvider> | null = null;
+/** 缓存对应的**实际文件路径**：路径变了（例如刷新写进 `$DIY_HOME/data/`）就必须重读 */
+let _snapshotPath: string | null = null;
 
 /** snapshot 全量投影（models.dev 产物）。装配视图之外的用途（如 env 导入扫描）经此取用。 */
 export function snapshotProviders(): Record<string, SpecProvider> {
     return snapshot();
 }
 
-/** 惰性加载 snapshot（进程内缓存一次） */
+/**
+ * 丢弃进程内快照缓存（模型目录刷新后调用，##385）：下一次读就会重新走 `dataFileOrThrow`，
+ * 命中的可能是刚写进 `$DIY_HOME/data/` 的新快照。刻意返回 void —— 缓存重建是下一次读的事。
+ */
+export function invalidateSnapshot(): void {
+    _snapshot = null;
+    _snapshotPath = null;
+}
+
+/**
+ * 惰性加载 snapshot（进程内缓存**按文件路径**，判据只看路径、不看 mtime —— 读侧不为此多做 stat）：
+ *   · 同一路径 → 只解析一次（4MB / 6000+ 模型，热路径不能每次解析）；
+ *   · 路径变了 → 重读。**注意这是「路径变了才重读」，不是「文件变了就重读」**：
+ *     · 应用内刷新（`refreshAndApply`）写盘后**会调 `invalidateSnapshot()`** ⇒ 同路径覆盖也立即生效；
+ *     · 手工往 `$DIY_HOME/data/` 放快照：**该文件原先不存在**（路径从源树/ bundle 切到 `$DIY_HOME`）
+ *       时天然生效；**原先已存在再手工覆盖**则要重启，或走一次 `diy llmConfig syncModels`（它自带失效）。
+ */
 function snapshot(): Record<string, SpecProvider> {
-    if (_snapshot) return _snapshot;
-    _snapshot = JSON.parse(readFileSync(dataFileOrThrow(MODELS_DEV_FILE), "utf-8")) as Record<string, SpecProvider>;
+    const path = dataFileOrThrow(MODELS_DEV_FILE);
+    if (_snapshot && _snapshotPath === path) return _snapshot;
+    _snapshot = JSON.parse(readFileSync(path, "utf-8")) as Record<string, SpecProvider>;
+    _snapshotPath = path;
     return _snapshot;
 }
 

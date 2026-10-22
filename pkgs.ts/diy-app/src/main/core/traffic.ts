@@ -112,10 +112,33 @@ export interface TrafficRecord {
     url: string;
     host: string;
     path: string;
+    /**
+     * 【老字段，兼容保留】本 run 内第几次 HTTP 往返（跨步累计，重试也算一次）。
+     * **不是步序**（一步可能有好几次往返），也**不是重试序号**（跨步累计）。
+     * 定位"这一步的第几次尝试"请看 `stepSeq` + `attemptInStep`（##409）。
+     */
     attempt: number;
+    /**
+     * 该往返属于本轮第几个**逻辑步**（1 起；与变更历史的 `stepNo` / `stepId` 的 `_s<N>` 同号）。
+     * 步边界由 `noteStep`（local-agent 的 prepareStep，每步一次）标出来。
+     * null = 没登记步（模型配置探测 / 摘要这类一次性调用、或老记录）。
+     */
+    stepSeq: number | null;
+    /**
+     * 该步内第几次 HTTP 往返（1 = 首试，2 = 第 1 次重试…）。同一步的多条记录按这个序号即成重试链。
+     * null = 没登记步（同上）。
+     */
+    attemptInStep: number | null;
     maxRetries: number;
     status: number | null;
+    /** 这次往返的总耗时 ms（发出 → 收口）。**只含这一次往返**：重试是新的一次往返、另一条记录，从不合并。 */
     ms: number;
+    /**
+     * 从发出到收到**响应头**的耗时 ms（≈ 连接 + 排队 + 上游首字节）；发送 → 响应头之前的时间都算它。
+     * null = 没收到响应头（网络错 / 连接超时 ⇒ 看 err）。用来把"慢在哪一段"分开：
+     * ttfbMs≈ms 说明卡在等响应、ttfbMs 缺失说明压根没连上（如 Connect Timeout）。
+     */
+    ttfbMs: number | null;
     /** 请求正文字节数（完整大小，不受首尾法截断影响；无正文为 0） */
     reqBytes: number;
     /** 响应正文字节数（完整大小；未收到为 0） */
@@ -164,6 +187,18 @@ interface UReq {
 interface URes {
     statusCode: number;
     headers: Array<string | Uint8Array>;
+}
+
+/** session 级的计数状态（`attempt` 与步归属；见 noteRun / noteStep / onCreate） */
+interface SessionTrace {
+    /** 本 run 内第几次 HTTP 往返（老字段 `attempt` 的来源） */
+    attempt: number;
+    /** 当前逻辑步（1 起）；null = 还没登记步 */
+    stepSeq: number | null;
+    /** 这个步属于哪个轮（noteStep 传的 turnId）—— 换轮后不采信旧步号 */
+    stepTurnId: string | null;
+    /** 当前步内第几次往返 */
+    inStep: number;
 }
 
 /** 一次往返的累积器（create 时建，trailers / error 时收口） */
@@ -384,8 +419,8 @@ class Traffic {
     private originKind = new Map<string, { kind: TrafficKind; session: string; provider: string; model: string; baseUrl: string }>();
     /** 地址 origin → 最近的归属（用于展示 provider/model） */
     private originMeta = new Map<string, RunMeta>();
-    /** session → 本轮请求序号（每次重试都是一次 HTTP 往返，天然逐次自增） */
-    private attempts = new Map<string, number>();
+    /** session → 本轮的请求计数与**当前步**（见 noteRun / noteStep） */
+    private traces = new Map<string, SessionTrace>();
     /** 进行中的往返：undici request 对象 → 累积器（同对象贯穿 create→trailers） */
     private accs = new WeakMap<object, Acc>();
     private waiters: Array<() => void> = [];
@@ -414,7 +449,7 @@ class Traffic {
         }
     }
 
-    /** 发请求前登记：本轮归属 + 序号归零（LLM 对话调用） */
+    /** 发请求前登记：本轮归属 + 计数归零（`attempt` 与步归属，LLM 对话调用） */
     noteRun(meta: RunMeta): void {
         this.init();
         this.runs.set(meta.session, meta);
@@ -426,7 +461,35 @@ class Traffic {
             model: meta.model,
             baseUrl: meta.baseUrl,
         });
-        this.attempts.set(meta.session, 0);
+        this.traces.set(meta.session, { attempt: 0, stepSeq: null, stepTurnId: null, inStep: 0 });
+    }
+
+    /**
+     * 标记「接下来发的是第几个**逻辑步**」（##409）。
+     * 调用点在 local-agent 的 `prepareStep`：**每步一次、在该步的请求发出之前** ——
+     * 因此这一步内 SDK 的重试（新的一次 HTTP 往返，但不会再走 prepareStep）都归到同一步，
+     * 记录里的 `attemptInStep` 就天然是「该步第几次往返」。
+     *
+     * 为什么要 `turnId`：同一 session 上可能叠着两类运行（如用户手动触发的摘要是一次
+     * `noteRun`，与正在跑的轮共用一个 session）—— 只在 turnId 与当前登记一致时才采信步号，
+     * 否则宁可留 null（观测数据宁缺勿错）。
+     */
+    noteStep(session: string, turnId: string, stepSeq: number): void {
+        if (!session) return;
+        const st = this.traceOf(session);
+        st.stepSeq = stepSeq;
+        st.stepTurnId = turnId;
+        st.inStep = 0;
+    }
+
+    /** session → 计数状态（没登记过就建一个，与老实现「无 noteRun 也计数」的行为一致） */
+    private traceOf(session: string): SessionTrace {
+        let st = this.traces.get(session);
+        if (!st) {
+            st = { attempt: 0, stepSeq: null, stepTurnId: null, inStep: 0 };
+            this.traces.set(session, st);
+        }
+        return st;
     }
 
     /**
@@ -527,8 +590,11 @@ class Traffic {
         const kind: TrafficKind = run ? "llm" : (fallback?.kind ?? "http");
         const meta = run ?? this.originMeta.get(origin);
         // 无任何线索的请求也记（流量页要能看到全部出站请求），只是没有任务归属
-        const attempt = session ? (this.attempts.get(session) ?? 0) + 1 : 1;
-        if (session) this.attempts.set(session, attempt);
+        const st = session ? this.traceOf(session) : null;
+        const attempt = st ? ++st.attempt : 1;
+        // 步归属：只采信「登记过步」且「该步属于当前这次运行登记的轮」的情形（见 noteStep）
+        const stepSeq = st && st.stepSeq !== null && st.stepTurnId === run?.turnId ? st.stepSeq : null;
+        const attemptInStep = st && stepSeq !== null ? ++st.inStep : null;
         const url = `${r.origin}${r.path}`;
         const rec: TrafficRecord = {
             id: ++this.seq,
@@ -545,9 +611,12 @@ class Traffic {
             host: hostOf(url),
             path: r.path,
             attempt,
+            stepSeq,
+            attemptInStep,
             maxRetries: meta?.maxRetries ?? 0,
             status: null,
             ms: 0,
+            ttfbMs: null,
             reqBytes: 0,
             resBytes: 0,
             reqHeaders: headers,
@@ -573,6 +642,9 @@ class Traffic {
         if (!acc) return;
         const res = msg.response;
         acc.rec.status = res.statusCode;
+        // 首字节（响应头）时刻：把「连上/排队」与「下载」分开 —— 超时记录里 ms 巨大而 ttfbMs 缺失，
+        // 一眼就知道时间全花在**连不上**而不是读取慢（##409：341s 那条的复盘缺口）。
+        acc.rec.ttfbMs = Date.now() - acc.rec.ts;
         acc.rec.resHeaders = headersToObject(res.headers);
         // 追责凭据：各网关叫法不同 —— commandcode.ai = x-trace-id，
         // opencode zen = x-opencode-log-id，通用 = x-request-id。取到哪个算哪个。

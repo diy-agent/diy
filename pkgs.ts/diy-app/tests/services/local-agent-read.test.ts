@@ -29,6 +29,8 @@ beforeAll(() => {
     outsideDir = mkdtempSync(join(tmpdir(), "diy-read-outside-"));
     writeFileSync(join(workDir, "relative.txt"), "relative-ok", "utf-8");
     writeFileSync(join(outsideDir, "absolute.txt"), "absolute-ok", "utf-8");
+    // 50 行样本：**在 beforeAll 建**（原先由某个用例顺手建，shuffle 后顺序一变就 ENOENT）
+    writeFileSync(join(workDir, "many.txt"), Array.from({ length: 50 }, (_, i) => `row${i + 1}`).join("\n") + "\n", "utf-8");
 });
 
 afterAll(() => {
@@ -96,8 +98,6 @@ describe("read 工具 — 行窗口与续读（#156）", () => {
     });
 
     it("limit 收窄：尾部给出 offset 续读入口（旧 clip 没有这个出口）", async () => {
-        const p = join(workDir, "many.txt");
-        writeFileSync(p, Array.from({ length: 50 }, (_, i) => `row${i + 1}`).join("\n") + "\n", "utf-8");
         const tools = buildTools(workDir, limits, "test/task");
         const result = await (tools as any).read.execute({ path: "many.txt", limit: 10 });
         expect(result).toContain("10: row10");

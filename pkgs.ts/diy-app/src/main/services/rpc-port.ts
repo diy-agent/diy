@@ -28,6 +28,7 @@ import type { AppConfig } from '../core/app-config';
 import { apiDef } from './api-def';
 import { PROD_DEFAULT_PORT } from '../../runtime';
 import { sameDataHome } from '../core/instance-identity';
+import { errText, errorCodeOf } from '../../shared/error-report';
 
 /**
  * 可替换目标的「渲染进程转发」壳。
@@ -222,8 +223,10 @@ export class RpcPortService {
     } catch (e) {
       // 响应前崩溃：500 JSON（curl 非 0 → 调用方回退直连 CLI）
       try {
+        // 跨进程保留 code（##411）：`error` 仍是人读一句话（旧调用方不受影响），新增 `code`
+        // 承错误码（拿不到 = null）—— 否则调用方侧只看到一句话，三档分类无从谈起。
         stream.respond({ ':status': 500, 'content-type': 'application/json' });
-        stream.end(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }));
+        stream.end(JSON.stringify({ error: errText(e), code: errorCodeOf(e) }));
       } catch {
         /* 流已死 */
       }

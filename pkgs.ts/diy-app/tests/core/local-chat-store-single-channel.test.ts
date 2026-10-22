@@ -18,6 +18,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BlockNode, Op } from "../../src/main/services/local-blocks";
 import type { OpsFrame } from "../../src/shared/ops-frame";
 import type { SteerItem } from "../../src/main/core/drafts";
+import { installRpc, stubPersonaLoad, stubToasts } from "../helpers/renderer-deps";
 
 /** 手动可控的异步帧流（opsWatch 的返回物） */
 function makeSub() {
@@ -70,28 +71,6 @@ const h = vi.hoisted(() => ({
     addToast: vi.fn(),
 }));
 
-vi.mock("../../src/renderer_solid/lib/rpc", () => ({
-    diyService: {
-        diy: {
-            agent: {
-                local: {
-                    historyWindow: h.historyWindow,
-                    historyOlder: h.historyOlder,
-                    opsWatermark: h.opsWatermark,
-                    opsWatch: h.opsWatch,
-                    running: h.running,
-                    usage: h.usage,
-                    chat: h.chat,
-                    steer: { list: h.steerList },
-                },
-            },
-        },
-    },
-}));
-vi.mock("../../src/renderer_solid/store/personaStore", () => ({ personaStore: { load: async () => {} } }));
-vi.mock("../../src/renderer_solid/store/notificationStore", () => ({
-    notificationStore: { addToast: h.addToast },
-}));
 
 // node 环境没有 rAF，而 op 落地后的合帧刷新走它。替身必须**延后执行**、由 flushFrames() 手动跑：
 // 若替身同步执行回调，`rafId = requestAnimationFrame(cb)` 里 cb 先置 null、赋值随后又写回非 null
@@ -125,8 +104,31 @@ function chatThroughBothChannels(ops: Op[]) {
     };
 }
 
+/**
+ * 每个用例一份全新 store 单例（模块级 signal 只初始化一次）。
+ * RPC / toast / personaStore 走**显式注入**（##402：不再 vi.mock 全局模块表）；
+ * 顺序要紧：先 resetModules，再注入 —— 否则注入的是旧模块实例。
+ */
 async function freshStore() {
     vi.resetModules();
+    await installRpc({
+        diy: {
+            agent: {
+                local: {
+                    historyWindow: h.historyWindow,
+                    historyOlder: h.historyOlder,
+                    opsWatermark: h.opsWatermark,
+                    opsWatch: h.opsWatch,
+                    running: h.running,
+                    usage: h.usage,
+                    chat: h.chat,
+                    steer: { list: h.steerList },
+                },
+            },
+        },
+    });
+    await stubToasts((...args) => h.addToast(...args));
+    await stubPersonaLoad();
     return (await import("../../src/renderer_solid/store/localChatStore")).localChatStore;
 }
 

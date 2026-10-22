@@ -53,7 +53,7 @@ import {
     visibleDiffRows,
     type YamlDiffRow,
 } from "../../shared/yaml-lines";
-import { requestViewYaml, type LayerRow, type RequestView } from "../../shared/context/request-view";
+import { clipForPreview, requestViewYaml, type LayerRow, type PreviewClipStats, type RequestView } from "../../shared/context/request-view";
 import { DrawerMaxButton } from "./DrawerMaximize";
 import { notificationStore } from "../store/notificationStore";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -690,6 +690,9 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
     const [pendingReset, setPendingReset] = createSignal(false);
     /** ##378：待确认回滚的版本 id（确认弹窗读它；null = 无） */
     const [pendingRestore, setPendingRestore] = createSignal<string | null>(null);
+    /** ##406：预览裁剪阈值（单条字符串 / 数组元素）—— 只影响展示副本 */
+    const PREVIEW_CLIP = { maxChars: 4000, maxItems: 200 } as const;
+
     /** headtail 私有参数的字段表（渲染顺序 + 文案一处定义） */
     const RENDER_DATA_FIELDS: { key: "head" | "tail" | "maxLineChars" | "maxKeepBytes"; hint: string }[] = [
         { key: "head", hint: "保留头部行数" },
@@ -699,16 +702,47 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
     ];
 
     // 右栏视图控制
+    /** diff 闸（##406）：**缺省关闭**。
+     *  用户原话：「直接把里面的 diff 页面禁用掉，它的加载机理有问题，导致进不去，暂时不修了，就禁用掉」
+     *  —— 裁剪 + 缺省 2 层已经把「进不去」修好了（本 PR 刀 1），但那是**推出来**的边界；
+     *  先让人能进页面、按需再开，比「赌它够小」稳。开了才计算、才渲染。 */
+    const [diffEnabled, setDiffEnabled] = createSignal(false);
     const [sideBySide, setSideBySide] = createSignal(false);
     const [onlyDiff, setOnlyDiff] = createSignal(true);
-    /** 展开层级：0 = 只露根行；N = 全展开 */
-    const [expandLevel, setExpandLevel] = createSignal(Number.MAX_SAFE_INTEGER);
+    /** 展开层级：0 = 只露根行；N = 全展开。
+     *  **缺省 2**（##406）：原来是 `MAX_SAFE_INTEGER`（全展开）—— 对一次 4.95 MB 的请求
+     *  等于把数万行一次性铺成 DOM，渲染进程直接卡死（用户报「一进去就卡住」）。
+     *  2 层足够看清「哪个键变了」，要看细节点「展开」。 */
+    const [expandLevel, setExpandLevel] = createSignal(2);
+
+    /** 展示预算（##406）：裁剪只做一次，diff 与「已裁剪多少」都读它 ——
+     *  否则同一份 4.95 MB 请求会被递归走两遍（纯浪费时间）。 */
+    const previewPair = createMemo(() => {
+        if (!diffEnabled()) return null;
+        const m = ctl.pv();
+        if (!m) return null;
+        const base = clipForPreview(requestViewYaml(m.baseRequest), PREVIEW_CLIP);
+        const mod = clipForPreview(requestViewYaml(m.modRequest), PREVIEW_CLIP);
+        return { base, mod };
+    });
 
     // 两级 diff：以两个请求**对象**做节点级对齐（base = 未压缩，mod = 当前预算）
     const rows = createMemo<YamlDiffRow[]>(() => {
-        const m = ctl.pv();
-        if (!m) return [];
-        return diffValues(requestViewYaml(m.baseRequest), requestViewYaml(m.modRequest));
+        const p = previewPair();
+        if (!p) return [];
+        // diff 与渲染都必须在**有界**的副本上做 —— 否则大会话（>MB 级）会把
+        // 「数万行 diff + 数万个 DOM 节点」一次性压上来，页面卡死。真发内容不受影响。
+        return diffValues(p.base.value, p.mod.value);
+    });
+
+    /** 预览裁剪统计（顶部报「已裁剪多少」，让人知道看不到的部分存在） */
+    const clipStats = createMemo<PreviewClipStats>(() => {
+        const p = previewPair();
+        if (!p) return { droppedChars: 0, droppedItems: 0 };
+        return {
+            droppedChars: p.base.stats.droppedChars + p.mod.stats.droppedChars,
+            droppedItems: p.base.stats.droppedItems + p.mod.stats.droppedItems,
+        };
     });
 
     const foldLevels = createMemo(() => foldLevelCount(rows()));
@@ -1118,6 +1152,19 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
 
             {/* ── 右栏：预览区（请求 YAML diff）─────────────── */}
             <div class="grow flex flex-col overflow-hidden">
+                <Show
+                    when={diffEnabled()}
+                    fallback={
+                        <div class="p-6 flex flex-col gap-3 text-caption">
+                            <div class="opacity-70">
+                                差异视图缺省关闭（##406）：大请求的 diff 计算与渲染曾把页面卡死。先保证页面能进，再按需开。
+                            </div>
+                            <button class="btn btn-xs btn-outline self-start" onClick={() => setDiffEnabled(true)}>
+                                计算并显示 diff（大会话可能要等数秒）
+                            </button>
+                        </div>
+                    }
+                >
                 <div class="px-3 py-1.5 border-b flex items-center gap-3 shrink-0 text-caption">
                     <div class="join">
                         <button
@@ -1146,6 +1193,15 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                     <button class="btn btn-ghost btn-xs" aria-label="逐级展开" onClick={nextLevel}>
                         展开 {curLevel()}/{foldLevels()}
                     </button>
+                    {/* ##406：预览是有界的副本 —— 裁掉了多少必须说出来，否则「看不到」会被误当成「没有」 */}
+                    <Show when={clipStats().droppedChars > 0 || clipStats().droppedItems > 0}>
+                        <span
+                            class="badge badge-ghost badge-xs"
+                            title="长文本 / 大数组在预览里只留头尾（真发内容不受影响）。要看原文请到流量日志。"
+                        >
+                            预览已裁剪 {clipStats().droppedChars.toLocaleString()} 字符 / {clipStats().droppedItems.toLocaleString()} 项
+                        </span>
+                    </Show>
                     <span class="opacity-50 ml-auto">请求结构 YAML（base vs mod）</span>
                 </div>
 
@@ -1238,6 +1294,7 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                         </div>
                     </Show>
                 </div>
+                </Show>
             </div>
         </div>
     );

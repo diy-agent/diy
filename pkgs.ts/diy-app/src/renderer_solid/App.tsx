@@ -21,9 +21,9 @@ import { AppInfo } from "./components/AppInfo";
 import { LogPanel } from "./components/LogPanel";
 import { ThemeSettings } from "./components/ThemeSettings";
 import { ToastContainer } from "./components/ToastContainer";
-import { ConfirmDialog } from "./components/ConfirmDialog";
 // 「模型不可用」顶栏 bar（##369 ①）：真发失败时把事实从会话流里提出来摆到最显眼处
 import { ModelUnavailableBar } from "./components/ModelUnavailableBar";
+import type { Remedy } from "../shared/error-remedy";
 import { EnvStatusBar } from "./components/EnvStatusBar";
 import { taskStore, type TreeNode } from "./store/taskStore";
 import { tabStore } from "./store/tabStore";
@@ -214,6 +214,11 @@ export default function App() {
         tabStore.active ? { kind: "tab", key: tabStore.active } : { kind: "section", section: "task" },
     );
     const [subPage, setSubPage] = createSignal("info");
+    /**
+     * 设置 → 模型页的**修复引导**（##407）：`{ remedy, nonce }`。
+     * nonce 每次点击都不同 —— 同一条引导连点两次也要重新滚动 + 重新闪（用户以为没反应就再点一次）。
+     */
+    const [modelFocus, setModelFocus] = createSignal<{ remedy: Remedy; nonce: number } | null>(null);
     // 侧栏默认紧缩（2.5rem 纯图标 rail 省空间）；悬停或锁定才展开，选导航后即回缩
     const [pinned, setPinned] = createSignal(false);
     const [hovered, setHovered] = createSignal(false);
@@ -703,9 +708,6 @@ export default function App() {
         }
     });
 
-    /** 关 tab 前要确认的那一个（在跑的会话：##305 轮次脱离连接，关掉只是不看） */
-    const [pendingClose, setPendingClose] = createSignal<{ key: string; label: string } | null>(null);
-
     let fsAbort: AbortController | undefined;
 
     // 相对时间心跳（见 nowMs 的注释）：1 分钟推一次，界面静止时 `20h` 也会自己变 `21h`
@@ -1051,21 +1053,10 @@ export default function App() {
         setRoute({ kind: "tab", key });
     };
 
-    /** 关闭 tab：与任务状态无关（= 暂时不理会）。关父连带关子 */
-    const closeTab = (key: string, opts?: { skipConfirm?: boolean }) => {
-        // 关掉一个**正在跑**的会话：弹一次确认（##358 D3 / demo v4「① 关 tab 时若还在跑」）。
-        // 不是拦你 —— 是告诉你"关掉只是不看它，轮次照跑（##305）"，免得以为关了就停了。
-        // 走应用内 ConfirmDialog（**禁** window.confirm：窗口级模态会卡住整个渲染进程，且自动化点不到）。
-        const ctx = key.includes(":") ? key.slice(key.indexOf(":") + 1) : null;
-        if (!opts?.skipConfirm && ctx && sessionStore.byUri(ctx)?.turn !== null) {
-            setPendingClose({ key, label: tabLabel(ctx) });
-            return;
-        }
-        doCloseTab(key);
-    };
-
-    /** 真正执行关闭（确认过后走这里） */
-    const doCloseTab = (key: string) => {
+    /** 关闭 tab：与任务状态无关（= 暂时不理会）。关父连带关子。
+     *  **直接关，不确认**（##405）：在跑的会话关掉只是不看它，轮次照跑（##305 轮次脱离连接）——
+     *  那是既有语义，不需要再问一遍。 */
+    const closeTab = (key: string) => {
         hideHoverLayers();
         // 关闭前记下它的 ctx：关掉最后一个 tab 会落回任务树，那时也应在树里定位到它（##160），
         // 但 tabStore.close 之后 activeTab 已变，取不到了
@@ -1115,9 +1106,16 @@ export default function App() {
                                 notice={n()}
                                 onDismiss={() => modelNoticeStore.dismissCurrent()}
                                 onConfigure={() => {
-                                    // "去配置模型" = 设置 → 模型（唯一要做的动作；顺带把 route 切过去）
+                                    // 无修复映射时的兜底："去配置模型" = 设置 → 模型（只切页，不定位）
                                     goSection("settings");
                                     setSubPage("models");
+                                }}
+                                onRemedy={(r) => {
+                                    // 有映射（##407）：带到**具体锚点**去，页面里滚动 + 高亮该字段。
+                                    // 纯静态导航 —— 引导本身不调用任何模型（此刻 LLM 已经不可用）。
+                                    goSection("settings");
+                                    setSubPage("models");
+                                    setModelFocus({ remedy: r, nonce: Date.now() });
                                 }}
                             />
                         )}
@@ -1224,7 +1222,7 @@ export default function App() {
                                 <ThemeSettings />
                             </Show>
                             <Show when={subPage() === "models"}>
-                                <ModelConfigPage />
+                                <ModelConfigPage focus={modelFocus()} />
                             </Show>
                         </div>
                     </Show>
@@ -1836,22 +1834,6 @@ export default function App() {
                 onPick={(uri) => getRendererActions().openTaskRun?.(uri)}
             />
 
-            {/* 关掉在跑的会话前的确认（走应用内弹窗，见 closeTab 注释） */}
-            <Show when={pendingClose()}>
-                {(p) => (
-                    <ConfirmDialog
-                        title="它还在后台跑，确定关掉？"
-                        message={`${p().label} 这一轮还没跑完。关掉只是不看它 —— 轮次会照常在后台跑完（##305 轮次脱离连接），跑完会提示你。`}
-                        confirmLabel="关掉（不看）"
-                        onCancel={() => setPendingClose(null)}
-                        onConfirm={() => {
-                            const k = p().key;
-                            setPendingClose(null);
-                            closeTab(k, { skipConfirm: true });
-                        }}
-                    />
-                )}
-            </Show>
             <ToastContainer />
         </div>
         {/* 全局侧边栏助手 room（##166 §30 / §31）：**独立于路由** ——

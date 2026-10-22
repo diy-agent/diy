@@ -29,6 +29,17 @@ import { z } from "zod";
 export const ModelUnavailableKindSchema = z.enum(["coming-soon", "unknown-model", "auth", "quota"]);
 export type ModelUnavailableKind = z.infer<typeof ModelUnavailableKindSchema>;
 
+/**
+ * 四类判据 → 一句话标签（用户不必知道判据名，只需知道「该干什么」）。
+ * 放 shared 而不是各组件里：顶栏 bar 与模型配置页的回看列表要**同一套词**（##407）。
+ */
+export const MODEL_UNAVAILABLE_KIND_LABEL: Record<ModelUnavailableKind, string> = {
+    "coming-soon": "模型未上架",
+    "unknown-model": "模型 id 不认识",
+    auth: "认证失败",
+    quota: "配额或限流",
+};
+
 /** 探测到的错误事实（各字段都可缺：上游可能只回 body、SDK 可能只填 message） */
 export interface ModelErrorProbe {
     /** HTTP 状态码（拿不到 = null：网络错误 / 超时根本没有响应） */
@@ -194,6 +205,12 @@ export const ModelUnavailableNoticeSchema = z.object({
     personaName: z.string(),
     /** 模型 id（bar 的主角） */
     model: z.string(),
+    /**
+     * provider 段（std = models.dev id；custom = `custom:<key>`；拿不到 = ""）。
+     * 用途只有一个：##407 的修复引导据此定位到**那张 provider 卡片**（`providerAnchor()`）——
+     * 提示说「去配 key」，总得知道去哪张卡上配。
+     */
+    provider: z.string(),
     /** 哪个任务触发的（可去会话里看上下文） */
     taskUri: z.string(),
 });

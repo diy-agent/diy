@@ -14,7 +14,7 @@
 //   ③ readOpLines 的边界：UTF-8 跨块、脏行、越界（都曾是把「读文件」写错的老坑）
 // ═══════════════════════════════════════════════════════════════
 
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { LanguageModelV3StreamPart, LanguageModelV3StreamResult, LanguageModelV3Usage } from "@ai-sdk/provider";
@@ -33,6 +33,10 @@ beforeAll(() => {
   process.env["OPENCODE_API_KEY"] = "test-key";
   PROJECT = createProject(join(diyHome(), "ops-feed-work"));
 });
+
+// 每个用例从空的内存缓存起步：`--no-isolate` 下 OpsFeed 单例跨文件共享，
+// 而各文件自建数据根 ⇒ 同名 uri 的旧水位会串味（见 __test.resetFeeds 的注释）。
+beforeEach(() => __test.resetFeeds());
 
 let seq = 0;
 const newUri = (): string => createTask({ title: `ops feed ${++seq}`, project: PROJECT });

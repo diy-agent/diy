@@ -441,6 +441,21 @@ export function turnRows(turn: BlockNode, live: BlockNode | null): TurnRow[] {
     return rows;
 }
 
+/**
+ * **收起态仍要画的行**（1-2 级 / 用户手动收拢这一轮）：只留**用户自己的发言**。
+ *
+ * 用户 2026-10-21：「1/2/3/4 级都没有我那条留言，我需要展开 1 就能看到 —— 这是用户级留言，
+ * 不应该被折叠放到深层」。判据：用户发言是**对话脉络本体**（与 `contentItems` 里"不并进 proc bar"
+ * 同一条理由），不是"过程细节"；它一旦被收起，界面上就只剩「🗨 已投递」那个徽章，
+ * 读起来像"我说的话丢了"。
+ *
+ * 仍走 `turnRows` 的同一条路径（只做过滤、不重排）：收起态相对顺序 = 文档序，
+ * 与展开态一致；轮首那批不由这里出（`leadUsers` 单独画，两者不重叠）。
+ */
+export function collapsedRows(rows: TurnRow[]): TurnRow[] {
+    return rows.filter((r) => r.kind === "user");
+}
+
 // ─── 展开级别 ────────────────────────────────────────
 
 /**

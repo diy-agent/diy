@@ -15,39 +15,12 @@
 //   B = 只 cancel 不断流（CLI 路径）：main 侧 abort → fullStream 自然结束 → 生成器正常走完
 // 两者都必须「收尾完整」；B 用于钉住「别改坏正常收尾」。
 //
-// 无网络、无 Electron：vi.mock("ai") 只吐两个 token 后挂起等 abort。
+// 无网络、无 Electron：桩模型（tests/helpers/hanging-model）吐两个 token 后挂起等 abort。
 // ═══════════════════════════════════════════════════════════════
 
-import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-
-vi.mock("ai", () => ({
-    tool: (cfg: unknown) => cfg,
-    stepCountIs: () => () => false,
-    streamText: (opts: { abortSignal?: AbortSignal }) => {
-        const sig = opts.abortSignal;
-        return {
-            // 吐两个 token 即挂起，直到 abort 才收束 —— 制造「轮次正在直播中」的窗口，
-            // 两条路径都在这个窗口里分叉（A 切断 / B 取消）。
-            fullStream: (async function* () {
-                yield { type: "start-step" };
-                yield { type: "text-start", id: "p1" };
-                yield { type: "text-delta", id: "p1", text: "生成中…" };
-                if (!sig) return;
-                await new Promise<void>((resolve) => {
-                    if (sig.aborted) {
-                        resolve();
-                        return;
-                    }
-                    sig.addEventListener("abort", () => resolve(), { once: true });
-                });
-                // abort 后自然结束（真实 ai-sdk 会吐 abort part；终态由 closeTurn 兜，本测试只断言终态）
-            })(),
-        };
-    },
-}));
-
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { LocalAgentManager, opsFile } from "../../src/main/services/local-agent";
@@ -58,6 +31,7 @@ import { diyHome } from "../../src/main/core/state";
 import { llmFile } from "../../src/main/core/local-paths";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
+import { hangingModel } from "../helpers/hanging-model";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -131,7 +105,7 @@ beforeEach(() => {
 describe("主动停止的收尾完整性（201 R1-S1 回归）", () => {
     it("A：消费端中途切断（= 刷新页面）不再打断轮次；此后 cancel 仍完整收尾", async () => {
         const uri = freshTask("切断不打断");
-        const mgr = new LocalAgentManager();
+        const mgr = new LocalAgentManager(() => hangingModel());
         const gen = mgr.chat(uri, "你好");
 
         let cut = false;
@@ -161,7 +135,7 @@ describe("主动停止的收尾完整性（201 R1-S1 回归）", () => {
 
     it("B：只 cancel 不断流（CLI 路径）→ 正常收尾不被改坏", async () => {
         const uri = freshTask("cancel收尾");
-        const mgr = new LocalAgentManager();
+        const mgr = new LocalAgentManager(() => hangingModel());
         const gen = mgr.chat(uri, "你好");
 
         let cancelled = false;

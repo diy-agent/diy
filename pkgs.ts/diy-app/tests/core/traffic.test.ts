@@ -5,7 +5,7 @@
 // 驱动方式：直接往 `node:diagnostics_channel` 上 publish 假事件 —— 与 undici 真实
 // 收发的事件同形（见 core/traffic.ts 顶部注释），比真发便宜且可观（真发要 key、
 // 要钱，且偶发 400 不可控）。
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { channel } from "node:diagnostics_channel";
 import { traffic, TrafficLogError } from "../../src/main/core/traffic";
 
@@ -151,12 +151,137 @@ describe("traffic（undici diagnostics_channel）", () => {
         expect(traffic.snapshot().records.map((r) => r.attempt)).toEqual([1, 2]);
     });
 
+    it("★ 步归属（##409）：noteStep 后同一步的两次往返 = stepSeq 1 / attemptInStep 1,2（重试链可读）", () => {
+        traffic.noteStep(RUN.session, RUN.turnId, 1);
+        const a = fireReq({ body: "{}" });
+        fireRes(a, 429, { "content-type": "application/json" }, "{}");
+        const b = fireReq({ body: "{}" }); // SDK 重试：又一次 HTTP 往返，不再走 prepareStep
+        fireRes(b, 200, { "content-type": "application/json" }, "{}");
+
+        const recs = traffic.snapshot().records;
+        expect(recs.map((r) => r.stepSeq)).toEqual([1, 1]);
+        expect(recs.map((r) => r.attemptInStep)).toEqual([1, 2]); // 该步第 1 次 / 第 1 次重试
+        expect(recs.map((r) => r.attempt)).toEqual([1, 2]); // 老字段仍在（兼容）
+    });
+
+    it("★ 步归属：下一步（noteStep 2）的 attemptInStep 从 1 重新起算，attempt 仍跨步累计", () => {
+        traffic.noteStep(RUN.session, RUN.turnId, 1);
+        const a = fireReq({ body: "{}" });
+        fireRes(a, 200, { "content-type": "application/json" }, "{}");
+        traffic.noteStep(RUN.session, RUN.turnId, 2);
+        const b = fireReq({ body: "{}" });
+        fireRes(b, 200, { "content-type": "application/json" }, "{}");
+
+        const recs = traffic.snapshot().records;
+        expect(recs.map((r) => [r.stepSeq, r.attemptInStep, r.attempt])).toEqual([
+            [1, 1, 1],
+            [2, 1, 2],
+        ]);
+    });
+
+    it("步归属：没登记步（探测 / 摘要 / 老用法）→ stepSeq 与 attemptInStep 都 null，attempt 照旧自增", () => {
+        const a = fireReq({ body: "{}" });
+        fireRes(a, 200, { "content-type": "application/json" }, "{}");
+        const b = fireReq({ body: "{}" });
+        fireRes(b, 200, { "content-type": "application/json" }, "{}");
+        const recs = traffic.snapshot().records;
+        expect(recs.map((r) => r.stepSeq)).toEqual([null, null]);
+        expect(recs.map((r) => r.attemptInStep)).toEqual([null, null]);
+        expect(recs.map((r) => r.attempt)).toEqual([1, 2]);
+    });
+
+    it("步归属：登记的是**别的轮**的步（同 session 上叠了摘要之类）→ 不采信，留 null（宁缺勿错）", () => {
+        traffic.noteStep("another-turn-session", "turn-other", 3); // 别的 session，无关
+        traffic.noteStep(RUN.session, "turn-other", 3); // 同 session、别的轮
+        traffic.noteRun({ ...RUN, turnId: "turn-2" }); // 本次运行登记的是 turn-2
+        const req = fireReq({ body: "{}" });
+        fireRes(req, 200, { "content-type": "application/json" }, "{}");
+        const r = traffic.snapshot().records[0]!;
+        expect(r.turnId).toBe("turn-2");
+        expect(r.stepSeq).toBeNull();
+        expect(r.attemptInStep).toBeNull();
+    });
+
     it("网络异常：status 落 null 并记 err（error 事件收口）", () => {
         const req = fireReq({ body: "{}" });
         channel("undici:request:error").publish({ request: req, error: new Error("connect ETIMEDOUT") });
         const r = traffic.snapshot().records[0];
         expect(r.status).toBeNull();
         expect(r.err).toContain("ETIMEDOUT");
+    });
+
+    it("★ 超时不可复盘的现场（##409）：卡在连接的首试 + 成功重试 → 各自 ms、最后一次成败 / 卡在哪都读得出", () => {
+        // 341s 那类记录：create 之后很久才收到 error（连接超时），响应头从未到达
+        vi.useFakeTimers();
+        try {
+            vi.setSystemTime(1_000_000);
+            traffic.noteStep(RUN.session, RUN.turnId, 8);
+            const bad = fireReq({ body: "{}" });
+            vi.setSystemTime(1_000_000 + 341_145);
+            channel("undici:request:error").publish({
+                request: bad,
+                error: new Error("Connect Timeout Error (attempted address: api.example.com:443, timeout: 10000ms)"),
+            });
+
+            vi.setSystemTime(1_000_000 + 342_000);
+            const ok = fireReq({ body: "{}" });
+            vi.setSystemTime(1_000_000 + 342_000 + 200);
+            channel("undici:request:headers").publish({
+                request: ok,
+                response: { statusCode: 200, headers: headersBufArr({ "content-type": "application/json" }) },
+            });
+            vi.setSystemTime(1_000_000 + 342_000 + 6644);
+            channel("undici:request:trailers").publish({ request: ok, trailers: [] });
+
+            const recs = traffic.snapshot().records;
+            // 两条各自计时（从不合并成一个数）
+            expect(recs[0]!.ms).toBe(341_145);
+            expect(recs[1]!.ms).toBe(6644);
+            // 同一步的两次往返：第 1 次失败、第 2 次成功 —— 「试了几次 / 最后一次成没成」有答案
+            expect(recs.map((r) => [r.stepSeq, r.attemptInStep])).toEqual([
+                [8, 1],
+                [8, 2],
+            ]);
+            // 卡在哪：首试没有响应头（ttfbMs=null）⇒ 时间全花在连接阶段；重试有响应头
+            expect(recs[0]!.ttfbMs).toBeNull();
+            expect(recs[1]!.ttfbMs).toBe(200);
+            expect(recs[0]!.err).toContain("Connect Timeout");
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("ttfbMs：收到响应头的时刻单独记 → 把「连接 + 等首字节」与「下载」分开", () => {
+        vi.useFakeTimers();
+        try {
+            vi.setSystemTime(5_000_000);
+            const req = fireReq({ body: "{}" });
+            vi.setSystemTime(5_000_000 + 1200);
+            channel("undici:request:headers").publish({
+                request: req,
+                response: { statusCode: 200, headers: headersBufArr({ "content-type": "application/json" }) },
+            });
+            vi.setSystemTime(5_000_000 + 8000);
+            channel("undici:request:bodyChunkReceived").publish({ request: req, chunk: enc("{}") });
+            channel("undici:request:trailers").publish({ request: req, trailers: [] });
+
+            const r = traffic.snapshot().records[0]!;
+            expect(r.ms).toBe(8000);
+            expect(r.ttfbMs).toBe(1200); // 连接 + 排队 + 上游首字节
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("落盘：新字段（stepSeq / attemptInStep / ttfbMs）一并写进 JSONL —— 事后回看也在", () => {
+        traffic.noteStep(RUN.session, RUN.turnId, 2);
+        const req = fireReq({ body: "{}" });
+        fireRes(req, 200, { "content-type": "application/json" }, "{}");
+        const r = traffic.snapshot().records[0]!;
+        const back = traffic.readLog(r.log!) as Record<string, unknown>;
+        expect(back.stepSeq).toBe(2);
+        expect(back.attemptInStep).toBe(1);
+        expect(back.ttfbMs).not.toBeNull();
     });
 
     it("无归属（无 x-opencode-session 且 origin 未登记）：仍记录为其它来源", () => {

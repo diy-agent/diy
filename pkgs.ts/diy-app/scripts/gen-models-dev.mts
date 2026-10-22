@@ -11,23 +11,18 @@
 // 用法：
 //   npx tsx scripts/gen-models-dev.mts [源]      # 源 = 本地文件路径 或 URL
 //   缺省源 = https://models.dev/api.json
+//
+// 过滤口径与结构校验**不在本文件**：走 `src/main/core/models-snapshot.ts`（与运行期刷新同一道门）。
+// 两份各写一份白名单 = 早晚分叉 = 静默丢 provider（##385）。上游改版 / 抓半截 → 这里直接报错退出，
+// 绝不写出一份「结构说得过去但内容不全」的发行快照。
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildModelsSnapshot } from "../src/main/core/models-snapshot";
 
-const NPM_ALLOW = ["@ai-sdk/openai-compatible", "@ai-sdk/openai"];
 const src = process.argv[2] ?? "https://models.dev/api.json";
-const raw = src.startsWith("http")
-  ? await (await fetch(src)).text()
-  : readFileSync(src, "utf-8");
-const all = JSON.parse(raw);
-const out = Object.fromEntries(
-  Object.entries(all as Record<string, { npm?: string }>).filter(([, p]) => NPM_ALLOW.includes(p.npm ?? "")),
-);
-const models = Object.values(out as Record<string, { models: Record<string, unknown> }>).reduce(
-  (n, p) => n + Object.keys(p.models).length,
-  0,
-);
+const raw = src.startsWith("http") ? await (await fetch(src)).text() : readFileSync(src, "utf-8");
+const { snapshot, providers, models } = buildModelsSnapshot(JSON.parse(raw));
 const dest = join(dirname(fileURLToPath(import.meta.url)), "../src/main/data/models.dev.json");
-writeFileSync(dest, JSON.stringify(out), "utf-8");
-console.log(`models.dev: ${Object.keys(out).length} providers / ${models} models → ${dest}`);
+writeFileSync(dest, JSON.stringify(snapshot), "utf-8");
+console.log(`models.dev: ${providers} providers / ${models} models → ${dest}`);

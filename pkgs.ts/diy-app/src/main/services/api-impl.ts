@@ -283,6 +283,28 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const home = state.diyHome();
     const { existsSync } = await import("node:fs");
     const { join } = await import("node:path");
+    // 模型目录快照：**报实际命中的绝对路径 + 来源**（##385 §3.1）——
+    // 「明明刷新了为什么没生效」的第一步永远是「现在读的是哪一份」。解析失败/缺失也要出声（进 issues）。
+    const { activeSnapshot } = await import("../core/models-sync");
+    let models: { path: string; source: "diy-home" | "bundle" | "source-tree"; providers: number; models: number } | null = null;
+    try {
+      models = activeSnapshot(home)?.info ?? null;
+      if (!models) {
+        issues.push({
+          code: "models-snapshot-missing",
+          severity: "critical",
+          message: "models.dev 快照不存在（候选：$DIY_HOME/data / bundle / 源树）",
+          detail: `home=${home}`,
+        });
+      }
+    } catch (e) {
+      issues.push({
+        code: "models-snapshot-invalid",
+        severity: "critical",
+        message: `models.dev 快照解析失败: ${e instanceof Error ? e.message : String(e)}`,
+        detail: "跑 `diy llmConfig syncModels` 重新抓一份（失败会保留旧文件）",
+      });
+    }
     return {
       status: "ok",
       data: {
@@ -291,6 +313,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
         state_exists: existsSync(join(home, "state.yaml")),
         issues: issues.map((i) => i.message),
         healthy: issues.length === 0,
+        models,
       },
     };
   });
@@ -1242,6 +1265,16 @@ export function bindAppHandlers(binding: ServerBinding): void {
     saveCustomSpecs(state.diyHome(), specs);
     refreshModelRuntime(state.diyHome());
     return { status: "ok" };
+  });
+
+  /**
+   * 模型目录刷新（##385）：手工按钮（模型页 / 模型不可用 bar）入口。
+   * 与定时任务共用 `refreshAndApply` —— 写盘 + 让进程内快照缓存失效 + 重装运行时目录。
+   * **不抛**：失败进返回值（ok=false + error），UI 直接渲染三态。
+   */
+  binding.on(app.llmConfig.syncModels, async () => {
+    const { refreshAndApply } = await import("../core/models-sync");
+    return refreshAndApply({ home: state.diyHome() });
   });
 
   binding.on(app.llmConfig.costs, async ({ input }) => {

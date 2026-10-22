@@ -44,6 +44,8 @@ import {
   ImportEnvResultSchema,
   LlmConfigViewSchema,
   ModelConfigFileSchema,
+  ModelsRefreshResultSchema,
+  ModelsSnapshotInfoSchema,
   ProbeResultSchema,
   ProviderCostsViewSchema,
   ScanEnvResultSchema,
@@ -676,6 +678,12 @@ export const apiDef = RpcSchema.router({
             state_exists: z.boolean(),
             issues: z.array(z.string()),
             healthy: z.boolean(),
+            /**
+             * 实际生效的模型目录快照（##385 §3.1）：**必须能说出读的是哪一份**。
+             * `source` 区分 `diy-home`（应用内刷新写的）/ `bundle`（发行产物）/ `source-tree`（源码树），
+             * 排查「明明刷新了为什么没生效」时先看这里。null = 一份都没有 / 解析失败（见 issues）。
+             */
+            models: ModelsSnapshotInfoSchema.nullable(),
           }),
         }),
       }),
@@ -2042,6 +2050,16 @@ export const apiDef = RpcSchema.router({
                 .cliOption({ desc: "只导入这些 provider id（缺省 = 全部可导入项）" }),
             },
             output: ImportEnvResultSchema,
+          }),
+          /**
+           * 模型目录刷新（##385）：抓 models.dev 上游 → 校验 → 有 diff 才写 `$DIY_HOME/data/models.dev.json`。
+           * 手工按钮（模型页 / 模型不可用 bar）与定时任务共用同一实现（core/models-sync.ts）。
+           * **失败不抛**：`ok=false` + `error`，本地快照逐字不变（fail-soft，§3.4）。
+           */
+          syncModels: RpcSchema.unary({
+            desc: `刷新模型目录（抓 models.dev → 结构校验 → 有 diff 才写 $DIY_HOME；失败保留旧文件）`,
+            input: {},
+            output: ModelsRefreshResultSchema,
           }),
           probe: RpcSchema.unary({
             desc: `探测 provider 连通性并拉 ${"${baseUrl}"}/models（UI「测试/获取模型」共用）`,

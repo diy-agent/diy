@@ -7,7 +7,7 @@
 // 不能静默半用（否则"我改了却没反应"这类排查成本极高）。
 // ═══════════════════════════════════════════════════════════════
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { sanitizeSystemPlaces } from "../../src/shared/context/config";
 import { defaultSystemPlaces } from "../../src/shared/context/delivery";
 
@@ -69,7 +69,16 @@ describe("context.yaml（划分规则真源）", () => {
         }
     });
 
+    // 每条用例从「文件缺失」起步：本组用例有的断言缺省名单、有的依赖上一条写下的名单
+    // （「写侧拒绝非法输入」断言拒绝后文件保持 `["diy","task.title"]`）。`--sequence.shuffle`
+    // 打乱顺序后这个隐含前提不成立 ⇒ 各自造前置，断言不变。
+    beforeEach(() => {
+        rmSync(contextConfigFile(home), { force: true });
+        saveSystemPlaces(home, ["diy", "task.title"]);
+    });
+
     it("文件缺失 → 推荐名单（开箱即用，与旧行为一致）", () => {
+        rmSync(contextConfigFile(home), { force: true });
         expect(loadSystemPlaces(home)).toEqual(defaultSystemPlaces());
     });
 

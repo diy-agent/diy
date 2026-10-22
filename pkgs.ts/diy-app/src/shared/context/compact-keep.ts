@@ -138,6 +138,17 @@ export const DEFAULT_KEEP: readonly KeepStage[] = [
  */
 export const DEFAULT_MUST_HARD_CAP_BYTES = 1024 * 1024;
 
+/**
+ * 装配后硬上限（字节）的**唯一判据**：模型窗口 token × 4；拿不到窗口时 `DEFAULT_MUST_HARD_CAP_BYTES`。
+ *
+ * 为什么是「× 4」而不是 × 4 × 0.8：这个闸只负责「别再把 4.95 MB 原样发出去」——留出 20% 的余量是
+ * **发请求前的 token 预检**（`request-preflight.ts`）的职责，两处各管一段，别混成一个数。
+ */
+export function mustHardCapBytesOf(contextLimitTokens?: number): number {
+    if (!contextLimitTokens || !Number.isFinite(contextLimitTokens) || contextLimitTokens <= 0) return DEFAULT_MUST_HARD_CAP_BYTES;
+    return Math.floor(contextLimitTokens) * 4;
+}
+
 /** 校验问题（`check` 的判据；level=error 即拒绝 —— 配置照旧、不落盘） */
 export interface KeepIssue {
     level: "error" | "warn";

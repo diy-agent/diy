@@ -140,7 +140,13 @@ describe("upstreamText / probeModelError", () => {
 });
 
 describe("noticeFromError（main 侧组装）", () => {
-    const ctx = { taskUri: "projects/4/tasks/369", personaId: "9", personaName: "for-test", model: "chen56@x/longcat-9" };
+    const ctx = {
+        taskUri: "projects/4/tasks/369",
+        personaId: "9",
+        personaName: "for-test",
+        model: "chen56@x/longcat-9",
+        provider: "opencode-go",
+    };
 
     it("命中 → 通知带齐 bar 要显示的全部字段", () => {
         const n = noticeFromError({ statusCode: 400, responseBody: "[model_coming_soon] coming soon", message: null }, ctx);
@@ -149,6 +155,8 @@ describe("noticeFromError（main 侧组装）", () => {
         expect(n!.model).toBe("chen56@x/longcat-9");
         expect(n!.personaName).toBe("for-test");
         expect(n!.taskUri).toBe("projects/4/tasks/369");
+        // ##407：provider 是修复引导的定位依据（「去配 key」得知道去哪张卡上配）
+        expect(n!.provider).toBe("opencode-go");
         expect(n!.upstream).toContain("model_coming_soon");
         expect(n!.id.length).toBeGreaterThan(0);
     });

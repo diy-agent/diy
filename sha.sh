@@ -173,6 +173,9 @@ check() {
   run bash scripts/check-exec-bit.sh
   # 原子写护栏：src/main 下整文件覆盖写必须走 core/atomic-write.ts 的 writeFileAtomic（实现见 scripts/check-atomic-write.sh，详见 ##383(整文件覆盖写加固)）
   run bash scripts/check-atomic-write.sh
+  # vi.mock 禁令护栏（##402）：test-unit 跑 `--no-isolate`，vi.mock 改全局模块表会**静默失效**
+  #（实现见 scripts/check-no-vi-mock.sh；替代写法 = 注入 / 手写假对象 / server.deps.inline alias）
+  run bash scripts/check-no-vi-mock.sh
   # 异常码护栏（##394）：新增 `throw new` 必须带 code（<域>/<kebab-case>）；存量按 LEGACY_THROW_BASELINE 比例递减
   #（实现见 scripts/check-error-code.sh，判据见 rule.err-triage；**别改成整文件豁免** —— 那会让新代码永远不被拦）
   run bash scripts/check-error-code.sh
