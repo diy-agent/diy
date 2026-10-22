@@ -6,6 +6,15 @@
 # 生成物式的真源：整篇由 `diy facts submit` 写入（字段顺序、条目排序都由程序定）。
 domain: app
 facts:
+  app.cli#append-strip:
+    value: '`--append-body*` 的**剥头判据比整篇侧更严**：只有 frontmatter **同时含 `state` / `created` / `updated`** 才算「整份任务文件」→ 才剥头；因此追加一份**自带 front matter 的普通文档**时其文档头**保留**（不会莫名消失）。三选一：`--append-body <file|->` / `--append-body-file` / `--append-body-text`。'
+    id: app.cli.append-strip
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: 8ef8f82a:docs/task-write-contract.md:23
+      verifiedAt: '2026-10-22'
   app.cli#cli-inline-text:
     value: 「值必须是**内联文本**」的护栏（`_CliOptionMeta.inlineText`，##338）也判在**调用方进程**的 parser：整值单 token + 形如路径（`/` `./` `../` `~/` / 盘符）**或**该文件确实存在（`cli/_parser.ts::pathLikeValue`）→ `CliParseError`（exit=2）+ 提示改 `--body-file` / `--body-text`。存在性要看 cwd，只有调用方判得准；触发缘起：`--body` 收文本而 `--append-body` 收 `<file|->`，两侧不对称 → 三例把路径当正文静默存下（##290/##294/##87）。**三选一**裁决在 `main/core/task.ts::resolveBodyOverride`（`resolveBodyInputs` 是它在 edit 侧多带一组追加的壳）。**挂三处**：`task edit` / `task create` / `task drafts set` 的 `--body`（##376 补后两者；此前只有 edit 挂，同族静默收路径串）
     id: app.cli.cli-inline-text
@@ -41,6 +50,15 @@ facts:
     evidence:
       source: user
       at: ba99d638:pkgs.ts/diy-app/AGENTS.md:160
+      verifiedAt: '2026-10-22'
+  app.cli#rpc-gap:
+    value: '**CLI 骨架优势已用足、皮囊与 RPC 并发力未用**（2026-07 评估，结论仍成立的方向）：单一事实源（RPC meta 反射）+ 强类型 + 与 RPC 一体是多数 CLI 没有的架构；缺的是 help 示例 / 拼写建议 / TTY·颜色感知 / exit code 细分，以及「RPC 原生 + 并发执行」这个差异化能力**没暴露给用户**（当前死板的一进程一命令）。落地顺序见文档第五节，`docs/cli-meta-gen-evaluation.md` 是 help 生成侧的评估。'
+    id: app.cli.rpc-gap
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: 8ef8f82a:docs/rpc-cli-modern-design.md:11
       verifiedAt: '2026-10-22'
   app.cli#rpc-output-schema:
     value: RPC 的 `outputSchema` **只用于类型推导，运行期不校验也不剥字段**（`pkgs.ts/diy-rpc/src/core/meta.ts`；只有 input 走 zod）。故漏写字段**不会报错**：handler 原样送出的字段仍在，但类型上没有 → 消费端「拿不到、画不出」，且改起来像幽灵 bug。共享形状必须落成 schema（如 `shared/usage.ts` 的 `ModelCostSchema`）并被两侧引用，别手写第二份子集

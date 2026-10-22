@@ -123,6 +123,8 @@ subjects:
     description: 本机项目清单与定位
   ref:
     description: 参考实现：三方 agent 框架源码位置（只读设计取舍，不抄代码）
+  ref.diy:
+    description: diy 自己的 ref 镜像实现（diy.yaml 注册 → clone/pull → lock）
   rule:
     description: 硬约束
     aliases: []
