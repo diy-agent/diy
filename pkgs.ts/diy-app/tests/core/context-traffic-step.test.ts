@@ -10,7 +10,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, expect } from "vitest";
-import { dateOfLogFile, pickStepTraffic, type TrafficStepRecord } from "../../src/shared/context/traffic-step";
+import { dateOfLogFile, groupByStep, pickStepTraffic, type TrafficStepRecord } from "../../src/shared/context/traffic-step";
 import { changeForNode, nodeHitByChange } from "../../src/shared/context/changelog";
 
 const rec = (over: Partial<TrafficStepRecord> & { ts: number }): TrafficStepRecord => ({
@@ -68,6 +68,65 @@ describe("pickStepTraffic：一步 → 那条请求", () => {
     it("taskUri 传 null = 不按任务过滤（CLI/跨任务视角）", () => {
         const records = [rec({ ts: 100, taskUri: "projects/9/tasks/9" })];
         expect(pickStepTraffic(records, { turnId: "t1", step: 1 }, null)?.record.ts).toBe(100);
+    });
+});
+
+describe("步号判据（##409）：有 stepSeq 时优先按步取，比时刻更硬", () => {
+    it("★ 重试把时刻判据顶歪时，步号仍取对那一步的首试", () => {
+        const records = [
+            rec({ ts: 1000, attempt: 3, stepSeq: 2, attemptInStep: 1, status: 500 }),
+            rec({ ts: 1100, attempt: 4, stepSeq: 2, attemptInStep: 2, status: 200 }),
+        ];
+        // 记录时刻落在两次往返之间：按时刻会取到重试那条（1100），按步号仍取该步首试（1000）
+        const p = pickStepTraffic(records, { turnId: "t1", step: 2 }, null, new Date(1050).toISOString());
+        expect(p?.record.attemptInStep).toBe(1);
+        expect(p?.record.ts).toBe(1000);
+        expect(p?.turnRecords).toBe(2);
+    });
+
+    it("老记录（无步号）自动退回时刻判据 / 按序判据", () => {
+        const records = [rec({ ts: 100 }), rec({ ts: 200 })];
+        expect(pickStepTraffic(records, { turnId: "t1", step: 2 }, null)?.record.ts).toBe(200);
+        expect(
+            pickStepTraffic(records, { turnId: "t1", step: 1 }, null, new Date(150).toISOString())?.record.ts,
+        ).toBe(200);
+    });
+});
+
+describe("groupByStep：一步 = 一条重试链（试了几次 / 各自成败 / 最后一次成没成）", () => {
+    it("★ 一步含 1 次重试：retries=1、attempts 按序、lastOk 取最后一次", () => {
+        const records = [
+            rec({ ts: 1000, attempt: 1, stepSeq: 1, attemptInStep: 1, status: null }),
+            rec({ ts: 1500, attempt: 2, stepSeq: 1, attemptInStep: 2, status: 200 }),
+            rec({ ts: 2000, attempt: 3, stepSeq: 2, attemptInStep: 1, status: 200 }),
+        ];
+        const chains = groupByStep(records);
+        expect(chains.map((c) => c.stepSeq)).toEqual([1, 2]);
+        expect(chains[0]!.attempts.map((a) => a.attemptInStep)).toEqual([1, 2]);
+        expect(chains[0]!.retries).toBe(1);
+        expect(chains[0]!.lastOk).toBe(true); // 最后一次成功
+        expect(chains[1]!.retries).toBe(0);
+        expect(chains[1]!.lastOk).toBe(true);
+    });
+
+    it("重试全失败：retries 照数、lastOk=false（「最后一次也没成」读得出）", () => {
+        const records = [
+            rec({ ts: 1000, stepSeq: 1, attemptInStep: 1, status: 503 }),
+            rec({ ts: 2000, stepSeq: 1, attemptInStep: 2, status: 503 }),
+            rec({ ts: 3000, stepSeq: 1, attemptInStep: 3, status: null }),
+        ];
+        const [chain] = groupByStep(records);
+        expect(chain!.retries).toBe(2);
+        expect(chain!.lastOk).toBe(false);
+    });
+
+    it("没有步号的记录（探测 / 摘要 / 老记录）不成步，直接跳过", () => {
+        const records = [
+            rec({ ts: 100, stepSeq: null, attemptInStep: null }),
+            rec({ ts: 200 }),
+            rec({ ts: 300, stepSeq: 1, attemptInStep: 1 }),
+        ];
+        expect(groupByStep(records).map((c) => c.stepSeq)).toEqual([1]);
     });
 });
 
