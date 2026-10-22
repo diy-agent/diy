@@ -1,0 +1,50 @@
+# knowledge/facts/ref.yaml
+
+# 生成物式的真源：整篇由 `diy facts submit` 写入（字段顺序、条目排序都由程序定）。
+domain: ref
+facts:
+  ref#dir:
+    value: 三方源码在 `~/git-ref/`：`deepseek-harness/`（= dsh）· `opencode/` · `pi/`。**带着问题去查**（「我要的是哪种取舍」），不通读。
+    id: agents.ref.dir
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:46
+      verifiedAt: '2026-10-22'
+  ref#dsh:
+    value: DeepSeek 自家 harness；**编辑器式工具 + UI 呈现**：`packages/fs/tool-str-replace-editor/`（`str_replace_editor`：view / create / str_replace / insert）+ `packages/fs/tool-fs/{edit,write,read}.ts`。
+    id: agents.ref.dsh
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:49
+      verifiedAt: '2026-10-22'
+  ref#opencode:
+    value: TS + Effect 的完整 agent；**工具契约最全**：`packages/core/src/tool/plugin/*.ts`（edit / write / read / patch / glob / grep / shell），带权限审批、formatter 钩子、返回文件 diff。
+    id: agents.ref.opencode
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:47
+      verifiedAt: '2026-10-22'
+  ref#outcome:
+    value: 结论写回**任务 body 或 AGENTS.md**，别只留在会话里（同一轮调研会被压缩掉）。
+    id: agents.ref.outcome
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:50
+      verifiedAt: '2026-10-22'
+  ref#pi:
+    value: 极简 durable agent；**参数容错与盘面细节最讲究**：`packages/durable/src/tools/edit.ts`（批量 `edits[]`、行尾 / BOM 归一、字符归一匹配、同文件变更队列、生成 unified patch）。
+    id: agents.ref.pi
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:48
+      verifiedAt: '2026-10-22'

@@ -11,6 +11,10 @@ subjects:
     aliases:
       - 监听端口
       - 端口缺省
+  data:
+    description: 项目里的数据文件（依赖源 / 工作区）
+  dev:
+    description: 开发流程的打法（按任务类型分流 / 验证预算 / 长任务 / 喊人）
   dev.check:
     description: 提交前唯一检查入口
     aliases:
@@ -66,6 +70,8 @@ subjects:
     description: 任务日志 journal.jsonl 的写作约束（author / anchor / 只追加）
   kb.layer:
     description: 任务知识的三层划分与归属（body / facts / journal / 流水）
+  level:
+    description: 层级术语（0 最高）：任务优先级 / UI 暴露 / 提示叫醒共用一把尺子
   model:
     description: 本地 agent 测试用什么模型
     aliases: []
@@ -73,9 +79,15 @@ subjects:
     description: 未指定模型时的缺省选择规则
     aliases:
       - 缺省模型
+  proj:
+    description: 本机项目清单与定位
+  ref:
+    description: 参考实现：三方 agent 框架源码位置（只读设计取舍，不抄代码）
   rule:
     description: 硬约束
     aliases: []
+  rule.err-triage:
+    description: 异常三档分类的判据（defect / 已识别外部 / 未识别外部）
   tool:
     description: 命令
     aliases: []

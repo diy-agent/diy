@@ -133,3 +133,48 @@ facts:
       source: user
       at: ~/git/AGENTS.md:17
       verifiedAt: '2026-10-21'
+  dev#by-type:
+    value: |-
+      **先判类型再选打法，不要所有任务一套**：
+
+      | 类型 | 打法 | 明确不要做 |
+      |---|---|---|
+      | UI / 视觉 / 交互 | `./sha.sh lab` 起实例，人眼 + **少量** CDP 抽样；可观测性差或要主观判断 → 叫醒用户（见 `dev.wake-user`） | 几十轮 CDP 逐像素猜、为一行样式硬啃 |
+      | 纯逻辑 / 内核 / CLI | 先写判据（纯函数 + 单测）再实现；意图测试收口 | 起 GUI 验证 |
+      | 数据修复 | 备份 → 改 → 复扫 + 逐字比对 | 跑一次就宣布修好 |
+      | 文档 / 配置 | `./sha.sh check` + 索引护栏 | 额外造测试 |
+      | 性能 | **先量再动**：给出基线数字再改，改完用同一个测量口径复测 | 凭感觉「应该更快了」 |
+    id: agents.dev.by-type
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:70
+      verifiedAt: '2026-10-22'
+  dev#long-task:
+    value: '**长命令不靠 `sleep` 轮询**：bash 超时缺省 300s（`DIY_LOCAL_BASH_TIMEOUT_MS` 可调）；仍超长就 `nohup … &` **一次**，然后做别的事/汇报，用一次 `tail` 取增量 —— 绝不用「`sleep 30` → 看一眼 → 再 `sleep 30`」把一步工作切成十步（每步都是一次完整请求）。'
+    id: agents.dev.long-task
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:81
+      verifiedAt: '2026-10-22'
+  dev#verify-budget:
+    value: '**验证预算按改动面走，不按习惯走**：改一个文件只跑受影响的 1~3 个测试文件；全量套件（`./sha.sh check` / `test-unit` / 全量 intent）**只在收工前跑一次**。禁止「改一行 → 全量」循环 —— 一次全量 30~120s（还可能触发 bash 超时），循环 N 次等于把 N 次完整请求赔进去。红灯即停（先修再看），但回报必须如实写「跑到第一个失败为止：N files / M passed / 其余未跑」，不许报成全量通过。'
+    id: agents.dev.verify-budget
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:69
+      verifiedAt: '2026-10-22'
+  dev#wake-user:
+    value: '**agent 的可观测性有上限，到了就喊人，不许硬啃**。判据：需要人看一眼（视觉/交互效果）/ 需要人做决定（方案取舍）/ 卡住超过一次尝试。喊法 = 在会话里写三句话（**要你做什么 / 现在卡在哪 / 我试过什么**），然后**结束本轮** —— 不要空转等，也不要指望用户盯着日志看。'
+    id: agents.dev.wake-user
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:80
+      verifiedAt: '2026-10-22'

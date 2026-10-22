@@ -3,6 +3,60 @@
 # 生成物式的真源：整篇由 `diy facts submit` 写入（字段顺序、条目排序都由程序定）。
 domain: rule
 facts:
+  rule.err-triage#code:
+    value: 每个 throw 点带 `code`（`<域>/<kebab-case>`，域 = `llm|fs|net|rpc|agent|db|ui`），UI / 日志 / issue **三处同一个 code** 才能按频次统计「哪类 unknown 最该被识别」；**新增 throw 无 code 由 `scripts/check-error-code.sh` 拦**（挂 `./sha.sh check`），存量按 `LEGACY_THROW_BASELINE` 逐文件钉数**只减不增** —— 不做全仓机械补码（会造出 `app/internal-1` 这类假码污染统计）。
+    id: agents.rule.err-triage.code
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:27
+      verifiedAt: '2026-10-22'
+  rule.err-triage#defect:
+    value: defect **只能由判据认领**：用 `invariant(cond, code, detail?)` 表达不变量（协议校验 / 单调性 / 非法状态转移），它一抛 `triageOf` 必判 defect；**不准为「看着严重」手工标红**，defect 也不许吞、不许降级成 unknown。
+    id: agents.rule.err-triage.defect
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:24
+      verifiedAt: '2026-10-22'
+  rule.err-triage#evolve:
+    value: 识别度**可演化且留痕**：`ENOSPC 裸抛 → unknown` → 人裁定「环境问题」→ 开任务识别并写话术 → 上线后 `recognized`；新埋点上线**不追溯**老 unknown（历史数据不重算）。**文案与判据分离**：判据归 `error-triage.ts`，文案归 `shared/turn-end.ts` / notice 出口，渲染层不许拼句子。
+    id: agents.rule.err-triage.evolve
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:28
+      verifiedAt: '2026-10-22'
+  rule.err-triage#recognized:
+    value: '**已识别的外部问题不许当 bug**（当 bug 会让缺陷率失真、把用户训练成忽略红色）：额度 429 / 认证 401·403 / 磁盘满 ENOSPC·EDQUOT / 网络层错误码 ⇒ 固定话术 + 处置建议，不报 issue、不弹裁定，允许再现。入场门槛 = 说得出判据；**HTTP 5xx 与请求超时不算**（上游回了 HTTP 说明网络通着，那是服务端故障 ##369(模型不可用)）。'
+    id: agents.rule.err-triage.recognized
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:25
+      verifiedAt: '2026-10-22'
+  rule.err-triage#unknown:
+    value: 未识别的外部只生成**本地草稿**：拿不到码就如实写「无法判定」，**不猜、不预设是 bug**；未知异常**永不自动上报**（正文可能含路径 / 日志片段，人确认后才出网），同类第二次经人裁定后升级为 defect / recognized（留痕在 `local/` 侧，刀 2）。
+    id: agents.rule.err-triage.unknown
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:26
+      verifiedAt: '2026-10-22'
+  rule#atomic-task:
+    value: '**任务是原子开发单元**：建任务的前提是它能**独立开发 + 独立 merge 回 main 且 main 仍可用（可编译、可验收）**。做不到（改动与别的任务共用同一处代码、merge 后 main 半截）即切分错了 → 要么重划边界，要么并成一个任务一次性成型。**先后顺序靠排序表达，不靠拆任务。**'
+    id: agents.rule.atomic-task
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:16
+      verifiedAt: '2026-10-22'
   rule#check:
     value: '**类型检查只准 `./sha.sh check`**。各包 `noEmit:true`；一旦 emit，产物落在源码旁会被 `resolve.extensions` 优先命中（症状：改了没反应）'
     id: agents.rule.check
@@ -12,6 +66,24 @@ facts:
       source: user
       at: AGENTS.md:49
       verifiedAt: '2026-10-21'
+  rule#core-log:
+    value: '**核心逻辑不依赖日志**：模块的领域状态自成真源、可独立序列化落盘；日志（事件流）降为**审计/统计**材料，可清可丢、丢了不影响运行；进程内的 Event 只是模块间进度通知的消息。横向模块关联靠**显式 ref**（如 `turnId`/`stepId`），不靠共享日志。**历史转变**：早期把日志当投影真源（ops → historyMessages），致模块逻辑被日志绑死、难进化 → **新 module 一律按新思路设计，旧模块不追溯**。代表：##310 / ##311(工作流特性专项)。'
+    id: agents.rule.core-log
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:21
+      verifiedAt: '2026-10-22'
+  rule#deps:
+    value: 不加载第三方依赖目录的 AGENTS.md（`node_modules/`、`.venv/`、`vendor/` 等）
+    id: agents.rule.deps
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:10
+      verifiedAt: '2026-10-22'
   rule#dev-concurrent:
     value: '**同一 variant** 的 `lab` 运行中勿并发 `tsc -b` / `vite build` / 全量 vitest（抢同一 `outDir`，watcher 卡死）。跨 variant（lab vs test）各写 `build/<v>`，不抢'
     id: agents.rule.dev-concurrent
@@ -21,6 +93,60 @@ facts:
       source: user
       at: AGENTS.md:51
       verifiedAt: '2026-10-21'
+  rule#discriminated-union:
+    value: '**判别联合（带判别键的对象）一律「判别键同级 = 公共字段；分支私有数据进 `data`」**：判别键默认 `type`（历史 `kind`/`op`/`mode`/`render` 不动），与 `type` 同级的字段 = **所有分支共有**；每个分支**私有**的数据一律放 `data`。**用统一 `data` 而非 `<判别键>Data`**：这样「任何类型化节点 = `{ type, 公共…, data }`」**自相似**——通用序列化/校验/UI 只认 `.data` 即可，不必先知道判别键名才能找到载荷。**嵌套同构**：子对象也是 `{ type, data }`，逐层递归（`data.data` 是不同深度，**不撞车**）。理由：① 读结构即知归属；② 私有字段平铺会与公共字段抢同级空间；③ 统一 `data` 使机器可泛化处理。历史形状（`mode`+`modeData` / `render`+`renderData`）保留不追溯。'
+    id: agents.rule.discriminated-union
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:20
+      verifiedAt: '2026-10-22'
+  rule#doc-format:
+    value: 每条一行：`- \`<域>.<对象>.<方面>\` — 值`。key 全链唯一，同一事实只在最该负责的那层写一次（深层同名 key = 覆盖）。值超过一行说明它是细节 → 删掉，改成指向路径。
+    id: agents.rule.doc-format
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:12
+      verifiedAt: '2026-10-22'
+  rule#doc-fresh:
+    value: '**AGENTS.md 是代码的信息投影，不是知识库**。只写「去哪找 / 用什么 / 硬约束 / 反直觉的坑」，不写易变细节（字段清单、UI 文案、实现步骤）。**代码大改后对应层必须整篇重写**，而不是打补丁 —— 投影腐坏比没有投影更糟。'
+    id: agents.rule.doc-fresh
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:11
+      verifiedAt: '2026-10-22'
+  rule#doc-scope:
+    value: 分层职责：`~/AGENTS.md` 全局规则 · `~/git/AGENTS.md` 项目指针 · 项目 AGENTS.md 该项目事实 · 包 AGENTS.md 仅包内定位与坑。**下层不重复上层**。
+    id: agents.rule.doc-scope
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:13
+      verifiedAt: '2026-10-22'
+  rule#err-triage:
+    value: '**全局异常三档，唯一分类轴 = 是不是我们已识别的缺陷**：`defect` 我方缺陷（人为界定的判据触发）/ `external-recognized` 已识别外部（说得出「啥到上限了」）/ `external-unknown` 未识别外部（既不是缺陷、也归不进任何已识别类）。**任何「错误能到达用户 / 日志 / 提示」的出口一律过 `triageOf(err)`**，判据唯一真源 `pkgs.ts/diy-app/src/shared/error-triage.ts`（见包内 `find.err-triage`）。'
+    id: agents.rule.err-triage
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:23
+      verifiedAt: '2026-10-22'
+  rule#inherit:
+    value: 全局规则（skills 命名前缀、AGENTS.md 格式、工具偏好）见 `~/AGENTS.md`，本层不重复
+    id: agents.rule.inherit
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/git/AGENTS.md:19
+      verifiedAt: '2026-10-22'
   rule#instance-lifecycle:
     value: '**实例起停权限与数据定性**：`test` / `lab` 由 agent **自由起停**（随便折腾，不用问；`lab` 同时是人机沟通·验证 UI 的入口 —— 原 `preview` 的职责已并入它）；二者数据皆**临时非生产**（仓库根 `build/<variant>/home`，坏了就清，必要时可重置）。**唯全局 `diy`（prod / `~/.diy`）是日常实跑的生产 app** —— 不动其数据根、不杀其进程，重启留给用户手动'
     id: agents.rule.instance-lifecycle
@@ -39,6 +165,15 @@ facts:
       source: user
       at: AGENTS.md:53
       verifiedAt: '2026-10-21'
+  rule#lang:
+    value: 对话、文档、代码注释一律中文；对话精简、省 token
+    id: agents.rule.lang
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:7
+      verifiedAt: '2026-10-22'
   rule#new-pkg:
     value: 新增包检查单：`tsconfig.json`（composite + noEmit + include）+ `tsconfig.all.json` references
     id: agents.rule.new-pkg
@@ -66,6 +201,78 @@ facts:
       source: user
       at: AGENTS.md:55
       verifiedAt: '2026-10-21'
+  rule#session-start:
+    value: 新会话先列：①已加载的上下文文件绝对路径 ②可用 skills 的绝对路径
+    id: agents.rule.session-start
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:9
+      verifiedAt: '2026-10-22'
+  rule#sketch-html:
+    value: '**给用户看 UI / 布局方案一律产出「单文件可交互 HTML」**（内联 CSS + 原生 JS，`open` 即看，能点着折叠 / 切状态 / 多版并排对比），不写 ASCII 或纯文本草图。多版对比渲染**同一份 DOM**、只换皮肤 —— 顺带就当「同构」的字面验证。'
+    id: agents.rule.sketch-html
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:29
+      verifiedAt: '2026-10-22'
+  rule#specs:
+    value: '**各领域规范的索引总表在 `~/SPECS.md`**：正文仍住各层 AGENTS.md（分层加载不变），总表只做索引与查重；**新增 / 修改跨领域规范先查表去重**，`./sha.sh check` 的 `check-specs` 机械保证 key 不重复、指针不悬空。'
+    id: agents.rule.specs
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:14
+      verifiedAt: '2026-10-22'
+  rule#structured-exit:
+    value: '**agent 的结论一律走结构化出口（工具调用），永不解析正文文本**：正常轮 `tool_choice=auto` → 该收口却未调用则该轮**补射一次** `tool_choice={type:"function",function:{name:"<结论工具>"}}` → 仍拿不到 ⇒ **报错亮帧 + 提示换模型**，**绝不默认 pass、绝不退到正则兜底**（末行约定实测漏 20%~33%，且堵死载荷扩展）。载荷 `{…, ref:{node,seq}, data:{…}}` 可随需加字段（如每轮顺带更新核心事实，降任务 body 腐败）。代表：##311(工作流特性专项) ##359(微调通道)。'
+    id: agents.rule.structured-exit
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:22
+      verifiedAt: '2026-10-22'
+  rule#task-artifacts:
+    value: '**任务产物（工具 / demo / 文档等）落位**：**临时**的一律进系统临时目录（`/tmp`、`mktemp -d`），不落任务目录；**需长期参考**的进**任务目录** `$DIY_HOME/projects/<pid>/tasks/<tid>/gen/<类别>/`（`$DIY_HOME` = `~/.diy`；如 demo → `…/tasks/<tid>/gen/demo/<名>/`，**每个 demo 独占一目录**，别把多文件混作一堆 —— 一个目的常产多个文件）。⚠️ **是任务目录、不是 worktree 的 `./gen/`** —— agent 的 cwd = worktree，写相对路径 `./gen/` 会落进**产品仓**（禁止：产品仓只放产品资产，任务截图 / demo 不是）。**带时效**的（一版接一版，如 demo 迭代）目录名带「日期 + 序号 + 用途」；**长期事实**（不随时间变）**不加日期**。'
+    id: agents.rule.task-artifacts
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:19
+      verifiedAt: '2026-10-22'
+  rule#task-owner:
+    value: '**父任务 / 根任务是其子任务的 owner，自身不写码**。owner 只做四件事：**计划**（拆子任务 / 排序 / 定边界）、**review**（子任务交付）、**排查**（追根因、定位到代码）、**沟通**（回用户、派活）。要写码 → **开子任务派出去**。owner 的产物是**任务 body**（台账 / 计划 / 订正 / review 记录），不是 diff。'
+    id: agents.rule.task-owner
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:17
+      verifiedAt: '2026-10-22'
+  rule#task-ref:
+    value: '**引用任务一律写成 `##<号>(<标题>)`**（如 `##227(会话清零)`），完整 URI 同理补标题；不写裸编号 —— 人记不住数字号是干什么的。标题取任务当前标题的短名。'
+    id: agents.rule.task-ref
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:15
+      verifiedAt: '2026-10-22'
+  rule#task-root-logical:
+    value: '**逻辑根 ≠ 物理根**：任务树由 `parent` 字段表达，但**尚未打平** —— 有些任务物理上挂在**目录型容器**下（如 bug汇总 `##158(bug汇总)` → 归档 `##162(bug汇总归档（158 已修复项）)`；分配官 `##87(任务分配)`），**逻辑上仍是根任务**。判据看**职责不看挂点**：自成专项、养着子任务的就是逻辑根 → 按 `rule.task-owner` 办（不开发，只计划 / review / 排查 / 沟通）。临时安排，待树打平后自然消解。'
+    id: agents.rule.task-root-logical
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:18
+      verifiedAt: '2026-10-22'
   rule#task-write:
     value: '**任务文件头是权威**（##322）：读侧 `task show` / `getTask` / 上下文 `task.*` 就是 frontmatter 同一份（不必 `cat`）；写侧收到「整份文件」一律**剥头**，`--body` 只收内联正文（见路径样值即拒，##338）→ `docs/task-write-contract.md`（`--body-text` / `--body-file` / `--append-body*` 三选一、create 不剥头、##376 同族护栏）'
     id: agents.rule.task-write
@@ -75,3 +282,39 @@ facts:
       source: user
       at: AGENTS.md:56
       verifiedAt: '2026-10-21'
+  rule#verify:
+    value: 结果与猜测不符时，先查证再解释，不臆断
+    id: agents.rule.verify
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:8
+      verifiedAt: '2026-10-22'
+  rule#worktree-path:
+    value: '**worktree 一律放仓库外、原项目的同级目录**，名 `<原项目名>.worktrees/<标识>`（示例：`~/git/diy/diy` → `~/git/diy.worktrees/t323-xxx`）；**禁放仓库内部**（如 `repo/_diy.worktrees/`）—— 否则 worktree 会落进主仓的 AGENTS.md 链（读到主仓的上下文投影 = 嵌套覆盖），且被 fd/rg · npm workspaces · tsconfig include 误扫'
+    id: agents.rule.worktree-path
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/git/AGENTS.md:18
+      verifiedAt: '2026-10-22'
+  rule#worktree-selfcheck:
+    value: 动手改文件前先 `pwd` + `git rev-parse --show-toplevel`：落在主仓工作树（如 `~/git/diy/diy`）就先建 worktree 再动；**判据 = 这次改动会不会进 git**（纯读不用、写要）。反例：##404 连续 6 次直接在 main 上提交 —— 规则不落成动作就等于没有
+    id: agents.rule.worktree-selfcheck
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/git/AGENTS.md:17
+      verifiedAt: '2026-10-22'
+  rule#worktree:
+    value: '**git 项目上修改代码一律先开 git worktree 做**，不在主仓当前分支直接改；除非用户明确许可或确有特殊需要'
+    id: agents.rule.worktree
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/git/AGENTS.md:16
+      verifiedAt: '2026-10-22'
