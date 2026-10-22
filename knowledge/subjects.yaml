@@ -144,6 +144,10 @@ subjects:
     description: diy-talk 包内定位：锚点 / 事件 / 反应 / role / 序列化 / 装配器（@diy/talk 对话容器内核）
   talk.rule:
     description: diy-talk 硬约束：零依赖零取时间 / 只做纯数据 / 非法输入必抛 / 判别联合落地
+  template.find:
+    description: diy-template 包内定位：parser / render / scope / analyze / 宿主装配入口（@diy/template 提示词模版引擎）
+  template.rule:
+    description: diy-template 硬约束：不做表达式语言 / 逐字节保真 / 意图测试优先 / IO 归宿主
   tool:
     description: 命令
     aliases: []
