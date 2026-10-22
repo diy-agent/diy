@@ -92,6 +92,57 @@ export function parseChildren(stdout: string, rootPid: number): { pid: number; c
     return out;
 }
 
+/** 一棵进程树的聚合视图（`ps -axo pid=,ppid=,pcpu=,comm=` 的产物）。 */
+export interface ProcessTree {
+    /** 直接子进程数（证据）。 */
+    readonly directChildCount: number;
+    /** 全部后代（不含 root）。 */
+    readonly descendants: readonly { pid: number; command: string }[];
+    /** root + 全部后代的 CPU 百分比之和（macOS 的 `%cpu` 是衰减均值，但**整棵树的覆盖**才是关键）。 */
+    readonly treeCpuPercent: number;
+}
+
+/**
+ * `ps -axo pid=,ppid=,pcpu=,comm=` → 从 `rootPid` 起算的树聚合。
+ *
+ * ⚠️ 为什么需要它：`npm run build` / `tsc` / `vitest` / `sha.sh build` 都是**父进程在等、子进程在算**；
+ * 只采 root 会看到「CPU≈0 + 无输出」⇒ 静默超阈值即判 `stuck`。判据吃 `treeCpuPercent`。
+ * root 不在表里（进程已退出/ps 权限）⇒ 返回全 0，判据走 R6 / R4 而不误判。
+ */
+export function parseProcessTree(stdout: string, rootPid: number): ProcessTree {
+    const rows: { pid: number; ppid: number; cpu: number; command: string }[] = [];
+    for (const line of stdout.split("\n")) {
+        const m = /^\s*(\d+)\s+(\d+)\s+([\d.]+)\s+(.*)$/.exec(line);
+        if (!m) continue;
+        rows.push({ pid: Number(m[1]), ppid: Number(m[2]), cpu: Number(m[3]) || 0, command: m[4].trim() });
+    }
+    const byPid = new Map(rows.map((r) => [r.pid, r]));
+    const childrenOf = new Map<number, typeof rows>();
+    for (const r of rows) {
+        const list = childrenOf.get(r.ppid);
+        if (list) list.push(r);
+        else childrenOf.set(r.ppid, [r]);
+    }
+
+    const root = byPid.get(rootPid);
+    let cpu = root ? root.cpu : 0;
+    const descendants: { pid: number; command: string }[] = [];
+    const seen = new Set<number>([rootPid]);
+    const queue: number[] = [rootPid];
+    while (queue.length > 0) {
+        const cur = queue.shift() as number;
+        for (const child of childrenOf.get(cur) ?? []) {
+            if (seen.has(child.pid)) continue; // 防御：pid 复用 / 环
+            seen.add(child.pid);
+            cpu += child.cpu;
+            descendants.push({ pid: child.pid, command: child.command });
+            queue.push(child.pid);
+        }
+    }
+    const directChildCount = (childrenOf.get(rootPid) ?? []).filter((c) => seen.has(c.pid)).length;
+    return { directChildCount, descendants, treeCpuPercent: Math.round(cpu * 10) / 10 };
+}
+
 /** `lsof -nP -a -p <pid> -iTCP` → 连接（含状态；没有 REMOTE 的 LISTEN 行也保留）。 */
 export function parseLsofTcp(stdout: string): ConnectionInfo[] {
     const out: ConnectionInfo[] = [];
@@ -118,7 +169,7 @@ export function sampleProcess(input: SampleInput, deps: SamplerDeps = DEFAULT_SA
             : // 非 darwin 的 `ps %cpu` 本身就是衰减平均，够用
               (Number(deps.run("ps", ["-o", "%cpu=", "-p", pid]).trim()) || 0);
 
-    const children = parseChildren(deps.run("ps", ["-axo", "pid=,ppid=,comm="]), input.pid);
+    const tree = parseProcessTree(deps.run("ps", ["-axo", "pid=,ppid=,pcpu=,comm="]), input.pid);
     const connections = parseLsofTcp(deps.run("lsof", ["-nP", "-a", "-p", pid, "-iTCP"]));
     const silentMs = input.lastOutputAt === null ? runMs : Math.max(0, deps.now() - input.lastOutputAt);
 
@@ -128,7 +179,8 @@ export function sampleProcess(input: SampleInput, deps: SamplerDeps = DEFAULT_SA
         outputBytes: input.outputBytes,
         silentMs,
         cpuPercent: cpu,
-        childCount: children.length,
+        treeCpuPercent: tree.treeCpuPercent,
+        childCount: tree.directChildCount,
         connections,
         historicalP50Ms: input.historicalP50Ms,
     };

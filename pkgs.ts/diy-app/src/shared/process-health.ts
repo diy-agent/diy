@@ -29,9 +29,19 @@ export interface ProcessSample {
     readonly outputBytes: number;
     /** 距**最后一次**输出多久（ms）；从未输出过 = `runMs`。 */
     readonly silentMs: number;
-    /** 瞬时 CPU 百分比（macOS `top -l 2` **第二行**取样；`-l 1` 第一行是进程生命周期累计值）。 */
+    /** **root 进程**的瞬时 CPU 百分比（macOS `top -l 2` **第二块**取样；`-l 1` 第一块是生命周期累计值）。 */
     readonly cpuPercent: number;
-    /** 直接子进程数。 */
+    /**
+     * **整棵进程树**（root + 全部后代）的 CPU 百分比聚合（`ps -axo pid=,ppid=,pcpu=` 求后代和）。
+     *
+     * 为什么必须有它：`npm run build` / `./sha.sh check` / `vitest` / `sha.sh build` 全是
+     * **「父进程在等、子进程在算」** 的形状 —— 只看 root 会看到 CPU≈0 + 无输出，
+     * 静默超阈值就直接判 `stuck`，一接上 L2 就会对着我们自己的构建任务狂唤醒。
+     *
+     * 缺省（老样本 / 回放数据无此字段）= 退回只看 `cpuPercent`。
+     */
+    readonly treeCpuPercent?: number;
+    /** 直接子进程数（证据，进 reason / 日志；判据用的是 `treeCpuPercent`）。 */
     readonly childCount: number;
     /** TCP 连接（`lsof -nP -a -p <pid> -iTCP` 的产物）。 */
     readonly connections: readonly ConnectionInfo[];
@@ -125,13 +135,38 @@ function tokens(command: string): string[] {
     return command.trim().split(/\s+/).filter(Boolean);
 }
 
-/** 取 exec 用的首个有效词（跳过 `env FOO=bar` / `sudo` / `nohup` / `time` 这类前缀）。 */
-function headWord(toks: readonly string[]): { head: string; rest: readonly string[] } {
+const DURATION_RE = /^\d+(?:\.\d+)?[smhd]?$/;
+
+/**
+ * coreutils 的 `timeout <dur>` / `gtimeout <dur>` 包装器：`timeout 30 curl …`。
+ * 返回「时长 + 之后的起始下标」，不是 timeout 包装器则 `limit = null`。
+ * 选项里 `-s SIG` / `-k DUR` 各带一个参数，都要跳过去。
+ */
+function parseTimeoutWrapper(toks: readonly string[], start: number): { limit: string | null; next: number } {
+    let i = start + 1;
+    while (i < toks.length && toks[i].startsWith("-")) {
+        const opt = toks[i];
+        i++;
+        if (opt === "-s" || opt === "--signal" || opt === "-k" || opt === "--kill-after") i++;
+    }
+    if (i < toks.length && DURATION_RE.test(toks[i])) return { limit: toks[i], next: i + 1 };
+    return { limit: null, next: i };
+}
+
+/** 取 exec 用的首个有效词（跳过 `env FOO=bar` / `sudo` / `nohup` / `time` / `timeout 30` 这类前缀）。 */
+function headWord(toks: readonly string[]): { head: string; rest: readonly string[]; timeoutLimit: string | null } {
     let i = 0;
+    let timeoutLimit: string | null = null;
     while (i < toks.length) {
         const t = toks[i];
         if (t.includes("=") && !t.startsWith("-") && !t.startsWith("/")) {
             i++; // env 赋值
+            continue;
+        }
+        if (t === "timeout" || t === "gtimeout") {
+            const w = parseTimeoutWrapper(toks, i);
+            timeoutLimit = w.limit;
+            i = w.next;
             continue;
         }
         if (["sudo", "nohup", "env", "time", "command", "exec", "nice", "setsid", "caffeinate"].includes(t)) {
@@ -140,7 +175,7 @@ function headWord(toks: readonly string[]): { head: string; rest: readonly strin
         }
         break;
     }
-    return { head: (toks[i] ?? "").replace(/^.*\//, ""), rest: toks.slice(i + 1) };
+    return { head: (toks[i] ?? "").replace(/^.*\//, ""), rest: toks.slice(i + 1), timeoutLimit };
 }
 
 /**
@@ -149,10 +184,16 @@ function headWord(toks: readonly string[]): { head: string; rest: readonly strin
  */
 export function probeNetworkWait(command: string): NetworkWait {
     const toks = tokens(command);
-    const { head, rest } = headWord(toks);
+    const { head, rest, timeoutLimit } = headWord(toks);
 
     for (const [re, label] of BOUNDED_FLAGS) {
         if (re.test(command)) return { network: isNetworkClient(head, rest), bounded: true, client: label };
+    }
+
+    // `timeout 30 curl …`：包装器给了**总**超时 —— 后台进程到点会被杀掉，不会永久挂起。
+    // 必须显式识别：否则 head 落到 `curl` 会走 UNBOUNDED_CLIENTS，把有界命令判成 `stuck`。
+    if (timeoutLimit !== null && isNetworkClient(head, rest)) {
+        return { network: true, bounded: true, client: `timeout ${timeoutLimit} ${head}` };
     }
 
     if (SELF_BOUNDED_CLIENTS.includes(head)) return { network: true, bounded: true, client: head };
@@ -194,7 +235,9 @@ export function judgeHealth(sample: ProcessSample, policy: HealthPolicy = DEFAUL
     const net = probeNetworkWait(sample.command);
     const stalledEnough = sample.silentMs >= policy.stallFloorMs;
     const overP50 = stallFactor !== null && stallFactor >= policy.stallFactor;
-    const idleCpu = sample.cpuPercent < policy.cpuActivePercent;
+    // 进程树聚合优先：构建类命令是「父在等、子在算」，只看 root 必误判 stuck。
+    const activeCpu = Math.max(sample.cpuPercent, sample.treeCpuPercent ?? 0);
+    const idleCpu = activeCpu < policy.cpuActivePercent;
 
     if (sample.silentMs <= policy.progressWindowMs) {
         return {
@@ -206,11 +249,14 @@ export function judgeHealth(sample: ProcessSample, policy: HealthPolicy = DEFAUL
         };
     }
 
-    if (!idleCpu && !(stalledEnough && overP50)) {
+    // CPU 在算就**一律**算推进 —— 即使静默已超倍数。
+    // 理由：「父在等、子在算」（构建/编译/测试）是最常见的长时间无输出形态，若还要求「未超倍数」才认 CPU，
+    // 等于把最需要放过的一类判死。代价是「CPU 高 + 零输出的 busy loop」也会落在这里（已知边界，交 L2 判语义）。
+    if (!idleCpu) {
         return {
             verdict: "progressing",
             rule: "R2:cpu-active",
-            reason: `CPU ${sample.cpuPercent.toFixed(1)}% 仍在算`,
+            reason: `CPU ${activeCpu.toFixed(1)}%（进程树聚合）仍在算`,
             stallFactor,
             confidence: 0.9,
         };
@@ -251,7 +297,7 @@ export function judgeHealth(sample: ProcessSample, policy: HealthPolicy = DEFAUL
         return {
             verdict: "stuck",
             rule: "R4:stalled-vs-p50",
-            reason: `静默 ${Math.round(sample.silentMs / 1000)}s = 历史中位的 ${stallFactor?.toFixed(0)}×，CPU ${sample.cpuPercent.toFixed(1)}%`,
+            reason: `静默 ${Math.round(sample.silentMs / 1000)}s = 历史中位的 ${stallFactor?.toFixed(0)}×，CPU ${activeCpu.toFixed(1)}%（${sample.childCount} 个子进程）`,
             stallFactor,
             confidence: p50 === null ? 0.55 : 0.75,
         };

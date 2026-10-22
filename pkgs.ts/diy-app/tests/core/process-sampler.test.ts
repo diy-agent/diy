@@ -11,6 +11,7 @@ import {
     parseChildren,
     parseEtime,
     parseLsofTcp,
+    parseProcessTree,
     parseTopCpu,
     sampleProcess,
     type SamplerDeps,
@@ -38,6 +39,14 @@ const PS_TREE = `  4200     1 node
   4210  4200 node
   4211  4200 ps
   4212  4211 sh
+`;
+
+/** 带 `%cpu` 列的进程表（树聚合用）：父 0.3%、子 97%、孙 45% —— 典型「父在等子」。 */
+const PS_TREE_CPU = `  4200     1   0.3 node
+  4210  4200  97.0 node
+  4211  4200   0.1 ps
+  4212  4211  45.0 sh
+  4300     1  12.0 unrelated
 `;
 
 const LSOF = `COMMAND  PID USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
@@ -96,13 +105,39 @@ describe("parseChildren / parseLsofTcp", () => {
     });
 });
 
+describe("parseProcessTree —— 进程树 CPU 聚合", () => {
+    it("root + 全部后代求和；兄弟树不算进来（同一父的孙进程要算）", () => {
+        const t = parseProcessTree(PS_TREE_CPU, 4200);
+        expect(t.treeCpuPercent).toBe(142.4);
+        expect(t.descendants.map((d) => d.pid)).toEqual([4210, 4211, 4212]);
+        expect(t.directChildCount).toBe(2);
+    });
+
+    it("root 为 0%、子进程在算 ⇒ 树聚合不为 0（这就是修 R1 的那一刀）", () => {
+        const t = parseProcessTree(PS_TREE_CPU, 4200);
+        expect(t.treeCpuPercent).toBeGreaterThan(50);
+    });
+
+    it("root 不在表里（进程已退 / ps 失败）⇒ 全 0，不抛、不编数字", () => {
+        expect(parseProcessTree(PS_TREE_CPU, 9999)).toEqual({ directChildCount: 0, descendants: [], treeCpuPercent: 0 });
+        expect(parseProcessTree("", 4200).treeCpuPercent).toBe(0);
+    });
+
+    it("pid 复用成环也不会死循环（seen 防御）", () => {
+        const cyclic = `  1     2  50.0 a\n  2     1  50.0 b\n`;
+        const t = parseProcessTree(cyclic, 1);
+        expect(t.descendants.map((d) => d.pid)).toEqual([2]);
+        expect(t.treeCpuPercent).toBe(100);
+    });
+});
+
 describe("sampleProcess —— 组装", () => {
     it("runMs / cpu / 子进程 / 连接 / silentMs 全部就位", () => {
         const d = deps(
             {
                 "ps -o etime= -p 4200": "  10:00",
                 "top -l 2 -pid 4200 -stats pid,cpu,time,command": TOP_L2,
-                "ps -axo pid=,ppid=,comm=": PS_TREE,
+                "ps -axo pid=,ppid=,pcpu=,comm=": PS_TREE_CPU,
                 "lsof -nP -a -p 4200 -iTCP": LSOF,
             },
             1_000_000,
@@ -120,6 +155,8 @@ describe("sampleProcess —— 组装", () => {
         expect(s.runMs).toBe(600_000);
         expect(s.cpuPercent).toBe(0.3);
         expect(s.childCount).toBe(2);
+        // 树聚合 = 0.3 + 97.0 + 0.1 + 45.0（root 在表里，孙进程计入，无关进程 4300 不计）
+        expect(s.treeCpuPercent).toBe(142.4);
         expect(s.connections).toHaveLength(2);
         expect(s.silentMs).toBe(300_000);
         expect(s.outputBytes).toBe(1234);

@@ -6,12 +6,14 @@
 //   ② **无总超时的网络命令 = stuck**（`curl` / `git fetch` / `ssh` 默认没有总超时，DNS/TLS 半死即永久挂起）——
 //      这是历史上 1849 条 `nohup` 绕开超时的成因，模型会误以为「默认超时会自己失败」；
 //   ③ **有界等待不打扰**（`sleep` / 带 `--max-time` 的网络客户端 ⇒ passive-wait）；
-//   ④ **证据不足不下结论**（无历史 p50 且未超绝对静默下限 ⇒ unknown，不许猜 stuck）。
+//   ④ **证据不足不下结论**（无历史 p50 且未超绝对静默下限 ⇒ unknown，不许猜 stuck）；
+//   ⑤ **CPU 要看整棵进程树**（`npm run build` / `tsc` / `vitest` 是「父在等、子在算」，只看 root 必误判 stuck）。
 
 import { describe, it, expect } from "vitest";
 import {
     DEFAULT_HEALTH_POLICY,
     judgeHealth,
+    isTimedWait,
     medianDuration,
     probeNetworkWait,
     type ProcessSample,
@@ -54,6 +56,23 @@ describe("probeNetworkWait —— 有没有总超时上限", () => {
         expect(probeNetworkWait("git fetch origin main")).toMatchObject({ network: true, bounded: false });
         expect(probeNetworkWait("git clone https://x/y.git")).toMatchObject({ network: true, bounded: false });
         expect(probeNetworkWait("git status --porcelain")).toMatchObject({ network: false });
+    });
+
+    it("`timeout 30 curl …` 是**有界**（包装器给了总超时，后台进程到点被杀）", () => {
+        expect(probeNetworkWait("timeout 30 curl -s https://x/y")).toMatchObject({
+            network: true,
+            bounded: true,
+        });
+        expect(probeNetworkWait("timeout 30 curl -s https://x/y").client).toContain("timeout 30");
+        // 选项形式：`-s SIG` / `-k DUR` 各带一个参数，都要跳过
+        expect(probeNetworkWait("timeout -s KILL 20 curl -s https://x/y")).toMatchObject({ network: true, bounded: true });
+        expect(probeNetworkWait("gtimeout 15s curl -s https://x/y")).toMatchObject({ network: true, bounded: true });
+        // 没按时长（timeout 会自己报错）⇒ 不当作有界证据
+        expect(probeNetworkWait("timeout curl -s https://x/y")).toMatchObject({ network: true, bounded: false });
+    });
+
+    it("`timeout 30 sleep 5` ⇒ 仍识别为定时等待（head 要跳过包装器）", () => {
+        expect(isTimedWait("timeout 30 sleep 5")).toBe(true);
     });
 
     it("ssh 无 -o ConnectTimeout ⇒ 无界；带了 ⇒ 有界", () => {
@@ -99,6 +118,29 @@ describe("judgeHealth —— 三态判据", () => {
         expect(d.verdict).toBe("stuck");
         expect(d.rule).toBe("R3:unbounded-network-wait");
         expect(d.reason).toContain("无总超时上限");
+    });
+
+    it("R2 子树在算：root CPU 0% + 子进程 97% + 静默 600s + 超 p50 ⇒ progressing（不是 stuck）", () => {
+        const d = judgeHealth(
+            sample({
+                command: "npm run build", // 典型：父进程等、子进程在编译
+                cpuPercent: 0, // 只看 root 就是 0
+                treeCpuPercent: 97,
+                childCount: 3,
+                silentMs: 600_000,
+                historicalP50Ms: 5_000, // 倍数 120× —— 单看倍数早该判死了
+            }),
+        );
+        expect(d.verdict).toBe("progressing");
+        expect(d.rule).toBe("R2:cpu-active");
+        expect(d.reason).toContain("进程树聚合");
+    });
+
+    it("R4 仍是 stuck：树聚合也低（CPU 1.2%）+ 静默 120× p50 ⇒ stuck", () => {
+        const d = judgeHealth(sample({ cpuPercent: 0, treeCpuPercent: 1.2, silentMs: 600_000 }));
+        expect(d.verdict).toBe("stuck");
+        expect(d.rule).toBe("R4:stalled-vs-p50");
+        expect(d.reason).toContain("子进程");
     });
 
     it("R3 只按「无界」成立，不在乎 p50 是否可用（无历史也要判死）", () => {
