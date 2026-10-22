@@ -22,13 +22,13 @@ facts:
       at: ~/git/diy/AGENTS.md:25
       verifiedAt: '2026-10-21'
   dev.context#chain-share:
-    value: AGENTS.md 链 28.3 KB 占 system 81%（~/AGENTS.md 17.0 · 本 worktree 9.5 · ~/git 1.6）；~/AGENTS.md 内 `## rule` 一节 8.9 KB 就占该文件 51% —— 减负只有一个量级对象，就是链
+    value: AGENTS.md 链瘦身前 28.3 KB 占 system 81%（~/AGENTS.md 17.0 · 仓库 9.5 · ~/git 1.6）；仓库那份 43 条正文 2026-10-22 迁进知识库后降到 1.9 KB，system 34.9→26.7 KB。**剩余大头是 ~/AGENTS.md 17.0 KB（占 system 64%）**：它是全局规则，塞项目库是 scope 错位，得先有 user 级库
     id: dev.context-chain-share
     review: accepted
     lifecycle: active
     evidence:
       source: probe
-      probe: npx tsx build/lab/home/projects/1/tasks/5/gen/probe/measure-context.mts
+      probe: npx tsx build/lab/home/projects/1/tasks/5/gen/probe/measure-context.mts --home build/lab/home
       verifiedAt: '2026-10-22'
   dev.context#help-share:
     value: 信封 help 7.4 KB 里 `system`(3.2) + `runtime`(2.2) 两节占 73%，全是 zod 派生的结构说明；`about` 固定话术已从 1689 B 压到 724 B（占 10%）。再砍只能动描述文本（`descMaxDepth`）

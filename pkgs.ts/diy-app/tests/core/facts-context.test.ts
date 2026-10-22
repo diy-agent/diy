@@ -10,7 +10,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildFactsContext } from "../../src/main/services/facts-context";
+import { buildFactsContext, buildKbIndex } from "../../src/main/services/facts-context";
 
 let root = "";
 let repoKb = "";
@@ -122,5 +122,49 @@ describe("降级", () => {
         expect(() => buildFactsContext({ home, taskUri: TASK, env: "production" })).not.toThrow();
         // 坏文件让整个库读不出来 ⇒ 降级为缺席
         expect(buildFactsContext({ home, taskUri: TASK, env: "production" })).toBeNull();
+    });
+});
+
+// ── kb 索引（##5 报送的需求 5：这段原先零测试，而它决定「链上正文能不能删」）──
+//
+// 索引的用途是**让人知道该查哪个主题**，所以压的是三条会被误读成"正常"的边界：
+// 没有库 ≠ 空库、无 description 的主题不进 entries（但条目仍被计数）、计数口径与投影同源。
+describe("kb 索引", () => {
+    it("没有库 ⇒ null（整节缺席，不是 claims: 0 的空对象）", () => {
+        process.env["DIY_FACTS_DIR"] = path.join(root, "nowhere");
+        expect(buildKbIndex()).toBeNull();
+    });
+
+    it("主题缺 description ⇒ 不进 entries，但其条目仍计入 claims（两者不等 = 有主题没登记）", () => {
+        // dev.test 有描述、app.port 有描述；再塞一个无描述主题带 2 条事实
+        write(path.join(repoKb, "subjects.yaml"), SUBJECTS + "  ghost.topic:\n    aliases: [g]\n");
+        write(
+            path.join(repoKb, "facts", "ghost.yaml"),
+            factsYaml([
+                "  ghost.topic#a:",
+                "    value: 'x'",
+                "    review: accepted",
+                "    lifecycle: active",
+                "    evidence: { source: code, at: K.ts:1 }",
+                "  ghost.topic#b:",
+                "    value: 'y'",
+                "    review: accepted",
+                "    lifecycle: active",
+                "    evidence: { source: code, at: K.ts:1 }",
+            ]),
+        );
+        const kb = buildKbIndex()!;
+        expect(kb.entries.map((e) => e.subject)).not.toContain("ghost.topic");
+        const listed = kb.entries.reduce((n, e) => n + e.claims, 0);
+        // 差额 = 没登记 description 的主题条目数（索引里看不见，但库里有）
+        expect(kb.claims - listed).toBe(2);
+    });
+
+    it("claims 与事实投影同一口径（同一仓库同一时刻：索引总数 = 投影条目数）", () => {
+        const kb = buildKbIndex()!;
+        expect(kb.claims).toBe(1);
+        // 投影只取"当前作用域解析得出"的条目，默认 env 下 app.port#default 取到 1 条
+        const v = buildFactsContext({ home, taskUri: "", env: "production" })!;
+        expect(Object.keys(v.project ?? {}).length).toBe(kb.claims);
     });
 });

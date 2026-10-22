@@ -64,7 +64,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:49
       verifiedAt: '2026-10-21'
   rule#core-log:
     value: '**核心逻辑不依赖日志**：模块的领域状态自成真源、可独立序列化落盘；日志（事件流）降为**审计/统计**材料，可清可丢、丢了不影响运行；进程内的 Event 只是模块间进度通知的消息。横向模块关联靠**显式 ref**（如 `turnId`/`stepId`），不靠共享日志。**历史转变**：早期把日志当投影真源（ops → historyMessages），致模块逻辑被日志绑死、难进化 → **新 module 一律按新思路设计，旧模块不追溯**。代表：##310 / ##311(工作流特性专项)。'
@@ -91,7 +90,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:51
       verifiedAt: '2026-10-21'
   rule#discriminated-union:
     value: '**判别联合（带判别键的对象）一律「判别键同级 = 公共字段；分支私有数据进 `data`」**：判别键默认 `type`（历史 `kind`/`op`/`mode`/`render` 不动），与 `type` 同级的字段 = **所有分支共有**；每个分支**私有**的数据一律放 `data`。**用统一 `data` 而非 `<判别键>Data`**：这样「任何类型化节点 = `{ type, 公共…, data }`」**自相似**——通用序列化/校验/UI 只认 `.data` 即可，不必先知道判别键名才能找到载荷。**嵌套同构**：子对象也是 `{ type, data }`，逐层递归（`data.data` 是不同深度，**不撞车**）。理由：① 读结构即知归属；② 私有字段平铺会与公共字段抢同级空间；③ 统一 `data` 使机器可泛化处理。历史形状（`mode`+`modeData` / `render`+`renderData`）保留不追溯。'
@@ -154,7 +152,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:52
       verifiedAt: '2026-10-21'
   rule#lab-owner:
     value: '**lab 一律开在「自己任务的 worktree」里**（`~/git/diy.worktrees/t<号>-*/` 内 `./sha.sh lab`；数据根随之隔离在该 worktree 的 `build/lab/home`）。**根 worktree（`~/git/diy/diy`）的 `build/lab/home` 是「无主」的** —— 只与用户联合使用（人在那儿看效果），**agent 不自己去开**：判别不了谁在用，撞 `SingletonLock` 或把种子 / 真配置写进用户正开着的根。要实验先给自己任务开 worktree'
@@ -163,7 +160,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:53
       verifiedAt: '2026-10-21'
   rule#lang:
     value: 对话、文档、代码注释一律中文；对话精简、省 token
@@ -181,7 +177,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:54
       verifiedAt: '2026-10-21'
   rule#probe:
     value: 轮次中勿改 `src/**` 当探针（watch 重启打断自己的轮次）；探针写 `/tmp`
@@ -190,7 +185,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:50
       verifiedAt: '2026-10-21'
   rule#renderer:
     value: UI 主线是 `renderer_solid/`（SolidJS）；React 版已删除
@@ -199,7 +193,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:55
       verifiedAt: '2026-10-21'
   rule#session-start:
     value: 新会话先列：①已加载的上下文文件绝对路径 ②可用 skills 的绝对路径
@@ -280,7 +273,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:56
       verifiedAt: '2026-10-21'
   rule#verify:
     value: 结果与猜测不符时，先查证再解释，不臆断

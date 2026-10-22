@@ -28,7 +28,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:62
       verifiedAt: '2026-10-21'
   model#default:
     value: 缺省先挑 free 可用项，都不可用退 `mimo-v2.5`；`mimo-v2.6-flash` 自 2026-10-17 起**不作缺省**（上游 `[model_coming_soon]`）
@@ -37,7 +36,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:64
       verifiedAt: '2026-10-21'
   model#free:
     value: free 模型上架/下架频繁，用前必须列 `https://opencode.ai/zen/go/v1/models` 筛 `free` + 各实测一条（**流式 + 工具**齐备才算可用）→ 写回真源并标核对日期
@@ -46,7 +44,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:63
       verifiedAt: '2026-10-21'
   model#reasoning:
     value: 档位只有 `none/low/medium/high`（上游 400 拒绝 `minimal`/`xhigh`/`max`）
@@ -55,7 +52,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:65
       verifiedAt: '2026-10-21'
   model#truth:
     value: 价目真源 `https://models.dev/api.json`（`opencode-go` 的 cost/limit）
@@ -64,5 +60,4 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:66
       verifiedAt: '2026-10-21'

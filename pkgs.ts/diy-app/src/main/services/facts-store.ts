@@ -309,14 +309,23 @@ export interface BriefResult {
     notes: string[];
 }
 
-/** 变体组的代表：accepted 优先 → 限定条件最少（无条件比"仅 production"更接近通例）→ id 短 */
+/**
+ * 变体组的代表：accepted 优先 → **最通用**的一条 → id（保证稳定，不随文件行序抖）。
+ *
+ * "最通用"不是"限定条件个数最少"，而是**覆盖面最大**：`env: [development, test]`
+ * 同时管两个环境，比 `env: production` 更像通例。所以按覆盖数算宽窄，不是按"有没有 scope"。
+ */
 function pickRepresentative(list: readonly Fact[]): Fact {
     const rank = (f: Fact): number => (f.review === "accepted" ? 0 : f.review === "proposed" ? 1 : 2);
-    const weight = (f: Fact): number =>
-        f.scope === undefined
-            ? 0
-            : (f.scope.env === undefined ? 0 : 1) + (f.scope.paths === undefined ? 0 : 1) + (f.scope.task === undefined ? 0 : 1);
-    return [...list].sort((a, b) => rank(a) - rank(b) || weight(a) - weight(b) || a.id.localeCompare(b.id))[0] as Fact;
+    const breadth = (f: Fact): number => {
+        const s = f.scope;
+        if (s === undefined) return 0;
+        const env = s.env === undefined ? 0 : Array.isArray(s.env) ? s.env.length : 1;
+        const paths = s.paths === undefined ? 0 : s.paths.length;
+        const task = s.task === undefined ? 0 : 1;
+        return 100 - (env + paths + task);
+    };
+    return [...list].sort((a, b) => rank(a) - rank(b) || breadth(a) - breadth(b) || a.id.localeCompare(b.id))[0] as Fact;
 }
 
 /**
@@ -411,10 +420,18 @@ export function find(keywordIn: string, opts: { dir?: string; in?: string; limit
         );
     }
     const max = opts.maxChars ?? 80;
+    // subject 的 description 也进检索面：agent 听到的往往是**人话**（"端口"、"异常三档"），
+    // 而 claim 里是 `app.port` / `rule.err-triage` —— 只搜键名等于要求它先知道答案。
+    const descOf = new Map(repo.subjects.map((s) => [s.key, (s.description ?? "").toLowerCase()]));
     const scored: { hit: FindHit; score: number }[] = [];
     for (const f of repo.facts) {
         const gid = `${f.subject}#${f.aspect}`;
-        const haystack: Record<string, string> = { claim: gid.toLowerCase(), id: f.id.toLowerCase(), value: f.value.toLowerCase() };
+        const haystack: Record<string, string> = {
+            claim: gid.toLowerCase(),
+            id: f.id.toLowerCase(),
+            value: f.value.toLowerCase(),
+            subject: descOf.get(f.subject) ?? "",
+        };
         const hitIn = new Set<string>();
         let all = true;
         for (const t of terms) {
@@ -435,8 +452,9 @@ export function find(keywordIn: string, opts: { dir?: string; in?: string; limit
                 review: f.review,
                 lifecycle: f.lifecycle,
             },
-            // 命中内容 > 命中键名：查"异常三档"时 value 里真讲了这件事，比 id 里凑巧有这三个字更有用
-            score: hitIn.has("value") ? 0 : hitIn.has("id") ? 1 : 2,
+            // 命中内容 > 命中主题说明 > 命中键名：查"异常三档"时 value 里真讲了这件事，
+            // 比 id 里凑巧有三个字更有用；主题说明（人话）又比 claim（标识符）更接近提问方式。
+            score: hitIn.has("value") ? 0 : hitIn.has("subject") ? 1 : hitIn.has("id") ? 2 : 3,
         });
     }
     scored.sort((a, b) => a.score - b.score || a.hit.gid.localeCompare(b.hit.gid));

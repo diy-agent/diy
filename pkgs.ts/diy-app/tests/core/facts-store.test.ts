@@ -139,8 +139,13 @@ describe("submit", () => {
         const r = store.submitPayload(payload);
         expect(r.problems.filter((p) => p.level === "error")).toEqual([]);
         const text = readFileSync(path.join(kb, "facts/dev.yaml"), "utf8");
+        // 真源是 **claim map**（350d2e33）：key = `subject#aspect`，`id` 降级为值里的可选字段。
+        // 这条断言原本压"id 在 value 之前"，是列表形式年代的 —— 形状改了、断言没跟，红灯
+        // 亮了很久没人管（`./sha.sh check` 不含单测）。现在压真正的契约：key 在最前。
+        expect(text).toContain("dev.test#entry:");
+        expect(text.indexOf("dev.test#entry")).toBeLessThan(text.indexOf("value: ./sha.sh test-unit"));
+        // id 仍是**审计锚点**（不可派生），只是不再当结构键 —— 它必须还在值里
         expect(text).toContain("id: test.entry");
-        expect(text.indexOf("id: test.entry")).toBeLessThan(text.indexOf("value: ./sha.sh test-unit"));
     });
 
     it("冲突整批拒：磁盘不动，问题带码回", () => {
@@ -293,11 +298,15 @@ describe("brief", () => {
         const r = store.brief("app.port", { dir: kb });
         expect(r.subject).toBe("app.port");
         expect(r.desc).toBe("端口");
-        expect(r.entries.map((e) => e.aspect)).toEqual(["default", "legacy"]);
-        expect(r.claims).toBe(2);
-        // beforeEach 里 default 有 3 个变体（production/development/test 之外还有一条）
-        const def = r.entries.find((e) => e.aspect === "default")!;
-        expect(def.variants).toBeGreaterThanOrEqual(2);
+        // beforeEach 的 app.port 只有 default 一个 aspect、两条变体（production / dev+test）
+        expect(r.entries.map((e) => e.aspect)).toEqual(["default"]);
+        expect(r.claims).toBe(1);
+        expect(r.facts).toBe(2);
+        // `variants > 1` 是"该问一句当前环境"的信号（与投递投影 cell.variants 同义）
+        expect(r.entries[0]!.variants).toBe(2);
+        // 代表值取**最通用**的一条：`env: [development, test]`（管两个环境）比
+        // `env: production`（管一个）更像通例 → "0"。这条断言同时锁住"不随文件行序抖"。
+        expect(r.entries[0]!.preview).toBe("0");
     });
 
     it("subject 不存在 ⇒ 不报错，给相近主题（只说「没有」等于让人重敲一次）", () => {
@@ -318,10 +327,19 @@ describe("brief", () => {
 });
 
 describe("find", () => {
-    it("命中内容排在命中键名之前（查到的是一件真事，不是凑巧同名的键）", () => {
+    it("人话也能查：subject 的 description 进检索面（agent 听到的是「端口」，不是 app.port）", () => {
         const r = store.find("端口", { dir: kb });
         expect(r.total).toBeGreaterThan(0);
+        expect(r.hits[0]!.hitIn).toContain("subject");
+    });
+
+    it("命中内容排在命中键名之前（查到的是一件真事，不是凑巧同名的键）", () => {
+        // "app" 既在 claim 里也在 id 里；"18888" 只在 value 里 → 后者必须排前面
+        const r = store.find("app,18888", { dir: kb });
+        expect(r.total).toBe(1);
         expect(r.hits[0]!.hitIn).toContain("value");
+        const byClaim = store.find("app.port", { dir: kb });
+        expect(byClaim.hits[0]!.hitIn).not.toContain("value");
     });
 
     it("多关键词 = 与（每个都得命中某处），不是或", () => {

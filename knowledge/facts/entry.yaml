@@ -10,7 +10,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:24
       verifiedAt: '2026-10-21'
   entry#client-data-root:
     value: '`diy` / `./diy.sh` 作为客户端按 **`$DIY_HOME` 定位数据根**（读 `$DIY_HOME/app.port` 探活）：shell 里继承来的 `DIY_HOME` 会把它拉去连**那个数据根**的实例，症状是查生产任务报「任务不存在」而不是报错。判据 `diy getAppInfo` 看 `diyHome`；跨数据根操作显式 `env -u DIY_HOME -u DIY_VARIANT diy …`'
@@ -28,7 +27,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:26
       verifiedAt: '2026-10-21'
   entry#gui:
     value: 起 GUI 两条路：`./sha.sh lab`（HMR，免构建）或 `sha.sh build` 后由 CLI 拉起
@@ -82,7 +80,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:28
       verifiedAt: '2026-10-21'
   entry#seed:
     value: 空数据根的初始种入：**生产根永不种入**；`lab` 缺省自动只跑一次（`.seed-done` 标记，删掉的 provider 不会被种回来）。开关三态 / 补缺命令 / 落点见 `pkgs.ts/diy-app/AGENTS.md::env.seed`
@@ -100,7 +97,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:27
       verifiedAt: '2026-10-21'
   entry#variant:
     value: '`DIY_VARIANT`（`prod|test|lab`）是产物 / 数据分根的唯一轴，缺省 `prod`（`./diy.sh` 缺省 `lab`）；`preview` 已删除（##381），遇之显式报错 → `pkgs.ts/diy-app/AGENTS.md::env.variant`'
@@ -109,7 +105,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: AGENTS.md:25
       verifiedAt: '2026-10-21'
   entry#verify:
     value: lab 起来后用 `diy getAppInfo` 看 `diyHome` / `env` / `branch`，确认数据目录与启动参数（验证没起错数据根/变体）
