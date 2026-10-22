@@ -6,11 +6,33 @@
 #
 # 字段：description（必填，一句话说清这个对象）· aliases（选填，只做提示，不参与匹配）
 subjects:
+  app.cli:
+    description: CLI 与 RPC 契约（option 形状 / zod 补丁顺序 / 读文件语义）
+  app.dev:
+    description: 实例与进程（单例锁 / 自毁 / CDP / 外壳 / 异常出口）
+  app.entry:
+    description: 入口注入的环境变量（DIY_HOME / DIY_CLI / DIY_ENV / DIY_VARIANT…）
+  app.find:
+    description: 包内定位：各目录与关键文件在哪（diy-app 源码地图）
+  app.flow:
+    description: 工作流：状态权威 / 两段式插件 / 讨论线程 / 驱动环
+  app.history:
+    description: 会话历史与压缩：折叠 / 分页 / 广播 / 装配管道 / 聊天渲染
+  app.model:
+    description: 模型 provider / 价目 / 用量口径
   app.port:
     description: 应用实例的监听端口
     aliases:
       - 监听端口
       - 端口缺省
+  app.rule:
+    description: diy-app 包内硬约束（测试纪律 / 原子写 / 提示词 / 联动契约）
+  app.tool:
+    description: 验证与调试打法（UI 改动顺序 / 喊人 / 叫醒机制缺口）
+  app.traffic:
+    description: 出站流量观测（覆盖范围 / 步归属 / 落盘与清理）
+  app.ui:
+    description: UI 与前端坑（Solid / 主题 / 虚拟化 / 本地存储）
   data:
     description: 项目里的数据文件（依赖源 / 工作区）
   dev:

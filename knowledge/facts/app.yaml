@@ -6,6 +6,854 @@
 # 生成物式的真源：整篇由 `diy facts submit` 写入（字段顺序、条目排序都由程序定）。
 domain: app
 facts:
+  app.cli#cli-inline-text:
+    value: 「值必须是**内联文本**」的护栏（`_CliOptionMeta.inlineText`，##338）也判在**调用方进程**的 parser：整值单 token + 形如路径（`/` `./` `../` `~/` / 盘符）**或**该文件确实存在（`cli/_parser.ts::pathLikeValue`）→ `CliParseError`（exit=2）+ 提示改 `--body-file` / `--body-text`。存在性要看 cwd，只有调用方判得准；触发缘起：`--body` 收文本而 `--append-body` 收 `<file|->`，两侧不对称 → 三例把路径当正文静默存下（##290/##294/##87）。**三选一**裁决在 `main/core/task.ts::resolveBodyOverride`（`resolveBodyInputs` 是它在 edit 侧多带一组追加的壳）。**挂三处**：`task edit` / `task create` / `task drafts set` 的 `--body`（##376 补后两者；此前只有 edit 挂，同族静默收路径串）
+    id: app.cli.cli-inline-text
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.cli#cli-kebab:
+    value: CLI 选项名默认取 schema 字段名（camelCase），parser 另注册 kebab 别名并**在 help 里显示 kebab**（`--by-agent`），两种写法都接受 —— 新增 camelCase 选项无需额外处理
+    id: app.cli.cli-kebab
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.cli#cli-readfile:
+    value: CLI 的 `readFile` 选项（如 `task edit --append-body <file|->`）**在调用方进程的 parser 里读**（`pkgs.ts/diy-rpc/src/cli/_parser.ts`）：handler 跑在 app 进程，它的 fd 0 / cwd 都不是调用方的，在调用方读才两件事都对。故含 `-`（stdin）的调用必须**绕开 /cli 转发**（`diy.sh` 的 http 模式已按 argv 判定并落回直连 CLI）
+    id: app.cli.cli-readfile
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.cli#head-note:
+    value: '**关键设计理由都写在各自文件头注**（`src/main/core/steer-queue.ts` / `persona.ts` / `drafts.ts` / `src/main/services/local-agent.ts`）：改动前先读头注，别只看函数名'
+    id: app.cli.head-note
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.cli#rpc-output-schema:
+    value: RPC 的 `outputSchema` **只用于类型推导，运行期不校验也不剥字段**（`pkgs.ts/diy-rpc/src/core/meta.ts`；只有 input 走 zod）。故漏写字段**不会报错**：handler 原样送出的字段仍在，但类型上没有 → 消费端「拿不到、画不出」，且改起来像幽灵 bug。共享形状必须落成 schema（如 `shared/usage.ts` 的 `ModelCostSchema`）并被两侧引用，别手写第二份子集
+    id: app.cli.rpc-output-schema
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.cli#zod-cli-meta-order:
+    value: '**zod schema 必须在 `_cli-meta.ts` 补丁之后创建**（v4 实例创建即定死原型链，事后打补丁看不见）。打包会把**被多个 chunk 共用**的模块提升成独立 chunk 并**先于入口模块体求值** ⇒ 一个带 schema 的模块（`main/core/task-state.ts`）只要被拖进共享 chunk（如 `shared/task-head.ts` 之类共享常量模块一旦 import 了 `shared/task-detail.ts`），启动即 `TypeError: TaskStateSchema.cliArg is not a function`。判据：**共享常量模块必须零依赖**（清单归它、zod 形状归消费方）'
+    id: app.cli.zod-cli-meta-order
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.dev#app-root:
+    value: '**包根别数 `dirname`**：CLI 的源码 `src/cli/index.ts`（包根下 2 级）与产物 `build/<V>/cli/index.js`（4 级）深度不同 —— 固定 4 次只对产物成立，`DIY_CLI_MODE=tsx` 直跑时报「未构建: `<repo>`/pkgs.ts/build/…」（少了 `diy-app`）。判据 = 按 `package.json` 标记上溯（`core/app-root.ts`，有单测）'
+    id: app.dev.app-root
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.dev#bash-kill-group:
+    value: '**取消 / 超时 / 输出溢出三种"我们主动杀"一律杀整个进程组**（`killProcessGroup`，`main/services/local-agent.ts`），前提是 `runBash` **自持 `spawn` + `detached:true`**：`execFile` 把选项**白名单**转发给 spawn、**`detached` 被静默丢掉**（node 24 `lib/child_process.js`），所以「execFile + detached + `kill(-pid)`」是**假修法**（实测 pgid 仍属父进程组、`kill(-pid)` 直接 ESRCH、子孙照跑满）。组杀只在子进程**未收尸**时发（`exitCode`/`signalCode` 已置位即跳过）—— pid 可复用，取消信号可能比命令活得久'
+    id: app.dev.bash-kill-group
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.dev#cdp-goto:
+    value: '`playwright-cli attach` 模式下**不要用 `goto`**（CDP 附加态不支持 `Target.createTarget`，一次 goto 就打坏会话）；换页用 `reload`'
+    id: app.dev.cdp-goto
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.dev#cdp-hit:
+    value: 点击前做**命中自检** `document.elementFromPoint(中心) === 目标元素`（抓「按钮溢出被相邻元素盖住」的唯一手段）；断言读 DOM 不靠截图；`elementFromPoint` 只测坐标，**真实手势链**要 `mouse.move/down/up` 分步，且拖拽**必须给真实时间 + 至少一帧**（CDP 合成事件是瞬时的，dnd-kit 异步激活等不到）
+    id: app.dev.cdp-hit
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.dev#cdp-port:
+    value: '`DevToolsActivePort` 文件内容**不一定是当前实例的端口**（输给单实例锁的第二个实例也会先写自己的端口再退出）→ 读后必须 `curl --max-time 3 http://127.0.0.1:<port>/json/version` 校验'
+    id: app.dev.cdp-port
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.dev#ctx-two-lines:
+    value: '**上下文树页**（ctxlab）的请求预览是**真发形态**（走 `buildDelivery`）；**提示词页**（lab）是**模版线**（`assembleSystem`）。两者不是同一条链，改动别互推'
+    id: app.dev.ctx-two-lines
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.dev#env-pollution:
+    value: 跑意图测试 / CDP 夹具前 shell 里**不要 export `DIY_PORT` / `DIY_HOME`**（`ShellTest` 继承 `process.env` → 每条 `./diy.sh` 都去打别的端口、各拉一个新 app 互踢）。正确姿势 `env -u DIY_PORT -u DIY_HOME npx vitest run …`
+    id: app.dev.env-pollution
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.dev#err-triage:
+    value: '**已识别的外部不许标红**（当 bug 会让缺陷率失真、把用户训练成忽略红色）：HTTP 5xx / 请求超时**不进** `KNOWN_EXTERNAL`（上游有响应 = 网络通着，那是 ##369(模型不可用) 的服务端故障）；`InvariantError` 之外**拿不到码就如实判 unknown**，别为「看着严重」判 defect，也别给未知码编一个假 code 凑统计（`triageOf` 对未知码原样带回）。`invariant` 只表达**人为判据**，别拿它做用户输入校验（那是预期内的世界，属 external-*）。改 `LEGACY_THROW_BASELINE` 只能往下调；**别改成整文件豁免**（那会让该文件以后的新 throw 永远不被拦）。'
+    id: app.dev.err-triage
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.dev#excepthook:
+    value: 主进程**自注册 `uncaughtException` 处理器即抑制 Electron 的模态异常框**（其内置守卫是 `listenerCount > 1`），与有没有 try/catch 无关；诊断由 `installDiagnostics` 统一挂（三入口各落独立日志）
+    id: app.dev.excepthook
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.dev#intent-build:
+    value: '**`tests/cli.intent.*` 跑的是 `build/test/` 编译产物**（起隔离 Electron，main/preload/renderer 全来自产物）：改 `src/**` 后不构建就跑 = 拿旧代码断言（症状：文案/diff 断言莫名失败，而同一份源码的单测全绿）。`sha.sh test-intent` 自动 `DIY_VARIANT=test build`；`tests/core|services` 是 vitest 直读源码，无需构建'
+    id: app.dev.intent-build
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.dev#llm-log:
+    value: '`$DIY_HOME/local/<uri 路径>/<key>/llm.jsonl`（##379 分层；旧平铺 `<key>.llm.jsonl` 读侧兜底）是**append-only 全量消息日志**（每行 1 条原生 ModelMessage + 索引位 `turn`/`step` + 工具结果的 `origin` 自证位），**行号 = 消息序号**（压缩注记的 `range` 就指它）。与压缩**解耦**：压缩只改投递期投影，绝不写它。加载时与 ops 投影对账（前缀则补齐 / 中部不一致则整份重建）'
+    id: app.dev.llm-log
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.dev#one-prompt-source:
+    value: '`_guard.md` 不得复述 `INTERRUPTED_TOOL_NOTICE`；该文案唯一来源是 `local-blocks.ts` 的常量'
+    id: app.dev.one-prompt-source
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.dev#self-destruct:
+    value: 生产 diy（数据根 `~/.diy`，管任务管理）与 agent 同进程树，杀它 = 窗口白屏 + 无日志（SIGKILL 捕获不到）：**绝不可杀**。agent **自己**起的隔离实例（数据根在 worktree 的 `build/home` 等）可自行按**精确 pid** 收掉 —— `_guard.md` 已明许（运行时护栏 `agent-guard.ts` 已停用，判据分不清宿主与自己起的实例）；**只禁 `pkill/killall electron` 这类无差别指令**（会捎带生产实例）
+    id: app.dev.self-destruct
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.dev#shell-test:
+    value: '`ShellTest` 的输出边界 = stderr 的 PS1 marker + **stdout 的哨兵**：marker 只证明命令结束，stdout 是另一管道、到达顺序不保证，只等 marker 会读到半截输出并让后续每条命令错位'
+    id: app.dev.shell-test
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.dev#singleton-lock:
+    value: '隔离实例必须用**全新 `DIY_HOME`**（`mktemp -d`）：`SingletonLock` 写在 `electron_user_data/` 下，残留实例会抢锁 → 新实例打 `SingleInstanceLock: failed` 后直接退出。撞锁时换新 home，别动别人的进程'
+    id: app.dev.singleton-lock
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.dev#tool-result-error:
+    value: tool-result 的**成败落在 `output.type`**（`error-text` = 失败），**不是**块上的 `status` —— `status` 是 diy 私有属性、模型看不见。投影（`projectAll`）与投递渲染（`renderMessage`）**两处都不许压回 `text`**：只改前者会被后者静默撤销（##329 的 b；理由见 `local-blocks.ts` 的 `ToolResultOutput` 头注）
+    id: app.dev.tool-result-error
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.dev#watch-restart:
+    value: 改 `src/**` 会触发 lab watch 重启 Electron，**正在跑的本机 agent 轮次会被打断**（tool 被标 `interrupted`；这是「本轮未完成/流中断」的头号成因，实测 12/12 —— facts `dev.turn-interrupt#rate`，含复跑脚本）→ 轮次中别拿源码当探针，探针写 `/tmp`；`interrupted.data` 今天为空，热重启与真流断无法区分（`dev.turn-interrupt#blind`）
+    id: app.dev.watch-restart
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.entry#bin-diy:
+    value: '`bin/diy`（发布）→ `node build/prod/cli/index.js`；注入 `DIY_HOME=~/.diy`、`DIY_CLI=$0`、`DIY_ENV=production`'
+    id: app.entry.bin-diy
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.entry#cli:
+    value: '`DIY_CLI` 当前 CLI 入口绝对路径（提示词模版 `diy.md` 消费）；缺 → 提示词里告警，**不静默冒充 `diy`**'
+    id: app.entry.cli
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.entry#diy-sh:
+    value: '`./diy.sh`（仓库根）→ 跑 `auto`：`build/<variant>/cli/index.js` 优先，打包源比产物新则回退 `tsx src/cli/index.ts`（`DIY_CLI_MODE`）；注入 `DIY_HOME=./build/<variant>/home`、`DIY_VARIANT=lab`（缺省）、`DIY_CLI`'
+    id: app.entry.diy-sh
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.entry#electron-dev:
+    value: '`scripts/electron-dev.mts`（lab）→ `build/<variant>/main/index.mjs`；注入 `DIY_HOME=./build/<variant>/home`（继承来的生产根被拒，见 `app.entry#home`）、`DIY_VARIANT`、`DIY_CLI`、`DIY_DEV_SERVER_URL`、`DIY_ENV=development`'
+    id: app.entry.electron-dev
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.entry#env:
+    value: '`DIY_ENV` = `production`/`development`/`test`，**dev/test 专属能力的唯一判据**（如窗口副屏定位）；缺省 = production（未声明即生产，能力全关）'
+    id: app.entry.env
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.entry#home:
+    value: '`DIY_HOME` 数据根（state/task/**app.port**），缺省 `~/.diy`；**lab / `diy.sh` / `serve` 一律拒绝继承来的 `~/.diy`**（判据唯一定义处 `core/instance-identity.ts::isProdDataHome` ── 真实家目录；撞上后怎么回落见 `core/dev-home.ts::resolveDevHome`；放行需 `DIY_ALLOW_PROD_HOME=1`）。bash 侧（`diy.sh`）同口径归一写法（`cd <dir> && pwd -P`：尾斜杠 / `..` / `./` / 符号链接，是 TS `resolve` 的超集）'
+    id: app.entry.home
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.entry#inject:
+    value: '**入口自证，不继承**：`DIY_CLI` = 「跑的是谁」。各入口各声明自己（`diy.sh` → 自身；`bin/diy` → `$0`；`electron-dev.mts` → `<repo>/diy.sh`；`serve/index.ts` → 从自身位置找仓库根）。`main/index.ts` **只在未注入时**兜底自证（`||=`，按数据根推导：生产根 → `"diy"`，隔离 → `<repo>/diy.sh`）—— 无条件覆盖会误伤生产 GUI（把 `bin/diy` 注入的 `$0` 换成 `<repo>/diy.sh`）。`serve` 不 import main，故独立自证一次；它**无条件覆盖** `DIY_CLI`（没有上游入口为它声明，只能自证），与 main 的 `||=` 语义相反 —— 别照抄。**三处入口（`diy.sh` / `bin/diy` / `electron-dev.mts`）漏一处注入，提示词就退化成裸 `diy`（→ 打到生产）**'
+    id: app.entry.inject
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.entry#injection-only:
+    value: 入口脚本**只负责注入环境变量**，业务统一由 `src/runtime.ts readRuntimeConfig()` 读取组装 —— 不在入口里做路径 / 模式派生（派生逻辑只在 runtime 与 `core/*`，两处各推一遍必然分叉）
+    id: app.entry.injection-only
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.entry#instance-identity:
+    value: CLI 复用已运行实例前**必须问对方是谁**：连端口发 `diy.getAppInfo`，比 `diyHome`（同一性判据 `core/instance-identity.ts::sameDataHome` = 写法归一 + 解符号链接）→ 不是本数据根就拒绝复用、另起自己的（实现 `src/cli/probe-instance.ts`，等待循环里同样校验）。`app.port` 只是端口缓存、可能陈旧到别人的实例上（##328(实例身份只靠端口) 的串台就是这样发生的）
+    id: app.entry.instance-identity
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.entry#noLaunch:
+    value: '`DIY_NO_LAUNCH=1` 禁止 CLI 自动拉起 app（测试专用，防实例逃逸）'
+    id: app.entry.noLaunch
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.entry#port:
+    value: '`DIY_PORT` 首选端口（测试注 `0`=随机）；优先级 `DIY_PORT` > `app.port` 文件 > **按环境缺省**（`runtime.ts::defaultPort`：production=`18888` 门牌，development/test=`0` 随机）；裁决 `runtime.ts::resolvePort`（纯函数、可单测，**非生产不沿用记录里的 `18888`**）。**端口不承载身份** —— 别再往它上面挂「谁在跑」的判据'
+    id: app.entry.port
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.entry#scope:
+    value: '**本节只记本包读到什么**；入口辨析（谁是客户端 / 谁起 GUI / 启动器≠客户端 / 变体必须配对 / 数据根差异）在仓库级 `entry.*` 主题（见 `entry#choose` / `entry#launch-vs-client` / `entry#variant-match`）'
+    id: app.entry.scope
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.entry#seed:
+    value: '`DIY_SEED` 三态开关（`0`/`false`/`off` 关 · `1`/`true`/`on` 开；未声明 = 仅 `DIY_VARIANT` 为 `lab` 时开）→ `src/main/core/seed.ts`（契约 `src/runtime.ts`）。**自动种入只跑一次**（`.seed-done` 标记：删掉的 provider 不会被种回来），补缺项用 `diy seed run`；**生产根永不种入**。**职责 = 示例/测试数据**（示例项目与任务 + 缺省人物 + `$VAR` 占位凭据）；真配置见下条'
+    id: app.entry.seed
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.entry#self-declare:
+    value: '**三件套 `DIY_HOME`/`DIY_CLI`/`DIY_ENV` 都自证，不继承**（开发入口）。继承的生产值（agent 会话常带 `DIY_HOME=~/.diy`、`DIY_CLI=<全局 diy>`、`DIY_ENV=production`）会：操作生产数据 / 让模型敲错的 CLI / 误关 dev 能力。数据根判据：`core/instance-identity.ts`（`prodDataHome` / `isProdDataHome` / `cliEntryForRepo`，**全仓唯一**；dev 侧再经 `core/dev-home.ts::resolveDevHome` 回落 `build/<variant>/home`）；`DIY_ALLOW_PROD_HOME=1` 放行。数据根：未设置或指向生产根 → `<repo>/build/<variant>/home`（**与静态产物同一个 variant 轴**；`serve` 缺省 variant=`prod`）；`DIY_ENV`：`production` → `development`。`serve` 直接跑也走同一套（它不 import main），数据根经 `core/dev-home.ts::resolveDevHome` —— 不要在入口里另写一套回落'
+    id: app.entry.self-declare
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.entry#sync-home:
+    value: '**真配置同步**（`./sha.sh sync` 末尾的 `sync-dev-home`，脚本侧非 TS）：把 `~/.diy` 的 `model.yaml` / `context.yaml` / `personas.yaml` / `providers.custom.yaml` 投影进 `build/<variant>/home/`（逐字覆盖这 4 份；`state.yaml` / `projects/` / `local/` 一律不碰）。变体随 `DIY_VARIANT`（缺省 lab），`DIY_SYNC_HOME=0` 关 · `DIY_SYNC_HOME_SRC` 换源。⚠️ 含真 key，落 build/**（已 gitignore）'
+    id: app.entry.sync-home
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.entry#variant:
+    value: '`DIY_VARIANT` = `prod|test|lab`，**产物/数据分根的唯一轴**：vite 配置据此定 `outDir=build/<variant>/*`，运行时据此选 `build/<variant>/main`，缺省 `prod`（`./diy.sh` 缺省 `lab`）。lab 一根、test 独占 `build/test/**` → 两者可并行、互不打断 watch。`preview` **已删除**（##381）：**共 5 处**遇 `DIY_VARIANT=preview` **直接报错退出**，绝不静默落到 `build/preview/**` —— 三处入口（`diy.sh` / `pkgs.ts/diy-app/sha.sh` / `scripts/electron-dev.mts`）+ 根 `sha.sh`（dispatch 前）+ `src/serve/index.ts`（算数据根前）'
+    id: app.entry.variant
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#chat-fold:
+    value: '**对话折叠 / 级别的语义唯一出处** `src/renderer_solid/lib/chat-fold.ts`（纯函数，可单测；组件只管画）：`turnRows`（一轮的过程历史行，级别只决定显示多少）· `tailOf`（结尾槽四形态：结论 / 结束点 / 现场 / 执行过程）· `endLeafTip`（结束点那句 tooltip，须喂 **turn** —— `endReason` 不在叶子上）· `clampLines` / `expandableOf`（"点开真会多出东西"的判据，**只此一套**）。级别本身落盘在 `src/renderer_solid/lib/ui-state.ts`（`Caches.diy_chat_level`，缺省 `DEFAULT_TURN_LEVEL`）'
+    id: app.find.chat-fold
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#chat-view:
+    value: '**会话块树的渲染**：组件 `renderer_solid/components/LocalChatPage.tsx`（行按 id 复用 + `VirtRow` 绝对定位）· **视口虚拟化纯逻辑** `renderer_solid/lib/chat-virtual.ts`（前缀和布局 / 窗口 / 高度账）· 折叠级别语义 `renderer_solid/lib/chat-fold.ts` · 样式钩子见 `app.find#skin`'
+    id: app.find.chat-view
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#cli:
+    value: '`src/cli/index.ts` CLI 入口（命令定义与 RPC 调用）'
+    id: app.find.cli
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#compact:
+    value: 压缩（**目标式预算**）：策略/账本/选择 `shared/context/compaction.ts`（`CompactPolicySchema` 真源 + `ClipSpec` 裁剪能力轴）· 选择算法**元件库 + 装配器** `main/services/compaction-plan.ts`（picker / stage / `runPlan` / `defaultBudgetPlan`）· 投递宿主 `main/services/local-blocks.ts`（`selectHistoryByBudget` / 两段分离：选择带出 clip → 渲染 `renderMessage`）· 单条工具输出截断 `main/services/tool-output.ts`（##127，挂在 `tool.toModelOutput`）· 预算注记 `shared/context/budget-note.ts`（YAML 文本，`kept` 保留区间；**格式说明已并入信封 `help.history`**，由 `HistoryNoteSchema` 派生，原 `history-index.ts` 节点已删） · 缓存 TTL 夹逼 `cache-ttl.ts` · 装配管道**进配置**（##344 M2）`shared/context/compact-keep.ts`（`history.keep[]` 契约 + `validateKeepStages`；形状见 `app.history#compact-keep`） · 校验 `main/services/compact-plan-service.ts`（`checkKeep`：静态 + must 层实占字节 vs 硬上限） · **手与闸**（##362 M3a）`main/services/compact-plan-io.ts`（`planGet/planCheck/planSet/planRestore/planReset`（**reset = 一键回出厂缺省**，删 `history.keep[]`；##363）；**工具 `compact_plan` 与 RPC 共用这一份**，禁两处各写；写闸 `history.allowAgentWrite` **只管 agent**；写前快照 `$DIY_HOME/plan-history/` 留 20 份（**旧链，只读兼容**）、审计 `log/compact/plan-edits.jsonl`）；形状与坑见 `app.history#plan-gate` · **版本链**（##378）`main/services/plan-store.ts`（内容寻址 CAS `$DIY_HOME/plan-store/plan-<sha12>.json` + 链 `$DIY_HOME/local/plan/<keyOf(scope)>/index.jsonl`；见 `app.history#plan-version` 与 `app.history#plan-gate`）· 自动压缩 `auto-compact.ts`（真源 `$DIY_HOME/auto-compact.yaml`，契约 `shared/context/auto-compact.ts`、I/O `src/main/core/auto-compact-config.ts`） · CLI `diy agent local compact plan get|set|check|reset|versions|version|restore`（set **校验后才写**；`via=user` 不受写闸约束）· agent 工具 `compact_plan`（op=get/check/set/restore/reset/versions/version；**两条只读 op 恒可用**，不受写闸约束）· 会话落盘路径唯一出口 `src/main/core/local-paths.ts`（##379：`sessionFile`/`resolveSessionFile` 双认 + 粘旧；迁移 `diy agent local migrate-layout`）
+    id: app.find.compact
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#context:
+    value: '`src/shared/context/` 上下文树与投递：`README.md` 是**完整约定表**（领域模型 / 投递构造 / 划分真源 / step 快照 / 渲染坑）；投递构造唯一入口 `delivery.ts` 的 `buildDelivery`；划分真源 `$DIY_HOME/context.yaml`（契约 `config.ts`、I/O `src/main/core/context-config.ts`）'
+    id: app.find.context
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#core:
+    value: '`src/main/core/` 状态与文件落位：`state.ts`（数据根/任务路径单一出口）· `task*.ts`（任务读写与字段）· `tree-format.ts` · `drafts.ts`（草稿 + 插话队列）· `steer-queue.ts` · `persona.ts` · `cwd.ts`'
+    id: app.find.core
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#data-file:
+    value: 内置数据文件定位 `src/main/core/data-file.ts`：候选 `$DIY_HOME/data/<name>` > bundle 旁（`build/<V>/{main,cli}/data`）> 源树；`dataFileHit()` 带 `source`，`diy doctor` 的 `models` 段报**实际命中的绝对路径** + provider/模型计数。应用内刷新只写最上一层（下面两层只读：bundle 是发行物、源树是仓库）
+    id: app.find.data-file
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#env-import:
+    value: 模型页「环境变量导入」提示条 `src/renderer_solid/components/EnvImportBar.tsx`：**四态常显**（可导入 / 命中但均已配置 / 零命中 / 扫描失败），零命中态靠 `llmConfig.scanEnv` 回报的**扫描面**（`scanned`：191 家 / 181 个变量名）交代「查过什么」——只在有候选时出条，会让用户分不清「env 没这个变量」与「功能没跑」
+    id: app.find.env-import
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#env-watch:
+    value: '**「环境感知」的可见性（##384）**：机器环境坏了（磁盘满 / 网断）从**沉默**变**顶栏红条**（带数字）。判据纯函数 `src/shared/env-watch.ts`（磁盘水位 `full<512MiB`/`low<2GiB` · 网络码族 6 个连续 3 次 · `navigator.onLine` **不作判据**；通知形状 `{ id, ts, type, level, data }` 判别联合，表驱动单测 `tests/core/env-watch.test.ts`）· main 侧 `src/main/services/env-watch.ts`（主动轮询 `fs.statfs`（**不 shell 出去跑 `df`**）+ 被动：写失败 `ENOSPC` 走 `core/atomic-write.ts` 的钩子、网络层失败在 `local-agent.ts` 按**轮次**计连败）· RPC `env.list|ls|dismiss|watch|simulate|probe`（`watch` 回放 + `resolve` 事件 = **条件恢复自动消**；`dismiss` = 静音该**槽**；⚠️ 去重键 `slotOf`（`disk:<dev>` / type，**定义在 shared**）main 与 renderer 必须**共用同一份** —— 各写一套会在「多卷」时把两条合成一条；槽键必须是**卷标识 `stat.dev`**、`mount` 只是**采样路径**（按路径分槽会让轮询那条与写失败那条并存、后者永不自动消，review2 实测踩过））· UI `components/EnvStatusBar.tsx` + `store/envWatchStore.ts`（**多条堆叠**最多 3 条 + 折叠计数），挂 `App.tsx` 的 `<main>` 最上方 · 探针 `diy env simulate`（**仅非生产**：注入假水位 / 假错误码，走同一条判据与同一个 bar）+ `diy env probe <path>`（指向小容量镜像）· ⚠️ 坑①**别真填满根卷**（2026-10-18 已毁过 ##166 正文）②SDK 的网络失败以 **error part** 报出（**不抛异常**）、流随后仍正常收尾 ⇒ `local-agent.ts` 收尾处的 `succeed()` 必须挂 `!streamErrorPart` 闸门，否则刚记的连败被立刻清零、红条永远不亮（实测踩过）'
+    id: app.find.env-watch
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#err-report:
+    value: '**异常出口落盘（##411）**：形状 / 限流判据 `src/shared/error-report.ts`（`errText` **全仓唯一实现** + `buildErrorReport` + `ErrorRateLimiter`，纯函数）· 落盘 `src/main/services/error-report.ts::reportError(e, ctx)` → `$DIY_HOME/log/error/<YYYY-MM-DD>.jsonl`（`{ts, code, name, message, stack, ctx}`；同 `code + message` 每分钟 ≤ `DEFAULT_ERROR_LOG_LIMIT_PER_MIN` 条、**永不抛**）。接线：`local-agent` 流 `error` part / `turn-stream` 抛穿、`room-service` 投递失败 / 镜像回写 / 投递链异常、`rpc-port` 500 响应带 `code`。用户面文案不变（stack 只进日志）。单测 `tests/core/error-report.test.ts`。'
+    id: app.find.err-report
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#err-triage:
+    value: '**全局异常三档判据（##394）**：纯函数 `src/shared/error-triage.ts`（`triageOf` / `invariant` / `KNOWN_EXTERNAL` / `triageOfTurnEnd`；零 IO，表驱动单测 `tests/core/error-triage.test.ts`）。已识别清单**复用** `src/shared/env-watch.ts` 的 `NETWORK_ERROR_CODES` + `probeNetworkError`（别再写一份错误链探测）。边界示范两处：`local-agent.ts` 的 `closeTurn`（轮末 → 审计行 `triage`/`code`，**只映射、不动 `TurnEndReason` 值域**）与流内 `tool-error` 分支。护栏 `scripts/check-error-code.mjs`（`LEGACY_THROW_BASELINE` 按文件钉数只减、`--by-file` 出数，挂根 `./sha.sh check`）；掩码 lexer 与 atomic-write 护栏共用 `scripts/lib/source-scan.mjs`。'
+    id: app.find.err-triage
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#error-remedy:
+    value: '**「这个错该去哪修」的声明式判据（##407）**：纯函数 `src/shared/error-remedy.ts`（`remedyOf({code,reason,ctx}) → {label,target,hint} | null`，表驱动单测 `tests/core/error-remedy.test.ts`）。输入是 `triageOf` 的 code + `model-unavailable` 的 kind/provider + 状态码，输出是**目标页锚点**（`{page:"models", anchor}`，anchor = 目标元素 `data-focus-target` 值：`provider-std-<key>` / `provider-custom-<key>` / `models-pick`）。**表里没有 ⇒ 返回 null、不给按钮**（不造假入口）。消费端只有两处：`components/NoticeDetail.tsx` 的「🛠 去修复」+ 引导卡（自足文本，不调模型）、`App.tsx` 导航到设置→模型并带 `focus`；定位高亮在 `ModelConfigPage.tsx`（`data-focus-phase` = flash 4s → rest，样式在 `index.css`）。回看：`store/modelNoticeStore.ts` 的 `history`（关掉 bar 仍可找回；全局通知信箱未实现见 `app.tool#wake-gap`）'
+    id: app.find.error-remedy
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#instances:
+    value: '**实例大盘（##366）**：CLI `diy instances ls`（表格文本）/ `list`（结构化，UI 用）· `focus --pid <pid>`（唤起：目标实例自己 `show+focus+全屏`，降级 osascript）· `self`（自报身份 + 活跃会话 + 窗口，被别的实例探测）/ `reveal`（唤起本实例的入口）。实现：发现靠**扫进程** `src/main/core/instance-scan.ts`（纯函数：ps → 实例行；helper/crashpad/CLI **都不是**实例）·「谁开的」靠**启动时**写的注册表 `src/main/core/instance-registry.ts`（`<真实家目录>/.diy-instances/<pid>.json`，`DIY_INSTANCE_REGISTRY` 覆盖；退出即删 + **读侧按 pid 存活过滤**）· 聚合/唤起 `src/main/services/instances.ts` · 跨实例 HTTP 探测 `src/main/services/instance-probe.ts`（与 `src/cli/probe-instance.ts` **同一份协议**，禁两处各写）· 排版 `src/main/core/instance-table.ts`。UI 页 `src/renderer_solid/components/InstancesPage.tsx`（导航「实例」，##367：表格 + 「显示」唤起 + 3s 轮询；展示语义纯函数 `src/shared/instance-view.ts`，页面**不可见即停轮询**、刷新按 pid 保选中/展开；**只读**，无杀/停入口）。⚠️ 坑：`ps eww` 的 `DIY_HOME` 是**继承**来的 ≠ 真数据根（真根取实例自报；实测 pid=11419 反例）'
+    id: app.find.instances
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#journal:
+    value: 任务日志（##404）：契约 `src/shared/journal.ts`（五种 kind 各答一个问题）· 存储 `src/main/services/journal-store.ts`（`<taskDir>/journal.jsonl`，**一行一条 JSON 只追加**，读时容忍坏行）· CLI `diy journal add|find|stats|import`。三层划分判据见 `~/git/diy/AGENTS.md::rule.task-three-layers` —— 别往 body 里堆处理记录
+    id: app.find.journal
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#main-proc:
+    value: '`src/main/index.ts` 主进程入口（窗口 / 诊断 / 单实例）'
+    id: app.find.main-proc
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#model-notice:
+    value: '**「模型不可用」的可见性（##369 ①）**：判据纯函数 `src/shared/model-unavailable.ts`（四类：`model_coming_soon` / 404 unknown model / 401·403 / 429；**上游 5xx 与超时不算**；表驱动单测 `tests/core/model-unavailable.test.ts`）· main 侧通知中心 `src/main/services/model-notice.ts` + **两个触发点**（流内 `error` part 是主路径、`streamText` 的 catch 兜底；装配期"未知模型"另走 `unavailableNoticeFromLocal`，都在 `local-agent.ts`）· RPC `notice.list|dismiss|watch`（`watch` 订阅即**回放**现存 —— 页面重载后 bar 能自己回来；`dismiss` 必须落 main，否则重连又弹）· UI 顶栏细条 `src/renderer_solid/components/ModelUnavailableBar.tsx` + `store/modelNoticeStore.ts`（含**回看** `history`），挂 `App.tsx` 的 `<main>` 最上方；通知带 `provider` 段供修复引导定位，见 `app.find#error-remedy`'
+    id: app.find.model-notice
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#model:
+    value: '模型 provider 配置机制（##184）：契约 `src/shared/model-config.ts`（`model.yaml` 配置层 + `providers.custom.yaml` spec 层 + 限定名切分 `splitQualified`）· 运行时可解析目录 `src/shared/models.ts`（`setModelCatalog`/`findModel`/`apiOf`…，**无内置 provider：无配置 = 空目录**）· 装配 `src/main/core/model-runtime.ts`（快照 ⊕ custom ⊕ `$DIY_HOME/model.yaml` → 目录，含 `$VAR` 展开；档触发条件判别 `toTierWhens` —— **快照是 `JSON.parse` 直取、不过 zod**，此处是最后一道哨；档写 `{window:"id"}` 时按时段表展开成多条 `TierWhen`）· 文件 I/O `src/main/core/model-config.ts` · 配置 UI `src/renderer_solid/components/ModelConfigPage.tsx` · **价目登记（CLI）** `src/main/core/llm-cost.ts`（`diy llmConfig costs/setCost/setTiers` 的落点判定 + 落盘 + 回执；纯变换在 `src/shared/cost-edit.ts`，与 UI 同源；UI 每个编辑入口都包 `editCost` 收尾 —— 价目空了就删键，不留 `cost: {}`） · **运行时价目形状**（RPC 下发 / UI / CLI 同一份）`src/shared/usage.ts` 的 `ModelCostSchema`（camelCase，含 `baseLabel` 与分档 `tiers`）· **内置数据三件**（文件名常量在 `src/shared/model-config.ts`，定位 `src/main/core/data-file.ts`；`sha.sh build` 按 `src/main/data/*.json` 通配拷贝）：① 快照 `models.dev.json`（models.dev npm 白名单，上游产物整份重下，`scripts/gen-models-dev.mts`）② **diy 扩展层** `models.dev.diy.json`（**手写、只增不改**：具名时段表 `windows` —— models.dev 零个时间字段，时段计费只能自己登记；加载 `src/main/core/cost-windows.ts`，形状/展开/摘要 `src/shared/cost-windows.ts`）③ `calendars.json`（工作日日历，`scripts/gen-calendars.mts` 从 chinese-days 生成；`CN-business-day` 含调休补班、`CN-mon-fri-ex-holiday` 不含 —— 同一地域多套作息是常态，按语义分 id）· 单测夹具 `tests/fixtures/models.ts` · env 导入 `src/main/core/model-import.ts`（snapshot 声明的 env ∩ 本机变量 → 候选；**只列不写、不落明文、不覆盖已有**，UI 提示条与 `diy llmConfig scanEnv|importEnv` 同源）'
+    id: app.find.model
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#notice:
+    value: '**用户可见提示的信息契约（##391）**：任何提示都要带三段 `{ source, reason, detail }`（谁发的含代码位置 / 为什么此刻发**带数字与时刻** / 机制说明：在监测什么·何时有·怎么消·意味着什么）。唯一正路 `notificationStore.addToast(type, message, meta, opts)`（空值**抛错**，校验 `src/renderer_solid/lib/notice.ts::assertNoticeMeta`）· 二级 UI `components/NoticeDetail.tsx`（`[详情]` + 三段 + 复制；toast / env bar / model bar / ops 常驻条共用一套）· 同源同文案默认**聚合**（`count` → `×N`，`opts.aggregate:false` 关掉）· 文案真源按域分文件：`lib/notice-ops.ts`（会话实时更新 = 样板）· `notice-chat.ts`（历史分段/插话队列/清空/停止/检索定位）· `notice-copy.ts`（剪贴板）· `notice-compact.ts`（上下文压缩）· `notice-entity.ts`（任务·项目·草稿）。**遗留债务**：未改造的 95 处仍在 `addToastLegacy`（详情面板如实标「未登记」），按文件钉在 `tests/core/notice-contract.test.ts` —— 只许减少，新代码一律用 `addToast`'
+    id: app.find.notice
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#ops-feed:
+    value: '**会话 op 的写侧广播总线**（##307 读侧）：`main/services/ops-feed.ts`（`publish` / `subscribe` / `reset`；seq = 行号、epoch 随 `clear` 换发）· 唯一落盘点 `local-agent.ts` 的 `opsSink`（chat / 排队回执 / 加载自愈共用）· RPC `agent.local.opsWatermark` + `opsWatch` · 渲染端订阅 `localChatStore.ts` 的 `ensureOpsSubscription`（建流/退避重连）/ `applyOpsFrame`（按 seq 去重、**洞即重订补发**；**取代 2s 轮询**）· **本订阅是块树的唯一 apply 通道**（##327）：同一批 op 也作为 `agent.local.chat` 的流回到发起方，**那条流只取「本轮结束/报错」信号、一个 op 都不落地** —— 两边都 apply = 每条 delta 追加两遍 = 整段叠字（delta 纯追加、无唯一键，而 start/patch/stop 恰好幂等，故只表现为文字、结构看不出来）· 单通道的**代价**：订阅坏了 = 一个字也看不见（界面上与「模型在想」同形）→ 两个名字别删：`opsState`（订阅健康度，判「通了」以**收到帧**为准）、`settleOpsAfterTurn`（轮末自检：水位没前进即重订补发并出声）'
+    id: app.find.ops-feed
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#ops-fold:
+    value: '**会话历史（UI 重放）的折叠 + 增量缓存**：折叠算子 `main/services/local-blocks.ts` 的 `compactOps`（块树 → 每块 `start` + 终值 `patch` + `stop`）· 读侧 `main/services/local-agent.ts` 的 `history()`（fold 缓存按 `(task, start)` 分键 —— 多窗口并存时同 task 多键 + 「已消费字节 + 前 4KB 覆盖写哨兵」判续 fold）与**分页窗口** `historyWindow`/`historyOlder`（RPC `agent.local.*` 同名）· 渲染端**分段 + 幂等并入** `renderer_solid/store/localChatStore.ts` 的 `mergeWindow`（段 = 一段窗口，前插时已有段的块引用一个不动）'
+    id: app.find.ops-fold
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#ops-seek:
+    value: '**大会话分页的窗口起点 + 游标**（`main/services/local-ops-seek.ts`）：`seekWindowStart`/`seekTurnStartAtOrBefore` 按字节预算**向上 floor 到轮 `start` 行行首**（切在轮内会让块塌成根、跨切点 patch 丢）· 游标**不透明**：`encodeCursor`/`decodeCursor`/`isTurnStartAt`'
+    id: app.find.ops-seek
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#renderer:
+    value: '`src/renderer_solid/`（Solid，主线）：`components/` 业务组件 · `store/` signal 单例 · `lib/` rpc client 与 `diy.ui.*` handler · `App.tsx` / `main.tsx`'
+    id: app.find.renderer
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#scripts:
+    value: 仓库 `scripts/`：`ui-smoke/`（CDP 冒烟）· `check-error-code.mjs` + `lib/source-scan.mjs`（新增 throw 必带 code 的棘轮护栏，判据见 `app.find#err-triage`）· `cdp-colorscheme-demo.mts` · `repro-epipe-dialog.mts` · `doctor-env.sh` · `check-specs.mts`（`~/SPECS.md` 规范索引护栏：key 唯一 / 指针可解析 / 链上新增未收录的 ratchet 增量，基线 `scripts/specs-unindexed.txt`，挂在根 `sha.sh check`）· `check-sync.mjs`（依赖同步快检，根 `sha.sh` 的 `ensure-sync` 入口闸门 + 本包 `build` 只读护栏共用）· `ensure-electron.mjs`（electron 二进制收成「全机一份 store + worktree 软链」，由根 `sync-deps` 与 `_ensure_electron` 调用）· `ensure-electron-if-needed.sh`（CLI 入口快检：`diy.sh` / `bin/diy` 用，缺/悬空才起 node）
+    id: app.find.scripts
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#serve:
+    value: '`src/serve/index.ts` 纯 Web 模式（无 Electron）'
+    id: app.find.serve
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#sessions:
+    value: '**全局会话可见性（##308）**：唯一数据源 `src/renderer_solid/store/sessionStore.ts`（**全应用只此一个** `agent.local.sessions` 订阅 + 本地已读水位 `seenSteps`；R3：看状态不计入 `viewers`）→ 三处消费者共用 `shared/session-overview` 的判据：总览页 `components/SessionOverviewPage.tsx`（导航「会话」）· nav 角标 / 已打开 tab 的 chip `components/SessionChip.tsx` · 任务表行内 chip（`TaskTree.tsx` 标题单元格）。⚠️「跟随当前会话水位」的 effect **只许读**：`markViewed` 内部对水位读做了 `untrack`（自读自写会自我入队 → 无限递归，回归 `tests/core/session-store.test.ts`）'
+    id: app.find.sessions
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#shared:
+    value: '`src/shared/` **跨层契约**（zod schema / 纯函数，main 与 renderer 共用，禁止各处重写）：`task-uri.ts`（URI 解析）· `task-detail.ts` · `task-list.ts`（排序搜索）· `persona.ts` · `prompt-schema.ts` · `session-view.ts`（**单会话**运行态判据）· `session-overview.ts`（**全局**会话可见性判据：working/idle · 三种排队 · 步数进度 · 停滞/异常退出 · chip 文案 —— 三处消费者共用）· `turn-end.ts`（**轮次结束原因 → 人话/图标**的唯一文案源，main 与 renderer 同调）· `usage.ts`（**token 四桶 / 单价 / 金额的唯一口径处**，含 tier 选价与聚合）'
+    id: app.find.shared
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#skin:
+    value: '**界面样式（皮肤 `rail` 竖栏 / `card` 卡片）**：规则**全在** `src/renderer_solid/index.css` 的 `[data-skin]` 段（挂 `documentElement.dataset.skin`）· 组件只给语义钩子（`data-row-head` / `data-row-handle` / `data-block-tag` / `data-tail-box` / `data-chat-list` / `data-proc-children`）· 竖列折叠条 `src/renderer_solid/components/RowGutter.tsx`（**一根条**：整块高 + 条内首行居中的尖头；两皮肤只差横向落点）· 设置页实时小样 `components/ChatSkinPreview.tsx`（钩子必须与真 DOM 同形，由 `tests/core/chat-skin-preview.test.ts` 从 css 反推守住）'
+    id: app.find.skin
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#svc:
+    value: '`src/main/services/` RPC 与业务：`api-def.ts`（**契约**）· `api-impl.ts`（**实现**）· `local-agent.ts`（本地 agent 循环）· `local-blocks.ts`（op 流）· `ops-feed.ts`（会话 op 增量总线）· `async-queue.ts`（事件源 → `AsyncIterable` 桥接）· `usage-report.ts`（用量账本读取 + CLI 报表渲染，与 UI 同源）· `session-registry.ts`（**会话注册表**：本次启动后活跃过的会话 + turn/queue/viewers/lastEndReason 的唯一真源，读口 `agent.local.sessions`）· `prompt-registry.ts`（提示词装配）· `agent-guard.ts`（自毁命令拦截）· `diagnostics.ts`（日志/异常兜底）'
+    id: app.find.svc
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#tests:
+    value: '`tests/`：`cli.intent.*` 意图测试（真实 UI / 隔离 Electron，**跑 `out/` 产物**）· `core/` `services/` 单测（vitest **直读 `src/`**）· 夹具 `electron-test.ts` · `ui-drive.ts` · `shell-test.ts` · `setup.ts`'
+    id: app.find.tests
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#traffic:
+    value: '**出站流量观测**（##309）：`src/main/core/traffic.ts`（订阅 undici `node:diagnostics_channel` 采集请求/响应 + 归属反查 + 正文首尾法有界保留）· `src/main/core/traffic-log.ts`（`log/network/YYYY-MM-DD.jsonl` 按天落盘 + 按位置随机读 + 全文查询；行首 `_fmt` 小版本兼容、大版本跳过）· 契约 `src/main/services/api-def.ts` 的 `traffic.*`（CLI `diy traffic …`）· UI `src/renderer_solid/components/TrafficView.tsx`（导航页与聊天侧抽屉共用同一份）+ `TrafficPage.tsx` / `TrafficDrawer.tsx` / `JsonViewer.tsx` / `JsonTree.tsx` · 日志清理面板 `TrafficLogCleanup.tsx`（##324：列文件 / 占用 / 「只留最近 N 天」/ 勾选删除）'
+    id: app.find.traffic
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#turn-end:
+    value: '**轮次结束原因** `turn.endReason`（判别联合 6 值：`completed`/`max-steps`/`max-tokens`/`aborted`/`error`/`interrupted`；判别键 `type` + 分支私有 `data`）：判据**散在 `main/services/local-agent.ts` 的流循环**（`setEndReason` **8 处** / 5 类：budget 超限 · llm `error` · **stream `error`** · `abort`（两处：fullStream 的 `abort` part + 流异常，**来源取 `signal.reason`** —— 现只有用户主动停止） · finish 后的 `max-tokens`/`max-steps`/`completed`），`closeTurn` 只是**兜底**（`endReason ?? (streamDone ? completed : aborted{detached})`；`detached` 自 ##305 起**不再**由消费端断开触发，只剩"流意外中断"一个来源）；崩溃/被杀留下的开口轮由 `local-blocks.ts` 的 `danglingStopPatches` 补 `interrupted`（冷读合成，不覆盖已有值）。UI 只消费（`chat-fold.ts` 的 `turnEndNote` 出结束说明、`sceneTailOf` 出"错误/未完成现场"）· **文案唯一源 = `src/shared/turn-end.ts`**（`abortText` / `turnEndText` / `endMarkOf`，main 的中止 error 块与 renderer 的轮尾**同调**；`aborted.data.source`：`"user"` = 用户停止（`cancel()` 显式带上）· `"detached"` = 流意外中断 · 旧日志 `"abort"` = 来源不明）'
+    id: app.find.turn-end
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.find#workflow:
+    value: '**工作流接入（##319）**：宿主自持定义 `src/main/workflows/{dev.ts,index.ts}`（按 id 注册，`workflowById` 是唯一取用口；**执行者绑定**（「哪一个 agent 跑这个节点」）是宿主侧旁表 `workflows/executors.ts` + `dev.ts::DEV_EXECUTORS`，按节点 id 关联 —— 内核 `NodeDef` 形状封闭，不加字段）· 领域操作 `src/main/core/flow.ts`（正路 `advance`；**系统推** `stepFlow` 走内核 `runtime.step` 求值 `pred:`/`action:` 并落盘，见 `app.flow#flow-two-phase`；参数值语义的唯一闸门 = 内核 `createRuntime`）· 落盘 `src/main/core/flow-store.ts`（任务目录 `flow/`：`state.json` 唯一权威 · `path.jsonl` 重建材料 · `events.jsonl` 审计可删 · `instance.json` 绑定）· 节点提示装配 `src/main/prompts/flow.ts` + `prompt-registry.ts::renderFlowNodeHint` + 只读命令 `services/flow-prompt.ts`（CLI `diy flow …`，RPC 域在 `api-def.ts` 的 `flow` 组；收尾 `finish` 见 `app.flow#flow-authority`）· **产物链（##337）**：声明 `art`（`workflows/dev.ts`，内核九渲染器 + 插件名）→ raw 放袋（`flow-store.ts` 的 `artifactFile`/`readArtifacts`/`writeArtifact`，任务目录 `flow/artifacts/<节点 id>.json`）→ render 插件翻译（`workflows/plugins.ts`：`patch`→diff · `records`→table · `text`→doc 的 `{ text }`；唯一调用点 `core/flow.ts::translateArtifact`）→ `FlowView.art/view` + 只读命令 `diy flow view`；写侧最小入口 `diy flow artifact put`）· **自动轮转（##341）**：驱动环 `services/flow-runner.ts`（按 `FlowView.next.mode` 三分流：`entry` 进入 / `system` 求值自动推 / `actor` 且有执行者表 = agent ⇒ 起一轮 agent 收结论后 `advance`|`bounce`、`human` ⇒停下等人；停止条件与幂等见 `app.flow#flow-driver`）+ 外部世界插件 `workflows/plugins.ts`（`guard:ci_green` 真跑 `ci.command` 看退出码 · `action:pr_mergeable` 默认**只查不合**，`merge.apply=true` 才真合）→ CLI `diy flow step`（推一步）/ `diy flow run`（serverStream，逐行 JSON 帧；**客户端断开 ⇒ signal 中断环与在跑的轮次**）· **讨论线程（##342）**：旁注流 `core/flow-store.ts` 的 `flow/threads.jsonl`（`FlowPost`/`appendPost`/`readPosts`，容错读）+ 业务层 `src/main/core/flow-thread.ts`（线程**从折线的真打回边推**、`postThread` 的锚点闸门）· 意见一等落盘 `flow.ts::appendBounceOpinion`（`diy flow bounce --opinion` 与驱动环自动打回共用）· CLI `diy flow thread list|post` · UI 讨论区 view `flow.dispute`（`components/flow/DisputePanel.tsx`）'
+    id: app.find.workflow
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.flow#agent-history:
+    value: 本地 agent 的 `bash` 工具若执行**批量**杀进程命令（按名字匹配 electron 的一类），会杀掉宿主自己的 renderer → 永久白屏且进程被杀事件捕获不到。曾经的运行时拦截 `agent-guard.ts` 已于 2026-10-02 停用（判据分不清宿主与 agent 自己起的实例）；现由 `_guard.md` 提示词约束（`prompts/defaults.ts`）
+    id: app.flow.agent-history
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.flow#flow-authority:
+    value: '工作流实例**读只读 `flow/state.json`**（`path.jsonl` 只用于重建：重建态必须与快照**同形**，不一致即**亮错**、不许静默择一；它有三种记录 `config`/`advance`/`finish`，`FlowState` 三部分各一种来源）；改参数值**只允许尚未进入**（已进入 = 换配置 ⇒ 另起一次运行）；`done` 有两个来源：`diy flow finish`（**宣布**，只许在**结构终端节点**＝无 `next` 出边＝`next.terminal` 上敲门）与**内核 `step` 的终态分支**（##341 起走得通：`flow step`/`flow run` 对 `actor: system` 节点真求值，全过且无 `next` 出边即置 `done`）—— 两者都要留重建材料（`path.jsonl` 的 `finish` 记录）；`--param` 是**数组型**选项，重复给会**后者覆盖前者**（parser 逐项 `input[key]=value`），多项必须写成 JSON 数组那一种；`prompts/flow.ts` 的模版**故意不进 `PROMPT_DEFAULTS`**（那份清单是用户可编辑面，并进去就会改既有 `template list` 输出与 golden 快照）；`vite.pkg-deps.ts` 的 `WORKSPACE_TS_DEPS` 是「要打包的 workspace 包」白名单（**main/serve/preload 的唯一真源**），加 workspace 依赖必须同步加那里（漏加 = 产物里留裸 `import "@diy/x"`，node 加载 `.ts` 直接炸；判据 `rg ''^import .*"@diy/'' build/<v>/{main,serve}/*.mjs` 应零命中）；**产物袋**（`flow/artifacts/<节点 id>.json`，JSON 数组、下标 = 驻留 `seq` − 1）**不是领域态**：不进 `state.json`、不产生 `path.jsonl` 增量、删了不影响 `advance`/对账 —— 立场是「缺项 = 无产物（`view: null`，正常态）」与「袋坏 = 亮错（不静默降级）」两分，且**坏袋不许拖垮领域读**（`flow show` 照出整页 + `FlowView.viewError` 亮错，只有产物专读的 `diy flow view` 抛）；`view.renderer` 必须与 `art.renderer` 一致（声明是 UI 预选渲染器的契约），`art.plugin` 留空只在「raw 本身已是该 renderer 的 data」时合法（纯文本 raw ≠ `doc` 的 `{ text }` ⇒ 挂 `text` 插件）'
+    id: app.flow.flow-authority
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.flow#flow-driver:
+    value: '**驱动环（`services/flow-runner.ts`）判据只读状态**：每步重新 `flow show`（不靠内存进度）⇒ 幂等、可中断、续跑不重复消费；`rule#core-log` 的落点 = 帧与 `events.jsonl` **只作观察**，删了不影响运行（位置/折线/终态全在 `flow/state.json`）。五条别改错：① 分类**顺序**是 `human` → `system` → `agent`（「该谁拍板」优先于「守卫可不可观测」—— 反过来的话 `actor:human` + 可观测守卫会被**自推**，审批点就没了）；② **替用户起轮次前先问 `LocalAgentManager.busy(uri)`**（`chat()` 对忙会话**不拒绝、只排队** ⇒ 不问就会把节点提示词排进**用户自己的会话**、还收不到正文），忙 ⇒ 停因 **`session-busy`**、不碰队列不碰状态；中断时**只停自己起的那一轮**（归属判据 = 收到**自己的** `start kind:"turn"`，排队回执的 `meta.source === "queue"` 描述的是**别人**的轮次）—— ##305 拍板「消费端断开不掐轮次」，所以这句得自己补，不然 `flow run` 会卡在 `await` 上、轮次还烧 token；③ 打回判据是**末行明文约定**（`结论：通过` / `结论：打回（原因…）`，只在当前节点**真有 bounce 出边**时生效，读不到按通过）—— 可复核优先于猜语义；④ 结论**落袋失败不挡这一轮**（试译抛，如纯 JSON 对象落进 diff 节点；产物是派生数据，坏了不挡正路），原因随 `turn` 帧的 `artifactError` **亮出**（不静默）；⑤ 本版三个限制：`next`/`bounce` 出边各取**第一条**（内核允许多条 + `when`，本版不挑）、**命令期不可停**（`stepFlow`/`collectFacts` 不接 `signal`，`exec` 自带 10 分钟上限）、`flow run` **退出码恒 0**（停因在帧里 —— 别拿退出码当判据）'
+    id: app.flow.flow-driver
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.flow#flow-thread:
+    value: '**讨论线程（##342）锚点 = 一条真打回边的一次穿越**：`{from: 打回前位置, to: 落点节点, seq: **落点那次驻留**的 Visit.seq}`（一次 bounce 恰创生一次驻留 ⇒ 三元组唯一；**同节点二次打回靠 `seq` 不串台**，##320 P1-1 的同一教训）；文本 id `from->to#seq`（`--thread` 参数 / UI 的 `data-flow-thread` / `flow-model.ts::threadIdOfVisit` 三方逐字一致，有单测钉）。三条立场：① **旁注**（`rule#core-log`）：`threads.jsonl` 不进 `state.json` / 不产生 `path.jsonl` 增量 / **删了不影响**推进与对账（线程结构仍从折线推得出来，只是发言没了），坏行**跳过并计数**（`flow show` 的 `FlowView.threadError` 错误位 + `flow thread list` 的 `skipped`，对照 ##337 P2-B，**绝不拖垮领域读**）；② **不造数据**：`postThread` 写前验「折线上确有这次 bounce 驻留」（`flow-thread.ts::requireRealBounce`），假锚点即拒；读侧对折线上查无的旧发言标 `real: false` 亮出来（坏数据不藏）；③ **三出口**：(a) 撤销打回 = **现有合法边**（dev 定义 `implement --next--> review` 就是那条，**不动内核**）(b) `--type resolved` (c) `--type escalate`（`actor: human` 的发言；领域侧落点 = 走到 `actor:human` 节点如 `approve`）—— 状态由**最后一条状态发言**决定。另两条别踩：④ **「不写空发言」闸门只有一处真源** `flow-store.ts::requirePostText`（`postThread` 与 `appendBounceOpinion` 共用）—— 驱动环的结论行**合法地可以只写「结论：打回」**（`reason: ""`）⇒ 闸门装在 `appendBounceOpinion` 里，驱动环已有 catch 故自动降级为**不写 + warn**（审计照旧记 `打回`：审计与讨论口径不同是对的，往留痕里凑一句评审没说过的话 = 造数据）；⑤ **出口 (a) 撤销打回在讨论视图上无留痕**（走既有合法边 ⇒ 不写讨论流 ⇒ 线程 `status` 停在 `open`）：**接受现状** —— 折线本身即留痕（多一次 `next` 驻留），不给「撤销」开第二处写入语义（避免写入路径分叉），留待 ##325 隐私/权限定案时一并看。UI 讨论区本轮**只读**（可见性/留痕是本任务交付，发放入口只在 CLI；「谁能发言」属 ##325，未定前不钉进 UI）'
+    id: app.flow.flow-thread
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.flow#flow-two-phase:
+    value: '**跑外部世界的插件是两段式**：内核插件接口是同步的（`GuardPlugin = (ctx) => GuardResult`），而 `./sha.sh check` / `gh pr …` 必然异步 —— 故事实**先取后用**：`stepFlow` 先 `await collectFacts(ctx, deps)`（异步 I/O，可换替身 ⇒ 不真出网可证），把结果包成事实表交 `createHostRegistry({ facts })`，插件求值时**只读表**。两条硬约束：① 不许在插件里 `spawnSync`（会把 Electron **主进程**事件循环堵死几十秒，GUI 假死 + RPC 排队）；② 没有预热就求值 ⇒ **抛**（无预热即抛 —— 静默当成「不通过」会把工作流悄悄推成另一条路），静默当成「不通过」会把工作流悄悄推成另一条路。任何真跑 `createRuntime` 的地方都必须用 `createHostRegistry()`（只注册 render 的那份会在组合期对 `pred:ci_green` 报 `unknown-plugin`）'
+    id: app.flow.flow-two-phase
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.flow#interrupt:
+    value: 中断的 tool 调用必须**在新一轮开始时收敛成显式终态并写进 ops**，投影（`blocksToMessages`）只做纯翻译。禁止退回"投影时现造占位文案"：文案会被模型当待办，重载后同一条自毁命令会被重发
+    id: app.flow.interrupt
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.flow#live-turn:
+    value: '**直播轮的判据不能只看"最后一轮"**：外部（CLI / 另一窗口）刚起一轮、而我们还没收到它的 ops 时，最后一轮早已 stop —— 拿它顶替会把一个正常收尾的历史轮画成直播（红框 / "进行中"）。判据 = main 真值 `localChatStore.live` **且** 该轮 turn 块未 stop（`LocalChatPage.tsx` 的 `liveTurnId`）'
+    id: app.flow.live-turn
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.flow#ownership:
+    value: 任务目录内 `AGENTS.md` 面向用户可编辑，`.diy/**` 系统独占（仅 main 经 RPC 写）；路径单一出口 `src/main/core/state.ts` 的 `taskSystemDir(uri)`
+    id: app.flow.ownership
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.flow#steer-two-phase:
+    value: 插话的「认领」（`prepareStep` 只读队列、注入请求 messages）与「落位」（流里出现 `start-step` 时才 sink + 出队）**不能合并**：两条流不同一时间轴，提前 sink 会把插话插到上一步未完内容之前。轮末开场则**只读不取**（先记账再出队），中途崩掉最坏重复投一遍、不会丢。理由见 `local-agent.ts` 的 `claimStepSteers` 头注
+    id: app.flow.steer-two-phase
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.history#budget-compact:
+    value: '压缩 = **一个字节预算**（`budgetBytes`，UI 显示 KB，除固定开支外历史消息可占上限；`0`=清零，**且 0 时保底也不生效** —— 清零就是「全不要」）：缺省管道（##343 M1）= **保底最近 6 步 `clip: full`**（`exempt`，不计预算：只保下标不保字节治不了「留下的结果被裁成头尾」）+ 纵向优先级阶梯（`user > assistant结论 > assistant非结论 > tool-call > tool-result`，全局跨轮、同层新的先、call 与 result 同进退）计预算保留。**不是**「保留 N 轮」（横向会整轮陪葬前面重要的用户消息 —— 用户明确否决）'
+    id: app.history.budget-compact
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.history#chat-reload:
+    value: '**轮末收尾重放必须走「幂等并入」，不许重建**（`localChatStore.mergeWindow`）：旧实现每轮都 `new BlockStore()` 全量 fold → `toForest` 的身份缓存（TreeCache）整片失效 → Solid 的 `<For>` 把**每一轮**都销毁重建（含全量 Markdown re-parse）—— 这正是大会话“每次轮末 GC 风暴”的根因。折叠流幂等，再喂一遍即可，未变的轮次引用不变（实测第 1 轮 DOM 节点跨轮仍是同一对象）。大会话另有一层见 `app.history#chat-virtual`：DOM 里只挂视口附近若干轮（离屏轮**不在 DOM**，不是靠 `content-visibility` 跳过绘制）'
+    id: app.history.chat-reload
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.history#chat-virtual:
+    value: '**滚出视口的轮不挂 DOM**（##301；`lib/chat-virtual.ts` + `LocalChatPage` 的 `VirtRow`）：`content-visibility: auto` 只跳过离屏子树的布局与绘制，**DOM 与组件状态照旧**（48 轮实测 1441 个节点全体在树里）⇒ 要真降下来必须把远端轮摘掉。几何 = 每行**绝对定位**、顶边取**账面高度前缀和**（行间距由账给，不用 `space-y-*`：spacer 与相邻行的间距要另推一遍账，边界必差一个 gap）。三条硬约束：① **位置补偿只此一处** —— 任何"行顶边会变"的因（测量修正 / 前插补段 / 重置）都由同一个监听布局的 effect 按「视口锚点」纠正；`applyHeights` 与 `loadOlderInto` 各算一遍就是重复补偿（实测一次上滚多推 605px）；② **锚点锚在"块"上、不锚在像素上**（`pickAnchorIn`/`applyAnchor`）；程序化滚动**只走 `writeScrollTop`** —— 它写元素 + 同步 `scrollTop` 信号（虚拟窗口由信号驱动，只写元素则窗口还按旧位置挂行、锚点块不在 DOM）并记下写入值 `progWriteTop`，让紧随的 scroll 事件**不重取锚点**；分辨"用户在滚"归 `anchorTick` 的 `lastSt` latch（≤1px 容差）；③ 高度估算的**唯一出口**是 `HeightLedger`（CSS 里不再留 `contain-intrinsic-size` —— 两处各估一次必然漂移），未渲染轮用已测均值、实测过的行**永久保留**（卸载不清账，滚回来位置才稳）'
+    id: app.history.chat-virtual
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.history#clip-axis:
+    value: '**裁剪能力轴**（##343 M1）：每条取法（`PickStage`）可声明 `clip`（`full | path | headtail{head,tail,maxLineChars,maxKeepBytes}`，判别键 `type`、私有参数进 `data`），**先选中它的级生效**，没声明则回落 `defaultClip`（= 策略 `toolResult.render` 的降级）⇒ 选择结果带 `clips[]`，渲染阶段按**每条消息**取裁法（成本与渲染必须同源，否则「按 A 算预算、发出去是 B」）。配置化（`history.keep[]`）已由 ##344 M2 落地（见 `app.history#compact-keep`）'
+    id: app.history.clip-axis
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.history#compact-keep:
+    value: '**装配管道 = 数据**（##344 M2）：`auto-compact.yaml` 的 `history.keep[]` 是级列表，级 = `{ type, must?, limit?, clip?, data }`（遵 `rule#discriminated-union`：`type` = **取法** `ladder|role|recent|steps`、与它同级 = 公共字段、私有参数进 `data`）；数组序 = 优先序（先声明的先挑、先选中者的 `clip` 生效）。**读侧宽松**（无/坏 `keep` ⇒ 只丢 `history`、回落 `DEFAULT_KEEP`，不回归）· **写侧校验后才落地**（非法 ⇒ 拒绝且不动文件）。缺省管道以 `DEFAULT_KEEP` **单一真源**表达（`defaultBudgetPlan()` 由它生成）⇒ 代码与「配置面回显」不会分叉。⚠️ 级里清字段要**删键**，不能写 `undefined`（`yaml.dump` 会落成 `clip: null` = schema 非法值）。'
+    id: app.history.compact-keep
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.history#compact-lazy:
+    value: '**压缩预览（`compactPreview`）= 成本 ∝ 会话字节的「只算不写」调用**（一份 78MB 会话整读 + 解析 + 折叠 ≈ 数秒，且 main 单线程期间所有 RPC 排队）⇒ **必须由可见性闸门保护**：控制器 `useCompactPanel(uri, visible)`（`CompactSessionPanel.tsx`）的**第二参即闸门**，调用方传 `() => props.open`；`ContextPartsDrawer` 由常挂的 `WindowRing` 持有（`open` 只控显隐、节点总在树上），漏传闸门 = 打开任何会话页都白算一次。source 另须用**当前页 `props.uri`**（勿读挂载瞬间的 `store.currentUri`，否则从大会话切走会对着旧会话再算一遍）。护栏单测 `tests/core/compact-preview-reuse.test.ts`'
+    id: app.history.compact-lazy
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.history#compact-note:
+    value: '预算压缩的历史标注 = **普通 YAML 文本塞进 messages**（同 system/runtime 变量树同一机制）：只列**保留区间** `kept: [[a,b],…]`，区间之间的行号即被省略（**不逐 gap 标注**）；字段说明走**信封的 `help.history`**（由 zod `HistoryNoteSchema` 派生；值节点里禁解释性字段）。⚠️ 标注是投递时现算的文本 ⇒ **本就在预算内**（无需为它另设封顶）'
+    id: app.history.compact-note
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.history#compact-shape:
+    value: 策略真源是**带归属的结构** `{ mode:"budget", modeData:{ budgetBytes, toolResult }, summary }`（`modeData` 内 = 该 mode 私有；与 `mode` 同级 = 共有）。现役**只有 `budget` 一种算法**（`reset`/`keep` 已删，未发布无需兼容）。工具结果的呈现（`toolResult`，headtail 参数在 `renderData`）是**系统内部旋钮**（不给用户拧）。互转收口：`normalizePolicy`（任意→合法）/ `flatPolicyOf`（→扁平输入面）/ `budgetBytesOf`（→字节预算唯一入口）。**别再新增第三形状**
+    id: app.history.compact-shape
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.history#compact-triggers:
+    value: '自动压缩的三个触发（`systemContextChanged` / `cacheExpired` / `contextWindowOver`）**全是从现成数据可判定的确定事实**（零额外请求），**不含"划不划算"的预测** —— 后者是 ##230#25 明确放弃的评估；改动别把判据换成估算'
+    id: app.history.compact-triggers
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.history#config-vs-history:
+    value: '**配置 / 历史分离**（用户 2026-10-07）：投递口径 = **当前配置**（`$DIY_HOME/auto-compact.yaml` 的 `policy` **+ `history.keep[]`**，见 `app.find#compact`），**每次请求实时算** ⇒ 改预算/改管道**本轮即生效**；压缩账（会话目录的 `compact.jsonl`）只是**不可变快照**（历史页/回溯用），**不决定投递**（v4 起每行带 `plan.planVersion` 指针 ⇒ 回查到 CAS 即「当时那套 plan」；v3 旧行的 `plan.keep` 全文照旧可读，见 `app.history#plan-version`）。⚠️ 别再让投递去读 `resolveBoundary`（旧边界机制已废：没压过就不生效，违反直觉）'
+    id: app.history.config-vs-history
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.history#history-cursor:
+    value: '分页的**窗口边界只是 main 的知识**：渲染端拿到的是**不透明游标**（只回传、不解释字节）。失效（清空 / 覆盖写 / 换文件）一律退**全量**并由 main 出声 `HistoryWindow.stale` ⇒ 消费端必须**整树重置**，**不许**拿「前缀守卫恰好成立」兜（被覆盖写的全量与末段轮次 id 恰好相容时，守卫会放行、把两段不同来源的历史缝在一起）—— 两个消费端（轮末 `doReload` / 上滚 `loadOlder`）都得认这个字段；且 stale ⇒ 除整树重置外，仍须**丢弃末段游标**（main 退全量时 `hasMore=false`、游标落在 at:0，而 at:0 是合法轮首 ⇒ 回传会被照收、每轮退全量。收口在 `mergeWindow` 重置分支：`stale ? null : cursor`）'
+    id: app.history.history-cursor
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.history#history-filter:
+    value: '**历史 = 固定的消息集合**；一次压缩 = 用**某算法**对它定义的一个**过滤条件**。事件里的 `policy` 承载**算法**（`mode`，现役只有 `budget`）与该算法的**过滤器表达**；**换算法 = 加新分支 + 新 filter 形状**，别用一套结构硬套。旧「分代（generations）」**已删除**（连续轮边界表达不了预算的分散保留）'
+    id: app.history.history-filter
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.history#md-reconcile:
+    value: '**MarkdownView（`renderer_solid/components/MarkdownView.tsx`）必须走 solid-markdown 的 `reconcile` 策略，且 `pre` 里取代码正文/语言必须用访问器现读**。两个都是硬约束，破一个就有肉眼可见的 bug：① 用 `memo`（库的缺省）时每帧给出全新 hast 树，`<For>` 按引用比对 ⇒ **每帧把整棵子树拆了重建** —— 块内 `overflow` 容器的 scrollLeft 归零、拖出的选区被清空（用户看到的「拖到长行右侧又被拉回起点」「流式中选不中、copy 不了」）；② `reconcile` 按位置合并、节点对象**就地更新且身份不变** ⇒ 组件函数体只跑一次，`const n = props.node.children.find(...)` 这种读法会停在第一帧（表现为流式代码块只显示开头一段）。同理 `components/CodeBlock.tsx` 的两态（未定稿纯文本 / 定稿 Shiki）**共用一个恒常滚动外壳**：各带一个滚动容器的话，定稿那次切换等于把容器换掉，滚动位置照样丢。回归 `tests/cli.intent.ui-chat-render.test.ts`（桩上游逐 delta 推，判据是「同一个元素对象 + 滚动位置还在 + 选区还在」）'
+    id: app.history.md-reconcile
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.history#ops-broadcast:
+    value: '**op 的落盘与广播必须成对，且写入者只有 main**：全部 `ops.jsonl` 写入都经 `local-agent.ts` 的 `opsSink`（CLI 也是 RPC 客户端 → 同一个 main），故「变化」在写点即知 —— 不尾随文件（chokidar 有 debounce 时延）、不轮询。`publish` 只在 `appendFileSync` **成功之后**调用（失败仍广播 ⇒ 订阅侧水位超前于盘，此后按行号的补发/去重全错）。订阅后 UI 不再靠轮末全量重放追平；洞由「重订补发」修，`reload` 降级为「收到 reset」的兜底。**停止收尾期间**另有一节轻量 tick（`lib/stop-ticker.ts`）推进 `now`，否则 main 卡在工具里（不发 op）时 `stoppingStuck` 永不翻真，「强制中断」出口成死代码；ticker 同步**收口**在 `localChatStore.ts` 的唯一写点 `setStopRequested`（改停态即对齐）+ `watch`/`open` 起始（切回仍在收尾的任务需重新开表），漏任一处该出口即失效'
+    id: app.history.ops-broadcast
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.history#ops-fold:
+    value: '**会话历史读出来是折叠过的**（`compactOps`；对消费端透明：同一棵块树，只是逐 token 的 delta 碎片变成每块「`start` + 一次终值 `patch` + `stop`」，实测一次 74MB / 87.7 万 op 的会话 → 15.2MB / 1.76 万 op）。三条不可动摇的约束：① **无父块必须显式写 `parent: null`** —— 省字段（undefined）在 JSON 里会整条消失，重放时退回栈顶，于是“本就该是根的块”被前一棵未闭合子树认领；② `patch` 值未变不写也不碰 `touched`、`stop` 只在“未定稿 → 定稿”那一次碰 ⇒ 对同一份折叠流**重复 apply 无副作用**；③ 折叠流按**轮次递增**（DFS 顺序 = 轮次顺序）；**缓存判据在 main**（`foldedOps`）：按 `(task, start)` 分键，用「已消费字节 + 前 4KB 指纹」判续 fold（`consumed > size` 或指纹变即整份重建）。渲染端是**按段**前缀守卫（`mergeWindow`）：末段轮次序列是新窗口前缀时**增量**并入，否则整段重置（**不是**「整份重建」）'
+    id: app.history.ops-fold
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.history#plan-gate:
+    value: '**plan 写闸只管 agent**（##362 M3a）：`history.allowAgentWrite` 缺省 `false`，只拦 `compact_plan` 工具那条路 —— CLI `compact plan set` / UI 编辑器是用户**自己的**显式操作，若也拦就没人能开闸了。三条实测坑：① 改 `saveKeepConfig` 时**必须保留 `history` 的其余字段**（整包换成 `{ keep }` 等于顺手把闸关掉 ⇒ agent 写一次就永久失去权限）；② **reset 同走闸**（`planReset` 与 set/restore 一样先查 `history.allowAgentWrite`，闸关返回拒绝文本；##363）；③ 闸关时工具**返回拒绝文本而不抛错**（抛错会被当成工具失败、污染轮次信号，模型看不出"是没权限"），而**非法 plan 要抛**（那是调用方写错，该看到错在哪）—— 两者判据不同向，别互相抄'
+    id: app.history.plan-gate
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.history#plan-version:
+    value: '**plan 版本 = 内容寻址**（##378）：id = `plan-` + `sha256(canonicalJson({v,source,keep[]}))` 前 12 位 —— canonical = **对象键递归字典序、无空白、丢 `undefined` 键**（直接用 `JSON.stringify` 会因构造键序不同把同内容 hash 成两版）；全文存**不存 diff**（plan 几百字节，diff 换来的是链式依赖）、**不设份数上限**（要加上限必须出声 + 迁移，否则事件账 `planVersion` 悬空）。四个不回退的点：① 版本文档**只含 plan 数据**（`ts/op/via/taskUri/parent/brief` 进 index，否则同内容不同时间 hash 成两份、去重失效）；② `source` 进内容 —— `default` 版 restore 是**删键**（跟随将来缺省），`config` 版才是写级列表；③ 入链**幂等**：与链尾同内容 = 不追加（否则重复行 + 自指 `parent`）；④ 旧时间戳快照与 v3 事件**只读兼容、不迁移不改写**（restore 收到旧快照 id ⇒ 读到即转成版本入链）'
+    id: app.history.plan-version
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.history#tool-output-clip:
+    value: '**单条工具输出的截断落投递层**（##127）：挂在 `tool.toModelOutput`（`main/services/tool-output.ts`），**不在 `execute`** —— `execute` 返回值是落进 ops 的原文（UI/日志/压缩都从它取），裁了原文当场丢。超 2000 行 / 50KB（= read 窗口的 `READ_MAX_LINES` / `READ_MAX_BYTES`，三路径同一预算）即头尾 + marker + 原文落**会话目录** `$DIY_HOME/local/<uri 路径>/<key>/toolout/<toolCallId>.txt`（##379 随会话分层；旧共享 `local/toolout/` 读侧兜底）（marker 写**绝对路径**：模型只按 cwd 解析相对路径）；bash 工具的 `maxBuffer`（`runBash` 自持 spawn，32MB）只当内存护栏且触顶**显式**报（不再静默 ENOBUFS）'
+    id: app.history.tool-output-clip
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.model#cost-override:
+    value: 价目**覆盖不是补丁**：`model.yaml` 的 `cost` 一旦存在就**整体**取代 spec 价（models.dev 的价也是 spec）⇒ 只填一个字段会把其余字段静默清掉（缓存读价没了 = 低估成钱）。故 CLI/服务端首次写覆盖时以 spec 价为**基线**（回执 `seededFromSpec`），`llmConfig costs` 的 `cost`/`costSource` 是改价前的必读项。档引用的 `window`/`calendar` 不存在 → **不阻断保存**，只让该档永不命中（退 base 价）+ 回执 `warnings`（`llmConfig costs` 同时下发可用的 `windows`/`calendars` 清单供选）
+    id: app.model.cost-override
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.model#model-apiface:
+    value: API 面**由 npm 解析**（与 models.dev 对齐，不硬编码名单）：`provider.npm` 默认 + 模型级 `provider.npm` 覆写（opencode-go 的 gpt-5.6/6-luna 在 models.dev 里就是 `@ai-sdk/openai`）。白名单 `@ai-sdk/openai-compatible`→chat / `@ai-sdk/openai`→responses，其余 npm 的模型不出现。`providerOptions` 命名空间随面对齐（chat → `openaiCompatible` / responses → `openai`）
+    id: app.model.model-apiface
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.model#model-env:
+    value: '`model.yaml` 的账号 `data.value` 支持 `$VAR`/`${VAR}` 展开（未定义 = **fail-fast**，不静默发空 key）；无 env 回退，账号必填。密钥**明文可**（最简单），多账号是一等公民（同一 provider 多订阅）'
+    id: app.model.model-env
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.model#model-ref:
+    value: '`persona.model` = **完全限定名** `account@provider/model`（按**第一个** `/` 切 provider|model —— 模型 id 自带 `/`；provider 段按**最后一个** `@` 切 account|provider）。custom provider 恒带 `custom:` 前缀（永不与 models.dev id 撞）。存量裸名不自动迁移（手工批处理）。账号名缺省 = 序号 `0`'
+    id: app.model.model-ref
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.model#model-tier:
+    value: '**阶梯价两条轴，别混**（`shared/usage.ts` `ratesOf`）：`tier` = 上下文档（`context`，按总输入取**最大**阈值）；`window` = 时段档（`utc-range`，按请求时刻 + 内置日历判工作日，取**按序首个命中** —— 时段是分类不是阈值）。时段价优先于上下文阶梯；`calendar` 引用不存在的日历 → 该窗**不命中**（退 base 价，绝不静默用错价）。`start`/`end` 写 ISO 8601 带偏移（`01:00:00+08:00`；**缺偏移即拒**，不默认本地时区；`end < start` = 跨零点）'
+    id: app.model.model-tier
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.model#models-refresh:
+    value: 应用内刷新三条别改错：① 结构校验 `buildModelsSnapshot`（`src/main/core/models-snapshot.ts`）**不许比真实数据严** —— models.dev 里 `openai` 就**没有 `api` 字段**，把 `api` 写成必填等于「永远刷不进去」；真必填只有 `id` + `models`，`api`/`name`/`env` 可缺省、给了必须是对的类型（`name` 字符串 / `env` 数组）。② 失败必须**先于写盘**返回（抓取 / HTTP 非 2xx / 非 JSON / 校验失败 ⇒ `ok:false` + 原因，旧文件 **mtime 与内容逐字不变**；半成品落盘 = 静默丢价）。③ **无 diff 一律不写**（`diffSnapshot` 连价目等元数据变化也算 diff）
+    id: app.model.models-refresh
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.model#persona-id:
+    value: persona 引用**存 id 不存名字**：名字只是标签（可随时改），拿名字当引用键则改名 = 打断所有引用（引用者静默回落缺省人物）。理由见 `src/shared/persona.ts` 头注
+    id: app.model.persona-id
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.model#usage-buckets:
+    value: 用量口径三条硬约束（`shared/usage.ts` 是唯一实现，别在别处另算）：① **思考输出是总输出的子集**，展示可拆、计价**不另加**（照抄 opencode 公式即重复计费）；② **不可测桶写 `null` 不写 0**（`api:"chat"` 面拿不到 cacheWrite，记 0 = 静默低估成钱）；③ **窗口占用取最后一步**（总输入+总输出），累加值只解释「这轮为什么贵」。单价快照随每行落盘（单价会变，历史账不能漂）
+    id: app.model.usage-buckets
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
   app.port#default:
     - value: '0'
       scope:
@@ -39,6 +887,390 @@ facts:
       - rel: depends-on
         data:
           toClaim: app.port#default
+  app.rule#agents-chain:
+    value: AGENTS.md 链**上界到 `$HOME` 为止**（不进 `/`、`/Users`）；不在 `$HOME` 下时只取工作目录一层
+    id: app.rule.agents-chain
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.rule#agents-injected:
+    value: '**本文件会被 `chainOf` 注入 system 提示词**（受 64KB 预算 `SYSTEM_BUDGET_CAP_BYTES` 约束）：长文写 README / 独立文档，这里只留指针'
+    id: app.rule.agents-injected
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.rule#budget:
+    value: 系统提示词预算 `clamp(模型上下文 × 4B × 5%, 16KB, 64KB)`；超限**拒发不截断**，且早退也必须闭合轮次（stop + noteTurnEnd + 审计）
+    id: app.rule.budget
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.rule#file-write:
+    value: '**整文件覆盖写一律走** `src/main/core/atomic-write.ts::writeFileAtomic`（同目录 tmp → `rename`；失败 ⇒ 原文件**逐字不变** + tmp 清理 + 错误**原样上抛**）。禁直接 `writeFileSync(目标, …)` 覆盖已有内容的文件，也禁再添第二份私有 tmp+rename 副本 —— 前者在低磁盘下**先把目标清空**（2026-10-18 实测把 253KB 任务正文写成 0 字节，##382），后者必然分叉成「有的写点原子、有的不原子」。剩余写点收敛见 ##383'
+    id: app.rule.file-write
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.rule#form-toggle:
+    value: '**表单里的三态控件**：二态开/关用 daisyUI **toggle**、多选一用 **radio**（两者形态必须一眼可分，别都塞 checkbox）；**按钮位**（工具条 / view bar / 图标切换）用 **swap**（隐藏 checkbox + 图标双态，省地方）—— 三者各司其职，别互串'
+    id: app.rule.form-toggle
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.rule#golden:
+    value: 改内置模版（`src/main/prompts/defaults.ts`）**必须同步** `tests/fixtures/system.golden.txt`（当前内置模版的逐字节快照）。⚠️ `./sha.sh check` **不含 vitest**，不会替你抓到这类失效 —— 改完模版跑 `npx vitest run tests/core/template-dsl-golden.test.ts`
+    id: app.rule.golden
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.rule#log-vs-config:
+    value: '**落盘日志**（会话目录 `local/<uri 路径>/<key>/*.jsonl`；旧平铺 `<key>.*.jsonl` 读侧兜底）读侧宽松（初版紧凑/扩展松散/缺必填即**异常数据**，见 `log-schema.ts`）；**配置真源**（`context.yaml` / `auto-compact.yaml`）读侧出声回落默认、写侧归一 + 原子写，且**不进 localStorage**（有损 + 两进程各持一份）'
+    id: app.rule.log-vs-config
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.rule#no-silent-catch:
+    value: 不要静默吞异常（如切模型曾一律 `catch {}` → 用户以为切了其实没切）
+    id: app.rule.no-silent-catch
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.rule#noemit:
+    value: '**类型检查绝不 emit**（各包 `noEmit: true`，唯一入口 `./sha.sh check`）。一旦产物落在源码旁，`resolve.extensions` 里 `.js/.jsx` 排在 `.ts/.tsx` 之前 → dev/构建/单测全部静默加载旧产物'
+    id: app.rule.noemit
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.rule#renderer-io:
+    value: renderer **永不直接写文件**，一律经 RPC（如 `diy.task.drafts.*`）
+    id: app.rule.renderer-io
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.rule#schema-source:
+    value: 需自说明的结构（策略 / 投递注记 / 日志行）一律以 **zod 定义为唯一真源**：字段说明由 `src/shared/schema-doc.ts` 从 `.describe()` 派生，**禁止手写字段表**（手写 = 第二真源，改字段忘改注释就撒谎）；日志读侧校验走 `src/shared/context/log-schema.ts`（初版紧凑 / 扩展松散 / 缺必填即**异常数据**，不计入统计）
+    id: app.rule.schema-source
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.rule#stdio:
+    value: 子进程 stdio 判据是**读端是否一定被排空**：常驻/分离式 spawn 一律 `inherit`/`ignore`；测试侧 `pipe` 必须挂 `data` 监听持续排空。⚠️ **不得**为解析 `DevTools listening on` 而 pipe stderr —— CDP 地址一律读 `DevToolsActivePort` 文件
+    id: app.rule.stdio
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.rule#steer-queue:
+    value: '**会话生成中再发消息不拒绝、改排队**（##306）：入 `SteerQueue`（缺省 **`next-step`** = 下一个模型步边界前整批投，横条可切回 `next-turn`），只回一条排队回执（`kind=error` + `meta.source=queue`，error 块不进 LLM 投影）；条数上限 `maxSteerQueue`（默认 1000，`local/limits.json`（**全局、不随会话分层**）/ `DIY_LOCAL_MAX_STEER_QUEUE`，超限在 `SteerQueue.add` **抛错**不静默丢）。**UI 两个入口**：输入框发送（`LocalChatPage` 的 `submit` 在 `live` 时本地早退 → 该路径目前只由 CLI / RPC 可达）与横条**留言**（`submitSteer`，同一队列、同一缺省时机 `shared/steer-mode.ts` 的 `DEFAULT_STEER_MODE`）'
+    id: app.rule.steer-queue
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.rule#test-bail:
+    value: '**撞红即停（`bail:1` 刻意保留），但回报必须说清范围**：根与各包 `vitest.config.ts` 全为 `bail:1` —— 早停省墙钟，代价是「后面的没跑」。交付口径写「跑到第一个失败文件为止：N files / M passed / 其余未跑」，**不许**把早停报成「全量通过」（判据 = 末行 `Test Files N failed (总数)`；拿不准就单跑那个失败文件）。历史：`##379` review2 里 `bail:1` 让 162 个文件只跑了 38 例。⚠️ 此前「交付口径改 `--bail=0`」的建议**已作废**（用户 2026-10-20 定：红就停，别再跑）'
+    id: app.rule.test-bail
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.rule#test-fixture:
+    value: '**提速靠跨文件共享 fixture，不靠合并测试文件**：文件边界跟**语义**走（一文件 = 一个被考察对象 / 一组不变量），**禁止**为省启动开销把不相干的测试并进一个文件。开销从 fixture 侧省：**只读且与测试无关**的准备数据（golden / 模型快照 / 造好的任务库与会话文件）放 `tests/fixtures/`，多文件直接读同一份；**被测试写**的状态一律隔离（`app.rule#test-home` 的 per-file `mkdtemp`），**不许**为了复用改成共享 —— 串味后失败点会漂到别的文件。现根/各包 `vitest.config.ts` 均无 `globalSetup`；需要一次性准备时按需引入，但**只准写 tmpdir、不写仓库**'
+    id: app.rule.test-fixture
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.rule#test-home:
+    value: 隔离 HOME **用后即删**（`tests/temp-home.ts`）：两套前缀都要管 —— `diy-app-test-*`（electron-test，`stop()` 当场删）与 `diy-desktop-test-*`（`setup.ts` 每测试文件一个，`afterAll` 删；**`process.on("exit")` 在 vitest worker 里不触发** —— 被 tinypool SIGTERM 掐）。删除双校验：必须在 `os.tmpdir()` 下 + 带本套件前缀（`TEST_HOME_PREFIXES`），缺一不可；另有 `sweepStaleTestHomes`（>24h）兜强杀残留。历史代价：曾 4 天积 1583 个 / 2.9GB
+    id: app.rule.test-home
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.rule#test-isolate:
+    value: '**`unit` 跑 `--no-isolate`（每个 worker 共享一份模块图）⇒ 测试之间共享模块级状态，三条硬约束**（##402）：① **禁 `vi.mock`**（改全局模块表，先加载的实现会把它静默顶掉 ⇒ 「单跑绿、一起跑红」且无报错；机械护栏 `scripts/check-no-vi-mock.sh`，替代写法 = 依赖注入 / 手写假对象 / `server.deps.inline` alias）；② **模块顶层的可变状态必须在 `beforeEach` 复位**（真踩过：`sessionStore` 水位 / `usageLedgerStore` 缓存 / `rpc` 的 `setDiyService` 假实现残留 —— 症状是 `--sequence.shuffle` 换序即红）；③ **模块图顺序是语义的一部分**（`@diy-agent/rpc` 用原型补丁给 zod 装 `cliArg`，schema 创建时定死原型链 ⇒ 谁先建 schema 谁就看不见补丁；`tests/setup.ts` 已先引 rpc 钉死这条，别删）。验收判据：`test-unit` 与 `test-unit --sequence.shuffle` 两遍都全绿'
+    id: app.rule.test-isolate
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.rule#test-perf:
+    value: '**别为提速虚拟化 fs / 进程，先量再动**（本机实测 2026-10-20）：fs 写 2KB **236µs** · 原子写 356µs · 读 34µs · 真 `spawn` 一个进程 **5.2ms**；而 `tests/core` 单文件墙钟 **≈1.9s**，其中 fs 最密的 `task.test.ts` 2.0s 里 sys 仅 0.43s、真写几十次 ≈ 几毫秒（**<1%**）。**反证**：`TMPDIR` 指到 512MB RAM disk（介质归零）跑同一文件 `1.94/2.01s → 2.58/2.16s`，**没变快** ⇒ 瓶颈不在介质也不在 syscall 次数，虚拟 fs（`memfs` / `unionfs` / `mock-fs`）的收益上界就是那几毫秒，代价是全仓 mock 复杂度。**进程**没有虚拟化库（进程不是纯数据结构），等价手段是注入（已有 `CollectDeps` / `HostPluginDeps.runCommand` / `SteerQueuePort`）。❌ 更要命的是**语义**：`##379` R1（copy 半截 + `existsSync` 认领）、`##382`（ENOSPC 毁 253KB）恰是真盘语义上的事故，memfs 里根本不存在 ⇒ 那类护栏永久失去。**判据（三条全过才虚拟化）**：耗 ≥10ms/次 · 测试里出现 ≥100 次 · 不需要验证其真实语义'
+    id: app.rule.test-perf
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.rule#test-render:
+    value: intent 用 `--no-file-parallelism` + `fileParallelism:false`：**单实例串行**（起→测→收），实测 app 并发恒为 1；别改成并发（多实例抢 CPU 会让墙钟判据假红）
+    id: app.rule.test-render
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.rule#turn-lifecycle:
+    value: '**轮次生命周期独立于消费端连接**（##305）：`agent.local.chat` 虽是 `serverStream`，但**流只是订阅者** —— 驱动在 `LocalAgentManager.driveTurn`（`turns` 注册表持有，与生成器解耦），消费端断开（刷新/切页/关窗/杀 CLI）**只退订、不 abort**（旧行为"`finally` 里 `if(!done) ctrl.abort()`、无人消费即停"已废；改写这块别把生成器当驱动者）。无人消费**继续烧 token**（定案：窗口只是后端的使用窗口），开销由 **`maxSteps`（缺省 200，`DEFAULT_LIMITS.n`）步数上限**自然收口 —— **禁加时间维度的"无人即停"回收**（会误杀正常长任务）；真卡死由人在全局会话视图（导航「会话」`components/SessionOverviewPage.tsx`）手动中断（##308 已落地，见 `app.find#sessions`）。可见性 = `LocalAgentManager.watchers`（chat 流消费端 + `opsFeed` 订阅**都算**，UI 只走后者）→ `agent.local.running` 的 `subscribers`。⚠️ 摘除靠 **service 层听 RPC 注入的 `signal`**（`withCleanup` 第三参）：断开时 RPC 层调的是 `abort` + `void g.return()`，而 `return()` **排在悬挂的 `next()` 之后**（生成器卡在 `await inner.next()`）⇒ 无事件期间断开根本走不到 cleanup，订阅要等**下一条事件**才释放（`subscribers` 虚高）。**订阅类 serverStream 必须把 `signal` 一路传到 `withCleanup`**（`agent.local.chat` 的 `run.subs` / `ops-feed.subscribe` / `file-watcher.subscribe` **三处已接**，review1-R1 补齐 chat 那条），新增订阅源照办。重连追平走 ops 水位（读侧 ##307）'
+    id: app.rule.turn-lifecycle
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.rule#ui-notice:
+    value: '**所有用户可见提示（toast / 常驻条 / 内联状态条）必须能回答三问**：谁发的（机制名 + 代码位置）/ 为什么**此刻**发（带具体数值或时刻）/ 怎么消；一级只说一句话，二段进 `[详情]` 面板（`components/NoticeDetail.tsx`）。**只给结论不给机制的成功类提示一律不许上屏**（要么带详情，要么不弹）。新代码用 `addToast`（空 `source`/`reason`/`detail` 直接抛错），债务只许走 `addToastLegacy` 且条数不得增加（`tests/core/notice-contract.test.ts` 按文件钉死）。见 `app.find#notice`'
+    id: app.rule.ui-notice
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.rule#user-run-merge:
+    value: '**「provider 拒连续同角色」是未验证假设，已于 2026-10-16 实测推翻**：`goat`（`api.commandcode.ai`）与 `opencode-go`（`opencode.ai/inference/go`）对 `[{user:A},{user:B}]` 及 content **parts** 形态**均 HTTP 200** ⇒ `local-agent.ts::normalizeUserRuns` 的合并是**收敛语义**（一份信封只留一条 user），**不是** provider 要求；真遇到拒的 provider，那里是唯一改动点（探针 ##310 的 `gen/probe/role-run-probe.sh`）'
+    id: app.rule.user-run-merge
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.rule#wire-envelope:
+    value: 投给模型的**一条消息 = 一份 YAML 信封**：一切**自动生成**的段（`summary:` / `history:` / `runtime:` / `runtimeDiff:`）**各占一个顶层键**，**禁止**混进 `user.message`（混进去 = 自动生成的元数据伪装成用户原话；tasks/5 实测模型为此多烧 3 次 bash / 5.6 万 prompt token）。契约与派生唯一处 `src/shared/context/envelope.ts` + `README.md` 的「信封」行
+    id: app.rule.wire-envelope
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.tool#cdp:
+    value: 取 CDP 地址：`cat "$DIY_HOME/electron_user_data/DevToolsActivePort"`（**读后校验**，见 `app.dev#cdp-port`）；`./sha.sh lab` 启动日志会打印完整 `attach` 命令
+    id: app.tool.cdp
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.tool#inspect:
+    value: '`./diy.sh ui inspect` 遍历 renderer DOM 生成无障碍树，快速看 UI 全貌'
+    id: app.tool.inspect
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.tool#isolate:
+    value: 起隔离实例：全新 `DIY_HOME`（`mktemp -d`）+ `export HOME=$H`；演示数据落 `/tmp`，不写用户 `~/.diy`
+    id: app.tool.isolate
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.tool#log:
+    value: 应用日志 `$DIY_HOME/log/`：`main.log` / `cli.log` / `serve.log` / `dev.jsonl`（`grep watch-stall-suspect` 判 watcher 卡死）/ `agent-bash.jsonl`（agent 命令审计，write-ahead）
+    id: app.tool.log
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.tool#models-sync:
+    value: 'models.dev 快照**两层、别看错层**：① **CI 层**（##107）`./sha.sh models-sync [源]` 重下 → 仓库 `src/main/data/models.dev.json`（上游产物整份覆盖，要重新构建才生效）；② **应用内层**（##385）`diy llmConfig syncModels`（RPC 同名）→ 写 `$DIY_HOME/data/models.dev.json` 并**写后 invalidate 进程内目录**（当场生效、无需重启）；启动后台自动跑一次，24h 定时**待 ##408 挂上**（别自己造第二套调度器）。演算全在 `src/main/core/models-sync.ts`：`refreshModelsOnce()` = 一次 tick 的干净边界，返回 `{ok,changed,providers,models,added*,removed*,error}`'
+    id: app.tool.models-sync
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.tool#persona:
+    value: '`diy agent persona list|set|setDefault`；模型/参数属**人物**，任务只持引用 id'
+    id: app.tool.persona
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.tool#smoke:
+    value: '`node scripts/ui-smoke/task-detail-smoke.mjs`（任务详情三块 + 拖宽落盘）· `python3 scripts/ui-smoke/dnd-smoke.py`（⚠️ 它的收尾用按名匹配的强杀，**会连正在用的 diy 一起收掉** —— 跑之前先改掉那段；且本机需 `pip install playwright`）'
+    id: app.tool.smoke
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.tool#steer:
+    value: '`diy chat --mode next-step|next-turn` 入队插话；`steer` 组只做队列管理（list/cancel/toggleMode/reorder）'
+    id: app.tool.steer
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.tool#traffic:
+    value: '`diy traffic snapshot|clear|cleanLogs|query|logFiles|readLog|revealLog|setFullCapture|setCap|events`（worktree 里 `./diy.sh traffic …`；清单真源 `diy traffic --help`）；日志落 `$DIY_HOME/log/network/`（**等同 cache，可随时清理**）'
+    id: app.tool.traffic
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.tool#ui-priority:
+    value: '**UI 类改动的打法：lab 优先、叫醒优先、CDP 末位**。顺序是 ① `./sha.sh lab` 起来自己点一遍（本 worktree 数据根，非生产）② 判据能写成纯函数的部分补单测（##329 R1 教训：UI 语义抽纯函数）③ 只有「真实事件链 / 手势」这类 handler 层测不出的，才上 Playwright/CDP，且**只跑 1~2 条**。**不要**为一行样式跑几十轮 CDP 逐像素猜 —— UI 的可观测性有硬上限（动画、时序、观感），越猜越慢。见 `dev#wake-user`（`~/AGENTS.md`）。'
+    id: app.tool.ui-priority
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.tool#ui-verify:
+    value: '**两层互补**：`diy.ui.*`（handler 层，CLI 经 RPC 直调 renderer 共享函数，测行为/契约，稳定但**测不到真实 DOM 事件链的 bug**）vs **Playwright/CDP 真实事件层**（`mouse.move/down/up` 驱动真实 renderer，抓 gesture bug —— UI 交互改动后必跑）'
+    id: app.tool.ui-verify
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.tool#verify:
+    value: 本包验证入口：`./sha.sh test`（全仓）· `npx vitest run tests/core/…`（单测）；`./sha.sh check` 的口径见仓根 `AGENTS.md::tool.check`
+    id: app.tool.verify
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.tool#wake-gap:
+    value: '**agent 主动叫醒用户：机制尚未闭环（2026-10-21 核实）**。术语按 `~/AGENTS.md::level.notice`（N0 强干预 / N1 toast / N2 顶栏图标 / N3 极小点）。现有三级提示真源 `src/shared/session-alerts.ts` **全是旁观者推断**（跑完 / 停滞 / 异常 / 等回复），agent 没有「主动发起一条提示」的出口（`notice.*` RPC 只有模型不可用）⇒ N0 / N1 / N2 都发不出去。当前唯一可行喊法：**本轮最后一条消息写清三句话 + 结束本轮**（只触发「跑完了」）。要 N0 横幅 / N1 toast / N2 角标 + 跳会话，需另立项（含 `level#inbox` 的通知信箱），勿在任务里绕路造。'
+    id: app.tool.wake-gap
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.traffic#traffic-chunk:
+    value: undici 事件的 `chunk` 是**底层复用/回收的字节** → 落盘前必须 `Buffer.from(chunk)` 复制；归属靠请求头 `x-opencode-session`（`local-agent.ts` 每处真发都带，按 task 稳定），**新增 LLM 发送入口若漏带该头，流量页就认不出任务归属**（退化成按 origin 兜底、或记为「其它」）
+    id: app.traffic.traffic-chunk
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.traffic#traffic-clean:
+    value: 清理（##324）**单位是整个按天文件**，且**今天正在写入的那个一律不删**（Writer 持着 fd，unlink 后后续记录写进已删 inode）；删除**不可恢复**（不进回收站）→ 界面必须走 `ConfirmDialog` 二次确认
+    id: app.traffic.traffic-clean
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.traffic#traffic-scope:
+    value: 流量观测**只覆盖 undici**（Electron 主进程 / serve 的 `fetch` 与 ai-sdk 发出的请求）：renderer 是 Chromium 栈（要看需 CDP）、`net.fetch` / 子进程 / native binding **看不到** —— 「某条请求怎么没记下」先问它走的是不是这条路。订阅必须早于任何请求（`traffic.init()` 在 `src/main/index.ts` 与 `src/serve/index.ts`，另有 `noteRun` 惰性兜底）
+    id: app.traffic.traffic-scope
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.traffic#traffic-step:
+    value: 流量记录的**步归属**（`stepSeq` / `attemptInStep`，##409）由 `traffic.noteStep` 在 `prepareStep` 里**每步登记一次**（该步请求之前）→ 该步内 SDK 的重试自然收成一条重试链；探测 / 摘要 / 老记录没有步号（null）。**别把老字段 `attempt` 当步序或重试序号**——它是本 run 内的往返序号（跨步累计）。新增 LLM 发送入口若不经过 prepareStep，记录里就没有步号
+    id: app.traffic.traffic-step
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.ui#daisyui-drawer:
+    value: drawer 需渲染 `<input class="drawer-toggle">`，漏了侧栏 `visibility:hidden` 直接消失
+    id: app.ui.daisyui-drawer
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.ui#grid-fold:
+    value: '**收起 area 时被收起 track 的尺寸要交给邻居**（`shared/grid-layout.ts::resolveLayout` 的 `foldTracks`）。本轴还有弹性轨（fr）时剩余空间天然归它，不必动手；但**拖过线之后**两侧 track 都被写成 px（`layoutStore.setTrackPair` 的口径），此时只把 track 写 0 就是净丢那几百 px ⇒ 网格内容比容器窄、右侧一片死区（任务执行页表现为「左栏任务详情最小化后中栏不铺满」，##348 ⑤）。交接方向按「内容区在左上」：列向右找、行向上找。纯函数回归 `tests/core/grid-layout.test.ts`'
+    id: app.ui.grid-fold
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.ui#hl-token:
+    value: CodeMirror 默认**只给 token 挂 class、不上色**：必须配 `HighlightStyle` + `syntaxHighlighting()`。`&light`/`&dark` **只能**用在 `EditorView.baseTheme`，写在 `EditorView.theme` 里是**模块加载期**抛错 → 整个 renderer 白屏
+    id: app.ui.hl-token
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.ui#localstorage:
+    value: '**禁止把草稿写 localStorage**（属有损数据，且 serve 与 Electron 各持一份）：草稿 + 插话队列落任务目录 `.diy/drafts.yaml`，会话日志落 `$DIY_HOME/local/<uri 路径>/<key>/`（##379 分层）'
+    id: app.ui.localstorage
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.ui#proc-status:
+    value: 工具/思考行的**状态灯（✓/✗/⊘）与「失败块恒展开」的判据在 `src/renderer_solid/lib/chat-fold.ts`**（`procStatusOf` / `procOpenOf` / `isFailedTool` / `isInterruptedToolBlock`，有单测）；组件 `LocalChatPage.tsx` 只把档位映成 class。**别把判据写回组件私有函数** —— 那样测试全绿而用户看不到 ✗（`status` 是 diy 私有属性，改它 UI 与「用户看得见什么」一起变，##329 的原始形态就是「数据对了、界面没变」）。`live` 由调用方传 main 真值（组件读 store），lib 不读 store
+    id: app.ui.proc-status
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.ui#solid-show:
+    value: Solid 组件函数体里的 `if (props.x) return A; return B;` **对 props 变化不响应**（函数体只执行一次）→ 用 `<Show when=… fallback=…>`。反之，`<Show>` 内组件在 `onCleanup` 里读 `props` 会抛 `Stale read from <Show>` 并中断更新 → 需"卸载前落盘"的副作用放面板级组件
+    id: app.ui.solid-show
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.ui#solid-ssr-test:
+    value: node 下 `solid-js` 解析到 **SSR 构建**（`createEffect` 是空实现、不追踪依赖）⇒ 响应式契约单测必须钉**客户端构建**（`vi.mock("solid-js", () => import("solid-js/dist/solid.js"))` + 类型垫片 `tests/types/solid-client.ts`，该 dist 无 types 映射、而 `check-no-emit.sh` 禁 `tests/**` 下的 `.d.ts`）；范式 `tests/core/session-store.test.ts`（真 store + 假 transport 从订阅真路径喂帧，断言**订阅是否还活着**而非 DOM —— "先 apply 后炸"只看 DOM 看不出来）
+    id: app.ui.solid-ssr-test
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  app.ui#theme:
+    value: 主题**不得回落 `prefers-color-scheme`**：Playwright 的 `colorScheme` 默认 `"light"`，attach CDP 会覆盖系统外观把界面刷白
+    id: app.ui.theme
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
   env.diy-env#values:
     value: production | development | test（无法识别的值一律按 production：宁可少开能力，不可误开）
     review: accepted
