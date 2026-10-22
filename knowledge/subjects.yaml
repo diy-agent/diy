@@ -88,6 +88,18 @@ subjects:
   find:
     description: 去哪找
     aliases: []
+  flow.define:
+    description: 工作流定义 DSL 的结构约束：节点/边/泳道/打回/边界
+  flow.domain:
+    description: 领域态一等（##333）：FlowState 真源、advance 正路、落盘读回、审计适配
+  flow.exec:
+    description: 转移执行器：guard 求值/选边/宣布/终态/次序铁律/报错不降级
+  flow.find:
+    description: diy-flow 包内定位：哪个文件管什么（工作流内核 @diy/flow）
+  flow.params:
+    description: 参数层（L2）：节点上声明、类型/取值/插值/快照导出
+  flow.plugin:
+    description: 插件槽与注册表：五个槽位、组合期校验、notify 旁路
   kb.journal:
     description: 任务日志 journal.jsonl 的写作约束（author / anchor / 只追加）
   kb.layer:
