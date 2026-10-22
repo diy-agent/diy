@@ -178,6 +178,10 @@ export const AssembleGlobalsSchema = z.object({
         .record(z.string(), FactsCellSchema)
         .optional()
         .describe("**任务级库**的已解析值（claim → 值）。本任务自己的结论，优先级最高"),
+      global: z
+        .record(z.string(), FactsCellSchema)
+        .optional()
+        .describe("**设备级库**（`~/.diy/knowledge/`）的已解析值（claim → 值）。跨项目的用户规则，优先级高于项目库"),
       project: z
         .record(z.string(), FactsCellSchema)
         .optional()
@@ -213,6 +217,7 @@ export const AssembleGlobalsSchema = z.object({
             subject: z.string().describe("主题（`diy facts get <主题>#<方面>` 的前半）"),
             desc: z.string().describe("一句话说清这个对象（直接取自 subject 词表的 description）"),
             claims: z.number().describe("该主题下的条目数"),
+            ns: z.string().describe("在哪個库：project（仓库 knowledge/）或 global（设备级）—— 查的时候带 `--in`"),
           }),
         )
         .describe("可查主题索引（按主题名排序）"),

@@ -231,12 +231,23 @@ describe("--in task:<uri>（任务级库）", () => {
         expect(t.subjectsFallback).toBe(path.join(kb, "subjects.yaml"));
     });
 
-    it("缺省 / global / project 都指向仓库库（任务库不抢缺省）", () => {
-        for (const spec of [undefined, "global", "project"]) {
+    it("缺省 / project 指向仓库库（任务库不抢缺省）", () => {
+        for (const spec of [undefined, "project"]) {
             const t = store.resolveFactsTarget(spec === undefined ? {} : { in: spec });
             expect(t.dir).toBe(kb);
             expect(t.allowMissing).toBe(false);
         }
+    });
+
+    it("global 指向**设备级库** <DIY_HOME>/knowledge，不是仓库库", () => {
+        // 原先 global 与 project 都落到仓库库 —— 那让"设备级事实"无处可去（##5 需求 3 的实质）。
+        const t = store.resolveFactsTarget({ in: "global" });
+        expect(t.dir).toBe(path.join(home, "knowledge"));
+        expect(t.allowMissing).toBe(true);
+        // 词表仍继承仓库（同一套 subject 命名），证据按 ~ 解析
+        expect(t.subjectsFallback).toBe(path.join(kb, "subjects.yaml"));
+        // 证据解析根 = **真家目录**（不是 dirname(DIY_HOME)：lab 的 DIY_HOME 在 build/ 下）
+        expect(t.root).toBe(os.homedir());
     });
 
     it("首次 submit 建库：目录不存在也能写，且继承的 subject 通得过 G3", () => {

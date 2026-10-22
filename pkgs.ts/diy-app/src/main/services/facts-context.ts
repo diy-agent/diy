@@ -28,6 +28,8 @@ export interface FactsContextValue {
     algorithm: ProjectionAlgorithm;
     env: string;
     task?: Record<string, FactsContextCell>;
+    /** 设备级库（`~/.diy/knowledge/`）：跨项目的用户规则 */
+    global?: Record<string, FactsContextCell>;
     project?: Record<string, FactsContextCell>;
     text?: string;
     omitted: number;
@@ -108,6 +110,12 @@ export function buildFactsContext(opts: BuildFactsContextOptions = {}): FactsCon
         });
         if (hit) loaded.push(hit);
     }
+    // 设备级库排在项目库之前：预算按这个顺序分配，而"用户的硬规则"比"仓库细节"更该保住
+    const globalKb = path.join(home, "knowledge");
+    const globalHit = loadQuietly(globalKb, { kind: "global" }, {
+        ...(repoDir === null ? {} : { subjectsFallback: path.join(repoDir, "subjects.yaml"), root: path.dirname(repoDir) }),
+    });
+    if (globalHit) loaded.push(globalHit);
     if (repoDir !== null) {
         const hit = loadQuietly(repoDir, { kind: "project" }, {});
         if (hit) loaded.push(hit);
@@ -161,6 +169,7 @@ export function buildFactsContext(opts: BuildFactsContextOptions = {}): FactsCon
         }
         if (Object.keys(cells).length === 0) continue;
         if (l.ns.kind === "task") out.task = cells;
+        else if (l.ns.kind === "global") out.global = cells;
         else if (l.ns.kind === "project") out.project = cells;
     }
     return out;
@@ -171,6 +180,12 @@ export interface KbIndexEntry {
     subject: string;
     desc: string;
     claims: number;
+    /**
+     * 该主题在**哪个库**（查的时候要带 `--in`，否则落空）。
+     * 为什么不合并同名主题：同一 subject 在项目库与设备库里可以各写各的（局部覆盖全局），
+     * 合并成一条会让 agent 以为只有一个来源，查错库还以为"库里没有"。
+     */
+    ns: "project" | "global";
 }
 
 export interface KbIndex {
@@ -191,17 +206,32 @@ export interface KbIndex {
  *
  * 读不到库 → `null`（缺席，与 `buildFactsContext` 同一纪律：读失败不炸整轮）。
  */
-export function buildKbIndex(): KbIndex | null {
+export function buildKbIndex(opts: { home?: string } = {}): KbIndex | null {
+    const home = opts.home ?? diyHome();
     const repoDir = repoDirQuietly();
-    if (repoDir === null) return null;
-    const hit = loadQuietly(repoDir, { kind: "project" }, {});
-    if (!hit) return null;
-    const counts = new Map<string, number>();
-    for (const f of hit.repo.facts) counts.set(f.subject, (counts.get(f.subject) ?? 0) + 1);
-    const entries = hit.repo.subjects
-        .filter((s) => (s.description ?? "") !== "")
-        .map((s) => ({ subject: s.key, desc: s.description as string, claims: counts.get(s.key) ?? 0 }))
-        .sort((a, b) => a.subject.localeCompare(b.subject));
+    const loaded: Loaded[] = [];
+    // 设备级库先读（与投影同序：用户的硬规则优先保住）
+    const globalHit = loadQuietly(path.join(home, "knowledge"), { kind: "global" }, {});
+    if (globalHit) loaded.push(globalHit);
+    if (repoDir !== null) {
+        const hit = loadQuietly(repoDir, { kind: "project" }, {});
+        if (hit) loaded.push(hit);
+    }
+    if (loaded.length === 0) return null;
+    const entries: KbIndexEntry[] = [];
+    let total = 0;
+    for (const l of loaded) {
+        const counts = new Map<string, number>();
+        for (const f of l.repo.facts) counts.set(f.subject, (counts.get(f.subject) ?? 0) + 1);
+        total += l.repo.facts.length;
+        const ns = l.ns.kind === "global" ? "global" : "project";
+        for (const sub of l.repo.subjects) {
+            if ((sub.description ?? "") === "") continue;
+            entries.push({ subject: sub.key, desc: sub.description as string, claims: counts.get(sub.key) ?? 0, ns });
+        }
+    }
     if (entries.length === 0) return null;
-    return { entries, claims: hit.repo.facts.length };
+    // 主题名优先、同名的 global 在后（覆盖关系：项目级针对本项目，先看到它）
+    entries.sort((a, b) => a.subject.localeCompare(b.subject) || (a.ns === "global" ? 1 : 0) - (b.ns === "global" ? 1 : 0));
+    return { entries, claims: total };
 }

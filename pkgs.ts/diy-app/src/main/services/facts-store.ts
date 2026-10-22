@@ -11,6 +11,7 @@
  * 而"CLI 能写、CI 却红"正是本次要消除的病（见 scripts/facts-index.mts 头注）。
  */
 import { existsSync, readFileSync, readdirSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { affected, buildIndex, resolveClaim, validateFacts, type Env, type Fact, type Ns, type Ref, type Scope } from "@diy/facts";
 import { checkRepo, loadRepo, submit, project, type SubjectDef, type SubmitReport } from "@diy/facts/node";
@@ -160,8 +161,29 @@ const TASK_IN = /^task:(projects\/\d+\/tasks\/\d+)$/;
  * 子任务开发），"当前"根本无从判断 —— 写错库比多敲十次 uri 危险得多。
  */
 export function resolveFactsTarget(opts: { dir?: string; in?: string } = {}): FactsTarget {
-    const spec = opts.in?.trim();
-    if (spec !== undefined && spec !== "" && spec !== "global" && spec !== "project") {
+    const spec = opts.in?.trim() ?? "";
+    // 设备级库（`~/.diy/knowledge/`）：讲"这台机器 / 这个用户"的事实，跨项目可用
+    // （`~/AGENTS.md` 的全局规则归它）。与仓库库分开是因为**归属不同**：全局规则换到
+    // 另一个项目里也该查得到 —— 塞进某项目的 `knowledge/` 就是 scope 错位。
+    if (spec === "global") {
+        const out: FactsTarget = { dir: path.join(diyHome(), "knowledge"), allowMissing: true };
+        // 词表仍优先继承仓库（同一套 subject 命名），但**仓库缺失时不阻塞**：设备库
+        // 可能在任何目录下被读（agent 的 cwd 不一定是仓库）。
+        try {
+            const repoKb = resolveFactsDir(undefined);
+            return {
+                ...out,
+                subjectsFallback: path.join(repoKb, "subjects.yaml"),
+                // 证据按**真家目录**解析（不是 dirname(DIY_HOME)）：全局规则引用的是
+                // `~/AGENTS.md` 这类位置，而 lab 的 DIY_HOME 在 build/lab/home 下，
+                // dirname 会算到 build/lab —— 生产里两者恰好相同，所以只有 lab 会暴露。
+                root: os.homedir(),
+            };
+        } catch {
+            return out;
+        }
+    }
+    if (spec !== "" && spec !== "project") {
         const m = TASK_IN.exec(spec);
         if (m === null) {
             throw new FactsStoreError(
@@ -212,14 +234,15 @@ export function status(opts: { dir?: string; in?: string } = {}) {
     if (target.allowMissing && !existsSync(path.join(kb, "facts"))) {
         throw new FactsStoreError(
             "agent/facts-repo-missing",
-            `任务级库还没建：${kb} —— 第一次写入自动创建，先跑 \`diy facts submit --in ${opts.in ?? "task:<uri>"}\``,
+            `库还没建：${kb} —— 第一次写入自动创建，先跑 \`diy facts submit --in ${opts.in ?? "task:<uri>"}\``,
         );
     }
     const { repo, problems } = checkRepo(kb, targetOpts(target));
     const claims = new Set(repo.facts.map((f) => `${f.subject}#${f.aspect}`));
     return {
         dir: kb,
-        in: opts.in ?? "global",
+        // 缺省读仓库库 ⇒ 回报 project（`global` 是另一份真源，别混）
+        in: opts.in ?? "project",
         facts: repo.facts.length,
         claims: claims.size,
         subjects: new Set(repo.facts.map((f) => f.subject)).size,
@@ -556,7 +579,7 @@ export function projectFacts(
     if (target.allowMissing && !existsSync(path.join(kb, "facts"))) {
         throw new FactsStoreError(
             "agent/facts-repo-missing",
-            `任务级库还没建：${kb} —— 第一次写入自动创建，先跑 \`diy facts submit --in ${opts.in ?? "task:<uri>"}\``,
+            `库还没建：${kb} —— 第一次写入自动创建，先跑 \`diy facts submit --in ${opts.in ?? "task:<uri>"}\``,
         );
     }
     const { repo } = checkRepo(kb, targetOpts(target));
