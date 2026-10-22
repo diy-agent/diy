@@ -492,6 +492,15 @@ facts:
       source: user
       at: ba99d638:pkgs.ts/diy-app/AGENTS.md:10
       verifiedAt: '2026-10-22'
+  app.find#interrupted-cause:
+    value: '**「本轮未完成」要能说出原因（##416）**：纯函数 `src/shared/interrupted-cause.ts`（`classifyInterruptedCause(since, until, ev)` 按窗口取**最新**一条可命名证据：`app-exit:<kind>` / `crash:minidump` → `agent/app-restart`|`agent/app-crash`；`codeOfInterruptedWhy` 是**唯一**派生闸门，认不出返 null）· 读盘 `src/main/services/interrupted-cause.ts::readCauseEvidence`（`log/app-exit.jsonl` + `log/crashes/**/*.dmp` 的 mtime，**永不抛**）· 写入 `appendAppExit`（格式唯一一份，`crash-reporting` 与本包 `scripts/electron-dev.mts` 共用；**watch 重启由杀的一方亲手记 `electron-dev-restart`**，别指望被杀进程写完）· 消费 `local-agent.ts::healResidualOps`（补 closer 时填 `endReason.data.why/evidence`，同判定走 `reportError{where:"agent/turn-interrupted"}`）。铁律：**能命名才命名，查不到保持 unknown**（SIGKILL / 断电说不出口）。'
+    id: app.find.interrupted-cause
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: 2901cb27:pkgs.ts/diy-app/src/shared/interrupted-cause.ts:1
+      verifiedAt: '2026-10-22'
   app.find#journal:
     value: 任务日志（##404）：契约 `src/shared/journal.ts`（五种 kind 各答一个问题）· 存储 `src/main/services/journal-store.ts`（`<taskDir>/journal.jsonl`，**一行一条 JSON 只追加**，读时容忍坏行）· CLI `diy journal add|find|stats|import`。三层划分判据见 `~/git/diy/AGENTS.md::rule.task-three-layers` —— 别往 body 里堆处理记录
     id: app.find.journal
