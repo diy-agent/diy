@@ -15,8 +15,10 @@ import {
     areaCss,
     colLineSegments,
     findArea,
+    parseTrackPx,
     resolveLayout,
     rowLineSegments,
+    trackCss,
     type Layout,
 } from "../../shared/grid-layout";
 import { findPage, groupViewsByArea, planPageViews, type Binding } from "../../shared/view-registry";
@@ -27,21 +29,6 @@ import { IconExpand, IconCompress, IconCollapse } from "./icons";
 
 /** 拖线时两侧 track 的最小 px（防止把某块拖没，用户就再也抓不到线了） */
 const MIN_TRACK = 48;
-
-/**
- * track → CSS 尺寸：**fr 必须带 `minmax(0, …)` 下界**。
- *
- * CSS 里裸 `1fr` 等价 `minmax(auto, 1fr)`，下界是内容的 min-content —— 某个 view 里放一行
- * 不可折的长内容（宽表格 / 长代码 / 单行 tool 输出），整列就被撑到内容宽，合计超出容器，
- * 右侧（发送按钮就在那儿）被推出可视区，而容器 `overflow-hidden` 让人以为页面坏了
- * （2026-10-22 实测：容器 984px，列算出 355 + 1589 = 1944）。
- * area 自己已有 `min-w-0`，下界交给它（内部滚动 / 换行）才是正确归属。
- *
- * ⚠️ `shared/grid-layout.ts::trackCss` 是同一件事的另一份（main 侧也用），
- * 本轮只修 renderer 侧（改 shared 会触发主进程重建，见 task body 的探针纪律），应择机归一。
- */
-const trackCssBounded = (t: { unit: string; value: number }): string =>
-    t.unit === "px" ? `${t.value}px` : `minmax(0, ${t.value}fr)`;
 
 export function ViewGrid(props: {
     pageId: string;
@@ -99,10 +86,7 @@ export function ViewGrid(props: {
         const el = gridRef;
         if (!el) return;
         const cs = getComputedStyle(el);
-        const resolved = (axis === "col" ? cs.gridTemplateColumns : cs.gridTemplateRows)
-            .split(" ")
-            .map((x) => parseFloat(x))
-            .filter((x) => Number.isFinite(x));
+        const resolved = parseTrackPx(axis === "col" ? cs.gridTemplateColumns : cs.gridTemplateRows);
         if (resolved.length !== (axis === "col" ? props.layout.cols.length : props.layout.rows.length)) return;
 
         const startPos = axis === "col" ? e.clientX : e.clientY;
@@ -117,7 +101,7 @@ export function ViewGrid(props: {
             // 两侧都不许小于下限：撞到下限时把剩余量全给另一侧
             na = Math.max(MIN_TRACK, Math.min(total - MIN_TRACK, na));
             const nb = total - na;
-            layoutStore.setTrackPair(props.pageId, axis, lineIndex, [na, nb], base);
+            layoutStore.setTrackPair(props.pageId, axis, lineIndex, [na, nb], base, resolved);
         };
         const up = () => {
             window.removeEventListener("mousemove", move);
@@ -205,8 +189,8 @@ export function ViewGrid(props: {
                 ref={(el) => (gridRef = el)}
                 class="grid h-full w-full overflow-hidden relative"
                 style={{
-                    "grid-template-columns": layout().cols.map(trackCssBounded).join(" "),
-                    "grid-template-rows": layout().rows.map(trackCssBounded).join(" "),
+                    "grid-template-columns": layout().cols.map(trackCss).join(" "),
+                    "grid-template-rows": layout().rows.map(trackCss).join(" "),
                 }}
             >
                 <For each={groups()}>
