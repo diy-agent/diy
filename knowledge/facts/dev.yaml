@@ -67,7 +67,7 @@ facts:
       probe: npx tsx build/lab/home/projects/1/tasks/5/gen/probe/measure-context.mts
       verifiedAt: '2026-10-22'
   dev.context#query-cost:
-    value: '**搬走的账要按收支算，不按字节算**：搬走一条 X 字节，每轮省 X；但要查它一次 ≈ 一次额外完整请求 = 全量重发前缀（当前 41 KB 量级：system 26.7 + help 8.1 + facts 4.0 + kb 索引 2.2）。回本需 41000/X 轮 —— 200 B 的条目 205 轮、2 KB 的 20 轮、17 KB 整篇 2.4 轮。**推论：小条目不该搬**（任务动辄 100+ 轮，查一次就净亏）；只有大块低频参考才值得。减负优先序 = 删 > 压缩 > 搬'
+    value: '**搬走的账按收支算，不按字节线性相除**：搬走 1 KB 每轮省 1 KB；但要查它一次 ≈ 一次额外请求的前缀重发（`get` 全量 41 KB 量级：system 26.7 + help 8.1 + facts 4.0 + kb 索引 2.2；`brief` 单位 KB 成本低一个数量级）⇒ **回本 ≈ 20 轮 / KB**（原来按 41000/X 算出的「200 B = 205 轮」是把查询成本全押在 41 KB 全量重发上，brief 已把单次成本压掉一个量级）。**推论：<1 KB 的小条目搬走仍不划算**；只有大块低频参考才值得。减负优先序 = 删 > 压缩 > 搬'
     id: dev.context-query-cost
     review: accepted
     lifecycle: active

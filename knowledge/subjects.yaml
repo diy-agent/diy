@@ -113,6 +113,12 @@ subjects:
     description: 未指定模型时的缺省选择规则
     aliases:
       - 缺省模型
+  plan.acp:
+    description: ACP（Agent Client Protocol）v1 协议事实与接入要点
+  plan.context-placement:
+    description: 提示词落点研究：缓存前缀 / 三通道 / 易变内容挪出 system 的验收需求
+  plan.event-protocol:
+    description: Agent 事件记录协议（设计已收敛未实现）：七元结构 / type+data / Context Tree / 回放
   proj:
     description: 本机项目清单与定位
   ref:
