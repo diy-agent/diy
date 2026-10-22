@@ -183,25 +183,6 @@ check() {
   #（实现见 scripts/check-specs.mts；**总表缺失 = skip + 提示、不算失败**，跨机器 / CI 没有家目录那份文件）
   run npx tsx scripts/check-specs.mts
 }
-# 原生编译器旁路（##413 评估，非替代）：与 check() 同一套步骤，只把两处 tsc 换成 tsgo
-#（= @typescript/native-preview 的 Go 原生实现）。全量 ~7s vs tsc 45~128s，供本地快进。
-# 两条红线（详见任务 ##413 评估文档）：
-#   1. tsbuildinfo **两家不通用**（version 字段 = 编译器版本）⇒ 与 check() 交替跑会互相判失效、
-#      每次切换各退化成全量（tsc 侧 ~33~45s，tsgo 侧 ~8s）。只在「本轮不想等 tsc」时用它，别交替。
-#   2. 结论暂为「并存双轨」，CI / 收工仍跑 check()；本函数与原 check() 的护栏清单需手工保持同步。
-check:native() {
-  ensure-sync
-  run npx tsgo -b tsconfig.all.json --noEmit
-  run npx oxlint pkgs.ts/
-  run npx tsgo --noEmit -p pkgs.ts/diy-rpc/tsconfig.browser.json
-  # 以下与 check() 的护栏完全一致（刻意复制而非抽公共函数：本旁路是评估性改动，不改 check() 本体）
-  run bash scripts/check-no-emit.sh
-  run bash scripts/check-exec-bit.sh
-  run bash scripts/check-atomic-write.sh
-  run bash scripts/check-no-vi-mock.sh
-  run bash scripts/check-error-code.sh
-  run npx tsx scripts/check-specs.mts
-}
 # 全仓唯一自动修复入口：格式化 + lint 可修项，能修的全修
 fix() {
   run npx oxfmt --write pkgs.ts/

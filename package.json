@@ -5,11 +5,10 @@
     "pkgs.ts/*"
   ],
   "devDependencies": {
-    "@typescript/native-preview": "^7.0.0-dev.20260707.2",
     "oxfmt": "^0.57.0",
     "oxlint": "^1.72.0",
     "playwright-core": "^1.63.0",
-    "typescript": "^6.0.3",
+    "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   },
   "allowScripts": {
