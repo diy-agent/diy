@@ -141,36 +141,32 @@ export function buildFactsContext(opts: BuildFactsContextOptions = {}): FactsCon
         };
     }
 
-    // ── structured：按库分组，claim 作 key ──
+    // ── structured：一次解析全部库、再按 ns 分桶 ──
+    //
+    // **必须一次传全部 entries**：`projectItems` 跨库去重（同 claim 取 ns 高层），
+    // 每个库各自调一次就退化成"各出一条"—— 实测 16 条同 claim 在两库重复（`level` 6 /
+    // `tool` 5 / `ref` 5），4 KB 预算里白占一倍。
     const out: FactsContextValue = { algorithm, env, omitted: 0, problems: [] };
-    // 预算按"先任务后项目"分配：条目异常多时先保住任务库（本任务的结论最要紧）
+    const allEntries: ProjectEntry[] = loaded.flatMap((l) => l.repo.facts.map((fact) => ({ ns: l.ns, fact })));
+    const parsed = projectItems({ entries: allEntries, ctx });
+    out.problems.push(...parsed.problems.map((p) => ({ gid: p.gid, code: p.code })));
+    void parsed.skipped; // 当前 scope 下不适用（正常，不是裁掉）
+
+    // 预算按 items 顺序分配：`projectItems` 已按 ns 优先级排序（task > project > global），
+    // 故"本任务的结论"先保住
     let remaining = maxBytes;
-    for (const l of loaded) {
-        const entries: ProjectEntry[] = l.repo.facts.map((fact) => ({ ns: l.ns, fact }));
-        const { items, skipped, problems } = projectItems({ entries, ctx });
-        out.problems.push(...problems.map((p) => ({ gid: p.gid, code: p.code })));
-        // `skipped` = 当前 scope 下不适用（正常，不是裁掉），不计入 omitted
-        void skipped;
-        const cells: Record<string, FactsContextCell> = {};
-        for (const item of items) {
-            const key = algorithm === "flat-gid" ? item.gid : item.claim;
-            const cell: FactsContextCell = {
-                value: item.value,
-                resolvedBy: item.resolvedBy,
-                variants: item.variants,
-            };
-            const size = Buffer.byteLength(`${key}: ${JSON.stringify(cell)}\n`, "utf8");
-            if (size > remaining) {
-                out.omitted += 1;
-                continue;
-            }
-            remaining -= size;
-            cells[key] = cell;
+    for (const item of parsed.items) {
+        const key = algorithm === "flat-gid" ? item.gid : item.claim;
+        const cell: FactsContextCell = { value: item.value, resolvedBy: item.resolvedBy, variants: item.variants };
+        const size = Buffer.byteLength(`${key}: ${JSON.stringify(cell)}\n`, "utf8");
+        if (size > remaining) {
+            out.omitted += 1;
+            continue;
         }
-        if (Object.keys(cells).length === 0) continue;
-        if (l.ns.kind === "task") out.task = cells;
-        else if (l.ns.kind === "global") out.global = cells;
-        else if (l.ns.kind === "project") out.project = cells;
+        remaining -= size;
+        const kind = item.ns.kind;
+        const bucket = kind === "task" ? (out.task ??= {}) : kind === "global" ? (out.global ??= {}) : (out.project ??= {});
+        bucket[key] = cell;
     }
     return out;
 }
@@ -181,11 +177,12 @@ export interface KbIndexEntry {
     desc: string;
     claims: number;
     /**
-     * 该主题在**哪个库**（查的时候要带 `--in`，否则落空）。
-     * 为什么不合并同名主题：同一 subject 在项目库与设备库里可以各写各的（局部覆盖全局），
-     * 合并成一条会让 agent 以为只有一个来源，查错库还以为"库里没有"。
+     * 该主题在**哪些库**（查的时候要带 `--in`，否则落空）。
+     * 同一 subject 在项目库与设备库里可以各写各的（局部覆盖全局），故是**数组**；
+     * 但**合并成一条**：各出一条会让 agent 以为是两个不同主题、还把 claims 数看错
+     * （实测 `tool` 两行，22 + 5，读起来像"库里有 44 条 tool"）。
      */
-    ns: "project" | "global";
+    ns: ("project" | "global")[];
 }
 
 export interface KbIndex {
@@ -218,20 +215,31 @@ export function buildKbIndex(opts: { home?: string } = {}): KbIndex | null {
         if (hit) loaded.push(hit);
     }
     if (loaded.length === 0) return null;
-    const entries: KbIndexEntry[] = [];
     let total = 0;
+    // 按 subject 聚：多库同名合并成一条（`ns` 记来源数组、`claims` 求和）
+    const merged = new Map<string, KbIndexEntry>();
     for (const l of loaded) {
         const counts = new Map<string, number>();
         for (const f of l.repo.facts) counts.set(f.subject, (counts.get(f.subject) ?? 0) + 1);
         total += l.repo.facts.length;
-        const ns = l.ns.kind === "global" ? "global" : "project";
+        const ns = l.ns.kind === "global" ? ("global" as const) : ("project" as const);
         for (const sub of l.repo.subjects) {
             if ((sub.description ?? "") === "") continue;
-            entries.push({ subject: sub.key, desc: sub.description as string, claims: counts.get(sub.key) ?? 0, ns });
+            const hit = merged.get(sub.key);
+            const claims = counts.get(sub.key) ?? 0;
+            if (hit === undefined) {
+                merged.set(sub.key, { subject: sub.key, desc: sub.description as string, claims, ns: [ns] });
+            } else {
+                // desc 取**先到的**那份：loaded 已按 ns 优先级排（global 先读），但项目库的
+                // 描述更具体 —— 故项目库那份覆盖（后到者赢，仅当它来自 project）
+                if (ns === "project") hit.desc = sub.description as string;
+                if (!hit.ns.includes(ns)) hit.ns.push(ns);
+                hit.claims += claims;
+            }
         }
     }
+    const entries = [...merged.values()];
     if (entries.length === 0) return null;
-    // 主题名优先、同名的 global 在后（覆盖关系：项目级针对本项目，先看到它）
-    entries.sort((a, b) => a.subject.localeCompare(b.subject) || (a.ns === "global" ? 1 : 0) - (b.ns === "global" ? 1 : 0));
+    entries.sort((a, b) => a.subject.localeCompare(b.subject));
     return { entries, claims: total };
 }

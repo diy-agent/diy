@@ -100,11 +100,32 @@ describe("投影形状", () => {
             ]),
         );
         const v = buildFactsContext({ home, taskUri: TASK, env: "production", algorithm: "flat-gid" })!;
+        // 同名 claim 跨库**只出高层一条**（task > project > global）——局部覆盖全局
         expect(Object.keys(v.task ?? {})).toEqual([`task:${TASK}:app.port#default`]);
-        expect(Object.keys(v.project ?? {})).toEqual(["project:app.port#default"]);
-        // 同名 claim 两库各有值 —— 任务库优先且**没有**互相覆盖
+        expect(v.project ?? {}).toEqual({});
         expect(v.task![`task:${TASK}:app.port#default`]!.value).toBe("0");
-        expect(v.project!["project:app.port#default"]!.value).toBe("18888");
+        expect(v.problems).toEqual([]);
+    });
+
+    it("同 claim 两库同值 ⇒ 只出一条（省预算，不重复展示）", () => {
+        // beforeEach 已在 project 库写了 app.port#default = 18888；这里在 global 库写同值
+        const globalKb = path.join(home, "knowledge");
+        write(path.join(globalKb, "subjects.yaml"), SUBJECTS);
+        write(
+            path.join(globalKb, "facts", "app.yaml"),
+            factsYaml([
+                "  app.port#default:",
+                "    value: '18888'",
+                "    scope: { env: production }",
+                "    review: accepted",
+                "    lifecycle: active",
+                "    evidence: { source: code, at: K.ts:2 }",
+            ]),
+        );
+        const v = buildFactsContext({ home, taskUri: "", env: "production", algorithm: "flat-gid" })!;
+        // project 胜过 global（ns 优先级），global 那条不重复出现
+        expect(Object.keys(v.project ?? {})).toEqual(["project:app.port#default"]);
+        expect(Object.keys(v.global ?? {})).toEqual([]);
     });
 
     it("md-list 算法 ⇒ 只出一段 text，不再给 task/project 两棵树", () => {

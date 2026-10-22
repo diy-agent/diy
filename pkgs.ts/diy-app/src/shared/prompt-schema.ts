@@ -217,7 +217,11 @@ export const AssembleGlobalsSchema = z.object({
             subject: z.string().describe("主题（`diy facts get <主题>#<方面>` 的前半）"),
             desc: z.string().describe("一句话说清这个对象（直接取自 subject 词表的 description）"),
             claims: z.number().describe("该主题下的条目数"),
-            ns: z.string().describe("在哪個库：project（仓库 knowledge/）或 global（设备级）—— 查的时候带 `--in`"),
+            ns: z
+              .array(z.string())
+              .describe(
+                "在哪些库：project（仓库 knowledge/）/ global（设备级）。两个都在 = 项目库覆盖设备库那份；查的时候带 `--in` 指定",
+              ),
           }),
         )
         .describe("可查主题索引（按主题名排序）"),

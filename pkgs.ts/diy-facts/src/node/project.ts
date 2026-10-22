@@ -77,17 +77,6 @@ export interface ProjectOutput {
     readonly problems: readonly ProjectProblem[];
 }
 
-function groupByNs(entries: readonly ProjectEntry[]): Map<string, { ns: Ns; facts: Fact[] }> {
-    const out = new Map<string, { ns: Ns; facts: Fact[] }>();
-    for (const e of entries) {
-        const k = formatNs(e.ns);
-        const g = out.get(k);
-        if (g === undefined) out.set(k, { ns: e.ns, facts: [e.fact] });
-        else g.facts.push(e.fact);
-    }
-    return out;
-}
-
 function isReadable(f: Fact, includeProposed: boolean): boolean {
     if (f.lifecycle !== 'active') return false;
     return f.review === 'accepted' || (includeProposed && f.review === 'proposed');
@@ -105,9 +94,28 @@ export function projectItems(input: ProjectInput): {
     const problems: ProjectProblem[] = [];
     const skipped: string[] = [];
 
-    for (const { ns, facts } of groupByNs(input.entries).values()) {
-        const claims = [...new Set(facts.filter((f) => isReadable(f, includeProposed)).map((f) => claimOf(f)))];
-        for (const claim of claims) {
+    // **跨库同 claim 只出一条**（ns 优先级 task > project > global）。
+    //
+    // 为什么不能按库各自 resolve：同一 claim 在两库各写一份是常态（设备级规则被项目库
+    // 抄过一份），各自 resolve 会让同一个值在投影里出现两次 —— 4 KB 预算白花一倍，
+    // 而值不等时 agent 会看到**两个都像真的**答案（实测 `tool#skill-dir` 两库两版措辞）。
+    // 处置：高层胜出、低层只在**值不同**时报 problem（不静默，但也不让投影变成一片红）。
+    const byClaim = new Map<string, ProjectEntry[]>();
+    for (const e of input.entries) {
+        if (!isReadable(e.fact, includeProposed)) continue;
+        const c = claimOf(e.fact);
+        const g = byClaim.get(c);
+        if (g === undefined) byClaim.set(c, [e]);
+        else g.push(e);
+    }
+
+    for (const [claim, group] of byClaim) {
+        let bestRank = Number.POSITIVE_INFINITY;
+        for (const e of group) bestRank = Math.min(bestRank, nsRank(e.ns));
+        const winners = group.filter((e) => nsRank(e.ns) === bestRank);
+        const ns = winners[0]!.ns;
+        {
+            const facts = winners.map((e) => e.fact);
             const r = resolveClaim(facts, claim, ctx);
             const gid = formatGid(ns, claim);
             if (!r.ok) {
@@ -118,7 +126,7 @@ export function projectItems(input: ProjectInput): {
                 else problems.push({ gid, code: r.code, ...(r.detail === undefined ? {} : { detail: r.detail }) });
                 continue;
             }
-            const variants = facts.filter((f) => claimOf(f) === claim && isReadable(f, includeProposed)).length;
+            const variants = facts.length;
             items.push({
                 gid,
                 claim,
@@ -128,6 +136,10 @@ export function projectItems(input: ProjectInput): {
                 variants,
                 verifiedAt: r.value.evidence.verifiedAt ?? '',
             });
+            // 低层库的同名 claim **静默让位**：值不同是「局部覆盖全局」的正常语义，
+            // 报成冲突会让每轮投影都带噪声，而人本来就想覆盖。
+            // 真正该查的是「同一个 claim 被两处各自维护」= 双写漂移，那由
+            // `diy facts status` 的跨库审计负责（不在每轮投影里吵）。
         }
     }
 
