@@ -49,14 +49,11 @@ import type { ContextPath, ContextTreeState } from "./types";
  * 真正该动版本的只有 `WIRE_ENCODING` 里那些**语义**（system/runtime 投递形态、hash 口径、渲染格式）。
  */
 export const ENVELOPE_ABOUT = [
-    "本消息是一份 YAML 信封：顶层键只有 help / system / runtime / runtimeDiff / summary / history / user（见 help 各节）；其中 summary / history 只在会话历史被压缩时出现。",
-    "· help 段是**结构说明**（由代码里的 zod 定义派生，随代码版本变化）——读它就知道每个键是什么、下面有哪些字段。",
-    "· 值段（system / runtime / runtimeDiff / history / user）只放**数据**，不放解释；解释一律在 help。",
-    "· system 段每次请求**全量重建**（稳定项），变更时直接以新值替换、不带历史。",
-    "· runtime 段是**易变项**：每轮首步给全量；轮中途某一步变了，就**追加**一条只含 runtimeDiff 的消息（键 = 变化的单元，值 = 该单元变更后的当前值）。新旧以**后出现**的为准。",
-    "· **历史压缩不影响变量树**：`history:` 段只说明「对话历史被压掉了哪些行」。system / runtime 两段**每次都是全量当前值**（system 段随每个请求重建；runtime 段在每轮第一条 user 消息里给全量，轮中途变了再追加 `runtimeDiff`）—— 变量树**不会**因压缩而丢失或陈旧。**不要**为「某个变量现在是什么值」去做额外查询（cat 文件 / 跑命令），直接看本消息里的值。",
-    "· `summary:` 是被压缩掉那段对话的**结论**（摘要功能启用时才有）—— 只做**背景**，不是变量树：要取某个变量的值仍看 system / runtime 段。",
-    "· `[]` / `{}` 表示「该变量存在但为空」，与「没有这个变量」不是一回事。",
+    "信封顶层键见 help（`summary` / `history` 只在历史被压缩时出现）；值段只放**数据**，解释一律在 help。",
+    "· `system` 每次请求**全量重建**；`runtime` 每轮首步全量，轮中变更以 `runtimeDiff` **追加**（只列变化单元，新旧取**后出现**者）。",
+    "· **历史压缩不动变量树**：`system` / `runtime` 恒是当前值。**不要**为「某变量现在是什么」去 cat 文件或跑命令，直接看本消息。",
+    "· `summary` 是被压掉那段的**结论**，只做背景，不是变量树。",
+    "· `[]` / `{}` = 该变量存在但为空，与「没有这个变量」不是一回事。",
 ].join("\n");
 
 /** 易变变量树（作为信封的 `runtime` 键；每轮首步全量） */
