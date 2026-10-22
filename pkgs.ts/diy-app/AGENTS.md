@@ -143,6 +143,7 @@
 - `pit.agent-history` — 本地 agent 的 `bash` 工具若执行**批量**杀进程命令（按名字匹配 electron 的一类），会杀掉宿主自己的 renderer → 永久白屏且进程被杀事件捕获不到。曾经的运行时拦截 `agent-guard.ts` 已于 2026-10-02 停用（判据分不清宿主与 agent 自己起的实例）；现由 `_guard.md` 提示词约束（`prompts/defaults.ts`）
 
 - `pit.steer-two-phase` — 插话的「认领」（`prepareStep` 只读队列、注入请求 messages）与「落位」（流里出现 `start-step` 时才 sink + 出队）**不能合并**：两条流不同一时间轴，提前 sink 会把插话插到上一步未完内容之前。轮末开场则**只读不取**（先记账再出队），中途崩掉最坏重复投一遍、不会丢。理由见 `local-agent.ts` 的 `claimStepSteers` 头注
+- `pit.models-refresh` — 应用内刷新三条别改错：① 结构校验 `buildModelsSnapshot`（`src/main/core/models-snapshot.ts`）**不许比真实数据严** —— models.dev 里 `openai` 就**没有 `api` 字段**，把 `api` 写成必填等于「永远刷不进去」；真必填只有 `id` + `models`，`api`/`name`/`env` 可缺省、给了必须是对的类型（`name` 字符串 / `env` 数组）。② 失败必须**先于写盘**返回（抓取 / HTTP 非 2xx / 非 JSON / 校验失败 ⇒ `ok:false` + 原因，旧文件 **mtime 与内容逐字不变**；半成品落盘 = 静默丢价）。③ **无 diff 一律不写**（`diffSnapshot` 连价目等元数据变化也算 diff）
 - `pit.model-ref` — `persona.model` = **完全限定名** `account@provider/model`（按**第一个** `/` 切 provider|model —— 模型 id 自带 `/`；provider 段按**最后一个** `@` 切 account|provider）。custom provider 恒带 `custom:` 前缀（永不与 models.dev id 撞）。存量裸名不自动迁移（手工批处理）。账号名缺省 = 序号 `0`
 - `pit.model-apiface` — API 面**由 npm 解析**（与 models.dev 对齐，不硬编码名单）：`provider.npm` 默认 + 模型级 `provider.npm` 覆写（opencode-go 的 gpt-5.6/6-luna 在 models.dev 里就是 `@ai-sdk/openai`）。白名单 `@ai-sdk/openai-compatible`→chat / `@ai-sdk/openai`→responses，其余 npm 的模型不出现。`providerOptions` 命名空间随面对齐（chat → `openaiCompatible` / responses → `openai`）
 - `pit.model-env` — `model.yaml` 的账号 `data.value` 支持 `$VAR`/`${VAR}` 展开（未定义 = **fail-fast**，不静默发空 key）；无 env 回退，账号必填。密钥**明文可**（最简单），多账号是一等公民（同一 provider 多订阅）
@@ -173,4 +174,5 @@
 - `pit.traffic-clean` — 清理（##324）**单位是整个按天文件**，且**今天正在写入的那个一律不删**（Writer 持着 fd，unlink 后后续记录写进已删 inode）；删除**不可恢复**（不进回收站）→ 界面必须走 `ConfirmDialog` 二次确认
 - `tool.persona` — `diy agent persona list|set|setDefault`；模型/参数属**人物**，任务只持引用 id
 - `tool.steer` — `diy chat --mode next-step|next-turn` 入队插话；`steer` 组只做队列管理（list/cancel/toggleMode/reorder）
-- `tool.models-sync` — `./sha.sh models-sync [源]` 重下 models.dev 快照 → `src/main/data/models.dev.json`（上游产物**整份覆盖**；diy 扩展层 `models.dev.diy.json` 手维护、本命令不碰）；缺省源 `https://models.dev/api.json`。生效需**重启实例**（snapshot 进程内缓存一次；prod 走源树兜底、免 build）。自动化见 ##107(models 数据同步)
+- `tool.models-sync` — models.dev 快照**两层、别看错层**：① **CI 层**（##107）`./sha.sh models-sync [源]` 重下 → 仓库 `src/main/data/models.dev.json`（上游产物整份覆盖，要重新构建才生效）；② **应用内层**（##385）`diy llmConfig syncModels`（RPC 同名）→ 写 `$DIY_HOME/data/models.dev.json` 并**写后 invalidate 进程内目录**（当场生效、无需重启）；启动后台自动跑一次，24h 定时**待 ##408 挂上**（别自己造第二套调度器）。演算全在 `src/main/core/models-sync.ts`：`refreshModelsOnce()` = 一次 tick 的干净边界，返回 `{ok,changed,providers,models,added*,removed*,error}`
+- `find.data-file` — 内置数据文件定位 `src/main/core/data-file.ts`：候选 `$DIY_HOME/data/<name>` > bundle 旁（`build/<V>/{main,cli}/data`）> 源树；`dataFileHit()` 带 `source`，`diy doctor` 的 `models` 段报**实际命中的绝对路径** + provider/模型计数。应用内刷新只写最上一层（下面两层只读：bundle 是发行物、源树是仓库）

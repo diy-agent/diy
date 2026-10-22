@@ -14,8 +14,10 @@
  */
 import { MODEL_UNAVAILABLE_KIND_LABEL as KIND_LABEL, type ModelUnavailableNotice } from "../../shared/model-unavailable";
 import { remedyOf, type Remedy } from "../../shared/error-remedy";
+import { Show } from "solid-js";
 import { NoticeDetail } from "./NoticeDetail";
 import type { NoticeMeta } from "../lib/notice";
+import { createModelsSync } from "../lib/models-sync";
 
 /**
  * 机制说明（##391 R2）：这条 bar 为什么存在 / 判据是什么 / 关掉意味着什么。
@@ -65,6 +67,13 @@ export function ModelUnavailableBar(props: {
                 httpStatus: props.notice.statusCode,
             },
         });
+    /**
+     * 「更新模型数据」（##385 §3.3）：**修复动作出现在故障现场**。
+     * 四类 kind 都可能是「本地的模型目录过期了」（下架 / 改名 / 免费档限制都是上游语义变化），
+     * 故模型类 bar 一律给这个入口；磁盘 / 网络 bar 是另一条组件（EnvStatusBar），不涉及。
+     * 失败**不吞**：状态文本直接写在 bar 上（用户就在这儿），且本地数据逐字不变。
+     */
+    const modelsSync = createModelsSync();
     return (
         <div
             data-model-unavailable-bar
@@ -91,6 +100,25 @@ export function ModelUnavailableBar(props: {
                 remedy={remedy()}
                 onRemedy={props.onRemedy}
             />
+            <Show when={modelsSync.text()}>
+                <span
+                    class="text-xs"
+                    data-model-bar-sync-status={modelsSync.phase()}
+                    classList={{ "text-error-content font-semibold": modelsSync.phase() === "error" }}
+                    title={modelsSync.phase() === "error" ? modelsSync.text() : undefined}
+                >
+                    {modelsSync.text()}
+                </span>
+            </Show>
+            <button
+                class="btn btn-xs btn-ghost"
+                data-model-bar-sync
+                title="抓 models.dev 最新目录（有变化才写；失败保留旧数据）—— 模型下架 / 改名 / 价格变动常靠它解决"
+                disabled={modelsSync.phase() === "running"}
+                onClick={() => void modelsSync.run()}
+            >
+                {modelsSync.phase() === "running" ? "更新中…" : "🔄 更新模型数据"}
+            </button>
             {/* 有映射 → 带着锚点去（真的滚到该字段并高亮）；没有 → 只能开到页面顶部 */}
             <button
                 class="btn btn-xs ml-auto"

@@ -32,6 +32,7 @@ import type { CostField } from "../../shared/cost-edit";
 import { addUtcRangeTier, editCost, patchUtcRange, removeTier, setBaseLabel, setBasePrice, tierIssues, utcRangeSlots } from "../../shared/cost-edit";
 import { diyService } from "../lib/rpc";
 import { EnvImportBar, type EnvScanScope } from "./EnvImportBar";
+import { createModelsSync } from "../lib/models-sync";
 import { notificationStore } from "../store/notificationStore";
 import { modelNoticeStore } from "../store/modelNoticeStore";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -179,6 +180,17 @@ export function ModelConfigPage(props: {
       setLoading(false);
     }
   };
+  /**
+   * 模型目录刷新（##385 §3.3）：**常规入口**（顶栏 bar 不一定在屏幕上，所以这里必须有）。
+   * **有 diff 才重读视图**：`changed=false` 意为磁盘与界面同源同内容（`diffSnapshot` 已是逐字比较），
+   * 再 `reload` 一次没有收益，只会白花一次 RPC。
+   */
+  const modelsSync = createModelsSync({
+    onDone: (r) => {
+      if (r.ok && r.changed) void reload();
+    },
+  });
+
   /** 扫环境变量（只列不写）：提示条据此渲染（候选 + 扫描面；失败也如实入条，不静默吞） */
   const scanEnv = async () => {
     try {
@@ -325,7 +337,26 @@ export function ModelConfigPage(props: {
       <div class="flex items-center justify-between">
         <div class="text-title font-bold">🤖 模型 provider 配置</div>
         <div class="flex gap-2 items-center">
+          {/* 三态文案（更新中 / 成功报数 / 失败给原因）紧贴按钮：用户点完不必再翻别处 */}
+          <Show when={modelsSync.text()}>
+            <span
+              class="text-xs"
+              data-models-sync-status={modelsSync.phase()}
+              classList={{ "text-error": modelsSync.phase() === "error", "opacity-70": modelsSync.phase() !== "error" }}
+            >
+              {modelsSync.text()}
+            </span>
+          </Show>
           <code class="text-body opacity-50 text-xs">~/.diy/model.yaml</code>
+          <button
+            class="btn btn-sm"
+            data-models-sync
+            title="抓 models.dev 最新目录并写入 $DIY_HOME/data/models.dev.json（有变化才写；失败保留旧数据）"
+            disabled={modelsSync.phase() === "running"}
+            onClick={() => void modelsSync.run()}
+          >
+            {modelsSync.phase() === "running" ? "更新中…" : "🔄 更新模型数据"}
+          </button>
           <button class="btn btn-sm btn-primary" disabled={loading() || !dirty() || saving()} onClick={() => void save()}>
             {saving() ? "保存中…" : "保存全部"}
           </button>

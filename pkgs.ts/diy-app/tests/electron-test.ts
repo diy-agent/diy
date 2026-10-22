@@ -195,10 +195,11 @@ async function waitForCdpBase(home: string, timeoutMs = 8000): Promise<string | 
  * 启动隔离 Electron 实例。返回 { home, port, cdpUrl, stop }。
  * 必须在测试后调用 stop() 释放进程。
  */
-export async function startElectronTest(): Promise<ElectronTest> {
+export async function startElectronTest(extraEnv: Record<string, string> = {}): Promise<ElectronTest> {
   const home = makeIsolatedHome();
   // DIY_ENV=test：runtime.ts 派生副屏定位等测试专属能力，不遮挡主屏工作
-  const env = { ...process.env, HOME: home, DIY_HOME: home, DIY_ENV: "test" };
+  // extraEnv：单条用例专属注入（如 `DIY_MODELS_DEV_ORIGIN` 指向本地 fixture，避免真抓上游）
+  const env = { ...process.env, HOME: home, DIY_HOME: home, DIY_ENV: "test", ...extraEnv };
   const appDir = join(__dirname, "..");
 
   // 测试实例走 build/test/main（DIY_VARIANT=test 由 test-intent 注入），与 lab 产物隔离
