@@ -4033,13 +4033,6 @@ export function LocalChatPage(props: {
                             轮尾那行会随滚屏移出视野，而"整体跑得快不快"是常驻参考。 */}
                         <OverallRateChip rate={overallRate()} />
                         <div class="flex-1" />
-                        {/* 生成中的可见性：别人（CLI/另一窗口）发起时本地 running 全程为 false，
-                            不显式说出来，界面看起来就像"什么都没发生"（任务 194 现象一的另一半） */}
-                        <Show when={localChatStore.view.busy && !localChatStore.sending}>
-                            <span class="text-body text-primary" aria-label="其他端正在生成">
-                                其他端（CLI/窗口）正在生成…
-                            </span>
-                        </Show>
                         {/* 停止（两种观感：收尾中 / 生成中）+ **发送（恒在）**。
                             停止按钮**不分谁发起的**：main 报告活跃就给入口（含 CLI 那轮）；
                             外观沿用 steer 分支的 aura 装饰。
