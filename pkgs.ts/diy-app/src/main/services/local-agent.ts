@@ -175,6 +175,7 @@ import { renderSummarySection } from "./prompt-registry";
 import { assembleGlobals, systemOverBudget } from "./prompt-registry";
 import { readFileWindow, formatReadOutput, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
 import { countsLabel, formatWriteResult, writeFileWhole, WRITE_MAX_BYTES } from "../core/file-write";
+import { describeEditResult, displayPath, editFile, resolveEditablePath, withFileEditQueue } from "../core/file-edit";
 import { SteerQueue, fileSteerPort } from "../core/steer-queue";
 import { DEFAULT_STEER_MODE, steerModeLabel } from "../../shared/steer-mode";
 import type { SteerItem, SteerMode } from "../core/drafts";
@@ -1342,6 +1343,78 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                     result: countsLabel(r),
                 });
                 return formatWriteResult(r);
+            },
+        }),
+        /**
+         * `edit` —— **局部替换**（##415）。存在的唯一理由：改 3 行不该重写整个文件。
+         *
+         * 与 `write` 的分工：write 负责「整份文件是什么」，edit 负责「把这几处换成那几处」。
+         * 匹配 / 归一 / diff 全在 core/file-edit.ts（纯函数、可单测）；这里只管 I/O：
+         *   路径护栏 → 同文件队列 → 读改写 → 审计 → 抛错（不 return 失败）。
+         * 路径护栏与 diff 生成目前是本文件族内的小函数（##266 待与 write 工具去重）。
+         */
+        edit: tool({
+            description:
+                "对**单个已存在的文件**做局部替换（不要为了改几行就重写整个文件，那是 write 的事）。" +
+                "edits 是**有序**的：后一条基于前一条的结果匹配。每条 oldText 必须逐字来自文件且**唯一命中**" +
+                "（命中多处会报错并给出次数；确实要全改就传 replaceAll: true）。" +
+                "精确匹配失败时会做字符归一（全角/半角、弯直引号、行尾空白）再试，命中后在返回里**明确说明**用了归一；" +
+                "未命中的行逐字保留。返回 unified patch。",
+            inputSchema: z.object({
+                path: z.string().describe("目标文件路径（相对项目目录或绝对路径，必须在项目目录内）"),
+                edits: z
+                    .array(
+                        z.object({
+                            oldText: z
+                                .string()
+                                .describe("要替换的原文（逐字来自文件；必须唯一命中，除非 replaceAll: true）"),
+                            newText: z.string().describe("替换成什么（空串 = 删除这段原文）"),
+                            replaceAll: z.boolean().optional().describe("允许替换全部命中（缺省 false = 必须唯一）"),
+                        }),
+                    )
+                    .describe("有序的替换列表：后一条基于前一条的结果匹配"),
+            }),
+            execute: async ({ path: filePath, edits }) => {
+                const home = diyHome();
+                const abs = resolveEditablePath(cwd, filePath);
+                const label = displayPath(cwd, abs);
+                const t0 = Date.now();
+                // 写前审计：与 bash 同一口径（先落盘再执行，保证最后一幕不丢）
+                appendAudit(home, {
+                    phase: "file-edit-start",
+                    taskUri,
+                    cwd,
+                    path: label,
+                    result: `${edits.length} 条 edits`,
+                });
+                try {
+                    return await withFileEditQueue(abs, () => {
+                        const r = editFile(abs, label, edits, (p, c) => writeFileAtomic(p, c));
+                        const text = describeEditResult(label, r);
+                        appendAudit(home, {
+                            phase: "file-edit-end",
+                            taskUri,
+                            cwd,
+                            path: label,
+                            ms: Date.now() - t0,
+                            result: clip(text, 500),
+                        });
+                        // 返回「摘要 + unified patch」：摘要给模型确认命中/归一，patch 给人看改了什么
+                        return r.patch === "" ? text : `${text}\n\n${r.patch}`;
+                    });
+                } catch (e) {
+                    // **抛，不 return**（与 read / bash 同口径）：失败必须是 tool-error，
+                    // 否则 UI 画 ✓ 且不展开。这里只补一条审计，错误原样上抛（带 fs/ code）。
+                    appendAudit(home, {
+                        phase: "file-edit-end",
+                        taskUri,
+                        cwd,
+                        path: label,
+                        ms: Date.now() - t0,
+                        result: `失败：${clip(e instanceof Error ? e.message : String(e), 300)}`,
+                    });
+                    throw e;
+                }
             },
         }),
         /**
