@@ -81,6 +81,19 @@ export type Ref =
 
 export type Rel = Ref['rel'];
 
+/**
+ * 值的**读取格式**（不是类型系统，是给消费侧的一句提示）。
+ *
+ * 缺省 = `md`（不落盘，省字节）：事实正文就是给人/模型读的 markdown —— 段落、列表、表格
+ * 都可以直接写，不需要任何转义。只有**机器要消费**的值才声明 `json`（契约 / 配置片段），
+ * 声明即校验：`submit` 当场 `JSON.parse`，解析失败报 `facts/value-format` —— 否则
+ * "看着是 JSON、其实少个逗号"的条目会一路静默到消费侧才炸。
+ *
+ * 为什么放在 **fact 级而不是 subject 级缺省**：同一个主题里「一条是 JSON 契约、一条是散文」
+ * 很常见（`app.port#contract` vs `app.port#why`），按主题定格式会逼着人拆主题。
+ */
+export type Format = 'md' | 'json';
+
 export interface Fact {
     /** 稳定、不可派生；改名 = 新 id + `supersedes` 边 */
     readonly id: string;
@@ -90,6 +103,8 @@ export interface Fact {
     readonly aspect: string;
     /** 事实值（字符串；结构化值序列化后存放） */
     readonly value: string;
+    /** 值的读取格式（缺省 `md`；`json` 在 submit 时当场校验） */
+    readonly format?: Format;
     readonly scope?: Scope;
     readonly review: Review;
     readonly lifecycle: Lifecycle;
@@ -109,6 +124,7 @@ export type FactsErrorCode =
     | 'facts/dangling-ref'
     | 'facts/supersede-cycle'
     | 'facts/vocab-unknown'
+    | 'facts/value-format'
     | 'facts/ns-invalid'
     // 词表删除（`submit` 的 `dropSubjects`）：三条各自对应一种「删不得」
     | 'facts/subject-drop-in-use'

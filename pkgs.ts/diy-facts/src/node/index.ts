@@ -17,7 +17,8 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { dump, load } from 'js-yaml';
+import { load } from 'js-yaml';
+import { dumpSource } from './yaml-out.js';
 import { writeFilesAtomic } from './atomic-write.js';
 import { claimOf, derivedFactId } from '../claim.js';
 import { DEFAULT_FULL_BUDGET, checkExpose, checkExposeLeveled, defaultExposeOf, exposeOf, type ExposeLevel, type ExposeMap } from '../expose.js';
@@ -282,6 +283,12 @@ export function loadRepo(knowledgeDir: string, opts: LoadRepoOptions = {}): Repo
                     ? it.id
                     : typeof it.subject === 'string' && typeof it.aspect === 'string' ? `${it.subject}#${it.aspect}` : undefined;
                 if (id !== undefined) origin.set(id, file);
+                // claim 级**兜底**：派生 id 会带 scope 后缀（`app.port#default@env=production`），
+                // 与这里能算出的 id 不同 → 只按 id 记会让**每个变体都丢失来源文件**（`get` 报空路径，
+                // 依赖 origin 的工具——如整篇重排——会把整条 claim 丢掉，实测丢过一条两变体的事实）。
+                if (typeof it.subject === 'string' && typeof it.aspect === 'string') {
+                    origin.set(`${it.subject}#${it.aspect}`, file);
+                }
             }
             raw.push(item);
         }
@@ -335,6 +342,15 @@ export function loadRepo(knowledgeDir: string, opts: LoadRepoOptions = {}): Repo
     }
 
     const { facts, issues } = validateFacts(raw);
+
+    // 校验层可能改写 id（缺省 id = `<subject>#<aspect>` [+ `@<scope>`]）—— 用它把
+    // 上面记的 claim 级来源补到最终 id 上。**必须在 validate 之后**：那是 id 唯一被确定的地方。
+    for (const f of facts) {
+        if (origin.has(f.id)) continue;
+        const byClaim = origin.get(claimOf(f));
+        if (byClaim !== undefined) origin.set(f.id, byClaim);
+    }
+
     return {
         dir,
         root: opts.root === undefined ? path.dirname(dir) : path.resolve(opts.root),
@@ -570,6 +586,8 @@ function evidenceOf(f: Fact): Record<string, unknown> {
 /** 比较用的完整形态（含 subject/aspect —— 改名但 id 不变也是一种变更） */
 function canonicalFact(f: Fact): Record<string, unknown> {
     const out: Record<string, unknown> = { id: f.id, subject: f.subject, aspect: f.aspect, value: f.value };
+    // 缺省 md 不落盘（省字节且免全库迁移）；只有机器消费的值才写 `format: json`
+    if (f.format !== undefined) out['format'] = f.format;
     if (f.scope !== undefined) out['scope'] = canonicalScope(f.scope);
     out['review'] = f.review;
     out['lifecycle'] = f.lifecycle;
@@ -584,6 +602,7 @@ function canonicalFact(f: Fact): Record<string, unknown> {
  */
 function factCell(f: Fact): Record<string, unknown> {
     const out: Record<string, unknown> = { value: f.value };
+    if (f.format !== undefined) out['format'] = f.format;
     if (f.scope !== undefined) out['scope'] = canonicalScope(f.scope);
     if (f.id !== derivedFactId(f)) out['id'] = f.id;
     out['review'] = f.review;
@@ -657,7 +676,7 @@ export function renderDoc(opts: { note?: string; domain: string; facts: readonly
         .split('\n')
         .map((l) => `# ${l}`.trimEnd())
         .join('\n');
-    const body = dump(
+    const body = dumpSource(
         { domain: opts.domain, facts: claimMap(opts.facts) },
         { noRefs: true, lineWidth: -1, quoteStyle: 'single' },
     );
@@ -871,7 +890,7 @@ export function submit(
         for (const s of [...localMap.values()].sort((a, b) => a.key.localeCompare(b.key))) {
             vocab[s.key] = { ...(s.description ? { description: s.description } : {}), ...(s.aliases ? { aliases: s.aliases } : {}) };
         }
-        writes.push({ file: vocabFile, text: `${VOCAB_HEAD}\n${dump({ subjects: vocab }, { noRefs: true, lineWidth: -1, quoteStyle: 'single' })}` });
+        writes.push({ file: vocabFile, text: `${VOCAB_HEAD}\n${dumpSource({ subjects: vocab }, { noRefs: true, lineWidth: -1, quoteStyle: 'single' })}` });
     }
 
     // 6) 暴露档：只在**真的给了** `expose` 时重写（未给不动文件 —— 空提交不该把档位洗成默认）
@@ -880,7 +899,7 @@ export function submit(
         for (const k of Object.keys(exposeMap).sort()) merged[k] = exposeOf(exposeMap, k);
         writes.push({
             file: exposeFile,
-            text: `${EXPOSE_HEAD}\n${dump({ expose: merged }, { noRefs: true, lineWidth: -1, quoteStyle: 'single' })}`,
+            text: `${EXPOSE_HEAD}\n${dumpSource({ expose: merged }, { noRefs: true, lineWidth: -1, quoteStyle: 'single' })}`,
         });
     }
 

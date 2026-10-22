@@ -6,7 +6,7 @@
 
 import { derivedFactId } from './claim.js';
 import type { Issue } from './index-build';
-import type { Evidence, Fact, FactsErrorCode, Ref, Scope, Env } from './types';
+import type { Env, Evidence, Fact, FactsErrorCode, Format, Ref, Scope } from './types';
 
 export interface Validation {
     readonly facts: readonly Fact[];
@@ -17,8 +17,9 @@ const REVIEWS = ['proposed', 'accepted', 'rejected'] as const;
 const LIFECYCLES = ['active', 'superseded', 'expired'] as const;
 const SOURCES = ['user', 'probe', 'code', 'inference'] as const;
 const ENVS = ['production', 'development', 'test'] as const;
+const FORMATS = ['md', 'json'] as const;
 
-const FACT_KEYS = new Set(['id', 'subject', 'aspect', 'value', 'scope', 'review', 'lifecycle', 'evidence', 'refs']);
+const FACT_KEYS = new Set(['id', 'subject', 'aspect', 'value', 'format', 'scope', 'review', 'lifecycle', 'evidence', 'refs']);
 
 function isObj(v: unknown): v is Record<string, unknown> {
     return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -81,6 +82,21 @@ export function validateFacts(input: unknown): Validation {
         }
         if (typeof value !== 'string') bad('facts/schema', `${at}.value`, '必填字符串', ids);
 
+        // 值的读取格式（缺省 md 不落盘）。`json` 当场解析 —— 契约类事实写错一个逗号，
+        // 让它在 submit 就炸，而不是等消费侧拼 URL 时才发现。
+        const format = raw.format;
+        if (format !== undefined) {
+            if (typeof format !== 'string' || !(FORMATS as readonly string[]).includes(format)) {
+                bad('facts/schema', `${at}.format`, `必须是 ${FORMATS.join(' | ')}（缺省 md，不必写）`, ids);
+            } else if (format === 'json' && typeof value === 'string') {
+                try {
+                    JSON.parse(value);
+                } catch (e) {
+                    bad('facts/value-format', `${at}.value`, `format=json 但值解析失败：${(e as Error).message}`, ids);
+                }
+            }
+        }
+
         const review = raw.review ?? 'accepted';
         const lifecycle = raw.lifecycle ?? 'active';
         if (typeof review !== 'string' || !(REVIEWS as readonly string[]).includes(review)) {
@@ -119,6 +135,7 @@ export function validateFacts(input: unknown): Validation {
             subject: subject as string,
             aspect: aspect as string,
             value: value as string,
+            ...(format === 'json' ? { format: format as Format } : {}),
             review: review as Fact['review'],
             lifecycle: lifecycle as Fact['lifecycle'],
             evidence: evidence as Evidence,

@@ -170,6 +170,37 @@ describe('submit（整批事务）', () => {
     });
 });
 
+describe('origin（每条事实的来源文件）', () => {
+    // 回归：派生 id 带 scope 后缀（`app.port#default@env=production`），而读文件时能算出的
+    // id 是 claim 形态 —— 只按 claim 记会让**每个变体都丢失来源**。症状不是报错，是静默：
+    // `get` 的 file 变空串，且任何按 origin 分组的操作（整篇重排 / 迁移）会把整条 claim 丢掉
+    // （实测丢过 `app.port#default` 的两个变体，连带 depends-on 指向它的事实变悬空）。
+    it('带 scope 的变体（派生 id）也有来源文件', () => {
+        const dir = makeRepo({
+            'app.yaml': `domain: app
+facts:
+  app.port#default:
+    - value: '0'
+      scope: { env: [development, test] }
+      review: accepted
+      lifecycle: active
+      evidence: { source: code, at: README.md:1 }
+    - value: '18888'
+      scope: { env: production }
+      review: accepted
+      lifecycle: active
+      evidence: { source: code, at: README.md:1 }
+`,
+        });
+        writeFileSync(path.join(dir, '..', 'README.md'), 'x\n');
+        const repo = loadRepo(dir);
+        expect(repo.facts).toHaveLength(2);
+        for (const f of repo.facts) {
+            expect(repo.origin.get(f.id)).toBe(path.join(dir, 'facts', 'app.yaml'));
+        }
+    });
+});
+
 describe('loadRepo extraDirs（设备级跨根只读）', () => {
     it('额外库的 claim 会并进来，主库已有的 claim 不覆盖', () => {
         const main = makeRepo();
