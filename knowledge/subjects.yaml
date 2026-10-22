@@ -65,6 +65,12 @@ subjects:
     description: worktree 的落地位置
     aliases:
       - worktree
+  diydev.find:
+    description: diy-dev 包内定位：进程内 RPC 入口 / ref 子模块 / runtime / 两条跑法（dev 命令 CLI）
+  diydev.rule:
+    description: diy-dev 硬约束：cwd 即作用域 / ref.lock v1 唯一写入方 / 镜像路径 / 版本钉法
+  diydev.tool:
+    description: diy-dev 的命令入口与自检方式
   entry:
     description: 实例三态（**先问：操作谁的数据 / 谁看 UI**）
     aliases: []
