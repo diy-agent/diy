@@ -33,18 +33,17 @@ export const HistoryNoteSchema = z
         file: z
             .string()
             .describe(
-                "全量消息日志的相对路径（相对 $DIY_HOME）。**每 1 行 = 1 条消息，行号即消息序号**；" +
-                    "取被省掉的区间：`sed -n 'A,Bp' \"$DIY_HOME/<file>\"`（A/B 取别的保留区间之间的行号）；" +
-                    "按轮定位：`grep -n '\"turn\":\"T\"' \"$DIY_HOME/<file>\"`",
+                "全量消息日志（相对 `$DIY_HOME`）。**每 1 行 = 1 条消息，行号即序号**；" +
+                    "取被省区间 `sed -n 'A,Bp' \"$DIY_HOME/<file>\"`，按轮定位 `grep -n '\"turn\":\"T\"' …`",
             ),
         absPath: z.string().describe("同一份日志的绝对路径（bash 直接可用，省掉拼接）"),
         budgetBytes: z.number().describe("历史消息可占字节上限（用户给的预算）"),
         keptBytes: z.number().describe("实际保留的字节数"),
         kept: z
             .array(z.tuple([z.number(), z.number()]))
-            .describe("保留的消息行号区间 [from, to]（含两端，1-based = 日志文件物理行号）；区间之间的空隙即被省略的部分"),
+            .describe("保留的行号区间 [from, to]（含两端，1-based）；**区间之间的空隙即被省略的部分**"),
     })
-    .describe("会话历史被按字节预算压缩时的**保留位置索引**：信封里的 `history:` 键（与 runtime / user 平级，**不进** user.message）。`kept` 列出保留的消息行号区间，区间之间的空隙即被省略的部分");
+    .describe("会话历史被按字节预算压缩时的**保留位置索引**（顶层 `history:` 键，**不进** user.message）");
 
 export type HistoryNote = z.infer<typeof HistoryNoteSchema>;
 

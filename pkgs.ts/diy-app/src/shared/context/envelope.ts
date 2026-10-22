@@ -79,8 +79,8 @@ export const RuntimeDiffSchema = z
 export const SummarySchema = z
     .string()
     .describe(
-        "被压缩掉的那段对话的**摘要**（上一段会话的结论，由摘要模型生成；仅在摘要功能启用时出现）。" +
-            "它只做**背景**：变量树的**当前值**一律看 system / runtime 段（每次全量），**不要**为取某个变量的值去翻历史。",
+        "被压缩掉那段对话的**摘要**（由摘要模型生成，仅摘要启用时出现）。只做**背景**：" +
+            "变量树的**当前值**一律看 system / runtime 段（每次全量），不要为此翻历史。",
     );
 
 /** 用户消息（信封的 `user` 键） */
@@ -116,7 +116,10 @@ export function buildHelpDoc(opts: {
     systemPlaces: readonly ContextPath[];
     runtimePlaces: readonly ContextPath[];
 }): HelpDoc {
-    const globalsDoc = describeSchema(AssembleGlobalsSchema);
+    // `descMaxDepth: 2` —— 只保留「这组是什么」的两层说明，叶子字段（path / value / variants）
+    // 的名字本就自解释。实测：help 11.2 KB 里 85% 是 desc 文本，结构骨架仅 1.6 KB，
+    // 而这份 help 每轮都要重复付（system 前缀吃缓存，但字节数仍进上下文）。
+    const globalsDoc = describeSchema(AssembleGlobalsSchema, { descMaxDepth: 2 });
     const key = (k: keyof typeof EnvelopeSchema.shape): string =>
         (EnvelopeSchema.shape[k].description as string | undefined) ?? "";
     return {

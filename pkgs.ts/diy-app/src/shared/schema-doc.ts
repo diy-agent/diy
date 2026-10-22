@@ -141,19 +141,24 @@ function hasStructure(bit: JsonSchemaBit): boolean {
 }
 
 /** JSON Schema → 结构说明文档（`depth` 兜住自引用，超限就把子树折成 `…`） */
-function simplifyBit(bit: JsonSchemaBit, depth: number, maxDepth: number): SchemaDoc {
+function simplifyBit(bit: JsonSchemaBit, depth: number, maxDepth: number, descMaxDepth: number): SchemaDoc {
     const out: SchemaDoc = {};
-    if (typeof bit.description === "string" && bit.description) out["desc"] = bit.description;
+    // `descMaxDepth`：**只在前几层说「这组是什么」**，深层/叶子的字段说明不进每轮 system
+    // （实测 help 11.2 KB 里 85% 是 desc 文本，结构骨架只 1.6 KB —— 见 ##5 量化）。
+    // 叶子字段名（path / value / variants）本就自解释，解释它们的代价是每轮重复付。
+    if (depth <= descMaxDepth && typeof bit.description === "string" && bit.description) {
+        out["desc"] = bit.description;
+    }
     const type = typeof bit.type === "string" ? bit.type : undefined;
     const props = bit.properties;
     if (type === "object" && props && Object.keys(props).length > 0 && depth < maxDepth) {
-        for (const [k, v] of Object.entries(props)) out[k] = simplifyBit(v, depth + 1, maxDepth);
+        for (const [k, v] of Object.entries(props)) out[k] = simplifyBit(v, depth + 1, maxDepth, descMaxDepth);
         return out;
     }
     if (type === "array") {
         out["type"] = "array";
         const item = Array.isArray(bit.items) ? bit.items[0] : (bit.items ?? bit.prefixItems?.[0]);
-        if (item && depth < maxDepth) out["items"] = simplifyBit(item, depth + 1, maxDepth);
+        if (item && depth < maxDepth) out["items"] = simplifyBit(item, depth + 1, maxDepth, descMaxDepth);
         return out;
     }
     // record（`z.record(k, v)` → `additionalProperties`）：**值的结构**要带上。
@@ -165,7 +170,7 @@ function simplifyBit(bit: JsonSchemaBit, depth: number, maxDepth: number): Schem
         const valueBit = ap as JsonSchemaBit;
         if (hasStructure(valueBit)) {
             out["type"] = "object";
-            out["values"] = simplifyBit(valueBit, depth + 1, maxDepth);
+            out["values"] = simplifyBit(valueBit, depth + 1, maxDepth, descMaxDepth);
             return out;
         }
     }
@@ -180,8 +185,13 @@ function simplifyBit(bit: JsonSchemaBit, depth: number, maxDepth: number): Schem
  * `maxDepth` 兜住自引用 schema（z.lazy 造的环）；到限即停在该层，不假装下面没有了
  * （子字段仍在上一层列着，读侧不会以为"这个对象没字段"）。
  */
-export function describeSchema(schema: ZodType, opts: { maxDepth?: number } = {}): SchemaDoc {
+export function describeSchema(
+    schema: ZodType,
+    opts: { maxDepth?: number; descMaxDepth?: number } = {},
+): SchemaDoc {
     const maxDepth = opts.maxDepth ?? 8;
+    // 缺省不限（老消费者行为不变）；信封的 `help:` 传 2 —— 只有前两层 desc 值得每轮发。
+    const descMaxDepth = opts.descMaxDepth ?? Number.POSITIVE_INFINITY;
     // 校验细节（prefixItems / items:false / minItems…）全部丢掉：投给模型的只有
     // 「字段名 + 一句话 + 结构」，那是人/模型读得懂的部分。
     const json = z.toJSONSchema(schema, {
@@ -189,7 +199,7 @@ export function describeSchema(schema: ZodType, opts: { maxDepth?: number } = {}
         unrepresentable: "any",
         reused: "inline",
     }) as unknown as JsonSchemaBit;
-    return simplifyBit(deref(json, json) as JsonSchemaBit, 0, maxDepth);
+    return simplifyBit(deref(json, json) as JsonSchemaBit, 0, maxDepth, descMaxDepth);
 }
 
 /**

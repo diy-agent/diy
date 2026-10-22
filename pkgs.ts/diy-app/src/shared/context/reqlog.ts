@@ -25,17 +25,12 @@ export const ReqlogSchema = z
         file: z
             .string()
             .describe(
-                "今天的流量日志文件（绝对路径；`$DIY_HOME/log/network/<YYYY-MM-DD>.jsonl`，按天切分）。" +
-                    "本应用**每次真发 HTTP 请求**都往它追加一行（一行 = 一条 JSON，含请求体与响应）——" +
-                    "自己刚发出去的那条就在里面。定位自己这一步的那条：" +
-                    "`grep -n '\"taskUri\":\"<你的 task.uri>\"' <file> | tail -20`（行号 = 文件内第几行）；" +
-                    "一轮多步 = 同一个 turnId 多行，按 ts 升序即第 1/2/… 步；" +
-                    "⚠️ `attempt` 是**重试**序号、不是步序。字段表见日志行本身的键" +
-                    "（真源 `pkgs.ts/diy-app/src/shared/traffic-record.ts`）。" +
-                    "reqBody 默认只留首尾各一段（`truncated: true` 时 JSON 解不开）；要看全文先开" +
-                    "「记录完整请求内容」（流量页右上角开关；CLI 侧 = 本应用 CLI 的 `traffic setFullCapture true`，" +
-                    "参数是**位置参数**、不是 `--on`）再复现。" +
-                    "log 目录等同 cache，可随时清理 —— 老日期查不到是正常的。",
+                "今天的流量日志（绝对路径，按天切分）。本应用**每次真发 HTTP 请求**都追加一行" +
+                    "（一行 = 一条 JSON，含请求体与响应）。定位自己这一步：" +
+                    "`grep -n '\"taskUri\":\"<你的 task.uri>\"' <file> | tail -20`（行号 = 文件内第几行；" +
+                    "同 turnId 多行按 ts 升序为第 1/2/… 步，`attempt` 是**重试**序号不是步序）。" +
+                    "reqBody 默认截断（`truncated: true` 时 JSON 解不开），要看全文先" +
+                    "`traffic setFullCapture true`（位置参数，非 `--on`）再复现。log 目录等同 cache，可随时清理。",
             ),
     })
     .describe("本应用真发请求的**流量日志**：一行 = 一次真发 HTTP 请求（含请求体与响应）");
