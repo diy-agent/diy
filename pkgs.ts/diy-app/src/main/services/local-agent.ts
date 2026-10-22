@@ -84,6 +84,8 @@ import { capToolOutput, toolOutFile, toolOutFileCandidates, toolOutRelPath } fro
 import { abortText } from "../../shared/turn-end";
 import type { TurnGate, TurnGateDecision } from "../../shared/turn-gate";
 import { triageOf, triageOfTurnEnd } from "../../shared/error-triage";
+import { errText } from "../../shared/error-report";
+import { reportError } from "./error-report";
 import { opsFeed } from "./ops-feed";
 import type { DeliveryOrigin, TurnOrigin } from "../../shared/room";
 // 「模型不可用」通知（##369 ①）：判据在 shared/model-unavailable，通知中心在 model-notice
@@ -1395,13 +1397,6 @@ function outText(output: unknown): string {
     const o = output as Record<string, unknown> | null;
     if (o && typeof o.value === "string") return o.value;
     return JSON.stringify(output);
-}
-
-function errText(e: unknown): string {
-    if (e instanceof Error) return e.message;
-    const o = e as Record<string, unknown> | null;
-    if (o && typeof o.message === "string") return o.message;
-    return String(e ?? "未知错误");
 }
 
 /**
@@ -4297,6 +4292,9 @@ export class LocalAgentManager {
                         case "error": {
                             const err = (part as { error?: unknown }).error;
                             const msg = errText(err);
+                            // 出口落盘（##411）：error part 是上游/流失败**第一次变成给用户看的东西**；
+                            // 此前这里只留一条 console.warn，stack 与 code 当场蒸发。用户面文案不变。
+                            reportError(err, { where: "agent/llm-error-part", taskUri, model });
                             // 模型不可用的**主路径**（实测：`[model_coming_soon]` 从这里来，不走 catch）
                             reportModelUnavailable(err, taskUri, identity.persona, model, rm.provider);
                             // 环境感知（##384）：网络层失败按**轮次**计连败（ENOTFOUND / ETIMEDOUT / …），
@@ -4446,6 +4444,9 @@ export class LocalAgentManager {
                     yield* errorBlock("abort", abortText(src));
                 } else {
                     const msg = errText(e);
+                    // 出口落盘（##411）：这里是「流抛穿」的唯一出口 —— 之前只把 message 塞进 error 块，
+                    // stack / code 到此为止。用户面仍只一句话（errorBlock），stack 只进 log/error。
+                    reportError(e, { where: "agent/turn-stream", taskUri, model });
                     // ── 「模型不可用」的可见性（##369 ①）──
                     // 判据是 shared/model-unavailable 的**纯函数**（表驱动单测在同名 tests/core）：
                     // 只挑四类（模型未上架 / id 不认识 / 认证失败 / 配额），**上游 5xx 与网络超时不算**
