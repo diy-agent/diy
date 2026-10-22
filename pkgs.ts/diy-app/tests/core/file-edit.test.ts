@@ -13,7 +13,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -21,12 +21,14 @@ import {
   describeEditResult,
   EditError,
   editFile,
-  generateUnifiedPatch,
   normalizeForFuzzyMatch,
   resolveEditablePath,
   withFileEditQueue,
 } from "../../src/main/core/file-edit";
+import { generateUnifiedPatch } from "../../src/main/core/unified-diff";
+import { unifiedDiff } from "../../src/main/core/file-write";
 import { writeFileAtomic } from "../../src/main/core/atomic-write";
+import { FileWriteError } from "../../src/main/core/file-write";
 
 let dir: string;
 
@@ -134,7 +136,7 @@ describe("applyEdits — 归一匹配", () => {
   });
 });
 
-describe("generateUnifiedPatch — patch 形状", () => {
+describe("generateUnifiedPatch — patch 形状（真源在 core/unified-diff，write / edit 共用）", () => {
   it("单点修改：---/+++/@@ 头 + -/+ 行", () => {
     const before = "a\nb\nc\nd\ne\n";
     const after = "a\nb\nC\nd\ne\n";
@@ -152,6 +154,12 @@ describe("generateUnifiedPatch — patch 形状", () => {
     expect(generateUnifiedPatch("x", "same\n", "same\n")).toBe("");
   });
 
+  it("与 write 的 diff 摘要**同源**（同一份 LCS：patch 文本逐字相等）", () => {
+    const before = "a\nb\nc\nd\ne\nf\ng\n";
+    const after = "a\nB\nc\nd\ne\nf\nG\n";
+    expect(generateUnifiedPatch("f.txt", before, after)).toBe(unifiedDiff(before, after, { path: "f.txt" }).text);
+  });
+
   it("远端修改分成两个 hunk", () => {
     const before = Array.from({ length: 20 }, (_, i) => `L${i}`).join("\n") + "\n";
     const afterLines = before.split("\n");
@@ -162,14 +170,48 @@ describe("generateUnifiedPatch — patch 形状", () => {
   });
 });
 
-describe("resolveEditablePath — 路径护栏", () => {
-  it("cwd 内路径放行", () => {
-    expect(resolveEditablePath(dir, "a/b.txt")).toBe(join(dir, "a/b.txt"));
+describe("resolveEditablePath — 路径护栏（复用 write 的 resolveWritePath，##266 review2）", () => {
+  it("cwd 内已存在文件放行（返回 realpath）", () => {
+    const sub = join(dir, "a");
+    mkdirSync(sub, { recursive: true });
+    const target = join(sub, "b.txt");
+    writeFileSync(target, "x\n", "utf-8");
+    // macOS 的 /var 是 /private/var 的软链 —— 护栏返回的是真实路径
+    expect(resolveEditablePath(dir, "a/b.txt")).toBe(realpathSync(target));
   });
 
   it("越界路径 fs/path-escape", () => {
     expectCode(() => resolveEditablePath(dir, "../outside.txt"), "fs/path-escape");
     expectCode(() => resolveEditablePath(dir, "/etc/passwd"), "fs/path-escape");
+  });
+
+  it("cwd 内的软链指向外部：fs/path-escape（不只做字符串前缀判断）", () => {
+    const link = join(dir, "escape-link");
+    try {
+      symlinkSync("/etc", link);
+    } catch {
+      return; // 无权限建软链（少见）：跳过，别把环境问题当断言失败
+    }
+    expectCode(() => resolveEditablePath(dir, "escape-link/passwd"), "fs/path-escape");
+  });
+
+  it("目标不存在：fs/not-a-file（edit 不允许新建，那是 write 的事）", () => {
+    expectCode(() => resolveEditablePath(dir, "not-there.txt"), "fs/not-a-file");
+  });
+
+  it("目标是 cwd 自身：fs/not-a-file（复用 write 的 fs/is-directory，按 edit 语义改报）", () => {
+    expectCode(() => resolveEditablePath(dir, "."), "fs/not-a-file");
+  });
+
+  it("目标是目录：fs/not-a-file", () => {
+    const d = join(dir, "dir-target");
+    mkdirSync(d, { recursive: true });
+    expectCode(() => resolveEditablePath(dir, "dir-target"), "fs/not-a-file");
+  });
+
+  it("错误类同源：EditError 是 FileWriteError 的子类（上层一次 catch 接得住）", () => {
+    const err = expectCode(() => resolveEditablePath(dir, "../outside.txt"), "fs/path-escape");
+    expect(err).toBeInstanceOf(FileWriteError);
   });
 });
 

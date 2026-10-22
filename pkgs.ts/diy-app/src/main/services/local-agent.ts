@@ -1351,7 +1351,8 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
          * 与 `write` 的分工：write 负责「整份文件是什么」，edit 负责「把这几处换成那几处」。
          * 匹配 / 归一 / diff 全在 core/file-edit.ts（纯函数、可单测）；这里只管 I/O：
          *   路径护栏 → 同文件队列 → 读改写 → 审计 → 抛错（不 return 失败）。
-         * 路径护栏与 diff 生成目前是本文件族内的小函数（##266 待与 write 工具去重）。
+         * 路径护栏 / 错误类 / diff 生成**与 write 共用一份**（`core/file-write.ts` +
+         * `core/unified-diff.ts`，##266 review2 去重）；本文件只做 I/O 与审计。
          */
         edit: tool({
             description:

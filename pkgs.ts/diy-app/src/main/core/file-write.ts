@@ -20,6 +20,7 @@
 import { closeSync, openSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { writeFileAtomic } from "./atomic-write";
+import { diffLines, displayDiffLine, renderUnifiedHunks, splitDiffLines } from "./unified-diff";
 
 /** 单次写入的内容上限（字节，UTF-8）。1 MB 足够一整份源码/文档，又不至于把主进程内存撑爆。 */
 export const WRITE_MAX_BYTES = 1024 * 1024;
@@ -29,11 +30,16 @@ const BOM = "\uFEFF";
 
 export type FileWriteErrorCode = "fs/path-escape" | "fs/content-too-large" | "fs/is-directory";
 
-/** 写入类错误：`code` 用 `fs/` 域（`error-triage.ts::CODE_RE` 已含 fs，不新开域）。 */
-export class FileWriteError extends Error {
-    readonly code: FileWriteErrorCode;
+/**
+ * 写入类错误：`code` 用 `fs/` 域（`error-triage.ts::CODE_RE` 已含 fs，不新开域）。
+ *
+ * 泛型参数只为**同族子类**（`EditError`）能收窄自己的 code 联合（##266 review2）：
+ * 上层 `catch (e) { if (e instanceof FileWriteError) … }` 一次接住 write 与 edit 的路径错误。
+ */
+export class FileWriteError<C extends string = FileWriteErrorCode> extends Error {
+    readonly code: C;
     /** 对象参数形态：`{ code, message }` —— 与 `throw new Error(msg, { code })` 同一种「码在实参里」的写法 */
-    constructor(init: { code: FileWriteErrorCode; message: string }) {
+    constructor(init: { code: C; message: string }) {
         super(init.message);
         this.name = "FileWriteError";
         this.code = init.code;
@@ -122,127 +128,6 @@ export interface DiffResult {
     truncated: boolean;
 }
 
-type DiffOp = { t: "eq" | "del" | "add"; line: string };
-
-/** 按 `\n` 切行（不保留行尾符；文件末尾无换行的最后一行也保留） */
-function splitLines(s: string): string[] {
-    const body = s.startsWith(BOM) ? s.slice(1) : s;
-    if (body === "") return [];
-    const lines = body.split("\n");
-    if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
-    return lines;
-}
-
-/** 单行展示：去掉行尾 `\r`（CRLF 文件不让 diff 里挂一根看不见的控制符） */
-function displayLine(line: string): string {
-    return line.endsWith("\r") ? line.slice(0, -1) : line;
-}
-
-/**
- * 行级 diff（先剥公共前后缀，中间段用 LCS）。
- *
- * LCS 的规模闸：中间段行数乘积 > 4e6 时退化成「整段替换」——
- * 1 MB 的行级 LCS 在最坏情况下是 O(n·m) 的内存/时间，摘要不值得为此卡住主进程。
- */
-function diffOps(a: string[], b: string[]): DiffOp[] {
-    let pre = 0;
-    while (pre < a.length && pre < b.length && a[pre] === b[pre]) pre += 1;
-    let suf = 0;
-    while (suf < a.length - pre && suf < b.length - pre && a[a.length - 1 - suf] === b[b.length - 1 - suf]) suf += 1;
-
-    const ops: DiffOp[] = [];
-    for (let i = 0; i < pre; i += 1) ops.push({ t: "eq", line: a[i] });
-
-    const am = a.slice(pre, a.length - suf);
-    const bm = b.slice(pre, b.length - suf);
-    if (am.length === 0 || bm.length === 0 || am.length * bm.length > 4_000_000) {
-        for (const line of am) ops.push({ t: "del", line });
-        for (const line of bm) ops.push({ t: "add", line });
-    } else {
-        const n = am.length;
-        const m = bm.length;
-        const w = m + 1;
-        const dp = new Uint32Array((n + 1) * w);
-        for (let i = n - 1; i >= 0; i -= 1) {
-            for (let j = m - 1; j >= 0; j -= 1) {
-                dp[i * w + j] =
-                    am[i] === bm[j]
-                        ? dp[(i + 1) * w + j + 1] + 1
-                        : Math.max(dp[(i + 1) * w + j], dp[i * w + j + 1]);
-            }
-        }
-        let i = 0;
-        let j = 0;
-        while (i < n && j < m) {
-            if (am[i] === bm[j]) {
-                ops.push({ t: "eq", line: am[i] });
-                i += 1;
-                j += 1;
-            } else if (dp[(i + 1) * w + j] >= dp[i * w + j + 1]) {
-                ops.push({ t: "del", line: am[i] });
-                i += 1;
-            } else {
-                ops.push({ t: "add", line: bm[j] });
-                j += 1;
-            }
-        }
-        while (i < n) ops.push({ t: "del", line: am[i++] });
-        while (j < m) ops.push({ t: "add", line: bm[j++] });
-    }
-
-    for (let i = a.length - suf; i < a.length; i += 1) ops.push({ t: "eq", line: a[i] });
-    return ops;
-}
-
-/** 把 ops 渲染成带上下文的 hunks（相邻 hunk 间隔 ≤ 2·context 时合并） */
-function renderHunks(ops: DiffOp[], ctx: number, pathLabel: string | null): string[] {
-    // 每个 op 的旧/新行号（1-based；只对 eq/del/add 前进）
-    let oldNo = 1;
-    let newNo = 1;
-    const meta = ops.map((op) => {
-        const m = { oldNo, newNo };
-        if (op.t !== "add") oldNo += 1;
-        if (op.t !== "del") newNo += 1;
-        return m;
-    });
-
-    const changes: number[] = [];
-    ops.forEach((op, i) => {
-        if (op.t !== "eq") changes.push(i);
-    });
-    if (changes.length === 0) return [];
-
-    const hunks: Array<[number, number]> = [];
-    let start = Math.max(0, changes[0] - ctx);
-    let end = Math.min(ops.length - 1, changes[0] + ctx);
-    for (let k = 1; k < changes.length; k += 1) {
-        const s = Math.max(0, changes[k] - ctx);
-        const e = Math.min(ops.length - 1, changes[k] + ctx);
-        if (s <= end + 1) end = Math.max(end, e);
-        else {
-            hunks.push([start, end]);
-            start = s;
-            end = e;
-        }
-    }
-    hunks.push([start, end]);
-
-    const out: string[] = [];
-    for (const [s, e] of hunks) {
-        const seg = ops.slice(s, e + 1);
-        const oldCount = seg.filter((o) => o.t !== "add").length;
-        const newCount = seg.filter((o) => o.t !== "del").length;
-        const oldStart = oldCount === 0 ? meta[s].oldNo - 1 : meta[s].oldNo;
-        const newStart = newCount === 0 ? meta[s].newNo - 1 : meta[s].newNo;
-        out.push(`@@ -${oldStart},${oldCount} +${newStart},${newCount} @@`);
-        for (const op of seg) {
-            const prefix = op.t === "eq" ? " " : op.t === "add" ? "+" : "-";
-            out.push(`${prefix}${displayLine(op.line)}`);
-        }
-    }
-    return pathLabel === null ? out : [`--- a/${pathLabel}`, `+++ b/${pathLabel}`, ...out];
-}
-
 /**
  * 生成 unified diff 摘要。
  *
@@ -254,13 +139,13 @@ export function unifiedDiff(before: string | null, after: string, opts: DiffOpti
     const maxLines = opts.maxLines ?? 100;
     const maxNewFileLines = opts.maxNewFileLines ?? 20;
     const pathLabel = opts.path ?? null;
-    const afterLines = splitLines(after);
+    const afterLines = splitDiffLines(after);
 
     // 新文件：全部 + 行，只列前 N 行（新增行数仍是真值）
     if (before === null) {
         const head = pathLabel === null ? [] : ["--- /dev/null", `+++ b/${pathLabel}`];
         const shown = afterLines.slice(0, maxNewFileLines);
-        const body = shown.map((l) => `+${displayLine(l)}`);
+        const body = shown.map((l) => `+${displayDiffLine(l)}`);
         const omitted = afterLines.length - shown.length;
         const tail =
             omitted > 0 ? [`[省略 ${omitted} 行（新文件共 ${afterLines.length} 行）]`] : [];
@@ -268,13 +153,14 @@ export function unifiedDiff(before: string | null, after: string, opts: DiffOpti
         return { added: afterLines.length, removed: 0, text: lines.join("\n"), truncated: omitted > 0 };
     }
 
-    const beforeLines = splitLines(before);
-    const ops = diffOps(beforeLines, afterLines);
-    const added = ops.filter((o) => o.t === "add").length;
-    const removed = ops.filter((o) => o.t === "del").length;
+    // diff 本体（LCS + hunk 渲染）**只有一份**，在 core/unified-diff.ts（##266 review2）：
+    // edit 的 patch 回执与这里的摘要同源，改一处两边都变。本函数只做展示层（截断 / 新文件）。
+    const ops = diffLines(splitDiffLines(before), afterLines);
+    const added = ops.filter((o) => o.kind === "add").length;
+    const removed = ops.filter((o) => o.kind === "del").length;
     if (added === 0 && removed === 0) return { added: 0, removed: 0, text: "", truncated: false };
 
-    let lines = renderHunks(ops, ctx, pathLabel);
+    let lines = renderUnifiedHunks(ops, ctx, pathLabel);
     let truncated = false;
     if (lines.length > maxLines) {
         const headCount = Math.max(1, maxLines - Math.floor(maxLines / 3));

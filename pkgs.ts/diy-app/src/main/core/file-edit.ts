@@ -12,30 +12,41 @@
 //   · 默认 oldText 必须唯一；多条命中 ⇒ `fs/ambiguous-match`（带出现次数）；
 //     `replaceAll: true` 才允许全部替换。
 //   · 归一命中时**只重写被命中的那几行**，其余行逐字保留（原文的行尾 / 缩进不被顺手改掉）。
+//   · 路径护栏复用 `file-write.ts::resolveWritePath`（write/edit 只有一份，##266 review2），
+//     这里只补 edit 独有的两条：目标必须**已存在**且**是普通文件**；
+//     unified patch 来自 `unified-diff.ts`（write 的摘要与 edit 的 patch 同一个 LCS）。
 //
 // 错误码域：`fs/`（与 write 工具同一口径）。错误走 `throw`（不 return），
 //   让 SDK 走 tool-error 分支（UI 画 ✗ 且自动展开），与 read / bash 的失败口径一致。
+//   `EditError` **继承** write 的 `FileWriteError`（##266 review2）：路径护栏是共用的，
+//   同一种「越界」不许在上层表现为两个不相干的类 —— 上层 catch `FileWriteError` 两个都接得住。
 
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
+import { FileWriteError, resolveWritePath, type FileWriteErrorCode } from "./file-write";
+import { generateUnifiedPatch } from "./unified-diff";
 
 export type EditErrorCode =
     | "fs/empty-edits"
     | "fs/empty-old-text"
     | "fs/no-match"
     | "fs/ambiguous-match"
-    | "fs/path-escape"
     | "fs/not-a-file"
     | "fs/read-failed"
-    | "fs/write-failed";
+    | "fs/write-failed"
+    /** 路径护栏（与 write 共用实现，故这几个码来自 `FileWriteError`） */
+    | FileWriteErrorCode;
 
-/** edit 的失败：code 是事实（进 triage 统计），message 是给模型看的话。 */
-export class EditError extends Error {
-    readonly code: EditErrorCode;
+/**
+ * edit 的失败：code 是事实（进 triage 统计），message 是给模型看的话。
+ *
+ * **同族**：继承 `FileWriteError<EditErrorCode>` —— 路径护栏是共用的，同一种「越界」
+ * 不许在上层表现为两个不相干的类（catch `FileWriteError` 即可接住两者）。
+ */
+export class EditError extends FileWriteError<EditErrorCode> {
     constructor(code: EditErrorCode, message: string) {
-        super(message);
+        super({ code, message });
         this.name = "EditError";
-        this.code = code;
     }
 }
 
@@ -316,168 +327,39 @@ export function applyEdits(content: string, edits: EditOp[]): ApplyResult {
 }
 
 // ═══════════════════════════════════════════════
-//  unified patch（自写，不引依赖）
-// ═══════════════════════════════════════════════
-
-type DiffKind = "eq" | "del" | "add";
-interface DiffOp {
-    kind: DiffKind;
-    text: string;
-}
-
-/** 中间区段 LCS 的规模上限（cells）——超过就退化成"整段删 + 整段加"，保证不卡住主进程。 */
-const LCS_MAX_CELLS = 4_000_000;
-const PATCH_CONTEXT = 3;
-
-/** 规模超限返回 null（调用方退化成「整段删 + 整段加」）—— 用返回值而不是异常：这不是错误场景。 */
-function lcsOps(a: string[], b: string[]): DiffOp[] | null {
-    if (a.length === 0) return b.map((text) => ({ kind: "add" as const, text }));
-    if (b.length === 0) return a.map((text) => ({ kind: "del" as const, text }));
-    if (a.length * b.length > LCS_MAX_CELLS) return null;
-    const n = a.length;
-    const m = b.length;
-    const w = m + 1;
-    const dp = new Int32Array((n + 1) * w);
-    for (let i = n - 1; i >= 0; i--) {
-        for (let j = m - 1; j >= 0; j--) {
-            dp[i * w + j] =
-                a[i] === b[j] ? dp[(i + 1) * w + j + 1] + 1 : Math.max(dp[(i + 1) * w + j], dp[i * w + j + 1]);
-        }
-    }
-    const out: DiffOp[] = [];
-    let i = 0;
-    let j = 0;
-    while (i < n && j < m) {
-        if (a[i] === b[j]) {
-            out.push({ kind: "eq", text: a[i] });
-            i++;
-            j++;
-        } else if (dp[(i + 1) * w + j] >= dp[i * w + j + 1]) {
-            out.push({ kind: "del", text: a[i] });
-            i++;
-        } else {
-            out.push({ kind: "add", text: b[j] });
-            j++;
-        }
-    }
-    while (i < n) out.push({ kind: "del", text: a[i++] });
-    while (j < m) out.push({ kind: "add", text: b[j++] });
-    return out;
-}
-
-/** 行级 diff（掐掉公共前后缀再算 LCS —— 单点编辑的中间区段通常只有几行）。 */
-export function diffLines(before: string[], after: string[]): DiffOp[] {
-    let head = 0;
-    while (head < before.length && head < after.length && before[head] === after[head]) head++;
-    let tail = 0;
-    while (
-        tail < before.length - head &&
-        tail < after.length - head &&
-        before[before.length - 1 - tail] === after[after.length - 1 - tail]
-    ) {
-        tail++;
-    }
-    const a = before.slice(head, before.length - tail);
-    const b = after.slice(head, after.length - tail);
-    const middle =
-        lcsOps(a, b) ??
-        ([...a.map((text) => ({ kind: "del" as const, text })), ...b.map((text) => ({ kind: "add" as const, text }))] as DiffOp[]);
-    return [
-        ...before.slice(0, head).map((text) => ({ kind: "eq" as const, text })),
-        ...middle,
-        ...before.slice(before.length - tail).map((text) => ({ kind: "eq" as const, text })),
-    ];
-}
-
-/**
- * 生成 unified patch（`---` / `+++` / `@@`，3 行上下文）。
- *
- * @param fileLabel 展示用路径（相对 cwd 更易读；不会参与 IO）
- * @param before 变更前全文（**LF**）
- * @param after 变更后全文（**LF**）
- * @returns 无差异时返回 ""
- */
-export function generateUnifiedPatch(fileLabel: string, before: string, after: string): string {
-    if (before === after) return "";
-    const a = before.split("\n");
-    const b = after.split("\n");
-    const ops = diffLines(a, b);
-
-    // 每个 op 之前已消费的旧/新行数（用于 @@ 头的起点：hunk 首行前的位置 + 1）
-    let oldNo = 0;
-    let newNo = 0;
-    const rows = ops.map((op) => {
-        const row = { ...op, oldBefore: oldNo, newBefore: newNo };
-        if (op.kind !== "add") oldNo++;
-        if (op.kind !== "del") newNo++;
-        return row;
-    });
-
-    // 变更行索引 → 合并成 hunk（相隔 ≤ 2*context 的变更并进同一块）
-    const changeIdx = rows.map((r, i) => (r.kind === "eq" ? -1 : i)).filter((i) => i >= 0);
-    if (changeIdx.length === 0) return "";
-    const hunks: Array<{ start: number; end: number }> = [];
-    for (const idx of changeIdx) {
-        const cur = hunks[hunks.length - 1];
-        if (cur && idx - cur.end <= PATCH_CONTEXT * 2) {
-            cur.end = idx;
-            continue;
-        }
-        hunks.push({ start: idx, end: idx });
-    }
-
-    const out: string[] = [`--- a/${fileLabel}`, `+++ b/${fileLabel}`];
-    for (const h of hunks) {
-        const from = Math.max(0, h.start - PATCH_CONTEXT);
-        const to = Math.min(rows.length - 1, h.end + PATCH_CONTEXT);
-        const slice = rows.slice(from, to + 1);
-        const oldCount = slice.filter((r) => r.kind !== "add").length;
-        const newCount = slice.filter((r) => r.kind !== "del").length;
-        // 与 git 同一约定：count = 0 时起点写「前一行」，否则写 hunk 首行行号
-        const oldStart = oldCount === 0 ? slice[0].oldBefore : slice[0].oldBefore + 1;
-        const newStart = newCount === 0 ? slice[0].newBefore : slice[0].newBefore + 1;
-        out.push(`@@ -${oldStart},${oldCount} +${newStart},${newCount} @@`);
-        for (const r of slice) {
-            out.push(`${r.kind === "eq" ? " " : r.kind === "del" ? "-" : "+"}${r.text}`);
-        }
-    }
-    return out.join("\n");
-}
-
-// ═══════════════════════════════════════════════
 //  路径护栏 + 同文件串行队列
 // ═══════════════════════════════════════════════
 
-function isWithin(root: string, target: string): boolean {
-    const rel = path.relative(root, target);
-    return rel === "" || (!rel.startsWith(`..${path.sep}`) && rel !== ".." && !path.isAbsolute(rel));
-}
-
 /**
- * 解析工具传入的路径：**必须落在 cwd 内**（`fs/path-escape`）。
- * 只存在软链时按真实路径再验一次 —— 否则 cwd 内的软链可以指向任意位置。
+ * 解析 edit 的目标路径：**护栏只有一份** —— 直接复用 write 的 {@link resolveWritePath}
+ * （相对 cwd 解析 + 最近存在祖先 realpath 后仍须落在 cwd 内，越界 `fs/path-escape`）。
+ *
+ * edit 与 write 的**唯一差异**补在这里：目标必须**已存在**且**是普通文件**
+ * （edit 只能改已有内容，新建没有 oldText 可匹配 → 那是 write 的事）。
+ *
+ * 抛错统一成 `EditError`（它是 `FileWriteError` 的子类，`code` 原样保留）——
+ * 上层不会见到「同一种越界抛两种类」。
  */
 export function resolveEditablePath(cwd: string, input: string): string {
-    const root = path.resolve(cwd);
-    const abs = path.resolve(root, input);
-    if (!isWithin(root, abs)) fail("fs/path-escape", `路径越界：${input} 不在工作目录 ${root} 内`);
-    let real: string | null = null;
+    let abs: string;
     try {
-        real = realpathSync(abs);
-    } catch {
-        // 目标不存在：交给后面的 statSync 报 fs/read-failed
-        real = null;
-    }
-    if (real) {
-        let realRoot = root;
-        try {
-            realRoot = realpathSync(root);
-        } catch {
-            /* 保持词法根 */
+        abs = resolveWritePath(cwd, input);
+    } catch (e) {
+        if (e instanceof FileWriteError) {
+            // 措辞归 edit：write 的「只写文件」文案不该原样漏到 edit 的错误里
+            if (e.code === "fs/is-directory") fail("fs/not-a-file", `${input} 是目录（edit 只改文件）`);
+            // error-code-ok: 转手 write 侧已带 code 的错误（code 原样透传，不新造）
+            throw new EditError(e.code, e.message);
         }
-        if (!isWithin(realRoot, real)) fail("fs/path-escape", `路径越界：${input} 经软链指向 ${real}，不在工作目录内`);
-        return real;
+        throw e;
     }
+    let isFile = false;
+    try {
+        isFile = statSync(abs).isFile();
+    } catch {
+        fail("fs/not-a-file", `文件不存在：${input}（edit 只能改已存在的文件；新建/整份覆盖请用 write）`);
+    }
+    if (!isFile) fail("fs/not-a-file", `${input} 不是普通文件（edit 只改文件；看目录用 bash ls）`);
     return abs;
 }
 
@@ -495,7 +377,7 @@ export function displayPath(cwd: string, abs: string): string {
     }
     for (const root of roots) {
         const rel = path.relative(root, abs);
-        if (rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel)) return rel;
+        if (rel !== "" && rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel)) return rel;
     }
     return path.basename(abs);
 }
