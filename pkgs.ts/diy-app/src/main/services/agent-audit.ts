@@ -18,7 +18,14 @@ import { appendFileSync, existsSync, mkdirSync, openSync, readSync, closeSync, r
 import { activeTurnList, lastRenderer } from "./runtime-context";
 import { join } from "node:path";
 
-export type AuditPhase = "turn-start" | "turn-end" | "bash-start" | "bash-end" | "bash-blocked";
+export type AuditPhase =
+  | "turn-start"
+  | "turn-end"
+  | "bash-start"
+  | "bash-end"
+  | "bash-blocked"
+  /** `write` 工具的整文件写（##414）：`command` = 相对路径，`result` = `+N/-M` */
+  | "file-write";
 
 export interface AuditEntry {
   /** ISO 时间戳 */

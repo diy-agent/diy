@@ -174,6 +174,7 @@ import {
 import { renderSummarySection } from "./prompt-registry";
 import { assembleGlobals, systemOverBudget } from "./prompt-registry";
 import { readFileWindow, formatReadOutput, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
+import { formatWriteResult, writeFileWhole, WRITE_MAX_BYTES } from "../core/file-write";
 import { SteerQueue, fileSteerPort } from "../core/steer-queue";
 import { DEFAULT_STEER_MODE, steerModeLabel } from "../../shared/steer-mode";
 import type { SteerItem, SteerMode } from "../core/drafts";
@@ -1307,6 +1308,40 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                     //   ⚠️「bash.execute 现在会抛」≠「它见错就抛」—— 判据细节全在 runBash 头注。
                     throw new Error(`[读取失败] ${e instanceof Error ? e.message : e}`);
                 }
+            },
+        }),
+        /**
+         * `write` —— 整文件写（##414）。
+         *
+         * 为什么要有：没有它时所有写文件都靠 bash（heredoc / python / sed），转义易错、
+         * 无 diff 反馈、无路径护栏、审计粒度只有一条命令行。
+         * 实现全在 core/file-write.ts（路径护栏 / 上限 / BOM / diff 摘要只有一份）——
+         * ##415 的 edit 会复用同一套，别在本文件里另写。
+         */
+        write: tool({
+            description:
+                "整文件写入（新建或覆盖；相对路径按项目目录解析）。" +
+                `**父目录不存在会自动创建**（mkdir -p），这不是错误。` +
+                `护栏：路径必须落在项目目录内（越界报 fs/path-escape）；content 上限 ${Math.round(WRITE_MAX_BYTES / 1024)}KB（报 fs/content-too-large）；` +
+                "目标是目录报 fs/is-directory。UTF-8 原样写：行尾不转换，原文件有 BOM 会保留。" +
+                "返回 `+N/-M 行` 与 unified diff 摘要。改几行不要用本工具重写整个文件。",
+            inputSchema: z.object({
+                path: z.string().describe("文件路径（相对项目目录解析）"),
+                content: z.string().describe("完整文件内容（UTF-8 文本；原样写入，不做转义处理）"),
+            }),
+            execute: async ({ path: filePath, content }) => {
+                const home = diyHome();
+                // **抛，不 return**（##414 / 与 read 的 ##329 同口径）：失败是工具错误（UI ✗ 且自动展开），
+                // 不是「正常结果里写一句失败」—— 后者会被画成 ✓。
+                const r = writeFileWhole(cwd, filePath, content);
+                appendAudit(home, {
+                    phase: "file-write",
+                    taskUri,
+                    cwd,
+                    command: filePath,
+                    result: `+${r.added}/-${r.removed}`,
+                });
+                return formatWriteResult(r);
             },
         }),
         /**
