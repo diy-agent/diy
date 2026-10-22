@@ -129,6 +129,21 @@ facts:
       source: user
       at: ~/AGENTS.md:35
       verifiedAt: '2026-10-22'
+  tool#scan-big-dirs:
+    value: |-
+      **搜之前先摸体量**：仓外目录（`~`、`$DIY_HOME`、`/tmp`、`build/`）先 `du -d 1 -h <dir> | sort -h | tail` 看清哪一层是 GB 级，再决定 `rg` / `fd` 显式排除哪些（`-g '!{.venv,build,node_modules,dist,_diy.worktrees,.cache}/**'`）。
+
+      判据：
+
+      - 仓内（有 `.gitignore`）先 `rg --files | wc -l` —— 上千正常、上万即已扫进大目录，别再猜
+      - **一次卡死 = 纪律没落实**，不是「机器慢」：`rg` 在 1 GB 的 `build/` 上会把整轮请求赔进去（bash 超时 300s 都不够），而 `du` 一秒出结果
+      - `build/lab/home` 这类数据根尤其危险：`electron_user_data/`、`log/network/` 都是万级小文件
+    id: agents.tool.scan-big-dirs
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
   tool#shell:
     value: 文件操作优先 `fd` / `rg`，替代 `find` / `grep`
     id: agents.tool.shell
