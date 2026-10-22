@@ -130,6 +130,11 @@ describe("blameOf：TurnEndReason 六个值逐一映射（不许漏、不许编�
             { type: "error", data: { source: "budget", message: "quota" } },
             { type: "error", data: { source: "stream", message: "socket hang up" } },
             { type: "interrupted", data: {} },
+            // ##416：冷读能命名时归 environment（已识别的外部环境），与 triageOfTurnEnd 同结论
+            { type: "interrupted", data: { why: "app-exit:SIGTERM" } },
+            { type: "interrupted", data: { why: "crash:minidump" } },
+            // 认不出的 why ⇒ 仍 unknown（两处都不猜）
+            { type: "interrupted", data: { why: "app-exit:whatever" } },
         ];
         for (const end of ends) {
             const mine = tierOf(blameOf(end));

@@ -191,6 +191,37 @@ describe("triageOfTurnEnd · 轮末映射（只映射，不动值域）", () => 
         expect(v.reason.trim().length).toBeGreaterThan(0);
     });
 
+    // ##416：冷读补 closer 时若现场证据能命名（why），就不能再灌进 unknown 池
+    const named: Array<[string, TurnEndReason, string | null, string | null]> = [
+        [
+            "interrupted:app-exit:SIGTERM",
+            { type: "interrupted", data: { why: "app-exit:SIGTERM", evidence: "/h/log/app-exit.jsonl" } },
+            "external-recognized",
+            "agent/app-restart",
+        ],
+        [
+            "interrupted:app-exit:electron-dev-restart",
+            { type: "interrupted", data: { why: "app-exit:electron-dev-restart" } },
+            "external-recognized",
+            "agent/app-restart",
+        ],
+        [
+            "interrupted:uncaughtException",
+            { type: "interrupted", data: { why: "app-exit:uncaughtException" } },
+            "external-recognized",
+            "agent/app-crash",
+        ],
+        ["interrupted:minidump", { type: "interrupted", data: { why: "crash:minidump" } }, "external-recognized", "agent/app-crash"],
+        // 认不出的 why 必须回落 unknown —— 「能命名才命名」，不许硬猜
+        ["interrupted:未知 why", { type: "interrupted", data: { why: "app-exit:whatever" } }, "external-unknown", "agent/interrupted"],
+    ];
+    it.each(named)("可命名/不可命名的中断：%s", (_name, reason, triage, code) => {
+        const v = triageOfTurnEnd(reason);
+        expect(v.triage).toBe(triage);
+        expect(v.code).toBe(code);
+        expect(v.reason.trim().length).toBeGreaterThan(0);
+    });
+
     it("预期内（completed / 用户停止，含 legacy abort）不算 external-unknown —— 别把「正常」标成可疑", () => {
         expect(triageOfTurnEnd({ type: "completed", data: {} }).triage).toBeNull();
         expect(triageOfTurnEnd({ type: "aborted", data: { source: "user" } }).triage).toBeNull();

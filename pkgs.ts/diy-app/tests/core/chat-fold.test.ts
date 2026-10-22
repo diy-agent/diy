@@ -402,6 +402,13 @@ describe("turnEndNote：结束原因翻成人话（所有级别恒显）", () =>
         expect(turnEndNote(ended("aborted", { source: "abort" }))).toContain("被中断");
     });
 
+    it("##416 interrupted 能命名时给具体说法（仍一句话）；查不到保持兜底句", () => {
+        expect(turnEndNote(ended("interrupted", { why: "app-exit:SIGTERM" }))).toBe("本轮未完成（进程重启）");
+        expect(turnEndNote(ended("interrupted", { why: "crash:minidump" }))).toBe("本轮未完成（进程崩溃）");
+        expect(turnEndNote(ended("interrupted", { why: "app-exit:whatever" }))).toBe("本轮未完成（流中断/崩溃恢复）");
+        expect(turnEndNote(ended("interrupted", {}))).toBe("本轮未完成（流中断/崩溃恢复）");
+    });
+
     it("error 的细节由 error 块/现场说 —— 这一行不重复", () => {
         expect(turnEndNote(ended("error", { source: "stream", message: "x" }))).toBeNull();
     });
@@ -602,6 +609,19 @@ describe("轮尾状态行的状态图标（endMarkOf）", () => {
         // aborted 的 tip 同样按 source 分句（与 turnEndNote 同源，不许各写各的）
         expect(endMarkOf({ type: "aborted", data: { source: "user" } } as never, false).tip).toBe("生成已取消");
         expect(endMarkOf({ type: "interrupted", data: {} } as never, false)).toMatchObject({ icon: "⛔", tone: "cut" });
+    });
+
+    it("##416 中断能命名时 tip 说具体原因（仍一句话）；查不到保持兜底句", () => {
+        expect(endMarkOf({ type: "interrupted", data: { why: "app-exit:SIGTERM" } } as never, false).tip).toBe(
+            "未完成（进程重启）",
+        );
+        expect(endMarkOf({ type: "interrupted", data: { why: "crash:minidump" } } as never, false).tip).toBe(
+            "未完成（进程崩溃）",
+        );
+        expect(endMarkOf({ type: "interrupted", data: { why: "app-exit:whatever" } } as never, false).tip).toBe(
+            "未完成（流中断/崩溃恢复）",
+        );
+        expect(endMarkOf({ type: "interrupted", data: {} } as never, false).tip).toBe("未完成（流中断/崩溃恢复）");
     });
 
     it("旧日志没有 endReason → 不给图标（不编状态，连灰点都不给）", () => {

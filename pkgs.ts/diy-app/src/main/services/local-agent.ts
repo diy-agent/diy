@@ -86,6 +86,8 @@ import type { TurnGate, TurnGateDecision } from "../../shared/turn-gate";
 import { triageOf, triageOfTurnEnd } from "../../shared/error-triage";
 import { errText } from "../../shared/error-report";
 import { reportError } from "./error-report";
+import { readCauseEvidence } from "./interrupted-cause";
+import { classifyInterruptedCause, turnStartedAtOf } from "../../shared/interrupted-cause";
 import { opsFeed } from "./ops-feed";
 import type { DeliveryOrigin, TurnOrigin } from "../../shared/room";
 // 「模型不可用」通知（##369 ①）：判据在 shared/model-unavailable，通知中心在 model-notice
@@ -1936,8 +1938,40 @@ export class LocalAgentManager {
      * （chat() 开场，兜住"进程活着但上一轮没闭合"）—— 自愈原先只挂在加载（每进程一次），
      * 于是开口轮能一直挂到主进程重启：生产实测跨 9 轮、挂了 6 天。
      */
-    private healResidualOps(s: LocalSession): Op[] {
-        return [...interruptedToolPatches(s.store), ...danglingStopPatches(s.store)];
+    private healResidualOps(taskUri: string, s: LocalSession): Op[] {
+        // 现场勘验（##416）：一个开口轮怎么没跑完，先按**时间窗口**查 `log/app-exit.jsonl` 与 minidump。
+        // 每批读一次（量级是「每天几条」），查不到就 null ⇒ `danglingStopPatches` 退回空 data，
+        // 三档仍归 unknown（SIGKILL / 断电说不出口，不许猜）。
+        const evidence = readCauseEvidence(diyHome());
+        const now = Date.now();
+        return [
+            ...interruptedToolPatches(s.store),
+            ...danglingStopPatches(s.store, {
+                interruptedData: (turn) => {
+                    const since = turnStartedAtOf(turn.id);
+                    if (since == null) return null; // 没有窗口下界 ⇒ 不判（会把几天前的退出算进来）
+                    const cause = classifyInterruptedCause(since, now, evidence);
+                    if (!cause) return null;
+                    // 落盘（##411 reportError）：同一判定留一条，ctx 带 taskUri / turnId / why / 证据路径
+                    // —— 用户面仍只是一句话（`turnEndText`），细节在这里可回溯。
+                    reportError(
+                        Object.assign(new Error(`本轮未完成：${cause.why}`), {
+                            name: "TurnInterrupted",
+                            code: cause.code,
+                        }),
+                        {
+                            where: "agent/turn-interrupted",
+                            taskUri,
+                            turnId: turn.id,
+                            why: cause.why,
+                            evidence: cause.evidence,
+                            evidenceAt: new Date(cause.at).toISOString(),
+                        },
+                    );
+                    return { why: cause.why, evidence: cause.evidence };
+                },
+            }),
+        ];
     }
 
     private convergeOnLoad(taskUri: string, s: LocalSession): void {
@@ -1945,7 +1979,7 @@ export class LocalAgentManager {
         const sink = this.opsSink(taskUri);
         // 先补 tool 的业务终态（patch + stop），再补剩余结构开口（stop）—— 前者已 stop 的块
         // 不会被后者重复处理（danglingStopPatches 只挑未 stop 的）。
-        for (const op of this.healResidualOps(s)) {
+        for (const op of this.healResidualOps(taskUri, s)) {
             sink(op);
             s.store.apply(op);
         }
@@ -3326,7 +3360,7 @@ export class LocalAgentManager {
             // 开口 turn 跨越 9 轮、挂了 6 天）。此刻 sess.running 已由上方互斥守卫保证为空 ——
             // 上一轮真在跑的话新消息连这个函数都进不来 —— 所以未 stop 的块必是残留
             // （崩溃 / 被杀 / 轮次被中途 abort）。
-            for (const op of this.healResidualOps(sess)) {
+            for (const op of this.healResidualOps(taskUri, sess)) {
                 sink(op);
                 sess.store.apply(op);
                 publish(op);

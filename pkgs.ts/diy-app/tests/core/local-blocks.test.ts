@@ -664,6 +664,31 @@ describe("danglingStopPatches：崩溃残留块补 stop + 轮级结束原因", (
         expect(danglingStopPatches(s)).toEqual([{ op: "stop", id: "t1" }]);
     });
 
+    it("##416 冷读能命名时写进 data.why/evidence（老记录无 why 的形态见上一条）", () => {
+        const s = new BlockStore();
+        s.apply({ op: "start", id: `t${1700000000000}`, kind: "turn" });
+        const ops = danglingStopPatches(s, {
+            interruptedData: (turn) => ({ why: `app-exit:SIGTERM`, evidence: `/h/log/app-exit.jsonl#${turn.id}` }),
+        });
+        expect(ops).toEqual([
+            {
+                op: "patch",
+                id: `t${1700000000000}`,
+                fields: { endReason: { type: "interrupted", data: { why: "app-exit:SIGTERM", evidence: `/h/log/app-exit.jsonl#t${1700000000000}` } } },
+            },
+            { op: "stop", id: `t${1700000000000}` },
+        ]);
+    });
+
+    it("##416 resolver 返回 null（查不到现场）⇒ 与改动前逐字一致：data 为空对象", () => {
+        const s = new BlockStore();
+        s.apply({ op: "start", id: "t1", kind: "turn" });
+        expect(danglingStopPatches(s, { interruptedData: () => null })).toEqual([
+            { op: "patch", id: "t1", fields: { endReason: { type: "interrupted", data: {} } } },
+            { op: "stop", id: "t1" },
+        ]);
+    });
+
     it("收敛后重放：turn.attrs.endReason 可在块树上读到（UI 的输入）", () => {
         const s = new BlockStore();
         s.apply({ op: "start", id: "t1", kind: "turn" });
