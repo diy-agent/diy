@@ -2157,7 +2157,7 @@ export const apiDef = RpcSchema.router({
             desc: `追加一条日志（只追加、不改不删；title 一行必填 —— 标题写不出多半是该拆）`,
             input: {
               task: z.string().cliArg({ placeholder: "<projects/N/tasks/M>", desc: "任务 URI（**必填，不做「当前任务」推导**）" }),
-              kind: z.enum(["decision", "pitfall", "review", "progress", "learn"]).cliOption({ desc: "kind：决策 / 踩坑 / 结论 / 里程碑 / 发现" }),
+              kind: z.enum(["decision", "pitfall", "review", "progress", "learn"]).cliOption({ desc: "kind：decision 决策 / pitfall 踩坑 / review 结论 / progress 里程碑 / learn 发现（**传英文值**，中文只是说明）" }),
               title: z.string().cliOption({ placeholder: "<text>", desc: "一行标题（标题写不出 = 这条该拆）" }),
               body: z
                 .string()
