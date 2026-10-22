@@ -197,6 +197,31 @@ describe('loadRepo extraDirs（设备级跨根只读）', () => {
         expect(repo.facts.find((f) => f.id === 'x')!.value).toBe('1000');
     });
 
+    it('主库同 claim 全被 superseded 时，额外库那份顶上（不是"知识消失"）', () => {
+        const main = makeRepo();
+        const extra = makeRepo();
+        const mk = (id: string, value: string, lifecycle: 'active' | 'superseded'): Fact =>
+            fact({
+                id,
+                subject: 'app.port',
+                aspect: 'default',
+                value,
+                lifecycle,
+                evidence: { source: 'code', at: 'K.ts:1', verifiedAt: '2026-10-21' },
+            });
+        writeFileSync(
+            path.join(main, 'facts', 'a.yaml'),
+            renderDoc({ domain: 'a', note: '', facts: [mk('x', '1000', 'superseded')] }),
+        );
+        writeFileSync(
+            path.join(extra, 'facts', 'a.yaml'),
+            renderDoc({ domain: 'a', note: '', facts: [mk('g', '2000', 'active')] }),
+        );
+        const repo = loadRepo(main, { extraDirs: [extra] });
+        // claim 层面：主库那条"让位"，extra 那条并进来
+        expect(repo.facts.map((f) => f.id).sort()).toEqual(['g', 'x']);
+    });
+
     it('额外库坏了不影响主库（它是参考不是真源）', () => {
         const main = makeRepo();
         const extra = makeRepo();

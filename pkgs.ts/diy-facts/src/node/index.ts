@@ -241,10 +241,15 @@ export function loadRepo(knowledgeDir: string, opts: LoadRepoOptions = {}): Repo
             const it = item as { subject?: unknown; aspect?: unknown };
             return typeof it.subject === 'string' && typeof it.aspect === 'string' ? `${it.subject}#${it.aspect}` : undefined;
         };
+        // 只算**可用**的 claim（active + accepted）：主库同 claim 全被 superseded / 待审时，
+        // 视为"主库没有"，让额外库那份顶上 —— 否则标一条 superseded 就等于知识凭空消失。
         const seen = new Set<string>();
         for (const item of raw) {
             const k = claimKey(item);
-            if (k !== undefined) seen.add(k);
+            if (k === undefined) continue;
+            const it = item as { review?: unknown; lifecycle?: unknown };
+            const usable = (it.lifecycle ?? 'active') === 'active' && (it.review ?? 'accepted') === 'accepted';
+            if (usable) seen.add(k);
         }
         for (const extra of opts.extraDirs) {
             const extraFactsDir = path.join(path.resolve(extra), 'facts');
