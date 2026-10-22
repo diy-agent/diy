@@ -30,6 +30,15 @@ facts:
       source: probe
       probe: npx tsx build/lab/home/projects/1/tasks/5/gen/probe/measure-context.mts --home build/lab/home
       verifiedAt: '2026-10-22'
+  dev.context#evidence-anchor:
+    value: '`evidence.at` 锚的是**当前文件行号**，源一瘦身就全烂：AGENTS.md 从 75 行改成 29 行后，43 条 `at: AGENTS.md:NN` 越界 → `facts submit` 整批被挡（全过才写），一条新事实都写不进去。迁移类事实不该锚在被搬空的原文件上：要么去掉 at（git 历史可追），要么 schema 支持 `<rev>:<path>:<line>`（未实现）'
+    id: dev.context-evidence-anchor
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: 'git log --oneline -- knowledge/facts/entry.yaml | head -1  # at 锚被移动后越界'
+      verifiedAt: '2026-10-22'
   dev.context#help-share:
     value: 信封 help 7.4 KB 里 `system`(3.2) + `runtime`(2.2) 两节占 73%，全是 zod 派生的结构说明；`about` 固定话术已从 1689 B 压到 724 B（占 10%）。再砍只能动描述文本（`descMaxDepth`）
     id: dev.context-help-share
