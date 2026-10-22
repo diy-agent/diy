@@ -18,7 +18,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { dump, load } from 'js-yaml';
 import { claimOf, derivedFactId } from '../claim.js';
-import { DEFAULT_FULL_BUDGET, checkExpose, exposeOf, type ExposeLevel, type ExposeMap } from '../expose.js';
+import { DEFAULT_FULL_BUDGET, checkExpose, checkExposeLeveled, defaultExposeOf, exposeOf, type ExposeLevel, type ExposeMap } from '../expose.js';
 import { buildIndex, validateFacts } from '../index.js';
 import type { Evidence, Fact, Ref, Scope } from '../types.js';
 
@@ -112,6 +112,14 @@ function readYaml(file: string): unknown {
 }
 
 export interface LoadRepoOptions {
+    /**
+     * 这个库是**哪一类**（task / project / global）—— 只用来选缺省暴露档：
+     * 任务库缺省 `full`（本任务的结论最该常驻），项目 / 设备库缺省 `index`。
+     *
+     * 为什么不按目录名猜：任务库路径形状可变（`projects/<p>/tasks/<t>/knowledge`），
+     * 猜错就会把任务结论静默降级（正是 ##5 第 8 轮撞到的那个 bug）。
+     */
+    readonly kind?: 'task' | 'project' | 'global';
     /**
      * 词表缺省来源（另一份 `subjects.yaml` 的绝对路径）。
      *
@@ -442,19 +450,25 @@ export function checkRepo(
     problems: readonly RepoProblem[];
 } {
     const repo = loadRepo(knowledgeDir, opts);
+    const { kind: _kind, ...factOpts } = opts;
     const problems: RepoProblem[] = [
         ...repo.schemaIssues,
         ...checkFacts(repo.facts, {
             subjects: repo.subjects,
             root: repo.root,
             subjectsUnusedScope: repo.localSubjects.map((s) => s.key),
-            ...opts,
+            ...factOpts,
         }),
     ];
     // 暴露档超预算 = **错误**（不是警告）：否则 `omitted: 131` 那种"装不下但没人说"
     // 会一直沉默下去。只在写了 expose.yaml 的库上判（兼容窗口，见 `buildFactsContext`）。
     if (existsSync(path.join(repo.dir, 'expose.yaml'))) {
-        for (const p of checkExpose(repo.facts, readExpose(repo.dir), { budget: DEFAULT_FULL_BUDGET })) {
+        const map = readExpose(repo.dir);
+        const fallback = defaultExposeOf(opts.kind ?? 'project');
+        for (const p of checkExposeLeveled(
+            repo.facts.map((fact) => ({ fact, level: exposeOf(map, fact.subject, fallback) })),
+            { budget: DEFAULT_FULL_BUDGET },
+        )) {
             problems.push({ level: 'error', code: p.code, detail: p.detail, ...(p.facts ? { facts: p.facts } : {}) });
         }
     }
@@ -680,7 +694,11 @@ export function submit(
     const hasExposeFile = existsSync(exposeFile);
     const exposeMap: ExposeMap = { ...readExpose(repo.dir), ...(input.expose ?? {}) };
     if (hasExposeFile || input.expose !== undefined) {
-        for (const p of checkExpose(schema.facts, exposeMap, { budget: DEFAULT_FULL_BUDGET })) {
+        const fallback = defaultExposeOf(repoOpts.kind ?? 'project');
+        for (const p of checkExposeLeveled(
+            schema.facts.map((fact) => ({ fact, level: exposeOf(exposeMap, fact.subject, fallback) })),
+            { budget: DEFAULT_FULL_BUDGET },
+        )) {
             problems.push({ level: 'error', code: p.code, detail: p.detail, ...(p.facts ? { facts: p.facts } : {}) });
         }
     }

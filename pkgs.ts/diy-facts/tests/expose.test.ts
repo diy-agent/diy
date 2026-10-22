@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_FULL_BUDGET, bytesOf, checkExpose, exposeOf, weightsOf } from '../src/expose';
+import { DEFAULT_FULL_BUDGET, bytesOf, checkExpose, checkExposeLeveled, defaultExposeOf, exposeOf, weightsOf } from '../src/expose';
 import type { Fact } from '../src/types';
 
 const base = { review: 'accepted', lifecycle: 'active', evidence: { source: 'code' } } as const;
@@ -67,5 +67,34 @@ describe('checkExpose', () => {
 
     it('缺省预算是 4 KB（与 runtime 投影同一个数）', () => {
         expect(DEFAULT_FULL_BUDGET).toBe(4000);
+    });
+});
+
+describe('defaultExposeOf', () => {
+    it('任务库缺省 full（本任务结论最该常驻），项目/设备库缺省 index', () => {
+        expect(defaultExposeOf('task')).toBe('full');
+        expect(defaultExposeOf('project')).toBe('index');
+        expect(defaultExposeOf('global')).toBe('index');
+        // 不认识的类型退保守档（不抢预算）
+        expect(defaultExposeOf('whatever')).toBe('index');
+    });
+});
+
+describe('checkExposeLeveled', () => {
+    it('按**逐条**档位算预算：同一 subject 在两库可不同档', () => {
+        // 这正是「按库解析」的最小证据：合表就表达不出这个
+        const facts = [fact('a', 'rule', 'x'.repeat(60)), fact('b', 'rule', 'y'.repeat(60))];
+        const items = [
+            { fact: facts[0]!, level: 'full' as const },
+            { fact: facts[1]!, level: 'index' as const },
+        ];
+        expect(checkExposeLeveled(items, { budget: 100 })).toEqual([]);
+        const both = items.map((i) => ({ ...i, level: 'full' as const }));
+        expect(checkExposeLeveled(both, { budget: 100 }).map((p) => p.code)).toEqual(['facts/expose-budget']);
+    });
+
+    it('不可用（superseded / proposed）的事实不占预算', () => {
+        const items = [{ fact: { ...fact('a', 'rule', 'x'.repeat(500)), lifecycle: 'superseded' as const }, level: 'full' as const }];
+        expect(checkExposeLeveled(items, { budget: 100 })).toEqual([]);
     });
 });

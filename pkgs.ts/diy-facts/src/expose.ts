@@ -21,14 +21,36 @@ export type ExposeLevel = (typeof EXPOSE_LEVELS)[number];
 /** 没写 expose 的 subject 落哪档：**index**（自动进索引，不抢正文预算） */
 export const DEFAULT_EXPOSE: ExposeLevel = 'index';
 
+/**
+ * **按库类型**的缺省档 —— 这是"按库"而不是"按合并后的一张表"的落地（##5 第 8 轮）。
+ *
+ * 为什么 task 是 `full`：任务库里的条目是**本任务自己的结论**（`diy.facts#*` 之类）。
+ * 它一旦被降到 index，agent 每轮看到的是"库里有 diy.facts 这个话题"，而写一句结论
+ * 还要先 `facts get` 一次 —— 实际效果与丢失相同（而 omitted 仍是 0，因为被 index
+ * 掉的**根本不计入** omitted）。"静默省"是最坏的一种省：省的正好是这一轮最该看的东西。
+ *
+ * 为什么 project / global 是 `index`：它们是**目录型**知识（几十条规则 / 工具说明），
+ * 由 owner 显式声明哪几个主题值得常驻（`<库>/expose.yaml` 的 `full`）。
+ */
+export const DEFAULT_EXPOSE_BY_KIND: Readonly<Record<'task' | 'project' | 'global', ExposeLevel>> = {
+    task: 'full',
+    project: 'index',
+    global: 'index',
+};
+
+/** 库类型 → 缺省档；不认识的类型退 `DEFAULT_EXPOSE`（保守：不抢预算） */
+export function defaultExposeOf(kind: string): ExposeLevel {
+    return DEFAULT_EXPOSE_BY_KIND[kind as 'task' | 'project' | 'global'] ?? DEFAULT_EXPOSE;
+}
+
 /** `full` 档的字节预算（与 `buildFactsContext` 的 `DEFAULT_FACTS_MAX_BYTES` 同一个数） */
 export const DEFAULT_FULL_BUDGET = 4000;
 
 /** subject → 档位（缺省档不出现在表里，读侧用 `exposeOf`） */
 export type ExposeMap = Readonly<Record<string, ExposeLevel>>;
 
-export function exposeOf(map: ExposeMap, subject: string): ExposeLevel {
-    return map[subject] ?? DEFAULT_EXPOSE;
+export function exposeOf(map: ExposeMap, subject: string, fallback: ExposeLevel = DEFAULT_EXPOSE): ExposeLevel {
+    return map[subject] ?? fallback;
 }
 
 /** 一条事实**会不会**进投影正文：只有可用（active + accepted）的才占预算 */
@@ -84,6 +106,43 @@ export interface ExposeProblem {
     readonly facts?: readonly string[];
 }
 
+/** 一条事实 + 它**实际**的档位（已经按"哪个库的 expose.yaml / 该库的缺省档"解析过） */
+export interface LeveledFact {
+    readonly fact: Fact;
+    readonly level: ExposeLevel;
+}
+
+/**
+ * 校验按**逐条**给的档位：`full` 的字节和 > 预算 = 错误。
+ *
+ * 为什么要有这个入口：`expose.yaml` 是**按库**的（task / project / global 各一份），
+ * 所以同一个 subject 在两个库里可以是不同档 —— 合并成一张表就必然丢掉"哪个库说的"。
+ * 实测事故（##5 第 8 轮）：项目库写了 `expose.yaml` 之后，**任务库那 4 条结论被一起
+ * 降级**，从正文里静默消失。
+ */
+export function checkExposeLeveled(items: readonly LeveledFact[], opts: { budget?: number } = {}): ExposeProblem[] {
+    const budget = opts.budget ?? DEFAULT_FULL_BUDGET;
+    const acc = new Map<string, number>();
+    for (const it of items) {
+        if (it.level !== 'full' || !isUsable(it.fact)) continue;
+        acc.set(it.fact.subject, (acc.get(it.fact.subject) ?? 0) + bytesOf(it.fact.value));
+    }
+    const full = [...acc.entries()]
+        .map(([subject, bytes]) => ({ subject, bytes }))
+        .sort((a, b) => b.bytes - a.bytes || a.subject.localeCompare(b.subject));
+    const used = full.reduce((n, w) => n + w.bytes, 0);
+    if (used <= budget) return [];
+    return [
+        {
+            code: 'facts/expose-budget',
+            detail:
+                `expose: full 的字节和 ${used} 超预算 ${budget}（${full.map((w) => `${w.subject} ${w.bytes}B`).join(' · ')}）` +
+                ` —— 把最大的降到 index，或把主题拆细（每主题 ≤ ${Math.floor(budget / 4)} B）`,
+            facts: full.map((w) => `${w.subject}#*`),
+        },
+    ];
+}
+
 /**
  * 校验 expose 配置：**`full` 档的字节和 > 预算 = 错误**（不是警告）。
  *
@@ -106,16 +165,12 @@ export function checkExpose(
             detail: `expose 档位非法（只认 ${EXPOSE_LEVELS.join(' / ')}）：${unknown.join(', ')}`,
         });
     }
-    const full = weights.filter((w) => exposeOf(map, w.subject) === 'full');
-    const used = full.reduce((n, w) => n + w.bytes, 0);
-    if (used > budget) {
-        problems.push({
-            code: 'facts/expose-budget',
-            detail:
-                `expose: full 的字节和 ${used} 超预算 ${budget}（${full.map((w) => `${w.subject} ${w.bytes}B`).join(' · ')}）` +
-                ` —— 把最大的降到 index，或把主题拆细（每主题 ≤ ${Math.floor(budget / 4)} B）`,
-            facts: full.map((w) => `${w.subject}#*`),
-        });
-    }
+    void weights;
+    problems.push(
+        ...checkExposeLeveled(
+            facts.map((fact) => ({ fact, level: exposeOf(map, fact.subject) })),
+            { budget },
+        ),
+    );
     return problems;
 }

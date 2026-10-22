@@ -245,3 +245,58 @@ describe("expose 暴露档（##5 第 7 轮：subject 级 = 正文预算的开关
         expect(v?.problems.map((p) => p.code)).toContain("facts/expose-budget");
     });
 });
+
+describe("按库解析暴露档（##5 第 8 轮：合表会把任务库一起降级）", () => {
+    function taskLib(): string {
+        const kb = path.join(home, TASK, "knowledge");
+        write(
+            path.join(kb, "facts", "diy.facts.yaml"),
+            factsYaml([
+                "  diy.facts#scope:",
+                "    value: '任务库的结论'",
+                "    review: accepted",
+                "    lifecycle: active",
+                "    evidence: { source: code, at: K.ts:1 }",
+            ]),
+        );
+        return kb;
+    }
+
+    it("项目库写了 expose.yaml ⇒ **任务库的条目仍在正文**（缺省档 task = full）", () => {
+        // 铁证场景：只声明 `app.port: full` 的那次，任务库 4 条结论被静默降级。
+        // 判据：每个库各读自己的 expose.yaml，各按**库类型**缺省档回落。
+        write(path.join(repoKb, "facts", "app.yaml"), factsYaml([
+            "  app.port#default:",
+            "    value: '18888'",
+            "    review: accepted",
+            "    lifecycle: active",
+            "    evidence: { source: code, at: K.ts:2 }",
+            "  dev.test#cmd:",
+            "    value: 'npm test'",
+            "    review: accepted",
+            "    lifecycle: active",
+            "    evidence: { source: code, at: K.ts:3 }",
+        ]));
+        write(path.join(repoKb, "expose.yaml"), "expose:\n  app.port: full\n");
+        taskLib();
+        const v = buildFactsContext({ home, taskUri: TASK })!;
+        expect(Object.keys(v.task ?? {})).toEqual(["diy.facts#scope"]);
+        expect(Object.keys(v.project ?? {})).toEqual(["app.port#default"]);
+    });
+
+    it("任务库自己的 expose.yaml 能覆盖它的缺省档（none ⇒ 正文与索引都不给）", () => {
+        const kb = taskLib();
+        write(path.join(kb, "expose.yaml"), "expose:\n  diy.facts: none\n");
+        write(path.join(repoKb, "expose.yaml"), "expose:\n  app.port: full\n");
+        const v = buildFactsContext({ home, taskUri: TASK })!;
+        expect(v.task).toBeUndefined();
+    });
+
+    it("谁都没写 expose.yaml ⇒ 旧行为（三库全进正文）", () => {
+        taskLib();
+        // beforeEach 那条 app.port 带 `scope.env: production`，显式给 env 才解析得出来
+        const v = buildFactsContext({ home, taskUri: TASK, env: "production" })!;
+        expect(Object.keys(v.task ?? {})).toEqual(["diy.facts#scope"]);
+        expect(Object.keys(v.project ?? {})).toEqual(["app.port#default"]);
+    });
+});

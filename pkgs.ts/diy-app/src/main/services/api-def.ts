@@ -2151,7 +2151,7 @@ export const apiDef = RpcSchema.router({
             output: FactsGetSchema,
           }),
           submit: RpcSchema.unary({
-            desc: `整批写入事实（**全过才写**：一条不过整批拒，磁盘不动）。载荷 JSON \`{ facts: [...], subjects?: [...], drop?: [...], expose?: {<subject>: full|index|none} }\`（field 值为 - 读 stdin）；--dry-run 只回显差异。\`expose\` = 主题暴露档与事实**同一事务**（改档位也别手改 YAML）：\`full\` 进正文 / \`index\` 只进索引（缺省）/ \`none\` 两处都不给；\`full\` 的字节和超预算 ⇒ 整批拒写（不许沉默超限）。\`drop\` = 物理删除的 id，与写入**同批事务** —— 改名 = \`drop\` 旧 id + 写新 id + 补 supersedes 边，一次成型（分成两次 = 中间态悬空边或断头事实）；删完照样跑整套判据，删错了以「边悬空」当场拒写`,
+            desc: `整批写入事实（**全过才写**：一条不过整批拒，磁盘不动）。载荷 JSON \`{ facts: [...], subjects?: [...], drop?: [...], expose?: {<subject>: full|index|none} }\`（field 值为 - 读 stdin）；--dry-run 只回显差异。\`expose\` = 主题暴露档与事实**同一事务**（改档位也别手改 YAML）：\`full\` 进正文 / \`index\` 只进索引（缺省）/ \`none\` 两处都不给；\`full\` 的字节和超预算 ⇒ 整批拒写（不许沉默超限）。\`drop\` = 物理删除的 id，与写入**同批事务** —— 改名 = \`drop\` 旧 id + 写新 id + 补 supersedes 边，一次成型（分成两次 = 中间态悬空边或断头事实）；删完照样跑整套判据，删错了以「边悬空」当场拒写\n\n**四种载荷各自的形状**（字段名写错当场拒，不再崩在内部）：\n· facts[] = { subject, aspect, value, review?, lifecycle?, scope?, refs?, evidence }；evidence = { source: user|probe|code|inference, at?, quote?, probe?, probeDigest?, verifiedAt? } —— at 形如 <路径>:<行>（行可省），**source: probe 用 probe（探针命令）而不是 at**（探针没有文件行号可指，可不写 at）\n· subjects[] = { key, description?, aliases? } —— 字段名是 **key**（不是 subject / name / id）；每个 subject 必须有 description\n· drop[] = fact id 字符串\n· expose = { \"<subject>\": full|index|none }`,
             input: {
               file: z.string().cliOption({ readFile: true, placeholder: "<file|->", desc: "载荷 JSON 文件（- = stdin）" }),
               dryRun: z.boolean().optional().cliOption({ desc: "只算不写：回显将新增 / 修改什么" }),

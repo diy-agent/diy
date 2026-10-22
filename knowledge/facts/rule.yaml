@@ -3,6 +3,58 @@
 # 生成物式的真源：整篇由 `diy facts submit` 写入（字段顺序、条目排序都由程序定）。
 domain: rule
 facts:
+  rule.agent#deps:
+    value: 不加载第三方依赖目录的 AGENTS.md（`node_modules/`、`.venv/`、`vendor/` 等）
+    id: agents.rule.agent.deps
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:10
+      verifiedAt: '2026-10-22'
+  rule.agent#probe:
+    value: 轮次中勿改 `src/**` 当探针（watch 重启打断自己的轮次）；探针写 `/tmp`
+    id: agents.rule.agent.probe
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-21'
+  rule.agent#renderer:
+    value: UI 主线是 `renderer_solid/`（SolidJS）；React 版已删除
+    id: agents.rule.agent.renderer
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-21'
+  rule.agent#session-start:
+    value: 新会话先列：①已加载的上下文文件绝对路径 ②可用 skills 的绝对路径
+    id: agents.rule.agent.session-start
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:9
+      verifiedAt: '2026-10-22'
+  rule.agent#structured-exit:
+    value: '**agent 的结论一律走结构化出口（工具调用），永不解析正文文本**：正常轮 `tool_choice=auto` → 该收口却未调用则该轮**补射一次** `tool_choice={type:"function",function:{name:"<结论工具>"}}` → 仍拿不到 ⇒ **报错亮帧 + 提示换模型**，**绝不默认 pass、绝不退到正则兜底**（末行约定实测漏 20%~33%，且堵死载荷扩展）。载荷 `{…, ref:{node,seq}, data:{…}}` 可随需加字段（如每轮顺带更新核心事实，降任务 body 腐败）。代表：##311(工作流特性专项) ##359(微调通道)。'
+    id: agents.rule.agent.structured-exit
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:22
+      verifiedAt: '2026-10-22'
+  rule.agent#verify:
+    value: 结果与猜测不符时，先查证再解释，不臆断
+    id: agents.rule.agent.verify
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:8
+      verifiedAt: '2026-10-22'
   rule.err-triage#code:
     value: 每个 throw 点带 `code`（`<域>/<kebab-case>`，域 = `llm|fs|net|rpc|agent|db|ui`），UI / 日志 / issue **三处同一个 code** 才能按频次统计「哪类 unknown 最该被识别」；**新增 throw 无 code 由 `scripts/check-error-code.sh` 拦**（挂 `./sha.sh check`），存量按 `LEGACY_THROW_BASELINE` 逐文件钉数**只减不增** —— 不做全仓机械补码（会造出 `app/internal-1` 这类假码污染统计）。
     id: agents.rule.err-triage.code
@@ -74,15 +126,6 @@ facts:
       source: user
       at: ~/AGENTS.md:21
       verifiedAt: '2026-10-22'
-  rule#deps:
-    value: 不加载第三方依赖目录的 AGENTS.md（`node_modules/`、`.venv/`、`vendor/` 等）
-    id: agents.rule.deps
-    review: accepted
-    lifecycle: active
-    evidence:
-      source: user
-      at: ~/AGENTS.md:10
-      verifiedAt: '2026-10-22'
   rule#dev-concurrent:
     value: '**同一 variant** 的 `lab` 运行中勿并发 `tsc -b` / `vite build` / 全量 vitest（抢同一 `outDir`，watcher 卡死）。跨 variant（lab vs test）各写 `build/<v>`，不抢'
     id: agents.rule.dev-concurrent
@@ -127,15 +170,6 @@ facts:
       source: user
       at: ~/AGENTS.md:13
       verifiedAt: '2026-10-22'
-  rule#err-triage:
-    value: '**全局异常三档，唯一分类轴 = 是不是我们已识别的缺陷**：`defect` 我方缺陷（人为界定的判据触发）/ `external-recognized` 已识别外部（说得出「啥到上限了」）/ `external-unknown` 未识别外部（既不是缺陷、也归不进任何已识别类）。**任何「错误能到达用户 / 日志 / 提示」的出口一律过 `triageOf(err)`**，判据唯一真源 `pkgs.ts/diy-app/src/shared/error-triage.ts`（见包内 `find.err-triage`）。'
-    id: agents.rule.err-triage
-    review: accepted
-    lifecycle: active
-    evidence:
-      source: user
-      at: ~/AGENTS.md:23
-      verifiedAt: '2026-10-22'
   rule#inherit:
     value: 全局规则（skills 命名前缀、AGENTS.md 格式、工具偏好）见 `~/AGENTS.md`，本层不重复
     id: agents.rule.inherit
@@ -161,15 +195,6 @@ facts:
     evidence:
       source: user
       verifiedAt: '2026-10-21'
-  rule#lang:
-    value: 对话、文档、代码注释一律中文；对话精简、省 token
-    id: agents.rule.lang
-    review: accepted
-    lifecycle: active
-    evidence:
-      source: user
-      at: ~/AGENTS.md:7
-      verifiedAt: '2026-10-22'
   rule#new-pkg:
     value: 新增包检查单：`tsconfig.json`（composite + noEmit + include）+ `tsconfig.all.json` references
     id: agents.rule.new-pkg
@@ -178,31 +203,6 @@ facts:
     evidence:
       source: user
       verifiedAt: '2026-10-21'
-  rule#probe:
-    value: 轮次中勿改 `src/**` 当探针（watch 重启打断自己的轮次）；探针写 `/tmp`
-    id: agents.rule.probe
-    review: accepted
-    lifecycle: active
-    evidence:
-      source: user
-      verifiedAt: '2026-10-21'
-  rule#renderer:
-    value: UI 主线是 `renderer_solid/`（SolidJS）；React 版已删除
-    id: agents.rule.renderer
-    review: accepted
-    lifecycle: active
-    evidence:
-      source: user
-      verifiedAt: '2026-10-21'
-  rule#session-start:
-    value: 新会话先列：①已加载的上下文文件绝对路径 ②可用 skills 的绝对路径
-    id: agents.rule.session-start
-    review: accepted
-    lifecycle: active
-    evidence:
-      source: user
-      at: ~/AGENTS.md:9
-      verifiedAt: '2026-10-22'
   rule#sketch-html:
     value: '**给用户看 UI / 布局方案一律产出「单文件可交互 HTML」**（内联 CSS + 原生 JS，`open` 即看，能点着折叠 / 切状态 / 多版并排对比），不写 ASCII 或纯文本草图。多版对比渲染**同一份 DOM**、只换皮肤 —— 顺带就当「同构」的字面验证。'
     id: agents.rule.sketch-html
@@ -220,15 +220,6 @@ facts:
     evidence:
       source: user
       at: ~/AGENTS.md:14
-      verifiedAt: '2026-10-22'
-  rule#structured-exit:
-    value: '**agent 的结论一律走结构化出口（工具调用），永不解析正文文本**：正常轮 `tool_choice=auto` → 该收口却未调用则该轮**补射一次** `tool_choice={type:"function",function:{name:"<结论工具>"}}` → 仍拿不到 ⇒ **报错亮帧 + 提示换模型**，**绝不默认 pass、绝不退到正则兜底**（末行约定实测漏 20%~33%，且堵死载荷扩展）。载荷 `{…, ref:{node,seq}, data:{…}}` 可随需加字段（如每轮顺带更新核心事实，降任务 body 腐败）。代表：##311(工作流特性专项) ##359(微调通道)。'
-    id: agents.rule.structured-exit
-    review: accepted
-    lifecycle: active
-    evidence:
-      source: user
-      at: ~/AGENTS.md:22
       verifiedAt: '2026-10-22'
   rule#task-artifacts:
     value: '**任务产物（工具 / demo / 文档等）落位**：**临时**的一律进系统临时目录（`/tmp`、`mktemp -d`），不落任务目录；**需长期参考**的进**任务目录** `$DIY_HOME/projects/<pid>/tasks/<tid>/gen/<类别>/`（`$DIY_HOME` = `~/.diy`；如 demo → `…/tasks/<tid>/gen/demo/<名>/`，**每个 demo 独占一目录**，别把多文件混作一堆 —— 一个目的常产多个文件）。⚠️ **是任务目录、不是 worktree 的 `./gen/`** —— agent 的 cwd = worktree，写相对路径 `./gen/` 会落进**产品仓**（禁止：产品仓只放产品资产，任务截图 / demo 不是）。**带时效**的（一版接一版，如 demo 迭代）目录名带「日期 + 序号 + 用途」；**长期事实**（不随时间变）**不加日期**。'
@@ -274,15 +265,6 @@ facts:
     evidence:
       source: user
       verifiedAt: '2026-10-21'
-  rule#verify:
-    value: 结果与猜测不符时，先查证再解释，不臆断
-    id: agents.rule.verify
-    review: accepted
-    lifecycle: active
-    evidence:
-      source: user
-      at: ~/AGENTS.md:8
-      verifiedAt: '2026-10-22'
   rule#worktree-path:
     value: '**worktree 一律放仓库外、原项目的同级目录**，名 `<原项目名>.worktrees/<标识>`（示例：`~/git/diy/diy` → `~/git/diy.worktrees/t323-xxx`）；**禁放仓库内部**（如 `repo/_diy.worktrees/`）—— 否则 worktree 会落进主仓的 AGENTS.md 链（读到主仓的上下文投影 = 嵌套覆盖），且被 fd/rg · npm workspaces · tsconfig include 误扫'
     id: agents.rule.worktree-path

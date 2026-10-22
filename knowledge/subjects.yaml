@@ -86,6 +86,8 @@ subjects:
   rule:
     description: 硬约束
     aliases: []
+  rule.agent:
+    description: agent 自身的行为纪律（先查证再解释 / 结论走工具 / 别拿 src 当探针 / 少读依赖目录）
   rule.err-triage:
     description: 异常三档分类的判据（defect / 已识别外部 / 未识别外部）
   tool:

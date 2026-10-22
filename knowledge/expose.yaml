@@ -1,0 +1,15 @@
+# knowledge/expose.yaml — 主题的**暴露档**（##404）
+#
+# 决定一个 subject 在上下文里露多少（值只有三档）：
+#   full  —— 正文进 runtime.facts（**常驻**：每一轮都付这个字节）
+#   index —— 只在 runtime.kb 一行（知道有这个话题，要值就 `diy facts get`）
+#   none  —— 两处都不给，只能 get / brief（临时性 / 体量太大）
+#
+# 缺省档 = index（没列出来的 subject 就是 index）：新写的主题自动进索引、不抢正文预算。
+# 硬约束：`full` 的字节和超过预算 ⇒ `diy facts submit` / `./sha.sh check` **报错**，
+# 不许沉默超限。改档位也走 `diy facts submit` 的 `expose` 载荷（**别手改本文件**）。
+#
+# 判据：搬走一条 X 字节的知识每轮省 X，但查它一次 ≈ 一次完整请求的前缀重发（约 41 KB）。
+# 故 full 给"每轮都要知道"的，index 给"知道有、偶尔查"的。
+expose:
+  rule.agent: full

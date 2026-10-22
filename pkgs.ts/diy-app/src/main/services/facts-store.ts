@@ -17,13 +17,15 @@ import {
     DEFAULT_FULL_BUDGET,
     affected,
     buildIndex,
-    checkExpose,
+    checkExposeLeveled,
+    defaultExposeOf,
     exposeOf,
     resolveClaim,
     validateFacts,
     weightsOf,
     type Env,
     type ExposeLevel,
+    type ExposeMap,
     type Fact,
     type Ns,
     type Ref,
@@ -181,6 +183,8 @@ export interface FactsTarget {
      * 与 `$DIY_HOME` 无关 —— lab 里也该看得到生产积累的全局规则。**只读**，写永远落本根。
      */
     readonly readExtra?: readonly string[];
+    /** 库类型（只用来选缺省暴露档：task = full，project / global = index） */
+    readonly kind?: "task" | "project" | "global";
 }
 
 /**
@@ -218,7 +222,7 @@ export function resolveFactsTarget(opts: { dir?: string; in?: string } = {}): Fa
         // dirname(DIY_HOME)：lab 的 DIY_HOME 在 build/lab/home，dirname 会算到 build/lab。
         const prodKb = path.join(os.homedir(), ".diy", "knowledge");
         const readExtra = prodKb === ownDir || !existsSync(path.join(prodKb, "facts")) ? [] : [prodKb];
-        const out: FactsTarget = { dir: ownDir, allowMissing: true, ...(readExtra.length > 0 ? { readExtra } : {}) };
+        const out: FactsTarget = { dir: ownDir, allowMissing: true, kind: "global", ...(readExtra.length > 0 ? { readExtra } : {}) };
         // 词表仍优先继承仓库（同一套 subject 命名），但**仓库缺失时不阻塞**：设备库
         // 可能在任何目录下被读（agent 的 cwd 不一定是仓库）。
         try {
@@ -263,6 +267,7 @@ export function resolveFactsTarget(opts: { dir?: string; in?: string } = {}): Fa
         const taskExtra = [...globalKbDirs(), repoKb].filter((d) => d !== path.join(taskDir, "knowledge"));
         return {
             dir: path.join(taskDir, "knowledge"),
+            kind: "task",
             // 任务库继承仓库词表：本地 subjects.yaml 存在则本地优先（局部扩词），否则用仓库的
             subjectsFallback,
             allowMissing: true,
@@ -275,6 +280,7 @@ export function resolveFactsTarget(opts: { dir?: string; in?: string } = {}): Fa
     const projectExtra = globalKbDirs().filter((d) => d !== projectDir);
     return {
         dir: projectDir,
+        kind: "project",
         allowMissing: false,
         ...(projectExtra.length > 0 ? { readExtra: projectExtra } : {}),
     };
@@ -289,6 +295,7 @@ function targetOpts(t: FactsTarget, forWrite = false) {
         allowMissing: forWrite && t.allowMissing,
         ...(t.subjectsFallback === undefined ? {} : { subjectsFallback: t.subjectsFallback }),
         ...(t.root === undefined ? {} : { root: t.root }),
+        ...(t.kind === undefined ? {} : { kind: t.kind }),
         // 写时**不**读额外库：否则 submit 会把跨根读来的条目当成"本库已有"而漏写
         ...(!forWrite && t.readExtra !== undefined ? { extraDirs: t.readExtra } : {}),
     };
@@ -331,19 +338,41 @@ export function status(opts: { dir?: string; in?: string } = {}) {
         claims: new Set(list.map((f) => `${f.subject}#${f.aspect}`)).size,
         subjects: new Set(list.map((f) => f.subject)).size,
     });
-    // 暴露档：跨库合并（越具体越优先：本根 > 额外库），并跑一次预算校验 ——
-    // 与 submit 的硬校验同一套判据（`checkExpose`），只是这里不阻断（读侧只报告）。
-    const expose = { ...Object.fromEntries(extraDirs.map((d) => Object.entries(readExpose(d))).flat()), ...readExpose(kb) };
-    const hasExposeFile = extraDirs.some((d) => existsSync(path.join(d, "expose.yaml"))) || existsSync(path.join(kb, "expose.yaml"));
+    // 暴露档：**按库**解析（每个库各读自己的 `expose.yaml`，各按库类型缺省档回落）。
+    // 曾合并成一张表 —— 那会让"项目库声明了一条 expose"顺手把任务库的结论降级（##5 第 8 轮）。
+    const libKind = opts.in !== undefined && opts.in.startsWith("task:") ? "task" : opts.in === "global" ? "global" : "project";
+    const libExpose = new Map<string, { map: ExposeMap; kind: string }>();
+    for (const d of [...extraDirs, kb]) {
+        libExpose.set(path.resolve(d), { map: readExpose(d), kind: path.resolve(d) === path.resolve(kb) ? libKind : "global" });
+    }
+    const libOf = (f: Fact): { map: ExposeMap; kind: string } => {
+        const origin = path.resolve(repo.origin.get(f.id) ?? kb);
+        for (const [dir, lib] of libExpose) if (origin === dir || origin.startsWith(`${dir}${path.sep}`)) return lib;
+        return { map: {} as ExposeMap, kind: libKind };
+    };
+    const hasExposeFile = [...libExpose.keys()].some((d) => existsSync(path.join(d, "expose.yaml")));
     const exposeProblems = hasExposeFile
-        ? checkExpose(repo.facts, expose, { budget: DEFAULT_FULL_BUDGET })
+        ? checkExposeLeveled(
+              repo.facts.map((f) => {
+                  const lib = libOf(f);
+                  return { fact: f, level: exposeOf(lib.map, f.subject, defaultExposeOf(lib.kind)) };
+              }),
+              { budget: DEFAULT_FULL_BUDGET },
+          )
         : [];
     for (const p of exposeProblems) problems.push({ level: "error", code: p.code, detail: p.detail, ...(p.facts ? { facts: [...p.facts] } : {}) });
 
     // 按 subject 的字节账：预算的单位是**字节**，而 status 原本只给 claims 数 ——
     // 人看不到"这个话题占多少"就没法决定该把它放 full 还是 index（实测 `rule` 一个主题 9.3 KB）。
     const weights = weightsOf(repo.facts);
-    const bySubject = weights.map((w) => ({ ...w, expose: exposeOf(expose, w.subject) }));
+    // 一个 subject 可能横跨多库（project 声明 index、global 声明 full）：取**先到的那个库**
+    // 的档位（`weightsOf` 已按字节降序，这里只借它挑代表库）。档位是给人看的提示，
+    // 真正的判据在投影里逐库解析。
+    const bySubject = weights.map((w) => {
+        const first = repo.facts.find((f) => f.subject === w.subject && f.lifecycle === "active" && f.review === "accepted");
+        const lib = first === undefined ? { map: {} as ExposeMap, kind: libKind } : libOf(first);
+        return { ...w, expose: exposeOf(lib.map, w.subject, defaultExposeOf(lib.kind)) };
+    });
 
     return {
         dir: kb,
@@ -713,7 +742,57 @@ export function parseSubmitPayload(text: string): SubmitPayload {
         return id.trim();
     });
     const expose = parseExpose(obj.expose);
-    return { facts: obj.facts ?? [], subjects: obj.subjects ?? [], drop, ...(expose === undefined ? {} : { expose }) };
+    return { facts: obj.facts ?? [], subjects: parseSubjects(obj.subjects), drop, ...(expose === undefined ? {} : { expose }) };
+}
+
+/** `subjects` 元素允许的字段（写错字段名**必须当场报错**，见 `parseSubjects`） */
+const SUBJECT_KEYS = new Set(["key", "description", "aliases"]);
+
+/**
+ * `subjects` 载荷：`[{ key, description?, aliases? }]`。
+ *
+ * 为什么必须在这里严格校验（实测事故）：元素写错字段名（`subject:` 而不是 `key:`）时
+ * `key` 是 `undefined`，一路穿到写盘阶段才在 `undefined.localeCompare` 上抛
+ * `TypeError: Cannot read properties of undefined` —— 报错看起来像程序崩了，而不是
+ * "你载荷写错了"。**形状错必须在入口拒**，并直接给正确形状。
+ *
+ * （`facts` 里拼错字段有 `facts/schema` 的「未知字段（拼错了？）」兜着，subjects 原先连这个都没有。）
+ */
+function parseSubjects(raw: unknown): SubjectDef[] {
+    if (raw === undefined || raw === null) return [];
+    if (!Array.isArray(raw)) {
+        throw new FactsStoreError("agent/facts-payload-shape", `subjects 期望数组，实际收到：${JSON.stringify(raw)}`);
+    }
+    return raw.map((item, i) => {
+        if (item === null || typeof item !== "object" || Array.isArray(item)) {
+            throw new FactsStoreError("agent/facts-payload-shape", `subjects[${i}] 期望对象，实际收到：${JSON.stringify(item)}`);
+        }
+        const rec = item as Record<string, unknown>;
+        for (const k of Object.keys(rec)) {
+            if (!SUBJECT_KEYS.has(k)) {
+                throw new FactsStoreError(
+                    "agent/facts-payload-shape",
+                    `subjects[${i}] 未知字段 "${k}"（拼错了？）—— 元素形如 { key, description?, aliases? }；` +
+                        `注意字段名是 key，不是 subject/name/id`,
+                );
+            }
+        }
+        if (typeof rec.key !== "string" || rec.key.trim() === "") {
+            throw new FactsStoreError(
+                "agent/facts-payload-shape",
+                `subjects[${i}].key 必须是非空字符串 —— 元素形如 { key, description?, aliases? }`,
+            );
+        }
+        const aliases = rec.aliases;
+        if (aliases !== undefined && (!Array.isArray(aliases) || aliases.some((a) => typeof a !== "string"))) {
+            throw new FactsStoreError("agent/facts-payload-shape", `subjects[${i}].aliases 期望字符串数组`);
+        }
+        return {
+            key: rec.key.trim(),
+            ...(typeof rec.description === "string" ? { description: rec.description } : {}),
+            ...(aliases === undefined ? {} : { aliases: aliases as string[] }),
+        };
+    });
 }
 
 /**

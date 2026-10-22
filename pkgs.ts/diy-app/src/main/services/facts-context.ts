@@ -15,7 +15,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { loadRepo, project, projectItems, readExpose, type ProjectEntry, type ProjectionAlgorithm, type Repo } from "@diy/facts/node";
-import { DEFAULT_FULL_BUDGET, bytesOf, checkExpose, exposeOf, type ExposeMap, type Ns } from "@diy/facts";
+import { bytesOf, checkExposeLeveled, defaultExposeOf, exposeOf, type ExposeLevel, type ExposeMap, type LeveledFact, type Ns } from "@diy/facts";
 import { diyHome } from "../core/state";
 import { readRuntimeConfig } from "../../runtime";
 import { resolveFactsDir } from "./facts-store";
@@ -47,19 +47,26 @@ interface Loaded {
 }
 
 /**
- * 合并多库的 expose 档：**越具体越优先**（task > project > global）。
+ * **按库**解析档位 —— 这一层曾经写错过，别再合回一张表（##5 第 8 轮的铁证）。
  *
- * 与投影合并同向：局部覆盖全局。注意 `loaded` 的读入顺序是 [task, global, project]
- * （为了预算分配），所以这里不能直接顺序覆盖 —— 按 nsRank 反序写。
+ * 错法：把三库的 `expose.yaml` 合并成一张 subject → 档位 的表，再拿它套所有库。
+ * 后果：项目库写了 `expose.yaml`（哪怕只声明一条），**任务库的 4 条结论一起被降级**
+ * ——它们从不属于任何 expose 配置，却因为"合并后集合里有人声明了"而被套上了缺省 index。
+ * 而 `omitted` 仍是 0（被 index 掉的根本不计入），于是**静默**。省掉的正好是这一轮
+ * 最该看的东西（本任务自己的结论），是最坏的一种省。
+ *
+ * 正确判据：每个库各读各的 `expose.yaml`，各按**自己库类型**的缺省档回落
+ * （`task = full` / `project`·`global` = index，见 `DEFAULT_EXPOSE_BY_KIND`）。
  */
-function mergeExpose(loaded: readonly Loaded[]): ExposeMap {
-    const out: Record<string, string> = {};
-    const rank = (n: Ns): number => (n.kind === "task" ? 0 : n.kind === "project" ? 1 : 2);
-    for (const l of [...loaded].sort((a, b) => rank(b.ns) - rank(a.ns))) {
-        for (const [k, v] of Object.entries(l.expose)) out[k] = v;
-    }
-    return out as ExposeMap;
+function levelOf(loaded: readonly Loaded[], declared: boolean, entry: ProjectEntry): ExposeLevel {
+    // 兼容窗口：**谁都没写** `expose.yaml` ⇒ 回落旧行为（全进正文 + 按预算裁）。
+    // 一旦任一个库写了（哪怕一条），声明式生效 —— 此时按库解析，未声明的主题走该库缺省档。
+    if (!declared) return "full";
+    const lib = loaded.find((l) => l.ns.kind === entry.ns.kind && libKey(l.ns) === libKey(entry.ns));
+    return exposeOf(lib?.expose ?? {}, entry.fact.subject, defaultExposeOf(entry.ns.kind));
 }
+
+const libKey = (ns: Ns): string => (ns.kind === "task" ? `task:${ns.taskUri}` : ns.kind);
 
 /**
  * 读一个库；不存在 / 解析失败 → `null`（**不是**空库，也不是异常）。
@@ -146,24 +153,20 @@ export function buildFactsContext(opts: BuildFactsContextOptions = {}): FactsCon
         ...(taskUri === "" ? {} : { task: taskUri }),
     };
 
-    // ── md 算法：整份渲染成一段 markdown（此时不再给 task/project 两棵树）──
     // 暴露档：只有 `full` 进正文。`index` 在 kb 索引里（知道有、要值就查），`none` 两处都不给。
-    const expose = mergeExpose(loaded);
-    const full = (fact: { subject: string }): boolean => exposeOf(expose, fact.subject) === "full";
-    const budgetProblems = checkExpose(
-        loaded.flatMap((l) => l.repo.facts),
-        expose,
-        { budget: maxBytes },
-    ).map((p) => ({ gid: "facts.expose", code: p.code }));
-    // 缺省档是 index：新写的主题自动进索引、不抢正文预算。
-    //
-    // **兼容窗口**：库目录里根本**没有** `expose.yaml` ⇒ 回落到旧行为（全部进正文 + 按预算裁）。
-    // 否则升级当天所有存量库的正文会一起消失 —— 那不是"更省的投影"，是"知识静默丢失"。
-    // 一旦写了 expose.yaml（**哪怕只写一条**），声明式就生效：没列出的 subject = index。
+    // **按库**解析（见 `levelOf` 的注释：合并成一张表会把任务库一起降级）。
+    const allEntries: ProjectEntry[] = loaded.flatMap((l) => l.repo.facts.map((fact) => ({ ns: l.ns, fact })));
+    const declared = loaded.some((l) => Object.keys(l.expose).length > 0);
+    const leveled: LeveledFact[] = allEntries.map((e) => ({ fact: e.fact, level: levelOf(loaded, declared, e) }));
+    const levelByFact = new Map(leveled.map((x) => [x.fact, x.level] as const));
+    const full = (e: ProjectEntry): boolean => levelByFact.get(e.fact) === "full";
+    const budgetProblems = checkExposeLeveled(leveled, { budget: maxBytes }).map((p) => ({
+        gid: "facts.expose",
+        code: p.code,
+    }));
 
     if (algorithm === "md-list") {
-        const all: ProjectEntry[] = loaded.flatMap((l) => l.repo.facts.map((fact) => ({ ns: l.ns, fact })));
-        const entries = Object.keys(expose).length === 0 ? all : all.filter((e) => full(e.fact));
+        const entries = allEntries.filter(full);
         const out = project({ entries, ctx, algorithm: "md-list", maxBytes, shape: "auto" });
         return {
             algorithm,
@@ -180,11 +183,7 @@ export function buildFactsContext(opts: BuildFactsContextOptions = {}): FactsCon
     // 每个库各自调一次就退化成"各出一条"—— 实测 16 条同 claim 在两库重复（`level` 6 /
     // `tool` 5 / `ref` 5），4 KB 预算里白占一倍。
     const out: FactsContextValue = { algorithm, env, omitted: 0, problems: [...budgetProblems] };
-    const allEntries: ProjectEntry[] = loaded.flatMap((l) => l.repo.facts.map((fact) => ({ ns: l.ns, fact })));
-    const parsed = projectItems({
-        entries: Object.keys(expose).length === 0 ? allEntries : allEntries.filter((e) => full(e.fact)),
-        ctx,
-    });
+    const parsed = projectItems({ entries: allEntries.filter(full), ctx });
     out.problems.push(...parsed.problems.map((p) => ({ gid: p.gid, code: p.code })));
     void parsed.skipped; // 当前 scope 下不适用（正常，不是裁掉）
 
@@ -251,7 +250,7 @@ export function buildKbIndex(opts: { home?: string } = {}): KbIndex | null {
         if (hit) loaded.push(hit);
     }
     if (loaded.length === 0) return null;
-    const expose = mergeExpose(loaded);
+    const declared = loaded.some((l) => Object.keys(l.expose).length > 0);
     let total = 0;
     // 按 subject 聚：多库同名合并成一条（`ns` 记来源数组、`claims` 求和）
     const merged = new Map<string, KbIndexEntry>();
@@ -262,8 +261,9 @@ export function buildKbIndex(opts: { home?: string } = {}): KbIndex | null {
         const ns = l.ns.kind === "global" ? ("global" as const) : ("project" as const);
         for (const sub of l.repo.subjects) {
             if ((sub.description ?? "") === "") continue;
-            // `none` = 连索引都不给（体量太大 / 临时性）：库里有，但 agent 得自己知道去查
-            if (Object.keys(expose).length > 0 && exposeOf(expose, sub.key) === "none") continue;
+            // `none` = 连索引都不给（体量太大 / 临时性）：库里有，但 agent 得自己知道去查。
+            // **按库**判定（该库自己的 expose.yaml + 该库类型的缺省档）—— 与正文投影同口径。
+            if (declared && exposeOf(l.expose, sub.key, defaultExposeOf(ns)) === "none") continue;
             const hit = merged.get(sub.key);
             const claims = counts.get(sub.key) ?? 0;
             if (hit === undefined) {

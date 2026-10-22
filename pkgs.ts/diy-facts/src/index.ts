@@ -22,6 +22,9 @@ export { affected, buildIndex, refsOf, type Conflict, type FactsIndex, type Issu
 export { validateFacts, type Validation } from './validate';
 export {
     DEFAULT_EXPOSE,
+    DEFAULT_EXPOSE_BY_KIND,
+    defaultExposeOf,
+    checkExposeLeveled,
     DEFAULT_FULL_BUDGET,
     EXPOSE_LEVELS,
     bytesOf,
@@ -32,5 +35,6 @@ export {
     type ExposeLevel,
     type ExposeMap,
     type ExposeProblem,
+    type LeveledFact,
     type SubjectWeight,
 } from './expose';

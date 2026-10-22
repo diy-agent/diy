@@ -97,6 +97,21 @@ describe("submit", () => {
         expect(() => store.parseSubmitPayload("{oops")).toThrow(/JSON/);
     });
 
+    it("subjects 元素字段写错 ⇒ **当场拒并给正确形状**（不再崩在 localeCompare）", () => {
+        // 实测事故：`{"subjects":[{"subject":"x","description":"y"}]}` 一路穿到写盘阶段，
+        // 抛 `TypeError: Cannot read properties of undefined (reading 'localeCompare')` ——
+        // 报错看着像程序崩了，而不是"你载荷写错了"。
+        expect(() => store.parseSubmitPayload('{"facts":[],"subjects":[{"subject":"x"}]}')).toThrow(/shape|key/);
+        expect(() => store.parseSubmitPayload('{"facts":[],"subjects":[{"subject":"x"}]}')).toThrow(/形如 \{ key/);
+        expect(() => store.parseSubmitPayload('{"facts":[],"subjects":["x"]}')).toThrow(/期望对象/);
+        expect(() => store.parseSubmitPayload('{"facts":[],"subjects":[{"key":"  "}]}')).toThrow(/非空字符串/);
+        expect(() => store.parseSubmitPayload('{"facts":[],"subjects":[{"key":"a","aliases":"b"}]}')).toThrow(/字符串数组/);
+        // 合法：description / aliases 选填
+        expect(store.parseSubmitPayload('{"facts":[],"subjects":[{"key":"a","description":"d","aliases":["b"]}]}').subjects).toEqual([
+            { key: "a", description: "d", aliases: ["b"] },
+        ]);
+    });
+
     it("dry-run 回差异但不落盘", () => {
         const before = readFileSync(path.join(kb, "facts/app.yaml"), "utf8");
         const payload = store.parseSubmitPayload(
