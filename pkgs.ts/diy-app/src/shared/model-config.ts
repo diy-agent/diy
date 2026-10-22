@@ -604,6 +604,57 @@ export const SeedReportSchema = z.object({
 });
 export type SeedReport = z.infer<typeof SeedReportSchema>;
 
+// ── 模型目录刷新（##385：应用内定时 + 手工按钮；CI 发行层见 ##107） ──
+
+/**
+ * 内置数据文件命中来源（优先级顺序见 `main/core/data-file.ts`）：
+ *   · `diy-home`    —— `$DIY_HOME/data/<name>`，**应用内刷新写的**（压过发行快照）
+ *   · `bundle`      —— 打包/构建时拷到 `build/<V>/{main,cli}/data`
+ *   · `source-tree` —— 仓库源码树 `src/main/data`（tsx 直跑）
+ */
+export const DataFileSourceSchema = z.enum(["diy-home", "bundle", "source-tree"]);
+export type DataFileSource = z.infer<typeof DataFileSourceSchema>;
+
+/** 「现在读的是哪一份快照」—— 诊断出口（`diy doctor`）必须能说清（##338 / ##372 同族病） */
+export const ModelsSnapshotInfoSchema = z.object({
+  /** 实际命中/写入的绝对路径 */
+  path: z.string(),
+  source: DataFileSourceSchema,
+  providers: z.number().int().nonnegative(),
+  models: z.number().int().nonnegative(),
+});
+export type ModelsSnapshotInfo = z.infer<typeof ModelsSnapshotInfoSchema>;
+
+/**
+ * `llmConfig.syncModels` 输出（手工按钮 / 定时 tick 共用同一形状）。
+ *
+ * 三态可见（##385 §3.3）：
+ *   · 成功有 diff → `ok && changed`，报 `addedModels / removedModels`
+ *   · 成功无 diff → `ok && !changed`（「已是最新」；**不写盘**）
+ *   · 失败       → `!ok` + `error`（本地文件逐字不变，见 §3.4 fail-soft）
+ */
+export const ModelsRefreshResultSchema = z.object({
+  ok: z.boolean(),
+  changed: z.boolean(),
+  /** 本次检查时刻（ISO；定时任务据此看「上次同步是什么时候」） */
+  checkedAt: z.string(),
+  /** 写入目标：`$DIY_HOME/data/models.dev.json` */
+  path: z.string(),
+  /** 抓取源（URL 或本地文件路径）*/
+  origin: z.string(),
+  /** 刷新后（失败时 = 仍生效的）provider 数 / 模型数 */
+  providers: z.number().int().nonnegative(),
+  models: z.number().int().nonnegative(),
+  addedProviders: z.array(z.string()),
+  removedProviders: z.array(z.string()),
+  addedModels: z.number().int().nonnegative(),
+  removedModels: z.number().int().nonnegative(),
+  /** 刷新前实际生效的那份（null = 之前一份都没有） */
+  previous: ModelsSnapshotInfoSchema.nullable(),
+  error: z.string().nullable(),
+});
+export type ModelsRefreshResult = z.infer<typeof ModelsRefreshResultSchema>;
+
 /** llmConfig.read 全量输出 */
 export const LlmConfigViewSchema = z.object({
     /** 内置日历清单（时段档的日历下拉项；空 = calendars.json 缺失 → 时段档只能「不限日历」） */

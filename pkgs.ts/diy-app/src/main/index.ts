@@ -48,6 +48,7 @@ import { SINGLETON_LOCK, classifyLock, lockAdvice, readLock } from "./core/singl
 // window-ops 让 RPC 层能请出本实例窗口而不 import Electron（serve 模式不注入 ⇒ 如实报「无窗口」）。
 import { dropSelfRecord, setSelfPort, writeSelfRecord } from "./services/instances";
 import { setWindowOps } from "./services/window-ops";
+import { refreshModelsOnStartup } from "./services/models-startup-refresh";
 import type { InstanceSelf, RevealResult } from "../shared/instance-row";
 
 // Chromium 开关必须走 app.commandLine（ready 之前），跟在 app 路径后传 argv 无效。
@@ -61,6 +62,8 @@ let ipcBinding: ServerBinding | null = null;
 let mainWindow: BrowserWindow | null = null;
 let appConfig: AppConfig;
 let httpPort = 0;
+/** 模型目录启动刷新的取消函数（`before-quit` 调；null = 没起） */
+let cancelModelsStartupRefresh: (() => void) | null = null;
 
 // getAppInfo 已迁到 RPC（api-def / api-impl），Electron、serve、CLI 共用一份实现；
 // 这里只保留 httpPort 供启动横幅与端口复用逻辑使用。
@@ -414,6 +417,13 @@ app.whenReady().then(async () => {
   // 走这里 —— RPC 层不 import Electron（serve 模式也要能加载 api-impl）。
   setWindowOps({ reveal: () => revealWindow(), state: () => currentWindowState() });
 
+  // 模型目录刷新（##385 §3.2 的一半）：**启动后一次**，后台不阻塞（延迟 15s 让窗口先出来）。
+  // 定时（24h）与 job 可见性归 ##408 —— 这里只调用 `core/models-sync.ts::refreshModelsOnce` 那一次 tick。
+  // test 变体一律不起 —— 自动化测试不该发外部请求（真抓取的行为由单测 + 意图测试的本地源覆盖）。
+  cancelModelsStartupRefresh = refreshModelsOnStartup({
+    enabled: readRuntimeConfig().env !== "test",
+  });
+
   const ok = await startRpcPort(ipcTransport);
   // 端口已定（含 EADDRINUSE 后的随机端口兜底）→ 重设标题补上 `:<port>`
   applyWindowTitle();
@@ -453,6 +463,8 @@ app.on("window-all-closed", () => {
 // darwin 由 Cmd+Q 触发）。这里不 destroy ipcBinding —— 与关窗不同，进程正在退出，
 // 无需为「以后还要用」留口子（window-all-closed 才 destroy，因为那时进程还活着）。
 app.on("before-quit", () => {
+  cancelModelsStartupRefresh?.();
+  cancelModelsStartupRefresh = null;
   rpcPort?.stop();
   // 注册表清理：正常退出即删自己的条目。**但不能只靠它** —— SIGKILL / 崩溃时这里不会跑，
   // 故读侧（core/instance-registry.ts::readRecords）一律按 pid 存活过滤并顺手删死者。
