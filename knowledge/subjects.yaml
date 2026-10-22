@@ -85,6 +85,10 @@ subjects:
       - DIY_VARIANT
   facts.cli:
     description: 事实库的写入口本身（agent 只经 CLI，不碰 YAML）
+  facts.find:
+    description: diy-facts 包内定位：哪个文件管什么（事实库内核 @diy/facts）
+  facts.rule:
+    description: 事实库硬约束：env 轴 / claim 与 id / 相交匹配 / 单一实现 / 生成物式真源 / 任务级库边界
   find:
     description: 去哪找
     aliases: []
