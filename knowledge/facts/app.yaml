@@ -1390,14 +1390,16 @@ facts:
       at: ba99d638:pkgs.ts/diy-app/AGENTS.md:134
       verifiedAt: '2026-10-22'
   app.ui#grid-fold:
-    value: '**收起 area 时被收起 track 的尺寸要交给邻居**（`shared/grid-layout.ts::resolveLayout` 的 `foldTracks`）。本轴还有弹性轨（fr）时剩余空间天然归它，不必动手；但**拖过线之后**两侧 track 都被写成 px（`layoutStore.setTrackPair` 的口径），此时只把 track 写 0 就是净丢那几百 px ⇒ 网格内容比容器窄、右侧一片死区（任务执行页表现为「左栏任务详情最小化后中栏不铺满」，##348 ⑤）。交接方向按「内容区在左上」：列向右找、行向上找。纯函数回归 `tests/core/grid-layout.test.ts`'
+    value: |-
+      **收起 area 时被收起 track 的尺寸要交给邻居**（`shared/grid-layout.ts::resolveLayout` 的 `foldTracks`）。本轴还有弹性轨（fr）时剩余空间天然归它，不必动手；但**拖过线之后**两侧 track 都被写成 px（`layoutStore.setTrackPair` 的口径），此时只把 track 写 0 就是净丢那几百 px ⇒ 网格内容比容器窄、右侧一片死区（任务执行页表现为「左栏任务详情最小化后中栏不铺满」，##348 ⑤）。交接方向按「内容区在左上」：列向右找、行向上找。纯函数回归 `tests/core/grid-layout.test.ts`
+
+      **2026-10-23 更正**：拖线不再把 fr 轨写成 px —— 见 `app.ui#layout-track-unit`。本条「拖过线之后两侧 track 都被写成 px」现在只对 **base 全 px** 的轴成立；弹性轨不再被固化，故「收起左栏后中栏不铺满」在那类布局里已不会发生。
     id: app.ui.grid-fold
     review: accepted
     lifecycle: active
     evidence:
-      source: user
-      at: ba99d638:pkgs.ts/diy-app/AGENTS.md:96
-      verifiedAt: '2026-10-22'
+      source: probe
+      probe: '##348 ⑤：左栏最小化后中栏不铺满（foldTracks 引入时实测）'
   app.ui#hl-token:
     value: CodeMirror 默认**只给 token 挂 class、不上色**：必须配 `HighlightStyle` + `syntaxHighlighting()`。`&light`/`&dark` **只能**用在 `EditorView.baseTheme`，写在 `EditorView.theme` 里是**模块加载期**抛错 → 整个 renderer 白屏
     id: app.ui.hl-token
@@ -1407,6 +1409,14 @@ facts:
       source: user
       at: ba99d638:pkgs.ts/diy-app/AGENTS.md:135
       verifiedAt: '2026-10-22'
+  app.ui#layout-track-unit:
+    value: '**track 的单位是身份，拖线只改尺寸不换单位**：base 声明 px 就写 px（固定栏是合法意图），base 声明 fr 就写 **fr 权重**（`shared/grid-layout.ts::trackPairAfterDrag`，按该轨此刻 px 同比缩放 `w'' = w·px''/px`；该轴只有一条弹性轨时权重恒保持原值，别写出 0.85 这种漂移）。反例（2026-10-22 实测，##5 报）：拖完把两侧都写成 px ⇒ 声明为 `1fr` 的中栏被固化成 `1589px`，窗口缩到 984px 时合计 1944px 撑爆容器，右侧发送按钮 `right 1028` 被顶出可视区（`getComputedStyle` 列 = `355px 1589px 0px`）。**归一化不放在 `resolveLayout`** —— `ui layout set --cols 300,624,0` 是显式声明，被归一化会静默失效；拖线才是快照，快照该换算。另两条同族硬约束：① `trackCss` 的 fr 必须写 `minmax(0, <v>fr)`（裸 `1fr` == `minmax(auto,1fr)`，下界是 min-content，一行长内容即撑爆列）；② 拖线起点用 `parseTrackPx(getComputedStyle)`，`minmax` 之后浏览器仍回 px 序列（有单测钉住 —— 变了的表现是「拖不动」而非报错）。回归 `tests/core/grid-layout.test.ts`'
+    id: app.ui.layout-track-unit
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: CDP 实测：task-run 容器 984px，computed 列 355px 1589px 0px（合计 1944）；发送按钮 left 978 / right 1028
   app.ui#localstorage:
     value: '**禁止把草稿写 localStorage**（属有损数据，且 serve 与 Electron 各持一份）：草稿 + 插话队列落任务目录 `.diy/drafts.yaml`，会话日志落 `$DIY_HOME/local/<uri 路径>/<key>/`（##379 分层）'
     id: app.ui.localstorage
