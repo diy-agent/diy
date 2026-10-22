@@ -34,7 +34,17 @@ import { ModelCostSchema } from "../../shared/usage";
 // 「模型不可用」通知契约（纯 zod，renderer 同源；判据函数也在同文件，见 ##369）
 import { ModelUnavailableNoticeSchema } from "../../shared/model-unavailable";
 // 事实库契约（##404）：形状在 shared/facts.ts，语义校验在内核 @diy/facts
-import { EnvSchema, FactsAffectedSchema, FactsGetSchema, FactsProjectSchema, FactsRawSchema, FactsStatusSchema, FactsSubmitSchema } from "../../shared/facts";
+import {
+  EnvSchema,
+  FactsAffectedSchema,
+  FactsBriefSchema,
+  FactsFindSchema,
+  FactsGetSchema,
+  FactsProjectSchema,
+  FactsRawSchema,
+  FactsStatusSchema,
+  FactsSubmitSchema,
+} from "../../shared/facts";
 // 任务日志契约（##404）：append-only 事件流，见 shared/journal.ts 头注（三分法）
 import { JournalAddSchema, JournalFindSchema, JournalImportSchema, JournalRawSchema, JournalStatsSchema } from "../../shared/journal";
 // 「环境感知」通知契约（##384）：磁盘满 / 网断 —— 与 notice.* 同形不同源
@@ -2096,6 +2106,33 @@ export const apiDef = RpcSchema.router({
                 .cliOption({ desc: "库的位置：缺省/global = 仓库 knowledge/；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）" }),
             },
             output: FactsStatusSchema,
+          }),
+          brief: RpcSchema.unary({
+            desc: `目录级：列一个 subject 的**全部 aspect**（gid + 值首句 ≤80 字）。链上正文删掉后靠它"扫一眼有哪些条目"，再决定精确 \`get\` 哪条`,
+            input: {
+              subject: z.string().cliArg({ placeholder: "<subject>", desc: "主题（如 find / tool / rule）" }),
+              maxChars: z.number().optional().cliOption({ desc: "每条摘要字数上限（缺省 80）" }),
+              dir: z.string().optional().cliOption({ desc: "knowledge 目录（缺省自动向上找）" }),
+              in: z
+                .string()
+                .optional()
+                .cliOption({ desc: "库的位置：缺省/global = 仓库 knowledge/；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）" }),
+            },
+            output: FactsBriefSchema,
+          }),
+          find: RpcSchema.unary({
+            desc: `全文检索：claim / id / value 上大小写不敏感子串，多个关键词用逗号分隔 = **全都要命中**。命中内容排在命中键名之前`,
+            input: {
+              keyword: z.string().cliArg({ placeholder: "<关键词,...>", desc: "关键词（多个用逗号分隔 = 与）" }),
+              limit: z.number().optional().cliOption({ desc: "最多返回几条（缺省 20；total 不受影响）" }),
+              maxChars: z.number().optional().cliOption({ desc: "每条摘要字数上限（缺省 80）" }),
+              dir: z.string().optional().cliOption({ desc: "knowledge 目录（缺省自动向上找）" }),
+              in: z
+                .string()
+                .optional()
+                .cliOption({ desc: "库的位置：缺省/global = 仓库 knowledge/；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）" }),
+            },
+            output: FactsFindSchema,
           }),
           get: RpcSchema.unary({
             desc: `按 claim（subject#aspect）取当前作用域下的值；多个 claim 用逗号分隔。悬空 / 冲突带错误码返回，**不当成"没找到"**`,

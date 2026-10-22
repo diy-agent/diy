@@ -274,6 +274,180 @@ export function get(
     return { resolved, notes };
 }
 
+/**
+ * 读侧摘要：值压成一行、取前 `max` 字（尽量在句末断）。
+ *
+ * 为什么要有它：链上正文删掉之后，agent 得先"扫一眼有哪些条目、各是什么"才知道
+ * 该精确 `get` 哪条 —— 而完整值动辄几百字（`pit` 类），全列出来就是另一种链。
+ * 所以这里只给**够判断该不该展开**的量，摘要永远是线索、不是结论（精确值走 `get`）。
+ */
+export function previewOf(value: string, max = 80): string {
+    const flat = value.replace(/\s+/g, " ").replace(/[*`]/g, "").trim();
+    if (flat.length <= max) return flat;
+    const cut = flat.slice(0, max);
+    const stop = Math.max(cut.lastIndexOf("。"), cut.lastIndexOf("；"));
+    return `${stop > max / 2 ? cut.slice(0, stop + 1) : cut}…`;
+}
+
+export interface BriefEntry {
+    aspect: string;
+    gid: string;
+    preview: string;
+    /** 该 claim 的变体数（>1 ⇒ 还有别的值，问"当前环境是哪个"要 `get --env`） */
+    variants: number;
+    review: string;
+    lifecycle: string;
+    file: string;
+}
+
+export interface BriefResult {
+    subject: string;
+    desc: string | null;
+    claims: number;
+    facts: number;
+    entries: BriefEntry[];
+    notes: string[];
+}
+
+/** 变体组的代表：accepted 优先 → 限定条件最少（无条件比"仅 production"更接近通例）→ id 短 */
+function pickRepresentative(list: readonly Fact[]): Fact {
+    const rank = (f: Fact): number => (f.review === "accepted" ? 0 : f.review === "proposed" ? 1 : 2);
+    const weight = (f: Fact): number =>
+        f.scope === undefined
+            ? 0
+            : (f.scope.env === undefined ? 0 : 1) + (f.scope.paths === undefined ? 0 : 1) + (f.scope.task === undefined ? 0 : 1);
+    return [...list].sort((a, b) => rank(a) - rank(b) || weight(a) - weight(b) || a.id.localeCompare(b.id))[0] as Fact;
+}
+
+/**
+ * 目录级：列一个 subject 的**全部 aspect**（gid + 值首句）。
+ *
+ * 为什么需要它（这是本命令存在的唯一理由）：`get` 要精确 claim、`status` 只给计数，
+ * 中间那层"这个主题下有哪些条目"原本不存在 ⇒ 链上正文就删不掉（删了不知从何查起）。
+ */
+export function brief(subjectIn: string, opts: { dir?: string; in?: string; maxChars?: number } = {}): BriefResult {
+    const subject = subjectIn.trim();
+    if (subject === "") {
+        throw new FactsStoreError("agent/facts-brief-arg", "brief 需要 subject（如 `diy facts brief find`）");
+    }
+    const target = resolveFactsTarget(opts);
+    const repo = loadRepo(target.dir, targetOpts(target));
+    if (repo.schemaIssues.length > 0) {
+        throw new FactsStoreError(
+            "agent/facts-schema",
+            `真源有 schema 问题（先跑 \`diy facts status\`）：${repo.schemaIssues[0]?.detail ?? ""}`,
+        );
+    }
+    const desc = repo.subjects.find((s) => s.key === subject)?.description ?? null;
+    const mine = repo.facts.filter((f) => f.subject === subject);
+    const notes: string[] = [];
+    if (mine.length === 0) {
+        // 空不是错误（可能拼错）。给"相近主题"让其自纠 —— 只说"没有"等于让人重敲一次。
+        const all = [...new Set(repo.facts.map((f) => f.subject))];
+        const near = all.filter((s) => s.includes(subject) || subject.includes(s)).slice(0, 5);
+        notes.push(near.length > 0 ? `没这个 subject；相近的有：${near.join(", ")}` : "没这个 subject（`diy facts status` 看全部主题）");
+        return { subject, desc, claims: 0, facts: 0, entries: [], notes };
+    }
+    const max = opts.maxChars ?? 80;
+    const byAspect = new Map<string, Fact[]>();
+    for (const f of mine) {
+        const arr = byAspect.get(f.aspect) ?? [];
+        arr.push(f);
+        byAspect.set(f.aspect, arr);
+    }
+    const entries: BriefEntry[] = [...byAspect.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([aspect, list]) => {
+            const rep = pickRepresentative(list);
+            return {
+                aspect,
+                gid: `${subject}#${aspect}`,
+                preview: previewOf(rep.value, max),
+                variants: list.length,
+                review: rep.review,
+                lifecycle: rep.lifecycle,
+                file: path.relative(repo.root, repo.origin.get(rep.id) ?? ""),
+            };
+        });
+    return { subject, desc, claims: entries.length, facts: mine.length, entries, notes };
+}
+
+export interface FindHit {
+    gid: string;
+    id: string;
+    preview: string;
+    /** 命中位置（claim / id / value 的并集）—— "命中键名"和"命中内容"的可信度不一样 */
+    hitIn: string[];
+    review: string;
+    lifecycle: string;
+}
+
+export interface FindResult {
+    keyword: string;
+    hits: FindHit[];
+    /** 命中总数（`hits` 可能被 `limit` 截断） */
+    total: number;
+    notes: string[];
+}
+
+/**
+ * 全文检索：claim / id / value 上的大小写不敏感子串，多关键词 = **与**（每个都得命中某处）。
+ *
+ * 为什么不用模糊匹配 / 分词：agent 查的是它刚听到的**专有词**（"异常三档"、"reqlog"），
+ * 子串足够；分词会引入"命中了但是不相干"的噪声，反而要人再看一遍。
+ */
+export function find(keywordIn: string, opts: { dir?: string; in?: string; limit?: number; maxChars?: number } = {}): FindResult {
+    const keyword = keywordIn.trim();
+    const terms = splitList(keyword).map((t) => t.toLowerCase());
+    if (terms.length === 0) {
+        throw new FactsStoreError("agent/facts-find-arg", "find 需要至少一个关键词（多个用逗号分隔 = 全都要命中）");
+    }
+    const target = resolveFactsTarget(opts);
+    const repo = loadRepo(target.dir, targetOpts(target));
+    if (repo.schemaIssues.length > 0) {
+        throw new FactsStoreError(
+            "agent/facts-schema",
+            `真源有 schema 问题（先跑 \`diy facts status\`）：${repo.schemaIssues[0]?.detail ?? ""}`,
+        );
+    }
+    const max = opts.maxChars ?? 80;
+    const scored: { hit: FindHit; score: number }[] = [];
+    for (const f of repo.facts) {
+        const gid = `${f.subject}#${f.aspect}`;
+        const haystack: Record<string, string> = { claim: gid.toLowerCase(), id: f.id.toLowerCase(), value: f.value.toLowerCase() };
+        const hitIn = new Set<string>();
+        let all = true;
+        for (const t of terms) {
+            const where = Object.keys(haystack).filter((k) => (haystack[k] as string).includes(t));
+            if (where.length === 0) {
+                all = false;
+                break;
+            }
+            for (const w of where) hitIn.add(w);
+        }
+        if (!all) continue;
+        scored.push({
+            hit: {
+                gid,
+                id: f.id,
+                preview: previewOf(f.value, max),
+                hitIn: [...hitIn],
+                review: f.review,
+                lifecycle: f.lifecycle,
+            },
+            // 命中内容 > 命中键名：查"异常三档"时 value 里真讲了这件事，比 id 里凑巧有这三个字更有用
+            score: hitIn.has("value") ? 0 : hitIn.has("id") ? 1 : 2,
+        });
+    }
+    scored.sort((a, b) => a.score - b.score || a.hit.gid.localeCompare(b.hit.gid));
+    const limit = opts.limit ?? 20;
+    const hits = scored.slice(0, limit).map((s) => s.hit);
+    const notes: string[] = [];
+    if (scored.length === 0) notes.push(`没有命中「${keyword}」（换更短的词，或 \`diy facts status\` 看主题表）`);
+    else if (scored.length > hits.length) notes.push(`共 ${scored.length} 条命中，显示前 ${hits.length}（--limit 调整）`);
+    return { keyword, hits, total: scored.length, notes };
+}
+
 /** 提交载荷的 JSON 形状：`{ facts: [...], subjects?: [...] }`（也接受裸数组 = 只交 facts） */
 export interface SubmitPayload {
     facts: unknown[];

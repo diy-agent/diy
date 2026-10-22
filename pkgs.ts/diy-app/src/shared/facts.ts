@@ -100,6 +100,52 @@ export const FactsGetSchema = z.object({
     notes: z.array(z.string()),
 });
 
+/**
+ * 目录级摘要（`diy facts brief <subject>`）：一个 subject 的全部 aspect + 值首句。
+ *
+ * `preview` 是**线索**不是结论：完整值走 `get`。`variants > 1` 是"该问一句当前环境"的信号
+ * （与投递投影的 cell.variants 同一个含义，两处别各定义）。
+ */
+export const FactsBriefSchema = z.object({
+    subject: z.string(),
+    /** subject 词表里的说明（没有则 null —— 不是空串） */
+    desc: z.string().nullable(),
+    claims: z.number(),
+    facts: z.number(),
+    entries: z.array(
+        z.object({
+            aspect: z.string(),
+            gid: z.string(),
+            preview: z.string(),
+            variants: z.number(),
+            review: z.string(),
+            lifecycle: z.string(),
+            file: z.string(),
+        }),
+    ),
+    notes: z.array(z.string()),
+});
+
+/**
+ * 全文检索（`diy facts find <词>`）：claim / id / value 子串命中，多词 = 与。
+ * `total` 是命中总数，`hits` 可能被 limit 截断（二者不等就是截断了）。
+ */
+export const FactsFindSchema = z.object({
+    keyword: z.string(),
+    hits: z.array(
+        z.object({
+            gid: z.string(),
+            id: z.string(),
+            preview: z.string(),
+            hitIn: z.array(z.string()),
+            review: z.string(),
+            lifecycle: z.string(),
+        }),
+    ),
+    total: z.number(),
+    notes: z.array(z.string()),
+});
+
 export const FactsSubmitReportSchema = z.object({
     dryRun: z.boolean(),
     added: z.array(z.string()),

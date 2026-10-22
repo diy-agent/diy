@@ -282,3 +282,61 @@ describe("--in task:<uri>（任务级库）", () => {
         expect(() => store.status({ in: "task:projects/4/tasks/404" })).toThrow(/还没建.*submit/);
     });
 });
+
+// ── 目录级摘要 / 全文检索（##5 报送的需求 1、2）─────────────────
+//
+// 这两条命令存在的唯一理由是**链上正文要能删**：删了之后 agent 得先"扫一眼有哪些条目"
+// （brief）或"按听到的词定位"（find），否则 `get` 要求精确 claim 就成了死门槛。
+// 所以压的是"能不能替我决定下一步查哪条"，不是"格式对不对"。
+describe("brief", () => {
+    it("列全部 aspect，按 aspect 排序，变体数如实计数", () => {
+        const r = store.brief("app.port", { dir: kb });
+        expect(r.subject).toBe("app.port");
+        expect(r.desc).toBe("端口");
+        expect(r.entries.map((e) => e.aspect)).toEqual(["default", "legacy"]);
+        expect(r.claims).toBe(2);
+        // beforeEach 里 default 有 3 个变体（production/development/test 之外还有一条）
+        const def = r.entries.find((e) => e.aspect === "default")!;
+        expect(def.variants).toBeGreaterThanOrEqual(2);
+    });
+
+    it("subject 不存在 ⇒ 不报错，给相近主题（只说「没有」等于让人重敲一次）", () => {
+        const r = store.brief("app.po", { dir: kb });
+        expect(r.entries).toEqual([]);
+        expect(r.notes.join(" ")).toContain("相近");
+        expect(r.notes.join(" ")).toContain("app.port");
+    });
+
+    it("preview 是线索不是结论：超长截断带 …，且比完整值短", () => {
+        const long = "甲".repeat(200);
+        write("facts/long.yaml", `domain: long\nfacts:\n  - id: long.thing\n    subject: dev.test\n    aspect: big\n    value: '${long}'\n    review: accepted\n    lifecycle: active\n    evidence: { source: code, at: K.ts:1 }\n`);
+        const r = store.brief("dev.test", { dir: kb, maxChars: 20 });
+        const big = r.entries.find((e) => e.aspect === "big")!;
+        expect(big.preview.length).toBeLessThanOrEqual(21);
+        expect(big.preview.endsWith("…")).toBe(true);
+    });
+});
+
+describe("find", () => {
+    it("命中内容排在命中键名之前（查到的是一件真事，不是凑巧同名的键）", () => {
+        const r = store.find("端口", { dir: kb });
+        expect(r.total).toBeGreaterThan(0);
+        expect(r.hits[0]!.hitIn).toContain("value");
+    });
+
+    it("多关键词 = 与（每个都得命中某处），不是或", () => {
+        const both = store.find("app.port,18888", { dir: kb });
+        expect(both.total).toBeGreaterThan(0);
+        const none = store.find("app.port,绝不可能出现的词", { dir: kb });
+        expect(none.total).toBe(0);
+        expect(none.notes.join(" ")).toContain("没有命中");
+    });
+
+    it("limit 截断但 total 仍报全量（两者不等 = 被截了）", () => {
+        const all = store.find("app.port", { dir: kb, limit: 100 });
+        const cut = store.find("app.port", { dir: kb, limit: 1 });
+        expect(cut.hits.length).toBe(1);
+        expect(cut.total).toBe(all.total);
+        expect(cut.notes.join(" ")).toContain("共");
+    });
+});

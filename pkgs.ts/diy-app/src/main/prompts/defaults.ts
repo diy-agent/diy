@@ -40,7 +40,9 @@ lockTip: "装配入口是结构契约：改了会改变模型看到的节顺序�
 <template :include="./identity.md"/>
 <template :include="./diy.md"/>
 <template :include="./project.md"/>
-<template :include="./kb.md" :if={{kb}}/>
+{{/* 知识库索引不走这里：它是 Context Tree 的 runtime place（delivery.ts 的 kb），
+    真发由那条管道投递。放进这套模版会变成第二份渲染实现，必然与真发分叉 ——
+    上一版就在这里写了 diy facts find（当时还不存在的命令）。要索引去看上下文树页。 */}}
 <template :include="./task.md"/>
 <template :include="./rules.md"/>
 {{/* 技能槽位：skills 为空数组时整节不出现（空数组为假） */}}
@@ -127,29 +129,6 @@ diy 是一个 Electron 桌面管控台。命令行入口 {{diy.cli}}，数据根
 
 `,
 
-    // ── 知识库索引（##404 待办 1）────────────────────────────────
-    // 为什么要有这一节：AGENTS.md 链里「不查也行、查了才用得上」的说明性内容（三方源码位置、
-    // 术语表、异常三档判据…）迁进知识库后，链上只留指针；agent 得先知道**库里有哪几个主题**
-    // 才谈得上去查 —— 这就是「先给索引，再删正文」的那半截。
-    // 为什么只给 subject + 一句话：字节量只随主题数增长（26 主题 ≈ 1.5 KB），条目全文归 runtime
-    // 的 `facts` 投影（4 KB 硬预算，装不下全库）。索引里 `claims` 顺带告诉 agent 该主题有几条。
-    'kb.md': `---
-title: 知识库索引
-desc: 可查主题一览（subject + 一句话说明 + 条目数）。内容不全，全库正文按需用 facts 工具查。
-version: 1
----
-<knowledge_base claims="{{kb.claims}}">
-项目知识库；这里只列**主题**，不列条目全文。需要某主题的细节时按需查：
-- 取某主题全部条目：diy facts get <subject>
-- 取单条：diy facts get <subject>#<aspect>
-- 模糊找：diy facts find <关键词>
-
-<template :for={{kb.entries}} :as="e">
-- {{.e.value.subject}}（{{.e.value.claims}} 条）— {{.e.value.desc}}
-</template>
-</knowledge_base>
-
-`,
     'project.md': `---
 title: 项目规范
 desc: 按目录 scope 生效的 AGENTS.md 链（home 到工作目录逐层）。层数由 chain 决定，链为空则本节只有说明文字。

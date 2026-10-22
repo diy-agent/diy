@@ -1452,6 +1452,21 @@ export function bindAppHandlers(binding: ServerBinding): void {
       ...(input.task === undefined ? {} : { task: input.task }),
     }),
   );
+  binding.on(app.facts.brief, async ({ input }) =>
+    factsStore.brief(input.subject, {
+      ...(input.dir === undefined ? {} : { dir: input.dir }),
+      ...(input.in === undefined ? {} : { in: input.in }),
+      ...(input.maxChars === undefined ? {} : { maxChars: input.maxChars }),
+    }),
+  );
+  binding.on(app.facts.find, async ({ input }) =>
+    factsStore.find(input.keyword, {
+      ...(input.dir === undefined ? {} : { dir: input.dir }),
+      ...(input.in === undefined ? {} : { in: input.in }),
+      ...(input.limit === undefined ? {} : { limit: input.limit }),
+      ...(input.maxChars === undefined ? {} : { maxChars: input.maxChars }),
+    }),
+  );
   binding.on(app.facts.submit, async ({ input }) =>
     factsStore.submitPayload(factsStore.parseSubmitPayload(input.file), {
       ...(input.dir === undefined ? {} : { dir: input.dir }),
