@@ -306,7 +306,7 @@ describe("--in task:<uri>（任务级库）", () => {
 // 所以压的是"能不能替我决定下一步查哪条"，不是"格式对不对"。
 describe("brief", () => {
     it("列全部 aspect，按 aspect 排序，变体数如实计数", () => {
-        const r = store.brief("app.port", { dir: kb });
+        const r = store.brief("app.port", { dir: kb }).subjects[0]!;
         expect(r.subject).toBe("app.port");
         expect(r.desc).toBe("端口");
         // beforeEach 的 app.port 只有 default 一个 aspect、两条变体（production / dev+test）
@@ -321,7 +321,7 @@ describe("brief", () => {
     });
 
     it("subject 不存在 ⇒ 不报错，给相近主题（只说「没有」等于让人重敲一次）", () => {
-        const r = store.brief("app.po", { dir: kb });
+        const r = store.brief("app.po", { dir: kb }).subjects[0]!;
         expect(r.entries).toEqual([]);
         expect(r.notes.join(" ")).toContain("相近");
         expect(r.notes.join(" ")).toContain("app.port");
@@ -330,10 +330,33 @@ describe("brief", () => {
     it("preview 是线索不是结论：超长截断带 …，且比完整值短", () => {
         const long = "甲".repeat(200);
         write("facts/long.yaml", `domain: long\nfacts:\n  - id: long.thing\n    subject: dev.test\n    aspect: big\n    value: '${long}'\n    review: accepted\n    lifecycle: active\n    evidence: { source: code, at: K.ts:1 }\n`);
-        const r = store.brief("dev.test", { dir: kb, maxChars: 20 });
+        const r = store.brief("dev.test", { dir: kb, maxChars: 20 }).subjects[0]!;
         const big = r.entries.find((e) => e.aspect === "big")!;
         expect(big.preview.length).toBeLessThanOrEqual(21);
         expect(big.preview.endsWith("…")).toBe(true);
+    });
+});
+
+describe("brief 多主题 / 预算（##5 需求 3）", () => {
+    it("逗号分隔多主题 ⇒ 一次调用返回各主题，形状恒为数组", () => {
+        const r = store.brief("app.port,dev.test", { dir: kb });
+        expect(r.subjects.map((x) => x.subject)).toEqual(["app.port", "dev.test"]);
+        expect(r.budget).toBeUndefined();
+    });
+
+    it("单主题也是 1 元素数组（形状不随入参变，消费方不必写两套分支）", () => {
+        const r = store.brief("app.port", { dir: kb });
+        expect(r.subjects).toHaveLength(1);
+    });
+
+    it("--budget 超了按比例缩每条 preview，回执给 used", () => {
+        const long = "乙".repeat(300);
+        write("facts/long.yaml", `domain: long\nfacts:\n  - id: long.thing\n    subject: dev.test\n    aspect: big\n    value: '${long}'\n    review: accepted\n    lifecycle: active\n    evidence: { source: code, at: K.ts:1 }\n`);
+        const wide = store.brief("dev.test", { dir: kb, maxChars: 80, budget: 60 });
+        expect(wide.budget!.limit).toBe(60);
+        expect(wide.budget!.used).toBeLessThanOrEqual(60);
+        const item = wide.subjects[0]!;
+        expect(item.entries.find((e) => e.aspect === "big")!.preview.length).toBeLessThanOrEqual(60);
     });
 });
 

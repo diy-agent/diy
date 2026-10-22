@@ -133,6 +133,15 @@ export interface LoadRepoOptions {
      * （`pkgs.ts/diy-app/src/x.ts:10`）。按"库目录的父目录"解析会让每一条证据都悬空。
      */
     readonly root?: string;
+    /**
+     * **额外只读库**（`knowledge/` 绝对路径，主库已有的 claim 一律不覆盖）。
+     *
+     * 为**设备级库跨根读**而设：lab 的 `$DIY_HOME` 在 `build/lab/home`，写进那里的
+     * "设备级"事实生产 `~/.diy/knowledge` 看不到，反之亦然 —— 但 `~/AGENTS.md`
+     * 物理上只有一份，这正是"设备级"该有的语义。判据：**读跨根无害且有用，写才有风险**
+     * （agent 不写生产数据根，见 guard）。故只读合并，主库优先。
+     */
+    readonly extraDirs?: readonly string[];
 }
 
 /**
@@ -222,6 +231,43 @@ export function loadRepo(knowledgeDir: string, opts: LoadRepoOptions = {}): Repo
                 if (id !== undefined) origin.set(id, file);
             }
             raw.push(item);
+        }
+    }
+
+    // 额外只读库：主库已有的 claim 不覆盖（同 claim 两处写 = 必漂移，以本根为准）
+    if (opts.extraDirs !== undefined && opts.extraDirs.length > 0) {
+        const claimKey = (item: unknown): string | undefined => {
+            if (typeof item !== 'object' || item === null) return undefined;
+            const it = item as { subject?: unknown; aspect?: unknown };
+            return typeof it.subject === 'string' && typeof it.aspect === 'string' ? `${it.subject}#${it.aspect}` : undefined;
+        };
+        const seen = new Set<string>();
+        for (const item of raw) {
+            const k = claimKey(item);
+            if (k !== undefined) seen.add(k);
+        }
+        for (const extra of opts.extraDirs) {
+            const extraFactsDir = path.join(path.resolve(extra), 'facts');
+            if (extraFactsDir === factsDir || !existsSync(extraFactsDir)) continue;
+            for (const f of readdirSync(extraFactsDir).filter((n) => n.endsWith('.yaml') || n.endsWith('.yml')).sort()) {
+                const file = path.join(extraFactsDir, f);
+                let doc: unknown;
+                try {
+                    doc = readYaml(file) as unknown;
+                } catch {
+                    // 额外库坏了不该让主库不可用（它是"参考"，不是真源）
+                    continue;
+                }
+                const d = doc as { facts?: unknown } | unknown[] | null;
+                const rawFacts: unknown = Array.isArray(d) ? d : (d?.facts ?? {});
+                if (typeof rawFacts !== 'object' || rawFacts === null) continue;
+                for (const item of expandClaims(rawFacts)) {
+                    const k = claimKey(item);
+                    if (k !== undefined && seen.has(k)) continue;
+                    if (k !== undefined) seen.add(k);
+                    raw.push(item);
+                }
+            }
         }
     }
 

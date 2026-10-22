@@ -106,7 +106,7 @@ export const FactsGetSchema = z.object({
  * `preview` 是**线索**不是结论：完整值走 `get`。`variants > 1` 是"该问一句当前环境"的信号
  * （与投递投影的 cell.variants 同一个含义，两处别各定义）。
  */
-export const FactsBriefSchema = z.object({
+export const FactsBriefItemSchema = z.object({
     subject: z.string(),
     /** subject 词表里的说明（没有则 null —— 不是空串） */
     desc: z.string().nullable(),
@@ -124,6 +124,15 @@ export const FactsBriefSchema = z.object({
         }),
     ),
     notes: z.array(z.string()),
+});
+
+/**
+ * 多主题摘要的返回：`subjects` 恒为数组（单主题也是 1 元素 —— 形状不随入参变，
+ * 消费方不必写两套分支）。给了 `--budget` 才有 `budget` 回执。
+ */
+export const FactsBriefSchema = z.object({
+    subjects: z.array(FactsBriefItemSchema),
+    budget: z.object({ limit: z.number(), used: z.number() }).optional(),
 });
 
 /**

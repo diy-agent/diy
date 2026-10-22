@@ -150,6 +150,11 @@ export interface FactsTarget {
      * 按任务目录解析会让每条证据都悬空。
      */
     readonly root?: string;
+    /**
+     * 额外只读库（跨根读取）。目前只有 `global` 用：设备级事实讲的是"这台机器 / 这个用户"，
+     * 与 `$DIY_HOME` 无关 —— lab 里也该看得到生产积累的全局规则。**只读**，写永远落本根。
+     */
+    readonly readExtra?: readonly string[];
 }
 
 const TASK_IN = /^task:(projects\/\d+\/tasks\/\d+)$/;
@@ -166,7 +171,12 @@ export function resolveFactsTarget(opts: { dir?: string; in?: string } = {}): Fa
     // （`~/AGENTS.md` 的全局规则归它）。与仓库库分开是因为**归属不同**：全局规则换到
     // 另一个项目里也该查得到 —— 塞进某项目的 `knowledge/` 就是 scope 错位。
     if (spec === "global") {
-        const out: FactsTarget = { dir: path.join(diyHome(), "knowledge"), allowMissing: true };
+        const ownDir = path.join(diyHome(), "knowledge");
+        // 跨根读：生产 `~/.diy/knowledge` 与本根不同则并入（只读）。用真 home 而不是
+        // dirname(DIY_HOME)：lab 的 DIY_HOME 在 build/lab/home，dirname 会算到 build/lab。
+        const prodKb = path.join(os.homedir(), ".diy", "knowledge");
+        const readExtra = prodKb === ownDir || !existsSync(path.join(prodKb, "facts")) ? [] : [prodKb];
+        const out: FactsTarget = { dir: ownDir, allowMissing: true, ...(readExtra.length > 0 ? { readExtra } : {}) };
         // 词表仍优先继承仓库（同一套 subject 命名），但**仓库缺失时不阻塞**：设备库
         // 可能在任何目录下被读（agent 的 cwd 不一定是仓库）。
         try {
@@ -225,6 +235,8 @@ function targetOpts(t: FactsTarget, forWrite = false) {
         allowMissing: forWrite && t.allowMissing,
         ...(t.subjectsFallback === undefined ? {} : { subjectsFallback: t.subjectsFallback }),
         ...(t.root === undefined ? {} : { root: t.root }),
+        // 写时**不**读额外库：否则 submit 会把跨根读来的条目当成"本库已有"而漏写
+        ...(!forWrite && t.readExtra !== undefined ? { extraDirs: t.readExtra } : {}),
     };
 }
 
@@ -323,6 +335,12 @@ export interface BriefEntry {
     file: string;
 }
 
+export interface BriefMultiResult {
+    readonly subjects: BriefResult[];
+    /** 给了 `--budget` 才有：上限与实际占用（近似字数，不是 UTF-8 字节） */
+    readonly budget?: { readonly limit: number; readonly used: number };
+}
+
 export interface BriefResult {
     subject: string;
     desc: string | null;
@@ -357,7 +375,7 @@ function pickRepresentative(list: readonly Fact[]): Fact {
  * 为什么需要它（这是本命令存在的唯一理由）：`get` 要精确 claim、`status` 只给计数，
  * 中间那层"这个主题下有哪些条目"原本不存在 ⇒ 链上正文就删不掉（删了不知从何查起）。
  */
-export function brief(subjectIn: string, opts: { dir?: string; in?: string; maxChars?: number } = {}): BriefResult {
+function briefOne(subjectIn: string, opts: { dir?: string; in?: string; maxChars?: number } = {}): BriefResult {
     const subject = subjectIn.trim();
     if (subject === "") {
         throw new FactsStoreError("agent/facts-brief-arg", "brief 需要 subject（如 `diy facts brief find`）");
@@ -428,6 +446,56 @@ export interface FindResult {
  * 为什么不用模糊匹配 / 分词：agent 查的是它刚听到的**专有词**（"异常三档"、"reqlog"），
  * 子串足够；分词会引入"命中了但是不相干"的噪声，反而要人再看一遍。
  */
+
+/**
+ * 目录级摘要（支持**多个 subject**，逗号分隔）。
+ *
+ * 为什么多主题是一等需求而不是便利功能：了解 3 个主题 = 3 次工具调用 = 3 轮，
+ * 而每轮都要重发整份前缀（实测 41 KB）。**查询次数是隐藏成本**，把它压成 1 次
+ * 省下的比"少几条正文"多一个量级。
+ *
+ * `--budget`（总字节）：先按 `maxChars` 生成，超预算才按比例缩（下限 24 字）重算一次。
+ * 不追求精确贴合 —— 宁可少缩一点，也不要为了凑整把 preview 截成看不懂的样子。
+ */
+export function brief(
+    subjectsIn: string,
+    opts: { dir?: string; in?: string; maxChars?: number; budget?: number } = {},
+): BriefMultiResult {
+    const list = subjectsIn
+        .split(",")
+        .map((x) => x.trim())
+        .filter((x) => x !== "");
+    if (list.length === 0) {
+        throw new FactsStoreError("agent/facts-brief-arg", "brief 需要 subject（如 `diy facts brief find`，多个用逗号）");
+    }
+    const max = opts.maxChars ?? 80;
+    const build = (chars: number): BriefResult[] => list.map((s) => briefOne(s, { ...opts, maxChars: chars }));
+    const usedOf = (rs: readonly BriefResult[]): number =>
+        rs.reduce(
+            (n, r) => n + r.subject.length + r.entries.reduce((m, e) => m + e.gid.length + e.preview.length + 12, 0),
+            0,
+        );
+    let results = build(max);
+    let used = usedOf(results);
+    if (opts.budget !== undefined && opts.budget > 0 && used > opts.budget) {
+        // 按**固定开销**先扣掉再均分：gid + 每条 12 字的结构开销是省不掉的，按比例缩
+        // preview 会在条目多时永远够不着预算（试过：24 字下限 + 20 字固定开销仍超）。
+        const fixed = results.reduce(
+            (n, r) => n + r.subject.length + r.entries.reduce((m, e) => m + e.gid.length + 12, 0),
+            0,
+        );
+        const entries = results.reduce((n, r) => n + r.entries.length, 0);
+        // -1 给截断符 `…` 留位（previewOf 超长时输出 max+1 字符）
+        const per = entries === 0 ? max : Math.max(8, Math.floor((opts.budget - fixed) / entries) - 1);
+        results = build(Math.min(max, per));
+        used = usedOf(results);
+    }
+    return {
+        subjects: results,
+        ...(opts.budget === undefined ? {} : { budget: { limit: opts.budget, used } }),
+    };
+}
+
 export function find(keywordIn: string, opts: { dir?: string; in?: string; limit?: number; maxChars?: number } = {}): FindResult {
     const keyword = keywordIn.trim();
     const terms = splitList(keyword).map((t) => t.toLowerCase());

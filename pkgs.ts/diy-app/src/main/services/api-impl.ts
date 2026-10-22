@@ -1457,6 +1457,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
       ...(input.dir === undefined ? {} : { dir: input.dir }),
       ...(input.in === undefined ? {} : { in: input.in }),
       ...(input.maxChars === undefined ? {} : { maxChars: input.maxChars }),
+      ...(input.budget === undefined ? {} : { budget: input.budget }),
     }),
   );
   binding.on(app.facts.find, async ({ input }) =>

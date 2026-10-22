@@ -169,6 +169,43 @@ describe('submit（整批事务）', () => {
     });
 });
 
+describe('loadRepo extraDirs（设备级跨根只读）', () => {
+    it('额外库的 claim 会并进来，主库已有的 claim 不覆盖', () => {
+        const main = makeRepo();
+        const extra = makeRepo();
+        const mk = (id: string, subject: string, aspect: string, value: string): Fact =>
+            fact({ id, subject, aspect, value, evidence: { source: 'code', at: 'K.ts:1', verifiedAt: '2026-10-21' } });
+        writeFileSync(
+            path.join(main, 'facts', 'a.yaml'),
+            renderDoc({ domain: 'a', note: '', facts: [mk('x', 'app.port', 'default', '1000')] }),
+        );
+        writeFileSync(
+            path.join(extra, 'facts', 'a.yaml'),
+            renderDoc({
+                domain: 'a',
+                note: '',
+                facts: [
+                    // 同 claim：主库优先，extra 不覆盖
+                    mk('x', 'app.port', 'default', '2000'),
+                    // 主库没有：并进来
+                    mk('y', 'app.port', 'resolution', '600'),
+                ],
+            }),
+        );
+        const repo = loadRepo(main, { extraDirs: [extra] });
+        expect(repo.facts.map((f) => f.id).sort()).toEqual(['x', 'y']);
+        expect(repo.facts.find((f) => f.id === 'x')!.value).toBe('1000');
+    });
+
+    it('额外库坏了不影响主库（它是参考不是真源）', () => {
+        const main = makeRepo();
+        const extra = makeRepo();
+        writeFileSync(path.join(extra, 'facts', 'bad.yaml'), 'facts: [unclosed\n');
+        const repo = loadRepo(main, { extraDirs: [extra] });
+        expect(repo.schemaIssues.filter((i) => i.level === 'error')).toHaveLength(0);
+    });
+});
+
 describe('renderDoc', () => {
     it('条目按 claim 排序（diff 只落在改动的那条）', () => {
         const dir = makeRepo();

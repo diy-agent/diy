@@ -2103,20 +2103,21 @@ export const apiDef = RpcSchema.router({
               in: z
                 .string()
                 .optional()
-                .cliOption({ desc: "库的位置：缺省/global = 仓库 knowledge/；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）" }),
+                .cliOption({ desc: "库的位置：缺省 = 仓库 knowledge/；global = 设备级 <数据根>/knowledge；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）" }),
             },
             output: FactsStatusSchema,
           }),
           brief: RpcSchema.unary({
-            desc: `目录级：列一个 subject 的**全部 aspect**（gid + 值首句 ≤80 字）。链上正文删掉后靠它"扫一眼有哪些条目"，再决定精确 \`get\` 哪条`,
+            desc: `目录级：列若干 subject 的**全部 aspect**（gid + 值首句 ≤80 字）。链上正文删掉后靠它"扫一眼有哪些条目"，再决定精确 \`get\` 哪条。**多个主题用逗号** —— 一次调用搞定，省下的是一整轮前缀重发`,
             input: {
-              subject: z.string().cliArg({ placeholder: "<subject>", desc: "主题（如 find / tool / rule）" }),
+              subject: z.string().cliArg({ placeholder: "<subject,...>", desc: "主题（如 find / tool / rule；多个用逗号分隔）" }),
               maxChars: z.number().optional().cliOption({ desc: "每条摘要字数上限（缺省 80）" }),
+              budget: z.number().optional().cliOption({ desc: "总字数上限（超了按比例缩每条，下限 24 字）" }),
               dir: z.string().optional().cliOption({ desc: "knowledge 目录（缺省自动向上找）" }),
               in: z
                 .string()
                 .optional()
-                .cliOption({ desc: "库的位置：缺省/global = 仓库 knowledge/；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）" }),
+                .cliOption({ desc: "库的位置：缺省 = 仓库 knowledge/；global = 设备级 <数据根>/knowledge；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）" }),
             },
             output: FactsBriefSchema,
           }),
@@ -2130,7 +2131,7 @@ export const apiDef = RpcSchema.router({
               in: z
                 .string()
                 .optional()
-                .cliOption({ desc: "库的位置：缺省/global = 仓库 knowledge/；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）" }),
+                .cliOption({ desc: "库的位置：缺省 = 仓库 knowledge/；global = 设备级 <数据根>/knowledge；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）" }),
             },
             output: FactsFindSchema,
           }),
@@ -2145,7 +2146,7 @@ export const apiDef = RpcSchema.router({
               in: z
                 .string()
                 .optional()
-                .cliOption({ desc: "库的位置：缺省/global = 仓库 knowledge/；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）" }),
+                .cliOption({ desc: "库的位置：缺省 = 仓库 knowledge/；global = 设备级 <数据根>/knowledge；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）" }),
             },
             output: FactsGetSchema,
           }),
@@ -2158,7 +2159,7 @@ export const apiDef = RpcSchema.router({
               in: z
                 .string()
                 .optional()
-                .cliOption({ desc: "库的位置：缺省/global = 仓库 knowledge/；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）" }),
+                .cliOption({ desc: "库的位置：缺省 = 仓库 knowledge/；global = 设备级 <数据根>/knowledge；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）" }),
             },
             output: FactsSubmitSchema,
           }),
@@ -2169,7 +2170,7 @@ export const apiDef = RpcSchema.router({
               in: z
                 .string()
                 .optional()
-                .cliOption({ desc: "库的位置：缺省/global = 仓库 knowledge/；task:<taskUri> = 任务级库（词表继承仓库）" }),
+                .cliOption({ desc: "库的位置：缺省 = 仓库 knowledge/；global = 设备级 <数据根>/knowledge；task:<taskUri> = 任务级库（词表继承仓库）" }),
             },
             output: FactsRawSchema,
           }),
@@ -2186,7 +2187,7 @@ export const apiDef = RpcSchema.router({
               in: z
                 .string()
                 .optional()
-                .cliOption({ desc: "库的位置：缺省/global = 仓库 knowledge/；task:<taskUri> = 任务级库（词表继承仓库）" }),
+                .cliOption({ desc: "库的位置：缺省 = 仓库 knowledge/；global = 设备级 <数据根>/knowledge；task:<taskUri> = 任务级库（词表继承仓库）" }),
             },
             output: FactsProjectSchema,
           }),
@@ -2198,7 +2199,7 @@ export const apiDef = RpcSchema.router({
               in: z
                 .string()
                 .optional()
-                .cliOption({ desc: "库的位置：缺省/global = 仓库 knowledge/；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）" }),
+                .cliOption({ desc: "库的位置：缺省 = 仓库 knowledge/；global = 设备级 <数据根>/knowledge；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）" }),
             },
             output: FactsAffectedSchema,
           }),

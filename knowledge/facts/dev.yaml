@@ -66,6 +66,24 @@ facts:
       source: probe
       probe: npx tsx build/lab/home/projects/1/tasks/5/gen/probe/measure-context.mts
       verifiedAt: '2026-10-22'
+  dev.context#query-cost:
+    value: '**搬走的账要按收支算，不按字节算**：搬走一条 X 字节，每轮省 X；但要查它一次 ≈ 一次额外完整请求 = 全量重发前缀（当前 41 KB 量级：system 26.7 + help 8.1 + facts 4.0 + kb 索引 2.2）。回本需 41000/X 轮 —— 200 B 的条目 205 轮、2 KB 的 20 轮、17 KB 整篇 2.4 轮。**推论：小条目不该搬**（任务动辄 100+ 轮，查一次就净亏）；只有大块低频参考才值得。减负优先序 = 删 > 压缩 > 搬'
+    id: dev.context-query-cost
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: npx tsx build/lab/home/projects/1/tasks/5/gen/probe/measure-context.mts --home build/lab/home
+      verifiedAt: '2026-10-22'
+  dev.context#resident-set:
+    value: 常驻集 = **会改变行为、且违背代价高**的（硬约束 / 反直觉坑 / 入口选择），少而硬；搬运集 = **大块（>2 KB）且查阅式**（参考实现路径 / 命令细节 / 历史决策）；删除集 = 从不用。按此体检 2026-10-22 迁走 AGENTS.md 43 条（均 220 B）：`rule` 8 + `entry` 5 属于前一类（本应常驻），`find` 12 / `tool` 22 / `model` 5 属于搬运集（搬走合理）。工具面缺「按 subject 标 expose，不靠人拍脑袋」
+    id: dev.context-resident-set
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: './diy.sh facts brief find|tool|model|rule|entry  # 逐主题看条目体量'
+      verifiedAt: '2026-10-22'
   dev.setup#sync:
     value: 新 worktree 先 ./sha.sh sync（npm i --workspaces --include-workspace-root + 子模块 + 各包 sync）；只跑 --workspaces 会漏装根依赖，干净 worktree 上必现 build 解析失败
     id: dev.sync
