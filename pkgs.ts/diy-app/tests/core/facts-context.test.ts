@@ -190,6 +190,52 @@ describe("kb 索引", () => {
     });
 });
 
+describe("kb 索引按前缀折叠（##5 第 9 轮：索引成了新的固定前缀成本）", () => {
+    // 三个同前缀主题 ⇒ 索引里只留一条 `app.*`，展开靠 `diy facts brief app.*`
+    const threeAppSubjects = () =>
+        write(
+            path.join(repoKb, "subjects.yaml"),
+            "subjects:\n  app.find:\n    description: 去哪找\n  app.rule:\n    description: 硬约束\n  app.tool:\n    description: 命令\n",
+        );
+
+    it("同前缀 ≥3 ⇒ 折成一条，desc 自带展开命令", () => {
+        threeAppSubjects();
+        write(
+            path.join(repoKb, "facts", "app.yaml"),
+            factsYaml([
+                "  app.find#x:",
+                "    value: '1'",
+                "    review: accepted",
+                "    lifecycle: active",
+                "    evidence: { source: code, at: K.ts:1 }",
+                "  app.rule#x:",
+                "    value: '2'",
+                "    review: accepted",
+                "    lifecycle: active",
+                "    evidence: { source: code, at: K.ts:2 }",
+                "  app.tool#x:",
+                "    value: '3'",
+                "    review: accepted",
+                "    lifecycle: active",
+                "    evidence: { source: code, at: K.ts:3 }",
+            ]),
+        );
+        const kb = buildKbIndex()!;
+        expect(kb.entries.map((e) => e.subject)).toEqual(["app.*"]);
+        expect(kb.entries[0]?.claims).toBe(3);
+        expect(kb.entries[0]?.desc).toContain("diy facts brief app.*");
+        // 折叠**不改** claims 口径（总数仍是全库条目数）
+        expect(kb.claims).toBe(3);
+    });
+
+    it("不足 3 个同前缀主题 ⇒ 不折（索引里还是逐个列出）", () => {
+        write(path.join(repoKb, "subjects.yaml"), "subjects:\n  app.find:\n    description: 去哪找\n  dev.test:\n    description: 测试\n");
+        const kb = buildKbIndex()!;
+        // app 前缀只有 1 个主题 ⇒ 不折；dev.test 是 beforeEach 里就在的词表项（0 条事实）
+        expect(kb.entries.map((e) => e.subject)).toEqual(["app.find", "dev.test"]);
+    });
+});
+
 describe("expose 暴露档（##5 第 7 轮：subject 级 = 正文预算的开关）", () => {
     const twoSubjects = () =>
         factsYaml([

@@ -130,6 +130,10 @@ export const FactsGetSchema = z.object({
  *
  * `preview` 是**线索**不是结论：完整值走 `get`。`variants > 1` 是"该问一句当前环境"的信号
  * （与投递投影的 cell.variants 同一个含义，两处别各定义）。
+ *
+ * **可省字段的判据**（##5 第 9 轮实测：`brief app.find` 10.5 KB 里 5.3 KB 是元数据）：
+ * 缺省值不写、重复值上提。`review`/`lifecycle` 只在非 accepted/active（异常态才是信号）；
+ * `variants` 只在 >1；`file` 同主题同源时提到主题级，否则落在条目上。
  */
 export const FactsBriefItemSchema = z.object({
     subject: z.string(),
@@ -137,15 +141,20 @@ export const FactsBriefItemSchema = z.object({
     desc: z.string().nullable(),
     claims: z.number(),
     facts: z.number(),
+    /** 该主题全部条目同源一个文件时给出（此时条目上没有 `file`） */
+    file: z.string().optional(),
     entries: z.array(
         z.object({
             aspect: z.string(),
             gid: z.string(),
             preview: z.string(),
-            variants: z.number(),
-            review: z.string(),
-            lifecycle: z.string(),
-            file: z.string(),
+            variants: z.number().optional().describe("变体数（>1 才出现）"),
+            review: z.string().optional().describe("只在非 accepted 时出现"),
+            lifecycle: z.string().optional().describe("只在非 active 时出现"),
+            file: z
+                .string()
+                .optional()
+                .describe("来源文件（该主题条目不同源时才逐条给；同源时见主题级 `file`）"),
         }),
     ),
     notes: z.array(z.string()),

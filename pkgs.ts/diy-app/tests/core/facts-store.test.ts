@@ -396,8 +396,11 @@ describe("跨库读的三个口径缺口（##5 第 6 轮 A/B/C）", () => {
         writeGlobal("facts/app.yaml", ["domain: app", "facts:", ...factLine("global.port", "3000"), ""].join("\n"));
         const b = store.brief("app.port");
         const entry = b.subjects[0]?.entries.find((e) => e.aspect === "default");
-        expect(entry?.lifecycle).toBe("active");
-        expect(entry?.file.startsWith(home)).toBe(true);
+        // 缺省态不写：代表条目 active ⇒ 条目上不再带 lifecycle（异常态才是信号）
+        expect(entry?.lifecycle).toBeUndefined();
+        // 同主题全部同源 ⇒ file 提到主题级（不再每条重复绝对路径）
+        expect(entry?.file).toBeUndefined();
+        expect(b.subjects[0]?.file?.startsWith(home)).toBe(true);
         expect(entry?.variants).toBe(3);
     });
 

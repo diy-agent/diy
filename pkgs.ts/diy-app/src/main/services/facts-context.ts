@@ -14,6 +14,7 @@
  */
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { foldKbIndex, KB_FOLD_MIN_GROUP } from "@diy/facts";
 import { loadRepo, project, projectItems, readExpose, type ProjectEntry, type ProjectionAlgorithm, type Repo } from "@diy/facts/node";
 import { bytesOf, checkExposeLeveled, defaultExposeOf, exposeOf, type ExposeLevel, type ExposeMap, type LeveledFact, type Ns } from "@diy/facts";
 import { diyHome } from "../core/state";
@@ -250,7 +251,6 @@ export function buildKbIndex(opts: { home?: string } = {}): KbIndex | null {
         if (hit) loaded.push(hit);
     }
     if (loaded.length === 0) return null;
-    const declared = loaded.some((l) => Object.keys(l.expose).length > 0);
     let total = 0;
     // 按 subject 聚：多库同名合并成一条（`ns` 记来源数组、`claims` 求和）
     const merged = new Map<string, KbIndexEntry>();
@@ -263,7 +263,8 @@ export function buildKbIndex(opts: { home?: string } = {}): KbIndex | null {
             if ((sub.description ?? "") === "") continue;
             // `none` = 连索引都不给（体量太大 / 临时性）：库里有，但 agent 得自己知道去查。
             // **按库**判定（该库自己的 expose.yaml + 该库类型的缺省档）—— 与正文投影同口径。
-            if (declared && exposeOf(l.expose, sub.key, defaultExposeOf(ns)) === "none") continue;
+            // 注意与正文的区别：`index` 与 `full` **都进索引**（full 也要能被发现），只有 `none` 不进。
+            if (exposeOf(l.expose, sub.key, defaultExposeOf(ns)) === "none") continue;
             const hit = merged.get(sub.key);
             const claims = counts.get(sub.key) ?? 0;
             if (hit === undefined) {
@@ -280,5 +281,9 @@ export function buildKbIndex(opts: { home?: string } = {}): KbIndex | null {
     const entries = [...merged.values()];
     if (entries.length === 0) return null;
     entries.sort((a, b) => a.subject.localeCompare(b.subject));
-    return { entries, claims: total };
+    // 按前缀折叠（##5 第 9 轮）：主题数会随迁入线性涨，而索引是每轮固定前缀 ——
+    // 41 主题 ≈ 4 KB/轮、全仓所有任务都付。折叠项自带展开方法（`brief app.*`）。
+    // 折叠结果转成可变的 ns（zod 那边 output 形状是 `string[]`，两处别各定义一份）
+    const folded = foldKbIndex(entries, { minGroup: KB_FOLD_MIN_GROUP }).map((e) => ({ ...e, ns: [...e.ns] }));
+    return { entries: folded, claims: total };
 }

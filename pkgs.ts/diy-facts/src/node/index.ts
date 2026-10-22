@@ -13,6 +13,7 @@
 // 字段顺序、缩进全由本文件的 canonical 函数决定。手动留的注释会被冲掉，故文件头注
 // 改由文档里的 `note` 字段生成（真源里就不能只活在注释里）。这样 `git diff` 恒为
 // "条目级"变更，不会因为谁手工排了序而整篇翻红。
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -353,6 +354,59 @@ function resolveEvidencePath(root: string, raw: string): string {
 }
 
 /**
+ * `evidence.at` 的两种写法（##5 第 9 轮的实测：源文件瘦身后行号必然越界，`at` 整批删 =
+ * 迁移类事实永久失去"它原来写在哪"，而那是 review 时唯一能核的锚）。
+ *
+ *   `<path>:<line>`           —— 当前工作树（默认，行号随文件漂）
+ *   `<rev>:<path>:<line>`     —— 钉住提交（行号在 rev 里恒有效，越界 = 真写错了）
+ *
+ * 判据：冒号分段。两段 = rev 形态；其余按路径处理。路径里出现冒号是怪事（也不受支持），
+ * 而 rev 段带 `/`（如 `origin/main`）或 `~` 的分法会让 `pkgs.ts/x.md:12` 被误判成 rev
+ * —— 故 rev 必须是不含 `/` 的单段（分支名 / tag / sha 都满足）。
+ */
+export interface EvidenceTarget {
+    readonly rev?: string;
+    readonly file: string;
+    readonly line: number;
+}
+
+export function parseEvidenceAt(at: string): EvidenceTarget | null {
+    const m = /^(.+):(\d+)$/.exec(at);
+    if (m === null) return null;
+    const head = m[1] as string;
+    const line = Number(m[2]);
+    const parts = head.split(':');
+    if (parts.length === 2) {
+        const [rev, file] = parts as [string, string];
+        if (rev !== '' && !rev.includes('/') && !rev.startsWith('~') && file !== '') return { rev, file, line };
+    }
+    return { file: head, line };
+}
+
+/**
+ * 读 `rev:path` 的内容（`git show`）。`null` = rev 不存在 / 该 rev 里没这个文件。
+ * 按 `rev:path` 记忆：一次 check 里同源文件的事实会重复问同一个文件。
+ */
+const revTextCache = new Map<string, string | null>();
+function textAtRev(root: string, rev: string, file: string): string | null {
+    const key = `${root}\u0000${rev}:${file}`;
+    const hit = revTextCache.get(key);
+    if (hit !== undefined) return hit;
+    let out: string | null = null;
+    try {
+        out = execFileSync('git', ['-C', root, 'show', `${rev}:${file}`], {
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore'],
+            maxBuffer: 64 * 1024 * 1024,
+        });
+    } catch {
+        out = null;
+    }
+    revTextCache.set(key, out);
+    return out;
+}
+
+/**
  * 全量校验（G1…W1）。`facts` 可传"候选集"——`submit` 落盘前先拿候选集跑一遍同样的判据，
  * 保证「能写进去的」与「check 会通过的」是同一套规则（否则 CLI 能过、CI 红）。
  */
@@ -408,18 +462,43 @@ export function checkFacts(
             problems.push({ level: 'error', code: 'facts/probe-missing', detail: `${f.id}: source=probe 但没给 evidence.probe`, facts: [f.id] });
         }
         if (ev.at !== undefined) {
-            const m = /^(.*):(\d+)$/.exec(ev.at);
-            if (m === null) {
-                problems.push({ level: 'error', code: 'facts/evidence-format', detail: `${f.id}: evidence.at 必须是 <路径>:<行>，实际 ${ev.at}`, facts: [f.id] });
+            const target = parseEvidenceAt(ev.at);
+            if (target === null) {
+                problems.push({
+                    level: 'error',
+                    code: 'facts/evidence-format',
+                    detail: `${f.id}: evidence.at 必须是 <路径>:<行> 或 <rev>:<路径>:<行>，实际 ${ev.at}`,
+                    facts: [f.id],
+                });
+            } else if (target.rev !== undefined) {
+                // 钉版本：行号在**那个提交**里校验，源文件后续瘦身不影响它
+                const text = textAtRev(opts.root, target.rev, target.file);
+                if (text === null) {
+                    problems.push({
+                        level: 'error',
+                        code: 'facts/evidence-rev',
+                        detail: `${f.id}: evidence.at 的 \`${target.rev}:${target.file}\` 取不到（rev 不存在，或该提交里没这个文件；根 ${opts.root}）`,
+                        facts: [f.id],
+                    });
+                } else {
+                    const lines = text.split('\n').length;
+                    if (target.line < 1 || target.line > lines) {
+                        problems.push({
+                            level: 'error',
+                            code: 'facts/evidence-line',
+                            detail: `${f.id}: ${target.rev}:${target.file}:${target.line} 越界（该提交里共 ${lines} 行）`,
+                            facts: [f.id],
+                        });
+                    }
+                }
             } else {
-                const abs = resolveEvidencePath(opts.root, m[1] as string);
-                const line = Number(m[2]);
+                const abs = resolveEvidencePath(opts.root, target.file);
                 if (!existsSync(abs)) {
-                    problems.push({ level: 'error', code: 'facts/evidence-missing', detail: `${f.id}: evidence.at 指向的文件不存在：${m[1]}`, facts: [f.id] });
+                    problems.push({ level: 'error', code: 'facts/evidence-missing', detail: `${f.id}: evidence.at 指向的文件不存在：${target.file}`, facts: [f.id] });
                 } else {
                     const lines = readFileSync(abs, 'utf8').split('\n').length;
-                    if (line < 1 || line > lines) {
-                        problems.push({ level: 'error', code: 'facts/evidence-line', detail: `${f.id}: ${m[1]}:${line} 越界（该文件共 ${lines} 行）`, facts: [f.id] });
+                    if (target.line < 1 || target.line > lines) {
+                        problems.push({ level: 'error', code: 'facts/evidence-line', detail: `${f.id}: ${target.file}:${target.line} 越界（该文件共 ${lines} 行）`, facts: [f.id] });
                     }
                 }
             }

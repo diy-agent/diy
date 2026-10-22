@@ -40,6 +40,7 @@ import {
     submit,
     project,
     type SubjectDef,
+    type Repo,
     type SubmitReport,
 } from "@diy/facts/node";
 import type { z } from "zod";
@@ -467,15 +468,25 @@ export function previewOf(value: string, max = 80): string {
     return `${stop > max / 2 ? cut.slice(0, stop + 1) : cut}…`;
 }
 
+/**
+ * 一条摘要。**除 aspect/gid/preview 外都可省** —— 省掉的是"缺省值"和"重复值"：
+ * - `variants` 只在 >1 时出现（1 个变体是常态，32 条各写一次 `variants: 1` 纯噪声）
+ * - `review` / `lifecycle` 只在**异常态**出现（accepted / active 是常态）
+ * - `file` 只在同主题内**不同源**时出现在条目上；同源时提到 `BriefResult.file`
+ *   （实测 `brief app.find` 10.5 KB 里 5.3 KB 是元数据，其中 32 份同一个绝对路径 ≈2.9 KB）
+ */
 export interface BriefEntry {
     aspect: string;
     gid: string;
     preview: string;
-    /** 该 claim 的变体数（>1 ⇒ 还有别的值，问"当前环境是哪个"要 `get --env`） */
-    variants: number;
-    review: string;
-    lifecycle: string;
-    file: string;
+    /** 变体数（>1 才出现 ⇒ 还有别的值，问"当前环境是哪个"要 `get --env`） */
+    variants?: number;
+    /** 只在非 accepted 时出现 */
+    review?: string;
+    /** 只在非 active 时出现（`superseded` 说明这个 claim 的可用值在另一条上） */
+    lifecycle?: string;
+    /** 只在同一主题的条目**不共享同一个文件**时出现 */
+    file?: string;
 }
 
 export interface BriefMultiResult {
@@ -489,6 +500,8 @@ export interface BriefResult {
     desc: string | null;
     claims: number;
     facts: number;
+    /** 该主题全部条目同源一个文件时给出（条目上就不再重复） */
+    file?: string;
     entries: BriefEntry[];
     notes: string[];
 }
@@ -525,13 +538,22 @@ function pickRepresentative(list: readonly Fact[]): Fact {
  * 为什么需要它（这是本命令存在的唯一理由）：`get` 要精确 claim、`status` 只给计数，
  * 中间那层"这个主题下有哪些条目"原本不存在 ⇒ 链上正文就删不掉（删了不知从何查起）。
  */
-function briefOne(subjectIn: string, opts: { dir?: string; in?: string; maxChars?: number } = {}): BriefResult {
+function briefOne(
+    subjectIn: string,
+    opts: { dir?: string; in?: string; maxChars?: number } = {},
+    /** 预载的库（`brief` 多主题 / 通配时避免同一份 YAML 反复解析） */
+    preloaded?: Repo,
+): BriefResult {
     const subject = subjectIn.trim();
     if (subject === "") {
         throw new FactsStoreError("agent/facts-brief-arg", "brief 需要 subject（如 `diy facts brief find`）");
     }
-    const target = resolveFactsTarget(opts);
-    const repo = loadRepo(target.dir, targetOpts(target));
+    const repo =
+        preloaded ??
+        (() => {
+            const target = resolveFactsTarget(opts);
+            return loadRepo(target.dir, targetOpts(target));
+        })();
     if (repo.schemaIssues.length > 0) {
         throw new FactsStoreError(
             "agent/facts-schema",
@@ -559,17 +581,26 @@ function briefOne(subjectIn: string, opts: { dir?: string; in?: string; maxChars
         .sort((a, b) => a[0].localeCompare(b[0]))
         .map(([aspect, list]) => {
             const rep = pickRepresentative(list);
-            return {
+            const entry: BriefEntry = {
                 aspect,
                 gid: `${subject}#${aspect}`,
                 preview: previewOf(rep.value, max),
-                variants: list.length,
-                review: rep.review,
-                lifecycle: rep.lifecycle,
-                file: displayFile(repo, rep.id),
             };
+            // 缺省值不写：1 个变体 / accepted / active 是常态，写出来只是给每条加 ~30 B
+            if (list.length > 1) entry.variants = list.length;
+            if (rep.review !== "accepted") entry.review = rep.review;
+            if (rep.lifecycle !== "active") entry.lifecycle = rep.lifecycle;
+            entry.file = displayFile(repo, rep.id);
+            return entry;
         });
-    return { subject, desc, claims: entries.length, facts: mine.length, entries, notes };
+    // 同源时把 `file` 提到主题级（32 条重复同一个绝对路径 ≈2.9 KB/次查询）
+    const files = new Set(entries.map((e) => e.file));
+    const out: BriefResult = { subject, desc, claims: entries.length, facts: mine.length, entries, notes };
+    if (files.size === 1) {
+        out.file = [...files][0] as string;
+        for (const e of entries) delete e.file;
+    }
+    return out;
 }
 
 export interface FindHit {
@@ -598,6 +629,28 @@ export interface FindResult {
  */
 
 /**
+ * 通配展开：`app.*` 或裸前缀 `app`（当库里没有恰好叫 `app` 的主题时）展开成全部同前缀主题。
+ * 精确命中的主题原样保留（不做前缀猜测 —— 猜错比不猜更贵）。
+ */
+export function expandSubjects(list: readonly string[], all: readonly string[]): string[] {
+    const known = new Set(all);
+    const out: string[] = [];
+    for (const raw of list) {
+        const glob = raw.endsWith(".*") ? raw.slice(0, -2) : null;
+        const prefix = glob ?? raw;
+        // 裸前缀本体算组内（与索引折叠同口径：`dev.*` 展开要能看到 `dev` 自己）
+        const hits = [...known].filter((s) => s === prefix || s.startsWith(`${prefix}.`)).sort((a, b) => a.localeCompare(b));
+        if (glob !== null || (!known.has(raw) && hits.length > 0)) {
+            if (hits.length === 0) out.push(raw); // 一个都没展开 ⇒ 照旧交给 briefOne 报"没这个 subject + 相近的"
+            else out.push(...hits);
+            continue;
+        }
+        out.push(raw);
+    }
+    return [...new Set(out)];
+}
+
+/**
  * 目录级摘要（支持**多个 subject**，逗号分隔）。
  *
  * 为什么多主题是一等需求而不是便利功能：了解 3 个主题 = 3 次工具调用 = 3 轮，
@@ -619,7 +672,12 @@ export function brief(
         throw new FactsStoreError("agent/facts-brief-arg", "brief 需要 subject（如 `diy facts brief find`，多个用逗号）");
     }
     const max = opts.maxChars ?? 80;
-    const build = (chars: number): BriefResult[] => list.map((s) => briefOne(s, { ...opts, maxChars: chars }));
+    // 通配展开（##5 第 9 轮）：索引折叠后 `app.*` 只剩一行，展开必须**一次调用**能完成 ——
+    // 否则折叠省下的索引用途变成了"省了字节、断了去路"。
+    const target = resolveFactsTarget(opts);
+    const repo = loadRepo(target.dir, targetOpts(target));
+    const subjects = expandSubjects(list, repo.facts.map((f) => f.subject));
+    const build = (chars: number): BriefResult[] => subjects.map((s) => briefOne(s, { ...opts, maxChars: chars }, repo));
     const usedOf = (rs: readonly BriefResult[]): number =>
         rs.reduce(
             (n, r) => n + r.subject.length + r.entries.reduce((m, e) => m + e.gid.length + e.preview.length + 12, 0),

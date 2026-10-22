@@ -2,12 +2,13 @@
 //
 // 压的是**真场景**而不是构造的空库：词表 → 提交两条 → 改一条 → 提交一条冲突的。
 // 每条都在临时目录里跑（submit 真的落盘，不 mock fs —— mock 出来的通过等于没验）。
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildIndex } from '../src/index';
-import { checkRepo, FactsRepoError, loadRepo, renderDoc, submit } from '../src/node/index';
+import { checkRepo, FactsRepoError, loadRepo, parseEvidenceAt, renderDoc, submit } from '../src/node/index';
 import type { Fact } from '../src/types';
 
 const tmp: string[] = [];
@@ -243,5 +244,61 @@ describe('renderDoc', () => {
         expect(pc).toBeGreaterThanOrEqual(0);
         expect(pc).toBeLessThan(pa);
         expect(pa).toBeLessThan(pb);
+    });
+});
+
+describe('evidence.at 钉版本（<rev>:<path>:<line>）', () => {
+    // 场景来源：##5 第 9 轮实测 —— 源文件瘦身后行号必然越界，`at` 整批删 = 迁移类事实
+    // 永久失去"它原来写在哪"。这里用真 git 仓（不是 mock）：`git show` 的判据必须真跑。
+    function git(root: string, ...args: string[]): void {
+        execFileSync('git', ['-c', 'commit.gpgsign=false', '-c', 'user.name=t', '-c', 'user.email=t@t', '-C', root, ...args], { stdio: 'ignore' });
+    }
+    /** 建一个真仓：SRC.md 有 3 行，提交后瘦身成 1 行 —— rev 里的第 3 行仍然有效 */
+    function makeGitRepo(evidenceAt: string): { dir: string; rev: string } {
+        const root = mkdtempSync(path.join(os.tmpdir(), 'facts-git-'));
+        tmp.push(root);
+        git(root, 'init', '-q');
+        writeFileSync(path.join(root, 'SRC.md'), 'l1\nl2\nl3\n');
+        git(root, 'add', '.');
+        git(root, 'commit', '-qm', 'full');
+        const rev = execFileSync('git', ['-C', root, 'rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+        writeFileSync(path.join(root, 'SRC.md'), 'l1\n'); // 瘦身：当前工作树只剩 1 行
+        const dir = path.join(root, 'knowledge');
+        mkdirp(path.join(dir, 'facts'));
+        writeFileSync(path.join(dir, 'subjects.yaml'), 'subjects:\n  app.port:\n    description: 端口\n');
+        writeFileSync(
+            path.join(dir, 'facts', 'app.yaml'),
+            `domain: app\nfacts:\n  - id: a\n    subject: app.port\n    aspect: default\n    value: '1'\n    review: accepted\n    lifecycle: active\n    evidence: { source: code, at: '${evidenceAt}' }\n`,
+        );
+        return { dir, rev };
+    }
+
+    it('parseEvidenceAt：两段 = rev 形态，其余按路径', () => {
+        expect(parseEvidenceAt('docs/a.md:12')).toEqual({ file: 'docs/a.md', line: 12 });
+        expect(parseEvidenceAt('abc1234:docs/a.md:12')).toEqual({ rev: 'abc1234', file: 'docs/a.md', line: 12 });
+        // 带 `/` 的段不当 rev（`origin/main` 这类分法会让普通路径被误判）
+        expect(parseEvidenceAt('a/b:12')).toEqual({ file: 'a/b', line: 12 });
+        expect(parseEvidenceAt('没有行号')).toBeNull();
+    });
+
+    it('钉住 rev 后，源文件瘦身不影响行号（裸路径形态则当场越界）', () => {
+        const ok = makeGitRepo('__REV__:SRC.md:3');
+        const text = readFileSync(path.join(ok.dir, 'facts', 'app.yaml'), 'utf8').replace('__REV__', ok.rev);
+        writeFileSync(path.join(ok.dir, 'facts', 'app.yaml'), text);
+        expect(checkRepo(ok.dir).problems.map((p) => p.code)).not.toContain('facts/evidence-line');
+
+        const bare = makeGitRepo('SRC.md:3'); // 同一个事实，改成裸路径
+        expect(checkRepo(bare.dir).problems.map((p) => p.code)).toContain('facts/evidence-line');
+    });
+
+    it('rev 不存在 / 该提交里没这个文件 → evidence-rev（不猜"大概指的是什么"）', () => {
+        const { dir } = makeGitRepo('deadbeef:SRC.md:1');
+        expect(checkRepo(dir).problems.map((p) => p.code)).toContain('facts/evidence-rev');
+    });
+
+    it('行号超出 rev 里的行数 → evidence-line（钉版本不等于免检）', () => {
+        const { dir, rev } = makeGitRepo('__REV__:SRC.md:9');
+        writeFileSync(path.join(dir, 'facts', 'app.yaml'), readFileSync(path.join(dir, 'facts', 'app.yaml'), 'utf8').replace('__REV__', rev));
+        expect(checkRepo(dir).problems.map((p) => p.code)).toContain('facts/evidence-line');
     });
 });
