@@ -112,7 +112,7 @@
 ## pit — 坑（反直觉，代码看不出来）
 
 - `pit.err-triage` — **已识别的外部不许标红**（当 bug 会让缺陷率失真、把用户训练成忽略红色）：HTTP 5xx / 请求超时**不进** `KNOWN_EXTERNAL`（上游有响应 = 网络通着，那是 ##369(模型不可用) 的服务端故障）；`InvariantError` 之外**拿不到码就如实判 unknown**，别为「看着严重」判 defect，也别给未知码编一个假 code 凑统计（`triageOf` 对未知码原样带回）。`invariant` 只表达**人为判据**，别拿它做用户输入校验（那是预期内的世界，属 external-*）。改 `LEGACY_THROW_BASELINE` 只能往下调；**别改成整文件豁免**（那会让该文件以后的新 throw 永远不被拦）。
-- `pit.watch-restart` — 改 `src/**` 会触发 lab watch 重启 Electron，**正在跑的本机 agent 轮次会被打断**（tool 被标 `interrupted`）→ 轮次中别拿源码当探针，探针写 `/tmp`
+- `pit.watch-restart` — 改 `src/**` 会触发 lab watch 重启 Electron，**正在跑的本机 agent 轮次会被打断**（tool 被标 `interrupted`；这是「本轮未完成/流中断」的头号成因，实测 12/12 —— facts `dev.turn-interrupt#rate`，含复跑脚本）→ 轮次中别拿源码当探针，探针写 `/tmp`；`interrupted.data` 今天为空，热重启与真流断无法区分（`dev.turn-interrupt#blind`）
 - `pit.solid-ssr-test` — node 下 `solid-js` 解析到 **SSR 构建**（`createEffect` 是空实现、不追踪依赖）⇒ 响应式契约单测必须钉**客户端构建**（`vi.mock("solid-js", () => import("solid-js/dist/solid.js"))` + 类型垫片 `tests/types/solid-client.ts`，该 dist 无 types 映射、而 `check-no-emit.sh` 禁 `tests/**` 下的 `.d.ts`）；范式 `tests/core/session-store.test.ts`（真 store + 假 transport 从订阅真路径喂帧，断言**订阅是否还活着**而非 DOM —— "先 apply 后炸"只看 DOM 看不出来）
 - `pit.solid-show` — Solid 组件函数体里的 `if (props.x) return A; return B;` **对 props 变化不响应**（函数体只执行一次）→ 用 `<Show when=… fallback=…>`。反之，`<Show>` 内组件在 `onCleanup` 里读 `props` 会抛 `Stale read from <Show>` 并中断更新 → 需"卸载前落盘"的副作用放面板级组件
 - `pit.singleton-lock` — 隔离实例必须用**全新 `DIY_HOME`**（`mktemp -d`）：`SingletonLock` 写在 `electron_user_data/` 下，残留实例会抢锁 → 新实例打 `SingleInstanceLock: failed` 后直接退出。撞锁时换新 home，别动别人的进程

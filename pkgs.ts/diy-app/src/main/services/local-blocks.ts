@@ -10,6 +10,8 @@
 
 // ─── 类型 ─────────────────────────────────────────────
 
+import type { Triage } from "../../shared/error-triage";
+
 export type JSONVal = string | number | boolean | null | JSONVal[] | { [k: string]: JSONVal };
 
 export type BlockKind = "turn" | "step" | "text" | "think" | "tool" | "plan" | "error";
@@ -30,8 +32,11 @@ export type TurnEndReason =
     // source：`"user"` = 用户主动停止（`cancel()` 显式带上）· `"detached"` = 流意外中断/没跑完的兜底
     //（##305 起消费端断开**不再**产生它）· 旧日志里的 `"abort"` = 来源不明的中断。文案映射唯一源见 shared/turn-end
     | { type: "aborted"; data: { source: string } }
-    | { type: "error"; data: { source: string; message: string } } // llm / stream / budget
-    | { type: "interrupted"; data: {} }; // 崩溃/被杀后补 closer（进程已死，不可能是正常收尾）
+    // `code` / `triage` = **根因 + 性质**（##393 用户口径：不再分类「有限额/中断」这类同级词，
+    // 直接放根因，但要说清「是我方 bug / 已识别外部 / 未识别外部」）。判据唯一出口 =
+    // `shared/error-triage.ts::endReasonOf`，文案唯一源 = `shared/turn-end.ts`。
+    | { type: "error"; data: { source: string; message: string; code?: string | null; triage?: Triage } } // llm / stream / budget / drive-turn
+    | { type: "interrupted"; data: { code?: string | null; triage?: Triage } };
 
 export type Op =
     | { op: "start"; id: string; kind: BlockKind; parent?: string | null; meta?: Record<string, JSONVal> }

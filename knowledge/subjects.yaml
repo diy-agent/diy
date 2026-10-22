@@ -25,6 +25,11 @@ subjects:
     description: 测试入口与测试纪律
     aliases:
       - 测试
+  dev.turn-interrupt:
+    description: 本机 agent 轮次「未完成」的成因与可辨识度
+    aliases:
+      - 轮次中断
+      - 流中断
   dev.worktree:
     description: worktree 的落地位置
     aliases:

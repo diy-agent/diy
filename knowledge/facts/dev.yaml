@@ -61,6 +61,33 @@ facts:
       source: code
       at: sha.sh:89
       verifiedAt: '2026-10-21'
+  dev.turn-interrupt#blind:
+    value: 结局不可辨：interrupted.data 是空对象（local-blocks.ts:34），UI 一律显示「本轮未完成（流中断/崩溃恢复）」（turn-end.ts:55 / chat-fold.ts:232）—— 热重启 / 流断 / 进程被杀同形，人和 agent 都无法归因
+    id: dev.turn-interrupt-blind
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: pkgs.ts/diy-app/src/main/services/local-blocks.ts:34
+      verifiedAt: '2026-10-22'
+  dev.turn-interrupt#cause:
+    value: lab/dev 下「本轮未完成」的头号成因是 dev 热重启，不是服务器：main bundle 一变更 electron-dev.mts::startElectron 就 kill Electron，而轮次跑在 main 进程内存里 → 一起消失
+    id: dev.turn-interrupt-cause
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: pkgs.ts/diy-app/scripts/electron-dev.mts:295
+      verifiedAt: '2026-10-22'
+  dev.turn-interrupt#rate:
+    value: 实测 tasks/5 + tasks/7 共 37 个真发请求轮：HTTP 全 200；interrupted 12 起，12 起全部命中 electron-restart（末请求后 7.2~31.3s）；服务器侧成因 0 起，唯一 error 是流读 read ETIMEDOUT
+    id: dev.turn-interrupt-rate
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: DIY_HOME=<lab home> uv run <lab home>/projects/1/tasks/7/gen/probe/interrupt-cause.py projects/1/tasks/5 projects/1/tasks/7
+      verifiedAt: '2026-10-22'
   dev.worktree#location:
     value: 放仓库外、原项目同级：<原项目>.worktrees/<标识>（禁放仓库内部）
     id: dev.worktree
