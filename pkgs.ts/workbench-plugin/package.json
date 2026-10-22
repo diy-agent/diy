@@ -1,0 +1,55 @@
+{
+    "name": "@diy-agent/workbench-plugin",
+    "version": "0.1.0",
+    "private": true,
+    "description": "工作台插件契约：清单（plugin.json）schema + 档 2 面板描述符 + 插件服务端方法契约（definePlugin）",
+    "keywords": [
+        "contract",
+        "diy",
+        "plugin",
+        "workbench",
+        "zod"
+    ],
+    "homepage": "https://github.com/diy-agent/diy/tree/main/pkgs.ts/workbench-plugin",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/diy-agent/diy.git",
+        "directory": "pkgs.ts/workbench-plugin"
+    },
+    "files": [
+        "src/"
+    ],
+    "type": "module",
+    "main": "./src/index.ts",
+    "exports": {
+        ".": "./src/index.ts",
+        "./manifest": "./src/manifest.ts",
+        "./panel": "./src/panel.ts",
+        "./spec": "./src/spec.ts"
+    },
+    "dependencies": {
+        "zod": "^4.4.3"
+    },
+    "devDependencies": {
+        "oxfmt": "^0.57.0",
+        "oxlint": "^1.72.0",
+        "typescript": "^6.0.3",
+        "vitest": "^4.1.10"
+    },
+    "oxlint": {
+        "rules": {
+            "no-unused-vars": "warn",
+            "no-console": "off",
+            "@typescript-eslint/no-unused-vars": [
+                "warn",
+                {
+                    "argsIgnorePattern": "^_"
+                }
+            ]
+        },
+        "ignorePatterns": [
+            "node_modules/"
+        ]
+    }
+}
