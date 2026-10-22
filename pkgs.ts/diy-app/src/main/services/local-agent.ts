@@ -174,7 +174,7 @@ import {
 import { renderSummarySection } from "./prompt-registry";
 import { assembleGlobals, systemOverBudget } from "./prompt-registry";
 import { readFileWindow, formatReadOutput, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
-import { formatWriteResult, writeFileWhole, WRITE_MAX_BYTES } from "../core/file-write";
+import { countsLabel, formatWriteResult, writeFileWhole, WRITE_MAX_BYTES } from "../core/file-write";
 import { SteerQueue, fileSteerPort } from "../core/steer-queue";
 import { DEFAULT_STEER_MODE, steerModeLabel } from "../../shared/steer-mode";
 import type { SteerItem, SteerMode } from "../core/drafts";
@@ -1339,7 +1339,7 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                     taskUri,
                     cwd,
                     command: filePath,
-                    result: `+${r.added}/-${r.removed}`,
+                    result: countsLabel(r),
                 });
                 return formatWriteResult(r);
             },

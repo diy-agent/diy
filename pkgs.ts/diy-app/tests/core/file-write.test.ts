@@ -51,6 +51,18 @@ describe("路径护栏", () => {
         expect(codeOf(() => resolveWritePath(root, "link/x.txt"))).toBe("fs/path-escape");
     });
 
+    it("`..notes.md` 是合法文件名，不是越界（##266 review1）", () => {
+        expect(resolveWritePath(root, "..notes.md")).toBe(join(realpathSync(root), "..notes.md"));
+        const r = writeFileWhole(root, "..notes.md", "x\n");
+        expect(readFileSync(join(root, "..notes.md"), "utf-8")).toBe("x\n");
+        expect(r.isNew).toBe(true);
+    });
+
+    it("解析不了的路径（symlink 环）+ 出界 → fail-closed 报 fs/path-escape", () => {
+        symlinkSync("loop", join(root, "loop"));
+        expect(codeOf(() => resolveWritePath(root, "loop/x.txt"))).toBe("fs/path-escape");
+    });
+
     it("cwd 内的普通相对路径照常解析", () => {
         // macOS 的 /var 是 /private/var 的 symlink —— 解析结果是 realpath，比较也用 realpath
         expect(resolveWritePath(root, "a/b.txt")).toBe(join(realpathSync(root), "a/b.txt"));
@@ -103,6 +115,27 @@ describe("writeFileWhole", () => {
         const r = writeFileWhole(root, "bom.txt", "new\n");
         expect(r.bomKept).toBe(true);
         expect(readFileSync(join(root, "bom.txt"), "utf-8")).toBe("\uFEFFnew\n");
+    });
+
+    it("原文件没有 BOM、content 自带 → 剥掉（不新增 BOM）", () => {
+        writeFileSync(join(root, "plain.txt"), "old\n");
+        const r = writeFileWhole(root, "plain.txt", "\uFEFFnew\n");
+        expect(r.bomStripped).toBe(true);
+        expect(r.bomKept).toBe(false);
+        expect(readFileSync(join(root, "plain.txt"), "utf-8")).toBe("new\n");
+    });
+
+    it("原文件超 diff 上限：不读不算 diff，回执说明「diff 略」，isNew 仍真实", () => {
+        writeFileSync(join(root, "big.log"), "a\nb\nc\n");
+        const r = writeFileWhole(root, "big.log", "a\nb\nc\nd\n", { diffMaxBeforeBytes: 4 });
+        expect(r.diffSkipped).toBe(true);
+        expect(r.isNew).toBe(false);
+        expect(r.added).toBeNull();
+        expect(r.removed).toBeNull();
+        expect(r.diff).toBe("");
+        expect(formatWriteResult(r)).toContain("diff 略");
+        expect(formatWriteResult(r)).toContain("+?/-?");
+        expect(readFileSync(join(root, "big.log"), "utf-8")).toBe("a\nb\nc\nd\n");
     });
 
     it("行尾原样：CRLF 不被转成 LF，LF 也不被转成 CRLF", () => {

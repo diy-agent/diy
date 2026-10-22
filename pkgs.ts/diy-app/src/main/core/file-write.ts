@@ -17,7 +17,7 @@
 //
 // ⚠️ 错误是**抛**不是 return（##353 同口径）：catch-and-return 的字符串会被画成 ✓。
 
-import { readFileSync, realpathSync, statSync } from "node:fs";
+import { closeSync, openSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { writeFileAtomic } from "./atomic-write";
 
@@ -56,8 +56,14 @@ function realpathOfNearest(abs: string): string {
         } catch (e) {
             const code = (e as NodeJS.ErrnoException).code;
             // ENOENT / ENOTDIR：这段还不存在（或中间某段是文件）→ 上溯一层继续解析。
-            // 其它错误（EACCES / ELOOP）不猜：直接按原样拼，让真正的写入去报错。
-            if (code !== "ENOENT" && code !== "ENOTDIR") return path.join(probe, ...rest);
+            // 其它错误（EACCES / ELOOP）**fail-closed**：解析不了就不放行 ——
+            // ELOOP 的自引用 symlink 尤其不能靠"反正写不进去"来兜（护栏要保守，不能指望下游）。
+            if (code !== "ENOENT" && code !== "ENOTDIR") {
+                throw new FileWriteError({
+                    code: "fs/path-escape",
+                    message: `无法解析路径 ${probe}（${code}）：为避免绕过 cwd 护栏，拒绝写入`,
+                });
+            }
             const parent = path.dirname(probe);
             if (parent === probe) return path.join(probe, ...rest);
             rest.unshift(path.basename(probe));
@@ -80,7 +86,8 @@ export function resolveWritePath(cwd: string, relPath: string): string {
     if (rel === "") {
         throw new FileWriteError({ code: "fs/is-directory", message: `${relPath} 是工作目录本身（write 只写文件）` });
     }
-    if (rel.startsWith("..") || path.isAbsolute(rel)) {
+    // `..` 必须是**独立路径段**：`..notes.md` 是合法文件名，不能按前缀判成逃逸（##266 review1）
+    if (rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
         throw new FileWriteError({
             code: "fs/path-escape",
             message: `路径越界：${relPath}（解析后 ${real} 不在工作目录 ${root} 内；只能写 cwd 里的文件）`,
@@ -286,21 +293,49 @@ export function unifiedDiff(before: string | null, after: string, opts: DiffOpti
 export interface WriteFileOptions {
     /** 内容上限（字节；缺省 WRITE_MAX_BYTES） */
     maxBytes?: number;
+    /**
+     * 原文件超过这个字节数就**不读、不算 diff**（缺省 2 MB）。
+     * 存在的意义：1MB 上限只管新内容；目标是几百 MB 的日志/产物时，读全文 + 切行会白吃主进程内存。
+     */
+    diffMaxBeforeBytes?: number;
 }
+
+/** 原文件参与 diff 的大小上限（超过只写不算 diff） */
+export const DIFF_MAX_BEFORE_BYTES = 2 * 1024 * 1024;
 
 export interface FileWriteResult {
     /** 展示用路径（调用方传进来的相对路径，原样回显） */
     path: string;
-    /** 实际写入字节数（含补回的 BOM） */
+    /** 实际写入字节数（含补回/剥掉的 BOM） */
     bytes: number;
-    added: number;
-    removed: number;
+    /** 新增行数；`null` = 原文件超上限未读，未统计 */
+    added: number | null;
+    /** 删除行数；`null` 同上 */
+    removed: number | null;
     /** 是否新建（目标原本不存在） */
     isNew: boolean;
     /** 原文件有 BOM 且新内容没有 → 已补回 */
     bomKept: boolean;
-    /** unified diff 摘要文本（无变化时为空串） */
+    /** 原文件没有 BOM 而 content 自带 → 已剥掉（不新增 BOM） */
+    bomStripped: boolean;
+    /** 原文件超过 diffMaxBeforeBytes → 未读、未算 diff */
+    diffSkipped: boolean;
+    /** 原文件字节数（新建 = 0） */
+    beforeBytes: number;
+    /** unified diff 摘要文本（无变化 / 跳过时为空串） */
     diff: string;
+}
+
+/** 文件开头是否 UTF-8 BOM（只读 3 字节：大文件也不必全文读入） */
+function hasBom(abs: string): boolean {
+    const fd = openSync(abs, "r");
+    try {
+        const buf = Buffer.alloc(3);
+        const n = readSync(fd, buf, 0, 3, 0);
+        return n === 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf;
+    } finally {
+        closeSync(fd);
+    }
 }
 
 /**
@@ -311,7 +346,11 @@ export interface FileWriteResult {
 export function writeFileWhole(cwd: string, relPath: string, content: string, opts: WriteFileOptions = {}): FileWriteResult {
     const target = resolveWritePath(cwd, relPath);
 
+    let exists = false;
     let before: string | null = null;
+    let beforeBytes = 0;
+    let oldBom = false;
+    let diffSkipped = false;
     try {
         const st = statSync(target);
         if (st.isDirectory()) {
@@ -320,15 +359,29 @@ export function writeFileWhole(cwd: string, relPath: string, content: string, op
                 message: `${relPath} 是目录（write 只写文件；要列目录用 bash ls）`,
             });
         }
-        before = readFileSync(target, "utf-8");
+        exists = true;
+        beforeBytes = st.size;
+        oldBom = hasBom(target);
+        // 大文件只探测 BOM，不读全文（见 WriteFileOptions.diffMaxBeforeBytes）
+        if (beforeBytes <= (opts.diffMaxBeforeBytes ?? DIFF_MAX_BEFORE_BYTES)) before = readFileSync(target, "utf-8");
+        else diffSkipped = true;
     } catch (e) {
         if (e instanceof FileWriteError) throw e;
         if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
     }
 
-    // BOM 保留：原文件有、新内容没写 → 补回（模型看不见 BOM，不该因为一次覆盖把它丢掉）
-    const bomKept = before !== null && before.startsWith(BOM) && !content.startsWith(BOM);
-    const finalContent = bomKept ? BOM + content : content;
+    // BOM：已有文件的 BOM 状态**保持不变**（模型看不见它，不该被一次覆盖改掉）；
+    // 新文件按 content 原样写（用户显式给的 BOM 不剥）。
+    let finalContent = content;
+    let bomKept = false;
+    let bomStripped = false;
+    if (exists && oldBom && !content.startsWith(BOM)) {
+        finalContent = BOM + content;
+        bomKept = true;
+    } else if (exists && !oldBom && content.startsWith(BOM)) {
+        finalContent = content.slice(1);
+        bomStripped = true;
+    }
 
     const maxBytes = opts.maxBytes ?? WRITE_MAX_BYTES;
     const bytes = Buffer.byteLength(finalContent, "utf-8");
@@ -341,15 +394,35 @@ export function writeFileWhole(cwd: string, relPath: string, content: string, op
         });
     }
 
-    const diff = unifiedDiff(before, finalContent, { path: relPath });
+    // 跳过 diff 时 before 是 null，但 isNew 另有判据（exists）—— 不能拿 before 反推「新建」
+    const diff = diffSkipped ? null : unifiedDiff(exists ? before : null, finalContent, { path: relPath });
     writeFileAtomic(target, finalContent);
-    return { path: relPath, bytes, added: diff.added, removed: diff.removed, isNew: before === null, bomKept, diff: diff.text };
+    return {
+        path: relPath,
+        bytes,
+        added: diff?.added ?? null,
+        removed: diff?.removed ?? null,
+        isNew: !exists,
+        bomKept,
+        bomStripped,
+        diffSkipped,
+        beforeBytes,
+        diff: diff?.text ?? "",
+    };
+}
+
+/** `+N/-M`（无法统计时为 `+?/-?`）—— 回执与审计共用同一写法 */
+export function countsLabel(r: Pick<FileWriteResult, "added" | "removed">): string {
+    return r.added === null || r.removed === null ? "+?/-?" : `+${r.added}/-${r.removed}`;
 }
 
 /** 给模型看的回执：一行结论 + diff 摘要 */
 export function formatWriteResult(r: FileWriteResult): string {
     const kb = r.bytes < 1024 ? `${r.bytes} B` : `${(r.bytes / 1024).toFixed(1)} KB`;
-    const flags = `${r.isNew ? "，新建" : ""}${r.bomKept ? "，保留 BOM" : ""}`;
-    const head = `写入 ${r.path}（+${r.added}/-${r.removed} 行，${kb}${flags}）`;
+    const flags = `${r.isNew ? "，新建" : ""}${r.bomKept ? "，保留 BOM" : ""}${r.bomStripped ? "，剥掉 BOM" : ""}`;
+    const skipped = r.diffSkipped
+        ? `；原文件 ${(r.beforeBytes / 1024 / 1024).toFixed(1)} MB，diff 略`
+        : "";
+    const head = `写入 ${r.path}（${countsLabel(r)} 行，${kb}${flags}${skipped}）`;
     return r.diff ? `${head}\n\n${r.diff}` : head;
 }
