@@ -974,6 +974,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
         systemPlaces: cur?.systemPlaces ?? [],
         systemDiffers: cur && prev ? cur.systemText !== prev.systemText : null,
         runtimeDiffers: cur && prev ? cur.runtimeText !== prev.runtimeText : null,
+        // 注记段缺字段（老快照）= 不知道 ⇒ null（UI 不画徽章），别拿 undefined 跟字符串比得「变了」
+        historyDiffers: cur?.historyText === undefined || prev?.historyText === undefined ? null : cur.historyText !== prev.historyText,
         incomparable: cur && prev ? cur.wireVersion !== prev.wireVersion : null,
         cacheHitRate: buckets && buckets.inputTotal > 0 ? buckets.cacheRead / buckets.inputTotal : null,
         cost: usage.get(turnId)?.cost ? usage.get(turnId)!.cost!.total : null,
@@ -1070,12 +1072,16 @@ export function bindAppHandlers(binding: ServerBinding): void {
         changed: d?.changed ?? Object.keys(cur.valueHashes).sort(),
         systemDiffers: d?.systemDiffers ?? true,
         runtimeDiffers: d?.runtimeDiffers ?? true,
+        historyDiffers: d?.historyDiffers ?? false,
         systemDiff: d?.systemDiff ?? [],
         runtimeDiff: d?.runtimeDiff ?? [],
+        historyDiff: d?.historyDiff ?? [],
         systemText: cur.systemText,
         runtimeText: cur.runtimeText,
+        historyText: cur.historyText ?? "",
         baseSystemText: prev?.systemText ?? null,
         baseRuntimeText: prev?.runtimeText ?? null,
+        baseHistoryText: prev?.historyText ?? null,
       };
     }
     // 未选中：**当前变量树** vs 最后一步（"我现在改的东西会带来什么变化"）
@@ -1107,12 +1113,18 @@ export function bindAppHandlers(binding: ServerBinding): void {
       changed: d.changed,
       systemDiffers: d.systemDiffers,
       runtimeDiffers: d.runtimeDiffers,
+      // live 模式比的是「当前变量树 vs 最后一步」：注记段**不属于变量树**（它由压缩选择算），
+      // 当前没有"待发的注记"⇒ 不存在可比对象，恒 false；历史行对照仍给 baseHistoryText。
+      historyDiffers: false,
       systemDiff: d.systemDiff,
       runtimeDiff: d.runtimeDiff,
+      historyDiff: d.historyDiff,
       systemText: now.system.text,
       runtimeText: now.runtime.text,
+      historyText: "",
       baseSystemText: last.systemText,
       baseRuntimeText: last.runtimeText,
+      baseHistoryText: last.historyText ?? null,
     };
   });
 

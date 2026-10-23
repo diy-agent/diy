@@ -4161,11 +4161,12 @@ export class LocalAgentManager {
             const replayOpts = reasoningReplayOptsOf(rm, reasoningEffort);
             // 一份 `hist` → 最终 wire 形状（尾部 runtime 信封 + 摘要 + 推理回放归一）。
             // 抽成闭包：预检「再压一次」要按同一套拼装重算一遍 —— 两处各抄一遍必分叉（##227 老教训）。
+            // 摘要段**算一次**：它既进 `sent`，也要原样进投递快照（##5 第 16 轮）。
+            // 两处各调一次 `effectiveSummary` 是纯读、值相同，但"恰好相同"不该是快照正确的依据。
+            const summaryPart = renderSummaryPart(this.effectiveSummary(taskUri));
             const sentOf = (h: typeof hist): ModelMessage[] =>
                 ensureReasoningReplay(
-                    normalizeUserRuns(
-                        withRuntime(h.messages, delivery.runtime.text, h.note, renderSummaryPart(this.effectiveSummary(taskUri))),
-                    ),
+                    normalizeUserRuns(withRuntime(h.messages, delivery.runtime.text, h.note, summaryPart)),
                     replayOpts,
                 );
             let sent: ModelMessage[] = sentOf(hist);
@@ -4272,6 +4273,10 @@ export class LocalAgentManager {
                 valueHashes: delivery.valueHashes,
                 systemText: delivery.system.text,
                 runtimeText: delivery.runtime.text,
+                // 尾部信封里另外两段（##5 第 16 轮）：它们**不是变量树单元**，不进 valueHashes，
+                // 也不出现在 `runtimeDiff` 里 —— 不记下来就永远看不见它们变没变。
+                historyText: hist.note,
+                summaryText: summaryPart,
             };
             appendStep(stepsFile(taskUri), step);
             // 变更统计（**按项目**累计；只存变化路径 → 体积小、可长期留）。
