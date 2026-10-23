@@ -156,9 +156,11 @@ function MessageCard(props: { m: StepMessage; open: () => boolean; onToggle: () 
                                 </Show>
                             }
                         >
-                            {/* 结构视图：YAML → 树。长字符串（AGENTS.md 正文 / 事实值）在叶子节点上
-                                还能再切 MD / YAML —— 那一层嵌套文本的层级化由 JsonTree 负责。 */}
-                            <JsonTree data={env().data} />
+                            {/* 结构视图：YAML → 树，**用 yaml 语法渲**（信封本来就是 YAML，键裸写、无括号，
+                                与原文对不上括号但读得快；要与线上字节核对时切 `<>`）。
+                                长字符串（AGENTS.md 正文 / 事实值 / 嵌套信封）在叶子上会自动猜成 YAML/MD 展开
+                                —— 那一层层级化由 JsonTree 负责（见其 guessFmt）。 */}
+                            <JsonTree data={env().data} syntax="yaml" />
                         </Show>
                         <Show when={env().error && !env().ok}>
                             <div class="text-caption text-warning">{`不是合法 YAML（按原文显示）：${env().error ?? ""}`}</div>
