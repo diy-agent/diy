@@ -838,14 +838,15 @@ facts:
       verifiedAt: '2026-10-22'
   app.history#budget-compact:
     value: |-
-      压缩 = **一个字节预算**（`budgetBytes`，UI 显示 KB，除固定开支外历史消息可占上限；`0`=清零，**且 0 时保底也不生效** —— 清零就是「全不要」）：缺省管道（##343 M1）= **保底最近 6 步 `clip: full`**（`exempt`，不计预算：只保下标不保字节治不了「留下的结果被裁成头尾」）+ 纵向优先级阶梯（`user > assistant结论 > assistant非结论 > tool-call > tool-result`，全局跨轮、同层新的先、call 与 result 同进退）计预算保留。**不是**「保留 N 轮」（横向会整轮陪葬前面重要的用户消息 —— 用户明确否决）
+      压缩 = **一个字节预算**（`budgetBytes`，UI 显示 KB，除固定开支外历史消息可占上限；`0`=清零，**且 0 时保底也不生效** —— 清零就是「全不要」）：缺省管道（##343 M1）= **保底最近 6 步 `clip: full`**（`exempt`，**不占预算**：只保下标不保字节治不了「留下的结果被裁成头尾」）+ 纵向优先级阶梯（`user > assistant结论 > assistant非结论 > tool-call > tool-result`，全局跨轮、同层新的先、call 与 result 同进退）计预算保留。**不是**「保留 N 轮」（横向会整轮陪葬前面重要的用户消息 —— 用户明确否决）
+
+      **信封 `history` 注记必须拆 `countBytes` / `mustBytes`**：托底级不占预算 ⇒ `keptBytes > budgetBytes` 是**常态**。只报 budget+kept 两个数，读的人只能得出「超了 58%」这个错误结论（##5 实账 20480 vs 32298，代码一直对、说法错）。
     id: app.history.budget-compact
     review: accepted
     lifecycle: active
     evidence:
-      source: user
-      at: ba99d638:pkgs.ts/diy-app/AGENTS.md:87
-      verifiedAt: '2026-10-22'
+      source: code
+      at: 3688c89f:pkgs.ts/diy-app/src/shared/context/budget-note.ts:22
   app.history#chat-reload:
     value: |-
       **轮末收尾重放必须走「幂等并入」，不许重建**（`localChatStore.mergeWindow`）：旧实现每轮都 `new BlockStore()` 全量 fold → `toForest` 的身份缓存（TreeCache）整片失效 → Solid 的 `<For>` 把**每一轮**都销毁重建（含全量 Markdown re-parse）—— 这正是大会话“每次轮末 GC 风暴”的根因。折叠流幂等，再喂一遍即可，未变的轮次引用不变（实测第 1 轮 DOM 节点跨轮仍是同一对象）。大会话另有一层见 `app.history#chat-virtual`：DOM 里只挂视口附近若干轮（离屏轮**不在 DOM**，不是靠 `content-visibility` 跳过绘制）
