@@ -78,6 +78,15 @@ export function TaskRunPage(props: { uri: string }) {
                 >
                     🌲 上下文树
                 </button>
+                {/* 打开大脑页（**独立子页面**：脑容量账 / 记分 / 多步趋势 + 信号）—— 与上下文树平行，
+                    分工是"钱花在哪"而不是"变量变了什么" */}
+                <button
+                    class="btn btn-xs btn-ghost"
+                    title="打开大脑页（每步思考的预算构成 / 记分 / 多步趋势与信号）"
+                    onClick={() => getRendererActions().openTab?.("brain", props.uri)}
+                >
+                    🧠 大脑
+                </button>
                 {/* 打开泳道视图页（**独立子页面**：轨迹折线 + 每步产物 + 参数表单，##320） */}
                 <button
                     class="btn btn-xs btn-ghost"

@@ -203,6 +203,22 @@ export const VIEWS: ViewDef[] = [
     instanceScope: "global",
     placement: { traffic: { area: "right", order: 10 } },
   },
+  {
+    // 大脑页左栏：**这一次思考**的脑容量账（段 → 字节）+ 记分。
+    // 与上下文树的分工：那边回答"变量变了什么"，这边回答"这次思考的钱花在哪、值不值"。
+    id: "brain.budget",
+    title: "这次思考",
+    instanceScope: "context",
+    placement: { brain: { area: "left", order: 10 } },
+  },
+  {
+    // 大脑页中栏：**多步**的时间维度（脑容量曲线 + 形态 + 异常信号）。
+    // 与左栏同一份数据的两把尺：一次是快照，多次是趋势。
+    id: "brain.timeline",
+    title: "多步趋势",
+    instanceScope: "context",
+    placement: { brain: { area: "center", order: 10 } },
+  },
 ];
 
 // ═══════════════════════════════════════════
@@ -285,6 +301,27 @@ export const PAGES: PageDef[] = [
       version: 1,
       // 两列：结构树（输入）| 请求预览（产出）
       cols: [px(340), fr(1)],
+      rows: [fr(1)],
+      areas: [
+        { id: "left", col: 0, row: 0 },
+        { id: "center", col: 1, row: 0 },
+      ],
+    },
+  },
+  {
+    // 大脑页：**独立子页面**，与上下文树页（ctxlab）平级挂在任务执行页之下。
+    // 为什么独立：上下文树是"变量树的一种组织"，大脑页是"脑容量 × 材料 × 时间"的跨维度视图；
+    // 塞进 ctxlab 会被它的树形交互带偏（用户 2026-10-23 拍板：独立 page、平行位置）。
+    // 记分**合并**在本页（不另开页）：结果（分）与原因（段账 / 历史占比）必须同一屏才说得清。
+    id: "brain",
+    title: "大脑",
+    icon: "B",
+    multi: true, // 每个任务一个实例
+    parentPage: "task-run",
+    layout: {
+      version: 1,
+      // 左：这次思考（段账 + 记分）| 中：多步趋势（曲线 + 信号）
+      cols: [px(380), fr(1)],
       rows: [fr(1)],
       areas: [
         { id: "left", col: 0, row: 0 },
