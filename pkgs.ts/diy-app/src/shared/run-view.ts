@@ -29,6 +29,8 @@ export interface RunFact extends RunLike {
     logPath: string;
     origin?: RunOriginRef;
     error?: string;
+    /** 前台 run（工具调用正在等结果）；后台为 false/undefined */
+    foreground?: boolean;
 }
 
 export interface RunView {
@@ -67,6 +69,8 @@ export interface RunView {
     /** 来源一行话：`projects/4/tasks/408 · t179… · call_…` */
     originText: string;
     error: string | null;
+    /** 前台 run（`bash` 没给 `background`）—— 表格里标出来 */
+    foreground: boolean;
 }
 
 /** 本地时间 `HH:MM:SS`（表里只放到秒：作业的生命周期不是审计，不必到毫秒）。 */
@@ -129,6 +133,7 @@ export function runViewOf(fact: RunFact, now: number, outputBytes?: number | nul
         origin: fact.origin ?? null,
         originText: originTextOf(fact.origin),
         error: fact.error ?? null,
+        foreground: fact.foreground === true,
     };
 }
 

@@ -572,10 +572,44 @@ function ToolBody(props: {
     // 命令是"这一步到底跑了什么"的唯一事实源，必须留在体里；无命令（streaming 早期 / 中断）才省。
     const cmd = () => shownCommand(n());
     const cmdNeedsFull = () => !!cmd();
+    /**
+     * **原始参数**（用户 2026-10-23：「工具定义里有 `background` / `timeout`，可聊天里看不见，
+     * 我判断不了它是前台还是后台」）。
+     *
+     * 为什么必须给原文而不是"拼一句人话"：参数是模型**实际发的**那一份，工具描述随时会改；
+     * 渲染层再翻译一遍就多一处会漂的口径。JSON 原样给人看，判断依据与模型看到的一致。
+     * 流式早期 `args` 还没到 ⇒ 退回逐片拼的 `input` 原文（半截 JSON 也比空着强）。
+     */
+    const [showParams, setShowParams] = createSignal(false);
+    const paramsText = (): string => {
+        const args = n().attrs.args;
+        if (args && typeof args === "object") return JSON.stringify(args, null, 2);
+        const raw = str(n().attrs.input);
+        return raw || "（还没有参数）";
+    };
     return (
         <div class="space-y-1 font-mono" data-tool-body>
             <Show when={cmdNeedsFull()}>
-                <pre class="text-base-content/70">$ {cmd()}</pre>
+                <div class="relative">
+                    <button
+                        class="btn btn-ghost btn-xs absolute right-1 top-0 z-10 min-h-0 px-1 opacity-40 hover:opacity-100"
+                        data-tool-params-toggle="1"
+                        data-tip="看模型这次实际发的参数（JSON 原文）—— 是前台还是后台、超时多少都在里面"
+                        aria-label="查看工具参数"
+                        onClick={() => setShowParams(!showParams())}
+                    >
+                        <span class="text-[10px]">{showParams() ? "×" : "<>"}</span>
+                    </button>
+                    <pre class="text-base-content/70 pr-8">$ {cmd()}</pre>
+                </div>
+            </Show>
+            <Show when={showParams()}>
+                <pre
+                    class="max-h-72 overflow-auto whitespace-pre-wrap rounded bg-base-100/60 p-2 text-base-content/80"
+                    data-tool-params
+                >
+                    {paramsText()}
+                </pre>
             </Show>
             <Show when={output()}>
                 {/* 相对定位容器：**最大化按钮**浮在框右上角（≠ 插一行按钮把正文挤下去，

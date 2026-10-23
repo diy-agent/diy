@@ -27,7 +27,7 @@
 // 一条跑过午夜的属"哪天起的"，否则同一条 run 的日志会随收口时间跳到别的目录。
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { closeSync, mkdirSync, openSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { readRuntimeConfig } from "../../runtime";
 import { MAX_TAIL_BYTES, notifyText, tailOf, type RunLike, type TailResult } from "../../shared/run-status";
@@ -54,6 +54,32 @@ export interface RunInfo extends RunLike {
     error?: string;
     /** 结束通知是否已投递（防重复唤醒） */
     notified?: boolean;
+    /**
+     * 前台 run（`bash` 工具没给 `background`，工具调用正在等它的结果）：
+     * 结果直接回给调用方，**结束不投插话**；面板上标出来，好区分"谁在等"。
+     */
+    foreground?: boolean;
+}
+
+/** 前台 run 收口时要交代的三件事（其余从 `runBash` 的结局映射）。 */
+export interface FinishRunInput {
+    exitCode?: number | null;
+    signal?: string | null;
+    /** 我们主动杀的（超时 / 取消）—— 与后台口径一致 */
+    killed?: boolean;
+    /** 起不来 / 异常的原因（无退出码无信号时判 `failed`） */
+    error?: string;
+}
+
+/** 前台 run 的句柄：输出边跑边追加、结束后收口。 */
+export interface RunHandle {
+    readonly info: RunInfo;
+    /** spawn 拿到 pid 后补录（同时补写 meta.json —— pid 是这条 run 的身份之一） */
+    setPid(pid: number | undefined): void;
+    /** 追加输出（直接写 out.log，不攒内存） */
+    write(chunk: Buffer): void;
+    /** 收口（幂等：重复调用只有第一次生效） */
+    finish(o?: FinishRunInput): void;
 }
 
 export interface SpawnRunInput {
@@ -163,6 +189,78 @@ export class RunRegistry {
         child.on("error", (e) => this.settle(id, null, null, e.message));
         child.on("close", (code, signal) => this.settle(id, code, signal ?? null));
         return info;
+    }
+
+    /**
+     * 登记一条**前台** run（##408 刀 11：`bash` 工具不加 `background` 时也进表）。
+     *
+     * 为什么前台也要登记：用户实测「`nohup sleep 10 &` 跑了但表里什么都没有」——
+     * 判据没错，是**表里没有它爹**。不加这一条，`&` 起的孤儿进程就永远只有
+     * "未登记"那一行，进程一死连"哪条命令起的"都无从回答。
+     *
+     * 与 `spawn` 的分工：进程由调用方（`runBash`）拉起并持有，这里只负责**记账 + 落 out.log**
+     * —— 于是前台的输出也被完整保存（且不再额外攒一份内存）。
+     */
+    track(input: SpawnRunInput): RunHandle {
+        const now = this.now();
+        const id = newRunId(now);
+        const dir = join(this.rootDir, dateDirOf(now), id);
+        mkdirSync(dir, { recursive: true });
+        const logPath = join(dir, "out.log");
+        const info: RunInfo = {
+            id,
+            command: input.command,
+            cwd: input.cwd,
+            state: "running",
+            startedAt: now,
+            dir,
+            logPath,
+            foreground: true,
+            ...(input.title ? { title: input.title } : {}),
+            ...(input.origin ? { origin: input.origin } : {}),
+        };
+        this.runs.set(id, info);
+        this.writeMeta(info);
+        let fd: number | undefined;
+        try {
+            fd = openSync(logPath, "a");
+        } catch (e) {
+            // 落盘失败不许炸业务：run 照跑，只是"输出"tab 会空
+            console.warn("[run] out.log 打不开", id, e);
+        }
+        const closeFd = (): void => {
+            if (fd === undefined) return;
+            try {
+                closeSync(fd);
+            } catch {
+                // 已关 / 已失效：无可关
+            }
+            fd = undefined;
+        };
+        let done = false;
+        return {
+            info,
+            setPid: (pid) => {
+                if (pid === undefined) return;
+                info.pid = pid;
+                this.writeMeta(info);
+            },
+            write: (chunk) => {
+                if (done || fd === undefined || chunk.length === 0) return;
+                try {
+                    writeSync(fd, chunk);
+                } catch (e) {
+                    console.warn("[run] out.log 写入失败", id, e);
+                    closeFd();
+                }
+            },
+            finish: (o) => {
+                if (done) return;
+                done = true;
+                closeFd();
+                this.settleTracked(id, o ?? {});
+            },
+        };
     }
 
     /** 全部 run，**活着的在前**、同状态按启动时间倒序（最近起的先看）。 */
@@ -327,6 +425,28 @@ export class RunRegistry {
         for (const w of this.waiters.get(id) ?? []) w(info);
         this.waiters.delete(id);
         this.notify(info);
+    }
+
+    /**
+     * 前台 run 的收口（= `settle` 的姊妹）。
+     *
+     * 判据与后台同一套：我们主动杀的 ⇒ `killed`；有退出码/信号 ⇒ `exited`
+     *（非零也是 exited —— 成功与否由 exitCode 说，不塞进状态里）；
+     * 既没码也没信号还带了原因 ⇒ `failed`（起不来）。
+     * 差别只有一条：前台**不投插话**（结果直接回给工具调用方）。
+     */
+    private settleTracked(id: string, o: FinishRunInput): void {
+        const info = this.runs.get(id);
+        if (!info || info.state !== "running") return;
+        const noCode = o.exitCode === undefined || o.exitCode === null;
+        const hasErr = !!o.error && noCode && !o.signal;
+        info.state = hasErr ? "failed" : o.killed ? "killed" : "exited";
+        info.exitCode = o.exitCode ?? null;
+        info.signal = o.signal ?? null;
+        info.endedAt = this.now();
+        if (o.error) info.error = o.error;
+        for (const w of this.waiters.get(id) ?? []) w(info);
+        this.waiters.delete(id);
     }
 
     private notify(info: RunInfo): void {

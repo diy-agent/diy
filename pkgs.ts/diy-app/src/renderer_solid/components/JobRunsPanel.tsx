@@ -100,12 +100,18 @@ export function JobRunsPanel(props: { uri: string }) {
         onCleanup(stop);
     });
 
+    /**
+     * 含前台命令（**缺省开**）：`bash` 不加 `background` 也建一行 —— 否则「`&` 起的孤儿」
+     * 只有"未登记"那一行，进程一死就再也说不清是谁起的。关掉只是让表安静些。
+     */
+    const [showForeground, setShowForeground] = createSignal(true);
+
     /** 行：先 run（活体在前），再未登记的野进程；「全部」视角下不分任务 */
     const rows = createMemo<Row[]>(() => {
         const all = scope() === "all";
-        const runs = (all ? jobRunsStore.allRuns() : jobRunsStore.runsFor(props.uri)).map(
-            (run): Row => ({ kind: "run", run }),
-        );
+        const runs = (all ? jobRunsStore.allRuns() : jobRunsStore.runsFor(props.uri))
+            .filter((run) => showForeground() || !run.foreground)
+            .map((run): Row => ({ kind: "run", run }));
         const procs = (all ? jobRunsStore.allUntracked() : jobRunsStore.untrackedFor(props.uri)).map(
             (proc): Row => ({ kind: "proc", proc }),
         );
@@ -309,6 +315,14 @@ export function JobRunsPanel(props: { uri: string }) {
                         全部
                     </button>
                 </div>
+                <button
+                    class={`btn btn-xs shrink-0 ${showForeground() ? "btn-active" : "btn-ghost"}`}
+                    data-job-foreground-btn="toggle"
+                    data-tip="前台命令（工具调用正在等它的那种）也列出来。关掉=只看后台活"
+                    onClick={() => setShowForeground(!showForeground())}
+                >
+                    {showForeground() ? "含前台" : "只后台"}
+                </button>
                 <span class="opacity-60" data-job-count>
                     {rows().length} 条
                     {running() > 0 ? ` · ${running()} 在跑` : ""}
@@ -429,6 +443,11 @@ export function JobRunsPanel(props: { uri: string }) {
                                                     </div>
                                                     <Show when={row.kind === "run" && row.run.error}>
                                                         {(e) => <div class="truncate text-error">{e()}</div>}
+                                                    </Show>
+                                                    <Show when={row.kind === "run" && row.run.foreground}>
+                                                        <span class="mr-1 rounded bg-base-content/10 px-1 text-xs opacity-70" data-job-foreground>
+                                                            前台
+                                                        </span>
                                                     </Show>
                                                     <Show when={scope() === "all" && row.kind === "run" && row.run.origin?.taskUri}>
                                                         {(uri) => (

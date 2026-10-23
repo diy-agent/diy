@@ -194,3 +194,49 @@ describe("落盘布局（log/job/run/<date>/<id>/）", () => {
         expect(reg.kill("r-internal")).toBe(false);
     });
 });
+
+// ##408 刀 11：**前台** run 也进表 —— 判据是"谁起的"（`&` 起的孤儿总得有个爹）
+describe("前台 run（track）", () => {
+    it("登记即 running、写出去的字节进 out.log、收口后是 exited", () => {
+        const h = reg.track({ command: "echo hi; echo bye", cwd: root, origin });
+        expect(h.info.state).toBe("running");
+        expect(h.info.foreground).toBe(true);
+        h.setPid(12345);
+        h.write(Buffer.from("hi\n"));
+        h.write(Buffer.from("bye\n"));
+        h.finish({ exitCode: 0 });
+        const after = reg.get(h.info.id);
+        expect(after?.state).toBe("exited");
+        expect(after?.exitCode).toBe(0);
+        expect(after?.pid).toBe(12345);
+        expect(after?.foreground).toBe(true);
+        expect(readFileSync(h.info.logPath, "utf8")).toBe("hi\nbye\n");
+        // pid 后补录后 meta.json 也要跟着（"这条 run 是谁"的一半是 pid）
+        expect(JSON.parse(reg.metaJson(h.info.id) ?? "{}").pid).toBe(12345);
+    });
+
+    it("我们主动杀的（超时/取消）⇒ killed，而不是 failed", () => {
+        const h = reg.track({ command: "sleep 99", cwd: root });
+        h.finish({ killed: true, signal: "SIGTERM" });
+        const after = reg.get(h.info.id);
+        expect(after?.state).toBe("killed");
+        expect(after?.signal).toBe("SIGTERM");
+    });
+
+    it("起不来（无码无信号 + 有原因）⇒ failed，表里仍留一条", () => {
+        const h = reg.track({ command: "x", cwd: root });
+        h.finish({ error: "spawn ENOENT" });
+        expect(reg.get(h.info.id)?.state).toBe("failed");
+        expect(reg.get(h.info.id)?.error).toBe("spawn ENOENT");
+    });
+
+    it("收口幂等：重复 finish 只有第一次生效（不会被后一次改掉终态）", () => {
+        const h = reg.track({ command: "echo x", cwd: root });
+        h.finish({ exitCode: 0 });
+        h.finish({ killed: true });
+        expect(reg.get(h.info.id)?.state).toBe("exited");
+        // 收口后不再写盘（fd 已关，写不进去也不报错）
+        h.write(Buffer.from("late\n"));
+        expect(readFileSync(h.info.logPath, "utf8")).toBe("");
+    });
+});

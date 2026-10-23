@@ -1437,6 +1437,24 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                               cwd,
                           })
                         : null;
+                // ── 前台也进运行表（##408 刀 11）──
+                // 用户实测抓到：「`nohup sleep 10 &` 明明跑了，表里什么都没有」。判据没错，
+                // 是**表里没有它爹** —— 不加这一条，`&` 起的孤儿就只剩"未登记"那一行，
+                // 进程一死连"哪条命令起的"都无从回答。输出同时被完整落盘（不再另攒一份内存）。
+                const tracked = runRegistry.track({
+                    command,
+                    cwd,
+                    ...(execOpts?.toolCallId && anchor
+                        ? {
+                              origin: {
+                                  taskUri,
+                                  turnId: anchor.turnId,
+                                  stepId: anchor.stepId(),
+                                  toolCallId: execOpts.toolCallId,
+                              },
+                          }
+                        : { origin: { taskUri } }),
+                });
                 const run = await runBash(
                     command,
                     cwd,
@@ -1445,13 +1463,32 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                     {
                         onSpawn: (pid) => {
                             // 组名册补录任务归属（##408 刀 10）：面板按任务过滤"未登记的进程"
-                            ownedGroups.record(pid, { at: Date.now(), command, cwd, taskUri });
+                            ownedGroups.record(pid, {
+                                at: Date.now(),
+                                command,
+                                cwd,
+                                taskUri,
+                                // runId 必须带上：命令里 `nohup xxx &` 起的孤儿就是靠
+                                // 「组的 runId」归到这条 run 名下的（否则表格里 runId=null）
+                                runId: tracked.info.id,
+                            });
+                            tracked.setPid(pid);
                             job?.setPid(pid);
                         },
-                        ...(job ? { onChunk: (chunk) => job.noteOutput(chunk) } : {}),
+                        onChunk: (chunk) => {
+                            tracked.write(chunk);
+                            job?.noteOutput(chunk);
+                        },
                     },
                     timeout,
                 );
+                // 收口：前台不投插话（结果直接回给工具调用方），但状态/退出码/耗时进表
+                tracked.finish({
+                    ...(run.exitCode !== undefined ? { exitCode: run.exitCode } : {}),
+                    ...(run.signal !== undefined ? { signal: run.signal } : {}),
+                    killed: run.outcome === "timeout" || run.outcome === "canceled",
+                    ...(run.outcome === "fail" ? { error: clip(run.text, 400) } : {}),
+                });
                 if (job) {
                     // 记账是观测：**任何**失败都不许冒到工具结果（命令已经跑完了）
                     try {
