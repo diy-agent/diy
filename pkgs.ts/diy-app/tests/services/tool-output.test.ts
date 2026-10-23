@@ -94,8 +94,10 @@ describe("bash 工具：截断落投递层（toModelOutput），execute 仍返�
         const tools = buildTools(workDir, limits, URI) as any;
         const out: string = await tools.bash.execute({ command: "cat big.txt" });
         // ① execute 的返回值 = 落进 ops 的**原文**（ops 原文永不动）
-        expect(out.split("\n").length).toBe(BIG_LINES);
-        expect(out).toContain(`行 ${BIG_LINES}`);
+        // ##419 起结果 = YAML 头 + 正文原文：行数只看正文（头另有 12 行）
+        const body = out.slice(out.indexOf("\n---\n", 4) + 5);
+        expect(body.split("\n").length).toBe(BIG_LINES);
+        expect(body).toContain(`行 ${BIG_LINES}`);
         // ② 发给模型的那一份被收口
         const modelOut: { type: string; value: string } = await tools.bash.toModelOutput({
             toolCallId: "call_cat",
@@ -114,7 +116,7 @@ describe("bash 工具：截断落投递层（toModelOutput），execute 仍返�
         const failed: string = await tools.bash.execute({
             command: `for i in $(seq 1 10000); do echo "err $i"; done; exit 3`,
         });
-        expect(failed.startsWith("[退出码 3]")).toBe(true);
+        expect(failed).toContain("\n---\n[退出码 3]"); // ##419 起正文前有 YAML 头
         const modelOut: { value: string } = await tools.bash.toModelOutput({
             toolCallId: "call_err",
             input: { command: "x" },

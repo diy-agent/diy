@@ -28,6 +28,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { writeFileAtomic } from "../core/atomic-write";
+import { fieldNames, renderFieldDocs } from "../../shared/schema-doc";
 import { findInOpsFile, type FindResult, type FindScopes } from "./local-find";
 import { diyHome, projectDir, projectFromUri } from "../core/state";
 import { keyOf, llmFile, llmLogRelPath, localDir, opsFile, sessionFileForWrite, sessionFilesToClear, sessionIdOf } from "../core/local-paths";
@@ -1047,6 +1048,62 @@ function clip(s: string, n = 6000): string {
 const BASH_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
 
 /**
+ * bash 结果的 **YAML 头**（##419）—— **唯一真源**：渲染（`renderBashHead`）与工具 description 的
+ * 字段说明都由它派生（`shared/schema-doc.ts::fieldNames / renderFieldDocs`）。加字段只改这里。
+ *
+ * 为什么要有头：模型和人都得**一眼看清这一步是怎么结束的**（耗时 / 超没超时 / 被杀没有 / 退出码）——
+ * 以前这些信息散在正文的自然语言里，而「永挂」那几条（##419）连自然语言都没有。
+ */
+const BASH_RESULT_HEAD_SCHEMA = z.object({
+    ok: z.boolean().describe("是否正常结束（退出码 0，且没超时 / 没被杀 / 没因输出溢出被终止）"),
+    exit_code: z.number().optional().describe("退出码；超时 / 取消 / 命令没跑起来时整行缺席"),
+    duration_ms: z.number().describe("墙钟耗时（毫秒）：从 spawn 前到收尾"),
+    timeout_ms: z.number().describe("本次生效的超时（毫秒），环境变量 DIY_LOCAL_BASH_TIMEOUT_MS 可调"),
+    timed_out: z.boolean().describe("是否因超时被终止"),
+    killed: z.boolean().describe("是否被我们主动杀掉（超时 / 取消 / 输出溢出）"),
+    truncated: z.boolean().describe("投递层是否截断了正文（超 2000 行 / 50KB）；原文可 read 回取"),
+    stdout_bytes: z.number().describe("stdout 原始字节数（截断前）"),
+    stderr_bytes: z.number().describe("stderr 原始字节数（截断前）"),
+    cwd: z.string().describe("命令的工作目录（相对路径的基准）"),
+    signal: z.string().optional().describe("子进程收到的信号名（SIGKILL / SIGTERM…），没有则整行缺席"),
+});
+
+type BashHead = z.infer<typeof BASH_RESULT_HEAD_SCHEMA>;
+
+/** YAML 标量：能裸写就裸写（人读友好），否则 JSON 引号转义（cwd 里的空格 / 引号 / 冒号） */
+function yamlScalar(v: string | number | boolean): string {
+    if (typeof v !== "string") return String(v);
+    return /^[A-Za-z0-9_./~+=@-]+$/.test(v) ? v : JSON.stringify(v);
+}
+
+/**
+ * 结果的 **YAML 头 + 正文原文**（##419）：`---\n<key: value>…\n---\n` 后紧跟正文，正文逐字不动
+ * （模型 / 日志引用同一段文字，`read` 也能原样回取）。值为 undefined 的键**整行省略**。
+ */
+function renderBashHead(h: Partial<BashHead>): string {
+    const lines = ["---"];
+    for (const name of fieldNames(BASH_RESULT_HEAD_SCHEMA)) {
+        const v = h[name as keyof BashHead];
+        if (v === undefined) continue;
+        lines.push(`${name}: ${yamlScalar(v)}`);
+    }
+    lines.push("---");
+    return `${lines.join("\n")}\n`;
+}
+
+/**
+ * 投递层把 `truncated: false` 改写成 `true`（##419）。
+ *
+ * 为什么不在 execute 里就写好：**截断只发生在投递层**（`capToolOutput`，##127）—— execute 交给
+ * ops 的那一份是原文，它本来就是完整的。所以这个位只能投递时现算；只改**头部那一行**，正文不碰。
+ */
+export function markBashTruncated(text: string): string {
+    const end = text.indexOf("\n---\n", 4);
+    if (end < 0) return text; // 没有头（不该发生）→ 原样返回，绝不改正文
+    return text.slice(0, end).replace(/^truncated: false$/m, "truncated: true") + text.slice(end);
+}
+
+/**
  * bash 执行结果的**语义档**（##353：工具行 ✓/✗ 的口径真源）。
  *
  * `failed` = 这一行该画 ✗（execute 据此抛错 → SDK 发 tool-error → ops `status:"error"`）。
@@ -1152,37 +1209,104 @@ export function runBash(
 ): Promise<BashRun> {
     return new Promise((resolve) => {
         if (signal?.aborted) {
-            resolve({ text: "[已取消]", failed: false, outcome: "canceled" });
+            // 还没起进程就取消了：头照给（字段齐全），耗时 / 字节都是 0
+            resolve({
+                text:
+                    renderBashHead({
+                        ok: false,
+                        duration_ms: 0,
+                        timeout_ms: limits.bashTimeoutMs,
+                        timed_out: false,
+                        killed: false,
+                        truncated: false,
+                        stdout_bytes: 0,
+                        stderr_bytes: 0,
+                        cwd,
+                    }) + "[已取消]",
+                failed: false,
+                outcome: "canceled",
+            });
             return;
         }
         /** abort 补刀的注销器（settle 时解绑，避免监听器随轮次泄漏） */
         let offAbort: (() => void) | undefined;
         /** 超时定时器（settle 时清掉） */
         let timeoutId: NodeJS.Timeout | undefined;
-        /** 全部结局只在这里落一次（成功 / 各失败档）；'close'/'error'/取消/同步 catch 共用同一判定 */
-        const settle = (err: BashExecError, stdout: string, stderr: string, sig?: string | null): void => {
+        /** 起跑时刻（`duration_ms` 的起点）：放在 spawn 之前，含建进程的开销 */
+        const startedAt = Date.now();
+        // ── 下面这几项 settle 与 try 两处都要用（settle 在 try 外定义，收尾要读它们）──
+        // 输出按**块**攒（不逐块拼字符串）：上限判据只要长度计数，逐块 `byteLength` 是 O(n²)
+        const chunks = { out: [] as Buffer[], err: [] as Buffer[] };
+        const len = { out: 0, err: 0 };
+        const dump = (side: "out" | "err"): string => Buffer.concat(chunks[side], len[side]).toString("utf8");
+        /** 结局是否已落（Promise 本身只认第一次，这里只是别再做无用功 / 别多杀） */
+        let done = false;
+        /** 我们主动杀的（超时 / 取消 / 输出溢出）—— 对应 execFile 的 `killed` */
+        let killed = false;
+        /**
+         * 释放 stdout/stderr 管道（spawn 成功后才会被赋值）：同步抛（cwd 是普通文件 ⇒ ENOTDIR）时
+         * `child` 根本没建出来，settle 碰它就是 TDZ 崩 —— 用这个"句柄"隔一层，见下方结算处注释。
+         */
+        let destroyPipes: (() => void) | undefined;
+        /**
+         * 全部结局只在这里落一次（成功 / 各失败档）；
+         * 'close' / 'error' / 取消 / 超时 / 同步 catch 共用同一判定。
+         *
+         * `timedOut` 由**超时那条路**显式传进来（不从 `killed` 猜）：`killed` 一个位服务三条主动
+         * 路径（超时 / 输出溢出 / 取消），只有调用点知道是哪一条（见 ##419）。
+         */
+        const settle = (
+            err: BashExecError,
+            stdout: string,
+            stderr: string,
+            sig?: string | null,
+            timedOut = false,
+        ): void => {
             offAbort?.();
             offAbort = undefined;
             if (timeoutId) {
                 clearTimeout(timeoutId);
                 timeoutId = undefined;
             }
+            // 结案即刻**释放管道**（##419）：超时 / 取消时子进程可能还活着（后台作业换了
+            // session/pgid ⇒ 组杀打空），它的子孙仍握着 stdout/stderr 写端 —— 不 destroy 就每挂
+            // 一次泄 2 个 fd。`done` 闸门已挡住后续数据，destroy 只影响"谁还握着写端"。
+            destroyPipes?.();
+            destroyPipes = undefined;
             const out = [stdout, stderr].filter(Boolean).join("\n");
+            /** 结果头（##419）：字段名 / 顺序由 BASH_RESULT_HEAD_SCHEMA 派生，正文一律原文 */
+            const head = (h: { ok: boolean; exitCode?: number; signal?: string | null }): string =>
+                renderBashHead({
+                    ok: h.ok,
+                    exit_code: h.exitCode,
+                    duration_ms: Date.now() - startedAt,
+                    timeout_ms: limits.bashTimeoutMs,
+                    timed_out: timedOut,
+                    killed: killed || err?.killed === true,
+                    // 投递层（toModelOutput + markBashTruncated）按 capToolOutput 的结果改写成 true；
+                    // 这一份是**原文**，原文就是完整的 ⇒ 恒 false
+                    truncated: false,
+                    stdout_bytes: len.out,
+                    stderr_bytes: len.err,
+                    cwd,
+                    signal: h.signal ?? undefined,
+                });
             // ⚠️ 这里一律返回**完整**文本（不 clip）：发给模型的那一份由 `capToolOutput` 在
             //    投递层现算（##127）—— 在 execute 里裁 = 落进 ops 的原文当场丢。
             //
             // `outcome` 只给 job 账本（##408 刀 5），**不参与** ✓/✗ 判定（`failed` 的判据见文件头）
-            if (err?.name === "AbortError") resolve({ text: "[已取消]", failed: false, outcome: "canceled" });
+            if (err?.name === "AbortError")
+                resolve({ text: head({ ok: false }) + "[已取消]", failed: false, outcome: "canceled" });
             else if (err?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" || err?.code === "ENOBUFS")
                 resolve({
-                    text: `[输出超过 ${fmtBytes(BASH_MAX_BUFFER_BYTES)} 上限，命令已终止；以下是已收到的部分]\n${out}`,
+                    text: head({ ok: false }) + `[输出超过 ${fmtBytes(BASH_MAX_BUFFER_BYTES)} 上限，命令已终止；以下是已收到的部分]\n${out}`,
                     failed: false,
                     outcome: "fail",
                 });
             else if (err?.killed)
                 // 带上时长与出路：模型看到「30s 被杀」才会去 nohup / 分批，只写「超时」它会原样重试
                 resolve({
-                    text: `[命令超时被杀]（超过 ${fmtTimeout(limits.bashTimeoutMs)}，可用 DIY_LOCAL_BASH_TIMEOUT_MS 调整；长任务请后台跑 + 取增量日志）\n${out}`,
+                    text: head({ ok: false, signal: sig }) + `[命令超时被杀]（超过 ${fmtTimeout(limits.bashTimeoutMs)}，可用 DIY_LOCAL_BASH_TIMEOUT_MS 调整；长任务请后台跑 + 取增量日志）\n${out}`,
                     failed: false,
                     outcome: "timeout",
                     ...(sig ? { signal: sig } : {}),
@@ -1190,7 +1314,7 @@ export function runBash(
             else if (typeof err?.code === "number")
                 // 命令级非零退出（##353）：有 stderr = 失败，无 stderr = 查询未命中（数据）
                 resolve({
-                    text: `[退出码 ${err.code}]\n${out || "(无输出)"}`,
+                    text: head({ ok: err.code === 0, exitCode: err.code, signal: sig }) + `[退出码 ${err.code}]\n${out || "(无输出)"}`,
                     failed: stderr.trim().length > 0,
                     outcome: err.code === 0 ? "ok" : "fail",
                     exitCode: err.code,
@@ -1199,11 +1323,17 @@ export function runBash(
             else if (err)
                 // spawn / IO 失败（##332 ③）：命令**根本没跑起来** —— 失败档（execute 据此抛错）
                 resolve({
-                    text: `[命令未能启动 ${typeof err.code === "string" ? err.code : "?"}] ${err.message ?? ""}（工作目录：${cwd}）${out ? `\n${out}` : ""}`,
+                    text: head({ ok: false }) + `[命令未能启动 ${typeof err.code === "string" ? err.code : "?"}] ${err.message ?? ""}（工作目录：${cwd}）${out ? `\n${out}` : ""}`,
                     failed: true,
                     outcome: "fail",
                 });
-            else resolve({ text: out || "(无输出)", failed: false, outcome: "ok", exitCode: 0 });
+            else
+                resolve({
+                    text: head({ ok: true, exitCode: 0 }) + (out || "(无输出)"),
+                    failed: false,
+                    outcome: "ok",
+                    exitCode: 0,
+                });
         };
         try {
             // ⚠️ 为什么不用 execFile（##375 实测，别改回去）：`execFile` 把选项**白名单**转发给
@@ -1225,19 +1355,16 @@ export function runBash(
                 detached: true,
                 stdio: ["ignore", "pipe", "pipe"],
             });
+            // 管道释放句柄交给 settle（它跨 try 作用域，不能直接碰 child）
+            destroyPipes = () => {
+                child.stdout?.destroy();
+                child.stderr?.destroy();
+            };
             if (child.pid !== undefined) hooks?.onSpawn?.(child.pid);
-            // 输出按**块**攒（不逐块拼字符串）：上限判据只要长度计数，逐块 `byteLength` 是 O(n²)
-            const chunks = { out: [] as Buffer[], err: [] as Buffer[] };
-            const len = { out: 0, err: 0 };
-            const dump = (side: "out" | "err"): string => Buffer.concat(chunks[side], len[side]).toString("utf8");
-            /** 结局是否已落（Promise 本身只认第一次，这里只是别再做无用功 / 别多杀） */
-            let done = false;
-            /** 我们主动杀的（超时 / 输出溢出）—— 对应 execFile 的 `killed` */
-            let killed = false;
-            const finish = (err: BashExecError, o: string, e: string): void => {
+            const finish = (err: BashExecError, o: string, e: string, timedOut = false, sig?: string): void => {
                 if (done) return; // settle 内部（唯一落点）负责解绑 abort 监听与超时定时器
                 done = true;
-                settle(err, o, e, child.signalCode);
+                settle(err, o, e, sig ?? child.signalCode, timedOut);
             };
             /** 攒输出 + 上限（与 execFile 同口径：stdout / stderr **各算各的**，超了即杀、留已收到的部分） */
             const onData = (chunk: Buffer, side: "out" | "err"): void => {
@@ -1265,8 +1392,16 @@ export function runBash(
                     finish({ code, killed, message: `Command failed: /bin/bash -c ${command}` }, dump("out"), dump("err"));
             });
             // 超时：自己计时（不用 execFile 的 timeout —— 它只杀直接子进程，同一类孤儿缺口）
+            //
+            // ⚠️ **先收尾、再杀组**（##419，与下面 onAbort 同构）：只杀不收尾是"永挂"的根因 ——
+            //    后台作业（`&` + disown / 自己 setsid 的 Electron）换了 session/pgid ⇒ `kill(-pid)`
+            //    打空，它（或它的子孙）仍握着 stdout/stderr 写端 ⇒ `'close'` **永远不到** ⇒ Promise
+            //    永不 resolve（实测 30.2 / 82.4 分钟，铁证见 `~/.diy/log/agent-bash.jsonl`）。
+            //    超时这一刻结局**已经确定**，没理由再等一个可能永不到来的事件。
+            //    `signal` 显式给 "SIGKILL"：紧接着就发，不等 'close' 回填 signalCode。
             timeoutId = setTimeout(() => {
                 killed = true;
+                finish({ code: null, message: "timeout", killed: true }, dump("out"), dump("err"), true, "SIGKILL");
                 killProcessGroup(child);
             }, limits.bashTimeoutMs);
             if (signal) {
@@ -1274,6 +1409,7 @@ export function runBash(
                 // 顺序有意：这是一条"肯定结束了"的路径，不必等 close 事件（组杀完 close 才到，
                 // 中间那段 UI 会显示"还在跑"）；而杀组要在 bash 还活着时发，组 id 才有效。
                 const onAbort = (): void => {
+                    killed = true; // 头里 killed 如实置位（紧接着就发 SIGKILL，与超时同构）
                     finish({ name: "AbortError", code: "ABORT_ERR", message: "The operation was aborted" }, dump("out"), dump("err"));
                     killProcessGroup(child);
                 };
@@ -1305,15 +1441,23 @@ export interface TurnToolAnchor {
 export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: string, anchor?: TurnToolAnchor) {
     return {
         bash: tool({
-            description: "在项目目录执行 bash 命令并返回输出（查文件、跑命令、看系统信息）。",
+            description: [
+                "在项目目录执行 bash 命令并返回输出（查文件、跑命令、看系统信息）。",
+                `超时缺省 ${fmtTimeout(limits.bashTimeoutMs)}（环境变量 DIY_LOCAL_BASH_TIMEOUT_MS 调整）：超时 / 取消 / 输出溢出都会杀掉整个进程组，并**照样返回结果**（不抛错）—— 正文是已收到的部分，看头里 timed_out / killed 判断怎么结束的。`,
+                "长任务写法：`nohup <命令> > /tmp/x.log 2>&1 < /dev/null & disown` 立刻返回，然后用**另一条**命令 `tail /tmp/x.log` 取增量；不要在同一条命令里 sleep 等它跑完 —— 那只会撞上自己的超时。",
+                "stdin 已接 /dev/null：`cat`、无参 `grep` / `rg` 立刻拿到 EOF，不会挂住等输入。相对路径一律按 cwd（项目目录）解析。",
+                "结果 = YAML 头 + 正文原文（正文逐字不动）。头的字段：",
+                ...renderFieldDocs(BASH_RESULT_HEAD_SCHEMA),
+            ].join("\n"),
             inputSchema: z.object({ command: z.string().describe("要执行的 bash 命令") }),
             // ##127：单条工具输出的截断**只落投递层** —— `toModelOutput` 改写「发给模型的那一份」
             // （超 2000 行 / 50KB 时头尾 + marker + 原文落盘可 read 回取），`execute` 的返回值
             // 仍是全文（落进 ops 的原文永不动）。见 services/tool-output.ts。
-            toModelOutput: ({ toolCallId, output }) => ({
-                type: "text" as const,
-                value: capToolOutput(String(output), toolCallId, taskUri).text,
-            }),
+            toModelOutput: ({ toolCallId, output }) => {
+                const capped = capToolOutput(String(output), toolCallId, taskUri);
+                // 头里的 truncated 位只能在投递层定（真截断才知道），见 markBashTruncated
+                return { type: "text" as const, value: capped.clipped ? markBashTruncated(capped.text) : capped.text };
+            },
             execute: async ({ command }, opts) => {
                 const home = diyHome();
                 // 自杀护栏（agent-guard.ts）已停用（2026-10-02）：

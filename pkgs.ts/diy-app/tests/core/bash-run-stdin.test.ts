@@ -58,7 +58,8 @@ describe("runBash 的 stdin 隔离（##418）", () => {
         const ms = Date.now() - t0;
         expect(run.outcome).toBe("ok");
         expect(run.failed).toBe(false);
-        expect(run.text).toBe("(无输出)");
+        // ##419 起结果 = YAML 头 + 正文；正文仍是「(无输出)」，头逐字段见 bash-run-timeout.test.ts
+        expect(run.text.endsWith("\n---\n(无输出)")).toBe(true);
         expect(ms).toBeLessThan(limits.bashTimeoutMs);
     });
 
