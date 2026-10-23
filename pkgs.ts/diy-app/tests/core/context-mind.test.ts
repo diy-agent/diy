@@ -6,7 +6,16 @@
 // 不跟踪块标量就会把正文切碎（字节凭空多出来、段数翻倍），而这个错误在
 // 「总数对得上」时看不出来（它会悄悄把一段拆成两段，各归一个桶）。
 import { describe, expect, it } from "vitest";
-import { analyzeMind, mindTrend, repeatReads, splitYamlBlocks, utf8Bytes, type MindGroup } from "../../src/shared/context/mind";
+import {
+    analyzeMind,
+    explainSegment,
+    mindTrend,
+    repeatReads,
+    splitYamlBlocks,
+    unchangedSegments,
+    utf8Bytes,
+    type MindGroup,
+} from "../../src/shared/context/mind";
 import type { StepMessage } from "../../src/shared/context/step-request";
 
 function msg(role: string, text: string, index = 1): StepMessage {
@@ -109,5 +118,34 @@ describe("repeatReads / mindTrend", () => {
         ]);
         expect(t.historyHeavyAt).toBe(2);
         expect(t.historyShare).toBeCloseTo(0.9);
+    });
+});
+
+describe("explainSegment / unchangedSegments（「为什么发」的归因）", () => {
+    const reasons = { facts: "事实库投影：随 submit 变（稀疏）", chain: "AGENTS.md 链：只在目录/文件改动时变" };
+
+    it("按段 key 判容器 + 来法，并把 reason 取到单元（含二级路径回落顶层）", () => {
+        expect(explainSegment("help")).toMatchObject({ place: "help", kind: "结构说明" });
+        expect(explainSegment("chain · /Users/ccc/AGENTS.md", reasons)).toMatchObject({ place: "system", kind: "全量重建" });
+        expect(explainSegment("runtime.facts", reasons)).toMatchObject({
+            place: "runtime",
+            kind: "首步全量",
+            reason: reasons.facts,
+        });
+        // 轮中变化与首步全量必须分开：一个是"只发变化的单元"，一个是"整份重建"
+        expect(explainSegment("runtimeDiff.facts", reasons)).toMatchObject({ place: "runtime", kind: "轮中变化" });
+        // 二级路径（task.body）没有独立 reason 时回落到顶层 `task`
+        expect(explainSegment("runtime.task.body", { task: "任务" }).reason).toBe("任务");
+        expect(explainSegment("输入 · user")).toMatchObject({ place: "input", kind: "用户原话" });
+        expect(explainSegment("历史 · tool")).toMatchObject({ place: "history", kind: "历史回放" });
+    });
+
+    it("逐字相同才叫「没变」（同字节不同内容不算）", () => {
+        const a = [{ key: "runtime.facts", group: "runtime" as const, bytes: 5, chars: 5, text: "abcde" }];
+        const b = [{ key: "runtime.facts", group: "runtime" as const, bytes: 5, chars: 5, text: "abcde" }];
+        const c = [{ key: "runtime.facts", group: "runtime" as const, bytes: 5, chars: 5, text: "abXde" }];
+        expect(unchangedSegments(a, b)).toHaveLength(1);
+        expect(unchangedSegments(a, c)).toHaveLength(0);
+        expect(unchangedSegments(a, undefined)).toHaveLength(0);
     });
 });

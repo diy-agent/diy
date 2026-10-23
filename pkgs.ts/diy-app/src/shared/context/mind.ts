@@ -168,6 +168,61 @@ export function analyzeMind(messages: readonly StepMessage[]): {
     return { segments, totalBytes: segments.reduce((n, s) => n + s.bytes, 0), byGroup };
 }
 
+/**
+ * 一段「为什么被发出去」的归因。
+ *
+ * 判据（用户 2026-10-23）：「大脑里为啥要发送某些数据，没有体现出来」——
+ * 字节账只说「谁吃得多」，不回答「它凭什么在这里」。三件事缺一不可：
+ *   · `place`  在哪个容器（system 参数 / 尾部 user 信封 / 历史回放）
+ *   · `kind`   这份是**怎么来的**（首步全量 / 轮中变化 / 全量重建）—— 决定它该不该被减
+ *   · `reason` 为什么**归这个容器**（真源 = `delivery.ts` 的 `PLACE_CANDIDATES.reason`）
+ */
+export interface SegmentWhy {
+    place: "system" | "runtime" | "input" | "history" | "help";
+    kind: "首步全量" | "轮中变化" | "全量重建" | "结构说明" | "用户原话" | "历史回放";
+    reason: string;
+}
+
+/**
+ * 段 key → 投递归因。
+ *
+ * `reasons` 由调用方传（= `PLACE_CANDIDATES` 的 path→reason）：本文件不 import delivery，
+ * 避免「数据层反向依赖投递装配」；传空表也能用（只缺那句 reason）。
+ */
+export function explainSegment(key: string, reasons: Record<string, string> = {}): SegmentWhy {
+    const pick = (p: string): string => reasons[p] ?? reasons[p.split(".")[0] ?? ""] ?? "";
+    if (key === "help") {
+        return { place: "help", kind: "结构说明", reason: "由 zod 递归派生（envelope.buildHelpDoc）；system 参数每次请求全量重建" };
+    }
+    if (key.startsWith("chain · ")) return { place: "system", kind: "全量重建", reason: pick("chain") };
+    if (key.startsWith("system.")) return { place: "system", kind: "全量重建", reason: pick(key.slice(7)) };
+    if (key.startsWith("runtimeDiff.")) return { place: "runtime", kind: "轮中变化", reason: pick(key.slice(12)) };
+    if (key.startsWith("runtime.")) return { place: "runtime", kind: "首步全量", reason: pick(key.slice(8)) };
+    if (key.startsWith("输入 · ")) {
+        return { place: "input", kind: "用户原话", reason: "用户本轮真话（原样）；自动生成的段各有自己的顶层键" };
+    }
+    if (key === "summary" || key === "history") {
+        return { place: "history", kind: "历史回放", reason: "自动生成的元数据（摘要 / 压缩注记），不是变量树" };
+    }
+    return { place: "history", kind: "历史回放", reason: "" };
+}
+
+/**
+ * 与上一步**逐字相同**的段（按 key 对齐，比 text 不比 bytes —— 同字节不同内容是可能的）。
+ *
+ * 用途：回答「这次到底有什么变化」。`runtime.*` 段在这里出现，就等于「这一份是纯重发」——
+ * 每轮首步都会重发全量 runtime（上一轮那份不在历史里，见 envelope.ts 头注），
+ * 这是**设计后果**而不是重复发送；但哪几个单元真的变了，必须看得见。
+ */
+export function unchangedSegments(
+    cur: readonly MindSegment[],
+    prev: readonly MindSegment[] | undefined,
+): MindSegment[] {
+    if (!prev) return [];
+    const m = new Map(prev.map((s) => [s.key, s.text]));
+    return cur.filter((s) => m.get(s.key) === s.text);
+}
+
 /** 路径太长就掐头（保留末尾两级，人认的是文件名而非前缀） */
 function shortPath(p: string): string {
     if (p.length <= 52) return p;

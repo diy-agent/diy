@@ -24,7 +24,16 @@ import { ViewGrid } from "./ViewGrid";
 import { layoutStore } from "../store/layoutStore";
 import { findPage } from "../../shared/view-registry";
 import { parseStepRequest, type StepMessage } from "../../shared/context/step-request";
-import { analyzeMind, mindTrend, repeatReads, type MindGroup, type MindSegment } from "../../shared/context/mind";
+import {
+    analyzeMind,
+    explainSegment,
+    mindTrend,
+    repeatReads,
+    unchangedSegments,
+    type MindGroup,
+    type MindSegment,
+} from "../../shared/context/mind";
+import { PLACE_CANDIDATES } from "../../shared/context/delivery";
 import { LayoutAreaToggles } from "./LayoutAreaToggles";
 import { BrainMessages } from "./BrainMessages";
 
@@ -100,6 +109,18 @@ const GROUP_META: Record<MindGroup, { label: string; cls: string }> = {
 
 /** 用户「催」的话术（出现即说明上一步没推进；只认极短的一句，避免把真实提问算进来） */
 const STALL_RE = /^(继续|？|\?|继续吧|go on|continue)[。．.！!？?\s]*$/i;
+
+/** 段 key → 投递归因用的理由表（真源 = 投递装配的候选表，不在这里手抄一份会漂的文案） */
+const PLACE_REASONS: Record<string, string> = Object.fromEntries(PLACE_CANDIDATES.map((c) => [c.path, c.reason]));
+
+/** 归因徽章的配色（place 维度；与段分组配色区分开，免得看成同一种语义） */
+const PLACE_CLS: Record<string, string> = {
+    system: "badge-warning",
+    runtime: "badge-info",
+    help: "badge-success",
+    input: "badge-primary",
+    history: "badge-ghost",
+};
 
 export function BrainPage(props: { uri: string }): JSX.Element {
     const [selected, setSelected] = createSignal<number | null>(null);
@@ -198,6 +219,24 @@ export function BrainPage(props: { uri: string }): JSX.Element {
         if (next) setSelected(next.step);
     };
 
+    /**
+     * 「上一份同容器」的段：用来判「这次到底变了没有」。
+     * 取**上一步**（不是上一个同轮首步）：轮中只发 `runtimeDiff` 时，上一份全量就是本轮首步那份，
+     * 于是"和上一步比"自然对上了；跨轮时上一步是上一轮最后一步，也能看出全量重发了几段。
+     */
+    const prevSegs = (s: BrainStep): MindSegment[] | undefined => {
+        const list = steps();
+        const i = list.findIndex((x) => x.step === s.step);
+        return i > 0 ? list[i - 1]?.segments : undefined;
+    };
+
+    /** 本步「没变化却仍在 byte 账里」的 runtime 段（纯重发；设计后果，但必须看得见） */
+    const resentRuntime = (s: BrainStep): MindSegment[] =>
+        unchangedSegments(
+            s.segments.filter((x) => x.group === "runtime"),
+            prevSegs(s),
+        );
+
     /** 段按字节降序（一次思考里最先该看的） */
     const segsOf = (s: BrainStep): MindSegment[] => [...s.segments].sort((a, b) => b.bytes - a.bytes);
 
@@ -284,6 +323,7 @@ export function BrainPage(props: { uri: string }): JSX.Element {
                     <thead>
                         <tr>
                             <th>段</th>
+                            <th>为什么发</th>
                             <th class="text-right">字节</th>
                             <th class="text-right">占比</th>
                         </tr>
@@ -297,6 +337,20 @@ export function BrainPage(props: { uri: string }): JSX.Element {
                                     onClick={() => setOpenSeg(openSeg() === seg.key ? null : seg.key)}
                                 >
                                     <td class="font-mono">{seg.key}</td>
+                                    <td>
+                                        {(() => {
+                                            const why = explainSegment(seg.key, PLACE_REASONS);
+                                            return (
+                                                <div class="flex flex-wrap items-center gap-1">
+                                                    <span class={`badge badge-xs ${PLACE_CLS[why.place] ?? "badge-ghost"}`}>{why.place}</span>
+                                                    <span class="badge badge-xs badge-outline">{why.kind}</span>
+                                                    <span class="max-w-[36ch] truncate text-caption opacity-60" title={why.reason}>
+                                                        {why.reason}
+                                                    </span>
+                                                </div>
+                                            );
+                                        })()}
+                                    </td>
                                     <td class="text-right font-mono">{fmtBytes(seg.bytes)}</td>
                                     <td class="text-right font-mono opacity-60">{pct(seg.bytes, s.totalBytes)}</td>
                                 </tr>
@@ -322,6 +376,20 @@ export function BrainPage(props: { uri: string }): JSX.Element {
                 </Show>
                 <Show when={s.note}>
                     <div class="rounded border border-warning/40 bg-warning/10 px-2 py-1 text-caption">{s.note}</div>
+                </Show>
+                {/* 重发账：本步 runtime 段里「与上一步逐字相同」的那部分 —— 不是 bug，是
+                    "上一轮那份不在历史里，每轮首步必须重建"的代价。把代价标出来，才谈得上要不要改。 */}
+                <Show when={resentRuntime(s).length > 0}>
+                    <div class="rounded border border-info/40 bg-info/10 px-2 py-1 text-caption">
+                        {(() => {
+                            const same = resentRuntime(s);
+                            const bytes = same.reduce((n, x) => n + x.bytes, 0);
+                            const all = s.segments.filter((x) => x.group === "runtime");
+                            return `runtime 重发 ${fmtBytes(bytes)}（${same.length}/${all.length} 段与上一步逐字相同：${same
+                                .map((x) => x.key.replace(/^runtime\./, ""))
+                                .join(" · ")}）—— 每轮首步都发全量，因为上一轮那份不进历史`;
+                        })()}
+                    </div>
                 </Show>
             </div>
         );
