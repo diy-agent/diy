@@ -20,6 +20,7 @@ import {
     checkExposeLeveled,
     defaultExposeOf,
     exposeOf,
+    claimOf,
     resolveClaim,
     validateFacts,
     weightsOf,
@@ -303,6 +304,68 @@ function targetOpts(t: FactsTarget, forWrite = false) {
     };
 }
 
+/**
+ * 跨库双写审计：**同一 claim 在两个库都有可用事实**（active + accepted）⇒ 漂移风险。
+ *
+ * 为什么要单写一份扫描（而不是统计 `repo.facts`）：额外库装载时主库已可用的 claim 会被
+ * **跳过**（`loadRepo` 的 `seen`）—— 合并后的条目表里天然看不到"两处都写"，问题也就藏在这里。
+ * 判据只看「可用事实」：`superseded` 让位是正确的覆盖表达，不算双写；同库内多个 env 变体
+ * 也不算（那是同一处维护的变体）。
+ *
+ * 为什么是问题：覆盖的正确表达是**让位**，投影只解析一次。两处都 active = 两个真源各自维护
+ * 同一件事 —— 今天值一样是巧合，明天改一处就分叉，而分叉是**静默的**（低层那份永不现形）。
+ */
+function crossLibDups(repo: Repo, kb: string, extraDirs: readonly string[]): DtoProblem[] {
+    const usable = (f: Fact): boolean => f.lifecycle === "active" && f.review === "accepted";
+    const mine = new Set(repo.files.map((f) => path.resolve(f)));
+    const local = new Map<string, { ids: string[]; values: Set<string> }>();
+    for (const f of repo.facts) {
+        if (!usable(f) || !mine.has(path.resolve(repo.origin.get(f.id) ?? ""))) continue;
+        const claim = claimOf(f);
+        const slot = local.get(claim) ?? { ids: [], values: new Set<string>() };
+        slot.ids.push(f.id);
+        slot.values.add(f.value);
+        local.set(claim, slot);
+    }
+    if (local.size === 0) return [];
+    const out: DtoProblem[] = [];
+    for (const dir of extraDirs) {
+        const abs = path.resolve(dir);
+        if (abs === path.resolve(kb) || !existsSync(path.join(abs, "facts"))) continue;
+        let other: Repo;
+        try {
+            other = loadRepo(abs, { allowMissing: true });
+        } catch {
+            // 额外库坏了不该让 status 不可用（它是"参考"，不是真源）
+            continue;
+        }
+        const theirs = new Map<string, { ids: string[]; values: Set<string> }>();
+        for (const f of other.facts) {
+            if (!usable(f)) continue;
+            const claim = claimOf(f);
+            const slot = theirs.get(claim) ?? { ids: [], values: new Set<string>() };
+            slot.ids.push(f.id);
+            slot.values.add(f.value);
+            theirs.set(claim, slot);
+        }
+        for (const [claim, a] of local) {
+            const b = theirs.get(claim);
+            if (b === undefined) continue;
+            const values = new Set([...a.values, ...b.values]);
+            out.push({
+                level: "warning",
+                code: "facts/cross-lib-dup",
+                detail:
+                    values.size === 1
+                        ? `同一 claim 在 2 个库都有可用事实（两处维护 = 必然漂移，值暂时相同）：${claim} —— 本库{${a.ids.join(", ")}} / ${abs}{${b.ids.join(", ")}}；删掉冗余的一份`
+                        : `同一 claim 在 2 个库有**不同**值（低特定度那份被静默让位、永不现形）：${claim} —— 本库{${a.ids.join(", ")}} / ${abs}{${b.ids.join(", ")}}；把让位的那份标 superseded 或 drop`,
+                facts: [...a.ids, ...b.ids],
+            });
+        }
+    }
+    return out;
+}
+
 export function status(opts: { dir?: string; in?: string } = {}) {
     const target = resolveFactsTarget(opts);
     const kb = target.dir;
@@ -363,6 +426,7 @@ export function status(opts: { dir?: string; in?: string } = {}) {
           )
         : [];
     for (const p of exposeProblems) problems.push({ level: "error", code: p.code, detail: p.detail, ...(p.facts ? { facts: [...p.facts] } : {}) });
+    for (const p of crossLibDups(repo, kb, extraDirs)) problems.push(p);
 
     // 按 subject 的字节账：预算的单位是**字节**，而 status 原本只给 claims 数 ——
     // 人看不到"这个话题占多少"就没法决定该把它放 full 还是 index（实测 `rule` 一个主题 9.3 KB）。

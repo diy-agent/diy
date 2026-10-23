@@ -475,6 +475,28 @@ describe("跨库读的三个口径缺口（##5 第 6 轮 A/B/C）", () => {
         expect(st.problems.filter((p) => p.code === "facts/subject-unregistered")).toEqual([]);
     });
 
+    it("D: 同一 claim 两库都可用 ⇒ 报 facts/cross-lib-dup（两处维护 = 必然漂移）", () => {
+        // 主库已有 app.port#default 两个 env 变体（active + accepted），设备库再写一份同 claim
+        writeGlobal("facts/app.yaml", ["domain: app", "facts:", ...factLine("global.port", "3000"), ""].join("\n"));
+        const dup = store.status().problems.filter((p) => p.code === "facts/cross-lib-dup");
+        expect(dup).toHaveLength(1);
+        expect(dup[0]?.level).toBe("warning");
+        // 值不同 ⇒ 说清「低特定度那份被静默让位」，并两侧 id 都点出来
+        expect(dup[0]?.detail).toContain("app.port#default");
+        expect(dup[0]?.detail).toContain("不同");
+        expect(dup[0]?.facts).toEqual(expect.arrayContaining(["global.port", "port.production"]));
+    });
+
+    it("D: 低层让位（superseded）不是双写 ⇒ 不报", () => {
+        // 主库同 claim 全标 superseded（正确表达覆盖的方式：让位，投影只解析一次）
+        write(
+            "facts/app.yaml",
+            ["domain: app", "facts:", ...factLine("port.production", "18888", "superseded"), ...factLine("port.dev", "0", "superseded"), ""].join("\n"),
+        );
+        writeGlobal("facts/app.yaml", ["domain: app", "facts:", ...factLine("global.port", "3000"), ""].join("\n"));
+        expect(store.status().problems.filter((p) => p.code === "facts/cross-lib-dup")).toEqual([]);
+    });
+
     it("C: submit 的 drop 与写入同批事务 —— 改名（删旧 + 写新）一次成型", () => {
         const payload = {
             drop: ["port.production"],
