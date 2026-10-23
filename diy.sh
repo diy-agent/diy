@@ -19,7 +19,7 @@
 # 前置要求：首次使用或改动 main/preload/renderer 后，需先构建：
 #   cd pkgs.ts/diy-app && ./sha.sh build
 # 否则 build/<variant>/main/index.mjs 不存在，CLI 会在 stderr 提示并退出（不污染 stdout JSON）。
-# 变体：DIY_VARIANT=prod|test|lab（缺省 lab）。
+# 变体：DIY_VARIANT=prod|test|lab|preview（缺省 lab）。
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,11 +28,8 @@ APP_DIR="$SCRIPT_DIR/pkgs.ts/diy-app"
 # lab 与 prod 共用 ./diy.sh 作为「通用 CLI 客户端」，连谁由 DIY_VARIANT + DIY_HOME 决定。
 DIY_VARIANT="${DIY_VARIANT:-lab}"
 export DIY_VARIANT
-# preview 变体已删除（##381）：显式报错，别静默落到 build/preview/**（那个根已不存在）
-if [[ "$DIY_VARIANT" == "preview" ]]; then
-  echo "[diy.sh] ✗ preview 变体已删除，改用 lab：DIY_VARIANT=lab ./diy.sh $*" >&2
-  exit 1
-fi
+# preview（2026-10-23 恢复，##404）= 编译后运行的稳定实例（无 watch）；连它需先
+# `pkgs.ts/diy-app/sha.sh preview` 把产物与数据根（build/preview/home）备好。
 
 # 前置检查：GUI 产物必须存在（CLI 本身是 tsx 源码无需构建，但要拉起的 Electron 必须已构建）
 GUI_ENTRY="$APP_DIR/build/${DIY_VARIANT}/main/index.mjs"

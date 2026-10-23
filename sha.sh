@@ -277,16 +277,14 @@ github-actions-cicd()    {
 
 # lab：HMR 开发实例（人看效果 / agent 实验都用它），独占 build/lab/**，与 test 互不干扰。
 lab()     {  ensure-sync; pkgs.ts/diy-app/sha.sh lab; }
+# preview：编译后运行（无 watch）的稳定实例 —— 长会话 / 人要持续对话时用它，改码不打断。
+preview() {  ensure-sync; DIY_VARIANT=preview pkgs.ts/diy-app/sha.sh preview "$@"; }
 
 
 ####################################################
 # app entry script & _root cmd
 ####################################################
 
-# preview 变体已删除（##381）：显式报错，绝不静默落到 build/preview/**（本脚本只 sync-dev-home 用到它）
-if [[ "${DIY_VARIANT:-}" == "preview" ]]; then
-    echo "ERROR: preview 变体已删除，改用 lab（DIY_VARIANT=lab ./sha.sh <命令>）" >&2
-    exit 1
-fi
+# preview（2026-10-23 恢复，##404）：编译后运行的稳定实例，无 watch。见 diy-app/sha.sh::preview。
 
 sha "$@"

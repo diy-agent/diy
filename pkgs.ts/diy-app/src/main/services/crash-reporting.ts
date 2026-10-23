@@ -16,6 +16,8 @@ import { mkdirSync, readdirSync } from "node:fs";
 import { app, crashReporter } from "electron";
 import { crashScene } from "./agent-audit";
 import { appendAppExit } from "./interrupted-cause";
+import { activeTurnList } from "./runtime-context";
+import { deferQuitUntilIdle } from "../core/restart-gate";
 
 /** 进程级异常/信号落盘（崩溃诊断的主日志之外的结构化尾巴）。
  *  格式与写盘在 `interrupted-cause.ts::appendAppExit` —— 冷读（##416）要按同一份格式消费，
@@ -90,6 +92,28 @@ export function installCrashReporting(home: string): void {
       app.quit();
     });
   }
+  // ── 热重启让位（##404）──
+  // `SIGUSR2` = 「**换**一份代码」而不是「停」：`scripts/electron-dev.mts` 的 watch 重建用它。
+  // 立刻退会把正在跑的本地 agent 轮次砍掉 —— 而一个正在改 `src/**` 的 agent 每改一次就
+  // 触发一次重建，等于**它自己把自己的轮次杀掉一次**（lab 实测一天 5 条 `agent/app-restart`）。
+  // 所以：有轮次在跑 ⇒ 等它们跑完再退（上限 30 分钟，超时照退并留痕）。
+  // SIGTERM/SIGINT/SIGHUP 仍是立刻退：那是用户/编排脚本「停」，让位会让实例停不掉。
+  process.on("SIGUSR2", () => {
+    console.log(`[exit] 收到 SIGUSR2（热重启请求），在跑的轮次会先跑完`);
+    const verdict = deferQuitUntilIdle({
+      activeTurns: () => activeTurnList(),
+      quit: (why) => {
+        // 留痕口径与 dev 脚本一致（kind 属信号族 ⇒ 冷读判重启，不判崩溃）
+        appendExitLog(home, "electron-dev-restart", `热重启：${why}`);
+        app.quit();
+      },
+      log: (line) => console.log(line),
+    });
+    if (!verdict.deferred) {
+      appendExitLog(home, "electron-dev-restart", "热重启：此刻空闲，立即退出");
+      app.quit();
+    }
+  });
   process.on("uncaughtException", (err) => {
     console.error(`[exit] 未捕获异常: ${err?.stack ?? err}`);
     appendExitLog(home, "uncaughtException", `${err?.message ?? err}\n${err?.stack ?? ""}`);

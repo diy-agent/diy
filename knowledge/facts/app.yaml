@@ -248,14 +248,14 @@ facts:
       verifiedAt: '2026-10-22'
   app.dev#watch-restart:
     value: |-
-      改 `src/**` 会触发 lab watch 重启 Electron，**正在跑的本机 agent 轮次会被打断**（tool 被标 `interrupted`；这是「本轮未完成/流中断」的头号成因，实测 12/12 —— facts `dev.turn-interrupt#rate`，含复跑脚本）→ 轮次中别拿源码当探针，探针写 `/tmp`；`interrupted.data` 今天为空，热重启与真流断无法区分（`dev.turn-interrupt#blind`）
+      改 `src/**` 会触发 lab watch 重启 Electron，**正在跑的本机 agent 轮次会被打断**（tool 被标 `interrupted`；这是「本轮未完成/流中断」的头号成因，实测 12/12 —— facts `dev.turn-interrupt#rate`）。三条对策：① 轮次中别拿源码当探针，探针写 `/tmp`；② **要持续对话的实例改用 preview**（`pkgs.ts/diy-app/sha.sh preview` = 编译后运行、无 watch，改 src 波及不到它；lab 留给边改边看，见 `app.entry#variant`）；③ `interrupted.data` 今天为空，热重启与真流断仍无法区分（`dev.turn-interrupt#blind`）。
     id: app.dev.watch-restart
     review: accepted
     lifecycle: active
     evidence:
-      source: user
-      at: ba99d638:pkgs.ts/diy-app/AGENTS.md:115
-      verifiedAt: '2026-10-22'
+      source: probe
+      probe: ./sha.sh preview --from lab → build/preview/main 起来后 pid 35077 常驻，改 src 不触发其重启
+      verifiedAt: '2026-10-23'
   app.entry#bin-diy:
     value: |-
       `bin/diy`（发布）→ `node build/prod/cli/index.js`；注入 `DIY_HOME=~/.diy`、`DIY_CLI=$0`、`DIY_ENV=production`
@@ -408,14 +408,14 @@ facts:
       verifiedAt: '2026-10-22'
   app.entry#variant:
     value: |-
-      `DIY_VARIANT` = `prod|test|lab`，**产物/数据分根的唯一轴**：vite 配置据此定 `outDir=build/<variant>/*`，运行时据此选 `build/<variant>/main`，缺省 `prod`（`./diy.sh` 缺省 `lab`）。lab 一根、test 独占 `build/test/**` → 两者可并行、互不打断 watch。`preview` **已删除**（##381）：**共 5 处**遇 `DIY_VARIANT=preview` **直接报错退出**，绝不静默落到 `build/preview/**` —— 三处入口（`diy.sh` / `pkgs.ts/diy-app/sha.sh` / `scripts/electron-dev.mts`）+ 根 `sha.sh`（dispatch 前）+ `src/serve/index.ts`（算数据根前）
+      `DIY_VARIANT` = `prod|test|lab|preview`，**产物/数据分根的唯一轴**：vite 配置据此定 `outDir=build/<variant>/*`，运行时据此选 `build/<variant>/main`，缺省 `prod`（`./diy.sh` 缺省 `lab`）。**`lab` = watch/HMR（边改边看）**；**`preview` = 编译后运行、无 watch 的稳定实例**（2026-10-23 恢复，##404：lab 每改一处 src 就重启主进程、打断正在跑的轮次，实测 129 轮里 128 轮这么死的 ⇒ 要持续对话的实例用 preview）。产物 `<包>/build/preview/**`、数据根**仓库根** `build/preview/home`（两处基准不同，别照产物路径推）。入口 `pkgs.ts/diy-app/sha.sh preview`（`--build` 强制重编译 / `--from <variant>` 首次克隆该变体的 home 续用其任务与会话）。`scripts/electron-dev.mts` 仍拒绝 preview（它不是 watch 模式）；web 的 `src/serve` 也不认这个变体。
     id: app.entry.variant
     review: accepted
     lifecycle: active
     evidence:
-      source: user
-      at: ba99d638:pkgs.ts/diy-app/AGENTS.md:61
-      verifiedAt: '2026-10-22'
+      source: code
+      at: pkgs.ts/diy-app/sha.sh:113
+      verifiedAt: '2026-10-23'
   app.find#chat-fold:
     value: |-
       **对话折叠 / 级别的语义唯一出处** `src/renderer_solid/lib/chat-fold.ts`（纯函数，可单测；组件只管画）：`turnRows`（一轮的过程历史行，级别只决定显示多少）· `tailOf`（结尾槽四形态：结论 / 结束点 / 现场 / 执行过程）· `endLeafTip`（结束点那句 tooltip，须喂 **turn** —— `endReason` 不在叶子上）· `clampLines` / `expandableOf`（"点开真会多出东西"的判据，**只此一套**）。级别本身落盘在 `src/renderer_solid/lib/ui-state.ts`（`Caches.diy_chat_level`，缺省 `DEFAULT_TURN_LEVEL`）
@@ -1633,10 +1633,10 @@ facts:
       verifiedAt: '2026-10-21'
   env.variant#values:
     value: |-
-      prod | test | lab（preview 已删除：遇 DIY_VARIANT=preview 显式报错，不静默落 build/preview）
+      prod | test | lab | preview（preview = 编译后运行、无 watch 的稳定实例；`scripts/electron-dev.mts` / `src/serve` 遇到它仍显式报错，因为它们不是这条路径）
     review: accepted
     lifecycle: active
     evidence:
       source: code
-      at: pkgs.ts/diy-app/src/cli/index.ts:58
-      verifiedAt: '2026-10-21'
+      at: pkgs.ts/diy-app/sha.sh:113
+      verifiedAt: '2026-10-23'

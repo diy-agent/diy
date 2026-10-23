@@ -32,8 +32,9 @@ const repoRoot = join(scriptDir, "..", "..", "..");
 // 产物 + build/lab/home 数据根（单实例锁 per-home），与 test 等变体互不干扰。
 const variant = process.env["DIY_VARIANT"] ?? "lab";
 if (variant === "preview") {
-    // preview 变体已删除（##381）：显式报错，不静默落到 build/preview/**
-    console.error("✗ preview 变体已删除，改用 lab：DIY_VARIANT=lab ./sha.sh lab");
+    // preview 是**编译后运行**的稳定实例（`sha.sh preview`，无 watch），不是本脚本的模式。
+    // 走这里 = 有人想用 watch 起 preview 根，会同时污染 build/preview/** ⇒ 直接拒绝，别猜。
+    console.error("✗ preview 是编译后运行的变体（无 watch）：用 ./sha.sh preview；开发实例仍用 ./sha.sh lab");
     process.exit(1);
 }
 process.env["DIY_VARIANT"] = variant; // 传给 vite 配置（决定 outDir）
@@ -307,35 +308,79 @@ function startElectron(url: string): void {
   restartChain = next.catch((e) => devLog("electron-restart-failed", { error: String(e) }));
 }
 
-/** SIGTERM + 等退出（宽限后 SIGKILL）。宽限是给被杀进程留出写 `app-exit.jsonl` 的时间 */
-function stopElectron(proc: ChildProcess, graceMs = 5000): Promise<void> {
+/**
+ * 热重启宽限（##404）：等旧实例把**正在跑的 agent 轮次**跑完再退。
+ *
+ * 缺省 20 分钟 —— 一轮 agent 动辄 10 分钟以上；这里等得越久，越不容易把轮次砍掉。
+ * `DIY_DEV_RESTART_GRACE_MS=0` ⇒ 不等（退回老行为：立刻强杀）。
+ */
+function restartGraceMs(): number {
+  const raw = Number(process.env["DIY_DEV_RESTART_GRACE_MS"]);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 20 * 60_000;
+}
+
+/**
+ * 等进程退出；返回是否在 `ms` 内退出。
+ *
+ * `onWait` 每隔 `reportMs` 叫一次 —— 「在等轮次跑完」和「卡死了」在终端里长得一模一样，
+ * 不主动说话就会被人当成 watcher 挂了（实测有人据此直接 Ctrl-C，反而砍了轮次）。
+ */
+function waitExit(proc: ChildProcess, ms: number, onWait?: () => void, reportMs = 60_000): Promise<boolean> {
   return new Promise((resolve) => {
     if (proc.exitCode !== null || proc.signalCode !== null) {
-      resolve();
+      resolve(true);
       return;
     }
-    let done = false;
-    const finish = (): void => {
-      if (done) return;
-      done = true;
+    let settled = false;
+    const finish = (ok: boolean): void => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      resolve();
+      if (reporter) clearInterval(reporter);
+      resolve(ok);
     };
-    const timer = setTimeout(() => {
-      devLog("electron-kill-timeout", { pid: proc.pid, graceMs });
-      try {
-        proc.kill("SIGKILL");
-      } catch {
-        /* 已退出 */
-      }
-    }, graceMs);
-    proc.once("close", finish);
-    try {
-      proc.kill("SIGTERM");
-    } catch {
-      finish();
-    }
+    const timer = setTimeout(() => finish(false), ms);
+    const reporter = onWait ? setInterval(onWait, reportMs) : null;
+    proc.once("close", () => finish(true));
   });
+}
+
+/**
+ * 请旧实例退场（##404）：**「换」不是「停」**。
+ *
+ * · POSIX 发 `SIGUSR2` —— 主进程的 restart-gate 收到后先等在跑的轮次跑完，再自己退。
+ *   老实例没有这个 handler ⇒ 信号默认动作就是终止，等价于改前的行为（平滑降级）。
+ * · win32 没有 SIGUSR2 ⇒ 退回 SIGTERM（立刻退）。
+ * · 宽限内没退 ⇒ 强杀并**由本脚本留痕**（杀的一方亲手写证据，见 ##416）。
+ */
+async function retireElectron(proc: ChildProcess): Promise<void> {
+  const graceMs = restartGraceMs();
+  const signal: NodeJS.Signals = process.platform === "win32" ? "SIGTERM" : "SIGUSR2";
+  devLog("electron-retire-request", { pid: proc.pid, signal, graceMs });
+  console.log(
+    `[dev] 请旧实例退场（${signal}）：正在跑的 agent 轮次会先跑完，最多等 ${Math.round(graceMs / 60_000)} 分钟`,
+  );
+  try {
+    proc.kill(signal);
+  } catch {
+    return; // 已退出
+  }
+  const ok = await waitExit(proc, graceMs, () => {
+    console.log("[dev] 仍在等旧实例让位（它在跑 agent 轮次）…");
+    devLog("electron-retire-waiting", { pid: proc.pid });
+  });
+  if (ok) {
+    devLog("electron-retired", { pid: proc.pid });
+    return;
+  }
+  devLog("electron-retire-timeout", { pid: proc.pid, graceMs });
+  appendAppExit(process.env["DIY_HOME"]!, "electron-dev-restart", `watch 重建：让位超时，强杀旧实例 pid=${proc.pid}`);
+  try {
+    proc.kill("SIGKILL");
+  } catch {
+    /* 已退出 */
+  }
+  await waitExit(proc, 5000);
 }
 
 async function startElectronNow(url: string): Promise<void> {
@@ -343,12 +388,10 @@ async function startElectronNow(url: string): Promise<void> {
     const old = electronProc;
     console.log("[dev] restarting electron...");
     devLog("electron-restart", { oldPid: old.pid });
-    // **杀的一方亲手留痕**（##416）：不能指望被杀进程在死前把字写完 ——
-    // ##404 lab 的 app-exit.jsonl 里只有 1 条 SIGTERM，而期间重启了多次。
-    // 写成 `electron-dev-restart`（信号族）⇒ 冷读据此给出「本轮未完成（进程重启）」。
-    appendAppExit(process.env["DIY_HOME"]!, "electron-dev-restart", `watch 重建后替换旧实例 pid=${old.pid}`);
     electronProc = null; // 先置空：其 close 事件属于「主动重启」，由下面 await 收尾
-    await stopElectron(old);
+    // **先请它在轮次跑完后自己退**（##404）；留痕由它自己写（`electron-dev-restart`），
+    // 只有让位超时的强杀路径才由本脚本补一条（##416：杀的一方亲手留证据）。
+    await retireElectron(old);
   }
 
   // CDP 端口 0 = 随机空闲端口。实际地址由 Chromium 写入 userData/DevToolsActivePort，

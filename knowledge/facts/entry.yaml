@@ -111,13 +111,14 @@ facts:
       verifiedAt: '2026-10-21'
   entry#variant:
     value: |-
-      `DIY_VARIANT`（`prod|test|lab`）是产物 / 数据分根的唯一轴，缺省 `prod`（`./diy.sh` 缺省 `lab`）；`preview` 已删除（##381），遇之显式报错 → `pkgs.ts/diy-app/AGENTS.md::env.variant`
+      `DIY_VARIANT`（`prod|test|lab|preview`）是产物 / 数据分根的唯一轴，缺省 `prod`（`./diy.sh` 缺省 `lab`）；`preview` = **编译后运行（无 watch）的稳定实例**，用来跑「不能被重启打断」的长会话（恢复于 2026-10-23，##404）。详见 facts `app.entry#variant`。
     id: agents.entry.variant
     review: accepted
     lifecycle: active
     evidence:
-      source: user
-      verifiedAt: '2026-10-21'
+      source: code
+      at: pkgs.ts/diy-app/sha.sh:113
+      verifiedAt: '2026-10-23'
   entry#verify:
     value: |-
       lab 起来后用 `diy getAppInfo` 看 `diyHome` / `env` / `branch`，确认数据目录与启动参数（验证没起错数据根/变体）
