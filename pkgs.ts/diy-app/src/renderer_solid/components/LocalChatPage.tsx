@@ -526,6 +526,55 @@ function SpentBadge(props: { node: BlockNode }) {
     );
 }
 
+/**
+ * 「看参数」开关：**按块 id 存**，因为按钮在**折叠行（bar）**上、JSON 在**框体**里，
+ * 两处是两个组件实例 —— 状态放组件内就只有一边能看到另一边点了。
+ * 用模块级 signal 而不是 props 逐层传：展开与否是**读屏偏好**，与轮次/折叠树无关。
+ */
+const [paramsOpen, setParamsOpen] = createSignal<Record<string, boolean>>({});
+
+function toggleParams(id: string) {
+    setParamsOpen({ ...paramsOpen(), [id]: !paramsOpen()[id] });
+}
+
+/** 这块有没有参数可看（流式早期的 `input` 也算 —— 半截 JSON 也比空着强） */
+function hasParams(n: BlockNode): boolean {
+    if (n.tag !== "tool") return false;
+    return n.attrs.args !== undefined || !!str(n.attrs.input);
+}
+
+/**
+ * **bar 上的 `<>`**（##408 用户 2026-10-23 订正）：
+ * 「应该在 bash 输出的 **bar** 上加 `<>` 图标，你加到了内容区域」。
+ * 所以它挂在折叠行（`ProcessRow` / `TailBox` 的 `data-row-head`）里，与状态灯、耗时角标同级；
+ * 框体里只负责把 JSON 画出来。
+ */
+function ParamsToggle(props: { node: BlockNode; onOpen?: () => void }) {
+    const n = () => props.node;
+    const open = () => !!paramsOpen()[n().id];
+    return (
+        <Show when={hasParams(n())}>
+            <button
+                class="btn btn-ghost btn-xs min-h-0 shrink-0 px-1 text-caption opacity-40 hover:opacity-100"
+                classList={{ "opacity-100 text-primary": open() }}
+                data-tool-params-toggle="1"
+                data-tip="看这次工具调用的参数：模型发的原文 + 工具实际收到的（含缺省值）"
+                aria-label="查看工具参数"
+                onClick={(e) => {
+                    // 折叠行自己也吃点击 —— 不拦就会「点参数 = 展开/收起正文」
+                    e.stopPropagation();
+                    // 体是折叠的就没有 `ToolBody` 可挂面板（点了只会"什么都没发生"，实测踩过）：
+                    // 先要参数就必须先把行打开。
+                    props.onOpen?.();
+                    toggleParams(n().id);
+                }}
+            >
+                {"<>"}
+            </button>
+        </Show>
+    );
+}
+
 /** 状态灯档位 → class（**只有这里认 class**；"什么时候失败"的判据在 `procStatusOf`） */
 const STATUS_TONE_CLASS: Record<ProcTone, string> = {
     error: "text-error",
@@ -573,43 +622,53 @@ function ToolBody(props: {
     const cmd = () => shownCommand(n());
     const cmdNeedsFull = () => !!cmd();
     /**
-     * **原始参数**（用户 2026-10-23：「工具定义里有 `background` / `timeout`，可聊天里看不见，
-     * 我判断不了它是前台还是后台」）。
+     * **两段式参数**（用户 2026-10-23 二轮订正）：
+     * ① **模型发的原文** —— `args`（流式早期退回逐片拼的 `input`，半截 JSON 也比空着强）；
+     * ② **工具实际收到的** —— `execArgs`（main 侧 `shared/tool-args.ts` 补完缺省的那一份，
+     *    被补上的键记在 `execDefaults` 里并逐个标注）。
      *
-     * 为什么必须给原文而不是"拼一句人话"：参数是模型**实际发的**那一份，工具描述随时会改；
-     * 渲染层再翻译一遍就多一处会漂的口径。JSON 原样给人看，判断依据与模型看到的一致。
-     * 流式早期 `args` 还没到 ⇒ 退回逐片拼的 `input` 原文（半截 JSON 也比空着强）。
+     * 只给①会让人以为 `background` / `timeout` 不存在（用户实测就是这么误判的）；只给②则
+     * 看不出模型自己说了什么。两份并列，谁也不用猜。
      */
-    const [showParams, setShowParams] = createSignal(false);
-    const paramsText = (): string => {
+    const rawParamsText = (): string => {
         const args = n().attrs.args;
         if (args && typeof args === "object") return JSON.stringify(args, null, 2);
-        const raw = str(n().attrs.input);
-        return raw || "（还没有参数）";
+        return str(n().attrs.input) || "（还没有参数）";
+    };
+    const execParamsText = (): string => {
+        const eff = n().attrs.execArgs;
+        if (!eff || typeof eff !== "object") return "";
+        const def = new Set(
+            Array.isArray(n().attrs.execDefaults) ? (n().attrs.execDefaults as unknown[]).map((k) => String(k)) : [],
+        );
+        const json = JSON.stringify(eff, null, 2);
+        if (def.size === 0) return json;
+        // 逐行标注「这行是补的」：JSON 里看不出"显式 false"和"没传补 false"的区别，
+        // 而这恰恰是用户要判断的那件事 —— 只能在这里标。
+        return json
+            .split("\n")
+            .map((line) => {
+                const m = /^\s*"([^"]+)":/.exec(line);
+                return m && def.has(m[1]!) ? `${line}   // 缺省值（模型没发）` : line;
+            })
+            .join("\n");
     };
     return (
         <div class="space-y-1 font-mono" data-tool-body>
             <Show when={cmdNeedsFull()}>
-                <div class="relative">
-                    <button
-                        class="btn btn-ghost btn-xs absolute right-1 top-0 z-10 min-h-0 px-1 opacity-40 hover:opacity-100"
-                        data-tool-params-toggle="1"
-                        data-tip="看模型这次实际发的参数（JSON 原文）—— 是前台还是后台、超时多少都在里面"
-                        aria-label="查看工具参数"
-                        onClick={() => setShowParams(!showParams())}
-                    >
-                        <span class="text-[10px]">{showParams() ? "×" : "<>"}</span>
-                    </button>
-                    <pre class="text-base-content/70 pr-8">$ {cmd()}</pre>
-                </div>
+                <pre class="text-base-content/70">$ {cmd()}</pre>
             </Show>
-            <Show when={showParams()}>
-                <pre
-                    class="max-h-72 overflow-auto whitespace-pre-wrap rounded bg-base-100/60 p-2 text-base-content/80"
-                    data-tool-params
-                >
-                    {paramsText()}
-                </pre>
+            <Show when={paramsOpen()[n().id]}>
+                <div class="space-y-1 rounded bg-base-100/60 p-2" data-tool-params>
+                    <div class="text-caption opacity-60">模型发的参数（原文）</div>
+                    <pre class="max-h-60 overflow-auto whitespace-pre-wrap text-base-content/80">{rawParamsText()}</pre>
+                    <Show when={execParamsText()}>
+                        <div class="text-caption opacity-60">工具实际收到的参数（补完缺省）</div>
+                        <pre class="max-h-60 overflow-auto whitespace-pre-wrap text-base-content/80">
+                            {execParamsText()}
+                        </pre>
+                    </Show>
+                </div>
             </Show>
             <Show when={output()}>
                 {/* 相对定位容器：**最大化按钮**浮在框右上角（≠ 插一行按钮把正文挤下去，
@@ -723,6 +782,12 @@ function ProcessRow(props: {
             <span class="font-medium text-base-content/80 truncate flex-1">
                 {summaryOf(n(), open(), props.turn)}
             </span>
+            <ParamsToggle
+                node={n()}
+                onOpen={() => {
+                    if (!open()) props.onToggle(n().id);
+                }}
+            />
             <SpentBadge node={n()} />
         </>
     );
@@ -834,6 +899,17 @@ function TailBox(props: {
                     <span class="text-error">✗</span>
                 </Show>
                 <span class="font-medium text-base-content/80 truncate flex-1">{title()}</span>
+                {/* 参数开关：直播/现场也要能看（`props.body` 才是那个工具块，`props.node` 是尾叶子） */}
+                <Show when={props.body}>
+                    {(b) => (
+                        <ParamsToggle
+                            node={b()}
+                            onOpen={() => {
+                                if (!open()) props.onToggle(n().id, props.live ? true : undefined);
+                            }}
+                        />
+                    )}
+                </Show>
                 {/* 开销角标（用户 2026-10-20：「这是模型质量的观测」）：主体那一块自己的耗时 + 体积 */}
                 <Show when={props.body}>{(b) => <SpentBadge node={b()} />}</Show>
                 {/* 状态位**只说此刻在等什么**（三档），不再有"进行中"这种什么也没说的词 */}

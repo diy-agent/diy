@@ -208,6 +208,7 @@ import { ensureReasoningReplay, isDeepSeekWire, type ReasoningReplayOpts } from 
 import { resolveModelKey } from "../core/model-runtime";
 import { invariant } from "../../shared/error-triage";
 import { runRegistry, type RunInfo } from "./run-registry";
+import { effectiveBashArgs } from "../../shared/tool-args";
 import { ownedGroups } from "./owned-groups";
 import { exitText, formatDuration, runLine, stateLabel } from "../../shared/run-status";
 import { spawnedJobs } from "./spawned-jobs";
@@ -1385,13 +1386,16 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                 appendAudit(home, { phase: "bash-start", taskUri, cwd, command });
                 const t0 = Date.now();
                 const execOpts = opts as { abortSignal?: AbortSignal; toolCallId?: string } | undefined;
+                // **生效参数**：缺省值只在这里补一次（`shared/tool-args.ts`），聊天里显示的
+                // 「工具实际收到」用的也是这同一份 —— 两处各补一次必然漂成"界面说前台、实际跑后台"。
+                const eff = effectiveBashArgs({ command, timeout, background }, limits);
                 // ── 后台模式（##408 刀 8）──
                 // 与前台共用**同一个** bash 工具和同一套入参，只由 `background` 一位分叉：
                 //   · 前台 = 阻塞到结束（超时可调，缺省 300s）——「现在就要结果」
                 //   · 后台 = 立即返回 id + 日志路径，结束时插话唤醒——「等得起，先干别的」
                 // 这也是 opencode `shell` 工具的形状（`background` + `timeout` 两位），
                 // 两边的口径一致，模型不必学两套。
-                if (background) {
+                if (eff.args.background === true) {
                     const proc = runRegistry.spawn({
                         command,
                         cwd,
@@ -1480,7 +1484,7 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                             job?.noteOutput(chunk);
                         },
                     },
-                    timeout,
+                    eff.args.timeout as number,
                 );
                 // 收口：前台不投插话（结果直接回给工具调用方），但状态/退出码/耗时进表
                 tracked.finish({
@@ -4679,6 +4683,10 @@ export class LocalAgentManager {
                             yield* ensure(part.toolCallId, "tool", stepId, { tool: part.toolName, status: "streaming" });
                             blockT0.set(part.toolCallId, Date.now());
                             const input = (part as { input?: JSONVal }).input;
+                            // 模型发的原文之外，再给一份**补完缺省的**实参（##408 用户 2026-10-23）：
+                            // 用户看见 `{"command":…}` 会以为 background/timeout 不存在，其实它们
+                            // 是代码里补的缺省值 —— 只显示原文等于让界面撒谎。
+                            const effArgs = part.toolName === "bash" ? effectiveBashArgs(input, L) : null;
                             const title =
                                 input &&
                                 typeof input === "object" &&
@@ -4692,6 +4700,12 @@ export class LocalAgentManager {
                                     tool: part.toolName,
                                     input: JSON.stringify(input ?? {}),
                                     args: input ?? null,
+                                    ...(effArgs
+                                        ? {
+                                              execArgs: effArgs.args as unknown as JSONVal,
+                                              execDefaults: effArgs.defaulted,
+                                          }
+                                        : {}),
                                     status: "running",
                                     title,
                                 },
