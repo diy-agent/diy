@@ -11,7 +11,9 @@
 // 看 `kept: [[5,8],[120,135]]` 就知道 9~119 被省。
 //
 // ── 形态（##310 六轮拍板后）──
-// `history:` 段 = **纯数据**（file / absPath / budgetBytes / keptBytes / kept）。
+// `history:` 段 = **纯数据**（file / absPath / budgetBytes / keptBytes / countBytes / mustBytes / kept）。
+// ⚠️ `countBytes` / `mustBytes` 是**拆账**不是修饰：托底级不占预算 ⇒ 只报 budget+kept
+// 会让人读成「超了 58%」（本任务 ##5 实账 20480 vs 32298，代码一直是对的、说法是错的）。
 // 解释（这是什么、怎么回取原文、字段含义）**一律在信封的 `help.history`**
 // （由 `HistoryNoteSchema` 递归派生）—— 值节点里禁出现 `about`/`legend`/`retrieve`
 // 一类解释性字段：一条信息只在一处，且那一处由代码（zod）派生、不会腐坏。
