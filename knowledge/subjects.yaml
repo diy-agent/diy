@@ -190,16 +190,24 @@ subjects:
   rpc.rule:
     description: |-
       diy-rpc 硬约束：ESM 扩展名 / 浏览器安全边界 / 发布流程
-  rule:
-    description: |-
-      硬约束
-    aliases: []
   rule.agent:
     description: |-
       agent 自身的行为纪律（先查证再解释 / 结论走工具 / 别拿 src 当探针 / 少读依赖目录）
+  rule.code:
+    description: |-
+      代码设计硬约束：核心逻辑不依赖日志 / 判别联合的形状（公共字段同级、私有进 data）
+  rule.dev:
+    description: |-
+      本地开发环境与验证：worktree 位置与自检 / sha.sh check 唯一入口 / 并发禁令 / 实例起停权限 / 新包检查单
+  rule.doc:
+    description: |-
+      AGENTS.md 与规范索引怎么写：信息投影 / 分层职责 / 一行一条 / SPECS 总表 / UI 方案用单文件 HTML
   rule.err-triage:
     description: |-
       异常三档分类的判据（defect / 已识别外部 / 未识别外部）
+  rule.task:
+    description: |-
+      任务作为原子开发单元：拆任务的边界 / owner 不写码 / 引用格式 / 产物落位 / 文件头权威
   talk.find:
     description: |-
       diy-talk 包内定位：锚点 / 事件 / 反应 / role / 序列化 / 装配器（@diy/talk 对话容器内核）
