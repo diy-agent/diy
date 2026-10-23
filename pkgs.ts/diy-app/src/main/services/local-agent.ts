@@ -1213,7 +1213,18 @@ export function runBash(
             //    `kill(-pid)` 当场 ESRCH，子孙照样跑满）。要进程组就只能自己 spawn，并顺手接住
             //    execFile 原本代劳的那几件事（攒输出 / maxBuffer / 超时 / 错误形状）——
             //    形状与 execFile **逐字段同构**，判据仍只有 settle 那一处。
-            const child = spawn("/bin/bash", ["-c", command], { cwd, detached: true });
+            //
+            // ⚠️ `stdio` 必须显式给（##418 实测）：缺省是 `['pipe','pipe','pipe']` ⇒ 子进程 fd0 是
+            //    **socketpair**（不是 tty、也不是 /dev/null）。ripgrep 用 `is_file / is_fifo / is_socket`
+            //    启发式判断「stdin 可读吗」，socket 即判可读 ⇒ **放弃搜 `./`、改读 stdin** ⇒ 没人写
+            //    就阻塞到工具超时（实测：不带路径的 `rg` 跑满 300s，user CPU 只用几毫秒）。
+            //    `ignore`（= /dev/null）让它正常搜 cwd；`cat`（无参）/ 无文件参数的 `grep` 也立刻拿到 EOF。
+            //    stdout / stderr 必须仍是 `pipe`：超时 / 溢出 / 取消三条判据都依赖 `onData`。
+            const child = spawn("/bin/bash", ["-c", command], {
+                cwd,
+                detached: true,
+                stdio: ["ignore", "pipe", "pipe"],
+            });
             if (child.pid !== undefined) hooks?.onSpawn?.(child.pid);
             // 输出按**块**攒（不逐块拼字符串）：上限判据只要长度计数，逐块 `byteLength` 是 O(n²)
             const chunks = { out: [] as Buffer[], err: [] as Buffer[] };
