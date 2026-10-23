@@ -150,6 +150,26 @@ export function BrainPage(props: { uri: string }): JSX.Element {
     const [data, { refetch }] = createResource(load);
 
     const steps = (): BrainStep[] => data() ?? [];
+
+    /**
+     * 能算出段账的步数。**为什么要有这个数**：流量默认「只留首尾」（`truncated`），
+     * 截断的请求体解不开 ⇒ 段账恒为空。实测本任务 412 条记录**全部**截断 —— 没有这个
+     * 提示，用户打开本页看到的是一片 0，会以为是页坏了，而不是「去开个开关」。
+     */
+    const usable = (): number => steps().filter((s) => s.messages.length > 0).length;
+    const [enabling, setEnabling] = createSignal(false);
+    /** 就地开「记录完整请求内容」—— 用户不必先知道那开关在流量页的哪个角落 */
+    const enableCapture = async (): Promise<void> => {
+        setEnabling(true);
+        try {
+            await diyService.diy.traffic.setFullCapture({ on: true });
+            await refetch();
+        } catch (e) {
+            console.error("开启全量捕获失败", e);
+        } finally {
+            setEnabling(false);
+        }
+    };
     const cur = (): BrainStep | null => {
         const list = steps();
         if (list.length === 0) return null;
@@ -495,6 +515,26 @@ export function BrainPage(props: { uri: string }): JSX.Element {
                 <div class="flex-1" />
                 <LayoutAreaToggles page={findPage(PAGE)!} ctx={props.uri} />
             </div>
+            {/* 段账不可用时的显式降级：整片 0 必须有一句话解释 + 一个能直接点的修法 */}
+            <Show when={steps().length > 0 && usable() === 0}>
+                <div class="flex shrink-0 flex-wrap items-center gap-2 border-b border-warning/40 bg-warning/10 px-3 py-1 text-caption">
+                    <span class="badge badge-warning badge-xs">段账不可用</span>
+                    <span class="opacity-80">
+                        {`这 ${steps().length} 步的请求体都被截断（默认只留首尾一段，解不开就数不出段）—— 不是没有上下文，是没记全。`}
+                    </span>
+                    <button class="btn btn-xs btn-warning" disabled={enabling()} onClick={() => void enableCapture()}>
+                        {enabling() ? "开启中…" : "开启全量录制，再真发一轮"}
+                    </button>
+                    <span class="opacity-50">
+                        （等价于流量页「记录完整请求内容」/ `traffic setFullCapture true`；本页字节仍按 `reqBytes` 出行，只是拆不出段）
+                    </span>
+                </div>
+            </Show>
+            <Show when={steps().length > 0 && usable() > 0 && usable() < steps().length}>
+                <div class="shrink-0 border-b border-base-300 bg-base-200/40 px-3 py-1 text-caption opacity-70">
+                    {`${steps().length} 步里有 ${usable()} 步能拆段，其余请求体被截断（开「记录完整请求内容」后新发的请求才可拆）`}
+                </div>
+            </Show>
             <div class="min-h-0 flex-1">
                 <ViewGrid
                     pageId={PAGE}
