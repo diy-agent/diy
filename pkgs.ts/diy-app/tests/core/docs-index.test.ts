@@ -74,6 +74,22 @@ describe("buildDocsIndex", () => {
         expect(none?.status).toBeUndefined();
     });
 
+    it("状态词里的加粗标记先剥掉（不会被 20 字截断切出 `**` 残尾）", () => {
+        const root = tmpRepo({
+            // 实测形态：`> **状态：研究完成，实现未开始（下一轮）**`（18 字，刚好不截断）
+            "docs/plans/bold.md": "# 带加粗\n\n> **状态：研究完成，实现未开始（下一轮）**\n\n正文\n",
+            // 超长形态：截断点落在粗体内部，尾部的 `**` 不许留
+            "docs/plans/long-bold.md": `# 超长加粗\n\n> **状态：${"很长的状态".repeat(6)}**\n\n正文\n`,
+        });
+        const idx = buildDocsIndex({ root });
+        const bold = idx?.entries.find((e) => e.path.endsWith("bold.md"));
+        expect(bold?.status).toBe("状态：研究完成，实现未开始（下一轮）");
+        const longBold = idx?.entries.find((e) => e.path.endsWith("long-bold.md"));
+        expect(longBold?.status?.startsWith("状态：")).toBe(true);
+        expect(longBold?.status?.endsWith("…")).toBe(true);
+        expect(longBold?.status?.includes("*")).toBe(false);
+    });
+
     it("非 git 仓库：touched 缺席，但条目照样出（一个文件坏不许让整节消失）", () => {
         const idx = buildDocsIndex({ root: tmpRepo({ "docs/plans/a.md": "# A\n" }) });
         expect(idx?.entries.length).toBe(1);

@@ -17,7 +17,8 @@
  * 就是信号**（"文档说 7-10，实际 7-19 改过"）。只信 git 会得出"8 篇同一天写的"这种假结论。
  *
  * `status` 是**启发式**：只认开篇引用行里以「状态 / 结论 / 核心结论 / 实现状态」开头的那句。
- * 抽不到就留空 —— **不许编**（编出来的状态比没有更坏，人会信）。
+ * 抽不到就留空 —— **不许编**（编出来的状态比没有更坏，人会信）。实测 10 篇里 4 篇抽到，
+ * 缺的 6 篇是 7 月的旧格式（正文里压根没写状态），**这是正确行为**，不是待修的 bug。
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -145,12 +146,22 @@ function describeOne(root: string, rel: string, touched?: string): DocsEntry | n
     return entry;
 }
 
-/** 开篇引用块里的「状态：…」那一句（启发式，抽不到返回空串） */
+/**
+ * 开篇引用块里的「状态：…」那一句（启发式，抽不到返回空串）。
+ *
+ * 加粗标记**先整体剥掉**再判定 / 截断：`**状态：…**` 里的 `**` 不带信息，而夹在中段的 `**`
+ * 一旦碰上 20 字截断就留下 `（下一轮）**…` 这种残缺尾巴（实测 4 篇里 2 篇如此），
+ * 读起来像没写完 —— 索引是给人扫的，残缺符号比少几个字更坏。
+ */
 function statusOf(text: string): string {
     const lines = text.split("\n").slice(1, STATUS_SCAN_LINES);
     for (const line of lines) {
         if (!line.startsWith(">")) continue;
-        const body = line.replace(/^>\s*/, "").trim().replace(/^[*_\s]+|[*_\s]+$/g, "");
+        const body = line
+            .replace(/^>\s*/, "")
+            .trim()
+            .replace(/\*\*|__/g, "")
+            .replace(/^[*_\s]+|[*_\s]+$/g, "");
         if (!/^(状态|结论|核心结论|实现状态|当前状态)\s*[:：]/.test(body)) continue;
         return clip(body.replace(/\s*[|｜].*$/, ""), STATUS_MAX);
     }
