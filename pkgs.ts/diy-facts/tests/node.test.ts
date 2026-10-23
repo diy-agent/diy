@@ -3,7 +3,7 @@
 // 压的是**真场景**而不是构造的空库：词表 → 提交两条 → 改一条 → 提交一条冲突的。
 // 每条都在临时目录里跑（submit 真的落盘，不 mock fs —— mock 出来的通过等于没验）。
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -334,11 +334,15 @@ describe('evidence.at 钉版本（<rev>:<path>:<line>）', () => {
     });
 });
 
-describe('submit · drop 把一篇文章删空', () => {
-    // 起因（##5 第 12 轮实测）：`drop` 只从**存活集**建篇 → 一篇被删空后它不在存活集里
-    // ⇒ 不进写盘计划 ⇒ **磁盘一个字不动**，而 report 里 `dropped` 列了 id、`files` 为空
-    // —— 两处自相矛盾本身就是判据（"我删了 4 条"与"一个文件都没改"不能同时成立）。
-    it('整篇删空后文件仍然重写（只剩头注），status 不再报那几条', () => {
+describe('submit · drop 把一篇文章删空 ⇒ 文件消失', () => {
+    // 两代病史，同一处：
+    //   ① 早期 `drop` 只从**存活集**建篇 → 一篇被删空后它不在存活集 ⇒ 不进写盘计划
+    //      ⇒ 磁盘一个字不动，而 report 里 `dropped` 列了 id、`files` 为空（自相矛盾）
+    //   ② 修①时选了"按空集重写、保留头注" —— 判据成立但结果错：空的 `facts: []` 壳
+    //      不能 get、不占投影，只让 `knowledge/facts/` 堆"曾经有过"的空篇，
+    //      而 `files: 218 B` 这种"变了其实什么都没了"的数字更误导。
+    // 现在：删空 ⇒ 文件消失（语义与 `drop` 一致；历史由 git 留）。审计对象是事实不是文件。
+    it('整篇删空后文件消失，status 不再报那几条', () => {
         const dir = makeRepo();
         writeFileSync(path.join(dir, '..', 'K.ts'), 'a\n');
         const ev = { source: 'code' as const, at: 'K.ts:1', verifiedAt: '2026-10-22' };
@@ -354,13 +358,39 @@ describe('submit · drop 把一篇文章删空', () => {
         expect(r.report.dropped).toEqual(['p1', 'p2']);
         // 关键不变量：dropped 有值 ⇒ files 必须非空（否则就是"report 说删了、磁盘没动"）
         expect(r.report.files.map((f) => path.basename(f.file))).toEqual(['app.yaml']);
+        // `after === 0` ⇔ 本篇被删空、文件已消失（正常写盘恒有头注，不会 = 0）
+        expect(r.report.files[0]?.after).toBe(0);
 
         expect(loadRepo(dir).facts).toHaveLength(0);
-        const text = readFileSync(path.join(dir, 'facts', 'app.yaml'), 'utf8');
-        // **文件不删**：删文件会让 notes / domains / evidence 的相对路径同时失去落点，
-        // 且"文件消失"不可审计 —— 空篇是"这里曾有什么、现在没了"的留痕
-        expect(text.startsWith('# knowledge/facts/app.yaml')).toBe(true);
-        expect(text).not.toContain('app.port#default');
+        expect(existsSync(path.join(dir, 'facts', 'app.yaml'))).toBe(false);
+    });
+
+    it('dry-run 不删文件（同一条路径，只差最后落盘）', () => {
+        const dir = makeRepo();
+        writeFileSync(path.join(dir, '..', 'K.ts'), 'a\n');
+        const ev = { source: 'code' as const, at: 'K.ts:1', verifiedAt: '2026-10-22' };
+        submit(dir, { facts: [fact({ id: 'p1', subject: 'app.port', aspect: 'default', value: '18888', evidence: ev })] });
+        const r = submit(dir, { facts: [], drop: ['p1'], dryRun: true });
+        expect(r.report.files[0]?.after).toBe(0);
+        expect(existsSync(path.join(dir, 'facts', 'app.yaml'))).toBe(true);
+    });
+
+    it('删空一个主题 ⇒ 该库 expose.yaml 里那一行也摘掉（配置不许指向零事实的主题）', () => {
+        const dir = makeRepo();
+        writeFileSync(path.join(dir, '..', 'K.ts'), 'a\n');
+        const ev = { source: 'code' as const, at: 'K.ts:1', verifiedAt: '2026-10-22' };
+        writeFileSync(path.join(dir, 'expose.yaml'), 'expose:\n  app.port: full\n  dev.check: index\n');
+        submit(dir, {
+            facts: [
+                fact({ id: 'p1', subject: 'app.port', aspect: 'default', value: '18888', evidence: ev }),
+                fact({ id: 'd1', subject: 'dev.check', aspect: 'entry', value: './sha.sh check', evidence: ev }),
+            ],
+        });
+        submit(dir, { facts: [], drop: ['p1'] });
+        const text = readFileSync(path.join(dir, 'expose.yaml'), 'utf8');
+        expect(text).not.toContain('app.port');
+        // 还活着的主题不动
+        expect(text).toContain('dev.check');
     });
 
     it('多篇里只删空其中一篇：另一篇照常不动', () => {
@@ -375,8 +405,10 @@ describe('submit · drop 把一篇文章删空', () => {
         });
         const other = readFileSync(path.join(dir, 'facts', 'dev.yaml'), 'utf8');
         const r = submit(dir, { facts: [], drop: ['p1'] });
-        // 存活篇照常重写（内容不变），被删空的那篇进 `files`
+        // 存活篇照常重写（内容不变），被删空的那篇进 `files` 且 after = 0（= 文件已消失）
         expect(r.report.files.map((f) => path.basename(f.file)).sort()).toEqual(['app.yaml', 'dev.yaml']);
+        expect(r.report.files.find((f) => f.file.endsWith('app.yaml'))?.after).toBe(0);
+        expect(r.report.files.find((f) => f.file.endsWith('dev.yaml'))?.after).toBeGreaterThan(0);
         expect(readFileSync(path.join(dir, 'facts', 'dev.yaml'), 'utf8')).toBe(other);
     });
 });

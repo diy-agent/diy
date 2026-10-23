@@ -692,7 +692,13 @@ export interface SubmitReport {
     readonly newSubjects: readonly string[];
     /** 本批从**本地**词表里删掉的 subject（不存在于本库的不在此列） */
     readonly droppedSubjects: readonly string[];
-    /** 每篇的字节变化（`path → [before, after]`） */
+    /**
+     * 每篇的字节变化（`path → [before, after]`）。
+     *
+     * `after === 0` **就是**「这一篇被删空了，文件已消失」—— 正常写盘恒有头注（≥ 200 B），
+     * 不可能为 0，所以不需要额外的 `removed` 布尔（多一个字段 = 多一处可能与 after 打架的真相，
+     * 而且 diy-app 侧的 zod 会把它 strip 掉 —— 契约与实现又分叉）。
+     */
     readonly files: readonly { readonly file: string; readonly before: number; readonly after: number }[];
     /** 本批物理删除的 id（不存在于本库的 id 不在此列 —— 删不存在的东西不该算成功） */
     readonly dropped: readonly string[];
@@ -758,7 +764,11 @@ export function submit(
     // 1) 候选事实集：同 id 覆盖（审计锚点稳定），新 id 追加
     const byId = new Map(repo.facts.map((f) => [f.id, f]));
     const dropped: string[] = [];
+    // 被删事实的 subject 集合：删空一个主题后要把 expose.yaml 里那行也摘掉（见 3.5）
+    const subjectsTouchedByDrop = new Set<string>();
     for (const id of input.drop ?? []) {
+        const prev = byId.get(id);
+        if (prev !== undefined) subjectsTouchedByDrop.add(prev.subject);
         if (byId.delete(id)) dropped.push(id);
     }
     const added: string[] = [];
@@ -846,7 +856,15 @@ export function submit(
     // 库目录里没有 `expose.yaml` 时不判（兼容窗口：升级当天不能把存量库卡死）。
     const exposeFile = path.join(repo.dir, 'expose.yaml');
     const hasExposeFile = existsSync(exposeFile);
-    const exposeMap: ExposeMap = { ...readExpose(repo.dir), ...(input.expose ?? {}) };
+    const storedExpose = readExpose(repo.dir);
+    const exposeMap: Record<string, ExposeLevel> = { ...storedExpose, ...(input.expose ?? {}) };
+    // 删空一个主题 ⇒ 把它在本库 expose.yaml 里那一行一起摘掉。
+    // 不摘的后果：键留着指向一个零事实的 subject，`status` 会把它当档位报出来、
+    // 预算校验却永远看不到它 —— 配置与库面脱节，而人看不出哪边是对的。
+    // 判定用**本库存活集**（candidate = 本库，写侧不并额外库），所以别库的同名主题不受影响。
+    const emptiedSubjects = [...subjectsTouchedByDrop].filter((s) => !candidate.some((f) => f.subject === s));
+    const prunedExpose = emptiedSubjects.filter((s) => s in storedExpose);
+    for (const s of emptiedSubjects) delete exposeMap[s];
     if (hasExposeFile || input.expose !== undefined) {
         const fallback = defaultExposeOf(repoOpts.kind ?? 'project');
         for (const p of checkExposeLeveled(
@@ -869,19 +887,22 @@ export function submit(
         list.push(f);
         fileOf.set(file, list);
     }
-    // 4.5) **被删空的篇也要重写**：一篇文章的条目被本批 drop 光之后，它已不在
-    // `candidate`（存活集）里 ⇒ 不进 `fileOf` ⇒ **磁盘一个字不动**，而 report 里
-    // `dropped` 却列了 4 个 id、`files` 为空（两处自相矛盾 —— 这本身就是判据）。
-    // 处置：照样按空集重写（保留头注 / note / domain），**不删文件** —— 删文件会让
-    // `repo.notes` / `domains` / evidence 里的相对路径同时失去落点，而且"文件消失"
-    // 不可审计。空篇不是垃圾，是"这里曾经有什么、现在没了"的留痕。
-    for (const id of dropped) {
-        const file = repo.origin.get(id);
-        if (file !== undefined && !fileOf.has(file)) fileOf.set(file, []);
-    }
-
+    // 4.5) **被删空的篇 = 删文件**（不是写一份空壳）
+    // 一篇文章的条目被本批 drop 光之后，它已不在 `candidate`（存活集）里 ⇒ 不进 `fileOf`。
+    // 早先的处置是"按空集重写，保留头注 / note / domain"，理由是"文件消失不可审计" ——
+    // 那条理由站不住：**审计对象是事实不是文件**，空的 `facts: []` + 只剩头注的壳
+    // 既不能 get、也不占投影，却让 `knowledge/facts/` 里堆着一堆"曾经有过"的空篇，
+    // 而 report 里 `files: 4 → 218 B` 这种"看起来变了其实什么都没了"的数字更误导。
+    // 所以：drop 删空 ⇒ 文件消失（与 `drop` 语义一致：删了就没了）。删不掉历史有 git。
+    const removals: string[] = [];
     const files: { file: string; before: number; after: number }[] = [];
     const writes: { file: string; text: string }[] = [];
+    for (const id of dropped) {
+        const file = repo.origin.get(id);
+        if (file === undefined || fileOf.has(file) || removals.includes(file)) continue;
+        removals.push(file);
+        files.push({ file: path.relative(repo.root, file), before: existsSync(file) ? readFileSync(file, 'utf8').length : 0, after: 0 });
+    }
     for (const [file, list] of fileOf) {
         const before = existsSync(file) ? readFileSync(file, 'utf8').length : 0;
         const text = renderDoc({
@@ -903,8 +924,9 @@ export function submit(
         writes.push({ file: vocabFile, text: `${VOCAB_HEAD}\n${dumpSource({ subjects: vocab }, { noRefs: true, lineWidth: -1, quoteStyle: 'single' })}` });
     }
 
-    // 6) 暴露档：只在**真的给了** `expose` 时重写（未给不动文件 —— 空提交不该把档位洗成默认）
-    if (input.expose !== undefined) {
+    // 6) 暴露档：**给了 expose** 或 **drop 删空了主题**（要摘键）时重写；否则不动文件
+    // （未给不动文件 —— 空提交不该把档位洗成默认）
+    if (input.expose !== undefined || prunedExpose.length > 0) {
         const merged: Record<string, string> = {};
         for (const k of Object.keys(exposeMap).sort()) merged[k] = exposeOf(exposeMap, k);
         writes.push({
@@ -917,7 +939,7 @@ export function submit(
     // 逐个「写 tmp → rename」在 ENOSPC 于第 5 个文件时，前 4 个已经换掉了：校验层刚做成的
     // 「全过才写」在 IO 层漏成半截。两阶段把窗口压到「只剩下目录项替换」。
     // 并发安全：tmp 名带 pid + rand（固定名会让同进程两批 submit 互相踩）。
-    if (!(input.dryRun ?? false)) writeFilesAtomic(writes);
+    if (!(input.dryRun ?? false)) writeFilesAtomic(writes, { removals });
     return {
         report: { dryRun: input.dryRun ?? false, added, updated, unchanged, newSubjects, droppedSubjects, files, dropped },
         problems,
@@ -966,7 +988,7 @@ export function formatReport(r: SubmitReport): string {
     if (r.newSubjects.length > 0) lines.push(`+ 词表新增 ${r.newSubjects.length}：${r.newSubjects.join(', ')}`);
     if (r.droppedSubjects.length > 0) lines.push(`- 词表删除 ${r.droppedSubjects.length}：${r.droppedSubjects.join(', ')}`);
     if (lines.length === 0) lines.push(`= 无变化（${r.unchanged.length} 条与真源一致）`);
-    for (const f of r.files) lines.push(`  ${f.file}: ${f.before} → ${f.after} B`);
+    for (const f of r.files) lines.push(f.after === 0 ? `  删除空篇 ${f.file}（原 ${f.before} B）` : `  ${f.file}: ${f.before} → ${f.after} B`);
     if (r.dryRun) lines.push('（--dry-run：以上均未落盘）');
     return lines.join('\n');
 }

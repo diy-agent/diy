@@ -158,7 +158,10 @@ describe("submit", () => {
         // 这条断言原本压"id 在 value 之前"，是列表形式年代的 —— 形状改了、断言没跟，红灯
         // 亮了很久没人管（`./sha.sh check` 不含单测）。现在压真正的契约：key 在最前。
         expect(text).toContain("dev.test#entry:");
-        expect(text.indexOf("dev.test#entry")).toBeLessThan(text.indexOf("value: ./sha.sh test-unit"));
+        // ⚠️ 别再压 `value: <一行>`：全库已改成块标量（`value: |` + 缩进正文），
+        // 断言文本形状会被"纯格式重排"打红（`9b8bc91b` 之后这里就是这么断的）。
+        // 压顺序即可：claim key 必须在值**之前**出现。
+        expect(text.indexOf("dev.test#entry:")).toBeLessThan(text.indexOf("./sha.sh test-unit"));
         // id 仍是**审计锚点**（不可派生），只是不再当结构键 —— 它必须还在值里
         expect(text).toContain("id: test.entry");
     });

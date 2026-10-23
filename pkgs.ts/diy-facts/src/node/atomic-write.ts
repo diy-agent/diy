@@ -47,6 +47,20 @@ export interface AtomicWrite {
     text: string;
 }
 
+/** 整批落盘的选项（删除与写同一批，见 `removals`） */
+export interface AtomicApplyOptions {
+    fs?: FsLike;
+    /**
+     * 本批**要删掉**的文件（不存在的静默跳过）。
+     *
+     * 为什么与写同一批：`drop` 把一章删光时，正确结果是「文件消失」而不是「写一份空篇」。
+     * 拆两次做会留下「新内容已落、空壳还在」的中间态 —— 而删空留壳正是这条要治的病。
+     * 删除排在 rename **之后**：万一删除失败，也只是退回旧行为（空壳残留），
+     * 而不是「文件没了、新内容也没落」那种丢数据的状态。
+     */
+    removals?: readonly string[];
+}
+
 /** 某个目标的 tmp 落点（测试用它断言"没有残骸"）。 */
 export function tempPathOf(file: string, nonce = randomBytes(4).toString('hex')): string {
     return path.join(path.dirname(file), `${path.basename(file)}.tmp-${process.pid}-${nonce}`);
@@ -60,8 +74,11 @@ export function tempPathOf(file: string, nonce = randomBytes(4).toString('hex'))
  *   · 失败 = **原样上抛**；每个目标文件要么保持旧内容、要么是完整新内容（绝无半截）。
  *   · 失败时本批 tmp 已清理（尽力而为，清理失败也不掩盖原错误）。
  */
-export function writeFilesAtomic(writes: readonly AtomicWrite[], opts: { fs?: FsLike } = {}): void {
-    if (writes.length === 0) return;
+export function writeFilesAtomic(writes: readonly AtomicWrite[], opts: AtomicApplyOptions = {}): void {
+    if (writes.length === 0) {
+        removeAll(opts.fs ?? realFs, opts.removals ?? []);
+        return;
+    }
     const fs = opts.fs ?? realFs;
     const nonce = randomBytes(4).toString('hex');
     // 一个目标一份 tmp：nonce 全批共享，但文件名里还带目标 basename ⇒ 不会撞
@@ -93,6 +110,14 @@ export function writeFilesAtomic(writes: readonly AtomicWrite[], opts: { fs?: Fs
         cleanup(fs, written.slice(done));
         throw e;
     }
+
+    // ③ 最后删（顺序理由见 AtomicApplyOptions.removals）
+    removeAll(fs, opts.removals ?? []);
+}
+
+/** 删本批的遗留文件；`force` ⇒ 不存在即跳过（删不存在的东西不算成功也不算失败） */
+function removeAll(fs: FsLike, files: readonly string[]): void {
+    for (const file of files) fs.rmSync(file, { force: true });
 }
 
 /** 让 tmp 继承目标**既有**的权限位（目标不存在 = 新建，用缺省；stat 失败同样不阻断）。 */
