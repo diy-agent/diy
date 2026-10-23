@@ -23,7 +23,7 @@ import {
 import { findPage, groupViewsByArea, planPageViews, type Binding } from "../../shared/view-registry";
 import { ViewBoundary } from "./ViewBoundary";
 import { layoutStore } from "../store/layoutStore";
-import { VIEW_BAR_H } from "../lib/layout-metrics";
+import { AREA_CHROME_W, VIEW_BAR_H } from "../lib/layout-metrics";
 import { IconExpand, IconCompress, IconCollapse } from "./icons";
 
 /** 拖线时两侧 track 的最小 px（防止把某块拖没，用户就再也抓不到线了） */
@@ -129,7 +129,8 @@ export function ViewGrid(props: {
         // 与 view 顶栏同高 + items-center：图标垂直居中，不再贴顶（原来只有 h-5 裸条）。
         return (
             <div
-                class={`absolute top-0 right-0 z-30 flex items-center ${VIEW_BAR_H} opacity-40 hover:opacity-100 transition-opacity`}
+                class={`absolute top-0 right-0 z-30 flex items-center justify-end ${VIEW_BAR_H} opacity-40 hover:opacity-100 transition-opacity`}
+                style={{ width: `${AREA_CHROME_W}px` }}
             >
                 <label
                     class="btn btn-ghost btn-xs px-1 min-h-0 swap swap-rotate"

@@ -5,10 +5,10 @@ import {
     isTerminal,
     MAX_TAIL_BYTES,
     notifyText,
-    procLine,
+    runLine,
     stateLabel,
     tailOf,
-} from "../../src/shared/proc-status";
+} from "../../src/shared/run-status";
 
 // ##408 刀 8：后台进程的呈现口径（纯函数）。判据写进用例名，改实现先看这些句子还成不成立。
 
@@ -84,7 +84,7 @@ describe("花名册与结束通知", () => {
     };
 
     it("一行里能看出状态 / id / 时长 / 命令 / 来源", () => {
-        const line = procLine({ ...base, origin: { taskUri: "projects/4/tasks/408" } }, 20_000);
+        const line = runLine({ ...base, origin: { taskUri: "projects/4/tasks/408" } }, 20_000);
         expect(line).toContain("已结束");
         expect(line).toContain("p-abc-1");
         expect(line).toContain("18.0s");
@@ -93,7 +93,7 @@ describe("花名册与结束通知", () => {
     });
 
     it("多行命令只取首行进单行（花名册不许被换行拆开）", () => {
-        expect(procLine({ ...base, command: "line1\nline2" }, 20_000)).not.toContain("\n");
+        expect(runLine({ ...base, command: "line1\nline2" }, 20_000)).not.toContain("\n");
     });
 
     it("结束通知带结论 + 尾巴 + 下一步命令（给的是「接着干」的最小上下文，不是全文）", () => {

@@ -207,8 +207,8 @@ import { taskTurnGate } from "../core/turn-gate";
 import { ensureReasoningReplay, isDeepSeekWire, type ReasoningReplayOpts } from "./reasoning-replay";
 import { resolveModelKey } from "../core/model-runtime";
 import { invariant } from "../../shared/error-triage";
-import { procRegistry, type ProcInfo } from "./proc-registry";
-import { exitText, formatDuration, procLine, stateLabel } from "../../shared/proc-status";
+import { runRegistry, type RunInfo } from "./run-registry";
+import { exitText, formatDuration, runLine, stateLabel } from "../../shared/run-status";
 import { spawnedJobs } from "./spawned-jobs";
 import type { RunOutcome } from "../../shared/spawned-job";
 
@@ -1320,7 +1320,7 @@ export interface TurnToolAnchor {
 const EMPTY_TAIL = { text: "", lines: 0, droppedBytes: 0 };
 
 /** 一条进程的**详情文案**（job status / wait 共用）：状态 + 结局 + 来源 + 输出尾巴。 */
-function detail(info: ProcInfo, tail: { text: string; lines: number; droppedBytes: number }, now: number): string {
+function detail(info: RunInfo, tail: { text: string; lines: number; droppedBytes: number }, now: number): string {
     const rows = [
         `${info.id} · ${stateLabel(info.state)} · ${formatDuration((info.endedAt ?? now) - info.startedAt)}`,
         `命令：${info.command}`,
@@ -1385,7 +1385,7 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                 // 这也是 opencode `shell` 工具的形状（`background` + `timeout` 两位），
                 // 两边的口径一致，模型不必学两套。
                 if (background) {
-                    const proc = procRegistry.spawn({
+                    const proc = runRegistry.spawn({
                         command,
                         cwd,
                         ...(execOpts?.toolCallId && anchor
@@ -1509,7 +1509,7 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
          * （status）、它说了什么（output）、停掉它（kill），以及"我等它"（wait）。
          * 靠 bash 手搓 `ps -p` / `tail` 会把判据散进命令行，模型每次都要重新想一遍。
          *
-         * 判据真源在 shared/proc-status.ts（纯函数）；本处只做 IO 编排。
+         * 判据真源在 shared/run-status.ts（纯函数）；本处只做 IO 编排。
          */
         job: tool({
             description:
@@ -1525,30 +1525,30 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
             execute: async ({ action, id, lines, timeoutMs }) => {
                 const now = Date.now();
                 if (action === "list") {
-                    const all = procRegistry.list();
+                    const all = runRegistry.list();
                     if (all.length === 0) return "（没有后台进程）";
                     const running = all.filter((p) => p.state === "running").length;
-                    return [`共 ${all.length} 条（运行中 ${running}）`, ...all.map((p) => procLine(p, now))].join("\n");
+                    return [`共 ${all.length} 条（运行中 ${running}）`, ...all.map((p) => runLine(p, now))].join("\n");
                 }
                 if (!id) return `[缺 id] action=${action} 需要给 id（先用 job list 看有哪些）`;
-                const info = procRegistry.get(id);
+                const info = runRegistry.get(id);
                 if (!info) return `[没有这个后台进程] ${id}（job list 看现有；app 重启后表会清空）`;
 
                 if (action === "kill") {
-                    const ok = procRegistry.kill(id);
+                    const ok = runRegistry.kill(id);
                     return ok
                         ? `已发送停止信号（进程组 ${info.pid}）：${id}。稍后用 job status 确认终态。`
                         : `未发送：${id} 当前是「${stateLabel(info.state)}」（只有运行中的才可停）。`;
                 }
                 if (action === "wait") {
                     const limit = timeoutMs === undefined ? 30_000 : Math.max(0, Math.floor(timeoutMs));
-                    const done = await procRegistry.wait(id, limit);
+                    const done = await runRegistry.wait(id, limit);
                     if (done && done.state === "running") {
-                        return `${detail(done, procRegistry.tail(id, 5) ?? EMPTY_TAIL, now)}\n（已等 ${formatDuration(limit)}，仍未结束）`;
+                        return `${detail(done, runRegistry.tail(id, 5) ?? EMPTY_TAIL, now)}\n（已等 ${formatDuration(limit)}，仍未结束）`;
                     }
-                    return detail(done ?? info, procRegistry.tail(id, lines ?? 10) ?? EMPTY_TAIL, now);
+                    return detail(done ?? info, runRegistry.tail(id, lines ?? 10) ?? EMPTY_TAIL, now);
                 }
-                const tail = procRegistry.tail(id, lines ?? (action === "output" ? 40 : 10)) ?? EMPTY_TAIL;
+                const tail = runRegistry.tail(id, lines ?? (action === "output" ? 40 : 10)) ?? EMPTY_TAIL;
                 return detail(info, tail, now);
             },
         }),
@@ -4897,7 +4897,7 @@ export function getLocalAgent(): LocalAgentManager {
 // 为什么是 `next-turn` 而不是 `next-step`：进程结束时模型通常已经不在当前步了
 // （它可能正写报告、也可能已结束本轮），"下一步前插一句"会把别人的步边界打乱；
 // 轮是人的/模型的自然停顿点。
-procRegistry.setNotifier((taskUri, text) => {
+runRegistry.setNotifier((taskUri, text) => {
     wakeTaskWithSteer(taskUri, text);
 });
 

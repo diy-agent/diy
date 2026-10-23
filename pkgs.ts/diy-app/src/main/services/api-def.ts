@@ -2350,6 +2350,45 @@ export const apiDef = RpcSchema.router({
             },
             output: z.object({ status: z.string(), data: z.any() }).or(z.object({ status: z.string(), msg: z.string() })),
           }),
+          ps: RpcSchema.unary({
+            desc: `
+            **在跑什么**（活体表，刀 8 起）：后台 run 的当前快照 —— 不是历史账。
+
+            返回 runs（运行中的在前，同状态按启动时间倒序）· running（在跑几条）· total。
+            每行含：state/stateLabel · pid（进程内任务为 null）· title · **command（原始命令行全文）** ·
+            cwd · startedAt/endedAt · durationText · exitCode/signal/exitText · outputBytes/outputText ·
+            origin/originText（哪个任务/轮/步/工具调用起的）· logPath · dir。
+            `,
+            input: {
+              all: z
+                .boolean()
+                .optional()
+                .cliOption({ desc: "也列出已结束的（缺省只列运行中；app 退出后表即空 —— 这是刻意的，不做恢复）" }),
+            },
+            output: z.object({ status: z.string(), data: z.any() }),
+          }),
+          kill: RpcSchema.unary({
+            desc: `停止一条 run（进程型按**进程组** SIGTERM → 2s → SIGKILL）。返回是否真的发出了停止。`,
+            input: {
+              id: z.string().cliArg({ desc: "run id（r-<epoch>-<rand>，用 diy job ps 查）" }),
+            },
+            output: z.object({ status: z.string(), data: z.any() }).or(z.object({ status: z.string(), msg: z.string() })),
+          }),
+          tail: RpcSchema.unary({
+            desc: `读一条 run 的输出尾部（从它自己的 out.log 读；给了 lines 就按行切，同时受 16KB 字节上限）。`,
+            input: {
+              id: z.string().cliArg({ desc: "run id" }),
+              lines: z.number().optional().cliOption({ desc: "要最后几行（缺省 40）" }),
+            },
+            output: z.object({ status: z.string(), data: z.any() }).or(z.object({ status: z.string(), msg: z.string() })),
+          }),
+          meta: RpcSchema.unary({
+            desc: `看一条 run **实际落盘的东西**：meta.json 原文 + out.log 路径/字节数 + 目录（面板「存储数据」tab 用）。`,
+            input: {
+              id: z.string().cliArg({ desc: "run id" }),
+            },
+            output: z.object({ status: z.string(), data: z.any() }).or(z.object({ status: z.string(), msg: z.string() })),
+          }),
         },
       }),
 

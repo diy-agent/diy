@@ -1,57 +1,71 @@
-// 🎯 后台进程表（活体）—— ##408 刀 8
+// 🎯 后台**运行**表（活体）—— ##408 刀 8，刀 9 按用户订正改名
 //
 // 用户 2026-10-23 的口径：「**不要进程恢复、不要文件审计、不要历史数据**，先把核心业务
 // 实现掉：让 llm 起一个后台进程，自己心里有数、随时能查是死是活，也能放心结束本轮、
-// 等 job 完成时插话激活。」
+// 等 job 完成时插话激活。」后又订正：「proc 改为 run，因为长时间 job 不一定是进程，
+// 可能是我们的一个 **js 进程内任务**。」
 //
 // 于是这里**刻意最小**：
 //   · 真源 = 内存里的 `Map`（app 退出即空；重启后不接管、不 reconcile、不写 jsonl）；
-//   · 输出 = 子进程自己的 fd 直写 `$DIY_HOME/jobs/proc/<id>/out.log`（进程的产物，
-//     不是账本；要看就 tail 它，不额外维护"日志管理"）；
+//   · 叫 run 不叫 proc：`pid` 因此是**可选**的 —— 进程型有 pid，进程内任务没有；
+//     杀它也不走信号而走 `cancel`（进程内任务自己收手）；
+//   · 输出 = 自己的 fd 直写 `$DIY_HOME/log/job/run/<YYYY-MM-DD>/<id>/out.log`
+//     （运行的产物，不是账本；要看就 tail 它，不额外维护"日志管理"）；
+//   · 落盘只有两样，都是为了「这条 run 自己说得清」：`meta.json`（谁起的、什么命令、
+//     从哪个 cwd、什么时候起）+ `out.log`。**没有历史账、没有保留策略、没有重放**。
 //   · 判活 = 我们持有 `ChildProcess` 的 `close` 事件（不需要 ps 轮询、不需要定时器）；
-//   · 收口 = 状态落到终态后，若这条进程是某个任务的工具调用起的，**投一条插话**唤醒它。
+//   · 收口 = 状态落到终态后，若这条 run 是某个任务的工具调用起的，**投一条插话**唤醒它。
 //
-// 为什么不做定时器：判活靠事件，不靠 tick。整条链上没有任何 `setInterval`。
+// 为什么不做定时器：判活靠事件，不靠 tick。整条链上唯一的 `setTimeout` 是 kill 的宽限期。
 //
 // 生命周期唯一的坑（写在这里，别再踩一遍）：
 //   子进程 `detached: true` + `stdio: ["ignore", <fd>, <fd>]` —— **不给管道**。
-//   给管道就必须等 EOF，而未 `setsid` 的子孙可能继续持有写端 ⇒ `close` 迟到（##418 同源）。
+//   给管道就必须等 EOF，而未 setsid 的子孙可能继续持有写端 ⇒ `close` 迟到（##418 同源）。
 //   输出直落文件后，`close` 与"进程真的结束了"一一对应。
+//
+// 日期目录（用户要求「按 date 做数据分散」）取**启动时刻的本地日期**，不是收口日期：
+// 一条跑过午夜的属"哪天起的"，否则同一条 run 的日志会随收口时间跳到别的目录。
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { closeSync, mkdirSync, openSync, readFileSync, statSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { MAX_TAIL_BYTES, notifyText, tailOf, type ProcLike, type TailResult } from "../../shared/proc-status";
-import { jobsDir } from "./job-ledger";
+import { readRuntimeConfig } from "../../runtime";
+import { MAX_TAIL_BYTES, notifyText, tailOf, type RunLike, type TailResult } from "../../shared/run-status";
 
-/** 进程的来源锚点：哪一轮、哪一步、哪个工具调用起的（`toolCallId` 是定位键）。 */
-export interface ProcOrigin {
+/** run 的来源锚点：哪一轮、哪一步、哪个工具调用起的（`toolCallId` 是定位键）。 */
+export interface RunOrigin {
     taskUri: string;
     turnId?: string;
     stepId?: string;
     toolCallId?: string;
 }
 
-export interface ProcInfo extends ProcLike {
-    /** 进程组 id（= pid，因为 `detached` = setsid）：kill 按组发，才杀得干净 */
-    pid: number;
+export interface RunInfo extends RunLike {
+    /** 进程型才有（进程内 JS 任务没有 pid）；`detached` 时它同时是进程组 id */
+    pid?: number;
     cwd: string;
+    /** 人话标题；缺省用命令首行（表格里不必自己截） */
+    title?: string;
+    /** run 的落盘目录（`meta.json` + `out.log` 都在里面） */
+    dir: string;
     logPath: string;
-    origin?: ProcOrigin;
+    origin?: RunOrigin;
     /** 起不来时的原因（`failed` 专属） */
     error?: string;
     /** 结束通知是否已投递（防重复唤醒） */
     notified?: boolean;
 }
 
-export interface SpawnProcInput {
+export interface SpawnRunInput {
     command: string;
     cwd: string;
-    origin?: ProcOrigin;
+    /** 人话标题（缺省 = 命令首行） */
+    title?: string;
+    origin?: RunOrigin;
 }
 
-export interface ProcRegistryOptions {
-    /** 进程产物根目录（缺省 `$DIY_HOME/jobs/proc`）；测试注入 tmpdir */
+export interface RunRegistryOptions {
+    /** 运行产物根目录（缺省 `$DIY_HOME/log/job/run`）；测试注入 tmpdir */
     rootDir?: string;
     /** 时钟（测试注入假钟） */
     now?: () => number;
@@ -62,22 +76,34 @@ export interface ProcRegistryOptions {
 /** 杀不及时的宽限期：先 SIGTERM（让它自己收尾），到这个点还在就 SIGKILL 整组。 */
 export const KILL_GRACE_MS = 2_000;
 
-function newProcId(now: number): string {
-    return `p-${now.toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+/** 运行产物根：`$DIY_HOME/log/job/run`（**不是** `jobs/` —— 那批是 v1 的执行账）。 */
+export function runRoot(home: string = readRuntimeConfig().home): string {
+    return join(home, "log", "job", "run");
 }
 
-export class ProcRegistry {
-    private readonly procs = new Map<string, ProcInfo>();
+/** 本地日期目录名 `YYYY-MM-DD`（按启动时刻；理由见文件头）。 */
+export function dateDirOf(ts: number): string {
+    const d = new Date(ts);
+    const p2 = (n: number): string => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+}
+
+function newRunId(now: number): string {
+    return `r-${now.toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
+export class RunRegistry {
+    private readonly runs = new Map<string, RunInfo>();
     private readonly children = new Map<string, ChildProcess>();
-    private readonly waiters = new Map<string, Array<(info: ProcInfo) => void>>();
+    private readonly waiters = new Map<string, Array<(info: RunInfo) => void>>();
     /** 我们主动杀过的 id：决定终态是 `killed` 还是 `exited` */
     private readonly killedByUs = new Set<string>();
     private readonly rootDir: string;
     private readonly now: () => number;
     private notifier?: (taskUri: string, text: string) => void;
 
-    constructor(opts: ProcRegistryOptions = {}) {
-        this.rootDir = opts.rootDir ?? join(jobsDir(), "proc");
+    constructor(opts: RunRegistryOptions = {}) {
+        this.rootDir = opts.rootDir ?? runRoot();
         this.now = opts.now ?? Date.now;
         this.notifier = opts.notifier;
     }
@@ -87,30 +113,33 @@ export class ProcRegistry {
     }
 
     /**
-     * 起一条后台进程并**当场**登记。
+     * 起一条后台**运行**并**当场**登记。
      *
      * 登记时刻 = `spawn` 返回那一刻 —— 这是本刀的要害：v1 的「惰性晋升」（跑够 10s 才承认）
      * 让"进程活着但表里没有"成为常态（用户实测抓到 85 分钟无痕）。现在只要起了就在表里。
      */
-    spawn(input: SpawnProcInput): ProcInfo {
+    spawn(input: SpawnRunInput): RunInfo {
         const now = this.now();
-        const id = newProcId(now);
-        const dir = join(this.rootDir, id);
+        const id = newRunId(now);
+        const dir = join(this.rootDir, dateDirOf(now), id);
         mkdirSync(dir, { recursive: true });
         const logPath = join(dir, "out.log");
-        const info: ProcInfo = {
+        const info: RunInfo = {
             id,
-            pid: -1,
             command: input.command,
             cwd: input.cwd,
             state: "running",
             startedAt: now,
+            dir,
             logPath,
+            ...(input.title ? { title: input.title } : {}),
             ...(input.origin ? { origin: input.origin } : {}),
         };
         // 先登记再 spawn：spawn 同步抛（cwd 不存在等）时表里也要有一条 `failed`，
         // 否则"我起过它"这个事实凭空消失（用户会以为命令没发出去）。
-        this.procs.set(id, info);
+        this.runs.set(id, info);
+        // meta.json 写在 spawn **之前**：起不来的那条也要留下「我起过什么」。
+        this.writeMeta(info);
 
         let child: ChildProcess;
         try {
@@ -126,9 +155,9 @@ export class ProcRegistry {
             }
         } catch (e) {
             this.settle(id, null, null, e instanceof Error ? e.message : String(e));
-            return this.procs.get(id) ?? info;
+            return this.runs.get(id) ?? info;
         }
-        info.pid = child.pid ?? -1;
+        info.pid = child.pid;
         this.children.set(id, child);
         // 不 unref：我们要 `close` 事件来判终态；main 退出后子进程仍在（detached）
         child.on("error", (e) => this.settle(id, null, null, e.message));
@@ -136,9 +165,9 @@ export class ProcRegistry {
         return info;
     }
 
-    /** 全部进程，**活着的在前**、同状态按启动时间倒序（最近起的先看）。 */
-    list(): ProcInfo[] {
-        return [...this.procs.values()].sort((a, b) => {
+    /** 全部 run，**活着的在前**、同状态按启动时间倒序（最近起的先看）。 */
+    list(): RunInfo[] {
+        return [...this.runs.values()].sort((a, b) => {
             const ar = a.state === "running" ? 0 : 1;
             const br = b.state === "running" ? 0 : 1;
             if (ar !== br) return ar - br;
@@ -146,45 +175,70 @@ export class ProcRegistry {
         });
     }
 
-    get(id: string): ProcInfo | undefined {
-        return this.procs.get(id);
+    get(id: string): RunInfo | undefined {
+        return this.runs.get(id);
     }
 
     /** 读输出尾部；未登记 ⇒ `undefined`（调用方自己决定怎么说）。 */
     tail(id: string, lines = 40): TailResult | undefined {
-        const info = this.procs.get(id);
+        const info = this.runs.get(id);
         if (!info) return undefined;
         return tailOf(this.readLogTail(info.logPath), lines);
     }
 
+    /** 输出文件当前字节数（表格里"输出"列；在跑时它一直在长）。读不到给 `undefined`。 */
+    outputBytes(id: string): number | undefined {
+        const info = this.runs.get(id);
+        if (!info) return undefined;
+        try {
+            return statSync(info.logPath).size;
+        } catch {
+            return undefined;
+        }
+    }
+
+    /** 落盘的 `meta.json` 原文（面板「存储数据」tab 要给人看"到底存了什么"）。 */
+    metaJson(id: string): string | undefined {
+        const info = this.runs.get(id);
+        if (!info) return undefined;
+        try {
+            return readFileSync(join(info.dir, "meta.json"), "utf8");
+        } catch {
+            return undefined;
+        }
+    }
+
     /**
-     * 停止：先按**进程组**发 SIGTERM，`KILL_GRACE_MS` 后还在就 SIGKILL。
+     * 停止：进程型先按**进程组**发 SIGTERM，`KILL_GRACE_MS` 后还在就 SIGKILL；
+     * 进程内任务（没有 pid）走它自己的 `cancel`。
      *
      * 按组发是硬要求：`bash -c "a | b"` 的真正工作进程是 bash 的子孙，只杀 `child.pid`
      * 会留下跑满的孤儿（`##375` 同一个坑）。
      */
     kill(id: string): boolean {
-        const info = this.procs.get(id);
+        const info = this.runs.get(id);
+        if (!info || info.state !== "running") return false;
         const child = this.children.get(id);
-        if (!info || info.state !== "running" || !child?.pid) return false;
+        const pid = child?.pid;
+        if (!pid) return false;
         this.killedByUs.add(id);
-        this.signalGroup(child.pid, "SIGTERM");
+        this.signalGroup(pid, "SIGTERM");
         const timer = setTimeout(() => {
-            if (this.procs.get(id)?.state === "running") this.signalGroup(child.pid!, "SIGKILL");
+            if (this.runs.get(id)?.state === "running") this.signalGroup(pid, "SIGKILL");
         }, KILL_GRACE_MS);
         timer.unref?.();
         return true;
     }
 
     /** 等它结束；`timeoutMs = 0` 表示一直等（调用方自己负责别等死）。 */
-    wait(id: string, timeoutMs: number): Promise<ProcInfo | undefined> {
-        const info = this.procs.get(id);
+    wait(id: string, timeoutMs: number): Promise<RunInfo | undefined> {
+        const info = this.runs.get(id);
         if (!info) return Promise.resolve(undefined);
         if (info.state !== "running") return Promise.resolve(info);
         return new Promise((resolve) => {
             const list = this.waiters.get(id) ?? [];
             let done = false;
-            const settle = (cur: ProcInfo | undefined): void => {
+            const settle = (cur: RunInfo | undefined): void => {
                 if (done) return;
                 done = true;
                 this.waiters.set(
@@ -196,7 +250,7 @@ export class ProcRegistry {
             list.push(settle);
             this.waiters.set(id, list);
             if (timeoutMs > 0) {
-                const timer = setTimeout(() => settle(this.procs.get(id)), timeoutMs);
+                const timer = setTimeout(() => settle(this.runs.get(id)), timeoutMs);
                 timer.unref?.();
             }
         });
@@ -204,7 +258,7 @@ export class ProcRegistry {
 
     /** 测试 / 收工清理用：丢掉全部记忆（不杀进程）。 */
     clear(): void {
-        this.procs.clear();
+        this.runs.clear();
         this.children.clear();
         this.waiters.clear();
         this.killedByUs.clear();
@@ -215,6 +269,25 @@ export class ProcRegistry {
             process.kill(-pid, sig);
         } catch {
             // 组已空（全收完）或 pid 已回收：无可杀
+        }
+    }
+
+    /** `meta.json`：一条 run 的自述（**写一次就不再改**，终态不进这个文件）。 */
+    private writeMeta(info: RunInfo): void {
+        const meta = {
+            id: info.id,
+            command: info.command,
+            ...(info.title ? { title: info.title } : {}),
+            cwd: info.cwd,
+            startedAt: new Date(info.startedAt).toISOString(),
+            ...(info.pid !== undefined ? { pid: info.pid } : {}),
+            ...(info.origin ? { origin: info.origin } : {}),
+        };
+        try {
+            writeFileSync(join(info.dir, "meta.json"), `${JSON.stringify(meta, null, 2)}\n`, "utf8"); // non-atomic-ok: 每个 run 独占自己的新目录，写完即冻结，不存在并发覆盖
+        } catch (e) {
+            // 落盘失败不许炸业务：run 照跑，只是"存储数据"tab 会空
+            console.warn("[run] meta.json 写入失败", info.id, e);
         }
     }
 
@@ -235,7 +308,7 @@ export class ProcRegistry {
      * `exitCode` 表达，不塞进状态里，否则模型得猜两个字段谁说话。
      */
     private settle(id: string, exitCode: number | null, signal: string | null, errorText?: string): void {
-        const info = this.procs.get(id);
+        const info = this.runs.get(id);
         if (!info || info.state !== "running") return;
         const ours = this.killedByUs.delete(id);
         info.state = errorText && exitCode === null && signal === null ? "failed" : ours ? "killed" : "exited";
@@ -249,7 +322,7 @@ export class ProcRegistry {
         this.notify(info);
     }
 
-    private notify(info: ProcInfo): void {
+    private notify(info: RunInfo): void {
         if (info.notified) return;
         const taskUri = info.origin?.taskUri;
         if (!taskUri || !this.notifier) return;
@@ -258,10 +331,10 @@ export class ProcRegistry {
             this.notifier(taskUri, notifyText(info, tailOf(this.readLogTail(info.logPath), 20)));
         } catch (e) {
             // 观测不许把业务炸掉：通知失败只留痕
-            console.warn("[proc] 结束通知投递失败", info.id, e);
+            console.warn("[run] 结束通知投递失败", info.id, e);
         }
     }
 }
 
 /** 全局单例（一个 app 实例一张表）。 */
-export const procRegistry = new ProcRegistry();
+export const runRegistry = new RunRegistry();

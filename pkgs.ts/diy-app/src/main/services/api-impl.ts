@@ -42,6 +42,9 @@ import { collectInstances, focusInstance, renderInstanceList, selfReport } from 
 import { revealSelf, windowState } from "./window-ops";
 import { shortName } from "../../shared/room";
 import { jobList, jobShow } from "./job-view";
+import { runRegistry } from "./run-registry";
+import { runViewOf } from "../../shared/run-view";
+import { stateLabel } from "../../shared/run-status";
 
 /**
  * 实际 RPC 监听端口，由入口在绑定完成后回填。
@@ -1144,6 +1147,46 @@ export function bindAppHandlers(binding: ServerBinding): void {
     } catch (e) {
       return { status: "error", msg: e instanceof Error ? e.message : String(e) };
     }
+  });
+
+  // ── job 活体表（刀 8/9：run = 进程型或进程内任务；不做恢复、不做历史账）──
+  binding.on(app.job.ps, async ({ input }) => {
+    const now = Date.now();
+    const all = runRegistry.list();
+    const picked = input.all === true ? all : all.filter((r) => r.state === "running");
+    return {
+      status: "ok",
+      data: {
+        runs: picked.map((r) => runViewOf(r, now, runRegistry.outputBytes(r.id) ?? null)),
+        running: all.filter((r) => r.state === "running").length,
+        total: all.length,
+      },
+    };
+  });
+  binding.on(app.job.kill, async ({ input }) => {
+    const info = runRegistry.get(input.id);
+    if (!info) return { status: "error", msg: `没有这条 run：${input.id}（diy job ps 看在跑什么）` };
+    if (info.state !== "running") return { status: "error", msg: `这条 run 已经结束（${stateLabel(info.state)}），无需停止` };
+    const ok = runRegistry.kill(input.id);
+    return { status: "ok", data: { ok, id: input.id } };
+  });
+  binding.on(app.job.tail, async ({ input }) => {
+    const tail = runRegistry.tail(input.id, input.lines ?? 40);
+    if (!tail) return { status: "error", msg: `没有这条 run：${input.id}` };
+    return { status: "ok", data: { ...tail, logPath: runRegistry.get(input.id)?.logPath ?? null } };
+  });
+  binding.on(app.job.meta, async ({ input }) => {
+    const info = runRegistry.get(input.id);
+    if (!info) return { status: "error", msg: `没有这条 run：${input.id}` };
+    return {
+      status: "ok",
+      data: {
+        metaJson: runRegistry.metaJson(input.id) ?? null,
+        dir: info.dir,
+        logPath: info.logPath,
+        outputBytes: runRegistry.outputBytes(input.id) ?? null,
+      },
+    };
   });
 
   binding.on(app.traffic.snapshot, async ({ input }) => traffic.snapshot(input.withRecords ?? true));

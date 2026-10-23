@@ -10,20 +10,20 @@
 //   · 判据仍然只有一条：**能在任何时候回答「它是死是活」**。
 
 /** 进程四态。**不设 `lost`**：没有恢复就没有"不知道"——重启后表是空的，不是 lost。 */
-export type ProcState = "running" | "exited" | "killed" | "failed";
+export type RunState = "running" | "exited" | "killed" | "failed";
 
-export const PROC_TERMINAL_STATES: readonly ProcState[] = ["exited", "killed", "failed"];
+export const RUN_TERMINAL_STATES: readonly RunState[] = ["exited", "killed", "failed"];
 
 /** 终态 = 不会自己再变。`running` 之外都是终态（三态都是"结束了，只是方式不同"）。 */
-export function isTerminal(state: ProcState): boolean {
-    return PROC_TERMINAL_STATES.includes(state);
+export function isTerminal(state: RunState): boolean {
+    return RUN_TERMINAL_STATES.includes(state);
 }
 
 /**
  * 人话状态。`exited` 不说"成功"——退出码在 `exitText()` 里单列：
  * 「结束了」和「成功了」是两件事，混在一句里，面板就分不出 `exit 1` 与 `exit 0`。
  */
-export function stateLabel(state: ProcState): string {
+export function stateLabel(state: RunState): string {
     switch (state) {
         case "running":
             return "运行中";
@@ -87,18 +87,18 @@ export function tailOf(raw: string, wantLines: number, maxBytes: number = MAX_TA
 }
 
 /** 退出情况的**唯一**表述：`退出码 0` / `退出码 7` / `信号 SIGKILL` / `（未结束）`。 */
-export function exitText(state: ProcState, exitCode?: number | null, signal?: string | null): string {
+export function exitText(state: RunState, exitCode?: number | null, signal?: string | null): string {
     if (state === "running") return "（未结束）";
     if (signal) return `信号 ${signal}`;
     if (exitCode === null || exitCode === undefined) return "无退出码";
     return `退出码 ${exitCode}`;
 }
 
-/** 最小活体形状（注册表的 `ProcInfo` 满足它；测试不必造整个注册表）。 */
-export interface ProcLike {
+/** 最小活体形状（注册表的 `RunInfo` 满足它；测试不必造整个注册表）。 */
+export interface RunLike {
     id: string;
     command: string;
-    state: ProcState;
+    state: RunState;
     startedAt: number;
     endedAt?: number;
     exitCode?: number | null;
@@ -107,7 +107,7 @@ export interface ProcLike {
 }
 
 /** 一行花名册（`job list` 的每行）：状态 · id · 时长 · 命令首行 · 来源。 */
-export function procLine(p: ProcLike, now: number): string {
+export function runLine(p: RunLike, now: number): string {
     const dur = formatDuration((p.endedAt ?? now) - p.startedAt);
     const head = p.command.split("\n")[0] ?? "";
     const cmd = head.length > 60 ? `${head.slice(0, 57)}…` : head;
@@ -121,7 +121,7 @@ export function procLine(p: ProcLike, now: number): string {
  * 为什么不塞整段输出：这是"插话"，进的是 LLM 上下文，一条任务结束就贴几十 KB 等于
  * 拿上下文换个通知；给**结论 + 尾巴几行**，要全文它自己 `job output`。
  */
-export function notifyText(p: ProcLike, tail: TailResult, maxLines = 20): string {
+export function notifyText(p: RunLike, tail: TailResult, maxLines = 20): string {
     const dur = formatDuration((p.endedAt ?? p.startedAt) - p.startedAt);
     const head = [
         `[后台进程结束] ${p.id} · ${stateLabel(p.state)} · ${exitText(p.state, p.exitCode, p.signal)} · ${dur}`,

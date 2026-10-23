@@ -2,18 +2,18 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ProcRegistry } from "../../src/main/services/proc-registry";
+import { RunRegistry } from "../../src/main/services/run-registry";
 
 // ##408 刀 8：后台进程表（活体）。**真起 /bin/bash**，但不等固定时长 —— 一律用 `wait()` 事件。
 // 判据：spawn 当场登记 / 判活靠事件 / 输出直落文件 / 杀进程组 / 起不来要说清楚。
 
 let root: string;
-let reg: ProcRegistry;
+let reg: RunRegistry;
 const origin = { taskUri: "projects/4/tasks/408", turnId: "t1", stepId: "t1_s1", toolCallId: "call-1" };
 
 beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "diy-proc-"));
-    reg = new ProcRegistry({ rootDir: root });
+    reg = new RunRegistry({ rootDir: root });
 });
 
 afterEach(() => {
@@ -101,7 +101,7 @@ describe("查询与停止", () => {
 describe("结束通知（插话唤醒的数据面）", () => {
     it("带 origin 的进程结束时通知恰好一次，内容是「结论 + 尾巴」", async () => {
         const seen: Array<{ taskUri: string; text: string }> = [];
-        const local = new ProcRegistry({ rootDir: root, notifier: (taskUri, text) => seen.push({ taskUri, text }) });
+        const local = new RunRegistry({ rootDir: root, notifier: (taskUri, text) => seen.push({ taskUri, text }) });
         const p = local.spawn({ command: "echo shipped", cwd: root, origin });
         await local.wait(p.id, 10_000);
         // close 事件在 wait 之后一拍
@@ -115,7 +115,7 @@ describe("结束通知（插话唤醒的数据面）", () => {
 
     it("没有 origin 的进程不通知（不知道叫醒谁，就不叫）", async () => {
         const seen: string[] = [];
-        const local = new ProcRegistry({ rootDir: root, notifier: (_t, text) => seen.push(text) });
+        const local = new RunRegistry({ rootDir: root, notifier: (_t, text) => seen.push(text) });
         const p = local.spawn({ command: "true", cwd: root });
         await local.wait(p.id, 10_000);
         await new Promise((r) => setTimeout(r, 20));
@@ -124,7 +124,7 @@ describe("结束通知（插话唤醒的数据面）", () => {
     });
 
     it("通知出口自己抛错也不许影响进程状态（观测不能炸业务）", async () => {
-        const local = new ProcRegistry({
+        const local = new RunRegistry({
             rootDir: root,
             notifier: () => {
                 throw new Error("boom");
@@ -135,5 +135,62 @@ describe("结束通知（插话唤醒的数据面）", () => {
         await new Promise((r) => setTimeout(r, 20));
         expect(local.get(p.id)?.state).toBe("exited");
         local.clear();
+    });
+});
+
+// ── 刀 9（用户订正）：叫 run 不叫 proc / 按日期分目录 / 落盘只有 meta.json + out.log ──
+describe("落盘布局（log/job/run/<date>/<id>/）", () => {
+    it("默认根是 $DIY_HOME/log/job/run，且日期目录按**启动时刻**的本地日期分", async () => {
+        const { runRoot, dateDirOf, RunRegistry: R } = await import("../../src/main/services/run-registry");
+        expect(runRoot("/home/x").endsWith(join("log", "job", "run"))).toBe(true);
+        // 用本地时间构造，避免测试受时区影响（dateDirOf 也按本地日期）
+        const ts = new Date(2026, 0, 2, 23, 59, 0).getTime();
+        expect(dateDirOf(ts)).toBe("2026-01-02");
+        // 跨午夜不改目录：目录取启动时刻，不取收口时刻
+        const r = new R({ rootDir: root });
+        const p = r.spawn({ command: "true", cwd: root });
+        expect(p.dir.startsWith(join(root, dateDirOf(p.startedAt)))).toBe(true);
+        await r.wait(p.id, 10_000);
+        r.clear();
+    });
+
+    it("meta.json 写一次：命令 / cwd / 启动时刻 / 来源都在里面（「存储数据」tab 的真相）", async () => {
+        const p = reg.spawn({ command: "echo hi", cwd: root, origin, title: "打个招呼" });
+        await reg.wait(p.id, 10_000);
+        const raw = reg.metaJson(p.id);
+        expect(raw).toBeTruthy();
+        const meta = JSON.parse(raw!) as Record<string, unknown>;
+        expect(meta["command"]).toBe("echo hi");
+        expect(meta["cwd"]).toBe(root);
+        expect(meta["title"]).toBe("打个招呼");
+        expect(meta["origin"]).toEqual(origin);
+        expect(typeof meta["startedAt"]).toBe("string");
+        // 终态**不进** meta.json：它是一次性自述，不是账本
+        expect(meta["state"]).toBeUndefined();
+        expect(meta["exitCode"]).toBeUndefined();
+    });
+
+    it("起不来也要留一条 failed + meta.json（'我起过它'不许凭空消失）", async () => {
+        const p = reg.spawn({ command: "true", cwd: join(root, "不存在的目录") });
+        // Node 的 spawn 对非法 cwd 是**异步**报错（`error` 事件），不是同步抛 ⇒ 登记了再看它转终态
+        await reg.wait(p.id, 5_000);
+        expect(p.state).toBe("failed");
+        expect(p.error).toBeTruthy();
+        expect(p.pid).toBeUndefined();
+        expect(reg.metaJson(p.id)).toBeTruthy();
+    });
+
+    it("outputBytes 跟着文件长（表格「输出」列的来源，不读全文）", async () => {
+        const p = reg.spawn({ command: "printf 12345", cwd: root });
+        await reg.wait(p.id, 10_000);
+        expect(reg.outputBytes(p.id)).toBe(5);
+    });
+
+    it("没有 pid 的 run（进程内任务）也能查，只是 kill 无从下手", () => {
+        const p = reg.spawn({ command: "true", cwd: root });
+        // 模拟进程内任务的形状：表里的一条 run 不一定有 pid
+        const internal = { ...p, id: "r-internal", pid: undefined, state: "running" as const };
+        expect(internal.pid).toBeUndefined();
+        expect(reg.kill("r-internal")).toBe(false);
     });
 });
