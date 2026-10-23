@@ -208,6 +208,7 @@ import { ensureReasoningReplay, isDeepSeekWire, type ReasoningReplayOpts } from 
 import { resolveModelKey } from "../core/model-runtime";
 import { invariant } from "../../shared/error-triage";
 import { runRegistry, type RunInfo } from "./run-registry";
+import { ownedGroups } from "./owned-groups";
 import { exitText, formatDuration, runLine, stateLabel } from "../../shared/run-status";
 import { spawnedJobs } from "./spawned-jobs";
 import type { RunOutcome } from "../../shared/spawned-job";
@@ -1237,7 +1238,13 @@ export function runBash(
                 detached: true,
                 stdio: ["ignore", "pipe", "pipe"],
             });
-            if (child.pid !== undefined) hooks?.onSpawn?.(child.pid);
+            if (child.pid !== undefined) {
+                // 组名册（##408 刀 10）：记下"这个组是我起的" —— 之后命令里自己
+                // `nohup xxx &` 起的子孙即使被 reparent 到 launchd，也能按组认领回来。
+                // `taskUri` 由**工具层**（buildTools 的 onSpawn）补录 —— runBash 不认识任务。
+                ownedGroups.record(child.pid, { at: Date.now(), command, cwd });
+                hooks?.onSpawn?.(child.pid);
+            }
             // 输出按**块**攒（不逐块拼字符串）：上限判据只要长度计数，逐块 `byteLength` 是 O(n²)
             const chunks = { out: [] as Buffer[], err: [] as Buffer[] };
             const len = { out: 0, err: 0 };
@@ -1400,6 +1407,9 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                             : { origin: { taskUri } }),
                     });
                     appendAudit(home, { phase: "bash-background", taskUri, cwd, command, result: proc.id });
+                    if (proc.pid !== undefined) {
+                        ownedGroups.record(proc.pid, { at: proc.startedAt, command, cwd, taskUri, runId: proc.id });
+                    }
                     if (proc.state === "failed") {
                         // 起不来的必须**抛**（命令根本没跑，不是结果）——与前台 spawn 失败同口径
                         // 命令根本没跑起来（cwd 不存在等）= 与前台 spawn 失败同档（##332 ③）：
@@ -1432,7 +1442,14 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                     cwd,
                     limits,
                     execOpts?.abortSignal,
-                    job ? { onSpawn: (pid) => job.setPid(pid), onChunk: (chunk) => job.noteOutput(chunk) } : undefined,
+                    {
+                        onSpawn: (pid) => {
+                            // 组名册补录任务归属（##408 刀 10）：面板按任务过滤"未登记的进程"
+                            ownedGroups.record(pid, { at: Date.now(), command, cwd, taskUri });
+                            job?.setPid(pid);
+                        },
+                        ...(job ? { onChunk: (chunk) => job.noteOutput(chunk) } : {}),
+                    },
                     timeout,
                 );
                 if (job) {

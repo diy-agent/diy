@@ -175,6 +175,13 @@ export class RunRegistry {
         });
     }
 
+    /** run 根进程 pid → runId（`ps` 扫描时把进程归到某条 run 名下；进程内任务没有 pid 故不在表里）。 */
+    pidMap(): Map<number, string> {
+        const out = new Map<number, string>();
+        for (const r of this.runs.values()) if (r.pid !== undefined) out.set(r.pid, r.id);
+        return out;
+    }
+
     get(id: string): RunInfo | undefined {
         return this.runs.get(id);
     }

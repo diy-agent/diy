@@ -11,6 +11,7 @@ import {
   ownerAt,
   rowLineSegments,
   formatTracks,
+  fitTracks,
   fr,
   parseTracks,
   px,
@@ -400,5 +401,34 @@ describe("resolveLayout", () => {
     expect(resolveLayout(l, { hidden: { a: true } }).cols).toEqual([px(0), px(300)]);
     // 两列都收起：没有未收起的邻居可接
     expect(resolveLayout(l, { hidden: { a: true, b: true } }).cols).toEqual([px(0), px(0)]);
+  });
+});
+
+describe("fitTracks — 贴合实测容器（用户报的「下面一大段空白」）", () => {
+  it("px 之和小于容器 ⇒ 差额给最大的那条（内容区变大，侧栏不动）", () => {
+    // 实测现场：tasks 页 rows = 440 + 116，容器 836 高 ⇒ 空 280
+    expect(fitTracks([px(440), px(116)], 836)).toEqual([px(720), px(116)]);
+  });
+
+  it("px 之和大于容器 ⇒ 从最大的那条借（先扣它，扣到下限为止）", () => {
+    expect(fitTracks([px(800), px(200)], 600)).toEqual([px(400), px(200)]);
+  });
+
+  it("有 fr 轨 ⇒ 一个字节都不动（剩余空间天然归它，浏览器会算对）", () => {
+    expect(fitTracks([fr(1), px(320)], 900)).toEqual([fr(1), px(320)]);
+  });
+
+  it("容器尺寸未知（0）⇒ 原样返回（首帧 ResizeObserver 还没回调）", () => {
+    expect(fitTracks([px(440), px(116)], 0)).toEqual([px(440), px(116)]);
+  });
+
+  it("目标轨不会低于下限（拖到 48 就再也抓不到线了）", () => {
+    const out = fitTracks([px(50), px(300)], 60);
+    expect(out[0]!.value + out[1]!.value).toBeGreaterThan(0);
+    expect(out[0]!.value).toBeGreaterThanOrEqual(48);
+  });
+
+  it("差额小于 1px ⇒ 不动（避免每帧抖动）", () => {
+    expect(fitTracks([px(400), px(100)], 500.4)).toEqual([px(400), px(100)]);
   });
 });

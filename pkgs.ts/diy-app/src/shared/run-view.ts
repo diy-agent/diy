@@ -11,6 +11,7 @@
 // 这里只做**呈算**（拼字、算时长、截首行）—— 不引入新事实、不读盘（字节数由调用方给）。
 
 import { formatDuration, exitText, stateLabel, type RunLike, type RunState } from "./run-status";
+import type { OwnedProc } from "./proc-scan";
 
 /** 来源锚点（与 `main/services/run-registry.ts::RunOrigin` 同形；shared 不许反向依赖 main）。 */
 export interface RunOriginRef {
@@ -136,4 +137,70 @@ export function bytesText(n: number): string {
     if (n < 1024) return `${n}B`;
     if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}K`;
     return `${(n / (1024 * 1024)).toFixed(1)}M`;
+}
+
+/**
+ * **未登记**的进程行（##408 刀 10）—— 命令里自己 `nohup xxx &` 起的那种：
+ * 它从没经过 `run-registry`，但在 `ps` 里归我们管（判据见 `shared/proc-scan.ts`）。
+ *
+ * 为什么要单独一张表：直接把它塞进 `RunView` 会让"run"这个词失真 ——
+ * run 有 origin、有落盘目录、有终态；这条只有一个 pid 和一段命令行。
+ * 两者共用**表格列**（`TableRow`），但不共用模型。
+ */
+export interface ProcRow {
+    /** `pid:<n>` —— 表格行键，和 run 的 `r-…` 不会撞 */
+    id: string;
+    pid: number;
+    pgid: number;
+    ppid: number;
+    /** 一行标题（命令首行） */
+    title: string;
+    /** 原始命令行全文 */
+    command: string;
+    /** 已运行时长 */
+    elapsedMs: number | null;
+    elapsedText: string;
+    /** CPU%（ps 的采样平值，只作参考） */
+    cpuText: string;
+    /** 内存常驻 */
+    memText: string;
+    /** 它属于哪条 run（`null` = 连 run 都没有的野进程） */
+    runId: string | null;
+    /** 哪个 bash 调用留下的（有就显示，回答"这堆进程是谁起的"） */
+    groupText: string;
+    /** 进程组组长的原始命令（tooltip 用；没有给 null） */
+    groupCommand: string | null;
+    /** 那条命令属于哪个任务（面板据此只在"本任务"里列它；不知道给 null） */
+    taskUri: string | null;
+}
+
+/** ps 的 KiB → 人话（1024 进制；表格里只留一位小数，够判断数量级）。 */
+export function memTextOf(rssKb: number | null): string {
+    if (!rssKb || rssKb <= 0) return "—";
+    if (rssKb < 1024) return `${rssKb}K`;
+    return `${(rssKb / 1024).toFixed(1)}M`;
+}
+
+/** 一条"野进程" → 表格行。`elapsedMs` 由调用方给（`ps` 的 etime 解析在 main 侧）。 */
+export function procRowOf(
+    proc: OwnedProc,
+    elapsedMs: number | null,
+    group?: { command: string; runId?: string; taskUri?: string; at: number },
+): ProcRow {
+    return {
+        id: `pid:${proc.pid}`,
+        pid: proc.pid,
+        pgid: proc.pgid,
+        ppid: proc.ppid,
+        title: titleOf(proc.command),
+        command: proc.command,
+        elapsedMs,
+        elapsedText: formatDuration(elapsedMs ?? undefined),
+        cpuText: proc.pcpu === null ? "—" : `${proc.pcpu.toFixed(1)}%`,
+        memText: memTextOf(proc.rssKb),
+        runId: proc.runId,
+        groupText: group ? `bash · ${group.command.split("\n")[0] ?? ""}` : "—",
+        groupCommand: group?.command ?? null,
+        taskUri: group?.taskUri ?? null,
+    };
 }

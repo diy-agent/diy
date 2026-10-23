@@ -17,19 +17,29 @@
 
 import { createSignal } from "solid-js";
 import { diyService } from "../lib/rpc";
-import type { RunView } from "../../shared/run-view";
+import type { ProcRow, RunView } from "../../shared/run-view";
 import type { JobNavTarget } from "../../shared/job-runs-view";
 
 /** `diy.job.ps` 的数据形状（真源 `main/services/api-impl.ts` + `shared/run-view.ts::RunView`） */
 export interface RunsSnapshot {
     readonly runs: readonly RunView[];
+    /**
+     * **没登记**的进程（命令里自己 `nohup xxx &` 起的那种，##408 刀 10）。
+     * 它们是 `ps` 里归我们管、但没走过 `run-registry` 的活 —— 也要能看见、能杀。
+     */
+    readonly untracked: readonly ProcRow[];
+    /** 每条 run 名下的进程（根进程退了但子孙还在时这里仍非空） */
+    readonly procsByRun: Readonly<Record<string, readonly ProcRow[]>>;
     /** 在跑几条（不分任务 —— 这是全局活体表） */
     readonly running: number;
     /** 表里一共几条（含已结束） */
     readonly total: number;
+    /** 上一次 ps 扫描的时刻 / 是否扫成功（失败时不能说"没有进程"） */
+    readonly scanAt: number | null;
+    readonly scanOk: boolean;
 }
 
-const EMPTY: RunsSnapshot = { runs: [], running: 0, total: 0 };
+const EMPTY: RunsSnapshot = { runs: [], untracked: [], procsByRun: {}, running: 0, total: 0, scanAt: null, scanOk: false };
 
 const [snap, setSnap] = createSignal<RunsSnapshot>(EMPTY);
 const [error, setError] = createSignal<string | null>(null);
@@ -53,12 +63,16 @@ async function refresh(opts: { all?: boolean } = {}): Promise<void> {
     const run = (async () => {
         setLoading(true);
         try {
-            const r = await diyService.diy.job.ps({ all: opts.all !== false });
+            const r = await diyService.diy.job.ps({ all: opts.all !== false, scan: true });
             const data = r.data as Partial<RunsSnapshot> | undefined;
             setSnap({
                 runs: (data?.runs ?? []) as RunView[],
+                untracked: (data?.untracked ?? []) as ProcRow[],
+                procsByRun: (data?.procsByRun ?? {}) as Record<string, ProcRow[]>,
                 running: data?.running ?? 0,
                 total: data?.total ?? 0,
+                scanAt: data?.scanAt ?? null,
+                scanOk: data?.scanOk ?? false,
             });
             setError(null);
         } catch (e) {
@@ -84,9 +98,31 @@ export const jobRunsStore = {
         return loading();
     },
     refresh,
+    /** 全部 run（"总的运行管理器"视角：不分任务；运行中在前；main 侧已排好序） */
+    allRuns(): readonly RunView[] {
+        return snap().runs;
+    },
+    /** 全部未登记进程（不分任务） */
+    allUntracked(): readonly ProcRow[] {
+        return snap().untracked;
+    },
     /** 本任务的 run（活体表里 origin.taskUri 命中本任务的；运行中在前） */
     runsFor(taskUri: string): RunView[] {
         return snap().runs.filter((r) => r.origin?.taskUri === taskUri);
+    },
+    /**
+     * 本任务**未登记**的进程（按"哪条命令起的"归到任务）。
+     *
+     * 为什么要按任务过滤：面板挂在任务页底栏，列一堆别的任务的进程只会让人以为是自己的。
+     * 归不到任务的（`taskUri === null`，例如更早版本的组名册没记任务）一律不显示 ——
+     * 宁可少显示也不要让人对着一条不知道哪来的进程按「结束」。
+     */
+    untrackedFor(taskUri: string): ProcRow[] {
+        return snap().untracked.filter((p) => p.taskUri === taskUri);
+    },
+    /** 某条 run 名下的进程（含根进程；详情里列子树用） */
+    procsOfRun(runId: string): ProcRow[] {
+        return [...(snap().procsByRun[runId] ?? [])];
     },
     /** 本任务正在跑的条数 */
     runningFor(taskUri: string): number {

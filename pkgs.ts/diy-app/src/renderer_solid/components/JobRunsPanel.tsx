@@ -1,26 +1,24 @@
 /**
- * JobRunsPanel — 任务页底栏的「作业」面板（##408；刀 9 改成**运行表 + 三 tab 详情**）。
+ * JobRunsPanel — 任务页底栏的「作业」面板（##408；刀 9 运行表 + 三 tab；刀 10 加"未登记进程"）。
  *
- * 用户 2026-10-23 的口径（本刀唯一依据）：
+ * 用户口径（按时间序，都是原话）：
  *   「先开发页面，不然不知道是怎么运转的，**把原始命令行要显示出来**。表格形式，各种字段。」
- *   +「每条记录加个按钮，可以看原文数据的（实际存储和 `diy job show` 的数据），
- *      和输出用 tab 分开看切换，即详情分 输出 / API 数据 / 存储数据」
- *   +「右上角的几个按钮排列有问题有覆盖现象（最大化 / 最小化 / 刷新）」
+ *   「每条记录加个按钮，可以看原文数据的（实际存储和 `diy job show` 的数据），和输出用 tab
+ *    分开看切换，即详情分 输出 / API 数据 / 存储数据」
+ *   「右上角的几个按钮排列有问题有覆盖现象（最大化 / 最小化 / 刷新）」
+ *   「bottonview 的表格和详细中间的横条需要能调节高度拖拉，**和其他横条一致**」
+ *   「我希望**所有** job/shell 的进程都通过我们管理器看到」（含命令里自己 `nohup xxx &` 起的）
  *
- * ── 四个刻意的克制 ──
- *   ① **数据源只有一个**：`diy.job.ps` / `job.tail` / `job.meta`（= main 侧活体表 + run 自己的落盘）。
+ * ── 五个刻意的克制 ──
+ *   ① **数据源只有一个**：`diy.job.ps`（活体表 + ps 扫描）/ `job.tail` / `job.meta`。
  *      面板不新造存储、不猜状态。
- *   ② **表格给字段，详情给原文**：表格列只放"扫一眼要看"的（状态 / 标题 / 时长 / 输出量 /
- *      退出 / 来源 / 启动）；原始命令行全文、pid、cwd、两条落盘路径都进详情 —— 否则表格会被
- *      一条长命令撑成三行高。
- *   ③ **不给每行都拉 tail**：`job.tail` 读一次 out.log。列表只显示字节数（`job.ps` 已 stat），
- *      **选中哪行才**去取它的输出（一次请求）。
- *   ④ **右内边距留给 area chrome**：本面板顶栏右侧有按钮，而 chrome 是 `absolute right-0`
- *      不占布局的浮层 ⇒ 必须显式让位（`AREA_CHROME_W`），否则两边盖在一起（用户报的那个 bug）。
- *
- * ── 为什么是「表格 + 选中行详情」而不是每行展开 ──
- *   运行表可能几十条（一次会话里每起一条后台命令就是一行）。行内展开会让列表每点一次整体位移，
- *   读起来更累；详情固定在一侧（或下侧），滚动列表时不会跟着跑。
+ *   ② **「run」与「未登记进程」是两种东西**，共用表格列但不共用模型：run 有 origin / 终态 /
+ *      落盘目录；野进程只有 pid 和命令行。混成一个模型会让 "run" 这个词失真。
+ *   ③ **不给每行都拉 tail**：列表只显示字节数（`job.ps` 已 stat），**选中哪行才**读一次输出。
+ *   ④ **右内边距留给 area chrome**：chrome 是 `absolute right-0` 浮层不占布局，顶栏必须显式让位，
+ *      否则两边盖在同一块像素上（用户报过的 bug）。
+ *   ⑤ **横条就是横条**：表格与详情之间那条 6px 的分隔条可拖（和 `ViewGrid` 的线同款手感），
+ *      位置记在 localStorage（下次打开还是你调的那档）。
  */
 
 import { createSignal, createMemo, createEffect, on, onCleanup, onMount, For, Show } from "solid-js";
@@ -28,7 +26,7 @@ import { diyService } from "../lib/rpc";
 import { getRendererActions } from "../lib/renderer-actions";
 import { jobRunsStore } from "../store/jobRunsStore";
 import { AREA_CHROME_W, VIEW_BAR_H } from "../lib/layout-metrics";
-import type { RunView } from "../../shared/run-view";
+import type { ProcRow, RunView } from "../../shared/run-view";
 import { bytesText } from "../../shared/run-view";
 
 /** 灯 → class（颜色归主题；这里只选 token，不写具体色值） */
@@ -37,14 +35,17 @@ const LAMP_CLASS: Record<string, string> = {
     exited: "bg-success",
     killed: "bg-warning",
     failed: "bg-error",
+    untracked: "bg-base-content/30",
 };
-
-function lampClassOf(row: RunView): string {
-    return LAMP_CLASS[row.state] ?? "bg-base-content/40";
-}
 
 /** 详情 tab */
 type Tab = "output" | "api" | "store";
+
+/** 布局：左右（列表 ↔ 详情）或上下（列表 ↑ 详情） */
+type LayoutMode = "split" | "stack";
+
+/** 一行：登记过的 run，或 `ps` 里发现但没登记过的进程 */
+type Row = { kind: "run"; run: RunView } | { kind: "proc"; proc: ProcRow };
 
 interface TailView {
     text: string;
@@ -60,42 +61,83 @@ interface MetaView {
     outputBytes: number | null;
 }
 
-/** 布局：左右（列表 ↔ 详情）或上下（列表 ↑ 详情） */
-type LayoutMode = "split" | "stack";
+/** 拖动条的位置（0.15~0.85）—— 两种布局各记一份 */
+const FRAC_KEY_SPLIT = "diy_job_panel_frac_split";
+const FRAC_KEY_STACK = "diy_job_panel_frac_stack";
+
+function loadFrac(key: string, fallback: number): number {
+    try {
+        const n = Number(localStorage.getItem(key));
+        if (Number.isFinite(n) && n >= 0.15 && n <= 0.85) return n;
+    } catch {
+        // localStorage 不可用（隐私模式等）⇒ 用缺省值，不影响功能
+    }
+    return fallback;
+}
 
 export function JobRunsPanel(props: { uri: string }) {
     const [selected, setSelected] = createSignal<string | null>(null);
     const [mode, setMode] = createSignal<LayoutMode>("split");
+    /**
+     * 视角：只看本任务 / 看全部（"总的 run 管理器"）。
+     *
+     * 缺省「本任务」：面板挂在任务页底栏，先把**这活儿的**后台活说清楚；
+     * 但用户要的"总的 run 管理器"也必须能进 —— 一个按钮切过去，不用换页面。
+     */
+    const [scope, setScope] = createSignal<"task" | "all">("task");
     const [tab, setTab] = createSignal<Tab>("output");
     const [tail, setTail] = createSignal<TailView | null>(null);
     const [meta, setMeta] = createSignal<MetaView | null>(null);
     const [detailErr, setDetailErr] = createSignal<string | null>(null);
     const [busy, setBusy] = createSignal(false);
+    const [fracSplit, setFracSplit] = createSignal(loadFrac(FRAC_KEY_SPLIT, 0.55));
+    const [fracStack, setFracStack] = createSignal(loadFrac(FRAC_KEY_STACK, 0.55));
+
+    let bodyRef: HTMLDivElement | undefined;
 
     onMount(() => {
         const stop = jobRunsStore.watch();
         onCleanup(stop);
     });
 
-    const rows = createMemo(() => jobRunsStore.runsFor(props.uri));
+    /** 行：先 run（活体在前），再未登记的野进程；「全部」视角下不分任务 */
+    const rows = createMemo<Row[]>(() => {
+        const all = scope() === "all";
+        const runs = (all ? jobRunsStore.allRuns() : jobRunsStore.runsFor(props.uri)).map(
+            (run): Row => ({ kind: "run", run }),
+        );
+        const procs = (all ? jobRunsStore.allUntracked() : jobRunsStore.untrackedFor(props.uri)).map(
+            (proc): Row => ({ kind: "proc", proc }),
+        );
+        return [...runs, ...procs];
+    });
+
+    /** 行键（run 用 `r-…`、野进程用 `pid:<n>`）；`null` 行给空串（"没选中"也是一种状态）。 */
+    const keyOf = (row: Row | null): string => (row === null ? "" : row.kind === "run" ? row.run.id : row.proc.id);
 
     /** 默认选中：第一条正在跑的；否则最近一条（打开面板多半就是想看"现在在跑什么"） */
-    const activeRow = createMemo<RunView | null>(() => {
+    const activeRow = createMemo<Row | null>(() => {
         const list = rows();
         const sel = selected();
         if (sel) {
-            const hit = list.find((r) => r.id === sel);
+            const hit = list.find((r) => keyOf(r) === sel);
             if (hit) return hit;
         }
-        return list.find((r) => r.state === "running") ?? list[0] ?? null;
+        return list.find((r) => r.kind === "run" && r.run.state === "running") ?? list[0] ?? null;
     });
 
-    const running = createMemo(() => rows().filter((r) => r.state === "running").length);
+    const activeRun = createMemo<RunView | null>(() => {
+        const a = activeRow();
+        return a && a.kind === "run" ? a.run : null;
+    });
 
-    const loadTail = async (row: RunView): Promise<void> => {
+    const running = createMemo(() => jobRunsStore.runsFor(props.uri).filter((r) => r.state === "running").length);
+    const untrackedCount = createMemo(() => jobRunsStore.untrackedFor(props.uri).length);
+
+    const loadTail = async (id: string): Promise<void> => {
         setBusy(true);
         try {
-            const r = await diyService.diy.job.tail({ id: row.id, lines: 200 });
+            const r = await diyService.diy.job.tail({ id, lines: 200 });
             if (r.status !== "ok" || !("data" in r) || !r.data) {
                 setDetailErr("取输出失败（这条 run 已不在活体表里）");
                 setTail(null);
@@ -112,9 +154,9 @@ export function JobRunsPanel(props: { uri: string }) {
         }
     };
 
-    const loadMeta = async (row: RunView): Promise<void> => {
+    const loadMeta = async (id: string): Promise<void> => {
         try {
-            const r = await diyService.diy.job.meta({ id: row.id });
+            const r = await diyService.diy.job.meta({ id });
             if (r.status !== "ok" || !("data" in r) || !r.data) {
                 setMeta(null);
                 return;
@@ -127,41 +169,46 @@ export function JobRunsPanel(props: { uri: string }) {
     };
 
     /**
-     * 选中行变了 ⇒ 取该看的那份。
+     * 选中行/切 tab ⇒ 取该看的那份。
      *
-     * 「该看的那份」跟着 tab 走：在「存储数据」tab 上就不要白读一次 out.log（反过来也一样）——
-     * 用户切 tab 才是意图，别替他预取两份。
+     * 「该看的那份」跟着 tab 走：在「存储数据」tab 上就不白读一次 out.log（反之亦然）。
+     * 未登记的进程没有落盘（它压根没走登记），它的 tab 只有「输出 = 无」和「API = 该行」。
      */
     createEffect(
         on(
-            () => [activeRow()?.id ?? null, tab()] as const,
-            ([id]) => {
-                const row = activeRow();
-                if (!id || !row) {
+            () => [keyOf(activeRow()), tab()] as const,
+            ([, t]) => {
+                const a = activeRow();
+                if (!a) {
                     setTail(null);
                     setMeta(null);
                     return;
                 }
-                if (tab() === "store") void loadMeta(row);
-                else if (tab() === "output") void loadTail(row);
+                if (a.kind !== "run") {
+                    setTail(null);
+                    setMeta(null);
+                    return;
+                }
+                if (t === "store") void loadMeta(a.run.id);
+                else if (t === "output") void loadTail(a.run.id);
             },
         ),
     );
 
-    /** 在跑的 run：每 3s 重取一次输出（与列表同一个节奏，看得到输出在长） */
+    /** 在跑的 run：每 3s 重取一次输出（看得到输出在长） */
     onMount(() => {
         const t = setInterval(() => {
-            const row = activeRow();
-            if (!row || row.state !== "running") return;
-            if (tab() === "output") void loadTail(row);
-            else if (tab() === "store") void loadMeta(row);
+            const run = activeRun();
+            if (!run || run.state !== "running") return;
+            if (tab() === "output") void loadTail(run.id);
+            else if (tab() === "store") void loadMeta(run.id);
         }, 3000);
         onCleanup(() => clearInterval(t));
     });
 
     /** 点「来源」：切到该任务会话，并把待定位请求交给会话页（它挂载/切任务时取走） */
-    const gotoOrigin = (row: RunView): void => {
-        const o = row.origin;
+    const gotoOrigin = (run: RunView): void => {
+        const o = run.origin;
         if (!o) return;
         getRendererActions().openTaskRun?.(o.taskUri);
         // 定位需要 (turnId, blockId) 一对（`JobNavTarget` 的契约）；缺一个就只切页，不假装能定位
@@ -170,10 +217,10 @@ export function JobRunsPanel(props: { uri: string }) {
         }
     };
 
-    const stop = async (row: RunView): Promise<void> => {
+    const stopRun = async (run: RunView): Promise<void> => {
         setBusy(true);
         try {
-            const r = await diyService.diy.job.kill({ id: row.id });
+            const r = await diyService.diy.job.kill({ id: run.id });
             if (r.status !== "ok") setDetailErr(("msg" in r ? r.msg : null) ?? "停止失败");
             else setDetailErr(null);
             await jobRunsStore.refresh();
@@ -183,6 +230,57 @@ export function JobRunsPanel(props: { uri: string }) {
             setBusy(false);
         }
     };
+
+    /** 结束一条**未登记**的进程（main 侧会重扫 ps 校验，不会误杀别人的） */
+    const stopProc = async (proc: ProcRow): Promise<void> => {
+        setBusy(true);
+        try {
+            const r = await diyService.diy.job.killPid({ pid: proc.pid });
+            if (r.status !== "ok") setDetailErr(("msg" in r ? r.msg : null) ?? "结束失败");
+            else setDetailErr(null);
+            await jobRunsStore.refresh();
+        } catch (e) {
+            setDetailErr(`结束失败：${e instanceof Error ? e.message : String(e)}`);
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    /**
+     * 拖分隔条 —— 与 `ViewGrid` 的线同一手感（6px 可见条、hover 高亮、整段 window 监听）。
+     *
+     * 两种布局各记一份位置：左右时拖的是宽，上下时拖的是高，混用会让另一种布局莫名变窄。
+     */
+    const startResize = (e: MouseEvent): void => {
+        e.preventDefault();
+        e.stopPropagation();
+        const el = bodyRef;
+        if (!el) return;
+        const rect = el.getBoundingClientRect();
+        const axis = mode() === "split" ? "x" : "y";
+        const setter = axis === "x" ? setFracSplit : setFracStack;
+        const getter = axis === "x" ? fracSplit : fracStack;
+        const key = axis === "x" ? FRAC_KEY_SPLIT : FRAC_KEY_STACK;
+        const move = (ev: MouseEvent): void => {
+            const f = axis === "x" ? (ev.clientX - rect.left) / rect.width : (ev.clientY - rect.top) / rect.height;
+            setter(Math.min(0.85, Math.max(0.15, f)));
+        };
+        const up = (): void => {
+            window.removeEventListener("mousemove", move);
+            window.removeEventListener("mouseup", up);
+            bodyRef?.removeAttribute("data-resizing");
+            try {
+                localStorage.setItem(key, String(getter()));
+            } catch {
+                // 记不住就算了：位置只在本次会话里有，不影响功能
+            }
+        };
+        bodyRef?.setAttribute("data-resizing", axis);
+        window.addEventListener("mousemove", move);
+        window.addEventListener("mouseup", up);
+    };
+
+    const frac = (): number => (mode() === "split" ? fracSplit() : fracStack());
 
     return (
         <div class="flex h-full min-h-0 flex-col overflow-hidden" data-job-runs-panel data-job-layout={mode()}>
@@ -195,9 +293,26 @@ export function JobRunsPanel(props: { uri: string }) {
                 style={{ "padding-right": `${AREA_CHROME_W + 12}px` }}
             >
                 <span class="font-medium">作业</span>
+                <div class="join shrink-0" data-tip="视角：本任务的后台活 / 这台 app 全部的活（总的 run 管理器）">
+                    <button
+                        class={`btn btn-xs join-item ${scope() === "task" ? "btn-active" : "btn-ghost"}`}
+                        data-job-scope-btn="task"
+                        onClick={() => setScope("task")}
+                    >
+                        本任务
+                    </button>
+                    <button
+                        class={`btn btn-xs join-item ${scope() === "all" ? "btn-active" : "btn-ghost"}`}
+                        data-job-scope-btn="all"
+                        onClick={() => setScope("all")}
+                    >
+                        全部
+                    </button>
+                </div>
                 <span class="opacity-60" data-job-count>
                     {rows().length} 条
                     {running() > 0 ? ` · ${running()} 在跑` : ""}
+                    {untrackedCount() > 0 ? ` · ${untrackedCount()} 未登记` : ""}
                 </span>
                 <div class="flex-1" />
                 <Show when={jobRunsStore.loading}>
@@ -232,9 +347,16 @@ export function JobRunsPanel(props: { uri: string }) {
                 {(msg) => <div class="px-3 py-2 text-body text-error">{msg()}</div>}
             </Show>
 
-            <div class={`flex-1 min-h-0 ${mode() === "split" ? "flex flex-row" : "flex flex-col"}`}>
+            <div
+                ref={(el) => (bodyRef = el)}
+                class={`flex-1 min-h-0 ${mode() === "split" ? "flex flex-row" : "flex flex-col"}`}
+                data-job-body
+            >
                 {/* ── 表 ── */}
-                <div class="min-h-0 min-w-0 flex-1 overflow-auto">
+                <div
+                    class="min-h-0 min-w-0 overflow-auto"
+                    style={mode() === "split" ? { width: `${frac() * 100}%` } : { height: `${frac() * 100}%` }}
+                >
                     <Show
                         when={rows().length > 0}
                         fallback={
@@ -243,7 +365,8 @@ export function JobRunsPanel(props: { uri: string }) {
                                 <div class="mt-1 opacity-70">
                                     让 agent 用 <code class="font-mono">bash</code> 的{" "}
                                     <code class="font-mono">background:true</code> 起一条命令（或命令跑得比 300s 长），
-                                    这里就会出现它的状态、耗时、输出与来源。
+                                    这里就会出现它的状态、耗时、输出与来源；命令里自己{" "}
+                                    <code class="font-mono">nohup xxx &</code> 起的进程也会被扫出来（标「未登记」）。
                                 </div>
                             </div>
                         }
@@ -256,7 +379,7 @@ export function JobRunsPanel(props: { uri: string }) {
                         */}
                         <table class="w-full table-fixed text-xs" data-job-table>
                             <colgroup>
-                                <col style="width: 5.2rem" />
+                                <col style="width: 5.4rem" />
                                 <col />
                                 <col style="width: 5.4rem" />
                                 <col style="width: 3.6rem" />
@@ -280,56 +403,91 @@ export function JobRunsPanel(props: { uri: string }) {
                             <tbody>
                                 <For each={rows()}>
                                     {(row) => {
-                                        const isActive = () => activeRow()?.id === row.id;
+                                        const key = keyOf(row);
+                                        const isActive = () => keyOf(activeRow()) === key;
+                                        const lamp = () => LAMP_CLASS[row.kind === "run" ? row.run.state : "untracked"];
                                         return (
                                             <tr
                                                 class={`cursor-pointer border-b border-base-content/10 align-top ${isActive() ? "bg-base-content/10" : "hover:bg-base-content/5"}`}
-                                                data-job-row={row.id}
-                                                data-job-state={row.state}
-                                                onClick={() => setSelected(row.id)}
+                                                data-job-row={key}
+                                                data-job-kind={row.kind}
+                                                data-job-state={row.kind === "run" ? row.run.state : "untracked"}
+                                                onClick={() => setSelected(key)}
                                             >
                                                 <td class="py-1 pl-3 pr-2 whitespace-nowrap">
                                                     <span class="inline-flex items-center gap-1">
-                                                        <span class={`h-2 w-2 shrink-0 rounded-full ${lampClassOf(row)}`} />
-                                                        {row.stateLabel}
+                                                        <span class={`h-2 w-2 shrink-0 rounded-full ${lamp()}`} />
+                                                        {row.kind === "run" ? row.run.stateLabel : "未登记"}
                                                     </span>
                                                 </td>
                                                 <td class="px-2">
-                                                    <div class="truncate font-medium" data-tip={row.command}>
-                                                        {row.title}
+                                                    <div
+                                                        class="truncate font-medium"
+                                                        data-tip={row.kind === "run" ? row.run.command : row.proc.command}
+                                                    >
+                                                        {row.kind === "run" ? row.run.title : row.proc.title}
                                                     </div>
-                                                    <Show when={row.error}>
+                                                    <Show when={row.kind === "run" && row.run.error}>
                                                         {(e) => <div class="truncate text-error">{e()}</div>}
+                                                    </Show>
+                                                    <Show when={scope() === "all" && row.kind === "run" && row.run.origin?.taskUri}>
+                                                        {(uri) => (
+                                                            <div class="truncate opacity-50" data-job-run-task>
+                                                                {uri()}
+                                                            </div>
+                                                        )}
+                                                    </Show>
+                                                    <Show when={row.kind === "proc"}>
+                                                        <div class="truncate opacity-60" data-job-proc-stats>
+                                                            {(row as { kind: "proc"; proc: ProcRow }).proc.cpuText} · 内存{" "}
+                                                            {(row as { kind: "proc"; proc: ProcRow }).proc.memText} · pgid{" "}
+                                                            {(row as { kind: "proc"; proc: ProcRow }).proc.pgid}
+                                                        </div>
                                                     </Show>
                                                 </td>
                                                 <td class="px-2">
                                                     <Show
-                                                        when={row.origin?.toolCallId}
+                                                        when={row.kind === "run" ? row.run.origin?.toolCallId : null}
                                                         fallback={
-                                                            <span class="opacity-60" data-tip={row.originText}>
-                                                                {row.origin ? "无锚点" : "—"}
+                                                            <span
+                                                                class="opacity-60"
+                                                                data-tip={row.kind === "run" ? row.run.originText : row.proc.groupText}
+                                                            >
+                                                                {row.kind === "proc"
+                                                                    ? "未登记"
+                                                                    : row.run.origin
+                                                                      ? "无锚点"
+                                                                      : "—"}
                                                             </span>
                                                         }
                                                     >
                                                         <button
                                                             class="btn btn-xs btn-ghost gap-1 px-1 min-h-0"
-                                                            data-job-origin-link={row.origin?.taskUri}
-                                                            data-tip={`${row.originText}（点它回会话定位到那次工具调用）`}
+                                                            data-job-origin-link={(row as { kind: "run"; run: RunView }).run.origin?.taskUri}
+                                                            data-tip={`${(row as { kind: "run"; run: RunView }).run.originText}（点它回会话定位到那次工具调用）`}
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
-                                                                gotoOrigin(row);
+                                                                gotoOrigin((row as { kind: "run"; run: RunView }).run);
                                                             }}
                                                         >
                                                             ▶ 会话 ↗
                                                         </button>
                                                     </Show>
                                                 </td>
-                                                <td class="px-2 whitespace-nowrap opacity-70">{row.durationText}</td>
-                                                <td class="px-2 whitespace-nowrap opacity-70">{row.outputText}</td>
-                                                <td class="px-2 whitespace-nowrap opacity-70">{row.exitText}</td>
-                                                <td class="px-2 whitespace-nowrap opacity-60">{row.startedAtText}</td>
+                                                <td class="px-2 whitespace-nowrap opacity-70">
+                                                    {row.kind === "run" ? row.run.durationText : row.proc.elapsedText}
+                                                </td>
+                                                <td class="px-2 whitespace-nowrap opacity-70">
+                                                    {row.kind === "run" ? row.run.outputText : "—"}
+                                                </td>
+                                                <td class="px-2 whitespace-nowrap opacity-70">
+                                                    {row.kind === "run" ? row.run.exitText : "—"}
+                                                </td>
+                                                <td class="px-2 whitespace-nowrap opacity-60">
+                                                    {row.kind === "run" ? row.run.startedAtText : "—"}
+                                                </td>
                                                 <td class="px-2 whitespace-nowrap font-mono opacity-60">
-                                                    {row.pid ?? "—"}
+                                                    {row.kind === "run" ? (row.run.pid ?? "—") : row.proc.pid}
                                                 </td>
                                             </tr>
                                         );
@@ -340,28 +498,54 @@ export function JobRunsPanel(props: { uri: string }) {
                     </Show>
                 </div>
 
+                {/* ── 分隔条：可拖（和 ViewGrid 的线同款：6px、hover 高亮、cursor 跟随方向）── */}
+                <Show when={activeRow()}>
+                    <div
+                        class={`shrink-0 bg-base-content/10 hover:bg-primary/40 active:bg-primary/60 ${
+                            mode() === "split" ? "w-1.5 cursor-col-resize" : "h-1.5 cursor-row-resize"
+                        }`}
+                        data-job-resizer
+                        data-tip="拖动调整列表 / 详情的大小"
+                        onMouseDown={startResize}
+                    />
+                </Show>
+
                 {/* ── 详情 ── */}
                 <Show when={activeRow()}>
                     {(row) => (
                         <div
-                            class={`flex min-h-0 min-w-0 flex-col text-body ${
-                                mode() === "split" ? "w-[46%] min-w-[280px] border-l" : "h-[46%] min-h-[160px] border-t"
-                            }`}
+                            class="flex min-h-0 min-w-0 flex-1 flex-col text-body"
                             data-job-detail
-                            data-job-detail-id={row().id}
+                            data-job-detail-id={keyOf(row())}
                         >
                             {/* 详情头：标题 + 原始命令行（用户点名要看全文）*/}
                             <div class="shrink-0 px-3 pt-2">
                                 <div class="flex items-center gap-2">
-                                    <span class={`h-2 w-2 shrink-0 rounded-full ${lampClassOf(row())}`} />
-                                    <span class="min-w-0 flex-1 truncate font-medium">{row().title}</span>
-                                    <Show when={row().state === "running"}>
+                                    <span
+                                        class={`h-2 w-2 shrink-0 rounded-full ${LAMP_CLASS[row().kind === "run" ? (row() as { kind: "run"; run: RunView }).run.state : "untracked"]}`}
+                                    />
+                                    <span class="min-w-0 flex-1 truncate font-medium">
+                                        {row().kind === "run"
+                                            ? (row() as { kind: "run"; run: RunView }).run.title
+                                            : (row() as { kind: "proc"; proc: ProcRow }).proc.title}
+                                    </span>
+                                    <Show when={row().kind === "run" && (row() as { kind: "run"; run: RunView }).run.state === "running"}>
                                         <button
                                             class="btn btn-xs btn-warning shrink-0"
                                             data-job-stop
-                                            onClick={() => void stop(row())}
+                                            onClick={() => void stopRun((row() as { kind: "run"; run: RunView }).run)}
                                         >
                                             停止
+                                        </button>
+                                    </Show>
+                                    <Show when={row().kind === "proc"}>
+                                        <button
+                                            class="btn btn-xs btn-warning shrink-0"
+                                            data-job-kill-pid={(row() as { kind: "proc"; proc: ProcRow }).proc.pid}
+                                            data-tip="结束这条进程（按进程组；main 侧会重扫 ps 校验它确实归我们管）"
+                                            onClick={() => void stopProc((row() as { kind: "proc"; proc: ProcRow }).proc)}
+                                        >
+                                            结束进程
                                         </button>
                                     </Show>
                                 </div>
@@ -369,42 +553,40 @@ export function JobRunsPanel(props: { uri: string }) {
                                     class="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-all rounded bg-base-200/50 p-2 font-mono text-xs opacity-90"
                                     data-job-command
                                 >
-                                    {row().command}
+                                    {row().kind === "run"
+                                        ? (row() as { kind: "run"; run: RunView }).run.command
+                                        : (row() as { kind: "proc"; proc: ProcRow }).proc.command}
                                 </pre>
                             </div>
 
                             {/* 字段表：表格里放不下的都在这儿 */}
                             <div class="grid shrink-0 grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 px-3 py-2 text-xs">
-                                <span class="opacity-60">run</span>
-                                <span class="truncate font-mono">{row().id}</span>
-                                <span class="opacity-60">状态</span>
-                                <span>
-                                    {row().stateLabel} · {row().exitText}
-                                    <Show when={row().signal}>{(s) => <span class="opacity-60"> · 信号 {s()}</span>}</Show>
-                                </span>
-                                <span class="opacity-60">时间</span>
-                                <span class="opacity-80">
-                                    {row().startedAtText}
-                                    {row().endedAtText ? ` → ${row().endedAtText}` : ""} · 共 {row().durationText}
-                                </span>
-                                <span class="opacity-60">pid</span>
-                                <span class="font-mono opacity-80">{row().pid ?? "—（进程内任务）"}</span>
-                                <span class="opacity-60">cwd</span>
-                                <span class="truncate font-mono opacity-80" data-tip={row().cwd}>
-                                    {row().cwd}
-                                </span>
-                                <span class="opacity-60">来源</span>
-                                <span class="truncate opacity-80" data-tip="origin：哪个任务 / 轮 / 步 / 工具调用起的">
-                                    {row().originText}
-                                </span>
-                                <span class="opacity-60">输出</span>
-                                <span class="opacity-80">
-                                    {row().outputText}
-                                    <Show when={tail()?.droppedBytes}>{(n) => <span class="text-warning"> · 截断 {n()}B</span>}</Show>
-                                </span>
+                                <Show when={row().kind === "run"} fallback={<ProcFields proc={(row() as { kind: "proc"; proc: ProcRow }).proc} />}>
+                                    <RunFields run={(row() as { kind: "run"; run: RunView }).run} />
+                                    <Show when={tail()?.droppedBytes}>
+                                        {(n) => (
+                                            <>
+                                                <span class="opacity-60">输出截断</span>
+                                                <span class="text-warning">{n()}B（底部只留最近一段）</span>
+                                            </>
+                                        )}
+                                    </Show>
+                                    <Show when={jobRunsStore.procsOfRun((row() as { kind: "run"; run: RunView }).run.id).length > 0}>
+                                        <span class="opacity-60">名下进程</span>
+                                        <span class="font-mono opacity-80" data-job-run-procs>
+                                            <For each={jobRunsStore.procsOfRun((row() as { kind: "run"; run: RunView }).run.id)}>
+                                                {(p) => (
+                                                    <div class="truncate">
+                                                        {p.pid} · {p.cpuText} · {p.memText} · {p.title}
+                                                    </div>
+                                                )}
+                                            </For>
+                                        </span>
+                                    </Show>
+                                </Show>
                             </div>
 
-                            {/* tab 条 */}
+                            {/* tab 条：未登记的进程没有落盘，只有"输出（无）"与"API 数据"两页有内容 */}
                             <div class="flex shrink-0 items-center gap-1 border-b px-2" data-job-tabs>
                                 <For
                                     each={
@@ -437,64 +619,89 @@ export function JobRunsPanel(props: { uri: string }) {
                                 {/* 输出：out.log 的尾部（选中才读一次；在跑每 3s 重读） */}
                                 <Show when={tab() === "output"}>
                                     <Show
-                                        when={tail()?.text}
+                                        when={row().kind === "run"}
                                         fallback={
                                             <div class="text-xs opacity-60" data-job-tail-empty>
-                                                （还没有输出）
+                                                这条进程没走调度器（命令里自己 <code class="font-mono">&</code> 起的），
+                                                所以它没有我们的输出文件；要看输出请回到起它的那条命令。
                                             </div>
                                         }
                                     >
-                                        {(text) => (
-                                            <pre
-                                                class="whitespace-pre-wrap break-all font-mono text-xs opacity-90"
-                                                data-job-tail
-                                            >
-                                                {text()}
-                                            </pre>
-                                        )}
+                                        <Show
+                                            when={tail()?.text}
+                                            fallback={
+                                                <div class="text-xs opacity-60" data-job-tail-empty>
+                                                    （还没有输出）
+                                                </div>
+                                            }
+                                        >
+                                            {(text) => (
+                                                <pre
+                                                    class="whitespace-pre-wrap break-all font-mono text-xs opacity-90"
+                                                    data-job-tail
+                                                >
+                                                    {text()}
+                                                </pre>
+                                            )}
+                                        </Show>
                                     </Show>
                                 </Show>
 
-                                {/* API 数据：这条 run 在 `diy job ps` 里的**原始载荷**（就是这个对象） */}
+                                {/* API 数据：这条记录在 `diy job ps` 里的**原始载荷**（就是这个对象） */}
                                 <Show when={tab() === "api"}>
                                     <pre
                                         class="whitespace-pre-wrap break-all font-mono text-xs opacity-90"
                                         data-job-api-json
                                     >
-                                        {JSON.stringify(row(), null, 2)}
+                                        {JSON.stringify(row().kind === "run" ? (row() as { kind: "run"; run: RunView }).run : (row() as { kind: "proc"; proc: ProcRow }).proc, null, 2)}
                                     </pre>
                                 </Show>
 
                                 {/* 存储数据：落盘的 meta.json 原文 + 两条路径（"到底存了什么"） */}
                                 <Show when={tab() === "store"}>
-                                    <div class="text-xs">
-                                        <div class="opacity-60">目录</div>
-                                        <div class="truncate font-mono opacity-90" data-job-dir>
-                                            {meta()?.dir ?? row().dir}
-                                        </div>
-                                        <div class="mt-1 opacity-60">输出日志</div>
-                                        <div class="truncate font-mono opacity-90" data-job-log-path>
-                                            {meta()?.logPath ?? row().logPath}
-                                            <span class="opacity-60">
-                                                {" "}
-                                                （{bytesText(meta()?.outputBytes ?? row().outputBytes ?? 0)}）
-                                            </span>
-                                        </div>
-                                        <div class="mt-1 opacity-60">meta.json</div>
-                                        <Show
-                                            when={meta()?.metaJson}
-                                            fallback={<div class="opacity-50">（读不到 meta.json）</div>}
-                                        >
-                                            {(json) => (
-                                                <pre
-                                                    class="whitespace-pre-wrap break-all font-mono text-xs opacity-90"
-                                                    data-job-meta-json
-                                                >
-                                                    {json()}
-                                                </pre>
-                                            )}
-                                        </Show>
-                                    </div>
+                                    <Show
+                                        when={row().kind === "run"}
+                                        fallback={
+                                            <div class="text-xs opacity-60">
+                                                未登记的进程没有落盘（它从没走过 <code class="font-mono">run-registry</code>）。
+                                                它的全部信息就是上面那个 API 对象里的 pid / 命令行 / 进程组。
+                                            </div>
+                                        }
+                                    >
+                                        {(() => {
+                                            const run = (row() as { kind: "run"; run: RunView }).run;
+                                            return (
+                                                <div class="text-xs">
+                                                    <div class="opacity-60">目录</div>
+                                                    <div class="truncate font-mono opacity-90" data-job-dir>
+                                                        {meta()?.dir ?? run.dir}
+                                                    </div>
+                                                    <div class="mt-1 opacity-60">输出日志</div>
+                                                    <div class="truncate font-mono opacity-90" data-job-log-path>
+                                                        {meta()?.logPath ?? run.logPath}
+                                                        <span class="opacity-60">
+                                                            {" "}
+                                                            （{bytesText(meta()?.outputBytes ?? run.outputBytes ?? 0)}）
+                                                        </span>
+                                                    </div>
+                                                    <div class="mt-1 opacity-60">meta.json</div>
+                                                    <Show
+                                                        when={meta()?.metaJson}
+                                                        fallback={<div class="opacity-50">（读不到 meta.json）</div>}
+                                                    >
+                                                        {(json) => (
+                                                            <pre
+                                                                class="whitespace-pre-wrap break-all font-mono text-xs opacity-90"
+                                                                data-job-meta-json
+                                                            >
+                                                                {json()}
+                                                            </pre>
+                                                        )}
+                                                    </Show>
+                                                </div>
+                                            );
+                                        })()}
+                                    </Show>
                                 </Show>
                             </div>
                         </div>
@@ -502,5 +709,66 @@ export function JobRunsPanel(props: { uri: string }) {
                 </Show>
             </div>
         </div>
+    );
+}
+
+/** run 的字段行（`grid-cols-[auto_1fr]` 的子项） */
+function RunFields(props: { run: RunView }) {
+    return (
+        <>
+            <span class="opacity-60">run</span>
+            <span class="truncate font-mono">{props.run.id}</span>
+            <span class="opacity-60">状态</span>
+            <span>
+                {props.run.stateLabel} · {props.run.exitText}
+                <Show when={props.run.signal}>{(s) => <span class="opacity-60"> · 信号 {s()}</span>}</Show>
+            </span>
+            <span class="opacity-60">时间</span>
+            <span class="opacity-80">
+                {props.run.startedAtText}
+                {props.run.endedAtText ? ` → ${props.run.endedAtText}` : ""} · 共 {props.run.durationText}
+            </span>
+            <span class="opacity-60">pid</span>
+            <span class="font-mono opacity-80">{props.run.pid ?? "—（进程内任务）"}</span>
+            <span class="opacity-60">cwd</span>
+            <span class="truncate font-mono opacity-80" data-tip={props.run.cwd}>
+                {props.run.cwd}
+            </span>
+            <span class="opacity-60">来源</span>
+            <span class="truncate opacity-80" data-tip="origin：哪个任务 / 轮 / 步 / 工具调用起的">
+                {props.run.originText}
+            </span>
+            <span class="opacity-60">输出</span>
+            <span class="opacity-80">{props.run.outputText}</span>
+        </>
+    );
+}
+
+/** 未登记进程的字段行 */
+function ProcFields(props: { proc: ProcRow }) {
+    return (
+        <>
+            <span class="opacity-60">pid</span>
+            <span class="font-mono">{props.proc.pid}</span>
+            <span class="opacity-60">进程组</span>
+            <span class="font-mono opacity-80">
+                {props.proc.pgid} · 父 {props.proc.ppid}
+            </span>
+            <span class="opacity-60">已运行</span>
+            <span class="opacity-80">{props.proc.elapsedText}</span>
+            <span class="opacity-60">CPU / 内存</span>
+            <span class="opacity-80">
+                {props.proc.cpuText} · {props.proc.memText}
+            </span>
+            <span class="opacity-60">来源</span>
+            <span class="truncate opacity-80" data-tip={props.proc.groupCommand ?? "未知"}>
+                {props.proc.groupText}
+            </span>
+            <span class="opacity-60">说明</span>
+            <span class="opacity-70">
+                没走调度器（命令里自己 <code class="font-mono">&</code> / <code class="font-mono">nohup</code> 起的），
+                只能看和杀，没有输出与账。
+            </span>
+        </>
     );
 }

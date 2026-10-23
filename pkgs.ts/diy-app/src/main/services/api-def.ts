@@ -2364,8 +2364,37 @@ export const apiDef = RpcSchema.router({
                 .boolean()
                 .optional()
                 .cliOption({ desc: "也列出已结束的（缺省只列运行中；app 退出后表即空 —— 这是刻意的，不做恢复）" }),
+              scan: z
+                .boolean()
+                .optional()
+                .cliOption({ desc: "顺带扫一遍 ps，带上**未登记**的进程（命令里自己 `nohup xxx &` 起的；缺省 true）" }),
             },
             output: z.object({ status: z.string(), data: z.any() }),
+          }),
+          procs: RpcSchema.unary({
+            desc: `
+            **这台 app 起过、现在还在的全部进程**（ps 现扫，不只我们登记过的）。
+
+            为什么要它：模型可以在命令里写 \`nohup xxx & \` —— 那种进程从没经过活体表，
+            但归我们管（按**进程组**认领，见 \`shared/proc-scan.ts\`）。这里把它一并列出来，
+            回答「我起的那些东西现在到底有哪些在跑」。
+            `,
+            input: {
+              scan: z.boolean().optional().cliOption({ desc: "预留：是否重扫（当前恒重扫，ps 一次约几十毫秒）" }),
+            },
+            output: z.object({ status: z.string(), data: z.any() }),
+          }),
+          killPid: RpcSchema.unary({
+            desc: `
+            结束一条**未登记**的进程（按 pid；同组且组不是 app 自己时按组杀）。
+
+            安全检查：调用时**重新扫一遍** ps，pid 不在"归我们管"的名单里就拒绝 ——
+            免得任何调用方（含模型）拿这个接口去杀别人的进程。
+            `,
+            input: {
+              pid: z.number().cliArg({ desc: "进程 pid（`diy job procs` 里看到的）" }),
+            },
+            output: z.object({ status: z.string(), data: z.any() }).or(z.object({ status: z.string(), msg: z.string() })),
           }),
           kill: RpcSchema.unary({
             desc: `停止一条 run（进程型按**进程组** SIGTERM → 2s → SIGKILL）。返回是否真的发出了停止。`,

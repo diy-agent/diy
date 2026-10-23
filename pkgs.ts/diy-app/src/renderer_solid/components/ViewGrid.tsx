@@ -10,11 +10,12 @@
  *     被跨列 area 覆盖的段没有分隔可言，故不渲染手柄（见 colLineSegments）
  *   - 最大化 / 最小化：浮在 area 右上角
  */
-import { For, Show, createMemo, type JSX } from "solid-js";
+import { For, Show, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
 import {
     areaCss,
     colLineSegments,
     findArea,
+    fitTracks,
     resolveLayout,
     rowLineSegments,
     trackCss,
@@ -43,9 +44,27 @@ export function ViewGrid(props: {
 
     const st = () => layoutStore.pageState(props.pageId);
 
-    /** 有效布局 = 默认 + 用户 track 覆盖 + 隐藏 area 的 track 归零。
-     *  算法在 shared（resolveLayout）—— 渲染与 CLI `ui layout get` 必须是同一份结果。 */
-    const layout = createMemo<Layout>(() => resolveLayout(props.layout, st()));
+    /**
+     * 内容区的**实测**尺寸（`ResizeObserver` 于网格元素）。
+     *
+     * 为什么必须有它：用户拖过线之后 track 全是 px，容器尺寸再变，px 之和就不等于容器尺寸，
+     * CSS Grid 不会替你填 —— 多出来的部分是一条死区（用户 2026-10-23 报的「下面一大段空白」）。
+     * 判据在 `fitTracks`（纯函数、可单测），这里只负责量。
+     */
+    const [box, setBox] = createSignal<{ w: number; h: number }>({ w: 0, h: 0 });
+
+    /** 有效布局 = 默认 + 用户 track 覆盖 + 隐藏 area 的 track 归零，再**贴合实测容器尺寸**。
+     *  算法在 shared（resolveLayout / fitTracks）—— 渲染与 CLI 必须同一份结果。 */
+    const layout = createMemo<Layout>(() => {
+        const base = resolveLayout(props.layout, st());
+        const b = box();
+        if (!(b.w > 0) && !(b.h > 0)) return base;
+        return {
+            ...base,
+            cols: b.w > 0 ? fitTracks(base.cols, b.w) : base.cols,
+            rows: b.h > 0 ? fitTracks(base.rows, b.h) : base.rows,
+        };
+    });
 
     /**
      * 本次渲染的 area 计划（可见 / 最大化 / 被挤掉）—— 判据在 shared（planPageViews），
@@ -189,7 +208,16 @@ export function ViewGrid(props: {
             }
         >
             <div
-                ref={(el) => (gridRef = el)}
+                ref={(el) => {
+                    gridRef = el;
+                    // 量容器：尺寸变化时重算（fitTracks 把 px 差额还给最大的 track）
+                    const ro = new ResizeObserver(() => {
+                        const r = el.getBoundingClientRect();
+                        setBox({ w: r.width, h: r.height });
+                    });
+                    ro.observe(el);
+                    onCleanup(() => ro.disconnect());
+                }}
                 class="grid h-full w-full overflow-hidden relative"
                 style={{
                     "grid-template-columns": layout().cols.map(trackCss).join(" "),

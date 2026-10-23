@@ -43,7 +43,9 @@ import { revealSelf, windowState } from "./window-ops";
 import { shortName } from "../../shared/room";
 import { jobList, jobShow } from "./job-view";
 import { runRegistry } from "./run-registry";
-import { runViewOf } from "../../shared/run-view";
+import { scanOwnedProcs, groupOwnerOf, killOwnedProc } from "./process-scan";
+import { procRowOf, runViewOf } from "../../shared/run-view";
+import { parseEtime } from "./process-sampler";
 import { stateLabel } from "../../shared/run-status";
 
 /**
@@ -1154,14 +1156,49 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const now = Date.now();
     const all = runRegistry.list();
     const picked = input.all === true ? all : all.filter((r) => r.state === "running");
+    // 顺带扫一遍 ps：登记过的 run 之外，命令里自己 `nohup xxx &` 起的进程也要看见（##408 刀 10）。
+    // `scan:false` 只给"我只要表里那几条"的调用方（省一次 ps）。
+    const scan = input.scan === false ? null : scanOwnedProcs({ runPids: runRegistry.pidMap() });
+    const procRows = (scan?.procs ?? []).map((p) =>
+        procRowOf(p, parseEtime(p.etimeText), groupOwnerOf(p.pgid)),
+    );
+    const byRun: Record<string, typeof procRows> = {};
+    for (const row of procRows) if (row.runId) (byRun[row.runId] ??= []).push(row);
     return {
       status: "ok",
       data: {
         runs: picked.map((r) => runViewOf(r, now, runRegistry.outputBytes(r.id) ?? null)),
+        /** 没登记进活体表的进程（表格里跟在 run 后面） */
+        untracked: procRows.filter((r) => r.runId === null),
+        /** 每条 run 名下的进程（含根进程；根进程退了但子孙还在时这里仍非空） */
+        procsByRun: byRun,
         running: all.filter((r) => r.state === "running").length,
         total: all.length,
+        scanAt: scan?.at ?? null,
+        scanOk: scan?.ok ?? false,
       },
     };
+  });
+  binding.on(app.job.procs, async () => {
+    const scan = scanOwnedProcs({ runPids: runRegistry.pidMap() });
+    return {
+      status: "ok",
+      data: {
+        at: scan.at,
+        ok: scan.ok,
+        procs: scan.procs.map((p) => procRowOf(p, parseEtime(p.etimeText), groupOwnerOf(p.pgid))),
+      },
+    };
+  });
+  binding.on(app.job.killPid, async ({ input }) => {
+    // 重新扫一遍再动手：pid 可能已被回收、也可能根本不是我们的（调用方给错号的代价是杀别人）
+    const scan = scanOwnedProcs({ runPids: runRegistry.pidMap() });
+    const hit = scan.procs.find((p) => p.pid === input.pid);
+    if (!hit) {
+      return { status: "error", msg: `pid ${input.pid} 不在"归我们管"的进程名单里（diy job procs 看现在有哪些）` };
+    }
+    const ok = killOwnedProc(hit, scan.selfPgid);
+    return { status: "ok", data: { ok, pid: hit.pid, pgid: hit.pgid } };
   });
   binding.on(app.job.kill, async ({ input }) => {
     const info = runRegistry.get(input.id);
