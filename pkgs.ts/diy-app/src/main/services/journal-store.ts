@@ -293,6 +293,56 @@ export function addEntries(
   return { task: taskUri, added, total: after.rows.length };
 }
 
+export interface SystemEventInput {
+  /** 归一化 code（`llm/step-limit` 这类）；**同时是去重键** */
+  readonly code: string;
+  /** 一行标题（不含 code 前缀，本函数自己加） */
+  readonly title: string;
+  readonly body?: string;
+  /** kind 缺省 `pitfall`：系统事件几乎都是「出了事」，少数里程碑由调用方改传 */
+  readonly kind?: JournalKind;
+  /** 同 code 静默窗（ms），缺省 10 分钟 */
+  readonly windowMs?: number;
+}
+
+/**
+ * **系统侧客观事件**（##404 待办 3）：`author: system` 的条目由系统自己写，不靠模型自述。
+ *
+ * 为什么必须有这条通道：journal 已有 `author` 三态契约，但历史里**全是 `agent`** ——
+ * 「落地了 X」「发现了 Y」都是模型自己说的，可能错。客观事实（轮末判成 defect）只有系统说得出来，
+ * 且它恰是「事后查为什么这一轮挂了」最有用的那一条。
+ *
+ * 三条纪律：
+ *  · **只写 defect**（判据归调用方）：`external-*` 是环境噪音、全局审计（`log/agent-bash.jsonl`）
+ *    已逐轮兜底，journal 再来一份就是双写流水 —— 反而把真正的缺陷埋掉。
+ *  · **同 code 有静默窗**：缺陷可能连续几十轮复现（同一个 bug 反复触发），几十条同标题
+ *    等于把日志变成计数器。窗内只在**上一条**上判（连续重复才算重复，中间插了别的事就该重记）。
+ *  · **失败不许影响调用方**：产出日志是副作用，副作用炸掉不该带走主流程（调用方仍需自己兜）。
+ */
+export function addSystemEvent(
+  taskUri: string,
+  input: SystemEventInput,
+): { added: JournalRow | null; skipped: "duplicate" | null } {
+  requireTask(taskUri);
+  const windowMs = input.windowMs ?? 10 * 60 * 1000;
+  const tag = `[${input.code}] `;
+  const rows = readJournal(taskUri).rows;
+  const prev = rows[rows.length - 1];
+  if (prev !== undefined && prev.author?.role === "system" && prev.title.startsWith(tag)) {
+    const dt = Date.now() - Date.parse(prev.ts);
+    if (Number.isFinite(dt) && dt >= 0 && dt < windowMs) return { added: null, skipped: "duplicate" };
+  }
+  const r = addEntries(taskUri, [
+    {
+      kind: input.kind ?? "pitfall",
+      title: `${tag}${input.title}`,
+      ...(input.body === undefined || input.body === "" ? {} : { body: input.body }),
+      author: { role: "system" },
+    },
+  ]);
+  return { added: r.added[0] ?? null, skipped: null };
+}
+
 /** 批量导入（回灌历史用）：**整批校验通过才写**，`dryRun` 只算 */
 export function importEntries(
   taskUri: string,

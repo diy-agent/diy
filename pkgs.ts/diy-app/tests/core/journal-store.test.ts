@@ -259,3 +259,48 @@ describe("author / anchor", () => {
         expect(store.readJournal(TASK).rows).toHaveLength(0);
     });
 });
+
+// ── 系统侧客观事件（##404 待办 3）──────────────────────────────────
+//
+// 压三件只有这条通道才有的语义：author 必须是 system（否则这条日志不能当证据）、
+// 同 code 有静默窗（缺陷连续复现不该变成计数器）、**非连续不合并**（中间插了别的事就该重记）。
+describe("addSystemEvent", () => {
+    it("写进去的 author 是 system，code 进标题前缀", () => {
+        const r = store.addSystemEvent(TASK, { code: "agent/turn-defect", title: "轮末判为 defect" });
+        expect(r.skipped).toBeNull();
+        const row = store.readJournal(TASK).rows.at(-1)!;
+        expect(row.author).toEqual({ role: "system" });
+        expect(row.kind).toBe("pitfall");
+        expect(row.title).toBe("[agent/turn-defect] 轮末判为 defect");
+    });
+
+    it("同 code 落在窗口内 → 跳过（连续复现不刷屏）", () => {
+        const first = store.addSystemEvent(TASK, { code: "agent/x", title: "第一次" });
+        expect(first.added).not.toBeNull();
+        const second = store.addSystemEvent(TASK, { code: "agent/x", title: "第二次" });
+        expect(second).toEqual({ added: null, skipped: "duplicate" });
+        expect(store.readJournal(TASK).rows).toHaveLength(1);
+    });
+
+    it("中间插了别的条目 → 同 code 重记（连续才算重复）", () => {
+        store.addSystemEvent(TASK, { code: "agent/x", title: "第一次" });
+        add({ title: "人写的一条" });
+        const again = store.addSystemEvent(TASK, { code: "agent/x", title: "第二次" });
+        expect(again.added).not.toBeNull();
+        expect(store.readJournal(TASK).rows.map((r) => r.title)).toEqual([
+            "[agent/x] 第一次",
+            "人写的一条",
+            "[agent/x] 第二次",
+        ]);
+    });
+
+    it("窗口可关（windowMs=0 → 每次都写）：用于明确要记全的场合", () => {
+        store.addSystemEvent(TASK, { code: "agent/x", title: "a", windowMs: 0 });
+        const b = store.addSystemEvent(TASK, { code: "agent/x", title: "b", windowMs: 0 });
+        expect(b.added).not.toBeNull();
+    });
+
+    it("任务不存在 → 拒（同 addEntries，不在别处造孤儿）", () => {
+        expect(() => store.addSystemEvent("projects/1/tasks/999", { code: "agent/x", title: "t" })).toThrow(/任务不存在/);
+    });
+});

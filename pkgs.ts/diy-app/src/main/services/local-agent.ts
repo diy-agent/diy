@@ -65,6 +65,25 @@ import {
     seekWindowStart,
 } from "./local-ops-seek";
 import { appendAudit } from "./agent-audit";
+import { addSystemEvent } from "./journal-store";
+
+/**
+ * 轮末「模型没机会说出口」的 code（##404 待办 3 的判据）。
+ *
+ * 只有这几类会进任务 journal（`author: system`）：共同点是**本轮缺收尾那句话**，
+ * 事后查「为什么这轮没结果」时 `agent` 条目是空的。其余收尾（步数上限 / 上游报错 / 额度）
+ * 模型自己看得见、会在对话里交代，写进 journal 只是重复。
+ *
+ * 与 `error-triage.ts` 的分工：那边说「要不要当事处理」，这里说「要不要留痕」—— 两把尺子，
+ * 别合并（一个 defect 可能模型自己说清了；一个 external-unknown 可能恰恰没人说）。
+ */
+const TURN_SILENT_END_CODES: ReadonlySet<string> = new Set([
+    "agent/aborted-detached", // 生成器被 return 展开（中断 / 驱动收尾）
+    "agent/aborted", // 中断来源不明
+    "agent/interrupted", // 流中断 / 崩溃恢复补 closer
+    "agent/app-crash", // 宿主异常退出
+    "agent/app-restart", // 宿主重启打断本轮
+]);
 import {
     PLAN_SCOPE_NOTE,
     planCheck,
@@ -3946,6 +3965,24 @@ export class LocalAgentManager {
                 ...(endTriage.triage ? { triage: endTriage.triage } : {}),
                 ...(endTriage.code ? { code: endTriage.code } : {}),
             });
+            // 系统侧客观事件（##404 待办 3）：**只记「模型没机会说出口」的那几类收尾**。
+            // 判据不是严重程度、而是**可复述性**：`max-steps` / `error` 时模型还活着、自己会在对话里
+            // 交代；而崩溃 / 进程重启 / 生成器被 return 展开这几种，本轮**根本没有收尾那句话** ——
+            // 事后查「这轮为什么没结果」只有系统说得出来（`agent` 条目在此全缺）。
+            // `external-recognized` 的额度 / 窗越线同样不写：它们是常态噪音，全局审计
+            // `log/agent-bash.jsonl` 已逐轮兜底，journal 再来一份就是双写流水、反把真事埋掉。
+            // 写失败只记 console：日志是副作用，不能带走轮次收尾（这一步必须同步且不抛）。
+            if (endTriage.code !== null && TURN_SILENT_END_CODES.has(endTriage.code)) {
+                try {
+                    addSystemEvent(taskUri, {
+                        code: endTriage.code,
+                        title: `本轮没有收尾（${endTriage.code}）· steps=${steps}`,
+                        body: `${endTriage.reason}\n\n- endReason: \`${reason.type}\`\n- steps: ${steps}\n- usage: ${acc.in} in / ${acc.out} out（cached ${acc.cached}）\n- 全量流水：\`log/agent-bash.jsonl\`（本任务全部轮次）`,
+                    });
+                } catch (e) {
+                    console.error(`[local-agent] 系统日志写入失败（不影响轮次收尾）${taskUri}:`, e);
+                }
+            }
             // ② 尽力投递：消费端还在就让它看到 stop；已断开则在此停住 —— 状态早已一致（①已完成）
             for (const op of ops) yield op;
         };
