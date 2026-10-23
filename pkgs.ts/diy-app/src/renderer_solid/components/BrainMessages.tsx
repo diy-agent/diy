@@ -80,8 +80,30 @@ function firstLine(s: string, n = 90): string {
     return line.length > n ? `${line.slice(0, n)}…` : line;
 }
 
+/**
+ * 折叠态的预览标题：**说人话**。
+ *
+ * 信封消息的首行是 `summary:` / `history:` / `runtime:` —— 那是结构，不是内容。
+ * 用户 2026-10-23 点名：「user 消息未展开的预览 title 应该是用户的发言本身，提取出来」。
+ * 于是顺序固定为：`user.message` → `user` 本体（字符串形态）→ 顶层键清单 → 首行原文。
+ */
+function previewOf(text: string, env: YamlTry): string {
+    if (env.ok) {
+        const o = env.data as Record<string, unknown>;
+        const u = o.user;
+        if (typeof u === "string") return firstLine(u, 120);
+        if (u !== null && typeof u === "object") {
+            const said = (u as Record<string, unknown>).message;
+            if (typeof said === "string") return firstLine(said, 120);
+        }
+        const keys = env.keys ?? [];
+        if (keys.length > 0) return keys.join(" · ");
+    }
+    return firstLine(text);
+}
+
 /** 一条消息的卡片：头（角色 / 量）+ 结构视图 + `<>` 原文 */
-function MessageCard(props: { m: StepMessage; open: () => boolean; onToggle: () => void }): JSX.Element {
+function MessageCard(props: { m: StepMessage; open: () => boolean; onToggle: () => void; floor: number }): JSX.Element {
     const [mode, setMode] = createSignal<"read" | "raw">("read");
     const env = createMemo(() => parseEnvelope(props.m.text));
     const meta = (): { cls: string; label: string } => ROLE_META[props.m.role] ?? { cls: "badge-ghost", label: props.m.role };
@@ -102,7 +124,7 @@ function MessageCard(props: { m: StepMessage; open: () => boolean; onToggle: () 
                         <span class="badge badge-xs badge-ghost">{`tool-call ×${props.m.toolCalls.length}`}</span>
                     </Show>
                     <Show when={!props.open()}>
-                        <span class="min-w-0 truncate opacity-60 text-caption">{firstLine(props.m.text)}</span>
+                        <span class="min-w-0 truncate opacity-60 text-caption">{previewOf(props.m.text, env())}</span>
                     </Show>
                 </button>
                 <span class="ml-auto shrink-0 font-mono text-caption opacity-50">
@@ -160,7 +182,7 @@ function MessageCard(props: { m: StepMessage; open: () => boolean; onToggle: () 
                                 与原文对不上括号但读得快；要与线上字节核对时切 `<>`）。
                                 长字符串（AGENTS.md 正文 / 事实值 / 嵌套信封）在叶子上会自动猜成 YAML/MD 展开
                                 —— 那一层层级化由 JsonTree 负责（见其 guessFmt）。 */}
-                            <JsonTree data={env().data} syntax="yaml" />
+                            <JsonTree data={env().data} syntax="yaml" floor={props.floor} />
                         </Show>
                         <Show when={env().error && !env().ok}>
                             <div class="text-caption text-warning">{`不是合法 YAML（按原文显示）：${env().error ?? ""}`}</div>
@@ -178,19 +200,30 @@ function MessageCard(props: { m: StepMessage; open: () => boolean; onToggle: () 
  * 折展状态放组件内（`open` 的 Set）：消息列表每一步都不一样，跨步记忆折叠态没有意义
  * （按 index 记住会让新一步显示成上一步的折叠形态，反而误导）。
  */
+/** 展开层级上限：1 层 = 卡片全展开，其上每层深入树一层。8 层之后该切 `<>` 原文了 */
+const MAX_LEVEL = 8;
+
 export function BrainMessages(props: { messages: readonly StepMessage[]; raw: string | null; note: string }): JSX.Element {
-    const [openSet, setOpenSet] = createSignal<Set<number>>(new Set());
+    /**
+     * 展开层级（**一个总闸**）：0 = 全收起；L≥1 = 卡片全展开 + 树展开到 L 层。
+     *
+     * 为什么合并：原先有「全部展开/收起」（卡片）× 「展开到 n 层」（树）两个按钮 ——
+     * 用户口径「这是同一件事的两个层级，不是两件事」。保留其一即可，故合成一把梯子：
+     * 点一次 0→1→…→8→0，卡片开合是第 1 级，再往上只加深树。
+     */
+    const [level, setLevel] = createSignal(0);
+    /** 单卡反选：点卡头可单独翻某张卡（在总闸基础上取反，不动总闸） */
+    const [flipped, setFlipped] = createSignal<Set<number>>(new Set());
     const [rawOpen, setRawOpen] = createSignal(false);
-    const isOpen = (i: number): boolean => openSet().has(i);
+    const isOpen = (i: number): boolean => (level() >= 1) !== flipped().has(i);
     const toggle = (i: number): void => {
-        const next = new Set(openSet());
+        const next = new Set(flipped());
         if (next.has(i)) next.delete(i);
         else next.add(i);
-        setOpenSet(next);
+        setFlipped(next);
     };
-    const allOpen = (): boolean => props.messages.every((m) => isOpen(m.index));
-    const setAll = (on: boolean): void => {
-        setOpenSet(on ? new Set(props.messages.map((m) => m.index)) : new Set<number>());
+    const step = (): void => {
+        setLevel((l) => (l >= MAX_LEVEL ? 0 : l + 1));
     };
     const totals = (): { bytes: number; tokens: number } => ({
         bytes: props.messages.reduce((n, m) => n + (m.bytes || utf8Bytes(m.text)), 0),
@@ -202,8 +235,12 @@ export function BrainMessages(props: { messages: readonly StepMessage[]; raw: st
                 <span class="badge badge-xs badge-ghost">{`${props.messages.length} 条消息`}</span>
                 <span class="opacity-60 font-mono">{`合计 ${fmtBytes(totals().bytes)} · ≈${totals().tokens} tok`}</span>
                 <div class="flex-1" />
-                <button class="btn btn-xs btn-ghost" onClick={() => setAll(!allOpen())}>
-                    {allOpen() ? "全部收起" : "全部展开"}
+                <button
+                    class="btn btn-xs btn-ghost"
+                    onClick={step}
+                    title={`展开层级：0 = 全收起；1 = 卡片全展开（只见顶层键）；再点逐层展开树，${MAX_LEVEL} 层之后回到 0。单张卡点卡头可单独开关。`}
+                >
+                    {`展开 ${level()}/${MAX_LEVEL} 层`}
                 </button>
                 <button
                     class={`btn btn-xs font-mono ${rawOpen() ? "btn-primary" : "btn-ghost"}`}
@@ -223,7 +260,14 @@ export function BrainMessages(props: { messages: readonly StepMessage[]; raw: st
                 <div class="rounded border border-warning/40 bg-warning/10 px-2 py-1 text-caption">{props.note}</div>
             </Show>
             <For each={props.messages}>
-                {(m) => <MessageCard m={m} open={() => isOpen(m.index)} onToggle={() => toggle(m.index)} />}
+                {(m) => (
+                    <MessageCard
+                        m={m}
+                        open={() => isOpen(m.index)}
+                        onToggle={() => toggle(m.index)}
+                        floor={Math.max(1, level())}
+                    />
+                )}
             </For>
         </div>
     );

@@ -318,19 +318,27 @@ function depthOf(v: unknown): number {
     return 0;
 }
 
-export function JsonTree(props: { data: unknown; syntax?: TreeSyntax }) {
+export function JsonTree(props: { data: unknown; syntax?: TreeSyntax; floor?: number }) {
     const syntax = (): TreeSyntax => props.syntax ?? "json";
     // 展开层级：点一次深一层，到顶后回到 1，往复
-    const [floor, setFloor] = createSignal(1);
+    const [local, setLocal] = createSignal(1);
     const max = () => Math.max(1, depthOf(props.data));
-    const step = () => setFloor((f) => (f >= max() ? 1 : f + 1));
+    const step = () => setLocal((f) => (f >= max() ? 1 : f + 1));
+    /**
+     * 受控模式（`floor` 给了值）：深度由调用方总闸给，本组件**不画自己的按钮**
+     * —— 用户 2026-10-23：「全部展开和展开到 n 层 为啥是分开的 2 个按钮？合并可行吗？」
+     * 两个阶梯并排 = 同一个问题有两个抓手（卡片开合 × 树深度），故上层合并后这里让位。
+     */
+    const floor = (): number => props.floor ?? local();
     return (
         <div class="font-mono text-body leading-relaxed">
-            <div class="flex justify-end pb-1">
-                <button class="btn btn-xs btn-ghost" onClick={step}>
-                    {floor() >= max() ? `收起 ${max()}/${max()}层` : `展开到 ${floor() + 1}/${max()}层`}
-                </button>
-            </div>
+            <Show when={props.floor === undefined}>
+                <div class="flex justify-end pb-1">
+                    <button class="btn btn-xs btn-ghost" onClick={step}>
+                        {floor() >= max() ? `收起 ${max()}/${max()}层` : `展开到 ${floor() + 1}/${max()}层`}
+                    </button>
+                </div>
+            </Show>
             <JsonNode v={props.data} depth={0} floor={floor} syntax={syntax()} />
         </div>
     );
