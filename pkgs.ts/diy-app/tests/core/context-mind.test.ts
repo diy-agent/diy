@@ -70,6 +70,17 @@ describe("analyzeMind", () => {
         );
     });
 
+    it("非信封的 user 消息在 input 组下不叫「历史」（标签与分组不许互相矛盾）", () => {
+        // 实测踩点：一条 18759 B 的 user 消息落在 group=input，标签却写 `历史 · user`，
+        // 读的人会以为分组算错了。标签前缀必须跟 roleGroup 走。
+        const plain = analyzeMind([msg("user", "继续")]);
+        expect(plain.segments[0]!.group).toBe("input");
+        expect(plain.segments[0]!.key).toBe("输入 · user");
+        // 多轮里的旧发言仍归 history，标签照旧
+        const old = analyzeMind([msg("user", "上一轮的话"), msg("assistant", "好")]);
+        expect(old.segments.filter((s) => s.group === "history").map((s) => s.key)).not.toContain("历史 · user");
+    });
+
     it("分组求和 = 总字节（不多不少，否则账本自己就错了）", () => {
         const { segments, totalBytes, byGroup } = analyzeMind([systemMsg, msg("assistant", "好的"), lastUser]);
         expect(segments.reduce((n, s) => n + s.bytes, 0)).toBe(totalBytes);

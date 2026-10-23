@@ -133,7 +133,12 @@ export function analyzeMind(messages: readonly StepMessage[]): {
         const blocks = envelopeKeys(m.text);
         const isEnvelope = blocks.some((k) => k in ENVELOPE_GROUP);
         if (!isEnvelope) {
-            const label = m.role === "assistant" ? "历史 · assistant（含工具调用参数）" : m.role === "user" ? "历史 · user" : `历史 · ${m.role}`;
+            // 前缀按**分组**取，不按角色写死：user 的消息算 input（本轮输入）还是 history
+            // 由上面的 roleGroup 判过 —— 标签再写死「历史」就会与计数互相矛盾。
+            // 实测：`历史 · user 18759 B` 出现在 input 组下，读的人第一反应是分组算错了。
+            const prefix = roleGroup === "input" ? "输入" : roleGroup === "system" ? "system" : "历史";
+            const label =
+                m.role === "assistant" ? "历史 · assistant（含工具调用参数）" : `${prefix} · ${m.role}`;
             push(label, roleGroup, m.text);
             continue;
         }
