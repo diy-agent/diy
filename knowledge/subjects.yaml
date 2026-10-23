@@ -7,157 +7,221 @@
 # 字段：description（必填，一句话说清这个对象）· aliases（选填，只做提示，不参与匹配）
 subjects:
   app.cli:
-    description: CLI 与 RPC 契约（option 形状 / zod 补丁顺序 / 读文件语义）
+    description: |-
+      CLI 与 RPC 契约（option 形状 / zod 补丁顺序 / 读文件语义）
   app.dev:
-    description: 实例与进程（单例锁 / 自毁 / CDP / 外壳 / 异常出口）
+    description: |-
+      实例与进程（单例锁 / 自毁 / CDP / 外壳 / 异常出口）
   app.entry:
-    description: 入口注入的环境变量（DIY_HOME / DIY_CLI / DIY_ENV / DIY_VARIANT…）
+    description: |-
+      入口注入的环境变量（DIY_HOME / DIY_CLI / DIY_ENV / DIY_VARIANT…）
   app.find:
-    description: 包内定位：各目录与关键文件在哪（diy-app 源码地图）
+    description: |-
+      包内定位：各目录与关键文件在哪（diy-app 源码地图）
   app.flow:
-    description: 工作流：状态权威 / 两段式插件 / 讨论线程 / 驱动环
+    description: |-
+      工作流：状态权威 / 两段式插件 / 讨论线程 / 驱动环
   app.history:
-    description: 会话历史与压缩：折叠 / 分页 / 广播 / 装配管道 / 聊天渲染
+    description: |-
+      会话历史与压缩：折叠 / 分页 / 广播 / 装配管道 / 聊天渲染
   app.model:
-    description: 模型 provider / 价目 / 用量口径
+    description: |-
+      模型 provider / 价目 / 用量口径
   app.port:
-    description: 应用实例的监听端口
+    description: |-
+      应用实例的监听端口
     aliases:
       - 监听端口
       - 端口缺省
   app.rule:
-    description: diy-app 包内硬约束（测试纪律 / 原子写 / 提示词 / 联动契约）
+    description: |-
+      diy-app 包内硬约束（测试纪律 / 原子写 / 提示词 / 联动契约）
   app.tool:
-    description: 验证与调试打法（UI 改动顺序 / 喊人 / 叫醒机制缺口）
+    description: |-
+      验证与调试打法（UI 改动顺序 / 喊人 / 叫醒机制缺口）
   app.traffic:
-    description: 出站流量观测（覆盖范围 / 步归属 / 落盘与清理）
+    description: |-
+      出站流量观测（覆盖范围 / 步归属 / 落盘与清理）
   app.ui:
-    description: UI 与前端坑（Solid / 主题 / 虚拟化 / 本地存储）
+    description: |-
+      UI 与前端坑（Solid / 主题 / 虚拟化 / 本地存储）
   data:
-    description: 项目里的数据文件（依赖源 / 工作区）
+    description: |-
+      项目里的数据文件（依赖源 / 工作区）
   dev:
-    description: 开发流程的打法（按任务类型分流 / 验证预算 / 长任务 / 喊人）
+    description: |-
+      开发流程的打法（按任务类型分流 / 验证预算 / 长任务 / 喊人）
   dev.check:
-    description: 提交前唯一检查入口
+    description: |-
+      提交前唯一检查入口
     aliases:
       - check
   dev.commit:
-    description: 提交的硬性要求
+    description: |-
+      提交的硬性要求
     aliases:
       - commit
   dev.context:
-    description: 上下文固定前缀的规模与构成（每轮都付的字节，##404 减负主线）
+    description: |-
+      上下文固定前缀的规模与构成（每轮都付的字节，##404 减负主线）
     aliases:
       - 上下文预算
       - 固定前缀
   dev.setup:
-    description: 开工前的环境准备（worktree / 依赖 / 任务文件写入规矩）
+    description: |-
+      开工前的环境准备（worktree / 依赖 / 任务文件写入规矩）
   dev.test:
-    description: 测试入口与测试纪律
+    description: |-
+      测试入口与测试纪律
     aliases:
       - 测试
   dev.turn-interrupt:
-    description: 本机 agent 轮次「未完成」的成因与可辨识度
+    description: |-
+      本机 agent 轮次「未完成」的成因与可辨识度
     aliases:
       - 轮次中断
       - 流中断
   dev.worktree:
-    description: worktree 的落地位置
+    description: |-
+      worktree 的落地位置
     aliases:
       - worktree
   diydev.find:
-    description: diy-dev 包内定位：进程内 RPC 入口 / ref 子模块 / runtime / 两条跑法（dev 命令 CLI）
+    description: |-
+      diy-dev 包内定位：进程内 RPC 入口 / ref 子模块 / runtime / 两条跑法（dev 命令 CLI）
   diydev.rule:
-    description: diy-dev 硬约束：cwd 即作用域 / ref.lock v1 唯一写入方 / 镜像路径 / 版本钉法
+    description: |-
+      diy-dev 硬约束：cwd 即作用域 / ref.lock v1 唯一写入方 / 镜像路径 / 版本钉法
   diydev.tool:
-    description: diy-dev 的命令入口与自检方式
+    description: |-
+      diy-dev 的命令入口与自检方式
   entry:
-    description: 实例三态（**先问：操作谁的数据 / 谁看 UI**）
+    description: |-
+      实例三态（**先问：操作谁的数据 / 谁看 UI**）
     aliases: []
   env.diy-env:
-    description: 运行环境（决定能力开关与缺省行为）
+    description: |-
+      运行环境（决定能力开关与缺省行为）
     aliases:
       - 环境
       - DIY_ENV
   env.switch:
-    description: 环境变量开关（README 里最容易漏写的一档）
+    description: |-
+      环境变量开关（README 里最容易漏写的一档）
     aliases:
       - 开关
       - 环境变量
   env.variant:
-    description: 产物/数据分根用的变体（决定 build/<v> 与 build/<v>/home）
+    description: |-
+      产物/数据分根用的变体（决定 build/<v> 与 build/<v>/home）
     aliases:
       - 变体
       - DIY_VARIANT
   facts.cli:
-    description: 事实库的写入口本身（agent 只经 CLI，不碰 YAML）
+    description: |-
+      事实库的写入口本身（agent 只经 CLI，不碰 YAML）
   facts.find:
-    description: diy-facts 包内定位：哪个文件管什么（事实库内核 @diy/facts）
+    description: |-
+      diy-facts 包内定位：哪个文件管什么（事实库内核 @diy/facts）
   facts.rule:
-    description: 事实库硬约束：env 轴 / claim 与 id / 相交匹配 / 单一实现 / 生成物式真源 / 任务级库边界
+    description: |-
+      事实库硬约束：env 轴 / claim 与 id / 相交匹配 / 单一实现 / 生成物式真源 / 任务级库边界
   find:
-    description: 去哪找
+    description: |-
+      去哪找
     aliases: []
   flow.define:
-    description: 工作流定义 DSL 的结构约束：节点/边/泳道/打回/边界
+    description: |-
+      工作流定义 DSL 的结构约束：节点/边/泳道/打回/边界
   flow.domain:
-    description: 领域态一等（##333）：FlowState 真源、advance 正路、落盘读回、审计适配
+    description: |-
+      领域态一等（##333）：FlowState 真源、advance 正路、落盘读回、审计适配
   flow.exec:
-    description: 转移执行器：guard 求值/选边/宣布/终态/次序铁律/报错不降级
+    description: |-
+      转移执行器：guard 求值/选边/宣布/终态/次序铁律/报错不降级
   flow.find:
-    description: diy-flow 包内定位：哪个文件管什么（工作流内核 @diy/flow）
+    description: |-
+      diy-flow 包内定位：哪个文件管什么（工作流内核 @diy/flow）
   flow.params:
-    description: 参数层（L2）：节点上声明、类型/取值/插值/快照导出
+    description: |-
+      参数层（L2）：节点上声明、类型/取值/插值/快照导出
   flow.plugin:
-    description: 插件槽与注册表：五个槽位、组合期校验、notify 旁路
+    description: |-
+      插件槽与注册表：五个槽位、组合期校验、notify 旁路
   kb.journal:
-    description: 任务日志 journal.jsonl 的写作约束（author / anchor / 只追加）
+    description: |-
+      任务日志 journal.jsonl 的写作约束（author / anchor / 只追加）
   kb.layer:
-    description: 任务知识的三层划分与归属（body / facts / journal / 流水）
+    description: |-
+      任务知识的三层划分与归属（body / facts / journal / 流水）
   level:
-    description: 层级术语（0 最高）：任务优先级 / UI 暴露 / 提示叫醒共用一把尺子
+    description: |-
+      层级术语（0 最高）：任务优先级 / UI 暴露 / 提示叫醒共用一把尺子
   model:
-    description: 本地 agent 测试用什么模型
+    description: |-
+      本地 agent 测试用什么模型
     aliases: []
   model.default:
-    description: 未指定模型时的缺省选择规则
+    description: |-
+      未指定模型时的缺省选择规则
     aliases:
       - 缺省模型
   plan.acp:
-    description: ACP（Agent Client Protocol）v1 协议事实与接入要点
+    description: |-
+      ACP（Agent Client Protocol）v1 协议事实与接入要点
   plan.context-placement:
-    description: 提示词落点研究：缓存前缀 / 三通道 / 易变内容挪出 system 的验收需求
+    description: |-
+      提示词落点研究：缓存前缀 / 三通道 / 易变内容挪出 system 的验收需求
   plan.event-protocol:
-    description: Agent 事件记录协议（设计已收敛未实现）：七元结构 / type+data / Context Tree / 回放
+    description: |-
+      Agent 事件记录协议（设计已收敛未实现）：七元结构 / type+data / Context Tree / 回放
   proj:
-    description: 本机项目清单与定位
+    description: |-
+      本机项目清单与定位
   ref:
-    description: 参考实现：三方 agent 框架源码位置（只读设计取舍，不抄代码）
+    description: |-
+      参考实现：三方 agent 框架源码位置（只读设计取舍，不抄代码）
   ref.diy:
-    description: diy 自己的 ref 镜像实现（diy.yaml 注册 → clone/pull → lock）
+    description: |-
+      diy 自己的 ref 镜像实现（diy.yaml 注册 → clone/pull → lock）
   rpc.find:
-    description: diy-rpc 包内定位：核 / 传输 / CLI 桥 / 发布形态（@diy-agent/rpc 协议内核）
+    description: |-
+      diy-rpc 包内定位：核 / 传输 / CLI 桥 / 发布形态（@diy-agent/rpc 协议内核）
   rpc.rule:
-    description: diy-rpc 硬约束：ESM 扩展名 / 浏览器安全边界 / 发布流程
+    description: |-
+      diy-rpc 硬约束：ESM 扩展名 / 浏览器安全边界 / 发布流程
   rule:
-    description: 硬约束
+    description: |-
+      硬约束
     aliases: []
   rule.agent:
-    description: agent 自身的行为纪律（先查证再解释 / 结论走工具 / 别拿 src 当探针 / 少读依赖目录）
+    description: |-
+      agent 自身的行为纪律（先查证再解释 / 结论走工具 / 别拿 src 当探针 / 少读依赖目录）
   rule.err-triage:
-    description: 异常三档分类的判据（defect / 已识别外部 / 未识别外部）
+    description: |-
+      异常三档分类的判据（defect / 已识别外部 / 未识别外部）
   talk.find:
-    description: diy-talk 包内定位：锚点 / 事件 / 反应 / role / 序列化 / 装配器（@diy/talk 对话容器内核）
+    description: |-
+      diy-talk 包内定位：锚点 / 事件 / 反应 / role / 序列化 / 装配器（@diy/talk 对话容器内核）
   talk.rule:
-    description: diy-talk 硬约束：零依赖零取时间 / 只做纯数据 / 非法输入必抛 / 判别联合落地
+    description: |-
+      diy-talk 硬约束：零依赖零取时间 / 只做纯数据 / 非法输入必抛 / 判别联合落地
   template.find:
-    description: diy-template 包内定位：parser / render / scope / analyze / 宿主装配入口（@diy/template 提示词模版引擎）
+    description: |-
+      diy-template 包内定位：parser / render / scope / analyze / 宿主装配入口（@diy/template 提示词模版引擎）
   template.rule:
-    description: diy-template 硬约束：不做表达式语言 / 逐字节保真 / 意图测试优先 / IO 归宿主
+    description: |-
+      diy-template 硬约束：不做表达式语言 / 逐字节保真 / 意图测试优先 / IO 归宿主
   tool:
-    description: 命令
+    description: |-
+      命令
     aliases: []
   ui.find:
-    description: diy-ui 包内定位：核心树形运行时 / 浏览器入口 / HostAdapter / providers / demo 站（@diy-agent/ui 声明式 UI 层）
+    description: |-
+      diy-ui 包内定位：核心树形运行时 / 浏览器入口 / HostAdapter / providers / demo 站（@diy-agent/ui 声明式 UI 层）
   ui.rule:
-    description: diy-ui 硬约束：DOM 类型自取 / 浏览器入口不许走根 / 控件层交给 Web Awesome / 发布与 lock
+    description: |-
+      diy-ui 硬约束：DOM 类型自取 / 浏览器入口不许走根 / 控件层交给 Web Awesome / 发布与 lock
+  where:
+    description: |-
+      总入口：什么信息去哪里查（问路，不答值）

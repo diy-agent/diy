@@ -13,3 +13,4 @@
 # 故 full 给"每轮都要知道"的，index 给"知道有、偶尔查"的。
 expose:
   rule.agent: full
+  where: full

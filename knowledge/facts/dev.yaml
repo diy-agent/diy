@@ -93,6 +93,26 @@ facts:
       source: probe
       probe: './diy.sh facts brief find|tool|model|rule|entry  # 逐主题看条目体量'
       verifiedAt: '2026-10-22'
+  dev.context#score-l0:
+    value: |-
+      **上下文质量的 L0 机械记分卡**（零 LLM，全从 `llm.jsonl` 解析）五个指标：`recheck` 重查率（bash 里 `cat|sed|head|tail` 的路径在最近 20 步内读过，每步上限 1）· `ungrounded` 工具报错率（`output.type==error-text` 或退出码非 0）· `idle` 空转率（无工具调用）· `hallucinated_ref` 假引用率（`<path>:<line>` 经 `git ls-files` + 行数校验）· `human_nudge` 真人消息数（含催促）。
+      **##5 实测基线**（1103 步 / 1079 调用 / 74 轮）：recheck 45.3% · err 2.9% · idle 4.0% · hallu 0.45% · 真人消息 62 条。recheck 45% 换算成成本 ≈500 步重复劳动 ≈20 MB 前缀。
+      **用法铁律**：只做**事件对齐**（kb 改动前 30 步 vs 后 30 步），绝对值不跨任务比较。演示页：`build/lab/home/projects/1/tasks/5/gen/demo/2026-10-23-kgscore/index.html`（解析器同目录 `score.py`）。
+    id: dev.context.score-l0
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: score.py 解析 projects/1/tasks/5 llm.jsonl 2297 条
+  dev.context#step-cost:
+    value: |-
+      **一步 = 一次工具调用 = 一次全前缀**：实测 ##5 的 1096 步里 1032 步只有 1 次工具调用（step 内不串多调），每步付一次 ~40 KB 前缀 ⇒ 全程 ≈44 MB。所以上下文成本的唯一杠杆是**省步数**，任何「上下文质量」指标最终都要能预测步数，否则只是噪声。
+    id: dev.context.step-cost
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: python3 解析 llm.jsonl：按 step 分组统计 tool-call 数（1072 calls / 1096 steps，分布 {1:1032, 2:20}）
   dev.setup#sync:
     value: |-
       新 worktree 先 ./sha.sh sync（npm i --workspaces --include-workspace-root + 子模块 + 各包 sync）；只跑 --workspaces 会漏装根依赖，干净 worktree 上必现 build 解析失败

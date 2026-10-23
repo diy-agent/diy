@@ -13,6 +13,15 @@ facts:
       source: user
       at: ~/AGENTS.md:10
       verifiedAt: '2026-10-22'
+  rule.agent#locate-first:
+    value: |-
+      问题里的名词不认识 / 「X 在哪」→ 先看本库 full 暴露的 `where#*`（信息地图）**定类**，再用 `diy facts find <词>` 确认它指什么；不许先 rg 猜词乱翻。
+    id: kb.rule.agent.locate-first
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-23'
   rule.agent#probe:
     value: |-
       轮次中勿改 `src/**` 当探针（watch 重启打断自己的轮次）；探针写 `/tmp`
