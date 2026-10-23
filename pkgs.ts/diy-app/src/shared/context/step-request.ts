@@ -185,8 +185,10 @@ export function parseStepRequest(rb: RequestBodyLike | null | undefined): StepRe
             text,
             toolCalls,
             chars: text.length,
+            // 字节与 tok 必须**同源**（都是这条消息的 JSON 原件）：只看 `text` 会把
+            // tool-call 的参数算成 0 tok（实测 assistant「1.4 KB · ≈0 tok」—— 那 1.4 KB 全在参数里）。
             bytes: bytesOf(JSON.stringify(m ?? null)),
-            tokens: estimateTokens(text),
+            tokens: estimateTokens(JSON.stringify(m ?? null)),
         };
     });
     const totalChars = messages.reduce((n, m) => n + m.chars, 0);

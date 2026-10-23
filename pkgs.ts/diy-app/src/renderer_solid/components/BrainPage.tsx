@@ -26,6 +26,7 @@ import { findPage } from "../../shared/view-registry";
 import { parseStepRequest, type StepMessage } from "../../shared/context/step-request";
 import { analyzeMind, mindTrend, repeatReads, type MindGroup, type MindSegment } from "../../shared/context/mind";
 import { LayoutAreaToggles } from "./LayoutAreaToggles";
+import { BrainMessages } from "./BrainMessages";
 
 const PAGE = "brain";
 /** 只算最近这么多步：一条完整请求可达 250 KB，全量重算会把页面卡死（如实标注，不静默截断） */
@@ -67,11 +68,16 @@ interface Rec {
 
 /** 一步 = 一条请求 + 它的段账 + 相邻步差分（「这一思考产生了多少动作」） */
 interface BrainStep {
+    /** 窗口内序号（1 起，**全局唯一**）—— 选中态 / 图表 x 轴 / 表行高亮都靠它 */
     step: number;
+    /** 轮内步号（每轮从 1 重数）：**同一页里会有多个「第 1 步」**，只用来给人看，不做身份 */
+    stepSeq: number;
     ts: number;
     turnId: string;
     rec: Rec;
     messages: StepMessage[];
+    /** 整步 `messages[]` 的逐字原文（`<>` 用；null = 请求体不可用） */
+    raw: string | null;
     segments: MindSegment[];
     totalBytes: number;
     byGroup: Record<MindGroup, number>;
@@ -125,18 +131,22 @@ export function BrainPage(props: { uri: string }): JSX.Element {
         const drafts = uniq.map((rec) => {
             const parsed = parseStepRequest(rec.reqBody);
             const mind = analyzeMind(parsed.messages ?? []);
-            return { rec, messages: parsed.messages ?? [], note: parsed.note, ...mind };
+            return { rec, messages: parsed.messages ?? [], raw: parsed.raw, note: parsed.note, ...mind };
         });
 
         return drafts.map((d, i): BrainStep => {
             const next = drafts[i + 1];
             const lastUser = next ? [...next.messages].reverse().find((m) => m.role === "user") : undefined;
             return {
-                step: d.rec.stepSeq ?? i + 1,
+                // 身份 = 窗口序号，不是 `stepSeq`：多条轮次各有一堆 stepSeq=1，用它当 key 会让
+                // 选中态 / 表格高亮 / 图表 x 轴在多轮窗口里互相踩（实测：两轮各一步，页面只显示 1 步）。
+                step: i + 1,
+                stepSeq: d.rec.stepSeq ?? 0,
                 ts: d.rec.ts,
                 turnId: d.rec.turnId ?? "",
                 rec: d.rec,
                 messages: d.messages,
+                raw: d.raw,
                 segments: d.segments,
                 totalBytes: d.totalBytes,
                 byGroup: d.byGroup,
@@ -179,6 +189,14 @@ export function BrainPage(props: { uri: string }): JSX.Element {
 
     const trend = () => mindTrend(steps().map((s) => ({ step: s.step, reqBytes: s.rec.reqBytes ?? s.totalBytes, byGroup: s.byGroup })));
     const dups = () => repeatReads(steps().map((s) => ({ step: s.step, toolCalls: s.messages.flatMap((m) => m.toolCalls) })));
+
+    /** 上一步 / 下一步（消息列表里翻步用；两端夹住，不循环 —— 循环会让人以为数据回绕了） */
+    const go = (delta: number): void => {
+        const list = steps();
+        const i = list.findIndex((s) => s.step === cur()?.step);
+        const next = list[Math.min(Math.max(i + delta, 0), list.length - 1)];
+        if (next) setSelected(next.step);
+    };
 
     /** 段按字节降序（一次思考里最先该看的） */
     const segsOf = (s: BrainStep): MindSegment[] => [...s.segments].sort((a, b) => b.bytes - a.bytes);
@@ -229,7 +247,7 @@ export function BrainPage(props: { uri: string }): JSX.Element {
             <div class="flex flex-col gap-1 p-1">
                 {/* 步选择条 */}
                 <div class="flex flex-wrap items-center gap-1">
-                    <span class="badge badge-xs badge-outline font-mono">第 {s.step} 步</span>
+                    <span class="badge badge-xs badge-outline font-mono" title={`本轮第 ${s.stepSeq} 步 · turn ${s.turnId.slice(0, 8)}`}>{`#${s.step}（本轮第 ${s.stepSeq} 步）`}</span>
                     <span class="font-mono text-caption opacity-70">{s.rec.model}</span>
                     <span
                         class="badge badge-xs"
@@ -469,14 +487,48 @@ export function BrainPage(props: { uri: string }): JSX.Element {
         );
     };
 
+    /**
+     * 发出去的消息（逐条）。与「段账」的分工见 BrainMessages 头注：
+     * 那边回答「字节是谁付的」，这边回答「模型实际看到的那几条，逐字长什么样」。
+     */
+    const messagesPane = (): JSX.Element => {
+        const s = cur();
+        if (!s) return <div class="p-2 opacity-60">没有可分析的真发请求。</div>;
+        const list = steps();
+        const i = list.findIndex((x) => x.step === s.step);
+        return (
+            <div class="flex flex-col gap-1 p-1">
+                <div class="flex flex-wrap items-center gap-1 text-caption">
+                    <button class="btn btn-xs btn-ghost" disabled={i <= 0} onClick={() => go(-1)} title="上一步">
+                        ◀
+                    </button>
+                    <span class="badge badge-xs badge-outline font-mono" title={`turn ${s.turnId}`}>{`#${s.step}（本轮第 ${s.stepSeq} 步）`}</span>
+                    <button class="btn btn-xs btn-ghost" disabled={i >= list.length - 1} onClick={() => go(1)} title="下一步">
+                        ▶
+                    </button>
+                    <span class="font-mono opacity-60">{s.turnId.slice(0, 8)}</span>
+                    <span class="opacity-50">{new Date(s.ts).toLocaleTimeString()}</span>
+                </div>
+                <BrainMessages messages={s.messages} raw={s.raw} note={s.note} />
+            </div>
+        );
+    };
+
     const parts: Record<string, () => JSX.Element> = {
         "brain.budget": () => (
             <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-body">
                 <Fold k="budget" label="脑容量账（这一次思考）" extra={cur() ? `${fmtBytes(cur()!.totalBytes)} / ${segsOf(cur()!).length} 段` : "无数据"}>
                     {budgetPane()}
                 </Fold>
-                <Fold k="score" label="记分 v0（可量的事实）" extra={cur() ? `第 ${cur()!.step} 步` : "—"}>
+                <Fold k="score" label="记分 v0（可量的事实）" extra={cur() ? `#${cur()!.step}` : "—"}>
                     {scorePane()}
+                </Fold>
+            </div>
+        ),
+        "brain.messages": () => (
+            <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-body">
+                <Fold k="messages" label="发出去的消息（逐条审阅）" extra={cur() ? `${cur()!.messages.length} 条 · #${cur()!.step}` : "无数据"}>
+                    {messagesPane()}
                 </Fold>
             </div>
         ),

@@ -219,6 +219,15 @@ export const VIEWS: ViewDef[] = [
     instanceScope: "context",
     placement: { brain: { area: "center", order: 10 } },
   },
+  {
+    // 大脑页右栏：**发出去的消息（逐条审阅）**。
+    // 与左栏段账是同一份 messages 的两把尺：段账回答「字节是谁付的」，这里回答
+    // 「模型实际看到的那几条，逐字长什么样」（结构化 + `<>` 原文，同一次解析的两种投影）。
+    id: "brain.messages",
+    title: "发出去的消息",
+    instanceScope: "context",
+    placement: { brain: { area: "right", order: 10 } },
+  },
 ];
 
 // ═══════════════════════════════════════════
@@ -320,12 +329,16 @@ export const PAGES: PageDef[] = [
     parentPage: "task-run",
     layout: {
       version: 1,
-      // 左：这次思考（段账 + 记分）| 中：多步趋势（曲线 + 信号）
-      cols: [px(380), fr(1)],
+      // 左：这次思考（段账 + 记分）| 中：多步趋势（曲线 + 信号）| 右：发出去的消息（逐条）
+      // 右栏而不是叠在中栏：消息列表天然是竖长条（40 条 × 卡片），叠起来会把趋势图挤没。
+      // 三栏都用「固定左 + 两个弹性」：右栏给死 px 会在 1024 宽窗口里把中栏压到几十像素
+      // （实测把发送框挤出屏幕）。左栏是段账表，宽度需求稳定；中/右都是长列表，弹性更合理。
+      cols: [px(340), fr(1), fr(1)],
       rows: [fr(1)],
       areas: [
         { id: "left", col: 0, row: 0 },
         { id: "center", col: 1, row: 0 },
+        { id: "right", col: 2, row: 0 },
       ],
     },
   },
