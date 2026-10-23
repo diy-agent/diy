@@ -869,6 +869,16 @@ export function submit(
         list.push(f);
         fileOf.set(file, list);
     }
+    // 4.5) **被删空的篇也要重写**：一篇文章的条目被本批 drop 光之后，它已不在
+    // `candidate`（存活集）里 ⇒ 不进 `fileOf` ⇒ **磁盘一个字不动**，而 report 里
+    // `dropped` 却列了 4 个 id、`files` 为空（两处自相矛盾 —— 这本身就是判据）。
+    // 处置：照样按空集重写（保留头注 / note / domain），**不删文件** —— 删文件会让
+    // `repo.notes` / `domains` / evidence 里的相对路径同时失去落点，而且"文件消失"
+    // 不可审计。空篇不是垃圾，是"这里曾经有什么、现在没了"的留痕。
+    for (const id of dropped) {
+        const file = repo.origin.get(id);
+        if (file !== undefined && !fileOf.has(file)) fileOf.set(file, []);
+    }
 
     const files: { file: string; before: number; after: number }[] = [];
     const writes: { file: string; text: string }[] = [];

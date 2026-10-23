@@ -16,7 +16,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { foldKbIndex, KB_FOLD_MIN_GROUP } from "@diy/facts";
 import { loadRepo, project, projectItems, readExpose, type ProjectEntry, type ProjectionAlgorithm, type Repo } from "@diy/facts/node";
-import { bytesOf, checkExposeLeveled, defaultExposeOf, exposeOf, type ExposeLevel, type ExposeMap, type LeveledFact, type Ns } from "@diy/facts";
+import { budgetBytesOf, bytesOf, claimOf, checkExposeLeveled, defaultExposeOf, exposeOf, type ExposeLevel, type ExposeMap, type LeveledFact, type Ns } from "@diy/facts";
 import { diyHome } from "../core/state";
 import { readRuntimeConfig } from "../../runtime";
 import { resolveFactsDir } from "./facts-store";
@@ -34,6 +34,12 @@ export interface FactsContextValue {
     project?: Record<string, FactsContextCell>;
     text?: string;
     omitted: number;
+    /**
+     * 包装开销（字节）：`<claim>: {value,resolvedBy,variants}` 外壳本身 —— 不进预算，只回报。
+     * 存在意义：预算按**值字节**算（与写侧 `checkExposeLeveled` 同口径），所以实际文本
+     * 会略大于 `maxBytes`。给出这个数，人就不用猜"为什么 4 KB 预算投出去 4.6 KB"。
+     */
+    overhead?: number;
     problems: { gid: string; code: string }[];
 }
 
@@ -168,12 +174,16 @@ export function buildFactsContext(opts: BuildFactsContextOptions = {}): FactsCon
 
     if (algorithm === "md-list") {
         const entries = allEntries.filter(full);
-        const out = project({ entries, ctx, algorithm: "md-list", maxBytes, shape: "auto" });
+        // 预算口径与 `checkExposeLeveled` 同一函数（`budgetBytesOf` = 值字节）：
+        // 两处各算一套就是「写侧判绿、读侧静默裁」的成因，见 `measure` 的注释。
+        const out = project({ entries, ctx, algorithm: "md-list", maxBytes, shape: "auto", measure: budgetBytesOf });
+        // 包装开销 = 文本字节 - 已展示条目的值字节（md 表每行是 `- \`gid\` — value (变体…)`）
         return {
             algorithm,
             env,
             text: out.text,
             omitted: out.omitted.length,
+            overhead: Math.max(0, out.bytes - shownValueBytes(out.shown, entries)),
             problems: [...out.problems.map((p) => ({ gid: p.gid, code: p.code })), ...budgetProblems],
         };
     }
@@ -189,17 +199,24 @@ export function buildFactsContext(opts: BuildFactsContextOptions = {}): FactsCon
     void parsed.skipped; // 当前 scope 下不适用（正常，不是裁掉）
 
     // 预算按 items 顺序分配：`projectItems` 已按 ns 优先级排序（task > project > global），
-    // 故"本任务的结论"先保住
+    // 故"本任务的结论"先保住。
+    //
+    // 计量用 `budgetBytesOf`（**值字节**）—— 与写侧 `checkExposeLeveled` 同一个函数。
+    // 曾经这里按 `\`${key}: ${JSON.stringify(cell)}\n\`` 的**包装后**字节算，与写侧差 20%+，
+    // 于是"status 绿灯 + 投影静默裁一条"可以并存（##5 第 12 轮实测：3308 < 4000 判绿，
+    // `omitted: 1`）。包装开销现在单独回报（`overhead`），不进预算 —— 它随条目数线性增长，
+    // 混进预算会让"4 KB 装几条"变得不可预测。
     let remaining = maxBytes;
     for (const item of parsed.items) {
         const key = algorithm === "flat-gid" ? item.gid : item.claim;
         const cell: FactsContextCell = { value: item.value, resolvedBy: item.resolvedBy, variants: item.variants };
-        const size = Buffer.byteLength(`${key}: ${JSON.stringify(cell)}\n`, "utf8");
+        const size = budgetBytesOf(item);
         if (size > remaining) {
             out.omitted += 1;
             continue;
         }
         remaining -= size;
+        out.overhead = (out.overhead ?? 0) + Math.max(0, Buffer.byteLength(`${key}: ${JSON.stringify(cell)}\n`, "utf8") - size);
         const kind = item.ns.kind;
         const bucket = kind === "task" ? (out.task ??= {}) : kind === "global" ? (out.global ??= {}) : (out.project ??= {});
         bucket[key] = cell;
@@ -286,4 +303,18 @@ export function buildKbIndex(opts: { home?: string } = {}): KbIndex | null {
     // 折叠结果转成可变的 ns（zod 那边 output 形状是 `string[]`，两处别各定义一份）
     const folded = foldKbIndex(entries, { minGroup: KB_FOLD_MIN_GROUP }).map((e) => ({ ...e, ns: [...e.ns] }));
     return { entries: folded, claims: total };
+}
+
+/**
+ * md 表已展示条目的值字节和 —— 只用来算 `overhead`（文本 - 值）。
+ * 按 claim 匹配（`out.shown` 给的是 gid，`projectItems` 的 gid = `<ns>:<claim>`）。
+ */
+function shownValueBytes(shown: readonly string[], entries: readonly ProjectEntry[]): number {
+    const gids = new Set(shown);
+    let n = 0;
+    for (const e of entries) {
+        const claim = claimOf(e.fact);
+        if ([...gids].some((g) => g === claim || g.endsWith(`:${claim}`))) n += bytesOf(e.fact.value);
+    }
+    return n;
 }

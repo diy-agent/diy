@@ -38,6 +38,14 @@ export interface ProjectInput {
      * 缺省 `auto`：唯一且全局的条目渲染成裸标量（省字节），其余结构化。
      */
     readonly shape?: 'auto' | 'always-object';
+    /**
+     * 预算计量函数（缺省 = **渲染后文本字节**，整段重算）。
+     *
+     * 为什么要可注入：`maxBytes` 有两种合法含义 —— ① "这段文本别超过 N 字节"（缺省，
+     * 调用方要的是投递体积）；② "值别超过 N 字节"（`budgetBytesOf`，与 `submit` 侧的
+     * `checkExposeLeveled` 同一口径）。两者混用就会出现「写侧判绿、读侧静默裁」。
+     */
+    readonly measure?: (item: ProjectItem) => number;
 }
 
 export interface ProjectItem {
@@ -201,12 +209,28 @@ export function project(input: ProjectInput): ProjectOutput {
     const maxBytes = input.maxBytes ?? Number.POSITIVE_INFINITY;
 
     let shown = items;
+    const measure = input.measure;
+    if (measure !== undefined) {
+        // 按注入口径**从前缀累计**（顺序 = 保留优先级）：不做"先全渲染再减一条"的重算，
+        // 因为计量函数与文本无关，没必要每裁一条就重排一次 yaml。
+        let used = 0;
+        const keep: ProjectItem[] = [];
+        for (const i of items) {
+            const m = measure(i);
+            if (used + m > maxBytes) break;
+            used += m;
+            keep.push(i);
+        }
+        shown = keep;
+    }
     let text = render(algorithm, shown, shape);
     let bytes = Buffer.byteLength(text, 'utf8');
-    while (bytes > maxBytes && shown.length > 0) {
-        shown = shown.slice(0, -1);
-        text = render(algorithm, shown, shape);
-        bytes = Buffer.byteLength(text, 'utf8');
+    if (measure === undefined) {
+        while (bytes > maxBytes && shown.length > 0) {
+            shown = shown.slice(0, -1);
+            text = render(algorithm, shown, shape);
+            bytes = Buffer.byteLength(text, 'utf8');
+        }
     }
 
     const shownGids = new Set(shown.map((i) => i.gid));

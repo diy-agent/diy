@@ -71,6 +71,27 @@ export function bytesOf(value: string): number {
     return n;
 }
 
+/** 预算计量用的最小事实形状（`Fact` / `ProjectItem` 都满足） */
+export interface Metered {
+    readonly value: string;
+}
+
+/**
+ * **预算口径的唯一实现**：`full` 档占的字节 = `bytesOf(value)`。
+ *
+ * 为什么只算值、不算包装：校验发生在**写侧**（`submit` 那时还不知道 resolvedBy / 变体数 /
+ * 渲染算法），投影发生在**读侧** —— 两侧各算一套，必然出现「check 绿 + 投影静默裁」。
+ * 实测（##5 第 12 轮）：三库 full 合计 3308 B < 4000 判绿，而投影 `omitted: 1` 静默少了
+ * 一条 —— 正是 expose 这一轮要治的病。
+ *
+ * 包装开销（`<claim>: {value,resolvedBy,variants}` 的外壳，约 40~60 B/条）**不进预算**，
+ * 单独以 `overhead` 回报：它随条目数线性增长，量级与值不在一个档，混进预算只会让
+ * 「4 KB 能装多少条」变得不可预测。
+ */
+export function budgetBytesOf(item: Metered): number {
+    return bytesOf(item.value);
+}
+
 export interface SubjectWeight {
     readonly subject: string;
     readonly claims: number;
@@ -125,7 +146,7 @@ export function checkExposeLeveled(items: readonly LeveledFact[], opts: { budget
     const acc = new Map<string, number>();
     for (const it of items) {
         if (it.level !== 'full' || !isUsable(it.fact)) continue;
-        acc.set(it.fact.subject, (acc.get(it.fact.subject) ?? 0) + bytesOf(it.fact.value));
+        acc.set(it.fact.subject, (acc.get(it.fact.subject) ?? 0) + budgetBytesOf(it.fact));
     }
     const full = [...acc.entries()]
         .map(([subject, bytes]) => ({ subject, bytes }))

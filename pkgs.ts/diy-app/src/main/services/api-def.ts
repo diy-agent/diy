@@ -2095,7 +2095,9 @@ export const apiDef = RpcSchema.router({
       }),
 
       facts: RpcSchema.group({
-        desc: `项目级事实库（##404）：agent **只经这里读写事实，不碰 YAML 文件**（手改必错）。真源 knowledge/facts/*.yaml，判据在 @diy/facts`,
+        desc:
+            `项目级事实库（##404）：agent **只经这里读写事实，不碰 YAML 文件**（手改必错）。真源 knowledge/facts/*.yaml，判据在 @diy/facts。` +
+            `\n\n**不知道一件东西该去哪查 → \`diy facts brief where\`**：\`where\` 主题是「统一汇入点」，每个通道（facts / runtime / journal / traffic / 文件）一条，只写"去哪查"、不写值（通道才变，所以不腐坏）`,
         children: {
           status: RpcSchema.unary({
             desc: `事实库体检：条目 / claim / 词表计数 + 全部问题（与 ./sha.sh check 同一套判据，不会出现"CLI 绿、CI 红"）。顶层计数 = **本根**，额外只读库（设备级）单列在 \`extra\` —— 混一桶会造出"我啥也没干库就暴涨"的假象`,

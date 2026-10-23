@@ -292,6 +292,32 @@ describe("expose 暴露档（##5 第 7 轮：subject 级 = 正文预算的开关
     });
 });
 
+describe("预算口径与写侧校验同源（##5 第 12 轮）", () => {
+    /**
+     * 病因：写侧 `checkExposeLeveled` 按**值字节**判，读侧投影按**包装后**字节裁
+     * ⇒ "status 绿灯 + 投影静默裁一条"可以并存（实测 3308 < 4000 判绿而 `omitted: 1`）。
+     * 判据：**写侧判绿 ⇒ 读侧 omitted 必须为 0**；包装开销单独回报在 `overhead`。
+     */
+    it("写侧判不超 ⇒ 读侧一条都不裁（口径统一后才成立）", () => {
+        // 6 条 × 600 B 值 + 包装（每条约 50 B）= 值 3600 < 4000 但包装后 3900 也<4000；
+        // 取 6 × 650 = 3900 值，包装后 ≈ 4200 会超旧口径 ⇒ 正好压住"两套口径"的缝
+        const rows: string[] = [];
+        for (let i = 0; i < 6; i++) {
+            rows.push(`  app.port#a${i}:`, `    value: '${"x".repeat(650)}'`, "    review: accepted", "    lifecycle: active", "    evidence: { source: code, at: K.ts:2 }");
+        }
+        write(path.join(repoKb, "facts", "app.yaml"), factsYaml(rows));
+        write(path.join(repoKb, "expose.yaml"), "expose:\n  app.port: full\n");
+        const v = buildFactsContext({ home, taskUri: "", maxBytes: 4000 });
+        // 写侧不报超预算（值 3900 < 4000）
+        expect(v?.problems.map((p) => p.code)).not.toContain("facts/expose-budget");
+        // 读侧也就不许裁
+        expect(v?.omitted).toBe(0);
+        expect(Object.keys(v?.project ?? {})).toHaveLength(6);
+        // 包装开销如实回报（>0），但不进预算
+        expect(v?.overhead ?? 0).toBeGreaterThan(0);
+    });
+});
+
 describe("按库解析暴露档（##5 第 8 轮：合表会把任务库一起降级）", () => {
     function taskLib(): string {
         const kb = path.join(home, TASK, "knowledge");

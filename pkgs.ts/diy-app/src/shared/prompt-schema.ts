@@ -191,6 +191,14 @@ export const AssembleGlobalsSchema = z.object({
         .optional()
         .describe("**仅 `md` 算法**：整份投影的 markdown 表（此时 task/project 缺席 —— 同一种内容不给两种形状）"),
       omitted: z.number().describe("因预算被裁掉的条目数（>0 ⇒ 还有没带进来的，用 `diy facts status` 看）"),
+      overhead: z
+        .number()
+        .optional()
+        .describe(
+          "包装开销（字节，不进预算）：`<claim>: {value,resolvedBy,variants}` 外壳本身。" +
+            "预算按**值字节**算（与 `diy facts submit` 的校验同口径），故实际文本 ≈ 预算 + 本字段 —— " +
+            "`omitted > 0` 才是「装不下」，这里大只是外壳多",
+        ),
       problems: z
         .array(z.object({ gid: z.string().describe("哪一条（`<ns>:<claim>`）"), code: z.string().describe("机器码（`facts/*`）") }))
         .describe("**真问题**：冲突 / 库内缺 claim。空数组 = 正常"),

@@ -27,6 +27,7 @@ export {
     checkExposeLeveled,
     DEFAULT_FULL_BUDGET,
     EXPOSE_LEVELS,
+    budgetBytesOf,
     bytesOf,
     checkExpose,
     exposeOf,

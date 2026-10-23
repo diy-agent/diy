@@ -334,6 +334,53 @@ describe('evidence.at 钉版本（<rev>:<path>:<line>）', () => {
     });
 });
 
+describe('submit · drop 把一篇文章删空', () => {
+    // 起因（##5 第 12 轮实测）：`drop` 只从**存活集**建篇 → 一篇被删空后它不在存活集里
+    // ⇒ 不进写盘计划 ⇒ **磁盘一个字不动**，而 report 里 `dropped` 列了 id、`files` 为空
+    // —— 两处自相矛盾本身就是判据（"我删了 4 条"与"一个文件都没改"不能同时成立）。
+    it('整篇删空后文件仍然重写（只剩头注），status 不再报那几条', () => {
+        const dir = makeRepo();
+        writeFileSync(path.join(dir, '..', 'K.ts'), 'a\n');
+        const ev = { source: 'code' as const, at: 'K.ts:1', verifiedAt: '2026-10-22' };
+        submit(dir, {
+            facts: [
+                fact({ id: 'p1', subject: 'app.port', aspect: 'default', value: '18888', evidence: ev }),
+                fact({ id: 'p2', subject: 'app.port', aspect: 'fallback', value: '18889', evidence: ev }),
+            ],
+        });
+        expect(loadRepo(dir).facts).toHaveLength(2);
+
+        const r = submit(dir, { facts: [], drop: ['p1', 'p2'] });
+        expect(r.report.dropped).toEqual(['p1', 'p2']);
+        // 关键不变量：dropped 有值 ⇒ files 必须非空（否则就是"report 说删了、磁盘没动"）
+        expect(r.report.files.map((f) => path.basename(f.file))).toEqual(['app.yaml']);
+
+        expect(loadRepo(dir).facts).toHaveLength(0);
+        const text = readFileSync(path.join(dir, 'facts', 'app.yaml'), 'utf8');
+        // **文件不删**：删文件会让 notes / domains / evidence 的相对路径同时失去落点，
+        // 且"文件消失"不可审计 —— 空篇是"这里曾有什么、现在没了"的留痕
+        expect(text.startsWith('# knowledge/facts/app.yaml')).toBe(true);
+        expect(text).not.toContain('app.port#default');
+    });
+
+    it('多篇里只删空其中一篇：另一篇照常不动', () => {
+        const dir = makeRepo();
+        writeFileSync(path.join(dir, '..', 'K.ts'), 'a\n');
+        const ev = { source: 'code' as const, at: 'K.ts:1', verifiedAt: '2026-10-22' };
+        submit(dir, {
+            facts: [
+                fact({ id: 'p1', subject: 'app.port', aspect: 'default', value: '18888', evidence: ev }),
+                fact({ id: 'd1', subject: 'dev.check', aspect: 'entry', value: './sha.sh check', evidence: ev }),
+            ],
+        });
+        const other = readFileSync(path.join(dir, 'facts', 'dev.yaml'), 'utf8');
+        const r = submit(dir, { facts: [], drop: ['p1'] });
+        // 存活篇照常重写（内容不变），被删空的那篇进 `files`
+        expect(r.report.files.map((f) => path.basename(f.file)).sort()).toEqual(['app.yaml', 'dev.yaml']);
+        expect(readFileSync(path.join(dir, 'facts', 'dev.yaml'), 'utf8')).toBe(other);
+    });
+});
+
 describe('submit · 词表删除（dropSubjects）', () => {
     // 起因（##5 实测）：`subjects` 原先只有增没有删 —— 写错一个 key 就永久占着词表，
     // 而 agent 不许手改 YAML，唯一出路是 `git checkout knowledge/subjects.yaml`。
