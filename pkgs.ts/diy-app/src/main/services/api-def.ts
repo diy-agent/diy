@@ -2364,10 +2364,10 @@ export const apiDef = RpcSchema.router({
                 .boolean()
                 .optional()
                 .cliOption({ desc: "也列出已结束的（缺省只列运行中；app 退出后表即空 —— 这是刻意的，不做恢复）" }),
-              scan: z
+              noScan: z
                 .boolean()
                 .optional()
-                .cliOption({ desc: "顺带扫一遍 ps，带上**未登记**的进程（命令里自己 `nohup xxx &` 起的；缺省 true）" }),
+                .cliOption({ desc: "不扫 ps（跳过「未登记」进程那一列；缺省扫）" }),
             },
             output: z.object({ status: z.string(), data: z.any() }),
           }),

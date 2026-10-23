@@ -55,6 +55,13 @@ export interface RunInfo extends RunLike {
     /** 结束通知是否已投递（防重复唤醒） */
     notified?: boolean;
     /**
+     * 根进程（我们 spawn 的 bash）已退出、但**进程组里还有活口** ⇒ 这条 run 仍在跑。
+     * 用户口径：「通知时机 = 真正没人跑了那一刻（进程组空）」。
+     */
+    awaitingGroup?: boolean;
+    /** 根进程退出的时刻（`awaitingGroup` 时为真；用来交代「父命令 35ms 就退了，活的其实是它起的后台进程」） */
+    rootExitedAt?: number;
+    /**
      * 前台 run（`bash` 工具没给 `background`，工具调用正在等它的结果）：
      * 结果直接回给调用方，**结束不投插话**；面板上标出来，好区分"谁在等"。
      */
@@ -97,6 +104,34 @@ export interface RunRegistryOptions {
     now?: () => number;
     /** 结束通知出口（缺省不通知）；真实 app 由 local-agent 注册「插话」实现 */
     notifier?: (taskUri: string, text: string) => void;
+    /** 进程组里还有没有活口（测试注入假判据；缺省 `kill(-pgid, 0)`） */
+    probeGroup?: (pgid: number) => boolean;
+    /** 组探活间隔（ms）；只在「根已退出、组里还有活口」期间跑，组空即停 */
+    reapMs?: number;
+}
+
+/** 根进程的退出信息：组空之前先存着，收口时才用。 */
+interface PendingExit {
+    exitCode: number | null;
+    signal: string | null;
+    errorText?: string;
+    killed?: boolean;
+}
+
+/**
+ * 进程组里还有活口吗？
+ *
+ * 用 `kill(-pgid, 0)` 只发信号 0（存在性检查），**不起进程**（比每次都 `ps` 便宜一个数量级）。
+ * `EPERM` 也算活着：组里确实有进程，只是不归我们发信号。
+ */
+export function groupAlive(pgid: number): boolean {
+    if (!Number.isInteger(pgid) || pgid <= 0) return false;
+    try {
+        process.kill(-pgid, 0);
+        return true;
+    } catch (e) {
+        return (e as NodeJS.ErrnoException).code === "EPERM";
+    }
 }
 
 /** 杀不及时的宽限期：先 SIGTERM（让它自己收尾），到这个点还在就 SIGKILL 整组。 */
@@ -124,13 +159,20 @@ export class RunRegistry {
     private readonly waiters = new Map<string, Array<(info: RunInfo) => void>>();
     /** 我们主动杀过的 id：决定终态是 `killed` 还是 `exited` */
     private readonly killedByUs = new Set<string>();
+    /** 根进程已退出、等进程组空的那些 id 的退出信息（收口要用的都得先存着） */
+    private readonly pendingExits = new Map<string, PendingExit>();
     private readonly rootDir: string;
     private readonly now: () => number;
+    private readonly probeGroup: (pgid: number) => boolean;
+    private readonly reapMs: number;
+    private reapTimer?: ReturnType<typeof setTimeout>;
     private notifier?: (taskUri: string, text: string) => void;
 
     constructor(opts: RunRegistryOptions = {}) {
         this.rootDir = opts.rootDir ?? runRoot();
         this.now = opts.now ?? Date.now;
+        this.probeGroup = opts.probeGroup ?? groupAlive;
+        this.reapMs = opts.reapMs ?? 1000;
         this.notifier = opts.notifier;
     }
 
@@ -180,14 +222,14 @@ export class RunRegistry {
                 closeSync(fd);
             }
         } catch (e) {
-            this.settle(id, null, null, e instanceof Error ? e.message : String(e));
+            this.settle(id, { exitCode: null, signal: null, errorText: e instanceof Error ? e.message : String(e) });
             return this.runs.get(id) ?? info;
         }
         info.pid = child.pid;
         this.children.set(id, child);
         // 不 unref：我们要 `close` 事件来判终态；main 退出后子进程仍在（detached）
-        child.on("error", (e) => this.settle(id, null, null, e.message));
-        child.on("close", (code, signal) => this.settle(id, code, signal ?? null));
+        child.on("error", (e) => this.onRootExit(id, { exitCode: null, signal: null, errorText: e.message }));
+        child.on("close", (code, signal) => this.onRootExit(id, { exitCode: code, signal: signal ?? null }));
         return info;
     }
 
@@ -258,7 +300,12 @@ export class RunRegistry {
                 if (done) return;
                 done = true;
                 closeFd();
-                this.settleTracked(id, o ?? {});
+                this.onRootExit(id, {
+                    exitCode: o?.exitCode ?? null,
+                    signal: o?.signal ?? null,
+                    ...(o?.error ? { errorText: o.error } : {}),
+                    ...(o?.killed ? { killed: true } : {}),
+                });
             },
         };
     }
@@ -323,8 +370,8 @@ export class RunRegistry {
     kill(id: string): boolean {
         const info = this.runs.get(id);
         if (!info || info.state !== "running") return false;
-        const child = this.children.get(id);
-        const pid = child?.pid;
+        // 用 info.pid 而不是 children：根进程可能早就退了，活的是它起的后台进程（组还在）
+        const pid = info.pid;
         if (!pid) return false;
         this.killedByUs.add(id);
         this.signalGroup(pid, "SIGTERM");
@@ -367,6 +414,9 @@ export class RunRegistry {
         this.children.clear();
         this.waiters.clear();
         this.killedByUs.clear();
+        this.pendingExits.clear();
+        if (this.reapTimer) clearTimeout(this.reapTimer);
+        this.reapTimer = undefined;
     }
 
     private signalGroup(pid: number, sig: NodeJS.Signals): void {
@@ -407,46 +457,86 @@ export class RunRegistry {
     }
 
     /**
+     * **根进程退出**（我们 spawn 的那个 bash）—— 注意：它不等于这条 run 结束。
+     *
+     * 用户实测的病：`nohup sleep 600 > /dev/null 2>&1 &` 这条命令 35ms 就返回，
+     * 而真正在跑的是它起的 `sleep 600`（已被 reparent 到 launchd）。按"根退出 = 结束"
+     * 算，表上写「已结束 · 35ms」、通知也在 35ms 就发完，长活永远不长。
+     *
+     * 判据因此成一句：**进程组里还有活口 ⇒ 这条 run 还在跑**（用户口径：
+     * 「通知时机 = 真正没人跑了那一刻（进程组空）」，只发一次）。
+     */
+    private onRootExit(id: string, exit: PendingExit): void {
+        const info = this.runs.get(id);
+        if (!info || info.state !== "running") return;
+        this.pendingExits.set(id, exit);
+        const pgid = info.pid;
+        if (pgid !== undefined && this.probeGroup(pgid)) {
+            info.awaitingGroup = true;
+            info.rootExitedAt = this.now();
+            // 根的 ChildProcess 已经结束（close 已到），内存里不必再留着；组探活只需要 pgid
+            this.children.delete(id);
+            this.scheduleReap();
+            return;
+        }
+        this.settle(id, exit);
+    }
+
+    /**
+     * 组探活：**只在「根已退出、组里还有活口」期间**跑，组空即停（自己清掉定时器）。
+     *
+     * 为什么这里必须有定时器：`wait` 只能等**自己的孩子**，被 reparent 到 launchd 的
+     * 后台进程没有内核事件可挂；`kill(-pgid, 0)` 是同步且极便宜的存在性检查（不起进程）。
+     * 所以这是"有人还在跑"的有界轮询，不是调度器的 tick —— 全表都没有活口时它不存在。
+     */
+    private hasAwaitingGroup(): boolean {
+        for (const r of this.runs.values()) if (r.state === "running" && r.awaitingGroup) return true;
+        return false;
+    }
+
+    private scheduleReap(): void {
+        if (this.reapTimer) return;
+        const timer = setTimeout(() => {
+            this.reapTimer = undefined;
+            for (const info of this.runs.values()) {
+                if (info.state !== "running" || !info.awaitingGroup) continue;
+                if (info.pid !== undefined && this.probeGroup(info.pid)) continue;
+                const exit = this.pendingExits.get(info.id) ?? { exitCode: null, signal: null };
+                this.settle(info.id, exit);
+            }
+            if (this.hasAwaitingGroup()) {
+                this.scheduleReap();
+            }
+        }, this.reapMs);
+        timer.unref?.();
+        this.reapTimer = timer;
+    }
+
+    /**
      * 终态唯一落点。判据只有一条：**是不是我们杀的**。
      *
      * 其余一律 `exited` —— 退出码非零也还是 exited：命令跑了、结束了；"成功与否"由
      * `exitCode` 表达，不塞进状态里，否则模型得猜两个字段谁说话。
+     *
+     * 通知（唤醒 agent）**只在这里发一次**，且**我们主动杀的不发**：用户口径
+     * 「通知是背景 job 执行完、唤醒 agent 给任务发消息，不是 kill」—— 杀完立刻把人叫醒
+     * 等于自问自答，结果（`killed` + 信号）留在表里等人/下一轮自己看。
      */
-    private settle(id: string, exitCode: number | null, signal: string | null, errorText?: string): void {
+    private settle(id: string, exit: PendingExit): void {
         const info = this.runs.get(id);
         if (!info || info.state !== "running") return;
-        const ours = this.killedByUs.delete(id);
-        info.state = errorText && exitCode === null && signal === null ? "failed" : ours ? "killed" : "exited";
-        info.exitCode = exitCode;
-        info.signal = signal;
+        const ours = !!exit.killed || this.killedByUs.delete(id);
+        info.state = exit.errorText && exit.exitCode === null && !exit.signal ? "failed" : ours ? "killed" : "exited";
+        info.exitCode = exit.exitCode;
+        info.signal = exit.signal;
         info.endedAt = this.now();
-        if (errorText) info.error = errorText;
+        info.awaitingGroup = false;
+        if (exit.errorText) info.error = exit.errorText;
+        this.pendingExits.delete(id);
         this.children.delete(id);
         for (const w of this.waiters.get(id) ?? []) w(info);
         this.waiters.delete(id);
-        this.notify(info);
-    }
-
-    /**
-     * 前台 run 的收口（= `settle` 的姊妹）。
-     *
-     * 判据与后台同一套：我们主动杀的 ⇒ `killed`；有退出码/信号 ⇒ `exited`
-     *（非零也是 exited —— 成功与否由 exitCode 说，不塞进状态里）；
-     * 既没码也没信号还带了原因 ⇒ `failed`（起不来）。
-     * 差别只有一条：前台**不投插话**（结果直接回给工具调用方）。
-     */
-    private settleTracked(id: string, o: FinishRunInput): void {
-        const info = this.runs.get(id);
-        if (!info || info.state !== "running") return;
-        const noCode = o.exitCode === undefined || o.exitCode === null;
-        const hasErr = !!o.error && noCode && !o.signal;
-        info.state = hasErr ? "failed" : o.killed ? "killed" : "exited";
-        info.exitCode = o.exitCode ?? null;
-        info.signal = o.signal ?? null;
-        info.endedAt = this.now();
-        if (o.error) info.error = o.error;
-        for (const w of this.waiters.get(id) ?? []) w(info);
-        this.waiters.delete(id);
+        if (!ours) this.notify(info);
     }
 
     private notify(info: RunInfo): void {

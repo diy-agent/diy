@@ -144,9 +144,13 @@ export function selectOwnedProcs(rows: readonly PsRow[], opts: SelectOptions): O
         if (row.pid === opts.selfPid) continue;
         if (isAppHelperProc(row.command)) continue;
         const groupOwner = opts.groups.get(row.pgid);
-        const mine = groupOwner !== undefined || isDescendantOfSelf(row);
+        // pgid 命中 run 根 pid 也算"归我们管"：根退了之后，组名册迟早过期，而 pgid 一直是那个号
+        const mine = groupOwner !== undefined || opts.runPids.has(row.pgid) || isDescendantOfSelf(row);
         if (!mine) continue;
-        const runId = opts.runPids.get(row.pid) ?? runIdOfAncestors(row) ?? groupOwner?.runId ?? null;
+        // 组号 = run 根 pid（spawn 一律 `detached`）：根退了、子孙被 reparent 到 launchd 之后，
+        // 父子链已经断了，**只剩 pgid 这一条线**能归到「谁起的」（`nohup … &` 就是这种）。
+        const runId =
+            opts.runPids.get(row.pid) ?? opts.runPids.get(row.pgid) ?? runIdOfAncestors(row) ?? groupOwner?.runId ?? null;
         out.push({ ...row, runId, isRunRoot: opts.runPids.has(row.pid) });
     }
     return out.sort((a, b) => a.pid - b.pid);

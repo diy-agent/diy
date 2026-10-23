@@ -16,6 +16,8 @@ import {
     type OwnedProc,
 } from "../../shared/proc-scan";
 
+let lastScanWarnAt = 0;
+
 export interface ScanDeps {
     /** 跑命令拿 stdout；失败返回 `""`（采集失败退化成"看不见"，不许炸业务）。 */
     run(cmd: string, args: readonly string[], timeoutMs?: number): string;
@@ -33,7 +35,16 @@ export const DEFAULT_SCAN_DEPS: ScanDeps = {
                 stdio: ["ignore", "pipe", "ignore"],
                 maxBuffer: 8 * 1024 * 1024,
             });
-        } catch {
+        } catch (e) {
+            // 扫描失败退化成"看不见"，但**不许静默**：面板会显示「没扫到」，而人要能查出为什么
+            // （实测的第一次：机器内存只剩 0.2GB，fork 出 ps 失败 ⇒ EAGAIN，界面像"没有进程"）。
+            // 限流打印，避免每 3 秒刷一次。
+            const now = Date.now();
+            if (now - lastScanWarnAt > 60_000) {
+                lastScanWarnAt = now;
+                const code = (e as NodeJS.ErrnoException | undefined)?.code;
+                console.warn("[scan] ps 失败:", code ?? (e instanceof Error ? e.message : String(e)));
+            }
             return "";
         }
     },

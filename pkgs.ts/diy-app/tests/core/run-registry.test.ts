@@ -240,3 +240,77 @@ describe("前台 run（track）", () => {
         expect(readFileSync(h.info.logPath, "utf8")).toBe("");
     });
 });
+
+// ##408 刀 13：run 的寿命 = **进程组的寿命**，不是根 bash 的寿命。
+// 用户实测的病：`nohup sleep 600 > /dev/null 2>&1 &` 这条命令 35ms 就返回，
+// 表上写「已结束 · 35ms」、通知也在 35ms 发完，而真正在跑的 `sleep 600` 还在跑。
+// 判据：组里还有活口 ⇒ 仍 running；组空那一刻才收口 + **只发一次**通知。
+describe("寿命按进程组算（不是根 bash）", () => {
+    it("根退出但组里还有活口 ⇒ 状态仍是 running（不许写「已结束」）", async () => {
+        const r = new RunRegistry({ rootDir: root, probeGroup: () => true, reapMs: 60_000 });
+        const p = r.spawn({ command: "exit 0", cwd: root, origin });
+        await new Promise((res) => setTimeout(res, 120));
+        expect(p.state).toBe("running");
+        expect(p.awaitingGroup).toBe(true);
+        expect(p.rootExitedAt).toBeGreaterThanOrEqual(p.startedAt);
+        r.clear();
+    });
+
+    it("组空了才收口，且这一等出来的终态仍是 exited + 真实退出码", async () => {
+        let alive = true;
+        const r = new RunRegistry({ rootDir: root, probeGroup: () => alive, reapMs: 20 });
+        const p = r.spawn({ command: "exit 3", cwd: root, origin });
+        await new Promise((res) => setTimeout(res, 80));
+        expect(p.state).toBe("running");
+        alive = false;
+        const done = await r.wait(p.id, 5_000);
+        expect(done?.state).toBe("exited");
+        expect(done?.exitCode).toBe(3);
+        expect(done?.awaitingGroup).toBe(false);
+        r.clear();
+    });
+
+    it("真进程：`nohup sleep &` 的父命令秒退，run 活到后台进程真的没了才结束", async () => {
+        const p = reg.spawn({ command: "nohup sleep 0.6 > /dev/null 2>&1 & echo ok", cwd: root, origin });
+        // 根命令本身 20ms 级就退；此时不许收口
+        await new Promise((res) => setTimeout(res, 150));
+        expect(p.state).toBe("running");
+        expect(p.awaitingGroup).toBe(true);
+        const done = await reg.wait(p.id, 10_000);
+        expect(done?.state).toBe("exited");
+        expect(done?.exitCode).toBe(0);
+        // 时长按"真正没人跑"算（≥ 后台进程那 ~600ms），不是父命令的 20ms
+        expect(done!.endedAt! - done!.startedAt).toBeGreaterThanOrEqual(400);
+    }, 15_000);
+
+    it("通知只在组空那一刻发，且只发一次（探活多轮不重复唤醒）", async () => {
+        let alive = true;
+        const notes: string[] = [];
+        const r = new RunRegistry({
+            rootDir: root,
+            probeGroup: () => alive,
+            reapMs: 20,
+            notifier: (_t, text) => notes.push(text),
+        });
+        const p = r.spawn({ command: "exit 0", cwd: root, origin });
+        await new Promise((res) => setTimeout(res, 120));
+        expect(notes).toHaveLength(0); // 组里还有活口 ⇒ 还不叫醒
+        alive = false;
+        await r.wait(p.id, 5_000);
+        await new Promise((res) => setTimeout(res, 120)); // 再多探几轮
+        expect(notes).toHaveLength(1);
+        expect(notes[0]).toContain("r-");
+        r.clear();
+    });
+
+    it("我们主动杀的：不发唤醒（通知是「跑完了」，不是「被停了」）", async () => {
+        const notes: string[] = [];
+        const r = new RunRegistry({ rootDir: root, notifier: (_t, text) => notes.push(text) });
+        const p = r.spawn({ command: "sleep 5", cwd: root, origin });
+        r.kill(p.id);
+        const done = await r.wait(p.id, 10_000);
+        expect(done?.state).toBe("killed");
+        expect(notes).toHaveLength(0);
+        r.clear();
+    });
+});

@@ -63,7 +63,7 @@ async function refresh(opts: { all?: boolean } = {}): Promise<void> {
     const run = (async () => {
         setLoading(true);
         try {
-            const r = await diyService.diy.job.ps({ all: opts.all !== false, scan: true });
+            const r = await diyService.diy.job.ps({ all: opts.all !== false, noScan: false });
             const data = r.data as Partial<RunsSnapshot> | undefined;
             setSnap({
                 runs: (data?.runs ?? []) as RunView[],

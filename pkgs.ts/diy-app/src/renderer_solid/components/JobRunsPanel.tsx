@@ -444,6 +444,14 @@ export function JobRunsPanel(props: { uri: string }) {
                                                     <Show when={row.kind === "run" && row.run.error}>
                                                         {(e) => <div class="truncate text-error">{e()}</div>}
                                                     </Show>
+                                                    <Show when={row.kind === "run" && row.run.awaitingGroup}>
+                                                        <span
+                                                            class="mr-1 rounded bg-warning/20 px-1 text-xs"
+                                                            data-job-awaiting-group
+                                                        >
+                                                            后台仍在跑
+                                                        </span>
+                                                    </Show>
                                                     <Show when={row.kind === "run" && row.run.foreground}>
                                                         <span class="mr-1 rounded bg-base-content/10 px-1 text-xs opacity-70" data-job-foreground>
                                                             前台

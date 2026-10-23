@@ -1158,7 +1158,10 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const picked = input.all === true ? all : all.filter((r) => r.state === "running");
     // 顺带扫一遍 ps：登记过的 run 之外，命令里自己 `nohup xxx &` 起的进程也要看见（##408 刀 10）。
     // `scan:false` 只给"我只要表里那几条"的调用方（省一次 ps）。
-    const scan = input.scan === false ? null : scanOwnedProcs({ runPids: runRegistry.pidMap() });
+    // 缺省**扫**；`--no-scan` 才跳过。为什么不是 `scan: boolean`：
+    // CLI 的布尔选项缺省是 `false`（`--scan` 不写就是 false），会把"没表态"读成"不要扫"
+    // —— 实测症状：`diy job ps` 永远 `scanOk:false`、看不见 `nohup xxx &` 起的孤儿。
+    const scan = input.noScan === true ? null : scanOwnedProcs({ runPids: runRegistry.pidMap() });
     const procRows = (scan?.procs ?? []).map((p) =>
         procRowOf(p, parseEtime(p.etimeText), groupOwnerOf(p.pgid)),
     );

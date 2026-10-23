@@ -31,6 +31,8 @@ export interface RunFact extends RunLike {
     error?: string;
     /** 前台 run（工具调用正在等结果）；后台为 false/undefined */
     foreground?: boolean;
+    /** 根命令已退出、但进程组里还有活口（长活就是这种：`nohup … &`） */
+    awaitingGroup?: boolean;
 }
 
 export interface RunView {
@@ -71,6 +73,8 @@ export interface RunView {
     error: string | null;
     /** 前台 run（`bash` 没给 `background`）—— 表格里标出来 */
     foreground: boolean;
+    /** 根命令退了、后台子孙还在跑 —— 表格里标「后台」 */
+    awaitingGroup: boolean;
 }
 
 /** 本地时间 `HH:MM:SS`（表里只放到秒：作业的生命周期不是审计，不必到毫秒）。 */
@@ -134,6 +138,7 @@ export function runViewOf(fact: RunFact, now: number, outputBytes?: number | nul
         originText: originTextOf(fact.origin),
         error: fact.error ?? null,
         foreground: fact.foreground === true,
+        awaitingGroup: fact.awaitingGroup === true,
     };
 }
 

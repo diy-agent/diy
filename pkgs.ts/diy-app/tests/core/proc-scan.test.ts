@@ -100,6 +100,16 @@ describe("selectOwnedProcs — 认领判据（组号 ∪ 子孙）", () => {
     ]);
   });
 
+  it("根退了、子孙被 reparent 到 launchd：靠 **pgid = 根 pid** 归到那条 run", () => {
+    // `nohup sleep 600 &` 的真实形状：父 bash(500) 已退出，sleep(501) 的 ppid 变 1
+    const procs = selectOwnedProcs(rows(line(501, 1, 500, "sleep 600")), {
+      selfPid: 100,
+      groups: new Map(),
+      runPids: new Map([[500, "r-1"]]),
+    });
+    expect(procs.map((p) => [p.pid, p.runId])).toEqual([[501, "r-1"]]);
+  });
+
   it("组名册里的 runId 会把野子孙也归到那条 run（根退了、子孙还在）", () => {
     const g = new Map<number, GroupOwner>([[500, { at: 1, command: "bash -c server", cwd: "/tmp", runId: "r-1" }]]);
     const procs = selectOwnedProcs(rows(line(501, 1, 500, "node server.js")), {
