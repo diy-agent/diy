@@ -37,8 +37,15 @@ export const HistoryNoteSchema = z
                     "取被省区间 `sed -n 'A,Bp' \"$DIY_HOME/<file>\"`，按轮定位 `grep -n '\"turn\":\"T\"' …`",
             ),
         absPath: z.string().describe("同一份日志的绝对路径（bash 直接可用，省掉拼接）"),
-        budgetBytes: z.number().describe("历史消息可占字节上限（用户给的预算）"),
-        keptBytes: z.number().describe("实际保留的字节数"),
+        budgetBytes: z
+            .number()
+            .describe(
+                "**只约束「按预算挑」的那部分（count 级）**；托底级（最近 N 步）走 `mustBytes`、**不占它**" +
+                    " ⇒ `keptBytes > budgetBytes` 是正常的，不是溢出",
+            ),
+        keptBytes: z.number().describe("实际保留字节总数 = `countBytes + mustBytes`"),
+        countBytes: z.number().describe("预算内那部分的实付字节（自身 ≤ `budgetBytes`）"),
+        mustBytes: z.number().describe("托底级（最近 N 步，`clip: full`）实付字节，**不占预算**"),
         kept: z
             .array(z.tuple([z.number(), z.number()]))
             .describe("保留的行号区间 [from, to]（含两端，1-based）；**区间之间的空隙即被省略的部分**"),

@@ -2235,6 +2235,8 @@ export class LocalAgentManager {
             {
                 budgetBytes: policy.modeData.budgetBytes,
                 keptBytes: sel.keptBytes,
+                countBytes: sel.countBytes,
+                mustBytes: sel.mustBytes,
                 kept: sel.keptRuns,
             },
             { file: llmLogRelPath(taskUriOf), absPath: llmFile(taskUriOf) },

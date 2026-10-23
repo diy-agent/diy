@@ -77,8 +77,18 @@ export interface BudgetSelection {
     dropped: number[];
     /** 保留的**连续区间**（[from,to] 1-based，含两端）—— 索引标注用它（gap = 区间之间的空隙，不必逐 gap 标注） */
     keptRuns: [number, number][];
-    /** 实际占用字节（**渲染后**口径，工具结果已按策略裁剪） */
+    /** 实际占用字节（**渲染后**口径，工具结果已按策略裁剪）= `countBytes + mustBytes` */
     keptBytes: number;
+    /**
+     * `count` 级实付字节（**受 `budgetBytes` 约束**的那部分）。
+     *
+     * 为什么要单列：默认管道下 `keptBytes > budgetBytes` 是**常态**（托底级不占预算），
+     * 只报这两个数会让读的人以为「超了 58%」—— 口径必须写到字段上，不能指望读的人
+     * 知道管道长什么样（本任务 ##5 实账：budget 20480 / kept 32298）。
+     */
+    countBytes: number;
+    /** `exempt` 级（托底：最近 N 步）实付字节，**不占预算** */
+    mustBytes: number;
     /**
      * 每条消息的**裁法**（下标对齐 `all`；`null` = 没被任何级声明 clip ⇒ 回落 `defaultClip`）。
      * **只在有级声明 clip 时出现** —— 老消费者（与老断言）不必知道这条轴（读侧兼容）。
@@ -397,10 +407,12 @@ export function runPlan(
     bounds: { mustCapBytes?: number } = {},
 ): BudgetSelection {
     const n = all.length;
-    if (n === 0) return { kept: [], dropped: [], keptRuns: [], keptBytes: 0 };
+    if (n === 0) return { kept: [], dropped: [], keptRuns: [], keptBytes: 0, countBytes: 0, mustBytes: 0 };
     /** 托底级累计字节 / 单元数（跨级累计：整条 plan 的 exempt 部分共用一个上限） */
     let mustBytes = 0;
     let mustUnits = 0;
+    /** count 级实付（与 `remaining` 同源扣减，独立记一份供注记报账） */
+    let countBytes = 0;
 
     const ctx = buildCtx(all, args.costOf);
     const keep = all.map(() => false);
@@ -440,7 +452,9 @@ export function runPlan(
                 if (c > remaining) continue; // 放不下 → 跳过该候选（后面的可能更小）
                 for (const k of add) {
                     keep[k] = true;
-                    remaining -= costOf(k);
+                    const ck = costOf(k);
+                    remaining -= ck;
+                    countBytes += ck;
                 }
             } else {
                 // 托底：不计预算；但设了硬上限就按上限逐单元收（##406 刀 2）
@@ -468,7 +482,7 @@ export function runPlan(
         else keptRuns.push([i + 1, i + 1]);
         prev = i;
     }
-    const out: BudgetSelection = { kept, dropped, keptRuns, keptBytes };
+    const out: BudgetSelection = { kept, dropped, keptRuns, keptBytes, countBytes, mustBytes };
     if (declared) out.clips = clips; // 无人声明 clip ⇒ 字段不出现（读侧兼容）
     if (rDeclared) out.reasoningClips = rclips; // 同上（推理轴；两轴各报各的）
     return out;
