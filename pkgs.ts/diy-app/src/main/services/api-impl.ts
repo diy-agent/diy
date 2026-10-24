@@ -42,6 +42,7 @@ import { collectInstances, focusInstance, renderInstanceList, selfReport } from 
 import { revealSelf, windowState } from "./window-ops";
 import { shortName } from "../../shared/room";
 import { runRegistry } from "./run-registry";
+import { foregroundBash } from "./foreground-bash";
 import { scanOwnedProcs, groupOwnerOf, killOwnedProc } from "./process-scan";
 import { procRowOf, runViewOf } from "../../shared/run-view";
 import { parseEtime } from "./process-sampler";
@@ -1160,6 +1161,20 @@ export function bindAppHandlers(binding: ServerBinding): void {
         scanOk: scan?.ok ?? false,
       },
     };
+  });
+  binding.on(app.job.detachables, async ({ input }) => ({
+    status: "ok",
+    data: { items: foregroundBash.list(input.taskUri) },
+  }));
+  binding.on(app.job.detach, async ({ input }) => {
+    try {
+      const info = await foregroundBash.detach(input.toolCallId, input.taskUri);
+      return { status: "ok", data: { id: info.id, pid: info.pid ?? null, logPath: info.logPath } };
+    } catch (err) {
+      // 拒绝是**正常时序**（恰好结束 / 连按两次 / 跨任务）—— 如实回给调用方，不抛
+      const code = (err as { code?: unknown }).code;
+      return { status: "error", msg: `${typeof code === "string" ? `[${code}] ` : ""}${(err as Error).message}` };
+    }
   });
   binding.on(app.job.procs, async () => {
     const scan = await scanOwnedProcs({ runPids: runRegistry.pidMap() });

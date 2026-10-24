@@ -210,6 +210,7 @@ import { invariant } from "../../shared/error-triage";
 import { runRegistry, type RunInfo } from "./run-registry";
 import { effectiveBashArgs } from "../../shared/tool-args";
 import { ownedGroups } from "./owned-groups";
+import { foregroundBash } from "./foreground-bash";
 import { exitText, formatDuration, runLine, runsOfTask, stateLabel, type RunOutcome } from "../../shared/run-status";
 
 // 模型查询函数抽到 shared/models.ts（core 不能被 services 反向依赖，否则循环 import）。
@@ -1125,6 +1126,15 @@ export interface BashControl {
      * 失败（已结束 / 没有 pid）时抛错，调用方据此如实告诉模型「它已经结束了」。
      */
     handoff(write: (b: Buffer) => void): Buffer;
+    /**
+     * 交接之后，**替这次工具调用收尾**（把结果文本回给工具）。
+     *
+     * 为什么由调用方来填这一句：转后台后的 run id 是 `RunRegistry.adopt()` 分配的，
+     * `runBash` 不认识 run 表 —— 硬把 runId 塞进 `handoff` 会让这一层多背一个它不该知道的 id。
+     * 代价是**必须调**：不调则该工具调用永远挂着（本轮也就退不出去）。
+     * 未 `handoff` 就调 = 编程错误（抛 `agent/job-not-detached`）。
+     */
+    finishAsDetached(text: string): void;
 }
 
 /**
@@ -1394,6 +1404,12 @@ export function runBash(
                         logSink = write;
                         return buffered;
                     },
+                    finishAsDetached: (text) => {
+                        // 没交接就收尾 = 调用方顺序错了（那时 `done` 还是假，说明它想让本函数
+                        // "当没发生过" —— 那会把真正的结局吞掉，不如直接报错）
+                        if (!logSink) throw new DetachError({ code: "agent/job-not-detached", message: "尚未转后台" });
+                        resolve({ text, failed: false, outcome: "ok" });
+                    },
                 });
             }
         } catch (e) {
@@ -1541,19 +1557,48 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                 // 唯一保留的是**组号归属**（`ownedGroups`）：它不是 job，是"进程总管"认领孤儿的
                 // 依据（命令里自己 `nohup xxx &` 的进程，ppid 会变成 launchd，只有组号还记得是谁起的）。
                 let fgPid: number | undefined;
-                const run = await runBash(
-                    command,
-                    cwd,
-                    limits,
-                    execOpts?.abortSignal,
-                    {
-                        onSpawn: (pid) => {
-                            fgPid = pid;
-                            ownedGroups.record(pid, { at: Date.now(), command, cwd, taskUri });
+                // 转后台（##408 刀 21）：把这条前台调用的控制句柄登记到 `foregroundBash`，
+                // UI 才能按 `toolCallId` 找到它并接管。**只在拿到 toolCallId 时登记** ——
+                // 没有它就没法把按钮和调用对上，宁可没按钮，也不造一个点不中的按钮。
+                const fgToolCallId = execOpts?.toolCallId;
+                let run: BashRun;
+                try {
+                    run = await runBash(
+                        command,
+                        cwd,
+                        limits,
+                        execOpts?.abortSignal,
+                        {
+                            onSpawn: (pid) => {
+                                fgPid = pid;
+                                ownedGroups.record(pid, { at: Date.now(), command, cwd, taskUri });
+                            },
+                            ...(fgToolCallId
+                                ? {
+                                      onControl: (ctl: BashControl) => {
+                                          foregroundBash.register(fgToolCallId, {
+                                              process: ctl,
+                                              command,
+                                              cwd,
+                                              origin: {
+                                                  taskUri,
+                                                  ...(anchor
+                                                      ? { turnId: anchor.turnId, stepId: anchor.stepId(), toolCallId: fgToolCallId }
+                                                      : {}),
+                                              },
+                                          });
+                                      },
+                                  }
+                                : {}),
                         },
-                    },
-                    eff.args.timeout as number,
-                );
+                        eff.args.timeout as number,
+                    );
+                } finally {
+                    // 正常结束（含异常）就把登记摘掉：结束的进程没有「转」这回事，
+                    // 留在表里只会让 UI 显示一个按了必失败的按钮。
+                    // 转成功的条目已由 `foregroundBash.detach` 摘除，这里是无操作。
+                    if (fgToolCallId) foregroundBash.drop(fgToolCallId);
+                }
                 // 前台命令跑完：组里没活口就把组记录撤掉（留下孤儿的组要留 —— 那是认领线索）。
                 // 判据在 `owned-groups::release`，这里只管"命令结束"这个时机。
                 if (fgPid !== undefined) ownedGroups.release(fgPid);

@@ -2336,6 +2336,33 @@ export const apiDef = RpcSchema.router({
             },
             output: z.object({ status: z.string(), data: z.any() }),
           }),
+          detachables: RpcSchema.unary({
+            desc: `
+            **现在能转后台的前台调用**（##408 刀 21）：哪条工具调用还跑着、已经跑了多久。
+
+            只列**本任务**、**还在跑**、**拿得到 toolCallId** 的前台 bash —— 三项缺一就不列
+            （转不了的按钮不如没有）。转完就从这里消失，去 \`job.ps\` 里看它。
+            `,
+            input: {
+              taskUri: z.string().cliArg({ desc: "任务 URI（只看这个任务的）" }),
+            },
+            output: z.object({ status: z.string(), data: z.any() }),
+          }),
+          detach: RpcSchema.unary({
+            desc: `
+            把一条**还在跑的前台命令**转成后台 run（对应 opencode 的 \`ctrl+b\`）。
+
+            语义：**不重启进程、不丢前半段输出** —— 只换"谁在等"和"输出写到哪"。
+            转成功后工具调用立刻返回 \`[已转后台] <runId>\`，模型据此去 \`job status\`；
+            结束时会照常插话唤醒。拒绝是**正常时序**不是缺陷：命令恰好结束了（\`agent/job-already-ended\`）、
+            已经转过了（\`agent/job-not-found\`）、不属于这个任务（\`agent/job-foreign\`）。
+            `,
+            input: {
+              toolCallId: z.string().cliArg({ desc: "工具调用 id（\`job.detachables\` 里给的）" }),
+              taskUri: z.string().optional().cliOption({ desc: "任务 URI（传了就校验归属）" }),
+            },
+            output: z.object({ status: z.string(), data: z.any() }).or(z.object({ status: z.string(), msg: z.string() })),
+          }),
           procs: RpcSchema.unary({
             desc: `
             **这台 app 起过、现在还在的全部进程**（ps 现扫，不只我们登记过的）。

@@ -78,6 +78,7 @@ import { Caches, CONCLUSION_LINES_MAX, CONCLUSION_LINES_MIN } from "../lib/ui-st
 import { HeightLedger, stackRows, windowRange } from "../lib/chat-virtual";
 import { chatFindStore, type ChatFindHit } from "../store/chatFindStore";
 import { jobRunsStore } from "../store/jobRunsStore";
+import { detachablesStore } from "../store/detachablesStore";
 import type { JobNavTarget } from "../../shared/run-view";
 import { findStore } from "../store/findStore";
 import { ChatFindPanel } from "./ChatFindPanel";
@@ -532,6 +533,13 @@ function SpentBadge(props: { node: BlockNode }) {
  * 用模块级 signal 而不是 props 逐层传：展开与否是**读屏偏好**，与轮次/折叠树无关。
  */
 const [paramsOpen, setParamsOpen] = createSignal<Record<string, boolean>>({});
+/**
+ * 转后台的一句结果（按 toolCallId 存）。
+ *
+ * 为什么不放在 `DetachToggle` 自己的 signal 里：转成功后 main 那边条目就删了，
+ * **按钮下一次刷新即消失**，组件随之卸载 —— 结果会跟着一起没，人只看到"按了一下，啥也没说"。
+ */
+const [detachNote, setDetachNote] = createSignal<Record<string, string>>({});
 
 function toggleParams(id: string) {
     setParamsOpen({ ...paramsOpen(), [id]: !paramsOpen()[id] });
@@ -571,6 +579,51 @@ function ParamsToggle(props: { node: BlockNode; onOpen?: () => void }) {
             >
                 {"<>"}
             </button>
+        </Show>
+    );
+}
+
+/**
+ * bar 上的「转后台」（##408 刀 21，对应 opencode 的 `ctrl+b`）。
+ *
+ * 为什么挂在**折叠行**而不是框体里：与 `<>` 同一条理由（用户 2026-10-23 订正）——
+ * bar 是"这个块此刻的状态位"那一行，动作属于状态，不属于正文。
+ *
+ * **只画 main 说能转的**（`job.detachables`）：还在跑、拿得到 toolCallId、属于本任务。
+ * 三项缺一就不画 —— 一个按下去必然失败的按钮，比没有按钮更糟（用户会以为功能坏了）。
+ * 转完按钮自己消失（main 那边条目已删，下一次刷新就没了），并留一句结果在原地。
+ */
+function DetachToggle(props: { node: BlockNode }) {
+    const n = () => props.node;
+    const [busy, setBusy] = createSignal(false);
+    return (
+        <Show when={n().tag === "tool" && detachablesStore.has(n().id)}>
+            <button
+                class="btn btn-ghost btn-xs min-h-0 shrink-0 px-1 text-caption opacity-60 hover:opacity-100"
+                data-tool-detach="1"
+                data-tip="转后台：进程不动、前半段输出不丢，工具调用立刻返回 run id；结束时会插话叫醒 agent"
+                aria-label="转后台运行"
+                disabled={busy()}
+                onClick={async (e) => {
+                    // 折叠行自己也吃点击 —— 不拦就会「点转后台 = 展开/收起正文」
+                    e.stopPropagation();
+                    setBusy(true);
+                    const msg = await detachablesStore.detach(n().id);
+                    setDetachNote({ ...detachNote(), [n().id]: msg });
+                    setBusy(false);
+                }}
+            >
+                {busy() ? "⏳" : "⇥ 转后台"}
+            </button>
+        </Show>
+    );
+}
+
+/** 转后台的结果留在原地几秒（按钮消失后，人得知道"刚才那一下成了没有"） */
+function DetachNote(props: { node: BlockNode }) {
+    return (
+        <Show when={props.node.tag === "tool" ? detachNote()[props.node.id] : undefined}>
+            {(t) => <span class="shrink-0 text-caption text-base-content/60">{t()}</span>}
         </Show>
     );
 }
@@ -912,6 +965,14 @@ function TailBox(props: {
                 </Show>
                 {/* 开销角标（用户 2026-10-20：「这是模型质量的观测」）：主体那一块自己的耗时 + 体积 */}
                 <Show when={props.body}>{(b) => <SpentBadge node={b()} />}</Show>
+                <Show when={props.body}>
+                    {(b) => (
+                        <>
+                            <DetachNote node={b()} />
+                            <DetachToggle node={b()} />
+                        </>
+                    )}
+                </Show>
                 {/* 状态位**只说此刻在等什么**（三档），不再有"进行中"这种什么也没说的词 */}
                 <Show when={props.live}>
                     <span class="shrink-0 text-caption opacity-50" data-live-state>
@@ -2531,6 +2592,39 @@ export function LocalChatPage(props: {
     // 执行页显式传入 uri；不能依赖全局 selectedUri，否则任务详情还在异步加载时，
     // 页面可能显示“选择任务”但聊天仍沿用上一个任务的会话，形成串台。
     const uri = () => props.uri ?? taskStore.selectedUri ?? null;
+    /**
+     * 转后台（##408 刀 21）：进入本任务会话就开始盯「哪条前台调用能转」，离开即停。
+     *
+     * `Cmd/Ctrl+B` = 把本任务在跑的前台命令**全部**转后台（opencode 的同款快捷键）。
+     * 只在焦点不在输入框时生效 —— 在输入框里按 Cmd+B 是编辑器的"加粗"，不该被抢。
+     */
+    createEffect(
+        on(uri, (u) => {
+            if (u) detachablesStore.watch(u);
+            else detachablesStore.stop();
+        }),
+    );
+    onCleanup(() => detachablesStore.stop());
+    onMount(() => {
+        const onKey = (e: KeyboardEvent): void => {
+            if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "b") return;
+            const el = e.target as HTMLElement | null;
+            const tag = el?.tagName?.toLowerCase();
+            if (tag === "input" || tag === "textarea" || el?.isContentEditable) return;
+            const ids = detachablesStore.all();
+            if (ids.length === 0) return; // 没有可转的就不抢默认行为（浏览器/系统可能有自己的 Cmd+B）
+            e.preventDefault();
+            // 一条一条转（各自有各自的拒绝理由；一把 Promise.all 会把失败原因糊成一团）
+            void (async () => {
+                for (const id of ids) {
+                    const msg = await detachablesStore.detach(id);
+                    setDetachNote({ ...detachNote(), [id]: msg });
+                }
+            })();
+        };
+        window.addEventListener("keydown", onKey);
+        onCleanup(() => window.removeEventListener("keydown", onKey));
+    });
     /**
      * 本任务当前状态（##400 静态提示用）：树节点优先，详情面板兜底。
      * 只做**显示**用途 —— 拒绝的真判据在 main（TurnGate）；前端的只读只是把"按了也没用"藏起来。
