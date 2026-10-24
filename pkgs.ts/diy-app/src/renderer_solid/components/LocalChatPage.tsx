@@ -42,7 +42,7 @@ import {
     useContext,
 } from "solid-js";
 import type { JSX } from "solid-js";
-import { localChatStore } from "../store/localChatStore";
+import { loadFullBlockFields, localChatStore } from "../store/localChatStore";
 import { personaStore } from "../store/personaStore";
 import { PersonaDrawer } from "./PersonaDrawer";
 import {
@@ -63,7 +63,7 @@ import { TrafficDrawer } from "./TrafficDrawer";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { OpsDownBar } from "./OpsDownBar";
 import { copyFailMeta, copyOkMeta } from "../lib/notice-copy";
-import { chatNotice, DETAIL_CHAT_FIND } from "../lib/notice-chat";
+import { chatNotice, DETAIL_CHAT_FIND, DETAIL_HISTORY } from "../lib/notice-chat";
 import { draftStore } from "../store/draftStore";
 import { trafficStore } from "../store/trafficStore";
 import { notificationStore } from "../store/notificationStore";
@@ -620,8 +620,81 @@ function statusMark(node: BlockNode) {
     );
 }
 
+/**
+ * 「已载入全文」的块（##93 D 的按需读）：**至多存一个** —— 用户点开哪块就只留哪块，
+ * 否则这个缓存本身又成了新的无上限内存（正是本任务要治的病）。
+ */
+const [fullBlock, setFullBlock] = createSignal<{ id: string; fields: Record<string, string> } | null>(null);
+
+/** 该块某字段的全文（没点过「载入全文」时 undefined ⇒ 调用方退回硬顶后的显示值） */
+function fullTextOf(id: string, field: string): string | undefined {
+    const f = fullBlock();
+    return f && f.id === id ? f.fields[field] : undefined;
+}
+
+/** 千分位（与 main 侧 `fmtNum` 同一取向：不用 `toLocaleString`，免得随环境飘） */
+function fmtCount(n: number): string {
+    const t = String(Math.trunc(n));
+    let out = "";
+    for (let i = 0; i < t.length; i++) {
+        if (i > 0 && (t.length - i) % 3 === 0) out += ",";
+        out += t[i];
+    }
+    return out;
+}
+
+/**
+ * 被 Text 硬顶裁过的块：**明说**「现在看到的是头尾两段」+ 给一个「载入全文」出口。
+ *
+ * 为什么要这一条：裁剪本身是静默的（值里只有一行 `……已省略 N 字符……`），
+ * 若不给出口，用户会以为那块的中间内容**丢了**；而按需读（重折一份无硬顶的段）要用户
+ * 明确点一下才付代价（4 MB 段重折 ≈ 180 ms，瞬时 ~3 MB）。见任务 body「按需读走 ②」。
+ */
+function CapNotice(props: { node: BlockNode; field: "content" | "output" }) {
+    const cap = () => (props.node.attrs.__cap as Record<string, { total: number; omitted: number }> | undefined)?.[props.field];
+    const [busy, setBusy] = createSignal(false);
+    const load = async () => {
+        if (busy()) return;
+        setBusy(true);
+        try {
+            const fields = await loadFullBlockFields(props.node.id);
+            if (fields) setFullBlock({ id: props.node.id, fields });
+            else
+                notificationStore.addToast(
+                    "info",
+                    "这块的完整内容已不在会话日志里",
+                    chatNotice(
+                        "载入全文 · loadFullBlockFields（##93 D）",
+                        `该块 ${props.node.id} 所在的段从盘上重取回来重折后已不含这个 id（日志被改写 / 块已被新帧替换）→ 不拿裁过的值冒充全文`,
+                        DETAIL_HISTORY,
+                    ),
+                );
+        } finally {
+            setBusy(false);
+        }
+    };
+    return (
+        <Show when={cap()}>
+            <div class="flex flex-wrap items-center gap-2 py-1 font-sans text-xs text-base-content/60" data-cap-notice>
+                <span>
+                    界面只保留了头尾两段（共 {fmtCount(cap()!.total)} 字符，已省略 {fmtCount(cap()!.omitted)}）
+                </span>
+                <button class="btn btn-ghost btn-xs min-h-0 px-1" disabled={busy()} onClick={load}>
+                    {busy() ? "载入中…" : "载入全文"}
+                </button>
+            </div>
+        </Show>
+    );
+}
+
 function ThinkBody(props: { node: BlockNode }) {
-    return <div class="whitespace-pre-wrap leading-relaxed">{str(props.node.attrs.content)}</div>;
+    const text = () => fullTextOf(props.node.id, "content") ?? str(props.node.attrs.content);
+    return (
+        <div class="whitespace-pre-wrap leading-relaxed">
+            {text()}
+            <CapNotice node={props.node} field="content" />
+        </div>
+    );
 }
 
 function ToolBody(props: {
@@ -636,7 +709,7 @@ function ToolBody(props: {
     // 这是「工具执行中一片空白」的根因（##399 实测）；思考框没这问题，因为它把
     // `props.node.attrs.content` 直接写在 JSX 表达式里（那是 effect，每帧重读）。
     const n = () => props.node;
-    const output = () => str(n().attrs.output);
+    const output = () => fullTextOf(props.node.id, "output") ?? str(n().attrs.output);
     /** 全文行数：**按块版本 memo** —— 块没变就不重算；只有正在流式增长的这块每帧付一次
      *  `countLines`（3.28 M ≈ 1.5 ms，零分配），定稿后只算一次。见 ##93（不为提示数字每帧 split 全文）。 */
     const totalLines = createMemo(() => countLines(output()));
@@ -731,6 +804,7 @@ function ToolBody(props: {
                     $
                 </pre>
             </Show>
+            <CapNotice node={n()} field="output" />
             {/* 中断遗留：正文显示与发往 LLM 完全同源的占位说明（不再是空白让人无从下手） */}
             <Show when={isInterruptedToolBlock(n(), viewLive())}>
                 <div class="alert alert-warning alert-soft text-body py-2 font-sans">
@@ -750,6 +824,8 @@ function ProcBody(props: {
     /** 正文的渲染方式（md / 原文）—— 与页面上其它正文同一开关，不另开一套 */
     md?: boolean;
 }) {
+    /** 正文（MD 渲染 / 原文两条路共用）：点过「载入全文」就用全文，否则用硬顶后的显示值 */
+    const bodyText = () => fullTextOf(props.node.id, "content") ?? str(props.node.attrs.content);
     return (
         <Switch>
             <Match when={props.node.tag === "think"}>
@@ -759,9 +835,10 @@ function ProcBody(props: {
                 <ToolBody node={props.node} onFull={props.onFull} live={props.live} />
             </Match>
             <Match when={props.node.tag === "text"}>
-                <Show when={props.md} fallback={<PlainText text={str(props.node.attrs.content)} />}>
-                    <MarkdownText text={str(props.node.attrs.content)} streaming={!props.node.stopped} />
+                <Show when={props.md} fallback={<PlainText text={bodyText()} />}>
+                    <MarkdownText text={bodyText()} streaming={!props.node.stopped} />
                 </Show>
+                {props.md ? null : <CapNotice node={props.node} field="content" />}
             </Match>
             <Match when={props.node.tag === "error"}>
                 <div class="whitespace-pre-wrap text-error">{str(props.node.attrs.message)}</div>
