@@ -300,7 +300,7 @@ describe("kb 索引按前缀折叠（##5 第 9 轮：索引成了新的固定前
         expect(kb.entries.map((e) => e.subject)).toEqual(["app.*"]);
         expect(kb.entries[0]?.claims).toBe(3);
         // 折叠项列出**主题名**（可直接 brief 精确主题），不再推荐 `brief app.*` 全展开（实测 43 KB）
-        expect(kb.entries[0]?.desc).toBe("app.find, app.rule, app.tool");
+        expect(kb.entries[0]?.desc).toBe("3 个主题 / 3 条 · app.find, app.rule, app.tool");
         // 折叠**不改** claims 口径（总数仍是全库条目数）
         expect(kb.claims).toBe(3);
     });

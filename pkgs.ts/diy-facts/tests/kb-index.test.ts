@@ -19,7 +19,7 @@ describe('foldKbIndex', () => {
         expect(app.claims).toBe(73);
         expect(app.ns).toEqual(['project', 'global']);
         // 折叠项必须给出「有哪些主题」（直接可 brief 的精确名），不推荐通配展开
-        expect(app.desc).toBe('app.find, app.history, app.rule');
+        expect(app.desc).toBe('3 个主题 / 73 条 · app.find, app.history, app.rule');
         expect(app.desc).not.toContain('app.*');
     });
 
@@ -33,12 +33,22 @@ describe('foldKbIndex', () => {
         expect(out.map((x) => x.subject)).toEqual(['dev.*']);
         expect(out[0]?.claims).toBe(14);
         // `dev` 本体也出现在名字列表里（与「并入同组」等价，且不用额外注记）
-        expect(out[0]?.desc).toBe('dev, dev.check, dev.context, dev.lab');
+        expect(out[0]?.desc).toBe('4 个主题 / 14 条 · dev, dev.check, dev.context, dev.lab');
     });
 
     it('裸前缀存在但不够 minGroup ⇒ 不并（不为了消除歧义硬折）', () => {
         const out = foldKbIndex([e('dev'), e('dev.context')]);
         expect(out.map((x) => x.subject)).toEqual(['dev', 'dev.context']);
+    });
+
+    it('名字超过 6 个才截断，并给出全表入口（不推荐通配展开 —— 实测那样一次 43.5 KB）', () => {
+        const many = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].map((x) => e(`app.${x}`));
+        const out = foldKbIndex(many);
+        const desc = out[0]?.desc ?? '';
+        expect(desc.startsWith('8 个主题 / 8 条 · ')).toBe(true);
+        expect(desc).toContain('app.a, app.b, app.c, app.d, app.e, app.f');
+        expect(desc).toContain('…等 8 个（全表见 `diy facts status`）');
+        expect(desc).not.toContain('brief app.*');
     });
 
     it('无前缀主题不受影响，结果按主题名排序', () => {

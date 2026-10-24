@@ -10,8 +10,11 @@
 //     不发明新分组，只是把已有的层级显式化
 //   - 同前缀 ≥ `minGroup` 个主题才折；少于则不折（折了反而多一层跳转）
 //
-// 折叠项的 desc 必须自带**展开方法**：agent 看到 `app.* (11 主题 / 154 条)` 时唯一能做的
-// 事就是照 desc 里的命令展开 —— 否则「省了字节、断了去路」。
+// 折叠项的 desc 必须自带**去路**：agent 看到 `app.*` 时得知道里面有什么、下一步敲什么。
+// 首版写「`diy facts brief app.*` 展开」—— 实测那条推荐输出 43.5 KB（12 主题全展开，
+// 约 1.8 倍整条 AGENTS.md 链），是索引自己推荐出来的上下文炸弹；`--budget` 也救不了
+// （旧版按字符估算，2000 预算仍出 26 KB）。所以改成**列主题名**：直接 `brief app.cli`
+// 单主题 2~4 KB，一步到位；名字列不下时给出 `diy facts status`（全表带字节账）。
 
 /** 索引里只出现两种库（任务库不进 kb 索引：它按 ns 缺省 full 走正文） */
 export type KbNs = 'project' | 'global';
@@ -72,16 +75,16 @@ export function foldKbIndex(entries: readonly KbSubjectEntry[], opts: KbFoldOpti
             claims += e.claims;
             for (const n of e.ns) if (!ns.includes(n)) ns.push(n);
         }
-        // 折叠的唯一代价是「看不见有哪些」⇒ desc 直接**列出主题名**，而不是「怎么展开」。
-        // 曾写「`diy facts brief app.*` 展开」—— 实测 43.5 KB（12 个主题全展开），
-        // 是索引自己推荐出来的上下文炸弹；`--budget` 救不了（按字符估算，2000 预算仍出 26 KB）。
-        // 给名字 ⇒ agent 直接 `brief app.cli`（单主题 2~4 KB），一步到位。
+        // desc = `N 个主题 / M 条 · 名字…`。**条数不能省**：它是判断"这组值不值得展开"的
+        // 唯一信号（只有名字时，agent 得逐个 brief 才能知道体量 —— 又回到 N 次调用）。
+        // 名字截断时给 `diy facts status`（按主题列 claims / bytes / expose，是全表）。
         const names = list.map((e) => e.subject).sort((a, b) => a.localeCompare(b));
         const SHOW = 6;
-        const shown = names.length > SHOW ? [...names.slice(0, SHOW), `…共 ${names.length} 个`] : names;
+        const shown =
+            names.length > SHOW ? `${names.slice(0, SHOW).join(", ")} …等 ${names.length} 个（全表见 \`diy facts status\`）` : names.join(", ");
         out.push({
             subject: `${prefix}.*`,
-            desc: shown.join(", "),
+            desc: `${list.length} 个主题 / ${claims} 条 · ${shown}`,
             claims,
             ns,
         });
