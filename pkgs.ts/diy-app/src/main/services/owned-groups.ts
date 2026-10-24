@@ -48,6 +48,32 @@ export interface OwnedGroupsOptions {
     file?: string;
 }
 
+/**
+ * 盘上条目 → 内存表（抽成独立函数只为**可测**：那条判定躲在 `load` 的 `await readFile`
+ * 后面，端到端测不到「谁先跑完」的竞态）。
+ *
+ * **内存优先**：内存里已有的 pgid 一律跳过 —— 启动早期 `record` 抢在 `load` 之前跑完时，
+ * 盘上的旧条目（上一轮会话的命令 / 缺 `taskUri`·`runId`）不许把它整条覆盖。
+ * 没有这条判定，pid 复用时会说成「这条孤儿是上一轮那条命令起的」，指向错的来源。
+ */
+export function applyLoaded(map: Map<number, GroupOwner>, raw: unknown): void {
+    if (!Array.isArray(raw)) return;
+    for (const item of raw) {
+        const it = item as { pgid?: unknown; owner?: Partial<GroupOwner> };
+        const pgid = Number(it.pgid);
+        const o = it.owner;
+        if (!Number.isInteger(pgid) || pgid <= 0 || !o || typeof o.command !== "string") continue;
+        if (map.has(pgid)) continue;
+        map.set(pgid, {
+            at: typeof o.at === "number" ? o.at : 0,
+            command: o.command,
+            cwd: typeof o.cwd === "string" ? o.cwd : "",
+            ...(typeof o.runId === "string" ? { runId: o.runId } : {}),
+            ...(typeof o.taskUri === "string" ? { taskUri: o.taskUri } : {}),
+        });
+    }
+}
+
 export class OwnedGroups {
     private readonly map = new Map<number, GroupOwner>();
     private readonly file?: string;
@@ -57,8 +83,12 @@ export class OwnedGroups {
         this.file = opts.file;
         this.isAlive = opts.alive ?? aliveGroup;
         // 读盘是异步的（用户 2026-10-24：app 里不许有同步 IO），但构造函数不能 await。
-        // 于是把这次读挂成一个 Promise：**读不读得完都不影响登记**（`record` 只写内存），
-        // 只有"查询旧条目"的路径需要它（`get` / `snapshot`），那边会先 `await ready`。
+        // 于是把这次读挂成一个 Promise：**读不读得完都不影响登记**（`record` 只写内存）。
+        //
+        // ⚠️ `get` / `snapshot` 是**同步**的（要能嵌进纯函数），所以启动早期（`ready` 还没
+        // resolve）查旧条目会读不到 —— 需要**完整**视图的路径必须自己 `await ready`
+        // （`process-scan::scanOwnedProcs` 就是这么做的）。反向是安全的：`load` 见到内存里
+        // 已有的 pgid 一律跳过，不会用盘上的旧条目覆盖启动早期刚登记的归属。
         this.ready = this.load();
     }
 
@@ -70,21 +100,7 @@ export class OwnedGroups {
         if (!this.file) return;
         try {
             const text = await readFile(this.file, "utf8");
-            const raw = JSON.parse(text) as unknown;
-            if (!Array.isArray(raw)) return;
-            for (const item of raw) {
-                const it = item as { pgid?: unknown; owner?: Partial<GroupOwner> };
-                const pgid = Number(it.pgid);
-                const o = it.owner;
-                if (!Number.isInteger(pgid) || pgid <= 0 || !o || typeof o.command !== "string") continue;
-                this.map.set(pgid, {
-                    at: typeof o.at === "number" ? o.at : 0,
-                    command: o.command,
-                    cwd: typeof o.cwd === "string" ? o.cwd : "",
-                    ...(typeof o.runId === "string" ? { runId: o.runId } : {}),
-                    ...(typeof o.taskUri === "string" ? { taskUri: o.taskUri } : {}),
-                });
-            }
+            applyLoaded(this.map, JSON.parse(text) as unknown);
         } catch {
             // 坏索引 = 认不出老孤儿，功能退化但一切照跑
         }

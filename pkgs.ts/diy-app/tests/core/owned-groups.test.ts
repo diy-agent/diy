@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { OwnedGroups } from "../../src/main/services/owned-groups";
+import { OwnedGroups, applyLoaded } from "../../src/main/services/owned-groups";
 
 const base = { at: 1000, command: "bash -c x", cwd: "/tmp" };
 
@@ -102,6 +102,19 @@ describe("OwnedGroups — 落盘索引（app 重启后仍认得出孤儿）", ()
     const g = new OwnedGroups({ file });
     await g.ready;
     expect(g.size()).toBe(0);
+  });
+
+  it("读盘不覆盖启动早期刚登记的组（内存优先；##5 review 抓到的竞态）", () => {
+    // 直接测合并函数：`record` 抢在 `load` 的 `await readFile` 之前跑完时，
+    // 盘上那条旧条目（上一轮会话的命令、缺 taskUri/runId）不许把它整条盖掉。
+    const map = new Map<number, { at: number; command: string; cwd: string; taskUri?: string }>();
+    map.set(60534, { at: 9000, command: "新登记的这条", cwd: "/new", taskUri: "projects/1/tasks/5" });
+    applyLoaded(map, [
+        { pgid: 60534, owner: { at: 1000, command: "盘上的旧条目", cwd: "/old" } },
+        { pgid: 60535, owner: { at: 1000, command: "只有盘上有的那条", cwd: "/old2" } },
+    ]);
+    expect(map.get(60534)).toEqual({ at: 9000, command: "新登记的这条", cwd: "/new", taskUri: "projects/1/tasks/5" });
+    expect(map.get(60535)?.command).toBe("只有盘上有的那条"); // 盘上独有的照常并进来
   });
 
   it("清理后落盘也跟着少（不会越积越多）", async () => {
