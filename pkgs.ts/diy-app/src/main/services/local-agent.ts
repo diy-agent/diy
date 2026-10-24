@@ -121,7 +121,7 @@ import { buildDelivery, isRuntimePlace, runtimeDiffDelivery, type Delivery } fro
 import { renderBudgetNote } from "../../shared/context/budget-note";
 import { mustHardCapBytesOf } from "../../shared/context/compact-keep";
 import { estimateRequest, tighterHistoryCapBytes } from "../../shared/context/request-preflight";
-import { isEnvelopeText, renderSummaryPart, tailEnvelope } from "../../shared/context/envelope";
+import { isEnvelopeText, isFromEnvelopeText, renderSummaryPart, tailEnvelope } from "../../shared/context/envelope";
 import { describeAnomalies, readLlmLog } from "../../shared/context/log-schema";
 import {
     autoCompactPolicyInput,
@@ -587,13 +587,21 @@ function isEnvelope(m: ModelMessage): boolean {
  *     尾部几百字节 miss。这笔账写进 ##421 的 PR 正文。
  *
  * 尾部不是 user（如自动续跑、纯工具轮）→ 不编 `user:` 段；全空 → 原样返回。
+ *
+ * 末条**已是 `from:` 信封**（##422：历史 user 消息自带发言者段）→ **不嵌套**，尾部信封自占
+ * 一条消息、各段顶层键并列（嵌套会把 `from` 塞进 `user.message`，正是 `FromSchema` 说的不许）。
+ * 两条都是信封 ⇒ `normalizeUserRuns` 也不会合并（判据 `isEnvelopeText`），形状可控。
  */
 function withRuntime(hist: ModelMessage[], runtime: string, summaryPart = ""): ModelMessage[] {
     const parts = [summaryPart, runtime].filter((t) => t.trim());
     if (parts.length === 0) return hist;
     const last = hist[hist.length - 1];
-    if (last && last.role === "user" && typeof last.content === "string" && last.content.trim()) {
-        return [...hist.slice(0, -1), { role: "user", content: tailEnvelope(parts, last.content) }];
+    const lastText = last?.role === "user" && typeof last.content === "string" ? last.content : "";
+    if (last && last.role === "user" && lastText.trim() && isFromEnvelopeText(lastText)) {
+        return [...hist, { role: "user", content: tailEnvelope(parts) }];
+    }
+    if (last && last.role === "user" && lastText.trim()) {
+        return [...hist.slice(0, -1), { role: "user", content: tailEnvelope(parts, lastText) }];
     }
     // 没有可并的输入：只有 runtime 一段时保持旧形（逐字一致）；否则各段各有顶层键
     if (parts.length === 1 && runtime.trim() && !summaryPart.trim()) {
@@ -4849,11 +4857,25 @@ export class LocalAgentManager {
         let pendingSteerOps: Op[] = [];
         /** 已被 prepareStep 认领、但还没在流里落位的 next-step 插话（认领≠投递，见 claimStepSteers 头注） */
         let claimed: SteerItem[] = [];
+        /**
+         * 发言者（##422）：成员 id → `{ id, name? }`，落进 user 块的 `meta.speaker` —— 投影时
+         * 变成历史消息的 `from:` 段（模型才知道「这句话是谁说的」）。
+         *
+         * 名字取自**房间成员表**（`identity.room.members.list`，本轮已算了的那一份，零额外 IO）；
+         * 对不上就不写 `name`（判据：**不猜**，宁可只给 id）。空签名 ⇒ 不落键
+         * （任务页本人发言）—— 那正是存量行为，投影走裸文本。
+         */
+        const speakerOf = (author: string | undefined): Record<string, JSONVal> | undefined => {
+            if (!author) return undefined;
+            const name = identity.room?.members.list.find((m) => m.id === author)?.name;
+            return name ? { id: author, name } : { id: author };
+        };
         /** 插话的 user 块（三个 op）；parent 一律 = turn —— 该块在文档序上就是"某步之后、下一步之前" */
         const steerBlockOps = (item: SteerItem): Op[] => {
             // 块 id 沿用 turn 内局部序号风格（`<turnId>_suN`），另在 meta 里记 steerId 指回
             // 队列项（`steer/N`）：排障时能对上"日志里这条块是哪次插话投的"
             const id = `${turnId}_su${++uN}`;
+            const sp = speakerOf(item.author);
             // ⚠️ `meta.steer` 这个键名有两处消费：renderer 的 `applyOpsFrame` 用「带 steer 标记的
             // user 块到达」判定"插话已投递 → 重拉队列快照"（见 localChatStore 的 sawSteerDelivered），
             // 以及这里渲染插话样式。改键名必须**同时**改那处，否则横条会一直挂着"待发送"
@@ -4869,6 +4891,7 @@ export class LocalAgentManager {
                         steer: item.mode,
                         steerId: item.id,
                         ...(item.author ? { author: item.author } : {}),
+                        ...(sp ? { speaker: sp } : {}),
                     },
                 },
                 { op: "delta", id, fields: { content: item.text } },
@@ -5068,6 +5091,7 @@ export class LocalAgentManager {
         // 也是重放/续聊时唯一能区分"用户主动说"与"插嘴补一句"的线索。
         for (const [i, item] of input.entries()) {
             const uid = i === 0 ? `${turnId}_u` : `${turnId}_u${i + 1}`;
+            const sp = speakerOf(item.author);
             yield* seal([
                 {
                     op: "start",
@@ -5083,6 +5107,9 @@ export class LocalAgentManager {
                         // 房间来源（##377 第 23 刀）：`{ roomId, sayId }` —— 收件方据此知道这句话
                         // **是别的房间投过来的**（不是本任务的人在说话）。同样有则落、无则不落键。
                         ...(item.room ? { room: item.room } : {}),
+                        // 发言者之于**模型**（##422）：投影成 `from:` 段（带显示名）。
+                        // 与 `author` 同写入点、同一来源，但读侧各管一边（UI / LLM）。
+                        ...(sp ? { speaker: sp } : {}),
                     },
                 },
                 { op: "delta", id: uid, fields: { content: item.text } },

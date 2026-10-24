@@ -24,6 +24,12 @@
 //       是被压缩了，放最后一个，完全被淹没了」。因此它必须**不被** `normalizeUserRuns`
 //       并进相邻 user 正文（判据 `isEnvelopeText`：首行是信封顶层键）。
 //
+//   **历史** user 消息（块树里的 user 块 → 投影，##422）
+//     from:        ← 发言者（成员 id + 显示名）—— 多人群聊 / agent 间消息才分得清谁说的
+//     user:
+//       message:   ← 当时那句原话
+//       ⚠️ 老消息没有 `from:` 段（块里没 speaker）⇒ 仍是**裸文本**，不造 `from: unknown`。
+//
 // ── 硬规则（用户 2026-10-15 拍板）──
 //   1. `help` **只能由 zod 派生**（`desc` = `.describe()`），只允许一小段固定话术
 //      （`help.about`）兜住"help 描述不了的总逻辑"。
@@ -54,7 +60,9 @@ import type { ContextPath, ContextTreeState } from "./types";
  * 真正该动版本的只有 `WIRE_ENCODING` 里那些**语义**（system/runtime 投递形态、hash 口径、渲染格式）。
  */
 export const ENVELOPE_ABOUT = [
-    "本消息是一份 YAML 信封：顶层键只有 help / system / runtime / runtimeDiff / summary / history / user（见 help 各节）；其中 summary / history 只在会话历史被压缩时出现。",
+    "本消息是一份 YAML 信封：顶层键只有 help / system / runtime / runtimeDiff / summary / history / from / user（见 help 各节）；其中 summary / history 只在会话历史被压缩时出现，from 只出现在**历史** user 消息里。",
+    "· **`from:`（发言者）**：只出现在**历史** user 消息上（每条历史 user 消息自己的一个小信封：`from` + `user.message`，与本轮尾部信封的 `user:` 并列而非嵌套）。`from.id` 是成员 id（`agent:<名>` / `human:<名>`），`from.name` 是当时的显示名。**老消息可能没有这一段**（那时块里没记发言者）—— 没有 = 未知，不要当成「同一个人」。",
+    "· 别把 `from:` 当成变量树：它只描述**那句话是谁说的**，不描述当前状态（当前状态看 system / runtime）。",
     "· help 段是**结构说明**（由代码里的 zod 定义派生，随代码版本变化）——读它就知道每个键是什么、下面有哪些字段。",
     "· 值段（system / runtime / runtimeDiff / history / user）只放**数据**，不放解释；解释一律在 help。",
     "· system 段每次请求**全量重建**（稳定项），变更时直接以新值替换、不带历史。",
@@ -89,6 +97,20 @@ export const SummarySchema = z
             "它只做**背景**：变量树的**当前值**一律看 system / runtime 段（每次全量），**不要**为取某个变量的值去翻历史。",
     );
 
+/** 发言者（`from:` 段；只出现在**历史** user 消息上，见 ##422） */
+export const FromSchema = z
+    .object({
+        id: z.string().describe("发言者成员 id（`agent:<名>` / `human:<名>`）—— 谁说的这句话"),
+        name: z
+            .string()
+            .optional()
+            .describe("当时的显示名（房间成员表里的名字）；**取不到就省**（不猜，不编）"),
+    })
+    .describe(
+        "这条历史发言的**发言者**（`from` 段）：只出现在历史 user 消息上，与 `user.message` 并列（不嵌套）。" +
+            "**老消息可能没有本段**（那时没记发言者）—— 没有 = 未知，不要当成「同一个人」。",
+    );
+
 /** 用户消息（信封的 `user` 键） */
 export const UserEnvelopeSchema = z
     .object({ message: z.string().describe("用户本轮真实发言（原样，未加工）") })
@@ -101,6 +123,7 @@ export const EnvelopeSchema = z
         runtime: RuntimeSchema,
         runtimeDiff: RuntimeDiffSchema,
         summary: SummarySchema,
+        from: FromSchema,
         user: UserEnvelopeSchema,
     })
     .describe(ENVELOPE_ABOUT);
@@ -132,12 +155,13 @@ export function buildHelpDoc(opts: {
         runtimeDiff: { desc: EnvelopeSchema.shape.runtimeDiff.description },
         summary: describeSchema(SummarySchema),
         history: { desc: HistoryNoteSchema.description, ...describeSchema(HistoryNoteSchema) },
+        from: describeSchema(FromSchema),
         user: { desc: key("user"), ...describeSchema(UserEnvelopeSchema) },
     };
 }
 
 /** 信封的**顶层键名**（`ENVELOPE_ABOUT` 第一行那份名单；`isEnvelopeText` 的判据也用它） */
-export const ENVELOPE_TOP_KEYS = new Set(["help", "system", "runtime", "runtimeDiff", "summary", "history", "user"]);
+export const ENVELOPE_TOP_KEYS = new Set(["help", "system", "runtime", "runtimeDiff", "summary", "history", "from", "user"]);
 
 /**
  * 这段文本是不是**一份信封**（自占顶层键的自动生成段）？
@@ -183,6 +207,39 @@ export function tailEnvelope(parts: readonly string[], userText?: string): strin
 export function renderSummaryPart(text: string): string {
     if (!text.trim()) return "";
     return toYaml({ summary: text });
+}
+
+/** 一条发言的**发言者**（`from:` 段的值；见 `FromSchema`） */
+export interface Speaker {
+    id: string;
+    /** 显示名（取不到就省 —— 不猜、不编，见 `FromSchema`） */
+    name?: string;
+}
+
+/**
+ * 历史 user 消息的 `from:` 段（顶层键，与 `user.message` **并列** —— 见 ##422）。
+ *
+ * 为何不用 `user.message` 前缀而另立顶层键（与 `history:` / `summary:` 同一条硬规则）：
+ * 自动生成 / 机器携带的段一旦写进 `user.message`，模型会把它当**用户的任务内容**去处理。
+ */
+export function renderFromPart(speaker: Speaker): string {
+    const v = speaker.name ? { id: speaker.id, name: speaker.name } : { id: speaker.id };
+    return toYaml({ from: v });
+}
+
+/**
+ * 这段文本是不是**只带 `from:` 的历史 user 信封**（首行是 `from:`）？
+ *
+ * 干什么用：`withRuntime` 拼本轮尾部信封时，末条若是它就不嵌套（嵌套 = `from` 跑进
+ * `user.message`，正是 `FromSchema` 说的“不许”）：外层信封自占一条消息，各段顶层键并列。
+ */
+export function isFromEnvelopeText(text: string): boolean {
+    for (const line of text.split("\n")) {
+        if (!line.trim()) continue;
+        if (line !== line.trimStart()) return false; // 首行缩进 ⇒ 是普通正文
+        return /^from:(\s|$)/.test(line);
+    }
+    return false;
 }
 
 /** 只拼 `runtime:` + `user:` 的常见形（见 `tailEnvelope`） */
