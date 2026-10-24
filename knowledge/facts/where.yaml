@@ -5,12 +5,12 @@ domain: where
 facts:
   where#agent:
     value: |-
-      「谁在跑 / 跟别的 agent 说话 / 中止别人」→ `diy agent local running`（活体表）· `chat <taskUri> --message -` · `history <taskUri>` · `cancel <taskUri>`
-    id: where.agent
+      「谁在跑 / 跟别的 agent 说话 / 中止别人」→ `diy agent local running`（活体表）· `chat <taskUri> "<消息>"`（消息是**位置参数**，没有 `--message`；`-` 不读 stdin，多行用 `"$(cat 文件)"`）· 加 `--mode next-turn` 入队到对方下一轮开场、**不打断**它当前轮（对方没在跑则入队即开一轮）· `history <taskUri>` · `cancel <taskUri>`
     review: accepted
     lifecycle: active
     evidence:
       source: user
+      verifiedAt: '2026-10-25'
   where#cmd:
     value: |-
       「这命令怎么用 / 有什么能力」→ `diy --help` 与 `diy <域> --help`（真源，别猜）；提示词骨架 `diy template`。
