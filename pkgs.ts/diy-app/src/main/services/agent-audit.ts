@@ -22,6 +22,8 @@ export type AuditPhase =
   | "turn-start"
   | "turn-end"
   | "bash-start"
+  /** 后台模式（##408 刀 8）：`result` = 进程 id（它结束了另算，不出审计事件） */
+  | "bash-background"
   | "bash-end"
   | "bash-blocked"
   /** `write` 工具的整文件写（##414）：`command` = 相对路径，`result` = `+N/-M` */

@@ -367,6 +367,47 @@ export function resolveLayout(base: Layout, override: LayoutOverride): Layout {
 }
 
 /**
+ * 让 track 尺寸**贴合容器**：容器变大/变小时，把差额还/借给最大那条 track。
+ *
+ * 病（用户 2026-10-23 报的「聊天区变矮、下面一大段空白」）：
+ *   拖过线之后两侧 track 都被写成 px（见 setTrackPair 的理由）。之后**容器尺寸一变**
+ *   （窗口拉大 / 收起一个 area 让出空间），px 之和就不再等于容器高度 ——
+ *   CSS Grid 不会替你填，多出来的部分就是一条死区。实测：`tasks` 页 rows=440px+116px、
+ *   容器 836px ⇒ 底部空 280px，聊天区只有 440px。
+ *
+ * 判据：
+ *   · 本轴只要还有一个 fr，剩余空间天然归它 —— 不动（浏览器会算对）；
+ *   · 全是 px 才需要修正；差额全给**最大**那条（通常是内容区，面板/侧栏保持原高 ——
+ *     这符合用户直觉："窗口变大，该变大的是内容"，而不是把侧栏一起撑开）；
+ *   · 目标 track 不低于 `MIN_FIT_TRACK`（拖到下限就再也抓不到线了）。
+ */
+export const MIN_FIT_TRACK = 48;
+
+export function fitTracks(tracks: readonly TrackSize[], containerPx: number): TrackSize[] {
+  if (!(containerPx > 0) || tracks.length === 0) return [...tracks];
+  if (tracks.some((t) => t.unit === "fr" && t.value > 0)) return [...tracks];
+  const sum = tracks.reduce((a, t) => a + t.value, 0);
+  if (sum <= 0) return [...tracks];
+  let delta = containerPx - sum;
+  if (Math.abs(delta) < 1) return [...tracks];
+  const out = tracks.map((t) => ({ ...t }));
+  // 从最大值开始吃/还差额（一份差额只该有一个去处，可预测）
+  const order = out
+    .map((t, i) => ({ i, v: t.value }))
+    .sort((a, b) => b.v - a.v)
+    .map((x) => x.i);
+  for (const i of order) {
+    if (Math.abs(delta) < 1) break;
+    const cur = out[i]!.value;
+    const want = cur + delta;
+    const next = Math.max(MIN_FIT_TRACK, want);
+    delta -= next - cur;
+    out[i] = px(next);
+  }
+  return out;
+}
+
+/**
  * 收起若干 track —— 并把**被收起的尺寸交给邻居**。
  *
  * 为什么不能只把尺寸写 0（##348 ⑤ 的根因）：

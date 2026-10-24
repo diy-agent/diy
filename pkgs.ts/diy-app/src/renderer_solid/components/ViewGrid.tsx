@@ -10,11 +10,12 @@
  *     被跨列 area 覆盖的段没有分隔可言，故不渲染手柄（见 colLineSegments）
  *   - 最大化 / 最小化：浮在 area 右上角
  */
-import { For, Show, createMemo, type JSX } from "solid-js";
+import { For, Show, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
 import {
     areaCss,
     colLineSegments,
     findArea,
+    fitTracks,
     resolveLayout,
     rowLineSegments,
     trackCss,
@@ -23,7 +24,7 @@ import {
 import { findPage, groupViewsByArea, planPageViews, type Binding } from "../../shared/view-registry";
 import { ViewBoundary } from "./ViewBoundary";
 import { layoutStore } from "../store/layoutStore";
-import { VIEW_BAR_H } from "../lib/layout-metrics";
+import { AREA_CHROME_W, VIEW_BAR_H } from "../lib/layout-metrics";
 import { IconExpand, IconCompress, IconCollapse } from "./icons";
 
 /** 拖线时两侧 track 的最小 px（防止把某块拖没，用户就再也抓不到线了） */
@@ -43,9 +44,27 @@ export function ViewGrid(props: {
 
     const st = () => layoutStore.pageState(props.pageId);
 
-    /** 有效布局 = 默认 + 用户 track 覆盖 + 隐藏 area 的 track 归零。
-     *  算法在 shared（resolveLayout）—— 渲染与 CLI `ui layout get` 必须是同一份结果。 */
-    const layout = createMemo<Layout>(() => resolveLayout(props.layout, st()));
+    /**
+     * 内容区的**实测**尺寸（`ResizeObserver` 于网格元素）。
+     *
+     * 为什么必须有它：用户拖过线之后 track 全是 px，容器尺寸再变，px 之和就不等于容器尺寸，
+     * CSS Grid 不会替你填 —— 多出来的部分是一条死区（用户 2026-10-23 报的「下面一大段空白」）。
+     * 判据在 `fitTracks`（纯函数、可单测），这里只负责量。
+     */
+    const [box, setBox] = createSignal<{ w: number; h: number }>({ w: 0, h: 0 });
+
+    /** 有效布局 = 默认 + 用户 track 覆盖 + 隐藏 area 的 track 归零，再**贴合实测容器尺寸**。
+     *  算法在 shared（resolveLayout / fitTracks）—— 渲染与 CLI 必须同一份结果。 */
+    const layout = createMemo<Layout>(() => {
+        const base = resolveLayout(props.layout, st());
+        const b = box();
+        if (!(b.w > 0) && !(b.h > 0)) return base;
+        return {
+            ...base,
+            cols: b.w > 0 ? fitTracks(base.cols, b.w) : base.cols,
+            rows: b.h > 0 ? fitTracks(base.rows, b.h) : base.rows,
+        };
+    });
 
     /**
      * 本次渲染的 area 计划（可见 / 最大化 / 被挤掉）—— 判据在 shared（planPageViews），
@@ -129,7 +148,8 @@ export function ViewGrid(props: {
         // 与 view 顶栏同高 + items-center：图标垂直居中，不再贴顶（原来只有 h-5 裸条）。
         return (
             <div
-                class={`absolute top-0 right-0 z-30 flex items-center ${VIEW_BAR_H} opacity-40 hover:opacity-100 transition-opacity`}
+                class={`absolute top-0 right-0 z-30 flex items-center justify-end ${VIEW_BAR_H} opacity-40 hover:opacity-100 transition-opacity`}
+                style={{ width: `${AREA_CHROME_W}px` }}
             >
                 <label
                     class="btn btn-ghost btn-xs px-1 min-h-0 swap swap-rotate"
@@ -188,7 +208,16 @@ export function ViewGrid(props: {
             }
         >
             <div
-                ref={(el) => (gridRef = el)}
+                ref={(el) => {
+                    gridRef = el;
+                    // 量容器：尺寸变化时重算（fitTracks 把 px 差额还给最大的 track）
+                    const ro = new ResizeObserver(() => {
+                        const r = el.getBoundingClientRect();
+                        setBox({ w: r.width, h: r.height });
+                    });
+                    ro.observe(el);
+                    onCleanup(() => ro.disconnect());
+                }}
                 class="grid h-full w-full overflow-hidden relative"
                 style={{
                     "grid-template-columns": layout().cols.map(trackCss).join(" "),
