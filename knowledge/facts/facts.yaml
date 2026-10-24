@@ -150,13 +150,13 @@ facts:
       verifiedAt: '2026-10-24'
   facts.rule#expose-cross-lib:
     value: |-
-      expose 表的适用域必须**按库**判，不能按合并后的一张表：实测仓库 knowledge/expose.yaml 只写了 `rule.agent: full`，任务库（diy.facts 4 条 658 B，未声明 expose）的正文随即从 runtime.facts 消失（omitted 0，正文只剩 6 条）。**任务库缺 expose 应回落旧行为（全进正文），或按 ns 给缺省档：task=full / project·global=index** —— 任务自己的结论最该常驻，被上层库的配置静默吞掉是最坏的一种「省」。
+      expose 表的适用域必须**按库**判，不能按合并后的一张表：实测仓库 `knowledge/expose.yaml` 只声明了**一个** subject（当时是 `rule.agent: full`，现为 `where: full`），任务库（diy.facts 4 条 658 B，未声明 expose）的正文随即从 `runtime.facts` 消失（omitted 0，正文只剩 6 条）。**任务库缺 expose 应回落旧行为（全进正文），或按 ns 给缺省档：task=full / project·global=index** —— 任务自己的结论最该常驻，被上层库的配置静默吞掉是最坏的一种「省」。
     id: diy.facts.expose-cross-lib
     review: accepted
     lifecycle: active
     evidence:
       source: inference
-      verifiedAt: '2026-10-23'
+      verifiedAt: '2026-10-25'
   facts.rule#generated:
     value: |-
       真源是**生成物式**：条目排序 / 字段顺序 / 头注（`note` 或文件开头注释块）全由 `renderDoc` 决定 ⇒ 手工改格式会被下一次 submit 冲掉；改内容只能走 `diy facts submit`
@@ -224,13 +224,13 @@ facts:
       verifiedAt: '2026-10-22'
   facts.rule#subject-split:
     value: |-
-      subject 级 expose 的前提是**单主题体量 ≤ 预算/4**：实测 `rule` 30 条 9279 B > 4 KB 预算 2.3 倍，`full` 对它是不可选项。已做最小切分——把「agent 自身行为纪律」6 条（verify / probe / session-start / structured-exit / deps / renderer，合计 988 B）拆成 `rule.agent` 标 full，其余 22 条 7730 B 留 `rule` 走 index。切分判据 = **读它的场景一致**（谁要读它），不是字段分类；不要一次拆成 4 个（rule.dev/doc/task 会把 `rule` 拆空并触发 subject-unused）。
+      subject 级 expose 的前提是**单主题体量 ≤ 预算/4**：实测 `rule` 30 条 9279 B > 4 KB 预算 2.3 倍，`full` 对它是不可选项。切分判据 = **读它的场景一致**（谁要读它），不是字段分类；不要一次拆成 4 个（rule.dev/doc/task 会把 `rule` 拆空并触发 subject-unused）。**切之前先查 chain**：拆出来的主题若内容已在 `AGENTS.md` 链里，标 full 就是双写漂移 —— `rule.agent` 那 6 条实测 4 条与 `~/AGENTS.md` 逐字重复（已于 ##9 删除）、3 条迁进更该负责的主题，主题整体 drop。
     id: diy.facts.subject-split
     review: accepted
     lifecycle: active
     evidence:
       source: inference
-      verifiedAt: '2026-10-23'
+      verifiedAt: '2026-10-25'
   facts.rule#tasklib-inherit:
     value: |-
       任务级库**继承**仓库词表，且**写回只写本地的**：`loadRepo` 把「全量词表」与「本地声明的词表」分成两份（`subjects` / `localSubjects`），写回用后者 —— 混用会让第一次 `submit` 就把继承的整份词表复制成本地快照。⚠️ **继承只持续到本地文件诞生**：任务库首次写入就建出本地 `subjects.yaml`，继承当场断掉、此后**不再合并**仓库词表 ⇒ 任务库词表不是「仓库 ∪ 本地」的持续快照，别按那个前提设计
