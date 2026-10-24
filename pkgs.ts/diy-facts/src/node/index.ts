@@ -20,6 +20,7 @@ import path from 'node:path';
 import { load } from 'js-yaml';
 import { dumpSource } from './yaml-out.js';
 import { writeFilesAtomic } from './atomic-write.js';
+import { withLibraryLock } from './lock.js';
 import { claimOf, derivedFactId } from '../claim.js';
 import { DEFAULT_FULL_BUDGET, checkExpose, checkExposeLeveled, defaultExposeOf, exposeOf, type ExposeLevel, type ExposeMap } from '../expose.js';
 import { buildIndex, validateFacts } from '../index.js';
@@ -566,7 +567,56 @@ export function checkRepo(
             problems.push({ level: 'error', code: p.code, detail: p.detail, ...(p.facts ? { facts: p.facts } : {}) });
         }
     }
-    return { repo, problems };
+    return { repo, problems: [...problems, ...canonicalProblems(repo)] };
+}
+
+/**
+ * W2 文件必须是**内核渲染的结果**（否则报 warning）。
+ *
+ * 为什么需要（##9 review P1②）：真源是**生成物式**的 —— 条目顺序 / 字段顺序 / 缩进全由
+ * `renderDoc` 决定。一旦有人手改 YAML，或 `git merge` 把两个分支的条目拼成「按分支分组」
+ * 的扁平串联，**库仍然能读、语义仍然对**，但 diff 从此整篇翻红，而“序坏了”这件事
+ * 没有任何机械判断能看得见。本条就是那个判断。
+ *
+ * 为什么是 warning 不是 error：序不影响任何查询结果（读侧按 id 建 map），拿它堵 CI 只会
+ * 逼人 `--no-verify`。但它是**唯一**能让人发现“该重新生成而不是接着手拼”的信号。
+ *
+ * 修法（写给看日志的人）：把该文件的内容取**并集**（两边都要）后要么直接丢给
+ * `diy facts submit`（它整篇重写），要么 `git checkout` 后用 submit 重写 —— 不需手拼顺序。
+ */
+function canonicalProblems(repo: Repo): RepoProblem[] {
+    const byFile = new Map<string, Fact[]>();
+    for (const f of repo.facts) {
+        const file = repo.origin.get(f.id) ?? path.join(repo.dir, 'facts', `${domainOf(f)}.yaml`);
+        const list = byFile.get(file) ?? [];
+        list.push(f);
+        byFile.set(file, list);
+    }
+    const out: RepoProblem[] = [];
+    for (const [file, list] of byFile) {
+        let before: string;
+        try {
+            before = readFileSync(file, 'utf8');
+        } catch {
+            continue;
+        }
+        const text = renderDoc({
+            note: repo.notes.get(file) ?? `knowledge/facts/${path.basename(file)}`,
+            domain: repo.domains.get(file) ?? path.basename(file, '.yaml'),
+            facts: list,
+        });
+        if (text === before) continue;
+        out.push({
+            level: 'warning',
+            code: 'facts/file-not-canonical',
+            detail:
+                `${path.relative(repo.root, file)} 不是内核渲染的结果（手改过 / merge 时按分支拼了序）：` +
+                `内核渲染 ${text.length} B，磁盘 ${before.length} B。` +
+                '修法：把两边内容取并集后用 `diy facts submit` 重写该篇，别手拼顺序。',
+            facts: list.map((f) => f.id),
+        });
+    }
+    return out;
 }
 
 // ── 写入 ──────────────────────────────────────────────────────────────
@@ -753,6 +803,21 @@ export interface SubmitInput {
  * "部分生效"，下一轮 agent 读到半截状态又会重复提。宁可整批退，让它重提。
  */
 export function submit(
+    knowledgeDir: string,
+    input: SubmitInput,
+    repoOpts: LoadRepoOptions = {},
+): { report: SubmitReport; problems: readonly RepoProblem[] } {
+    // `dry-run` 一个字都不写 ⇒ 不必占锁（「读不产生任何持久副作用」包括不去掺和别人的临界区）。
+    if (input.dryRun ?? false) return submitUnlocked(knowledgeDir, input, repoOpts);
+    // 非 dry-run：**读-改-写整体**进临界区。
+    //
+    // 为什么锁要包到 `loadRepo` 之外（而不是只包 `writeFilesAtomic`）：丢失更新的成因就是
+    // 「B 读的是 A 写之前的库」，只锁写等于锁了个寂寞 —— rename 照样把 A 的条目整篇盖掉。
+    // 见 `./lock.ts` 头注（实测 ##9 的 conc-write 复现：两进程都报 added，磁盘只剩后者）。
+    return withLibraryLock(knowledgeDir, () => submitUnlocked(knowledgeDir, input, repoOpts));
+}
+
+function submitUnlocked(
     knowledgeDir: string,
     input: SubmitInput,
     repoOpts: LoadRepoOptions = {},

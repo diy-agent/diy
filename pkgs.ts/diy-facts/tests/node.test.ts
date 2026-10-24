@@ -497,3 +497,31 @@ describe('submit · 词表删除（dropSubjects）', () => {
         expect(r.report.droppedSubjects).toEqual([]);
     });
 });
+
+describe('W2 文件必须是内核渲染的结果（##9 review P1②：手改 / merge 坏序）', () => {
+    it('submit 写出来的文件 ⇒ 不报 file-not-canonical', () => {
+        const dir = makeRepo();
+        writeFileSync(path.join(dir, '..', 'README.md'), 'x\n');
+        submit(dir, {
+            facts: [fact({ id: 'app.port.default', subject: 'app.port', aspect: 'default', value: '18888' })],
+        });
+        expect(checkRepo(dir).problems.map((p) => p.code)).not.toContain('facts/file-not-canonical');
+    });
+
+    it('手改（多一行空行）⇒ warning，且不阻断（内容仍能读）', () => {
+        const dir = makeRepo();
+        writeFileSync(path.join(dir, '..', 'README.md'), 'x\n');
+        submit(dir, {
+            facts: [fact({ id: 'app.port.default', subject: 'app.port', aspect: 'default', value: '18888' })],
+        });
+        const file = path.join(dir, 'facts', 'app.yaml');
+        writeFileSync(file, `${readFileSync(file, 'utf8')}\n`);
+        const problems = checkRepo(dir).problems;
+        const hit = problems.find((p) => p.code === 'facts/file-not-canonical');
+        expect(hit?.level).toBe('warning');
+        // 语义没坏：事实照读得到（序/空行不影响查询，所以只能是 warning）
+        expect(loadRepo(dir).facts.map((f) => f.id)).toContain('app.port.default');
+        // 修法在文案里（否则读日志的人只知道"红了"，不知道"重新生成就行"）
+        expect(hit?.detail).toContain('diy facts submit');
+    });
+});

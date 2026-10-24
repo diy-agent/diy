@@ -11,6 +11,7 @@
 //   G4 证据可解析      —— evidence.at 的 `<路径>:<行>` 必须真存在（仓库相对 或 `~/` 开头）
 //   G5 probe 档齐备    —— source=probe 必须有 evidence.probe（否则「验证过」是空话）
 //   W1 证据陈旧        —— verifiedAt 超过 --max-age 天（缺省 180）= warning，不算失败
+//   W2 文件非内核渲染   —— 手改 / merge 坏序（内容等价但字节不等）= warning，修法是 submit 重写
 //
 // **判据本身不在这里**：实现归 `@diy/facts/node`（`checkRepo`），因为同一套判据还有第二个
 // 消费者 —— `diy facts submit` 落盘前要拿候选集跑一遍同样的检查（否则会出现「CLI 能写进去、
