@@ -121,6 +121,9 @@ import { sessionRegistry } from "./session-registry";
 // 会造成循环 —— room-service 静态 import 本模块的 getLocalAgent）。
 import { commitSelfStartContext, roomRuntimeFact, type RoomRuntimeValue } from "./room-context";
 import { addStepUsage, newUsageAcc, setTurnUsage, type TurnUsage } from "./turn-usage";
+// 自量（##404 / ##9 提案）：本进程里的「最近一步」账。记账点 = finish-step（与 appendUsage 同一处），
+// 读点 = 每步重建上下文 —— 读时零 IO（理由见 services/self-usage.ts 头注）。
+import { noteSelfStep, selfOf } from "./self-usage";
 import {
     bucketsOf,
     costBreakdown,
@@ -4792,9 +4795,14 @@ export class LocalAgentManager {
         // 系统上下文：Context Tree 投递（稳定项 → system 参数；易变项 → 尾部 user 消息）。
         // **与上下文树页的预览同一条链**（shared/context/delivery）：同一份 globals、同一份
         // system 名单、同一套渲染 —— 于是"预览看到的字节"就是这里发出去的字节。
+        // 自量（##404 / ##9 提案）：轮首这一份用的是**上一次真发那一步**的账（本进程内存里）。
+        // 本步还没发，`turn.steps` = 0 ⇒ 只有 `window` / `last`，这恰好是"发出去之前该知道的"。
+        const selfValue = (): ReturnType<typeof selfOf> =>
+            selfOf(taskUri, { contextLimit: identity.contextLimit, steps: stepN, cost: turnCost, unpriced: turnUnpriced });
         const globals = assembleGlobals(diyHome(), projectFromUri(taskUri), {
             taskUri,
             room: identity.room ?? null,
+            self: selfValue(),
         }) as unknown as Record<string, unknown>;
         // 划分规则读**真源**（$DIY_HOME/context.yaml；缺失/损坏则推荐名单 + 出声）——
         // 与上下文树页读的是同一份，所以页面上看到的 system/runtime 划分就是这里会用的划分。
@@ -4808,6 +4816,8 @@ export class LocalAgentManager {
             const g = assembleGlobals(diyHome(), projectFromUri(taskUri), {
                 taskUri,
                 room: identity.room ?? null,
+                // 每步重算 ⇒ 这里是「上一步的账 + 本轮累计」的最新值（`self` 是最高频单元，见 delivery.ts）
+                self: selfValue(),
             }) as unknown as Record<string, unknown>;
             return buildDelivery(g, loadSystemPlaces(diyHome()));
         };
@@ -4921,10 +4931,6 @@ export class LocalAgentManager {
             // 构成字节 = 环形构成卡与构成报表的数据源（system 容器精确字节 + tools JSON 字节，
             // 消息段由账本每步 prompt 减法导出 —— 见 shared/usage StepUsageRecord.contextParts）。
             const tools = buildTools(cwd, L, taskUri, { turnId, stepId: () => stepId });
-            const ctxParts = {
-                systemBytes: delivery.system.bytes,
-                toolsBytes: JSON.stringify(tools).length,
-            };
             let hist = this.deliveryHistory(taskUri, sess.store, undefined, undefined, sess.llmBase);
             // ── thinking 回放归一（##398）──
             // 上游（DeepSeek thinking 模式 / luminal 严判端点）要求**每条回放的 assistant**都带
@@ -4953,6 +4959,15 @@ export class LocalAgentManager {
                     replayOpts,
                 );
             let sent: ModelMessage[] = sentOf(hist);
+            // 构成字节（##9 追加的历史段）：system / tools / **历史** 三段，才答得了
+            // 「历史占了窗口多少、该不该压」。`historyBytes` 量的是**真发消息段**
+            // （含尾部 runtime 信封 + 摘要 + 注记，即 wire 上的 messages 全量），不是块树字节 ——
+            // 后者少三条注入（差异见 `sentOf`）。选在 `sent` 之后算，就是为了量"真发"。
+            const ctxParts = {
+                systemBytes: delivery.system.bytes,
+                toolsBytes: JSON.stringify(tools).length,
+                historyBytes: utf8Bytes(JSON.stringify(sent)),
+            };
 
             // ── 发请求**前**的 token 预检（##406 刀 2 后半）────────────────────────
             // 病灶（##401）：请求 4.95 MB 发出去才知道超了窗口，之后每次「？」都重发同一个 400，
@@ -4990,6 +5005,8 @@ export class LocalAgentManager {
                         // 压得动 ⇒ 直接换掉这份投递，并**告知**（轮尾 notice，不冒充错误）
                         hist = hist2;
                         sent = sent2;
+                        // 压缩换掉了消息段 ⇒ 构成字节跟着换（否则报表会把"压之前"的字节当"发出去的"）
+                        ctxParts.historyBytes = utf8Bytes(JSON.stringify(sent));
                         historyCapOverride = tightCap;
                         preflightNotice =
                             `上下文接近窗口上限（${est0.estTokens} tokens > 窗口 ${ctxLimitTokens} 的 80%），` +
@@ -5434,6 +5451,9 @@ export class LocalAgentManager {
                                 // **无价目 ≠ 0**：只累加有价目的步，无价目的只计数（##372 附带要求 1）
                                 if (cost) turnCost = turnCost ? sumCosts([turnCost, cost]) : cost;
                                 else turnUnpriced++;
+                                // 自量（##404）：把这一步的桶+金额记进内存账 —— 下一步重建上下文时
+                                // `runtime.self` 就有数可报（含跨轮：同一进程里下轮首步仍读得到）。
+                                noteSelfStep(taskUri, b, cost);
                                 sessionRegistry.noteTurnUsage(taskUri, acc.total);
                                 appendUsage(taskUri, {
                                     ts: new Date().toISOString(),

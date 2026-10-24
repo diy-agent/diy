@@ -301,6 +301,48 @@ export const AssembleGlobalsSchema = z.object({
     })
     .optional()
     .describe("房间上下文（没有房间时缺席）"),
+  /**
+   * **自量**（##404 / ##9 提案）：agent 自己的钱与窗口 —— 三个**能改变行为**的数。
+   *
+   * 为什么进 runtime 而不是 system：这些数**每步都变**（`window` 随本步 token、`last` 随上一步、
+   * `turn` 随本轮累计），进 system ⇒ 前缀缓存每步作废（实测 cacheRead 占 92~99%，一改就是几十倍
+   * 输入成本）。故 `PLACE_CANDIDATES` 里 `system: false`。
+   *
+   * 为什么只这三个：别的（tok/s、per-tool 耗时、chunk 间隔）看得到但无法据此改变决定 ——
+   * 纯占字节且稀释注意力（判据在 `shared/context/self.ts` 头注）。
+   *
+   * 缺席（`undefined`）= 一条数都给不出（新进程首轮首步）⇒ 与未接入前逐字不变。
+   * 子项缺席 = **量不到**（不是 0）：`window` 要窗口上限、`last.cost` 要价目表。
+   */
+  self: z
+    .object({
+      window: z
+        .object({
+          used: z.number().describe("上一步请求的总 token（输入 + 输出）；窗口占用的分子"),
+          limit: z.number().describe("模型窗口上限（tokens）"),
+          ratio: z.number().describe("`used / limit` 的**百分数**（0~100，1 位小数）：>60 就该收尾 / 少堆长输出"),
+        })
+        .optional()
+        .describe("上下文窗口占用（取**上一步**：本步发出去之前就已经知道用了多少）；窗口上限未知则缺席"),
+      last: z
+        .object({
+          cacheHit: z.number().optional().describe("上一步的缓存命中率**百分数**（0~100）。从 90+ 掉到 <50 ⇒ 前缀缓存被打断（多半是刚动了 system 段），输入成本会翻数倍"),
+          output: z.number().describe("上一步的输出 token（文本 + 思考）"),
+          cost: z.number().optional().describe("上一步金额（USD）；无价目则缺席（**不是 0**）"),
+        })
+        .optional()
+        .describe("上一步的实际消耗"),
+      turn: z
+        .object({
+          steps: z.number().describe("本轮已走步数"),
+          cost: z.number().optional().describe("本轮累计金额（USD）；一步都没价目则缺席"),
+          unpriced: z.number().optional().describe("本轮无价目的步数（>0 ⇒ `cost` 是部分和，不是完整花费）"),
+        })
+        .optional()
+        .describe("本轮累计（进程重启不影响它：来自本轮现场）"),
+    })
+    .optional()
+    .describe("自量：窗口占用 / 上一步消耗 / 本轮累计（每步都变，故归 runtime；量不到的子项缺席，不写 0）"),
 });
 export type AssembleGlobals = z.infer<typeof AssembleGlobalsSchema>;
 

@@ -11,6 +11,7 @@
 // 本模块只做组装与渲染，不发任何 LLM 请求（试验场试跑 = dry-run，看请求长什么样）。
 
 import type { RoomRuntimeValue } from "./room-context";
+import type { SelfValue } from "../../shared/context/self";
 import * as yaml from "js-yaml";
 import { existsSync, readFileSync, readdirSync, rmSync, rmdirSync } from "node:fs";
 import { homedir } from "node:os";
@@ -594,6 +595,12 @@ export function assembleGlobals(
      * ⚠ 类型走 `import type`：本文件不进 zod 补丁顺序的坑（##322），别改成值导入。
      */
     room?: RoomRuntimeValue | null;
+    /**
+     * 自量（##404 / ##9 提案）：窗口占用 / 上一步消耗 / 本轮累计。由调用方（runTurn）给 ——
+     * 它才知道本轮的现场（`stepN` / `turnCost`）与本进程里的上一步账；装配层现读就要读账本（热路径 IO）。
+     * 传 `null` / 缺省 = 不注入（预览页、首轮首步 ⇒ 与未接入前逐字不变）。
+     */
+    self?: SelfValue | null;
   } = {},
 ): AssembleGlobals {
   const taskUri = opts.taskUri ?? "";
@@ -674,6 +681,8 @@ export function assembleGlobals(
     ...(factsValue ? { facts: factsValue } : {}),
     ...(kbValue ? { kb: kbValue } : {}),
     ...(docsValue ? { docs: docsValue } : {}),
+    // 自量（##404 / ##9 提案）：**一条数都给不出时整节缺席**（不是 `self: {}`）
+    ...(opts.self ? { self: opts.self } : {}),
     identity: section(DELIVERED_SECTIONS.identity),
     rules: section(DELIVERED_SECTIONS.rules),
     guard: section(DELIVERED_SECTIONS.guard),
