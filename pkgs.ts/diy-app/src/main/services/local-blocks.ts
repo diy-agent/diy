@@ -157,7 +157,19 @@ type FieldKind = "Text" | "List" | "Flag";
 
 /** kind → 字段类型表。children 为结构位（start 自动维护），不接受 delta/patch。 */
 const SCHEMA: Record<BlockKind, Record<string, FieldKind>> = {
-    turn: { usage: "Flag", status: "Flag", notice: "Flag", reasoningEffort: "Flag", durationMs: "Flag", endReason: "Flag" },
+    turn: {
+        usage: "Flag",
+        status: "Flag",
+        notice: "Flag",
+        reasoningEffort: "Flag",
+        durationMs: "Flag",
+        endReason: "Flag",
+        // degraded（##424）：该轮是**降级重建**出来的（`turns.jsonl` 折成只读文本），不是 ops 原文。
+        // `{ refDangling: boolean, state: "ok"|"interrupted"|"error", at: ISO }` ——
+        // `refDangling` 时 UI 行内写「原始记录已清理」（锚点指向的 ops 已经不在了）。
+        // 正常路径永不出现这个字段（turns 只在降级时被消费）。
+        degraded: "Flag",
+    },
     step: { model: "Flag", usage: "Flag", status: "Flag" },
     // steer / steerId：用户"插嘴"写进对话流的标记（模式 next-step|next-turn，缺省 = 本轮开场的那次发言）
     // 与队列项 id（steer/N，回查用）。走 start 的 meta 落位（见 local-agent 的 steerBlockOps），
