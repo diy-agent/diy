@@ -40,13 +40,13 @@ facts:
       verifiedAt: '2026-10-23'
   where#doc:
     value: |-
-      「设计稿 / 方案 / 计划」→ `diy docs index`（`docs/` 不在 AGENTS.md 链上，信封只有摘要）；任务自己的产出在 `$DIY_HOME/<taskUri>/gen/`。
+      「设计稿 / 方案 / 计划」→ `diy docs index`（`docs/` 不在 AGENTS.md 链上）。信封的 `docs` 单元只给摘要，且**按项目路径求仓库根** —— 项目不在仓库内则整节缺席（lab 的 sample-project 就是这样，别以为 docs 单元坏了）；任务自己的产出在 `$DIY_HOME/<taskUri>/gen/`。
     id: kb.where.doc
     review: accepted
     lifecycle: active
     evidence:
       source: user
-      verifiedAt: '2026-10-23'
+      verifiedAt: '2026-10-25'
   where#fact:
     value: |-
       「X 现在是什么 / 有没有约定」→ `diy facts find <词>`（多词=与）→ `brief <主题>` → `get <主题>#<面>`；已知主题见 `runtime.kb`。**先查库，再 rg**。
