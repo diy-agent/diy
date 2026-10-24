@@ -27,7 +27,7 @@ import { getRendererActions } from "../lib/renderer-actions";
 import { jobRunsStore } from "../store/jobRunsStore";
 import { AREA_CHROME_W, VIEW_BAR_H } from "../lib/layout-metrics";
 import type { ProcRow, RunView } from "../../shared/run-view";
-import { bytesText } from "../../shared/run-view";
+import { bytesText, worthShowing } from "../../shared/run-view";
 
 /** 灯 → class（颜色归主题；这里只选 token，不写具体色值） */
 const LAMP_CLASS: Record<string, string> = {
@@ -110,19 +110,14 @@ export function JobRunsPanel(props: { uri: string }) {
      */
     const [showForeground, setShowForeground] = createSignal(false);
 
-    /** 这条 run 在默认视图里值不值得出现（判据见上）。 */
-    const worthShowing = (run: RunView): boolean =>
-        showForeground() ||
-        !run.foreground ||
-        run.state === "running" ||
-        run.state === "failed" ||
-        run.hadSurvivingGroup === true;
+    /** 这条 run 在默认视图里值不值得出现（判据真源 `shared/run-view.ts::worthShowing`）。 */
+    const visible = (run: RunView): boolean => worthShowing(run, showForeground());
 
     /** 行：先 run（活体在前），再未登记的野进程；「全部」视角下不分任务 */
     const rows = createMemo<Row[]>(() => {
         const all = scope() === "all";
         const runs = (all ? jobRunsStore.allRuns() : jobRunsStore.runsFor(props.uri))
-            .filter(worthShowing)
+            .filter(visible)
             .map((run): Row => ({ kind: "run", run }));
         const procs = (all ? jobRunsStore.allUntracked() : jobRunsStore.untrackedFor(props.uri)).map(
             (proc): Row => ({ kind: "proc", proc }),

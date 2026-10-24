@@ -2,7 +2,15 @@
 // 不是"渲染得好不好看"：面板 / CLI / 导出必须看同一份字段，否则必然漂。
 
 import { describe, expect, it } from "vitest";
-import { bytesText, clockText, originTextOf, runViewOf, titleOf, type RunFact } from "../../src/shared/run-view";
+import {
+    bytesText,
+    clockText,
+    originTextOf,
+    runViewOf,
+    titleOf,
+    worthShowing,
+    type RunFact,
+} from "../../src/shared/run-view";
 
 const base: RunFact = {
     id: "r-1",
@@ -121,5 +129,35 @@ describe("前台 / 后台（刀 14）", () => {
     it("通知状态透出（「agent 会不会被叫醒」要能看见）", () => {
         expect(runViewOf(base, 0).notified).toBe(false);
         expect(runViewOf({ ...base, notified: true }, 0).notified).toBe(true);
+    });
+});
+
+describe("面板默认视图（用户 1888：不要很快结束的进程）", () => {
+    const view = runViewOf(base, 1000);
+    const fg = { ...view, foreground: true };
+
+    it("前台毫秒级过路命令默认不显示（ls / rg 不该刷屏）", () => {
+        expect(worthShowing({ ...fg, state: "exited" }, false)).toBe(false);
+    });
+
+    it("正在跑的前台命令照旧显示（人正等着它）", () => {
+        expect(worthShowing({ ...fg, state: "running" }, false)).toBe(true);
+    });
+
+    it("失败的前台命令照旧显示（出事的不许藏）：状态 failed 与退出码非零都算", () => {
+        expect(worthShowing({ ...fg, state: "failed" }, false)).toBe(true);
+        expect(worthShowing({ ...fg, state: "exited", exitCode: 1 }, false)).toBe(true);
+    });
+
+    it("留下过后台子孙的前台 run 照旧显示（nohup … &：父命令秒退，活还在）", () => {
+        expect(worthShowing({ ...fg, state: "exited", hadSurvivingGroup: true }, false)).toBe(true);
+    });
+
+    it("后台 run 永远显示（那是用户要管的东西）", () => {
+        expect(worthShowing({ ...view, foreground: false, state: "exited" }, false)).toBe(true);
+    });
+
+    it("开关打开后全显示", () => {
+        expect(worthShowing({ ...fg, state: "exited" }, true)).toBe(true);
     });
 });

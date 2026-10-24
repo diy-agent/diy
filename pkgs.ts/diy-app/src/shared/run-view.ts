@@ -236,3 +236,21 @@ export function procRowOf(
         taskUri: group?.taskUri ?? null,
     };
 }
+
+/**
+ * 面板默认视图该不该显示这条 run（##408 用户 1888：「我不要他很快结束的进程」）。
+ *
+ * 判据（放大到"含前台"时全部显示）：
+ *   · 后台 run —— 永远显示（那是用户要管的东西）；
+ *   · 前台 run —— 只有**正在跑**、**失败**、或**留下过后台子孙**（`nohup … &`，父命令
+ *     35ms 就退但活还在）才显示；`ls`/`rg` 这类毫秒级过路命令默认挡掉。
+ *
+ * 抽成纯函数：这条判据直接决定"用户能不能看见他的长活"，值得被单测钉住。
+ */
+export function worthShowing(run: RunView, showForeground: boolean): boolean {
+    if (showForeground) return true;
+    if (!run.foreground) return true;
+    // 失败要看**两处**：状态（起不来 / 被信号杀）与退出码（命令跑了但报错，状态仍是 exited）
+    const failed = run.state === "failed" || (run.exitCode !== null && run.exitCode !== 0) || run.signal !== null;
+    return run.state === "running" || failed || run.hadSurvivingGroup === true;
+}
