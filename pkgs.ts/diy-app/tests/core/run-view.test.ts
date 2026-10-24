@@ -88,6 +88,11 @@ describe("来源 / 输出量", () => {
         expect(originTextOf(undefined)).toBe("—");
     });
 
+    it("`taskUri` 直接取 origin（kill 的归属声明要它，调用方只准照读、不准猜）", () => {
+        expect(runViewOf(base, 0).taskUri).toBe("projects/4/tasks/408");
+        expect(runViewOf({ ...base, origin: undefined }, 0).taskUri).toBeNull();
+    });
+
     it("字节数人话（读不到给「—」，不许当成 0 字节）", () => {
         expect(bytesText(0)).toBe("0B");
         expect(bytesText(2048)).toBe("2.0K");

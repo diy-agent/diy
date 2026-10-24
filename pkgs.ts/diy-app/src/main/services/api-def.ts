@@ -2358,8 +2358,8 @@ export const apiDef = RpcSchema.router({
             已经转过了（\`agent/job-not-found\`）、不属于这个任务（\`agent/job-foreign\`）。
             `,
             input: {
-              toolCallId: z.string().cliArg({ desc: "工具调用 id（\`job.detachables\` 里给的）" }),
-              taskUri: z.string().optional().cliOption({ desc: "任务 URI（传了就校验归属）" }),
+              toolCallId: z.string().cliArg({ desc: "工具调用 id（`job.detachables` 里给的）" }),
+              taskUri: z.string().cliArg({ desc: "任务 URI（**必填**：属主对不上就拒，见 `job-fence`）" }),
             },
             output: z.object({ status: z.string(), data: z.any() }).or(z.object({ status: z.string(), msg: z.string() })),
           }),
@@ -2380,18 +2380,26 @@ export const apiDef = RpcSchema.router({
             desc: `
             结束一条**未登记**的进程（按 pid；同组且组不是 app 自己时按组杀）。
 
-            安全检查：调用时**重新扫一遍** ps，pid 不在"归我们管"的名单里就拒绝 ——
-            免得任何调用方（含模型）拿这个接口去杀别人的进程。
+            两道闸都过才动手：① 调用时**重新扫一遍** ps，pid 不在"归我们管"的名单里就拒绝；
+            ② 归属校验（\`shared/job-fence.ts\`）—— 你声明的 \`taskUri\` 必须与组名册 / run origin
+            记下的归属一致，否则拒绝（跨任务不代杀；归属不明的也不动，请用 ps / kill 手工来）。
             `,
             input: {
               pid: z.number().cliArg({ desc: "进程 pid（`diy job procs` 里看到的）" }),
+              taskUri: z.string().cliArg({ desc: "任务 URI（**必填**：这个 pid 归哪个任务）" }),
             },
             output: z.object({ status: z.string(), data: z.any() }).or(z.object({ status: z.string(), msg: z.string() })),
           }),
           kill: RpcSchema.unary({
-            desc: `停止一条 run（进程型按**进程组** SIGTERM → 2s → SIGKILL）。返回是否真的发出了停止。`,
+            desc: `
+            停止一条 run（进程型按**进程组** SIGTERM → 2s → SIGKILL）。返回是否真的发出了停止。
+
+            \`taskUri\` **必填**：这条 run 的 \`origin.taskUri\` 必须与它一致（\`shared/job-fence.ts\`）。
+            跨任务不代杀 —— kill 是按组发的，认错一次带走的是整组无关进程。
+            `,
             input: {
               id: z.string().cliArg({ desc: "run id（形如 r-mvlmxmuf-qxmr：r-<base36 毫秒>-<4 位随机>，用 diy job ps 查）" }),
+              taskUri: z.string().cliArg({ desc: "这条 run 属于哪个任务（`job.ps` 每行的 `taskUri`）" }),
             },
             output: z.object({ status: z.string(), data: z.any() }).or(z.object({ status: z.string(), msg: z.string() })),
           }),

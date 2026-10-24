@@ -84,7 +84,7 @@ export const detachablesStore = {
     /** 转一条；返回给用户看的一句话（失败也照实说，不静默） */
     async detach(toolCallId: string): Promise<string> {
         try {
-            const r = await diyService.diy.job.detach({ toolCallId, taskUri: taskUri ?? undefined });
+            const r = await diyService.diy.job.detach({ toolCallId, taskUri: taskUri ?? "" });
             // 返回是判别联合（ok / error），取不到 id 就如实说"?"，不猜
             const data = "data" in r ? (r.data as { id?: string } | undefined) : undefined;
             await refresh();

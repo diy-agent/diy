@@ -232,7 +232,8 @@ export function JobRunsPanel(props: { uri: string }) {
     const stopRun = async (run: RunView): Promise<void> => {
         setBusy(true);
         try {
-            const r = await diyService.diy.job.kill({ id: run.id });
+            // 归属必须**从数据里读**再声明（`job-fence`）：面板不猜，run 说自己归谁就报谁
+            const r = await diyService.diy.job.kill({ id: run.id, taskUri: run.taskUri ?? "" });
             if (r.status !== "ok") setDetailErr(("msg" in r ? r.msg : null) ?? "停止失败");
             else setDetailErr(null);
             await jobRunsStore.refresh();
@@ -247,7 +248,7 @@ export function JobRunsPanel(props: { uri: string }) {
     const stopProc = async (proc: ProcRow): Promise<void> => {
         setBusy(true);
         try {
-            const r = await diyService.diy.job.killPid({ pid: proc.pid });
+            const r = await diyService.diy.job.killPid({ pid: proc.pid, taskUri: proc.taskUri ?? "" });
             if (r.status !== "ok") setDetailErr(("msg" in r ? r.msg : null) ?? "结束失败");
             else setDetailErr(null);
             await jobRunsStore.refresh();
@@ -557,14 +558,29 @@ export function JobRunsPanel(props: { uri: string }) {
                                     </button>
                                 </Show>
                                 <Show when={row().kind === "proc"}>
-                                    <button
-                                        class="btn btn-xs btn-warning shrink-0"
-                                        data-job-kill-pid={(row() as { kind: "proc"; proc: ProcRow }).proc.pid}
-                                        data-tip="结束这条进程（按进程组；main 侧会重扫 ps 校验它确实归我们管）"
-                                        onClick={() => void stopProc((row() as { kind: "proc"; proc: ProcRow }).proc)}
+                                    {/* 归属不明的进程**不给按钮**：main 的 `job-fence` 会拒（证明不了归谁），
+                                        一个点了必然失败的按钮比没有更糟。给人指条明路（ps / kill 手工）。 */}
+                                    <Show
+                                        when={(row() as { kind: "proc"; proc: ProcRow }).proc.taskUri}
+                                        fallback={
+                                            <span
+                                                class="text-[10px] opacity-60 shrink-0"
+                                                data-job-kill-blocked={(row() as { kind: "proc"; proc: ProcRow }).proc.pid}
+                                                data-tip="没有组名册 / run origin 记录，证明不了这条进程归谁 —— main 侧一律拒杀；要用请 ps / kill 手工来"
+                                            >
+                                                来源不明
+                                            </span>
+                                        }
                                     >
-                                        结束进程
-                                    </button>
+                                        <button
+                                            class="btn btn-xs btn-warning shrink-0"
+                                            data-job-kill-pid={(row() as { kind: "proc"; proc: ProcRow }).proc.pid}
+                                            data-tip="结束这条进程（按进程组；main 侧重扫 ps + 校验归属）"
+                                            onClick={() => void stopProc((row() as { kind: "proc"; proc: ProcRow }).proc)}
+                                        >
+                                            结束进程
+                                        </button>
+                                    </Show>
                                 </Show>
                             </div>
 

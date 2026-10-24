@@ -47,6 +47,7 @@ import { scanOwnedProcs, groupOwnerOf, killOwnedProc } from "./process-scan";
 import { procRowOf, runViewOf } from "../../shared/run-view";
 import { parseEtime } from "./process-sampler";
 import { stateLabel } from "../../shared/run-status";
+import { fenceTaskOwner } from "../../shared/job-fence";
 
 /**
  * 实际 RPC 监听端口，由入口在绑定完成后回填。
@@ -1194,6 +1195,11 @@ export function bindAppHandlers(binding: ServerBinding): void {
     if (!hit) {
       return { status: "error", msg: `pid ${input.pid} 不在"归我们管"的进程名单里（diy job procs 看现在有哪些）` };
     }
+    // 归属闸（`shared/job-fence.ts`）：声明必须与我们记下的归属一致。
+    // 组名册是首选（野进程只有它有记录）；登记过的 run 再退到它的 origin。
+    const owner = groupOwnerOf(hit.pgid)?.taskUri ?? (hit.runId ? runRegistry.get(hit.runId)?.origin?.taskUri : undefined);
+    const fence = fenceTaskOwner(input.taskUri, owner ?? null, `进程 ${hit.pid}`);
+    if (!fence.ok) return { status: "error", msg: fence.msg };
     const ok = killOwnedProc(hit, scan.selfPgid);
     return { status: "ok", data: { ok, pid: hit.pid, pgid: hit.pgid } };
   });
@@ -1201,6 +1207,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const info = runRegistry.get(input.id);
     if (!info) return { status: "error", msg: `没有这条 run：${input.id}（diy job ps 看在跑什么）` };
     if (info.state !== "running") return { status: "error", msg: `这条 run 已经结束（${stateLabel(info.state)}），无需停止` };
+    const fence = fenceTaskOwner(input.taskUri, info.origin?.taskUri ?? null, `run ${input.id}`);
+    if (!fence.ok) return { status: "error", msg: fence.msg };
     const ok = runRegistry.kill(input.id);
     return { status: "ok", data: { ok, id: input.id } };
   });

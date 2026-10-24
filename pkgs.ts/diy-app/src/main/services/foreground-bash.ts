@@ -15,6 +15,7 @@
  */
 import type { ChildProcess } from "node:child_process";
 import { ownedGroups } from "./owned-groups";
+import { fenceTaskOwner } from "../../shared/job-fence";
 import { runRegistry, type RunInfo, type RunOrigin, type RunRegistry } from "./run-registry";
 
 /**
@@ -97,12 +98,13 @@ export class ForegroundBash {
      * 把一次前台调用转成后台 run：接管同一个进程（不重启、不换读端），并**替它收尾**
      * （工具调用立刻返回一段「已转后台」+ run id，模型据此去 `job status`）。
      */
-    async detach(toolCallId: string, taskUri?: string): Promise<RunInfo> {
+    async detach(toolCallId: string, taskUri: string): Promise<RunInfo> {
         const e = this.map.get(toolCallId);
         if (!e) throw new ForegroundBashError({ code: "agent/job-not-found", message: "这条工具调用已经不在前台表里（可能已结束或已转后台）" });
-        // 围栏：给了 taskUri 就必须是同一个任务（UI 传，防跨任务误操作）
-        if (taskUri !== undefined && e.origin?.taskUri !== undefined && e.origin.taskUri !== taskUri)
-            throw new ForegroundBashError({ code: "agent/job-foreign", message: "这条调用不属于当前任务" });
+        // 归属闸（`shared/job-fence.ts`）：与 kill 同一份判据 —— 声明必须与记录一致。
+        // 转后台之后这条 run 就归那个任务了（退出即收 / 通知都按它算），认错归属等于替别人起活。
+        const fence = fenceTaskOwner(taskUri, e.origin?.taskUri ?? null, "这条前台调用");
+        if (!fence.ok) throw new ForegroundBashError({ code: fence.code, message: fence.msg });
         if (e.process.ended()) {
             this.map.delete(toolCallId);
             throw new ForegroundBashError({ code: "agent/job-already-ended", message: "命令已经结束，结果就在那条工具调用里" });

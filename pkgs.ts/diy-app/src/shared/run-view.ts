@@ -76,6 +76,13 @@ export interface RunView {
     origin: RunOriginRef | null;
     /** 来源一行话：`projects/4/tasks/408 · t179… · call_…` */
     originText: string;
+    /**
+     * 这条 run 归哪个任务（= `origin.taskUri`）。
+     *
+     * 存在的理由只有一个：**动手前要能声明归属**（`job-fence.ts`）——
+     * RPC / CLI 的 kill 入参得填它，调用方必须从数据里读出来，不许自己猜。
+     */
+    taskUri: string | null;
     error: string | null;
     /** 根命令退了、后台子孙还在跑（长活的常态：`nohup … &` 的父命令秒退） */
     awaitingGroup: boolean;
@@ -149,6 +156,7 @@ export function runViewOf(fact: RunFact, now: number, outputBytes?: number | nul
         dir: fact.dir,
         origin: fact.origin ?? null,
         originText: originTextOf(fact.origin),
+        taskUri: fact.origin?.taskUri ?? null,
         error: fact.error ?? null,
         awaitingGroup: fact.awaitingGroup === true,
         pgid: fact.pid ?? null,
