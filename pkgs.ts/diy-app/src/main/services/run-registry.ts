@@ -474,6 +474,59 @@ export class RunRegistry {
         return true;
     }
 
+    /**
+     * 退出即收：把还在跑的 run 连同它们的进程组一起收掉（`before-quit` 调）。
+     *
+     * 为什么必须有：`spawn` 是 `detached` 的（要 pgid 归我们管），app 一退子进程就
+     * reparent 到 launchd —— **没有任何内核机制能带走它们**（`PDEATHSIG` 只有 Linux 有）。
+     * 不在这里收，它们就继续跑、继续写日志、继续没人收尸：那就是用户说的「进程泄漏」。
+     *
+     * 做法：整组 SIGTERM → 等 `graceMs`（或全部收口，通常毫秒级）→ 剩下的整组 SIGKILL。
+     * **超预算也要返回** —— 退出预算是硬约束，不能把用户卡在 Dock 里等我们。
+     *
+     * 不叫醒 agent：进程都要没了，没人会收到（且 `killedByUs` 生效 ⇒ 收口即 `killed`，
+     * 与用户口径「杀不发通知」一致）。终态照常落表，宿主还活着时（测试）账仍是准的。
+     *
+     * **兜不住的边界**：崩溃 / `kill -9` 主进程时这段根本不会跑 —— 那是 OS 层的事，
+     * 靠组名册（`owned-groups`，带开机判据）下次启动认领，不在这里解决。
+     *
+     * 「手工设置脱离管理」的扩展点：将来若要给某条 run 标记「退出时别杀」，在这里加一个
+     * 逐条跳过判据即可（**现在没有这个字段**，别提前造抽象）。
+     *
+     * 返回本应收掉的 run 条数（`0` = 本来就没在跑）。
+     */
+    async shutdown(opts: { graceMs?: number } = {}): Promise<number> {
+        const graceMs = opts.graceMs ?? KILL_GRACE_MS;
+        const targets = [...this.runs.values()].filter((r) => r.state === "running");
+        if (targets.length === 0) return 0;
+        for (const info of targets) {
+            if (info.pid === undefined) continue;
+            this.killedByUs.add(info.id);
+            this.signalGroup(info.pid, "SIGTERM");
+        }
+        await this.awaitSettled(targets, graceMs);
+        // 宽限期到点还在跑的：整组 SIGKILL（仍收不掉就放弃 —— 预算比"条条收到"重要）
+        const left = targets.filter((r) => this.runs.get(r.id)?.state === "running");
+        for (const info of left) if (info.pid !== undefined) this.signalGroup(info.pid, "SIGKILL");
+        if (left.length > 0) await this.awaitSettled(left, 500);
+        return targets.length;
+    }
+
+    /** 等这些 run 全部离开 `running`，或超时（不改状态：状态只由 `settle` 改）。 */
+    private async awaitSettled(list: RunInfo[], ms: number): Promise<void> {
+        const pending = list.filter((r) => this.runs.get(r.id)?.state === "running");
+        if (pending.length === 0) return;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+            Promise.all(pending.map((r) => this.wait(r.id, 0))),
+            new Promise<void>((resolve) => {
+                timer = setTimeout(resolve, ms);
+                timer.unref?.();
+            }),
+        ]);
+        if (timer) clearTimeout(timer);
+    }
+
     /** 等它结束；`timeoutMs = 0` 表示一直等（调用方自己负责别等死）。 */
     wait(id: string, timeoutMs: number): Promise<RunInfo | undefined> {
         const info = this.runs.get(id);

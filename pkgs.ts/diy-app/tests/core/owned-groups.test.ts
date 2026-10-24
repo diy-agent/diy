@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { OwnedGroups, applyLoaded } from "../../src/main/services/owned-groups";
+import { OwnedGroups, applyLoaded, bootTimeMs } from "../../src/main/services/owned-groups";
 
 const base = { at: 1000, command: "bash -c x", cwd: "/tmp" };
 
@@ -88,7 +88,8 @@ describe("OwnedGroups — 落盘索引（app 重启后仍认得出孤儿）", ()
   it("登记即写盘；新实例读回同一批组号（孤儿 ppid 已是 launchd，只靠这个索引）", async () => {
     const file = tmpFile();
     const a = new OwnedGroups({ file });
-    a.record(60534, { ...base, taskUri: "projects/1/tasks/5" });
+    // `at` 用真时钟：读回时会过「跨重启」判据（早于本次开机的条目一律丢，见下个 describe）
+    a.record(60534, { ...base, at: Date.now(), taskUri: "projects/1/tasks/5" });
     await a.flush(); // 落盘是异步的（app 里不许有同步 IO）：测试显式等它写完
     const b = new OwnedGroups({ file });
     await b.ready;
@@ -126,5 +127,54 @@ describe("OwnedGroups — 落盘索引（app 重启后仍认得出孤儿）", ()
     const b = new OwnedGroups({ file });
     await b.ready;
     expect(b.size()).toBe(0);
+  });
+});
+
+// ##408 刀 20：重启后所有进程都死了，但盘上的组号还留着 —— 组号就是 pid，新进程会拿到同一个号，
+// 于是名册把无辜进程认成「任务 N 起的」，还能按组杀掉它。判据：**登记得比开机还早 ⇒ 必是上一轮残骸**。
+describe("跨重启丢弃（开机判据）", () => {
+  const boot = 1_000_000;
+  const tmpFile = (): string => join(mkdtempSync(join(tmpdir(), "diy-groups-boot-")), "groups.json");
+
+  it("上一轮开机的条目一律丢掉（那些进程必然已被重启杀光）", () => {
+    const map = new Map<number, { at: number; command: string; cwd: string }>();
+    applyLoaded(map, [{ pgid: 700, owner: { at: boot - 86_400_000, command: "上次开机起的", cwd: "/old" } }], boot);
+    expect(map.size).toBe(0);
+  });
+
+  it("本次开机的条目照常读回（判据不能把正常孤儿一起丢了）", () => {
+    const map = new Map<number, { at: number; command: string; cwd: string }>();
+    applyLoaded(map, [{ pgid: 700, owner: { at: boot + 60_000, command: "开机后起的", cwd: "/w" } }], boot);
+    expect(map.get(700)?.command).toBe("开机后起的");
+  });
+
+  it("`at` 缺失 / 为 0 的老条目也丢（证明不了属于本次开机，而误留 = 可能杀错进程）", () => {
+    const map = new Map<number, { at: number; command: string; cwd: string }>();
+    applyLoaded(map, [
+      { pgid: 701, owner: { command: "没有 at", cwd: "/x" } },
+      { pgid: 702, owner: { at: 0, command: "at=0", cwd: "/x" } },
+    ], boot);
+    expect(map.size).toBe(0);
+  });
+
+  it("不传 bootAt 时行为不变（老调用方 / 纯合并场景）", () => {
+    const map = new Map<number, { at: number; command: string; cwd: string }>();
+    applyLoaded(map, [{ pgid: 703, owner: { at: 0, command: "照读", cwd: "/x" } }]);
+    expect(map.size).toBe(1);
+  });
+
+  it("`bootTimeMs` = 现在 - uptime（注入两端即可断言，不依赖真时钟）", () => {
+    expect(bootTimeMs(10_000_000, 1_000)).toBe(9_000_000);
+    // 亚秒精度照留（不做取整）：多一点精度只会让判据更准，抖动由调用方的 5s 容差吸收
+    expect(bootTimeMs(10_000_000, 1_000.4)).toBe(8_999_600);
+  });
+
+  it("端到端：盘上写着十天前的条目 ⇒ load 后名册是空的", async () => {
+    const file = tmpFile();
+    const tenDaysAgo = Date.now() - 10 * 86_400_000;
+    writeFileSync(file, JSON.stringify([{ pgid: 800, owner: { at: tenDaysAgo, command: "上次开机", cwd: "/old" } }]), "utf8");
+    const g = new OwnedGroups({ file });
+    await g.ready;
+    expect(g.size()).toBe(0);
   });
 });

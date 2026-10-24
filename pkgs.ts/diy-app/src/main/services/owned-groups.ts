@@ -13,6 +13,7 @@
 
 import { readFile, writeFile } from "node:fs/promises";
 import type { GroupOwner } from "../../shared/proc-scan";
+import { uptime } from "node:os";
 import { join } from "node:path";
 import { readRuntimeConfig } from "../../runtime";
 
@@ -33,6 +34,22 @@ export function aliveGroup(pgid: number): boolean {
 
 /** 名册上限：一次会话里起过的组不该无界（超了先丢没活口的，再丢最老的）。 */
 const MAX_GROUPS = 512;
+
+/** 比开机时刻还早多少毫秒算「上一轮开机的残骸」（`uptime` 只到秒级，留 5s 容差）。 */
+const BOOT_SKEW_MS = 5_000;
+
+/**
+ * 本次开机时刻（ms）—— 名册的**跨重启判据**。
+ *
+ * `os.uptime()` 在 macOS 上就是 `kern.boottime`（Linux 是 `/proc/uptime`），零子进程零依赖。
+ * 为什么需要它：组号就是 pid，重启后系统从低位重新分配 —— 盘上留着的旧号会被**新的无辜
+ * 进程**占用，于是名册把它认领成「任务 N 起的」，「结束进程」还会按组杀掉它。
+ * 而「登记得比开机还早」这一个事实足以否掉整条：**重启杀光一切**，那条记录描述的进程
+ * 必然已经死了（我们起的都不是 launchd 服务，跨不过重启）。
+ */
+export function bootTimeMs(now: number = Date.now(), upSec: number = uptime()): number {
+    return now - Math.round(upSec * 1000);
+}
 
 /** 新登记的组在这么短时间内不参与"无进程即丢弃"（见文件头）。 */
 const RETAIN_GRACE_MS = 30_000;
@@ -55,8 +72,12 @@ export interface OwnedGroupsOptions {
  * **内存优先**：内存里已有的 pgid 一律跳过 —— 启动早期 `record` 抢在 `load` 之前跑完时，
  * 盘上的旧条目（上一轮会话的命令 / 缺 `taskUri`·`runId`）不许把它整条覆盖。
  * 没有这条判定，pid 复用时会说成「这条孤儿是上一轮那条命令起的」，指向错的来源。
+ *
+ * **跨重启丢弃**（传了 `bootAt` 时）：登记时刻早于本次开机 ⇒ 必定是上一轮开机的残骸，
+ * 直接丢（理由见 `bootTimeMs`）。`at` 缺失/为 0 的老条目同样丢掉 —— 它无法证明自己属于
+ * 本次开机，而误留的代价是**杀错进程**、误丢的代价只是认不出老孤儿（退化成不落盘）。
  */
-export function applyLoaded(map: Map<number, GroupOwner>, raw: unknown): void {
+export function applyLoaded(map: Map<number, GroupOwner>, raw: unknown, bootAt?: number): void {
     if (!Array.isArray(raw)) return;
     for (const item of raw) {
         const it = item as { pgid?: unknown; owner?: Partial<GroupOwner> };
@@ -64,8 +85,10 @@ export function applyLoaded(map: Map<number, GroupOwner>, raw: unknown): void {
         const o = it.owner;
         if (!Number.isInteger(pgid) || pgid <= 0 || !o || typeof o.command !== "string") continue;
         if (map.has(pgid)) continue;
+        const at = typeof o.at === "number" ? o.at : 0;
+        if (bootAt !== undefined && at < bootAt - BOOT_SKEW_MS) continue;
         map.set(pgid, {
-            at: typeof o.at === "number" ? o.at : 0,
+            at,
             command: o.command,
             cwd: typeof o.cwd === "string" ? o.cwd : "",
             ...(typeof o.runId === "string" ? { runId: o.runId } : {}),
@@ -100,7 +123,7 @@ export class OwnedGroups {
         if (!this.file) return;
         try {
             const text = await readFile(this.file, "utf8");
-            applyLoaded(this.map, JSON.parse(text) as unknown);
+            applyLoaded(this.map, JSON.parse(text) as unknown, bootTimeMs());
         } catch {
             // 坏索引 = 认不出老孤儿，功能退化但一切照跑
         }
@@ -234,8 +257,10 @@ export class OwnedGroups {
     /**
      * 扫描后清理：`livePgids` = 本轮 `ps` 里还活着的组。
      *
-     * 只丢"扫不到进程且已过宽限期"的组 —— 组号被系统复用给别的进程时也不会误认领
-     * （那种情况 pgid 仍在 livePgids 里，但命令已经不同；那是极端巧合，不额外处理）。
+     * 只丢"扫不到进程且已过宽限期"的组。**跨重启**那类误认领由 `applyLoaded` 的开机判据
+     * 处理（旧条目根本进不来内存）；**同一次开机内**的组号复用这里不管 —— 组号就是 pid，
+     * macOS 顺序分配、涨到上限才回绕，要撞上手头的号得先生成近十万个进程，代价远超收益。
+     * 真撞上时还有一道闸：`job.killPid` 调用前会重扫 `ps` 校验（见 `process-scan`）。
      */
     retain(livePgids: ReadonlySet<number>, now: number): void {
         // 迭代中会 delete：先拍快照（Map 的迭代器允许边迭代边删，但在这里"先拍后删"更直白）

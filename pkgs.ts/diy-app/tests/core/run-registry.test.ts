@@ -356,3 +356,35 @@ describe("review 修正（刀 15）", () => {
         expect(existsSync(p.dir)).toBe(true);
     });
 });
+
+// ##408 刀 20：app 退出时后台 run 是 `detached` 的，没有内核机制能带走 —— 不收就成孤儿。
+// 判据：shutdown 把**整组**收掉（含"根已退、只剩子孙"那一路），且不叫醒 agent。
+describe("退出即收（shutdown）", () => {
+    it("收掉所有在跑的 run —— 含根已退、只剩子孙的那条", async () => {
+        const notes: string[] = [];
+        reg.setNotifier((_t, text) => notes.push(text));
+        const plain = await reg.spawn({ command: "sleep 30", cwd: root, origin });
+        const orphan = await reg.spawn({ command: "nohup sleep 30 > /dev/null 2>&1 & echo started", cwd: root, origin });
+        // 等它进入"组还有活口"的态：这才是最难收的那一类（根已退出、活的是被 reparent 的子孙）
+        for (let i = 0; i < 100 && !reg.get(orphan.id)?.awaitingGroup; i++) await new Promise((r) => setTimeout(r, 20));
+        expect(reg.get(orphan.id)?.awaitingGroup).toBe(true);
+
+        const n = await reg.shutdown({ graceMs: 2_000 });
+
+        expect(n).toBe(2);
+        expect(reg.get(plain.id)?.state).toBe("killed");
+        expect(reg.get(orphan.id)?.state).toBe("killed");
+        // 状态变了不等于组空了：真发信号 0 验一遍（`kill` 抛 = 组里一个都不剩）
+        for (const pid of [plain.pid, orphan.pid]) {
+            expect(() => process.kill(-(pid as number), 0)).toThrow();
+        }
+        // 杀不发唤醒（用户口径：「通知是执行完叫醒 agent，不是 kill」）
+        expect(notes).toEqual([]);
+    }, 20_000);
+
+    it("没有在跑的 run ⇒ 返回 0，不拖住退出", async () => {
+        const p = await reg.spawn({ command: "true", cwd: root });
+        await reg.wait(p.id, 10_000);
+        expect(await reg.shutdown()).toBe(0);
+    }, 10_000);
+});
