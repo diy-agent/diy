@@ -144,3 +144,16 @@ export function notifyText(p: RunLike, tail: TailResult, maxLines = 20): string 
     );
     return head.join("\n");
 }
+
+/**
+ * 只保留**属于某任务**的 run（`job` 工具的可见性边界）。
+ *
+ * 为什么要有：`job list/status/kill` 曾经直接读全局表 —— 同一 app 里多个任务并行时，
+ * A 能把 B 的命令全文列出来（可能含密钥/路径）、还能把 B 的后台活 kill 掉，那是越权。
+ * 判据只有一条：`origin.taskUri === 当前任务`；没有 origin 的 run 一律不算谁的。
+ *
+ * 抽成纯函数是为了能钉测试（工具层只做接线）。
+ */
+export function runsOfTask<T extends { origin?: { taskUri?: string } }>(runs: readonly T[], taskUri: string): T[] {
+    return runs.filter((r) => r.origin?.taskUri === taskUri);
+}

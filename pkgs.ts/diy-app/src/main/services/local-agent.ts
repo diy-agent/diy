@@ -212,6 +212,7 @@ import { effectiveBashArgs } from "../../shared/tool-args";
 import { ownedGroups } from "./owned-groups";
 import { exitText, formatDuration, runLine, stateLabel } from "../../shared/run-status";
 import { spawnedJobs } from "./spawned-jobs";
+import { runsOfTask } from "../../shared/run-status";
 import type { RunOutcome } from "../../shared/spawned-job";
 
 // 模型查询函数抽到 shared/models.ts（core 不能被 services 反向依赖，否则循环 import）。
@@ -1327,6 +1328,12 @@ export interface TurnToolAnchor {
 
 const EMPTY_TAIL = { text: "", lines: 0, droppedBytes: 0 };
 
+/**
+ * `job wait` 的上限（10 分钟）。`timeoutMs = 0` 曾经表示「一直等」，等于给模型一把
+ * 自锁的钥匙（永不退出的 daemon + 等待 = 这一轮再也回不去，而唤醒是「结束才叫」）。
+ */
+const WAIT_MAX_MS = 600_000;
+
 /** 一条进程的**详情文案**（job status / wait 共用）：状态 + 结局 + 来源 + 输出尾巴。 */
 function detail(info: RunInfo, tail: { text: string; lines: number; droppedBytes: number }, now: number): string {
     const rows = [
@@ -1359,13 +1366,17 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                 timeout: z
                     .number()
                     .optional()
-                    .describe("本次执行的超时（毫秒）；0 = 不设超时；省略 = 缺省 300s（DIY_LOCAL_BASH_TIMEOUT_MS 可调）"),
+                    .describe(
+                        "本次执行的超时（毫秒）；0 = 不设超时；省略 = 前台缺省 300s（DIY_LOCAL_BASH_TIMEOUT_MS 可调）/" +
+                            "后台缺省不设超时",
+                    ),
                 background: z
                     .boolean()
                     .optional()
                     .describe(
                         "后台执行：立即返回作业 id，输出落日志文件；结束时会插话通知你。不需要在命令末尾加 &。" +
-                            "查状态/输出/停止用 job 工具。",
+                            "查状态/输出/停止用 job 工具。**后台缺省不设超时**（前台缺省 300s）；" +
+                            "要给后台限时就显式给 timeout，到点整组停止。",
                     ),
             }),
             // ##127：单条工具输出的截断**只落投递层** —— `toModelOutput` 改写「发给模型的那一份」
@@ -1396,7 +1407,7 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                 // 这也是 opencode `shell` 工具的形状（`background` + `timeout` 两位），
                 // 两边的口径一致，模型不必学两套。
                 if (eff.args.background === true) {
-                    const proc = runRegistry.spawn({
+                    const proc = await runRegistry.spawn({
                         command,
                         cwd,
                         ...(execOpts?.toolCallId && anchor
@@ -1409,15 +1420,19 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                                   },
                               }
                             : { origin: { taskUri } }),
+                        // 后台缺省**不设超时**（daemon 不该在 300s 被静默做掉）；
+                        // 模型显式给的正数才真的到点整组 SIGTERM（见 `shared/tool-args.ts`）。
+                        ...((eff.args.timeout as number) > 0 ? { deadlineMs: eff.args.timeout as number } : {}),
                     });
                     appendAudit(home, { phase: "bash-background", taskUri, cwd, command, result: proc.id });
                     if (proc.pid !== undefined) {
                         ownedGroups.record(proc.pid, { at: proc.startedAt, command, cwd, taskUri, runId: proc.id });
                     }
                     if (proc.state === "failed") {
-                        // 起不来的必须**抛**（命令根本没跑，不是结果）——与前台 spawn 失败同口径
-                        // 命令根本没跑起来（cwd 不存在等）= 与前台 spawn 失败同档（##332 ③）：
-                        // 它不是"命令报了错"，没有退出码可言 ⇒ 抛（工具错误），并用 invariant 带上码。
+                        // 起不来的必须**抛**（命令根本没跑，不是结果）—— 与前台 spawn 失败同口径。
+                        // `spawn()` 现在会 await 到 `spawn` / `error` 定局，所以走到这里时
+                        // 失败已经确定（此前它只接同步抛，异步 error 事件让这段成了死代码：
+                        // 工具先说「已转后台」，几十毫秒后再补一条「启动失败」）。
                         invariant(false, "agent/background-spawn-failed", `${proc.error ?? "未知原因"}（工作目录：${cwd}）`);
                     }
                     return [
@@ -1571,26 +1586,35 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
          */
         job: tool({
             description:
-                "管理你用 bash(background: true) 起的后台进程。action：list（全部，活着的在前）· " +
-                "status（一条的详情 + 输出尾巴）· output（取输出 tail）· kill（按进程组停止）· " +
-                "wait（等它结束，最多 timeoutMs）。**有完成通知，不需要轮询。**",
+                "管理**本任务**用 bash(background: true) 起的后台进程（别的任务的 run 看不见、停不掉）。action：" +
+                "list（本任务全部，活着的在前）· status（一条的详情 + 输出尾巴）· output（取输出 tail）· " +
+                "kill（按进程组停止）· wait（等它结束，最多 timeoutMs；**0 = 等 10 分钟上限**，不能无限等）。" +
+                "**有完成通知，不需要轮询。**",
             inputSchema: z.object({
                 action: z.enum(["list", "status", "output", "kill", "wait"]),
                 id: z.string().optional().describe("进程 id（list 不需要；其余必填）"),
                 lines: z.number().optional().describe("output/status 取多少行尾巴（缺省 40 / 10）"),
-                timeoutMs: z.number().optional().describe("wait 的等待上限（毫秒，缺省 30000；0 = 一直等）"),
+                timeoutMs: z
+                    .number()
+                    .optional()
+                    .describe("wait 的等待上限（毫秒，缺省 30000；0 = 用上限 10 分钟，不能无限等）"),
             }),
             execute: async ({ action, id, lines, timeoutMs }) => {
                 const now = Date.now();
+                // 只认**本任务**的 run：同一 app 里多个任务/agent 并行时，A 能把 B 的命令全文
+                // 列出来（可能含密钥/路径）、还能把 B 的后台活 kill 掉 —— 那是越权，不是便利。
+                const mine = (r: { origin?: { taskUri?: string } }): boolean => runsOfTask([r], taskUri).length > 0;
                 if (action === "list") {
-                    const all = runRegistry.list();
-                    if (all.length === 0) return "（没有后台进程）";
+                    const all = runsOfTask(runRegistry.list(), taskUri);
+                    if (all.length === 0) return "（本任务没有后台进程）";
                     const running = all.filter((p) => p.state === "running").length;
                     return [`共 ${all.length} 条（运行中 ${running}）`, ...all.map((p) => runLine(p, now))].join("\n");
                 }
                 if (!id) return `[缺 id] action=${action} 需要给 id（先用 job list 看有哪些）`;
                 const info = runRegistry.get(id);
-                if (!info) return `[没有这个后台进程] ${id}（job list 看现有；app 重启后表会清空）`;
+                if (!info || !mine(info)) {
+                    return `[没有这个后台进程] ${id}（只认本任务起的；job list 看现有；app 重启后表会清空）`;
+                }
 
                 if (action === "kill") {
                     const ok = runRegistry.kill(id);
@@ -1599,10 +1623,13 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                         : `未发送：${id} 当前是「${stateLabel(info.state)}」（只有运行中的才可停）。`;
                 }
                 if (action === "wait") {
-                    const limit = timeoutMs === undefined ? 30_000 : Math.max(0, Math.floor(timeoutMs));
+                    // 0 曾经等于「永远等」：一个永不退出的 daemon + `wait 0` ⇒ 这一轮再也回不去，
+                    // 而唤醒机制本身是「结束才叫」⇒ 自锁且外部无解。改成**有上限**（10 分钟）。
+                    const asked = timeoutMs === undefined ? 30_000 : Math.max(0, Math.floor(timeoutMs));
+                    const limit = asked === 0 ? WAIT_MAX_MS : Math.min(asked, WAIT_MAX_MS);
                     const done = await runRegistry.wait(id, limit);
                     if (done && done.state === "running") {
-                        return `${detail(done, runRegistry.tail(id, 5) ?? EMPTY_TAIL, now)}\n（已等 ${formatDuration(limit)}，仍未结束）`;
+                        return `${detail(done, runRegistry.tail(id, 5) ?? EMPTY_TAIL, now)}\n（已等 ${formatDuration(limit)}，仍未结束；别干等长任务 —— 去做别的，结束会通知你）`;
                     }
                     return detail(done ?? info, runRegistry.tail(id, lines ?? 10) ?? EMPTY_TAIL, now);
                 }

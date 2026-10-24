@@ -66,18 +66,19 @@ export function parsePsRows(stdout: string): PsRow[] {
 /**
  * Chromium/Electron 自己的辅助进程 —— 它们也是 app 的子孙，但**不是** agent 起的活。
  *
- * 判据用命令行特征（`--type=` 是 Chromium 子进程的通用标记；Crashpad 是崩溃上报器）。
- * 宁可漏判（多显示一行）也不要误杀：把渲染进程显示成"agent 的后台任务"会让人去点「结束」。
+ * 判据（review 抓到过一次误杀，所以这里收窄）：**必须同时**是 Chromium 系的二进制
+ * **且**带辅助进程标记。早先只看 `--type=`：那是任意命令都可能带的通用标志
+ * （`rg --type=py …`、`tsc --type=…`），一条正常后台活会被整条丢弃 —— 与「我希望所有
+ * job/shell 的进程都看得见」正好相反。
  */
 export function isAppHelperProc(command: string): boolean {
     // 扫描自己（`process-scan.ts` 的那条 ps）会出现在自己的 ps 输出里 —— 别把观测工具当活干。
     if (command.startsWith("ps -axo pid=,ppid=,pgid=")) return true;
-    return (
-        /--type=/.test(command) ||
-        /Electron Helper/.test(command) ||
-        /crashpad_handler/.test(command) ||
-        /Chromium Helper/.test(command)
-    );
+    // 这两类名字本身就是 Chromium 专属，不含歧义
+    if (/crashpad_handler/.test(command)) return true;
+    if (/Electron Helper|Chromium Helper/.test(command)) return true;
+    // 其余：命令行里**同时**出现 Electron/Chromium 与 `--type=` 才算辅助进程
+    return /--type=/.test(command) && /Electron|Chromium/.test(command);
 }
 
 /** 组登记：组 id → 是谁起的（只为显示"这堆进程是哪条命令留下的"）。 */

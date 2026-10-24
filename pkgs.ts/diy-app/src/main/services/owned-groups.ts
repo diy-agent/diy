@@ -16,13 +16,30 @@ import type { GroupOwner } from "../../shared/proc-scan";
 import { join } from "node:path";
 import { readRuntimeConfig } from "../../runtime";
 
-/** 名册上限：一次会话里起过的组不该无界（超了丢最老的）。 */
+/**
+ * 组里还有没有活口（信号 0：**同步且不起进程**，比 `ps` 便宜一个数量级）。
+ *
+ * `EPERM` 也算活着：组里确实有进程，只是不归我们发信号。
+ */
+export function aliveGroup(pgid: number): boolean {
+    if (!Number.isInteger(pgid) || pgid <= 0) return false;
+    try {
+        process.kill(-pgid, 0);
+        return true;
+    } catch (e) {
+        return (e as NodeJS.ErrnoException).code === "EPERM";
+    }
+}
+
+/** 名册上限：一次会话里起过的组不该无界（超了先丢没活口的，再丢最老的）。 */
 const MAX_GROUPS = 512;
 
 /** 新登记的组在这么短时间内不参与"无进程即丢弃"（见文件头）。 */
 const RETAIN_GRACE_MS = 30_000;
 
 export interface OwnedGroupsOptions {
+    /** 组里还有没有活口（缺省 `kill(-pgid, 0)`；测试注入假判据） */
+    alive?: (pgid: number) => boolean;
     /**
      * 落盘文件（可选）。**这不是"进程恢复"**：只记「这些组号是我起的」这一条索引，
      * 好让 app 重启后仍能认出 `nohup xxx &` 留下的孤儿（它们的 ppid 已经是 launchd）。
@@ -34,9 +51,11 @@ export interface OwnedGroupsOptions {
 export class OwnedGroups {
     private readonly map = new Map<number, GroupOwner>();
     private readonly file?: string;
+    private readonly isAlive: (pgid: number) => boolean;
 
     constructor(opts: OwnedGroupsOptions = {}) {
         this.file = opts.file;
+        this.isAlive = opts.alive ?? aliveGroup;
         this.load();
     }
 
@@ -100,10 +119,30 @@ export class OwnedGroups {
             return;
         }
         this.map.set(pgid, owner);
+        this.prune();
         this.save();
-        if (this.map.size > MAX_GROUPS) {
-            const oldest = [...this.map.entries()].sort((a, b) => a[1].at - b[1].at)[0];
-            if (oldest) this.map.delete(oldest[0]);
+    }
+
+    /**
+     * 超上限时剪枝（review 抓到的两个真问题）：
+     *
+     *   ① **只剪已经没有活口的组** —— 前台命令现在每条都登记组，512 条 `ls` 就能把
+     *      还在跑的后台任务组挤掉，而这份索引是重启后**唯一**的认领依据（挤掉 = 孤儿
+     *      变成"别人的进程"，既看不见也杀不掉）。
+     *   ② 剪完**落盘** —— 原实现先 save 后 delete，盘上会长期多一条幽灵条目。
+     */
+    private prune(): void {
+        if (this.map.size <= MAX_GROUPS) return;
+        const byAge = [...this.map.entries()].sort((a, b) => a[1].at - b[1].at);
+        for (const [pgid] of byAge) {
+            if (this.map.size <= MAX_GROUPS) break;
+            if (this.isAlive(pgid)) continue;
+            this.map.delete(pgid);
+        }
+        // 全活着（极端）：仍然要收敛，否则无界 —— 只能丢最老的活口组
+        for (const [pgid] of byAge) {
+            if (this.map.size <= MAX_GROUPS) break;
+            this.map.delete(pgid);
         }
     }
 

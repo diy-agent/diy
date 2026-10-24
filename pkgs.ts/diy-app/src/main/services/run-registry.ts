@@ -7,8 +7,10 @@
 //
 // 于是这里**刻意最小**：
 //   · 真源 = 内存里的 `Map`（app 退出即空；重启后不接管、不 reconcile、不写 jsonl）；
-//   · 叫 run 不叫 proc：`pid` 因此是**可选**的 —— 进程型有 pid，进程内任务没有；
-//     杀它也不走信号而走 `cancel`（进程内任务自己收手）；
+//   · 叫 run 不叫 proc：`pid` 因此是**可选**的（**预留**：将来 js 进程内任务没有 pid）。
+//     现实约束要看清：目前唯一的登记入口（`spawn` / `track`）都是**进程型**，
+//     没有任何代码会造出"无 pid 的 run"；`kill` 对无 pid 直接返回 false。
+//     这条抽象只是留了形状，别在文档里把它说成已实现的功能。
 //   · 输出 = 自己的 fd 直写 `$DIY_HOME/log/job/run/<YYYY-MM-DD>/<id>/out.log`
 //     （运行的产物，不是账本；要看就 tail 它，不额外维护"日志管理"）；
 //   · 落盘只有两样，都是为了「这条 run 自己说得清」：`meta.json`（谁起的、什么命令、
@@ -27,7 +29,19 @@
 // 一条跑过午夜的属"哪天起的"，否则同一条 run 的日志会随收口时间跳到别的目录。
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { closeSync, mkdirSync, openSync, readFileSync, statSync, writeFileSync, writeSync } from "node:fs";
+import {
+    closeSync,
+    fstatSync,
+    mkdirSync,
+    openSync,
+    readdirSync,
+    readFileSync,
+    readSync,
+    rmSync,
+    statSync,
+    writeFileSync,
+    writeSync,
+} from "node:fs";
 import { join } from "node:path";
 import { readRuntimeConfig } from "../../runtime";
 import { MAX_TAIL_BYTES, notifyText, tailOf, type RunLike, type TailResult } from "../../shared/run-status";
@@ -98,6 +112,13 @@ export interface SpawnRunInput {
     /** 人话标题（缺省 = 命令首行） */
     title?: string;
     origin?: RunOrigin;
+    /**
+     * 到点整组 SIGTERM（后台模式的**显式** timeout 才有值）。
+     *
+     * 只有模型明确写了 `timeout` 才传：后台命令的缺省值是「不设超时」，否则一条
+     * `background:true` 的 daemon 会在 300s 被静默做掉（见 `shared/tool-args.ts`）。
+     */
+    deadlineMs?: number;
 }
 
 export interface RunRegistryOptions {
@@ -137,8 +158,43 @@ export function groupAlive(pgid: number): boolean {
     }
 }
 
+/**
+ * 等 spawn 定局：成功发 `spawn`，失败发 `error`（异步）。两者都没来就永远悬着 ——
+ * 所以这里不设超时，只等 Node 自己那一个事件（它必来其一）。
+ */
+function awaitOpened(child: ChildProcess): Promise<{ ok: boolean; error?: string }> {
+    return new Promise((resolve) => {
+        const done = (r: { ok: boolean; error?: string }): void => {
+            child.off("spawn", onSpawn);
+            child.off("error", onError);
+            resolve(r);
+        };
+        const onSpawn = (): void => done({ ok: true });
+        const onError = (e: Error): void => done({ ok: false, error: e.message });
+        child.once("spawn", onSpawn);
+        child.once("error", onError);
+    });
+}
+
 /** 杀不及时的宽限期：先 SIGTERM（让它自己收尾），到这个点还在就 SIGKILL 整组。 */
 export const KILL_GRACE_MS = 2_000;
+
+/**
+ * 内存表上限（**运行中的永不淘汰**）。
+ *
+ * 前台命令也入表之后，一个长会话里几百上千条 `ls`/`rg` 是常态；不设上限就是
+ * 常驻内存线性增长 + 每次刷新把全表序列化过 IPC。
+ */
+export const MAX_RUNS = 300;
+
+/**
+ * 日期目录保留天数（`log/job/run/<date>/`）。
+ *
+ * 这是**运行产物**的垃圾回收，不是审计账的保留策略（后者属 ##410）：一条 run 靠
+ * meta.json + out.log 才「自己说得清」，但没人会回看一周前的 `ls` 输出。
+ * 只按目录名（日期）整目录删，不碰今天的。
+ */
+export const KEEP_DAYS = 7;
 
 /** 运行产物根：`$DIY_HOME/log/job/run`（**不是** `jobs/` —— 那批是 v1 的执行账）。 */
 export function runRoot(home: string = readRuntimeConfig().home): string {
@@ -169,6 +225,8 @@ export class RunRegistry {
     private readonly probeGroup: (pgid: number) => boolean;
     private readonly reapMs: number;
     private reapTimer?: ReturnType<typeof setTimeout>;
+    /** 后台显式 timeout 的定时器（到点整组 SIGTERM；收口即清） */
+    private readonly deadlines = new Map<string, ReturnType<typeof setTimeout>>();
     private notifier?: (taskUri: string, text: string) => void;
 
     constructor(opts: RunRegistryOptions = {}) {
@@ -177,6 +235,7 @@ export class RunRegistry {
         this.probeGroup = opts.probeGroup ?? groupAlive;
         this.reapMs = opts.reapMs ?? 1000;
         this.notifier = opts.notifier;
+        this.pruneOldDirs();
     }
 
     setNotifier(fn: ((taskUri: string, text: string) => void) | undefined): void {
@@ -189,7 +248,7 @@ export class RunRegistry {
      * 登记时刻 = `spawn` 返回那一刻 —— 这是本刀的要害：v1 的「惰性晋升」（跑够 10s 才承认）
      * 让"进程活着但表里没有"成为常态（用户实测抓到 85 分钟无痕）。现在只要起了就在表里。
      */
-    spawn(input: SpawnRunInput): RunInfo {
+    async spawn(input: SpawnRunInput): Promise<RunInfo> {
         const now = this.now();
         const id = newRunId(now);
         const dir = join(this.rootDir, dateDirOf(now), id);
@@ -230,10 +289,82 @@ export class RunRegistry {
         }
         info.pid = child.pid;
         this.children.set(id, child);
+        // pid 是这条 run 的**身份**（进程组号也等于它）：spawn 后立刻补写 meta，
+        // 否则盘上只有 command/cwd，重启后对不上任何东西（前台 `track` 一直有补写，这里曾经漏了）。
+        this.writeMeta(info);
+        // 起不来是**异步** `error` 事件（非法 cwd / ENOENT），不是同步抛。
+        // 不等这一步定局就返回，工具会对模型说「已转后台」，几十毫秒后再补一句「启动失败」。
+        const opened = await awaitOpened(child);
+        if (!opened.ok) {
+            this.settle(id, { exitCode: null, signal: null, errorText: opened.error ?? "启动失败" });
+            return this.runs.get(id) ?? info;
+        }
         // 不 unref：我们要 `close` 事件来判终态；main 退出后子进程仍在（detached）
         child.on("error", (e) => this.onRootExit(id, { exitCode: null, signal: null, errorText: e.message }));
         child.on("close", (code, signal) => this.onRootExit(id, { exitCode: code, signal: signal ?? null }));
-        return info;
+        if (input.deadlineMs !== undefined && input.deadlineMs > 0) this.armDeadline(id, input.deadlineMs);
+        this.evictOld();
+        return this.runs.get(id) ?? info;
+    }
+
+    /**
+     * 后台的**显式** timeout：到点整组 SIGTERM（不走 `probeGroup`，也不叫醒 agent）。
+     *
+     * 用 `killedByUs` 标记 ⇒ 终态 `killed`：它是被策略停的，不是命令自己失败；
+     * 模型能从 `timeout` 参数据此对上号（与前台超时同一口径）。
+     */
+    private armDeadline(id: string, ms: number): void {
+        const timer = setTimeout(() => {
+            this.deadlines.delete(id);
+            const info = this.runs.get(id);
+            if (!info || info.state !== "running" || info.pid === undefined) return;
+            this.killedByUs.add(id);
+            this.signalGroup(info.pid, "SIGTERM");
+            const grace = setTimeout(() => {
+                if (this.runs.get(id)?.state === "running") this.signalGroup(info.pid as number, "SIGKILL");
+            }, KILL_GRACE_MS);
+            grace.unref?.();
+        }, ms);
+        timer.unref?.();
+        this.deadlines.set(id, timer);
+    }
+
+    /** 淘汰最老的**已结束** run（运行中的永不淘汰）；只清内存，不动盘上产物。 */
+    private evictOld(): void {
+        if (this.runs.size <= MAX_RUNS) return;
+        const ended = [...this.runs.values()]
+            .filter((r) => r.state !== "running")
+            .sort((a, b) => a.startedAt - b.startedAt);
+        for (const r of ended) {
+            if (this.runs.size <= MAX_RUNS) break;
+            this.runs.delete(r.id);
+        }
+    }
+
+    /**
+     * 清掉过期日期目录（保留 `KEEP_DAYS` 天，今天永不动）。
+     *
+     * 一次启动做一次，不建定时器：这是垃圾回收，不是调度。删失败一律静默 ——
+     * 目录可能是别的实例的，也可能正被读。
+     */
+    pruneOldDirs(keepDays = KEEP_DAYS): void {
+        let names: string[];
+        try {
+            names = readdirSync(this.rootDir);
+        } catch {
+            return;
+        }
+        const cutoff = new Date(this.now() - keepDays * 86_400_000);
+        const edge = dateDirOf(cutoff.getTime());
+        for (const name of names) {
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(name)) continue;
+            if (name >= edge) continue;
+            try {
+                rmSync(join(this.rootDir, name), { recursive: true, force: true });
+            } catch {
+                // 清不掉就算了：产物垃圾不该把启动拖垮
+            }
+        }
     }
 
     /**
@@ -364,8 +495,10 @@ export class RunRegistry {
     }
 
     /**
-     * 停止：进程型先按**进程组**发 SIGTERM，`KILL_GRACE_MS` 后还在就 SIGKILL；
-     * 进程内任务（没有 pid）走它自己的 `cancel`。
+     * 停止：先按**进程组**发 SIGTERM，`KILL_GRACE_MS` 后还在就 SIGKILL。
+     *
+     * 没有 pid 的 run（**预留**的进程内任务形状）返回 false —— 那种 run 得由它自己
+     * 的 cancel 收手，而 cancel 目前还不存在（见文件头：别把它当已实现）。
      *
      * 按组发是硬要求：`bash -c "a | b"` 的真正工作进程是 bash 的子孙，只杀 `child.pid`
      * 会留下跑满的孤儿（`##375` 同一个坑）。
@@ -420,6 +553,8 @@ export class RunRegistry {
         this.pendingExits.clear();
         if (this.reapTimer) clearTimeout(this.reapTimer);
         this.reapTimer = undefined;
+        for (const t of this.deadlines.values()) clearTimeout(t);
+        this.deadlines.clear();
     }
 
     private signalGroup(pid: number, sig: NodeJS.Signals): void {
@@ -449,13 +584,38 @@ export class RunRegistry {
         }
     }
 
+    /**
+     * 读日志尾部（**定长偏移读**，不整文件读进内存）。
+     *
+     * out.log 没有上限（`yes` / 编译器输出能长到几个 G）：先 `stat` 再 `readFileSync`
+     * 会把整个文件读进主进程内存 —— 面板每 3s 调一次，等于每 3s 一次卡死 + OOM 风险。
+     */
     private readLogTail(logPath: string): string {
+        let fd: number | undefined;
         try {
-            const size = statSync(logPath).size;
-            const start = Math.max(0, size - MAX_TAIL_BYTES * 4);
-            return readFileSync(logPath).subarray(start).toString("utf8");
+            fd = openSync(logPath, "r");
+            const size = fstatSync(fd).size;
+            const want = Math.min(size, MAX_TAIL_BYTES * 4);
+            if (want <= 0) return "";
+            const start = size - want;
+            const buf = Buffer.allocUnsafe(want);
+            let got = 0;
+            while (got < want) {
+                const n = readSync(fd, buf, got, want - got, start + got);
+                if (n <= 0) break;
+                got += n;
+            }
+            return buf.subarray(0, got).toString("utf8");
         } catch {
             return "";
+        } finally {
+            if (fd !== undefined) {
+                try {
+                    closeSync(fd);
+                } catch {
+                    // 已失效
+                }
+            }
         }
     }
 
@@ -538,6 +698,12 @@ export class RunRegistry {
         if (exit.errorText) info.error = exit.errorText;
         this.pendingExits.delete(id);
         this.children.delete(id);
+        const dl = this.deadlines.get(id);
+        if (dl) {
+            clearTimeout(dl);
+            this.deadlines.delete(id);
+        }
+        this.evictOld();
         for (const w of this.waiters.get(id) ?? []) w(info);
         this.waiters.delete(id);
         // 谁该被叫醒（##408 刀 14，用户实测报的病）：

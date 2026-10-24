@@ -2355,7 +2355,7 @@ export const apiDef = RpcSchema.router({
             **在跑什么**（活体表，刀 8 起）：后台 run 的当前快照 —— 不是历史账。
 
             返回 runs（运行中的在前，同状态按启动时间倒序）· running（在跑几条）· total。
-            每行含：state/stateLabel · pid（进程内任务为 null）· title · **command（原始命令行全文）** ·
+            每行含：state/stateLabel · pid（null = 没起来或非进程型）· title · **command（原始命令行全文）** ·
             cwd · startedAt/endedAt · durationText · exitCode/signal/exitText · outputBytes/outputText ·
             origin/originText（哪个任务/轮/步/工具调用起的）· logPath · dir。
             `,
@@ -2399,7 +2399,7 @@ export const apiDef = RpcSchema.router({
           kill: RpcSchema.unary({
             desc: `停止一条 run（进程型按**进程组** SIGTERM → 2s → SIGKILL）。返回是否真的发出了停止。`,
             input: {
-              id: z.string().cliArg({ desc: "run id（r-<epoch>-<rand>，用 diy job ps 查）" }),
+              id: z.string().cliArg({ desc: "run id（形如 r-mvlmxmuf-qxmr：r-<base36 毫秒>-<4 位随机>，用 diy job ps 查）" }),
             },
             output: z.object({ status: z.string(), data: z.any() }).or(z.object({ status: z.string(), msg: z.string() })),
           }),

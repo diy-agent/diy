@@ -10,7 +10,24 @@ describe("effectiveBashArgs", () => {
     it("模型只发 command ⇒ timeout/background 都按缺省补齐并标为 defaulted", () => {
         const r = effectiveBashArgs({ command: "ls" }, { bashTimeoutMs: 120_000 });
         expect(r.args).toEqual({ command: "ls", timeout: 120_000, background: false });
-        expect(r.defaulted).toEqual(["timeout", "background"]);
+        expect(r.defaulted).toEqual(["background", "timeout"]);
+    });
+
+    it("后台缺省不设超时（daemon 不该在 300s 被静默做掉）", () => {
+        const r = effectiveBashArgs({ command: "x", background: true }, { bashTimeoutMs: 300_000 });
+        expect(r.args.timeout).toBe(0);
+        expect(r.defaulted).toContain("timeout");
+    });
+
+    it("后台**显式**给了 timeout ⇒ 原样生效（到点整组停）", () => {
+        const r = effectiveBashArgs({ command: "x", background: true, timeout: 5000 }, { bashTimeoutMs: 300_000 });
+        expect(r.args.timeout).toBe(5000);
+        expect(r.defaulted).not.toContain("timeout");
+    });
+
+    it('background 只认严格 true（"false" 这种字符串不算后台）', () => {
+        expect(effectiveBashArgs({ command: "x", background: "false" }, {}).args.background).toBe(false);
+        expect(effectiveBashArgs({ command: "x", background: 1 }, {}).args.background).toBe(false);
     });
 
     it("limits 缺字段 ⇒ 退 DEFAULT_BASH_TIMEOUT_MS（与执行侧同值）", () => {
@@ -45,7 +62,7 @@ describe("effectiveBashArgs", () => {
         for (const bad of [null, undefined, "{\"command\"", 42]) {
             const r = effectiveBashArgs(bad, { bashTimeoutMs: 7 });
             expect(r.args).toEqual({ command: "", timeout: 7, background: false });
-            expect(r.defaulted).toEqual(["timeout", "background"]);
+            expect(r.defaulted).toEqual(["background", "timeout"]);
         }
     });
 

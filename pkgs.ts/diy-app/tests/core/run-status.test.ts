@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+    runsOfTask,
     exitText,
     formatDuration,
     isTerminal,
@@ -107,5 +108,20 @@ describe("花名册与结束通知", () => {
 
     it("无输出也明说「无输出」（不说「输出：」然后空着）", () => {
         expect(notifyText(base, { text: "", lines: 0, droppedBytes: 0 })).toContain("（无输出）");
+    });
+});
+
+describe("任务隔离（job 工具的可见性边界）", () => {
+    type Row = { id: string; origin?: { taskUri: string } };
+    const a: Row = { id: "r-a", origin: { taskUri: "projects/1/tasks/1" } };
+    const b: Row = { id: "r-b", origin: { taskUri: "projects/1/tasks/2" } };
+    const orphan: Row = { id: "r-c" };
+
+    it("只列本任务的 run（别的任务的命令全文不该被看见）", () => {
+        expect(runsOfTask([a, b, orphan], "projects/1/tasks/1").map((r) => r.id)).toEqual(["r-a"]);
+    });
+
+    it("没有 origin 的 run 不算任何任务的（既看不见也停不掉）", () => {
+        expect(runsOfTask([orphan], "projects/1/tasks/1")).toEqual([]);
     });
 });

@@ -102,16 +102,27 @@ export function JobRunsPanel(props: { uri: string }) {
     });
 
     /**
-     * 含前台命令（**缺省开**）：`bash` 不加 `background` 也建一行 —— 否则「`&` 起的孤儿」
-     * 只有"未登记"那一行，进程一死就再也说不清是谁起的。关掉只是让表安静些。
+     * 含前台命令（**缺省关**，用户 1888：「我不要他很快结束的进程」）。
+     *
+     * 但"关"不等于"看不见该看的"：正在跑的前台命令、失败的、以及**留下过后台子孙**的
+     * （`nohup sleep 600 &` 那种父命令 35ms 就退的）照旧显示 —— 那正是用户要盯的长活。
+     * 关掉挡住的只是 `ls`/`rg` 这类毫秒级的过路命令。
      */
-    const [showForeground, setShowForeground] = createSignal(true);
+    const [showForeground, setShowForeground] = createSignal(false);
+
+    /** 这条 run 在默认视图里值不值得出现（判据见上）。 */
+    const worthShowing = (run: RunView): boolean =>
+        showForeground() ||
+        !run.foreground ||
+        run.state === "running" ||
+        run.state === "failed" ||
+        run.hadSurvivingGroup === true;
 
     /** 行：先 run（活体在前），再未登记的野进程；「全部」视角下不分任务 */
     const rows = createMemo<Row[]>(() => {
         const all = scope() === "all";
         const runs = (all ? jobRunsStore.allRuns() : jobRunsStore.runsFor(props.uri))
-            .filter((run) => showForeground() || !run.foreground)
+            .filter(worthShowing)
             .map((run): Row => ({ kind: "run", run }));
         const procs = (all ? jobRunsStore.allUntracked() : jobRunsStore.untrackedFor(props.uri)).map(
             (proc): Row => ({ kind: "proc", proc }),
@@ -138,7 +149,8 @@ export function JobRunsPanel(props: { uri: string }) {
         return a && a.kind === "run" ? a.run : null;
     });
 
-    const running = createMemo(() => jobRunsStore.runsFor(props.uri).filter((r) => r.state === "running").length);
+    // 计数跟着**当前视图**走：否则关掉前台后「N 条 · X 在跑」会和表里对不上（review 抓到）
+    const running = createMemo(() => rows().filter((r) => r.kind === "run" && r.run.state === "running").length);
     const untrackedCount = createMemo(() => jobRunsStore.untrackedFor(props.uri).length);
 
     const loadTail = async (id: string): Promise<void> => {
@@ -194,10 +206,19 @@ export function JobRunsPanel(props: { uri: string }) {
                 if (a.kind !== "run") {
                     setTail(null);
                     setMeta(null);
+                    setDetailErr(null);
                     return;
                 }
+                // 换了一条 run：上一条的错误提示不能挂在新的那条上（review 抓到同一类残留）
+                setDetailErr(null);
                 if (t === "store") void loadMeta(a.run.id);
                 else if (t === "output") void loadTail(a.run.id);
+                else {
+                    // 「概要」页不读文件，但**必须清掉上一条 run 的残留**：
+                    // 否则截断字节数（`tail()?.droppedBytes`）会显示别人那条的（review 抓到）
+                    setTail(null);
+                    setMeta(null);
+                }
             },
         ),
     );
@@ -318,10 +339,10 @@ export function JobRunsPanel(props: { uri: string }) {
                 <button
                     class={`btn btn-xs shrink-0 ${showForeground() ? "btn-active" : "btn-ghost"}`}
                     data-job-foreground-btn="toggle"
-                    data-tip="前台命令（工具调用正在等它的那种）也列出来。关掉=只看后台活"
+                    data-tip="前台命令（工具调用正在等它的那种）也列出来。默认只看长活：运行中 / 失败 / 留下过后台子孙"
                     onClick={() => setShowForeground(!showForeground())}
                 >
-                    {showForeground() ? "含前台" : "只后台"}
+                    {showForeground() ? "含前台" : "只看长活"}
                 </button>
                 <span class="opacity-60" data-job-count>
                     {rows().length} 条
@@ -780,7 +801,7 @@ function RunFields(props: { run: RunView }) {
             </Show>
             <span class="opacity-60">pid</span>
             <span class="font-mono opacity-80">
-                {props.run.pid ?? "—（进程内任务）"}
+                {props.run.pid ?? "—"}
                 <Show when={props.run.pgid}>
                     {(pg) => <span class="opacity-60"> · 进程组 {pg()}</span>}
                 </Show>

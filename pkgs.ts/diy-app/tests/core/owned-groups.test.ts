@@ -1,6 +1,6 @@
 // ##408 刀 10：进程组名册 —— 记不住它，`nohup xxx &` 起的孤儿就认领不回来。
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OwnedGroups } from "../../src/main/services/owned-groups";
@@ -28,12 +28,23 @@ describe("OwnedGroups — 登记与补录", () => {
     expect(g.get(120)).toEqual({ ...base, taskUri: "projects/1/tasks/1", runId: "r-1" });
   });
 
-  it("名册有上限（一次会话起过的组不许无界增长）", () => {
-    const g = new OwnedGroups();
-    for (let i = 1; i <= 600; i++) g.record(i, { ...base, at: i });
+  it("名册有上限：先剪**没有活口**的组，活着的组绝不丢（重启后靠它认孤儿）", () => {
+    // 组 777 是"活的"，其余都是死的（注入判据，不真起进程）
+    const g = new OwnedGroups({ alive: (pgid) => pgid === 777 });
+    g.record(777, { ...base, at: 1 }); // 最老，但活着 ⇒ 不许被剪
+    for (let i = 2; i <= 600; i++) g.record(i, { ...base, at: i });
     expect(g.size()).toBeLessThanOrEqual(512);
-    // 丢的是最老的
-    expect(g.get(1)).toBeUndefined();
+    expect(g.get(777)).toBeTruthy();
+    expect(g.get(2)).toBeUndefined(); // 死组里最老的先走
+  });
+
+  it("剪枝后落盘也是剪过的（先 save 后 delete 会让盘上留幽灵条目）", () => {
+    const file = join(mkdtempSync(join(tmpdir(), "diy-grp-")), "groups.json");
+    const g = new OwnedGroups({ file, alive: () => false });
+    for (let i = 1; i <= 600; i++) g.record(i, { ...base, at: i });
+    const raw = JSON.parse(readFileSync(file, "utf8")) as Array<{ pgid: number }>;
+    expect(raw.length).toBeLessThanOrEqual(512);
+    expect(raw.some((x) => x.pgid === 1)).toBe(false);
   });
 });
 
