@@ -145,8 +145,8 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:68
-      verifiedAt: '2026-10-21'
+      at: ~/AGENTS.md:72
+      verifiedAt: '2026-10-24'
   dev.test#entry:
     value: |-
       ./sha.sh test-unit 快测（不起 Electron）· diy-app 意图测试 pkgs.ts/diy-app/sha.sh test-intent [片段]
