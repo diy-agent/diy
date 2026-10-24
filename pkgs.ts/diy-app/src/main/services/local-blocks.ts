@@ -96,9 +96,44 @@ export function displayText(b: Block | undefined, path = "content"): string {
  */
 const flatten = (v: string): string => (v.length < 256 ? v : Buffer.from(v, "utf8").toString("utf8"));
 
+const isHighSurrogate = (c: number): boolean => c >= 0xd800 && c <= 0xdbff;
+const isLowSurrogate = (c: number): boolean => c >= 0xdc00 && c <= 0xdfff;
+
+/**
+ * 取头 n 个 code unit，**不在代理对中间切**（切了就会得到 lone surrogate —— 再经 `Buffer` 的
+ * UTF-8 往返变成 `U+FFFD`，不可逆地损坏文本：`"🎉".repeat(100).slice(0,7)` 就是现场）。
+ */
+function headSlice(v: string, n: number): string {
+    if (v.length <= n) return v;
+    const cut = isHighSurrogate(v.charCodeAt(n - 1)) && isLowSurrogate(v.charCodeAt(n)) ? n - 1 : n;
+    return v.slice(0, cut);
+}
+
+/** 取尾 n 个 code unit，同样避开代理对（起点落在低代理上就前移一位，宁可少一个字符）。 */
+function tailSlice(v: string, n: number): string {
+    if (v.length <= n) return v;
+    let start = v.length - n;
+    if (isHighSurrogate(v.charCodeAt(start - 1)) && isLowSurrogate(v.charCodeAt(start))) start += 1;
+    return v.slice(start);
+}
+
+/**
+ * 千分位（**不用 `toLocaleString`**：它依赖运行环境的 ICU 与默认 locale，
+ * 同一段文本在 CI / 生产可能不同，测试断言与用户看到的东西都会飘）。
+ */
+function fmtNum(n: number): string {
+    const s = String(Math.trunc(n));
+    let out = "";
+    for (let i = 0; i < s.length; i++) {
+        if (i > 0 && (s.length - i) % 3 === 0) out += ",";
+        out += s[i];
+    }
+    return out;
+}
+
 /** 裁剪标记（读时靠它把「不连续」这件事说清楚，不许静默拼接成看起来连续的文本） */
 const capMark = (omitted: number, total: number): string =>
-    `\n\n……已省略 ${omitted.toLocaleString()} 字符（全文 ${total.toLocaleString()} 字符；界面只保留头尾两段）……\n\n`;
+    `\n\n……已省略 ${fmtNum(omitted)} 字符（全文 ${fmtNum(total)} 字符；界面只保留头尾两段）……\n\n`;
 
 export interface Block {
     id: string;
@@ -319,19 +354,20 @@ export class BlockStore {
         let head: string;
         let tail: string;
         if (mode === "patch") {
-            head = flatten(val.slice(0, cap.head));
-            tail = flatten(val.slice(-cap.tail));
+            head = flatten(headSlice(val, cap.head));
+            tail = flatten(tailSlice(val, cap.tail));
         } else if (r0) {
             // 头「攒够就停」，尾「滚动窗口」——切的对象恒 ≤ 64 KB + 一次 delta（有界），
             // 且切片立刻压平（否则 SlicedString 把父串一起钉住，等于没裁）
-            head = r0.head.length >= cap.head ? r0.head : flatten((r0.head + val).slice(0, cap.head));
-            tail = flatten((r0.tail + val).slice(-cap.tail));
+            head = r0.head.length >= cap.head ? r0.head : flatten(headSlice(r0.head + val, cap.head));
+            tail = flatten(tailSlice(r0.tail + val, cap.tail));
         } else {
             const full = curStr + val; // 首次超顶：这一刻才付一次全文代价（此后再不切大串）
-            head = flatten(full.slice(0, cap.head));
-            tail = flatten(full.slice(-cap.tail));
+            head = flatten(headSlice(full, cap.head));
+            tail = flatten(tailSlice(full, cap.tail));
         }
-        const omitted = total - cap.head - cap.tail;
+        // 计数按**实际留下的长度**算（代理对齐可能少 1 个 code unit，不能让标记的数字对不上）
+        const omitted = Math.max(0, total - head.length - tail.length);
         caps[path] = { total, omitted };
         raws[path] = { head, tail };
         // 显示串**不落库**：`b[path]` 是个惰性 getter（见 `blockGet`），按需拼 head + 标记 + tail

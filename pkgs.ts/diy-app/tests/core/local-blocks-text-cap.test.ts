@@ -109,4 +109,42 @@ describe("Text 硬顶（##93 D）", () => {
         expect(fields.__cap).toBeUndefined();
         expect(String(fields.content)).toContain("已省略");
     });
+
+    // ── surrogate 边界（##8 的 agent review 里指出的真 bug：切在代理对中间 ⇒ U+FFFD 不可逆损坏）
+    it("代理对边界：emoji 单字重复，切点必落在代理对中间也不许出 U+FFFD", () => {
+        const s = store();
+        s.apply({ op: "start", id: "t1", kind: "text" });
+        // 每个 🎉 = 2 个 code unit ⇒ 64K 切点必然落在某个代理对中间
+        s.apply({ op: "delta", id: "t1", fields: { content: "🎉".repeat(200_000) } });
+        const v = textOf(s, "t1");
+        expect(v).not.toContain("\uFFFD");
+        // 头尾各自都是完整的 emoji 序列（不许出现孤立代理）
+        expect(/^[\uD800-\uDBFF][\uDC00-\uDFFF]/.test(v)).toBe(true);
+        expect(/[\uD800-\uDBFF][\uDC00-\uDFFF]$/.test(v)).toBe(true);
+        expect(v).toContain("已省略");
+    });
+
+    it("代理对边界：中文 + emoji 混排，尾切点落在低代理上也不许出 U+FFFD", () => {
+        const s = store();
+        s.apply({ op: "start", id: "t1", kind: "text" });
+        let chunk = "";
+        for (let i = 0; i < 40_000; i++) chunk += i % 7 === 0 ? "🎉😀" : "汉字";
+        s.apply({ op: "delta", id: "t1", fields: { content: chunk } });
+        s.apply({ op: "delta", id: "t1", fields: { content: chunk } });
+        const v = textOf(s, "t1");
+        expect(v).not.toContain("\uFFFD");
+        expect(v).toContain("🎉");
+        // 计数与显示值一致：省略数 = 总数 - 实际留下的字符数
+        const cap = (s.blocks.get("t1")!.__cap as Record<string, { total: number; omitted: number }>).content!;
+        const shown = v.replace(/\n\n……已省略 [\d,]+ 字符（全文 [\d,]+ 字符；界面只保留头尾两段）……\n\n/, "");
+        expect(cap.total).toBe(chunk.length * 2);
+        expect(cap.omitted).toBe(cap.total - shown.length);
+    });
+
+    it("标记里的数字不依赖 ICU：同一段文本在任何 locale 下一致", () => {
+        const s = store();
+        s.apply({ op: "start", id: "t1", kind: "text" });
+        s.apply({ op: "delta", id: "t1", fields: { content: "x".repeat(300_000) } });
+        expect(textOf(s, "t1")).toContain("已省略 168,928 字符（全文 300,000 字符；界面只保留头尾两段）");
+    });
 });
