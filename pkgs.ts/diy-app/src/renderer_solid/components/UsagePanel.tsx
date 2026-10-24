@@ -61,6 +61,14 @@ import { useCompactPanel, CompactPanelContent } from "./CompactSessionPanel";
 import { RowGutter } from "./RowGutter";
 import type { CompactEventRecord, CompactTrigger } from "../../shared/context/compaction";
 import { mapCompactPointsToSteps, stepKey } from "../../shared/context/compact-points";
+import {
+    deliveryBadgeText,
+    deliveryBadgeTitle,
+    mustStagesOf,
+    TRIGGER_LABEL,
+    type DeliveryTriggerCfg,
+} from "../../shared/context/delivery-badge";
+import type { KeepStage } from "../../shared/context/compact-keep";
 
 // ─── 共用小件 ────────────────────────────────────────
 
@@ -808,8 +816,44 @@ export function ContextPartsDrawer(props: { open: boolean; uri: string | null; o
     const compactPoints = createMemo(() => mapCompactPointsToSteps(steps(), compactEvents() ?? []));
     const fmtB = (n?: number) => (n === undefined ? "—" : n >= 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} B`);
     const byText = (by: CompactEventRecord["by"]) => (by === "auto" ? "自动" : by === "ui" ? "界面" : "命令行");
-    const triggerShort = (t: CompactTrigger) =>
-        t === "systemContextChanged" ? "系统上下文变" : t === "cacheExpired" ? "缓存过期" : t === "contextWindowOver" ? "窗口超限" : "手动";
+    const triggerShort = (t: CompactTrigger) => TRIGGER_LABEL[t];
+
+    // ─── ##423：徽章 hover 要讲清**三触发器的配置与本步命中**（旧版只说预算多少）───
+    // 门槛与压缩点位同：抽屉真的开着才查（`autoCompactStatus` 要重建一次 system 容器 + 读 TTL 观测）。
+    const [autoStatus] = createResource(
+        () => (props.open ? props.uri : null),
+        async (u) =>
+            u
+                ? ((await localChatStore.autoCompactStatus(u)) as unknown as {
+                      config?: {
+                          mode: "off" | "notify" | "auto";
+                          triggers: { systemContextChanged: boolean; cacheExpired: boolean; contextWindowOver: number };
+                          history?: { keep?: KeepStage[] };
+                      };
+                      facts?: { ttl?: { prior?: number } };
+                  })
+                : undefined,
+    );
+    const badgeCfg = (): DeliveryTriggerCfg | null => {
+        const st = autoStatus();
+        const c = st?.config;
+        if (!c) return null;
+        const prior = st?.facts?.ttl?.prior;
+        return {
+            mode: c.mode,
+            triggers: c.triggers,
+            ttlMs: typeof prior === "number" && prior > 0 ? prior : null,
+            mustStages: mustStagesOf(c.history?.keep),
+        };
+    };
+    // 会话/本轮的**压缩次数**与**投递次数（= 步数）**（##423 ③：此前哪里都看不到这两个数）
+    const compactList = () => compactEvents() ?? [];
+    const turnCompactCount = (turnId: string) => {
+        let n = 0;
+        for (const [k, list] of compactPoints()) if (k.startsWith(`${turnId}#`)) n += list.length;
+        return n;
+    };
+    const lastTurn = () => groups().at(-1);
 
     /** 一行的三段（cp = 该行记录的构成字节；prompt = 该行输入 token，精确） */
     const rowParts = (cp: { systemBytes: number; toolsBytes: number } | undefined, prompt: number) => {
@@ -936,6 +980,28 @@ export function ContextPartsDrawer(props: { open: boolean; uri: string | null; o
                         }
                     >
                     <div class="min-h-0 flex-1 overflow-auto p-4">
+                        {/* ##423 ③：会话/本轮的两个数（压缩次数 / 投递次数）此前哪里都看不到 */}
+                        <Show when={steps().length > 0}>
+                            <div
+                                class="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-caption opacity-80"
+                                data-delivery-stats
+                            >
+                                <span>
+                                    本会话：<b class="tabular-nums">{steps().length}</b> 次投递（= 步数）·
+                                    <b class="tabular-nums">{groups().length}</b> 轮 · 压缩 <b class="tabular-nums">{compactList().length}</b> 次
+                                    （自动 {compactList().filter((e) => e.by === "auto").length} / 手动{" "}
+                                    {compactList().filter((e) => e.by !== "auto").length}）
+                                </span>
+                                <Show when={lastTurn()}>
+                                    {(g) => (
+                                        <span title="本轮步数 = 本轮投递次数；压缩 = 本轮生效（下一个轮首请求用上新历史）的压缩事件数">
+                                            本轮 {g().turnId}：<b class="tabular-nums">{g().steps.length}</b> 步 · 压缩生效{" "}
+                                            <b class="tabular-nums">{turnCompactCount(g().turnId)}</b> 次
+                                        </span>
+                                    )}
+                                </Show>
+                            </div>
+                        </Show>
                         <Show
                             when={steps().length > 0}
                             fallback={<div class="text-body opacity-60">还没有用量记录（跑一轮后每步写入账本）。</div>}
@@ -985,13 +1051,17 @@ export function ContextPartsDrawer(props: { open: boolean; uri: string | null; o
                                                                                     <span
                                                                                         data-delivery-compact
                                                                                         class="badge badge-ghost badge-xs"
-                                                                                        title={`投递压缩（配置驱动·每轮重建）：预算 ${
-                                                                                            d().budgetBytes === 0
-                                                                                                ? "0（清零）"
-                                                                                                : `${Math.round(d().budgetBytes / 1024)} KB`
-                                                                                        } · 丢 ${d().droppedMessages}/${d().totalMessages} 条 · 保留 ${d().keptRuns} 段`}
+                                                                                        title={deliveryBadgeTitle({
+                                                                                            selection: d(),
+                                                                                            hits: (evs() ?? []).map((e) => ({
+                                                                                                trigger: e.trigger,
+                                                                                                by: e.by,
+                                                                                            })),
+                                                                                            cfg: badgeCfg(),
+                                                                                            stepTokens: v.buckets.total,
+                                                                                        })}
                                                                                     >
-                                                                                        投递{d().droppedMessages > 0 ? "" : "·全量"}
+                                                                                        {deliveryBadgeText(d())}
                                                                                     </span>
                                                                                 )}
                                                                             </Show>
