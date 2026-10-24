@@ -1445,6 +1445,7 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                 // 于是：不建 run 行、不落 out.log、不写 meta、不投通知 —— 结果直接回给工具调用方。
                 // 唯一保留的是**组号归属**（`ownedGroups`）：它不是 job，是"进程总管"认领孤儿的
                 // 依据（命令里自己 `nohup xxx &` 的进程，ppid 会变成 launchd，只有组号还记得是谁起的）。
+                let fgPid: number | undefined;
                 const run = await runBash(
                     command,
                     cwd,
@@ -1452,11 +1453,15 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                     execOpts?.abortSignal,
                     {
                         onSpawn: (pid) => {
+                            fgPid = pid;
                             ownedGroups.record(pid, { at: Date.now(), command, cwd, taskUri });
                         },
                     },
                     eff.args.timeout as number,
                 );
+                // 前台命令跑完：组里没活口就把组记录撤掉（留下孤儿的组要留 —— 那是认领线索）。
+                // 判据在 `owned-groups::release`，这里只管"命令结束"这个时机。
+                if (fgPid !== undefined) ownedGroups.release(fgPid);
                 appendAudit(home, {
                     phase: "bash-end",
                     taskUri,

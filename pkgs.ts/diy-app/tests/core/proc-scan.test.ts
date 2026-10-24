@@ -121,6 +121,19 @@ describe("selectOwnedProcs — 认领判据（组号 ∪ 子孙）", () => {
     expect(procs[0]!.isRunRoot).toBe(false);
   });
 
+  it("前台命令**本体**不列（组根还活着 ⇒ 当前这轮 llm 自己的事，用户 2026-10-24 口径）", () => {
+    // 实测症状：agent 每跑一条 `rg`/`tsc`，面板就闪一条「野进程」，命令一结束又没了
+    const fg = new Map<number, GroupOwner>([[500, { at: 1000, command: "bash -c rg x", cwd: "/tmp" }]]);
+    const all = rows(line(500, 100, 500, "/bin/bash -c rg x"), line(501, 500, 500, "rg x"));
+    expect(selectOwnedProcs(all, { selfPid: 100, groups: fg, runPids: new Map() })).toEqual([]);
+  });
+
+  it("组根退了 ⇒ 同一组剩下的孤儿立刻列出来（`nohup … &` 那类）", () => {
+    const fg = new Map<number, GroupOwner>([[500, { at: 1000, command: "nohup sleep 600 &", cwd: "/tmp" }]]);
+    const all = rows(line(501, 1, 500, "sleep 600"));
+    expect(selectOwnedProcs(all, { selfPid: 100, groups: fg, runPids: new Map() }).map((p) => p.pid)).toEqual([501]);
+  });
+
   it("输出按 pid 升序（表格不会每刷一次就跳行）", () => {
     const all = rows(line(130, 1, 120, "b"), line(121, 1, 120, "a"), line(125, 1, 120, "c"));
     expect(selectOwnedProcs(all, { selfPid: 100, groups, runPids: new Map() }).map((p) => p.pid)).toEqual([121, 125, 130]);

@@ -14,6 +14,12 @@
 //
 // 于是「归我们管」= `pgid ∈ 我们发过的组` ∪ `是 app 的子孙`。前者抓孤儿，后者抓没 detached 的漏网。
 //
+// **但「归我们管」≠「该列出来」**（用户 2026-10-24 定口径「前台进程不进观察名单，不属于 job，
+// 就是当前 llm 自己的事情，不管、不列出、不记录」）：前台命令**组根还活着**时整组跳过 ——
+// 否则 agent 每跑一条 `rg`/`git`/`tsc`，面板就闪一条「野进程」，命令一结束又消失（实测症状）。
+// 判据 = 组根（`pgid` 那条 pid，detached ⇒ 根 pid == 组号）仍在 `ps` 快照里；根一退，
+// 组里剩下的就是 `nohup … &` 的孤儿，才该列出来（那是「谁起的」的唯一线索）。
+//
 // 本文件只管**判据与解析**（能拿 `ps` 文本夹具单测）；真跑 `ps` 在
 // `main/services/process-scan.ts`，登记组 id 在 `main/services/owned-groups.ts`。
 
@@ -152,6 +158,10 @@ export function selectOwnedProcs(rows: readonly PsRow[], opts: SelectOptions): O
         // 父子链已经断了，**只剩 pgid 这一条线**能归到「谁起的」（`nohup … &` 就是这种）。
         const runId =
             opts.runPids.get(row.pid) ?? opts.runPids.get(row.pgid) ?? runIdOfAncestors(row) ?? groupOwner?.runId ?? null;
+        // 前台命令本体（组名册里没有 runId + 组根还活着）⇒ 不列：那是当前这一轮 llm 自己的事。
+        // 只对**有组记录**的行判（`isDescendantOfSelf` 抓到的漏网没有组记录，仍要显示 ——
+        // 否则将来某条 spawn 忘了 detached 时，进程会彻底从面板消失）。
+        if (runId === null && groupOwner !== undefined && byPid.has(row.pgid)) continue;
         out.push({ ...row, runId, isRunRoot: opts.runPids.has(row.pid) });
     }
     return out.sort((a, b) => a.pid - b.pid);

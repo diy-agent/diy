@@ -28,6 +28,16 @@ describe("OwnedGroups — 登记与补录", () => {
     expect(g.get(120)).toEqual({ ...base, taskUri: "projects/1/tasks/1", runId: "r-1" });
   });
 
+  it("release：组里没活口就撤记录；有活口必须留（那就是孤儿认领线索）", () => {
+    const g = new OwnedGroups({ alive: (pgid) => pgid === 777 });
+    g.record(777, base);
+    g.record(778, base);
+    g.release(778);
+    expect(g.get(778)).toBeUndefined();
+    g.release(777);
+    expect(g.get(777)).toBeTruthy();
+  });
+
   it("名册有上限：先剪**没有活口**的组，活着的组绝不丢（重启后靠它认孤儿）", () => {
     // 组 777 是"活的"，其余都是死的（注入判据，不真起进程）
     const g = new OwnedGroups({ alive: (pgid) => pgid === 777 });

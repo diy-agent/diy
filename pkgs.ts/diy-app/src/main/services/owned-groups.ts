@@ -190,6 +190,22 @@ export class OwnedGroups {
         }
     }
 
+    /**
+     * 前台命令跑完后**立刻撤掉**它的组记录 —— 除非组里还有活口。
+     *
+     * 为什么要有：用户口径「前台不记录」。这条记录存在的唯一理由是「它可能在跑，
+     * 跑完/退出了要能认出留下的孤儿」。命令结束且一个进程都没剩 ⇒ 记录就该消失，
+     * 名册不再被几千条 `ls` 撑着（也避免 512 上限被无用条目占满）。
+     * 组里还有活口 = 命令留下了 `nohup … &` 的子孙 ⇒ **必须留**（那是唯一的认领线索）。
+     */
+    release(pgid: number): void {
+        if (!Number.isInteger(pgid) || pgid <= 0) return;
+        if (!this.map.has(pgid)) return;
+        if (this.isAlive(pgid)) return;
+        this.map.delete(pgid);
+        this.save();
+    }
+
     get(pgid: number): GroupOwner | undefined {
         return this.map.get(pgid);
     }
