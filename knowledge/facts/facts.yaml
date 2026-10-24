@@ -175,6 +175,22 @@ facts:
       source: code
       at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:22
       verifiedAt: '2026-10-22'
+  facts.rule#lazy-create:
+    value: |-
+      **库没有「新建」动作**：不存在 = 空库（读），第一次写入时由写盘原语（`atomic-write.ts` 的 `mkdirSync(dirname, {recursive:true})`）自己建目录（写）。读入口一律不建库、也不因为没库报错。
+
+      判据按**路径来源**分护栏：
+      - `--in task:<uri>` / `global` ⇒ 路径是推导的，不可能打错 ⇒ 懒建，无条件
+      - `--dir <path>` ⇒ 手敲的 ⇒ 照样懒建，但回显一行 `已新建库：<path>`（不阻止，也不静默）
+
+      **现状：三处保护尚未删，此条是判据不是现状**（需求单在 ##404）。
+
+      反例（现行实现，已定要删）：`loadRepo` 在 `allowMissing` 时 `mkdirSync` ⇒ `submit --dry-run` 会建库，把「库建没建」这个状态改了，而 `--dry-run` 自称「磁盘一个字都不动」。
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-24'
   facts.rule#live:
     value: |-
       冲突 / 冗余只在 `review=accepted && lifecycle=active` 之间判；`superseded` 留档不算问题
