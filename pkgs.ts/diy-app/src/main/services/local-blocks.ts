@@ -44,6 +44,97 @@ export type Op =
     | { op: "stop"; id: string };
 
 /** 运行时块：kind 声明字段的扁平容器 + 结构位 */
+/**
+ * Text 字段**硬顶**（##93 D）：一个块的内容超过 `head + tail` 时，store 只留头尾，
+ * 中间换成一行显式标注 + 计数（`block.__cap[字段] = { total, omitted }`）。
+ *
+ * 为什么要有：##266 那轮会话单个 `text` 块 328 万字符 —— 它一个人就顶掉了整个渲染进程的内存预算，
+ * 而界面**同时**只看得到其中几十行。窗口化（##93 A）只解决 CPU，内存得靠这里。
+ *
+ * 为什么默认关：`main` 侧的 store 是**投递真源**（`blocksToMessages` / `projectAll` 要靠全文
+ * 重建 messages），裁了就是丢上下文。只有渲染端那份**纯显示**的 fold 可以裁。
+ */
+export interface TextCap {
+    /** 头部保留字符数 */
+    head: number;
+    /** 尾部保留字符数 */
+    tail: number;
+}
+
+/** 被裁字段的计数（挂在 block 的 `__cap` 上，随 attrs 一起下发到 UI） */
+export interface TextCapInfo {
+    /** 该字段完整字符数（含被省略部分） */
+    total: number;
+    /** 被省略的字符数 */
+    omitted: number;
+}
+
+/** 渲染端硬顶（UI 只用它显示；全文按需另取，见 ##93 D 的 range 读） */
+export const RENDER_TEXT_CAP: TextCap = { head: 64 * 1024, tail: 64 * 1024 };
+
+/**
+ * 读一个 Text 字段的**显示值**。被硬顶裁过时拼 `head + 标记 + tail`（每次读重拼 128 KB，瞬时垃圾），
+ * 未裁时就是字段原值。
+ *
+ * 为什么不把拼好的串存进块里：那样 store 里会同时留着 head/tail 与显示串两份（实测 456 KB/块），
+ * 而判据是「常驻 < 200 KB」。惰性拼装把常驻压到 head+tail 一份。
+ */
+export function displayText(b: Block | undefined, path = "content"): string {
+    if (!b) return "";
+    const raw = (b.__raw as Record<string, { head: string; tail: string }> | undefined)?.[path];
+    if (!raw) return typeof (b as Record<string, unknown>)[path] === "string" ? ((b as Record<string, unknown>)[path] as string) : "";
+    const cap = (b.__cap as Record<string, TextCapInfo> | undefined)?.[path];
+    return raw.head + (cap ? capMark(cap.omitted, cap.total) : "") + raw.tail;
+}
+
+/**
+ * 把字符串**压平成独立副本**（切断 V8 SlicedString 对父串的引用）。
+ *
+ * 为什么必须：`slice(k)` 返回的是 SlicedString，它引用**整条父串** —— 对 3.28 M 的串取尾巴，
+ * 等于把整条串继续钉在堆上（实测硬顶后仍有 202 KB/块，压平后 ~130 KB/块）。
+ * 只在 head/tail 两段上做（各 ≤ 64 KB），每次 delta 两次 64 KB 拷贝 ≈ 0.04 ms，与每帧预算相比可忽略。
+ */
+const flatten = (v: string): string => (v.length < 256 ? v : Buffer.from(v, "utf8").toString("utf8"));
+
+const isHighSurrogate = (c: number): boolean => c >= 0xd800 && c <= 0xdbff;
+const isLowSurrogate = (c: number): boolean => c >= 0xdc00 && c <= 0xdfff;
+
+/**
+ * 取头 n 个 code unit，**不在代理对中间切**（切了就会得到 lone surrogate —— 再经 `Buffer` 的
+ * UTF-8 往返变成 `U+FFFD`，不可逆地损坏文本：`"🎉".repeat(100).slice(0,7)` 就是现场）。
+ */
+function headSlice(v: string, n: number): string {
+    if (v.length <= n) return v;
+    const cut = isHighSurrogate(v.charCodeAt(n - 1)) && isLowSurrogate(v.charCodeAt(n)) ? n - 1 : n;
+    return v.slice(0, cut);
+}
+
+/** 取尾 n 个 code unit，同样避开代理对（起点落在低代理上就前移一位，宁可少一个字符）。 */
+function tailSlice(v: string, n: number): string {
+    if (v.length <= n) return v;
+    let start = v.length - n;
+    if (isHighSurrogate(v.charCodeAt(start - 1)) && isLowSurrogate(v.charCodeAt(start))) start += 1;
+    return v.slice(start);
+}
+
+/**
+ * 千分位（**不用 `toLocaleString`**：它依赖运行环境的 ICU 与默认 locale，
+ * 同一段文本在 CI / 生产可能不同，测试断言与用户看到的东西都会飘）。
+ */
+function fmtNum(n: number): string {
+    const s = String(Math.trunc(n));
+    let out = "";
+    for (let i = 0; i < s.length; i++) {
+        if (i > 0 && (s.length - i) % 3 === 0) out += ",";
+        out += s[i];
+    }
+    return out;
+}
+
+/** 裁剪标记（读时靠它把「不连续」这件事说清楚，不许静默拼接成看起来连续的文本） */
+const capMark = (omitted: number, total: number): string =>
+    `\n\n……已省略 ${fmtNum(omitted)} 字符（全文 ${fmtNum(total)} 字符；界面只保留头尾两段）……\n\n`;
+
 export interface Block {
     id: string;
     kind: BlockKind;
@@ -224,6 +315,64 @@ export class BlockStore {
     private openStack: string[] = [];
     readonly issues: FoldIssue[] = [];
     private seq = 0;
+    /** Text 硬顶（缺省 = 不裁；只有渲染端那份纯显示的 fold 传） */
+    private readonly textCap?: TextCap;
+
+    constructor(opts: { textCap?: TextCap } = {}) {
+        this.textCap = opts.textCap;
+    }
+
+    /**
+     * Text 字段落值（delta 追加 / patch 覆盖共用出口）—— 超硬顶时只留头尾。
+     *
+     * **头尾各自增量维护**（`__raw[path] = { head, tail }`），不在大字符串上 `slice`：
+     * V8 的 `slice` 返回 **SlicedString**，它**引用整条父串** —— `big.slice(0, 64K)` 看上去只留
+     * 6.4 万字符，实际把 3.28 M 的父串一起钉在堆上（实测 257 KB/块 vs 128 KB/块的目标）。
+     * 所以：头部「攒够就停」（只 append 不切），尾部「滚动窗口」（切的对象永远 ≤ tail + 一次 delta，
+     * 有界）。导出的显示串 = head + 标记 + tail 由 `buildNode` 拼（保 identity 缓存，不每帧拼）。
+     *
+     * delta 与 patch 的差别只在 `total` 怎么来：delta 是「之前的累计 + 新片段」（裁掉的中段已不在
+     * 内存里，长度只能靠计数），patch 是整体覆盖，`total` = 新值长度。
+     */
+    private setText(b: Block, path: string, val: string, mode: "delta" | "patch"): void {
+        const cap = this.textCap;
+        const caps = (b.__cap ??= {}) as Record<string, TextCapInfo>;
+        const raws = (b.__raw ??= {}) as Record<string, { head: string; tail: string }>;
+        const r0 = raws[path];
+        const prev = caps[path];
+        // 已裁过就直接读真身（**不要**读 `b[path]`：那是惰性拼装串，读一次就是一次 128 KB 重建）
+        const curStr = r0 ? "" : typeof (b as Record<string, unknown>)[path] === "string" ? (b as Record<string, unknown>)[path] as string : "";
+        const total = mode === "delta" ? (prev?.total ?? curStr.length) + val.length : val.length;
+        if (!cap || total <= cap.head + cap.tail) {
+            // 不超顶：仍是 cons string（`cur += val` 摊销 O(1)），并清掉旧的裁剪计数
+            delete caps[path];
+            delete raws[path];
+            const base = r0 ? r0.head + r0.tail : curStr;
+            (b as Record<string, unknown>)[path] = mode === "delta" ? base + val : val;
+            return;
+        }
+        let head: string;
+        let tail: string;
+        if (mode === "patch") {
+            head = flatten(headSlice(val, cap.head));
+            tail = flatten(tailSlice(val, cap.tail));
+        } else if (r0) {
+            // 头「攒够就停」，尾「滚动窗口」——切的对象恒 ≤ 64 KB + 一次 delta（有界），
+            // 且切片立刻压平（否则 SlicedString 把父串一起钉住，等于没裁）
+            head = r0.head.length >= cap.head ? r0.head : flatten(headSlice(r0.head + val, cap.head));
+            tail = flatten(tailSlice(r0.tail + val, cap.tail));
+        } else {
+            const full = curStr + val; // 首次超顶：这一刻才付一次全文代价（此后再不切大串）
+            head = flatten(headSlice(full, cap.head));
+            tail = flatten(tailSlice(full, cap.tail));
+        }
+        // 计数按**实际留下的长度**算（代理对齐可能少 1 个 code unit，不能让标记的数字对不上）
+        const omitted = Math.max(0, total - head.length - tail.length);
+        caps[path] = { total, omitted };
+        raws[path] = { head, tail };
+        // 显示串**不落库**：`b[path]` 是个惰性 getter（见 `blockGet`），按需拼 head + 标记 + tail
+        delete (b as Record<string, unknown>)[path];
+    }
 
     /** 标记块被触碰（所有成功落子的 op 共用出口） */
     private touch(id: string): void {
@@ -303,7 +452,10 @@ export class BlockStore {
                         const cur = path.includes(".") ? getPath(b, path) : (b as Record<string, unknown>)[path];
                         if (jsonEqual(cur, val)) continue;
                         if (path.includes(".")) setPath(b, path, val);
-                        else (b as Record<string, unknown>)[path] = val;
+                        else if (this.textCap && decl === "Text" && typeof val === "string" && !jsonEqual(cur, val)) {
+                            // patch 是整体覆盖 ⇒ 硬顶按「新值的完整长度」重算（不是叠在旧的累计上）
+                            this.setText(b, path, val, "patch");
+                        } else (b as Record<string, unknown>)[path] = val;
                         changed = true;
                         continue;
                     }
@@ -329,11 +481,19 @@ export class BlockStore {
                         : (b as Record<string, unknown>)[path];
                     if (decl === "Text") {
                         const next = `${typeof cur === "string" ? cur : ""}${typeof val === "string" ? val : JSON.stringify(val)}`;
+                        // 点分路径不参与硬顶（Text 字段都是顶层；带点的走 setPath 保持原语义）
                         if (path.includes(".")) setPath(b, path, next);
+                        else if (this.textCap) this.setText(b, path, typeof val === "string" ? val : JSON.stringify(val), "delta");
                         else (b as Record<string, unknown>)[path] = next;
                     } else {
-                        // List：值本身是数组则逐元素追加，否则作为单元素 push
-                        const arr = Array.isArray(cur) ? [...cur] : [];
+                        // List：值本身是数组则逐元素追加，否则作为单元素 push。
+                        // ⚠ **就地 push，不 `[...cur]`**（##93 E）：List 字段只会被**追加**
+                        // （SCHEMA 里仅 `plan.items` 是 List），每次追加都复制整组 = O(n²)；
+                        // 一条 1.16 M op 的真实会话里 List delta 为 0，但形状上一旦有就是平方。
+                        // 值语义为什么不破：追加只增不改已有元素，且每次 apply 都 `touch()` ⇒
+                        // `toForest` 会重建该节点；已导出的旧节点与 store 共享数组，看到的是
+                        // **更新的同一条数据**（跨进程到 renderer 时是 structured clone，天然快照）。
+                        const arr = Array.isArray(cur) ? cur : [];
                         if (Array.isArray(val)) arr.push(...(val as JSONVal[]));
                         else arr.push(val);
                         (b as Record<string, unknown>)[path] = arr;
@@ -389,8 +549,15 @@ export function compactOps(store: BlockStore): Op[] {
         const fields: Record<string, JSONVal> = {};
         for (const [k, v] of Object.entries(b)) {
             if (k === "id" || k === "kind" || k === "parent" || k === "children" || k === "stopped" || k === "touched") continue;
+            // `__` 前缀 = fold 侧的本地记账（如 `__cap` 的裁剪计数，##93 D）：不是块数据，不进折叠流
+            if (k.startsWith("__")) continue;
             if (v === undefined) continue;
             fields[k] = v as JSONVal;
+        }
+        // 被硬顶裁过的 Text 字段不在 `b` 上（只在 `__raw` 里），折叠时按**显示值**写出：
+        // 折叠流是「终值即等价」的，裁过的 store 本来就只剩头尾（渲染端才裁，而它不做折叠）。
+        for (const p of Object.keys((b.__raw as Record<string, unknown> | undefined) ?? {})) {
+            fields[p] = displayText(b, p);
         }
         if (Object.keys(fields).length > 0) out.push({ op: "patch", id: b.id, fields });
         for (const c of b.children) emit(c);
@@ -506,6 +673,17 @@ function buildNode(store: BlockStore, rootId: string, cache: Map<string, TreeCac
     }
     const { id, kind, children: _kids, stopped, touched, ...attrs } = b;
     delete (attrs as Record<string, unknown>).parent; // parent 由 children 树表达，不进 attrs
+    // `__raw` 是硬顶的内部记账（头/尾两段的真身），不进 attrs；`__cap` 的计数要进（UI 用）
+    delete (attrs as Record<string, unknown>).__raw;
+    // 被硬顶裁过的字段：attrs 上挂**惰性 getter**（每次读拼一次，不常驻第二份 128 KB 串）
+    for (const p of Object.keys((b.__raw as Record<string, unknown> | undefined) ?? {})) {
+        delete (attrs as Record<string, unknown>)[p];
+        Object.defineProperty(attrs, p, {
+            enumerable: true,
+            configurable: true,
+            get: () => displayText(b, p),
+        });
+    }
     const node: BlockNode = {
         tag: kind,
         id,

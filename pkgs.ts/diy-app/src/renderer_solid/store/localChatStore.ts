@@ -25,7 +25,15 @@ import { diyService } from "../lib/rpc";
 import { notificationStore } from "./notificationStore";
 import { opsLiveMeta } from "../lib/notice-ops";
 import { chatNotice, DETAIL_CANCEL, DETAIL_CLEAR, DETAIL_HISTORY, DETAIL_STEER } from "../lib/notice-chat";
-import { BlockStore, applyOpsSafely, toForest, type BlockNode, type Op } from "../../main/services/local-blocks";
+import {
+    BlockStore,
+    RENDER_TEXT_CAP,
+    applyOpsSafely,
+    displayText,
+    toForest,
+    type BlockNode,
+    type Op,
+} from "../../main/services/local-blocks";
 import type { OpsFrame } from "../../shared/ops-frame";
 // 阅读位置锚点的形状（纯函数模块，零 DOM）：与滚动决策同源，故不在此另定一份
 import type { ChatAnchor } from "../lib/chat-scroll";
@@ -289,7 +297,7 @@ function tailSegment(st: TaskState): Segment | undefined {
 function tailForWrite(st: TaskState): Segment {
     let seg = tailSegment(st);
     if (!seg) {
-        seg = { store: new BlockStore(), ids: [], cursor: "" };
+        seg = { store: new BlockStore({ textCap: RENDER_TEXT_CAP }), ids: [], cursor: "" };
         st.segments.push(seg);
     }
     return seg;
@@ -327,7 +335,7 @@ function mergeWindow(st: TaskState, ops: Op[], cursor: string, hasMore: boolean,
         // ⚠️ 不动 hasMore：那是「**最老**段之前还有没有轮」，单段时才等于本窗口的 hasMore
         return;
     }
-    const seg: Segment = { store: new BlockStore(), ids: [], cursor };
+    const seg: Segment = { store: new BlockStore({ textCap: RENDER_TEXT_CAP }), ids: [], cursor };
     applyInto(seg, ops);
     seg.ids = ids;
     st.segments = [seg];
@@ -1525,6 +1533,64 @@ async function clear(taskUri: string) {
  * 时间里用户还在上滚，拿旧基准算出的**绝对**滚动位置会把用户这段滚动吞掉（##293 现象二：
  * 滚到顶继续滚，补段后又被拽回触发那一刻）。改由调用方在这里量、在插入后按**增量**补。
  */
+/**
+ * **按需取某块的全文**（##93 D 的「按需读」，口径 = 复用 `historyOlder` / `historyWindow` 重折一份，
+ * 见任务 body 的「待决策②」；不新增 main 接口）。
+ *
+ * 为什么需要：渲染端的 store 对 Text 字段设了硬顶（头 64 K + 尾 64 K，见 `RENDER_TEXT_CAP`），
+ * 大字块的中间那段**根本不在内存里**。用户明确点「载入全文」时，才把该块所在的段重新取回来、
+ * 用**无硬顶**的 store 重折一遍，抠出该块的完整字段值，**随即丢弃那份 store**（瞬时 ~3 MB，一次性）。
+ *
+ * 为什么按「段」取而不是按「字节区间」取：没���「块 → 文件偏移」的索引，range 读仍要扫全文件
+ * （266 那份 142 MB ≈ 1 s），得不偿失；段的边界恰好是轮首，重折天然干净。
+ *
+ * 分段取法：
+ *   · 不是末段 → `historyOlder({cursor: 下一段起点})` = `[下一段起点 - budget, 下一段起点)`，
+ *     正好覆盖本段（轮首对齐）；
+ *   · 末段 → `historyWindow({cursor: 本段起点})` = `[本段起点, 文件尾)`，即尾部窗口本身。
+ *
+ * 返回 `null` = 查不到（块已被新帧替换 / 该段读不出来）—— 调用方如实提示，绝不静默给截断值。
+ */
+export async function loadFullBlockFields(blockId: string): Promise<Record<string, string> | null> {
+    for (const [taskUri, st] of states) {
+        const idx = st.segments.findIndex((sg) => sg.store.blocks.has(blockId));
+        if (idx < 0) continue;
+        const seg = st.segments[idx];
+        const next = st.segments[idx + 1];
+        let ops: Op[] | null = null;
+        try {
+            if (next) {
+                const r = await diyService.diy.agent.local.historyOlder({
+                    taskUri,
+                    cursor: next.cursor,
+                    budgetBytes: HISTORY_WINDOW_BYTES,
+                });
+                if (!r.stale) ops = r.ops as Op[];
+            }
+            if (!ops) {
+                const r = await diyService.diy.agent.local.historyWindow({
+                    taskUri,
+                    cursor: seg.cursor || undefined,
+                    budgetBytes: HISTORY_WINDOW_BYTES,
+                });
+                ops = r.ops as Op[];
+            }
+        } catch (e) {
+            console.warn(`[localChat] 载入全文失败 ${taskUri}/${blockId}:`, e);
+            return null;
+        }
+        // 无硬顶的临时 store：要的就是中间那段
+        const tmp = new BlockStore();
+        applyOpsSafely(tmp, ops);
+        const b = tmp.blocks.get(blockId);
+        if (!b) return null;
+        const out: Record<string, string> = {};
+        for (const p of Object.keys((b.__cap as Record<string, unknown> | undefined) ?? {})) out[p] = displayText(b, p);
+        return Object.keys(out).length > 0 ? out : { content: displayText(b, "content") };
+    }
+    return null;
+}
+
 async function loadOlder(taskUri: string, beforeApply?: () => void): Promise<boolean> {
     const st = states.get(taskUri);
     if (!st || !st.loaded || !st.hasMore() || st.olderBusy()) return false;
@@ -1563,7 +1629,7 @@ async function loadOlder(taskUri: string, beforeApply?: () => void): Promise<boo
             flushRefresh(st);
             return false; // 重建不是前插 ⇒ 不做位置补偿（视口本就该挪到新内容上）
         }
-        const seg: Segment = { store: new BlockStore(), ids: [], cursor: r.cursor };
+        const seg: Segment = { store: new BlockStore({ textCap: RENDER_TEXT_CAP }), ids: [], cursor: r.cursor };
         applyInto(seg, ops);
         seg.ids = ids;
         st.segments.unshift(seg); // 前插：**已有段的块对象引用一个都不动** → 折叠态/渲染不重来
@@ -1608,7 +1674,7 @@ async function jumpTo(taskUri: string, at: number): Promise<boolean> {
     try {
         const r = await diyService.diy.agent.local.historyAt({ taskUri, at, budgetBytes: HISTORY_WINDOW_BYTES });
         if (r.stale) return false;
-        const seg: Segment = { store: new BlockStore(), ids: [], cursor: r.cursor };
+        const seg: Segment = { store: new BlockStore({ textCap: RENDER_TEXT_CAP }), ids: [], cursor: r.cursor };
         applyInto(seg, r.ops as Op[]);
         seg.ids = turnIdsOf(r.ops as Op[]);
         st.segments = [seg];

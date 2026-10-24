@@ -42,7 +42,7 @@ import {
     useContext,
 } from "solid-js";
 import type { JSX } from "solid-js";
-import { localChatStore } from "../store/localChatStore";
+import { loadFullBlockFields, localChatStore } from "../store/localChatStore";
 import { personaStore } from "../store/personaStore";
 import { PersonaDrawer } from "./PersonaDrawer";
 import {
@@ -63,7 +63,7 @@ import { TrafficDrawer } from "./TrafficDrawer";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { OpsDownBar } from "./OpsDownBar";
 import { copyFailMeta, copyOkMeta } from "../lib/notice-copy";
-import { chatNotice, DETAIL_CHAT_FIND } from "../lib/notice-chat";
+import { chatNotice, DETAIL_CHAT_FIND, DETAIL_HISTORY } from "../lib/notice-chat";
 import { draftStore } from "../store/draftStore";
 import { trafficStore } from "../store/trafficStore";
 import { notificationStore } from "../store/notificationStore";
@@ -119,13 +119,14 @@ import type { DragDropProviderProps } from "@dnd-kit/solid";
 import { IconExpand, IconCompress, IconTrash, IconGrip, IconClock, IconBolt, IconChevron, IconCode } from "./icons";
 import { RowGutter } from "./RowGutter";
 import { VIEW_BAR_H, chatInputMaxHeight } from "../lib/layout-metrics";
+// 文本取行（窗口化，##93）：摘要 / 预览 / 折叠都只吃需要的那一小段，且不每帧 split 全文
+import { clampLines, countLines, firstLine, previewLines } from "../lib/chat-text";
 import type { BlockNode } from "../../main/services/local-blocks";
 import { INTERRUPTED_TOOL_NOTICE } from "../../main/services/local-blocks";
 // 折叠 / 展开级别语义（纯函数，可单测）：显示什么、按什么序、开到第几层 —— 本文件只消费结果
 import {
     DEFAULT_TURN_LEVEL,
     TURN_LEVEL_MAX,
-    clampLines,
     collapsedRows,
     composeTail,
     cycleTurnLevel,
@@ -212,42 +213,11 @@ function DisclosureHead(props: {
     );
 }
 
-/**
- * 单行摘要：**第一行非空内容**（前导空行不算）。
- *
- * 为什么不是 `split("\n")[0]`：真实数据里思考正文常以换行开头（模型的 reasoning 前导 `\n`），
- * 取第一行会得空串 → 标题退回"思考"两个字，整页看不出这段在琢磨什么
- * （用户 2026-10-12 反馈："v4 的思考 bar 会显示思考的第一行"）。空行跳过，再截 90 字。
- */
-const firstLine = (s: string) => {
-    for (const line of s.split("\n")) {
-        const t = line.trim();
-        if (t) return t.slice(0, 90);
-    }
-    return "";
-};
-
+// 文本摘要 / 预览 / 折叠的取行逻辑在 `lib/chat-text.ts`（窗口化，##93）：本文件只消费结果。
 /** 过程历史里正文行的折叠阈值（草图 v4 的 `.txt.clamp` 同款：超过 3 行才给折叠能力）。
  *  缺省**展开** —— 折叠是用户主动点的结果，级别不该替他把历史里的正文缩起来。 */
 const HISTORY_TEXT_FOLD_LINES = 3;
 const str = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : String(v));
-
-/** 输出截断：head + tail，中间计省略行数（行内展开用；超预算才挂全屏按钮） */
-export interface Preview {
-    text: string;
-    omitted: number;
-    total: number;
-}
-export function previewLines(text: string, head = 20, tail = 30): Preview {
-    const lines = text.split("\n");
-    if (lines.length <= head + tail) return { text, omitted: 0, total: lines.length };
-    const omitted = lines.length - head - tail;
-    return {
-        text: [...lines.slice(0, head), `… 省略 ${omitted} 行 …`, ...lines.slice(-tail)].join("\n"),
-        omitted,
-        total: lines.length,
-    };
-}
 
 // ─── 滚动跟随（stick-to-bottom） ──────────────────────────────
 //
@@ -650,8 +620,81 @@ function statusMark(node: BlockNode) {
     );
 }
 
+/**
+ * 「已载入全文」的块（##93 D 的按需读）：**至多存一个** —— 用户点开哪块就只留哪块，
+ * 否则这个缓存本身又成了新的无上限内存（正是本任务要治的病）。
+ */
+const [fullBlock, setFullBlock] = createSignal<{ id: string; fields: Record<string, string> } | null>(null);
+
+/** 该块某字段的全文（没点过「载入全文」时 undefined ⇒ 调用方退回硬顶后的显示值） */
+function fullTextOf(id: string, field: string): string | undefined {
+    const f = fullBlock();
+    return f && f.id === id ? f.fields[field] : undefined;
+}
+
+/** 千分位（与 main 侧 `fmtNum` 同一取向：不用 `toLocaleString`，免得随环境飘） */
+function fmtCount(n: number): string {
+    const t = String(Math.trunc(n));
+    let out = "";
+    for (let i = 0; i < t.length; i++) {
+        if (i > 0 && (t.length - i) % 3 === 0) out += ",";
+        out += t[i];
+    }
+    return out;
+}
+
+/**
+ * 被 Text 硬顶裁过的块：**明说**「现在看到的是头尾两段」+ 给一个「载入全文」出口。
+ *
+ * 为什么要这一条：裁剪本身是静默的（值里只有一行 `……已省略 N 字符……`），
+ * 若不给出口，用户会以为那块的中间内容**丢了**；而按需读（重折一份无硬顶的段）要用户
+ * 明确点一下才付代价（4 MB 段重折 ≈ 180 ms，瞬时 ~3 MB）。见任务 body「按需读走 ②」。
+ */
+function CapNotice(props: { node: BlockNode; field: "content" | "output" }) {
+    const cap = () => (props.node.attrs.__cap as Record<string, { total: number; omitted: number }> | undefined)?.[props.field];
+    const [busy, setBusy] = createSignal(false);
+    const load = async () => {
+        if (busy()) return;
+        setBusy(true);
+        try {
+            const fields = await loadFullBlockFields(props.node.id);
+            if (fields) setFullBlock({ id: props.node.id, fields });
+            else
+                notificationStore.addToast(
+                    "info",
+                    "这块的完整内容已不在会话日志里",
+                    chatNotice(
+                        "载入全文 · loadFullBlockFields（##93 D）",
+                        `该块 ${props.node.id} 所在的段从盘上重取回来重折后已不含这个 id（日志被改写 / 块已被新帧替换）→ 不拿裁过的值冒充全文`,
+                        DETAIL_HISTORY,
+                    ),
+                );
+        } finally {
+            setBusy(false);
+        }
+    };
+    return (
+        <Show when={cap()}>
+            <div class="flex flex-wrap items-center gap-2 py-1 font-sans text-xs text-base-content/60" data-cap-notice>
+                <span>
+                    界面只保留了头尾两段（共 {fmtCount(cap()!.total)} 字符，已省略 {fmtCount(cap()!.omitted)}）
+                </span>
+                <button class="btn btn-ghost btn-xs min-h-0 px-1" disabled={busy()} onClick={load}>
+                    {busy() ? "载入中…" : "载入全文"}
+                </button>
+            </div>
+        </Show>
+    );
+}
+
 function ThinkBody(props: { node: BlockNode }) {
-    return <div class="whitespace-pre-wrap leading-relaxed">{str(props.node.attrs.content)}</div>;
+    const text = () => fullTextOf(props.node.id, "content") ?? str(props.node.attrs.content);
+    return (
+        <div class="whitespace-pre-wrap leading-relaxed">
+            {text()}
+            <CapNotice node={props.node} field="content" />
+        </div>
+    );
 }
 
 function ToolBody(props: {
@@ -666,8 +709,12 @@ function ToolBody(props: {
     // 这是「工具执行中一片空白」的根因（##399 实测）；思考框没这问题，因为它把
     // `props.node.attrs.content` 直接写在 JSX 表达式里（那是 effect，每帧重读）。
     const n = () => props.node;
-    const output = () => str(n().attrs.output);
-    const pv = () => previewLines(output());
+    const output = () => fullTextOf(props.node.id, "output") ?? str(n().attrs.output);
+    /** 全文行数：**按块版本 memo** —— 块没变就不重算；只有正在流式增长的这块每帧付一次
+     *  `countLines`（3.28 M ≈ 1.5 ms，零分配），定稿后只算一次。见 ##93（不为提示数字每帧 split 全文）。 */
+    const totalLines = createMemo(() => countLines(output()));
+    /** 预览本身也 memo：一帧里它被读两次（`data-tip` + 正文），不必每次重切首尾行 */
+    const pv = createMemo(() => previewLines(output(), 20, 30, totalLines()));
     const title = () => `${str(n().attrs.tool)} · ${toolCommand(n())}`;
     // 命令行**恒给**（##399 用户 2026-10-20）：折叠行的标题已改成 `<tool> · <意图>`
     // （拍板 B），标题里**不再有命令** ⇒ "折叠行已显示命令首行，展开体别重复"这个前提失效了。
@@ -731,7 +778,7 @@ function ToolBody(props: {
                     <button
                         class="btn btn-ghost btn-xs absolute right-1 top-1 z-10 min-h-0 px-1 opacity-40 hover:opacity-100"
                         data-tool-max="1"
-                        data-tip={`最大化（全屏查看 / 复制，共 ${pv().total} 行）`}
+                        data-tip={`最大化（全屏查看 / 复制，共 ${pv().exact ? "" : "≥"}${pv().total} 行）`}
                         aria-label="最大化工具输出"
                         onClick={() => props.onFull(title(), output())}
                     >
@@ -757,6 +804,7 @@ function ToolBody(props: {
                     $
                 </pre>
             </Show>
+            <CapNotice node={n()} field="output" />
             {/* 中断遗留：正文显示与发往 LLM 完全同源的占位说明（不再是空白让人无从下手） */}
             <Show when={isInterruptedToolBlock(n(), viewLive())}>
                 <div class="alert alert-warning alert-soft text-body py-2 font-sans">
@@ -776,6 +824,8 @@ function ProcBody(props: {
     /** 正文的渲染方式（md / 原文）—— 与页面上其它正文同一开关，不另开一套 */
     md?: boolean;
 }) {
+    /** 正文（MD 渲染 / 原文两条路共用）：点过「载入全文」就用全文，否则用硬顶后的显示值 */
+    const bodyText = () => fullTextOf(props.node.id, "content") ?? str(props.node.attrs.content);
     return (
         <Switch>
             <Match when={props.node.tag === "think"}>
@@ -785,9 +835,10 @@ function ProcBody(props: {
                 <ToolBody node={props.node} onFull={props.onFull} live={props.live} />
             </Match>
             <Match when={props.node.tag === "text"}>
-                <Show when={props.md} fallback={<PlainText text={str(props.node.attrs.content)} />}>
-                    <MarkdownText text={str(props.node.attrs.content)} streaming={!props.node.stopped} />
+                <Show when={props.md} fallback={<PlainText text={bodyText()} />}>
+                    <MarkdownText text={bodyText()} streaming={!props.node.stopped} />
                 </Show>
+                <CapNotice node={props.node} field="content" />
             </Match>
             <Match when={props.node.tag === "error"}>
                 <div class="whitespace-pre-wrap text-error">{str(props.node.attrs.message)}</div>
@@ -1265,11 +1316,15 @@ function TextRow(props: {
      *  原来按**原始**行数判（`countLines(raw()) > lines`），而 `clampLines` 已跳过前导空行
      *  （RV-2 的修复）⇒ 以空行开头的正文会给出一个"点开毫无变化"的箭头。
      *  现在直接取 `clampLines` 的 `omitted` —— 与"真截"**同源**，不再有第二套口径。 */
-    const canFold = () => clampLines(raw(), props.lines).omitted > 0;
+    /** 全文行数：**按块版本 memo**（块不变就不重算）—— 直播中的大块每帧付一次 `countLines`，定稿后只算一次 */
+    const totalLines = createMemo(() => countLines(raw()));
+    /** 截断结果同样 memo：原来 `canFold()` 与 `view()` **各算一次** `clampLines` ⇒ 每帧两遍全文 split（##93） */
+    const clamped = createMemo(() => clampLines(raw(), props.lines, totalLines()));
+    const canFold = () => clamped().omitted > 0;
     const open = () => (b().id in props.pin ? props.pin[b().id]! : props.defaultOpen);
     // 直播中的正文不折：它还在长，折叠只会来回跳；定稿后才折成摘要
     const folded = () => canFold() && b().stopped && !open();
-    const view = () => (folded() ? clampLines(raw(), props.lines) : { text: raw(), omitted: 0 });
+    const view = () => (folded() ? clamped() : { text: raw(), omitted: 0, exact: true });
     const cut = () => view().omitted > 0;
     /** 点**这一块**（正文行自己那条竖列折叠条 / 提示行）—— 用户 2026-10-12 R6 报的 bug：
      *  原来结论槽把 `onExpand` 接到了"换级别"，点一下**把工具历史折了、自己没变**。 */
@@ -1345,7 +1400,7 @@ function TextRow(props: {
                     class="mt-0.5 text-caption opacity-60 hover:opacity-100 hover:text-primary"
                     onClick={fire}
                 >
-                    ⋯ 已折叠 {view().omitted} 行 · 点击展开全部正文
+                    ⋯ 已折叠 {view().exact ? "" : "≥"}{view().omitted} 行 · 点击展开全部正文
                 </button>
             </Show>
             {/* 1 级「摘要结论」下缘拖条：往下拖 = 这一块画更多行（免在 1/2 级间来回切）。

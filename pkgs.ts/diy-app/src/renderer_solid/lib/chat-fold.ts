@@ -12,6 +12,8 @@
  */
 
 import type { BlockNode, TurnEndReason } from "../../main/services/local-blocks";
+// 窗口化取行（##93）：lastLine / clampLines 的真源在这里，本文件只转发 + 给默认值
+import { clampLines as clampLinesOf, lastLine as lastLineOf } from "./chat-text";
 // 结束原因 → 人话 / 图标 的**唯一文案源**（main 与 renderer 共用，##308）：这里只做
 // 「块树 → endReason/notice」的取数，措辞一律不在此处另写一份（否则又分叉）。
 import { endMarkOf, turnEndText, type EndMark } from "../../shared/turn-end";
@@ -573,21 +575,13 @@ export function linesFromDrag(
 /**
  * 按可视行数截断正文（**1 级「摘要结论」**的摘要态；Markdown 不解析时也走这里）。
  *
- * 只截**行**不截字符：正文里代码块/列表被字符数切开比少几行更难看懂。
- * 返回 omitted（被藏起来的行数）而不是布尔 —— 界面要说出"还有几行"，
- * 光一个 `…` 信息量太低（2026-10-11 用户反馈：看不出被裁过）。
+ * 实现已搬到 `chat-text.ts` 并**窗口化**（##93）：这里只做转发，语义与旧实现逐字一致
+ * （判据 = `clampLines` 与「全文 split 一遍」的朴素实现等价，见 `tests/core/chat-text.test.ts`）。
+ * 之所以不留在本文件：它现在与 `previewLines` / `firstLine` 共用同一套窗口化取行，
+ * 拆两处必然漂移（本任务开工前它们就是对同一个"行"各写了一遍口径）。
  */
-export function clampLines(text: string, n: number): { text: string; omitted: number } {
-    const lines = text.split("\n");
-    // **前导空行不算额度**：Markdown 里首个块之前的空行没有语义（渲染时本来就被吃掉），
-    // 却会占满摘要的全部行数 —— `clampLines("\n\n正文", 2)` 会把两行额度全用在空行上，
-    // 摘要里一个字都看不见（review ##253 RV-2 的同一类"判据两处口径"）。
-    let start = 0;
-    while (start < lines.length && lines[start]!.trim() === "") start++;
-    const kept = lines.slice(start);
-    if (kept.length <= n) return { text: kept.join("\n"), omitted: 0 };
-    return { text: kept.slice(0, n).join("\n"), omitted: kept.length - n };
-}
+export const clampLines = clampLinesOf;
+export type { Clamped } from "./chat-text";
 
 // ─── 过程行的**状态**（图标 / 默认开合）──────────────────────
 //
@@ -685,14 +679,14 @@ export function procOpenOf(n: BlockNode, pin: Record<string, boolean>, live: boo
 /** 标题里"意图"这一截的字数上限（与 `firstLine` 的 90 同一口径；标题本身还有 CSS truncate） */
 const INTENT_MAX = 90;
 
-/** 取文本的**最后一行非空**（意图末行用；与 `firstLine` 对称） */
+/**
+ * 取文本的**最后一行非空**（意图末行用；与 `firstLine` 对称）。
+ *
+ * 实现搬到 `chat-text.ts` 并窗口化（##93）：**每次按行回退**，不 split 全文 ——
+ * 3 MB 的思考块每帧都被 `intentOf` 调一次，旧实现一次 11.62 ms。
+ */
 export function lastLine(text: string, max = INTENT_MAX): string {
-    const lines = text.split("\n");
-    for (let i = lines.length - 1; i >= 0; i--) {
-        const t = lines[i]!.trim();
-        if (t) return t.length > max ? `${t.slice(0, max)}…` : t;
-    }
-    return "";
+    return lastLineOf(text, max);
 }
 
 /** `node` 的**同层兄弟表**（哪一层含它就算哪一层：step / turn 都行） */
