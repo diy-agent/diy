@@ -31,7 +31,7 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:97
+      at: ~/AGENTS.md:100
       verifiedAt: '2026-10-22'
   proj#sha:
     value: |-

@@ -11,7 +11,7 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:61
+      at: ~/AGENTS.md:64
       verifiedAt: '2026-10-22'
   level#expose:
     value: |-
@@ -21,7 +21,7 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:59
+      at: ~/AGENTS.md:62
       verifiedAt: '2026-10-22'
   level#inbox:
     value: |-
@@ -31,7 +31,7 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:62
+      at: ~/AGENTS.md:65
       verifiedAt: '2026-10-22'
   level#notice:
     value: |-
@@ -41,7 +41,7 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:60
+      at: ~/AGENTS.md:63
       verifiedAt: '2026-10-22'
   level#priority:
     value: |-
@@ -51,7 +51,7 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:58
+      at: ~/AGENTS.md:61
       verifiedAt: '2026-10-22'
   level#rule:
     value: |-
@@ -61,5 +61,5 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:57
+      at: ~/AGENTS.md:60
       verifiedAt: '2026-10-22'

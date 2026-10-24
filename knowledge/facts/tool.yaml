@@ -85,7 +85,7 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:40
+      at: ~/AGENTS.md:42
       verifiedAt: '2026-10-22'
   tool#file-write:
     value: |-
@@ -113,7 +113,7 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:38
+      at: ~/AGENTS.md:40
       verifiedAt: '2026-10-22'
   tool#model-import:
     value: |-
@@ -132,7 +132,7 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:39
+      at: ~/AGENTS.md:41
       verifiedAt: '2026-10-22'
   tool#pkg-action:
     value: |-
@@ -160,7 +160,7 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:35
+      at: ~/AGENTS.md:37
       verifiedAt: '2026-10-22'
   tool#scan-big-dirs:
     value: |-
@@ -205,7 +205,7 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:37
+      at: ~/AGENTS.md:39
       verifiedAt: '2026-10-22'
   tool#sync-gate:
     value: |-
