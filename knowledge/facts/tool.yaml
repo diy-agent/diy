@@ -3,6 +3,15 @@
 # 生成物式的真源：整篇由 `diy facts submit` 写入（字段顺序、条目排序都由程序定）。
 domain: tool
 facts:
+  tool#async-io:
+    value: |-
+      **app（主进程 / shared / preload）里不许出现同步 IO**：一律 `node:fs/promises` 的 `await` 版本，子进程用 `execFile` 而非 `execFileSync`/`spawnSync`。判据不是「会不会卡」而是**主进程是单线程事件循环** —— 一次 `readFileSync` 就把渲染、RPC、流式输出一起按停；落在热路径上（面板每 3s 刷、每个输出块）就是 UI 掉帧的唯一原因。**新增由 `scripts/check-sync-io.sh` 拦**（挂 `./sha.sh check`，存量按 `LEGACY_SYNC_IO_BASELINE` 逐文件钉数**只减不增**）；确实必须在同步窗口里做（启动早期 / 原子写工具本身 / CLI 一次性初始化）写 `// sync-io-ok: <理由>`。测试文件不在此列（不在事件循环关键路径）。
+    id: agents.tool.async-io
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-24'
   tool#check:
     value: |-
       `./sha.sh check` 是**提交前唯一检查**（tsc `--noEmit` + oxlint + 产物 / 可执行位 / 规范索引护栏）；改一行只跑受影响测试，全量收工前一次
@@ -78,6 +87,15 @@ facts:
       source: user
       at: ~/AGENTS.md:40
       verifiedAt: '2026-10-22'
+  tool#file-write:
+    value: |-
+      写文件按改动面选工具：新建 / 整文件重写用 `write`、局部改几行用 `edit`（批量 `edits[]` 一次改多处）；**改文件别用 `bash` heredoc / `sed -i`**（绕开路径护栏、diff 摘要与审计）；管道 / 程序化处理才用 `bash`
+    id: agents.tool.file-write
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-24'
   tool#fmt:
     value: |-
       格式真源 = 各包 `.oxfmtrc.json`（oxfmt **不读** `package.json` 的 `oxfmt` 块）；**fmt 未纳入 `check`**（##323(oxfmt 配置腐坏)）
