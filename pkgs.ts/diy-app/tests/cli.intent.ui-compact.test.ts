@@ -503,7 +503,7 @@ describe("##339：分表投递徽标（配置驱动压缩的事实）", () => {
     await waitUntil(a11yText, (t) => t.includes("投递话题"), { label: "会话上屏" });
   });
 
-  it("分表：**只有轮首步**有「投递」徽标（其余步无）；悬停给出预算/丢几条", async () => {
+  it("分表：**只有轮首步**有「历史」徽标（其余步无）；悬停给出维度/预算/丢几条/must 级/三触发器", async () => {
     await openDrawer();
     await ui.clickSelector('[data-drawer-tab="step"]');
     await waitUntil(
@@ -514,11 +514,28 @@ describe("##339：分表投递徽标（配置驱动压缩的事实）", () => {
     // 恰好一处（= 轮首步）；第二步不标
     expect(await ui.query<number>("document.querySelectorAll('[data-delivery-compact]').length")).toBe(1);
     const badge = await ui.query<string>("document.querySelector('[data-delivery-compact]')?.textContent?.trim() ?? ''");
-    expect(badge).toContain("投递");
+    // ##423：维度写进词里 —— 不再有裸「全量」/「投递」这种跨维度歧义词
+    expect(badge).toContain("历史");
+    expect(badge).toContain("丢 3 条");
+    expect(badge).not.toContain("全量");
     const tip = await ui.query<string>("document.querySelector('[data-delivery-compact]')?.getAttribute('title') ?? ''");
+    expect(tip).toContain("历史裁剪");
     expect(tip).toContain("3 KB");
     expect(tip).toContain("丢 3/5");
     expect(tip).toContain("保留 1 段");
+    // ③【关键】must 级不吃预算（「压完还超预算、于是每轮都在压」的根因）
+    expect(tip).toContain("预算只约束非 must 级");
+    // ④ 三触发器 + 阈值（旧版 hover 只说预算多少）
+    expect(tip).toContain("systemContextChanged");
+    expect(tip).toContain("cacheExpired");
+    expect(tip).toContain("contextWindowOver");
+    expect(tip).toContain("本步");
+
+    // ③ 统计补齐：会话/本轮的投递次数（= 步数）与压缩次数
+    const stats = await ui.query<string>("document.querySelector('[data-delivery-stats]')?.textContent ?? ''");
+    expect(stats).toContain("2 次投递");
+    expect(stats).toContain("1 轮");
+    expect(stats).toContain("压缩 0 次");
     await ui.clickSelector('[aria-label="关闭窗口构成"]');
   });
 });
