@@ -212,6 +212,24 @@ export function composeTail(turn: BlockNode, tail: BlockNode | null): TailScene 
     return { body: prev && prev.tag !== "error" ? prev : null, error: tail };
 }
 
+/**
+ * 降级重建标记（##424 刀 2；读该轮事实；脏值当没有）。
+ *
+ * `null` = 这一轮是 ops 原文（正常路径，绝大多数）；非 null = 它是 `turns.jsonl` 折成的
+ * 只读文本历史，`dangling` 时锚点指向的 ops 已经不在了（行内写「原始记录已清理」）。
+ */
+export interface TurnDegraded {
+    refDangling: boolean;
+    state?: string;
+    at?: string;
+}
+
+export function degradedOf(turn: BlockNode): TurnDegraded | null {
+    const d = turn.attrs.degraded as Partial<TurnDegraded> | undefined;
+    if (!d || typeof d !== "object") return null;
+    return { refDangling: d.refDangling === true, ...(d.state ? { state: d.state } : {}), ...(d.at ? { at: d.at } : {}) };
+}
+
 /** 结束原因（读该轮事实；脏值当没有） */
 export function endReasonOf(turn: BlockNode): TurnEndReason | null {
     const r = turn.attrs.endReason as TurnEndReason | undefined;

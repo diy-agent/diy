@@ -31,7 +31,16 @@ import { writeFileAtomic } from "../core/atomic-write";
 import { fieldNames, renderFieldDocs } from "../../shared/schema-doc";
 import { findInOpsFile, type FindResult, type FindScopes } from "./local-find";
 import { diyHome, projectDir, projectFromUri } from "../core/state";
-import { keyOf, llmFile, llmLogRelPath, localDir, opsFile, sessionFileForWrite, sessionFilesToClear, sessionIdOf } from "../core/local-paths";
+import { keyOf, llmFile, llmLogRelPath, localDir, opsFile, resolveSessionFile, sessionFileForWrite, sessionFilesToClear, sessionIdOf } from "../core/local-paths";
+import {
+    appendTurnRecord,
+    checkOpsRef,
+    clipTurnText,
+    readTurnRecords,
+    synthesizeTurnOps,
+    type TurnRecordV1,
+    type TurnRecordState,
+} from "./local-turns";
 
 // 再导出：测试与产品共用同一路径实现（不把 key 算法复制到测试里）
 export { opsFile };
@@ -87,6 +96,7 @@ import { capToolOutput, toolOutFile, toolOutFileCandidates, toolOutRelPath } fro
 import { abortText } from "../../shared/turn-end";
 import type { TurnGate, TurnGateDecision } from "../../shared/turn-gate";
 import { triageOf, triageOfTurnEnd } from "../../shared/error-triage";
+import type { DegradedCause, DegradedHistory } from "../../shared/degraded-history";
 import { errText } from "../../shared/error-report";
 import { reportError } from "./error-report";
 import { readCauseEvidence } from "./interrupted-cause";
@@ -679,6 +689,25 @@ function fileSize(fp: string): number {
 }
 
 /**
+ * 轮末状态三档（`turns.jsonl` 的 `state`，##424）。
+ *
+ * 值域只有三个（body 定死）：`error` = 本轮到错误收口；`aborted` / `interrupted` = 被中断；
+ * 其余（自然说完 / 打满步数 / 输出截断）都是 **ok** —— 它们是「这一轮跑完了」的不同形态，
+ * 不是失败。不该在这里造第四档（消费侧只认三个值）。
+ */
+function turnStateOf(reason: TurnEndReason): TurnRecordState {
+    switch (reason.type) {
+        case "error":
+            return "error";
+        case "aborted":
+        case "interrupted":
+            return "interrupted";
+        default:
+            return "ok";
+    }
+}
+
+/**
  * 分页窗口的一段（任务 293）：**已折叠**的 op 流 + 段起点游标 + 「更早还有轮吗」。
  * `cursor` 是 main 签发的不透明 token（渲染端只回传），见 local-ops-seek。
  *
@@ -693,7 +722,16 @@ export interface HistoryWindow {
     hasMore: boolean;
     /** 游标失效（清空 / 覆盖写 / 起点不再是轮首）⇒ 本次是退化全量，渲染端要重置 */
     stale: boolean;
+    /**
+     * 降级重建的可见标记（##424 刀 2）：**有它就意味着「这份历史不是 ops 原文」**。
+     * `ops` 此时是 `turns.jsonl` 折成的只读文本历史（user + assistant 正文），
+     * UI 顶部挂横幅、行内标「原始记录已清理」——**不许静默空白**。正常路径恒 undefined。
+     */
+    degraded?: DegradedHistory;
 }
+
+// 降级标记的类型/文案在 shared（跨层契约：main 产出、renderer 消费，见 shared/degraded-history）
+export type { DegradedCause, DegradedHistory };
 
 /** 折叠缓存的上限（LRU）：块树常驻内存，多开几个大会话也不至于无界堆积。 */
 const HISTORY_CACHE_MAX = 8;
@@ -3104,7 +3142,71 @@ export class LocalAgentManager {
      * 失效判据见下方 invalid —— 宁可把整份日志重放一遍，也绝不把两份文件的历史缝在一起。
      */
     history(taskUri: string): Op[] {
+        const deg = this.degradedHistory(taskUri);
+        if (deg) return deg.ops;
         return this.foldedOps(taskUri, opsFile(taskUri), 0);
+    }
+
+    /**
+     * **降级链**（##424 刀 2）：ops 读不出明细时，用 `turns.jsonl` 重建只读文本历史。
+     *
+     * 触发（body 刀 2）：`resolveOpsReplay` 报 `schema-break` / `truncated`，或 ops 文件
+     * 不存在 / 为空。正常路径（ops 可读）**不进这个函数体** —— 它先在两处廉价判据处 return，
+     * turns 只在降级时被消费，正常时零成本。
+     *
+     * 拼装口径：
+     *   · turns 里**锚点仍在存活段里**的轮直接跳过（真实 op 已经在 `surviving` 里，不能双份）；
+     *   · 剩下的轮折成 `user` + `assistant` 文本块（`synthesizeTurnOps`），逐条校 ref：
+     *     悬空即在该轮 turn 块上标 `degraded.refDangling`（UI 行内写「原始记录已清理」）；
+     *   · 存活段（断代 / 清空之后新跑的轮）照旧用真实 op 拼在**后面**（它们是可用明细）；
+     *   · 返回 `degraded` 标记给 UI 挂横幅 —— **不许静默空白**。
+     */
+    private degradedHistory(taskUri: string): { ops: Op[]; degraded: DegradedHistory } | null {
+        const fp = resolveSessionFile(taskUri, "ops");
+        // sync-io-ok: 「在不在」与「多大」要分开答（missing 与 empty 是两种降级原因），
+        // 且本方法是**同步读口**（history/historyWindow 都是同步 API）—— 一次 exists + 一次 stat
+        const present = existsSync(fp); // sync-io-ok: 同上一行（降级路径专用，正常路径零额外读）
+        const size = fileSize(fp);
+        // 廉价判据：文件在且非空、且账本不说断代 ⇒ 不是降级场景（正常路径零额外读）
+        const replay = resolveOpsReplay(taskUri);
+        let cause: DegradedCause | null = null;
+        let note = "";
+        if (!present) {
+            cause = "missing";
+            note = "会话 ops 日志不存在（被清理 / 换了数据根 / 从未写出）";
+        } else if (size <= 0) {
+            cause = "empty";
+            note = "会话 ops 日志为空";
+        } else if (replay.kind === "schema-break") {
+            cause = "schema-break";
+            note = replay.note ?? "ops 格式断代";
+        } else if (replay.kind === "truncated") {
+            cause = "truncated";
+            note = replay.note ?? "ops 被截断 / 换了一份";
+        }
+        if (cause === null) return null;
+
+        const records = readTurnRecords(taskUri);
+        const surviving = present ? readOpsFrom(fp, replay.from) : [];
+        const aliveTurns = new Set<string>();
+        for (const op of surviving) if (op.op === "start" && op.kind === "turn") aliveTurns.add(op.id);
+        const ops: Op[] = [];
+        let turns = 0;
+        let dangling = 0;
+        for (const rec of records) {
+            if (aliveTurns.has(rec.turnId)) continue; // 真实 op 还在 ⇒ 不拿文本记录顶掉它
+            const check = checkOpsRef(taskUri, rec);
+            if (!check.ok) dangling++;
+            ops.push(...synthesizeTurnOps(rec, !check.ok));
+            turns++;
+        }
+        if (surviving.length > 0) {
+            // 与 `history()` 同口径：存活段也走一次 fold + compact（回包体积从 raw 降到段大小）
+            const store = new BlockStore();
+            for (const op of surviving) store.apply(op);
+            ops.push(...compactOps(store));
+        }
+        return { ops, degraded: { cause, note, turns, dangling } };
     }
 
     /**
@@ -3280,6 +3382,22 @@ export class LocalAgentManager {
      * （见 local-ops-seek 的三条保证）—— 窗口边界错位会让块塌成根、patch 丢失。
      */
     historyWindow(taskUri: string, opts: { budgetBytes?: number; cursor?: string } = {}): HistoryWindow {
+        // 降级在前：游标口径对「ops 已不存在/断代」无意义（解码出来的起点不一定是轮首）
+        const deg = this.degradedHistory(taskUri);
+        if (deg) {
+            const dfp = resolveSessionFile(taskUri, "ops");
+            // 带了游标却解不出 / 起点不再是轮首 ⇒ 同样报 stale（渲染端必须重置）——
+            // 降级本就是一次「整树换源」，不承认它会让旧窗口的新内容与文本记录缝在一起。
+            const at = opts.cursor ? decodeCursor(opts.cursor, dfp) : null;
+            const stale = opts.cursor !== undefined && (at === null || !isTurnStartAt(dfp, at));
+            return {
+                ops: deg.ops,
+                cursor: encodeCursor(dfp, 0),
+                hasMore: false,
+                stale,
+                degraded: deg.degraded,
+            };
+        }
         const fp = opsFile(taskUri);
         const at = opts.cursor ? decodeCursor(opts.cursor, fp) : null;
         // 带了游标却失效（清空 / 覆盖写 / 换了文件）⇒ 退全量：**绝不把两段历史缝在一起**，
@@ -3295,6 +3413,9 @@ export class LocalAgentManager {
      * 已到文件头（`at === 0`）⇒ 空段 + `hasMore: false`（渲染端据此收工，不再请求）。
      */
     historyOlder(taskUri: string, opts: { cursor: string; budgetBytes?: number }): HistoryWindow {
+        // 降级态没有「更早的段」：ops 明细已经不可信，文本历史一次给完（hasMore 恒 false）
+        const deg = this.degradedHistory(taskUri);
+        if (deg) return { ops: [], cursor: opts.cursor, hasMore: false, stale: false, degraded: deg.degraded };
         const fp = opsFile(taskUri);
         const at = decodeCursor(opts.cursor, fp);
         if (at === null || !isTurnStartAt(fp, at)) return this.segmentOf(taskUri, fp, 0, undefined, true); // 游标失效 ⇒ 全量 + stale
@@ -3328,6 +3449,18 @@ export class LocalAgentManager {
         taskUri: string,
         opts: { at: number; budgetBytes?: number },
     ): HistoryWindow & { hasNewer: boolean } {
+        // 降级态下 ops 偏移不再是定位依据（文件已断代/缺失）⇒ 如实回空 + degraded，不报 stale
+        const deg = this.degradedHistory(taskUri);
+        if (deg) {
+            return {
+                ops: [],
+                cursor: encodeCursor(resolveSessionFile(taskUri, "ops"), 0),
+                hasMore: false,
+                stale: false,
+                hasNewer: false,
+                degraded: deg.degraded,
+            };
+        }
         const fp = opsFile(taskUri);
         const fallback = { ...this.segmentOf(taskUri, fp, 0, undefined, true), hasNewer: false };
         if (!isTurnStartAt(fp, opts.at)) return fallback;
@@ -4474,6 +4607,50 @@ export class LocalAgentManager {
     ): AsyncGenerator<Op, { failed: boolean; turnId: string }, void> {
         const turnId = `t${Date.now()}`;
         const cwd0 = resolveCwdWithNote(diyHome(), taskUri).cwd;
+        // ── L3 结论账（##424 刀 1）：本轮事实的**采集位** ──
+        // · `turnOpsOffset` 在**写侧**取（本轮第一条 op 落盘之前的 fileSize）—— 不去改
+        //   `readOpsRange` 的解析循环算偏移（那是冷加载热路径，body 刀 1 §3）；
+        // · `turnOpsSeq` 在 turn start 落盘后取（= 该行行号，与 opsFeed / UI 水位同口径）；
+        // · `assistantTexts` 收本轮**全部** assistant 正文（过程句也留；工具正文归 ops）；
+        // · 整段旁路：写失败只 warn（`appendTurnRecord` / 本函数双重 try/catch）。
+        const opsFp = opsFile(taskUri);
+        const turnOpsOffset = fileSize(opsFp);
+        let turnOpsSeq = 0;
+        const assistantTexts = new Map<string, { seq: number; text: string }>();
+        let turnRecorded = false;
+        /** 轮末落一条 turns 记录（幂等；不抛） */
+        const recordTurn = (reason: TurnEndReason): void => {
+            if (turnRecorded) return;
+            turnRecorded = true;
+            try {
+                const textOf = (raw: string): { text: string; truncated?: true; bytes?: number } => clipTurnText(raw);
+                const user = textOf(input.map((i) => i.text).join("\n"));
+                const rec: TurnRecordV1 = {
+                    v: 1,
+                    turnId,
+                    at: new Date().toISOString(),
+                    state: turnStateOf(reason),
+                    user: user.text,
+                    ...(user.truncated ? { userTruncated: true as const, userBytes: user.bytes } : {}),
+                    texts: [...assistantTexts.values()]
+                        .filter((t) => t.text.length > 0)
+                        .map((t) => {
+                            const c = textOf(t.text);
+                            return {
+                                seq: t.seq,
+                                text: c.text,
+                                ...(c.truncated ? { truncated: true as const, bytes: c.bytes } : {}),
+                            };
+                        }),
+                    // `len` = 整行含换行：本轮所有 op 落完之后量一次（closeTurn 的收尾 op 也在内）
+                    ref: { ops: { offset: turnOpsOffset, len: Math.max(0, fileSize(opsFp) - turnOpsOffset), seq: turnOpsSeq } },
+                };
+                appendTurnRecord(taskUri, rec);
+            } catch (e) {
+                // 采集/截断本身出错也不许冒到轮末收口（旁路铁律）
+                console.warn(`[local-agent] turns 记录构造失败（不影响轮末收口）${taskUri}#${turnId}:`, e);
+            }
+        };
         // 轮次事实的**唯一**登记点（##240 review1 P2-3：runtime-context 的 activeTurns 已收敛为
         // 本注册表的投影，故此处不再另调它 —— 两份由同一批调用点驱动 = 迟早漂移）。
         sessionRegistry.noteTurnStart(taskUri, { turnId, model, cwd: cwd0 });
@@ -4732,12 +4909,17 @@ export class LocalAgentManager {
                 ...(endTriage.triage ? { triage: endTriage.triage } : {}),
                 ...(endTriage.code ? { code: endTriage.code } : {}),
             });
+            // L3 结论账（##424 刀 1）：一轮一条，必须在 turn 的 stop **落盘之后**量 len
+            // （上面那段 sink 已写完收尾 op）。旁路：不 await、不 yield、不抛。
+            recordTurn(reason);
             // ② 尽力投递：消费端还在就让它看到 stop；已断开则在此停住 —— 状态早已一致（①已完成）
             for (const op of ops) yield op;
         };
 
         // 轮次事实：模型 + 思考级别（渲染时读它署名/展示档位，不读当前配置 —— 任务 196 的教训）
         yield* emit({ op: "start", id: turnId, kind: "turn", meta: { model: model, reasoningEffort } });
+        // turn start 已落盘 + 已 publish ⇒ 此刻的水位就是该行的物理行号（turns.ref.ops.seq）
+        turnOpsSeq = opsFeed.watermark(taskUri).seq;
 
         // ── 系统上下文：**先算预算再记账** ──
         // 超预算时这一轮根本不发请求，所以此刻**还不能**写开场 user 块、也不能投递插话：
@@ -5213,6 +5395,8 @@ export class LocalAgentManager {
                                 parent: stepId,
                                 meta: { role: "assistant" },
                             });
+                            // L3（##424）：该段正文的 start 行号 = 刚 publish 完的水位
+                            assistantTexts.set(id, { seq: opsFeed.watermark(taskUri).seq, text: "" });
                             break;
                         }
                         case "text-delta": {
@@ -5222,7 +5406,12 @@ export class LocalAgentManager {
                                 partBlock.set(part.id, id);
                                 yield* ensure(id, "text", stepId, { role: "assistant" });
                             }
-                            yield* emit({ op: "delta", id, fields: { content: pick(part, "text", "delta") } });
+                            const chunk = pick(part, "text", "delta");
+                            yield* emit({ op: "delta", id, fields: { content: chunk } });
+                            // L3（##424）：收全文（**不只最后一条** —— 过程句是用户要的口径）
+                            const entry = assistantTexts.get(id) ?? { seq: opsFeed.watermark(taskUri).seq, text: "" };
+                            entry.text += chunk;
+                            assistantTexts.set(id, entry);
                             break;
                         }
                         case "text-end": {

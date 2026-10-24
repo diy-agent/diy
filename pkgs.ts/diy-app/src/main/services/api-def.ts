@@ -895,6 +895,19 @@ export const apiDef = RpcSchema.router({
                   hasMore: z.boolean(),
                   /** 游标失效 ⇒ 本次是退化全量（渲染端必须重置现有段，不能当前缀拼） */
                   stale: z.boolean(),
+                  /**
+                   * 降级重建标记（##424 刀 2）：有它 = `ops` 不是 ops 原文，而是 `turns.jsonl`
+                   * 折成的**只读文本历史**。渲染端必须挂横幅 + 行内标「原始记录已清理」，
+                   * 不许把它们当正常明细渲染。缺省 undefined = 正常路径（零成本）。
+                   */
+                  degraded: z
+                    .object({
+                      cause: z.enum(["missing", "empty", "schema-break", "truncated"]),
+                      note: z.string().describe("人话原因（横幅「历史明细不可用（<note>）」）"),
+                      turns: z.number().describe("重建出来的轮数"),
+                      dangling: z.number().describe("其中锚点已悬空的轮数（行内「原始记录已清理」）"),
+                    })
+                    .optional(),
                 }),
               }),
               /** 更早的一段（滚动上取）：`cursor` 所在段之前的 `budgetBytes` 字节 */

@@ -38,6 +38,7 @@ import { StopTicker } from "../lib/stop-ticker";
 // 用量账本类型：与 main 落盘、CLI 报表、看板共用同一份形状（shared/usage 是唯一口径处）
 import type { StepUsageRecord } from "../../shared/usage";
 import type { FlatCompactPolicy, HeadTailPolicy } from "../../shared/context/compaction";
+import type { DegradedHistory } from "../../shared/degraded-history";
 
 /**
  * 已加载的一段窗口（任务 293）：一段从**轮首**开始的折叠 op 流 fold 出来的块树。
@@ -191,6 +192,13 @@ interface TaskState {
      */
     usage: () => StepUsageRecord[];
     setUsage: (v: StepUsageRecord[]) => void;
+    /**
+     * 降级重建标记（##424 刀 2；main 的 `historyWindow.degraded` 原样存）。
+     * 非 null = 块树里那些轮是 `turns.jsonl` 折成的**只读文本历史**、不是 ops 原文 ——
+     * 会话页顶部横幅读它；轮内「原始记录已清理」读 turn 块的 `degraded.refDangling`。
+     */
+    degraded: () => DegradedHistory | null;
+    setDegraded: (v: DegradedHistory | null) => void;
 }
 
 /**
@@ -217,6 +225,7 @@ function stateFor(taskUri: string): TaskState {
         const [usage, setUsage] = createSignal<StepUsageRecord[]>([]);
         const [opsState, setOpsState] = createSignal<OpsState>("idle");
         const [detached, setDetached] = createSignal(false);
+        const [degraded, setDegraded] = createSignal<DegradedHistory | null>(null);
         const [hasMore, setHasMore] = createSignal(false);
         const [olderBusy, setOlderBusy] = createSignal(false);
         s = {
@@ -229,6 +238,7 @@ function stateFor(taskUri: string): TaskState {
             appliedSeq: 0, epoch: -1, opsAbort: null, opsState, setOpsState, opsDownNotified: false,
             opsDownAt: null, opsReconnects: 0,
             detached, setDetached,
+            degraded, setDegraded,
         };
         states.set(taskUri, s);
     }
@@ -478,6 +488,8 @@ async function doReload(taskUri: string): Promise<void> {
         }
         // stale ⇒ 这份是全量，尾游标由 mergeWindow 统一丢弃（见其重置分支）；下一轮按预算重新 seek。
         mergeWindow(st, r.ops as Op[], r.cursor, r.hasMore, r.stale);
+        // 降级标记（##424）：每次回包以 main 当下口径为准（恢复正常就自动熄掉横幅）
+        st.setDegraded(r.degraded ?? null);
         st.loaded = true;
         flushRefresh(st);
     } catch (e) {
@@ -639,6 +651,8 @@ async function loadHistory(st: TaskState, taskUri: string): Promise<void> {
             cursor: undefined,
         });
         mergeWindow(st, r.ops as Op[], r.cursor, r.hasMore);
+        // 降级标记（##424）：main 说这份是 turns 折的文本历史 ⇒ 顶部横幅 + 行内标注
+        st.setDegraded(r.degraded ?? null);
         refresh(st);
         st.loaded = true;
     } catch (e) {
@@ -1839,6 +1853,13 @@ export const localChatStore = {
     /** 当前会话本段 op 故障内**已自动重订几次**（##391；恢复 toast 与常驻条详情共用） */
     get opsReconnects(): number {
         return cur()?.opsReconnects ?? 0;
+    },
+    /**
+     * 降级重建标记（##424 刀 2；响应式）：非 null = 现在看到的是**结论文本记录**、不是 ops 明细。
+     * 顶部横幅读它（`shared/degraded-history` 出文案，渲染层只拼）。
+     */
+    get degraded(): DegradedHistory | null {
+        return cur()?.degraded() ?? null;
     },
     /** 手动刷新用量账本（看板打开/调试用） */
     refreshUsage,
