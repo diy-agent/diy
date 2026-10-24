@@ -51,7 +51,9 @@ import {
     selectForDelivery,
     type BlockKind,
     type BlockNode,
+    type BudgetSelection,
     type DeliveryOpts,
+    type LocalModelMessage,
     type Op,
     type JSONVal,
     type TurnEndReason,
@@ -119,7 +121,7 @@ import { buildDelivery, isRuntimePlace, runtimeDiffDelivery, type Delivery } fro
 import { renderBudgetNote } from "../../shared/context/budget-note";
 import { mustHardCapBytesOf } from "../../shared/context/compact-keep";
 import { estimateRequest, tighterHistoryCapBytes } from "../../shared/context/request-preflight";
-import { renderSummaryPart, tailEnvelope } from "../../shared/context/envelope";
+import { isEnvelopeText, renderSummaryPart, tailEnvelope } from "../../shared/context/envelope";
 import { describeAnomalies, readLlmLog } from "../../shared/context/log-schema";
 import {
     autoCompactPolicyInput,
@@ -525,7 +527,9 @@ export function normalizeUserRuns(msgs: ModelMessage[]): ModelMessage[] {
     const out: ModelMessage[] = [];
     for (const m of msgs) {
         const last = out[out.length - 1];
-        if (m.role === "user" && last?.role === "user") {
+        // 【##421】**信封形态的消息不参与合并**：自动生成的段（`history:` 注记）自占一条消息，
+        // 它放在历史第一条之前 —— 若被并进相邻 user，就又是一坨「元数据伪装成用户原话」（##310 八轮坑）。
+        if (m.role === "user" && last?.role === "user" && !isEnvelope(m) && !isEnvelope(last)) {
             out[out.length - 1] = {
                 role: "user",
                 content: mergeUserContent(last.content as UserContent, m.content as UserContent),
@@ -537,9 +541,14 @@ export function normalizeUserRuns(msgs: ModelMessage[]): ModelMessage[] {
     return out;
 }
 
+/** 信封消息（自占顶层键的自动生成段）—— 不参与 user 合并，见 `normalizeUserRuns` 与 `isEnvelopeText` */
+function isEnvelope(m: ModelMessage): boolean {
+    return m.role === "user" && typeof m.content === "string" && isEnvelopeText(m.content);
+}
+
 /**
- * 把**尾部信封**拼进 messages：`summary:`（历史摘要素，可选）+ `history:`（压缩索引注记，可选）
- * + `runtime:`（或 `runtimeDiff:`）+ `user:`（本轮输入），合成**一份**合法 YAML（`tailEnvelope`）。
+ * 把**尾部信封**拼进 messages：`summary:`（历史摘要素，可选）+ `runtime:`（或 `runtimeDiff:`）
+ * + `user:`（本轮输入），合成**一份**合法 YAML（`tailEnvelope`）。
  *
  * 为什么合成一份（##310 六轮拍板）：这些段与本轮输入是**相邻 user**，而
  * `normalizeUserRuns` 必然把它们合并成一条（收敛成"一份信封一条 user"）。与其让合并
@@ -548,8 +557,6 @@ export function normalizeUserRuns(msgs: ModelMessage[]): ModelMessage[] {
  *     summary:      ← 仅当有历史摘要（自动生成的元数据，自己的顶层键）
  *       |-
  *       …
- *     history:      ← 仅当历史被压缩（自动生成的元数据，自己的顶层键）
- *       kept: [[5, 8]]
  *     runtime:      ← 或 runtimeDiff:
  *       task: {…}
  *     user:
@@ -560,32 +567,51 @@ export function normalizeUserRuns(msgs: ModelMessage[]): ModelMessage[] {
  * （tasks/5 实测：多烧 3 次 bash、5.6 万 prompt token 就为一个字）。摘要（`withSummary`）同坑，
  * 九轮一并改成顶层键 `summary:`。
  *
- * 尾部不是 user（如自动续跑、纯工具轮）→ 不编 `user:` 段；三段全空 → 原样返回。
+ * ⚠️ `history:`（压缩索引注记，##421）**不在**尾部信封里了 —— 它自占一条 user 消息、
+ * 挂在历史第一条之前（见 `withHistoryNote`）：
+ *   · 用户原话：「压缩后第一个消息很容易分辨是被压缩了，放最后一个，完全被淹没了」。
+ *   · `runtime:` **保持尾部**：DeepSeek 前缀缓存是逐字节前缀，runtime 每轮首步必变，
+ *     挪到 system 之后会让整个历史每轮按 cache miss 计费（hit/miss 约 10×）—— 尾部只让
+ *     尾部几百字节 miss。这笔账写进 ##421 的 PR 正文。
+ *
+ * 尾部不是 user（如自动续跑、纯工具轮）→ 不编 `user:` 段；全空 → 原样返回。
  */
-function withRuntime(hist: ModelMessage[], runtime: string, historyNote = "", summaryPart = ""): ModelMessage[] {
-    const parts = [summaryPart, historyNote, runtime].filter((t) => t.trim());
+function withRuntime(hist: ModelMessage[], runtime: string, summaryPart = ""): ModelMessage[] {
+    const parts = [summaryPart, runtime].filter((t) => t.trim());
     if (parts.length === 0) return hist;
     const last = hist[hist.length - 1];
     if (last && last.role === "user" && typeof last.content === "string" && last.content.trim()) {
         return [...hist.slice(0, -1), { role: "user", content: tailEnvelope(parts, last.content) }];
     }
     // 没有可并的输入：只有 runtime 一段时保持旧形（逐字一致）；否则各段各有顶层键
-    if (parts.length === 1 && runtime.trim() && !historyNote.trim() && !summaryPart.trim()) {
+    if (parts.length === 1 && runtime.trim() && !summaryPart.trim()) {
         return [...hist, { role: "user", content: runtime }];
     }
     return [...hist, { role: "user", content: tailEnvelope(parts) }];
 }
 
 /**
+ * 把**压缩索引注记**挂到历史**首条之前**（##421）：system 之后、历史之前，**独立一条 user 消息**。
+ *
+ * 为什么不放尾部信封（旧位置）：用户原话「放最后一个，完全被淹没了」—— 压缩与否要一眼看得出来。
+ * 为什么不会被 `normalizeUserRuns` 并进相邻 user：该函数对**信封形态**的消息不合并
+ * （判据 `isEnvelopeText`，本刀一并修）。注记空串 ⇒ 不注入（没真丢消息时就是空串）。
+ */
+function withHistoryNote(hist: ModelMessage[], note: string): ModelMessage[] {
+    if (!note.trim()) return hist;
+    return [{ role: "user", content: note }, ...hist];
+}
+
+/**
  * 投递口径的历史 = **消息** + **压缩索引注记片段**（`history:` 一段，纯数据）。
  *
- * 为什么把注记拿出来（##310 八轮）：它进 messages 就必然被 `normalizeUserRuns` 合并进
- * 相邻那条 user 的正文 —— 于是自动生成的元数据伪装成用户原话。改成"注记 = 独立顶层键片段"，
- * 由调用方与 runtime 一起塞进**尾部信封**（`withRuntime`），`user.message` 只剩用户真说的那句。
+ * 注记为何单独拿出来（##310 八轮）：它进 messages 就必然被 `normalizeUserRuns` 合并进
+ * 相邻那条 user 的正文 —— 于是自动生成的元数据伪装成用户原话。
+ * 位置（##421）：由调用方用 `withHistoryNote` 挂在**历史第一条之前**（不再塞尾部信封）。
  */
 export interface HistoryDelivery {
     messages: ModelMessage[];
-    /** 压缩索引注记片段（`history:` 一段；空串 = 本次没压缩，不投递） */
+    /** 压缩索引注记（`history:` 一段；空串 = 本次没真丢消息，不投递） */
     note: string;
 }
 
@@ -2356,15 +2382,34 @@ export class LocalAgentManager {
         // 预算注记：只列**保留区间**（gap 自明，不逐 gap 标注）
         const all = projectAll(store);
         const sel = selectHistoryByBudget(all, policy.modeData.budgetBytes, opts);
+        // 【##421】注记**只在真丢了消息时**出现：keptRuns 覆盖全部消息（无 gap）⇒ 什么都没压 ⇒ 不注入。
+        // 旧实现只看 `policy` 非空 ⇒ **恒注入**（实测 lab 两步都没压掉任何消息，却每轮自带一条
+        // `kept: [[1,1]] keptBytes: 32` 的索引）—— 「注记存在」必须等价于「历史真被压过」。
+        if (sel.dropped.length === 0) return { messages: kept, note: "" };
         const note = renderBudgetNote(
             {
                 budgetBytes: policy.modeData.budgetBytes,
-                keptBytes: sel.keptBytes,
+                // `keptBytes` 扣除**本轮 user 那一行**（##421）：它是本轮输入、作为 `user.message`
+                // 走尾部信封，不属于「被保留的历史」——不扣就是纯记账偏差（注记里的数字会对不上）。
+                keptBytes: sel.keptBytes - this.tailUserBytes(all, sel, opts),
                 kept: sel.keptRuns,
             },
             { file: llmLogRelPath(taskUriOf), absPath: llmFile(taskUriOf) },
         );
         return { messages: kept, note };
+    }
+
+    /**
+     * 本轮 user 那一行在 `keptBytes` 里占的字节（##421）；不在保留集里（或尾条不是 user）→ 0。
+     *
+     * 判据：**全量投影的尾条且 role=user** —— 真发每一步都会重建投递，但只有轮首那一步的尾条
+     * 才是「本轮输入」（轮中途尾条是 tool-result，那时没有可扣的东西）。
+     */
+    private tailUserBytes(all: readonly LocalModelMessage[], sel: BudgetSelection, opts: DeliveryOpts): number {
+        const i = all.length - 1;
+        if (i < 0 || all[i]!.role !== "user" || !sel.kept.includes(i)) return 0;
+        // 与选择阶段**同一个成本口径**（含该条实际生效的 clip）——否则扣的不是它被算进去的那个数
+        return costOfWith(opts)(all[i]!, sel.clips?.[i] ?? null, sel.reasoningClips?.[i] ?? null);
     }
 
     /** 索引注记开关（默认开；`DIY_CTX_HISTORY_NOTE=0` 关 —— 对照实验用，将来收编进 policy） */
@@ -2887,8 +2932,9 @@ export class LocalAgentManager {
         const histView = this.deliveryHistoryForView(store, policy, taskUri);
         const summaryText = summaryOverride !== undefined ? summaryOverride : this.effectiveSummary(taskUri);
         // 摘要与注记一样是**自动生成的段** → 各占顶层键，不进 user.message（##310 九轮）
+        // 位置（##421）：注记在**历史首条之前**，摘要在尾部信封
         const messages = normalizeUserRuns(
-            withRuntime(histView.messages, delivery.runtime.text, histView.note, renderSummaryPart(summaryText)),
+            withRuntime(withHistoryNote(histView.messages, histView.note), delivery.runtime.text, renderSummaryPart(summaryText)),
         );
         return {
             model: personaForTask(home, taskUri).model,
@@ -4264,12 +4310,16 @@ export class LocalAgentManager {
             // 归一判据算**一次**：首步与 prepareStep 的每步都用同一份（两处判据分叉必出「首步补了、
             // 后续步没补」的假修复 —— 正是 ##405 第 85 步 400 的形态）。
             const replayOpts = reasoningReplayOptsOf(rm, reasoningEffort);
-            // 一份 `hist` → 最终 wire 形状（尾部 runtime 信封 + 摘要 + 推理回放归一）。
+            // 一份 `hist` → 最终 wire 形状（历史前注记 + 尾部 runtime 信封 + 摘要 + 推理回放归一）。
             // 抽成闭包：预检「再压一次」要按同一套拼装重算一遍 —— 两处各抄一遍必分叉（##227 老教训）。
             const sentOf = (h: typeof hist): ModelMessage[] =>
                 ensureReasoningReplay(
                     normalizeUserRuns(
-                        withRuntime(h.messages, delivery.runtime.text, h.note, renderSummaryPart(this.effectiveSummary(taskUri))),
+                        withRuntime(
+                            withHistoryNote(h.messages, h.note),
+                            delivery.runtime.text,
+                            renderSummaryPart(this.effectiveSummary(taskUri)),
+                        ),
                     ),
                     replayOpts,
                 );
@@ -5014,17 +5064,19 @@ export async function previewSimulatedRequest(opts: {
     const hist = opts.messages?.length
         ? { messages: opts.messages, note: "" }
         : getLocalAgent().deliveryMessages(taskUri);
-    // 与真发**逐字同形**：末条 user = 本轮输入 → 外面套**尾部信封**（history? + runtime + user），
-    // 再合并相邻 user。别各插一条消息 —— 那样合出来是「YAML + 裸文本」，预览会撒谎。
+    // 与真发**逐字同形**：注记（history:）挂历史首条之前，末条 user = 本轮输入 → 外面套**尾部信封**
+    // （runtime + user），再合并相邻 user。别各插一条消息 —— 那样合出来是「YAML + 裸文本」，预览会撒谎。
     // thinking 回放归一（##398）也要在预览里跑：否则预览显示「没补 reasoning_content」而真发补了
     // ⇒ 预览撒谎。档位取与真发同源（人物档位 || 模型默认档）。
     const previewRm = findModel(model);
     const messages: ModelMessage[] = ensureReasoningReplay(
         normalizeUserRuns(
             withRuntime(
-                [...hist.messages, { role: "user", content: opts.lastUser ?? "[仿真占位]真实下一轮此处为用户输入" }],
+                withHistoryNote(
+                    [...hist.messages, { role: "user", content: opts.lastUser ?? "[仿真占位]真实下一轮此处为用户输入" }],
+                    hist.note,
+                ),
                 opts.runtime ?? "",
-                hist.note,
                 renderSummaryPart(getLocalAgent().effectiveSummary(taskUri)),
             ),
         ),
