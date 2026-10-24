@@ -48,6 +48,19 @@ describe("OwnedGroups — 登记与补录", () => {
     expect(g.get(2)).toBeUndefined(); // 死组里最老的先走
   });
 
+  it("全新数据根：父目录不存在也照样落盘（log/job 那层没人建过 —— ##408 review 的真 bug）", async () => {
+    // 回归点：`log/job/groups.json` 的父目录**只有** run-registry 建 `runs/` 时顺手存在。
+    // 少了 mkdir 就是「全新数据根 / 还没起过后台 run」时每次 record 都 ENOENT + 一条 warn，
+    // 名册永远落不了盘 —— 而「重启后还能认领孤儿」整个建立在这份文件上。
+    const root = mkdtempSync(join(tmpdir(), "diy-grp-"));
+    const file = join(root, "log", "job", "groups.json"); // ← 父目录故意不存在
+    const g = new OwnedGroups({ file, alive: () => false });
+    g.record(4242, base);
+    await g.flush();
+    const raw = JSON.parse(readFileSync(file, "utf8")) as Array<{ pgid: number }>;
+    expect(raw.map((x) => x.pgid)).toEqual([4242]);
+  });
+
   it("剪枝后落盘也是剪过的（先 save 后 delete 会让盘上留幽灵条目）", async () => {
     const file = join(mkdtempSync(join(tmpdir(), "diy-grp-")), "groups.json");
     const g = new OwnedGroups({ file, alive: () => false });

@@ -93,7 +93,11 @@ const LEGACY_SYNC_IO_BASELINE = new Map(Object.entries({
   "pkgs.ts/diy-app/src/main/services/health.ts": 2,
   "pkgs.ts/diy-app/src/main/services/instances.ts": 3,
   "pkgs.ts/diy-app/src/main/services/interrupted-cause.ts": 5,
-  "pkgs.ts/diy-app/src/main/services/local-agent.ts": 27,
+  // ⚠️ 27 → 38 是一次**对齐**，不是放宽：基线是在本护栏立项的分支上算的，之后 main 进了
+  // ##419（bash 结果头）与 ops-seek，那些同步 IO 属存量代码、本护栏当时还没见过它们。
+  // 判据：这 11 处**一行都不是**本分支新增（count 与 `origin/main` 上的同名文件逐一相同）。
+  // 同一文件再涨就是新代码了 —— 那要改异步，不许再调这个数。
+  "pkgs.ts/diy-app/src/main/services/local-agent.ts": 38,
   "pkgs.ts/diy-app/src/main/services/local-find.ts": 4,
   "pkgs.ts/diy-app/src/main/services/local-layout-migrate.ts": 19,
   "pkgs.ts/diy-app/src/main/services/local-ops-seek.ts": 14,

@@ -246,6 +246,13 @@ export class RunRegistry {
     private readonly sinks = new Map<string, { chain: Promise<void>; close: () => Promise<void> }>();
     /** 收口时还没写完的那条链（`notify` 先等它，再 tail） */
     private readonly pendingFlush = new Map<string, Promise<void>>();
+    /**
+     * 日志**不可用**的 run（落盘阶段就失败了：进程在跑，但看不到输出）。
+     *
+     * 为什么要单独记一位：失败之后队列不再攒字节（见 `adopt`），所以「有没有日志」不能再靠
+     * `logPath` 存不存在去猜 —— 那条路径我们知道，只是文件写不出来。
+     */
+    private readonly logFailed = new Set<string>();
     private notifier?: (taskUri: string, text: string) => void;
 
     constructor(opts: RunRegistryOptions = {}) {
@@ -554,9 +561,15 @@ export class RunRegistry {
     }
 
     /** 测试 / 收工清理用：丢掉全部记忆（不杀进程）。 */
+    /** 这条 run 的日志是否**不可用**（诊断口径：落盘失败 ⇒ 进程在跑但看不到输出）。 */
+    logUnavailable(id: string): boolean {
+        return this.logFailed.has(id);
+    }
+
     clear(): void {
         for (const s of this.sinks.values()) void s.close();
         this.sinks.clear();
+        this.logFailed.clear();
         this.pendingFlush.clear();
         this.runs.clear();
         this.children.clear();
@@ -684,16 +697,6 @@ export class RunRegistry {
     }
 
     /**
-     * 终态唯一落点。判据只有一条：**是不是我们杀的**。
-     *
-     * 其余一律 `exited` —— 退出码非零也还是 exited：命令跑了、结束了；"成功与否"由
-     * `exitCode` 表达，不塞进状态里，否则模型得猜两个字段谁说话。
-     *
-     * 通知（唤醒 agent）**只在这里发一次**，且**我们主动杀的不发**：用户口径
-     * 「通知是背景 job 执行完、唤醒 agent 给任务发消息，不是 kill」—— 杀完立刻把人叫醒
-     * 等于自问自答，结果（`killed` + 信号）留在表里等人/下一轮自己看。
-     */
-    /**
      * **接管一条已经在跑的进程**（##408 刀 19：前台命令运行中转后台）。
      *
      * 用户口径（2026-10-24）：「转 job 不能重启进程、不能丢已产生的输出」。于是这里是
@@ -710,7 +713,9 @@ export class RunRegistry {
         const proc = input.process;
         const now = this.now();
         const id = newRunId(now);
-        const dir = join(this.rootDir, dateDirOf(now), id);
+        // 目录按**起跑时刻**分，与 spawn 那条路径同一口径（文件头：「日期取启动时刻的本地日期」）。
+        // 用 `now`（= 转的那一刻）会让跨午夜转的 run 落进第二天，与它自己的 `startedAt` 不符。
+        const dir = join(this.rootDir, dateDirOf(proc.startedAt), id);
         const logPath = join(dir, "out.log");
         const info: RunInfo = {
             id,
@@ -729,10 +734,17 @@ export class RunRegistry {
         // 放在最前面：抛了就没有"半只 run"，调用方能干净地回一句「它已经结束了」。
         // 此刻起的字节先进 `queued`，等日志文件就绪再按序放行（先 `buffered` 后 `queued`）。
         let ready = false;
+        /**
+         * 落盘失败后置真：字节**照样消费**（不消费的话子进程写满 64KB 就永久阻塞 —— 那比丢日志
+         * 严重得多），但不再进队列。没有这一位，「转后台的长跑进程 + 一次磁盘错误」= 队列无界
+         * 增长到 OOM（##408 review）。
+         */
+        let discarding = false;
         const queued: Buffer[] = [];
         let chain: Promise<void> = Promise.resolve();
         let fh: Awaited<ReturnType<typeof open>> | undefined;
         const write = (b: Buffer): void => {
+            if (discarding) return;
             if (!ready || !fh) {
                 queued.push(b);
                 return;
@@ -768,7 +780,9 @@ export class RunRegistry {
             await this.writeMeta(info);
         } catch (e) {
             console.warn("[run] adopt 落盘失败", id, e);
+            discarding = true;
             queued.length = 0;
+            this.logFailed.add(id);
         }
         this.evictOld();
         // 极端竞态兜底：交接与退出同毫秒（`handoff` 里查过一次，这里再兜一次）
@@ -777,6 +791,16 @@ export class RunRegistry {
         return this.runs.get(id) ?? info;
     }
 
+    /**
+     * 终态唯一落点。判据只有一条：**是不是我们杀的**。
+     *
+     * 其余一律 `exited` —— 退出码非零也还是 exited：命令跑了、结束了；"成功与否"由
+     * `exitCode` 表达，不塞进状态里，否则模型得猜两个字段谁说话。
+     *
+     * 通知（唤醒 agent）**只在这里发一次**，且**我们主动杀的不发**：用户口径
+     * 「通知是背景 job 执行完、唤醒 agent 给任务发消息，不是 kill」—— 杀完立刻把人叫醒
+     * 等于自问自答，结果（`killed` + 信号）留在表里等人/下一轮自己看。
+     */
     private settle(id: string, exit: PendingExit): void {
         const info = this.runs.get(id);
         if (!info || info.state !== "running") return;

@@ -11,10 +11,10 @@
 // 唯一要管的是**别无限长**：每次扫描后把"组里一个进程都不剩"的号丢掉（宽限 30s，
 // 避免刚登记就扫描时进程还没被 `ps` 抓到而被误删）。
 
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import type { GroupOwner } from "../../shared/proc-scan";
 import { uptime } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { readRuntimeConfig } from "../../runtime";
 
 /**
@@ -169,10 +169,19 @@ export class OwnedGroups {
             this.dirty = false;
             const list = [...this.map.entries()].map(([pgid, owner]) => ({ pgid, owner }));
             try {
+                // ⚠️ 目录可能还不存在（##408 review 的真 bug）：`log/job/groups.json` 所在的那层
+                //    只有 run-registry 建 `log/job/runs` 时顺手存在，**全新数据根 / 还没起过后台
+                //    run 时没人建它** ⇒ 每次 record 都 ENOENT + 一条 warn，名册永远落不了盘，
+                //    而「重启后还能认领孤儿」整个建立在这份文件上。
+                await mkdir(dirname(this.file as string), { recursive: true });
                 // non-atomic-ok: 索引可丢可重建，写坏的代价只是认不出老孤儿
                 await writeFile(this.file as string, `${JSON.stringify(list)}\n`, "utf8");
             } catch (e) {
-                console.warn("[job] 进程组索引写入失败", this.file, e);
+                // 写失败要**留住脏标记**：清掉就再也不会重试，这一轮的内存状态永远不落盘。
+                // 但此刻也别在失败里空转 —— 交给下一次 `save()` 再试。
+                this.dirty = true;
+                console.warn("[job] 进程组索引写入失败（下次变更重试）", this.file, e);
+                return;
             }
         }
     }

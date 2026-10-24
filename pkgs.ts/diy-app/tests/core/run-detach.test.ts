@@ -8,7 +8,7 @@
 // 六个坑逐条钉在测试名里（漏一个都是"转过去的活几百毫秒后自己死掉"）：
 //   ① 读端不关（关了就 64KB 阻塞）② 不再判 maxBuffer ③ 撤超时 ④ 摘 abort
 //   ⑤ 双按 / 已结束要拒绝 ⑥ 前半段输出不许丢。
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -142,6 +142,35 @@ describe("运行中转后台", () => {
         await reg.wait(info.id, 10_000);
         const lines = readFileSync(info.logPath, "utf8").trim().split("\n");
         expect(lines).toEqual(Array.from({ length: 20 }, (_, i) => `line${i + 1}`));
+    });
+
+    it("落盘失败：字节照样消费（子进程不被 64KB 卡住）、不再攒队列、如实标日志不可用", async () => {
+        // 造一个必失败的落盘目标：rootDir 的父路径是**普通文件** ⇒ mkdir 报 ENOTDIR。
+        // 回归点（##408 review）：失败后 `write` 若继续 push 进 `queued`，一条长跑进程 + 一次
+        // 磁盘错误 = 队列无界增长到 OOM；而完全不消费又会让子进程写满管道永久阻塞。
+        // 内存无界这件事测不出来，这里钉的是它**可见的两面**：进程照常跑完 + 明确标记不可用。
+        const blocker = join(tmpdir(), `diy-detach-block-${process.pid}`);
+        writeFileSync(blocker, "x");
+        const badReg = new RunRegistry({ rootDir: join(blocker, "sub") });
+        try {
+            // 200KB 远超管道缓冲（64KB）：只有真被消费，命令才可能跑完
+            const cmd = 'for i in $(seq 1 400); do echo "pad-$i-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; done; echo tail-marker';
+            const { ctl } = startForeground(cmd, { timeoutMs: 20_000 });
+            const info = await badReg.adopt({ process: ctl, command: cmd, cwd: root });
+            expect(badReg.logUnavailable(info.id)).toBe(true);
+            await badReg.wait(info.id, 10_000);
+            expect(badReg.list().find((r) => r.id === info.id)?.state).toBe("exited");
+        } finally {
+            badReg.clear();
+            rmSync(blocker, { force: true });
+        }
+    });
+
+    it("落盘成功时**不**误标日志不可用", async () => {
+        const { ctl } = startForeground("echo hi", { timeoutMs: 20_000 });
+        const info = await reg.adopt({ process: ctl, command: "echo hi", cwd: root });
+        expect(reg.logUnavailable(info.id)).toBe(false);
+        await reg.wait(info.id, 10_000);
     });
 
     it("时长按命令真正起跑算（转后台的那一刻不是起点）", async () => {
