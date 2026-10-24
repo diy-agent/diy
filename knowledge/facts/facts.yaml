@@ -179,13 +179,17 @@ facts:
     value: |-
       **库没有「新建」动作**：不存在 = 空库（读），第一次写入时由写盘原语（`atomic-write.ts` 的 `mkdirSync(dirname, {recursive:true})`）自己建目录（写）。读入口一律不建库、也不因为没库报错。
 
+      判据只有两条：
+      - **读不产生任何持久副作用** —— 磁盘快照前后一致（`loadRepo` 读路径不再 `mkdir`：原 `allowMissing` 分支已从选项类型里删除）
+      - **写不需要任何前置动作** —— 空库 `submit` 直接落盘，无例外
+
       判据按**路径来源**分护栏：
       - `--in task:<uri>` / `global` ⇒ 路径是推导的，不可能打错 ⇒ 懒建，无条件
-      - `--dir <path>` ⇒ 手敲的 ⇒ 照样懒建，但回显一行 `已新建库：<path>`（不阻止，也不静默）
+      - `--dir <path>` ⇒ 手敲的 ⇒ 照样懒建，但报告带 `created: { dir }`（不阻止，也不静默）
 
-      **现状：三处保护尚未删，此条是判据不是现状**（需求单在 ##404）。
+      反例（已修，`b6353abe`）：`loadRepo` 在 `allowMissing` 时 `mkdirSync` ⇒ `submit --dry-run` 会建库，把「库建没建」这个状态改了，而 `--dry-run` 自称「磁盘一个字都不动」。同族另两处已删：`status` / `projectFacts` 门口那句「库还没建…先跑 submit」。
 
-      反例（现行实现，已定要删）：`loadRepo` 在 `allowMissing` 时 `mkdirSync` ⇒ `submit --dry-run` 会建库，把「库建没建」这个状态改了，而 `--dry-run` 自称「磁盘一个字都不动」。
+      `agent/facts-repo-missing` **没有整体退役**，只收窄到两条环境错误（判的是「你指错地方了」，不是「库还没建」）：向上找不到 `knowledge/subjects.yaml`（处置：`--dir` 指仓根或 `DIY_FACTS_DIR`）、任务库缺继承词表（同处置）。这两条都答得出「读它的人能做什么」，故留。
     review: accepted
     lifecycle: active
     evidence:
