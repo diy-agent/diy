@@ -3,6 +3,14 @@
 # 生成物式的真源：整篇由 `diy facts submit` 写入（字段顺序、条目排序都由程序定）。
 domain: where
 facts:
+  where#agent:
+    value: |-
+      「谁在跑 / 跟别的 agent 说话 / 中止别人」→ `diy agent local running`（活体表）· `chat <taskUri> --message -` · `history <taskUri>` · `cancel <taskUri>`
+    id: where.agent
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
   where#cmd:
     value: |-
       「这命令怎么用 / 有什么能力」→ `diy --help` 与 `diy <域> --help`（真源，别猜）；提示词骨架 `diy template`。
@@ -57,6 +65,14 @@ facts:
     evidence:
       source: user
       verifiedAt: '2026-10-23'
+  where#job:
+    value: |-
+      「那条后台长活跑完了吗 / 停了没」→ `diy job ps` · `tail <runId>` · `job kill <runId>`（只管 background；前台命令不登记）
+    id: where.job
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
   where#locate-first:
     value: |-
       问题里的名词不认识 / 「X 在哪」→ 先看本库 full 暴露的 `where#*`（信息地图）**定类**，再用 `diy facts find <词>` 确认它指什么；不许先 rg 猜词乱翻。
