@@ -23,6 +23,22 @@ facts:
       source: user
       at: ~/git/diy/AGENTS.md:25
       verifiedAt: '2026-10-21'
+  dev.context#cache-economics:
+    value: |-
+      **一步的钱由 `cacheHit` 决定，不由前缀大小决定**：实测命中步 ≈ $0.0007/步，未命中步 ≈ $0.0118/步 ⇒ **≈18 倍**（2026-10-24，deepseek-v4.1-flash，lab tasks/5 单轮 8 步）。
+
+      推论一：**减负动作必须成批落在轮次边界，不能边走边改** —— 每改一次 system 段就熔断一次缓存，18 倍单价会把零敲碎打的小改全部吃回去；省下的 10 KB 要几十步才回本。
+
+      推论二：`runtime.self` 这类**每步都变**的自量必须走 `runtimeDiff`（追加在末尾，不动前缀），绝不能进 `runtime` 全量（轮首全量 = 每轮第一步让其后所有历史失效）。实测 `self` 块 192 B/步，代价可忽略。
+
+      推论三：`cacheHit` 掉到 <50% 要能分辨两种成因 —— ①自己改了 system 段（可控）②历史压缩触发（预算阶梯的固有代价，必然断一次）。结果同为 18 倍，处置完全不同。
+    id: dev.context-cache-economics
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: 'runtime.self 的 last.cacheHit / last.cost 逐步实录（见 journal #94）'
+      verifiedAt: '2026-10-24'
   dev.context#chain-share:
     value: |-
       AGENTS.md 链瘦身前 28.3 KB 占 system 81%（~/AGENTS.md 17.0 · 仓库 9.5 · ~/git 1.6）；仓库那份 43 条正文 2026-10-22 迁进知识库后降到 1.9 KB，system 34.9→26.7 KB。**剩余大头是 ~/AGENTS.md 17.0 KB（占 system 64%）**：它是全局规则，塞项目库是 scope 错位，得先有 user 级库
