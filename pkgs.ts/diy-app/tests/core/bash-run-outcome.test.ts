@@ -67,6 +67,6 @@ describe("runBash 的结局映射（job 账本的唯一来源）", () => {
         const run = await pending;
         expect(run.outcome).toBe("canceled");
         expect(run.failed).toBe(false);
-        expect(run.text).toBe("[已取消]");
+        expect(run.text.endsWith("\n---\n[已取消]")).toBe(true); // ##419 起带头，正文仍是原文
     }, 10_000);
 });

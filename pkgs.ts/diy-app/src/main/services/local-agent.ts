@@ -28,6 +28,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { writeFileAtomic } from "../core/atomic-write";
+import { fieldNames, renderFieldDocs } from "../../shared/schema-doc";
 import { findInOpsFile, type FindResult, type FindScopes } from "./local-find";
 import { diyHome, projectDir, projectFromUri } from "../core/state";
 import { keyOf, llmFile, llmLogRelPath, localDir, opsFile, sessionFileForWrite, sessionFilesToClear, sessionIdOf } from "../core/local-paths";
@@ -50,7 +51,9 @@ import {
     selectForDelivery,
     type BlockKind,
     type BlockNode,
+    type BudgetSelection,
     type DeliveryOpts,
+    type LocalModelMessage,
     type Op,
     type JSONVal,
     type TurnEndReason,
@@ -118,7 +121,7 @@ import { buildDelivery, isRuntimePlace, runtimeDiffDelivery, type Delivery } fro
 import { renderBudgetNote } from "../../shared/context/budget-note";
 import { mustHardCapBytesOf } from "../../shared/context/compact-keep";
 import { estimateRequest, tighterHistoryCapBytes } from "../../shared/context/request-preflight";
-import { renderSummaryPart, tailEnvelope } from "../../shared/context/envelope";
+import { isEnvelopeText, renderSummaryPart, tailEnvelope } from "../../shared/context/envelope";
 import { describeAnomalies, readLlmLog } from "../../shared/context/log-schema";
 import {
     autoCompactPolicyInput,
@@ -532,7 +535,9 @@ export function normalizeUserRuns(msgs: ModelMessage[]): ModelMessage[] {
     const out: ModelMessage[] = [];
     for (const m of msgs) {
         const last = out[out.length - 1];
-        if (m.role === "user" && last?.role === "user") {
+        // 【##421】**信封形态的消息不参与合并**：自动生成的段（`history:` 注记）自占一条消息，
+        // 它放在历史第一条之前 —— 若被并进相邻 user，就又是一坨「元数据伪装成用户原话」（##310 八轮坑）。
+        if (m.role === "user" && last?.role === "user" && !isEnvelope(m) && !isEnvelope(last)) {
             out[out.length - 1] = {
                 role: "user",
                 content: mergeUserContent(last.content as UserContent, m.content as UserContent),
@@ -544,9 +549,14 @@ export function normalizeUserRuns(msgs: ModelMessage[]): ModelMessage[] {
     return out;
 }
 
+/** 信封消息（自占顶层键的自动生成段）—— 不参与 user 合并，见 `normalizeUserRuns` 与 `isEnvelopeText` */
+function isEnvelope(m: ModelMessage): boolean {
+    return m.role === "user" && typeof m.content === "string" && isEnvelopeText(m.content);
+}
+
 /**
- * 把**尾部信封**拼进 messages：`summary:`（历史摘要素，可选）+ `history:`（压缩索引注记，可选）
- * + `runtime:`（或 `runtimeDiff:`）+ `user:`（本轮输入），合成**一份**合法 YAML（`tailEnvelope`）。
+ * 把**尾部信封**拼进 messages：`summary:`（历史摘要素，可选）+ `runtime:`（或 `runtimeDiff:`）
+ * + `user:`（本轮输入），合成**一份**合法 YAML（`tailEnvelope`）。
  *
  * 为什么合成一份（##310 六轮拍板）：这些段与本轮输入是**相邻 user**，而
  * `normalizeUserRuns` 必然把它们合并成一条（收敛成"一份信封一条 user"）。与其让合并
@@ -555,8 +565,6 @@ export function normalizeUserRuns(msgs: ModelMessage[]): ModelMessage[] {
  *     summary:      ← 仅当有历史摘要（自动生成的元数据，自己的顶层键）
  *       |-
  *       …
- *     history:      ← 仅当历史被压缩（自动生成的元数据，自己的顶层键）
- *       kept: [[5, 8]]
  *     runtime:      ← 或 runtimeDiff:
  *       task: {…}
  *     user:
@@ -567,32 +575,51 @@ export function normalizeUserRuns(msgs: ModelMessage[]): ModelMessage[] {
  * （tasks/5 实测：多烧 3 次 bash、5.6 万 prompt token 就为一个字）。摘要（`withSummary`）同坑，
  * 九轮一并改成顶层键 `summary:`。
  *
- * 尾部不是 user（如自动续跑、纯工具轮）→ 不编 `user:` 段；三段全空 → 原样返回。
+ * ⚠️ `history:`（压缩索引注记，##421）**不在**尾部信封里了 —— 它自占一条 user 消息、
+ * 挂在历史第一条之前（见 `withHistoryNote`）：
+ *   · 用户原话：「压缩后第一个消息很容易分辨是被压缩了，放最后一个，完全被淹没了」。
+ *   · `runtime:` **保持尾部**：DeepSeek 前缀缓存是逐字节前缀，runtime 每轮首步必变，
+ *     挪到 system 之后会让整个历史每轮按 cache miss 计费（hit/miss 约 10×）—— 尾部只让
+ *     尾部几百字节 miss。这笔账写进 ##421 的 PR 正文。
+ *
+ * 尾部不是 user（如自动续跑、纯工具轮）→ 不编 `user:` 段；全空 → 原样返回。
  */
-function withRuntime(hist: ModelMessage[], runtime: string, historyNote = "", summaryPart = ""): ModelMessage[] {
-    const parts = [summaryPart, historyNote, runtime].filter((t) => t.trim());
+function withRuntime(hist: ModelMessage[], runtime: string, summaryPart = ""): ModelMessage[] {
+    const parts = [summaryPart, runtime].filter((t) => t.trim());
     if (parts.length === 0) return hist;
     const last = hist[hist.length - 1];
     if (last && last.role === "user" && typeof last.content === "string" && last.content.trim()) {
         return [...hist.slice(0, -1), { role: "user", content: tailEnvelope(parts, last.content) }];
     }
     // 没有可并的输入：只有 runtime 一段时保持旧形（逐字一致）；否则各段各有顶层键
-    if (parts.length === 1 && runtime.trim() && !historyNote.trim() && !summaryPart.trim()) {
+    if (parts.length === 1 && runtime.trim() && !summaryPart.trim()) {
         return [...hist, { role: "user", content: runtime }];
     }
     return [...hist, { role: "user", content: tailEnvelope(parts) }];
 }
 
 /**
+ * 把**压缩索引注记**挂到历史**首条之前**（##421）：system 之后、历史之前，**独立一条 user 消息**。
+ *
+ * 为什么不放尾部信封（旧位置）：用户原话「放最后一个，完全被淹没了」—— 压缩与否要一眼看得出来。
+ * 为什么不会被 `normalizeUserRuns` 并进相邻 user：该函数对**信封形态**的消息不合并
+ * （判据 `isEnvelopeText`，本刀一并修）。注记空串 ⇒ 不注入（没真丢消息时就是空串）。
+ */
+function withHistoryNote(hist: ModelMessage[], note: string): ModelMessage[] {
+    if (!note.trim()) return hist;
+    return [{ role: "user", content: note }, ...hist];
+}
+
+/**
  * 投递口径的历史 = **消息** + **压缩索引注记片段**（`history:` 一段，纯数据）。
  *
- * 为什么把注记拿出来（##310 八轮）：它进 messages 就必然被 `normalizeUserRuns` 合并进
- * 相邻那条 user 的正文 —— 于是自动生成的元数据伪装成用户原话。改成"注记 = 独立顶层键片段"，
- * 由调用方与 runtime 一起塞进**尾部信封**（`withRuntime`），`user.message` 只剩用户真说的那句。
+ * 注记为何单独拿出来（##310 八轮）：它进 messages 就必然被 `normalizeUserRuns` 合并进
+ * 相邻那条 user 的正文 —— 于是自动生成的元数据伪装成用户原话。
+ * 位置（##421）：由调用方用 `withHistoryNote` 挂在**历史第一条之前**（不再塞尾部信封）。
  */
 export interface HistoryDelivery {
     messages: ModelMessage[];
-    /** 压缩索引注记片段（`history:` 一段；空串 = 本次没压缩，不投递） */
+    /** 压缩索引注记（`history:` 一段；空串 = 本次没真丢消息，不投递） */
     note: string;
     /**
      * ##420：本次读的**重放起点**（`deliveryMessages` 预览路径才带）。
@@ -1242,6 +1269,62 @@ function clip(s: string, n = 6000): string {
 const BASH_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
 
 /**
+ * bash 结果的 **YAML 头**（##419）—— **唯一真源**：渲染（`renderBashHead`）与工具 description 的
+ * 字段说明都由它派生（`shared/schema-doc.ts::fieldNames / renderFieldDocs`）。加字段只改这里。
+ *
+ * 为什么要有头：模型和人都得**一眼看清这一步是怎么结束的**（耗时 / 超没超时 / 被杀没有 / 退出码）——
+ * 以前这些信息散在正文的自然语言里，而「永挂」那几条（##419）连自然语言都没有。
+ */
+const BASH_RESULT_HEAD_SCHEMA = z.object({
+    ok: z.boolean().describe("是否正常结束（退出码 0，且没超时 / 没被杀 / 没因输出溢出被终止）"),
+    exit_code: z.number().optional().describe("退出码；超时 / 取消 / 命令没跑起来时整行缺席"),
+    duration_ms: z.number().describe("墙钟耗时（毫秒）：从 spawn 前到收尾"),
+    timeout_ms: z.number().describe("本次生效的超时（毫秒），环境变量 DIY_LOCAL_BASH_TIMEOUT_MS 可调"),
+    timed_out: z.boolean().describe("是否因超时被终止"),
+    killed: z.boolean().describe("是否被我们主动杀掉（超时 / 取消 / 输出溢出）"),
+    truncated: z.boolean().describe("投递层是否截断了正文（超 2000 行 / 50KB）；原文可 read 回取"),
+    stdout_bytes: z.number().describe("stdout 原始字节数（截断前）"),
+    stderr_bytes: z.number().describe("stderr 原始字节数（截断前）"),
+    cwd: z.string().describe("命令的工作目录（相对路径的基准）"),
+    signal: z.string().optional().describe("子进程收到的信号名（SIGKILL / SIGTERM…），没有则整行缺席"),
+});
+
+type BashHead = z.infer<typeof BASH_RESULT_HEAD_SCHEMA>;
+
+/** YAML 标量：能裸写就裸写（人读友好），否则 JSON 引号转义（cwd 里的空格 / 引号 / 冒号） */
+function yamlScalar(v: string | number | boolean): string {
+    if (typeof v !== "string") return String(v);
+    return /^[A-Za-z0-9_./~+=@-]+$/.test(v) ? v : JSON.stringify(v);
+}
+
+/**
+ * 结果的 **YAML 头 + 正文原文**（##419）：`---\n<key: value>…\n---\n` 后紧跟正文，正文逐字不动
+ * （模型 / 日志引用同一段文字，`read` 也能原样回取）。值为 undefined 的键**整行省略**。
+ */
+function renderBashHead(h: Partial<BashHead>): string {
+    const lines = ["---"];
+    for (const name of fieldNames(BASH_RESULT_HEAD_SCHEMA)) {
+        const v = h[name as keyof BashHead];
+        if (v === undefined) continue;
+        lines.push(`${name}: ${yamlScalar(v)}`);
+    }
+    lines.push("---");
+    return `${lines.join("\n")}\n`;
+}
+
+/**
+ * 投递层把 `truncated: false` 改写成 `true`（##419）。
+ *
+ * 为什么不在 execute 里就写好：**截断只发生在投递层**（`capToolOutput`，##127）—— execute 交给
+ * ops 的那一份是原文，它本来就是完整的。所以这个位只能投递时现算；只改**头部那一行**，正文不碰。
+ */
+export function markBashTruncated(text: string): string {
+    const end = text.indexOf("\n---\n", 4);
+    if (end < 0) return text; // 没有头（不该发生）→ 原样返回，绝不改正文
+    return text.slice(0, end).replace(/^truncated: false$/m, "truncated: true") + text.slice(end);
+}
+
+/**
  * bash 执行结果的**语义档**（##353：工具行 ✓/✗ 的口径真源）。
  *
  * `failed` = 这一行该画 ✗（execute 据此抛错 → SDK 发 tool-error → ops `status:"error"`）。
@@ -1347,37 +1430,104 @@ export function runBash(
 ): Promise<BashRun> {
     return new Promise((resolve) => {
         if (signal?.aborted) {
-            resolve({ text: "[已取消]", failed: false, outcome: "canceled" });
+            // 还没起进程就取消了：头照给（字段齐全），耗时 / 字节都是 0
+            resolve({
+                text:
+                    renderBashHead({
+                        ok: false,
+                        duration_ms: 0,
+                        timeout_ms: limits.bashTimeoutMs,
+                        timed_out: false,
+                        killed: false,
+                        truncated: false,
+                        stdout_bytes: 0,
+                        stderr_bytes: 0,
+                        cwd,
+                    }) + "[已取消]",
+                failed: false,
+                outcome: "canceled",
+            });
             return;
         }
         /** abort 补刀的注销器（settle 时解绑，避免监听器随轮次泄漏） */
         let offAbort: (() => void) | undefined;
         /** 超时定时器（settle 时清掉） */
         let timeoutId: NodeJS.Timeout | undefined;
-        /** 全部结局只在这里落一次（成功 / 各失败档）；'close'/'error'/取消/同步 catch 共用同一判定 */
-        const settle = (err: BashExecError, stdout: string, stderr: string, sig?: string | null): void => {
+        /** 起跑时刻（`duration_ms` 的起点）：放在 spawn 之前，含建进程的开销 */
+        const startedAt = Date.now();
+        // ── 下面这几项 settle 与 try 两处都要用（settle 在 try 外定义，收尾要读它们）──
+        // 输出按**块**攒（不逐块拼字符串）：上限判据只要长度计数，逐块 `byteLength` 是 O(n²)
+        const chunks = { out: [] as Buffer[], err: [] as Buffer[] };
+        const len = { out: 0, err: 0 };
+        const dump = (side: "out" | "err"): string => Buffer.concat(chunks[side], len[side]).toString("utf8");
+        /** 结局是否已落（Promise 本身只认第一次，这里只是别再做无用功 / 别多杀） */
+        let done = false;
+        /** 我们主动杀的（超时 / 取消 / 输出溢出）—— 对应 execFile 的 `killed` */
+        let killed = false;
+        /**
+         * 释放 stdout/stderr 管道（spawn 成功后才会被赋值）：同步抛（cwd 是普通文件 ⇒ ENOTDIR）时
+         * `child` 根本没建出来，settle 碰它就是 TDZ 崩 —— 用这个"句柄"隔一层，见下方结算处注释。
+         */
+        let destroyPipes: (() => void) | undefined;
+        /**
+         * 全部结局只在这里落一次（成功 / 各失败档）；
+         * 'close' / 'error' / 取消 / 超时 / 同步 catch 共用同一判定。
+         *
+         * `timedOut` 由**超时那条路**显式传进来（不从 `killed` 猜）：`killed` 一个位服务三条主动
+         * 路径（超时 / 输出溢出 / 取消），只有调用点知道是哪一条（见 ##419）。
+         */
+        const settle = (
+            err: BashExecError,
+            stdout: string,
+            stderr: string,
+            sig?: string | null,
+            timedOut = false,
+        ): void => {
             offAbort?.();
             offAbort = undefined;
             if (timeoutId) {
                 clearTimeout(timeoutId);
                 timeoutId = undefined;
             }
+            // 结案即刻**释放管道**（##419）：超时 / 取消时子进程可能还活着（后台作业换了
+            // session/pgid ⇒ 组杀打空），它的子孙仍握着 stdout/stderr 写端 —— 不 destroy 就每挂
+            // 一次泄 2 个 fd。`done` 闸门已挡住后续数据，destroy 只影响"谁还握着写端"。
+            destroyPipes?.();
+            destroyPipes = undefined;
             const out = [stdout, stderr].filter(Boolean).join("\n");
+            /** 结果头（##419）：字段名 / 顺序由 BASH_RESULT_HEAD_SCHEMA 派生，正文一律原文 */
+            const head = (h: { ok: boolean; exitCode?: number; signal?: string | null }): string =>
+                renderBashHead({
+                    ok: h.ok,
+                    exit_code: h.exitCode,
+                    duration_ms: Date.now() - startedAt,
+                    timeout_ms: limits.bashTimeoutMs,
+                    timed_out: timedOut,
+                    killed: killed || err?.killed === true,
+                    // 投递层（toModelOutput + markBashTruncated）按 capToolOutput 的结果改写成 true；
+                    // 这一份是**原文**，原文就是完整的 ⇒ 恒 false
+                    truncated: false,
+                    stdout_bytes: len.out,
+                    stderr_bytes: len.err,
+                    cwd,
+                    signal: h.signal ?? undefined,
+                });
             // ⚠️ 这里一律返回**完整**文本（不 clip）：发给模型的那一份由 `capToolOutput` 在
             //    投递层现算（##127）—— 在 execute 里裁 = 落进 ops 的原文当场丢。
             //
             // `outcome` 只给 job 账本（##408 刀 5），**不参与** ✓/✗ 判定（`failed` 的判据见文件头）
-            if (err?.name === "AbortError") resolve({ text: "[已取消]", failed: false, outcome: "canceled" });
+            if (err?.name === "AbortError")
+                resolve({ text: head({ ok: false }) + "[已取消]", failed: false, outcome: "canceled" });
             else if (err?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" || err?.code === "ENOBUFS")
                 resolve({
-                    text: `[输出超过 ${fmtBytes(BASH_MAX_BUFFER_BYTES)} 上限，命令已终止；以下是已收到的部分]\n${out}`,
+                    text: head({ ok: false }) + `[输出超过 ${fmtBytes(BASH_MAX_BUFFER_BYTES)} 上限，命令已终止；以下是已收到的部分]\n${out}`,
                     failed: false,
                     outcome: "fail",
                 });
             else if (err?.killed)
                 // 带上时长与出路：模型看到「30s 被杀」才会去 nohup / 分批，只写「超时」它会原样重试
                 resolve({
-                    text: `[命令超时被杀]（超过 ${fmtTimeout(limits.bashTimeoutMs)}，可用 DIY_LOCAL_BASH_TIMEOUT_MS 调整；长任务请后台跑 + 取增量日志）\n${out}`,
+                    text: head({ ok: false, signal: sig }) + `[命令超时被杀]（超过 ${fmtTimeout(limits.bashTimeoutMs)}，可用 DIY_LOCAL_BASH_TIMEOUT_MS 调整；长任务请后台跑 + 取增量日志）\n${out}`,
                     failed: false,
                     outcome: "timeout",
                     ...(sig ? { signal: sig } : {}),
@@ -1385,7 +1535,7 @@ export function runBash(
             else if (typeof err?.code === "number")
                 // 命令级非零退出（##353）：有 stderr = 失败，无 stderr = 查询未命中（数据）
                 resolve({
-                    text: `[退出码 ${err.code}]\n${out || "(无输出)"}`,
+                    text: head({ ok: err.code === 0, exitCode: err.code, signal: sig }) + `[退出码 ${err.code}]\n${out || "(无输出)"}`,
                     failed: stderr.trim().length > 0,
                     outcome: err.code === 0 ? "ok" : "fail",
                     exitCode: err.code,
@@ -1394,11 +1544,17 @@ export function runBash(
             else if (err)
                 // spawn / IO 失败（##332 ③）：命令**根本没跑起来** —— 失败档（execute 据此抛错）
                 resolve({
-                    text: `[命令未能启动 ${typeof err.code === "string" ? err.code : "?"}] ${err.message ?? ""}（工作目录：${cwd}）${out ? `\n${out}` : ""}`,
+                    text: head({ ok: false }) + `[命令未能启动 ${typeof err.code === "string" ? err.code : "?"}] ${err.message ?? ""}（工作目录：${cwd}）${out ? `\n${out}` : ""}`,
                     failed: true,
                     outcome: "fail",
                 });
-            else resolve({ text: out || "(无输出)", failed: false, outcome: "ok", exitCode: 0 });
+            else
+                resolve({
+                    text: head({ ok: true, exitCode: 0 }) + (out || "(无输出)"),
+                    failed: false,
+                    outcome: "ok",
+                    exitCode: 0,
+                });
         };
         try {
             // ⚠️ 为什么不用 execFile（##375 实测，别改回去）：`execFile` 把选项**白名单**转发给
@@ -1420,19 +1576,16 @@ export function runBash(
                 detached: true,
                 stdio: ["ignore", "pipe", "pipe"],
             });
+            // 管道释放句柄交给 settle（它跨 try 作用域，不能直接碰 child）
+            destroyPipes = () => {
+                child.stdout?.destroy();
+                child.stderr?.destroy();
+            };
             if (child.pid !== undefined) hooks?.onSpawn?.(child.pid);
-            // 输出按**块**攒（不逐块拼字符串）：上限判据只要长度计数，逐块 `byteLength` 是 O(n²)
-            const chunks = { out: [] as Buffer[], err: [] as Buffer[] };
-            const len = { out: 0, err: 0 };
-            const dump = (side: "out" | "err"): string => Buffer.concat(chunks[side], len[side]).toString("utf8");
-            /** 结局是否已落（Promise 本身只认第一次，这里只是别再做无用功 / 别多杀） */
-            let done = false;
-            /** 我们主动杀的（超时 / 输出溢出）—— 对应 execFile 的 `killed` */
-            let killed = false;
-            const finish = (err: BashExecError, o: string, e: string): void => {
+            const finish = (err: BashExecError, o: string, e: string, timedOut = false, sig?: string): void => {
                 if (done) return; // settle 内部（唯一落点）负责解绑 abort 监听与超时定时器
                 done = true;
-                settle(err, o, e, child.signalCode);
+                settle(err, o, e, sig ?? child.signalCode, timedOut);
             };
             /** 攒输出 + 上限（与 execFile 同口径：stdout / stderr **各算各的**，超了即杀、留已收到的部分） */
             const onData = (chunk: Buffer, side: "out" | "err"): void => {
@@ -1460,8 +1613,16 @@ export function runBash(
                     finish({ code, killed, message: `Command failed: /bin/bash -c ${command}` }, dump("out"), dump("err"));
             });
             // 超时：自己计时（不用 execFile 的 timeout —— 它只杀直接子进程，同一类孤儿缺口）
+            //
+            // ⚠️ **先收尾、再杀组**（##419，与下面 onAbort 同构）：只杀不收尾是"永挂"的根因 ——
+            //    后台作业（`&` + disown / 自己 setsid 的 Electron）换了 session/pgid ⇒ `kill(-pid)`
+            //    打空，它（或它的子孙）仍握着 stdout/stderr 写端 ⇒ `'close'` **永远不到** ⇒ Promise
+            //    永不 resolve（实测 30.2 / 82.4 分钟，铁证见 `~/.diy/log/agent-bash.jsonl`）。
+            //    超时这一刻结局**已经确定**，没理由再等一个可能永不到来的事件。
+            //    `signal` 显式给 "SIGKILL"：紧接着就发，不等 'close' 回填 signalCode。
             timeoutId = setTimeout(() => {
                 killed = true;
+                finish({ code: null, message: "timeout", killed: true }, dump("out"), dump("err"), true, "SIGKILL");
                 killProcessGroup(child);
             }, limits.bashTimeoutMs);
             if (signal) {
@@ -1469,6 +1630,7 @@ export function runBash(
                 // 顺序有意：这是一条"肯定结束了"的路径，不必等 close 事件（组杀完 close 才到，
                 // 中间那段 UI 会显示"还在跑"）；而杀组要在 bash 还活着时发，组 id 才有效。
                 const onAbort = (): void => {
+                    killed = true; // 头里 killed 如实置位（紧接着就发 SIGKILL，与超时同构）
                     finish({ name: "AbortError", code: "ABORT_ERR", message: "The operation was aborted" }, dump("out"), dump("err"));
                     killProcessGroup(child);
                 };
@@ -1500,15 +1662,23 @@ export interface TurnToolAnchor {
 export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: string, anchor?: TurnToolAnchor) {
     return {
         bash: tool({
-            description: "在项目目录执行 bash 命令并返回输出（查文件、跑命令、看系统信息）。",
+            description: [
+                "在项目目录执行 bash 命令并返回输出（查文件、跑命令、看系统信息）。",
+                `超时缺省 ${fmtTimeout(limits.bashTimeoutMs)}（环境变量 DIY_LOCAL_BASH_TIMEOUT_MS 调整）：超时 / 取消 / 输出溢出都会杀掉整个进程组，并**照样返回结果**（不抛错）—— 正文是已收到的部分，看头里 timed_out / killed 判断怎么结束的。`,
+                "长任务写法：`nohup <命令> > /tmp/x.log 2>&1 < /dev/null & disown` 立刻返回，然后用**另一条**命令 `tail /tmp/x.log` 取增量；不要在同一条命令里 sleep 等它跑完 —— 那只会撞上自己的超时。",
+                "stdin 已接 /dev/null：`cat`、无参 `grep` / `rg` 立刻拿到 EOF，不会挂住等输入。相对路径一律按 cwd（项目目录）解析。",
+                "结果 = YAML 头 + 正文原文（正文逐字不动）。头的字段：",
+                ...renderFieldDocs(BASH_RESULT_HEAD_SCHEMA),
+            ].join("\n"),
             inputSchema: z.object({ command: z.string().describe("要执行的 bash 命令") }),
             // ##127：单条工具输出的截断**只落投递层** —— `toModelOutput` 改写「发给模型的那一份」
             // （超 2000 行 / 50KB 时头尾 + marker + 原文落盘可 read 回取），`execute` 的返回值
             // 仍是全文（落进 ops 的原文永不动）。见 services/tool-output.ts。
-            toModelOutput: ({ toolCallId, output }) => ({
-                type: "text" as const,
-                value: capToolOutput(String(output), toolCallId, taskUri).text,
-            }),
+            toModelOutput: ({ toolCallId, output }) => {
+                const capped = capToolOutput(String(output), toolCallId, taskUri);
+                // 头里的 truncated 位只能在投递层定（真截断才知道），见 markBashTruncated
+                return { type: "text" as const, value: capped.clipped ? markBashTruncated(capped.text) : capped.text };
+            },
             execute: async ({ command }, opts) => {
                 const home = diyHome();
                 // 自杀护栏（agent-guard.ts）已停用（2026-10-02）：
@@ -2462,17 +2632,37 @@ export class LocalAgentManager {
         // 预算注记：只列**保留区间**（gap 自明，不逐 gap 标注）
         const all = projectAll(store);
         const sel = selectHistoryByBudget(all, policy.modeData.budgetBytes, opts);
+        // 【##421】注记**只在真丢了消息时**出现：keptRuns 覆盖全部消息（无 gap）⇒ 什么都没压 ⇒ 不注入。
+        // 旧实现只看 `policy` 非空 ⇒ **恒注入**（实测 lab 两步都没压掉任何消息，却每轮自带一条
+        // `kept: [[1,1]] keptBytes: 32` 的索引）—— 「注记存在」必须等价于「历史真被压过」。
+        if (sel.dropped.length === 0) return { messages: kept, note: "" };
+        // ##420：`store` 只含保留段 ⇒ 选出的行号要整体加上跳过段的长度（= llm.jsonl 物理行号）
         const keptRuns: [number, number][] =
             llmLineBase > 0 ? sel.keptRuns.map(([a, b]) => [a + llmLineBase, b + llmLineBase]) : sel.keptRuns;
         const note = renderBudgetNote(
             {
                 budgetBytes: policy.modeData.budgetBytes,
-                keptBytes: sel.keptBytes,
+                // `keptBytes` 扣除**本轮 user 那一行**（##421）：它是本轮输入、作为 `user.message`
+                // 走尾部信封，不属于「被保留的历史」——不扣就是纯记账偏差（注记里的数字会对不上）。
+                keptBytes: sel.keptBytes - this.tailUserBytes(all, sel, opts),
                 kept: keptRuns,
             },
             { file: llmLogRelPath(taskUriOf), absPath: llmFile(taskUriOf) },
         );
         return { messages: kept, note };
+    }
+
+    /**
+     * 本轮 user 那一行在 `keptBytes` 里占的字节（##421）；不在保留集里（或尾条不是 user）→ 0。
+     *
+     * 判据：**全量投影的尾条且 role=user** —— 真发每一步都会重建投递，但只有轮首那一步的尾条
+     * 才是「本轮输入」（轮中途尾条是 tool-result，那时没有可扣的东西）。
+     */
+    private tailUserBytes(all: readonly LocalModelMessage[], sel: BudgetSelection, opts: DeliveryOpts): number {
+        const i = all.length - 1;
+        if (i < 0 || all[i]!.role !== "user" || !sel.kept.includes(i)) return 0;
+        // 与选择阶段**同一个成本口径**（含该条实际生效的 clip）——否则扣的不是它被算进去的那个数
+        return costOfWith(opts)(all[i]!, sel.clips?.[i] ?? null, sel.reasoningClips?.[i] ?? null);
     }
 
     /** 索引注记开关（默认开；`DIY_CTX_HISTORY_NOTE=0` 关 —— 对照实验用，将来收编进 policy） */
@@ -3000,8 +3190,9 @@ export class LocalAgentManager {
         const histView = this.deliveryHistoryForView(store, policy, taskUri, storeInput ? 0 : replayPlan.lineBase);
         const summaryText = summaryOverride !== undefined ? summaryOverride : this.effectiveSummary(taskUri);
         // 摘要与注记一样是**自动生成的段** → 各占顶层键，不进 user.message（##310 九轮）
+        // 位置（##421）：注记在**历史首条之前**，摘要在尾部信封
         const messages = normalizeUserRuns(
-            withRuntime(histView.messages, delivery.runtime.text, histView.note, renderSummaryPart(summaryText)),
+            withRuntime(withHistoryNote(histView.messages, histView.note), delivery.runtime.text, renderSummaryPart(summaryText)),
         );
         return {
             model: personaForTask(home, taskUri).model,
@@ -4391,12 +4582,16 @@ export class LocalAgentManager {
             // 归一判据算**一次**：首步与 prepareStep 的每步都用同一份（两处判据分叉必出「首步补了、
             // 后续步没补」的假修复 —— 正是 ##405 第 85 步 400 的形态）。
             const replayOpts = reasoningReplayOptsOf(rm, reasoningEffort);
-            // 一份 `hist` → 最终 wire 形状（尾部 runtime 信封 + 摘要 + 推理回放归一）。
+            // 一份 `hist` → 最终 wire 形状（历史前注记 + 尾部 runtime 信封 + 摘要 + 推理回放归一）。
             // 抽成闭包：预检「再压一次」要按同一套拼装重算一遍 —— 两处各抄一遍必分叉（##227 老教训）。
             const sentOf = (h: typeof hist): ModelMessage[] =>
                 ensureReasoningReplay(
                     normalizeUserRuns(
-                        withRuntime(h.messages, delivery.runtime.text, h.note, renderSummaryPart(this.effectiveSummary(taskUri))),
+                        withRuntime(
+                            withHistoryNote(h.messages, h.note),
+                            delivery.runtime.text,
+                            renderSummaryPart(this.effectiveSummary(taskUri)),
+                        ),
                     ),
                     replayOpts,
                 );
@@ -5141,17 +5336,19 @@ export async function previewSimulatedRequest(opts: {
     const hist = opts.messages?.length
         ? { messages: opts.messages, note: "" }
         : getLocalAgent().deliveryMessages(taskUri);
-    // 与真发**逐字同形**：末条 user = 本轮输入 → 外面套**尾部信封**（history? + runtime + user），
-    // 再合并相邻 user。别各插一条消息 —— 那样合出来是「YAML + 裸文本」，预览会撒谎。
+    // 与真发**逐字同形**：注记（history:）挂历史首条之前，末条 user = 本轮输入 → 外面套**尾部信封**
+    // （runtime + user），再合并相邻 user。别各插一条消息 —— 那样合出来是「YAML + 裸文本」，预览会撒谎。
     // thinking 回放归一（##398）也要在预览里跑：否则预览显示「没补 reasoning_content」而真发补了
     // ⇒ 预览撒谎。档位取与真发同源（人物档位 || 模型默认档）。
     const previewRm = findModel(model);
     const messages: ModelMessage[] = ensureReasoningReplay(
         normalizeUserRuns(
             withRuntime(
-                [...hist.messages, { role: "user", content: opts.lastUser ?? "[仿真占位]真实下一轮此处为用户输入" }],
+                withHistoryNote(
+                    [...hist.messages, { role: "user", content: opts.lastUser ?? "[仿真占位]真实下一轮此处为用户输入" }],
+                    hist.note,
+                ),
                 opts.runtime ?? "",
-                hist.note,
                 renderSummaryPart(getLocalAgent().effectiveSummary(taskUri)),
             ),
         ),

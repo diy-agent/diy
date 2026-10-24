@@ -13,11 +13,16 @@
 //
 //   尾部 user 消息（不进块树/llm 历史；每轮现拼 → 不会累积）
 //     summary:     ← 被压掉那段的摘要（仅摘要功能启用时；背景，不是变量树）
-//     history:     ← 压缩索引注记（仅历史被压缩时；纯数据）
 //     runtime:     ← 易变变量树（**每轮首步全量**）
 //     runtimeDiff: ← 本步**变化的原子单元** → 变更后的当前值（只列变化的）
 //     user:
 //       message:   ← 用户本轮真实发言（原样）
+//
+//   历史首条之前的**独立 user 消息**（##421）
+//     history:     ← 压缩索引注记（**仅当真的丢了消息**；纯数据，自占一条消息）
+//       ⚠️ 位置在 system 之后、历史第一条之前 —— 用户原话：「压缩后第一个消息很容易分辨
+//       是被压缩了，放最后一个，完全被淹没了」。因此它必须**不被** `normalizeUserRuns`
+//       并进相邻 user 正文（判据 `isEnvelopeText`：首行是信封顶层键）。
 //
 // ── 硬规则（用户 2026-10-15 拍板）──
 //   1. `help` **只能由 zod 派生**（`desc` = `.describe()`），只允许一小段固定话术
@@ -54,6 +59,7 @@ export const ENVELOPE_ABOUT = [
     "· 值段（system / runtime / runtimeDiff / history / user）只放**数据**，不放解释；解释一律在 help。",
     "· system 段每次请求**全量重建**（稳定项），变更时直接以新值替换、不带历史。",
     "· runtime 段是**易变项**：每轮首步给全量；轮中途某一步变了，就**追加**一条只含 runtimeDiff 的消息（键 = 变化的单元，值 = 该单元变更后的当前值）。新旧以**后出现**的为准。",
+    "· **历史压缩（`history:` 段）**：什么时候压 —— 三个可判定的触发（① 系统上下文变了 ⇒ 前缀缓存必作废、② 缓存已过期、③ 上下文窗口占用超阈值），压缩按 `budgetBytes` 预算从**全量历史**里挑保留哪些消息（主干优先：用户发言 > 结论 > 过程文本 > 工具调用 > 工具结果，新的先）。压完 messages 长什么样 —— `history:` **自占一条 user 消息**，紧跟在 system 之后、历史第一条之前（不是历史的内容，只是索引）；它后面的消息才是保留的历史。`kept` 是保留的行号区间（1-based，行号 = `file` 那份日志的行号），**区间之间的空隙就是被省掉的部分**，需要原文时按 `file` 取。⚠️ **什么都没丢时（没压缩）这条注记根本不出现** —— 看到它才说明历史真被压过。",
     "· **历史压缩不影响变量树**：`history:` 段只说明「对话历史被压掉了哪些行」。system / runtime 两段**每次都是全量当前值**（system 段随每个请求重建；runtime 段在每轮第一条 user 消息里给全量，轮中途变了再追加 `runtimeDiff`）—— 变量树**不会**因压缩而丢失或陈旧。**不要**为「某个变量现在是什么值」去做额外查询（cat 文件 / 跑命令），直接看本消息里的值。",
     "· `summary:` 是被压缩掉那段对话的**结论**（摘要功能启用时才有）—— 只做**背景**，不是变量树：要取某个变量的值仍看 system / runtime 段。",
     "· `[]` / `{}` 表示「该变量存在但为空」，与「没有这个变量」不是一回事。",
@@ -128,6 +134,30 @@ export function buildHelpDoc(opts: {
         history: { desc: HistoryNoteSchema.description, ...describeSchema(HistoryNoteSchema) },
         user: { desc: key("user"), ...describeSchema(UserEnvelopeSchema) },
     };
+}
+
+/** 信封的**顶层键名**（`ENVELOPE_ABOUT` 第一行那份名单；`isEnvelopeText` 的判据也用它） */
+export const ENVELOPE_TOP_KEYS = new Set(["help", "system", "runtime", "runtimeDiff", "summary", "history", "user"]);
+
+/**
+ * 这段文本是不是**一份信封**（自占顶层键的自动生成段）？
+ *
+ * 判据：**首个非空行**就是信封顶层键 `<key>:`（顶格无缩进，键在白名单里）。
+ * 干什么用（##421）：`normalizeUserRuns` 据此**不合并**信封消息 —— 注记（`history:`）现在放在
+ * 历史第一条之前，若被并进相邻 user，就又是一坨「自动生成的元数据伪装成用户原话」（##310 八轮坑）。
+ *
+ * 为什么不真解析 YAML：信封恒由 `toYaml` 产出、顶层键必在首行；为一次合并判断引入解析器（且失败要吞）
+ * 代价不成比例。误判方向也是安全的：要么把不该分的两条 user 分开（= 现状），要么把该分的合并回去
+ * （= 老行为，不新造危害）。
+ */
+export function isEnvelopeText(text: string): boolean {
+    for (const line of text.split("\n")) {
+        if (!line.trim()) continue;
+        if (line !== line.trimStart()) return false; // 首行缩进 ⇒ 是普通正文，不是信封
+        const m = /^([A-Za-z][A-Za-z0-9_]*):(\s|$)/.exec(line);
+        return m !== null && ENVELOPE_TOP_KEYS.has(m[1]!);
+    }
+    return false;
 }
 
 /**

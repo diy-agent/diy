@@ -10,8 +10,11 @@
 // 保留区间之间的**空隙即 gap**，行号跳号本身就说清了「这里被省了」。模型不必靠逐段标注，
 // 看 `kept: [[5,8],[120,135]]` 就知道 9~119 被省。
 //
-// ── 形态（##310 六轮拍板后）──
+// ── 形态（##310 六轮拍板 + ##421）──
 // `history:` 段 = **纯数据**（file / absPath / budgetBytes / keptBytes / kept）。
+// 位置（##421）：它自占一条 user 消息、**放在历史第一条之前**（一眼能看出压缩了），且
+// **只在真丢了消息时出现**（keptRuns 覆盖全部 ⇒ 不注入）—— 旧实现恒注入 + 塞在尾部信封里，
+// 于是「什么都没压掉」的会话每轮都带着一条索引，还埋在尾部几百字节里没人看得见。
 // 解释（这是什么、怎么回取原文、字段含义）**一律在信封的 `help.history`**
 // （由 `HistoryNoteSchema` 递归派生）—— 值节点里禁出现 `about`/`legend`/`retrieve`
 // 一类解释性字段：一条信息只在一处，且那一处由代码（zod）派生、不会腐坏。
@@ -38,13 +41,27 @@ export const HistoryNoteSchema = z
                     "按轮定位：`grep -n '\"turn\":\"T\"' \"$DIY_HOME/<file>\"`",
             ),
         absPath: z.string().describe("同一份日志的绝对路径（bash 直接可用，省掉拼接）"),
-        budgetBytes: z.number().describe("历史消息可占字节上限（用户给的预算）"),
-        keptBytes: z.number().describe("实际保留的字节数"),
+        budgetBytes: z
+            .number()
+            .describe("历史消息可占字节上限 = 压缩策略的 `budgetBytes`（只算历史消息，不含 system / tools 这些固定开支）"),
+        keptBytes: z
+            .number()
+            .describe(
+                "实际保留的历史字节数（= `kept` 里那些消息渲染后的字节之和；**不含本轮 user 那一行** ——" +
+                    "它作为 `user.message` 单独投递；与 `budgetBytes` 同口径，可对照着看压掉了多少）",
+            ),
         kept: z
             .array(z.tuple([z.number(), z.number()]))
-            .describe("保留的消息行号区间 [from, to]（含两端，1-based = 日志文件物理行号）；区间之间的空隙即被省略的部分"),
+            .describe(
+                "保留的消息行号区间 [from, to]（含两端，1-based = 日志文件物理行号，与 `file` 的行号一一对应）；" +
+                    "**区间之间的空隙 = 被省略的部分**（不必逐段标注）；空数组 = 这次一条历史都没保留（等价清零）",
+            ),
     })
-    .describe("会话历史被按字节预算压缩时的**保留位置索引**：信封里的 `history:` 键（与 runtime / user 平级，**不进** user.message）。`kept` 列出保留的消息行号区间，区间之间的空隙即被省略的部分");
+    .describe(
+        "会话历史被按字节预算压缩后**保留位置索引**：它自占一条 user 消息（`history:` 顶层键），" +
+            "放在**历史第一条之前**、system 之后；**没压缩（什么都没丢）时这条消息根本不出现**。" +
+            "`kept` 列出保留的消息行号区间，区间之间的空隙即被省略的部分；取原文看 `file` / `absPath`",
+    );
 
 export type HistoryNote = z.infer<typeof HistoryNoteSchema>;
 
@@ -55,7 +72,7 @@ export interface HistoryNoteCtx {
     absPath: string;
 }
 
-/** 把注记渲染成信封里的一个**顶层键片段**（`history:` 一段；字段说明在 `help.history`） */
+/** 把注记渲染成一段 `history:` YAML（自占一条消息的内容；字段说明在 `help.history`） */
 export function renderBudgetNote(note: Omit<HistoryNote, "file" | "absPath">, ctx: HistoryNoteCtx): string {
     return toYaml({ history: { file: ctx.file, absPath: ctx.absPath, ...note } });
 }
