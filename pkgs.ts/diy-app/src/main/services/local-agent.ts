@@ -1080,6 +1080,51 @@ interface BashRunHooks {
     onSpawn?(pid: number): void;
     /** 收到一块输出（stdout / stderr 都算，按到达顺序；已按 buffer 上限裁过） */
     onChunk?(chunk: Buffer): void;
+    /**
+     * 交出「把这次前台执行转成后台」的句柄（##408 刀 19）。
+     *
+     * 只在前台路径给：`runBash` 的 Promise 一旦 resolve，句柄即作废（`ended()` 为真）。
+     * 转后台**不重启进程、不换读端**（见 `handoff` 注释）。
+     */
+    onControl?(ctl: BashControl): void;
+}
+
+/**
+ * 转后台被拒（**不是缺陷**：连按两次、或命令恰好在这毫秒结束 —— 都是正常的用户时序）。
+ *
+ * 单独一个类只为带 `code`（`rule.err-triage`）并让调用方能按码分支：`already-detached`
+ * 说明"已经在后台表里了，去看那儿"，`already-ended` 说明"它已经结束，结果在工具块里"。
+ */
+export class DetachError extends Error {
+    readonly code: string;
+    constructor(input: { code: string; message: string }) {
+        super(input.message);
+        this.code = input.code;
+    }
+}
+
+/**
+ * 前台命令的「转后台」句柄。
+ *
+ * 语义就一句：**把这次调用的等待者和输出去处换掉，进程本身不动**。
+ * 为什么不能重开一条后台 run 再杀前台：那是"重启命令"，已跑的时间和前半段输出全丢。
+ */
+export interface BashControl {
+    /** 子进程本体（`adopt` 要挂 `close` 监听 —— 判活靠事件，不靠轮询） */
+    readonly child: ChildProcess;
+    readonly pid: number;
+    /** 命令真正起跑的时刻（`adopt` 用它当 `startedAt`，否则面板时长会从 0 算） */
+    readonly startedAt: number;
+    /** 已经结束了？（转后台前必须查：结束的进程没有"转"这回事） */
+    ended(): boolean;
+    /**
+     * 交接后续输出，返回**转之前已经收到**的字节。
+     *
+     * 调用即生效：本函数（`runBash`）从此不再攒缓冲、不再判 `maxBuffer`、不再落 settle，
+     * 超时定时器与 abort 监听一并撤掉 —— 这三条是转后台必踩的坑，全部收在这一个点。
+     * 失败（已结束 / 没有 pid）时抛错，调用方据此如实告诉模型「它已经结束了」。
+     */
+    handoff(write: (b: Buffer) => void): Buffer;
 }
 
 /**
@@ -1169,6 +1214,8 @@ export function runBash(
         let offAbort: (() => void) | undefined;
         /** 超时定时器（settle 时清掉） */
         let timeoutId: NodeJS.Timeout | undefined;
+        /** 命令真正起跑的时刻（spawn 返回那一刻）；转后台时当 `startedAt` */
+        let startedAt = 0;
         /** 本次生效的超时：0 = 不设（`setTimeout(0)` 会立刻开火，故 0 必须跳过而不是照传） */
         const effectiveTimeoutMs = timeoutMs === undefined ? limits.bashTimeoutMs : Math.max(0, Math.floor(timeoutMs));
         /** 全部结局只在这里落一次（成功 / 各失败档）；'close'/'error'/取消/同步 catch 共用同一判定 */
@@ -1243,6 +1290,7 @@ export function runBash(
                 // `taskUri` 由**工具层**（buildTools 的 onSpawn）补录 —— runBash 不认识任务。
                 ownedGroups.record(child.pid, { at: Date.now(), command, cwd });
                 hooks?.onSpawn?.(child.pid);
+                startedAt = Date.now();
             }
             // 输出按**块**攒（不逐块拼字符串）：上限判据只要长度计数，逐块 `byteLength` 是 O(n²)
             const chunks = { out: [] as Buffer[], err: [] as Buffer[] };
@@ -1257,8 +1305,19 @@ export function runBash(
                 done = true;
                 settle(err, o, e, child.signalCode);
             };
+            /**
+             * 转后台之后的写入口（`handoff` 设置）。
+             *
+             * 顺序有意：**先看它再看 `done`** —— 交接时 `done` 会被置真（本函数不再落 settle），
+             * 若按原顺序提前返回，转后台后的输出就全丢了（子进程还在写，只是没人接）。
+             */
+            let logSink: ((b: Buffer) => void) | undefined;
             /** 攒输出 + 上限（与 execFile 同口径：stdout / stderr **各算各的**，超了即杀、留已收到的部分） */
             const onData = (chunk: Buffer, side: "out" | "err"): void => {
+                if (logSink) {
+                    logSink(chunk);
+                    return;
+                }
                 if (done) return;
                 const keep = BASH_MAX_BUFFER_BYTES - len[side];
                 const taken = keep >= chunk.length ? chunk : chunk.subarray(0, keep);
@@ -1300,6 +1359,42 @@ export function runBash(
                 };
                 signal.addEventListener("abort", onAbort, { once: true });
                 offAbort = () => signal.removeEventListener("abort", onAbort);
+            }
+            // ── 转后台句柄（##408 刀 19）──
+            // 放在三条"撤火路径"（超时 / abort / 溢出）都挂完之后：句柄一给出，调用方随时可能
+            // 在下一 tick 调 `handoff`，那三样必须都已经存在，撤的时候才不会漏。
+            if (child.pid !== undefined && hooks?.onControl) {
+                hooks.onControl({
+                    child,
+                    pid: child.pid,
+                    startedAt,
+                    ended: () => done || child.exitCode !== null || child.signalCode !== null,
+                    handoff: (write) => {
+                        if (logSink) throw new DetachError({ code: "agent/job-already-detached", message: "已转后台" });
+                        // 结束的进程没有"转"这回事：如实拒绝，别假装转成功再补一条"其实早结束了"
+                        if (done || child.exitCode !== null || child.signalCode !== null)
+                            throw new DetachError({ code: "agent/job-already-ended", message: "命令已结束" });
+                        // ① 本函数不再落 settle（收口唯一归 run 表；否则双写终态、双发通知）
+                        done = true;
+                        // ② 超时定时器：不撤 ⇒ 5 分钟后把刚转后台的活杀掉（人以为它在跑）
+                        if (timeoutId) {
+                            clearTimeout(timeoutId);
+                            timeoutId = undefined;
+                        }
+                        // ③ 轮次 abort：不摘 ⇒ 用户点"停止本轮"会把刚转后台的活一起带走
+                        offAbort?.();
+                        offAbort = undefined;
+                        // ④ 前半段一个字节都不许丢：先交给调用方落盘，再切换去向
+                        const buffered = Buffer.concat([...chunks.out, ...chunks.err], len.out + len.err);
+                        chunks.out.length = 0;
+                        chunks.err.length = 0;
+                        len.out = 0;
+                        len.err = 0;
+                        // ⑤ 读端**不 destroy**：子进程还往这个 pipe 写，关了它 64KB 就阻塞
+                        logSink = write;
+                        return buffered;
+                    },
+                });
             }
         } catch (e) {
             // ⚠️ **同步抛是真实路径**，不是防御性代码：cwd 是普通文件时 Node 在 spawn 内直接

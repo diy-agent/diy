@@ -93,6 +93,36 @@ export interface SpawnRunInput {
     deadlineMs?: number;
 }
 
+/**
+ * 「接管一条已经在跑的进程」的入参（##408 刀 19：前台转后台）。
+ *
+ * 与 `SpawnRunInput` 的差别只有一处：进程**已经存在**，我们不再 spawn，
+ * 而是把它的输出接过来、把它的 `close` 接过来。
+ */
+/**
+ * 「接管一条已经在跑的进程」—— **只要这三样**，不要求调用方懂 fs。
+ *
+ * 结构化类型（不 import `BashControl`）：`runBash` 的控制句柄天然满足它，
+ * 而本文件不必反向依赖 `local-agent`（那会成环）。
+ */
+export interface AdoptableProcess {
+    /** 已经在跑的子进程：`detached`，pgid == pid */
+    readonly child: ChildProcess;
+    readonly pid: number;
+    /** 它**真正**的启动时刻（不是转的那一刻，否则面板时长会把前半段抹掉） */
+    readonly startedAt: number;
+    /** 交出后续输出，返回**转之前已经收到**的字节；调用即冻结原宿主（不再攒、不落 settle） */
+    handoff(write: (b: Buffer) => void): Buffer;
+}
+
+export interface AdoptRunInput {
+    process: AdoptableProcess;
+    command: string;
+    cwd: string;
+    origin?: RunOrigin;
+    title?: string;
+}
+
 export interface RunRegistryOptions {
     /** 运行产物根目录（缺省 `$DIY_HOME/log/job/run`）；测试注入 tmpdir */
     rootDir?: string;
@@ -206,6 +236,16 @@ export class RunRegistry {
     private reapTimer?: ReturnType<typeof setTimeout>;
     /** 后台显式 timeout 的定时器（到点整组 SIGTERM；收口即清） */
     private readonly deadlines = new Map<string, ReturnType<typeof setTimeout>>();
+    /**
+     * 接管来的 run 的日志写句柄（只有 `adopt` 会产生；`spawn` 用 fd 直写，不需要）。
+     *
+     * 为什么用 `open` + 串行写链而不是 `createWriteStream`：收口时**通知**要读日志尾巴
+     * （`notify` → `readLogTail`），而 stream 的 `end()` 是异步 flush —— 不等它就发通知，
+     * 模型会看到「输出 399B」却 tail 到空。串行链让「收口 → flush → 通知」有确定的先后。
+     */
+    private readonly sinks = new Map<string, { chain: Promise<void>; close: () => Promise<void> }>();
+    /** 收口时还没写完的那条链（`notify` 先等它，再 tail） */
+    private readonly pendingFlush = new Map<string, Promise<void>>();
     private notifier?: (taskUri: string, text: string) => void;
 
     constructor(opts: RunRegistryOptions = {}) {
@@ -462,6 +502,9 @@ export class RunRegistry {
 
     /** 测试 / 收工清理用：丢掉全部记忆（不杀进程）。 */
     clear(): void {
+        for (const s of this.sinks.values()) void s.close();
+        this.sinks.clear();
+        this.pendingFlush.clear();
         this.runs.clear();
         this.children.clear();
         this.waiters.clear();
@@ -597,6 +640,90 @@ export class RunRegistry {
      * 「通知是背景 job 执行完、唤醒 agent 给任务发消息，不是 kill」—— 杀完立刻把人叫醒
      * 等于自问自答，结果（`killed` + 信号）留在表里等人/下一轮自己看。
      */
+    /**
+     * **接管一条已经在跑的进程**（##408 刀 19：前台命令运行中转后台）。
+     *
+     * 用户口径（2026-10-24）：「转 job 不能重启进程、不能丢已产生的输出」。于是这里是
+     * **adopt 不是 spawn**：同一个 child、同一个 pipe（绝不 `destroy()` 读端 —— 子进程
+     * 写满 64KB 就阻塞），只把字节的去向换了。
+     *
+     * **为什么要在这里调 `handoff`（而不是让调用方先调）**：`handoff` 是同步切换，
+     * 而建目录 / 开文件是异步的。若调用方先 handoff 再 await adopt，这段缝隙里的字节
+     * 落进调用方的临时缓冲、顺序还可能被 adopt 的写链打乱。所以顺序钉死：
+     *   open → handoff（同步，此刻起的字节进 `queued`）→ 写前半段 → 放行队列。
+     * 这样「前半段 → 缝隙期字节 → 后续字节」的先后与进程产出顺序完全一致。
+     */
+    async adopt(input: AdoptRunInput): Promise<RunInfo> {
+        const proc = input.process;
+        const now = this.now();
+        const id = newRunId(now);
+        const dir = join(this.rootDir, dateDirOf(now), id);
+        const logPath = join(dir, "out.log");
+        const info: RunInfo = {
+            id,
+            command: input.command,
+            cwd: input.cwd,
+            state: "running",
+            // 用命令**真正起跑**的时刻，不是转的那一刻（否则面板时长把前半段抹掉）
+            startedAt: proc.startedAt,
+            dir,
+            logPath,
+            pid: proc.pid,
+            ...(input.title ? { title: input.title } : {}),
+            ...(input.origin ? { origin: input.origin } : {}),
+        };
+        // ── ① 同步交接（可能抛：已结束 / 已转过后台）──
+        // 放在最前面：抛了就没有"半只 run"，调用方能干净地回一句「它已经结束了」。
+        // 此刻起的字节先进 `queued`，等日志文件就绪再按序放行（先 `buffered` 后 `queued`）。
+        let ready = false;
+        const queued: Buffer[] = [];
+        let chain: Promise<void> = Promise.resolve();
+        let fh: Awaited<ReturnType<typeof open>> | undefined;
+        const write = (b: Buffer): void => {
+            if (!ready || !fh) {
+                queued.push(b);
+                return;
+            }
+            // 串行写：字节顺序 = 进程产出顺序（并发 write 会互相穿插）
+            chain = chain.then(() => fh!.write(b).then(() => undefined)).catch(() => undefined);
+        };
+        const buffered = proc.handoff(write); // ← 已结束会在这里抛，原样冒给调用方
+        this.runs.set(id, info);
+        // ── ② 挂监听（紧跟交接，中间不许夹 await：`close` 可能就在下一 tick）──
+        const child = proc.child;
+        this.children.set(id, child);
+        child.on("error", (e) => this.onRootExit(id, { exitCode: null, signal: null, errorText: e.message }));
+        child.on("close", (code, signal) => this.onRootExit(id, { exitCode: code, signal: signal ?? null }));
+        // ── ③ 落盘（失败只留痕：run 照跑、照收口，只是没有日志可看）──
+        try {
+            await mkdir(dir, { recursive: true });
+            fh = await open(logPath, "w");
+            const sink = {
+                get chain() {
+                    return chain;
+                },
+                close: async () => {
+                    await chain.catch(() => undefined);
+                    await fh!.close().catch(() => undefined);
+                },
+            };
+            this.sinks.set(id, sink);
+            await fh.write(buffered);
+            ready = true;
+            for (const b of queued) write(b);
+            queued.length = 0;
+            await this.writeMeta(info);
+        } catch (e) {
+            console.warn("[run] adopt 落盘失败", id, e);
+            queued.length = 0;
+        }
+        this.evictOld();
+        // 极端竞态兜底：交接与退出同毫秒（`handoff` 里查过一次，这里再兜一次）
+        if (child.exitCode !== null || child.signalCode !== null)
+            this.onRootExit(id, { exitCode: child.exitCode, signal: child.signalCode });
+        return this.runs.get(id) ?? info;
+    }
+
     private settle(id: string, exit: PendingExit): void {
         const info = this.runs.get(id);
         if (!info || info.state !== "running") return;
@@ -609,6 +736,14 @@ export class RunRegistry {
         if (exit.errorText) info.error = exit.errorText;
         this.pendingExits.delete(id);
         this.children.delete(id);
+        // 接管来的 run：把日志写完再算收口（否则通知里的 tail 会读到半截）
+        const sink = this.sinks.get(id);
+        if (sink) {
+            this.sinks.delete(id);
+            const flushed = sink.close();
+            this.pendingFlush.set(id, flushed);
+            void flushed.finally(() => this.pendingFlush.delete(id));
+        }
         const dl = this.deadlines.get(id);
         if (dl) {
             clearTimeout(dl);
@@ -627,6 +762,9 @@ export class RunRegistry {
         if (info.notified) return;
         const taskUri = info.origin?.taskUri;
         if (!taskUri || !this.notifier) return;
+        // 接管来的 run 的日志是我们自己写的：先等写链落干净，tail 才不是半截
+        const pending = this.pendingFlush.get(info.id);
+        if (pending) await pending.catch(() => undefined);
         info.notified = true;
         try {
             this.notifier(taskUri, notifyText(info, tailOf(await this.readLogTail(info.logPath), 20)));
