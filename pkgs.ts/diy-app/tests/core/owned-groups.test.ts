@@ -38,10 +38,11 @@ describe("OwnedGroups — 登记与补录", () => {
     expect(g.get(2)).toBeUndefined(); // 死组里最老的先走
   });
 
-  it("剪枝后落盘也是剪过的（先 save 后 delete 会让盘上留幽灵条目）", () => {
+  it("剪枝后落盘也是剪过的（先 save 后 delete 会让盘上留幽灵条目）", async () => {
     const file = join(mkdtempSync(join(tmpdir(), "diy-grp-")), "groups.json");
     const g = new OwnedGroups({ file, alive: () => false });
     for (let i = 1; i <= 600; i++) g.record(i, { ...base, at: i });
+    await g.flush();
     const raw = JSON.parse(readFileSync(file, "utf8")) as Array<{ pgid: number }>;
     expect(raw.length).toBeLessThanOrEqual(512);
     expect(raw.some((x) => x.pgid === 1)).toBe(false);
@@ -74,26 +75,33 @@ describe("OwnedGroups.retain — 清理（但别把刚登记的清掉）", () =>
 describe("OwnedGroups — 落盘索引（app 重启后仍认得出孤儿）", () => {
   const tmpFile = (): string => join(mkdtempSync(join(tmpdir(), "diy-groups-")), "groups.json");
 
-  it("登记即写盘；新实例读回同一批组号（孤儿 ppid 已是 launchd，只靠这个索引）", () => {
+  it("登记即写盘；新实例读回同一批组号（孤儿 ppid 已是 launchd，只靠这个索引）", async () => {
     const file = tmpFile();
     const a = new OwnedGroups({ file });
     a.record(60534, { ...base, taskUri: "projects/1/tasks/5" });
+    await a.flush(); // 落盘是异步的（app 里不许有同步 IO）：测试显式等它写完
     const b = new OwnedGroups({ file });
+    await b.ready;
     expect(b.get(60534)?.command).toBe("bash -c x");
     expect(b.get(60534)?.taskUri).toBe("projects/1/tasks/5");
   });
 
-  it("坏文件 ⇒ 当空，不影响启动（索引可丢可重建）", () => {
+  it("坏文件 ⇒ 当空，不影响启动（索引可丢可重建）", async () => {
     const file = tmpFile();
     writeFileSync(file, "{ 这不是 JSON", "utf8");
-    expect(new OwnedGroups({ file }).size()).toBe(0);
+    const g = new OwnedGroups({ file });
+    await g.ready;
+    expect(g.size()).toBe(0);
   });
 
-  it("清理后落盘也跟着少（不会越积越多）", () => {
+  it("清理后落盘也跟着少（不会越积越多）", async () => {
     const file = tmpFile();
     const a = new OwnedGroups({ file });
     a.record(1, { ...base, at: 1000 });
     a.retain(new Set(), 1000 + 60_000);
-    expect(new OwnedGroups({ file }).size()).toBe(0);
+    await a.flush();
+    const b = new OwnedGroups({ file });
+    await b.ready;
+    expect(b.size()).toBe(0);
   });
 });

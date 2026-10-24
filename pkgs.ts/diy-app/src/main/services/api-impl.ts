@@ -41,7 +41,6 @@ import { setWriteErrorHook } from "../core/atomic-write";
 import { collectInstances, focusInstance, renderInstanceList, selfReport } from "./instances";
 import { revealSelf, windowState } from "./window-ops";
 import { shortName } from "../../shared/room";
-import { jobList, jobShow } from "./job-view";
 import { runRegistry } from "./run-registry";
 import { scanOwnedProcs, groupOwnerOf, killOwnedProc } from "./process-scan";
 import { procRowOf, runViewOf } from "../../shared/run-view";
@@ -1129,28 +1128,6 @@ export function bindAppHandlers(binding: ServerBinding): void {
   });
 
   // ── traffic（流量观测；见 core/traffic.ts）──
-  binding.on(app.job.ls, async ({ input }) => ({
-    status: "ok",
-    data: await jobList({
-      ...(input.limit !== undefined ? { limit: input.limit } : {}),
-      includeLive: input.live !== false,
-    }),
-  }));
-  binding.on(app.job.show, async ({ input }) => {
-    try {
-      const view = await jobShow(input.id, {
-        sample: input.sample === true,
-        ...(input.tail !== undefined ? { tailBytes: input.tail } : {}),
-      });
-      if (view.runs.length === 0 && !view.live) {
-        return { status: "error", msg: `没有这条 job：${input.id}（diy job ls 看有哪些）` };
-      }
-      return { status: "ok", data: view };
-    } catch (e) {
-      return { status: "error", msg: e instanceof Error ? e.message : String(e) };
-    }
-  });
-
   // ── job 活体表（刀 8/9：run = 进程型或进程内任务；不做恢复、不做历史账）──
   binding.on(app.job.ps, async ({ input }) => {
     const now = Date.now();
@@ -1161,7 +1138,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     // 缺省**扫**；`--no-scan` 才跳过。为什么不是 `scan: boolean`：
     // CLI 的布尔选项缺省是 `false`（`--scan` 不写就是 false），会把"没表态"读成"不要扫"
     // —— 实测症状：`diy job ps` 永远 `scanOk:false`、看不见 `nohup xxx &` 起的孤儿。
-    const scan = input.noScan === true ? null : scanOwnedProcs({ runPids: runRegistry.pidMap() });
+    const scan = input.noScan === true ? null : await scanOwnedProcs({ runPids: runRegistry.pidMap() });
     const procRows = (scan?.procs ?? []).map((p) =>
         procRowOf(p, parseEtime(p.etimeText), groupOwnerOf(p.pgid)),
     );
@@ -1170,7 +1147,9 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return {
       status: "ok",
       data: {
-        runs: picked.map((r) => runViewOf(r, now, runRegistry.outputBytes(r.id) ?? null)),
+        runs: await Promise.all(
+            picked.map(async (r) => runViewOf(r, now, (await runRegistry.outputBytes(r.id)) ?? null)),
+        ),
         /** 没登记进活体表的进程（表格里跟在 run 后面） */
         untracked: procRows.filter((r) => r.runId === null),
         /** 每条 run 名下的进程（含根进程；根进程退了但子孙还在时这里仍非空） */
@@ -1183,7 +1162,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     };
   });
   binding.on(app.job.procs, async () => {
-    const scan = scanOwnedProcs({ runPids: runRegistry.pidMap() });
+    const scan = await scanOwnedProcs({ runPids: runRegistry.pidMap() });
     return {
       status: "ok",
       data: {
@@ -1195,7 +1174,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
   });
   binding.on(app.job.killPid, async ({ input }) => {
     // 重新扫一遍再动手：pid 可能已被回收、也可能根本不是我们的（调用方给错号的代价是杀别人）
-    const scan = scanOwnedProcs({ runPids: runRegistry.pidMap() });
+    const scan = await scanOwnedProcs({ runPids: runRegistry.pidMap() });
     const hit = scan.procs.find((p) => p.pid === input.pid);
     if (!hit) {
       return { status: "error", msg: `pid ${input.pid} 不在"归我们管"的进程名单里（diy job procs 看现在有哪些）` };
@@ -1211,7 +1190,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return { status: "ok", data: { ok, id: input.id } };
   });
   binding.on(app.job.tail, async ({ input }) => {
-    const tail = runRegistry.tail(input.id, input.lines ?? 40);
+    const tail = await runRegistry.tail(input.id, input.lines ?? 40);
     if (!tail) return { status: "error", msg: `没有这条 run：${input.id}` };
     return { status: "ok", data: { ...tail, logPath: runRegistry.get(input.id)?.logPath ?? null } };
   });
@@ -1221,10 +1200,10 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return {
       status: "ok",
       data: {
-        metaJson: runRegistry.metaJson(input.id) ?? null,
+        metaJson: (await runRegistry.metaJson(input.id)) ?? null,
         dir: info.dir,
         logPath: info.logPath,
-        outputBytes: runRegistry.outputBytes(input.id) ?? null,
+        outputBytes: (await runRegistry.outputBytes(input.id)) ?? null,
       },
     };
   });

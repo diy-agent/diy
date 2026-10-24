@@ -11,7 +11,7 @@
 // 唯一要管的是**别无限长**：每次扫描后把"组里一个进程都不剩"的号丢掉（宽限 30s，
 // 避免刚登记就扫描时进程还没被 `ps` 抓到而被误删）。
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
 import type { GroupOwner } from "../../shared/proc-scan";
 import { join } from "node:path";
 import { readRuntimeConfig } from "../../runtime";
@@ -56,14 +56,21 @@ export class OwnedGroups {
     constructor(opts: OwnedGroupsOptions = {}) {
         this.file = opts.file;
         this.isAlive = opts.alive ?? aliveGroup;
-        this.load();
+        // 读盘是异步的（用户 2026-10-24：app 里不许有同步 IO），但构造函数不能 await。
+        // 于是把这次读挂成一个 Promise：**读不读得完都不影响登记**（`record` 只写内存），
+        // 只有"查询旧条目"的路径需要它（`get` / `snapshot`），那边会先 `await ready`。
+        this.ready = this.load();
     }
 
+    /** 首读完成的信号（坏文件/读不到也 resolve —— 认不出老孤儿是退化，不是错误）。 */
+    readonly ready: Promise<void>;
+
     /** 从盘上读回组号索引（坏文件/读不到一律当空，绝不因此炸启动）。 */
-    private load(): void {
-        if (!this.file || !existsSync(this.file)) return;
+    private async load(): Promise<void> {
+        if (!this.file) return;
         try {
-            const raw = JSON.parse(readFileSync(this.file, "utf8")) as unknown;
+            const text = await readFile(this.file, "utf8");
+            const raw = JSON.parse(text) as unknown;
             if (!Array.isArray(raw)) return;
             for (const item of raw) {
                 const it = item as { pgid?: unknown; owner?: Partial<GroupOwner> };
@@ -83,14 +90,51 @@ export class OwnedGroups {
         }
     }
 
-    /** 落盘（失败只留痕，不影响内存态）。 */
+    /**
+     * 落盘（失败只留痕，不影响内存态）。
+     *
+     * **异步 + 合并**：`record` 是热路径（每条 bash 调用都走），同步重写整份 JSON 会把
+     * 主进程按在磁盘上（用户 2026-10-24：app 里不许有同步 IO）。这里改成"脏标记 + 单飞"：
+     * 正在写就只标脏，写完再看一次 —— N 次连续登记最多合并成 2 次写。
+     */
     private save(): void {
         if (!this.file) return;
+        this.dirty = true;
+        if (!this.inflight) void this.flush();
+    }
+
+    private dirty = false;
+    /** 正在写的那次（`flush()` 要能等它，否则测试读到的可能是半截/空文件） */
+    private inflight: Promise<void> | null = null;
+
+    /**
+     * 把脏状态写完（测试可以 await 它，确认盘上内容）。
+     *
+     * 语义：**等上一次写完，再判要不要再写一轮** —— 直接 `if (saving) return` 会让
+     * 后来者立刻返回、读到还没落盘的旧文件（实测踩过：测试读到空文件）。
+     */
+    async flush(): Promise<void> {
+        if (!this.file) return;
+        if (this.inflight) await this.inflight;
+        if (!this.dirty) return;
+        this.inflight = this.doFlush();
         try {
+            await this.inflight;
+        } finally {
+            this.inflight = null;
+        }
+    }
+
+    private async doFlush(): Promise<void> {
+        while (this.dirty) {
+            this.dirty = false;
             const list = [...this.map.entries()].map(([pgid, owner]) => ({ pgid, owner }));
-            writeFileSync(this.file, `${JSON.stringify(list)}\n`, "utf8"); // non-atomic-ok: 索引可丢可重建，写坏的代价只是认不出老孤儿
-        } catch (e) {
-            console.warn("[job] 进程组索引写入失败", this.file, e);
+            try {
+                // non-atomic-ok: 索引可丢可重建，写坏的代价只是认不出老孤儿
+                await writeFile(this.file as string, `${JSON.stringify(list)}\n`, "utf8");
+            } catch (e) {
+                console.warn("[job] 进程组索引写入失败", this.file, e);
+            }
         }
     }
 

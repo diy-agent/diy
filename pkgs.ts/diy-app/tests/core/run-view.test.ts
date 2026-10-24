@@ -7,9 +7,11 @@ import {
     clockText,
     originTextOf,
     runViewOf,
+    navTargetOf,
     titleOf,
-    worthShowing,
+    type JobNavTarget,
     type RunFact,
+    type RunOriginRef,
 } from "../../src/shared/run-view";
 
 const base: RunFact = {
@@ -99,17 +101,12 @@ describe("来源 / 输出量", () => {
 });
 
 // ##408 刀 14：表格「类型」列 + 概要页的后台属性（用户实测：默认详情页看不出来是不是后台）。
-describe("前台 / 后台（刀 14）", () => {
-    it("没给 foreground ⇒ 后台（background:true 的工具返回时工具早就走了）", () => {
-        const v = runViewOf(base, 0);
-        expect(v.background).toBe(true);
-        expect(v.modeText).toBe("后台");
-    });
-
-    it("foreground:true ⇒ 前台", () => {
-        const v = runViewOf({ ...base, foreground: true }, 0);
-        expect(v.background).toBe(false);
-        expect(v.modeText).toBe("前台");
+describe("后台属性（刀 14 / 刀 16 收窄）", () => {
+    it("表里没有前台概念（用户 2026-10-24：job 只管后台；前台命令不登记、不列出）", () => {
+        const v = runViewOf(base, 0) as unknown as Record<string, unknown>;
+        expect(v["foreground"]).toBeUndefined();
+        expect(v["background"]).toBeUndefined();
+        expect(v["modeText"]).toBeUndefined();
     });
 
     it("进程组就是根 pid（detached spawn；进程内任务两者皆 null）", () => {
@@ -132,32 +129,39 @@ describe("前台 / 后台（刀 14）", () => {
     });
 });
 
-describe("面板默认视图（用户 1888：不要很快结束的进程）", () => {
-    const view = runViewOf(base, 1000);
-    const fg = { ...view, foreground: true };
+// 用户 20:5x：「某会话启动的长 job 应可以打开会话定位到那个 message/toolcall 点上」；
+// 硬约束：「指不回去的 job **不显示成可点**」—— navTargetOf 是唯一判据。
+describe("来源导航判据（navTargetOf）", () => {
+    const TASK = "projects/4/tasks/408";
 
-    it("前台毫秒级过路命令默认不显示（ls / rg 不该刷屏）", () => {
-        expect(worthShowing({ ...fg, state: "exited" }, false)).toBe(false);
+    it("锚点齐全 ⇒ 给出 (taskUri, turnId, blockId)（blockId = toolCallId）", () => {
+        expect(navTargetOf({ taskUri: TASK, turnId: "t1", stepId: "t1_s3", toolCallId: "call_a" })).toEqual({
+            taskUri: TASK,
+            turnId: "t1",
+            blockId: "call_a",
+        } satisfies JobNavTarget);
     });
 
-    it("正在跑的前台命令照旧显示（人正等着它）", () => {
-        expect(worthShowing({ ...fg, state: "running" }, false)).toBe(true);
+    it("缺 toolCallId / turnId / taskUri ⇒ null（不假装能导航）", () => {
+        expect(navTargetOf({ taskUri: TASK, turnId: "t1" })).toBeNull();
+        expect(navTargetOf({ taskUri: TASK, toolCallId: "call_a" })).toBeNull();
+        // 类型上 taskUri 必填，但运行时数据可能来自旧结构 / 半截写入 —— 判据必须扛得住
+        expect(navTargetOf({ turnId: "t1", toolCallId: "call_a" } as unknown as RunOriginRef)).toBeNull();
+        expect(navTargetOf({} as unknown as RunOriginRef)).toBeNull();
     });
 
-    it("失败的前台命令照旧显示（出事的不许藏）：状态 failed 与退出码非零都算", () => {
-        expect(worthShowing({ ...fg, state: "failed" }, false)).toBe(true);
-        expect(worthShowing({ ...fg, state: "exited", exitCode: 1 }, false)).toBe(true);
+    it("空串与空白算缺（面板里的空字段是常见形态）", () => {
+        expect(navTargetOf({ taskUri: TASK, turnId: " ", toolCallId: "call_a" })).toBeNull();
+        expect(navTargetOf({ taskUri: TASK, turnId: "t1", toolCallId: "" })).toBeNull();
     });
 
-    it("留下过后台子孙的前台 run 照旧显示（nohup … &：父命令秒退，活还在）", () => {
-        expect(worthShowing({ ...fg, state: "exited", hadSurvivingGroup: true }, false)).toBe(true);
+    it("taskUri 形状不对 ⇒ null（拼错的地址点开只会把用户送到空页）", () => {
+        expect(navTargetOf({ taskUri: "not-a-uri", turnId: "t1", toolCallId: "c" })).toBeNull();
+        expect(navTargetOf({ taskUri: "/tmp/x", turnId: "t1", toolCallId: "c" })).toBeNull();
     });
 
-    it("后台 run 永远显示（那是用户要管的东西）", () => {
-        expect(worthShowing({ ...view, foreground: false, state: "exited" }, false)).toBe(true);
-    });
-
-    it("开关打开后全显示", () => {
-        expect(worthShowing({ ...fg, state: "exited" }, true)).toBe(true);
+    it("没有 origin ⇒ null（将来的 scheduled/event 型天然落这里）", () => {
+        expect(navTargetOf(null)).toBeNull();
+        expect(navTargetOf(undefined)).toBeNull();
     });
 });

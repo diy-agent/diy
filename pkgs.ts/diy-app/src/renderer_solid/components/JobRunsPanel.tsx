@@ -27,7 +27,7 @@ import { getRendererActions } from "../lib/renderer-actions";
 import { jobRunsStore } from "../store/jobRunsStore";
 import { AREA_CHROME_W, VIEW_BAR_H } from "../lib/layout-metrics";
 import type { ProcRow, RunView } from "../../shared/run-view";
-import { bytesText, worthShowing } from "../../shared/run-view";
+import { bytesText } from "../../shared/run-view";
 
 /** 灯 → class（颜色归主题；这里只选 token，不写具体色值） */
 const LAMP_CLASS: Record<string, string> = {
@@ -101,24 +101,13 @@ export function JobRunsPanel(props: { uri: string }) {
         onCleanup(stop);
     });
 
-    /**
-     * 含前台命令（**缺省关**，用户 1888：「我不要他很快结束的进程」）。
-     *
-     * 但"关"不等于"看不见该看的"：正在跑的前台命令、失败的、以及**留下过后台子孙**的
-     * （`nohup sleep 600 &` 那种父命令 35ms 就退的）照旧显示 —— 那正是用户要盯的长活。
-     * 关掉挡住的只是 `ls`/`rg` 这类毫秒级的过路命令。
-     */
-    const [showForeground, setShowForeground] = createSignal(false);
-
-    /** 这条 run 在默认视图里值不值得出现（判据真源 `shared/run-view.ts::worthShowing`）。 */
-    const visible = (run: RunView): boolean => worthShowing(run, showForeground());
-
     /** 行：先 run（活体在前），再未登记的野进程；「全部」视角下不分任务 */
     const rows = createMemo<Row[]>(() => {
         const all = scope() === "all";
-        const runs = (all ? jobRunsStore.allRuns() : jobRunsStore.runsFor(props.uri))
-            .filter(visible)
-            .map((run): Row => ({ kind: "run", run }));
+        // 表里只有后台 run（前台命令不登记，见 `shared/run-view.ts` 头注）—— 不必过滤
+        const runs = (all ? jobRunsStore.allRuns() : jobRunsStore.runsFor(props.uri)).map(
+            (run): Row => ({ kind: "run", run }),
+        );
         const procs = (all ? jobRunsStore.allUntracked() : jobRunsStore.untrackedFor(props.uri)).map(
             (proc): Row => ({ kind: "proc", proc }),
         );
@@ -331,14 +320,6 @@ export function JobRunsPanel(props: { uri: string }) {
                         全部
                     </button>
                 </div>
-                <button
-                    class={`btn btn-xs shrink-0 ${showForeground() ? "btn-active" : "btn-ghost"}`}
-                    data-job-foreground-btn="toggle"
-                    data-tip="前台命令（工具调用正在等它的那种）也列出来。默认只看长活：运行中 / 失败 / 留下过后台子孙"
-                    onClick={() => setShowForeground(!showForeground())}
-                >
-                    {showForeground() ? "含前台" : "只看长活"}
-                </button>
                 <span class="opacity-60" data-job-count>
                     {rows().length} 条
                     {running() > 0 ? ` · ${running()} 在跑` : ""}
@@ -407,7 +388,10 @@ export function JobRunsPanel(props: { uri: string }) {
                                     <th class="py-1 pl-3 pr-2 font-normal">状态</th>
                                     <th class="px-2 font-normal">标题 / 命令首行</th>
                                     <th class="px-2 font-normal">来源</th>
-                                    <th class="px-2 font-normal whitespace-nowrap" data-tip="前台=工具调用正在等结果；后台=background:true 或命令自己 & 起的">
+                                    <th
+                                        class="px-2 font-normal whitespace-nowrap"
+                                        data-tip="后台任务 = 走过 bash(background:true) 的 run；野进程 = 命令里自己 & 起的、从没登记过的进程"
+                                    >
                                         类型
                                     </th>
                                     <th class="px-2 font-normal whitespace-nowrap">时长</th>
@@ -452,11 +436,6 @@ export function JobRunsPanel(props: { uri: string }) {
                                                             data-job-awaiting-group
                                                         >
                                                             后台仍在跑
-                                                        </span>
-                                                    </Show>
-                                                    <Show when={row.kind === "run" && row.run.foreground}>
-                                                        <span class="mr-1 rounded bg-base-content/10 px-1 text-xs opacity-70" data-job-foreground>
-                                                            前台
                                                         </span>
                                                     </Show>
                                                     <Show when={scope() === "all" && row.kind === "run" && row.run.origin?.taskUri}>
@@ -506,15 +485,13 @@ export function JobRunsPanel(props: { uri: string }) {
                                                 <td class="px-2 whitespace-nowrap">
                                                     <span
                                                         class={`rounded px-1 text-xs ${
-                                                            row.kind === "proc"
-                                                                ? "bg-base-content/10 opacity-70"
-                                                                : row.run.background
-                                                                  ? "bg-primary/15 text-primary"
-                                                                  : "bg-base-content/10 opacity-70"
+                                                            row.kind === "run"
+                                                                ? "bg-primary/15 text-primary"
+                                                                : "bg-base-content/10 opacity-70"
                                                         }`}
-                                                        data-job-mode={row.kind === "run" ? row.run.modeText : "后台"}
+                                                        data-job-mode={row.kind === "run" ? "后台任务" : "野进程"}
                                                     >
-                                                        {row.kind === "run" ? row.run.modeText : "后台"}
+                                                        {row.kind === "run" ? "后台任务" : "野进程"}
                                                     </span>
                                                 </td>
                                                 <td class="px-2 whitespace-nowrap opacity-70">
@@ -625,7 +602,7 @@ export function JobRunsPanel(props: { uri: string }) {
                                 {/*
                                   概要（刀 14）：**后台进程的关键属性都在这页**——
                                   用户实测「默认的详情 tab 里缺少后台进程的关键属性」。
-                                  命令行原文 + 类型（前台/后台）+ 进程组 + 名下进程 + 来源锚点 + 通知状态。
+                                  命令行原文 + 类型（后台任务 / 野进程）+ 进程组 + 名下进程 + 来源锚点 + 通知状态。
                                 */}
                                 <Show when={tab() === "summary"}>
                                     <pre
@@ -777,13 +754,7 @@ function RunFields(props: { run: RunView }) {
             </span>
             <span class="opacity-60">类型</span>
             <span class="opacity-80" data-job-field="mode">
-                {props.run.modeText}
-                <Show when={props.run.background}>
-                    <span class="ml-1 opacity-60">（background:true，工具已返回，结束会叫醒 agent）</span>
-                </Show>
-                <Show when={props.run.foreground}>
-                    <span class="ml-1 opacity-60">（工具调用在等它的结果；普通命令不叫醒 agent）</span>
-                </Show>
+                后台（工具已返回，结束会叫醒 agent）
             </span>
             <Show when={props.run.hadSurvivingGroup || props.run.awaitingGroup}>
                 <span class="opacity-60">后台子孙</span>

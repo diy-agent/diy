@@ -18,7 +18,7 @@
 import { createSignal } from "solid-js";
 import { diyService } from "../lib/rpc";
 import type { ProcRow, RunView } from "../../shared/run-view";
-import type { JobNavTarget } from "../../shared/job-runs-view";
+import type { JobNavTarget } from "../../shared/run-view";
 
 /** `diy.job.ps` 的数据形状（真源 `main/services/api-impl.ts` + `shared/run-view.ts::RunView`） */
 export interface RunsSnapshot {

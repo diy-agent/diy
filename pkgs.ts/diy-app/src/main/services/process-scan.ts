@@ -5,8 +5,11 @@
 //
 // 拉式：**只在有人问的时候扫**（面板刷新 / `<tool>job ps</tool>`）。没有定时器、没有后台轮询 ——
 // 「观测」不该自己变成负担。
+//
+// **异步**：用户 2026-10-24 定下硬规范「app 里不许有同步 IO」。`execFileSync` 会把主进程
+// （含渲染与 RPC）按在 `ps` 上几十~几百毫秒，面板每 3s 一刷就是每 3s 掉一次帧。
 
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { ownedGroups, type OwnedGroups } from "./owned-groups";
 import { KILL_GRACE_MS } from "./run-registry";
 import {
@@ -20,7 +23,7 @@ let lastScanWarnAt = 0;
 
 export interface ScanDeps {
     /** 跑命令拿 stdout；失败返回 `""`（采集失败退化成"看不见"，不许炸业务）。 */
-    run(cmd: string, args: readonly string[], timeoutMs?: number): string;
+    run(cmd: string, args: readonly string[], timeoutMs?: number): Promise<string>;
     now(): number;
     /** app 主进程 pid（子孙也算我们起的） */
     selfPid: number;
@@ -28,29 +31,42 @@ export interface ScanDeps {
 
 export const DEFAULT_SCAN_DEPS: ScanDeps = {
     run(cmd, args, timeoutMs = 1500) {
-        try {
-            return execFileSync(cmd, args as string[], {
-                encoding: "utf8",
-                timeout: timeoutMs,
-                stdio: ["ignore", "pipe", "ignore"],
-                maxBuffer: 8 * 1024 * 1024,
-            });
-        } catch (e) {
-            // 扫描失败退化成"看不见"，但**不许静默**：面板会显示「没扫到」，而人要能查出为什么
-            // （实测的第一次：机器内存只剩 0.2GB，fork 出 ps 失败 ⇒ EAGAIN，界面像"没有进程"）。
-            // 限流打印，避免每 3 秒刷一次。
-            const now = Date.now();
-            if (now - lastScanWarnAt > 60_000) {
-                lastScanWarnAt = now;
-                const code = (e as NodeJS.ErrnoException | undefined)?.code;
-                console.warn("[scan] ps 失败:", code ?? (e instanceof Error ? e.message : String(e)));
-            }
-            return "";
-        }
+        return new Promise<string>((resolve) => {
+            execFile(
+                cmd,
+                args as string[],
+                {
+                    encoding: "utf8",
+                    timeout: timeoutMs,
+                    maxBuffer: 8 * 1024 * 1024,
+                },
+                (err, stdout) => {
+                    if (!err) {
+                        resolve(stdout ?? "");
+                        return;
+                    }
+                    onScanFailed(err);
+                    resolve("");
+                },
+            );
+        });
     },
     now: () => Date.now(),
     selfPid: process.pid,
 };
+
+/** 扫描失败：退化成"看不见"，但**不许静默**（限流打日志，见下）。 */
+function onScanFailed(e: unknown): void {
+    // 面板会显示「没扫到」，而人要能查出为什么
+    // （实测的第一次：机器内存只剩 0.2GB，fork 出 ps 失败 ⇒ EAGAIN，界面像"没有进程"）。
+    // 限流打印，避免每 3 秒刷一次。
+    const now = Date.now();
+    if (now - lastScanWarnAt > 60_000) {
+        lastScanWarnAt = now;
+        const code = (e as NodeJS.ErrnoException | undefined)?.code;
+        console.warn("[scan] ps 失败:", code ?? (e instanceof Error ? e.message : String(e)));
+    }
+}
 
 export interface ScanResult {
     at: number;
@@ -71,15 +87,17 @@ const PS_ARGS = ["-axo", "pid=,ppid=,pgid=,etime=,pcpu=,rss=,command="] as const
  * `groups` / `runPids` 由调用方给（默认取全局名册 + 传进来的 run 根 pid 表），
  * 这样单测可以完全注入而不碰全局单例。
  */
-export function scanOwnedProcs(opts: {
+export async function scanOwnedProcs(opts: {
     deps?: ScanDeps;
     groups?: OwnedGroups;
     /** run 根 pid → runId */
     runPids: ReadonlyMap<number, string>;
-}): ScanResult {
+}): Promise<ScanResult> {
     const deps = opts.deps ?? DEFAULT_SCAN_DEPS;
     const groups = opts.groups ?? ownedGroups;
-    const stdout = deps.run("ps", PS_ARGS);
+    // 首读（跨重启认领）可能还没完成：等它，否则会把老孤儿当"别人的进程"
+    await groups.ready;
+    const stdout = await deps.run("ps", PS_ARGS);
     const at = deps.now();
     if (!stdout.trim()) return { at, selfPgid: null, procs: [], ok: false };
     const rows = parsePsRows(stdout);

@@ -9,6 +9,10 @@
 //
 // 与注册表的关系：注册表持有**事实**（state / pid / startedAt / exitCode…），
 // 这里只做**呈算**（拼字、算时长、截首行）—— 不引入新事实、不读盘（字节数由调用方给）。
+//
+// **本表只装后台 run**（用户 2026-10-24：「前台进程不进观察名单，不属于 job…… job 现阶段
+// 只管后台任务」）。所以这里没有 `foreground` / `modeText`，也没有"要不要显示前台命令"的过滤判据
+// —— 那套东西（`worthShowing`）随前台登记一起删了。
 
 import { formatDuration, exitText, stateLabel, type RunLike, type RunState } from "./run-status";
 import type { OwnedProc } from "./proc-scan";
@@ -29,8 +33,6 @@ export interface RunFact extends RunLike {
     logPath: string;
     origin?: RunOriginRef;
     error?: string;
-    /** 前台 run（工具调用正在等结果）；后台为 false/undefined */
-    foreground?: boolean;
     /** 根命令已退出、但进程组里还有活口（长活就是这种：`nohup … &`） */
     awaitingGroup?: boolean;
     /** 曾经有过后台子孙（收口后 `awaitingGroup` 清掉，但这个事实留着） */
@@ -75,14 +77,8 @@ export interface RunView {
     /** 来源一行话：`projects/4/tasks/408 · t179… · call_…` */
     originText: string;
     error: string | null;
-    /** 前台 run（`bash` 没给 `background`）—— 表格里标出来 */
-    foreground: boolean;
-    /** 根命令退了、后台子孙还在跑 —— 表格里标「后台」 */
+    /** 根命令退了、后台子孙还在跑（长活的常态：`nohup … &` 的父命令秒退） */
     awaitingGroup: boolean;
-    /** 后台 run（`background:true`）—— 表格「类型」列 */
-    background: boolean;
-    /** 类型人话：后台 / 前台（前台 = 工具调用正在等它的结果） */
-    modeText: string;
     /**
      * 进程组号。detached spawn ⇒ **pgid 恒等于根 pid**，所以这里就取 pid；
      * 台前台后没有区别（都是 `detached:true`）。进程内任务两者都 null。
@@ -154,10 +150,7 @@ export function runViewOf(fact: RunFact, now: number, outputBytes?: number | nul
         origin: fact.origin ?? null,
         originText: originTextOf(fact.origin),
         error: fact.error ?? null,
-        foreground: fact.foreground === true,
         awaitingGroup: fact.awaitingGroup === true,
-        background: fact.foreground !== true,
-        modeText: fact.foreground === true ? "前台" : "后台",
         pgid: fact.pid ?? null,
         hadSurvivingGroup: fact.hadSurvivingGroup === true,
         notified: fact.notified === true,
@@ -237,20 +230,31 @@ export function procRowOf(
     };
 }
 
+// ═══════════════════════════════════════════════
+//  「来源」导航（原 `job-runs-view.ts` 唯一还活着的判据，其余随 v1 账本一起删）
+// ═══════════════════════════════════════════════
+
+/** 一次定位请求：切到哪个任务的会话、定位到哪一轮的哪个块（`blockId` = `toolCallId`）。 */
+export interface JobNavTarget {
+    taskUri: string;
+    turnId: string;
+    blockId: string;
+}
+
 /**
- * 面板默认视图该不该显示这条 run（##408 用户 1888：「我不要他很快结束的进程」）。
+ * 这条 run 能不能**点回源头**（用户 20:5x：「某会话启动的长 job 应可以打开会话定位到那个
+ * message/toolcall 点上」）。返回 `null` ⇒ 渲染成**纯文本**，不做「点了没反应」的假按钮。
  *
- * 判据（放大到"含前台"时全部显示）：
- *   · 后台 run —— 永远显示（那是用户要管的东西）；
- *   · 前台 run —— 只有**正在跑**、**失败**、或**留下过后台子孙**（`nohup … &`，父命令
- *     35ms 就退但活还在）才显示；`ls`/`rg` 这类毫秒级过路命令默认挡掉。
- *
- * 抽成纯函数：这条判据直接决定"用户能不能看见他的长活"，值得被单测钉住。
+ * 判据：锚点三件（taskUri / turnId / toolCallId）必须**都在**且非空。
+ * 为什么这么严：只有 taskUri 时打开会话也不知道停哪儿，等于"假装能导航"——那比不导航更坏
+ * （用户会以为定位功能坏了）。将来 scheduled/event 型的 origin 没有 toolCallId，天然落 `null`。
  */
-export function worthShowing(run: RunView, showForeground: boolean): boolean {
-    if (showForeground) return true;
-    if (!run.foreground) return true;
-    // 失败要看**两处**：状态（起不来 / 被信号杀）与退出码（命令跑了但报错，状态仍是 exited）
-    const failed = run.state === "failed" || (run.exitCode !== null && run.exitCode !== 0) || run.signal !== null;
-    return run.state === "running" || failed || run.hadSurvivingGroup === true;
+export function navTargetOf(origin: RunOriginRef | null | undefined): JobNavTarget | null {
+    if (!origin) return null;
+    const taskUri = (origin.taskUri ?? "").trim();
+    const turnId = (origin.turnId ?? "").trim();
+    const blockId = (origin.toolCallId ?? "").trim();
+    if (!taskUri || !turnId || !blockId) return null;
+    if (!/^projects\/\d+\/tasks\/\d+$/.test(taskUri)) return null;
+    return { taskUri, turnId, blockId };
 }

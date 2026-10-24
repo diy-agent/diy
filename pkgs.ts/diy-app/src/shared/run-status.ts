@@ -12,6 +12,14 @@
 /** 进程四态。**不设 `lost`**：没有恢复就没有"不知道"——重启后表是空的，不是 lost。 */
 export type RunState = "running" | "exited" | "killed" | "failed";
 
+/**
+ * **怎么结束的**（与 `RunState` 正交：状态说"结束了没有"，它说"结束得像不像正常收场"）。
+ *
+ * 从 v1 的 `spawned-job.ts` 迁来（那个账本已删，用户 2026-10-24「清理废弃的实现」）——
+ * `runBash` 的结局判据要用它，而它本身与"账本"无关。
+ */
+export type RunOutcome = "ok" | "fail" | "canceled" | "timeout";
+
 export const RUN_TERMINAL_STATES: readonly RunState[] = ["exited", "killed", "failed"];
 
 /** 终态 = 不会自己再变。`running` 之外都是终态（三态都是"结束了，只是方式不同"）。 */

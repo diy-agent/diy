@@ -66,8 +66,8 @@ describe("查询与停止", () => {
     it("tail 取最后 N 行；未登记的 id 给 undefined（查询结果是结果，不是异常）", async () => {
         const p = await reg.spawn({ command: "printf 'a\\nb\\nc\\n'", cwd: root });
         await reg.wait(p.id, 10_000);
-        expect(reg.tail(p.id, 2)?.text).toBe("b\nc");
-        expect(reg.tail("p-nope", 2)).toBeUndefined();
+        expect((await reg.tail(p.id, 2))?.text).toBe("b\nc");
+        expect(await reg.tail("p-nope", 2)).toBeUndefined();
     });
 
     it("kill 按进程组发信号，终态是 killed（不是 exited）——「是我们杀的」这件事必须留在状态里", async () => {
@@ -139,10 +139,11 @@ describe("结束通知（插话唤醒的数据面）", () => {
 });
 
 // ── 刀 9（用户订正）：叫 run 不叫 proc / 按日期分目录 / 落盘只有 meta.json + out.log ──
-describe("落盘布局（log/job/run/<date>/<id>/）", () => {
+describe("落盘布局（log/job/runs/<date>/<id>/）", () => {
     it("默认根是 $DIY_HOME/log/job/run，且日期目录按**启动时刻**的本地日期分", async () => {
         const { runRoot, dateDirOf, RunRegistry: R } = await import("../../src/main/services/run-registry");
-        expect(runRoot("/home/x").endsWith(join("log", "job", "run"))).toBe(true);
+        // 用户 2026-10-24 定的位置口径：log/<module>/<用途|实体数据集合> ⇒ log/job/runs
+        expect(runRoot("/home/x")).toBe(join("/home/x", "log", "job", "runs"));
         // 用本地时间构造，避免测试受时区影响（dateDirOf 也按本地日期）
         const ts = new Date(2026, 0, 2, 23, 59, 0).getTime();
         expect(dateDirOf(ts)).toBe("2026-01-02");
@@ -157,7 +158,7 @@ describe("落盘布局（log/job/run/<date>/<id>/）", () => {
     it("meta.json 写一次：命令 / cwd / 启动时刻 / 来源都在里面（「存储数据」tab 的真相）", async () => {
         const p = await reg.spawn({ command: "echo hi", cwd: root, origin, title: "打个招呼" });
         await reg.wait(p.id, 10_000);
-        const raw = reg.metaJson(p.id);
+        const raw = await reg.metaJson(p.id);
         expect(raw).toBeTruthy();
         const meta = JSON.parse(raw!) as Record<string, unknown>;
         expect(meta["command"]).toBe("echo hi");
@@ -177,13 +178,13 @@ describe("落盘布局（log/job/run/<date>/<id>/）", () => {
         expect(p.state).toBe("failed");
         expect(p.error).toBeTruthy();
         expect(p.pid).toBeUndefined();
-        expect(reg.metaJson(p.id)).toBeTruthy();
+        expect(await reg.metaJson(p.id)).toBeTruthy();
     });
 
     it("outputBytes 跟着文件长（表格「输出」列的来源，不读全文）", async () => {
         const p = await reg.spawn({ command: "printf 12345", cwd: root });
         await reg.wait(p.id, 10_000);
-        expect(reg.outputBytes(p.id)).toBe(5);
+        expect(await reg.outputBytes(p.id)).toBe(5);
     });
 
     it("没有 pid 的 run（进程内任务）也能查，只是 kill 无从下手", async () => {
@@ -195,96 +196,24 @@ describe("落盘布局（log/job/run/<date>/<id>/）", () => {
     });
 });
 
-// ##408 刀 11：**前台** run 也进表 —— 判据是"谁起的"（`&` 起的孤儿总得有个爹）
-describe("前台 run（track）", () => {
-    it("登记即 running、写出去的字节进 out.log、收口后是 exited", async () => {
-        const h = reg.track({ command: "echo hi; echo bye", cwd: root, origin });
-        expect(h.info.state).toBe("running");
-        expect(h.info.foreground).toBe(true);
-        h.setPid(12345);
-        h.write(Buffer.from("hi\n"));
-        h.write(Buffer.from("bye\n"));
-        h.finish({ exitCode: 0 });
-        const after = reg.get(h.info.id);
-        expect(after?.state).toBe("exited");
-        expect(after?.exitCode).toBe(0);
-        expect(after?.pid).toBe(12345);
-        expect(after?.foreground).toBe(true);
-        expect(readFileSync(h.info.logPath, "utf8")).toBe("hi\nbye\n");
-        // pid 后补录后 meta.json 也要跟着（"这条 run 是谁"的一半是 pid）
-        expect(JSON.parse(reg.metaJson(h.info.id) ?? "{}").pid).toBe(12345);
+// ##408 刀 16：**前台命令不登记**（用户 2026-10-24 定口径：「前台进程不进观察名单，
+// 不属于 job，就是当前 llm 自己的事，不管、不列出、不记录。job 现阶段只管后台任务」）。
+// ⇒ 这台寄存器**没有** `track()`：前台命令零登记、零落盘；表里每一条都是后台 run。
+describe("只管后台（刀 16）", () => {
+    it("注册表没有登记前台的入口（exports 里不该有 track —— 有它就是又要把前台塞回表里）", async () => {
+        const reg0 = new RunRegistry({ rootDir: root });
+        expect((reg0 as unknown as { track?: unknown }).track).toBeUndefined();
+        expect((reg0 as unknown as { spawn?: unknown }).spawn).toBeTypeOf("function");
+        reg0.clear();
     });
 
-    it("我们主动杀的（超时/取消）⇒ killed，而不是 failed", async () => {
-        const h = reg.track({ command: "sleep 99", cwd: root });
-        h.finish({ killed: true, signal: "SIGTERM" });
-        const after = reg.get(h.info.id);
-        expect(after?.state).toBe("killed");
-        expect(after?.signal).toBe("SIGTERM");
-    });
-
-    it("起不来（无码无信号 + 有原因）⇒ failed，表里仍留一条", async () => {
-        const h = reg.track({ command: "x", cwd: root });
-        h.finish({ error: "spawn ENOENT" });
-        expect(reg.get(h.info.id)?.state).toBe("failed");
-        expect(reg.get(h.info.id)?.error).toBe("spawn ENOENT");
-    });
-
-    it("收口幂等：重复 finish 只有第一次生效（不会被后一次改掉终态）", async () => {
-        const h = reg.track({ command: "echo x", cwd: root });
-        h.finish({ exitCode: 0 });
-        h.finish({ killed: true });
-        expect(reg.get(h.info.id)?.state).toBe("exited");
-        // 收口后不再写盘（fd 已关，写不进去也不报错）
-        h.write(Buffer.from("late\n"));
-        expect(readFileSync(h.info.logPath, "utf8")).toBe("");
-    });
-});
-
-// ##408 刀 14：**谁该被叫醒**。
-// 用户实测报的病：「为啥他所有指令都会执行完通知 agent？都是后台指令？」
-// —— 刀 11 让前台命令也进表之后，`settle` 无差别通知，于是 `ls` 也会插一句话。
-// 判据：后台 run（工具早已返回）要叫；前台 run 只有**留下过后台子孙**才叫
-// （那时工具返回的只是"起好了"）；普通前台 run 不叫 —— 结果already在模型手里。
-describe("结束通知的判据（刀 14）", () => {
-    it("普通前台命令不叫醒 agent（工具结果已经回到模型手里，再插一句是噪音）", async () => {
-        const notes: string[] = [];
-        const r = new RunRegistry({ rootDir: root, notifier: (_t, text) => notes.push(text) });
-        const h = r.track({ command: "ls -la", cwd: root, origin });
-        h.setPid(process.pid);
-        h.finish({ exitCode: 0 });
-        expect(r.get(h.info.id)?.state).toBe("exited");
-        expect(notes).toHaveLength(0);
-        r.clear();
-    });
-
-    it("前台命令留下过后台子孙（nohup … &）⇒ 组空那一刻叫一次（工具当时只返回了「起好了」）", async () => {
-        let alive = true;
-        const notes: string[] = [];
-        const r = new RunRegistry({
-            rootDir: root,
-            probeGroup: () => alive,
-            reapMs: 20,
-            notifier: (_t, text) => notes.push(text),
-        });
-        const h = r.track({ command: "nohup sleep 99 & echo ok", cwd: root, origin });
-        h.setPid(4242);
-        h.finish({ exitCode: 0 });
-        expect(notes).toHaveLength(0); // 根退了，但组里还有活口 ⇒ 还不叫
-        expect(r.get(h.info.id)?.awaitingGroup).toBe(true);
-        expect(r.get(h.info.id)?.hadSurvivingGroup).toBe(true);
-        alive = false;
-        await r.wait(h.info.id, 5_000);
-        await new Promise((res) => setTimeout(res, 120));
-        expect(notes).toHaveLength(1);
-        r.clear();
-    });
-
-    it("后台 run（background:true）照旧叫醒（工具早已返回，人只能靠通知知道结局）", async () => {
+    it("后台 run 结束必叫醒一次（工具早已返回，结局只能靠通知）", async () => {
         const notes: string[] = [];
         const r = new RunRegistry({ rootDir: root, notifier: (_t, text) => notes.push(text) });
         const p = await r.spawn({ command: "exit 0", cwd: root, origin });
         await r.wait(p.id, 10_000);
+        await new Promise((res) => setTimeout(res, 120));
+        expect(p.notified).toBe(true);
         expect(notes).toHaveLength(1);
         r.clear();
     });
@@ -377,7 +306,7 @@ describe("review 修正（刀 15）", () => {
     it("后台 run 的 pid 写进 meta.json（钉住：身份不许只留在内存里）", async () => {
         const p = await reg.spawn({ command: "sleep 5", cwd: root });
         expect(p.pid).toBeGreaterThan(0);
-        const meta = JSON.parse(reg.metaJson(p.id)!) as Record<string, unknown>;
+        const meta = JSON.parse((await reg.metaJson(p.id))!) as Record<string, unknown>;
         expect(meta["pid"]).toBe(p.pid);
         await reg.wait(p.id, 0.001 as unknown as number).catch(() => undefined);
         reg.kill(p.id);
@@ -387,7 +316,7 @@ describe("review 修正（刀 15）", () => {
         // 4MB 日志：整文件读进内存就是每次刷新一次卡顿（面板每 3s 一次）
         const p = await reg.spawn({ command: `python3 -c "print('x' * 200, end='\\n'); [print('line%d' % i) for i in range(20000)]"`, cwd: root });
         await reg.wait(p.id, 20_000);
-        const t = reg.tail(p.id, 3);
+        const t = await reg.tail(p.id, 3);
         expect(t?.text).toBe("line19997\nline19998\nline19999");
         expect(t?.text).not.toContain("\uFFFD");
     });
@@ -422,7 +351,7 @@ describe("review 修正（刀 15）", () => {
         mkdirSync(join(root, old), { recursive: true });
         const p = await reg.spawn({ command: "true", cwd: root });
         await reg.wait(p.id, 10_000);
-        reg.pruneOldDirs();
+        await reg.pruneOldDirs();
         expect(existsSync(join(root, old))).toBe(false);
         expect(existsSync(p.dir)).toBe(true);
     });

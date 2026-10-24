@@ -78,7 +78,7 @@ import { Caches, CONCLUSION_LINES_MAX, CONCLUSION_LINES_MIN } from "../lib/ui-st
 import { HeightLedger, stackRows, windowRange } from "../lib/chat-virtual";
 import { chatFindStore, type ChatFindHit } from "../store/chatFindStore";
 import { jobRunsStore } from "../store/jobRunsStore";
-import type { JobNavTarget } from "../../shared/job-runs-view";
+import type { JobNavTarget } from "../../shared/run-view";
 import { findStore } from "../store/findStore";
 import { ChatFindPanel } from "./ChatFindPanel";
 import { clearHitHighlight, paintHitHighlight } from "../lib/hit-highlight";

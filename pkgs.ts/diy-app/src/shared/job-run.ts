@@ -25,7 +25,7 @@
 
 import { z } from "zod";
 import { invariant } from "./error-triage";
-import type { RunOutcome } from "./spawned-job";
+import type { RunOutcome } from "./run-status";
 
 // ═══════════════════════════════════════════════
 //  枚举：kind / state

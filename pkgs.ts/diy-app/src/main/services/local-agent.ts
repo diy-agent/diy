@@ -210,10 +210,7 @@ import { invariant } from "../../shared/error-triage";
 import { runRegistry, type RunInfo } from "./run-registry";
 import { effectiveBashArgs } from "../../shared/tool-args";
 import { ownedGroups } from "./owned-groups";
-import { exitText, formatDuration, runLine, stateLabel } from "../../shared/run-status";
-import { spawnedJobs } from "./spawned-jobs";
-import { runsOfTask } from "../../shared/run-status";
-import type { RunOutcome } from "../../shared/spawned-job";
+import { exitText, formatDuration, runLine, runsOfTask, stateLabel, type RunOutcome } from "../../shared/run-status";
 
 // 模型查询函数抽到 shared/models.ts（core 不能被 services 反向依赖，否则循环 import）。
 // 这里**原样 re-export**：历史引用路径（tests/…/local-models-*.test.ts 等）保持不变。
@@ -1442,38 +1439,12 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                         `随时查：job status ${proc.id} / job output ${proc.id} / job kill ${proc.id}`,
                     ].join("\n");
                 }
-                // ── spawned job 登记（##408 刀 5）──
-                // 三条缺一不可：有轮内锚点（预览/仿真路径没有）、有 toolCallId（origin 的定位键）、
-                // 有 taskUri。缺任何一条就不登记 —— 宁可没有 job，也不落一条**指不回去**的账。
-                const job =
-                    anchor && execOpts?.toolCallId
-                        ? spawnedJobs.begin({
-                              taskUri,
-                              turnId: anchor.turnId,
-                              stepId: anchor.stepId(),
-                              toolCallId: execOpts.toolCallId,
-                              cmd: command,
-                              cwd,
-                          })
-                        : null;
-                // ── 前台也进运行表（##408 刀 11）──
-                // 用户实测抓到：「`nohup sleep 10 &` 明明跑了，表里什么都没有」。判据没错，
-                // 是**表里没有它爹** —— 不加这一条，`&` 起的孤儿就只剩"未登记"那一行，
-                // 进程一死连"哪条命令起的"都无从回答。输出同时被完整落盘（不再另攒一份内存）。
-                const tracked = runRegistry.track({
-                    command,
-                    cwd,
-                    ...(execOpts?.toolCallId && anchor
-                        ? {
-                              origin: {
-                                  taskUri,
-                                  turnId: anchor.turnId,
-                                  stepId: anchor.stepId(),
-                                  toolCallId: execOpts.toolCallId,
-                              },
-                          }
-                        : { origin: { taskUri } }),
-                });
+                // ── 前台命令**不登记**（##408 刀 16，用户 2026-10-24 定口径）──
+                // 「前台进程不进观察名单，不属于 job，就是当前 llm 自己的事，不管、不列出、
+                // 不记录。job 现阶段只管后台任务。」
+                // 于是：不建 run 行、不落 out.log、不写 meta、不投通知 —— 结果直接回给工具调用方。
+                // 唯一保留的是**组号归属**（`ownedGroups`）：它不是 job，是"进程总管"认领孤儿的
+                // 依据（命令里自己 `nohup xxx &` 的进程，ppid 会变成 launchd，只有组号还记得是谁起的）。
                 const run = await runBash(
                     command,
                     cwd,
@@ -1481,48 +1452,11 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                     execOpts?.abortSignal,
                     {
                         onSpawn: (pid) => {
-                            // 组名册补录任务归属（##408 刀 10）：面板按任务过滤"未登记的进程"
-                            ownedGroups.record(pid, {
-                                at: Date.now(),
-                                command,
-                                cwd,
-                                taskUri,
-                                // runId 必须带上：命令里 `nohup xxx &` 起的孤儿就是靠
-                                // 「组的 runId」归到这条 run 名下的（否则表格里 runId=null）
-                                runId: tracked.info.id,
-                            });
-                            tracked.setPid(pid);
-                            job?.setPid(pid);
-                        },
-                        onChunk: (chunk) => {
-                            tracked.write(chunk);
-                            job?.noteOutput(chunk);
+                            ownedGroups.record(pid, { at: Date.now(), command, cwd, taskUri });
                         },
                     },
                     eff.args.timeout as number,
                 );
-                // 收口：前台不投插话（结果直接回给工具调用方），但状态/退出码/耗时进表
-                tracked.finish({
-                    ...(run.exitCode !== undefined ? { exitCode: run.exitCode } : {}),
-                    ...(run.signal !== undefined ? { signal: run.signal } : {}),
-                    killed: run.outcome === "timeout" || run.outcome === "canceled",
-                    ...(run.outcome === "fail" ? { error: clip(run.text, 400) } : {}),
-                });
-                if (job) {
-                    // 记账是观测：**任何**失败都不许冒到工具结果（命令已经跑完了）
-                    try {
-                        await job.finish({
-                            outcome: run.outcome,
-                            ...(run.exitCode !== undefined ? { exitCode: run.exitCode } : {}),
-                            ...(run.signal !== undefined ? { signal: run.signal } : {}),
-                            ...(run.outcome !== "ok" ? { error: clip(run.text, 400) } : {}),
-                        });
-                    } catch (e) {
-                        console.warn("[local-agent] job 收口失败:", e);
-                    } finally {
-                        spawnedJobs.noteFinished(job);
-                    }
-                }
                 appendAudit(home, {
                     phase: "bash-end",
                     taskUri,
@@ -1629,11 +1563,11 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                     const limit = asked === 0 ? WAIT_MAX_MS : Math.min(asked, WAIT_MAX_MS);
                     const done = await runRegistry.wait(id, limit);
                     if (done && done.state === "running") {
-                        return `${detail(done, runRegistry.tail(id, 5) ?? EMPTY_TAIL, now)}\n（已等 ${formatDuration(limit)}，仍未结束；别干等长任务 —— 去做别的，结束会通知你）`;
+                        return `${detail(done, (await runRegistry.tail(id, 5)) ?? EMPTY_TAIL, now)}\n（已等 ${formatDuration(limit)}，仍未结束；别干等长任务 —— 去做别的，结束会通知你）`;
                     }
-                    return detail(done ?? info, runRegistry.tail(id, lines ?? 10) ?? EMPTY_TAIL, now);
+                    return detail(done ?? info, (await runRegistry.tail(id, lines ?? 10)) ?? EMPTY_TAIL, now);
                 }
-                const tail = runRegistry.tail(id, lines ?? (action === "output" ? 40 : 10)) ?? EMPTY_TAIL;
+                const tail = (await runRegistry.tail(id, lines ?? (action === "output" ? 40 : 10))) ?? EMPTY_TAIL;
                 return detail(info, tail, now);
             },
         }),
