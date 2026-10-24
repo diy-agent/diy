@@ -65,6 +65,19 @@ export function atomicUnitPaths(): ContextPath[] {
     return PLACE_CANDIDATES.map((c) => c.path);
 }
 
+/**
+ * **变更历史**用的单位集 = 原子单元里"结果来自外部变化"的那些。
+ *
+ * 与 `atomicUnitPaths` 的差别只有一类：候选显式声明 `changelog: false`（目前仅 `self`）。
+ * 它每步必变（窗口占用 / 上一步花费），但它变的原因是"我们刚量了一次"，不是"世界变了" ——
+ * 放进变更历史等于每步一条 `changed`，把真变化淹掉。
+ *
+ * 但**投递仍要它**（模型必须看到最新窗口占用），所以两个口径都留着，别合并。
+ */
+export function changelogUnitPaths(): ContextPath[] {
+    return PLACE_CANDIDATES.filter((c) => c.changelog !== false).map((c) => c.path);
+}
+
 /** 参与比较的最小快照（Delivery 结构上满足它；不直接依赖 delivery，避开 render 链） */
 export interface CtxSnapshot {
     tree: ContextTreeState;

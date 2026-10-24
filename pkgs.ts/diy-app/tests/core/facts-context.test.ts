@@ -6,11 +6,11 @@
 //   ③ env 决定解析出哪个变体，并带 resolvedBy / variants
 //   ④ 两种投影算法的 key 形状不同，但值同源
 //   ⑤ 库坏了 ⇒ 降级为缺席，**不抛**（上下文构造失败 = 人发不出消息）
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildFactsContext, buildKbIndex } from "../../src/main/services/facts-context";
+import { buildFactsContext, buildKbIndex, clearFactsContextCache, factsContextCacheStats } from "../../src/main/services/facts-context";
 
 let root = "";
 let repoKb = "";
@@ -447,5 +447,103 @@ describe("按库解析暴露档（##5 第 8 轮：合表会把任务库一起降
         const v = buildFactsContext({ home, taskUri: TASK, env: "production" })!;
         expect(Object.keys(v.task ?? {})).toEqual(["diy.facts#scope"]);
         expect(Object.keys(v.project ?? {})).toEqual(["app.port#default"]);
+    });
+});
+
+describe("跨步缓存（##9 review P1①：每步 60 ms 同步 IO 在热路径上）", () => {
+    it("磁盘没变 ⇒ 命中缓存、不再解析", () => {
+        // 判据用**可数的命中数**而不是耗时：并发跑测试时 CPU 竞争会让耗时断言随机翻红，
+        // 那是假判据（这条最早就是写成"暖比冷快一半"，跑整套时被打红）。
+        clearFactsContextCache();
+        buildFactsContext({ home, taskUri: TASK, env: "production" });
+        const first = factsContextCacheStats();
+        expect(first.misses).toBeGreaterThan(0);
+        expect(first.hits).toBe(0);
+        buildFactsContext({ home, taskUri: TASK, env: "production" });
+        const second = factsContextCacheStats();
+        // 第二次一条都没解析（同一批库全部命中）
+        expect(second.misses).toBe(first.misses);
+        expect(second.hits).toBe(first.hits + first.misses);
+    });
+
+    it("磁盘变了 ⇒ 立刻看到新值（指纹失效，不是定时过期）", () => {
+        expect(buildFactsContext({ home, taskUri: TASK, env: "production" })!.project).toHaveProperty("app.port#default");
+        write(
+            path.join(repoKb, "facts", "app.yaml"),
+            factsYaml([
+                "  app.port#default:",
+                "    value: '19999'",
+                "    scope: { env: production }",
+                "    review: accepted",
+                "    lifecycle: active",
+                "    evidence: { source: code, at: K.ts:2 }",
+            ]),
+        );
+        const v = buildFactsContext({ home, taskUri: TASK, env: "production" })!;
+        expect(JSON.stringify(v.project)).toContain("19999");
+    });
+
+    it("新增一篇 facts 文件也算变了（指纹含文件名，不只 mtime）", () => {
+        buildFactsContext({ home, taskUri: TASK, env: "production" });
+        write(
+            path.join(repoKb, "facts", "dev.yaml"),
+            factsYaml([
+                "  dev.test#x:",
+                "    value: 'v'",
+                "    scope: { env: production }",
+                "    review: accepted",
+                "    lifecycle: active",
+                "    evidence: { source: code, at: K.ts:1 }",
+            ]),
+        );
+        expect(buildFactsContext({ home, taskUri: TASK, env: "production" })!.project).toHaveProperty("dev.test#x");
+    });
+});
+
+describe("裁剪语义 = 按 ns 优先级（##9 review P2：跳过的不是任务库、是低优先级的坑）", () => {
+    function bigTaskLib(): void {
+        const kb = path.join(home, TASK, "knowledge");
+        write(
+            path.join(kb, "facts", "diy.facts.yaml"),
+            factsYaml([
+                "  diy.facts#scope:",
+                `    value: '${"x".repeat(3000)}'`,
+                "    review: accepted",
+                "    lifecycle: active",
+                "    evidence: { source: code, at: K.ts:1 }",
+            ]),
+        );
+    }
+
+    it("任务库一条装不下 ⇒ 项目库的小条目**不许**顶进来（否则「任务结论优先」是空话）", () => {
+        bigTaskLib();
+        // beforeEach 的 app.port 带 `scope.env: production`，不显式给 env 会解析不出值
+        const v = buildFactsContext({ home, taskUri: TASK, env: "production", maxBytes: 1000 })!;
+        expect(v.task).toBeUndefined();
+        // 项目库那条（app.port，几十字节）在预算上放得下，但优先级低 ⇒ 让位
+        expect(v.project).toBeUndefined();
+        // 两处都要如实回报"被裁了"，且给出名字（没有名字就没有动作）
+        expect(v.omitted).toBe(2);
+        expect(v.omittedClaims).toContain("diy.facts#scope");
+    });
+
+    it("同优先级内允许「跳大的填小的」（预算要用满，不为一条大条目浪费 4 KB）", () => {
+        const rows: string[] = [
+            "  app.port#big:",
+            `    value: '${"x".repeat(3000)}'`,
+            "    review: accepted",
+            "    lifecycle: active",
+            "    evidence: { source: code, at: K.ts:2 }",
+            "  app.port#small:",
+            "    value: '18888'",
+            "    review: accepted",
+            "    lifecycle: active",
+            "    evidence: { source: code, at: K.ts:2 }",
+        ];
+        write(path.join(repoKb, "facts", "app.yaml"), factsYaml(rows));
+        const v = buildFactsContext({ home, taskUri: TASK, env: "production", maxBytes: 500 })!;
+        expect(v.project).toHaveProperty("app.port#small");
+        expect(v.omitted).toBe(1);
+        expect(v.omittedClaims).toEqual(["app.port#big"]);
     });
 });

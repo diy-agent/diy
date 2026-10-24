@@ -13,7 +13,7 @@
  *   ③ **不在这里拼给人看的句子**（句子归 CLI 的 format*）：这里只出结构化值，
  *      信封由通用渲染器出 YAML。
  */
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { foldKbIndex, KB_FOLD_MIN_GROUP } from "@diy/facts";
 import { loadRepo, project, projectItems, readExpose, type ProjectEntry, type ProjectionAlgorithm, type Repo } from "@diy/facts/node";
@@ -41,8 +41,16 @@ export interface FactsContextValue {
      * 会略大于 `maxBytes`。给出这个数，人就不用猜"为什么 4 KB 预算投出去 4.6 KB"。
      */
     overhead?: number;
+    /**
+     * 被预算裁掉的 claim（最多 `OMITTED_SAMPLE` 个）：只给数量等于「自己数少了什么」。
+     * 有了名字才谈得上动作 —— `diy facts get <claim>` 把它捞回来。
+     */
+    omittedClaims?: string[];
     problems: { gid: string; code: string }[];
 }
+
+/** `omittedClaims` 的采样上限（数目本身由 `omitted` 给） */
+const OMITTED_SAMPLE = 5;
 
 /** 投影默认预算：超了从尾部（project 侧）裁。不是硬上限 —— 只在条目异常多时兜底 */
 export const DEFAULT_FACTS_MAX_BYTES = 4000;
@@ -77,14 +85,106 @@ function levelOf(loaded: readonly Loaded[], declared: boolean, entry: ProjectEnt
 const libKey = (ns: Ns): string => (ns.kind === "task" ? `task:${ns.taskUri}` : ns.kind);
 
 /**
+ * 一个库的**磁盘指纹**（`null` = 库不存在）。
+ *
+ * 为什么用指纹而不是定时过期：本文件的调用方（`buildFactsContext` / `buildKbIndex`）是**每步**
+ * 都要读一次的，而库的变化只发生在 `facts submit`（别进程 / 本进程）—— 按时间过期意味着
+ * 「刚写完的一轮可能读到旧值」，那是最坏的一种过期。指纹比对只做 readdir + stat，比解析
+ * 22 篇 YAML 便宜一到两个数量级。
+ *
+ * 指纹包含：`subjects.yaml` / `expose.yaml` / `facts/*.yaml` 的 `名字 + size + mtimeMs`。
+ * 名字进指纹 ⇒ 增删文件也会变（只比 mtime 会漏掉"跟着删了一个文件"）。
+ */
+function signatureOf(dir: string): string | null {
+    const factsDir = path.join(dir, "facts");
+    // sync-io-ok: 本文件的整条链路本来就是同步的（`buildFactsContext` 在提示词装配里被同步调用）；
+    // 这里量的是「比解析 22 篇 YAML 便宜一个数量级」的 stat 指纹，正是为了把 60 ms 的同步窗口压到 1 ms
+    if (!existsSync(factsDir)) return null;
+    const parts: string[] = [];
+    for (const name of ["subjects.yaml", "expose.yaml"]) {
+        const file = path.join(dir, name);
+        try {
+            // sync-io-ok: 同上（stat 指纹，单文件一次）
+            const st = statSync(file);
+            parts.push(`${name}:${st.size}:${st.mtimeMs}`);
+        } catch {
+            parts.push(`${name}:-`);
+        }
+    }
+    let names: string[];
+    try {
+        // sync-io-ok: 同上（一次 readdir 换掉整批解析）
+        names = readdirSync(factsDir).filter((f) => f.endsWith(".yaml")).sort();
+    } catch {
+        return null;
+    }
+    for (const name of names) {
+        try {
+            // sync-io-ok: 同上（每篇一次 stat）
+            const st = statSync(path.join(factsDir, name));
+            parts.push(`${name}:${st.size}:${st.mtimeMs}`);
+        } catch {
+            parts.push(`${name}:-`);
+        }
+    }
+    return parts.join("|");
+}
+
+interface CacheEntry {
+    readonly sig: string;
+    readonly value: Loaded | null;
+}
+
+/**
+ * 已解析库的**跨步缓存**（key = 库目录 + 加载选项）。
+ *
+ * 为什么需要（实测 ##9 review P1①）：`buildFactsContext` 35 ms + `buildKbIndex` 24 ms =
+ * **每步约 60 ms 的同步 IO**，而两者读的是同一批 22 篇 YAML。主进程是单线程事件循环 ——
+ * 这 60 ms 是渲染 / RPC / 流式输出一起停住的时间。缓存后稳态只剩 stat。
+ *
+ * 缓存放模块级而不是进程级单例：它**按库目录隔离**，测试换一个 tmp 目录就是另一条 key，
+ * 不会串味。
+ */
+const loadCache = new Map<string, CacheEntry>();
+
+/** 缓存命中统计（测试用判据 + 将来想看一眼"这轮有没有在重复解析"） */
+const cacheStats = { hits: 0, misses: 0 };
+
+/** 清缓存（测试用；生产不需要 —— 指纹自己会失效） */
+export function clearFactsContextCache(): void {
+    loadCache.clear();
+    cacheStats.hits = 0;
+    cacheStats.misses = 0;
+}
+
+/** 缓存计数（只读；`hits + misses` = 调用过 `loadQuietly` 的库次数） */
+export function factsContextCacheStats(): { hits: number; misses: number } {
+    return { ...cacheStats };
+}
+
+/**
  * 读一个库；不存在 / 解析失败 → `null`（**不是**空库，也不是异常）。
  * 调用方据此决定"缺席"而不是"给了个空对象"—— 空对象会被信封渲染成 `facts.task: {}`，
  * 看起来像"任务库存在但没有事实"，与"根本没有库"是两件事。
  */
 function loadQuietly(dir: string, ns: Ns, opts: { subjectsFallback?: string; root?: string }): Loaded | null {
-    if (!existsSync(path.join(dir, "facts"))) return null;
+    const sig = signatureOf(dir);
+    // ns 也进 key：同一个目录被当成不同库读取时（测试 / 迁移现场）不该共用缓存
+    const nsKey = ns.kind === "task" ? `task:${ns.taskUri}` : ns.kind;
+    const key = [dir, nsKey, opts.subjectsFallback ?? "", opts.root ?? ""].join("\u0000");
+    if (sig === null) {
+        loadCache.delete(key);
+        return null;
+    }
+    const cached = loadCache.get(key);
+    if (cached !== undefined && cached.sig === sig) {
+        cacheStats.hits += 1;
+        return cached.value;
+    }
+    cacheStats.misses += 1;
+    let value: Loaded | null;
     try {
-        return {
+        value = {
             ns,
             expose: readExpose(dir),
             repo: loadRepo(dir, {
@@ -94,8 +194,10 @@ function loadQuietly(dir: string, ns: Ns, opts: { subjectsFallback?: string; roo
         };
     } catch {
         // YAML 坏到读不出来：不抛（见纪律 ②）。真问题会在 `diy facts status` 里亮出来。
-        return null;
+        value = null;
     }
+    loadCache.set(key, { sig, value });
+    return value;
 }
 
 /** 仓库库的 `knowledge/`：与 CLI 同一份定位（`DIY_FACTS_DIR` > 向上找），找不到 → null */
@@ -183,6 +285,7 @@ export function buildFactsContext(opts: BuildFactsContextOptions = {}): FactsCon
             env,
             text: out.text,
             omitted: out.omitted.length,
+            ...(out.omitted.length > 0 ? { omittedClaims: out.omitted.slice(0, OMITTED_SAMPLE) } : {}),
             overhead: Math.max(0, out.bytes - shownValueBytes(out.shown, entries)),
             problems: [...out.problems.map((p) => ({ gid: p.gid, code: p.code })), ...budgetProblems],
         };
@@ -207,16 +310,38 @@ export function buildFactsContext(opts: BuildFactsContextOptions = {}): FactsCon
     // `omitted: 1`）。包装开销现在单独回报（`overhead`），不进预算 —— 它随条目数线性增长，
     // 混进预算会让"4 KB 装几条"变得不可预测。
     let remaining = maxBytes;
+    // 被裁掉的 claim（最多记 5 个）：只给数量等于「让我自己数数少了什么」—— 而 agent 真正
+    // 需要的动作是「用 `facts get <claim>` 把那条捞回来」，那个动作得先知道 claim 叫什么。
+    const omittedClaims: string[] = [];
+    /**
+     * 已裁过的**最高**优先级（数字越小越优先：task=0 > project=1 > global=2）。
+     *
+     * 裁剪语义：同一优先级内允许「跳过大的、填小的」（把预算用满），但**一旦高优先级有东西
+     * 没装下**，就不许用低优先级的东西去填那个坑 —— 否则「预算按 task > project > global
+     * 分配、本任务的结论先保住」这条注释就是空话（实测 ##9 复现：任务库一条大结论被跳，
+     * 项目库里的一条小事顶了进来，读起来像「本任务的结论不存在」）。
+     */
+    let stopBelow = Number.POSITIVE_INFINITY;
+    const priorityOf = (kind: string): number => (kind === "task" ? 0 : kind === "project" ? 1 : 2);
     for (const item of parsed.items) {
         const key = algorithm === "flat-gid" ? item.gid : item.claim;
+        const priority = priorityOf(item.ns.kind);
         // 缺省值不写（与 `brief` 同一口径）：`resolvedBy: ""`（全局唯一）与 `variants: 1`（无变体）
         // 对每条都是常量 —— 实测 16 条 × 62 B 外壳 ≈ 992 B/轮，全是零信息。
         const cell: FactsContextCell = { value: item.value };
         if (item.resolvedBy !== "") cell.resolvedBy = item.resolvedBy;
         if (item.variants > 1) cell.variants = item.variants;
         const size = budgetBytesOf(item);
+        if (priority > stopBelow) {
+            // 高优先级有没装下的 ⇒ 低优先级一律让位（连计数也算"被裁"，如实回报）
+            out.omitted += 1;
+            if (omittedClaims.length < OMITTED_SAMPLE) omittedClaims.push(key);
+            continue;
+        }
         if (size > remaining) {
             out.omitted += 1;
+            if (omittedClaims.length < OMITTED_SAMPLE) omittedClaims.push(key);
+            stopBelow = Math.min(stopBelow, priority);
             continue;
         }
         remaining -= size;
@@ -225,6 +350,7 @@ export function buildFactsContext(opts: BuildFactsContextOptions = {}): FactsCon
         const bucket = kind === "task" ? (out.task ??= {}) : kind === "global" ? (out.global ??= {}) : (out.project ??= {});
         bucket[key] = cell;
     }
+    if (omittedClaims.length > 0) out.omittedClaims = omittedClaims;
     return out;
 }
 

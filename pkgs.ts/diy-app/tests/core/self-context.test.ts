@@ -10,6 +10,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { buildSelfValue } from "../../src/shared/context/self";
 import { buildDelivery, defaultSystemPlaces, PLACE_CANDIDATES } from "../../src/shared/context/delivery";
+import { atomicUnitPaths, changelogUnitPaths } from "../../src/shared/context/changelog";
 import { noteSelfStep, resetSelfUsage, selfOf } from "../../src/main/services/self-usage";
 
 const buckets = (p: { total: number; output?: number; cacheRead?: number; input?: number }) => ({
@@ -120,5 +121,16 @@ describe("投递位置", () => {
         expect(d.systemData.text).not.toContain("ratio:");
         expect(d.systemData.text).not.toContain("self");
         expect(d.runtime.places).toContain("self");
+    });
+});
+
+describe("投递 vs 变更历史（两个消费者口径不同，别合并）", () => {
+    it("self 进 runtimeDiff（模型要看最新数），但不进变更历史（每步必变 = 噪声）", () => {
+        // 投递侧：`self` 在原子单元里（runtime diff 靠它算出 changedRun）
+        expect(atomicUnitPaths()).toContain("self");
+        // 变更历史侧：被 `changelog: false` 排除
+        expect(changelogUnitPaths()).not.toContain("self");
+        // 其余单元的差异一览无遗：只有 self 被排除（别顺手把别的东西也筛掉）
+        expect(changelogUnitPaths()).toEqual(atomicUnitPaths().filter((p) => p !== "self"));
     });
 });

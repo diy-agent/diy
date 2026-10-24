@@ -28,6 +28,18 @@ export interface PlaceCandidate {
     system: boolean;
     /** 稳定性判断（也就是"为什么"） */
     reason: string;
+    /**
+     * 是否进**变更历史**（`changelog` / 上下文树的"变化步骤"）。缺省 `true`。
+     *
+     * 为什么允许为 `false`：变更历史回答的是「**上下文为什么变了**」，它的读者是"要判断
+     * 有没有东西该重看"的人和 agent。而 `self` 是**仪表盘**（花了多少钱 / 窗口多满），
+     * 每步必变 —— 让它进变更历史，等于每一步都落一条 `changed`，真实变化被淹掉
+     * （##5 早报过"变化步骤一堆空的"，反过来"每步都有变化、但全是仪表盘"同样是噪声）。
+     *
+     * 注意它**不影响投递**：`self` 仍要进 `runtimeDiff`（模型必须看到最新数）——
+     * 两个消费者口径不同，别合成一个开关。
+     */
+    changelog?: false;
 }
 
 /** 任务头字段的投递理由（逐键必填：清单在 shared/task-head.ts 的 TASK_HEAD_FIELDS） */
@@ -103,7 +115,12 @@ export const PLACE_CANDIDATES: PlaceCandidate[] = [
     // 进 system 就是每步把前缀缓存打碎（实测 cacheRead 占 92~99%，一改输入成本×几十）。
     // 为什么单列而不并进别的单元：它的变化频率是**最高档**（每步一次），与其他单元混在一起
     // 会让“别的字段改一下”也把这份高频段重发一遍。
-    { path: "self", system: false, reason: "自量（窗口占用/上一步消耗/本轮累计）：每步都变 → 必须 runtime" },
+    {
+        path: "self",
+        system: false,
+        changelog: false,
+        reason: "自量（窗口占用/上一步消耗/本轮累计）：每步都变 → 必须 runtime，且不进变更历史（见 changelog 字段）",
+    },
 ];
 
 /** 默认 system 名单（真发与预览共用；用户可在页面上改，改动只影响该页面预览） */

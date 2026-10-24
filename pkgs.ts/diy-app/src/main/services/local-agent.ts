@@ -166,7 +166,7 @@ import { appendContextStat } from "../core/context-stats";
 import { traffic } from "../core/traffic";
 import { appendCtxLog, hasV2CtxLog, lastCtxLogSeq, readCtxLogEntries } from "../core/context-changelog";
 import { statFromStep } from "../../shared/context/stats";
-import { atomicUnitPaths, changesOf, foldCtxTree, type CtxSnapshot } from "../../shared/context/changelog";
+import { atomicUnitPaths, changelogUnitPaths, changesOf, foldCtxTree, type CtxSnapshot } from "../../shared/context/changelog";
 import type { DeliveryStepRecord } from "../../shared/context/steps";
 import {
     budgetBytesOf,
@@ -4831,6 +4831,8 @@ export class LocalAgentManager {
         // 变更历史（##310 二版）：每步**有变才写**；一段会话的起点 = 一条 baseline（整棵树）。
         // 变更单位 = 原子单元（`chain` 整体一条，不下钻数组 —— 原子字段要变一起变）。
         const ctxUnits = atomicUnitPaths();
+        // 变更历史用的口径（去掉"每步必变"的仪表盘单元，见 `changelogUnitPaths`）
+        const ctxLogUnits = changelogUnitPaths();
         let ctxSeq = lastCtxLogSeq(taskUri);
         // 该不该写起点：还没有二版记录（新任务 / 从没写过的新格式），或有人显式要求重新起算
         // （会话清零、`diy context rebaseline`）。**每轮只在轮首判一次**：轮中途置的标记下一轮生效。
@@ -5152,7 +5154,7 @@ export class LocalAgentManager {
                             this.rebaselinePending.delete(taskUri);
                             ctxBaselineWritten = true;
                         } else {
-                            const changes = changesOf(ctxPrevSnap, fresh, ctxUnits);
+                            const changes = changesOf(ctxPrevSnap, fresh, ctxLogUnits);
                             if (changes.length > 0) {
                                 appendCtxLog(taskUri, {
                                     seq: ++ctxSeq, type: "changed", ts: new Date().toISOString(), model,

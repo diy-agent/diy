@@ -197,6 +197,13 @@ export const AssembleGlobalsSchema = z.object({
         .optional()
         .describe("**仅 `md` 算法**：整份投影的 markdown 表（此时 task/project 缺席 —— 同一种内容不给两种形状）"),
       omitted: z.number().describe("因预算被裁掉的条目数（>0 ⇒ 还有没带进来的，用 `diy facts status` 看）"),
+      omittedClaims: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "被裁掉的 claim（采样，最多 5 个）：`diy facts get <其一>` 就能把它捞回来。" +
+            "数目看 `omitted`，这里只给「叫什么」—— 没有名字就没有动作",
+        ),
       overhead: z
         .number()
         .optional()
