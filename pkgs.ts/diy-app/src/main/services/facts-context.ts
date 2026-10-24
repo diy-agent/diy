@@ -272,13 +272,31 @@ export function buildKbIndex(opts: { home?: string } = {}): KbIndex | null {
         if (hit) loaded.push(hit);
     }
     if (loaded.length === 0) return null;
+    // 计数口径（##5 数据侧实测）：**按 claim 去重后再数**，字段名 `claims` 名副其实。
+    //
+    // 旧版按库相加、且数的是 facts ⇒ 两处都错，实测差 16：
+    //   ① 跨库同 claim 的主题被翻倍展示（level 12 vs brief 6、ref 10 vs 5、tool 30 vs 25）；
+    //   ② 同一 claim 的多个 env 变体被当成多条（`app.port` 索引 3 / brief 2）。
+    // 读索引的人看到"level 12 条"、`brief level` 只拿到 6 条，会以为有 6 条查不到 ——
+    // 这是"数算得对、说法错"的一类（同 history.budgetBytes 家族）。
+    //
+    // 判据：**kb 的 claims 恒等于 `diy facts brief <主题>` 的 claims**（按 `subject#aspect` 去重，
+    // 不看库、不看 env 变体、不看 lifecycle —— brief 本来就把失效条目也列出来给人判断）。
+    // `status.bySubject` 数的是**可用**条目的 claim（它服务 expose 预算，失效条目不占预算），
+    // 两者在"有 superseded 条目"时会差，这是有意的：一个回答"能查到什么"，一个回答"占多少预算"。
+    const claimsBySubject = new Map<string, Set<string>>();
+    for (const l of loaded) {
+        for (const f of l.repo.facts) {
+            const set = claimsBySubject.get(f.subject) ?? new Set<string>();
+            set.add(claimOf(f));
+            claimsBySubject.set(f.subject, set);
+        }
+    }
     let total = 0;
-    // 按 subject 聚：多库同名合并成一条（`ns` 记来源数组、`claims` 求和）
+    for (const set of claimsBySubject.values()) total += set.size;
+    // 按 subject 聚：多库同名合并成一条（`ns` 记来源数组、`claims` 取**去重后的全局值**）
     const merged = new Map<string, KbIndexEntry>();
     for (const l of loaded) {
-        const counts = new Map<string, number>();
-        for (const f of l.repo.facts) counts.set(f.subject, (counts.get(f.subject) ?? 0) + 1);
-        total += l.repo.facts.length;
         const ns = l.ns.kind === "global" ? ("global" as const) : ("project" as const);
         for (const sub of l.repo.subjects) {
             if ((sub.description ?? "") === "") continue;
@@ -286,8 +304,8 @@ export function buildKbIndex(opts: { home?: string } = {}): KbIndex | null {
             // **按库**判定（该库自己的 expose.yaml + 该库类型的缺省档）—— 与正文投影同口径。
             // 注意与正文的区别：`index` 与 `full` **都进索引**（full 也要能被发现），只有 `none` 不进。
             if (exposeOf(l.expose, sub.key, defaultExposeOf(ns)) === "none") continue;
+            const claims = claimsBySubject.get(sub.key)?.size ?? 0;
             const hit = merged.get(sub.key);
-            const claims = counts.get(sub.key) ?? 0;
             if (hit === undefined) {
                 merged.set(sub.key, { subject: sub.key, desc: sub.description as string, claims, ns: [ns] });
             } else {
@@ -295,7 +313,8 @@ export function buildKbIndex(opts: { home?: string } = {}): KbIndex | null {
                 // 描述更具体 —— 故项目库那份覆盖（后到者赢，仅当它来自 project）
                 if (ns === "project") hit.desc = sub.description as string;
                 if (!hit.ns.includes(ns)) hit.ns.push(ns);
-                hit.claims += claims;
+                // 幂等赋值（不是 +=）：同一个 claim 两库都有声明时只算一条，这是本次修的正题
+                hit.claims = claims;
             }
         }
     }

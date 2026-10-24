@@ -182,6 +182,81 @@ describe("kb 索引", () => {
         expect(kb.claims - listed).toBe(2);
     });
 
+    // ##5 数据侧实测（2026-10-24）：旧版按库相加，跨库同 claim 的主题被**翻倍展示**
+    // （level 12 vs brief 6、ref 10 vs 5、tool 30 vs 25）。判据：同一主题在 kb 索引 /
+    // brief / status.bySubject 三处报的条数必须相等。
+    it("跨库同 claim 只算一条（与 brief / status 同口径）", () => {
+        const globalKb = path.join(home, "knowledge");
+        write(path.join(globalKb, "subjects.yaml"), SUBJECTS);
+        // 三处同 claim（与 project 库逐字重复）+ 一处 global 独有 + 一处 env 变体
+        write(
+            path.join(globalKb, "facts", "app.yaml"),
+            factsYaml([
+                "  app.port#default:",
+                "    value: '18888'",
+                "    scope: { env: production }",
+                "    review: accepted",
+                "    lifecycle: active",
+                "    evidence: { source: code, at: K.ts:2 }",
+                "  app.port#host:",
+                "    value: 'localhost'",
+                "    review: accepted",
+                "    lifecycle: active",
+                "    evidence: { source: code, at: K.ts:3 }",
+                "  dev.test#run:",
+                "    value: 'vitest'",
+                "    review: accepted",
+                "    lifecycle: active",
+                "    evidence: { source: code, at: K.ts:1 }",
+                "  dev.test#run2:",
+                "    value: 'same claim 的另一个 env 变体'",
+                "    scope: { env: production }",
+                "    review: accepted",
+                "    lifecycle: active",
+                "    evidence: { source: code, at: K.ts:1 }",
+            ]),
+        );
+        // 必须显式传 home：`buildKbIndex()` 缺省用 `diyHome()`，读不到本测试的 global 库
+        const kb = buildKbIndex({ home })!;
+        // app.port：project 1 条 + global 独有 1 条（#host）= 2（#default 重复，只算一条）
+        expect(kb.entries.find((e) => e.subject === "app.port")?.claims).toBe(2);
+        // dev.test：global 两条各自不同 claim ⇒ 2
+        expect(kb.entries.find((e) => e.subject === "dev.test")?.claims).toBe(2);
+        // 总数不再是"逐库 facts 相加"（那会是 1 + 2 + 2 = 5），而是去重后的 claim 数 4
+        expect(kb.claims).toBe(4);
+    });
+
+    it("同 claim 跨库并存（高层那份已 superseded）⇒ 仍只算一条（brief 也把它列出来）", () => {
+        // project 把 app.port#default 标 superseded，global 有一份 active 的同 claim
+        write(
+            path.join(repoKb, "facts", "app.yaml"),
+            factsYaml([
+                "  app.port#default:",
+                "    value: '18888'",
+                "    scope: { env: production }",
+                "    review: accepted",
+                "    lifecycle: superseded",
+                "    evidence: { source: code, at: K.ts:2 }",
+            ]),
+        );
+        const globalKb = path.join(home, "knowledge");
+        write(path.join(globalKb, "subjects.yaml"), SUBJECTS);
+        write(
+            path.join(globalKb, "facts", "app.yaml"),
+            factsYaml([
+                "  app.port#default:",
+                "    value: '9999'",
+                "    scope: { env: production }",
+                "    review: accepted",
+                "    lifecycle: active",
+                "    evidence: { source: code, at: K.ts:2 }",
+            ]),
+        );
+        const kb = buildKbIndex({ home })!;
+        expect(kb.entries.find((e) => e.subject === "app.port")?.claims).toBe(1);
+        expect(kb.claims).toBe(1);
+    });
+
     it("claims 与事实投影同一口径（同一仓库同一时刻：索引总数 = 投影条目数）", () => {
         const kb = buildKbIndex()!;
         expect(kb.claims).toBe(1);

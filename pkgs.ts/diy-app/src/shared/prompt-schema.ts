@@ -224,13 +224,17 @@ export const AssembleGlobalsSchema = z.object({
    */
   kb: z
     .object({
-      claims: z.number().describe("全库条目总数（与索引里各主题的条数之和对不上 ⇒ 有主题缺 description 没进索引）"),
+      claims: z
+        .number()
+        .describe(
+          "全库条目总数，**claim 口径**（subject#aspect；跨库同 claim 只算一条，与 `facts brief` / `status` 同口径 —— 不是 facts 数：同一 claim 的多个 env 变体算一条）。与索引里各主题的条数之和对不上 ⇒ 有主题缺 description 没进索引",
+        ),
       entries: z
         .array(
           z.object({
             subject: z.string().describe("主题（`diy facts get <主题>#<方面>` 的前半）"),
             desc: z.string().describe("一句话说清这个对象（直接取自 subject 词表的 description）"),
-            claims: z.number().describe("该主题下的条目数"),
+            claims: z.number().describe("该主题下的条目数（claim 口径，= `facts brief <主题>` 的 claims；跨库同 claim 只算一条）"),
             ns: z
               .array(z.string())
               .describe(
