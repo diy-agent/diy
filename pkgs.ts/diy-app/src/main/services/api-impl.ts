@@ -681,7 +681,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
   binding.on(app.agent.local.autoCompactStatus, async ({ input }) => {
     noteRendererTouch("diy.agent.local.autoCompactStatus", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
-    return getLocalAgent().autoCompactStatus(input.taskUri);
+    return await getLocalAgent().autoCompactStatus(input.taskUri);
   });
   binding.on(app.agent.local.autoCompactSetConfig, async ({ input }) => {
     const { saveAutoCompact, loadAutoCompact } = await import("../core/auto-compact-config");
@@ -718,13 +718,13 @@ export function bindAppHandlers(binding: ServerBinding): void {
   binding.on(app.agent.local.requestView, async ({ input }) => {
     noteRendererTouch("diy.agent.local.requestView", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
-    return getLocalAgent().requestView(input.taskUri);
+    return await getLocalAgent().requestView(input.taskUri);
   });
   binding.on(app.agent.local.compact.preview, async ({ input }) => {
     noteRendererTouch("diy.agent.local.compact.preview", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
     const txt = (input as { summaryText?: string }).summaryText;
-    return getLocalAgent().compactPreview(input.taskUri, policyOf(input), txt);
+    return await getLocalAgent().compactPreview(input.taskUri, policyOf(input), txt);
   });
   binding.on(app.agent.local.compact.undo, async ({ input }) => {
     noteRendererTouch("diy.agent.local.compact.undo", input.taskUri);
@@ -1084,9 +1084,10 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const project = projectFromUri(input.taskUri) || input.project;
     // 房间上下文（##377 第 26 刀）：预览与真发同一份装配（取**本任务自己的房间**）
     const { roomRuntimeFact } = await import("./room-context");
+    const roomCtx = (await roomRuntimeFact({ roomId: input.taskUri, taskUri: input.taskUri }))?.value ?? null;
     const globals = assembleGlobals(diyHome(), project, {
       taskUri: input.taskUri,
-      room: roomRuntimeFact({ roomId: input.taskUri, taskUri: input.taskUri })?.value ?? null,
+      room: roomCtx,
     }) as unknown as Record<string, unknown>;
     const now = buildDelivery(globals, input.systemPlaces?.length ? input.systemPlaces : loadSystemPlaces(diyHome()));
     const last = records[records.length - 1]!;
@@ -1582,29 +1583,31 @@ export function bindAppHandlers(binding: ServerBinding): void {
   // 投递器在 services/room-service.ts（真起一轮的是它，不是本绑定层）；落盘层在 core/room.ts。
   binding.on(app.room.list, async () => {
     const { listRooms, readEvents } = await import("../core/room");
-    return {
-      rooms: listRooms().map((r) => {
-        const { events } = readEvents(r.id, { limit: 1 });
-        const last = events[events.length - 1];
-        return {
-          id: r.id,
-          ...(r.title ? { title: r.title } : {}),
-          focus: r.focus,
-          members: r.members.length,
-          ...(last ? { last: `${shortName(last.author)}: ${last.text.slice(0, 60)}` } : {}),
-        };
-      }),
-    };
+    const rooms = [];
+    for (const r of listRooms()) {
+      // 只要最后一条 ⇒ 倒读 1 行（##427：不再是整份读 + 解析）
+      const { events } = await readEvents(r.id, { limit: 1 });
+      const last = events[events.length - 1];
+      rooms.push({
+        id: r.id,
+        ...(r.title ? { title: r.title } : {}),
+        focus: r.focus,
+        members: r.members.length,
+        ...(last ? { last: `${shortName(last.author)}: ${last.text.slice(0, 60)}` } : {}),
+      });
+    }
+    return { rooms };
   });
   binding.on(app.room.get, async ({ input }) => {
-    // 走 readRoomView（不是裸 readEvents）：投递状态在 deliveries.jsonl 里，要 fold 上来
-    const { readRoomView } = await import("../core/room");
+    // 走 readRoomViewCached（不是裸 readEvents）：投递状态在 deliveries.jsonl 里，要 fold 上来；
+    // 缓存按文件签名失效 + 合并并发（##427：同一房间在同一次刷新窗口里被多个组件读多遍盘）
+    const { readRoomViewCached } = await import("../core/room-view-cache");
     const { ensureRoomForTask } = await import("./room-service");
     const { withSteerTurns } = await import("../../shared/room");
     const { getLocalAgent } = await import("./local-agent");
     // 宿主定案（§28.7 G）：id = taskUri，且**每个任务恒是一个 room** ⇒ 读之前先补齐成员表
     await ensureRoomForTask(input.id);
-    const { room, events, bad } = readRoomView(input.id, { limit: input.limit ?? 200 });
+    const { room, events, bad } = await readRoomViewCached(input.id, { limit: input.limit ?? 200 });
     // 忙时插话那条的 **turnId 是读侧投影**（##377 第 29 刀）：投递时只知道「插进了正在跑的那一轮」，
     // 队列项落位之后才有块带 `meta.steerId` ⇒ 现在问 `local-agent` 反查得到。
     // 不落盘：它不是事件事实，而是"拿着既有键（steerId）现算的地址"（owner 口径：别造回复映射）。
@@ -1756,7 +1759,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
       memberUri = m.id;
     } else {
       if (!input.event) throw new Error("要么给 --event（reply 事件 id），要么给 --member + --turn");
-      const { events } = readRoomView(input.id, { limit: 0 });
+      // limit: 0 = **全量**（要按 id 反查任意一条历史事件，尾部窗口答不了 —— 这是人为操作、不是轮询）
+      const { events } = await readRoomView(input.id, { limit: 0 });
       const ev = events.find((e) => e.id === input.event);
       if (!ev) throw new Error(`房间里没有这条事件：${input.event}（room get 看事件 id）`);
       const ref = ev.ref;
@@ -1787,7 +1791,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
    * 纯读、无副作用；任何布局的「头像行状态」都吃这一份（详情另走 `turn`）。
    */
   binding.on(app.room.roster, async ({ input }) => {
-    const { readRoom, readRoomView } = await import("../core/room");
+    const { readRoom } = await import("../core/room");
+    const { readDeliveriesCached } = await import("../core/room-view-cache");
     const { ensureRoomForTask } = await import("./room-service");
     const { getLocalAgent } = await import("./local-agent");
     const { sessionRegistry } = await import("./session-registry");
@@ -1795,18 +1800,19 @@ export function bindAppHandlers(binding: ServerBinding): void {
     await ensureRoomForTask(input.id);
     const room = readRoom(input.id);
     if (!room) throw new Error(`房间不存在：${input.id}`);
-    const { events } = readRoomView(input.id, { limit: 0 });
+    // 本端点只要「谁在排队 / 谁在跑」⇒ 直接吃 deliveries 的 fold（**不碰事件流**）：
+    // 旧实现为这几个计数把整条事件流读了一遍（limit: 0 = 全量，5 MB 时每次轮询 ~百 ms 级）。
+    const { byEvent } = await readDeliveriesCached(input.id);
+    const states = [...byEvent.values()].flatMap((inner) => [...inner.values()]);
     const agent = getLocalAgent();
     const members = orderedMembers(room).map((m, i) => {
       const taskUri = m.backend?.type === "task" ? m.backend.data.taskUri || null : null;
       let queued = 0;
       let running = 0;
-      for (const ev of events) {
-        for (const d of ev.deliveries ?? []) {
-          if (d.memberId !== m.id) continue;
-          if (d.status === "queued") queued++;
-          else if (d.status === "running") running++;
-        }
+      for (const d of states) {
+        if (d.memberId !== m.id) continue;
+        if (d.status === "queued") queued++;
+        else if (d.status === "running") running++;
       }
       return {
         memberId: m.id,

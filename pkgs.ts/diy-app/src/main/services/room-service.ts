@@ -216,7 +216,7 @@ async function mirrorIntoTarget(input: {
         const targetMemberId = owner?.id ?? MAIN_MEMBER_ID;
         // 幂等（review2 R1）：判据是「两条**各自**在不在」，不是「say 在」——
         // 补写比漏写安全（与「水位是优化」同族）：重复写没有意义，少一条就是永久缺一块。
-        const { events } = readEvents(input.targetTaskUri);
+        const { events } = await readEvents(input.targetTaskUri);
         const miss = mirrorMissingParts(events, input.sayId);
         if (!miss.say && !miss.reply) return;
         const built = mirrorEvents({
@@ -234,9 +234,9 @@ async function mirrorIntoTarget(input: {
         });
         if (!built) return;
         // 只补缺的那条（`mirrorMissingParts` 的判据）—— 两条都在时上面已 return
-        if (miss.say) record(input.targetTaskUri, built.say);
+        if (miss.say) await record(input.targetTaskUri, built.say);
         // `built.reply` 缺席 = 这条投递本来就没有独立回复（忙时插话）⇒ 不去"补"
-        if (miss.reply && built.reply) record(input.targetTaskUri, built.reply);
+        if (miss.reply && built.reply) await record(input.targetTaskUri, built.reply);
     } catch (e) {
         // 出口落盘（##411）：这里原来只是 console.warn —— 跨房间镜像写不进去的事实随时间丢失。
         // 只用 catch 作用域内可拿到的入参（`targetMemberId` 在 try 里算的，这里不能引）。
@@ -417,9 +417,11 @@ async function runQueued(taskUri: string): Promise<RunResult> {
  * 只有一条流 ⇒ 零分支；将来多流时改这一处（channel 由调用上下文决定）即可，
  * 而不是回头去补四个事件构造点。
  */
-function record(roomId: string, ev: Omit<RoomEvent, "channel"> & { channel?: string }): RoomEvent {
+async function record(roomId: string, ev: Omit<RoomEvent, "channel"> & { channel?: string }): Promise<RoomEvent> {
     const rec: RoomEvent = { ...ev, channel: ev.channel ?? DEFAULT_CHANNEL_ID };
-    appendEvent(roomId, rec);
+    // 落盘是异步的（##427 `rule.tool.async-io`）—— **先 await 落盘再返回**，
+    // 「先落盘再 yield」这条铁律不能因为改成异步而松掉（否则读侧可能还没看见这条）。
+    await appendEvent(roomId, rec);
     return rec;
 }
 
@@ -461,7 +463,7 @@ export async function* postToRoom(roomId: string, rawText: string): AsyncGenerat
 
     const sayId = nextEventId();
     // record = 落盘 + 补 channel（唯一写入口）；返回的那份才是盘上的形状 ⇒ yield 它
-    const sayEvent = record(roomId, {
+    const sayEvent = await record(roomId, {
         id: sayId,
         ts: new Date().toISOString(),
         kind: "say",
@@ -510,7 +512,7 @@ export async function* postToRoom(roomId: string, rawText: string): AsyncGenerat
         const why = whyNotDeliverable(m, room);
         if (why) {
             const replyId = nextEventId();
-            const skip = record(roomId, {
+            const skip = await record(roomId, {
                 id: replyId,
                 ts: new Date().toISOString(),
                 kind: "reply",
@@ -528,7 +530,7 @@ export async function* postToRoom(roomId: string, rawText: string): AsyncGenerat
                 replyId,
                 ts: new Date().toISOString(),
             };
-            appendDelivery(roomId, { eventId: sayId, ...st });
+            await appendDelivery(roomId, { eventId: sayId, ...st });
             states.set(id, st);
             immediate.push({ ...sayEvent, deliveries: [...states.values()] }, skip);
             continue;
@@ -596,7 +598,7 @@ function deliverOne(input: DeliverInput): Promise<void> {
     st.depth++;
     const ahead = st.depth - 1;
 
-    const mark = (status: DeliveryStatus, extra: Record<string, unknown> = {}): void => {
+    const mark = async (status: DeliveryStatus, extra: Record<string, unknown> = {}): Promise<void> => {
         const st: DeliveryState = {
             memberId: member.id,
             status,
@@ -604,10 +606,18 @@ function deliverOne(input: DeliverInput): Promise<void> {
             ts: new Date().toISOString(),
             ...extra,
         } as DeliveryState;
-        appendDelivery(roomId, { eventId: sayId, ...st });
+        await appendDelivery(roomId, { eventId: sayId, ...st });
         input.markState(st);
     };
-    mark("queued", ahead > 0 ? { error: `前面还有 ${ahead} 条在排队（本切片的队列只在内存里，重启即丢）` } : {});
+    // 「排队中」的落盘是异步的（##427）：显式串到**链首**（旧实现同步写，顺序天然成立；
+    // 现在必须显式保证「queued 先落盘、后面那条才开始跑」）。写失败不卡投递 —— 它只是状态记账，
+    // 而 `input.done` 才是 `post` 流收敛的唯一凭据（见下方不变量注释）。
+    const queued = mark(
+        "queued",
+        ahead > 0 ? { error: `前面还有 ${ahead} 条在排队（本切片的队列只在内存里，重启即丢）` } : {},
+    ).catch((e: unknown) => {
+        reportError(e, { where: "room/delivery-queued", roomId, member: member.id, taskUri });
+    });
 
     /**
      * 一轮跑完的收尾：落回复事件 + 投递状态 + 水位 + 双向可见 + 完成信号。
@@ -617,7 +627,7 @@ function deliverOne(input: DeliverInput): Promise<void> {
      */
     const settleTurn = async (r: RunResult): Promise<void> => {
         const replyId = nextEventId();
-        const ev = record(roomId, {
+        const ev = await record(roomId, {
             id: replyId,
             ts: new Date().toISOString(),
             kind: "reply",
@@ -630,7 +640,7 @@ function deliverOne(input: DeliverInput): Promise<void> {
             // 这一轮的引用（##166 §28.7 A1）：UI 据此去成员会话切出该轮 → 复用任务对话的块渲染
             ...(r.turnId ? { ref: { memberUri: member.id, turnId: r.turnId } } : {}),
         });
-        mark(r.error ? "failed" : "ok", {
+        await mark(r.error ? "failed" : "ok", {
             replyId,
             ...(r.turnId ? { turnId: r.turnId } : {}),
             ...(r.error ? { error: r.error } : {}),
@@ -658,7 +668,7 @@ function deliverOne(input: DeliverInput): Promise<void> {
 
     const run = async (): Promise<void> => {
         st.depth--;
-        mark("running");
+        await mark("running");
         const name = memberName(input.room, member.id);
         // ── 忙时投递 = **插进正在跑的那一轮**（##377 第 27 刀）────────────────────────
         // 修前：会话正有轮次在跑（任务页自己那一轮 / 别的客户端 / 侧边栏那条链）⇒ 直接标
@@ -692,7 +702,7 @@ function deliverOne(input: DeliverInput): Promise<void> {
                 // `steerId` 落盘（第 29 刀）：这条投递**没有自己的回复**，但"它进了哪一轮"是可查的事实
                 // —— `room.get` 的读侧投影拿它反查 turnId（`local-agent.steerTurnId`），
                 // 于是房间页能把这条 say 指到"回复在你上面那一轮"（body 真缺陷第 1 条）。
-                mark("ok", { note: plan.note, ...(steered.steerId ? { steerId: steered.steerId } : {}) });
+                await mark("ok", { note: plan.note, ...(steered.steerId ? { steerId: steered.steerId } : {}) });
                 // 水位照常前移：这句话**确实送到了**（进了那一轮的插话队列，且有人在跑 ⇒
                 // 下一步 / 轮末续轮必来取走）⇒ 下一轮的房间上下文不该再把它当"没看过的新发言"
                 // 重投一遍（与"失败不前移"不冲突：失败是没送到）。
@@ -751,9 +761,11 @@ function deliverOne(input: DeliverInput): Promise<void> {
     // 的**唯一**来源就是 `input.done`。所以 `run` 里任何一步抛错（`runAndCollect` / `record` /
     // `mark` / `advanceLastSeen` / 未来的任何 await）都必须在这里兜住并**补一次 done** ——
     // 否则那条 `room.post` 的 serverStream 永远不关闭（症状 = CLI/UI 挂住，不是报错）。
-    const started = st.tail
+    const prevTail = st.tail;
+    const started = queued
+        .then(() => prevTail)
         .then(run, run) // 前一条失败也照跑（队列不是"一个失败全停"）
-        .catch((e: unknown) => {
+        .catch(async (e: unknown) => {
             // 出口落盘（##411）：链上任何一步抛错都在这里收敛成一条房间事件 —— 事件里只有一句话，
             // 现场（stack / code）只能靠这里留下（`String(e)` 连 name 都不一定给）。
             reportError(e, { where: "room/delivery-chain", roomId, member: member.id, taskUri });
@@ -762,7 +774,7 @@ function deliverOne(input: DeliverInput): Promise<void> {
             // 事件写不进去就给一条内存事件，至少让流收尾、让 UI 看见失败。
             let ev: RoomEvent | undefined;
             try {
-                ev = record(roomId, {
+                ev = await record(roomId, {
                     id: nextEventId(),
                     ts: new Date().toISOString(),
                     kind: "reply",
@@ -777,7 +789,7 @@ function deliverOne(input: DeliverInput): Promise<void> {
                 ev = undefined;
             }
             try {
-                mark("failed", { error: msg, ...(ev ? { replyId: ev.id } : {}) });
+                await mark("failed", { error: msg, ...(ev ? { replyId: ev.id } : {}) });
             } catch {
                 // appendDelivery 也失败：状态徽章少一条，但仍不能堵死流
             }
