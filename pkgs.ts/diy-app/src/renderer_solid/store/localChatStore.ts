@@ -25,7 +25,14 @@ import { diyService } from "../lib/rpc";
 import { notificationStore } from "./notificationStore";
 import { opsLiveMeta } from "../lib/notice-ops";
 import { chatNotice, DETAIL_CANCEL, DETAIL_CLEAR, DETAIL_HISTORY, DETAIL_STEER } from "../lib/notice-chat";
-import { BlockStore, applyOpsSafely, toForest, type BlockNode, type Op } from "../../main/services/local-blocks";
+import {
+    BlockStore,
+    RENDER_TEXT_CAP,
+    applyOpsSafely,
+    toForest,
+    type BlockNode,
+    type Op,
+} from "../../main/services/local-blocks";
 import type { OpsFrame } from "../../shared/ops-frame";
 // 阅读位置锚点的形状（纯函数模块，零 DOM）：与滚动决策同源，故不在此另定一份
 import type { ChatAnchor } from "../lib/chat-scroll";
@@ -289,7 +296,7 @@ function tailSegment(st: TaskState): Segment | undefined {
 function tailForWrite(st: TaskState): Segment {
     let seg = tailSegment(st);
     if (!seg) {
-        seg = { store: new BlockStore(), ids: [], cursor: "" };
+        seg = { store: new BlockStore({ textCap: RENDER_TEXT_CAP }), ids: [], cursor: "" };
         st.segments.push(seg);
     }
     return seg;
@@ -327,7 +334,7 @@ function mergeWindow(st: TaskState, ops: Op[], cursor: string, hasMore: boolean,
         // ⚠️ 不动 hasMore：那是「**最老**段之前还有没有轮」，单段时才等于本窗口的 hasMore
         return;
     }
-    const seg: Segment = { store: new BlockStore(), ids: [], cursor };
+    const seg: Segment = { store: new BlockStore({ textCap: RENDER_TEXT_CAP }), ids: [], cursor };
     applyInto(seg, ops);
     seg.ids = ids;
     st.segments = [seg];
@@ -1563,7 +1570,7 @@ async function loadOlder(taskUri: string, beforeApply?: () => void): Promise<boo
             flushRefresh(st);
             return false; // 重建不是前插 ⇒ 不做位置补偿（视口本就该挪到新内容上）
         }
-        const seg: Segment = { store: new BlockStore(), ids: [], cursor: r.cursor };
+        const seg: Segment = { store: new BlockStore({ textCap: RENDER_TEXT_CAP }), ids: [], cursor: r.cursor };
         applyInto(seg, ops);
         seg.ids = ids;
         st.segments.unshift(seg); // 前插：**已有段的块对象引用一个都不动** → 折叠态/渲染不重来
@@ -1608,7 +1615,7 @@ async function jumpTo(taskUri: string, at: number): Promise<boolean> {
     try {
         const r = await diyService.diy.agent.local.historyAt({ taskUri, at, budgetBytes: HISTORY_WINDOW_BYTES });
         if (r.stale) return false;
-        const seg: Segment = { store: new BlockStore(), ids: [], cursor: r.cursor };
+        const seg: Segment = { store: new BlockStore({ textCap: RENDER_TEXT_CAP }), ids: [], cursor: r.cursor };
         applyInto(seg, r.ops as Op[]);
         seg.ids = turnIdsOf(r.ops as Op[]);
         st.segments = [seg];
