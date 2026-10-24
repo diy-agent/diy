@@ -119,13 +119,14 @@ import type { DragDropProviderProps } from "@dnd-kit/solid";
 import { IconExpand, IconCompress, IconTrash, IconGrip, IconClock, IconBolt, IconChevron, IconCode } from "./icons";
 import { RowGutter } from "./RowGutter";
 import { VIEW_BAR_H, chatInputMaxHeight } from "../lib/layout-metrics";
+// 文本取行（窗口化，##93）：摘要 / 预览 / 折叠都只吃需要的那一小段，且不每帧 split 全文
+import { clampLines, countLines, firstLine, previewLines } from "../lib/chat-text";
 import type { BlockNode } from "../../main/services/local-blocks";
 import { INTERRUPTED_TOOL_NOTICE } from "../../main/services/local-blocks";
 // 折叠 / 展开级别语义（纯函数，可单测）：显示什么、按什么序、开到第几层 —— 本文件只消费结果
 import {
     DEFAULT_TURN_LEVEL,
     TURN_LEVEL_MAX,
-    clampLines,
     collapsedRows,
     composeTail,
     cycleTurnLevel,
@@ -212,42 +213,11 @@ function DisclosureHead(props: {
     );
 }
 
-/**
- * 单行摘要：**第一行非空内容**（前导空行不算）。
- *
- * 为什么不是 `split("\n")[0]`：真实数据里思考正文常以换行开头（模型的 reasoning 前导 `\n`），
- * 取第一行会得空串 → 标题退回"思考"两个字，整页看不出这段在琢磨什么
- * （用户 2026-10-12 反馈："v4 的思考 bar 会显示思考的第一行"）。空行跳过，再截 90 字。
- */
-const firstLine = (s: string) => {
-    for (const line of s.split("\n")) {
-        const t = line.trim();
-        if (t) return t.slice(0, 90);
-    }
-    return "";
-};
-
+// 文本摘要 / 预览 / 折叠的取行逻辑在 `lib/chat-text.ts`（窗口化，##93）：本文件只消费结果。
 /** 过程历史里正文行的折叠阈值（草图 v4 的 `.txt.clamp` 同款：超过 3 行才给折叠能力）。
  *  缺省**展开** —— 折叠是用户主动点的结果，级别不该替他把历史里的正文缩起来。 */
 const HISTORY_TEXT_FOLD_LINES = 3;
 const str = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : String(v));
-
-/** 输出截断：head + tail，中间计省略行数（行内展开用；超预算才挂全屏按钮） */
-export interface Preview {
-    text: string;
-    omitted: number;
-    total: number;
-}
-export function previewLines(text: string, head = 20, tail = 30): Preview {
-    const lines = text.split("\n");
-    if (lines.length <= head + tail) return { text, omitted: 0, total: lines.length };
-    const omitted = lines.length - head - tail;
-    return {
-        text: [...lines.slice(0, head), `… 省略 ${omitted} 行 …`, ...lines.slice(-tail)].join("\n"),
-        omitted,
-        total: lines.length,
-    };
-}
 
 // ─── 滚动跟随（stick-to-bottom） ──────────────────────────────
 //
@@ -667,7 +637,11 @@ function ToolBody(props: {
     // `props.node.attrs.content` 直接写在 JSX 表达式里（那是 effect，每帧重读）。
     const n = () => props.node;
     const output = () => str(n().attrs.output);
-    const pv = () => previewLines(output());
+    /** 全文行数：**按块版本 memo** —— 块没变就不重算；只有正在流式增长的这块每帧付一次
+     *  `countLines`（3.28 M ≈ 1.5 ms，零分配），定稿后只算一次。见 ##93（不为提示数字每帧 split 全文）。 */
+    const totalLines = createMemo(() => countLines(output()));
+    /** 预览本身也 memo：一帧里它被读两次（`data-tip` + 正文），不必每次重切首尾行 */
+    const pv = createMemo(() => previewLines(output(), 20, 30, totalLines()));
     const title = () => `${str(n().attrs.tool)} · ${toolCommand(n())}`;
     // 命令行**恒给**（##399 用户 2026-10-20）：折叠行的标题已改成 `<tool> · <意图>`
     // （拍板 B），标题里**不再有命令** ⇒ "折叠行已显示命令首行，展开体别重复"这个前提失效了。
@@ -731,7 +705,7 @@ function ToolBody(props: {
                     <button
                         class="btn btn-ghost btn-xs absolute right-1 top-1 z-10 min-h-0 px-1 opacity-40 hover:opacity-100"
                         data-tool-max="1"
-                        data-tip={`最大化（全屏查看 / 复制，共 ${pv().total} 行）`}
+                        data-tip={`最大化（全屏查看 / 复制，共 ${pv().exact ? "" : "≥"}${pv().total} 行）`}
                         aria-label="最大化工具输出"
                         onClick={() => props.onFull(title(), output())}
                     >
@@ -1265,11 +1239,15 @@ function TextRow(props: {
      *  原来按**原始**行数判（`countLines(raw()) > lines`），而 `clampLines` 已跳过前导空行
      *  （RV-2 的修复）⇒ 以空行开头的正文会给出一个"点开毫无变化"的箭头。
      *  现在直接取 `clampLines` 的 `omitted` —— 与"真截"**同源**，不再有第二套口径。 */
-    const canFold = () => clampLines(raw(), props.lines).omitted > 0;
+    /** 全文行数：**按块版本 memo**（块不变就不重算）—— 直播中的大块每帧付一次 `countLines`，定稿后只算一次 */
+    const totalLines = createMemo(() => countLines(raw()));
+    /** 截断结果同样 memo：原来 `canFold()` 与 `view()` **各算一次** `clampLines` ⇒ 每帧两遍全文 split（##93） */
+    const clamped = createMemo(() => clampLines(raw(), props.lines, totalLines()));
+    const canFold = () => clamped().omitted > 0;
     const open = () => (b().id in props.pin ? props.pin[b().id]! : props.defaultOpen);
     // 直播中的正文不折：它还在长，折叠只会来回跳；定稿后才折成摘要
     const folded = () => canFold() && b().stopped && !open();
-    const view = () => (folded() ? clampLines(raw(), props.lines) : { text: raw(), omitted: 0 });
+    const view = () => (folded() ? clamped() : { text: raw(), omitted: 0, exact: true });
     const cut = () => view().omitted > 0;
     /** 点**这一块**（正文行自己那条竖列折叠条 / 提示行）—— 用户 2026-10-12 R6 报的 bug：
      *  原来结论槽把 `onExpand` 接到了"换级别"，点一下**把工具历史折了、自己没变**。 */
@@ -1345,7 +1323,7 @@ function TextRow(props: {
                     class="mt-0.5 text-caption opacity-60 hover:opacity-100 hover:text-primary"
                     onClick={fire}
                 >
-                    ⋯ 已折叠 {view().omitted} 行 · 点击展开全部正文
+                    ⋯ 已折叠 {view().exact ? " " : " ≥ "}{view().omitted} 行 · 点击展开全部正文
                 </button>
             </Show>
             {/* 1 级「摘要结论」下缘拖条：往下拖 = 这一块画更多行（免在 1/2 级间来回切）。

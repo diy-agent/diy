@@ -135,6 +135,22 @@ describe("delta/patch 合并语义", () => {
         expect(s.blocks.get("p1")!.items).toEqual(["做 A", "做 B", "做 C"]);
     });
 
+    // ##93 E：List 追加**就地**（旧实现 `[...cur]` 每次整组拷贝 ⇒ n 次追加 = O(n²)）。
+    // 值语义靠「追加只增不改 + 每次 apply 都 touch」：导出的旧节点与 store 共享这个数组，
+    // 但 touched 变了 ⇒ `toTree` 必然给新节点，`<For>` 据此更新。
+    it("List 追加是就地 push（不整组拷贝），节点随 touched 重建", () => {
+        const s = ops({ op: "start", id: "p1", kind: "plan" });
+        const before = toTree(s, "p1");
+        s.apply({ op: "delta", id: "p1", fields: { items: "做 A" } });
+        const arr = s.blocks.get("p1")!.items;
+        s.apply({ op: "delta", id: "p1", fields: { items: ["做 B", "做 C"] } });
+        expect(s.blocks.get("p1")!.items).toBe(arr); // 同一个数组对象 ⇒ 没有拷贝
+        expect(arr).toEqual(["做 A", "做 B", "做 C"]);
+        const after = toTree(s, "p1");
+        expect(after).not.toBe(before); // touched 变了 ⇒ 新节点（UI 会更新）
+        expect(after.attrs.items).toEqual(["做 A", "做 B", "做 C"]);
+    });
+
     // 【时间线假定】「整段折叠流再喂一遍无副作用」只在 store **不领先于**该快照时成立 ——
     // 这条不是本模块的锅，但它是消费端（localChatStore）能安全"整段再喂"的前提，写在这里留证。
     // 反例：把一份**早于在途流**的快照再 apply 一遍 ⇒ patch 无条件覆盖回旧值、delta 追在回退值上

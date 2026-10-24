@@ -332,8 +332,14 @@ export class BlockStore {
                         if (path.includes(".")) setPath(b, path, next);
                         else (b as Record<string, unknown>)[path] = next;
                     } else {
-                        // List：值本身是数组则逐元素追加，否则作为单元素 push
-                        const arr = Array.isArray(cur) ? [...cur] : [];
+                        // List：值本身是数组则逐元素追加，否则作为单元素 push。
+                        // ⚠ **就地 push，不 `[...cur]`**（##93 E）：List 字段只会被**追加**
+                        // （SCHEMA 里仅 `plan.items` 是 List），每次追加都复制整组 = O(n²)；
+                        // 一条 1.16 M op 的真实会话里 List delta 为 0，但形状上一旦有就是平方。
+                        // 值语义为什么不破：追加只增不改已有元素，且每次 apply 都 `touch()` ⇒
+                        // `toForest` 会重建该节点；已导出的旧节点与 store 共享数组，看到的是
+                        // **更新的同一条数据**（跨进程到 renderer 时是 structured clone，天然快照）。
+                        const arr = Array.isArray(cur) ? cur : [];
                         if (Array.isArray(val)) arr.push(...(val as JSONVal[]));
                         else arr.push(val);
                         (b as Record<string, unknown>)[path] = arr;
