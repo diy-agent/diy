@@ -40,7 +40,7 @@ export function TaskRunPage(props: { uri: string }) {
      * 说清楚代价：本次会话里**新**产生的作业不自动弹，但页面菜单条上有「④ bottom」可开，
      * 且列表本身每 3s 自刷（面板可见时）。
      */
-    void jobRunsStore.refresh({ limit: 200 }).then(() => {
+    void jobRunsStore.refresh().then(() => {
         if (layoutStore.userTouched(PAGE.id)) return;
         if (jobRunsStore.runsFor(props.uri).length === 0) return;
         layoutStore.setAreaHiddenAuto(PAGE.id, "bottom", false);

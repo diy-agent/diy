@@ -78,7 +78,8 @@ import { Caches, CONCLUSION_LINES_MAX, CONCLUSION_LINES_MIN } from "../lib/ui-st
 import { HeightLedger, stackRows, windowRange } from "../lib/chat-virtual";
 import { chatFindStore, type ChatFindHit } from "../store/chatFindStore";
 import { jobRunsStore } from "../store/jobRunsStore";
-import type { JobNavTarget } from "../../shared/job-runs-view";
+import { detachablesStore } from "../store/detachablesStore";
+import type { JobNavTarget } from "../../shared/run-view";
 import { findStore } from "../store/findStore";
 import { ChatFindPanel } from "./ChatFindPanel";
 import { clearHitHighlight, paintHitHighlight } from "../lib/hit-highlight";
@@ -526,6 +527,107 @@ function SpentBadge(props: { node: BlockNode }) {
     );
 }
 
+/**
+ * 「看参数」开关：**按块 id 存**，因为按钮在**折叠行（bar）**上、JSON 在**框体**里，
+ * 两处是两个组件实例 —— 状态放组件内就只有一边能看到另一边点了。
+ * 用模块级 signal 而不是 props 逐层传：展开与否是**读屏偏好**，与轮次/折叠树无关。
+ */
+const [paramsOpen, setParamsOpen] = createSignal<Record<string, boolean>>({});
+/**
+ * 转后台的一句结果（按 toolCallId 存）。
+ *
+ * 为什么不放在 `DetachToggle` 自己的 signal 里：转成功后 main 那边条目就删了，
+ * **按钮下一次刷新即消失**，组件随之卸载 —— 结果会跟着一起没，人只看到"按了一下，啥也没说"。
+ */
+const [detachNote, setDetachNote] = createSignal<Record<string, string>>({});
+
+function toggleParams(id: string) {
+    setParamsOpen({ ...paramsOpen(), [id]: !paramsOpen()[id] });
+}
+
+/** 这块有没有参数可看（流式早期的 `input` 也算 —— 半截 JSON 也比空着强） */
+function hasParams(n: BlockNode): boolean {
+    if (n.tag !== "tool") return false;
+    return n.attrs.args !== undefined || !!str(n.attrs.input);
+}
+
+/**
+ * **bar 上的 `<>`**（##408 用户 2026-10-23 订正）：
+ * 「应该在 bash 输出的 **bar** 上加 `<>` 图标，你加到了内容区域」。
+ * 所以它挂在折叠行（`ProcessRow` / `TailBox` 的 `data-row-head`）里，与状态灯、耗时角标同级；
+ * 框体里只负责把 JSON 画出来。
+ */
+function ParamsToggle(props: { node: BlockNode; onOpen?: () => void }) {
+    const n = () => props.node;
+    const open = () => !!paramsOpen()[n().id];
+    return (
+        <Show when={hasParams(n())}>
+            <button
+                class="btn btn-ghost btn-xs min-h-0 shrink-0 px-1 text-caption opacity-40 hover:opacity-100"
+                classList={{ "opacity-100 text-primary": open() }}
+                data-tool-params-toggle="1"
+                data-tip="看这次工具调用的参数：模型发的原文 + 工具实际收到的（含缺省值）"
+                aria-label="查看工具参数"
+                onClick={(e) => {
+                    // 折叠行自己也吃点击 —— 不拦就会「点参数 = 展开/收起正文」
+                    e.stopPropagation();
+                    // 体是折叠的就没有 `ToolBody` 可挂面板（点了只会"什么都没发生"，实测踩过）：
+                    // 先要参数就必须先把行打开。
+                    props.onOpen?.();
+                    toggleParams(n().id);
+                }}
+            >
+                {"<>"}
+            </button>
+        </Show>
+    );
+}
+
+/**
+ * bar 上的「转后台」（##408 刀 21，对应 opencode 的 `ctrl+b`）。
+ *
+ * 为什么挂在**折叠行**而不是框体里：与 `<>` 同一条理由（用户 2026-10-23 订正）——
+ * bar 是"这个块此刻的状态位"那一行，动作属于状态，不属于正文。
+ *
+ * **只画 main 说能转的**（`job.detachables`）：还在跑、拿得到 toolCallId、属于本任务。
+ * 三项缺一就不画 —— 一个按下去必然失败的按钮，比没有按钮更糟（用户会以为功能坏了）。
+ * 转完按钮自己消失（main 那边条目已删，下一次刷新就没了），并留一句结果在原地。
+ */
+function DetachToggle(props: { node: BlockNode }) {
+    const n = () => props.node;
+    const [busy, setBusy] = createSignal(false);
+    return (
+        <Show when={n().tag === "tool" && detachablesStore.has(n().id)}>
+            <button
+                class="btn btn-ghost btn-xs min-h-0 shrink-0 px-1 text-caption opacity-60 hover:opacity-100"
+                data-tool-detach="1"
+                data-tip="转后台：进程不动、前半段输出不丢，工具调用立刻返回 run id；结束时会插话叫醒 agent"
+                aria-label="转后台运行"
+                disabled={busy()}
+                onClick={async (e) => {
+                    // 折叠行自己也吃点击 —— 不拦就会「点转后台 = 展开/收起正文」
+                    e.stopPropagation();
+                    setBusy(true);
+                    const msg = await detachablesStore.detach(n().id);
+                    setDetachNote({ ...detachNote(), [n().id]: msg });
+                    setBusy(false);
+                }}
+            >
+                {busy() ? "⏳" : "⇥ 转后台"}
+            </button>
+        </Show>
+    );
+}
+
+/** 转后台的结果留在原地几秒（按钮消失后，人得知道"刚才那一下成了没有"） */
+function DetachNote(props: { node: BlockNode }) {
+    return (
+        <Show when={props.node.tag === "tool" ? detachNote()[props.node.id] : undefined}>
+            {(t) => <span class="shrink-0 text-caption text-base-content/60">{t()}</span>}
+        </Show>
+    );
+}
+
 /** 状态灯档位 → class（**只有这里认 class**；"什么时候失败"的判据在 `procStatusOf`） */
 const STATUS_TONE_CLASS: Record<ProcTone, string> = {
     error: "text-error",
@@ -572,10 +674,54 @@ function ToolBody(props: {
     // 命令是"这一步到底跑了什么"的唯一事实源，必须留在体里；无命令（streaming 早期 / 中断）才省。
     const cmd = () => shownCommand(n());
     const cmdNeedsFull = () => !!cmd();
+    /**
+     * **两段式参数**（用户 2026-10-23 二轮订正）：
+     * ① **模型发的原文** —— `args`（流式早期退回逐片拼的 `input`，半截 JSON 也比空着强）；
+     * ② **工具实际收到的** —— `execArgs`（main 侧 `shared/tool-args.ts` 补完缺省的那一份，
+     *    被补上的键记在 `execDefaults` 里并逐个标注）。
+     *
+     * 只给①会让人以为 `background` / `timeout` 不存在（用户实测就是这么误判的）；只给②则
+     * 看不出模型自己说了什么。两份并列，谁也不用猜。
+     */
+    const rawParamsText = (): string => {
+        const args = n().attrs.args;
+        if (args && typeof args === "object") return JSON.stringify(args, null, 2);
+        return str(n().attrs.input) || "（还没有参数）";
+    };
+    const execParamsText = (): string => {
+        const eff = n().attrs.execArgs;
+        if (!eff || typeof eff !== "object") return "";
+        const def = new Set(
+            Array.isArray(n().attrs.execDefaults) ? (n().attrs.execDefaults as unknown[]).map((k) => String(k)) : [],
+        );
+        const json = JSON.stringify(eff, null, 2);
+        if (def.size === 0) return json;
+        // 逐行标注「这行是补的」：JSON 里看不出"显式 false"和"没传补 false"的区别，
+        // 而这恰恰是用户要判断的那件事 —— 只能在这里标。
+        return json
+            .split("\n")
+            .map((line) => {
+                const m = /^\s*"([^"]+)":/.exec(line);
+                return m && def.has(m[1]!) ? `${line}   // 缺省值（模型没发）` : line;
+            })
+            .join("\n");
+    };
     return (
         <div class="space-y-1 font-mono" data-tool-body>
             <Show when={cmdNeedsFull()}>
                 <pre class="text-base-content/70">$ {cmd()}</pre>
+            </Show>
+            <Show when={paramsOpen()[n().id]}>
+                <div class="space-y-1 rounded bg-base-100/60 p-2" data-tool-params>
+                    <div class="text-caption opacity-60">模型发的参数（原文）</div>
+                    <pre class="max-h-60 overflow-auto whitespace-pre-wrap text-base-content/80">{rawParamsText()}</pre>
+                    <Show when={execParamsText()}>
+                        <div class="text-caption opacity-60">工具实际收到的参数（补完缺省）</div>
+                        <pre class="max-h-60 overflow-auto whitespace-pre-wrap text-base-content/80">
+                            {execParamsText()}
+                        </pre>
+                    </Show>
+                </div>
             </Show>
             <Show when={output()}>
                 {/* 相对定位容器：**最大化按钮**浮在框右上角（≠ 插一行按钮把正文挤下去，
@@ -689,6 +835,12 @@ function ProcessRow(props: {
             <span class="font-medium text-base-content/80 truncate flex-1">
                 {summaryOf(n(), open(), props.turn)}
             </span>
+            <ParamsToggle
+                node={n()}
+                onOpen={() => {
+                    if (!open()) props.onToggle(n().id);
+                }}
+            />
             <SpentBadge node={n()} />
         </>
     );
@@ -800,8 +952,27 @@ function TailBox(props: {
                     <span class="text-error">✗</span>
                 </Show>
                 <span class="font-medium text-base-content/80 truncate flex-1">{title()}</span>
+                {/* 参数开关：直播/现场也要能看（`props.body` 才是那个工具块，`props.node` 是尾叶子） */}
+                <Show when={props.body}>
+                    {(b) => (
+                        <ParamsToggle
+                            node={b()}
+                            onOpen={() => {
+                                if (!open()) props.onToggle(n().id, props.live ? true : undefined);
+                            }}
+                        />
+                    )}
+                </Show>
                 {/* 开销角标（用户 2026-10-20：「这是模型质量的观测」）：主体那一块自己的耗时 + 体积 */}
                 <Show when={props.body}>{(b) => <SpentBadge node={b()} />}</Show>
+                <Show when={props.body}>
+                    {(b) => (
+                        <>
+                            <DetachNote node={b()} />
+                            <DetachToggle node={b()} />
+                        </>
+                    )}
+                </Show>
                 {/* 状态位**只说此刻在等什么**（三档），不再有"进行中"这种什么也没说的词 */}
                 <Show when={props.live}>
                     <span class="shrink-0 text-caption opacity-50" data-live-state>
@@ -2421,6 +2592,39 @@ export function LocalChatPage(props: {
     // 执行页显式传入 uri；不能依赖全局 selectedUri，否则任务详情还在异步加载时，
     // 页面可能显示“选择任务”但聊天仍沿用上一个任务的会话，形成串台。
     const uri = () => props.uri ?? taskStore.selectedUri ?? null;
+    /**
+     * 转后台（##408 刀 21）：进入本任务会话就开始盯「哪条前台调用能转」，离开即停。
+     *
+     * `Cmd/Ctrl+B` = 把本任务在跑的前台命令**全部**转后台（opencode 的同款快捷键）。
+     * 只在焦点不在输入框时生效 —— 在输入框里按 Cmd+B 是编辑器的"加粗"，不该被抢。
+     */
+    createEffect(
+        on(uri, (u) => {
+            if (u) detachablesStore.watch(u);
+            else detachablesStore.stop();
+        }),
+    );
+    onCleanup(() => detachablesStore.stop());
+    onMount(() => {
+        const onKey = (e: KeyboardEvent): void => {
+            if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "b") return;
+            const el = e.target as HTMLElement | null;
+            const tag = el?.tagName?.toLowerCase();
+            if (tag === "input" || tag === "textarea" || el?.isContentEditable) return;
+            const ids = detachablesStore.all();
+            if (ids.length === 0) return; // 没有可转的就不抢默认行为（浏览器/系统可能有自己的 Cmd+B）
+            e.preventDefault();
+            // 一条一条转（各自有各自的拒绝理由；一把 Promise.all 会把失败原因糊成一团）
+            void (async () => {
+                for (const id of ids) {
+                    const msg = await detachablesStore.detach(id);
+                    setDetachNote({ ...detachNote(), [id]: msg });
+                }
+            })();
+        };
+        window.addEventListener("keydown", onKey);
+        onCleanup(() => window.removeEventListener("keydown", onKey));
+    });
     /**
      * 本任务当前状态（##400 静态提示用）：树节点优先，详情面板兜底。
      * 只做**显示**用途 —— 拒绝的真判据在 main（TurnGate）；前端的只读只是把"按了也没用"藏起来。

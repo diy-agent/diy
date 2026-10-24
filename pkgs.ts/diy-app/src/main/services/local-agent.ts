@@ -229,8 +229,12 @@ import { personaByIdOrName, personaForTask } from "../core/persona";
 import { taskTurnGate } from "../core/turn-gate";
 import { ensureReasoningReplay, isDeepSeekWire, type ReasoningReplayOpts } from "./reasoning-replay";
 import { resolveModelKey } from "../core/model-runtime";
-import { spawnedJobs } from "./spawned-jobs";
-import type { RunOutcome } from "../../shared/spawned-job";
+import { invariant } from "../../shared/error-triage";
+import { runRegistry, type RunInfo } from "./run-registry";
+import { effectiveBashArgs } from "../../shared/tool-args";
+import { ownedGroups } from "./owned-groups";
+import { foregroundBash } from "./foreground-bash";
+import { exitText, formatDuration, runLine, runsOfTask, stateLabel, type RunOutcome } from "../../shared/run-status";
 
 // 模型查询函数抽到 shared/models.ts（core 不能被 services 反向依赖，否则循环 import）。
 // 这里**原样 re-export**：历史引用路径（tests/…/local-models-*.test.ts 等）保持不变。
@@ -1374,6 +1378,60 @@ interface BashRunHooks {
     onSpawn?(pid: number): void;
     /** 收到一块输出（stdout / stderr 都算，按到达顺序；已按 buffer 上限裁过） */
     onChunk?(chunk: Buffer): void;
+    /**
+     * 交出「把这次前台执行转成后台」的句柄（##408 刀 19）。
+     *
+     * 只在前台路径给：`runBash` 的 Promise 一旦 resolve，句柄即作废（`ended()` 为真）。
+     * 转后台**不重启进程、不换读端**（见 `handoff` 注释）。
+     */
+    onControl?(ctl: BashControl): void;
+}
+
+/**
+ * 转后台被拒（**不是缺陷**：连按两次、或命令恰好在这毫秒结束 —— 都是正常的用户时序）。
+ *
+ * 单独一个类只为带 `code`（`rule.err-triage`）并让调用方能按码分支：`already-detached`
+ * 说明"已经在后台表里了，去看那儿"，`already-ended` 说明"它已经结束，结果在工具块里"。
+ */
+export class DetachError extends Error {
+    readonly code: string;
+    constructor(input: { code: string; message: string }) {
+        super(input.message);
+        this.code = input.code;
+    }
+}
+
+/**
+ * 前台命令的「转后台」句柄。
+ *
+ * 语义就一句：**把这次调用的等待者和输出去处换掉，进程本身不动**。
+ * 为什么不能重开一条后台 run 再杀前台：那是"重启命令"，已跑的时间和前半段输出全丢。
+ */
+export interface BashControl {
+    /** 子进程本体（`adopt` 要挂 `close` 监听 —— 判活靠事件，不靠轮询） */
+    readonly child: ChildProcess;
+    readonly pid: number;
+    /** 命令真正起跑的时刻（`adopt` 用它当 `startedAt`，否则面板时长会从 0 算） */
+    readonly startedAt: number;
+    /** 已经结束了？（转后台前必须查：结束的进程没有"转"这回事） */
+    ended(): boolean;
+    /**
+     * 交接后续输出，返回**转之前已经收到**的字节。
+     *
+     * 调用即生效：本函数（`runBash`）从此不再攒缓冲、不再判 `maxBuffer`、不再落 settle，
+     * 超时定时器与 abort 监听一并撤掉 —— 这三条是转后台必踩的坑，全部收在这一个点。
+     * 失败（已结束 / 没有 pid）时抛错，调用方据此如实告诉模型「它已经结束了」。
+     */
+    handoff(write: (b: Buffer) => void): Buffer;
+    /**
+     * 交接之后，**替这次工具调用收尾**（把结果文本回给工具）。
+     *
+     * 为什么由调用方来填这一句：转后台后的 run id 是 `RunRegistry.adopt()` 分配的，
+     * `runBash` 不认识 run 表 —— 硬把 runId 塞进 `handoff` 会让这一层多背一个它不该知道的 id。
+     * 代价是**必须调**：不调则该工具调用永远挂着（本轮也就退不出去）。
+     * 未 `handoff` 就调 = 编程错误（抛 `agent/job-not-detached`）。
+     */
+    finishAsDetached(text: string): void;
 }
 
 /**
@@ -1446,8 +1504,17 @@ export function runBash(
     limits: LocalAgentLimits,
     signal?: AbortSignal,
     hooks?: BashRunHooks,
+    /**
+     * 本次调用的超时（毫秒）。`undefined` = 用 `limits.bashTimeoutMs`；`0` = **不设超时**。
+     *
+     * 为什么是参数而不是改 limits：超时是**这次执行的实参**（模型说"这活要跑 10 分钟"），
+     * 而 limits 是人配的上限。两者混在一起，"临时放宽一次"就得改全局配置。
+     */
+    timeoutMs?: number,
 ): Promise<BashRun> {
     return new Promise((resolve) => {
+        /** 本次生效的超时：0 = 不设（`setTimeout(0)` 会立刻开火，故 0 必须跳过而不是照传） */
+        const effectiveTimeoutMs = timeoutMs === undefined ? limits.bashTimeoutMs : Math.max(0, Math.floor(timeoutMs));
         if (signal?.aborted) {
             // 还没起进程就取消了：头照给（字段齐全），耗时 / 字节都是 0
             resolve({
@@ -1455,7 +1522,7 @@ export function runBash(
                     renderBashHead({
                         ok: false,
                         duration_ms: 0,
-                        timeout_ms: limits.bashTimeoutMs,
+                        timeout_ms: effectiveTimeoutMs,
                         timed_out: false,
                         killed: false,
                         truncated: false,
@@ -1474,6 +1541,13 @@ export function runBash(
         let timeoutId: NodeJS.Timeout | undefined;
         /** 起跑时刻（`duration_ms` 的起点）：放在 spawn 之前，含建进程的开销 */
         const startedAt = Date.now();
+        /**
+         * 进程**真正被创建**的时刻（`spawn` 返回那一刻）；转后台时用它当 run 的 `startedAt`。
+         *
+         * 为什么不与 `startedAt` 共用（##408 review）：`duration_ms` 要含建进程开销才诚实，
+         * 而 run 的「起了多久」该从进程真正存在那刻算。两个语义挤一个变量，改一边就会歪另一边。
+         */
+        let launchedAt = 0;
         // ── 下面这几项 settle 与 try 两处都要用（settle 在 try 外定义，收尾要读它们）──
         // 输出按**块**攒（不逐块拼字符串）：上限判据只要长度计数，逐块 `byteLength` 是 O(n²)
         const chunks = { out: [] as Buffer[], err: [] as Buffer[] };
@@ -1520,7 +1594,7 @@ export function runBash(
                     ok: h.ok,
                     exit_code: h.exitCode,
                     duration_ms: Date.now() - startedAt,
-                    timeout_ms: limits.bashTimeoutMs,
+                    timeout_ms: effectiveTimeoutMs,
                     timed_out: timedOut,
                     killed: killed || err?.killed === true,
                     // 投递层（toModelOutput + markBashTruncated）按 capToolOutput 的结果改写成 true；
@@ -1546,7 +1620,7 @@ export function runBash(
             else if (err?.killed)
                 // 带上时长与出路：模型看到「30s 被杀」才会去 nohup / 分批，只写「超时」它会原样重试
                 resolve({
-                    text: head({ ok: false, signal: sig }) + `[命令超时被杀]（超过 ${fmtTimeout(limits.bashTimeoutMs)}，可用 DIY_LOCAL_BASH_TIMEOUT_MS 调整；长任务请后台跑 + 取增量日志）\n${out}`,
+                    text: head({ ok: false, signal: sig }) + `[命令超时被杀]（超过 ${fmtTimeout(effectiveTimeoutMs)}，可用 timeout 参数或 DIY_LOCAL_BASH_TIMEOUT_MS 调整；长任务请后台跑 + 取增量日志）\n${out}`,
                     failed: false,
                     outcome: "timeout",
                     ...(sig ? { signal: sig } : {}),
@@ -1600,14 +1674,33 @@ export function runBash(
                 child.stdout?.destroy();
                 child.stderr?.destroy();
             };
-            if (child.pid !== undefined) hooks?.onSpawn?.(child.pid);
+            if (child.pid !== undefined) {
+                // 组名册（##408 刀 10）：记下"这个组是我起的" —— 之后命令里自己
+                // `nohup xxx &` 起的子孙即使被 reparent 到 launchd，也能按组认领回来。
+                // `taskUri` 由**工具层**（buildTools 的 onSpawn）补录 —— runBash 不认识任务。
+                ownedGroups.record(child.pid, { at: Date.now(), command, cwd });
+                hooks?.onSpawn?.(child.pid);
+                // 进程真被创建了才有"起跑时刻"（cwd 同步抛的那条走不到这里）
+                launchedAt = Date.now();
+            }
             const finish = (err: BashExecError, o: string, e: string, timedOut = false, sig?: string): void => {
                 if (done) return; // settle 内部（唯一落点）负责解绑 abort 监听与超时定时器
                 done = true;
                 settle(err, o, e, sig ?? child.signalCode, timedOut);
             };
+            /**
+             * 转后台之后的写入口（`handoff` 设置）。
+             *
+             * 顺序有意：**先看它再看 `done`** —— 交接时 `done` 会被置真（本函数不再落 settle），
+             * 若按原顺序提前返回，转后台后的输出就全丢了（子进程还在写，只是没人接）。
+             */
+            let logSink: ((b: Buffer) => void) | undefined;
             /** 攒输出 + 上限（与 execFile 同口径：stdout / stderr **各算各的**，超了即杀、留已收到的部分） */
             const onData = (chunk: Buffer, side: "out" | "err"): void => {
+                if (logSink) {
+                    logSink(chunk);
+                    return;
+                }
                 if (done) return;
                 const keep = BASH_MAX_BUFFER_BYTES - len[side];
                 const taken = keep >= chunk.length ? chunk : chunk.subarray(0, keep);
@@ -1632,6 +1725,7 @@ export function runBash(
                     finish({ code, killed, message: `Command failed: /bin/bash -c ${command}` }, dump("out"), dump("err"));
             });
             // 超时：自己计时（不用 execFile 的 timeout —— 它只杀直接子进程，同一类孤儿缺口）
+            // `effectiveTimeoutMs === 0` = 显式不设超时（长任务），此时不留定时器。
             //
             // ⚠️ **先收尾、再杀组**（##419，与下面 onAbort 同构）：只杀不收尾是"永挂"的根因 ——
             //    后台作业（`&` + disown / 自己 setsid 的 Electron）换了 session/pgid ⇒ `kill(-pid)`
@@ -1639,11 +1733,13 @@ export function runBash(
             //    永不 resolve（实测 30.2 / 82.4 分钟，铁证见 `~/.diy/log/agent-bash.jsonl`）。
             //    超时这一刻结局**已经确定**，没理由再等一个可能永不到来的事件。
             //    `signal` 显式给 "SIGKILL"：紧接着就发，不等 'close' 回填 signalCode。
-            timeoutId = setTimeout(() => {
-                killed = true;
-                finish({ code: null, message: "timeout", killed: true }, dump("out"), dump("err"), true, "SIGKILL");
-                killProcessGroup(child);
-            }, limits.bashTimeoutMs);
+            if (effectiveTimeoutMs > 0) {
+                timeoutId = setTimeout(() => {
+                    killed = true;
+                    finish({ code: null, message: "timeout", killed: true }, dump("out"), dump("err"), true, "SIGKILL");
+                    killProcessGroup(child);
+                }, effectiveTimeoutMs);
+            }
             if (signal) {
                 // 取消（用户停止 → ctrl.abort）：**先**钉 AbortError 结局、**再**杀整组。
                 // 顺序有意：这是一条"肯定结束了"的路径，不必等 close 事件（组杀完 close 才到，
@@ -1655,6 +1751,49 @@ export function runBash(
                 };
                 signal.addEventListener("abort", onAbort, { once: true });
                 offAbort = () => signal.removeEventListener("abort", onAbort);
+            }
+            // ── 转后台句柄（##408 刀 19）──
+            // 放在三条"撤火路径"（超时 / abort / 溢出）都挂完之后：句柄一给出，调用方随时可能
+            // 在下一 tick 调 `handoff`，那三样必须都已经存在，撤的时候才不会漏。
+            if (child.pid !== undefined && hooks?.onControl) {
+                hooks.onControl({
+                    child,
+                    pid: child.pid,
+                    // 真正起跑时刻（不是含建进程开销的那个 `startedAt`）
+                    startedAt: launchedAt || startedAt,
+                    ended: () => done || child.exitCode !== null || child.signalCode !== null,
+                    handoff: (write) => {
+                        if (logSink) throw new DetachError({ code: "agent/job-already-detached", message: "已转后台" });
+                        // 结束的进程没有"转"这回事：如实拒绝，别假装转成功再补一条"其实早结束了"
+                        if (done || child.exitCode !== null || child.signalCode !== null)
+                            throw new DetachError({ code: "agent/job-already-ended", message: "命令已结束" });
+                        // ① 本函数不再落 settle（收口唯一归 run 表；否则双写终态、双发通知）
+                        done = true;
+                        // ② 超时定时器：不撤 ⇒ 5 分钟后把刚转后台的活杀掉（人以为它在跑）
+                        if (timeoutId) {
+                            clearTimeout(timeoutId);
+                            timeoutId = undefined;
+                        }
+                        // ③ 轮次 abort：不摘 ⇒ 用户点"停止本轮"会把刚转后台的活一起带走
+                        offAbort?.();
+                        offAbort = undefined;
+                        // ④ 前半段一个字节都不许丢：先交给调用方落盘，再切换去向
+                        const buffered = Buffer.concat([...chunks.out, ...chunks.err], len.out + len.err);
+                        chunks.out.length = 0;
+                        chunks.err.length = 0;
+                        len.out = 0;
+                        len.err = 0;
+                        // ⑤ 读端**不 destroy**：子进程还往这个 pipe 写，关了它 64KB 就阻塞
+                        logSink = write;
+                        return buffered;
+                    },
+                    finishAsDetached: (text) => {
+                        // 没交接就收尾 = 调用方顺序错了（那时 `done` 还是假，说明它想让本函数
+                        // "当没发生过" —— 那会把真正的结局吞掉，不如直接报错）
+                        if (!logSink) throw new DetachError({ code: "agent/job-not-detached", message: "尚未转后台" });
+                        resolve({ text, failed: false, outcome: "ok" });
+                    },
+                });
             }
         } catch (e) {
             // ⚠️ **同步抛是真实路径**，不是防御性代码：cwd 是普通文件时 Node 在 spawn 内直接
@@ -1678,18 +1817,64 @@ export interface TurnToolAnchor {
     stepId(): string;
 }
 
+const EMPTY_TAIL = { text: "", lines: 0, droppedBytes: 0 };
+
+/**
+ * `job wait` 的上限（10 分钟）。`timeoutMs = 0` 曾经表示「一直等」，等于给模型一把
+ * 自锁的钥匙（永不退出的 daemon + 等待 = 这一轮再也回不去，而唤醒是「结束才叫」）。
+ */
+const WAIT_MAX_MS = 600_000;
+
+/** 一条进程的**详情文案**（job status / wait 共用）：状态 + 结局 + 来源 + 输出尾巴。 */
+function detail(info: RunInfo, tail: { text: string; lines: number; droppedBytes: number }, now: number): string {
+    const rows = [
+        `${info.id} · ${stateLabel(info.state)} · ${formatDuration((info.endedAt ?? now) - info.startedAt)}`,
+        `命令：${info.command}`,
+        `目录：${info.cwd}`,
+        `结局：${exitText(info.state, info.exitCode, info.signal)}${info.error ? `（${info.error}）` : ""}`,
+        `输出：${info.logPath}`,
+        ...(info.origin ? [`来源：${info.origin.taskUri}${info.origin.turnId ? ` / ${info.origin.turnId}` : ""}`] : []),
+    ];
+    if (tail.lines === 0) rows.push("（无输出）");
+    else {
+        rows.push(
+            `—— 输出尾部${tail.droppedBytes > 0 ? `（前 ${tail.droppedBytes} 字节已截断）` : ""} ——`,
+            tail.text,
+        );
+    }
+    return rows.join("\n");
+}
+
 export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: string, anchor?: TurnToolAnchor) {
     return {
         bash: tool({
             description: [
                 "在项目目录执行 bash 命令并返回输出（查文件、跑命令、看系统信息）。",
                 `超时缺省 ${fmtTimeout(limits.bashTimeoutMs)}（环境变量 DIY_LOCAL_BASH_TIMEOUT_MS 调整）：超时 / 取消 / 输出溢出都会杀掉整个进程组，并**照样返回结果**（不抛错）—— 正文是已收到的部分，看头里 timed_out / killed 判断怎么结束的。`,
+                "每步的 `timeout`（毫秒，0 = 不设超时）可覆盖缺省；`background: true` 把长任务转到后台并**立即返回**作业 id —— 结束时会插话通知你，**不要轮询**（sleep 再查属于轮询），期间可以放心结束本轮去做别的事。查状态 / 取输出 / 停止用 `job` 工具。",
                 "长任务写法：`nohup <命令> > /tmp/x.log 2>&1 < /dev/null & disown` 立刻返回，然后用**另一条**命令 `tail /tmp/x.log` 取增量；不要在同一条命令里 sleep 等它跑完 —— 那只会撞上自己的超时。",
                 "stdin 已接 /dev/null：`cat`、无参 `grep` / `rg` 立刻拿到 EOF，不会挂住等输入。相对路径一律按 cwd（项目目录）解析。",
                 "结果 = YAML 头 + 正文原文（正文逐字不动）。头的字段：",
                 ...renderFieldDocs(BASH_RESULT_HEAD_SCHEMA),
             ].join("\n"),
-            inputSchema: z.object({ command: z.string().describe("要执行的 bash 命令") }),
+            inputSchema: z.object({
+                command: z.string().describe("要执行的 bash 命令"),
+                timeout: z
+                    .number()
+                    .optional()
+                    .describe(
+                        "本次执行的超时（毫秒）；0 = 不设超时；省略 = 前台缺省 300s（DIY_LOCAL_BASH_TIMEOUT_MS 可调）/" +
+                            "后台缺省不设超时",
+                    ),
+                background: z
+                    .boolean()
+                    .optional()
+                    .describe(
+                        "后台执行：立即返回作业 id，输出落日志文件；结束时会插话通知你。不需要在命令末尾加 &。" +
+                            "查状态/输出/停止用 job 工具。**后台缺省不设超时**（前台缺省 300s）；" +
+                            "要给后台限时就显式给 timeout，到点整组停止。",
+                    ),
+            }),
             // ##127：单条工具输出的截断**只落投递层** —— `toModelOutput` 改写「发给模型的那一份」
             // （超 2000 行 / 50KB 时头尾 + marker + 原文落盘可 read 回取），`execute` 的返回值
             // 仍是全文（落进 ops 的原文永不动）。见 services/tool-output.ts。
@@ -1698,7 +1883,7 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                 // 头里的 truncated 位只能在投递层定（真截断才知道），见 markBashTruncated
                 return { type: "text" as const, value: capped.clipped ? markBashTruncated(capped.text) : capped.text };
             },
-            execute: async ({ command }, opts) => {
+            execute: async ({ command, timeout, background }, opts) => {
                 const home = diyHome();
                 // 自杀护栏（agent-guard.ts）已停用（2026-10-02）：
                 // 判据是命令文本，无法区分「宿主进程」与「agent 自己起的实例」——
@@ -1709,38 +1894,103 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                 appendAudit(home, { phase: "bash-start", taskUri, cwd, command });
                 const t0 = Date.now();
                 const execOpts = opts as { abortSignal?: AbortSignal; toolCallId?: string } | undefined;
-                // ── spawned job 登记（##408 刀 5）──
-                // 三条缺一不可：有轮内锚点（预览/仿真路径没有）、有 toolCallId（origin 的定位键）、
-                // 有 taskUri。缺任何一条就不登记 —— 宁可没有 job，也不落一条**指不回去**的账。
-                const job =
-                    anchor && execOpts?.toolCallId
-                        ? spawnedJobs.begin({
-                              taskUri,
-                              turnId: anchor.turnId,
-                              stepId: anchor.stepId(),
-                              toolCallId: execOpts.toolCallId,
-                              cmd: command,
-                              cwd,
-                          })
-                        : null;
-                const run = await runBash(command, cwd, limits, execOpts?.abortSignal, job
-                    ? { onSpawn: (pid) => job.setPid(pid), onChunk: (chunk) => job.noteOutput(chunk) }
-                    : undefined);
-                if (job) {
-                    // 记账是观测：**任何**失败都不许冒到工具结果（命令已经跑完了）
-                    try {
-                        await job.finish({
-                            outcome: run.outcome,
-                            ...(run.exitCode !== undefined ? { exitCode: run.exitCode } : {}),
-                            ...(run.signal !== undefined ? { signal: run.signal } : {}),
-                            ...(run.outcome !== "ok" ? { error: clip(run.text, 400) } : {}),
-                        });
-                    } catch (e) {
-                        console.warn("[local-agent] job 收口失败:", e);
-                    } finally {
-                        spawnedJobs.noteFinished(job);
+                // **生效参数**：缺省值只在这里补一次（`shared/tool-args.ts`），聊天里显示的
+                // 「工具实际收到」用的也是这同一份 —— 两处各补一次必然漂成"界面说前台、实际跑后台"。
+                const eff = effectiveBashArgs({ command, timeout, background }, limits);
+                // ── 后台模式（##408 刀 8）──
+                // 与前台共用**同一个** bash 工具和同一套入参，只由 `background` 一位分叉：
+                //   · 前台 = 阻塞到结束（超时可调，缺省 300s）——「现在就要结果」
+                //   · 后台 = 立即返回 id + 日志路径，结束时插话唤醒——「等得起，先干别的」
+                // 这也是 opencode `shell` 工具的形状（`background` + `timeout` 两位），
+                // 两边的口径一致，模型不必学两套。
+                if (eff.args.background === true) {
+                    const proc = await runRegistry.spawn({
+                        command,
+                        cwd,
+                        ...(execOpts?.toolCallId && anchor
+                            ? {
+                                  origin: {
+                                      taskUri,
+                                      turnId: anchor.turnId,
+                                      stepId: anchor.stepId(),
+                                      toolCallId: execOpts.toolCallId,
+                                  },
+                              }
+                            : { origin: { taskUri } }),
+                        // 后台缺省**不设超时**（daemon 不该在 300s 被静默做掉）；
+                        // 模型显式给的正数才真的到点整组 SIGTERM（见 `shared/tool-args.ts`）。
+                        ...((eff.args.timeout as number) > 0 ? { deadlineMs: eff.args.timeout as number } : {}),
+                    });
+                    appendAudit(home, { phase: "bash-background", taskUri, cwd, command, result: proc.id });
+                    if (proc.pid !== undefined) {
+                        ownedGroups.record(proc.pid, { at: proc.startedAt, command, cwd, taskUri, runId: proc.id });
                     }
+                    if (proc.state === "failed") {
+                        // 起不来的必须**抛**（命令根本没跑，不是结果）—— 与前台 spawn 失败同口径。
+                        // `spawn()` 现在会 await 到 `spawn` / `error` 定局，所以走到这里时
+                        // 失败已经确定（此前它只接同步抛，异步 error 事件让这段成了死代码：
+                        // 工具先说「已转后台」，几十毫秒后再补一条「启动失败」）。
+                        invariant(false, "agent/background-spawn-failed", `${proc.error ?? "未知原因"}（工作目录：${cwd}）`);
+                    }
+                    return [
+                        `[已转后台] ${proc.id}（pid ${proc.pid}）`,
+                        `输出：${proc.logPath}`,
+                        "结束时会自动通知你，**不要轮询**（sleep 再查 = 轮询）。现在可以继续干别的，或直接结束本轮。",
+                        `随时查：job status ${proc.id} / job output ${proc.id} / job kill ${proc.id}`,
+                    ].join("\n");
                 }
+                // ── 前台命令**不登记**（##408 刀 16，用户 2026-10-24 定口径）──
+                // 「前台进程不进观察名单，不属于 job，就是当前 llm 自己的事，不管、不列出、
+                // 不记录。job 现阶段只管后台任务。」
+                // 于是：不建 run 行、不落 out.log、不写 meta、不投通知 —— 结果直接回给工具调用方。
+                // 唯一保留的是**组号归属**（`ownedGroups`）：它不是 job，是"进程总管"认领孤儿的
+                // 依据（命令里自己 `nohup xxx &` 的进程，ppid 会变成 launchd，只有组号还记得是谁起的）。
+                let fgPid: number | undefined;
+                // 转后台（##408 刀 21）：把这条前台调用的控制句柄登记到 `foregroundBash`，
+                // UI 才能按 `toolCallId` 找到它并接管。**只在拿到 toolCallId 时登记** ——
+                // 没有它就没法把按钮和调用对上，宁可没按钮，也不造一个点不中的按钮。
+                const fgToolCallId = execOpts?.toolCallId;
+                let run: BashRun;
+                try {
+                    run = await runBash(
+                        command,
+                        cwd,
+                        limits,
+                        execOpts?.abortSignal,
+                        {
+                            onSpawn: (pid) => {
+                                fgPid = pid;
+                                ownedGroups.record(pid, { at: Date.now(), command, cwd, taskUri });
+                            },
+                            ...(fgToolCallId
+                                ? {
+                                      onControl: (ctl: BashControl) => {
+                                          foregroundBash.register(fgToolCallId, {
+                                              process: ctl,
+                                              command,
+                                              cwd,
+                                              origin: {
+                                                  taskUri,
+                                                  ...(anchor
+                                                      ? { turnId: anchor.turnId, stepId: anchor.stepId(), toolCallId: fgToolCallId }
+                                                      : {}),
+                                              },
+                                          });
+                                      },
+                                  }
+                                : {}),
+                        },
+                        eff.args.timeout as number,
+                    );
+                } finally {
+                    // 正常结束（含异常）就把登记摘掉：结束的进程没有「转」这回事，
+                    // 留在表里只会让 UI 显示一个按了必失败的按钮。
+                    // 转成功的条目已由 `foregroundBash.detach` 摘除，这里是无操作。
+                    if (fgToolCallId) foregroundBash.drop(fgToolCallId);
+                }
+                // 前台命令跑完：组里没活口就把组记录撤掉（留下孤儿的组要留 —— 那是认领线索）。
+                // 判据在 `owned-groups::release`，这里只管"命令结束"这个时机。
+                if (fgPid !== undefined) ownedGroups.release(fgPid);
                 appendAudit(home, {
                     phase: "bash-end",
                     taskUri,
@@ -1790,6 +2040,69 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                     //   ⚠️「bash.execute 现在会抛」≠「它见错就抛」—— 判据细节全在 runBash 头注。
                     throw new Error(`[读取失败] ${e instanceof Error ? e.message : e}`);
                 }
+            },
+        }),
+        /**
+         * `job` —— 后台进程的**唯一问询口**（##408 刀 8）。
+         *
+         * 为什么要有这个工具（而不是让模型每轮 bash 去 `ps`）：用户要的是「llm 心里有数」——
+         * 它得能用一个**稳定、可预期**的动作回答四件事：还有哪些在跑（list）、这条是死是活
+         * （status）、它说了什么（output）、停掉它（kill），以及"我等它"（wait）。
+         * 靠 bash 手搓 `ps -p` / `tail` 会把判据散进命令行，模型每次都要重新想一遍。
+         *
+         * 判据真源在 shared/run-status.ts（纯函数）；本处只做 IO 编排。
+         */
+        job: tool({
+            description:
+                "管理**本任务**用 bash(background: true) 起的后台进程（别的任务的 run 看不见、停不掉）。action：" +
+                "list（本任务全部，活着的在前）· status（一条的详情 + 输出尾巴）· output（取输出 tail）· " +
+                "kill（按进程组停止）· wait（等它结束，最多 timeoutMs；**0 = 等 10 分钟上限**，不能无限等）。" +
+                "**有完成通知，不需要轮询。**",
+            inputSchema: z.object({
+                action: z.enum(["list", "status", "output", "kill", "wait"]),
+                id: z.string().optional().describe("进程 id（list 不需要；其余必填）"),
+                lines: z.number().optional().describe("output/status 取多少行尾巴（缺省 40 / 10）"),
+                timeoutMs: z
+                    .number()
+                    .optional()
+                    .describe("wait 的等待上限（毫秒，缺省 30000；0 = 用上限 10 分钟，不能无限等）"),
+            }),
+            execute: async ({ action, id, lines, timeoutMs }) => {
+                const now = Date.now();
+                // 只认**本任务**的 run：同一 app 里多个任务/agent 并行时，A 能把 B 的命令全文
+                // 列出来（可能含密钥/路径）、还能把 B 的后台活 kill 掉 —— 那是越权，不是便利。
+                const mine = (r: { origin?: { taskUri?: string } }): boolean => runsOfTask([r], taskUri).length > 0;
+                if (action === "list") {
+                    const all = runsOfTask(runRegistry.list(), taskUri);
+                    if (all.length === 0) return "（本任务没有后台进程）";
+                    const running = all.filter((p) => p.state === "running").length;
+                    return [`共 ${all.length} 条（运行中 ${running}）`, ...all.map((p) => runLine(p, now))].join("\n");
+                }
+                if (!id) return `[缺 id] action=${action} 需要给 id（先用 job list 看有哪些）`;
+                const info = runRegistry.get(id);
+                if (!info || !mine(info)) {
+                    return `[没有这个后台进程] ${id}（只认本任务起的；job list 看现有；app 重启后表会清空）`;
+                }
+
+                if (action === "kill") {
+                    const ok = runRegistry.kill(id);
+                    return ok
+                        ? `已发送停止信号（进程组 ${info.pid}）：${id}。稍后用 job status 确认终态。`
+                        : `未发送：${id} 当前是「${stateLabel(info.state)}」（只有运行中的才可停）。`;
+                }
+                if (action === "wait") {
+                    // 0 曾经等于「永远等」：一个永不退出的 daemon + `wait 0` ⇒ 这一轮再也回不去，
+                    // 而唤醒机制本身是「结束才叫」⇒ 自锁且外部无解。改成**有上限**（10 分钟）。
+                    const asked = timeoutMs === undefined ? 30_000 : Math.max(0, Math.floor(timeoutMs));
+                    const limit = asked === 0 ? WAIT_MAX_MS : Math.min(asked, WAIT_MAX_MS);
+                    const done = await runRegistry.wait(id, limit);
+                    if (done && done.state === "running") {
+                        return `${detail(done, (await runRegistry.tail(id, 5)) ?? EMPTY_TAIL, now)}\n（已等 ${formatDuration(limit)}，仍未结束；别干等长任务 —— 去做别的，结束会通知你）`;
+                    }
+                    return detail(done ?? info, (await runRegistry.tail(id, lines ?? 10)) ?? EMPTY_TAIL, now);
+                }
+                const tail = (await runRegistry.tail(id, lines ?? (action === "output" ? 40 : 10))) ?? EMPTY_TAIL;
+                return detail(info, tail, now);
             },
         }),
         /**
@@ -4995,6 +5308,10 @@ export class LocalAgentManager {
                             yield* ensure(part.toolCallId, "tool", stepId, { tool: part.toolName, status: "streaming" });
                             blockT0.set(part.toolCallId, Date.now());
                             const input = (part as { input?: JSONVal }).input;
+                            // 模型发的原文之外，再给一份**补完缺省的**实参（##408 用户 2026-10-23）：
+                            // 用户看见 `{"command":…}` 会以为 background/timeout 不存在，其实它们
+                            // 是代码里补的缺省值 —— 只显示原文等于让界面撒谎。
+                            const effArgs = part.toolName === "bash" ? effectiveBashArgs(input, L) : null;
                             const title =
                                 input &&
                                 typeof input === "object" &&
@@ -5008,6 +5325,12 @@ export class LocalAgentManager {
                                     tool: part.toolName,
                                     input: JSON.stringify(input ?? {}),
                                     args: input ?? null,
+                                    ...(effArgs
+                                        ? {
+                                              execArgs: effArgs.args as unknown as JSONVal,
+                                              execDefaults: effArgs.defaulted,
+                                          }
+                                        : {}),
                                     status: "running",
                                     title,
                                 },
@@ -5252,6 +5575,48 @@ let _manager: LocalAgentManager | null = null;
 export function getLocalAgent(): LocalAgentManager {
     if (!_manager) _manager = createLocalAgent();
     return _manager;
+}
+
+// ─── 后台进程结束 → 插话唤醒（##408 刀 8）─────────────────────────
+//
+// 用户的原话：「可以放心的停止本轮，等待 job 对 llm 激活，激活可以用**现在显式的消息
+// 通知形式插话激活**，简单点。」—— 所以这里**不新造通知通道**，就用既有的插话队列：
+//   ① `steerAdd(taskUri, "next-turn", …)`：落进 `.diy/drafts.yaml` 的待投递队列（FIFO）；
+//   ② 若此刻**没有轮次在跑**，立刻用队列开一轮（`chatQueued`）——这正是 `agent.local.chat`
+//      在 `--mode` 分支里干的事（##303：留言的语义就是"发一句话"，空闲时它本就该马上发出）。
+//      没有这一步，结束通知会永远躺在队列里，模型永远醒不过来。
+//   ③ 有轮次在跑 ⇒ 什么都不做，那一轮的轮末会把队列整批带走（既有语义）。
+//
+// 为什么是 `next-turn` 而不是 `next-step`：进程结束时模型通常已经不在当前步了
+// （它可能正写报告、也可能已结束本轮），"下一步前插一句"会把别人的步边界打乱；
+// 轮是人的/模型的自然停顿点。
+runRegistry.setNotifier((taskUri, text) => {
+    wakeTaskWithSteer(taskUri, text);
+});
+
+function wakeTaskWithSteer(taskUri: string, text: string): void {
+    let agent: LocalAgentManager;
+    try {
+        agent = getLocalAgent();
+    } catch (e) {
+        console.warn(`[job] 唤醒失败（agent 未就绪）${taskUri}:`, e);
+        return;
+    }
+    try {
+        agent.steerAdd(taskUri, "next-turn", text, "job");
+    } catch (e) {
+        console.warn(`[job] 结束通知入队失败 ${taskUri}:`, e);
+        return;
+    }
+    if (agent.busy(taskUri)) return;
+    // 无人消费也要把它跑完：ops 由会话自己落盘，这里只是驱动生成器前进。
+    void (async () => {
+        try {
+            for await (const _op of agent.chatQueued(taskUri)) void _op;
+        } catch (e) {
+            console.warn(`[job] 空闲唤醒轮次失败（通知仍在队列，下一轮带走）${taskUri}:`, e);
+        }
+    })();
 }
 
 // ─── 仿真预览：走真实组装链、发送前掐断 ─────────────────────────

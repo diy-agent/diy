@@ -179,6 +179,10 @@ check() {
   # 异常码护栏（##394）：新增 `throw new` 必须带 code（<域>/<kebab-case>）；存量按 LEGACY_THROW_BASELINE 比例递减
   #（实现见 scripts/check-error-code.sh，判据见 rule.err-triage；**别改成整文件豁免** —— 那会让新代码永远不被拦）
   run bash scripts/check-error-code.sh
+  # 同步 IO 护栏（##408 刀 16）：主进程 / shared / preload 里新增 `*Sync` 的磁盘或子进程调用一律 ✗
+  #（实现见 scripts/check-sync-io.sh；用户口径「app 不允许有 sync 的 io 操作」；存量按
+  # LEGACY_SYNC_IO_BASELINE 棘轮递减，逃生口 `// sync-io-ok: <理由>`）
+  run bash scripts/check-sync-io.sh
   # 各领域规范索引护栏（##388）：~/SPECS.md 的 key 唯一 / 指针可解析 / 链上新增未收录（ratchet：存量基线 scripts/specs-unindexed.txt）
   #（实现见 scripts/check-specs.mts；**总表缺失 = skip + 提示、不算失败**，跨机器 / CI 没有家目录那份文件）
   run npx tsx scripts/check-specs.mts

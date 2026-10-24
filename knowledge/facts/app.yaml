@@ -556,6 +556,24 @@ facts:
       source: code
       at: 2901cb27:pkgs.ts/diy-app/src/shared/interrupted-cause.ts:1
       verifiedAt: '2026-10-22'
+  app.find#job-fence:
+    value: |-
+      **「这条 run/进程归谁」的唯一判据**：`src/shared/job-fence.ts::fenceTaskOwner`（纯函数）。`job.kill` / `job.killPid` / `job.detach` 三条动手路径**都过它**：调用方必须声明 `taskUri`（CLI 是位置参数、**没有缺省**），且必须与该 run 的 `origin.taskUri` / 组名册的 `taskUri` 一致 —— 跨任务不代杀、归属不明的也不动（`agent/job-task-required|owner-unknown|foreign`）。理由：kill 是按**进程组**发的，认错一次带走整组无关进程。加新动手接口 = 先接这道闸，别再各写一份比较 · 坑见 `app.rule#job-spawn-listen`
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: 7c8b0e950398:pkgs.ts/diy-app/AGENTS.md:31
+      verifiedAt: '2026-10-24'
+  app.find#job-run:
+    value: |-
+      **后台 run 管理与可见性（##408 v1）**：活体表 `src/main/services/run-registry.ts`（内存 Map，**只管 `background:true` 起的后台 run** —— 前台命令不登记、不落盘，用户 2026-10-24 定口径；run 的寿命按**进程组**算，组空才收口并唤醒 agent 一次，我们主动杀的不发唤醒）· 呈现口径 `src/shared/run-status.ts`（状态/时长/tail/唤醒文案，纯函数）+ `src/shared/run-view.ts`（表格字段 + `navTargetOf`：来源锚点三件齐全才可点）· 进程总管 `src/shared/proc-scan.ts`（按**进程组**认领孤儿，reparent 到 launchd 也认得出）+ `src/main/services/{process-scan,owned-groups}.ts` · 落盘 `$DIY_HOME/log/job/runs/<YYYY-MM-DD>/<id>/{meta.json,out.log}`（**运行产物**，留 7 天，不是执行账）· RPC 域 `job.*`（`ps` / `procs` / `killPid` / `kill` / `tail` / `meta`）· 面板 `renderer_solid/components/JobRunsPanel.tsx`（底栏 `task-run.bottom`；四 tab：概要/输出/API 数据/存储数据）
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: 7c8b0e950398:pkgs.ts/diy-app/AGENTS.md:30
+      verifiedAt: '2026-10-24'
   app.find#journal:
     value: |-
       任务日志（##404）：契约 `src/shared/journal.ts`（五种 kind 各答一个问题）· 存储 `src/main/services/journal-store.ts`（`<taskDir>/journal.jsonl`，**一行一条 JSON 只追加**，读时容忍坏行）· CLI `diy journal add|find|stats|import`。三层划分判据见 `~/git/diy/AGENTS.md::rule.task-three-layers` —— 别往 body 里堆处理记录
@@ -1193,6 +1211,15 @@ facts:
       source: user
       at: ba99d638:pkgs.ts/diy-app/AGENTS.md:76
       verifiedAt: '2026-10-22'
+  app.rule#job-spawn-listen:
+    value: |-
+      **`spawn()` 之后不许夹 `await` 再挂监听**：`spawn`/`error` 是下一个 tick 的一次性事件，`spawn()` → `await open/close` → `awaitOpened(child)` 的写法会让事件先发、监听后挂 ⇒ 永远等不到、`spawn()` 挂死（实测：一个只有 `sleep 5` 的用例卡满 60s）。正解：spawn 返回后**同步**挂监听（`awaitOpened(child)` 就地产出 Promise），其余 await 排队在后面。
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: 7c8b0e950398:pkgs.ts/diy-app/AGENTS.md:122
+      verifiedAt: '2026-10-24'
   app.rule#log-vs-config:
     value: |-
       **落盘日志**（会话目录 `local/<uri 路径>/<key>/*.jsonl`；旧平铺 `<key>.*.jsonl` 读侧兜底）读侧宽松（初版紧凑/扩展松散/缺必填即**异常数据**，见 `log-schema.ts`）；**配置真源**（`context.yaml` / `auto-compact.yaml`）读侧出声回落默认、写侧归一 + 原子写，且**不进 localStorage**（有损 + 两进程各持一份）
