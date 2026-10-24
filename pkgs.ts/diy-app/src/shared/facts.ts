@@ -166,7 +166,10 @@ export const FactsBriefItemSchema = z.object({
  */
 export const FactsBriefSchema = z.object({
     subjects: z.array(FactsBriefItemSchema),
+    /** 给了 `--budget` 才有：`used` = 最终输出的 UTF-8 字节（与收到的那串文本同一口径） */
     budget: z.object({ limit: z.number(), used: z.number() }).optional(),
+    /** 因预算被裁掉的条目数（>0 ⇒ 缩 preview 不够、只能裁条目） */
+    truncated: z.number().optional(),
 });
 
 /**

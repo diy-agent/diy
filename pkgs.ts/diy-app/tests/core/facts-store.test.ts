@@ -546,14 +546,35 @@ describe("brief 多主题 / 预算（##5 需求 3）", () => {
         expect(r.subjects).toHaveLength(1);
     });
 
-    it("--budget 超了按比例缩每条 preview，回执给 used", () => {
+    it("--budget 按**实际输出字节**计，超了先缩 preview", () => {
         const long = "乙".repeat(300);
         write("facts/long.yaml", `domain: long\nfacts:\n  - id: long.thing\n    subject: dev.test\n    aspect: big\n    value: '${long}'\n    review: accepted\n    lifecycle: active\n    evidence: { source: code, at: K.ts:1 }\n`);
-        const wide = store.brief("dev.test", { dir: kb, maxChars: 80, budget: 60 });
-        expect(wide.budget!.limit).toBe(60);
-        expect(wide.budget!.used).toBeLessThanOrEqual(60);
+        const wide = store.brief("dev.test", { dir: kb, maxChars: 80, budget: 600 });
+        expect(wide.budget!.limit).toBe(600);
+        expect(wide.budget!.used).toBeLessThanOrEqual(600);
+        expect(wide.truncated).toBeUndefined();
         const item = wide.subjects[0]!;
-        expect(item.entries.find((e) => e.aspect === "big")!.preview.length).toBeLessThanOrEqual(60);
+        // `used` 的口径必须是「真正会发出去的那串字节」，不是字符估算
+        expect(wide.budget!.used).toBe(Buffer.byteLength(JSON.stringify({ subjects: wide.subjects }), "utf8"));
+        // 截断符 `…` 会多占 1 位（previewOf 输出 max+1），故上界是 maxChars+1
+        expect(item.entries.find((e) => e.aspect === "big")!.preview.length).toBeLessThanOrEqual(81);
+    });
+
+    it("--budget 缩到下限仍装不下 ⇒ 裁条目并报 truncated（旧版这里只缩不裁，等于预算失效）", () => {
+        // 20 字节连一条 `{aspect,gid,preview}` 的外壳都塞不下：只能裁到空（硬上限）
+        const long = "乙".repeat(300);
+        write("facts/long.yaml", `domain: long\nfacts:\n  - id: long.thing\n    subject: dev.test\n    aspect: big\n    value: '${long}'\n    review: accepted\n    lifecycle: active\n    evidence: { source: code, at: K.ts:1 }\n`);
+        const wide = store.brief("dev.test", { dir: kb, maxChars: 80, budget: 20 });
+        expect(wide.budget!.used).toBeLessThanOrEqual(20);
+        expect(wide.truncated).toBeGreaterThan(0);
+        // 裁空的主题整个去掉，不留 `entries: []` 的空壳（否则读的人以为「这主题没有条目」）
+        expect(wide.subjects.every((s) => s.entries.length > 0 || s.notes.length > 0)).toBe(true);
+    });
+
+    it("--budget 够用 ⇒ 不缩不裁，truncated 缺席", () => {
+        const r = store.brief("app.port", { dir: kb, budget: 100000 });
+        expect(r.truncated).toBeUndefined();
+        expect(r.budget!.used).toBeLessThanOrEqual(100000);
     });
 });
 

@@ -560,8 +560,13 @@ export interface BriefEntry {
 
 export interface BriefMultiResult {
     readonly subjects: BriefResult[];
-    /** 给了 `--budget` 才有：上限与实际占用（近似字数，不是 UTF-8 字节） */
+    /**
+     * 给了 `--budget` 才有：上限与实际占用。
+     * `used` = **最终输出的 UTF-8 字节**（`JSON.stringify` 后量），与收到的那串文本同一口径。
+     */
     readonly budget?: { readonly limit: number; readonly used: number };
+    /** 因预算被**裁掉**的条目数（>0 ⇒ 还是超，缩 preview 不够、只能裁） */
+    readonly truncated?: number;
 }
 
 export interface BriefResult {
@@ -726,8 +731,13 @@ export function expandSubjects(list: readonly string[], all: readonly string[]):
  * 而每轮都要重发整份前缀（实测 41 KB）。**查询次数是隐藏成本**，把它压成 1 次
  * 省下的比"少几条正文"多一个量级。
  *
- * `--budget`（总字节）：先按 `maxChars` 生成，超预算才按比例缩（下限 24 字）重算一次。
- * 不追求精确贴合 —— 宁可少缩一点，也不要为了凑整把 preview 截成看不懂的样子。
+ * `--budget`（**UTF-8 字节**，按**最终输出** `JSON.stringify` 计量 —— 与消费方真正收到的那串
+ * 文本同一口径）：超了先缩 preview（下限 8 字），缩到底仍超就**裁条目**并在 `truncated` 里报数。
+ *
+ * 旧版按「字符数 + 每条 12 的估算」判预算，实测 `--budget 2000` 输出 26 KB（3 倍误差），
+ * 且缩到下限后无法再收敛 ⇒ 预算等于失效（##9 实测）。两条教训：
+ *   ① **口径必须与实际产出同源**（估算式会随 JSON 结构 / 多字节字符系统性地差）
+ *   ② **必须有兜底动作**（只缩不裁时，条目多到固定开销就超预算，缩到 0 字也进不去）
  */
 export function brief(
     subjectsIn: string,
@@ -747,29 +757,51 @@ export function brief(
     const repo = loadRepo(target.dir, targetOpts(target));
     const subjects = expandSubjects(list, repo.facts.map((f) => f.subject));
     const build = (chars: number): BriefResult[] => subjects.map((s) => briefOne(s, { ...opts, maxChars: chars }, repo));
-    const usedOf = (rs: readonly BriefResult[]): number =>
-        rs.reduce(
-            (n, r) => n + r.subject.length + r.entries.reduce((m, e) => m + e.gid.length + e.preview.length + 12, 0),
-            0,
-        );
+    /** 预算口径 = **实际发给消费方的那串字节**（`JSON.stringify` + UTF-8） */
+    const bytesOf = (rs: readonly BriefResult[]): number => Buffer.byteLength(JSON.stringify({ subjects: rs }), "utf8");
+    const limit = opts.budget;
     let results = build(max);
-    let used = usedOf(results);
-    if (opts.budget !== undefined && opts.budget > 0 && used > opts.budget) {
-        // 按**固定开销**先扣掉再均分：gid + 每条 12 字的结构开销是省不掉的，按比例缩
-        // preview 会在条目多时永远够不着预算（试过：24 字下限 + 20 字固定开销仍超）。
-        const fixed = results.reduce(
-            (n, r) => n + r.subject.length + r.entries.reduce((m, e) => m + e.gid.length + 12, 0),
-            0,
-        );
-        const entries = results.reduce((n, r) => n + r.entries.length, 0);
-        // -1 给截断符 `…` 留位（previewOf 超长时输出 max+1 字符）
-        const per = entries === 0 ? max : Math.max(8, Math.floor((opts.budget - fixed) / entries) - 1);
-        results = build(Math.min(max, per));
-        used = usedOf(results);
+    let used = bytesOf(results);
+    let truncated = 0;
+    if (limit !== undefined && limit > 0 && used > limit) {
+        // ① 缩 preview：按「每条还差几个字节」反推每轮缩几个字，实测后重算。
+        //    不一次算准 —— 多字节字符 1 字 = 1~3 字节，收敛比精确更重要（缩过头只是更省）。
+        let per = max;
+        for (let i = 0; i < 12 && per > 8; i++) {
+            const entries = results.reduce((n, r) => n + r.entries.length, 0);
+            const over = used - limit;
+            if (entries === 0 || over <= 0) break;
+            const next = Math.max(8, per - Math.max(1, Math.ceil(over / entries)));
+            if (next >= per) break;
+            per = next;
+            results = build(per);
+            used = bytesOf(results);
+        }
+        // ② 缩到下限（8 字）仍超 ⇒ **只能裁条目**（固定开销比预算还大时，preview 缩到 0 也进不去）。
+        //    轮转着从**末尾**各裁一条：主题按入参序、主题内按 aspect 序，末尾 = 最不可能是入门那几条。
+        //    裁到空的主题整个去掉 —— 留个 `entries: []` 的空壳，读的人会以为「这个主题没有条目」。
+        const trimOrder = [...results].reverse();
+        for (let round = 0; used > limit; round++) {
+            const target = trimOrder[round % Math.max(1, trimOrder.length)];
+            if (target === undefined || trimOrder.every((r) => r.entries.length === 0)) break;
+            if (target.entries.length === 0) continue;
+            target.entries.pop();
+            truncated += 1;
+            used = bytesOf(results);
+        }
+        results = results.filter((r) => r.entries.length > 0 || r.notes.length > 0);
+        used = bytesOf(results);
+        // ③ 连「空壳」（主题名 + desc + notes）都超 ⇒ 从末尾逐个去掉。
+        //    `--budget` 是**硬上限**：给 60 字节的人要的是一行，不是"尽量少"。
+        while (used > limit && results.length > 0) {
+            results = results.slice(0, -1);
+            used = bytesOf(results);
+        }
     }
     return {
         subjects: results,
-        ...(opts.budget === undefined ? {} : { budget: { limit: opts.budget, used } }),
+        ...(truncated > 0 ? { truncated } : {}),
+        ...(limit === undefined ? {} : { budget: { limit, used } }),
     };
 }
 
