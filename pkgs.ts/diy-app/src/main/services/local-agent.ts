@@ -928,7 +928,7 @@ function latestBoundary(taskUri: string): { boundary: ReturnType<typeof resolveB
     const fp = compactFile(taskUri);
     let size = 0;
     try {
-        size = statSync(fp).size;
+        size = statSync(fp).size; // sync-io-ok: 压缩账本尾部定位/读取（O(1)~几 MB），与 readOpsRange 同一同步 fold 窗口；改异步会把整条 replay 链染成 async
     } catch {
         return null; // 从未压缩过
     }
@@ -938,18 +938,18 @@ function latestBoundary(taskUri: string): { boundary: ReturnType<typeof resolveB
         const from = Math.max(0, size - window);
         let text: string;
         try {
-            const fd = openSync(fp, "r");
+            const fd = openSync(fp, "r"); // sync-io-ok: 压缩账本尾部定位/读取（O(1)~几 MB），与 readOpsRange 同一同步 fold 窗口；改异步会把整条 replay 链染成 async
             try {
                 const buf = Buffer.allocUnsafe(size - from);
                 let got = 0;
                 while (got < buf.length) {
-                    const n = readSync(fd, buf, got, buf.length - got, from + got);
+                    const n = readSync(fd, buf, got, buf.length - got, from + got); // sync-io-ok: 压缩账本尾部定位/读取（O(1)~几 MB），与 readOpsRange 同一同步 fold 窗口；改异步会把整条 replay 链染成 async
                     if (n <= 0) break;
                     got += n;
                 }
                 text = buf.subarray(0, got).toString("utf-8");
             } finally {
-                closeSync(fd);
+                closeSync(fd); // sync-io-ok: 压缩账本尾部定位/读取（O(1)~几 MB），与 readOpsRange 同一同步 fold 窗口；改异步会把整条 replay 链染成 async
             }
         } catch {
             return null;
@@ -1020,7 +1020,7 @@ export function resolveOpsReplay(taskUri: string): OpsReplay {
     let cSize = -1;
     let cMtime = -1;
     try {
-        const st = statSync(compactFile(taskUri));
+        const st = statSync(compactFile(taskUri)); // sync-io-ok: 压缩账本尾部定位/读取（O(1)~几 MB），与 readOpsRange 同一同步 fold 窗口；改异步会把整条 replay 链染成 async
         cSize = st.size;
         cMtime = st.mtimeMs;
     } catch {
@@ -1127,24 +1127,24 @@ function readCompactLog(taskUri: string): CompactLogEvent[] {
 function readCompactLogFrom(fp: string, at: number): CompactLogEvent[] {
     let size = 0;
     try {
-        size = statSync(fp).size;
+        size = statSync(fp).size; // sync-io-ok: 压缩账本尾部定位/读取（O(1)~几 MB），与 readOpsRange 同一同步 fold 窗口；改异步会把整条 replay 链染成 async
     } catch {
         return [];
     }
     if (at >= size) return [];
     try {
-        const fd = openSync(fp, "r");
+        const fd = openSync(fp, "r"); // sync-io-ok: 压缩账本尾部定位/读取（O(1)~几 MB），与 readOpsRange 同一同步 fold 窗口；改异步会把整条 replay 链染成 async
         try {
             const buf = Buffer.allocUnsafe(size - at);
             let got = 0;
             while (got < buf.length) {
-                const n = readSync(fd, buf, got, buf.length - got, at + got);
+                const n = readSync(fd, buf, got, buf.length - got, at + got); // sync-io-ok: 压缩账本尾部定位/读取（O(1)~几 MB），与 readOpsRange 同一同步 fold 窗口；改异步会把整条 replay 链染成 async
                 if (n <= 0) break;
                 got += n;
             }
             return parseCompactLog(buf.subarray(0, got).toString("utf-8"));
         } finally {
-            closeSync(fd);
+            closeSync(fd); // sync-io-ok: 压缩账本尾部定位/读取（O(1)~几 MB），与 readOpsRange 同一同步 fold 窗口；改异步会把整条 replay 链染成 async
         }
     } catch (e) {
         console.error(`[local-agent] 压缩账本读取失败 ${fp}@${at}:`, e);
@@ -3587,7 +3587,7 @@ export class LocalAgentManager {
         if (!isTurnStartAt(fp, opts.at)) return fallback;
         let size = 0;
         try {
-            size = statSync(fp).size;
+            size = statSync(fp).size; // sync-io-ok: 压缩账本尾部定位/读取（O(1)~几 MB），与 readOpsRange 同一同步 fold 窗口；改异步会把整条 replay 链染成 async
         } catch {
             return fallback;
         }
