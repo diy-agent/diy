@@ -1040,7 +1040,7 @@ export function ContextLabPage(props: { uri: string }) {
                 <div class="p-2 text-body">
                     <div class="mb-1">{`未找到该步的实际请求（轮 ${e.ref.turnId} · 第 ${e.ref.step} 步）。`}</div>
                     <div class="opacity-60">
-                        可能的原因：① 这条记录是手写/演示数据，没真发过；② 流量日志被清（log 等同 cache，可随时清理）；
+                        可能的原因：① 这条记录是手写/演示数据，没真发过；② 流量日志被清（流量日志等同 cache，可随时清理）；
                         ③ 该轮不是本机发出的。真发一轮后再回来看即可对上。
                     </div>
                 </div>

@@ -37,7 +37,8 @@ export const ReqlogSchema = z
                     "reqBody 默认只留首尾各一段（`truncated: true` 时 JSON 解不开）；要看全文先开" +
                     "「记录完整请求内容」（流量页右上角开关；CLI 侧 = 本应用 CLI 的 `traffic setFullCapture true`，" +
                     "参数是**位置参数**、不是 `--on`）再复现。" +
-                    "log 目录等同 cache，可随时清理 —— 老日期查不到是正常的。",
+                    "`log/network/` 等同 cache，可随时清理 —— 老日期查不到是正常的。" +
+                    "⚠️ **只有 `log/` 是 cache**：`local/` 下的 ops/llm/steps 是会话数据，不在可清之列。",
             ),
     })
     .describe("本应用真发请求的**流量日志**：一行 = 一次真发 HTTP 请求（含请求体与响应）");
