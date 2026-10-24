@@ -59,6 +59,9 @@ export interface RunInfo extends RunLike {
      * 用户口径：「通知时机 = 真正没人跑了那一刻（进程组空）」。
      */
     awaitingGroup?: boolean;
+    /** 曾经有过后台子孙（根退了、组里还有活口）。收口后 `awaitingGroup` 会清掉，
+     *  但"这条命令确实留下过后台活"这个事实要留住 —— 它决定要不要叫醒 agent（见 `settle`）。 */
+    hadSurvivingGroup?: boolean;
     /** 根进程退出的时刻（`awaitingGroup` 时为真；用来交代「父命令 35ms 就退了，活的其实是它起的后台进程」） */
     rootExitedAt?: number;
     /**
@@ -473,6 +476,7 @@ export class RunRegistry {
         const pgid = info.pid;
         if (pgid !== undefined && this.probeGroup(pgid)) {
             info.awaitingGroup = true;
+            info.hadSurvivingGroup = true;
             info.rootExitedAt = this.now();
             // 根的 ChildProcess 已经结束（close 已到），内存里不必再留着；组探活只需要 pgid
             this.children.delete(id);
@@ -536,7 +540,13 @@ export class RunRegistry {
         this.children.delete(id);
         for (const w of this.waiters.get(id) ?? []) w(info);
         this.waiters.delete(id);
-        if (!ours) this.notify(info);
+        // 谁该被叫醒（##408 刀 14，用户实测报的病）：
+        //   ① 后台 run（`background:true`）—— 工具早就返回了，人只能靠通知知道结局。
+        //   ② 前台 run，但它**留下过后台子孙**（`nohup … &`）—— 那时工具返回的只是"起好了"，
+        //      真正的结局（组空）没人看见，所以要叫。
+        //   ③ 普通前台 run **不叫**：工具结果已经回到模型手里，再插一句话就是纯噪音
+        //      （用户实测「为啥他所有指令都会执行完通知agent？」，`ls` 也弹通知）。
+        if (!ours && (!info.foreground || info.hadSurvivingGroup)) this.notify(info);
     }
 
     private notify(info: RunInfo): void {

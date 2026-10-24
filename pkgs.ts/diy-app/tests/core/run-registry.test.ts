@@ -241,6 +241,55 @@ describe("前台 run（track）", () => {
     });
 });
 
+// ##408 刀 14：**谁该被叫醒**。
+// 用户实测报的病：「为啥他所有指令都会执行完通知 agent？都是后台指令？」
+// —— 刀 11 让前台命令也进表之后，`settle` 无差别通知，于是 `ls` 也会插一句话。
+// 判据：后台 run（工具早已返回）要叫；前台 run 只有**留下过后台子孙**才叫
+// （那时工具返回的只是"起好了"）；普通前台 run 不叫 —— 结果already在模型手里。
+describe("结束通知的判据（刀 14）", () => {
+    it("普通前台命令不叫醒 agent（工具结果已经回到模型手里，再插一句是噪音）", () => {
+        const notes: string[] = [];
+        const r = new RunRegistry({ rootDir: root, notifier: (_t, text) => notes.push(text) });
+        const h = r.track({ command: "ls -la", cwd: root, origin });
+        h.setPid(process.pid);
+        h.finish({ exitCode: 0 });
+        expect(r.get(h.info.id)?.state).toBe("exited");
+        expect(notes).toHaveLength(0);
+        r.clear();
+    });
+
+    it("前台命令留下过后台子孙（nohup … &）⇒ 组空那一刻叫一次（工具当时只返回了「起好了」）", async () => {
+        let alive = true;
+        const notes: string[] = [];
+        const r = new RunRegistry({
+            rootDir: root,
+            probeGroup: () => alive,
+            reapMs: 20,
+            notifier: (_t, text) => notes.push(text),
+        });
+        const h = r.track({ command: "nohup sleep 99 & echo ok", cwd: root, origin });
+        h.setPid(4242);
+        h.finish({ exitCode: 0 });
+        expect(notes).toHaveLength(0); // 根退了，但组里还有活口 ⇒ 还不叫
+        expect(r.get(h.info.id)?.awaitingGroup).toBe(true);
+        expect(r.get(h.info.id)?.hadSurvivingGroup).toBe(true);
+        alive = false;
+        await r.wait(h.info.id, 5_000);
+        await new Promise((res) => setTimeout(res, 120));
+        expect(notes).toHaveLength(1);
+        r.clear();
+    });
+
+    it("后台 run（background:true）照旧叫醒（工具早已返回，人只能靠通知知道结局）", async () => {
+        const notes: string[] = [];
+        const r = new RunRegistry({ rootDir: root, notifier: (_t, text) => notes.push(text) });
+        const p = r.spawn({ command: "exit 0", cwd: root, origin });
+        await r.wait(p.id, 10_000);
+        expect(notes).toHaveLength(1);
+        r.clear();
+    });
+});
+
 // ##408 刀 13：run 的寿命 = **进程组的寿命**，不是根 bash 的寿命。
 // 用户实测的病：`nohup sleep 600 > /dev/null 2>&1 &` 这条命令 35ms 就返回，
 // 表上写「已结束 · 35ms」、通知也在 35ms 发完，而真正在跑的 `sleep 600` 还在跑。

@@ -89,3 +89,37 @@ describe("来源 / 输出量", () => {
         expect(clockText(new Date(2026, 0, 2, 9, 8, 7).getTime())).toBe("09:08:07");
     });
 });
+
+// ##408 刀 14：表格「类型」列 + 概要页的后台属性（用户实测：默认详情页看不出来是不是后台）。
+describe("前台 / 后台（刀 14）", () => {
+    it("没给 foreground ⇒ 后台（background:true 的工具返回时工具早就走了）", () => {
+        const v = runViewOf(base, 0);
+        expect(v.background).toBe(true);
+        expect(v.modeText).toBe("后台");
+    });
+
+    it("foreground:true ⇒ 前台", () => {
+        const v = runViewOf({ ...base, foreground: true }, 0);
+        expect(v.background).toBe(false);
+        expect(v.modeText).toBe("前台");
+    });
+
+    it("进程组就是根 pid（detached spawn；进程内任务两者皆 null）", () => {
+        expect(runViewOf({ ...base, pid: 4242 }, 0).pgid).toBe(4242);
+        expect(runViewOf({ ...base, pid: undefined }, 0).pgid).toBeNull();
+    });
+
+    it("「留下过后台子孙」与「正在等后台子孙」是两个事实，分别透出", () => {
+        const waiting = runViewOf({ ...base, awaitingGroup: true, hadSurvivingGroup: true }, 0);
+        expect(waiting.awaitingGroup).toBe(true);
+        expect(waiting.hadSurvivingGroup).toBe(true);
+        const after = runViewOf({ ...base, awaitingGroup: false, hadSurvivingGroup: true }, 0);
+        expect(after.awaitingGroup).toBe(false);
+        expect(after.hadSurvivingGroup).toBe(true);
+    });
+
+    it("通知状态透出（「agent 会不会被叫醒」要能看见）", () => {
+        expect(runViewOf(base, 0).notified).toBe(false);
+        expect(runViewOf({ ...base, notified: true }, 0).notified).toBe(true);
+    });
+});

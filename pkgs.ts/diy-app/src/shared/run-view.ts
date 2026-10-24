@@ -33,6 +33,10 @@ export interface RunFact extends RunLike {
     foreground?: boolean;
     /** 根命令已退出、但进程组里还有活口（长活就是这种：`nohup … &`） */
     awaitingGroup?: boolean;
+    /** 曾经有过后台子孙（收口后 `awaitingGroup` 清掉，但这个事实留着） */
+    hadSurvivingGroup?: boolean;
+    /** 结束通知是否已投递（"agent 会不会被叫醒"的可见证据） */
+    notified?: boolean;
 }
 
 export interface RunView {
@@ -75,6 +79,19 @@ export interface RunView {
     foreground: boolean;
     /** 根命令退了、后台子孙还在跑 —— 表格里标「后台」 */
     awaitingGroup: boolean;
+    /** 后台 run（`background:true`）—— 表格「类型」列 */
+    background: boolean;
+    /** 类型人话：后台 / 前台（前台 = 工具调用正在等它的结果） */
+    modeText: string;
+    /**
+     * 进程组号。detached spawn ⇒ **pgid 恒等于根 pid**，所以这里就取 pid；
+     * 台前台后没有区别（都是 `detached:true`）。进程内任务两者都 null。
+     */
+    pgid: number | null;
+    /** 曾经留下过后台子孙 */
+    hadSurvivingGroup: boolean;
+    /** 结束通知已投递 */
+    notified: boolean;
 }
 
 /** 本地时间 `HH:MM:SS`（表里只放到秒：作业的生命周期不是审计，不必到毫秒）。 */
@@ -139,6 +156,11 @@ export function runViewOf(fact: RunFact, now: number, outputBytes?: number | nul
         error: fact.error ?? null,
         foreground: fact.foreground === true,
         awaitingGroup: fact.awaitingGroup === true,
+        background: fact.foreground !== true,
+        modeText: fact.foreground === true ? "前台" : "后台",
+        pgid: fact.pid ?? null,
+        hadSurvivingGroup: fact.hadSurvivingGroup === true,
+        notified: fact.notified === true,
     };
 }
 
