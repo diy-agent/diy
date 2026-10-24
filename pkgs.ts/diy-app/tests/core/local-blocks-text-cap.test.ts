@@ -147,4 +147,22 @@ describe("Text 硬顶（##93 D）", () => {
         s.apply({ op: "delta", id: "t1", fields: { content: "x".repeat(300_000) } });
         expect(textOf(s, "t1")).toContain("已省略 168,928 字符（全文 300,000 字符；界面只保留头尾两段）");
     });
+
+    it("浏览器环境（没有全局 Buffer）也能应用大块：本模块不依赖 Node 内置", () => {
+        // 现场（##93 合入后）：renderer 里 `Buffer is not defined` → op 应用失败被跳过 →
+        // 大块内容凭空消失（不报错、不显示）。这条用例把 Buffer 拿掉，模拟 renderer。
+        const g = globalThis as { Buffer?: unknown };
+        const saved = g.Buffer;
+        try {
+            delete g.Buffer;
+            const s = store();
+            s.apply({ op: "start", id: "t1", kind: "text" });
+            s.apply({ op: "delta", id: "t1", fields: { content: "x".repeat(300_000) } });
+            const v = textOf(s, "t1");
+            expect(v.length).toBeGreaterThan(100_000);
+            expect(v).not.toContain("\uFFFD");
+        } finally {
+            g.Buffer = saved;
+        }
+    });
 });

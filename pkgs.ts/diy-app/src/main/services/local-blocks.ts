@@ -94,7 +94,13 @@ export function displayText(b: Block | undefined, path = "content"): string {
  * 等于把整条串继续钉在堆上（实测硬顶后仍有 202 KB/块，压平后 ~130 KB/块）。
  * 只在 head/tail 两段上做（各 ≤ 64 KB），每次 delta 两次 64 KB 拷贝 ≈ 0.04 ms，与每帧预算相比可忽略。
  */
-const flatten = (v: string): string => (v.length < 256 ? v : Buffer.from(v, "utf8").toString("utf8"));
+// ⚠️ 不能用 `Buffer`：本模块 main 与 **renderer** 共用（浏览器没有 Buffer —— 曾经在这里抛
+// `ReferenceError: Buffer is not defined`，整条 op 被跳过、大块内容凭空消失）。
+// TextEncoder / TextDecoder 两边都有；往返会把 lone surrogate 变成 U+FFFD（与 Buffer 行为一致），
+// 所以切点仍必须先避开代理对（见下面的 sliceNoSplitOff）。
+const FLATTEN_ENC = new TextEncoder();
+const FLATTEN_DEC = new TextDecoder();
+const flatten = (v: string): string => (v.length < 256 ? v : FLATTEN_DEC.decode(FLATTEN_ENC.encode(v)));
 
 const isHighSurrogate = (c: number): boolean => c >= 0xd800 && c <= 0xdbff;
 const isLowSurrogate = (c: number): boolean => c >= 0xdc00 && c <= 0xdfff;
