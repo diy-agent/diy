@@ -801,6 +801,12 @@ export function readOpsFrom(fp: string, from: number): Op[] {
     return readOpsRange(fp, start, size).ops;
 }
 
+/** `readOpsFrom` 的 fold 版：同一跳前缀语义，直接把 op 喂进给定块树（投递预览复用 UI 缓存时的常见展开）。 */
+function replayOpsInto(store: BlockStore, fp: string, from: number): BlockStore {
+    for (const op of readOpsFrom(fp, from)) store.apply(op);
+    return store;
+}
+
 /** `at-1` 处的字节是不是换行（读不到就当是 —— 宁可按行首处理，不无端跳行） */
 function prevByteIsNewline(fp: string, at: number): boolean {
     try {
@@ -1112,6 +1118,8 @@ function readCompactLog(taskUri: string): CompactLogEvent[] {
  * 从账本的字节偏移 `at` 读到文件尾（`at` 必须是某条事件行的行首 —— 调用方用
  * `latestBoundary` 给出的偏移）。只用于「最近一条 compact 之后发生了什么」，量级是几条事件。
  */
+// sync-io-ok: 与 readOpsRange 同一读模式（fd + 定长读）；量级 = 账本尾部几条事件（≤ 几 MB），
+// 调用点都在同步 fold 窗口内，改成异步会把整个 replay 链染成 async。
 function readCompactLogFrom(fp: string, at: number): CompactLogEvent[] {
     let size = 0;
     try {
@@ -2940,8 +2948,18 @@ export class LocalAgentManager {
     deliveryMessages(taskUri: string): HistoryDelivery {
         // ##420：只 replay 压缩账本起点之后那段（与 getSession 同一个起点、同一份判定）
         const replay = resolveOpsReplay(taskUri);
-        const store = new BlockStore();
-        for (const op of readOpsFrom(opsFile(taskUri), replay.from)) store.apply(op);
+        const fp = opsFile(taskUri);
+        const uiStart = this.uiReplayStart(taskUri);
+        // ##92：本地预览与 UI 重放**同起点**时复用同一份块树（`foldedOps` 那条缓存）——
+        // 266 实测冷启动 4.5s，打开一次投递预览面板就再吃一遍；而两条路径要的只是
+        // 「同一棵树的两种投影」（这边投递消息、那边折叠 op 流）。缓存里的 `store` 只读
+        // （`deliveryHistory` → `buildHistory` 只投影不改块），与 UI 侧共用安全。
+        // 起点不一致（断代 / 偏移不是轮首 ⇒ UI 退全量）时照旧现折：投递口径不跟着 UI 的
+        // 「宁可慢也要看得见」走 —— 那边能退全量，这边退全量就是重复喂旧轮次。
+        const store =
+            uiStart === replay.from
+                ? this.foldedEntry(taskUri, fp, replay.from).store
+                : replayOpsInto(new BlockStore(), fp, replay.from);
         // 断代/截断的标记随消息一起回给 UI（**不许静默空白**：用户看到一个空会话时必须知道为什么）
         return { ...this.deliveryHistory(taskUri, store, undefined, undefined, replay.lineBase), replay };
     }
@@ -3118,6 +3136,17 @@ export class LocalAgentManager {
      * 取向：宁可重放一遍，也绝不把两份日志的历史缝在一起。
      */
     private foldedOps(taskUri: string, fp: string, start: number): Op[] {
+        return this.foldedEntry(taskUri, fp, start).compact ?? [];
+    }
+
+    /**
+     * `foldedOps` 的**缓存条目本体**（##92）：UI 要折叠流（`compact`），投递预览要块树
+     * （`store`）—— 同一段字节只该 fold 一次，所以拆出入口，两条路径共用一份缓存。
+     *
+     * ⚠️ 返回的 `store` 是**共享对象**：调用方只读，不许 `apply` / 改块字段（改了就污染
+     * 别人的缓存）。
+     */
+    private foldedEntry(taskUri: string, fp: string, start: number): FoldCacheEntry {
         const size = fileSize(fp);
         const prefix = readPrefix(fp);
         const key = `${taskUri}#${start}`;
@@ -3163,7 +3192,7 @@ export class LocalAgentManager {
             c.compact = compactOps(c.store);
             c.compactConsumed = c.consumed;
         }
-        return c.compact;
+        return c;
     }
 
     /**
