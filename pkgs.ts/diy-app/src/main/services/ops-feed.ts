@@ -18,7 +18,7 @@
 // 【与 history() 的关系】`history()` 返回折叠流（-98% op 数，大会话快路径），
 // 订阅方首载用 history，随后从 watermark() 的水位起订阅增量 —— 两者 fold 同一棵树。
 
-import { closeSync, existsSync, openSync, readSync } from "node:fs";
+import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 import { opsFile } from "../core/local-paths";
 import type { Op } from "./local-blocks";
@@ -34,23 +34,46 @@ interface TaskFeed {
   subs: Set<AsyncQueue<OpsFrame>>;
 }
 
-/** 数文件的 `\n` 个数 = 已写行数（sink 每条 op 一行且以 `\n` 结尾） */
+/**
+ * 数文件的 `\n` 个数 = 已写行数（sink 每条 op 一行且以 `\n` 结尾）。
+ *
+ * ##420：**带缓存**（size + mtime 双判据）。ops.jsonl 可以大到几十万行 / 百 MB ——
+ * 每次订阅 / 首次问水位都全文件数一遍是纯浪费（同一次 append 之后 size 必变，故缓存不会陈旧）。
+ */
+const lineCountCache = new Map<string, { size: number; mtimeMs: number; lines: number }>();
+/** 缓存上限（按会话数）：超过就丢最早的一条 —— 它只是个加速器，丢了重数就行 */
+const LINE_COUNT_CACHE_MAX = 64;
+
 function countLines(fp: string): number {
-  if (!existsSync(fp)) return 0;
+  let st: { size: number; mtimeMs: number };
+  try {
+    st = statSync(fp);
+  } catch {
+    lineCountCache.delete(fp);
+    return 0;
+  }
+  const hit = lineCountCache.get(fp);
+  if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return hit.lines;
   const fd = openSync(fp, "r");
+  let n = 0;
   try {
     const CHUNK = 256 * 1024;
     const buf = Buffer.allocUnsafe(CHUNK);
-    let n = 0;
     let bytes: number;
     // 分块数换行：不整文件读进内存（ops.jsonl 可达几十 MB）
     while ((bytes = readSync(fd, buf, 0, CHUNK, null)) > 0) {
       for (let i = 0; i < bytes; i++) if (buf[i] === 0x0a) n++;
     }
-    return n;
   } finally {
     closeSync(fd);
   }
+  lineCountCache.delete(fp);
+  lineCountCache.set(fp, { size: st.size, mtimeMs: st.mtimeMs, lines: n });
+  if (lineCountCache.size > LINE_COUNT_CACHE_MAX) {
+    const oldest = lineCountCache.keys().next().value;
+    if (oldest !== undefined) lineCountCache.delete(oldest);
+  }
+  return n;
 }
 
 /**
@@ -244,6 +267,7 @@ export const opsFeed = new OpsFeed();
  */
 function resetFeeds(): void {
   opsFeed.resetForTest();
+  lineCountCache.clear();
 }
 
 export const __test = { readOpLines, countLines, resetFeeds };
