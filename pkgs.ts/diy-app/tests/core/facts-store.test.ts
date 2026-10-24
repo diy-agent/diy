@@ -61,10 +61,14 @@ describe("定位真源", () => {
         expect(store.resolveFactsDir()).toBe(kb);
     });
 
-    it("显式目录原样返回（不预检），读取时才报不存在 —— 不静默当空库", () => {
+    // 2026-10-23（大王判决）：路径指错**不再是错误** —— 库没有就是空库，读就出空。
+    // 顺带说明这里为什么不再"预检路径"：预检 + 读取两处判同一件事，就是"三处保护"的来源。
+    it("显式目录原样返回，指到不存在的路径 ⇒ 空库（零计数，不抛）", () => {
         delete process.env["DIY_FACTS_DIR"];
         expect(store.resolveFactsDir("/definitely/not/here")).toBe("/definitely/not/here");
-        expect(() => store.status({ dir: "/definitely/not/here" })).toThrow(/不存在|repo-missing/);
+        const s = store.status({ dir: "/definitely/not/here" });
+        expect(s.facts).toBe(0);
+        expect(existsSync("/definitely/not/here")).toBe(false);
     });
 });
 
@@ -283,10 +287,9 @@ describe("--in task:<uri>（任务级库）", () => {
         evidence: { source: "user", at: "K.ts:1", verifiedAt: "2026-10-21" },
     };
 
-    it("解析到 <DIY_HOME>/<uri>/knowledge，词表回落仓库、允许首次建库", () => {
+    it("解析到 <DIY_HOME>/<uri>/knowledge，词表回落仓库", () => {
         const t = store.resolveFactsTarget({ in: "task:projects/4/tasks/404" });
         expect(t.dir).toBe(path.join(taskDir, "knowledge"));
-        expect(t.allowMissing).toBe(true);
         expect(t.subjectsFallback).toBe(path.join(kb, "subjects.yaml"));
     });
 
@@ -294,7 +297,6 @@ describe("--in task:<uri>（任务级库）", () => {
         for (const spec of [undefined, "project"]) {
             const t = store.resolveFactsTarget(spec === undefined ? {} : { in: spec });
             expect(t.dir).toBe(kb);
-            expect(t.allowMissing).toBe(false);
         }
     });
 
@@ -302,7 +304,6 @@ describe("--in task:<uri>（任务级库）", () => {
         // 原先 global 与 project 都落到仓库库 —— 那让"设备级事实"无处可去（##5 需求 3 的实质）。
         const t = store.resolveFactsTarget({ in: "global" });
         expect(t.dir).toBe(path.join(home, "knowledge"));
-        expect(t.allowMissing).toBe(true);
         // 词表仍继承仓库（同一套 subject 命名），证据按 ~ 解析
         expect(t.subjectsFallback).toBe(path.join(kb, "subjects.yaml"));
         // 证据解析根 = **真家目录**（不是 dirname(DIY_HOME)：lab 的 DIY_HOME 在 build/ 下）
@@ -353,8 +354,13 @@ describe("--in task:<uri>（任务级库）", () => {
         expect(() => store.resolveFactsTarget({ in: "whatever" })).toThrow(/bad-in|task:<taskUri>/);
     });
 
-    it("status --in 尚未建库 → 报缺失（不当空库），讯息指向 submit", () => {
-        expect(() => store.status({ in: "task:projects/4/tasks/404" })).toThrow(/还没建.*submit/);
+    // 2026-10-23 翻转：**尚未建库 = 空库**（零计数，不抛）。原先这里抛「库还没建…先跑 submit」，
+    // 而 `submit --dry-run` 又会偷偷建库 —— 两边自相矛盾，且"没库"被当成了错误。
+    it("status --in 尚未建库 → 零计数（空库），不抛", () => {
+        const s = store.status({ in: "task:projects/4/tasks/404" });
+        expect(s.facts).toBe(0);
+        expect(s.subjects).toBe(0);
+        expect(existsSync(path.join(taskDir, "knowledge"))).toBe(false);
     });
 });
 
@@ -650,5 +656,106 @@ describe("字节账 / expose 档", () => {
         expect(existsSync(file)).toBe(true);
         // 且它指向 **repo.root 之外**时也一样能打开（lab 与生产的差别只在这里）
         expect(file).toBe(path.join(kb, "facts", "app.yaml"));
+    });
+});
+
+// ── 库不存在 = 空库（2026-10-23 大王判决）────────────────────────────────────
+//
+// 要治的病：同一件事有过三处保护 —— `loadRepo` 的 `allowMissing` 建目录、`status` / `project`
+// 各自在门口抛「库还没建」。三者互相打架：`submit --dry-run`（自称"磁盘一个字都不动"）
+// 顺手把库建了出来，而并发的另一个 `status` 又报"没库"。
+// 现在：读就出空、写就直接写（目录由 `atomic-write` 顺带建出），"建库"不再是一个动作。
+describe("空库语义：读就出空、写就直接写", () => {
+    let home = "";
+    let taskDir = "";
+    let taskKb = "";
+    const prevHome = process.env["DIY_HOME"];
+    /** 判据用：递归列出目录内容（不存在 ⇒ []）；前后比对 = "磁盘有没有变" */
+    const snapshot = (dir: string): string[] => {
+        if (!existsSync(dir)) return [];
+        const { readdirSync, statSync } = require("node:fs") as typeof import("node:fs");
+        const out: string[] = [];
+        const walk = (d: string): void => {
+            for (const name of readdirSync(d).sort()) {
+                const abs = path.join(d, name);
+                out.push(path.relative(dir, abs) + (statSync(abs).isDirectory() ? "/" : ""));
+                if (statSync(abs).isDirectory()) walk(abs);
+            }
+        };
+        walk(dir);
+        return out;
+    };
+
+    beforeEach(() => {
+        home = mkdtempSync(path.join(os.tmpdir(), "facts-empty-"));
+        process.env["DIY_HOME"] = home;
+        taskDir = path.join(home, "projects/4/tasks/999");
+        mkdirSync(taskDir, { recursive: true });
+        taskKb = path.join(taskDir, "knowledge");
+    });
+    afterEach(() => {
+        if (prevHome === undefined) delete process.env["DIY_HOME"];
+        else process.env["DIY_HOME"] = prevHome;
+        rmSync(home, { recursive: true, force: true });
+    });
+
+    const inTask = "task:projects/4/tasks/999";
+    const oneFact = { subject: "dev.test", aspect: "bail", value: "红灯即停", evidence: { source: "user" as const } };
+
+    it("空库 + status ⇒ 零计数、不抛、磁盘一个字不动", () => {
+        const before = snapshot(taskDir);
+        const s = store.status({ in: inTask });
+        expect(s.facts).toBe(0);
+        expect(s.claims).toBe(0);
+        expect(s.subjects).toBe(0);
+        expect(snapshot(taskDir)).toEqual(before);
+        // 关键的一半：连 `knowledge/` 都不该冒出来
+        expect(existsSync(taskKb)).toBe(false);
+    });
+
+    it("空库 + submit --dry-run ⇒ 不建库（这是原来的 bug）", () => {
+        const before = snapshot(taskDir);
+        const r = store.submitPayload({ facts: [oneFact], subjects: [] }, { in: inTask, dryRun: true });
+        expect(r.problems).toEqual([]);
+        expect(snapshot(taskDir)).toEqual(before);
+        expect(existsSync(taskKb)).toBe(false);
+        // dry-run 也不会自称"建了库"
+        expect(r.report.created).toBeUndefined();
+    });
+
+    it("空库 + submit（真写）⇒ 文件自己出现，且报告回显 created", () => {
+        const r = store.submitPayload({ facts: [oneFact], subjects: [] }, { in: inTask });
+        expect(r.problems).toEqual([]);
+        expect(r.report.added).toEqual(["dev.test#bail"]);
+        expect(r.report.created).toEqual({ dir: taskKb });
+        const file = path.join(taskKb, "facts", "dev.yaml");
+        expect(existsSync(file)).toBe(true);
+        expect(readFileSync(file, "utf8")).toContain("红灯即停");
+        // 库已存在时不再回显（"新建"只发生一次）
+        const again = store.submitPayload({ facts: [{ ...oneFact, value: "红灯即停。" }], subjects: [] }, { in: inTask });
+        expect(again.report.created).toBeUndefined();
+    });
+
+    it("--dir 指一个不存在的路径 ⇒ 照样写，但报告 created 说出落点", () => {
+        // 全新的库没有词表可继承（`--dir` 不像任务库那样回落仓库），所以词表与事实同一批提
+        const fresh = path.join(root, "brand-new-kb");
+        const r = store.submitPayload(
+            { facts: [oneFact], subjects: [{ key: "dev.test", description: "测试" }] },
+            { dir: fresh },
+        );
+        expect(r.problems).toEqual([]);
+        // 判据：**不阻止，也不静默** —— 手敲的路径容易写错，写成功但落错库是最难查的那种
+        expect(r.report.created).toEqual({ dir: fresh });
+        expect(existsSync(path.join(fresh, "facts", "dev.yaml"))).toBe(true);
+    });
+
+    it("空库 + project ⇒ 不抛，返回空投影，且不建库", () => {
+        const before = snapshot(taskDir);
+        const p = store.projectFacts({ in: inTask });
+        expect(p.shown).toEqual([]);
+        expect(p.omitted).toEqual([]);
+        expect(existsSync(taskKb)).toBe(false);
+        // 投影更不许建库（它是**读**，每轮都跑）
+        expect(snapshot(taskDir)).toEqual(before);
     });
 });

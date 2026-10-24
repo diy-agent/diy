@@ -6,7 +6,8 @@
  * （`diy facts context --in task:<uri>` 预览 / 页面上的"这一轮会投什么"）。
  *
  * 三条纪律：
- *   ① **读操作永不建库**（`allowMissing: false`）：投影顺手 `mkdir` 会让"库建没建"不可判定。
+ *   ① **读操作永不建库**：`loadRepo` 读路径已不碰磁盘（2026-10-23 删掉 `allowMissing`），
+ *      本文件再用 `existsSync` 判"有没有库"只是为了让"库不存在"渲染成**单元缺席**而不是空对象。
  *   ② **读失败不许炸掉整轮**：库坏了 / 找不到，降级为"这个单元缺席 + 一条 problem" ——
  *      上下文构造失败 = 人连消息都发不出去，代价远大于"这一轮没看到事实"。
  *   ③ **不在这里拼给人看的句子**（句子归 CLI 的 format*）：这里只出结构化值，
@@ -80,14 +81,13 @@ const libKey = (ns: Ns): string => (ns.kind === "task" ? `task:${ns.taskUri}` : 
  * 调用方据此决定"缺席"而不是"给了个空对象"—— 空对象会被信封渲染成 `facts.task: {}`，
  * 看起来像"任务库存在但没有事实"，与"根本没有库"是两件事。
  */
-function loadQuietly(dir: string, ns: Ns, opts: { subjectsFallback?: string; root?: string; allowMissing?: boolean }): Loaded | null {
+function loadQuietly(dir: string, ns: Ns, opts: { subjectsFallback?: string; root?: string }): Loaded | null {
     if (!existsSync(path.join(dir, "facts"))) return null;
     try {
         return {
             ns,
             expose: readExpose(dir),
             repo: loadRepo(dir, {
-                allowMissing: opts.allowMissing === true,
                 ...(opts.subjectsFallback === undefined ? {} : { subjectsFallback: opts.subjectsFallback }),
                 ...(opts.root === undefined ? {} : { root: opts.root }),
             }),

@@ -200,6 +200,14 @@ export const FactsSubmitReportSchema = z.object({
     files: z.array(z.object({ file: z.string(), before: z.number(), after: z.number() })),
     /** 本批物理删除的 id（改名 = drop 旧 id + 写新 id，同批事务） */
     dropped: z.array(z.string()),
+    /**
+     * 本批**顺手建了库**（只在真写了、且写前 `facts/` 不存在时出现）。
+     *
+     * 为什么要有：`--dir <path>` 是手敲的路径，写错一个新目录也会"成功" —— 不提示就等于
+     * 默许知识进了另一个库。`--in task:<uri>` / `global` 同样会带（路径是推导的，建库是预期
+     * 行为，带上是给人确认"库在哪"）。**不阻止、不静默**：这是唯一允许的形态。
+     */
+    created: z.object({ dir: z.string() }).optional(),
 });
 
 export const FactsSubmitSchema = z.object({

@@ -176,7 +176,7 @@ function selfTest() {
     ["InvariantError literal", `throw new InvariantError("agent/invariant-step-seq", "x");`, 0],
     ["InvariantError bad code", `throw new InvariantError("stepSeq");`, 1],
     ["InvariantError variable code", `const c = "agent/x";\nthrow new InvariantError(c);`, 1],
-    ["FactsStoreError literal code", `throw new FactsStoreError("agent/facts-repo-missing", "x");`, 0],
+    ["FactsStoreError literal code", `throw new FactsStoreError("agent/facts-bad-in", "x");`, 0],
     ["FactsStoreError bad code", `throw new FactsStoreError("facts/repo-missing", "x");`, 1],
     ["rethrow", `try { x(); } catch (e) { throw e; }`, 0],
     ["comment only", `// throw new Error("x");`, 0],

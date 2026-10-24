@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildIndex } from '../src/index';
-import { checkRepo, FactsRepoError, loadRepo, parseEvidenceAt, renderDoc, submit } from '../src/node/index';
+import { checkRepo, loadRepo, parseEvidenceAt, renderDoc, submit } from '../src/node/index';
 import type { Fact } from '../src/types';
 
 const tmp: string[] = [];
@@ -45,8 +45,35 @@ function fact(over: Partial<Fact> & { id: string; subject: string; aspect: strin
 }
 
 describe('loadRepo / checkRepo', () => {
-    it('目录不存在 = 环境问题，不静默当空库', () => {
-        expect(() => loadRepo('/nonexistent/knowledge')).toThrow(FactsRepoError);
+    // 2026-10-23 大王判决：**库不存在 = 空库**。「读就出空、写就直接写」，没有"建库"这个动作
+    // —— 原先这里抛 `facts/repo-missing`，逼得调用方各自抢在写之前把目录建出来
+    // （`submit --dry-run` 因此会建库，把"库建没建"这个状态改掉）。
+    it('目录不存在 = 空库（不抛、也不建目录）', () => {
+        const root = mkdtempSync(path.join(os.tmpdir(), 'facts-'));
+        tmp.push(root);
+        const dir = path.join(root, 'knowledge');
+        const repo = loadRepo(dir);
+        expect(repo.facts).toEqual([]);
+        expect(repo.files).toEqual([]);
+        expect(repo.schemaIssues).toEqual([]);
+        expect(existsSync(dir)).toBe(false);
+    });
+
+    // 「写就直接写」的另一半：空库 `submit` 不需要任何人先建目录（`atomic-write` 顺带 mkdir）。
+    // 注意"不需要前置动作"指的是**环境**（目录/文件），不是**判据** —— 词表与证据照样要过，
+    // 那是内容正确性，两件事别混。
+    it('空库 + submit ⇒ 目录与文件自己出现', () => {
+        const root = mkdtempSync(path.join(os.tmpdir(), 'facts-'));
+        tmp.push(root);
+        writeFileSync(path.join(root, 'README.md'), 'x\n');
+        const dir = path.join(root, 'knowledge');
+        const { report, problems } = submit(dir, {
+            facts: [fact({ id: 'a', subject: 'app.port', aspect: 'default', value: '1' })],
+            subjects: [{ key: 'app.port', description: '端口' }],
+        });
+        expect(problems).toEqual([]);
+        expect(report.added).toEqual(['a']);
+        expect(existsSync(path.join(dir, 'facts', 'app.yaml'))).toBe(true);
     });
 
     it('证据指向的文件不存在 → error（G4）', () => {

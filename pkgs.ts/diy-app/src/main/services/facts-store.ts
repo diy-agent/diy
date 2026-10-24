@@ -57,8 +57,13 @@ type DtoFact = z.infer<typeof FactSchema>;
 type DtoProblem = { level: "error" | "warning"; code: string; detail: string; facts?: string[] };
 
 /** 问题表同样是 readonly→plain（`facts` 数组要摊开，否则 DTO 类型对不上） */
-/** 报告里全是 readonly 数组（内核不可变纪律）→ 摊成 DTO */
-function plainReport(r: SubmitReport) {
+/**
+ * 报告里全是 readonly 数组（内核不可变纪律）→ 摊成 DTO。
+ *
+ * `created` 是 **app 侧**加的（内核不知道"库刚诞生"这件事 —— 它只管写文件，
+ * 而 `atomic-write` 顺手建目录；"是不是新建的"只有调用方在写前那次 `existsSync` 能答）。
+ */
+function plainReport(r: SubmitReport, created?: { dir: string }) {
     return {
         dryRun: r.dryRun,
         added: [...r.added],
@@ -68,6 +73,7 @@ function plainReport(r: SubmitReport) {
         droppedSubjects: [...r.droppedSubjects],
         files: r.files.map((f) => ({ file: f.file, before: f.before, after: f.after })),
         dropped: [...r.dropped],
+        ...(created === undefined ? {} : { created }),
     };
 }
 
@@ -164,17 +170,18 @@ export function resolveFactsDir(explicit?: string): string {
 
 /**
  * 库的定位结果。**为什么不是单纯一个目录**：任务级库与仓库库的差别不在路径，
- * 而在两条附加语义 —— ① 词表继承（否则每个任务复制一份 subjects.yaml 必然分叉）
- * ② 首次写入即诞生（任务库第一次 `submit` 前目录根本不存在）。
- * 把这两条塞进调用方，`submit` / `status` 就各写一遍，迟早不一致。
+ * 而在附加语义 —— 词表继承（否则每个任务复制一份 subjects.yaml 必然分叉），
+ * 以及证据 / paths 的解析根不同（任务库讲的是代码仓的事）。
+ * 把这几条塞进调用方，`submit` / `status` 就各写一遍，迟早不一致。
+ *
+ * **这里没有 `allowMissing`**（2026-10-23 删）：库不存在就是空库 —— 读就出空、
+ * 写就直接写（`atomic-write` 顺带建目录）。"库建没建"不再需要每个入口各自判、各自抛。
  */
 export interface FactsTarget {
     /** 库的 `knowledge/` 绝对路径 */
     readonly dir: string;
     /** 词表缺省来源（任务级库 → 仓库词表；仓库库自身 = 无） */
     readonly subjectsFallback?: string;
-    /** 首次写入可建库（只有任务级库为 true） */
-    readonly allowMissing: boolean;
     /**
      * 证据 / paths 的解析根。任务级库指向**仓库根**而非任务目录 ——
      * 任务写的事实讲的是代码仓的事（`pkgs.ts/diy-app/src/x.ts:10`），
@@ -225,7 +232,7 @@ export function resolveFactsTarget(opts: { dir?: string; in?: string } = {}): Fa
         // dirname(DIY_HOME)：lab 的 DIY_HOME 在 build/lab/home，dirname 会算到 build/lab。
         const prodKb = path.join(os.homedir(), ".diy", "knowledge");
         const readExtra = prodKb === ownDir || !existsSync(path.join(prodKb, "facts")) ? [] : [prodKb];
-        const out: FactsTarget = { dir: ownDir, allowMissing: true, kind: "global", ...(readExtra.length > 0 ? { readExtra } : {}) };
+        const out: FactsTarget = { dir: ownDir, kind: "global", ...(readExtra.length > 0 ? { readExtra } : {}) };
         // 词表仍优先继承仓库（同一套 subject 命名），但**仓库缺失时不阻塞**：设备库
         // 可能在任何目录下被读（agent 的 cwd 不一定是仓库）。
         try {
@@ -273,7 +280,6 @@ export function resolveFactsTarget(opts: { dir?: string; in?: string } = {}): Fa
             kind: "task",
             // 任务库继承仓库词表：本地 subjects.yaml 存在则本地优先（局部扩词），否则用仓库的
             subjectsFallback,
-            allowMissing: true,
             root: path.dirname(repoKb),
             ...(taskExtra.length > 0 ? { readExtra: taskExtra } : {}),
         };
@@ -284,18 +290,18 @@ export function resolveFactsTarget(opts: { dir?: string; in?: string } = {}): Fa
     return {
         dir: projectDir,
         kind: "project",
-        allowMissing: false,
         ...(projectExtra.length > 0 ? { readExtra: projectExtra } : {}),
     };
 }
 
 /**
- * `FactsTarget` → 内核选项。`forWrite` 才允许"建库"：**读操作永不制造目录** ——
- * `status` 顺手建出一个空库，会让"库在哪、建没建"这件事变得不可判定。
+ * `FactsTarget` → 内核选项。
+ *
+ * `forWrite` 现在只做一件事：**写时不读额外库**（否则 submit 会把跨根读来的条目当成
+ * "本库已有"而漏写）。"建不建目录"已不在选项里 —— 读永不碰磁盘，写由 `atomic-write` 建。
  */
 function targetOpts(t: FactsTarget, forWrite = false) {
     return {
-        allowMissing: forWrite && t.allowMissing,
         ...(t.subjectsFallback === undefined ? {} : { subjectsFallback: t.subjectsFallback }),
         ...(t.root === undefined ? {} : { root: t.root }),
         ...(t.kind === undefined ? {} : { kind: t.kind }),
@@ -334,7 +340,8 @@ function crossLibDups(repo: Repo, kb: string, extraDirs: readonly string[]): Dto
         if (abs === path.resolve(kb) || !existsSync(path.join(abs, "facts"))) continue;
         let other: Repo;
         try {
-            other = loadRepo(abs, { allowMissing: true });
+            // 读操作永不建库（2026-10-23：`allowMissing` 已从内核删掉，读路径本就不碰磁盘）
+            other = loadRepo(abs);
         } catch {
             // 额外库坏了不该让 status 不可用（它是"参考"，不是真源）
             continue;
@@ -369,12 +376,9 @@ function crossLibDups(repo: Repo, kb: string, extraDirs: readonly string[]): Dto
 export function status(opts: { dir?: string; in?: string } = {}) {
     const target = resolveFactsTarget(opts);
     const kb = target.dir;
-    if (target.allowMissing && !existsSync(path.join(kb, "facts"))) {
-        throw new FactsStoreError(
-            "agent/facts-repo-missing",
-            `库还没建：${kb} —— 第一次写入自动创建，先跑 \`diy facts submit --in ${opts.in ?? "task:<uri>"}\``,
-        );
-    }
+    // 库不存在 = 空库（2026-10-23 删掉"库还没建"的抛错）：读就出空，零计数照常返回。
+    // 这行注释是**护栏**，别把「没库」当错误加回来 —— 那会让空库上 `status` 不可用，
+    // 而 `submit --dry-run` 又偷偷把库建出来，两边自相矛盾。
     const repo = loadRepo(kb, targetOpts(target));
     // 词表 = 本根 ∪ 额外库：额外库（设备级）独有的 subject 在本根词表里当然没有 ——
     // 只认本根会把它们全判 `subject-unregistered`（实测 `skill` 只在设备库词表里，
@@ -960,6 +964,15 @@ function parseExpose(raw: unknown): Record<string, ExposeLevel> | undefined {
 export function submitPayload(payload: SubmitPayload, opts: { dir?: string; in?: string; dryRun?: boolean } = {}) {
     const target = resolveFactsTarget(opts);
     const kb = target.dir;
+    /**
+     * 本批会不会**顺手建库**（写前磁盘状态）。
+     *
+     * 为什么需要回显：`--in task:<uri>` / `global` 的路径是**推导**出来的，建库是预期行为；
+     * 而 `--dir <path>` 是**人手敲的**，写到一个不存在的路径也会"成功"—— 不提示就等于默许
+     * 他把知识写进了另一个库。判据：**不阻止，也不静默**。
+     * `--dry-run` 恒不出（它一个字都不写，自然也不会建库）。
+     */
+    const willCreate = opts.dryRun !== true && !existsSync(path.join(kb, "facts"));
     const { facts, issues } = validateFacts(payload.facts);
     // 事务边界在这一句上：**形状校验不过，一个字都不写**。
     //
@@ -996,7 +1009,9 @@ export function submitPayload(payload: SubmitPayload, opts: { dir?: string; in?:
     );
     // zod 之外的语义问题由内核给（这里只把"形状都解析不出"的情况补上）
     const schemaProblems = issues.map((i) => ({ level: "error" as const, code: i.code, detail: i.detail, ...(i.facts ? { facts: i.facts } : {}) }));
-    return { report: plainReport(report), problems: plainProblems([...schemaProblems, ...problems]) };
+    // 写成功后库才真的在：以**写后**的磁盘状态为准（写失败会抛，走不到这里）
+    const created = willCreate && existsSync(path.join(kb, "facts")) ? { dir: kb } : undefined;
+    return { report: plainReport(report, created), problems: plainProblems([...schemaProblems, ...problems]) };
 }
 
 export function affectedByFiles(files: readonly string[], opts: { dir?: string; in?: string } = {}): { ids: string[] } {
@@ -1047,12 +1062,9 @@ export function projectFacts(
 ) {
     const target = resolveFactsTarget(opts);
     const kb = target.dir;
-    if (target.allowMissing && !existsSync(path.join(kb, "facts"))) {
-        throw new FactsStoreError(
-            "agent/facts-repo-missing",
-            `库还没建：${kb} —— 第一次写入自动创建，先跑 \`diy facts submit --in ${opts.in ?? "task:<uri>"}\``,
-        );
-    }
+    // 库不存在 = 空库（2026-10-23 删掉"库还没建"的抛错）：读就出空，零计数照常返回。
+    // 这行注释是**护栏**，别把「没库」当错误加回来 —— 那会让空库上 `status` 不可用，
+    // 而 `submit --dry-run` 又偷偷把库建出来，两边自相矛盾。
     const { repo } = checkRepo(kb, targetOpts(target));
     const ns: Ns = opts.in?.startsWith("task:") ? { kind: "task", taskUri: opts.in.slice("task:".length) } : { kind: "project" };
     const out = project({

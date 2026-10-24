@@ -144,7 +144,7 @@ export function TaskFactsView(props: { uri: string }) {
                             when={data().exists}
                             fallback={
                                 <div class="opacity-60">
-                                    任务级库还没建（<code class="font-mono">{data().dir}</code>）—— 第一次 <code class="font-mono">diy facts submit --in {spec()}</code> 自动创建。
+                                    库是空的（<code class="font-mono">{data().dir}</code>）—— 第一次 <code class="font-mono">diy facts submit --in {spec()}</code> 会写在这里（目录自动建）。
                                 </div>
                             }
                         >

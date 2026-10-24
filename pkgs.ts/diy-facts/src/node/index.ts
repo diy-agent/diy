@@ -14,7 +14,7 @@
 // 改由文档里的 `note` 字段生成（真源里就不能只活在注释里）。这样 `git diff` 恒为
 // "条目级"变更，不会因为谁手工排了序而整篇翻红。
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { load } from 'js-yaml';
@@ -132,12 +132,6 @@ export interface LoadRepoOptions {
      */
     readonly subjectsFallback?: string;
     /**
-     * facts 目录不存在时是否当空库（并在 `submit` 时建出来）。
-     * 缺省 `false` —— 仓库真源缺失是环境问题，静默当空库会让 `submit` 写到别处。
-     * 任务级库才开：它本来就是"第一次写入时诞生"。
-     */
-    readonly allowMissing?: boolean;
-    /**
      * 覆盖 `root`（缺省 = `knowledge/` 的父目录）。
      *
      * 为**任务级库**而设：任务的库住在 `$DIY_HOME/projects/<p>/tasks/<t>/knowledge/`，
@@ -204,7 +198,8 @@ function readSubjects(localFile: string, fallbackFile?: string): { all: SubjectD
  *
  * 为什么单独开一个口：`status` 跨库读时要判"这个 subject 在哪份词表里登记过" ——
  * 只认主库词表会把额外库（设备级）独有的 subject 全判成"未登记"（实测 `skill` 就是这样）。
- * 用 `loadRepo` 去读额外库不行：它带 `allowMissing` 会**顺手建目录**，读操作不该有副作用。
+ * （历史：早期这里必须绕开 `loadRepo`，因为它带 `allowMissing` 会**顺手建目录**。
+ * 2026-10-23 起 `loadRepo` 读路径永不碰磁盘，那个绕行已不必要 —— 注释留档，别回退。）
  */
 export function readSubjectDefs(knowledgeDir: string): SubjectDef[] {
     try {
@@ -241,19 +236,22 @@ export function readExpose(knowledgeDir: string): ExposeMap {
     }
 }
 
-/** 装载真源。除非 `allowMissing`，目录不存在 = 环境问题（不是"空库"） */
+/**
+ * 装载真源。
+ *
+ * **库不存在 = 空库**（2026-10-23 大王判决）：读就出空、写就直接写，没有"建库"这个动作。
+ * 原先这里有 `allowMissing` 分支会 `mkdirSync` —— 后果是 `submit --dry-run`（自称"磁盘一个字
+ * 都不动"）顺手把库建了出来，把"库建没建"这个状态改掉了；`status` / `project` 又各自在门口抛
+ * 「库还没建」。同一件事三处保护、三处说法，全是多余的。
+ * 现在：读路径**不碰磁盘**（目录不在就不扫文件段），写路径由 `atomic-write` 的
+ * `mkdirSync(dirname(target))` 顺带建出 —— 唯一定义落在"写就得有目录"这一句上。
+ */
 export function loadRepo(knowledgeDir: string, opts: LoadRepoOptions = {}): Repo {
     const dir = path.resolve(knowledgeDir);
     const factsDir = path.join(dir, 'facts');
-    if (!existsSync(factsDir)) {
-        if (opts.allowMissing !== true) {
-            throw new FactsRepoError('facts/repo-missing', `事实库真源不存在：${factsDir}（--dir 指错？）`);
-        }
-        mkdirSync(factsDir, { recursive: true });
-    }
     const { all: subjects, local: localSubjects } = readSubjects(path.join(dir, 'subjects.yaml'), opts.subjectsFallback);
 
-    const files = readdirSync(factsDir)
+    const files = (existsSync(factsDir) ? readdirSync(factsDir) : [])
         .filter(isFactFile)
         .sort()
         .map((f) => path.join(factsDir, f));
