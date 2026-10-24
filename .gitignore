@@ -56,6 +56,9 @@ data/
 
 .worktree/
 _diy.worktrees/
+# 现行 worktree 位置（rule.worktree-path，2026-10-23 起）：仓库内部 <repo>/diy.worktrees/<标识>。
+# 必须 ignore —— 否则 `git add -A` 会把整棵 worktree 收进主仓，`rg`/`fd` 也会扫。
+diy.worktrees/
 .playwright-cli/
 .hermes/
 .commandcode/

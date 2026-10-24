@@ -221,8 +221,8 @@ describe("轮内重算：变量变了 → 下一步请求即用新值", () => {
     });
 });
 
-describe("压缩注记的位置：进尾部信封的 history: 键，不进 user.message", () => {
-    it("历史被压缩时，末条 user 消息 = history + runtime + user 三段；用户原话无污染", async () => {
+describe("压缩注记的位置：自占一条 user 消息，挂在历史第一条之前（##421）", () => {
+    it("历史被压缩时，注记 = messages[1]（system 之后、历史之前）；尾部信封只剩 runtime + user", async () => {
         // 把历史预算调到极小 → 一定触发注记（真源 = $DIY_HOME/auto-compact.yaml 的 policy）
         writeFileSync(
             join(diyHome(), "auto-compact.yaml"),
@@ -244,19 +244,26 @@ describe("压缩注记的位置：进尾部信封的 history: 键，不进 user.
         for await (const _op of mgr.chat(uri, "第二轮")) void _op;
 
         const prompt = (model.doStreamCalls[1]?.prompt ?? []) as Array<{ role: string; content: unknown }>;
-        const last = prompt[prompt.length - 1];
-        expect(last?.role).toBe("user");
-        // ⚠️ 经 SDK 后 user 的 content 一律是 part 数组（可能是单 part 或多 part）→ 取首段文本
-        const content = last?.content;
-        const text =
-            typeof content === "string"
-                ? content
-                : ((content ?? []) as Array<{ text?: string }>).map((part) => part.text ?? "").join("\n");
-        expect(text.startsWith("history:")).toBe(true);
-        expect(text).toContain("\nruntime:");
-        expect(text.endsWith('user:\n  message: "第二轮"')).toBe(true);
-        // 用户原话那一节里不出现自动生成的元数据
-        expect(text.slice(text.indexOf("\nuser:"))).not.toContain("history");
+        // ⚠️ 经 SDK 后 user 的 content 一律是 part 数组（可能是单 part 或多 part）→ 取文本
+        const textOf = (c: unknown): string =>
+            typeof c === "string" ? c : ((c ?? []) as Array<{ text?: string }>).map((part) => part.text ?? "").join("\n");
+
+        // ② 注记在 system 之后的第一条（就位，不被埋在尾部）
+        expect(prompt[0]?.role).toBe("system");
+        expect(textOf(prompt[1]?.content).startsWith("history:")).toBe(true);
+
+        // 尾部信封只剩 runtime + user（注记已不在这里）
+        const tail = textOf(prompt[prompt.length - 1]?.content);
+        expect(tail).toContain("runtime:");
+        // ⚠️ 判据必须是「**行的开头**是 history:」（顶层键），不能是「文本里出现 history:」——
+        // runtime 变量树里就有 `where#history:` 这种**键名本身含 history:** 的单元（本任务实测踩到），
+        // 子串判据会把它当成注记混进来。
+        const hasHistoryKey = (t: string): boolean => /^history:/m.test(t);
+        expect(hasHistoryKey(tail)).toBe(false);
+        expect(tail.endsWith('user:\n  message: "第二轮"')).toBe(true);
+
+        // ③ 注记没被并进相邻消息的正文：紧跟其后的那一条不携带索引文本
+        expect(hasHistoryKey(textOf(prompt[2]?.content))).toBe(false);
     });
 });
 

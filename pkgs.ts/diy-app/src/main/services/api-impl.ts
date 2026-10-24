@@ -921,7 +921,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
         taskUri,
         system: lab.system.text,
         model,
-        // runtime 由 previewSimulatedRequest 经 withRuntime 拼进**尾部信封**（history? + runtime + user）
+        // runtime 由 previewSimulatedRequest 经 withRuntime 拼进**尾部信封**（runtime + user）；
+        // 压缩注记（history:）则自占一条消息、挂在历史首条之前（##421）
         runtime: lab.runtime.text,
       });
       request = { body: sim.body, note: sim.note, model };

@@ -28,6 +28,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { writeFileAtomic } from "../core/atomic-write";
+import { fieldNames, renderFieldDocs } from "../../shared/schema-doc";
 import { findInOpsFile, type FindResult, type FindScopes } from "./local-find";
 import { diyHome, projectDir, projectFromUri } from "../core/state";
 import { keyOf, llmFile, llmLogRelPath, localDir, opsFile, sessionFileForWrite, sessionFilesToClear, sessionIdOf } from "../core/local-paths";
@@ -50,7 +51,9 @@ import {
     selectForDelivery,
     type BlockKind,
     type BlockNode,
+    type BudgetSelection,
     type DeliveryOpts,
+    type LocalModelMessage,
     type Op,
     type JSONVal,
     type TurnEndReason,
@@ -137,7 +140,7 @@ import { buildDelivery, isRuntimePlace, runtimeDiffDelivery, type Delivery } fro
 import { renderBudgetNote } from "../../shared/context/budget-note";
 import { mustHardCapBytesOf } from "../../shared/context/compact-keep";
 import { estimateRequest, tighterHistoryCapBytes } from "../../shared/context/request-preflight";
-import { renderSummaryPart, tailEnvelope } from "../../shared/context/envelope";
+import { isEnvelopeText, renderSummaryPart, tailEnvelope } from "../../shared/context/envelope";
 import { describeAnomalies, readLlmLog } from "../../shared/context/log-schema";
 import {
     autoCompactPolicyInput,
@@ -172,6 +175,7 @@ import {
     toolResultOf,
     type CompactTrigger,
     normalizePolicy,
+    OPS_SCHEMA_CURRENT,
     parseCompactLog,
     resolveBoundary,
     utf8Bytes,
@@ -394,6 +398,13 @@ interface LocalSession {
     store: BlockStore;
     /** llm 全量日志（append-only）已写出的消息条数 = 下次 append 的起点（真值在盘上，加载时对账得出） */
     logged: number;
+    /**
+     * `store` 的投影在 llm.jsonl 里的**行号偏移**（##420）= 被压缩跳过、本次没 replay 的消息条数。
+     * 0 = 全量加载（原有语义）；> 0 时对账只比「偏移之后那一段」，且**绝不从前缀重建**（前缀已不在内存）。
+     */
+    llmBase: number;
+    /** 本次加载的重放起点（断代标记回给 UI：不许静默空白） */
+    replay: OpsReplay;
     loaded: boolean;
     running: AbortController | null;
 }
@@ -543,7 +554,9 @@ export function normalizeUserRuns(msgs: ModelMessage[]): ModelMessage[] {
     const out: ModelMessage[] = [];
     for (const m of msgs) {
         const last = out[out.length - 1];
-        if (m.role === "user" && last?.role === "user") {
+        // 【##421】**信封形态的消息不参与合并**：自动生成的段（`history:` 注记）自占一条消息，
+        // 它放在历史第一条之前 —— 若被并进相邻 user，就又是一坨「元数据伪装成用户原话」（##310 八轮坑）。
+        if (m.role === "user" && last?.role === "user" && !isEnvelope(m) && !isEnvelope(last)) {
             out[out.length - 1] = {
                 role: "user",
                 content: mergeUserContent(last.content as UserContent, m.content as UserContent),
@@ -555,9 +568,14 @@ export function normalizeUserRuns(msgs: ModelMessage[]): ModelMessage[] {
     return out;
 }
 
+/** 信封消息（自占顶层键的自动生成段）—— 不参与 user 合并，见 `normalizeUserRuns` 与 `isEnvelopeText` */
+function isEnvelope(m: ModelMessage): boolean {
+    return m.role === "user" && typeof m.content === "string" && isEnvelopeText(m.content);
+}
+
 /**
- * 把**尾部信封**拼进 messages：`summary:`（历史摘要素，可选）+ `history:`（压缩索引注记，可选）
- * + `runtime:`（或 `runtimeDiff:`）+ `user:`（本轮输入），合成**一份**合法 YAML（`tailEnvelope`）。
+ * 把**尾部信封**拼进 messages：`summary:`（历史摘要素，可选）+ `runtime:`（或 `runtimeDiff:`）
+ * + `user:`（本轮输入），合成**一份**合法 YAML（`tailEnvelope`）。
  *
  * 为什么合成一份（##310 六轮拍板）：这些段与本轮输入是**相邻 user**，而
  * `normalizeUserRuns` 必然把它们合并成一条（收敛成"一份信封一条 user"）。与其让合并
@@ -566,8 +584,6 @@ export function normalizeUserRuns(msgs: ModelMessage[]): ModelMessage[] {
  *     summary:      ← 仅当有历史摘要（自动生成的元数据，自己的顶层键）
  *       |-
  *       …
- *     history:      ← 仅当历史被压缩（自动生成的元数据，自己的顶层键）
- *       kept: [[5, 8]]
  *     runtime:      ← 或 runtimeDiff:
  *       task: {…}
  *     user:
@@ -578,33 +594,58 @@ export function normalizeUserRuns(msgs: ModelMessage[]): ModelMessage[] {
  * （tasks/5 实测：多烧 3 次 bash、5.6 万 prompt token 就为一个字）。摘要（`withSummary`）同坑，
  * 九轮一并改成顶层键 `summary:`。
  *
- * 尾部不是 user（如自动续跑、纯工具轮）→ 不编 `user:` 段；三段全空 → 原样返回。
+ * ⚠️ `history:`（压缩索引注记，##421）**不在**尾部信封里了 —— 它自占一条 user 消息、
+ * 挂在历史第一条之前（见 `withHistoryNote`）：
+ *   · 用户原话：「压缩后第一个消息很容易分辨是被压缩了，放最后一个，完全被淹没了」。
+ *   · `runtime:` **保持尾部**：DeepSeek 前缀缓存是逐字节前缀，runtime 每轮首步必变，
+ *     挪到 system 之后会让整个历史每轮按 cache miss 计费（hit/miss 约 10×）—— 尾部只让
+ *     尾部几百字节 miss。这笔账写进 ##421 的 PR 正文。
+ *
+ * 尾部不是 user（如自动续跑、纯工具轮）→ 不编 `user:` 段；全空 → 原样返回。
  */
-function withRuntime(hist: ModelMessage[], runtime: string, historyNote = "", summaryPart = ""): ModelMessage[] {
-    const parts = [summaryPart, historyNote, runtime].filter((t) => t.trim());
+function withRuntime(hist: ModelMessage[], runtime: string, summaryPart = ""): ModelMessage[] {
+    const parts = [summaryPart, runtime].filter((t) => t.trim());
     if (parts.length === 0) return hist;
     const last = hist[hist.length - 1];
     if (last && last.role === "user" && typeof last.content === "string" && last.content.trim()) {
         return [...hist.slice(0, -1), { role: "user", content: tailEnvelope(parts, last.content) }];
     }
     // 没有可并的输入：只有 runtime 一段时保持旧形（逐字一致）；否则各段各有顶层键
-    if (parts.length === 1 && runtime.trim() && !historyNote.trim() && !summaryPart.trim()) {
+    if (parts.length === 1 && runtime.trim() && !summaryPart.trim()) {
         return [...hist, { role: "user", content: runtime }];
     }
     return [...hist, { role: "user", content: tailEnvelope(parts) }];
 }
 
 /**
+ * 把**压缩索引注记**挂到历史**首条之前**（##421）：system 之后、历史之前，**独立一条 user 消息**。
+ *
+ * 为什么不放尾部信封（旧位置）：用户原话「放最后一个，完全被淹没了」—— 压缩与否要一眼看得出来。
+ * 为什么不会被 `normalizeUserRuns` 并进相邻 user：该函数对**信封形态**的消息不合并
+ * （判据 `isEnvelopeText`，本刀一并修）。注记空串 ⇒ 不注入（没真丢消息时就是空串）。
+ */
+function withHistoryNote(hist: ModelMessage[], note: string): ModelMessage[] {
+    if (!note.trim()) return hist;
+    return [{ role: "user", content: note }, ...hist];
+}
+
+/**
  * 投递口径的历史 = **消息** + **压缩索引注记片段**（`history:` 一段，纯数据）。
  *
- * 为什么把注记拿出来（##310 八轮）：它进 messages 就必然被 `normalizeUserRuns` 合并进
- * 相邻那条 user 的正文 —— 于是自动生成的元数据伪装成用户原话。改成"注记 = 独立顶层键片段"，
- * 由调用方与 runtime 一起塞进**尾部信封**（`withRuntime`），`user.message` 只剩用户真说的那句。
+ * 注记为何单独拿出来（##310 八轮）：它进 messages 就必然被 `normalizeUserRuns` 合并进
+ * 相邻那条 user 的正文 —— 于是自动生成的元数据伪装成用户原话。
+ * 位置（##421）：由调用方用 `withHistoryNote` 挂在**历史第一条之前**（不再塞尾部信封）。
  */
 export interface HistoryDelivery {
     messages: ModelMessage[];
-    /** 压缩索引注记片段（`history:` 一段；空串 = 本次没压缩，不投递） */
+    /** 压缩索引注记（`history:` 一段；空串 = 本次没真丢消息，不投递） */
     note: string;
+    /**
+     * ##420：本次读的**重放起点**（`deliveryMessages` 预览路径才带）。
+     * 里面的 `kind` / `note` 就是断代的**可见标记**（用户 2026-10-23：不许静默空白）——
+     * UI 看到空会话时必须能说出“为什么空”。
+     */
+    replay?: OpsReplay;
 }
 
 /** 读某任务的投递快照（时间正序；文件不存在 = 还没真发过） */
@@ -727,6 +768,187 @@ function readOpsRange(fp: string, from: number, to: number): { ops: Op[]; consum
     } finally {
         closeSync(fd);
     }
+}
+
+/**
+ * 从 `from` 字节读到文件尾 → op 列表（##420：会话加载的**唯一跳前缀入口**）。
+ *
+ * 就是 `readOpsRange(fp, from, size)`，但多一道**行首校验**：
+ * `from` 来自账本的 `keptFromOpsOffset`（理论上必是轮首行的行首），但账本可能被手改 / 来自旧版本，
+ * 一旦指到行中（更糟：指向一个多字节 UTF-8 字符的中间），从那儿解出的第一条就是半行脏 JSON
+ * —— 而它的前缀字节会被当成一条独立 op 解出来，静默换掉一段历史。
+ * 故：只有当 `from-1` 处的字节是 `\n` 才认它是行首，否则向后跳到下一个行首再开始
+ * （0x0a 不可能是 UTF-8 的续字节，故这个判据对多字节字符也成立）。
+ */
+export function readOpsFrom(fp: string, from: number): Op[] {
+    const size = fileSize(fp);
+    if (size <= 0) return [];
+    let start = Math.max(0, Math.min(from, size));
+    if (start > 0 && start < size) {
+        const atLineStart = prevByteIsNewline(fp, start);
+        if (!atLineStart) start = skipToNextLineStart(fp, start, size);
+    }
+    if (start >= size) return [];
+    return readOpsRange(fp, start, size).ops;
+}
+
+/** `at-1` 处的字节是不是换行（读不到就当是 —— 宁可按行首处理，不无端跳行） */
+function prevByteIsNewline(fp: string, at: number): boolean {
+    try {
+        const fd = openSync(fp, "r");
+        try {
+            const b = Buffer.allocUnsafe(1);
+            if (readSync(fd, b, 0, 1, at - 1) !== 1) return true;
+            return b[0] === 0x0a;
+        } finally {
+            closeSync(fd);
+        }
+    } catch {
+        return true;
+    }
+}
+
+/** 从 `at` 向后找下一个行首（= 第一个 `\n` 之后）；找不到（尾部半行）= 文件尾 */
+function skipToNextLineStart(fp: string, at: number, size: number): number {
+    const CHUNK = 64 * 1024;
+    try {
+        const fd = openSync(fp, "r");
+        try {
+            const buf = Buffer.allocUnsafe(CHUNK);
+            let pos = at;
+            while (pos < size) {
+                const want = Math.min(CHUNK, size - pos);
+                const got = readSync(fd, buf, 0, want, pos);
+                if (got <= 0) break;
+                const nl = buf.subarray(0, got).indexOf(0x0a);
+                if (nl >= 0) return pos + nl + 1;
+                pos += got;
+            }
+        } finally {
+            closeSync(fd);
+        }
+    } catch {
+        /* 读不到就当文件尾 */
+    }
+    return size;
+}
+
+/** 文件的完整行数（分块数换行，不整份读进内存；断代路径专用，量级 = 一次冷加载） */
+function countFileLines(fp: string): number {
+    if (!existsSync(fp)) return 0;
+    const CHUNK = 256 * 1024;
+    let n = 0;
+    try {
+        const fd = openSync(fp, "r");
+        try {
+            const buf = Buffer.allocUnsafe(CHUNK);
+            let got: number;
+            while ((got = readSync(fd, buf, 0, CHUNK, null)) > 0) {
+                for (let i = 0; i < got; i++) if (buf[i] === 0x0a) n++;
+            }
+        } finally {
+            closeSync(fd);
+        }
+    } catch {
+        return n;
+    }
+    return n;
+}
+
+/**
+ * 会话重放的**起点**（##420）：压缩账本记的 ops 字节偏移 —— 只读起点之后的段。
+ *
+ * 病根：`getSession` / `deliveryMessages` / `buildRequestView` / `measureMustStages` 都是
+ * 「整份 replay ops.jsonl」，141 MB / 114 万行的会话每次开工都要走一遍全文件，而其中绝大多数
+ * 轮次早被压缩掉了（投递侧根本不看它们）。
+ *
+ * 口径（用户 2026-10-23）：**不引入 L2 层、不引入 commit op、不双投影** —— L2 就是「ops 的一个
+ * 读窗口」，它的载体就是账本里的一个字节偏移。故这里只做两件事：取偏移、配两个自证。
+ */
+export interface OpsReplay {
+    /** 从哪个字节开始 replay（0 = 全量） */
+    from: number;
+    /**
+     * `store` 的投影在 **llm.jsonl 里的行号偏移**（= 被跳过的消息条数；0 = 无偏移）。
+     * 投递注记（`history.kept`）与 llm 日志对账都按行号对齐，跳了段就必须把这段加上。
+     */
+    lineBase: number;
+    /**
+     * full          从未压缩 / 旧账缺偏移 ⇒ 全量（行为与今天逐字一致）
+     * offset        按账本偏移跳前缀（快路径）
+     * schema-break  账本格式断代 ⇒ 起点 EOF（旧段退化为纯审计日志，永不再 replay）
+     * truncated     文件比压缩时还短（被截断 / 换了一份）⇒ 起点作废，同样走断代
+     */
+    kind: "full" | "offset" | "schema-break" | "truncated";
+    /** 断代的**可见标记**（日志 + 回给 UI）：不许静默空白 */
+    note?: string;
+    /** 生效锚点（full 时为 null；UI/排查用） */
+    anchor: {
+        compactId: string;
+        schema: number;
+        keptFromTurnId: string | null;
+        keptFromOpsOffset?: number;
+        keptFromLlmLine?: number;
+        opsBytes?: number;
+    } | null;
+}
+
+/**
+ * 解析某任务的 ops 重放起点（纯读：账本 + 文件大小，不碰 ops 内容）。
+ *
+ * 判定顺序（任一破了就退到更保守的一档）：
+ *   ① 没有生效压缩（从未压过 / 全被 undo）→ 全量；
+ *   ② 账本 `schema` 与当前不符 → **断代**（EOF + 可见标记）；
+ *   ③ `size < 账本.opsBytes` → 文件被截断/替换 → **断代**（**绝不回退 0**：0 可能读到旧格式的别的会话）；
+ *   ④ 账本没记 `keptFromOpsOffset` / `keptFromLlmLine`（v1 旧账、全清压缩）→ 全量。
+ *
+ * 为什么 `keptFromLlmLine` 是**必需**的（而不是可选优化）：跳了前缀之后块树只含保留段，
+ * 投递注记的行号与 llm.jsonl 的 append 对账都会**整体错位**被跳过的条数；不知道错多少就只能全量重放。
+ */
+export function resolveOpsReplay(taskUri: string): OpsReplay {
+    const fp = opsFile(taskUri);
+    const full: OpsReplay = { from: 0, lineBase: 0, kind: "full", anchor: null };
+    let b: ReturnType<typeof resolveBoundary> = null;
+    try {
+        b = resolveBoundary(readCompactLog(taskUri));
+    } catch {
+        return full;
+    }
+    if (!b) return full; // 从未压缩 → 全读（安全，行为与升级前逐字一致）
+    const anchor = {
+        compactId: b.compactId,
+        schema: b.schema,
+        keptFromTurnId: b.keptFromTurnId,
+        ...(b.keptFromOpsOffset !== undefined ? { keptFromOpsOffset: b.keptFromOpsOffset } : {}),
+        ...(b.keptFromLlmLine !== undefined ? { keptFromLlmLine: b.keptFromLlmLine } : {}),
+        ...(b.opsBytes !== undefined ? { opsBytes: b.opsBytes } : {}),
+    };
+    if (b.schema !== OPS_SCHEMA_CURRENT) {
+        const lines = countFileLines(llmFile(taskUri));
+        return {
+            from: fileSize(fp),
+            lineBase: lines,
+            kind: "schema-break",
+            note: `格式断代：账本 schema=${b.schema}、当前=${OPS_SCHEMA_CURRENT}（旧 ops 段不再 replay，只作审计）`,
+            anchor,
+        };
+    }
+    const size = fileSize(fp);
+    if (b.opsBytes !== undefined && size < b.opsBytes) {
+        const lines = countFileLines(llmFile(taskUri));
+        return {
+            from: size,
+            lineBase: lines,
+            kind: "truncated",
+            note: `起点作废：ops 现有 ${size}B < 压缩时 ${b.opsBytes}B（被截断/替换）→ 断代，不回退从 0 读`,
+            anchor,
+        };
+    }
+    if (b.keptFromOpsOffset === undefined || b.keptFromLlmLine === undefined) {
+        // v1 旧账 / 全清压缩（keptFromTurnId = null 时不记偏移）：跳了就没法对齐行号 → 老实全读
+        return { ...full, anchor };
+    }
+    return { from: b.keptFromOpsOffset, lineBase: Math.max(0, b.keptFromLlmLine - 1), kind: "offset", anchor };
 }
 
 /** 读 `[from, to)` → fold → compact（**定长区间**：上滚取的那一段，不走增量缓存）。 */
@@ -1066,6 +1288,62 @@ function clip(s: string, n = 6000): string {
 const BASH_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
 
 /**
+ * bash 结果的 **YAML 头**（##419）—— **唯一真源**：渲染（`renderBashHead`）与工具 description 的
+ * 字段说明都由它派生（`shared/schema-doc.ts::fieldNames / renderFieldDocs`）。加字段只改这里。
+ *
+ * 为什么要有头：模型和人都得**一眼看清这一步是怎么结束的**（耗时 / 超没超时 / 被杀没有 / 退出码）——
+ * 以前这些信息散在正文的自然语言里，而「永挂」那几条（##419）连自然语言都没有。
+ */
+const BASH_RESULT_HEAD_SCHEMA = z.object({
+    ok: z.boolean().describe("是否正常结束（退出码 0，且没超时 / 没被杀 / 没因输出溢出被终止）"),
+    exit_code: z.number().optional().describe("退出码；超时 / 取消 / 命令没跑起来时整行缺席"),
+    duration_ms: z.number().describe("墙钟耗时（毫秒）：从 spawn 前到收尾"),
+    timeout_ms: z.number().describe("本次生效的超时（毫秒），环境变量 DIY_LOCAL_BASH_TIMEOUT_MS 可调"),
+    timed_out: z.boolean().describe("是否因超时被终止"),
+    killed: z.boolean().describe("是否被我们主动杀掉（超时 / 取消 / 输出溢出）"),
+    truncated: z.boolean().describe("投递层是否截断了正文（超 2000 行 / 50KB）；原文可 read 回取"),
+    stdout_bytes: z.number().describe("stdout 原始字节数（截断前）"),
+    stderr_bytes: z.number().describe("stderr 原始字节数（截断前）"),
+    cwd: z.string().describe("命令的工作目录（相对路径的基准）"),
+    signal: z.string().optional().describe("子进程收到的信号名（SIGKILL / SIGTERM…），没有则整行缺席"),
+});
+
+type BashHead = z.infer<typeof BASH_RESULT_HEAD_SCHEMA>;
+
+/** YAML 标量：能裸写就裸写（人读友好），否则 JSON 引号转义（cwd 里的空格 / 引号 / 冒号） */
+function yamlScalar(v: string | number | boolean): string {
+    if (typeof v !== "string") return String(v);
+    return /^[A-Za-z0-9_./~+=@-]+$/.test(v) ? v : JSON.stringify(v);
+}
+
+/**
+ * 结果的 **YAML 头 + 正文原文**（##419）：`---\n<key: value>…\n---\n` 后紧跟正文，正文逐字不动
+ * （模型 / 日志引用同一段文字，`read` 也能原样回取）。值为 undefined 的键**整行省略**。
+ */
+function renderBashHead(h: Partial<BashHead>): string {
+    const lines = ["---"];
+    for (const name of fieldNames(BASH_RESULT_HEAD_SCHEMA)) {
+        const v = h[name as keyof BashHead];
+        if (v === undefined) continue;
+        lines.push(`${name}: ${yamlScalar(v)}`);
+    }
+    lines.push("---");
+    return `${lines.join("\n")}\n`;
+}
+
+/**
+ * 投递层把 `truncated: false` 改写成 `true`（##419）。
+ *
+ * 为什么不在 execute 里就写好：**截断只发生在投递层**（`capToolOutput`，##127）—— execute 交给
+ * ops 的那一份是原文，它本来就是完整的。所以这个位只能投递时现算；只改**头部那一行**，正文不碰。
+ */
+export function markBashTruncated(text: string): string {
+    const end = text.indexOf("\n---\n", 4);
+    if (end < 0) return text; // 没有头（不该发生）→ 原样返回，绝不改正文
+    return text.slice(0, end).replace(/^truncated: false$/m, "truncated: true") + text.slice(end);
+}
+
+/**
  * bash 执行结果的**语义档**（##353：工具行 ✓/✗ 的口径真源）。
  *
  * `failed` = 这一行该画 ✗（execute 据此抛错 → SDK 发 tool-error → ops `status:"error"`）。
@@ -1171,37 +1449,104 @@ export function runBash(
 ): Promise<BashRun> {
     return new Promise((resolve) => {
         if (signal?.aborted) {
-            resolve({ text: "[已取消]", failed: false, outcome: "canceled" });
+            // 还没起进程就取消了：头照给（字段齐全），耗时 / 字节都是 0
+            resolve({
+                text:
+                    renderBashHead({
+                        ok: false,
+                        duration_ms: 0,
+                        timeout_ms: limits.bashTimeoutMs,
+                        timed_out: false,
+                        killed: false,
+                        truncated: false,
+                        stdout_bytes: 0,
+                        stderr_bytes: 0,
+                        cwd,
+                    }) + "[已取消]",
+                failed: false,
+                outcome: "canceled",
+            });
             return;
         }
         /** abort 补刀的注销器（settle 时解绑，避免监听器随轮次泄漏） */
         let offAbort: (() => void) | undefined;
         /** 超时定时器（settle 时清掉） */
         let timeoutId: NodeJS.Timeout | undefined;
-        /** 全部结局只在这里落一次（成功 / 各失败档）；'close'/'error'/取消/同步 catch 共用同一判定 */
-        const settle = (err: BashExecError, stdout: string, stderr: string, sig?: string | null): void => {
+        /** 起跑时刻（`duration_ms` 的起点）：放在 spawn 之前，含建进程的开销 */
+        const startedAt = Date.now();
+        // ── 下面这几项 settle 与 try 两处都要用（settle 在 try 外定义，收尾要读它们）──
+        // 输出按**块**攒（不逐块拼字符串）：上限判据只要长度计数，逐块 `byteLength` 是 O(n²)
+        const chunks = { out: [] as Buffer[], err: [] as Buffer[] };
+        const len = { out: 0, err: 0 };
+        const dump = (side: "out" | "err"): string => Buffer.concat(chunks[side], len[side]).toString("utf8");
+        /** 结局是否已落（Promise 本身只认第一次，这里只是别再做无用功 / 别多杀） */
+        let done = false;
+        /** 我们主动杀的（超时 / 取消 / 输出溢出）—— 对应 execFile 的 `killed` */
+        let killed = false;
+        /**
+         * 释放 stdout/stderr 管道（spawn 成功后才会被赋值）：同步抛（cwd 是普通文件 ⇒ ENOTDIR）时
+         * `child` 根本没建出来，settle 碰它就是 TDZ 崩 —— 用这个"句柄"隔一层，见下方结算处注释。
+         */
+        let destroyPipes: (() => void) | undefined;
+        /**
+         * 全部结局只在这里落一次（成功 / 各失败档）；
+         * 'close' / 'error' / 取消 / 超时 / 同步 catch 共用同一判定。
+         *
+         * `timedOut` 由**超时那条路**显式传进来（不从 `killed` 猜）：`killed` 一个位服务三条主动
+         * 路径（超时 / 输出溢出 / 取消），只有调用点知道是哪一条（见 ##419）。
+         */
+        const settle = (
+            err: BashExecError,
+            stdout: string,
+            stderr: string,
+            sig?: string | null,
+            timedOut = false,
+        ): void => {
             offAbort?.();
             offAbort = undefined;
             if (timeoutId) {
                 clearTimeout(timeoutId);
                 timeoutId = undefined;
             }
+            // 结案即刻**释放管道**（##419）：超时 / 取消时子进程可能还活着（后台作业换了
+            // session/pgid ⇒ 组杀打空），它的子孙仍握着 stdout/stderr 写端 —— 不 destroy 就每挂
+            // 一次泄 2 个 fd。`done` 闸门已挡住后续数据，destroy 只影响"谁还握着写端"。
+            destroyPipes?.();
+            destroyPipes = undefined;
             const out = [stdout, stderr].filter(Boolean).join("\n");
+            /** 结果头（##419）：字段名 / 顺序由 BASH_RESULT_HEAD_SCHEMA 派生，正文一律原文 */
+            const head = (h: { ok: boolean; exitCode?: number; signal?: string | null }): string =>
+                renderBashHead({
+                    ok: h.ok,
+                    exit_code: h.exitCode,
+                    duration_ms: Date.now() - startedAt,
+                    timeout_ms: limits.bashTimeoutMs,
+                    timed_out: timedOut,
+                    killed: killed || err?.killed === true,
+                    // 投递层（toModelOutput + markBashTruncated）按 capToolOutput 的结果改写成 true；
+                    // 这一份是**原文**，原文就是完整的 ⇒ 恒 false
+                    truncated: false,
+                    stdout_bytes: len.out,
+                    stderr_bytes: len.err,
+                    cwd,
+                    signal: h.signal ?? undefined,
+                });
             // ⚠️ 这里一律返回**完整**文本（不 clip）：发给模型的那一份由 `capToolOutput` 在
             //    投递层现算（##127）—— 在 execute 里裁 = 落进 ops 的原文当场丢。
             //
             // `outcome` 只给 job 账本（##408 刀 5），**不参与** ✓/✗ 判定（`failed` 的判据见文件头）
-            if (err?.name === "AbortError") resolve({ text: "[已取消]", failed: false, outcome: "canceled" });
+            if (err?.name === "AbortError")
+                resolve({ text: head({ ok: false }) + "[已取消]", failed: false, outcome: "canceled" });
             else if (err?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" || err?.code === "ENOBUFS")
                 resolve({
-                    text: `[输出超过 ${fmtBytes(BASH_MAX_BUFFER_BYTES)} 上限，命令已终止；以下是已收到的部分]\n${out}`,
+                    text: head({ ok: false }) + `[输出超过 ${fmtBytes(BASH_MAX_BUFFER_BYTES)} 上限，命令已终止；以下是已收到的部分]\n${out}`,
                     failed: false,
                     outcome: "fail",
                 });
             else if (err?.killed)
                 // 带上时长与出路：模型看到「30s 被杀」才会去 nohup / 分批，只写「超时」它会原样重试
                 resolve({
-                    text: `[命令超时被杀]（超过 ${fmtTimeout(limits.bashTimeoutMs)}，可用 DIY_LOCAL_BASH_TIMEOUT_MS 调整；长任务请后台跑 + 取增量日志）\n${out}`,
+                    text: head({ ok: false, signal: sig }) + `[命令超时被杀]（超过 ${fmtTimeout(limits.bashTimeoutMs)}，可用 DIY_LOCAL_BASH_TIMEOUT_MS 调整；长任务请后台跑 + 取增量日志）\n${out}`,
                     failed: false,
                     outcome: "timeout",
                     ...(sig ? { signal: sig } : {}),
@@ -1209,7 +1554,7 @@ export function runBash(
             else if (typeof err?.code === "number")
                 // 命令级非零退出（##353）：有 stderr = 失败，无 stderr = 查询未命中（数据）
                 resolve({
-                    text: `[退出码 ${err.code}]\n${out || "(无输出)"}`,
+                    text: head({ ok: err.code === 0, exitCode: err.code, signal: sig }) + `[退出码 ${err.code}]\n${out || "(无输出)"}`,
                     failed: stderr.trim().length > 0,
                     outcome: err.code === 0 ? "ok" : "fail",
                     exitCode: err.code,
@@ -1218,11 +1563,17 @@ export function runBash(
             else if (err)
                 // spawn / IO 失败（##332 ③）：命令**根本没跑起来** —— 失败档（execute 据此抛错）
                 resolve({
-                    text: `[命令未能启动 ${typeof err.code === "string" ? err.code : "?"}] ${err.message ?? ""}（工作目录：${cwd}）${out ? `\n${out}` : ""}`,
+                    text: head({ ok: false }) + `[命令未能启动 ${typeof err.code === "string" ? err.code : "?"}] ${err.message ?? ""}（工作目录：${cwd}）${out ? `\n${out}` : ""}`,
                     failed: true,
                     outcome: "fail",
                 });
-            else resolve({ text: out || "(无输出)", failed: false, outcome: "ok", exitCode: 0 });
+            else
+                resolve({
+                    text: head({ ok: true, exitCode: 0 }) + (out || "(无输出)"),
+                    failed: false,
+                    outcome: "ok",
+                    exitCode: 0,
+                });
         };
         try {
             // ⚠️ 为什么不用 execFile（##375 实测，别改回去）：`execFile` 把选项**白名单**转发给
@@ -1244,19 +1595,16 @@ export function runBash(
                 detached: true,
                 stdio: ["ignore", "pipe", "pipe"],
             });
+            // 管道释放句柄交给 settle（它跨 try 作用域，不能直接碰 child）
+            destroyPipes = () => {
+                child.stdout?.destroy();
+                child.stderr?.destroy();
+            };
             if (child.pid !== undefined) hooks?.onSpawn?.(child.pid);
-            // 输出按**块**攒（不逐块拼字符串）：上限判据只要长度计数，逐块 `byteLength` 是 O(n²)
-            const chunks = { out: [] as Buffer[], err: [] as Buffer[] };
-            const len = { out: 0, err: 0 };
-            const dump = (side: "out" | "err"): string => Buffer.concat(chunks[side], len[side]).toString("utf8");
-            /** 结局是否已落（Promise 本身只认第一次，这里只是别再做无用功 / 别多杀） */
-            let done = false;
-            /** 我们主动杀的（超时 / 输出溢出）—— 对应 execFile 的 `killed` */
-            let killed = false;
-            const finish = (err: BashExecError, o: string, e: string): void => {
+            const finish = (err: BashExecError, o: string, e: string, timedOut = false, sig?: string): void => {
                 if (done) return; // settle 内部（唯一落点）负责解绑 abort 监听与超时定时器
                 done = true;
-                settle(err, o, e, child.signalCode);
+                settle(err, o, e, sig ?? child.signalCode, timedOut);
             };
             /** 攒输出 + 上限（与 execFile 同口径：stdout / stderr **各算各的**，超了即杀、留已收到的部分） */
             const onData = (chunk: Buffer, side: "out" | "err"): void => {
@@ -1284,8 +1632,16 @@ export function runBash(
                     finish({ code, killed, message: `Command failed: /bin/bash -c ${command}` }, dump("out"), dump("err"));
             });
             // 超时：自己计时（不用 execFile 的 timeout —— 它只杀直接子进程，同一类孤儿缺口）
+            //
+            // ⚠️ **先收尾、再杀组**（##419，与下面 onAbort 同构）：只杀不收尾是"永挂"的根因 ——
+            //    后台作业（`&` + disown / 自己 setsid 的 Electron）换了 session/pgid ⇒ `kill(-pid)`
+            //    打空，它（或它的子孙）仍握着 stdout/stderr 写端 ⇒ `'close'` **永远不到** ⇒ Promise
+            //    永不 resolve（实测 30.2 / 82.4 分钟，铁证见 `~/.diy/log/agent-bash.jsonl`）。
+            //    超时这一刻结局**已经确定**，没理由再等一个可能永不到来的事件。
+            //    `signal` 显式给 "SIGKILL"：紧接着就发，不等 'close' 回填 signalCode。
             timeoutId = setTimeout(() => {
                 killed = true;
+                finish({ code: null, message: "timeout", killed: true }, dump("out"), dump("err"), true, "SIGKILL");
                 killProcessGroup(child);
             }, limits.bashTimeoutMs);
             if (signal) {
@@ -1293,6 +1649,7 @@ export function runBash(
                 // 顺序有意：这是一条"肯定结束了"的路径，不必等 close 事件（组杀完 close 才到，
                 // 中间那段 UI 会显示"还在跑"）；而杀组要在 bash 还活着时发，组 id 才有效。
                 const onAbort = (): void => {
+                    killed = true; // 头里 killed 如实置位（紧接着就发 SIGKILL，与超时同构）
                     finish({ name: "AbortError", code: "ABORT_ERR", message: "The operation was aborted" }, dump("out"), dump("err"));
                     killProcessGroup(child);
                 };
@@ -1324,15 +1681,23 @@ export interface TurnToolAnchor {
 export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: string, anchor?: TurnToolAnchor) {
     return {
         bash: tool({
-            description: "在项目目录执行 bash 命令并返回输出（查文件、跑命令、看系统信息）。",
+            description: [
+                "在项目目录执行 bash 命令并返回输出（查文件、跑命令、看系统信息）。",
+                `超时缺省 ${fmtTimeout(limits.bashTimeoutMs)}（环境变量 DIY_LOCAL_BASH_TIMEOUT_MS 调整）：超时 / 取消 / 输出溢出都会杀掉整个进程组，并**照样返回结果**（不抛错）—— 正文是已收到的部分，看头里 timed_out / killed 判断怎么结束的。`,
+                "长任务写法：`nohup <命令> > /tmp/x.log 2>&1 < /dev/null & disown` 立刻返回，然后用**另一条**命令 `tail /tmp/x.log` 取增量；不要在同一条命令里 sleep 等它跑完 —— 那只会撞上自己的超时。",
+                "stdin 已接 /dev/null：`cat`、无参 `grep` / `rg` 立刻拿到 EOF，不会挂住等输入。相对路径一律按 cwd（项目目录）解析。",
+                "结果 = YAML 头 + 正文原文（正文逐字不动）。头的字段：",
+                ...renderFieldDocs(BASH_RESULT_HEAD_SCHEMA),
+            ].join("\n"),
             inputSchema: z.object({ command: z.string().describe("要执行的 bash 命令") }),
             // ##127：单条工具输出的截断**只落投递层** —— `toModelOutput` 改写「发给模型的那一份」
             // （超 2000 行 / 50KB 时头尾 + marker + 原文落盘可 read 回取），`execute` 的返回值
             // 仍是全文（落进 ops 的原文永不动）。见 services/tool-output.ts。
-            toModelOutput: ({ toolCallId, output }) => ({
-                type: "text" as const,
-                value: capToolOutput(String(output), toolCallId, taskUri).text,
-            }),
+            toModelOutput: ({ toolCallId, output }) => {
+                const capped = capToolOutput(String(output), toolCallId, taskUri);
+                // 头里的 truncated 位只能在投递层定（真截断才知道），见 markBashTruncated
+                return { type: "text" as const, value: capped.clipped ? markBashTruncated(capped.text) : capped.text };
+            },
             execute: async ({ command }, opts) => {
                 const home = diyHome();
                 // 自杀护栏（agent-guard.ts）已停用（2026-10-02）：
@@ -2020,12 +2385,27 @@ export class LocalAgentManager {
     private getSession(taskUri: string): LocalSession {
         let s = this.sessions.get(taskUri);
         if (!s) {
-            s = { store: new BlockStore(), logged: 0, loaded: false, running: null };
+            s = {
+                store: new BlockStore(),
+                logged: 0,
+                llmBase: 0,
+                replay: { from: 0, lineBase: 0, kind: "full", anchor: null },
+                loaded: false,
+                running: null,
+            };
             this.sessions.set(taskUri, s);
         }
         if (!s.loaded) {
             // ops 日志 → 块树 → LLM 历史（wire = store = UI = LLM 单一权威路径）
-            for (const op of readJsonl<Op>(opsFile(taskUri))) s.store.apply(op);
+            // ##420：起点取压缩账本的字节偏移（只 replay 保留段）；从未压缩 / 旧账 / 断代 ⇒ from=0。
+            const replay = resolveOpsReplay(taskUri);
+            s.replay = replay;
+            s.llmBase = replay.lineBase;
+            if (replay.note) {
+                // 断代必须**显式可见**（用户 2026-10-23）：一行日志 + `replay` 标记随会话回给 UI
+                console.warn(`[local-agent] 会话 ${taskUri} ${replay.note}`);
+            }
+            for (const op of readOpsFrom(opsFile(taskUri), replay.from)) s.store.apply(op);
             // 崩溃残留自愈：半截块补终态 + 未闭合块补 stop（写回 ops，幂等）。
             // 必须在「接受新输入之前」做完 —— getSession 先于 runTurn，故补写的轮不会插到新轮后面。
             this.convergeOnLoad(taskUri, s);
@@ -2107,6 +2487,11 @@ export class LocalAgentManager {
      *   · 文件是投影的前缀 → **追加**补齐（崩溃时最后一轮没来得及写）
      *   · 中部就不一致     → **整份重建**（原子 tmp+rename）并出声（旧版本脏行 / 被手工改过）
      * 为什么不在运行期做：「只增」的价值是行号稳定（D2 的索引锚点），运行期永不回改已写内容。
+     *
+     * ##420：`store` 可能是**只 replay 了保留段**的块树（`s.llmBase > 0`）—— 此时：
+     *   · 对比从第 `llmBase + 1` 行开始（前缀不在内存，无从重建，也无必要重建）；
+     *   · 「不一致」时**保留前缀原文**、只重写偏移之后的尾段（绝不把整份缩成只剩尾巴）。
+     * 文件比 llmBase 还短（被截断 / 换了一份）⇒ 前段不可信，只追加、不改写，并大声说出来。
      */
     private reconcileLlmLog(taskUri: string, s: LocalSession): number {
         const fp = sessionFileForWrite(taskUri, "llm");
@@ -2120,10 +2505,18 @@ export class LocalAgentManager {
                 return 0;
             }
         }
+        const base = Math.max(0, s.llmBase);
+        if (base > 0 && actual.length < base) {
+            console.warn(
+                `[local-agent] llm 日志只有 ${actual.length} 行，少于重放起点 ${base}（被截断/替换）—— 只追加，不改写 ${fp}`,
+            );
+        }
+        // 尾段 = 与 `store` 对齐的那一段（base=0 时就是整份，与旧行为逐字相同）
+        const tail = actual.slice(base);
         let k = 0;
-        while (k < actual.length && k < expect.length && actual[k] === expect[k]) k++;
-        if (k === actual.length && k === expect.length) return k; // 一致
-        if (k === actual.length) {
+        while (k < tail.length && k < expect.length && tail[k] === expect[k]) k++;
+        if (k === tail.length && k === expect.length) return k; // 一致
+        if (k === tail.length) {
             // 文件是投影的前缀 → 只追加缺的尾部（崩溃残留轮），不动已写行
             try {
                 appendFileSync(fp, expect.slice(k).map((l) => `${l}\n`).join(""), "utf-8");
@@ -2137,16 +2530,30 @@ export class LocalAgentManager {
         // 只在罕见路径上跑，热路径零成本。
         let why = "";
         try {
-            const an = readLlmLog(actual.join("\n")).anomalies;
+            const an = readLlmLog(tail.join("\n")).anomalies;
             if (an.length > 0) why = `；异常行：${describeAnomalies(an)}`;
         } catch {
             /* 诊断失败不影响重建 */
         }
-        console.warn(`[local-agent] llm 全量日志与 ops 投影不一致（第 ${k + 1} 条起），整份重建 ${fp}${why}`);
+        if (base > actual.length) {
+            // 前缀都不够长：只能追加，不碰已有内容（宁可尾部多几行，也不删别人写过的历史）
+            console.warn(`[local-agent] llm 全量日志短于重放起点（${actual.length} < ${base}），只追加尾段 ${fp}${why}`);
+            try {
+                appendFileSync(fp, expect.map((l) => `${l}\n`).join(""), "utf-8");
+                return expect.length;
+            } catch (e) {
+                console.error(`[local-agent] llm 日志补齐失败 ${fp}:`, e);
+                return 0;
+            }
+        }
+        console.warn(
+            `[local-agent] llm 全量日志与 ops 投影不一致（第 ${base + k + 1} 条起），${base > 0 ? "按尾段重建" : "整份重建"} ${fp}${why}`,
+        );
         try {
             // 原子写（##382 收敛）：整份重建也是「整文件覆盖」，与 core/atomic-write.ts 同语义。
             // 注意**调用方**这里的 catch 仍是「降级返回 k」—— 那是重建路径的既有策略，非写侧行为。
-            writeFileAtomic(fp, expect.map((l) => `${l}\n`).join(""));
+            // ##420：`base > 0` 时前缀不在内存（跳过了），**原样保留**，只重写偏移之后的尾段。
+            writeFileAtomic(fp, [...actual.slice(0, base), ...expect].map((l) => `${l}\n`).join(""));
             return expect.length;
         } catch (e) {
             console.error(`[local-agent] llm 日志重建失败 ${fp}:`, e);
@@ -2199,17 +2606,24 @@ export class LocalAgentManager {
         collect?: ClippedToolDetail[],
         /** 【##406 刀 2】更紧的装配后硬上限（预检发现越线时重压一次用）；缺省 = 按模型窗口算 */
         hardCapBytes?: number,
+        /** ##420：`store` 在 llm.jsonl 里的行号偏移（只 replay 保留段时 = 被跳过的消息条数） */
+        llmLineBase = 0,
     ): HistoryDelivery {
         // 【配置 / 历史分离，用户 2026-10-07】投递口径 = **当前配置**（期望值），每次请求实时算 ——
         // 改预算**本轮即生效**。压缩账（compact.jsonl）只是**历史快照**（不可变，供回溯/对比），
         // 不再决定投递（旧实现读 `resolveBoundary` → 没压过就不生效，违反直觉）。
         const policy = loadAutoCompact(diyHome()).policy;
-        return this.buildHistory(store, policy, collect, taskUri, hardCapBytes);
+        return this.buildHistory(store, policy, collect, taskUri, hardCapBytes, llmLineBase);
     }
 
     /** 面板参数预览用（给定 policy + 边界现算，不读生效账本）—— 与真发同一条构造链 */
-    private deliveryHistoryForView(store: BlockStore, policy: CompactPolicy | null, taskUri: string): HistoryDelivery {
-        return this.buildHistory(store, policy, undefined, taskUri);
+    private deliveryHistoryForView(
+        store: BlockStore,
+        policy: CompactPolicy | null,
+        taskUri: string,
+        llmLineBase = 0,
+    ): HistoryDelivery {
+        return this.buildHistory(store, policy, undefined, taskUri, undefined, llmLineBase);
     }
 
 /**
@@ -2224,6 +2638,12 @@ export class LocalAgentManager {
         taskUriOf = "",
         /** 【##406 刀 2】更紧的装配后硬上限；缺省 = 按模型窗口算 */
         hardCapBytes?: number,
+        /**
+         * ##420：`store` 在 llm.jsonl 里的**行号偏移**（= 读取侧跳过的消息条数）。
+         * 注记的 `kept` 是「llm.jsonl 物理行号」，而 `store` 只含保留段 ⇒ 选择出的行号要整体加上它；
+         * 忘了加 = 注记把模型指向一批**别的**消息（行号错位，且只错在跳过段的长度上）。
+         */
+        llmLineBase = 0,
     ): HistoryDelivery {
         const opts: DeliveryOpts = policy ? optsFor(policy, taskUriOf, collect, undefined, hardCapBytes) : {};
         const kept = blocksToMessages(store, opts) as unknown as ModelMessage[];
@@ -2231,17 +2651,43 @@ export class LocalAgentManager {
         // 预算注记：只列**保留区间**（gap 自明，不逐 gap 标注）
         const all = projectAll(store);
         const sel = selectHistoryByBudget(all, policy.modeData.budgetBytes, opts);
+        // 【##421】注记**只在真丢了消息时**出现：keptRuns 覆盖全部消息（无 gap）⇒ 什么都没压 ⇒ 不注入。
+        // 旧实现只看 `policy` 非空 ⇒ **恒注入**（实测 lab 两步都没压掉任何消息，却每轮自带一条
+        // `kept: [[1,1]] keptBytes: 32` 的索引）—— 「注记存在」必须等价于「历史真被压过」。
+        if (sel.dropped.length === 0) return { messages: kept, note: "" };
+        // ##420：`store` 只含保留段 ⇒ 选出的行号要整体加上跳过段的长度（= llm.jsonl 物理行号）
+        const keptRuns: [number, number][] =
+            llmLineBase > 0 ? sel.keptRuns.map(([a, b]) => [a + llmLineBase, b + llmLineBase]) : sel.keptRuns;
         const note = renderBudgetNote(
             {
                 budgetBytes: policy.modeData.budgetBytes,
-                keptBytes: sel.keptBytes,
+                // `keptBytes` 扣除**本轮 user 那一行**（##421）：它是本轮输入、作为 `user.message`
+                // 走尾部信封，不属于「被保留的历史」——不扣就是纯记账偏差（注记里的数字会对不上）。
+                keptBytes: sel.keptBytes - this.tailUserBytes(all, sel, opts),
+                // ##5 拆账：两个桶都是**扣前**口径（选择阶段的原始账）。本轮 user 那一行本就不属于
+                // 任一桶，所以 `keptBytes` 会比 `countBytes + mustBytes` 少那一行的字节 ——
+                // 差额不是溢出，是它根本不算历史。硬把它分进某个桶就是编的。
                 countBytes: sel.countBytes,
                 mustBytes: sel.mustBytes,
-                kept: sel.keptRuns,
+                // ##420：行号取加了跳过段偏移的那份（`keptRuns` 已按 llm.jsonl 物理行号换算）
+                kept: keptRuns,
             },
             { file: llmLogRelPath(taskUriOf), absPath: llmFile(taskUriOf) },
         );
         return { messages: kept, note };
+    }
+
+    /**
+     * 本轮 user 那一行在 `keptBytes` 里占的字节（##421）；不在保留集里（或尾条不是 user）→ 0。
+     *
+     * 判据：**全量投影的尾条且 role=user** —— 真发每一步都会重建投递，但只有轮首那一步的尾条
+     * 才是「本轮输入」（轮中途尾条是 tool-result，那时没有可扣的东西）。
+     */
+    private tailUserBytes(all: readonly LocalModelMessage[], sel: BudgetSelection, opts: DeliveryOpts): number {
+        const i = all.length - 1;
+        if (i < 0 || all[i]!.role !== "user" || !sel.kept.includes(i)) return 0;
+        // 与选择阶段**同一个成本口径**（含该条实际生效的 clip）——否则扣的不是它被算进去的那个数
+        return costOfWith(opts)(all[i]!, sel.clips?.[i] ?? null, sel.reasoningClips?.[i] ?? null);
     }
 
     /** 索引注记开关（默认开；`DIY_CTX_HISTORY_NOTE=0` 关 —— 对照实验用，将来收编进 policy） */
@@ -2342,9 +2788,12 @@ export class LocalAgentManager {
      * （不能用 llm.jsonl：那是 append-only 的**全量**日志，含已被压掉的轮。）
      */
     deliveryMessages(taskUri: string): HistoryDelivery {
+        // ##420：只 replay 压缩账本起点之后那段（与 getSession 同一个起点、同一份判定）
+        const replay = resolveOpsReplay(taskUri);
         const store = new BlockStore();
-        for (const op of readJsonl<Op>(opsFile(taskUri))) store.apply(op);
-        return this.deliveryHistory(taskUri, store);
+        for (const op of readOpsFrom(opsFile(taskUri), replay.from)) store.apply(op);
+        // 断代/截断的标记随消息一起回给 UI（**不许静默空白**：用户看到一个空会话时必须知道为什么）
+        return { ...this.deliveryHistory(taskUri, store, undefined, undefined, replay.lineBase), replay };
     }
 
     /** 可选模型（去掉密钥等连接隐私字段，只下发元数据 + 限定名供 UI/CLI 展示） */
@@ -2759,13 +3208,16 @@ export class LocalAgentManager {
         const { cwd } = resolveCwdWithNote(home, taskUri);
         const L = this.getLimits();
         const tools = buildTools(cwd, L, taskUri);
-        const store = storeInput ?? replay(readJsonl<Op>(opsFile(taskUri)));
+        // ##420：没传块树时只 replay 保留段（传了 = 调用方手里已是同一次加载的树，如 compactPreview）
+        const replayPlan = storeInput ? { from: 0, lineBase: 0 } : resolveOpsReplay(taskUri);
+        const store = storeInput ?? replay(readOpsFrom(opsFile(taskUri), replayPlan.from));
         // 与真发**同一条链**（含压缩注记）：面板里的"压缩后预览"就是这一份
-        const histView = this.deliveryHistoryForView(store, policy, taskUri);
+        const histView = this.deliveryHistoryForView(store, policy, taskUri, storeInput ? 0 : replayPlan.lineBase);
         const summaryText = summaryOverride !== undefined ? summaryOverride : this.effectiveSummary(taskUri);
         // 摘要与注记一样是**自动生成的段** → 各占顶层键，不进 user.message（##310 九轮）
+        // 位置（##421）：注记在**历史首条之前**，摘要在尾部信封
         const messages = normalizeUserRuns(
-            withRuntime(histView.messages, delivery.runtime.text, histView.note, renderSummaryPart(summaryText)),
+            withRuntime(withHistoryNote(histView.messages, histView.note), delivery.runtime.text, renderSummaryPart(summaryText)),
         );
         return {
             model: personaForTask(home, taskUri).model,
@@ -2883,7 +3335,8 @@ export class LocalAgentManager {
         const hardCapBytes = mustHardCapBytesOf(capTokens);
         const must = keep.filter((s) => s.must === true);
         if (must.length === 0) return { mustBytes: 0, hardCapBytes };
-        const all = projectAll(replay(readJsonl<Op>(opsFile(taskUri))));
+        // ##420：与投递同一起点（只量保留段；被压掉的轮不参与投递，也不该在这里被读一遍）
+        const all = projectAll(replay(readOpsFrom(opsFile(taskUri), resolveOpsReplay(taskUri).from)));
         const p = keepStagesToPlan(must, Number.MAX_SAFE_INTEGER, clipSpecOf(toolResultOf(policy)));
         const sel = runPlan(all, p, { costOf: costOfWith(optsFor(policy, taskUri)) });
         return { mustBytes: sel.keptBytes, hardCapBytes };
@@ -2924,11 +3377,21 @@ export class LocalAgentManager {
         }
 
         const ts = new Date().toISOString();
+        // ##420：保留起点在 **llm.jsonl 里的行号**（1-based）= 该轮第一条消息在 `projectAll` 里的下标 + 1。
+        // 读取侧靠它把「跳过的消息条数」换算回来（注记行号 / llm 对账都按行号对齐）。
+        // 同轮内首条被保留的消息之前可能还有被丢的消息，但重放是从**轮首**开始的，
+        // 故这里取的是**该轮第一条消息**，不是 `sel.kept[0]`。
+        const firstKeptLlmLine =
+            p.keptFromTurnId !== null
+                ? projectAll(p.store).findIndex((m) => m.turn === p.keptFromTurnId)
+                : -1;
         const rec: CompactEventRecord = {
             kind: "compact",
             v: 4,
             id: ts,
             ts,
+            // ##420：账本格式代号（升级 = 一次压缩，旧 ops 段退化为纯审计，永不再 replay）
+            schema: OPS_SCHEMA_CURRENT,
             by,
             trigger,
             policy: p.policy,
@@ -2942,6 +3405,9 @@ export class LocalAgentManager {
                 ...(p.keptFromTurnId !== null && p.scan.turnOffsets.has(p.keptFromTurnId)
                     ? { keptFromOpsOffset: p.scan.turnOffsets.get(p.keptFromTurnId)! }
                     : {}),
+                ...(firstKeptLlmLine >= 0 ? { keptFromLlmLine: firstKeptLlmLine + 1 } : {}),
+                // ##420 起点自证：压缩那一刻 ops.jsonl 的**完整行字节数**（与 `opsBytesOf` 同一口径）
+                opsBytes: p.scan.totalBytes,
             },
             // 结果数字（keptTurns/droppedTurns 归这里 —— 它们是结果，不是锚点）
             size: {
@@ -4146,7 +4612,7 @@ export class LocalAgentManager {
                 systemBytes: delivery.system.bytes,
                 toolsBytes: JSON.stringify(tools).length,
             };
-            let hist = this.deliveryHistory(taskUri, sess.store);
+            let hist = this.deliveryHistory(taskUri, sess.store, undefined, undefined, sess.llmBase);
             // ── thinking 回放归一（##398）──
             // 上游（DeepSeek thinking 模式 / luminal 严判端点）要求**每条回放的 assistant**都带
             // `reasoning_content`；而生成侧不一定每步都有推理（实测 31% 的 assistant 无 think 块，
@@ -4159,14 +4625,18 @@ export class LocalAgentManager {
             // 归一判据算**一次**：首步与 prepareStep 的每步都用同一份（两处判据分叉必出「首步补了、
             // 后续步没补」的假修复 —— 正是 ##405 第 85 步 400 的形态）。
             const replayOpts = reasoningReplayOptsOf(rm, reasoningEffort);
-            // 一份 `hist` → 最终 wire 形状（尾部 runtime 信封 + 摘要 + 推理回放归一）。
+            // 一份 `hist` → 最终 wire 形状（历史前注记 + 尾部 runtime 信封 + 摘要 + 推理回放归一）。
             // 抽成闭包：预检「再压一次」要按同一套拼装重算一遍 —— 两处各抄一遍必分叉（##227 老教训）。
             // 摘要段**算一次**：它既进 `sent`，也要原样进投递快照（##5 第 16 轮）。
             // 两处各调一次 `effectiveSummary` 是纯读、值相同，但"恰好相同"不该是快照正确的依据。
             const summaryPart = renderSummaryPart(this.effectiveSummary(taskUri));
             const sentOf = (h: typeof hist): ModelMessage[] =>
                 ensureReasoningReplay(
-                    normalizeUserRuns(withRuntime(h.messages, delivery.runtime.text, h.note, summaryPart)),
+                    // 位置取 ##421（注记自占一条 user 消息、挂在历史第一条之前）；
+                    // `summaryPart` 仍按 ##5 提升到闭包外只算一次（它同时要进投递快照）。
+                    normalizeUserRuns(
+                        withRuntime(withHistoryNote(h.messages, h.note), delivery.runtime.text, summaryPart),
+                    ),
                     replayOpts,
                 );
             let sent: ModelMessage[] = sentOf(hist);
@@ -4195,7 +4665,7 @@ export class LocalAgentManager {
                         systemBytes: delivery.system.bytes,
                         toolsBytes: ctxParts.toolsBytes,
                     }));
-                    const hist2 = this.deliveryHistory(taskUri, sess.store, undefined, tightCap);
+                    const hist2 = this.deliveryHistory(taskUri, sess.store, undefined, tightCap, sess.llmBase);
                     const sent2 = sentOf(hist2);
                     const est2 = estimateRequest({
                         systemBytes: delivery.system.bytes,
@@ -4914,17 +5384,19 @@ export async function previewSimulatedRequest(opts: {
     const hist = opts.messages?.length
         ? { messages: opts.messages, note: "" }
         : getLocalAgent().deliveryMessages(taskUri);
-    // 与真发**逐字同形**：末条 user = 本轮输入 → 外面套**尾部信封**（history? + runtime + user），
-    // 再合并相邻 user。别各插一条消息 —— 那样合出来是「YAML + 裸文本」，预览会撒谎。
+    // 与真发**逐字同形**：注记（history:）挂历史首条之前，末条 user = 本轮输入 → 外面套**尾部信封**
+    // （runtime + user），再合并相邻 user。别各插一条消息 —— 那样合出来是「YAML + 裸文本」，预览会撒谎。
     // thinking 回放归一（##398）也要在预览里跑：否则预览显示「没补 reasoning_content」而真发补了
     // ⇒ 预览撒谎。档位取与真发同源（人物档位 || 模型默认档）。
     const previewRm = findModel(model);
     const messages: ModelMessage[] = ensureReasoningReplay(
         normalizeUserRuns(
             withRuntime(
-                [...hist.messages, { role: "user", content: opts.lastUser ?? "[仿真占位]真实下一轮此处为用户输入" }],
+                withHistoryNote(
+                    [...hist.messages, { role: "user", content: opts.lastUser ?? "[仿真占位]真实下一轮此处为用户输入" }],
+                    hist.note,
+                ),
                 opts.runtime ?? "",
-                hist.note,
                 renderSummaryPart(getLocalAgent().effectiveSummary(taskUri)),
             ),
         ),

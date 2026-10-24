@@ -619,9 +619,37 @@ export interface CompactBoundaryRecord {
     keepFromOpIndex: number;
     /** 该轮 start 在 ops.jsonl 里的**字节偏移**（重放跳前缀的快路径；缺省则退化为全量重放） */
     keptFromOpsOffset?: number;
+    /**
+     * 保留起点**在全量消息日志（llm.jsonl）里的行号**（1-based；= `projectAll` 下标 + 1）。
+     *
+     * 为什么必须记（##420）：读取侧只 replay `keptFromOpsOffset` 之后的 op ⇒ 块树里只剩保留段，
+     * 于是「下标 = llm.jsonl 行号」这条对齐**整体错位**了被跳过的消息条数。用 `keptFromOpsOffset`
+     * 只能跳字节，说不出「跳过了几条消息」—— 而投递注记（`history.kept` 行号）与 llm.jsonl 的
+     * append 对账都按行号对齐。记下它，跳过的部分才是**可换算**的（`lineBase = 行号 - 1`）。
+     * 缺省（旧账）= 不换算，读取侧退回全量重放（安全优先）。
+     */
+    keptFromLlmLine?: number;
+    /**
+     * 压缩那一刻 ops.jsonl 的**完整行字节数**（起点自证，##420）。
+     *
+     * `keptFromOpsOffset` 只在 append-only 前提下有效：文件被截断 / 换了一份（清空、搬机器、覆盖写），
+     * 同一个偏移就指到别的 op 上。加载时比 `statSync(fp).size < opsBytes` 即可判「起点作废」——
+     * 作废必须走**断代**（起点 = EOF），**不许**从 0 读（旧内容可能已不是同一份会话，比空更糟）。
+     */
+    opsBytes?: number;
     keptTurns: number;
     droppedTurns: number;
 }
+
+/**
+ * 当前 ops 账本的**格式代号**（##420 的断代轴）。
+ *
+ * 用户 2026-10-23 的口径：「一旦升级版本号，就可以压缩一次，全当以前的格式不再遵守」。
+ * 于是升级 = 一次压缩 + 旧段退化为纯审计日志（永不再 replay），跨版本兼容包袱彻底卸掉。
+ * ⚠️ 读侧：**账本没写 `schema` 的旧账一律视为当前代号**（它们本来就是按这套格式写的）——
+ * 把「没写」当成「不符」会让所有存量会话凭空变空会话，那不是断代，那是丢数据。
+ */
+export const OPS_SCHEMA_CURRENT = 1;
 
 /** 被丢弃的一轮：只存**摘要 + 指针**，全文留在 ops 原地（体积可控，且随时可回查） */
 export interface DroppedTurnDetail {
@@ -713,6 +741,12 @@ export interface CompactEventRecord {
     /** 压缩 id（= ts，供 measure / undo 回指） */
     id: string;
     ts: string;
+    /**
+     * 写这条账时 ops 账本的**格式代号**（`OPS_SCHEMA_CURRENT`；缺省 = 旧账，按当前代号读）。
+     * 加载时 `schema !== OPS_SCHEMA_CURRENT` ⇒ **格式断代**：`keptFromOpsOffset` 不再可信，
+     * 起点取 EOF（空会话），并且必须显式可见（日志 + 返回给 UI 的标记），不许静默空白。
+     */
+    schema?: number;
     /** 谁触发的（"auto" 是自动压缩；理由见 trigger） */
     by: "ui" | "cli" | "auto";
     /** 为什么压（手动/系统上下文变/缓存过期/窗口超限） */
@@ -732,6 +766,10 @@ export interface CompactEventRecord {
         keepFromOpIndex: number;
         /** 该轮 start 在 ops.jsonl 里的字节偏移（重放跳前缀的快路径） */
         keptFromOpsOffset?: number;
+        /** 该轮第一条消息在 llm.jsonl 里的行号（1-based；跳前缀后换算行号的依据，见 CompactBoundaryRecord） */
+        keptFromLlmLine?: number;
+        /** 压缩那一刻 ops.jsonl 的完整行字节数（起点自证；`size < opsBytes` ⇒ 起点作废） */
+        opsBytes?: number;
     };
     /**
      * **空操作**标记（可选）：该次压缩什么都没改（无轮被丢、无工具被裁、投递字节不变）。
@@ -955,6 +993,12 @@ export interface EffectiveBoundary {
     /** 机械锚点（op 下标）；-1 = 老账本没记（下游按 keptFromTurnId 回退推导） */
     keepFromOpIndex: number;
     keptFromOpsOffset?: number;
+    /** 保留起点在 llm.jsonl 里的行号（1-based；缺省 = 旧账，读取侧退回全量） */
+    keptFromLlmLine?: number;
+    /** 压缩那一刻 ops.jsonl 的完整行字节数（起点自证；缺省 = 旧账，不做截断判定） */
+    opsBytes?: number;
+    /** 账本格式代号（缺省 = 旧账，按 `OPS_SCHEMA_CURRENT` 读） */
+    schema: number;
     policy: CompactPolicy;
     ts: string;
 }
@@ -985,6 +1029,9 @@ export function resolveBoundary(events: readonly CompactLogEvent[]): EffectiveBo
         ...(c.boundary.keptFromOpsOffset !== undefined
             ? { keptFromOpsOffset: c.boundary.keptFromOpsOffset }
             : {}),
+        ...(c.boundary.keptFromLlmLine !== undefined ? { keptFromLlmLine: c.boundary.keptFromLlmLine } : {}),
+        ...(c.boundary.opsBytes !== undefined ? { opsBytes: c.boundary.opsBytes } : {}),
+        schema: c.schema ?? OPS_SCHEMA_CURRENT,
         // 读侧归一：账本里可能是扁平输入面形状（budgetBytes/toolResult/headtail），
         // 这里统一成决策树 —— 于是「历史账本」与「新写的账本」下游完全同形（初版紧凑、扩展松散）。
         policy: normalizePolicy(c.policy),

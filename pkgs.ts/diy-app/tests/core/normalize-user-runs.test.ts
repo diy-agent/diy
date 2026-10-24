@@ -62,6 +62,36 @@ describe("normalizeUserRuns", () => {
         expect(out[0]!.content).toBe("1\n2\n3");
     });
 
+    it("信封形态的 user 不参与合并（##421）：注记与历史首条 user 各占一条", () => {
+        // 注记自占顶层键（`history:`）—— 若被并进相邻 user，`user.message` 就变成「索引 + 原话」一坨
+        const note = "history:\n  file: local/x.llm.jsonl\n  kept:\n    - - 1\n      - 1";
+        const out = normalizeUserRuns([
+            { role: "user", content: note },
+            { role: "user", content: "用户原话" },
+        ] as ModelMessage[]);
+        expect(out).toHaveLength(2);
+        expect(out[0]!.content).toBe(note);
+        expect(out[1]!.content).toBe("用户原话");
+    });
+
+    it("信封形态的尾部 envelope 也不参与合并（runtime / user 两段自己拼好的一份）", () => {
+        const env = 'runtime:\n  task:\n    body: x\nuser:\n  message: "本轮"';
+        const out = normalizeUserRuns([
+            { role: "user", content: "上一句" },
+            { role: "user", content: env },
+        ] as ModelMessage[]);
+        expect(out).toHaveLength(2);
+        expect(out[1]!.content).toBe(env);
+    });
+
+    it("普通正文碰巧首行像键（有缩进 / 不在白名单）→ 照旧合并", () => {
+        const out = normalizeUserRuns([
+            { role: "user", content: "  前半句：缩进" },
+            { role: "user", content: "后半句" },
+        ] as ModelMessage[]);
+        expect(out).toHaveLength(1);
+    });
+
     it("不碰 tool 消息与配对（tool-call / tool-result 原样）", () => {
         const msgs = [
             { role: "assistant", content: [{ type: "tool-call", toolCallId: "t", toolName: "bash", input: {} }] },

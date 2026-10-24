@@ -110,22 +110,22 @@ facts:
       verifiedAt: '2026-10-21'
   rule.dev#instance-lifecycle:
     value: |-
-      **实例起停权限与数据定性**：`test` / `lab` / `preview` 由 agent **自由起停**（随便折腾，不用问）。分工：`lab` = watch/HMR 的开发实例（边改边看）；`preview` = **编译后运行、无 watch** 的稳定实例（人要持续对话 / 长会话用它，改码不打断；`sha.sh preview`）。三者数据皆**临时非生产**（仓库根 `build/<variant>/home`，坏了就清，必要时可重置）。**唯全局 `diy`（prod / `~/.diy`）是日常实跑的生产 app** —— 不动其数据根、不杀其进程，重启留给用户手动
+      **实例起停权限与数据定性**：`test` / `lab` 由 agent **自由起停**（随便折腾，不用问；`lab` 同时是人机沟通·验证 UI 的入口 —— 原 `preview` 的职责已并入它）。二者数据皆**临时非生产**（仓库根 `build/<variant>/home`，坏了就清，必要时可重置）。**唯全局 `diy`（prod / `~/.diy`）是日常实跑的生产 app** —— 不动其数据根、不杀其进程，重启留给用户手动。
     id: agents.rule.instance-lifecycle
     review: accepted
     lifecycle: active
     evidence:
       source: user
-      verifiedAt: '2026-10-23'
+      verifiedAt: '2026-10-24'
   rule.dev#lab-owner:
     value: |-
-      **lab 一律开在「自己任务的 worktree」里**（`~/git/diy.worktrees/t<号>-*/` 内 `./sha.sh lab`；数据根随之隔离在该 worktree 的 `build/lab/home`）。**根 worktree（`~/git/diy/diy`）的 `build/lab/home` 是「无主」的** —— 只与用户联合使用（人在那儿看效果），**agent 不自己去开**：判别不了谁在用，撞 `SingletonLock` 或把种子 / 真配置写进用户正开着的根。要实验先给自己任务开 worktree
+      **lab 一律开在「自己任务的 worktree」里**（`~/git/diy/diy/diy.worktrees/t<号>-*/` 内 `./sha.sh lab`；数据根随之隔离在该 worktree 的 `build/lab/home`）。**根 worktree（`~/git/diy/diy`）的 `build/lab/home` 是「无主」的** —— 只与用户联合使用（人在那儿看效果），**agent 不自己去开**：判别不了谁在用，撞 `SingletonLock` 或把种子 / 真配置写进用户正开着的根。要实验先给自己任务开 worktree。
     id: agents.rule.lab-owner
     review: accepted
     lifecycle: active
     evidence:
       source: user
-      verifiedAt: '2026-10-21'
+      verifiedAt: '2026-10-24'
   rule.dev#new-pkg:
     value: |-
       新增包检查单：`tsconfig.json`（composite + noEmit + include）+ `tsconfig.all.json` references
@@ -137,14 +137,13 @@ facts:
       verifiedAt: '2026-10-21'
   rule.dev#worktree-path:
     value: |-
-      **worktree 一律放仓库外、原项目的同级目录**，名 `<原项目名>.worktrees/<标识>`（示例：`~/git/diy/diy` → `~/git/diy.worktrees/t323-xxx`）；**禁放仓库内部**（如 `repo/_diy.worktrees/`）—— 否则 worktree 会落进主仓的 AGENTS.md 链（读到主仓的上下文投影 = 嵌套覆盖），且被 fd/rg · npm workspaces · tsconfig include 误扫
+      **worktree 一律放仓库内部的 `<repo>/diy.worktrees/<标识>`**（示例：`~/git/diy/diy` → `~/git/diy/diy/diy.worktrees/t323-xxx`）。**前置条件**：该目录必须在仓的 `.gitignore` 里（漏了会让 `git add -A` 把整棵 worktree 收进去、`rg`/`fd` 也会扫）。**仓外同级目录（`~/git/<项目>.worktrees/`）2026-10-23 起停用** —— 用户裁：`diy` 与 `diy.worktrees` 并排极易认错；旧禁令「落进主仓 AGENTS.md 链 = 嵌套覆盖」不成立。
     id: agents.rule.worktree-path
     review: accepted
     lifecycle: active
     evidence:
       source: user
-      at: ~/git/AGENTS.md:18
-      verifiedAt: '2026-10-22'
+      verifiedAt: '2026-10-24'
   rule.dev#worktree-selfcheck:
     value: |-
       动手改文件前先 `pwd` + `git rev-parse --show-toplevel`：落在主仓工作树（如 `~/git/diy/diy`）就先建 worktree 再动；**判据 = 这次改动会不会进 git**（纯读不用、写要）。反例：##404 连续 6 次直接在 main 上提交 —— 规则不落成动作就等于没有
