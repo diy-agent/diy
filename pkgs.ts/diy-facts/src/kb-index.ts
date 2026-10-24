@@ -72,11 +72,16 @@ export function foldKbIndex(entries: readonly KbSubjectEntry[], opts: KbFoldOpti
             claims += e.claims;
             for (const n of e.ns) if (!ns.includes(n)) ns.push(n);
         }
-        const hasBare = list.some((e) => e.subject === prefix);
+        // 折叠的唯一代价是「看不见有哪些」⇒ desc 直接**列出主题名**，而不是「怎么展开」。
+        // 曾写「`diy facts brief app.*` 展开」—— 实测 43.5 KB（12 个主题全展开），
+        // 是索引自己推荐出来的上下文炸弹；`--budget` 救不了（按字符估算，2000 预算仍出 26 KB）。
+        // 给名字 ⇒ agent 直接 `brief app.cli`（单主题 2~4 KB），一步到位。
+        const names = list.map((e) => e.subject).sort((a, b) => a.localeCompare(b));
+        const SHOW = 6;
+        const shown = names.length > SHOW ? [...names.slice(0, SHOW), `…共 ${names.length} 个`] : names;
         out.push({
             subject: `${prefix}.*`,
-            // desc 必须带展开方法：折叠的唯一代价是「看不见有哪些」，得给出立刻能补上的动作
-            desc: `${list.length} 个主题 / ${claims} 条${hasBare ? `（含 \`${prefix}\` 本体）` : ""} —— \`diy facts brief ${prefix}.*\` 展开`,
+            desc: shown.join(", "),
             claims,
             ns,
         });

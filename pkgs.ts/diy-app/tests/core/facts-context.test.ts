@@ -70,12 +70,13 @@ describe("拆解", () => {
 });
 
 describe("投影形状", () => {
-    it("claim 作 map 的 key；值为已解析值 + resolvedBy + variants", () => {
+    it("claim 作 map 的 key；缺省值不写（resolvedBy 空 / variants=1）", () => {
         const v = buildFactsContext({ home, taskUri: "", env: "production" })!;
         const cell = v.project!["app.port#default"]!;
         expect(cell.value).toBe("18888");
+        // 有变体歧义才写 resolvedBy；单变体不写 variants（每条都写 = 白占 1 KB/轮）
         expect(cell.resolvedBy).toContain("env=production");
-        expect(cell.variants).toBe(1);
+        expect(cell.variants).toBeUndefined();
     });
 
     it("当前 env 下无匹配 ⇒ 该 claim 不出现（skipped 不当问题）", () => {
@@ -223,7 +224,8 @@ describe("kb 索引按前缀折叠（##5 第 9 轮：索引成了新的固定前
         const kb = buildKbIndex()!;
         expect(kb.entries.map((e) => e.subject)).toEqual(["app.*"]);
         expect(kb.entries[0]?.claims).toBe(3);
-        expect(kb.entries[0]?.desc).toContain("diy facts brief app.*");
+        // 折叠项列出**主题名**（可直接 brief 精确主题），不再推荐 `brief app.*` 全展开（实测 43 KB）
+        expect(kb.entries[0]?.desc).toBe("app.find, app.rule, app.tool");
         // 折叠**不改** claims 口径（总数仍是全库条目数）
         expect(kb.claims).toBe(3);
     });

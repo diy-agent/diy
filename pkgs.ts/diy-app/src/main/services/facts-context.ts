@@ -209,7 +209,11 @@ export function buildFactsContext(opts: BuildFactsContextOptions = {}): FactsCon
     let remaining = maxBytes;
     for (const item of parsed.items) {
         const key = algorithm === "flat-gid" ? item.gid : item.claim;
-        const cell: FactsContextCell = { value: item.value, resolvedBy: item.resolvedBy, variants: item.variants };
+        // 缺省值不写（与 `brief` 同一口径）：`resolvedBy: ""`（全局唯一）与 `variants: 1`（无变体）
+        // 对每条都是常量 —— 实测 16 条 × 62 B 外壳 ≈ 992 B/轮，全是零信息。
+        const cell: FactsContextCell = { value: item.value };
+        if (item.resolvedBy !== "") cell.resolvedBy = item.resolvedBy;
+        if (item.variants > 1) cell.variants = item.variants;
         const size = budgetBytesOf(item);
         if (size > remaining) {
             out.omitted += 1;

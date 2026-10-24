@@ -12,5 +12,4 @@
 # 判据：搬走一条 X 字节的知识每轮省 X，但查它一次 ≈ 一次完整请求的前缀重发（约 41 KB）。
 # 故 full 给"每轮都要知道"的，index 给"知道有、偶尔查"的。
 expose:
-  rule.agent: full
   where: full

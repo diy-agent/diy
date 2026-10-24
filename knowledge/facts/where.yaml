@@ -57,6 +57,14 @@ facts:
     evidence:
       source: user
       verifiedAt: '2026-10-23'
+  where#locate-first:
+    value: |-
+      问题里的名词不认识 / 「X 在哪」→ 先看本库 full 暴露的 `where#*`（信息地图）**定类**，再用 `diy facts find <词>` 确认它指什么；不许先 rg 猜词乱翻。
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-23'
   where#rule:
     value: |-
       只写「去哪查」，不写值；一行一条通道（通道才变，故不腐坏）。判据：再过一轮，这行还成立吗？

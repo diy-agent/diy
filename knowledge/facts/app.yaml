@@ -206,6 +206,14 @@ facts:
       source: user
       at: ba99d638:pkgs.ts/diy-app/AGENTS.md:137
       verifiedAt: '2026-10-22'
+  app.dev#probe:
+    value: |-
+      轮次中勿改 `src/**` 当探针（watch 重启打断自己的轮次）；探针写 `/tmp`
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-21'
   app.dev#self-destruct:
     value: |-
       生产 diy（数据根 `~/.diy`，管任务管理）与 agent 同进程树，杀它 = 窗口白屏 + 无日志（SIGKILL 捕获不到）：**绝不可杀**。agent **自己**起的隔离实例（数据根在 worktree 的 `build/home` 等）可自行按**精确 pid** 收掉 —— `_guard.md` 已明许（运行时护栏 `agent-guard.ts` 已停用，判据分不清宿主与自己起的实例）；**只禁 `pkill/killall electron` 这类无差别指令**（会捎带生产实例）
@@ -1620,6 +1628,14 @@ facts:
       source: user
       at: ba99d638:pkgs.ts/diy-app/AGENTS.md:132
       verifiedAt: '2026-10-22'
+  app.ui#renderer:
+    value: |-
+      UI 主线是 `renderer_solid/`（SolidJS）；React 版已删除
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-21'
   app.ui#solid-show:
     value: |-
       Solid 组件函数体里的 `if (props.x) return A; return B;` **对 props 变化不响应**（函数体只执行一次）→ 用 `<Show when=… fallback=…>`。反之，`<Show>` 内组件在 `onCleanup` 里读 `props` 会抛 `Stale read from <Show>` 并中断更新 → 需"卸载前落盘"的副作用放面板级组件

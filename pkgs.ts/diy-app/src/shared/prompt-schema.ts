@@ -63,8 +63,14 @@ export const ChainItemSchema = z
 export const FactsCellSchema = z
   .object({
     value: z.string().describe("已解析的值"),
-    resolvedBy: z.string().describe("按什么解析出这个值的（`env=development` / `paths=pkgs.ts/...`；空串 = 全局唯一）"),
-    variants: z.number().describe("同 claim 的可用变体总数（>1 ⇒ 还有别的值存在，当前环境之外的）"),
+    resolvedBy: z
+      .string()
+      .optional()
+      .describe("按什么解析出这个值的（`env=development` / `paths=pkgs.ts/...`）。**缺省不输出** = 全局唯一（无变体歧义）"),
+    variants: z
+      .number()
+      .optional()
+      .describe("同 claim 的可用变体总数。**缺省不输出** = 1（没有别的值存在）"),
   })
   .meta({ id: "FactsCell" });
 export type FactsCell = z.infer<typeof FactsCellSchema>;

@@ -190,9 +190,6 @@ subjects:
   rpc.rule:
     description: |-
       diy-rpc 硬约束：ESM 扩展名 / 浏览器安全边界 / 发布流程
-  rule.agent:
-    description: |-
-      agent 自身的行为纪律（先查证再解释 / 结论走工具 / 别拿 src 当探针 / 少读依赖目录）
   rule.code:
     description: |-
       代码设计硬约束：核心逻辑不依赖日志 / 判别联合的形状（公共字段同级、私有进 data）

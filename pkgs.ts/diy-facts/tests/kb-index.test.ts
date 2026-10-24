@@ -18,9 +18,9 @@ describe('foldKbIndex', () => {
         const app = out[0] as KbSubjectEntry;
         expect(app.claims).toBe(73);
         expect(app.ns).toEqual(['project', 'global']);
-        // 折叠项必须自带展开方法，否则「省了字节、断了去路」
-        expect(app.desc).toContain('diy facts brief app.*');
-        expect(app.desc).toContain('3 个主题');
+        // 折叠项必须给出「有哪些主题」（直接可 brief 的精确名），不推荐通配展开
+        expect(app.desc).toBe('app.find, app.history, app.rule');
+        expect(app.desc).not.toContain('app.*');
     });
 
     it('不足 minGroup 不折（折了反而多一层跳转）', () => {
@@ -32,8 +32,8 @@ describe('foldKbIndex', () => {
         const out = foldKbIndex([e('dev', 4), e('dev.context', 7), e('dev.check', 2), e('dev.lab', 1)]);
         expect(out.map((x) => x.subject)).toEqual(['dev.*']);
         expect(out[0]?.claims).toBe(14);
-        expect(out[0]?.desc).toContain('含 `dev` 本体');
-        expect(out[0]?.desc).toContain('4 个主题');
+        // `dev` 本体也出现在名字列表里（与「并入同组」等价，且不用额外注记）
+        expect(out[0]?.desc).toBe('dev, dev.check, dev.context, dev.lab');
     });
 
     it('裸前缀存在但不够 minGroup ⇒ 不并（不为了消除歧义硬折）', () => {
