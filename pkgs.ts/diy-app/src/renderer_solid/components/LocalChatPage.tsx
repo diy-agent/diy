@@ -838,7 +838,7 @@ function ProcBody(props: {
                 <Show when={props.md} fallback={<PlainText text={bodyText()} />}>
                     <MarkdownText text={bodyText()} streaming={!props.node.stopped} />
                 </Show>
-                {props.md ? null : <CapNotice node={props.node} field="content" />}
+                <CapNotice node={props.node} field="content" />
             </Match>
             <Match when={props.node.tag === "error"}>
                 <div class="whitespace-pre-wrap text-error">{str(props.node.attrs.message)}</div>
@@ -1400,7 +1400,7 @@ function TextRow(props: {
                     class="mt-0.5 text-caption opacity-60 hover:opacity-100 hover:text-primary"
                     onClick={fire}
                 >
-                    ⋯ 已折叠 {view().exact ? " " : " ≥ "}{view().omitted} 行 · 点击展开全部正文
+                    ⋯ 已折叠 {view().exact ? "" : "≥"}{view().omitted} 行 · 点击展开全部正文
                 </button>
             </Show>
             {/* 1 级「摘要结论」下缘拖条：往下拖 = 这一块画更多行（免在 1/2 级间来回切）。
