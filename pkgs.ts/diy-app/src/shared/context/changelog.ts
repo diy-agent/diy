@@ -8,7 +8,7 @@
 //     **禁止** `chain.0.content` —— 原子字段要变一起变，下钻会谎报"半棵树变了"（旧实现是 bug）；
 //   · **before/after 自带**（落盘自包含）→ 读侧不再回放；`baseline` 首条给整棵树。
 //
-// 为什么与 steps.jsonl 并存：steps 每步一份**全文**（大、可清），changelog 每步只有
+// 为什么与 steps.jsonl 并存：steps 每步一份**全文**（大，体积治理见 ##410），changelog 每步只有
 // **变更 + 一行摘要**（小、可长期留）。审计 / debug / 统计看它；精确回溯看 steps。
 //
 // 约定：本文件只放纯函数，禁止 import node:*（renderer 会打进包）。

@@ -175,7 +175,7 @@
 - `tool.smoke` — `node scripts/ui-smoke/task-detail-smoke.mjs`（任务详情三块 + 拖宽落盘）· `python3 scripts/ui-smoke/dnd-smoke.py`（⚠️ 它的收尾用按名匹配的强杀，**会连正在用的 diy 一起收掉** —— 跑之前先改掉那段；且本机需 `pip install playwright`）
 - `tool.log` — 应用日志 `$DIY_HOME/log/`：`main.log` / `cli.log` / `serve.log` / `dev.jsonl`（`grep watch-stall-suspect` 判 watcher 卡死）/ `agent-bash.jsonl`（agent 命令审计，write-ahead）
 - `tool.isolate` — 起隔离实例：全新 `DIY_HOME`（`mktemp -d`）+ `export HOME=$H`；演示数据落 `/tmp`，不写用户 `~/.diy`
-- `tool.traffic` — `diy traffic snapshot|clear|cleanLogs|query|logFiles|readLog|revealLog|setFullCapture|setCap|events`（worktree 里 `./diy.sh traffic …`；清单真源 `diy traffic --help`）；日志落 `$DIY_HOME/log/network/`（**等同 cache，可随时清理**）
+- `tool.traffic` — `diy traffic snapshot|clear|cleanLogs|query|logFiles|readLog|revealLog|setFullCapture|setCap|events`（worktree 里 `./diy.sh traffic …`；清单真源 `diy traffic --help`）；日志落 `$DIY_HOME/log/network/`（**等同 cache，可随时清理**；仅 `log/` 如此 —— `local/` 下 ops/llm/steps 是会话数据，见 `data.log`）
 - `pit.traffic-clean` — 清理（##324）**单位是整个按天文件**，且**今天正在写入的那个一律不删**（Writer 持着 fd，unlink 后后续记录写进已删 inode）；删除**不可恢复**（不进回收站）→ 界面必须走 `ConfirmDialog` 二次确认
 - `tool.persona` — `diy agent persona list|set|setDefault`；模型/参数属**人物**，任务只持引用 id
 - `tool.steer` — `diy chat --mode next-step|next-turn` 入队插话；`steer` 组只做队列管理（list/cancel/toggleMode/reorder）
