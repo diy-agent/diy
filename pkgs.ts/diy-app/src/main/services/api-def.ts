@@ -2115,7 +2115,12 @@ export const apiDef = RpcSchema.router({
             input: {
               subject: z.string().cliArg({ placeholder: "<subject,...>", desc: "主题（如 find / tool / rule；多个用逗号分隔）" }),
               maxChars: z.number().optional().cliOption({ desc: "每条摘要字数上限（缺省 80）" }),
-              budget: z.number().optional().cliOption({ desc: "总字节上限（UTF-8，按最终输出的 JSON 量）：超了先缩 preview（下限 8 字），仍超则裁条目，`truncated` 报裁了几条" }),
+              budget: z
+                .number()
+                .optional()
+                .cliOption({
+                    desc: "总字节上限（UTF-8，按**最终输出的 JSON** 量，含 budget/truncated/notes 回执）：按主题序 → aspect 序**逐条贪心装**，装不下就停（余下记 `truncated`）。利用率接近 100%，不再有「整主题砍」的断崖；一条都装不下时给 `notes` 说明最小单元与建议值",
+                }),
               dir: z.string().optional().cliOption({ desc: "knowledge 目录（缺省自动向上找）" }),
               in: z
                 .string()

@@ -163,13 +163,19 @@ export const FactsBriefItemSchema = z.object({
 /**
  * 多主题摘要的返回：`subjects` 恒为数组（单主题也是 1 元素 —— 形状不随入参变，
  * 消费方不必写两套分支）。给了 `--budget` 才有 `budget` 回执。
+ *
+ * `--budget` 语义：按主题序 → aspect 序**逐条贪心装**，装不下就停 —— `truncated` 是"没装下的
+ * 条目数"，既不是错误也不是"数据没有"；一条都装不下时 `notes` 给最小单元与建议值
+ * （让「预算太小」与「没数据」可区分）。
  */
 export const FactsBriefSchema = z.object({
     subjects: z.array(FactsBriefItemSchema),
     /** 给了 `--budget` 才有：`used` = 最终输出的 UTF-8 字节（与收到的那串文本同一口径） */
     budget: z.object({ limit: z.number(), used: z.number() }).optional(),
-    /** 因预算被裁掉的条目数（>0 ⇒ 缩 preview 不够、只能裁条目） */
+    /** 因预算被裁掉的条目数（>0 ⇒ 按主题序 → aspect 序截成了前缀） */
     truncated: z.number().optional(),
+    /** 一条都没装下时的说明（预算太小 + 建议值）—— 让「没数据」与「预算太小」可区分 */
+    notes: z.array(z.string()).optional(),
 });
 
 /**

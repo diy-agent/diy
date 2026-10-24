@@ -565,8 +565,10 @@ export interface BriefMultiResult {
      * `used` = **最终输出的 UTF-8 字节**（`JSON.stringify` 后量），与收到的那串文本同一口径。
      */
     readonly budget?: { readonly limit: number; readonly used: number };
-    /** 因预算被**裁掉**的条目数（>0 ⇒ 还是超，缩 preview 不够、只能裁） */
+    /** 因预算被**裁掉**的条目数（>0 ⇒ 装不下的部分，按主题序 → aspect 序截成前缀） */
     readonly truncated?: number;
+    /** 装不下一条时的说明（预算太小 / 建议值）—— 让「没数据」与「预算太小」可区分 */
+    readonly notes?: string[];
 }
 
 export interface BriefResult {
@@ -732,12 +734,17 @@ export function expandSubjects(list: readonly string[], all: readonly string[]):
  * 省下的比"少几条正文"多一个量级。
  *
  * `--budget`（**UTF-8 字节**，按**最终输出** `JSON.stringify` 计量 —— 与消费方真正收到的那串
- * 文本同一口径）：超了先缩 preview（下限 8 字），缩到底仍超就**裁条目**并在 `truncated` 里报数。
+ * 文本同一口径，`budget` / `truncated` / `notes` 外壳也计入）：超了**按序贪心填装**条目，
+ * 装不下就停（后续条目记进 `truncated`）。
  *
- * 旧版按「字符数 + 每条 12 的估算」判预算，实测 `--budget 2000` 输出 26 KB（3 倍误差），
- * 且缩到下限后无法再收敛 ⇒ 预算等于失效（##9 实测）。两条教训：
- *   ① **口径必须与实际产出同源**（估算式会随 JSON 结构 / 多字节字符系统性地差）
- *   ② **必须有兜底动作**（只缩不裁时，条目多到固定开销就超预算，缩到 0 字也进不去）
+ * 三代实现的教训（##9 实测曲线）：
+ *   ① 第一代按「字符数 + 每条 12」估算 ⇒ 3 倍误差，`--budget 2000` 输出 26 KB，预算等于失效
+ *   ② 第二代改真字节，但兜底是「均分缩 preview → 轮转裁条目 → 整主题砍」⇒ **断崖**：
+ *      `3000` 只剩 4 条（563 B）、`2000` 直接空壳，agent 分不清「没数据」和「预算太小」
+ *   ③ 现在：**一条一条装**（序号前缀语义），装不下就停 —— 利用率天然接近 100%，
+ *      且「给了多少预算就换回多少条」单调可预测
+ *
+ * 判据：**有数据时绝不返回空**（除非预算小到连一条的外壳都塞不下 ⇒ `notes` 说明原因与建议值）。
  */
 export function brief(
     subjectsIn: string,
@@ -757,51 +764,116 @@ export function brief(
     const repo = loadRepo(target.dir, targetOpts(target));
     const subjects = expandSubjects(list, repo.facts.map((f) => f.subject));
     const build = (chars: number): BriefResult[] => subjects.map((s) => briefOne(s, { ...opts, maxChars: chars }, repo));
-    /** 预算口径 = **实际发给消费方的那串字节**（`JSON.stringify` + UTF-8） */
-    const bytesOf = (rs: readonly BriefResult[]): number => Buffer.byteLength(JSON.stringify({ subjects: rs }), "utf8");
     const limit = opts.budget;
-    let results = build(max);
-    let used = bytesOf(results);
-    let truncated = 0;
-    if (limit !== undefined && limit > 0 && used > limit) {
-        // ① 缩 preview：按「每条还差几个字节」反推每轮缩几个字，实测后重算。
-        //    不一次算准 —— 多字节字符 1 字 = 1~3 字节，收敛比精确更重要（缩过头只是更省）。
-        let per = max;
-        for (let i = 0; i < 12 && per > 8; i++) {
-            const entries = results.reduce((n, r) => n + r.entries.length, 0);
-            const over = used - limit;
-            if (entries === 0 || over <= 0) break;
-            const next = Math.max(8, per - Math.max(1, Math.ceil(over / entries)));
-            if (next >= per) break;
-            per = next;
-            results = build(per);
-            used = bytesOf(results);
+    const full = build(max);
+    if (limit === undefined || limit <= 0) return { subjects: full };
+
+    /** 预算口径 = **实际发给消费方的那一串**（`JSON.stringify` + UTF-8） */
+    const bytesOf = (rs: readonly BriefResult[], extra: Record<string, unknown> = {}): number =>
+        Buffer.byteLength(JSON.stringify({ subjects: rs, ...extra }), "utf8");
+    const total = full.reduce((n, r) => n + r.entries.length, 0);
+
+    /** 外壳开销（`budget` / `truncated` / `notes`）：按「三者都在」+ notes 一段占位算，宁保守不超限 */
+    const reserve =
+        bytesOf([], { truncated: total, notes: ["预".repeat(90)], budget: { limit, used: limit } }) - bytesOf([]);
+    const room = limit - reserve;
+
+    /**
+     * 按序贪心填装：主题序 → aspect 序，**一条一条**加，加不下就**停**（返回已装前缀）。
+     *
+     * 为什么「停」而不是「跳到下一个更短的主题继续装」：跳着装会让「装到第 N 条」不可预测 ——
+     * 读的人无法从预算反推自己看到的是不是完整前缀。宁可少给，也不要给出一个缺口在中间的列表。
+     */
+    const pack = (rs: readonly BriefResult[]): BriefResult[] => {
+        const out: BriefResult[] = [];
+        for (const s of rs) {
+            let acc: BriefResult | null = null;
+            for (const e of s.entries) {
+                if (acc === null) {
+                    acc = { subject: s.subject, desc: s.desc, claims: 0, facts: s.facts, entries: [], notes: [...s.notes] };
+                    if (s.file !== undefined) acc.file = s.file;
+                    out.push(acc);
+                }
+                acc.entries.push(e);
+                acc.claims = acc.entries.length;
+                if (bytesOf(out) > room) {
+                    acc.entries.pop();
+                    acc.claims = acc.entries.length;
+                    // 该主题一条都没装进去 ⇒ 不留下 `entries: []` 的空壳（读的人会以为「这主题没有条目」）
+                    if (acc.entries.length === 0) out.pop();
+                    return out;
+                }
+            }
         }
-        // ② 缩到下限（8 字）仍超 ⇒ **只能裁条目**（固定开销比预算还大时，preview 缩到 0 也进不去）。
-        //    轮转着从**末尾**各裁一条：主题按入参序、主题内按 aspect 序，末尾 = 最不可能是入门那几条。
-        //    裁到空的主题整个去掉 —— 留个 `entries: []` 的空壳，读的人会以为「这个主题没有条目」。
-        const trimOrder = [...results].reverse();
-        for (let round = 0; used > limit; round++) {
-            const target = trimOrder[round % Math.max(1, trimOrder.length)];
-            if (target === undefined || trimOrder.every((r) => r.entries.length === 0)) break;
-            if (target.entries.length === 0) continue;
-            target.entries.pop();
-            truncated += 1;
-            used = bytesOf(results);
+        return out;
+    };
+
+    // preview 宽度：先按默认宽装（一条 ≈110 B，信息量最大）。一条都装不下才收窄再试 ——
+    // 8 字的 preview 是噪声不是预览，所以只退到 32 / 16；再小就用 notes 说清，别给一堆碎片。
+    let results: BriefResult[] = [];
+    const widths = [...new Set([max, 32, 16].filter((w) => w <= max))];
+    for (const w of widths) {
+        results = pack(w === max ? full : build(w));
+        if (results.some((r) => r.entries.length > 0)) break;
+    }
+    const kept = results.reduce((n, r) => n + r.entries.length, 0);
+    const dropped = total - kept;
+    /** 最小可装单元（主题外壳 + 第一条）—— notes 里给的是真数，不是"约 110 B"这种估值 */
+    const minUnit =
+        full.length === 0
+            ? 0
+            : bytesOf([
+                  {
+                      subject: full[0]!.subject,
+                      desc: full[0]!.desc,
+                      claims: 1,
+                      facts: full[0]!.facts,
+                      entries: full[0]!.entries.slice(0, 1),
+                      notes: [...full[0]!.notes],
+                      ...(full[0]!.file === undefined ? {} : { file: full[0]!.file }),
+                  },
+              ]) - bytesOf([]);
+    const notes: string[] =
+        kept === 0 && total > 0
+            ? [
+                  `预算太小：一条都装不下（最小单元 ≈${minUnit} B = 主题外壳 + 一条），当前 --budget ${limit}。` +
+                      `建议 ≥${Math.min(8000, Math.max(1000, minUnit * 4))}，或先用 \`diy facts find <词>\` 收窄主题`,
+              ]
+            : [];
+
+    // `used` / 判定 / 回执三者同源：都量**最终这一串**（含回执自己）。
+    // 自指的位数变化靠固定点迭代收敛（`used` 是 3~5 位数，两三轮回稳）。
+    const envelope = (u: number, ns: readonly string[]): number =>
+        bytesOf(results, {
+            ...(dropped > 0 ? { truncated: dropped } : {}),
+            ...(ns.length > 0 ? { notes: ns } : {}),
+            budget: { limit, used: u },
+        });
+    const settle = (ns: readonly string[]): number => {
+        let u = envelope(limit, ns);
+        for (let i = 0; i < 6; i++) {
+            const next = envelope(u, ns);
+            if (next === u) break;
+            u = next;
         }
-        results = results.filter((r) => r.entries.length > 0 || r.notes.length > 0);
-        used = bytesOf(results);
-        // ③ 连「空壳」（主题名 + desc + notes）都超 ⇒ 从末尾逐个去掉。
-        //    `--budget` 是**硬上限**：给 60 字节的人要的是一行，不是"尽量少"。
-        while (used > limit && results.length > 0) {
-            results = results.slice(0, -1);
-            used = bytesOf(results);
+        return u;
+    };
+    let used = settle(notes);
+    if (used > limit && notes.length > 0) {
+        // 预算比「回执 + 说明」还小 ⇒ **数据/口径优先，解释让位**：去掉 notes 再量
+        const bare = settle([]);
+        if (bare <= limit) {
+            notes.length = 0;
+            used = bare;
         }
+        // 连「空回执」都装不下（JSON 外壳本身就要几十字节）= 不可满足：
+        // 如实报 used（`used > limit` 就是信号），notes 留着解释为什么是空的
     }
     return {
         subjects: results,
-        ...(truncated > 0 ? { truncated } : {}),
-        ...(limit === undefined ? {} : { budget: { limit, used } }),
+        ...(dropped > 0 ? { truncated: dropped } : {}),
+        ...(notes.length > 0 ? { notes } : {}),
+        budget: { limit, used },
     };
 }
 

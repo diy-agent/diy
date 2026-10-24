@@ -546,34 +546,79 @@ describe("brief 多主题 / 预算（##5 需求 3）", () => {
         expect(r.subjects).toHaveLength(1);
     });
 
-    it("--budget 按**实际输出字节**计，超了先缩 preview", () => {
-        const long = "乙".repeat(300);
-        write("facts/long.yaml", `domain: long\nfacts:\n  - id: long.thing\n    subject: dev.test\n    aspect: big\n    value: '${long}'\n    review: accepted\n    lifecycle: active\n    evidence: { source: code, at: K.ts:1 }\n`);
-        const wide = store.brief("dev.test", { dir: kb, maxChars: 80, budget: 600 });
-        expect(wide.budget!.limit).toBe(600);
-        expect(wide.budget!.used).toBeLessThanOrEqual(600);
-        expect(wide.truncated).toBeUndefined();
-        const item = wide.subjects[0]!;
-        // `used` 的口径必须是「真正会发出去的那串字节」，不是字符估算
-        expect(wide.budget!.used).toBe(Buffer.byteLength(JSON.stringify({ subjects: wide.subjects }), "utf8"));
-        // 截断符 `…` 会多占 1 位（previewOf 输出 max+1），故上界是 maxChars+1
-        expect(item.entries.find((e) => e.aspect === "big")!.preview.length).toBeLessThanOrEqual(81);
+    // ── `--budget`（##9 实测的三条判据）──────────────────────────────────
+    //
+    // 病根（二代实现）：兜底是「均分缩 preview → 轮转裁条目 → 整主题砍」，实测曲线断崖 ——
+    // `3000` 只剩 4 条（563 B）、`2000` 直接空壳，agent 分不清「没数据」和「预算太小」。
+    // 现在：按序逐条贪心装，装不下就停 ⇒ 曲线单调、利用率接近 100%。
+    const seedBulk = (n: number): void => {
+        const lines = ["domain: bulk", "facts:"];
+        for (let i = 0; i < n; i++) {
+            lines.push(
+                [
+                    `  - id: bulk.${i}`,
+                    "    subject: bulk",
+                    `    aspect: a${String(i).padStart(2, "0")}`,
+                    `    value: '${"甲乙丙丁".repeat(50)}'`,
+                    "    review: accepted",
+                    "    lifecycle: active",
+                    "    evidence: { source: code, at: K.ts:1 }",
+                ].join("\n"),
+            );
+        }
+        write("facts/bulk.yaml", `${lines.join("\n")}\n`);
+        write("subjects.yaml", "subjects:\n  app.port:\n    description: 端口\n  bulk:\n    description: 批量\n");
+    };
+    const bytes = (r: unknown): number => Buffer.byteLength(JSON.stringify(r), "utf8");
+    const keptOf = (r: { subjects: { entries: unknown[] }[] }): number =>
+        r.subjects.reduce((n, s) => n + s.entries.length, 0);
+
+    it("--budget：`used` 就是**整串回执**的字节（含 budget/truncated 自身，与收到的那串同源）", () => {
+        seedBulk(20);
+        const r = store.brief("bulk", { budget: 2000 });
+        expect(r.budget!.used).toBe(bytes(r));
+        expect(r.budget!.used).toBeLessThanOrEqual(2000);
     });
 
-    it("--budget 缩到下限仍装不下 ⇒ 裁条目并报 truncated（旧版这里只缩不裁，等于预算失效）", () => {
-        // 20 字节连一条 `{aspect,gid,preview}` 的外壳都塞不下：只能裁到空（硬上限）
-        const long = "乙".repeat(300);
-        write("facts/long.yaml", `domain: long\nfacts:\n  - id: long.thing\n    subject: dev.test\n    aspect: big\n    value: '${long}'\n    review: accepted\n    lifecycle: active\n    evidence: { source: code, at: K.ts:1 }\n`);
-        const wide = store.brief("dev.test", { dir: kb, maxChars: 80, budget: 20 });
-        expect(wide.budget!.used).toBeLessThanOrEqual(20);
-        expect(wide.truncated).toBeGreaterThan(0);
-        // 裁空的主题整个去掉，不留 `entries: []` 的空壳（否则读的人以为「这主题没有条目」）
-        expect(wide.subjects.every((s) => s.entries.length > 0 || s.notes.length > 0)).toBe(true);
+    it("--budget：曲线单调且不断崖（多给预算只会多给条目，不会掉到空壳）", () => {
+        seedBulk(40);
+        const curve = [600, 1000, 1500, 3000, 6000, 12000].map((b) => {
+            const r = store.brief("bulk", { budget: b });
+            expect(r.budget!.used).toBeLessThanOrEqual(b);
+            return keptOf(r);
+        });
+        // 单调不减 + 每一步都真的在涨（断崖的特征是「多点预算反而更少」）
+        for (let i = 1; i < curve.length; i++) expect(curve[i]!).toBeGreaterThanOrEqual(curve[i - 1]!);
+        expect(curve[curve.length - 1]!).toBeGreaterThan(curve[0]!);
+        // 有数据时必须给得出东西（旧二代在 2000 返回空）
+        expect(curve[1]!).toBeGreaterThan(0);
     });
 
-    it("--budget 够用 ⇒ 不缩不裁，truncated 缺席", () => {
-        const r = store.brief("app.port", { dir: kb, budget: 100000 });
+    it("--budget：预算充足时利用率 ≥70%（不许「留下大半预算空转」）", () => {
+        seedBulk(40);
+        for (const limit of [4000, 8000]) {
+            const r = store.brief("bulk", { budget: limit });
+            expect(r.budget!.used).toBeGreaterThanOrEqual(0.7 * limit);
+            expect(r.budget!.used).toBeLessThanOrEqual(limit);
+        }
+    });
+
+    it("--budget：装不下任何一条 ⇒ notes 说清原因（「没数据」与「预算太小」必须可区分）", () => {
+        seedBulk(3);
+        const r = store.brief("bulk", { budget: 20 });
+        expect(r.subjects).toEqual([]);
+        expect(r.truncated).toBe(3);
+        expect(r.notes?.join(" ")).toMatch(/预算太小|最小单元/);
+        // 反例：真没数据的时候**不许**冒出"预算太小"这种误导
+        const none = store.brief("不存在的主题", { budget: 20 });
+        expect(none.notes).toBeUndefined();
+    });
+
+    it("--budget 够用 ⇒ 不裁不缩，truncated / notes 缺席", () => {
+        const r = store.brief("app.port", { budget: 100000 });
         expect(r.truncated).toBeUndefined();
+        expect(r.notes).toBeUndefined();
+        expect(r.budget!.used).toBe(bytes(r));
         expect(r.budget!.used).toBeLessThanOrEqual(100000);
     });
 });
