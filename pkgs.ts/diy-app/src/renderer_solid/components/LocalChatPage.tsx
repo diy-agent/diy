@@ -129,6 +129,7 @@ import {
     collapsedRows,
     composeTail,
     cycleTurnLevel,
+    degradedOf,
     endLeafTip,
     endReasonOf,
     expandableOf,
@@ -165,6 +166,8 @@ import {
 // 历史 mode 值归一与文案放 shared（纯函数、可单测）：ops 日志是 append-only 的史书，
 // 枚举改名前的 step/turn 与现值长期共存，读侧必须归一（详见 shared/steer-mode.ts）
 import { steerModeLabel, steerModeTip } from "../../shared/steer-mode";
+// 降级历史（##424 刀 2）：文案在 shared（main / renderer 同一份），这里只拼
+import { DEGRADED_DANGLING_TEXT, degradedBannerText } from "../../shared/degraded-history";
 
 // ─── 层级 ───────────────────────────────────────────
 
@@ -1878,6 +1881,13 @@ export function TurnView(props: {
             <Show when={!isLiveTurn() && turnEndNote(t())}>
                 <div class="text-body text-warning" data-turn-end-note>
                     ⚠ {turnEndNote(t())}
+                </div>
+            </Show>
+            {/* 降级轮的行内标注（##424 刀 2）：这一轮是从 turns 折出来的文本记录，
+                锚点指向的 ops 已经不在了 ⇒ 如实说「原始记录已清理」，不静默空白。 */}
+            <Show when={degradedOf(t())?.refDangling}>
+                <div class="text-body text-warning/80" data-turn-degraded={degradedOf(t())?.state ?? ""}>
+                    ⓘ {DEGRADED_DANGLING_TEXT}
                 </div>
             </Show>
             {/* 轮尾：**时刻靠左、纯文本、不可点**（滚屏阅读时左侧最容易误触，那句话也没有可点的东西），
@@ -4059,6 +4069,24 @@ export function LocalChatPage(props: {
                 与恢复 toast 共用同一份机制说明（`lib/notice-ops.ts`）—— 两处说法必须是一个故事。 */}
             <Show when={localChatStore.opsState === "down"}>
                 <OpsDownBar />
+            </Show>
+
+            {/* 降级重建横幅（##424 刀 2）：`historyWindow` 回包带 `degraded` ⇒ 现在看到的
+                不是 ops 明细，而是 `turns.jsonl` 折成的**结论文本记录**。
+                为什么必须显式（用户口径）：ops 缺失/断代时静默给空栏，等于让用户以为
+                “这场对话什么都没发生过”—— 那比少显示明细更坏。常量与文案归 shared。 */}
+            <Show when={localChatStore.degraded}>
+                {(d) => (
+                    <div
+                        class="flex items-center gap-2 border-b border-warning/40 bg-warning/10 px-4 py-1.5 text-body text-warning shrink-0"
+                        data-degraded={d().cause}
+                        data-degraded-turns={d().turns}
+                        data-degraded-dangling={d().dangling}
+                    >
+                        <span aria-hidden="true">⚠</span>
+                        <span>{degradedBannerText(d())}</span>
+                    </div>
+                )}
             </Show>
 
             {/* 块树滚动区 */}
