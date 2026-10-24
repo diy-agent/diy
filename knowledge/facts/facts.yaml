@@ -130,6 +130,24 @@ facts:
       source: code
       at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:20
       verifiedAt: '2026-10-22'
+  facts.rule#evidence-drift-undecidable:
+    value: |-
+      「源改了我没跟」**机械不可判**：实测把判据写成「钉版本的那行文本还在不在现在的源里」→ 470 条里 **269 条 warning**（全是 AGENTS.md 内容外迁进 kb 后行文消失，属预期），换成「rev..HEAD 改过几次」→ **272 条**（合并频繁的仓里恒真）。噪声等于没有 ⇒ 该判据**不得**进 `facts-index`。要真判只有两条路：① 写入时把锚行文本存成 digest，比对 digest（schema 加字段）；② 人工/agent 例行「复核」仪式（W1 `facts/stale` 已提供时间触发器）。取舍未定，勿擅自实现
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: python3 /tmp/t5/probe2.py（对 470 条事实逐条比对 rev 行文与当前源）
+      verifiedAt: '2026-10-24'
+  facts.rule#evidence-pin-placement:
+    value: |-
+      `evidence.at` 的钉版本形态用错了边：全库 353 条带 at 的事实里 **269 条钉在已瘦身的 AGENTS.md 上**（那行已从源消失，锚只剩「历史上它写在这」的归档意义）、**41 条**那行仍在源里、**84 条是未钉版本直指当前文件**。**真正的危险区是未钉的那 84 条** —— 其中 **45 条指 `~/AGENTS.md:<行>`**，而 `~/AGENTS.md` 正是下一步要瘦身的对象：瘦完这 45 条会**静默指错行**（行号仍在范围内，G4 查不出来）。判据：钉版本只对「已搬家」的归档事实合适；**对活着的规则（每轮要照做的），必须保证 at 随源同步更新**，否则宁可删 at 也要在写侧重算
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: python3 /tmp/t5/probe2.py（统计 at 的两种形态分布 + 未钉版本的目标文件直方图）
+      verifiedAt: '2026-10-24'
   facts.rule#expose-cross-lib:
     value: |-
       expose 表的适用域必须**按库**判，不能按合并后的一张表：实测仓库 knowledge/expose.yaml 只写了 `rule.agent: full`，任务库（diy.facts 4 条 658 B，未声明 expose）的正文随即从 runtime.facts 消失（omitted 0，正文只剩 6 条）。**任务库缺 expose 应回落旧行为（全进正文），或按 ns 给缺省档：task=full / project·global=index** —— 任务自己的结论最该常驻，被上层库的配置静默吞掉是最坏的一种「省」。
