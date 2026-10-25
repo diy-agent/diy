@@ -48,6 +48,7 @@ import { procRowOf, runViewOf } from "../../shared/run-view";
 import { parseEtime } from "./process-sampler";
 import { stateLabel } from "../../shared/run-status";
 import { fenceTaskOwner } from "../../shared/job-fence";
+import { snapshotMetrics } from "../../shared/metrics";
 
 /**
  * 实际 RPC 监听端口，由入口在绑定完成后回填。
@@ -1132,6 +1133,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
 
   // ── traffic（流量观测；见 core/traffic.ts）──
   // ── job 活体表（刀 8/9：run = 进程型或进程内任务；不做恢复、不做历史账）──
+  binding.on(app.job.metrics, async () => ({ status: "ok", data: await snapshotMetrics() }));
   binding.on(app.job.ps, async ({ input }) => {
     const now = Date.now();
     const all = runRegistry.list();

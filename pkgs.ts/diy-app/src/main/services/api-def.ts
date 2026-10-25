@@ -2315,6 +2315,27 @@ export const apiDef = RpcSchema.router({
       job: RpcSchema.group({
         desc: `后台 run 的管理与可见性（只管 **background** 起的长活；前台命令不登记 —— 见 ##408 刀 16）`,
         children: {
+          metrics: RpcSchema.unary({
+            desc: `
+            **指标快照**（##408 metrics 地基）：counter / gauge / histogram 的当前累计值。
+
+            与 \`job.ps\` 的区别：\`ps\` 是**现在有什么在跑**（活体表逐条），\`metrics\` 是
+            **聚合值**（跑过多少次 / 各终态几次 / 耗时分布）—— 两者不是同一份数据，
+            指标**可以随时丢光重算**，真源永远是活体表。
+
+            数据形状（CLI 缺省即此）：
+            \`\`\`
+            { at, metrics: [ { name, description, unit, type, points: [ { attrs, value } ] } ] }
+            \`\`\`
+            \`type\` ∈ counter / gauge / histogram；直方图的 \`value\` 是
+            \`{count,sum,min,max,boundaries,counts}\`（边界 1s/10s/1m/5m/30m）。
+
+            **纯拉**：没人调用就不发生任何计算，也没有任何定时器（不推、不入库、
+            不做 HTTP 导出 —— 将来接 Prometheus 只是在这份快照上加一个渲染器）。
+            `,
+            input: {},
+            output: z.object({ status: z.string(), data: z.any() }),
+          }),
           ps: RpcSchema.unary({
             desc: `
             **在跑什么**（活体表，刀 8 起）：后台 run 的当前快照 —— 不是历史账。
