@@ -43,15 +43,6 @@ export type ContextConfig = z.infer<typeof ContextConfigSchema>;
  * 为何"丢坏项"而不是"整份回落默认"：手改文件打错一个字（`task.titl`）不该把
  * 用户其余的划分一起丢掉；而重叠这类集合级错误只能丢其中一个（排序后取先者，结果确定）。
  */
-/**
- * 净化输入上限（读侧一律走它）：只认**正数**，其余一律回落缺省。
- * 为什么不设上限：阈值是给「明显异常」用的门槛，用户想调多严是自己的事（判据只是"这条消息多长"）。
- */
-export function sanitizeInputLimitChars(raw: unknown): number {
-  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 1) return DEFAULT_INPUT_LIMIT_CHARS;
-  return Math.floor(raw);
-}
-
 export function sanitizeSystemPlaces(raw: readonly string[]): {
   places: string[];
   dropped: string[];
@@ -74,4 +65,13 @@ export function sanitizeSystemPlaces(raw: readonly string[]): {
     return { places: defaultSystemPlaces(), dropped };
   }
   return { places: kept, dropped };
+}
+
+/**
+ * 净化输入上限（读侧一律走它）：只认**正数**，其余一律回落缺省。
+ * 为什么不设上限：阈值是给「明显异常」用的门槛，用户想调多严是自己的事（判据只是"这条消息多长"）。
+ */
+export function sanitizeInputLimitChars(raw: unknown): number {
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 1) return DEFAULT_INPUT_LIMIT_CHARS;
+  return Math.floor(raw);
 }
