@@ -56,6 +56,26 @@ afterAll(async () => {
   await fx?.electron?.stop();
 });
 
+/**
+ * ##423 块 3：配置控件从 select/checkbox 换成了 daisyUI `filter`（radio 组）。
+ * 组容器带 `data-*` 钩子；点选 = 真实 click 对应 `input[data-filter-value=…]`（同组互斥交给 browser）。
+ */
+async function pickFilter(group: string, value: string): Promise<string> {
+  return ui.query<string>(
+    `(() => { const g=document.querySelector(${JSON.stringify(group)}); if(!g) return 'no-group';
+      const r=g.querySelector('input[data-filter-value=' + JSON.stringify(${JSON.stringify(value)}) + ']');
+      if(!r) return 'no-option'; r.click(); return 'ok'; })()`,
+  );
+}
+
+/** 某个 filter 组当前选中的值（radio 组没有 `.value`） */
+async function pickedFilter(group: string): Promise<string> {
+  return ui.query<string>(
+    `(() => { const g=document.querySelector(${JSON.stringify(group)}); if(!g) return 'no-group';
+      const r=g.querySelector('input[type=radio]:checked'); return r ? r.getAttribute('data-filter-value') : ''; })()`,
+  );
+}
+
 async function a11yText(): Promise<string> {
   const res = await fx.sh.getJson("./diy.sh ui inspect");
   const acc: string[] = [];
@@ -173,7 +193,8 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
     const text = await a11yText();
     expect(text).toContain("自动压缩");
     expect(text).toContain("费用对比");
-    expect(await ui.query<boolean>(`!!document.querySelector('[aria-label="自动压缩"]')`)).toBe(true);
+    // ##423 块 3：三态改 filter 组（旧 toggle 把 notify 压没了）
+    expect(await ui.query<boolean>(`!!document.querySelector('[aria-label="自动压缩模式"]')`)).toBe(true);
     expect(await ui.query<boolean>(`!!document.querySelector('input[aria-label="压缩预算KB"]')`)).toBe(true);
     expect(await ui.query<boolean>(`!!document.querySelector('[aria-label="压缩（详情页）"]')`)).toBe(true);
     expect(await ui.query<string>(`document.querySelector('[aria-label="窗口构成视图"] button')?.textContent?.trim() ?? ''`)).toBe("压缩");
@@ -191,14 +212,12 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
     for (const k of ["head", "tail", "maxLineChars", "maxKeepBytes"]) {
       expect(await ui.query<boolean>(`!!document.querySelector('input[aria-label="${k}"]')`)).toBe(true);
     }
-    // render 默认 headtail（真源缺省）
-    expect(await ui.query<string>(`document.querySelector('select[aria-label="工具结果呈现"]')?.value ?? ''`)).toBe("headtail");
+    // render 默认 headtail（真源缺省）—— filter 组：读选中的 radio
+    expect(await pickedFilter('[data-render-select]')).toBe("headtail");
   });
 
   it("M3：改工具结果呈现 render（headtail → callpath）写回真源", async () => {
-    await ui.query<string>(
-      `(() => { const s=document.querySelector('select[aria-label="工具结果呈现"]'); s.value='callpath'; s.dispatchEvent(new Event('change',{bubbles:true})); return 'x'; })()`,
-    );
+    expect(await pickFilter('[data-render-select]', "callpath")).toBe("ok");
     await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("render: callpath"), { label: "render → callpath 写回" });
     // 非 headtail → renderData 字段从 DOM 退场
     await waitUntil(
@@ -207,9 +226,7 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
       { label: "renderData 字段退场" },
     );
     // 切回 headtail（后续用例依赖缺省）
-    await ui.query<string>(
-      `(() => { const s=document.querySelector('select[aria-label="工具结果呈现"]'); s.value='headtail'; s.dispatchEvent(new Event('change',{bubbles:true})); return 'x'; })()`,
-    );
+    expect(await pickFilter('[data-render-select]', "headtail")).toBe("ok");
     await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("render: headtail"), { label: "render 切回 headtail" });
   });
 
@@ -243,12 +260,16 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
     );
   });
 
-  it("自动压缩：toggle 写回真源 $DIY_HOME/auto-compact.yaml（auto ⇄ off）", async () => {
-    expect(await ui.query<boolean>(`document.querySelector('input[aria-label="自动压缩"]')?.checked`)).toBe(false);
-    await ui.query<string>(`(() => { const t=document.querySelector('input[aria-label="自动压缩"]'); t.checked=true; t.dispatchEvent(new Event('change',{bubbles:true})); return 'x'; })()`);
-    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("mode: auto"), { label: "toggle 开 → auto" });
-    await ui.query<string>(`(() => { const t=document.querySelector('input[aria-label="自动压缩"]'); t.checked=false; t.dispatchEvent(new Event('change',{bubbles:true})); return 'x'; })()`);
-    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("mode: off"), { label: "toggle 关 → off" });
+  it("自动压缩：filter 三态写回真源 $DIY_HOME/auto-compact.yaml（off / notify / auto）", async () => {
+    // ##423 块 3：三态全可见（旧 toggle 只能 auto ⇄ off，notify 在界面上根本选不到）
+    // 缺省 = notify（见 AutoCompactConfigSchema.mode 的缺省注释），不是 off
+    expect(["off", "notify", "auto"]).toContain(await pickedFilter('[data-compact-mode]'));
+    expect(await pickFilter('[data-compact-mode]', "auto")).toBe("ok");
+    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("mode: auto"), { label: "auto 写回" });
+    expect(await pickFilter('[data-compact-mode]', "notify")).toBe("ok");
+    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("mode: notify"), { label: "notify 写回" });
+    expect(await pickFilter('[data-compact-mode]', "off")).toBe("ok");
+    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("mode: off"), { label: "off 写回" });
   });
 
   it("压缩到输入：手改写回真源（3KB=3072，预算形状）", async () => {
@@ -551,10 +572,25 @@ describe("装配管道（##344 M2）：级列表增删改 + 即时预览 + 与 C
   /** 第 i 级里的某个控件（多级同形 ⇒ 必须按行取，不能全局 querySelector） */
   const rowSel = (i: number, sel: string) =>
     `document.querySelectorAll('[data-keep-stage]')[${i}]?.querySelector(${JSON.stringify(sel)})`;
-  /** 给某个控件设值并派发 change（走真实 DOM 事件路径） */
+  /**
+   * 给某个控件设值并派发 change（走真实 DOM 事件路径）。
+   *
+   * ##423 块 3：下拉/勾选框换成了 daisyUI `filter`（radio 组）—— `[data-keep-type-select]` 这类钩子
+   * 现在挂在**组容器**上，所以这里分两路：容器 ⇒ 点 `input[data-filter-value=<v>]`（真实点击，
+   * 让 browser 自己处理同组互斥）；`input/select` ⇒ 老路径 el.value + change。
+   */
   const fire = (sel: string, value: string) =>
     ui.query<string>(
-      `(() => { const el=${sel}; if(!el) return 'no'; el.value=${JSON.stringify(value)}; el.dispatchEvent(new Event('change',{bubbles:true})); return 'ok'; })()`,
+      `(() => { const el=${sel}; if(!el) return 'no';
+        if (el.matches('input,select,textarea')) { el.value=${JSON.stringify(value)}; el.dispatchEvent(new Event('change',{bubbles:true})); return 'ok'; }
+        const r = el.querySelector('input[data-filter-value=' + JSON.stringify(${JSON.stringify(value)}) + ']');
+        if (!r) return 'no-option'; r.click(); return 'ok'; })()`,
+    );
+  /** 某个 filter 组的当前选中值（radio 组没有 `.value` 可读） */
+  const picked = (sel: string) =>
+    ui.query<string>(
+      `(() => { const el=${sel}; if(!el) return 'no';
+        const r = el.querySelector('input[type=radio]:checked'); return r ? r.getAttribute('data-filter-value') : ''; })()`,
     );
 
   /** 该 describe 接在分表用例之后 —— 那时抽屉在「分表」tab 上，先切回「压缩」tab */
@@ -581,11 +617,38 @@ describe("装配管道（##344 M2）：级列表增删改 + 即时预览 + 与 C
     expect(await ui.query<number>(`document.querySelectorAll('[data-keep-stage]').length`)).toBe(2);
     expect(await ui.query<string>(`document.querySelectorAll('[data-keep-stage]')[0].getAttribute('data-keep-type')`)).toBe("steps");
     expect(await ui.query<string>(`document.querySelectorAll('[data-keep-stage]')[1].getAttribute('data-keep-type')`)).toBe("ladder");
-    expect(await ui.query<boolean>(`document.querySelectorAll('[data-keep-must]')[0].checked`)).toBe(true);
-    expect(await ui.query<string>(`document.querySelectorAll('[data-keep-clip]')[0].value`)).toBe("full");
+    // ##423 块 3：勾选框/下拉换成 filter 按钮组 ⇒ 读「选中的 radio」而不是 .checked / .value
+    expect(await picked(`document.querySelectorAll('[data-keep-must]')[0]`)).toBe("must");
+    expect(await picked(`document.querySelectorAll('[data-keep-clip]')[0]`)).toBe("full");
     // 阶梯级不声明 clip ⇒ 界面显示「回落全局」（不是写死 headtail）
-    expect(await ui.query<string>(`document.querySelectorAll('[data-keep-clip]')[1].value`)).toBe("inherit");
+    expect(await picked(`document.querySelectorAll('[data-keep-clip]')[1]`)).toBe("inherit");
     expect(await ui.query<string>(`document.querySelectorAll('[data-keep-n]')[0].value`)).toBe("6");
+  });
+
+  it("##423 块 2/3：「什么时候会压」讲清判据、范例预览左右对照、计数上屏", async () => {
+    await gotoCompactTab();
+    // ① 什么时候会压：三触发器 + 手动，各自带「开/关/手动」与当前值
+    const text = await a11yText();
+    expect(await ui.query<boolean>(`!!document.querySelector('[data-when-compact]')`)).toBe(true);
+    expect(
+      await ui.query<string[]>(`[...document.querySelectorAll('[data-when-row]')].map(e=>e.getAttribute('data-when-row'))`),
+    ).toEqual(["systemContextChanged", "cacheExpired", "contextWindowOver", "manual"]);
+    expect(text).toContain("系统上下文变");
+    expect(text).toContain("缓存过期");
+    expect(text).toContain("窗口超限");
+    expect(text).toContain("压成什么样");
+    // ② 范例预览：左 = 固定样例全部 20 条，右 = 压完留下的（上限小 ⇒ 留得少）
+    const before = await ui.query<number>(`document.querySelectorAll('[data-example-before] [data-example-msg]').length`);
+    const after = await ui.query<number>(`document.querySelectorAll('[data-example-after] [data-example-msg]').length`);
+    expect(before).toBe(20);
+    expect(after).toBeGreaterThan(0);
+    expect(after).toBeLessThan(before);
+    // 每条都标了模拟 token 尺寸
+    expect(text).toMatch(/\d+ tok/);
+    // ③ 计数：本会话投递次数 / 轮数 / 压缩次数 = 账本同源
+    expect(await ui.query<boolean>(`!!document.querySelector('[data-compact-stats]')`)).toBe(true);
+    expect(text).toContain("次投递（= 步数）");
+    expect(text).toContain("压缩");
   });
 
   it("「+ 新增级」→ 写回 history.keep[]（来源变「来自配置」）", async () => {
@@ -616,9 +679,8 @@ describe("装配管道（##344 M2）：级列表增删改 + 即时预览 + 与 C
 
   it("必保勾选 / 裁法选择 → 写回必须字段 `must` 与公共字段 `clip`", async () => {
     // 第 2 级（recent）取消必保（它本来没有 must）→ 勾上再取消
-    await ui.query<string>(
-      `(() => { const c=${rowSel(1, "[data-keep-must]")}; c.checked=true; c.dispatchEvent(new Event('change',{bubbles:true})); return 'x'; })()`,
-    );
+    // 第 2 级「计预算 → 必保」（filter 组：点对应 radio）
+    expect(await fire(rowSel(1, "[data-keep-must]"), "must")).toBe("ok");
     await waitUntil(() => Promise.resolve(autoYaml()), (t) => (t.match(/must: true/g) || []).length >= 2, { label: "recent 级变必保" });
     // 第 2 级裁法 → full（写回 clip 形状）
     await fire(rowSel(1, "[data-keep-clip]"), "full");
