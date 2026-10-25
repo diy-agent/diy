@@ -44,7 +44,7 @@
 import { z } from "zod";
 import { AssembleGlobalsSchema } from "../prompt-schema";
 import { describeSchema, pruneSchemaDoc, type SchemaDoc } from "../schema-doc";
-import { HistoryNoteSchema } from "./budget-note";
+import { HistoryNoteSchema } from "./history-note";
 import { emitYamlTraced, renderPaths, subsetOf, toYaml } from "./render";
 import type { ContextPath, ContextTreeState } from "./types";
 

@@ -142,7 +142,7 @@ import {
     type UsageLike,
 } from "../../shared/usage";
 import { buildDelivery, isRuntimePlace, runtimeDiffDelivery, type Delivery } from "../../shared/context/delivery";
-import { renderBudgetNote } from "../../shared/context/budget-note";
+import { renderHistoryNote } from "../../shared/context/history-note";
 import { assemblyHardCapBytes } from "../../shared/context/request-preflight";
 import { estimateRequest, tighterHistoryCapBytes } from "../../shared/context/request-preflight";
 import { isEnvelopeText, renderSummaryPart, tailEnvelope } from "../../shared/context/envelope";
@@ -3385,7 +3385,7 @@ export class LocalAgentManager {
         if (!range || !this.noteEnabled()) return { messages: kept, note: "" };
         const sel = selectHistoryByCut(all, range);
         if (sel.dropped.length === 0) return { messages: kept, note: "" };
-        const note = renderBudgetNote(
+        const note = renderHistoryNote(
             {
                 limitTokens: limit.limitTokens,
                 dropped: sel.dropped.length,

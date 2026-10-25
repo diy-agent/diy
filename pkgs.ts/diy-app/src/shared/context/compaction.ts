@@ -395,7 +395,7 @@ function truncLine(line: string, max: number): string {
  * 为什么需要它 —— 这道顶**不是**锦上添花，是 ##401 死锁的直接成因：
  *   ① 投递层（`main/services/tool-output.ts` 的 `toModelOutput`）对**首次出洞**的单条输出有 50 KB 预算；
  *   ② 但**历史重放**走的是本函数，`clip` 由**级声明**决定 —— 缺省 plan 的第一级是
- *      `steps · must:true · clip:{type:"full"}`（`compact-keep.ts` 的 `DEFAULT_KEEP`），语义是「工作集逐字保真」；
+ *      旧装配管道里那条「最近若干步字节保真」的级（已于 ##432 删除），语义是「工作集逐字保真」；
  *   ③ `full` 直接原样返回 ⇒ **① 的封顶被绕过**，几步之内累积出 4.95 MB 发了出去
  *      （实测 `~/.diy/log/network/2026-10-21.jsonl`：16:34 一次 282 KB，16:57 直接跳到 4,946,910 B）。
  *  ⇒ 结论：**「full」只能是「不额外裁」，不能是「无上限」**。上限由这道硬顶兜住，任何级声明都翻不过去。
@@ -731,7 +731,7 @@ export type CompactTrigger =
  * 也才能回答「换了 plan 之后，压缩后果变好还是变坏」（##340 量尺的 A/B 基线）。
  *
  * ##378 起：**不再内嵌全文**（同内容反复内嵌 = 去重 0，且没有版本链）。改为内容寻址指针
- * `planVersion` —— 全文在 `$DIY_HOME/plan-store/plan-<sha12>.json`（CAS），按需取回。
+ * `planVersion` —— 旧账本里的 CAS 指针；`$DIY_HOME/plan-store/` 已随 ##432 清理删除，读旧账时只做展示。
  * v3 旧事件里的 `keep` 全文**照旧可读**（不改写既有账本；UI 要能同时显示两种）。
  */
 export interface CompactPlanSnapshot {
@@ -1070,7 +1070,7 @@ export function resolveBoundary(events: readonly CompactLogEvent[]): EffectiveBo
         ...(c.boundary.keptFromLlmLine !== undefined ? { keptFromLlmLine: c.boundary.keptFromLlmLine } : {}),
         ...(c.boundary.opsBytes !== undefined ? { opsBytes: c.boundary.opsBytes } : {}),
         schema: c.schema ?? OPS_SCHEMA_CURRENT,
-        // 读侧归一：账本里可能是扁平输入面形状（budgetBytes/toolResult/headtail），
+        // 读侧归一：旧账本里可能是扁平输入面形状（budgetBytes/toolResult/headtail），
         // 这里统一成决策树 —— 于是「历史账本」与「新写的账本」下游完全同形（初版紧凑、扩展松散）。
         policy: normalizePolicy(c.policy),
         ts: c.ts,
@@ -1144,7 +1144,7 @@ export function turnIdToTime(turnId: string): Date | null {
 // 新模型：**历史 = 固定的消息集合**；一次压缩 = 用**某算法**对它定义的一个**过滤条件**。
 // 于是要记两样（都在 CompactEventRecord.policy 里）：
 //   · **算法**（`mode`：现役只有 `budget`）—— 换算法 = 加新分支 + 新 filter 形状（判别式联合）；
-//   · 该算法的**过滤器表达**（其余字段：budgetBytes+toolResult / …）。
+//   · 该算法的**过滤器表达**（旧口径是 budgetBytes+toolResult；现在是 turns.jsonl 里的边界）。
 // 历史页列的就是这些**不可变快照**；当前配置对历史回溯**无效**（回溯只看当时那条事件）。
 
 /** 粗略 token 估算：字节/4（无 tokenizer；只用于 panel 的「首屏估算」文案，绝不用于计费） */

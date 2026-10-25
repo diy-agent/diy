@@ -1,4 +1,4 @@
-// src/shared/context/budget-note.ts
+// src/shared/context/history-note.ts
 // 🎯 压缩后的**历史索引注记**（##432 刀 2：一条上限 + 一次事件）—— 纯函数，禁止 import node:*
 //
 // ── 为什么只剩这几个字段 ──
@@ -61,6 +61,3 @@ export interface HistoryNoteCtx {
 export function renderHistoryNote(note: Omit<HistoryNote, "file" | "absPath">, ctx: HistoryNoteCtx): string {
     return toYaml({ history: { file: ctx.file, absPath: ctx.absPath, ...note } });
 }
-
-/** 旧名（##432 之前的调用点还在用）—— 语义现在是「压缩注记」，不是「预算注记」 */
-export const renderBudgetNote = renderHistoryNote;

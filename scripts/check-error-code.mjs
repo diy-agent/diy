@@ -51,15 +51,13 @@ const LITERAL_RE = /^["'`]([^"'`$]*)["'`]$/;
 const LEGACY_THROW_BASELINE = new Map(Object.entries({
   // 由 `--by-file` 生成（2026-10-20，##394 立项时实测：177 处 / 31 文件）。
   // 改好一处就把数字调小（护栏会提示），**不要往上调**。
-  "pkgs.ts/diy-app/src/main/services/api-impl.ts": 34,
+  "pkgs.ts/diy-app/src/main/services/api-impl.ts": 32,
   "pkgs.ts/diy-app/src/main/core/flow.ts": 29,
   "pkgs.ts/diy-app/src/main/core/flow-store.ts": 21,
   "pkgs.ts/diy-app/src/main/core/llm-cost.ts": 11,
   "pkgs.ts/diy-app/src/main/core/task.ts": 8,
-  "pkgs.ts/diy-app/src/main/services/local-agent.ts": 8,
+  "pkgs.ts/diy-app/src/main/services/local-agent.ts": 5,
   "pkgs.ts/diy-app/src/main/core/traffic-log.ts": 7,
-  "pkgs.ts/diy-app/src/main/core/auto-compact-config.ts": 6,
-  "pkgs.ts/diy-app/src/main/services/compact-plan-io.ts": 5,
   "pkgs.ts/diy-app/src/main/services/prompt-registry.ts": 5,
   "pkgs.ts/diy-app/src/cli/index.ts": 4,
   "pkgs.ts/diy-app/src/main/core/flow-thread.ts": 4,
