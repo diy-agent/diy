@@ -14,13 +14,26 @@
 // （`Caches.diy_inbox_last_read`，沿 `sessionStore` 已读水位的既有做法：丢了大不了多报未读，
 // 不造成数据损失）。不新开账本文件 —— 水位是"用户看到哪儿了"，不是业务事实。
 //
+// ⚠️ **水位带数据根**（##266 硬要求）：`localStorage` 是同一个 Electron userData，而
+// lab（`build/home`）与 production（`~/.diy`）的 `local/inbox.jsonl` 是两份不同的账。
+// 只按条目 id 存，在 lab 里点开一次面板就会把 production 的未读一把清掉。
+// 存储形态 = `<数据根>|<条目 id>`（见 `shared/inbox.watermarkStoreOf`），数据根从
+// `diy.getAppInfo` 取（与 `SidebarRoom` 判 lab/prod 同源）。
+//
 // 一个条目只弹一次：`seen` 按 id 去重（订阅首帧 / 重连不会重复弹同一条）。
 
 import { createSignal } from "solid-js";
 import { diyService } from "../lib/rpc";
 import { Caches } from "../lib/ui-state";
 import { notificationStore } from "./notificationStore";
-import { INBOX_MAX, latestIdOf, unreadCountOf, type InboxEntry } from "../../shared/inbox";
+import {
+    INBOX_MAX,
+    latestIdOf,
+    unreadCountOf,
+    watermarkIdOf,
+    watermarkStoreOf,
+    type InboxEntry,
+} from "../../shared/inbox";
 
 /** 已处理过的条目 id（toast 去重）：够去重就行 —— toast 本身有寿命 */
 const seen = new Set<string>();
@@ -31,12 +44,20 @@ let abort: AbortController | undefined;
 let started = false;
 
 const [entries, setEntries] = createSignal<InboxEntry[]>([]);
-const [lastReadId, setLastReadIdSig] = createSignal<string | null>(Caches.diy_inbox_last_read.get() || null);
+/** 本实例的数据根（`~/.diy` / `build/home`…）：水位按它分段，空 = 还没问出来 */
+const [dataRoot, setDataRoot] = createSignal<string>("");
+/** 存储里的原样水位（`<数据根>|<id>`）；对外暴露的是"属于当前数据根的那一段" */
+const [storedWatermark, setStoredWatermark] = createSignal<string>(Caches.diy_inbox_last_read.get() ?? "");
+
+/** 属于当前数据根的水位 id（数据根未定 ⇒ `""` = 全部未读，宁可多报也不谎报已读） */
+function watermark(): string {
+    return watermarkIdOf(storedWatermark(), dataRoot());
+}
 
 /** 把一条信箱条目变成 toast（导出以便单测直接钉文案/二级信息） */
 export function toastOfEntry(e: InboxEntry): { type: "info" | "error"; message: string; meta: { source: string; reason: string; detail: string } } {
     return {
-        // 撞上限：模型话没说完就断了（有实际损失）⇒ error 色；其余（成本告警 / 留言 / 投递丢失）⇒ info
+        // 撞上限：模型话没说完就断了（有实际损失）⇒ error 色；其余（成本告警 / 留言 / 滞留）⇒ info
         type: e.kind === "max-tokens" ? "error" : "info",
         message: e.text,
         meta: { source: e.source, reason: e.reason, detail: e.detail },
@@ -82,7 +103,14 @@ async function load(): Promise<void> {
 function start(): void {
     if (started) return;
     started = true;
-    void load().then(() => {
+    void diyService.diy
+        .getAppInfo({})
+        .then((info) => setDataRoot(info.diyHome ?? ""))
+        .catch(() => {
+            /* 拿不到数据根 ⇒ 水位判不出归属 ⇒ 全部算未读（多报一次，总比谎报已读过好） */
+        })
+        .then(() => load())
+        .then(() => {
         if (abort) return;
         const ctrl = new AbortController();
         abort = ctrl;
@@ -118,24 +146,31 @@ export const inboxStore = {
     get entries(): InboxEntry[] {
         return entries();
     },
-    /** 未读数 = 水位之后的条数（判据是纯函数，见 `shared/inbox.unreadCountOf`） */
+    /** 未读数 = 比水位新的条数（判据是纯函数，见 `shared/inbox.unreadCountOf`） */
     get unread(): number {
-        return unreadCountOf(entries(), lastReadId());
+        return unreadCountOf(entries(), watermark());
     },
-    get lastReadId(): string | null {
-        return lastReadId();
+    /** 当前数据根下的水位 id（`""` = 全部未读） */
+    get lastReadId(): string {
+        return watermark();
+    },
+    /** 本实例数据根（空 = 还没问出来） */
+    get dataRoot(): string {
+        return dataRoot();
     },
     /** 标到最新（打开面板即"这一波我都看到了"—— 水位只有一个值，只能这么表达） */
     markAllRead(): void {
         const id = latestIdOf(entries());
-        if (!id || id === lastReadId()) return;
-        setLastReadIdSig(id);
-        Caches.diy_inbox_last_read.set(id);
+        if (!id || id === watermark()) return;
+        const stored = watermarkStoreOf(dataRoot(), id);
+        setStoredWatermark(stored);
+        Caches.diy_inbox_last_read.set(stored);
     },
     /** 清空（测试用；同时清水位，否则测试之间互相污染） */
     reset(): void {
         setEntries([]);
-        setLastReadIdSig(null);
+        setDataRoot("");
+        setStoredWatermark("");
         Caches.diy_inbox_last_read.reset();
         seen.clear();
     },

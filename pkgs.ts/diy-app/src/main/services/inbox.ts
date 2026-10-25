@@ -32,7 +32,7 @@ export function inboxEntryOf(
     partial: Omit<InboxEntry, "id" | "ts">,
     now = new Date(),
 ): InboxEntry {
-    return { id: `ib-${now.getTime()}-${++seq}`, ts: now.toISOString(), ...partial };
+    return { id: `ib-${now.getTime()}-${String(++seq).padStart(4, "0")}`, ts: now.toISOString(), ...partial };
 }
 
 /**
@@ -167,48 +167,6 @@ export function messageEntryOf(input: {
     };
 }
 
-/**
- * 落一条「投递丢了」的条目（##436 顺带治的洞）：进程重启后，`deliveries.jsonl` 里停在
- * `queued`/`running` 的那条话已经没人会看见了 —— 至少让人能在信箱里读到它是什么。
- *
- * **不静默**是硬要求（t266.room#queues）；**不重投**也是：重投要改投递路径，本轮硬约束
- * 明确禁止（“不改投递”）。所以这里只记账 + 说清“去房间看原文”。
- */
-export function lostDeliveryEntryOf(input: {
-    taskUri: string;
-    roomId: string;
-    sayId: string;
-    memberId: string;
-    status: string;
-    text?: string;
-    ts?: string;
-    /** 幂等键（启动扫尾重启十次也只记一条；判据在 `inbox-sweep`） */
-    dedupeKey: string;
-}): Omit<InboxEntry, "id" | "ts"> {
-    const raw = input.text ?? "";
-    return {
-        level: "N1",
-        kind: "delivery-lost",
-        taskUri: input.taskUri,
-        text: `一条房间留言没送到（${input.roomId} · 停在 ${input.status}）${raw ? `：${inboxPreviewOf(raw, 40)}` : ""}`,
-        source: `房间投递账 · ${input.roomId} · 收件成员 ${input.memberId}`,
-        reason: `这条 say（${input.sayId}）的最后一笔投递状态停在 ${input.status}，而进程重启过 ⇒ 内存里的执行链已丢，没有 agent 会再取走它`,
-        detail: [
-            "机制：房间投递的执行链只在内存（`room-service.queues`），消息本体在 room events —— 链断了消息就没人送。",
-            "本条是启动扫尾按 sayId 判出来的“已知丢失”，没有重投（重投要改投递路径，不在本轮范围）。",
-            "想看原话与上下文：房间页 / `diy room get <roomId>`；想让 agent 处理：把原话重新发一遍。",
-        ].join("\n"),
-        data: {
-            raw,
-            sayId: input.sayId,
-            roomId: input.roomId,
-            memberId: input.memberId,
-            status: input.status,
-            at: input.ts ?? null,
-            dedupeKey: input.dedupeKey,
-        },
-    };
-}
 
 /** fire-and-forget 落一条（记账失败只出声，绝不让投递因此失败） */
 export function noteInbox(partial: Omit<InboxEntry, "id" | "ts">): void {
@@ -216,37 +174,44 @@ export function noteInbox(partial: Omit<InboxEntry, "id" | "ts">): void {
 }
 
 /**
- * 落一条「永不投递的队列」条目（##436 顺带治的第二个洞）。
+ * 一条**滞留留言**的条目（##229 的真实现场 / ##436 顺带治的洞 ②）。
  *
- * 判据在 `inbox-sweep.sweepStuckQueues`：**任务已终态**（`shared/turn-gate` 的词表）却还压着
- * 待投递插话 —— 终态会话不再接受新轮次，那些留言永远不会被「轮末整批取走」。
+ * 判据（##266 查真盘后钉的，别扩）：`.diy/drafts.yaml` 的 `steers` 非空 **且** 任务状态
+ * 不再接受新轮次 ⇒ 没有下一次轮次来取走它。**一条 steer 一条条目**（而不是整个队列一条），
+ * 因为跳转要的锚点就是那一条的 `steerId`。
  *
- * 原文全部带上（`data.items`）：用户要判断的正是"那几句该不该我处理"。
+ * 文案纪律（##416「不隐藏信息」）：说清**为什么没被消费** + **怎么救**，且必须写明这是
+ * **可逆**的 —— 任务随时可以改回 active，那时这条留言照样会被取走。所以用「不会被取出」
+ * 而不是「已丢弃」。
  */
-export function stuckQueueEntryOf(input: {
+export function stuckSteerEntryOf(input: {
     taskUri: string;
     state: string;
-    steers: ReadonlyArray<{ id: string; text: string; author?: string; created: string }>;
+    steer: { id: string; text: string; author?: string; created: string };
+    /** 幂等键（启动扫尾重启十次也只记一条；判据在 `inbox-sweep`） */
     dedupeKey: string;
 }): Omit<InboxEntry, "id" | "ts"> {
-    const first = input.steers[0];
+    const { steer } = input;
+    const who = steer.author && steer.author.length > 0 ? steer.author : "无署名";
     return {
         level: "N1",
-        kind: "delivery-lost",
+        kind: "lost",
         taskUri: input.taskUri,
-        text: `这个会话已 ${input.state}，但队列里还压着 ${input.steers.length} 条留言（永远不会被投递）${first ? `：${inboxPreviewOf(first.text, 40)}` : ""}`,
-        source: `插话队列 · ${input.taskUri} · .diy/drafts.yaml`,
-        reason: `会话状态 ${input.state} 属于终态（不再接受新轮次）⇒ 队列没有下一次取走的机会；进程重启也不会让它们变新鲜`,
+        text: `任务已结案（${input.state}），此留言不会被取出：${inboxPreviewOf(steer.text, 40)}`,
+        source: `插话队列 · ${input.taskUri} · 署名 ${who}`,
+        reason: `任务状态 ${input.state} 已不再接受新轮次（TurnGate 在建轮之前就拒）⇒ 队列没有下一次被取走的机会`,
         detail: [
-            "机制：留言存在任务的 `.diy/drafts.yaml` 里，只由**轮次**取走（`claimStepSteers` / 轮末整批）。",
-            "终态任务不会再起轮次 ⇒ 这些条只会一直躺着（`deliveries` 里三条都没有，因为它们压根没开始投）。",
-            "想处理：把任务恢复成可跑状态后再发一次，或把原话复制到新的任务里。本条由启动扫尾写入，不重投、不删除任何队列项。",
+            "机制：留言存在任务目录的 `.diy/drafts.yaml` 的 `steers` 里，只由**轮次**取走（下一个模型步前 / 轮末整批）。",
+            "为什么它进得来：UI 输入框直接往 drafts 追加（不经 TurnGate），任务结案后写进去的就没人取；CLI 那条路会被 TurnGate 挡住，造不出这种。",
+            `**这是可逆的**：要它生效，把任务改回可跑状态（\`diy task edit ${input.taskUri} active\`），它就会在下一轮被取走。`,
+            "本条由启动扫尾写入：不重投、不删 drafts、不改任务状态。",
         ].join("\n"),
         data: {
-            raw: input.steers.map((s) => `${s.author ? `${s.author}：` : ""}${s.text}`).join("\n---\n"),
+            raw: steer.text,
             state: input.state,
-            count: input.steers.length,
-            steerIds: input.steers.map((s) => s.id).join(","),
+            steerId: steer.id,
+            author: steer.author ?? null,
+            created: steer.created,
             dedupeKey: input.dedupeKey,
         },
     };

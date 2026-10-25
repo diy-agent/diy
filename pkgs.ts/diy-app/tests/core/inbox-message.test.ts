@@ -63,102 +63,71 @@ describe("##436 留言条目：分级（人 = N2 / 机器 = N1）+ 原文不丢"
     });
 });
 
-describe("##436 顺带洞 ①：僵尸投递（deliveries 停在 queued/running）", () => {
-    it("扫出来落一条 delivery-lost，带原话；再跑一次不再落（幂等）", async () => {
-        const { ensureRoom, appendEvent, appendDelivery } = await import("../../src/main/core/room");
-        const { sweepLostDeliveries } = await import("../../src/main/services/inbox-sweep");
+describe("##436 顺带洞：结案任务里没人取的留言（kind=lost）", () => {
+    const draftsOf = (uri: string, steers: string): string =>
+        `kind: diy.ui-drafts\nversion: 3\ntask: ${uri}\nfields: {}\nsteers:\n${steers}`;
+
+    function makeTask(uri: string, state: string, steers: string): void {
+        const dir = join(home, uri);
+        mkdirSync(join(dir, ".diy"), { recursive: true });
+        writeFileSync(join(dir, "AGENTS.md"), `---\ntitle: 任务\nstate: ${state}\n---\n正文正文正文正文正文\n`, "utf-8");
+        writeFileSync(join(dir, ".diy", "drafts.yaml"), draftsOf(uri, steers), "utf-8");
+    }
+
+    it("done 任务 + steers 非空 ⇒ 每条留言落一条 lost（带 steerId / 原文 / created / state）；再跑不重复", async () => {
+        const { sweepStuckSteers } = await import("../../src/main/services/inbox-sweep");
         const { inboxHub } = await import("../../src/main/services/inbox");
+        const uri = "projects/4/tasks/438";
+        makeTask(
+            uri,
+            "done",
+            '  - id: st-1\n    mode: next-turn\n    text: 这句没人取\n    created: "2026-10-25T12:00:00.000Z"\n    author: "human:chen56"\n',
+        );
 
-        ensureRoom("projects/4/tasks/436", {
-            members: [
-                {
-                    id: "agent:dev-1",
-                    name: "dev-1",
-                    kind: "agent",
-                    backend: { type: "task", data: { taskUri: "projects/4/tasks/435" } },
-                },
-            ],
-        });
-        await appendEvent("projects/4/tasks/436", {
-            id: "say-9",
-            ts: new Date().toISOString(),
-            kind: "say",
-            channel: "default",
-            author: "human:chen56",
-            to: [],
-            delivered: false,
-            text: "这句话没送到",
-        });
-        await appendDelivery("projects/4/tasks/436", {
-            eventId: "say-9",
-            memberId: "agent:dev-1",
-            status: "queued",
-            taskUri: "projects/4/tasks/435",
-            ts: new Date().toISOString(),
-        });
-
-        expect(await sweepLostDeliveries()).toBe(1);
+        expect(await sweepStuckSteers()).toBe(1);
         const rows = await inboxHub.list();
         expect(rows).toHaveLength(1);
-        expect(rows[0]).toMatchObject({ kind: "delivery-lost", taskUri: "projects/4/tasks/435" });
-        expect(rows[0]!.data?.["raw"]).toBe("这句话没送到");
-        expect(rows[0]!.data?.["sayId"]).toBe("say-9");
+        expect(rows[0]).toMatchObject({ kind: "lost", taskUri: uri, level: "N1" });
+        expect(rows[0]!.data?.["raw"]).toBe("这句没人取");
+        expect(rows[0]!.data?.["steerId"]).toBe("st-1");
+        expect(rows[0]!.data?.["created"]).toBe("2026-10-25T12:00:00.000Z");
+        expect(rows[0]!.data?.["state"]).toBe("done");
+        // 文案口径（##266）：说清"不会被取出"+"可逆"，不是"已丢弃"
+        expect(rows[0]!.text).toContain("不会被取出");
+        expect(rows[0]!.detail).toContain("可逆");
+        expect(rows[0]!.detail).toContain("task edit");
 
-        // 同一件事重启再扫：不再落第二条
-        expect(await sweepLostDeliveries()).toBe(0);
+        // 同一件事重启再扫：不再落第二条（幂等键 = uri#steerId）
+        expect(await sweepStuckSteers()).toBe(0);
         expect(await inboxHub.list()).toHaveLength(1);
     });
 
-    it("已投递（ok）不算僵尸；没有收件会话可跳的也不算（不造假按钮）", async () => {
-        const { ensureRoom, appendDelivery } = await import("../../src/main/core/room");
-        const { sweepLostDeliveries } = await import("../../src/main/services/inbox-sweep");
-        ensureRoom("projects/4/tasks/437", {
-            members: [{ id: "agent:x", name: "x", kind: "agent", backend: null }],
-        });
-        const now = new Date().toISOString();
-        await appendDelivery("projects/4/tasks/437", { eventId: "say-ok", memberId: "agent:x", status: "ok", ts: now });
-        await appendDelivery("projects/4/tasks/437", { eventId: "say-noop", memberId: "agent:x", status: "queued", ts: now });
-        expect(await sweepLostDeliveries()).toBe(0);
-    });
-});
-
-describe("##436 顺带洞 ②：终态任务里永不投递的队列", () => {
-    it("done 任务 + drafts 里有 steers ⇒ 落一条；再跑不重复", async () => {
-        const { sweepStuckQueues } = await import("../../src/main/services/inbox-sweep");
+    it("cancelled / closed / shelved 都算「不再接受新轮次」", async () => {
+        const { sweepStuckSteers } = await import("../../src/main/services/inbox-sweep");
         const { inboxHub } = await import("../../src/main/services/inbox");
-        const uri = "projects/4/tasks/438";
-        const dir = join(home, uri);
-        mkdirSync(join(dir, ".diy"), { recursive: true });
-        writeFileSync(
-            join(dir, "AGENTS.md"),
-            "---\ntitle: 已结案\nstate: done\n---\n正文正文正文正文正文\n",
-            "utf-8",
-        );
-        writeFileSync(
-            join(dir, ".diy", "drafts.yaml"),
-            `kind: diy.ui-drafts\nversion: 3\ntask: ${uri}\nfields: {}\nsteers:\n  - id: st-1\n    mode: next-turn\n    text: 这句没人取\n    created: "2026-10-25T12:00:00.000Z"\n    author: "human:chen56"\n`,
-            "utf-8",
-        );
-
-        expect(await sweepStuckQueues()).toBe(1);
-        const rows = await inboxHub.list();
-        expect(rows[0]).toMatchObject({ kind: "delivery-lost", taskUri: uri });
-        expect(rows[0]!.data?.["raw"]).toContain("这句没人取");
-
-        expect(await sweepStuckQueues()).toBe(0);
+        let i = 0;
+        for (const state of ["cancelled", "closed", "shelved"]) {
+            const uri = `projects/4/tasks/${450 + i++}`;
+            makeTask(uri, state, `  - id: st-${i}\n    mode: next-turn\n    text: 躺着\n    created: "2026-10-25T12:00:00.000Z"\n`);
+        }
+        expect(await sweepStuckSteers()).toBe(3);
+        expect((await inboxHub.list()).map((r) => r.taskUri).sort()).toEqual([
+            "projects/4/tasks/450",
+            "projects/4/tasks/451",
+            "projects/4/tasks/452",
+        ]);
     });
 
-    it("非终态任务**不动**（用户随时可能点跑，猜错就是假警报）", async () => {
-        const { sweepStuckQueues } = await import("../../src/main/services/inbox-sweep");
+    it("非结案任务**不动**（用户随时可能点跑，猜错就是假警报）", async () => {
+        const { sweepStuckSteers } = await import("../../src/main/services/inbox-sweep");
         const uri = "projects/4/tasks/439";
-        const dir = join(home, uri);
-        mkdirSync(join(dir, ".diy"), { recursive: true });
-        writeFileSync(join(dir, "AGENTS.md"), "---\ntitle: 在跑\nstate: active\n---\n正文正文正文正文正文\n", "utf-8");
-        writeFileSync(
-            join(dir, ".diy", "drafts.yaml"),
-            `kind: diy.ui-drafts\nversion: 3\ntask: ${uri}\nfields: {}\nsteers:\n  - id: st-2\n    mode: next-turn\n    text: 待投\n    created: "2026-10-25T12:00:00.000Z"\n`,
-            "utf-8",
-        );
-        expect(await sweepStuckQueues()).toBe(0);
+        makeTask(uri, "active", '  - id: st-2\n    mode: next-turn\n    text: 待投\n    created: "2026-10-25T12:00:00.000Z"\n');
+        expect(await sweepStuckSteers()).toBe(0);
+    });
+
+    it("结案但 steers 为空 ⇒ 不落条目（没东西可取 ≠ 有东西取不出）", async () => {
+        const { sweepStuckSteers } = await import("../../src/main/services/inbox-sweep");
+        makeTask("projects/4/tasks/440", "done", "");
+        expect(await sweepStuckSteers()).toBe(0);
     });
 });

@@ -1,7 +1,9 @@
 // tests/core/inbox-unread.test.ts
 // ═══════════════════════════════════════════════════════════════
 // ##436 通知信箱 UI 的**判据**（纯函数，`shared/inbox.ts`）：
-//   ① 未读数 = 水位之后的条数（0 / 99+ / 全读归零 / 水位被 ring 挤掉 ⇒ 全部未读）
+//   ① 未读数 = 比水位**新**的条数（0 / 99+ / 全读归零 / 水位被 ring 挤掉 ⇒ 全部未读 /
+//      inbox 被清空 ⇒ 0 且不为负）—— 口径是 id 的**单调序**，不是数组位置
+//   ①' 水位按数据根分段（lab 与 prod 是两份账，不许互相清未读）
 //   ② 徽标文字（0 = 不显示数字，图标恒在）
 //   ③ 跳转锚点（有锚点才"定位"，没锚点必须由调用方说出来）
 //   ④ kind 的中文名覆盖完整（组件里不许各写一份文案）
@@ -18,6 +20,10 @@ import {
     hasAnchorOf,
     latestIdOf,
     unreadCountOf,
+    isNewerInboxId,
+    inboxIdOrderOf,
+    watermarkIdOf,
+    watermarkStoreOf,
     type InboxEntry,
 } from "../../src/shared/inbox";
 
@@ -34,23 +40,44 @@ const entry = (id: string, over: Partial<InboxEntry> = {}): InboxEntry => ({
     ...over,
 });
 
-describe("##436 未读数（水位之后的条数）", () => {
+/** 真 id 形态：`ib-<毫秒>-<序号>`（序号补零 ⇒ 纯字符串比较也单调） */
+const ib = (ms: number, seq: number): string => `ib-${ms}-${String(seq).padStart(4, "0")}`;
+
+describe("##436 未读数（比水位新的条数）", () => {
     it("水位为空 = 全部未读（新装 / 清过视图 cache）", () => {
-        const rows = [entry("a"), entry("b"), entry("c")];
+        const rows = [entry(ib(1, 1)), entry(ib(1, 2)), entry(ib(2, 1))];
         expect(unreadCountOf(rows, null)).toBe(3);
         expect(unreadCountOf(rows, "")).toBe(3);
     });
 
-    it("水位在中间 = 之后那几条；水位是最新 = 0（全读后归零）", () => {
-        const rows = [entry("a"), entry("b"), entry("c")];
-        expect(unreadCountOf(rows, "a")).toBe(2);
-        expect(unreadCountOf(rows, "b")).toBe(1);
-        expect(unreadCountOf(rows, "c")).toBe(0);
+    it("水位在中间 = 比它新的那几条；水位是最新 = 0（全读后归零）", () => {
+        const rows = [entry(ib(1, 1)), entry(ib(1, 2)), entry(ib(2, 1))];
+        expect(unreadCountOf(rows, ib(1, 1))).toBe(2);
+        expect(unreadCountOf(rows, ib(1, 2))).toBe(1);
+        expect(unreadCountOf(rows, ib(2, 1))).toBe(0);
     });
 
-    it("水位找不到（被 INBOX_MAX ring 挤掉）= 全部未读（不谎报已读）", () => {
-        const rows = [entry("x"), entry("y")];
-        expect(unreadCountOf(rows, "早被挤掉的 id")).toBe(2);
+    it("同毫秒内按序号比大小（旧的按字符串比会把 `-10` 判成比 `-9` 小）", () => {
+        const rows = Array.from({ length: 12 }, (_, i) => entry(ib(1000, i + 1)));
+        expect(unreadCountOf(rows, ib(1000, 9))).toBe(3); // 10 / 11 / 12
+        expect(isNewerInboxId(ib(1000, 10), ib(1000, 9))).toBe(true);
+    });
+
+    it("水位比所有条目都旧（被 INBOX_MAX ring 挤掉）= 全部未读（不谎报已读）", () => {
+        const rows = [entry(ib(5000, 1)), entry(ib(5000, 2))];
+        expect(unreadCountOf(rows, ib(1, 1))).toBe(2);
+    });
+
+    it("inbox 被清空 / 换过数据根（水位比所有条目都新）= 0，**不许负数**", () => {
+        const rows = [entry(ib(1000, 1))];
+        expect(unreadCountOf(rows, ib(9999, 1))).toBe(0);
+        expect(unreadCountOf([], ib(9999, 1))).toBe(0);
+    });
+
+    it("水位是脏值（解析不了）= 全部未读（宁可多报，也不谎报已读）", () => {
+        const rows = [entry(ib(1, 1))];
+        expect(unreadCountOf(rows, "早被挤掉的 id")).toBe(1);
+        expect(unreadCountOf(rows, "ib-abc-1")).toBe(1);
     });
 
     it("空信箱 = 0", () => {
@@ -58,9 +85,35 @@ describe("##436 未读数（水位之后的条数）", () => {
         expect(unreadCountOf([], null)).toBe(0);
     });
 
-    it("`latestIdOf` = 最后一条（空信箱 = null，不写空串进 cache）", () => {
+    it("`latestIdOf` = id 最新的那条（与数组顺序无关；空信箱 = null）", () => {
         expect(latestIdOf([])).toBeNull();
-        expect(latestIdOf([entry("a"), entry("b")])).toBe("b");
+        expect(latestIdOf([entry(ib(2, 1)), entry(ib(1, 1))])).toBe(ib(2, 1));
+    });
+
+    it("id 解析：`ib-<毫秒>-<序号>` 才认，其它形态 = null（旧格式走兜底）", () => {
+        expect(inboxIdOrderOf("ib-1792950000000-0003")).toEqual({ ms: 1792950000000, seq: 3 });
+        expect(inboxIdOrderOf("a")).toBeNull();
+        expect(inboxIdOrderOf("ib-1")).toBeNull();
+    });
+});
+
+describe("##436 已读水位按数据根分段（lab 与 prod 是两份账）", () => {
+    it("存进去再取出来：只有同一个数据根才认", () => {
+        const stored = watermarkStoreOf("/Users/ccc/.diy", "ib-1-0001");
+        expect(stored).toBe("/Users/ccc/.diy|ib-1-0001");
+        expect(watermarkIdOf(stored, "/Users/ccc/.diy")).toBe("ib-1-0001");
+        // 换数据根（lab = build/home）⇒ 不认，全部未读（不许把 production 的未读清掉）
+        expect(watermarkIdOf(stored, "/repo/build/home")).toBe("");
+    });
+
+    it("空 / 旧形态（裸 id，没有数据根）= 不认（判不出归属就多报未读）", () => {
+        expect(watermarkIdOf("", "/x")).toBe("");
+        expect(watermarkIdOf(null, "/x")).toBe("");
+        expect(watermarkIdOf("ib-1-0001", "/x")).toBe("");
+    });
+
+    it("空 id ⇒ 空串（别把 `根|` 存成一个「看起来有水位」的值）", () => {
+        expect(watermarkStoreOf("/x", "")).toBe("");
     });
 });
 
