@@ -32,9 +32,9 @@ export const TOOL_OUTPUT_HEAD_LINES = TOOL_OUTPUT_MAX_LINES / 2;
 export const TOOL_OUTPUT_TAIL_LINES = TOOL_OUTPUT_MAX_LINES / 2;
 
 /**
- * 工具输出层的裁剪策略（唯一真源）。与**历史投递层**同用 `clipToolResult` ⇒ marker 文案同构
- * （`[... 中间省略 N 行 / X KB，完整输出见 <path> ...]`），只有参数不同（这里是「一条输出」的预算，
- * 那里是用户拧的 `toolResult.render`）。
+ * 工具输出层的裁剪策略（唯一真源）。与**历史投递层**同用 `clipToolResult` ⇒ marker 同构
+ * （`<cut by="tool-output" scope="wire" why="budget" total="…" kept="…" resume="…"/>`，见 `shared/cut-marker`），
+ * 只有参数不同（这里是「一条输出」的预算，那里是用户拧的 `toolResult.render`）。
  */
 export const TOOL_OUTPUT_POLICY: ToolResultPolicy = {
     render: "headtail",
@@ -115,9 +115,9 @@ export interface CappedToolOutput {
 /**
  * 单条工具输出 → **发给模型的那一份**（##127）。
  *
- * 超限（> 2000 行 / > 50KB / 有超长行）时：头尾保留 + marker；原文**落盘**（绝对路径写进 marker，
- * 模型可 `read` 回取被省略的中段）。落盘失败（磁盘满/权限）不假装成功：退化成不带路径的 marker
- * （`完整输出已省略`），模型至少知道「被截了」。
+ * 超限（> 2000 行 / > 50KB / 有超长行）时：头尾保留 + marker；原文**落盘**（绝对路径写进 marker
+ * 的 `resume`，模型可 `read` 回取被省略的中段）。落盘失败（磁盘满/权限）不假装成功：退化成不带
+ * `resume` 的 marker，模型至少知道「被截了、且这次取不回」。
  */
 export function capToolOutput(text: string, toolCallId: string, taskUri: string): CappedToolOutput {
     const probe = clipToolResult(text, TOOL_OUTPUT_POLICY);

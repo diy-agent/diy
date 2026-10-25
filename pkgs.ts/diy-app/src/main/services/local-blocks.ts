@@ -11,6 +11,7 @@
 // ─── 类型 ─────────────────────────────────────────────
 
 import type { Triage } from "../../shared/error-triage";
+import { cutMarker } from "../../shared/cut-marker";
 
 export type JSONVal = string | number | boolean | null | JSONVal[] | { [k: string]: JSONVal };
 
@@ -131,22 +132,21 @@ function tailSlice(v: string, n: number): string {
 }
 
 /**
- * 千分位（**不用 `toLocaleString`**：它依赖运行环境的 ICU 与默认 locale，
- * 同一段文本在 CI / 生产可能不同，测试断言与用户看到的东西都会飘）。
+ * 裁剪标记（##425）：`view` 档 —— 原文完整（盘上有），只是**这个视图**留了头尾两段。
+ * 中间嵌在内容里、经 markdown 渲染 ⇒ `fence: true`，否则 `<cut …/>` 会被当成 HTML 吞掉。
+ * `resume` 指向 UI 的「载入全文」出口（见 `CapNotice`）。
  */
-function fmtNum(n: number): string {
-    const s = String(Math.trunc(n));
-    let out = "";
-    for (let i = 0; i < s.length; i++) {
-        if (i > 0 && (s.length - i) % 3 === 0) out += ",";
-        out += s[i];
-    }
-    return out;
-}
-
-/** 裁剪标记（读时靠它把「不连续」这件事说清楚，不许静默拼接成看起来连续的文本） */
 const capMark = (omitted: number, total: number): string =>
-    `\n\n……已省略 ${fmtNum(omitted)} 字符（全文 ${fmtNum(total)} 字符；界面只保留头尾两段）……\n\n`;
+    `\n\n${cutMarker({
+        by: "renderer-text-cap",
+        scope: "view",
+        why: "render",
+        unit: "chars",
+        total,
+        kept: Math.max(0, total - omitted),
+        resume: "ui:载入全文",
+        fence: true,
+    })}\n\n`;
 
 export interface Block {
     id: string;
@@ -1031,7 +1031,7 @@ export function projectAll(store: BlockStore): LocalModelMessage[] {
             // ⚠️ 「中断」必须由 **status** 判定，不能由「output 是否非空」判定 ——
             //    interruptedToolPatches 收敛时会往 output 写上同一句契约文案，于是收敛后
             //    output 变非空，旧判据（typeof b.output === "string" && b.output）就会把它
-            //    当成工具真实输出送去裁剪：callpath 模式把它换成「[输出已省略（只留调用）…]」，
+            //    当成工具真实输出送去裁剪：callpath 模式把它换成一条 `<cut by="tool-result-callpath" …/>`，
             //    并指向一个**根本不存在的** toolout/<id>.txt。同一份历史，投递结果取决于
             //    "这块有没有被收敛过" —— 是 bug（本地补的错误信息被当作历史投递）。
             const interrupted = status === INTERRUPTED_STATUS;

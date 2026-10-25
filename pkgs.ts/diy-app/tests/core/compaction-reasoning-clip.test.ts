@@ -22,6 +22,7 @@ import {
     validateKeepStages,
 } from "../../src/shared/context/compact-keep";
 import { blocksToMessages, projectAll, replay, type Op } from "../../src/main/services/local-blocks";
+import { parseCutMarkers } from "../../src/shared/cut-marker";
 import { CLIP_FULL, defaultBudgetPlan, keepStagesToPlan, runPlan } from "../../src/main/services/compaction-plan";
 
 const LONG = "推".repeat(2_000);
@@ -67,7 +68,14 @@ describe("clipReasoningText（纯函数：裁短不裁空）", () => {
         const r = clipReasoningText(LONG, HEADTAIL_600);
         expect(r.clipped).toBe(true);
         expect(r.text.startsWith(LONG.slice(0, 600))).toBe(true);
-        expect(r.text).toContain("推理省略");
+        // ##425：`<cut by="reasoning-clip" scope="wire" …/>`（推理原文不在任何地方可回取 ⇒ 无 resume）
+        expect(parseCutMarkers(r.text).at(0)).toMatchObject({
+            by: "reasoning-clip",
+            scope: "wire",
+            unit: "chars",
+            total: LONG.length,
+            kept: 600,
+        });
         expect(r.text.length).toBeGreaterThan(0); // 硬约束
         expect(r.text.length).toBeLessThan(LONG.length);
         expect(r.droppedChars).toBe(LONG.length - 600);
@@ -160,7 +168,7 @@ describe("选择 + 渲染（两段分离不得破）", () => {
         expect(texts.filter((t) => t === LONG)).toHaveLength(6);
         const clipped = texts.filter((t) => t !== LONG);
         expect(clipped).toHaveLength(2);
-        for (const t of clipped) expect(t).toContain("推理省略");
+        for (const t of clipped) expect(parseCutMarkers(t).at(0)?.by).toBe("reasoning-clip");
         expect(sel.kept.length).toBe(all.length); // 本用例预算够，选择不是重点（轴行为才是）
     });
 
