@@ -50,6 +50,7 @@ import { DocsIndexSchema } from "../../shared/docs";
 import { JournalAddSchema, JournalFindSchema, JournalImportSchema, JournalRawSchema, JournalStatsSchema } from "../../shared/journal";
 // 「环境感知」通知契约（##384）：磁盘满 / 网断 —— 与 notice.* 同形不同源
 import { EnvNoticeSchema, EnvNoticeEventSchema } from "../../shared/env-watch";
+import { InboxEntrySchema } from "../../shared/inbox";
 import {
   CostUpdateResultSchema,
   ImportEnvResultSchema,
@@ -1261,6 +1262,9 @@ export const apiDef = RpcSchema.router({
                 output: z.object({
                   maxSteps: z.number(),
                   maxOutputTokens: z.number(),
+                  maxOutputTokensSource: z.enum(["env", "file", "default"]),
+                  costWarnStepUsd: z.number(),
+                  costWarnTurnUsd: z.number(),
                   bashTimeoutMs: z.number(),
                   outputClipChars: z.number(),
                   readMaxBytes: z.number(),
@@ -1298,7 +1302,18 @@ export const apiDef = RpcSchema.router({
                 desc: `写运行限制（下一轮生效；环境变量 DIY_LOCAL_* 优先级更高，会盖过写入值）`,
                 input: {
                   maxSteps: z.number().optional().cliOption({ desc: "单轮最大模型步数（>0）" }),
-                  maxOutputTokens: z.number().optional().cliOption({ desc: "单次模型请求输出上限（>0）" }),
+                  maxOutputTokens: z
+                    .number()
+                    .optional()
+                    .cliOption({ desc: "全局输出软上限（>0；它同时是天花板，任务/人物不得越过它）" }),
+                  costWarnStepUsd: z
+                    .number()
+                    .optional()
+                    .cliOption({ desc: "单步成本告警阈值（USD；0 = 关闭该类告警）" }),
+                  costWarnTurnUsd: z
+                    .number()
+                    .optional()
+                    .cliOption({ desc: "单轮累计成本告警阈值（USD；0 = 关闭该类告警）" }),
                   bashTimeoutMs: z.number().optional().cliOption({ desc: "单条 bash 命令超时毫秒（>0）" }),
                   outputClipChars: z
                     .number()
@@ -1310,6 +1325,9 @@ export const apiDef = RpcSchema.router({
                 output: z.object({
                   maxSteps: z.number(),
                   maxOutputTokens: z.number(),
+                  maxOutputTokensSource: z.enum(["env", "file", "default"]),
+                  costWarnStepUsd: z.number(),
+                  costWarnTurnUsd: z.number(),
                   bashTimeoutMs: z.number(),
                   outputClipChars: z.number(),
                   readMaxBytes: z.number(),
@@ -2891,6 +2909,34 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
             desc: `通知流（订阅回放现存 + 增量推送；顶栏 bar 的数据源）`,
             input: {},
             output: ModelUnavailableNoticeSchema,
+          }),
+          /**
+           * 通知信箱（##429 要求 ④/⑤）：`level#inbox` 的「N1/N2 一律落信箱」里**能落的那一半**。
+           *
+           * 与上面 `list/dismiss/watch`、下面 `env.*` 的关键差别是**数据定性**：那些是 cache
+           * （进程内存 ring，重启即空 —— 描述“此刻怎么了”）；这里是 **append-only 落盘**
+           * （`$DIY_HOME/local/inbox.jsonl`）—— 它描述“发生过什么”，重启后回看正是它的主要用途。
+           *
+           * 订阅语义刻意不同：`watch` **只推增量、不回放**。回放的历史条目会在 renderer 里
+           * 被当成“刚发生”再弹一轮 toast（每次窗口重载糊一脸）；要回看走 `list`。
+           */
+          inbox: RpcSchema.group({
+            desc: `通知信箱（N1 提示的落盘流水：撞输出上限 / 成本过阈；可回看）`,
+            children: {
+              list: RpcSchema.unary({
+                desc: `列出信箱条目（时间升序；按任务可筛。人读用 diy notice inbox list）`,
+                input: {
+                  taskUri: z.string().optional().cliOption({ desc: "只看该任务的条目" }),
+                  limit: z.number().optional().cliOption({ desc: "只要最近 N 条（缺省全部，上限 200）" }),
+                },
+                output: z.array(InboxEntrySchema),
+              }),
+              watch: RpcSchema.serverStream({
+                desc: `信箱增量流（**不回放历史**：订阅后新落的才推；renderer 据此弹 N1 toast）`,
+                input: {},
+                output: InboxEntrySchema,
+              }),
+            },
           }),
         },
       }),
