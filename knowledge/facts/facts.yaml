@@ -167,6 +167,15 @@ facts:
     evidence:
       source: inference
       verifiedAt: '2026-10-25'
+  facts.rule#expose:
+    value: |-
+      `expose` **必须显式写**，不能吃缺省：任务级库的缺省档是 `full`（`DEFAULT_EXPOSE_BY_KIND.task`，只有 project / global 才是 `index`）—— 不写就把任务库整份值塞进**每轮**信封；外面还叠一层兼容窗口：三库**谁都没写** `expose.yaml` 时一律回落 full（旧行为：全进正文 + 按预算裁）。实证（##408）：任务级库没声明 expose ⇒ 本任务结论按 full 常驻，`full` 字节和超过 4 KB 预算 ⇒ 触发 `facts/expose-budget`（正文 `omitted: 12`），把项目库唯一声明的 full 主题 `where` 整块挤出正文 ⇒ 模型那一轮看不到信息地图（`where#*` 就是「什么信息去哪查」的入口）。判据：**任务级库一律 `expose: index`**（信封里只留 `runtime.kb` 一行索引），要值时 `diy facts brief <主题> --in task:<uri>` / `diy facts get <claim> --in task:<uri>`；项目库按主题逐个定档，`full` 只给「每轮都要知道」的，新增主题吃不准就 `index`。⚠️ 被 index 或被裁掉的主题**不计入 `omitted`**（`omitted: 0` ≠ 装得下），所以别拿 `omitted` 当预算够的证据。改档位走 `diy facts submit` 的 `expose` 载荷，别手改 `expose.yaml`。与 `facts.rule#expose-cross-lib` 末尾「task=full」的提案相反，**以本条为准**。
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: f6f1a264:pkgs.ts/diy-facts/src/expose.ts:35
+      verifiedAt: '2026-10-26'
   facts.rule#generated:
     value: |-
       真源是**生成物式**：条目排序 / 字段顺序 / 头注（`note` 或文件开头注释块）全由 `renderDoc` 决定 ⇒ 手工改格式会被下一次 submit 冲掉；改内容只能走 `diy facts submit`
