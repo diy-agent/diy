@@ -10,7 +10,7 @@ import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
 import { ViewGrid } from "./ViewGrid";
 import type { JSX } from "solid-js";
-import { areasWithViews, findPage } from "../../shared/view-registry";
+import { findPage } from "../../shared/view-registry";
 import { layoutStore } from "../store/layoutStore";
 import { Caches, type CacheField } from "../lib/ui-state";
 import { projectFromUri } from "../../shared/task-uri";
@@ -26,6 +26,7 @@ import { AssembleGlobalsSchema } from "../../shared/prompt-schema";
 import { buildValueTree, buildVarTree, flattenVars, type ValueNode, type VarNode } from "../../shared/var-tree";
 import type { HlLines } from "./MdEditor";
 import { lineNumbersOf, type HlSpan } from "../../shared/hl-lines";
+import { LayoutAreaToggles } from "./LayoutAreaToggles";
 
 // 变量契约在 renderer 侧直接从 schema 派生（单一真源，零 RPC 往返）：
 //   SYSTEM_VARS → 引擎静态校验；VAR_TREE → 「变量定义」view 的二维树
@@ -987,12 +988,6 @@ export function PromptLabV4Page() {
 
     /** 提示词页（子页面）的 page 定义 */
     const LAB_PAGE = findPage("lab")!;
-    const CIRCLED = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧"];
-    /** 菜单条上的 area 按钮 = 只列本 page 实例下有 view 的 area（空 area 点了没反应） */
-    const menuAreas = () => {
-        const has = areasWithViews(LAB_PAGE, taskUri(), layoutStore.bindingFor(LAB_PAGE, taskUri()));
-        return LAB_PAGE.layout.areas.map((a, idx) => ({ area: a, idx })).filter((x) => has.has(x.area.id));
-    };
     /** 右栏 area 内的两个 view 互斥（tab 属于 area，不属于 page）。
      *  落 Caches：area 内 tab 是**用户选择**，切页/重开不该回到默认（模块级 signal 做不到
      *  跨页面卸载保留，且「重置界面状态」要能一起清掉 —— 故走 ui-state 单一入口）。 */
@@ -1499,19 +1494,8 @@ export function PromptLabV4Page() {
                         </Show>
                     </span>
                     <div class="flex-1" />
-                    {/* 布局按钮：只给有 view 的 area（空 area 点了没反应，见 menuAreas） */}
-                    <For each={menuAreas()}>
-                        {({ area, idx }) => (
-                            <button
-                                class={`btn btn-xs ${layoutStore.isHidden("lab", area.id) ? "btn-ghost opacity-50" : "btn-active"}`}
-                                title={`${area.id}（区域 ${idx + 1}）开合`}
-                                aria-pressed={!layoutStore.isHidden("lab", area.id)}
-                                onClick={() => layoutStore.toggleArea("lab", area.id)}
-                            >
-                                {CIRCLED[idx] ?? idx + 1} {area.id}
-                            </button>
-                        )}
-                    </For>
+                    {/* 布局按钮（一份实现见 LayoutAreaToggles）：最小化后的唯一恢复入口 */}
+                    <LayoutAreaToggles page={LAB_PAGE} ctx={taskUri()} />
                 </div>
 
                 <div class="flex-1 min-h-0">

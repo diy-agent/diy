@@ -1,0 +1,245 @@
+# knowledge/facts/tool.yaml
+
+# 生成物式的真源：整篇由 `diy facts submit` 写入（字段顺序、条目排序都由程序定）。
+domain: tool
+facts:
+  tool#async-io:
+    value: |-
+      **app（主进程 / shared / preload）里不许出现同步 IO**：一律 `node:fs/promises` 的 `await` 版本，子进程用 `execFile` 而非 `execFileSync`/`spawnSync`。判据不是「会不会卡」而是**主进程是单线程事件循环** —— 一次 `readFileSync` 就把渲染、RPC、流式输出一起按停；落在热路径上（面板每 3s 刷、每个输出块）就是 UI 掉帧的唯一原因。**新增由 `scripts/check-sync-io.sh` 拦**（挂 `./sha.sh check`，存量按 `LEGACY_SYNC_IO_BASELINE` 逐文件钉数**只减不增**）；确实必须在同步窗口里做（启动早期 / 原子写工具本身 / CLI 一次性初始化）写 `// sync-io-ok: <理由>`。测试文件不在此列（不在事件循环关键路径）。
+    id: agents.tool.async-io
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-24'
+  tool#check:
+    value: |-
+      `./sha.sh check` 是**提交前唯一检查**（tsc `--noEmit` + oxlint + 产物 / 可执行位 / 规范索引护栏）；改一行只跑受影响测试，全量收工前一次
+    id: agents.tool.check
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-21'
+  tool#cli-stderr:
+    value: |-
+      **CLI 的 stderr 是「环境警告」通道，不是错误噪音**（数据根被拒 / 变体被改 / `DIY_ENV` 被改都在里面），stdout 才是 JSON 数据。**禁止 `2>/dev/null`** —— 屏掉的恰是「你连的不是你以为的数据根」这类唯一提示（实测因此把正常输出误判成「命令没输出」）。要静音就 `2>/tmp/warn.log`，别丢
+    id: agents.tool.cli-stderr
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  tool#cli:
+    value: |-
+      查/改数据：生产 `diy <域> <命令>` · worktree `./diy.sh <域> <命令>`；**域名清单真源 = `diy --help`**，别抄清单
+    id: agents.tool.cli
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-21'
+  tool#confirm:
+    value: |-
+      破坏性操作的应用内二次确认走 `ConfirmDialog.tsx`；**禁用原生 `window.confirm`**（窗口级模态，且自动化点不到）
+    id: agents.tool.confirm
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-21'
+  tool#diy-cli-root:
+    value: |-
+      **能力真源是 `diy --help` / `diy <域> --help`，但先确认你敲的是哪个 `diy`**：PATH 首位常是 worktree 的 `node_modules/.bin/diy`（**未构建 ⇒ 只报错**），生产客户端在 `~/.local/share/mise/installs/node/lts/bin/diy`；跨数据根必须 `env -u DIY_HOME -u DIY_VARIANT`，否则被环境变量拉去连别的实例 —— 症状是「任务 N 不存在」，不是报错。**「有真源 ≠ 有送达」**：不知道某域存在时先跑 `diy --help` 再翻源码。
+    id: agents.tool.diy-cli-root
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:33
+      verifiedAt: '2026-10-22'
+  tool#electron-cache:
+    value: |-
+      **缓存里明明有 zip 却重下**的根因：`@electron/get` 缓存键 = **下载 URL 目录**的 sha256；`~/.npmrc` 的 `electron_mirror` 只在 npm 上下文生效（运行时直接 node 没有 `npm_config_electron_mirror`）⇒ 走 GitHub 键必 miss。`ensure-electron` 显式读 npmrc 把镜像传下去，键才与 npm 安装时一致
+    id: agents.tool.electron-cache
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: docs/toolchain.md:51
+      verifiedAt: '2026-10-21'
+  tool#electron:
+    value: |-
+      electron 43 **无 postinstall**：缺二进制会在进程内**无超时**下载（症状＝静默卡死）；布局与校验收口 `scripts/ensure-electron.mjs` + `ensure-electron-if-needed.sh`
+    id: agents.tool.electron
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-21'
+  tool#file-loc:
+    value: |-
+      **文件定位统一格式**：`<绝对路径>:<行>[:<列>]`；范围 `<路径>:<起行>[:<起列>]-<止行>[:<止列>]`，纯行可省列；备选（未来编辑器格式）`<路径>#<起行>[:<起列>]…`。凡引用文件内具体位置（日志某条、代码某行）一律用它，不写裸路径 + 自然语言「第几行」
+    id: agents.tool.file-loc
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:42
+      verifiedAt: '2026-10-22'
+  tool#file-write:
+    value: |-
+      写文件按改动面选工具：新建 / 整文件重写用 `write`、局部改几行用 `edit`（批量 `edits[]` 一次改多处）；**改文件别用 `bash` heredoc / `sed -i`**（绕开路径护栏、diff 摘要与审计）；管道 / 程序化处理才用 `bash`
+    id: agents.tool.file-write
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-24'
+  tool#fmt:
+    value: |-
+      格式真源 = 各包 `.oxfmtrc.json`（oxfmt **不读** `package.json` 的 `oxfmt` 块）；**fmt 未纳入 `check`**（##323(oxfmt 配置腐坏)）
+    id: agents.tool.fmt
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-21'
+  tool#hang-detect:
+    value: |-
+      **先证「卡死」别再报「在推进」**：`top -l 2 -pid <pid> -stats pid,cpu,time,command`（macOS **第二行**才是瞬时 CPU，只看一行会误判）+ `lsof -nP -a -p <pid> -iTCP`（`-a` 必须，否则串到别的进程；看卡在哪条连接）+ 产出文件 mtime 是否还在前进。**CPU≈0 + 产出 mtime 不动 = 卡死**（进程活着 ≠ 在推进）。报状态先给这三个数，再下结论
+    id: agents.tool.hang-detect
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:40
+      verifiedAt: '2026-10-22'
+  tool#model-import:
+    value: |-
+      环境变量 → provider 导入候选（只列不写）→ `pkgs.ts/diy-app/src/main/core/model-import.ts`
+    id: agents.tool.model-import
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-21'
+  tool#npm-timeout:
+    value: |-
+      npm 默认 `fetch-timeout=300000`（5 分钟）、`fetch-retries=2`，网络半死时表现是**长时间静默**：先 `npm config get fetch-timeout` 核，按次用 `--fetch-timeout=<ms>` 收短；但**流式下载不一定吃这个超时**，判据仍靠上一条
+    id: agents.tool.npm-timeout
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:41
+      verifiedAt: '2026-10-22'
+  tool#pkg-action:
+    value: |-
+      `pkgs.ts/diy-app/sha.sh lab|build|test|cli` 单包动作
+    id: agents.tool.pkg-action
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-21'
+  tool#publish:
+    value: |-
+      npm 发布（`@diy-agent`）：根 `./sha.sh publish [--dry-run]`，认证 `NPM_PUBLISH_TOKEN`；仓内 `package.json` 恒指 `src/*.ts` 且留 `private:true`（护栏）
+    id: agents.tool.publish
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-21'
+  tool#py-script:
+    value: |-
+      **单文件 Python 工具脚本用 PEP 723 inline metadata** 声明依赖（文件头 `# /// script` 块），调用式就是 `uv run script.py`，不建 `.venv`。**不要**为脚本建 pyproject / 走项目模式
+    id: agents.tool.py-script
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:37
+      verifiedAt: '2026-10-22'
+  tool#scan-big-dirs:
+    value: |-
+      **搜之前先摸体量**：仓外目录（`~`、`$DIY_HOME`、`/tmp`、`build/`）先 `du -d 1 -h <dir> | sort -h | tail` 看清哪一层是 GB 级，再决定 `rg` / `fd` 显式排除哪些（`-g '!{.venv,build,node_modules,dist,_diy.worktrees,.cache}/**'`）。
+
+      判据：
+
+      - 仓内（有 `.gitignore`）先 `rg --files | wc -l` —— 上千正常、上万即已扫进大目录，别再猜
+      - **一次卡死 = 纪律没落实**，不是「机器慢」：`rg` 在 1 GB 的 `build/` 上会把整轮请求赔进去（bash 超时 300s 都不够），而 `du` 一秒出结果
+      - `build/lab/home` 这类数据根尤其危险：`electron_user_data/`、`log/network/` 都是万级小文件
+    id: agents.tool.scan-big-dirs
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  tool#shell:
+    value: |-
+      文件操作优先 `fd` / `rg`，替代 `find` / `grep`
+    id: agents.tool.shell
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:34
+      verifiedAt: '2026-10-22'
+  tool#skill-dir:
+    value: |-
+      共享 skills 真身在 `~/.agents/skills/`（`~/.hermes/skills/skills` 是它的 symlink，归档区 `~/.agents/skills.archive/` 同仓）；**自 2026-10-22 起是独立 git 仓**（首提交 `b961916`，279 文件 / 2.2 MB）—— 此前因磁盘满被手动删过 `.git`，单机仓只防误改、不防盘挂。**`~` 本身不是 git 仓**（`git -C ~ rev-parse` 直接失败），要判归属就判 `~/.agents`
+    id: agents.tool.skill-dir
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: git -C ~/.agents rev-parse --show-toplevel
+      verifiedAt: '2026-10-22'
+  tool#skill-rule:
+    value: |-
+      命名前缀完整规则见 `c-hermes` skill；摘要见下节
+    id: agents.tool.skill-rule
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:39
+      verifiedAt: '2026-10-22'
+  tool#sync-gate:
+    value: |-
+      build/check/test/lab 入口先过 `ensure-sync`，命中即自动 `sync-deps`；`DIY_AUTO_SYNC=0` 关掉改报错，`./sha.sh sync-status` 只看状态
+    id: agents.tool.sync-gate
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-21'
+  tool#sync:
+    value: |-
+      **新开 worktree 先 `./sha.sh sync`**（漏 `--include-workspace-root` 必现 build 解析失败）；末尾把 `~/.diy` 真配置投影进 `build/<variant>/home/`（`DIY_SYNC_HOME=0` 关）
+    id: agents.tool.sync
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-21'
+  tool#test:
+    value: |-
+      `./sha.sh test` 全仓 · `test-unit` 不起 Electron · `pkgs.ts/diy-app/sha.sh test-intent [片段…]`（位置参数过滤文件，带 `/` 或 `.test.ts` 原样传，无参全量）
+    id: agents.tool.test
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-21'
+  tool#ui:
+    value: |-
+      真实 UI 验证走 CDP：`playwright-cli attach --cdp=…`
+    id: agents.tool.ui
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-21'

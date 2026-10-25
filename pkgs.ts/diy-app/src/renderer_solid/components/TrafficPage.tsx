@@ -10,17 +10,16 @@
  * 本组件不自己拼布局 —— 交给 ViewGrid 消费 layout + binding：
  * 每个 area 自带最大化 / 最小化 chrome，菜单条给 area 开合入口（同 TaskRunPage）。
  */
-import { For } from "solid-js";
-import { areasWithViews, findPage } from "../../shared/view-registry";
+import { findPage } from "../../shared/view-registry";
 import { ViewGrid } from "./ViewGrid";
 import { layoutStore } from "../store/layoutStore";
 import { createTrafficState, TrafficDetail, TrafficList } from "./TrafficView";
 import { trafficStore } from "../store/trafficStore";
 import { VIEW_BAR_H } from "../lib/layout-metrics";
+import { LayoutAreaToggles } from "./LayoutAreaToggles";
 
 const PAGE = findPage("traffic")!;
 /** area 序号（① ② …）—— 与 TaskRunPage 同一套「按钮先用序号替代图标」的占位（见 133） */
-const CIRCLED = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧"];
 
 export function TrafficPage() {
     // 跨页跳（##310 的「在流量页打开」）：抽屉只挂对话页，跳过来的是本页 ——
@@ -31,30 +30,13 @@ export function TrafficPage() {
     });
     const binding = () => layoutStore.bindingFor(PAGE, null);
 
-    /** 菜单条只列**有 view 的 area**（空 area 的按钮点了没反应，见 TaskRunPage） */
-    const menuAreas = () => {
-        const has = areasWithViews(PAGE, null, binding());
-        return PAGE.layout.areas.map((a, idx) => ({ area: a, idx })).filter((x) => has.has(x.area.id));
-    };
-
     return (
         <div class="flex flex-col h-full overflow-hidden" data-traffic-page>
             <div class={`flex items-center gap-2 border-b px-3 ${VIEW_BAR_H} text-body shrink-0`}>
                 <span class="font-medium">流量</span>
                 <span class="text-caption opacity-50">跨会话查看应用发出的全部 HTTP 请求 / 响应</span>
                 <div class="flex-1" />
-                <For each={menuAreas()}>
-                    {({ area, idx }) => (
-                        <button
-                            class={`btn btn-xs ${layoutStore.isHidden(PAGE.id, area.id) ? "btn-ghost opacity-50" : "btn-active"}`}
-                            title={`${area.id}（区域 ${idx + 1}）开合`}
-                            aria-pressed={!layoutStore.isHidden(PAGE.id, area.id)}
-                            onClick={() => layoutStore.toggleArea(PAGE.id, area.id)}
-                        >
-                            {CIRCLED[idx] ?? idx + 1} {area.id}
-                        </button>
-                    )}
-                </For>
+                <LayoutAreaToggles page={PAGE} ctx={null} />
             </div>
 
             <div class="flex-1 min-h-0">

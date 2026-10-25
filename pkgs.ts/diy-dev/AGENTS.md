@@ -1,22 +1,29 @@
 # diy-dev — ref（仓库引用 / vendor 镜像）CLI
 
 > 全仓契约见**仓库根 `AGENTS.md`**。本包是独立的 `dev` 命令，**不是** diy 应用的一部分。
+>
+> ⚠️ **cwd 即作用域**：`diy.yaml` 在哪个目录就在哪操作；`bin/dev` 刻意不 cd 到包根。
 
-## find — 包内定位
+## 正文在知识库，本节只留目录
 
-- `find.cli` — `src/cli/index.ts` 入口：**进程内 RPC**（`createMemTransportPair` + `ChannelServerBinding`），零网络零 Electron —— 只为复用 `diy-app` 同一套命令解析（zod schema + `cliArg`/`cliOption` → help / did-you-mean）
-- `find.ref` — `src/ref/`：`api.ts`（RPC **纯定义**）· `impl.ts`（handler 绑定）· `git.ts`（git 调用）· `store.ts`（`diy.yaml` / `ref.lock.yaml` 读写 + URL 解析）· `render.ts`（输出）· `progress.ts`
-- `find.runtime` — `src/runtime.ts` 只读 `DIY_HOME`（镜像根 `$DIY_HOME/ref`）
-- `find.entry` — `bin/dev`（跑 `build/prod/cli/index.js` 产物）· `./sha.sh dev <args>`（跑源码，**不 cd**）
+原先写在下面的 10 条正文已整体迁进**项目知识库**（真源 `knowledge/facts/`，逐条带
+`evidence.at: 115d5522:pkgs.ts/diy-dev/AGENTS.md:<行>` —— rev 钉住版本，本文件瘦身后行号仍可核）。
+本文件 1.9 KB → 1.5 KB。
 
-## rule — 硬约束
+| 主题 | 是什么 | 条数 |
+|---|---|---|
+| `diydev.find` | 包内定位：进程内 RPC 入口 / ref 子模块 / runtime / 两条跑法 | 4 |
+| `diydev.rule` | 硬约束：cwd 即作用域 / `ref.lock.yaml` v1 唯一写入方 / 镜像路径 / 版本钉法 | 4 |
+| `diydev.tool` | 命令入口与自检方式 | 2 |
 
-- `rule.cwd-scope` — **cwd 即作用域**：`diy.yaml` 在哪个目录就在哪操作；`bin/dev` **刻意不 cd 到包根**（`node` 必须保持调用者当前目录）
-- `rule.lock-format` — `ref.lock.yaml` 本包写 **v1**：`{version:1, generated, source:{key:{url,version,dir,lastSync}}}`；diy-app 侧的 v5 写引擎**已删（##387）**，本格式是全仓唯一写入方，改动格式无需再比对另一侧
-- `rule.mirror-dir` — 镜像落 `$DIY_HOME/ref/<host>/<owner>/<repo>/<version>/`；`LockEntry.dir` 存**相对 `$DIY_HOME`** 的路径（跨 worktree 复用要拼当前 home）
-- `rule.version-pin` — `@` 后是 tag / sha（`isPinnedVersion`）则 sync 只检出不 pull；`null` 视作 `main`
+（前缀用 `diydev.*` 而非 `dev.*`：`dev` 已是「开发流程打法」的 subject，`tool` 是通用工具主题，
+混用会把两类事实搅进同一张 claim 表。）
 
-## tool — 命令
+**取法**：
 
-- `tool.dev` — `./sha.sh dev ref add|remove|sync|list`（源码）· `bin/dev ref …`（产物）
-- `tool.check` — `./sha.sh check`（typecheck + lint）· `./sha.sh test`（本包全是快测，`test ≡ test-unit`）
+- `diy facts brief diydev.rule` — 该主题全部条目 + 每条首句
+- `diy facts get 'diydev.rule#lock-format'` — 单条完整值
+- `diy facts brief 'diydev.*'` — 全包一次拿
+
+⚠️ **改 `ref.lock.yaml` 格式前 brief 一次 `diydev.rule`**：本包是它**全仓唯一写入方**
+（diy-app 侧 v5 写引擎已在 ##387 删除），改格式不会再触发另一侧的对拍 —— 也就意味着改错没人拦。

@@ -15,8 +15,10 @@ import {
   fr,
   parseTracks,
   px,
+  parseTrackPx,
   resolveLayout,
   trackCss,
+  trackPairAfterDrag,
   unownedCells,
   validateLayout,
   type Layout,
@@ -155,9 +157,19 @@ describe("派生工具", () => {
     });
   });
 
-  it("trackCss：px 原样、fr 加单位", () => {
+  it("trackCss：px 原样、fr 必须带 minmax(0, …) 下界（否则被内容撑爆）", () => {
     expect(trackCss(px(240))).toBe("240px");
-    expect(trackCss(fr(1))).toBe("1fr");
+    // 裸 `1fr` == `minmax(auto, 1fr)`：下界是 min-content，一行长内容就能把整列撑爆，
+    // 合计超出容器 ⇒ 右侧被顶出屏幕（实测 355+1589=1944 撑在 984 容器里）
+    expect(trackCss(fr(1))).toBe("minmax(0, 1fr)");
+    expect(trackCss(fr(2.5))).toBe("minmax(0, 2.5fr)");
+  });
+
+  it("parseTrackPx：浏览器算出的 px 序列（minmax 之后仍是 px）", () => {
+    // 拖线起点取自 getComputedStyle；这条前提一变，拖拽会静默失效（拖不动而不报错）
+    expect(parseTrackPx("300px 684px 0px")).toEqual([300, 684, 0]);
+    expect(parseTrackPx("  355px   1589px  ")).toEqual([355, 1589]);
+    expect(parseTrackPx("")).toEqual([]);
   });
 
   it("findArea 按 id 寻址（契约层不认坐标）", () => {
@@ -286,6 +298,47 @@ describe("parseTracks", () => {
     for (const spec of ["240,*,320", "0,1fr,200", "300,2fr"]) {
       expect(formatTracks(parseTracks(spec)!)).toBe(spec.replace("1fr", "*"));
     }
+  });
+});
+
+// ═══════════════════════════════════════════
+// trackPairAfterDrag —— 拖线后两侧尺寸（单位是身份，不因拖拽而变）
+// ═══════════════════════════════════════════
+
+describe("trackPairAfterDrag", () => {
+  /** 任务执行页真实列：左 300px 固定 | 中 1fr | 右 0（容器 984 时渲染成 300 / 684 / 0） */
+  const cols = () => [px(300), fr(1), px(0)];
+  const rendered = [300, 684, 0];
+
+  it("px | fr：px 侧写 px，fr 侧仍是 fr（不固化成绝对宽）", () => {
+    const [a, b] = trackPairAfterDrag(cols(), rendered, 1, [400, 584]);
+    expect(a).toEqual(px(400));
+    // 单条弹性轨吃剩余空间 ⇒ 权重守恒在 1，不再是 px(584)
+    expect(b).toEqual(fr(1));
+  });
+
+  it("px | px：固定轨保持固定（「我就要 320px 右栏」是合法意图）", () => {
+    const base = [px(300), px(400), px(200)];
+    expect(trackPairAfterDrag(base, [300, 400, 200], 2, [380, 220])).toEqual([px(380), px(220)]);
+  });
+
+  it("fr | fr：按此刻 px 占比折成权重（相对宽度不丢，窗口缩放仍成立）", () => {
+    const base = [fr(1), fr(1)];
+    // 各占 400 → 拖成 600 / 200 ⇒ 权重 1.5 : 0.5
+    expect(trackPairAfterDrag(base, [400, 400], 1, [600, 200])).toEqual([fr(1.5), fr(0.5)]);
+  });
+
+  it("弹性轨总宽未知（窗口还没渲染出尺寸）→ 保持原权重，不写 0fr", () => {
+    const base = [px(300), fr(2)];
+    expect(trackPairAfterDrag(base, [0, 0], 1, [350, 0])).toEqual([px(350), fr(2)]);
+  });
+
+  it("回归：拖完再缩小窗口 ⇒ 该轴仍有弹性轨可让（bug 的判据）", () => {
+    const base = cols();
+    const [a, b] = trackPairAfterDrag(base, rendered, 1, [355, 629]);
+    const after = [a, b, base[2]!];
+    expect(after.some((t) => t.unit === "fr")).toBe(true); // 有弹性轨 ⇒ 不会被撑爆
+    expect(after.reduce((n, t) => n + (t.unit === "px" ? t.value : 0), 0)).toBeLessThan(984);
   });
 });
 

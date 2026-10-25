@@ -16,6 +16,7 @@ import {
     colLineSegments,
     findArea,
     fitTracks,
+    parseTrackPx,
     resolveLayout,
     rowLineSegments,
     trackCss,
@@ -104,10 +105,7 @@ export function ViewGrid(props: {
         const el = gridRef;
         if (!el) return;
         const cs = getComputedStyle(el);
-        const resolved = (axis === "col" ? cs.gridTemplateColumns : cs.gridTemplateRows)
-            .split(" ")
-            .map((x) => parseFloat(x))
-            .filter((x) => Number.isFinite(x));
+        const resolved = parseTrackPx(axis === "col" ? cs.gridTemplateColumns : cs.gridTemplateRows);
         if (resolved.length !== (axis === "col" ? props.layout.cols.length : props.layout.rows.length)) return;
 
         const startPos = axis === "col" ? e.clientX : e.clientY;
@@ -122,7 +120,7 @@ export function ViewGrid(props: {
             // 两侧都不许小于下限：撞到下限时把剩余量全给另一侧
             na = Math.max(MIN_TRACK, Math.min(total - MIN_TRACK, na));
             const nb = total - na;
-            layoutStore.setTrackPair(props.pageId, axis, lineIndex, [na, nb], base);
+            layoutStore.setTrackPair(props.pageId, axis, lineIndex, [na, nb], base, resolved);
         };
         const up = () => {
             window.removeEventListener("mousemove", move);

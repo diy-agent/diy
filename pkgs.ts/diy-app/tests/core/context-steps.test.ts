@@ -54,9 +54,54 @@ describe("step diff", () => {
         const d = diffSteps(rec(), rec({ valueHashes: { diy: "h1" }, runtimeText: "" }));
         expect(d.changed).toEqual(["task.body"]);
     });
+
+    // ── history 注记段（##5 第 16 轮）──────────────────────────────
+    // 它不是变量树单元：不参与 valueHashes，也不进 runtimeDiff。若不专门比，它变了永远是"无变化"。
+    it("history 注记段变了 → historyDiffers 命中，且不进 changed（它不是变量树单元）", () => {
+        const a = rec({ historyText: "history:\n  budgetBytes: 20480\n  kept:\n    - [1, 8]\n" });
+        const b = rec({
+            historyText: "history:\n  budgetBytes: 20480\n  kept:\n    - [5, 8]\n",
+            runtimeText: 'task:\n  body: "一"',
+        });
+        const d = diffSteps(a, b);
+        expect(d.historyDiffers).toBe(true);
+        expect(d.changed).toEqual([]);
+        expect(d.runtimeDiffers).toBe(false);
+        expect(d.historyDiff.some((l) => l.t === "-" && l.s.includes("[1, 8]"))).toBe(true);
+        expect(d.historyDiff.some((l) => l.t === "+" && l.s.includes("[5, 8]"))).toBe(true);
+    });
+
+    it("history 段逐字相同 → 不报变化（每轮重算但结果一样是常态）", () => {
+        const note = "history:\n  kept:\n    - [1, 8]\n";
+        const d = diffSteps(rec({ historyText: note }), rec({ historyText: note }));
+        expect(d.historyDiffers).toBe(false);
+        expect(d.historyDiff).toEqual([]);
+    });
+
+    it("老快照没有 historyText 字段 → 不下结论（false），不把 undefined 当「变了」", () => {
+        const d = diffSteps(rec(), rec({ historyText: "history:\n  kept: []\n" }));
+        expect(d.historyDiffers).toBe(false);
+        expect(d.historyDiff).toEqual([]);
+    });
+
+    it("summary 段同理（同一套 cmpNote 判据）", () => {
+        const d = diffSteps(rec({ summaryText: "summary:\n  a: 1\n" }), rec({ summaryText: "summary:\n  a: 2\n" }));
+        expect(d.summaryDiffers).toBe(true);
+        expect(d.summaryDiff.length).toBeGreaterThan(0);
+    });
 });
 
 describe("step 摘要列表", () => {
+    it("sincePrev 带 historyDiffers / historySize（列表徽章的数据源）", () => {
+        const [first, second] = summarizeSteps([
+            rec({ historyText: "history:\n  kept:\n    - [1, 8]\n" }),
+            rec({ historyText: "history:\n  kept:\n    - [5, 8]\n" }),
+        ]);
+        expect(first!.sincePrev).toBeNull();
+        expect(second!.sincePrev?.historyDiffers).toBe(true);
+        expect(second!.sincePrev?.historySize.add).toBeGreaterThan(0);
+    });
+
     const steps = [rec({ ts: "T1" }), rec({ ts: "T2", runtimeText: 'task:\n  body: "二"' }), rec({ ts: "T3", runtimeText: 'task:\n  body: "二"' })];
 
     it("首步 sincePrev = null（它是 baseline，没有上一步）", () => {

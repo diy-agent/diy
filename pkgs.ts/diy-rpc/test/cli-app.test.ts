@@ -132,3 +132,70 @@ describe("CliApp.showNodeHelp", () => {
     expect(out2).not.toContain("[options] ");
   });
 });
+
+describe("CliApp.exitCodeOf", () => {
+  const getApi = RpcSchema.router({
+    facts: RpcSchema.group({
+      desc: "事实库",
+      children: {
+        get: RpcSchema.unary({
+          desc: "按 claim 取值",
+          input: { claim: z.string().cliArg({ desc: "claim" }) },
+          output: z.object({ resolved: z.array(z.unknown()), notes: z.array(z.string()) }),
+        }),
+      },
+    }),
+  });
+
+  async function run(result: unknown, exitCodeOf?: (a: { rpcName: string; result: unknown }) => number | undefined) {
+    const out: string[] = [];
+    const err: string[] = [];
+    const exitCodes: number[] = [];
+    const transport = {
+      invoke: vi.fn(async () => result),
+      serverStream: vi.fn(),
+      clientStream: vi.fn(),
+      bidiStream: vi.fn(),
+      dispose: vi.fn(),
+    } as unknown as ClientBinding;
+    const app = new CliApp({
+      name: "diy",
+      router: getApi,
+      transport,
+      cliRootPath: "facts",
+      out: (l) => out.push(l),
+      err: (l) => err.push(l),
+      exit: ((c: number) => {
+        exitCodes.push(c);
+        throw new Error(`cli exit ${c}`);
+      }) as (c: number) => void,
+      exitCodeOf,
+    });
+    let thrown: unknown;
+    try {
+      await app.parse(["get", "bogus#x"]);
+    } catch (e) {
+      thrown = e;
+    }
+    return { out, err, exitCodes, thrown };
+  }
+
+  it("全空 ⇒ 打印后走 exit(1)，且不把退出哨兵当运行错误打到 stderr", async () => {
+    const r = await run({ resolved: [], notes: ["claim 不存在"] }, ({ rpcName, result }) => {
+      if (rpcName !== "facts.get") return undefined;
+      return (result as { resolved: unknown[] }).resolved.length === 0 ? 1 : undefined;
+    });
+    expect(r.out.join("\n")).toContain('"resolved": []');
+    expect(r.err).toEqual([]);
+    expect(r.exitCodes).toEqual([1]);
+    expect(r.thrown).toBeInstanceOf(Error);
+  });
+
+  it("非空 / 未提供判据 / 判据返回 0 ⇒ 退出码 0", async () => {
+    expect((await run({ resolved: [{}] }, ({ rpcName, result }) =>
+      rpcName === "facts.get" && (result as { resolved: unknown[] }).resolved.length === 0 ? 1 : undefined,
+    )).exitCodes).toEqual([]);
+    expect((await run({ resolved: [] })).exitCodes).toEqual([]);
+    expect((await run({ resolved: [] }, () => 0)).exitCodes).toEqual([]);
+  });
+});

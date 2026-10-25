@@ -33,6 +33,18 @@ export interface DeliveryStepRecord {
     systemText: string;
     /** runtime 容器全文 */
     runtimeText: string;
+    /**
+     * 尾部信封里 `history:` 那一段（压缩索引注记；空/缺 = 本轮没压缩 / 老快照没记）。
+     *
+     * 为什么要记（##5 第 16 轮，用户实测：「runtimeDiff 里并没有体现出 history 的变化」）：
+     * `history:` **不是变量树的单元** —— 它是 `deliveryHistory()` 在轮首算出来、由 `withRuntime`
+     * 拼进信封的一段，真源是压缩选择（`selectHistoryByBudget`），与 `assembleGlobals` 无关。
+     * 于是它既不会出现在 `runtimeDiff` 里，也不进 `valueHashes` ⇒ **变化了也没有任何地方能看到**。
+     * 记进快照后，步骤列表/差异视图才能回答「这一轮 history 段跟上一轮一样吗」。
+     */
+    historyText?: string;
+    /** 尾部信封里 `summary:` 那一段（历史摘要；空/缺 = 没启用摘要 / 老快照没记） */
+    summaryText?: string;
 }
 
 /** 快照 + 序号（读取时按行序赋；1 基） */
@@ -50,6 +62,11 @@ export interface StepDiff {
     /** 行级 diff（点开看内容用）；未变则空数组 */
     systemDiff: DiffLine[];
     runtimeDiff: DiffLine[];
+    /** `history:` 注记段是否变（老快照缺字段 ⇒ false = 不下结论，不谎报"变了"） */
+    historyDiffers: boolean;
+    summaryDiffers: boolean;
+    historyDiff: DiffLine[];
+    summaryDiff: DiffLine[];
 }
 
 /**
@@ -62,12 +79,26 @@ export function diffSteps(prev: DeliveryStepRecord, next: DeliveryStepRecord): S
     const changed = [...keys].filter((k) => prev.valueHashes[k] !== next.valueHashes[k]).sort();
     const systemDiffers = prev.systemText !== next.systemText;
     const runtimeDiffers = prev.runtimeText !== next.runtimeText;
+    // 注记段：**缺字段**（老快照）与「空串」是两码事 —— 老快照永远 `undefined`，
+    // 拿它跟新快照的 `history:\n…` 比会报一次假「变了」（同一形状的坑：`expose` 曾把
+    // "合并后集合非空"当成"这个库声明了"，于是默认档静默失效）。缺 = 不知道 ⇒ 不下结论。
+    const cmpNote = (a: string | undefined, b: string | undefined): [boolean, DiffLine[]] => {
+        if (a === undefined || b === undefined) return [false, []];
+        if (a === b) return [false, []];
+        return [true, lineDiff(a, b)];
+    };
+    const [historyDiffers, historyDiff] = cmpNote(prev.historyText, next.historyText);
+    const [summaryDiffers, summaryDiff] = cmpNote(prev.summaryText, next.summaryText);
     return {
         changed,
         systemDiffers,
         runtimeDiffers,
+        historyDiffers,
+        summaryDiffers,
         systemDiff: systemDiffers ? lineDiff(prev.systemText, next.systemText) : [],
         runtimeDiff: runtimeDiffers ? lineDiff(prev.runtimeText, next.runtimeText) : [],
+        historyDiff,
+        summaryDiff,
         incomparable: prev.wireVersion !== next.wireVersion,
     };
 }
@@ -108,12 +139,16 @@ export interface StepSummary {
         changed: string[];
         systemDiffers: boolean;
         runtimeDiffers: boolean;
+        /** `history:` 注记段是否变（老快照缺字段时为 false = 不下结论） */
+        historyDiffers: boolean;
+        summaryDiffers: boolean;
         incomparable: boolean;
         systemSize: { add: number; del: number };
         runtimeSize: { add: number; del: number };
+        historySize: { add: number; del: number };
     } | null;
     /** 行级 diff 内容（`withDiff` 时才带；默认只给统计，避免下发整份文本） */
-    diff?: { system: DiffLine[]; runtime: DiffLine[] } | null;
+    diff?: { system: DiffLine[]; runtime: DiffLine[]; history: DiffLine[] } | null;
 }
 
 /**
@@ -132,7 +167,7 @@ export function summarizeSteps(
         const idx = base + i;
         const prev = idx > 0 ? records[idx - 1]! : null;
         const d = prev ? diffSteps(prev, r) : null;
-        const raw = opts.withDiff && d ? { system: d.systemDiff, runtime: d.runtimeDiff } : undefined;
+        const raw = opts.withDiff && d ? { system: d.systemDiff, runtime: d.runtimeDiff, history: d.historyDiff } : undefined;
         return {
             index: idx + 1,
             ts: r.ts,
@@ -147,9 +182,12 @@ export function summarizeSteps(
                       changed: d.changed,
                       systemDiffers: d.systemDiffers,
                       runtimeDiffers: d.runtimeDiffers,
+                      historyDiffers: d.historyDiffers,
+                      summaryDiffers: d.summaryDiffers,
                       incomparable: d.incomparable,
                       systemSize: diffSize(d.systemDiff),
                       runtimeSize: diffSize(d.runtimeDiff),
+                      historySize: diffSize(d.historyDiff),
                   }
                 : null,
             ...(opts.withDiff ? { diff: raw ?? null } : {}),

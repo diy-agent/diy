@@ -1,0 +1,469 @@
+/**
+ * facts-context.ts — 把事实库**投影成上下文变量树的一个单元**（##404 待办 4）
+ *
+ * 为什么单独一份而不是塞进 prompt-registry：本文件是"读真源 + 投影"的唯一入口，
+ * 而 prompt-registry 只负责"把它挂到变量树上"。分开放，是因为将来还有第二个消费者
+ * （`diy facts context --in task:<uri>` 预览 / 页面上的"这一轮会投什么"）。
+ *
+ * 三条纪律：
+ *   ① **读操作永不建库**：`loadRepo` 读路径已不碰磁盘（2026-10-23 删掉 `allowMissing`），
+ *      本文件再用 `existsSync` 判"有没有库"只是为了让"库不存在"渲染成**单元缺席**而不是空对象。
+ *   ② **读失败不许炸掉整轮**：库坏了 / 找不到，降级为"这个单元缺席 + 一条 problem" ——
+ *      上下文构造失败 = 人连消息都发不出去，代价远大于"这一轮没看到事实"。
+ *   ③ **不在这里拼给人看的句子**（句子归 CLI 的 format*）：这里只出结构化值，
+ *      信封由通用渲染器出 YAML。
+ */
+import { existsSync, readdirSync, statSync } from "node:fs";
+import path from "node:path";
+import { foldKbIndex, KB_FOLD_MIN_GROUP } from "@diy/facts";
+import { loadRepo, project, projectItems, readExpose, type ProjectEntry, type ProjectionAlgorithm, type Repo } from "@diy/facts/node";
+import { budgetBytesOf, bytesOf, claimOf, checkExposeLeveled, defaultExposeOf, exposeOf, type ExposeLevel, type ExposeMap, type LeveledFact, type Ns } from "@diy/facts";
+import { diyHome } from "../core/state";
+import { readRuntimeConfig } from "../../runtime";
+import { resolveFactsDir } from "./facts-store";
+import type { FactsCell } from "../../shared/prompt-schema";
+
+/** 投影的一个值（与 `FactsContextSchema` 的 cell 同形；renderer 侧由 schema 推） */
+export type FactsContextCell = FactsCell;
+
+export interface FactsContextValue {
+    algorithm: ProjectionAlgorithm;
+    env: string;
+    task?: Record<string, FactsContextCell>;
+    /** 设备级库（`~/.diy/knowledge/`）：跨项目的用户规则 */
+    global?: Record<string, FactsContextCell>;
+    project?: Record<string, FactsContextCell>;
+    text?: string;
+    omitted: number;
+    /**
+     * 包装开销（字节）：`<claim>: {value,resolvedBy,variants}` 外壳本身 —— 不进预算，只回报。
+     * 存在意义：预算按**值字节**算（与写侧 `checkExposeLeveled` 同口径），所以实际文本
+     * 会略大于 `maxBytes`。给出这个数，人就不用猜"为什么 4 KB 预算投出去 4.6 KB"。
+     */
+    overhead?: number;
+    /**
+     * 被预算裁掉的 claim（最多 `OMITTED_SAMPLE` 个）：只给数量等于「自己数少了什么」。
+     * 有了名字才谈得上动作 —— `diy facts get <claim>` 把它捞回来。
+     */
+    omittedClaims?: string[];
+    problems: { gid: string; code: string }[];
+}
+
+/** `omittedClaims` 的采样上限（数目本身由 `omitted` 给） */
+const OMITTED_SAMPLE = 5;
+
+/** 投影默认预算：超了从尾部（project 侧）裁。不是硬上限 —— 只在条目异常多时兜底 */
+export const DEFAULT_FACTS_MAX_BYTES = 4000;
+
+interface Loaded {
+    ns: Ns;
+    repo: Repo;
+    /** 该库的暴露档（`<库>/expose.yaml`；空表 = 全走缺省 index） */
+    expose: ExposeMap;
+}
+
+/**
+ * **按库**解析档位 —— 这一层曾经写错过，别再合回一张表（##5 第 8 轮的铁证）。
+ *
+ * 错法：把三库的 `expose.yaml` 合并成一张 subject → 档位 的表，再拿它套所有库。
+ * 后果：项目库写了 `expose.yaml`（哪怕只声明一条），**任务库的 4 条结论一起被降级**
+ * ——它们从不属于任何 expose 配置，却因为"合并后集合里有人声明了"而被套上了缺省 index。
+ * 而 `omitted` 仍是 0（被 index 掉的根本不计入），于是**静默**。省掉的正好是这一轮
+ * 最该看的东西（本任务自己的结论），是最坏的一种省。
+ *
+ * 正确判据：每个库各读各的 `expose.yaml`，各按**自己库类型**的缺省档回落
+ * （`task = full` / `project`·`global` = index，见 `DEFAULT_EXPOSE_BY_KIND`）。
+ */
+function levelOf(loaded: readonly Loaded[], declared: boolean, entry: ProjectEntry): ExposeLevel {
+    // 兼容窗口：**谁都没写** `expose.yaml` ⇒ 回落旧行为（全进正文 + 按预算裁）。
+    // 一旦任一个库写了（哪怕一条），声明式生效 —— 此时按库解析，未声明的主题走该库缺省档。
+    if (!declared) return "full";
+    const lib = loaded.find((l) => l.ns.kind === entry.ns.kind && libKey(l.ns) === libKey(entry.ns));
+    return exposeOf(lib?.expose ?? {}, entry.fact.subject, defaultExposeOf(entry.ns.kind));
+}
+
+const libKey = (ns: Ns): string => (ns.kind === "task" ? `task:${ns.taskUri}` : ns.kind);
+
+/**
+ * 一个库的**磁盘指纹**（`null` = 库不存在）。
+ *
+ * 为什么用指纹而不是定时过期：本文件的调用方（`buildFactsContext` / `buildKbIndex`）是**每步**
+ * 都要读一次的，而库的变化只发生在 `facts submit`（别进程 / 本进程）—— 按时间过期意味着
+ * 「刚写完的一轮可能读到旧值」，那是最坏的一种过期。指纹比对只做 readdir + stat，比解析
+ * 22 篇 YAML 便宜一到两个数量级。
+ *
+ * 指纹包含：`subjects.yaml` / `expose.yaml` / `facts/*.yaml` 的 `名字 + size + mtimeMs`。
+ * 名字进指纹 ⇒ 增删文件也会变（只比 mtime 会漏掉"跟着删了一个文件"）。
+ */
+function signatureOf(dir: string): string | null {
+    const factsDir = path.join(dir, "facts");
+    // sync-io-ok: 本文件的整条链路本来就是同步的（`buildFactsContext` 在提示词装配里被同步调用）；
+    // 这里量的是「比解析 22 篇 YAML 便宜一个数量级」的 stat 指纹，正是为了把 60 ms 的同步窗口压到 1 ms
+    if (!existsSync(factsDir)) return null;
+    const parts: string[] = [];
+    for (const name of ["subjects.yaml", "expose.yaml"]) {
+        const file = path.join(dir, name);
+        try {
+            // sync-io-ok: 同上（stat 指纹，单文件一次）
+            const st = statSync(file);
+            parts.push(`${name}:${st.size}:${st.mtimeMs}`);
+        } catch {
+            parts.push(`${name}:-`);
+        }
+    }
+    let names: string[];
+    try {
+        // sync-io-ok: 同上（一次 readdir 换掉整批解析）
+        names = readdirSync(factsDir).filter((f) => f.endsWith(".yaml")).sort();
+    } catch {
+        return null;
+    }
+    for (const name of names) {
+        try {
+            // sync-io-ok: 同上（每篇一次 stat）
+            const st = statSync(path.join(factsDir, name));
+            parts.push(`${name}:${st.size}:${st.mtimeMs}`);
+        } catch {
+            parts.push(`${name}:-`);
+        }
+    }
+    return parts.join("|");
+}
+
+interface CacheEntry {
+    readonly sig: string;
+    readonly value: Loaded | null;
+}
+
+/**
+ * 已解析库的**跨步缓存**（key = 库目录 + 加载选项）。
+ *
+ * 为什么需要（实测 ##9 review P1①）：`buildFactsContext` 35 ms + `buildKbIndex` 24 ms =
+ * **每步约 60 ms 的同步 IO**，而两者读的是同一批 22 篇 YAML。主进程是单线程事件循环 ——
+ * 这 60 ms 是渲染 / RPC / 流式输出一起停住的时间。缓存后稳态只剩 stat。
+ *
+ * 缓存放模块级而不是进程级单例：它**按库目录隔离**，测试换一个 tmp 目录就是另一条 key，
+ * 不会串味。
+ */
+const loadCache = new Map<string, CacheEntry>();
+
+/** 缓存命中统计（测试用判据 + 将来想看一眼"这轮有没有在重复解析"） */
+const cacheStats = { hits: 0, misses: 0 };
+
+/** 清缓存（测试用；生产不需要 —— 指纹自己会失效） */
+export function clearFactsContextCache(): void {
+    loadCache.clear();
+    cacheStats.hits = 0;
+    cacheStats.misses = 0;
+}
+
+/** 缓存计数（只读；`hits + misses` = 调用过 `loadQuietly` 的库次数） */
+export function factsContextCacheStats(): { hits: number; misses: number } {
+    return { ...cacheStats };
+}
+
+/**
+ * 读一个库；不存在 / 解析失败 → `null`（**不是**空库，也不是异常）。
+ * 调用方据此决定"缺席"而不是"给了个空对象"—— 空对象会被信封渲染成 `facts.task: {}`，
+ * 看起来像"任务库存在但没有事实"，与"根本没有库"是两件事。
+ */
+function loadQuietly(dir: string, ns: Ns, opts: { subjectsFallback?: string; root?: string }): Loaded | null {
+    const sig = signatureOf(dir);
+    // ns 也进 key：同一个目录被当成不同库读取时（测试 / 迁移现场）不该共用缓存
+    const nsKey = ns.kind === "task" ? `task:${ns.taskUri}` : ns.kind;
+    const key = [dir, nsKey, opts.subjectsFallback ?? "", opts.root ?? ""].join("\u0000");
+    if (sig === null) {
+        loadCache.delete(key);
+        return null;
+    }
+    const cached = loadCache.get(key);
+    if (cached !== undefined && cached.sig === sig) {
+        cacheStats.hits += 1;
+        return cached.value;
+    }
+    cacheStats.misses += 1;
+    let value: Loaded | null;
+    try {
+        value = {
+            ns,
+            expose: readExpose(dir),
+            repo: loadRepo(dir, {
+                ...(opts.subjectsFallback === undefined ? {} : { subjectsFallback: opts.subjectsFallback }),
+                ...(opts.root === undefined ? {} : { root: opts.root }),
+            }),
+        };
+    } catch {
+        // YAML 坏到读不出来：不抛（见纪律 ②）。真问题会在 `diy facts status` 里亮出来。
+        value = null;
+    }
+    loadCache.set(key, { sig, value });
+    return value;
+}
+
+/** 仓库库的 `knowledge/`：与 CLI 同一份定位（`DIY_FACTS_DIR` > 向上找），找不到 → null */
+function repoDirQuietly(): string | null {
+    try {
+        return resolveFactsDir(undefined);
+    } catch {
+        return null;
+    }
+}
+
+export interface BuildFactsContextOptions {
+    /** 数据根（缺省 = `diyHome()`）；显式传是为了测试与 lab 实例 */
+    home?: string;
+    /** 任务 URI（`projects/4/tasks/404`）；空串 = 不读任务库 */
+    taskUri?: string;
+    env?: "production" | "development" | "test";
+    /** 参与 `scope.paths` 匹配的代码位置（缺省 = 不按路径筛） */
+    paths?: readonly string[];
+    algorithm?: ProjectionAlgorithm;
+    maxBytes?: number;
+}
+
+/**
+ * 构造 `globals.facts`。
+ *
+ * @returns `null` = 两面库都不存在 ⇒ **单元缺席**（与接入前逐字不变）。
+ */
+export function buildFactsContext(opts: BuildFactsContextOptions = {}): FactsContextValue | null {
+    const home = opts.home ?? diyHome();
+    const env = opts.env ?? readRuntimeConfig().env;
+    const algorithm = opts.algorithm ?? "yaml-nested";
+    const maxBytes = opts.maxBytes ?? DEFAULT_FACTS_MAX_BYTES;
+
+    const taskUri = opts.taskUri ?? "";
+    const repoDir = repoDirQuietly();
+    const loaded: Loaded[] = [];
+
+    if (taskUri !== "") {
+        const taskKb = path.join(home, taskUri, "knowledge");
+        const hit = loadQuietly(taskKb, { kind: "task", taskUri }, {
+            ...(repoDir === null ? {} : { subjectsFallback: path.join(repoDir, "subjects.yaml") }),
+            ...(repoDir === null ? {} : { root: path.dirname(repoDir) }),
+        });
+        if (hit) loaded.push(hit);
+    }
+    // 设备级库排在项目库之前：预算按这个顺序分配，而"用户的硬规则"比"仓库细节"更该保住
+    const globalKb = path.join(home, "knowledge");
+    const globalHit = loadQuietly(globalKb, { kind: "global" }, {
+        ...(repoDir === null ? {} : { subjectsFallback: path.join(repoDir, "subjects.yaml"), root: path.dirname(repoDir) }),
+    });
+    if (globalHit) loaded.push(globalHit);
+    if (repoDir !== null) {
+        const hit = loadQuietly(repoDir, { kind: "project" }, {});
+        if (hit) loaded.push(hit);
+    }
+    if (loaded.length === 0) return null;
+
+    const ctx = {
+        env,
+        ...(opts.paths === undefined ? {} : { paths: opts.paths }),
+        ...(taskUri === "" ? {} : { task: taskUri }),
+    };
+
+    // 暴露档：只有 `full` 进正文。`index` 在 kb 索引里（知道有、要值就查），`none` 两处都不给。
+    // **按库**解析（见 `levelOf` 的注释：合并成一张表会把任务库一起降级）。
+    const allEntries: ProjectEntry[] = loaded.flatMap((l) => l.repo.facts.map((fact) => ({ ns: l.ns, fact })));
+    const declared = loaded.some((l) => Object.keys(l.expose).length > 0);
+    const leveled: LeveledFact[] = allEntries.map((e) => ({ fact: e.fact, level: levelOf(loaded, declared, e) }));
+    const levelByFact = new Map(leveled.map((x) => [x.fact, x.level] as const));
+    const full = (e: ProjectEntry): boolean => levelByFact.get(e.fact) === "full";
+    const budgetProblems = checkExposeLeveled(leveled, { budget: maxBytes }).map((p) => ({
+        gid: "facts.expose",
+        code: p.code,
+    }));
+
+    if (algorithm === "md-list") {
+        const entries = allEntries.filter(full);
+        // 预算口径与 `checkExposeLeveled` 同一函数（`budgetBytesOf` = 值字节）：
+        // 两处各算一套就是「写侧判绿、读侧静默裁」的成因，见 `measure` 的注释。
+        const out = project({ entries, ctx, algorithm: "md-list", maxBytes, shape: "auto", measure: budgetBytesOf });
+        // 包装开销 = 文本字节 - 已展示条目的值字节（md 表每行是 `- \`gid\` — value (变体…)`）
+        return {
+            algorithm,
+            env,
+            text: out.text,
+            omitted: out.omitted.length,
+            ...(out.omitted.length > 0 ? { omittedClaims: out.omitted.slice(0, OMITTED_SAMPLE) } : {}),
+            overhead: Math.max(0, out.bytes - shownValueBytes(out.shown, entries)),
+            problems: [...out.problems.map((p) => ({ gid: p.gid, code: p.code })), ...budgetProblems],
+        };
+    }
+
+    // ── structured：一次解析全部库、再按 ns 分桶 ──
+    //
+    // **必须一次传全部 entries**：`projectItems` 跨库去重（同 claim 取 ns 高层），
+    // 每个库各自调一次就退化成"各出一条"—— 实测 16 条同 claim 在两库重复（`level` 6 /
+    // `tool` 5 / `ref` 5），4 KB 预算里白占一倍。
+    const out: FactsContextValue = { algorithm, env, omitted: 0, problems: [...budgetProblems] };
+    const parsed = projectItems({ entries: allEntries.filter(full), ctx });
+    out.problems.push(...parsed.problems.map((p) => ({ gid: p.gid, code: p.code })));
+    void parsed.skipped; // 当前 scope 下不适用（正常，不是裁掉）
+
+    // 预算按 items 顺序分配：`projectItems` 已按 ns 优先级排序（task > project > global），
+    // 故"本任务的结论"先保住。
+    //
+    // 计量用 `budgetBytesOf`（**值字节**）—— 与写侧 `checkExposeLeveled` 同一个函数。
+    // 曾经这里按 `\`${key}: ${JSON.stringify(cell)}\n\`` 的**包装后**字节算，与写侧差 20%+，
+    // 于是"status 绿灯 + 投影静默裁一条"可以并存（##5 第 12 轮实测：3308 < 4000 判绿，
+    // `omitted: 1`）。包装开销现在单独回报（`overhead`），不进预算 —— 它随条目数线性增长，
+    // 混进预算会让"4 KB 装几条"变得不可预测。
+    let remaining = maxBytes;
+    // 被裁掉的 claim（最多记 5 个）：只给数量等于「让我自己数数少了什么」—— 而 agent 真正
+    // 需要的动作是「用 `facts get <claim>` 把那条捞回来」，那个动作得先知道 claim 叫什么。
+    const omittedClaims: string[] = [];
+    /**
+     * 已裁过的**最高**优先级（数字越小越优先：task=0 > project=1 > global=2）。
+     *
+     * 裁剪语义：同一优先级内允许「跳过大的、填小的」（把预算用满），但**一旦高优先级有东西
+     * 没装下**，就不许用低优先级的东西去填那个坑 —— 否则「预算按 task > project > global
+     * 分配、本任务的结论先保住」这条注释就是空话（实测 ##9 复现：任务库一条大结论被跳，
+     * 项目库里的一条小事顶了进来，读起来像「本任务的结论不存在」）。
+     */
+    let stopBelow = Number.POSITIVE_INFINITY;
+    const priorityOf = (kind: string): number => (kind === "task" ? 0 : kind === "project" ? 1 : 2);
+    for (const item of parsed.items) {
+        const key = algorithm === "flat-gid" ? item.gid : item.claim;
+        const priority = priorityOf(item.ns.kind);
+        // 缺省值不写（与 `brief` 同一口径）：`resolvedBy: ""`（全局唯一）与 `variants: 1`（无变体）
+        // 对每条都是常量 —— 实测 16 条 × 62 B 外壳 ≈ 992 B/轮，全是零信息。
+        const cell: FactsContextCell = { value: item.value };
+        if (item.resolvedBy !== "") cell.resolvedBy = item.resolvedBy;
+        if (item.variants > 1) cell.variants = item.variants;
+        const size = budgetBytesOf(item);
+        if (priority > stopBelow) {
+            // 高优先级有没装下的 ⇒ 低优先级一律让位（连计数也算"被裁"，如实回报）
+            out.omitted += 1;
+            if (omittedClaims.length < OMITTED_SAMPLE) omittedClaims.push(key);
+            continue;
+        }
+        if (size > remaining) {
+            out.omitted += 1;
+            if (omittedClaims.length < OMITTED_SAMPLE) omittedClaims.push(key);
+            stopBelow = Math.min(stopBelow, priority);
+            continue;
+        }
+        remaining -= size;
+        out.overhead = (out.overhead ?? 0) + Math.max(0, Buffer.byteLength(`${key}: ${JSON.stringify(cell)}\n`, "utf8") - size);
+        const kind = item.ns.kind;
+        const bucket = kind === "task" ? (out.task ??= {}) : kind === "global" ? (out.global ??= {}) : (out.project ??= {});
+        bucket[key] = cell;
+    }
+    if (omittedClaims.length > 0) out.omittedClaims = omittedClaims;
+    return out;
+}
+
+/** 索引的一条：主题 + 一句话 + 条目数（正文**不进**索引） */
+export interface KbIndexEntry {
+    subject: string;
+    desc: string;
+    claims: number;
+    /**
+     * 该主题在**哪些库**（查的时候要带 `--in`，否则落空）。
+     * 同一 subject 在项目库与设备库里可以各写各的（局部覆盖全局），故是**数组**；
+     * 但**合并成一条**：各出一条会让 agent 以为是两个不同主题、还把 claims 数看错
+     * （实测 `tool` 两行，22 + 5，读起来像"库里有 44 条 tool"）。
+     */
+    ns: ("project" | "global")[];
+}
+
+export interface KbIndex {
+    entries: KbIndexEntry[];
+    /** 全库条目总数（含没进索引的 subject —— 数字对不上时说明有 subject 缺 description） */
+    claims: number;
+}
+
+/**
+ * **知识库索引**（##404：AGENTS.md 的「按需」条目迁进 facts 后，靠它找回）。
+ *
+ * 为什么只给 subject 不给条目：条目全文是 `yaml-nested` 投影（runtime）的活，而 runtime 那段
+ * 有 4 KB 硬预算，实测溢出 120+ 条。索引要的是「**库里有什么**」，字节量与条目数无关 ——
+ * 26 个主题约 1.5 KB，迁走 25 KB 只留下这一个量级的常驻成本。
+ *
+ * 为什么 description 是索引唯一的人读信息：它已经是 subject 词表的必填字段（写词表时就要求
+ * 能一句话说清这个对象），索引直接复用它 —— 不新增一份要同步的说明。
+ *
+ * 读不到库 → `null`（缺席，与 `buildFactsContext` 同一纪律：读失败不炸整轮）。
+ */
+export function buildKbIndex(opts: { home?: string } = {}): KbIndex | null {
+    const home = opts.home ?? diyHome();
+    const repoDir = repoDirQuietly();
+    const loaded: Loaded[] = [];
+    // 设备级库先读（与投影同序：用户的硬规则优先保住）
+    const globalHit = loadQuietly(path.join(home, "knowledge"), { kind: "global" }, {});
+    if (globalHit) loaded.push(globalHit);
+    if (repoDir !== null) {
+        const hit = loadQuietly(repoDir, { kind: "project" }, {});
+        if (hit) loaded.push(hit);
+    }
+    if (loaded.length === 0) return null;
+    // 计数口径（##5 数据侧实测）：**按 claim 去重后再数**，字段名 `claims` 名副其实。
+    //
+    // 旧版按库相加、且数的是 facts ⇒ 两处都错，实测差 16：
+    //   ① 跨库同 claim 的主题被翻倍展示（level 12 vs brief 6、ref 10 vs 5、tool 30 vs 25）；
+    //   ② 同一 claim 的多个 env 变体被当成多条（`app.port` 索引 3 / brief 2）。
+    // 读索引的人看到"level 12 条"、`brief level` 只拿到 6 条，会以为有 6 条查不到 ——
+    // 这是"数算得对、说法错"的一类（同 history.budgetBytes 家族）。
+    //
+    // 判据：**kb 的 claims 恒等于 `diy facts brief <主题>` 的 claims**（按 `subject#aspect` 去重，
+    // 不看库、不看 env 变体、不看 lifecycle —— brief 本来就把失效条目也列出来给人判断）。
+    // `status.bySubject` 数的是**可用**条目的 claim（它服务 expose 预算，失效条目不占预算），
+    // 两者在"有 superseded 条目"时会差，这是有意的：一个回答"能查到什么"，一个回答"占多少预算"。
+    const claimsBySubject = new Map<string, Set<string>>();
+    for (const l of loaded) {
+        for (const f of l.repo.facts) {
+            const set = claimsBySubject.get(f.subject) ?? new Set<string>();
+            set.add(claimOf(f));
+            claimsBySubject.set(f.subject, set);
+        }
+    }
+    let total = 0;
+    for (const set of claimsBySubject.values()) total += set.size;
+    // 按 subject 聚：多库同名合并成一条（`ns` 记来源数组、`claims` 取**去重后的全局值**）
+    const merged = new Map<string, KbIndexEntry>();
+    for (const l of loaded) {
+        const ns = l.ns.kind === "global" ? ("global" as const) : ("project" as const);
+        for (const sub of l.repo.subjects) {
+            if ((sub.description ?? "") === "") continue;
+            // `none` = 连索引都不给（体量太大 / 临时性）：库里有，但 agent 得自己知道去查。
+            // **按库**判定（该库自己的 expose.yaml + 该库类型的缺省档）—— 与正文投影同口径。
+            // 注意与正文的区别：`index` 与 `full` **都进索引**（full 也要能被发现），只有 `none` 不进。
+            if (exposeOf(l.expose, sub.key, defaultExposeOf(ns)) === "none") continue;
+            const claims = claimsBySubject.get(sub.key)?.size ?? 0;
+            const hit = merged.get(sub.key);
+            if (hit === undefined) {
+                merged.set(sub.key, { subject: sub.key, desc: sub.description as string, claims, ns: [ns] });
+            } else {
+                // desc 取**先到的**那份：loaded 已按 ns 优先级排（global 先读），但项目库的
+                // 描述更具体 —— 故项目库那份覆盖（后到者赢，仅当它来自 project）
+                if (ns === "project") hit.desc = sub.description as string;
+                if (!hit.ns.includes(ns)) hit.ns.push(ns);
+                // 幂等赋值（不是 +=）：同一个 claim 两库都有声明时只算一条，这是本次修的正题
+                hit.claims = claims;
+            }
+        }
+    }
+    const entries = [...merged.values()];
+    if (entries.length === 0) return null;
+    entries.sort((a, b) => a.subject.localeCompare(b.subject));
+    // 按前缀折叠（##5 第 9 轮）：主题数会随迁入线性涨，而索引是每轮固定前缀 ——
+    // 41 主题 ≈ 4 KB/轮、全仓所有任务都付。折叠项自带展开方法（`brief app.*`）。
+    // 折叠结果转成可变的 ns（zod 那边 output 形状是 `string[]`，两处别各定义一份）
+    const folded = foldKbIndex(entries, { minGroup: KB_FOLD_MIN_GROUP }).map((e) => ({ ...e, ns: [...e.ns] }));
+    return { entries: folded, claims: total };
+}
+
+/**
+ * md 表已展示条目的值字节和 —— 只用来算 `overhead`（文本 - 值）。
+ * 按 claim 匹配（`out.shown` 给的是 gid，`projectItems` 的 gid = `<ns>:<claim>`）。
+ */
+function shownValueBytes(shown: readonly string[], entries: readonly ProjectEntry[]): number {
+    const gids = new Set(shown);
+    let n = 0;
+    for (const e of entries) {
+        const claim = claimOf(e.fact);
+        if ([...gids].some((g) => g === claim || g.endsWith(`:${claim}`))) n += bytesOf(e.fact.value);
+    }
+    return n;
+}

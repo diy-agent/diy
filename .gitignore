@@ -66,3 +66,5 @@ diy.worktrees/
 # ##184：models.dev snapshot（源数据真源，随仓走；上面 data/ 规则的例外）
 !pkgs.ts/diy-app/src/main/data/
 !pkgs.ts/diy-app/src/main/data/models*.json
+# 事实库生成物（--write 可重建，勿手改）
+knowledge/index.json

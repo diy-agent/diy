@@ -40,6 +40,9 @@ lockTip: "装配入口是结构契约：改了会改变模型看到的节顺序�
 <template :include="./identity.md"/>
 <template :include="./diy.md"/>
 <template :include="./project.md"/>
+{{/* 知识库索引不走这里：它是 Context Tree 的 runtime place（delivery.ts 的 kb），
+    真发由那条管道投递。放进这套模版会变成第二份渲染实现，必然与真发分叉 ——
+    上一版就在这里写了 diy facts find（当时还不存在的命令）。要索引去看上下文树页。 */}}
 <template :include="./task.md"/>
 <template :include="./rules.md"/>
 {{/* 技能槽位：skills 为空数组时整节不出现（空数组为假） */}}

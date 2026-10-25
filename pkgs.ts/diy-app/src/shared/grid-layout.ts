@@ -166,9 +166,33 @@ export function unownedCells(layout: Layout): Array<{ col: number; row: number }
   return out;
 }
 
-/** track → CSS 值（px 原样，fr 加单位） */
+/**
+ * track → CSS 值。
+ *
+ * ⚠️ **fr 必须带 `minmax(0, …)` 下界**：CSS 里裸 `1fr` 等价 `minmax(auto, 1fr)`，下界是内容的
+ * min-content —— 某个 view 里放一行不可折的长内容（宽表格 / 长代码 / 单行 tool 输出），整列就被
+ * 撑到内容宽，合计超出容器，右侧（发送按钮就在那儿）被推出可视区，而容器 `overflow-hidden`
+ * 让人以为页面坏了（2026-10-22 实测：容器 984px，列算出 355 + 1589 = 1944）。
+ * area 自己已有 `min-w-0`，下界交给它（内部滚动 / 换行）才是正确归属。
+ *
+ * px 原样 —— 那是固定轨，本就该按声明宽度走。
+ */
 export function trackCss(t: TrackSize): string {
-  return t.unit === "px" ? `${t.value}px` : `${t.value}fr`;
+  return t.unit === "px" ? `${t.value}px` : `minmax(0, ${t.value}fr)`;
+}
+
+/**
+ * 解析浏览器算出的 `grid-template-columns` / `-rows`（形如 `"355px 1589px 0px"`）为 px 数组。
+ *
+ * 抽成纯函数是为了能测：拖线起点取自 `getComputedStyle`，加 `minmax()` 之后浏览器仍回 px 序列，
+ * 但这条前提值得钉住 —— 它一变拖拽会**静默失效**（parseFloat 拿 NaN、被 filter 掉、长度对不上
+ * 就 return，表现是「拖不动」而不是报错）。
+ */
+export function parseTrackPx(cssValue: string): number[] {
+  return cssValue
+    .split(/\s+/)
+    .map((x) => parseFloat(x))
+    .filter((x) => Number.isFinite(x));
 }
 
 /** area → CSS Grid 声明（1:1 映射；CSS 的 line 是 1-based，故 +1） */
@@ -347,6 +371,49 @@ export interface LayoutOverride {
   rows?: TrackSize[];
   /** areaId → 隐藏 */
   hidden?: Record<string, boolean>;
+}
+
+/**
+ * 拖线后两侧轨道的新尺寸 —— **单位是身份，拖拽只改尺寸，不换单位**。
+ *
+ * 为什么（实测账单，##5 2026-10-22）：原实现拖完把两侧都写成 px，于是声明为 `1fr` 的中栏被
+ * **固化成当时的绝对 px**（该页存了 `355px 1589px 0px`）。用户缩小窗口时没有任何轨道可让 ⇒
+ * 合计 1944px 撑在 984px 容器里，右侧发送按钮被顶出可视区。
+ * 「拖过就不再受 fr 重算影响」这个意图是对的（用户就是要这侧更宽）—— 错的是**换了单位**。
+ *
+ * 规则：
+ *   · base 是 px ⇒ 写 px（固定栏就是固定栏）
+ *   · base 是 fr ⇒ 写 **fr 权重**，按该轴各 fr 轨此刻的 px 比例分配（相对宽度不丢）
+ *     ⇒ 窗口缩放时剩余空间仍按权重重算，不再撑爆
+ *
+ * 为什么不放在 `resolveLayout` 里做归一（曾经那么写过）：`ui layout set --cols 300,624,0`
+ * 是**显式意图**（IDE 式固定宽），归一化会让它静默失效。拖线才是「快照」—— 快照该换算，
+ * 声明不该。故修在写入侧：只有拖拽路径会走到本函数。
+ *
+ * @param renderedPx 该轴**此刻渲染出来的** px 序列（`getComputedStyle` 的 gridTemplate 解析）
+ */
+export function trackPairAfterDrag(
+  baseTracks: TrackSize[],
+  renderedPx: number[],
+  lineIndex: number,
+  next: [number, number],
+): [TrackSize, TrackSize] {
+  // 该轴只有一条弹性轨时，权重数值没有意义（剩余空间全归它）⇒ 保持原值，别写出 0.85 这种漂移
+  const frCount = baseTracks.filter((t) => t.unit === "fr").length;
+
+  const write = (idx: number, pxValue: number): TrackSize => {
+    const b = baseTracks[idx];
+    if (!b || b.unit === "px") return px(Math.max(0, Math.round(pxValue)));
+    // 弹性轨：**按它自己此刻的 px 同比缩放权重**（w' = w · px'/px），尺度不漂：
+    //   · 单条弹性轨（其余 px / 0）⇒ 权重恒等于原值，不会被写成 0.85 这种莫名数字
+    //   · 多条弹性轨 ⇒ 相对宽度原样保留，窗口缩放仍成立
+    // 此刻 px 未知（窗口还没渲染 / 该轨被折叠成 0）⇒ 保持原权重
+    const curPx = renderedPx[idx] ?? 0;
+    if (frCount <= 1 || curPx <= 0) return fr(b.value);
+    const w = (b.value * Math.max(0, pxValue)) / curPx;
+    return fr(Math.min(9999, Math.max(0.01, Math.round(w * 100) / 100)));
+  };
+  return [write(lineIndex - 1, next[0]), write(lineIndex, next[1])];
 }
 
 /**

@@ -1,0 +1,113 @@
+# knowledge/facts/ui.yaml
+
+# 生成物式的真源：整篇由 `diy facts submit` 写入（字段顺序、条目排序都由程序定）。
+domain: ui
+facts:
+  ui.find#browser:
+    value: |-
+      `src/browser.ts`：**浏览器安全统一入口**（`Signal` / `ScopeNode` / `CellHost` / 两个 Scheduler / `GenApp` + `html`），**不含 pi-tui**。其依赖链（signal / scope / cell / scheduler / providers/dom-gen）实测零 pi-tui import
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cdb037fd:pkgs.ts/diy-ui/AGENTS.md:8
+      verifiedAt: '2026-10-23'
+  ui.find#core:
+    value: |-
+      `src/` 核心（纯 TS 树形运行时）：`signal.ts`（`Signal<T>`，`@vue/reactivity` shallowRef 的框架无关外观）· `scope.ts`（`ScopeNode`/`ScopeConfig` 树 + 配置向上继承）· `components.ts`（`UIComponent` 三态基类，直接实现 pi-tui `Component`）· `cell.ts`（`CellHost` rerun 块 + staging rerun）· `scheduler.ts`（`ImmediateScheduler`/`PeriodicScheduler`）
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cdb037fd:pkgs.ts/diy-ui/AGENTS.md:7
+      verifiedAt: '2026-10-23'
+  ui.find#host:
+    value: |-
+      `src/host.ts` `HostAdapter`：provider 与原生 UI 树的子节点同步钩子（core 只认 `ScopeNode` 树，不碰原生节点）
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cdb037fd:pkgs.ts/diy-ui/AGENTS.md:9
+      verifiedAt: '2026-10-23'
+  ui.find#providers:
+    value: |-
+      `src/providers/`：`pi-tui.ts`（`App`，主线）· `dom.ts` / `dom-dsl.ts` / `dom-gen.ts`（浏览器）；`dom-jsx.ts` 是**未采纳**的实验、**不在 `exports` 里**（别引用、别当可用 API）
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cdb037fd:pkgs.ts/diy-ui/AGENTS.md:10
+      verifiedAt: '2026-10-23'
+  ui.find#publish:
+    value: |-
+      `tsconfig.build.json`（NodeNext + emit 到 `dist/`）· 分发脚本 `scripts/npm-publish.mjs`（仓根）；npm 名 `@diy-agent/ui`（目录名 `diy-ui`，历史名 `diyui`）
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cdb037fd:pkgs.ts/diy-ui/AGENTS.md:12
+      verifiedAt: '2026-10-23'
+  ui.find#web:
+    value: |-
+      `web/` Vite demo 站（`./sha.sh web`）；`examples/` 是 tsx 脚本（`./sha.sh examples <名>`）
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cdb037fd:pkgs.ts/diy-ui/AGENTS.md:11
+      verifiedAt: '2026-10-23'
+  ui.rule#browser-entry:
+    value: |-
+      **浏览器侧只能走浏览器安全入口，绝不 import 根入口**：根 `@diy-agent/ui`（`src/index.ts`）re-export 了 `providers/pi-tui.js`（Node-only），浏览器打包器一 import 它就把 pi-tui 拖进 bundle。安全入口 = `./browser`（统一入口）或细粒度 `./signal` / `./host` / `./dom` / `./dom-dsl` / `./dom-gen`（`package.json::exports` 实测共 7 个键：根 + 这 6 个）。**禁止 deep-import `node_modules/@diy-agent/ui/...`**（包管理器一换就断）
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cdb037fd:pkgs.ts/diy-ui/package.json:1
+      verifiedAt: '2026-10-23'
+  ui.rule#components:
+    value: |-
+      **控件层用 Web Awesome**（`wa-*` 自定义元素，框架无关）：diyui 只做声明式结构 + 响应式，交互控件交给 Web Awesome（`html.tag("wa-button", {...})`）。diyui **不依赖** Web Awesome，两者可换
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cdb037fd:pkgs.ts/diy-ui/AGENTS.md:18
+      verifiedAt: '2026-10-23'
+  ui.rule#dom-lib:
+    value: |-
+      `src/providers/dom*.ts` 靠文件头 `/// <reference lib="dom" />` 自取 DOM 类型；**别把 DOM 加进 `tsconfig.json` 的 `lib`** —— 否则核心层误用 `document` 也不再报错（污染纯 TS 内核）
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cdb037fd:pkgs.ts/diy-ui/AGENTS.md:16
+      verifiedAt: '2026-10-23'
+  ui.rule#esm-ext:
+    value: |-
+      源码内相对 import/export 带 `.js` 扩展名（指向 `.ts`）：`module: NodeNext` 与发布构建都要求显式扩展名。**与 `rpc.rule#esm-ext` 同一条判据**（同一类坑，别在两处各记一版）
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cdb037fd:pkgs.ts/diy-ui/AGENTS.md:19
+      verifiedAt: '2026-10-23'
+  ui.rule#package-lock:
+    value: |-
+      本包是根 npm workspace 成员（`pkgs.ts/*`），**不留自己的 `package-lock.json`**（会与根 lock 打架）
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cdb037fd:pkgs.ts/diy-ui/AGENTS.md:21
+      verifiedAt: '2026-10-23'
+  ui.rule#publish-flow:
+    value: |-
+      发布**只走** `./sha.sh publish`；仓内 `main`/`exports` 恒指 `src/*.ts` 且留 `private:true`（防手滑护栏），**发行 exports 由仓内 exports 推导**、新增子路径入口自动带上（同 `rpc.rule#publish-flow`）
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cdb037fd:pkgs.ts/diy-ui/AGENTS.md:20
+      verifiedAt: '2026-10-23'

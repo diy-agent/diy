@@ -11,6 +11,7 @@
 // 本模块只做组装与渲染，不发任何 LLM 请求（试验场试跑 = dry-run，看请求长什么样）。
 
 import type { RoomRuntimeValue } from "./room-context";
+import type { SelfValue } from "../../shared/context/self";
 import * as yaml from "js-yaml";
 import { existsSync, readFileSync, readdirSync, rmSync, rmdirSync } from "node:fs";
 import { homedir } from "node:os";
@@ -40,6 +41,8 @@ import { reqlogValue } from "../../shared/context/reqlog";
 import { LOG_DIR_REL, dayFile } from "../core/traffic-log";
 // 契约类型唯一源（shared/prompt-schema.ts，纯 zod）——renderer 也用它，避免手抄第二份
 import type { AssembledSystem, PromptEntry } from "../../shared/prompt-schema";
+import { buildFactsContext, buildKbIndex } from "./facts-context";
+import { buildDocsIndex, summarizeDocsIndex } from "./docs-index";
 
 export type { AssembledSystem, PromptEntry };
 
@@ -592,6 +595,12 @@ export function assembleGlobals(
      * ⚠ 类型走 `import type`：本文件不进 zod 补丁顺序的坑（##322），别改成值导入。
      */
     room?: RoomRuntimeValue | null;
+    /**
+     * 自量（##404 / ##9 提案）：窗口占用 / 上一步消耗 / 本轮累计。由调用方（runTurn）给 ——
+     * 它才知道本轮的现场（`stepN` / `turnCost`）与本进程里的上一步账；装配层现读就要读账本（热路径 IO）。
+     * 传 `null` / 缺省 = 不注入（预览页、首轮首步 ⇒ 与未接入前逐字不变）。
+     */
+    self?: SelfValue | null;
   } = {},
 ): AssembleGlobals {
   const taskUri = opts.taskUri ?? "";
@@ -646,11 +655,34 @@ export function assembleGlobals(
     if (!hit) throw new Error(`缺少模版节：${relpath}`);
     return renderSystemDsl({ globals: core, templates: { [relpath]: hit.source }, entry: relpath, resolve });
   };
+  // 事实投影（##404 待办 4）：带上 cwd 的**仓库相对路径**，让 `scope.paths` 型事实自动筛掉
+  // 与当前位置无关的那些（不传 = 不筛 = 65 条全进上下文，实测吃满 5.6 KB 预算）。
+  // 相对化在这里做而不是在 facts-context 里：`root` 的语义（证据/paths 按仓库根解析）
+  // 归内核，装配层只负责"我现在在哪"。
+  const repoRoot = getProjectPath(projectId);
+  const relCwd = repoRoot === undefined || !cwdRes.cwd.startsWith(`${repoRoot}/`) ? undefined : cwdRes.cwd.slice(repoRoot.length + 1);
+  const factsValue = buildFactsContext({ home, taskUri, ...(relCwd === undefined ? {} : { paths: [relCwd] }) });
+  // 知识库索引（##404 待办 1）：AGENTS.md 链里「按需」的条目迁进 facts 后，agent 靠这个索引
+  // 知道**库里有什么、怎么取**。与 facts 同一纪律：读不到库 = 整节缺席（不渲染空节）。
+  const kbValue = buildKbIndex();
+  // 仓库文档索引（##5 第 11 轮 B）：真源是**仓库文件树**（`docs/plans`），故要仓库根；
+  // 没有项目路径（任务不在仓库里）⇒ 整节缺席，与未接入前逐字不变。
+  // 变量树里只放**摘要**（根 / 篇数 / 最新改动日）；逐篇条目归 `diy docs index`（按需取）——
+  // 逐篇 18 行 ≈ 2 KB/轮 vs "一次性好奇"，账见 shared/docs.ts 头注。
+  const docsValue = repoRoot === undefined ? null : summarizeDocsIndex(buildDocsIndex({ root: repoRoot }));
   return {
     ...core,
     // 房间上下文（##377 第 26 刀）：**只在有房间时出现**（缺这个键 = 单人任务逐字不变）。
     // 两个原子单元由 PLACE_CANDIDATES 的 `room.members` / `room.recent` 各自成一条 runtime 单元。
     ...(opts.room ? { room: opts.room } : {}),
+    // 事实库投影（##404 待办 4）：与 room 同一纪律 —— **没有库就整节缺席**
+    // （`{}` 会被渲染成 `facts: {}`，看着像"库在但没有事实"，与"没接库"不是一回事）。
+    // 读失败降级为缺席而不是抛：上下文构造失败 = 人连消息都发不出去（见 facts-context 头注纪律 ②）。
+    ...(factsValue ? { facts: factsValue } : {}),
+    ...(kbValue ? { kb: kbValue } : {}),
+    ...(docsValue ? { docs: docsValue } : {}),
+    // 自量（##404 / ##9 提案）：**一条数都给不出时整节缺席**（不是 `self: {}`）
+    ...(opts.self ? { self: opts.self } : {}),
     identity: section(DELIVERED_SECTIONS.identity),
     rules: section(DELIVERED_SECTIONS.rules),
     guard: section(DELIVERED_SECTIONS.guard),

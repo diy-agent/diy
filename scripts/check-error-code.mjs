@@ -9,7 +9,7 @@
 //   · 增量：基线之外任何 `throw new` 不带 code ⇒ ✗
 //   · 带 code 的判据（任一条成立即算数）：
 //       ① 构造实参里有 `code: …`（`new Error(msg, { code: "fs/disk-full" })`）
-//       ② `new InvariantError("agent/…", detail)` —— 首参是 code，但**必须是字面量且合命名约定**
+//       ② `new InvariantError("agent/…", detail)` / 白名单类（`CODE_FIRST_ARG_CLASSES`）—— 首参是 code，但**必须是字面量且合命名约定**
 //          （写变量 = 统计时 grep 不到，等于没码）
 //   · 逃生口：`// error-code-ok: <非空理由>`（写在本行或上一行）—— 理由空着不算数
 //
@@ -30,6 +30,12 @@ import { maskNonCode, matchingParen } from "./lib/source-scan.mjs";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SCAN_DIR = join(ROOT, "pkgs.ts/diy-app/src");
 const SELF = "pkgs.ts/diy-app/src/shared/error-triage.ts";
+
+/**
+ * 「首参即 code」的错误类白名单。加新人前先确认：**首参真的是 `err.code`**（而不是 message），
+ * 否则护栏会被骗过 —— 例如 `ValidationError(errors)` 的 code 在 errors 载荷里，不在此列。
+ */
+const CODE_FIRST_ARG_CLASSES = new Set(["InvariantError", "FactsStoreError"]);
 
 /** code 命名约定（与 shared/error-triage.ts::isErrorCode 同一份口径） */
 const CODE_RE = /^(llm|fs|net|rpc|agent|db|ui)\/[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -118,14 +124,12 @@ export function scanSource(src, file = "<fixture>") {
 
     // ① 实参里有 `code:`
     if (/\bcode\s*:/.test(spanMasked)) continue;
-    // ② InvariantError 的字面量 code（首参 = code，必须是字面量 + 合约定）
-    if (name === "InvariantError") {
-      // 掩码文本里字面量已成空白，故按**原文**同一偏移取首参：长度取掩码那一截（偏移严格对齐）
-      const firstLen = (spanMasked.split(",")[0] ?? "").length;
-      const lit = spanRaw.slice(0, firstLen).trim();
-      const litVal = LITERAL_RE.exec(lit)?.[1] ?? "";
+    // ② 「首参即 code」的错误类（字面量 + 合命名约定）
+    if (CODE_FIRST_ARG_CLASSES.has(name)) {
+      // 掩码文本里字面量已成空白 —— 直接在**原文**首段上抓引号串（按掩码长度切片会切到字符串中间）
+      const litVal = /^\s*["'`]([^"'`$]*)["'`]/.exec(spanRaw)?.[1] ?? "";
       if (CODE_RE.test(litVal)) continue;
-      hits.push({ line, name, snippet: snippetOf(src, m.index, closeIdx), why: "InvariantError 的 code 必须是字面量且形如 <域>/<kebab-case>" });
+      hits.push({ line, name, snippet: snippetOf(src, m.index, closeIdx), why: `${name} 的 code 必须是字面量且形如 <域>/<kebab-case>` });
       continue;
     }
     // ③ 逃生口注释（本行或上一行，理由非空）
@@ -172,6 +176,8 @@ function selfTest() {
     ["InvariantError literal", `throw new InvariantError("agent/invariant-step-seq", "x");`, 0],
     ["InvariantError bad code", `throw new InvariantError("stepSeq");`, 1],
     ["InvariantError variable code", `const c = "agent/x";\nthrow new InvariantError(c);`, 1],
+    ["FactsStoreError literal code", `throw new FactsStoreError("agent/facts-bad-in", "x");`, 0],
+    ["FactsStoreError bad code", `throw new FactsStoreError("facts/repo-missing", "x");`, 1],
     ["rethrow", `try { x(); } catch (e) { throw e; }`, 0],
     ["comment only", `// throw new Error("x");`, 0],
     ["string only", `const s = "throw new Error('x')";`, 0],

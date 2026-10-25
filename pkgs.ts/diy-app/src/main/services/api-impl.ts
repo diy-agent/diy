@@ -19,10 +19,13 @@ import { refreshModelRuntime } from "../core/model-runtime";
 import { hasConversation } from "../core/local-paths";
 import { autoSeedEnabled, seedHome } from "../core/seed";
 import { platform, arch, release, totalmem, freemem } from "node:os";
-import { currentGitBranch, homeDisplayOf, repoDisplayOf } from "../core/instance-identity";
+import { currentGitBranch, findRepoRoot, homeDisplayOf, repoDisplayOf } from "../core/instance-identity";
 import { readRuntimeConfig } from "../../runtime";
 import * as health from "./health";
 import { apiDef } from "./api-def";
+import * as factsStore from "./facts-store";
+import * as journalStore from "./journal-store";
+import { buildDocsIndex, DEFAULT_DOCS_ROOTS } from "./docs-index";
 import { TaskDetailSchema } from "../../shared/task-detail";
 import { noteRendererTouch } from "./runtime-context";
 import type { ToolResultMode } from "../../shared/context/compaction";
@@ -1038,6 +1041,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
         systemPlaces: cur?.systemPlaces ?? [],
         systemDiffers: cur && prev ? cur.systemText !== prev.systemText : null,
         runtimeDiffers: cur && prev ? cur.runtimeText !== prev.runtimeText : null,
+        // 注记段缺字段（老快照）= 不知道 ⇒ null（UI 不画徽章），别拿 undefined 跟字符串比得「变了」
+        historyDiffers: cur?.historyText === undefined || prev?.historyText === undefined ? null : cur.historyText !== prev.historyText,
         incomparable: cur && prev ? cur.wireVersion !== prev.wireVersion : null,
         cacheHitRate: buckets && buckets.inputTotal > 0 ? buckets.cacheRead / buckets.inputTotal : null,
         cost: usage.get(turnId)?.cost ? usage.get(turnId)!.cost!.total : null,
@@ -1089,11 +1094,17 @@ export function bindAppHandlers(binding: ServerBinding): void {
         });
       }
     }
-    const total = entries.length;
+    // **只要变化**：降级路径（老格式日志回放 / 从投递快照折算）会**每步**给一条 —— 没变的那步
+    // 落在时间线上就是一个空行，实测老任务里能占掉一多半（用户 2026-10-22：「变化步骤很多是空
+    // 步骤，只需要变化的步骤才记录和显示」）。v2 记录本身"有变才写"，这里的过滤对它无副作用，
+    // 对降级路径是**显示侧的兜底**（记录侧无从修：那些步的日志已经写死了）。
+    // baseline 不在过滤之列 —— 它是时间线的起点，不是"某一步的变化"。
+    const kept = entries.filter((e) => e.type === 'baseline' || e.changes.length > 0);
+    const total = kept.length;
     return {
       total,
       source,
-      entries: input.limit && input.limit > 0 ? entries.slice(-input.limit) : entries,
+      entries: input.limit && input.limit > 0 ? kept.slice(-input.limit) : kept,
     };
   });
 
@@ -1128,12 +1139,16 @@ export function bindAppHandlers(binding: ServerBinding): void {
         changed: d?.changed ?? Object.keys(cur.valueHashes).sort(),
         systemDiffers: d?.systemDiffers ?? true,
         runtimeDiffers: d?.runtimeDiffers ?? true,
+        historyDiffers: d?.historyDiffers ?? false,
         systemDiff: d?.systemDiff ?? [],
         runtimeDiff: d?.runtimeDiff ?? [],
+        historyDiff: d?.historyDiff ?? [],
         systemText: cur.systemText,
         runtimeText: cur.runtimeText,
+        historyText: cur.historyText ?? "",
         baseSystemText: prev?.systemText ?? null,
         baseRuntimeText: prev?.runtimeText ?? null,
+        baseHistoryText: prev?.historyText ?? null,
       };
     }
     // 未选中：**当前变量树** vs 最后一步（"我现在改的东西会带来什么变化"）
@@ -1166,12 +1181,18 @@ export function bindAppHandlers(binding: ServerBinding): void {
       changed: d.changed,
       systemDiffers: d.systemDiffers,
       runtimeDiffers: d.runtimeDiffers,
+      // live 模式比的是「当前变量树 vs 最后一步」：注记段**不属于变量树**（它由压缩选择算），
+      // 当前没有"待发的注记"⇒ 不存在可比对象，恒 false；历史行对照仍给 baseHistoryText。
+      historyDiffers: false,
       systemDiff: d.systemDiff,
       runtimeDiff: d.runtimeDiff,
+      historyDiff: d.historyDiff,
       systemText: now.system.text,
       runtimeText: now.runtime.text,
+      historyText: "",
       baseSystemText: last.systemText,
       baseRuntimeText: last.runtimeText,
+      baseHistoryText: last.historyText ?? null,
     };
   });
 
@@ -1608,6 +1629,108 @@ export function bindAppHandlers(binding: ServerBinding): void {
       .finally(() => queue.close());
     for await (const frame of queue) yield JSON.stringify(frame);
   });
+
+  // ── docs（##404 #3：仓库文档索引；变量树只放摘要，逐篇按需在这里取）──
+  binding.on(app.docs.index, async ({ input }) => {
+    const roots = input.roots === undefined
+      ? undefined
+      : input.roots.split(",").map((s) => s.trim()).filter((s) => s !== "");
+    // 缺省根 = **app 进程 cwd 向上找到的仓库根**（不是 process.cwd() 本身）：
+    // app 进程的 cwd 是包目录（`pkgs.ts/diy-app`），直接拿它扫 `docs/plans` 永远是空。
+    // 这也解释了为什么必须显式传 `--dir` 或依赖上溯 —— CLI 敲命令的 cwd 到不了这里。
+    const idx = buildDocsIndex({
+      root: input.dir ?? findRepoRoot(process.cwd()) ?? process.cwd(),
+      ...(roots === undefined ? {} : { roots }),
+      ...(input.max === undefined ? {} : { maxEntries: input.max }),
+    });
+    // 没有文档 = 空索引（不是 null）：CLI 的返回形状要稳定，空 = "这个根下没扫到"，
+    // 与"变量树里整节缺席"是两件事（后者是上下文层的纪律）。
+    return idx ?? { roots: roots ?? [...DEFAULT_DOCS_ROOTS], entries: [] };
+  });
+
+  // ── facts（##404：项目级事实库；agent 只经 RPC 读写，不碰 YAML）──
+  binding.on(app.facts.status, async ({ input }) => factsStore.status({ ...(input.dir === undefined ? {} : { dir: input.dir }), ...(input.in === undefined ? {} : { in: input.in }) }));
+  binding.on(app.facts.get, async ({ input }) =>
+    factsStore.get(factsStore.splitList(input.claim), {
+      ...(input.dir === undefined ? {} : { dir: input.dir }),
+      ...(input.in === undefined ? {} : { in: input.in }),
+      ...(input.env === undefined ? {} : { env: input.env }),
+      ...(input.path === undefined ? {} : { paths: factsStore.splitList(input.path) }),
+      ...(input.task === undefined ? {} : { task: input.task }),
+    }),
+  );
+  binding.on(app.facts.brief, async ({ input }) =>
+    factsStore.brief(input.subject, {
+      ...(input.dir === undefined ? {} : { dir: input.dir }),
+      ...(input.in === undefined ? {} : { in: input.in }),
+      ...(input.maxChars === undefined ? {} : { maxChars: input.maxChars }),
+      ...(input.budget === undefined ? {} : { budget: input.budget }),
+    }),
+  );
+  binding.on(app.facts.find, async ({ input }) =>
+    factsStore.find(input.keyword, {
+      ...(input.dir === undefined ? {} : { dir: input.dir }),
+      ...(input.in === undefined ? {} : { in: input.in }),
+      ...(input.limit === undefined ? {} : { limit: input.limit }),
+      ...(input.maxChars === undefined ? {} : { maxChars: input.maxChars }),
+    }),
+  );
+  binding.on(app.facts.submit, async ({ input }) =>
+    factsStore.submitPayload(factsStore.parseSubmitPayload(input.file), {
+      ...(input.dir === undefined ? {} : { dir: input.dir }),
+      ...(input.in === undefined ? {} : { in: input.in }),
+      dryRun: input.dryRun === true,
+    }),
+  );
+  binding.on(app.facts.raw, async ({ input }) => factsStore.raw({
+    ...(input.dir === undefined ? {} : { dir: input.dir }),
+    ...(input.in === undefined ? {} : { in: input.in }),
+  }));
+  binding.on(app.facts.project, async ({ input }) => factsStore.projectFacts({
+    ...(input.dir === undefined ? {} : { dir: input.dir }),
+    ...(input.in === undefined ? {} : { in: input.in }),
+    ...(input.algorithm === undefined ? {} : { algorithm: input.algorithm }),
+    ...(input.maxBytes === undefined ? {} : { maxBytes: input.maxBytes }),
+    ...(input.env === undefined ? {} : { env: input.env }),
+    ...(input.path === undefined ? {} : { paths: factsStore.splitList(input.path) }),
+    ...(input.task === undefined ? {} : { task: input.task }),
+    ...(input.includeProposed === undefined ? {} : { includeProposed: input.includeProposed }),
+  }));
+  binding.on(app.facts.affected, async ({ input }) => factsStore.affectedByFiles(factsStore.splitList(input.files), {
+      ...(input.dir === undefined ? {} : { dir: input.dir }),
+      ...(input.in === undefined ? {} : { in: input.in }),
+    }));
+
+  // ── journal（##404：任务日志 = append-only 事件流；把"发生过什么"从任务 body 里摘出来）──
+  binding.on(app.journal.add, async ({ input }) => {
+    const body = journalStore.resolveBody(input.body, input.bodyText, input.bodyFile);
+    return journalStore.addEntries(input.task, [
+      {
+        kind: input.kind,
+        title: input.title,
+        ...(body === undefined ? {} : { body }),
+        ...(input.refs === undefined ? {} : { refs: journalStore.splitRefs(input.refs) }),
+        ...(input.round === undefined ? {} : { round: input.round }),
+        ...(input.author === undefined ? {} : { author: journalStore.parseAuthorSpec(input.author) }),
+        ...(input.anchor === undefined ? {} : { anchor: journalStore.parseAnchorSpec(input.anchor) }),
+      },
+    ]);
+  });
+  binding.on(app.journal.raw, async ({ input }) => journalStore.rawJournal(input.task));
+  binding.on(app.journal.find, async ({ input }) =>
+    journalStore.findJournal(input.task, {
+      ...(input.kind === undefined ? {} : { kind: journalStore.splitKinds(input.kind) }),
+      ...(input.since === undefined ? {} : { since: input.since }),
+      ...(input.until === undefined ? {} : { until: input.until }),
+      ...(input.grep === undefined ? {} : { grep: input.grep }),
+      ...(input.limit === undefined ? {} : { limit: input.limit }),
+      ...(input.order === undefined ? {} : { order: input.order }),
+    }),
+  );
+  binding.on(app.journal.stats, async ({ input }) => journalStore.journalStats(input.task));
+  binding.on(app.journal.import, async ({ input }) =>
+    journalStore.importEntries(input.task, journalStore.parseImportPayload(input.file), input.dryRun === true),
+  );
 
   // ── seed ──
   binding.on(app.seed.run, async () => {

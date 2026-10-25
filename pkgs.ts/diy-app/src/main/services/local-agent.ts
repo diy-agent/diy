@@ -77,6 +77,25 @@ import {
     seekWindowStart,
 } from "./local-ops-seek";
 import { appendAudit } from "./agent-audit";
+import { addSystemEvent } from "./journal-store";
+
+/**
+ * 轮末「模型没机会说出口」的 code（##404 待办 3 的判据）。
+ *
+ * 只有这几类会进任务 journal（`author: system`）：共同点是**本轮缺收尾那句话**，
+ * 事后查「为什么这轮没结果」时 `agent` 条目是空的。其余收尾（步数上限 / 上游报错 / 额度）
+ * 模型自己看得见、会在对话里交代，写进 journal 只是重复。
+ *
+ * 与 `error-triage.ts` 的分工：那边说「要不要当事处理」，这里说「要不要留痕」—— 两把尺子，
+ * 别合并（一个 defect 可能模型自己说清了；一个 external-unknown 可能恰恰没人说）。
+ */
+const TURN_SILENT_END_CODES: ReadonlySet<string> = new Set([
+    "agent/aborted-detached", // 生成器被 return 展开（中断 / 驱动收尾）
+    "agent/aborted", // 中断来源不明
+    "agent/interrupted", // 流中断 / 崩溃恢复补 closer
+    "agent/app-crash", // 宿主异常退出
+    "agent/app-restart", // 宿主重启打断本轮
+]);
 import {
     PLAN_SCOPE_NOTE,
     planCheck,
@@ -112,6 +131,9 @@ import { sessionRegistry } from "./session-registry";
 // 会造成循环 —— room-service 静态 import 本模块的 getLocalAgent）。
 import { commitSelfStartContext, roomRuntimeFact, type RoomRuntimeValue } from "./room-context";
 import { addStepUsage, newUsageAcc, setTurnUsage, type TurnUsage } from "./turn-usage";
+// 自量（##404 / ##9 提案）：本进程里的「最近一步」账。记账点 = finish-step（与 appendUsage 同一处），
+// 读点 = 每步重建上下文 —— 读时零 IO（理由见 services/self-usage.ts 头注）。
+import { noteSelfStep, selfOf } from "./self-usage";
 import {
     bucketsOf,
     costBreakdown,
@@ -154,7 +176,7 @@ import { appendContextStat } from "../core/context-stats";
 import { traffic } from "../core/traffic";
 import { appendCtxLog, hasV2CtxLog, lastCtxLogSeq, readCtxLogEntries } from "../core/context-changelog";
 import { statFromStep } from "../../shared/context/stats";
-import { atomicUnitPaths, changesOf, foldCtxTree, type CtxSnapshot } from "../../shared/context/changelog";
+import { atomicUnitPaths, changelogUnitPaths, changesOf, foldCtxTree, type CtxSnapshot } from "../../shared/context/changelog";
 import type { DeliveryStepRecord } from "../../shared/context/steps";
 import {
     budgetBytesOf,
@@ -3179,6 +3201,12 @@ export class LocalAgentManager {
                 // `keptBytes` 扣除**本轮 user 那一行**（##421）：它是本轮输入、作为 `user.message`
                 // 走尾部信封，不属于「被保留的历史」——不扣就是纯记账偏差（注记里的数字会对不上）。
                 keptBytes: sel.keptBytes - this.tailUserBytes(all, sel, opts),
+                // ##5 拆账：两个桶都是**扣前**口径（选择阶段的原始账）。本轮 user 那一行本就不属于
+                // 任一桶，所以 `keptBytes` 会比 `countBytes + mustBytes` 少那一行的字节 ——
+                // 差额不是溢出，是它根本不算历史。硬把它分进某个桶就是编的。
+                countBytes: sel.countBytes,
+                mustBytes: sel.mustBytes,
+                // ##420：行号取加了跳过段偏移的那份（`keptRuns` 已按 llm.jsonl 物理行号换算）
                 kept: keptRuns,
             },
             { file: llmLogRelPath(taskUriOf), absPath: llmFile(taskUriOf) },
@@ -5166,6 +5194,24 @@ export class LocalAgentManager {
                 ...(endTriage.triage ? { triage: endTriage.triage } : {}),
                 ...(endTriage.code ? { code: endTriage.code } : {}),
             });
+            // 系统侧客观事件（##404 待办 3）：**只记「模型没机会说出口」的那几类收尾**。
+            // 判据不是严重程度、而是**可复述性**：`max-steps` / `error` 时模型还活着、自己会在对话里
+            // 交代；而崩溃 / 进程重启 / 生成器被 return 展开这几种，本轮**根本没有收尾那句话** ——
+            // 事后查「这轮为什么没结果」只有系统说得出来（`agent` 条目在此全缺）。
+            // `external-recognized` 的额度 / 窗越线同样不写：它们是常态噪音，全局审计
+            // `log/agent-bash.jsonl` 已逐轮兜底，journal 再来一份就是双写流水、反把真事埋掉。
+            // 写失败只记 console：日志是副作用，不能带走轮次收尾（这一步必须同步且不抛）。
+            if (endTriage.code !== null && TURN_SILENT_END_CODES.has(endTriage.code)) {
+                try {
+                    addSystemEvent(taskUri, {
+                        code: endTriage.code,
+                        title: `本轮没有收尾（${endTriage.code}）· steps=${steps}`,
+                        body: `${endTriage.reason}\n\n- endReason: \`${reason.type}\`\n- steps: ${steps}\n- usage: ${acc.in} in / ${acc.out} out（cached ${acc.cached}）\n- 全量流水：\`log/agent-bash.jsonl\`（本任务全部轮次）`,
+                    });
+                } catch (e) {
+                    console.error(`[local-agent] 系统日志写入失败（不影响轮次收尾）${taskUri}:`, e);
+                }
+            }
             // L3 结论账（##424 刀 1）：一轮一条，必须在 turn 的 stop **落盘之后**量 len
             // （上面那段 sink 已写完收尾 op）。旁路：不 await、不 yield、不抛。
             recordTurn(reason);
@@ -5188,9 +5234,14 @@ export class LocalAgentManager {
         // 系统上下文：Context Tree 投递（稳定项 → system 参数；易变项 → 尾部 user 消息）。
         // **与上下文树页的预览同一条链**（shared/context/delivery）：同一份 globals、同一份
         // system 名单、同一套渲染 —— 于是"预览看到的字节"就是这里发出去的字节。
+        // 自量（##404 / ##9 提案）：轮首这一份用的是**上一次真发那一步**的账（本进程内存里）。
+        // 本步还没发，`turn.steps` = 0 ⇒ 只有 `window` / `last`，这恰好是"发出去之前该知道的"。
+        const selfValue = (): ReturnType<typeof selfOf> =>
+            selfOf(taskUri, { contextLimit: identity.contextLimit, steps: stepN, cost: turnCost, unpriced: turnUnpriced });
         const globals = assembleGlobals(diyHome(), projectFromUri(taskUri), {
             taskUri,
             room: identity.room ?? null,
+            self: selfValue(),
         }) as unknown as Record<string, unknown>;
         // 划分规则读**真源**（$DIY_HOME/context.yaml；缺失/损坏则推荐名单 + 出声）——
         // 与上下文树页读的是同一份，所以页面上看到的 system/runtime 划分就是这里会用的划分。
@@ -5204,6 +5255,8 @@ export class LocalAgentManager {
             const g = assembleGlobals(diyHome(), projectFromUri(taskUri), {
                 taskUri,
                 room: identity.room ?? null,
+                // 每步重算 ⇒ 这里是「上一步的账 + 本轮累计」的最新值（`self` 是最高频单元，见 delivery.ts）
+                self: selfValue(),
             }) as unknown as Record<string, unknown>;
             return buildDelivery(g, loadSystemPlaces(diyHome()));
         };
@@ -5217,6 +5270,8 @@ export class LocalAgentManager {
         // 变更历史（##310 二版）：每步**有变才写**；一段会话的起点 = 一条 baseline（整棵树）。
         // 变更单位 = 原子单元（`chain` 整体一条，不下钻数组 —— 原子字段要变一起变）。
         const ctxUnits = atomicUnitPaths();
+        // 变更历史用的口径（去掉"每步必变"的仪表盘单元，见 `changelogUnitPaths`）
+        const ctxLogUnits = changelogUnitPaths();
         let ctxSeq = lastCtxLogSeq(taskUri);
         // 该不该写起点：还没有二版记录（新任务 / 从没写过的新格式），或有人显式要求重新起算
         // （会话清零、`diy context rebaseline`）。**每轮只在轮首判一次**：轮中途置的标记下一轮生效。
@@ -5317,10 +5372,6 @@ export class LocalAgentManager {
             // 构成字节 = 环形构成卡与构成报表的数据源（system 容器精确字节 + tools JSON 字节，
             // 消息段由账本每步 prompt 减法导出 —— 见 shared/usage StepUsageRecord.contextParts）。
             const tools = buildTools(cwd, L, taskUri, { turnId, stepId: () => stepId });
-            const ctxParts = {
-                systemBytes: delivery.system.bytes,
-                toolsBytes: JSON.stringify(tools).length,
-            };
             let hist = this.deliveryHistory(taskUri, sess.store, undefined, undefined, sess.llmBase);
             // ── thinking 回放归一（##398）──
             // 上游（DeepSeek thinking 模式 / luminal 严判端点）要求**每条回放的 assistant**都带
@@ -5336,18 +5387,28 @@ export class LocalAgentManager {
             const replayOpts = reasoningReplayOptsOf(rm, reasoningEffort);
             // 一份 `hist` → 最终 wire 形状（历史前注记 + 尾部 runtime 信封 + 摘要 + 推理回放归一）。
             // 抽成闭包：预检「再压一次」要按同一套拼装重算一遍 —— 两处各抄一遍必分叉（##227 老教训）。
+            // 摘要段**算一次**：它既进 `sent`，也要原样进投递快照（##5 第 16 轮）。
+            // 两处各调一次 `effectiveSummary` 是纯读、值相同，但"恰好相同"不该是快照正确的依据。
+            const summaryPart = renderSummaryPart(this.effectiveSummary(taskUri));
             const sentOf = (h: typeof hist): ModelMessage[] =>
                 ensureReasoningReplay(
+                    // 位置取 ##421（注记自占一条 user 消息、挂在历史第一条之前）；
+                    // `summaryPart` 仍按 ##5 提升到闭包外只算一次（它同时要进投递快照）。
                     normalizeUserRuns(
-                        withRuntime(
-                            withHistoryNote(h.messages, h.note),
-                            delivery.runtime.text,
-                            renderSummaryPart(this.effectiveSummary(taskUri)),
-                        ),
+                        withRuntime(withHistoryNote(h.messages, h.note), delivery.runtime.text, summaryPart),
                     ),
                     replayOpts,
                 );
             let sent: ModelMessage[] = sentOf(hist);
+            // 构成字节（##9 追加的历史段）：system / tools / **历史** 三段，才答得了
+            // 「历史占了窗口多少、该不该压」。`historyBytes` 量的是**真发消息段**
+            // （含尾部 runtime 信封 + 摘要 + 注记，即 wire 上的 messages 全量），不是块树字节 ——
+            // 后者少三条注入（差异见 `sentOf`）。选在 `sent` 之后算，就是为了量"真发"。
+            const ctxParts = {
+                systemBytes: delivery.system.bytes,
+                toolsBytes: JSON.stringify(tools).length,
+                historyBytes: utf8Bytes(JSON.stringify(sent)),
+            };
 
             // ── 发请求**前**的 token 预检（##406 刀 2 后半）────────────────────────
             // 病灶（##401）：请求 4.95 MB 发出去才知道超了窗口，之后每次「？」都重发同一个 400，
@@ -5385,6 +5446,8 @@ export class LocalAgentManager {
                         // 压得动 ⇒ 直接换掉这份投递，并**告知**（轮尾 notice，不冒充错误）
                         hist = hist2;
                         sent = sent2;
+                        // 压缩换掉了消息段 ⇒ 构成字节跟着换（否则报表会把"压之前"的字节当"发出去的"）
+                        ctxParts.historyBytes = utf8Bytes(JSON.stringify(sent));
                         historyCapOverride = tightCap;
                         preflightNotice =
                             `上下文接近窗口上限（${est0.estTokens} tokens > 窗口 ${ctxLimitTokens} 的 80%），` +
@@ -5451,6 +5514,10 @@ export class LocalAgentManager {
                 valueHashes: delivery.valueHashes,
                 systemText: delivery.system.text,
                 runtimeText: delivery.runtime.text,
+                // 尾部信封里另外两段（##5 第 16 轮）：它们**不是变量树单元**，不进 valueHashes，
+                // 也不出现在 `runtimeDiff` 里 —— 不记下来就永远看不见它们变没变。
+                historyText: hist.note,
+                summaryText: summaryPart,
             };
             appendStep(stepsFile(taskUri), step);
             // 变更统计（**按项目**累计；只存变化路径 → 体积小、可长期留）。
@@ -5526,7 +5593,7 @@ export class LocalAgentManager {
                             this.rebaselinePending.delete(taskUri);
                             ctxBaselineWritten = true;
                         } else {
-                            const changes = changesOf(ctxPrevSnap, fresh, ctxUnits);
+                            const changes = changesOf(ctxPrevSnap, fresh, ctxLogUnits);
                             if (changes.length > 0) {
                                 appendCtxLog(taskUri, {
                                     seq: ++ctxSeq, type: "changed", ts: new Date().toISOString(), model,
@@ -5832,6 +5899,9 @@ export class LocalAgentManager {
                                 // **无价目 ≠ 0**：只累加有价目的步，无价目的只计数（##372 附带要求 1）
                                 if (cost) turnCost = turnCost ? sumCosts([turnCost, cost]) : cost;
                                 else turnUnpriced++;
+                                // 自量（##404）：把这一步的桶+金额记进内存账 —— 下一步重建上下文时
+                                // `runtime.self` 就有数可报（含跨轮：同一进程里下轮首步仍读得到）。
+                                noteSelfStep(taskUri, b, cost);
                                 sessionRegistry.noteTurnUsage(taskUri, acc.total);
                                 appendUsage(taskUri, {
                                     ts: new Date().toISOString(),

@@ -28,6 +28,18 @@ export interface PlaceCandidate {
     system: boolean;
     /** 稳定性判断（也就是"为什么"） */
     reason: string;
+    /**
+     * 是否进**变更历史**（`changelog` / 上下文树的"变化步骤"）。缺省 `true`。
+     *
+     * 为什么允许为 `false`：变更历史回答的是「**上下文为什么变了**」，它的读者是"要判断
+     * 有没有东西该重看"的人和 agent。而 `self` 是**仪表盘**（花了多少钱 / 窗口多满），
+     * 每步必变 —— 让它进变更历史，等于每一步都落一条 `changed`，真实变化被淹掉
+     * （##5 早报过"变化步骤一堆空的"，反过来"每步都有变化、但全是仪表盘"同样是噪声）。
+     *
+     * 注意它**不影响投递**：`self` 仍要进 `runtimeDiff`（模型必须看到最新数）——
+     * 两个消费者口径不同，别合成一个开关。
+     */
+    changelog?: false;
 }
 
 /**
@@ -116,6 +128,34 @@ export const PLACE_CANDIDATES: PlaceCandidate[] = [
     // （`projection.ts` 的 renderedHash），合起来则"成员改个名"会把整段 recent 重发一遍。
     { path: "room.members", system: false, reason: "房间成员：低频（改成员才变）" },
     { path: "room.recent", system: false, reason: "房间近期发言：高频（有人说话就变）" },
+    // 事实库投影（##404 待办 4）：**runtime 而不是 system** —— 它是"任务当前的真身"，
+    // 每轮都变（agent 自己在本轮里就可能 submit 一批）；放 system 会把前缀缓存砸掉。
+    // 与 `task.body` 同一道理：内容随工作推进而变，但变化**稀疏**（不是每轮都有新事实），
+    // 故单列一个原子单元比并进 body 更好 —— body 是 prose、facts 是结构化键值，
+    // 混在一起既不能按 claim diff，也没法在页面上分开看。
+    { path: "facts", system: false, reason: "事实库投影：随 submit 变（稀疏）；结构化，与 body 的散文分开" },
+    // 知识库索引（##404 待办 1）：AGENTS.md 链里「按需才查」的条目迁进库后，agent 靠它知道
+    // **库里有什么**。为什么与 facts 同样进 runtime：索引里的 `claims` 计数**随 submit 变**
+    // （新增一条事实 → 那个主题的条数就变），放 system 同样会砸前缀缓存。
+    // 为什么单列而不并进 facts：二者字节量与变化频率差一个量级（索引 ~1.5 KB 随主题数，
+    // 投影 4 KB 随条目数），合并后"改一个主题名"会把 4 KB 投影整段重发。
+    { path: "kb", system: false, reason: "知识库索引：随库主题/条数变（低频）；与 facts 投影分开计价" },
+    // 仓库文档索引（##5 第 11 轮 B）：`docs/` 不在 AGENTS.md 链上，不列出来 agent 就不知道
+    // 有哪些设计稿。与 kb 同样进 runtime：**文档增删 / 改标题就变**，放 system 会砸前缀缓存。
+    // 为什么单列而不并进 kb：真源不同（文件树 vs 事实库），变更频率也不同（kb 随 submit 变、
+    // docs 随 git 提交变）。合并后"submit 一条事实"会把整段文档索引重发。
+    { path: "docs", system: false, reason: "仓库文档索引：随文档增删/改标题变（低频）；真源是文件树" },
+    // 自量（##404 / ##9 提案）：窗口占用 / 上一步消耗 / 本轮累计。
+    // 为什么必须进 runtime：这三个数**每步都变**（窗口随本步 token、`turn.cost` 随累计），
+    // 进 system 就是每步把前缀缓存打碎（实测 cacheRead 占 92~99%，一改输入成本×几十）。
+    // 为什么单列而不并进别的单元：它的变化频率是**最高档**（每步一次），与其他单元混在一起
+    // 会让“别的字段改一下”也把这份高频段重发一遍。
+    {
+        path: "self",
+        system: false,
+        changelog: false,
+        reason: "自量（窗口占用/上一步消耗/本轮累计）：每步都变 → 必须 runtime，且不进变更历史（见 changelog 字段）",
+    },
 ];
 
 /** 默认 system 名单（真发与预览共用；用户可在页面上改，改动只影响该页面预览） */

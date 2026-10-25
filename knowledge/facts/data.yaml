@@ -1,0 +1,25 @@
+# knowledge/facts/data.yaml
+
+# 生成物式的真源：整篇由 `diy facts submit` 写入（字段顺序、条目排序都由程序定）。
+domain: data
+facts:
+  data#diy-yaml:
+    value: |-
+      `diy.yaml` diy 的 vendor 依赖源列表
+    id: agents.data.diy-yaml
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/git/AGENTS.md:11
+      verifiedAt: '2026-10-22'
+  data#workspace:
+    value: |-
+      `*.code-workspace` VS Code 工作区文件
+    id: agents.data.workspace
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/git/AGENTS.md:12
+      verifiedAt: '2026-10-22'
