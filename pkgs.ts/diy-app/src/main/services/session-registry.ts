@@ -45,6 +45,8 @@ export interface SessionRegistryDeps {
   viewersOf(taskUri: string): number;
   /** 待投递留言条数（steer 队列，##306） */
   queueOf(taskUri: string): number;
+  /** 待投递留言里**署名是人**的条数（`author: human:*`，##435） */
+  queueHumanOf(taskUri: string): number;
 }
 
 /**
@@ -58,6 +60,7 @@ export interface SessionRegistryDeps {
 const defaultDeps: SessionRegistryDeps = {
   viewersOf: (uri) => opsFeed.subscriberCount(uri),
   queueOf: () => 0, // 待投递留言队列归 manager；manager 未构造 = 没有队列，0 是事实而非占位
+  queueHumanOf: () => 0, // 同上；没有队列 = 没有"人署名"的条
 };
 
 /** 注册表内核条目（不含活态属性 viewers / queue —— 那两个是取值器给的） */
@@ -133,11 +136,17 @@ class SessionRegistry {
   /** 内核条目 + 活态属性 → 对外视图（订阅 / 快照唯一出口） */
   private view(e: CoreEntry): SessionEntry {
     const viewers = this.deps.viewersOf(e.uri);
+    const queue = this.deps.queueOf(e.uri);
+    // 人署名条数卡在 [0, queue]：取值器与总条数分两次读盘，中间新入队一条也不该让
+    // `queueAuto` 变成负数（帧只是"此刻的事实"，下一帧就追上了）
+    const queueHuman = Math.min(Math.max(0, this.deps.queueHumanOf(e.uri)), Math.max(0, queue));
     return {
       id: sessionIdOf(e.uri),
       refs: e.refs.map((r) => ({ ...r })),
       turn: e.turn ? { ...e.turn, state: viewers > 0 ? "active" : "detached" } : null,
-      queue: this.deps.queueOf(e.uri),
+      queue,
+      queueHuman,
+      queueAuto: Math.max(0, queue) - queueHuman,
       viewers,
       firstSeenAt: e.firstSeenAt,
       lastActivity: e.lastActivity,

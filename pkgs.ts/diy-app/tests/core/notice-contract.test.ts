@@ -102,7 +102,7 @@ describe("遗留清单：addToastLegacy 的条数按文件钉死（只许减少�
      * **不许**往上加 —— 新代码一律用 `addToast`（三段齐全）。
      */
     const LEGACY_BASELINE: Record<string, number> = {
-        "App.tsx": 8,
+        "App.tsx": 7, // ##435：会话提示迁到 addToast（真 meta）——遗留清单只许减少
         "store/personaStore.ts": 7,
         "components/PromptLabV4Page.tsx": 5,
         "components/ModelConfigPage.tsx": 17,
@@ -149,13 +149,13 @@ describe("遗留清单：addToastLegacy 的条数按文件钉死（只许减少�
         expect(scan(SRC)).toEqual(LEGACY_BASELINE);
     });
 
-    it("总数 = 95（##391 v1 之后剩下的），且每条详情面板都如实说「未登记」", () => {
+    it("总数 = 94（##391 v1 之后剩下的；##435 减一），且每条详情面板都如实说「未登记」", () => {
         notificationStore.addToastLegacy("error", "一条历史提示");
         const t = notificationStore.toasts[0] as Toast;
         expect(t.legacy).toBe(true);
         expect(t.source).toContain("未登记");
         expect(t.detail).toContain("##391");
-        expect(Object.values(LEGACY_BASELINE).reduce((a, b) => a + b, 0)).toBe(95);
+        expect(Object.values(LEGACY_BASELINE).reduce((a, b) => a + b, 0)).toBe(94);
     });
 });
 

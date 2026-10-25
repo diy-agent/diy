@@ -225,7 +225,7 @@ import { countsLabel, formatWriteResult, writeFileWhole, WRITE_MAX_BYTES } from 
 import { describeEditResult, displayPath, editFile, resolveEditablePath, withFileEditQueue } from "../core/file-edit";
 import { SteerQueue, fileSteerPort } from "../core/steer-queue";
 import { DEFAULT_STEER_MODE, steerModeLabel } from "../../shared/steer-mode";
-import type { SteerItem, SteerMode } from "../core/drafts";
+import { isHumanAuthor, type SteerItem, type SteerMode } from "../core/drafts";
 
 import {
     apiOf,
@@ -2930,6 +2930,15 @@ export class LocalAgentManager {
                     return this.queue.list(uri).length;
                 } catch {
                     return 0; // 队列读盘失败不能让注册表崩（它只是"此刻的事实"，不是权威落盘）
+                }
+            },
+            // ##435：队列的收件人是 agent，不是人 —— 按署名把人写的与机器写的分开，
+            // 只有前者才配叫「有人在等你回复」（L2 抢焦点）。判据见 `core/drafts.isHumanAuthor`。
+            queueHumanOf: (uri) => {
+                try {
+                    return this.queue.list(uri).filter((it) => isHumanAuthor(it.author)).length;
+                } catch {
+                    return 0;
                 }
             },
         });

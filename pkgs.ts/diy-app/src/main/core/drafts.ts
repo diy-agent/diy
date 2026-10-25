@@ -91,6 +91,23 @@ export interface SteerItem {
 }
 
 /**
+ * 这条队列项**是不是一个人**写的（##435）。
+ *
+ * 判据只看 `author` 是否落了**人署名**（`human:<名>`，成员 id 的写法见 ##166 §40）：
+ *   · `human:chen56` —— 是一个人（room 投递 / 带署名的调用）
+ *   · `job` / `agent:*` / `system` —— 机器（job 结束通知 / 别的 agent 派活）
+ *   · **无 `author`** —— **不算人**：无署名 = 本任务本人发言或 CLI 未给署名的历史写法
+ *     （见 `TurnInput.author`）。它可能是"用户在忙时自己补的一句"，但那种情形用户
+ *     自己知道且 tab 开着（`alertsOf` 会按 `opened` 挡掉），不能拿它去喊「有人在等你回复」
+ *     —— 宁可少一次抢焦点，不可再多一次"拽过去没事干"。
+ *
+ * 为什么是纯函数：它决定 L2（抢焦点）的准入，不能在 main / renderer 里各写一遍。
+ */
+export function isHumanAuthor(author: string | undefined): boolean {
+  return typeof author === "string" && author.startsWith("human:");
+}
+
+/**
  * 版本迁移表：旧版本号 → 升级函数（返回新对象，version 必须变成下一版）。
  *
  * v1 → v2：字段 detail 下线（任务模型只有 title + 内容，detail 是历史遗留的同义槽）。

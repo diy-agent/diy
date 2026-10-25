@@ -38,6 +38,8 @@ function entry(patch: Partial<SessionEntry> = {}): SessionEntry {
         refs: [{ kind: "task", uri: "projects/4/tasks/1" }],
         turn: null,
         queue: 0,
+        queueHuman: 0,
+        queueAuto: 0,
         viewers: 0,
         firstSeenAt: T0,
         lastActivity: T0,
@@ -87,7 +89,7 @@ function row(patch: Partial<NavRow> & { uri: string }): NavRow {
             unread: patch.unread ?? 0,
             now: NOW,
         });
-    return { label: patch.uri, state, running: false, stalled: false, abnormal: false, unread: 0, queue: 0, opened: false, lastTs: null, ...patch };
+    return { label: patch.uri, state, running: false, stalled: false, abnormal: false, unread: 0, queue: 0, queueHuman: 0, opened: false, lastTs: null, ...patch };
 }
 
 describe("navRowOf：判据全部出自 session-overview（不另写一套）", () => {

@@ -35,6 +35,8 @@ function entry(patch: Partial<SessionEntry> = {}): SessionEntry {
         refs: [{ kind: "task", uri: "projects/4/tasks/1" }],
         turn: null,
         queue: 0,
+        queueHuman: 0,
+        queueAuto: 0,
         viewers: 0,
         firstSeenAt: T0,
         lastActivity: T0,
@@ -231,7 +233,15 @@ describe("glyphOf：形状 ≠ 只靠颜色", () => {
         expect(running.run).toBe("running");
         expect(flagsOf(running).unread).toBe(true);
         // 属性轴里没有任何"状态"值：类型上就不可能出现 in-turn / unread 这类伪状态
-        expect(Object.keys(flagsOf(running)).sort()).toEqual(["draft", "queued", "seen", "stalled", "unread", "unreadCount"]);
+        expect(Object.keys(flagsOf(running)).sort()).toEqual([
+            "draft",
+            "queued",
+            "queuedHuman",
+            "seen",
+            "stalled",
+            "unread",
+            "unreadCount",
+        ]);
     });
 
     it("未读以属性形式进图标视图（`+N`），但形状仍由状态决定", () => {
