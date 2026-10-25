@@ -16,8 +16,9 @@
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { diyHome } from "../core/state";
+import { isHumanAuthor } from "../core/drafts";
 import { AsyncQueue, withCleanup } from "./async-queue";
-import { INBOX_MAX, type InboxEntry } from "../../shared/inbox";
+import { INBOX_MAX, inboxPreviewOf, type InboxEntry } from "../../shared/inbox";
 
 /** 信箱文件（**不按天切**：条目本就稀疏，按天切只会让"翻上周那条"变成翻十个文件） */
 export function inboxFile(): string {
@@ -31,7 +32,7 @@ export function inboxEntryOf(
     partial: Omit<InboxEntry, "id" | "ts">,
     now = new Date(),
 ): InboxEntry {
-    return { id: `ib-${now.getTime()}-${++seq}`, ts: now.toISOString(), ...partial };
+    return { id: `ib-${now.getTime()}-${String(++seq).padStart(4, "0")}`, ts: now.toISOString(), ...partial };
 }
 
 /**
@@ -111,3 +112,128 @@ class InboxHub {
 }
 
 export const inboxHub = new InboxHub();
+
+/**
+ * 「有新留言」条目的**组装**（##436 块 4）：`room-service` 与 `agent.local.chat --mode`
+ * 两个投递入口共用这一份，别各写一套文案（同一条留言在两个入口会给出两种说法）。
+ *
+ * 为什么带上**原文**（`data.raw`）：用户被叫醒却“看不出要回什么”的根因就是只有一句话；
+ * `text` 只给一行结论（列表用），原文整段进 `data.raw` + 展开面板（不截断 —— 截断等于
+ * 又把原文藏起来）。
+ *
+ * 分级：信箱对**人 / 机器一视同仁**都记（“谁发的”写在 `source`）。要不要抢焦点是另一回事，
+ * 判据完全归 `shared/session-alerts.pick()`（##435：只对人署名留言 L2）—— 这里不复刻、不另造。
+ *
+ * ⚠️ **等级只影响顶栏角标**（`shared/inbox.unreadBreakdownOf` 只数 N2、列表照显全部），
+ * 所以 N2 的语义必须钉死成「**有人在等你**」：
+ *   · 人署名（`human:*`）且**不是你自己** ⇒ N2；
+ *   · 你自己发的（`author === selfId`）⇒ N1 —— 否则你在 UI 里每说一句，顶栏就给自己报一次信
+ *     （##266 复核提的阻塞 2，实测可复现）；
+ *   · job / agent / 无署名 ⇒ N1（##435 的 L2 判据不变：那边判的是「叫不叫醒你」，这是「角标数几个」）。
+ */
+export function messageEntryOf(input: {
+    taskUri: string;
+    /** 投递正文（原样，未加工） */
+    text: string;
+    /** 署名：`human:<名>` / `job` / `agent:<名>` / 缺省 = 无署名 */
+    author?: string;
+    /** 房间投递才有：房间 id 与显示名（“谁发的”在跨任务时最缺） */
+    roomId?: string;
+    fromName?: string;
+    /** 房间事件 id（`sayId`）/ 插话队列 id（`steerId`）—— 跳转定位的锚点原料 */
+    sayId?: string;
+    steerId?: string;
+    /**
+     * **本机用户**的成员 id（`HUMAN_MEMBER_ID`）。给了 `author === selfId` ⇒ 记 N1：
+     * 你自己发的留言不该给自己报信（##266 复核阻塞 2）。缺省 = 判不出本人，按人/机判。
+     */
+    selfId?: string;
+}): Omit<InboxEntry, "id" | "ts"> {
+    const who = input.author && input.author.length > 0 ? input.author : "无署名";
+    // 人 / 机器：**判据只此一处**（`core/drafts.isHumanAuthor`，与 ##435 的 L2 准入同一份实现）
+    const humanAuthor = isHumanAuthor(input.author);
+    // 「本人」：同一条人署名留言，发送方就是本机用户 ⇒ 不算“有人在等你”（##266 阻塞 2）
+    const isSelf = Boolean(input.selfId) && input.author === input.selfId;
+    const human = humanAuthor && !isSelf;
+    const via = input.roomId ? `房间 ${input.roomId}${input.fromName ? `（${input.fromName}）` : ""}` : "会话直投";
+    const preview = inboxPreviewOf(input.text);
+    return {
+        // 人署名（且不是你自己）= N2（顶栏角标，真的有人在等回复）· 其余 = N1（只落条目，参见 #435）
+        level: human ? "N2" : "N1",
+        kind: "message",
+        taskUri: input.taskUri,
+        text: isSelf ? `你自己留了一条留言：${preview}` : `${who} 给你留了一条留言：${preview}`,
+        source: `留言投递 · ${via} · 署名 ${who}`,
+        reason: "这个会话的插话队列刚进了一条待投递留言（它的收件人是 agent；你不需要逐条回复，但要知道有这回事）",
+        detail: [
+            "写入点在留言投递路径：`room-service.steerOrWake`（房间投递）与 `agent.local.chat --mode`（CLI / 别的 agent 代投）。",
+            "只记**跃迁**（“来了一条消息”），不记“现在有 N 条未读”——后者是状态，由会话角标负责（与 shared/session-alerts 同一纪律）。",
+            "原文在下面（未截断）。要看它落在哪一轮：点「去来源会话」；投递相当于是插进那一轮，目前还没有轮次锚点的就从会话尾部往前找这位署名。",
+            ...(isSelf
+                ? [
+                      "**你自己发的**：所以顶栏角标不数它（角标只数「有人在等你」），但它照样进列表 —— 回看时你发过什么也在账上。",
+                  ]
+                : []),
+        ].join("\n"),
+        data: {
+            raw: input.text,
+            author: input.author ?? null,
+            roomId: input.roomId ?? null,
+            fromName: input.fromName ?? null,
+            sayId: input.sayId ?? null,
+            steerId: input.steerId ?? null,
+            // human = 真的有人在等你 · self = 你自己发的（人署名但不催你）· machine = job / agent / 无署名
+            senderKind: isSelf ? "self" : humanAuthor ? "human" : "machine",
+        },
+    };
+}
+
+
+/** fire-and-forget 落一条（记账失败只出声，绝不让投递因此失败） */
+export function noteInbox(partial: Omit<InboxEntry, "id" | "ts">): void {
+    void inboxHub.push(inboxEntryOf(partial)).catch((e) => console.error("[inbox] 落条目失败:", e));
+}
+
+/**
+ * 一条**滞留留言**的条目（##229 的真实现场 / ##436 顺带治的洞 ②）。
+ *
+ * 判据（##266 查真盘后钉的，别扩）：`.diy/drafts.yaml` 的 `steers` 非空 **且** 任务状态
+ * 不再接受新轮次 ⇒ 没有下一次轮次来取走它。**一条 steer 一条条目**（而不是整个队列一条），
+ * 因为跳转要的锚点就是那一条的 `steerId`。
+ *
+ * 文案纪律（##416「不隐藏信息」）：说清**为什么没被消费** + **怎么救**，且必须写明这是
+ * **可逆**的 —— 任务随时可以改回 active，那时这条留言照样会被取走。所以用「不会被取出」
+ * 而不是「已丢弃」。
+ */
+export function stuckSteerEntryOf(input: {
+    taskUri: string;
+    state: string;
+    steer: { id: string; text: string; author?: string; created: string };
+    /** 幂等键（启动扫尾重启十次也只记一条；判据在 `inbox-sweep`） */
+    dedupeKey: string;
+}): Omit<InboxEntry, "id" | "ts"> {
+    const { steer } = input;
+    const who = steer.author && steer.author.length > 0 ? steer.author : "无署名";
+    return {
+        level: "N1",
+        kind: "lost",
+        taskUri: input.taskUri,
+        text: `任务已结案（${input.state}），此留言不会被取出：${inboxPreviewOf(steer.text, 40)}`,
+        source: `插话队列 · ${input.taskUri} · 署名 ${who}`,
+        reason: `任务状态 ${input.state} 已不再接受新轮次（TurnGate 在建轮之前就拒）⇒ 队列没有下一次被取走的机会`,
+        detail: [
+            "机制：留言存在任务目录的 `.diy/drafts.yaml` 的 `steers` 里，只由**轮次**取走（下一个模型步前 / 轮末整批）。",
+            "为什么它进得来：UI 输入框直接往 drafts 追加（不经 TurnGate），任务结案后写进去的就没人取；CLI 那条路会被 TurnGate 挡住，造不出这种。",
+            `**这是可逆的**：要它生效，把任务改回可跑状态（\`diy task edit ${input.taskUri} active\`），它就会在下一轮被取走。`,
+            "本条由启动扫尾写入：不重投、不删 drafts、不改任务状态。",
+        ].join("\n"),
+        data: {
+            raw: steer.text,
+            state: input.state,
+            steerId: steer.id,
+            author: steer.author ?? null,
+            created: steer.created,
+            dedupeKey: input.dedupeKey,
+        },
+    };
+}

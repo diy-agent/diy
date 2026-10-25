@@ -2829,7 +2829,12 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
             output: ModelUnavailableNoticeSchema,
           }),
           /**
-           * 通知信箱（##429 要求 ④/⑤）：`level#inbox` 的「N1/N2 一律落信箱」里**能落的那一半**。
+           * 通知信箱（##429 要求 ④/⑤ + ##436 的界面）：`level#inbox` 的「N1/N2 一律落信箱」。
+           *
+           * 条目种类（`shared/inbox.INBOX_KINDS`）：`max-tokens` / `cost-step` / `cost-turn`
+           * （损失型，##429）· `message`（有留言投给某会话，##436：人署名 N2 / 机器 N1）·
+           * `lost`（**任务已结案而插话队列里还压着留言** ⇒ 不会有下一次轮次来取走它；
+           * 启动扫尾写入，不许静默。文案必须写明「改回 active 就会生效」——它是可逆的）。
            *
            * 与上面 `list/dismiss/watch`、下面 `env.*` 的关键差别是**数据定性**：那些是 cache
            * （进程内存 ring，重启即空 —— 描述“此刻怎么了”）；这里是 **append-only 落盘**
@@ -2839,7 +2844,7 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
            * 被当成“刚发生”再弹一轮 toast（每次窗口重载糊一脸）；要回看走 `list`。
            */
           inbox: RpcSchema.group({
-            desc: `通知信箱（N1 提示的落盘流水：撞输出上限 / 成本过阈；可回看）`,
+            desc: `通知信箱（落盘流水：撞输出上限 / 成本过阈 / 新留言 / 结案任务的滞留留言；可回看）`,
             children: {
               list: RpcSchema.unary({
                 desc: `列出信箱条目（时间升序；按任务可筛。人读用 diy notice inbox list）`,

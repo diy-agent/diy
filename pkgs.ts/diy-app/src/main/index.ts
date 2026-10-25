@@ -431,6 +431,12 @@ app.whenReady().then(async () => {
   // 端口已定（含 EADDRINUSE 后的随机端口兜底）→ 重设标题补上 `:<port>`
   applyWindowTitle();
 
+  // 通知信箱启动扫尾（##436）：僵尸投递 / 终态任务里永不投递的插话 → 落一条可读条目。
+  // **不阻塞启动、不抛**（函数内部全吞）：扫尾是记账，坏了不能让 app 起不来。
+  void import("./services/inbox-sweep")
+    .then((m) => m.sweepInboxOnStartup())
+    .catch((e: unknown) => console.error("[inbox-sweep] 启动扫尾未执行（不影响运行）:", e));
+
   if (ok) {
     loadMainApp();
     console.log("═══════════════════════════════════════");

@@ -80,6 +80,7 @@ import { Caches, CONCLUSION_LINES_MAX, CONCLUSION_LINES_MIN } from "../lib/ui-st
 import { HeightLedger, stackRows, windowRange } from "../lib/chat-virtual";
 import { chatFindStore, type ChatFindHit } from "../store/chatFindStore";
 import { jobRunsStore } from "../store/jobRunsStore";
+import { chatNavStore, type ChatNavTarget } from "../store/chatNavStore";
 import { detachablesStore } from "../store/detachablesStore";
 import type { JobNavTarget } from "../../shared/run-view";
 import { findStore } from "../store/findStore";
@@ -3562,7 +3563,7 @@ export function LocalChatPage(props: {
     // 用户从「作业」面板点「来源」⇒ 这里把视口送到那次 tool_call 块并高亮。
     // 与检索定位（##389）**同一套手法**（`anchorRowIndex` + 闭环校正 + 用户接管即收手），
     // 差别只在终点粒度：检索要跳的是「这一轮的命中字」，作业要跳的是「这一轮里的某一个块」。
-    let pendingBlockLocate: JobNavTarget | null = null;
+    let pendingBlockLocate: ChatNavTarget | null = null;
 
     /** 高亮一个块（沿用 `data-hit-flash`：轮级高亮与块级高亮同一条通道，样式在 index.css） */
     const flashBlock = (blockId: string) => {
@@ -3632,22 +3633,66 @@ export function LocalChatPage(props: {
      *   ③ 不在块树（历史被压缩 / 未加载 / 日志已轮转）→ **视图不动**，如实说"原文不可用"，
      *      并指向作业面板里的落盘输出。绝不跳到一个"看起来像"的位置（那是假导航）。
      */
-    const locateJobTarget = (t: JobNavTarget) => {
+    /**
+     * 拿插话队列项 id 反查块（##436）：留言投递时块还没生成，只有 `steerId` 是当时就有的锚点。
+     *
+     * 判据：块树的 `attrs.steerId`（`local-agent.steerBlockOps` 落盘时就带上，见
+     * `shared/room.RoomDelivery.steerId`）；找不到 = 那一轮还没跑 / 历史被压缩。
+     */
+    const steerAnchorOf = (steerId: string): { turnId: string; blockId: string } | null => {
+        const walk = (n: BlockNode): BlockNode | null => {
+            if (n.attrs["steerId"] === steerId) return n;
+            for (const c of n.children) {
+                const hit = walk(c);
+                if (hit) return hit;
+            }
+            return null;
+        };
+        for (const tr of localChatStore.trees) {
+            const hit = walk(tr);
+            if (hit) return { turnId: tr.id, blockId: hit.id };
+        }
+        return null;
+    };
+
+    const locateJobTarget = (t: ChatNavTarget) => {
         clearHitHighlight();
+        // steer 锚点先翻译成 轮/块 —— 之后**只有一条**定位路径（不另写一套滚动/展开逻辑）
+        const resolved = t.turnId && t.blockId ? { turnId: t.turnId, blockId: t.blockId } : t.steerId ? steerAnchorOf(t.steerId) : null;
+        const fromInbox = t.origin === "inbox";
         if (localChatStore.view.live) {
             pendingBlockLocate = t;
             notificationStore.addToast(
                 "info",
-                "这一轮正在生成：结束后自动定位到那次工具调用",
+                resolved ? `这一轮正在生成：结束后自动定位到${fromInbox ? "那条留言" : "那次工具调用"}` : "这一轮正在生成：结束后再看你的留言",
                 chatNotice(
-                    "作业来源 · locateJobTarget（##408）",
-                    `作业锚点落在本轮 ${t.turnId} 仍在写入的内容里 → 已记下，轮结束后再滚过去（流式中抢滚动会与跟随打架）`,
+                    fromInbox ? "通知信箱 · 去来源会话（##436）" : "作业来源 · locateJobTarget（##408）",
+                    resolved
+                        ? `锚点落在本轮 ${resolved.turnId} 仍在写入的内容里 → 已记下，轮结束后再滚过去（流式中抢滚动会与跟随打架）`
+                        : "这一轮还在跑，块还没落盘 ⇒ 此刻定位不到；轮末自动再试一次（原文在信箱面板里，随时可读）",
                     DETAIL_CHAT_FIND,
                 ),
             );
             return;
         }
-        const inTree = localChatStore.trees.some((tr) => tr.id === t.turnId || containsBlockId(tr, t.blockId));
+        if (!resolved) {
+            // 说清楚"为什么没定位"——body 硬要求：不许只开 tab 还不说
+            notificationStore.addToast(
+                "info",
+                fromInbox ? "已打开会话；这条留言还没有轮次锚点（可能尚未被投递）" : "原文已不可用：这一轮不在当前窗口",
+                chatNotice(
+                    fromInbox ? "通知信箱 · 去来源会话（##436）" : "作业来源 · locateJobTarget（##408）",
+                    fromInbox
+                        ? `留言锚点（steerId=${t.steerId ?? "无"}）在已加载的块树里找不到 —— 它插进的那一轮可能还没跑，或历史被压缩。` +
+                          "**视图未移动**；原文请回信箱面板读（那里存了未截断的留言）。"
+                        : `锚点 轮 ${t.turnId ?? "?"} / 块 ${t.blockId ?? "?"} 不在已加载的块树里（压缩历史或日志轮转）⇒ 视图**未移动**；` +
+                          "作业面板里的 settle 输出与 logs/<runId>.log 才是这次的原文",
+                    DETAIL_CHAT_FIND,
+                ),
+            );
+            return;
+        }
+        const inTree = localChatStore.trees.some((tr) => tr.id === resolved.turnId || containsBlockId(tr, resolved.blockId));
         if (!inTree) {
             notificationStore.addToast(
                 "info",
@@ -3661,8 +3706,8 @@ export function LocalChatPage(props: {
             );
             return;
         }
-        revealBlock(t.turnId, t.blockId);
-        scrollToBlock(t.turnId, t.blockId);
+        revealBlock(resolved.turnId, resolved.blockId);
+        scrollToBlock(resolved.turnId, resolved.blockId);
     };
 
     /**
@@ -3687,20 +3732,20 @@ export function LocalChatPage(props: {
     };
 
     /**
-     * 消费「作业面板发来的待定位请求」。
+     * 消费「作业面板 / 通知信箱发来的待定位请求」（同一条通道，`chatNavStore`）。
      *
      * 为什么放在会话页而不是面板里：只有这里拿得到滚动容器与块树（与 `chatFindStore.claim` 同一理由）。
      * 三个条件（等任务切过来 + 等会话数据到位 + 等块树非空）都是必需的：
      * 面板点「来源」时先 `openTaskRun` 切页，本页**可能整页新挂**，那一刻 trees 还是空的。
      */
     createEffect(() => {
-        const target = jobRunsStore.pendingNav;
+        const target = chatNavStore.pending;
         if (!target) return;
         const u = uri();
         if (!u || u !== target.taskUri) return;
         if (localChatStore.currentUri !== u) return;
         if (localChatStore.trees.length === 0) return;
-        const taken = jobRunsStore.takeNav(u);
+        const taken = chatNavStore.take(u);
         if (taken) locateJobTarget(taken);
     });
 

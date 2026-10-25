@@ -11,7 +11,7 @@
  *   - 顶级 section（无 tab 上下文）显示自身名称，无 ▾
  *   - lab 是叶子（无 ▾），task-run 的 ▾ = 其 lab 子页面
  */
-import { Show, For, createSignal, onCleanup, onMount } from "solid-js";
+import { Show, For, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { findPage } from "../../shared/view-registry";
 import { taskStateColor } from "../../main/core/task-state";
 import { tabStore, type TabItem } from "../store/tabStore";
@@ -240,6 +240,13 @@ export interface BreadcrumbProps {
     gotoTab: (key: string) => void;
     gotoSection: (id: string) => void;
     closeTab: (key: string) => void;
+    /**
+     * 右侧动作组最左边的插入位（##436：通知信箱的喇叭）。
+     *
+     * 为什么由调用方传而不是写死在这里：面包屑只管导航，不该 import 任何一个业务 store
+     * （它现在已经是"最上层且全局可见"的那条栏，业务入口挂进来就够了）。
+     */
+    right?: JSX.Element;
 }
 
 export function Breadcrumb(props: BreadcrumbProps) {
@@ -297,6 +304,7 @@ export function Breadcrumb(props: BreadcrumbProps) {
             {/* 右侧动作组：页内查找 + 关闭当前页（都靠右）。
                 查找按钮是「不知道快捷键的人也能点」的入口（##234）：⌘F 可用，但按钮保证可达。 */}
             <div class="ml-auto flex items-center gap-0.5 shrink-0">
+                {props.right}
                 <button
                     class="btn btn-ghost btn-xs px-1.5 min-h-0 h-5 shrink-0 gap-1 text-base-content/60 hover:text-primary"
                     title="页面内查找（⌘F）"

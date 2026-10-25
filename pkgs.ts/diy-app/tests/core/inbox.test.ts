@@ -15,7 +15,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { inboxEntryOf, inboxFile, inboxHub } from "../../src/main/services/inbox";
+import { inboxEntryOf, inboxFile } from "../../src/main/services/inbox";
 import { inboxLineOf, type InboxEntry } from "../../src/shared/inbox";
 import { taskOutputOverride, TASK_OUTPUT_KEY } from "../../src/main/core/output-budget";
 
