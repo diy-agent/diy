@@ -65,6 +65,9 @@ export async function readTailLines(file: string, maxLines: number, chunkBytes =
             const b = Buffer.from(buf.subarray(0, bytesRead));
             for (let i = 0; i < b.length; i++) if (b[i] === 0x0a) newlines++;
             chunks.unshift(b);
+            // 短读（`fh.read` 允许少给）：把没读到的那段**还回下一轮的区间**，
+            // 否则 `pos` 按 `len` 前移会静默跳过几个字节（本地文件少见，但不能留暗坑）
+            if (bytesRead < len) pos += len - bytesRead;
         }
         const atStart = pos === 0;
         const text = Buffer.concat(chunks).toString("utf8");

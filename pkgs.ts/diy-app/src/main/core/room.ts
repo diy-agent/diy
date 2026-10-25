@@ -293,7 +293,8 @@ function eventIdOfLine(line: string): string | null {
  * 完整 fold 仍需要整份扫（同一 (eventId, memberId) 可能有多次状态变更，最新的一份才算数），
  * 这里只省解析、不省正确性。
  *
- * 坏行计数口径：给了 `eventIds` 时**只数窗口内的坏行**（窗口外的不属于本次返回值）。
+ * 坏行计数口径：给了 `eventIds` 时无法判定归属的坏行（连 `eventId` 都抠不出来的）
+ * **不计入** `bad` —— 它们既可能属于窗口内也可能属于窗口外，报哪个都是猜。
  */
 export async function readDeliveries(
     roomId: string,
