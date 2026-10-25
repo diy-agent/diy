@@ -436,14 +436,14 @@ facts:
       verifiedAt: '2026-10-22'
   app.find#chat-view:
     value: |-
-      **会话块树的渲染**：组件 `renderer_solid/components/LocalChatPage.tsx`（行按 id 复用 + `VirtRow` 绝对定位）· **视口虚拟化纯逻辑** `renderer_solid/lib/chat-virtual.ts`（前缀和布局 / 窗口 / 高度账）· 折叠级别语义 `renderer_solid/lib/chat-fold.ts` · 样式钩子见 `app.find#skin`
+      **会话块树的渲染**：组件 `renderer_solid/components/LocalChatPage.tsx`（行按 id 复用 + `VirtRow` 绝对定位）· **视口虚拟化纯逻辑** `renderer_solid/lib/chat-virtual.ts`（前缀和布局 / 窗口 / 高度账）· 折叠级别语义 `renderer_solid/lib/chat-fold.ts` · **摘要/预览的窗口化扫描** `renderer_solid/lib/chat-text.ts`（`firstLine`/`lastLine`/`previewLines`/`clampLines` + 零分配 `countLines`；长块不再每帧全量 `split`，##93）· 样式钩子见 `app.find#skin`
     id: app.find.chat-view
     review: accepted
     lifecycle: active
     evidence:
-      source: user
-      at: ba99d638:pkgs.ts/diy-app/AGENTS.md:21
-      verifiedAt: '2026-10-22'
+      source: code
+      at: pkgs.ts/diy-app/src/renderer_solid/lib/chat-text.ts:1
+      verifiedAt: '2026-10-25'
   app.find#cli:
     value: |-
       `src/cli/index.ts` CLI 入口（命令定义与 RPC 调用）
@@ -466,24 +466,24 @@ facts:
       verifiedAt: '2026-10-22'
   app.find#context:
     value: |-
-      `src/shared/context/` 上下文树与投递：`README.md` 是**完整约定表**（领域模型 / 投递构造 / 划分真源 / step 快照 / 渲染坑）；投递构造唯一入口 `delivery.ts` 的 `buildDelivery`；划分真源 `$DIY_HOME/context.yaml`（契约 `config.ts`、I/O `src/main/core/context-config.ts`）
+      `src/shared/context/` 上下文树与投递：`README.md` 是**完整约定表**（领域模型 / 投递构造 / 划分真源 / step 快照 / 渲染坑）；投递构造唯一入口 `delivery.ts` 的 `buildDelivery`；划分真源 `$DIY_HOME/context.yaml`（契约 `config.ts`、I/O `src/main/core/context-config.ts`；**缺省最小 system 名单** `delivery.ts::defaultSystemPlaces` —— 只放存续期不变的单元，易变项（`task.state`/`task.updated`/`task.title`/`cwd`/`reqlog`…）一律 runtime，否则每轮砸前缀缓存，##426）· 输入超长门禁 `shared/context/input-limit.ts` + `renderer_solid/components/InputLimitDialog.tsx`（默认 10 万字符可配，超限弹窗报 ≈token / 预计 $，可转文件发送，##426）
     id: app.find.context
     review: accepted
     lifecycle: active
     evidence:
-      source: user
-      at: ba99d638:pkgs.ts/diy-app/AGENTS.md:17
-      verifiedAt: '2026-10-22'
+      source: code
+      at: pkgs.ts/diy-app/src/shared/context/delivery.ts:1
+      verifiedAt: '2026-10-25'
   app.find#core:
     value: |-
-      `src/main/core/` 状态与文件落位：`state.ts`（数据根/任务路径单一出口）· `task*.ts`（任务读写与字段）· `tree-format.ts` · `drafts.ts`（草稿 + 插话队列）· `steer-queue.ts` · `persona.ts` · `cwd.ts`
+      `src/main/core/` 状态与文件落位：`state.ts`（数据根/任务路径单一出口）· `room.ts` + `room-view-cache.ts`（**房间落盘与读视图**：事件流 / 投递快照一律 `limit>0` ⇒ 尾部倒读 `tail-lines.ts`（不整份读）、写侧全异步；`room.get` 走**文件签名缓存**合并多组件轮询，##427）· `task*.ts`（任务读写与字段）· `tree-format.ts` · `drafts.ts`（草稿 + 插话队列）· `steer-queue.ts` · `persona.ts` · `cwd.ts`
     id: app.find.core
     review: accepted
     lifecycle: active
     evidence:
-      source: user
-      at: ba99d638:pkgs.ts/diy-app/AGENTS.md:7
-      verifiedAt: '2026-10-22'
+      source: code
+      at: pkgs.ts/diy-app/src/main/core/room-view-cache.ts:1
+      verifiedAt: '2026-10-25'
   app.find#data-file:
     value: |-
       内置数据文件定位 `src/main/core/data-file.ts`：候选 `$DIY_HOME/data/<name>` > bundle 旁（`build/<V>/{main,cli}/data`）> 源树；`dataFileHit()` 带 `source`，`diy doctor` 的 `models` 段报**实际命中的绝对路径** + provider/模型计数。应用内刷新只写最上一层（下面两层只读：bundle 是发行物、源树是仓库）
@@ -592,6 +592,16 @@ facts:
       source: user
       at: ba99d638:pkgs.ts/diy-app/AGENTS.md:9
       verifiedAt: '2026-10-22'
+  app.find#l3-turns:
+    value: |-
+      **L3 结论账（turns.jsonl）**：`main/services/local-turns.ts`（一轮一条 `{v,turnId,at,state,user,texts[],ref.ops{offset,len,seq}}`，写侧在 turn `stop` 落盘后量字节偏移，旁路不 await 不抛）· 只服务**降级重建**：ops 缺失/断代时由它折成只读文本历史 + `degraded{cause,note,turns,dangling}`，横幅与行内文案单源 `shared/degraded-history.ts`；**正常路径（ops 可读）不读 turns**（##424）
+    id: app.find.l3-turns
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: pkgs.ts/diy-app/src/main/services/local-turns.ts:1
+      verifiedAt: '2026-10-25'
   app.find#main-proc:
     value: |-
       `src/main/index.ts` 主进程入口（窗口 / 诊断 / 单实例）
@@ -644,14 +654,14 @@ facts:
       verifiedAt: '2026-10-22'
   app.find#ops-fold:
     value: |-
-      **会话历史（UI 重放）的折叠 + 增量缓存**：折叠算子 `main/services/local-blocks.ts` 的 `compactOps`（块树 → 每块 `start` + 终值 `patch` + `stop`）· 读侧 `main/services/local-agent.ts` 的 `history()`（fold 缓存按 `(task, start)` 分键 —— 多窗口并存时同 task 多键 + 「已消费字节 + 前 4KB 覆盖写哨兵」判续 fold）与**分页窗口** `historyWindow`/`historyOlder`（RPC `agent.local.*` 同名）· 渲染端**分段 + 幂等并入** `renderer_solid/store/localChatStore.ts` 的 `mergeWindow`（段 = 一段窗口，前插时已有段的块引用一个不动）
+      **会话历史（UI 重放）的折叠 + 增量缓存**：折叠算子 `main/services/local-blocks.ts` 的 `compactOps`（块树 → 每块 `start` + 终值 `patch` + `stop`）· 读侧 `main/services/local-agent.ts` 的 `history()`（**起点 = 压缩账本 `keptFromOpsOffset`**，与投递侧同一个 seek，见 `uiReplayStart`；fold 缓存按 `(task, start)` 分键 —— 多窗口并存时同 task 多键 + 「已消费字节 + 前 4KB 覆盖写哨兵」判续 fold，**折叠流同缓存**（`consumed` 未进而复用同一份数组）、issue 只在新出现时出声）与**分页窗口** `historyWindow`/`historyOlder`（RPC `agent.local.*` 同名）· 渲染端**分段 + 幂等并入** `renderer_solid/store/localChatStore.ts` 的 `mergeWindow`（段 = 一段窗口，前插时已有段的块引用一个不动）
     id: app.find.ops-fold
     review: accepted
     lifecycle: active
     evidence:
-      source: user
-      at: ba99d638:pkgs.ts/diy-app/AGENTS.md:19
-      verifiedAt: '2026-10-22'
+      source: code
+      at: pkgs.ts/diy-app/src/main/services/local-agent.ts:1
+      verifiedAt: '2026-10-25'
   app.find#ops-seek:
     value: |-
       **大会话分页的窗口起点 + 游标**（`main/services/local-ops-seek.ts`）：`seekWindowStart`/`seekTurnStartAtOrBefore` 按字节预算**向上 floor 到轮 `start` 行行首**（切在轮内会让块塌成根、跨切点 patch 丢）· 游标**不透明**：`encodeCursor`/`decodeCursor`/`isTurnStartAt`
