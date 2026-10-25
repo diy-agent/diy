@@ -56,8 +56,9 @@ async function treeText(): Promise<string> {
 }
 
 describe("ui 人类点击顺序（CLI diy.ui.*，agent 可复用）", () => {
-  // setup: task fixture 就位 — 点导航进任务视图 + 点创建项目
-  it("setup: 点导航进任务视图 → 点创建项目（fixture 就位）", async () => {
+  // 夹具（##434）：点导航进任务视图 + 建项目，给下面两条用例预置状态。
+  // 写成 `it` 时 `-t` 过滤会跳过它 ⇒ 后续用例拿到的 `fixtureProj` 是空（##433 同款）。
+  beforeAll(async () => {
     // ① 点击左侧导航「任务树」（= ui.page.navigate，渲染进程 state 切换）
     await sh.assertJson("./diy.sh ui page navigate task", { ok: true, data: { status: "ok" } });
 

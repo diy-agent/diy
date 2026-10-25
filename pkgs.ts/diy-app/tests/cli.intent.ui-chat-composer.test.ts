@@ -213,8 +213,10 @@ const turnRows = () =>
          })()`,
     );
 
-describe("R5 聊天输入框高度：一行起、随内容长、整个输入区 view 1/3 封顶", () => {
-    it("setup: 造任务并打开执行页", async () => {
+// 夹具（##434）：造任务 + 三轮会话落盘 + 打开执行页。
+// 写成 `it` 时 `-t` 过滤会把它跳过 —— 后面 R5 / R6 的用例拿到的就是空 uri（##433 同款假红）。
+// R6 也用它，故挂在**文件级** hook；describe 级 hook 在只跑 R6 时不会执行。
+beforeAll(async () => {
         const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/composer --label Composer`);
         const pid = String((p.data as any)?.data?.id);
         const t = await fx.sh.getJson(`./diy.sh task create "输入框高度 + 消息时间" ${pid}`);
@@ -309,6 +311,7 @@ describe("R5 聊天输入框高度：一行起、随内容长、整个输入区 
         );
     });
 
+describe("R5 聊天输入框高度：一行起、随内容长、整个输入区 view 1/3 封顶", () => {
     it("空输入：就一行高（不再是 72px 起）", async () => {
         const box = await waitUntil(areaBox, (b) => b != null, { label: "输入区上屏" });
         expect(box!.h).toBeLessThan(40); // 旧实现是 min-h-[72px]
