@@ -102,6 +102,14 @@ export function isCompleteHistoryLimit(raw: unknown): boolean {
  * 适用范围：历史的粗估（`selectCompactableRange` 的累加与 `appliedHistoryRange` 的触发判据）——
  * 正式用量（计费 / 窗口占比）永远走 provider 回包的 `usage`，不用这里。
  */
+/**
+ * token 粗估（**CJK 感知**）：CJK 码点 1 token/字，其余 4 字符 1 token。
+ *
+ * ⚠️ 与 `compaction.ts::estimateTokens`（字节 / 4）**不是同一个口径**，两者并存是已知遗留：
+ * 本函数只喂历史压缩边界（要与配置里的 `limitTokens` 比，中文不能低估 4 倍）；
+ * 那边喂 inputGate / preflight，阈值按字节/4 标定。统一需同时重标定阈值（见 ##432 body 遗留项）。
+ * 界面上的样例预览（`compact-example.ts::bytesToTokens` = 字节 / 3）按「中文 3 字节/字」与**本函数**对齐。
+ */
 export function estimateTokensOf(text: string): number {
     let cjk = 0;
     let other = 0;

@@ -1163,10 +1163,10 @@ export function selectHistory(
 // 没有边界时退回**轮边界**口径（`sinceTurnId`），那是与压缩无关的老语义。
 
 /**
- * 选择阶段的**成本口径**：投递口径（渲染后字节；工具结果按**该级的 clip** 裁剪）。
- * 与最终渲染走同一个 `renderMessage` ⇒ 「算预算的字节」就是「发出去的字节」。
- * 抽出来是因为 ##344 M2 的 `plan check` 要**单独**跑「只有 must 级」的管道来量它占多少字节 ——
- * 测量若另写一份口径，「量出来的」与「真发的」就是两个数。
+ * 选择阶段的**成本口径**：投递口径（渲染后字节；工具结果按传进来的 clip 裁剪）。
+ * 与最终渲染走同一个 `renderMessage` ⇒ 「算边界的字节」就是「发出去的那条消息字节」。
+ * 为什么抽成一个函数：量边界的路径（硬上限收窄 / 预览）与真发必须**同一份**口径 ——
+ * 各写一份就会出现「量出来能装下、发出去超了」（##406 的病因）。
  */
 export function costOfWith(opts: Pick<DeliveryOpts, "transformToolResult" | "defaultClip" | "defaultReasoningClip">) {
     return (m: LocalModelMessage, clip: ClipSpec | null, reasoningClip: ReasoningClipSpec | null = null): number =>

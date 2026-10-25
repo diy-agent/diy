@@ -1147,7 +1147,16 @@ export function turnIdToTime(turnId: string): Date | null {
 //   · 该算法的**过滤器表达**（旧口径是 budgetBytes+toolResult；现在是 turns.jsonl 里的边界）。
 // 历史页列的就是这些**不可变快照**；当前配置对历史回溯**无效**（回溯只看当时那条事件）。
 
-/** 粗略 token 估算：字节/4（无 tokenizer；只用于 panel 的「首屏估算」文案，绝不用于计费） */
+/**
+ * 粗略 token 估算：**字节 / 4**（无 tokenizer；用于 inputGate / request-preflight / step-request 等
+ * 「够不够装」的粗判，绝不用于计费）。
+ *
+ * ⚠️ **两套口径并存（已知遗留）**：另一处是 `history-limit.ts::estimateTokensOf`（CJK 码点 1 token/字、
+ * 其余 /4）—— 它只喂**历史压缩边界**，因为压缩要跟配置里的 token 上限比，中文必须不低估 4 倍。
+ * 本函数一律按字节 /4 ⇒ 中文会话上会**低估约 3~4 倍**（中文 3 字节/字 ⇒ 实际 token ≈ 字节/3）。
+ * 后果：中文会话里「预检说不超、压缩说超」。为什么暂不统一：inputGate / preflight 的阈值是按本口径
+ * 标定的，改成 CJK 感知要同时重标定阈值（改动面大，记在 ##432 body 的遗留项里）。改之前**别只改一个**。
+ */
 export function estimateTokens(bytes: number): number {
     return Math.round(bytes / 4);
 }

@@ -55,7 +55,7 @@ import { clipForPreview, requestViewYaml, type LayerRow, type PreviewClipStats, 
 import { DrawerMaxButton } from "./DrawerMaximize";
 import { notificationStore } from "../store/notificationStore";
 import { compactResultSentence, compactWhenRows, windowRatio, type CompactWhenInput } from "../../shared/context/compact-when";
-import { EXAMPLE_MESSAGES, buildCompactExample, type ExampleRow } from "../../shared/context/compact-example";
+import { EXAMPLE_MESSAGES, buildCompactExample, bytesToTokens, type ExampleRow } from "../../shared/context/compact-example";
 import { MIN_HISTORY_LIMIT_TOKENS, normalizeHistoryLimit } from "../../shared/context/history-limit";
 
 const INDENT = "  ";
@@ -192,7 +192,7 @@ export interface CompactPanelCtl {
     autoPolicy: () => CompactPolicy;
     /** ##432 刀 2 的**唯一旋钮**：历史 token 上限（投递只按它切） */
     limitTokens: () => number;
-    /** 写上限：本地先夹到 `MIN_HISTORY_LIMIT_TOKENS`，再整体写回 `history`（保住 keep / allowAgentWrite） */
+    /** 写上限：本地先夹到 `MIN_HISTORY_LIMIT_TOKENS`，再整包写回 `history.limit`（`{limitTokens, summary}`） */
     commitLimitTokens: (n: number) => Promise<void>;
     /** `history.limit.summary.enabled`（v1 缺省 false：只留注记 + ref，不做摘要 LLM 调用） */
     limitSummary: () => boolean;
@@ -256,7 +256,10 @@ export function useCompactPanel(uri: () => string, visible: () => boolean = () =
     const historyLimit = () => normalizeHistoryLimit(auto()?.config.history?.limit);
     const limitTokens = (): number => historyLimit().limitTokens;
     const limitSummary = (): boolean => historyLimit().summary.enabled;
-    /** 写 `history.limit`：**整包写回 history**（RPC 是顶层浅合并 ⇒ 只给 `{limit}` 会丢 keep / allowAgentWrite） */
+    /**
+     * 写 `history.limit`：**整包写回 history**（RPC 是顶层浅合并 ⇒ 只给 `{limit}` 会丢 history 下的
+     * 其它键；`history` 现役只有 `limit`，但 `...hist` 让「以后加键」不会静默被抹掉）。
+     */
     const writeHistoryLimit = async (patch: { limitTokens?: number; summary?: boolean }): Promise<void> => {
         const cur = historyLimit();
         const next = {
@@ -471,12 +474,13 @@ const KIND_TONE: Record<ExampleRow["kind"], string> = {
  *
  * 左 = 原始投递（每条带**模拟** token 尺寸），右 = 按**当前上限**压完的实际形态（丢掉的整条不在）。
  * 样例固定（`shared/context/compact-example.ts`），改上限 → 两边对比立刻变 —— 这就是「看得懂」。
- * 尺寸口径：字节 ÷ 4 = token（与账本同一估算，不是精确 meter）。
+ * 尺寸口径：`shared/context/compact-example.ts::bytesToTokens`（3 字节 ≈ 1 token —— 样例正文是中文，
+ * 与压缩走的 `estimateTokensOf` 同口径；不是精确 meter）。
  */
 function ExamplePreviewBlock(props: { limitTokens: number }) {
     const ex = createMemo(() => buildCompactExample(props.limitTokens));
-    const beforeTok = () => Math.round(ex().beforeBytes / 4);
-    const afterTok = () => Math.round(ex().keptBytes / 4);
+    const beforeTok = () => bytesToTokens(ex().beforeBytes);
+    const afterTok = () => bytesToTokens(ex().keptBytes);
     const savedPct = () =>
         ex().beforeBytes === 0 ? 0 : Math.round(((ex().beforeBytes - ex().keptBytes) / ex().beforeBytes) * 100);
     const row = (r: ExampleRow, kept: boolean) => (
@@ -812,7 +816,7 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                                 <span class="opacity-60">token</span>
                             </div>
                             <div class="opacity-50">
-                                从最后一步往前累加（字符数 / 4 粗估），装得下就装、装不下就停；切点必须 tool 配对平衡
+                                从最后一步往前累加（token 粗估：中文 1 字 1 token、其余 4 字符 1 token），装得下就装、装不下就停；切点必须 tool 配对平衡
                                 （不平衡往前挪）；**保头 600 token 硬编码**（不参与累加、永不被丢）；一次压缩只保留到上限的
                                 一半。最小 {MIN_HISTORY_LIMIT_TOKENS}（再小会让每步都重算）。**边界只在压缩事件时算一次**
                                 并落盘，之后每步只追加不重算。
