@@ -308,3 +308,69 @@ describe("review1 P2-3 — activeTurns 收敛为注册表投影（R1 单真源�
     expect(entryOf(uri)!.turnCount).toBe(1); // 条目保留（同一份数据的另一面）
   });
 });
+
+describe("##435 — 队列来源分布进注册表（queue / queueHuman / queueAuto）", () => {
+    /** 摆桩：只换队列取值器，viewers 归零（本组只关心队列三兄弟） */
+    const stubQueue = (counts: (uri: string) => { total: number; human: number }) => {
+        sessionRegistry.setDeps({ viewersOf: () => 0, queueCountsOf: counts });
+    };
+
+    it("auto = total - human（不是 total，也不是负数）；一次 view 只取一次值", () => {
+        const uri = newUri();
+        sessionRegistry.noteActivity(uri);
+        let calls = 0;
+        stubQueue(() => {
+            calls++;
+            return { total: 3, human: 1 };
+        });
+
+        const e = entryOf(uri)!;
+        expect(e.queue).toBe(3);
+        expect(e.queueHuman).toBe(1);
+        expect(e.queueAuto).toBe(2); // ← 不是 3（拿总数冒充自动），也不是 -2
+        // 热路径（noteTurnStep / touch 每帧都调 view）⇒ 两个数必须同一次取值给出，不许读两遍盘
+        expect(calls).toBe(1);
+    });
+
+    it("human 被夹到 [0, total]：取值器越界 / 负数都不漏进帧", () => {
+        const over = newUri();
+        sessionRegistry.noteActivity(over);
+        stubQueue(() => ({ total: 2, human: 5 }));
+        expect(entryOf(over)!.queueHuman).toBe(2); // 夹到 total
+        expect(entryOf(over)!.queueAuto).toBe(0);
+
+        const neg = newUri();
+        sessionRegistry.noteActivity(neg);
+        stubQueue(() => ({ total: -1, human: -3 }));
+        expect(entryOf(neg)!.queue).toBe(0);
+        expect(entryOf(neg)!.queueHuman).toBe(0);
+        expect(entryOf(neg)!.queueAuto).toBe(0);
+    });
+
+    it("缺省取值器（manager 未构造）：三者都是 0，不是 NaN / undefined", () => {
+        const uri = newUri();
+        sessionRegistry.noteActivity(uri); // reset() 已把 deps 拨回 defaultDeps
+        const e = entryOf(uri)!;
+        expect(e.queue).toBe(0);
+        expect(e.queueHuman).toBe(0);
+        expect(e.queueAuto).toBe(0);
+    });
+
+    it("接线：真 SteerQueue 落三条（human:chen56 / job / 无署名）⇒ 数出 human=1 auto=2", () => {
+        // 这一例钉的是**判据对真实写入方的 author 形状判得对**（契约两头）：
+        //   · room 投递 → `human:chen56`（room-service.ts）
+        //   · job 后台结束通知 → `job`（local-agent.ts 的 wakeTaskWithSteer）
+        //   · 任务页输入框 → 无 author
+        const uri = newUri();
+        const agent = new LocalAgentManager(); // 构造即把 queueCountsOf 注入注册表
+        agent.steerAdd(uri, "next-turn", "人留的", "human:chen56");
+        agent.steerAdd(uri, "next-turn", "job 通知", "job");
+        agent.steerAdd(uri, "next-turn", "无署名的一条");
+        sessionRegistry.noteActivity(uri);
+
+        const e = entryOf(uri)!;
+        expect(e.queue).toBe(3);
+        expect(e.queueHuman).toBe(1);
+        expect(e.queueAuto).toBe(2);
+    });
+});

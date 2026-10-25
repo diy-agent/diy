@@ -47,6 +47,13 @@ export interface NavRow {
     unread: number;
     /** 待投递留言条数（##306） */
     queue: number;
+    /**
+     * 队列里**署名是人**的条数（##435）。
+     *
+     * 为什么单独拿出来：`queue` 的收件人是 agent，不是人 —— job 结束通知 / 别的 agent 派活
+     * 也走同一个队列，那些条人类零动作。拿总条数去喊「有人在等你回复」= 把用户拽过去没事干。
+     */
+    queueHuman: number;
     /** 这个窗口开着它的 tab（开着 = 已在视线内，不必再提示） */
     opened: boolean;
     /** 最后活动时刻（ISO）—— **跨启动**那一把尺子（账本最后一条账的 `ts`） */
@@ -109,6 +116,7 @@ export function navRowOf(i: NavRowInput): NavRow {
         abnormal: state.run === "ended" && isAbnormalBlame(state.blame),
         unread: state.unread,
         queue: state.queued,
+        queueHuman: state.queuedHuman,
         opened: i.opened,
         lastTs: i.lastTs ?? null,
     };

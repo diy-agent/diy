@@ -14,6 +14,7 @@ import {
   readDrafts,
   writeDrafts,
   writeSteers,
+  isHumanAuthor,
   type SteerItem,
 } from "../../src/main/core/drafts";
 import { SteerQueue } from "../../src/main/core/steer-queue";
@@ -357,5 +358,23 @@ describe("插话署名（author）读写", () => {
     const items = q.add(URI, "next-turn", "本人发言");
     expect("author" in items[0]!).toBe(false);
     expect(readDrafts(URI)!.steers[0]!.author).toBeUndefined();
+  });
+});
+
+// ##435：这条判据决定「有人在等你回复」的 L2 准入 —— 错了就是半夜抢焦点
+describe("isHumanAuthor —— 谁算「人」（##435）", () => {
+  it("human:<名> ⇒ 人（room 投递 / 带署名的调用）", () => {
+    expect(isHumanAuthor("human:chen56")).toBe(true);
+  });
+
+  it("job / agent:* / system ⇒ 不是人（机器写的）", () => {
+    expect(isHumanAuthor("job")).toBe(false);
+    expect(isHumanAuthor("agent:166")).toBe(false);
+    expect(isHumanAuthor("system")).toBe(false);
+  });
+
+  it("无署名 / 空串 ⇒ 不算人（本任务本人或 CLI 未署名；宁少一次抢焦点）", () => {
+    expect(isHumanAuthor(undefined)).toBe(false);
+    expect(isHumanAuthor("")).toBe(false);
   });
 });

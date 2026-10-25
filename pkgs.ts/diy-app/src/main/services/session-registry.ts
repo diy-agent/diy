@@ -43,8 +43,15 @@ export type { RegistryFrame, SessionEntry, SessionRef, SessionTurn };
 export interface SessionRegistryDeps {
   /** 内容观察者数（chat 流 `run.subs` + op 流订阅者；见 LocalAgentManager.watchers） */
   viewersOf(taskUri: string): number;
-  /** 待投递留言条数（steer 队列，##306） */
-  queueOf(taskUri: string): number;
+  /**
+   * 待投递留言的来源分布（steer 队列，##306 / ##435）。
+   *
+   * **一次读盘给两个数**（review#435 P1）：`view()` 是每个会话每次变更都调用的热路径
+   * （`noteTurnStep` 每步一次、`touch` 每有动静一次），拆成两个取值器就是同一份
+   * `drafts.yaml` 每帧读两遍。`total` = 全部待投递条数，`human` = 其中**署名是人**的
+   * （`author: human:*`）。
+   */
+  queueCountsOf(taskUri: string): { total: number; human: number };
 }
 
 /**
@@ -57,7 +64,7 @@ export interface SessionRegistryDeps {
  */
 const defaultDeps: SessionRegistryDeps = {
   viewersOf: (uri) => opsFeed.subscriberCount(uri),
-  queueOf: () => 0, // 待投递留言队列归 manager；manager 未构造 = 没有队列，0 是事实而非占位
+  queueCountsOf: () => ({ total: 0, human: 0 }), // 待投递留言队列归 manager；manager 未构造 = 没有队列，0 是事实而非占位
 };
 
 /** 注册表内核条目（不含活态属性 viewers / queue —— 那两个是取值器给的） */
@@ -133,11 +140,18 @@ class SessionRegistry {
   /** 内核条目 + 活态属性 → 对外视图（订阅 / 快照唯一出口） */
   private view(e: CoreEntry): SessionEntry {
     const viewers = this.deps.viewersOf(e.uri);
+    const counts = this.deps.queueCountsOf(e.uri);
+    const queue = Math.max(0, counts.total);
+    // 夹到 [0, total] 是**防御**（取值器不来就不该越界 —— 于是 `queueAuto` 永远不为负），
+    // 不是给"两次读盘不一致"打的补丁：两个数来自同一次 `list()`。
+    const queueHuman = Math.min(Math.max(0, counts.human), queue);
     return {
       id: sessionIdOf(e.uri),
       refs: e.refs.map((r) => ({ ...r })),
       turn: e.turn ? { ...e.turn, state: viewers > 0 ? "active" : "detached" } : null,
-      queue: this.deps.queueOf(e.uri),
+      queue,
+      queueHuman,
+      queueAuto: queue - queueHuman,
       viewers,
       firstSeenAt: e.firstSeenAt,
       lastActivity: e.lastActivity,

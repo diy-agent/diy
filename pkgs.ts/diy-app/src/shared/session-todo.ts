@@ -60,15 +60,26 @@ function rankOf(kind: TodoKind): number {
     return kind === "failed" ? 0 : kind === "stalled" ? 1 : kind === "waiting" ? 2 : 3;
 }
 
-/** 原因短语（判据只此一处） */
-function whyOf(kind: TodoKind, count: number): string {
+/**
+ * 原因短语（判据只此一处）。
+ *
+ * `waiting` 要看队列的**来源**（##435）：队列的收件人是 agent，不是人 —— job 结束通知 /
+ * 别的 agent 派活也走同一个队列，那些条人类零动作。只按总数写「等你回复」，
+ * 就是把用户拽进来让他对着自己无事可做的一行发呆。
+ */
+function whyOf(kind: TodoKind, count: number, queueHuman: number): string {
     switch (kind) {
         case "failed":
             return `异常终止 · ${count} 条未读`;
         case "stalled":
             return "无进展 · 在跑但长时间没动静";
-        case "waiting":
-            return `有 ${count} 条留言等你回复`;
+        case "waiting": {
+            // ##435（review P2）：这里的数字必须是**人写的**条数 —— 说总数（`count` = `r.queue`）
+            // 会让人点进去发现只有 1 条是给他写的。自动条数另外交代，不混进「等你回复」。
+            if (queueHuman <= 0) return `有 ${count} 条自动留言待投递（无需回复）`;
+            const rest = count > queueHuman ? `（队列共 ${count} 条，其余为自动）` : "";
+            return `有 ${queueHuman} 条留言等你回复${rest}`;
+        }
         case "finished":
             return `跑完了 · ${count} 条未读`;
     }
@@ -87,7 +98,7 @@ export function todoOf(rows: NavRow[]): TodoItem[] {
         const kind = todoKindOf(r);
         if (!kind) continue;
         const count = kind === "waiting" ? r.queue : kind === "stalled" ? 0 : r.unread;
-        out.push({ row: r, kind, count, why: whyOf(kind, count) });
+        out.push({ row: r, kind, count, why: whyOf(kind, count, r.queueHuman) });
     }
     return out.sort(
         (a, b) =>

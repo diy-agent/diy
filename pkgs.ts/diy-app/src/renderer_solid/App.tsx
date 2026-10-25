@@ -71,7 +71,9 @@ import {
 } from "../shared/session-nav";
 import type { NavRow } from "../shared/session-nav";
 import type { GlyphTone } from "../shared/session-state";
-import { ALERT_ACTION_LABEL, alertsOf } from "../shared/session-alerts";
+import { ALERT_ACTION_LABEL, ALERT_QUEUE_ACTION_LABEL, alertsOf, type SessionAlert } from "../shared/session-alerts";
+// 提示的二级信息三问（##391）：`addToast` 空值即抛错 —— 会话提示不再走 `addToastLegacy`（##435）
+import { formatClock, type NoticeMeta } from "./lib/notice";
 // 「待你处理」区（##358 D5）：判据纯函数；行集仍是上面那份 navRows（两个区**不可能**给出不同结论）
 import { todoOf, todoWhenOf } from "../shared/session-todo";
 // 相对时间（`20h`）—— 纯函数在 shared/session-overview，与任务表 `fmtStamp` 同处（不另写时间格式）
@@ -79,6 +81,49 @@ import { fmtAgo } from "../shared/session-overview";
 import { resumeOf, resumeWhenOf } from "../shared/session-resume";
 import { usageLedgerStore } from "./store/usageLedgerStore";
 import { alertPrefsStore } from "./store/alertPrefsStore";
+
+/** 会话提示的**来源**（##391 R1：机制名 + 代码位置）—— 所有 kind 共用一句，便于顺着它找代码 */
+const ALERT_NOTICE_SOURCE = "会话提示 · session-alerts.pick()（src/shared/session-alerts.ts）";
+
+/**
+ * 会话提示的**二级信息**（##391）：谁发的 / 为什么此刻发 / 机制是什么。
+ *
+ * 为什么现在补（##435）：`session-alerts` 的提示里有一档会**抢焦点**（L2 自动开 tab），
+ * 而它一直走 `addToastLegacy` —— 详情面板只能写「来源：未登记（##391 遗留清单）」。
+ * 抢焦点级别的提示反倒说不出所以然，是这批遗留里最不该留的一个；顺手把判据也写进详情。
+ */
+function alertNoticeMeta(a: SessionAlert, at: number): NoticeMeta {
+    const clock = formatClock(at);
+    // 原因：**带条数与 author 分布**（##391：没有数字的提示 = 形容词，无法复盘）
+    const reason = [
+        `L${a.level === "L2" ? 2 : 1} · ${a.kind} · 触发于 ${clock}`,
+        a.kind === "waiting" || a.kind === "queued-auto"
+            ? `队列 ${a.queueHuman + a.queueAuto} 条 = 人 ${a.queueHuman} + 自动 ${a.queueAuto}`
+            : "",
+        a.autoPull ? "已自动拉回视线" : "",
+    ]
+        .filter(Boolean)
+        .join(" · ");
+
+    // 机制：先说 queue 是什么（这是本提示最常被误解的一层），再说这一档为什么是这个级别
+    const queueDetail =
+        a.kind === "waiting" || a.kind === "queued-auto"
+            ? [
+                  "queue = 待投递给**这个会话的 agent** 的留言条数（`.diy/drafts.yaml` 的 steers，##306 插话队列）—— 收件人是 agent，不是你。",
+                  "谁会往里写：任务页输入框（会话正忙时改排队）· room 投递（署名 `human:*`）· job 结束通知 / 别的 agent 派活（署名 `job` / `agent:*`）· CLI 无署名的留言。",
+                  a.kind === "waiting"
+                      ? "本条命中：这 N 条里有**人署名**的 ⇒ 真的有人在等这个 agent 回话，故把你拉回视线（L2）。你不必回复那个人；要看就点「看留言」。"
+                      : "本条命中：这 N 条**全部没有人的署名**（job / agent / 无署名）⇒ 投递后由 agent 自己消化，**你无需回复**；故只提示（L1），不抢焦点、不开 tab。",
+              ].join("\n")
+            : [];
+    const detail = [
+        "判据在 `src/shared/session-alerts.ts`（纯函数，有单测）：只对**跃迁**出提示 —— 「现在有几条未读 / 几条留言」是状态（常驻角标负责），状态本身不弹。",
+        "级别：L1 = 一次性 toast（不抢焦点）；L2 = 自动把会话拉回视线，只给「异常终止」与「有人署名留言」两种。",
+        ...queueDetail,
+        "同类提示只在该会话 tab 没开着时出（开着 = 你已在视线内）；关掉「自动拉回」开关只降级为 L1，不丢提示。",
+    ].join("\n");
+    return { source: ALERT_NOTICE_SOURCE, reason, detail };
+}
 
 /**
  * 取"此刻最上面的可查找浮层"（##309）。
@@ -690,7 +735,8 @@ export default function App() {
      *
      * 判据全在 `shared/session-alerts`（纯函数 + 单测）：只对**跃迁**出提示 ——
      * 「现在有 3 条未读」是状态不是事件，拿状态当事件就会一启动糊一脸、且每 tick 反复弹。
-     * 谁配得上抢焦点（L2）也只有两种：**异常终止** 与 **有人在等你回复**（队列里刚出现留言）。
+     * 谁配得上抢焦点（L2）也只有两种：**异常终止** 与 **有人（人署名）在等你回复** ——
+     * 队列里的 job / agent 自动留言只出 L1（##435：那些条人类零动作，抢焦点是纯噪音）。
      */
     let alertPrev: Record<string, NavRow> = {};
     createEffect(() => {
@@ -700,12 +746,25 @@ export default function App() {
         // 那一跑必须看到"已处理过"的 prev，否则同一条提示弹两遍（真跑过的坑：自动拉回 = 无限弹）。
         alertPrev = Object.fromEntries(rows.map((r) => [r.uri, r]));
         for (const a of alerts) {
-            if (a.autoPull) openSessionByUri(a.uri); // L2：抢焦点（仅异常终止 / 有人在等）
-            notificationStore.addToastLegacy(
+            if (a.autoPull) openSessionByUri(a.uri); // L2：抢焦点（仅异常终止 / 人署名留言）
+            notificationStore.addToast(
                 a.kind === "failed" ? "error" : a.kind === "finished" ? "success" : "info",
                 a.text,
-                a.level === "L2" && a.autoPull ? 0 : 10000, // 抢过焦点的那条必须被看见/点掉；其余 10s 自己走
-                { label: ALERT_ACTION_LABEL, onClick: () => openSessionByUri(a.uri) },
+                // ##391：来源 / 原因 / 机制三段全给（会话提示不再走遗留口子，##435）
+                alertNoticeMeta(a, Date.now()),
+                {
+                    duration: a.level === "L2" && a.autoPull ? 0 : 10000, // 抢过焦点的那条必须被看见/点掉；其余 10s 自己走
+                    // 自动留言**没有 action**：它们不需要人动手，给了按钮反而像在催人
+                    ...(a.kind === "queued-auto"
+                        ? {}
+                        : {
+                              action:
+                                  a.kind === "waiting"
+                                      ? { label: ALERT_QUEUE_ACTION_LABEL, onClick: () => openSessionByUri(a.uri) }
+                                      : { label: ALERT_ACTION_LABEL, onClick: () => openSessionByUri(a.uri) },
+                          }),
+                    // 聚合键是 source + 文案：人署名 / 自动两档文案不同，本就不会互相折叠
+                },
             );
         }
     });

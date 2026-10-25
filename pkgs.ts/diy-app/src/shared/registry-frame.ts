@@ -63,8 +63,18 @@ export interface SessionEntry {
   refs: SessionRef[];
   /** 在途轮次；null = idle */
   turn: SessionTurn | null;
-  /** 待投递留言条数（##306 steer 队列）—— 活态属性，不进状态轴 */
+  /** 待投递留言条数（##306 steer 队列）—— 活态属性，不进状态轴。= `queueHuman + queueAuto` */
   queue: number;
+  /**
+   * `queue` 里**署名是人**的条数（`author: human:*`，##435）。
+   *
+   * 为什么要有它：`queue` 的收件人是**这一轮要跑的 agent**，不是人 —— 往里写的不只有人
+   * （job 结束通知 / 别的 agent 派活 / CLI 无署名），那些条人类零动作。拿总条数去喊
+   * 「有人在等你回复」会把用户拽到任务页却无事可做（##435 的现场）。故来源要能分开。
+   */
+  queueHuman: number;
+  /** `queue` 里**非人**的条数（job / agent / 无署名）。= `queue - queueHuman` */
+  queueAuto: number;
   /** 此刻的观察者数（chat 流 + op 流订阅者；**注册表自身订阅者不计入**，R3） */
   viewers: number;
   /** 本进程内首次见到该会话的时刻（= "本次启动活跃过"的边界，R5：不落盘） */

@@ -130,6 +130,8 @@ function makeEntry(over: Partial<SessionEntry> = {}, uri = "projects/2/tasks/1")
             state: "active",
         },
         queue: 0,
+        queueHuman: 0,
+        queueAuto: 0,
         viewers: 0,
         firstSeenAt: at,
         lastActivity: at,
