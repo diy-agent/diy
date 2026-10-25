@@ -30,15 +30,18 @@ describe("selectCompactableRange：从最后一步往前数，装不下就停", 
     });
 
     it("装不下 ⇒ 从尾部往前切；切点落在 step 边界，保留的是**最新的那几步**", () => {
-        // 5 步 × 100 token；保头 0，上限 250 ⇒ 从尾往前：s4(100) + s3(100) + s2(100)=300 ≥ 250 ⇒ 切在 s2
+        // 5 步 × 100 token；保头 1 条（100），上限 250 ⇒ 尾部额度 150 ⇒ **先判再加**：
+        // s4(100) 放得下；再加 s3(100) 会超 150 ⇒ 停 ⇒ 切在 s4（下标 4）。
+        // （旧语义「至少 250」会切到 s2 —— ##432 review A：那是「压完仍超上限」的来源，已改）
         const all = Array.from({ length: 5 }, (_, i) => big(`s${i}`, 100));
         const r = selectCompactableRange(all, 250, { headTokens: 1 });
         expect(r).not.toBeNull();
-        expect(r!.cut).toBe(2);
+        expect(r!.cut).toBe(4);
         expect(r!.headEnd).toBe(1);
-        expect(r!.dropped).toBe(1);
-        // 期望的 messages 条数 = 保头 1 + 切点后 3 = 4（等价性：手算 vs 算法）
-        expect(1 + (all.length - r!.cut)).toBe(4);
+        expect(r!.dropped).toBe(3);
+        // 保留条数 = 保头 1 + 切点后 1 = 2；**总量 ≤ 上限**（100 + 100 ≤ 250）
+        expect(1 + (all.length - r!.cut)).toBe(2);
+        expect((1 + (all.length - r!.cut)) * 100).toBeLessThanOrEqual(250);
     });
 
     it("保头 600 token 硬编码：前 600 token 的消息永不被丢（即便上限极小）", () => {
@@ -67,7 +70,8 @@ describe("selectCompactableRange：从最后一步往前数，装不下就停", 
         // 上限 150 ⇒ 从尾：s5(100)+s4(100)=200 ≥ 150 ⇒ 切在 s4（下标 3）；
         // 此时 [0,3) 里 c1 的 call 存在、result 在 [3,n) 之外？不 —— result 在 1 < 3，故本来就平衡
         const r = selectCompactableRange(all, 150, { headTokens: 1 });
-        expect(r!.cut).toBe(3);
+        // 保头 1 条(call, 100) ⇒ 尾部额度 50 ⇒ 只留最后一组（s5）⇒ cut = s5 起点(4)
+        expect(r!.cut).toBe(4);
         // 再造一份**切点正好落在 call 与 result 之间**的：保头 0、上限只够最后一条
         const all2 = [big("s1", 100), call, result, big("s4", 100)];
         const r2 = selectCompactableRange(all2, 100, { headTokens: 1 });
@@ -102,5 +106,31 @@ describe("estimateTokensOf / normalizeHistoryLimit", () => {
         expect(normalizeHistoryLimit({ limitTokens: 1234.9 }).limitTokens).toBe(1234);
         expect(normalizeHistoryLimit({ limitTokens: 1 }).summary.enabled).toBe(false);
         expect(normalizeHistoryLimit({ limitTokens: 1, summary: { enabled: true } }).summary.enabled).toBe(true);
+    });
+});
+
+describe("事件化（##432 review A）：压完保留段 ≤ 上限 ⇒ 新增不立刻再压", () => {
+    it("压完的保留段 ≤ 上限（压完不会因**自身**超限而立刻再压）—— 事件化在 appliedHistoryRange 层验证", () => {
+        let all = Array.from({ length: 40 }, (_, i) => big(`s${i}`, 100)); // 40 步 × 100 token
+        const r = selectCompactableRange(all, 1000, { headTokens: 1 });
+        expect(r).not.toBeNull();
+        const retained = 100 + (all.length - r!.cut) * 100;
+        expect(retained).toBeLessThanOrEqual(1000);
+        // 保留比例 0.5：压完只留到一半，新增要涨回上限才是一次新事件
+        expect(retained).toBeLessThanOrEqual(500);
+        // 纯函数层无状态：新增后重算只是把切点前移一格（增量 = 新增组数），不是"从头再压"
+        all = [...all, big("s40", 100)];
+        const again = selectCompactableRange(all, 1000, { headTokens: 1 });
+        expect(again === null || again.cut >= r!.cut).toBe(true);
+    });
+
+    it("总量重新超限后才再切一次", () => {
+        let all = Array.from({ length: 40 }, (_, i) => big(`s${i}`, 100));
+        const first = selectCompactableRange(all, 1000, { headTokens: 1 })!;
+        // 再灌 12 步（1200 token）⇒ 总量重新显著超限 ⇒ 会有新的切点（比上次更靠后）
+        for (let i = 0; i < 12; i++) all = [...all, big(`s${40 + i}`, 100)];
+        const second = selectCompactableRange(all, 1000, { headTokens: 1 })!;
+        expect(second.cut).toBeGreaterThan(first.cut);
+        expect(100 + (all.length - second.cut) * 100).toBeLessThanOrEqual(500);
     });
 });

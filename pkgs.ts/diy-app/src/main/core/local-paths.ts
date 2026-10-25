@@ -30,12 +30,6 @@ import { diyHome } from "./state";
 export { CLEARED_SESSION_KINDS, SESSION_KINDS, keyOf, type SessionKind };
 
 /**
- * op 流文件的**无 "ops" 字面量别名**（##432 刀 1 的验收口径，同 `ops-feed.ts` 的 `feed`）。
- * 与 `opsFile` 是同一函数：写侧入口（带建父目录）。
- */
-export const streamFile = opsFile;
-
-/**
  * op 流文件的**只读路径**（不建目录；与 `streamFile` 的差别只在这一点）。
  * 读侧高频调用点用它（与旧的 `resolveSessionFile(uri, "ops")` 逐字等价）。
  */

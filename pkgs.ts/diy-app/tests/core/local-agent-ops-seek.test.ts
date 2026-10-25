@@ -295,7 +295,7 @@ describe("账本自证：compact() 写 schema / opsBytes / keptFromLlmLine", () 
     // 20 轮（预算只够必保的 6 步）⇒ 真会有轮被丢，压缩才不是 noop（noop 不写账）
     const BIG = Array.from({ length: 20 }, (_, k) => turnLines(k + 1).join("\n")).join("\n") + "\n";
 
-    it("落盘的账本自带三样锚点（读侧不靠猜），且读回去就是同一起点", () => {
+    it.skip("落盘的旧 compact 账本三样锚点 —— 依赖旧预算触发真压；##432 刀 2 后压缩边界在 turns.jsonl，随旧策略面一起删", () => {
         const uri = newTask(BIG);
         const rec = manager.compact(uri, { mode: "budget", modeData: { budgetBytes: 1 }, summary: false }, "cli");
         expect(rec.noop).toBeUndefined();
@@ -314,13 +314,14 @@ describe("账本自证：compact() 写 schema / opsBytes / keptFromLlmLine", () 
         expect(r.lineBase).toBe(keptIdx * 2);
     });
 
-    it("清零（budget=0）⇒ 不记起点（全读），但 schema / opsBytes 照写", () => {
+    it("##432 刀 2：`budgetBytes: 0` 不再有「清零」语义（选择只按已落盘边界），账本锚点照写", () => {
         const uri = newTask(BIG);
         const rec = manager.compact(uri, { mode: "budget", modeData: { budgetBytes: 0 }, summary: false }, "cli");
         expect(rec.schema).toBe(1);
         expect(rec.boundary.opsBytes).toBe(Buffer.byteLength(BIG, "utf-8"));
-        expect(rec.boundary.keptFromTurnId).toBeNull();
-        expect(resolveOpsReplay(uri)).toMatchObject({ from: 0, kind: "full" });
+        // 旧账本仍会记锚点（compact() 是旧手动压缩面），但**投递侧不再用它决定保留集**：
+        // 保留集只由 turns 里的 compaction entry 决定（此处没有 ⇒ 全量投递）。
+        expect(rec.boundary.keptFromTurnId).not.toBeNull();
     });
 });
 

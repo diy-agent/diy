@@ -132,7 +132,7 @@ describe("轮次中改配置：在途轮次用轮首快照，下一轮才用新�
         expect(promptText(model, 1)).toContain("第 1 句");
     });
 
-    it("下一轮：改预算后新请求（requestView）反映新配置（轮首实时读）", async () => {
+    it.skip("下一轮：改预算后新请求反映新配置 —— `budgetBytes` 已不决定投递（##432 刀 2）；配置生效改由 history.limit 在下次压缩事件体现", async () => {
         const uri = newUri();
         seedOps(uri);
         const mgr = new LocalAgentManager(() => stubModel() as unknown as LanguageModel);

@@ -1261,33 +1261,57 @@ export function selectForDelivery(
 export function selectHistoryByCut(
     all: readonly LocalModelMessage[],
     range: { cut: number; headEnd: number },
-    opts: Pick<DeliveryOpts, "transformToolResult" | "defaultClip" | "defaultReasoningClip"> = {},
+    opts: Pick<DeliveryOpts, "transformToolResult" | "defaultClip" | "defaultReasoningClip"> & { hardCapBytes?: number } = {},
 ): BudgetSelection {
     const n = all.length;
     const cut = Math.max(0, Math.min(range.cut, n));
     const headEnd = Math.max(0, Math.min(range.headEnd, cut));
-    const kept: number[] = [];
-    const dropped: number[] = [];
-    for (let i = 0; i < n; i++) (i < headEnd || i >= cut ? kept : dropped).push(i);
-    const keptRuns: [number, number][] = [];
-    let prev = -2;
-    let keptBytes = 0;
     const costOf = costOfWith(opts);
-    for (const i of kept) {
-        keptBytes += costOf(all[i]!, null, null);
-        if (i === prev + 1) keptRuns[keptRuns.length - 1]![1] = i + 1;
-        else keptRuns.push([i + 1, i + 1]);
-        prev = i;
-    }
-    return {
-        kept,
-        dropped,
-        keptRuns,
-        keptBytes,
-        // 新算法没有「预算桶」与「托底桶」之分：两个字段保留形状，报实际保留字节
-        countBytes: keptBytes,
-        mustBytes: 0,
+    const cost = (i: number): number => costOf(all[i]!, null, null);
+
+    /**
+     * 从 `cut` 往后按**步边界**收窄（##432 review B：`##406` 的装配后硬上限必须在这条新路径上仍然生效）。
+     * 收窄只能「整组丢」（不许切开 tool 配对）；最后一组永远保留（否则一条不剩 = 清零）。
+     */
+    const advance = (from: number): number => {
+        // 下一个 step 边界（无 step 的消息并入前一组 ⇒ 这里只看 step 变化处）
+        for (let i = from + 1; i < n; i++) {
+            const prevStep = all[i - 1]!.step;
+            const step = all[i]!.step;
+            if (step !== undefined && step !== prevStep) return i;
+        }
+        return n;
     };
+
+    const build = (cutAt: number): BudgetSelection => {
+        const kept: number[] = [];
+        const dropped: number[] = [];
+        for (let i = 0; i < n; i++) (i < headEnd || i >= cutAt ? kept : dropped).push(i);
+        const keptRuns: [number, number][] = [];
+        let prev = -2;
+        let keptBytes = 0;
+        for (const i of kept) {
+            keptBytes += cost(i);
+            if (i === prev + 1) keptRuns[keptRuns.length - 1]![1] = i + 1;
+            else keptRuns.push([i + 1, i + 1]);
+            prev = i;
+        }
+        return { kept, dropped, keptRuns, keptBytes, countBytes: keptBytes, mustBytes: 0 };
+    };
+
+    let out = build(cut);
+    const cap = opts.hardCapBytes && opts.hardCapBytes > 0 ? opts.hardCapBytes : 0;
+    if (cap > 0) {
+        let cur = cut;
+        while (out.keptBytes > cap) {
+            const next = advance(cur);
+            if (next >= n) break; // 只剩最后一组：它是最后可发的一块，再收就什么都没有了
+            cur = next;
+            out = build(cur);
+            if (out.dropped.length === 0) break;
+        }
+    }
+    return out;
 }
 
 /** 块树 → 可发/可落盘的消息（选择 + 渲染；跳过 turn/step 容器 —— think 已挂进 assistant 消息） */

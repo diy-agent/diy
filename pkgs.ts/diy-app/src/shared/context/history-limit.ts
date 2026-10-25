@@ -19,6 +19,15 @@ import { z } from "zod";
  */
 export const HISTORY_HEAD_TOKENS = 600;
 
+/**
+ * **保留比例**（硬编码，不进配置）：一次压缩只把历史保留到上限的这么点，余下的留给后续新增。
+ *
+ * 为什么必须有它（##432 review A）：若压缩只压到「刚好 ≤ 上限」，**每新增一步就重新超限** ⇒
+ * 每步都算一次切点、每步写一条 compaction entry、前缀缓存每步被打断 —— 与「压缩是罕见事件」
+ * 正面相反。留一半 ⇒ 要涨回上限才再压一次（上限 20000 时约 8~10 步一次）。
+ */
+export const HISTORY_RETAIN_RATIO = 0.5;
+
 /** 单条上限的缺省值（token）。旧 `budgetBytes: 20480` ≈ 5120 token —— 新口径放开到 20000。 */
 export const DEFAULT_HISTORY_LIMIT_TOKENS = 20_000;
 
@@ -166,18 +175,38 @@ export function selectCompactableRange(
         headEnd += 1;
     }
 
-    // ② 从最后一组往前累加
+    // ② 从最后一组往前累加 —— **先判再加**：放不下就停在这一组之前。
+    //
+    // ⚠️ 「保留段总量 ≤ 上限」是**硬要求**（##432 review A）：dsh 的 `retainTokens` 是「至少保留」的下限
+    // （它的触发看窗口比例），而我们只有这一个数 —— 若保留「≥ 上限」，压完总量**恒 > 上限** ⇒ 下一步
+    // 又触发 ⇒ 每步压一次（前缀缓存每步被打断 + 账本无限涨）。先判再加 ⇒ 压完 ≤ 上限 ⇒ 下一次必须等
+    // 新增把总量重新顶过线，压缩才真正成为**事件**。
     const starts = stepStarts(all);
+    const groupCost = (g: number): number => {
+        const from = starts[g]!;
+        const to = g + 1 < starts.length ? starts[g + 1]! : n;
+        let c = 0;
+        for (let i = from; i < to; i++) c += cost(all[i]!, i);
+        return c;
+    };
+    let headCost = 0;
+    for (let i = 0; i < headEnd; i++) headCost += cost(all[i]!, i);
+    // 尾部的可用额度 = **保留目标** - 保头（保留目标 = 上限 × 保留比例，见 HISTORY_RETAIN_RATIO）
+    const tailBudget = Math.max(0, Math.floor(limitTokens * HISTORY_RETAIN_RATIO) - headCost);
+
     let acc = 0;
     let groupIdx = starts.length - 1;
+    // 最后一组**永远至少保留**（不能一条都不留）：它自己就超额度时也留它
+    const lastCost = groupCost(groupIdx);
+    acc = lastCost;
+    groupIdx -= 1;
     for (; groupIdx >= 0; groupIdx--) {
-        const from = starts[groupIdx]!;
-        const to = groupIdx + 1 < starts.length ? starts[groupIdx + 1]! : n;
-        for (let i = from; i < to; i++) acc += cost(all[i]!, i);
-        if (acc >= limitTokens) break;
+        const c = groupCost(groupIdx);
+        if (acc + c > tailBudget) break; // 放不下 ⇒ 停在这一组之前
+        acc += c;
     }
-    if (groupIdx < 0) return null; // 全量都装得下 ⇒ 不压
-    let cut = starts[groupIdx]!;
+    if (groupIdx < 0 && acc <= tailBudget) return null; // 全部装得下 ⇒ 不压
+    let cut = starts[groupIdx + 1]!;
 
     // ③ 配对平衡：切开的地方往前挪（挪到最小的一处「答案在后面的 call」之前，再对齐到组起点）
     for (let guard = 0; guard < starts.length + 4; guard++) {

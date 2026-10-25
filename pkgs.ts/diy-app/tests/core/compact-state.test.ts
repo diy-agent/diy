@@ -285,7 +285,7 @@ describe("④ 账本瘦身：v5 单条 ≤ 1 KB，且不再存明细", () => {
         expect(rec.v).toBe(5);
         expect(rec.details?.dropped).toBeUndefined();
         expect(rec.details?.clipped).toBeUndefined();
-        expect(rec.details?.droppedCount).toBe(3); // 预算 0 ⇒ 3 轮全丢
+        expect(rec.details?.droppedCount).toBe(0); // ##432 刀 2：`budgetBytes: 0` 不再清零（无边界 ⇒ 全保留）
         expect(rec.details?.clippedIds?.count).toBe(rec.details?.clippedIds?.ids.length ?? -1);
     });
 

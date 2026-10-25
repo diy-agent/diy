@@ -256,12 +256,6 @@ class OpsFeed {
 
 export const opsFeed = new OpsFeed();
 
-/**
- * 同一实例的**无 "ops" 字面量别名**（##432 刀 1 的验收口径：`local-agent.ts` 里 `rg 'ops'` 只剩注释）。
- * 行为与 `opsFeed` 完全同一个对象 —— 两处 `new OpsFeed()` 会让订阅者与发布者各在一张表里。
- */
-export const feed = opsFeed;
-
 // 测试用：读某行区间（导出便于单测边界：UTF-8 跨块、脏行跳过、越界）
 /**
  * 仅测试用：清空内存里的 per-会话 feed 缓存（水位/epoch/订阅者集合）。

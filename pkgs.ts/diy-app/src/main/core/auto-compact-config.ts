@@ -179,15 +179,14 @@ export function saveAutoCompact(home: string, cfg: unknown): AutoCompactConfig {
         "#   modeData: **只属于该 mode** 的私有参数（换 mode 就换一整包；与 mode 同级的 summary 才是所有算法共有）\n" +
         "#     · budget：budgetBytes 历史字节上限（0=清零）· toolResult 工具结果呈现\n" +
         "#         toolResult.render: asis 原样 / headtail 头尾裁剪（私有参数在 renderData）/ callpath 只留调用\n" +
-        "# history: 历史装配管道（##344 M2 起可从配置改；缺省 = 代码里的缺省管道）\n" +
-    "#   allowAgentWrite: 允许本地 agent 经 compact_plan 工具改写 plan（缺省 false = 只读；##362 M3a）\n" +
-    "#     agent 写闸只管 agent —— CLI `compact plan set` / UI 编辑器是用户自己的操作，不受它约束\n" +
-        "#   keep[]: 级列表，**从上往下**生效（先声明的先挑）；形状 `{ type, must?, limit?, clip?, data }`\n" +
-        "#     type: ladder 纵向阶梯（缺省兜底）/ role 某角色全部 / recent 最近 N 条 / steps 最近 N 步\n" +
-        "#     must: true = 必保（不占预算）；limit: 最多几个单元（call+result=1）\n" +
-        "#     clip: full 不裁 / path 只留调用+路径 / { type: headtail, data: { head, tail, maxLineChars, maxKeepBytes } }\n" +
-        "#     data: 各取法私有参数（role: { role } · recent: { n, role? } · steps: { n }）\n" +
-        "#   预算(**0 = 清零**，含 must 级) 在 policy.modeData.budgetBytes；校验/读写走 `diy ... compact plan`\n" +
+        "# history: **历史预算**（##432 刀 2：唯一旋钮）\n" +
+        "#   limit.limitTokens: 单条 token 上限（字符数 / 4 粗估）—— 从最后一步往前累加，装得下就装、装不下就停；\n" +
+        "#     切点必须 tool 配对平衡（不平衡往前挪）；**保头 600 token 硬编码**（不参与累加、永不被丢）\n" +
+        "#   limit.summary.enabled: 对丢掉那段做摘要（v1 缺省 false：只留一行注记 + ref 指回原文）\n" +
+        "#   口径：**边界只在压缩事件时算一次**并落 turns.jsonl（compaction entry），之后每步只追加不重算\n" +
+        "#   ⚠️ 旧字段 `history.keep[]`（ladder/role/recent/steps + must）与 `policy.modeData.budgetBytes`\n" +
+        "#      **已不决定投递**（只为旧调用点保留形状；删除待后续 PR）—— 改它们不会改变发给模型的历史。\n" +
+        "#   allowAgentWrite: 允许本地 agent 经 compact_plan 工具改写 plan（缺省 false = 只读；##362 M3a）\n" +
         "# 契约：pkgs.ts/diy-app/src/shared/context/auto-compact.ts 的 AutoCompactConfigSchema\n";
     writeFileAtomic(p, header + yaml.dump(norm, { indent: 2, noRefs: true }));
     return norm;
