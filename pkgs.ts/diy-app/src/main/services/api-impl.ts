@@ -1747,6 +1747,9 @@ export function bindAppHandlers(binding: ServerBinding): void {
     factsStore.submitPayload(factsStore.parseSubmitPayload(input.file), {
       ...(input.dir === undefined ? {} : { dir: input.dir }),
       ...(input.in === undefined ? {} : { in: input.in }),
+      // 调用方 cwd（CLI parser 注入）：缺省库目录要按**敲命令的那个 shell** 找，
+      // 不是主进程 cwd（##437，主进程 cwd = 应用目录 = 主仓）。
+      ...(input.cwd === undefined ? {} : { callerCwd: input.cwd }),
       dryRun: input.dryRun === true,
     }),
   );
