@@ -31,6 +31,10 @@ export async function createTaskViaUi(input: CreateTaskViaUiInput): Promise<stri
     change_type: input.change_type as never,
     module: input.module,
     priority: input.priority as never,
+    // CLI 专属字段（##430）：cwd 由 parser 自动注入、force 是归属拦截的逃生口。
+    // UI 侧本来就看得见「项目」，不参与归属检测，故显式给 undefined（契约要求键出现）。
+    cwd: undefined,
+    force: undefined,
   });
   const uri: string = r?.data?.uri;
   await taskStore.loadTree();
