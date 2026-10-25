@@ -79,6 +79,17 @@ export function sessionFile(taskUri: string, kind: SessionKind): string {
     return path.join(sessionDir(taskUri), `${kind}.jsonl`);
 }
 
+/**
+ * 会话级**旁路状态文件**：`<会话目录>/<name>.json`（当前值快照，不是 append-only 流水）。
+ *
+ * 目前唯一使用者 = `compact-state`（##431）：压缩边界的当前值，读它 O(1)。
+ * 为什么固定走**新落位**：它是新功能、没有旧平铺副本要兼容；与 `.jsonl` 流水分开命名，
+ * 也就不会被「按 kind 双认」的逻辑误认成会话流水。
+ */
+export function sessionStateFile(taskUri: string, name: string): string {
+    return path.join(sessionDir(taskUri), `${name}.json`);
+}
+
 /** 旧平铺落位（##379 之前；存量兼容用，见 `resolveSessionFile` 的「粘旧」裁决） */
 export function legacySessionFile(taskUri: string, kind: SessionKind): string {
     return path.join(localDir(), `${keyOf(taskUri)}.${kind}.jsonl`);
@@ -155,6 +166,8 @@ export function sessionFilesToClear(taskUri: string): string[] {
     for (const kind of CLEARED_SESSION_KINDS) {
         out.push(sessionFile(taskUri, kind), legacySessionFile(taskUri, kind));
     }
+    // 旁路状态快照（##431）：留着它 = 「清空对话」后仍记着旧边界/旧工具 id（下一次写又会复活）。
+    out.push(sessionStateFile(taskUri, "compact-state"));
     return out;
 }
 

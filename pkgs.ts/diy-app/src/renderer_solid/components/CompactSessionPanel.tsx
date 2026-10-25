@@ -1397,18 +1397,25 @@ const fmtBytes = (n: number | undefined): string => {
     return `${n} B`;
 };
 
+/** `compact.events` 的回包（##431 起限读尾部） */
+interface CompactEventsPage {
+    events: CompactEventRow[];
+    truncated: boolean;
+}
+
 export function CompactHistoryPanel(props: { uri: string; onClose: () => void }) {
-    const [events, { refetch }] = createResource(
+    const [page, { refetch }] = createResource(
         () => props.uri,
-        async (u) => (await localChatStore.compactEvents(u)) as CompactEventRow[],
+        async (u) => (await localChatStore.compactEvents(u)) as CompactEventsPage,
     );
     const [busy, setBusy] = createSignal(false);
     const [maximized, setMaximized] = createSignal(false);
 
+    const all = () => page()?.events ?? [];
     /** 只列 compact 事件（measure / undo 是附属记录，不单独成行） */
-    const rows = () => (events() ?? []).filter((e) => e.kind === "compact");
+    const rows = () => all().filter((e) => e.kind === "compact");
     /** 已被 undo 的 compact id（行上标"已撤销"） */
-    const undone = () => new Set((events() ?? []).filter((e) => e.kind === "undo").map((e) => e.ref));
+    const undone = () => new Set(all().filter((e) => e.kind === "undo").map((e) => e.ref));
 
     const undo = async (ref: string) => {
         setBusy(true);
@@ -1510,6 +1517,12 @@ export function CompactHistoryPanel(props: { uri: string; onClose: () => void })
                         </table>
                     </Show>
                 </div>
+                {/* ##431：限读尾部 ⇒ 更早的记录确实没读。必须显式说出来（不许静默截断）。 */}
+                <Show when={page()?.truncated}>
+                    <div class="px-4 py-1.5 text-caption opacity-60 border-t">
+                        ⓘ 更早的压缩记录未加载（审计日志，可清理）—— 下面列的是最近 200 条
+                    </div>
+                </Show>
             </div>
         </div>
     );

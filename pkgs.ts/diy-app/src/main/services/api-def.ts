@@ -1443,11 +1443,22 @@ export const apiDef = RpcSchema.router({
                  * 「那一刻用的是哪套 plan」）。【用户 2026-10-07】取代 generations（连续分代不适合预算的分散保留）。
                  */
                 events: RpcSchema.unary({
-                  desc: `读取压缩事件账（历史页快照列表：时间/算法/过滤器/前后规模/方式·理由）`,
+                  desc: `读取压缩事件账（历史页快照列表：时间/算法/过滤器/前后规模/方式·理由）。
+**限读尾部**（最近 200 条 / 256 KB，##431）：回包 = { events, truncated, size, from }，
+truncated=true 表示更早的记录未加载（界面必须显式标出来，不许静默截断）`,
                   input: {
                     taskUri: z.string().cliArg({ desc: "任务 URI" }),
                   },
-                  output: z.array(z.any()),
+                  output: z.object({
+                    /** 账本事件（按文件顺序；截断时只含尾部窗口内那些） */
+                    events: z.array(z.any()),
+                    /** 更早的记录未加载（界面必须显式标出，不许静默截断） */
+                    truncated: z.boolean(),
+                    /** 账本总字节数（限读不改变「它有多大」这个事实） */
+                    size: z.number(),
+                    /** 本次返回的窗口起点（字节偏移；truncated=true 时 >0） */
+                    from: z.number(),
+                  }),
                 }),
                 /**
                  * 生成历史摘要（压缩承接）：对**将被丢弃的轮**做一次结构化抽取（一次模型调用，花钱）。
