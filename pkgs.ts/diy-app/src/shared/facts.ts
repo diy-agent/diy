@@ -113,7 +113,7 @@ export const FactsStatusSchema = z.object({
 });
 
 export const FactsGetSchema = z.object({
-    /** 是否找到（找不到**不是**错误：`diy facts get` 就是拿来试探有没有这条的） */
+    /** 是否找到（找不到**不是 RPC 错误**：CLI 侧以退出码 1 表达，见下方 `factsGetExitCode`） */
     resolved: z.array(
         z.object({
             claim: z.string(),
@@ -124,6 +124,27 @@ export const FactsGetSchema = z.object({
     /** 每个 claim 的裁决理由（选了哪条 / 为什么没选） */
     notes: z.array(z.string()),
 });
+
+/**
+ * `diy facts get` 的退出码判据（CLI 输出层用，见 CliConfig.exitCodeOf）。
+ *
+ * 分界（别扩大）：**按名取实体**查不到 ⇒ 1（同 `grep` 无匹配 / `cat` 缺文件）；
+ * `find` / `brief` / `status` 这类搜索 / 列举**不实现此判据** —— 空结果是正常结果，退出码 0。
+ *
+ * 只看 `resolved` 是否**全空**：多 claim 查询里「部分命中」是合法用法（命中就给了值），
+ * 抛错或判失败都会毁掉它。返回体照旧给 `resolved: []` + `notes`，人要先看见原因再拿退出码。
+ */
+export function factsGetExitCode({
+    rpcName,
+    result,
+}: {
+    rpcName: string;
+    result: unknown;
+}): number | undefined {
+    if (rpcName !== 'diy.facts.get') return undefined;
+    const resolved = (result as { resolved?: unknown } | null | undefined)?.resolved;
+    return Array.isArray(resolved) && resolved.length === 0 ? 1 : undefined;
+}
 
 /**
  * 目录级摘要（`diy facts brief <subject>`）：一个 subject 的全部 aspect + 值首句。

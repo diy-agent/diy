@@ -191,6 +191,17 @@ export interface CliConfig<TRouter extends _Router | _AnyProcedureMeta> {
    */
   cwd?: string;
   /**
+   * 结果决定退出码（"按名取实体"类命令用：查不到 ≠ 成功）。
+   *
+   * 为什么不在命令实现里 `process.exit`：handler 跑在 app 进程（CLI 只是 RPC 客户端），
+   * 且 `/cli` 端点也复用同一个 CliApp —— 退出语义必须留在**输出层**一处。
+   *
+   * 契约：**结果打印之后**调用；返回 `undefined` = 不介入（退出码 0），非 0 走 `exit` 钩子
+   * （与错误路径同一条收尾：先 flush 两条流再退）。搜索 / 列举类命令**不要**实现它 ——
+   * 空结果是正常结果。
+   */
+  exitCodeOf?: (args: { rpcName: string; result: unknown }) => number | undefined;
+  /**
    * 输出/退出注入（server 内嵌 CLI / 端点用，见 diy-app rpc-port.ts 的 /cli）：
    * 缺省 = console.log / console.error / process.exit —— 直连 CLI 行为不变。
    *
@@ -349,6 +360,12 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
     // proc.path 会丢失 "diy." 前缀，与 binding 注册的全名不匹配，故路由一律用 def.name。
     const rpcName = def.name ?? proc.path;
 
+    /**
+     * 结果派生的退出码：在 try **之外**退出。
+     * 若在 try 里调 `_exit`，注入的 exit 钩子抛出的哨兵会被下面的 `catch` 当成运行错误，
+     * 再多打一行 `Error: cli exit N`（实测）。故只在这里记下，try/catch 结束后再走 exit 钩子。
+     */
+    let resultExitCode: number | undefined;
     try {
       const { input, helpRequested } = parseArgv(def, remaining, { cwd: this.config.cwd });
 
@@ -414,6 +431,9 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
               : String(result);
           this._print(output);
         }
+        // 按名取实体查不到 ⇒ 非零退出（`get X && ...` 不许对不存在的东西说通过）。
+        // 在**打印之后**判：人要能看见 `resolved: []` 与 notes 再拿退出码。
+        resultExitCode = this.config.exitCodeOf?.({ rpcName, result });
       }
     } catch (err: unknown) {
       if (err instanceof CliParseError) {
@@ -428,6 +448,9 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
       );
       this._exit(1);
     }
+
+    // 结果派生的非零退出（放在 try 外：见上方 resultExitCode 注释）
+    if (resultExitCode !== undefined && resultExitCode !== 0) this._exit(resultExitCode);
   }
 
   /** 单个命令帮助：叶子命令显示参数 help；父命令显示自身 desc + 子命令列表 */
