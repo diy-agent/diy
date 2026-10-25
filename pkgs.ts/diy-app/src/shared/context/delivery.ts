@@ -42,36 +42,67 @@ export interface PlaceCandidate {
     changelog?: false;
 }
 
-/** 任务头字段的投递理由（逐键必填：清单在 shared/task-head.ts 的 TASK_HEAD_FIELDS） */
-const TASK_HEAD_REASONS: Record<TaskHeadField, string> = {
-    title: "任务标题：偶尔改一次",
-    state: "任务状态：偶尔改一次",
-    parent: "父任务 URI：只在 move 时变",
-    created: "创建时间：不变",
-    updated: "最后编辑时间：编辑时变（与 title 同频）",
-    change_type: "变更性质：偶尔改一次",
-    module: "模块：偶尔改一次",
-    priority: "优先级：偶尔改一次",
-    persona: "绑定的人物：绑定时变（空 = 跟随缺省）",
+/**
+ * 任务头字段的投递划分（逐键必填：清单在 shared/task-head.ts 的 TASK_HEAD_FIELDS）。
+ *
+ * 判据（##426）：**只有「任务存续期内不变 + 值得缓存」的才进 system**。
+ * 任务头大部分字段是**编辑就变**（title / state / updated / change_type / module / priority / persona）——
+ * 放 system 等于每改一次任务就砸一次前缀缓存，整段 system 重算（实测 cacheHit 98% → 0、单步成本 ×12）。
+ * 它们体量很小，放 runtime 的代价远低于收益（runtime 每轮全量重发，几行字而已）。
+ */
+const TASK_HEAD_DELIVERY: Record<TaskHeadField, { system: boolean; reason: string }> = {
+    title: { system: false, reason: "任务标题：改一次任务就变 → runtime（进 system 会砸前缀缓存）" },
+    state: {
+        system: false,
+        reason: "任务状态：每轮都可能变（pending→in_progress→done），头号缓存杀手 → runtime",
+    },
+    parent: { system: true, reason: "父任务 URI：只在 move 时变（任务存续期内基本不变）→ system" },
+    created: { system: true, reason: "创建时间：整个存续期不变 → system（可缓存）" },
+    updated: {
+        system: false,
+        reason: "最后编辑时间：任何一次编辑都刷新（与 state 同频，是第二大头号缓存杀手）→ runtime",
+    },
+    change_type: { system: false, reason: "变更性质：编辑任务时会变 → runtime" },
+    module: { system: false, reason: "模块：编辑任务时会变 → runtime" },
+    priority: { system: false, reason: "优先级：调整时会变 → runtime" },
+    persona: { system: false, reason: "绑定的人物：绑定时变（空 = 跟随缺省）→ runtime" },
 };
+
+/** 任务头字段的投递理由（页面「划分规则」表用；逐键必填） */
+const TASK_HEAD_REASONS: Record<TaskHeadField, string> = Object.fromEntries(
+    TASK_HEAD_FIELDS.map((f) => [f.key, TASK_HEAD_DELIVERY[f.key].reason]),
+) as Record<TaskHeadField, string>;
 
 /**
  * 候选投递单元 = 顶层字段 + 少数需要单独拆开的子字段。
  *
- * 为什么顶层之外还要拆：`task` 下面 `title/uri/state/dir` 在任务存续期内基本不变，
- * 而 `body` 每次编辑任务就变 —— 按第一层粗暴划分会把这两类塞进同一份，
- * 要么浪费 system 缓存，要么让易变内容污染 system。规则表的意义正在这里。
+ * 为什么顶层之外还要拆：`task` 下面 `uri/dir/created/parent` 在任务存续期内不变，
+ * 而 `state/updated/title/body` 每改一次任务就变 —— 按第一层粗暴划分会把这两类塞进同一份，
+ * 要么浪费 system 缓存，要么让易变内容污染 system。规则表的意义正在这里（##426）。
  */
 export const PLACE_CANDIDATES: PlaceCandidate[] = [
     { path: "diy", system: true, reason: "进程身份（CLI / 数据根）：整个会话不变" },
     { path: "project", system: true, reason: "项目路径：只在切项目时变" },
-    { path: "cwd", system: true, reason: "工作目录：任务存续期内固定" },
+    // ##426：**默认最小 system 名单** —— 只有「绝对有信心不变 + 值得缓存」的才留 system，
+    // 其余一律回 runtime。用户口径（2026-10-25）：「理论上除了绝对有信心的一些字段外，
+    // 其他默认应该把所有变量都放到 run，只有觉得统计上需要放到 sys 的才回放到 sys」。
+    // 依据：system 每轮全量重建，任何一点变化 ⇒ 前缀缓存整段失效（实测生产 2 轮间 system 逐字节
+    // 相同却因名单含易变字段而 cacheHit 0 → 单步成本 ×12）。
+    {
+        path: "cwd",
+        system: false,
+        reason: "工作目录整段含 note/isFallback/isTaskDir/isAppDir —— 回退与目录判定会变、会砸缓存；体量小，放 runtime 代价低于收益",
+    },
     { path: "chain", system: true, reason: "AGENTS.md 链：只在目录/文件改动时变" },
     // 任务头（frontmatter）字段（##322：**读侧显式给头**，确认任务/取父级不必去 cat 文件）。
-    // 它们就是文件头的同一份（不是副本），随文件走；容量都很小，与 title 同频（编辑就变）。
+    // 它们就是文件头的同一份（不是副本），随文件走。**只有存续期不变的才进 system**（见 TASK_HEAD_DELIVERY）。
     // **名单不在此手抄**：path 从 TASK_HEAD_FIELDS 派生（##322 review R3），reason 必须逐键齐全
-    // （Record<TaskHeadField,string> ⇒ 新增头字段漏写 reason 直接编译失败，这就是要的效果）。
-    ...TASK_HEAD_FIELDS.map((f) => ({ path: `task.${f.key}`, system: true, reason: TASK_HEAD_REASONS[f.key] })),
+    // （Record<TaskHeadField,string> ⇒ 新增头字段漏写理由直接编译失败，这就是要的效果）。
+    ...TASK_HEAD_FIELDS.map((f) => ({
+        path: `task.${f.key}`,
+        system: TASK_HEAD_DELIVERY[f.key].system,
+        reason: TASK_HEAD_REASONS[f.key],
+    })),
     { path: "task.uri", system: true, reason: "任务 URI：不变" },
     { path: "task.dir", system: true, reason: "任务目录：不变" },
     // ── 模版节（identity / rules / guard，值是模版渲染结果；见 prompt-registry 的 DELIVERED_SECTIONS）──
@@ -86,7 +117,11 @@ export const PLACE_CANDIDATES: PlaceCandidate[] = [
     // 用户 2026-10-15：上下文树主要是**给模型定位信息**用的 —— 关键位置（我这个任务真发的请求
     // 落到哪个文件、怎么找）给不出来，模型就无法自查"我上一步到底发出去了什么"。
     // 值只有 `file`（纯数据）；路径规则/定位命令在 `.describe()` → 信封的 `help.reqlog`。
-    { path: "reqlog", system: true, reason: "真发请求的流量日志在哪：稳定（仅文件名按天变）→ 可缓存" },
+    {
+        path: "reqlog",
+        system: false,
+        reason: "真发请求的流量日志在哪：**文件名按天变** —— 跨天就砸一次前缀缓存；且只是定位信息、本就不常查 → runtime",
+    },
     { path: "task.body", system: false, reason: "任务正文：每次编辑正文就变 → 放 runtime，不污染 system 缓存" },
     { path: "skills", system: false, reason: "技能清单：安装/升级技能就变" },
     // 房间上下文（##377 第 26 刀）：**两个原子单元，别合成一个** —— runtime 增量按 place 逐条比

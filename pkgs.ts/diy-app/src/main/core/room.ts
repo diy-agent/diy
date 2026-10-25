@@ -15,9 +15,11 @@
 // ⚠️ 不写 `state.yaml`：那是运行中的应用独占写入的核心状态（data.state 约定），外部写它
 //    等于与运行中的 app 抢同一份文件（与 flow-store 同一条理由）。
 
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { writeFileAtomic } from "./atomic-write";
+import { readTailLines } from "./tail-lines";
 import * as yaml from "js-yaml";
 import { diyHome } from "./state";
 import {
@@ -225,7 +227,8 @@ export async function markRead(roomId: string, eventId?: string): Promise<boolea
     if (humans.length === 0) return Promise.resolve(false);
     let target = eventId;
     if (!target) {
-        const { events } = readEvents(roomId);
+        // 只要最后一条 ⇒ 倒读 1 行（别为取一个 id 把整条事件流读一遍，##427）
+        const { events } = await readEvents(roomId, { limit: 1 });
         target = events[events.length - 1]?.id;
     }
     if (!target) return Promise.resolve(false);
@@ -248,21 +251,74 @@ export function roomDeliveriesPath(id: string): string {
  *
  * 为什么单开一个文件而不是改写 events.jsonl：**事件本体一次写定、永不改**（审计要的是"当时说了什么"），
  * 投递状态是**后到的、会变的**（排队中 → 投递中 → 已投递）。两者生命周期不同，混一个文件就得改写历史。
+ *
+ * **异步**（`rule.tool.async-io`）：主进程是单线程事件循环，`appendFileSync` 会把渲染 / RPC /
+ * 流式输出一起按停（##427）。
  */
-export function appendDelivery(roomId: string, rec: DeliveryState & { eventId: string }): void {
-    mkdirSync(roomDir(roomId), { recursive: true });
-    appendFileSync(roomDeliveriesPath(roomId), `${JSON.stringify(rec)}\n`, "utf8");
+export async function appendDelivery(roomId: string, rec: DeliveryState & { eventId: string }): Promise<void> {
+    await mkdir(roomDir(roomId), { recursive: true });
+    await appendFile(roomDeliveriesPath(roomId), `${JSON.stringify(rec)}\n`, "utf8");
 }
 
-/** 读投递状态：fold 成 `eventId → memberId → 最新状态`（坏行跳过并计数） */
-export function readDeliveries(roomId: string): { byEvent: Map<string, Map<string, DeliveryState>>; bad: number } {
+/**
+ * 读盘计数（测试 / 验证用，生产无副作用）：
+ *   · `eventsFiles` / `deliveriesFiles` —— 真读了几次盘（证「同一 roomId 在一次刷新窗口里只读一次」）
+ *   · `eventsTailBytes` —— 事件流倒读时**实际读了多少字节**（证「limit 真的没读全文」）
+ */
+const readStats = { eventsFiles: 0, deliveriesFiles: 0, eventsTailBytes: 0 };
+export function roomReadStats(): { eventsFiles: number; deliveriesFiles: number; eventsTailBytes: number } {
+    return { ...readStats };
+}
+export function resetRoomReadStats(): void {
+    readStats.eventsFiles = 0;
+    readStats.deliveriesFiles = 0;
+    readStats.eventsTailBytes = 0;
+}
+
+/** 从一行 jsonl 里**不解析**地抠出 `eventId`（预筛用：不属于返回窗口的行不进 `JSON.parse`） */
+function eventIdOfLine(line: string): string | null {
+    const key = '"eventId":"';
+    const at = line.indexOf(key);
+    if (at < 0) return null;
+    const from = at + key.length;
+    const end = line.indexOf('"', from);
+    return end < 0 ? null : line.slice(from, end);
+}
+
+/**
+ * 读投递状态：fold 成 `eventId → memberId → 最新状态`（坏行跳过并计数）。
+ *
+ * `eventIds` = **只要这些事件的投递状态**（`readRoomView` 的返回窗口）：给了它就先用
+ * `eventIdOfLine` 做字符串预筛，窗口外的行**不解析**（成本从「整份解析」降到「整份扫行」，##427）。
+ * 完整 fold 仍需要整份扫（同一 (eventId, memberId) 可能有多次状态变更，最新的一份才算数），
+ * 这里只省解析、不省正确性。
+ *
+ * 坏行计数口径：给了 `eventIds` 时无法判定归属的坏行（连 `eventId` 都抠不出来的）
+ * **不计入** `bad` —— 它们既可能属于窗口内也可能属于窗口外，报哪个都是猜。
+ */
+export async function readDeliveries(
+    roomId: string,
+    opts: { eventIds?: ReadonlySet<string> } = {},
+): Promise<{ byEvent: Map<string, Map<string, DeliveryState>>; bad: number }> {
     const f = roomDeliveriesPath(roomId);
     const byEvent = new Map<string, Map<string, DeliveryState>>();
-    if (!existsSync(f)) return { byEvent, bad: 0 };
+    let text: string;
+    try {
+        text = await readFile(f, "utf8");
+    } catch (e) {
+        if ((e as NodeJS.ErrnoException)?.code === "ENOENT") return { byEvent, bad: 0 };
+        throw e;
+    }
+    readStats.deliveriesFiles++;
     let bad = 0;
-    for (const line of readFileSync(f, "utf8").split("\n")) {
+    for (const line of text.split("\n")) {
         const t = line.trim();
         if (!t) continue;
+        const want = opts.eventIds;
+        if (want) {
+            const eid = eventIdOfLine(t);
+            if (!eid || !want.has(eid)) continue;
+        }
         let raw: unknown;
         try {
             raw = JSON.parse(t);
@@ -283,19 +339,29 @@ export function readDeliveries(roomId: string): { byEvent: Map<string, Map<strin
     return { byEvent, bad };
 }
 
+/** 房间视图（`readRoomView` 的返回值；也是 `readRoomViewCached` 的缓存单元） */
+export interface RoomView {
+    room: Room | null;
+    events: RoomEvent[];
+    bad: number;
+}
+
 /**
  * 读一个房间的**视图** = 成员表 + 事件流（已附上投递状态 + `delivered` 真值）。
  *
  * `delivered` 为什么要在读侧重算：落盘那一刻还没有投递结果（事件先落盘再 yield 的铁律），
  * 盘上那份恒为 false；真值只有把 deliveries fold 上来才知道。
+ *
+ * `opts.limit`（> 0）= **只要最后 N 条** —— 事件流用倒读（`readEvents`），投递状态用
+ * `eventIds` 预筛（`readDeliveries`），两条路径都不再读全文（##427）。
  */
-export function readRoomView(
-    roomId: string,
-    opts: { limit?: number } = {},
-): { room: Room | null; events: RoomEvent[]; bad: number } {
+export async function readRoomView(roomId: string, opts: { limit?: number } = {}): Promise<RoomView> {
     const room = readRoom(roomId);
-    const { events, bad } = readEvents(roomId, opts);
-    const { byEvent, bad: badD } = readDeliveries(roomId);
+    const { events, bad } = await readEvents(roomId, opts);
+    const { byEvent, bad: badD } = await readDeliveries(
+        roomId,
+        events.length > 0 ? { eventIds: new Set(events.map((e) => e.id)) } : {},
+    );
     // replyId → 状态：**回复事件**也要能查到"这一轮是谁投的、轮次 id 是什么"（UI 显示轮次用）
     const byReply = new Map<string, DeliveryState>();
     for (const inner of byEvent.values()) {
@@ -320,23 +386,17 @@ export function readRoomView(
     return { room, events: folded, bad: bad + badD };
 }
 
-/** 追加一条事件（append-only；**不重写**整份 —— 事件流只增不改） */
-export function appendEvent(roomId: string, ev: RoomEvent): void {
-    mkdirSync(roomDir(roomId), { recursive: true });
+/** 追加一条事件（append-only；**不重写**整份 —— 事件流只增不改）。异步 IO，理由同 `appendDelivery` */
+export async function appendEvent(roomId: string, ev: RoomEvent): Promise<void> {
+    await mkdir(roomDir(roomId), { recursive: true });
     // channel **落盘**（##166 §28.K 待拍 17）：`?? DEFAULT_CHANNEL_ID` 只是兜底 ——
     // 调用方（room-service）一律显式给值；这里防的是"将来多一个写入口忘了带"静默落个 undefined。
     const rec = { ...ev, channel: ev.channel ?? DEFAULT_CHANNEL_ID };
-    appendFileSync(roomEventsPath(roomId), `${JSON.stringify(rec)}\n`, "utf8");
+    await appendFile(roomEventsPath(roomId), `${JSON.stringify(rec)}\n`, "utf8");
 }
 
-/**
- * 读事件流。坏行**跳过并计数**（不静默：坏行数由调用方上报）——
- * 一次半截写入不该让整个房间打不开。
- */
-export function readEvents(roomId: string, opts: { limit?: number } = {}): { events: RoomEvent[]; bad: number } {
-    const f = roomEventsPath(roomId);
-    if (!existsSync(f)) return { events: [], bad: 0 };
-    const lines = readFileSync(f, "utf8").split("\n");
+/** 逐行解析成事件（坏行**跳过并计数** —— 不静默、也不让一行坏数据炸掉整条流） */
+function parseEventLines(lines: readonly string[]): { events: RoomEvent[]; bad: number } {
     const events: RoomEvent[] = [];
     let bad = 0;
     for (const line of lines) {
@@ -356,10 +416,47 @@ export function readEvents(roomId: string, opts: { limit?: number } = {}): { eve
         }
         events.push(parsed.data);
     }
-    if (opts.limit && opts.limit > 0 && events.length > opts.limit) {
-        return { events: events.slice(events.length - opts.limit), bad };
-    }
     return { events, bad };
+}
+
+/**
+ * 读事件流。`limit > 0` = **只读最后 N 行**（从文件尾倒读，`tail-lines.readTailLines`）——
+ * 这是本文件的核心成本（##427）：append-only 流只会越来越长，而轮询要的永远是尾巴。
+ *
+ * 两条口径：
+ *   · 坏行**跳过并计数**（不静默：坏行数由调用方上报）；一次半截写入不该让整个房间打不开。
+ *   · **`limit` 模式下 `bad` 只数读到的这个窗口**（窗口外的坏行压根没进内存）—— 要全量计数
+ *     就不传 `limit`。
+ */
+export async function readEvents(roomId: string, opts: { limit?: number } = {}): Promise<{ events: RoomEvent[]; bad: number }> {
+    const f = roomEventsPath(roomId);
+    const limit = opts.limit && opts.limit > 0 ? Math.floor(opts.limit) : 0;
+    if (limit > 0) {
+        // 窗口按**行**倒读；窗口里混了坏行 ⇒ 名额被挤掉，向尾部再宽一档重读（至多 2 次翻倍）。
+        // 判据（任务 body）：「坏行只影响自身，其余 N-1 条正常返回」—— 所以不能因为夹了一条坏行
+        // 就只给 N-2 条。重读只在真有坏行时发生（正常房间零额外成本）。
+        let window = limit;
+        for (let attempt = 0; ; attempt++) {
+            const { lines, bytesRead, atStart } = await readTailLines(f, window);
+            if (lines.length === 0) return { events: [], bad: 0 };
+            readStats.eventsFiles++;
+            readStats.eventsTailBytes += bytesRead;
+            const parsed = parseEventLines(lines);
+            const tail = parsed.events.length > limit ? { events: parsed.events.slice(parsed.events.length - limit), bad: parsed.bad } : parsed;
+            const enough = tail.events.length >= limit || atStart || attempt >= 2;
+            if (parsed.bad === 0 || enough) return tail;
+            window *= 2;
+        }
+    }
+    let text: string;
+    try {
+        text = await readFile(f, "utf8");
+    } catch (e) {
+        if ((e as NodeJS.ErrnoException)?.code === "ENOENT") return { events: [], bad: 0 };
+        throw e;
+    }
+    readStats.eventsFiles++;
+    return parseEventLines(text.split("\n"));
 }
 
 /**

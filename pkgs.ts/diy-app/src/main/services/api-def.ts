@@ -822,6 +822,49 @@ export const apiDef = RpcSchema.router({
                 output: z.object({ cancelled: z.boolean() }),
               }),
               /**
+               * **发送前门禁**（##426 B）：这一条用户消息有多长、要花多少钱、窗口占多少。
+               *
+               * 为什么放在 main：token 估算 / 单价快照 / 窗口占用三件事的真源都在主进程
+               * （`shared/context/input-limit.ts` 纯算术 + `usage.jsonl` 最后一步实测 + 模型价目），
+               * 渲染层各算一份必然与账本对不上（"UI 说 $0.03、账本写 $0.0303"那种不可信的数）。
+               *
+               * 判据只看**本条消息**：`over=false` 时 UI 必须零变化（不弹、不闪、不改文案）。
+               */
+              inputGate: RpcSchema.unary({
+                desc: `量一条待发用户消息：字符数 / 估算 token / 成本增量 / 窗口占用（超阈值 → UI 弹门禁框）`,
+                input: {
+                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                  text: z.string().cliArg({ desc: "待发消息原文（只量不发）" }),
+                },
+                output: z.object({
+                  over: z.boolean().describe("超过 inputLimitChars（唯一判据）"),
+                  chars: z.number().describe("字符数（code point 口径）"),
+                  bytes: z.number().describe("UTF-8 字节数"),
+                  estTokens: z.number().describe("粗略 token（字节 / 4，与全仓同口径）"),
+                  limitChars: z.number().describe("当前阈值（$DIY_HOME/context.yaml 的 inputLimitChars）"),
+                  costIncrement: z.number().nullable().describe("预计成本增量（$）；无价目 = null，不画 0"),
+                  windowTokens: z.number().nullable().describe("当前窗口占用（最后一步总输入+总输出）"),
+                  contextLimitTokens: z.number().nullable().describe("模型上下文窗口；未知 = null"),
+                  windowRatio: z.number().nullable().describe("加上本条后的窗口占用率（0~1+）；窗口未知 = null"),
+                }),
+              }),
+              /**
+               * **转文件发送**（##426 B 的「转文件」动作）：把超长内容落
+               * `$DIY_HOME/<taskUri>/gen/paste/<ts>.txt`，返回消息体（路径 + 前 20 行 + 总行数/字节数）。
+               * 只落文件、不发送 —— 发送仍由调用方走原通道（这样"转文件"与"真发"各自可测）。
+               */
+              pasteToFile: RpcSchema.unary({
+                desc: `把超长消息正文存成任务目录下的文件，返回可发送的消息体（路径 + 前 20 行 + 总行数/字节数）`,
+                input: {
+                  taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                  text: z.string().cliArg({ desc: "要转存的消息原文" }),
+                },
+                output: z.object({
+                  path: z.string().describe("落盘路径（绝对路径）"),
+                  message: z.string().describe("替换原消息的文字（路径 + 前 20 行 + 总行数/字节数）"),
+                }),
+              }),
+              /**
                * 运行态真值查询：renderer 的私有 `running` 只表示"我这轮在等自己的流"，
                * 回答不了「别人（CLI/另一窗口）是否正在这个任务上跑」。
                * 真相在**会话注册表**里（`session-registry` 的 `turn != null` 条目；`runtime-context.activeTurnList`
@@ -910,6 +953,19 @@ export const apiDef = RpcSchema.router({
                   hasMore: z.boolean(),
                   /** 游标失效 ⇒ 本次是退化全量（渲染端必须重置现有段，不能当前缀拼） */
                   stale: z.boolean(),
+                  /**
+                   * 降级重建标记（##424 刀 2）：有它 = `ops` 不是 ops 原文，而是 `turns.jsonl`
+                   * 折成的**只读文本历史**。渲染端必须挂横幅 + 行内标「原始记录已清理」，
+                   * 不许把它们当正常明细渲染。缺省 undefined = 正常路径（零成本）。
+                   */
+                  degraded: z
+                    .object({
+                      cause: z.enum(["missing", "empty", "schema-break", "truncated"]),
+                      note: z.string().describe("人话原因（横幅「历史明细不可用（<note>）」）"),
+                      turns: z.number().describe("重建出来的轮数"),
+                      dangling: z.number().describe("其中锚点已悬空的轮数（行内「原始记录已清理」）"),
+                    })
+                    .optional(),
                 }),
               }),
               /** 更早的一段（滚动上取）：`cursor` 所在段之前的 `budgetBytes` 字节 */
@@ -1767,14 +1823,19 @@ export const apiDef = RpcSchema.router({
               systemPlaces: z.array(z.string()).describe("当前生效的 system 单元（其余自动 runtime）"),
               defaults: z.array(z.string()).describe("推荐名单（文件缺失/清空时用它）"),
               fromFile: z.boolean().describe("是否来自 context.yaml（false = 用推荐名单）"),
+              inputLimitChars: z.number().describe("用户单条消息的字符上限（##426 B）"),
             }),
           }),
           setConfig: RpcSchema.unary({
             desc: `写划分规则（非法路径或互为祖先/后代一律拒绝；下一轮真发生效）`,
             input: {
               systemPlaces: z.array(z.string()).cliOption({ desc: "进 system 的单元（JSON 数组）" }),
+              inputLimitChars: z.number().optional().cliOption({ desc: "用户单条消息的字符上限（##426 B）" }),
             },
-            output: z.object({ systemPlaces: z.array(z.string()) }),
+            output: z.object({
+              systemPlaces: z.array(z.string()),
+              inputLimitChars: z.number().nullable().describe("当前输入上限（本次没改 = 原值）"),
+            }),
           }),
           candidates: RpcSchema.unary({
             desc: `列出候选投递单元与默认 system 名单`,

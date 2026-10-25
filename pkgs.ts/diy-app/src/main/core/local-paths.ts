@@ -50,8 +50,14 @@ export function sessionIdOf(taskUri: string): string {
     return `local-${keyOf(taskUri)}`;
 }
 
-/** 会话子文件种类（**唯一清单**：双认 / 迁移 / clear 都按它走，别在各处再列一遍） */
-export const SESSION_KINDS = ["ops", "llm", "usage", "steps", "compact", "changelog", "raw"] as const;
+/**
+ * 会话子文件种类（**唯一清单**：双认 / 迁移 / clear 都按它走，别在各处再列一遍）
+ *
+ * `turns`（##424）：**每轮一条的结论账**（user 原文 + 该轮全部 assistant 正文 + 指回 ops 的
+ * 字节锚点）。它**不是**会话真源，而是 ops 断代 / 缺失时的**降级重建材料** ——
+ * 形状与读取见 `services/local-turns.ts` 的头注。放进本清单是为了让落位迁移与清空同样覆盖它。
+ */
+export const SESSION_KINDS = ["ops", "llm", "usage", "steps", "compact", "changelog", "raw", "turns"] as const;
 export type SessionKind = (typeof SESSION_KINDS)[number];
 
 /**
@@ -140,7 +146,9 @@ export function sessionFileCandidates(taskUri: string): { file: string; legacy: 
  * 必须两份都删：只删 `resolve` 命中的那一份，另一份会被读侧兜底重新认领 = 清空静默失效。
  * ⚠️ `changelog` **不在清单里**（它是跨会话审计时间线，见 local-agent clear 的注记）。
  */
-export const CLEARED_SESSION_KINDS = ["ops", "llm", "raw", "steps", "usage", "compact"] as const;
+// `turns` 必须一起删（##424）：清空对话后 ops 不存在 ⇒ 降级链会把「已经清掉的对话」
+// 从 turns 里重新翻出来，等于清空静默失效。
+export const CLEARED_SESSION_KINDS = ["ops", "llm", "raw", "steps", "usage", "compact", "turns"] as const;
 
 export function sessionFilesToClear(taskUri: string): string[] {
     const out: string[] = [];
@@ -162,6 +170,16 @@ export function opsFile(taskUri: string): string {
 /** 全量消息日志（append-only；每行 1 条消息，行号即消息序号 —— 压缩注记的行号口径） */
 export function llmFile(taskUri: string): string {
     return sessionFileForWrite(taskUri, "llm");
+}
+
+/**
+ * 每轮结论账（`turns.jsonl`，##424）：降级重建的唯一材料。
+ *
+ * ⚠️ 与 `opsFile` / `llmFile` 同一会话目录、同一 key；**旁路文件** —— 写失败不许冒到轮次
+ * （见 `services/local-turns.ts::appendTurnRecord` 的 try/catch）。
+ */
+export function turnsFile(taskUri: string): string {
+    return sessionFileForWrite(taskUri, "turns");
 }
 
 /** 会话日志的相对路径（相对 `$DIY_HOME`）——写进投递文本给模型/人照此回取 */

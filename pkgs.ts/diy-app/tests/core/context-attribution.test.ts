@@ -119,7 +119,8 @@ describe("unitsFromSystemPlaces：快照划分 → 单元 map", () => {
 
     it("默认名单 = PLACE_CANDIDATES 的推荐（与 defaultSystemPlaces 一致）", () => {
         const u = unitsFromSystemPlaces(DEF_SYS);
-        expect(u.get("task.title")).toBe("system");
+        expect(u.get("task.created")).toBe("system"); // 存续期内不变
+        expect(u.get("task.state")).toBe("runtime"); // ##426：头号缓存杀手
         expect(u.get("task.body")).toBe("runtime");
     });
 
