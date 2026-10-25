@@ -148,6 +148,16 @@ facts:
       source: probe
       probe: python3 /tmp/t5/probe2.py（统计 at 的两种形态分布 + 未钉版本的目标文件直方图）
       verifiedAt: '2026-10-24'
+  facts.rule#exit-code:
+    value: |-
+      按名取实体查不到 ⇒ **退出码非零**（同 `grep` 无匹配 / `cat` 缺文件）；搜索或列举空结果 ⇒ **0**（`find` 无命中是正常结果）。落点：`diy facts get` 的 `resolved` **全空** ⇒ 1（多 claim 部分命中照常 0）；返回体不变（`resolved: []` + `notes` 照给，人要先看见原因再拿退出码）。实现在 CLI 输出层 `CliConfig.exitCodeOf`（直连与 `/cli` 端点同一判据，`diy.sh` 的 http 模式经 `x-diy-exit` 透传）。
+    id: facts.rule-exit-code
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: './diy.sh facts get totally.bogus#nothing; echo EXIT=$?  # 期望 1'
+      verifiedAt: '2026-10-25'
   facts.rule#expose-cross-lib:
     value: |-
       expose 表的适用域必须**按库**判，不能按合并后的一张表：实测仓库 `knowledge/expose.yaml` 只声明了**一个** subject（当时是 `rule.agent: full`，现为 `where: full`），任务库（diy.facts 4 条 658 B，未声明 expose）的正文随即从 `runtime.facts` 消失（omitted 0，正文只剩 6 条）。**任务库缺 expose 应回落旧行为（全进正文），或按 ns 给缺省档：task=full / project·global=index** —— 任务自己的结论最该常驻，被上层库的配置静默吞掉是最坏的一种「省」。

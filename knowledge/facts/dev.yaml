@@ -59,6 +59,16 @@ facts:
       source: probe
       probe: 'git log --oneline -- knowledge/facts/entry.yaml | head -1  # at 锚被移动后越界'
       verifiedAt: '2026-10-22'
+  dev.context#expose-ceiling:
+    value: |-
+      `expose` 预算 4000 B 是**每轮常驻知识**的硬上限（超了 submit 拒写 `facts/expose-budget`）。按键 ≤12 token 折算 ≈ 54 B/条 ⇒ **装不下一条真实事实**（实测均值 220~400 B/条）⇒ `full` 只能给「写错就每轮教坏动作」的少数主题（现 2.4 KB / 13 条 `where`），其余一律 `index`。判据不是「库有多大」，是「省下的解析轮次 × 单轮成本」。
+    id: dev.context-expose-ceiling
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: './diy.sh facts status  # exposeBudget.used/limit + bySubject.bytes'
+      verifiedAt: '2026-10-25'
   dev.context#help-share:
     value: |-
       信封 help 7.4 KB 里 `system`(3.2) + `runtime`(2.2) 两节占 73%，全是 zod 派生的结构说明；`about` 固定话术已从 1689 B 压到 724 B（占 10%）。再砍只能动描述文本（`descMaxDepth`）
