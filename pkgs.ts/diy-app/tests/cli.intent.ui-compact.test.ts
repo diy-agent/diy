@@ -248,7 +248,7 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
 
   it("M3：参数区按 mode → modeData → toolResult → renderData 层次展示（归属可见）", async () => {
     const text = await a11yText();
-    for (const k of ["modeData", "budgetBytes", "toolResult", "render", "renderData", "summary"]) {
+    for (const k of ["modeData", "limitTokens", "toolResult", "render", "renderData", "summary"]) {
       expect(text).toContain(k);
     }
     // 层次结构的字段键（renderData 私有参数）在 DOM 里
@@ -292,7 +292,7 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
       (t) => t.includes("mode:") && t.includes("policy:"),
       { label: "原始 YAML 上屏" },
     );
-    expect(raw).toContain("budgetBytes");
+    expect(raw).toContain("limitTokens");
     expect(raw).toContain("toolResult");
     // 切回参数视图
     await ui.clickSelector('[aria-label="压缩配置视图"] button:nth-child(1)');
@@ -524,7 +524,8 @@ describe("M4：分表压缩点位", () => {
       { label: "压缩详情展开" },
     );
     expect(detail).toContain("budget");
-    expect(detail).toContain("3 KB");
+    // 旧事件没有边界上限字段（边界在 turns.jsonl）；已废弃的 budgetBytes 不再显示 KB
+    expect(detail).toContain("保留区间");
     expect(detail).toContain("保留区间");
     // 再点收起
     await ui.clickSelector('[aria-label="压缩点位"]');
@@ -566,7 +567,7 @@ describe("##339：分表投递徽标（配置驱动压缩的事实）", () => {
       [
         // 轮首步：投递被压过（丢 3 条、保留 1 段）+ 一条压缩事件命中的位置
         step("t3000", 1, {
-          historySelection: { budgetBytes: 3072, keptBytes: 800, keptRuns: 1, droppedMessages: 3, totalMessages: 5 },
+          historySelection: { limitTokens: 3072, keptBytes: 800, keptRuns: 1, droppedMessages: 3, totalMessages: 5 },
         }),
         // 同轮第二步：**不带**（配置驱动的重建点只在轮首）
         step("t3000", 2, {}),
@@ -607,11 +608,11 @@ describe("##339：分表投递徽标（配置驱动压缩的事实）", () => {
     expect(badge).not.toContain("全量");
     const tip = await ui.query<string>("document.querySelector('[data-delivery-compact]')?.getAttribute('title') ?? ''");
     expect(tip).toContain("历史裁剪");
-    expect(tip).toContain("3 KB");
+    expect(tip).toContain("3072 token");
     expect(tip).toContain("丢 3/5");
     expect(tip).toContain("保留 1 段");
-    // ③【关键】must 级不吃预算（「压完还超预算、于是每轮都在压」的根因）
-    expect(tip).toContain("预算只约束非 must 级");
+    // ③ `must` / 字节预算这些词已随 ##432 清理（唯一旋钮是 token 上限）
+    expect(tip).not.toContain("must");
     // ④ 三触发器 + 阈值（旧版 hover 只说预算多少）
     expect(tip).toContain("systemContextChanged");
     expect(tip).toContain("cacheExpired");
@@ -644,25 +645,11 @@ describe("压缩面板（##344 M2）：历史上限 + 候选预览 + 旧级列�
     }
     await ui.clickSelector('[data-drawer-tab="compact"]');
     await waitUntil(
-      () => ui.query<boolean>(`!!document.querySelector('[data-keep-stage]')`),
+      () => ui.query<boolean>(`!!document.querySelector('input[aria-label="历史上限token"]')`),
       (v) => v === true,
-      { label: "级列表上屏" },
+      { label: "压缩 tab 上屏" },
     );
   }
-
-  it("默认：旧 history.keep 仍**只读回显**成数据（steps + ladder），但已标废弃、无编辑控件", async () => {
-    await gotoCompactTab();
-    const text = await a11yText();
-    expect(text).toContain("装配管道");
-    expect(text).toContain("已废弃");
-    expect(await ui.query<number>(`document.querySelectorAll('[data-keep-stage]').length`)).toBe(2);
-    expect(await ui.query<string>(`document.querySelectorAll('[data-keep-stage]')[0].getAttribute('data-keep-type')`)).toBe("steps");
-    expect(await ui.query<string>(`document.querySelectorAll('[data-keep-stage]')[1].getAttribute('data-keep-type')`)).toBe("ladder");
-    // ##432：编辑控件整体退场（review 第 1 条）——「必保 / 裁法 / n / 类型」都不再是可点的东西
-    for (const sel of ["[data-keep-must]", "[data-keep-clip]", "[data-keep-type-select]", "[data-keep-n]"]) {
-      expect(await ui.query<boolean>(`!!document.querySelector('${sel}')`)).toBe(false);
-    }
-  });
 
   it("##423 块 2/3：「什么时候会压」讲清判据、范例预览左右对照、计数上屏", async () => {
     await gotoCompactTab();
@@ -690,44 +677,9 @@ describe("压缩面板（##344 M2）：历史上限 + 候选预览 + 旧级列�
     expect(text).toContain("压缩");
   });
 
-  it("装配管道（已废弃）：只读回显 + 无编辑入口（##432 review 第 1 条：不许并列第二个旋钮）", async () => {
-    await gotoCompactTab();
-    const text = await a11yText();
-    expect(text).toContain("已废弃");
-    expect(text).toContain("不决定投递");
-    // 旧 keep 仍回显成数据（「我配过什么」还查得到），但**没有任何编辑控件**
-    expect(await ui.query<number>(`document.querySelectorAll('[data-keep-stage]').length`)).toBe(2);
-    for (const sel of ["[data-keep-add]", "[data-keep-reset]", "[data-keep-must]", "[data-keep-clip]", "[data-keep-type-select]"]) {
-      expect(await ui.query<boolean>(`!!document.querySelector('${sel}')`)).toBe(false);
-    }
-    // 唯一旋钮在：历史上限（token）—— 不再是 KB 预算
-    expect(await ui.query<boolean>(`!!document.querySelector('input[aria-label="历史上限token"]')`)).toBe(true);
-    expect(await ui.query<boolean>(`!!document.querySelector('input[aria-label="压缩预算KB"]')`)).toBe(false);
-    // 「mode: off ≠ 不裁」必须在界面上说清楚（review 第 4 条）
-    expect(text).toContain("自动压缩 off");
-    expect(text).toContain("不会让历史全量发出去");
-  });
-
-  it("CLI compact plan set/get 往返（CLI 面仍在，UI 面已收口）", async () => {
-    // 非法 plan：写文件 → set 拒绝（exit≠0）且**配置一字不改**
-    const badPath = join(fx.HOME, "bad-keep.yaml");
-    writeFileSync(badPath, "- type: nope\n", "utf-8");
-    const before = autoYaml();
-    const bad = await fx.sh.run(`./diy.sh agent local compact plan set ${uri} ${badPath}`);
-    expect(bad.code).not.toBe(0);
-    expect(bad.stderr).toContain("未知取法");
-    expect(autoYaml()).toBe(before);
-
-    // 合法 plan：写文件 → set 通过 → get 读回（**往返一致**）
-    const goodPath = join(fx.HOME, "good-keep.yaml");
-    writeFileSync(goodPath, "keep:\n  - type: steps\n    must: true\n    clip: {type: full}\n    data: {n: 6}\n  - type: ladder\n", "utf-8");
-    const ok = await fx.sh.run(`./diy.sh agent local compact plan set ${uri} ${goodPath}`);
-    expect(ok.code).toBe(0);
-    const back = (await fx.sh.getJson(`./diy.sh agent local compact plan get ${uri}`)).data as { source: string; keep: Array<{ type: string }> };
-    expect(back.source).toBe("config");
-    expect(back.keep.map((x) => x.type)).toEqual(["steps", "ladder"]);
-    expect((await fx.sh.run(`./diy.sh agent local compact plan check ${uri}`)).code).toBe(0);
-    // 这份 keep **不决定投递**：配置里有它，历史仍只按 limitTokens 切（预览/投递不因它变）
-    expect(autoYaml()).toContain("keep:");
+  it("`compact plan` 子命令已删（##432 清理：装配计划面整体退场）", async () => {
+    const r = await fx.sh.run(`./diy.sh agent local compact plan get ${uri}`);
+    expect(r.code).not.toBe(0);
+    expect(`${r.stdout}${r.stderr}`).toMatch(/unknown command|未知|没有.*plan/i);
   });
 });

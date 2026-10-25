@@ -75,7 +75,7 @@ export function loadAutoCompactDetailed(home: string): AutoCompactLoadResult {
         issues.unshift(...autoCompactIssuesFromZod(parsed.error, config));
         console.warn(
             `[auto-compact] ${p} 结构不符（${parsed.error.issues.map((i) => i.path.join(".") || "（根）").join("，")}），` +
-                `已逐键回落缺省（详见「compact plan get」/ UI 的出声）`,
+                `已逐键回落缺省（详见 UI 压缩 tab 的出声）`,
         );
     }
     return { config, issues };

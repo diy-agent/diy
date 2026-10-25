@@ -1346,10 +1346,10 @@ export const apiDef = RpcSchema.router({
                 output: z.array(z.any()),
               }),
               /**
-               * 压缩（compact）命令族。**升为 group 的理由**（##344 M2）：规格要求
-               * `compact plan get|set|check`（`docs/plans/2026-10-08-compact-plan-config.md` §⑦.1），
-               * 而 RPC 树的不变量是「一个节点要么是组、要么是叶子」—— 只有 `compact` 成为 group，
-               * 才能容下 `plan` 子命令。旧平铺名随之归位：`compact` → `compact.run`、
+               * 压缩（compact）命令族。**升为 group 的理由**（##344 M2）：RPC 树的不变量是
+               * 「一个节点要么是组、要么是叶子」，命令族要能容下多个动作就得是 group。
+               * ##432 起装配计划子命令（`compact plan *`）已整体删除 —— 只留 run / preview / undo /
+               * events / summarize。旧平铺名随之归位：`compact` → `compact.run`、
                * `compactPreview` → `compact.preview`、`undoCompact` → `compact.undo`、
                * `compactEvents` → `compact.events`、`summarize` → `compact.summarize`。
                */

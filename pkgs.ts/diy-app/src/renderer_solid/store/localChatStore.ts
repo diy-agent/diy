@@ -1774,9 +1774,8 @@ async function autoCompactStatus(taskUri: string) {
 
 /**
  * 写自动压缩配置（真源 = $DIY_HOME/auto-compact.yaml；patch = 部分字段，主进程浅合并）。
- * ⚠️ 级列表（`history.keep[]`）也走这里（`{ history: { keep } }`）—— 读侧在 `autoCompactStatus`
- * 的 `config.history`；UI 写前用 shared 的 `validateKeepStages` **本地校验**（同一判据，不打空 RPC）。
- * 命令行那三条（`compact plan get|set|check`）是给 CLI/脚本用的，renderer 不绕那一圈。
+ * 唯一旋钮是 `history.limit.limitTokens`（+ `summary.enabled`）；##432 起级列表 / 写闸 / 字节预算
+ * 全部删除（`compact plan *` 子命令一并退场），此处只做「部分字段 → 主进程浅合并」的透传。
  */
 async function autoCompactSetConfig(patch: Record<string, unknown>, taskUri?: string) {
     // `taskUri` 只用于记账（哪个会话改的），不影响配置本身
