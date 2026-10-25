@@ -197,6 +197,16 @@ facts:
       source: user
       at: ~/AGENTS.md:25
       verifiedAt: '2026-10-22'
+  rule.err-triage#triage:
+    value: |-
+      **全局异常三档，唯一分类轴 = 是不是我们已识别的缺陷**：`defect` 我方缺陷（人为界定的判据触发）/ `external-recognized` 已识别外部（说得出「啥到上限了」）/ `external-unknown` 未识别外部（既不是缺陷、也归不进任何已识别类）。**任何「错误能到达用户 / 日志 / 提示」的出口一律过 `triageOf(err)`**，判据唯一真源 `pkgs.ts/diy-app/src/shared/error-triage.ts`（见包内 `find.err-triage`）。
+    id: agents.rule.err-triage
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:23
+      verifiedAt: '2026-10-25'
   rule.err-triage#unknown:
     value: |-
       未识别的外部只生成**本地草稿**：拿不到码就如实写「无法判定」，**不猜、不预设是 bug**；未知异常**永不自动上报**（正文可能含路径 / 日志片段，人确认后才出网），同类第二次经人裁定后升级为 defect / recognized（留痕在 `local/` 侧，刀 2）。
@@ -266,3 +276,53 @@ facts:
     evidence:
       source: user
       verifiedAt: '2026-10-21'
+  rule#deps:
+    value: |-
+      不加载第三方依赖目录的 AGENTS.md：`node_modules/`、`.venv/`、`vendor/` 等
+    id: agents.rule.deps
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:10
+      verifiedAt: '2026-10-25'
+  rule#lang:
+    value: |-
+      对话、文档、代码注释一律中文；对话精简、省 token
+    id: agents.rule.lang
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:7
+      verifiedAt: '2026-10-25'
+  rule#session-start:
+    value: |-
+      新会话先列：①已加载的上下文文件绝对路径 ②可用 skills 的绝对路径
+    id: agents.rule.session-start
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:9
+      verifiedAt: '2026-10-25'
+  rule#structured-exit:
+    value: |-
+      **agent 的结论一律走结构化出口（工具调用），永不解析正文文本**：正常轮 `tool_choice=auto` → 该收口却未调用则该轮**补射一次** `tool_choice={type:"function",function:{name:"<结论工具>"}}` → 仍拿不到 ⇒ **报错亮帧 + 提示换模型**，**绝不默认 pass、绝不退到正则兜底**（末行约定实测漏 20%~33%，且堵死载荷扩展）。载荷 `{…, ref:{node,seq}, data:{…}}` 可随需加字段（如每轮顺带更新核心事实，降任务 body 腐败）。代表：##311(工作流特性专项) ##359(微调通道)。
+    id: agents.rule.structured-exit
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:22
+      verifiedAt: '2026-10-25'
+  rule#verify:
+    value: |-
+      结果与猜测不符时，先查证再解释，不臆断
+    id: agents.rule.verify
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/AGENTS.md:8
+      verifiedAt: '2026-10-25'
