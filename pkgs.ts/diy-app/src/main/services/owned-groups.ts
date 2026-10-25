@@ -269,7 +269,7 @@ export class OwnedGroups {
      * 只丢"扫不到进程且已过宽限期"的组。**跨重启**那类误认领由 `applyLoaded` 的开机判据
      * 处理（旧条目根本进不来内存）；**同一次开机内**的组号复用这里不管 —— 组号就是 pid，
      * macOS 顺序分配、涨到上限才回绕，要撞上手头的号得先生成近十万个进程，代价远超收益。
-     * 真撞上时还有一道闸：`job.killPid` 调用前会重扫 `ps` 校验（见 `process-scan`）。
+     * 真撞上时还有一道闸：`job.killproc` 调用前会重扫 `ps` 校验（见 `process-scan`）。
      */
     retain(livePgids: ReadonlySet<number>, now: number): void {
         // 迭代中会 delete：先拍快照（Map 的迭代器允许边迭代边删，但在这里"先拍后删"更直白）

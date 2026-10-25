@@ -566,7 +566,7 @@ facts:
       verifiedAt: '2026-10-22'
   app.find#job-fence:
     value: |-
-      **「这条 run/进程归谁」的唯一判据**：`src/shared/job-fence.ts::fenceTaskOwner`（纯函数）。`job.kill` / `job.killPid` / `job.detach` 三条动手路径**都过它**：调用方必须声明 `taskUri`（CLI 是位置参数、**没有缺省**），且必须与该 run 的 `origin.taskUri` / 组名册的 `taskUri` 一致 —— 跨任务不代杀、归属不明的也不动（`agent/job-task-required|owner-unknown|foreign`）。理由：kill 是按**进程组**发的，认错一次带走整组无关进程。加新动手接口 = 先接这道闸，别再各写一份比较 · 坑见 `app.rule#job-spawn-listen`
+      **「这条 run/进程归谁」的唯一判据**：`src/shared/job-fence.ts::fenceTaskOwner`（纯函数）。`job.kill` / `job.killproc` / `job.detach` 三条动手路径**都过它**：调用方必须声明 `taskUri`（CLI 是位置参数、**没有缺省**），且必须与该 run 的 `origin.taskUri` / 组名册的 `taskUri` 一致 —— 跨任务不代杀、归属不明的也不动（`agent/job-task-required|owner-unknown|foreign`）。理由：kill 是按**进程组**发的，认错一次带走整组无关进程。加新动手接口 = 先接这道闸，别再各写一份比较 · 坑见 `app.rule#job-spawn-listen`
     review: accepted
     lifecycle: active
     evidence:
@@ -575,7 +575,7 @@ facts:
       verifiedAt: '2026-10-24'
   app.find#job-run:
     value: |-
-      **后台 run 管理与可见性（##408 v1）**：活体表 `src/main/services/run-registry.ts`（内存 Map，**只管 `background:true` 起的后台 run** —— 前台命令不登记、不落盘，用户 2026-10-24 定口径；run 的寿命按**进程组**算，组空才收口并唤醒 agent 一次，我们主动杀的不发唤醒）· 呈现口径 `src/shared/run-status.ts`（状态/时长/tail/唤醒文案，纯函数）+ `src/shared/run-view.ts`（表格字段 + `navTargetOf`：来源锚点三件齐全才可点）· 进程总管 `src/shared/proc-scan.ts`（按**进程组**认领孤儿，reparent 到 launchd 也认得出）+ `src/main/services/{process-scan,owned-groups}.ts` · 落盘 `$DIY_HOME/log/job/runs/<YYYY-MM-DD>/<id>/{meta.json,out.log}`（**运行产物**，留 7 天，不是执行账）· RPC 域 `job.*`（`ps` / `procs` / `killPid` / `kill` / `tail` / `meta`）· 面板 `renderer_solid/components/JobRunsPanel.tsx`（底栏 `task-run.bottom`；四 tab：概要/输出/API 数据/存储数据）
+      **后台 run 管理与可见性（##408 v1）**：活体表 `src/main/services/run-registry.ts`（内存 Map，**只管 `background:true` 起的后台 run** —— 前台命令不登记、不落盘，用户 2026-10-24 定口径；run 的寿命按**进程组**算，组空才收口并唤醒 agent 一次，我们主动杀的不发唤醒）· 呈现口径 `src/shared/run-status.ts`（状态/时长/tail/唤醒文案，纯函数）+ `src/shared/run-view.ts`（表格字段 + `navTargetOf`：来源锚点三件齐全才可点）· 进程总管 `src/shared/proc-scan.ts`（按**进程组**认领孤儿，reparent 到 launchd 也认得出）+ `src/main/services/{process-scan,owned-groups}.ts` · 落盘 `$DIY_HOME/log/job/runs/<YYYY-MM-DD>/<id>/{meta.json,out.log}`（**运行产物**，留 7 天，不是执行账）· RPC 域 `job.*`（`ps` / `procs` / `killproc` / `kill` / `tail` / `meta`）· 面板 `renderer_solid/components/JobRunsPanel.tsx`（底栏 `task-run.bottom`；四 tab：概要/输出/API 数据/存储数据）
     review: accepted
     lifecycle: active
     evidence:
@@ -1238,6 +1238,15 @@ facts:
       source: user
       at: 7c8b0e950398:pkgs.ts/diy-app/AGENTS.md:122
       verifiedAt: '2026-10-24'
+  app.rule#job-vocab:
+    value: |-
+      **job / run 词汇表（##408 刀 26 定案）**：`job` = 后台活儿的**总称**（域名：`diy job` / `job.*` / `log/job/`），**不是实体**；`run` = 唯一实体（`RunInfo` / `runId`，一次具体执行）；`origin` = 溯源（谁起的，判别联合），**不是分类轴**；`trigger` = origin 的一个 type，v2 做调度也只多一条带 `origin.type==="trigger"` 的 run，**不引入新实体**。**禁词**：`Supervisor` / `Worker` / `Child` / `Tree`（不引入 supervision —— OTP 的前提是 VM 不死，我们主进程一死全死）/ `service`（常驻容器成员 <2 不立词）/ `kind` 用作 run 分类（v1 `JobKind` 残留）。规矩：**定义层不叫 job** —— v2 若有定时定义，另起域名（如 `diy sched`），`diy job` 继续只指后台 run；`job` 下**不许挂实体集合接口**（`job.ls` / `job.get <id>` 这类），否则 v2 一到就撞。
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ed3aab82:pkgs.ts/diy-app/src/main/services/run-registry.ts:1
+      verifiedAt: '2026-10-25'
   app.rule#log-vs-config:
     value: |-
       **落盘日志**（会话目录 `local/<uri 路径>/<key>/*.jsonl`；旧平铺 `<key>.*.jsonl` 读侧兜底）读侧宽松（初版紧凑/扩展松散/缺必填即**异常数据**，见 `log-schema.ts`）；**配置真源**（`context.yaml` / `auto-compact.yaml`）读侧出声回落默认、写侧归一 + 原子写，且**不进 localStorage**（有损 + 两进程各持一份）
@@ -1400,14 +1409,14 @@ facts:
       verifiedAt: '2026-10-22'
   app.rule#wire-envelope:
     value: |-
-      投给模型的**一条消息 = 一份 YAML 信封**：一切**自动生成** / 机器携带的段（`summary:` / `history:` / `from:` / `runtime:` / `runtimeDiff:`）**各占一个顶层键**，**禁止**混进 `user.message`（混进去 = 自动生成的元数据伪装成用户原话；tasks/5 实测模型为此多烧 3 次 bash / 5.6 万 prompt token）。`from:`（##422）只出现在**历史** user 消息上（`from.id` = 成员 id、`name` = 当时的显示名；老块无 `speaker` ⇒ 裸文本，不造 `from: unknown`），它与 `user.message` **并列**而非嵌套 —— `withRuntime` 遇末条已是**信封**时尾部信封**自占一条消息**。**重放只剥 `runtime:` / `runtimeDiff:`**（`stripRuntimeSections`；`from:` / `history:` / `summary:` 是线索，逐字保留；裸文本与没有顶格 `user:` 的粘贴 YAML 一字不动），剥完仍是信封时也**不嵌套**。契约与派生唯一处 `src/shared/context/envelope.ts` + `README.md` 的「信封」行
+      投给模型的**一条消息 = 一份 YAML 信封**：一切**自动生成**的段（`summary:` / `history:` / `runtime:` / `runtimeDiff:`）**各占一个顶层键**，**禁止**混进 `user.message`（混进去 = 自动生成的元数据伪装成用户原话；tasks/5 实测模型为此多烧 3 次 bash / 5.6 万 prompt token）。契约与派生唯一处 `src/shared/context/envelope.ts` + `README.md` 的「信封」行
     id: app.rule.wire-envelope
     review: accepted
     lifecycle: active
     evidence:
       source: user
       at: ba99d638:pkgs.ts/diy-app/AGENTS.md:81
-      verifiedAt: '2026-10-25'
+      verifiedAt: '2026-10-22'
   app.tool#cdp:
     value: |-
       取 CDP 地址：`cat "$DIY_HOME/electron_user_data/DevToolsActivePort"`（**读后校验**，见 `app.dev#cdp-port`）；`./sha.sh lab` 启动日志会打印完整 `attach` 命令
