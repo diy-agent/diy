@@ -36,6 +36,7 @@ import { layoutStore } from "./store/layoutStore";
 import { diyService } from "./lib/rpc";
 import { notificationStore } from "./store/notificationStore";
 import { modelNoticeStore } from "./store/modelNoticeStore";
+import { inboxStore } from "./store/inboxStore";
 import { MAX_BARS, envWatchStore } from "./store/envWatchStore";
 import { defaultBinding, findPage, findView, viewInstanceKey } from "../shared/view-registry";
 import { taskIndentOf } from "../shared/tab-order";
@@ -976,6 +977,8 @@ export default function App() {
         // 「模型不可用」通知订阅（##369 ①）：main 侧真发失败时推一条 → 顶栏 bar。
         // 只此一处订阅（与 sessionStore 同原则：多一处订阅 = 多一处漂移源）。
         modelNoticeStore.start();
+        // 通知信箱订阅（##429）：撞输出上限 / 成本过阈 → N1 toast（main 侧已落盘，这里只管"上屏"）。
+        inboxStore.start();
         // 「环境感知」通知订阅（##384）：磁盘满 / 网断 → 顶栏红条（条件恢复自动消）。
         // 与 modelNoticeStore 各自一份订阅：两者的产生源与生命周期语义不同（见 main/services/env-watch.ts 头注）。
         envWatchStore.start();
@@ -984,6 +987,7 @@ export default function App() {
         fsAbort?.abort();
         sessionStore.stop();
         modelNoticeStore.stop();
+        inboxStore.stop();
         envWatchStore.stop();
         resetRendererActions();
     });

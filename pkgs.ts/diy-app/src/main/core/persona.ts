@@ -146,6 +146,20 @@ export function personaForTask(home: string, taskUri: string): Persona {
 }
 
 /**
+ * 人物配置非法（##429）：写入侧的参数错了（用户填错），不是上游/环境问题。
+ *
+ * 为什么要一个错误类而不只抛字符串：`rule.err-triage`（##394）要求新增 throw 带 code，
+ * 调用方（CLI / UI）据此判“该让用户改配置”而不是“该重试/报障”。
+ */
+export class PersonaInvalidError extends Error {
+  override readonly name = "PersonaInvalidError" as const;
+  readonly code = "agent/persona-invalid";
+  constructor(message: string) {
+    super(message);
+  }
+}
+
+/**
  * 定义合法性与**能力**校验（写入前拒绝非法配置，而不是等上游 400）：
  *   模型必须在清单内（清单外模型连 API 面都无从判断）
  *   推理强度必须在该模型 supported 内（各模型词表不同，见 shared/models.ts）
@@ -157,5 +171,10 @@ export function assertPersonaDef(def: PersonaDef): void {
   const r = reasoningOf(def.model);
   if (!r.supported.includes(def.reasoningEffort)) {
     throw new Error(`模型 ${def.model} 不支持推理强度 ${def.reasoningEffort}（可选：${r.supported.join("/")}）`);
+  }
+  // 输出软上限（##429）：非法值当场拒，别存一个“看着有、实际被忽略”的数
+  if (def.maxOutputTokens !== undefined && (!Number.isFinite(def.maxOutputTokens) || def.maxOutputTokens <= 0)) {
+    // error-code-ok: code 由 PersonaInvalidError 类固定为 agent/persona-invalid（写入侧参数校验，不归 defect）
+    throw new PersonaInvalidError(`输出软上限 maxOutputTokens 必须是正数（当前 ${String(def.maxOutputTokens)}）`);
   }
 }

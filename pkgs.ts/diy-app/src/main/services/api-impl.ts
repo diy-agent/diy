@@ -38,6 +38,7 @@ import * as flowThread from "../core/flow-thread";
 import { flowPrompt } from "./flow-prompt";
 import { AsyncQueue } from "./async-queue";
 import { modelNoticeHub } from "./model-notice";
+import { inboxHub } from "./inbox";
 import { envWatchHub, ensureDiskPoller, noteWriteError, realStatfs, simulateEnvFact } from "./env-watch";
 import { envNoticeFromDisk, fmtDiskBytes, type EnvNotice } from "../../shared/env-watch";
 import { setWriteErrorHook } from "../core/atomic-write";
@@ -1368,6 +1369,13 @@ export function bindAppHandlers(binding: ServerBinding): void {
   });
   binding.on(app.notice.watch, async function* ({ signal }) {
     for await (const n of modelNoticeHub.subscribe(signal)) yield n;
+  });
+
+  // ── inbox（N1 提示的落盘流水；##429 要求 ④/⑤）──
+  // 与 notice / env 两个内存 ring 不同：这里是 append-only 落盘（重启后仍可回看）。
+  binding.on(app.notice.inbox.list, async ({ input }) => inboxHub.list({ taskUri: input.taskUri, limit: input.limit }));
+  binding.on(app.notice.inbox.watch, async function* ({ signal }) {
+    for await (const e of inboxHub.subscribe(signal)) yield e;
   });
 
   // ── env（「环境感知」通知；##384）──

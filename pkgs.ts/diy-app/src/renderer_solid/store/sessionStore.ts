@@ -411,6 +411,8 @@ export const sessionStore = {
             const r = await diyService.diy.agent.local.setLimits({
                 maxSteps: n,
                 maxOutputTokens: undefined,
+                costWarnStepUsd: undefined,
+                costWarnTurnUsd: undefined,
                 bashTimeoutMs: undefined,
                 outputClipChars: undefined,
                 readMaxBytes: undefined,
