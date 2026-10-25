@@ -25,25 +25,24 @@ import { parseCutMarkers } from "../../src/shared/cut-marker";
 
 // ─── 策略归一（只有 budget 一种算法）───
 
-describe("normalizePolicy：预算 + 工具结果兜底", () => {
-    it("空输入 → 默认 20KB 预算 + 头尾裁剪（##343 M1：默认值与生产 auto-compact.yaml 对齐）", () => {
+describe("normalizePolicy：工具结果兜底（历史上限不在这里）", () => {
+    it("空输入 → 缺省：头尾裁剪（历史上限 = history.limit.limitTokens，与 policy 无关）", () => {
         const p = normalizePolicy(undefined);
         expect(p.mode).toBe("budget");
-        expect(p.modeData.budgetBytes).toBe(20 * 1024);
         expect(p.modeData.toolResult.render).toBe("headtail");
         expect(flatPolicyOf(p).headtail).toEqual(DEFAULT_HEADTAIL);
     });
-    it("收扁平输入面（budgetBytes + headLines 局部覆盖）", () => {
-        const t = toolResultOf(normalizePolicy({ budgetBytes: 5120, toolResult: "headtail", headtail: { headLines: 7 } }));
+    it("收扁平输入面（headLines 局部覆盖）；旧 budgetBytes 字段被忽略", () => {
+        const t = toolResultOf(normalizePolicy({ toolResult: "headtail", headtail: { headLines: 7 } }));
         expect(t.render).toBe("headtail");
         if (t.render === "headtail") {
             expect(t.renderData.head).toBe(7);
             expect(t.renderData.tail).toBe(DEFAULT_HEADTAIL.tailLines);
         }
-        expect(normalizePolicy({ budgetBytes: 5120 }).modeData.budgetBytes).toBe(5120);
+        // ##432：旧字节预算字段已删 —— 传进来也不影响任何东西（不炸、不复活）
+        expect(normalizePolicy({ budgetBytes: 5120 }).modeData.toolResult.render).toBe("headtail");
     });
-    it("坏值回落：负数预算 → 缺省（脏数据不当作清零）；未知 render → asis", () => {
-        expect(normalizePolicy({ budgetBytes: -5 }).modeData.budgetBytes).toBe(20 * 1024);
+    it("坏值回落：未知 render → asis", () => {
         expect(normalizePolicy({ toolResult: "nope" }).modeData.toolResult.render).toBe("asis");
     });
 });

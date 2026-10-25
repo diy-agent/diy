@@ -12,11 +12,11 @@
 // 文案归出口：主进程不拼句子，渲染层不拼数字，这份函数同时被 UI 用与单测钉。
 
 import type { CompactTrigger } from "./compaction";
-import { DEFAULT_KEEP, type KeepStage } from "./compact-keep";
 
 /** 该步（轮首）投递时的历史选择事实（= `StepUsageRecord.historySelection`） */
 export interface DeliverySelection {
-    budgetBytes: number;
+    /** 本步生效的**历史上限**（token，唯一旋钮 `history.limit.limitTokens`） */
+    limitTokens: number;
     keptBytes: number;
     keptRuns: number;
     droppedMessages: number;
@@ -35,8 +35,6 @@ export interface DeliveryTriggerCfg {
     triggers: { systemContextChanged: boolean; cacheExpired: boolean; contextWindowOver: number };
     /** 生效 TTL（毫秒）；`null` = 无实测也无先验 → 不写时长 */
     ttlMs: number | null;
-    /** 装配管道里 **must 级**（必保、不吃预算）；空数组 = 没有任何必保级 */
-    mustStages: { type: string; summary: string }[];
 }
 
 export interface DeliveryBadgeInput {
@@ -57,34 +55,19 @@ export const TRIGGER_LABEL: Record<CompactTrigger, string> = {
     contextWindowOver: "窗口超限",
 };
 
-/** 字节人读：0 是「清零」（不是 0 字节上限的另一种说法），其余按 KB / B */
+/** 字节人读（保留量）：KB / B */
 export function fmtBudgetBytes(n: number): string {
-    if (n === 0) return "0（清零）";
     return n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`;
+}
+
+/** token 人读（上限）：原样带单位 */
+export function fmtLimitTokens(n: number): string {
+    return `${n} token`;
 }
 
 /** 徽章**文本**：维度必须写在词里（`历史·…`），不再出现裸「全量」 */
 export function deliveryBadgeText(sel: DeliverySelection): string {
     return sel.droppedMessages > 0 ? `历史·丢 ${sel.droppedMessages} 条` : "历史·无裁剪";
-}
-
-/** 一条级 → 短摘要（`steps n=6` / `role tool` …）；只为人读，不参与判据 */
-export function stageSummary(s: KeepStage): string {
-    const d = (s as { data?: Record<string, unknown> }).data ?? {};
-    const n = d["n"];
-    const role = d["role"];
-    if (typeof n === "number") return `${s.type} n=${n}`;
-    if (typeof role === "string") return `${s.type} ${role}`;
-    return s.type;
-}
-
-/** 生效管道里的 must 级（配置没写 `history.keep` ⇒ 回落代码缺省管道） */
-export function mustStagesOf(keep: readonly KeepStage[] | undefined): { type: string; summary: string }[] {
-    const plan = keep && keep.length > 0 ? keep : DEFAULT_KEEP;
-    return plan.filter((s) => (s as { must?: boolean }).must === true).map((s) => ({
-        type: s.type,
-        summary: stageSummary(s),
-    }));
 }
 
 /** 触发器三行（本步命中 / 阈值 / 实测值）—— 徽章 hover 的主体 */
@@ -133,28 +116,22 @@ function triggerLines(cfg: DeliveryTriggerCfg, input: DeliveryBadgeInput): strin
 /**
  * 徽章 **hover 全文**（多行）。
  *
- * 四块，缺一不可：
+ * 三块，缺一不可（##432 清理后：`must` / 字节预算 / 级列表这些词已不存在）：
  *   ① 维度：这是**历史裁剪**，与 runtime 无关
- *   ② 本步事实：预算 / 丢几条 / 保留几段
- *   ③ **must 级不吃预算**（「压完还超预算、于是每轮都在压」的根因，必须写在脸上）
- *   ④ 三触发器的配置与**本步命中**（阈值 + 实测，不再只说「预算多少」）
+ *   ② 本步事实：上限（token）/ 丢几条 / 保留几段 / 实际保留字节
+ *   ③ 三触发器的配置与**本步命中**（阈值 + 实测）
  */
 export function deliveryBadgeTitle(input: DeliveryBadgeInput): string {
     const s = input.selection;
     const cfg = input.cfg;
     const out: string[] = [];
     out.push(
-        `历史裁剪（本步投递的唯一维度，与 runtime 无关）：预算 ${fmtBudgetBytes(s.budgetBytes)}` +
+        `历史裁剪（本步投递的唯一维度，与 runtime 无关）：上限 ${fmtLimitTokens(s.limitTokens)}` +
             ` · 丢 ${s.droppedMessages}/${s.totalMessages} 条 · 保留 ${s.keptRuns} 段` +
             ` · 实际保留 ${fmtBudgetBytes(s.keptBytes)}`,
     );
-    // ③ must 级：预算只约束非 must 级 —— 压完还超预算、每轮都在压的根因
-    out.push("预算只约束非 must 级：must 级（必保）不吃预算，压完仍可能超预算，于是每轮都在压。");
+    out.push("上限是**唯一旋钮**：从最后一步往前累加装到一半为止（保头 600 token 硬编码、切点 tool 配对平衡）。");
     if (cfg) {
-        const must = cfg.mustStages.length
-            ? cfg.mustStages.map((m) => m.summary).join(" / ")
-            : "无（本 plan 没有必保级）";
-        out.push(`本 plan 的 must 级：${must}`);
         out.push(`压缩触发器（mode=${cfg.mode}）：`);
         out.push(...triggerLines(cfg, input));
     } else {

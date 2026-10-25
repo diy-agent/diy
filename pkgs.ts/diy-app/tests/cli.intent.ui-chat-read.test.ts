@@ -24,7 +24,7 @@ import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
 import { waitUntil } from "./wait";
 import { makeUiDriver, type A11yNode, type UiDriver } from "./ui-drive";
-import { opsFile } from "../src/main/services/local-agent";
+import { opsFile } from "../src/main/core/local-paths";
 
 // ─── 桩上游（chat 面 SSE）─────────────────────────────
 

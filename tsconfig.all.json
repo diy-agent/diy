@@ -23,6 +23,9 @@
       "path": "pkgs.ts/diy-facts"
     },
     {
+      "path": "pkgs.ts/diy-persistence"
+    },
+    {
       "path": "pkgs.ts/diy-app"
     },
     {

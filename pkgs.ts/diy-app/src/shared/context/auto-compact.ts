@@ -20,10 +20,9 @@
 
 import { z } from "zod";
 import { cacheStateAfterGap, type EffectiveTtl } from "./cache-ttl";
-import { validateKeepStages, type KeepStage } from "./compact-keep";
+import { HistoryLimitSchema, MIN_HISTORY_LIMIT_TOKENS, isCompleteHistoryLimit, normalizeHistoryLimit, type HistoryLimit } from "./history-limit";
 import {
     CompactPolicySchema,
-    DEFAULT_BUDGET_BYTES,
     DEFAULT_TOOL_RESULT_POLICY,
     normalizePolicy,
     type CompactPolicy,
@@ -43,28 +42,19 @@ export const AutoCompactTriggersSchema = z.object({
 });
 
 /**
- * `history` —— 「留给模型的历史消息」怎么装配（##344 M2 新增；压缩的**作用对象**）。
+ * `history` —— 「留给模型的历史消息」怎么装配（压缩的**作用对象**）。
  *
- * 与 `policy` 的分工：`policy` 是**旋钮**（预算 / 工具结果全局呈现），`history.keep[]` 是**管道**
- * （级列表：每条取法留哪些、怎么裁）。缺 `keep` ⇒ 回落代码缺省管道（= ##343 M1 的 `defaultBudgetPlan`）。
- * 形状与校验的真源：`shared/context/compact-keep.ts`（此处只保证「是个数组」，容错归一在 normalizeAutoCompact）。
+ * ##432 清理（用户 2026-10-25 拍板「该清理的清理掉」）：这里**只剩一项半** ——
+ * 一条 token 上限（`limit.limitTokens`）+ 摘要开关（`limit.summary.enabled`，缺省 false）。
+ * 级列表 `keep[]` / 写闸 `allowAgentWrite` / 字节预算 `budgetBytes` 全部删除，**不留兼容壳**；
+ * 旧配置里的 `keep` / `allowAgentWrite` 读时忽略并出声（见 `normalizeHistory`）。
  */
 export const AutoCompactHistorySchema = z.object({
-    keep: z
-        .array(z.unknown())
-        .optional()
-        .describe("级列表 `{ type, must?, limit?, clip?, data }`（形状见 shared/context/compact-keep.ts）；缺省回落默认管道"),
     /**
-     * **闸**：允许本地 agent 经 `compact_plan` 工具改写 plan（##362 M3a）。
-     *
-     * 缺省 `false` = agent 只读（get / check 始终可用）——plan 是**全局配置**，改它等于改所有任务、
-     * 所有 agent 的投递；给手的同时必须给闸，且闸的缺省方向只能是"关"（写坏 keep ⇒ 全库会话静默丢上下文）。
-     * 人工入口（CLI `compact plan set` / UI 编辑器）**不受此闸约束**：那是用户自己的显式操作。
+     * **唯一的历史预算**：一条 token 上限（+ 摘要开关）。
+     * 缺省 = `DEFAULT_HISTORY_LIMIT`（20000 token / 摘要关）。
      */
-    allowAgentWrite: z
-        .boolean()
-        .optional()
-        .describe("允许本地 agent 写 plan（缺省 false；CLI/UI 不受此闸约束）"),
+    limit: HistoryLimitSchema.optional().describe("历史预算：一条 token 上限 + 摘要开关（唯一旋钮）"),
 });
 
 export const AutoCompactConfigSchema = z.object({
@@ -79,22 +69,19 @@ export const AutoCompactConfigSchema = z.object({
      * 各造一个形状必然分叉。
      */
     policy: CompactPolicySchema.describe("自动压时用的策略（与手动面板同一真源形状）"),
-    history: AutoCompactHistorySchema.optional().describe("历史装配管道（级列表）；缺省 = 回落代码缺省管道"),
+    history: AutoCompactHistorySchema.optional().describe("历史预算（一条 token 上限 + 摘要开关）；缺省 = 20000 token"),
 });
 /**
- * 配置真源类型（**手写**而非 `z.infer`）：`history.keep` 在 schema 里是 `unknown[]`（容错由
- * `normalizeAutoCompact` 用 `validateKeepStages` 做，非法级**只丢 history、不丢整份配置**），
- * 而对外读到的必然是**校验过的** `KeepStage[]` —— 两者不同，不能靠 z.infer 硬凑。
+ * 配置真源类型（**手写**而非 `z.infer`）：`history.limit` 的容错归一（宽松补齐 + 出声）
+ * 由 `normalizeHistory` 做，读到的必然是**补全过的** `HistoryLimit` —— 与 schema 里的可选项不同，
+ * 不能靠 `z.infer` 硬凑。
  */
 export interface AutoCompactConfig {
     mode: "off" | "notify" | "auto";
     triggers: AutoCompactTriggers;
     policy: CompactPolicy;
-    /**
-     * 级列表（已校验；非法 / 空列表 ⇒ `keep` 缺席 = 回落缺省管道）+ agent 写闸。
-     * ⚠️ `keep` 缺席 ≠ `history` 缺席：只写了 `allowAgentWrite` 的配置也要能读到闸。
-     */
-    history?: { keep?: KeepStage[]; allowAgentWrite?: boolean };
+    /** 历史预算：**一条 token 上限 + 摘要开关**（唯一旋钮；缺省 = `DEFAULT_HISTORY_LIMIT`） */
+    history?: { limit?: HistoryLimit };
 }
 export type AutoCompactTriggers = z.infer<typeof AutoCompactTriggersSchema>;
 
@@ -203,11 +190,11 @@ export function normalizeWindowOver(v: unknown, issues?: AutoCompactIssue[]): nu
 export const DEFAULT_AUTO_COMPACT: AutoCompactConfig = {
     mode: "notify",
     triggers: { systemContextChanged: true, cacheExpired: true, contextWindowOver: DEFAULT_WINDOW_OVER_TOKENS },
-    // 目标式预算：默认 3KB（≈清零）—— 用户 2026-10-07「更倾向于清零，经验上也没啥大不了」。
     // 自动压与手动压**同一套策略**（合并后不再有第二套）。
+    // ⚠️ 历史预算不在这里 —— 它是 `history.limit.limitTokens`（缺省 20000 token）。
     policy: {
         mode: "budget",
-        modeData: { budgetBytes: DEFAULT_BUDGET_BYTES, toolResult: DEFAULT_TOOL_RESULT_POLICY },
+        modeData: { toolResult: DEFAULT_TOOL_RESULT_POLICY },
         summary: false,
     },
 };
@@ -215,7 +202,7 @@ export const DEFAULT_AUTO_COMPACT: AutoCompactConfig = {
 /**
  * 宽松归一（从 YAML/UI 来的可能缺字段/越界）：初版紧凑、扩展松散。
  *
- * 缺 `policy` 时用 `DEFAULT_AUTO_COMPACT.policy`（目标式预算 3KB），**不**用 `normalizePolicy({})`
+ * 缺 `policy` 时用 `DEFAULT_AUTO_COMPACT.policy`，**不**用 `normalizePolicy({})`
  * 的缺省 —— 缺省值必须有依据，不能顺手取一个（见 `DEFAULT_AUTO_COMPACT` 的注释）。
  *
  * 可选的 `issues` 收集器：凡**本函数改动过**（缺键补缺省、旧单位迁移、坏 keep 丢弃）的地方各推一条
@@ -225,7 +212,7 @@ export function normalizeAutoCompact(raw: unknown, issues?: AutoCompactIssue[]):
     const src = (raw ?? {}) as Record<string, unknown>;
     const t = (src["triggers"] ?? {}) as Record<string, unknown>;
     const mode = src["mode"] === "off" || src["mode"] === "auto" ? src["mode"] : "notify";
-    const history = normalizeHistory(src["history"], issues);
+    const history = normalizeHistory(src["history"], issues, legacyBudgetBytes(src["policy"]));
     return {
         mode,
         triggers: {
@@ -241,42 +228,66 @@ export function normalizeAutoCompact(raw: unknown, issues?: AutoCompactIssue[]):
     };
 }
 
+/** 旧配置里的字节预算（`{modeData:{budgetBytes}}` 或扁平 `{budgetBytes}`）；没有 = undefined */
+function legacyBudgetBytes(rawPolicy: unknown): number | undefined {
+    if (rawPolicy === null || typeof rawPolicy !== "object") return undefined;
+    const p = rawPolicy as Record<string, unknown>;
+    const md = (p["modeData"] ?? {}) as Record<string, unknown>;
+    const v = md["budgetBytes"] ?? p["budgetBytes"];
+    return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined;
+}
+
 /**
  * `history` 的容错归一（**读侧宽松**，硬要求）：
- *   · 缺 `history` / 缺 `keep` → 缺席（= 回落缺省管道）；
- *   · `keep` 有**非法级** → 只丢 `history`（出声），**不丢整份配置**（mode/triggers/policy 照用）；
- *   · `keep: []`（空级列表）→ 同样回落缺省 —— 空列表的字面后果是「什么都不留」（= 清零），
- *     而"清空所有级"几乎都是编辑途中的手滑，不该静默把会话清掉。要清零请把预算设 0。
+ *   · 缺 `history` / 缺 `limit` → 缺席（= 回落缺省）；
+ *   · `limit` 残缺 / 超界 → **宽松归一**（补缺省、夹下限）并出声，**绝不抛**（##432 review B1：
+ *     用户照 header 只写 `{limitTokens: 8000}` 曾让整份配置读不出来）；
+ *   · 旧字段 `keep[]` / `allowAgentWrite` → **忽略 + 出声**（已不决定投递；不保留兼容壳）。
  */
 function normalizeHistory(
     raw: unknown,
     issues?: AutoCompactIssue[],
-): { keep?: KeepStage[]; allowAgentWrite?: boolean } | undefined {
+    legacyBudgetBytes?: number,
+): { limit?: HistoryLimit } | undefined {
     if (raw === null || typeof raw !== "object") return undefined;
     const src = raw as Record<string, unknown>;
-    // 闸的**权威读法**：只有字面 `true` 才算开（`"yes"` / `1` 之类不算 —— 闸的缺省方向是关）。
-    const allowAgentWrite = src["allowAgentWrite"] === true ? (true as const) : undefined;
-    const withGate = allowAgentWrite ? { allowAgentWrite } : {};
-    const keepRaw = src["keep"];
-    if (keepRaw === undefined) return allowAgentWrite ? withGate : undefined;
-    // ⚠️ 局部名别叫 `issues`：与参数（出声收集器）撞名 —— oxc 会报「不能重复声明」
-    const checked = validateKeepStages(keepRaw);
-    const stages = checked.stages;
-    const errors = checked.issues.filter((i) => i.level === "error");
-    if (errors.length > 0) {
-        const message = `history.keep 非法（${errors.map((e) => e.message).join("；")}）→ 回落缺省管道`;
+    // 旧字段的出声：写了就当"你的这份没按新形状写"，但继续用（不炸、不静默）
+    for (const dead of ["keep", "allowAgentWrite"] as const) {
+        if (src[dead] === undefined) continue;
+        const message =
+            `history.${dead} 已删除（##432：不让人/agent 编排装配计划）→ 已忽略；` +
+            "历史上限只看 history.limit.limitTokens（没有「清零」这种说法）";
         console.warn(`[auto-compact] ${message}`);
-        issues?.push({ path: "history.keep", message });
-        // 坏 keep 只丢 keep：闸是另一件事，不该被一并丢掉（否则用户开闸的意图会被一个笔误静默撤销）
-        return allowAgentWrite ? withGate : undefined;
+        issues?.push({ path: `history.${dead}`, message });
     }
-    if (stages.length === 0) {
-        const message = "history.keep 是空级列表 → 回落缺省管道（要清零请把 policy.modeData.budgetBytes 设为 0）";
+    const limitRaw = src["limit"];
+    if (limitRaw === undefined) {
+        // **旧字段一次性名字映射**（不保留两套字段名）：没有 `history.limit` 但旧配置带
+        // `policy.modeData.budgetBytes` ⇒ 折算成 token 上限（bytes / 4，与仓库同一个粗估口径）
+        // 并出声。写回时 `saveAutoCompact` 落的就是新形状，映射只发生这一次。
+        if (legacyBudgetBytes === undefined) return undefined;
+        const limitTokens = Math.max(MIN_HISTORY_LIMIT_TOKENS, Math.floor(legacyBudgetBytes / 4));
+        const message =
+            `policy.modeData.budgetBytes=${String(legacyBudgetBytes)} 是旧口径（已删除）→ 一次性折算成 ` +
+            `history.limit.limitTokens=${String(limitTokens)}（bytes/4）；写回后即为新形状`;
         console.warn(`[auto-compact] ${message}`);
-        issues?.push({ path: "history.keep", message });
-        return allowAgentWrite ? withGate : undefined;
+        issues?.push({ path: "policy.modeData.budgetBytes", message });
+        return { limit: { limitTokens, summary: { enabled: false } } };
     }
-    return { keep: stages, ...withGate };
+    // ⚠️ **不许裸 parse**：`HistoryLimitSchema` 里 `summary` / `enabled` 是必填，
+    // 用户照 header 只写 `{limitTokens: 8000}` 就会抛 ZodError，而外层没有 try/catch ⇒ 整份配置读不出来。
+    // 一律走宽松归一：缺的字段补缺省、超界的夹回下限，读不出来时**出声**但不炸。
+    const parsed = HistoryLimitSchema.safeParse(limitRaw);
+    if (!parsed.success || !isCompleteHistoryLimit(limitRaw)) {
+        const message =
+            `history.limit 不完整或非法（${parsed.success ? "缺 summary 等字段" : parsed.error.issues.map((i) => i.path.join(".")).join("，")}）` +
+            "→ 已回落为补齐后的值（缺 summary ⇒ summary.enabled=false；limitTokens 越界 ⇒ 夹到下限）";
+        console.warn(`[auto-compact] ${message}`);
+        // 出声路径尽量**指到具体那个键**（谁缺就说谁），这样调用方能一键定位
+        const missingKey = (limitRaw as { limitTokens?: unknown } | null)?.limitTokens === undefined ? "limitTokens" : "summary";
+        issues?.push({ path: `history.limit.${missingKey}`, message });
+    }
+    return { limit: normalizeHistoryLimit(limitRaw) };
 }
 
 /** 判定所需的**事实**（全部可观测，不含预测） */

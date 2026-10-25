@@ -12,7 +12,8 @@ import { join } from "node:path";
 import { diyHome } from "../../src/main/core/state";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
-import { getLocalAgent, opsFile } from "../../src/main/services/local-agent";
+import { getLocalAgent } from "../../src/main/services/local-agent";
+import { opsFile } from "../../src/main/core/local-paths";
 import { replay, projectAll, blocksToMessages, type Op } from "../../src/main/services/local-blocks";
 
 let PROJECT = "";

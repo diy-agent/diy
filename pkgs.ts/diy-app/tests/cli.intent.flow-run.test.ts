@@ -36,7 +36,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
 import { waitUntil } from "./wait";
-import { opsFile } from "../src/main/services/local-agent";
+import { opsFile } from "../src/main/core/local-paths";
 
 // ─── 桩上游：把「这一轮 agent 说了什么」变成确定输入 ──────────────
 

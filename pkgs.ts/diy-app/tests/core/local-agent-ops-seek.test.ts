@@ -13,8 +13,9 @@ import { join } from "node:path";
 import { diyHome } from "../../src/main/core/state";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
-import { LocalAgentManager, compactFile, opsFile, readOpsFrom, resolveOpsReplay } from "../../src/main/services/local-agent";
-import { autoCompactFile } from "../../src/main/core/auto-compact-config";
+import { LocalAgentManager, compactFile, readOpsFrom, resolveOpsReplay } from "../../src/main/services/local-agent";
+import { opsFile } from "../../src/main/core/local-paths";
+import { autoCompactFile, loadAutoCompact } from "../../src/main/core/auto-compact-config";
 import { llmFile } from "../../src/main/core/local-paths";
 import { BlockStore, projectAll, type Op } from "../../src/main/services/local-blocks";
 import type { CompactEventRecord } from "../../src/shared/context/compaction";
@@ -255,47 +256,31 @@ describe("读者接线：deliveryMessages 只 replay 保留段", () => {
         expect(seek.replay?.kind).toBe("offset");
     });
 
-    it("注记的 kept 行号跟着偏移走（否则模型会照错行号去翻 llm.jsonl）", () => {
-        // 【##421 合并后的订正】注记只在**真丢了消息**时出现 ⇒ 本用例必须先把预算调紧，
-        // 否则 kept 覆盖全部消息、注记根本不注入（`did.length === 0` 分支），断言无从谈起。
+    it("##432 刀 2：未超单条上限 ⇒ **不产生注记**（压缩是事件，不是每步的重新决策）", () => {
         const compactCfg = autoCompactFile(diyHome());
         const saved = existsSync(compactCfg) ? readFileSync(compactCfg, "utf-8") : null;
         writeFileSync(
             compactCfg,
             JSON.stringify({
                 mode: "notify",
-                policy: { mode: "budget", modeData: { budgetBytes: 200 }, summary: false },
-                // 只留 ladder（不放 steps 托底）：托底级不耗预算、会把最近几条无条件留住 ⇒ 永远压不到东西
-                history: { keep: [{ type: "ladder" }] },
+                triggers: { systemContextChanged: true, cacheExpired: true, contextWindowOver: 0 },
+                policy: { mode: "budget", modeData: { budgetBytes: 20480, toolResult: { render: "asis" } }, summary: false },
+                // 上限取下限（4000；更小的值会被夹上来，见 MIN_HISTORY_LIMIT_TOKENS），
+                // 而 CANON 的历史远短于它 ⇒ 保住全部、什么都没丢 ⇒ 不注入注记。
+                // 这正是新口径：小会话永远不该被压（旧实现会按预算切，切出空注记）。
+                history: { limit: { limitTokens: 5, summary: { enabled: false } } },
             }),
             "utf-8",
         );
         try {
+            // 配置里写 5 ⇒ **读回来是夹取后的 4000**（下限，防止每步重算）
+            expect(loadAutoCompact(diyHome()).history?.limit?.limitTokens).toBe(4_000);
             const uriFull = newTask(CANON);
             const uriSeek = newTask(CANON, (ctx) => [compactEvent(ctx)]);
-            const noteFull = manager.deliveryMessages(uriFull).note;
-            const noteSeek = manager.deliveryMessages(uriSeek).note;
-            expect(noteFull).toContain("history:");
-            expect(noteSeek).toContain("history:");
-            // YAML 把元组渲染成嵌套序列：`kept:\n  - - 1\n    - 3`
-            const ranges = (note: string): [number, number][] =>
-                [...note.matchAll(/- - (\d+)\s*\n\s*- (\d+)/g)].map(
-                    (m) => [Number(m[1]), Number(m[2])] as [number, number],
-                );
-            const a = ranges(noteFull);
-            const b = ranges(noteSeek);
-            expect(a.length).toBeGreaterThan(0);
-            expect(b.length).toBeGreaterThan(0);
-            // 行号是 **llm.jsonl 的绝对行号**（不是段内相对号）。
-            // 两家都只留「最近的若干条」⇒ 全量侧与 seek 侧选中的是**同一批消息**，
-            // 因此加上 `llmLineBase`（跳过的 6 条）之后两者必须逐段相等。
-            // 忘了加 base ⇒ b 会退化成 [1,6]（段内相对号），模型就去翻已丢弃的轮了。
-            expect(b).toEqual(a);
-            // 起点都在保留段内（绝对行号 ≥ 第 7 行 = 跳过的 6 条之后）
-            for (const [from] of b) expect(from).toBeGreaterThanOrEqual(KEEP_FROM * 2 - 1);
+            expect(manager.deliveryMessages(uriFull).note).toBe("");
+            expect(manager.deliveryMessages(uriSeek).note).toBe("");
         } finally {
-            if (saved === null) rmSync(compactCfg, { force: true });
-            else writeFileSync(compactCfg, saved, "utf-8");
+            if (saved !== null) writeFileSync(compactCfg, saved, "utf-8");
         }
     });
 
@@ -312,7 +297,7 @@ describe("账本自证：compact() 写 schema / opsBytes / keptFromLlmLine", () 
     // 20 轮（预算只够必保的 6 步）⇒ 真会有轮被丢，压缩才不是 noop（noop 不写账）
     const BIG = Array.from({ length: 20 }, (_, k) => turnLines(k + 1).join("\n")).join("\n") + "\n";
 
-    it("落盘的账本自带三样锚点（读侧不靠猜），且读回去就是同一起点", () => {
+    it.skip("落盘的旧 compact 账本三样锚点 —— 依赖旧预算触发真压；##432 刀 2 后压缩边界在 turns.jsonl，随旧策略面一起删", () => {
         const uri = newTask(BIG);
         const rec = manager.compact(uri, { mode: "budget", modeData: { budgetBytes: 1 }, summary: false }, "cli");
         expect(rec.noop).toBeUndefined();
@@ -331,13 +316,14 @@ describe("账本自证：compact() 写 schema / opsBytes / keptFromLlmLine", () 
         expect(r.lineBase).toBe(keptIdx * 2);
     });
 
-    it("清零（budget=0）⇒ 不记起点（全读），但 schema / opsBytes 照写", () => {
+    it("##432 刀 2：`budgetBytes: 0` 不再有「清零」语义（选择只按已落盘边界），账本锚点照写", () => {
         const uri = newTask(BIG);
         const rec = manager.compact(uri, { mode: "budget", modeData: { budgetBytes: 0 }, summary: false }, "cli");
         expect(rec.schema).toBe(1);
         expect(rec.boundary.opsBytes).toBe(Buffer.byteLength(BIG, "utf-8"));
-        expect(rec.boundary.keptFromTurnId).toBeNull();
-        expect(resolveOpsReplay(uri)).toMatchObject({ from: 0, kind: "full" });
+        // 旧账本仍会记锚点（compact() 是旧手动压缩面），但**投递侧不再用它决定保留集**：
+        // 保留集只由 turns 里的 compaction entry 决定（此处没有 ⇒ 全量投递）。
+        expect(rec.boundary.keptFromTurnId).not.toBeNull();
     });
 });
 
