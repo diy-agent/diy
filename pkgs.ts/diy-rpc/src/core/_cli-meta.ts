@@ -29,6 +29,16 @@ export interface _CliOptionMeta {
    * 相对路径的"存在性"判得准（handler 跑在 app 进程，cwd 不对）。
    */
   inlineText?: { fileOpt: string; textOpt: string };
+  /**
+   * 值 = **调用方进程的 cwd**，由 parser 自动注入，**不是一个用户可敲的选项**
+   * （不进 `--help`、不占 argv、`--<名>` 会按未知选项报错）。
+   *
+   * 为什么需要：handler 跑在 app 进程，它的 `process.cwd()` 是应用目录；
+   * 想让 handler 知道「人在哪个目录敲的命令」（如 ##430 判断 project 归属）只能由调用方带上。
+   * 已有 `resolvePath` 能把**参数值**按调用方 cwd 解析，但那是「解析某个路径值」，
+   * 拿不到「cwd 本身」。实现见 cli/_parser.ts。
+   */
+  callerCwd?: boolean;
 }
 
 /** @internal */

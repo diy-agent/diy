@@ -31,7 +31,7 @@ import { noteRendererTouch } from "./runtime-context";
 import type { ToolResultMode } from "../../shared/context/compaction";
 import type { HistoryEntryView } from "../../shared/context/schema";
 import { readFileWindow, formatReadOutput, ReadWindowError } from "../core/file-read";
-import { resolve as resolvePath } from "node:path";
+import { resolve as resolvePath, relative as relativePath, isAbsolute as isAbsolutePath } from "node:path";
 import * as flow from "../core/flow";
 import { requirePostText } from "../core/flow-store";
 import * as flowThread from "../core/flow-thread";
@@ -143,15 +143,75 @@ export function bindAppHandlers(binding: ServerBinding): void {
   }
 
   // ── task ──
+  /**
+   * 找 **cwd 属于哪个项目**（##430）。
+   *
+   * 多个项目可以**互相嵌套**（实测数据根里同时注册了 `~/git/diy` 与 `~/git/diy/diy`），
+   * 所以「包含 cwd」的项目可能不止一个 —— 取**最深的那个**（路径最长）作为语义归属：
+   * 人在 `~/git/diy/diy`（或其 worktree）里敲命令，归属就是代码仓本身，不是它的父目录。
+   */
+  function projectOwningCwd(cwd: string): { id: string; path: string; label?: string } | undefined {
+    const target = resolvePath(cwd);
+    let best: { id: string; path: string; label?: string } | undefined;
+    for (const { id, info } of project.listProjects()) {
+      const root = project.getProjectPath(id);
+      if (!root) continue;
+      const rel = relativePath(root, target);
+      // rel === "" → 就在项目根；不以 .. 开头且非绝对 → 在其子目录（worktree 天然成立）
+      if (rel !== "" && (rel.startsWith("..") || isAbsolutePath(rel))) continue;
+      if (!best || root.length > best.path.length) best = { id, path: root, label: info.label };
+    }
+    return best;
+  }
+
   binding.on(app.task.create, async ({ input }) => {
     // 正文输入的显式三态（##338 / ##376）：`body|bodyText|bodyFile` 三选一 —— 与 `task edit`
     // 同一裁决点（core/task.ts::resolveBodyOverride），免得"某条命令漏了护栏"再次发生。
-    const { body, bodyText, bodyFile, ...rest } = input;
+    // `cwd` / `force` 不是任务字段：cwd 由 CLI parser 自动注入（归属检测用），force 是逃生口。
+    const { body, bodyText, bodyFile, cwd, force, ...rest } = input;
+
+    // 归属检测（##430）：人在某个项目的目录里（或其 worktree 里），却给**另一个** project ——
+    // 实际踩过：在 `~/git/diy/diy` 的 worktree 里把 ##92/93/94 建到了父目录项目 2，
+    // 两个项目各自有 tasks/92，同号撞车，事后靠两轮对话才纠正。
+    // 口径：**只拒绝、不猜**（猜错比报错贵）。要给别的项目建任务 → 显式换 --project，或加 --force。
+    if (!force && cwd) {
+      const owner = projectOwningCwd(cwd);
+      if (owner && owner.id !== rest.project) {
+        const cand = project
+          .listProjects()
+          .map(({ id, info }) => `  ${id} · ${info.label ?? "(无 label)"} · ${info.path ?? "(无 path)"}`)
+          .join("\n");
+        throw new task.ValidationError([
+          {
+            field: "project",
+            code: "project-mismatch",
+            msg:
+              `cwd 属于 project ${owner.id}（${owner.label ?? "无 label"} · ${owner.path}），` +
+              `但给的是 project ${rest.project} —— 层号/路径不符，拒绝创建（免得多项目同号任务撞车）。\n` +
+              `候选项目：\n${cand}\n` +
+              `下一步：把 project 改成 ${owner.id}；确要在 ${rest.project} 下建则加 --force。`,
+          },
+        ]);
+      }
+    }
+
     const resolvedBody = task.resolveBodyOverride({ body, bodyText, bodyFile });
-    return { status: "ok", data: { uri: task.createTask({ ...rest, body: resolvedBody } as any) } };
+    const uri = task.createTask({ ...rest, body: resolvedBody } as any);
+    // 归属回显（##430）：只回 uri 时人看不出落到了哪个仓，故带上 label / path
+    const info = project.getProjectInfo(rest.project);
+    return { status: "ok", data: { uri, project: rest.project, label: info?.label, path: info?.path } };
   });
   binding.on(app.task.list, async ({ input }) => {
-    return { status: "ok", data: { tasks: task.listTasks(input.project) } };
+    const tasks = task.listTasks(input.project);
+    // 多项目同号可分辨（##430）：`tasks` 仍是 uri 字符串数组（形状不变），
+    // 归属另给一张 id → label/path 的表 —— 只有 id 时 `projects/2/tasks/92` 与
+    // `projects/4/tasks/92` 脱离上下文看不出是哪个仓。
+    const ids = new Set(tasks.map((u) => u.split("/")[1]));
+    const projects = project
+      .listProjects()
+      .filter(({ id }) => ids.has(id))
+      .map(({ id, info }) => ({ id, label: info.label, path: info.path }));
+    return { status: "ok", data: { tasks, projects } };
   });
   binding.on(app.task.show, async ({ input }) => {
     const t = state.getTask(input.uri);
