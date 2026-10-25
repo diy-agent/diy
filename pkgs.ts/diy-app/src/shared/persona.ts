@@ -27,6 +27,15 @@ export const PersonaDefSchema = z.object({
   model: z.string().describe("模型 id（须在模型清单内）"),
   reasoningEffort: z.string().describe("推理强度档位（须在该模型支持集内）"),
   /**
+   * 输出软上限（tokens，##429）：这个人物的单次回复最多吐多少。
+   *
+   * 为什么挂在人物上而不只留全局 env：模型与「愿意付多少输出」是同一类决策
+   * （换模型为了什么，往往同时决定给多少预算），而 DIY_LOCAL_MAX_OUTPUT_TOKENS
+   * 是全局一把、改它等于改所有人物。省略 = 跟随场景缺省（对话 16384）。
+   * 真发值仍会被模型硬上限与全局天花板压低，见 shared/output-budget.ts。
+   */
+  maxOutputTokens: z.number().optional().describe("输出软上限（tokens）；省略 = 场景缺省"),
+  /**
    * 行为指令：给这个人物的固定行为要求（说话方式、回答结构、专业程度、输出约束……），
    * 注入系统提示词的**身份节**；空串 = 不注入。
    *

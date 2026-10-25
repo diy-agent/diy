@@ -11,7 +11,7 @@
  */
 import { createSignal } from "solid-js";
 import { Caches } from "../lib/ui-state";
-import { px, resolveLayout, type Layout, type TrackSize } from "../../shared/grid-layout";
+import { px, resolveLayout, trackPairAfterDrag, type Layout, type TrackSize } from "../../shared/grid-layout";
 import {
     applyHiddenViews,
     defaultBinding,
@@ -231,6 +231,11 @@ export const layoutStore = {
      * 为什么不是「整份写入」：ViewGrid 传进来的尺寸是**渲染态**（已按 hidden 折叠成 0）。
      * 整份写会把「折叠出来的 0」当成用户尺寸固化下来 —— 之后即使把 area 开回来，
      * 那条 track 也永远停在 0。只写相邻两条则天然避开这个坑。
+     *
+     * 单位不换（见 `trackPairAfterDrag`）：px 轨写 px，fr 轨按此刻 px 占比折成**权重**。
+     * 原先直接写 px 会把 `1fr` 中栏固化成绝对宽，窗口一缩小就把右侧顶出屏幕。
+     *
+     * @param renderedPx 该轴此刻渲染出的 px 序列（算 fr 权重用；缺省则保持原权重）
      */
     setTrackPair(
         pageId: string,
@@ -238,12 +243,14 @@ export const layoutStore = {
         lineIndex: number,
         values: [number, number],
         base: TrackSize[],
+        renderedPx: number[] = [],
     ): void {
         patch(pageId, (s) => {
             const key = axis === "col" ? "cols" : "rows";
             const cur = s[key]?.length === base.length ? [...s[key]!] : [...base];
-            cur[lineIndex - 1] = px(values[0]);
-            cur[lineIndex] = px(values[1]);
+            const [a, b] = trackPairAfterDrag(base, renderedPx, lineIndex, values);
+            cur[lineIndex - 1] = a;
+            cur[lineIndex] = b;
             return { ...s, [key]: cur };
         });
     },

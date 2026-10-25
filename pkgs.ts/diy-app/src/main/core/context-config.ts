@@ -11,12 +11,38 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeFileAtomic } from "./atomic-write";
 import * as yaml from "js-yaml";
-import { sanitizeSystemPlaces } from "../../shared/context/config";
+import { sanitizeInputLimitChars, sanitizeSystemPlaces } from "../../shared/context/config";
 import { ContextConfigSchema } from "../../shared/context/config";
 import { defaultSystemPlaces } from "../../shared/context/delivery";
+import { DEFAULT_INPUT_LIMIT_CHARS } from "../../shared/context/input-limit";
 
 export function contextConfigFile(home: string): string {
   return join(home, "context.yaml");
+}
+
+/**
+ * 读整份 context.yaml 的**原始文档**（不做净化；文件缺失 / 解析失败 / 结构不符 → null）。
+ * 用途：写回时**保住别人的键**（写 `systemPlaces` 不该顺手把 `inputLimitChars` 抹掉）。
+ */
+function readRawDoc(home: string): Record<string, unknown> | null {
+  const p = contextConfigFile(home);
+  if (!existsSync(p)) return null; // sync-io-ok: 与 loadSystemPlaces 同一条读侧同步路径（真发前要同步拿到名单）
+  try {
+    const doc = yaml.load(readFileSync(p, "utf-8")); // sync-io-ok: 同上 —— 读侧本来就同步，不在这里新造异步链
+    return doc && typeof doc === "object" && !Array.isArray(doc) ? (doc as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 读用户单条消息的字符上限（##426 B）。
+ * 文件缺失 / 键缺失 / 值非法 → 缺省（**不是 0、不是 null**：门禁永远有一个可用阈值）。
+ */
+export function loadInputLimitChars(home: string): number {
+  const doc = readRawDoc(home);
+  if (!doc) return DEFAULT_INPUT_LIMIT_CHARS;
+  return sanitizeInputLimitChars(doc["inputLimitChars"]);
 }
 
 /**
@@ -61,6 +87,30 @@ export function saveSystemPlaces(home: string, systemPlaces: readonly string[]):
     "# 读写入口：上下文树页的 ⇄ 开关（或直接改本文件；下一轮真发生效）\n" +
     "# 结构：只声明**进 system** 的单元，其余自动归 runtime；两两不可互为祖先/后代\n" +
     "# 契约：pkgs.ts/diy-app/src/shared/context/config.ts 的 ContextConfigSchema\n";
-  writeFileAtomic(contextConfigFile(home), header + yaml.dump({ systemPlaces: [...places] }, { indent: 2, noRefs: true }));
+  // 保住**别的键**（如 inputLimitChars）：只写 systemPlaces 会把它们静默抹掉，
+  // 而「改一次划分就丢了输入阈值」是本任务最不能犯的那类静默损失。
+  const prev = readRawDoc(home) ?? {};
+  const next: Record<string, unknown> = { ...prev, systemPlaces: [...places] };
+  writeFileAtomic(contextConfigFile(home), header + yaml.dump(next, { indent: 2, noRefs: true }));
   return places;
+}
+
+/** 写输入上限（原子写；同样保住 systemPlaces 等其它键）。返回净化后的值。 */
+export function saveInputLimitChars(home: string, chars: number): number {
+  const value = sanitizeInputLimitChars(chars);
+  const prev = readRawDoc(home) ?? {};
+  const places = Array.isArray(prev["systemPlaces"]) ? (prev["systemPlaces"] as unknown[]).map(String) : undefined;
+  const next: Record<string, unknown> = {
+    ...prev,
+    ...(places ? { systemPlaces: places } : {}),
+    inputLimitChars: value,
+  };
+  const header =
+    "# agent 系统上下文的投递划分 —— 唯一运行时真源\n" +
+    "# 读写入口：上下文树页的 ⇄ 开关（或直接改本文件；下一轮真发生效）\n" +
+    "# 结构：只声明**进 system** 的单元，其余自动归 runtime；两两不可互为祖先/后代\n" +
+    "# inputLimitChars：用户单条消息的字符上限（超过 → 发送前弹门禁框，##426）\n" +
+    "# 契约：pkgs.ts/diy-app/src/shared/context/config.ts 的 ContextConfigSchema\n";
+  writeFileAtomic(contextConfigFile(home), header + yaml.dump(next, { indent: 2, noRefs: true }));
+  return value;
 }

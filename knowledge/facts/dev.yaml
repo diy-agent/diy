@@ -1,0 +1,327 @@
+# knowledge/facts/dev.yaml — 开发流程纪律（判据 / 入口 / 硬要求）
+
+# 生成物式的真源：整篇由 `diy facts submit` 写入（字段顺序、条目排序都由程序定）。
+domain: dev
+facts:
+  dev.check#entry:
+    value: |-
+      ./sha.sh check = tsc -b 全仓 + oxlint + rpc 浏览器安全 + 产物/可执行位/原子写/异常码/规范索引 五道护栏
+    id: dev.check
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: sha.sh:165
+      verifiedAt: '2026-10-21'
+  dev.commit#signing:
+    value: |-
+      所有 git 操作必须 GPG 签名，失败即停并求助，禁 --no-gpg-sign
+    id: dev.commit-sign
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-21'
+  dev.context#cache-economics:
+    value: |-
+      **一步的钱由 `cacheHit` 决定，不由前缀大小决定**：实测命中步 ≈ $0.0007/步，未命中步 ≈ $0.0118/步 ⇒ **≈18 倍**（2026-10-24，deepseek-v4.1-flash，lab tasks/5 单轮 8 步）。
+
+      推论一：**减负动作必须成批落在轮次边界，不能边走边改** —— 每改一次 system 段就熔断一次缓存，18 倍单价会把零敲碎打的小改全部吃回去；省下的 10 KB 要几十步才回本。
+
+      推论二：`runtime.self` 这类**每步都变**的自量必须走 `runtimeDiff`（追加在末尾，不动前缀），绝不能进 `runtime` 全量（轮首全量 = 每轮第一步让其后所有历史失效）。实测 `self` 块 192 B/步，代价可忽略。
+
+      推论三：`cacheHit` 掉到 <50% 要能分辨两种成因 —— ①自己改了 system 段（可控）②历史压缩触发（预算阶梯的固有代价，必然断一次）。结果同为 18 倍，处置完全不同。
+    id: dev.context-cache-economics
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: 'runtime.self 的 last.cacheHit / last.cost 逐步实录（见 journal #94）'
+      verifiedAt: '2026-10-24'
+  dev.context#chain-share:
+    value: |-
+      AGENTS.md 链瘦身前 28.3 KB 占 system 81%（~/AGENTS.md 17.0 · 仓库 9.5 · ~/git 1.6）；仓库那份 43 条正文 2026-10-22 迁进知识库后降到 1.9 KB，system 34.9→26.7 KB。**剩余大头是 ~/AGENTS.md 17.0 KB（占 system 64%）**：它是全局规则，塞项目库是 scope 错位，得先有 user 级库
+    id: dev.context-chain-share
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: npx tsx build/lab/home/projects/1/tasks/5/gen/probe/measure-context.mts --home build/lab/home
+      verifiedAt: '2026-10-22'
+  dev.context#evidence-anchor:
+    value: |-
+      `evidence.at` 锚的是**当前文件行号**，源一瘦身就全烂：AGENTS.md 从 75 行改成 29 行后，43 条 `at: AGENTS.md:NN` 越界 → `facts submit` 整批被挡（全过才写），一条新事实都写不进去。迁移类事实不该锚在被搬空的原文件上：要么去掉 at（git 历史可追），要么 schema 支持 `<rev>:<path>:<line>`（未实现）
+    id: dev.context-evidence-anchor
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: 'git log --oneline -- knowledge/facts/entry.yaml | head -1  # at 锚被移动后越界'
+      verifiedAt: '2026-10-22'
+  dev.context#expose-ceiling:
+    value: |-
+      `expose` 预算 4000 B 是**每轮常驻知识**的硬上限（超了 submit 拒写 `facts/expose-budget`）。按键 ≤12 token 折算 ≈ 54 B/条 ⇒ **装不下一条真实事实**（实测均值 220~400 B/条）⇒ `full` 只能给「写错就每轮教坏动作」的少数主题（现 2.4 KB / 13 条 `where`），其余一律 `index`。判据不是「库有多大」，是「省下的解析轮次 × 单轮成本」。
+    id: dev.context-expose-ceiling
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: './diy.sh facts status  # exposeBudget.used/limit + bySubject.bytes'
+      verifiedAt: '2026-10-25'
+  dev.context#help-share:
+    value: |-
+      信封 help 7.4 KB 里 `system`(3.2) + `runtime`(2.2) 两节占 73%，全是 zod 派生的结构说明；`about` 固定话术已从 1689 B 压到 724 B（占 10%）。再砍只能动描述文本（`descMaxDepth`）
+    id: dev.context-help-share
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: npx tsx build/lab/home/projects/1/tasks/5/gen/probe/measure-context.mts
+      verifiedAt: '2026-10-22'
+  dev.context#measure:
+    value: |-
+      量上下文别用 reqlog：请求体默认截断（head 8 KB / tail 16 KB），量出来偏小且缺中段。走与真发同一个组装函数 `assembleSystem` + `buildHelpDoc` 才算准（脚本见 evidence.probe）
+    id: dev.context-measure
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: pkgs.ts/diy-app/src/main/services/prompt-registry.ts:503
+      verifiedAt: '2026-10-22'
+  dev.context#prefix-cost:
+    value: |-
+      每轮都付的固定前缀实测 46 KB 量级：system 34.9 KB + 信封 help 7.4 KB + facts 投影 ≤4 KB（runtime 首步）。基线日期 2026-10-22（lab，tasks/5）
+    id: dev.context-prefix-cost
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: npx tsx build/lab/home/projects/1/tasks/5/gen/probe/measure-context.mts
+      verifiedAt: '2026-10-22'
+  dev.context#query-cost:
+    value: |-
+      **搬走的账按收支算，不按字节线性相除**：搬走 1 KB 每轮省 1 KB；但要查它一次 ≈ 一次额外请求的前缀重发（`get` 全量 41 KB 量级：system 26.7 + help 8.1 + facts 4.0 + kb 索引 2.2；`brief` 单位 KB 成本低一个数量级）⇒ **回本 ≈ 20 轮 / KB**（原来按 41000/X 算出的「200 B = 205 轮」是把查询成本全押在 41 KB 全量重发上，brief 已把单次成本压掉一个量级）。**推论：<1 KB 的小条目搬走仍不划算**；只有大块低频参考才值得。减负优先序 = 删 > 压缩 > 搬
+    id: dev.context-query-cost
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: npx tsx build/lab/home/projects/1/tasks/5/gen/probe/measure-context.mts --home build/lab/home
+      verifiedAt: '2026-10-22'
+  dev.context#resident-set:
+    value: |-
+      常驻集 = **会改变行为、且违背代价高**的（硬约束 / 反直觉坑 / 入口选择），少而硬；搬运集 = **大块（>2 KB）且查阅式**（参考实现路径 / 命令细节 / 历史决策）；删除集 = 从不用。按此体检 2026-10-22 迁走 AGENTS.md 43 条（均 220 B）：`rule` 8 + `entry` 5 属于前一类（本应常驻），`find` 12 / `tool` 22 / `model` 5 属于搬运集（搬走合理）。工具面缺「按 subject 标 expose，不靠人拍脑袋」
+    id: dev.context-resident-set
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: './diy.sh facts brief find|tool|model|rule|entry  # 逐主题看条目体量'
+      verifiedAt: '2026-10-22'
+  dev.context#score-l0:
+    value: |-
+      **上下文质量的 L0 机械记分卡**（零 LLM，全从 `llm.jsonl` 解析）五个指标：`recheck` 重查率（bash 里 `cat|sed|head|tail` 的路径在最近 20 步内读过，每步上限 1）· `ungrounded` 工具报错率（`output.type==error-text` 或退出码非 0）· `idle` 空转率（无工具调用）· `hallucinated_ref` 假引用率（`<path>:<line>` 经 `git ls-files` + 行数校验）· `human_nudge` 真人消息数（含催促）。
+      **##5 实测基线**（1103 步 / 1079 调用 / 74 轮）：recheck 45.3% · err 2.9% · idle 4.0% · hallu 0.45% · 真人消息 62 条。recheck 45% 换算成成本 ≈500 步重复劳动 ≈20 MB 前缀。
+      **用法铁律**：只做**事件对齐**（kb 改动前 30 步 vs 后 30 步），绝对值不跨任务比较。演示页：`build/lab/home/projects/1/tasks/5/gen/demo/2026-10-23-kgscore/index.html`（解析器同目录 `score.py`）。
+    id: dev.context.score-l0
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: score.py 解析 projects/1/tasks/5 llm.jsonl 2297 条
+  dev.context#step-cost:
+    value: |-
+      **一步 = 一次工具调用 = 一次全前缀**：实测 ##5 的 1096 步里 1032 步只有 1 次工具调用（step 内不串多调），每步付一次 ~40 KB 前缀 ⇒ 全程 ≈44 MB。所以上下文成本的唯一杠杆是**省步数**，任何「上下文质量」指标最终都要能预测步数，否则只是噪声。
+    id: dev.context.step-cost
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: python3 解析 llm.jsonl：按 step 分组统计 tool-call 数（1072 calls / 1096 steps，分布 {1:1032, 2:20}）
+  dev.setup#sync:
+    value: |-
+      新 worktree 先 ./sha.sh sync（npm i --workspaces --include-workspace-root + 子模块 + 各包 sync）；只跑 --workspaces 会漏装根依赖，干净 worktree 上必现 build 解析失败
+    id: dev.sync
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: docs/toolchain.md:32
+      verifiedAt: '2026-10-21'
+  dev.setup#task-write:
+    value: |-
+      任务文件头是权威：读侧 task show 给的就是 frontmatter；--body 只收内联正文（值形如单行路径即拒），整篇文件走 --body-file / 追加走 --append-body-file
+    id: dev.task-write
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: docs/task-write-contract.md:1
+      verifiedAt: '2026-10-21'
+  dev.test#bail:
+    value: |-
+      红灯即停；回报如实写「跑到第一个失败为止：N files / M passed / 其余未跑」，不许报成全量通过
+    scope:
+      paths:
+        - pkgs.ts/diy-app/tests
+        - pkgs.ts/diy-facts/tests
+    id: dev.test-bail
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-24'
+  dev.test#entry:
+    value: |-
+      ./sha.sh test-unit 快测（不起 Electron）· diy-app 意图测试 pkgs.ts/diy-app/sha.sh test-intent [片段]
+    id: dev.test
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: sha.sh:200
+      verifiedAt: '2026-10-24'
+  dev.turn-interrupt#blind:
+    value: |-
+      冷读补 `interrupted` 时，`data` 里两组标注都是**可选**：`code`/`triage`（##393 三档性质）与 `why`/`evidence`（##416 现场可命名的原因）。**缺 `why` 才是真盲** —— 退化成兜底句「本轮未完成（流中断/崩溃恢复）」（`turn-end.ts:60` / `chat-fold.ts:232`）；能命名时给具体说法「进程重启」/「进程崩溃」（`turn-end.ts:58-59`）。所以「热重启 / 流断 / 进程被杀同形、人和 agent 都无法归因」已被 ##416 消掉大半，只剩老记录仍不可辨
+    id: dev.turn-interrupt-blind
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: pkgs.ts/diy-app/src/main/services/local-blocks.ts:43
+      verifiedAt: '2026-10-24'
+  dev.turn-interrupt#cause:
+    value: |-
+      lab/dev 下「本轮未完成」的**历史**头号成因是 dev 热重启：main bundle 一变就让旧实例退场，而轮次跑在 main 进程内存里。**##404 起不再直接 kill** —— POSIX 发 `SIGUSR2`，主进程 restart-gate 先等在跑的轮次跑完再自退（`electron-dev.mts::retireElectron`，宽限 20 分钟）；仍超时才 `SIGKILL` 并由本脚本亲手补一条 `electron-restart` 证据（##416）。win32 无 `SIGUSR2` ⇒ 退回 `SIGTERM`，仍会立刻中断
+    id: dev.turn-interrupt-cause
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: pkgs.ts/diy-app/scripts/electron-dev.mts:348
+      verifiedAt: '2026-10-24'
+  dev.turn-interrupt#rate:
+    value: |-
+      实测 tasks/5 + tasks/7 共 37 个真发请求轮：HTTP 全 200；interrupted 12 起，12 起全部命中 electron-restart（末请求后 7.2~31.3s）；服务器侧成因 0 起，唯一 error 是流读 read ETIMEDOUT
+    id: dev.turn-interrupt-rate
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: DIY_HOME=<lab home> uv run <lab home>/projects/1/tasks/7/gen/probe/interrupt-cause.py projects/1/tasks/5 projects/1/tasks/7
+      verifiedAt: '2026-10-22'
+  dev.worktree#location:
+    value: |-
+      放仓库外、原项目同级：<原项目>.worktrees/<标识>（禁放仓库内部）
+    id: dev.worktree
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      at: ~/git/AGENTS.md:17
+      verifiedAt: '2026-10-21'
+  dev#by-type:
+    value: |-
+      **先判类型再选打法，不要所有任务一套**：
+
+      | 类型 | 打法 | 明确不要做 |
+      |---|---|---|
+      | UI / 视觉 / 交互 | `./sha.sh lab` 起实例，人眼 + **少量** CDP 抽样；可观测性差或要主观判断 → 叫醒用户（见 `dev.wake-user`） | 几十轮 CDP 逐像素猜、为一行样式硬啃 |
+      | 纯逻辑 / 内核 / CLI | 先写判据（纯函数 + 单测）再实现；意图测试收口 | 起 GUI 验证 |
+      | 数据修复 | 备份 → 改 → 复扫 + 逐字比对 | 跑一次就宣布修好 |
+      | 文档 / 配置 | `./sha.sh check` + 索引护栏 | 额外造测试 |
+      | 性能 | **先量再动**：给出基线数字再改，改完用同一个测量口径复测 | 凭感觉「应该更快了」 |
+    id: agents.dev.by-type
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  dev#for-test-persona:
+    value: |-
+      真 LLM 实验**只用 `for-test` 人物**（`~/.diy/personas.yaml` 的 `persona/9`）；该人物**不得用于自动化测试**（自动化测试走隔离 home + 种子，**绝不**依赖 `~/.diy` 真配置）
+    id: agents.dev.for-test-persona
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-25'
+  dev#lab-model:
+    value: |-
+      **lab 数据根（仓库根 `build/<variant>/home`）的真配置由 `./sha.sh sync` 自动同步**：把 `~/.diy/` 的 `model.yaml` / `context.yaml` / `personas.yaml` / `providers.custom.yaml` 逐字投影进去（变体随 `DIY_VARIANT`，缺省 lab；`DIY_SYNC_HOME=0` 关）—— **不再手抄**（手抄极易漏 `context.yaml` = 投递划分真源，漏了测到的划分是种子那份）；seed 只种示例数据（示例项目/任务 + 占位人物）
+    id: agents.dev.lab-model
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-25'
+  dev#lab-scope:
+    value: |-
+      `lab`（唯一 GUI 启动器，原 `preview` 已删，##381）**只用于探测性开发**（人看效果 / 手工验一条真请求 / 临时实验）；**不要**用它做自动化测试、压测、批量跑（那些走 `test` variant 与既有测试入口）
+    id: agents.dev.lab-scope
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-25'
+  dev#long-task:
+    value: |-
+      **长命令不靠 `sleep` 轮询**：bash 超时缺省 300s（`DIY_LOCAL_BASH_TIMEOUT_MS` 可调）；仍超长就 `nohup … &` **一次**，然后做别的事/汇报，用一次 `tail` 取增量 —— 绝不用「`sleep 30` → 看一眼 → 再 `sleep 30`」把一步工作切成十步（每步都是一次完整请求）。
+    id: agents.dev.long-task
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  dev#model-cheap:
+    value: |-
+      实验一律用**免费或最便宜**的模型（缺省先挑 `diy/AGENTS.md` 的 `model.free` 可用项，退 `mimo-v2.5`；`mimo-v2.6-flash` 自 2026-10-17 起**不作缺省** —— 上游返回 `[model_coming_soon]`）；贵模型只在用户明确许可下、一次一条用例
+    id: agents.dev.model-cheap
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-25'
+  dev#model-unavailable:
+    value: |-
+      模型不可用（上游 `model_coming_soon` / id 不认识 404 / 认证 401·403 / 配额 429）→ **停工 + 通知**，**不换模型硬试**；实验实例页顶出 bar（判据 `pkgs.ts/diy-app/src/shared/model-unavailable.ts`；上游 5xx 与超时**不算**，那是另一类问题）
+    id: agents.dev.model-unavailable
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-25'
+  dev#test-fixture:
+    value: |-
+      **意图测试里的「夹具」不许写成 `it`**（##433 / ##434）。判据一句话：这条用例单独跑（`vitest run <file> -t '<名>'`）时还有意义吗？没有 ⇒ 它就不是用例，是夹具。
+
+      - 夹具（造数据 / 建任务 / 开页面 / 置模块级变量）一律进 `beforeAll`；要被每条用例重置的才 `beforeEach`。
+      - **作用域按「谁用它」定**：只本 describe 用 ⇒ describe 级 hook；跨 describe 共用（典型：基础 `uri`）⇒ **文件级** hook —— describe 级 hook 只在该 describe 有用例被选中时才执行，单跑别的 describe 时它不跑，夹具仍缺席。
+      - 被夹具预置的状态若又被某条用例「再推一步」（例：先点成原文态、再点回渲染态），那条用例要**自己补齐前置**（`if (状态不对) 补一步`），否则 `-t` 单跑仍是假红；#433 的「账本空时自己跑一次 `compact run`」同此。
+
+      为什么值钱：`-t` 是排查单条用例的唯一手段。夹具带序时依赖 ⇒ 任何人拿 `-t` 定位，先看到的是「环境坏了」而不是「用例过了/没过」，每次都得先花一轮证伪（##433 的 `-e3b0c44298fc` 假目录就是这么来的）。
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: 42199e1c:pkgs.ts/diy-app/tests/cli.intent.ui-compact.test.ts:187
+      verifiedAt: '2026-10-25'
+  dev#verify-budget:
+    value: |-
+      **验证预算按改动面走，不按习惯走**：改一个文件只跑受影响的 1~3 个测试文件；全量套件（`./sha.sh check` / `test-unit` / 全量 intent）**只在收工前跑一次**。禁止「改一行 → 全量」循环 —— 一次全量 30~120s（还可能触发 bash 超时），循环 N 次等于把 N 次完整请求赔进去。红灯即停（先修再看），但回报必须如实写「跑到第一个失败为止：N files / M passed / 其余未跑」，不许报成全量通过。
+    id: agents.dev.verify-budget
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'
+  dev#wake-user:
+    value: |-
+      **agent 的可观测性有上限，到了就喊人，不许硬啃**。判据：需要人看一眼（视觉/交互效果）/ 需要人做决定（方案取舍）/ 卡住超过一次尝试。喊法 = 在会话里写三句话（**要你做什么 / 现在卡在哪 / 我试过什么**），然后**结束本轮** —— 不要空转等，也不要指望用户盯着日志看。
+    id: agents.dev.wake-user
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-22'

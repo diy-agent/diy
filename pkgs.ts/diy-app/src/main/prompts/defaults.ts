@@ -40,6 +40,9 @@ lockTip: "装配入口是结构契约：改了会改变模型看到的节顺序�
 <template :include="./identity.md"/>
 <template :include="./diy.md"/>
 <template :include="./project.md"/>
+{{/* 知识库索引不走这里：它是 Context Tree 的 runtime place（delivery.ts 的 kb），
+    真发由那条管道投递。放进这套模版会变成第二份渲染实现，必然与真发分叉 ——
+    上一版就在这里写了 diy facts find（当时还不存在的命令）。要索引去看上下文树页。 */}}
 <template :include="./task.md"/>
 <template :include="./rules.md"/>
 {{/* 技能槽位：skills 为空数组时整节不出现（空数组为假） */}}
@@ -119,7 +122,7 @@ diy 是一个 Electron 桌面管控台。命令行入口 {{diy.cli}}，数据根
 
 - state.yaml 由运行中的应用独占写入 —— 不要直接编辑，改任务/项目一律走 CLI
 - projects/<pid>/tasks/<tid>/AGENTS.md 是任务本体（frontmatter + 正文）
-- local/projects/<pid>/tasks/<tid>/<key>/ 是会话与 LLM 日志（ops/llm/usage/…），只读；旧平铺 local/<key>.*.jsonl 也还在（未迁移的存量）
+- local/projects/<pid>/tasks/<tid>/<key>/ 是会话数据（ops/llm/usage/…，**不是可清日志**），只读；旧平铺 local/<key>.*.jsonl 也还在（未迁移的存量）
 
 用法：{{diy.cli}} --help；按域 {{diy.cli}} task --help；查环境 {{diy.cli}} getAppInfo
 </diy>

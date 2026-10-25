@@ -58,6 +58,23 @@ export const ChainItemSchema = z
   })
   .meta({ id: "ChainEntry" });
 
+
+/** 事实投影的一个值（见 AssembleGlobalsSchema.facts 的说明） */
+export const FactsCellSchema = z
+  .object({
+    value: z.string().describe("已解析的值"),
+    resolvedBy: z
+      .string()
+      .optional()
+      .describe("按什么解析出这个值的（`env=development` / `paths=pkgs.ts/...`）。**缺省不输出** = 全局唯一（无变体歧义）"),
+    variants: z
+      .number()
+      .optional()
+      .describe("同 claim 的可用变体总数。**缺省不输出** = 1（没有别的值存在）"),
+  })
+  .meta({ id: "FactsCell" });
+export type FactsCell = z.infer<typeof FactsCellSchema>;
+
 /**
  * 注入 globals 的**契约（单一真源）**：
  *   · `flattenVars()` 派生出引擎静态校验用的扁平 VarSpec[]
@@ -138,6 +155,123 @@ export const AssembleGlobalsSchema = z.object({
    *
    * 缺席（`undefined`）= 这个任务没有房间（从没开过任务页、也没被投递过）⇒ 单人任务逐字不变。
    */
+  /**
+   * **事实库投影**（##404 待办 4）：任务库 + 项目库已解析后的值。
+   *
+   * 为什么进变量树而不是在投递处拼一段文本：与 identity / rules 同理 ——
+   * 拼好的文本既看不见（上下文树页无节点）、也没法 diff（改一条 = 整段重发），
+   * 还会退化成"与正文不可区分的机制文本"（压缩会当人话改写）。
+   *
+   * 为什么给**已解析值**而不是变体列表：让 agent 读到 `18888` 却不知道自己在哪个
+   * 环境，就会把 production 的端口当成 lab 的。故条目带 `resolvedBy` / `variants`，
+   * 由它自己判断要不要追问（`diy facts get <claim> --in task:<uri>`）。
+   *
+   * 为什么 claim 作 map 的 key 而不是数组里的 id 字段：`id` 可派生（= `subject#aspect`），
+   * 数组形式每个元素都要重复一遍 subject 与 aspect，且引用起来要遍历。
+   *
+   * 缺席（`undefined`）= 这个任务既没有任务级库、也没有项目级库 ⇒ 与未接入前逐字不变。
+   */
+  facts: z
+    .object({
+      algorithm: z
+        .enum(["yaml-nested", "flat-gid", "md-list"])
+        .describe(
+          "投影算法（与 `@diy/facts` 的 `PROJECTION_ALGORITHMS` 同名，别在此另起一套）：" +
+            "`yaml-nested` = claim 分组的 map（缺省）；`flat-gid` = gid 扁平 map；`md-list` = 一段 markdown 表",
+        ),
+      env: z.string().describe("解析变体用的环境（`DIY_ENV`）：production / development / test"),
+      task: z
+        .record(z.string(), FactsCellSchema)
+        .optional()
+        .describe("**任务级库**的已解析值（claim → 值）。本任务自己的结论，优先级最高"),
+      global: z
+        .record(z.string(), FactsCellSchema)
+        .optional()
+        .describe("**设备级库**（`~/.diy/knowledge/`）的已解析值（claim → 值）。跨项目的用户规则；同名 claim 时**项目库优先于它**（task > project > global）"),
+      project: z
+        .record(z.string(), FactsCellSchema)
+        .optional()
+        .describe("**项目级库**的已解析值（claim → 值）。跨任务共享的结论"),
+      text: z
+        .string()
+        .optional()
+        .describe("**仅 `md` 算法**：整份投影的 markdown 表（此时 task/project 缺席 —— 同一种内容不给两种形状）"),
+      omitted: z.number().describe("因预算被裁掉的条目数（>0 ⇒ 还有没带进来的，用 `diy facts status` 看）"),
+      omittedClaims: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "被裁掉的 claim（采样，最多 5 个）：`diy facts get <其一>` 就能把它捞回来。" +
+            "数目看 `omitted`，这里只给「叫什么」—— 没有名字就没有动作",
+        ),
+      overhead: z
+        .number()
+        .optional()
+        .describe(
+          "包装开销（字节，不进预算）：`<claim>: {value,resolvedBy,variants}` 外壳本身。" +
+            "预算按**值字节**算（与 `diy facts submit` 的校验同口径），故实际文本 ≈ 预算 + 本字段 —— " +
+            "`omitted > 0` 才是「装不下」，这里大只是外壳多",
+        ),
+      problems: z
+        .array(z.object({ gid: z.string().describe("哪一条（`<ns>:<claim>`）"), code: z.string().describe("机器码（`facts/*`）") }))
+        .describe("**真问题**：冲突 / 库内缺 claim。空数组 = 正常"),
+    })
+    .optional()
+    .describe("事实库投影（没有库时缺席）"),
+  /**
+   * **知识库索引**（##404）：知识库里**有什么**，正文不进上下文。
+   *
+   * 为什么必须有这一段：AGENTS.md 链占 system 81%（28.3 KB）且全量常驻，其中一大半是
+   * 「不查也行、查了才用得上」的说明性内容（三方源码位置、术语表、异常三档判据…）。
+   * 把那些迁进知识库、链上只留指针后，agent 仍要知道**有库、库里有什么**才谈得上"按需查"
+   * —— 这一段就是那个索引，也是迁移的**前提**（先给索引、再删正文，否则能力直接丢失）。
+   *
+   * 为什么只给 subject + description：字节量与**条目数无关**，只随主题数增长（26 主题 ≈ 1.5 KB），
+   * 拿它换掉 25 KB 常驻正文是唯一划算的量级。条目全文归 `facts` 投影（runtime，有 4 KB 硬预算）。
+   */
+  kb: z
+    .object({
+      claims: z
+        .number()
+        .describe(
+          "全库条目总数，**claim 口径**（subject#aspect；跨库同 claim 只算一条，与 `facts brief` / `status` 同口径 —— 不是 facts 数：同一 claim 的多个 env 变体算一条）。与索引里各主题的条数之和对不上 ⇒ 有主题缺 description 没进索引",
+        ),
+      entries: z
+        .array(
+          z.object({
+            subject: z.string().describe("主题（`diy facts get <主题>#<方面>` 的前半）"),
+            desc: z.string().describe("一句话说清这个对象（直接取自 subject 词表的 description）"),
+            claims: z.number().describe("该主题下的条目数（claim 口径，= `facts brief <主题>` 的 claims；跨库同 claim 只算一条）"),
+            ns: z
+              .array(z.string())
+              .describe(
+                "在哪些库：project（仓库 knowledge/）/ global（设备级）。两个都在 = 项目库覆盖设备库那份；查的时候带 `--in` 指定",
+              ),
+          }),
+        )
+        .describe("可查主题索引（按主题名排序）"),
+    })
+    .optional()
+    .describe("知识库索引（没有库时整节缺席）"),
+  /**
+   * **仓库文档索引（摘要）**（##404 / ##5 第 11 轮 B）：`docs/` 是设计的活真源，但它不在任何
+   * AGENTS.md 链上 —— 只给一句"有这些、怎么查"，agent 才知道去 `diy docs index` 看全表。
+   *
+   * 为什么变量树里**只有摘要**、逐篇条目归 CLI：实测逐篇 18 行 ≈ 2 KB/轮，全仓所有任务都付；
+   * 而"有哪些文档"是一次性好奇，不是每轮必需。按需 query 一次比每轮常驻更划算
+   * （判据与账在 `shared/docs.ts` 头注）。这也是它与 `kb` 的差别：kb 主题数有限且稳定，
+   * docs 的篇数随开发线性增长 —— 常驻那份必然越活越贵。
+   *
+   * 缺席（`undefined`）= 这个仓库没有可索引的文档 ⇒ 与未接入前逐字不变。
+   */
+  docs: z
+    .object({
+      roots: z.array(z.string()).describe("扫描根（仓库相对）：缺省只有 `docs/plans`（设计稿正区），可 `--roots` 扩到 `docs`"),
+      count: z.number().describe("可索引篇数"),
+      newest: z.string().optional().describe("全部文档里最新的 git 改动日（`YY-MM-DD`）；非 git / 未提交则缺席"),
+    })
+    .optional()
+    .describe("仓库文档索引**摘要**（没有文档时整节缺席）。逐篇索引（路径 / 标题 / 字节 / 状态词 / 两日期）按需取：`diy docs index`"),
   room: z
     .object({
       members: z
@@ -174,17 +308,55 @@ export const AssembleGlobalsSchema = z.object({
     })
     .optional()
     .describe("房间上下文（没有房间时缺席）"),
+  /**
+   * **自量**（##404 / ##9 提案）：agent 自己的钱与窗口 —— 三个**能改变行为**的数。
+   *
+   * 为什么进 runtime 而不是 system：这些数**每步都变**（`window` 随本步 token、`last` 随上一步、
+   * `turn` 随本轮累计），进 system ⇒ 前缀缓存每步作废（实测 cacheRead 占 92~99%，一改就是几十倍
+   * 输入成本）。故 `PLACE_CANDIDATES` 里 `system: false`。
+   *
+   * 为什么只这三个：别的（tok/s、per-tool 耗时、chunk 间隔）看得到但无法据此改变决定 ——
+   * 纯占字节且稀释注意力（判据在 `shared/context/self.ts` 头注）。
+   *
+   * 缺席（`undefined`）= 一条数都给不出（新进程首轮首步）⇒ 与未接入前逐字不变。
+   * 子项缺席 = **量不到**（不是 0）：`window` 要窗口上限、`last.cost` 要价目表。
+   */
+  self: z
+    .object({
+      window: z
+        .object({
+          used: z.number().describe("上一步请求的总 token（输入 + 输出）；窗口占用的分子"),
+          limit: z.number().describe("模型窗口上限（tokens）"),
+          ratio: z.number().describe("`used / limit` 的**百分数**（0~100，1 位小数）：>60 就该收尾 / 少堆长输出"),
+        })
+        .optional()
+        .describe("上下文窗口占用（取**上一步**：本步发出去之前就已经知道用了多少）；窗口上限未知则缺席"),
+      last: z
+        .object({
+          cacheHit: z.number().optional().describe("上一步的缓存命中率**百分数**（0~100）。从 90+ 掉到 <50 ⇒ 前缀缓存被打断（多半是刚动了 system 段），输入成本会翻数倍"),
+          output: z.number().describe("上一步的输出 token（文本 + 思考）"),
+          cost: z.number().optional().describe("上一步金额（USD）；无价目则缺席（**不是 0**）"),
+        })
+        .optional()
+        .describe("上一步的实际消耗"),
+      turn: z
+        .object({
+          steps: z.number().describe("本轮已走步数"),
+          cost: z.number().optional().describe("本轮累计金额（USD）；一步都没价目则缺席"),
+          unpriced: z.number().optional().describe("本轮无价目的步数（>0 ⇒ `cost` 是部分和，不是完整花费）"),
+        })
+        .optional()
+        .describe("本轮累计（进程重启不影响它：来自本轮现场）"),
+    })
+    .optional()
+    .describe("自量：窗口占用 / 上一步消耗 / 本轮累计（每步都变，故归 runtime；量不到的子项缺席，不写 0）"),
 });
 export type AssembleGlobals = z.infer<typeof AssembleGlobalsSchema>;
 
-/** 变量契约的扁平条目（引擎静态校验用；由 AssembleGlobalsSchema 派生） */
-export interface VarSpec {
-  path: string;
-  type: "string" | "number" | "boolean" | "array" | "object";
-  desc?: string;
-  /** 该路径**可能缺席**（schema 里是 `.optional()`，或祖先可选）—— 校验器据此放过"没有这个键" */
-  optional?: boolean;
-}
+/** 变量契约的扁平条目（引擎静态校验用；由 AssembleGlobalsSchema 派生）。
+ *  定义在 `@diy/template`：**引擎与宿主共用一份**（引擎校验读它、宿主 fork 出注入值产它）——
+ *  在这里再声明一份，引擎新加的字段（如 `dynamicKeys`）宿主侧就看不见。 */
+export type { VarSpec } from "@diy/template";
 
 /** 渲染结构 trace 节点（试验场「模版结构树」：每个节点的产出字节 + :if 真假原因 + 迭代次数） */
 export type TraceNode = {

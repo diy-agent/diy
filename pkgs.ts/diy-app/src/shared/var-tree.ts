@@ -103,6 +103,13 @@ const COARSE: Record<string, VarSpec["type"]> = {
   boolean: "boolean",
   array: "array",
   object: "object",
+  // ⚠ 这两个原先**不在表里** ⇒ 下面 `if (!self) return []` 把整棵子树静默丢掉：
+  //   `facts.algorithm`（`z.enum`）与 `facts.task` / `facts.project`（`z.record`）因此从未进过契约，
+  //   模版里写 `{{facts.algorithm}}` 会被判「契约里没有这个变量」。由 prompt-registry 的
+  //   「变量契约 ↔ 实际注入双向一致」测试抓到（##404）。教训：**schema 支持的类型必须全部映射**，
+  //   否则漏掉的那种不会报错、只会消失。
+  enum: "string", // z.enum 的 entries 恒为字符串
+  record: "object", // record 语义上就是对象：键动态，值类型另说
 };
 
 /**
@@ -126,8 +133,24 @@ export function flattenVars(schema: ZodType, prefix = "", optionalUp = false): V
       ),
     ];
   }
+  if (type === "literal") {
+    // 字面量按**值**的原始类型归类（`z.literal(3)` 是 number，别一概当 string，否则 `:for` 判据会误报）
+    const v = (d as { values?: unknown[] }).values?.[0];
+    const t = typeof v;
+    if (t === "string" || t === "number" || t === "boolean") return [{ path: prefix, type: t, desc: descOf(inner), ...(mayMiss ? { optional: true } : {}) }];
+    return [];
+  }
   if (!self) return []; // unknown 之类不参与校验
-  return [{ path: prefix, type: self, desc: descOf(inner), ...(mayMiss ? { optional: true } : {}) }];
+  return [
+    {
+      path: prefix,
+      type: self,
+      desc: descOf(inner),
+      ...(mayMiss ? { optional: true } : {}),
+      // record 的键来自数据（如 claim 名 trait），静态契约不可能穷举 → 标记动态，校验器改按前缀放行
+      ...(type === "record" ? { dynamicKeys: true } : {}),
+    },
+  ];
 }
 
 // ── 值树（「变量值」view）───────────────────────────────────────────────

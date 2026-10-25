@@ -1,0 +1,270 @@
+# knowledge/facts/facts.yaml
+
+# 生成物式的真源：整篇由 `diy facts submit` 写入（字段顺序、条目排序都由程序定）。
+domain: facts
+facts:
+  facts.cli#entry:
+    value: |-
+      diy facts status · get <claim> [--env] · submit --file <json|-> [--dry-run] · affected --files a,b —— **agent 只走 CLI，不碰 YAML**（整批事务：一条不过整批拒）
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: scripts/facts-index.mts:1
+      verifiedAt: '2026-10-21'
+  facts.find#atomic-write:
+    value: |-
+      `src/node/atomic-write.ts` 落盘原语：**两阶段**（先把 N 份 tmp 全写出来 → 再逐个 rename）；任一步失败清掉本批所有 tmp、目标保持原样、原错误上抛。tmp 名 `<目标>.tmp-<pid>-<rand>`（rand 防并发互踩；后缀不是 `.yaml`，`isFactFile` 另显式排除 `.tmp-`）。目标已存在 ⇒ tmp 继承权限位。**与 `diy-app` 的 `core/atomic-write.ts` 同范式、但各自持有一份**（依赖方向 `diy-app → diy-facts`，反向 import 会成环）；改语义两边一起改
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: bfb9eaa0:pkgs.ts/diy-facts/src/node/atomic-write.ts:1
+      verifiedAt: '2026-10-22'
+  facts.find#entry:
+    value: |-
+      `src/index.ts` 导出面；消费者只看这一份，别直接摸子文件
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:8
+      verifiedAt: '2026-10-22'
+  facts.find#fixtures:
+    value: |-
+      `tests/fixtures/real.ts` 取自仓库现有事实的真样例（判据压真数据，不编例子）
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:13
+      verifiedAt: '2026-10-22'
+  facts.find#index-build:
+    value: |-
+      `src/index-build.ts` claim 表 / 反查 / 冲突 / 影响面（全由程序生成）
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:11
+      verifiedAt: '2026-10-22'
+  facts.find#node:
+    value: |-
+      `src/node/index.ts`（`loadRepo` / `checkFacts` / `checkRepo` / `submit` / `renderDoc`）：**判据的唯二消费者共用这里** —— `check` 脚本与 `diy facts submit` 落盘前的候选集校验；两条路走同一份判据，杜绝「CLI 绿、CI 红」
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:14
+      verifiedAt: '2026-10-22'
+  facts.find#projection:
+    value: |-
+      投影给已解析值 + resolvedBy（按什么解析出来）+ variants（还有几个变体），不给变体列表 —— 让 agent 读到 18888 却不知道自己在 lab 就会踩坑
+    id: diy.facts.projection-shape
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: pkgs.ts/diy-app/src/main/services/facts-context.ts:1
+      verifiedAt: '2026-10-23'
+  facts.find#resolve:
+    value: |-
+      `src/resolve.ts` 读取唯一入口（悬空与冲突**显式失败**，不返回 null）
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:10
+      verifiedAt: '2026-10-22'
+  facts.find#scope:
+    value: |-
+      `src/scope.ts` 三轴匹配 / 归一键 / 特定度
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:9
+      verifiedAt: '2026-10-22'
+  facts.find#tasklib:
+    value: |-
+      任务级库：`--in task:<taskUri>` → `$DIY_HOME/<uri>/knowledge/`，与仓库库**同一套**判据与事务；差别只有两条（词表继承、首次写入即诞生），见 `LoadRepoOptions`
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:16
+      verifiedAt: '2026-10-22'
+  facts.find#validate:
+    value: |-
+      `src/validate.ts` 未知输入 → `Fact[]`，**一次报全部问题**（不中途返回）
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:12
+      verifiedAt: '2026-10-22'
+  facts.find#writer:
+    value: |-
+      写入事务：**`validateFacts` 报任何 issue ⇒ 不进内核、不碰磁盘**（整批退，`problems` 带码可重提）—— 早期把坏事实过滤成空集后照样 submit，于是坏事实落成空集、词表成了唯一落盘物（中间态「6 主题 / 0 条」）；落盘本身两阶段（tmp + rename），一条不过则目标原样、tmp 清空
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: bfb9eaa0:pkgs.ts/diy-facts/src/node/index.ts:732
+      verifiedAt: '2026-10-22'
+  facts.rule#claim:
+    value: |-
+      边指向 **claim**（`subject#aspect`），`supersedes` 指向 **fact id**；claim 可派生、fact id 不可派生（审计锚点 —— `supersedes.to` 指着它，改了就是断边）
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:21
+      verifiedAt: '2026-10-22'
+  facts.rule#env-axis:
+    value: |-
+      `scope.env` 对齐 **`DIY_ENV`**（production / development / test），**不是** `DIY_VARIANT`（prod / test / lab）：`lab` 只是 development 的一种实例形态，混用两套轴会在 lab 与 development 之间打架
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:20
+      verifiedAt: '2026-10-22'
+  facts.rule#evidence-drift-undecidable:
+    value: |-
+      「源改了我没跟」**机械不可判**：实测把判据写成「钉版本的那行文本还在不在现在的源里」→ 470 条里 **269 条 warning**（全是 AGENTS.md 内容外迁进 kb 后行文消失，属预期），换成「rev..HEAD 改过几次」→ **272 条**（合并频繁的仓里恒真）。噪声等于没有 ⇒ 该判据**不得**进 `facts-index`。要真判只有两条路：① 写入时把锚行文本存成 digest，比对 digest（schema 加字段）；② 人工/agent 例行「复核」仪式（W1 `facts/stale` 已提供时间触发器）。取舍未定，勿擅自实现
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: python3 /tmp/t5/probe2.py（对 470 条事实逐条比对 rev 行文与当前源）
+      verifiedAt: '2026-10-24'
+  facts.rule#evidence-pin-placement:
+    value: |-
+      `evidence.at` 的钉版本形态用错了边：全库 353 条带 at 的事实里 **269 条钉在已瘦身的 AGENTS.md 上**（那行已从源消失，锚只剩「历史上它写在这」的归档意义）、**41 条**那行仍在源里、**84 条是未钉版本直指当前文件**。**真正的危险区是未钉的那 84 条** —— 其中 **45 条指 `~/AGENTS.md:<行>`**，而 `~/AGENTS.md` 正是下一步要瘦身的对象：瘦完这 45 条会**静默指错行**（行号仍在范围内，G4 查不出来）。判据：钉版本只对「已搬家」的归档事实合适；**对活着的规则（每轮要照做的），必须保证 at 随源同步更新**，否则宁可删 at 也要在写侧重算
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: python3 /tmp/t5/probe2.py（统计 at 的两种形态分布 + 未钉版本的目标文件直方图）
+      verifiedAt: '2026-10-24'
+  facts.rule#exit-code:
+    value: |-
+      按名取实体查不到 ⇒ **退出码非零**（同 `grep` 无匹配 / `cat` 缺文件）；搜索或列举空结果 ⇒ **0**（`find` 无命中是正常结果）。落点：`diy facts get` 的 `resolved` **全空** ⇒ 1（多 claim 部分命中照常 0）；返回体不变（`resolved: []` + `notes` 照给，人要先看见原因再拿退出码）。实现在 CLI 输出层 `CliConfig.exitCodeOf`（直连与 `/cli` 端点同一判据，`diy.sh` 的 http 模式经 `x-diy-exit` 透传）。
+    id: facts.rule-exit-code
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: './diy.sh facts get totally.bogus#nothing; echo EXIT=$?  # 期望 1'
+      verifiedAt: '2026-10-25'
+  facts.rule#expose-cross-lib:
+    value: |-
+      expose 表的适用域必须**按库**判，不能按合并后的一张表：实测仓库 `knowledge/expose.yaml` 只声明了**一个** subject（当时是 `rule.agent: full`，现为 `where: full`），任务库（diy.facts 4 条 658 B，未声明 expose）的正文随即从 `runtime.facts` 消失（omitted 0，正文只剩 6 条）。**任务库缺 expose 应回落旧行为（全进正文），或按 ns 给缺省档：task=full / project·global=index** —— 任务自己的结论最该常驻，被上层库的配置静默吞掉是最坏的一种「省」。
+    id: diy.facts.expose-cross-lib
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: inference
+      verifiedAt: '2026-10-25'
+  facts.rule#generated:
+    value: |-
+      真源是**生成物式**：条目排序 / 字段顺序 / 头注（`note` 或文件开头注释块）全由 `renderDoc` 决定 ⇒ 手工改格式会被下一次 submit 冲掉；改内容只能走 `diy facts submit`
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:25
+      verifiedAt: '2026-10-22'
+  facts.rule#intersect:
+    value: |-
+      匹配是**相交**不是包含：`env: ['development','test']` 在 `{env:'test'}` 下命中（数组语义是析取，不是合取）
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:22
+      verifiedAt: '2026-10-22'
+  facts.rule#lazy-create:
+    value: |-
+      **库没有「新建」动作**：不存在 = 空库（读），第一次写入时由写盘原语（`atomic-write.ts` 的 `mkdirSync(dirname, {recursive:true})`）自己建目录（写）。读入口一律不建库、也不因为没库报错。
+
+      判据只有两条：
+      - **读不产生任何持久副作用** —— 磁盘快照前后一致（`loadRepo` 读路径不再 `mkdir`：原 `allowMissing` 分支已从选项类型里删除）
+      - **写不需要任何前置动作** —— 空库 `submit` 直接落盘，无例外
+
+      判据按**路径来源**分护栏：
+      - `--in task:<uri>` / `global` ⇒ 路径是推导的，不可能打错 ⇒ 懒建，无条件
+      - `--dir <path>` ⇒ 手敲的 ⇒ 照样懒建，但报告带 `created: { dir }`（不阻止，也不静默）
+
+      反例（已修，`b6353abe`）：`loadRepo` 在 `allowMissing` 时 `mkdirSync` ⇒ `submit --dry-run` 会建库，把「库建没建」这个状态改了，而 `--dry-run` 自称「磁盘一个字都不动」。同族另两处已删：`status` / `projectFacts` 门口那句「库还没建…先跑 submit」。
+
+      `agent/facts-repo-missing` **没有整体退役**，只收窄到两条环境错误（判的是「你指错地方了」，不是「库还没建」）：向上找不到 `knowledge/subjects.yaml`（处置：`--dir` 指仓根或 `DIY_FACTS_DIR`）、任务库缺继承词表（同处置）。这两条都答得出「读它的人能做什么」，故留。
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-24'
+  facts.rule#live:
+    value: |-
+      冲突 / 冗余只在 `review=accepted && lifecycle=active` 之间判；`superseded` 留档不算问题
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:23
+      verifiedAt: '2026-10-22'
+  facts.rule#no-throw:
+    value: |-
+      读取侧一律返回 `Result`（`facts/scope-no-match` / `facts/scope-conflict` 是可预期结果）；只有构造非法输入才 throw 带 code 的错误
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:29
+      verifiedAt: '2026-10-22'
+  facts.rule#single-impl:
+    value: |-
+      **判据只写一份**：CLI 与 check 脚本都调 `@diy/facts/node`，任一侧自己再实现一遍校验 = 分叉，正是本任务要治的病
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:24
+      verifiedAt: '2026-10-22'
+  facts.rule#subject-split:
+    value: |-
+      subject 级 expose 的前提是**单主题体量 ≤ 预算/4**：实测 `rule` 30 条 9279 B > 4 KB 预算 2.3 倍，`full` 对它是不可选项。切分判据 = **读它的场景一致**（谁要读它），不是字段分类；不要一次拆成 4 个（rule.dev/doc/task 会把 `rule` 拆空并触发 subject-unused）。**切之前先查 chain**：拆出来的主题若内容已在 `AGENTS.md` 链里，标 full 就是双写漂移 —— `rule.agent` 那 6 条实测 4 条与 `~/AGENTS.md` 逐字重复（已于 ##9 删除）、3 条迁进更该负责的主题，主题整体 drop。
+    id: diy.facts.subject-split
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: inference
+      verifiedAt: '2026-10-25'
+  facts.rule#tasklib-inherit:
+    value: |-
+      任务级库**继承**仓库词表，且**写回只写本地的**：`loadRepo` 把「全量词表」与「本地声明的词表」分成两份（`subjects` / `localSubjects`），写回用后者 —— 混用会让第一次 `submit` 就把继承的整份词表复制成本地快照。⚠️ **继承只持续到本地文件诞生**：任务库首次写入就建出本地 `subjects.yaml`，继承当场断掉、此后**不再合并**仓库词表 ⇒ 任务库词表不是「仓库 ∪ 本地」的持续快照，别按那个前提设计
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:28
+      verifiedAt: '2026-10-22'
+  facts.rule#tasklib-root:
+    value: |-
+      任务级库的 `root`（证据 / `scope.paths` 的解析根）**是仓库根**，不是任务目录：任务写的事实讲的是代码仓的事（`pkgs.ts/diy-app/src/x.ts:10`），按任务目录解析会让每条证据都悬空
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:27
+      verifiedAt: '2026-10-22'
+  facts.rule#workspace-dep:
+    value: |-
+      diy-app 新增 workspace 依赖**必须**同步 `pkgs.ts/diy-app/vite.pkg-deps.ts::WORKSPACE_TS_DEPS`，否则 main 产物留裸 `import "@diy/x"`、运行时加载 `.ts` 源码直接炸（本任务实测踩中一次）
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:26
+      verifiedAt: '2026-10-22'

@@ -26,6 +26,15 @@ beforeAll(async () => {
     HOME,
     sh: new ShellTest({ cwd: join(__dirname, "..", "..", ".."), env: { HOME, DIY_HOME: HOME } }),
   };
+
+  // 基础夹具（##434）：一个项目 + 一条任务。`uri` 被后面多个 describe 共用
+  // （提示词页 / 真实 UI 操作 / 子页面身份 / 详情 URI 位置），所以必须在**文件级** hook 里造。
+  // 写成 describe 里的 `it` 时，`-t` 过滤会跳过它 ⇒ 那些用例拿到空 uri（##433 同款假红）。
+  const p = await fx.sh.getJson(`./diy.sh project create ${HOME}/tabs --label Tabs`);
+  const pid = String((p.data as any)?.data?.id);
+  const t = await fx.sh.getJson(`./diy.sh task create 任务tab验证 ${pid}`);
+  uri = String((t.data as any)?.data?.uri);
+  expect(uri).toMatch(/^projects\/.+\/tasks\/.+$/);
 });
 
 afterAll(async () => {
@@ -97,14 +106,6 @@ const contentX = async (ui: UiDriver, title: string): Promise<number | null> =>
   (await rowAnchor(ui, title))?.x ?? null;
 
 describe("任务 tab —— 打开 / 聚焦 / 关闭", () => {
-  it("setup: 造任务", async () => {
-    const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/tabs --label Tabs`);
-    const pid = String((p.data as any)?.data?.id);
-    const t = await fx.sh.getJson(`./diy.sh task create 任务tab验证 ${pid}`);
-    uri = String((t.data as any)?.data?.uri);
-    expect(uri).toMatch(/^projects\/.+\/tasks\/.+$/);
-  });
-
   it("初始没有打开的 tab（回任务树）", async () => {
     await fx.sh.getJson("./diy.sh ui page navigate task");
     expect((await tabs()).active).toBe("");
@@ -453,7 +454,8 @@ describe("打开列表表达任务层次（排序 + 缩进）", () => {
   let a = "";
   let c = "";
 
-  it("setup: 造 a 与 a/b/c 三个任务", async () => {
+  // 夹具（##434）：造 a 与 a/b/c 三个任务。
+  beforeAll(async () => {
     const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/nest --label Nest`);
     const pid = String((p.data as any)?.data?.id);
     const r1 = await fx.sh.getJson(`./diy.sh task create 父任务 ${pid}`);
@@ -519,7 +521,8 @@ describe("打开列表表达任务层次（排序 + 缩进）", () => {
 describe("任务被移动 → 导航结构实时跟随（165 回归）", () => {
   let a = "", b = "", c = "", x = "", y = "";
 
-  it("setup: 造 a → b → c 三级，外加两个独立任务 x / y", async () => {
+  // 夹具（##434）：造 a → b → c 三级，外加两个独立任务 x / y。
+  beforeAll(async () => {
     const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/move --label Move`);
     const pid = String((p.data as any)?.data?.id);
     const uriOf = (r: any) => String((r.data as any)?.data?.uri);
@@ -597,7 +600,8 @@ describe("关父 tab 后孤儿子任务不挂错（226 回归）", () => {
   let s = "";
   let u = "";
 
-  it("setup: 造 祖→父→孙 三级 + 无关顶级任务，开满后关父", async () => {
+  // 夹具（##434）：造 祖→父→孙 三级 + 无关顶级任务，开满后关父（含清掉前序 describe 遗留的 tab）。
+  beforeAll(async () => {
     const pr = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/orphan --label Orphan`);
     const pid = String((pr.data as any)?.data?.id);
     const uriOf = (r: any) => String((r.data as any)?.data?.uri);
@@ -670,7 +674,8 @@ describe("关父 tab 后孤儿子任务不挂错（226 回归）", () => {
 describe("删除任务 → 打开列表摘掉幽灵 tab（dropCtx 接线）", () => {
   let t = "";
 
-  it("setup: 造任务并打开 tab（它同时是 active）", async () => {
+  // 夹具（##434）：造任务并打开 tab（它同时是 active）。
+  beforeAll(async () => {
     const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/ghost --label Ghost`);
     const pid = String((p.data as any)?.data?.id);
     const tr = await fx.sh.getJson(`./diy.sh task create 幽灵任务 ${pid}`);

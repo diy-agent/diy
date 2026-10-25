@@ -81,13 +81,13 @@ describe("④ 投影只读：同一块树反复投影恒等（base/mod 共享 st
 });
 
 describe("④ 压缩预览公开入口：连续两次 + 交错其它投影，输出逐字段一致", () => {
-    it("compactPreview(uri, policy) 两次 deep-equal；中间插一次 requestView 也不变", () => {
+    it("compactPreview(uri, policy) 两次 deep-equal；中间插一次 requestView 也不变", async () => {
         const uri = newUri();
         seedOps(uri);
         const policy = { budgetBytes: 1024 * 1024, toolResult: { render: "asis" } };
-        const p1 = getLocalAgent().compactPreview(uri, policy);
-        getLocalAgent().requestView(uri); // 交错的另一次投影（共享同一份文件）
-        const p2 = getLocalAgent().compactPreview(uri, policy);
+        const p1 = await getLocalAgent().compactPreview(uri, policy);
+        await getLocalAgent().requestView(uri); // 交错的另一次投影（共享同一份文件）
+        const p2 = await getLocalAgent().compactPreview(uri, policy);
         expect(p2).toEqual(p1);
         expect(p2.baseRequest).toEqual(p1.baseRequest);
         expect(p2.modRequest).toEqual(p1.modRequest);

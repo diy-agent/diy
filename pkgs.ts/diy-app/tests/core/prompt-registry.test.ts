@@ -367,9 +367,13 @@ describe("回归：评审修复项", () => {
       expect(typeOf(v), spec.path).toBe(spec.type);
     }
     // ② 注入 → 契约：注入里的每个叶子/集合路径都必须在契约里
+    //   例外：**动态键容器**（zod `z.record`，如 `facts.task` 的 claim 名）子树来自数据，静态穷举不了 → 按前缀放行
     const declared = new Set(SYSTEM_VARS.map((v) => v.path));
+    const dynamicPrefixes = SYSTEM_VARS.filter((v) => v.dynamicKeys).map((v) => `${v.path}.`);
+    expect(dynamicPrefixes.length, "至少要有一处动态键容器（facts.task / facts.project）").toBeGreaterThan(0);
     const missing: string[] = [];
     const visit = (node: unknown, prefix: string): void => {
+      if (dynamicPrefixes.some((pre) => prefix.startsWith(pre))) return;
       if (Array.isArray(node) || node === null || typeof node !== "object") {
         if (!declared.has(prefix)) missing.push(prefix);
         return;

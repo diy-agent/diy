@@ -5,6 +5,7 @@
 // ##401 的请求从 282 KB 一步跳到 4.95 MB（`~/.diy/log/network/2026-10-21.jsonl`）。
 import { describe, expect, it } from "vitest";
 import { clipToolResult, HARD_MAX_TOOL_RESULT_BYTES, toToolResultPolicy, type ToolResultPolicy } from "../../src/shared/context/compaction";
+import { parseCutMarkers } from "../../src/shared/cut-marker";
 
 /** 缺省 plan 的保底级 `clip:{type:"full"}` —— 经 toToolResultPolicy 映射成 `asis`（原样不裁） */
 const FULL: ToolResultPolicy = toToolResultPolicy({ type: "full" });
@@ -19,8 +20,10 @@ describe("clipToolResult 单条硬顶（##406）", () => {
         const r = clipToolResult(huge, FULL, { origPath: "toolout/abc.txt" });
         expect(r.clipped).toBe(true);
         expect(bytes(r.text)).toBeLessThanOrEqual(HARD_MAX_TOOL_RESULT_BYTES);
-        expect(r.text).toContain("中间省略");
-        expect(r.text).toContain("toolout/abc.txt"); // 指针仍要给出
+        const m = parseCutMarkers(r.text).at(0)!;
+        expect(m).toMatchObject({ by: "tool-output", scope: "wire", why: "budget", unit: "lines" });
+        expect(m.total).toBeGreaterThan(m.kept);
+        expect(m.resume).toBe("toolout/abc.txt"); // 指针仍要给出
         expect(r.origBytes).toBe(bytes(huge)); // 原始体量仍如实报
     });
 
@@ -50,7 +53,7 @@ describe("clipToolResult 单条硬顶（##406）", () => {
         const big = "z".repeat(500_000);
         const r = clipToolResult(big, CALLPATH);
         expect(r.clipped).toBe(true);
-        expect(r.text).toContain("输出已省略（只留调用）");
+        expect(parseCutMarkers(r.text).at(0)).toMatchObject({ by: "tool-result-callpath", scope: "wire", kept: 0 });
         expect(bytes(r.text)).toBeLessThan(1000);
     });
 });

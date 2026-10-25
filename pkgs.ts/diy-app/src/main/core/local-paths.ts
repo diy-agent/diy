@@ -19,6 +19,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import path from "node:path";
+import { invariant } from "../../shared/error-triage";
 import { diyHome } from "./state";
 
 /** 会话数据根 `$DIY_HOME/local/`（不存在则创建） */
@@ -34,8 +35,18 @@ export function localDir(): string {
  * 共享 zen 会话亲和头）。可读前缀只为便于排查，唯一性由 sha256 前 12 位负责。
  *
  * ##379 起它是**目录名**（不再是文件名前缀）；算法一字未动（硬约束）。
+ *
+ * ⚠️ 空 uri 一律当场抛（##433）：`keyOf("")` 算出来的 `-e3b0c44298fc` 是**空串的 sha256 前 12 位** ——
+ * 一个语法合法、读侧永远不会按它去找的**假会话目录**。静默拼出它 = 历史写进黑洞（写成功、读不回）。
+ * 判据只有这一处：本模块是会话路径的**唯一出口**，`sessionDir` / `sessionFile` / `sessionIdOf` /
+ * `sessionFileRel` / `legacySessionFile` 全部从它派生，故在这里拦一次就够，不要在各调用点各判一遍。
  */
 export function keyOf(taskUri: string): string {
+    invariant(
+        typeof taskUri === "string" && taskUri.trim().length > 0,
+        "agent/empty-task-uri",
+        `会话路径需要非空 taskUri（收到 ${JSON.stringify(taskUri)}）；空 uri 会拼出假目录 -<空串 sha256 前 12 位>`,
+    );
     const readable = taskUri.replace(/[^\w.-]+/g, "_").slice(0, 64);
     const sum = createHash("sha256").update(taskUri).digest("hex").slice(0, 12);
     return `${readable}-${sum}`;
@@ -50,8 +61,14 @@ export function sessionIdOf(taskUri: string): string {
     return `local-${keyOf(taskUri)}`;
 }
 
-/** 会话子文件种类（**唯一清单**：双认 / 迁移 / clear 都按它走，别在各处再列一遍） */
-export const SESSION_KINDS = ["ops", "llm", "usage", "steps", "compact", "changelog", "raw"] as const;
+/**
+ * 会话子文件种类（**唯一清单**：双认 / 迁移 / clear 都按它走，别在各处再列一遍）
+ *
+ * `turns`（##424）：**每轮一条的结论账**（user 原文 + 该轮全部 assistant 正文 + 指回 ops 的
+ * 字节锚点）。它**不是**会话真源，而是 ops 断代 / 缺失时的**降级重建材料** ——
+ * 形状与读取见 `services/local-turns.ts` 的头注。放进本清单是为了让落位迁移与清空同样覆盖它。
+ */
+export const SESSION_KINDS = ["ops", "llm", "usage", "steps", "compact", "changelog", "raw", "turns"] as const;
 export type SessionKind = (typeof SESSION_KINDS)[number];
 
 /**
@@ -71,6 +88,17 @@ export function sessionDir(taskUri: string): string {
 /** 新落位下的文件绝对路径（**不判存在**；写侧目标） */
 export function sessionFile(taskUri: string, kind: SessionKind): string {
     return path.join(sessionDir(taskUri), `${kind}.jsonl`);
+}
+
+/**
+ * 会话级**旁路状态文件**：`<会话目录>/<name>.json`（当前值快照，不是 append-only 流水）。
+ *
+ * 目前唯一使用者 = `compact-state`（##431）：压缩边界的当前值，读它 O(1)。
+ * 为什么固定走**新落位**：它是新功能、没有旧平铺副本要兼容；与 `.jsonl` 流水分开命名，
+ * 也就不会被「按 kind 双认」的逻辑误认成会话流水。
+ */
+export function sessionStateFile(taskUri: string, name: string): string {
+    return path.join(sessionDir(taskUri), `${name}.json`);
 }
 
 /** 旧平铺落位（##379 之前；存量兼容用，见 `resolveSessionFile` 的「粘旧」裁决） */
@@ -140,13 +168,17 @@ export function sessionFileCandidates(taskUri: string): { file: string; legacy: 
  * 必须两份都删：只删 `resolve` 命中的那一份，另一份会被读侧兜底重新认领 = 清空静默失效。
  * ⚠️ `changelog` **不在清单里**（它是跨会话审计时间线，见 local-agent clear 的注记）。
  */
-export const CLEARED_SESSION_KINDS = ["ops", "llm", "raw", "steps", "usage", "compact"] as const;
+// `turns` 必须一起删（##424）：清空对话后 ops 不存在 ⇒ 降级链会把「已经清掉的对话」
+// 从 turns 里重新翻出来，等于清空静默失效。
+export const CLEARED_SESSION_KINDS = ["ops", "llm", "raw", "steps", "usage", "compact", "turns"] as const;
 
 export function sessionFilesToClear(taskUri: string): string[] {
     const out: string[] = [];
     for (const kind of CLEARED_SESSION_KINDS) {
         out.push(sessionFile(taskUri, kind), legacySessionFile(taskUri, kind));
     }
+    // 旁路状态快照（##431）：留着它 = 「清空对话」后仍记着旧边界/旧工具 id（下一次写又会复活）。
+    out.push(sessionStateFile(taskUri, "compact-state"));
     return out;
 }
 
@@ -162,6 +194,16 @@ export function opsFile(taskUri: string): string {
 /** 全量消息日志（append-only；每行 1 条消息，行号即消息序号 —— 压缩注记的行号口径） */
 export function llmFile(taskUri: string): string {
     return sessionFileForWrite(taskUri, "llm");
+}
+
+/**
+ * 每轮结论账（`turns.jsonl`，##424）：降级重建的唯一材料。
+ *
+ * ⚠️ 与 `opsFile` / `llmFile` 同一会话目录、同一 key；**旁路文件** —— 写失败不许冒到轮次
+ * （见 `services/local-turns.ts::appendTurnRecord` 的 try/catch）。
+ */
+export function turnsFile(taskUri: string): string {
+    return sessionFileForWrite(taskUri, "turns");
 }
 
 /** 会话日志的相对路径（相对 `$DIY_HOME`）——写进投递文本给模型/人照此回取 */
@@ -182,6 +224,9 @@ export function llmLogRelPath(taskUri: string): string {
  * 变化 → noteActivity），"打开过"不等于"说过话"。
  */
 export function hasConversation(taskUri: string): boolean {
+    // 空 uri = 「没有会话」而不是「编程错误」：本函数是**列表展示用粗判**，会随任务树逐条调，
+    // 让它抛会把整张列表带下来。空 uri 走不到任何真实目录，直接给 false（与 catch 分支同价）。
+    if (typeof taskUri !== "string" || taskUri.trim().length === 0) return false;
     try {
         // 纯读：**不建目录**（列表页逐条调，建目录就是撒垃圾）
         return statSync(resolveSessionFile(taskUri, "ops")).size > 0;

@@ -10,6 +10,9 @@
 
 // ─── 类型 ─────────────────────────────────────────────
 
+import type { Triage } from "../../shared/error-triage";
+import { cutMarker } from "../../shared/cut-marker";
+
 export type JSONVal = string | number | boolean | null | JSONVal[] | { [k: string]: JSONVal };
 
 export type BlockKind = "turn" | "step" | "text" | "think" | "tool" | "plan" | "error";
@@ -26,16 +29,21 @@ export type BlockKind = "turn" | "step" | "text" | "think" | "tool" | "plan" | "
 export type TurnEndReason =
     | { type: "completed"; data: {} } // 模型自然说完（末步无待续工具）
     | { type: "max-steps"; data: { steps: number; limit: number } } // 打满 maxSteps，模型仍在请求工具
-    | { type: "max-tokens"; data: { maxOutputTokens: number } } // 撞 maxOutputTokens 被截断
+    // `layer`：这个上限**是哪一层定的**（##429 拍板：日志必须能回答「为什么这次是 2000」）。
+    // 可选 —— 老日志没有它，读侧不得因缺键报错。取值见 `shared/output-budget.ts::OutputBudgetLayer`。
+    | { type: "max-tokens"; data: { maxOutputTokens: number; layer?: string } } // 撞输出上限被截断
     // source：`"user"` = 用户主动停止（`cancel()` 显式带上）· `"detached"` = 流意外中断/没跑完的兜底
     //（##305 起消费端断开**不再**产生它）· 旧日志里的 `"abort"` = 来源不明的中断。文案映射唯一源见 shared/turn-end
     | { type: "aborted"; data: { source: string } }
-    | { type: "error"; data: { source: string; message: string } } // llm / stream / budget
-    // 崩溃/被杀后冷读补 closer（进程已死，不可能是正常收尾）。
-    // `why` / `evidence`（##416）：冷读时按现场证据给出的**可命名原因**（`app-exit:<kind>` / `crash:minidump`），
-    // 语义是由 `shared/interrupted-cause.ts::codeOfInterruptedWhy` 派生的三档归类 + 文案。
-    // **可选**：老记录（本次改动之前落的）没有 ⇒ 一律回落 unknown 兜底句，不许猜。
-    | { type: "interrupted"; data: { why?: string; evidence?: string } };
+    // `code` / `triage` = **根因 + 性质**（##393 用户口径：不再分类「有限额/中断」这类同级词，
+    // 直接放根因，但要说清「是我方 bug / 已识别外部 / 未识别外部」）。判据唯一出口 =
+    // `shared/error-triage.ts::endReasonOf`，文案唯一源 = `shared/turn-end.ts`。
+    | { type: "error"; data: { source: string; message: string; code?: string | null; triage?: Triage } } // llm / stream / budget / drive-turn
+    // 崩溃/被杀后冷读补 closer（进程已死，不可能是正常收尾）。两条正交标注并存：
+    // - `code` / `triage`：##393 的三档性质归类（活进程也会写）
+    // - `why` / `evidence`：##416 冷读时按现场证据给出的**可命名原因**（`app-exit:<kind>` / `crash:minidump`），
+    //   语义由 `shared/interrupted-cause.ts::codeOfInterruptedWhy` 派生；**可选**，老记录没有 ⇒ unknown 兜底，不许猜。
+    | { type: "interrupted"; data: { code?: string | null; triage?: Triage; why?: string; evidence?: string } };
 
 export type Op =
     | { op: "start"; id: string; kind: BlockKind; parent?: string | null; meta?: Record<string, JSONVal> }
@@ -44,6 +52,102 @@ export type Op =
     | { op: "stop"; id: string };
 
 /** 运行时块：kind 声明字段的扁平容器 + 结构位 */
+/**
+ * Text 字段**硬顶**（##93 D）：一个块的内容超过 `head + tail` 时，store 只留头尾，
+ * 中间换成一行显式标注 + 计数（`block.__cap[字段] = { total, omitted }`）。
+ *
+ * 为什么要有：##266 那轮会话单个 `text` 块 328 万字符 —— 它一个人就顶掉了整个渲染进程的内存预算，
+ * 而界面**同时**只看得到其中几十行。窗口化（##93 A）只解决 CPU，内存得靠这里。
+ *
+ * 为什么默认关：`main` 侧的 store 是**投递真源**（`blocksToMessages` / `projectAll` 要靠全文
+ * 重建 messages），裁了就是丢上下文。只有渲染端那份**纯显示**的 fold 可以裁。
+ */
+export interface TextCap {
+    /** 头部保留字符数 */
+    head: number;
+    /** 尾部保留字符数 */
+    tail: number;
+}
+
+/** 被裁字段的计数（挂在 block 的 `__cap` 上，随 attrs 一起下发到 UI） */
+export interface TextCapInfo {
+    /** 该字段完整字符数（含被省略部分） */
+    total: number;
+    /** 被省略的字符数 */
+    omitted: number;
+}
+
+/** 渲染端硬顶（UI 只用它显示；全文按需另取，见 ##93 D 的 range 读） */
+export const RENDER_TEXT_CAP: TextCap = { head: 64 * 1024, tail: 64 * 1024 };
+
+/**
+ * 读一个 Text 字段的**显示值**。被硬顶裁过时拼 `head + 标记 + tail`（每次读重拼 128 KB，瞬时垃圾），
+ * 未裁时就是字段原值。
+ *
+ * 为什么不把拼好的串存进块里：那样 store 里会同时留着 head/tail 与显示串两份（实测 456 KB/块），
+ * 而判据是「常驻 < 200 KB」。惰性拼装把常驻压到 head+tail 一份。
+ */
+export function displayText(b: Block | undefined, path = "content"): string {
+    if (!b) return "";
+    const raw = (b.__raw as Record<string, { head: string; tail: string }> | undefined)?.[path];
+    if (!raw) return typeof (b as Record<string, unknown>)[path] === "string" ? ((b as Record<string, unknown>)[path] as string) : "";
+    const cap = (b.__cap as Record<string, TextCapInfo> | undefined)?.[path];
+    return raw.head + (cap ? capMark(cap.omitted, cap.total) : "") + raw.tail;
+}
+
+/**
+ * 把字符串**压平成独立副本**（切断 V8 SlicedString 对父串的引用）。
+ *
+ * 为什么必须：`slice(k)` 返回的是 SlicedString，它引用**整条父串** —— 对 3.28 M 的串取尾巴，
+ * 等于把整条串继续钉在堆上（实测硬顶后仍有 202 KB/块，压平后 ~130 KB/块）。
+ * 只在 head/tail 两段上做（各 ≤ 64 KB），每次 delta 两次 64 KB 拷贝 ≈ 0.04 ms，与每帧预算相比可忽略。
+ */
+// ⚠️ 不能用 `Buffer`：本模块 main 与 **renderer** 共用（浏览器没有 Buffer —— 曾经在这里抛
+// `ReferenceError: Buffer is not defined`，整条 op 被跳过、大块内容凭空消失）。
+// TextEncoder / TextDecoder 两边都有；往返会把 lone surrogate 变成 U+FFFD（与 Buffer 行为一致），
+// 所以切点仍必须先避开代理对（见下面的 sliceNoSplitOff）。
+const FLATTEN_ENC = new TextEncoder();
+const FLATTEN_DEC = new TextDecoder();
+const flatten = (v: string): string => (v.length < 256 ? v : FLATTEN_DEC.decode(FLATTEN_ENC.encode(v)));
+
+const isHighSurrogate = (c: number): boolean => c >= 0xd800 && c <= 0xdbff;
+const isLowSurrogate = (c: number): boolean => c >= 0xdc00 && c <= 0xdfff;
+
+/**
+ * 取头 n 个 code unit，**不在代理对中间切**（切了就会得到 lone surrogate —— 再经 `Buffer` 的
+ * UTF-8 往返变成 `U+FFFD`，不可逆地损坏文本：`"🎉".repeat(100).slice(0,7)` 就是现场）。
+ */
+function headSlice(v: string, n: number): string {
+    if (v.length <= n) return v;
+    const cut = isHighSurrogate(v.charCodeAt(n - 1)) && isLowSurrogate(v.charCodeAt(n)) ? n - 1 : n;
+    return v.slice(0, cut);
+}
+
+/** 取尾 n 个 code unit，同样避开代理对（起点落在低代理上就前移一位，宁可少一个字符）。 */
+function tailSlice(v: string, n: number): string {
+    if (v.length <= n) return v;
+    let start = v.length - n;
+    if (isHighSurrogate(v.charCodeAt(start - 1)) && isLowSurrogate(v.charCodeAt(start))) start += 1;
+    return v.slice(start);
+}
+
+/**
+ * 裁剪标记（##425）：`view` 档 —— 原文完整（盘上有），只是**这个视图**留了头尾两段。
+ * 中间嵌在内容里、经 markdown 渲染 ⇒ `fence: true`，否则 `<cut …/>` 会被当成 HTML 吞掉。
+ * `resume` 指向 UI 的「载入全文」出口（见 `CapNotice`）。
+ */
+const capMark = (omitted: number, total: number): string =>
+    `\n\n${cutMarker({
+        by: "renderer-text-cap",
+        scope: "view",
+        why: "render",
+        unit: "chars",
+        total,
+        kept: Math.max(0, total - omitted),
+        resume: "ui:载入全文",
+        fence: true,
+    })}\n\n`;
+
 export interface Block {
     id: string;
     kind: BlockKind;
@@ -60,7 +164,19 @@ type FieldKind = "Text" | "List" | "Flag";
 
 /** kind → 字段类型表。children 为结构位（start 自动维护），不接受 delta/patch。 */
 const SCHEMA: Record<BlockKind, Record<string, FieldKind>> = {
-    turn: { usage: "Flag", status: "Flag", notice: "Flag", reasoningEffort: "Flag", durationMs: "Flag", endReason: "Flag" },
+    turn: {
+        usage: "Flag",
+        status: "Flag",
+        notice: "Flag",
+        reasoningEffort: "Flag",
+        durationMs: "Flag",
+        endReason: "Flag",
+        // degraded（##424）：该轮是**降级重建**出来的（`turns.jsonl` 折成只读文本），不是 ops 原文。
+        // `{ refDangling: boolean, state: "ok"|"interrupted"|"error", at: ISO }` ——
+        // `refDangling` 时 UI 行内写「原始记录已清理」（锚点指向的 ops 已经不在了）。
+        // 正常路径永不出现这个字段（turns 只在降级时被消费）。
+        degraded: "Flag",
+    },
     step: { model: "Flag", usage: "Flag", status: "Flag" },
     // steer / steerId：用户"插嘴"写进对话流的标记（模式 next-step|next-turn，缺省 = 本轮开场的那次发言）
     // 与队列项 id（steer/N，回查用）。走 start 的 meta 落位（见 local-agent 的 steerBlockOps），
@@ -229,6 +345,64 @@ export class BlockStore {
     private openStack: string[] = [];
     readonly issues: FoldIssue[] = [];
     private seq = 0;
+    /** Text 硬顶（缺省 = 不裁；只有渲染端那份纯显示的 fold 传） */
+    private readonly textCap?: TextCap;
+
+    constructor(opts: { textCap?: TextCap } = {}) {
+        this.textCap = opts.textCap;
+    }
+
+    /**
+     * Text 字段落值（delta 追加 / patch 覆盖共用出口）—— 超硬顶时只留头尾。
+     *
+     * **头尾各自增量维护**（`__raw[path] = { head, tail }`），不在大字符串上 `slice`：
+     * V8 的 `slice` 返回 **SlicedString**，它**引用整条父串** —— `big.slice(0, 64K)` 看上去只留
+     * 6.4 万字符，实际把 3.28 M 的父串一起钉在堆上（实测 257 KB/块 vs 128 KB/块的目标）。
+     * 所以：头部「攒够就停」（只 append 不切），尾部「滚动窗口」（切的对象永远 ≤ tail + 一次 delta，
+     * 有界）。导出的显示串 = head + 标记 + tail 由 `buildNode` 拼（保 identity 缓存，不每帧拼）。
+     *
+     * delta 与 patch 的差别只在 `total` 怎么来：delta 是「之前的累计 + 新片段」（裁掉的中段已不在
+     * 内存里，长度只能靠计数），patch 是整体覆盖，`total` = 新值长度。
+     */
+    private setText(b: Block, path: string, val: string, mode: "delta" | "patch"): void {
+        const cap = this.textCap;
+        const caps = (b.__cap ??= {}) as Record<string, TextCapInfo>;
+        const raws = (b.__raw ??= {}) as Record<string, { head: string; tail: string }>;
+        const r0 = raws[path];
+        const prev = caps[path];
+        // 已裁过就直接读真身（**不要**读 `b[path]`：那是惰性拼装串，读一次就是一次 128 KB 重建）
+        const curStr = r0 ? "" : typeof (b as Record<string, unknown>)[path] === "string" ? (b as Record<string, unknown>)[path] as string : "";
+        const total = mode === "delta" ? (prev?.total ?? curStr.length) + val.length : val.length;
+        if (!cap || total <= cap.head + cap.tail) {
+            // 不超顶：仍是 cons string（`cur += val` 摊销 O(1)），并清掉旧的裁剪计数
+            delete caps[path];
+            delete raws[path];
+            const base = r0 ? r0.head + r0.tail : curStr;
+            (b as Record<string, unknown>)[path] = mode === "delta" ? base + val : val;
+            return;
+        }
+        let head: string;
+        let tail: string;
+        if (mode === "patch") {
+            head = flatten(headSlice(val, cap.head));
+            tail = flatten(tailSlice(val, cap.tail));
+        } else if (r0) {
+            // 头「攒够就停」，尾「滚动窗口」——切的对象恒 ≤ 64 KB + 一次 delta（有界），
+            // 且切片立刻压平（否则 SlicedString 把父串一起钉住，等于没裁）
+            head = r0.head.length >= cap.head ? r0.head : flatten(headSlice(r0.head + val, cap.head));
+            tail = flatten(tailSlice(r0.tail + val, cap.tail));
+        } else {
+            const full = curStr + val; // 首次超顶：这一刻才付一次全文代价（此后再不切大串）
+            head = flatten(headSlice(full, cap.head));
+            tail = flatten(tailSlice(full, cap.tail));
+        }
+        // 计数按**实际留下的长度**算（代理对齐可能少 1 个 code unit，不能让标记的数字对不上）
+        const omitted = Math.max(0, total - head.length - tail.length);
+        caps[path] = { total, omitted };
+        raws[path] = { head, tail };
+        // 显示串**不落库**：`b[path]` 是个惰性 getter（见 `blockGet`），按需拼 head + 标记 + tail
+        delete (b as Record<string, unknown>)[path];
+    }
 
     /** 标记块被触碰（所有成功落子的 op 共用出口） */
     private touch(id: string): void {
@@ -308,7 +482,10 @@ export class BlockStore {
                         const cur = path.includes(".") ? getPath(b, path) : (b as Record<string, unknown>)[path];
                         if (jsonEqual(cur, val)) continue;
                         if (path.includes(".")) setPath(b, path, val);
-                        else (b as Record<string, unknown>)[path] = val;
+                        else if (this.textCap && decl === "Text" && typeof val === "string" && !jsonEqual(cur, val)) {
+                            // patch 是整体覆盖 ⇒ 硬顶按「新值的完整长度」重算（不是叠在旧的累计上）
+                            this.setText(b, path, val, "patch");
+                        } else (b as Record<string, unknown>)[path] = val;
                         changed = true;
                         continue;
                     }
@@ -334,11 +511,19 @@ export class BlockStore {
                         : (b as Record<string, unknown>)[path];
                     if (decl === "Text") {
                         const next = `${typeof cur === "string" ? cur : ""}${typeof val === "string" ? val : JSON.stringify(val)}`;
+                        // 点分路径不参与硬顶（Text 字段都是顶层；带点的走 setPath 保持原语义）
                         if (path.includes(".")) setPath(b, path, next);
+                        else if (this.textCap) this.setText(b, path, typeof val === "string" ? val : JSON.stringify(val), "delta");
                         else (b as Record<string, unknown>)[path] = next;
                     } else {
-                        // List：值本身是数组则逐元素追加，否则作为单元素 push
-                        const arr = Array.isArray(cur) ? [...cur] : [];
+                        // List：值本身是数组则逐元素追加，否则作为单元素 push。
+                        // ⚠ **就地 push，不 `[...cur]`**（##93 E）：List 字段只会被**追加**
+                        // （SCHEMA 里仅 `plan.items` 是 List），每次追加都复制整组 = O(n²)；
+                        // 一条 1.16 M op 的真实会话里 List delta 为 0，但形状上一旦有就是平方。
+                        // 值语义为什么不破：追加只增不改已有元素，且每次 apply 都 `touch()` ⇒
+                        // `toForest` 会重建该节点；已导出的旧节点与 store 共享数组，看到的是
+                        // **更新的同一条数据**（跨进程到 renderer 时是 structured clone，天然快照）。
+                        const arr = Array.isArray(cur) ? cur : [];
                         if (Array.isArray(val)) arr.push(...(val as JSONVal[]));
                         else arr.push(val);
                         (b as Record<string, unknown>)[path] = arr;
@@ -394,8 +579,15 @@ export function compactOps(store: BlockStore): Op[] {
         const fields: Record<string, JSONVal> = {};
         for (const [k, v] of Object.entries(b)) {
             if (k === "id" || k === "kind" || k === "parent" || k === "children" || k === "stopped" || k === "touched") continue;
+            // `__` 前缀 = fold 侧的本地记账（如 `__cap` 的裁剪计数，##93 D）：不是块数据，不进折叠流
+            if (k.startsWith("__")) continue;
             if (v === undefined) continue;
             fields[k] = v as JSONVal;
+        }
+        // 被硬顶裁过的 Text 字段不在 `b` 上（只在 `__raw` 里），折叠时按**显示值**写出：
+        // 折叠流是「终值即等价」的，裁过的 store 本来就只剩头尾（渲染端才裁，而它不做折叠）。
+        for (const p of Object.keys((b.__raw as Record<string, unknown> | undefined) ?? {})) {
+            fields[p] = displayText(b, p);
         }
         if (Object.keys(fields).length > 0) out.push({ op: "patch", id: b.id, fields });
         for (const c of b.children) emit(c);
@@ -511,6 +703,17 @@ function buildNode(store: BlockStore, rootId: string, cache: Map<string, TreeCac
     }
     const { id, kind, children: _kids, stopped, touched, ...attrs } = b;
     delete (attrs as Record<string, unknown>).parent; // parent 由 children 树表达，不进 attrs
+    // `__raw` 是硬顶的内部记账（头/尾两段的真身），不进 attrs；`__cap` 的计数要进（UI 用）
+    delete (attrs as Record<string, unknown>).__raw;
+    // 被硬顶裁过的字段：attrs 上挂**惰性 getter**（每次读拼一次，不常驻第二份 128 KB 串）
+    for (const p of Object.keys((b.__raw as Record<string, unknown> | undefined) ?? {})) {
+        delete (attrs as Record<string, unknown>)[p];
+        Object.defineProperty(attrs, p, {
+            enumerable: true,
+            configurable: true,
+            get: () => displayText(b, p),
+        });
+    }
     const node: BlockNode = {
         tag: kind,
         id,
@@ -855,7 +1058,7 @@ export function projectAll(store: BlockStore): LocalModelMessage[] {
             // ⚠️ 「中断」必须由 **status** 判定，不能由「output 是否非空」判定 ——
             //    interruptedToolPatches 收敛时会往 output 写上同一句契约文案，于是收敛后
             //    output 变非空，旧判据（typeof b.output === "string" && b.output）就会把它
-            //    当成工具真实输出送去裁剪：callpath 模式把它换成「[输出已省略（只留调用）…]」，
+            //    当成工具真实输出送去裁剪：callpath 模式把它换成一条 `<cut by="tool-result-callpath" …/>`，
             //    并指向一个**根本不存在的** toolout/<id>.txt。同一份历史，投递结果取决于
             //    "这块有没有被收敛过" —— 是 bug（本地补的错误信息被当作历史投递）。
             const interrupted = status === INTERRUPTED_STATUS;

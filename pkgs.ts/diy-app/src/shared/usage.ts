@@ -511,7 +511,7 @@ export interface StepUsageRecord {
      * 窗口构成报表（按轮/按步）的数据源；消息段由「该步 prompt（精确）− 前两段÷4 估算」导出。
      * optional：本版上线前的账本没有 → 三段显示 `–`（不编 0）。
      */
-    contextParts?: { systemBytes: number; toolsBytes: number };
+    contextParts?: { systemBytes: number; toolsBytes: number; historyBytes?: number };
     /**
      * 该轮**首步**（step===1）投递时的历史选择（**配置驱动压缩的事实**）—— 供 UI 在分表标注
      * 「本步投递被压过」。**每轮重建**（`runTurn` 轮首按当前配置算一次），与是否写了压缩事件无关。
@@ -595,7 +595,7 @@ export type TurnUsagePatch = {
      */
     unpriced?: number;
     /** 该轮真发的构成字节（轮内各步相同；L2 构成卡实时源）。optional：老记录没有 → 三段 – */
-    contextParts?: { systemBytes: number; toolsBytes: number };
+    contextParts?: { systemBytes: number; toolsBytes: number; historyBytes?: number };
 };
 
 /** 由累计桶 + 最后一步桶 + 累计金额 → turn 页脚视图 */
@@ -605,7 +605,7 @@ export function turnUsagePatch(
     cost: CostBreakdown | null,
     contextLimit?: number,
     steps = 0,
-    contextParts?: { systemBytes: number; toolsBytes: number },
+    contextParts?: { systemBytes: number; toolsBytes: number; historyBytes?: number },
     /** 实时档：本轮最后一步的生成速度（`stepRate`）；给不出 → 传 null */
     lastStepRate: number | null = null,
     /** 轮均档：本轮 Σ总输出 ÷ Σ响应耗时（`avgRate`）；给不出 → 传 null（UI 回退逐步账本） */

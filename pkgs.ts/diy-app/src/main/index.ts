@@ -49,6 +49,7 @@ import { SINGLETON_LOCK, classifyLock, lockAdvice, readLock } from "./core/singl
 import { dropSelfRecord, setSelfPort, writeSelfRecord } from "./services/instances";
 import { setWindowOps } from "./services/window-ops";
 import { refreshModelsOnStartup, startupRefreshEnabled } from "./services/models-startup-refresh";
+import { runRegistry } from "./services/run-registry";
 import type { InstanceSelf, RevealResult } from "../shared/instance-row";
 
 // Chromium 开关必须走 app.commandLine（ready 之前），跟在 app 路径后传 argv 无效。
@@ -464,13 +465,30 @@ app.on("window-all-closed", () => {
 // RPC 服务与窗口通道的停止点：真正退出前（非 darwin 由 window-all-closed 的 app.quit() 触发；
 // darwin 由 Cmd+Q 触发）。这里不 destroy ipcBinding —— 与关窗不同，进程正在退出，
 // 无需为「以后还要用」留口子（window-all-closed 才 destroy，因为那时进程还活着）。
-app.on("before-quit", () => {
+//
+// **退出即收**：后台 run 是 `detached` 的，没有内核机制能把它们带走 —— 不收就成孤儿
+// （reparent 到 launchd，继续跑、继续写日志、没人收尸）。所以这里拦一次退出，等 run 表
+// 把进程组收完再真退；`SHUTDOWN_BUDGET_MS` 是硬上限：宁可有漏网的，也不许把用户卡在
+// Dock 里转圈（超时后仍照常 `app.quit()`）。
+const SHUTDOWN_BUDGET_MS = 2_500;
+let quitting = false;
+
+app.on("before-quit", (event) => {
   cancelModelsStartupRefresh?.();
   cancelModelsStartupRefresh = null;
   rpcPort?.stop();
   // 注册表清理：正常退出即删自己的条目。**但不能只靠它** —— SIGKILL / 崩溃时这里不会跑，
   // 故读侧（core/instance-registry.ts::readRecords）一律按 pid 存活过滤并顺手删死者。
   dropSelfRecord();
+  if (quitting) return;
+  // 第二趟 `app.quit()` 才是真退出（`quitting` 已置位，直接放行）
+  if (!runRegistry.list().some((r) => r.state === "running")) return;
+  event.preventDefault();
+  quitting = true;
+  void Promise.race([
+    runRegistry.shutdown({ graceMs: 1_500 }),
+    new Promise<void>((resolve) => setTimeout(resolve, SHUTDOWN_BUDGET_MS)),
+  ]).finally(() => app.quit());
 });
 
 /**

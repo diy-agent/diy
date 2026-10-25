@@ -5,6 +5,7 @@ import { JsonViewer } from "./JsonViewer";
 import { findStore } from "../store/findStore";
 import type { TrafficFocus } from "../store/trafficStore";
 import { fmtBytes } from "../lib/bytes";
+import { bodyValue } from "../lib/traffic-body";
 import { TrafficLogCleanButton } from "./TrafficLogCleanup";
 
 /**
@@ -69,25 +70,6 @@ function mimeType(r: Rec): string {
         return main;
     }
     return r.kind === "llm" ? "llm" : "—";
-}
-
-type BodyCapture = NonNullable<Rec["reqBody"]>;
-
-/**
- * 把「首尾法保留的正文」还原成可展示的值：未截断且能解析成 JSON → 结构；否则 → 文本。
- * 被截断时，中间省略的部分用 `<…>` 包一句说明插在头尾之间，一眼能看出这里断过。
- */
-function bodyValue(c: BodyCapture | null, note: string | null): unknown {
-    if (!c) return note ?? "（无正文）";
-    if (!c.truncated) {
-        try {
-            return JSON.parse(c.head);
-        } catch {
-            return c.head;
-        }
-    }
-    const omitted = c.totalBytes - c.headBytes - c.tailBytes;
-    return `${c.head}\n<中间省略 ${omitted} 字节（正文共 ${c.totalBytes} 字节）>\n${c.tail}`;
 }
 
 /**
@@ -662,7 +644,7 @@ export function TrafficList(props: { st: TrafficState; intro?: boolean }) {
                 </div>
             </Show>
             <div class="flex items-center gap-2 flex-wrap shrink-0">
-                <span class="text-body opacity-70" title="磁盘日志总体积（按天切文件；log 等同 cache，可随时清理）">
+                <span class="text-body opacity-70" title="磁盘日志总体积（按天切文件；流量日志等同 cache，可随时清理）">
                     日志 {fmtBytes(st.logBytes())} · {st.dateOptions().rest.length + 1} 个文件
                 </span>
                 <TrafficLogCleanButton
@@ -820,7 +802,7 @@ export function TrafficView(props: {
                 <Show when={props.showIntro !== false}>
                     <h2 class="text-display font-bold mr-auto">流量</h2>
                 </Show>
-                <span class="text-body opacity-70" title="磁盘日志总体积（按天切文件；log 等同 cache，可随时清理）">
+                <span class="text-body opacity-70" title="磁盘日志总体积（按天切文件；流量日志等同 cache，可随时清理）">
                     日志 {fmtBytes(st.logBytes())} · {st.dateOptions().rest.length + 1} 个文件
                 </span>
                 <TrafficLogCleanButton

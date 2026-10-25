@@ -19,6 +19,7 @@
 //   「彻底删除」仍归现有 clear（物理删文件）。
 
 import { z } from "zod";
+import { cutMarker } from "../cut-marker";
 
 // ─── ① 策略 ───────────────────────────────────────────
 
@@ -276,7 +277,8 @@ export function clipReasoningText(text: string, clip: ReasoningClipSpec | null |
     const dropped = origChars - headN - tailN;
     if (dropped <= 0) return same(); // 本来就短 ⇒ 不动（也保证"极短也不裁空"）
 
-    const marker = `\n[… 推理省略 ${dropped} 字符 …]\n`;
+    // ##425：wire 档（发给模型的那份就是残缺的；推理原文不在任何地方可回取）
+    const marker = `\n${cutMarker({ by: "reasoning-clip", scope: "wire", why: "budget", unit: "chars", total: origChars, kept: headN + tailN })}\n`;
     // head 至少留 1 字符（headChars ≥ 1 由 schema 保证）：空串 = 没传 = 400，这条断言是硬底线
     const out = `${text.slice(0, Math.max(1, headN))}${marker}${tailN > 0 ? text.slice(origChars - tailN) : ""}`;
     return { text: out, clipped: true, origChars, keptChars: out.length, droppedChars: dropped };
@@ -418,7 +420,8 @@ const HARD_CAP_POLICY: ToolResultPolicy = {
  *   · **未触发裁条件时逐字符返回原文** —— 不"顺手规整"，否则 86% 不受影响的输出会和历史分叉；
  *   · 行数触发是主判据（阈值 ≈ p90），字节兜底只防"一行超长"（压缩 JSON / base64）；
  *   · marker 里**必须**给原文路径（##127 的「头尾保留 + marker + 原文可寻回」三件套），
- *     否则模型看到「中间省略」却无处可查，只能重跑一遍命令（那是真金白银）。
+ *     否则模型看到「被截了」却无处可查，只能重跑一遍命令（那是真金白银）。
+ *     语法统一走 `shared/cut-marker`（##425）：`<cut by=… scope="wire" … resume="<path>"/>`。
  */
 export function clipToolResult(text: string, raw: ToolResultPolicy, opts: ClipOpts = {}): ToolClipResult {
     const origLines = text === "" ? 0 : text.split("\n").length;
@@ -441,11 +444,20 @@ export function clipToolResult(text: string, raw: ToolResultPolicy, opts: ClipOp
     if (toolResult.render === "asis") return same();
 
     const lines = text.split("\n");
-    const pathHint = opts.origPath ? `完整输出见 ${opts.origPath}` : "完整输出已省略";
+    // ##425：wire 档 —— 发给模型的那份被裁；原文落盘时给 `resume`（模型可 `read` 回取），
+    // 没落盘就不给（指向一个不存在的文件比不说还坏）。
+    const resume = opts.origPath;
 
     if (toolResult.render === "callpath") {
         if (text === "") return same();
-        const marker = `[输出已省略（只留调用）：${origLines} 行 / ${fmtBytes(origBytes)}，${pathHint}]`;
+        const marker = cutMarker({
+            by: "tool-result-callpath",
+            scope: "wire",
+            why: "budget",
+            total: origLines,
+            kept: 0,
+            ...(resume ? { resume } : {}),
+        });
         return {
             text: marker,
             clipped: true,
@@ -485,11 +497,16 @@ export function clipToolResult(text: string, raw: ToolResultPolicy, opts: ClipOp
     const build = (): string => {
         const head = lines.slice(0, headN).map((l) => truncLine(l, ht.maxLineChars));
         const tail = tailN > 0 ? lines.slice(origLines - tailN).map((l) => truncLine(l, ht.maxLineChars)) : [];
-        const midStart = headN;
-        const midEnd = origLines - tailN;
-        const dropped = lines.slice(midStart, midEnd);
-        const dBytes = utf8Bytes(dropped.join("\n"));
-        const marker = `[... 中间省略 ${dropped.length} 行 / ${fmtBytes(dBytes)}，${pathHint} ...]`;
+        // ##425：wire 档。`total` / `kept` 都按**行**（与 `unit` 同量纲）；
+        // 行内超长被 `maxLineChars` 再截的部分不另报 —— marker 只回答「中间少了多少行」。
+        const marker = cutMarker({
+            by: "tool-output",
+            scope: "wire",
+            why: "budget",
+            total: origLines,
+            kept: headN + tailN,
+            ...(resume ? { resume } : {}),
+        });
         return [...head, marker, ...tail].join("\n");
     };
     let out = build();
@@ -671,6 +688,18 @@ export interface DroppedTurnDetail {
     }[];
 }
 
+/**
+ * **v5** 账本里的工具裁剪摘要（##431）：只留 id 清单 + 条数。
+ *
+ * 为什么不再存单项明细：`ClippedToolDetail` 六个数字 + 路径 × 每次几十项 = 单条事件 10~20 KB，
+ * 而它只服务「事后看裁了什么」这种审计需求 —— 明细本来就能从 ops + 当前 policy 现算。
+ * `ids` 另有硬用途：`clear()` / 落位迁移靠它找回「哪些工具原文是本会话的」。
+ */
+export interface ClippedIdsSummary {
+    ids: string[];
+    count: number;
+}
+
 /** 被裁剪的工具输出明细（只对「保留部分」生效；原文落盘可寻回） */
 export interface ClippedToolDetail {
     id: string;
@@ -736,8 +765,12 @@ export interface CompactPlanSnapshot {
  */
 export interface CompactEventRecord {
     kind: "compact";
-    /** v2 = 只有 `policy`（旋钮）；v3 = 多一条 `plan` 快照（##344 M2）；**v4 = plan 只记版本指针**（##378）。读侧各版都收。 */
-    v: 2 | 3 | 4;
+    /**
+     * v2 = 只有 `policy`（旋钮）；v3 = 多一条 `plan` 快照（##344 M2）；**v4 = plan 只记版本指针**（##378）；
+     * **v5 = 明细瘦身**（##431：不再写 `details.dropped` 全文与 `details.clipped` 明细，只留计数与 id 清单）。
+     * 读侧各版都收 —— 老行的大 details 照旧可读，只是新行不再产出。
+     */
+    v: 2 | 3 | 4 | 5;
     /** 压缩 id（= ts，供 measure / undo 回指） */
     id: string;
     ts: string;
@@ -802,12 +835,20 @@ export interface CompactEventRecord {
          */
         backfillSteps?: number;
     };
-    /** **明细**（体积可控：只存摘要 + 指针，全文留在 ops 原地） */
+    /** **明细**（体积可控：只存摘要 + 指针，全文留在 ops 原地）
+     *
+     * ⚠️ ##431 起新事件（v5）**不再写** `dropped` / `clipped` 明细：一条事件曾因此涨到 20~29 KB，
+     * 而账本是审计日志、页面只需要看「压了几轮、裁了几个」。老行的大 details 照旧可读。
+     */
     details?: {
-        /** 被丢弃的轮（只存摘要 + 指针） */
+        /** 被丢弃的轮（只存摘要 + 指针；**v5 起不再写**，改读 `droppedCount`） */
         dropped?: DroppedTurnDetail[];
-        /** 被裁剪的工具输出（只对保留部分生效；原文落盘可寻回） */
+        /** 被裁剪的工具输出（只对保留部分生效；原文落盘可寻回；**v5 起不再写**，改读 `clippedIds`） */
         clipped?: ClippedToolDetail[];
+        /** **v5**：被丢弃的轮数（= `size.droppedTurns`，冗余一份便于 UI 单读 details；明细现场从 ops 算） */
+        droppedCount?: number;
+        /** **v5**：被裁剪的工具输出 —— 只留 id 清单 + 条数（单项明细现场从 ops 算；id 是原文落盘的寻回键） */
+        clippedIds?: ClippedIdsSummary;
         /**
          * **预算算法的过滤器表达**：保留的消息行号区间（1-based，等于 llm.jsonl 物理行号）。
          * 历史回溯 / 对比时据此还原那次投递了哪些消息（diff 的"保留侧"），不需要重放当前配置。
@@ -1112,4 +1153,142 @@ export function turnIdToTime(turnId: string): Date | null {
 /** 粗略 token 估算：字节/4（无 tokenizer；只用于 panel 的「首屏估算」文案，绝不用于计费） */
 export function estimateTokens(bytes: number): number {
     return Math.round(bytes / 4);
+}
+
+// ─── ⑥ 压缩状态快照（`compact-state.json`，##431）────────────────────
+//
+// 为什么另立一个**当前值文件**（而不是继续从账本流水推）：
+//   · 账本是 append-only 流水，且每条曾达 20~29 KB（266 会话实测 274 MB）—— 「现在生效的边界是什么」
+//     这个**每步投递都要问**的问题，原来要靠「倒着扫账本尾部」回答，账本一大就顶到主线程；
+//   · 当前值只有一个：`{ boundary, at, opIds, measure }`，几百 B。原子覆盖写（tmp + rename），
+//     读它 O(1)。账本从此降级为**纯审计日志**：删了 / 坏了只丢历史，不影响 agent 跑（回落扫一次 + 懒迁移）。
+//
+// 判据边界（用户 2026-10-25）：「主要是想把 compact.jsonl 变为和 ops 一样的非核心依赖，就是日志」。
+// 故本文件的**唯一用途**是「生成的快照」—— 真源仍是账本；快照丢了就按账本重建，重建结果必须与之等价。
+
+/** 状态快照的文件名（会话目录下的旁路 JSON，不是 jsonl 流水） */
+export const COMPACT_STATE_FILENAME = "compact-state.json";
+
+/**
+ * 一次压缩的**当前值**（从账本条目提取，纯数据）。
+ * 与 `EffectiveBoundary` 的区别：多带 `at`（账本条目的字节偏移，供审计 / 后续读取），少了「从账本再推一遍」的成本。
+ */
+export interface CompactPointState {
+    compactId: string;
+    /** 账本格式代号（缺省 = 旧账，按 `OPS_SCHEMA_CURRENT` 读） */
+    schema: number;
+    keptFromTurnId: string | null;
+    keepFromOpIndex: number;
+    keptFromOpsOffset?: number;
+    keptFromLlmLine?: number;
+    opsBytes?: number;
+    /** 该 compact 行在账本里的字节偏移（可选；只用于回查，不影响重放起点） */
+    at?: number;
+    /** 压缩时刻（= compact id 的同源时间戳） */
+    ts: string;
+    /** 当时的旋钮（`resolveBoundary` 的对外形状要求它，故一并快照） */
+    policy: CompactPolicy;
+}
+
+/** `compact-state.json` 的内容（v1） */
+export interface CompactState {
+    v: 1;
+    /** **当前生效**的边界；`null` = 账本在但没有生效压缩（从未压过 / 全被 undo） */
+    boundary: CompactPointState | null;
+    /** 当前工作集引用过的工具原文 id（`clear()` 与落位迁移的归属判据；新事件只写 ids） */
+    opIds: string[];
+    /** 最近一次 measure（可选；缺失只是少一条统计，不影响任何行为） */
+    measure?: MeasureEventRecord;
+    /** 快照生成时刻（ISO；排查用） */
+    savedAt?: string;
+}
+
+/** 账本条目 → 当前值快照点（`at` = 该行在账本里的字节偏移） */
+export function compactPointOf(rec: CompactEventRecord, at?: number): CompactPointState {
+    return {
+        compactId: rec.id,
+        schema: rec.schema ?? OPS_SCHEMA_CURRENT,
+        keptFromTurnId: rec.boundary.keptFromTurnId,
+        keepFromOpIndex: rec.boundary.keepFromOpIndex ?? -1,
+        ...(rec.boundary.keptFromOpsOffset !== undefined ? { keptFromOpsOffset: rec.boundary.keptFromOpsOffset } : {}),
+        ...(rec.boundary.keptFromLlmLine !== undefined ? { keptFromLlmLine: rec.boundary.keptFromLlmLine } : {}),
+        ...(rec.boundary.opsBytes !== undefined ? { opsBytes: rec.boundary.opsBytes } : {}),
+        ...(at !== undefined ? { at } : {}),
+        ts: rec.ts,
+        policy: normalizePolicy(rec.policy),
+    };
+}
+
+/** 当前值快照点 → `EffectiveBoundary`（下游只认这一种形状，与 `resolveBoundary` 逐字段同构） */
+export function boundaryOfPoint(p: CompactPointState): EffectiveBoundary {
+    return {
+        compactId: p.compactId,
+        keptFromTurnId: p.keptFromTurnId,
+        keepFromOpIndex: p.keepFromOpIndex,
+        ...(p.keptFromOpsOffset !== undefined ? { keptFromOpsOffset: p.keptFromOpsOffset } : {}),
+        ...(p.keptFromLlmLine !== undefined ? { keptFromLlmLine: p.keptFromLlmLine } : {}),
+        ...(p.opsBytes !== undefined ? { opsBytes: p.opsBytes } : {}),
+        schema: p.schema,
+        policy: normalizePolicy(p.policy),
+        ts: p.ts,
+    };
+}
+
+/** 一条 compact 事件引用过的工具原文 id（v5 的 `clippedIds` 优先；老行回落 `clipped` 明细） */
+export function clippedIdsOfEvent(rec: CompactEventRecord): string[] {
+    const out = new Set<string>();
+    for (const id of rec.details?.clippedIds?.ids ?? []) if (typeof id === "string" && id) out.add(id);
+    for (const c of rec.details?.clipped ?? []) if (typeof c?.id === "string" && c.id) out.add(c.id);
+    return [...out];
+}
+
+/**
+ * 宽松校验磁盘上的 `compact-state.json`（外部输入，坏形状 = null，由调用方回落扫账本）。
+ *
+ * 为什么不在 shared 用 zod：这个形状只有一个消费方（main），且校验判据就是"能不能用"——
+ * 用 zod 会把 shared 变成 schema 定义处，而账单的可选字段一多，schema 就比校验函数更长。
+ */
+export function normalizeCompactState(raw: unknown): CompactState | null {
+    if (!raw || typeof raw !== "object") return null;
+    const o = raw as Record<string, unknown>;
+    if (o["v"] !== 1) return null;
+    const b = o["boundary"];
+    let boundary: CompactPointState | null = null;
+    if (b !== null && b !== undefined) {
+        if (typeof b !== "object") return null;
+        const p = b as Record<string, unknown>;
+        if (typeof p["compactId"] !== "string" || !p["compactId"]) return null;
+        if (typeof p["keptFromTurnId"] !== "string" && p["keptFromTurnId"] !== null) return null;
+        const num = (k: string): number | undefined => {
+            const value = p[k];
+            return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+        };
+        const off = num("keptFromOpsOffset");
+        const line = num("keptFromLlmLine");
+        const bytes = num("opsBytes");
+        const at = num("at");
+        boundary = {
+            compactId: p["compactId"],
+            schema: num("schema") ?? OPS_SCHEMA_CURRENT,
+            keptFromTurnId: (p["keptFromTurnId"] as string | null) ?? null,
+            keepFromOpIndex: num("keepFromOpIndex") ?? -1,
+            ...(off !== undefined ? { keptFromOpsOffset: off } : {}),
+            ...(line !== undefined ? { keptFromLlmLine: line } : {}),
+            ...(bytes !== undefined ? { opsBytes: bytes } : {}),
+            ...(at !== undefined ? { at } : {}),
+            ts: typeof p["ts"] === "string" ? p["ts"] : (p["compactId"] as string),
+            policy: normalizePolicy(p["policy"]),
+        };
+    } else if (b === undefined) {
+        return null; // 缺键 ≠ 「无边界」：这是坏文件，交调用方回落
+    }
+    const ids = Array.isArray(o["opIds"]) ? (o["opIds"] as unknown[]).filter((x): x is string => typeof x === "string" && !!x) : [];
+    const measure = o["measure"];
+    return {
+        v: 1,
+        boundary,
+        opIds: ids,
+        ...(measure && typeof measure === "object" ? { measure: measure as MeasureEventRecord } : {}),
+        ...(typeof o["savedAt"] === "string" ? { savedAt: o["savedAt"] } : {}),
+    };
 }

@@ -11,11 +11,14 @@ import {
   ownerAt,
   rowLineSegments,
   formatTracks,
+  fitTracks,
   fr,
   parseTracks,
   px,
+  parseTrackPx,
   resolveLayout,
   trackCss,
+  trackPairAfterDrag,
   unownedCells,
   validateLayout,
   type Layout,
@@ -154,9 +157,19 @@ describe("派生工具", () => {
     });
   });
 
-  it("trackCss：px 原样、fr 加单位", () => {
+  it("trackCss：px 原样、fr 必须带 minmax(0, …) 下界（否则被内容撑爆）", () => {
     expect(trackCss(px(240))).toBe("240px");
-    expect(trackCss(fr(1))).toBe("1fr");
+    // 裸 `1fr` == `minmax(auto, 1fr)`：下界是 min-content，一行长内容就能把整列撑爆，
+    // 合计超出容器 ⇒ 右侧被顶出屏幕（实测 355+1589=1944 撑在 984 容器里）
+    expect(trackCss(fr(1))).toBe("minmax(0, 1fr)");
+    expect(trackCss(fr(2.5))).toBe("minmax(0, 2.5fr)");
+  });
+
+  it("parseTrackPx：浏览器算出的 px 序列（minmax 之后仍是 px）", () => {
+    // 拖线起点取自 getComputedStyle；这条前提一变，拖拽会静默失效（拖不动而不报错）
+    expect(parseTrackPx("300px 684px 0px")).toEqual([300, 684, 0]);
+    expect(parseTrackPx("  355px   1589px  ")).toEqual([355, 1589]);
+    expect(parseTrackPx("")).toEqual([]);
   });
 
   it("findArea 按 id 寻址（契约层不认坐标）", () => {
@@ -289,6 +302,47 @@ describe("parseTracks", () => {
 });
 
 // ═══════════════════════════════════════════
+// trackPairAfterDrag —— 拖线后两侧尺寸（单位是身份，不因拖拽而变）
+// ═══════════════════════════════════════════
+
+describe("trackPairAfterDrag", () => {
+  /** 任务执行页真实列：左 300px 固定 | 中 1fr | 右 0（容器 984 时渲染成 300 / 684 / 0） */
+  const cols = () => [px(300), fr(1), px(0)];
+  const rendered = [300, 684, 0];
+
+  it("px | fr：px 侧写 px，fr 侧仍是 fr（不固化成绝对宽）", () => {
+    const [a, b] = trackPairAfterDrag(cols(), rendered, 1, [400, 584]);
+    expect(a).toEqual(px(400));
+    // 单条弹性轨吃剩余空间 ⇒ 权重守恒在 1，不再是 px(584)
+    expect(b).toEqual(fr(1));
+  });
+
+  it("px | px：固定轨保持固定（「我就要 320px 右栏」是合法意图）", () => {
+    const base = [px(300), px(400), px(200)];
+    expect(trackPairAfterDrag(base, [300, 400, 200], 2, [380, 220])).toEqual([px(380), px(220)]);
+  });
+
+  it("fr | fr：按此刻 px 占比折成权重（相对宽度不丢，窗口缩放仍成立）", () => {
+    const base = [fr(1), fr(1)];
+    // 各占 400 → 拖成 600 / 200 ⇒ 权重 1.5 : 0.5
+    expect(trackPairAfterDrag(base, [400, 400], 1, [600, 200])).toEqual([fr(1.5), fr(0.5)]);
+  });
+
+  it("弹性轨总宽未知（窗口还没渲染出尺寸）→ 保持原权重，不写 0fr", () => {
+    const base = [px(300), fr(2)];
+    expect(trackPairAfterDrag(base, [0, 0], 1, [350, 0])).toEqual([px(350), fr(2)]);
+  });
+
+  it("回归：拖完再缩小窗口 ⇒ 该轴仍有弹性轨可让（bug 的判据）", () => {
+    const base = cols();
+    const [a, b] = trackPairAfterDrag(base, rendered, 1, [355, 629]);
+    const after = [a, b, base[2]!];
+    expect(after.some((t) => t.unit === "fr")).toBe(true); // 有弹性轨 ⇒ 不会被撑爆
+    expect(after.reduce((n, t) => n + (t.unit === "px" ? t.value : 0), 0)).toBeLessThan(984);
+  });
+});
+
+// ═══════════════════════════════════════════
 // resolveLayout —— 有效布局（渲染与 CLI 必须同源）
 // ═══════════════════════════════════════════
 
@@ -400,5 +454,34 @@ describe("resolveLayout", () => {
     expect(resolveLayout(l, { hidden: { a: true } }).cols).toEqual([px(0), px(300)]);
     // 两列都收起：没有未收起的邻居可接
     expect(resolveLayout(l, { hidden: { a: true, b: true } }).cols).toEqual([px(0), px(0)]);
+  });
+});
+
+describe("fitTracks — 贴合实测容器（用户报的「下面一大段空白」）", () => {
+  it("px 之和小于容器 ⇒ 差额给最大的那条（内容区变大，侧栏不动）", () => {
+    // 实测现场：tasks 页 rows = 440 + 116，容器 836 高 ⇒ 空 280
+    expect(fitTracks([px(440), px(116)], 836)).toEqual([px(720), px(116)]);
+  });
+
+  it("px 之和大于容器 ⇒ 从最大的那条借（先扣它，扣到下限为止）", () => {
+    expect(fitTracks([px(800), px(200)], 600)).toEqual([px(400), px(200)]);
+  });
+
+  it("有 fr 轨 ⇒ 一个字节都不动（剩余空间天然归它，浏览器会算对）", () => {
+    expect(fitTracks([fr(1), px(320)], 900)).toEqual([fr(1), px(320)]);
+  });
+
+  it("容器尺寸未知（0）⇒ 原样返回（首帧 ResizeObserver 还没回调）", () => {
+    expect(fitTracks([px(440), px(116)], 0)).toEqual([px(440), px(116)]);
+  });
+
+  it("目标轨不会低于下限（拖到 48 就再也抓不到线了）", () => {
+    const out = fitTracks([px(50), px(300)], 60);
+    expect(out[0]!.value + out[1]!.value).toBeGreaterThan(0);
+    expect(out[0]!.value).toBeGreaterThanOrEqual(48);
+  });
+
+  it("差额小于 1px ⇒ 不动（避免每帧抖动）", () => {
+    expect(fitTracks([px(400), px(100)], 500.4)).toEqual([px(400), px(100)]);
   });
 });

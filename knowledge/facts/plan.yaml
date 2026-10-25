@@ -1,0 +1,274 @@
+# knowledge/facts/plan.yaml
+
+# 生成物式的真源：整篇由 `diy facts submit` 写入（字段顺序、条目排序都由程序定）。
+domain: plan
+facts:
+  plan.acp#capabilities:
+    value: |-
+      `agentCapabilities` 形状（initialize response）：`loadSession` · `sessionCapabilities.{resume,close,delete,list,additionalDirectories}`（**存在 = 支持**，空对象即开）· `promptCapabilities.{image,audio,embeddedContext}` · `mcpCapabilities.{http,sse}` · `_meta`（如 `maxConcurrentSessions`）。解析时按「字段存在即 true」判，缺省 false。
+    id: plan.acp.capabilities
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: b0ff9948:docs/plans/2026-07-10-acp-research.md:38
+      verifiedAt: '2026-10-22'
+  plan.acp#protocol-baseline:
+    value: |-
+      ACP（Agent Client Protocol）v1 基线：`protocolVersion` 是**整数 `1`**（不是字符串 `"0.1.0"`）；`initialize` 参数带 `clientCapabilities`（fs 等）；agent 在 initialize response 里返回**完整能力清单**；`session/update` 是流式通知、事件名 `agent_message_chunk`。session 能力是**嵌套**的：`loadSession`（顶层）+ `sessionCapabilities.{resume,close,delete,list,additionalDirectories}` —— **没有** `session.list/load/save/configure` 这套顶层方法。
+    id: plan.acp.protocol-baseline
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: b0ff9948:docs/plans/2026-07-10-acp-research.md:11
+      verifiedAt: '2026-10-22'
+  plan.acp#registry:
+    value: |-
+      ACP Registry：`github.com/agentclientprotocol/registry` —— 每个 agent 提交 `acp.json` manifest（`name` / `entrypoint` / `transports` / `capabilities` 静态声明）；22+ agent 已注册（Claude Agent、Codex、Cline、Cursor、Devin、Gemini CLI 等）。
+    id: plan.acp.registry
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: b0ff9948:docs/plans/2026-07-10-acp-research.md:81
+      verifiedAt: '2026-10-22'
+  plan.acp#sdk-decision:
+    value: |-
+      **注意演进**：这份 2026-07-10 文档主张「不用 `@agentclientprotocol/sdk`、自建 ~150 行（避免版本漂移）」；后来 acp-opencode 接入时**推翻**了它，改用官方 `@agentclientprotocol/sdk`（现 `diy-app` 依赖 1.4.0）。所以「自建」只是历史决策，**现行看代码** `pkgs.ts/diy-app/package.json`。
+    id: plan.acp.sdk-decision
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: inference
+      verifiedAt: '2026-10-22'
+  plan.acp#session-update:
+    value: |-
+      `session/update` 通知（**无 id、单向**）：`agent_message_chunk`（文本 delta）/ `agent_thought_chunk`（推理过程，RFD 阶段）/ `plan`（执行计划）/ `tool_call`（工具调用开始）/ `tool_call_update`（工具状态 in_progress / completed）/ `usage_update`。消息体形如 `{sessionUpdate:'agent_message_chunk', messageId, content:{type:'text',text}}`。
+    id: plan.acp.session-update
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: b0ff9948:docs/plans/2026-07-10-acp-research.md:66
+      verifiedAt: '2026-10-22'
+  plan.acp#transport-lifecycle:
+    value: |-
+      传输：**Stdio (NDJSON)** 为主，HTTP/SSE 与 WebSocket 仍在 RFC 阶段。生命周期：`initialize`（握手 protocolVersion + capabilities）→ `session/new`（创建）/ `load` / `resume` → `session/prompt`（发消息）↔ `session/update`（流式推送）/ `session/request_permission`（权限申请）/ `session/cancel`（取消）→ prompt response 的 `stopReason`（`end_turn` / `cancelled` / `max_tokens` / `refusal`）。
+    id: plan.acp.transport-lifecycle
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: b0ff9948:docs/plans/2026-07-10-acp-research.md:24
+      verifiedAt: '2026-10-22'
+  plan.context-placement#cache-defect:
+    value: |-
+      `diy` 把**每轮都可能变**的内容（`<task>` 正文、`<project_context>` 链）放在 **leading system 前缀**里 —— 任务正文一改，整个前缀失配（provider 前缀缓存按**首条消息字节**匹配）。参考实现实测：切换点 uncached 输入 14.7k → ~300 tokens（**约 50×**）。这不是「缺动态上下文」的小优化，而是**长会话的主要成本项**。
+    id: plan.context-placement.cache-defect
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: b0ff9948:docs/plans/2026-09-21-prompt-cache-and-dynamic-context.md:10
+      verifiedAt: '2026-10-22'
+  plan.context-placement#constraints:
+    value: |-
+      四条语义约束（决定落点，不只为缓存）：① in-history system 必须是**完整 prompt**，不能是 delta（模型把最新 system 当完整提示，delta 会静默丢掉未变段）；② system 必须排在**该步 user 输入之前**；③ 清空要清**所有活跃 system 节点**（只清最新会让旧 prompt 复活）；④ node 0 受保护、不可被压缩/遮蔽，后续 system 节点可。代理层改写/重排 system 会静默破坏语义 —— 真实 API 的 cache-hit e2e 是唯一探测器。
+    id: plan.context-placement.constraints
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: b0ff9948:docs/plans/2026-09-21-prompt-cache-and-dynamic-context.md:96
+      verifiedAt: '2026-10-22'
+  plan.context-placement#diy-gap:
+    value: |-
+      `diy` 现状（`_system.md`：identity → diy → project → task → rules → skills → guard，全部一条 leading system，每轮全量重算）：`identity`/`diy`/`rules`/`_guard` 不变 ✅ 留 system；`project.md` 的 `<project_context>`（随 AGENTS.md 变）偶尔变 ⇒ 应挪；`task.md`（`task.body` 用户随时改、`cwd.*` 随回退变）**每轮可能变** ⇒ 必须挪到尾部 user 快照；`skills.md` 会话内基本不变 ⇒ system 可接受。病根 = **把易变内容放在最贵的位置**。
+    id: plan.context-placement.diy-gap
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: b0ff9948:docs/plans/2026-09-21-prompt-cache-and-dynamic-context.md:164
+      verifiedAt: '2026-10-22'
+  plan.context-placement#measured:
+    value: |-
+      实测数字（真实 provider）：变化事实放 dynamic system section ⇒ 切换轮 cache-read 256 / uncached **14,691–14,782**；放尾部 user 快照 ⇒ cache-read 14,848–15,872 / uncached **59–306**。**缓存收益是测量结论**；措辞 / 模型行为层面的收益**未被统计验证**（预注册实验两个阳性对照都失败）—— 别拿「缓存命中」当「措辞更好」的证据。
+    id: plan.context-placement.measured
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: b0ff9948:docs/plans/2026-09-21-prompt-cache-and-dynamic-context.md:76
+      verifiedAt: '2026-10-22'
+  plan.context-placement#prefix-cache:
+    value: |-
+      理论依据：**provider prefix cache 按前缀字节完整匹配**（DeepSeek 尤其），首条 wire 消息一变，system+history 的长前缀全部失效 —— 长 agentic 会话反复付这笔。Anthropic 指引同向：变化的 per-request context 应放在稳定缓存前缀**之后**。跨 harness：Codex 把权限建模成 developer 角色 `WorldState` + fingerprint（只在变时发）；Hermes 会话内 system 固定、变化通知 prepend 到下一条 user。
+    id: plan.context-placement.prefix-cache
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: b0ff9948:docs/plans/2026-09-21-prompt-cache-and-dynamic-context.md:56
+      verifiedAt: '2026-10-22'
+  plan.context-placement#requirements:
+    value: |-
+      实现验收（下一轮，需求级）：**R1** 易变内容（`task.body`/`cwd.note`/`chain[].content`）变化时 leading system **逐字节不变**；**R2** 变化事实渲染成尾部 user 消息、正文自带 supersede 语义；**R3** 内容未变不发（避免 token 堆积）；**R4** 全部消失要发**显式清空**文案（否则旧快照继续生效）；**R5** system 在前、snapshot 在该步 user 输入之前；**R6** 预算口径仍判「实际发送的完整 system 部分」，快照是否计入实现时定并写进测试；**R7** 渲染失败 / 变量缺失沿用严格硬错，不得降级为空快照。
+    id: plan.context-placement.requirements
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: b0ff9948:docs/plans/2026-09-21-prompt-cache-and-dynamic-context.md:185
+      verifiedAt: '2026-10-22'
+  plan.context-placement#three-channels:
+    value: |-
+      三通道判据（不是两个）：① **leading system（node 0）** = 整会话几乎不变（身份 / persona / 工具指引）；② **in-history system append** = 偶尔变、且模型声明支持 `systemPromptUpdate:'in-history'`；③ **尾部 user 消息** = 每步都可能变或需逐次重算（snapshot / notice / instructions / relay / recall 五 form）。dsh 原话：prompt 在**大多数步**都变的，就该挪进 **runtime context**。
+    id: plan.context-placement.three-channels
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: b0ff9948:docs/plans/2026-09-21-prompt-cache-and-dynamic-context.md:39
+      verifiedAt: '2026-10-22'
+  plan.context-placement#undecided:
+    value: |-
+      未决（实现前敲定）：① 尾部 user 追加 vs in-history system append —— 取决于 `diy` 模型池是否支持 mid-convo system（AI SDK + openai-compatible 目前无能力位抽象）；② `<project_context>` 先不挪（变化频率远低于 task.body，可先只挪 `task.*` 观察收益）；③ 快照是否计入 64KB 预算（若计入，预算语义从「system 预算」变「上下文预算」，需改名与告警文案）；④ 变更粒度按渲染文本比较即可，不依赖事件；⑤ 分段归属（dsh 的 `sections`）可延后；⑥ skills 非空后留 system 还是进快照。
+    id: plan.context-placement.undecided
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: b0ff9948:docs/plans/2026-09-21-prompt-cache-and-dynamic-context.md:265
+      verifiedAt: '2026-10-22'
+  plan.context-placement#user-channel-cost:
+    value: |-
+      user 通道的固有代价：`source:{kind,plugin,form}` **不发给模型**（只用于日志/UI），模型只能靠正文 frame 文案识别「这不是用户说的」（opencode 用 `<system-reminder>` + 提示词声明；dsh 用 `Current runtime context … supersedes earlier …`）。in-history 的成本：追加节点**每次请求都付自己的 token** 直到被压缩遮蔽 ⇒ 变化少 → append 划算；几乎每步都变 → 下沉 user。
+    id: plan.context-placement.user-channel-cost
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: b0ff9948:docs/plans/2026-09-21-prompt-cache-and-dynamic-context.md:116
+      verifiedAt: '2026-10-22'
+  plan.event-protocol#context-tree:
+    value: |-
+      事件日志 ≠ model wire：**Context Tree 是唯一上下文状态**（不维护事实树与投影树两套），三层 = `places`（割点集合，唯一 placement 配置）/ system 容器（每请求全量重建）/ runtime 容器（路径级 patch + 定期 snapshot）。规则：places 两两不可互为祖先后代；system 不进消息历史故不需补丁；compaction / 恢复 / patch 超阈值 / placement 迁移 / wire 版本升级 / 用户手动 ⇒ 发全量 snapshot 且 `supersedes: all`；变化按 step 最终 hash 比较（中途改后恢复原值 = 未变）；`WIRE_VERSION = sha256(canonical(WIRE_ENCODING)).slice(0,8)`。
+    id: plan.event-protocol.context-tree
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: b0ff9948:docs/plans/2026-09-22-agent-event-protocol.md:531
+      verifiedAt: '2026-10-22'
+  plan.event-protocol#entity-types:
+    value: |-
+      实体/事实类型固定几类：`message.submitted`（用户消息是 `unary+single`，不拆 start/delta/stop；发送失败也**不删**这条事实）；`text`/`think` = `stream` + `content|completed|failed`；工具统一 `entity.type=tool` + `fact.data.name`（**不为 bash/read 各建 `tool.bash` 实体类型**）；`context` = `replaced|patched|snapshot|removed`；`decision` = `made`。
+    id: plan.event-protocol.entity-types
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: b0ff9948:docs/plans/2026-09-22-agent-event-protocol.md:451
+      verifiedAt: '2026-10-22'
+  plan.event-protocol#id-rule:
+    value: |-
+      **实体 id 与事件 id 分离**：实体 id 是 session 局部可读层级路径（`session/1/turn/1/step/1/tool/1`），表示持续存在的实体；eventId 是 `session/1/event/42`，表示一条具体记录。工具服务商的 `callId` 留在 `fact.data`，**不当实体 id**（同一实体可有多条事件；按实体回放、按事件追踪）。
+    id: plan.event-protocol.id-rule
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: b0ff9948:docs/plans/2026-09-22-agent-event-protocol.md:353
+      verifiedAt: '2026-10-22'
+  plan.event-protocol#legacy-map:
+    value: |-
+      旧协议 → 新协议：`start`→`phase=begin`+声明实体；`delta`→`phase=data`+对应 `fact.type`；`patch`→`phase=data`+具体事实类型；`stop`→`phase=end`；user 三段消息→`unary+single` 的 `message.submitted`；`meta`→结构字段；`fields`→`fact.data`；`kind`→`entity.type`；`parent`→`entity.parent`。**未发布阶段直接切换，不做迁移兼容**。
+    id: plan.event-protocol.legacy-map
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: b0ff9948:docs/plans/2026-09-22-agent-event-protocol.md:624
+      verifiedAt: '2026-10-22'
+  plan.event-protocol#no-action-op:
+    value: |-
+      **`action` / `op` / `start|stop|delta|patch` 都不再作为事件字段**：`action` 表示命令或意图（`tool.call`），持久化日志记**已发生的事实**（`tool.requested` / `context.replaced`）；`start/stop` 只是流生命周期 ⇒ `frame.mode(unary|stream)` + `frame.phase(single|begin|data|end|abort)`。旧 `delta` 由 `phase=data` 表达（不再需要 `delta_content`）。
+    id: plan.event-protocol.no-action-op
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: b0ff9948:docs/plans/2026-09-22-agent-event-protocol.md:50
+      verifiedAt: '2026-10-22'
+  plan.event-protocol#not-doing:
+    value: |-
+      当前不做（边界，防扩散）：不提前设计插件 id 分配协议、不把 dsh 当 runtime 依赖、**不实现 in-history system**（直到真实验证 `gpt-5.6-luna + zen.go + AI SDK` 的能力）、不混用 action/op/start-stop、不为每个工具建 entity kind、不把 TS 泛型当协议必需、不设通用 body、不为插件预留未定字段。
+    id: plan.event-protocol.not-doing
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: b0ff9948:docs/plans/2026-09-22-agent-event-protocol.md:671
+      verifiedAt: '2026-10-22'
+  plan.event-protocol#overview:
+    value: |-
+      **设计已收敛、尚未实现**。目标：事件日志单行自描述、可区分「谁写 / 内容来自谁 / 为什么」、同时表达一次性与流式、实体树 + 并发交错、JSON 与 TS/Zod 同构、插件扩展不污染 core。七元：`source`（哪个模块写）/ `origin`（内容来自谁）/ `entity`（事实依附的实体）/ `frame`（流阶段）/ `fact`（实体实际发生什么）/ `cause`（为什么）/ `eventId + ts`。
+    id: plan.event-protocol.overview
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: b0ff9948:docs/plans/2026-09-22-agent-event-protocol.md:20
+      verifiedAt: '2026-10-22'
+  plan.event-protocol#parent-vs-cause:
+    value: |-
+      **`entity.parent` 与 `cause` 不可混用**：parent = 实体树的结构关系（只在实体首次出现时给，后续靠 id 引用）；cause = 事件之间的因果关系。于是系统同时有「实体关系树 / 事件关系有向图 / 日志线性追加序列」三层 —— 这正是多工具并发、事件交错、独立回放的基础。
+    id: plan.event-protocol.parent-vs-cause
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: b0ff9948:docs/plans/2026-09-22-agent-event-protocol.md:336
+      verifiedAt: '2026-10-22'
+  plan.event-protocol#replay:
+    value: |-
+      持久化仍 **append-only JSONL**：回放器 `JSONL → EventRecord → 实体树/事件索引 → blocks/messages/context projection`。未闭合流**不能当完整事实**（`begin → data×N` 无 end）；各实体自定中断策略，context 未闭合时不投影且标 rebaseline（老历史无有效 context 时首次打开自动生成 baseline）。UI 默认折叠 context / decision 事件。
+    id: plan.event-protocol.replay
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: b0ff9948:docs/plans/2026-09-22-agent-event-protocol.md:569
+      verifiedAt: '2026-10-22'
+  plan.event-protocol#source-origin-cause:
+    value: |-
+      三分必须分清：**`source` = 哪个 diy 模块实际写出这条记录**（`diy.ui` / `diy.agent.transport` / `diy.tool-runner` / `diy.prompt`，由宿主代码确定，**不能由 LLM 或工具参数填写**）；**`origin` = 事实内容来自谁**（`llm{provider,model}` / `user{channel}` / `process{name,pid}` / `application{module}`，同样 `type+data`）；**`cause` = 为什么发生**（`{eventId, relation}`，如 `response-to`）。
+    id: plan.event-protocol.source-origin-cause
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: b0ff9948:docs/plans/2026-09-22-agent-event-protocol.md:259
+      verifiedAt: '2026-10-22'
+  plan.event-protocol#three-authorities:
+    value: |-
+      **三种权威数据必须分开**（可以同文件但用途不同）：`ops` 事件事实日志 = UI / 审计 / 回放 / 状态投影的权威；`llm` 消息历史 = 续聊构造下一次请求的权威；`raw` 请求观测 = 旁路 HTTP/stream 快照（仅调试，可选）。UI **不应**直接把 LLM 消息日志当事件日志，LLM 也**不应**依赖 UI 展示模型。
+    id: plan.event-protocol.three-authorities
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: b0ff9948:docs/plans/2026-09-22-agent-event-protocol.md:686
+      verifiedAt: '2026-10-22'
+  plan.event-protocol#type-data:
+    value: |-
+      统一判别结构 = **`{type, data}`**：「判别键同级 = 公共字段，分支私有进 `data`」。**不用** `{type, [type]: …}`（类型名成动态字段、会与公共字段碰撞），也**不设通用 `body` 杂货袋**；`status` 这类公共元数据留在 `fact` 同级。**不要求 TypeScript 泛型**（普通判别联合 + 接口继承即可），但运行时仍需 Zod（TS 类型会被擦除）。
+    id: plan.event-protocol.type-data
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: b0ff9948:docs/plans/2026-09-22-agent-event-protocol.md:156
+      verifiedAt: '2026-10-22'

@@ -10,11 +10,13 @@
 // 保留区间之间的**空隙即 gap**，行号跳号本身就说清了「这里被省了」。模型不必靠逐段标注，
 // 看 `kept: [[5,8],[120,135]]` 就知道 9~119 被省。
 //
-// ── 形态（##310 六轮拍板 + ##421）──
-// `history:` 段 = **纯数据**（file / absPath / budgetBytes / keptBytes / kept）。
+// ── 形态（##310 六轮拍板 + ##421 + ##5 拆账）──
+// `history:` 段 = **纯数据**（file / absPath / budgetBytes / keptBytes / countBytes / mustBytes / kept）。
 // 位置（##421）：它自占一条 user 消息、**放在历史第一条之前**（一眼能看出压缩了），且
 // **只在真丢了消息时出现**（keptRuns 覆盖全部 ⇒ 不注入）—— 旧实现恒注入 + 塞在尾部信封里，
 // 于是「什么都没压掉」的会话每轮都带着一条索引，还埋在尾部几百字节里没人看得见。
+// ⚠️ `countBytes` / `mustBytes` 是**拆账**不是修饰：托底级不占预算 ⇒ 只报 budget+kept
+// 会让人读成「超了 58%」（本任务 ##5 实账 20480 vs 32298，代码一直是对的、说法是错的）。
 // 解释（这是什么、怎么回取原文、字段含义）**一律在信封的 `help.history`**
 // （由 `HistoryNoteSchema` 递归派生）—— 值节点里禁出现 `about`/`legend`/`retrieve`
 // 一类解释性字段：一条信息只在一处，且那一处由代码（zod）派生、不会腐坏。
@@ -36,20 +38,25 @@ export const HistoryNoteSchema = z
         file: z
             .string()
             .describe(
-                "全量消息日志的相对路径（相对 $DIY_HOME）。**每 1 行 = 1 条消息，行号即消息序号**；" +
-                    "取被省掉的区间：`sed -n 'A,Bp' \"$DIY_HOME/<file>\"`（A/B 取别的保留区间之间的行号）；" +
-                    "按轮定位：`grep -n '\"turn\":\"T\"' \"$DIY_HOME/<file>\"`",
+                "全量消息日志（相对 `$DIY_HOME`）。**每 1 行 = 1 条消息，行号即序号**；" +
+                    "取被省区间 `sed -n 'A,Bp' \"$DIY_HOME/<file>\"`，按轮定位 `grep -n '\"turn\":\"T\"' …`",
             ),
         absPath: z.string().describe("同一份日志的绝对路径（bash 直接可用，省掉拼接）"),
         budgetBytes: z
             .number()
-            .describe("历史消息可占字节上限 = 压缩策略的 `budgetBytes`（只算历史消息，不含 system / tools 这些固定开支）"),
+            .describe(
+                "历史消息可占字节上限 = 压缩策略的 `budgetBytes`（只算历史消息，不含 system / tools 这些固定开支）；" +
+                    "**它只约束「按预算挑」的那部分（count 级）** —— 托底级（最近 N 步）走 `mustBytes`、**不占它**" +
+                    " ⇒ `keptBytes > budgetBytes` 是正常的，不是溢出",
+            ),
         keptBytes: z
             .number()
             .describe(
                 "实际保留的历史字节数（= `kept` 里那些消息渲染后的字节之和；**不含本轮 user 那一行** ——" +
                     "它作为 `user.message` 单独投递；与 `budgetBytes` 同口径，可对照着看压掉了多少）",
             ),
+        countBytes: z.number().describe("预算内那部分（count 级）的实付字节，自身 ≤ `budgetBytes`"),
+        mustBytes: z.number().describe("托底级（最近 N 步，`clip: full`）实付字节，**不占预算**"),
         kept: z
             .array(z.tuple([z.number(), z.number()]))
             .describe(

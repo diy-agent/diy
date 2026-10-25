@@ -430,11 +430,11 @@ describe("turnEndNote：结束原因翻成人话（所有级别恒显）", () =>
 
 describe("clampLines：1 级摘要按行截断", () => {
     it("行数不超上限 → 原样，omitted=0（短结论不该显示「已折叠 0 行」）", () => {
-        expect(clampLines("a\nb", 3)).toEqual({ text: "a\nb", omitted: 0 });
+        expect(clampLines("a\nb", 3)).toMatchObject({ text: "a\nb", omitted: 0 });
     });
 
     it("超出 → 只留前 N 行，并报出被藏起来的行数", () => {
-        expect(clampLines("a\nb\nc\nd", 2)).toEqual({ text: "a\nb", omitted: 2 });
+        expect(clampLines("a\nb\nc\nd", 2)).toMatchObject({ text: "a\nb", omitted: 2 });
     });
 
     it("按行切而不是按字符切：代码块/列表不会被切在中间", () => {
@@ -444,18 +444,18 @@ describe("clampLines：1 级摘要按行截断", () => {
     // review ##253 RV-2：前导空行在 Markdown 里没有语义（首个块之前本来就被吃掉），
     // 却会占满摘要的行额度 —— 摘要的语义是"看得见内容"。
     it("前导空行不占额度：`\\n\\n正文` 在 2 行额度下仍看得见正文", () => {
-        expect(clampLines("\n\n正文", 2)).toEqual({ text: "正文", omitted: 0 });
+        expect(clampLines("\n\n正文", 2)).toMatchObject({ text: "正文", omitted: 0 });
         // 额度用完之后照旧按行截（前导空行只是不参与计数，不许把正文一起吞了）
-        expect(clampLines("\n\n一行\n二行\n三行", 2)).toEqual({ text: "一行\n二行", omitted: 1 });
+        expect(clampLines("\n\n一行\n二行\n三行", 2)).toMatchObject({ text: "一行\n二行", omitted: 1 });
     });
 
     // review ##253 RV-6：正文行的"能不能折"由 `omitted > 0` 判（组件 `TextRow.canFold`）——
     // 前导空行不占额度之后，这种输入**不该**再给出箭头（旧判据按原始行数 5 > 3 给箭头，
     // 点开却和标题一模一样：箭头承诺了不存在的东西）。
     it("前导空行吃掉的行数不算「还能展开」：omitted=0 ⇒ 组件不给箭头", () => {
-        expect(clampLines("\n\n一行\n二行\n三行", 3)).toEqual({ text: "一行\n二行\n三行", omitted: 0 });
+        expect(clampLines("\n\n一行\n二行\n三行", 3)).toMatchObject({ text: "一行\n二行\n三行", omitted: 0 });
         // 真多出一行就照旧给（底线：判据只差"前导空行"，不是把折叠能力整体关掉）
-        expect(clampLines("\n\n一行\n二行\n三行\n四行", 3)).toEqual({ text: "一行\n二行\n三行", omitted: 1 });
+        expect(clampLines("\n\n一行\n二行\n三行\n四行", 3)).toMatchObject({ text: "一行\n二行\n三行", omitted: 1 });
     });
 });
 

@@ -199,7 +199,9 @@ async function closeDrawer(): Promise<void> {
 const settle = (ms = 600) => new Promise((r) => setTimeout(r, ms));
 
 describe("##321 压缩预览懒算：抽屉关着 = main 零成本", () => {
-  it("setup: 两个会话各自落盘 + 主进程探针已生效", async () => {
+  // 夹具（##434）：两个会话各自落盘 + 主进程探针生效 + 先把 B 打开。
+  // 写成 `it` 时 `-t` 过滤会跳过它 ⇒ 后续用例的 `uriA`/`uriB`/探针路径都是空（##433 同款）。
+  beforeAll(async () => {
     const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/lazy --label 懒算`);
     const pid = String((p.data as any)?.data?.id);
     const a = await fx.sh.getJson(`./diy.sh task create "懒算 A" ${pid}`);

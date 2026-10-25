@@ -21,6 +21,7 @@ import { apiDef } from "../main/services/api-def";
 import { readRuntimeConfig, type RuntimeConfig } from "../runtime";
 import { resolveAppRoot } from "../main/core/app-root";
 import { AppConfig } from "../main/core/app-config";
+import { factsGetExitCode } from "../shared/facts";
 import { installDiagnostics } from "../main/services/diagnostics";
 import { SINGLETON_LOCK, classifyLock, lockAdvice, readLock } from "../main/core/single-instance";
 /** app 就绪等待上限 */
@@ -237,6 +238,9 @@ async function main() {
       // 路径参数（如 tool read 的 path）按**调用者**目录解析：入口脚本已 cd 到应用目录，
       // 进程 cwd 不再可信，故由 DIY_CALLER_CWD 显式带过来（见 diy.sh / bin/diy）。
       cwd: process.env["DIY_CALLER_CWD"] || process.cwd(),
+      // 按名取实体查不到 ⇒ 退出码 1（`diy facts get X && ...` 不许对不存在的 claim 说通过）；
+      // 搜索 / 列举类命令不受影响（判据只在 factsGetExitCode 里，按 rpcName 分派）。
+      exitCodeOf: factsGetExitCode,
       // 错误路径（用法错误 exit=2 / 运行错误 exit=1）也走这里：不直接 exit，先让 main 排空两条流
       exit: (code: number): never => {
         throw new CliExit(code);

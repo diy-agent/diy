@@ -137,7 +137,10 @@ export class BlockStore {
             if (path.includes(".")) setPath(b, path, next);
             else (b as Record<string, unknown>)[path] = next;
           } else {
-            const arr = Array.isArray(cur) ? [...cur] : [];
+            // List：值本身是数组则逐元素追加，否则作为单元素 push。
+            // ⚠ **就地 push**（##93 E，与 `diy-app/src/main/services/local-blocks.ts` 同一段逻辑）：
+            // 每次追加都复制整组 = O(n²)。值语义靠「追加只增不改 + 每次 apply 都 touch」保证。
+            const arr = Array.isArray(cur) ? cur : [];
             if (Array.isArray(val)) arr.push(...(val as JSONVal[]));
             else arr.push(val);
             (b as Record<string, unknown>)[path] = arr;
