@@ -48,6 +48,9 @@ const facts = (over: Partial<AutoCompactFacts> = {}): AutoCompactFacts => ({
     sinceLastRequestMs: 5 * MIN,
     ttl: TTL,
     windowTokens: 10_000,
+    retainedTokens: null,
+    boundary: null,
+    compactionCount: 0,
     ...over,
 });
 

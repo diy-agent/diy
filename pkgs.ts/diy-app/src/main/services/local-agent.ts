@@ -38,6 +38,7 @@ import {
     appendTurnRecord,
     checkOpsRef,
     clipTurnText,
+    countCompactions,
     readBoundary,
     readTurnRecords,
     synthesizeTurnOps,
@@ -3568,12 +3569,25 @@ export class LocalAgentManager {
         // 没有用量账（老会话 / 手工造的会话）→ null：**无实测不判**，不退回「投影字节」估算
         // （那是被用户否掉的"文字数"口径；估出来的 token 数只会误导触发时机）。
         const windowTokens = last ? bucketsOf(last.usage as UsageLike).total : null;
+        // ##423：投递出去的那段历史 ≈ token（最后一步轮首的投递选择快照）—— 「什么时候会压」拿它跟上限比
+        const retainedTokens =
+            typeof last?.historySelection?.keptTokens === "number" ? last.historySelection.keptTokens : null;
+        // 已落盘的压缩边界（turns.jsonl 的 compaction entry）：有它 = 历史已被切过，之后每步只按它切
+        const bEntry = readBoundary(taskUri);
+        const boundary = bEntry
+            ? { at: bEntry.at, dropped: bEntry.dropped, limitTokens: bEntry.limitTokens }
+            : null;
+        // 压缩事件**总条数**（turns.jsonl 的 compaction entry）—— 与 compact.jsonl 的审计条数不是一回事
+        const compactionCount = countCompactions(taskUri);
 
         const facts: AutoCompactFacts = {
             systemContextChanged,
             sinceLastRequestMs,
             ttl: this.effectiveTtlOf(taskUri),
             windowTokens,
+            retainedTokens,
+            boundary,
+            compactionCount,
         };
         const triggers = detectAutoCompactTriggers(facts, config);
         const raw = { path: autoCompactFile(home), text: readAutoCompactText(home) };
@@ -5829,6 +5843,9 @@ export class LocalAgentManager {
             }
             const historySelection = {
                 limitTokens: stepLimit.limitTokens,
+                // ##423：丢 / 留都说 **token**（与上限同口径）—— 徽章不再拿字节和 token 上限比
+                keptTokens: sel.kept.reduce((n, i) => n + estimateTokensOf(JSON.stringify(allMsgs[i]?.content ?? "")), 0),
+                droppedTokens: sel.dropped.reduce((n, i) => n + estimateTokensOf(JSON.stringify(allMsgs[i]?.content ?? "")), 0),
                 keptBytes: sel.keptBytes,
                 keptRuns: sel.keptRuns.length,
                 droppedMessages: sel.dropped.length,

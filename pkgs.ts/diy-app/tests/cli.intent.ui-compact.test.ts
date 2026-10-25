@@ -567,7 +567,16 @@ describe("##339：分表投递徽标（配置驱动压缩的事实）", () => {
       [
         // 轮首步：投递被压过（丢 3 条、保留 1 段）+ 一条压缩事件命中的位置
         step("t3000", 1, {
-          historySelection: { limitTokens: 3072, keptBytes: 800, keptRuns: 1, droppedMessages: 3, totalMessages: 5 },
+          // ##423：丢 / 留都说 token（与 limitTokens 同口径）—— 徽章不再拿字节跟 token 上限比
+          historySelection: {
+            limitTokens: 3072,
+            keptTokens: 900,
+            droppedTokens: 2100,
+            keptBytes: 800,
+            keptRuns: 1,
+            droppedMessages: 3,
+            totalMessages: 5,
+          },
         }),
         // 同轮第二步：**不带**（配置驱动的重建点只在轮首）
         step("t3000", 2, {}),
@@ -591,7 +600,7 @@ describe("##339：分表投递徽标（配置驱动压缩的事实）", () => {
     await waitUntil(a11yText, (t) => t.includes("投递话题"), { label: "会话上屏" });
   });
 
-  it("分表：**只有轮首步**有「历史」徽标（其余步无）；悬停给出维度/预算/丢几条/must 级/三触发器", async () => {
+  it("分表：**只有轮首步**有「历史」徽标（其余步无）；悬停给出维度 / token 口径 / 什么时候会压", async () => {
     await openDrawer();
     await ui.clickSelector('[data-drawer-tab="step"]');
     await waitUntil(
@@ -602,28 +611,29 @@ describe("##339：分表投递徽标（配置驱动压缩的事实）", () => {
     // 恰好一处（= 轮首步）；第二步不标
     expect(await ui.query<number>("document.querySelectorAll('[data-delivery-compact]').length")).toBe(1);
     const badge = await ui.query<string>("document.querySelector('[data-delivery-compact]')?.textContent?.trim() ?? ''");
-    // ##423：维度写进词里 —— 不再有裸「全量」/「投递」这种跨维度歧义词
+    // ##423：维度写进词里 —— 不再有裸「全量」/「投递」这种跨维度歧义词；数一律 token
     expect(badge).toContain("历史");
-    expect(badge).toContain("丢 3 条");
+    expect(badge).toContain("丢 2.1k tok");
     expect(badge).not.toContain("全量");
     const tip = await ui.query<string>("document.querySelector('[data-delivery-compact]')?.getAttribute('title') ?? ''");
     expect(tip).toContain("历史裁剪");
-    expect(tip).toContain("3072 token");
+    expect(tip).toContain("3,072 token");
     expect(tip).toContain("丢 3/5");
-    expect(tip).toContain("保留 1 段");
-    // ③ `must` / 字节预算这些词已随 ##432 清理（唯一旋钮是 token 上限）
+    expect(tip).toContain("2.1k tok");
+    expect(tip).toContain("1 段");
+    // ① `must` / 字节预算这些词已随 ##432 清理（唯一旋钮是 token 上限）
     expect(tip).not.toContain("must");
-    // ④ 三触发器 + 阈值（旧版 hover 只说预算多少）
-    expect(tip).toContain("systemContextChanged");
-    expect(tip).toContain("cacheExpired");
-    expect(tip).toContain("contextWindowOver");
-    expect(tip).toContain("本步");
+    expect(tip).not.toContain("预算");
+    // ② 事件制：hover 讲「什么时候会压」，并把三触发器归位为「只写审计、不改切点」
+    expect(tip).toContain("压缩事件");
+    expect(tip).toContain("只看保留段自己");
+    expect(tip).toContain("不改投递切点");
 
     // ③ 统计补齐：会话/本轮的投递次数（= 步数）与压缩次数
     const stats = await ui.query<string>("document.querySelector('[data-delivery-stats]')?.textContent ?? ''");
     expect(stats).toContain("2 次投递");
     expect(stats).toContain("1 轮");
-    expect(stats).toContain("压缩 0 次");
+    expect(stats).toContain("压缩");
     await ui.clickSelector('[aria-label="关闭窗口构成"]');
   });
 });
@@ -653,16 +663,21 @@ describe("压缩面板（##344 M2）：历史上限 + 候选预览 + 旧级列�
 
   it("##423 块 2/3：「什么时候会压」讲清判据、范例预览左右对照、计数上屏", async () => {
     await gotoCompactTab();
-    // ① 什么时候会压：三触发器 + 手动，各自带「开/关/手动」与当前值
+    // ① 什么时候会压：##432 之后是**事件制**（首次 / 保留段再顶过上限 / 每步按边界切 / 手动）
     const text = await a11yText();
     expect(await ui.query<boolean>(`!!document.querySelector('[data-when-compact]')`)).toBe(true);
     expect(
       await ui.query<string[]>(`[...document.querySelectorAll('[data-when-row]')].map(e=>e.getAttribute('data-when-row'))`),
-    ).toEqual(["systemContextChanged", "cacheExpired", "contextWindowOver", "manual"]);
-    expect(text).toContain("系统上下文变");
-    expect(text).toContain("缓存过期");
-    expect(text).toContain("窗口超限");
+    ).toEqual(["first", "retained", "reuse", "manual"]);
+    expect(text).toContain("第一次压");
+    expect(text).toContain("保留段再顶过上限");
+    expect(text).toContain("每步投递");
     expect(text).toContain("压成什么样");
+    // 三触发器归位：只写审计、不改投递切点（与投递划清界线）
+    // a11y 文本每节点会被截短 ⇒ 这句从 title（完整形）上验
+    expect(
+      await ui.query<string>(`document.querySelector('[data-when-audit]')?.getAttribute('title') ?? ''`),
+    ).toContain("不改投递切点");
     // ② 范例预览：左 = 固定样例全部 20 条，右 = 压完留下的（上限小 ⇒ 留得少）
     const before = await ui.query<number>(`document.querySelectorAll('[data-example-before] [data-example-msg]').length`);
     const after = await ui.query<number>(`document.querySelectorAll('[data-example-after] [data-example-msg]').length`);

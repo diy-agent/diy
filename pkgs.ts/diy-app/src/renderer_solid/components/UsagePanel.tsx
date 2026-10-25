@@ -64,7 +64,7 @@ import {
     deliveryBadgeText,
     deliveryBadgeTitle,
     TRIGGER_LABEL,
-    type DeliveryTriggerCfg,
+    type DeliveryBoundary,
 } from "../../shared/context/delivery-badge";
 
 // ─── 共用小件 ────────────────────────────────────────
@@ -825,31 +825,29 @@ export function ContextPartsDrawer(props: { open: boolean; uri: string | null; o
     const byText = (by: CompactEventRecord["by"]) => (by === "auto" ? "自动" : by === "ui" ? "界面" : "命令行");
     const triggerShort = (t: CompactTrigger) => TRIGGER_LABEL[t];
 
-    // ─── ##423：徽章 hover 要讲清**三触发器的配置与本步命中**（旧版只说预算多少）───
+    // ─── ##423：徽章 hover 要讲清**这个切点是哪次压缩事件写的** + 自动压缩（审计）mode ───
     // 门槛与压缩点位同：抽屉真的开着才查（`autoCompactStatus` 要重建一次 system 容器 + 读 TTL 观测）。
     const [autoStatus] = createResource(
         () => (props.open ? props.uri : null),
         async (u) =>
             u
                 ? ((await localChatStore.autoCompactStatus(u)) as unknown as {
-                      config?: {
-                          mode: "off" | "notify" | "auto";
-                          triggers: { systemContextChanged: boolean; cacheExpired: boolean; contextWindowOver: number };
-                      };
-                      facts?: { ttl?: { prior?: number } };
+                      config?: { mode: "off" | "notify" | "auto" };
+                      /** ##432 事件制：已落盘的压缩边界（null = 从没压过） */
+                      facts?: { boundary?: { at: string; dropped: number; limitTokens: number } | null };
                   })
                 : undefined,
     );
-    const badgeCfg = (): DeliveryTriggerCfg | null => {
+    /** 自动压缩 mode：只说「要不要另记一条审计」，与投递切点无关（`null` = 未读到） */
+    const badgeMode = (): "off" | "notify" | "auto" | null => autoStatus()?.config?.mode ?? null;
+    /**
+     * 已落盘的压缩边界 —— `undefined` = 还没取到（不写这块），`null` = 确实没压过（投递 = 全量）。
+     * 两个值不能合成一个：没取到就说「没压过」等于编事实。
+     */
+    const badgeBoundary = (): DeliveryBoundary | null | undefined => {
         const st = autoStatus();
-        const c = st?.config;
-        if (!c) return null;
-        const prior = st?.facts?.ttl?.prior;
-        return {
-            mode: c.mode,
-            triggers: c.triggers,
-            ttlMs: typeof prior === "number" && prior > 0 ? prior : null,
-        };
+        if (!st) return undefined;
+        return st.facts?.boundary ?? null;
     };
     // 会话/本轮的**压缩次数**与**投递次数（= 步数）**（##423 ③：此前哪里都看不到这两个数）
     const compactList = () => compactEvents() ?? [];
@@ -1058,12 +1056,8 @@ export function ContextPartsDrawer(props: { open: boolean; uri: string | null; o
                                                                                         class="badge badge-ghost badge-xs"
                                                                                         title={deliveryBadgeTitle({
                                                                                             selection: d(),
-                                                                                            hits: (evs() ?? []).map((e) => ({
-                                                                                                trigger: e.trigger,
-                                                                                                by: e.by,
-                                                                                            })),
-                                                                                            cfg: badgeCfg(),
-                                                                                            stepTokens: v.buckets.total,
+                                                                                            boundary: badgeBoundary(),
+                                                                                            mode: badgeMode(),
                                                                                         })}
                                                                                     >
                                                                                         {deliveryBadgeText(d())}

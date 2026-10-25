@@ -520,7 +520,15 @@ export interface StepUsageRecord {
     historySelection?: {
         /** 生效的**历史上限**（token，唯一旋钮 `history.limit.limitTokens`） */
         limitTokens: number;
-        /** 实际保留的渲染后字节 */
+        /**
+         * 实际保留段估算 token（##423：与 `limitTokens` **同口径**，都用
+         * `history-limit.ts::estimateTokensOf` 粗估）—— 徽章说「丢多少 / 留多少」只认这个数，
+         * 别用 `keptBytes` 去和 token 上限比（那是两个口径，用户 2026-10-23 的原话就是被这个坑到）。
+         */
+        keptTokens?: number;
+        /** 被省掉那段估算 token（同口径）；0 / 缺省 = 没丢 */
+        droppedTokens?: number;
+        /** 实际保留的渲染后**字节**（装配层硬上限 `hardCapBytes` 仍按字节算，故保留） */
         keptBytes: number;
         /** 保留的连续区间段数 */
         keptRuns: number;

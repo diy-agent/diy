@@ -2,7 +2,7 @@
  * CompactSessionPanel — 压缩会话上下文的**面板**（控制器 + 可嵌入内容）
  *
  * ⚠️ 语义：压缩 **≠** 清除。
- *   · 压缩：只改「发给模型的上下文」—— 按字节预算保留历史 + 可选裁工具结果；
+ *   · 压缩：只改「发给模型的上下文」—— 按 `history.limit.limitTokens`（**token 上限**）保留历史 + 可选裁工具结果；
  *     **不删任何历史**，旧内容仍在会话日志里、可查、可撤销。
  *   · 清除（⋯ 菜单）：物理删除所有会话日志，不可恢复 —— 两回事，别混。
  *
@@ -11,8 +11,8 @@
  *   顶栏 / 执行按钮 / 关闭都归外层 drawer。`CompactHistoryPanel` 是独立的压缩历史弹窗。
  *
  * 内容布局：**左参数 + 右预览**，一眼对照。
- *   · 左栏 = 预算区（自动压缩 toggle + 压缩到 KB）+ 费用对比图形
- *   · base = **未压缩**的全量投递（compactPreview 现算），mod = 当前预算
+ *   · 左栏 = 上限区（历史上限 token + 摘要开关 + 自动压缩 mode）+ 费用对比图形
+ *   · base = **未压缩**的全量投递（compactPreview 现算），mod = 按当前上限压完的投递
  *   · 右栏把两者渲染成 YAML 行、做行级 diff（增删变色、可折叠、可只看差异、可并排）
  */
 
@@ -54,7 +54,14 @@ import {
 import { clipForPreview, requestViewYaml, type LayerRow, type PreviewClipStats, type RequestView } from "../../shared/context/request-view";
 import { DrawerMaxButton } from "./DrawerMaximize";
 import { notificationStore } from "../store/notificationStore";
-import { compactResultSentence, compactWhenRows, windowRatio, type CompactWhenInput } from "../../shared/context/compact-when";
+import {
+    autoAuditSentence,
+    compactResultSentence,
+    compactWhenRows,
+    fmtTokens,
+    windowRatio,
+    type CompactWhenInput,
+} from "../../shared/context/compact-when";
 import { EXAMPLE_MESSAGES, buildCompactExample, bytesToTokens, type ExampleRow } from "../../shared/context/compact-example";
 import { MIN_HISTORY_LIMIT_TOKENS, normalizeHistoryLimit } from "../../shared/context/history-limit";
 
@@ -137,7 +144,7 @@ function CostCompare(props: { facts: LayerRow[] }) {
                     <div class="pt-1.5 border-t border-base-300">
                         <Show
                             when={saved() > 1e-9}
-                            fallback={<span data-cost-saved class="opacity-60">无节省（预算未生效 / 历史本来就不多）</span>}
+                            fallback={<span data-cost-saved class="opacity-60">无节省（上限未顶到 / 历史本来就不多）</span>}
                         >
                             <span data-cost-saved class="text-success font-semibold">
                                 省 {money(saved())}（−{savedPct()}%）
@@ -181,8 +188,18 @@ export interface CompactPanelCtl {
             /** ##423 块 2：三触发器的**当前配置值**（面板要把它原样说出来，不许 UI 另编一套） */
             triggers?: { systemContextChanged: boolean; cacheExpired: boolean; contextWindowOver: number };
         };
-        /** 判定用的事实（实测）：`windowTokens` = 该会话最后一步实测 total，`ttl` = 生效 TTL */
-        facts?: { windowTokens: number | null; ttl?: { prior?: number } };
+        /**
+         * 判定用的事实（实测）：`windowTokens` = 该会话最后一步实测 total；
+         * `retainedTokens` = 上次投递出去的历史 ≈ token；`boundary` = 已落盘的压缩边界（null = 没压过）。
+         */
+        facts?: {
+            windowTokens: number | null;
+            retainedTokens?: number | null;
+            boundary?: { at: string; dropped: number; limitTokens: number } | null;
+            /** 本会话写过的压缩事件条数（turns.jsonl 的 compaction entry） */
+            compactionCount?: number;
+            ttl?: { prior?: number };
+        };
         raw?: { path: string; text: string };
         /** 读配置的出声条目（##370）：非空 = 有键缺失/非法，已逐键回落缺省 */
         warnings?: AutoCompactIssue[];
@@ -337,7 +354,7 @@ export function useCompactPanel(uri: () => string, visible: () => boolean = () =
         setErr(null);
         try {
             const rec = await localChatStore.compact(u, flatPolicyOf(autoPolicy()));
-            if (rec?.noop) notificationStore.addToastLegacy("info", "无需压缩（历史已在预算内）");
+            if (rec?.noop) notificationStore.addToastLegacy("info", "无需压缩（历史已在上限内）");
             else notificationStore.addToastLegacy("success", "已压缩（历史保留、可撤销）");
         } catch (e) {
             setErr(String(e instanceof Error ? e.message : e));
@@ -406,11 +423,13 @@ function FilterGroup<T extends string>(props: {
  * 「**什么时候会压**」—— ##423 块 2。
  *
  * 用户原话（2026-10-25）：「我觉得我们缺少对什么时候会压缩…的 ui 呈现，我已经完全被搞懵了。」
- * 所以这里不摆旋钮，而是**把判据翻译成人话**：每条触发器一行：开关状态 + 判据 + 当前实际值，
+ * 所以这里不摆旋钮，而是**把判据翻译成人话**：一判据一行 —— 开关状态 + 判据 + 当前实际值，
  * 句子全部来自 `shared/context/compact-when.ts`（可单测），组件只负责排版。
  *
- * `lastStepTokens` 取**实测**（`facts.windowTokens`，即该会话最后一步 usage.total）：
- * 没有实测就说「还没有实测用量」，不写 0（0 会被读成「离撞墙远得很」）。
+ * ##432 刀 2 后判据换了（用户 2026-10-25 复查拍板）：**不是三触发器看旧预算，而是事件制** ——
+ *   首次全量超上限 → 算一次并写压缩事件；之后只当**保留段自己**重新顶过上限才再压；
+ *   其余每步按已落盘边界切、不重算；手动随时可压。
+ * 三触发器（mode）降级为「要不要另记一条审计」，在块尾单独一行说清（`autoAuditSentence`）。
  */
 function WhenCompactBlock(props: { ctl: CompactPanelCtl; windowLimit: number | null }) {
     const input = createMemo<CompactWhenInput>(() => {
@@ -418,9 +437,9 @@ function WhenCompactBlock(props: { ctl: CompactPanelCtl; windowLimit: number | n
         const facts = props.ctl.auto()?.facts;
         return {
             mode: cfg?.mode ?? "off",
-            triggers: cfg?.triggers ?? { systemContextChanged: false, cacheExpired: false, contextWindowOver: 0 },
-            ttlMs: typeof facts?.ttl?.prior === "number" && facts.ttl.prior > 0 ? facts.ttl.prior : null,
             limitTokens: props.ctl.limitTokens(),
+            boundary: facts?.boundary ?? null,
+            retainedTokens: typeof facts?.retainedTokens === "number" ? facts.retainedTokens : null,
             lastStepTokens: facts?.windowTokens ?? null,
             windowLimit: props.windowLimit,
         };
@@ -449,9 +468,14 @@ function WhenCompactBlock(props: { ctl: CompactPanelCtl; windowLimit: number | n
                 <div class="border-t border-base-300 pt-1 opacity-70" data-when-result title={compactResultSentence(input().limitTokens)}>
                     <span class="font-semibold">压成什么样：</span> {compactResultSentence(input().limitTokens)}
                 </div>
+                {/* 三触发器与投递的关系：划清界线（##432 后它们只写审计，不改切点） */}
+                <div class="opacity-45" data-when-audit title={autoAuditSentence(input())}>
+                    {autoAuditSentence(input())}
+                </div>
                 <div class="opacity-45">
-                    每条触发器 hover 看判据。窗口占比{ratio() == null ? "需有实测用量与模型窗口上限" : ` = ${ratio()}%`}
-                    （本会话最后一步）。
+                    每一行 hover 看判据。窗口占用{ratio() == null ? "需有实测用量与模型窗口上限" : ` = ${ratio()}%`}
+                    （本会话最后一步 {input().lastStepTokens == null ? "无实测" : fmtTokens(input().lastStepTokens!)}，
+                    与历史的 {fmtTokens(input().limitTokens)} 上限**不是同一个数**）。
                 </div>
             </div>
         </Block>
@@ -500,7 +524,8 @@ function ExamplePreviewBlock(props: { limitTokens: number }) {
         <Block title="范例预览（合成样例）" extra={`${EXAMPLE_MESSAGES.length} 条 · ${beforeTok()} tok`}>
             <div class="space-y-1" data-example>
                 <div class="text-caption opacity-60">
-                    固定样例（每条标的是**模拟** token 尺寸，字节÷4）；按当前上限 {props.limitTokens} token 推演：
+                    固定样例（每条标的是**模拟** token 尺寸，3 字节 ≈ 1 token —— 样例正文是中文，与真压的
+                    CJK 粗估同口径）；按当前上限 {props.limitTokens} token 推演：
                     右侧出现的才会进本次请求，被划掉的仍在历史里（可查可撤销）。
                 </div>
                 <div class="grid grid-cols-1 gap-2 md:grid-cols-2">
@@ -543,14 +568,19 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
     const compactRows = () => (compactEvts() ?? []).filter((e) => e.kind === "compact");
     const deliveries = () => localChatStore.usage.length;
     const turnCount = () => new Set(localChatStore.usage.map((r) => r.turnId)).size;
+    /**
+     * **压缩事件次数**（真源 = `turns.jsonl` 的 compaction entry，由 main 数）——
+     * ##432 后它才是「压过几次」；`compact.jsonl`（`compactRows()`）降为**纯审计**，两数分开叫。
+     */
+    const compactionCount = (): number => ctl.auto()?.facts?.compactionCount ?? 0;
+    /** 已落盘边界（最近一次压缩事件） */
+    const boundary = () => ctl.auto()?.facts?.boundary ?? null;
     /** 窗口上限：取**最后一条**用量记录里的 `contextLimit`（用户要知道「上限 Y」是多少） */
     const windowLimit = (): number | null => {
         const u = localChatStore.usage;
         const last = u[u.length - 1];
         return typeof last?.contextLimit === "number" && last.contextLimit > 0 ? last.contextLimit : null;
     };
-    /** 最近一次压缩：条数 / 字节 / 轮次的前后对比 */
-    const lastCompact = (): CompactEventRow | undefined => compactRows().at(-1);
 
     /** headtail 私有参数的字段表（渲染顺序 + 文案一处定义） */
     const RENDER_DATA_FIELDS: { key: "head" | "tail" | "maxLineChars" | "maxKeepBytes"; hint: string }[] = [
@@ -661,16 +691,21 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
             });
     });
 
-    const estTok = (bytes: number) => Math.round(bytes / 4);
+    /**
+     * 字节 → token：**用 `bytesToTokens`（3 字节 ≈ 1 token）**，不要在这里写 `bytes / 4`。
+     * 旧口径（÷4）把中文低估约 1/3 —— 面板说「压缩后 8k tok」、真发却是 12k，正是用户被搞懵的原因之一。
+     */
+    const estTok = (bytes: number) => bytesToTokens(bytes);
     /** 历史上限人读（token —— 唯一旋钮） */
     const limitLabel = (): string => `${ctl.limitTokens().toLocaleString()} token`;
     /**
-     * 压缩后**整份请求**的规模（KB）—— 含固定开支（system + 工具定义 + runtime）+ 预算内历史。
-     * 用费用表 total 行的 token（= 各层之和，含 system / tools）；token ≈ 字节 / 4 ⇒ ×4 反推字节。
+     * 压缩后**整份请求**的规模（token）—— 含固定开支（system + 工具定义 + runtime）+ 上限内历史。
+     * 用费用表 total 行的 token（= 各层之和，含 system / tools），**不再转回 KB**：
+     * 历史口径是 token，给人看的数也得是 token，否则两个数域摆在一起又要换算。
      */
-    const afterKb = (): string => {
+    const afterTokens = (): string => {
         const t = (ctl.pv()?.facts ?? []).find((r) => r.key === "total");
-        return (((t?.newTokens ?? 0) * 4) / 1024).toFixed(1) + " KB";
+        return `${Math.round(t?.newTokens ?? 0).toLocaleString()} tok`;
     };
     const ratio = () => {
         const b = ctl.pv()?.before.bytes ?? 0;
@@ -765,18 +800,27 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                             </Show>
                         </div>
                         <div class="text-caption opacity-70">
-                            历史上限 <b>{limitLabel()}</b> · 整份请求 ≈ <b>{afterKb()}</b>
+                            历史上限 <b>{limitLabel()}</b> · 整份请求 ≈ <b>{afterTokens()}</b>
                         </div>
                         {/* ##423 块 2：本会话计数 + 最近一次压缩的前后对比（此前哪里都看不到这两个数） */}
                         <div class="text-caption opacity-70" data-compact-stats>
                             本会话：<b class="tabular-nums">{deliveries()}</b> 次投递（= 步数）· <b class="tabular-nums">{turnCount()}</b> 轮 ·
-                            压缩 <b class="tabular-nums">{compactRows().length}</b> 次（自动{" "}
-                            {compactRows().filter((e) => e.by === "auto").length} / 手动{" "}
-                            {compactRows().filter((e) => e.by !== "auto").length}）
-                            <Show when={lastCompact()}>
-                                {(e) => (
+                            压缩<b class="tabular-nums">{compactionCount()}</b> 次（事件，写边界）
+                            <span class="opacity-60">
+                                　另有审计 {compactRows().length} 条（手动/自动各次的 compact.jsonl 记录）
+                            </span>
+                            <Show when={boundary()}>
+                                {(b) => (
                                     <span class="block opacity-80" data-compact-last>
-                                        最近一次：轮 {e().size?.before?.turns ?? "—"} → {e().size?.after?.turns ?? "—"} · 条{" "}
+                                        最近一次事件：{new Date(b().at).toLocaleString()} · 丢 {b().dropped} 条 · 当时上限{" "}
+                                        {fmtTokens(b().limitTokens)}（现在 {fmtTokens(ctl.limitTokens())}）
+                                    </span>
+                                )}
+                            </Show>
+                            <Show when={compactRows().at(-1)}>
+                                {(e) => (
+                                    <span class="block opacity-60" data-compact-last-audit>
+                                        最近一条审计：轮 {e().size?.before?.turns ?? "—"} → {e().size?.after?.turns ?? "—"} · 条{" "}
                                         {e().size?.before?.messages ?? "—"} → {e().size?.after?.messages ?? "—"} · 字节{" "}
                                         {fmtBytes(e().size?.before?.bytes)} → {fmtBytes(e().size?.after?.bytes)}
                                     </span>
@@ -858,7 +902,7 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                                                 name="tool-render"
                                                 value={ctl.render()}
                                                 options={[
-                                                    { value: "asis", label: "原样", hint: "工具结果一字不改（最完整，也最吃预算）" },
+                                                    { value: "asis", label: "原样", hint: "工具结果一字不改（最完整，也最占历史上限）" },
                                                     { value: "headtail", label: "头尾裁剪", hint: "保留头几行 + 尾几行，中间省略；单行超长另按字符阈裁" },
                                                     { value: "callpath", label: "只留调用", hint: "只留「调了什么」+ 原文落盘路径，不正文 —— 大输出最省" },
                                                 ]}
