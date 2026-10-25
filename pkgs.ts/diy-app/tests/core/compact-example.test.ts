@@ -96,8 +96,9 @@ describe("compact-example · 范例预览（展示层，判据走 selectKeptBoun
         expect(r.keptBytes).toBe(headRows.reduce((a, x) => a + x.bytes, 0));
     });
 
-    it("上限很大 ⇒ 一条不丢", () => {
-        const r = buildCompactExample(100_000);
+    it("上限足够大（≥ 总量 ÷ 保留比例）⇒ 一条不丢", () => {
+        // ##432 刀 2：一次压缩只保留到**上限的一半**（RETAIN_RATIO），所以「不丢」要上限 ≥ 总量 × 2
+        const r = buildCompactExample(200_000);
         expect(r.dropped).toBe(0);
         expect(r.keptBytes).toBe(r.beforeBytes);
     });

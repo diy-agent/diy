@@ -34,8 +34,8 @@ describe("select-kept-boundary · 保留边界的唯一判据", () => {
         expect(cut).toBe(5);
     });
 
-    it("从最后往前累加：累积 ≥ 上限即停（刚越过上限那条算保留）", () => {
-        // 每条 250 token、上限 125 ⇒ 只取最后一条
+    it("从最后往前累加、**先判再加**：保留到上限的一半（RETAIN_RATIO），最后一步永远保留", () => {
+        // 每条 250 token、上限 125 ⇒ 尾部额度 floor(62.5)−保头(750) ≤ 0 ⇒ 只留最后一条
         const { cut } = selectKeptBoundary([m(250), m(250), m(250), m(250), m(250)], 125);
         expect(cut).toBe(4);
     });

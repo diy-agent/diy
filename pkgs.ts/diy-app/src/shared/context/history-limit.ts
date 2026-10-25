@@ -13,20 +13,13 @@
 
 import { z } from "zod";
 
-/**
- * 保头 token 数（**硬编码，不进配置**）：首个 user / 任务目标所在的开头永远不参与累加、永不被丢。
- * 用户口径：「保头 600 token 硬编码（不进配置、不参与累加）」。
- */
-export const HISTORY_HEAD_TOKENS = 600;
+import { HEAD_KEEP_TOKENS, selectKeptBoundary, type BoundaryMessage } from "./select-kept-boundary";
 
 /**
- * **保留比例**（硬编码，不进配置）：一次压缩只把历史保留到上限的这么点，余下的留给后续新增。
- *
- * 为什么必须有它（##432 review A）：若压缩只压到「刚好 ≤ 上限」，**每新增一步就重新超限** ⇒
- * 每步都算一次切点、每步写一条 compaction entry、前缀缓存每步被打断 —— 与「压缩是罕见事件」
- * 正面相反。留一半 ⇒ 要涨回上限才再压一次（上限 20000 时约 8~10 步一次）。
+ * 保头 token 数 / 保留比例：**唯一真源在 `./select-kept-boundary.ts`**（与界面范例预览共用同一份判据），
+ * 这里只做再导出，别在本文件另起常量。
  */
-export const HISTORY_RETAIN_RATIO = 0.5;
+export { HEAD_KEEP_TOKENS as HISTORY_HEAD_TOKENS, RETAIN_RATIO as HISTORY_RETAIN_RATIO } from "./select-kept-boundary";
 
 /** 单条上限的缺省值（token）。旧 `budgetBytes: 20480` ≈ 5120 token —— 新口径放开到 20000。 */
 export const DEFAULT_HISTORY_LIMIT_TOKENS = 20_000;
@@ -87,14 +80,14 @@ export interface CompactableRange {
     dropped: number;
 }
 
-const toolCallIds = (m: CompactableMessage): string[] => {
+const callIds = (m: CompactableMessage): string[] => {
     if (!Array.isArray(m.content)) return [];
     return (m.content as { type?: string; toolCallId?: string }[])
         .filter((p) => p.type === "tool-call" && typeof p.toolCallId === "string")
         .map((p) => p.toolCallId!);
 };
 
-const toolResultIds = (m: CompactableMessage): string[] => {
+const resultIds = (m: CompactableMessage): string[] => {
     if (!Array.isArray(m.content)) return [];
     return (m.content as { type?: string; toolCallId?: string }[])
         .filter((p) => p.type === "tool-result" && typeof p.toolCallId === "string")
@@ -121,105 +114,62 @@ export function stepStarts(all: readonly CompactableMessage[]): number[] {
     return starts;
 }
 
-/** `[cut, end)` 里有没有「其 tool-call 在 cut 之前」的 result（= 切开了配对） */
-function splitsToolPair(all: readonly CompactableMessage[], cut: number): boolean {
-    if (cut <= 0) return false;
-    const callsBefore = new Set<string>();
-    for (let i = 0; i < cut; i++) for (const id of toolCallIds(all[i]!)) callsBefore.add(id);
-    if (callsBefore.size === 0) return false;
-    for (let i = cut; i < all.length; i++) for (const id of toolResultIds(all[i]!)) if (callsBefore.has(id)) return true;
-    return false;
-}
-
-/** `[0, cut)` 里有没有「其 result 在 cut 之后」的 tool-call（同一个判据的另一侧） */
-function hasUnansweredCallBefore(all: readonly CompactableMessage[], cut: number): number | null {
-    const resultsAfter = new Set<string>();
-    for (let i = cut; i < all.length; i++) for (const id of toolResultIds(all[i]!)) resultsAfter.add(id);
-    if (resultsAfter.size === 0) return null;
-    for (let i = 0; i < cut; i++) for (const id of toolCallIds(all[i]!)) if (resultsAfter.has(id)) return i;
-    return null;
+/**
+ * 把 core 的消息形状适配成边界判据的最小形状（工具配对与 step 都带过去）。
+ *
+ * ⚠️ 无 step 的消息（开场 user）**归属到它后面那一轮的第一步**（与 `stepStarts` 同语义），
+ * 因为边界判据把「没有 step」解释成「每条自成一组」（UI 预览需要它）—— 差别的处理只在这一处。
+ */
+export function toBoundaryMessages(
+    all: readonly CompactableMessage[],
+    costOf: (m: CompactableMessage, index: number) => number,
+): BoundaryMessage[] {
+    const stepOf: (string | undefined)[] = new Array(all.length);
+    let next: string | undefined;
+    for (let i = all.length - 1; i >= 0; i--) {
+        const s = all[i]!.step;
+        if (s) next = s;
+        stepOf[i] = s ?? next;
+    }
+    return all.map((m, i) => {
+        const calls = callIds(m);
+        const results = resultIds(m);
+        const kind = calls.length > 0 ? "call" : results.length > 0 ? "result" : m.role === "user" ? "user" : "text";
+        const callId = calls[0] ?? results[0];
+        return {
+            tokens: costOf(m, i),
+            kind,
+            ...(callId ? { callId } : {}),
+            ...(stepOf[i] ? { step: stepOf[i] } : {}),
+        };
+    });
 }
 
 export interface SelectRangeOpts {
     /** 每条消息的 token 成本（缺省 = 渲染后 JSON 字符数 / 4） */
     costOf?: (m: CompactableMessage, index: number) => number;
-    /** 保头 token（缺省 `HISTORY_HEAD_TOKENS`；单测可传更小的值） */
+    /** 保头 token（缺省 `HEAD_KEEP_TOKENS`；单测可传更小的值） */
     headTokens?: number;
 }
 
 /**
- * **唯一的切点算法**（照抄 dsh 的 `selectCompactableRange`，见 `~/git-ref/deepseek-harness/packages/compaction/compaction-basic/src/region.ts:110-160`）：
+ * **core 侧的适配层**：把消息序列喂给唯一判据 `selectKeptBoundary`（`./select-kept-boundary.ts`），
+ * 再把下标换算成 core 的 `{ cut, headEnd, dropped }`（`headEnd` 在这里是**开区间右端**，
+ * 边界判据用的是**保头末条下标** —— 差一，换算只此一处）。
  *
- *   ① 保头：从第 0 条起到累计 ≥ headTokens 为止，这些消息**不参与累加、永不被丢**；
- *   ② 从最后一组（step）往前累加 token，累积 ≥ limitTokens 即停 —— 停处就是切点；
- *   ③ 切点**必须 tool 配对平衡**（不许切开 toolCall 与 toolResult），不平衡就**往前挪**一组；
- *   ④ 切点 ≤ 保头（没有可丢的）⇒ `null`（什么都没发生，不写边界）。
- *
- * 返回值里的 `cut` 是**绝对下标**（相对于传入的 `all`），由调用方换算成 llm 行号后落盘。
+ * 返回 `null` = 没有可丢的（什么都没发生，不写边界）。
  */
 export function selectCompactableRange(
     all: readonly CompactableMessage[],
     limitTokens: number,
     opts: SelectRangeOpts = {},
 ): CompactableRange | null {
-    const n = all.length;
-    if (n === 0 || !(limitTokens > 0)) return null;
+    if (all.length === 0 || !(limitTokens > 0)) return null;
     const cost = opts.costOf ?? ((m: CompactableMessage) => estimateTokensOf(JSON.stringify(m.content ?? "")));
-    const headTokens = opts.headTokens ?? HISTORY_HEAD_TOKENS;
-
-    // ① 保头
-    let headEnd = 0;
-    let headAcc = 0;
-    while (headEnd < n && headAcc < headTokens) {
-        headAcc += cost(all[headEnd]!, headEnd);
-        headEnd += 1;
-    }
-
-    // ② 从最后一组往前累加 —— **先判再加**：放不下就停在这一组之前。
-    //
-    // ⚠️ 「保留段总量 ≤ 上限」是**硬要求**（##432 review A）：dsh 的 `retainTokens` 是「至少保留」的下限
-    // （它的触发看窗口比例），而我们只有这一个数 —— 若保留「≥ 上限」，压完总量**恒 > 上限** ⇒ 下一步
-    // 又触发 ⇒ 每步压一次（前缀缓存每步被打断 + 账本无限涨）。先判再加 ⇒ 压完 ≤ 上限 ⇒ 下一次必须等
-    // 新增把总量重新顶过线，压缩才真正成为**事件**。
-    const starts = stepStarts(all);
-    const groupCost = (g: number): number => {
-        const from = starts[g]!;
-        const to = g + 1 < starts.length ? starts[g + 1]! : n;
-        let c = 0;
-        for (let i = from; i < to; i++) c += cost(all[i]!, i);
-        return c;
-    };
-    let headCost = 0;
-    for (let i = 0; i < headEnd; i++) headCost += cost(all[i]!, i);
-    // 尾部的可用额度 = **保留目标** - 保头（保留目标 = 上限 × 保留比例，见 HISTORY_RETAIN_RATIO）
-    const tailBudget = Math.max(0, Math.floor(limitTokens * HISTORY_RETAIN_RATIO) - headCost);
-
-    let acc = 0;
-    let groupIdx = starts.length - 1;
-    // 最后一组**永远至少保留**（不能一条都不留）：它自己就超额度时也留它
-    const lastCost = groupCost(groupIdx);
-    acc = lastCost;
-    groupIdx -= 1;
-    for (; groupIdx >= 0; groupIdx--) {
-        const c = groupCost(groupIdx);
-        if (acc + c > tailBudget) break; // 放不下 ⇒ 停在这一组之前
-        acc += c;
-    }
-    if (groupIdx < 0 && acc <= tailBudget) return null; // 全部装得下 ⇒ 不压
-    let cut = starts[groupIdx + 1]!;
-
-    // ③ 配对平衡：切开的地方往前挪（挪到最小的一处「答案在后面的 call」之前，再对齐到组起点）
-    for (let guard = 0; guard < starts.length + 4; guard++) {
-        if (!splitsToolPair(all, cut)) break;
-        const bad = hasUnansweredCallBefore(all, cut);
-        if (bad === null) break;
-        let g = 0;
-        while (g + 1 < starts.length && starts[g + 1]! <= bad) g++;
-        cut = starts[g]!;
-        if (cut <= headEnd) return null;
-    }
-
-    // ④ 没有可丢的
-    if (cut <= headEnd) return null;
-    return { cut, headEnd, dropped: cut - headEnd };
+    const msgs = toBoundaryMessages(all, cost);
+    // 单测可以调小保头（不传就是真实口径）；判据本身仍只有一份
+    const boundary = selectKeptBoundary(msgs, limitTokens, opts.headTokens === undefined ? {} : { headTokens: opts.headTokens });
+    const headEnd = boundary.headEnd + 1;
+    if (boundary.cut <= headEnd) return null;
+    return { cut: boundary.cut, headEnd, dropped: boundary.cut - headEnd };
 }

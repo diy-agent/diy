@@ -1,8 +1,10 @@
 // tests/core/history-limit.test.ts
 // ##432 刀 2 的**唯一算法**（shared/context/history-limit.ts）单测：切点 / 保头 / 配对平衡 / 幂等。
 import { describe, expect, it } from "vitest";
+import { selectKeptBoundary } from "../../src/shared/context/select-kept-boundary";
 import {
     HISTORY_HEAD_TOKENS,
+    toBoundaryMessages,
     estimateTokensOf,
     normalizeHistoryLimit,
     selectCompactableRange,
@@ -132,5 +134,27 @@ describe("事件化（##432 review A）：压完保留段 ≤ 上限 ⇒ 新增�
         const second = selectCompactableRange(all, 1000, { headTokens: 1 })!;
         expect(second.cut).toBeGreaterThan(first.cut);
         expect(100 + (all.length - second.cut) * 100).toBeLessThanOrEqual(500);
+    });
+});
+
+describe("适配层不复制判据：core 的切点 = selectKeptBoundary 的切点（##432 review 新约束）", () => {
+    it("同一份历史、同一成本模型 ⇒ 两条路径给出同一个 cut", () => {
+        const all = [
+            m(undefined, "u0"),
+            m("s1", "a1", [{ type: "tool-call", toolCallId: "c1", toolName: "bash", input: {} }]),
+            m("s1", "r1", [{ type: "tool-result", toolCallId: "c1", output: { type: "text", value: "x".repeat(4000) } }]),
+            m("s2", "a2"),
+            m("s3", "a3"),
+            m("s4", "a4"),
+        ];
+        const costOf = (mm: { content: unknown }) => Math.ceil(JSON.stringify(mm.content ?? "").length / 4);
+        for (const limit of [50, 200, 800, 5000]) {
+            for (const head of [1, 600]) {
+                const core = selectCompactableRange(all, limit, { costOf, headTokens: head });
+                const b = selectKeptBoundary(toBoundaryMessages(all, costOf), limit, { headTokens: head });
+                expect(core?.cut ?? null).toBe(b.cut <= b.headEnd + 1 ? null : b.cut);
+                expect(core?.headEnd ?? null).toBe(b.cut <= b.headEnd + 1 ? null : b.headEnd + 1);
+            }
+        }
     });
 });
