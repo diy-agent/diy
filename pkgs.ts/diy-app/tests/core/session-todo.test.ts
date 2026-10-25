@@ -125,7 +125,7 @@ describe("todoOf：行集与行序", () => {
 
         // ##435：队列按 author 分流 —— 人署名才是「等你回复」，job/agent 的自动留言明说无需回复
         const [waiting] = todoOf([row({ uri: "u", queue: 3, queueHuman: 2 })]);
-        expect(waiting.why).toBe("有 3 条留言等你回复");
+        expect(waiting.why).toBe("有 2 条留言等你回复（队列共 3 条，其余为自动）"); // 说人写的几条，不是总数
         const [auto] = todoOf([row({ uri: "v", queue: 2 })]);
         expect(auto.why).toBe("有 2 条自动留言待投递（无需回复）");
         // 卡住没有条数（不是 0 条未读，是"没法用条数说清"）——

@@ -73,8 +73,13 @@ function whyOf(kind: TodoKind, count: number, queueHuman: number): string {
             return `异常终止 · ${count} 条未读`;
         case "stalled":
             return "无进展 · 在跑但长时间没动静";
-        case "waiting":
-            return queueHuman > 0 ? `有 ${count} 条留言等你回复` : `有 ${count} 条自动留言待投递（无需回复）`;
+        case "waiting": {
+            // ##435（review P2）：这里的数字必须是**人写的**条数 —— 说总数（`count` = `r.queue`）
+            // 会让人点进去发现只有 1 条是给他写的。自动条数另外交代，不混进「等你回复」。
+            if (queueHuman <= 0) return `有 ${count} 条自动留言待投递（无需回复）`;
+            const rest = count > queueHuman ? `（队列共 ${count} 条，其余为自动）` : "";
+            return `有 ${queueHuman} 条留言等你回复${rest}`;
+        }
         case "finished":
             return `跑完了 · ${count} 条未读`;
     }

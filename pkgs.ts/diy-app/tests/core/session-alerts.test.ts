@@ -197,4 +197,25 @@ describe("##435 · 队列按 author 分流：只有人署名才配 L2（抢焦�
         expect(a.queueHuman).toBe(1);
         expect(a.queueAuto).toBe(0);
     });
+
+    it("②b 条数说的是**人写的**几条（review P2：说总数就是又撒一次谎）", () => {
+        // 3 条里 1 条 human:ccc + 2 条 job：点进去只有 1 条是给他写的
+        const next = row({ running: true, queue: 3, queueHuman: 1 });
+        const [a] = alertsOf(snap(row({ running: true })), [next], { autoPull: true });
+        expect(a.text).toContain("有人给你留了 1 条留言"); // ← 不是 3
+        expect(a.text).toContain("队列共 3 条，其余为自动"); // 自动条数另交代
+        // 全是人写的：不加括号尾巴
+        const pure = row({ running: true, queue: 2, queueHuman: 2 });
+        const [b] = alertsOf(snap(row({ running: true })), [pure], { autoPull: true });
+        expect(b.text).toContain("有人给你留了 2 条留言");
+        expect(b.text).not.toContain("其余为自动");
+    });
+
+    it("④ 自动留言（L1）不许吞掉更重的「无进展」（review P2）", () => {
+        // 同一帧：既刚进停滞、又刚进一条 job 自动留言
+        const next = row({ running: true, stalled: true, queue: 1, queueHuman: 0 });
+        const [a] = alertsOf(snap(row({ running: true })), [next], { autoPull: true });
+        expect(a.kind).toBe("stalled"); // ← 不是 queued-auto
+        expect(a.level).toBe("L1");
+    });
 });

@@ -75,7 +75,10 @@ export const ALERT_QUEUE_ACTION_LABEL = "看留言";
  * 快照比较 → 该弹的提示（**按优先级每会话至多一条**）。
  *
  * 一个会话同时满足两条（如"异常终止"且"队列里有留言"）时只出最重的一条 ——
- * toast 是打断，一次打断说两件事等于没说。优先级：异常终止 > 有人在等 > 无进展 > 跑完（含自动留言）。
+ * toast 是打断，一次打断说两件事等于没说。优先级：异常终止 > 有人在等 > 无进展 > 自动留言 > 跑完。
+ *
+ * ‼ **L1 的自动留言不能抢在「无进展」前面**（review#435 P2）：它是最轻的一档，
+ * 把更重的停滞吞掉，用户就永远看不到"卡住了"（停滞那帧之后 `p.stalled` 已是真，不会再报）。
  *
  * @param prev 上一次快照（`uri → NavRow`）；空对象 = **首次建基线**，此时一律不报（见头注 ①）
  * @param next 这一次快照
@@ -128,24 +131,32 @@ function pick(r: NavRow, p: NavRow): { kind: AlertKind; level: "L1" | "L2"; text
     }
     // ② 队列里刚出现留言。**来源要分开**（##435）：队列的收件人是 agent，不是人 ——
     //    `queue` = 待投递给 agent 的留言条数，往里写的不只有人（job 结束通知 / 别的 agent 派活 /
-    //    CLI 无署名）。只有**人署名**的几条才叫「有人在等你回复」；否则人类零动作，
+    //    CLI 无署名）。只有**人署名**的几条才叫「有人在等你回复」，配 L2；否则人类零动作，
     //    却会被 L2 拽到任务页（##435 现场：11 条队列 0 条来自人）。
-    if (r.queue > 0 && p.queue === 0) {
-        const human = Math.max(0, Math.min(r.queueHuman, r.queue));
-        if (human > 0) {
-            return { kind: "waiting", level: "L2", text: `${r.label} 有人给你留了 ${r.queue} 条留言（队列里）` };
-        }
+    //
+    // ⚠️ 跃迁判据用的是**总数**的 0→非0（沿用旧口径，本刀不改）：它只决定"什么时候报"，
+    //    "报哪一级"才由来源决定。⇒ 已知缺口：队列先有 1 条 job 留言（L1），人随后再留 1 条
+    //    （总数 1→2）这一轮不出 L2。真解留 ##436（留言到达时落信箱条目，人与自动天然分开）。
+    const queueBurst = r.queue > 0 && p.queue === 0;
+    const human = Math.max(0, Math.min(r.queueHuman, r.queue));
+    if (queueBurst && human > 0) {
+        // ##435: "N 条"必须是**人写的**条数 —— 说总数会让用户点进去发现只有 1 条是给他写的
+        const rest = r.queue > human ? `（队列共 ${r.queue} 条，其余为自动）` : "";
+        return { kind: "waiting", level: "L2", text: `${r.label} 有人给你留了 ${human} 条留言${rest}` };
+    }
+    // ③ 无进展（停滞是运行的子集，故只需判"刚进停滞"）。比自动留言重，故先于 ④
+    if (r.stalled && !p.stalled) {
+        return { kind: "stalled", level: "L1", text: `${r.label} 在跑但没动静了（该看一眼是不是卡住）` };
+    }
+    // ④ 队列里刚出现留言，但**没有一条来自人** —— 最轻的一档：L1、不抢焦点、不开 tab
+    if (queueBurst) {
         return {
             kind: "queued-auto",
             level: "L1",
             text: `${r.label} 有 ${r.queue} 条自动留言待投递（job/agent 生成，你无需回复）`,
         };
     }
-    // ③ 无进展（停滞是运行的子集，故只需判"刚进停滞"）
-    if (r.stalled && !p.stalled) {
-        return { kind: "stalled", level: "L1", text: `${r.label} 在跑但没动静了（该看一眼是不是卡住）` };
-    }
-    // ④ 跑完（正常收尾）—— 不抢焦点；`opened` 已在调用方挡掉"你正看着它跑完"的情况
+    // ⑤ 跑完（正常收尾）—— 不抢焦点；`opened` 已在调用方挡掉"你正看着它跑完"的情况
     if (p.running && !r.running && !r.abnormal) {
         return { kind: "finished", level: "L1", text: `${r.label} 跑完了${unread}` };
     }

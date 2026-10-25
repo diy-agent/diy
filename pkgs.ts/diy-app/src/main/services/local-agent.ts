@@ -2925,20 +2925,18 @@ export class LocalAgentManager {
         // 注册表退回缺省（直查 ops-feed）——照样数得出来（review1 P2-1 缺口 C）。
         sessionRegistry.setDeps({
             viewersOf: (uri) => this.watchers(uri),
-            queueOf: (uri) => {
-                try {
-                    return this.queue.list(uri).length;
-                } catch {
-                    return 0; // 队列读盘失败不能让注册表崩（它只是"此刻的事实"，不是权威落盘）
-                }
-            },
             // ##435：队列的收件人是 agent，不是人 —— 按署名把人写的与机器写的分开，
             // 只有前者才配叫「有人在等你回复」（L2 抢焦点）。判据见 `core/drafts.isHumanAuthor`。
-            queueHumanOf: (uri) => {
+            // 两个数**同一次 list()** 给出：view() 是热路径，拆成两次就是同一份 drafts.yaml 每帧读两遍。
+            queueCountsOf: (uri) => {
                 try {
-                    return this.queue.list(uri).filter((it) => isHumanAuthor(it.author)).length;
+                    const items = this.queue.list(uri);
+                    return {
+                        total: items.length,
+                        human: items.filter((it) => isHumanAuthor(it.author)).length,
+                    };
                 } catch {
-                    return 0;
+                    return { total: 0, human: 0 }; // 队列读盘失败不能让注册表崩（它只是"此刻的事实"，不是权威落盘）
                 }
             },
         });
