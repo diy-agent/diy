@@ -142,6 +142,18 @@ export const Caches = {
     serialize: (v) => v,
     defaultValue: "created:asc",
   }),
+  /**
+   * 通知信箱的**已读水位**（##436 块 3）：最后一条「已看过」的条目 id（空 = 全未读）。
+   *
+   * 为什么落视图 cache 而不是新开一份账本文件：它记的是「用户看到哪儿了」，不是业务事实 ——
+   * 丢了只会多报未读（`shared/inbox.unreadCountOf` 对"水位找不到"就是全部算未读）。
+   * 与 `sessionStore` 的会话已读水位（`diy_sessions_seen`）同一取向：core 不需要知道谁看过什么。
+   */
+  diy_inbox_last_read: field<string>("diy_inbox_last_read", {
+    parse: (raw) => (raw.length <= 120 ? raw : null),
+    serialize: (v) => v,
+    defaultValue: "",
+  }),
   /** 任务树：搜索关键词（视图 cache：丢了只是清掉搜索框，无数据损失） */
   diy_task_tree_query: field<string>("diy_task_tree_query", {
     parse: (raw) => (raw.length <= 200 ? raw : null),

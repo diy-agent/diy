@@ -522,7 +522,21 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const agent = getLocalAgent();
     // --mode 给出 = 入队待投递；省略 = 立即开一轮。
     if (input.mode) {
-      agent.steerAdd(input.taskUri, input.mode, input.message, input.author);
+      const items = agent.steerAdd(input.taskUri, input.mode, input.message, input.author);
+      // ##436 块 4：留言进信箱。这是**第二个**投递入口（房间投递是另一个，见
+      // `room-service.deliverOne`）—— CLI / 别的 agent 代投的留言以前完全不进任何可读的地方，
+      // 用户只会被“叫醒”却看不到内容。只记跃迁（来了一条），分级不倒这里管（归 session-alerts）。
+      {
+        const { messageEntryOf, noteInbox } = await import("./inbox");
+        noteInbox(
+          messageEntryOf({
+            taskUri: input.taskUri,
+            text: input.message,
+            ...(input.author ? { author: input.author } : {}),
+            ...(items[items.length - 1]?.id ? { steerId: items[items.length - 1]!.id } : {}),
+          }),
+        );
+      }
       // ##303：入队后若**没有活跃轮次**，立刻用它开一轮 —— 留言的语义就是"发一句话"，
       // 空闲时它本就该像普通消息那样马上发出。否则没有任何机制会因它启动轮次，
       // 留言会永远躺在 .diy/drafts.yaml 里（界面只有横条，用户以为已经发出去了）。

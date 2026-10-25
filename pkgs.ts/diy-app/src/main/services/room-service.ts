@@ -39,6 +39,10 @@ import { diyHome, getTask } from "../core/state";
 import { defaultPersonaId, listPersonas } from "../core/persona";
 import { DEFAULT_STEER_MODE } from "../../shared/steer-mode";
 import {
+    messageEntryOf,
+    noteInbox,
+} from "./inbox";
+import {
     DEFAULT_CHANNEL_ID,
     deliveryPlanFor,
     deliveryText,
@@ -48,6 +52,7 @@ import {
     isSidebarRoomId,
     memberName,
     deliveryOriginFor,
+    opsAuthorFor,
     opsOriginFor,
     parseAddress,
     resolveMember,
@@ -670,6 +675,32 @@ function deliverOne(input: DeliverInput): Promise<void> {
         st.depth--;
         await mark("running");
         const name = memberName(input.room, member.id);
+        /**
+         * ##436 块 4：留言进信箱 —— **只记跃迁**（“来了一条留言”），不记“队列里现在有 N 条”。
+         *
+         * 两个投递路径（插进正在跑的一轮 / 空闲开一轮）都调它：用户被“叫醒”时能读到原文、
+         * 看得出是谁发的，正是本任务的直接解药。
+         *
+         * 三处**刻意的不记**：
+         *   · 用户本人发给主人格（`opsAuthorFor` 返回 undefined）—— 他就在场，这句不会“叫醒”谁；
+         *   · 没有 taskUri 的成员（不可投递）：根本没有会话可跳；
+         *   · 失败：不写两条，条目在 `mark("failed")` 里已经有投递账可查。
+         */
+        const noteMessageInbox = (steerId?: string): void => {
+            if (!taskUri) return;
+            if (opsAuthorFor(member.main === true, author) === undefined) return;
+            noteInbox(
+                messageEntryOf({
+                    taskUri,
+                    text: body,
+                    author,
+                    roomId,
+                    fromName,
+                    sayId,
+                    ...(steerId ? { steerId } : {}),
+                }),
+            );
+        };
         // ── 忙时投递 = **插进正在跑的那一轮**（##377 第 27 刀）────────────────────────
         // 修前：会话正有轮次在跑（任务页自己那一轮 / 别的客户端 / 侧边栏那条链）⇒ 直接标
         //   「未投递」—— 而任务页同一句话按 Enter 会进**插话队列**（`_su*` 块），两个入口
@@ -703,6 +734,7 @@ function deliverOne(input: DeliverInput): Promise<void> {
                 // —— `room.get` 的读侧投影拿它反查 turnId（`local-agent.steerTurnId`），
                 // 于是房间页能把这条 say 指到"回复在你上面那一轮"（body 真缺陷第 1 条）。
                 await mark("ok", { note: plan.note, ...(steered.steerId ? { steerId: steered.steerId } : {}) });
+                noteMessageInbox(steered.steerId);
                 // 水位照常前移：这句话**确实送到了**（进了那一轮的插话队列，且有人在跑 ⇒
                 // 下一步 / 轮末续轮必来取走）⇒ 下一轮的房间上下文不该再把它当"没看过的新发言"
                 // 重投一遍（与"失败不前移"不冲突：失败是没送到）。
@@ -753,6 +785,7 @@ function deliverOne(input: DeliverInput): Promise<void> {
             //   `fromDelivery: true` 仍恒带（不落盘）：它表达「这一轮是投递」，与"落盘落什么"是两件事。
             deliveryOriginFor(member.main === true, author, { roomId, sayId }),
         );
+        noteMessageInbox();
         await settleTurn(r);
     };
 
