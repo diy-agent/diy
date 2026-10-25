@@ -168,13 +168,13 @@ async function scrollChatToTopUntil(match: string, max = 10): Promise<boolean> {
   return await bodyHas(match);
 }
 
-/** 预算输入框当前值（KB） */
-const budgetKb = () => ui.query<string>(`document.querySelector('input[aria-label="压缩预算KB"]')?.value ?? ''`);
+/** 历史上限输入框当前值（**token**，##432 刀 2 的唯一旋钮） */
+const limitTokensValue = () => ui.query<string>(`document.querySelector('input[aria-label="历史上限token"]')?.value ?? ''`);
 
-/** 在预算输入框里设 KB 并提交（input + change） */
-async function setBudgetKb(kb: number): Promise<void> {
+/** 在历史上限输入框里设 token 并提交（change） */
+async function setLimitTokens(tokens: number): Promise<void> {
   await ui.query<string>(
-    `(() => { const i=document.querySelector('input[aria-label="压缩预算KB"]'); if(!i) return 'x'; i.value=${JSON.stringify(String(kb))}; i.dispatchEvent(new Event('input',{bubbles:true})); i.dispatchEvent(new Event('change',{bubbles:true})); return 'x'; })()`,
+    `(() => { const i=document.querySelector('input[aria-label="历史上限token"]'); if(!i) return 'x'; i.value=${JSON.stringify(String(tokens))}; i.dispatchEvent(new Event('change',{bubbles:true})); return 'x'; })()`,
   );
   await new Promise((r) => setTimeout(r, 500));
 }
@@ -229,7 +229,7 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
   it("点环 → 窗口构成抽屉：**第一 tab 是压缩**（自动压缩 + 参数区 + 费用对比），tab 栏有「压缩」执行按钮", async () => {
     await openDrawer();
     await waitUntil(
-      () => ui.query<boolean>(`!!document.querySelector('input[aria-label="压缩预算KB"]')`),
+      () => ui.query<boolean>(`!!document.querySelector('input[aria-label="历史上限token"]')`),
       (v) => v === true,
       { label: "压缩 tab 上屏" },
     );
@@ -238,17 +238,17 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
     expect(text).toContain("费用对比");
     // ##423 块 3：三态改 filter 组（旧 toggle 把 notify 压没了）
     expect(await ui.query<boolean>(`!!document.querySelector('[aria-label="自动压缩模式"]')`)).toBe(true);
-    expect(await ui.query<boolean>(`!!document.querySelector('input[aria-label="压缩预算KB"]')`)).toBe(true);
+    expect(await ui.query<boolean>(`!!document.querySelector('input[aria-label="历史上限token"]')`)).toBe(true);
     expect(await ui.query<boolean>(`!!document.querySelector('[aria-label="压缩（详情页）"]')`)).toBe(true);
     expect(await ui.query<string>(`document.querySelector('[aria-label="窗口构成视图"] button')?.textContent?.trim() ?? ''`)).toBe("压缩");
     expect(await ui.query<boolean>(`!!document.querySelector('[aria-label="窗口构成视图"] button.btn-active')`)).toBe(true);
-    // 缺省预算 = DEFAULT_BUDGET_BYTES（##343 M1 起 20KB，与生产 auto-compact.yaml 对齐）
-    expect(await budgetKb()).toBe("20");
+    // 缺省上限 = DEFAULT_HISTORY_LIMIT_TOKENS（20000 token，##432 刀 2）
+    expect(await limitTokensValue()).toBe("20000");
   });
 
   it("M3：参数区按 mode → modeData → toolResult → renderData 层次展示（归属可见）", async () => {
     const text = await a11yText();
-    for (const k of ["mode", "budget", "modeData", "budgetBytes", "toolResult", "render", "renderData", "summary"]) {
+    for (const k of ["modeData", "budgetBytes", "toolResult", "render", "renderData", "summary"]) {
       expect(text).toContain(k);
     }
     // 层次结构的字段键（renderData 私有参数）在 DOM 里
@@ -297,7 +297,7 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
     // 切回参数视图
     await ui.clickSelector('[aria-label="压缩配置视图"] button:nth-child(1)');
     await waitUntil(
-      () => ui.query<boolean>(`!!document.querySelector('input[aria-label="压缩预算KB"]')`),
+      () => ui.query<boolean>(`!!document.querySelector('input[aria-label="历史上限token"]')`),
       (v) => v === true,
       { label: "参数视图回归" },
     );
@@ -315,10 +315,13 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
     await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("mode: off"), { label: "off 写回" });
   });
 
-  it("压缩到输入：手改写回真源（3KB=3072，预算形状）", async () => {
-    await setBudgetKb(3);
-    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("budgetBytes: 3072"), { label: "手改写回真源（3KB=3072）" });
-    expect(autoYaml()).toContain("mode: budget");
+  it("历史上限：手改写回真源（3000 → 夹到下限 4000，token 形状）", async () => {
+    await setLimitTokens(3000);
+    // 小于下限的值会被夹上来（##432 review 第 2 条：太快触发 = 每步都重算）
+    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("limitTokens: 4000"), { label: "上限写回真源（夹到 4000）" });
+    await setLimitTokens(9000);
+    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("limitTokens: 9000"), { label: "上限写回真源（9000）" });
+    expect(autoYaml()).toContain("limit:");
   });
 
   it("费用对比（图形）：当前 / 压缩后两条 + 省 $x（−y%）", async () => {
@@ -374,7 +377,7 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
   it("切「总表（按轮）/ 分表（按步）」：压缩内容退场（无用量记录 → 空态），可切回", async () => {
     await ui.clickSelector('[data-drawer-tab="total"]');
     await waitUntil(
-      () => ui.query<boolean>(`!!document.querySelector('input[aria-label="压缩预算KB"]')`),
+      () => ui.query<boolean>(`!!document.querySelector('input[aria-label="历史上限token"]')`),
       (v) => v === false,
       { label: "压缩 tab 退场" },
     );
@@ -384,7 +387,7 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
     expect(await ui.query<boolean>("!!document.querySelector('table')")).toBe(false);
     await ui.clickSelector('[data-drawer-tab="compact"]');
     await waitUntil(
-      () => ui.query<boolean>(`!!document.querySelector('input[aria-label="压缩预算KB"]')`),
+      () => ui.query<boolean>(`!!document.querySelector('input[aria-label="历史上限token"]')`),
       (v) => v === true,
       { label: "压缩 tab 回归" },
     );
@@ -625,37 +628,12 @@ describe("##339：分表投递徽标（配置驱动压缩的事实）", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// 装配管道（##344 M2）：级列表编辑器 + 即时预览 + 与 CLI 同一真源
+// 压缩面板（##344 M2 / ##423 块 2-3 / ##432 刀 2）
 //
-// 验收（##344 body）：UI 级列表**可增删改**（选 type / 必保 / limit / clip / 私有 data）+
-// **即时预览投递效果**；破坏性操作（删级）走 ConfirmDialog；CLI `compact plan get|set|check`
-// 与 UI 读写的是**同一份** `history.keep[]`。
+// ##432 起：级列表编辑器**退场**（历史投递只按 `history.limit.limitTokens` 一条上限）。
+// 这里守的是「原生机制仍可看」+「编辑面确实没了」+ CLI 面仍在（`compact plan get|set|check`）。
 // ═══════════════════════════════════════════════════════════════
-describe("装配管道（##344 M2）：级列表增删改 + 即时预览 + 与 CLI 同一真源", () => {
-  /** 第 i 级里的某个控件（多级同形 ⇒ 必须按行取，不能全局 querySelector） */
-  const rowSel = (i: number, sel: string) =>
-    `document.querySelectorAll('[data-keep-stage]')[${i}]?.querySelector(${JSON.stringify(sel)})`;
-  /**
-   * 给某个控件设值并派发 change（走真实 DOM 事件路径）。
-   *
-   * ##423 块 3：下拉/勾选框换成了 daisyUI `filter`（radio 组）—— `[data-keep-type-select]` 这类钩子
-   * 现在挂在**组容器**上，所以这里分两路：容器 ⇒ 点 `input[data-filter-value=<v>]`（真实点击，
-   * 让 browser 自己处理同组互斥）；`input/select` ⇒ 老路径 el.value + change。
-   */
-  const fire = (sel: string, value: string) =>
-    ui.query<string>(
-      `(() => { const el=${sel}; if(!el) return 'no';
-        if (el.matches('input,select,textarea')) { el.value=${JSON.stringify(value)}; el.dispatchEvent(new Event('change',{bubbles:true})); return 'ok'; }
-        const r = el.querySelector('input[data-filter-value=' + JSON.stringify(${JSON.stringify(value)}) + ']');
-        if (!r) return 'no-option'; r.click(); return 'ok'; })()`,
-    );
-  /** 某个 filter 组的当前选中值（radio 组没有 `.value` 可读） */
-  const picked = (sel: string) =>
-    ui.query<string>(
-      `(() => { const el=${sel}; if(!el) return 'no';
-        const r = el.querySelector('input[type=radio]:checked'); return r ? r.getAttribute('data-filter-value') : ''; })()`,
-    );
-
+describe("压缩面板（##344 M2）：历史上限 + 候选预览 + 旧级列表只读回显", () => {
   /** 该 describe 接在分表用例之后 —— 那时抽屉在「分表」tab 上，先切回「压缩」tab */
   async function gotoCompactTab(): Promise<void> {
     if (!(await ui.query<boolean>(`!!document.querySelector('[data-drawer-tab="compact"]')`))) {
@@ -672,20 +650,18 @@ describe("装配管道（##344 M2）：级列表增删改 + 即时预览 + 与 C
     );
   }
 
-  it("默认：配置无 history.keep ⇒ 显示「缺省回落」并把缺省管道**回显成数据**（steps 必保 full + ladder）", async () => {
+  it("默认：旧 history.keep 仍**只读回显**成数据（steps + ladder），但已标废弃、无编辑控件", async () => {
     await gotoCompactTab();
     const text = await a11yText();
     expect(text).toContain("装配管道");
-    expect(text).toContain("缺省回落");
+    expect(text).toContain("已废弃");
     expect(await ui.query<number>(`document.querySelectorAll('[data-keep-stage]').length`)).toBe(2);
     expect(await ui.query<string>(`document.querySelectorAll('[data-keep-stage]')[0].getAttribute('data-keep-type')`)).toBe("steps");
     expect(await ui.query<string>(`document.querySelectorAll('[data-keep-stage]')[1].getAttribute('data-keep-type')`)).toBe("ladder");
-    // ##423 块 3：勾选框/下拉换成 filter 按钮组 ⇒ 读「选中的 radio」而不是 .checked / .value
-    expect(await picked(`document.querySelectorAll('[data-keep-must]')[0]`)).toBe("must");
-    expect(await picked(`document.querySelectorAll('[data-keep-clip]')[0]`)).toBe("full");
-    // 阶梯级不声明 clip ⇒ 界面显示「回落全局」（不是写死 headtail）
-    expect(await picked(`document.querySelectorAll('[data-keep-clip]')[1]`)).toBe("inherit");
-    expect(await ui.query<string>(`document.querySelectorAll('[data-keep-n]')[0].value`)).toBe("6");
+    // ##432：编辑控件整体退场（review 第 1 条）——「必保 / 裁法 / n / 类型」都不再是可点的东西
+    for (const sel of ["[data-keep-must]", "[data-keep-clip]", "[data-keep-type-select]", "[data-keep-n]"]) {
+      expect(await ui.query<boolean>(`!!document.querySelector('${sel}')`)).toBe(false);
+    }
   });
 
   it("##423 块 2/3：「什么时候会压」讲清判据、范例预览左右对照、计数上屏", async () => {
@@ -714,127 +690,25 @@ describe("装配管道（##344 M2）：级列表增删改 + 即时预览 + 与 C
     expect(text).toContain("压缩");
   });
 
-  it("「+ 新增级」→ 写回 history.keep[]（来源变「来自配置」）", async () => {
-    await ui.clickSelector("[data-keep-add]");
-    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("history:") && t.includes("keep:"), {
-      label: "history.keep 落盘",
-    });
-    expect(autoYaml()).toContain("must: true");
-    expect(await ui.query<number>(`document.querySelectorAll('[data-keep-stage]').length`)).toBe(3);
-    expect((await a11yText()).includes("来自配置")).toBe(true);
-    // 新增的是「最近 6 步」（必保），label 一处文案
-    expect(await ui.query<string>(`document.querySelectorAll('[data-keep-stage]')[2].getAttribute('data-keep-type')`)).toBe("steps");
-  });
-
-  it("换 type（ladder → recent）→ data **整包换**（默认 n=10），再改 n / role 写回 data", async () => {
-    await fire(rowSel(1, "[data-keep-type-select]"), "recent");
-    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("type: recent"), { label: "type → recent 写回" });
-    // ⚠️ js-yaml 把键 `n` 落成 `'n':`（YAML 1.1 的 y/n 布尔别名 ⇒ 必须引号化）；值语义不变
-    expect(autoYaml()).toContain("'n': 10");
-    // 私有参数控件随 type 出现 —— **等 DOM，不等文件**（文件已写 ≠ 界面已重渲染，
-    // 同一原则在本文件别处已注明；`setKeep` 走 RPC 后再回灌，紧跟着查 DOM 会读到上一帧）。
-    await waitUntil(
-      () => ui.query<boolean>(`!!${rowSel(1, "[data-keep-n]")}`),
-      (v) => v === true,
-      { label: "recent 级 n 控件出现" },
-    );
-    expect(await ui.query<boolean>(`!!${rowSel(1, "[data-keep-role]")}`)).toBe(true);
-    await fire(rowSel(1, "[data-keep-n]"), "3");
-    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("'n': 3"), { label: "n=3 写回" });
-    await fire(rowSel(1, "[data-keep-role]"), "user");
-    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("role: user"), { label: "role=user 写回" });
-  });
-
-  it("必保勾选 / 裁法选择 → 写回必须字段 `must` 与公共字段 `clip`", async () => {
-    // 第 2 级（recent）取消必保（它本来没有 must）→ 勾上再取消
-    // 第 2 级「计预算 → 必保」（filter 组：点对应 radio）
-    expect(await fire(rowSel(1, "[data-keep-must]"), "must")).toBe("ok");
-    await waitUntil(() => Promise.resolve(autoYaml()), (t) => (t.match(/must: true/g) || []).length >= 2, { label: "recent 级变必保" });
-    // 第 2 级裁法 → full（写回 clip 形状）
-    await fire(rowSel(1, "[data-keep-clip]"), "full");
-    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("type: full"), { label: "clip → full 写回" });
-    // 切到 headtail ⇒ 出现私有参数控件（head/tail/...）
-    await fire(rowSel(1, "[data-keep-clip]"), "headtail");
-    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("type: headtail"), { label: "clip → headtail 写回" });
-    // 私有参数控件随 clip 出现（等 DOM，不等文件 —— 文件已写 ≠ 界面已重渲染）
-    await waitUntil(
-      () => ui.query<boolean>(`!!${rowSel(1, "[data-keep-ht='head']")}`),
-      (v) => v === true,
-      { label: "headtail 私有参数控件出现" },
-    );
-    await fire(rowSel(1, "[data-keep-ht='head']"), "2");
-    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("head: 2"), { label: "headtail.head=2 写回" });
-    // 回落全局（删掉 clip 键）；判据用**本级的 `head: 2`**（不能用 `type: headtail`：真源头部注释里就有这串字）
-    await fire(rowSel(1, "[data-keep-clip]"), "inherit");
-    await waitUntil(() => Promise.resolve(autoYaml()), (t) => !t.includes("head: 2"), { label: "clip 回落（键消失）" });
-  });
-
-  it("删级：走 ConfirmDialog（应用内弹窗，非原生 confirm）确认后才写回", async () => {
-    const before = autoYaml();
-    // 第 3 级的删除按钮。用**合成 click**（`el.click()`）而非真实鼠标：级列表在 340px 左栏里，
-    // 行可能横向溢出 ⇒ 真实点击的命中点会被裁到别的元素上（同文件里开抽屉也出于同类原因用合成 click）。
-    // 重试上限 10 次：级列表刚被上一条用例改过（`setKeep` → RPC → 回灌），紧跟着点删除可能落在
-    // 重渲染中间态（按钮还没挂上 / 事件绑在旧行上）⇒ 弹窗不出来。这是**夹具时序**，不是被测行为：
-    // 下面「未确认前不改文件」与「确认后才写回」两条断言一个字没放宽。
-    let dialogUp = false;
-    for (let i = 0; i < 10 && !dialogUp; i++) {
-      await ui.query<string>(
-        `(() => { const b=${rowSel(2, "[data-keep-del]")}; if(!b) return 'no'; b.click(); return 'ok'; })()`,
-      );
-      dialogUp = await waitUntil(
-        () => ui.query<boolean>(`!!document.querySelector('button.btn-error')`),
-        (v) => v === true,
-        { label: "ConfirmDialog 出现", timeoutMs: 500 },
-      );
+  it("装配管道（已废弃）：只读回显 + 无编辑入口（##432 review 第 1 条：不许并列第二个旋钮）", async () => {
+    await gotoCompactTab();
+    const text = await a11yText();
+    expect(text).toContain("已废弃");
+    expect(text).toContain("不决定投递");
+    // 旧 keep 仍回显成数据（「我配过什么」还查得到），但**没有任何编辑控件**
+    expect(await ui.query<number>(`document.querySelectorAll('[data-keep-stage]').length`)).toBe(2);
+    for (const sel of ["[data-keep-add]", "[data-keep-reset]", "[data-keep-must]", "[data-keep-clip]", "[data-keep-type-select]"]) {
+      expect(await ui.query<boolean>(`!!document.querySelector('${sel}')`)).toBe(false);
     }
-    expect(dialogUp).toBe(true);
-    // 未确认前**不改文件**（破坏性操作要显式确认）
-    expect(autoYaml()).toBe(before);
-    await ui.clickSelector("button.btn-error");
-    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t !== before, { label: "确认后写回" });
-    await waitUntil(
-      () => ui.query<number>(`document.querySelectorAll('[data-keep-stage]').length`),
-      (n) => n === 2,
-      { label: "级数 → 2" },
-    );
+    // 唯一旋钮在：历史上限（token）—— 不再是 KB 预算
+    expect(await ui.query<boolean>(`!!document.querySelector('input[aria-label="历史上限token"]')`)).toBe(true);
+    expect(await ui.query<boolean>(`!!document.querySelector('input[aria-label="压缩预算KB"]')`)).toBe(false);
+    // 「mode: off ≠ 不裁」必须在界面上说清楚（review 第 4 条）
+    expect(text).toContain("自动压缩 off");
+    expect(text).toContain("不会让历史全量发出去");
   });
 
-  it("改管道 ⇒ 预览**即时重算**（阶梯级裁法改 path → 工具结果变「只留调用」）", async () => {
-    // 预览区的 diff 计算是**按实例**的开关（##406）：本 describe 的面板是新挂的，得再开一次。
-    await enableDiffPreview();
-    await expandAll();
-    const before = await ui.query<string>("document.querySelector('[data-compact-preview]')?.textContent ?? ''");
-    // 先证明预览确实渲染了：否则下面「不含 X」是空串给的假绿。
-    expect(before.length).toBeGreaterThan(0);
-    expect(before).not.toContain("输出已省略（只留调用）");
-    await fire(rowSel(1, "[data-keep-clip]"), "path");
-    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("type: path"), { label: "clip → path 写回" });
-    // 预览以「当前配置」现算 ⇒ 立刻反映（不必点任何按钮）
-    const after = await waitUntil(
-      () => ui.query<string>("document.querySelector('[data-compact-preview]')?.textContent ?? ''"),
-      (t) => t.includes("输出已省略（只留调用）"),
-      { label: "预览即时重算（path 生效）" },
-    );
-    expect(after.length).toBeGreaterThan(0);
-    // 复位（后续 CLI 用例按 headtail 语义断言）
-    await fire(rowSel(1, "[data-keep-clip]"), "inherit");
-    await waitUntil(() => Promise.resolve(autoYaml()), (t) => !/type: path/.test(t), { label: "裁法复位" });
-  });
-
-  it("CLI 与 UI 同一真源：compact plan get 读到 UI 写的那份；plan check 通过；非法 set 拒绝且不改文件", async () => {
-    const get = (await fx.sh.getJson(`./diy.sh agent local compact plan get ${uri}`)).data as {
-      source: string;
-      keep: Array<{ type: string }>;
-      raw: string;
-    };
-    expect(get.source).toBe("config");
-    expect(get.keep.map((s) => s.type)).toEqual(["steps", "recent"]);
-    expect(get.raw).toContain("history:");
-
-    const chk = await fx.sh.run(`./diy.sh agent local compact plan check ${uri}`);
-    expect(chk.stderr).toBe("");
-    expect(chk.code).toBe(0);
-
+  it("CLI compact plan set/get 往返（CLI 面仍在，UI 面已收口）", async () => {
     // 非法 plan：写文件 → set 拒绝（exit≠0）且**配置一字不改**
     const badPath = join(fx.HOME, "bad-keep.yaml");
     writeFileSync(badPath, "- type: nope\n", "utf-8");
@@ -849,47 +723,11 @@ describe("装配管道（##344 M2）：级列表增删改 + 即时预览 + 与 C
     writeFileSync(goodPath, "keep:\n  - type: steps\n    must: true\n    clip: {type: full}\n    data: {n: 6}\n  - type: ladder\n", "utf-8");
     const ok = await fx.sh.run(`./diy.sh agent local compact plan set ${uri} ${goodPath}`);
     expect(ok.code).toBe(0);
-    const back = (await fx.sh.getJson(`./diy.sh agent local compact plan get ${uri}`)).data as { source: string; keep: Array<{ type: string; must?: boolean }> };
+    const back = (await fx.sh.getJson(`./diy.sh agent local compact plan get ${uri}`)).data as { source: string; keep: Array<{ type: string }> };
     expect(back.source).toBe("config");
-    expect(back.keep).toEqual([
-      { type: "steps", must: true, clip: { type: "full" }, data: { n: 6 } },
-      { type: "ladder" },
-    ]);
-    // 校验盘上配置（不带 keep 参数）也通过
+    expect(back.keep.map((x) => x.type)).toEqual(["steps", "ladder"]);
     expect((await fx.sh.run(`./diy.sh agent local compact plan check ${uri}`)).code).toBe(0);
-  });
-
-  it("##363：点「重置为缺省」→ ConfirmDialog（点明影响面）→ 确认 → keep 键消失、标记变「缺省回落」、级列表回显缺省", async () => {
-    await gotoCompactTab();
+    // 这份 keep **不决定投递**：配置里有它，历史仍只按 limitTokens 切（预览/投递不因它变）
     expect(autoYaml()).toContain("keep:");
-    // 合成 click（同上：左栏窄、真实命中点会被裁）
-    await ui.query<string>(
-      `(() => { const b=document.querySelector('[data-keep-reset]'); if(!b) return 'no'; if(b.disabled) return 'disabled'; b.click(); return 'ok'; })()`,
-    );
-    await waitUntil(
-      () => ui.query<boolean>(`!!document.querySelector('button.btn-error')`),
-      (v) => v === true,
-      { label: "重置 ConfirmDialog 出现" },
-    );
-    // 文案点明影响面（全局 + 可 restore 找回）
-    expect(await bodyHas("所有任务")).toBe(true);
-    expect(await bodyHas("restore")).toBe(true);
-    // 未确认前**不动文件**
-    const before = autoYaml();
-    expect(before).toContain("keep:");
-    await ui.clickSelector("button.btn-error");
-    // 删键（不是写死 DEFAULT_KEEP 字面量）⇒ 文件里不再有 `keep:`
-    await waitUntil(() => Promise.resolve(autoYaml()), (t) => !t.includes("keep:"), { label: "history.keep 键消失" });
-    // 标记回落 + 级列表回显缺省（steps + ladder）
-    await waitUntil(() => a11yText(), (t) => t.includes("缺省回落"), { label: "标记变缺省回落" });
-    await waitUntil(
-      () => ui.query<number>(`document.querySelectorAll('[data-keep-stage]').length`),
-      (n) => n === 2,
-      { label: "级列表回显缺省（2 级）" },
-    );
-    expect(await ui.query<string>(`document.querySelectorAll('[data-keep-stage]')[0].getAttribute('data-keep-type')`)).toBe("steps");
-    // CLI 读同一真源：source 回落 default
-    const get = (await fx.sh.getJson(`./diy.sh agent local compact plan get ${uri}`)).data as { source: string };
-    expect(get.source).toBe("default");
   });
 });

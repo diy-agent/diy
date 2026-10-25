@@ -13,7 +13,7 @@
 
 import { z } from "zod";
 
-import { HEAD_KEEP_TOKENS, selectKeptBoundary, type BoundaryMessage } from "./select-kept-boundary";
+import { selectKeptBoundary, type BoundaryMessage } from "./select-kept-boundary";
 
 /**
  * 保头 token 数 / 保留比例：**唯一真源在 `./select-kept-boundary.ts`**（与界面范例预览共用同一份判据），
@@ -25,6 +25,19 @@ export { HEAD_KEEP_TOKENS as HISTORY_HEAD_TOKENS, RETAIN_RATIO as HISTORY_RETAIN
 export const DEFAULT_HISTORY_LIMIT_TOKENS = 20_000;
 
 /**
+ * 单条上限的**下限**（token），低于它一律夹上来 —— 理由（##432 review 第 2 条）：
+ *
+ * 保头 `HEAD_KEEP_TOKENS = 600` 是硬编码、不参与累加；一次压缩只保留到 `limitTokens × RETAIN_RATIO(0.5)`。
+ * 于是 `tailBudget = limitTokens × 0.5 − headTokens`，当 `limitTokens ≤ 1200` 时 tailBudget ≤ 0，
+ * 保留段**必然**超上限 ⇒ 每一步都重算切点、每一步都可能写一条 compaction entry ——
+ * 「压缩是罕见事件」从后门失效（正是 `##432` 要治的病）。
+ *
+ * 4000 的选择：`4000 × 0.5 − 600 = 1400` token 的尾部额度，约等于 2~3 个 step 的正文，
+ * 保证「压一次能顶住之后若干步的新增量」；再小就没有压缩的意义了（不如不压）。
+ */
+export const MIN_HISTORY_LIMIT_TOKENS = 4_000;
+
+/**
  * 历史预算的配置面（唯一的一项）。
  *
  * `summary.enabled` 缺省 **false**：v1 **不做摘要 LLM 调用**，丢掉的部分靠注记一行 + ref 指回去查。
@@ -32,8 +45,14 @@ export const DEFAULT_HISTORY_LIMIT_TOKENS = 20_000;
  */
 export const HistoryLimitSchema = z.object({
     limitTokens: z
-        .number()
-        .describe("历史消息可占的 **token** 上限（字符数 / 4 粗估）：从最后一步往前累加，装得下就装，装不下就停"),
+        // ⚠️ 用 transform **夹**而不是 `.min()` 拒绝：配置里小于下限的值不该让整份配置读不出来
+        //    （读不出 = 回落缺省 + 一条 warning，用户只会看到"我配的没生效"）。夹取与
+        //    `normalizeHistoryLimit` 是同一个口径（MIN_HISTORY_LIMIT_TOKENS 的理由见那里）。
+        .transform((v: number) => Math.max(MIN_HISTORY_LIMIT_TOKENS, Math.floor(v)))
+        .describe(
+            "历史消息可占的 **token** 上限（字符数 / 4 粗估）：从最后一步往前累加，装得下就装，装不下就停。" +
+                `低于 ${MIN_HISTORY_LIMIT_TOKENS} 会被夹上来（再小则保头 + 保留比例让每步都重算）`,
+        ),
     summary: z
         .object({
             enabled: z.boolean().describe("是否对丢掉的那段做摘要（v1 缺省 false：只留一行注记 + ref 指回原文）"),
@@ -48,11 +67,17 @@ export const DEFAULT_HISTORY_LIMIT: HistoryLimit = {
     summary: { enabled: false },
 };
 
-/** 宽松归一：手写 / LLM 写的配置可能缺字段、给成 0 / 负数 / 旧字段名 */
+/**
+ * 宽松归一：手写 / LLM 写的配置可能缺字段、给成 0 / 负数 / 小于下限 / 旧字段名。
+ * `limitTokens` 一律夹到 `[MIN_HISTORY_LIMIT_TOKENS, ∞)`（理由见该常量的注释）。
+ */
 export function normalizeHistoryLimit(raw: unknown): HistoryLimit {
     const src = (raw ?? {}) as Record<string, unknown>;
     const n = src["limitTokens"];
-    const limitTokens = typeof n === "number" && Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_HISTORY_LIMIT_TOKENS;
+    const limitTokens =
+        typeof n === "number" && Number.isFinite(n) && n > 0
+            ? Math.max(MIN_HISTORY_LIMIT_TOKENS, Math.floor(n))
+            : DEFAULT_HISTORY_LIMIT_TOKENS;
     const sum = src["summary"] as Record<string, unknown> | undefined;
     return { limitTokens, summary: { enabled: sum?.["enabled"] === true } };
 }

@@ -78,20 +78,6 @@ async function openDrawer(): Promise<void> {
   });
 }
 
-/** 版本链落盘（实例 HOME；测试进程的 DIY_HOME 与它不是同一个） */
-function chainFile(): string {
-  const dir = join(fx.HOME, "local", "plan");
-  const scopeKey = readdirSync(dir)[0]!;
-  return join(dir, scopeKey, "index.jsonl");
-}
-const chainRows = (): Record<string, unknown>[] => {
-  try {
-    return readFileSync(chainFile(), "utf-8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
-  } catch {
-    return [];
-  }
-};
-
 describe("plan 版本链：UI 面", () => {
   it("装配管道显示当前版本 id + 版本行；点开看全文（再点收起）", async () => {
     await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
@@ -129,24 +115,10 @@ describe("plan 版本链：UI 面", () => {
     expect(readdirSync(join(fx.HOME, "local", "plan"))[0]).toBe(keyOf("plan-scope:global"));
   }, 60_000);
 
-  it("界面改级列表（+ 新增级）⇒ 也入版本链（UI 那条写路径同样记账）", async () => {
-    const before = chainRows().length;
-    expect(before).toBeGreaterThan(0);
-    await ui.clickSelector("[data-keep-add]");
-    const rows = await waitUntil(
-      () => Promise.resolve(chainRows()),
-      (r) => r.length > before,
-      { label: "UI 编辑入链" },
-    );
-    const last = rows.at(-1)!;
-    expect(last.op).toBe("set");
-    expect(last.via).toBe("user");
-    expect(String(last.parent)).toBe(String(rows[rows.length - 2]?.version));
-    // 当前版本 id 随之变化（界面自会刷新：链尾 = 新版本）
-    await waitUntil(
-      () => ui.query<string>(`document.querySelector('[data-plan-version]')?.textContent?.trim() ?? ''`),
-      (t) => t === String(last.version),
-      { label: "新版本上屏" },
-    );
+  it("界面不再给级列表编辑入口（##432：keep 已废弃，不决定投递）", async () => {
+    // 版本链保留只为「旧 keep 存档可查」；「UI 编辑 keep 入链」那条写路径已无入口（review 第 1 条：
+    // 不许并列第二个旋钮）。这条守的是**编辑面确实没了**，而不是某个按钮点在哪儿。
+    expect(await ui.query<boolean>(`!!document.querySelector('[data-keep-add]')`)).toBe(false);
+    expect(await ui.query<boolean>(`!!document.querySelector('[data-keep-reset]')`)).toBe(false);
   }, 60_000);
 });

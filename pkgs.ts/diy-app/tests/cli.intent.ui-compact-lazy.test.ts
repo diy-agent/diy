@@ -189,7 +189,7 @@ async function openDrawer(): Promise<void> {
 async function closeDrawer(): Promise<void> {
   await ui.clickSelector('[aria-label="关闭窗口构成"]');
   await waitUntil(
-    () => ui.query<boolean>(`!!document.querySelector('input[aria-label="压缩预算KB"]')`),
+    () => ui.query<boolean>(`!!document.querySelector('input[aria-label="历史上限token"]')`),
     (v) => v === false,
     { label: "抽屉已关" },
   );

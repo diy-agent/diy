@@ -105,8 +105,13 @@ describe("estimateTokensOf / normalizeHistoryLimit", () => {
         expect(normalizeHistoryLimit(undefined).limitTokens).toBe(20_000);
         expect(normalizeHistoryLimit({ limitTokens: 0 }).limitTokens).toBe(20_000);
         expect(normalizeHistoryLimit({ limitTokens: -5 }).limitTokens).toBe(20_000);
-        expect(normalizeHistoryLimit({ limitTokens: 1234.9 }).limitTokens).toBe(1234);
+        expect(normalizeHistoryLimit({ limitTokens: 12_345.9 }).limitTokens).toBe(12_345);
         expect(normalizeHistoryLimit({ limitTokens: 1 }).summary.enabled).toBe(false);
+        // 下限夹取（##432 review 第 2 条）：≤1200 会让 tailBudget=0 ⇒ 每步重算，故下限 4000
+        expect(normalizeHistoryLimit({ limitTokens: 1_000 }).limitTokens).toBe(4_000);
+        expect(normalizeHistoryLimit({ limitTokens: 1_200 }).limitTokens).toBe(4_000);
+        expect(normalizeHistoryLimit({ limitTokens: 4_000 }).limitTokens).toBe(4_000);
+        expect(normalizeHistoryLimit({ limitTokens: 3_999 }).limitTokens).toBe(4_000);
         expect(normalizeHistoryLimit({ limitTokens: 1, summary: { enabled: true } }).summary.enabled).toBe(true);
     });
 });

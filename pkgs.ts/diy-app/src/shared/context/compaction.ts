@@ -108,14 +108,19 @@ const SummaryField = z.boolean().describe("是否额外算一份历史摘要（�
  * （换 mode 就换一整包）。命名用 `<判别键>Data`（非 `data`）以避多判别键撞车。
  */
 export const CompactPolicySchema = z.object({
-    mode: z.literal("budget").describe("目标式预算：按纵向优先级阶梯保留到预算上限"),
+    mode: z
+        .literal("budget")
+        .describe("⚠️ 已废弃（不决定投递）：保留只是为了旧配置与旧调用点仍能解析。投递选择只看 `history.limit`"),
     modeData: z
         .object({
             budgetBytes: z
                 .number()
                 .int()
                 .nonnegative()
-                .describe("历史消息可占字节上限（不含固定开支）；0 = 清零"),
+                .describe(
+                    "⚠️ **已废弃，不决定投递**（##432 刀 2）：历史投递只按 `history.limit.limitTokens` 切，" +
+                        "改这个值**不会**改变发给模型的历史。字段为准旧调用点保留形状，删除待后续 PR",
+                ),
             toolResult: ToolResultPolicySchema.describe("工具结果在预算内的呈现"),
         })
         .describe("budget 算法私有参数（只此支有）"),

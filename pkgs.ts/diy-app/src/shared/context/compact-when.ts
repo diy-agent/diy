@@ -17,7 +17,6 @@
 //
 // 纯函数：禁止 import node:*（渲染层直接用）。
 
-import { fmtBudgetBytes } from "./delivery-badge";
 
 export type CompactWhenMode = "off" | "notify" | "auto";
 
@@ -27,7 +26,8 @@ export interface CompactWhenInput {
     /** 生效 TTL（毫秒，实测优先）；`null` = 无实测也无先验 → 不写时长 */
     ttlMs: number | null;
     /** 压缩上限（字节）：这就是「一条上限」—— 排版用 */
-    budgetBytes: number;
+    /** ##432 刀 2 的**唯一旋钮**：历史 token 上限（从最后一步往前累加，装不下就停） */
+    limitTokens: number;
     /** 该会话最后一步实测 token（输入 + 输出）；`null` = 没有实测 */
     lastStepTokens: number | null;
     /** 模型窗口上限（token）；`null` = 未知 */
@@ -140,9 +140,12 @@ export function compactWhenSummary(i: CompactWhenInput): string {
 
 /**
  * 「压成什么样」的一句话：上限 + 超出后的动作。
- * `modeData.budgetBytes` 是**唯一**的上限；它约束的是「按顺序挑历史」那部分的**值字节**。
+ * `history.limit.limitTokens` 是**唯一**的上限（token）：从最后一步往前累加，装不下就停；
+ * 保头 600 token 硬编码、切点 tool 配对平衡、一次压缩只保留到上限的一半。
  */
-export function compactResultSentence(budgetBytes: number): string {
-    if (budgetBytes === 0) return "上限 0（= 清零）：历史一条都不留，只剩每轮现建的 system / 工具表";
-    return `上限 ${fmtBudgetBytes(budgetBytes)}：超出就按管道顺序挑，挑到装不下为止（挑剩下的不进本次请求）`;
+export function compactResultSentence(limitTokens: number): string {
+    return (
+        `上限 ${limitTokens} token：从最后一步往前累加，装得下就装、装不下就停` +
+        "（保头 600 token 硬编码永不丢；切点必须 tool 配对平衡）；一次压缩只保留到上限的一半，边界只在压缩事件时算一次"
+    );
 }

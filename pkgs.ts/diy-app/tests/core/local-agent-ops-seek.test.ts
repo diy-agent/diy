@@ -265,14 +265,16 @@ describe("读者接线：deliveryMessages 只 replay 保留段", () => {
                 mode: "notify",
                 triggers: { systemContextChanged: true, cacheExpired: true, contextWindowOver: 0 },
                 policy: { mode: "budget", modeData: { budgetBytes: 20480, toolResult: { render: "asis" } }, summary: false },
-                // 上限给小，但 CANON 的历史比**保头 600 token** 还短 ⇒ 保住全部、什么都没丢 ⇒ 不注入注记。
+                // 上限取下限（4000；更小的值会被夹上来，见 MIN_HISTORY_LIMIT_TOKENS），
+                // 而 CANON 的历史远短于它 ⇒ 保住全部、什么都没丢 ⇒ 不注入注记。
                 // 这正是新口径：小会话永远不该被压（旧实现会按预算切，切出空注记）。
                 history: { limit: { limitTokens: 5, summary: { enabled: false } } },
             }),
             "utf-8",
         );
         try {
-            expect(loadAutoCompact(diyHome()).history?.limit?.limitTokens).toBe(5);
+            // 配置里写 5 ⇒ **读回来是夹取后的 4000**（下限，防止每步重算）
+            expect(loadAutoCompact(diyHome()).history?.limit?.limitTokens).toBe(4_000);
             const uriFull = newTask(CANON);
             const uriSeek = newTask(CANON, (ctx) => [compactEvent(ctx)]);
             expect(manager.deliveryMessages(uriFull).note).toBe("");

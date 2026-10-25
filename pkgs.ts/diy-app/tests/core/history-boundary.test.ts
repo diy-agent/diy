@@ -6,7 +6,7 @@ import type { LanguageModelV3StreamPart, LanguageModelV3StreamResult, LanguageMo
 import { MockLanguageModelV3 } from "ai/test";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { LanguageModel } from "ai";
-import { autoCompactFile } from "../../src/main/core/auto-compact-config";
+import { autoCompactFile, loadAutoCompact } from "../../src/main/core/auto-compact-config";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
 import { diyHome } from "../../src/main/core/state";
@@ -62,7 +62,7 @@ beforeAll(() => {
             "triggers: {systemContextChanged: true, cacheExpired: true, contextWindowOver: 0}",
             "policy: {mode: budget, modeData: {budgetBytes: 20480, toolResult: {render: asis}}, summary: false}",
             "history:",
-            "  limit: {limitTokens: 200, summary: {enabled: false}}",
+            "  limit: {limitTokens: 4000, summary: {enabled: false}}",
             "",
         ].join("\n"),
         "utf-8",
@@ -76,7 +76,7 @@ const compactions = (uri: string) => readTurnEntries(uri).filter((e) => "kind" i
 
 describe("压缩边界：一次算、落盘、之后不重算", () => {
     it("##432 review A：压完之后**连续几步小增量**不再写新 entry（保留段没重新顶过上限）", async () => {
-        // 这次用大一点的上限（2000）与较小的增量：先压一次，再连续 3 轮小消息
+        // 先压一次（上限 4000），再连续 3 轮小消息
         const cfg = autoCompactFile(diyHome());
         const saved = readFileSync(cfg, "utf-8");
         writeFileSync(
@@ -87,7 +87,7 @@ describe("压缩边界：一次算、落盘、之后不重算", () => {
         try {
             const uri = newTask();
             const mgr = manager();
-            for (let i = 0; i < 8; i++) await collect(mgr.chat(uri, `大 ${i}：${"问".repeat(2000)}`));
+            for (let i = 0; i < 8; i++) await collect(mgr.chat(uri, `大 ${i}：${"问".repeat(6000)}`));
             const n1 = compactions(uri).length;
             expect(n1).toBeGreaterThanOrEqual(1);
             // 连续 3 轮小增量（每轮 ~10 token）：保留段远没顶回上限 ⇒ **不新增** entry
@@ -102,13 +102,13 @@ describe("压缩边界：一次算、落盘、之后不重算", () => {
         const uri = newTask();
         const mgr = manager();
         // 每轮 user 都很长 ⇒ 累积很快超上限
-        for (let i = 0; i < 4; i++) await collect(mgr.chat(uri, `第 ${i} 问：${"问".repeat(1200)}`));
+        for (let i = 0; i < 4; i++) await collect(mgr.chat(uri, `第 ${i} 问：${"问".repeat(6000)}`));
         const before = compactions(uri);
         // 至少发生过一次压缩事件；**条数不再等于步数**（旧实现是每步一条）
         expect(before.length).toBeGreaterThanOrEqual(1);
         expect(before.length).toBeLessThanOrEqual(2);
         const entry = before[0] as { limitTokens: number; dropped: number; cut: { llmLine: number }; headLine: number };
-        expect(entry.limitTokens).toBe(200);
+        expect(entry.limitTokens).toBe(4_000);
         expect(entry.dropped).toBeGreaterThan(0);
         expect(entry.headLine).toBeGreaterThan(0);
         expect(entry.cut.llmLine).toBeGreaterThan(entry.headLine);
@@ -122,7 +122,7 @@ describe("压缩边界：一次算、落盘、之后不重算", () => {
     it("投递结果 = 保头 + 切点之后的原文（切点之前的消息一条都不在里面）", async () => {
         const uri = newTask();
         const mgr = manager();
-        for (let i = 0; i < 4; i++) await collect(mgr.chat(uri, `问 ${i}：${"问".repeat(3000)}`));
+        for (let i = 0; i < 4; i++) await collect(mgr.chat(uri, `问 ${i}：${"问".repeat(6000)}`));
         const entry = compactions(uri).at(-1) as { cut: { llmLine: number }; headLine: number } | undefined;
         expect(entry).toBeTruthy();
         const view = mgr.deliveryMessages(uri);
@@ -134,5 +134,34 @@ describe("压缩边界：一次算、落盘、之后不重算", () => {
         expect(m?.[1]).toBe(String(entry!.cut.llmLine));
         // 被丢的区间 = (headLine, cutLine) —— 至少一条
         expect(entry!.cut.llmLine - entry!.headLine).toBeGreaterThan(0);
+    });
+});
+
+describe("试算（##432 review 第 3 条）：改上限能立刻看到「压完长什么样」，且不写账本", () => {
+    it("上限调大 ⇒ 预览丢得更少（读侧照样按新上限重算），但 turns.jsonl 一条都不新增", async () => {
+        const cfg = autoCompactFile(diyHome());
+        const saved = readFileSync(cfg, "utf-8");
+        try {
+            const uri = newTask();
+            const mgr = manager();
+            for (let i = 0; i < 4; i++) await collect(mgr.chat(uri, `问 ${i}：${"问".repeat(6000)}`));
+            // 真发过一次 ⇒ 边界已落盘（上限 200 的那条）
+            const n1 = compactions(uri).length;
+            expect(n1).toBeGreaterThanOrEqual(1);
+            const policy = loadAutoCompact(diyHome()).policy;
+            const tight = await mgr.compactPreview(uri, policy);
+            expect(tight.droppedTurns).toBeGreaterThan(0);
+
+            // 改上限（4000 → 40000）——**只改配置**，不压缩、不发请求，然后看预览
+            writeFileSync(cfg, saved.replace("limitTokens: 4000", "limitTokens: 40_000"), "utf-8");
+            const loose = await mgr.compactPreview(uri, policy);
+            // 试算生效：保留段在新上限下装得下 ⇒ 丢得比之前少（旧实现这里会「毫无变化」）
+            expect(loose.droppedTurns).toBeLessThan(tight.droppedTurns);
+            expect(loose.droppedTurns).toBe(0);
+            // 预览是只读的：账本条数不变（试算不落盘）
+            expect(compactions(uri).length).toBe(n1);
+        } finally {
+            writeFileSync(cfg, saved, "utf-8");
+        }
     });
 });

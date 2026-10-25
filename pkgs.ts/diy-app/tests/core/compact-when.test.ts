@@ -12,7 +12,7 @@ const base: CompactWhenInput = {
     mode: "auto",
     triggers: { systemContextChanged: true, cacheExpired: true, contextWindowOver: 200_000 },
     ttlMs: 300_000,
-    budgetBytes: 60 * 1024,
+    limitTokens: 20_000,
     lastStepTokens: 50_000,
     windowLimit: 200_000,
 };
@@ -85,7 +85,7 @@ describe("compact-when · 「什么时候会压」的文案", () => {
     });
 
     it("「压成什么样」：上限 0 要说明是清零，不是「0 字节上限」", () => {
-        expect(compactResultSentence(0)).toContain("清零");
-        expect(compactResultSentence(60 * 1024)).toContain("60 KB");
+        expect(compactResultSentence(20_000)).toContain("20000 token");
+        expect(compactResultSentence(20_000)).toContain("保头 600");
     });
 });

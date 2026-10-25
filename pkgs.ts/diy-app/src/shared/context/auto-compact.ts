@@ -59,7 +59,10 @@ export const AutoCompactHistorySchema = z.object({
     keep: z
         .array(z.unknown())
         .optional()
-        .describe("级列表 `{ type, must?, limit?, clip?, data }`（形状见 shared/context/compact-keep.ts）；缺省回落默认管道"),
+        .describe(
+            "⚠️ **已废弃，不决定投递**（##432 刀 2）：级列表 `{ type, must?, limit?, clip?, data }` 曾是装配管道，" +
+                "现在投递只按 `history.limit` 切；字段为准旧调用点保留形状，删除待后续 PR",
+        ),
     /**
      * **闸**：允许本地 agent 经 `compact_plan` 工具改写 plan（##362 M3a）。
      *

@@ -29,10 +29,11 @@ function m(
 }
 
 /** 用同一个边界函数算「期望保留的 id」—— 期望值来自唯一实现点，不是另写一套 */
-function keptIdsByBoundary(messages: readonly ExampleMessage[], budgetBytes: number): string[] {
+/** 参照实现：**直接**调判据（`buildCompactExample` 现在收 token，不再是字节） */
+function keptIdsByBoundary(messages: readonly ExampleMessage[], budgetTokens: number): string[] {
     const { headEnd, cut } = selectKeptBoundary(
         messages.map((x) => ({ tokens: bytesToTokens(x.bytes), kind: x.kind, callId: x.callId })),
-        bytesToTokens(budgetBytes),
+        budgetTokens,
     );
     return messages.filter((_, i) => i <= headEnd || i >= cut).map((x) => x.id);
 }
@@ -51,7 +52,7 @@ describe("compact-example · 范例预览（展示层，判据走 selectKeptBoun
         for (const row of r.rows) expect(row.tokens).toBe(bytesToTokens(row.bytes));
     });
 
-    it.each([0, 3 * 1024, 12 * 1024, 1_000_000])("保留集合与 selectKeptBoundary 完全一致（上限 %i B）", (budget) => {
+    it.each([0, 3 * 1024, 12 * 1024, 1_000_000])("保留集合与 selectKeptBoundary 完全一致（上限 %i token）", (budget) => {
         const r = buildCompactExample(budget);
         expect(r.rows.filter((x) => x.kept).map((x) => x.id)).toEqual(keptIdsByBoundary(r.rows, budget));
     });

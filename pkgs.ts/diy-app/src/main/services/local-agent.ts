@@ -3451,7 +3451,7 @@ export class LocalAgentManager {
         llmLineBase = 0,
         /**
          * 只读路径（面板预览 / 该步实际请求）**不许写账本**（##432 review E）：
-         * 看页面不该改 turns.jsonl。`false` = 算边界但不落盘。
+         * 看页面不该改 turns.jsonl。`false` = **照样算**（含按当前上限试算），只是不落盘。
          */
         writeBoundary = true,
     ): HistoryDelivery {
@@ -3493,8 +3493,27 @@ export class LocalAgentManager {
         all: readonly LocalModelMessage[],
         llmLineBase: number,
         limit: HistoryLimit,
-        persist = true,
+        /**
+         * `false` = **试算**：照样读已落盘边界、照样在新上限下重算（`selectCompactableRange` 本来就是纯函数），
+         * 只是**不落盘**（##432 review 第 3 条）—— 面板改上限要能立刻看到「压完长什么样」，
+         * 而看页面不该改账本（review E）。真发仍是 `true`，由它把边界落一次。
+         */
+        write = true,
+        /**
+         * `true` = **按给定上限试算**（面板预览专用）：**不看已落盘的边界**，直接 `selectCompactableRange`
+         * 现算一次。预览要回答的是「按现在这个上限压，会压成什么样」—— 复用旧边界会让
+         * 「改了上限右边纹丝不动」（##432 review 第 3 条）；而真发仍走「事件制」（看已落盘边界、
+         * 只在保留段重新顶过上限时才重算），两者语义不同，**不许**在真发路径上开这个开关。
+         */
+        simulate = false,
     ): { cut: number; headEnd: number } | null {
+        const tokOf = (m: LocalModelMessage): number => estimateTokensOf(JSON.stringify(m.content ?? ""));
+        if (simulate) {
+            const total0 = all.reduce((n, m) => n + tokOf(m), 0);
+            if (total0 <= limit.limitTokens) return null;
+            const r0 = selectCompactableRange(all, limit.limitTokens);
+            return r0 ? { cut: r0.cut, headEnd: r0.headEnd } : null;
+        }
         const entry = taskUri ? readBoundary(taskUri) : null;
         let cut = 0;
         let headEnd = 0;
@@ -3506,8 +3525,6 @@ export class LocalAgentManager {
                 headEnd = Math.max(0, Math.min(h, cut));
             }
         }
-        // 只读路径（预览）：**只读已落盘的边界**，既不落盘也不重算（##432 review E）
-        if (!persist) return cut > 0 ? { cut, headEnd } : null;
         const tok = (m: LocalModelMessage): number => estimateTokensOf(JSON.stringify(m.content ?? ""));
         // ── 已有边界：只在**保留段本身**重新顶过上限时才重算（##432 review A 的事件化判据）──
         // 用「全量 token」判断是错的：被丢弃的那段永远算在内 ⇒ 每新增一步都"超限" ⇒ 每步重算。
@@ -3524,7 +3541,7 @@ export class LocalAgentManager {
         // 超限 ⇒ 算一次切点（已有边界更靠后就沿用；切点只往前推进，绝不回退）
         const r = selectCompactableRange(all, limit.limitTokens);
         if (!r || r.cut <= cut) return cut > 0 ? { cut, headEnd } : null;
-        if (taskUri && persist) {
+        if (taskUri && write) {
             appendCompactionEntry(taskUri, {
                 at: new Date().toISOString(),
                 limitTokens: limit.limitTokens,
@@ -4189,7 +4206,8 @@ export class LocalAgentManager {
         const all = projectAll(store);
         // ##432 review C：预览 / 记账也读**同一条已落盘边界**（不写账本：预览不改盘）
         const recordsLimit = normalizeHistoryLimit(loadAutoCompact(diyHome()).history?.limit);
-        const recordsRange = this.appliedHistoryRange(taskUri, all, 0, recordsLimit, false);
+        // `simulate: true` —— 预览 = 「按当前上限压会是什么样」，不吃已落盘的旧边界（review 第 3 条）
+        const recordsRange = this.appliedHistoryRange(taskUri, all, 0, recordsLimit, false, true);
         const sel = recordsRange
             ? selectHistoryByCut(all, recordsRange, optsFor(policy, taskUri))
             : selectHistoryByCut(all, { cut: all.length, headEnd: all.length });

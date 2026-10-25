@@ -24,6 +24,7 @@ import {
     type AutoCompactIssue,
 } from "../../shared/context/auto-compact";
 import { validateKeepStages, type KeepIssue, type KeepStage } from "../../shared/context/compact-keep";
+import { MIN_HISTORY_LIMIT_TOKENS } from "../../shared/context/history-limit";
 
 export function autoCompactFile(home: string): string {
     return join(home, "auto-compact.yaml");
@@ -170,22 +171,23 @@ export function saveAutoCompact(home: string, cfg: unknown): AutoCompactConfig {
     const header =
         "# 自动压缩配置 —— 唯一真源（手改或经 UI 写回；下一轮真发生效）\n" +
         "# mode: off 不检测 / notify 检测并提示（默认）/ auto 检测到就压\n" +
+        "#   ⚠️ mode 只管**自动触发**，不是「裁不裁」：投递**始终**按 history.limit 切，\n" +
+        "#      关掉自动压缩不会让历史全量发出去（只是不主动产生新的压缩事件）。\n" +
         "# triggers: 三个都是**可判定的确定事实**（不是「划不划算」的预测）\n" +
         "#   systemContextChanged 系统上下文变了 → 前缀缓存必作废，此刻压缩零重建代价\n" +
         "#   cacheExpired         缓存已过期（距上次请求 > 生效 TTL）→ 冷启动，压缩是白赚\n" +
         "#   contextWindowOver    上下文窗口占用上限（**token 数**，= 该会话最后一步实测用量；0 = 关闭）\n" +
-        "# policy: 压缩策略（自动与手动**同一套**）。\n" +
-        "#   mode: budget 目标式预算（现役；只有这一种算法）\n" +
-        "#   modeData: **只属于该 mode** 的私有参数（换 mode 就换一整包；与 mode 同级的 summary 才是所有算法共有）\n" +
-        "#     · budget：budgetBytes 历史字节上限（0=清零）· toolResult 工具结果呈现\n" +
-        "#         toolResult.render: asis 原样 / headtail 头尾裁剪（私有参数在 renderData）/ callpath 只留调用\n" +
-        "# history: **历史预算**（##432 刀 2：唯一旋钮）\n" +
+        "# history: **历史投递的唯一旋钮**（##432 刀 2 —— 旧 policy 预算与 history.keep[] 已不决定投递）\n" +
         "#   limit.limitTokens: 单条 token 上限（字符数 / 4 粗估）—— 从最后一步往前累加，装得下就装、装不下就停；\n" +
-        "#     切点必须 tool 配对平衡（不平衡往前挪）；**保头 600 token 硬编码**（不参与累加、永不被丢）\n" +
+        "#     切点必须 tool 配对平衡（不平衡往前挪）；**保头 600 token 硬编码**（不参与累加、永不被丢）；\n" +
+        "#     一次压缩只保留到上限的 **一半**（留余量给后续步骤）；\n" +
+        "#     最小 " + String(MIN_HISTORY_LIMIT_TOKENS) + "（再小则保头 + 保留比例让每步都重算，配置会被夹上来）\n" +
         "#   limit.summary.enabled: 对丢掉那段做摘要（v1 缺省 false：只留一行注记 + ref 指回原文）\n" +
         "#   口径：**边界只在压缩事件时算一次**并落 turns.jsonl（compaction entry），之后每步只追加不重算\n" +
-        "#   ⚠️ 旧字段 `history.keep[]`（ladder/role/recent/steps + must）与 `policy.modeData.budgetBytes`\n" +
-        "#      **已不决定投递**（只为旧调用点保留形状；删除待后续 PR）—— 改它们不会改变发给模型的历史。\n" +
+        "# policy: **已废弃，不决定投递**（仅为旧配置/旧调用点保留形状）\n" +
+        "#   modeData.budgetBytes / toolResult 里的 render 仍是**工具结果呈现**的真源；\n" +
+        "#   budgetBytes 本身不再参与历史选择 —— 改它不会改变发给模型的历史。\n" +
+        "# history.keep[]: **已废弃，不决定投递**（级列表 ladder/role/recent/steps + must 已不再使用）\n" +
         "#   allowAgentWrite: 允许本地 agent 经 compact_plan 工具改写 plan（缺省 false = 只读；##362 M3a）\n" +
         "# 契约：pkgs.ts/diy-app/src/shared/context/auto-compact.ts 的 AutoCompactConfigSchema\n";
     writeFileAtomic(p, header + yaml.dump(norm, { indent: 2, noRefs: true }));

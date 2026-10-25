@@ -89,17 +89,17 @@ export interface CompactExampleResult {
 /**
  * 算出「按这个上限压完长什么样」。留谁丢谁 = `selectKeptBoundary` 说了算，这里只排版。
  *
- * @param budgetBytes 上限（字节，0 = 清零：只留保头）
+ * @param budgetTokens 上限（**token**，与真实压缩同一个口径 —— ##432 的唯一旋钮）
  * @param messages 默认用 `EXAMPLE_MESSAGES`（测试可传小样例）
  */
 export function buildCompactExample(
-    budgetBytes: number,
+    budgetTokens: number,
     messages: readonly ExampleMessage[] = EXAMPLE_MESSAGES,
 ): CompactExampleResult {
     const beforeBytes = messages.reduce((a, m) => a + m.bytes, 0);
     const { headEnd, cut }: KeptBoundary = selectKeptBoundary(
         messages.map((m) => ({ tokens: bytesToTokens(m.bytes), kind: m.kind, callId: m.callId })),
-        bytesToTokens(budgetBytes),
+        budgetTokens,
     );
 
     const rows: ExampleRow[] = messages.map((m, i) => {
