@@ -654,6 +654,59 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { readUsage } = await import("./usage-report");
     return readUsage(input.taskUri);
   });
+  /**
+   * 发送前门禁（##426 B）：量这一条消息。**只量不发** —— 超阈值由渲染层弹框，
+   * 三个数（字符 / 估算 token / 成本增量 / 窗口占用）全部由这里的真源算出来。
+   */
+  binding.on(app.agent.local.inputGate, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.inputGate", input.taskUri);
+    const { inputGate } = await import("../../shared/context/input-limit");
+    const { loadInputLimitChars } = await import("../core/context-config");
+    const { diyHome } = await import("../core/state");
+    const { personaForTask } = await import("../core/persona");
+    const { contextLimitOf, costOf } = await import("../../shared/models");
+    const { readStepUsages } = await import("./local-agent");
+    const home = diyHome();
+    const model = personaForTask(home, input.taskUri).model;
+    // 窗口占用 = **最后一步**的总输入 + 总输出（与 turnUsagePatch.windowTotal 同口径）；
+    // 没有历史步 → null（不是 0：0 会被算成"窗口空着"，那是个假事实）。
+    const last = readStepUsages(input.taskUri).at(-1);
+    const windowTokens = last
+      ? (last.usage.inputTokens ?? 0) + (last.usage.outputTokens ?? 0)
+      : null;
+    const contextLimitTokens = last?.contextLimit ?? contextLimitOf(model) ?? null;
+    const rates = last?.rates ?? costOf(model, 0);
+    return inputGate({
+      text: input.text,
+      limitChars: loadInputLimitChars(home),
+      contextLimitTokens,
+      windowTokens,
+      inputRatePerM: rates?.input ?? null,
+    });
+  });
+  /**
+   * 「转文件发送」（##426 B）：正文落 `$DIY_HOME/<taskUri>/gen/paste/<ts>.txt`，返回消息体。
+   * 只落文件、不发送 —— 发送仍走原通道（两个动作各自可测、失败互不牵连）。
+   */
+  binding.on(app.agent.local.pasteToFile, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.pasteToFile", input.taskUri);
+    const { isTaskUri } = await import("../../shared/task-uri");
+    const { pasteFileMessage } = await import("../../shared/context/input-limit");
+    const { taskDir } = await import("../core/state");
+    const { writeFileAtomic } = await import("../core/atomic-write");
+    const { join } = await import("node:path");
+    // 断言函数必须经**显式类型的限定名**调用：TS 的 assertion signature 只认标识符 / 限定名，
+    // `(await import(...)).invariant(...)` 与解构出来的裸名都不算（TS2775 / TS2776）。
+    const triage: typeof import("../../shared/error-triage") = await import("../../shared/error-triage");
+    triage.invariant(isTaskUri(input.taskUri), "fs/illegal-task-uri", `非法任务 URI：${input.taskUri}`);
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const dir = join(taskDir(input.taskUri), "gen", "paste");
+    const path = join(dir, `${stamp}.txt`);
+    // 原子写（##382 的唯一写原语；父目录由它 mkdir -p）。用户正文只落这一份，
+    // 半截文件比没有文件更坏（模型会按残文干活）。
+    writeFileAtomic(path, input.text);
+    return { path, message: pasteFileMessage({ path, text: input.text }) };
+  });
   // ── 压缩（compact）：少发 ≠ 销毁；历史原地保留可查、可撤销 ──
   // CLI/UI 传来的散字段 → 策略对象（缺省字段由 normalizePolicy 兜底；undefined 覆盖成默认值）
   // 散字段 → **扁平策略对象**（输入面契约；三轴形状由 normalizePolicy 统一生成，见 shared/context/compaction）
@@ -880,16 +933,23 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { defaultSystemPlaces } = await import("../../shared/context/delivery");
     const { existsSync } = await import("node:fs");
     const { diyHome } = await import("../core/state");
+    const { loadInputLimitChars } = await import("../core/context-config");
     return {
       systemPlaces: loadSystemPlaces(diyHome()),
       defaults: defaultSystemPlaces(),
       fromFile: existsSync(contextConfigFile(diyHome())),
+      inputLimitChars: loadInputLimitChars(diyHome()),
     };
   });
   binding.on(app.context.setConfig, async ({ input }) => {
-    const { saveSystemPlaces } = await import("../core/context-config");
+    const { saveInputLimitChars, saveSystemPlaces } = await import("../core/context-config");
     const { diyHome } = await import("../core/state");
-    return { systemPlaces: saveSystemPlaces(diyHome(), input.systemPlaces) };
+    const home = diyHome();
+    const systemPlaces = saveSystemPlaces(home, input.systemPlaces);
+    // inputLimitChars 缺省不改（undefined = 只改划分）；给了才写
+    const inputLimitChars =
+      input.inputLimitChars === undefined ? undefined : saveInputLimitChars(home, input.inputLimitChars);
+    return { systemPlaces, inputLimitChars: inputLimitChars ?? null };
   });
   binding.on(app.context.candidates, async () => {
     const { PLACE_CANDIDATES, defaultSystemPlaces } = await import("../../shared/context/preview");

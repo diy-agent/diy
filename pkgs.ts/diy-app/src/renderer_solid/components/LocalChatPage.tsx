@@ -61,6 +61,8 @@ import {
 import { CompactHistoryPanel } from "./CompactSessionPanel";
 import { TrafficDrawer } from "./TrafficDrawer";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { InputLimitDialog } from "./InputLimitDialog";
+import type { InputGate } from "../../shared/context/input-limit";
 import { OpsDownBar } from "./OpsDownBar";
 import { copyFailMeta, copyOkMeta } from "../lib/notice-copy";
 import { chatNotice, DETAIL_CHAT_FIND, DETAIL_HISTORY } from "../lib/notice-chat";
@@ -3190,6 +3192,12 @@ export function LocalChatPage(props: {
     };
     /** 清空确认：清空会删掉 main 侧 ops/llm 日志（rmSync，不可恢复），必须二次确认 */
     const [confirmClear, setConfirmClear] = createSignal(false);
+    /**
+     * 发送前门禁（##426 B）的状态：`null` = 没在问（**未超限时永远是 null** —— 不弹、不闪、不改文案）。
+     * 存的是「原文 + 量出来的三个数」：用户在框里选动作时，原文必须一字不动（它还没发出去）。
+     */
+    const [inputGateAsk, setInputGateAsk] = createSignal<{ text: string; gate: InputGate } | null>(null);
+    const [gateBusy, setGateBusy] = createSignal(false);
     const [pinned, setPinned] = createSignal<Record<string, boolean>>({});
     /** `force` 显式定值（活动块这类**默认展开**的行：缺省翻转出来是 true = 维持展开） */
     const togglePin = (id: string, force?: boolean) =>
@@ -3876,6 +3884,21 @@ export function LocalChatPage(props: {
     // 换绑与改定义都在人物面板里做（那里能看见"影响多少任务"）——这里只负责打开它。
     // 为什么不做成下拉快速切换：人物是**全局配置实体**，下拉只够"选"，看不见改动的波及面。
 
+    /**
+     * 真正发出去（门禁通过之后）：清输入框、清草稿、走 room 投递。
+     * `sent` = 要发的正文（**转文件时是替换后的消息体**，不是用户原文）。
+     */
+    const deliver = async (u: string, sent: string, editorText: string) => {
+        setInputValue("");
+        // 内容已作为消息发出，草稿使命结束：清掉，避免下次进入看到已发送的旧文本
+        void draftStore.clear(u, ["agent_input"]);
+        setStick(true); // 刚发出，必然想看回复：无视之前是否在上方阅读
+        // 走 **room 投递**（##377 第 17 刀 / ##166 §44.2 A）：无 `@` ⇒ focus（缺省 = 主人格）
+        // ⇒ 与今天等价；`@dev` ⇒ 投给那个成员。实时显示与停止语义都不变（见 sendViaRoom 头注）。
+        const ok = await localChatStore.sendViaRoom(u, sent);
+        if (!ok) setInputValue(editorText); // 真失败（RPC 抛错）⇒ 把话还给用户，别"既没发出又被打字清空"
+    };
+
     const submit = async () => {
         // 终态任务只读（##400）：服务端本就会拒（TurnGate），这里**不让用户白打一句话**
         // —— 拒信仍由服务端给（前端的只读不是判据，别指望它兜底）。
@@ -3888,14 +3911,55 @@ export function LocalChatPage(props: {
         // 而侧边栏同一句话却能发出去、还能在房间里查到。
         if (!text || !uri()) return;
         const u = uri()!;
-        setInputValue("");
-        // 内容已作为消息发出，草稿使命结束：清掉，避免下次进入看到已发送的旧文本
-        void draftStore.clear(u, ["agent_input"]);
-        setStick(true); // 刚发出，必然想看回复：无视之前是否在上方阅读
-        // 走 **room 投递**（##377 第 17 刀 / ##166 §44.2 A）：无 `@` ⇒ focus（缺省 = 主人格）
-        // ⇒ 与今天等价；`@dev` ⇒ 投给那个成员。实时显示与停止语义都不变（见 sendViaRoom 头注）。
-        const ok = await localChatStore.sendViaRoom(u, text);
-        if (!ok) setInputValue(text); // 真失败（RPC 抛错）⇒ 把话还给用户，别"既没发出又被打字清空"
+        // ── 发送前门禁（##426 B）：只看**本条**消息的字符数；未超限 ⇒ 零打扰（直接发）──
+        // 量的口径全在 main（单价快照 / 窗口占用 / token 估算各一份真源），这里只认 over。
+        try {
+            const gate = (await diyService.diy.agent.local.inputGate({ taskUri: u, text })) as InputGate;
+            if (gate.over) {
+                // 输入框**不动**：用户还得在里面继续编辑（取消 = 回到打字）
+                setInputGateAsk({ text, gate });
+                return;
+            }
+        } catch {
+            /* 量不出来不拦发送：门禁是防护，不是判据（发送失败另有错误显示） */
+        }
+        await deliver(u, text, text);
+    };
+
+    /** 「转文件发送」：落盘 → 用返回的消息体（路径 + 前 20 行 + 总行数）发出去 */
+    const sendViaFile = async () => {
+        const ask = inputGateAsk();
+        const u = uri();
+        if (!ask || !u || gateBusy()) return;
+        setGateBusy(true);
+        try {
+            const r = await diyService.diy.agent.local.pasteToFile({ taskUri: u, text: ask.text });
+            setInputGateAsk(null);
+            await deliver(u, r.message, ask.text);
+        } catch (e) {
+            // 失败必须说出来：内容还在输入框（原文没动），别让"点了没反应"变成猜
+            const msg = e instanceof Error ? e.message : String(e);
+            notificationStore.addToast(
+                "error",
+                `转文件失败：${msg}`,
+                chatNotice(
+                    "发送前门禁 · 转文件（##426）",
+                    "内容原样还在输入框里，没有发出去；可以直接重试或改选「仍然发送」",
+                    "会话页 submit 前的超长门禁：超阈值 → `agent.local.pasteToFile` 把正文落 $DIY_HOME/<taskUri>/gen/paste/，落盘失败就不发送（半途发送会让内容只存在上游历史里、本地无副本）。",
+                ),
+            );
+        } finally {
+            setGateBusy(false);
+        }
+    };
+
+    /** 「仍然发送」：照发，不记后账（用户已看见三个数，选择权在他） */
+    const sendAnyway = async () => {
+        const ask = inputGateAsk();
+        const u = uri();
+        if (!ask || !u) return;
+        setInputGateAsk(null);
+        await deliver(u, ask.text, ask.text);
     };
 
     /**
@@ -4551,6 +4615,19 @@ export function LocalChatPage(props: {
                     }}
                 />
             </Show>
+            {/* 超长输入门禁（##426 B）：只有 over 才会挂上这个节点 */}
+            <Show when={inputGateAsk()}>
+                {(ask) => (
+                    <InputLimitDialog
+                        gate={ask().gate}
+                        busy={gateBusy()}
+                        onCancel={() => setInputGateAsk(null)}
+                        onToFile={() => void sendViaFile()}
+                        onStillSend={() => void sendAnyway()}
+                    />
+                )}
+            </Show>
+
             {/* 清空确认：破坏性且不可恢复，点击与执行之间隔一层确认 */}
             <Show when={confirmClear()}>
                 <ConfirmDialog
