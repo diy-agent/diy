@@ -300,6 +300,21 @@ export interface AutoCompactFacts {
     ttl: EffectiveTtl;
     /** 上下文窗口占用（**token 数** = 该会话最后一步实测用量 `usage.total`）；null = 未知（无用量账） */
     windowTokens: number | null;
+    /**
+     * 上次真发时**投递出去的那段历史** ≈ token（= 最后一步的 `historySelection.keptTokens`，同口径粗估）；
+     * null = 还没有投递记录。它和 `windowTokens` 不是一回事：后者是整份请求的实测用量。
+     */
+    retainedTokens: number | null;
+    /**
+     * 已落盘的**压缩边界**（`turns.jsonl` 的 compaction entry —— ##432 刀 2 的事件制）：
+     * null = 从没压过（投递 = 全量）。有它之后每步只按它切，不再重算。
+     */
+    boundary: { at: string; dropped: number; limitTokens: number } | null;
+    /**
+     * 本会话**一共写过几条压缩事件**（`turns.jsonl` 的 compaction entry）—— 「压缩次数」的真源。
+     * ⚠️ 不是 `compact.jsonl` 的条数：那份自 ##431 起是纯审计日志，两者在界面上要分开叫。
+     */
+    compactionCount: number;
 }
 
 /**

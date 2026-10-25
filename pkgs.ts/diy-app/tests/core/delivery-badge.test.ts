@@ -4,111 +4,131 @@
 // 用户 2026-10-23：「Q3 需要写清楚，不然我也搞不清触发条件」——
 // 旧文案 `投递·全量` 的「全量」在 runtime 语境里读作「runtime 全量投递」，
 // 实际含义只是「这一步一条历史消息都没丢」（历史裁剪维度）。
+//
+// ##432 刀 2 之后口径又变了一次（用户 2026-10-25 复查）：
+//   · 唯一旋钮是 `history.limit.limitTokens`（token）⇒ 徽章里的数**一律 token**，不再拿字节比 token 上限；
+//   · 「什么时候会压」是**事件制**（写边界），三触发器只写审计 —— hover 必须把这条界线说清。
 
 import { describe, it, expect } from "vitest";
 import {
     deliveryBadgeText,
     deliveryBadgeTitle,
     fmtBudgetBytes,
+    fmtLimitTokens,
+    fmtTokensShort,
     TRIGGER_LABEL,
     type DeliveryBadgeInput,
 } from "../../src/shared/context/delivery-badge";
 
 const sel = (over: Partial<DeliveryBadgeInput["selection"]> = {}): DeliveryBadgeInput["selection"] => ({
-    limitTokens: 61_440,
-    keptBytes: 2048,
+    limitTokens: 20_000,
+    keptTokens: 4_100,
+    droppedTokens: 12_300,
+    keptBytes: 20_480,
     keptRuns: 2,
     droppedMessages: 0,
     totalMessages: 5,
     ...over,
 });
 
-const cfg: DeliveryBadgeInput["cfg"] = {
-    mode: "auto",
-    triggers: { systemContextChanged: true, cacheExpired: true, contextWindowOver: 61440 },
-    ttlMs: 60 * 60_000,
-};
-
 const input = (over: Partial<DeliveryBadgeInput> = {}): DeliveryBadgeInput => ({
     selection: sel(),
-    hits: [],
-    cfg,
-    stepTokens: 12345,
+    boundary: null,
+    mode: "notify",
     ...over,
 });
 
-describe("##423 徽章文本：维度写在词里，不再有裸「全量」", () => {
-    it("没丢消息 → 「历史·无裁剪」；丢了 → 「历史·丢 N 条」", () => {
+describe("##423 徽章文本：维度写在词里，且数一律 token", () => {
+    it("没丢消息 → 「历史·无裁剪」", () => {
         expect(deliveryBadgeText(sel())).toBe("历史·无裁剪");
-        expect(deliveryBadgeText(sel({ droppedMessages: 3 }))).toBe("历史·丢 3 条");
-        for (const t of [deliveryBadgeText(sel()), deliveryBadgeText(sel({ droppedMessages: 3 }))]) {
-            expect(t).not.toContain("全量");
-            expect(t.startsWith("历史")).toBe(true);
-        }
     });
 
-    it("字节人读（保留量）：KB / B", () => {
-        expect(fmtBudgetBytes(3072)).toBe("3 KB");
-        expect(fmtBudgetBytes(512)).toBe("512 B");
+    it("丢了 → 报 **token**（不是条数、更不是字节）：`历史·丢 12.3k tok`", () => {
+        expect(deliveryBadgeText(sel({ droppedMessages: 3 }))).toBe("历史·丢 12.3k tok");
+    });
+
+    it("老账本没有 droppedTokens → 退回条数，**不拿字节换算**", () => {
+        const old = sel({ droppedMessages: 3 });
+        delete (old as { droppedTokens?: number }).droppedTokens;
+        expect(deliveryBadgeText(old)).toBe("历史·丢 3 条");
+    });
+
+    it("任何情况下都不出现裸「全量」", () => {
+        for (const d of [0, 3]) expect(deliveryBadgeText(sel({ droppedMessages: d }))).not.toContain("全量");
     });
 });
 
-describe("##423 hover：三块缺一不可", () => {
-    const title = deliveryBadgeTitle(input());
-
-    it("① 说清维度 = 历史裁剪（与 runtime 无关）+ 上限/丢几条/保留几段", () => {
-        expect(title).toContain("历史裁剪");
-        expect(title).toContain("与 runtime 无关");
-        expect(title).toContain("上限 61440 token");
-        expect(title).toContain("丢 0/5 条");
-        expect(title).toContain("保留 2 段");
-    });
-
-    it("② 说清「上限是唯一旋钮」（旧 must / 字节预算的话术已删）", () => {
-        expect(title).toContain("唯一旋钮");
-        expect(title).not.toContain("must");
-        expect(title).not.toContain("预算");
-    });
-
-    it("③ 三触发器都列出来（名字 + 配置开关 + 阈值）", () => {
-        for (const k of ["systemContextChanged", "cacheExpired", "contextWindowOver"]) expect(title).toContain(k);
-        expect(title).toContain("mode=auto");
-        expect(title).toContain("60 分钟"); // cacheExpired 的生效 TTL
-        expect(title).toContain("上限 61440 tok");
-    });
-
-    it("④ 本步命中要说得出来：未命中 / 命中哪个；窗口超限给实测 vs 上限", () => {
-        expect(title).toContain("本步未命中");
-        expect(title).toContain("实测 12345 tok vs 上限 61440 tok");
-
-        const hit = deliveryBadgeTitle(input({ hits: [{ trigger: "contextWindowOver", by: "auto" }] }));
-        expect(hit).toContain("本步命中");
-        expect(hit).toContain("实测 12345 tok vs 上限 61440 tok");
-    });
-
-    it("手动压不归触发器：另起一行说清，不让它看起来像「三个都没命中却压过」", () => {
-        const t = deliveryBadgeTitle(input({ hits: [{ trigger: "manual", by: "ui" }] }));
-        expect(t).toContain("本步未命中");
-        expect(t).toContain("另有手动压缩 1 次");
-    });
-
-    it("没有实测 token → 说「无实测」，不编 0", () => {
-        expect(deliveryBadgeTitle(input({ stepTokens: null }))).toContain("实测 无实测");
-    });
-
-    it("读不到配置 → 只讲历史裁剪事实，不编触发条件", () => {
-        const t = deliveryBadgeTitle(input({ cfg: null }));
+describe("##423 徽章 hover：维度 / 口径 / 什么时候会压 / 三触发器只写审计", () => {
+    it("① 首行说清维度 + 全用 token（上限 / 保留 / 丢几条+tok / 段数）", () => {
+        const t = deliveryBadgeTitle(input({ selection: sel({ droppedMessages: 3 }) }));
         expect(t).toContain("历史裁剪");
-        expect(t).toContain("配置未读到");
-        expect(t).not.toContain("本步命中");
+        expect(t).toContain("与 runtime 无关");
+        expect(t).toContain("20,000 token");
+        expect(t).toContain("4.1k tok");
+        expect(t).toContain("丢 3/5 条（12.3k tok）");
+        expect(t).toContain("2 段");
+    });
+
+    it("② 口径那一句只有一个数域（token）；字节口径退场", () => {
+        const t = deliveryBadgeTitle(input());
+        expect(t).toContain("中文 1 字 1 token");
+        expect(t).toContain("与上限同一个数域");
+        expect(t).not.toContain("KB");
+    });
+
+    it("字节人读小件仍可用（装配层硬上限用），但**不进**徽章", () => {
+        expect(fmtBudgetBytes(3072)).toBe("3 KB");
+        expect(deliveryBadgeTitle(input())).not.toContain(fmtBudgetBytes(20_480));
+    });
+
+    it("③ 事件制：没边界 → 说「投递的是全量」，有边界 → 说「哪次事件写的、之后不重算」", () => {
+        expect(deliveryBadgeTitle(input({ boundary: null }))).toContain("还没有压缩事件");
+        const t = deliveryBadgeTitle(
+            input({ boundary: { at: "2026-10-25T10:00:00.000Z", dropped: 7, limitTokens: 12_000 } }),
+        );
+        expect(t).toContain("2026-10-25T10:00:00.000Z 写的压缩事件");
+        expect(t).toContain("丢 7 条");
+        expect(t).toContain("12,000 token");
+        expect(t).toContain("不重算");
+        // 再压的判据 = **只看保留段**，不是全量
+        expect(t).toContain("只看保留段自己");
+    });
+
+    it("④ 三触发器：明说「只写审计、不改投递切点」（这是用户被搞懵的那处歧义）", () => {
+        const t = deliveryBadgeTitle(input({ mode: "auto" }));
+        expect(t).toContain("mode=auto");
+        expect(t).toContain("compact.jsonl");
+        expect(t).toContain("不改投递切点");
+    });
+
+    it("配置没读到 / 边界没取到 → 整块省略，不编事实", () => {
+        const t = deliveryBadgeTitle({ selection: sel() });
+        expect(t).not.toContain("压缩事件");
+        expect(t).not.toContain("自动压缩");
+        expect(deliveryBadgeTitle(input({ mode: null }))).toContain("配置未读到");
+    });
+
+    it("`must` / 字节预算这些 ##432 已删的词不再出现", () => {
+        const t = deliveryBadgeTitle(input({ mode: "auto", boundary: null }));
+        expect(t).not.toContain("must");
+        expect(t).not.toContain("预算");
+        expect(t).not.toContain("KB");
     });
 });
 
-describe("触发器词的单一真源", () => {
-    it("四个 trigger 都有中文短名", () => {
-        expect(TRIGGER_LABEL.systemContextChanged).toBe("系统上下文变");
-        expect(TRIGGER_LABEL.cacheExpired).toBe("缓存过期");
-        expect(TRIGGER_LABEL.contextWindowOver).toBe("窗口超限");
+describe("人读小件", () => {
+    it("fmtTokensShort：1000 以下原样，千以上一位小数（不丢精度也不啰嗦）", () => {
+        expect(fmtTokensShort(820)).toBe("820");
+        expect(fmtTokensShort(3_400)).toBe("3.4k");
+        expect(fmtTokensShort(4_000)).toBe("4k");
+    });
+
+    it("fmtLimitTokens：千位分隔 + token 单位", () => {
+        expect(fmtLimitTokens(20_000)).toBe("20,000 token");
+    });
+
+    it("触发器短名仍与压缩详情共用（不另起一套词）", () => {
         expect(TRIGGER_LABEL.manual).toBe("手动");
+        expect(TRIGGER_LABEL.contextWindowOver).toBe("窗口超限");
     });
 });
