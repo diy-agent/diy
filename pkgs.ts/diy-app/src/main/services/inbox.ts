@@ -123,6 +123,13 @@ export const inboxHub = new InboxHub();
  *
  * 分级：信箱对**人 / 机器一视同仁**都记（“谁发的”写在 `source`）。要不要抢焦点是另一回事，
  * 判据完全归 `shared/session-alerts.pick()`（##435：只对人署名留言 L2）—— 这里不复刻、不另造。
+ *
+ * ⚠️ **等级只影响顶栏角标**（`shared/inbox.unreadBreakdownOf` 只数 N2、列表照显全部），
+ * 所以 N2 的语义必须钉死成「**有人在等你**」：
+ *   · 人署名（`human:*`）且**不是你自己** ⇒ N2；
+ *   · 你自己发的（`author === selfId`）⇒ N1 —— 否则你在 UI 里每说一句，顶栏就给自己报一次信
+ *     （##266 复核提的阻塞 2，实测可复现）；
+ *   · job / agent / 无署名 ⇒ N1（##435 的 L2 判据不变：那边判的是「叫不叫醒你」，这是「角标数几个」）。
  */
 export function messageEntryOf(input: {
     taskUri: string;
@@ -136,24 +143,37 @@ export function messageEntryOf(input: {
     /** 房间事件 id（`sayId`）/ 插话队列 id（`steerId`）—— 跳转定位的锚点原料 */
     sayId?: string;
     steerId?: string;
+    /**
+     * **本机用户**的成员 id（`HUMAN_MEMBER_ID`）。给了 `author === selfId` ⇒ 记 N1：
+     * 你自己发的留言不该给自己报信（##266 复核阻塞 2）。缺省 = 判不出本人，按人/机判。
+     */
+    selfId?: string;
 }): Omit<InboxEntry, "id" | "ts"> {
     const who = input.author && input.author.length > 0 ? input.author : "无署名";
     // 人 / 机器：**判据只此一处**（`core/drafts.isHumanAuthor`，与 ##435 的 L2 准入同一份实现）
-    const human = isHumanAuthor(input.author);
+    const humanAuthor = isHumanAuthor(input.author);
+    // 「本人」：同一条人署名留言，发送方就是本机用户 ⇒ 不算“有人在等你”（##266 阻塞 2）
+    const isSelf = Boolean(input.selfId) && input.author === input.selfId;
+    const human = humanAuthor && !isSelf;
     const via = input.roomId ? `房间 ${input.roomId}${input.fromName ? `（${input.fromName}）` : ""}` : "会话直投";
     const preview = inboxPreviewOf(input.text);
     return {
-        // 人署名 = N2（顶栏角标，真的有人在等回复）· job/agent/无署名 = N1（只落条目，参见 #435）
+        // 人署名（且不是你自己）= N2（顶栏角标，真的有人在等回复）· 其余 = N1（只落条目，参见 #435）
         level: human ? "N2" : "N1",
         kind: "message",
         taskUri: input.taskUri,
-        text: `${who} 给你留了一条留言：${preview}`,
+        text: isSelf ? `你自己留了一条留言：${preview}` : `${who} 给你留了一条留言：${preview}`,
         source: `留言投递 · ${via} · 署名 ${who}`,
         reason: "这个会话的插话队列刚进了一条待投递留言（它的收件人是 agent；你不需要逐条回复，但要知道有这回事）",
         detail: [
             "写入点在留言投递路径：`room-service.steerOrWake`（房间投递）与 `agent.local.chat --mode`（CLI / 别的 agent 代投）。",
             "只记**跃迁**（“来了一条消息”），不记“现在有 N 条未读”——后者是状态，由会话角标负责（与 shared/session-alerts 同一纪律）。",
             "原文在下面（未截断）。要看它落在哪一轮：点「去来源会话」；投递相当于是插进那一轮，目前还没有轮次锚点的就从会话尾部往前找这位署名。",
+            ...(isSelf
+                ? [
+                      "**你自己发的**：所以顶栏角标不数它（角标只数「有人在等你」），但它照样进列表 —— 回看时你发过什么也在账上。",
+                  ]
+                : []),
         ].join("\n"),
         data: {
             raw: input.text,
@@ -162,7 +182,8 @@ export function messageEntryOf(input: {
             fromName: input.fromName ?? null,
             sayId: input.sayId ?? null,
             steerId: input.steerId ?? null,
-            senderKind: human ? "human" : "machine",
+            // human = 真的有人在等你 · self = 你自己发的（人署名但不催你）· machine = job / agent / 无署名
+            senderKind: isSelf ? "self" : humanAuthor ? "human" : "machine",
         },
     };
 }

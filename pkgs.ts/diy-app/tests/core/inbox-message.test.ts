@@ -53,6 +53,44 @@ describe("##436 留言条目：分级（人 = N2 / 机器 = N1）+ 原文不丢"
         expect(e.data?.["steerId"]).toBe("st-1");
     });
 
+    it("**你自己发的**（author === selfId）⇒ N1 + senderKind=self，不给自己报信（##266 阻塞 2）", async () => {
+        const { messageEntryOf } = await import("../../src/main/services/inbox");
+        // 本人 → 别人（房间投给另一个成员）：不能升 N2，否则你在 UI 里说一句顶栏就催你一次
+        const self = messageEntryOf({
+            taskUri: "projects/4/tasks/436",
+            text: "帮我看看这个",
+            author: "human:chen56",
+            selfId: "human:chen56",
+            roomId: "projects/4/tasks/436",
+        });
+        expect(self.level).toBe("N1");
+        expect(self.data?.["senderKind"]).toBe("self");
+        expect(self.text).toContain("你自己");
+        expect(self.detail).toContain("你自己发的");
+    });
+
+    it("**别人 → 本人** ⇒ N2（人署名 + 不是你自己：真的有人在等）；agent 署名照旧 N1", async () => {
+        const { messageEntryOf } = await import("../../src/main/services/inbox");
+        const other = messageEntryOf({
+            taskUri: "projects/4/tasks/436",
+            text: "这条要你回",
+            author: "human:someone-else",
+            selfId: "human:chen56",
+        });
+        expect(other.level).toBe("N2");
+        expect(other.data?.["senderKind"]).toBe("human");
+
+        const agent = messageEntryOf({
+            taskUri: "projects/4/tasks/436",
+            text: "派个活",
+            author: "agent:dev-1",
+            selfId: "human:chen56",
+        });
+        expect(agent.level).toBe("N1");
+        expect(agent.data?.["senderKind"]).toBe("machine");
+        // ⚠️ 这只影响**信箱角标**（只数 N2），不动 ##435 的 L2 叫醒判据（那边自有 `session-alerts.pick()`）
+    });
+
     it("job / agent / 无署名 ⇒ N1 + senderKind=machine（它们不需要人动手，##435）", async () => {
         const { messageEntryOf } = await import("../../src/main/services/inbox");
         for (const author of ["job", "agent:dev-1", undefined]) {

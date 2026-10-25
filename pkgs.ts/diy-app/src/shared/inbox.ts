@@ -124,11 +124,41 @@ export function isNewerInboxId(a: string, b: string): boolean {
  *   · 否则 = id 比它新的那几条（数量与"位置"口径一致，只是不再依赖条目数组顺不顺序）。
  */
 export function unreadCountOf(entries: readonly InboxEntry[], lastReadId: string | null | undefined): number {
-    if (!lastReadId) return entries.length;
-    if (!inboxIdOrderOf(lastReadId)) return entries.length;
-    let n = 0;
-    for (const e of entries) if (isNewerInboxId(e.id, lastReadId)) n++;
-    return n;
+    return unreadBreakdownOf(entries, lastReadId).total;
+}
+
+/** 未读的**分级**（##266 复核阻塞 1）：`n2` = 真的有人在等你，`n1` = 只是记一笔。 */
+export type InboxUnread = { n2: number; n1: number; total: number };
+
+/**
+ * 未读按等级拆开（##266 复核阻塞 1）。
+ *
+ * 为什么必须拆：顶栏角标是**催人**的信号，而信箱**全收**（人 / agent / job 都进）。
+ * 只数总数 ⇒ ##423 / ##432 那种 agent↔agent 派活（全 N1）也会把角标顶起来，用户点开一看
+ * 全是机器互聊 —— 那正是「把我拉到几个任务页面好几次，但都没啥要回复的」的体感来源。
+ * 所以：**角标只数 N2**（`badgeUnreadOf`），列表照显全部条目（`entries` 全量，不受等级影响）。
+ *
+ * 水位判据与 `unreadCountOf` 完全同源（一个实现，别分叉）：水位判不出来 / 比所有条目都旧
+ * ⇒ 全部算未读；比所有条目都新（清空 / 换数据根）⇒ 0。
+ */
+export function unreadBreakdownOf(
+    entries: readonly InboxEntry[],
+    lastReadId: string | null | undefined,
+): InboxUnread {
+    const trustable = Boolean(lastReadId) && Boolean(inboxIdOrderOf(lastReadId ?? ""));
+    let n2 = 0;
+    let n1 = 0;
+    for (const e of entries) {
+        if (trustable && !isNewerInboxId(e.id, lastReadId!)) continue;
+        if (e.level === "N2") n2++;
+        else n1++;
+    }
+    return { n2, n1, total: n2 + n1 };
+}
+
+/** 角标该显示几（= 未读里的 **N2**；N1 不进角标，只在面板里列出） */
+export function badgeUnreadOf(entries: readonly InboxEntry[], lastReadId: string | null | undefined): number {
+    return unreadBreakdownOf(entries, lastReadId).n2;
 }
 
 /** 水位该挪到哪（= 最新一条的 id；空信箱 = `null`，别写个空串进 cache） */

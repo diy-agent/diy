@@ -44,7 +44,7 @@ import { envNoticeFromDisk, fmtDiskBytes, type EnvNotice } from "../../shared/en
 import { setWriteErrorHook } from "../core/atomic-write";
 import { collectInstances, focusInstance, renderInstanceList, selfReport } from "./instances";
 import { revealSelf, windowState } from "./window-ops";
-import { shortName } from "../../shared/room";
+import { HUMAN_MEMBER_ID, shortName } from "../../shared/room";
 import { runRegistry } from "./run-registry";
 import { foregroundBash } from "./foreground-bash";
 import { scanOwnedProcs, groupOwnerOf, killOwnedProc } from "./process-scan";
@@ -533,6 +533,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
             taskUri: input.taskUri,
             text: input.message,
             ...(input.author ? { author: input.author } : {}),
+            // 以本机用户身份从 CLI / UI 发的（`--author human:chen56` 或省略即成缺省本人）⇒ N1，不给自己报信
+            selfId: HUMAN_MEMBER_ID,
             ...(items[items.length - 1]?.id ? { steerId: items[items.length - 1]!.id } : {}),
           }),
         );

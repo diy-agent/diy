@@ -20,6 +20,8 @@ import {
     hasAnchorOf,
     latestIdOf,
     unreadCountOf,
+    unreadBreakdownOf,
+    badgeUnreadOf,
     isNewerInboxId,
     inboxIdOrderOf,
     watermarkIdOf,
@@ -94,6 +96,46 @@ describe("##436 未读数（比水位新的条数）", () => {
         expect(inboxIdOrderOf("ib-1792950000000-0003")).toEqual({ ms: 1792950000000, seq: 3 });
         expect(inboxIdOrderOf("a")).toBeNull();
         expect(inboxIdOrderOf("ib-1")).toBeNull();
+    });
+});
+
+describe("##436 角标只数 N2（##266 复核阻塞 1）", () => {
+    const n2e = (id: string): InboxEntry => entry(id, { level: "N2", kind: "message" });
+    const n1e = (id: string, kind: "cost-step" | "message" = "cost-step"): InboxEntry => entry(id, { level: "N1", kind });
+
+    it("全是 N1 ⇒ 角标为空（agent↔agent 派活不该把人叫来）", () => {
+        const rows = [n1e(ib(1, 1)), n1e(ib(1, 2), "message"), n1e(ib(2, 1))];
+        expect(badgeUnreadOf(rows, null)).toBe(0);
+        expect(inboxBadgeOf(badgeUnreadOf(rows, null))).toBe("");
+        expect(unreadBreakdownOf(rows, null)).toEqual({ n2: 0, n1: 3, total: 3 });
+    });
+
+    it("2 N2 + 3 N1 ⇒ 角标「2」，列表仍是 5 条", () => {
+        const rows = [n2e(ib(1, 1)), n1e(ib(1, 2)), n2e(ib(2, 1)), n1e(ib(2, 2)), n1e(ib(3, 1), "message")];
+        expect(inboxBadgeOf(badgeUnreadOf(rows, null))).toBe("2");
+        expect(unreadBreakdownOf(rows, null)).toEqual({ n2: 2, n1: 3, total: 5 });
+        // 分级只影响「催不催」，不影响「能不能看到」：面板渲染的是全量，不是 N2 子集
+        expect(rows).toHaveLength(5);
+        expect(unreadCountOf(rows, null)).toBe(5); // 总未读（面板头那句"共 N 条"用它）
+    });
+
+    it("水位照旧生效（只对 N2 数）：2 N2 全读过 ⇒ 角标空，N1 仍未读", () => {
+        const rows = [n2e(ib(1, 1)), n2e(ib(1, 2)), n1e(ib(2, 1))];
+        expect(badgeUnreadOf(rows, ib(1, 2))).toBe(0);
+        expect(unreadBreakdownOf(rows, ib(1, 2))).toEqual({ n2: 0, n1: 1, total: 1 });
+        expect(unreadBreakdownOf(rows, ib(2, 1))).toEqual({ n2: 0, n1: 0, total: 0 });
+    });
+
+    it("N2 超 99 折 `99+`（只数 N2）", () => {
+        const rows = Array.from({ length: 120 }, (_, i) => n2e(ib(1000, i + 1)));
+        expect(inboxBadgeOf(badgeUnreadOf(rows, null))).toBe("99+");
+    });
+
+    it("水位脏 / 清空 与 unreadCountOf 同源（不分叉）", () => {
+        const rows = [n2e(ib(1, 1))];
+        expect(unreadBreakdownOf(rows, "脏值")).toEqual({ n2: 1, n1: 0, total: 1 });
+        expect(unreadBreakdownOf(rows, ib(9, 1))).toEqual({ n2: 0, n1: 0, total: 0 });
+        expect(unreadBreakdownOf([], null)).toEqual({ n2: 0, n1: 0, total: 0 });
     });
 });
 

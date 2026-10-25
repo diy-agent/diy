@@ -29,6 +29,7 @@ import { notificationStore } from "./notificationStore";
 import {
     INBOX_MAX,
     latestIdOf,
+    unreadBreakdownOf,
     unreadCountOf,
     watermarkIdOf,
     watermarkStoreOf,
@@ -149,6 +150,13 @@ export const inboxStore = {
     /** 未读数 = 比水位新的条数（判据是纯函数，见 `shared/inbox.unreadCountOf`） */
     get unread(): number {
         return unreadCountOf(entries(), watermark());
+    },
+    /**
+     * 未读按等级拆开（##266 阻塞 1）：`n2` = 有人在等你（**只有它进角标**），`n1` = 记一笔。
+     * 列表照显全部 —— 分级只影响"要不要催"，不影响"能不能看到"。
+     */
+    get unreadByLevel(): { n2: number; n1: number; total: number } {
+        return unreadBreakdownOf(entries(), watermark());
     },
     /** 当前数据根下的水位 id（`""` = 全部未读） */
     get lastReadId(): string {

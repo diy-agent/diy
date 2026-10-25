@@ -697,6 +697,8 @@ function deliverOne(input: DeliverInput): Promise<void> {
                     roomId,
                     fromName,
                     sayId,
+                    // 你自己在本房间发的（UI 输入框 / 你本人代的言）⇒ 记 N1，别给自己报信
+                    selfId: HUMAN_MEMBER_ID,
                     ...(steerId ? { steerId } : {}),
                 }),
             );

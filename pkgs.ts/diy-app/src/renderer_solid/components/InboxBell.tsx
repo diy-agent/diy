@@ -47,9 +47,18 @@ export function InboxBell(props: {
     /** 打开那一刻的水位快照：用来给条目画「新/旧」，关闭才真正推进水位 */
     const [watermarkAtOpen, setWatermarkAtOpen] = createSignal<string | null>(null);
 
-    const unread = () => inboxStore.unread;
-    const badge = () => inboxBadgeOf(unread());
+    /** 角标只数 N2（##266 阻塞 1）：N1 全是机器互聊，数进来就是"把我叫去却没内容"的来源 */
+    const badge = () => inboxBadgeOf(inboxStore.unreadByLevel.n2);
+    const n2 = () => inboxStore.unreadByLevel.n2;
+    const n1 = () => inboxStore.unreadByLevel.n1;
     /** 倒序（新的在上）：信箱的用途是"最近发生了什么" */
+    const badgeText = (): string => {
+        const a = n2();
+        const b = n1();
+        if (a === 0 && b === 0) return "通知信箱";
+        if (a === 0) return `通知信箱：${b} 条新记录（都是自动的，不需要你回复）`;
+        return `通知信箱：${a} 条待你回复${b > 0 ? ` · ${b} 条自动记录` : ""}`;
+    };
     const rows = () => [...inboxStore.entries].reverse();
     const isNew = (e: InboxEntry): boolean => {
         const wm = watermarkAtOpen();
@@ -87,8 +96,8 @@ export function InboxBell(props: {
                 tabindex="0"
                 role="button"
                 class="btn btn-ghost btn-sm h-7 min-h-0 gap-1 px-2"
-                title={unread() > 0 ? `通知信箱：${unread()} 条未读` : "通知信箱"}
-                aria-label={unread() > 0 ? `通知信箱：${unread()} 条未读` : "通知信箱"}
+                title={badgeText()}
+                aria-label={badgeText()}
             >
                 <span aria-hidden="true">🔔</span>
                 <Show when={badge()}>
@@ -106,7 +115,11 @@ export function InboxBell(props: {
                 <div class="flex items-center justify-between border-b border-base-300 px-3 py-2 text-body">
                     <span class="font-semibold">通知信箱</span>
                     <span class="opacity-70">
-                        {unread() > 0 ? `${unread()} 条未读` : "都看过了"} · 共 {inboxStore.entries.length} 条
+                        {n2() > 0 ? `${n2()} 条待你回复` : "没有待你回复的"}
+                        <Show when={n1() > 0}>
+                            <span> · {n1()} 条自动记录</span>
+                        </Show>
+                        <span> · 共 {inboxStore.entries.length} 条</span>
                     </span>
                 </div>
 
@@ -131,6 +144,11 @@ export function InboxBell(props: {
                                             <Show when={e.data?.["senderKind"] === "human"}>
                                                 <span class="badge badge-warning badge-xs" title="人署名（真的有人在等你）">
                                                     人
+                                                </span>
+                                            </Show>
+                                            <Show when={e.data?.["senderKind"] === "self"}>
+                                                <span class="badge badge-ghost badge-xs" title="你自己发的：不催你，但回看时也在账上">
+                                                    你自己
                                                 </span>
                                             </Show>
                                             <Show when={e.data?.["senderKind"] === "machine"}>
