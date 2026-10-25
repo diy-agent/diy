@@ -331,7 +331,12 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
   it("历史未销毁：ops 原文仍含全部 8 轮；压缩事件账有快照（算法 + 过滤器）", async () => {
     const opsRaw = readFileSync(join(fx.HOME, sessionFileRel(uri, "ops")), "utf-8");
     for (let i = 1; i <= 8; i++) expect(opsRaw).toContain(`第${i}轮问题`);
-    const events = (await fx.sh.getJson(`./diy.sh agent local compact events ${uri}`)).data as Array<{ kind: string; policy?: { mode?: string } }>;
+    // ##431：回包 = `{ events, truncated }`
+    const events = (
+        (await fx.sh.getJson(`./diy.sh agent local compact events ${uri}`)).data as {
+            events: Array<{ kind: string; policy?: { mode?: string } }>;
+        }
+    ).events;
     const compacts = events.filter((e) => e.kind === "compact");
     expect(compacts.length).toBeGreaterThanOrEqual(1);
     expect(compacts[0]!.policy?.mode).toBe("budget");

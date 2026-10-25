@@ -27,11 +27,12 @@ import {
     statSync,
 } from "node:fs";
 import path from "node:path";
-import { writeFileAtomic } from "../core/atomic-write";
+import { writeFileAtomic, type FsLike } from "../core/atomic-write";
 import { fieldNames, renderFieldDocs } from "../../shared/schema-doc";
 import { findInOpsFile, type FindResult, type FindScopes } from "./local-find";
 import { diyHome, projectDir, projectFromUri } from "../core/state";
-import { keyOf, llmFile, llmLogRelPath, localDir, opsFile, resolveSessionFile, sessionFileForWrite, sessionFilesToClear, sessionIdOf } from "../core/local-paths";
+import { keyOf, llmFile, llmLogRelPath, localDir, opsFile, resolveSessionFile, sessionFileForWrite, sessionFilesToClear, sessionIdOf, sessionStateFile } from "../core/local-paths";
+import { readJsonlTail } from "../core/jsonl-tail";
 import {
     appendTurnRecord,
     checkOpsRef,
@@ -181,10 +182,15 @@ import type { DeliveryStepRecord } from "../../shared/context/steps";
 import {
     budgetBytesOf,
     clipSpecOf,
+    clippedIdsOfEvent,
+    compactPointOf,
+    boundaryOfPoint,
+    COMPACT_STATE_FILENAME,
     estimateTokens,
     fmtBytes,
     makeDeliveryTransform,
     listTurnIds,
+    normalizeCompactState,
     toolResultOf,
     type CompactTrigger,
     normalizePolicy,
@@ -197,7 +203,10 @@ import {
     type CompactPlanSnapshot,
     type CompactLogEvent,
     type CompactPolicy,
+    type CompactState,
     type DroppedTurnDetail,
+    type EffectiveBoundary,
+    type MeasureEventRecord,
     type RateSnapshot,
     type SizeSnapshot,
 } from "../../shared/context/compaction";
@@ -973,18 +982,20 @@ export interface OpsReplay {
 }
 
 /**
- * 账本里**最近一条生效边界**（只读文件尾部，不整份 parse）。
+ * 账本里**最近一条生效 compact**（倒扫尾部，不整份 parse）—— **懒迁移 / 回退路径**。
+ *
+ * ##431 起它的主调用已不是每步投递，而是「快照缺失或损坏」时的**一次性重建**：
+ * 当前生效边界存在 `compact-state.json` 里（见 `ensureCompactState`），读它 O(1)。
  *
  * 为什么不能 `resolveBoundary(readCompactLog(...))`：compact.jsonl 是 append-only 且每条事件
  * 内嵌「被裁原文清单 / 摘要 / 过滤表达」，实测一个大会话长到 **274 MB / 458 行**（266 会话）。
- * `readFileSync` + `JSON.parse` 整套是**秒级同步阻塞**，而 `resolveOpsReplay` 落在每轮投递与
- * UI 重放的路径上 —— 每压一次、每开一次会话都要按秒计地卡主线程。
+ * `readFileSync` + `JSON.parse` 整套是**秒级同步阻塞**。
  *
  * 判据（append-only 单调）：**倒着扫**，见到的最新一条 compact 只要它之后没有 undo(ref) 就是生效边界
  * （undo 只能撤销已存在的 compact ⇒ 指向它的 undo 必在其后）。尾部窗口不够（行很长）就翻倍再扫，
  * 最坏退化成整份读 —— 与旧行为等价，只是不再无条件付这个代价。
  */
-function latestBoundary(taskUri: string): { boundary: ReturnType<typeof resolveBoundary>; at: number } | null {
+function scanLatestCompact(taskUri: string): { rec: CompactEventRecord; at: number } | null {
     const fp = compactFile(taskUri);
     let size = 0;
     try {
@@ -993,7 +1004,9 @@ function latestBoundary(taskUri: string): { boundary: ReturnType<typeof resolveB
         return null; // 从未压缩过
     }
     if (size <= 0) return null;
-    let window = 4 * 1024 * 1024;
+    // 初窗 64 KB（够装 2~3 条 25 KB 的 compact 行）—— ##431 起这是**懒迁移/回退路径**，
+    // 只在快照缺失时走一次；不必一上来就啃 4 MB（37 MB 账本实测 4 MB 起扫要 200 ms）。
+    let window = 64 * 1024;
     for (;;) {
         const from = Math.max(0, size - window);
         let text: string;
@@ -1043,9 +1056,8 @@ function latestBoundary(taskUri: string): { boundary: ReturnType<typeof resolveB
                 undone.add(ev.ref);
             } else if (ev.kind === "compact") {
                 if (undone.has(ev.id)) continue;
-                // `at` = 这条 compact 行的字节偏移（消费端从这儿往后读 = 压缩之后追加的全部事件，
-                // 量级是「几条」，与账本总长无关 —— 见 maybeRecordMeasure）
-                return { boundary: resolveBoundary([ev]), at: from + lineStarts[i]! };
+                // `at` = 这条 compact 行的字节偏移（落进快照，供回查 / measure 记账）
+                return { rec: ev, at: from + lineStarts[i]! };
             }
         }
         if (from === 0) return null; // 整份都扫完仍没有生效 compact
@@ -1053,11 +1065,121 @@ function latestBoundary(taskUri: string): { boundary: ReturnType<typeof resolveB
     }
 }
 
+// ─── 压缩状态快照（`compact-state.json`，##431）────────────────────────
+//
+// 口径（用户 2026-10-25）：「把 compact.jsonl 变为和 ops 一样的非核心依赖，就是日志」。
+// 于是「当前生效边界是什么」这个**每步投递都要问**的问题，不再靠扫账本流水回答 ——
+// 账本降级为纯审计日志（删了/坏了只丢历史，agent 照常跑），当前值落在这一个快照文件里。
+//
+// 三条硬约束：
+//   · **原子覆盖**：tmp + rename（`writeFileAtomic`）—— 读者要么看到旧内容、要么看到新内容；
+//   · **懒迁移**：快照缺失/损坏 ⇒ 扫一次账本尾部重建，**并出声**（warn），绝不静默当全量；
+//   · **写失败不阻断**：它只是投影，写不进去顶多下次再重建（`appendCompactEvent` 同一口径）。
+
+/** 账本尾部限读缺省（单次 < 10 ms；最近几十次压缩足够） */
+const COMPACT_TAIL_BYTES = 256 * 1024;
+const COMPACT_TAIL_LINES = 200;
+
+/** 压缩状态快照的绝对路径（会话目录下的旁路 JSON） */
+export function compactStateFile(taskUri: string): string {
+    return sessionStateFile(taskUri, COMPACT_STATE_FILENAME.replace(/\.json$/, ""));
+}
+
+type CompactStateRead =
+    | { kind: "ok"; state: CompactState }
+    | { kind: "missing" }
+    | { kind: "broken"; error: string };
+
+/** 读当前值快照（只读文件；坏形状 = `broken`，**不在这里**退化成全量判断）。 */
+function readCompactState(taskUri: string): CompactStateRead {
+    const fp = compactStateFile(taskUri);
+    // sync-io-ok: 存在性判定（几百 B 的旁路快照，与 readOpsRange 同一同步 fold 窗口）
+    if (!existsSync(fp)) return { kind: "missing" };
+    try {
+        // sync-io-ok: 当前值快照只有几百 B，读它替代「扫 274 MB 账本」，且与 readOpsRange 同一同步 fold 窗口
+        const raw = JSON.parse(readFileSync(fp, "utf-8")) as unknown;
+        const state = normalizeCompactState(raw);
+        if (!state) return { kind: "broken", error: "形状不符（v / boundary 缺失或类型不对）" };
+        return { kind: "ok", state };
+    } catch (e) {
+        return { kind: "broken", error: e instanceof Error ? e.message : String(e) };
+    }
+}
+
+/** 原子覆盖写快照（`fs` 注入仅供单测做确定性故障注入：验证「写一半不毁旧文件」）。 */
+export function writeCompactState(taskUri: string, state: CompactState, opts: { fs?: FsLike } = {}): void {
+    const fp = compactStateFile(taskUri);
+    const next: CompactState = { ...state, savedAt: new Date().toISOString() };
+    try {
+        writeFileAtomic(fp, `${JSON.stringify(next)}\n`, opts.fs ? { fs: opts.fs } : {});
+    } catch (e) {
+        // 只是投影：写不进去就下次再重建，绝不阻断会话
+        console.error(`[local-agent] 压缩状态快照写入失败 ${fp}:`, e);
+    }
+}
+
+/**
+ * 确保快照存在（**懒迁移入口**）：
+ *   · 快照可读 → 直接用（O(1)）；
+ *   · 缺失 / 损坏 → 扫一次账本重建并写回（损坏必须 warn：它与「从未压缩」是两种事实）。
+ *
+ * 返回 `null` = 账本不存在（从未压缩过）—— 此时**不写**快照（没内容可写）。
+ */
+function ensureCompactState(taskUri: string): CompactState | null {
+    const read = readCompactState(taskUri);
+    if (read.kind === "ok") return read.state;
+    if (read.kind === "broken") {
+        console.warn(
+            `[local-agent] 压缩状态快照不可用（${compactStateFile(taskUri)}）：${read.error} —— 回落扫一次账本重建（本步仍可继续）`,
+        );
+    }
+    const ledger = compactFile(taskUri);
+    if (!existsSync(ledger)) return null;
+    const sc = scanLatestCompact(taskUri);
+    // 命中 / 未命中都要写：`boundary: null` = 账本在但没有生效压缩（全被 undo），这份事实同样要缓存。
+    // `opIds` / `measure` 从**限读尾部**汇总 —— 懒迁移允许不精确（只影响迁移归属与一条统计），
+    // 但**不许整份读**（那正是本刀要消掉的病根）。
+    const tail = readCompactLogTail(taskUri, { maxBytes: COMPACT_TAIL_BYTES, maxLines: COMPACT_TAIL_LINES });
+    const opIdSet = new Set<string>();
+    for (const e of tail.events) {
+        if (e.kind !== "compact") continue;
+        for (const id of clippedIdsOfEvent(e)) opIdSet.add(id);
+    }
+    const point = sc ? compactPointOf(sc.rec, sc.at) : null;
+    const measure = point
+        ? ([...tail.events].reverse().find((e) => e.kind === "measure" && e.ref === point.compactId) as
+              | MeasureEventRecord
+              | undefined)
+        : undefined;
+    const state: CompactState = {
+        v: 1,
+        boundary: point,
+        opIds: [...opIdSet],
+        ...(measure ? { measure } : {}),
+    };
+    writeCompactState(taskUri, state);
+    return state;
+}
+
+/**
+ * **当前生效边界**（投递 / UI 重放共用的唯一入口）。
+ * 只读快照；缺失/损坏时懒迁移重建一次（warn）。返回 `null` = 从未压缩过（或归档账本已不存在）。
+ */
+function latestBoundary(taskUri: string): EffectiveBoundary | null {
+    const state = ensureCompactState(taskUri);
+    return state?.boundary ? boundaryOfPoint(state.boundary) : null;
+}
+
 /** `resolveOpsReplay` 的缓存（键 = ops 大小 + 账本大小/mtime；三者任一变了才重算）。 */
 const replayCache = new Map<string, { opsSize: number; cSize: number; cMtime: number; replay: OpsReplay }>();
 
 /** 缓存上限：只服务「当前打开的几个会话」，别把 N 个任务的判定常驻内存。 */
 const REPLAY_CACHE_MAX = 16;
+
+/** 仅测试：清掉重放判定缓存（键含 ops/账本 size+mtime，正常由它们自发失效）。 */
+export function resetOpsReplayCache(): void {
+    replayCache.clear();
+}
 
 /**
  * 解析某任务的 ops 重放起点（纯读：账本 + 文件大小，不碰 ops 内容）。
@@ -1071,8 +1193,9 @@ const REPLAY_CACHE_MAX = 16;
  * 为什么 `keptFromLlmLine` 是**必需**的（而不是可选优化）：跳了前缀之后块树只含保留段，
  * 投递注记的行号与 llm.jsonl 的 append 对账都会**整体错位**被跳过的条数；不知道错多少就只能全量重放。
  *
- * 热路径口径（##92）：这是**判定 + 缓存**的外壳 —— 账本只按尾部扫（见 `latestBoundary`），
- * 结果按 (ops 大小, 账本 size/mtime) 缓存，每步投递不再重读整份账本。
+ * 热路径口径（##92 / ##431）：这是**判定 + 缓存**的外壳 —— 当前生效边界读 `compact-state.json`
+ * （几百 B；缺失才扫一次账本尾部并懒迁移），结果按 (ops 大小, 账本 size/mtime) 缓存。
+ * 账本本身已降为**纯审计日志**：删了 / 坏了只丢历史页，不阻碍本轮。
  */
 export function resolveOpsReplay(taskUri: string): OpsReplay {
     const fp = opsFile(taskUri);
@@ -1100,9 +1223,9 @@ export function resolveOpsReplay(taskUri: string): OpsReplay {
 
 function computeOpsReplay(taskUri: string, fp: string, size: number): OpsReplay {
     const full: OpsReplay = { from: 0, lineBase: 0, kind: "full", anchor: null };
-    let b: ReturnType<typeof resolveBoundary> = null;
+    let b: EffectiveBoundary | null = null;
     try {
-        b = latestBoundary(taskUri)?.boundary ?? null;
+        b = latestBoundary(taskUri);
     } catch {
         return full;
     }
@@ -1166,11 +1289,54 @@ export function compactFile(taskUri: string): string {
 }
 
 
-/** 读取压缩账本（文件不存在 = 从未压缩过；坏行由 parseCompactLog 跳过） */
-function readCompactLog(taskUri: string): CompactLogEvent[] {
+/**
+ * 账本**限读**结果（##431）。`truncated` = 有更早的记录没读 —— **必须**透给界面，
+ * 不许静默截断（与 ##416「不隐藏信息」同一口径）。
+ */
+export interface CompactLogTail {
+    events: CompactLogEvent[];
+    truncated: boolean;
+    /** 文件当前字节数（不存在 = 0） */
+    size: number;
+    /** 实际开始读的字节偏移（0 = 从头读的） */
+    from: number;
+}
+
+/** `compact.events` RPC 的回包（限读结果；`truncated` 由界面显式标出） */
+export type CompactEventsResult = CompactLogTail;
+
+/**
+ * 读取压缩账本的**尾部限读**（文件不存在 = 从未压缩过；坏行由 parseCompactLog 跳过）。
+ *
+ * 这是账本的**唯一生产读口**：账本已降为审计日志（##431），页面要的只是最近几次压缩，
+ * 而 266 会话实测它 274 MB —— 整份 `readFileSync` + parse 会把主线程按死秒级。
+ */
+export function readCompactLogTail(
+    taskUri: string,
+    opts: { maxBytes?: number; maxLines?: number } = {},
+): CompactLogTail {
+    const fp = compactFile(taskUri);
+    const tail = readJsonlTail(fp, {
+        maxBytes: opts.maxBytes ?? COMPACT_TAIL_BYTES,
+        maxLines: opts.maxLines ?? COMPACT_TAIL_LINES,
+    });
+    return {
+        events: parseCompactLog(tail.lines.join("\n")),
+        truncated: tail.truncated,
+        size: tail.size,
+        from: tail.from,
+    };
+}
+
+/**
+ * 整份读取账本。**只给对照/测试用**（判据：懒迁移重建的结果必须与「扫整份」逐字段一致），
+ * 生产路径一律走 `readCompactLogTail` —— 整份读正是本刀要消掉的病根。
+ */
+export function readCompactLogFull(taskUri: string): CompactLogEvent[] {
     const fp = compactFile(taskUri);
     if (!existsSync(fp)) return [];
     try {
+        // sync-io-ok: 仅供测试 / 等价性对照，不是生产读口（生产读口= readCompactLogTail）
         return parseCompactLog(readFileSync(fp, "utf-8"));
     } catch (e) {
         console.error(`[local-agent] 压缩账本读取失败 ${fp}:`, e);
@@ -1179,47 +1345,23 @@ function readCompactLog(taskUri: string): CompactLogEvent[] {
 }
 
 /**
- * 从账本的字节偏移 `at` 读到文件尾（`at` 必须是某条事件行的行首 —— 调用方用
- * `latestBoundary` 给出的偏移）。只用于「最近一条 compact 之后发生了什么」，量级是几条事件。
+ * 追加一条压缩账（写失败只出声 —— 记账不能阻断会话）。
+ * @returns 该行在账本里的**字节偏移**（写入前的大小；落进快照供回查）
  */
-// sync-io-ok: 与 readOpsRange 同一读模式（fd + 定长读）；量级 = 账本尾部几条事件（≤ 几 MB），
-// 调用点都在同步 fold 窗口内，改成异步会把整个 replay 链染成 async。
-function readCompactLogFrom(fp: string, at: number): CompactLogEvent[] {
-    let size = 0;
-    try {
-        size = statSync(fp).size; // sync-io-ok: 压缩账本尾部定位/读取（O(1)~几 MB），与 readOpsRange 同一同步 fold 窗口；改异步会把整条 replay 链染成 async
-    } catch {
-        return [];
-    }
-    if (at >= size) return [];
-    try {
-        const fd = openSync(fp, "r"); // sync-io-ok: 压缩账本尾部定位/读取（O(1)~几 MB），与 readOpsRange 同一同步 fold 窗口；改异步会把整条 replay 链染成 async
-        try {
-            const buf = Buffer.allocUnsafe(size - at);
-            let got = 0;
-            while (got < buf.length) {
-                const n = readSync(fd, buf, got, buf.length - got, at + got); // sync-io-ok: 压缩账本尾部定位/读取（O(1)~几 MB），与 readOpsRange 同一同步 fold 窗口；改异步会把整条 replay 链染成 async
-                if (n <= 0) break;
-                got += n;
-            }
-            return parseCompactLog(buf.subarray(0, got).toString("utf-8"));
-        } finally {
-            closeSync(fd); // sync-io-ok: 压缩账本尾部定位/读取（O(1)~几 MB），与 readOpsRange 同一同步 fold 窗口；改异步会把整条 replay 链染成 async
-        }
-    } catch (e) {
-        console.error(`[local-agent] 压缩账本读取失败 ${fp}@${at}:`, e);
-        return [];
-    }
-}
-
-/** 追加一条压缩账（写失败只出声 —— 记账不能阻断会话） */
-function appendCompactEvent(taskUri: string, ev: CompactLogEvent): void {
+function appendCompactEvent(taskUri: string, ev: CompactLogEvent): number {
     const fp = compactFile(taskUri);
+    let at = 0;
+    try {
+        at = statSync(fp).size; // sync-io-ok: 一次 stat 拿追加起点；与 appendFileSync 同一记账窗口
+    } catch {
+        at = 0; // 文件还不存在 ⇒ 从 0 开始
+    }
     try {
         appendFileSync(fp, `${JSON.stringify(ev)}\n`, "utf-8");
     } catch (e) {
         console.error(`[local-agent] 压缩账写入失败 ${fp}:`, e);
     }
+    return at;
 }
 
 /**
@@ -1229,19 +1371,17 @@ function appendCompactEvent(taskUri: string, ev: CompactLogEvent): void {
  * 将来想算账也无从回补。所以只在有「未实测的压缩」时写一条 measure，不做任何判断与提示。
  */
 function maybeRecordMeasure(taskUri: string, rec: StepUsageRecord): void {
-    // ⚠️ 别用 `readCompactLog`（整份读 + parse：266 会话 274 MB ⇒ 每步秒级卡主线程）：
-    // 只关心**最近一条生效 compact** 与「它之后是否已有 measure」—— 从那条 compact 行往后读即可。
-    const lb = latestBoundary(taskUri);
-    if (!lb?.boundary) return;
-    const pendingId = lb.boundary.compactId;
-    const events = readCompactLogFrom(compactFile(taskUri), lb.at);
-    if (events.some((e) => e.kind === "measure" && e.ref === pendingId)) return;
+    // ##431：判据从快照读（`measure.ref` 是否已是这条 compact）—— 不再读账本，也不再扫尾部。
+    const state = ensureCompactState(taskUri);
+    const point = state?.boundary;
+    if (!state || !point) return;
+    if (state.measure?.ref === point.compactId) return; // 这条 compact 已实测过
 
     const b = bucketsOf(rec.usage as UsageLike);
-    appendCompactEvent(taskUri, {
+    const ev: MeasureEventRecord = {
         kind: "measure",
         v: 1,
-        ref: pendingId,
+        ref: point.compactId,
         ts: new Date().toISOString(),
         firstTurnId: rec.turnId,
         // predicted 只在**真有预测值**时才写：空对象 `{}` 落到盘上毫无信息量，
@@ -1254,7 +1394,9 @@ function maybeRecordMeasure(taskUri: string, rec: StepUsageRecord): void {
             cost: rec.cost?.total ?? null,
             cacheHitRate: b.inputTotal > 0 ? b.cacheRead / b.inputTotal : null,
         },
-    });
+    };
+    appendCompactEvent(taskUri, ev);
+    writeCompactState(taskUri, { v: 1, boundary: point, opIds: state.opIds, measure: ev });
 }
 
 /** ops.jsonl 扫描结果：解析后的 op + 每轮 start 的字节位置（回查/DroppedTurnDetail 的指针） */
@@ -3788,9 +3930,11 @@ export class LocalAgentManager {
         const fp = opsFile(taskUri);
         let compactedBefore: number | null = null;
         let compactedFromTurnId: string | null = null;
-        const events = readCompactLog(taskUri);
+        // ##431：账本降为审计日志 ⇒ 限读尾部（整份读 = 266 会话 274 MB 秒级卡主线程）。
+        // 尾部窗口都没扫到 compact ⇒ 当作「从未压缩」（多标几句「未压缩」，不影响搜索本身）。
+        const tail = readCompactLogTail(taskUri);
         let latest: CompactEventRecord | null = null;
-        for (const e of events) if (e.kind === "compact") latest = e;
+        for (const e of tail.events) if (e.kind === "compact") latest = e;
         if (latest) {
             compactedBefore = latest.boundary?.keptFromOpsOffset ?? null;
             compactedFromTurnId = latest.boundary?.keptFromTurnId ?? null;
@@ -3822,9 +3966,12 @@ export class LocalAgentManager {
      * 压缩事件账（历史页数据源）：**不可变快照列表**（时间 / 算法 / 过滤器 / 前后规模 / 方式·理由）。
      * 每条的 `policy` 自带算法（`mode`）与该算法的过滤器表达 —— 换算法 = 新分支，不混淆。
      * 【用户 2026-10-07】取代旧的 generations（连续分代不适合预算的分散保留）。
+     *
+     * ##431：**限读尾部**（缺省 200 条 / 256 KB）。`truncated` 由调用方（界面）显式标出来，
+     * 不许静默截断 —— 账本是审计日志，更早的记录可以没有，但不能“假装全在”。
      */
-    compactEvents(taskUri: string): CompactLogEvent[] {
-        return readCompactLog(taskUri);
+    compactEvents(taskUri: string): CompactEventsResult {
+        return readCompactLogTail(taskUri);
     }
 
     /**
@@ -3951,19 +4098,32 @@ export class LocalAgentManager {
      * （见 ##273，review 2026-10-08 备注）。
      */
     effectiveSummary(taskUri: string): string {
-        const events = readCompactLog(taskUri);
-        const b = resolveBoundary(events);
-        if (!b) return "";
-        const c = events.find((e) => e.kind === "compact" && e.id === b.compactId) as CompactEventRecord | undefined;
-        return c?.details?.summary?.text ?? "";
+        return this.effectiveCompactRecord(taskUri)?.details?.summary?.text ?? "";
+    }
+
+    /**
+     * 当前生效的那条 compact 账（带摘要等 details）。
+     * 取法：快照给 `compactId`，账本**限读尾部**里找同 id 的行（摘要在 details 里，不在快照里）。
+     * 尾部窗口里找不到（很老的压缩）⇒ undefined + 一句 warn —— 不整份读，也不静默装作“没摘要”。
+     */
+    private effectiveCompactRecord(taskUri: string): CompactEventRecord | undefined {
+        const b = latestBoundary(taskUri);
+        if (!b) return undefined;
+        const tail = readCompactLogTail(taskUri);
+        const hit = tail.events.find((e) => e.kind === "compact" && e.id === b.compactId) as
+            | CompactEventRecord
+            | undefined;
+        if (!hit && tail.truncated) {
+            console.warn(
+                `[local-agent] 生效压缩 ${b.compactId} 不在账本尾部窗口内（更早的记录未加载）—— 摘要按空处理`,
+            );
+        }
+        return hit;
     }
 
     /** 当前生效摘要的结构化数据（预览占位与再生成用） */
     currentSummaryData(taskUri: string): SummaryData {
-        const events = readCompactLog(taskUri);
-        const b = resolveBoundary(events);
-        const c = b ? (events.find((e) => e.kind === "compact" && e.id === b.compactId) as CompactEventRecord | undefined) : undefined;
-        return c?.details?.summary?.data ?? emptySummary();
+        return this.effectiveCompactRecord(taskUri)?.details?.summary?.data ?? emptySummary();
     }
 
     /**
@@ -4100,7 +4260,8 @@ export class LocalAgentManager {
                 : -1;
         const rec: CompactEventRecord = {
             kind: "compact",
-            v: 4,
+            // ##431：v5 = 明细瘦身（不再写 dropped 全文 / clipped 明细）。读侧仍收 v1~v4 老行。
+            v: 5,
             id: ts,
             ts,
             // ##420：账本格式代号（升级 = 一次压缩，旧 ops 段退化为纯审计，永不再 replay）
@@ -4130,9 +4291,11 @@ export class LocalAgentManager {
                 droppedTurns: p.droppedIds.length,
             },
             cost: { ...(p.rateSnap ? { rates: p.rateSnap } : {}), ...p.stats },
+            // ##431：单条账曾达 20~29 KB（dropped 每轮明细 + clipped 每项六个数字），而账本是**审计日志**。
+            // 现在只留计数与 id 清单：`kept`（过滤器表达，几条区间）保留 —— 它是历史回溯 diff 的"保留侧"。
             details: {
-                dropped: p.droppedDetail,
-                clipped: p.clipped,
+                droppedCount: p.droppedIds.length,
+                clippedIds: { ids: p.clipped.map((c) => c.id), count: p.clipped.length },
                 ...(p.keptRuns ? { kept: p.keptRuns } : {}),
                 summary: { text: summary?.text ?? null, data: summary?.data ?? null, cost: summary?.cost ?? null },
             },
@@ -4155,17 +4318,70 @@ export class LocalAgentManager {
                     brief: `压缩时补录：配置中的 plan 不在链上（${p.planKeep.map((k) => k.type).join(" / ") || "空级列表"}）`,
                 });
             }
-            appendCompactEvent(taskUri, rec);
+            // ##431：`opIds` 要在 append **之前**取（旧快照的 opIds 才是历史累积的；append 之后
+            // ensure 会先扫到新行、把边界换成新的 —— 值虽不错，但多扫一次且语义不清）。
+            const prev = ensureCompactState(taskUri);
+            const at = appendCompactEvent(taskUri, rec);
+            // 同步刷新**当前值快照**（投递侧下一步就读它，不必再扫账本）。
+            // `opIds` 合并：老工作集引用过的工具原文 id 仍可能被 `clear()` / 迁移用到，只增不减。
+            const opIds = new Set<string>(prev?.opIds ?? []);
+            for (const id of clippedIdsOfEvent(rec)) opIds.add(id);
+            writeCompactState(taskUri, {
+                v: 1,
+                boundary: compactPointOf(rec, at),
+                opIds: [...opIds],
+                // measure 属于旧边界：换边界后清掉（新边界还没实测）
+            });
         }
         return rec;
     }
 
-    /** 撤销某次压缩（append-only 的 undo：不删账，只标） */
+    /**
+     * 撤销某次压缩（append-only 的 undo：不删账，只标）。
+     *
+     * ##431：判据走**限读尾部 + 当前快照**（账本可能几百 MB，不许整份读）：
+     *   · 目标在尾部窗口内，或就是当前生效边界 ⇒ 能撤销；
+     *   · 窗口外且也不是当前边界（很老的压缩）⇒ 返回 false，并 warn 一句「更早的记录未加载」
+     *     —— 界面只列出尾部窗口里的记录，所以正常操作不会碰到这条。
+     */
     undoCompact(taskUri: string, ref: string): boolean {
-        const events = readCompactLog(taskUri);
-        if (!events.some((e) => e.kind === "compact" && e.id === ref)) return false;
-        if (events.some((e) => e.kind === "undo" && e.ref === ref)) return false;
+        const tail = readCompactLogTail(taskUri);
+        const current = latestBoundary(taskUri)?.compactId ?? null;
+        const exists = tail.events.some((e) => e.kind === "compact" && e.id === ref) || current === ref;
+        if (!exists) {
+            if (tail.truncated) {
+                console.warn(`[local-agent] 撤销目标 ${ref} 不在账本尾部窗口内（更早的压缩记录未加载）—— 不撤销`);
+            }
+            return false;
+        }
+        if (tail.events.some((e) => e.kind === "undo" && e.ref === ref)) return false;
+        const prevState = ensureCompactState(taskUri);
         appendCompactEvent(taskUri, { kind: "undo", v: 1, ref, ts: new Date().toISOString() });
+        // 边界变了 ⇒ 快照必须重算。**从尾部窗口现推**（不删了等懒迁移）：
+        // undo 一定追加在它撤的那条 compact 之后 ⇒ 新边界（上一条未被 undo 的 compact）也在尾部窗口内；
+        // 窗口里干脆没有 compact（更早的记录未加载）⇒ 删快照，交下一次 `ensureCompactState` 扫账本。
+        const after = readCompactLogTail(taskUri);
+        const next = resolveBoundary(after.events);
+        if (next) {
+            writeCompactState(taskUri, {
+                v: 1,
+                boundary: compactPointOf(
+                    after.events.find((e) => e.kind === "compact" && e.id === next.compactId) as CompactEventRecord,
+                ),
+                opIds: prevState?.opIds ?? [],
+                // measure 属于被撤掉的那次压缩：一并清空
+            });
+        } else if (after.events.some((e) => e.kind === "compact")) {
+            // 窗口内的 compact 全被撤销 ⇒ 「当前无生效边界」是确定事实，直接落盘
+            writeCompactState(taskUri, { v: 1, boundary: null, opIds: prevState?.opIds ?? [] });
+        } else {
+            try {
+                // sync-io-ok: undo 是显式用户操作（不在每步热路径），一次删除的同步代价可忽略
+                rmSync(compactStateFile(taskUri), { force: true });
+            } catch (e) {
+                console.error(`[local-agent] 撤销后清理压缩状态快照失败 ${compactStateFile(taskUri)}:`, e);
+            }
+        }
         this.sessions.delete(taskUri);
         return true;
     }
@@ -4381,6 +4597,13 @@ export class LocalAgentManager {
             console.error(`[local-agent] 清空插话队列失败 ${taskUri}:`, e);
             ok = false;
         }
+        // 工具原文 id 必须在**删日志之前**取：删掉 compact.jsonl 之后就再也推不出来了
+        // （旧实现在删除循环**之后**读账本 —— 实际读到的是已删的空文件，原文一直没被清）。
+        // ##431：优先读当前值快照（O(1)），再并上账本尾部窗口里的 id。
+        const toolOutIds = new Set<string>(ensureCompactState(taskUri)?.opIds ?? []);
+        for (const e of readCompactLogTail(taskUri).events) {
+            if (e.kind === "compact") for (const id of clippedIdsOfEvent(e)) toolOutIds.add(id);
+        }
         // 文件清单必须**穷举**：加新日志（如 usage / compact）时漏一处，就是「彻底删除」删不干净
         // （旧实现就漏了 usage.jsonl —— 用量账本按会话存，留着它会让删除后仍查到本会话的花费）。
         // ##379：新老两个落位都删（`sessionFilesToClear` 是唯一清单）——
@@ -4399,15 +4622,13 @@ export class LocalAgentManager {
         // ② legacy 共享目录 `local/toolout/` 兜底那份（迁移前写下的）。
         // legacy 目录是跨任务共享的，同 id 撞名在旧布局下本就无解（只能都删）；
         // 迁移后每会话一份，撞名面随之消失 —— 所以这里不再需要「只删自己的」这层猜想。
-        for (const e of readCompactLog(taskUri)) {
-            if (e.kind !== "compact") continue;
-            for (const c of e.details?.clipped ?? []) {
-                try {
-                    for (const f of toolOutFileCandidates(taskUri, c.id)) rmSync(f, { force: true });
-                } catch (err) {
-                    console.error(`[local-agent] 删除工具原文失败 ${c.id}:`, err);
-                    ok = false;
-                }
+        for (const id of toolOutIds) {
+            try {
+                // sync-io-ok: clear 是同步清理入口（与上方 sessionFilesToClear 的删除同一窗口）
+            for (const f of toolOutFileCandidates(taskUri, id)) rmSync(f, { force: true });
+            } catch (err) {
+                console.error(`[local-agent] 删除工具原文失败 ${id}:`, err);
+                ok = false;
             }
         }
         // 会话内容已从盘上消失 → 换发 epoch、水位归零，并通知所有订阅方重建块树。

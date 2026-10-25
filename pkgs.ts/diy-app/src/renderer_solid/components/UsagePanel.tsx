@@ -798,14 +798,20 @@ export function ContextPartsDrawer(props: { open: boolean; uri: string | null; o
     // ─── M4：压缩点位（分表按步标注「哪次请求被压过」）───
     // 【用户 2026-10-08】压缩可能发生在**一轮中间** ⇒ 用**轮次总表**表达不了「哪个请求压过」，
     // 必须落在**分表（按步）**：一步 = 一次请求。判据 = 该步 ts 是该压缩事件之后的**第一步**。
-    const [compactEvents, { refetch: refetchCompactEvents }] = createResource(
+    // ##431：`compact.events` 改为限读尾部（回包 = `{ events, truncated }`）——
+    // 这里只用来定位「哪次请求被压过」，更早的记录缺失不影响标注；`truncated` 在表尾提示一句。
+    const [compactPage, { refetch: refetchCompactEvents }] = createResource(
         () => (props.open ? props.uri : null),
-        async (u) => (u ? ((await localChatStore.compactEvents(u)) as CompactEventRecord[]) : []),
+        async (u) =>
+            u
+                ? ((await localChatStore.compactEvents(u)) as { events: CompactEventRecord[]; truncated: boolean })
+                : { events: [] as CompactEventRecord[], truncated: false },
     );
+    const compactEvents = () => compactPage()?.events ?? [];
     /** 展开的压缩点位（键 = `<turnId>#<step>`；同时只开一个） */
     const [openPoint, setOpenPoint] = createSignal<string | null>(null);
     /** 步键 → 该步命中的压缩事件（按 ts 升序；可能多条）。纯函数在 shared（可单测）。 */
-    const compactPoints = createMemo(() => mapCompactPointsToSteps(steps(), compactEvents() ?? []));
+    const compactPoints = createMemo(() => mapCompactPointsToSteps(steps(), compactEvents()));
     const fmtB = (n?: number) => (n === undefined ? "—" : n >= 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} B`);
     const byText = (by: CompactEventRecord["by"]) => (by === "auto" ? "自动" : by === "ui" ? "界面" : "命令行");
     const triggerShort = (t: CompactTrigger) =>
@@ -1100,6 +1106,12 @@ export function ContextPartsDrawer(props: { open: boolean; uri: string | null; o
                                 `–` = 该记录未落盘构成（本版前的旧轮）；窗口% = 该步 总输入+总输出 ÷ 上限（与环同源）；
                                 压缩列 = 该步（请求）的压缩：**投递**=按当前配置（每轮首重建，**无需事件**）→ 悬停看预算/丢几条；
                                 **压缩**=触发/手动事件（点开看算法/过滤器/规模）。
+                                <Show when={compactPage()?.truncated}>
+                                    {/* ##431：账本限读尾部 ⇒ 更早的压缩点位未加载，必须说出来。 */}
+                                    <div class="mt-1 text-warning" data-compact-truncated>
+                                        ⓘ 更早的压缩记录未加载（审计日志，可清理）—— 只标注了最近 200 条压缩事件
+                                    </div>
+                                </Show>
                             </div>
                         </Show>
                     </div>
