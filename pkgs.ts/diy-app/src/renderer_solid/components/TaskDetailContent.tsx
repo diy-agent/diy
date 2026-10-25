@@ -31,6 +31,7 @@ import { editTask } from "../lib/task-edit";
 import { diyService } from "../lib/rpc";
 import { getRendererActions } from "../lib/renderer-actions";
 import { findNode, lineageRows } from "../lib/task-lineage";
+import { keepLast } from "../lib/keep-last";
 import { TaskParentEditor } from "./TaskParentControls";
 import { notificationStore } from "../store/notificationStore";
 import { Caches, TASK_DETAIL_LEFT_MIN, TASK_DETAIL_LEFT_MAX } from "../lib/ui-state";
@@ -223,21 +224,26 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
         setTitleDraft(draftStore.fieldsOf(props.uri).title ?? props.task.title ?? "");
         setEditing(true);
     };
+    // ##428：`props.uri` 可能是父级 `<Show>` 的 accessor，**不要带着它过 `await`**
+    // （进异步前取快照存局部变量）。
     const cancelEdit = async () => {
+        const uri = props.uri;
         setEditing(false);
-        await draftStore.clear(props.uri, ["title"]);
+        await draftStore.clear(uri, ["title"]);
     };
 
     const save = async () => {
+        const uri = props.uri;
+        const dirty = titleDraft() !== (props.task.title ?? "");
         setSaving(true);
         try {
-            if (titleDraft() !== (props.task.title ?? "")) {
-                await editTask(props.uri, { title: titleDraft() });
-                await draftStore.clear(props.uri, ["title"]);
+            if (dirty) {
+                await editTask(uri, { title: titleDraft() });
+                await draftStore.clear(uri, ["title"]);
                 await props.refresh();
             } else {
                 // 无改动也算「本次编辑结束」：草稿没有存在意义了
-                await draftStore.clear(props.uri, ["title"]);
+                await draftStore.clear(uri, ["title"]);
             }
             setEditing(false);
         } catch (err: any) {
@@ -258,9 +264,10 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
 
     /** 改状态 / 分类字段：不进编辑态，改完即存 */
     const savePatch = async (patch: Record<string, string>) => {
+        const uri = props.uri; // 快照：见上方 cancelEdit 注释（##428）
         setSaving(true);
         try {
-            await editTask(props.uri, patch);
+            await editTask(uri, patch);
             await props.refresh();
         } catch (err: any) {
             notificationStore.addToastLegacy("error", `保存失败: ${err?.message ?? String(err)}`);
@@ -557,44 +564,48 @@ function LineageBlock(props: { uri: string; hoverPreview?: boolean; host?: "mana
             </For>
             {/* 管理面板树 hover 的并排信息卡：fixed 在面板左缘外（与面板并排、可同屏对比） */}
             <Show when={peek()}>
-                {(pk) => {
-                    const info = () => findNodeInfo(taskStore.nodes, pk().uri);
+                {(_pk) => {
+                    // ##428：不读 Show 的 accessor（peek 会在 250ms 定时器里置 null，同属
+                    // 「condition 先 falsy、子节点后销毁」那一类），改读 keepLast 派生值。
+                    const shownPeek = keepLast(peek);
+                    const info = () => findNodeInfo(taskStore.nodes, shownPeek()!.uri);
+                    const shownInfo = keepLast(info);
                     return (
                         <Portal>
                             <div
                                 class="fixed z-[150] w-72 rounded-box border border-base-300 bg-base-100 p-3 shadow-xl"
-                                style={{ right: `${pk().right}px`, top: `${pk().top}px` }}
+                                style={{ right: `${shownPeek()!.right}px`, top: `${shownPeek()!.top}px` }}
                                 data-find-skip
                                 onMouseEnter={cancelPeekClose}
                                 onMouseLeave={schedulePeekClose}
                             >
                                 <Show when={info()} fallback={<div class="text-body opacity-60">加载中…</div>}>
-                                    {(f) => (
+                                    {(_f) => (
                                         <div class="flex flex-col gap-1.5 text-body min-w-0">
                                             <div class="flex items-baseline gap-1.5 min-w-0">
-                                                <span class="font-mono opacity-60 shrink-0">#{f().node.num ?? "?"}</span>
-                                                <span class="font-semibold min-w-0 break-all">{f().node.title ?? f().node.uri}</span>
+                                                <span class="font-mono opacity-60 shrink-0">#{shownInfo()!.node.num ?? "?"}</span>
+                                                <span class="font-semibold min-w-0 break-all">{shownInfo()!.node.title ?? shownInfo()!.node.uri}</span>
                                             </div>
                                             <div class="flex items-center gap-1.5 opacity-70">
                                                 <span
-                                                    class={`w-2 h-2 rounded-full inline-block ${taskStateColor(f().node.state)}`}
+                                                    class={`w-2 h-2 rounded-full inline-block ${taskStateColor(shownInfo()!.node.state)}`}
                                                 />
-                                                <span>{f().node.state ?? "—"}</span>
+                                                <span>{shownInfo()!.node.state ?? "—"}</span>
                                             </div>
-                                            <Show when={f().parentTitle}>
+                                            <Show when={shownInfo()!.parentTitle}>
                                                 <div class="min-w-0 opacity-70">
-                                                    父级：<span class="min-w-0 break-all">{f().parentTitle}</span>
+                                                    父级：<span class="min-w-0 break-all">{shownInfo()!.parentTitle}</span>
                                                 </div>
                                             </Show>
-                                            <Show when={f().node.created}>
-                                                <div class="opacity-60">🕐 {new Date(f().node.created!).toLocaleString()}</div>
+                                            <Show when={shownInfo()!.node.created}>
+                                                <div class="opacity-60">🕐 {new Date(shownInfo()!.node.created!).toLocaleString()}</div>
                                             </Show>
-                                            <Show when={f().node.updated && f().node.updated !== f().node.created}>
-                                                <div class="opacity-60">✏️ {new Date(f().node.updated!).toLocaleString()}</div>
+                                            <Show when={shownInfo()!.node.updated && shownInfo()!.node.updated !== shownInfo()!.node.created}>
+                                                <div class="opacity-60">✏️ {new Date(shownInfo()!.node.updated!).toLocaleString()}</div>
                                             </Show>
-                                            <Show when={f().node.body}>
+                                            <Show when={shownInfo()!.node.body}>
                                                 <div class="opacity-50 border-t border-base-300 pt-1.5 line-clamp-4 whitespace-pre-wrap break-all">
-                                                    {f().node.body}
+                                                    {shownInfo()!.node.body}
                                                 </div>
                                             </Show>
                                             <div class="opacity-40 text-caption">并排对比 · 点标题=就近操作</div>
@@ -629,19 +640,23 @@ function BodyBlock(props: { uri: string; task: TaskDetail; refresh: () => Promis
         setDraft(draftStore.fieldsOf(props.uri).body ?? props.task.body ?? "");
         setEditing(true);
     };
+    // ##428：`props.uri` 可能是父级 `<Show>` 的 accessor，不要带着它过 `await`（先取快照）
     const cancelEdit = async () => {
+        const uri = props.uri;
         setEditing(false);
-        await draftStore.clear(props.uri, ["body"]);
+        await draftStore.clear(uri, ["body"]);
     };
     const save = async () => {
+        const uri = props.uri;
+        const dirty = draft() !== (props.task.body ?? "");
         setSaving(true);
         try {
-            if (draft() !== (props.task.body ?? "")) {
-                await editTask(props.uri, { body: draft() });
-                await draftStore.clear(props.uri, ["body"]);
+            if (dirty) {
+                await editTask(uri, { body: draft() });
+                await draftStore.clear(uri, ["body"]);
                 await props.refresh();
             } else {
-                await draftStore.clear(props.uri, ["body"]);
+                await draftStore.clear(uri, ["body"]);
             }
             setEditing(false);
         } catch (err: any) {
@@ -744,13 +759,36 @@ export function TaskDetailContent(props: {
      */
     const [leftW, setLeftW] = createSignal(Caches.diy_task_detail_left_width.get());
     const task = () => props.task ?? own();
+    /**
+     * 传给子块的「当前任务」——**不从 `<Show>` 的 children accessor 读**（##428）。
+     *
+     * Show 的 accessor 在 condition 转 falsy 后（含组件已卸载）再读就会抛
+     * `stale value from <Show>`，而它常被子块的下游 memo 在销毁前一拍读到。改读 keepLast：
+     * 源为 null 时回退到最近一次非空值，既不抛也不会把 null 带进子块（子块下一拍就被释放）。
+     * 详见 lib/keep-last.ts。
+     */
+    const shownTask = keepLast(task);
     /** 是否「任务不存在」终态。props.task 分支由调用方（管理面板）自己判，见 TaskDetailPanel */
     const missing = () => (props.task ? false : ownMissing());
+    /**
+     * 本组件**当前在跟踪的 uri**（非响应式快照）。
+     *
+     * 为什么不直接读 `props.uri`：它可能是父级 `<Show>` 的 accessor（App.tsx 的 nav 悬停
+     * 覆盖层就是 `uri={uri()}` 这么传的），而 Show 的 accessor **卸载后再读就抛
+     * `stale value from <Show>`**。任何 `await` 之后再去 `if (props.uri !== uri)` 都属于这一类 ——
+     * 抛在 `void load(...)` 里就成了未接的 Promise 拒绝（##428）。
+     */
+    let latestUri: string | undefined;
+    /** 已卸载：异步续体据此**不再碰任何渲染状态**（置 signal / 写 store 都跳过） */
+    let disposed = false;
+    onCleanup(() => {
+        disposed = true;
+    });
 
     const load = async (uri: string) => {
         const r = await diyService.diy.getTask({ uri });
-        // 响应回来时若 uri 已变（切得快）则丢弃，避免旧数据覆盖新的
-        if (props.uri !== uri) return;
+        // 卸载 / uri 已变（切得快）则丢弃：读的是快照，不是 accessor（见 latestUri 注释）
+        if (disposed || latestUri !== uri) return;
         // 判据收在 shared/task-load（与 main 的契约同源），不再各处写 `if (r.data)`
         if (getTaskVerdict(r) !== "ok" || !r.data) {
             setOwn(null);
@@ -766,6 +804,7 @@ export function TaskDetailContent(props: {
         on(
             () => props.uri,
             (uri) => {
+                latestUri = uri;
                 if (props.task) return; // 由调用方供数（任务管理详情面板）
                 setOwn(null);
                 setOwnMissing(false); // 先回「加载中」，请求回来才定 ok / missing
@@ -816,9 +855,13 @@ export function TaskDetailContent(props: {
 
     /** 改完刷新：任务树（全局）+ 本份详情（自己取的或调用方给的全局态） */
     const refresh = async () => {
+        // 进异步前把要用的值取成快照（props.uri 可能是父级 Show 的 accessor，##428）
+        const uri = latestUri ?? props.uri;
+        const provided = !!props.task;
         await taskStore.loadTree();
-        if (props.task) await taskStore.selectTask(props.uri);
-        else await load(props.uri);
+        if (disposed) return;
+        if (provided) await taskStore.selectTask(uri);
+        else await load(uri);
     };
 
     return (
@@ -837,14 +880,14 @@ export function TaskDetailContent(props: {
                 </Show>
             }
         >
-            {(t) => (
+            {(_t) => (
                 <div class="task-flow">
                     {/* 左列宽度用 CSS 变量下发（只改宽度，不改结构：结构由容器查询按实测宽度切换）。
                         leftW 是 signal → 拖动时这一处 style 更新，不触发三块 view 重建。 */}
                     <div class="task-flow-grid" style={{ "--task-flow-left": `${leftW()}px` }}>
                         <div class="task-flow-left">
                             <Block k="attrs" title="任务属性">
-                                <AttrsBlock uri={props.uri} task={t()} refresh={refresh} />
+                                <AttrsBlock uri={props.uri} task={shownTask()!} refresh={refresh} />
                             </Block>
                             <Block k="lineage" title="任务树">
                                 <LineageBlock uri={props.uri} hoverPreview={props.hoverPreview} host={props.host ?? "chat"} />
@@ -863,7 +906,7 @@ export function TaskDetailContent(props: {
                         />
                         <div class="task-flow-body">
                             <Block k="body" title="任务内容">
-                                <BodyBlock uri={props.uri} task={t()} refresh={refresh} />
+                                <BodyBlock uri={props.uri} task={shownTask()!} refresh={refresh} />
                             </Block>
                             {/* ##404：知识与历史的两个**只读**视图。默认收起 —— 它们是"要查才看"
                                 的东西，展开会把 body 挤下去（而 body 才是每轮要读的那份）。 */}
