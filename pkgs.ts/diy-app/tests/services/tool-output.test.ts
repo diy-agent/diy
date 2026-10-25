@@ -21,6 +21,7 @@ import {
     capToolOutput,
 } from "../../src/main/services/tool-output";
 import { READ_MAX_BYTES, READ_MAX_LINES, formatReadOutput, readFileWindow } from "../../src/main/core/file-read";
+import { parseCutMarkers, type CutMarker } from "../../src/shared/cut-marker";
 
 let workDir: string;
 const BIG_LINES = 60_000; // ≈ 0.5MB 的「cat 大文件」现场
@@ -36,8 +37,12 @@ const limits: LocalAgentLimits = { ...DEFAULT_LIMITS, bashTimeoutMs: 20_000, max
 const URI = "projects/1/tasks/379";
 
 const lines = (n: number) => Array.from({ length: n }, (_, i) => `line ${i + 1}`).join("\n");
-/** marker 行（`[... 中间省略 N 行 / X KB，完整输出见 <path> ...]`）——三路径格式一致的判据 */
-const markerOf = (text: string) => text.split("\n").find((l) => l.includes("中间省略"));
+/**
+ * 截断标记（##425：`<cut by="tool-output" scope="wire" …/>`）—— 三路径格式一致的判据。
+ * 一律走 `parseCutMarkers` 断言，不再 grep 中文措辞：marker 的**语义**（谁截的 / 语义 / 量）才是合同。
+ */
+const cutOf = (text: string): CutMarker | undefined => parseCutMarkers(text)[0];
+const markerOf = (text: string) => text.split("\n").find((l) => parseCutMarkers(l).length > 0);
 
 describe("capToolOutput：不超限即逐字符原样", () => {
     it("短输出：不动一个字，也不落盘", () => {
@@ -55,7 +60,15 @@ describe("capToolOutput：不超限即逐字符原样", () => {
     it("超一行即裁：头尾保留 + marker", () => {
         const r = capToolOutput(lines(TOOL_OUTPUT_MAX_LINES + 1), "call_over", URI);
         expect(r.clipped).toBe(true);
-        expect(markerOf(r.text)).toContain("中间省略 1 行");
+        // 超一行 ⇒ total = 2001、kept = 2000（头尾各半），标记一眼可查
+        expect(cutOf(r.text)).toMatchObject({
+            by: "tool-output",
+            scope: "wire",
+            why: "budget",
+            unit: "lines",
+            total: TOOL_OUTPUT_MAX_LINES + 1,
+            kept: TOOL_OUTPUT_MAX_LINES,
+        });
         expect(r.origPath).toBeTruthy();
     });
 });
@@ -66,9 +79,10 @@ describe("capToolOutput：marker 格式 + 原文可 read 回取", () => {
 
     it("marker 写明省略量与原文路径（**绝对路径**：模型只按 cwd 解析相对路径）", () => {
         expect(r.clipped).toBe(true);
-        const m = markerOf(r.text)!;
-        expect(m).toMatch(/中间省略 \d+ 行 \/ \d+ KB/);
-        expect(m).toContain(r.origPath!);
+        const m = cutOf(r.text)!;
+        expect(m).toMatchObject({ by: "tool-output", scope: "wire", unit: "lines", total: 10_000 });
+        expect(m.total - m.kept).toBeGreaterThan(0);
+        expect(m.resume).toBe(r.origPath);
         expect(r.origPath!.startsWith("/")).toBe(true);
         // ##379：不在共享的 local/toolout/ 里，而是本会话目录下（撞 id 不再互相覆盖）
         expect(r.origPath).toContain("/local/projects/1/tasks/379/");
@@ -106,9 +120,9 @@ describe("bash 工具：截断落投递层（toModelOutput），execute 仍返�
         });
         expect(modelOut.type).toBe("text");
         expect(modelOut.value).not.toContain(`行 ${Math.floor(BIG_LINES / 2)}`);
-        const m = markerOf(modelOut.value)!;
-        expect(m).toMatch(/中间省略 \d+ 行 \/ \d+ KB/);
-        expect(readFileSync(modelOut.value.match(/(\/\S+\.txt)/)![1]!, "utf-8")).toBe(out);
+        const m = cutOf(modelOut.value)!;
+        expect(m).toMatchObject({ by: "tool-output", scope: "wire", total: BIG_LINES + 12 }); // ##419 起带 YAML 头
+        expect(readFileSync(m.resume!, "utf-8")).toBe(out);
     });
 
     it("bash 报错路径与成功路径**同一 marker 格式**（旧行为：报错裁 6000 字符、成功裸奔）", async () => {
@@ -123,8 +137,10 @@ describe("bash 工具：截断落投递层（toModelOutput），execute 仍返�
             output: failed,
         });
         // 与成功路径同一函数、同一 marker 形状（只有内容不同）
-        expect(markerOf(modelOut.value)).toMatch(/中间省略 \d+ 行 \/ \d+ KB/);
-        expect(markerOf(modelOut.value)).toContain("/toolout/call_err.txt");
+        const m = cutOf(modelOut.value)!;
+        expect(m).toMatchObject({ by: "tool-output", scope: "wire", unit: "lines" });
+        expect(m.total).toBeGreaterThan(m.kept);
+        expect(m.resume).toContain("/toolout/call_err.txt");
     });
 });
 

@@ -28,6 +28,10 @@ import {
     type ClipSpec,
     type CompactPolicy,
 } from "../../src/shared/context/compaction";
+import { parseCutMarkers } from "../../src/shared/cut-marker";
+
+/** 该段文本里有没有截断标记（##425：`<cut …/>`；不再 grep 中文省略号） */
+const hasCut = (s: string) => parseCutMarkers(s).length > 0;
 
 const HEADTAIL: ClipSpec = { type: "headtail", data: { head: 1, tail: 1, maxLineChars: 100, maxKeepBytes: 200 } };
 
@@ -158,7 +162,7 @@ describe("端到端：保底最近 6 步 `clip: full` 字节保真（##343 M1 �
         for (const id of ids) {
             const v = resultValue(msgs, id)!;
             expect(v).toContain(`T${id.slice(5)}-L10`);
-            expect(v).not.toContain("中间省略");
+            expect(hasCut(v)).toBe(false);
         }
     });
 
@@ -166,13 +170,13 @@ describe("端到端：保底最近 6 步 `clip: full` 字节保真（##343 M1 �
         const msgs = blocksToMessages(store, { ...deliveryOpts(), budgetBytes: 20 * 1024 });
         // 旧消息（t1）：被裁
         const old = resultValue(msgs, "call_1")!;
-        expect(old).toContain("中间省略");
+        expect(hasCut(old)).toBe(true);
         expect(old).not.toContain("T1-L10");
         expect(old).toContain("local/toolout/call_1.txt"); // marker 给出原文路径
         // 保底消息（t8）：全量
         const kept = resultValue(msgs, "call_8")!;
         expect(kept).toContain("T8-L10");
-        expect(kept).not.toContain("中间省略");
+        expect(hasCut(kept)).toBe(false);
     });
 
     it("对照：全局策略 `asis` 也不该掐死级声明的 clip（更具体者赢）", () => {

@@ -805,13 +805,14 @@ describe("装配管道（##344 M2）：级列表增删改 + 即时预览 + 与 C
     const before = await ui.query<string>("document.querySelector('[data-compact-preview]')?.textContent ?? ''");
     // 先证明预览确实渲染了：否则下面「不含 X」是空串给的假绿。
     expect(before.length).toBeGreaterThan(0);
-    expect(before).not.toContain("输出已省略（只留调用）");
+    // ##425：截断标记的唯一语法（旧文案「输出已省略（只留调用）」已不存在）
+    expect(before).not.toContain('by="tool-result-callpath"');
     await fire(rowSel(1, "[data-keep-clip]"), "path");
     await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("type: path"), { label: "clip → path 写回" });
     // 预览以「当前配置」现算 ⇒ 立刻反映（不必点任何按钮）
     const after = await waitUntil(
       () => ui.query<string>("document.querySelector('[data-compact-preview]')?.textContent ?? ''"),
-      (t) => t.includes("输出已省略（只留调用）"),
+      (t) => t.includes('by="tool-result-callpath"'),
       { label: "预览即时重算（path 生效）" },
     );
     expect(after.length).toBeGreaterThan(0);

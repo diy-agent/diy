@@ -1400,14 +1400,14 @@ facts:
       verifiedAt: '2026-10-22'
   app.rule#wire-envelope:
     value: |-
-      投给模型的**一条消息 = 一份 YAML 信封**：一切**自动生成**的段（`summary:` / `history:` / `runtime:` / `runtimeDiff:`）**各占一个顶层键**，**禁止**混进 `user.message`（混进去 = 自动生成的元数据伪装成用户原话；tasks/5 实测模型为此多烧 3 次 bash / 5.6 万 prompt token）。契约与派生唯一处 `src/shared/context/envelope.ts` + `README.md` 的「信封」行
+      投给模型的**一条消息 = 一份 YAML 信封**：一切**自动生成** / 机器携带的段（`summary:` / `history:` / `from:` / `runtime:` / `runtimeDiff:`）**各占一个顶层键**，**禁止**混进 `user.message`（混进去 = 自动生成的元数据伪装成用户原话；tasks/5 实测模型为此多烧 3 次 bash / 5.6 万 prompt token）。`from:`（##422）只出现在**历史** user 消息上（`from.id` = 成员 id、`name` = 当时的显示名；老块无 `speaker` ⇒ 裸文本，不造 `from: unknown`），它与 `user.message` **并列**而非嵌套 —— `withRuntime` 遇末条已是**信封**时尾部信封**自占一条消息**。**重放只剥 `runtime:` / `runtimeDiff:`**（`stripRuntimeSections`；`from:` / `history:` / `summary:` 是线索，逐字保留；裸文本与没有顶格 `user:` 的粘贴 YAML 一字不动），剥完仍是信封时也**不嵌套**。契约与派生唯一处 `src/shared/context/envelope.ts` + `README.md` 的「信封」行
     id: app.rule.wire-envelope
     review: accepted
     lifecycle: active
     evidence:
       source: user
       at: ba99d638:pkgs.ts/diy-app/AGENTS.md:81
-      verifiedAt: '2026-10-22'
+      verifiedAt: '2026-10-25'
   app.tool#cdp:
     value: |-
       取 CDP 地址：`cat "$DIY_HOME/electron_user_data/DevToolsActivePort"`（**读后校验**，见 `app.dev#cdp-port`）；`./sha.sh lab` 启动日志会打印完整 `attach` 命令
