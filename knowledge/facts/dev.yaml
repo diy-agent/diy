@@ -171,7 +171,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:72
       verifiedAt: '2026-10-24'
   dev.test#entry:
     value: |-
@@ -239,7 +238,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:73
       verifiedAt: '2026-10-22'
   dev#long-task:
     value: |-
@@ -249,7 +247,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:84
       verifiedAt: '2026-10-22'
   dev#verify-budget:
     value: |-
@@ -259,7 +256,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:72
       verifiedAt: '2026-10-22'
   dev#wake-user:
     value: |-
@@ -269,5 +265,4 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:83
       verifiedAt: '2026-10-22'
