@@ -121,7 +121,7 @@ import { buildDelivery, isRuntimePlace, runtimeDiffDelivery, type Delivery } fro
 import { renderBudgetNote } from "../../shared/context/budget-note";
 import { mustHardCapBytesOf } from "../../shared/context/compact-keep";
 import { estimateRequest, tighterHistoryCapBytes } from "../../shared/context/request-preflight";
-import { isEnvelopeText, isFromEnvelopeText, renderSummaryPart, tailEnvelope } from "../../shared/context/envelope";
+import { isEnvelopeText, renderSummaryPart, tailEnvelope } from "../../shared/context/envelope";
 import { describeAnomalies, readLlmLog } from "../../shared/context/log-schema";
 import {
     autoCompactPolicyInput,
@@ -584,8 +584,9 @@ function isEnvelope(m: ModelMessage): boolean {
  *
  * 尾部不是 user（如自动续跑、纯工具轮）→ 不编 `user:` 段；全空 → 原样返回。
  *
- * 末条**已是 `from:` 信封**（##422：历史 user 消息自带发言者段）→ **不嵌套**，尾部信封自占
- * 一条消息、各段顶层键并列（嵌套会把 `from` 塞进 `user.message`，正是 `FromSchema` 说的不许）。
+ * 末条**已是信封**（##422：历史 user 消息自带 `from:` 段；重放存过整份信封的块时更不止一段）→
+ * **不嵌套**，尾部信封自占一条消息、各段顶层键并列（嵌套会把 `from` / `history` 塞进
+ * `user.message`，正是 `FromSchema` 说的不许，也把整份 YAML 缩进成块标量）。
  * 两条都是信封 ⇒ `normalizeUserRuns` 也不会合并（判据 `isEnvelopeText`），形状可控。
  */
 function withRuntime(hist: ModelMessage[], runtime: string, summaryPart = ""): ModelMessage[] {
@@ -593,7 +594,7 @@ function withRuntime(hist: ModelMessage[], runtime: string, summaryPart = ""): M
     if (parts.length === 0) return hist;
     const last = hist[hist.length - 1];
     const lastText = last?.role === "user" && typeof last.content === "string" ? last.content : "";
-    if (last && last.role === "user" && lastText.trim() && isFromEnvelopeText(lastText)) {
+    if (last && last.role === "user" && lastText.trim() && isEnvelopeText(lastText)) {
         return [...hist, { role: "user", content: tailEnvelope(parts) }];
     }
     if (last && last.role === "user" && lastText.trim()) {

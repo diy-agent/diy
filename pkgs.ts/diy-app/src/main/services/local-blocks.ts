@@ -712,7 +712,7 @@ export interface DeliveryOpts {
 // 于是：全量投影（= llm.jsonl 每行）→ 选择 → 渲染。预览与真发共用同一条链。
 
 import { clipReasoningText, utf8Bytes, type ClipSpec, type ReasoningClipSpec } from "../../shared/context/compaction";
-import { renderFromPart, tailEnvelope, type Speaker } from "../../shared/context/envelope";
+import { hasTopLevelKey, isEnvelopeText, renderFromPart, stripRuntimeSections, tailEnvelope, type Speaker } from "../../shared/context/envelope";
 // 选择算法（元件库 + 装配器）—— 见 compaction-plan.ts 头注。此处**转出**旧公开名以保持兼容。
 import {
     runPlan,
@@ -775,9 +775,24 @@ export function projectAll(store: BlockStore): LocalModelMessage[] {
             if (!text) return;
             if (role === "user") {
                 // 发言者（##422）：有 speaker ⇒ 投影成「`from:` 段 + `user.message`」的小信封。
-                // **老块没 speaker ⇒ 裸文本**（判据 ②：存量行为逐字不变，不造 `from: unknown`）。
+                // **重放前先剥易变段**（##422 第二轮）：历史 user 块里若本身就存着一份信封
+                // （`runtime:` 是每步全量的当前值），重放它只会浪费字节并让旧值伪装成现状；
+                // 而 `from:` / `history:` / `summary:` 是**线索**，一段不动（`stripRuntimeSections`）。
+                // 普通正文（不是信封形态）**逐字不变** —— 该函数对它们直接原样返回。
+                //
+                // 剥完仍是一份信封（历史里存过整份信封的块）⇒ **不嵌套**（同 `withRuntime` 的判据）：
+                // body 自带 `from:` 就照用；没带才把它**放在顶层**拼在前面（拼进 `user.message`
+                // 会把整份 YAML 缩进成块标量，既不是信封也读不了）。
+                const body = stripRuntimeSections(text);
                 const speaker = b.speaker as Speaker | undefined;
-                const content = speaker && typeof speaker.id === "string" && speaker.id ? tailEnvelope([renderFromPart(speaker)], text) : text;
+                const from = speaker && typeof speaker.id === "string" && speaker.id ? renderFromPart(speaker) : "";
+                const content = !from
+                    ? body
+                    : !isEnvelopeText(body)
+                      ? tailEnvelope([from], body)
+                      : hasTopLevelKey(body, "from")
+                        ? body
+                        : tailEnvelope([from, body]);
                 out.push({ role: "user", content, turn, ...(step ? { step } : {}) });
             }
             else {

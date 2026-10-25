@@ -228,18 +228,57 @@ export function renderFromPart(speaker: Speaker): string {
 }
 
 /**
- * 这段文本是不是**只带 `from:` 的历史 user 信封**（首行是 `from:`）？
+ * 重放历史时要**剥掉**的顶层段：易变变量树（`runtime:` / `runtimeDiff:`）。
  *
- * 干什么用：`withRuntime` 拼本轮尾部信封时，末条若是它就不嵌套（嵌套 = `from` 跑进
- * `user.message`，正是 `FromSchema` 说的“不许”）：外层信封自占一条消息，各段顶层键并列。
+ * 为什么只剥这两段（##422 用户口径）：「信封是只清理 runtime 消息，不是把所有线索性消息
+ * 都丢弃，因为不是所有信封字段都是 runtime 变量」—— `from:`（谁说的）/ `history:`（压掉了
+ * 哪些行）都是**线索**，重放必须留着；`runtime:` 是**每步全量的当前值**，重放只会浪费字节
+ * 并把旧值伪装成现状（与 `ENVELOPE_ABOUT` 那条「历史压缩不影响变量树」同一条道理）。
  */
-export function isFromEnvelopeText(text: string): boolean {
-    for (const line of text.split("\n")) {
-        if (!line.trim()) continue;
-        if (line !== line.trimStart()) return false; // 首行缩进 ⇒ 是普通正文
-        return /^from:(\s|$)/.test(line);
+export const RUNTIME_TOP_KEYS: ReadonlySet<string> = new Set(["runtime", "runtimeDiff"]);
+
+/** 顶格 `key:` 行（信封顶层键的形态；与 `isEnvelopeText` 同一把尺） */
+const TOP_KEY_RE = /^([A-Za-z][A-Za-z0-9_]*):(\s|$)/;
+
+/**
+ * 这段文本里**有没有**这个顶层键段（顶格 `<key>: ...`；块标量里的同名行不算）。
+ *
+ * 干什么用（##422）：块里存的那段本身就是信封时（重放）要看它自己带不带 `from:` —— 带了就
+ * 不重复加（同一份 YAML 里两个 `from:` 是非法重复键），没带就补到顶层。
+ */
+export function hasTopLevelKey(text: string, key: string): boolean {
+    return text.split("\n").some((l) => TOP_KEY_RE.exec(l)?.[1] === key);
+}
+
+/**
+ * 从一条**历史消息**里剥掉易变段（`runtime:` / `runtimeDiff:`），其余**逐字保留**。
+ *
+ * 判据（单测钉住）：
+ *   · 是信封（首个非空行是顶格的信封顶层键）**且**带顶格 `user:` 段 ⇒ 才是「我们的消息形态」，
+ *     动手剥；剥完 `from:` / `history:` / `summary:` / `user:` 一个不少、`runtime` 一个不留。
+ *   · 否则（裸文本、首行缩进、用户自己粘贴的一段 YAML 没有 `user:`）⇒ **原样返回**，
+ *     逐字不变 —— 剥错用户正文比少剥一段 runtime 严重得多。
+ *   · **幂等**：剥过的再剥仍是同一份字节（各层调用点重复跑也安全）。
+ *
+ * 为什么按行扫而不真解析 YAML：信封恒由 `toYaml` 产出（块标量必缩进，缩进行不可能被当成
+ * 顶层键），为一次重放做解析器（且失败要吞）代价不成比例 —— 与 `isEnvelopeText` 同一取舍。
+ */
+export function stripRuntimeSections(text: string): string {
+    // 不是信封（首行就是普通正文 / 首行缩进）⇒ 一字不动
+    if (!isEnvelopeText(text)) return text;
+    const lines = text.split("\n");
+    const keys = lines.map((l) => TOP_KEY_RE.exec(l)?.[1]).filter((k): k is string => k !== undefined);
+    // 不是「我们的消息形态」（没有顶格 `user:` 段）⇒ 一字不动：宁少剥，不剥用户正文
+    if (!keys.includes("user")) return text;
+    if (!keys.some((k) => RUNTIME_TOP_KEYS.has(k))) return text; // 没有易变段 ⇒ 一字不动（快路）
+    const out: string[] = [];
+    let skipping = false;
+    for (const line of lines) {
+        const key = TOP_KEY_RE.exec(line)?.[1];
+        if (key !== undefined) skipping = RUNTIME_TOP_KEYS.has(key); // 新的顶层键 ⇒ 换段
+        if (!skipping) out.push(line);
     }
-    return false;
+    return out.join("\n");
 }
 
 /** 只拼 `runtime:` + `user:` 的常见形（见 `tailEnvelope`） */
