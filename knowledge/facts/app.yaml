@@ -1308,6 +1308,20 @@ facts:
       source: user
       at: ba99d638:pkgs.ts/diy-app/AGENTS.md:77
       verifiedAt: '2026-10-22'
+  app.rule#task-body:
+    value: |-
+      任务 body 的**软上限 4 KB**（`diy task show <uri>` 渲染字节）：超限不算错，但**下次编辑必须顺手瘦身**。超限处置按三层判据分流，别原样留着 ——
+
+      1. 「**三个月后还成立吗？**」成立 ⇒ 稳定结论 → `diy facts submit`（**任务级库优先**：`--in task:<uri>`，本任务自己的结论就该常驻本任务信封）；
+      2. 「**只对当时有意义吗？**」⇒ 历史流水 / 决策理由 / 事故复盘 → `diy journal add <uri> --kind progress|decision|pitfall|review|learn --title "一行"`（append-only，`--refs` 带 commit / PR）；
+      3. 「**接下来要做什么？**」⇒ 留 body。
+
+      瘦身后 body 只剩 3~5 段：定位 / 现在是什么 / 待办 / 明确不做 / 指路命令（取值的那条命令），**不留流水账**。实测背景（##408 派发时核对）：376 个任务 body 合计 4.51 MB，`>20 KB` 的 51 个，最大 ##166 单条 349 KB（2026-10-26 复核）—— 任务被唤醒时 body 整段进上下文，等于每条都常驻。
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-26'
   app.rule#test-bail:
     value: |-
       **撞红即停（`bail:1` 刻意保留），但回报必须说清范围**：根与各包 `vitest.config.ts` 全为 `bail:1` —— 早停省墙钟，代价是「后面的没跑」。交付口径写「跑到第一个失败文件为止：N files / M passed / 其余未跑」，**不许**把早停报成「全量通过」（判据 = 末行 `Test Files N failed (总数)`；拿不准就单跑那个失败文件）。历史：`##379` review2 里 `bail:1` 让 162 个文件只跑了 38 例。⚠️ 此前「交付口径改 `--bail=0`」的建议**已作废**（用户 2026-10-20 定：红就停，别再跑）
