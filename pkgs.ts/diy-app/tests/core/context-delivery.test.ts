@@ -20,7 +20,19 @@ const globals = {
     project: { path: "/repo" },
     cwd: { path: "/repo", note: "", isFallback: false, isTaskDir: false, isAppDir: true },
     chain: [{ path: "/home/u/AGENTS.md", scope: "/home/u", content: "家目录规范\n" }],
-    task: { uri: "projects/1/tasks/1", title: "投递任务", state: "pending", dir: "/home/u/.diy/projects/1/tasks/1", body: "正文一\n正文二" },
+    task: {
+        uri: "projects/1/tasks/1",
+        title: "投递任务",
+        state: "pending",
+        dir: "/home/u/.diy/projects/1/tasks/1",
+        created: "2026-10-01",
+        parent: "",
+        updated: "2026-10-01",
+        change_type: "",
+        module: "",
+        priority: "",
+        body: "正文一\n正文二",
+    },
     skills: [],
     // 模版节（行为契约）：真发必须投它们，否则模型收不到人物指令/规范/保命契约（P0-1）
     identity: "你是 diy 管控台的本地 coding agent。你现在的人物是「大副」。\n每次回答前先称一声「大王」。\n",
@@ -30,37 +42,51 @@ const globals = {
 };
 
 describe("投递构造：两个容器", () => {
-    it("system = 信封（help 段 + system 段）；易变项（task.body / skills）不在里面", () => {
+    it("system = 信封（help 段 + system 段）；易变项（task.body / skills / task.state）不在里面", () => {
         const d = buildDelivery(globals, defaultSystemPlaces());
         // 信封两个顶层键：结构说明（help）在前、变量树（system）在后
         expect(d.system.text.startsWith("help:")).toBe(true);
         expect(d.system.text).toContain("\nsystem:\n");
-        // help 由 zod 派生：结构里点名的就是投出去的（含 reqlog 的 file 字段）
-        expect(d.system.text).toContain("reqlog:");
-        expect(d.system.text).toContain("grep -n");
-        // 变量树本身
+        // 变量树本身：只留「存续期内不变」的（##426）
         expect(d.system.text).toContain("家目录规范");
-        expect(d.system.text).toContain('title: "投递任务"');
+        expect(d.system.text).toContain("created: 2026-10-01");
         expect(d.system.text).not.toContain("正文一");
+        // 易变的头字段 / 按天变的 reqlog 都不在 system（它们进 runtime 信封的 help）
+        expect(d.systemData.text).not.toContain('title: "投递任务"');
+        // ⚠️ 判据用 systemData（纯数据段）：system.text 的 help 段由**整份 schema** 派生，
+        // 里面本来就列出 cwd / reqlog 这类 runtime 节点的结构说明（help 解释的是"这棵树有什么"，不是"谁进 system"）。
+        expect(d.systemData.text).not.toContain("reqlog");
         // systemData 是 system 的纯数据部分（不带 help 段）
         expect(d.systemData.text.startsWith("chain:")).toBe(true);
         expect(d.systemData.text).not.toContain("help:");
     });
 
-    it("runtime = 易变项（任务正文、技能清单）；不含说明头", () => {
+    it("runtime = 易变项（任务头易变字段、任务正文、技能清单、cwd、reqlog）；不含说明头", () => {
         const d = buildDelivery(globals, defaultSystemPlaces());
         expect(d.runtime.text).toContain("body:");
         expect(d.runtime.text).toContain("正文一");
         // runtime 也是信封（只有 runtime 一段）
         expect(d.runtime.text.startsWith("runtime:\n")).toBe(true);
         expect(d.runtime.text).not.toContain("help:");
-        expect(d.runtime.places).toEqual(["skills", "task.body"]);
+        expect(d.runtime.text).toContain("reqlog:");
+        expect(d.runtime.places).toEqual([
+            "cwd",
+            "reqlog",
+            "skills",
+            "task.body",
+            "task.change_type",
+            "task.module",
+            "task.priority",
+            "task.state",
+            "task.title",
+            "task.updated",
+        ]);
     });
 
     it("改名单 → 归属随之变（task.body 划进 system）", () => {
         const d = buildDelivery(globals, [...defaultSystemPlaces(), "task.body"]);
         expect(d.system.text).toContain("正文一");
-        expect(d.runtime.places).toEqual(["skills"]);
+        expect(d.runtime.places).not.toContain("task.body");
     });
 
     it("值 hash 表覆盖整棵树（含中间容器），父子都在（父的 hash 就是子树）", () => {
@@ -72,7 +98,7 @@ describe("投递构造：两个容器", () => {
     });
 
     it("runtime 一份都不剩（全划进 system）→ 文本为空串（调用方据此跳过那条 user 消息）", () => {
-        const d = buildDelivery(globals, [...defaultSystemPlaces(), "task.body", "skills"]);
+        const d = buildDelivery(globals, PLACE_CANDIDATES.map((c) => c.path));
         expect(d.runtime.places).toEqual([]);
         expect(d.runtime.text).toBe("");
         expect(d.runtime.bytes).toBe(0);
@@ -113,6 +139,54 @@ describe("投递构造：两个容器", () => {
     it("list 里只有候选（没有人手填的怪路径）", () => {
         expect(PLACE_CANDIDATES.every((c) => typeof c.path === "string" && c.reason.length > 0)).toBe(true);
         expect(defaultSystemPlaces()).not.toContain("task.body");
+    });
+});
+
+describe("默认最小 system 名单（##426）", () => {
+    it("★ 名单就是「存续期内不变」那一撮：加了新字段进 system 必须先想清楚它会不会变", () => {
+        expect(defaultSystemPlaces().slice().sort()).toEqual(
+            [
+                "chain",
+                "diy",
+                "guard",
+                "identity",
+                "project",
+                "rules",
+                "task.created",
+                "task.dir",
+                "task.parent",
+                "task.uri",
+            ].sort(),
+        );
+        // 头号缓存杀手：state / updated（每改一次任务就变）
+        for (const p of ["task.state", "task.updated", "task.title", "task.change_type", "task.module", "task.priority", "task.persona"]) {
+            expect(defaultSystemPlaces(), p).not.toContain(p);
+        }
+        // 按天变的 reqlog、含回退判定的 cwd 也不在 system
+        expect(defaultSystemPlaces()).not.toContain("reqlog");
+        expect(defaultSystemPlaces()).not.toContain("cwd");
+    });
+
+    it("★ 构造一次 state 迁移（pending → in_progress）→ system 逐字节不变（前缀缓存不被砸）", () => {
+        const before = buildDelivery(globals, defaultSystemPlaces());
+        const after = buildDelivery(
+            { ...globals, task: { ...globals.task, state: "in_progress", updated: "2026-10-25" } },
+            defaultSystemPlaces(),
+        );
+        // 判据是真发字节：system 文本完全一致 ⇒ 上游前缀缓存可整段命中；变化只落在 runtime
+        expect(after.system.text).toBe(before.system.text);
+        expect(after.system.bytes).toBe(before.system.bytes);
+        expect(after.runtime.text).not.toBe(before.runtime.text);
+        // 同样地，cwd 的回退 / reqlog 换日期也不该动 system
+        const cwdChanged = buildDelivery(
+            { ...globals, cwd: { ...globals.cwd, note: "回退", isFallback: true } },
+            defaultSystemPlaces(),
+        );
+        expect(cwdChanged.system.text).toBe(before.system.text);
+    });
+
+    it("每个候选都有非空理由（页面「划分规则」表直接显示它）", () => {
+        for (const c of PLACE_CANDIDATES) expect(c.reason.trim().length, c.path).toBeGreaterThan(0);
     });
 });
 

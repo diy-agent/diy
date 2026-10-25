@@ -435,7 +435,8 @@ export function ContextLabPage(props: { uri: string }) {
         setSystemPlaces(next);
         void (async () => {
             try {
-                const r = await diyService.diy.context.setConfig({ systemPlaces: next });
+                // inputLimitChars 键必须出现（本仓契约：optional 字段也是必填键），undefined = 只改划分
+                const r = await diyService.diy.context.setConfig({ systemPlaces: next, inputLimitChars: undefined });
                 setSystemPlaces(r.systemPlaces); // 服务端净化过的结果（可能与请求不同）
                 void refetchConfig();
             } catch (e) {

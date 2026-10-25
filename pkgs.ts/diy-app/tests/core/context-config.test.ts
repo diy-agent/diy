@@ -57,7 +57,14 @@ describe("sanitizeSystemPlaces", () => {
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadSystemPlaces, saveSystemPlaces, contextConfigFile } from "../../src/main/core/context-config";
+import {
+    loadInputLimitChars,
+    loadSystemPlaces,
+    saveInputLimitChars,
+    saveSystemPlaces,
+    contextConfigFile,
+} from "../../src/main/core/context-config";
+import { DEFAULT_INPUT_LIMIT_CHARS } from "../../src/shared/context/input-limit";
 
 describe("context.yaml（划分规则真源）", () => {
     const home = mkdtempSync(join(tmpdir(), "diy-ctx-config-"));
@@ -114,5 +121,80 @@ describe("context.yaml（划分规则真源）", () => {
     it("空名单 → 推荐名单（清空与没配同义）", () => {
         writeFileSync(contextConfigFile(home), "systemPlaces: []\n", "utf-8");
         expect(loadSystemPlaces(home)).toEqual(defaultSystemPlaces());
+    });
+});
+
+// ── 手改过的 home 一字不改（##426 的硬边界）──────────────────────
+describe("已手改的名单不被默认值改写", () => {
+    const home = mkdtempSync(join(tmpdir(), "diy-ctx-handedit-"));
+    process.on("exit", () => {
+        try {
+            rmSync(home, { recursive: true, force: true });
+        } catch {
+            /* 忽略 */
+        }
+    });
+
+    // 生产 home 那份（用户手调，8 项）—— 一字不动是本次改默认值的硬约束
+    const HAND_EDITED = "systemPlaces:\n  - chain\n  - cwd\n  - diy\n  - guard\n  - project\n  - rules\n  - task.dir\n  - task.uri\n";
+
+    it("★ 读侧原样返回手改名单（不掺默认、不改文件）", () => {
+        writeFileSync(contextConfigFile(home), HAND_EDITED, "utf-8");
+        expect(loadSystemPlaces(home)).toEqual([
+            "chain",
+            "cwd",
+            "diy",
+            "guard",
+            "project",
+            "rules",
+            "task.dir",
+            "task.uri",
+        ]);
+        // 读不会写：文件逐字不变
+        expect(readFileSync(contextConfigFile(home), "utf-8")).toBe(HAND_EDITED);
+        rmSync(contextConfigFile(home), { force: true });
+    });
+});
+
+// ── 输入上限（##426 B）────────────────────────────────────────────
+describe("context.yaml 的 inputLimitChars", () => {
+    const home = mkdtempSync(join(tmpdir(), "diy-ctx-limit-"));
+    process.on("exit", () => {
+        try {
+            rmSync(home, { recursive: true, force: true });
+        } catch {
+            /* 忽略 */
+        }
+    });
+
+    it("文件缺失 / 键缺失 → 缺省 100_000（老文件不因新键缺失就坏）", () => {
+        rmSync(contextConfigFile(home), { force: true });
+        expect(loadInputLimitChars(home)).toBe(DEFAULT_INPUT_LIMIT_CHARS);
+        saveSystemPlaces(home, ["diy"]);
+        expect(loadInputLimitChars(home)).toBe(DEFAULT_INPUT_LIMIT_CHARS);
+    });
+
+    it("写后读回（原子写 + 说明头）", () => {
+        saveSystemPlaces(home, ["diy"]);
+        expect(saveInputLimitChars(home, 200_000)).toBe(200_000);
+        expect(loadInputLimitChars(home)).toBe(200_000);
+        expect(readFileSync(contextConfigFile(home), "utf-8")).toContain("inputLimitChars: 200000");
+    });
+
+    it("★ 两个写入口互相保键：改划分不丢阈值，改阈值不丢划分", () => {
+        saveSystemPlaces(home, ["diy", "chain"]);
+        saveInputLimitChars(home, 5_000);
+        saveSystemPlaces(home, ["diy"]);
+        expect(loadSystemPlaces(home)).toEqual(["diy"]);
+        expect(loadInputLimitChars(home)).toBe(5_000);
+        saveInputLimitChars(home, 7_000);
+        expect(loadSystemPlaces(home)).toEqual(["diy"]);
+    });
+
+    it("非法值读回缺省（手改坏了不至于让门禁消失）", () => {
+        writeFileSync(contextConfigFile(home), "systemPlaces:\n  - diy\ninputLimitChars: 不是数\n", "utf-8");
+        expect(loadInputLimitChars(home)).toBe(DEFAULT_INPUT_LIMIT_CHARS);
+        // 但划分照样可用
+        expect(loadSystemPlaces(home)).toEqual(["diy"]);
     });
 });

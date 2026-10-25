@@ -100,7 +100,10 @@ describe("上下文树：RPC 契约（真实数据）", () => {
     expect(paths).toContain("task.body");
     // task 的稳定字段与易变字段被拆成不同单元（否则"按第一层划分"的毛病就回来了）
     expect(paths).toContain("task.title");
-    expect(c.defaultSystem).toContain("task.title");
+    // ##426：默认最小 system 名单 —— 只有存续期内不变的才进 system
+    expect(c.defaultSystem).toContain("task.created");
+    expect(c.defaultSystem).not.toContain("task.title"); // 改一次任务就变
+    expect(c.defaultSystem).not.toContain("task.state"); // 头号缓存杀手
     expect(c.defaultSystem).not.toContain("task.body");
 
     // 造一个真实的项目目录 + AGENTS.md 链，让 chain 有内容
@@ -128,9 +131,10 @@ describe("上下文树：RPC 契约（真实数据）", () => {
     // 纯 YAML：不再有自创的 XML 外壳
     expect(d.system.text).not.toContain("<context path=");
 
-    // 任务正文（易变）归 runtime；任务身份（稳定）归 system
+    // 任务正文 + 易变头字段（title/state/updated）归 runtime；任务身份（uri/dir/created/parent）归 system
     expect(d.runtime.text).toContain("body:");
-    expect(d.system.text).toContain('title: "上下文树任务"');
+    expect(d.runtime.text).toContain('title: "上下文树任务"');
+    expect(d.system.text).toContain("uri: ");
 
     // 请求体：与真发同一条构造链。形态 = [system 段, ...历史, user(runtime), user(占位输入)]
     // （真发同理：runtime 作为独立 user 消息插在**本轮输入之前**，见 runTurn 的 withRuntime）
