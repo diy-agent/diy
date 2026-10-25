@@ -21,7 +21,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/git/diy/AGENTS.md:25
       verifiedAt: '2026-10-21'
   dev.context#cache-economics:
     value: |-
@@ -239,6 +238,33 @@ facts:
     evidence:
       source: user
       verifiedAt: '2026-10-22'
+  dev#for-test-persona:
+    value: |-
+      真 LLM 实验**只用 `for-test` 人物**（`~/.diy/personas.yaml` 的 `persona/9`）；该人物**不得用于自动化测试**（自动化测试走隔离 home + 种子，**绝不**依赖 `~/.diy` 真配置）
+    id: agents.dev.for-test-persona
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-25'
+  dev#lab-model:
+    value: |-
+      **lab 数据根（仓库根 `build/<variant>/home`）的真配置由 `./sha.sh sync` 自动同步**：把 `~/.diy/` 的 `model.yaml` / `context.yaml` / `personas.yaml` / `providers.custom.yaml` 逐字投影进去（变体随 `DIY_VARIANT`，缺省 lab；`DIY_SYNC_HOME=0` 关）—— **不再手抄**（手抄极易漏 `context.yaml` = 投递划分真源，漏了测到的划分是种子那份）；seed 只种示例数据（示例项目/任务 + 占位人物）
+    id: agents.dev.lab-model
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-25'
+  dev#lab-scope:
+    value: |-
+      `lab`（唯一 GUI 启动器，原 `preview` 已删，##381）**只用于探测性开发**（人看效果 / 手工验一条真请求 / 临时实验）；**不要**用它做自动化测试、压测、批量跑（那些走 `test` variant 与既有测试入口）
+    id: agents.dev.lab-scope
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-25'
   dev#long-task:
     value: |-
       **长命令不靠 `sleep` 轮询**：bash 超时缺省 300s（`DIY_LOCAL_BASH_TIMEOUT_MS` 可调）；仍超长就 `nohup … &` **一次**，然后做别的事/汇报，用一次 `tail` 取增量 —— 绝不用「`sleep 30` → 看一眼 → 再 `sleep 30`」把一步工作切成十步（每步都是一次完整请求）。
@@ -248,6 +274,24 @@ facts:
     evidence:
       source: user
       verifiedAt: '2026-10-22'
+  dev#model-cheap:
+    value: |-
+      实验一律用**免费或最便宜**的模型（缺省先挑 `diy/AGENTS.md` 的 `model.free` 可用项，退 `mimo-v2.5`；`mimo-v2.6-flash` 自 2026-10-17 起**不作缺省** —— 上游返回 `[model_coming_soon]`）；贵模型只在用户明确许可下、一次一条用例
+    id: agents.dev.model-cheap
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-25'
+  dev#model-unavailable:
+    value: |-
+      模型不可用（上游 `model_coming_soon` / id 不认识 404 / 认证 401·403 / 配额 429）→ **停工 + 通知**，**不换模型硬试**；实验实例页顶出 bar（判据 `pkgs.ts/diy-app/src/shared/model-unavailable.ts`；上游 5xx 与超时**不算**，那是另一类问题）
+    id: agents.dev.model-unavailable
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-25'
   dev#verify-budget:
     value: |-
       **验证预算按改动面走，不按习惯走**：改一个文件只跑受影响的 1~3 个测试文件；全量套件（`./sha.sh check` / `test-unit` / 全量 intent）**只在收工前跑一次**。禁止「改一行 → 全量」循环 —— 一次全量 30~120s（还可能触发 bash 超时），循环 N 次等于把 N 次完整请求赔进去。红灯即停（先修再看），但回报必须如实写「跑到第一个失败为止：N files / M passed / 其余未跑」，不许报成全量通过。
