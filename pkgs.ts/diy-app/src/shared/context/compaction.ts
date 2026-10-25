@@ -19,6 +19,7 @@
 //   「彻底删除」仍归现有 clear（物理删文件）。
 
 import { z } from "zod";
+import { cutMarker } from "../cut-marker";
 
 // ─── ① 策略 ───────────────────────────────────────────
 
@@ -276,7 +277,8 @@ export function clipReasoningText(text: string, clip: ReasoningClipSpec | null |
     const dropped = origChars - headN - tailN;
     if (dropped <= 0) return same(); // 本来就短 ⇒ 不动（也保证"极短也不裁空"）
 
-    const marker = `\n[… 推理省略 ${dropped} 字符 …]\n`;
+    // ##425：wire 档（发给模型的那份就是残缺的；推理原文不在任何地方可回取）
+    const marker = `\n${cutMarker({ by: "reasoning-clip", scope: "wire", why: "budget", unit: "chars", total: origChars, kept: headN + tailN })}\n`;
     // head 至少留 1 字符（headChars ≥ 1 由 schema 保证）：空串 = 没传 = 400，这条断言是硬底线
     const out = `${text.slice(0, Math.max(1, headN))}${marker}${tailN > 0 ? text.slice(origChars - tailN) : ""}`;
     return { text: out, clipped: true, origChars, keptChars: out.length, droppedChars: dropped };
@@ -418,7 +420,8 @@ const HARD_CAP_POLICY: ToolResultPolicy = {
  *   · **未触发裁条件时逐字符返回原文** —— 不"顺手规整"，否则 86% 不受影响的输出会和历史分叉；
  *   · 行数触发是主判据（阈值 ≈ p90），字节兜底只防"一行超长"（压缩 JSON / base64）；
  *   · marker 里**必须**给原文路径（##127 的「头尾保留 + marker + 原文可寻回」三件套），
- *     否则模型看到「中间省略」却无处可查，只能重跑一遍命令（那是真金白银）。
+ *     否则模型看到「被截了」却无处可查，只能重跑一遍命令（那是真金白银）。
+ *     语法统一走 `shared/cut-marker`（##425）：`<cut by=… scope="wire" … resume="<path>"/>`。
  */
 export function clipToolResult(text: string, raw: ToolResultPolicy, opts: ClipOpts = {}): ToolClipResult {
     const origLines = text === "" ? 0 : text.split("\n").length;
@@ -441,11 +444,20 @@ export function clipToolResult(text: string, raw: ToolResultPolicy, opts: ClipOp
     if (toolResult.render === "asis") return same();
 
     const lines = text.split("\n");
-    const pathHint = opts.origPath ? `完整输出见 ${opts.origPath}` : "完整输出已省略";
+    // ##425：wire 档 —— 发给模型的那份被裁；原文落盘时给 `resume`（模型可 `read` 回取），
+    // 没落盘就不给（指向一个不存在的文件比不说还坏）。
+    const resume = opts.origPath;
 
     if (toolResult.render === "callpath") {
         if (text === "") return same();
-        const marker = `[输出已省略（只留调用）：${origLines} 行 / ${fmtBytes(origBytes)}，${pathHint}]`;
+        const marker = cutMarker({
+            by: "tool-result-callpath",
+            scope: "wire",
+            why: "budget",
+            total: origLines,
+            kept: 0,
+            ...(resume ? { resume } : {}),
+        });
         return {
             text: marker,
             clipped: true,
@@ -485,11 +497,16 @@ export function clipToolResult(text: string, raw: ToolResultPolicy, opts: ClipOp
     const build = (): string => {
         const head = lines.slice(0, headN).map((l) => truncLine(l, ht.maxLineChars));
         const tail = tailN > 0 ? lines.slice(origLines - tailN).map((l) => truncLine(l, ht.maxLineChars)) : [];
-        const midStart = headN;
-        const midEnd = origLines - tailN;
-        const dropped = lines.slice(midStart, midEnd);
-        const dBytes = utf8Bytes(dropped.join("\n"));
-        const marker = `[... 中间省略 ${dropped.length} 行 / ${fmtBytes(dBytes)}，${pathHint} ...]`;
+        // ##425：wire 档。`total` / `kept` 都按**行**（与 `unit` 同量纲）；
+        // 行内超长被 `maxLineChars` 再截的部分不另报 —— marker 只回答「中间少了多少行」。
+        const marker = cutMarker({
+            by: "tool-output",
+            scope: "wire",
+            why: "budget",
+            total: origLines,
+            kept: headN + tailN,
+            ...(resume ? { resume } : {}),
+        });
         return [...head, marker, ...tail].join("\n");
     };
     let out = build();

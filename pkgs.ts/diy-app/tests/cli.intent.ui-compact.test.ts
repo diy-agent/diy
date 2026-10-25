@@ -648,13 +648,13 @@ describe("装配管道（##344 M2）：级列表增删改 + 即时预览 + 与 C
   it("改管道 ⇒ 预览**即时重算**（阶梯级裁法改 path → 工具结果变「只留调用」）", async () => {
     await expandAll();
     const before = await ui.query<string>("document.querySelector('[data-compact-preview]')?.textContent ?? ''");
-    expect(before).not.toContain("输出已省略（只留调用）");
+    expect(before).not.toContain('by="tool-result-callpath"'); // ##425：截断标记的唯一语法
     await fire(rowSel(1, "[data-keep-clip]"), "path");
     await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("type: path"), { label: "clip → path 写回" });
     // 预览以「当前配置」现算 ⇒ 立刻反映（不必点任何按钮）
     const after = await waitUntil(
       () => ui.query<string>("document.querySelector('[data-compact-preview]')?.textContent ?? ''"),
-      (t) => t.includes("输出已省略（只留调用）"),
+      (t) => t.includes('by="tool-result-callpath"'),
       { label: "预览即时重算（path 生效）" },
     );
     expect(after.length).toBeGreaterThan(0);

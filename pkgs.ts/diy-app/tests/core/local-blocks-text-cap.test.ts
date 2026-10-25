@@ -10,6 +10,7 @@
 
 import { describe, it, expect } from "vitest";
 import { BlockStore, RENDER_TEXT_CAP, compactOps, displayText, toTree, type Op } from "../../src/main/services/local-blocks";
+import { parseCutMarkers } from "../../src/shared/cut-marker";
 
 const store = () => new BlockStore({ textCap: RENDER_TEXT_CAP });
 const textOf = (s: BlockStore, id: string) => displayText(s.blocks.get(id));
@@ -40,12 +41,21 @@ describe("Text 硬顶（##93 D）", () => {
         expect(cap.omitted).toBe(cap.total - RENDER_TEXT_CAP.head - RENDER_TEXT_CAP.tail);
     });
 
-    it("裁剪可见：值里带显式标注（含省略/全文两个数字）", () => {
+    it("裁剪可见：值里带显式标注（含省略/全文两个数字）—— ##425 起是 `<cut …/>`", () => {
         const s = store();
         s.apply({ op: "start", id: "t1", kind: "text" });
         s.apply({ op: "delta", id: "t1", fields: { content: "x".repeat(300_000) } });
         const v = textOf(s, "t1");
-        expect(v).toMatch(/已省略 [\d,]+ 字符（全文 [\d,]+ 字符；界面只保留头尾两段）/);
+        // view 档：原文完整（盘上有），只是**这个视图**留了头尾两段；resume 指向 UI 的载入全文
+        expect(parseCutMarkers(v).at(0)).toMatchObject({
+            by: "renderer-text-cap",
+            scope: "view",
+            why: "render",
+            unit: "chars",
+            total: 300_000,
+            kept: RENDER_TEXT_CAP.head + RENDER_TEXT_CAP.tail,
+            resume: "ui:载入全文",
+        });
     });
 
     it("后续 delta 持续累加计数（裁掉的长度不能凭当前值数出来）", () => {
@@ -107,7 +117,7 @@ describe("Text 硬顶（##93 D）", () => {
         const compact = compactOps(s);
         const fields = compact.find((o) => o.op === "patch")!.fields as Record<string, unknown>;
         expect(fields.__cap).toBeUndefined();
-        expect(String(fields.content)).toContain("已省略");
+        expect(parseCutMarkers(String(fields.content)).at(0)?.by).toBe("renderer-text-cap");
     });
 
     // ── surrogate 边界（##8 的 agent review 里指出的真 bug：切在代理对中间 ⇒ U+FFFD 不可逆损坏）
@@ -121,7 +131,7 @@ describe("Text 硬顶（##93 D）", () => {
         // 头尾各自都是完整的 emoji 序列（不许出现孤立代理）
         expect(/^[\uD800-\uDBFF][\uDC00-\uDFFF]/.test(v)).toBe(true);
         expect(/[\uD800-\uDBFF][\uDC00-\uDFFF]$/.test(v)).toBe(true);
-        expect(v).toContain("已省略");
+        expect(parseCutMarkers(v).at(0)?.by).toBe("renderer-text-cap");
     });
 
     it("代理对边界：中文 + emoji 混排，尾切点落在低代理上也不许出 U+FFFD", () => {
@@ -136,7 +146,7 @@ describe("Text 硬顶（##93 D）", () => {
         expect(v).toContain("🎉");
         // 计数与显示值一致：省略数 = 总数 - 实际留下的字符数
         const cap = (s.blocks.get("t1")!.__cap as Record<string, { total: number; omitted: number }>).content!;
-        const shown = v.replace(/\n\n……已省略 [\d,]+ 字符（全文 [\d,]+ 字符；界面只保留头尾两段）……\n\n/, "");
+        const shown = v.replace(/\n\n`<cut [^>]*\/>`\n\n/, "");
         expect(cap.total).toBe(chunk.length * 2);
         expect(cap.omitted).toBe(cap.total - shown.length);
     });
@@ -145,7 +155,8 @@ describe("Text 硬顶（##93 D）", () => {
         const s = store();
         s.apply({ op: "start", id: "t1", kind: "text" });
         s.apply({ op: "delta", id: "t1", fields: { content: "x".repeat(300_000) } });
-        expect(textOf(s, "t1")).toContain("已省略 168,928 字符（全文 300,000 字符；界面只保留头尾两段）");
+        // 数字一律裸十进制（不受 locale / ICU 影响）：省略 168,928 = 300,000 - 131,072
+        expect(textOf(s, "t1")).toContain('total="300000" kept="131072"');
     });
 
     it("浏览器环境（没有全局 Buffer）也能应用大块：本模块不依赖 Node 内置", () => {
