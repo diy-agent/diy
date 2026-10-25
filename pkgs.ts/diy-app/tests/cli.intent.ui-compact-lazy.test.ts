@@ -29,7 +29,7 @@ import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
 import { waitUntil } from "./wait";
 import { makeUiDriver, type A11yNode, type UiDriver } from "./ui-drive";
-import { opsFile } from "../src/main/services/local-agent";
+import { opsFile } from "../src/main/core/local-paths";
 
 const NL = String.fromCharCode(10);
 /** 被观测的 RPC：压缩预览（"抽屉关着时 main 完全不出现 compactPreview" 就是它） */

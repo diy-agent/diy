@@ -28,7 +28,8 @@ import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
 import { waitUntil } from "./wait";
 import { makeUiDriver, type A11yNode, type UiDriver } from "./ui-drive";
-import { compactFile, opsFile } from "../src/main/services/local-agent";
+import { compactFile } from "../src/main/services/local-agent";
+import { opsFile } from "../src/main/core/local-paths";
 import { keyOf, sessionFileRel } from "../src/main/core/local-paths";
 
 const NL = String.fromCharCode(10);

@@ -21,6 +21,7 @@
 import { z } from "zod";
 import { cacheStateAfterGap, type EffectiveTtl } from "./cache-ttl";
 import { validateKeepStages, type KeepStage } from "./compact-keep";
+import { HistoryLimitSchema, type HistoryLimit } from "./history-limit";
 import {
     CompactPolicySchema,
     DEFAULT_BUDGET_BYTES,
@@ -50,6 +51,11 @@ export const AutoCompactTriggersSchema = z.object({
  * 形状与校验的真源：`shared/context/compact-keep.ts`（此处只保证「是个数组」，容错归一在 normalizeAutoCompact）。
  */
 export const AutoCompactHistorySchema = z.object({
+    /**
+     * 【##432 刀 2】**唯一的历史预算**：一条 token 上限（+ 摘要开关）。
+     * 缺省 = `DEFAULT_HISTORY_LIMIT`（20000 token / 摘要关）。
+     */
+    limit: HistoryLimitSchema.optional().describe("历史预算：一条 token 上限 + 摘要开关（##432 刀 2 的唯一旋钮）"),
     keep: z
         .array(z.unknown())
         .optional()
@@ -94,7 +100,7 @@ export interface AutoCompactConfig {
      * 级列表（已校验；非法 / 空列表 ⇒ `keep` 缺席 = 回落缺省管道）+ agent 写闸。
      * ⚠️ `keep` 缺席 ≠ `history` 缺席：只写了 `allowAgentWrite` 的配置也要能读到闸。
      */
-    history?: { keep?: KeepStage[]; allowAgentWrite?: boolean };
+    history?: { limit?: HistoryLimit; keep?: KeepStage[]; allowAgentWrite?: boolean };
 }
 export type AutoCompactTriggers = z.infer<typeof AutoCompactTriggersSchema>;
 
@@ -251,14 +257,22 @@ export function normalizeAutoCompact(raw: unknown, issues?: AutoCompactIssue[]):
 function normalizeHistory(
     raw: unknown,
     issues?: AutoCompactIssue[],
-): { keep?: KeepStage[]; allowAgentWrite?: boolean } | undefined {
+): { limit?: HistoryLimit; keep?: KeepStage[]; allowAgentWrite?: boolean } | undefined {
     if (raw === null || typeof raw !== "object") return undefined;
     const src = raw as Record<string, unknown>;
     // 闸的**权威读法**：只有字面 `true` 才算开（`"yes"` / `1` 之类不算 —— 闸的缺省方向是关）。
     const allowAgentWrite = src["allowAgentWrite"] === true ? (true as const) : undefined;
     const withGate = allowAgentWrite ? { allowAgentWrite } : {};
+    // ##432 刀 2：`limit` 与旧 `keep` 各自独立归一（旧字段仍在，只是投递侧不再用它选）
+    const limitRaw = src["limit"];
+    const withLimit = limitRaw !== undefined ? { limit: HistoryLimitSchema.parse(limitRaw) } : {};
+    /** 收口：空对象 = 「这份配置没有 history 节」（缺席），不是「空 history」 */
+    const finish = (extra: Record<string, unknown> = {}) => {
+        const out = { ...withLimit, ...withGate, ...extra };
+        return Object.keys(out).length > 0 ? out : undefined;
+    };
     const keepRaw = src["keep"];
-    if (keepRaw === undefined) return allowAgentWrite ? withGate : undefined;
+    if (keepRaw === undefined) return finish();
     // ⚠️ 局部名别叫 `issues`：与参数（出声收集器）撞名 —— oxc 会报「不能重复声明」
     const checked = validateKeepStages(keepRaw);
     const stages = checked.stages;
@@ -268,15 +282,15 @@ function normalizeHistory(
         console.warn(`[auto-compact] ${message}`);
         issues?.push({ path: "history.keep", message });
         // 坏 keep 只丢 keep：闸是另一件事，不该被一并丢掉（否则用户开闸的意图会被一个笔误静默撤销）
-        return allowAgentWrite ? withGate : undefined;
+        return finish();
     }
     if (stages.length === 0) {
         const message = "history.keep 是空级列表 → 回落缺省管道（要清零请把 policy.modeData.budgetBytes 设为 0）";
         console.warn(`[auto-compact] ${message}`);
         issues?.push({ path: "history.keep", message });
-        return allowAgentWrite ? withGate : undefined;
+        return finish();
     }
-    return { keep: stages, ...withGate };
+    return finish({ keep: stages });
 }
 
 /** 判定所需的**事实**（全部可观测，不含预测） */

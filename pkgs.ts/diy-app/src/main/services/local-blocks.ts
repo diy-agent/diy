@@ -850,8 +850,13 @@ export interface LocalModelMessage {
  */
 export interface DeliveryOpts {
     /**
-     * 【新·目标式预算】历史消息可占字节上限（不含固定开支）。**有它就按装配管道选择**，
-     * 忽略 `sinceTurnId`/`content`（旧的轮边界口径）—— 见 selectHistoryByBudget。
+     * 【##432 刀 2】**已落盘的压缩边界**（store 下标）：`[0, headEnd)` 保头 + `[cut, n)` 保留。
+     * 有它就**只按边界切**（每步不重算）—— 这是「压缩是一次事件」在投递侧的落点。
+     */
+    historyCut?: { cut: number; headEnd: number };
+    /**
+     * 【旧·目标式预算】历史消息可占字节上限。**##432 刀 2 起不再由投递侧使用**（保留字段只为
+     * 老调用点编译通过；选择一律走 `historyCut`）。
      */
     budgetBytes?: number;
     /**
@@ -1240,9 +1245,49 @@ export function selectForDelivery(
     all: readonly LocalModelMessage[],
     opts: DeliveryOpts = {},
 ): { kept: number[]; dropped: number[]; clips?: (ClipSpec | null)[]; reasoningClips?: (ReasoningClipSpec | null)[] } {
-    return opts.budgetBytes !== undefined
-        ? selectHistoryByBudget(all, opts.budgetBytes, opts)
-        : selectHistory(all, opts);
+    if (opts.historyCut) return selectHistoryByCut(all, opts.historyCut, opts);
+    // 旧路径（compact 账本 / 预览 / plan 检查）仍按预算选 —— ##432 刀 2 只换了**投递侧**
+    // （`buildHistory` 传 `historyCut`）；这条回落留给尚未迁移的调用点，随旧策略一起删。
+    if (opts.budgetBytes !== undefined) return selectHistoryByBudget(all, opts.budgetBytes, opts);
+    return selectHistory(all, opts);
+}
+
+/**
+ * **按已落盘的边界选择**（##432 刀 2）：`[0, headEnd)` 保头 + `[cut, n)` 从切点往后的原文。
+ *
+ * 与旧 `selectHistoryByBudget` 的差别：这里**没有任何策略** —— 边界是压缩事件算好落盘的，
+ * 每步只按它切（因此同一步里多次投递得到**逐字相同**的 messages）。
+ */
+export function selectHistoryByCut(
+    all: readonly LocalModelMessage[],
+    range: { cut: number; headEnd: number },
+    opts: Pick<DeliveryOpts, "transformToolResult" | "defaultClip" | "defaultReasoningClip"> = {},
+): BudgetSelection {
+    const n = all.length;
+    const cut = Math.max(0, Math.min(range.cut, n));
+    const headEnd = Math.max(0, Math.min(range.headEnd, cut));
+    const kept: number[] = [];
+    const dropped: number[] = [];
+    for (let i = 0; i < n; i++) (i < headEnd || i >= cut ? kept : dropped).push(i);
+    const keptRuns: [number, number][] = [];
+    let prev = -2;
+    let keptBytes = 0;
+    const costOf = costOfWith(opts);
+    for (const i of kept) {
+        keptBytes += costOf(all[i]!, null, null);
+        if (i === prev + 1) keptRuns[keptRuns.length - 1]![1] = i + 1;
+        else keptRuns.push([i + 1, i + 1]);
+        prev = i;
+    }
+    return {
+        kept,
+        dropped,
+        keptRuns,
+        keptBytes,
+        // 新算法没有「预算桶」与「托底桶」之分：两个字段保留形状，报实际保留字节
+        countBytes: keptBytes,
+        mustBytes: 0,
+    };
 }
 
 /** 块树 → 可发/可落盘的消息（选择 + 渲染；跳过 turn/step 容器 —— think 已挂进 assistant 消息） */

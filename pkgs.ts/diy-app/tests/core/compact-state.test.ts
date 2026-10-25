@@ -13,17 +13,8 @@ import { join } from "node:path";
 import { diyHome } from "../../src/main/core/state";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
-import {
-    compactFile,
-    compactStateFile,
-    getLocalAgent,
-    opsFile,
-    readCompactLogFull,
-    readCompactLogTail,
-    resetOpsReplayCache,
-    resolveOpsReplay,
-    writeCompactState,
-} from "../../src/main/services/local-agent";
+import { compactFile, compactStateFile, getLocalAgent, readCompactLogFull, readCompactLogTail, resetOpsReplayCache, resolveOpsReplay, writeCompactState } from "../../src/main/services/local-agent";
+import { opsFile } from "../../src/main/core/local-paths";
 import { realFs } from "../../src/main/core/atomic-write";
 import { readJsonlTail } from "../../src/main/core/jsonl-tail";
 import { boundaryOfPoint, compactPointOf, parseCompactLog, resolveBoundary } from "../../src/shared/context/compaction";

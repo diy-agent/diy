@@ -17,7 +17,7 @@ import { diyHome } from "../../src/main/core/state";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
 import { LocalAgentManager } from "../../src/main/services/local-agent";
-import { opsFile } from "../../src/main/services/local-agent";
+import { opsFile } from "../../src/main/core/local-paths";
 import { saveAutoCompact } from "../../src/main/core/auto-compact-config";
 
 let PROJECT = "";

@@ -22,7 +22,7 @@ import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
 import { waitUntil } from "./wait";
 import { makeUiDriver, type A11yNode, type UiDriver } from "./ui-drive";
-import { opsFile } from "../src/main/services/local-agent";
+import { opsFile } from "../src/main/core/local-paths";
 
 // 会话规模：24 轮 × ~700KB（大头是 tool 输出）≈ 16.8MB —— 渲染端首载窗口 4MB（HISTORY_WINDOW_BYTES），
 // 上滚补段**也按 4MB**，于是整份 = 4 段：三条补段用例（点提示条 / 滚到顶 / 在途继续滚）各消费一段。

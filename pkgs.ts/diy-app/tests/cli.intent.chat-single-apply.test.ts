@@ -24,7 +24,7 @@ import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
 import { waitUntil } from "./wait";
 import { makeUiDriver, type A11yNode, type UiDriver } from "./ui-drive";
-import { opsFile } from "../src/main/services/local-agent";
+import { opsFile } from "../src/main/core/local-paths";
 
 /** 一段回复被切成的 delta 片段（逐个发 chunk ⇒ 逐个 text-delta op） */
 const FRAGMENTS = ["大王", "，", "先把现场", "看清楚", "。"];
