@@ -77,17 +77,17 @@ function seedOps(uri: string, turns = 3): string[] {
 }
 
 describe("① after.turns 按投递口径（数字之间不许打架）", () => {
-    it("预算=0（清零）→ after.turns = 0；预算撑满 → = 3", () => {
+    it("预算=0（清零）→ after.turns = 0；预算撑满 → = 3", async () => {
         const uri = newUri();
         seedOps(uri);
-        const pv0 = getLocalAgent().compactPreview(uri, { budgetBytes: 0, toolResult: { render: "asis" } });
+        const pv0 = await getLocalAgent().compactPreview(uri, { budgetBytes: 0, toolResult: { render: "asis" } });
         expect(pv0.after.turns).toBe(0);
         expect(pv0.after.messages).toBe(0);
         expect(pv0.before.turns).toBe(3);
 
         const uri2 = newUri();
         seedOps(uri2);
-        expect(getLocalAgent().compactPreview(uri2, { budgetBytes: 1024 * 1024, toolResult: { render: "asis" } }).after.turns).toBe(3);
+        expect((await getLocalAgent().compactPreview(uri2, { budgetBytes: 1024 * 1024, toolResult: { render: "asis" } })).after.turns).toBe(3);
     });
 });
 

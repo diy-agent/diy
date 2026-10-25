@@ -75,7 +75,8 @@ const LEGACY_SYNC_IO_BASELINE = new Map(Object.entries({
   "pkgs.ts/diy-app/src/main/core/models-sync.ts": 2,
   "pkgs.ts/diy-app/src/main/core/persona.ts": 4,
   "pkgs.ts/diy-app/src/main/core/project.ts": 12,
-  "pkgs.ts/diy-app/src/main/core/room.ts": 13,
+  // ##427：room 事件流 / 投递状态改异步 + 尾部倒读（读侧 + 写侧），剩 readRoom / listRooms 两处小文件同步读
+  "pkgs.ts/diy-app/src/main/core/room.ts": 5,
   "pkgs.ts/diy-app/src/main/core/seed.ts": 4,
   "pkgs.ts/diy-app/src/main/core/single-instance.ts": 3,
   "pkgs.ts/diy-app/src/main/core/state.ts": 5,

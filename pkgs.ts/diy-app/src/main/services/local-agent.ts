@@ -3248,7 +3248,7 @@ export class LocalAgentManager {
      *   · sinceLastRequestMs   —— now − 最后一条 usage 的 ts
      *   · windowTokens         —— 最后一步**实测**用量（最后一步 = 窗口占用，见 ##211 §三）的 token 数
      */
-    autoCompactStatus(taskUri: string): {
+    async autoCompactStatus(taskUri: string): Promise<{
         config: AutoCompactConfig;
         facts: AutoCompactFacts;
         triggers: CompactTrigger[];
@@ -3257,15 +3257,16 @@ export class LocalAgentManager {
         raw: { path: string; text: string };
         /** 读配置时的**出声条目**（##370）：非空 = 有键缺失/非法（已逐键回落缺省）。UI 据此说「为什么」 */
         warnings: AutoCompactIssue[];
-    } {
+    }> {
         const { config, issues: warnings } = loadAutoCompactDetailed(diyHome());
         // 系统上下文：与上次真发那份比（口径与 steps.jsonl 的 systemText 完全一致）
         const home = diyHome();
+        // 与真发同一条链（预览 = 会发出去的）：房间上下文取**本任务自己的房间**
+        // （自起轮的形状；投递轮看的是来源房间，这里给不出，边上注明即可）
+        const roomCtx = (await roomRuntimeFact({ roomId: taskUri, taskUri }))?.value ?? null;
         const globals = assembleGlobals(home, projectFromUri(taskUri), {
             taskUri,
-            // 与真发同一条链（预览 = 会发出去的）：房间上下文取**本任务自己的房间**
-            // （自起轮的形状；投递轮看的是来源房间，这里给不出，边上注明即可）
-            room: roomRuntimeFact({ roomId: taskUri, taskUri })?.value ?? null,
+            room: roomCtx,
         }) as unknown as Record<string, unknown>;
         const delivery = buildDelivery(globals, loadSystemPlaces(home));
         const lastStep = readDeliverySteps(taskUri).at(-1) ?? null;
@@ -3864,7 +3865,7 @@ export class LocalAgentManager {
      * **与真发同一条链**：assembleGlobals → buildDelivery → blocksToMessages（+ 工具输出裁剪）。
      * 预览的全部价值就是"看到的就是会发出去的"，所以这里不许另算一份。
      */
-    private buildRequestView(
+    private async buildRequestView(
         taskUri: string,
         policy: CompactPolicy | null,
         keptFromTurnId: string | null | undefined,
@@ -3873,12 +3874,13 @@ export class LocalAgentManager {
          *  省掉两遍「整读 + 解析 + 折叠」—— 这是「一份 78MB 文件被读三遍」的那两遍（##321）。
          *  只读复用：`buildHistory` 只投影（`blocksToMessages` / `projectAll` 均不回写块树）。 */
         storeInput?: BlockStore,
-    ): RequestView {
+    ): Promise<RequestView> {
         const home = diyHome();
+        // 同上：预览与真发同一份装配（房间取本任务自己的房间）
+        const roomCtx = (await roomRuntimeFact({ roomId: taskUri, taskUri }))?.value ?? null;
         const globals = assembleGlobals(home, projectFromUri(taskUri), {
             taskUri,
-            // 同上：预览与真发同一份装配（房间取本任务自己的房间）
-            room: roomRuntimeFact({ roomId: taskUri, taskUri })?.value ?? null,
+            room: roomCtx,
         }) as unknown as Record<string, unknown>;
         const delivery = buildDelivery(globals, loadSystemPlaces(home));
         const { cwd } = resolveCwdWithNote(home, taskUri);
@@ -3961,27 +3963,27 @@ export class LocalAgentManager {
     }
 
     /** 当前生效请求（base）：不传策略 = 用盘上生效的边界与裁剪 */
-    requestView(taskUri: string): RequestView {
+    async requestView(taskUri: string): Promise<RequestView> {
         // 与真发同源：读**当前配置**（不是压缩账里的旧 policy；配置 / 历史分离）
-        return this.buildRequestView(taskUri, loadAutoCompact(diyHome()).policy, undefined);
+        return await this.buildRequestView(taskUri, loadAutoCompact(diyHome()).policy, undefined);
     }
 
     /** 压缩预览（只算不写）：面板左侧参数 + 右侧请求 YAML diff + 事实表的数据源 */
-    compactPreview(taskUri: string, policyInput: unknown, summaryText?: string): CompactPreview {
+    async compactPreview(taskUri: string, policyInput: unknown, summaryText?: string): Promise<CompactPreview> {
         const p = this.planCompact(taskUri, policyInput);
         // 一次算两份视图（base/mod）→ 复用 planCompact 刚折好的块树：整读 + 解析 + 折叠只做一次。
         // 同步链路内文件不会变，且投影只读（不回写块树），故两份视图看到的是**同一份**历史。
         const store = p.store;
         // base = **未压缩**的投递（全量历史、无注记）—— 配置 / 历史分离后，"当前配置"就是 mod，
         // 拿它当 base 会得出"无差异"。预览的价值是看"这次压缩**去掉/改了什么**"，故 base 取全量。
-        const base = this.buildRequestView(taskUri, null, undefined, undefined, store);
+        const base = await this.buildRequestView(taskUri, null, undefined, undefined, store);
         // 勾选摘要但尚未生成 → 用占位骨架（让用户先看见"会得到什么"，且不花一分钱）
         const sum = p.policy.summary
             ? summaryText !== undefined
                 ? summaryText
                 : this.effectiveSummary(taskUri) || summaryPlaceholder(emptySummary(p.droppedIds.length))
             : "";
-        const mod = this.buildRequestView(taskUri, p.policy, p.keptFromTurnId, sum, store);
+        const mod = await this.buildRequestView(taskUri, p.policy, p.keptFromTurnId, sum, store);
         const inputRate = costOf(base.model, p.after.estTokens)?.input ?? 0;
         return {
             policy: p.policy,
@@ -4488,7 +4490,7 @@ export class LocalAgentManager {
         // （静默丢用户历史与 `rule.no-silent-catch` 同一条原则）。
         if (loadAutoCompact(diyHome()).mode === "auto") {
             try {
-                const st = this.autoCompactStatus(taskUri);
+                const st = await this.autoCompactStatus(taskUri);
                 if (st.triggers.length > 0) {
                     const rec = this.compact(
                         taskUri,
@@ -4664,7 +4666,7 @@ export class LocalAgentManager {
                 // 排除的那条 say 同样取不落盘的那份（`sourceSayId`）：投给主人格时 `room` 整条不落，
                 // 只看 `room.sayId` 会让 `recent` 里出现**自己这条投递**（正文已有一份 ⇒ 同一句话两遍）。
                 const sayId = origin?.sourceSayId ?? origin?.room?.sayId;
-                const fact = roomRuntimeFact({
+                const fact = await roomRuntimeFact({
                     roomId: origin?.sourceRoomId ?? origin?.room?.roomId ?? taskUri,
                     taskUri,
                     ...(sayId ? { sayId } : {}),

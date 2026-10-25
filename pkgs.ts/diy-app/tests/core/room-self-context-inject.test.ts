@@ -121,7 +121,7 @@ const mkSay = (author: string, text: string, n: number) => ({
 });
 
 /** 建一间「人 + 主人格」的房间，并灌一条别人的话 + 一条自己的话 */
-function seedRoom(roomId: string, taskUri: string): void {
+async function seedRoom(roomId: string, taskUri: string): Promise<void> {
   ensureRoom(roomId);
   upsertMember(roomId, {
     id: "agent:main",
@@ -131,14 +131,14 @@ function seedRoom(roomId: string, taskUri: string): void {
     main: true,
   });
   upsertMember(roomId, { id: "human:chen56", name: "chen56", kind: "human", backend: null });
-  appendEvent(roomId, mkSay("human:chen56", "先跑一下测试", 1));
-  appendEvent(roomId, mkSay("agent:main", "这句是我自己说的", 2));
+  await appendEvent(roomId, mkSay("human:chen56", "先跑一下测试", 1));
+  await appendEvent(roomId, mkSay("agent:main", "这句是我自己说的", 2));
 }
 
 describe("房间上下文真的进了请求（runtime 单元）", () => {
   it("① 自起一轮 ⇒ runtime 里有 room.recent（别人的话），正文仍是原话", async () => {
     const uri = newUri();
-    seedRoom(uri, uri);
+    await seedRoom(uri, uri);
     const prompts = { prompts: [] as unknown[] };
     const { prompt, ops } = await run(uri, new LocalAgentManager(() => stubModel(prompts)), undefined, prompts);
     expect(prompt).toContain("runtime:");
@@ -157,7 +157,7 @@ describe("房间上下文真的进了请求（runtime 单元）", () => {
 
   it("② 水位前移之后同一段不再出现（第二次请求里没有那段话）", async () => {
     const uri = newUri();
-    seedRoom(uri, uri);
+    await seedRoom(uri, uri);
     const prompts = { prompts: [] as unknown[] };
     const mgr = new LocalAgentManager(() => stubModel(prompts));
     await run(uri, mgr, undefined, prompts);
@@ -172,7 +172,7 @@ describe("房间上下文真的进了请求（runtime 单元）", () => {
   it("③ 投递来的 ⇒ 看的是**来源房间**，正文仍是原话（不含房间前缀/近期发言）", async () => {
     const uri = newUri(); // 收件人自己的任务
     const src = newRoomId();
-    seedRoom(src, uri); // 来源房间里有个绑 uri 的成员
+    await seedRoom(src, uri); // 来源房间里有个绑 uri 的成员
     const prompts = { prompts: [] as unknown[] };
     const { prompt, ops } = await run(
       uri,
@@ -196,10 +196,10 @@ describe("房间上下文真的进了请求（runtime 单元）", () => {
     //   ② 但"看哪间房"**不再跟着落盘判据走** —— 否则这一轮会退回本任务自己的房间，看不到
     //      来源房间里刚发生的事（第 26 刀 review1 R1 的病灶，`sourceRoomId` 专治这一条）。
     const uri = newUri();
-    seedRoom(uri, uri);
-    appendEvent(uri, mkSay("human:chen56", "本任务房间的一句无关内容", 3));
+    await seedRoom(uri, uri);
+    await appendEvent(uri, mkSay("human:chen56", "本任务房间的一句无关内容", 3));
     const src = newRoomId();
-    seedRoom(src, uri);
+    await seedRoom(src, uri);
     const prompts = { prompts: [] as unknown[] };
     const { prompt, ops } = await run(
       uri,
@@ -234,7 +234,7 @@ describe("房间上下文真的进了请求（runtime 单元）", () => {
   it("⑥ 投递轮**不动水位**（水位归 room-service；两边都动会把水位往回拨，review1 R3）", async () => {
     const uri = newUri();
     const src = newRoomId();
-    seedRoom(src, uri);
+    await seedRoom(src, uri);
     const before = { ...(readRoom(src)?.lastSeen ?? {}) };
     // ⚠ `fromDelivery: true` 不能省：这是**投递轮**的判据（水位归 room-service）。漏了它就变成
     //   自起轮 ⇒ 成轮后 `commitSelfStartContext` 本该前移水位，断言自然不成立。
