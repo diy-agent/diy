@@ -3450,6 +3450,13 @@ export class LocalAgentManager {
             for (const op of surviving) store.apply(op);
             ops.push(...compactOps(store));
         }
+        if (ops.length === 0 && present && size > 0) {
+            // 文件在、有内容，但降级链重建为空（断代 + 没有 turns.jsonl）：
+            // 旧 ops 段对本 UI 仍是**可展示**的历史 —— 交回正常路径整份重放
+            // （`uiReplayStart` 对 schema-break 退 0），宁可慢也不能把聊天记录静默变成空白（##92 口径）。
+            // `missing` / `empty` 不走这条：那两种确实没有可重放的内容，degraded 标记必须留着。
+            return null;
+        }
         return { ops, degraded: { cause, note, turns, dangling } };
     }
 
