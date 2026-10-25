@@ -7,14 +7,17 @@
 // 然后达到压缩后，右边呈现出压缩的新消息 history 形态」）。真会话不可复现（大小随任务变），
 // 一份固定样例才能让人一眼看懂「上限调小 = 从哪里开始砍」。
 //
-// ── ⚠️ 算法口径 = ##432 的**新规则**（占位对齐，字段名以 ##432 为准）──
-//   · 一条上限（`budgetBytes`；##432 会重命名，此处键名先跟现有 RPC 字段）
-//   · **保头 600 token 硬编码**：首个 user / 任务目标永不被丢，也不参与累加
-//   · 从最后一条往前累加，累积 ≥ 上限即停
-//   · 切点必须 **tool 配对平衡**：不许「留了 result 丢了它的 call」
-// ##432 落地后本文件只改取数来源（预算字段名 + 保头常量的来源），模拟本身不变。
+// ── 边界判据不在这里 ──
+// 留谁丢谁**一律**走 `./select-kept-boundary.ts::selectKeptBoundary`（唯一实现点，##432 的临时代管）。
+// 本文件只做两件事：① 提供合成样例（`EXAMPLE_MESSAGES`）；② 把边界结果翻译成界面字段
+// （`kept` / `why` / `dropped` / `keptBytes` / `biggestDrop`）。
+// 🚫 不许在本文件再写一份累加 / 配平逻辑 —— 示例与真实行为不一致比没有示例更糟。
 //
 // 纯函数：禁止 import node:*。
+
+import { selectKeptBoundary, type KeptBoundary } from "./select-kept-boundary";
+
+export { HEAD_KEEP_TOKENS } from "./select-kept-boundary";
 
 /** 合成样例里的一条消息（`bytes` 按 UTF-8 字节；token 估算 = 字节 ÷ 4，与全仓同一口径） */
 export interface ExampleMessage {
@@ -31,8 +34,6 @@ export interface ExampleMessage {
     callId?: string;
 }
 
-/** 保头（token）—— ##432 定为硬编码 600，不进配置 */
-export const EXAMPLE_HEAD_KEEP_TOKENS = 600;
 /** 字节 ÷ 4 = token（全仓同一口径，见 compaction.ts::estimateTokens） */
 export const bytesToTokens = (bytes: number): number => Math.round(bytes / 4);
 
@@ -85,24 +86,8 @@ export interface CompactExampleResult {
     biggestDrop: ExampleRow | null;
 }
 
-/** 把切点往前挪到 tool 配对平衡处：留了 result 就必须留它的 call */
-function balanceCut(messages: readonly ExampleMessage[], cut: number, headEnd: number): number {
-    let c = cut;
-    for (let guard = 0; guard < messages.length && c > headEnd; guard++) {
-        if (c >= messages.length) return c; // 尾部一条都没取（全在保头里）
-        const m = messages[c];
-        if (m.kind !== "result" || !m.callId) return c;
-        const callIdx = messages.findIndex((x) => x.kind === "call" && x.callId === m.callId);
-        if (callIdx < 0 || callIdx >= c) return c;
-        // 这一组必须整体保留 ⇒ 切点挪到它的 call 之前
-        c = callIdx;
-        // 挪完之后，新切点自身若是 result（嵌套的前一组）⇒ 循环继续处理
-    }
-    return c;
-}
-
 /**
- * 算出「按这个上限压完长什么样」。
+ * 算出「按这个上限压完长什么样」。留谁丢谁 = `selectKeptBoundary` 说了算，这里只排版。
  *
  * @param budgetBytes 上限（字节，0 = 清零：只留保头）
  * @param messages 默认用 `EXAMPLE_MESSAGES`（测试可传小样例）
@@ -112,52 +97,17 @@ export function buildCompactExample(
     messages: readonly ExampleMessage[] = EXAMPLE_MESSAGES,
 ): CompactExampleResult {
     const beforeBytes = messages.reduce((a, m) => a + m.bytes, 0);
-    const headBudget = EXAMPLE_HEAD_KEEP_TOKENS * 4;
+    const { headEnd, cut }: KeptBoundary = selectKeptBoundary(
+        messages.map((m) => ({ tokens: bytesToTokens(m.bytes), kind: m.kind, callId: m.callId })),
+        bytesToTokens(budgetBytes),
+    );
 
-    // ① 保头：从头装，装到超过 600 token 为止（首个 user 一定在内）
-    let headEnd = -1;
-    let headBytes = 0;
-    for (let i = 0; i < messages.length; i++) {
-        if (headBytes >= headBudget) break;
-        headBytes += messages[i].bytes;
-        headEnd = i;
-    }
-
-    // ② 清零：只留保头（切点放在末尾之后 = 尾部一条都不取）
-    if (budgetBytes === 0) {
-        const rows = messages.map((m, i) => rowOf(m, i <= headEnd, i <= headEnd ? "保头（硬编码 600 token，永不丢）" : "上限 0（清零）"));
-        return finish(messages, rows, headEnd, messages.length, beforeBytes);
-    }
-
-    // ③ 从最后往前累加，累积 ≥ 上限即停
-    let acc = 0;
-    let cut = messages.length; // 尾部保留区的起点；messages.length = 一条都没取
-    for (let i = messages.length - 1; i > headEnd; i--) {
-        if (acc >= budgetBytes) break;
-        acc += messages[i].bytes;
-        cut = i;
-    }
-    cut = balanceCut(messages, cut, headEnd);
-
-    const rows = messages.map((m, i) => {
+    const rows: ExampleRow[] = messages.map((m, i) => {
         if (i <= headEnd) return rowOf(m, true, "保头（硬编码 600 token，永不丢）");
         if (i >= cut) return rowOf(m, true, "在本次请求里（从最后往前数，装进上限）");
         return rowOf(m, false, "超出上限 ⇒ 不进本次请求（历史仍在，可查可撤销）");
     });
-    return finish(messages, rows, headEnd, cut, beforeBytes);
-}
 
-function rowOf(m: ExampleMessage, kept: boolean, why: string): ExampleRow {
-    return { ...m, kept, why, tokens: bytesToTokens(m.bytes) };
-}
-
-function finish(
-    messages: readonly ExampleMessage[],
-    rows: ExampleRow[],
-    headEnd: number,
-    cut: number,
-    beforeBytes: number,
-): CompactExampleResult {
     const keptRows = rows.filter((r) => r.kept);
     const droppedRows = rows.filter((r) => !r.kept);
     const biggest = droppedRows.reduce<ExampleRow | null>((a, r) => (a && a.bytes >= r.bytes ? a : r), null);
@@ -170,4 +120,8 @@ function finish(
         dropped: droppedRows.length,
         biggestDrop: biggest,
     };
+}
+
+function rowOf(m: ExampleMessage, kept: boolean, why: string): ExampleRow {
+    return { ...m, kept, why, tokens: bytesToTokens(m.bytes) };
 }

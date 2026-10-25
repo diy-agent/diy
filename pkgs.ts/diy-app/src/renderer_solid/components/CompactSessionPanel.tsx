@@ -884,7 +884,8 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
     // 账本与「历史」弹窗/用量分表同源（`compact.events`），不另存一份。
     const [compactEvts] = createResource(
         () => ctl.uri(),
-        async (u) => (u ? ((await localChatStore.compactEvents(u)) as CompactEventRow[]) : []),
+        // 账本接口是**分页形态**（`{ events, truncated, size, from }`），这里只要事件数组
+        async (u) => (u ? ((await localChatStore.compactEvents(u)).events as CompactEventRow[]) : []),
     );
     const compactRows = () => (compactEvts() ?? []).filter((e) => e.kind === "compact");
     const deliveries = () => localChatStore.usage.length;
