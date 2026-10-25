@@ -338,6 +338,9 @@ export async function makeUiDriver(
            const els = document.querySelectorAll(${JSON.stringify(selector)});
            const el = els[${nth}];
            if (!el) return "NOT_FOUND";
+           // 先滚进可视区：面板内容变长后，目标常在滚动区之外 ——
+           // 此时 getBoundingClientRect 给的坐标落在视口外，CDP 鼠标事件等于没点（表现为「点了没反应」）。
+           el.scrollIntoView({ block: "center", inline: "nearest" });
            const r = el.getBoundingClientRect();
            if (r.width === 0 || r.height === 0) return "ZERO_SIZE";
            return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
