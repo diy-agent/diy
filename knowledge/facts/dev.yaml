@@ -292,6 +292,21 @@ facts:
     evidence:
       source: user
       verifiedAt: '2026-10-25'
+  dev#test-fixture:
+    value: |-
+      **意图测试里的「夹具」不许写成 `it`**（##433 / ##434）。判据一句话：这条用例单独跑（`vitest run <file> -t '<名>'`）时还有意义吗？没有 ⇒ 它就不是用例，是夹具。
+
+      - 夹具（造数据 / 建任务 / 开页面 / 置模块级变量）一律进 `beforeAll`；要被每条用例重置的才 `beforeEach`。
+      - **作用域按「谁用它」定**：只本 describe 用 ⇒ describe 级 hook；跨 describe 共用（典型：基础 `uri`）⇒ **文件级** hook —— describe 级 hook 只在该 describe 有用例被选中时才执行，单跑别的 describe 时它不跑，夹具仍缺席。
+      - 被夹具预置的状态若又被某条用例「再推一步」（例：先点成原文态、再点回渲染态），那条用例要**自己补齐前置**（`if (状态不对) 补一步`），否则 `-t` 单跑仍是假红；#433 的「账本空时自己跑一次 `compact run`」同此。
+
+      为什么值钱：`-t` 是排查单条用例的唯一手段。夹具带序时依赖 ⇒ 任何人拿 `-t` 定位，先看到的是「环境坏了」而不是「用例过了/没过」，每次都得先花一轮证伪（##433 的 `-e3b0c44298fc` 假目录就是这么来的）。
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: 42199e1c:pkgs.ts/diy-app/tests/cli.intent.ui-compact.test.ts:187
+      verifiedAt: '2026-10-25'
   dev#verify-budget:
     value: |-
       **验证预算按改动面走，不按习惯走**：改一个文件只跑受影响的 1~3 个测试文件；全量套件（`./sha.sh check` / `test-unit` / 全量 intent）**只在收工前跑一次**。禁止「改一行 → 全量」循环 —— 一次全量 30~120s（还可能触发 bash 超时），循环 N 次等于把 N 次完整请求赔进去。红灯即停（先修再看），但回报必须如实写「跑到第一个失败为止：N files / M passed / 其余未跑」，不许报成全量通过。

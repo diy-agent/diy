@@ -218,7 +218,9 @@ afterAll(async () => {
 });
 
 describe("聊天页渲染层（流式 + 布局）", () => {
-  it("setup: 造任务并打开它的执行页", async () => {
+  // 夹具（##434）：造任务并打开它的执行页，给本 describe 所有用例预置 `uri` 与页面。
+  // 写成 `it` 时 `-t` 过滤会跳过它 ⇒ 后续用例的 `uri` 是空串（##433 同款）。
+  beforeAll(async () => {
     const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/render --label Render`);
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create "渲染验收" ${pid}`);
