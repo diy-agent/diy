@@ -99,6 +99,23 @@ async function expandAll(): Promise<void> {
   }
 }
 
+/** 打开预览区的 diff 计算（##406 起差异视图缺省关闭，见 `CompactSessionPanel.tsx:915` / `:1396`） */
+async function enableDiffPreview(): Promise<void> {
+  const r = await ui.query<string>(
+    `(() => { if (document.querySelector('[data-compact-preview]')) return 'already';
+      const b=[...document.querySelectorAll('button')].find(x=>(x.textContent||'').includes('计算并显示 diff'));
+      if(!b) return 'no-button'; b.click(); return 'ok'; })()`,
+  );
+  if (r === "no-button") {
+    throw new Error("预览区没有「计算并显示 diff」按钮：差异视图的闸门形状变了（见 CompactSessionPanel.tsx 的 diffEnabled）");
+  }
+  await waitUntil(
+    () => ui.query<boolean>(`!!document.querySelector('[data-compact-preview]')`),
+    (v) => v === true,
+    { label: "diff 面板打开" },
+  );
+}
+
 /** hover token 窗口环 → 弹出 L2 卡（含「压缩」快捷直压 + 「明细 ›」） */
 async function hoverRing(): Promise<void> {
   await ui.query<string>(
@@ -129,6 +146,27 @@ async function openDrawer(): Promise<void> {
 /** 正文里的文本（判「某轮还在不在」） */
 const bodyHas = (s: string) => ui.query<boolean>(`document.body.textContent.includes(${JSON.stringify(s)})`);
 
+/**
+ * 滚到聊天区顶部，直到 `match` 出现在 DOM 里（上限 `max` 次，防死循环）。
+ *
+ * 为什么需要：聊天块树是**视口虚拟化**的（##301）—— DOM 里只挂视口附近若干轮，
+ * 页面死在底部时第 1 轮根本不挂着，`document.body.textContent` 里也没有它。
+ * 「更早的历史还在」的可观测判据 = 滚到顶就能看见（滚动容器见 `LocalChatPage.tsx:4218` 的 `.diy-chat`）。
+ */
+async function scrollChatToTopUntil(match: string, max = 10): Promise<boolean> {
+  for (let i = 0; i < max; i++) {
+    if (await bodyHas(match)) return true;
+    await ui.query<string>(`(() => {
+      const el = document.querySelector('.diy-chat');
+      if (!el) return 'no-scroller';
+      el.scrollTop = 0;
+      el.dispatchEvent(new Event('scroll', { bubbles: true }));
+      return 'ok'; })()`);
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  return await bodyHas(match);
+}
+
 /** 预算输入框当前值（KB） */
 const budgetKb = () => ui.query<string>(`document.querySelector('input[aria-label="压缩预算KB"]')?.value ?? ''`);
 
@@ -146,7 +184,11 @@ const compactLog = () =>
 const budgetMarks = () => (compactLog().match(/"mode":"budget"/g) || []).length;
 
 describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压缩 → 历史不销毁", () => {
-  it("setup: 造 8 轮会话（每轮一个可辨识的用户文本）", async () => {
+  // 造会话数据 = **夹具**，不是用例（##433）：写成 `it` 时它还兼着「给后面的用例置 `uri`」的职责，
+  // 于是 `vitest run -t '历史未销毁'` 这类过滤只挑中后面那条时，`uri` 仍是初始的 `""` ——
+  // 读侧拿空 uri 拼出 `local/-e3b0c44298fc/ops.jsonl`（空串 sha256 前 12 位）而 ENOENT。
+  // 夹具必须在 describe 级 hook 里跑，与「跑哪几条用例」无关。
+  beforeAll(async () => {
     const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/cp --label 压缩`);
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create "压缩 UI 验证" ${pid}`);
@@ -289,6 +331,11 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
   });
 
   it("预览区渲染请求 YAML diff（含 system/messages 与增删行）", async () => {
+    // ##406 起差异视图**缺省关闭**（大请求的 diff 计算曾把页面卡死）——
+    // 预览区先渲染的是闸门 fallback（见 `CompactSessionPanel.tsx:915` 的 `diffEnabled` 缺省 false
+    // 与 `:1396-1403` 的 fallback 分支：「计算并显示 diff…」按钮）。
+    // 不点它，`[data-compact-preview]` 根本不在 DOM 里 —— 旧用例假设预览恒开，已过时。
+    await enableDiffPreview();
     await expandAll();
     await waitUntil(
       () => ui.query<string>("document.querySelector('[data-compact-preview]')?.textContent ?? ''"),
@@ -345,19 +392,33 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
   it("点「压缩（详情页）」→ 账本记预算压缩；**历史不销毁**（聊天页仍可见第1轮）", async () => {
     await ui.clickSelector('[aria-label="压缩（详情页）"]');
     await waitUntil(() => Promise.resolve(compactLog()), (t) => t.includes('"mode":"budget"'), { label: "账本记 budget 压缩" });
-    expect(await waitUntil(() => bodyHas("第1轮问题"), (v) => v === true, { label: "第1轮仍在（不销毁）" })).toBe(true);
+    // 「历史不销毁」要按**聊天页真实可见性**断：视口在底部时先看最新一轮（压缩不该动它），
+    // 再滚到顶看最早一轮（##301 起块树是视口虚拟化的，DOM 只挂视口附近的行 ——
+    // 旧断言假设「全历史恒在 DOM 里」，测的是当时未虚拟化的布局，不是销毁与否）。
     expect(await bodyHas("第8轮问题")).toBe(true);
+    expect(await scrollChatToTopUntil("第1轮问题")).toBe(true);
   });
 
   it("历史未销毁：ops 原文仍含全部 8 轮；压缩事件账有快照（算法 + 过滤器）", async () => {
     const opsRaw = readFileSync(join(fx.HOME, sessionFileRel(uri, "ops")), "utf-8");
     for (let i = 1; i <= 8; i++) expect(opsRaw).toContain(`第${i}轮问题`);
+
+    // 自足（##433）：账本里没有任何压缩事件时就自己压一次 —— `-t '历史未销毁'` 只挑本条的场合，
+    // 上一条「点「压缩（详情页）」」被跳过，账本必定是空的，而本用例断言的前提是「压缩过一次」。
+    // 走 CLI = 同一条 `compact.run`（与 UI 按钮同一个入口），不是另一条假路径。
+    const readEvents = async () =>
+        (
+            (await fx.sh.getJson(`./diy.sh agent local compact events ${uri}`)).data as {
+                events: Array<{ kind: string; policy?: { mode?: string } }>;
+            }
+        ).events;
+    if (!(await readEvents()).some((e) => e.kind === "compact")) {
+        const run = await fx.sh.run(`./diy.sh agent local compact run ${uri} --budget-bytes 3072`);
+        expect(run.stderr).toBe("");
+        expect(run.code).toBe(0);
+    }
     // ##431：回包 = `{ events, truncated }`
-    const events = (
-        (await fx.sh.getJson(`./diy.sh agent local compact events ${uri}`)).data as {
-            events: Array<{ kind: string; policy?: { mode?: string } }>;
-        }
-    ).events;
+    const events = await readEvents();
     const compacts = events.filter((e) => e.kind === "compact");
     expect(compacts.length).toBeGreaterThanOrEqual(1);
     expect(compacts[0]!.policy?.mode).toBe("budget");
@@ -379,7 +440,8 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
 describe("M4：分表压缩点位", () => {
   let uri2 = "";
 
-  it("两步 + 一条压缩事件（落在两步之间）→ 只有其后那步标「压缩」", async () => {
+  // 同上：夹具放 describe 级 hook，别让「跑单条用例」把它跳过（##433）。
+  beforeAll(async () => {
     const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/cp2 --label 点位`);
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create "压缩点位" ${pid}`);
@@ -668,8 +730,13 @@ describe("装配管道（##344 M2）：级列表增删改 + 即时预览 + 与 C
     await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("type: recent"), { label: "type → recent 写回" });
     // ⚠️ js-yaml 把键 `n` 落成 `'n':`（YAML 1.1 的 y/n 布尔别名 ⇒ 必须引号化）；值语义不变
     expect(autoYaml()).toContain("'n': 10");
-    // 私有参数控件随 type 出现
-    expect(await ui.query<boolean>(`!!${rowSel(1, "[data-keep-n]")}`)).toBe(true);
+    // 私有参数控件随 type 出现 —— **等 DOM，不等文件**（文件已写 ≠ 界面已重渲染，
+    // 同一原则在本文件别处已注明；`setKeep` 走 RPC 后再回灌，紧跟着查 DOM 会读到上一帧）。
+    await waitUntil(
+      () => ui.query<boolean>(`!!${rowSel(1, "[data-keep-n]")}`),
+      (v) => v === true,
+      { label: "recent 级 n 控件出现" },
+    );
     expect(await ui.query<boolean>(`!!${rowSel(1, "[data-keep-role]")}`)).toBe(true);
     await fire(rowSel(1, "[data-keep-n]"), "3");
     await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("'n': 3"), { label: "n=3 写回" });
@@ -705,14 +772,21 @@ describe("装配管道（##344 M2）：级列表增删改 + 即时预览 + 与 C
     const before = autoYaml();
     // 第 3 级的删除按钮。用**合成 click**（`el.click()`）而非真实鼠标：级列表在 340px 左栏里，
     // 行可能横向溢出 ⇒ 真实点击的命中点会被裁到别的元素上（同文件里开抽屉也出于同类原因用合成 click）。
-    await ui.query<string>(
-      `(() => { const b=${rowSel(2, "[data-keep-del]")}; if(!b) return 'no'; b.click(); return 'ok'; })()`,
-    );
-    await waitUntil(
-      () => ui.query<boolean>(`!!document.querySelector('button.btn-error')`),
-      (v) => v === true,
-      { label: "ConfirmDialog 出现" },
-    );
+    // 重试上限 10 次：级列表刚被上一条用例改过（`setKeep` → RPC → 回灌），紧跟着点删除可能落在
+    // 重渲染中间态（按钮还没挂上 / 事件绑在旧行上）⇒ 弹窗不出来。这是**夹具时序**，不是被测行为：
+    // 下面「未确认前不改文件」与「确认后才写回」两条断言一个字没放宽。
+    let dialogUp = false;
+    for (let i = 0; i < 10 && !dialogUp; i++) {
+      await ui.query<string>(
+        `(() => { const b=${rowSel(2, "[data-keep-del]")}; if(!b) return 'no'; b.click(); return 'ok'; })()`,
+      );
+      dialogUp = await waitUntil(
+        () => ui.query<boolean>(`!!document.querySelector('button.btn-error')`),
+        (v) => v === true,
+        { label: "ConfirmDialog 出现", timeoutMs: 500 },
+      );
+    }
+    expect(dialogUp).toBe(true);
     // 未确认前**不改文件**（破坏性操作要显式确认）
     expect(autoYaml()).toBe(before);
     await ui.clickSelector("button.btn-error");
@@ -725,8 +799,12 @@ describe("装配管道（##344 M2）：级列表增删改 + 即时预览 + 与 C
   });
 
   it("改管道 ⇒ 预览**即时重算**（阶梯级裁法改 path → 工具结果变「只留调用」）", async () => {
+    // 预览区的 diff 计算是**按实例**的开关（##406）：本 describe 的面板是新挂的，得再开一次。
+    await enableDiffPreview();
     await expandAll();
     const before = await ui.query<string>("document.querySelector('[data-compact-preview]')?.textContent ?? ''");
+    // 先证明预览确实渲染了：否则下面「不含 X」是空串给的假绿。
+    expect(before.length).toBeGreaterThan(0);
     expect(before).not.toContain("输出已省略（只留调用）");
     await fire(rowSel(1, "[data-keep-clip]"), "path");
     await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("type: path"), { label: "clip → path 写回" });

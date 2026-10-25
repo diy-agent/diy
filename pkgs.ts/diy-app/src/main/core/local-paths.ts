@@ -19,6 +19,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import path from "node:path";
+import { invariant } from "../../shared/error-triage";
 import { diyHome } from "./state";
 
 /** 会话数据根 `$DIY_HOME/local/`（不存在则创建） */
@@ -34,8 +35,18 @@ export function localDir(): string {
  * 共享 zen 会话亲和头）。可读前缀只为便于排查，唯一性由 sha256 前 12 位负责。
  *
  * ##379 起它是**目录名**（不再是文件名前缀）；算法一字未动（硬约束）。
+ *
+ * ⚠️ 空 uri 一律当场抛（##433）：`keyOf("")` 算出来的 `-e3b0c44298fc` 是**空串的 sha256 前 12 位** ——
+ * 一个语法合法、读侧永远不会按它去找的**假会话目录**。静默拼出它 = 历史写进黑洞（写成功、读不回）。
+ * 判据只有这一处：本模块是会话路径的**唯一出口**，`sessionDir` / `sessionFile` / `sessionIdOf` /
+ * `sessionFileRel` / `legacySessionFile` 全部从它派生，故在这里拦一次就够，不要在各调用点各判一遍。
  */
 export function keyOf(taskUri: string): string {
+    invariant(
+        typeof taskUri === "string" && taskUri.trim().length > 0,
+        "agent/empty-task-uri",
+        `会话路径需要非空 taskUri（收到 ${JSON.stringify(taskUri)}）；空 uri 会拼出假目录 -<空串 sha256 前 12 位>`,
+    );
     const readable = taskUri.replace(/[^\w.-]+/g, "_").slice(0, 64);
     const sum = createHash("sha256").update(taskUri).digest("hex").slice(0, 12);
     return `${readable}-${sum}`;
@@ -213,6 +224,9 @@ export function llmLogRelPath(taskUri: string): string {
  * 变化 → noteActivity），"打开过"不等于"说过话"。
  */
 export function hasConversation(taskUri: string): boolean {
+    // 空 uri = 「没有会话」而不是「编程错误」：本函数是**列表展示用粗判**，会随任务树逐条调，
+    // 让它抛会把整张列表带下来。空 uri 走不到任何真实目录，直接给 false（与 catch 分支同价）。
+    if (typeof taskUri !== "string" || taskUri.trim().length === 0) return false;
     try {
         // 纯读：**不建目录**（列表页逐条调，建目录就是撒垃圾）
         return statSync(resolveSessionFile(taskUri, "ops")).size > 0;
