@@ -67,7 +67,9 @@ const toggleState = () =>
   );
 
 describe("chat 正文：Markdown 原文 / 渲染两态切换", () => {
-  it("setup: 造任务 + 一段带 markdown 的会话落进 ops.jsonl", async () => {
+  // 夹具（##434）：造任务 + 一段带 markdown 的会话落进 ops.jsonl。
+  // 写成 `it` 时 `-t` 过滤会跳过它 ⇒ 后续用例的 `uri` 是空串（##433 同款）。
+  beforeAll(async () => {
     const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/md --label MD`);
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create "MD 切换验证" ${pid}`);
@@ -87,6 +89,9 @@ describe("chat 正文：Markdown 原文 / 渲染两态切换", () => {
       { op: "stop", id: "t1" },
     ];
     writeFileSync(file, ops.map((o) => JSON.stringify(o)).join("\n") + "\n", "utf-8");
+
+    // 开页面也是夹具（##434）：「页面已打开」是三条用例的共同前提，不是某条用例的内容。
+    await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
   });
 
   it("打开任务页：顶栏只有一个 `<>` 切换按钮（不是并排两个），默认渲染态正文出 h2", async () => {
@@ -147,6 +152,12 @@ describe("chat 正文：Markdown 原文 / 渲染两态切换", () => {
   });
 
   it("再点一下 → 同一页面立即恢复富文本（不回退、不重挂载）", async () => {
+    // 自足（##434）：`-t` 单跑这一条时上一条用例没跑过 —— 先把「原文态」补上，
+    // 否则测的就不是「再点一下」，而是在渲染态上首次点击（假红）。
+    if ((await ui.query<string>("localStorage.getItem('diy_chat_md')")) !== "0") {
+      await ui.clickSelector(TOGGLE);
+      await waitUntil(showsRawHeading, (v) => v === true, { label: "切到原文态（自足前置）" });
+    }
     await ui.clickSelector(TOGGLE);
     expect(await waitUntil(h2Text, (t) => t === "结论标题", { label: "h2 回来" })).toBe("结论标题");
     expect(await ui.query<string>("localStorage.getItem('diy_chat_md')")).toBe("1");

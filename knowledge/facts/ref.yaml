@@ -71,7 +71,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:49
       verifiedAt: '2026-10-22'
   ref#dsh:
     value: |-
@@ -81,7 +80,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:52
       verifiedAt: '2026-10-22'
   ref#opencode:
     value: |-
@@ -91,7 +89,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:50
       verifiedAt: '2026-10-22'
   ref#outcome:
     value: |-
@@ -101,7 +98,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:53
       verifiedAt: '2026-10-22'
   ref#pi:
     value: |-
@@ -111,5 +107,4 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:51
       verifiedAt: '2026-10-22'

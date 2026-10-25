@@ -16,6 +16,7 @@ import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
 import {
     CLEARED_SESSION_KINDS,
+    hasConversation,
     keyOf,
     legacySessionFile,
     llmFile,
@@ -49,6 +50,20 @@ describe("分层落位（##379）", () => {
 
     it("旧平铺路径仍可算出（迁移 / 兜底用）：local/<key>.<kind>.jsonl", () => {
         expect(legacySessionFile(URI, "compact")).toBe(join(localDir(), `${keyOf(URI)}.compact.jsonl`));
+    });
+});
+
+describe("会话 key 的前提：uri 非空（##433）", () => {
+    // 空 uri 会算出 `-e3b0c44298fc`（空串 sha256 前 12 位）—— 语法合法、永远是假的目录。
+    // 静默拼出它 = 历史写进黑洞；故唯一出口直接抛，不让各调用点自己判。
+    it("keyOf('') / 空串 uri 的任意派生路径 一律抛（不静默拼假目录）", () => {
+        expect(() => keyOf("")).toThrow(/agent\/empty-task-uri/);
+        expect(() => keyOf("   ")).toThrow(/agent\/empty-task-uri/);
+        expect(() => sessionFile("", "ops")).toThrow(/agent\/empty-task-uri/);
+    });
+
+    it("hasConversation('') = false（列表粗判不抛，空 uri 就是没对话）", () => {
+        expect(hasConversation("")).toBe(false);
     });
 });
 
@@ -112,9 +127,12 @@ function URI_SPLIT(uri: string): string {
 }
 
 describe("clear 的文件清单（两落位都删；changelog 除外）", () => {
-    it("覆盖全部 kind × 新老两份", () => {
+    it("覆盖全部 kind × 新老两份 + 压缩边界快照", () => {
         const files = sessionFilesToClear(URI);
-        expect(files.length).toBe(CLEARED_SESSION_KINDS.length * 2);
+        // ##431：除 7 种流水的「新 + 旧」两份外，还要删 `compact-state.json` 旁路快照
+        // （留着它 = 清空后仍记着旧边界/旧工具 id，下次写又会复活）。这条断言写死在 kinds*2
+        // 时是 ##431 之后的遗留红 —— 清单变长是故意的，断言的算式也要跟上。
+        expect(files.length).toBe(CLEARED_SESSION_KINDS.length * 2 + 1);
         for (const kind of CLEARED_SESSION_KINDS) {
             expect(files).toContain(sessionFile(URI, kind));
             expect(files).toContain(legacySessionFile(URI, kind));

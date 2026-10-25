@@ -147,7 +147,9 @@ function assistantTextOnDisk(): { text: string; deltas: number } {
 }
 
 describe("会话流式输出的单通道落地（真实界面）", () => {
-    it("setup: 打开该任务的对话视图", async () => {
+    // 夹具（##434）：建 ui driver + 打开该任务的对话视图。
+    // 写成 `it` 时 `-t` 过滤会跳过它 ⇒ 后续用例的 `ui` 未初始化（##433 同款）。
+    beforeAll(async () => {
         ui = await makeUiDriver(fx.electron.cdpUrl, async () => {
             const r = await fx.sh.getJson("./diy.sh ui inspect");
             return ((r.data as Record<string, unknown>)?.data as Record<string, unknown>)?.tree as A11yNode;

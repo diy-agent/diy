@@ -12,6 +12,15 @@ facts:
     evidence:
       source: user
       verifiedAt: '2026-10-21'
+  find#archived:
+    value: |-
+      `diy/pkgs/` **Python 包已归档**：代码保留，能力已放弃。不要参考、不要迁移其行为；一切以 TS 实现为准
+    id: agents.find.archived
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-25'
   find#cfg:
     value: |-
       `pkgs.ts/diy-app/src/runtime.ts` —— **`DIY_*` 环境变量契约的唯一源**
@@ -66,6 +75,15 @@ facts:
     evidence:
       source: user
       verifiedAt: '2026-10-21'
+  find#main:
+    value: |-
+      `diy/` **主 monorepo**（TypeScript + Electron 主线）→ 细节见 `diy/AGENTS.md`
+    id: agents.find.main
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-25'
   find#prompt:
     value: |-
       内置提示词 `pkgs.ts/diy-app/src/main/prompts/defaults.ts`（唯一真源）· 装配 `pkgs.ts/diy-app/src/main/services/prompt-registry.ts`
@@ -75,6 +93,24 @@ facts:
     evidence:
       source: user
       verifiedAt: '2026-10-21'
+  find#quant:
+    value: |-
+      `diyq/` 金融预测（xtquant）
+    id: agents.find.quant
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-25'
+  find#research:
+    value: |-
+      `diy-research/` 研究仓（子目录混乱，不承诺准确）
+    id: agents.find.research
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-25'
   find#rpc:
     value: |-
       `pkgs.ts/diy-rpc/` RPC 协议 + 传输（纯内核，零 Node/Electron 依赖）；**npm 发布名 `@diy-agent/rpc`**（见 `tool.publish`）
@@ -84,6 +120,15 @@ facts:
     evidence:
       source: user
       verifiedAt: '2026-10-21'
+  find#sandbox:
+    value: |-
+      `_dev-testbed/` 实验沙箱（无约束）
+    id: agents.find.sandbox
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-25'
   find#talk:
     value: |-
       `pkgs.ts/diy-talk/` 对话容器内核（事件 / 锚点 / 反应原语 + role 铁律，零依赖；消费者 `@diy/flow`（`Event` 原语）；接 ##319 存储/装配）
@@ -102,6 +147,15 @@ facts:
     evidence:
       source: user
       verifiedAt: '2026-10-21'
+  find#test:
+    value: |-
+      `_diy/` 开发测试项目
+    id: agents.find.test
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-25'
   find#ui:
     value: |-
       `pkgs.ts/diy-ui/`（包名 `diyui`）纯 TS / 零框架的**声明式 DOM 层**（原语 `Signal`/`Scope`/`Component`/`Cell`/`Scheduler` + provider `pi-tui`）；`web/`（Vite）是它的 demo 站
@@ -111,3 +165,12 @@ facts:
     evidence:
       source: user
       verifiedAt: '2026-10-21'
+  find#work:
+    value: |-
+      `_diy-work/` 临时工作区（Hermes agent 用，gitignore 排除）
+    id: agents.find.work
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-25'

@@ -21,6 +21,18 @@ interface ElectronFixture {
 
 let fx: ElectronFixture;
 
+/** 仓库根（diy.sh 所在）。会话 cwd 是它，但下面有用例要 cd 到别处，故留一份绝对路径。 */
+const REPO_ROOT = join(__dirname, "..", "..", "..");
+
+/** 在**指定目录**下跑 diy 子命令并取 JSON（归属用例需要把 cwd 放到别处）。
+ *  不能用 `fx.sh.getJson`：它把 `--json` 拼在整行末尾，`(cd x && …)` 这种写法会变成语法错。 */
+async function jsonIn(dir: string, args: string): Promise<any> {
+  const r = await fx.sh.run(`cd ${dir} && ${REPO_ROOT}/diy.sh ${args} --json`);
+  await fx.sh.run(`cd ${REPO_ROOT}`); // 会话 cwd 复位（上面那条会把它留在 dir）
+  if (r.code !== 0) throw new Error(`[jsonIn ${dir}: ${args}] exit=${r.code}\n${r.stderr}`);
+  return JSON.parse(r.stdout);
+}
+
 beforeAll(async () => {
   const electron = await startElectronTest();
   const HOME = electron.home;
@@ -45,6 +57,12 @@ async function freshProj(name: string): Promise<string> {
 }
 
 /** 清理：删 project 连带其全部任务 */
+/** 建一个**指定目录**的 project（可带 label），返回 id —— 归属用例需要知道 path。 */
+async function projAt(path: string, label?: string): Promise<string> {
+  const res = await fx.sh.getJson(`./diy.sh project create ${path}${label ? ` -l ${label}` : ""}`);
+  return String((res.data as any)?.data?.id);
+}
+
 async function cleanupProj(id: string): Promise<void> {
   await fx.sh.run(`./diy.sh project remove ${id}`);
 }
@@ -898,5 +916,77 @@ describe("task create / drafts set 正文护栏（##376）", () => {
     // create 的 desc 还得说清"不剥头"（与 edit 的差别，免得调用方以为能传整份任务文件）
     const hc = await fx.sh.run(`./diy.sh task create --help`);
     expect(hc.stdout).toContain("剥头");
+  });
+
+  // ── 归属（##430）：创建得让人看得见"落到哪个仓"，选错要拦 ──
+
+  it("create — 回显归属（uri + project + label + path）", async () => {
+    const path = `${fx.HOME}/t-echo`;
+    const pid = await projAt(path, "回声仓");
+
+    const d = ((await fx.sh.getJson(`./diy.sh task create 回显归属 ${pid}`)).data as any).data;
+    expect(d.uri).toBe(`projects/${pid}/tasks/1`);
+    expect(d.project).toBe(pid);
+    expect(d.label).toBe("回声仓");
+    // path 存盘时已归一（home 内 → ~/…），只断言指得到那个目录
+    expect(String(d.path)).toContain("t-echo");
+    await cleanupProj(pid);
+  });
+
+  it("create — cwd 属于 project A 却给 project B ⇒ 拒绝（不静默落到错项目）", async () => {
+    const aPath = `${fx.HOME}/t-own-a`;
+    const bPath = `${fx.HOME}/t-own-b`;
+    const a = await projAt(aPath);
+    const b = await projAt(bPath);
+    await fx.sh.run(`mkdir -p ${aPath}/sub`);
+
+    // 在 A 的子目录（worktree 同理）里给 B 建任务 → 拦，并列出候选
+    await fx.sh.assertSession(`
+      $! (cd ${aPath}/sub && ${REPO_ROOT}/diy.sh task create 落错仓 ${b})
+      *拒绝创建*
+      *${a}*
+    `);
+    // 不静默创建：两边都没有任务
+    expect(((await fx.sh.getJson(`./diy.sh task list -p ${b}`)).data as any).data.tasks).toEqual([]);
+    expect(((await fx.sh.getJson(`./diy.sh task list -p ${a}`)).data as any).data.tasks).toEqual([]);
+
+    // 同一个 cwd 给对的 project → 照常创建（不误拦）
+    const ok = (await jsonIn(`${aPath}/sub`, `task create 落对仓 ${a}`)).data.data;
+    expect(ok.uri).toBe(`projects/${a}/tasks/1`);
+    await cleanupProj(a);
+    await cleanupProj(b);
+  });
+
+  it("create — --force 才允许在别的项目下建任务（逃生口）", async () => {
+    const aPath = `${fx.HOME}/t-force-a`;
+    const bPath = `${fx.HOME}/t-force-b`;
+    const a = await projAt(aPath);
+    const b = await projAt(bPath);
+    await fx.sh.run(`mkdir -p ${aPath}/sub`);
+
+    const d = (await jsonIn(`${aPath}/sub`, `task create 强行越仓 ${b} --force`)).data.data;
+    expect(d.uri).toBe(`projects/${b}/tasks/1`);
+    await cleanupProj(a);
+    await cleanupProj(b);
+  });
+
+  it("list — 多项目同号可分辨：data.projects 给出 id → label/path", async () => {
+    const aPath = `${fx.HOME}/t-list-a`;
+    const bPath = `${fx.HOME}/t-list-b`;
+    const a = await projAt(aPath, "列表A");
+    const b = await projAt(bPath, "列表B");
+    await fx.sh.run(`./diy.sh task create 甲任务 ${a}`);
+    await fx.sh.run(`./diy.sh task create 乙任务 ${b}`);
+
+    const d = ((await fx.sh.getJson(`./diy.sh task list`)).data as any).data;
+    // tasks 形状不变（uri 字符串数组）—— 老调用方不受影响
+    expect(d.tasks).toContain(`projects/${a}/tasks/1`);
+    expect(d.tasks).toContain(`projects/${b}/tasks/1`);
+    // 归属表让同号任务分得清
+    const byId = new Map((d.projects as any[]).map((p: any) => [p.id, p]));
+    expect((byId.get(a) as any).label).toBe("列表A");
+    expect(String((byId.get(b) as any).path)).toContain("t-list-b");
+    await cleanupProj(a);
+    await cleanupProj(b);
   });
 });

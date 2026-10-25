@@ -56,7 +56,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:33
       verifiedAt: '2026-10-22'
   tool#electron-cache:
     value: |-
@@ -85,7 +84,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:42
       verifiedAt: '2026-10-22'
   tool#file-write:
     value: |-
@@ -113,7 +111,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:40
       verifiedAt: '2026-10-22'
   tool#model-import:
     value: |-
@@ -132,7 +129,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:41
       verifiedAt: '2026-10-22'
   tool#pkg-action:
     value: |-
@@ -143,6 +139,15 @@ facts:
     evidence:
       source: user
       verifiedAt: '2026-10-21'
+  tool#pkg:
+    value: |-
+      TS 用 npm workspaces（`package.json` + `package-lock.json`）；Python 遗留用 uv（仅归档区）
+    id: agents.tool.pkg
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-25'
   tool#publish:
     value: |-
       npm 发布（`@diy-agent`）：根 `./sha.sh publish [--dry-run]`，认证 `NPM_PUBLISH_TOKEN`；仓内 `package.json` 恒指 `src/*.ts` 且留 `private:true`（护栏）
@@ -160,7 +165,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:37
       verifiedAt: '2026-10-22'
   tool#scan-big-dirs:
     value: |-
@@ -177,6 +181,15 @@ facts:
     evidence:
       source: user
       verifiedAt: '2026-10-22'
+  tool#sha:
+    value: |-
+      每个项目自带开发入口 `./sha.sh`（`./sha.sh --help` 看子命令）；公共函数库 `sha.common.sh`
+    id: agents.tool.sha
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-25'
   tool#shell:
     value: |-
       文件操作优先 `fd` / `rg`，替代 `find` / `grep`
@@ -185,7 +198,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:34
       verifiedAt: '2026-10-22'
   tool#skill-dir:
     value: |-
@@ -205,7 +217,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:39
       verifiedAt: '2026-10-22'
   tool#sync-gate:
     value: |-

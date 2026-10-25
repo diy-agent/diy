@@ -151,4 +151,30 @@ describe("定义校验（写入前拦住非法配置）", () => {
             assertPersonaDef({ name: "x", model: "mimo-v2.6-flash", reasoningEffort: "high", instructions: "sir" }),
         ).not.toThrow();
     });
+
+    it("输出软上限（##429）：省略 = 跟随场景缺省；非正数当场拒（不存“看着有、实际被忽略”的数）", () => {
+        expect(() =>
+            assertPersonaDef({ name: "x", model: "mimo-v2.6-flash", reasoningEffort: "high", instructions: "" }),
+        ).not.toThrow();
+        expect(() =>
+            assertPersonaDef({
+                name: "x",
+                model: "mimo-v2.6-flash",
+                reasoningEffort: "high",
+                instructions: "",
+                maxOutputTokens: 8000,
+            }),
+        ).not.toThrow();
+        for (const bad of [0, -1, Number.NaN]) {
+            expect(() =>
+                assertPersonaDef({
+                    name: "x",
+                    model: "mimo-v2.6-flash",
+                    reasoningEffort: "high",
+                    instructions: "",
+                    maxOutputTokens: bad,
+                }),
+            ).toThrow(/输出软上限/);
+        }
+    });
 });

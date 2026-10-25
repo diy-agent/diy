@@ -231,7 +231,6 @@ import {
     apiOf,
     contextLimitOf,
     costOf,
-    effectiveMaxOutputTokens,
     findModel,
     findPricedModel,
     getModelCatalog,
@@ -248,6 +247,17 @@ import {
     type ReasoningEffort,
 } from "../../shared/models";
 import { personaByIdOrName, personaForTask } from "../core/persona";
+import { personaOutputOverride, taskOutputOverride } from "../core/output-budget";
+import { inboxEntryOf, inboxHub } from "./inbox";
+import { DEFAULT_COST_ALARM, costAlarmsOf, newCostAlarmState, usdText } from "../../shared/cost-alarm";
+import {
+    OUTPUT_SCENE_DEFAULTS,
+    describeOutputBudget,
+    resolveOutputBudget,
+    type OutputBudget,
+    type OutputScene,
+} from "../../shared/output-budget";
+import type { InboxEntry } from "../../shared/inbox";
 import { taskTurnGate } from "../core/turn-gate";
 import { ensureReasoningReplay, isDeepSeekWire, type ReasoningReplayOpts } from "./reasoning-replay";
 import { resolveModelKey } from "../core/model-runtime";
@@ -306,22 +316,44 @@ export function reasoningReplayOptsOf(rm: ResolvedModel, reasoningEffort: Reason
 // 解析「人物/覆盖里写的模型引用」→ 运行时模型 + 密钥：见 LocalAgentManager.resolveModel。
 
 /**
- * 按 model id 查 maxOutputTokens，回退全局 limits。
+ * 输出预算（##429）：**软硬分离**。
  *
- * ⚠️ 必须保证返回 **>= 1**：`streamText({ maxOutputTokens })` 传 0/负数会被 SDK 直接拒
- * （"maxOutputTokens must be >= 1"，##184 实测）。spec 未给 limit.output 的模型（如
- * commandcode 的 /models 只给 context_length、不给输出上限）走这里回退，绝不把 0 下发。
+ * 曾经的病（实测）：这里直接返回 models.dev 的 `limit.output`，于是「模型的物理上限」
+ * 就是「我们愿意付的上限」（生产最贵一条：output=131072=2^17，正好撞死）。
+ * 现在真发值 = `min(软上限, 模型硬上限)`，判据全在 `shared/output-budget.ts`。
+ *
+ * 这个函数只管「模型能给多少」；「我们愿意给多少」由 `outputBudgetOf` 叠三层后合并。
  */
-function modelOutputTokens(modelId: string): number {
-    return effectiveMaxOutputTokens(modelId, DEFAULT_LIMITS.maxOutputTokens);
+function modelHardLimit(modelId: string): number | null {
+    // ⚠️ 未知模型返回 null = 「模型硬上限未知」，**不是 0**：0 会让 `streamText` 直接拒
+    // （"maxOutputTokens must be >= 1"，##184 实测），而 null 的语义是「只有软上限可用」。
+    return maxOutputTokensOf(modelId) ?? null;
 }
 
 // ─── 运行限制配置（默认值 < $DIY_HOME/local/limits.json < 环境变量 DIY_LOCAL_*）──
 export interface LocalAgentLimits {
     /** 单轮最大模型步数（含工具步）；耗尽仍想调工具 → 强制收尾并 notice 提示 */
     maxSteps: number;
-    /** 单次模型请求输出上限（推理模型 reasoning 先吃预算） */
+    /**
+     * 单次模型请求的**全局**输出软上限（推理模型 reasoning 先吃预算）。
+     *
+     * ##429 起它只是覆盖链上的一层（任务 > 人物 > 本字段/env > 场景缺省），
+     * 并且**还是天花板**：任何更具体的配置都不得超过它（「我这台机器最多付这么多」）。
+     * 缺省值 16384 = 对话场景缺省（对齐 pi 的模型配置默认值）；`maxOutputTokensSource`
+     * 说清这个数是「用户配的」还是「没人配、只是缺省」—— 两者语义不同（见下）。
+     */
     maxOutputTokens: number;
+    /**
+     * `maxOutputTokens` 的来源：`env` / `file` = 用户显式配置（当作全局软上限参与覆盖链）；
+     * `default` = 没人配（此时不压制场景缺省 —— 否则摘要 2000 / 小任务 200 会被它顶掉）。
+     *
+     * 这个字段是**派生值**，不是配置项：`setLimits` 只接受数字，不为它开写口。
+     */
+    maxOutputTokensSource: "env" | "file" | "default";
+    /** 单步成本告警阈值（USD）；`0` = 关闭该类告警（##429 要求 ⑤） */
+    costWarnStepUsd: number;
+    /** 单轮累计成本告警阈值（USD）；`0` = 关闭该类告警 */
+    costWarnTurnUsd: number;
     /**
      * 单条 bash 命令超时（缺省 300s = 5 分钟）。
      *
@@ -347,7 +379,10 @@ export interface LocalAgentLimits {
 
 export const DEFAULT_LIMITS: LocalAgentLimits = {
     maxSteps: 200,
-    maxOutputTokens: 4000,
+    maxOutputTokens: OUTPUT_SCENE_DEFAULTS.chat,
+    maxOutputTokensSource: "default",
+    costWarnStepUsd: DEFAULT_COST_ALARM.stepUsd ?? 0,
+    costWarnTurnUsd: DEFAULT_COST_ALARM.turnUsd ?? 0,
     bashTimeoutMs: 300_000,
     outputClipChars: 6000,
     readMaxBytes: READ_MAX_BYTES,
@@ -369,18 +404,54 @@ function envPosInt(env: NodeJS.ProcessEnv, key: string): number | undefined {
     return n;
 }
 
-/** 合并链：默认值 < 文件 < 环境变量；非法值逐级忽略。纯函数可单测。 */
+/** 非负数值（0 有意义：成本告警的「关闭」；非法值 → undefined） */
+function envNonNegNumber(env: NodeJS.ProcessEnv, key: string): number | undefined {
+    const raw = env[key];
+    if (raw === undefined || raw.trim() === "") return undefined;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0) {
+        console.warn(`[local-agent] 非法环境变量 ${key}=${raw}，忽略`);
+        return undefined;
+    }
+    return n;
+}
+
+/**
+ * 合并链：默认值 < 文件 < 环境变量；非法值逐级忽略。纯函数可单测。
+ *
+ * ##429 改了两处语义，都不是纯新增：
+ *   ① `maxOutputTokens` 从「真发值」降级为「**全局软上限 + 天花板**」，并额外报 `maxOutputTokensSource`
+ *      —— “没人配”与“配成了 16384”必须能分开，否则摘要（2000）/ 小任务（200）的场景缺省会被顶掉。
+ *   ② 新增两个成本告警阈值（`0` = 关闭），同样默认值 < 文件 < env。
+ */
 export function resolveLimits(
     file: Partial<LocalAgentLimits> | null,
     env: NodeJS.ProcessEnv = process.env,
 ): LocalAgentLimits {
     const num = (v: unknown, d: number): number =>
         typeof v === "number" && Number.isFinite(v) && v > 0 ? v : d;
+    /** 非负（0 有意义：告警阈值 = 关闭） */
+    const nonNeg = (v: unknown, d: number): number =>
+        typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : d;
     const base = { ...DEFAULT_LIMITS, ...(file ?? {}) };
+    const fileOut =
+        typeof (file ?? {}).maxOutputTokens === "number" && Number.isFinite((file ?? {}).maxOutputTokens) &&
+        ((file ?? {}).maxOutputTokens as number) > 0
+            ? ((file ?? {}).maxOutputTokens as number)
+            : undefined;
+    const envOut = envPosInt(env, "DIY_LOCAL_MAX_OUTPUT_TOKENS");
     return {
         maxSteps: envPosInt(env, "DIY_LOCAL_MAX_STEPS") ?? num(base.maxSteps, DEFAULT_LIMITS.maxSteps),
-        maxOutputTokens:
-            envPosInt(env, "DIY_LOCAL_MAX_OUTPUT_TOKENS") ?? num(base.maxOutputTokens, DEFAULT_LIMITS.maxOutputTokens),
+        maxOutputTokens: envOut ?? fileOut ?? DEFAULT_LIMITS.maxOutputTokens,
+        // 来源比数值更重要：`default` = 没人配（不压制场景缺省）
+        maxOutputTokensSource: envOut !== undefined ? "env" : fileOut !== undefined ? "file" : "default",
+        // 阈值允许 0（= 关闭该类告警）：判据是**非负**，不是正数
+        costWarnStepUsd:
+            envNonNegNumber(env, "DIY_LOCAL_COST_WARN_STEP_USD") ??
+            nonNeg((file ?? {}).costWarnStepUsd, DEFAULT_LIMITS.costWarnStepUsd),
+        costWarnTurnUsd:
+            envNonNegNumber(env, "DIY_LOCAL_COST_WARN_TURN_USD") ??
+            nonNeg((file ?? {}).costWarnTurnUsd, DEFAULT_LIMITS.costWarnTurnUsd),
         bashTimeoutMs: envPosInt(env, "DIY_LOCAL_BASH_TIMEOUT_MS") ?? num(base.bashTimeoutMs, DEFAULT_LIMITS.bashTimeoutMs),
         outputClipChars: envPosInt(env, "DIY_LOCAL_OUTPUT_CLIP_CHARS") ?? num(base.outputClipChars, DEFAULT_LIMITS.outputClipChars),
         readMaxBytes: envPosInt(env, "DIY_LOCAL_READ_MAX_BYTES") ?? num(base.readMaxBytes, DEFAULT_LIMITS.readMaxBytes),
@@ -2942,6 +3013,41 @@ export class LocalAgentManager {
     }
 
     /**
+     * 输出预算（##429）—— **真发、预览、摘要三处共用这一个入口**。
+     *
+     * 链：任务（frontmatter `max_output_tokens`）> 人物（`maxOutputTokens`）>
+     *     全局（limits.json / `DIY_LOCAL_MAX_OUTPUT_TOKENS`）> 场景缺省；
+     * 之后 `tokens = min(软上限, 模型硬上限)`。判据本身在 `shared/output-budget.ts`（纯函数，可单测）。
+     *
+     * 为什么是 async：任务级覆盖要读 `AGENTS.md`（文件 IO 不进同步路径，见 `tool#async-io`）。
+     */
+    async outputBudgetOf(model: string, taskUri: string | null, scene: OutputScene): Promise<OutputBudget> {
+        const L = this.getLimits();
+        const home = diyHome();
+        const task = taskUri ? await taskOutputOverride(home, taskUri) : null;
+        const persona = taskUri ? personaOutputOverride(home, taskUri) : null;
+        // 未配置（source=default）不等于配成 16384：前者要让场景缺省说话（摘要 2000 / 小任务 200）
+        const global = L.maxOutputTokensSource === "default" ? null : L.maxOutputTokens;
+        return resolveOutputBudget({ scene, task, persona, global, modelLimit: modelHardLimit(model) });
+    }
+
+    /** 成本告警阈值（`0` = 关闭该类），本轮起跑时的 limits 快照口径 */
+    costAlarmCfgOf(L: LocalAgentLimits): { stepUsd: number | null; turnUsd: number | null } {
+        return {
+            stepUsd: L.costWarnStepUsd > 0 ? L.costWarnStepUsd : null,
+            turnUsd: L.costWarnTurnUsd > 0 ? L.costWarnTurnUsd : null,
+        };
+    }
+
+    /**
+     * 往通知信箱落一条（N1 的「不许只闪一下」那一半，##429 要求 ④/⑤）。
+     * 不阻塞轮次：记账失败只出声，绝不让一次对话因写不进账本而失败。
+     */
+    noteInbox(partial: Omit<InboxEntry, "id" | "ts">): void {
+        void inboxHub.push(inboxEntryOf(partial)).catch((e) => console.error("[local-agent] 信箱落盘失败:", e));
+    }
+
+    /**
      * 写运行限制（##240 第 3 项）：patch 合并进 `$DIY_HOME/local/limits.json`，并**立即失效缓存**。
      *
      * 语义：**下一轮生效** —— 在跑的轮次用的是它起跑时读到的值（`runTurn` 开头 `getLimits()` 一次），
@@ -2951,10 +3057,12 @@ export class LocalAgentManager {
      * 钉死，写文件对它无效 —— 返回值是合并后的**生效值**，调用方以它为准即可发现。
      */
     setLimits(patch: Partial<LocalAgentLimits>): LocalAgentLimits {
-        const merged: Partial<LocalAgentLimits> = this.readLimitsFile() ?? {};
-        for (const [k, v] of Object.entries(patch) as [keyof LocalAgentLimits, unknown][]) {
-            // 非法值忽略（不写坏文件）：与 resolveLimits 同一判据（有限正数）
-            if (typeof v === "number" && Number.isFinite(v) && v > 0) merged[k] = v;
+        const merged: Record<string, unknown> = { ...(this.readLimitsFile() ?? {}) };
+        // `0` 只对两个成本告警阈值有意义（= 关闭该类告警，##429）：其余字段仍是「有限正数」
+        const allowZero: ReadonlySet<string> = new Set(["costWarnStepUsd", "costWarnTurnUsd"]);
+        for (const [k, v] of Object.entries(patch) as [string, unknown][]) {
+            // 非法值忽略（不写坏文件）：与 resolveLimits 同一判据（有限数；正数，或告警阈值的 0）
+            if (typeof v === "number" && Number.isFinite(v) && (v > 0 || (v === 0 && allowZero.has(k)))) merged[k] = v;
         }
         writeFileAtomic(limitsFile(), `${JSON.stringify(merged, null, 2)}\n`);
         this._limits = null; // 失效缓存：下一次 getLimits() 现读（含新值）
@@ -4140,11 +4248,14 @@ export class LocalAgentManager {
         const { rm, key } = this.resolveModel(model);
         const dropped = droppedTextOf(p.store, p.droppedIds);
         this.noteTraffic(taskUri, "summary", rm, 2);
+        // 场景 = `summary`（##429 要求 ③）：摘要只要一段短 JSON，缺省 2000 不变（回归口径），
+        // 但**走同一个解析器**：任务/人物/全局若写得更小，摘要也一样不许越过去（宁可截断重试）。
+        const budget = await this.outputBudgetOf(model, taskUri, "summary");
         const res = await generateText({
             model: this.modelFor(rm, key),
             prompt: summaryExtractionPrompt(dropped, p.droppedIds.length),
             headers: { "x-opencode-session": sessionIdOf(taskUri) },
-            maxOutputTokens: 2000,
+            maxOutputTokens: budget.tokens,
             maxRetries: 2,
         });
         const data = parseSummary(res.text);
@@ -5571,7 +5682,13 @@ export class LocalAgentManager {
 
         const cwd = cwd0;
         const L = this.getLimits();
-        const modelMax = modelOutputTokens(model);
+        // 输出预算（##429）：软硬分离，真发值 = min(软上限, 模型硬上限)。
+        // **整轮只算一次**（与 L 同口径：本轮不中途换挡 —— 否则同轮前后步的 maxTokens 不一致）。
+        const budget = await this.outputBudgetOf(model, taskUri, "chat");
+        const modelMax = budget.tokens;
+        // 成本告警（要求 ⑤）：每轮一份状态（同类只报一次，见 shared/cost-alarm.ts）
+        const costCfg = this.costAlarmCfgOf(L);
+        let costState = newCostAlarmState();
         // 研究用：把“发给上游的 messages”与 fullStream 的每个 part 原样落盘
         const raw = rawDumpEnabled() ? rawFile(taskUri) : null;
         let rawSeq = 0;
@@ -5726,7 +5843,19 @@ export class LocalAgentManager {
                 model: model,
                 system: delivery.system.text,
                 tools: Object.keys(tools),
-                settings: { maxSteps: L.maxSteps, maxOutputTokens: modelMax, maxRetries: 2, reasoningEffort: reasoningEffort ?? "none" },
+                settings: {
+                    maxSteps: L.maxSteps,
+                    maxOutputTokens: modelMax,
+                    // ##429 要求 ②：**这个上限是哪一层定的**也要落 —— 光有数字回答不了“为何这次是 xxx”
+                    outputBudget: {
+                        soft: budget.soft,
+                        layer: budget.layer,
+                        modelLimit: budget.modelLimit,
+                        ...(budget.clamped ? { clamped: budget.clamped } : {}),
+                    },
+                    maxRetries: 2,
+                    reasoningEffort: reasoningEffort ?? "none",
+                },
                 messages: sent,
             });
             // 投递快照（每轮真发一条）：投递事实，供 UI 的 step/diff 用（与 raw 那种旁路观测不同）。
@@ -6127,6 +6256,32 @@ export class LocalAgentManager {
                                 // **无价目 ≠ 0**：只累加有价目的步，无价目的只计数（##372 附带要求 1）
                                 if (cost) turnCost = turnCost ? sumCosts([turnCost, cost]) : cost;
                                 else turnUnpriced++;
+                                // 成本告警（##429 要求 ⑤）：兜底网，**只告警不拦**。
+                                // 判据是纯函数；同类每轮只触发一次（同轮第 2、3 步继续贵不再刷屏）。
+                                {
+                                    const ca = costAlarmsOf(
+                                        costState,
+                                        cost ? cost.total : null,
+                                        turnCost ? turnCost.total : null,
+                                        costCfg,
+                                        stepN,
+                                    );
+                                    costState = ca.state;
+                                    for (const alarm of ca.alarms) {
+                                        this.noteInbox({
+                                            level: "N1",
+                                            kind: alarm.kind,
+                                            taskUri,
+                                            text: alarm.text,
+                                            source: "agent 成本门槛告警（##429）",
+                                            reason: `${alarm.kind === "cost-step" ? "单步" : "单轮"}金额超过阈值（${usdText(alarm.data.thresholdUsd)} USD）`,
+                                            detail:
+                                                "阈值来源 = limits.json / 环境变量 DIY_LOCAL_COST_WARN_STEP_USD、DIY_LOCAL_COST_WARN_TURN_USD（0 = 关闭）。" +
+                                                "这是兜底网：它不拦请求，只告诉你钱花到哪一步了。实际金额与计价依据见会话页脚的用量账。",
+                                            data: alarm.data,
+                                        });
+                                    }
+                                }
                                 // 自量（##404）：把这一步的桶+金额记进内存账 —— 下一步重建上下文时
                                 // `runtime.self` 就有数可报（含跨轮：同一进程里下轮首步仍读得到）。
                                 noteSelfStep(taskUri, b, cost);
@@ -6175,8 +6330,27 @@ export class LocalAgentManager {
                             const fr = (part as { finishReason?: string }).finishReason;
                             let notice: string | undefined;
                             if (fr === "length") {
-                                notice = `输出达到 maxOutputTokens=${modelMax} 被截断（${model} 硬上限），可再发一条消息接上`;
-                                setEndReason({ type: "max-tokens", data: { maxOutputTokens: modelMax } });
+                                // ##429 要求 ④：文案要说清「是软上限截的，不是模型不够」+ 给一个不需思考的下一步，
+                                // 并把「哪一层定的」写进 endReason（日志/流量页可对账）。
+                                notice = `这次回复被输出上限截断（${describeOutputBudget(budget)}），说「继续」可接上`;
+                                setEndReason({
+                                    type: "max-tokens",
+                                    data: { maxOutputTokens: modelMax, layer: budget.layer },
+                                });
+                                // N1：toast（renderer 订阅信箱）+ **信箱留痕**（落盘，重启后仍可回看）。
+                                // 为什么要两处：toast 会消失、老 turn.notice 只在会话页脚（用户不在那页就错过）。
+                                this.noteInbox({
+                                    level: "N1",
+                                    kind: "max-tokens",
+                                    taskUri,
+                                    text: notice,
+                                    source: "agent 输出上限（##429）",
+                                    reason: `本轮某个回答撞上了输出上限 ${modelMax}（${budget.layer === "task" ? "任务" : budget.layer === "persona" ? "人物" : budget.layer === "global" ? "全局" : "场景缺省"}定的）`,
+                                    detail:
+                                        "真发值 = min(软上限, 模型硬上限)：软上限决定“愿意付多少”（任务 frontmatter max_output_tokens > 人物的 maxOutputTokens > " +
+                                        "limits.json / DIY_LOCAL_MAX_OUTPUT_TOKENS > 场景缺省 16384）。撞上限后模型并没有说完，发「继续」即可从断点接上。",
+                                    data: { maxOutputTokens: modelMax, soft: budget.soft, layer: budget.layer },
+                                });
                             } else if (stepN >= L.maxSteps && lastAct === "tool") {
                                 notice = `达到 maxSteps=${L.maxSteps} 步上限，本轮强制收尾（模型仍在请求工具）；继续发消息可接力`;
                                 setEndReason({ type: "max-steps", data: { steps: stepN, limit: L.maxSteps } });
@@ -6439,7 +6613,9 @@ export async function previewSimulatedRequest(opts: {
     const model = opts.model ?? persona.model;
     const cwd = resolveCwdWithNote(diyHome(), taskUri).cwd;
     const L = getLocalAgent().getLimits();
-    const modelMax = modelOutputTokens(model);
+    // 与真发**同一条预算链**（##429）—— 预览必须能看到真正会发出去的 max_tokens，
+    // 否则“预览 = 真发”这条不变量就在最容易被拿来核对的那个字段上破了。
+    const modelMax = (await getLocalAgent().outputBudgetOf(model, taskUri, "chat")).tokens;
     // 历史：优先用调用方传的；否则从块树现算（与真发同一条投影 —— 含压缩边界与工具裁剪）。
     // 全量下发（不再有截尾上限）：历史已被压缩边界裁过，再截尾会破坏「预览=真发」。
     const hist = opts.messages?.length

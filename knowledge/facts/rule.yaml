@@ -11,7 +11,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:21
       verifiedAt: '2026-10-22'
   rule.code#discriminated-union:
     value: |-
@@ -21,7 +20,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:20
       verifiedAt: '2026-10-22'
   rule.dev#check:
     value: |-
@@ -105,7 +103,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:12
       verifiedAt: '2026-10-22'
   rule.doc#doc-fresh:
     value: |-
@@ -115,7 +112,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:11
       verifiedAt: '2026-10-22'
   rule.doc#doc-scope:
     value: |-
@@ -125,7 +121,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:13
       verifiedAt: '2026-10-22'
   rule.doc#inherit:
     value: |-
@@ -145,7 +140,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:29
       verifiedAt: '2026-10-22'
   rule.doc#specs:
     value: |-
@@ -155,7 +149,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:14
       verifiedAt: '2026-10-22'
   rule.err-triage#code:
     value: |-
@@ -165,7 +158,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:27
       verifiedAt: '2026-10-22'
   rule.err-triage#defect:
     value: |-
@@ -175,7 +167,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:24
       verifiedAt: '2026-10-22'
   rule.err-triage#evolve:
     value: |-
@@ -185,7 +176,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:28
       verifiedAt: '2026-10-22'
   rule.err-triage#recognized:
     value: |-
@@ -195,7 +185,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:25
       verifiedAt: '2026-10-22'
   rule.err-triage#triage:
     value: |-
@@ -205,7 +194,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:23
       verifiedAt: '2026-10-25'
   rule.err-triage#unknown:
     value: |-
@@ -215,7 +203,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:26
       verifiedAt: '2026-10-22'
   rule.task#atomic-task:
     value: |-
@@ -225,7 +212,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:16
       verifiedAt: '2026-10-22'
   rule.task#task-artifacts:
     value: |-
@@ -235,7 +221,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:19
       verifiedAt: '2026-10-22'
   rule.task#task-owner:
     value: |-
@@ -245,7 +230,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:17
       verifiedAt: '2026-10-22'
   rule.task#task-ref:
     value: |-
@@ -255,7 +239,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:15
       verifiedAt: '2026-10-22'
   rule.task#task-root-logical:
     value: |-
@@ -265,7 +248,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:18
       verifiedAt: '2026-10-22'
   rule.task#task-write:
     value: |-
@@ -284,7 +266,24 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:10
+      verifiedAt: '2026-10-25'
+  rule#gpg:
+    value: |-
+      **GPG 签名是所有 git 操作的硬要求**，失败即停并求助，禁 `--no-gpg-sign`
+    id: agents.rule.gpg
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-25'
+  rule#knowledge-placement:
+    value: |-
+      **一条「经验」是三句话，看中心句定去处**：可复现 / 可校验的断言（「X 是 Y」）→ facts（带 evidence）；「遇到 A 就做 B」的操作序列 → skill；「我在<场景>做了<动作>，结果<代价>」→ journal（**中心句必须是事件句**；「我否掉 A 选了 B，因为…」走 `kind=decision`，不是 `pitfall`）。**反例**：把「`DIY_HOME` 优先级高于 CLI 缺省」这种**规则句**写成 `kind=pitfall` —— 读起来像知识条目，事后分不清是实测还是转述。
+    id: agents.rule.knowledge-placement
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
       verifiedAt: '2026-10-25'
   rule#lang:
     value: |-
@@ -294,7 +293,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:7
       verifiedAt: '2026-10-25'
   rule#session-start:
     value: |-
@@ -304,7 +302,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:9
       verifiedAt: '2026-10-25'
   rule#structured-exit:
     value: |-
@@ -314,7 +311,24 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:22
+      verifiedAt: '2026-10-25'
+  rule#task-scratch:
+    value: |-
+      **还没想清的东西不许伪装成结论**：「有个念头 / 半成品结论」→ 任务 body 的 `## 草稿`；「我还没搞清的事 + 打算怎么查」→ `## 未定`（未知清单；与待办的区别：待办=要做，未知=要先弄明白）。**都不进 facts/journal**（facts 要证据、journal 不可改，草稿塞进去就是善意的污染）。**scope 一律任务级**，判据 = **任务收口是系统里唯一天然的清理节拍**，全局 / 项目级草稿没有收口时刻站、必成第二个坟场；跨任务该进 `facts(project)` / skill。**没有未知清单的载体，人就会用行动掩盖无知**（实测：不知道 `diy agent local chat` 存在而翻源码硬啃 5 小时）。
+    id: agents.rule.task-scratch
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-25'
+  rule#task-three-layers:
+    value: |-
+      任务的长期信息分三层，**混层是 body 膨胀的唯一病因**（实测 342 个任务 body 合计 4.25 MB、最大 349 KB，绝大部分是一次次处理记录）：**① 现在要做什么**（目标 / 台账 / 待办）留任务 body；**② 现在是什么**且可校验带证据 → 事实库（`diy facts`）；**③ 发生过什么**（处理记录 / review / 踩坑 / 被否掉的方案）→ 日志（`diy journal`）。判据：能改写成「现在是什么」→ facts；能改写成「我某时刻做了什么」→ journal；能改写成「接下来做什么」→ body。**journal 只追加、不参与每轮上下文**，所以搬过去就等于从固定成本里删掉。任务级长期知识用**任务级库**（`diy facts … --in task:<taskUri>`，词表继承仓库）。
+    id: agents.rule.task-three-layers
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
       verifiedAt: '2026-10-25'
   rule#verify:
     value: |-
@@ -324,5 +338,4 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/AGENTS.md:8
       verifiedAt: '2026-10-25'

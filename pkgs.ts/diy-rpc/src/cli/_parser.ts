@@ -96,7 +96,7 @@ export function parseArgv(def: _AnyProcedureMeta, argv: string[], opts: ParseArg
   for (const [key, field] of Object.entries(shape)) {
     const optMeta = _getCliOptionMeta(field);
     const argMeta = _getCliArgMeta(field);
-    if (optMeta) {
+    if (optMeta && !optMeta.callerCwd) {
       optionNames.set(key, key);
       // kebab 别名：`--by-agent` 与 `--byAgent` 等价（见 kebabOf）
       const kebab = kebabOf(key);
@@ -157,6 +157,12 @@ export function parseArgv(def: _AnyProcedureMeta, argv: string[], opts: ParseArg
   // 按顺序映射位置参数
   for (let i = 0; i < argOrder.length && i < positional.length; i++) {
     input[argOrder[i]] = positional[i];
+  }
+
+  // `callerCwd` 字段：自动填调用方 cwd（不是用户可敲的选项，故不参与上面的 argv 解析）。
+  // handler 跑在 app 进程，process.cwd() 是应用目录 —— 要它知道「人在哪敲的命令」只能这里带上。
+  for (const [key, field] of Object.entries(shape)) {
+    if (_getCliOptionMeta(field)?.callerCwd) input[key] = opts.cwd ?? process.cwd();
   }
 
   // 预转数字 + JSON 数组 + boolean
@@ -311,10 +317,10 @@ export function generateHelp(def: _AnyProcedureMeta, cmdName: string, descriptio
     lines.push('');
   }
 
-  // 命名选项
+  // 命名选项（`callerCwd` 是自动注入的内部字段，不给人看）
   const opts: [string, ReturnType<typeof _getCliOptionMeta>][] =
     Object.entries(shape).map(([k, f]) => [k, _getCliOptionMeta(f)] as any)
-      .filter(([, m]) => m);
+      .filter(([, m]) => m && !m.callerCwd);
 
   if (opts.length > 0) {
     lines.push('Options:');

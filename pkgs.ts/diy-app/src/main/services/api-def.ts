@@ -50,6 +50,7 @@ import { DocsIndexSchema } from "../../shared/docs";
 import { JournalAddSchema, JournalFindSchema, JournalImportSchema, JournalRawSchema, JournalStatsSchema } from "../../shared/journal";
 // 「环境感知」通知契约（##384）：磁盘满 / 网断 —— 与 notice.* 同形不同源
 import { EnvNoticeSchema, EnvNoticeEventSchema } from "../../shared/env-watch";
+import { InboxEntrySchema } from "../../shared/inbox";
 import {
   CostUpdateResultSchema,
   ImportEnvResultSchema,
@@ -74,6 +75,20 @@ import { TaskStateSchema } from "../core/task-state";
 import { ChangeTypeSchema, PrioritySchema } from "../core/task-fields";
 
 const StatusDataUri = z.object({ status: z.string(), data: z.object({ uri: z.string() }) });
+
+/** task create 的回报：uri + **归属回显**（project id / label / path）。
+ *  为什么回显（##430）：创建只回 uri 时，人看不出落到了哪个仓 —— 同名 id（两个项目都有 tasks/92）
+ *  要等很久以后靠撞车才发现。label/path 不长，多回两个字段就能一眼认出。 */
+const CreateResult = z.object({
+  status: z.string(),
+  data: z.object({
+    uri: z.string(),
+    /** 实际落到的 project id */
+    project: z.string(),
+    label: z.string().optional(),
+    path: z.string().optional(),
+  }),
+});
 /** task edit 的回报：uri + 本次写入实际做了什么（剥头 / 追加）—— 见 core/task.ts 的 TaskWriteReport。
  *  可选字段（不剥头/不追加就不出现）：避免调用方从"空对象"里猜发生了什么。 */
 const StrippedHeadReportSchema = z.object({
@@ -378,6 +393,10 @@ export const apiDef = RpcSchema.router({
               \`--body-file <file|->\` 任务内容：从**文件**读（\`-\` = stdin；相对路径按当前目录解析）
             与 \`task edit\` 同一套选项形状与同一条裁决（\`core/task.ts::resolveBodyOverride\`）。
             注意：create 是新建任务，**不做「整份任务文件剥头」**（没头可覆盖），传整份文件会把头写进正文。
+
+            归属检测（##430）：cwd 落在**另一个** project 的目录（含其 worktree）里 ⇒ 直接拒绝并列出候选
+            （多项目各自自增、同号会撞车，事后很难发现）。确要在那个 project 下建 → 显式加 \`--force\`。
+            成功时回显 uri + project + label + path（只回 uri 时看不出落到了哪个仓）。
             `,
             input: {
               title: z.string().min(1, "标题不能为空").max(200).cliArg({ desc: "任务标题" }),
@@ -407,15 +426,34 @@ export const apiDef = RpcSchema.router({
               change_type: ChangeTypeSchema.optional().cliOption({ desc: "变更性质（feat/fix/docs/…，见 conventional commits）" }),
               module: z.string().optional().cliOption({ desc: "模块（可 `/` 分层，如 agent/ui）" }),
               priority: PrioritySchema.optional().cliOption({ desc: "优先级 P0-P3（不传=未定级）" }),
+              /** 调用方 cwd（parser 自动注入，不是可敲的选项）—— 归属检测用（见 api-impl 的 task.create）。 */
+              cwd: z.string().optional().cliOption({ callerCwd: true }),
+              /** 归属检测的逃生口：确知要在「cwd 所在项目之外」建任务时显式声明。 */
+              force: z
+                .boolean()
+                .optional()
+                .cliOption({
+                  desc: "跳过「cwd 归属不符」的拦截（确要在别的项目下建任务时用；默认会拒绝并要求改 --project）",
+                }),
             },
-            output: StatusDataUri,
+            output: CreateResult,
           }),
           list: RpcSchema.unary({
             desc: `列出任务`,
             input: {
               project: z.string().optional().cliOption({ short: "p", desc: "按 project 筛选" }),
             },
-            output: z.object({ status: z.string(), data: z.object({ tasks: z.any() }) }),
+            output: z.object({
+              status: z.string(),
+              data: z.object({
+                /** 任务 URI 列表（形状不变：`string[]`；细分信息在 `projects` 里） */
+                tasks: z.any(),
+                /** 结果涉及到的 project 归属（id → label/path）：多项目同号时靠它区分（##430） */
+                projects: z
+                  .array(z.object({ id: z.string(), label: z.string().optional(), path: z.string().optional() }))
+                  .optional(),
+              }),
+            }),
           }),
           show: RpcSchema.unary({
             desc: `查看任务详情（含未提交草稿 ui_drafts）`,
@@ -1224,6 +1262,9 @@ export const apiDef = RpcSchema.router({
                 output: z.object({
                   maxSteps: z.number(),
                   maxOutputTokens: z.number(),
+                  maxOutputTokensSource: z.enum(["env", "file", "default"]),
+                  costWarnStepUsd: z.number(),
+                  costWarnTurnUsd: z.number(),
                   bashTimeoutMs: z.number(),
                   outputClipChars: z.number(),
                   readMaxBytes: z.number(),
@@ -1261,7 +1302,18 @@ export const apiDef = RpcSchema.router({
                 desc: `写运行限制（下一轮生效；环境变量 DIY_LOCAL_* 优先级更高，会盖过写入值）`,
                 input: {
                   maxSteps: z.number().optional().cliOption({ desc: "单轮最大模型步数（>0）" }),
-                  maxOutputTokens: z.number().optional().cliOption({ desc: "单次模型请求输出上限（>0）" }),
+                  maxOutputTokens: z
+                    .number()
+                    .optional()
+                    .cliOption({ desc: "全局输出软上限（>0；它同时是天花板，任务/人物不得越过它）" }),
+                  costWarnStepUsd: z
+                    .number()
+                    .optional()
+                    .cliOption({ desc: "单步成本告警阈值（USD；0 = 关闭该类告警）" }),
+                  costWarnTurnUsd: z
+                    .number()
+                    .optional()
+                    .cliOption({ desc: "单轮累计成本告警阈值（USD；0 = 关闭该类告警）" }),
                   bashTimeoutMs: z.number().optional().cliOption({ desc: "单条 bash 命令超时毫秒（>0）" }),
                   outputClipChars: z
                     .number()
@@ -1273,6 +1325,9 @@ export const apiDef = RpcSchema.router({
                 output: z.object({
                   maxSteps: z.number(),
                   maxOutputTokens: z.number(),
+                  maxOutputTokensSource: z.enum(["env", "file", "default"]),
+                  costWarnStepUsd: z.number(),
+                  costWarnTurnUsd: z.number(),
                   bashTimeoutMs: z.number(),
                   outputClipChars: z.number(),
                   readMaxBytes: z.number(),
@@ -2854,6 +2909,34 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
             desc: `通知流（订阅回放现存 + 增量推送；顶栏 bar 的数据源）`,
             input: {},
             output: ModelUnavailableNoticeSchema,
+          }),
+          /**
+           * 通知信箱（##429 要求 ④/⑤）：`level#inbox` 的「N1/N2 一律落信箱」里**能落的那一半**。
+           *
+           * 与上面 `list/dismiss/watch`、下面 `env.*` 的关键差别是**数据定性**：那些是 cache
+           * （进程内存 ring，重启即空 —— 描述“此刻怎么了”）；这里是 **append-only 落盘**
+           * （`$DIY_HOME/local/inbox.jsonl`）—— 它描述“发生过什么”，重启后回看正是它的主要用途。
+           *
+           * 订阅语义刻意不同：`watch` **只推增量、不回放**。回放的历史条目会在 renderer 里
+           * 被当成“刚发生”再弹一轮 toast（每次窗口重载糊一脸）；要回看走 `list`。
+           */
+          inbox: RpcSchema.group({
+            desc: `通知信箱（N1 提示的落盘流水：撞输出上限 / 成本过阈；可回看）`,
+            children: {
+              list: RpcSchema.unary({
+                desc: `列出信箱条目（时间升序；按任务可筛。人读用 diy notice inbox list）`,
+                input: {
+                  taskUri: z.string().optional().cliOption({ desc: "只看该任务的条目" }),
+                  limit: z.number().optional().cliOption({ desc: "只要最近 N 条（缺省全部，上限 200）" }),
+                },
+                output: z.array(InboxEntrySchema),
+              }),
+              watch: RpcSchema.serverStream({
+                desc: `信箱增量流（**不回放历史**：订阅后新落的才推；renderer 据此弹 N1 toast）`,
+                input: {},
+                output: InboxEntrySchema,
+              }),
+            },
           }),
         },
       }),

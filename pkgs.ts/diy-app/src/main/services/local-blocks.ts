@@ -29,7 +29,9 @@ export type BlockKind = "turn" | "step" | "text" | "think" | "tool" | "plan" | "
 export type TurnEndReason =
     | { type: "completed"; data: {} } // 模型自然说完（末步无待续工具）
     | { type: "max-steps"; data: { steps: number; limit: number } } // 打满 maxSteps，模型仍在请求工具
-    | { type: "max-tokens"; data: { maxOutputTokens: number } } // 撞 maxOutputTokens 被截断
+    // `layer`：这个上限**是哪一层定的**（##429 拍板：日志必须能回答「为什么这次是 2000」）。
+    // 可选 —— 老日志没有它，读侧不得因缺键报错。取值见 `shared/output-budget.ts::OutputBudgetLayer`。
+    | { type: "max-tokens"; data: { maxOutputTokens: number; layer?: string } } // 撞输出上限被截断
     // source：`"user"` = 用户主动停止（`cancel()` 显式带上）· `"detached"` = 流意外中断/没跑完的兜底
     //（##305 起消费端断开**不再**产生它）· 旧日志里的 `"abort"` = 来源不明的中断。文案映射唯一源见 shared/turn-end
     | { type: "aborted"; data: { source: string } }
