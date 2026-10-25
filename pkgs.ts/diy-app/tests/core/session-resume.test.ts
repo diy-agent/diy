@@ -25,6 +25,7 @@ function row(patch: Partial<NavRow> & { uri: string }): NavRow {
         abnormal: false,
         unread: 0,
         queue: 0,
+        queueHuman: 0,
         opened: false,
         lastTs: null,
         ...patch,

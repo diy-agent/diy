@@ -84,7 +84,7 @@ describe("按需取全文（##93 D）", () => {
         // ① 渲染端看到的是裁过的（头尾两段 + 标注）
         const shown = m.localChatStore.trees.find((t) => t.id === "t1")!.children.find((c) => c.id === "t1_b")!;
         expect(String(shown.attrs.content).length).toBeLessThan(200 * 1024);
-        expect(String(shown.attrs.content)).toContain("已省略");
+        expect(String(shown.attrs.content)).toContain('<cut by="renderer-text-cap"'); // ##425
         // ② 载入全文：main 会给同一段（`stale:false`），重折时**不带硬顶**
         h.historyWindow.mockResolvedValueOnce(win(bigTurn(), "c1", false));
         const fields = await m.loadFullBlockFields("t1_b");

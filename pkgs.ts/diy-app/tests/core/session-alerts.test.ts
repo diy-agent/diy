@@ -31,6 +31,7 @@ function row(over: Partial<NavRow> = {}): NavRow {
         abnormal: false,
         unread: 0,
         queue: 0,
+        queueHuman: 0,
         opened: false,
         lastTs: null,
         ...over,
@@ -100,11 +101,15 @@ describe("##358 D3 · alertsOf —— 只报跃迁", () => {
         expect(a.text).toContain("自动拉回已关");
     });
 
-    it("队列里**刚出现**留言 → L2「有人在等你回复」（可能是别的窗口留的，你看不到）", () => {
-        const [a] = alertsOf(snap(row({ running: true })), [row({ running: true, queue: 2 })], { autoPull: true });
+    it("队列里**刚出现人署名的**留言 → L2「有人给你留了 N 条留言」（可能是别的窗口留的，你看不到）", () => {
+        const [a] = alertsOf(snap(row({ running: true })), [row({ running: true, queue: 2, queueHuman: 2 })], {
+            autoPull: true,
+        });
         expect(a.kind).toBe("waiting");
         expect(a.level).toBe("L2");
-        expect(a.text).toContain("有人在等你回复");
+        expect(a.text).toContain("有人给你留了 2 条留言");
+        expect(a.queueHuman).toBe(2);
+        expect(a.queueAuto).toBe(0);
     });
 
     it("队列一直在（1 → 2）→ 不报：留言条数变化不是「新的人来了」", () => {
@@ -151,5 +156,66 @@ describe("##358 D3 · alertsOf —— 只报跃迁", () => {
         const out = alertsOf(prevAll, kinds, { autoPull: true });
         expect(out.length).toBe(4);
         for (const a of out) expect(a.text).not.toContain("步");
+    });
+});
+
+describe("##435 · 队列按 author 分流：只有人署名才配 L2（抢焦点）", () => {
+    // 现场（2026-10-25 22:36）：job 后台跑完 → steerAdd(…, "job") 入队 → queue 0→1
+    // → L2 「有人在等你回复」把用户拽到任务页 —— 而盘上 11 条队列里 0 条来自人。
+    it("① 全 author:job 的 0→1 **不出 L2**（L1 且不自动拉回，tab 不被抢）", () => {
+        const next = row({ running: true, queue: 1, queueHuman: 0 });
+        const [a] = alertsOf(snap(row({ running: true })), [next], { autoPull: true });
+        expect(a.kind).toBe("queued-auto");
+        expect(a.level).toBe("L1");
+        expect(a.autoPull).toBe(false); // 开关开着也不抢 —— 判据是 L1 本身
+        expect(a.queueHuman).toBe(0);
+        expect(a.queueAuto).toBe(1);
+    });
+
+    it("② 只要有一条来自人 → 仍是 L2（能力不删，只对准人）", () => {
+        // 混合：3 条里 1 条 human:ccc（room 投递）、2 条 job 通知
+        const next = row({ running: true, queue: 3, queueHuman: 1 });
+        const [a] = alertsOf(snap(row({ running: true })), [next], { autoPull: true });
+        expect(a.kind).toBe("waiting");
+        expect(a.level).toBe("L2");
+        expect(a.autoPull).toBe(true);
+        expect(a.queueHuman).toBe(1);
+        expect(a.queueAuto).toBe(2);
+    });
+
+    it("③ 全是自动留言时，文案不出现「等你回复」，而是明说无需回复", () => {
+        const next = row({ running: true, queue: 2, queueHuman: 0 });
+        const [a] = alertsOf(snap(row({ running: true })), [next], { autoPull: true });
+        expect(a.text).not.toContain("等你回复");
+        expect(a.text).toContain("你无需回复");
+        expect(a.text).toContain("自动留言");
+    });
+
+    it("人署名条数超出总数时按总数算（两次读盘之间的漂移不让 queueAuto 变负）", () => {
+        const next = row({ running: true, queue: 1, queueHuman: 5 });
+        const [a] = alertsOf(snap(row({ running: true })), [next], { autoPull: true });
+        expect(a.queueHuman).toBe(1);
+        expect(a.queueAuto).toBe(0);
+    });
+
+    it("②b 条数说的是**人写的**几条（review P2：说总数就是又撒一次谎）", () => {
+        // 3 条里 1 条 human:ccc + 2 条 job：点进去只有 1 条是给他写的
+        const next = row({ running: true, queue: 3, queueHuman: 1 });
+        const [a] = alertsOf(snap(row({ running: true })), [next], { autoPull: true });
+        expect(a.text).toContain("有人给你留了 1 条留言"); // ← 不是 3
+        expect(a.text).toContain("队列共 3 条，其余为自动"); // 自动条数另交代
+        // 全是人写的：不加括号尾巴
+        const pure = row({ running: true, queue: 2, queueHuman: 2 });
+        const [b] = alertsOf(snap(row({ running: true })), [pure], { autoPull: true });
+        expect(b.text).toContain("有人给你留了 2 条留言");
+        expect(b.text).not.toContain("其余为自动");
+    });
+
+    it("④ 自动留言（L1）不许吞掉更重的「无进展」（review P2）", () => {
+        // 同一帧：既刚进停滞、又刚进一条 job 自动留言
+        const next = row({ running: true, stalled: true, queue: 1, queueHuman: 0 });
+        const [a] = alertsOf(snap(row({ running: true })), [next], { autoPull: true });
+        expect(a.kind).toBe("stalled"); // ← 不是 queued-auto
+        expect(a.level).toBe("L1");
     });
 });

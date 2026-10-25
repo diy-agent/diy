@@ -675,7 +675,7 @@ describe("agent.local — 压缩 compact（无网络）", () => {
         await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
     });
 
-    it("工具输出裁剪：headtail 后投递里的工具结果带「中间省略」标记（预算撑满 + 裁）", async () => {
+    it("工具输出裁剪：headtail 后投递里的工具结果带 `<cut …/>` 截断标记（预算撑满 + 裁）", async () => {
         const uri = await setup("压缩裁工具输出");
         const big = Array.from({ length: 200 }, (_, i) => `row ${i}`).join("\n");
         seedOps(uri, [...turnOps("t9000", "只这一轮", big)]);

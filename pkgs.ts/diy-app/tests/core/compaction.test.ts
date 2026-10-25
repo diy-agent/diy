@@ -21,6 +21,7 @@ import {
     type CompactEventRecord,
     type OpLike,
 } from "../../src/shared/context/compaction";
+import { parseCutMarkers } from "../../src/shared/cut-marker";
 
 // ─── 策略归一（只有 budget 一种算法）───
 
@@ -79,9 +80,11 @@ describe("clipToolResult", () => {
         const out = r.text.split("\n");
         expect(out[0]).toBe("line 0");
         expect(out[head - 1]).toBe(`line ${head - 1}`);
-        // marker 紧跟在头之后（第 head 行）
-        expect(out[head]).toContain(`中间省略 ${n - head - tail} 行`);
-        expect(out[head]).toContain("local/toolout/x.txt");
+        // marker 紧跟在头之后（第 head 行）——##425 起是 `<cut by="tool-output" scope="wire" …/>`
+        const m = parseCutMarkers(out[head]!).at(0)!;
+        expect(m).toMatchObject({ by: "tool-output", scope: "wire", why: "budget", unit: "lines", total: n });
+        expect(m.total - m.kept).toBe(n - head - tail);
+        expect(m.resume).toBe("local/toolout/x.txt");
         expect(out[out.length - 1]).toBe(`line ${n - 1}`);
         expect(r.origLines).toBe(n);
         expect(r.droppedLines).toBe(n - head - tail);
@@ -91,16 +94,17 @@ describe("clipToolResult", () => {
 
     it("headtail：无 origPath 时 marker 不编造路径", () => {
         const r = clipToolResult(lines(200), pol("headtail"));
-        expect(r.text).toContain("完整输出已省略");
-        expect(r.text).not.toContain("见 ");
+        const m = parseCutMarkers(r.text).at(0)!;
+        expect(m).toMatchObject({ by: "tool-output", scope: "wire" });
+        expect(m.resume).toBeUndefined(); // 没落盘就不编造路径（指向不存在的文件比不说还坏）
     });
 
-    it("headtail：行数没超但单行超长 → 只做单行截断，不写「中间省略」marker", () => {
+    it("headtail：行数没超但单行超长 → 只做单行截断，不写截断 marker（没省略任何行）", () => {
         const t = `short\n${"A".repeat(500)}\nshort`;
         const r = clipToolResult(t, pol("headtail", { ...DEFAULT_HEADTAIL, maxLineChars: 300 }));
         expect(r.clipped).toBe(true);
         expect(r.droppedLines).toBe(0);
-        expect(r.text).not.toContain("中间省略");
+        expect(parseCutMarkers(r.text)).toEqual([]); // 没省略任何行 ⇒ 不写 marker
         expect(r.text).toContain("…");
         expect(r.text.split("\n")[1]!.endsWith("…")).toBe(true);
     });
@@ -116,9 +120,15 @@ describe("clipToolResult", () => {
     it("callpath：整段换成一句「只留调用」提示 + 原文路径", () => {
         const r = clipToolResult(lines(300), pol("callpath"), { origPath: "local/toolout/y.txt" });
         expect(r.clipped).toBe(true);
-        expect(r.text).toContain("输出已省略（只留调用）");
-        expect(r.text).toContain("300 行");
-        expect(r.text).toContain("local/toolout/y.txt");
+        expect(parseCutMarkers(r.text).at(0)).toMatchObject({
+            by: "tool-result-callpath",
+            scope: "wire",
+            why: "budget",
+            unit: "lines",
+            total: 300,
+            kept: 0,
+            resume: "local/toolout/y.txt",
+        });
         expect(r.keptLines).toBe(1);
     });
 

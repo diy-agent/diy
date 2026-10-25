@@ -11,6 +11,7 @@
 // ─── 类型 ─────────────────────────────────────────────
 
 import type { Triage } from "../../shared/error-triage";
+import { cutMarker } from "../../shared/cut-marker";
 
 export type JSONVal = string | number | boolean | null | JSONVal[] | { [k: string]: JSONVal };
 
@@ -131,22 +132,21 @@ function tailSlice(v: string, n: number): string {
 }
 
 /**
- * 千分位（**不用 `toLocaleString`**：它依赖运行环境的 ICU 与默认 locale，
- * 同一段文本在 CI / 生产可能不同，测试断言与用户看到的东西都会飘）。
+ * 裁剪标记（##425）：`view` 档 —— 原文完整（盘上有），只是**这个视图**留了头尾两段。
+ * 中间嵌在内容里、经 markdown 渲染 ⇒ `fence: true`，否则 `<cut …/>` 会被当成 HTML 吞掉。
+ * `resume` 指向 UI 的「载入全文」出口（见 `CapNotice`）。
  */
-function fmtNum(n: number): string {
-    const s = String(Math.trunc(n));
-    let out = "";
-    for (let i = 0; i < s.length; i++) {
-        if (i > 0 && (s.length - i) % 3 === 0) out += ",";
-        out += s[i];
-    }
-    return out;
-}
-
-/** 裁剪标记（读时靠它把「不连续」这件事说清楚，不许静默拼接成看起来连续的文本） */
 const capMark = (omitted: number, total: number): string =>
-    `\n\n……已省略 ${fmtNum(omitted)} 字符（全文 ${fmtNum(total)} 字符；界面只保留头尾两段）……\n\n`;
+    `\n\n${cutMarker({
+        by: "renderer-text-cap",
+        scope: "view",
+        why: "render",
+        unit: "chars",
+        total,
+        kept: Math.max(0, total - omitted),
+        resume: "ui:载入全文",
+        fence: true,
+    })}\n\n`;
 
 export interface Block {
     id: string;
@@ -193,6 +193,11 @@ const SCHEMA: Record<BlockKind, Record<string, FieldKind>> = {
         // 与 author 分工：author = 谁说的，room = 从哪来的。省略 = 不是投递来的
         // （任务页本人发言 / 老数据）⇒ 气泡逐字不变。Δt 不适用 ⇒ Flag（整对象写一次）。
         room: "Flag",
+        // speaker：发言者（##422）—— `{ id, name? }`，省略 = 未知/单人（任务页本人发言 / 老数据）。
+        // 与 `author` 分工：author 给 **UI**（气泡左右 / 署名，值 = 成员 id），speaker 给 **模型**
+        // （投影成历史 user 消息的 `from:` 段，带显示名）。两个字段同时落、同一写入点，
+        // 但**读侧各自独立**：删掉任一个只会让那一侧退回老行为，不会把另一侧弄错。
+        speaker: "Flag",
     },
     // ms：这块**自己花掉的时间**（##399 活动框右侧角标）—— think = 从 reasoning-start 到
     // reasoning-end（模型生成这段思考的时长），tool = 从 tool-call 到 tool-result（真执行时长，
@@ -915,6 +920,7 @@ export interface DeliveryOpts {
 // 于是：全量投影（= llm.jsonl 每行）→ 选择 → 渲染。预览与真发共用同一条链。
 
 import { clipReasoningText, utf8Bytes, type ClipSpec, type ReasoningClipSpec } from "../../shared/context/compaction";
+import { hasTopLevelKey, isEnvelopeText, renderFromPart, stripRuntimeSections, tailEnvelope, type Speaker } from "../../shared/context/envelope";
 // 选择算法（元件库 + 装配器）—— 见 compaction-plan.ts 头注。此处**转出**旧公开名以保持兼容。
 import {
     runPlan,
@@ -975,7 +981,28 @@ export function projectAll(store: BlockStore): LocalModelMessage[] {
             const role = (b.role as string) ?? "user";
             const text = (b.content as string) ?? "";
             if (!text) return;
-            if (role === "user") out.push({ role: "user", content: text, turn, ...(step ? { step } : {}) });
+            if (role === "user") {
+                // 发言者（##422）：有 speaker ⇒ 投影成「`from:` 段 + `user.message`」的小信封。
+                // **重放前先剥易变段**（##422 第二轮）：历史 user 块里若本身就存着一份信封
+                // （`runtime:` 是每步全量的当前值），重放它只会浪费字节并让旧值伪装成现状；
+                // 而 `from:` / `history:` / `summary:` 是**线索**，一段不动（`stripRuntimeSections`）。
+                // 普通正文（不是信封形态）**逐字不变** —— 该函数对它们直接原样返回。
+                //
+                // 剥完仍是一份信封（历史里存过整份信封的块）⇒ **不嵌套**（同 `withRuntime` 的判据）：
+                // body 自带 `from:` 就照用；没带才把它**放在顶层**拼在前面（拼进 `user.message`
+                // 会把整份 YAML 缩进成块标量，既不是信封也读不了）。
+                const body = stripRuntimeSections(text);
+                const speaker = b.speaker as Speaker | undefined;
+                const from = speaker && typeof speaker.id === "string" && speaker.id ? renderFromPart(speaker) : "";
+                const content = !from
+                    ? body
+                    : !isEnvelopeText(body)
+                      ? tailEnvelope([from], body)
+                      : hasTopLevelKey(body, "from")
+                        ? body
+                        : tailEnvelope([from, body]);
+                out.push({ role: "user", content, turn, ...(step ? { step } : {}) });
+            }
             else {
                 const lead = takePending(); // 本 step 攒下的推理，随第一条 assistant 消息落地
                 // assistant 文本并入最近的 assistant 消息（若上一条正是纯文本 assistant 则拼接）
@@ -1036,7 +1063,7 @@ export function projectAll(store: BlockStore): LocalModelMessage[] {
             // ⚠️ 「中断」必须由 **status** 判定，不能由「output 是否非空」判定 ——
             //    interruptedToolPatches 收敛时会往 output 写上同一句契约文案，于是收敛后
             //    output 变非空，旧判据（typeof b.output === "string" && b.output）就会把它
-            //    当成工具真实输出送去裁剪：callpath 模式把它换成「[输出已省略（只留调用）…]」，
+            //    当成工具真实输出送去裁剪：callpath 模式把它换成一条 `<cut by="tool-result-callpath" …/>`，
             //    并指向一个**根本不存在的** toolout/<id>.txt。同一份历史，投递结果取决于
             //    "这块有没有被收敛过" —— 是 bug（本地补的错误信息被当作历史投递）。
             const interrupted = status === INTERRUPTED_STATUS;

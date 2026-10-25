@@ -27,6 +27,8 @@ function entry(patch: Partial<SessionEntry> = {}): SessionEntry {
         refs: [{ kind: "task", uri: "projects/4/tasks/1" }],
         turn: null,
         queue: 0,
+        queueHuman: 0,
+        queueAuto: 0,
         viewers: 0,
         firstSeenAt: T0,
         lastActivity: T0,
@@ -47,6 +49,7 @@ function row(patch: Partial<NavRow> & { uri: string }): NavRow {
         abnormal: false,
         unread: 0,
         queue: 0,
+        queueHuman: 0,
         opened: false,
         lastTs: null,
         ...patch,
@@ -120,8 +123,11 @@ describe("todoOf：行集与行序", () => {
         expect(failed.why).toBe("异常终止 · 2 条未读");
         expect(failed.count).toBe(2);
 
-        const [waiting] = todoOf([row({ uri: "u", queue: 3 })]);
-        expect(waiting.why).toBe("有 3 条留言等你回复");
+        // ##435：队列按 author 分流 —— 人署名才是「等你回复」，job/agent 的自动留言明说无需回复
+        const [waiting] = todoOf([row({ uri: "u", queue: 3, queueHuman: 2 })]);
+        expect(waiting.why).toBe("有 2 条留言等你回复（队列共 3 条，其余为自动）"); // 说人写的几条，不是总数
+        const [auto] = todoOf([row({ uri: "v", queue: 2 })]);
+        expect(auto.why).toBe("有 2 条自动留言待投递（无需回复）");
         // 卡住没有条数（不是 0 条未读，是"没法用条数说清"）——
         // 文案里不许出现数字，否则读起来像"0 条未读"
         const [stalled] = todoOf([row({ uri: "u", stalled: true, running: true, unread: 4 })]);

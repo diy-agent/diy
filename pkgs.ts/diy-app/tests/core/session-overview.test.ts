@@ -31,6 +31,8 @@ function entry(patch: Partial<SessionEntry> = {}): SessionEntry {
         refs: [{ kind: "task", uri: "projects/4/tasks/308" }],
         turn: null,
         queue: 0,
+        queueHuman: 0,
+        queueAuto: 0,
         viewers: 0,
         firstSeenAt: T0,
         lastActivity: T0,

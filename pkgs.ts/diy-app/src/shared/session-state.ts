@@ -110,6 +110,8 @@ export interface SessionState {
     draft: boolean;
     /** 待投递留言条数（属性） */
     queued: number;
+    /** 待投递留言里**署名是人**的条数（##435：只有它才叫「有人在等你回复」） */
+    queuedHuman: number;
     /** 水位已追平（没有未读） */
     seen: boolean;
 }
@@ -135,6 +137,8 @@ export interface SessionFlags {
     draft: boolean;
     /** 待投递留言条数（##306 插话队列） */
     queued: number;
+    /** 其中**署名是人**的条数（其余 = job / agent / 无署名的自动留言，##435） */
+    queuedHuman: number;
     /** 在跑但心跳超过 `STALL_MS` 没动 —— **运行健康度**，不是状态 */
     stalled: boolean;
 }
@@ -147,6 +151,7 @@ export function flagsOf(s: SessionState): SessionFlags {
         seen: s.seen,
         draft: s.draft,
         queued: s.queued,
+        queuedHuman: s.queuedHuman,
         stalled: s.stalled,
     };
 }
@@ -236,6 +241,8 @@ export function sessionStateOf(i: SessionStateInput): SessionState {
     const unread = Math.max(0, i.unread); // 负数（水位比总轮次还大，如刚 clear）一律按 0
     const stalled = e ? stalledOf(e, i.now, i.stalledMs) : false;
     const queued = e ? e.queue : 0;
+    // ##435：队列的收件人是 agent，不是人 —— 来源要分开，否则 job 通知也会被喊成「有人在等你回复」
+    const queuedHuman = e ? e.queueHuman : 0;
     const draft = i.hasDraft === true;
 
     // 「聊过没有」三条真源取或：落盘会话存在 / 本进程跑过轮次 / 跨启动账本有轮次。
@@ -243,16 +250,16 @@ export function sessionStateOf(i: SessionStateInput): SessionState {
     const talked = i.hasSession === true || (e?.turnCount ?? 0) > 0 || (i.totalTurns ?? 0) > 0;
 
     if (e?.turn) {
-        return { run: "running", end: null, blame: "none", tier: "expected", stalled, unread, draft, queued, seen: unread === 0 };
+        return { run: "running", end: null, blame: "none", tier: "expected", stalled, unread, draft, queued, queuedHuman, seen: unread === 0 };
     }
     if (!talked) {
         // ⚠️ 队列/草稿是属性，`never` 也要如实带出来（##393 收编时曾在此把它写成 0，
         // 于是「有留言待投递的空闲会话」在任务表上显示成「已对话」—— 属性被状态分支吞掉）
-        return { run: "never", end: null, blame: "none", tier: "expected", stalled: false, unread, draft, queued, seen: unread === 0 };
+        return { run: "never", end: null, blame: "none", tier: "expected", stalled: false, unread, draft, queued, queuedHuman, seen: unread === 0 };
     }
     const end = endCauseOf(e?.lastEndReason ?? null);
     const blame = blameOf(e?.lastEndReason ?? null);
-    return { run: "ended", end, blame, tier: tierOf(blame), stalled: false, unread, draft, queued, seen: unread === 0 };
+    return { run: "ended", end, blame, tier: tierOf(blame), stalled: false, unread, draft, queued, queuedHuman, seen: unread === 0 };
 }
 
 // ─── 派生属性（判据的底层量，收编自 session-overview） ────────
