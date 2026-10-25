@@ -255,11 +255,15 @@ describe("压缩注记的位置：自占一条 user 消息，挂在历史第一�
         // 尾部信封只剩 runtime + user（注记已不在这里）
         const tail = textOf(prompt[prompt.length - 1]?.content);
         expect(tail).toContain("runtime:");
-        expect(tail).not.toContain("history:");
+        // ⚠️ 判据必须是「**行的开头**是 history:」（顶层键），不能是「文本里出现 history:」——
+        // runtime 变量树里就有 `where#history:` 这种**键名本身含 history:** 的单元（本任务实测踩到），
+        // 子串判据会把它当成注记混进来。
+        const hasHistoryKey = (t: string): boolean => /^history:/m.test(t);
+        expect(hasHistoryKey(tail)).toBe(false);
         expect(tail.endsWith('user:\n  message: "第二轮"')).toBe(true);
 
         // ③ 注记没被并进相邻消息的正文：紧跟其后的那一条不携带索引文本
-        expect(textOf(prompt[2]?.content)).not.toContain("history:");
+        expect(hasHistoryKey(textOf(prompt[2]?.content))).toBe(false);
     });
 });
 

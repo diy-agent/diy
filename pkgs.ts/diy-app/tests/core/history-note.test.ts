@@ -120,7 +120,9 @@ describe("##421 压缩注记：位置与形态（判据 ②③）", () => {
         // 尾部只有 runtime + user
         const tail = textOf(prompt[prompt.length - 1]!.content);
         expect(tail).toContain("runtime:");
-        expect(tail).not.toContain("history:");
+        // ⚠️ 判据 = 「行首是 history:」（顶层键），不是子串 —— runtime 变量树里存在
+        // `where#history:` 这类**键名本身含 history:** 的单元（本任务实测踩到），子串判据必假红。
+        expect(/^history:/m.test(tail)).toBe(false);
     });
 
     it("注记不被并进相邻 user 正文：紧随其后那条 user 仍是原话（不是「索引 + 原话」）", async () => {

@@ -29,6 +29,16 @@ export interface _CliOptionMeta {
    * 相对路径的"存在性"判得准（handler 跑在 app 进程，cwd 不对）。
    */
   inlineText?: { fileOpt: string; textOpt: string };
+  /**
+   * 值 = **调用方进程的 cwd**，由 parser 自动注入，**不是一个用户可敲的选项**
+   * （不进 `--help`、不占 argv、`--<名>` 会按未知选项报错）。
+   *
+   * 为什么需要：handler 跑在 app 进程，它的 `process.cwd()` 是应用目录；
+   * 想让 handler 知道「人在哪个目录敲的命令」（如 ##430 判断 project 归属）只能由调用方带上。
+   * 已有 `resolvePath` 能把**参数值**按调用方 cwd 解析，但那是「解析某个路径值」，
+   * 拿不到「cwd 本身」。实现见 cli/_parser.ts。
+   */
+  callerCwd?: boolean;
 }
 
 /** @internal */
@@ -73,15 +83,41 @@ declare module 'zod' {
   }
 }
 
-z.ZodType.prototype.cliOption = function (this: z.ZodType, cfg: _CliOptionMeta) {
+const _cliOptionImpl = function (this: object, cfg: _CliOptionMeta) {
   _optionRegistry.set(_unwrap(this), cfg);
   return this;
 };
 
-z.ZodType.prototype.cliArg = function (this: z.ZodType, cfg: _CliArgMeta) {
+const _cliArgImpl = function (this: object, cfg: _CliArgMeta) {
   _argRegistry.set(_unwrap(this), cfg);
   return this;
 };
+
+function _patchSchemaProto(proto: object | undefined): void {
+  if (!proto) return;
+  const p = proto as Record<string, unknown>;
+  if (typeof p.cliOption !== 'function') p.cliOption = _cliOptionImpl;
+  if (typeof p.cliArg !== 'function') p.cliArg = _cliArgImpl;
+}
+
+/**
+ * **不能只打 `z.ZodType.prototype`**（##5 第 13 轮实测）：zod v4 的 `z.enum()` /
+ * `z.literal()` / `z.object()` 返回的实例**不继承** `z.ZodType.prototype` ——
+ * 每个工厂自建类（`Object.getPrototypeOf(z.enum([...])) === z.ZodEnum.prototype`，
+ * 它的 proto 直接就是 `Object.prototype`）。`z.string()` 之类恰好还能继承，
+ * 于是「只打 ZodType」在多数 schema 上看着正常，只在 `.cliArg()` 落到 enum 上时炸：
+ * `TypeError: TaskStateSchema.cliArg is not a function` —— **main 加载期崩、实例起不来**。
+ * 所以扫一遍 zod 导出的所有 schema 类，各打各的。
+ */
+for (const v of Object.values(z as unknown as Record<string, unknown>)) {
+  if (typeof v !== 'function') continue;
+  const ctor = v as unknown as { prototype?: object; name?: string };
+  const proto = ctor.prototype;
+  if (!proto || (proto as { constructor?: unknown }).constructor !== v) continue;
+  if (!String(ctor.name ?? '').startsWith('Zod')) continue;
+  _patchSchemaProto(proto);
+}
+_patchSchemaProto(z.ZodType.prototype);
 
 // ═══════════════════════════════════════════════════
 //  Query helpers

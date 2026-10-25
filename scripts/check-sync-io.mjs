@@ -75,7 +75,8 @@ const LEGACY_SYNC_IO_BASELINE = new Map(Object.entries({
   "pkgs.ts/diy-app/src/main/core/models-sync.ts": 2,
   "pkgs.ts/diy-app/src/main/core/persona.ts": 4,
   "pkgs.ts/diy-app/src/main/core/project.ts": 12,
-  "pkgs.ts/diy-app/src/main/core/room.ts": 13,
+  // ##427：room 事件流 / 投递状态改异步 + 尾部倒读（读侧 + 写侧），剩 readRoom / listRooms 两处小文件同步读
+  "pkgs.ts/diy-app/src/main/core/room.ts": 5,
   "pkgs.ts/diy-app/src/main/core/seed.ts": 4,
   "pkgs.ts/diy-app/src/main/core/single-instance.ts": 3,
   "pkgs.ts/diy-app/src/main/core/state.ts": 5,
@@ -97,9 +98,17 @@ const LEGACY_SYNC_IO_BASELINE = new Map(Object.entries({
   // ##419（bash 结果头）与 ops-seek，那些同步 IO 属存量代码、本护栏当时还没见过它们。
   // 判据：这 11 处**一行都不是**本分支新增（count 与 `origin/main` 上的同名文件逐一相同）。
   // 同一文件再涨就是新代码了 —— 那要改异步，不许再调这个数。
-  "pkgs.ts/diy-app/src/main/services/local-agent.ts": 38,
+  // ⚠️ 下面 4 行同理是**首次登记**、不是放宽：`docs-index` / `facts-context` / `facts-store`
+  // / `journal-store` 都是本分支（##5 知识库）在护栏立项之前写的文件，护栏第一次见到它们。
+  // 判据：数字 = 当前实测（`--by-file`），一行为本分支既有代码；这 4 个文件再涨就是新代码，
+  // 要改异步。真正的债记在 ##5 待办（facts-store 每轮投影都同步读盘 = 热路径）。
+  "pkgs.ts/diy-app/src/main/services/docs-index.ts": 4,
+  "pkgs.ts/diy-app/src/main/services/facts-context.ts": 1,
+  "pkgs.ts/diy-app/src/main/services/facts-store.ts": 18,
+  "pkgs.ts/diy-app/src/main/services/journal-store.ts": 8,
+  "pkgs.ts/diy-app/src/main/services/local-agent.ts": 37,
   "pkgs.ts/diy-app/src/main/services/local-find.ts": 4,
-  "pkgs.ts/diy-app/src/main/services/local-layout-migrate.ts": 19,
+  "pkgs.ts/diy-app/src/main/services/local-layout-migrate.ts": 18,
   "pkgs.ts/diy-app/src/main/services/local-ops-seek.ts": 14,
   "pkgs.ts/diy-app/src/main/services/ops-feed.ts": 8,
   "pkgs.ts/diy-app/src/main/services/plan-store.ts": 7,

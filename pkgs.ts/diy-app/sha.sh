@@ -30,14 +30,14 @@ source "../../sha.common.sh"
 # mono必备子命令（根 ./sha.sh check/fix/test/test-unit 组装这些）
 ####################################################################################
 
-# 产物变体根：prod|test|lab。vite 配置读 DIY_VARIANT 决定输出目录；
+# 产物变体根：prod|test|lab|preview。vite 配置读 DIY_VARIANT 决定输出目录；
 # build/<variant>/{main,preload,cli,renderer,serve} 各自独立（见根 AGENTS.md「实例/变体」）。
+#
+# preview（2026-10-23 恢复，##404）：**编译后运行、无 watch** 的稳定实例。lab 的 HMR 每次改
+# src 都重启主进程，把正在进行的 agent 轮次打断（实测 129 轮里 128 轮这么死的）。所以
+# 「要持续对话的实例」用 preview（产物冻住，改码不波及它），「边改边看」仍用 lab。
+# 二者按变体分根（build/<variant>/** 与 build/<variant>/home），互不抢单实例锁。
 export DIY_VARIANT="${DIY_VARIANT:-prod}"
-# preview 变体已删除（##381）：显式报错，不静默落到 build/preview/**
-if [[ "$DIY_VARIANT" == "preview" ]]; then
-  echo "✗ preview 变体已删除，改用 lab：DIY_VARIANT=lab ./sha.sh lab" >&2
-  exit 1
-fi
 _build_dir() { echo "build/${DIY_VARIANT:-prod}"; }
 
 # electron 二进制就绪（全机共享 store + 本 worktree 软链；缺则下载一次，带超时）。
@@ -111,6 +111,49 @@ test-unit() { run npx vitest run --exclude '**/cli.intent*' --fileParallelism --
 # 人看效果、agent 快速验证/debug 都用它。产物/数据根 build/lab/{main,preload,home}，
 # 与 test 互不干扰，可同时运行（单实例锁 per-home）。透传参数，如 --port 18888
 lab() { _ensure_electron; run env DIY_VARIANT=lab npx tsx scripts/electron-dev.mts "$@"; }
+# 编译后运行的**稳定实例**（无 watch）：跑 build/preview/** 的产物，改 src 不会重启它。
+# 用途：人要持续对话 / 长会话（lab 的 watch 重启会打断正在进行的轮次）。
+# 数据根 build/preview/home（按变体分根，不与 lab 抢单实例锁）。
+#   ./sha.sh preview                # 产物缺失才编译，然后起/连实例
+#   ./sha.sh preview --build        # 强制重新编译后再起
+#   ./sha.sh preview --from lab     # **首次**把 lab 的数据根克隆过来（续用那里的任务/会话）
+preview() {
+  _ensure_electron
+  local do_build=0 from=""
+  while (($#)); do
+    case "$1" in
+      --build) do_build=1; shift ;;
+      --from) from="${2:?--from 需要变体名（lab|test|prod）}"; shift 2 ;;
+      *) echo "✗ 未知参数：$1（可用：--build / --from <variant>）" >&2; return 1 ;;
+    esac
+  done
+  export DIY_VARIANT=preview
+  # 产物在 <包>/build/<variant>/（vite outDir），数据根在**仓库根** build/<variant>/home
+  # （core/dev-home 的缺省，见其头注）——两处基准不同，别照着产物那个路径写。
+  local repo_root; repo_root="$(cd "$SCRIPT_DIR/../.." && pwd)"
+  local home="$repo_root/build/preview/home"
+  if [[ -n "$from" ]]; then
+    local src="$repo_root/build/$from/home"
+    [[ -d "$src" ]] || { echo "✗ 源数据根不存在：$src" >&2; return 1; }
+    if [[ -d "$home" ]] && [[ -n "$(ls -A "$home" 2>/dev/null)" ]]; then
+      echo "✗ 目标数据根非空，拒绝覆盖：$home（要重建先 rm -rf 它）" >&2
+      return 1
+    fi
+    mkdir -p "$home"
+    # 不搬 electron_user_data（单实例锁 / GPU 缓存）、app.port（那是**上一个实例**的端口）、
+    # cache（可重建；模型目录也在里面）—— 只带走真正是「数据」的部分。
+    run rsync -a --exclude 'electron_user_data/' --exclude 'app.port' --exclude 'cache/' "$src/" "$home/"
+  fi
+  if ((do_build)) || [[ ! -f build/preview/main/index.mjs ]]; then
+    build
+  fi
+  echo "── preview（编译产物，无 watch）"
+  echo "   数据根：$home"
+  # 起/连都交给 CLI 的 ensureAppPort（探活 → 验身份 → 复用或拉起，##328）：
+  # 不要在这里自己 spawn —— 否则锁冲突诊断 / CDP 提示 / 身份校验会两处分叉。
+  run env DIY_VARIANT=preview DIY_ENV=development DIY_HOME="$home" node ./build/preview/cli/index.js getAppInfo
+  echo "   与它对话：DIY_VARIANT=preview DIY_HOME=$home ../../diy.sh agent local chat <taskUri>"
+}
 # 开发期跑 CLI 源码：./sha.sh cli task list
 cli() { run npx tsx src/cli/index.ts "$@"; }
 # 纯 Web 服务（先构建 renderer，透传参数，如 --port <port>）

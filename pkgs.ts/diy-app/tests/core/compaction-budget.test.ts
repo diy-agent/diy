@@ -105,14 +105,17 @@ describe("预算注记（budget-note）：YAML 文本 + 纯数据（解释在信
     it("渲染出可解析的 YAML：只有数据字段（file/absPath/budgetBytes/keptBytes/kept）", async () => {
         const { renderBudgetNote } = await import("../../src/shared/context/budget-note");
         const yaml = renderBudgetNote(
-            { budgetBytes: 3072, keptBytes: 2048, kept: [[5, 8], [120, 135]] },
+            { budgetBytes: 3072, keptBytes: 6272, countBytes: 1024, mustBytes: 5248, kept: [[5, 8], [120, 135]] },
             { file: "local/x.llm.jsonl", absPath: "/tmp/x.llm.jsonl" },
         );
         // 是 YAML 数据（非 # 注释），且只有数据
         expect(yaml).toContain("history:");
         expect(yaml).toContain("file: local/x.llm.jsonl");
         expect(yaml).toContain("budgetBytes: 3072");
-        expect(yaml).toContain("keptBytes: 2048");
+        expect(yaml).toContain("keptBytes: 6272");
+        // 口径三分：keptBytes 可以大于 budgetBytes，只因为托底级不占预算（本任务 ##5 实账就是这么回事）
+        expect(yaml).toContain("countBytes: 1024");
+        expect(yaml).toContain("mustBytes: 5248");
         expect(yaml.split("\n").some((l) => l.trimStart().startsWith("#"))).toBe(false);
         // ⚠️ 解释性字段（about / retrieve / legend）已按六轮拍板删除：解释只住在 help.history
         expect(yaml).not.toContain("legend:");

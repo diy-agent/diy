@@ -99,9 +99,8 @@ describe("planPageViews —— 流量页两块的开合 / 最大化", () => {
     const p = findPage("task-run")!;
     const ctx = "projects/4/tasks/1";
     const plan = planPageViews(p, ctx, defaultBinding(p, ctx), { hidden: {}, maximized: "center" });
-    // task-run 的 left / center / right 都有 view（right = 成员栏，##377 第 16 刀；bottom 仍空着）
-    // ⚠️ 本文件这两条断言当时也漏改（既有红，与 view-registry.test.ts 同源）
-    expect(plan.visibleAreaIds).toEqual(["left", "center", "right"]);
-    expect(plan.suppressedAreaIds).toEqual(["left", "right"]);
+    // task-run 的四个 area 都有 view（right = 成员栏 ##377；bottom = 作业栏 ##408）
+    expect(plan.visibleAreaIds).toEqual(["left", "center", "right", "bottom"]);
+    expect(plan.suppressedAreaIds).toEqual(["left", "right", "bottom"]);
   });
 });

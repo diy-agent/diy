@@ -1,20 +1,27 @@
 # @diy/template — 提示词模版引擎
 
-> 全仓契约见**仓库根 `AGENTS.md`**。本包是**零依赖纯内核**（不认识文件系统，`include` 由宿主注入 resolver），Node / 浏览器 / Electron 通用。
+> 全仓契约见**仓库根 `AGENTS.md`**。本包是**零依赖纯内核**（不认识文件系统，`include` 由宿主注入
+> resolver），Node / 浏览器 / Electron 通用。
+>
+> 需求真源是意图测试（`tests/intent.template.test.ts` R1–R15 + `tests/parser.test.ts`），`SPEC.md` 只作索引。
 
-## find — 包内定位
+## 正文在知识库，本节只留目录
 
-- `find.spec` — `SPEC.md` **决策记录**（为什么换引擎、明确不做哪些语法）；需求真源是 `tests/intent.template.test.ts`（R1–R15）与 `tests/parser.test.ts`
-- `find.parser` — `src/parser.ts` + `src/ast.ts`：模版文本 → AST（两种正交概念：`parse` 与 `encode`，本包只做 parse）
-- `find.render` — `src/render.ts`：`render` / `renderWithTrace`（trace 供提示词试验场的高亮联动）
-- `find.scope` — `src/scope.ts`：作用域求值（`globals` 点路径 vs `.` 前缀的动态作用域）
-- `find.analyze` — `src/analyze.ts`：静态分析（变量契约、lint 视图、循环引用推导的数据源）
-- `find.entry` — `src/index.ts` barrel 导出
-- `find.host` — 宿主侧接入：`pkgs.ts/diy-app/src/main/services/prompt-registry.ts`（唯一装配入口）
+原先写在下面的 11 条正文已整体迁进**项目知识库**（真源 `knowledge/facts/`，逐条带
+`evidence.at: 818d342a:pkgs.ts/diy-template/AGENTS.md:<行>` —— rev 钉住版本，本文件瘦身后行号仍可核）。
+本文件 1.9 KB → 1.6 KB。
 
-## rule — 硬约束
+| 主题 | 是什么 | 条数 |
+|---|---|---|
+| `template.find` | 包内定位：SPEC / parser+ast / render+trace / scope / analyze / barrel / 宿主装配入口 | 7 |
+| `template.rule` | 硬约束：**不做表达式语言** / 逐字节保真不转义 / 意图测试优先 / IO 归宿主 | 4 |
 
-- `rule.no-expr` — **刻意不做表达式语言**（无 `==` / `&&` / 算术 / `?.` / `??` / filter / `with` / `../` / `@root`）：现存条件全部是「非空 / 存在 / 取反」，枚举判断用**谓词物化**覆盖。加语法前先读 `SPEC.md` 的取舍依据
-- `rule.byte-faithful` — **逐字节保真、不转义**：控制标记单独占行时不产出任何字符（故可自由缩进表达嵌套），但**输出文本必须顶格**（行首缩进会原样进提示词）；空行是内容不是排版
-- `rule.intent-first` — 需求真源是意图测试：新增需求**先写意图测试再补实现**，`SPEC.md` 只作索引与背景
-- `rule.host-owns-io` — 本包不碰文件系统 / Node API；`include` 的路径解析与读取一律由宿主的 `IncludeResolver` 提供
+**取法**：
+
+- `diy facts brief template.rule` — 该主题全部条目 + 每条首句
+- `diy facts get 'template.rule#no-expr'` — 单条完整值
+- `diy facts brief 'template.*'` — 全包一次拿
+
+⚠️ **想给模版加语法前，先 brief 一次 `template.rule`**。`no-expr` 那条写着「为什么不支持 `==` / `&&`」
+—— 它是决策不是缺口，`SPEC.md` 里有取舍依据。第二容易破的是 `byte-faithful`：模版里**行首缩进会
+原样进提示词**（控制标记本身不产出字符），靠缩进排版的美感会在 prompt 里变成多余空白。

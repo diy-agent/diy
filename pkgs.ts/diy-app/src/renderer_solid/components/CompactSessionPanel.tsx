@@ -57,6 +57,8 @@ import { clipForPreview, requestViewYaml, type LayerRow, type PreviewClipStats, 
 import { DrawerMaxButton } from "./DrawerMaximize";
 import { notificationStore } from "../store/notificationStore";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { compactResultSentence, compactWhenRows, windowRatio, type CompactWhenInput } from "../../shared/context/compact-when";
+import { EXAMPLE_MESSAGES, buildCompactExample, type ExampleRow } from "../../shared/context/compact-example";
 import {
     DEFAULT_EXEMPT_STEPS,
     DEFAULT_HEADTAIL_CLIP_DATA,
@@ -206,8 +208,18 @@ export interface PlanVersionDetailModel {
 }
 
 export interface CompactPanelCtl {
+    /** 本面板服务哪个任务（统计 / 事件账要自己去取） */
+    uri: () => string;
     auto: () => {
-        config: { mode: "off" | "notify" | "auto"; policy: unknown; history?: { keep?: KeepStage[] } };
+        config: {
+            mode: "off" | "notify" | "auto";
+            policy: unknown;
+            history?: { keep?: KeepStage[] };
+            /** ##423 块 2：三触发器的**当前配置值**（面板要把它原样说出来，不许 UI 另编一套） */
+            triggers?: { systemContextChanged: boolean; cacheExpired: boolean; contextWindowOver: number };
+        };
+        /** 判定用的事实（实测）：`windowTokens` = 该会话最后一步实测 total，`ttl` = 生效 TTL */
+        facts?: { windowTokens: number | null; ttl?: { prior?: number } };
         raw?: { path: string; text: string };
         /** 读配置的出声条目（##370）：非空 = 有键缺失/非法，已逐键回落缺省 */
         warnings?: AutoCompactIssue[];
@@ -280,11 +292,7 @@ export function useCompactPanel(uri: () => string, visible: () => boolean = () =
         () => (visible() ? uri() : null),
         async (u) => {
             if (!u) return undefined;
-            return (await localChatStore.autoCompactStatus(u)) as {
-                config: { mode: "off" | "notify" | "auto"; policy: unknown; history?: { keep?: KeepStage[] } };
-                raw?: { path: string; text: string };
-                warnings?: AutoCompactIssue[];
-            };
+            return (await localChatStore.autoCompactStatus(u)) as NonNullable<ReturnType<CompactPanelCtl["auto"]>>;
         },
     );
     // ─── ##378：版本链（只读 + 回滚）—— 与 auto / 预览同门槛：抽屉关着不查 ───
@@ -489,6 +497,7 @@ export function useCompactPanel(uri: () => string, visible: () => boolean = () =
     };
 
     return {
+        uri,
         auto, autoBusy, patchAuto, autoPolicy, budgetBytes, kbDraft, setKbDraft, commitKb, pv, pvLoading, busy, err, apply,
         render, setRender, renderData: headtailData, setRenderData, summaryEnabled, setSummary, rawText, rawPath,
         warnings,
@@ -512,6 +521,68 @@ const stageWithClipKind = (s: KeepStage, kind: ClipKind): KeepStage => {
     if (kind === "path") return withClip(s, { type: "path" });
     return withClip(s, { type: "headtail", data: { ...DEFAULT_HEADTAIL_CLIP_DATA } });
 };
+
+/**
+ * 分段按钮组（daisyUI `filter`）—— ##423 块 3：
+ * 下拉/勾选框全换成**一次摊开**的按钮，每项 `title` 给一句人话解释（用户 2026-10-25：
+ * 「不要做选豫框了，做成类似 daisyui filter 这样的选择按钮式，一次性显示出来，每个选项 hover 给出解释」）。
+ *
+ * 为什么是 radio 而不是 button + 自己管选中：`filter` 原生就是 radio 组（键盘方向键可切、
+ * 屏幕阅读器读得出「N 选 1」）；写成 button 就得自己补一整套无障碍语义。
+ * `data-filter-value` 是给测试与自检用的稳定钩子（与视觉无关）。
+ */
+function FilterGroup<T extends string>(props: {
+    ariaLabel: string;
+    name: string;
+    value: T;
+    options: readonly { value: T; label: string; hint: string }[];
+    disabled?: boolean;
+    /** 组容器的 data 钩子（意图测试按行取控件用：`[data-keep-type-select]` 等） */
+    dataAttr?: string;
+    onChange: (v: T) => void;
+}) {
+    return (
+        <div class="filter flex-wrap" role="radiogroup" aria-label={props.ariaLabel} data-filter-group={props.dataAttr}>
+            <For each={props.options}>
+                {(o) => (
+                    <input
+                        type="radio"
+                        class="btn btn-xs"
+                        name={props.name}
+                        aria-label={o.label}
+                        title={`${o.label} —— ${o.hint}`}
+                        data-filter-value={o.value}
+                        disabled={props.disabled}
+                        checked={props.value === o.value}
+                        onChange={() => props.onChange(o.value)}
+                    />
+                )}
+            </For>
+        </div>
+    );
+}
+
+/** 「取法」四选一（顺序 = 文本里给人的理解顺序，不是优先级） */
+const TYPE_OPTIONS: readonly { value: KeepStageType; label: string; hint: string }[] = [
+    { value: "ladder", label: "纵向阶梯", hint: "用户 > 结论 > 过程 > 命令行 > 结果，同层新的先。兜底取法：不知道留什么就用它" },
+    { value: "steps", label: "最近 N 步", hint: "最近 N 个步骤的**全部**消息（工作集）—— 正在干的活优先保住" },
+    { value: "recent", label: "最近 N 条", hint: "最近 N 条消息，可按角色过滤（如只留 user）" },
+    { value: "role", label: "某角色全部", hint: "某个角色的全部消息（user / assistant / tool），不受条数限制" },
+];
+
+const CLIP_OPTIONS: readonly { value: ClipKind; label: string; hint: string }[] = [
+    { value: "inherit", label: "回落全局", hint: "本级不声明裁法，用下面的「工具结果呈现」全局策略" },
+    { value: "full", label: "全量", hint: "工具结果原样保留，不裁。最完整，也最占预算" },
+    { value: "path", label: "只留调用", hint: "只留「调了什么」+ 原文落盘路径，不正文。大输出最省" },
+    { value: "headtail", label: "头尾", hint: "保留头几行 + 尾几行，中间省略（单行超长另有阈值）" },
+];
+
+const ROLE_OPTIONS: readonly { value: string; label: string; hint: string }[] = [
+    { value: "", label: "不限", hint: "不按角色过滤，哪个角色都取" },
+    { value: "user", label: "user", hint: "你的发言 / 插话（通常最能代表任务目标）" },
+    { value: "assistant", label: "assistant", hint: "助手正文与工具调用" },
+    { value: "tool", label: "tool", hint: "工具结果（体积最大、最该裁的就是它）" },
+];
 
 /**
  * **一级**的编辑器（##344 M2）：选 `type` / 必保 / `limit` / `clip` / 该取法私有的 `data`。
@@ -554,31 +625,31 @@ function KeepStageRow(props: {
         <div data-keep-stage data-keep-type={s().type} class="rounded border border-base-300 p-2 space-y-1">
             <div class="flex items-center gap-1">
                 <span class="font-mono opacity-50">{props.index + 1}</span>
-                <select
-                    data-keep-type-select
-                    class="select select-xs select-bordered"
-                    aria-label={`第 ${props.index + 1} 级取法`}
-                    disabled={props.disabled}
-                    value={s().type}
-                    onChange={(e) => patch(retypeStage(s(), e.currentTarget.value as KeepStageType))}
-                >
-                    <option value="ladder">ladder 纵向阶梯</option>
-                    <option value="steps">steps 最近 N 步</option>
-                    <option value="recent">recent 最近 N 条</option>
-                    <option value="role">role 某角色全部</option>
-                </select>
-                <label class="ml-auto flex items-center gap-1">
-                    <input
-                        data-keep-must
-                        type="checkbox"
-                        class="checkbox checkbox-xs"
-                        aria-label={`第 ${props.index + 1} 级必保`}
+                <div class="min-w-0" data-keep-type-select>
+                    <FilterGroup
+                        ariaLabel={`第 ${props.index + 1} 级取法`}
+                        name={`keep-type-${props.index}`}
+                        value={s().type}
+                        options={TYPE_OPTIONS}
                         disabled={props.disabled}
-                        checked={s().must === true}
-                        onChange={(e) => setMust(e.currentTarget.checked)}
+                        dataAttr={`keep-type-${props.index}`}
+                        onChange={(v) => patch(retypeStage(s(), v))}
                     />
-                    <span class="opacity-60">必保</span>
-                </label>
+                </div>
+                <div class="ml-auto" data-keep-must>
+                    <FilterGroup
+                        ariaLabel={`第 ${props.index + 1} 级是否必保`}
+                        name={`keep-must-${props.index}`}
+                        value={s().must === true ? "must" : "budget"}
+                        options={[
+                            { value: "budget", label: "计预算", hint: "常规级：占预算名额，装不下就丢" },
+                            { value: "must", label: "必保", hint: "**不占预算**：预算再紧也留 —— 压完还超预算、每轮都在压，多半就是这里开的" },
+                        ]}
+                        disabled={props.disabled}
+                        dataAttr={`keep-must-${props.index}`}
+                        onChange={(v) => setMust(v === "must")}
+                    />
+                </div>
                 <button
                     data-keep-del
                     class="btn btn-ghost btn-xs"
@@ -603,38 +674,32 @@ function KeepStageRow(props: {
                     onChange={(e) => setLimit(e.currentTarget.value)}
                 />
                 <span class="ml-auto opacity-60">裁</span>
-                <select
-                    data-keep-clip
-                    class="select select-xs select-bordered"
-                    aria-label={`第 ${props.index + 1} 级裁法`}
-                    disabled={props.disabled}
-                    value={clipKindOf(s())}
-                    onChange={(e) => patch(stageWithClipKind(s(), e.currentTarget.value as ClipKind))}
-                >
-                    <option value="inherit">回落全局</option>
-                    <option value="full">full 全量</option>
-                    <option value="path">path 只留调用</option>
-                    <option value="headtail">headtail 头尾</option>
-                </select>
+                <div data-keep-clip>
+                    <FilterGroup
+                        ariaLabel={`第 ${props.index + 1} 级裁法`}
+                        name={`keep-clip-${props.index}`}
+                        value={clipKindOf(s())}
+                        options={CLIP_OPTIONS}
+                        disabled={props.disabled}
+                        dataAttr={`keep-clip-${props.index}`}
+                        onChange={(v) => patch(stageWithClipKind(s(), v))}
+                    />
+                </div>
             </div>
             <Show when={s().type === "role" || s().type === "recent"}>
                 <div class="flex items-center gap-1">
                     <span class="opacity-60">role</span>
-                    <select
-                        data-keep-role
-                        class="select select-xs select-bordered"
-                        aria-label={`第 ${props.index + 1} 级角色`}
-                        disabled={props.disabled}
-                        value={String(d()?.role ?? "")}
-                        onChange={(e) => setRole(e.currentTarget.value as KeepRole)}
-                    >
-                        <Show when={s().type === "recent"}>
-                            <option value="">不限</option>
-                        </Show>
-                        <option value="user">user</option>
-                        <option value="assistant">assistant</option>
-                        <option value="tool">tool</option>
-                    </select>
+                    <div data-keep-role>
+                        <FilterGroup
+                            ariaLabel={`第 ${props.index + 1} 级角色`}
+                            name={`keep-role-${props.index}`}
+                            value={String(d()?.role ?? "")}
+                            options={s().type === "role" ? ROLE_OPTIONS.filter((o) => o.value !== "") : ROLE_OPTIONS}
+                            disabled={props.disabled}
+                            dataAttr={`keep-role-${props.index}`}
+                            onChange={(v) => setRole(v as KeepRole)}
+                        />
+                    </div>
                 </div>
             </Show>
             <Show when={s().type === "recent" || s().type === "steps"}>
@@ -680,6 +745,127 @@ function KeepStageRow(props: {
     );
 }
 
+/**
+ * 「**什么时候会压**」—— ##423 块 2。
+ *
+ * 用户原话（2026-10-25）：「我觉得我们缺少对什么时候会压缩…的 ui 呈现，我已经完全被搞懵了。」
+ * 所以这里不摆旋钮，而是**把判据翻译成人话**：每条触发器一行：开关状态 + 判据 + 当前实际值，
+ * 句子全部来自 `shared/context/compact-when.ts`（可单测），组件只负责排版。
+ *
+ * `lastStepTokens` 取**实测**（`facts.windowTokens`，即该会话最后一步 usage.total）：
+ * 没有实测就说「还没有实测用量」，不写 0（0 会被读成「离撞墙远得很」）。
+ */
+function WhenCompactBlock(props: { ctl: CompactPanelCtl; windowLimit: number | null }) {
+    const input = createMemo<CompactWhenInput>(() => {
+        const cfg = props.ctl.auto()?.config;
+        const facts = props.ctl.auto()?.facts;
+        return {
+            mode: cfg?.mode ?? "off",
+            triggers: cfg?.triggers ?? { systemContextChanged: false, cacheExpired: false, contextWindowOver: 0 },
+            ttlMs: typeof facts?.ttl?.prior === "number" && facts.ttl.prior > 0 ? facts.ttl.prior : null,
+            budgetBytes: props.ctl.budgetBytes(),
+            lastStepTokens: facts?.windowTokens ?? null,
+            windowLimit: props.windowLimit,
+        };
+    });
+    const ratio = () => windowRatio(input().lastStepTokens, input().windowLimit);
+    return (
+        <Block title="什么时候会压" extra={input().mode === "off" ? "自动压缩 off" : `mode=${input().mode}`}>
+            <div class="space-y-1 text-caption" data-when-compact>
+                <For each={compactWhenRows(input())}>
+                    {(r) => (
+                        <div class="flex items-start gap-1" data-when-row={r.key}>
+                            <span
+                                class={`badge badge-xs shrink-0 ${r.state === "on" ? "badge-success" : r.state === "off" ? "badge-ghost opacity-50" : "badge-info"}`}
+                            >
+                                {r.state === "on" ? "开" : r.state === "off" ? "关" : "手动"}
+                            </span>
+                            <span class="w-24 shrink-0 tabular-nums" title={r.hint}>
+                                {r.label}
+                            </span>
+                            <span class="min-w-0 break-words opacity-80" title={r.hint}>
+                                {r.text}
+                            </span>
+                        </div>
+                    )}
+                </For>
+                <div class="border-t border-base-300 pt-1 opacity-70" data-when-result title={compactResultSentence(input().budgetBytes)}>
+                    <span class="font-semibold">压成什么样：</span> {compactResultSentence(input().budgetBytes)}
+                </div>
+                <div class="opacity-45">
+                    每条触发器 hover 看判据。窗口占比{ratio() == null ? "需有实测用量与模型窗口上限" : ` = ${ratio()}%`}
+                    （本会话最后一步）。
+                </div>
+            </div>
+        </Block>
+    );
+}
+
+/** 一条消息的角色色点（左灰 = 原始，右绿 = 压缩后保留） */
+const KIND_TONE: Record<ExampleRow["kind"], string> = {
+    user: "text-secondary",
+    text: "text-base-content",
+    call: "text-info",
+    result: "text-warning",
+};
+
+/**
+ * 「压缩后长什么样」—— ##423 块 3 的**范例预览**。
+ *
+ * 用户原话：「能否用一些可视化的手段表达清晰，人类可理解，比如生成一个范例消息，
+ * 标注其模拟的 token size，然后达到压缩后，右边呈现出压缩的新消息 history 形态。」
+ *
+ * 左 = 原始投递（每条带**模拟** token 尺寸），右 = 按**当前上限**压完的实际形态（丢掉的整条不在）。
+ * 样例固定（`shared/context/compact-example.ts`），改上限 → 两边对比立刻变 —— 这就是「看得懂」。
+ * 尺寸口径：字节 ÷ 4 = token（与账本同一估算，不是精确 meter）。
+ */
+function ExamplePreviewBlock(props: { budgetBytes: number }) {
+    const ex = createMemo(() => buildCompactExample(props.budgetBytes));
+    const beforeTok = () => Math.round(ex().beforeBytes / 4);
+    const afterTok = () => Math.round(ex().keptBytes / 4);
+    const savedPct = () =>
+        ex().beforeBytes === 0 ? 0 : Math.round(((ex().beforeBytes - ex().keptBytes) / ex().beforeBytes) * 100);
+    const row = (r: ExampleRow, kept: boolean) => (
+        <div
+            class={`flex items-start gap-1 ${kept ? "" : "opacity-40"}`}
+            data-example-msg={r.id}
+            data-example-kept={kept ? "1" : "0"}
+            title={r.why}
+        >
+            <span class="w-6 shrink-0 font-mono text-caption opacity-60">{r.turn}</span>
+            <span class={`w-10 shrink-0 text-caption ${KIND_TONE[r.kind]} ${kept ? "" : "line-through"}`}>{r.kind}</span>
+            <span class={`min-w-0 flex-1 truncate text-caption ${kept ? "" : "line-through"}`}>{r.label}</span>
+            <span class="w-14 shrink-0 text-right text-caption tabular-nums opacity-70">{r.tokens} tok</span>
+        </div>
+    );
+    return (
+        <Block title="范例预览（合成样例）" extra={`${EXAMPLE_MESSAGES.length} 条 · ${beforeTok()} tok`}>
+            <div class="space-y-1" data-example>
+                <div class="text-caption opacity-60">
+                    固定样例（每条标的是**模拟** token 尺寸，字节÷4）；按当前上限 {Math.round(props.budgetBytes / 1024)} KB 推演：
+                    右侧出现的才会进本次请求，被划掉的仍在历史里（可查可撤销）。
+                </div>
+                <div class="grid grid-cols-1 gap-2 md:grid-cols-2">
+                    <div class="rounded border border-base-300 p-1" data-example-before>
+                        <div class="mb-1 text-caption font-semibold opacity-70">原始投递（{beforeTok()} tok）</div>
+                        <For each={ex().rows}>{(r) => row(r, true)}</For>
+                    </div>
+                    <div class="rounded border border-base-300 p-1" data-example-after>
+                        <div class="mb-1 text-caption font-semibold opacity-70">
+                            压缩后 history（{afterTok()} tok / 减 {savedPct()}% / 丢 {ex().dropped} 条）
+                        </div>
+                        <For each={ex().rows.filter((r) => r.kept)}>{(r) => row(r, false)}</For>
+                        <div class="mt-1 border-t border-base-300 pt-1 text-caption opacity-60">
+                            保头 = 硬编码 600 tok（首个 user / 任务目标，永不丢）
+                            {ex().biggestDrop ? ` · 最大一块被丢的是 ${ex().biggestDrop!.kind}（${ex().biggestDrop!.tokens} tok）` : ""}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </Block>
+    );
+}
+
 export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
     const ctl = props.ctl;
 
@@ -692,6 +878,26 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
     const [pendingRestore, setPendingRestore] = createSignal<string | null>(null);
     /** ##406：预览裁剪阈值（单条字符串 / 数组元素）—— 只影响展示副本 */
     const PREVIEW_CLIP = { maxChars: 4000, maxItems: 200 } as const;
+
+    // ─── ##423 块 2：本会话的**计数**（此前哪里都看不到）───
+    // 投递次数 = 步数（每步一次请求）；压缩次数 = 账本里 compact 事件的条数（measure/undo 不算）。
+    // 账本与「历史」弹窗/用量分表同源（`compact.events`），不另存一份。
+    const [compactEvts] = createResource(
+        () => ctl.uri(),
+        // 账本接口是**分页形态**（`{ events, truncated, size, from }`），这里只要事件数组
+        async (u) => (u ? ((await localChatStore.compactEvents(u)).events as CompactEventRow[]) : []),
+    );
+    const compactRows = () => (compactEvts() ?? []).filter((e) => e.kind === "compact");
+    const deliveries = () => localChatStore.usage.length;
+    const turnCount = () => new Set(localChatStore.usage.map((r) => r.turnId)).size;
+    /** 窗口上限：取**最后一条**用量记录里的 `contextLimit`（用户要知道「上限 Y」是多少） */
+    const windowLimit = (): number | null => {
+        const u = localChatStore.usage;
+        const last = u[u.length - 1];
+        return typeof last?.contextLimit === "number" && last.contextLimit > 0 ? last.contextLimit : null;
+    };
+    /** 最近一次压缩：条数 / 字节 / 轮次的前后对比 */
+    const lastCompact = (): CompactEventRow | undefined => compactRows().at(-1);
 
     /** headtail 私有参数的字段表（渲染顺序 + 文案一处定义） */
     const RENDER_DATA_FIELDS: { key: "head" | "tail" | "maxLineChars" | "maxKeepBytes"; hint: string }[] = [
@@ -882,17 +1088,23 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                         </div>
                     }
                 >
-                    {/* 预算区：自动压缩开关（= config.mode，非策略） */}
+                    {/* 预算区：自动压缩 mode（= config.mode，非策略）
+                        ##423 块 3：旧的是「开/关」toggle —— 它把三态压成两态，notify 在界面上根本选不到；
+                        改成三选一 filter，每项 hover 说人话。 */}
                     <div class="rounded-lg border border-base-300 p-3 space-y-2">
-                        <div class="flex items-center justify-between">
+                        <div class="space-y-1" data-compact-mode>
                             <span class="text-body font-semibold">自动压缩</span>
-                            <input
-                                type="checkbox"
-                                class="toggle toggle-sm toggle-primary"
-                                aria-label="自动压缩"
+                            <FilterGroup
+                                ariaLabel="自动压缩模式"
+                                name="compact-mode"
+                                value={ctl.auto()?.config.mode ?? "off"}
+                                options={[
+                                    { value: "off", label: "关闭", hint: "不检测触发条件；只有面板上的「压缩」按钮能动历史（最不容易误伤）" },
+                                    { value: "notify", label: "只提示", hint: "检测到该压就亮提示，**不自动执行** —— 适合先看清触发频率" },
+                                    { value: "auto", label: "自动压", hint: "检测到该压就按下面的上限直接压（历史保留、可撤销）" },
+                                ]}
                                 disabled={ctl.autoBusy()}
-                                checked={ctl.auto()?.config.mode === "auto"}
-                                onChange={(e) => void ctl.patchAuto({ mode: e.currentTarget.checked ? "auto" : "off" })}
+                                onChange={(v) => void ctl.patchAuto({ mode: v })}
                             />
                         </div>
                         <div class="text-caption opacity-70">
@@ -906,13 +1118,33 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                         <div class="text-caption opacity-70">
                             历史 ≤ <b>{budgetKbLabel()}</b> · 整份请求 ≈ <b>{afterKb()}</b>
                         </div>
+                        {/* ##423 块 2：本会话计数 + 最近一次压缩的前后对比（此前哪里都看不到这两个数） */}
+                        <div class="text-caption opacity-70" data-compact-stats>
+                            本会话：<b class="tabular-nums">{deliveries()}</b> 次投递（= 步数）· <b class="tabular-nums">{turnCount()}</b> 轮 ·
+                            压缩 <b class="tabular-nums">{compactRows().length}</b> 次（自动{" "}
+                            {compactRows().filter((e) => e.by === "auto").length} / 手动{" "}
+                            {compactRows().filter((e) => e.by !== "auto").length}）
+                            <Show when={lastCompact()}>
+                                {(e) => (
+                                    <span class="block opacity-80" data-compact-last>
+                                        最近一次：轮 {e().size?.before?.turns ?? "—"} → {e().size?.after?.turns ?? "—"} · 条{" "}
+                                        {e().size?.before?.messages ?? "—"} → {e().size?.after?.messages ?? "—"} · 字节{" "}
+                                        {fmtBytes(e().size?.before?.bytes)} → {fmtBytes(e().size?.after?.bytes)}
+                                    </span>
+                                )}
+                            </Show>
+                        </div>
                         <div class="text-caption opacity-45">
-                            历史按优先级保留：用户发言 &gt; 助手结论 &gt; 助手过程 &gt; 工具命令 &gt; 工具结果
+                            历史按管道顺序保留（先声明的先挑）：默认先保底最近 {DEFAULT_EXEMPT_STEPS} 步，再按纵向阶梯兜底
                         </div>
                         <Show when={ctl.err()}>
                             <div class="text-caption text-error">{ctl.err()}</div>
                         </Show>
                     </div>
+
+                    {/* ##423 块 2：什么时候会压（判据 + 当前值）；块 3：压缩后长什么样（范例预览） */}
+                    <WhenCompactBlock ctl={ctl} windowLimit={windowLimit()} />
+                    <ExamplePreviewBlock budgetBytes={ctl.budgetBytes()} />
 
                     {/* 装配管道（级列表）：**从上往下**生效 —— 先声明的先挑；一条消息被多级选中 ⇒ 先选中级的 clip 生效 */}
                     <Block title="装配管道" extra={ctl.keepSource() === "config" ? "来自配置" : "缺省回落（未配置）"}>
@@ -1047,19 +1279,22 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                                 </div>
                                 <div class="space-y-2 border-l-2 border-base-300 pl-2">
                                     <div class="font-mono opacity-50">toolResult（全局裁法）</div>
-                                    <div class="flex items-center gap-2">
+                                    <div class="flex flex-wrap items-center gap-2">
                                         <span class="font-mono opacity-70">render</span>
-                                        <select
-                                            class="select select-xs select-bordered"
-                                            aria-label="工具结果呈现"
-                                            disabled={ctl.autoBusy()}
-                                            value={ctl.render()}
-                                            onChange={(e) => ctl.setRender(e.currentTarget.value as ToolResultMode)}
-                                        >
-                                            <option value="asis">asis 原样</option>
-                                            <option value="headtail">headtail 头尾裁剪</option>
-                                            <option value="callpath">callpath 只留调用</option>
-                                        </select>
+                                        <div data-render-select>
+                                            <FilterGroup
+                                                ariaLabel="工具结果呈现"
+                                                name="tool-render"
+                                                value={ctl.render()}
+                                                options={[
+                                                    { value: "asis", label: "原样", hint: "工具结果一字不改（最完整，也最吃预算）" },
+                                                    { value: "headtail", label: "头尾裁剪", hint: "保留头几行 + 尾几行，中间省略；单行超长另按字符阈裁" },
+                                                    { value: "callpath", label: "只留调用", hint: "只留「调了什么」+ 原文落盘路径，不正文 —— 大输出最省" },
+                                                ]}
+                                                disabled={ctl.autoBusy()}
+                                                onChange={(v) => ctl.setRender(v)}
+                                            />
+                                        </div>
                                     </div>
                                     <Show when={ctl.render() === "headtail"}>
                                         <div class="space-y-1 border-l-2 border-base-300 pl-2">
@@ -1087,16 +1322,21 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                                     </Show>
                                 </div>
                             </div>
-                            <div class="flex items-center gap-2 border-t border-base-300 pt-2">
+                            <div class="flex flex-wrap items-center gap-2 border-t border-base-300 pt-2">
                                 <span class="font-mono opacity-60">summary</span>
-                                <input
-                                    type="checkbox"
-                                    class="toggle toggle-xs"
-                                    aria-label="历史摘要"
-                                    disabled={ctl.autoBusy()}
-                                    checked={ctl.summaryEnabled()}
-                                    onChange={(e) => ctl.setSummary(e.currentTarget.checked)}
-                                />
+                                <div data-summary-select>
+                                    <FilterGroup
+                                        ariaLabel="历史摘要"
+                                        name="tool-summary"
+                                        value={ctl.summaryEnabled() ? "on" : "off"}
+                                        options={[
+                                            { value: "off", label: "关", hint: "不额外计算历史摘要（缺省）" },
+                                            { value: "on", label: "开", hint: "额外算一份历史摘要（预留字段，当前未启用）" },
+                                        ]}
+                                        disabled={ctl.autoBusy()}
+                                        onChange={(v) => ctl.setSummary(v === "on")}
+                                    />
+                                </div>
                                 <span class="opacity-45">额外算历史摘要（预留，暂未启用）</span>
                             </div>
                         </div>
@@ -1397,18 +1637,25 @@ const fmtBytes = (n: number | undefined): string => {
     return `${n} B`;
 };
 
+/** `compact.events` 的回包（##431 起限读尾部） */
+interface CompactEventsPage {
+    events: CompactEventRow[];
+    truncated: boolean;
+}
+
 export function CompactHistoryPanel(props: { uri: string; onClose: () => void }) {
-    const [events, { refetch }] = createResource(
+    const [page, { refetch }] = createResource(
         () => props.uri,
-        async (u) => (await localChatStore.compactEvents(u)) as CompactEventRow[],
+        async (u) => (await localChatStore.compactEvents(u)) as CompactEventsPage,
     );
     const [busy, setBusy] = createSignal(false);
     const [maximized, setMaximized] = createSignal(false);
 
+    const all = () => page()?.events ?? [];
     /** 只列 compact 事件（measure / undo 是附属记录，不单独成行） */
-    const rows = () => (events() ?? []).filter((e) => e.kind === "compact");
+    const rows = () => all().filter((e) => e.kind === "compact");
     /** 已被 undo 的 compact id（行上标"已撤销"） */
-    const undone = () => new Set((events() ?? []).filter((e) => e.kind === "undo").map((e) => e.ref));
+    const undone = () => new Set(all().filter((e) => e.kind === "undo").map((e) => e.ref));
 
     const undo = async (ref: string) => {
         setBusy(true);
@@ -1510,6 +1757,12 @@ export function CompactHistoryPanel(props: { uri: string; onClose: () => void })
                         </table>
                     </Show>
                 </div>
+                {/* ##431：限读尾部 ⇒ 更早的记录确实没读。必须显式说出来（不许静默截断）。 */}
+                <Show when={page()?.truncated}>
+                    <div class="px-4 py-1.5 text-caption opacity-60 border-t">
+                        ⓘ 更早的压缩记录未加载（审计日志，可清理）—— 下面列的是最近 200 条
+                    </div>
+                </Show>
             </div>
         </div>
     );

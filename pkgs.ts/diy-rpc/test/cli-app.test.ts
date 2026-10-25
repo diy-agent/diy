@@ -132,3 +132,141 @@ describe("CliApp.showNodeHelp", () => {
     expect(out2).not.toContain("[options] ");
   });
 });
+
+describe("CliApp.exitCodeOf", () => {
+  const getApi = RpcSchema.router({
+    facts: RpcSchema.group({
+      desc: "事实库",
+      children: {
+        get: RpcSchema.unary({
+          desc: "按 claim 取值",
+          input: { claim: z.string().cliArg({ desc: "claim" }) },
+          output: z.object({ resolved: z.array(z.unknown()), notes: z.array(z.string()) }),
+        }),
+      },
+    }),
+  });
+
+  async function run(result: unknown, exitCodeOf?: (a: { rpcName: string; result: unknown }) => number | undefined) {
+    const out: string[] = [];
+    const err: string[] = [];
+    const exitCodes: number[] = [];
+    const transport = {
+      invoke: vi.fn(async () => result),
+      serverStream: vi.fn(),
+      clientStream: vi.fn(),
+      bidiStream: vi.fn(),
+      dispose: vi.fn(),
+    } as unknown as ClientBinding;
+    const app = new CliApp({
+      name: "diy",
+      router: getApi,
+      transport,
+      cliRootPath: "facts",
+      out: (l) => out.push(l),
+      err: (l) => err.push(l),
+      exit: ((c: number) => {
+        exitCodes.push(c);
+        throw new Error(`cli exit ${c}`);
+      }) as (c: number) => void,
+      exitCodeOf,
+    });
+    let thrown: unknown;
+    try {
+      await app.parse(["get", "bogus#x"]);
+    } catch (e) {
+      thrown = e;
+    }
+    return { out, err, exitCodes, thrown };
+  }
+
+  it("全空 ⇒ 打印后走 exit(1)，且不把退出哨兵当运行错误打到 stderr", async () => {
+    const r = await run({ resolved: [], notes: ["claim 不存在"] }, ({ rpcName, result }) => {
+      if (rpcName !== "facts.get") return undefined;
+      return (result as { resolved: unknown[] }).resolved.length === 0 ? 1 : undefined;
+    });
+    expect(r.out.join("\n")).toContain('"resolved": []');
+    expect(r.err).toEqual([]);
+    expect(r.exitCodes).toEqual([1]);
+    expect(r.thrown).toBeInstanceOf(Error);
+  });
+
+  it("非空 / 未提供判据 / 判据返回 0 ⇒ 退出码 0", async () => {
+    expect((await run({ resolved: [{}] }, ({ rpcName, result }) =>
+      rpcName === "facts.get" && (result as { resolved: unknown[] }).resolved.length === 0 ? 1 : undefined,
+    )).exitCodes).toEqual([]);
+    expect((await run({ resolved: [] })).exitCodes).toEqual([]);
+    expect((await run({ resolved: [] }, () => 0)).exitCodes).toEqual([]);
+  });
+});
+
+// `callerCwd` 字段（##430）：parser 自动注入调用方 cwd，不是用户可敲的选项。
+describe("callerCwd 自动注入", () => {
+  const api = RpcSchema.router({
+    task: RpcSchema.group({
+      desc: "任务管理",
+      children: {
+        create: RpcSchema.unary({
+          desc: "创建任务",
+          input: {
+            title: z.string().cliArg({ desc: "标题" }),
+            project: z.string().cliArg({ desc: "项目" }),
+            force: z.boolean().optional().cliOption({ desc: "跳过归属拦截" }),
+            cwd: z.string().optional().cliOption({ callerCwd: true }),
+          },
+          output: z.object({ status: z.string() }),
+        }),
+      },
+    }),
+  });
+
+  function make() {
+    const out: string[] = [];
+    const err: string[] = [];
+    const exitCodes: number[] = [];
+    const invoke = vi.fn(async () => ({ status: "ok" }));
+    const app = new CliApp({
+      name: "diy",
+      router: api,
+      transport: {
+        invoke,
+        serverStream: vi.fn(),
+        clientStream: vi.fn(),
+        bidiStream: vi.fn(),
+        dispose: vi.fn(),
+      } as unknown as ClientBinding,
+      cliRootPath: "task",
+      cwd: "/somewhere/inside/repo",
+      out: (l) => out.push(l),
+      err: (l) => err.push(l),
+      exit: ((c: number) => {
+        exitCodes.push(c);
+        throw new Error(`cli exit ${c}`);
+      }) as (c: number) => void,
+    });
+    return { app, invoke, out, err, exitCodes };
+  }
+
+  it("parse 把 config.cwd 填进 input.cwd", async () => {
+    const h = make();
+    await h.app.parse(["create", "标题", "4"]);
+    expect(h.invoke).toHaveBeenCalledTimes(1);
+    expect((h.invoke.mock.calls[0] as any)[1]).toEqual({
+      input: { title: "标题", project: "4", force: false, cwd: "/somewhere/inside/repo" },
+    });
+  });
+
+  it("不进 --help，也不能当选项敲", async () => {
+    const h = make();
+    await h.app.parse(["create", "--help"]);
+    const help = h.out.join("\n");
+    expect(help).toContain("--force"); // 普通选项照常出现
+    expect(help).not.toContain("cwd"); // 注入字段不露头
+
+    // 用法错走 exit(2)（注入的 exit 抛哨兵），报错在 err 里
+    const h2 = make();
+    await expect(h2.app.parse(["create", "标题", "4", "--cwd", "/tmp"])).rejects.toThrow(/cli exit 2/);
+    expect(h2.err.join("\n")).toContain("Unknown option: --cwd");
+    expect(h2.invoke).not.toHaveBeenCalled();
+  });
+});

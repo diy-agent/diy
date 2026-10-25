@@ -42,7 +42,7 @@ import {
     useContext,
 } from "solid-js";
 import type { JSX } from "solid-js";
-import { localChatStore } from "../store/localChatStore";
+import { loadFullBlockFields, localChatStore } from "../store/localChatStore";
 import { personaStore } from "../store/personaStore";
 import { PersonaDrawer } from "./PersonaDrawer";
 import {
@@ -61,9 +61,11 @@ import {
 import { CompactHistoryPanel } from "./CompactSessionPanel";
 import { TrafficDrawer } from "./TrafficDrawer";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { InputLimitDialog } from "./InputLimitDialog";
+import type { InputGate } from "../../shared/context/input-limit";
 import { OpsDownBar } from "./OpsDownBar";
 import { copyFailMeta, copyOkMeta } from "../lib/notice-copy";
-import { chatNotice, DETAIL_CHAT_FIND } from "../lib/notice-chat";
+import { chatNotice, DETAIL_CHAT_FIND, DETAIL_HISTORY } from "../lib/notice-chat";
 import { draftStore } from "../store/draftStore";
 import { trafficStore } from "../store/trafficStore";
 import { notificationStore } from "../store/notificationStore";
@@ -119,16 +121,18 @@ import type { DragDropProviderProps } from "@dnd-kit/solid";
 import { IconExpand, IconCompress, IconTrash, IconGrip, IconClock, IconBolt, IconChevron, IconCode } from "./icons";
 import { RowGutter } from "./RowGutter";
 import { VIEW_BAR_H, chatInputMaxHeight } from "../lib/layout-metrics";
+// 文本取行（窗口化，##93）：摘要 / 预览 / 折叠都只吃需要的那一小段，且不每帧 split 全文
+import { clampLines, countLines, firstLine, previewLines } from "../lib/chat-text";
 import type { BlockNode } from "../../main/services/local-blocks";
 import { INTERRUPTED_TOOL_NOTICE } from "../../main/services/local-blocks";
 // 折叠 / 展开级别语义（纯函数，可单测）：显示什么、按什么序、开到第几层 —— 本文件只消费结果
 import {
     DEFAULT_TURN_LEVEL,
     TURN_LEVEL_MAX,
-    clampLines,
     collapsedRows,
     composeTail,
     cycleTurnLevel,
+    degradedOf,
     endLeafTip,
     endReasonOf,
     expandableOf,
@@ -165,6 +169,8 @@ import {
 // 历史 mode 值归一与文案放 shared（纯函数、可单测）：ops 日志是 append-only 的史书，
 // 枚举改名前的 step/turn 与现值长期共存，读侧必须归一（详见 shared/steer-mode.ts）
 import { steerModeLabel, steerModeTip } from "../../shared/steer-mode";
+// 降级历史（##424 刀 2）：文案在 shared（main / renderer 同一份），这里只拼
+import { DEGRADED_DANGLING_TEXT, degradedBannerText } from "../../shared/degraded-history";
 
 // ─── 层级 ───────────────────────────────────────────
 
@@ -212,42 +218,11 @@ function DisclosureHead(props: {
     );
 }
 
-/**
- * 单行摘要：**第一行非空内容**（前导空行不算）。
- *
- * 为什么不是 `split("\n")[0]`：真实数据里思考正文常以换行开头（模型的 reasoning 前导 `\n`），
- * 取第一行会得空串 → 标题退回"思考"两个字，整页看不出这段在琢磨什么
- * （用户 2026-10-12 反馈："v4 的思考 bar 会显示思考的第一行"）。空行跳过，再截 90 字。
- */
-const firstLine = (s: string) => {
-    for (const line of s.split("\n")) {
-        const t = line.trim();
-        if (t) return t.slice(0, 90);
-    }
-    return "";
-};
-
+// 文本摘要 / 预览 / 折叠的取行逻辑在 `lib/chat-text.ts`（窗口化，##93）：本文件只消费结果。
 /** 过程历史里正文行的折叠阈值（草图 v4 的 `.txt.clamp` 同款：超过 3 行才给折叠能力）。
  *  缺省**展开** —— 折叠是用户主动点的结果，级别不该替他把历史里的正文缩起来。 */
 const HISTORY_TEXT_FOLD_LINES = 3;
 const str = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : String(v));
-
-/** 输出截断：head + tail，中间计省略行数（行内展开用；超预算才挂全屏按钮） */
-export interface Preview {
-    text: string;
-    omitted: number;
-    total: number;
-}
-export function previewLines(text: string, head = 20, tail = 30): Preview {
-    const lines = text.split("\n");
-    if (lines.length <= head + tail) return { text, omitted: 0, total: lines.length };
-    const omitted = lines.length - head - tail;
-    return {
-        text: [...lines.slice(0, head), `… 省略 ${omitted} 行 …`, ...lines.slice(-tail)].join("\n"),
-        omitted,
-        total: lines.length,
-    };
-}
 
 // ─── 滚动跟随（stick-to-bottom） ──────────────────────────────
 //
@@ -650,8 +625,81 @@ function statusMark(node: BlockNode) {
     );
 }
 
+/**
+ * 「已载入全文」的块（##93 D 的按需读）：**至多存一个** —— 用户点开哪块就只留哪块，
+ * 否则这个缓存本身又成了新的无上限内存（正是本任务要治的病）。
+ */
+const [fullBlock, setFullBlock] = createSignal<{ id: string; fields: Record<string, string> } | null>(null);
+
+/** 该块某字段的全文（没点过「载入全文」时 undefined ⇒ 调用方退回硬顶后的显示值） */
+function fullTextOf(id: string, field: string): string | undefined {
+    const f = fullBlock();
+    return f && f.id === id ? f.fields[field] : undefined;
+}
+
+/** 千分位（与 main 侧 `fmtNum` 同一取向：不用 `toLocaleString`，免得随环境飘） */
+function fmtCount(n: number): string {
+    const t = String(Math.trunc(n));
+    let out = "";
+    for (let i = 0; i < t.length; i++) {
+        if (i > 0 && (t.length - i) % 3 === 0) out += ",";
+        out += t[i];
+    }
+    return out;
+}
+
+/**
+ * 被 Text 硬顶裁过的块：**明说**「现在看到的是头尾两段」+ 给一个「载入全文」出口。
+ *
+ * 为什么要这一条：裁剪本身是静默的（值里只有一行 `……已省略 N 字符……`），
+ * 若不给出口，用户会以为那块的中间内容**丢了**；而按需读（重折一份无硬顶的段）要用户
+ * 明确点一下才付代价（4 MB 段重折 ≈ 180 ms，瞬时 ~3 MB）。见任务 body「按需读走 ②」。
+ */
+function CapNotice(props: { node: BlockNode; field: "content" | "output" }) {
+    const cap = () => (props.node.attrs.__cap as Record<string, { total: number; omitted: number }> | undefined)?.[props.field];
+    const [busy, setBusy] = createSignal(false);
+    const load = async () => {
+        if (busy()) return;
+        setBusy(true);
+        try {
+            const fields = await loadFullBlockFields(props.node.id);
+            if (fields) setFullBlock({ id: props.node.id, fields });
+            else
+                notificationStore.addToast(
+                    "info",
+                    "这块的完整内容已不在会话日志里",
+                    chatNotice(
+                        "载入全文 · loadFullBlockFields（##93 D）",
+                        `该块 ${props.node.id} 所在的段从盘上重取回来重折后已不含这个 id（日志被改写 / 块已被新帧替换）→ 不拿裁过的值冒充全文`,
+                        DETAIL_HISTORY,
+                    ),
+                );
+        } finally {
+            setBusy(false);
+        }
+    };
+    return (
+        <Show when={cap()}>
+            <div class="flex flex-wrap items-center gap-2 py-1 font-sans text-xs text-base-content/60" data-cap-notice>
+                <span>
+                    界面只保留了头尾两段（共 {fmtCount(cap()!.total)} 字符，已省略 {fmtCount(cap()!.omitted)}）
+                </span>
+                <button class="btn btn-ghost btn-xs min-h-0 px-1" disabled={busy()} onClick={load}>
+                    {busy() ? "载入中…" : "载入全文"}
+                </button>
+            </div>
+        </Show>
+    );
+}
+
 function ThinkBody(props: { node: BlockNode }) {
-    return <div class="whitespace-pre-wrap leading-relaxed">{str(props.node.attrs.content)}</div>;
+    const text = () => fullTextOf(props.node.id, "content") ?? str(props.node.attrs.content);
+    return (
+        <div class="whitespace-pre-wrap leading-relaxed">
+            {text()}
+            <CapNotice node={props.node} field="content" />
+        </div>
+    );
 }
 
 function ToolBody(props: {
@@ -666,8 +714,12 @@ function ToolBody(props: {
     // 这是「工具执行中一片空白」的根因（##399 实测）；思考框没这问题，因为它把
     // `props.node.attrs.content` 直接写在 JSX 表达式里（那是 effect，每帧重读）。
     const n = () => props.node;
-    const output = () => str(n().attrs.output);
-    const pv = () => previewLines(output());
+    const output = () => fullTextOf(props.node.id, "output") ?? str(n().attrs.output);
+    /** 全文行数：**按块版本 memo** —— 块没变就不重算；只有正在流式增长的这块每帧付一次
+     *  `countLines`（3.28 M ≈ 1.5 ms，零分配），定稿后只算一次。见 ##93（不为提示数字每帧 split 全文）。 */
+    const totalLines = createMemo(() => countLines(output()));
+    /** 预览本身也 memo：一帧里它被读两次（`data-tip` + 正文），不必每次重切首尾行 */
+    const pv = createMemo(() => previewLines(output(), 20, 30, totalLines()));
     const title = () => `${str(n().attrs.tool)} · ${toolCommand(n())}`;
     // 命令行**恒给**（##399 用户 2026-10-20）：折叠行的标题已改成 `<tool> · <意图>`
     // （拍板 B），标题里**不再有命令** ⇒ "折叠行已显示命令首行，展开体别重复"这个前提失效了。
@@ -731,7 +783,7 @@ function ToolBody(props: {
                     <button
                         class="btn btn-ghost btn-xs absolute right-1 top-1 z-10 min-h-0 px-1 opacity-40 hover:opacity-100"
                         data-tool-max="1"
-                        data-tip={`最大化（全屏查看 / 复制，共 ${pv().total} 行）`}
+                        data-tip={`最大化（全屏查看 / 复制，共 ${pv().exact ? "" : "≥"}${pv().total} 行）`}
                         aria-label="最大化工具输出"
                         onClick={() => props.onFull(title(), output())}
                     >
@@ -757,6 +809,7 @@ function ToolBody(props: {
                     $
                 </pre>
             </Show>
+            <CapNotice node={n()} field="output" />
             {/* 中断遗留：正文显示与发往 LLM 完全同源的占位说明（不再是空白让人无从下手） */}
             <Show when={isInterruptedToolBlock(n(), viewLive())}>
                 <div class="alert alert-warning alert-soft text-body py-2 font-sans">
@@ -776,6 +829,8 @@ function ProcBody(props: {
     /** 正文的渲染方式（md / 原文）—— 与页面上其它正文同一开关，不另开一套 */
     md?: boolean;
 }) {
+    /** 正文（MD 渲染 / 原文两条路共用）：点过「载入全文」就用全文，否则用硬顶后的显示值 */
+    const bodyText = () => fullTextOf(props.node.id, "content") ?? str(props.node.attrs.content);
     return (
         <Switch>
             <Match when={props.node.tag === "think"}>
@@ -785,9 +840,10 @@ function ProcBody(props: {
                 <ToolBody node={props.node} onFull={props.onFull} live={props.live} />
             </Match>
             <Match when={props.node.tag === "text"}>
-                <Show when={props.md} fallback={<PlainText text={str(props.node.attrs.content)} />}>
-                    <MarkdownText text={str(props.node.attrs.content)} streaming={!props.node.stopped} />
+                <Show when={props.md} fallback={<PlainText text={bodyText()} />}>
+                    <MarkdownText text={bodyText()} streaming={!props.node.stopped} />
                 </Show>
+                <CapNotice node={props.node} field="content" />
             </Match>
             <Match when={props.node.tag === "error"}>
                 <div class="whitespace-pre-wrap text-error">{str(props.node.attrs.message)}</div>
@@ -1265,11 +1321,15 @@ function TextRow(props: {
      *  原来按**原始**行数判（`countLines(raw()) > lines`），而 `clampLines` 已跳过前导空行
      *  （RV-2 的修复）⇒ 以空行开头的正文会给出一个"点开毫无变化"的箭头。
      *  现在直接取 `clampLines` 的 `omitted` —— 与"真截"**同源**，不再有第二套口径。 */
-    const canFold = () => clampLines(raw(), props.lines).omitted > 0;
+    /** 全文行数：**按块版本 memo**（块不变就不重算）—— 直播中的大块每帧付一次 `countLines`，定稿后只算一次 */
+    const totalLines = createMemo(() => countLines(raw()));
+    /** 截断结果同样 memo：原来 `canFold()` 与 `view()` **各算一次** `clampLines` ⇒ 每帧两遍全文 split（##93） */
+    const clamped = createMemo(() => clampLines(raw(), props.lines, totalLines()));
+    const canFold = () => clamped().omitted > 0;
     const open = () => (b().id in props.pin ? props.pin[b().id]! : props.defaultOpen);
     // 直播中的正文不折：它还在长，折叠只会来回跳；定稿后才折成摘要
     const folded = () => canFold() && b().stopped && !open();
-    const view = () => (folded() ? clampLines(raw(), props.lines) : { text: raw(), omitted: 0 });
+    const view = () => (folded() ? clamped() : { text: raw(), omitted: 0, exact: true });
     const cut = () => view().omitted > 0;
     /** 点**这一块**（正文行自己那条竖列折叠条 / 提示行）—— 用户 2026-10-12 R6 报的 bug：
      *  原来结论槽把 `onExpand` 接到了"换级别"，点一下**把工具历史折了、自己没变**。 */
@@ -1345,7 +1405,7 @@ function TextRow(props: {
                     class="mt-0.5 text-caption opacity-60 hover:opacity-100 hover:text-primary"
                     onClick={fire}
                 >
-                    ⋯ 已折叠 {view().omitted} 行 · 点击展开全部正文
+                    ⋯ 已折叠 {view().exact ? "" : "≥"}{view().omitted} 行 · 点击展开全部正文
                 </button>
             </Show>
             {/* 1 级「摘要结论」下缘拖条：往下拖 = 这一块画更多行（免在 1/2 级间来回切）。
@@ -1878,6 +1938,13 @@ export function TurnView(props: {
             <Show when={!isLiveTurn() && turnEndNote(t())}>
                 <div class="text-body text-warning" data-turn-end-note>
                     ⚠ {turnEndNote(t())}
+                </div>
+            </Show>
+            {/* 降级轮的行内标注（##424 刀 2）：这一轮是从 turns 折出来的文本记录，
+                锚点指向的 ops 已经不在了 ⇒ 如实说「原始记录已清理」，不静默空白。 */}
+            <Show when={degradedOf(t())?.refDangling}>
+                <div class="text-body text-warning/80" data-turn-degraded={degradedOf(t())?.state ?? ""}>
+                    ⓘ {DEGRADED_DANGLING_TEXT}
                 </div>
             </Show>
             {/* 轮尾：**时刻靠左、纯文本、不可点**（滚屏阅读时左侧最容易误触，那句话也没有可点的东西），
@@ -3125,6 +3192,12 @@ export function LocalChatPage(props: {
     };
     /** 清空确认：清空会删掉 main 侧 ops/llm 日志（rmSync，不可恢复），必须二次确认 */
     const [confirmClear, setConfirmClear] = createSignal(false);
+    /**
+     * 发送前门禁（##426 B）的状态：`null` = 没在问（**未超限时永远是 null** —— 不弹、不闪、不改文案）。
+     * 存的是「原文 + 量出来的三个数」：用户在框里选动作时，原文必须一字不动（它还没发出去）。
+     */
+    const [inputGateAsk, setInputGateAsk] = createSignal<{ text: string; gate: InputGate } | null>(null);
+    const [gateBusy, setGateBusy] = createSignal(false);
     const [pinned, setPinned] = createSignal<Record<string, boolean>>({});
     /** `force` 显式定值（活动块这类**默认展开**的行：缺省翻转出来是 true = 维持展开） */
     const togglePin = (id: string, force?: boolean) =>
@@ -3811,6 +3884,21 @@ export function LocalChatPage(props: {
     // 换绑与改定义都在人物面板里做（那里能看见"影响多少任务"）——这里只负责打开它。
     // 为什么不做成下拉快速切换：人物是**全局配置实体**，下拉只够"选"，看不见改动的波及面。
 
+    /**
+     * 真正发出去（门禁通过之后）：清输入框、清草稿、走 room 投递。
+     * `sent` = 要发的正文（**转文件时是替换后的消息体**，不是用户原文）。
+     */
+    const deliver = async (u: string, sent: string, editorText: string) => {
+        setInputValue("");
+        // 内容已作为消息发出，草稿使命结束：清掉，避免下次进入看到已发送的旧文本
+        void draftStore.clear(u, ["agent_input"]);
+        setStick(true); // 刚发出，必然想看回复：无视之前是否在上方阅读
+        // 走 **room 投递**（##377 第 17 刀 / ##166 §44.2 A）：无 `@` ⇒ focus（缺省 = 主人格）
+        // ⇒ 与今天等价；`@dev` ⇒ 投给那个成员。实时显示与停止语义都不变（见 sendViaRoom 头注）。
+        const ok = await localChatStore.sendViaRoom(u, sent);
+        if (!ok) setInputValue(editorText); // 真失败（RPC 抛错）⇒ 把话还给用户，别"既没发出又被打字清空"
+    };
+
     const submit = async () => {
         // 终态任务只读（##400）：服务端本就会拒（TurnGate），这里**不让用户白打一句话**
         // —— 拒信仍由服务端给（前端的只读不是判据，别指望它兜底）。
@@ -3823,14 +3911,55 @@ export function LocalChatPage(props: {
         // 而侧边栏同一句话却能发出去、还能在房间里查到。
         if (!text || !uri()) return;
         const u = uri()!;
-        setInputValue("");
-        // 内容已作为消息发出，草稿使命结束：清掉，避免下次进入看到已发送的旧文本
-        void draftStore.clear(u, ["agent_input"]);
-        setStick(true); // 刚发出，必然想看回复：无视之前是否在上方阅读
-        // 走 **room 投递**（##377 第 17 刀 / ##166 §44.2 A）：无 `@` ⇒ focus（缺省 = 主人格）
-        // ⇒ 与今天等价；`@dev` ⇒ 投给那个成员。实时显示与停止语义都不变（见 sendViaRoom 头注）。
-        const ok = await localChatStore.sendViaRoom(u, text);
-        if (!ok) setInputValue(text); // 真失败（RPC 抛错）⇒ 把话还给用户，别"既没发出又被打字清空"
+        // ── 发送前门禁（##426 B）：只看**本条**消息的字符数；未超限 ⇒ 零打扰（直接发）──
+        // 量的口径全在 main（单价快照 / 窗口占用 / token 估算各一份真源），这里只认 over。
+        try {
+            const gate = (await diyService.diy.agent.local.inputGate({ taskUri: u, text })) as InputGate;
+            if (gate.over) {
+                // 输入框**不动**：用户还得在里面继续编辑（取消 = 回到打字）
+                setInputGateAsk({ text, gate });
+                return;
+            }
+        } catch {
+            /* 量不出来不拦发送：门禁是防护，不是判据（发送失败另有错误显示） */
+        }
+        await deliver(u, text, text);
+    };
+
+    /** 「转文件发送」：落盘 → 用返回的消息体（路径 + 前 20 行 + 总行数）发出去 */
+    const sendViaFile = async () => {
+        const ask = inputGateAsk();
+        const u = uri();
+        if (!ask || !u || gateBusy()) return;
+        setGateBusy(true);
+        try {
+            const r = await diyService.diy.agent.local.pasteToFile({ taskUri: u, text: ask.text });
+            setInputGateAsk(null);
+            await deliver(u, r.message, ask.text);
+        } catch (e) {
+            // 失败必须说出来：内容还在输入框（原文没动），别让"点了没反应"变成猜
+            const msg = e instanceof Error ? e.message : String(e);
+            notificationStore.addToast(
+                "error",
+                `转文件失败：${msg}`,
+                chatNotice(
+                    "发送前门禁 · 转文件（##426）",
+                    "内容原样还在输入框里，没有发出去；可以直接重试或改选「仍然发送」",
+                    "会话页 submit 前的超长门禁：超阈值 → `agent.local.pasteToFile` 把正文落 $DIY_HOME/<taskUri>/gen/paste/，落盘失败就不发送（半途发送会让内容只存在上游历史里、本地无副本）。",
+                ),
+            );
+        } finally {
+            setGateBusy(false);
+        }
+    };
+
+    /** 「仍然发送」：照发，不记后账（用户已看见三个数，选择权在他） */
+    const sendAnyway = async () => {
+        const ask = inputGateAsk();
+        const u = uri();
+        if (!ask || !u) return;
+        setInputGateAsk(null);
+        await deliver(u, ask.text, ask.text);
     };
 
     /**
@@ -4059,6 +4188,24 @@ export function LocalChatPage(props: {
                 与恢复 toast 共用同一份机制说明（`lib/notice-ops.ts`）—— 两处说法必须是一个故事。 */}
             <Show when={localChatStore.opsState === "down"}>
                 <OpsDownBar />
+            </Show>
+
+            {/* 降级重建横幅（##424 刀 2）：`historyWindow` 回包带 `degraded` ⇒ 现在看到的
+                不是 ops 明细，而是 `turns.jsonl` 折成的**结论文本记录**。
+                为什么必须显式（用户口径）：ops 缺失/断代时静默给空栏，等于让用户以为
+                “这场对话什么都没发生过”—— 那比少显示明细更坏。常量与文案归 shared。 */}
+            <Show when={localChatStore.degraded}>
+                {(d) => (
+                    <div
+                        class="flex items-center gap-2 border-b border-warning/40 bg-warning/10 px-4 py-1.5 text-body text-warning shrink-0"
+                        data-degraded={d().cause}
+                        data-degraded-turns={d().turns}
+                        data-degraded-dangling={d().dangling}
+                    >
+                        <span aria-hidden="true">⚠</span>
+                        <span>{degradedBannerText(d())}</span>
+                    </div>
+                )}
             </Show>
 
             {/* 块树滚动区 */}
@@ -4468,6 +4615,19 @@ export function LocalChatPage(props: {
                     }}
                 />
             </Show>
+            {/* 超长输入门禁（##426 B）：只有 over 才会挂上这个节点 */}
+            <Show when={inputGateAsk()}>
+                {(ask) => (
+                    <InputLimitDialog
+                        gate={ask().gate}
+                        busy={gateBusy()}
+                        onCancel={() => setInputGateAsk(null)}
+                        onToFile={() => void sendViaFile()}
+                        onStillSend={() => void sendAnyway()}
+                    />
+                )}
+            </Show>
+
             {/* 清空确认：破坏性且不可恢复，点击与执行之间隔一层确认 */}
             <Show when={confirmClear()}>
                 <ConfirmDialog

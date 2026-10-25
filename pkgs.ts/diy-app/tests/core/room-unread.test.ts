@@ -81,7 +81,7 @@ describe("markRead：人成员的阅读游标前移", () => {
 
     it("① 前移到指定事件：**只动人成员**的格子（agent 的投递水位不许被 UI 前移）", async () => {
         ensureRoom("t1", { members: [HUMAN, DEV] });
-        appendEvent("t1", ev("e1", "agent:dev"));
+        await appendEvent("t1", ev("e1", "agent:dev"));
         expect(await markRead("t1", "e1")).toBe(true);
         const room = readRoom("t1");
         expect(room?.lastSeen[HUMAN_MEMBER_ID]).toBe("e1");
@@ -91,15 +91,15 @@ describe("markRead：人成员的阅读游标前移", () => {
 
     it("② 不给事件 ⇒ 前移到流尾", async () => {
         ensureRoom("t2", { members: [HUMAN, DEV] });
-        appendEvent("t2", ev("e1", HUMAN.id));
-        appendEvent("t2", ev("e2", "agent:dev"));
+        await appendEvent("t2", ev("e1", HUMAN.id));
+        await appendEvent("t2", ev("e2", "agent:dev"));
         expect(await markRead("t2")).toBe(true);
         expect(readRoom("t2")?.lastSeen[HUMAN_MEMBER_ID]).toBe("e2");
     });
 
     it("③ 已经是这一条 ⇒ 不写盘（advanced=false，且 updated 没被刷新）", async () => {
         ensureRoom("t3", { members: [HUMAN] });
-        appendEvent("t3", ev("e1", "agent:dev"));
+        await appendEvent("t3", ev("e1", "agent:dev"));
         await markRead("t3", "e1");
         const before = readRoom("t3")!;
         expect(await markRead("t3", "e1")).toBe(false);
@@ -109,14 +109,14 @@ describe("markRead：人成员的阅读游标前移", () => {
     it("④ 没有这个房间 / 没有人成员 ⇒ 静默不动（游标是优化，不是故障）", async () => {
         expect(await markRead("nope", "e1")).toBe(false);
         ensureRoom("t5", { members: [DEV] }); // 只有 agent 成员
-        appendEvent("t5", ev("e1", DEV.id));
+        await appendEvent("t5", ev("e1", DEV.id));
         expect(await markRead("t5", "e1")).toBe(false);
         expect(readRoom("t5")?.lastSeen).toEqual({});
     });
 
     it("⑤ 写盘失败 ⇒ 不 reject（与 advanceLastSeen 同口径：游标丢了最坏多提示一条未读）", async () => {
         ensureRoom("t6", { members: [HUMAN] });
-        appendEvent("t6", ev("e1", "agent:dev"));
+        await appendEvent("t6", ev("e1", "agent:dev"));
         chmodSync(roomDir("t6"), 0o555);
         try {
             await expect(markRead("t6", "e1")).resolves.toBe(false);

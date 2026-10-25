@@ -26,6 +26,7 @@ import { HttpServerBinding } from '@diy-agent/rpc/http';
 import { CliApp } from '@diy-agent/rpc/cli';
 import type { AppConfig } from '../core/app-config';
 import { apiDef } from './api-def';
+import { factsGetExitCode } from '../../shared/facts';
 import { PROD_DEFAULT_PORT } from '../../runtime';
 import { sameDataHome } from '../core/instance-identity';
 import { errText, errorCodeOf } from '../../shared/error-report';
@@ -254,6 +255,8 @@ export class RpcPortService {
         router: apiDef.diy,
         transport: this._cliClient,
         cwd: typeof cwdRaw === 'string' && cwdRaw ? cwdRaw : process.cwd(),
+        // 与直连 CLI 同一判据：`facts get` 全空 ⇒ x-diy-exit=1（diy.sh 的 http 模式据此透传）
+        exitCodeOf: factsGetExitCode,
         // 契约：hook 参数 = console.log 同参（不含换行），故这里补 \n 以对齐直连字节
         out: (line) => outBuf.push(line, '\n'),
         err: (line) => errBuf.push(line, '\n'),

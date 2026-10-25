@@ -25,6 +25,19 @@ import {
     type RoomRecentValue,
 } from "../../shared/room";
 
+/**
+ * 读事件流时的**尾部窗口**（行）—— 只为了答「最近谁说了什么」。
+ *
+ * 为什么要一个数：`roomContextFor` 的上限是 20 条 / 4000 字符，而事件流会无限增长（##427）。
+ * 给 500 行是**保守取的大值**（远超 20 条，且单行很长的房间也绰绰有余），代价仍是「只读文件尾
+ * 一两块」。
+ *
+ * ⚠ 副作用：水位（`lastSeenId`）若落在窗口之外，`roomContextFor` 按「从头看」处理
+ * （它本来就对「找不到水位」这么兜）—— 结果仍是「最近 20 条」，与全量读**逐字一致**；
+ * 差别只在 `omitted` 计数（窗口外的不再计入），不影响注入内容。
+ */
+const ROOM_CONTEXT_READ_LINES = 500;
+
 /** `runtime.room` 的值（两个**原子单元**：`room.members` 低频 / `room.recent` 高频） */
 export interface RoomRuntimeValue {
     members: RoomMembersValue;
@@ -56,7 +69,7 @@ export interface RoomRuntimeFact {
  *
  * `sayId`：投递轮传「正文里那一条」，避免同一句话既在正文又在 recent 里出现一次。
  */
-export function roomRuntimeFact(opts: { roomId: string; taskUri: string; sayId?: string }): RoomRuntimeFact | null {
+export async function roomRuntimeFact(opts: { roomId: string; taskUri: string; sayId?: string }): Promise<RoomRuntimeFact | null> {
     const { roomId, taskUri, sayId } = opts;
     const room = readRoom(roomId);
     if (!room) return null;
@@ -66,7 +79,9 @@ export function roomRuntimeFact(opts: { roomId: string; taskUri: string; sayId?:
         m.backend?.type === "task" && m.backend.data.taskUri === taskUri;
     const self = room.members.find((m) => bound(m) && m.main === true) ?? room.members.find(bound) ?? room.members.find((m) => m.main === true);
     if (!self) return null;
-    const { events } = readEvents(roomId);
+    // 只要"最近谁说了什么"（`roomContextFor` 最多吐 `CONTEXT_MAX_EVENTS` 条 / 4000 字符）⇒
+    // 倒读尾部一窗就够了（##427：旧实现为这句话把整条事件流读了一遍，5 MB 时是轮首一次 ~60 ms 的同步阻塞）。
+    const { events } = await readEvents(roomId, { limit: ROOM_CONTEXT_READ_LINES });
     const ctx = roomContextFor({
         events,
         memberId: self.id,

@@ -77,17 +77,17 @@ function seedOps(uri: string, turns = 3): string[] {
 }
 
 describe("① after.turns 按投递口径（数字之间不许打架）", () => {
-    it("预算=0（清零）→ after.turns = 0；预算撑满 → = 3", () => {
+    it("预算=0（清零）→ after.turns = 0；预算撑满 → = 3", async () => {
         const uri = newUri();
         seedOps(uri);
-        const pv0 = getLocalAgent().compactPreview(uri, { budgetBytes: 0, toolResult: { render: "asis" } });
+        const pv0 = await getLocalAgent().compactPreview(uri, { budgetBytes: 0, toolResult: { render: "asis" } });
         expect(pv0.after.turns).toBe(0);
         expect(pv0.after.messages).toBe(0);
         expect(pv0.before.turns).toBe(3);
 
         const uri2 = newUri();
         seedOps(uri2);
-        expect(getLocalAgent().compactPreview(uri2, { budgetBytes: 1024 * 1024, toolResult: { render: "asis" } }).after.turns).toBe(3);
+        expect((await getLocalAgent().compactPreview(uri2, { budgetBytes: 1024 * 1024, toolResult: { render: "asis" } })).after.turns).toBe(3);
     });
 });
 
@@ -113,8 +113,8 @@ describe("④ 预算事件的**过滤器表达**（历史回溯可还原投递�
     });
 });
 
-describe("② details.clipped：同 id 只记一次（去重 —— 回归「虚胖一倍」）", () => {
-    it("headtail 裁剪时，每个工具 id 在 details.clipped 里只出现一次", () => {
+describe("② details.clippedIds：同 id 只记一次（去重 —— 回归「虚胖一倍」；##431 起只存 id 清单）", () => {
+    it("headtail 裁剪时，每个工具 id 在 details.clippedIds.ids 里只出现一次", () => {
         const uri = newUri();
         // ⚠️ 必须**多于保底步数**（##343 M1：最近 6 步 `clip: full` ⇒ 不再被 headtail 裁）：
         //    8 轮 ⇒ 最早两轮的工具输出走阶梯级、照旧被裁，去重才有对象可验。
@@ -123,10 +123,11 @@ describe("② details.clipped：同 id 只记一次（去重 —— 回归「虚
             uri,
             { mode: "budget", budgetBytes: 1024 * 1024, toolResult: { render: "headtail" }, summary: false },
             "cli",
-        ) as { details?: { clipped?: Array<{ id: string }> } };
-        const clipped = rec.details?.clipped ?? [];
-        expect(clipped.length).toBeGreaterThan(0);
-        const ids = clipped.map((c) => c.id);
+        ) as { details?: { clippedIds?: { ids: string[]; count: number } } };
+        const ids = rec.details?.clippedIds?.ids ?? [];
+        // ##431：账本只留 id 清单（明细现场从 ops 算），但「同 id 只记一次」的去重口径不变
+        expect(ids.length).toBeGreaterThan(0);
+        expect(rec.details?.clippedIds?.count).toBe(ids.length);
         expect(new Set(ids).size).toBe(ids.length); // 无重复
     });
 });
@@ -231,7 +232,7 @@ describe("④ v3 分组形状：看 JSON 就知道每块回答什么（D5「结�
         const rec = getLocalAgent().compact(uri, { budgetBytes: 1024 * 1024, toolResult: { render: "asis" } }, "cli") as unknown as Record<string, unknown>;
         expect(rec.kind).toBe("compact");
         // ##344 M2 的 plan 快照 → ##378 起只记**内容寻址版本**（全文在 $DIY_HOME/plan-store/）
-        expect(rec.v).toBe(4);
+        expect(rec.v).toBe(5); // ##431：v5 = 明细瘦身
         expect(rec.trigger).toBe("manual");
         expect(Object.keys(rec)).toEqual(
             expect.arrayContaining(["policy", "boundary", "size", "cost", "details", "plan"]),
@@ -253,10 +254,12 @@ describe("④ v3 分组形状：看 JSON 就知道每块回答什么（D5「结�
         const size = rec.size as Record<string, unknown>;
         expect(size).toHaveProperty("keptTurns", 3);
         expect(size).toHaveProperty("droppedTurns", 0);
-        // 明细在 details（被裁工具输出）
+        // 明细在 details —— ##431 起只留**计数 + id 清单**（老账的大明细照旧可读，新账不再产出）
         const details = rec.details as Record<string, unknown>;
-        expect(Array.isArray(details.clipped)).toBe(true);
-        expect(Array.isArray(details.dropped)).toBe(true);
+        expect(details.dropped).toBeUndefined();
+        expect(details.clipped).toBeUndefined();
+        expect(details.droppedCount).toBe(0); // 1MB + asis ⇒ 无轮被丢
+        expect((details.clippedIds as { count: number }).count).toBe(0);
     });
 
     it("非空操作（真丢轮）才物化 plan 版本：CAS 可取回全文、且已入链（否则是悬空指针）", () => {

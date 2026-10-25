@@ -56,6 +56,26 @@ afterAll(async () => {
   await fx?.electron?.stop();
 });
 
+/**
+ * ##423 块 3：配置控件从 select/checkbox 换成了 daisyUI `filter`（radio 组）。
+ * 组容器带 `data-*` 钩子；点选 = 真实 click 对应 `input[data-filter-value=…]`（同组互斥交给 browser）。
+ */
+async function pickFilter(group: string, value: string): Promise<string> {
+  return ui.query<string>(
+    `(() => { const g=document.querySelector(${JSON.stringify(group)}); if(!g) return 'no-group';
+      const r=g.querySelector('input[data-filter-value=' + JSON.stringify(${JSON.stringify(value)}) + ']');
+      if(!r) return 'no-option'; r.click(); return 'ok'; })()`,
+  );
+}
+
+/** 某个 filter 组当前选中的值（radio 组没有 `.value`） */
+async function pickedFilter(group: string): Promise<string> {
+  return ui.query<string>(
+    `(() => { const g=document.querySelector(${JSON.stringify(group)}); if(!g) return 'no-group';
+      const r=g.querySelector('input[type=radio]:checked'); return r ? r.getAttribute('data-filter-value') : ''; })()`,
+  );
+}
+
 async function a11yText(): Promise<string> {
   const res = await fx.sh.getJson("./diy.sh ui inspect");
   const acc: string[] = [];
@@ -77,6 +97,23 @@ async function expandAll(): Promise<void> {
     if (Number(m[1]) >= Number(m[2])) return;
     await ui.clickSelector('[aria-label="逐级展开"]');
   }
+}
+
+/** 打开预览区的 diff 计算（##406 起差异视图缺省关闭，见 `CompactSessionPanel.tsx:915` / `:1396`） */
+async function enableDiffPreview(): Promise<void> {
+  const r = await ui.query<string>(
+    `(() => { if (document.querySelector('[data-compact-preview]')) return 'already';
+      const b=[...document.querySelectorAll('button')].find(x=>(x.textContent||'').includes('计算并显示 diff'));
+      if(!b) return 'no-button'; b.click(); return 'ok'; })()`,
+  );
+  if (r === "no-button") {
+    throw new Error("预览区没有「计算并显示 diff」按钮：差异视图的闸门形状变了（见 CompactSessionPanel.tsx 的 diffEnabled）");
+  }
+  await waitUntil(
+    () => ui.query<boolean>(`!!document.querySelector('[data-compact-preview]')`),
+    (v) => v === true,
+    { label: "diff 面板打开" },
+  );
 }
 
 /** hover token 窗口环 → 弹出 L2 卡（含「压缩」快捷直压 + 「明细 ›」） */
@@ -109,6 +146,27 @@ async function openDrawer(): Promise<void> {
 /** 正文里的文本（判「某轮还在不在」） */
 const bodyHas = (s: string) => ui.query<boolean>(`document.body.textContent.includes(${JSON.stringify(s)})`);
 
+/**
+ * 滚到聊天区顶部，直到 `match` 出现在 DOM 里（上限 `max` 次，防死循环）。
+ *
+ * 为什么需要：聊天块树是**视口虚拟化**的（##301）—— DOM 里只挂视口附近若干轮，
+ * 页面死在底部时第 1 轮根本不挂着，`document.body.textContent` 里也没有它。
+ * 「更早的历史还在」的可观测判据 = 滚到顶就能看见（滚动容器见 `LocalChatPage.tsx:4218` 的 `.diy-chat`）。
+ */
+async function scrollChatToTopUntil(match: string, max = 10): Promise<boolean> {
+  for (let i = 0; i < max; i++) {
+    if (await bodyHas(match)) return true;
+    await ui.query<string>(`(() => {
+      const el = document.querySelector('.diy-chat');
+      if (!el) return 'no-scroller';
+      el.scrollTop = 0;
+      el.dispatchEvent(new Event('scroll', { bubbles: true }));
+      return 'ok'; })()`);
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  return await bodyHas(match);
+}
+
 /** 预算输入框当前值（KB） */
 const budgetKb = () => ui.query<string>(`document.querySelector('input[aria-label="压缩预算KB"]')?.value ?? ''`);
 
@@ -126,7 +184,11 @@ const compactLog = () =>
 const budgetMarks = () => (compactLog().match(/"mode":"budget"/g) || []).length;
 
 describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压缩 → 历史不销毁", () => {
-  it("setup: 造 8 轮会话（每轮一个可辨识的用户文本）", async () => {
+  // 造会话数据 = **夹具**，不是用例（##433）：写成 `it` 时它还兼着「给后面的用例置 `uri`」的职责，
+  // 于是 `vitest run -t '历史未销毁'` 这类过滤只挑中后面那条时，`uri` 仍是初始的 `""` ——
+  // 读侧拿空 uri 拼出 `local/-e3b0c44298fc/ops.jsonl`（空串 sha256 前 12 位）而 ENOENT。
+  // 夹具必须在 describe 级 hook 里跑，与「跑哪几条用例」无关。
+  beforeAll(async () => {
     const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/cp --label 压缩`);
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create "压缩 UI 验证" ${pid}`);
@@ -173,7 +235,8 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
     const text = await a11yText();
     expect(text).toContain("自动压缩");
     expect(text).toContain("费用对比");
-    expect(await ui.query<boolean>(`!!document.querySelector('[aria-label="自动压缩"]')`)).toBe(true);
+    // ##423 块 3：三态改 filter 组（旧 toggle 把 notify 压没了）
+    expect(await ui.query<boolean>(`!!document.querySelector('[aria-label="自动压缩模式"]')`)).toBe(true);
     expect(await ui.query<boolean>(`!!document.querySelector('input[aria-label="压缩预算KB"]')`)).toBe(true);
     expect(await ui.query<boolean>(`!!document.querySelector('[aria-label="压缩（详情页）"]')`)).toBe(true);
     expect(await ui.query<string>(`document.querySelector('[aria-label="窗口构成视图"] button')?.textContent?.trim() ?? ''`)).toBe("压缩");
@@ -191,14 +254,12 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
     for (const k of ["head", "tail", "maxLineChars", "maxKeepBytes"]) {
       expect(await ui.query<boolean>(`!!document.querySelector('input[aria-label="${k}"]')`)).toBe(true);
     }
-    // render 默认 headtail（真源缺省）
-    expect(await ui.query<string>(`document.querySelector('select[aria-label="工具结果呈现"]')?.value ?? ''`)).toBe("headtail");
+    // render 默认 headtail（真源缺省）—— filter 组：读选中的 radio
+    expect(await pickedFilter('[data-render-select]')).toBe("headtail");
   });
 
   it("M3：改工具结果呈现 render（headtail → callpath）写回真源", async () => {
-    await ui.query<string>(
-      `(() => { const s=document.querySelector('select[aria-label="工具结果呈现"]'); s.value='callpath'; s.dispatchEvent(new Event('change',{bubbles:true})); return 'x'; })()`,
-    );
+    expect(await pickFilter('[data-render-select]', "callpath")).toBe("ok");
     await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("render: callpath"), { label: "render → callpath 写回" });
     // 非 headtail → renderData 字段从 DOM 退场
     await waitUntil(
@@ -207,9 +268,7 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
       { label: "renderData 字段退场" },
     );
     // 切回 headtail（后续用例依赖缺省）
-    await ui.query<string>(
-      `(() => { const s=document.querySelector('select[aria-label="工具结果呈现"]'); s.value='headtail'; s.dispatchEvent(new Event('change',{bubbles:true})); return 'x'; })()`,
-    );
+    expect(await pickFilter('[data-render-select]', "headtail")).toBe("ok");
     await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("render: headtail"), { label: "render 切回 headtail" });
   });
 
@@ -243,12 +302,16 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
     );
   });
 
-  it("自动压缩：toggle 写回真源 $DIY_HOME/auto-compact.yaml（auto ⇄ off）", async () => {
-    expect(await ui.query<boolean>(`document.querySelector('input[aria-label="自动压缩"]')?.checked`)).toBe(false);
-    await ui.query<string>(`(() => { const t=document.querySelector('input[aria-label="自动压缩"]'); t.checked=true; t.dispatchEvent(new Event('change',{bubbles:true})); return 'x'; })()`);
-    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("mode: auto"), { label: "toggle 开 → auto" });
-    await ui.query<string>(`(() => { const t=document.querySelector('input[aria-label="自动压缩"]'); t.checked=false; t.dispatchEvent(new Event('change',{bubbles:true})); return 'x'; })()`);
-    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("mode: off"), { label: "toggle 关 → off" });
+  it("自动压缩：filter 三态写回真源 $DIY_HOME/auto-compact.yaml（off / notify / auto）", async () => {
+    // ##423 块 3：三态全可见（旧 toggle 只能 auto ⇄ off，notify 在界面上根本选不到）
+    // 缺省 = notify（见 AutoCompactConfigSchema.mode 的缺省注释），不是 off
+    expect(["off", "notify", "auto"]).toContain(await pickedFilter('[data-compact-mode]'));
+    expect(await pickFilter('[data-compact-mode]', "auto")).toBe("ok");
+    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("mode: auto"), { label: "auto 写回" });
+    expect(await pickFilter('[data-compact-mode]', "notify")).toBe("ok");
+    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("mode: notify"), { label: "notify 写回" });
+    expect(await pickFilter('[data-compact-mode]', "off")).toBe("ok");
+    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("mode: off"), { label: "off 写回" });
   });
 
   it("压缩到输入：手改写回真源（3KB=3072，预算形状）", async () => {
@@ -268,6 +331,11 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
   });
 
   it("预览区渲染请求 YAML diff（含 system/messages 与增删行）", async () => {
+    // ##406 起差异视图**缺省关闭**（大请求的 diff 计算曾把页面卡死）——
+    // 预览区先渲染的是闸门 fallback（见 `CompactSessionPanel.tsx:915` 的 `diffEnabled` 缺省 false
+    // 与 `:1396-1403` 的 fallback 分支：「计算并显示 diff…」按钮）。
+    // 不点它，`[data-compact-preview]` 根本不在 DOM 里 —— 旧用例假设预览恒开，已过时。
+    await enableDiffPreview();
     await expandAll();
     await waitUntil(
       () => ui.query<string>("document.querySelector('[data-compact-preview]')?.textContent ?? ''"),
@@ -324,14 +392,33 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
   it("点「压缩（详情页）」→ 账本记预算压缩；**历史不销毁**（聊天页仍可见第1轮）", async () => {
     await ui.clickSelector('[aria-label="压缩（详情页）"]');
     await waitUntil(() => Promise.resolve(compactLog()), (t) => t.includes('"mode":"budget"'), { label: "账本记 budget 压缩" });
-    expect(await waitUntil(() => bodyHas("第1轮问题"), (v) => v === true, { label: "第1轮仍在（不销毁）" })).toBe(true);
+    // 「历史不销毁」要按**聊天页真实可见性**断：视口在底部时先看最新一轮（压缩不该动它），
+    // 再滚到顶看最早一轮（##301 起块树是视口虚拟化的，DOM 只挂视口附近的行 ——
+    // 旧断言假设「全历史恒在 DOM 里」，测的是当时未虚拟化的布局，不是销毁与否）。
     expect(await bodyHas("第8轮问题")).toBe(true);
+    expect(await scrollChatToTopUntil("第1轮问题")).toBe(true);
   });
 
   it("历史未销毁：ops 原文仍含全部 8 轮；压缩事件账有快照（算法 + 过滤器）", async () => {
     const opsRaw = readFileSync(join(fx.HOME, sessionFileRel(uri, "ops")), "utf-8");
     for (let i = 1; i <= 8; i++) expect(opsRaw).toContain(`第${i}轮问题`);
-    const events = (await fx.sh.getJson(`./diy.sh agent local compact events ${uri}`)).data as Array<{ kind: string; policy?: { mode?: string } }>;
+
+    // 自足（##433）：账本里没有任何压缩事件时就自己压一次 —— `-t '历史未销毁'` 只挑本条的场合，
+    // 上一条「点「压缩（详情页）」」被跳过，账本必定是空的，而本用例断言的前提是「压缩过一次」。
+    // 走 CLI = 同一条 `compact.run`（与 UI 按钮同一个入口），不是另一条假路径。
+    const readEvents = async () =>
+        (
+            (await fx.sh.getJson(`./diy.sh agent local compact events ${uri}`)).data as {
+                events: Array<{ kind: string; policy?: { mode?: string } }>;
+            }
+        ).events;
+    if (!(await readEvents()).some((e) => e.kind === "compact")) {
+        const run = await fx.sh.run(`./diy.sh agent local compact run ${uri} --budget-bytes 3072`);
+        expect(run.stderr).toBe("");
+        expect(run.code).toBe(0);
+    }
+    // ##431：回包 = `{ events, truncated }`
+    const events = await readEvents();
     const compacts = events.filter((e) => e.kind === "compact");
     expect(compacts.length).toBeGreaterThanOrEqual(1);
     expect(compacts[0]!.policy?.mode).toBe("budget");
@@ -353,7 +440,8 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
 describe("M4：分表压缩点位", () => {
   let uri2 = "";
 
-  it("两步 + 一条压缩事件（落在两步之间）→ 只有其后那步标「压缩」", async () => {
+  // 同上：夹具放 describe 级 hook，别让「跑单条用例」把它跳过（##433）。
+  beforeAll(async () => {
     const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/cp2 --label 点位`);
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create "压缩点位" ${pid}`);
@@ -498,7 +586,7 @@ describe("##339：分表投递徽标（配置驱动压缩的事实）", () => {
     await waitUntil(a11yText, (t) => t.includes("投递话题"), { label: "会话上屏" });
   });
 
-  it("分表：**只有轮首步**有「投递」徽标（其余步无）；悬停给出预算/丢几条", async () => {
+  it("分表：**只有轮首步**有「历史」徽标（其余步无）；悬停给出维度/预算/丢几条/must 级/三触发器", async () => {
     await openDrawer();
     await ui.clickSelector('[data-drawer-tab="step"]');
     await waitUntil(
@@ -509,11 +597,28 @@ describe("##339：分表投递徽标（配置驱动压缩的事实）", () => {
     // 恰好一处（= 轮首步）；第二步不标
     expect(await ui.query<number>("document.querySelectorAll('[data-delivery-compact]').length")).toBe(1);
     const badge = await ui.query<string>("document.querySelector('[data-delivery-compact]')?.textContent?.trim() ?? ''");
-    expect(badge).toContain("投递");
+    // ##423：维度写进词里 —— 不再有裸「全量」/「投递」这种跨维度歧义词
+    expect(badge).toContain("历史");
+    expect(badge).toContain("丢 3 条");
+    expect(badge).not.toContain("全量");
     const tip = await ui.query<string>("document.querySelector('[data-delivery-compact]')?.getAttribute('title') ?? ''");
+    expect(tip).toContain("历史裁剪");
     expect(tip).toContain("3 KB");
     expect(tip).toContain("丢 3/5");
     expect(tip).toContain("保留 1 段");
+    // ③【关键】must 级不吃预算（「压完还超预算、于是每轮都在压」的根因）
+    expect(tip).toContain("预算只约束非 must 级");
+    // ④ 三触发器 + 阈值（旧版 hover 只说预算多少）
+    expect(tip).toContain("systemContextChanged");
+    expect(tip).toContain("cacheExpired");
+    expect(tip).toContain("contextWindowOver");
+    expect(tip).toContain("本步");
+
+    // ③ 统计补齐：会话/本轮的投递次数（= 步数）与压缩次数
+    const stats = await ui.query<string>("document.querySelector('[data-delivery-stats]')?.textContent ?? ''");
+    expect(stats).toContain("2 次投递");
+    expect(stats).toContain("1 轮");
+    expect(stats).toContain("压缩 0 次");
     await ui.clickSelector('[aria-label="关闭窗口构成"]');
   });
 });
@@ -529,10 +634,25 @@ describe("装配管道（##344 M2）：级列表增删改 + 即时预览 + 与 C
   /** 第 i 级里的某个控件（多级同形 ⇒ 必须按行取，不能全局 querySelector） */
   const rowSel = (i: number, sel: string) =>
     `document.querySelectorAll('[data-keep-stage]')[${i}]?.querySelector(${JSON.stringify(sel)})`;
-  /** 给某个控件设值并派发 change（走真实 DOM 事件路径） */
+  /**
+   * 给某个控件设值并派发 change（走真实 DOM 事件路径）。
+   *
+   * ##423 块 3：下拉/勾选框换成了 daisyUI `filter`（radio 组）—— `[data-keep-type-select]` 这类钩子
+   * 现在挂在**组容器**上，所以这里分两路：容器 ⇒ 点 `input[data-filter-value=<v>]`（真实点击，
+   * 让 browser 自己处理同组互斥）；`input/select` ⇒ 老路径 el.value + change。
+   */
   const fire = (sel: string, value: string) =>
     ui.query<string>(
-      `(() => { const el=${sel}; if(!el) return 'no'; el.value=${JSON.stringify(value)}; el.dispatchEvent(new Event('change',{bubbles:true})); return 'ok'; })()`,
+      `(() => { const el=${sel}; if(!el) return 'no';
+        if (el.matches('input,select,textarea')) { el.value=${JSON.stringify(value)}; el.dispatchEvent(new Event('change',{bubbles:true})); return 'ok'; }
+        const r = el.querySelector('input[data-filter-value=' + JSON.stringify(${JSON.stringify(value)}) + ']');
+        if (!r) return 'no-option'; r.click(); return 'ok'; })()`,
+    );
+  /** 某个 filter 组的当前选中值（radio 组没有 `.value` 可读） */
+  const picked = (sel: string) =>
+    ui.query<string>(
+      `(() => { const el=${sel}; if(!el) return 'no';
+        const r = el.querySelector('input[type=radio]:checked'); return r ? r.getAttribute('data-filter-value') : ''; })()`,
     );
 
   /** 该 describe 接在分表用例之后 —— 那时抽屉在「分表」tab 上，先切回「压缩」tab */
@@ -559,11 +679,38 @@ describe("装配管道（##344 M2）：级列表增删改 + 即时预览 + 与 C
     expect(await ui.query<number>(`document.querySelectorAll('[data-keep-stage]').length`)).toBe(2);
     expect(await ui.query<string>(`document.querySelectorAll('[data-keep-stage]')[0].getAttribute('data-keep-type')`)).toBe("steps");
     expect(await ui.query<string>(`document.querySelectorAll('[data-keep-stage]')[1].getAttribute('data-keep-type')`)).toBe("ladder");
-    expect(await ui.query<boolean>(`document.querySelectorAll('[data-keep-must]')[0].checked`)).toBe(true);
-    expect(await ui.query<string>(`document.querySelectorAll('[data-keep-clip]')[0].value`)).toBe("full");
+    // ##423 块 3：勾选框/下拉换成 filter 按钮组 ⇒ 读「选中的 radio」而不是 .checked / .value
+    expect(await picked(`document.querySelectorAll('[data-keep-must]')[0]`)).toBe("must");
+    expect(await picked(`document.querySelectorAll('[data-keep-clip]')[0]`)).toBe("full");
     // 阶梯级不声明 clip ⇒ 界面显示「回落全局」（不是写死 headtail）
-    expect(await ui.query<string>(`document.querySelectorAll('[data-keep-clip]')[1].value`)).toBe("inherit");
+    expect(await picked(`document.querySelectorAll('[data-keep-clip]')[1]`)).toBe("inherit");
     expect(await ui.query<string>(`document.querySelectorAll('[data-keep-n]')[0].value`)).toBe("6");
+  });
+
+  it("##423 块 2/3：「什么时候会压」讲清判据、范例预览左右对照、计数上屏", async () => {
+    await gotoCompactTab();
+    // ① 什么时候会压：三触发器 + 手动，各自带「开/关/手动」与当前值
+    const text = await a11yText();
+    expect(await ui.query<boolean>(`!!document.querySelector('[data-when-compact]')`)).toBe(true);
+    expect(
+      await ui.query<string[]>(`[...document.querySelectorAll('[data-when-row]')].map(e=>e.getAttribute('data-when-row'))`),
+    ).toEqual(["systemContextChanged", "cacheExpired", "contextWindowOver", "manual"]);
+    expect(text).toContain("系统上下文变");
+    expect(text).toContain("缓存过期");
+    expect(text).toContain("窗口超限");
+    expect(text).toContain("压成什么样");
+    // ② 范例预览：左 = 固定样例全部 20 条，右 = 压完留下的（上限小 ⇒ 留得少）
+    const before = await ui.query<number>(`document.querySelectorAll('[data-example-before] [data-example-msg]').length`);
+    const after = await ui.query<number>(`document.querySelectorAll('[data-example-after] [data-example-msg]').length`);
+    expect(before).toBe(20);
+    expect(after).toBeGreaterThan(0);
+    expect(after).toBeLessThan(before);
+    // 每条都标了模拟 token 尺寸
+    expect(text).toMatch(/\d+ tok/);
+    // ③ 计数：本会话投递次数 / 轮数 / 压缩次数 = 账本同源
+    expect(await ui.query<boolean>(`!!document.querySelector('[data-compact-stats]')`)).toBe(true);
+    expect(text).toContain("次投递（= 步数）");
+    expect(text).toContain("压缩");
   });
 
   it("「+ 新增级」→ 写回 history.keep[]（来源变「来自配置」）", async () => {
@@ -583,8 +730,13 @@ describe("装配管道（##344 M2）：级列表增删改 + 即时预览 + 与 C
     await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("type: recent"), { label: "type → recent 写回" });
     // ⚠️ js-yaml 把键 `n` 落成 `'n':`（YAML 1.1 的 y/n 布尔别名 ⇒ 必须引号化）；值语义不变
     expect(autoYaml()).toContain("'n': 10");
-    // 私有参数控件随 type 出现
-    expect(await ui.query<boolean>(`!!${rowSel(1, "[data-keep-n]")}`)).toBe(true);
+    // 私有参数控件随 type 出现 —— **等 DOM，不等文件**（文件已写 ≠ 界面已重渲染，
+    // 同一原则在本文件别处已注明；`setKeep` 走 RPC 后再回灌，紧跟着查 DOM 会读到上一帧）。
+    await waitUntil(
+      () => ui.query<boolean>(`!!${rowSel(1, "[data-keep-n]")}`),
+      (v) => v === true,
+      { label: "recent 级 n 控件出现" },
+    );
     expect(await ui.query<boolean>(`!!${rowSel(1, "[data-keep-role]")}`)).toBe(true);
     await fire(rowSel(1, "[data-keep-n]"), "3");
     await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("'n': 3"), { label: "n=3 写回" });
@@ -594,9 +746,8 @@ describe("装配管道（##344 M2）：级列表增删改 + 即时预览 + 与 C
 
   it("必保勾选 / 裁法选择 → 写回必须字段 `must` 与公共字段 `clip`", async () => {
     // 第 2 级（recent）取消必保（它本来没有 must）→ 勾上再取消
-    await ui.query<string>(
-      `(() => { const c=${rowSel(1, "[data-keep-must]")}; c.checked=true; c.dispatchEvent(new Event('change',{bubbles:true})); return 'x'; })()`,
-    );
+    // 第 2 级「计预算 → 必保」（filter 组：点对应 radio）
+    expect(await fire(rowSel(1, "[data-keep-must]"), "must")).toBe("ok");
     await waitUntil(() => Promise.resolve(autoYaml()), (t) => (t.match(/must: true/g) || []).length >= 2, { label: "recent 级变必保" });
     // 第 2 级裁法 → full（写回 clip 形状）
     await fire(rowSel(1, "[data-keep-clip]"), "full");
@@ -621,14 +772,21 @@ describe("装配管道（##344 M2）：级列表增删改 + 即时预览 + 与 C
     const before = autoYaml();
     // 第 3 级的删除按钮。用**合成 click**（`el.click()`）而非真实鼠标：级列表在 340px 左栏里，
     // 行可能横向溢出 ⇒ 真实点击的命中点会被裁到别的元素上（同文件里开抽屉也出于同类原因用合成 click）。
-    await ui.query<string>(
-      `(() => { const b=${rowSel(2, "[data-keep-del]")}; if(!b) return 'no'; b.click(); return 'ok'; })()`,
-    );
-    await waitUntil(
-      () => ui.query<boolean>(`!!document.querySelector('button.btn-error')`),
-      (v) => v === true,
-      { label: "ConfirmDialog 出现" },
-    );
+    // 重试上限 10 次：级列表刚被上一条用例改过（`setKeep` → RPC → 回灌），紧跟着点删除可能落在
+    // 重渲染中间态（按钮还没挂上 / 事件绑在旧行上）⇒ 弹窗不出来。这是**夹具时序**，不是被测行为：
+    // 下面「未确认前不改文件」与「确认后才写回」两条断言一个字没放宽。
+    let dialogUp = false;
+    for (let i = 0; i < 10 && !dialogUp; i++) {
+      await ui.query<string>(
+        `(() => { const b=${rowSel(2, "[data-keep-del]")}; if(!b) return 'no'; b.click(); return 'ok'; })()`,
+      );
+      dialogUp = await waitUntil(
+        () => ui.query<boolean>(`!!document.querySelector('button.btn-error')`),
+        (v) => v === true,
+        { label: "ConfirmDialog 出现", timeoutMs: 500 },
+      );
+    }
+    expect(dialogUp).toBe(true);
     // 未确认前**不改文件**（破坏性操作要显式确认）
     expect(autoYaml()).toBe(before);
     await ui.clickSelector("button.btn-error");
@@ -641,8 +799,12 @@ describe("装配管道（##344 M2）：级列表增删改 + 即时预览 + 与 C
   });
 
   it("改管道 ⇒ 预览**即时重算**（阶梯级裁法改 path → 工具结果变「只留调用」）", async () => {
+    // 预览区的 diff 计算是**按实例**的开关（##406）：本 describe 的面板是新挂的，得再开一次。
+    await enableDiffPreview();
     await expandAll();
     const before = await ui.query<string>("document.querySelector('[data-compact-preview]')?.textContent ?? ''");
+    // 先证明预览确实渲染了：否则下面「不含 X」是空串给的假绿。
+    expect(before.length).toBeGreaterThan(0);
     expect(before).not.toContain("输出已省略（只留调用）");
     await fire(rowSel(1, "[data-keep-clip]"), "path");
     await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("type: path"), { label: "clip → path 写回" });

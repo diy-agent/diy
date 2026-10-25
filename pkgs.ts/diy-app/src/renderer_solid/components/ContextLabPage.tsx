@@ -44,9 +44,11 @@ import type { ContextDiff, CtxLog, HistoryEntryView, Stats } from "../../shared/
 import type { DiffLine } from "../../shared/line-diff";
 import { changeForNode } from "../../shared/context/changelog";
 import { dateOfLogFile, pickStepTraffic, type TrafficStepRecord } from "../../shared/context/traffic-step";
+import { parseStepRequest } from "../../shared/context/step-request";
 import { trafficStore } from "../store/trafficStore";
 import { TrafficDrawer } from "./TrafficDrawer";
 import { getRendererActions } from "../lib/renderer-actions";
+import { LayoutAreaToggles } from "./LayoutAreaToggles";
 
 const PAGE = "ctxlab";
 
@@ -63,23 +65,6 @@ function fmtBytes(n: number): string {
     return `${i === 0 ? v : v.toFixed(1)} ${u[i]}`;
 }
 
-/** 一条 ModelMessage 的 content → 可读文本（字符串原样；分片数组按类型摊平） */
-function msgText(c: unknown): string {
-    if (typeof c === "string") return c;
-    if (Array.isArray(c)) {
-        return c
-            .map((p) => {
-                const o = p as { type?: unknown; text?: unknown; toolName?: unknown; input?: unknown; output?: unknown };
-                if (typeof o?.text === "string") return o.text;
-                if (o?.type === "tool-call") return `[tool-call ${String(o.toolName)}] ${JSON.stringify(o.input ?? {})}`;
-                if (o?.type === "tool-result") return `[tool-result] ${JSON.stringify(o.output ?? {})}`;
-                return JSON.stringify(p);
-            })
-            .join("\n");
-    }
-    return c === undefined || c === null ? "" : JSON.stringify(c);
-}
-
 /** 流量记录里我们渲染时用到的字段（traffic.query 返回值是其超集） */
 interface TrafficRec extends TrafficStepRecord {
     id?: number;
@@ -88,32 +73,6 @@ interface TrafficRec extends TrafficStepRecord {
     resBytes?: number;
     ms?: number;
     reqBody?: { head?: string; tail?: string; truncated?: boolean; totalBytes?: number } | null;
-}
-
-/**
- * 请求体（首尾法保留的正文）→ 会话消息。
- * 默认**只留首尾一段**（`truncated`），这时 JSON 解不开 —— 如实说"被截断"并给出开关提示，
- * 不把半截 JSON 当正文渲染（那会让人以为请求就是这么发的）。
- */
-function parseBodyMessages(rec: TrafficRec): { msgs: Array<{ role: string; text: string }> | null; note: string } {
-    const rb = rec.reqBody ?? null;
-    if (!rb || typeof rb.head !== "string" || rb.head === "") return { msgs: null, note: "这条记录没有请求正文。" };
-    try {
-        const json = JSON.parse(rb.head) as { messages?: unknown };
-        if (!Array.isArray(json.messages)) return { msgs: null, note: "请求体里没有 messages 数组。" };
-        const msgs = (json.messages as Array<{ role?: unknown; content?: unknown }>).map((m) => ({
-            role: String(m?.role ?? "?"),
-            text: msgText(m?.content),
-        }));
-        return { msgs, note: "" };
-    } catch {
-        return {
-            msgs: null,
-            note: rb.truncated
-                ? `请求正文被截断（共 ${rb.totalBytes ?? 0} 字节，默认只留首尾）—— 在流量页打开「记录完整请求内容」后重发一轮即可见全文。`
-                : "请求正文不是合法 JSON。",
-        };
-    }
 }
 
 /** 折叠块展开态（模块级 + 落 Caches：`ui view expand` 可能在页面挂载前就切过来） */
@@ -350,6 +309,12 @@ export function ContextLabPage(props: { uri: string }) {
      * "我以为会发什么"，流量日志证明"确实发了什么"。找不到 = `null`（日志被清 / 该轮没真发过）
      * → UI 出声，不编。
      */
+    /**
+     * 「该步实际请求」的形态：格式化（人读）/ 原始（`<>`，messages 数组逐字 JSON）。
+     * 默认格式化 —— 用户先看结构，要核对再切原始；切的是**同一份解析结果**，不存在两套渲染。
+     */
+    const [stepView, setStepView] = createSignal<"format" | "raw">("format");
+
     const [stepTraffic, { refetch: refetchStepTraffic }] = createResource(
         () => {
             const e = effectiveEntry();
@@ -435,7 +400,8 @@ export function ContextLabPage(props: { uri: string }) {
         setSystemPlaces(next);
         void (async () => {
             try {
-                const r = await diyService.diy.context.setConfig({ systemPlaces: next });
+                // inputLimitChars 键必须出现（本仓契约：optional 字段也是必填键），undefined = 只改划分
+                const r = await diyService.diy.context.setConfig({ systemPlaces: next, inputLimitChars: undefined });
                 setSystemPlaces(r.systemPlaces); // 服务端净化过的结果（可能与请求不同）
                 void refetchConfig();
             } catch (e) {
@@ -693,6 +659,16 @@ export function ContextLabPage(props: { uri: string }) {
                                                 </Show>
                                                 <Show when={t.runtimeDiffers}>
                                                     <span class="badge badge-warning badge-xs ml-1">run</span>
+                                                </Show>
+                                                {/* history 段（压缩索引注记）变没变：它**不是变量树单元**，
+                                                    所以只看左上那些行永远看不出它变了 —— 用户 2026-10-23 实测踩到 */}
+                                                <Show when={t.historyDiffers === true}>
+                                                    <span
+                                                        class="badge badge-info badge-xs ml-1"
+                                                        title="history: 压缩索引注记段变了（不是变量树的变化）"
+                                                    >
+                                                        hist
+                                                    </span>
                                                 </Show>
                                             </td>
                                             <td class="font-mono">{t.ref.step}</td>
@@ -1002,8 +978,8 @@ export function ContextLabPage(props: { uri: string }) {
     const rawRuntime = (): string => {
         const t = stepTraffic();
         if (t) {
-            const parsed = parseBodyMessages(t.record);
-            const users = (parsed.msgs ?? []).filter((m) => m.role === "user");
+            const parsed = parseStepRequest(t.record.reqBody);
+            const users = (parsed.messages ?? []).filter((m) => m.role === "user");
             const last = users[users.length - 1];
             if (last) return last.text;
         }
@@ -1013,8 +989,8 @@ export function ContextLabPage(props: { uri: string }) {
     const rawRuntimeInfo = (): string => {
         const t = stepTraffic();
         if (t) {
-            const parsed = parseBodyMessages(t.record);
-            const users = (parsed.msgs ?? []).filter((m) => m.role === "user");
+            const parsed = parseStepRequest(t.record.reqBody);
+            const users = (parsed.messages ?? []).filter((m) => m.role === "user");
             if (users[users.length - 1]) {
                 const loc = `${t.record.log?.abs ?? "?"}:${t.record.log?.line ?? "?"}`;
                 return `该步**实际发出去**的末条 user 消息（流量日志 ${loc}）—— 就是**模型真正看到的那段**（runtime / runtimeDiff 信封 + 本轮用户输入）。${parsed.note ? `⚠️ ${parsed.note}` : ""}`;
@@ -1040,14 +1016,15 @@ export function ContextLabPage(props: { uri: string }) {
                 <div class="p-2 text-body">
                     <div class="mb-1">{`未找到该步的实际请求（轮 ${e.ref.turnId} · 第 ${e.ref.step} 步）。`}</div>
                     <div class="opacity-60">
-                        可能的原因：① 这条记录是手写/演示数据，没真发过；② 流量日志被清（log 等同 cache，可随时清理）；
+                        可能的原因：① 这条记录是手写/演示数据，没真发过；② 流量日志被清（流量日志等同 cache，可随时清理）；
                         ③ 该轮不是本机发出的。真发一轮后再回来看即可对上。
                     </div>
                 </div>
             );
         }
         const rec = t.record;
-        const parsed = parseBodyMessages(rec);
+        const parsed = parseStepRequest(rec.reqBody);
+        const msgs = parsed.messages;
         return (
             <div class="flex flex-col gap-1 p-1">
                 <div class="flex flex-wrap items-center gap-2 px-1 text-body">
@@ -1088,22 +1065,76 @@ export function ContextLabPage(props: { uri: string }) {
                 <Show when={parsed.note}>
                     <div class="px-1 text-caption text-warning">{parsed.note}</div>
                 </Show>
-                <Show when={parsed.msgs}>
+                <Show when={msgs}>
                     {(list) => (
-                        <div class="flex flex-col gap-1">
-                            <For each={list()}>
-                                {(m, i) => (
-                                    <details class="rounded border border-base-300 bg-base-100" open={i() === 0}>
-                                        <summary class="cursor-pointer px-2 py-1 text-body font-bold">
-                                            {`${i() + 1}. ${m.role} · ${m.text.length} 字`}
-                                        </summary>
-                                        <pre class="max-h-72 overflow-auto whitespace-pre-wrap px-2 pb-1 font-mono text-body">
-                                            {m.text}
-                                        </pre>
-                                    </details>
-                                )}
-                            </For>
-                        </div>
+                        <>
+                            {/*
+                              双形态（用户口径：格式化版本 + `<>` 原始版本，只要消息内容不要请求头）：
+                                · 格式化 = 逐条 role / 体积 / ≈token / tool_call 摘要，先看结构再决定读哪条；
+                                · 原始   = messages 数组的美化 JSON（逐字、可复制、可 diff）。
+                              两者**同源**（parseStepRequest 一次解析）—— 否则"看到的是不是真发的"永远扯不清。
+                            */}
+                            <div class="flex flex-wrap items-center gap-2 px-1 text-caption">
+                                <span class="badge badge-xs badge-ghost font-mono">{`${list().length} 条消息`}</span>
+                                <span class="opacity-70">{`≈${parsed.totalTokens} tokens`}</span>
+                                <span class="opacity-70">{`正文 ${fmtBytes(parsed.totalBytes)}`}</span>
+                                <span class="opacity-50" title="按 CJK 1 token / 其余 4 字符 1 token 估算，非上游真实计数">
+                                    （估算值）
+                                </span>
+                                <button
+                                    class={`btn btn-xs ml-auto ${stepView() === "raw" ? "btn-active" : "btn-ghost"}`}
+                                    aria-pressed={stepView() === "raw"}
+                                    title={stepView() === "raw" ? "回到格式化视图" : "看原始 JSON（messages 逐字）"}
+                                    onClick={() => setStepView(stepView() === "raw" ? "format" : "raw")}
+                                >
+                                    &lt;&gt;
+                                </button>
+                            </div>
+                            <Show
+                                when={stepView() === "format"}
+                                fallback={
+                                    <pre class="max-h-[70vh] select-text overflow-auto whitespace-pre rounded bg-base-100 p-1 font-mono text-caption">
+                                        {parsed.raw ?? ""}
+                                    </pre>
+                                }
+                            >
+                                <div class="flex flex-col gap-1">
+                                    <For each={list()}>
+                                        {(m, i) => (
+                                            <details class="rounded border border-base-300 bg-base-100" open={i() === list().length - 1}>
+                                                <summary class="cursor-pointer px-2 py-1 text-body">
+                                                    <span class="font-bold">{`${m.index}. ${m.role}`}</span>
+                                                    <span class="ml-2 font-mono text-caption opacity-70">
+                                                        {`${m.chars} 字 · ≈${m.tokens} tokens · ${fmtBytes(m.bytes)}`}
+                                                    </span>
+                                                    <Show when={m.toolCalls.length > 0}>
+                                                        <span class="ml-2 font-mono text-caption opacity-70">
+                                                            {`· ${m.toolCalls.length} 个 tool_call`}
+                                                        </span>
+                                                    </Show>
+                                                </summary>
+                                                <Show when={m.toolCalls.length > 0}>
+                                                    <div class="flex flex-col gap-0.5 px-2 pb-1">
+                                                        <For each={m.toolCalls}>
+                                                            {(c) => (
+                                                                <div class="rounded bg-base-200 px-1 py-0.5 font-mono text-caption">
+                                                                    <span class="badge badge-xs badge-info mr-1">{c.name}</span>
+                                                                    <span class="opacity-70">{`参数 ${c.argsChars} 字：`}</span>
+                                                                    <span class="whitespace-pre-wrap break-all">{c.argsPreview}</span>
+                                                                </div>
+                                                            )}
+                                                        </For>
+                                                    </div>
+                                                </Show>
+                                                <pre class="max-h-72 overflow-auto whitespace-pre-wrap px-2 pb-1 font-mono text-body">
+                                                    {m.text}
+                                                </pre>
+                                            </details>
+                                        )}
+                                    </For>
+                                </div>
+                            </Show>
+                        </>
                     )}
                 </Show>
             </div>
@@ -1379,8 +1410,9 @@ export function ContextLabPage(props: { uri: string }) {
                     ⟳ 刷新
                 </button>
                 <span class="opacity-60">{lab()?.source ?? "加载中…"}</span>
+                <div class="flex-1" />
                 <Show when={selected()}>
-                    <span class="ml-auto flex items-center gap-1">
+                    <span class="flex items-center gap-1">
                         <span class="opacity-60">选中</span>
                         <span class="badge badge-sm font-mono">{selected()}</span>
                         <button class="btn btn-ghost btn-xs px-1" title="取消选中" onClick={() => setSelected(null)}>
@@ -1388,6 +1420,12 @@ export function ContextLabPage(props: { uri: string }) {
                         </button>
                     </span>
                 </Show>
+                {/* 区域开合（2026-10-21 补）：`ViewGrid` 的 area 右上角**最小化是单向动作**，
+                    恢复入口只有这一组按钮 —— 本页此前漏接，最小化任一区域后 UI 上再也开不回来
+                    （用户：「有最小化 view 的按钮，但没有恢复按钮」）。 */}
+                <div class="flex items-center gap-1">
+                    <LayoutAreaToggles page={page} ctx={props.uri} />
+                </div>
             </div>
 
             <div class="min-h-0 flex-1">

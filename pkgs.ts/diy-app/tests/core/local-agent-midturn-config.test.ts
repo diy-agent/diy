@@ -138,10 +138,10 @@ describe("轮次中改配置：在途轮次用轮首快照，下一轮才用新�
         const mgr = new LocalAgentManager(() => stubModel() as unknown as LanguageModel);
 
         setBudget(1024 * 1024);
-        expect(JSON.stringify((mgr.requestView(uri) as { messages: unknown[] }).messages)).toContain("第 1 句");
+        expect(JSON.stringify(((await mgr.requestView(uri)) as { messages: unknown[] }).messages)).toContain("第 1 句");
         // 改预算（= 新配置）→ 下一次请求（下一轮的轮首）即反映
         setBudget(0);
-        expect(JSON.stringify((mgr.requestView(uri) as { messages: unknown[] }).messages)).not.toContain("第 1 句");
+        expect(JSON.stringify(((await mgr.requestView(uri)) as { messages: unknown[] }).messages)).not.toContain("第 1 句");
     });
 });
 

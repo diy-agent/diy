@@ -121,7 +121,7 @@ describe("装配：级 / 托底 / 限数 / 去重", () => {
 describe("边界", () => {
     it("空投影 → 空结果", () => {
         const s = runPlan([], defaultBudgetPlan(1024), { costOf });
-        expect(s).toEqual({ kept: [], dropped: [], keptRuns: [], keptBytes: 0 });
+        expect(s).toEqual({ kept: [], dropped: [], keptRuns: [], keptBytes: 0, countBytes: 0, mustBytes: 0 });
     });
 
     it("result 从不单独入选（即便被元件直接指到）", () => {

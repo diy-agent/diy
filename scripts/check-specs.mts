@@ -5,7 +5,7 @@
 // review**，却散在链文件 + 任务 body 里，光靠人记不出「这条是不是已经有了」。本脚本用机器
 // 保证**不重复**：
 //   G1 key 全链唯一      —— 总表里同一个中文 key 出现两次 = error
-//   G2 指针可解析        —— 每条的真源（文件 + 英文 key，或任务 + 锚文本）必须真在那儿 = error
+//   G2 指针可解析        —— 每条的真源（文件 + 英文 key / 任务 + 锚文本 / facts claim）必须真在那儿 = error
 //   G3 新增未收录        —— 链上有、表里没有、且**不在基线**的 key = warning（ratchet）
 //
 // G3 为什么是 ratchet（基线增量）而不是「全录」：链上 160+ 条 key，一次录满不现实，而报
@@ -35,7 +35,7 @@
 //
 // 退出码：0 = 通过（含「总表缺失跳过」）· 1 = 有 error
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,6 +43,16 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const HOME = os.homedir();
 const DIY_HOME = process.env.DIY_HOME ?? path.join(HOME, '.diy');
+/**
+ * 任务指针（`真源 任务 \`projects/N/tasks/M\``）的解析基址候选。
+ *
+ * SPECS.md 住在 home（`~/`），它引用的任务通常在**生产**数据根（`~/.diy`）；
+ * 而 `check` 常在 worktree / lab 会话里跑（`DIY_HOME=<repo>/build/lab/home`）。
+ * 只认当前 DIY_HOME 的话，同一份代码在 lab 下必红、在干净 shell 下必绿 —— 环境敏感红灯，
+ * 会随机挡提交（实测：`projects/4/tasks/87` 生产存在、lab 不存在）。
+ * 判据保持「真悬空仍报错」：所有候选基址都找不到才算悬空。
+ */
+const TASK_HOME_CANDIDATES = [...new Set([DIY_HOME, path.join(HOME, '.diy')])];
 
 const argv = process.argv.slice(2);
 const UPDATE_BASELINE = argv.includes('--update-baseline');
@@ -56,7 +66,7 @@ const BASELINE = path.join(ROOT, 'scripts', 'specs-unindexed.txt');
 // G3 的 key 前缀白名单：**只收跨领域规范**（按实测收口，2026-10-19 扫链）。
 // `find` / `pit` 是「包内去哪找 / 包内什么坑」= 导航，不是规范，故意不收。
 // 白名单外的前缀不静默吞掉 —— 见到就提示「是否该加进来」，否则新领域永远看不见。
-const PREFIXES = ['rule', 'tool', 'proj', 'data', 'dev', 'entry', 'model', 'env', 'level'];
+const PREFIXES = ['rule', 'tool', 'proj', 'data', 'dev', 'entry', 'model', 'env', 'level', 'ref'];
 // 明确**不收**的前缀（导航类，静默跳过 —— 不提示、不计入 G3）：
 //   `find` = 包内去哪找 · `pit` = 包内什么坑
 const IGNORED = ['find', 'pit'];
@@ -65,10 +75,14 @@ const IGNORED = ['find', 'pit'];
 const KEY_LINE = /^\s*[-*]\s+`([^`]+)`\s+—/;
 // 总表条目：`- \`<中文 key>\` — 一句话 → 真源 <指针>`
 const ENTRY = /^\s*[-*]\s+`([^`]+)`\s+—\s+(.+?)\s*→\s*真源\s+(.+?)\s*$/;
-// 指针两种形态：
+// 指针三种形态：
 //   ① 正文已落 AGENTS.md：`<绝对路径>` 的 `<英文 key>`
 //   ② 规范已定、正文还散在任务 body（**待落位**）：任务 `<任务 URI>` 的 `<锚文本>`
+//   ③ 正文已迁进知识库（AGENTS.md 瘦身之后）：facts `<claim>`（`knowledge/facts/*.yaml`
+//      的 `<subject>#<aspect>` 键）。瘦身会把 key 从 AGENTS.md 移走 —— 索引必须跟着搬，
+//      否则「AGENTS.md 变成纯指针」的那一次合并会留下 22 条悬空指针（##404 实测）。
 const PTR_TASK = /^任务\s+`?([^`\s]+)`?\s+的\s+`(.+)`$/;
+const PTR_FACT = /^facts\s+`([^`]+)`$/;
 const PTR_FILE = /^`?([^`]+?)`?\s+的\s+`(.+)`$/;
 
 const read = (p: string) => readFileSync(p, 'utf8');
@@ -189,11 +203,24 @@ for (const e of entries) {
   if (task) {
     const uri = task[1];
     const anchor = task[2];
-    const file = path.join(DIY_HOME, uri, 'AGENTS.md');
-    if (!existsSync(file)) {
-      errors.push({ kind: 'G2', msg: `第 ${e.line} 行 \`${e.key}\`：任务不存在 ${file}` });
+    const candidates = TASK_HOME_CANDIDATES.map((h) => path.join(h, uri, 'AGENTS.md'));
+    const file = candidates.find((f) => existsSync(f));
+    if (file === undefined) {
+      errors.push({ kind: 'G2', msg: `第 ${e.line} 行 \`${e.key}\`：任务不存在 ${candidates.join(' / ')}` });
     } else if (!read(file).includes(anchor)) {
       errors.push({ kind: 'G2', msg: `第 ${e.line} 行 \`${e.key}\`：锚文本不在 ${uri} 的 body 里：「${anchor}」` });
+    }
+    continue;
+  }
+  const fact = PTR_FACT.exec(e.pointer);
+  if (fact) {
+    const claim = fact[1];
+    const dir = path.join(ROOT, 'knowledge', 'facts');
+    const files = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.yaml')) : [];
+    // claim 里 `.` `#` 是字面量；行首缩进 + 结尾冒号 = yaml 的顶层键
+    const re = new RegExp(`^\\s+${claim.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:`, 'm');
+    if (!files.some((f) => re.test(read(path.join(dir, f))))) {
+      errors.push({ kind: 'G2', msg: `第 ${e.line} 行 \`${e.key}\`：知识库里没有 claim \`${claim}\`` });
     }
     continue;
   }

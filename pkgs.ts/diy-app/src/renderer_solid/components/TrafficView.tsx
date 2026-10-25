@@ -662,7 +662,7 @@ export function TrafficList(props: { st: TrafficState; intro?: boolean }) {
                 </div>
             </Show>
             <div class="flex items-center gap-2 flex-wrap shrink-0">
-                <span class="text-body opacity-70" title="磁盘日志总体积（按天切文件；log 等同 cache，可随时清理）">
+                <span class="text-body opacity-70" title="磁盘日志总体积（按天切文件；流量日志等同 cache，可随时清理）">
                     日志 {fmtBytes(st.logBytes())} · {st.dateOptions().rest.length + 1} 个文件
                 </span>
                 <TrafficLogCleanButton
@@ -820,7 +820,7 @@ export function TrafficView(props: {
                 <Show when={props.showIntro !== false}>
                     <h2 class="text-display font-bold mr-auto">流量</h2>
                 </Show>
-                <span class="text-body opacity-70" title="磁盘日志总体积（按天切文件；log 等同 cache，可随时清理）">
+                <span class="text-body opacity-70" title="磁盘日志总体积（按天切文件；流量日志等同 cache，可随时清理）">
                     日志 {fmtBytes(st.logBytes())} · {st.dateOptions().rest.length + 1} 个文件
                 </span>
                 <TrafficLogCleanButton

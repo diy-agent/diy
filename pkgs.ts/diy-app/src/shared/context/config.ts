@@ -11,12 +11,23 @@
 
 import { z } from "zod";
 import { defaultSystemPlaces } from "./delivery";
+import { DEFAULT_INPUT_LIMIT_CHARS } from "./input-limit";
 import { isValidPath } from "./path";
 
 /** context.yaml 的结构（全局一份） */
 export const ContextConfigSchema = z.object({
   /** 划入 system 的投递单元路径（其余自动 runtime） */
   systemPlaces: z.array(z.string()),
+  /**
+   * 用户单条消息的字符上限（##426 B）：超过就弹门禁框（转文件 / 仍然发送）。
+   * 缺省 `DEFAULT_INPUT_LIMIT_CHARS`；optional 为了**向后兼容** —— 老文件只有 `systemPlaces`。
+   *
+   * ⚠️ 类型给 `z.unknown()` 而不是 `z.number()`：这个键写坏（手填 `不是数`）只该让**它自己**
+   * 回落缺省（`sanitizeInputLimitChars`），**不能连累整份 `systemPlaces` 一起回落推荐名单** ——
+   * 一个门禁阈值打错字，不该顺手改掉用户的投递划分（那正是 `sanitizeSystemPlaces` 头注里
+   * "逐条净化、不整份回落"的同一条理由）。
+   */
+  inputLimitChars: z.unknown().optional(),
 });
 export type ContextConfig = z.infer<typeof ContextConfigSchema>;
 
@@ -54,4 +65,13 @@ export function sanitizeSystemPlaces(raw: readonly string[]): {
     return { places: defaultSystemPlaces(), dropped };
   }
   return { places: kept, dropped };
+}
+
+/**
+ * 净化输入上限（读侧一律走它）：只认**正数**，其余一律回落缺省。
+ * 为什么不设上限：阈值是给「明显异常」用的门槛，用户想调多严是自己的事（判据只是"这条消息多长"）。
+ */
+export function sanitizeInputLimitChars(raw: unknown): number {
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 1) return DEFAULT_INPUT_LIMIT_CHARS;
+  return Math.floor(raw);
 }

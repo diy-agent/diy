@@ -630,12 +630,18 @@ describe("agent.local — 压缩 compact（无网络）", () => {
         expect(readFileSync(fp, "utf-8")).toBe(before);
 
         // 契约③：**事件快照**（取代旧的"分代"）—— 一条 compact，带算法 + 过滤器
-        const events = (await fx.sh.getJson(`./diy.sh agent local compact events ${uri}`)).data as Array<{
-            kind: string;
-            id?: string;
-            policy?: { mode?: string };
-            size?: { before?: { turns: number }; after?: { turns: number } };
-        }>;
+        // ##431：回包 = `{ events, truncated }`（账本限读尾部）
+        const events = (
+            (await fx.sh.getJson(`./diy.sh agent local compact events ${uri}`)).data as {
+                events: Array<{
+                    kind: string;
+                    id?: string;
+                    policy?: { mode?: string };
+                    size?: { before?: { turns: number }; after?: { turns: number } };
+                }>;
+                truncated: boolean;
+            }
+        ).events;
         const compacts = events.filter((e) => e.kind === "compact");
         expect(compacts).toHaveLength(1);
         expect(compacts[0]!.policy?.mode).toBe("budget");
@@ -675,9 +681,10 @@ describe("agent.local — 压缩 compact（无网络）", () => {
         seedOps(uri, [...turnOps("t9000", "只这一轮", big)]);
         const rec = (await fx.sh.getJson(
             `./diy.sh agent local compact run ${uri} --budget-bytes 1048576 --tool-result headtail`,
-        )).data as { details?: { clipped?: unknown[] } };
-        // 被裁明细在 details.clipped（预算撑满 → 工具结果被保留，但按 headtail 裁）
-        expect(rec.details?.clipped && rec.details.clipped.length).toBeGreaterThan(0);
+        )).data as { details?: { clippedIds?: { ids?: string[]; count?: number } } };
+        // ##431 瘦身：只落 `clippedIds: { ids, count }`（单条明细现场从 ops 算），不再把整份明细塞进账本
+        expect(rec.details?.clippedIds?.count).toBeGreaterThan(0);
+        expect(rec.details?.clippedIds?.ids?.length).toBe(rec.details?.clippedIds?.count);
 
         const hist = (await fx.sh.getJson(`./diy.sh agent local history ${uri}`)).data as unknown[];
         // history 是 ops（原始，不裁）；裁剪只影响**投递**
@@ -748,10 +755,11 @@ describe("agent.local — 压缩 compact（无网络）", () => {
         const u = (await fx.sh.getJson(`./diy.sh agent local compact undo ${uri} ${rec.id}`)).data as { undone: boolean };
         expect(u.undone).toBe(true);
         // 事件账里出现一条 undo（不删原 compact 行 —— append-only、可审计）
-        const events = (await fx.sh.getJson(`./diy.sh agent local compact events ${uri}`)).data as Array<{
-            kind: string;
-            ref?: string;
-        }>;
+        const events = (
+            (await fx.sh.getJson(`./diy.sh agent local compact events ${uri}`)).data as {
+                events: Array<{ kind: string; ref?: string }>;
+            }
+        ).events;
         expect(events.some((e) => e.kind === "undo" && e.ref === rec.id)).toBe(true);
         expect(events.some((e) => e.kind === "compact" && (e as { id?: string }).id === rec.id)).toBe(true);
         // 原文一字未删
@@ -769,7 +777,9 @@ describe("agent.local — 压缩 compact（无网络）", () => {
         // 账本也删干净（否则删除后仍能查到本会话的压缩史）
         expect(existsSync(homeFile(uri, "compact"))).toBe(false);
         // 清后：压缩事件账也没了（本会话的压缩史查不到）
-        const events = (await fx.sh.getJson(`./diy.sh agent local compact events ${uri}`)).data as unknown[];
+        const events = (
+            (await fx.sh.getJson(`./diy.sh agent local compact events ${uri}`)).data as { events: unknown[] }
+        ).events;
         expect(events).toEqual([]);
         await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
     });

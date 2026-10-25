@@ -28,8 +28,10 @@ import {
     SESSION_KINDS,
     sessionDir,
     sessionFile,
+    sessionStateFile,
     type SessionKind,
 } from "../core/local-paths";
+import { readJsonlTail } from "../core/jsonl-tail";
 import { legacyToolOutDir, safeId } from "./tool-output";
 
 /** 单条迁移动作（`from`/`to` 都是相对 `$DIY_HOME` 的路径，便于人读与跨机比对） */
@@ -90,25 +92,37 @@ function scanLegacySessions(): { key: string; kind: SessionKind; file: string }[
 }
 
 /**
- * 会话账本里引用过的工具原文 id（归属判据：`compact` 事件的 `details.clipped[].id`）。
- * 新旧两个落位都读（迁移中的会话可能还在旧平铺上）。
+ * 会话引用的工具原文 id（归属判据）。
+ *
+ * ##431 起两个来源，都**限读**：
+ *   ① `compact-state.json` 的 `opIds`（当前值快照，几百 B，O(1)）—— 新会话的权威来源；
+ *   ② 账本**尾部窗口**（老会话没有快照，或快照只覆盖最近几次）里的 `clippedIds.ids` / 老 `clipped[].id`。
+ *
+ * 为什么不再整份读账本：266 会话实测 274 MB，一条迁移命令扫一遍就是秒级 × 几十个任务。
+ * 代价：超出尾部窗口的老记录里的 id 会漏 ⇒ 那些原文落在 `unknown`（留原地，人可手查）—— 宁可少归，不可猜。
  */
 function clippedIdsOf(uri: string): string[] {
     const ids = new Set<string>();
+    const stateFile = sessionStateFile(uri, "compact-state");
+    if (existsSync(stateFile)) {
+        try {
+            // sync-io-ok: 迁移是离线命令（无并发可挡），读的是几百 B 的当前值快照
+            const st = JSON.parse(readFileSync(stateFile, "utf-8")) as { opIds?: unknown };
+            if (Array.isArray(st.opIds)) for (const id of st.opIds) if (typeof id === "string" && id) ids.add(id);
+        } catch {
+            /* 坏快照：交给下面的账本回落（与产品读侧同策略） */
+        }
+    }
     const files = [sessionFile(uri, "compact"), legacySessionFile(uri, "compact")];
     for (const file of files) {
-        if (!existsSync(file)) continue;
-        let text = "";
-        try {
-            text = readFileSync(file, "utf-8");
-        } catch {
-            continue;
-        }
-        for (const line of text.split("\n")) {
-            const s = line.trim();
-            if (!s) continue;
+        const tail = readJsonlTail(file, { maxBytes: 256 * 1024, maxLines: 200 });
+        for (const s of tail.lines) {
             try {
-                const rec = JSON.parse(s) as { details?: { clipped?: { id?: unknown }[] } };
+                const rec = JSON.parse(s) as {
+                    details?: { clipped?: { id?: unknown }[]; clippedIds?: { ids?: unknown } };
+                };
+                const listed = rec.details?.clippedIds?.ids;
+                if (Array.isArray(listed)) for (const id of listed) if (typeof id === "string" && id) ids.add(id);
                 for (const c of rec.details?.clipped ?? []) {
                     if (typeof c?.id === "string" && c.id) ids.add(c.id);
                 }
