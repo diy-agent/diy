@@ -180,7 +180,9 @@ const draftsFile = () => join(fx.HOME, uri, ".diy", "drafts.yaml");
 const draftsRaw = () => (existsSync(draftsFile()) ? readFileSync(draftsFile(), "utf-8") : "");
 
 describe("插话界面 —— 生成中插嘴、横条、取消", () => {
-    it("setup: 任务执行页打开对话视图", async () => {
+    // 夹具（##434）：建 ui driver + 打开该任务的对话视图，并核对“起始无生成”这个前提。
+    // 写成 `it` 时 `-t` 过滤会跳过它 ⇒ 后续用例的 `ui` 未初始化（##433 同款）。
+    beforeAll(async () => {
         ui = await makeUiDriver(fx.electron.cdpUrl, async () => {
             const r = await fx.sh.getJson("./diy.sh ui inspect");
             return (r.data as any)?.data?.tree as A11yNode | undefined;
@@ -454,7 +456,8 @@ describe("##303 —— 留言的投递入口", () => {
         await waitUntil(stopButtonVisible, (v) => v, { label: "进入生成中" });
     };
 
-    it("setup: 新任务的对话页", async () => {
+    // 夹具（##434）：新任务 + 打开它的对话页。单独 `-t` 跑本 describe 时 ui 还没建。
+    beforeAll(async () => {
         if (!ui) {
             ui = await makeUiDriver(fx.electron.cdpUrl, async () => {
                 const r = await fx.sh.getJson("./diy.sh ui inspect");
