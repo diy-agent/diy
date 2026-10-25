@@ -860,18 +860,8 @@ export interface DeliveryOpts {
      */
     historyCut?: { cut: number; headEnd: number };
     /**
-     * 【旧·目标式预算】历史消息可占字节上限。**##432 刀 2 起不再由投递侧使用**（保留字段只为
-     * 老调用点编译通过；选择一律走 `historyCut`）。
-     */
-    budgetBytes?: number;
-    /**
-     * 【##344 M2】可执行装配管道（来自当前配置 `history.keep[]`，由 `keepStagesToPlan` 造）。
-     * 给了它就**按它选**（其中的 `budgetBytes` 即预算）；缺省 ⇒ `defaultBudgetPlan(budgetBytes, defaultClip)`。
-     */
-    plan?: CompactPlan;
-    /**
      * 【##406 刀 2】**装配后硬上限**（字节）：装完量`keptBytes`，超了就把 `must` 级从
-     * `full` 降 `headtail`、必要时按上限逐单元收、最后整段丢弃（见 `runPlanBounded`）。
+     * 超了就**按 step 从前往后整组收窄**（见 `selectHistoryByCut` 的 `cap` 分支）。
      * 缺省（不传）= 不设上限，老调用点行为逐字不变。
      */
     hardCapBytes?: number;
@@ -921,17 +911,30 @@ export interface DeliveryOpts {
 
 import { clipReasoningText, utf8Bytes, type ClipSpec, type ReasoningClipSpec } from "../../shared/context/compaction";
 import { hasTopLevelKey, isEnvelopeText, renderFromPart, stripRuntimeSections, tailEnvelope, type Speaker } from "../../shared/context/envelope";
-// 选择算法（元件库 + 装配器）—— 见 compaction-plan.ts 头注。此处**转出**旧公开名以保持兼容。
-import {
-    runPlan,
-    runPlanBounded,
-    defaultBudgetPlan,
-    HISTORY_LADDER,
-    type BudgetSelection,
-    type HistoryRank,
-    type CompactPlan,
-} from "./compaction-plan";
-export { HISTORY_LADDER, type HistoryRank, type BudgetSelection };
+/**
+ * **选择结果**（投递侧唯一形状）：保留了哪些下标 / 丢了哪些 / 连续区间 / 渲染后字节。
+ *
+ * ##432 清理（用户 2026-10-25 拍板）：旧的 `countBytes` / `mustBytes` 两桶随级列表一起删 ——
+ * 「must 级不占预算」这个病根就是它们带来的；现在只有**一个数**（`keptBytes`）。
+ */
+export interface BudgetSelection {
+    kept: number[];
+    dropped: number[];
+    /** 保留的连续区间（1-based 行号），给注记「kept: [[1,1],[80,80]]」与账本用 */
+    keptRuns: [number, number][];
+    /** 实际占用字节（渲染后口径，工具结果已按策略裁剪） */
+    keptBytes: number;
+    /** 每条被选中消息的裁法（选择阶段带出；缺省 = 回落 `defaultClip`） */
+    clips?: (ClipSpec | null)[];
+    /** 每条被选中消息的推理裁法（缺省 = 回落 `defaultReasoningClip`） */
+    reasoningClips?: (ReasoningClipSpec | null)[];
+    /** 装配后硬上限的降级留痕（真降了才有 —— 调用点据此出声） */
+    hardCap?: {
+        capBytes: number;
+        withinCap: boolean;
+        degradations: { kind: string; detail: string }[];
+    };
+}
 
 /**
  * **全量投影**：块树 → 消息（不做任何选择、不裁剪工具结果）。
@@ -1132,7 +1135,7 @@ export interface HistorySelection {
  * ② 内容级（`content`）：**整条丢** tool 链路（tool-call 与 tool-result 同批丢 ⇒ 配对铁律
  *    天然不破）；`conclusion` 再在每轮只留**最后一条**助手文本（省掉"我先看看…"过程文本）。
  */
-/** **轮边界选择**（旧机制，仅 `selectForDelivery` 在无 budgetBytes 时兜底用；投递主路径走预算） */
+/** **轮边界选择**（旧机制：`selectForDelivery` 在没有落盘边界时用它；压缩主路径走 `historyCut`） */
 export function selectHistory(
     all: readonly LocalModelMessage[],
     opts: Pick<DeliveryOpts, "sinceTurnId"> = {},
@@ -1152,37 +1155,12 @@ export function selectHistory(
     return { kept, dropped };
 }
 
-// ─── 预算驱动的历史选择（用户 2026-10-07：目标式压缩）──────────────────
+// ─── 历史选择（##432 刀 2）────────────────────────────────────────
 //
-// 选择算法已抽到 `compaction-plan.ts`（**元件库 + 装配器**，用户 2026-10-08）：把「排序 / 配对 /
-// 预算累加 / 裁剪声明」拆成可组合的**挑选元件**，默认管道 `defaultBudgetPlan` 定「保底 + 阶梯」。
-// 本函数是投递侧的**稳定入口**（真发 / 预览 / 记账共用），内部委托默认管道。
-// ⚠️ ##343 M1 起默认管道**不再是**「纯纵向阶梯」（多了保底最近 6 步 `clip: full`，见 compaction-plan），
-//    故这里也不再承诺「与旧阶梯逐字节等价」——行为变更见该任务的验收。
-//
-// 为什么是**纵向**（用户 2026-10-07 纠正「逐轮降解」）：**主干 > 细节**。用户发言是他
-// 记得、认为重要的主干，不管多旧都应优先保留；工具结果只是可回取的细节。按轮（横向）
-// 会把前面重要的用户消息整轮陪葬 —— 后几轮工具垃圾一爆，前面的用户发言就没了。
-
-/**
- * **预算选择**：全量投影 + 预算 → 保留哪些下标（纯函数）+ **每条被选中消息的裁法**（`clips`）。
- * 内部委托 `runPlan` + 默认管道（= 保底最近 N 步 `full` + 纵向阶梯计预算）；实现见 `compaction-plan.ts`。
- * `opts.defaultClip` = 全局回落裁法（策略的降级），传给默认管道的阶梯级。
- */
-export function selectHistoryByBudget(
-    all: readonly LocalModelMessage[],
-    budgetBytes: number,
-    opts: Pick<DeliveryOpts, "transformToolResult" | "defaultClip" | "plan" | "hardCapBytes"> = {},
-): BudgetSelection {
-    // 管道来源只有一个决策点：给了 `plan`（配置面）就用它，否则回落缺省管道。
-    // 出口再套一道硬上限（##406 刀 2）：给了 `hardCapBytes` 才生效，缺省与老行为逐字相同。
-    return runPlanBounded(
-        all,
-        opts.plan ?? defaultBudgetPlan(budgetBytes, opts.defaultClip),
-        { costOf: costOfWith(opts) },
-        opts.hardCapBytes ?? 0,
-    );
-}
+// **只有一种选择方式**：压缩事件算好并落盘的边界（`historyCut`），投递侧照切。
+// 用户 2026-10-25 拍板：`ladder / role / recent / steps` + `must` + `budgetBytes` 那套
+// 「元件库 + 装配器」整体删掉 —— 让人（和 agent）去编排装配计划的面一个不留。
+// 没有边界时退回**轮边界**口径（`sinceTurnId`），那是与压缩无关的老语义。
 
 /**
  * 选择阶段的**成本口径**：投递口径（渲染后字节；工具结果按**该级的 clip** 裁剪）。
@@ -1272,17 +1250,14 @@ export function selectForDelivery(
     all: readonly LocalModelMessage[],
     opts: DeliveryOpts = {},
 ): { kept: number[]; dropped: number[]; clips?: (ClipSpec | null)[]; reasoningClips?: (ReasoningClipSpec | null)[] } {
-    if (opts.historyCut) return selectHistoryByCut(all, opts.historyCut, opts);
-    // 旧路径（compact 账本 / 预览 / plan 检查）仍按预算选 —— ##432 刀 2 只换了**投递侧**
-    // （`buildHistory` 传 `historyCut`）；这条回落留给尚未迁移的调用点，随旧策略一起删。
-    if (opts.budgetBytes !== undefined) return selectHistoryByBudget(all, opts.budgetBytes, opts);
-    return selectHistory(all, opts);
+    // 有落盘边界 ⇒ 照切（唯一主路径）；没有 ⇒ 轮边界口径（与压缩无关的老语义）
+    return opts.historyCut ? selectHistoryByCut(all, opts.historyCut, opts) : selectHistory(all, opts);
 }
 
 /**
  * **按已落盘的边界选择**（##432 刀 2）：`[0, headEnd)` 保头 + `[cut, n)` 从切点往后的原文。
  *
- * 与旧 `selectHistoryByBudget` 的差别：这里**没有任何策略** —— 边界是压缩事件算好落盘的，
+ * 这里**没有任何策略** —— 边界是压缩事件算好落盘的，
  * 每步只按它切（因此同一步里多次投递得到**逐字相同**的 messages）。
  */
 export function selectHistoryByCut(
@@ -1323,19 +1298,28 @@ export function selectHistoryByCut(
             else keptRuns.push([i + 1, i + 1]);
             prev = i;
         }
-        return { kept, dropped, keptRuns, keptBytes, countBytes: keptBytes, mustBytes: 0 };
+        return { kept, dropped, keptRuns, keptBytes };
     };
 
     let out = build(cut);
     const cap = opts.hardCapBytes && opts.hardCapBytes > 0 ? opts.hardCapBytes : 0;
     if (cap > 0) {
         let cur = cut;
+        let narrowed = 0;
         while (out.keptBytes > cap) {
             const next = advance(cur);
             if (next >= n) break; // 只剩最后一组：它是最后可发的一块，再收就什么都没有了
             cur = next;
+            narrowed += 1;
             out = build(cur);
             if (out.dropped.length === 0) break;
+        }
+        if (narrowed > 0) {
+            out.hardCap = {
+                capBytes: cap,
+                withinCap: out.keptBytes <= cap,
+                degradations: [{ kind: "history-cap", detail: `按 step 收窄 ${narrowed} 次` }],
+            };
         }
     }
     return out;

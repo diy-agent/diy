@@ -70,7 +70,7 @@ describe("投递压缩可见性：每轮首步的用量账带 historySelection",
         saveAutoCompact(diyHome(), {
             mode: "notify",
             triggers: { systemContextChanged: true, cacheExpired: true, contextWindowOver: DEFAULT_WINDOW_OVER_TOKENS },
-            policy: { mode: "budget", modeData: { budgetBytes: 0, toolResult: { render: "asis" } }, summary: false },
+            policy: { mode: "budget", modeData: { toolResult: { render: "asis" } }, summary: false },
         });
         const model = new MockLanguageModelV3({
             provider: "stub",
@@ -87,8 +87,8 @@ describe("投递压缩可见性：每轮首步的用量账带 historySelection",
         expect(recs.length).toBeGreaterThanOrEqual(1);
         const s1 = recs.find((r) => r.step === 1)!;
         expect(s1.historySelection).toBeTruthy();
-        // 旧字段名（`budgetBytes`）现在报**新口径的 token 上限**（UI 待 ##423 迁移）；没有压缩边界 ⇒ 不丢消息
-        expect(s1.historySelection!.budgetBytes).toBe(20000);
+        // 报的是**唯一旋钮**的值（token 上限）；没有压缩边界 ⇒ 不丢消息
+        expect(s1.historySelection!.limitTokens).toBe(20000);
         expect(s1.historySelection!.totalMessages).toBeGreaterThan(0);
         expect(s1.historySelection!.droppedMessages).toBe(0);
         // 只有轮首记（配置驱动的重建点）；其余步不带

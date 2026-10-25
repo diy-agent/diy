@@ -21,7 +21,6 @@ import { getLocalAgent, compactFile } from "../../src/main/services/local-agent"
 import { opsFile } from "../../src/main/core/local-paths";
 import { parseCompactLog } from "../../src/shared/context/compaction";
 import { readFileSync } from "node:fs";
-import { listPlanVersions, readPlanVersion } from "../../src/main/services/plan-store";
 
 let PROJECT = "";
 beforeAll(() => {
@@ -78,39 +77,38 @@ function seedOps(uri: string, turns = 3): string[] {
 }
 
 describe("① after.turns 按投递口径（数字之间不许打架）", () => {
-    it("##432 刀 2：`budgetBytes` 不再决定保留集（预览按已落盘边界；无边界 ⇒ 全保留）", async () => {
+    it("##432：历史只按已落盘边界切（无边界 ⇒ 全保留；旧字节预算已删）", async () => {
         const uri = newUri();
         seedOps(uri);
-        const pv0 = await getLocalAgent().compactPreview(uri, { budgetBytes: 0, toolResult: { render: "asis" } });
-        // 旧语义「0 = 清零」已废：选择只看 turns 里的压缩边界（此处没有 ⇒ 全保留）
+        const pv0 = await getLocalAgent().compactPreview(uri, { toolResult: { render: "asis" } });
+        // 选择只看 turns 里的压缩边界（此处没有 ⇒ 全保留）
         expect(pv0.after.messages).toBeGreaterThan(0);
         expect(pv0.before.turns).toBe(3);
 
         const uri2 = newUri();
         seedOps(uri2);
-        expect((await getLocalAgent().compactPreview(uri2, { budgetBytes: 1024 * 1024, toolResult: { render: "asis" } })).after.turns).toBe(3);
+        expect((await getLocalAgent().compactPreview(uri2, { toolResult: { render: "asis" } })).after.turns).toBe(3);
     });
 });
 
 describe("④ 预算事件的**过滤器表达**（历史回溯可还原投递集）", () => {
-    it("budget 事件 details.kept 记保留行号区间；预算=0 时为空", () => {
+    it("事件 details.kept 记保留行号区间（无边界 ⇒ 全覆盖一段）", () => {
         const uri = newUri();
         seedOps(uri);
-        // 预算撑满 → 全部保留（单区间 [1, N]）
-        const rec = getLocalAgent().compact(uri, { mode: "budget", budgetBytes: 1024 * 1024, toolResult: { render: "asis" }, summary: false }, "cli") as {
+        // 无边界 → 全部保留（单区间 [1, N]）
+        const rec = getLocalAgent().compact(uri, { mode: "budget", toolResult: { render: "asis" }, summary: false }, "cli") as {
             details?: { kept?: [number, number][] };
         };
         expect(rec.details?.kept?.length).toBe(1);
         expect(rec.details!.kept![0]![0]).toBe(1);
         expect(rec.details!.kept![0]![1]).toBeGreaterThanOrEqual(1);
 
-        // 预算=0 → 空区间
         const uri2 = newUri();
         seedOps(uri2);
-        const rec2 = getLocalAgent().compact(uri2, { mode: "budget", budgetBytes: 0, toolResult: { render: "asis" }, summary: false }, "cli") as {
+        const rec2 = getLocalAgent().compact(uri2, { mode: "budget", toolResult: { render: "asis" }, summary: false }, "cli") as {
             details?: { kept?: [number, number][] };
         };
-        // 不再有「清零 ⇒ 空区间」：没有边界时保留区间是全覆盖
+        // 没有「清零」这种说法了：没有边界时保留区间是全覆盖
         expect(rec2.details?.kept?.length).toBe(1);
     });
 });
@@ -123,7 +121,7 @@ describe("② details.clippedIds：同 id 只记一次（去重 —— 回归「
         seedOpsBigTools(uri, 8);
         const rec = getLocalAgent().compact(
             uri,
-            { mode: "budget", budgetBytes: 1024 * 1024, toolResult: { render: "headtail" }, summary: false },
+            { mode: "budget", toolResult: { render: "headtail" }, summary: false },
             "cli",
         ) as { details?: { clippedIds?: { ids: string[]; count: number } } };
         const ids = rec.details?.clippedIds?.ids ?? [];
@@ -135,12 +133,12 @@ describe("② details.clippedIds：同 id 只记一次（去重 —— 回归「
 });
 
 describe("② 空操作压缩：不写账、返回 noop（回归「cacheExpired 空转记一次压缩」）", () => {
-    it("预算 ≥ 历史（无轮丢、无工具裁）→ rec.noop=true，且 compact 账本无新事件", () => {
+    it("历史在上限内（无轮丢、无工具裁）→ rec.noop=true，且 compact 账本无新事件", () => {
         const uri = newUri();
         seedOps(uri); // 三轮小会话
         const rec = getLocalAgent().compact(
             uri,
-            { mode: "budget", budgetBytes: 1024 * 1024, toolResult: { render: "asis" }, summary: false },
+            { mode: "budget", toolResult: { render: "asis" }, summary: false },
             "auto",
             undefined,
             "cacheExpired",
@@ -152,12 +150,12 @@ describe("② 空操作压缩：不写账、返回 noop（回归「cacheExpired 
         expect(events.filter((e) => e.kind === "compact")).toHaveLength(0);
     });
 
-    it("##432 刀 2：`budgetBytes: 0` 不再清零 ⇒ 无操作（noop），不写账", () => {
+    it("##432：没有可丢的 ⇒ 无操作（noop），不写账", () => {
         const uri = newUri();
         seedOps(uri);
         const rec = getLocalAgent().compact(
             uri,
-            { mode: "budget", budgetBytes: 0, toolResult: { render: "asis" }, summary: false },
+            { mode: "budget", toolResult: { render: "asis" }, summary: false },
             "cli",
         ) as { noop?: boolean };
         expect(rec.noop).toBe(true);
@@ -170,8 +168,8 @@ describe("② rates：provider = 谁服务的，source = 价目真源", () => {
     it("provider 不是 models.dev；source 才是；k 圆整", () => {
         const uri = newUri();
         seedOps(uri);
-        // 用「真压一次」把账本写出来（预览不落账）
-        const rec = getLocalAgent().compact(uri, { budgetBytes: 0, toolResult: { render: "asis" } }, "cli");
+        // 用「真压一次」把账本写出来（预览不落账）：headtail ⇒ 有工具结果被裁 ⇒ 不是空操作
+        const rec = getLocalAgent().compact(uri, { toolResult: { render: "headtail" } }, "cli");
         // v2 分组后 rates 在 cost 分组里
         const ev = rec as unknown as { cost?: { rates?: { provider?: string; source?: string; k: number } } };
         const rates = ev.cost?.rates;
@@ -213,7 +211,7 @@ describe("③ measure 事件：空壳 predicted 不写", () => {
     it.skip("真发一轮后 measure 落账 —— 依赖一次真压（旧预算面）；##432 刀 2 后压缩由 history.limit 触发，随旧策略面一起删", async () => {
         const uri = newUri();
         seedOps(uri);
-        getLocalAgent().compact(uri, { budgetBytes: 0, toolResult: { render: "asis" } }, "cli");
+        getLocalAgent().compact(uri, { toolResult: { render: "asis" } }, "cli");
         const mgr = new (await import("../../src/main/services/local-agent")).LocalAgentManager(
             () => stub() as unknown as LanguageModel,
         );
@@ -231,7 +229,7 @@ describe("④ v3 分组形状：看 JSON 就知道每块回答什么（D5「结�
     it("policy / boundary / size / cost / details 五块 + v4 的 plan **版本指针**，且 keptTurns 归 size（不是锚点）", () => {
         const uri = newUri();
         seedOps(uri);
-        const rec = getLocalAgent().compact(uri, { budgetBytes: 1024 * 1024, toolResult: { render: "asis" } }, "cli") as unknown as Record<string, unknown>;
+        const rec = getLocalAgent().compact(uri, { toolResult: { render: "asis" } }, "cli") as unknown as Record<string, unknown>;
         expect(rec.kind).toBe("compact");
         // ##344 M2 的 plan 快照 → ##378 起只记**内容寻址版本**（全文在 $DIY_HOME/plan-store/）
         expect(rec.v).toBe(5); // ##431：v5 = 明细瘦身
@@ -239,12 +237,12 @@ describe("④ v3 分组形状：看 JSON 就知道每块回答什么（D5「结�
         expect(Object.keys(rec)).toEqual(
             expect.arrayContaining(["policy", "boundary", "size", "cost", "details", "plan"]),
         );
-        // plan 快照：配置没写 history.keep ⇒ 来源 default；**不含 keep 全文**，只记版本指针
-        const plan = rec.plan as { budgetBytes: number; source: string; planVersion?: string; keep?: { type: string }[] };
-        expect(plan.budgetBytes).toBe(1024 * 1024);
+        // plan 快照：只剩 `source`（级列表与版本链已随 ##432 清理删除）
+        const plan = rec.plan as { budgetBytes?: number; source: string; planVersion?: string; keep?: unknown[] };
+        expect(plan.budgetBytes).toBeUndefined();
         expect(plan.source).toBe("default");
         expect(plan.keep).toBeUndefined();
-        expect(plan.planVersion).toMatch(/^plan-[0-9a-f]{12}$/);
+        expect(plan.planVersion).toBeUndefined();
         // ⚠️ 「CAS 可取回 + 已入链」不在这里断言：预算 1MB + asis ⇒ 本轮是**空操作**（noop），
         //    压缩按设计**不落账也不物化版本**。旧写法把它写在本用例里，能过只是因为别的用例
         //    先把同内容的版本写进了 CAS —— 那是顺序运气（`--sequence.shuffle` 即现）。
@@ -264,7 +262,6 @@ describe("④ v3 分组形状：看 JSON 就知道每块回答什么（D5「结�
         expect((details.clippedIds as { count: number }).count).toBe(0);
     });
 
-    it.skip("非空操作（真丢轮）才物化 plan 版本 —— 依赖旧预算丢轮；##432 刀 2 起由 history.limit 触发，随旧策略面一起删", () => {});
     it("① v1 平铺账照样能读（读侧归一，旧账本无需迁移）", async () => {
         const { parseCompactLog } = await import("../../src/shared/context/compaction");
         const v1 = JSON.stringify({

@@ -518,8 +518,8 @@ export interface StepUsageRecord {
      * optional：本版上线前的账本没有 → 分表不标注（不编造）。
      */
     historySelection?: {
-        /** 生效预算（字节）；0 = 清零 */
-        budgetBytes: number;
+        /** 生效的**历史上限**（token，唯一旋钮 `history.limit.limitTokens`） */
+        limitTokens: number;
         /** 实际保留的渲染后字节 */
         keptBytes: number;
         /** 保留的连续区间段数 */

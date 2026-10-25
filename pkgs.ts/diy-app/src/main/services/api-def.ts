@@ -1365,10 +1365,6 @@ export const apiDef = RpcSchema.router({
                 desc: `执行压缩（按当前配置的装配管道保留历史 + 裁剪工具输出；历史原地保留可撤销）`,
                 input: {
                   taskUri: z.string().cliArg({ desc: "任务 URI" }),
-                  budgetBytes: z
-                    .number()
-                    .optional()
-                    .cliOption({ desc: "【新】历史消息可占字节上限（0 = 清零）；给了它就按纵向优先级阶梯保留" }),
                   toolResult: z
                     .enum(["asis", "headtail", "callpath"])
                     .optional()
@@ -1390,10 +1386,6 @@ export const apiDef = RpcSchema.router({
                   desc: `预览压缩效果（只算不写；返回 base/mod 请求 / 前后规模 / 丢弃轮明细 / 裁剪明细 / 分层费用 facts）`,
                   input: {
                     taskUri: z.string().cliArg({ desc: "任务 URI" }),
-                    budgetBytes: z
-                      .number()
-                      .optional()
-                      .cliOption({ desc: "【新】历史消息可占字节上限（0 = 清零）" }),
                     toolResult: z.enum(["asis", "headtail", "callpath"]).optional().cliOption({ desc: "工具结果的处理方式（asis/headtail/callpath）" }),
                     triggerLines: z.number().optional().cliOption({ desc: "头尾裁剪阈值行数" }),
                     headLines: z.number().optional().cliOption({ desc: "头尾裁剪保留头行数" }),
@@ -1405,83 +1397,9 @@ export const apiDef = RpcSchema.router({
                   },
                   output: z.any(),
                 }),
-                /**
-                 * 装配管道（plan）的**读写与校验**（##344 M2）：把「留什么 / 怎么裁」从代码内置
-                 * 升级为 `$DIY_HOME/auto-compact.yaml` 的 `history.keep[]`（级列表）。
-                 * 形状与校验真源：`shared/context/compact-keep.ts`；规格：
-                 * `docs/plans/2026-10-08-compact-plan-config.md` §③/§④。
-                 * 与 `autoCompactSetConfig`（写整份配置的任意子集）分开：这三条**只谈 plan**，
-                 * 且 `set` 走「校验后才写」（非法 ⇒ 拒绝且不动文件）。
-                 */
-                plan: RpcSchema.group({
-                  desc: `历史装配管道（级列表 history.keep[]）：读当前生效 plan / 校验后写入 / 合法性检查`,
-                  children: {
-                    get: RpcSchema.unary({
-                      desc: `读当前生效的装配管道（含来源：配置 or 缺省回落；附真源原文）`,
-                      input: { taskUri: z.string().cliArg({ desc: "任务 URI（真源是全局配置，此参数用于上下文与 check）" }) },
-                      output: z.any(),
-                    }),
-                    set: RpcSchema.unary({
-                      desc: `写入装配管道（YAML/JSON 级列表；**校验通过才写**，非法则拒绝且不改文件）`,
-                      input: {
-                        taskUri: z.string().cliArg({ desc: "任务 URI" }),
-                        keep: z
-                          .string()
-                          .cliArg({ readFile: true, desc: "级列表**文件路径**（内容为 YAML/JSON 数组或 `{keep: [...]}`；`-` = 读 stdin）" }),
-                      },
-                      output: z.any(),
-                    }),
-                    check: RpcSchema.unary({
-                      desc: `校验装配管道（级类型 / clip 形状 / must 层是否撑爆硬上限）；不合法 ⇒ exit 1`,
-                      input: {
-                        taskUri: z.string().cliArg({ desc: "任务 URI（用于量 must 级实占字节）" }),
-                        keep: z
-                          .string()
-                          .optional()
-                          .cliArg({ readFile: true, desc: "待校验的级列表**文件路径**（缺省 = 校验盘上配置；`-` = 读 stdin）" }),
-                      },
-                      output: z.any(),
-                    }),
-                    /**
-                     * 重置为**出厂缺省**（##363 M3a 补）：删 `history.keep[]` 键（不写死缺省字面量 ——
-                     * 删键才能跟随将来缺省演进）。**不依赖任何快照**，是快照全坏时的逃生窗口。
-                     * reset 前先把旧 keep 存一份快照 ⇒ reset 也能被 `restore` 回滚；其余字段不动。
-                     */
-                    reset: RpcSchema.unary({
-                      desc: `重置装配管道为**出厂缺省**（删 history.keep[]；不依赖任何版本/快照的逃生窗口；mode/triggers/policy/allowAgentWrite 保留）`,
-                      input: { taskUri: z.string().cliArg({ desc: "任务 URI" }) },
-                      output: z.any(),
-                    }),
-                    /**
-                     * 版本链（##378 M3b）：plan 的每次变化都入链（内容寻址 CAS + index.jsonl）。
-                     * 三条**只读之外**只有 restore 一条写路径 —— 且与 set/reset 共用同一套闸+校验+快照。
-                     */
-                    versions: RpcSchema.unary({
-                      desc: `列出 plan 版本链（当前版本 id + 版本列表 + brief；只读）`,
-                      input: { taskUri: z.string().cliArg({ desc: "任务 URI" }) },
-                      output: z.any(),
-                    }),
-                    version: RpcSchema.unary({
-                      desc: `看某一版 plan 全文（含与上一版的对比；只读）`,
-                      input: {
-                        taskUri: z.string().cliArg({ desc: "任务 URI" }),
-                        version: z.string().cliArg({ desc: "版本 id（plan-<sha12>；见 plan versions）" }),
-                      },
-                      output: z.any(),
-                    }),
-                    restore: RpcSchema.unary({
-                      desc: `回滚到某一版 plan（缺省上一版；也兼容旧时间戳快照 id；走闸+校验+快照，回滚本身也可回滚）`,
-                      input: {
-                        taskUri: z.string().cliArg({ desc: "任务 URI" }),
-                        version: z
-                          .string()
-                          .optional()
-                          .cliArg({ desc: "版本 id（plan-<sha12>）或旧快照 id；缺省 = 版本链上一版" }),
-                      },
-                      output: z.any(),
-                    }),
-                  },
-                }),
+                // 装配管道（plan）的 get/set/check/reset/versions/version/restore 已于 ##432 整体删除：
+                // 用户 2026-10-25 拍板「该清理的清理掉」—— 不让人/agent 去编排装配计划，
+                // 配置面只剩 `history.limit.limitTokens`（+ `summary.enabled`）。
 
                 /** 撤销一次压缩（append-only 的 undo 标记；不删账，可审计） */
                 undo: RpcSchema.unary({

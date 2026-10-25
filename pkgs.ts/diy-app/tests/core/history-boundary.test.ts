@@ -87,7 +87,7 @@ describe("压缩边界：一次算、落盘、之后不重算", () => {
         try {
             const uri = newTask();
             const mgr = manager();
-            for (let i = 0; i < 8; i++) await collect(mgr.chat(uri, `大 ${i}：${"问".repeat(6000)}`));
+            for (let i = 0; i < 8; i++) await collect(mgr.chat(uri, `大 ${i}：${"问".repeat(1200)}`));
             const n1 = compactions(uri).length;
             expect(n1).toBeGreaterThanOrEqual(1);
             // 连续 3 轮小增量（每轮 ~10 token）：保留段远没顶回上限 ⇒ **不新增** entry
@@ -102,7 +102,7 @@ describe("压缩边界：一次算、落盘、之后不重算", () => {
         const uri = newTask();
         const mgr = manager();
         // 每轮 user 都很长 ⇒ 累积很快超上限
-        for (let i = 0; i < 4; i++) await collect(mgr.chat(uri, `第 ${i} 问：${"问".repeat(6000)}`));
+        for (let i = 0; i < 4; i++) await collect(mgr.chat(uri, `第 ${i} 问：${"问".repeat(1200)}`));
         const before = compactions(uri);
         // 至少发生过一次压缩事件；**条数不再等于步数**（旧实现是每步一条）
         expect(before.length).toBeGreaterThanOrEqual(1);
@@ -122,7 +122,7 @@ describe("压缩边界：一次算、落盘、之后不重算", () => {
     it("投递结果 = 保头 + 切点之后的原文（切点之前的消息一条都不在里面）", async () => {
         const uri = newTask();
         const mgr = manager();
-        for (let i = 0; i < 4; i++) await collect(mgr.chat(uri, `问 ${i}：${"问".repeat(6000)}`));
+        for (let i = 0; i < 4; i++) await collect(mgr.chat(uri, `问 ${i}：${"问".repeat(1200)}`));
         const entry = compactions(uri).at(-1) as { cut: { llmLine: number }; headLine: number } | undefined;
         expect(entry).toBeTruthy();
         const view = mgr.deliveryMessages(uri);
@@ -144,7 +144,7 @@ describe("试算（##432 review 第 3 条）：改上限能立刻看到「压完
         try {
             const uri = newTask();
             const mgr = manager();
-            for (let i = 0; i < 4; i++) await collect(mgr.chat(uri, `问 ${i}：${"问".repeat(6000)}`));
+            for (let i = 0; i < 4; i++) await collect(mgr.chat(uri, `问 ${i}：${"问".repeat(1200)}`));
             // 真发过一次 ⇒ 边界已落盘（上限 200 的那条）
             const n1 = compactions(uri).length;
             expect(n1).toBeGreaterThanOrEqual(1);

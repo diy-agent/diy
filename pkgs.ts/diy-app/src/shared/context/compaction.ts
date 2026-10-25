@@ -59,7 +59,7 @@ export interface HeadTailPolicy {
  *   · 单行 2000 字符（与 services/tool-output.ts 的 maxLineChars 同口径；300 会把 jsonl /
  *     压缩 JS 这类「一行一条记录」的文件砍成半条，且不可续读）；
  *   · 单条 100KB 兜底（防「一行超长」钻空子，不是常规闸）。
- * 真正的总量闸仍是 `budgetBytes`（用户配置），此处只管**一条**能有多大。
+ * 真正的总量闸是 `history.limit.limitTokens`（用户配置），此处只管**一条**能有多大。
  */
 export const DEFAULT_HEADTAIL: HeadTailPolicy = {
     triggerLines: 100,
@@ -112,17 +112,12 @@ export const CompactPolicySchema = z.object({
     mode: z
         .literal("budget")
         .describe("⚠️ 已废弃（不决定投递）：保留只是为了旧配置与旧调用点仍能解析。投递选择只看 `history.limit`"),
+    // ##432 清理（用户 2026-10-25）：`modeData.budgetBytes` **整体删除** —— 名字本身也不留。
+    // 历史上限只剩 `history.limit.limitTokens`（token）；旧配置里的 `budgetBytes` 由读侧
+    // 一次性映射成 token 上限 + 出声（见 `auto-compact.ts::normalizeAutoCompact`），写回即新形状。
     modeData: z
         .object({
-            budgetBytes: z
-                .number()
-                .int()
-                .nonnegative()
-                .describe(
-                    "⚠️ **已废弃，不决定投递**（##432 刀 2）：历史投递只按 `history.limit.limitTokens` 切，" +
-                        "改这个值**不会**改变发给模型的历史。字段为准旧调用点保留形状，删除待后续 PR",
-                ),
-            toolResult: ToolResultPolicySchema.describe("工具结果在预算内的呈现"),
+            toolResult: ToolResultPolicySchema.describe("工具结果在配置的呈现"),
         })
         .describe("budget 算法私有参数（只此支有）"),
     summary: SummaryField,
@@ -132,13 +127,6 @@ export type BudgetPolicy = z.infer<typeof CompactPolicySchema>;
 export type CompactPolicy = z.infer<typeof CompactPolicySchema>;
 export type CompactMode = CompactPolicy["mode"];
 
-
-/**
- * 默认预算：**20KB**（用户 2026-10-15 定；##343 M1 落地）。
- * 旧值 3KB（≈清零）是 ##271 的经验值；生产 `auto-compact.yaml` 早已是 20480 —— 默认值与生产
- * 实跑不一致，等于「新装的环境」与「现网」跑两套策略，故同步过来。
- */
-export const DEFAULT_BUDGET_BYTES = 20 * 1024;
 
 /** 预算缺省的工具结果呈现（头尾裁剪：长输出留头尾、中间省略，原文可回取） */
 export const DEFAULT_TOOL_RESULT_POLICY: ToolResultPolicy = {
@@ -151,10 +139,10 @@ export const DEFAULT_TOOL_RESULT_POLICY: ToolResultPolicy = {
     },
 };
 
-/** 新策略真源（UI/CLI 的缺省）：3KB 预算 + 工具结果头尾裁剪 */
+/** 策略真源（UI/CLI 的缺省）：工具结果头尾裁剪 + 不算摘要 */
 export const DEFAULT_COMPACT_POLICY: BudgetPolicy = {
     mode: "budget",
-    modeData: { budgetBytes: DEFAULT_BUDGET_BYTES, toolResult: DEFAULT_TOOL_RESULT_POLICY },
+    modeData: { toolResult: DEFAULT_TOOL_RESULT_POLICY },
     summary: false,
 };
 
@@ -163,11 +151,6 @@ export const DEFAULT_COMPACT_POLICY: BudgetPolicy = {
 /** 工具结果的呈现策略（预算策略唯一来源 = `modeData.toolResult`） */
 export function toolResultOf(p: CompactPolicy): ToolResultPolicy {
     return p.modeData.toolResult;
-}
-
-/** 策略 → **字节预算**（0 = 清零）。预算路径**唯一入口** */
-export function budgetBytesOf(p: CompactPolicy): number {
-    return p.modeData.budgetBytes;
 }
 
 // ── 裁剪能力轴（clip）──
@@ -251,6 +234,19 @@ export const ReasoningClipSpecSchema = z.discriminatedUnion("type", [
 ]);
 export type ReasoningClipSpec = z.infer<typeof ReasoningClipSpecSchema>;
 
+/**
+ * 推理的**保守缺省裁法**（##374 T2；`##432` 清理后这是唯一来源 —— 级列表已删，不再有"哪一级声明"）。
+ *
+ * 为什么是保头 600 字符（实测依据，样本 = 4 条真实长会话 `~/.diy/local/*.llm.jsonl`，
+ * 2163 条推理 part / 3.35 MiB）：字符数 p50=571 · p75=1362 · p90=2962。
+ * 保头 600 ⇒ 推理总字节降到 36.9%（裁掉 1051/2163 条的尾巴）；保头 300 ⇒ 23.0%。
+ * 取 600 = **保守**（保住约一段话的开头，含模型的判断依据）。
+ */
+export const DEFAULT_REASONING_CLIP = {
+    type: "headtail",
+    data: { headChars: 600, tailChars: 0 },
+} as const;
+
 /** 一条推理文本的裁剪账（供统计 / marker / 测试断言） */
 export interface ReasoningClipResult {
     text: string;
@@ -298,7 +294,6 @@ export function clipReasoningText(text: string, clip: ReasoningClipSpec | null |
  * `normalizePolicy` 是唯一适配点（扁平/旧形状 → 树），`flatPolicyOf` 是反向（树 → 扁平，供 UI 回读）。
  */
 export interface FlatCompactPolicy {
-    budgetBytes: number;
     toolResult: ToolResultMode;
     headtail: HeadTailPolicy;
     summary: boolean;
@@ -311,7 +306,7 @@ export function flatPolicyOf(p: CompactPolicy): FlatCompactPolicy {
     const ht = d
         ? { triggerLines: d.head + d.tail, headLines: d.head, tailLines: d.tail, maxLineChars: d.maxLineChars, maxKeepBytes: d.maxKeepBytes }
         : { ...DEFAULT_HEADTAIL };
-    return { budgetBytes: p.modeData.budgetBytes, toolResult: tr.render, headtail: ht, summary: p.summary };
+    return { toolResult: tr.render, headtail: ht, summary: p.summary };
 }
 
 const posNum = (v: unknown, d: number, min = 0): number =>
@@ -342,7 +337,7 @@ function readToolResult(raw: unknown, ht: Partial<HeadTailPolicy>): ToolResultPo
     return { render: "asis" };
 }
 
-/** 宽松归一：任意输入（真源 `{mode,modeData}` 或扁平 `{budgetBytes,toolResult,…}`）→ 合法策略 */
+/** 宽松归一：任意输入（真源 `{mode,modeData}` 或扁平 `{toolResult,…}`）→ 合法策略（旧 `budgetBytes` 忽略） */
 export function normalizePolicy(p: unknown): CompactPolicy {
     const src = (p ?? {}) as Record<string, unknown>;
     const md = (src["modeData"] ?? src) as Record<string, unknown>;
@@ -351,7 +346,6 @@ export function normalizePolicy(p: unknown): CompactPolicy {
     return {
         mode: "budget",
         modeData: {
-            budgetBytes: posNum(md["budgetBytes"], DEFAULT_BUDGET_BYTES, 0),
             toolResult: trRaw !== undefined || ht.headLines !== undefined ? readToolResult(trRaw, ht) : DEFAULT_TOOL_RESULT_POLICY,
         },
         summary: src["summary"] === true,
@@ -541,8 +535,6 @@ export function clipToolResult(text: string, raw: ToolResultPolicy, opts: ClipOp
  * `origPathOf` 由调用方注入（main 用落盘相对路径，renderer 用同一字符串，不碰文件系统）。
  */
 export interface DeliveryTransform {
-    /** 历史消息可占字节上限（按纵向优先级阶梯选择） */
-    budgetBytes: number;
     /**
      * **全局回落 clip**（= 策略 `toolResult.render` 的降级）：没被任何级声明 clip 的消息用它。
      * 有它才谈得上「保底级声明 `full`、其余照旧裁」—— 回落值必须随策略走，不能各自写死。
@@ -562,7 +554,7 @@ export function makeDeliveryTransform(
     collect?: ClippedToolDetail[],
 ): DeliveryTransform {
     const tr = toolResultOf(policy);
-    const opts: DeliveryTransform = { budgetBytes: budgetBytesOf(policy), defaultClip: clipSpecOf(tr) };
+    const opts: DeliveryTransform = { defaultClip: clipSpecOf(tr) };
     // 一律装上渲染器（不再按 `tr.render !== "asis"` 早退）：全局策略是 `asis` 时它是**恒等变换**
     // （`clipToolResult` 直接原样返回），但**级声明的 clip 仍要生效** —— 否则「全局 asis + 保底 full」
     // 这类组合会被全局策略掐死（级声明比全局更具体，谁更具体听谁的）。
@@ -732,7 +724,7 @@ export type CompactTrigger =
     | "contextWindowOver";
 
 /**
- * **plan 快照**（##344 M2 · 事件账 v3；##378 M3b 起只记**版本指针**）。
+ * **plan 快照**（旧字段，仅供读旧账本；##432 起新事件不再写它）。
  *
  * 为什么必须存：`policy` 只说明「旋钮拧到哪」（预算 / 全局裁法），说明不了「**为什么留这些**」——
  * 那是 `history.keep[]`（级列表）决定的。存下它，事后才能把某次压缩**回放**成「当时用的是哪套 plan」，
@@ -743,14 +735,14 @@ export type CompactTrigger =
  * v3 旧事件里的 `keep` 全文**照旧可读**（不改写既有账本；UI 要能同时显示两种）。
  */
 export interface CompactPlanSnapshot {
-    /** 当时的历史字节上限（= `policy.modeData.budgetBytes`） */
-    budgetBytes: number;
+    /** 旧账本里的历史字节上限（**旧口径**；新事件不写，读侧只用于展示"当时是什么"） */
+    budgetBytes?: number;
     /** 这套 plan 从哪来：`config` = 用户/agent 配的；`default` = 配置没写、回落代码缺省管道 */
     source: "config" | "default";
-    /** **v4**：内容寻址版本 id（`plan-<sha12>`）—— 回查 = 去 CAS 取一份 */
+    /** **v4**：内容寻址版本 id（`plan-<sha12>`）—— 旧账本的指针，回查已不可用（CAS 已删） */
     planVersion?: string;
     /** **v3 旧事件**的级列表原文（`{ type, must?, limit?, clip?, data }`）；新事件**不写**，读侧兼容 */
-    keep?: import("./compact-keep").KeepStage[];
+    keep?: unknown[];
 }
 
 /**

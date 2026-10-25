@@ -13,7 +13,7 @@
 
 import { z } from "zod";
 
-import { selectKeptBoundary, type BoundaryMessage } from "./select-kept-boundary";
+import { hasDropped, selectKeptBoundary, type BoundaryMessage } from "./select-kept-boundary";
 
 /**
  * 保头 token 数 / 保留比例：**唯一真源在 `./select-kept-boundary.ts`**（与界面范例预览共用同一份判据），
@@ -74,18 +74,54 @@ export const DEFAULT_HISTORY_LIMIT: HistoryLimit = {
 export function normalizeHistoryLimit(raw: unknown): HistoryLimit {
     const src = (raw ?? {}) as Record<string, unknown>;
     const n = src["limitTokens"];
+    // 是数就夹到 `[MIN, ∞)`（0 / 负数同样夹 —— 旧口径的「0 = 清零」已不存在；
+    // 只有**不是数**才回落缺省，那种情况是写坏了，缺省比夹取更稳）
     const limitTokens =
-        typeof n === "number" && Number.isFinite(n) && n > 0
+        typeof n === "number" && Number.isFinite(n)
             ? Math.max(MIN_HISTORY_LIMIT_TOKENS, Math.floor(n))
             : DEFAULT_HISTORY_LIMIT_TOKENS;
     const sum = src["summary"] as Record<string, unknown> | undefined;
     return { limitTokens, summary: { enabled: sum?.["enabled"] === true } };
 }
 
-/** token 粗估：**字符数 / 4**（不做 meter —— 精确计量要 tokenizer，且每步付一次代价不值得） */
+/**
+ * 配置是否**完整**（`limitTokens` 是数、`summary.enabled` 是布尔）。
+ * 只用来**出声**：不完整照样能用（`normalizeHistoryLimit` 补缺省），但要告诉用户「你写的那份没照形状」。
+ */
+export function isCompleteHistoryLimit(raw: unknown): boolean {
+    const src = (raw ?? {}) as Record<string, unknown>;
+    const sum = src["summary"] as Record<string, unknown> | undefined;
+    return typeof src["limitTokens"] === "number" && typeof sum?.["enabled"] === "boolean";
+}
+
+/**
+ * token 粗估（##432 review B2 —— 旧的 `length / 4` 对中文**低估约 3 倍**，等于压缩永不触发）。
+ *
+ * 规则：**CJK 按 1 token / 字**，其余按 `字符数 / 4`（英文约 4 字符 1 token）。
+ * 不做精确 tokenizer：那要真词表且每步付一次代价；这个加权把误差压到 ~±20% 以内就够。
+ * 适用范围：历史的粗估（`selectCompactableRange` 的累加与 `appliedHistoryRange` 的触发判据）——
+ * 正式用量（计费 / 窗口占比）永远走 provider 回包的 `usage`，不用这里。
+ */
 export function estimateTokensOf(text: string): number {
-    // 用 UTF-16 长度近似字符数：中文 1 字 ≈ 1 token 的量级，英文 1 词 ≈ 2 字符 → 两者都在这个粗估里可接受
-    return Math.ceil(text.length / 4);
+    let cjk = 0;
+    let other = 0;
+    for (const ch of text) {
+        const c = ch.codePointAt(0) ?? 0;
+        // CJK 统一表意文字（含扩展 A/B）、假名、谚文、全角标点：按 1 token / 字
+        if (
+            (c >= 0x3000 && c <= 0x30ff) || // 全角标点 / 假名
+            (c >= 0x3400 && c <= 0x4dbf) || // 扩展 A
+            (c >= 0x4e00 && c <= 0x9fff) || // 基本区
+            (c >= 0xac00 && c <= 0xd7af) || // 谚文
+            (c >= 0xf900 && c <= 0xfaff) || // 兼容表意
+            (c >= 0x20000 && c <= 0x3ffff) // 扩展 B 及以后
+        ) {
+            cjk += 1;
+        } else {
+            other += 1;
+        }
+    }
+    return Math.ceil(cjk + other / 4);
 }
 
 /** 算法只需要这几样（不绑 LocalModelMessage，便于单测与跨层复用） */
@@ -160,11 +196,13 @@ export function toBoundaryMessages(
         const calls = callIds(m);
         const results = resultIds(m);
         const kind = calls.length > 0 ? "call" : results.length > 0 ? "result" : m.role === "user" ? "user" : "text";
-        const callId = calls[0] ?? results[0];
+        // ⚠️ 传**整个集合**：一条 assistant 消息可带多个 tool-call，只取 `calls[0]` 会让
+        //    「切点落在第二个 result 上」时配平找不到调用 ⇒ 保留孤立 result ⇒ provider 400（review P0-1）
+        const ids = calls.length > 0 ? calls : results;
         return {
             tokens: costOf(m, i),
             kind,
-            ...(callId ? { callId } : {}),
+            ...(ids.length > 0 ? { callIds: ids } : {}),
             ...(stepOf[i] ? { step: stepOf[i] } : {}),
         };
     });
@@ -195,6 +233,7 @@ export function selectCompactableRange(
     // 单测可以调小保头（不传就是真实口径）；判据本身仍只有一份
     const boundary = selectKeptBoundary(msgs, limitTokens, opts.headTokens === undefined ? {} : { headTokens: opts.headTokens });
     const headEnd = boundary.headEnd + 1;
-    if (boundary.cut <= headEnd) return null;
-    return { cut: boundary.cut, headEnd, dropped: boundary.cut - headEnd };
+    // 「丢没丢」由判据显式给出（`kind`）—— 不用下标算式推：`cut === n`（尾部一条不取）也是**真丢了**
+    if (!hasDropped(boundary)) return null;
+    return { cut: boundary.cut, headEnd, dropped: boundary.dropped };
 }

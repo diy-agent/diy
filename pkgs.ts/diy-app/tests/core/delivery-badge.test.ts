@@ -10,15 +10,12 @@ import {
     deliveryBadgeText,
     deliveryBadgeTitle,
     fmtBudgetBytes,
-    mustStagesOf,
-    stageSummary,
     TRIGGER_LABEL,
     type DeliveryBadgeInput,
 } from "../../src/shared/context/delivery-badge";
-import { DEFAULT_KEEP } from "../../src/shared/context/compact-keep";
 
 const sel = (over: Partial<DeliveryBadgeInput["selection"]> = {}): DeliveryBadgeInput["selection"] => ({
-    budgetBytes: 61440,
+    limitTokens: 61_440,
     keptBytes: 2048,
     keptRuns: 2,
     droppedMessages: 0,
@@ -30,7 +27,6 @@ const cfg: DeliveryBadgeInput["cfg"] = {
     mode: "auto",
     triggers: { systemContextChanged: true, cacheExpired: true, contextWindowOver: 61440 },
     ttlMs: 60 * 60_000,
-    mustStages: mustStagesOf(undefined),
 };
 
 const input = (over: Partial<DeliveryBadgeInput> = {}): DeliveryBadgeInput => ({
@@ -51,30 +47,27 @@ describe("##423 徽章文本：维度写在词里，不再有裸「全量」", (
         }
     });
 
-    it("字节：0 是「清零」、其余按 KB / B", () => {
-        expect(fmtBudgetBytes(0)).toBe("0（清零）");
+    it("字节人读（保留量）：KB / B", () => {
         expect(fmtBudgetBytes(3072)).toBe("3 KB");
         expect(fmtBudgetBytes(512)).toBe("512 B");
     });
 });
 
-describe("##423 hover：四块缺一不可", () => {
+describe("##423 hover：三块缺一不可", () => {
     const title = deliveryBadgeTitle(input());
 
-    it("① 说清维度 = 历史裁剪（与 runtime 无关）+ 预算/丢几条/保留几段", () => {
+    it("① 说清维度 = 历史裁剪（与 runtime 无关）+ 上限/丢几条/保留几段", () => {
         expect(title).toContain("历史裁剪");
         expect(title).toContain("与 runtime 无关");
-        expect(title).toContain("预算 60 KB");
+        expect(title).toContain("上限 61440 token");
         expect(title).toContain("丢 0/5 条");
         expect(title).toContain("保留 2 段");
     });
 
-    it("②【关键】must 级不吃预算要写在脸上（压完还超预算的根因）", () => {
-        expect(title).toContain("预算只约束非 must 级");
-        expect(title).toContain("must 级（必保）不吃预算");
-        expect(title).toContain("每轮都在压");
-        // 缺省 plan 的必保级 = steps n=6（回显成数据，不是空话）
-        expect(title).toContain("steps n=6");
+    it("② 说清「上限是唯一旋钮」（旧 must / 字节预算的话术已删）", () => {
+        expect(title).toContain("唯一旋钮");
+        expect(title).not.toContain("must");
+        expect(title).not.toContain("预算");
     });
 
     it("③ 三触发器都列出来（名字 + 配置开关 + 阈值）", () => {
@@ -108,25 +101,6 @@ describe("##423 hover：四块缺一不可", () => {
         expect(t).toContain("历史裁剪");
         expect(t).toContain("配置未读到");
         expect(t).not.toContain("本步命中");
-    });
-});
-
-describe("must 级识别", () => {
-    it("配置没写 keep → 回落缺省管道（steps 必保）", () => {
-        expect(mustStagesOf(undefined).map((s) => s.summary)).toContain("steps n=6");
-    });
-
-    it("配置写了 keep → 按配置算（must 缺省 false = 计预算）", () => {
-        const keep = [
-            { type: "recent" as const, data: { n: 3 } },
-            { type: "ladder" as const, must: true },
-        ];
-        expect(mustStagesOf(keep)).toEqual([{ type: "ladder", summary: "ladder" }]);
-    });
-
-    it("级摘要：带参数就带出来（steps n=6 / role tool）", () => {
-        expect(stageSummary(DEFAULT_KEEP[0]!)).toBe("steps n=6");
-        expect(stageSummary({ type: "role", data: { role: "tool" } } as never)).toBe("role tool");
     });
 });
 

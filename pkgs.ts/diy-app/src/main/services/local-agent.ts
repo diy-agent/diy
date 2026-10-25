@@ -65,7 +65,6 @@ import {
     replay,
     costOfWith,
     selectHistory,
-    selectHistoryByBudget,
     selectHistoryByCut,
     selectForDelivery,
     type BlockKind,
@@ -77,8 +76,6 @@ import {
     type JSONVal,
     type TurnEndReason,
 } from "./local-blocks";
-import { DEFAULT_KEEP, DEFAULT_REASONING_CLIP, type KeepStage } from "../../shared/context/compact-keep";
-import { keepStagesToPlan, runPlan } from "./compaction-plan";
 import {
     decodeCursor,
     encodeCursor,
@@ -106,21 +103,6 @@ const TURN_SILENT_END_CODES: ReadonlySet<string> = new Set([
     "agent/app-crash", // 宿主异常退出
     "agent/app-restart", // 宿主重启打断本轮
 ]);
-import {
-    PLAN_SCOPE_NOTE,
-    planCheck,
-    planGet,
-    planReset,
-    planRestore,
-    planVersions,
-    planVersionView,
-    planSet,
-    renderCheckView,
-    renderPlanVersionsView,
-    renderPlanVersionView,
-    renderPlanView,
-} from "./compact-plan-io";
-import { appendPlanVersion, currentPlanVersion, planVersionDoc, planVersionId, writePlanVersion } from "./plan-store";
 import { capToolOutput, toolOutFile, toolOutFileCandidates, toolOutRelPath } from "./tool-output";
 import { abortText } from "../../shared/turn-end";
 import type { TurnGate, TurnGateDecision } from "../../shared/turn-gate";
@@ -161,7 +143,7 @@ import {
 } from "../../shared/usage";
 import { buildDelivery, isRuntimePlace, runtimeDiffDelivery, type Delivery } from "../../shared/context/delivery";
 import { renderBudgetNote } from "../../shared/context/budget-note";
-import { mustHardCapBytesOf } from "../../shared/context/compact-keep";
+import { assemblyHardCapBytes } from "../../shared/context/request-preflight";
 import { estimateRequest, tighterHistoryCapBytes } from "../../shared/context/request-preflight";
 import { isEnvelopeText, renderSummaryPart, tailEnvelope } from "../../shared/context/envelope";
 import { describeAnomalies, readLlmLog } from "../../shared/context/log-schema";
@@ -189,12 +171,12 @@ import { statFromStep } from "../../shared/context/stats";
 import { atomicUnitPaths, changelogUnitPaths, changesOf, foldCtxTree, type CtxSnapshot } from "../../shared/context/changelog";
 import type { DeliveryStepRecord } from "../../shared/context/steps";
 import {
-    budgetBytesOf,
     clipSpecOf,
     clippedIdsOfEvent,
     compactPointOf,
     boundaryOfPoint,
     COMPACT_STATE_FILENAME,
+    DEFAULT_REASONING_CLIP,
     estimateTokens,
     fmtBytes,
     makeDeliveryTransform,
@@ -1577,30 +1559,20 @@ function optsFor(
     policy: CompactPolicy,
     taskUri: string,
     collect?: ClippedToolDetail[],
-    keep?: readonly KeepStage[] | null,
     /**
-     * 【##406 刀 2】装配后硬上限（字节）。缺省 = 按模型窗口算（`mustHardCapBytesOf`）；
+     * 【##406 刀 2】装配后硬上限（字节）。缺省 = 按模型窗口算（`assemblyHardCapBytes`）；
      * 预检要**再压一次**时由调用方传更小的值（`tighterHistoryCapBytes`）。
      */
     hardCapBytes?: number,
 ): DeliveryOpts {
-    // 管道来自**当前配置**（config / history 分离：投递只读当前配置）—— 每个调用点都现读一次，
-    // 于是「改配置本轮即生效」对 `history.keep[]` 与预算**同一条**（无需压缩事件、无需重启）。
-    // `keep` 显式传入 = 调用方手里已有那一刻的配置（记账要快照，见 planCompact）。
-    const specs = keep !== undefined ? keep : loadAutoCompact(diyHome()).history?.keep;
     const transform = makeDeliveryTransform(policy, (id) => toolOutRelPath(taskUri, id), collect);
-    // ##432 刀 2：`budgetBytes` 不再参与选择（旧字段只服务已删的预算管道）；
-    // 留它在 opts 上会让 `selectForDelivery` 走回旧路径（review C 的两套口径就是这么来的）。
-    delete (transform as { budgetBytes?: number }).budgetBytes;
     return {
         ...transform,
-        // 推理的全局回落（##374 T2）：与工具侧的 `defaultClip` 对称 —— 级没声明 `reasoningClip`
-        // 就回落它（不然「不声明 ⇒ 不裁」，与工具轴反着来且静默多花字节）
+        // 推理的全局回落（##374 T2）：与工具侧的 `defaultClip` 对称
         defaultReasoningClip: DEFAULT_REASONING_CLIP,
-        plan: keepStagesToPlan(specs, budgetBytesOf(policy), clipSpecOf(toolResultOf(policy))),
-        // 出口硬上限（##406 刀 2）：`must` 级不占预算 ⇒ 必须另有一道总量闸，
-        // 否则「预算 20 KB / 实发 4.95 MB」可以同时成立（##401）。
-        hardCapBytes: hardCapBytes ?? mustHardCapBytesOf(contextLimitOf(personaForTask(diyHome(), taskUri).model)),
+        // 出口硬上限（##406 刀 2）：装完再把总字节收进窗口内，
+        // 否则「上限 20k token / 实发 4.95 MB」可以同时成立（##401）
+        hardCapBytes: hardCapBytes ?? assemblyHardCapBytes(contextLimitOf(personaForTask(diyHome(), taskUri).model)),
     };
 }
 
@@ -1622,10 +1594,8 @@ interface CompactPlan {
     rateSnap?: RateSnapshot;
     /** 账目（可缺；形状与账本的 `cost` 分组一致） */
     stats: NonNullable<CompactEventRecord["cost"]>;
-    /** 这次用的 plan 快照（##344 M2；##378 起只含**版本指针** + 标量，不含 keep 全文） */
+    /** 旧账本字段（级列表已删：只是为了读旧事件仍能解析） */
     planSnapshot: CompactPlanSnapshot;
-    /** 这次实际生效的级列表（**只在本进程内用**：入链 / 补录要写全文，不进事件账） */
-    planKeep: readonly KeepStage[];
 }
 
 /** 压缩预览（只算不写）：panel「事实」行 + 预览页共用 */
@@ -2676,75 +2646,6 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                 }
             },
         }),
-        /**
-         * `compact_plan` —— 装配管道（plan）的**手**（##362 M3a）。
-         *
-         * 为什么是**单工具带 op** 而不是三个：三者共用同一份「全局配置 + 闸」语义，工具描述只写一遍
-         * （每个工具都占 prompt 预算）；调用方看到的是一件事「装配管道」而不是三个散命令。
-         * execute 不含任何 plan 逻辑 —— 一律走 `services/compact-plan-io`（与 RPC **同一实现**）：
-         * 「CLI 校验通过、工具绕过校验」这类分叉必现，不能两处各写。
-         */
-        compact_plan: tool({
-            description:
-                "读/校验/改写「历史装配管道」（plan）—— 它决定哪些历史消息发给模型。" +
-                "**这是全局配置：改动影响所有任务、所有 agent 的投递**。" +
-                "op=get 读当前生效 plan（含来源与预算）；op=check 校验一份级列表（可传 keep，缺省校验盘上配置）；" +
-                "op=set 写 history.keep[]（需用户在配置里开 history.allowAgentWrite=true，否则返回「没权限」而非报错）；" +
-                "op=versions 列出 plan 版本链（只读，恒可用）；op=version 看某一版全文（只读）；" +
-                "op=restore 回滚到**某一版**（缺省上一版；也兼容旧时间戳快照 id；回滚本身也可回滚）；" +
-                "op=reset 一键回**出厂缺省** plan（删 history.keep[]；**不依赖任何版本/快照的逃生窗口** —— 链全坏时用它）。" +
-                "级列表形状：`[{ type: ladder|role|recent|steps, must?, limit?, clip?, data }]`，从上往下生效（先声明的先挑）。",
-            inputSchema: z.object({
-                op: z.enum(["get", "check", "set", "restore", "reset", "versions", "version"]).describe("要做什么"),
-                keep: z
-                    .string()
-                    .optional()
-                    .describe('op=check/set：级列表文本（YAML 或 JSON；数组，或 `{ keep: [...] }`）'),
-                version: z
-                    .string()
-                    .optional()
-                    .describe("op=version/restore：版本 id（`plan-<sha12>`；restore 也兼容旧快照 id）；缺省 = 上一版"),
-                snapshot: z.string().optional().describe("op=restore：旧参数名（= version；仅为兼容保留）"),
-            }),
-            execute: async ({ op, keep: keepText, version, snapshot }) => {
-                const home = diyHome();
-                // must 层实占字节要**量**（预算是管不到 must 的）—— 与 RPC 注入的是同一测量
-                const measure = (k: KeepStage[]): { mustBytes: number; hardCapBytes: number } =>
-                    getLocalAgent().measureMustStages(taskUri, k);
-                if (op === "get") return renderPlanView(planGet(home));
-                // 只读两条（versions / version）**恒可用** —— 不受 allowAgentWrite 闸约束（同 get / check）
-                if (op === "versions") {
-                    const v = planVersions(home);
-                    return `${renderPlanVersionsView(v)}\n${PLAN_SCOPE_NOTE}。`;
-                }
-                if (op === "version") {
-                    if (!version) throw new Error('op:"version" 需要 `version`（`plan-<sha12>`；见 op:"versions"）');
-                    const v = planVersionView(home, version);
-                    if (!v) throw new Error(`版本不存在：${version}（见 op:"versions"）`);
-                    return `${renderPlanVersionView(v)}\n${PLAN_SCOPE_NOTE}。`;
-                }
-                if (op === "check") {
-                    // 校验**不抛**（ok=false 也是有用信息）—— 与 set 的"写错就抛"不同向，理由见 compact-plan-io 头注
-                    return renderCheckView(planCheck({ home, taskUri, ...(keepText !== undefined ? { keepText } : {}), measure }));
-                }
-                if (op === "set") {
-                    if (!keepText || keepText.trim() === "") {
-                        throw new Error('op:"set" 需要 `keep`（级列表文本：YAML/JSON 数组，或 `{ keep: [...] }`）');
-                    }
-                    // 闸关 ⇒ 本调用返回**拒绝文本**（不抛）；非法 plan ⇒ 抛（那是模型写错了，该看到错在哪）
-                    return planSet({ home, taskUri, via: "agent", keepText, measure }).text;
-                }
-                if (op === "reset") return planReset({ home, taskUri, via: "agent" }).text;
-                return planRestore({
-                    home,
-                    taskUri,
-                    via: "agent",
-                    ...(version ? { version } : {}),
-                    ...(snapshot ? { snapshot } : {}),
-                    measure,
-                }).text;
-            },
-        }),
     };
 }
 
@@ -3476,7 +3377,7 @@ export class LocalAgentManager {
         // ##432 刀 2：**边界只在压缩事件时算一次并落盘**；之后每步只按它切（不重算）
         const range = this.appliedHistoryRange(taskUriOf, all, llmLineBase, limit, writeBoundary);
         const opts: DeliveryOpts = policy
-            ? { ...optsFor(policy, taskUriOf, collect, undefined, hardCapBytes), ...(range ? { historyCut: range } : {}) }
+            ? { ...optsFor(policy, taskUriOf, collect, hardCapBytes), ...(range ? { historyCut: range } : {}) }
             : range
               ? { historyCut: range }
               : {};
@@ -4204,16 +4105,9 @@ export class LocalAgentManager {
      */
     private planCompact(taskUri: string, policyInput: unknown): CompactPlan {
         const policy = normalizePolicy(policyInput);
-        // 装配管道 = **当前配置**的 `history.keep[]`；没配 ⇒ 缺省管道（回落，行为与 ##343 M1 一致）。
-        const cfgKeep = loadAutoCompact(diyHome()).history?.keep;
-        const keepUsed: readonly KeepStage[] = cfgKeep && cfgKeep.length > 0 ? cfgKeep : DEFAULT_KEEP;
-        const planSource: "config" | "default" = cfgKeep && cfgKeep.length > 0 ? "config" : "default";
-        // ##378：事件只记**版本指针**（内容寻址）—— 全文在 CAS，压缩账不再内嵌 keep
-        const planSnapshot: CompactPlanSnapshot = {
-            budgetBytes: policy.modeData.budgetBytes,
-            source: planSource,
-            planVersion: planVersionId(planVersionDoc({ source: planSource, keep: keepUsed })),
-        };
+        // 旧账本字段（级列表与 plan 版本链已删）：读旧事件仍要能解析，所以保留一个最小快照
+        const planSource: "config" | "default" = loadAutoCompact(diyHome()).history?.limit ? "config" : "default";
+        const planSnapshot: CompactPlanSnapshot = { source: planSource };
         const scan = scanOpsFile(taskUri);
         const turnIds = listTurnIds(scan.ops);
         const store = new BlockStore();
@@ -4263,7 +4157,7 @@ export class LocalAgentManager {
               }
             : undefined;
         const stats = usageStats(readStepUsages(taskUri), after.estTokens, rateSnap);
-        return { policy, keptTurns, keptFromTurnId, keepFromOpIndex, droppedIds, keptRuns, scan, store, before, after, droppedDetail, clipped, rateSnap, stats, planSnapshot, planKeep: keepUsed };
+        return { policy, keptTurns, keptFromTurnId, keepFromOpIndex, droppedIds, keptRuns, scan, store, before, after, droppedDetail, clipped, rateSnap, stats, planSnapshot };
     }
 
     /**
@@ -4423,26 +4317,6 @@ export class LocalAgentManager {
     }
 
     /**
-     * 「必保层（`must` 级）实占字节」测量（##344 M2 · `plan check` 的硬判据）。
-     *
-     * 只跑**必保级**：那是预算**管不到**的部分（撑爆就白压 —— 压了跟没压一样，还白付重建代价）。
-     * 硬上限 = 模型上下文窗口 token × 4（无 tokenizer，与全仓同一个粗估口径）；窗口未知 ⇒ 兜底常量。
-     */
-    measureMustStages(taskUri: string, keep: readonly KeepStage[]): { mustBytes: number; hardCapBytes: number } {
-        const policy = loadAutoCompact(diyHome()).policy;
-        const capTokens = contextLimitOf(personaForTask(diyHome(), taskUri).model);
-        // 与运行时装配的出口闸**同一个判据**（`mustHardCapBytesOf`）——离线量出来的才会等于真发的
-        const hardCapBytes = mustHardCapBytesOf(capTokens);
-        const must = keep.filter((s) => s.must === true);
-        if (must.length === 0) return { mustBytes: 0, hardCapBytes };
-        // ##420：与投递同一起点（只量保留段；被压掉的轮不参与投递，也不该在这里被读一遍）
-        const all = projectAll(replay(readOpsFrom(opsFile(taskUri), resolveOpsReplay(taskUri).from)));
-        const p = keepStagesToPlan(must, Number.MAX_SAFE_INTEGER, clipSpecOf(toolResultOf(policy)));
-        const sel = runPlan(all, p, { costOf: costOfWith(optsFor(policy, taskUri)) });
-        return { mustBytes: sel.keptBytes, hardCapBytes };
-    }
-
-    /**
      * 执行压缩：写一条账（append-only）+ 落盘被裁原文 + 重置内存态。
      *
      * 失败/边界原则（照 clear 的教训）：**先把可失败的事做完，最后才改内存态**。
@@ -4530,21 +4404,7 @@ export class LocalAgentManager {
         };
         // 空操作不写账（见上）；非空操作才 append。
         if (!noop) {
-            // ##378：先把 plan 版本物化进 CAS；链尾不是它（手改配置 / 版本化前配的 plan）⇒ 补录一行，
-            // 保证账里的 `planVersion` 一定能被「列出来 / 回查 / 回滚」（否则是悬空指针）。
-            const home = diyHome();
-            const doc = planVersionDoc({ source: p.planSnapshot.source, keep: p.planKeep });
-            writePlanVersion(home, doc);
-            if (currentPlanVersion(home)?.version !== p.planSnapshot.planVersion) {
-                appendPlanVersion({
-                    home,
-                    doc,
-                    op: "set",
-                    via: "user",
-                    taskUri,
-                    brief: `压缩时补录：配置中的 plan 不在链上（${p.planKeep.map((k) => k.type).join(" / ") || "空级列表"}）`,
-                });
-            }
+            // 旧账本里的 `planVersion` 指针不再写入：plan 版本链已删（##432 清理）。
             // ##431：`opIds` 要在 append **之前**取（旧快照的 opIds 才是历史累积的；append 之后
             // ensure 会先扫到新行、把边界换成新的 —— 值虽不错，但多扫一次且语义不清）。
             const prev = ensureCompactState(taskUri);
@@ -5968,7 +5828,6 @@ export class LocalAgentManager {
                 );
             }
             const historySelection = {
-                budgetBytes: stepLimit.limitTokens, // 旧字段名（UI 待 ##423 迁移），值 = 新口径的 token 上限
                 limitTokens: stepLimit.limitTokens,
                 keptBytes: sel.keptBytes,
                 keptRuns: sel.keptRuns.length,

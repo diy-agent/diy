@@ -103,8 +103,11 @@ describe("estimateTokensOf / normalizeHistoryLimit", () => {
 
     it("配置归一：缺字段 / 0 / 负数都回落缺省；摘要缺省关", () => {
         expect(normalizeHistoryLimit(undefined).limitTokens).toBe(20_000);
-        expect(normalizeHistoryLimit({ limitTokens: 0 }).limitTokens).toBe(20_000);
-        expect(normalizeHistoryLimit({ limitTokens: -5 }).limitTokens).toBe(20_000);
+        // 0 / 负数一律夹到下限（旧口径的「0 = 清零」已不存在）
+        expect(normalizeHistoryLimit({ limitTokens: 0 }).limitTokens).toBe(4_000);
+        expect(normalizeHistoryLimit({ limitTokens: -5 }).limitTokens).toBe(4_000);
+        // 不是数 ⇒ 回落缺省
+        expect(normalizeHistoryLimit({ limitTokens: "8000" }).limitTokens).toBe(20_000);
         expect(normalizeHistoryLimit({ limitTokens: 12_345.9 }).limitTokens).toBe(12_345);
         expect(normalizeHistoryLimit({ limitTokens: 1 }).summary.enabled).toBe(false);
         // 下限夹取（##432 review 第 2 条）：≤1200 会让 tailBudget=0 ⇒ 每步重算，故下限 4000
@@ -161,5 +164,22 @@ describe("适配层不复制判据：core 的切点 = selectKeptBoundary 的切�
                 expect(core?.headEnd ?? null).toBe(b.cut <= b.headEnd + 1 ? null : b.headEnd + 1);
             }
         }
+    });
+});
+
+describe("token 粗估（##432 review B2：中文不再低估 3 倍）", () => {
+    it("纯中文：1 token / 字（上界；旧的 length/4 会让压缩永不触发）", () => {
+        const text = "问".repeat(1000);
+        expect(estimateTokensOf(text)).toBe(1000);
+    });
+    it("纯英文：约 4 字符 / token", () => {
+        const text = "a".repeat(4000);
+        expect(estimateTokensOf(text)).toBe(1000);
+    });
+    it("中英混排：两者相加（不互相打折）", () => {
+        expect(estimateTokensOf("中".repeat(100) + "a".repeat(400))).toBe(200);
+    });
+    it("上界意义：一条 6000 字的中文消息，旧口径算 1500、新口径 6000 ⇒ 4000 的上限必然触发压缩", () => {
+        expect(estimateTokensOf("问".repeat(6000))).toBeGreaterThan(4_000);
     });
 });

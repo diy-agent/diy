@@ -1779,34 +1779,12 @@ async function autoCompactStatus(taskUri: string) {
  * 命令行那三条（`compact plan get|set|check`）是给 CLI/脚本用的，renderer 不绕那一圈。
  */
 async function autoCompactSetConfig(patch: Record<string, unknown>, taskUri?: string) {
-    // `taskUri` 只用于版本链记账（写 `history.keep[]` 时记下是谁改的），不影响配置本身
+    // `taskUri` 只用于记账（哪个会话改的），不影响配置本身
     return diyService.diy.agent.local.autoCompactSetConfig({ patch, taskUri });
 }
 
-/**
- * 重置装配管道为**出厂缺省**（##363）：走 `compact plan reset`（`via:"user"`，不受 agent 写闸约束）。
- * ⚠️ 与 `autoCompactSetConfig({ history: { keep: DEFAULT_KEEP } })` 的差别是**语义**：
- *   后者把缺省**写死**进配置（`source:"config"`，冻结在当时那版缺省）；reset 是**删键**
- *   （`source:"default"`，自动跟随将来缺省演进）。所以不能拿 patch 顶替。
- */
-async function compactPlanReset(taskUri: string) {
-    return diyService.diy.agent.local.compact.plan.reset({ taskUri });
-}
-
-/** plan 版本链（##378）：只读 —— 当前版本 id + 版本列表（brief 够看，不必打开全文） */
-async function compactPlanVersions(taskUri: string) {
-    return diyService.diy.agent.local.compact.plan.versions({ taskUri });
-}
-
-/** 单版 plan 全文（+ 与上一版对比）；只读 */
-async function compactPlanVersion(taskUri: string, version: string) {
-    return diyService.diy.agent.local.compact.plan.version({ taskUri, version });
-}
-
-/** 回滚到某一版 plan（缺省上一版；旧快照 id 也兼容）—— 走闸外通道（via:"user"），与 set/reset 同一套校验 */
-async function compactPlanRestore(taskUri: string, version?: string) {
-    return diyService.diy.agent.local.compact.plan.restore({ taskUri, version });
-}
+// 装配管道（plan）的 reset / versions / version / restore 已于 ##432 整体删除
+// （用户 2026-10-25 拍板：不让人/agent 编排装配计划；配置面只剩 history.limit.limitTokens）。
 
 /** 执行压缩（写边界账 + 落盘被裁原文 + 内存态重置）；成功后重建本地块树到新边界 */
 async function compact(
@@ -1839,7 +1817,6 @@ async function compactEvents(taskUri: string) {
 
 /** 策略对象 → RPC 扁平参数（headtail 展开成顶层字段，与 api-def 的 cliOption 对齐） */
 function policyFlat(p: FlatCompactPolicy): {
-    budgetBytes: number;
     toolResult: "asis" | "headtail" | "callpath";
     triggerLines: number | undefined;
     headLines: number | undefined;
@@ -1850,7 +1827,6 @@ function policyFlat(p: FlatCompactPolicy): {
 } {
     const ht: Partial<HeadTailPolicy> = p.headtail ?? {};
     return {
-        budgetBytes: p.budgetBytes,
         toolResult: p.toolResult,
         triggerLines: ht.triggerLines,
         headLines: ht.headLines,
@@ -1957,10 +1933,6 @@ export const localChatStore = {
     compact,
     autoCompactStatus,
     autoCompactSetConfig,
-    compactPlanReset,
-    compactPlanVersions,
-    compactPlanVersion,
-    compactPlanRestore,
     undoCompact,
     compactEvents,
     /** 上滚补一段更早的历史；返回是否真的插入了内容（调用方据此做滚动位置补偿） */

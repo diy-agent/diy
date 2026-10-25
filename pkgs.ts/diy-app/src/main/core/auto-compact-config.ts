@@ -23,7 +23,6 @@ import {
     type AutoCompactConfig,
     type AutoCompactIssue,
 } from "../../shared/context/auto-compact";
-import { validateKeepStages, type KeepIssue, type KeepStage } from "../../shared/context/compact-keep";
 import { MIN_HISTORY_LIMIT_TOKENS } from "../../shared/context/history-limit";
 
 export function autoCompactFile(home: string): string {
@@ -101,68 +100,6 @@ export function readAutoCompactText(home: string): string {
     }
 }
 
-/**
- * 解析 plan 文本（YAML 或 JSON）→ 待校验的原始值。
- *
- * 接受两种写法（都是人/agent 自然会写出来的）：**级列表数组**，或 `{ keep: [...] }`
- * （后者可直接从 `auto-compact.yaml` 里粘一段过来，零改写）。形状是否合法由 `validateKeepStages` 判 ——
- * 这里只负责「把文本变成值」，不做任何猜测性修复（猜错了就是静默丢上下文）。
- */
-export function parseKeepText(text: string): unknown {
-    const src = text.trim();
-    if (src === "") throw new Error("plan 文本为空（要给级列表数组，或 `{ keep: [...] }`）");
-    let v: unknown;
-    try {
-        v = yaml.load(src);
-    } catch (e) {
-        throw new Error(`plan 文本解析失败（YAML/JSON）：${e instanceof Error ? e.message : String(e)}`);
-    }
-    if (v === null || typeof v !== "object") throw new Error("plan 文本不是级列表（应为数组，或 `{ keep: [...] }`）");
-    if (Array.isArray(v)) return v;
-    const keep = (v as Record<string, unknown>)["keep"];
-    if (keep === undefined) throw new Error("plan 文本既不是数组、也没有 `keep` 字段");
-    return keep;
-}
-
-/**
- * 写 `history.keep[]`（**校验后才落地**）—— `compact plan set` 与 UI 级列表编辑器的**唯一写入口**。
- * 非法 ⇒ 抛错且**不改文件**：写好 plan 就是决定「哪些历史发给模型」，静默写坏等于静默丢上下文。
- * （读侧是另一回事：坏 `keep` 只丢 `history`、回落缺省管道，见 normalizeHistory —— 两面都硬就是自锁。）
- */
-export function saveKeepConfig(home: string, rawKeep: unknown): { keep: KeepStage[]; issues: KeepIssue[] } {
-    const { stages, issues } = validateKeepStages(rawKeep);
-    const errors = issues.filter((i) => i.level === "error");
-    if (errors.length > 0) {
-        throw new Error(`plan 非法，已拒绝写入（配置未改动）：\n${errors.map((e) => `· ${e.message}`).join("\n")}`);
-    }
-    if (stages.length === 0) {
-        throw new Error("keep 不能是空级列表（要清零请把预算 `policy.modeData.budgetBytes` 设为 0）");
-    }
-    // ⚠️ 必须**保留 history 的其余字段**（`allowAgentWrite` 等）：整包换成 `{ keep }` 会顺手把闸关掉
-    // —— 那意味着「agent 写一次 set 就自动失去写权限」，闸等于一次性；##362 M3a 实测复现过。
-    const cur = loadAutoCompact(home);
-    saveAutoCompact(home, { ...cur, history: { ...(cur.history ?? {}), keep: stages } });
-    return { keep: stages, issues };
-}
-
-/**
- * 删除 `history.keep[]` —— **回到「未配置」状态**（= 回落出厂缺省管道）。`compact plan reset` 的写入口。
- *
- * 与 `saveKeepConfig` 的差别就是**删键 vs 写值**：写死缺省的字面量会把配置**冻结**在当时那一版缺省
- * （将来缺省演进它不跟随）；删键则永远回落到**当前**缺省（`DEFAULT_KEEP` / `defaultBudgetPlan`）。
- * ⚠️ 只删 `keep`，**保留 `history` 其余字段**（`allowAgentWrite`）—— 与 `saveKeepConfig` 同一条教训
- * （##362 实测过：整包换成 `{ keep }` 会顺手把闸关掉）。
- */
-export function deleteKeepConfig(home: string): void {
-    const cur = loadAutoCompact(home);
-    const h = cur.history ?? {};
-    const rest: { allowAgentWrite?: boolean } = {};
-    if (h.allowAgentWrite !== undefined) rest.allowAgentWrite = h.allowAgentWrite;
-    // 不带 `keep`：`normalizeAutoCompact` 会把 `keep` 缺席视为「回落缺省管道」；
-    // 若连 `allowAgentWrite` 都没有，`history` 会整个缺席 —— 正是「未配置」的样子。
-    saveAutoCompact(home, { ...cur, history: rest });
-}
-
 /** 写自动压缩配置（原子：tmp → rename）。宽松归一后再写（不存坏数据）。 */
 export function saveAutoCompact(home: string, cfg: unknown): AutoCompactConfig {
     const norm = normalizeAutoCompact(cfg);
@@ -170,6 +107,7 @@ export function saveAutoCompact(home: string, cfg: unknown): AutoCompactConfig {
     mkdirSync(dirname(p), { recursive: true });
     const header =
         "# 自动压缩配置 —— 唯一真源（手改或经 UI 写回；下一轮真发生效）\n" +
+        "#\n" +
         "# mode: off 不检测 / notify 检测并提示（默认）/ auto 检测到就压\n" +
         "#   ⚠️ mode 只管**自动触发**，不是「裁不裁」：投递**始终**按 history.limit 切，\n" +
         "#      关掉自动压缩不会让历史全量发出去（只是不主动产生新的压缩事件）。\n" +
@@ -177,18 +115,22 @@ export function saveAutoCompact(home: string, cfg: unknown): AutoCompactConfig {
         "#   systemContextChanged 系统上下文变了 → 前缀缓存必作废，此刻压缩零重建代价\n" +
         "#   cacheExpired         缓存已过期（距上次请求 > 生效 TTL）→ 冷启动，压缩是白赚\n" +
         "#   contextWindowOver    上下文窗口占用上限（**token 数**，= 该会话最后一步实测用量；0 = 关闭）\n" +
-        "# history: **历史投递的唯一旋钮**（##432 刀 2 —— 旧 policy 预算与 history.keep[] 已不决定投递）\n" +
-        "#   limit.limitTokens: 单条 token 上限（字符数 / 4 粗估）—— 从最后一步往前累加，装得下就装、装不下就停；\n" +
-        "#     切点必须 tool 配对平衡（不平衡往前挪）；**保头 600 token 硬编码**（不参与累加、永不被丢）；\n" +
-        "#     一次压缩只保留到上限的 **一半**（留余量给后续步骤）；\n" +
-        "#     最小 " + String(MIN_HISTORY_LIMIT_TOKENS) + "（再小则保头 + 保留比例让每步都重算，配置会被夹上来）\n" +
-        "#   limit.summary.enabled: 对丢掉那段做摘要（v1 缺省 false：只留一行注记 + ref 指回原文）\n" +
-        "#   口径：**边界只在压缩事件时算一次**并落 turns.jsonl（compaction entry），之后每步只追加不重算\n" +
-        "# policy: **已废弃，不决定投递**（仅为旧配置/旧调用点保留形状）\n" +
-        "#   modeData.budgetBytes / toolResult 里的 render 仍是**工具结果呈现**的真源；\n" +
-        "#   budgetBytes 本身不再参与历史选择 —— 改它不会改变发给模型的历史。\n" +
-        "# history.keep[]: **已废弃，不决定投递**（级列表 ladder/role/recent/steps + must 已不再使用）\n" +
-        "#   allowAgentWrite: 允许本地 agent 经 compact_plan 工具改写 plan（缺省 false = 只读；##362 M3a）\n" +
+        "#\n" +
+        "# history.limit.limitTokens: **唯一的历史旋钮**（token）\n" +
+        "#   算法（只有这一套）：从最后一步往前累加，装得下就装、装不下就停；\n" +
+        "#     · token 粗估 = CJK 1 token/字、其余 字符数/4；\n" +
+        "#     · 切点必须 tool 配对平衡（不平衡就往前挪到那条 call 所在的组）；\n" +
+        "#     · **保头 600 token 硬编码**（首条 user / 任务目标，不参与累加、永不被丢）；\n" +
+        "#     · 一次压缩只保留到上限的 **一半**（留余量给后续步骤，否则每步都要重压）；\n" +
+        "#     · 下限 " + String(MIN_HISTORY_LIMIT_TOKENS) + "（再小则「保头 + 半额」让每步都重算，会被夹上来）；\n" +
+        "#     · **边界只在压缩事件时算一次**并落 turns.jsonl，之后每步只追加不重算。\n" +
+        "# history.limit.summary.enabled: 对丢掉那段做摘要（缺省 false：只留一行注记 + ref 指回原文）\n" +
+        "#\n" +
+        "# policy.modeData.toolResult: **工具结果呈现**的真源（asis / headtail / callpath）—— 与历史选择无关\n" +
+        "#\n" +
+        "# 已删除（##432，2026-10-25 用户拍板）：history.keep[] 级列表（ladder/role/recent/steps + must）、\n" +
+        "#   policy.modeData.budgetBytes（字节预算）、history.allowAgentWrite、plan 版本链。\n" +
+        "#   写了它们会被读侧忽略并出声；旧 budgetBytes 会**一次性**折算成 limitTokens（bytes/4）后写回新形状。\n" +
         "# 契约：pkgs.ts/diy-app/src/shared/context/auto-compact.ts 的 AutoCompactConfigSchema\n";
     writeFileAtomic(p, header + yaml.dump(norm, { indent: 2, noRefs: true }));
     return norm;

@@ -10,7 +10,10 @@
 //   ② 从最后一步往前累加 token，**先判再加** —— 放不下就停在那组之前；
 //      尾部总目标 = 上限 × 保留比例（见 `RETAIN_RATIO` 的注释），**保留段总量 ≤ 上限**；
 //   ③ 切点必须 tool 配对平衡：留了 result 就必须留下它的 call（整组前移，可连续前移）；
-//   ④ 没有可丢的 ⇒ `cut = headEnd + 1`（调用方据此判「什么都没发生」）。
+//      **按消息级 id 集合判**（`callIds`）—— 一条 assistant 消息可以带多个 tool-call，
+//      只认第一个 id 会让「切点落在第二个 result 上」时找不到配对（provider 400，##432 review P0-1）；
+//   ④ 「丢没丢」由返回值里的 `dropped` / `kind` **显式给出**，调用方不许用下标算式推
+//      （`cut === n` = 尾部一条不取，也是「真丢了」，曾与 `headEnd+1` 的「没丢」混淆，P1-2）。
 //
 // 纯函数：禁止 import node:*（跨层复用：core / UI / 单测）。
 
@@ -20,8 +23,13 @@ export interface BoundaryMessage {
     tokens: number;
     /** `call` / `result` 成对；其余（正文 / user）不用管 */
     kind?: string;
-    /** 工具调用与结果共用的 id */
+    /** 工具调用与结果共用的 id（单条调用的退化写法；多调用请用 `callIds`） */
     callId?: string;
+    /**
+     * **消息级**的 call id 集合：一条 assistant 消息可带多个 tool-call（并行调用是常态）。
+     * 配平判据 = 「保留区里某条 result 的 callId ∈ 某条保留消息的 callIds」。
+     */
+    callIds?: string[];
     /**
      * 属于哪一步（可选）：有它时**按 step 组**从尾往前累加（用户口径「从后往前数 step」）；
      * 缺省 = 每条自成一组（UI 范例预览只关心大小，不必编 step）。
@@ -34,6 +42,13 @@ export interface KeptBoundary {
     headEnd: number;
     /** 尾部保留区的起点下标；`messages.length` = 尾部一条都不取（上限 0 的情形） */
     cut: number;
+    /**
+     * 丢掉的消息条数（`> 0` 才是**压缩事件**）。显式给出，调用方别再用 `cut` / `headEnd` 的算式推。
+     * `0` 与「`cut === n` 全丢」是两个语义，共用下标哨兵迟早再咬人（##432 review P1-2）。
+     */
+    dropped: number;
+    /** `none` = 什么都没丢（不写边界）· `drop` = 真的丢了 `dropped` 条 */
+    kind: "none" | "drop";
 }
 
 /** 保头（token）—— 硬编码 600，不进配置 */
@@ -51,16 +66,38 @@ export const HEAD_KEEP_TOKENS = 600;
  */
 export const RETAIN_RATIO = 0.5;
 
-/** 把切点往前挪到 tool 配对平衡处：留了 result 就必须留它的 call（可连续前移） */
+/** 这条消息声明的 call id 集合（`callIds` 优先，其次单值 `callId`） */
+const idsOf = (m: BoundaryMessage): string[] => (m.callIds && m.callIds.length > 0 ? m.callIds : m.callId ? [m.callId] : []);
+
+/** 结果消息指回的那条调用消息的下标（在 `[0, before)` 里找**最后**一条声明了该 id 的）；找不到 = -1 */
+function callIndexBefore(messages: readonly BoundaryMessage[], callId: string, before: number): number {
+    for (let i = before - 1; i >= 0; i--) {
+        if (idsOf(messages[i]!).includes(callId)) return i;
+    }
+    return -1;
+}
+
+/**
+ * 把切点往前挪到 tool 配对平衡处：留了 result 就必须留它的 call（可连续前移）。
+ * **按 id 集合判**（一条消息可带多个 call）。
+ */
 function balanceCut(messages: readonly BoundaryMessage[], cut: number, headEnd: number): number {
     let c = cut;
     for (let guard = 0; guard < messages.length && c > headEnd; guard++) {
         if (c >= messages.length) return c; // 尾部一条都没取（全在保头里）
         const m = messages[c]!;
-        if (m.kind !== "result" || !m.callId) return c;
-        const callIdx = messages.findIndex((x) => x.kind === "call" && x.callId === m.callId);
-        if (callIdx < 0 || callIdx >= c) return c;
-        c = callIdx;
+        if (m.kind !== "result") return c;
+        const ids = idsOf(m);
+        if (ids.length === 0) return c;
+        // 保留区里这条 result 的每个 call 都必须有对应调用；缺哪个就前移到那个调用所在的消息
+        let moved = false;
+        for (const id of ids) {
+            const callIdx = callIndexBefore(messages, id, c);
+            if (callIdx < 0 || callIdx >= c) continue;
+            c = callIdx;
+            moved = true;
+        }
+        if (!moved) return c;
     }
     return c;
 }
@@ -109,10 +146,10 @@ export function selectKeptBoundary(
         headTokens += messages[i]!.tokens;
         headEnd = i;
     }
-    if (n === 0) return { headEnd: -1, cut: 0 };
+    if (n === 0) return { headEnd: -1, cut: 0, dropped: 0, kind: "none" };
 
     // ② 清零：尾部一条都不取
-    if (!(budgetTokens > 0)) return { headEnd, cut: n };
+    if (!(budgetTokens > 0)) return done(headEnd, n, n);
 
     // 尾部可用额度 = 保留目标（上限 × 比例）− 保头已占
     const tailBudget = Math.max(0, Math.floor(budgetTokens * ratio) - headTokens);
@@ -134,14 +171,21 @@ export function selectKeptBoundary(
         if (acc + c > tailBudget) break; // 先判再加：放不下 ⇒ 停在这一组之前
         acc += c;
     }
-    if (g < 0) return { headEnd, cut: headEnd + 1 }; // 全部装得下 ⇒ 什么都没发生
+    if (g < 0) return done(headEnd, headEnd + 1, n); // 全部装得下 ⇒ 什么都没发生
 
     let cut = starts[g + 1]!;
-    if (cut <= headEnd) return { headEnd, cut: headEnd + 1 }; // 没有可丢的
+    if (cut <= headEnd) return done(headEnd, headEnd + 1, n); // 没有可丢的
     cut = balanceCut(messages, cut, headEnd);
-    if (cut <= headEnd) return { headEnd, cut: headEnd + 1 };
-    return { headEnd, cut };
+    if (cut <= headEnd) return done(headEnd, headEnd + 1, n);
+    return done(headEnd, cut, n);
 }
 
-/** 保留段（保头 + 尾部）是否真的丢了一条以上 —— 调用方判「这次是不是事件」 */
-export const hasDropped = (b: KeptBoundary, n: number): boolean => b.cut > b.headEnd + 1 && b.cut < n;
+/** 组装返回值：`dropped` / `kind` 是**算出来的显式状态**（不看下标哨兵） */
+function done(headEnd: number, cut: number, n: number): KeptBoundary {
+    const c = Math.max(headEnd + 1, Math.min(cut, n));
+    const dropped = Math.max(0, c - (headEnd + 1));
+    return { headEnd, cut: c, dropped, kind: dropped > 0 ? "drop" : "none" };
+}
+
+/** 这次是否真的丢了东西（= 是不是一次压缩事件）。判据只看显式状态，不推下标。 */
+export const hasDropped = (b: KeptBoundary): boolean => b.kind === "drop";

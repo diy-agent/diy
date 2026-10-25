@@ -20,9 +20,7 @@ import { createSignal, createResource, createEffect, on, For, Show, createMemo, 
 import { localChatStore } from "../store/localChatStore";
 import type { AutoCompactIssue } from "../../shared/context/auto-compact";
 import {
-    DEFAULT_BUDGET_BYTES,
     DEFAULT_TOOL_RESULT_POLICY,
-    budgetBytesOf,
     flatPolicyOf,
     normalizePolicy,
     toolResultOf,
@@ -56,17 +54,9 @@ import {
 import { clipForPreview, requestViewYaml, type LayerRow, type PreviewClipStats, type RequestView } from "../../shared/context/request-view";
 import { DrawerMaxButton } from "./DrawerMaximize";
 import { notificationStore } from "../store/notificationStore";
-import { ConfirmDialog } from "./ConfirmDialog";
 import { compactResultSentence, compactWhenRows, windowRatio, type CompactWhenInput } from "../../shared/context/compact-when";
 import { EXAMPLE_MESSAGES, buildCompactExample, type ExampleRow } from "../../shared/context/compact-example";
 import { MIN_HISTORY_LIMIT_TOKENS, normalizeHistoryLimit } from "../../shared/context/history-limit";
-import {
-    DEFAULT_EXEMPT_STEPS,
-    DEFAULT_KEEP,
-    keepStageLabel,
-    validateKeepStages,
-    type KeepStage,
-} from "../../shared/context/compact-keep";
 
 const INDENT = "  ";
 
@@ -177,30 +167,6 @@ export interface CompactPreviewModel {
     baseRequest: RequestView;
 }
 
-/** 版本链一行（RPC `compact.plan.versions` 的裁剪视图；形状真源 = main/services/plan-store.ts） */
-export interface PlanVersionEntryModel {
-    version: string;
-    ts: string;
-    op: "set" | "restore" | "reset";
-    via: "agent" | "user";
-    taskUri: string;
-    parent: string | null;
-    brief: string;
-}
-export interface PlanVersionsModel {
-    /** 当前**生效内容**的版本 id（可能尚未入链，见 `pending`） */
-    current: string;
-    versions: PlanVersionEntryModel[];
-    latest: PlanVersionEntryModel | null;
-    /** 配置内容与链尾不同（手改 / UI 编辑尚未记账） */
-    pending: boolean;
-}
-export interface PlanVersionDetailModel {
-    version: string;
-    text: string;
-    diff?: string;
-}
-
 export interface CompactPanelCtl {
     /** 本面板服务哪个任务（统计 / 事件账要自己去取） */
     uri: () => string;
@@ -211,9 +177,6 @@ export interface CompactPanelCtl {
             history?: {
                 /** ##432 刀 2：**唯一旋钮**（投递只按它切） */
                 limit?: { limitTokens: number; summary?: { enabled: boolean } };
-                /** ⚠️ 已废弃（不决定投递），只为旧调用点保留 */
-                keep?: KeepStage[];
-                allowAgentWrite?: boolean;
             };
             /** ##423 块 2：三触发器的**当前配置值**（面板要把它原样说出来，不许 UI 另编一套） */
             triggers?: { systemContextChanged: boolean; cacheExpired: boolean; contextWindowOver: number };
@@ -234,10 +197,6 @@ export interface CompactPanelCtl {
     /** `history.limit.summary.enabled`（v1 缺省 false：只留注记 + ref，不做摘要 LLM 调用） */
     limitSummary: () => boolean;
     setLimitSummary: (v: boolean) => Promise<void>;
-    budgetBytes: () => number;
-    kbDraft: () => string;
-    setKbDraft: (v: string) => void;
-    commitKb: () => Promise<void>;
     pv: () => CompactPreviewModel | undefined;
     /** 预览在算（抽屉刚打开、大会话需数秒）—— 界面据此出 loading，而不是把空值当"零差异" */
     pvLoading: () => boolean;
@@ -261,27 +220,6 @@ export interface CompactPanelCtl {
     // ─── ##370：读配置的出声（键缺/非法 ⇒ 已逐键回落缺省）───
     /** 出声条目（空 = 干净读入）。UI 必须显示「为什么」——否则用户只看到"我的配置没生效" */
     warnings: () => AutoCompactIssue[];
-    // ─── M2（##344）：装配管道 `history.keep[]`（级列表）读写 ───
-    /** 当前级列表（配置没写 ⇒ 缺省管道**回显成数据**，用户看得见"现在在用什么"） */
-    keep: () => KeepStage[];
-    /** 级列表来源：`config` = 用户/agent 配的；`default` = 配置没写、回落缺省管道 */
-    keepSource: () => "config" | "default";
-    /** 写级列表（**写前先本地校验**；非法 ⇒ 只报错、不落盘） */
-    setKeep: (next: KeepStage[]) => Promise<void>;
-    /** 重置为**出厂缺省**（##363）：删配置里的 `history.keep[]`（走 RPC `compact plan reset`）。
-     *  ⚠️ 不是 `setKeep([...DEFAULT_KEEP])` —— 那是把缺省**写死**进配置；这里是**删键**（跟随将来缺省）。 */
-    resetKeep: () => Promise<void>;
-    // ─── ##378：plan 版本链（只读展示 + 回滚）───
-    /** 版本链（当前 id + 列表）；`undefined` = 还没取到（抽屉关着 / 首帧） */
-    planVersions: () => PlanVersionsModel | undefined;
-    /** 当前版本 id（未取到 = 空串） */
-    planVersion: () => string;
-    /** 展开中的版本详情（`undefined` = 没展开） */
-    versionDetail: () => PlanVersionDetailModel | undefined;
-    /** 展开/收起某一版（点已展开的那版 = 收起） */
-    showVersion: (version: string) => Promise<void>;
-    /** 回滚到某一版（**切指针**：走闸+校验+快照，回滚本身也入链） */
-    restoreVersion: (version: string) => Promise<void>;
 }
 
 /**
@@ -302,55 +240,12 @@ export function useCompactPanel(uri: () => string, visible: () => boolean = () =
             return (await localChatStore.autoCompactStatus(u)) as NonNullable<ReturnType<CompactPanelCtl["auto"]>>;
         },
     );
-    // ─── ##378：版本链（只读 + 回滚）—— 与 auto / 预览同门槛：抽屉关着不查 ───
-    const [planVersionsRes, { refetch: refetchVersions }] = createResource(
-        () => (visible() ? uri() : null),
-        async (u) =>
-            u ? ((await localChatStore.compactPlanVersions(u)) as unknown as PlanVersionsModel) : undefined,
-    );
-    const planVersion = (): string => planVersionsRes()?.current ?? "";
-    const [versionDetail, setVersionDetail] = createSignal<PlanVersionDetailModel | undefined>(undefined);
-    /** 点某一版：展开全文 + 对比（再点同一版 = 收起） */
-    const showVersion = async (version: string): Promise<void> => {
-        if (versionDetail()?.version === version) {
-            setVersionDetail(undefined);
-            return;
-        }
-        setErr(null);
-        try {
-            const r = (await localChatStore.compactPlanVersion(uri(), version)) as unknown as {
-                text: string;
-                diff?: string;
-            };
-            setVersionDetail({ version, text: r.text, diff: r.diff });
-        } catch (e) {
-            setErr(String(e instanceof Error ? e.message : e));
-        }
-    };
-    /** 回滚到某一版（确认后由界面调；这里是纯副作用，不做二次确认 —— 确认归调用点） */
-    const restoreVersion = async (version: string): Promise<void> => {
-        setAutoBusy(true);
-        setErr(null);
-        try {
-            await localChatStore.compactPlanRestore(uri(), version);
-            setVersionDetail(undefined);
-            await refetchAuto();
-            await refetchVersions();
-        } catch (e) {
-            setErr(String(e instanceof Error ? e.message : e));
-        } finally {
-            setAutoBusy(false);
-        }
-    };
-
     const [autoBusy, setAutoBusy] = createSignal(false);
     const patchAuto = async (patch: Record<string, unknown>) => {
         setAutoBusy(true);
         try {
             await localChatStore.autoCompactSetConfig(patch, uri());
             await refetchAuto();
-            // 写了 `history.keep` ⇒ 主进程会入版本链（##378）；这里同步刷新版本列表
-            if ((patch as { history?: unknown }).history) void refetchVersions();
         } finally {
             setAutoBusy(false);
         }
@@ -373,26 +268,8 @@ export function useCompactPanel(uri: () => string, visible: () => boolean = () =
     };
     const commitLimitTokens = (n: number): Promise<void> => writeHistoryLimit({ limitTokens: n });
     const setLimitSummary = (v: boolean): Promise<void> => writeHistoryLimit({ summary: v });
-    const budgetBytes = (): number => budgetBytesOf(autoPolicy()) ?? DEFAULT_BUDGET_BYTES;
     const patchAutoPolicy = (next: CompactPolicy) => patchAuto({ policy: next });
     const currentToolResult = () => toolResultOf(autoPolicy()) ?? DEFAULT_TOOL_RESULT_POLICY;
-    const setBudgetBytes = (b: number) =>
-        patchAutoPolicy({
-            mode: "budget",
-            modeData: { budgetBytes: Math.max(0, Math.round(b)), toolResult: currentToolResult() },
-            summary: false,
-        });
-    const setBudgetKb = (kb: number) => setBudgetBytes(kb * 1024);
-
-    /** 预算输入框草稿（KB）：不要让异步 auto() 覆盖用户正在输入的内容 —— 仅初始化 / 提交时同步 */
-    const [kbDraft, setKbDraft] = createSignal("3");
-    createEffect(
-        on(
-            () => budgetBytes(),
-            (b) => setKbDraft(b % 1024 === 0 ? String(b / 1024) : (b / 1024).toFixed(1)),
-            { defer: false },
-        ),
-    );
     /** headtail 私有参数（无 headtail 时回落到缺省 —— 切到 headtail 时用它初始化） */
     const headtailData = () => {
         const tr = currentToolResult();
@@ -400,11 +277,11 @@ export function useCompactPanel(uri: () => string, visible: () => boolean = () =
         const d = DEFAULT_TOOL_RESULT_POLICY.render === "headtail" ? DEFAULT_TOOL_RESULT_POLICY.renderData : undefined;
         return d ?? { head: 3, tail: 3, maxLineChars: 300, maxKeepBytes: 8192 };
     };
-    /** 写整个 toolResult 支（保住 budgetBytes 与 summary） */
+    /** 写整个 toolResult 支（保住 summary） */
     const patchToolResult = (next: ToolResultPolicy) =>
         patchAutoPolicy({
             mode: "budget",
-            modeData: { budgetBytes: budgetBytes(), toolResult: next },
+            modeData: { toolResult: next },
             summary: autoPolicy().summary,
         });
     const render = (): ToolResultMode => currentToolResult().render;
@@ -418,57 +295,6 @@ export function useCompactPanel(uri: () => string, visible: () => boolean = () =
     const rawPath = (): string => auto()?.raw?.path ?? "";
     /** 读配置的出声条目（##370）：**配置没生效时「为什么」就在这里**（不再只在应用日志里） */
     const warnings = (): AutoCompactIssue[] => auto()?.warnings ?? [];
-
-    // ─── M2：级列表（`history.keep[]`）───
-    // 配置没写 ⇒ 回显**缺省管道**（与主进程 `planFromKeep` 的回落同一份 `DEFAULT_KEEP`）：
-    // 界面必须显示"现在实际在用什么"，否则「回落」在 UI 上等于隐形。
-    const configuredKeep = (): KeepStage[] | undefined => {
-        const k = auto()?.config.history?.keep;
-        return k && k.length > 0 ? k : undefined;
-    };
-    const keep = (): KeepStage[] => configuredKeep() ?? [...DEFAULT_KEEP];
-    const keepSource = (): "config" | "default" => (configuredKeep() ? "config" : "default");
-    /** 写级列表：**先本地校验**（同一个 `validateKeepStages`，与主进程判据同源）⇒ 立刻给反馈、不打空 RPC */
-    const setKeep = async (next: KeepStage[]): Promise<void> => {
-        const { issues } = validateKeepStages(next);
-        const errors = issues.filter((i) => i.level === "error");
-        if (errors.length > 0) {
-            setErr(errors.map((e) => e.message).join("；"));
-            return;
-        }
-        if (next.length === 0) {
-            setErr("级列表不能为空（要清零请把预算设为 0）");
-            return;
-        }
-        setErr(null);
-        await patchAuto({ history: { keep: next } });
-    };
-    /** 重置为**出厂缺省**（##363 逃生窗口）：走 `compact plan reset`（删键），**不是**写 DEFAULT_KEEP 字面量。
-     *  成功后 `refetchAuto()` ⇒ `keepSource()` 变 `default`、`keep()` 回显缺省 ⇒ 预览 key 变、自动重算。 */
-    const resetKeep = async (): Promise<void> => {
-        setErr(null);
-        setAutoBusy(true);
-        try {
-            await localChatStore.compactPlanReset(uri());
-            await refetchAuto();
-            await refetchVersions();
-        } catch (e) {
-            setErr(String(e instanceof Error ? e.message : e));
-        } finally {
-            setAutoBusy(false);
-        }
-    };
-
-    /** 提交预算输入（失焦 / 回车）。**返回 Promise**：写盘 + refetch 异步，apply 必须先 await 它。 */
-    const commitKb = async (): Promise<void> => {
-        const kb = Number(kbDraft());
-        if (!Number.isFinite(kb) || kb < 0) {
-            setKbDraft(String(budgetBytes() / 1024));
-            return;
-        }
-        if (Math.round(kb * 1024) === budgetBytes()) return;
-        await setBudgetKb(kb);
-    };
 
     const [busy, setBusy] = createSignal(false);
     const [err, setErr] = createSignal<string | null>(null);
@@ -489,7 +315,7 @@ export function useCompactPanel(uri: () => string, visible: () => boolean = () =
         // 漏了它就会出现「改上限、预览纹丝不动」—— 正是 review 第 3 条要修的那个假象。
         // 编码：`<uri>\0<JSON>`，JSON 里同时装 policy / keep / limit —— **只能有一个分隔符**，
         // 多个分隔符会让下面的 `JSON.parse(第一个 \0 之后)` 撞上"JSON 后面还有内容"（实测红灯）。
-        return u + "\u0000" + JSON.stringify({ policy: flatPolicyOf(autoPolicy()), keep: keep(), limit: limitTokens() });
+        return u + "\u0000" + JSON.stringify({ policy: flatPolicyOf(autoPolicy()), limit: limitTokens() });
     };
     const [pv] = createResource(pvKey, (k) => {
         const i = k.indexOf("\u0000");
@@ -500,15 +326,13 @@ export function useCompactPanel(uri: () => string, visible: () => boolean = () =
     /** 预览是否在算（见 CompactPanelCtl.pvLoading） */
     const pvLoading = (): boolean => pv.loading;
 
-    /** 立即压缩：按当前预算压一次（历史保留、可撤销） */
+    /** 立即压缩：按当前上限压一次（历史保留、可撤销） */
     const apply = async () => {
         const u = uri();
         if (!u) return;
         setBusy(true);
         setErr(null);
         try {
-            // ⚠️ 先把输入框里的预算落盘（blur 的写盘是异步的）——否则可能用**旧预算**压
-            await commitKb();
             const rec = await localChatStore.compact(u, flatPolicyOf(autoPolicy()));
             if (rec?.noop) notificationStore.addToastLegacy("info", "无需压缩（历史已在预算内）");
             else notificationStore.addToastLegacy("success", "已压缩（历史保留、可撤销）");
@@ -522,11 +346,9 @@ export function useCompactPanel(uri: () => string, visible: () => boolean = () =
     return {
         uri,
         auto, autoBusy, patchAuto, autoPolicy, limitTokens, commitLimitTokens, limitSummary, setLimitSummary,
-        budgetBytes, kbDraft, setKbDraft, commitKb, pv, pvLoading, busy, err, apply,
+        pv, pvLoading, busy, err, apply,
         render, setRender, renderData: headtailData, setRenderData, summaryEnabled, setSummary, rawText, rawPath,
         warnings,
-        keep, keepSource, setKeep, resetKeep,
-        planVersions: planVersionsRes, planVersion, versionDetail, showVersion, restoreVersion,
     };
 }
 
@@ -703,11 +525,6 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
 
     /** 左栏视图：UI 表单 ⇄ 原始 YAML（同 VSCode settings 的 UI/JSON 切换；用户 2026-10-07） */
     const [panelView, setPanelView] = createSignal<"form" | "yaml">("form");
-    // 破坏性操作（删级 / 恢复缺省）走应用内 ConfirmDialog（禁原生 window.confirm，见 tool.confirm）
-    const [pendingRemove, setPendingRemove] = createSignal<number | null>(null);
-    const [pendingReset, setPendingReset] = createSignal(false);
-    /** ##378：待确认回滚的版本 id（确认弹窗读它；null = 无） */
-    const [pendingRestore, setPendingRestore] = createSignal<string | null>(null);
     /** ##406：预览裁剪阈值（单条字符串 / 数组元素）—— 只影响展示副本 */
     const PREVIEW_CLIP = { maxChars: 4000, maxItems: 200 } as const;
 
@@ -841,12 +658,8 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
     });
 
     const estTok = (bytes: number) => Math.round(bytes / 4);
-    /** 预算人读（KB；0 特别标「清零」） */
-    const budgetKbLabel = (): string => {
-        const b = ctl.budgetBytes();
-        if (b === 0) return "0（清零）";
-        return b % 1024 === 0 ? String(b / 1024) + " KB" : (b / 1024).toFixed(1) + " KB";
-    };
+    /** 历史上限人读（token —— 唯一旋钮） */
+    const limitLabel = (): string => `${ctl.limitTokens().toLocaleString()} token`;
     /**
      * 压缩后**整份请求**的规模（KB）—— 含固定开支（system + 工具定义 + runtime）+ 预算内历史。
      * 用费用表 total 行的 token（= 各层之和，含 system / tools）；token ≈ 字节 / 4 ⇒ ×4 反推字节。
@@ -948,7 +761,7 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                             </Show>
                         </div>
                         <div class="text-caption opacity-70">
-                            历史 ≤ <b>{budgetKbLabel()}</b> · 整份请求 ≈ <b>{afterKb()}</b>
+                            历史上限 <b>{limitLabel()}</b> · 整份请求 ≈ <b>{afterKb()}</b>
                         </div>
                         {/* ##423 块 2：本会话计数 + 最近一次压缩的前后对比（此前哪里都看不到这两个数） */}
                         <div class="text-caption opacity-70" data-compact-stats>
@@ -967,7 +780,8 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                             </Show>
                         </div>
                         <div class="text-caption opacity-45">
-                            历史按管道顺序保留（先声明的先挑）：默认先保底最近 {DEFAULT_EXEMPT_STEPS} 步，再按纵向阶梯兜底
+                            历史只按一条上限切：从最后一步往前累加装到上限的一半为止，保头 600 token 硬编码、切点 tool 配对平衡；
+                            边界只在压缩事件时算一次（之后每步只追加不重算）。
                         </div>
                         <Show when={ctl.err()}>
                             <div class="text-caption text-error">{ctl.err()}</div>
@@ -1022,45 +836,12 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                                 开关只管**自动触发**（off = 不检测 / notify = 检测并提示 / auto = 检测到就压）；
                                 投递**始终**按上面这条上限切 —— 关掉它不会让历史全量发出去，只是不主动产生新的压缩事件。
                             </div>
-                            {/* ##378：版本链 —— 版本记录的是旧级列表（已废弃），仅作历史可查 */}
-                            <div data-plan-versions class="space-y-1 border-t border-base-300 pt-2 opacity-60">
-                                <div class="flex items-center gap-1">
-                                    <span class="font-mono opacity-50">version（旧级列表，仅存档）</span>
-                                    <span class="font-mono opacity-80" data-plan-version>{ctl.planVersion() || "（未取到）"}</span>
-                                    <span class="ml-auto opacity-45">{ctl.planVersions()?.versions.length ?? 0} 版</span>
-                                </div>
-                            </div>
                         </div>
                     </Block>
 
-                    {/* 旧装配管道：**只读回显**（不决定投递）。保留形状是为了「我配过什么」还能查到 */}
-                    <Block title="装配管道（已废弃）" extra="不决定投递">
-                        <div class="space-y-1 text-caption opacity-60" data-keep-deprecated>
-                            <div class="opacity-70">
-                                `history.keep[]`（ladder / role / recent / steps + must）与 `policy.modeData.budgetBytes`
-                                **已不决定投递**：历史只按上面的 limitTokens 切。下表是配置里的旧值，原样展示、不可编辑。
-                            </div>
-                            <For each={ctl.keep()}>
-                                {(stage, i) => (
-                                    <div data-keep-stage data-keep-type={stage.type} class="flex items-center gap-2">
-                                        <span class="font-mono opacity-50">{i() + 1}.</span>
-                                        <span class="font-mono opacity-80">{stage.type}</span>
-                                        <span class="opacity-45">
-                                            {stage.must ? "必保（旧口径，已无意义）" : "计预算（旧口径，已无意义）"}
-                                        </span>
-                                    </div>
-                                )}
-                            </For>
-                        </div>
-                    </Block>
-
-                    {/* 计划级参数：**只剩工具结果呈现**（旧 budgetBytes 已不决定投递，见下） */}
+                    {/* 策略参数：**只剩工具结果呈现**（历史上限在上面的块里） */}
                     <Block title="工具结果呈现" extra="策略真源（仍生效）">
                         <div class="space-y-2 text-caption">
-                            <div data-budget-deprecated class="opacity-50">
-                                旧 `policy.modeData.budgetBytes` = {budgetKbLabel()}（**已废弃，不决定投递**：
-                                历史只按上面的 limitTokens 切；改它不会改变发给模型的历史，故这里不再给输入框）。
-                            </div>
                             <div class="space-y-2 border-l-2 border-base-300 pl-2">
                                 <div class="font-mono opacity-50">modeData</div>
                                 <div class="space-y-2 border-l-2 border-base-300 pl-2">
@@ -1127,46 +908,6 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                             </div>
                         </div>
                     </Block>
-                    <Show when={pendingRemove() !== null}>
-                        <ConfirmDialog
-                            title="删除这一级"
-                            message={`删除「${keepStageLabel(ctl.keep()[pendingRemove()!] ?? ctl.keep()[0]!)}」后，这一级挑中的消息会改由后续级决定是否保留（历史不删，只改投递）。`}
-                            confirmLabel="删除"
-                            onCancel={() => setPendingRemove(null)}
-                            onConfirm={() => {
-                                const i = pendingRemove();
-                                setPendingRemove(null);
-                                if (i === null) return;
-                                void ctl.setKeep(ctl.keep().filter((_, k) => k !== i));
-                            }}
-                        />
-                    </Show>
-                    <Show when={pendingRestore()}>
-                        <ConfirmDialog
-                            title="回滚 plan 版本"
-                            message={`把 history.keep[] 切到 ${pendingRestore()}（影响所有任务的投递）。回滚本身也入链、可再回滚；历史不删，只改投递。`}
-                            confirmLabel="回滚"
-                            onCancel={() => setPendingRestore(null)}
-                            onConfirm={() => {
-                                const v = pendingRestore();
-                                setPendingRestore(null);
-                                if (v) void ctl.restoreVersion(v);
-                            }}
-                        />
-                    </Show>
-                    <Show when={pendingReset()}>
-                        <ConfirmDialog
-                            title="重置为出厂缺省"
-                            message="将 history.keep[] 重置为出厂缺省，影响所有任务的投递（当前级列表会先存快照，可用 restore 找回）。历史不删，只改投递。"
-                            confirmLabel="重置为缺省"
-                            onCancel={() => setPendingReset(false)}
-                            onConfirm={() => {
-                                setPendingReset(false);
-                                void ctl.resetKeep();
-                            }}
-                        />
-                    </Show>
-
                     <Block title="费用对比">
                         <CostCompare facts={ctl.pv()?.facts ?? []} />
                         <div class="mt-2 text-caption opacity-60">
@@ -1386,7 +1127,7 @@ interface CompactEventRow {
     ts?: string;
     by?: "ui" | "cli" | "auto";
     trigger?: string;
-    /** 策略真源（决策树）：`{ mode:"budget", modeData:{ budgetBytes, toolResult } }` */
+    /** 策略快照（新事件只有 toolResult；旧事件里还有已删的 budgetBytes —— 读侧兼容展示） */
     policy?: {
         mode?: string;
         modeData?: { budgetBytes?: number; toolResult?: { render?: string } };
@@ -1403,18 +1144,15 @@ interface CompactEventRow {
 
 /** 算法中文名（`policy.mode`）；未知算法原样显示 —— 换算法加新分支即可 */
 function algoName(mode: string | undefined): string {
-    return mode === "budget" ? "预算" : (mode ?? "—");
+    return mode === "budget" ? "历史上限" : (mode ?? "—");
 }
 
-/** 算法的**过滤器表达**（算法私有，故按 mode 分派；换算法加新分支） */
+/** 事件里的算法表达：新事件没有上限字段（边界在 turns.jsonl），旧事件还留着已删的 budgetBytes */
 function filterText(p: CompactEventRow["policy"]): string {
     if (!p) return "—";
-    if (p.mode === "budget") {
-        const bb = p.modeData?.budgetBytes;
-        const kb = bb === undefined ? "?" : bb === 0 ? "0（=清零）" : `${Math.round(bb / 1024)} KB`;
-        return `上限 ${kb}`;
-    }
-    return "—";
+    const bb = p.modeData?.budgetBytes;
+    if (typeof bb !== "number") return "边界见 turns.jsonl";
+    return `旧上限 ${bb === 0 ? "0" : `${Math.round(bb / 1024)} KB`}（已废弃）`;
 }
 
 const fmtBytes = (n: number | undefined): string => {

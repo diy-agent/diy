@@ -2,7 +2,7 @@
 // 🎯 发请求**前**的 token 预检（##406 刀 2 后半）—— 纯函数，禁止 import node:*
 //
 // ── 它补的是哪一段 ──
-//   · 装配层的硬上限（`compaction-plan.ts::runPlanBounded`）管的是**历史**：
+//   · 装配层的硬上限（`assemblyHardCapBytes`，投递侧 `selectHistoryByCut` 的 `cap` 分支）管的是**历史**：
 //     装完量 `keptBytes`，超了就降级 —— 但它不知道 system / tools 有多大，也不知道窗口。
 //   · 本模块把「system + tools + messages 合起来」折算成 token，跟**模型窗口**比，
 //     越线（> 80%）就在发之前处理：先按剩余额度重装一次（能压就压），压不动才提示。
@@ -13,6 +13,20 @@
 // 口径：1 token ≈ 4 字节（与全仓同一个粗估口径 `estimateTokens`，无 tokenizer）。
 
 import { estimateTokens } from "./compaction";
+
+/** 拿不到模型窗口时，装配层硬上限的兜底（1 MiB） */
+export const DEFAULT_ASSEMBLY_HARD_CAP_BYTES = 1024 * 1024;
+
+/**
+ * 装配后硬上限（字节）的**唯一判据**：模型窗口 token × 4；拿不到窗口时兜底 1 MiB。
+ *
+ * 为什么是「× 4」而不是 × 4 × 0.8：这个闸只负责「别再把 4.95 MB 原样发出去」——留出 20% 的余量是
+ * **发请求前的 token 预检**（本文件其余部分）的职责，两处各管一段，别混成一个数。
+ */
+export function assemblyHardCapBytes(contextLimitTokens?: number): number {
+    if (!contextLimitTokens || !Number.isFinite(contextLimitTokens) || contextLimitTokens <= 0) return DEFAULT_ASSEMBLY_HARD_CAP_BYTES;
+    return Math.floor(contextLimitTokens) * 4;
+}
 
 /** 预检线：占窗口比例超过它就先压/提示（缺省 80%，留 20% 给输出与上游自己的模板开销） */
 export const PREFLIGHT_RATIO = 0.8;

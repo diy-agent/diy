@@ -809,22 +809,6 @@ export function bindAppHandlers(binding: ServerBinding): void {
     // 只给一半反而会让"没提的字段"含义模糊，不如要求完整；缺子对象 = 保留现值）
     const patch = (input.patch ?? {}) as Record<string, unknown>;
     const saved = saveAutoCompact(home, { ...cur, ...patch });
-    // ##378：UI 的级列表编辑器走这条（本地已用同一份 validateKeepStages 校验过）——
-    // 写了 `history.keep` 就**入版本链**，否则「版本链」会漏掉用户在界面上的每一次改动。
-    // ⚠️ 这里只做**记账**（plan 的写入口仍是 saveAutoCompact / saveKeepConfig 这一条）；
-    //    不做 plan.set 那套 must 层测量 —— UI 每次改动都读一遍整份会话是不可接受的代价。
-    const history = (patch as { history?: { keep?: unknown } }).history;
-    if (history && "keep" in history) {
-      const { planDocOfEffective } = await import("./compact-plan-io");
-      const { appendPlanVersion } = await import("./plan-store");
-      appendPlanVersion({
-        home,
-        doc: planDocOfEffective(home),
-        op: "set",
-        via: "user",
-        taskUri: input.taskUri ?? "",
-      });
-    }
     return saved;
   });
   binding.on(app.agent.local.compact.summarize, async ({ input }) => {
@@ -854,81 +838,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return getLocalAgent().compactEvents(input.taskUri);
   });
 
-  // ── 装配管道 plan（##344 M2 读/写/校验；##362 M3a 起抽成 services/compact-plan-io，工具与 RPC **共用**）──
-  // 与 `autoCompactSetConfig`（写整份配置的任意子集）分开：这三条只谈 plan，且 set/check 会**校验**。
-  // ⚠️ `via:"user"`：CLI / UI 是用户自己的显式操作，**不受** agent 写闸（`history.allowAgentWrite`）约束。
-  //    （闸只管 agent 那条路，见 compact-plan-io 头注 —— 若闸也拦人，用户就没法给自己开闸了。）
-  binding.on(app.agent.local.compact.plan.get, async ({ input }) => {
-    noteRendererTouch("diy.agent.local.compact.plan.get", input.taskUri);
-    const { planGet } = await import("./compact-plan-io");
-    const { diyHome } = await import("../core/state");
-    return planGet(diyHome());
-  });
-  binding.on(app.agent.local.compact.plan.set, async ({ input }) => {
-    noteRendererTouch("diy.agent.local.compact.plan.set", input.taskUri);
-    const { planSet } = await import("./compact-plan-io");
-    const { getLocalAgent } = await import("./local-agent");
-    const { diyHome } = await import("../core/state");
-    return planSet({
-      home: diyHome(),
-      taskUri: input.taskUri,
-      via: "user",
-      keepText: input.keep,
-      measure: (keep) => getLocalAgent().measureMustStages(input.taskUri, keep),
-    });
-  });
-  binding.on(app.agent.local.compact.plan.check, async ({ input }) => {
-    noteRendererTouch("diy.agent.local.compact.plan.check", input.taskUri);
-    const { planCheck } = await import("./compact-plan-io");
-    const { formatCheckFailure } = await import("./compact-plan-service");
-    const { getLocalAgent } = await import("./local-agent");
-    const { diyHome } = await import("../core/state");
-    const report = planCheck({
-      home: diyHome(),
-      taskUri: input.taskUri,
-      ...(input.keep !== undefined ? { keepText: input.keep } : {}),
-      measure: (keep) => getLocalAgent().measureMustStages(input.taskUri, keep),
-    });
-    if (!report.ok) throw new Error(formatCheckFailure(report));
-    return report;
-  });
-  binding.on(app.agent.local.compact.plan.reset, async ({ input }) => {
-    noteRendererTouch("diy.agent.local.compact.plan.reset", input.taskUri);
-    const { planReset } = await import("./compact-plan-io");
-    const { diyHome } = await import("../core/state");
-    // `via:"user"`：这是用户显式操作（CLI / UI 按钮），不受 agent 写闸约束（同 set 口径）。
-    return planReset({ home: diyHome(), taskUri: input.taskUri, via: "user" });
-  });
-  // ── plan 版本链（##378 M3b）：只读两条 + restore 一条（写路径同样走 via:"user" 的闸外通道）──
-  binding.on(app.agent.local.compact.plan.versions, async ({ input }) => {
-    noteRendererTouch("diy.agent.local.compact.plan.versions", input.taskUri);
-    const { planVersions, renderPlanVersionsView } = await import("./compact-plan-io");
-    const { diyHome } = await import("../core/state");
-    const v = planVersions(diyHome());
-    return { ...v, text: renderPlanVersionsView(v) };
-  });
-  binding.on(app.agent.local.compact.plan.version, async ({ input }) => {
-    noteRendererTouch("diy.agent.local.compact.plan.version", input.taskUri);
-    const { planVersionView, renderPlanVersionView } = await import("./compact-plan-io");
-    const { diyHome } = await import("../core/state");
-    const v = planVersionView(diyHome(), input.version);
-    if (!v) throw new Error(`版本不存在：${input.version}（见 plan versions）`);
-    return { ...v, text: renderPlanVersionView(v) };
-  });
-  binding.on(app.agent.local.compact.plan.restore, async ({ input }) => {
-    noteRendererTouch("diy.agent.local.compact.plan.restore", input.taskUri);
-    const { planRestore } = await import("./compact-plan-io");
-    const { getLocalAgent } = await import("./local-agent");
-    const { diyHome } = await import("../core/state");
-    return planRestore({
-      home: diyHome(),
-      taskUri: input.taskUri,
-      via: "user",
-      ...(input.version ? { version: input.version } : {}),
-      // must 层的实占字节要**量**（预算是管不到 must 的）—— 与 set/check 注入同一测量
-      measure: (keep) => getLocalAgent().measureMustStages(input.taskUri, keep),
-    });
-  });
+  // 装配管道（plan）与版本链已于 ##432 清理整体删除（用户 2026-10-25 拍板：不让人/agent 编排装配计划）。
 
   // 会话用量报表（人读表格）：与 UI 同源同口径，只是在这里渲染成等宽文本
   binding.on(app.agent.usage, async ({ input }) => {
