@@ -190,6 +190,9 @@ subjects:
   rpc.rule:
     description: |-
       diy-rpc 硬约束：ESM 扩展名 / 浏览器安全边界 / 发布流程
+  rule:
+    description: |-
+      全局通行规则：语言 / 会话开场 / 上下文加载边界 / 验证态度 / 结构化出口（不属于 code/dev/doc/task 任一细分的那几条）
   rule.code:
     description: |-
       代码设计硬约束：核心逻辑不依赖日志 / 判别联合的形状（公共字段同级、私有进 data）
