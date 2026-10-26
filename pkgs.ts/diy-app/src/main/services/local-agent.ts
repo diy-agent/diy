@@ -255,6 +255,7 @@ import { ensureReasoningReplay, isDeepSeekWire, type ReasoningReplayOpts } from 
 import { resolveModelKey } from "../core/model-runtime";
 import { invariant } from "../../shared/error-triage";
 import { runRegistry, type RunInfo } from "./run-registry";
+import { setTriggerDelivery } from "./trigger-registry";
 import { effectiveBashArgs } from "../../shared/tool-args";
 import { ownedGroups } from "./owned-groups";
 import { foregroundBash } from "./foreground-bash";
@@ -6478,8 +6479,21 @@ export function getLocalAgent(): LocalAgentManager {
 // 为什么是 `next-turn` 而不是 `next-step`：进程结束时模型通常已经不在当前步了
 // （它可能正写报告、也可能已结束本轮），"下一步前插一句"会把别人的步边界打乱；
 // 轮是人的/模型的自然停顿点。
-runRegistry.setNotifier((taskUri, text) => {
-    wakeTaskWithSteer(taskUri, text);
+// 触发器投递（##408 v2）：**唯一的落地口**。run 结束 / watch 变化 / 会话中断……
+// 全都 emit 到同一张目录，由这里按 `level` 决定要不要叫醒 —— 而不是每个调用点自己判断。
+//
+// 出口名解析（变量，不是地址）：
+//   `owner`      → 载荷里的 taskUri（run 的归属任务）
+//   `task:<uri>` → 显式地址
+//   `inbox` / `ui` / `def` → 本刀未接（各自有既有路径，接线时逐个补）
+setTriggerDelivery((def, payload, sink) => {
+    const p = payload as { owner?: string; text?: string };
+    const taskUri = sink === "owner" ? p.owner : sink.startsWith("task:") ? sink.slice(5) : null;
+    if (!taskUri) return;
+    // N0 / N1 才叫醒（N2 落信箱、N3 只记账 —— 层级尺子见 facts `level#notice`）
+    if (def.level === "N0" || def.level === "N1") {
+        wakeTaskWithSteer(taskUri, p.text ?? def.desc, "job");
+    }
 });
 
 /**
