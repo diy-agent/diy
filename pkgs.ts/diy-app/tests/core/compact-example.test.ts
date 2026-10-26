@@ -6,7 +6,7 @@ import {
     type ExampleMessage,
 } from "../../src/shared/context/compact-example";
 import { estimateTokensOf } from "../../src/shared/context/history-limit";
-import { selectKeptBoundary } from "../../src/shared/context/select-kept-boundary";
+import { RETAIN_RATIO, selectKeptBoundary } from "../../src/shared/context/select-kept-boundary";
 
 // ⚠️ 本文件**不复制算法**：留谁丢谁的唯一判据在 `select-kept-boundary.test.ts`。
 // 这里只钉两件事：① 预览确实走的是同一个 `selectKeptBoundary`（示例与真实行为同源）；
@@ -30,13 +30,14 @@ function m(
 }
 
 /** 用同一个边界函数算「期望保留的 id」—— 期望值来自唯一实现点，不是另写一套 */
-/** 参照实现：**直接**调判据（`buildCompactExample` 现在收 token，不再是字节） */
+/** 参照实现：**直接**调判据（`buildCompactExample` 收的是「保留量 token」；##442 起无保头） */
 function keptIdsByBoundary(messages: readonly ExampleMessage[], budgetTokens: number): string[] {
-    const { headEnd, cut } = selectKeptBoundary(
-        messages.map((x) => ({ tokens: bytesToTokens(x.bytes), kind: x.kind, callId: x.callId })),
+    const { cut } = selectKeptBoundary(
+        messages.map((x) => ({ tokens: bytesToTokens(x.bytes), user: x.kind === "user" })),
         budgetTokens,
+        Math.max(budgetTokens + 1, Math.round((budgetTokens / RETAIN_RATIO) * 0.8)),
     );
-    return messages.filter((_, i) => i <= headEnd || i >= cut).map((x) => x.id);
+    return messages.filter((_, i) => i >= cut).map((x) => x.id);
 }
 
 describe("compact-example · 范例预览（展示层，判据走 selectKeptBoundary）", () => {
@@ -108,12 +109,10 @@ describe("compact-example · 范例预览（展示层，判据走 selectKeptBoun
         expect(r.biggestDrop?.kind).toBe("result");
     });
 
-    it("上限 0 ⇒ 只剩保头，其余全丢", () => {
+    it("保留量 0 ⇒ 一条都不保留（##442 起没有保头）", () => {
         const r = buildCompactExample(0);
-        const headRows = r.rows.slice(0, r.headEnd + 1);
-        expect(headRows.every((x) => x.kept)).toBe(true);
-        expect(r.rows.slice(r.headEnd + 1).every((x) => !x.kept)).toBe(true);
-        expect(r.keptBytes).toBe(headRows.reduce((a, x) => a + x.bytes, 0));
+        expect(r.rows.every((x) => !x.kept)).toBe(true);
+        expect(r.keptBytes).toBe(0);
     });
 
     it("上限足够大（≥ 总量 ÷ 保留比例）⇒ 一条不丢", () => {

@@ -24,13 +24,14 @@ import {
     type TurnTextV1,
     type TurnEntry,
     type CompactionEntry,
+    type CompactionEntryV2,
     readTurnEntries as readTurnEntriesAt,
     readBoundary as readBoundaryAt,
     appendCompactionEntry as appendCompactionEntryAt,
 } from "@diy/persistence";
 
 export { TURN_SCHEMA_CURRENT, TURN_TEXT_MAX_BYTES };
-export type { OpsRef, OpsRefCheck, OpsRefReason, TurnEntry, TurnRecord, TurnRecordState, TurnTextV1, TurnDraft, TurnOp, CompactionEntry };
+export type { OpsRef, OpsRefCheck, OpsRefReason, TurnEntry, TurnRecord, TurnRecordState, TurnTextV1, TurnDraft, TurnOp, CompactionEntry, CompactionEntryV2 };
 
 /** 旧名（v1）—— 现在就是 `TurnRecord` */
 export type TurnRecordV1 = TurnRecord;
@@ -49,7 +50,8 @@ export function appendCompactionEntry(taskUri: string, entry: Omit<CompactionEnt
 }
 
 /** 当前生效的压缩边界（turns 里最后一条 compaction entry） */
-export function readBoundary(taskUri: string): CompactionEntry | null {
+/** 当前生效的压缩边界。**v2 老记录也会返回**（读侧按老语义解释：limitTokens 当保留量、headLine 当保头） */
+export function readBoundary(taskUri: string): CompactionEntry | CompactionEntryV2 | null {
     return readBoundaryAt(diyHome(), taskUri);
 }
 

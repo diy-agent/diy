@@ -2,7 +2,7 @@
  * CompactSessionPanel — 压缩会话上下文的**面板**（控制器 + 可嵌入内容）
  *
  * ⚠️ 语义：压缩 **≠** 清除。
- *   · 压缩：只改「发给模型的上下文」—— 按 `history.limit.limitTokens`（**token 上限**）保留历史 + 可选裁工具结果；
+ *   · 压缩：只改「发给模型的上下文」—— 按 `history.limit.retainRatio`（**窗口比例**）保留历史 + 可选裁工具结果；
  *     **不删任何历史**，旧内容仍在会话日志里、可查、可撤销。
  *   · 清除（⋯ 菜单）：物理删除所有会话日志，不可恢复 —— 两回事，别混。
  *
@@ -63,7 +63,7 @@ import {
     type CompactWhenInput,
 } from "../../shared/context/compact-when";
 import { EXAMPLE_MESSAGES, buildCompactExample, bytesToTokens, type ExampleRow } from "../../shared/context/compact-example";
-import { MIN_HISTORY_LIMIT_TOKENS, normalizeHistoryLimit } from "../../shared/context/history-limit";
+import { normalizeHistoryLimit } from "../../shared/context/history-limit";
 
 const INDENT = "  ";
 
@@ -181,8 +181,8 @@ export interface CompactPanelCtl {
         config: {
             policy: unknown;
             history?: {
-                /** ##432 刀 2：**唯一旋钮**（投递只按它切） */
-                limit?: { limitTokens: number; summary?: { enabled: boolean } };
+                /** ##442：**唯一旋钮**（窗口比例）+ 摘要模式 */
+                limit?: { retainRatio: number; summary?: { mode: "model" | "self" } };
             };
             /** ##423 块 2：三触发器的**当前配置值**（面板要把它原样说出来，不许 UI 另编一套） */
             triggers?: { systemContextChanged: boolean; cacheExpired: boolean; windowOverRatio: number };
@@ -194,7 +194,7 @@ export interface CompactPanelCtl {
         facts?: {
             windowTokens: number | null;
             retainedTokens?: number | null;
-            boundary?: { at: string; dropped: number; limitTokens: number } | null;
+            boundary?: { at: string; dropped: number; retainTokens: number; windowTokens: number } | null;
             /** 本会话写过的压缩事件条数（turns.jsonl 的 compaction entry） */
             compactionCount?: number;
             ttl?: { prior?: number };
@@ -206,13 +206,13 @@ export interface CompactPanelCtl {
     autoBusy: () => boolean;
     patchAuto: (patch: Record<string, unknown>) => Promise<void>;
     autoPolicy: () => CompactPolicy;
-    /** ##432 刀 2 的**唯一旋钮**：历史 token 上限（投递只按它切） */
-    limitTokens: () => number;
-    /** 写上限：本地先夹到 `MIN_HISTORY_LIMIT_TOKENS`，再整包写回 `history.limit`（`{limitTokens, summary}`） */
-    commitLimitTokens: (n: number) => Promise<void>;
-    /** `history.limit.summary.enabled`（v1 缺省 false：只留注记 + ref，不做摘要 LLM 调用） */
-    limitSummary: () => boolean;
-    setLimitSummary: (v: boolean) => Promise<void>;
+    /** ##442 的**唯一旋钮**：保留比例（窗口 × 本值） */
+    retainRatio: () => number;
+    /** 写比例：夹到 (0.01, 0.5]，整包写回 `history.limit`（`{retainRatio, summary}`） */
+    commitRetainRatio: (n: number) => Promise<void>;
+    /** `history.limit.summary.mode`：`model` 摘要 / `self` 让模型自己去查 */
+    summaryMode: () => "model" | "self";
+    setSummaryMode: (v: "model" | "self") => Promise<void>;
     pv: () => CompactPreviewModel | undefined;
     /** 预览在算（抽屉刚打开、大会话需数秒）—— 界面据此出 loading，而不是把空值当"零差异" */
     pvLoading: () => boolean;
@@ -270,23 +270,23 @@ export function useCompactPanel(uri: () => string, visible: () => boolean = () =
     const autoPolicy = (): CompactPolicy => normalizePolicy(auto()?.config.policy);
     // ─── ##432 刀 2：历史投递的唯一旋钮 ───
     const historyLimit = () => normalizeHistoryLimit(auto()?.config.history?.limit);
-    const limitTokens = (): number => historyLimit().limitTokens;
-    const limitSummary = (): boolean => historyLimit().summary.enabled;
+    const retainRatio = (): number => historyLimit().retainRatio;
+    const summaryMode = (): "model" | "self" => historyLimit().summary.mode;
     /**
      * 写 `history.limit`：**整包写回 history**（RPC 是顶层浅合并 ⇒ 只给 `{limit}` 会丢 history 下的
      * 其它键；`history` 现役只有 `limit`，但 `...hist` 让「以后加键」不会静默被抹掉）。
      */
-    const writeHistoryLimit = async (patch: { limitTokens?: number; summary?: boolean }): Promise<void> => {
+    const writeHistoryLimit = async (patch: { retainRatio?: number; summaryMode?: "model" | "self" }): Promise<void> => {
         const cur = historyLimit();
         const next = {
-            limitTokens: Math.max(MIN_HISTORY_LIMIT_TOKENS, Math.floor(patch.limitTokens ?? cur.limitTokens)),
-            summary: { enabled: patch.summary ?? cur.summary.enabled },
+            retainRatio: Math.min(0.5, Math.max(0.01, patch.retainRatio ?? cur.retainRatio)),
+            summary: { mode: patch.summaryMode ?? cur.summary.mode },
         };
         const hist = auto()?.config.history;
         await patchAuto({ history: { ...hist, limit: next } });
     };
-    const commitLimitTokens = (n: number): Promise<void> => writeHistoryLimit({ limitTokens: n });
-    const setLimitSummary = (v: boolean): Promise<void> => writeHistoryLimit({ summary: v });
+    const commitRetainRatio = (n: number): Promise<void> => writeHistoryLimit({ retainRatio: n });
+    const setSummaryMode = (v: "model" | "self"): Promise<void> => writeHistoryLimit({ summaryMode: v });
     const patchAutoPolicy = (next: CompactPolicy) => patchAuto({ policy: next });
     const currentToolResult = () => toolResultOf(autoPolicy()) ?? DEFAULT_TOOL_RESULT_POLICY;
     /** headtail 私有参数（无 headtail 时回落到缺省 —— 切到 headtail 时用它初始化） */
@@ -334,7 +334,7 @@ export function useCompactPanel(uri: () => string, visible: () => boolean = () =
         // 漏了它就会出现「改上限、预览纹丝不动」—— 正是 review 第 3 条要修的那个假象。
         // 编码：`<uri>\0<JSON>`，JSON 里同时装 policy / keep / limit —— **只能有一个分隔符**，
         // 多个分隔符会让下面的 `JSON.parse(第一个 \0 之后)` 撞上"JSON 后面还有内容"（实测红灯）。
-        return u + "\u0000" + JSON.stringify({ policy: flatPolicyOf(autoPolicy()), limit: limitTokens() });
+        return u + "\u0000" + JSON.stringify({ policy: flatPolicyOf(autoPolicy()), limit: retainRatio() });
     };
     const [pv] = createResource(pvKey, (k) => {
         const i = k.indexOf("\u0000");
@@ -364,7 +364,7 @@ export function useCompactPanel(uri: () => string, visible: () => boolean = () =
 
     return {
         uri,
-        auto, autoBusy, patchAuto, autoPolicy, limitTokens, commitLimitTokens, limitSummary, setLimitSummary,
+        auto, autoBusy, patchAuto, autoPolicy, retainRatio, commitRetainRatio, summaryMode, setSummaryMode,
         pv, pvLoading, busy, err, apply,
         render, setRender, renderData: headtailData, setRenderData, summaryEnabled, setSummary, rawText, rawPath,
         warnings,
@@ -435,7 +435,7 @@ function WhenCompactBlock(props: { ctl: CompactPanelCtl; windowLimit: number | n
         const cfg = props.ctl.auto()?.config;
         const facts = props.ctl.auto()?.facts;
         return {
-            limitTokens: props.ctl.limitTokens(),
+            retainRatio: props.ctl.retainRatio(),
             boundary: facts?.boundary ?? null,
             retainedTokens: typeof facts?.retainedTokens === "number" ? facts.retainedTokens : null,
             lastStepTokens: facts?.windowTokens ?? null,
@@ -463,8 +463,8 @@ function WhenCompactBlock(props: { ctl: CompactPanelCtl; windowLimit: number | n
                         </div>
                     )}
                 </For>
-                <div class="border-t border-base-300 pt-1 opacity-70" data-when-result title={compactResultSentence(input().limitTokens)}>
-                    <span class="font-semibold">压成什么样：</span> {compactResultSentence(input().limitTokens)}
+                <div class="border-t border-base-300 pt-1 opacity-70" data-when-result title={compactResultSentence(input().retainRatio)}>
+                    <span class="font-semibold">压成什么样：</span> {compactResultSentence(input().retainRatio)}
                 </div>
                 {/* 三触发器与投递的关系：划清界线（##432 后它们只写审计，不改切点） */}
                 <div class="opacity-45" data-when-audit title={autoCompactSentence()}>
@@ -473,7 +473,7 @@ function WhenCompactBlock(props: { ctl: CompactPanelCtl; windowLimit: number | n
                 <div class="opacity-45">
                     每一行 hover 看判据。窗口占用{ratio() == null ? "需有实测用量与模型窗口上限" : ` = ${ratio()}%`}
                     （本会话最后一步 {input().lastStepTokens == null ? "无实测" : fmtTokens(input().lastStepTokens!)}，
-                    与历史的 {fmtTokens(input().limitTokens)} 上限**不是同一个数**）。
+                    与历史的「保留 {Math.round(input().retainRatio * 1000) / 10}% 窗口」**不是同一个数**）。
                 </div>
             </div>
         </Block>
@@ -694,8 +694,13 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
      * 旧口径（÷4）把中文低估约 1/3 —— 面板说「压缩后 8k tok」、真发却是 12k，正是用户被搞懵的原因之一。
      */
     const estTok = (bytes: number) => bytesToTokens(bytes);
-    /** 历史上限人读（token —— 唯一旋钮） */
-    const limitLabel = (): string => `${ctl.limitTokens().toLocaleString()} token`;
+    /** 保留量（token）；窗口未知 ⇒ 按 0 传给范例预览（它会显示"什么都装不下"） */
+    const limitTokOf = (): number => (windowLimit() == null ? 0 : Math.floor(windowLimit()! * ctl.retainRatio()));
+    /** 保留量人读（token = 窗口 × 比例 —— 唯一旋钮） */
+    const limitLabel = (): string =>
+        windowLimit() == null
+            ? `窗口 × ${Math.round(ctl.retainRatio() * 1000) / 10}%（窗口未知）`
+            : `${Math.floor(windowLimit()! * ctl.retainRatio()).toLocaleString()} token`;
     /**
      * 压缩后**整份请求**的规模（token）—— 含固定开支（system + 工具定义 + runtime）+ 上限内历史。
      * 用费用表 total 行的 token（= 各层之和，含 system / tools），**不再转回 KB**：
@@ -802,8 +807,8 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                             <Show when={boundary()}>
                                 {(b) => (
                                     <span class="block opacity-80" data-compact-last>
-                                        最近一次事件：{new Date(b().at).toLocaleString()} · 丢 {b().dropped} 条 · 当时上限{" "}
-                                        {fmtTokens(b().limitTokens)}（现在 {fmtTokens(ctl.limitTokens())}）
+                                        最近一次事件：{new Date(b().at).toLocaleString()} · 丢 {b().dropped} 条 · 当时保留{" "}
+                                        {fmtTokens(b().retainTokens)}（窗口 {fmtTokens(b().windowTokens)}）
                                     </span>
                                 )}
                             </Show>
@@ -828,50 +833,55 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
 
                     {/* ##423 块 2：什么时候会压（判据 + 当前值）；块 3：压缩后长什么样（范例预览） */}
                     <WhenCompactBlock ctl={ctl} windowLimit={windowLimit()} />
-                    <ExamplePreviewBlock limitTokens={ctl.limitTokens()} />
+                    <ExamplePreviewBlock limitTokens={limitTokOf()} />
 
-                    {/* ##432 刀 2：**历史投递的唯一旋钮** —— 一条 token 上限。
-                        旧 `budgetBytes` / `history.keep[]` 已不决定投递（review 第 1 条：不许并列两个旋钮） */}
-                    <Block title="历史上限" extra="唯一旋钮（决定历史怎么切）">
+                    {/* ##442：**历史投递的唯一旋钮** —— 保留比例（窗口 × 本值）+ 摘要模式。
+                        旧 limitTokens / 保头 / 事后配平已删（向 dsh 看齐） */}
+                    <Block title="历史保留" extra="唯一旋钮（决定历史怎么切）">
                         <div class="space-y-2 text-caption" data-history-limit>
                             <div class="flex items-center gap-2">
-                                <span class="font-mono opacity-50">history.limit.limitTokens</span>
+                                <span class="font-mono opacity-50">history.limit.retainRatio</span>
                                 <input
                                     type="number"
-                                    class="input input-xs w-24"
-                                    aria-label="历史上限token"
-                                    min={MIN_HISTORY_LIMIT_TOKENS}
-                                    step="500"
-                                    value={ctl.limitTokens()}
+                                    class="input input-xs w-20"
+                                    aria-label="历史保留比例"
+                                    min="0.01"
+                                    max="0.5"
+                                    step="0.01"
+                                    value={ctl.retainRatio()}
                                     disabled={ctl.autoBusy()}
-                                    onChange={(e) => void ctl.commitLimitTokens(Number(e.currentTarget.value))}
-                                    onBlur={(e) => void ctl.commitLimitTokens(Number(e.currentTarget.value))}
+                                    onChange={(e) => void ctl.commitRetainRatio(Number(e.currentTarget.value))}
+                                    onBlur={(e) => void ctl.commitRetainRatio(Number(e.currentTarget.value))}
                                 />
-                                <span class="opacity-60">token</span>
+                                <span class="opacity-60">× 窗口 = {limitLabel()}</span>
                             </div>
                             <div class="opacity-50">
-                                从最后一步往前累加（token 粗估：中文 1 字 1 token、其余 4 字符 1 token），装得下就装、装不下就停；切点必须 tool 配对平衡
-                                （不平衡往前挪）；**保头 600 token 硬编码**（不参与累加、永不被丢）；一次压缩只保留到上限的
-                                一半。最小 {MIN_HISTORY_LIMIT_TOKENS}（再小会让每步都重算）。**边界只在压缩事件时算一次**
-                                并落盘，之后每步只追加不重算。
+                                从最后一条往前累加（token 粗估：中文 1 字 1 token、其余 4 字符 1 token），装够就停；切点往前挪到最近的
+                                <b> user 消息</b>（tool 的 call/result 因此永不拆开）；压完仍超触发线 ⇒ 不压；窗口上限取不到 ⇒ 不压。
+                                缺省 0.16（dsh 同值）：128k 窗口留 20k、256k 留 41k、1M 留 160k。
+                                **无保头、无事后配平、无绝对 token 上限**；边界只在压缩事件时算一次并落盘。
                             </div>
                             <label class="flex items-center gap-2 opacity-80">
-                                <input
-                                    type="checkbox"
-                                    class="checkbox checkbox-xs"
-                                    aria-label="压缩做摘要"
-                                    checked={ctl.limitSummary()}
+                                <span class="font-mono">limit.summary.mode</span>
+                                <select
+                                    class="select select-xs w-24"
+                                    aria-label="摘要模式"
+                                    value={ctl.summaryMode()}
                                     disabled={ctl.autoBusy()}
-                                    onChange={(e) => void ctl.setLimitSummary(e.currentTarget.checked)}
-                                />
-                                <span>
-                                    <span class="font-mono">limit.summary.enabled</span>
-                                    <span class="opacity-50">（v1 缺省关：丢掉的段只留一行注记 + ref 指回原文，不做摘要 LLM 调用）</span>
+                                    onChange={(e) => void ctl.setSummaryMode(e.currentTarget.value === "self" ? "self" : "model")}
+                                >
+                                    <option value="model">model</option>
+                                    <option value="self">self</option>
+                                </select>
+                                <span class="opacity-50">
+                                    {ctl.summaryMode() === "model"
+                                        ? "被压那段先交给模型压成结构化摘要，摘要消息顶替该段（dsh / pi 做法）"
+                                        : "不摘要：只注入一条指令，让模型自己去查历史文件并写出当前状况（对比用）"}
                                 </span>
                             </label>
                             <div class="border-t border-base-300 pt-2 opacity-70" data-mode-off-note>
                                 <span class="font-semibold">自动压缩 ≠ 裁历史：</span>
-                                ##442 起没有 off/notify/auto 三态，**到点就压**；投递**始终**按上面这条上限切 ——
+                                ##442 起没有 off/notify/auto 三态，**到点就压**；投递**始终**按上面这条保留量切 ——
                                 压缩只改边界事件，不会让历史全量发出去。
                             </div>
                         </div>

@@ -8,7 +8,7 @@
 // 不许裸用 —— 「全量」在这里既不是 runtime 全量、也不是会话全量，只表示「本轮没人被丢」。
 //
 // ── 口径（##432 刀 2 之后）──
-// 唯一的上限是 `history.limit.limitTokens`（token）。所以徽章里的数**一律 token**：
+// 保留量 = 压缩时窗口 × `history.limit.retainRatio`（token）。所以徽章里的数**一律 token**：
 // 「丢多少 / 留多少 / 上限多少」同一个数域，不再拿 `keptBytes` 去跟 token 上限比（那是两个口径）。
 // 老账本没有 `keptTokens` / `droppedTokens` → 只报条数，**不推算**（推算出来的 token 只能骗人）。
 //
@@ -18,8 +18,8 @@
 
 /** 该步（轮首）投递时的历史选择事实（= `StepUsageRecord.historySelection`） */
 export interface DeliverySelection {
-    /** 本步生效的**历史上限**（token，唯一旋钮 `history.limit.limitTokens`） */
-    limitTokens: number;
+    /** 本步生效的**历史保留量**（token = 窗口 × `history.limit.retainRatio`） */
+    retainTokens: number;
     /** 保留段估算 token（与上限同口径）；老账本没有 → 缺省 */
     keptTokens?: number;
     /** 被省掉那段估算 token（与上限同口径）；老账本没有 → 缺省 */
@@ -34,7 +34,7 @@ export interface DeliverySelection {
 export interface DeliveryBoundary {
     at: string;
     dropped: number;
-    limitTokens: number;
+    retainTokens: number;
 }
 
 export interface DeliveryBadgeInput {
@@ -100,7 +100,7 @@ export function deliveryBadgeTitle(input: DeliveryBadgeInput): string {
     const dropped =
         typeof s.droppedTokens === "number" ? `（${fmtTokensShort(s.droppedTokens)} tok）` : "";
     out.push(
-        `历史裁剪（本步投递的唯一维度，与 runtime 无关）：上限 ${fmtLimitTokens(s.limitTokens)}` +
+        `历史裁剪（本步投递的唯一维度，与 runtime 无关）：保留 ${fmtLimitTokens(s.retainTokens)}` +
             ` · 保留 ${kept} · 丢 ${s.droppedMessages}/${s.totalMessages} 条${dropped} · ${s.keptRuns} 段`,
     );
     out.push(
@@ -113,7 +113,7 @@ export function deliveryBadgeTitle(input: DeliveryBadgeInput): string {
         const b = input.boundary;
         out.push(
             b
-                ? `切点来自 ${b.at} 写的压缩事件（当时丢 ${b.dropped} 条、上限 ${fmtLimitTokens(b.limitTokens)}）：` +
+                ? `切点来自 ${b.at} 写的压缩事件（当时丢 ${b.dropped} 条、保留 ${fmtLimitTokens(b.retainTokens)}）：` +
                       "之后每步只按它切，不重算。"
                 : "还没有压缩事件：本步投递的是全量（全量估算一旦超上限，发请求前会算一次切点并写事件）。",
         );

@@ -102,15 +102,15 @@ async function turn(
 }
 
 /**
- * 压缩**事件**注入（##432 的口径：边界是事件落盘、之后每步只读）—— 照抄 `history-note.test.ts`：
- * `history.keep` 只留 `ladder` 一级（没有 `steps` 托底，小会话才压得掉东西）。
+ * 压缩**事件**注入（##432 的口径：边界是事件落盘、之后每步只读）。
+ * ##442 起边界是 v3：`{retainTokens, windowTokens}`，**没有保头、没有绝对上限**。
  */
-const writeBoundary = (uri: string, cutLine: number, headLine = 1, dropped = 1): void => {
+const writeBoundary = (uri: string, cutLine: number, dropped = 1): void => {
     appendCompactionEntry(uri, {
         at: new Date().toISOString(),
-        limitTokens: 20_000,
+        retainTokens: 20_000,
+        windowTokens: 128_000,
         dropped,
-        headLine,
         cut: { llmLine: cutLine, turnId: null },
     });
 };
@@ -218,10 +218,12 @@ describe("##422 合并规则：from 信封不参与相邻 user 合并（判据 �
         writeBoundary(uri, 3);
         const { prompt } = await turn(uri, mgr, "第二句", undefined, sink);
         expect(prompt[0]?.role).toBe("system");
-        // 注记已删：system 之后的第一条 user 就是**保留下来**的历史发言（from 信封）
-        const hist = textOf(prompt[1]?.content);
-        expect(hist.startsWith("from:\n")).toBe(true);
-        expect(hist).not.toContain("history:");
-        expect(hist).toContain("第一句");
+        // ##442 刀 2：注记已删 —— 头部**不许**再出现 `history:` 段
+        // ⚠️ 判据必须是「**行首**是 history:」（顶层键）：runtime 变量树里就有 `where#history:`
+        // 这种键名本身含 history: 的单元，子串判据会假红（##432 实测踩过）
+        expect(prompt.some((m) => /^history:/m.test(textOf(m.content)))).toBe(false);
+        // system 之后第一条不再有"注记占位"：要么是历史本身（from 信封），要么直接是尾部信封
+        const head = textOf(prompt[1]?.content);
+        expect(head.startsWith("from:\n") || head.startsWith("runtime:")).toBe(true);
     });
 });

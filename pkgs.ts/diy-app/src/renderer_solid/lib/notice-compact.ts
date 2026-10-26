@@ -23,11 +23,12 @@ const DETAIL_COMPACT = [
 /** 压缩类提示的二级信息（`kind` 决定原因措辞；上限用 token 表述，与面板显示一致） */
 export function compactNotice(p: {
     kind: "noop" | "done" | "failed";
-    limitTokens: number;
+    /** 保留比例（缺省 0.16） */
+    retainRatio: number;
     uri: string;
     error?: unknown;
 }): NoticeMeta {
-    const mb = `${p.limitTokens.toLocaleString()} token`;
+    const mb = `${Math.round(p.retainRatio * 1000) / 10}% 窗口`;
     const reason =
         p.kind === "noop"
             ? `会话 ${p.uri} 按上限 ${mb} 试算：历史已在上限内，可裁轮次 = 0 → 未改动任何内容`

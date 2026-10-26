@@ -571,14 +571,14 @@ export function WindowRing(props: { uri: string | null }) {
         if (!u) return;
         setBusy(true);
         try {
-            const rec = await localChatStore.compact(u, { limitTokens: limitTok() } as never);
+            const rec = await localChatStore.compact(u, { retainRatio: retainRatio() } as never);
             if (rec?.noop) {
                 notificationStore.addToast(
                     "info",
                     "无需压缩（历史已在预算内）",
                     compactNotice({
                         kind: "noop",
-                        limitTokens: limitTok(),
+                        retainRatio: retainRatio(),
                         uri: u,
                     }),
                 );
@@ -586,7 +586,7 @@ export function WindowRing(props: { uri: string | null }) {
                 notificationStore.addToast(
                     "success",
                     "已压缩（历史保留、可撤销）",
-                    compactNotice({ kind: "done", limitTokens: limitTok(), uri: u }),
+                    compactNotice({ kind: "done", retainRatio: retainRatio(), uri: u }),
                 );
             }
             setOpen(false);
@@ -594,7 +594,7 @@ export function WindowRing(props: { uri: string | null }) {
             notificationStore.addToast(
                 "error",
                 String(e instanceof Error ? e.message : e),
-                compactNotice({ kind: "failed", limitTokens: limitTok(), uri: u, error: e }),
+                compactNotice({ kind: "failed", retainRatio: retainRatio(), uri: u, error: e }),
             );
         } finally {
             setBusy(false);
@@ -603,23 +603,23 @@ export function WindowRing(props: { uri: string | null }) {
     const [anchor, setAnchor] = createSignal<{ left: number; top: number } | null>(null);
     let closeT: ReturnType<typeof setTimeout> | undefined;
 
-    /** 历史上限（token）—— 取配置真源 `auto-compact.yaml` 的 history.limit.limitTokens；缺省 20000 */
+    /** 历史保留比例 —— 取配置真源 `auto-compact.yaml` 的 history.limit.retainRatio；缺省 0.16（dsh 同值） */
     // 门槛 = 卡或抽屉真的开着：本组件常挂（会话页脚常驻），无门槛则**每次切会话页**都白打一次
     // `autoCompactStatus`（##321 复核补记的次级成本；非主因，但同属"抽屉关着也算"）。
     const [limitRes] = createResource(() => (open() || drawerOpen() ? props.uri : null), async (u) => {
         if (!u) return null;
         const st = (await localChatStore.autoCompactStatus(u)) as {
-            config?: { history?: { limit?: { limitTokens?: number } } };
+            config?: { history?: { limit?: { retainRatio?: number } } };
         };
-        const n = st?.config?.history?.limit?.limitTokens;
-        return typeof n === "number" ? n : 20_000;
+        const n = st?.config?.history?.limit?.retainRatio;
+        return typeof n === "number" ? n : 0.16;
     });
-    const limitTok = (): number => limitRes() ?? 20_000;
+    const retainRatio = (): number => limitRes() ?? 0.16;
     /** 压缩后估算 token：固定开支（system+工具）+ 历史上限（保留段按上限的一半计） */
     const afterTokens = (): number | null => {
         const p = partsOf(win());
         const fixed = (p.system ?? 0) + (p.tools ?? 0);
-        return fixed + Math.round(limitTok() / 2);
+        return fixed + Math.round(retainRatio() / 2);
     };
 
     const openCard = (el: HTMLElement) => {
@@ -833,7 +833,9 @@ export function ContextPartsDrawer(props: { open: boolean; uri: string | null; o
             u
                 ? ((await localChatStore.autoCompactStatus(u)) as unknown as {
                       /** ##432 事件制：已落盘的压缩边界（null = 从没压过） */
-                      facts?: { boundary?: { at: string; dropped: number; limitTokens: number } | null };
+                      facts?: {
+                          boundary?: { at: string; dropped: number; retainTokens: number; windowTokens: number } | null;
+                      };
                   })
                 : undefined,
     );

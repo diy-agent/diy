@@ -20,7 +20,7 @@
 
 import { z } from "zod";
 import { cacheStateAfterGap, type EffectiveTtl } from "./cache-ttl";
-import { HistoryLimitSchema, MIN_HISTORY_LIMIT_TOKENS, isCompleteHistoryLimit, normalizeHistoryLimit, type HistoryLimit } from "./history-limit";
+import { HistoryLimitSchema, isCompleteHistoryLimit, normalizeHistoryLimit, type HistoryLimit } from "./history-limit";
 import {
     CompactPolicySchema,
     DEFAULT_TOOL_RESULT_POLICY,
@@ -44,17 +44,17 @@ export const AutoCompactTriggersSchema = z.object({
 /**
  * `history` —— 「留给模型的历史消息」怎么装配（压缩的**作用对象**）。
  *
- * ##432 清理（用户 2026-10-25 拍板「该清理的清理掉」）：这里**只剩一项半** ——
- * 一条 token 上限（`limit.limitTokens`）+ 摘要开关（`limit.summary.enabled`，缺省 false）。
- * 级列表 `keep[]` / 写闸 `allowAgentWrite` / 字节预算 `budgetBytes` 全部删除，**不留兼容壳**；
- * 旧配置里的 `keep` / `allowAgentWrite` 读时忽略并出声（见 `normalizeHistory`）。
+ * ##442（2026-10-27 用户拍板「统一为总窗口比例，向 dsh 看齐」）：这里**只有两项** ——
+ * 保留比例 `limit.retainRatio`（缺省 0.16 = dsh）+ 摘要模式 `limit.summary.mode`（model / self）。
+ * 绝对上限 `limitTokens` / 下限夹取 / 保头 / 事后配平 全部删除，**不留兼容壳**；
+ * 旧配置里的 `limitTokens` / `summary.enabled` 读时忽略并出声（见 `normalizeHistory`）。
  */
 export const AutoCompactHistorySchema = z.object({
     /**
-     * **唯一的历史预算**：一条 token 上限（+ 摘要开关）。
-     * 缺省 = `DEFAULT_HISTORY_LIMIT`（30000 token / 摘要关）。
+     * **唯一的历史预算**：窗口比例 + 摘要模式。
+     * 缺省 = `DEFAULT_HISTORY_LIMIT`（0.16 / model）。
      */
-    limit: HistoryLimitSchema.optional().describe("历史预算：一条 token 上限 + 摘要开关（唯一旋钮）"),
+    limit: HistoryLimitSchema.optional().describe("历史预算：保留比例（窗口 × 本值）+ 摘要模式（唯一旋钮）"),
 });
 
 export const AutoCompactConfigSchema = z.object({
@@ -76,7 +76,7 @@ export const AutoCompactConfigSchema = z.object({
 export interface AutoCompactConfig {
     triggers: AutoCompactTriggers;
     policy: CompactPolicy;
-    /** 历史预算：**一条 token 上限 + 摘要开关**（唯一旋钮；缺省 = `DEFAULT_HISTORY_LIMIT`） */
+    /** 历史预算：**保留比例 + 摘要模式**（唯一旋钮；缺省 = `DEFAULT_HISTORY_LIMIT`） */
     history?: { limit?: HistoryLimit };
 }
 export type AutoCompactTriggers = z.infer<typeof AutoCompactTriggersSchema>;
@@ -270,6 +270,15 @@ function legacyBudgetBytes(rawPolicy: unknown): number | undefined {
  *     用户照 header 只写 `{limitTokens: 8000}` 曾让整份配置读不出来）；
  *   · 旧字段 `keep[]` / `allowAgentWrite` → **忽略 + 出声**（已不决定投递；不保留兼容壳）。
  */
+/** 旧键是否出现在这段配置里（用于出声，`enabled` 可能在 `limit.summary` 或顶层） */
+function src0Has(raw: unknown, key: string): boolean {
+    if (raw === null || typeof raw !== "object") return false;
+    const o = raw as Record<string, unknown>;
+    if (key in o) return true;
+    const sum = o["summary"];
+    return sum !== null && typeof sum === "object" && key in (sum as Record<string, unknown>);
+}
+
 function normalizeHistory(
     raw: unknown,
     issues?: AutoCompactIssue[],
@@ -282,7 +291,7 @@ function normalizeHistory(
         if (src[dead] === undefined) continue;
         const message =
             `history.${dead} 已删除（##432：不让人/agent 编排装配计划）→ 已忽略；` +
-            "历史上限只看 history.limit.limitTokens（没有「清零」这种说法）";
+            "历史预算只看 history.limit.retainRatio（没有「清零」这种说法）";
         console.warn(`[auto-compact] ${message}`);
         issues?.push({ path: `history.${dead}`, message });
     }
@@ -292,25 +301,28 @@ function normalizeHistory(
         // `policy.modeData.budgetBytes` ⇒ 折算成 token 上限（bytes / 4，与仓库同一个粗估口径）
         // 并出声。写回时 `saveAutoCompact` 落的就是新形状，映射只发生这一次。
         if (legacyBudgetBytes === undefined) return undefined;
-        const limitTokens = Math.max(MIN_HISTORY_LIMIT_TOKENS, Math.floor(legacyBudgetBytes / 4));
+        // ##442：保留量改窗口比例后，旧字节预算**没有等价物可折算**（同一个字节数在 128k / 1M 窗口上
+        // 该占多少完全相反）⇒ 忽略并出声，回落到 `DEFAULT_HISTORY_LIMIT`，不猜一个比例出来。
         const message =
-            `policy.modeData.budgetBytes=${String(legacyBudgetBytes)} 是旧口径（已删除）→ 一次性折算成 ` +
-            `history.limit.limitTokens=${String(limitTokens)}（bytes/4）；写回后即为新形状`;
+            `policy.modeData.budgetBytes=${String(legacyBudgetBytes)} 是旧口径（已删除）→ 无法折算成窗口比例，` +
+            "已忽略并回落缺省 retainRatio=" + String(0.16);
         console.warn(`[auto-compact] ${message}`);
         issues?.push({ path: "policy.modeData.budgetBytes", message });
-        return { limit: { limitTokens, summary: { enabled: false } } };
+        return { limit: normalizeHistoryLimit(undefined) };
     }
-    // ⚠️ **不许裸 parse**：`HistoryLimitSchema` 里 `summary` / `enabled` 是必填，
-    // 用户照 header 只写 `{limitTokens: 8000}` 就会抛 ZodError，而外层没有 try/catch ⇒ 整份配置读不出来。
-    // 一律走宽松归一：缺的字段补缺省、超界的夹回下限，读不出来时**出声**但不炸。
+    // ⚠️ **不许裸 parse**：`HistoryLimitSchema` 里 `summary` 是必填，
+    // 用户照 header 只写 `{retainRatio: 0.16}` 就会抛 ZodError，而外层没有 try/catch ⇒ 整份配置读不出来。
+    // 一律走宽松归一：缺的字段补缺省、越界的夹回范围，读不出来时**出声**但不炸。
     const parsed = HistoryLimitSchema.safeParse(limitRaw);
-    if (!parsed.success || !isCompleteHistoryLimit(limitRaw)) {
+    const legacyKeys = ["limitTokens", "enabled"].filter((k) => src0Has(limitRaw, k));
+    if (!parsed.success || !isCompleteHistoryLimit(limitRaw) || legacyKeys.length > 0) {
         const message =
-            `history.limit 不完整或非法（${parsed.success ? "缺 summary 等字段" : parsed.error.issues.map((i) => i.path.join(".")).join("，")}）` +
-            "→ 已回落为补齐后的值（缺 summary ⇒ summary.enabled=false；limitTokens 越界 ⇒ 夹到下限）";
+            `history.limit 不完整 / 非法 / 含旧键（${parsed.success ? "缺字段" : parsed.error.issues.map((i) => i.path.join(".")).join("，")}` +
+            `${legacyKeys.length > 0 ? `；旧键 ${legacyKeys.join("/")} 已删除` : ""}）` +
+            "→ 已回落为补齐后的值（缺 summary ⇒ mode=model；retainRatio 越界 ⇒ 夹到 (0.01, 0.5]）";
         console.warn(`[auto-compact] ${message}`);
         // 出声路径尽量**指到具体那个键**（谁缺就说谁），这样调用方能一键定位
-        const missingKey = (limitRaw as { limitTokens?: unknown } | null)?.limitTokens === undefined ? "limitTokens" : "summary";
+        const missingKey = (limitRaw as { retainRatio?: unknown } | null)?.retainRatio === undefined ? "retainRatio" : "summary";
         issues?.push({ path: `history.limit.${missingKey}`, message });
     }
     return { limit: normalizeHistoryLimit(limitRaw) };
@@ -340,7 +352,8 @@ export interface AutoCompactFacts {
      * 已落盘的**压缩边界**（`turns.jsonl` 的 compaction entry —— ##432 刀 2 的事件制）：
      * null = 从没压过（投递 = 全量）。有它之后每步只按它切，不再重算。
      */
-    boundary: { at: string; dropped: number; limitTokens: number } | null;
+    /** 当前生效的压缩边界（v2 老账没有 windowTokens ⇒ 0） */
+    boundary: { at: string; dropped: number; retainTokens: number; windowTokens: number } | null;
     /**
      * 本会话**一共写过几条压缩事件**（`turns.jsonl` 的 compaction entry）—— 「压缩次数」的真源。
      * ⚠️ 不是 `compact.jsonl` 的条数：那份自 ##431 起是纯审计日志，两者在界面上要分开叫。

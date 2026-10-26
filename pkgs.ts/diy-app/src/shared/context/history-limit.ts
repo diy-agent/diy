@@ -1,117 +1,117 @@
 // src/shared/context/history-limit.ts
-// 🎯 **唯一的压缩算法**（##432 刀 2）：一条上限 + 从后往前数 step + 保头 600 token。
+// 🎯 **唯一的压缩算法**（##442，2026-10-27 向 dsh 看齐）：一个比例 + 一条切点规则。
 //
-// 删掉的东西（用户 2026-10-25 拍板）：`ladder / role / recent / steps` 四级取法、
-// `must`（不占预算）、`budgetBytes` 多级挑拣、`clip` 策略矩阵 —— 那些让人连作者自己都看不懂，
-// 且 `must` 不占预算导致「压完还超预算」。现在的规则只有一条：
+//   保留量 = 模型窗口上限 × `RETAIN_RATIO(0.16)`；
+//   从尾往前累加 token 直到装够，然后切点往前挪到最近的 **user 消息**；
+//   压完仍超触发线 ⇒ 不压（空转判据）。
 //
-//   从最后一步往前累加 token（字符数 / 4 的粗估），装得下就装，装不下就停；
-//   切点必须 tool 配对平衡（不平衡就往前挪）；**保头 600 token 硬编码**（不参与累加、永不被丢）。
+// 判据本体在 `./select-kept-boundary.ts`（与界面范例预览共用同一份），本文件只负责
+// ① 配置形状（`retainRatio` + 摘要模式）、② 消息 → 边界形状的适配、③ token 粗估。
 //
-// 「边界只在压缩事件时算一次并落盘」——算一次的入口就是这里的 `selectCompactableRange`，
-// 落盘与之后的每步追加由 `@diy/persistence` / `local-agent` 负责（本文件是**纯函数**，禁止 node:*）。
+// 删掉的东西（见 `select-kept-boundary.ts` 头注，别再长回来）：
+//   `limitTokens` 绝对上限 / `MIN_HISTORY_LIMIT_TOKENS` 下限夹取 / 旧 `budgetBytes` 折算 /
+//   `HEAD_KEEP_TOKENS` 保头 / `RETAIN_RATIO = 0.5` 那层乘法 / `balanceCut` 事后配平。
+//
+// 「边界只在压缩事件时算一次并落盘」不变（##432）；落盘与每步追加归 `@diy/persistence`。
+// 本文件是**纯函数**，禁止 import node:*。
 
 import { z } from "zod";
 
-import { hasDropped, selectKeptBoundary, type BoundaryMessage } from "./select-kept-boundary";
+import { hasDropped, RETAIN_RATIO, selectKeptBoundary, type BoundaryMessage } from "./select-kept-boundary";
+
+/** 保留比例的唯一真源在 `select-kept-boundary.ts`；这里只再导出，别另起常量 */
+export { RETAIN_RATIO, RETAIN_RATIO as HISTORY_RETAIN_RATIO } from "./select-kept-boundary";
+
+/** 摘要模式（##442）：`model` = 模型读被压段产出结构化摘要；`self` = 只给指令、让模型自己去查 */
+export const SummaryModeSchema = z
+    .enum(["model", "self"])
+    .describe(
+        "压缩后如何告诉模型「前面那段没了」：" +
+            "`model` = 先把被压掉那段交给模型压成结构化摘要（结论/改动/未完成/未决），摘要消息顶替该段（dsh / pi 的做法）；" +
+            "`self` = 不做摘要，只注入一条固定指令（压缩事实 + 原文路径 + 检索方式 + 要产出什么），让模型自己去查——" +
+            "两种形态用于对比效果，切换只改这一个字段",
+    );
 
 /**
- * 保头 token 数 / 保留比例：**唯一真源在 `./select-kept-boundary.ts`**（与界面范例预览共用同一份判据），
- * 这里只做再导出，别在本文件另起常量。
- */
-export { HEAD_KEEP_TOKENS as HISTORY_HEAD_TOKENS, RETAIN_RATIO as HISTORY_RETAIN_RATIO } from "./select-kept-boundary";
-
-/**
- * 单条上限的缺省值（token）。旧 `budgetBytes: 20480` ≈ 5120 token；
- * ##442（用户 2026-10-26）：按「完全步骤历史留一个固定值，比如 30K」定为 30000。
- */
-export const DEFAULT_HISTORY_LIMIT_TOKENS = 30_000;
-
-/**
- * 单条上限的**下限**（token），低于它一律夹上来 —— 理由（##432 review 第 2 条）：
+ * 历史压缩的配置面 = **两项**。
  *
- * 保头 `HEAD_KEEP_TOKENS = 600` 是硬编码、不参与累加；一次压缩只保留到 `limitTokens × RETAIN_RATIO(0.5)`。
- * 于是 `tailBudget = limitTokens × 0.5 − headTokens`，当 `limitTokens ≤ 1200` 时 tailBudget ≤ 0，
- * 保留段**必然**超上限 ⇒ 每一步都重算切点、每一步都可能写一条 compaction entry ——
- * 「压缩是罕见事件」从后门失效（正是 `##432` 要治的病）。
- *
- * 4000 的选择：`4000 × 0.5 − 600 = 1400` token 的尾部额度，约等于 2~3 个 step 的正文，
- * 保证「压一次能顶住之后若干步的新增量」；再小就没有压缩的意义了（不如不压）。
- */
-export const MIN_HISTORY_LIMIT_TOKENS = 4_000;
-
-/**
- * 历史预算的配置面（唯一的一项）。
- *
- * `summary.enabled` 缺省 **false**：v1 **不做摘要 LLM 调用**，丢掉的部分靠注记一行 + ref 指回去查。
- * 留这个开关是为了将来抄 checkpoint 摘要时打开（而不是现在就多一条花钱的路径）。
+ * 不再有 token 绝对值：保留量是「窗口 × retainRatio」，窗口取不到 ⇒ 不压（不猜数）。
  */
 export const HistoryLimitSchema = z.object({
-    limitTokens: z
-        // ⚠️ 用 transform **夹**而不是 `.min()` 拒绝：配置里小于下限的值不该让整份配置读不出来
-        //    （读不出 = 回落缺省 + 一条 warning，用户只会看到"我配的没生效"）。夹取与
-        //    `normalizeHistoryLimit` 是同一个口径（MIN_HISTORY_LIMIT_TOKENS 的理由见那里）。
-        .transform((v: number) => Math.max(MIN_HISTORY_LIMIT_TOKENS, Math.floor(v)))
+    retainRatio: z
+        .number()
+        // 夹到 (0, 0.8)：≥ 触发线（缺省 0.8）时压完等于没压，等于配置写错 ⇒ 夹到 0.5 + 出声（见 auto-compact）
+        .transform((v: number) => Math.min(0.5, Math.max(0.01, v)))
         .describe(
-            "历史消息可占的 **token** 上限（字符数 / 4 粗估）：从最后一步往前累加，装得下就装，装不下就停。" +
-                `低于 ${MIN_HISTORY_LIMIT_TOKENS} 会被夹上来（再小则保头 + 保留比例让每步都重算）`,
+            `压缩后**保留**多少历史：模型窗口上限 × 本值（缺省 ${RETAIN_RATIO}）。` +
+                "0.16 ⇒ 128k 窗口留 20k、256k 留 41k、1M 留 160k（与 dsh 同值）；" +
+                "必须显著小于触发比例（`triggers.windowOverRatio`，缺省 0.8），否则压完立刻又超",
         ),
+    /**
+     * **模型窗口取不到时的兜底**（token）；缺省不填 = 不压（不猜数）。
+     *
+     * 为什么留这么一格：窗口上限的真源是模型目录（`contextLimitOf`），而自建/自托管模型的目录里
+     * 常常没有 `contextLimit`（dsh 也是让 adapter 自己声明 `contextWindow`，不猜）。
+     * **填了它 = 显式覆盖**（测试 / 自建模型 / 想让压缩更激进）；不填 = 走模型目录；
+     * 两边都没有 = 不压（不猜数）。
+     */
+    windowTokens: z
+        .number()
+        .transform((v: number) => Math.max(0, Math.floor(v)))
+        .optional()
+        .describe("模型窗口上限（token）—— 显式覆盖；不填则取模型目录，两边都没有 ⇒ 不压（不猜数）"),
     summary: z
-        .object({
-            enabled: z.boolean().describe("是否对丢掉的那段做摘要（v1 缺省 false：只留一行注记 + ref 指回原文）"),
-        })
-        .describe("摘要开关"),
+        .object({ mode: SummaryModeSchema })
+        .describe("压缩后如何承接被压掉的内容（`model` 摘要 / `self` 让模型自己查）"),
 });
 
 export type HistoryLimit = z.infer<typeof HistoryLimitSchema>;
 
 export const DEFAULT_HISTORY_LIMIT: HistoryLimit = {
-    limitTokens: DEFAULT_HISTORY_LIMIT_TOKENS,
-    summary: { enabled: false },
+    retainRatio: RETAIN_RATIO,
+    summary: { mode: "model" },
 };
 
 /**
- * 宽松归一：手写 / LLM 写的配置可能缺字段、给成 0 / 负数 / 小于下限 / 旧字段名。
- * `limitTokens` 一律夹到 `[MIN_HISTORY_LIMIT_TOKENS, ∞)`（理由见该常量的注释）。
+ * 宽松归一：手写 / LLM 写的配置可能缺字段、给成越界值、或带着旧字段名。
+ *
+ * 旧形状（`limitTokens` 数字 / `summary.enabled` 布尔）**忽略**并回落缺省：
+ * 保留量现在是窗口比例，没有可折算的等价物（用户 2026-10-27：「limitTokens 这个是以前的」）。
+ * 出声由调用方负责（`isCompleteHistoryLimit` 为 false 时给一条 warning）。
  */
 export function normalizeHistoryLimit(raw: unknown): HistoryLimit {
     const src = (raw ?? {}) as Record<string, unknown>;
-    const n = src["limitTokens"];
-    // 是数就夹到 `[MIN, ∞)`（0 / 负数同样夹 —— 旧口径的「0 = 清零」已不存在；
-    // 只有**不是数**才回落缺省，那种情况是写坏了，缺省比夹取更稳）
-    const limitTokens =
-        typeof n === "number" && Number.isFinite(n)
-            ? Math.max(MIN_HISTORY_LIMIT_TOKENS, Math.floor(n))
-            : DEFAULT_HISTORY_LIMIT_TOKENS;
+    const r = src["retainRatio"];
+    const retainRatio =
+        typeof r === "number" && Number.isFinite(r) && r > 0
+            ? Math.min(0.5, Math.max(0.01, r))
+            : DEFAULT_HISTORY_LIMIT.retainRatio;
     const sum = src["summary"] as Record<string, unknown> | undefined;
-    return { limitTokens, summary: { enabled: sum?.["enabled"] === true } };
+    // 旧 `summary.enabled`（布尔）不再有「关」这一档：压掉必须有替身，缺省 mode = model
+    const mode = sum?.["mode"] === "self" ? "self" : sum?.["mode"] === "model" ? "model" : undefined;
+    const summary = { mode: (mode ?? DEFAULT_HISTORY_LIMIT.summary.mode) as HistoryLimit["summary"]["mode"] };
+    const w = src["windowTokens"];
+    const windowTokens = typeof w === "number" && Number.isFinite(w) && w > 0 ? Math.floor(w) : undefined;
+    return { retainRatio, ...(windowTokens === undefined ? {} : { windowTokens }), summary };
 }
 
 /**
- * 配置是否**完整**（`limitTokens` 是数、`summary.enabled` 是布尔）。
- * 只用来**出声**：不完整照样能用（`normalizeHistoryLimit` 补缺省），但要告诉用户「你写的那份没照形状」。
+ * 配置是否**完整**（`retainRatio` 是正数、`summary.mode` 合法）。只用来**出声**：
+ * 不完整照样能用（`normalizeHistoryLimit` 补缺省），但要告诉用户「你写的那份没照形状」。
  */
 export function isCompleteHistoryLimit(raw: unknown): boolean {
     const src = (raw ?? {}) as Record<string, unknown>;
     const sum = src["summary"] as Record<string, unknown> | undefined;
-    return typeof src["limitTokens"] === "number" && typeof sum?.["enabled"] === "boolean";
+    return (
+        typeof src["retainRatio"] === "number" && (sum?.["mode"] === "model" || sum?.["mode"] === "self")
+    );
 }
 
 /**
- * token 粗估（##432 review B2 —— 旧的 `length / 4` 对中文**低估约 3 倍**，等于压缩永不触发）。
- *
- * 规则：**CJK 按 1 token / 字**，其余按 `字符数 / 4`（英文约 4 字符 1 token）。
- * 不做精确 tokenizer：那要真词表且每步付一次代价；这个加权把误差压到 ~±20% 以内就够。
- * 适用范围：历史的粗估（`selectCompactableRange` 的累加与 `appliedHistoryRange` 的触发判据）——
- * 正式用量（计费 / 窗口占比）永远走 provider 回包的 `usage`，不用这里。
- */
-/**
- * token 粗估（**CJK 感知**）：CJK 码点 1 token/字，其余 4 字符 1 token。
+ * token 粗估（CJK 感知）：CJK 码点 1 token/字，其余 4 字符 1 token。
  *
  * ⚠️ 与 `compaction.ts::estimateTokens`（字节 / 4）**不是同一个口径**，两者并存是已知遗留：
- * 本函数只喂历史压缩边界（要与配置里的 `limitTokens` 比，中文不能低估 4 倍）；
- * 那边喂 inputGate / preflight，阈值按字节/4 标定。统一需同时重标定阈值（见 ##432 body 遗留项）。
- * 界面上的样例预览（`compact-example.ts::bytesToTokens` = 字节 / 3）按「中文 3 字节/字」与**本函数**对齐。
+ * 本函数喂历史压缩边界（要与窗口比例比，中文不能低估 4 倍）；那边喂 inputGate / preflight。
  */
 export function estimateTokensOf(text: string): number {
     let cjk = 0;
@@ -139,112 +139,37 @@ export function estimateTokensOf(text: string): number {
 export interface CompactableMessage {
     role: string;
     content: unknown;
-    /** 属于哪一步（缺省 = 开场 user / 无步消息，归到前一个组） */
-    step?: string;
 }
 
 export interface CompactableRange {
-    /** 切点的消息下标（**这条及之后保留**；它之前的非保头部分被丢弃） */
+    /** 切点的消息下标（**这条及之后保留**；它之前全部丢弃） */
     cut: number;
-    /** 保头结束的下标（`[0, headEnd)` 永远保留） */
-    headEnd: number;
-    /** 本次丢掉的消息条数（不含保头） */
+    /** 本次丢掉的消息条数 */
     dropped: number;
 }
 
-const callIds = (m: CompactableMessage): string[] => {
-    if (!Array.isArray(m.content)) return [];
-    return (m.content as { type?: string; toolCallId?: string }[])
-        .filter((p) => p.type === "tool-call" && typeof p.toolCallId === "string")
-        .map((p) => p.toolCallId!);
-};
-
-const resultIds = (m: CompactableMessage): string[] => {
-    if (!Array.isArray(m.content)) return [];
-    return (m.content as { type?: string; toolCallId?: string }[])
-        .filter((p) => p.type === "tool-result" && typeof p.toolCallId === "string")
-        .map((p) => p.toolCallId!);
-};
-
-/**
- * 按 **step** 把消息切成若干连续组：同 step 的消息成组；没有 step 的消息**并入前一组**
- * （开场 user 属于它后面那一轮的第一步）。返回每组的起始下标（升序，首项恒为 0）。
- */
-export function stepStarts(all: readonly CompactableMessage[]): number[] {
-    const starts: number[] = [];
-    let prev = "";
-    for (let i = 0; i < all.length; i++) {
-        const key = all[i]!.step ?? "";
-        if (i === 0) {
-            starts.push(0);
-            prev = key;
-            continue;
-        }
-        if (key !== "" && key !== prev) starts.push(i);
-        if (key !== "") prev = key;
-    }
-    return starts;
-}
-
-/**
- * 把 core 的消息形状适配成边界判据的最小形状（工具配对与 step 都带过去）。
- *
- * ⚠️ 无 step 的消息（开场 user）**归属到它后面那一轮的第一步**（与 `stepStarts` 同语义），
- * 因为边界判据把「没有 step」解释成「每条自成一组」（UI 预览需要它）—— 差别的处理只在这一处。
- */
-export function toBoundaryMessages(
-    all: readonly CompactableMessage[],
-    costOf: (m: CompactableMessage, index: number) => number,
-): BoundaryMessage[] {
-    const stepOf: (string | undefined)[] = new Array(all.length);
-    let next: string | undefined;
-    for (let i = all.length - 1; i >= 0; i--) {
-        const s = all[i]!.step;
-        if (s) next = s;
-        stepOf[i] = s ?? next;
-    }
-    return all.map((m, i) => {
-        const calls = callIds(m);
-        const results = resultIds(m);
-        const kind = calls.length > 0 ? "call" : results.length > 0 ? "result" : m.role === "user" ? "user" : "text";
-        // ⚠️ 传**整个集合**：一条 assistant 消息可带多个 tool-call，只取 `calls[0]` 会让
-        //    「切点落在第二个 result 上」时配平找不到调用 ⇒ 保留孤立 result ⇒ provider 400（review P0-1）
-        const ids = calls.length > 0 ? calls : results;
-        return {
-            tokens: costOf(m, i),
-            kind,
-            ...(ids.length > 0 ? { callIds: ids } : {}),
-            ...(stepOf[i] ? { step: stepOf[i] } : {}),
-        };
-    });
-}
-
 export interface SelectRangeOpts {
-    /** 每条消息的 token 成本（缺省 = 渲染后 JSON 字符数 / 4） */
+    /** 每条消息的 token 成本（缺省 = 内容 JSON 的 CJK 感知粗估） */
     costOf?: (m: CompactableMessage, index: number) => number;
-    /** 保头 token（缺省 `HEAD_KEEP_TOKENS`；单测可传更小的值） */
-    headTokens?: number;
 }
 
 /**
- * **core 侧的适配层**：把消息序列喂给唯一判据 `selectKeptBoundary`（`./select-kept-boundary.ts`），
- * 再把下标换算成 core 的 `{ cut, headEnd, dropped }`（`headEnd` 在这里是**开区间右端**，
- * 边界判据用的是**保头末条下标** —— 差一，换算只此一处）。
+ * **core 侧的适配层**：把消息序列喂给唯一判据 `selectKeptBoundary`，再换算成 core 的 `{cut, dropped}`。
  *
- * 返回 `null` = 没有可丢的（什么都没发生，不写边界）。
+ * @param retainTokens 保留量 = `窗口 × retainRatio`
+ * @param triggerTokens 触发线 = `窗口 × windowOverRatio`（压完仍超它 ⇒ 不压）
+ * @returns `null` = 没有可丢的（什么都没发生，不写边界）
  */
 export function selectCompactableRange(
     all: readonly CompactableMessage[],
-    limitTokens: number,
+    retainTokens: number,
+    triggerTokens: number,
     opts: SelectRangeOpts = {},
 ): CompactableRange | null {
-    if (all.length === 0 || !(limitTokens > 0)) return null;
+    if (all.length === 0 || !(retainTokens > 0) || !(triggerTokens > retainTokens)) return null;
     const cost = opts.costOf ?? ((m: CompactableMessage) => estimateTokensOf(JSON.stringify(m.content ?? "")));
-    const msgs = toBoundaryMessages(all, cost);
-    // 单测可以调小保头（不传就是真实口径）；判据本身仍只有一份
-    const boundary = selectKeptBoundary(msgs, limitTokens, opts.headTokens === undefined ? {} : { headTokens: opts.headTokens });
-    const headEnd = boundary.headEnd + 1;
-    // 「丢没丢」由判据显式给出（`kind`）—— 不用下标算式推：`cut === n`（尾部一条不取）也是**真丢了**
+    const msgs: BoundaryMessage[] = all.map((m, i) => ({ tokens: cost(m, i), user: m.role === "user" }));
+    const boundary = selectKeptBoundary(msgs, retainTokens, triggerTokens);
     if (!hasDropped(boundary)) return null;
-    return { cut: boundary.cut, headEnd, dropped: boundary.dropped };
+    return { cut: boundary.cut, dropped: boundary.dropped };
 }

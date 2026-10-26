@@ -15,9 +15,9 @@
 //
 // 纯函数：禁止 import node:*。
 
-import { selectKeptBoundary, type KeptBoundary } from "./select-kept-boundary";
+import { RETAIN_RATIO, selectKeptBoundary, type KeptBoundary } from "./select-kept-boundary";
 
-export { HEAD_KEEP_TOKENS } from "./select-kept-boundary";
+export { RETAIN_RATIO } from "./select-kept-boundary";
 
 /** 合成样例里的一条消息（`bytes` 按 UTF-8 字节；token 见 `bytesToTokens` 的口径说明） */
 export interface ExampleMessage {
@@ -82,9 +82,7 @@ export interface ExampleRow extends ExampleMessage {
 
 export interface CompactExampleResult {
     rows: ExampleRow[];
-    /** 保头区最后一条的下标（-1 = 没有保头） */
-    headEnd: number;
-    /** 从后往前数出来的切点下标（-1 = 一条都装不下） */
+    /** 从后往前数出来的切点下标（0 = 什么都丢不掉；##442 起无保头） */
     cut: number;
     keptBytes: number;
     beforeBytes: number;
@@ -105,15 +103,16 @@ export function buildCompactExample(
     messages: readonly ExampleMessage[] = EXAMPLE_MESSAGES,
 ): CompactExampleResult {
     const beforeBytes = messages.reduce((a, m) => a + m.bytes, 0);
-    const { headEnd, cut }: KeptBoundary = selectKeptBoundary(
-        messages.map((m) => ({ tokens: bytesToTokens(m.bytes), kind: m.kind, callId: m.callId })),
+    // ##442：参数就是「保留量」（窗口 × retainRatio），触发线按同一窗口推（触发比例 0.8 = 缺省）
+    const { cut }: KeptBoundary = selectKeptBoundary(
+        messages.map((m) => ({ tokens: bytesToTokens(m.bytes), user: m.kind === "user" })),
         budgetTokens,
+        Math.max(budgetTokens + 1, Math.round(budgetTokens / RETAIN_RATIO * 0.8)),
     );
 
     const rows: ExampleRow[] = messages.map((m, i) => {
-        if (i <= headEnd) return rowOf(m, true, "保头（硬编码 600 token，永不丢）");
-        if (i >= cut) return rowOf(m, true, "在本次请求里（从最后往前数，装进上限）");
-        return rowOf(m, false, "超出上限 ⇒ 不进本次请求（历史仍在，可查可撤销）");
+        if (i >= cut) return rowOf(m, true, "在本次请求里（从最后往前数，装够保留量；切点落在 user 上）");
+        return rowOf(m, false, "超出保留量 ⇒ 不进本次请求（摘要 / 自取指令顶替它）");
     });
 
     const keptRows = rows.filter((r) => r.kept);
@@ -121,7 +120,6 @@ export function buildCompactExample(
     const biggest = droppedRows.reduce<ExampleRow | null>((a, r) => (a && a.bytes >= r.bytes ? a : r), null);
     return {
         rows,
-        headEnd,
         cut,
         keptBytes: keptRows.reduce((a, r) => a + r.bytes, 0),
         beforeBytes,

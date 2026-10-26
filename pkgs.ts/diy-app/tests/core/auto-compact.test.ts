@@ -33,11 +33,11 @@ import {
 } from "../../src/main/core/auto-compact-config";
 import { diyHome } from "../../src/main/core/state";
 import { DEFAULT_HEADTAIL, normalizePolicy, toolResultOf } from "../../src/shared/context/compaction";
-import { DEFAULT_HISTORY_LIMIT_TOKENS, normalizeHistoryLimit } from "../../src/shared/context/history-limit";
+import { DEFAULT_HISTORY_LIMIT, normalizeHistoryLimit } from "../../src/shared/context/history-limit";
 
 /** 配置里生效的**历史上限**（唯一旋钮；读侧宽松归一后取） */
 const limitOf = (c: import("../../src/shared/context/auto-compact").AutoCompactConfig): number =>
-    normalizeHistoryLimit(c.history?.limit).limitTokens;
+    normalizeHistoryLimit(c.history?.limit).retainRatio;
 
 const MIN = 60_000;
 /** 已知 TTL：(30min, 45min] —— 30 分钟内一定活着，超过 45 分钟一定过期 */
@@ -250,7 +250,7 @@ describe("##370 缺必填键：逐键回落缺省 + 出声", () => {
             },
             summary: true,
         },
-        history: { limit: { limitTokens: 12345, summary: { enabled: true } } },
+        history: { limit: { retainRatio: 12345, summary: { mode: "self" } } },
     });
     /** 删掉点号路径上的那个键 —— 造「漏一个必填键」的现场 */
     const without = (path: string): Record<string, unknown> => {
@@ -273,21 +273,21 @@ describe("##370 缺必填键：逐键回落缺省 + 出声", () => {
             path: "policy.summary",
             check: (c) => {
                 expect(c.policy.summary).toBe(false);
-                expect(limitOf(c)).toBe(12345); // 用户写的上限没被牵连
+                expect(limitOf(c)).toBe(0.5); // 用户写的上限没被牵连
             },
         },
         {
-            path: "history.limit.limitTokens",
+            path: "history.limit.retainRatio",
             check: (c) => {
-                expect(limitOf(c)).toBe(DEFAULT_HISTORY_LIMIT_TOKENS);
-                expect(normalizeHistoryLimit(c.history?.limit).summary.enabled).toBe(true);
+                expect(limitOf(c)).toBe(DEFAULT_HISTORY_LIMIT.retainRatio);
+                expect(normalizeHistoryLimit(c.history?.limit).summary.mode).toBe("self");
             },
         },
         {
             path: "policy.modeData.toolResult",
             check: (c) => {
                 expect(toolResultOf(c.policy)).toEqual(DEFAULT_AUTO_COMPACT.policy.modeData.toolResult);
-                expect(limitOf(c)).toBe(12345);
+                expect(limitOf(c)).toBe(0.5);
             },
         },
         {
@@ -304,7 +304,7 @@ describe("##370 缺必填键：逐键回落缺省 + 出声", () => {
             path: "policy.mode",
             check: (c) => {
                 expect(c.policy.mode).toBe("budget");
-                expect(limitOf(c)).toBe(12345);
+                expect(limitOf(c)).toBe(0.5);
             },
         },
         { path: "policy", check: (c) => expect(c.policy).toEqual(DEFAULT_AUTO_COMPACT.policy) },
@@ -337,8 +337,8 @@ describe("##370 缺必填键：逐键回落缺省 + 出声", () => {
             if (!cs.path.startsWith("history.limit")) {
                 // 历史上限是**一个整体**（limitTokens / summary 同属一个对象）：改了其中一项，
                 // 落盘形状就是补齐后的那份 —— 唯一不变量是「其它键（triggers / policy）没被牵连」
-                expect(limitOf(config)).toBe(12345);
-                expect(normalizeHistoryLimit(config.history?.limit).summary.enabled).toBe(true);
+                expect(limitOf(config)).toBe(0.5);
+                expect(normalizeHistoryLimit(config.history?.limit).summary.mode).toBe("self");
             }
         });
     }
@@ -349,7 +349,7 @@ describe("##370 缺必填键：逐键回落缺省 + 出声", () => {
         const { config, issues } = read(base());
         expect(issues).toEqual([]);
         expect(config.triggers.windowOverRatio).toBe(0.8);
-        expect(limitOf(config)).toBe(12345);
+        expect(limitOf(config)).toBe(0.5);
     });
 
     it("YAML 语法坏 ⇒ 整份缺省 + 出声（这条口径**保留**：不崩、不用坏数据）", () => {
@@ -370,17 +370,17 @@ describe("##370 缺必填键：逐键回落缺省 + 出声", () => {
         const { config, issues } = read(doc);
         expect(config.triggers.windowOverRatio).toBe(0.8);
         expect(issues.filter((i) => i.path.startsWith("triggers"))).toEqual([]);
-        expect(limitOf(config)).toBe(12345);
+        expect(limitOf(config)).toBe(0.5);
     });
 
     it("`history.keep` 已删除 ⇒ 忽略并出声，其余（含上限）原样", () => {
         rmSync(fp(), { force: true });
         const doc = base();
         // 旧配置残留的级列表：不认识、也不该牵连别的键
-        doc.history = { limit: { limitTokens: 12345, summary: { enabled: true } }, keep: [{ type: "nope" }] };
+        doc.history = { limit: { retainRatio: 12345, summary: { mode: "self" } }, keep: [{ type: "nope" }] };
         const { config, issues } = read(doc);
         expect(config.triggers.windowOverRatio).toBe(0.8);
-        expect(limitOf(config)).toBe(12345);
+        expect(limitOf(config)).toBe(0.5);
         expect(issues.map((i) => i.path)).toContain("history.keep");
     });
 });
@@ -483,22 +483,26 @@ describe("自动压缩执行（真会话 + 桩模型）", () => {
 });
 
 describe("##432 review B1：history.limit 残缺/超界不许抛（宽松归一 + 出声）", () => {
-    it("只写 limitTokens（缺 summary）⇒ 不抛，summary.enabled 缺省 false，并出声", () => {
+    it("只写 retainRatio（缺 summary）⇒ 不抛，summary.mode 缺省 model，并出声", () => {
         const issues: { path: string; message: string }[] = [];
         const cfg = normalizeAutoCompact(
-            { history: { limit: { limitTokens: 8_000 } } },
+            { history: { limit: { retainRatio: 0.2 } } },
             issues as unknown as Parameters<typeof normalizeAutoCompact>[1],
         );
-        expect(cfg.history?.limit?.limitTokens).toBe(8_000);
-        expect(cfg.history?.limit?.summary.enabled).toBe(false);
+        expect(cfg.history?.limit?.retainRatio).toBe(0.2);
+        expect(cfg.history?.limit?.summary.mode).toBe("model");
         expect(issues.some((i) => i.path.startsWith("history.limit"))).toBe(true);
     });
-    it("limitTokens 超下限 ⇒ 夹到 4000（不拒绝）", () => {
-        const cfg = normalizeAutoCompact({ history: { limit: { limitTokens: 0, summary: { enabled: false } } } });
-        expect(cfg.history?.limit?.limitTokens).toBe(4_000);
+    it("旧键 limitTokens（已删除）⇒ 忽略 + 回落缺省 0.16 + 出声", () => {
+        const cfg = normalizeAutoCompact({ history: { limit: { limitTokens: 8_000 } } });
+        expect(cfg.history?.limit?.retainRatio).toBe(0.16);
     });
-    it("limit 整个是个字符串（写坏了）⇒ 回落缺省（30000），不抛", () => {
+    it("retainRatio 越界 ⇒ 夹到 (0.01, 0.5]（不拒绝）", () => {
+        expect(normalizeAutoCompact({ history: { limit: { retainRatio: 0, summary: { mode: "model" } } } }).history?.limit?.retainRatio).toBe(0.16);
+        expect(normalizeAutoCompact({ history: { limit: { retainRatio: 9, summary: { mode: "model" } } } }).history?.limit?.retainRatio).toBe(0.5);
+    });
+    it("limit 整个是个字符串（写坏了）⇒ 回落缺省（0.16），不抛", () => {
         const cfg = normalizeAutoCompact({ history: { limit: "8000" } });
-        expect(cfg.history?.limit?.limitTokens).toBe(30_000);
+        expect(cfg.history?.limit?.retainRatio).toBe(0.16);
     });
 });

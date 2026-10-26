@@ -14,7 +14,8 @@
 //
 // ── 行形状（v2；v1 = ##424 的轮次记录，v2 加 `kind` 与 compaction entry）──
 //   轮次记录：{ v:1, turnId, at, state, user, texts:[{seq,text}], ref:{ ops:{offset,len,seq} } }
-//   压缩边界：{ v:2, kind:"compaction", at, limitTokens, dropped, headLine, cut:{ llmLine, turnId }, ref?:{ ops:{offset,seq} } }
+//   压缩边界：{ v:3, kind:"compaction", at, retainTokens, windowTokens, dropped, cut:{ llmLine, turnId }, ref?:{ ops:{offset,seq} } }
+//     （v2 遗留：`limitTokens` 绝对上限 + `headLine` 保头行号 —— ##442 起两者都不存在，读侧兼容一轮）
 // 约定：
 //   1. `offset` / `len` 一律**字节**，`len` 是**整行含换行**；
 //   2. `offset` 在**写侧**取（append 之前的 fileSize）；
@@ -75,22 +76,38 @@ export interface TurnRecord {
  * `cut.turnId` = 切点所在那轮的 id（下一轮 ops replay 的起点优化用；null = 拿不到）。
  */
 export interface CompactionEntry {
-    v: 2;
+    v: 3;
     kind: "compaction";
     /** 压缩发生时刻（ISO） */
     at: string;
-    /** 单条上限（token；字符数 / 4 的粗估口径） */
-    limitTokens: number;
-    /** 这次丢弃的消息条数（不含保头） */
+    /** 这次压缩保留多少历史（token）= 压缩时窗口 × `retainRatio` */
+    retainTokens: number;
+    /** 压缩时用的模型窗口上限（token；0 = 当时取不到）—— 换模型后要不要重算边界看它 */
+    windowTokens: number;
+    /** 这次丢弃的消息条数 */
     dropped: number;
-    /** 保头的最后一条消息行号（1-based，含） —— 它及其之前永远保留（##432：保头 600 token） */
-    headLine: number;
     cut: { llmLine: number; turnId: string | null };
     /** 切点那一轮的 ops 锚点（可选；用于下次 replay 少读前缀） */
     ref?: { ops: { offset: number; seq: number } };
 }
 
-export type TurnEntry = TurnRecord | CompactionEntry;
+/**
+ * **v2 遗留边界**（只读兼容）：没有 `windowTokens`、`headLine` 是保头行号。
+ * 读侧拿它当「retainTokens = limitTokens」用（旧口径下上限与保留量同一个数），保头照旧生效；
+ * 下一次压缩写出 v3 后自然淘汰。
+ */
+export interface CompactionEntryV2 {
+    v: 2;
+    kind: "compaction";
+    at: string;
+    limitTokens: number;
+    dropped: number;
+    headLine: number;
+    cut: { llmLine: number; turnId: string | null };
+    ref?: { ops: { offset: number; seq: number } };
+}
+
+export type TurnEntry = TurnRecord | CompactionEntry | CompactionEntryV2;
 
 /** 一条轮的正文段（写侧输入；`ref` 由 `appendOp` 的返回值给出） */
 export interface TurnDraft {
@@ -176,7 +193,7 @@ export function appendCompactionEntry(
     taskUri: string,
     entry: Omit<CompactionEntry, "v" | "kind">,
 ): boolean {
-    const rec: CompactionEntry = { v: 2, kind: "compaction", ...entry };
+    const rec: CompactionEntry = { v: 3, kind: "compaction", ...entry };
     let fp: string;
     try {
         fp = turnsFile(home, taskUri);
@@ -205,7 +222,7 @@ export function readTurnEntries(home: string, taskUri: string): TurnEntry[] {
         try {
             const rec = JSON.parse(t) as TurnEntry;
             if (isCompaction(rec)) {
-                if (rec.v === 2) out.push(rec);
+                if (rec.v === 2 || rec.v === 3) out.push(rec);
             } else if (rec && rec.v === 1 && typeof rec.turnId === "string" && rec.ref?.ops) {
                 out.push(rec);
             }
@@ -216,7 +233,7 @@ export function readTurnEntries(home: string, taskUri: string): TurnEntry[] {
     return out;
 }
 
-function isCompaction(rec: unknown): rec is CompactionEntry {
+function isCompaction(rec: unknown): rec is CompactionEntry | CompactionEntryV2 {
     return typeof rec === "object" && rec !== null && (rec as { kind?: unknown }).kind === "compaction";
 }
 
@@ -229,7 +246,7 @@ export function readTurnRecords(home: string, taskUri: string): TurnRecord[] {
  * **当前生效的压缩边界**：turns 里最后一条 compaction entry（append-only ⇒ 后者覆盖前者）。
  * 没有 ⇒ `null`（= 从未压缩，全量投递）。
  */
-export function readBoundary(home: string, taskUri: string): CompactionEntry | null {
+export function readBoundary(home: string, taskUri: string): CompactionEntry | CompactionEntryV2 | null {
     const entries = readTurnEntries(home, taskUri);
     for (let i = entries.length - 1; i >= 0; i--) {
         const e = entries[i]!;

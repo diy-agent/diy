@@ -3376,67 +3376,86 @@ export class LocalAgentManager {
         llmLineBase: number,
         limit: HistoryLimit,
         /**
-         * `false` = **试算**：照样读已落盘边界、照样在新上限下重算（`selectCompactableRange` 本来就是纯函数），
-         * 只是**不落盘**（##432 review 第 3 条）—— 面板改上限要能立刻看到「压完长什么样」，
-         * 而看页面不该改账本（review E）。真发仍是 `true`，由它把边界落一次。
+         * `false` = **试算**：照样读已落盘边界、照样按当前窗口重算（`selectCompactableRange` 是纯函数），
+         * 只是**不落盘**（看页面不该改账本，##432 review E）。
          */
         write = true,
-        /**
-         * `true` = **按给定上限试算**（面板预览专用）：**不看已落盘的边界**，直接 `selectCompactableRange`
-         * 现算一次。预览要回答的是「按现在这个上限压，会压成什么样」—— 复用旧边界会让
-         * 「改了上限右边纹丝不动」（##432 review 第 3 条）；而真发仍走「事件制」（看已落盘边界、
-         * 只在保留段重新顶过上限时才重算），两者语义不同，**不许**在真发路径上开这个开关。
-         */
+        /** `true` = 按当前窗口/配置现算（面板预览专用，不看已落盘边界） */
         simulate = false,
     ): { cut: number; headEnd: number } | null {
+        // ##442（向 dsh 看齐）：保留量 = **窗口 × retainRatio**，不再有「另一个 token 绝对值」。
+        // 窗口取不到 ⇒ **不压**（不猜数；三家同一条：dsh 配置报错、opencode 只用 200k 算摘要尺寸、pi 不触发）。
+        // 窗口：配置里显式写了就按它（测试 / 自建模型 / 想更激进），否则取模型目录；
+        // 两边都没有 ⇒ 0 ⇒ **不压**（不猜数；dsh 让 adapter 声明、opencode/pi 同样不猜）
+        const windowTokens = limit.windowTokens ?? contextLimitOf(personaForTask(diyHome(), taskUri).model) ?? 0;
+        if (!(windowTokens > 0)) return null;
+        const triggerRatio = loadAutoCompact(diyHome()).triggers?.windowOverRatio ?? 0.5;
+        const retainTokens = Math.max(1, Math.floor(windowTokens * limit.retainRatio));
+        const triggerTokens = Math.floor(windowTokens * triggerRatio);
+        // 配置自相矛盾（保留量 ≥ 触发线 ⇒ 压完立刻又超）⇒ 不压，等配置改对
+        if (!(triggerTokens > retainTokens)) return null;
+
         const tokOf = (m: LocalModelMessage): number => estimateTokensOf(JSON.stringify(m.content ?? ""));
+        const sumFrom = (from: number): number => {
+            let t = 0;
+            for (let i = from; i < all.length; i++) t += tokOf(all[i]!);
+            return t;
+        };
         if (simulate) {
-            const total0 = all.reduce((n, m) => n + tokOf(m), 0);
-            if (total0 <= limit.limitTokens) return null;
-            const r0 = selectCompactableRange(all, limit.limitTokens);
-            return r0 ? { cut: r0.cut, headEnd: r0.headEnd } : null;
+            const r0 = selectCompactableRange(all, retainTokens, triggerTokens, { costOf: (m) => estimateTokensOf(JSON.stringify(m.content ?? "")) });
+            return r0 ? { cut: r0.cut, headEnd: 0 } : null;
         }
+
         const entry = taskUri ? readBoundary(taskUri) : null;
         let cut = 0;
         let headEnd = 0;
+        let entryRetain = 0;
         if (entry) {
             const c = entry.cut.llmLine - 1 - llmLineBase;
-            const h = entry.headLine - llmLineBase;
             if (c > 0) {
                 cut = Math.min(c, all.length);
-                headEnd = Math.max(0, Math.min(h, cut));
+                // v2 遗留（有保头）照旧生效；v3 无保头
+                if (entry.v === 2) headEnd = Math.max(0, Math.min(entry.headLine - llmLineBase, cut));
+                entryRetain = entry.v === 2 ? entry.limitTokens : entry.retainTokens;
             }
         }
-        const tok = (m: LocalModelMessage): number => estimateTokensOf(JSON.stringify(m.content ?? ""));
-        // ── 已有边界：只在**保留段本身**重新顶过上限时才重算（##432 review A 的事件化判据）──
-        // 用「全量 token」判断是错的：被丢弃的那段永远算在内 ⇒ 每新增一步都"超限" ⇒ 每步重算。
-        // 保留段 = 保头 `[0,headEnd)` + `[cut,n)`；新增只会让它慢慢长大，涨过上限才是一次新事件。
-        if (cut > 0) {
+        // ── 已落盘边界还合法吗？──
+        // 判据 = 它的保留量与**当前窗口**算出来的一致（换模型到小窗口后，1M 时留的 160k 就是非法的）。
+        // 不合法 ⇒ 作废，按当前窗口**重算一次**（用户 2026-10-27：基数换成小窗，压一次就够）。
+        const boundaryValid = cut > 0 && entryRetain > 0 && entryRetain <= retainTokens;
+        if (boundaryValid) {
             let retained = 0;
-            for (let i = 0; i < headEnd; i++) retained += tok(all[i]!);
-            for (let i = cut; i < all.length; i++) retained += tok(all[i]!);
-            if (retained <= limit.limitTokens) return { cut, headEnd };
+            for (let i = 0; i < headEnd; i++) retained += tokOf(all[i]!);
+            retained += sumFrom(cut);
+            // 保留段还没顶到**触发线** ⇒ 沿用（压缩是罕见事件，不每步重算）。
+            // ⚠️ 这里必须用触发线（窗口 × windowOverRatio），不能用保留量：压缩后保留段正好≈保留量，
+            // 拿它当阈值 ⇒ 下一步涨 1 token 就又"超" ⇒ 每步压一次（##432 治过的老病）。
+            if (retained <= triggerTokens) return { cut, headEnd };
+        } else if (cut > 0 && !(entryRetain > 0)) {
+            // 老账缺字段：当作无边界，往下走全量判据
+            cut = 0;
         }
-        // 没有边界：全量 token 才是「该不该开始压」的判据
-        const total = all.reduce((n, m) => n + tok(m), 0);
-        if (total <= limit.limitTokens) return cut > 0 ? { cut, headEnd } : null;
-        // 超限 ⇒ 算一次切点（已有边界更靠后就沿用；切点只往前推进，绝不回退）
-        const r = selectCompactableRange(all, limit.limitTokens);
+
+        // 没有（或已失效的）边界：全量 token 才是「该不该开始压」的判据
+        const total = sumFrom(0);
+        if (total <= triggerTokens) return cut > 0 ? { cut, headEnd } : null;
+
+        const r = selectCompactableRange(all, retainTokens, triggerTokens, { costOf: (m) => estimateTokensOf(JSON.stringify(m.content ?? "")) });
+        // 切点只往前推进，绝不回退（回退 = 把丢掉的原文又捞回来，账与投递会打架）
         if (!r || r.cut <= cut) return cut > 0 ? { cut, headEnd } : null;
         if (taskUri && write) {
             appendCompactionEntry(taskUri, {
                 at: new Date().toISOString(),
-                limitTokens: limit.limitTokens,
+                retainTokens,
+                windowTokens,
                 dropped: r.dropped,
-                // 保头最后一条的**全局行号**（1-based，含）
-                headLine: llmLineBase + r.headEnd,
                 cut: { llmLine: llmLineBase + r.cut + 1, turnId: all[r.cut]?.turn ?? null },
             });
             console.log(
-                `[local-agent] 压缩事件 ${taskUri}：丢 ${r.dropped} 条（保头 ${r.headEnd} 条，上限 ${limit.limitTokens} token）`,
+                `[local-agent] 压缩事件 ${taskUri}：丢 ${r.dropped} 条（保留 ${retainTokens} token = 窗口 ${windowTokens} × ${limit.retainRatio}）`,
             );
         }
-        return { cut: r.cut, headEnd: r.headEnd };
+        return { cut: r.cut, headEnd: 0 };
     }
 
     /**
@@ -3540,7 +3559,13 @@ export class LocalAgentManager {
         // 已落盘的压缩边界（turns.jsonl 的 compaction entry）：有它 = 历史已被切过，之后每步只按它切
         const bEntry = readBoundary(taskUri);
         const boundary = bEntry
-            ? { at: bEntry.at, dropped: bEntry.dropped, limitTokens: bEntry.limitTokens }
+            ? {
+                at: bEntry.at,
+                dropped: bEntry.dropped,
+                // v2 老账没有 windowTokens/retainTokens：把老上限当保留量报（读侧统一口径）
+                retainTokens: bEntry.v === 2 ? bEntry.limitTokens : bEntry.retainTokens,
+                windowTokens: bEntry.v === 2 ? 0 : bEntry.windowTokens,
+            }
             : null;
         // 压缩事件**总条数**（turns.jsonl 的 compaction entry）—— 与 compact.jsonl 的审计条数不是一回事
         const compactionCount = countCompactions(taskUri);
@@ -5805,7 +5830,7 @@ export class LocalAgentManager {
                 );
             }
             const historySelection = {
-                limitTokens: stepLimit.limitTokens,
+                retainTokens: Math.max(1, Math.floor((contextLimitOf(model) ?? 0) * stepLimit.retainRatio)),
                 // ##423：丢 / 留都说 **token**（与上限同口径）—— 徽章不再拿字节和 token 上限比
                 keptTokens: sel.kept.reduce((n, i) => n + estimateTokensOf(JSON.stringify(allMsgs[i]?.content ?? "")), 0),
                 droppedTokens: sel.dropped.reduce((n, i) => n + estimateTokensOf(JSON.stringify(allMsgs[i]?.content ?? "")), 0),

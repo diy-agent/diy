@@ -224,14 +224,15 @@ describe("轮内重算：变量变了 → 下一步请求即用新值", () => {
 describe("压缩注记的位置：自占一条 user 消息，挂在历史第一条之前（##421）", () => {
     it("##442 刀 2：注记已删 —— 压缩后 prompt[1] **不得**再是 `history:` 段，且两段头必须逐字稳定", async () => {
         // 历史上限调到下限（4000 token）→ 两轮长正文一定触发注记
-        // （##432 刀 2：投递只按 history.limit.limitTokens 切，旧 policy.budgetBytes 已不决定）
+        // （##442：投递只按「窗口 × retainRatio」切，旧 policy.budgetBytes 已不决定）
         writeFileSync(
             join(diyHome(), "auto-compact.yaml"),
             JSON.stringify({
                 mode: "notify",
-                triggers: { systemContextChanged: true, cacheExpired: true, contextWindowOver: 0.8 },
+                triggers: { systemContextChanged: true, cacheExpired: true, windowOverRatio: 0.5 },
                 policy: { mode: "budget", modeData: { budgetBytes: 64, toolResult: { render: "asis" } }, summary: false },
-                history: { limit: { limitTokens: 4000, summary: { enabled: false } } },
+                // ##442：保留量 = 窗口 × retainRatio；窗口用显式兜底（stub 模型目录里没有 contextLimit）
+                history: { limit: { retainRatio: 0.16, windowTokens: 16000, summary: { mode: "model" } } },
             }),
             "utf-8",
         );

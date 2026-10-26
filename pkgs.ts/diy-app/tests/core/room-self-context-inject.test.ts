@@ -254,7 +254,9 @@ describe("房间上下文真的进了请求（runtime 单元）", () => {
     const uri = newUri();
     const prompts = { prompts: [] as unknown[] };
     const { prompt, ops } = await run(uri, new LocalAgentManager(() => stubModel(prompts)), undefined, prompts);
-    expect(prompt).not.toContain("room:");
+    // ##442：`help:` 段改成按**候选全集**生成（常量，不再随本轮有没有房间变）
+    // ⇒ `help.room` 的说明恒在；要断言的是 **runtime 值段**里没有 room
+    expect(prompt).not.toMatch(/^  room:/m);
     const turnId = ops.find((o) => o.op === "start" && o.kind === "turn")?.id ?? "";
     const mine = ops
       .filter((o) => o.op === "delta" && o.id === `${turnId}_u`)

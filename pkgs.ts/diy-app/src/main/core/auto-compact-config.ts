@@ -24,7 +24,6 @@ import {
     type AutoCompactConfig,
     type AutoCompactIssue,
 } from "../../shared/context/auto-compact";
-import { MIN_HISTORY_LIMIT_TOKENS } from "../../shared/context/history-limit";
 
 export function autoCompactFile(home: string): string {
     return join(home, "auto-compact.yaml");
@@ -165,21 +164,23 @@ export function saveAutoCompact(
         "#                        窗口上限取不到 ⇒ 不触发（不猜数）。\n" +
         "#                        旧的 token 绝对数（>=1，如 800000）读取时按窗口一次性折算并写回。\n" +
         "#\n" +
-        "# history.limit.limitTokens: **唯一的历史旋钮**（token）\n" +
-        "#   算法（只有这一套）：从最后一步往前累加，装得下就装、装不下就停；\n" +
-        "#     · token 粗估 = CJK 1 token/字、其余 字符数/4；\n" +
-        "#     · 切点必须 tool 配对平衡（不平衡就往前挪到那条 call 所在的组）；\n" +
-        "#     · **保头 600 token 硬编码**（首条 user / 任务目标，不参与累加、永不被丢）；\n" +
-        "#     · 一次压缩只保留到上限的 **一半**（留余量给后续步骤，否则每步都要重压）；\n" +
-        "#     · 下限 " + String(MIN_HISTORY_LIMIT_TOKENS) + "（再小则「保头 + 半额」让每步都重算，会被夹上来）；\n" +
+        "# history.limit.retainRatio: **唯一的历史旋钮**（比例）—— 压缩后保留多少历史 = 模型窗口 × 本值\n" +
+        "#   缺省 0.16（dsh `DEFAULT_RETAIN_RATIO` 同值）：128k 窗口留 20k、256k 留 41k、1M 留 160k。\n" +
+        "#   必须显著小于 triggers.windowOverRatio，否则压完立刻又超 ⇒ 本实现直接不压（不空转）。\n" +
+        "#   算法（只有这一套，向 dsh 看齐）：\n" +
+        "#     · 从最后一条往前累加 token（CJK 1 token/字、其余 字符数/4），装到 ≥ 保留量为止；\n" +
+        "#     · 切点往前挪到最近的 **user 消息**（消息边界 ⇒ tool 的 call/result 永不拆开）；\n" +
+        "#     · 压完仍超触发线 ⇒ **不压**（尾部一坨巨型工具结果时不硬压）；\n" +
+        "#     · 窗口上限取不到 ⇒ 不压（不猜数）；换模型到更小窗口 ⇒ 旧边界作废，按新窗口重算一次；\n" +
         "#     · **边界只在压缩事件时算一次**并落 turns.jsonl，之后每步只追加不重算。\n" +
-        "# history.limit.summary.enabled: 对丢掉那段做摘要（缺省 false：只留一行注记 + ref 指回原文）\n" +
-        "#\n" +
+        "#   已删除（##442）：limitTokens 绝对上限、MIN 下限夹取、保头 600 token、事后 balance 配平、旧 budgetBytes 折算。\n" +
+        "# history.limit.summary.mode: 压掉那段怎么承接 —— `model`（缺省，模型读它产出结构化摘要）/ `self`（不摘要，\n" +
+        "#   只注入一条指令让模型自己去查历史文件）；**没有「关」这一档**：压掉必须有替身。\n" +
         "# policy.modeData.toolResult: **工具结果呈现**的真源（asis / headtail / callpath）—— 与历史选择无关\n" +
         "#\n" +
         "# 已删除（##432，2026-10-25 用户拍板）：history.keep[] 级列表（ladder/role/recent/steps + must）、\n" +
         "#   policy.modeData.budgetBytes（字节预算）、history.allowAgentWrite、plan 版本链。\n" +
-        "#   写了它们会被读侧忽略并出声；旧 budgetBytes 会**一次性**折算成 limitTokens（bytes/4）后写回新形状。\n" +
+        "#   写了它们会被读侧忽略并出声。\n" +
         "# 契约：pkgs.ts/diy-app/src/shared/context/auto-compact.ts 的 AutoCompactConfigSchema\n";
     writeFileAtomic(p, header + yaml.dump(norm, { indent: 2, noRefs: true }));
     return norm;

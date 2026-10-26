@@ -16,11 +16,11 @@ import {
 } from "../../src/shared/context/compact-when";
 
 const base: CompactWhenInput = {
-    limitTokens: 20_000,
-    boundary: { at: "2026-10-25T10:00:00.000Z", dropped: 12, limitTokens: 20_000 },
+    retainRatio: 0.16,
+    windowLimit: 200_000,
+    boundary: { at: "2026-10-25T10:00:00.000Z", dropped: 12, retainTokens: 32_000, windowTokens: 200_000 },
     retainedTokens: 12_000,
     lastStepTokens: 50_000,
-    windowLimit: 200_000,
 };
 
 const rowOf = (i: CompactWhenInput, key: string) => compactWhenRows(i).find((r) => r.key === key)!;

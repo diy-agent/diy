@@ -1,7 +1,7 @@
 // tests/persistence.test.ts
 // @diy/persistence 的基本契约：键算法稳定、路径分层、appender 给出的锚点可被 checkOpsRef 认回、
 // 压缩边界 append/read 往返。
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -60,21 +60,35 @@ describe("ops 写入器 + turns", () => {
         expect(checkOpsRef(home, uri, { ...ref!, seq: 9 })).toEqual({ ok: false, reason: "seq" });
     });
 
-    it("压缩边界：append 后可读到**最后一条**（append-only ⇒ 后者覆盖前者）", () => {
+    it("压缩边界：append 后可读到**最后一条**（append-only ⇒ 后者覆盖前者）；##442 起写 v3", () => {
         appendCompactionEntry(home, uri, {
             at: new Date().toISOString(),
-            limitTokens: 1000,
+            retainTokens: 20_480,
+            windowTokens: 128_000,
             dropped: 3,
-            headLine: 2,
             cut: { llmLine: 6, turnId: "t1" },
         });
         const b = readBoundary(home, uri);
-        expect(b?.limitTokens).toBe(1000);
+        expect(b?.v).toBe(3);
+        expect(b && b.v === 3 ? b.retainTokens : null).toBe(20_480);
+        expect(b && b.v === 3 ? b.windowTokens : null).toBe(128_000);
         expect(b?.cut.llmLine).toBe(6);
-        expect(b?.headLine).toBe(2);
-        // 落盘形状：一行一条 JSON（v2 + kind）
+        // 落盘形状：一行一条 JSON（v3 + kind）
         const line = readFileSync(sessionFile(home, uri, "turns"), "utf-8").trim().split("\n").at(-1)!;
         const row = JSON.parse(line) as { v: number; kind: string };
-        expect(row).toMatchObject({ v: 2, kind: "compaction" });
+        expect(row).toMatchObject({ v: 3, kind: "compaction" });
+    });
+
+    it("v2 老边界仍能读回（读侧兼容一轮，之后自然淘汰）", () => {
+        const fp = sessionFile(home, uri, "turns");
+        appendFileSync(
+            fp,
+            `${JSON.stringify({ v: 2, kind: "compaction", at: new Date().toISOString(), limitTokens: 4000, dropped: 2, headLine: 1, cut: { llmLine: 3, turnId: null } })}\n`,
+            "utf-8",
+        );
+        const b = readBoundary(home, uri);
+        expect(b?.v).toBe(2);
+        expect(b && b.v === 2 ? b.limitTokens : null).toBe(4_000);
+        expect(b && b.v === 2 ? b.headLine : null).toBe(1);
     });
 });

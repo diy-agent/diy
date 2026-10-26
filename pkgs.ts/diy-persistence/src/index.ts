@@ -52,6 +52,7 @@ export {
     type TurnTextV1,
     type TurnDraft,
     type CompactionEntry,
+    type CompactionEntryV2,
     type OpsAppender,
     type TurnOp,
     clipTurnText,
