@@ -6478,7 +6478,13 @@ runRegistry.setNotifier((taskUri, text) => {
     wakeTaskWithSteer(taskUri, text);
 });
 
-function wakeTaskWithSteer(taskUri: string, text: string): void {
+/**
+ * 往某个任务的会话投一句话并（空闲时）立刻开一轮。
+ *
+ * `author` 是**来源标记**，进 user 块的 `meta.author`：`job` = 后台 run 结束通知、
+ * `watch` = 观察事件（##408 v2）。渲染层据它决定要不要画成「系统事件」而非人话。
+ */
+export function wakeTaskWithSteer(taskUri: string, text: string, author = "job"): void {
     let agent: LocalAgentManager;
     try {
         agent = getLocalAgent();
@@ -6487,7 +6493,7 @@ function wakeTaskWithSteer(taskUri: string, text: string): void {
         return;
     }
     try {
-        agent.steerAdd(taskUri, "next-turn", text, "job");
+        agent.steerAdd(taskUri, "next-turn", text, author);
     } catch (e) {
         console.warn(`[job] 结束通知入队失败 ${taskUri}:`, e);
         return;
