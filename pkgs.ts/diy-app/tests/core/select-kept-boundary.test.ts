@@ -114,6 +114,96 @@ describe("select-kept-boundary · 保留边界的唯一判据", () => {
         expect(dropped).toBe(1);
     });
 
+    // ── ##445 根因：保头 / 保留区的 call 必须都拿得到 result（否则 SDK 抛
+    //    AI_MissingToolResultsError，整轮死；不是降级、不是 provider 400）──
+
+    /** 保留区 = `[0, headEnd] ∪ [cut, n)`；判据 = 每条 call 的 getResult 都在保留区里 */
+    function orphanCalls(msgs: readonly BoundaryMessage[], headEnd: number, cut: number): string[] {
+        const kept = (i: number): boolean => i <= headEnd || i >= cut;
+        const out: string[] = [];
+        for (let i = 0; i < msgs.length; i++) {
+            const ids = msgs[i]!.kind === "call" ? idsOfMsg(msgs[i]!) : [];
+            if (ids.length === 0) continue;
+            for (const id of ids) {
+                // 该 id 的全部 result 下标
+                const results = msgs.map((mm, j) => (mm.kind === "result" && idsOfMsg(mm).includes(id) ? j : -1)).filter((j) => j >= 0);
+                if (results.length === 0) continue; // 这条 call 本来就没 result（另一类问题，A 兜底管）
+                const anyKept = results.some((j) => kept(j));
+                if (!anyKept && kept(i)) out.push(id);
+            }
+        }
+        return out;
+    }
+    const idsOfMsg = (mm: BoundaryMessage): string[] => mm.callIds ?? (mm.callId ? [mm.callId] : []);
+
+    it("**复现（##445 body）**：保头正好停在 assistant(tool-call) 上 ⇒ result 必须一并进保头", () => {
+        // body 里的 5 条：user(400) / assistant(call A, 300) / tool(result A, 200) / text / text
+        const msgs = [m(400), m(300, "call", "A"), m(200, "result", "A"), m(2000), m(2000)];
+        const { headEnd, cut } = selectKeptBoundary(msgs, 4000, { headTokens: 600, retainRatio: 0.25 });
+        // 修前：headEnd === 1（保头停在 call A 上）、cut === 4 ⇒ A 孤立
+        expect(msgs[headEnd]!.kind).toBe("result"); // 保头末尾是 result A
+        expect(orphanCalls(msgs, headEnd, cut)).toEqual([]);
+    });
+
+    it("**多 call 一条消息 + cut 落在第二个 result 上** ⇒ 第一个 result 也必须进保留区", () => {
+        const msgs = [
+            m(600), // 保头（一条就够 600）
+            m(100), // 丢弃区
+            { tokens: 100, kind: "call", callIds: ["cA", "cB"] } as BoundaryMessage,
+            m(100, "result", "cA"),
+            m(100, "result", "cB"),
+            m(100), // 最后一步（永远保留）
+        ];
+        // 额度 = floor(1000 × 0.85) − 600 = 250 ⇒ 先判再加：尾部本来只装得下 result cB（下标 4）
+        // ⇒ 切点初值 4。修前的 `balanceCut` 只把 call（下标 2，带 cA+cB）前移进来，
+        // 而 result cA 在下标 3 仍留在**丢弃区** ⇒ cA 孤立（##445 根因第二处）。
+        const { headEnd, cut } = selectKeptBoundary(msgs, 1000, { headTokens: 600, retainRatio: 0.85 });
+        expect(cut).toBe(2); // 修后：切点一路前移到那条 assistant —— cA / cB 的 result 都在保留区
+        expect(orphanCalls(msgs, headEnd, cut)).toEqual([]);
+    });
+
+    it("**性质测试**：随机 500 组序列 × 随机 budget / headTokens ⇒ 恒无孤立 call", () => {
+        // 线性同余伪随机（可复现；不引依赖）
+        let seed = 20261027;
+        const rnd = (n: number): number => {
+            seed = (seed * 1103515245 + 12345) % 2147483648;
+            return seed % n;
+        };
+        for (let round = 0; round < 500; round++) {
+            const len = 2 + rnd(24);
+            const msgs: BoundaryMessage[] = [];
+            let open: string[] = []; // 尚未出 result 的 call id
+            for (let i = 0; i < len; i++) {
+                const pick = rnd(10);
+                if (open.length > 0 && pick < 5) {
+                    // 出一条 result（可能一次一条）
+                    const id = open.shift()!;
+                    msgs.push(m(1 + rnd(300), "result", id));
+                } else if (pick < 9) {
+                    // 一条带 1~3 个 call 的 assistant
+                    const ids: string[] = [];
+                    const k = 1 + rnd(3);
+                    for (let j = 0; j < k; j++) ids.push(`c${round}_${i}_${j}`);
+                    open.push(...ids);
+                    msgs.push({ tokens: 1 + rnd(300), kind: "call", callIds: ids });
+                } else {
+                    msgs.push(m(1 + rnd(300)));
+                }
+            }
+            // 收尾：把所有 result 补齐（call 全部有 result，才谈得上「孤立」）
+            for (const id of open) msgs.push(m(1 + rnd(300), "result", id));
+            const budget = rnd(4000);
+            const headTokens = 1 + rnd(700);
+            const { headEnd, cut } = selectKeptBoundary(msgs, budget, { headTokens, retainRatio: 0.1 + rnd(90) / 100 });
+            const orphans = orphanCalls(msgs, headEnd, cut);
+            if (orphans.length > 0) {
+                // 打印可复现的最小现场
+                console.error("孤立 call:", orphans, JSON.stringify({ budget, headTokens, headEnd, cut, msgs }));
+            }
+            expect(orphans, `round ${round}`).toEqual([]);
+        }
+    });
+
     it("配平不会越过保头（切点至少停在 headEnd + 1）", () => {
         const msgs = [m(1000), m(50, "call", "c1"), m(50, "result", "c1")];
         const { headEnd, cut } = selectKeptBoundary(msgs, 10);

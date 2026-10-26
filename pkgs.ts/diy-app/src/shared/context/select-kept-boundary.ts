@@ -103,6 +103,36 @@ function balanceCut(messages: readonly BoundaryMessage[], cut: number, headEnd: 
 }
 
 /**
+ * 把切点**再往前挪**到「保留区里的 call 都拿得到 result」处（`balanceCut` 的**镜像**）。
+ *
+ * 病灶（##445 根因第二处，body 已给复现）：`balanceCut` 只保证「留了 result ⇒ 留下它的 call」，
+ * **没有**保证「留了 call ⇒ 留下它的 result」。一条 assistant 可带多个 tool-call（并行调用是常态）：
+ * `cut` 落在 resultB 上 ⇒ `balanceCut` 把带 [callA, callB] 的 assistant 拉进保留区，但 **resultA 仍在丢弃区**
+ * ⇒ callA 孤立。保头同理（保头里的 call 的 result 落在 `(headEnd, cut)` 中间）。
+ *
+ * 判据：保留区（`[0, headEnd] ∪ [cut, n)`）里每条 call 的 **每一个** result 下标若落在丢弃区 ⇒ `cut` 收到那里。
+ */
+function pullKeptCallResults(messages: readonly BoundaryMessage[], headEnd: number, cut: number): number {
+    if (cut >= messages.length) return cut; // 尾部一条都不取 ⇒ 全在保留区
+    const keptCalls = new Set<string>();
+    const collect = (i: number): void => {
+        const m = messages[i]!;
+        if (m.kind !== "call") return;
+        for (const id of idsOf(m)) keptCalls.add(id);
+    };
+    for (let i = 0; i <= headEnd; i++) collect(i);
+    for (let i = cut; i < messages.length; i++) collect(i);
+    if (keptCalls.size === 0) return cut;
+    let c = cut;
+    for (let i = headEnd + 1; i < c; i++) {
+        const m = messages[i]!;
+        if (m.kind !== "result") continue;
+        if (idsOf(m).some((id) => keptCalls.has(id))) c = i; // 取最小（继续往前扫）
+    }
+    return c;
+}
+
+/**
  * 把**保头末端**也挪到 tool 配对平衡处：保头里留了 call，就必须把它后面的 result 一起留在保头里。
  *
  * 病灶（##444 / ##445 B 段实测）：`balanceCut` 只平衡了**切点侧**（留了 result ⇒ 留下它的 call），
@@ -138,6 +168,36 @@ export function balanceHeadPairing(messages: readonly BoundaryMessage[], headEnd
         h = next;
     }
     return h;
+}
+
+/**
+ * **双向收敛**：保头侧（`balanceHeadPairing`）、切点侧（`balanceCut`）、
+ * 「保留区 call 的 result 都拿得到」（`pullKeptCallResults`）三者交替执行到不动点。
+ *
+ * 三条子判据任何一个单独都不够（每一处都会让**另一侧**产生新的孤立 call），
+ * 例：保头延长到 resultA 后，那条 assistant 的 callB 进了保留区 ⇒ 又要把 resultB 拉回来。
+ * 故只暴露这一个入口给调用方（##445 根因：以前只跑 `balanceCut` 一个方向）。
+ */
+export function balancePairing(
+    messages: readonly BoundaryMessage[],
+    headEnd: number,
+    cut: number,
+): { headEnd: number; cut: number } {
+    let h = headEnd;
+    let c = cut;
+    for (let guard = 0; guard < messages.length + 4; guard++) {
+        const prevH = h;
+        const prevC = c;
+        h = balanceHeadPairing(messages, h, c);
+        if (c > h) c = balanceCut(messages, c, h);
+        c = pullKeptCallResults(messages, h, c);
+        if (c <= h) {
+            // 两侧已接上（一条不丢）
+            return { headEnd: h, cut: Math.max(h + 1, c) };
+        }
+        if (h === prevH && c === prevC) break;
+    }
+    return { headEnd: h, cut: c };
 }
 
 /**
@@ -186,8 +246,9 @@ export function selectKeptBoundary(
     }
     if (n === 0) return { headEnd: -1, cut: 0, dropped: 0, kind: "none" };
 
-    // ② 清零：尾部一条都不取
-    if (!(budgetTokens > 0)) return done(headEnd, n, n);
+    // ② 清零：尾部一条都不取（**保头照样要配平** —— 性质测试第 81 组逮到的第三处：
+    //    清零路径早早在配平之前 return，保头停在 call 上 ⇒ 照样孤立 call）
+    if (!(budgetTokens > 0)) return done(balancePairing(messages, headEnd, n).headEnd, n, n);
 
     // 尾部可用额度 = 保留目标（上限 × 比例）− 保头已占
     const tailBudget = Math.max(0, Math.floor(budgetTokens * ratio) - headTokens);
@@ -213,11 +274,9 @@ export function selectKeptBoundary(
 
     let cut = starts[g + 1]!;
     if (cut <= headEnd) return done(headEnd, headEnd + 1, n); // 没有可丢的
-    cut = balanceCut(messages, cut, headEnd);
-    if (cut <= headEnd) return done(headEnd, headEnd + 1, n);
-    // 两侧都要配平：切点侧（`balanceCut`）+ 保头侧（`balanceHead`，##444 的现场就是这里断的）
-    headEnd = balanceHeadPairing(messages, headEnd, cut);
-    if (cut <= headEnd) return done(headEnd, headEnd + 1, n); // 保头延长后已没可丢的
+    // 三条配平判据交替到不动点（##445 根因：以前只跑一个方向 ⇒ 保头停在 call 上 = 孤立 call = 整轮死）
+    ({ headEnd, cut } = balancePairing(messages, headEnd, cut));
+    if (cut <= headEnd) return done(headEnd, headEnd + 1, n); // 配平后已没可丢的
     return done(headEnd, cut, n);
 }
 

@@ -45,7 +45,7 @@ import {
     type TurnRecordState,
 } from "./local-turns";
 import {
-    balanceHeadPairing,
+    balancePairing,
     estimateTokensOf,
     normalizeHistoryLimit,
     selectCompactableRange,
@@ -3445,10 +3445,16 @@ export class LocalAgentManager {
                 cut = Math.min(c, all.length);
                 headEnd = Math.max(0, Math.min(h, cut));
                 // ##445：落盘边界可能是**旧算法**写的（保头停在 tool-call 上、它的 result 掉进丢弃段
-                // ⇒ SDK 报 AI_MissingToolResultsError 打死整轮，##444 的现场）。读侧一律再配平一次：
-                // 只延长保头，切点不动，代价是几条消息，收益是这份历史**能重开轮次**。
+                // ⇒ SDK 报 AI_MissingToolResultsError 打死整轮，##444 的现场）。读侧一律再双向配平一次：
+                // 只**放宽**保留区（保头延长 / 切点前移），代价是几条消息，收益是这份历史**能重开轮次**。
                 // `headEnd` 在这里是**开区间右端**（= 保头条数），边界判据用的是**末条下标** ⇒ 差一
-                headEnd = balanceHeadPairing(toBoundaryMessages(all, (m: { content?: unknown }) => estimateTokensOf(JSON.stringify(m.content ?? ""))), headEnd - 1, cut) + 1;
+                const balanced = balancePairing(
+                    toBoundaryMessages(all, (m: { content?: unknown }) => estimateTokensOf(JSON.stringify(m.content ?? ""))),
+                    headEnd - 1,
+                    cut,
+                );
+                headEnd = balanced.headEnd + 1;
+                cut = Math.max(balanced.cut, headEnd);
             }
         }
         const tok = (m: LocalModelMessage): number => estimateTokensOf(JSON.stringify(m.content ?? ""));

@@ -16,7 +16,7 @@ import { z } from "zod";
 import { hasDropped, selectKeptBoundary, type BoundaryMessage } from "./select-kept-boundary";
 
 // 保头侧配平（##445）：读侧对**已落盘的旧边界**也要再对齐一次，故 core 直接用这个导出。
-export { balanceHeadPairing } from "./select-kept-boundary";
+export { balancePairing } from "./select-kept-boundary";
 
 /**
  * 保头 token 数 / 保留比例：**唯一真源在 `./select-kept-boundary.ts`**（与界面范例预览共用同一份判据），
