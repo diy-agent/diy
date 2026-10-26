@@ -36,6 +36,8 @@ export const runSettled = defineTrigger<{
     owner: string;
     exitCode: number | null;
     durationMs: number | null;
+    /** 一句人话（`[后台进程结束] … 退出码 0 · 17.3s`）。sink 直接拿它投递，不再自己拼文案 */
+    text: string;
 }>({
     id: "job:run-settled",
     desc: "后台 run 结束（exited / killed）",

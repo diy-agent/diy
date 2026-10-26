@@ -55,16 +55,33 @@ function assertDef(def: TriggerDef<unknown>): void {
 }
 
 /**
- * 投递（**当前只计数，不做任何通知**）。
+ * 投递实现（由 main 层注入）：拿到「定义 + 载荷 + 一个出口名」，自己决定怎么落地。
  *
- * ##408 v2 这一步只搭"目录"：调用方一处都还没接，所以这里不许产生副作用。
- * 接线那步把内部换成「解析 sinks → 逐个 sink 投递」即可，签名不变。
+ * 为什么是注入而不是在这里 import `inbox` / `wakeTaskWithSteer`：
+ * 注册表要保持**零依赖**（插件 / 测试 / renderer 都能用同一份目录），
+ * 真投递涉及会话、信箱、UI —— 那是宿主的事。
  */
+export type TriggerDelivery = (def: TriggerDef<unknown>, payload: unknown, sink: string) => void;
+
+let delivery: TriggerDelivery | undefined;
+
+/** main 进程启动时注入一次（见 `local-agent.ts` 的 `installTriggerDelivery` 调用）。 */
+export function setTriggerDelivery(fn: TriggerDelivery | undefined): void {
+    delivery = fn;
+}
+
+/** 投递失败不许拖死调用方：观测数据可以腐烂，业务不能。 */
 function dispatch<P>(def: TriggerDef<P>, payload: P): void {
     emitCounts.set(def.id, (emitCounts.get(def.id) ?? 0) + 1);
-    void payload;
-    void def;
     dispatchCount += 1;
+    if (!delivery) return;
+    for (const sink of def.sinks) {
+        try {
+            delivery(def as TriggerDef<unknown>, payload, sink);
+        } catch (e) {
+            console.warn(`[trigger] 投递失败 ${def.id} → ${sink}`, e);
+        }
+    }
 }
 
 /**
