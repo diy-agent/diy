@@ -13,6 +13,7 @@ import {
     probeFailed,
     probeSucceeded,
     endWatch,
+    parseSubjectSpec,
     sinkAddressError,
     subjectError,
     subjectIsPersistent,
@@ -237,5 +238,23 @@ describe("观察对象与生命周期", () => {
         expect(isDue(def(), s, 10_000_000)).toBe(false);
         expect(nextDueAt(def(), s)).toBeNull();
         expect(endWatch(s, 9_000, "又判了一次").ended?.at).toBe(5_000);
+    });
+});
+
+describe("CLI 的 --subject 解析", () => {
+    it("四种前缀各自落成对应形态；省略 / none 是无主观察", () => {
+        expect(parseSubjectSpec("run:r-1")).toEqual({ kind: "run", runId: "r-1" });
+        expect(parseSubjectSpec("task:projects/4/tasks/266")).toEqual({ kind: "task", uri: "projects/4/tasks/266" });
+        expect(parseSubjectSpec("command:npm test")).toEqual({ kind: "command", key: "npm test" });
+        expect(parseSubjectSpec(undefined)).toEqual({ kind: "none" });
+        expect(parseSubjectSpec("none")).toEqual({ kind: "none" });
+        expect(parseSubjectSpec("  ")).toEqual({ kind: "none" });
+    });
+
+    it("认不出的形态落成 command（可重开的身份），不抛 —— 报错交给 validateWatchDef", () => {
+        expect(parseSubjectSpec("npm test")).toEqual({ kind: "command", key: "npm test" });
+        // `run:` 空 id 是合法解析、非法定义 ⇒ 下一步由 subjectError 拦
+        expect(parseSubjectSpec("run:")).toEqual({ kind: "run", runId: "" });
+        expect(subjectError(parseSubjectSpec("run:"))).toContain("runId");
     });
 });
