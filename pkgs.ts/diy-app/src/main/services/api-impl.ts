@@ -1259,7 +1259,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
       },
     };
   });
-  binding.on(app.job.killPid, async ({ input }) => {
+  binding.on(app.job.killproc, async ({ input }) => {
     // 重新扫一遍再动手：pid 可能已被回收、也可能根本不是我们的（调用方给错号的代价是杀别人）
     const scan = await scanOwnedProcs({ runPids: runRegistry.pidMap() });
     const hit = scan.procs.find((p) => p.pid === input.pid);

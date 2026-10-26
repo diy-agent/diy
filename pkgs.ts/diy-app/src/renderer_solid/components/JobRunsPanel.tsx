@@ -248,7 +248,7 @@ export function JobRunsPanel(props: { uri: string }) {
     const stopProc = async (proc: ProcRow): Promise<void> => {
         setBusy(true);
         try {
-            const r = await diyService.diy.job.killPid({ pid: proc.pid, taskUri: proc.taskUri ?? "" });
+            const r = await diyService.diy.job.killproc({ pid: proc.pid, taskUri: proc.taskUri ?? "" });
             if (r.status !== "ok") setDetailErr(("msg" in r ? r.msg : null) ?? "结束失败");
             else setDetailErr(null);
             await jobRunsStore.refresh();

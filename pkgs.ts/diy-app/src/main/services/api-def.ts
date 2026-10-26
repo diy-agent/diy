@@ -2597,7 +2597,7 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
        * **只读**：本刀不做「运行 / 停用 / 取消」（刀 6 起接），故没有 run/cancel 子命令。
        */
       job: RpcSchema.group({
-        desc: `后台 run 的管理与可见性（只管 **background** 起的长活；前台命令不登记 —— 见 ##408 刀 16）`,
+        desc: `后台 run 的管理（**\`job\` = 后台活的总称，本域装的唯一实体是 run**；只管 \`background\` 起的长活，前台命令不登记 —— 见 ##408 刀 16）`,
         children: {
           ps: RpcSchema.unary({
             desc: `
@@ -2660,7 +2660,7 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
             },
             output: z.object({ status: z.string(), data: z.any() }),
           }),
-          killPid: RpcSchema.unary({
+          killproc: RpcSchema.unary({
             desc: `
             结束一条**未登记**的进程（按 pid；同组且组不是 app 自己时按组杀）。
 

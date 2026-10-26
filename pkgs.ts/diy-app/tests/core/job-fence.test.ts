@@ -1,5 +1,5 @@
 // 归属闸（##408 刀 22）—— 判据的唯一性靠这里钉住：
-// kill / killPid / detach 三条路径都调同一个 `fenceTaskOwner`，
+// kill / killproc / detach 三条路径都调同一个 `fenceTaskOwner`，
 // 所以「什么算归属一致」「什么必须拒」只在这一个文件里被定义一次。
 import { describe, expect, it } from "vitest";
 import { fenceTaskOwner } from "../../src/shared/job-fence";
