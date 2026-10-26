@@ -10,6 +10,8 @@ import type { ServerBinding } from "@diy-agent/rpc";
 import { ChannelServerBinding } from "@diy-agent/rpc";
 import type { EnvelopeTransport } from "@diy-agent/rpc";
 import * as task from "../core/task";
+import { LEVEL_TEXT } from "../../shared/trigger";
+import { listTriggers, triggerCount } from "./trigger-registry";
 import { DRAFT_FIELDS, clearDrafts, readDrafts, writeDrafts, type DraftField } from "../core/drafts";
 import * as project from "../core/project";
 import * as state from "../core/state";
@@ -1370,6 +1372,23 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const rows = await Promise.all(defs.map(async (d) => watchRow(d, await reg.getState(d.id), now)));
     const picked = input.all === true ? rows : rows.filter((r) => r.ended === null && r.enabled);
     return { status: "ok", data: { watches: picked, total: rows.length, now } };
+  });
+
+  /* ───────────── 触发器目录（##408 v2）───────────── */
+
+  binding.on(app.trigger.list, async () => {
+    return { status: "ok", data: { triggers: listTriggers(), total: triggerCount() } };
+  });
+
+  binding.on(app.trigger.ls, async () => {
+    const rows = listTriggers();
+    if (rows.length === 0) return "还没有触发器（空表 = 没有任何东西会叫你）";
+    const head = `${pad("ID", 24)}${pad("强度", 12)}${pad("出口", 18)}什么时候叫你`;
+    const lines = rows.map((r) => {
+      const lv = `${r.level} ${LEVEL_TEXT[r.level]}`;
+      return `${pad(r.id, 24)}${pad(lv, 12)}${pad(r.sinks.join(","), 18)}${r.desc}`;
+    });
+    return [head, ...lines].join("\n");
   });
 
   binding.on(app.job.watch.ls, async ({ input }) => {
