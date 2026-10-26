@@ -116,8 +116,11 @@ export const envBroken = defineTrigger<{
 }>({
     id: "env:broken",
     desc: "机器环境坏了（磁盘满 / 网断），恢复时也发一次",
-    level: "N0",
-    sinks: ["ui"],
+    // 2026-10-26 大王裁：**不再是 N0**（N0 是空位，没有「系统抢焦点」这回事），
+    // 也**不再只投 ui** —— 原来只有人看得见，agent 瞎着继续重试。现在：
+    //   有人归属 ⇒ 叫醒它自己去看（磁盘满时它最该知道）；无从属（整机事件）⇒ 落 `global` 信箱。
+    level: "N1",
+    sinks: ["owner", "inbox", "ui"],
 });
 
 /**
@@ -136,8 +139,9 @@ export const modelDown = defineTrigger<{
 }>({
     id: "notice:model-down",
     desc: "模型不可用（真发失败）",
-    level: "N0",
-    sinks: ["ui"],
+    // 同 `env:broken`：告诉 agent 比喊人有用 —— 它才能换模型 / 换上游重试。
+    level: "N1",
+    sinks: ["owner", "inbox", "ui"],
 });
 
 /* ────────────────────────── inbox 域 ───────────────────────── */
