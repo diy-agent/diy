@@ -37,6 +37,8 @@
         "@fontsource-variable/inter": "^5.2.8",
         "@kobalte/core": "^0.13.8",
         "@lezer/highlight": "^1.2.3",
+        "@opentelemetry/api": "1.10.0",
+        "@opentelemetry/sdk-metrics": "3.0.0",
         "@types/js-yaml": "^4.0.9",
         "@uiw/codemirror-themes-all": "^4.25.11",
         "ai": "^7.0.113",

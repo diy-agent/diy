@@ -26,6 +26,7 @@ import { diyService } from "../lib/rpc";
 import { getRendererActions } from "../lib/renderer-actions";
 import { jobRunsStore } from "../store/jobRunsStore";
 import { AREA_CHROME_W, VIEW_BAR_H } from "../lib/layout-metrics";
+import { JobMetricsView } from "./JobMetricsView";
 import type { ProcRow, RunView } from "../../shared/run-view";
 import { bytesText } from "../../shared/run-view";
 
@@ -87,6 +88,13 @@ export function JobRunsPanel(props: { uri: string }) {
      * 但用户要的"总的 run 管理器"也必须能进 —— 一个按钮切过去，不用换页面。
      */
     const [scope, setScope] = createSignal<"task" | "all">("task");
+    /**
+     * 主视图：运行表 / 指标（##408 v2 观察面）。
+     *
+     * 两者不共用一个布局：运行表是「哪一条」，指标是「总体怎么样」——
+     * 混成左右两栏会让人以为指标是选中那一条的（它不是，它是全量聚合）。
+     */
+    const [view, setView] = createSignal<"runs" | "metrics">("runs");
     const [tab, setTab] = createSignal<Tab>("summary");
     const [tail, setTail] = createSignal<TailView | null>(null);
     const [meta, setMeta] = createSignal<MetaView | null>(null);
@@ -321,9 +329,32 @@ export function JobRunsPanel(props: { uri: string }) {
                         全部
                     </button>
                 </div>
+                {/*
+                  视图切换（##408 v2）：运行表 = 逐条看，指标 = 聚合看。
+                  用户口径「我需要 v2 的 ui 来观察特性」——数据源 `job.metrics`（PR #341）是纯拉快照，
+                  本页只是它的一个呈现器（口径不在这里另立）。
+                */}
+                <div
+                    class="join shrink-0"
+                    data-tip="指标 = 聚合快照（累计次数 / 在跑数 / 耗时分布），不是某一条 run 的字段"
+                >
+                    <button
+                        class={`btn btn-xs join-item ${view() === "runs" ? "btn-active" : "btn-ghost"}`}
+                        data-job-view-btn="runs"
+                        onClick={() => setView("runs")}
+                    >
+                        运行表
+                    </button>
+                    <button
+                        class={`btn btn-xs join-item ${view() === "metrics" ? "btn-active" : "btn-ghost"}`}
+                        data-job-view-btn="metrics"
+                        onClick={() => setView("metrics")}
+                    >
+                        指标
+                    </button>
+                </div>
                 <span class="opacity-60" data-job-count>
-                    {rows().length} 条
-                    {running() > 0 ? ` · ${running()} 在跑` : ""}
+                    {rows().length} 条{running() > 0 ? ` · ${running()} 在跑` : ""}
                     {untrackedCount() > 0 ? ` · ${untrackedCount()} 未登记` : ""}
                 </span>
                 <div class="flex-1" />
@@ -339,20 +370,16 @@ export function JobRunsPanel(props: { uri: string }) {
                 </button>
             </div>
 
-            <Show when={jobRunsStore.error}>
-                {(msg) => <div class="px-3 py-2 text-body text-error">{msg()}</div>}
-            </Show>
+            <Show when={jobRunsStore.error}>{(msg) => <div class="px-3 py-2 text-body text-error">{msg()}</div>}</Show>
 
             <div
                 ref={(el) => (bodyRef = el)}
                 class="flex-1 min-h-0 flex flex-row"
+                classList={{ hidden: view() !== "runs" }}
                 data-job-body
             >
                 {/* ── 表 ── */}
-                <div
-                    class="min-h-0 min-w-0 overflow-auto"
-                    style={{ width: `${frac() * 100}%` }}
-                >
+                <div class="min-h-0 min-w-0 overflow-auto" style={{ width: `${frac() * 100}%` }}>
                     <Show
                         when={rows().length > 0}
                         fallback={
@@ -424,7 +451,9 @@ export function JobRunsPanel(props: { uri: string }) {
                                                 <td class="px-2">
                                                     <div
                                                         class="truncate font-medium"
-                                                        data-tip={row.kind === "run" ? row.run.command : row.proc.command}
+                                                        data-tip={
+                                                            row.kind === "run" ? row.run.command : row.proc.command
+                                                        }
                                                     >
                                                         {row.kind === "run" ? row.run.title : row.proc.title}
                                                     </div>
@@ -439,7 +468,13 @@ export function JobRunsPanel(props: { uri: string }) {
                                                             后台仍在跑
                                                         </span>
                                                     </Show>
-                                                    <Show when={scope() === "all" && row.kind === "run" && row.run.origin?.taskUri}>
+                                                    <Show
+                                                        when={
+                                                            scope() === "all" &&
+                                                            row.kind === "run" &&
+                                                            row.run.origin?.taskUri
+                                                        }
+                                                    >
                                                         {(uri) => (
                                                             <div class="truncate opacity-50" data-job-run-task>
                                                                 {uri()}
@@ -448,9 +483,9 @@ export function JobRunsPanel(props: { uri: string }) {
                                                     </Show>
                                                     <Show when={row.kind === "proc"}>
                                                         <div class="truncate opacity-60" data-job-proc-stats>
-                                                            {(row as { kind: "proc"; proc: ProcRow }).proc.cpuText} · 内存{" "}
-                                                            {(row as { kind: "proc"; proc: ProcRow }).proc.memText} · pgid{" "}
-                                                            {(row as { kind: "proc"; proc: ProcRow }).proc.pgid}
+                                                            {(row as { kind: "proc"; proc: ProcRow }).proc.cpuText} ·
+                                                            内存 {(row as { kind: "proc"; proc: ProcRow }).proc.memText}{" "}
+                                                            · pgid {(row as { kind: "proc"; proc: ProcRow }).proc.pgid}
                                                         </div>
                                                     </Show>
                                                 </td>
@@ -460,7 +495,11 @@ export function JobRunsPanel(props: { uri: string }) {
                                                         fallback={
                                                             <span
                                                                 class="opacity-60"
-                                                                data-tip={row.kind === "run" ? row.run.originText : row.proc.groupText}
+                                                                data-tip={
+                                                                    row.kind === "run"
+                                                                        ? row.run.originText
+                                                                        : row.proc.groupText
+                                                                }
                                                             >
                                                                 {row.kind === "proc"
                                                                     ? "未登记"
@@ -472,7 +511,10 @@ export function JobRunsPanel(props: { uri: string }) {
                                                     >
                                                         <button
                                                             class="btn btn-xs btn-ghost gap-1 px-1 min-h-0"
-                                                            data-job-origin-link={(row as { kind: "run"; run: RunView }).run.origin?.taskUri}
+                                                            data-job-origin-link={
+                                                                (row as { kind: "run"; run: RunView }).run.origin
+                                                                    ?.taskUri
+                                                            }
                                                             data-tip={`${(row as { kind: "run"; run: RunView }).run.originText}（点它回会话定位到那次工具调用）`}
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
@@ -548,7 +590,12 @@ export function JobRunsPanel(props: { uri: string }) {
                                         ? (row() as { kind: "run"; run: RunView }).run.title
                                         : (row() as { kind: "proc"; proc: ProcRow }).proc.title}
                                 </span>
-                                <Show when={row().kind === "run" && (row() as { kind: "run"; run: RunView }).run.state === "running"}>
+                                <Show
+                                    when={
+                                        row().kind === "run" &&
+                                        (row() as { kind: "run"; run: RunView }).run.state === "running"
+                                    }
+                                >
                                     <button
                                         class="btn btn-xs btn-warning shrink-0"
                                         data-job-stop
@@ -565,7 +612,9 @@ export function JobRunsPanel(props: { uri: string }) {
                                         fallback={
                                             <span
                                                 class="text-[10px] opacity-60 shrink-0"
-                                                data-job-kill-blocked={(row() as { kind: "proc"; proc: ProcRow }).proc.pid}
+                                                data-job-kill-blocked={
+                                                    (row() as { kind: "proc"; proc: ProcRow }).proc.pid
+                                                }
                                                 data-tip="没有组名册 / run origin 记录，证明不了这条进程归谁 —— main 侧一律拒杀；要用请 ps / kill 手工来"
                                             >
                                                 来源不明
@@ -576,7 +625,9 @@ export function JobRunsPanel(props: { uri: string }) {
                                             class="btn btn-xs btn-warning shrink-0"
                                             data-job-kill-pid={(row() as { kind: "proc"; proc: ProcRow }).proc.pid}
                                             data-tip="结束这条进程（按进程组；main 侧重扫 ps + 校验归属）"
-                                            onClick={() => void stopProc((row() as { kind: "proc"; proc: ProcRow }).proc)}
+                                            onClick={() =>
+                                                void stopProc((row() as { kind: "proc"; proc: ProcRow }).proc)
+                                            }
                                         >
                                             结束进程
                                         </button>
@@ -630,7 +681,12 @@ export function JobRunsPanel(props: { uri: string }) {
                                             : (row() as { kind: "proc"; proc: ProcRow }).proc.command}
                                     </pre>
                                     <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
-                                        <Show when={row().kind === "run"} fallback={<ProcFields proc={(row() as { kind: "proc"; proc: ProcRow }).proc} />}>
+                                        <Show
+                                            when={row().kind === "run"}
+                                            fallback={
+                                                <ProcFields proc={(row() as { kind: "proc"; proc: ProcRow }).proc} />
+                                            }
+                                        >
                                             <RunFields run={(row() as { kind: "run"; run: RunView }).run} />
                                             <Show when={tail()?.droppedBytes}>
                                                 {(n) => (
@@ -640,10 +696,20 @@ export function JobRunsPanel(props: { uri: string }) {
                                                     </>
                                                 )}
                                             </Show>
-                                            <Show when={jobRunsStore.procsOfRun((row() as { kind: "run"; run: RunView }).run.id).length > 0}>
+                                            <Show
+                                                when={
+                                                    jobRunsStore.procsOfRun(
+                                                        (row() as { kind: "run"; run: RunView }).run.id,
+                                                    ).length > 0
+                                                }
+                                            >
                                                 <span class="opacity-60">名下进程</span>
                                                 <span class="font-mono opacity-80" data-job-run-procs>
-                                                    <For each={jobRunsStore.procsOfRun((row() as { kind: "run"; run: RunView }).run.id)}>
+                                                    <For
+                                                        each={jobRunsStore.procsOfRun(
+                                                            (row() as { kind: "run"; run: RunView }).run.id,
+                                                        )}
+                                                    >
                                                         {(p) => (
                                                             <div class="truncate">
                                                                 {p.pid} · {p.cpuText} · {p.memText} · {p.title}
@@ -693,7 +759,13 @@ export function JobRunsPanel(props: { uri: string }) {
                                         class="whitespace-pre-wrap break-all font-mono text-xs opacity-90"
                                         data-job-api-json
                                     >
-                                        {JSON.stringify(row().kind === "run" ? (row() as { kind: "run"; run: RunView }).run : (row() as { kind: "proc"; proc: ProcRow }).proc, null, 2)}
+                                        {JSON.stringify(
+                                            row().kind === "run"
+                                                ? (row() as { kind: "run"; run: RunView }).run
+                                                : (row() as { kind: "proc"; proc: ProcRow }).proc,
+                                            null,
+                                            2,
+                                        )}
                                     </pre>
                                 </Show>
 
@@ -703,8 +775,9 @@ export function JobRunsPanel(props: { uri: string }) {
                                         when={row().kind === "run"}
                                         fallback={
                                             <div class="text-xs opacity-60">
-                                                未登记的进程没有落盘（它从没走过 <code class="font-mono">run-registry</code>）。
-                                                它的全部信息就是上面那个 API 对象里的 pid / 命令行 / 进程组。
+                                                未登记的进程没有落盘（它从没走过{" "}
+                                                <code class="font-mono">run-registry</code>）。 它的全部信息就是上面那个
+                                                API 对象里的 pid / 命令行 / 进程组。
                                             </div>
                                         }
                                     >
@@ -748,6 +821,18 @@ export function JobRunsPanel(props: { uri: string }) {
                     )}
                 </Show>
             </div>
+
+            {/*
+              指标视图（##408 v2 观察面）：与运行表**互斥**，用 hidden 保留 DOM。
+              理由：切回来时拖过的分隔条位置、选中的行都还在 —— 观察面不该把主视图的状态扔了。
+            */}
+            <div
+                class="min-h-0 flex-1 flex-col"
+                classList={{ flex: view() === "metrics", hidden: view() !== "metrics" }}
+                data-job-metrics-pane
+            >
+                <JobMetricsView uri={props.uri} all={scope() === "all"} />
+            </div>
         </div>
     );
 }
@@ -784,9 +869,7 @@ function RunFields(props: { run: RunView }) {
             <span class="opacity-60">pid</span>
             <span class="font-mono opacity-80">
                 {props.run.pid ?? "—"}
-                <Show when={props.run.pgid}>
-                    {(pg) => <span class="opacity-60"> · 进程组 {pg()}</span>}
-                </Show>
+                <Show when={props.run.pgid}>{(pg) => <span class="opacity-60"> · 进程组 {pg()}</span>}</Show>
             </span>
             <span class="opacity-60">cwd</span>
             <span class="truncate font-mono opacity-80" data-tip={props.run.cwd}>
@@ -797,12 +880,14 @@ function RunFields(props: { run: RunView }) {
                 {props.run.originText}
             </span>
             <span class="opacity-60">输出</span>
-            <span class="opacity-80">
-                {props.run.outputText}
-            </span>
+            <span class="opacity-80">{props.run.outputText}</span>
             <span class="opacity-60">通知</span>
             <span class="opacity-80" data-job-field="notified">
-                {props.run.notified ? "已叫醒 agent" : props.run.state === "running" ? "结束后会叫醒（若为后台）" : "未投递（我们杀的 / 无来源锚点）"}
+                {props.run.notified
+                    ? "已叫醒 agent"
+                    : props.run.state === "running"
+                      ? "结束后会叫醒（若为后台）"
+                      : "未投递（我们杀的 / 无来源锚点）"}
             </span>
         </>
     );
