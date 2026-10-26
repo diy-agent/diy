@@ -43,6 +43,7 @@ import { AssembleGlobalsSchema } from "../prompt-schema";
 import { describeSchema, pruneSchemaDoc, type SchemaDoc } from "../schema-doc";
 import { emitYamlTraced, renderPaths, subsetOf, toYaml } from "./render";
 import type { ContextPath, ContextTreeState } from "./types";
+import { CompactNoticeSchema } from "./compact-notice";
 
 /**
  * 信封的**总逻辑**（zod 描述不了的那部分）—— 固定话术，逐条讲清「help 描述不了的事」。
@@ -56,7 +57,7 @@ import type { ContextPath, ContextTreeState } from "./types";
  * 真正该动版本的只有 `WIRE_ENCODING` 里那些**语义**（system/runtime 投递形态、hash 口径、渲染格式）。
  */
 export const ENVELOPE_ABOUT = [
-    "YAML 信封：顶层键只有 help / system / runtime / runtimeDiff / summary / from / user。",
+    "YAML 信封：顶层键只有 help / system / runtime / runtimeDiff / summary / compact / from / user。",
     "· help = 结构说明（zod 派生）；值段只放数据，解释在 help。",
     "· system 每次全量重建；runtime 每轮首步全量，中途变了追加 runtimeDiff（以**后出现**者为准）。",
     "· **历史压缩不动变量树**（system / runtime 每次全量）：别为取值去 cat 文件或跑命令。",
@@ -114,6 +115,7 @@ export const EnvelopeSchema = z
         runtime: RuntimeSchema,
         runtimeDiff: RuntimeDiffSchema,
         summary: SummarySchema,
+        compact: CompactNoticeSchema,
         from: FromSchema,
         user: UserEnvelopeSchema,
     })
@@ -153,13 +155,14 @@ export function buildHelpDoc(opts: {
         runtime: { desc: key("runtime"), ...pruneSchemaDoc(globalsDoc, opts.runtimePlaces) },
         runtimeDiff: { desc: EnvelopeSchema.shape.runtimeDiff.description },
         summary: describeSchema(SummarySchema),
+        compact: describeSchema(CompactNoticeSchema),
         from: describeSchema(FromSchema),
         user: { desc: key("user"), ...describeSchema(UserEnvelopeSchema) },
     };
 }
 
 /** 信封的**顶层键名**（`ENVELOPE_ABOUT` 第一行那份名单；`isEnvelopeText` 的判据也用它） */
-export const ENVELOPE_TOP_KEYS = new Set(["help", "system", "runtime", "runtimeDiff", "summary", "from", "user"]);
+export const ENVELOPE_TOP_KEYS = new Set(["help", "system", "runtime", "runtimeDiff", "summary", "compact", "from", "user"]);
 
 /**
  * 这段文本是不是**一份信封**（自占顶层键的自动生成段）？

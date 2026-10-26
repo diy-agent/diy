@@ -24,5 +24,6 @@ export * from "./match";
 export * from "./config";
 export * from "./stats";
 export * from "./envelope";
+export * from "./compact-notice";
 export * from "./reqlog";
 export * from "./request-preflight";

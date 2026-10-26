@@ -31,7 +31,7 @@ import { writeFileAtomic, type FsLike } from "../core/atomic-write";
 import { fieldNames, renderFieldDocs } from "../../shared/schema-doc";
 import { findInOpsFile, type FindResult, type FindScopes } from "./local-find";
 import { diyHome, projectDir, projectFromUri } from "../core/state";
-import { keyOf, llmFile, llmLogRelPath, localDir, resolveSessionFile, sessionFileForWrite, sessionFilesToClear, sessionIdOf, sessionStateFile, streamPath, opsFile } from "../core/local-paths";
+import { keyOf, llmFile, llmLogRelPath, localDir, resolveSessionFile, sessionFileForWrite, sessionFilesToClear, sessionIdOf, sessionStateFile, streamPath, opsFile, turnsFile } from "../core/local-paths";
 import { readJsonlTail } from "../core/jsonl-tail";
 import {
     appendCompactionEntry,
@@ -146,6 +146,7 @@ import { buildDelivery, isRuntimePlace, runtimeDiffDelivery, type Delivery } fro
 import { assemblyHardCapBytes } from "../../shared/context/request-preflight";
 import { estimateRequest, tighterHistoryCapBytes } from "../../shared/context/request-preflight";
 import { isEnvelopeText, renderSummaryPart, tailEnvelope } from "../../shared/context/envelope";
+import { COMPACT_ASK, renderCompactNotice, withCompactNotice } from "../../shared/context/compact-notice";
 import { describeAnomalies, readLlmLog } from "../../shared/context/log-schema";
 import {
     autoCompactPolicyInput,
@@ -3360,7 +3361,28 @@ export class LocalAgentManager {
             : range
               ? { historyCut: range }
               : {};
-        return { messages: blocksToMessages(store, opts) as unknown as ModelMessage[] };
+        const base = blocksToMessages(store, opts) as unknown as ModelMessage[];
+        const note = range && taskUriOf ? this.compactNoticeText(taskUriOf) : "";
+        return { messages: note ? withCompactNotice(base, note) : base };
+    }
+
+    /** 压缩重建提示（##442 刀 2 后半）：真丢才发一条 `from: agent:system + compact:` */
+    private compactNoticeText(taskUri: string): string {
+        const entry = readBoundary(taskUri);
+        if (!entry || entry.dropped <= 0) return "";
+        const start = entry.headLine + 1;
+        const end = entry.cut.llmLine - 1;
+        const range = start <= end ? `${start}-${end}` : `1-${end}`;
+        const source = turnsFile(taskUri);
+        const more = opsFile(taskUri);
+        return renderCompactNotice({
+            at: entry.at,
+            dropped: entry.dropped,
+            range,
+            source,
+            more,
+            ask: COMPACT_ASK,
+        });
     }
 
     /**
