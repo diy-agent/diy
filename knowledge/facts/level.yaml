@@ -5,22 +5,22 @@ domain: level
 facts:
   level#agent:
     value: |-
-      **agent 主动叫醒只准 `N0` / `N1` / `N2`**：`N3` 留给系统自动指标，agent 投 `N3` 等于没投。
+      **agent 主动叫醒只准 `N1` / `N2`**：`N0` 是空位（设了等同 N1），`N3` 留给系统自动指标 —— agent 投 `N3` 等于没投。
     id: agents.level.agent
     review: accepted
     lifecycle: active
     evidence:
       source: user
-      verifiedAt: '2026-10-22'
+      verifiedAt: '2026-10-26'
   level#expose:
     value: |-
-      UI 暴露优先级 `E0`~`E3`（**信息摆多显眼**）：**E0** 抢注意力（焦点聚焦 / 拉回窗口 / 横幅）；**E1** 页面上直接可见（行内状态、常驻栏、条目）；**E2** hover / 点击弹出（简要 card、浮层）；**E3** 进新页面才看得到。
+      UI 暴露优先级 `E0`~`E3`（**信息摆多显眼**）：**E0** 横幅级（页面上拦一下、必须看见，但**不抢焦点、不拉窗口** —— 那是用户动作，不是信息的摆放）；**E1** 页面上直接可见（行内状态、常驻栏、条目）；**E2** hover / 点击弹出（简要 card、浮层）；**E3** 进新页面才看得到。
     id: agents.level.expose
     review: accepted
     lifecycle: active
     evidence:
       source: user
-      verifiedAt: '2026-10-22'
+      verifiedAt: '2026-10-26'
   level#inbox:
     value: |-
       **`N1` / `N2` 一律落「通知信箱」**（右上角，可回看、可计数 `+1`）：toast 会消失，**信箱不丢** —— 「我刚才错过了什么」的唯一答案在信箱里，不在 toast 的历史里。⚠️ 机制未实现，缺口记录见 `pkgs.ts/diy-app/AGENTS.md::tool.wake-gap`。
@@ -32,13 +32,13 @@ facts:
       verifiedAt: '2026-10-22'
   level#notice:
     value: |-
-      提示优先级 `N0`~`N3`（**怎么打扰人**）：**N0** 强干预（窗口取焦点 / 会话拉回 / 横幅告警）；**N1** toast（不要求立刻处理，**必须配 N2 兜底**，不许只闪一下）；**N2** 页面顶栏图标 / 角标（未读、运行中 session）；**N3** 极小指示（一个点、内部标签），不打扰。
+      提示优先级 `N0`~`N3`（**叫什么动**，不是「叫得多响」）：**N0 是空位** —— 这个系统里不存在「系统推送把用户从别处拽回来」的正当需求（真危险靠**拦下动作**，不靠喊；「切过去 / 抢焦点」永远只能是用户点的按钮）。谁设了 `N0` 就按 `N1` 处理（大王 2026-10-26：先观察一阵，不报错不红）；**N1** 叫醒 agent（进会话开一轮 + 信箱留痕）；**N2** 只进通知信箱 + 角标（不打扰，人自己看）；**N3** 只进 journal（agent 不许投）。
     id: agents.level.notice
     review: accepted
     lifecycle: active
     evidence:
       source: user
-      verifiedAt: '2026-10-22'
+      verifiedAt: '2026-10-26'
   level#priority:
     value: |-
       任务优先级 `P0`~`P3`：**P0** 立刻停手（数据危险 / 阻塞全员）；**P1** 本轮做；**P2** 排期做；**P3** 备忘（有清晰对错才立项，否则进候选池）。
