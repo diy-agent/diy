@@ -128,11 +128,9 @@ describe("压缩边界：一次算、落盘、之后不重算", () => {
         const view = mgr.deliveryMessages(uri);
         // 每个消息内容里都能找到自己的轮次号：切点之后 + 保头里才可能有
         expect(view.messages.length).toBeGreaterThan(0);
-        // 注记里的切点行号与落盘的边界**逐字一致**（模型按它去翻 llm.jsonl）
-        expect(view.note).toContain("history:");
-        const m = /cut:\s*\n\s*line: (\d+)/.exec(view.note);
-        expect(m?.[1]).toBe(String(entry!.cut.llmLine));
-        // 被丢的区间 = (headLine, cutLine) —— 至少一条
+        // ##442 刀 2：注记已删 ⇒ 投递里**不许**再出现 `history:` 段（它头部每轮变，砸前缀缓存）
+        expect(JSON.stringify(view.messages)).not.toContain("history:");
+        // 切点仍需真生效：被丢区间 = (headLine, cutLine) —— 至少一条
         expect(entry!.cut.llmLine - entry!.headLine).toBeGreaterThan(0);
     });
 });

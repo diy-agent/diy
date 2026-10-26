@@ -81,21 +81,21 @@ function promptText(model: MockLanguageModelV3, callIndex: number): string {
 }
 
 describe("信封：尾部各段各占一个顶层键（tailEnvelope / appendUserKey）", () => {
-    it("history 注记与 runtime 并列、user 在最后 —— 自动生成的段不混进 user.message", () => {
+    it("summary 段与 runtime 并列、user 在最后 —— 自动生成的段不混进 user.message", () => {
         const out = tailEnvelope(
-            ["history:\n  kept:\n    - - 1\n      - 1", "runtime:\n  task:\n    body: x"],
+            ["summary: 上一次压缩的结论", "runtime:\n  task:\n    body: x"],
             "回复 1",
         );
         expect(out).toBe(
-            'history:\n  kept:\n    - - 1\n      - 1\nruntime:\n  task:\n    body: x\nuser:\n  message: "回复 1"',
+            'summary: 上一次压缩的结论\nruntime:\n  task:\n    body: x\nuser:\n  message: "回复 1"',
         );
         // 关键：`user.message` 只剩用户真话（曾经注记被并进这里，模型把它当任务去查 —— tasks/5 实测）
-        expect(out.slice(out.indexOf("\nuser:"))).not.toContain("history");
-        // 注记在前、user 在最后
-        expect(out.indexOf("history:")).toBeLessThan(out.indexOf("runtime:"));
+        expect(out.slice(out.indexOf("\nuser:"))).not.toContain("summary");
+        // 自动段在前、user 在最后
+        expect(out.indexOf("summary:")).toBeLessThan(out.indexOf("runtime:"));
         expect(out.indexOf("\nuser:")).toBeGreaterThan(out.indexOf("runtime:"));
     });
-    it("没有注记时逐字等于旧形（appendUserKey）", () => {
+    it("没有自动段时逐字等于旧形（appendUserKey）", () => {
         expect(tailEnvelope(["runtime:\n  a: 1"], "你好")).toBe(appendUserKey("runtime:\n  a: 1", "你好"));
     });
     it("一个片段都没有 → 原样（不编 user 段）", () => {
@@ -222,7 +222,7 @@ describe("轮内重算：变量变了 → 下一步请求即用新值", () => {
 });
 
 describe("压缩注记的位置：自占一条 user 消息，挂在历史第一条之前（##421）", () => {
-    it("历史被压缩时，注记 = messages[1]（system 之后、历史之前）；尾部信封只剩 runtime + user", async () => {
+    it("##442 刀 2：注记已删 —— 压缩后 prompt[1] **不得**再是 `history:` 段，且两段头必须逐字稳定", async () => {
         // 历史上限调到下限（4000 token）→ 两轮长正文一定触发注记
         // （##432 刀 2：投递只按 history.limit.limitTokens 切，旧 policy.budgetBytes 已不决定）
         writeFileSync(
@@ -246,26 +246,26 @@ describe("压缩注记的位置：自占一条 user 消息，挂在历史第一�
         for await (const _op of mgr.chat(uri, `第二轮 ${"问".repeat(20000)}`)) void _op;
 
         const prompt = (model.doStreamCalls[1]?.prompt ?? []) as Array<{ role: string; content: unknown }>;
+        const prompt0 = (model.doStreamCalls[0]?.prompt ?? []) as Array<{ role: string; content: unknown }>;
         // ⚠️ 经 SDK 后 user 的 content 一律是 part 数组（可能是单 part 或多 part）→ 取文本
         const textOf = (c: unknown): string =>
             typeof c === "string" ? c : ((c ?? []) as Array<{ text?: string }>).map((part) => part.text ?? "").join("\n");
 
-        // ② 注记在 system 之后的第一条（就位，不被埋在尾部）
+        // ① system 仍是第一条，紧随其后**没有**自动生成的注记段
         expect(prompt[0]?.role).toBe("system");
-        expect(textOf(prompt[1]?.content).startsWith("history:")).toBe(true);
+        const hasHistoryKey = (t: string): boolean => /^history:/m.test(t);
+        for (const m of prompt) {
+            if (m.role !== "user") continue;
+            expect(hasHistoryKey(textOf(m.content))).toBe(false);
+        }
+        // ② 不变量：两轮之间 **system 逐字节相等**（头部出现任何每轮变的量，整段历史前缀缓存全废）
+        expect(textOf(prompt[0]?.content)).toBe(textOf(prompt0[0]?.content));
 
-        // 尾部信封只剩 runtime + user（注记已不在这里）
+        // 尾部信封只剩 runtime + user
         const tail = textOf(prompt[prompt.length - 1]?.content);
         expect(tail).toContain("runtime:");
-        // ⚠️ 判据必须是「**行的开头**是 history:」（顶层键），不能是「文本里出现 history:」——
-        // runtime 变量树里就有 `where#history:` 这种**键名本身含 history:** 的单元（本任务实测踩到），
-        // 子串判据会把它当成注记混进来。
-        const hasHistoryKey = (t: string): boolean => /^history:/m.test(t);
         expect(hasHistoryKey(tail)).toBe(false);
         expect(tail).toContain('user:\n  message: "第二轮');
-
-        // ③ 注记没被并进相邻消息的正文：紧跟其后的那一条不携带索引文本
-        expect(hasHistoryKey(textOf(prompt[2]?.content))).toBe(false);
     });
 });
 

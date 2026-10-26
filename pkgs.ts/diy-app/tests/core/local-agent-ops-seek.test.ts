@@ -277,8 +277,9 @@ describe("读者接线：deliveryMessages 只 replay 保留段", () => {
             expect(loadAutoCompact(diyHome()).history?.limit?.limitTokens).toBe(4_000);
             const uriFull = newTask(CANON);
             const uriSeek = newTask(CANON, (ctx) => [compactEvent(ctx)]);
-            expect(manager.deliveryMessages(uriFull).note).toBe("");
-            expect(manager.deliveryMessages(uriSeek).note).toBe("");
+            // ##442 刀 2：注记已删 ⇒ 两种读法都必须**没有任何** `history:` 段（不存在「空注记」这回事）
+            expect(JSON.stringify(manager.deliveryMessages(uriFull).messages)).not.toContain("history:");
+            expect(JSON.stringify(manager.deliveryMessages(uriSeek).messages)).not.toContain("history:");
         } finally {
             if (saved !== null) writeFileSync(compactCfg, saved, "utf-8");
         }

@@ -208,7 +208,7 @@ describe("##422 合并规则：from 信封不参与相邻 user 合并（判据 �
         expect(out[1]!.content).toBe("裸文本");
     });
 
-    it("压缩后：history 注记（[1]）与 from 信封（[2]）各占一条，互不合并（##421 的判据在新形态上仍成立）", async () => {
+    it("##442 刀 2：压缩后头部**没有**注记段 —— 保留的第一条历史消息（from 信封）直接紧跟 system", async () => {
         // 边界切在 3 ⇒ 旧 user（from 信封）留下、assistant 被丢（真压缩）
         const uri = newUri();
         seedRoom(uri, uri);
@@ -217,9 +217,9 @@ describe("##422 合并规则：from 信封不参与相邻 user 合并（判据 �
         await turn(uri, mgr, "第一句", { author: "agent:main" }, sink);
         writeBoundary(uri, 3);
         const { prompt } = await turn(uri, mgr, "第二句", undefined, sink);
-        expect(textOf(prompt[1]?.content).startsWith("history:")).toBe(true);
-        // 紧随注记那条是**保留下来**的历史发言（from 信封），不是「索引 + 原话」一坨
-        const hist = textOf(prompt[2]?.content);
+        expect(prompt[0]?.role).toBe("system");
+        // 注记已删：system 之后的第一条 user 就是**保留下来**的历史发言（from 信封）
+        const hist = textOf(prompt[1]?.content);
         expect(hist.startsWith("from:\n")).toBe(true);
         expect(hist).not.toContain("history:");
         expect(hist).toContain("第一句");

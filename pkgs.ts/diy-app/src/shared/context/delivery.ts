@@ -281,10 +281,15 @@ export function buildDelivery(
 
     const sysPlaces = tree.places.filter((p) => tree.placement[p] === "system").sort();
     const runPlaces = tree.places.filter((p) => (tree.placement[p] ?? "runtime") === "runtime").sort();
+    // help 里的 runtime 描述取**候选全集**而不是 runPlaces（本轮真出现的那些）——
+    // 否则可选单元的出现/消失会改 system 文本，把前缀缓存扭一次（见 `buildHelpDoc` 注释）。
+    const helpRunPlaces = unitPathsOf(systemPlaces)
+        .filter((p) => !sysPlaces.includes(p))
+        .sort();
     // system 信封：`help:`（**唯一的结构说明源**，由 zod 递归派生）+ `system:`（变量树）。
     // 一次产出同时给出文本与行号映射（emitValue 边写边记）—— 高亮/滚动才不会指错行；
     // 行号键剥掉 `system.` 前缀，与变量树 path 口径一致。
-    const sys = systemEnvelope(tree, sysPlaces, runPlaces);
+    const sys = systemEnvelope(tree, sysPlaces, runPlaces, helpRunPlaces);
     const run = runtimeEnvelope(tree, runPlaces);
 
     const part = (p: ContextPath[], t: { text: string; lines: DeliveryPart["lines"] }): DeliveryPart => ({
