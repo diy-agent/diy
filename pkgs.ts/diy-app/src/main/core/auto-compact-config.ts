@@ -19,6 +19,7 @@ import {
     AutoCompactConfigSchema,
     DEFAULT_AUTO_COMPACT,
     autoCompactIssuesFromZod,
+    needsWindowRatioMigration,
     normalizeAutoCompact,
     type AutoCompactConfig,
     type AutoCompactIssue,
@@ -54,7 +55,19 @@ export interface AutoCompactLoadResult {
  * ⇒ 缺键场景**永远跑不到**（等于死代码）。现在：严格 schema 只当**探测器**（它才说得出"缺了哪个必填键"），
  * 值走宽松归一，归一改过的地方由 `issues` 出声。
  */
-export function loadAutoCompactDetailed(home: string): AutoCompactLoadResult {
+export interface AutoCompactLoadOptions {
+    /**
+     * 当前模型窗口上限（token，`contextLimitOf(model)`）。
+     * 只用于**旧 token 阈值 → 比例**的一次性折算：`>=1` 的旧值按它折算后写回。
+     * 缺省 / null = 窗口未知（不做折算，本次按缺省比例判定）。
+     */
+    windowLimitTokens?: number | null;
+}
+
+export function loadAutoCompactDetailed(
+    home: string,
+    opts?: AutoCompactLoadOptions,
+): AutoCompactLoadResult {
     const p = autoCompactFile(home);
     if (!existsSync(p)) return { config: DEFAULT_AUTO_COMPACT, issues: [] };
     let raw: unknown;
@@ -65,11 +78,41 @@ export function loadAutoCompactDetailed(home: string): AutoCompactLoadResult {
         console.warn(`[auto-compact] ${p} ${message}`);
         return { config: DEFAULT_AUTO_COMPACT, issues: [{ path: "", message }] };
     }
-    const parsed = AutoCompactConfigSchema.safeParse(raw);
+    // 旧键 `triggers.contextWindowOver` 读时改名为 `windowOverRatio` —— 先映射再做**严格探测**，
+    // 否则 schema 会把「旧键存在」误报成「新键缺失」（判据④：旧比例 0.8 直接采纳、不告警）。
+    const parseRaw = (() => {
+        if (raw === null || typeof raw !== "object") return raw;
+        const src = raw as Record<string, unknown>;
+        const t = src["triggers"];
+        if (t === null || typeof t !== "object") return raw;
+        const tr = t as Record<string, unknown>;
+        if (tr["contextWindowOver"] === undefined || tr["windowOverRatio"] !== undefined) return raw;
+        return { ...src, triggers: { ...tr, windowOverRatio: tr["contextWindowOver"] } };
+    })();
+    const parsed = AutoCompactConfigSchema.safeParse(parseRaw);
     // 读侧也走宽松归一：单位迁移（旧比例 → token 默认）等**只在归一里做一次**，
     // 否则手改的旧配置文件会绕过迁移，被当成 token 阈值。
     const issues: AutoCompactIssue[] = [];
-    const config = normalizeAutoCompact(raw, issues);
+    const windowLimitTokens = opts?.windowLimitTokens ?? null;
+    const config = normalizeAutoCompact(raw, issues, windowLimitTokens);
+    // 旧 token 阈值 → 比例：**一次性**折算后写回新形状（写回失败出声，绝不静默）。
+    // 窗口未知时不写（还没有折算结果，留着下次读到窗口再迁）。
+    if (
+        needsWindowRatioMigration(raw) &&
+        typeof windowLimitTokens === "number" &&
+        Number.isFinite(windowLimitTokens) &&
+        windowLimitTokens > 0
+    ) {
+        try {
+            saveAutoCompact(home, config);
+        } catch (e) {
+            const message =
+                `旧窗口阈值折算后写回失败（${e instanceof Error ? e.message : String(e)}）；` +
+                `本次仍按 windowOverRatio=${config.triggers.windowOverRatio} 判定`;
+            console.warn(`[auto-compact] ${p} ${message}`);
+            issues.push({ path: "triggers.windowOverRatio", message });
+        }
+    }
     if (!parsed.success) {
         // zod 的问题排在前面（缺键/类型错是"更硬"的原因，归一的出声随后）
         issues.unshift(...autoCompactIssuesFromZod(parsed.error, config));
@@ -82,8 +125,8 @@ export function loadAutoCompactDetailed(home: string): AutoCompactLoadResult {
 }
 
 /** 读自动压缩配置（只要配置本身；要「为什么」用 `loadAutoCompactDetailed`） */
-export function loadAutoCompact(home: string): AutoCompactConfig {
-    return loadAutoCompactDetailed(home).config;
+export function loadAutoCompact(home: string, opts?: AutoCompactLoadOptions): AutoCompactConfig {
+    return loadAutoCompactDetailed(home, opts).config;
 }
 
 /**
@@ -101,20 +144,26 @@ export function readAutoCompactText(home: string): string {
 }
 
 /** 写自动压缩配置（原子：tmp → rename）。宽松归一后再写（不存坏数据）。 */
-export function saveAutoCompact(home: string, cfg: unknown): AutoCompactConfig {
-    const norm = normalizeAutoCompact(cfg);
+export function saveAutoCompact(
+    home: string,
+    cfg: unknown,
+    opts?: AutoCompactLoadOptions,
+): AutoCompactConfig {
+    const norm = normalizeAutoCompact(cfg, undefined, opts?.windowLimitTokens ?? null);
     const p = autoCompactFile(home);
     mkdirSync(dirname(p), { recursive: true });
     const header =
         "# 自动压缩配置 —— 唯一真源（手改或经 UI 写回；下一轮真发生效）\n" +
         "#\n" +
-        "# mode: off 不检测 / notify 检测并提示（默认）/ auto 检测到就压\n" +
-        "#   ⚠️ mode 只管**自动触发**，不是「裁不裁」：投递**始终**按 history.limit 切，\n" +
-        "#      关掉自动压缩不会让历史全量发出去（只是不主动产生新的压缩事件）。\n" +
+        "# 没有 mode（##442，用户 2026-10-26）：**到点就压**，不再有 off/notify/auto 三态。\n" +
+        "#   ⚠️ 自动压缩不是「裁不裁」：投递**始终**按 history.limit 切；压缩只改切点边界。\n" +
         "# triggers: 三个都是**可判定的确定事实**（不是「划不划算」的预测）\n" +
         "#   systemContextChanged 系统上下文变了 → 前缀缓存必作废，此刻压缩零重建代价\n" +
         "#   cacheExpired         缓存已过期（距上次请求 > 生效 TTL）→ 冷启动，压缩是白赚\n" +
-        "#   contextWindowOver    上下文窗口占用上限（**token 数**，= 该会话最后一步实测用量；0 = 关闭）\n" +
+        "#   windowOverRatio      上下文窗口占用**比例**（0~1，缺省 0.5）：\n" +
+        "#                        最后一步实测用量 >= 模型窗口 contextLimit × 本值 ⇒ 压；0 = 关闭；\n" +
+        "#                        窗口上限取不到 ⇒ 不触发（不猜数）。\n" +
+        "#                        旧的 token 绝对数（>=1，如 800000）读取时按窗口一次性折算并写回。\n" +
         "#\n" +
         "# history.limit.limitTokens: **唯一的历史旋钮**（token）\n" +
         "#   算法（只有这一套）：从最后一步往前累加，装得下就装、装不下就停；\n" +

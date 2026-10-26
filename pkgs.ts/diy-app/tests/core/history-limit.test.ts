@@ -102,12 +102,12 @@ describe("estimateTokensOf / normalizeHistoryLimit", () => {
     });
 
     it("配置归一：缺字段 / 0 / 负数都回落缺省；摘要缺省关", () => {
-        expect(normalizeHistoryLimit(undefined).limitTokens).toBe(20_000);
+        expect(normalizeHistoryLimit(undefined).limitTokens).toBe(30_000);
         // 0 / 负数一律夹到下限（旧口径的「0 = 清零」已不存在）
         expect(normalizeHistoryLimit({ limitTokens: 0 }).limitTokens).toBe(4_000);
         expect(normalizeHistoryLimit({ limitTokens: -5 }).limitTokens).toBe(4_000);
         // 不是数 ⇒ 回落缺省
-        expect(normalizeHistoryLimit({ limitTokens: "8000" }).limitTokens).toBe(20_000);
+        expect(normalizeHistoryLimit({ limitTokens: "8000" }).limitTokens).toBe(30_000);
         expect(normalizeHistoryLimit({ limitTokens: 12_345.9 }).limitTokens).toBe(12_345);
         expect(normalizeHistoryLimit({ limitTokens: 1 }).summary.enabled).toBe(false);
         // 下限夹取（##432 review 第 2 条）：≤1200 会让 tailBudget=0 ⇒ 每步重算，故下限 4000

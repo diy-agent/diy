@@ -11,7 +11,7 @@
  *   顶栏 / 执行按钮 / 关闭都归外层 drawer。`CompactHistoryPanel` 是独立的压缩历史弹窗。
  *
  * 内容布局：**左参数 + 右预览**，一眼对照。
- *   · 左栏 = 上限区（历史上限 token + 摘要开关 + 自动压缩 mode）+ 费用对比图形
+ *   · 左栏 = 上限区（历史上限 token + 摘要开关 + 自动压缩口径）+ 费用对比图形
  *   · base = **未压缩**的全量投递（compactPreview 现算），mod = 按当前上限压完的投递
  *   · 右栏把两者渲染成 YAML 行、做行级 diff（增删变色、可折叠、可只看差异、可并排）
  */
@@ -55,7 +55,7 @@ import { clipForPreview, requestViewYaml, type LayerRow, type PreviewClipStats, 
 import { DrawerMaxButton } from "./DrawerMaximize";
 import { notificationStore } from "../store/notificationStore";
 import {
-    autoAuditSentence,
+    autoCompactSentence,
     compactResultSentence,
     compactWhenRows,
     fmtTokens,
@@ -179,14 +179,13 @@ export interface CompactPanelCtl {
     uri: () => string;
     auto: () => {
         config: {
-            mode: "off" | "notify" | "auto";
             policy: unknown;
             history?: {
                 /** ##432 刀 2：**唯一旋钮**（投递只按它切） */
                 limit?: { limitTokens: number; summary?: { enabled: boolean } };
             };
             /** ##423 块 2：三触发器的**当前配置值**（面板要把它原样说出来，不许 UI 另编一套） */
-            triggers?: { systemContextChanged: boolean; cacheExpired: boolean; contextWindowOver: number };
+            triggers?: { systemContextChanged: boolean; cacheExpired: boolean; windowOverRatio: number };
         };
         /**
          * 判定用的事实（实测）：`windowTokens` = 该会话最后一步实测 total；
@@ -429,14 +428,13 @@ function FilterGroup<T extends string>(props: {
  * ##432 刀 2 后判据换了（用户 2026-10-25 复查拍板）：**不是三触发器看旧预算，而是事件制** ——
  *   首次全量超上限 → 算一次并写压缩事件；之后只当**保留段自己**重新顶过上限才再压；
  *   其余每步按已落盘边界切、不重算；手动随时可压。
- * 三触发器（mode）降级为「要不要另记一条审计」，在块尾单独一行说清（`autoAuditSentence`）。
+ * 三触发器降级为「要不要另记一条审计」，在块尾单独一行说清（`autoCompactSentence`）。
  */
 function WhenCompactBlock(props: { ctl: CompactPanelCtl; windowLimit: number | null }) {
     const input = createMemo<CompactWhenInput>(() => {
         const cfg = props.ctl.auto()?.config;
         const facts = props.ctl.auto()?.facts;
         return {
-            mode: cfg?.mode ?? "off",
             limitTokens: props.ctl.limitTokens(),
             boundary: facts?.boundary ?? null,
             retainedTokens: typeof facts?.retainedTokens === "number" ? facts.retainedTokens : null,
@@ -446,7 +444,7 @@ function WhenCompactBlock(props: { ctl: CompactPanelCtl; windowLimit: number | n
     });
     const ratio = () => windowRatio(input().lastStepTokens, input().windowLimit);
     return (
-        <Block title="什么时候会压" extra={input().mode === "off" ? "自动压缩 off" : `mode=${input().mode}`}>
+        <Block title="什么时候会压" extra="自动压缩：到点就压">
             <div class="space-y-1 text-caption" data-when-compact>
                 <For each={compactWhenRows(input())}>
                     {(r) => (
@@ -469,8 +467,8 @@ function WhenCompactBlock(props: { ctl: CompactPanelCtl; windowLimit: number | n
                     <span class="font-semibold">压成什么样：</span> {compactResultSentence(input().limitTokens)}
                 </div>
                 {/* 三触发器与投递的关系：划清界线（##432 后它们只写审计，不改切点） */}
-                <div class="opacity-45" data-when-audit title={autoAuditSentence(input())}>
-                    {autoAuditSentence(input())}
+                <div class="opacity-45" data-when-audit title={autoCompactSentence()}>
+                    {autoCompactSentence()}
                 </div>
                 <div class="opacity-45">
                     每一行 hover 看判据。窗口占用{ratio() == null ? "需有实测用量与模型窗口上限" : ` = ${ratio()}%`}
@@ -772,24 +770,16 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                         </div>
                     }
                 >
-                    {/* 预算区：自动压缩 mode（= config.mode，非策略）
-                        ##423 块 3：旧的是「开/关」toggle —— 它把三态压成两态，notify 在界面上根本选不到；
-                        改成三选一 filter，每项 hover 说人话。 */}
+                    {/* 预算区：##442 删了 off/notify/auto 三态 —— 自动压缩**到点就压**，
+                        这里只说明口径，不再摆模式开关。 */}
                     <div class="rounded-lg border border-base-300 p-3 space-y-2">
                         <div class="space-y-1" data-compact-mode>
                             <span class="text-body font-semibold">自动压缩</span>
-                            <FilterGroup
-                                ariaLabel="自动压缩模式"
-                                name="compact-mode"
-                                value={ctl.auto()?.config.mode ?? "off"}
-                                options={[
-                                    { value: "off", label: "关闭", hint: "不检测触发条件；只有面板上的「压缩」按钮能动历史（最不容易误伤）" },
-                                    { value: "notify", label: "只提示", hint: "检测到该压就亮提示，**不自动执行** —— 适合先看清触发频率" },
-                                    { value: "auto", label: "自动压", hint: "检测到该压就按下面的上限直接压（历史保留、可撤销）" },
-                                ]}
-                                disabled={ctl.autoBusy()}
-                                onChange={(v) => void ctl.patchAuto({ mode: v })}
-                            />
+                            <div class="text-caption opacity-70">
+                                到点就压（窗口占用 ≥ 模型窗口 ×{" "}
+                                {`${Math.round((ctl.auto()?.config.triggers?.windowOverRatio ?? 0.5) * 1000) / 10}%`}{" "}
+                                / 系统上下文变 / 缓存过期），不再有 off / notify / auto 三态。
+                            </div>
                         </div>
                         <div class="text-caption opacity-70">
                             <Show when={!ctl.pvLoading()} fallback={<span class="opacity-60">正在计算预览…</span>}>
@@ -880,9 +870,9 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                                 </span>
                             </label>
                             <div class="border-t border-base-300 pt-2 opacity-70" data-mode-off-note>
-                                <span class="font-semibold">「自动压缩 off」≠ 不裁：</span>
-                                开关只管**自动触发**（off = 不检测 / notify = 检测并提示 / auto = 检测到就压）；
-                                投递**始终**按上面这条上限切 —— 关掉它不会让历史全量发出去，只是不主动产生新的压缩事件。
+                                <span class="font-semibold">自动压缩 ≠ 裁历史：</span>
+                                ##442 起没有 off/notify/auto 三态，**到点就压**；投递**始终**按上面这条上限切 ——
+                                压缩只改边界事件，不会让历史全量发出去。
                             </div>
                         </div>
                     </Block>
