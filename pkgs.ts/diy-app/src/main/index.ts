@@ -48,6 +48,7 @@ import { SINGLETON_LOCK, classifyLock, lockAdvice, readLock } from "./core/singl
 // window-ops 让 RPC 层能请出本实例窗口而不 import Electron（serve 模式不注入 ⇒ 如实报「无窗口」）。
 import { dropSelfRecord, setSelfPort, writeSelfRecord } from "./services/instances";
 import { setWindowOps } from "./services/window-ops";
+import { startJobWatches } from "./services/job-watch-registry";
 import { refreshModelsOnStartup, startupRefreshEnabled } from "./services/models-startup-refresh";
 import { runRegistry } from "./services/run-registry";
 import type { InstanceSelf, RevealResult } from "../shared/instance-row";
@@ -65,6 +66,8 @@ let appConfig: AppConfig;
 let httpPort = 0;
 /** 模型目录启动刷新的取消函数（`before-quit` 调；null = 没起） */
 let cancelModelsStartupRefresh: (() => void) | null = null;
+/** JobWatch 退化订函数（`before-quit` 调；null = 没起） */
+let stopJobWatches: (() => void) | null = null;
 
 // getAppInfo 已迁到 RPC（api-def / api-impl），Electron、serve、CLI 共用一份实现；
 // 这里只保留 httpPort 供启动横幅与端口复用逻辑使用。
@@ -427,6 +430,13 @@ app.whenReady().then(async () => {
     enabled: readRuntimeConfig().env !== "test" && startupRefreshEnabled(),
   });
 
+  // JobWatch（##408 v2）：挂到**唯一一拍源**上（60s）——启动立即探一拍建基线，之后随拍走。
+  // test 变体不起：自动化测试里“有没有后台 interval”应当可判定，且 watch 定义目录为空时
+  // 本来零开销 —— 但一个跑着的定时器会让「测完能干净退出」变成靠 unref 兜底。
+  if (readRuntimeConfig().env !== "test") {
+    stopJobWatches = startJobWatches();
+  }
+
   const ok = await startRpcPort(ipcTransport);
   // 端口已定（含 EADDRINUSE 后的随机端口兜底）→ 重设标题补上 `:<port>`
   applyWindowTitle();
@@ -482,6 +492,8 @@ let quitting = false;
 app.on("before-quit", (event) => {
   cancelModelsStartupRefresh?.();
   cancelModelsStartupRefresh = null;
+  stopJobWatches?.();
+  stopJobWatches = null;
   rpcPort?.stop();
   // 注册表清理：正常退出即删自己的条目。**但不能只靠它** —— SIGKILL / 崩溃时这里不会跑，
   // 故读侧（core/instance-registry.ts::readRecords）一律按 pid 存活过滤并顺手删死者。
