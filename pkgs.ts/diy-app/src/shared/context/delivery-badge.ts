@@ -44,8 +44,6 @@ export interface DeliveryBadgeInput {
      * `null` = 从没压过（本步投递的是全量）；`undefined` = 没取到（不写这块）。
      */
     boundary?: DeliveryBoundary | null;
-    /** 当前自动压缩模式（只管审计记录）；`null` = 未读到 */
-    mode?: "off" | "notify" | "auto" | null;
 }
 
 /** 触发器 / 边界事件 → 人读短名（徽章与压缩详情共用同一套词） */
@@ -125,14 +123,5 @@ export function deliveryBadgeTitle(input: DeliveryBadgeInput): string {
         );
     }
 
-    // ③ 自动压缩的三触发器：只写审计
-    if (input.mode !== undefined) {
-        if (input.mode === null) out.push("自动压缩：配置未读到（本徽章只讲历史裁剪事实）");
-        else
-            out.push(
-                `自动压缩 mode=${input.mode}：三触发器（系统上下文变 / 缓存过期 / 窗口超限）只决定要不要另记一条` +
-                    "审计（compact.jsonl），**不改投递切点**。",
-            );
-    }
     return out.join("\n");
 }

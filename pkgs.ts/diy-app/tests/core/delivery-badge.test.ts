@@ -34,7 +34,6 @@ const sel = (over: Partial<DeliveryBadgeInput["selection"]> = {}): DeliveryBadge
 const input = (over: Partial<DeliveryBadgeInput> = {}): DeliveryBadgeInput => ({
     selection: sel(),
     boundary: null,
-    mode: "notify",
     ...over,
 });
 
@@ -94,22 +93,14 @@ describe("##423 徽章 hover：维度 / 口径 / 什么时候会压 / 三触发�
         expect(t).toContain("只看保留段自己");
     });
 
-    it("④ 三触发器：明说「只写审计、不改投递切点」（这是用户被搞懵的那处歧义）", () => {
-        const t = deliveryBadgeTitle(input({ mode: "auto" }));
-        expect(t).toContain("mode=auto");
-        expect(t).toContain("compact.jsonl");
-        expect(t).toContain("不改投递切点");
-    });
-
-    it("配置没读到 / 边界没取到 → 整块省略，不编事实", () => {
+    it("边界没取到 → 整块省略，不编事实（##442 删 mode 后徽章只讲历史裁剪）", () => {
         const t = deliveryBadgeTitle({ selection: sel() });
         expect(t).not.toContain("压缩事件");
         expect(t).not.toContain("自动压缩");
-        expect(deliveryBadgeTitle(input({ mode: null }))).toContain("配置未读到");
     });
 
     it("`must` / 字节预算这些 ##432 已删的词不再出现", () => {
-        const t = deliveryBadgeTitle(input({ mode: "auto", boundary: null }));
+        const t = deliveryBadgeTitle(input({ boundary: null }));
         expect(t).not.toContain("must");
         expect(t).not.toContain("预算");
         expect(t).not.toContain("KB");

@@ -13,7 +13,8 @@ import { localChatStore } from "../store/localChatStore";
  * 窗口占用（token 数 + 占阈值比例）—— 任务属性面板里的「窗口」行内容。
  *
  * 数据源 = `agent.local.autoCompactStatus`（只读）：`facts.windowTokens` = **该会话最后一步实测**
- * 窗口占用（token 数，##339/##211 口径），`config.triggers.contextWindowOver` = 触发压缩的阈值。
+ * 窗口占用（token 数，##339/##211 口径），`facts.windowLimitTokens × config.triggers.windowOverRatio`
+ * = 触发压缩的阈值（##442 起阈值是**比例**，不是固定 token 数）。
  * 两个都是真值，一个不编；拿不到就显示 `—`（老会话没有用量账，编个 0% 比不显示更坏）。
  *
  * 刷新时机 = 该任务**轮次有进展**时重取（resource 的 key 带 `totalSteps` + 在跑步数）：
@@ -27,16 +28,19 @@ export function AgentWindowUsage(props: { uri: string }) {
         },
         async () =>
             (await localChatStore.autoCompactStatus(props.uri)) as {
-                facts?: { windowTokens?: number | null };
-                config?: { triggers?: { contextWindowOver?: number } };
+                facts?: { windowTokens?: number | null; windowLimitTokens?: number | null };
+                config?: { triggers?: { windowOverRatio?: number } };
             },
     );
-    const view = () =>
-        windowUsageOf(
-            res()?.facts?.windowTokens ?? null,
-            res()?.config?.triggers?.contextWindowOver,
-            fmtTokens,
-        );
+    /** 触发阈值（token）= 模型窗口 × 比例；窗口未知 / 比例关闭 ⇒ undefined（不猜数） */
+    const threshold = (): number | undefined => {
+        const ratio = res()?.config?.triggers?.windowOverRatio;
+        const limit = res()?.facts?.windowLimitTokens;
+        return typeof ratio === "number" && ratio > 0 && typeof limit === "number" && limit > 0
+            ? limit * ratio
+            : undefined;
+    };
+    const view = () => windowUsageOf(res()?.facts?.windowTokens ?? null, threshold(), fmtTokens);
     return (
         <Show
             when={view()}

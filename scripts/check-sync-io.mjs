@@ -106,7 +106,7 @@ const LEGACY_SYNC_IO_BASELINE = new Map(Object.entries({
   "pkgs.ts/diy-app/src/main/services/facts-context.ts": 1,
   "pkgs.ts/diy-app/src/main/services/facts-store.ts": 18,
   "pkgs.ts/diy-app/src/main/services/journal-store.ts": 8,
-  "pkgs.ts/diy-app/src/main/services/local-agent.ts": 37,
+  "pkgs.ts/diy-app/src/main/services/local-agent.ts": 36,
   "pkgs.ts/diy-app/src/main/services/local-find.ts": 4,
   "pkgs.ts/diy-app/src/main/services/local-layout-migrate.ts": 18,
   "pkgs.ts/diy-app/src/main/services/local-ops-seek.ts": 14,

@@ -10,13 +10,11 @@
 //   ③ **每步投递**：按**已落盘边界**切，**不重算**（新增长只是追加到尾部，切点不动）。
 //   ④ **手动**：「压缩」按钮随时可用，按当前上限立刻重算一次。
 //
-// 三触发器（systemContextChanged / cacheExpired / contextWindowOver）**仍然存在**，但它们的
-// `mode=auto` 只决定要不要另写一条 `compact.jsonl` **审计记录**（##431 起降级为审计日志）——
-// **不改变投递切点**。界面上必须把这两件事分开说，否则又回到「用户被搞懵」的老路。
+// 三触发器（systemContextChanged / cacheExpired / contextWindowOver）**仍然存在**，但
+// ##442 起删了 off/notify/auto 三态：**到点就压**，只另写一条 `compact.jsonl` **审计记录**
+// （##431 起降级为审计日志）—— **不改变投递切点**。界面上必须把这两件事分开说。
 //
 // 纯函数：禁止 import node:*（渲染层直接用）。
-
-export type CompactWhenMode = "off" | "notify" | "auto";
 
 /** 已落盘的压缩边界（turns.jsonl 的 compaction entry，只取展示需要的三项） */
 export interface CompactWhenBoundary {
@@ -29,8 +27,6 @@ export interface CompactWhenBoundary {
 }
 
 export interface CompactWhenInput {
-    /** 自动压缩模式（只管审计记录，不改投递切点） */
-    mode: CompactWhenMode;
     /** 唯一旋钮：历史 token 上限 */
     limitTokens: number;
     /** 已落盘边界；null = 从没压过（投递 = 全量） */
@@ -140,25 +136,19 @@ export function compactWhenRows(i: CompactWhenInput): CompactWhenRow[] {
             label: "手动",
             state: "manual",
             text: "随时可用：面板右上「压缩」按钮 / `diy agent local compact run`（历史保留、可撤销）",
-            hint: "人工触发，不看 mode、不看上限是否已经顶过 —— 立刻按当前上限重算一次边界。",
+            hint: "人工触发，不看是否已经到点 —— 立刻按当前上限重算一次边界。",
         },
     ];
 }
 
 /**
- * 自动压缩（mode + 三触发器）与投递的关系 —— **一句话划清**。
+ * 自动压缩与投递的关系 —— **一句话划清**（##442 删 mode 后：到点就压）。
  * ##431 起 `compact.jsonl` 是纯审计日志，三触发器不再决定投递切点。
  */
-export function autoAuditSentence(i: Pick<CompactWhenInput, "mode">): string {
-    const mode =
-        i.mode === "off"
-            ? "off（不检测）"
-            : i.mode === "notify"
-              ? "notify（检测到只提示）"
-              : "auto（检测到就压，另记一条审计）";
+export function autoCompactSentence(): string {
     return (
-        `自动压缩 mode=${mode}：三个触发器（系统上下文变 / 缓存过期 / 窗口超限）只决定要不要**另记一条审计**` +
-        "（`compact.jsonl`），**不改投递切点** —— 投递只认上面那个已落盘的边界。"
+        "自动压缩：**到点就压**（窗口占比 / 系统上下文变 / 缓存过期），另记一条审计（`compact.jsonl`），" +
+        "**不改投递切点** —— 投递只认上面那个已落盘的边界。"
     );
 }
 

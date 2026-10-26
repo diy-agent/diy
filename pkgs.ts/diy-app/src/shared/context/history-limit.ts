@@ -21,8 +21,11 @@ import { hasDropped, selectKeptBoundary, type BoundaryMessage } from "./select-k
  */
 export { HEAD_KEEP_TOKENS as HISTORY_HEAD_TOKENS, RETAIN_RATIO as HISTORY_RETAIN_RATIO } from "./select-kept-boundary";
 
-/** 单条上限的缺省值（token）。旧 `budgetBytes: 20480` ≈ 5120 token —— 新口径放开到 20000。 */
-export const DEFAULT_HISTORY_LIMIT_TOKENS = 20_000;
+/**
+ * 单条上限的缺省值（token）。旧 `budgetBytes: 20480` ≈ 5120 token；
+ * ##442（用户 2026-10-26）：按「完全步骤历史留一个固定值，比如 30K」定为 30000。
+ */
+export const DEFAULT_HISTORY_LIMIT_TOKENS = 30_000;
 
 /**
  * 单条上限的**下限**（token），低于它一律夹上来 —— 理由（##432 review 第 2 条）：

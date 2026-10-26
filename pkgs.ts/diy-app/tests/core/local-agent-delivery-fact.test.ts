@@ -17,7 +17,6 @@ import { createTask } from "../../src/main/core/task";
 import { LocalAgentManager } from "../../src/main/services/local-agent";
 import { opsFile } from "../../src/main/core/local-paths";
 import { saveAutoCompact } from "../../src/main/core/auto-compact-config";
-import { DEFAULT_WINDOW_OVER_TOKENS } from "../../src/shared/context/auto-compact";
 import type { StepUsageRecord } from "../../src/shared/usage";
 
 let PROJECT = "";
@@ -68,8 +67,7 @@ describe("投递压缩可见性：每轮首步的用量账带 historySelection",
         const uri = createTask({ title: "投递事实", project: PROJECT });
         seedOps(uri);
         saveAutoCompact(diyHome(), {
-            mode: "notify",
-            triggers: { systemContextChanged: true, cacheExpired: true, contextWindowOver: DEFAULT_WINDOW_OVER_TOKENS },
+            triggers: { systemContextChanged: true, cacheExpired: true, windowOverRatio: 0.5 },
             policy: { mode: "budget", modeData: { toolResult: { render: "asis" } }, summary: false },
         });
         const model = new MockLanguageModelV3({
@@ -88,7 +86,7 @@ describe("投递压缩可见性：每轮首步的用量账带 historySelection",
         const s1 = recs.find((r) => r.step === 1)!;
         expect(s1.historySelection).toBeTruthy();
         // 报的是**唯一旋钮**的值（token 上限）；没有压缩边界 ⇒ 不丢消息
-        expect(s1.historySelection!.limitTokens).toBe(20000);
+        expect(s1.historySelection!.limitTokens).toBe(30000);
         expect(s1.historySelection!.totalMessages).toBeGreaterThan(0);
         expect(s1.historySelection!.droppedMessages).toBe(0);
         // 只有轮首记（配置驱动的重建点）；其余步不带

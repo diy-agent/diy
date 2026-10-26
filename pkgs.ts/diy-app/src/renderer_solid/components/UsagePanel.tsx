@@ -832,14 +832,11 @@ export function ContextPartsDrawer(props: { open: boolean; uri: string | null; o
         async (u) =>
             u
                 ? ((await localChatStore.autoCompactStatus(u)) as unknown as {
-                      config?: { mode: "off" | "notify" | "auto" };
                       /** ##432 事件制：已落盘的压缩边界（null = 从没压过） */
                       facts?: { boundary?: { at: string; dropped: number; limitTokens: number } | null };
                   })
                 : undefined,
     );
-    /** 自动压缩 mode：只说「要不要另记一条审计」，与投递切点无关（`null` = 未读到） */
-    const badgeMode = (): "off" | "notify" | "auto" | null => autoStatus()?.config?.mode ?? null;
     /**
      * 已落盘的压缩边界 —— `undefined` = 还没取到（不写这块），`null` = 确实没压过（投递 = 全量）。
      * 两个值不能合成一个：没取到就说「没压过」等于编事实。
@@ -1057,7 +1054,6 @@ export function ContextPartsDrawer(props: { open: boolean; uri: string | null; o
                                                                                         title={deliveryBadgeTitle({
                                                                                             selection: d(),
                                                                                             boundary: badgeBoundary(),
-                                                                                            mode: badgeMode(),
                                                                                         })}
                                                                                     >
                                                                                         {deliveryBadgeText(d())}

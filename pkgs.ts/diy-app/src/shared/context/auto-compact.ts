@@ -33,11 +33,11 @@ import {
 export const AutoCompactTriggersSchema = z.object({
     systemContextChanged: z.boolean().describe("系统上下文变了 → 前缀缓存必作废；此刻压缩零重建代价"),
     cacheExpired: z.boolean().describe("缓存已过期（距上次请求 > 生效 TTL）→ 同上，冷启动压缩是白赚"),
-    contextWindowOver: z
+    windowOverRatio: z
         .number()
         .describe(
-            "上下文窗口占用上限（**token 数** = 该会话最后一步实测用量 usage.total，见 ##268 §6.9 D7）；" +
-                "0 = 关闭该触发。撞墙即压，不是划不划算的问题",
+            "上下文窗口占用**比例**（0~1；判据 = 最后一步实测用量 usage.total >= 模型窗口 contextLimit × ratio）；" +
+                "0 = 关闭该触发。窗口上限取不到 ⇒ 不触发（不猜数）。缺省 0.5",
         ),
 });
 
@@ -52,24 +52,21 @@ export const AutoCompactTriggersSchema = z.object({
 export const AutoCompactHistorySchema = z.object({
     /**
      * **唯一的历史预算**：一条 token 上限（+ 摘要开关）。
-     * 缺省 = `DEFAULT_HISTORY_LIMIT`（20000 token / 摘要关）。
+     * 缺省 = `DEFAULT_HISTORY_LIMIT`（30000 token / 摘要关）。
      */
     limit: HistoryLimitSchema.optional().describe("历史预算：一条 token 上限 + 摘要开关（唯一旋钮）"),
 });
 
 export const AutoCompactConfigSchema = z.object({
-    mode: z
-        .enum(["off", "notify", "auto"])
-        .describe("off 不检测；notify 检测并提示（默认）；auto 检测到就压"),
     triggers: AutoCompactTriggersSchema,
     /**
      * 压缩策略（自动 / 手动**同一套**）—— 直接复用 `CompactPolicy`（含 `summary`）。
      *
-     * 自动压的"压什么"与手动压完全同类，就用同一个真源（差异只在**谁触发**，由 `mode`/`triggers` 表达）；
+     * 自动压的"压什么"与手动压完全同类，就用同一个真源（差异只在**谁触发**，由 `triggers` 表达）；
      * 各造一个形状必然分叉。
      */
     policy: CompactPolicySchema.describe("自动压时用的策略（与手动面板同一真源形状）"),
-    history: AutoCompactHistorySchema.optional().describe("历史预算（一条 token 上限 + 摘要开关）；缺省 = 20000 token"),
+    history: AutoCompactHistorySchema.optional().describe("历史预算（一条 token 上限 + 摘要开关）；缺省 = 30000 token"),
 });
 /**
  * 配置真源类型（**手写**而非 `z.infer`）：`history.limit` 的容错归一（宽松补齐 + 出声）
@@ -77,7 +74,6 @@ export const AutoCompactConfigSchema = z.object({
  * 不能靠 `z.infer` 硬凑。
  */
 export interface AutoCompactConfig {
-    mode: "off" | "notify" | "auto";
     triggers: AutoCompactTriggers;
     policy: CompactPolicy;
     /** 历史预算：**一条 token 上限 + 摘要开关**（唯一旋钮；缺省 = `DEFAULT_HISTORY_LIMIT`） */
@@ -153,45 +149,65 @@ export function autoCompactIssuesFromZod(error: z.ZodError, resolved: AutoCompac
 }
 
 /**
- * 窗口触发默认阈值（**token 域**，用户 2026-10-15 拍板 = 固定数字）：
- * 38400 token —— 用户口径「窗口占用到 150KB 就压」（150×1024 字节 ÷ 4 ≈ 38400 token）。
- * 判据 = 该会话**最后一步实测用量**（`usage.total`，真实 token 数）≥ 本值 ⇒ 压。
+ * 窗口触发默认阈值（**比例**，用户 2026-10-26 拍板）：模型窗口上限的 50%。
  *
- * **不是比例**（旧 `0.8` 在 1M 窗口上 ≈ 80 万 token 才触发 ⇒ 等于不压，等爆），
- * **也不是投影字节 / 字符数 / 文本量**。常量先写死（用户：「随时可以改」），
- * 将来变量树就地编辑（##268 §6.10）再迁。
+ * 判据 = 该会话**最后一步实测用量**（`usage.total`，真实 token 数）≥ `contextLimit × 本值` ⇒ 压。
+ * 固定 token 数在 1M 窗口下只有 3.84%（38400/1M），实际每步 80–95k ⇒ 恒超 ⇒ 每轮空转压缩；
+ * 比例才跟得上不同模型。窗口上限取不到 ⇒ **不触发**（不猜数）。
  */
-export const DEFAULT_WINDOW_OVER_TOKENS = 38400;
+export const DEFAULT_WINDOW_OVER_RATIO = 0.5;
 
 /**
- * 窗口阈值归一（单位：**token 数**）。
+ * 窗口阈值归一（单位：**比例 0~1**）。
  *
- * 【单位迁移】旧单位是**比例**（0~1，×contextLimit）。两单位在 (0,1) 区间**冲突**：
- * 旧的 `0.8` 会被当 0.8 token → 几乎必然触发（每轮都压，误伤用户的会话）。
- * 故把 `(0,1)` 视为**旧比例值**：出声告警并回落默认（38400），绝不静默把它当 token 用。
- * `0` = 关闭、`>=1` = 合法 token 阈值，原样保留。
+ * - `(0,1)`：合法比例，原样采纳（旧配置里本就是比例的 `0.8` 不再告警回落）；
+ * - `0`：关闭该触发；
+ * - `>=1`：**旧 token 绝对数**（如 800000）⇒ 按当前模型窗口一次性折算成比例；
+ *   窗口未知时无法折算，本次按缺省 `0.5` 判定并出声（读到窗口后会再折算并写回）。
  */
-export function normalizeWindowOver(v: unknown, issues?: AutoCompactIssue[]): number {
-    if (typeof v !== "number" || !Number.isFinite(v) || v < 0) return DEFAULT_WINDOW_OVER_TOKENS;
-    if (v > 0 && v < 1) {
-        const message = `contextWindowOver=${v} 疑似旧比例值；现单位为 **token 数**，已回落默认 ${DEFAULT_WINDOW_OVER_TOKENS}（≈150KB）`;
+export function normalizeWindowOverRatio(
+    v: unknown,
+    issues?: AutoCompactIssue[],
+    windowLimitTokens?: number | null,
+): number {
+    if (typeof v !== "number" || !Number.isFinite(v) || v < 0) return DEFAULT_WINDOW_OVER_RATIO;
+    if (v === 0) return 0;
+    if (v < 1) return v;
+    // 旧 token 绝对数 → 比例
+    if (typeof windowLimitTokens === "number" && Number.isFinite(windowLimitTokens) && windowLimitTokens > 0) {
+        const ratio = Math.max(1e-4, Math.min(1, Math.round((v / windowLimitTokens) * 10000) / 10000));
+        const message =
+            `contextWindowOver=${v}（旧 token 绝对数）已按模型窗口 ${windowLimitTokens} ` +
+            `一次性折算为 windowOverRatio=${ratio}，并写回`;
         console.warn(`[auto-compact] ${message}`);
-        issues?.push({ path: "triggers.contextWindowOver", message });
-        return DEFAULT_WINDOW_OVER_TOKENS;
+        issues?.push({ path: "triggers.windowOverRatio", message });
+        return ratio;
     }
-    return v;
+    const message =
+        `windowOverRatio=${v} 是旧 token 绝对数，但当前模型窗口上限未知 ⇒ 本次按缺省 ` +
+        `${DEFAULT_WINDOW_OVER_RATIO} 判定（不猜数；读到窗口上限后自动折算并写回）`;
+    console.warn(`[auto-compact] ${message}`);
+    issues?.push({ path: "triggers.windowOverRatio", message });
+    return DEFAULT_WINDOW_OVER_RATIO;
+}
+
+/** 这份原始配置是否需要做「旧 token 阈值 → 比例」的**一次性迁移写回** */
+export function needsWindowRatioMigration(raw: unknown): boolean {
+    const src = (raw ?? {}) as Record<string, unknown>;
+    const t = (src["triggers"] ?? {}) as Record<string, unknown>;
+    if (t["contextWindowOver"] !== undefined) return true;
+    const r = t["windowOverRatio"];
+    return typeof r === "number" && Number.isFinite(r) && r >= 1;
 }
 
 /**
- * 默认配置。**默认 `notify`**（不静默改用户的会话）：
- * 静默压缩是在用户背后丢他的对话历史，且损失不可见 —— 与 `rule.no-silent-catch` 同一条原则。
- * `auto` 要用户显式开（开了也会写账本 + 有理由可查）。
+ * 默认配置：**到点就压**（用户 2026-10-26：「没有必要这个复杂性，到了就压缩」）。
+ * 静默压缩的代价由「重建记忆提示」承担（刀 2）—— 不再用 off/notify 三态延长决定。
  */
 export const DEFAULT_AUTO_COMPACT: AutoCompactConfig = {
-    mode: "notify",
-    triggers: { systemContextChanged: true, cacheExpired: true, contextWindowOver: DEFAULT_WINDOW_OVER_TOKENS },
+    triggers: { systemContextChanged: true, cacheExpired: true, windowOverRatio: DEFAULT_WINDOW_OVER_RATIO },
     // 自动压与手动压**同一套策略**（合并后不再有第二套）。
-    // ⚠️ 历史预算不在这里 —— 它是 `history.limit.limitTokens`（缺省 20000 token）。
+    // ⚠️ 历史预算不在这里 —— 它是 `history.limit.limitTokens`（缺省 30000 token）。
     policy: {
         mode: "budget",
         modeData: { toolResult: DEFAULT_TOOL_RESULT_POLICY },
@@ -208,17 +224,27 @@ export const DEFAULT_AUTO_COMPACT: AutoCompactConfig = {
  * 可选的 `issues` 收集器：凡**本函数改动过**（缺键补缺省、旧单位迁移、坏 keep 丢弃）的地方各推一条
  * 出声（##370）—— 归一**不再静默**，调用方（plan get / UI）据此把"为什么"说给用户。
  */
-export function normalizeAutoCompact(raw: unknown, issues?: AutoCompactIssue[]): AutoCompactConfig {
+export function normalizeAutoCompact(
+    raw: unknown,
+    issues?: AutoCompactIssue[],
+    windowLimitTokens?: number | null,
+): AutoCompactConfig {
     const src = (raw ?? {}) as Record<string, unknown>;
     const t = (src["triggers"] ?? {}) as Record<string, unknown>;
-    const mode = src["mode"] === "off" || src["mode"] === "auto" ? src["mode"] : "notify";
+    // mode 已删除（##442）：旧配置残留 **忽略并出声**，不再有 off/notify/auto 三态
+    if (src["mode"] !== undefined) {
+        const message = `mode=${JSON.stringify(src["mode"])} 已删除（##442：到点就压）→ 已忽略`;
+        console.warn(`[auto-compact] ${message}`);
+        issues?.push({ path: "mode", message });
+    }
+    // 旧键 contextWindowOver 改名为 windowOverRatio；值语义同「比例」，旧 token 数由归一折算
+    const rawRatio = t["windowOverRatio"] !== undefined ? t["windowOverRatio"] : t["contextWindowOver"];
     const history = normalizeHistory(src["history"], issues, legacyBudgetBytes(src["policy"]));
     return {
-        mode,
         triggers: {
             systemContextChanged: t["systemContextChanged"] !== false,
             cacheExpired: t["cacheExpired"] !== false,
-            contextWindowOver: normalizeWindowOver(t["contextWindowOver"], issues),
+            windowOverRatio: normalizeWindowOverRatio(rawRatio, issues, windowLimitTokens),
         },
         // 策略（自动 / 手动**同一套**）→ 交给 normalizePolicy 统一宽松归一；
         // 缺省用 DEFAULT_AUTO_COMPACT.policy（见本函数头注）。
@@ -301,6 +327,11 @@ export interface AutoCompactFacts {
     /** 上下文窗口占用（**token 数** = 该会话最后一步实测用量 `usage.total`）；null = 未知（无用量账） */
     windowTokens: number | null;
     /**
+     * 模型窗口上限（token，`contextLimitOf(model)`）；null = 未知。
+     * 窗口未知 ⇒ 窗口触发**不判**（不拿缺省数猜一个阈值）。
+     */
+    windowLimitTokens: number | null;
+    /**
      * 上次真发时**投递出去的那段历史** ≈ token（= 最后一步的 `historySelection.keptTokens`，同口径粗估）；
      * null = 还没有投递记录。它和 `windowTokens` 不是一回事：后者是整份请求的实测用量。
      */
@@ -329,7 +360,14 @@ export function detectAutoCompactTriggers(
 ): CompactTrigger[] {
     const out: CompactTrigger[] = [];
     const t = cfg.triggers;
-    if (t.contextWindowOver > 0 && facts.windowTokens !== null && facts.windowTokens >= t.contextWindowOver) {
+    // 窗口触发 = **比例**：实测用量 ≥ 窗口上限 × ratio。窗口 / 用量任一未知 ⇒ 不触发（不猜数）
+    if (
+        t.windowOverRatio > 0 &&
+        facts.windowTokens !== null &&
+        facts.windowLimitTokens !== null &&
+        facts.windowLimitTokens > 0 &&
+        facts.windowTokens >= facts.windowLimitTokens * t.windowOverRatio
+    ) {
         out.push("contextWindowOver");
     }
     if (t.systemContextChanged && facts.systemContextChanged) out.push("systemContextChanged");
@@ -344,7 +382,7 @@ export const TRIGGER_TEXT: Record<CompactTrigger, string> = {
     manual: "手动触发",
     systemContextChanged: "系统上下文已变化 → 前缀缓存已作废（此刻压缩无重建代价）",
     cacheExpired: "缓存已过期（距上次请求超过生效 TTL）→ 冷启动，压缩无重建代价",
-    contextWindowOver: "上下文窗口占用超过上限（token 阈值；不压就撞墙）",
+    contextWindowOver: "上下文窗口占用超过模型窗口的比例阈值（不压就撞墙）",
 };
 
 /**
