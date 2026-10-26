@@ -62,9 +62,10 @@ describe("normalizeUserRuns", () => {
         expect(out[0]!.content).toBe("1\n2\n3");
     });
 
-    it("信封形态的 user 不参与合并（##421）：注记与历史首条 user 各占一条", () => {
-        // 注记自占顶层键（`history:`）—— 若被并进相邻 user，`user.message` 就变成「索引 + 原话」一坨
-        const note = "history:\n  file: local/x.llm.jsonl\n  kept:\n    - - 1\n      - 1";
+    it("信封形态的 user 不参与合并（##421）：自动段与历史首条 user 各占一条", () => {
+        // 自动段自占顶层键（`summary:`；`history:` 注记已于 ##442 刀 2 删除）——
+        // 若被并进相邻 user，`user.message` 就变成「自动段 + 原话」一坨
+        const note = 'summary: "上一段结论"';
         const out = normalizeUserRuns([
             { role: "user", content: note },
             { role: "user", content: "用户原话" },

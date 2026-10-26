@@ -18,11 +18,8 @@
 //     user:
 //       message:   ← 用户本轮真实发言（原样）
 //
-//   历史首条之前的**独立 user 消息**（##421）
-//     history:     ← 压缩索引注记（**仅当真的丢了消息**；纯数据，自占一条消息）
-//       ⚠️ 位置在 system 之后、历史第一条之前 —— 用户原话：「压缩后第一个消息很容易分辨
-//       是被压缩了，放最后一个，完全被淹没了」。因此它必须**不被** `normalizeUserRuns`
-//       并进相邻 user 正文（判据 `isEnvelopeText`：首行是信封顶层键）。
+//   ⚠️ 头部（system 之后、历史第一条之前）**只放逐字节常量**：前缀缓存按逐字节命中，那里一有
+//   每轮变的量，整段历史每轮按 cache miss 计费。`history:` 注记就是反例，已于 ##442 刀 2 删除。
 //
 //   **历史** user 消息（块树里的 user 块 → 投影，##422）
 //     from:        ← 发言者（成员 id + 显示名）—— 多人群聊 / agent 间消息才分得清谁说的
@@ -44,7 +41,6 @@
 import { z } from "zod";
 import { AssembleGlobalsSchema } from "../prompt-schema";
 import { describeSchema, pruneSchemaDoc, type SchemaDoc } from "../schema-doc";
-import { HistoryNoteSchema } from "./history-note";
 import { emitYamlTraced, renderPaths, subsetOf, toYaml } from "./render";
 import type { ContextPath, ContextTreeState } from "./types";
 
@@ -54,16 +50,15 @@ import type { ContextPath, ContextTreeState } from "./types";
  * 它是**代码**（改这段 = 改发给模型的话术）。⚠️ 但它**不参与** `WIRE_VERSION` 派生
  * （那只由 `wire.ts::WIRE_ENCODING` 的结构语义决定）。
  *
- * 【已决 · 用户 2026-10-15】信封**顶层键集不进 `WIRE_ENCODING`**：加键（`history` / `summary`）
+ * 【已决 · 用户 2026-10-15】信封**顶层键集不进 `WIRE_ENCODING`**：加键（`summary` / `from`）
  * 只改「给人/模型看的编排」，**不影响业务**（原子单元 hash 与投递到各容器的值都没变）——
  * 故 `WIRE_VERSION` 保持不变，免得存量 step 记录集体判「不可比」（UI 全标 incomparable）。
  * 真正该动版本的只有 `WIRE_ENCODING` 里那些**语义**（system/runtime 投递形态、hash 口径、渲染格式）。
  */
 export const ENVELOPE_ABOUT = [
-    "YAML 信封：顶层键只有 help / system / runtime / runtimeDiff / summary / history / from / user。",
+    "YAML 信封：顶层键只有 help / system / runtime / runtimeDiff / summary / from / user。",
     "· help = 结构说明（zod 派生）；值段只放数据，解释在 help。",
     "· system 每次全量重建；runtime 每轮首步全量，中途变了追加 runtimeDiff（以**后出现**者为准）。",
-    "· `history:` = 压缩注记（一条 token 上限、保头 600 token、tool 配对平衡；**边界只在压缩事件时算一次**）。自占一条 user 消息、紧跟 system；`mode: off` 只关自动触发，不关裁。",
     "· **历史压缩不动变量树**（system / runtime 每次全量）：别为取值去 cat 文件或跑命令。",
     "· `from:` 只在**历史** user 消息上，说明是谁说的（不是变量树）。",
     "· `summary:` 是被压掉那段的结论，只做背景。`[]` / `{}` = 存在但为空（与「没有这个变量」不是一回事）。",
@@ -139,6 +134,14 @@ export interface HelpDoc {
 export function buildHelpDoc(opts: {
     /** 该容器实际投递的 path（裁剪结构用；来自投递构造，不是用户偏好） */
     systemPlaces: readonly ContextPath[];
+    /**
+     * `help.runtime` 要描述哪些单元 —— **必须是常量名单**（候选全集），不能是「本轮真出现的那些」。
+     *
+     * 为何（##442 刀 2 连带修）：help 在 system 段里，而 system 是前缀缓存的第一块。若 help 跟着
+     * 「本轮存在哪些 runtime 单元」变，则 a) 可选单元首次出现/消失（`self` 首步还没有、`room.recent`
+     * 没人说话就缺席）就扭一次 system；b) 实测 ##266 第一轮 system 比第二轮少一整块 `self:` 描述。
+     * 描述的读者是模型（`缺席 ≠ 0`），写全反而更有用；代价只是一次性多几百字节常量。
+     */
     runtimePlaces: readonly ContextPath[];
 }): HelpDoc {
     const globalsDoc = describeSchema(AssembleGlobalsSchema);
@@ -150,21 +153,20 @@ export function buildHelpDoc(opts: {
         runtime: { desc: key("runtime"), ...pruneSchemaDoc(globalsDoc, opts.runtimePlaces) },
         runtimeDiff: { desc: EnvelopeSchema.shape.runtimeDiff.description },
         summary: describeSchema(SummarySchema),
-        history: { desc: HistoryNoteSchema.description, ...describeSchema(HistoryNoteSchema) },
         from: describeSchema(FromSchema),
         user: { desc: key("user"), ...describeSchema(UserEnvelopeSchema) },
     };
 }
 
 /** 信封的**顶层键名**（`ENVELOPE_ABOUT` 第一行那份名单；`isEnvelopeText` 的判据也用它） */
-export const ENVELOPE_TOP_KEYS = new Set(["help", "system", "runtime", "runtimeDiff", "summary", "history", "from", "user"]);
+export const ENVELOPE_TOP_KEYS = new Set(["help", "system", "runtime", "runtimeDiff", "summary", "from", "user"]);
 
 /**
  * 这段文本是不是**一份信封**（自占顶层键的自动生成段）？
  *
  * 判据：**首个非空行**就是信封顶层键 `<key>:`（顶格无缩进，键在白名单里）。
- * 干什么用（##421）：`normalizeUserRuns` 据此**不合并**信封消息 —— 注记（`history:`）现在放在
- * 历史第一条之前，若被并进相邻 user，就又是一坨「自动生成的元数据伪装成用户原话」（##310 八轮坑）。
+ * 干什么用（##421）：`normalizeUserRuns` 据此**不合并**信封消息 —— `summary:` 等自动生成段若被
+ * 并进相邻 user，就又是一坨「自动生成的元数据伪装成用户原话」（##310 八轮坑）。
  *
  * 为什么不真解析 YAML：信封恒由 `toYaml` 产出、顶层键必在首行；为一次合并判断引入解析器（且失败要吞）
  * 代价不成比例。误判方向也是安全的：要么把不该分的两条 user 分开（= 现状），要么把该分的合并回去
@@ -183,7 +185,7 @@ export function isEnvelopeText(text: string): boolean {
 /**
  * 把若干**顶层键片段**（各自是 `k:` + 缩进正文的一段 YAML）与可选的 `user:` 段拼成**一份**合法 YAML。
  *
- * 硬规则（##310）：消息里一切**自动生成**的段（`history:` 压缩索引、`runtime:` 变量树）
+ * 硬规则（##310）：消息里一切**自动生成**的段（`summary:` 摘要、`runtime:` 变量树）
  * 都必须有**自己的顶层键名**，与用户真话（`user.message`）泾渭分明 —— 混进 `user.message`
  * 会被模型当成"用户的任务内容"去处理（tasks/5 实测：模型为此多烧 3 次 bash、5.6 万 prompt token）。
  *
@@ -215,7 +217,7 @@ export interface Speaker {
 /**
  * 历史 user 消息的 `from:` 段（顶层键，与 `user.message` **并列** —— 见 ##422）。
  *
- * 为何不用 `user.message` 前缀而另立顶层键（与 `history:` / `summary:` 同一条硬规则）：
+ * 为何不用 `user.message` 前缀而另立顶层键（与 `summary:` 同一条硬规则）：
  * 自动生成 / 机器携带的段一旦写进 `user.message`，模型会把它当**用户的任务内容**去处理。
  */
 export function renderFromPart(speaker: Speaker): string {
@@ -227,7 +229,7 @@ export function renderFromPart(speaker: Speaker): string {
  * 重放历史时要**剥掉**的顶层段：易变变量树（`runtime:` / `runtimeDiff:`）。
  *
  * 为什么只剥这两段（##422 用户口径）：「信封是只清理 runtime 消息，不是把所有线索性消息
- * 都丢弃，因为不是所有信封字段都是 runtime 变量」—— `from:`（谁说的）/ `history:`（压掉了
+ * 都丢弃，因为不是所有信封字段都是 runtime 变量」—— `from:`（谁说的）/ `summary:`
  * 哪些行）都是**线索**，重放必须留着；`runtime:` 是**每步全量的当前值**，重放只会浪费字节
  * 并把旧值伪装成现状（与 `ENVELOPE_ABOUT` 那条「历史压缩不影响变量树」同一条道理）。
  */
@@ -251,7 +253,7 @@ export function hasTopLevelKey(text: string, key: string): boolean {
  *
  * 判据（单测钉住）：
  *   · 是信封（首个非空行是顶格的信封顶层键）**且**带顶格 `user:` 段 ⇒ 才是「我们的消息形态」，
- *     动手剥；剥完 `from:` / `history:` / `summary:` / `user:` 一个不少、`runtime` 一个不留。
+ *     动手剥；剥完 `from:` / `summary:` / `user:` 一个不少、`runtime` 一个不留。
  *   · 否则（裸文本、首行缩进、用户自己粘贴的一段 YAML 没有 `user:`）⇒ **原样返回**，
  *     逐字不变 —— 剥错用户正文比少剥一段 runtime 严重得多。
  *   · **幂等**：剥过的再剥仍是同一份字节（各层调用点重复跑也安全）。
@@ -311,8 +313,10 @@ export function systemEnvelope(
     tree: ContextTreeState,
     systemPlaces: readonly ContextPath[],
     runtimePlaces: readonly ContextPath[],
+    /** help 用名单（候选全集，常量）—— 缺省 = `runtimePlaces`（单侧调用兼容） */
+    helpRuntimePlaces: readonly ContextPath[] = runtimePlaces,
 ): EnvelopeRendering {
-    const help = buildHelpDoc({ systemPlaces, runtimePlaces });
+    const help = buildHelpDoc({ systemPlaces, runtimePlaces: helpRuntimePlaces });
     const r = emitYamlTraced({ help, system: subsetOf(tree, systemPlaces) });
     return { text: r.text, lines: strip(r.lines as never, "system") };
 }

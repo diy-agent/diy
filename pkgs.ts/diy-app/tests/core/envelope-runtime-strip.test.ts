@@ -1,12 +1,12 @@
 // tests/core/envelope-runtime-strip.test.ts
-// 🎯 ##422 第二轮：历史 user 消息**只剥 runtime 段**，其余信封字段（from / history / …）保住
+// 🎯 ##422 第二轮：历史 user 消息**只剥 runtime 段**，其余信封字段（from / summary / …）保住
 //
 // 用户口径（2026-10-24 原文）：「历史里重放的 user 消息，**只剥 runtime 段**（那是每步易变的全量值，
 // 重放只会浪费字节并误导模型），其余信封字段（from / 发言人 / 房间 / 投递来源等）**保留**。」
 //
 // 判据：
-//   ① 真信封形态（`from:` + `history:` + `runtime:` + `runtimeDiff:` + `user:`）⇒ runtime 两段**剥净**，
-//      from / history / user 段**逐字保住**
+//   ① 真信封形态（`from:` + `summary:` + `runtime:` + `runtimeDiff:` + `user:`）⇒ runtime 两段**剥净**，
+//      from / summary / user 段**逐字保住**
 //   ② 裸文本 / 首行缩进 / 没有顶格 `user:` 的粘贴 YAML ⇒ **逐字不变**（宁少剥，不剥用户正文）
 //   ③ **幂等**：剥过的再剥 = 同一份字节
 //   ④ 集成：块树里存着一份带 runtime 的信封 ⇒ `projectAll` 出来的消息里没有 runtime、仍带 from
@@ -24,11 +24,11 @@ import {
 import { toYaml } from "../../src/shared/context/render";
 import { BlockStore, projectAll, type Op } from "../../src/main/services/local-blocks";
 
-/** 一份**真形态**的历史 user 信封：from + history + runtime + runtimeDiff + user（顺序照 `withRuntime`/`projectAll`） */
+/** 一份**真形态**的历史 user 信封：from + summary + runtime + runtimeDiff + user（顺序照 `withRuntime`/`projectAll`） */
 const realEnvelope = (): string =>
     tailEnvelope(
         [
-            toYaml({ history: { from: 70, to: 70, budgetBytes: 61440 } }),
+            toYaml({ summary: "上一次压缩的结论" }),
             toYaml({ runtime: { docs: { count: 10 }, identity: "你是本地 coding agent" } }),
             toYaml({ runtimeDiff: { self: { turn: { steps: 3 } } } }),
             renderFromPart({ id: "agent:main", name: "deepseek-4.1-flash" }),
@@ -43,16 +43,16 @@ const topKeys = (text: string): string[] =>
         .filter((k): k is string => k !== undefined);
 
 describe("##422 判据 ①：真信封只剥 runtime", () => {
-    it("runtime / runtimeDiff 两段剥净，from / history / user 逐字保住", () => {
+    it("runtime / runtimeDiff 两段剥净，from / summary / user 逐字保住", () => {
         const env = realEnvelope();
         // 前提：这份 fixtures 真是信封、四段俱全（否则下面的断言测不到东西）
-        expect(topKeys(env)).toEqual(["history", "runtime", "runtimeDiff", "from", "user"]);
+        expect(topKeys(env)).toEqual(["summary", "runtime", "runtimeDiff", "from", "user"]);
         const out = stripRuntimeSections(env);
-        expect(topKeys(out)).toEqual(["history", "from", "user"]);
+        expect(topKeys(out)).toEqual(["summary", "from", "user"]);
         expect(out).not.toContain("runtime");
         // 线索段**逐字**还在（不是「差不多」）
         expect(out).toContain(renderFromPart({ id: "agent:main", name: "deepseek-4.1-flash" }));
-        expect(out).toContain("budgetBytes: 61440");
+        expect(out).toContain('summary: "上一次压缩的结论"');
         expect(out).toContain("第一句\n");
         // 剥完仍是同一份合法形状：`user.message` 里逐字 = 原话
         expect(out).toContain(toYaml({ user: { message: "第一句\n多行内容：a: b" } }));
@@ -143,7 +143,7 @@ describe("##422 判据 ④：投影期剥（块树 → 消息）", () => {
         expect(msgs).toHaveLength(1);
         const text = String(msgs[0]!.content);
         expect(text).not.toContain("runtime");
-        expect(topKeys(text)).toEqual(["history", "from", "user"]);
+        expect(topKeys(text)).toEqual(["summary", "from", "user"]);
         // 发言者段是**这一条**的（不是从信封里再读一份，块 meta 是唯一真源）
         expect(text).toContain(renderFromPart({ id: "agent:main", name: "deepseek-4.1-flash" }));
         // 信封顶层键白名单仍认这份形状 ⇒ 不会被 `normalizeUserRuns` 并进相邻 user
@@ -151,7 +151,7 @@ describe("##422 判据 ④：投影期剥（块树 → 消息）", () => {
     });
 
     it("块里那份信封**自己没带 from** ⇒ 补的 from 在**顶层**（不缩进进 user.message）", () => {
-        const inner = tailEnvelope([toYaml({ history: { from: 70, to: 70 } })], "原话");
+        const inner = tailEnvelope([toYaml({ summary: "上一次压缩的结论" })], "原话");
         const s = new BlockStore();
         for (const op of [
             { op: "start", id: "t1", kind: "turn" },
@@ -168,9 +168,9 @@ describe("##422 判据 ④：投影期剥（块树 → 消息）", () => {
         ] as Op[])
             s.apply(op);
         const text = String(projectAll(s)[0]!.content);
-        expect(topKeys(text)).toEqual(["from", "history", "user"]);
+        expect(topKeys(text)).toEqual(["from", "summary", "user"]);
         expect(text.startsWith(renderFromPart({ id: "human:chen56" }))).toBe(true);
-        // 只有一份 `from:` 顶层键（`history.from` 是缩进在段内的，不算）
+        // 只有一份 `from:` 顶层键（段内的 `from` 是缩进/内层的，不算）
         expect(topKeys(text).filter((k) => k === "from")).toHaveLength(1);
         expect(text).toContain("原话");
     });
