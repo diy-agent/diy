@@ -22,7 +22,7 @@
 import type { WatchEvent } from "../../../shared/watch-event";
 import { JobWatchError } from "../../../shared/job-watch";
 import { taskSink } from "./task";
-import type { JournalWriter } from "./task";
+import type { JournalWriter, WakeFn } from "./task";
 
 export interface WatchSink {
     /** 地址原文（`task:projects/4/tasks/408`） */
@@ -45,6 +45,8 @@ type SinkFactory = (addr: string) => WatchSink;
 export interface SinkDeps {
     /** `task:` 出口的 journal 写入口 */
     readonly journal?: JournalWriter;
+    /** `task:` 出口的唤醒函数（投进会话并开一轮） */
+    readonly wake?: WakeFn;
 }
 
 /** 前缀 → 工厂。**只登记真实现** —— 未实现的前缀在下面显式列出来。 */
@@ -67,7 +69,9 @@ function unimplementedSink(addr: string): WatchSink {
 /** 按地址造 sink。前缀不认识 ⇒ 抛（调用前应已过 `sinkAddressError`）。 */
 export function createSink(addr: string, deps: SinkDeps = {}): WatchSink {
     const prefix = addr.slice(0, addr.indexOf(":"));
-    if (prefix === "task" && deps.journal) return taskSink(addr, deps.journal);
+    if (prefix === "task" && (deps.journal || deps.wake)) {
+        return taskSink(addr, deps.journal ?? undefined, deps.wake);
+    }
     const factory = FACTORIES[prefix];
     if (factory) return factory(addr);
     if ((UNIMPLEMENTED_PREFIXES as readonly string[]).includes(prefix)) return unimplementedSink(addr);

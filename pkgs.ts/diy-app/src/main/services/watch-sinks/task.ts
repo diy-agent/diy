@@ -32,12 +32,27 @@ const PREFIX = "task:";
  */
 export type JournalWriter = (taskUri: string, input: SystemEventInput) => unknown;
 
-export function taskSink(addr: string, write: JournalWriter = addSystemEvent): WatchSink {
+/**
+ * 「投进会话并（空闲时）开一轮」的注入点。返回 Promise 也行 —— 真实现是 fire-and-forget。
+ *
+ * 为什么不直接 import：`local-agent` 是重量级模块（拉 Electron / provider），
+ * 让 sink 层静态依赖它会把单测也拖进去。所以缺省走**动态 import**。
+ */
+export type WakeFn = (taskUri: string, text: string) => void | Promise<void>;
+
+/** 缺省唤醒：复用 job 结束通知那条通道（同一语义：往会话投一句，空闲则开一轮）。 */
+async function defaultWake(taskUri: string, text: string): Promise<void> {
+    const { wakeTaskWithSteer } = await import("../local-agent");
+    wakeTaskWithSteer(taskUri, text, "watch");
+}
+
+export function taskSink(addr: string, write: JournalWriter = addSystemEvent, wake: WakeFn = defaultWake): WatchSink {
     const taskUri = addr.slice(PREFIX.length);
     return {
         addr,
-        deliver(ev: WatchEvent): void {
+        async deliver(ev: WatchEvent): Promise<void> {
             const { title, body } = watchEventText(ev);
+            // ① 账：journal（author=system，可查、权威）
             write(taskUri, {
                 code: ev.kind === "broken" ? "job/watch-broken" : "job/watch-change",
                 title,
@@ -46,6 +61,14 @@ export function taskSink(addr: string, write: JournalWriter = addSystemEvent): W
                 ...(body ? { body } : {}),
                 windowMs: 0,
             });
+            // ② 唤醒：投进那个任务的会话流（`meta.author = "watch"`），空闲则开一轮。
+            //    用户 2026-10-26 定案：**这就是 266 取代轮询的形态** —— 变化才说话，
+            //    说完模型自己决定要不要动。失败不上抛：账已经记上了，叫醒失败下一轮还能看见。
+            try {
+                await wake(taskUri, `${title}\n\n${body}`);
+            } catch {
+                // 叫不醒不算投递失败（journal 那条在）
+            }
         },
     };
 }

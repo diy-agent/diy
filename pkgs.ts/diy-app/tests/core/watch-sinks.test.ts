@@ -30,9 +30,9 @@ const event: WatchEvent = {
 };
 
 describe("task: 出口", () => {
-    it("写成 journal 的一条：system 通道的 code、progress、去重窗关掉", () => {
+    it("写成 journal 的一条：system 通道的 code、progress、去重窗关掉", async () => {
         const j = fakeJournal();
-        createSink("task:projects/4/tasks/266", { journal: j.write }).deliver(event);
+        await createSink("task:projects/4/tasks/266", { journal: j.write, wake: () => {} }).deliver(event);
         expect(j.calls).toEqual([
             {
                 taskUri: "projects/4/tasks/266",
@@ -47,9 +47,13 @@ describe("task: 出口", () => {
         ]);
     });
 
-    it("broken 走 pitfall + 自己的 code（「watch 坏了」比「有变化」急）", () => {
+    it("broken 走 pitfall + 自己的 code（「watch 坏了」比「有变化」急）", async () => {
         const j = fakeJournal();
-        createSink("task:projects/4/tasks/266", { journal: j.write }).deliver({ ...event, kind: "broken", diff: "EACCES" });
+        await createSink("task:projects/4/tasks/266", { journal: j.write, wake: () => {} }).deliver({
+            ...event,
+            kind: "broken",
+            diff: "EACCES",
+        });
         expect(j.calls[0].input.code).toBe("job/watch-broken");
         expect(j.calls[0].input.kind).toBe("pitfall");
         expect(j.calls[0].input.body).toBe("EACCES");
@@ -61,6 +65,7 @@ describe("注册表", () => {
         const j = fakeJournal();
         const results = await deliverToSinks(["room:projects/4/tasks/266", "task:projects/4/tasks/266"], event, {
             journal: j.write,
+            wake: () => {},
         });
         expect(results).toEqual([
             { addr: "room:projects/4/tasks/266", ok: false, error: "出口 room: 尚未实现" },
@@ -77,10 +82,30 @@ describe("注册表", () => {
                 if (uri === "projects/4/tasks/a") throw new Error("disk full");
                 return null;
             },
+            wake: () => {},
         });
         expect(results.map((r) => r.ok)).toEqual([false, true]);
         expect(results[0].error).toBe("disk full");
         expect(calls).toEqual(["projects/4/tasks/a", "projects/4/tasks/b"]);
+    });
+
+    it("同一次变化：先记账再唤醒（唤醒失败不影响投递结果）", async () => {
+        const j = fakeJournal();
+        const woken: Array<{ uri: string; text: string }> = [];
+        const sink = createSink("task:projects/4/tasks/266", {
+            journal: j.write,
+            wake: (uri, text) => {
+                woken.push({ uri, text });
+                throw new Error("agent 没就绪");
+            },
+        });
+        // 唤醒抛错 ⇒ 仍算投递成功（journal 那条是权威，叫不醒只是一轮的问题）
+        await expect(sink.deliver(event)).resolves.toBeUndefined();
+        expect(j.calls).toHaveLength(1);
+        expect(woken).toHaveLength(1);
+        expect(woken[0].uri).toBe("projects/4/tasks/266");
+        expect(woken[0].text).toContain("watch daily-pr 有变化");
+        expect(woken[0].text).toContain("~ a: 1 → 2");
     });
 
     it("未知前缀直接抛（地址校验应在上游拦住）", () => {
