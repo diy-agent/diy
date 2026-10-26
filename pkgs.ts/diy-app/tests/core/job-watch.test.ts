@@ -12,6 +12,12 @@ import {
     nextDueAt,
     probeFailed,
     probeSucceeded,
+    endWatch,
+    sinkAddressError,
+    subjectError,
+    subjectIsPersistent,
+    subjectLabel,
+    taskOfSink,
     validateWatchDef,
     watchIdError,
 } from "../../src/shared/job-watch";
@@ -26,6 +32,8 @@ function def(over: Partial<JobWatchDef> = {}): JobWatchDef {
         every: 30,
         probes: ["glob:gen/**"],
         quietAfter: DEFAULT_QUIET_AFTER,
+        sinks: ["task:projects/4/tasks/408"],
+        subject: { kind: "none" },
         createdAt: "2026-10-26T00:00:00.000Z",
         enabled: true,
         ...over,
@@ -178,5 +186,56 @@ describe("定义校验（写入口的闸门）", () => {
         expect(validateWatchDef(def({ probes: [] }))).toContain("探针");
         expect(validateWatchDef(def({ every: 7 as never }))).toContain("every");
         expect(validateWatchDef(def({ quietAfter: -1 }))).toContain("quietAfter");
+    });
+});
+
+describe("出口地址（订阅者抽象）", () => {
+    it("四种前缀都认；没前缀 / 空目标 / 未知前缀各有自己的错", () => {
+        for (const ok of ["room:projects/4/tasks/408", "task:projects/4/tasks/408", "member:agent:main", "inbox:human:chen56"]) {
+            expect(sinkAddressError(ok)).toBeNull();
+        }
+        expect(sinkAddressError("projects/4/tasks/408")).toContain("前缀");
+        expect(sinkAddressError("task:")).toContain("不能为空");
+        expect(sinkAddressError("nope:x")).toContain("未知出口");
+        expect(sinkAddressError("task:a b")).toContain("空白");
+        expect(sinkAddressError("task:../etc")).toContain("..");
+    });
+
+    it("只有 room / task 跟任务走（任务结案时用来结束 watch）", () => {
+        expect(taskOfSink("room:projects/4/tasks/408")).toBe("projects/4/tasks/408");
+        expect(taskOfSink("task:projects/4/tasks/408")).toBe("projects/4/tasks/408");
+        expect(taskOfSink("inbox:human:chen56")).toBeNull();
+    });
+});
+
+describe("观察对象与生命周期", () => {
+    it("四种 subject 各自带标识；none 没有标识", () => {
+        expect(subjectLabel({ kind: "run", runId: "r1" })).toBe("run:r1");
+        expect(subjectLabel({ kind: "task", uri: "projects/4/tasks/408" })).toBe("task:projects/4/tasks/408");
+        expect(subjectLabel({ kind: "command", key: "npm test" })).toBe("command:npm test");
+        expect(subjectLabel({ kind: "none" })).toBeUndefined();
+    });
+
+    it("空 id 的 subject 不合法（改绑新 run 无从判起）", () => {
+        expect(subjectError({ kind: "run", runId: " " })).toContain("runId");
+        expect(subjectError({ kind: "task", uri: "" })).toContain("uri");
+        expect(subjectError({ kind: "command", key: "" })).toContain("key");
+        expect(subjectError({ kind: "none" })).toBeNull();
+        expect(subjectError(undefined)).toContain("subject");
+    });
+
+    it("command / none 天生不朽（不会因为「这次跑完了」被结束）", () => {
+        expect(subjectIsPersistent({ kind: "command", key: "x" })).toBe(true);
+        expect(subjectIsPersistent({ kind: "none" })).toBe(true);
+        expect(subjectIsPersistent({ kind: "run", runId: "r1" })).toBe(false);
+        expect(subjectIsPersistent({ kind: "task", uri: "u" })).toBe(false);
+    });
+
+    it("ended 之后一拍都不探；结束时刻不被后来的判定改写", () => {
+        const s = endWatch(state(), 5_000, "对象没了");
+        expect(s.ended).toEqual({ at: 5_000, reason: "对象没了" });
+        expect(isDue(def(), s, 10_000_000)).toBe(false);
+        expect(nextDueAt(def(), s)).toBeNull();
+        expect(endWatch(s, 9_000, "又判了一次").ended?.at).toBe(5_000);
     });
 });

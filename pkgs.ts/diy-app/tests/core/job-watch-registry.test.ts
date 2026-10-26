@@ -14,7 +14,7 @@ let probeValue: string;
 let probeFails: boolean;
 let delivered: { id: string; diff: string }[];
 
-function makeRegistry(): JobWatchRegistry {
+function makeRegistry(over: Partial<ConstructorParameters<typeof JobWatchRegistry>[0]> = {}): JobWatchRegistry {
     return new JobWatchRegistry({
         rootDir: join(root, "watch"),
         home: root,
@@ -23,7 +23,8 @@ function makeRegistry(): JobWatchRegistry {
             if (probeFails) throw new Error("probe down");
             return [{ key: spec, value: probeValue }];
         },
-        deliver: (def, diff) => void delivered.push({ id: def.id, diff }),
+        deliver: (def, ev) => void delivered.push({ id: def.id, diff: ev.diff }),
+        ...over,
     });
 }
 
@@ -34,6 +35,8 @@ function def(over: Partial<JobWatchDef> = {}): JobWatchDef {
         every: 30,
         probes: ["glob:gen/**"],
         quietAfter: 4,
+        sinks: ["task:projects/4/tasks/408"],
+        subject: { kind: "none" },
         createdAt: "2026-10-26T00:00:00.000Z",
         enabled: true,
         ...over,
@@ -173,5 +176,59 @@ describe("一拍：挑该探的", () => {
         expect(r).toMatchObject({ due: 2, probed: 1, failed: 1 });
         expect((await reg.getState("a-bad")).errorStreak).toBe(1);
         expect((await reg.getState("b-good")).probes).toBe(1);
+    });
+});
+
+describe("生命周期：对象没了就 ended", () => {
+    it("subject 报 gone ⇒ 标 ended，此后一拍都不探（但 state 留着可查）", async () => {
+        const reg = makeRegistry({ subjectState: () => "gone" });
+        await reg.saveDef(def({ every: 1, subject: { kind: "run", runId: "r1" } }));
+        const r = await reg.tickAll();
+        expect(r.ended).toEqual(["daily-pr"]);
+        expect(r.due).toBe(0);
+        const st = await reg.getState("daily-pr");
+        expect(st.ended).toMatchObject({ at: clock, reason: expect.stringContaining("run:r1") });
+
+        clock += 60_000;
+        const r2 = await reg.tickAll();
+        expect(r2).toMatchObject({ due: 0, ended: [] });
+    });
+
+    it("subject 报 unknown 不动（重启后 run 表是空的 ≠ 结束了）", async () => {
+        const reg = makeRegistry({ subjectState: () => "unknown" });
+        await reg.saveDef(def({ every: 1, subject: { kind: "run", runId: "r1" } }));
+        const r = await reg.tickAll();
+        expect(r.ended).toEqual([]);
+        expect((await reg.getState("daily-pr")).ended).toBeNull();
+    });
+
+    it("persistent 的对象压根不问（command / none）", async () => {
+        let asked = 0;
+        const reg = makeRegistry({
+            subjectState: () => {
+                asked += 1;
+                return "gone";
+            },
+        });
+        await reg.saveDef(def({ every: 1, subject: { kind: "none" } }));
+        await reg.tickAll();
+        expect(asked).toBe(0);
+        expect((await reg.getState("daily-pr")).ended).toBeNull();
+    });
+});
+
+describe("broken 只投一次", () => {
+    it("连续失败跨过阈值那一拍投一条 broken，之后继续失败不再投", async () => {
+        const reg = makeRegistry({ deliver: (d, ev) => void delivered.push({ id: d.id, diff: `${ev.kind}:${ev.diff}` }) });
+        await reg.saveDef(def({ every: 1 }));
+        probeFails = true;
+        clock += 60_000;
+        for (let i = 0; i < 5; i++) {
+            await reg.tickAll();
+            clock += 60_000;
+        }
+        const broken = delivered.filter((d) => d.diff.startsWith("broken:"));
+        expect(broken).toHaveLength(1);
+        expect(broken[0].diff).toBe("broken:probe down");
     });
 });
