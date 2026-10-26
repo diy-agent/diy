@@ -119,6 +119,9 @@ diy 是一个 Electron 桌面管控台。命令行入口 {{diy.cli}}，数据根
   或 pkgs.ts/diy-app/sha.sh build 构建后由 CLI 拉起。
   起 GUI 的入口**只是启动器**（不连已跑的实例，重复运行会撞单实例锁）—— 要访问实例还是用上面那个 CLI（lab 实例要配 DIY_VARIANT=lab）。
 - **跨任务协作**（给别的任务发消息让它干活 / 看它进展 / 中止它）：{{diy.cli}} agent local chat|history|cancel <taskUri> …；任务树 {{diy.cli}} loadTaskTree；详见 skill diy-cli
+- **后台长活 / 盯变化**：{{diy.cli}} job --help（ps / tail / kill / watch）。要盯「某样东西变了」用 job watch
+  （{{diy.cli}} job watch save <id> -t "…" --every 30 --probe 'glob:<路径>' --sink task:<uri>），
+  它没变化时一声不响、变了才叫醒 —— **不要写 while … sleep 的轮询 job**，那是白烧唤醒。
 
 - state.yaml 由运行中的应用独占写入 —— 不要直接编辑，改任务/项目一律走 CLI
 - projects/<pid>/tasks/<tid>/AGENTS.md 是任务本体（frontmatter + 正文）
