@@ -52,9 +52,38 @@ export interface JobWatchDef {
     readonly probes: readonly string[];
     /** 连续多少次无变化后开始降频；0 = 永不降频 */
     readonly quietAfter: number;
+    /**
+     * 变化了告诉谁。地址带前缀（见 `SINK_PREFIXES`），**有序**：先写的先投。
+     * 空数组 = 只落 state 不投递（排查 / 试跑用的合法形态）。
+     */
+    readonly sinks: readonly string[];
+    /** 观察谁 —— 决定这条 watch 什么时候自动结束（见 `WatchSubject`）。 */
+    readonly subject: WatchSubject;
     readonly createdAt: string;
     readonly enabled: boolean;
 }
+
+/**
+ * **观察对象**（决定生命周期，不决定探针怎么跑）。
+ *
+ * 用户 2026-10-26 的订正：「watch 的对象应该跟对象走 —— watch 一个进程，进程完毕就成历史」。
+ *
+ *   · `run`     —— 一次具体执行（v1 的 `run-status` 四态）。run 终态 ⇒ watch `ended`。
+ *   · `task`    —— 任务（`done` / `archived` ⇒ `ended`）。
+ *   · `command` —— **可重开的身份**（同名命令 / 将来的 job 实体）。它不会「结束」，
+ *                  只会「这次跑完了」；下一次同名 run 出现时**改绑新 run 且清空指纹**
+ *                  （走 baseline，不误报），watch 自己活下去。
+ *   · `none`    —— 无主观察（纯 `glob:` 这类），永不自动结束。
+ */
+export type WatchSubject =
+    | { readonly kind: "run"; readonly runId: string }
+    | { readonly kind: "task"; readonly uri: string }
+    | { readonly kind: "command"; readonly key: string }
+    | { readonly kind: "none" };
+
+/** 地址前缀白名单。**这里是 sink 名的唯一真源**（校验与文档都读它）。 */
+export const SINK_PREFIXES = ["room", "task", "member", "inbox"] as const;
+export type SinkPrefix = (typeof SINK_PREFIXES)[number];
 
 /** watch 的运行状态（落盘在 `$DIY_HOME/jobs/watch/state/<id>.json`）。 */
 export interface JobWatchState {
@@ -71,6 +100,11 @@ export interface JobWatchState {
     /** 连续失败次数（>0 ⇒ 这个 watch 现在探不动了） */
     readonly errorStreak: number;
     readonly lastError: string | null;
+    /**
+     * 已结束（观察对象没了）。**不是删除** —— 定义、末态、最后一次 diff 都留着可查
+     * （用户 2026-10-26：「暂时简单点不清理」）。
+     */
+    readonly ended: { readonly at: number; readonly reason: string } | null;
 }
 
 export const EMPTY_WATCH_STATE: JobWatchState = {
@@ -82,6 +116,7 @@ export const EMPTY_WATCH_STATE: JobWatchState = {
     probes: 0,
     errorStreak: 0,
     lastError: null,
+    ended: null,
 };
 
 /** 一次探测的结论。`baseline` 与 `no-change` 都**不该**喊人。 */
@@ -128,13 +163,14 @@ export function intervalMinOf(def: JobWatchDef, state: JobWatchState): number {
 /** 这一拍该不该探。从未探过 ⇒ 立刻探（新 watch 不必等一个周期）。 */
 export function isDue(def: JobWatchDef, state: JobWatchState, now: number): boolean {
     if (!def.enabled) return false;
+    if (state.ended !== null) return false; // 对象没了：留档不再探
     if (state.lastProbeAt === null) return true;
     return now - state.lastProbeAt >= intervalMinOf(def, state) * 60_000;
 }
 
 /** 下次该探的时刻；不 enabled / 从未探过 ⇒ null（后者是「现在就该探」）。 */
 export function nextDueAt(def: JobWatchDef, state: JobWatchState): number | null {
-    if (!def.enabled || state.lastProbeAt === null) return null;
+    if (!def.enabled || state.ended !== null || state.lastProbeAt === null) return null;
     return state.lastProbeAt + intervalMinOf(def, state) * 60_000;
 }
 
@@ -283,7 +319,46 @@ export function validateWatchDef(def: JobWatchDef): string | null {
     for (const spec of def.probes) if (typeof spec !== "string" || !spec.trim()) return "探针不能是空串";
     if (!Number.isInteger(def.quietAfter) || def.quietAfter < 0) return "quietAfter 必须是非负整数";
     if (def.quietAfter > 100) return "quietAfter 太大（≤ 100）";
+    if (!Array.isArray(def.sinks)) return "sinks 必须是数组（可以是空数组）";
+    if (def.sinks.length > 5) return "出口最多 5 个（再多就是在广播，不是在通知）";
+    for (const addr of def.sinks) {
+        const e = typeof addr === "string" ? sinkAddressError(addr) : "出口必须是字符串地址";
+        if (e) return e;
+    }
+    const se = subjectError(def.subject);
+    if (se) return se;
     return null;
+}
+
+/** 观察对象的合法性。`none` 之外必须有非空 id —— 空 id 会让「改绑新 run」无从判起。 */
+export function subjectError(subject: WatchSubject | undefined): string | null {
+    if (!subject || typeof subject !== "object") return "subject 必须给（决定 watch 什么时候结束）";
+    switch (subject.kind) {
+        case "none":
+            return null;
+        case "run":
+            return subject.runId?.trim() ? null : "subject.run 的 runId 不能为空";
+        case "task":
+            return subject.uri?.trim() ? null : "subject.task 的 uri 不能为空";
+        case "command":
+            return subject.key?.trim() ? null : "subject.command 的 key 不能为空";
+        default:
+            return `未知 subject.kind "${(subject as { kind?: string }).kind}"（run / task / command / none）`;
+    }
+}
+
+/** 观察对象的人话标识（进 `WatchEvent.subject`；`none` 给 undefined）。 */
+export function subjectLabel(subject: WatchSubject): string | undefined {
+    switch (subject.kind) {
+        case "run":
+            return `run:${subject.runId}`;
+        case "task":
+            return `task:${subject.uri}`;
+        case "command":
+            return `command:${subject.key}`;
+        default:
+            return undefined;
+    }
 }
 
 /**
@@ -300,4 +375,46 @@ export class JobWatchError extends Error {
         this.name = "JobWatchError";
         this.code = code;
     }
+}
+
+// ─── 出口地址与结束（写入口 / 生命周期）──────────────
+
+/**
+ * sink 地址校验。`<prefix>:<target>`，target 非空、不含空白与控制字符、不含 `..`。
+ *
+ * **不校验 target 指的那个东西存不存在**（那要 IO，而本文件零 IO）：地址写错在下一次
+ * 投递时才暴露，且只影响那一个出口 —— 定义本身仍然有效（其余 sink 照投）。
+ */
+export function sinkAddressError(addr: string): string | null {
+    const i = addr.indexOf(":");
+    if (i <= 0) return `地址要写成 <前缀>:<目标>（收到 "${addr}"）`;
+    const prefix = addr.slice(0, i);
+    const target = addr.slice(i + 1);
+    if (!(SINK_PREFIXES as readonly string[]).includes(prefix)) {
+        return `未知出口 "${prefix}"（只允许 ${SINK_PREFIXES.join(" / ")}）`;
+    }
+    if (!target.trim()) return `出口 ${prefix} 的目标不能为空`;
+    if (/[\s\u0000-\u001f]/.test(target)) return `出口目标不能含空白或控制字符`;
+    if (target.includes("..")) return "出口目标不能含 ..";
+    return null;
+}
+
+/** 地址是不是「跟着哪个任务走」（用来在任务结案时自动结束）。 */
+export function taskOfSink(addr: string): string | null {
+    return addr.startsWith("room:") || addr.startsWith("task:") ? addr.slice(addr.indexOf(":") + 1) : null;
+}
+
+/**
+ * 把 watch 标成 `ended`（观察对象没了）。**不清 state** —— 末态与最后一次 diff 要留着可查。
+ *
+ * 幂等：已 ended 的再 end 一次，保留**最早**那一刻（「它什么时候停的」不该被后来的判定改写）。
+ */
+export function endWatch(state: JobWatchState, at: number, reason: string): JobWatchState {
+    if (state.ended !== null) return state;
+    return { ...state, ended: { at, reason } };
+}
+
+/** 观察对象是否「天生不朽」（`none` = 纯 glob 这类，永不自动结束）。 */
+export function subjectIsPersistent(subject: WatchSubject): boolean {
+    return subject.kind === "none" || subject.kind === "command";
 }

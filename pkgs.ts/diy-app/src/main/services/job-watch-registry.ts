@@ -25,19 +25,42 @@ import type { CoreTicker } from "./core-ticker";
 import {
     EMPTY_WATCH_STATE,
     JobWatchError,
+    WATCH_ERROR_STREAK_LIMIT,
+    endWatch,
     isBroken,
     isDue,
     probeFailed,
     probeSucceeded,
+    subjectIsPersistent,
+    subjectLabel,
     validateWatchDef,
 } from "../../shared/job-watch";
-import type { JobWatchDef, JobWatchState, ProbePart } from "../../shared/job-watch";
+import type { JobWatchDef, JobWatchState, ProbePart, WatchSubject } from "../../shared/job-watch";
+import { deliverToSinks } from "./watch-sinks";
+import type { SinkResult } from "./watch-sinks";
+import type { WatchEvent } from "../../shared/watch-event";
 
 /** 探针执行器：`spec` → 若干段事实。抛错 = 这次探测失败。 */
 export type ProbeRunner = (spec: string, ctx: { home: string; now: number }) => Promise<ProbePart[]>;
 
-/** 变化投递：缺省实现只打一行日志（接 local-agent / 房间消息是下一刀）。 */
-export type WatchDeliver = (def: JobWatchDef, diff: string, now: number) => void | Promise<void>;
+/**
+ * 变化投递。缺省 = 按 `def.sinks` 顺序投（`watch-sinks` 注册表）。
+ * 注入点留给测试与将来的批处理（比如「同一拍多条变化合成一条」）。
+ */
+export type WatchDeliver = (def: JobWatchDef, ev: WatchEvent) => void | Promise<void>;
+
+/**
+ * 观察对象还在不在（每拍探之前问一次）。
+ *
+ * 为什么必须外部注入：判「run 还在跑吗」要读活体表、判「任务结案了吗」要读任务状态 ——
+ * 两个都是 registry 不该自己长出来的依赖（它只该管 watch 自己的账）。
+ *
+ * 三态而不是两态：**`unknown` 不等于 `gone`**。进程重启后 v1 的 run 表是空的
+ * （用户 2026-10-23 定案：不做恢复），此时「查不到」只说明我们不知道，不说明它结束了 ——
+ * 让探针自己去失败，比凭一个空表把 watch 判死诚实。
+ */
+export type SubjectState = "alive" | "gone" | "unknown";
+export type SubjectChecker = (subject: WatchSubject) => SubjectState | Promise<SubjectState>;
 
 export interface JobWatchRegistryOptions {
     /** 落盘根；缺省 `$DIY_HOME/jobs/watch` */
@@ -47,6 +70,7 @@ export interface JobWatchRegistryOptions {
     now?: () => number;
     probe?: ProbeRunner;
     deliver?: WatchDeliver;
+    subjectState?: SubjectChecker;
 }
 
 export interface WatchTickReport {
@@ -60,6 +84,8 @@ export interface WatchTickReport {
     readonly failed: number;
     /** 指纹变了、已投递 */
     readonly changed: number;
+    /** 观察对象没了而被结束的 watch */
+    readonly ended: readonly string[];
     /** 因连续失败被标记为「这个 watch 坏了」的 id */
     readonly broken: readonly string[];
 }
@@ -93,6 +119,7 @@ export class JobWatchRegistry {
     private readonly now: () => number;
     private readonly probe: ProbeRunner;
     private readonly deliver: WatchDeliver;
+    private readonly subjectState: SubjectChecker;
 
     constructor(opts: JobWatchRegistryOptions = {}) {
         const cfg = readRuntimeConfig();
@@ -100,12 +127,9 @@ export class JobWatchRegistry {
         this.home = opts.home ?? cfg.home;
         this.now = opts.now ?? (() => Date.now());
         this.probe = opts.probe ?? globProbe;
-        this.deliver =
-            opts.deliver ??
-            ((def, diff) => {
-                // 骨架阶段：只打日志。刀 3 起换成投递到 task 房间 / 唤醒 agent。
-                console.log(`[job-watch] ${def.id}（${def.title}）有变化：\n${diff}`);
-            });
+        this.deliver = opts.deliver ?? ((def, ev) => deliverToSinks(def.sinks, ev).then(() => undefined));
+        // 缺省：不判（`command` / `none` 本来就不该结束；run / task 的判据由接线处注入）
+        this.subjectState = opts.subjectState ?? (() => "unknown");
     }
 
     private defsDir(): string {
@@ -188,6 +212,10 @@ export class JobWatchRegistry {
                 probes: typeof raw.probes === "number" ? raw.probes : 0,
                 errorStreak: typeof raw.errorStreak === "number" ? raw.errorStreak : 0,
                 lastError: typeof raw.lastError === "string" ? raw.lastError : null,
+                ended:
+                    raw.ended && typeof raw.ended === "object" && typeof (raw.ended as { at?: unknown }).at === "number"
+                        ? { at: (raw.ended as { at: number }).at, reason: String((raw.ended as { reason?: unknown }).reason ?? "") }
+                        : null,
             };
         } catch {
             return EMPTY_WATCH_STATE;
@@ -210,6 +238,21 @@ export class JobWatchRegistry {
         const defs = await this.loadDefs();
         const now = this.now();
         const states = new Map(await Promise.all(defs.map(async (d) => [d.id, await this.getState(d.id)] as const)));
+
+        // ── ① 生命周期：观察对象没了 ⇒ ended（幂等、不删账）──
+        const ended: string[] = [];
+        for (const def of defs) {
+            const st = states.get(def.id)!;
+            if (st.ended !== null || subjectIsPersistent(def.subject)) continue;
+            const probeState = await this.subjectState(def.subject);
+            // `unknown` 不动：查不到 ≠ 结束了（重启后 run 表本来就是空的）
+            if (probeState !== "gone") continue;
+            const next = endWatch(st, now, `观察对象已结束（${subjectLabel(def.subject) ?? def.subject.kind}）`);
+            await this.saveState(def.id, next);
+            states.set(def.id, next);
+            ended.push(def.id);
+        }
+
         const due = defs.filter((d) => isDue(d, states.get(d.id)!, now));
         let probed = 0;
         let failed = 0;
@@ -227,18 +270,39 @@ export class JobWatchRegistry {
                     probed += 1;
                     if (outcome.verdict === "changed") {
                         changed += 1;
-                        await this.deliver(def, outcome.diff, now);
+                        await this.deliver(def, {
+                            watchId: def.id,
+                            title: def.title,
+                            kind: "changed",
+                            at: now,
+                            diff: outcome.diff,
+                            ...(subjectLabel(def.subject) === undefined ? {} : { subject: subjectLabel(def.subject)! }),
+                        });
                     }
                 } catch (e) {
                     const next = probeFailed(state, e instanceof Error ? e.message : String(e), now);
                     await this.saveState(def.id, next);
                     failed += 1;
-                    if (isBroken(next)) broken.push(def.id);
+                    if (isBroken(next)) {
+                        broken.push(def.id);
+                        // 只在**刚跨过阈值**那一拍投一次：坏掉的 watch 每拍都失败，
+                        // 每拍都投等于把 journal 变成计数器（与 `addSystemEvent` 的静默窗同一理由）。
+                        if (state.errorStreak + 1 === WATCH_ERROR_STREAK_LIMIT) {
+                            await this.deliver(def, {
+                                watchId: def.id,
+                                title: def.title,
+                                kind: "broken",
+                                at: now,
+                                diff: next.lastError ?? "",
+                                ...(subjectLabel(def.subject) === undefined ? {} : { subject: subjectLabel(def.subject)! }),
+                            });
+                        }
+                    }
                 }
             }),
         );
 
-        return { watches: defs.length, due: due.length, probed, failed, changed, broken };
+        return { watches: defs.length, due: due.length, probed, failed, changed, broken, ended };
     }
 }
 
