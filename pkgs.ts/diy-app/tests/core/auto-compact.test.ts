@@ -32,13 +32,12 @@ import {
     autoCompactFile,
 } from "../../src/main/core/auto-compact-config";
 import { diyHome } from "../../src/main/core/state";
-import {
-    DEFAULT_BUDGET_BYTES,
-    DEFAULT_HEADTAIL,
-    budgetBytesOf,
-    normalizePolicy,
-    toolResultOf,
-} from "../../src/shared/context/compaction";
+import { DEFAULT_HEADTAIL, normalizePolicy, toolResultOf } from "../../src/shared/context/compaction";
+import { DEFAULT_HISTORY_LIMIT_TOKENS, normalizeHistoryLimit } from "../../src/shared/context/history-limit";
+
+/** 配置里生效的**历史上限**（唯一旋钮；读侧宽松归一后取） */
+const limitOf = (c: import("../../src/shared/context/auto-compact").AutoCompactConfig): number =>
+    normalizeHistoryLimit(c.history?.limit).limitTokens;
 
 const MIN = 60_000;
 /** 已知 TTL：(30min, 45min] —— 30 分钟内一定活着，超过 45 分钟一定过期 */
@@ -49,6 +48,9 @@ const facts = (over: Partial<AutoCompactFacts> = {}): AutoCompactFacts => ({
     sinceLastRequestMs: 5 * MIN,
     ttl: TTL,
     windowTokens: 10_000,
+    retainedTokens: null,
+    boundary: null,
+    compactionCount: 0,
     ...over,
 });
 
@@ -163,7 +165,7 @@ describe("配置文件层：真源落盘（不是 localStorage）", () => {
 //
 // 病：`auto-compact.yaml` 漏**任一**必填键 ⇒ `safeParse` 失败 ⇒ `return DEFAULT_AUTO_COMPACT`（整份），
 // 而 `plan get` 的 `raw` 仍是原文、`source` 已是 `default` —— **看得见原文、看不见因**（原因只在应用日志一行）；
-// 用户精心写的 `history.keep[]` 一并「不见了」，二阶效应是 `allowAgentWrite` 静默变 false。
+// 用户精心写的 `history.limit` 一并「不见了」。
 // 修法：严格 schema 只当**探测器**（它才说得出缺了哪个必填键），值走 `normalizeAutoCompact`
 // （本就是为缺字段/越界写的宽松归一，旧代码把它挡在严格校验之后 ⇒ 缺键场景**永远跑不到** = 死代码），
 // 归一改过的地方进 `issues` 出声。
@@ -178,12 +180,11 @@ describe("##370 缺必填键：逐键回落缺省 + 出声", () => {
         policy: {
             mode: "budget",
             modeData: {
-                budgetBytes: 12345,
                 toolResult: { render: "headtail", renderData: { head: 1, tail: 2, maxLineChars: 111, maxKeepBytes: 1000 } },
             },
             summary: true,
         },
-        history: { keep: [{ type: "recent", data: { n: 3 } }], allowAgentWrite: true },
+        history: { limit: { limitTokens: 12345, summary: { enabled: true } } },
     });
     /** 删掉点号路径上的那个键 —— 造「漏一个必填键」的现场 */
     const without = (path: string): Record<string, unknown> => {
@@ -206,21 +207,21 @@ describe("##370 缺必填键：逐键回落缺省 + 出声", () => {
             path: "policy.summary",
             check: (c) => {
                 expect(c.policy.summary).toBe(false);
-                expect(budgetBytesOf(c.policy)).toBe(12345); // 用户写的预算没被牵连
+                expect(limitOf(c)).toBe(12345); // 用户写的上限没被牵连
             },
         },
         {
-            path: "policy.modeData.budgetBytes",
+            path: "history.limit.limitTokens",
             check: (c) => {
-                expect(budgetBytesOf(c.policy)).toBe(DEFAULT_BUDGET_BYTES);
-                expect(c.policy.summary).toBe(true);
+                expect(limitOf(c)).toBe(DEFAULT_HISTORY_LIMIT_TOKENS);
+                expect(normalizeHistoryLimit(c.history?.limit).summary.enabled).toBe(true);
             },
         },
         {
             path: "policy.modeData.toolResult",
             check: (c) => {
                 expect(toolResultOf(c.policy)).toEqual(DEFAULT_AUTO_COMPACT.policy.modeData.toolResult);
-                expect(budgetBytesOf(c.policy)).toBe(12345);
+                expect(limitOf(c)).toBe(12345);
             },
         },
         {
@@ -237,7 +238,7 @@ describe("##370 缺必填键：逐键回落缺省 + 出声", () => {
             path: "policy.mode",
             check: (c) => {
                 expect(c.policy.mode).toBe("budget");
-                expect(budgetBytesOf(c.policy)).toBe(12345);
+                expect(limitOf(c)).toBe(12345);
             },
         },
         { path: "policy", check: (c) => expect(c.policy).toEqual(DEFAULT_AUTO_COMPACT.policy) },
@@ -259,7 +260,7 @@ describe("##370 缺必填键：逐键回落缺省 + 出声", () => {
             path: "mode",
             check: (c) => {
                 expect(c.mode).toBe("notify");
-                expect(budgetBytesOf(c.policy)).toBe(12345);
+                expect(limitOf(c)).toBe(12345);
             },
         },
     ];
@@ -274,9 +275,13 @@ describe("##370 缺必填键：逐键回落缺省 + 出声", () => {
             expect(hit!.message).toContain("已回落");
             // 该键回落缺省
             cs.check(config);
-            // 🔑 其余全部保留（旧行为：整份作废 —— 这两条正是用户「plan 不见了」的现场）
-            expect(config.history?.keep?.map((s) => s.type)).toEqual(["recent"]);
-            expect(config.history?.allowAgentWrite).toBe(true); // 二阶效应：闸不再被一个笔误静默关掉
+            // 🔑 其余全部保留（旧行为：整份作废 —— 这正是用户「配置不见了」的现场）
+            if (!cs.path.startsWith("history.limit")) {
+                // 历史上限是**一个整体**（limitTokens / summary 同属一个对象）：改了其中一项，
+                // 落盘形状就是补齐后的那份 —— 唯一不变量是「其它键（mode / triggers / policy）没被牵连」
+                expect(limitOf(config)).toBe(12345);
+                expect(normalizeHistoryLimit(config.history?.limit).summary.enabled).toBe(true);
+            }
         });
     }
 
@@ -286,8 +291,8 @@ describe("##370 缺必填键：逐键回落缺省 + 出声", () => {
         const { config, issues } = read(base());
         expect(issues).toEqual([]);
         expect(config.mode).toBe("auto");
-        expect(budgetBytesOf(config.policy)).toBe(12345);
-        expect(config.history?.keep?.map((s) => s.type)).toEqual(["recent"]);
+        expect(limitOf(config)).toBe(12345);
+        expect(limitOf(config)).toBe(12345);
     });
 
     it("YAML 语法坏 ⇒ 整份缺省 + 出声（这条口径**保留**：不崩、不用坏数据）", () => {
@@ -309,17 +314,17 @@ describe("##370 缺必填键：逐键回落缺省 + 出声", () => {
         expect(issues.map((i) => i.path)).toContain("triggers.contextWindowOver");
         // mode/预算照用（schema 层没失败，只有归一改了一处）
         expect(config.mode).toBe("auto");
-        expect(budgetBytesOf(config.policy)).toBe(12345);
+        expect(limitOf(config)).toBe(12345);
     });
 
-    it("`history.keep` 坏 ⇒ **只丢 history**（口径保留）且同样出声", () => {
+    it("`history.keep` 已删除 ⇒ 忽略并出声，其余（含上限）原样", () => {
         rmSync(fp(), { force: true });
         const doc = base();
-        doc.history = { keep: [{ type: "nope" }] };
+        // 旧配置残留的级列表：不认识、也不该牵连别的键
+        doc.history = { limit: { limitTokens: 12345, summary: { enabled: true } }, keep: [{ type: "nope" }] };
         const { config, issues } = read(doc);
-        expect(config.history).toBeUndefined(); // 回落缺省管道
-        expect(config.mode).toBe("auto"); // 整份配置**没**被丢掉
-        expect(budgetBytesOf(config.policy)).toBe(12345);
+        expect(config.mode).toBe("auto");
+        expect(limitOf(config)).toBe(12345);
         expect(issues.map((i) => i.path)).toContain("history.keep");
     });
 });
@@ -331,7 +336,8 @@ describe("自动压缩执行（真会话 + 桩模型）", () => {
         const { createProject } = await import("../../src/main/core/project");
         const { createTask } = await import("../../src/main/core/task");
         const { writeFileSync } = await import("node:fs");
-        const { compactFile, opsFile } = await import("../../src/main/services/local-agent");
+        const { compactFile } = await import("../../src/main/services/local-agent");
+    const { opsFile } = await import("../../src/main/core/local-paths");
         const { parseCompactLog } = await import("../../src/shared/context/compaction");
         const { readFileSync } = await import("node:fs");
         const { MockLanguageModelV3 } = await import("ai/test");
@@ -417,5 +423,26 @@ describe("自动压缩执行（真会话 + 桩模型）", () => {
         expect(c.policy).toEqual(DEFAULT_AUTO_COMPACT.policy);
         // 旧历史仍在（压缩只改投递）
         expect(readFileSync(opsFile(uri), "utf-8")).toContain("第 1 句");
+    });
+});
+
+describe("##432 review B1：history.limit 残缺/超界不许抛（宽松归一 + 出声）", () => {
+    it("只写 limitTokens（缺 summary）⇒ 不抛，summary.enabled 缺省 false，并出声", () => {
+        const issues: { path: string; message: string }[] = [];
+        const cfg = normalizeAutoCompact(
+            { history: { limit: { limitTokens: 8_000 } } },
+            issues as unknown as Parameters<typeof normalizeAutoCompact>[1],
+        );
+        expect(cfg.history?.limit?.limitTokens).toBe(8_000);
+        expect(cfg.history?.limit?.summary.enabled).toBe(false);
+        expect(issues.some((i) => i.path.startsWith("history.limit"))).toBe(true);
+    });
+    it("limitTokens 超下限 ⇒ 夹到 4000（不拒绝）", () => {
+        const cfg = normalizeAutoCompact({ history: { limit: { limitTokens: 0, summary: { enabled: false } } } });
+        expect(cfg.history?.limit?.limitTokens).toBe(4_000);
+    });
+    it("limit 整个是个字符串（写坏了）⇒ 回落缺省（20000），不抛", () => {
+        const cfg = normalizeAutoCompact({ history: { limit: "8000" } });
+        expect(cfg.history?.limit?.limitTokens).toBe(20_000);
     });
 });

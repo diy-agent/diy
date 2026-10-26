@@ -219,8 +219,24 @@ export const FactsFindSchema = z.object({
     notes: z.array(z.string()),
 });
 
+export const FactsLandingSchema = z.object({
+    /** 实际写入的 `knowledge/` **绝对路径** */
+    dir: z.string(),
+    /** 计算 `rel` 的根（仓库根；设备级库是家目录） */
+    root: z.string(),
+    /** 相对仓库根的路径（如 `knowledge` / `.diy/knowledge`） */
+    rel: z.string(),
+    /** 调用方 cwd（敲命令的那个 shell；没带就不给） */
+    callerCwd: z.string().optional(),
+});
+
 export const FactsSubmitReportSchema = z.object({
     dryRun: z.boolean(),
+    /**
+     * 落点回显（##437）：实际写进哪个 `knowledge/`。**dry-run 也带** —— 提前看见，
+     * 不必先写错一次（##408：worktree 里提交写进了主仓，一切"成功"、只是落点不对）。
+     */
+    landing: FactsLandingSchema,
     added: z.array(z.string()),
     updated: z.array(z.object({ id: z.string(), before: z.string(), after: z.string() })),
     unchanged: z.array(z.string()),

@@ -16,6 +16,7 @@
  */
 
 import { createSignal } from "solid-js";
+import { chatNavStore } from "./chatNavStore";
 import { diyService } from "../lib/rpc";
 import type { ProcRow, RunView } from "../../shared/run-view";
 import type { JobNavTarget } from "../../shared/run-view";
@@ -44,7 +45,6 @@ const EMPTY: RunsSnapshot = { runs: [], untracked: [], procsByRun: {}, running: 
 const [snap, setSnap] = createSignal<RunsSnapshot>(EMPTY);
 const [error, setError] = createSignal<string | null>(null);
 const [loading, setLoading] = createSignal(false);
-const [pendingNav, setPendingNav] = createSignal<JobNavTarget | null>(null);
 
 /** 面板可见时的刷新节奏。3s：与任务页成员栏同量级，人感觉"实时"，而 stat 几条文件仍远低于一帧的预算 */
 const POLL_MS = 3000;
@@ -150,12 +150,16 @@ export const jobRunsStore = {
         };
     },
     // ─── 跨组件导航请求（latest-wins）────────────────────────────
+    //
+    // ##436：实现已搬到 `chatNavStore`（信箱跳转与作业来源共用同一条通道）。
+    // 这三个入口保留为**转发** —— 旧调用点（JobRunsPanel / LocalChatPage）不必改签名。
     requestNav(target: JobNavTarget): void {
-        setPendingNav(target);
+        chatNavStore.request({ ...target, origin: "job" });
     },
     /** 反应式读取（会话页 effect 用它；不改状态） */
     get pendingNav(): JobNavTarget | null {
-        return pendingNav();
+        const p = chatNavStore.pending;
+        return p && p.origin === "job" && p.turnId && p.blockId ? { taskUri: p.taskUri, turnId: p.turnId, blockId: p.blockId } : null;
     },
     /**
      * 取走属于该任务的待导航请求（取走即清）。
@@ -164,15 +168,16 @@ export const jobRunsStore = {
      * 而用户此刻可能在读别的地方 —— 那正是"抢滚动"的来源。
      */
     takeNav(taskUri: string): JobNavTarget | null {
-        const p = pendingNav();
-        if (!p || p.taskUri !== taskUri) return null;
-        setPendingNav(null);
-        return p;
+        const p = chatNavStore.pending;
+        // 只取**自己那一类**请求：信箱请求（origin=inbox）被别人顺手取走就会被**静默丢弃**
+        if (!p || p.taskUri !== taskUri || p.origin !== "job" || !p.turnId || !p.blockId) return null;
+        chatNavStore.take(taskUri);
+        return { taskUri: p.taskUri, turnId: p.turnId, blockId: p.blockId };
     },
     /** 清空（测试 / 退出登录态） */
     reset(): void {
         setSnap(EMPTY);
         setError(null);
-        setPendingNav(null);
+        chatNavStore.reset();
     },
 };

@@ -1317,6 +1317,20 @@ facts:
       source: user
       at: ba99d638:pkgs.ts/diy-app/AGENTS.md:77
       verifiedAt: '2026-10-22'
+  app.rule#task-body:
+    value: |-
+      任务 body 的**软上限 4 KB**（`diy task show <uri>` 渲染字节）：超限不算错，但**下次编辑必须顺手瘦身**。超限处置按三层判据分流，别原样留着 ——
+
+      1. 「**三个月后还成立吗？**」成立 ⇒ 稳定结论 → `diy facts submit`（**任务级库优先**：`--in task:<uri>`，本任务自己的结论就该常驻本任务信封）；
+      2. 「**只对当时有意义吗？**」⇒ 历史流水 / 决策理由 / 事故复盘 → `diy journal add <uri> --kind progress|decision|pitfall|review|learn --title "一行"`（append-only，`--refs` 带 commit / PR）；
+      3. 「**接下来要做什么？**」⇒ 留 body。
+
+      瘦身后 body 只剩 3~5 段：定位 / 现在是什么 / 待办 / 明确不做 / 指路命令（取值的那条命令），**不留流水账**。实测背景（##408 派发时核对）：376 个任务 body 合计 4.51 MB，`>20 KB` 的 51 个，最大 ##166 单条 349 KB（2026-10-26 复核）—— 任务被唤醒时 body 整段进上下文，等于每条都常驻。
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-26'
   app.rule#test-bail:
     value: |-
       **撞红即停（`bail:1` 刻意保留），但回报必须说清范围**：根与各包 `vitest.config.ts` 全为 `bail:1` —— 早停省墙钟，代价是「后面的没跑」。交付口径写「跑到第一个失败文件为止：N files / M passed / 其余未跑」，**不许**把早停报成「全量通过」（判据 = 末行 `Test Files N failed (总数)`；拿不准就单跑那个失败文件）。历史：`##379` review2 里 `bail:1` 让 162 个文件只跑了 38 例。⚠️ 此前「交付口径改 `--bail=0`」的建议**已作废**（用户 2026-10-20 定：红就停，别再跑）
@@ -1409,14 +1423,14 @@ facts:
       verifiedAt: '2026-10-22'
   app.rule#wire-envelope:
     value: |-
-      投给模型的**一条消息 = 一份 YAML 信封**：一切**自动生成**的段（`summary:` / `history:` / `runtime:` / `runtimeDiff:`）**各占一个顶层键**，**禁止**混进 `user.message`（混进去 = 自动生成的元数据伪装成用户原话；tasks/5 实测模型为此多烧 3 次 bash / 5.6 万 prompt token）。契约与派生唯一处 `src/shared/context/envelope.ts` + `README.md` 的「信封」行
+      投给模型的**一条消息 = 一份 YAML 信封**：一切**自动生成** / 机器携带的段（`summary:` / `history:` / `from:` / `runtime:` / `runtimeDiff:`）**各占一个顶层键**，**禁止**混进 `user.message`（混进去 = 自动生成的元数据伪装成用户原话；tasks/5 实测模型为此多烧 3 次 bash / 5.6 万 prompt token）。`from:`（##422）只出现在**历史** user 消息上（`from.id` = 成员 id、`name` = 当时的显示名；老块无 `speaker` ⇒ 裸文本，不造 `from: unknown`），它与 `user.message` **并列**而非嵌套 —— `withRuntime` 遇末条已是**信封**时尾部信封**自占一条消息**。**重放只剥 `runtime:` / `runtimeDiff:`**（`stripRuntimeSections`；`from:` / `history:` / `summary:` 是线索，逐字保留；裸文本与没有顶格 `user:` 的粘贴 YAML 一字不动），剥完仍是信封时也**不嵌套**。契约与派生唯一处 `src/shared/context/envelope.ts` + `README.md` 的「信封」行
     id: app.rule.wire-envelope
     review: accepted
     lifecycle: active
     evidence:
       source: user
       at: ba99d638:pkgs.ts/diy-app/AGENTS.md:81
-      verifiedAt: '2026-10-22'
+      verifiedAt: '2026-10-25'
   app.tool#cdp:
     value: |-
       取 CDP 地址：`cat "$DIY_HOME/electron_user_data/DevToolsActivePort"`（**读后校验**，见 `app.dev#cdp-port`）；`./sha.sh lab` 启动日志会打印完整 `attach` 命令

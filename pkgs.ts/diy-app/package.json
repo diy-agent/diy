@@ -28,6 +28,7 @@
         "@diy-agent/rpc": "^0.2.0",
         "@diy/facts": "^0.1.0",
         "@diy/flow": "^0.1.0",
+        "@diy/persistence": "^0.1.0",
         "@diy/talk": "^0.1.0",
         "@diy/template": "^0.1.0",
         "@dnd-kit/solid": "^0.5.0",

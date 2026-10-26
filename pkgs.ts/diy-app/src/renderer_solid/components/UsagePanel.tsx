@@ -56,7 +56,6 @@ import { VIEW_BAR_H } from "../lib/layout-metrics";
 import { notificationStore } from "../store/notificationStore";
 import { copyFailMeta, copyOkMeta } from "../lib/notice-copy";
 import { compactNotice } from "../lib/notice-compact";
-import { DEFAULT_BUDGET_BYTES } from "../../shared/context/compaction";
 import { useCompactPanel, CompactPanelContent } from "./CompactSessionPanel";
 import { RowGutter } from "./RowGutter";
 import type { CompactEventRecord, CompactTrigger } from "../../shared/context/compaction";
@@ -64,13 +63,17 @@ import { mapCompactPointsToSteps, stepKey } from "../../shared/context/compact-p
 import {
     deliveryBadgeText,
     deliveryBadgeTitle,
-    mustStagesOf,
     TRIGGER_LABEL,
-    type DeliveryTriggerCfg,
+    type DeliveryBoundary,
 } from "../../shared/context/delivery-badge";
-import type { KeepStage } from "../../shared/context/compact-keep";
 
 // ─── 共用小件 ────────────────────────────────────────
+
+/** 旧账本里的字节预算（`policy.modeData.budgetBytes` 已删；只有旧事件还带着它） */
+function legacyBudgetKb(policy: unknown): string {
+    const bb = (policy as { modeData?: { budgetBytes?: number } } | undefined)?.modeData?.budgetBytes;
+    return typeof bb === "number" ? `${Math.round(bb / 1024)} KB（旧口径）` : "边界在 turns.jsonl";
+}
 
 /** 占用率文案；上限未知 → `—`（编一个百分比比留白更坏） */
 function pctText(rate: number | null): string {
@@ -568,14 +571,14 @@ export function WindowRing(props: { uri: string | null }) {
         if (!u) return;
         setBusy(true);
         try {
-            const rec = await localChatStore.compact(u, { budgetBytes: budget() ?? DEFAULT_BUDGET_BYTES } as never);
+            const rec = await localChatStore.compact(u, { limitTokens: limitTok() } as never);
             if (rec?.noop) {
                 notificationStore.addToast(
                     "info",
                     "无需压缩（历史已在预算内）",
                     compactNotice({
                         kind: "noop",
-                        budgetBytes: budget() ?? DEFAULT_BUDGET_BYTES,
+                        limitTokens: limitTok(),
                         uri: u,
                     }),
                 );
@@ -583,7 +586,7 @@ export function WindowRing(props: { uri: string | null }) {
                 notificationStore.addToast(
                     "success",
                     "已压缩（历史保留、可撤销）",
-                    compactNotice({ kind: "done", budgetBytes: budget() ?? DEFAULT_BUDGET_BYTES, uri: u }),
+                    compactNotice({ kind: "done", limitTokens: limitTok(), uri: u }),
                 );
             }
             setOpen(false);
@@ -591,7 +594,7 @@ export function WindowRing(props: { uri: string | null }) {
             notificationStore.addToast(
                 "error",
                 String(e instanceof Error ? e.message : e),
-                compactNotice({ kind: "failed", budgetBytes: budget() ?? DEFAULT_BUDGET_BYTES, uri: u, error: e }),
+                compactNotice({ kind: "failed", limitTokens: limitTok(), uri: u, error: e }),
             );
         } finally {
             setBusy(false);
@@ -600,25 +603,23 @@ export function WindowRing(props: { uri: string | null }) {
     const [anchor, setAnchor] = createSignal<{ left: number; top: number } | null>(null);
     let closeT: ReturnType<typeof setTimeout> | undefined;
 
-    /** 当前生效预算（字节）—— 取配置真源 `auto-compact.yaml` 的 policy.modeData.budgetBytes */
+    /** 历史上限（token）—— 取配置真源 `auto-compact.yaml` 的 history.limit.limitTokens；缺省 20000 */
     // 门槛 = 卡或抽屉真的开着：本组件常挂（会话页脚常驻），无门槛则**每次切会话页**都白打一次
     // `autoCompactStatus`（##321 复核补记的次级成本；非主因，但同属"抽屉关着也算"）。
-    const [budget] = createResource(() => (open() || drawerOpen() ? props.uri : null), async (u) => {
+    const [limitRes] = createResource(() => (open() || drawerOpen() ? props.uri : null), async (u) => {
         if (!u) return null;
         const st = (await localChatStore.autoCompactStatus(u)) as {
-            config?: { policy?: { modeData?: { budgetBytes?: number }; budgetBytes?: number } };
+            config?: { history?: { limit?: { limitTokens?: number } } };
         };
-        const p = st?.config?.policy;
-        const bb = p?.modeData?.budgetBytes ?? p?.budgetBytes;
-        return typeof bb === "number" ? bb : null;
+        const n = st?.config?.history?.limit?.limitTokens;
+        return typeof n === "number" ? n : 20_000;
     });
-    /** 压缩后估算 token：固定开支（system+工具）+ 预算内历史 */
+    const limitTok = (): number => limitRes() ?? 20_000;
+    /** 压缩后估算 token：固定开支（system+工具）+ 历史上限（保留段按上限的一半计） */
     const afterTokens = (): number | null => {
         const p = partsOf(win());
         const fixed = (p.system ?? 0) + (p.tools ?? 0);
-        const b = budget();
-        if (b == null) return null;
-        return fixed + Math.round(b / 4);
+        return fixed + Math.round(limitTok() / 2);
     };
 
     const openCard = (el: HTMLElement) => {
@@ -824,33 +825,29 @@ export function ContextPartsDrawer(props: { open: boolean; uri: string | null; o
     const byText = (by: CompactEventRecord["by"]) => (by === "auto" ? "自动" : by === "ui" ? "界面" : "命令行");
     const triggerShort = (t: CompactTrigger) => TRIGGER_LABEL[t];
 
-    // ─── ##423：徽章 hover 要讲清**三触发器的配置与本步命中**（旧版只说预算多少）───
+    // ─── ##423：徽章 hover 要讲清**这个切点是哪次压缩事件写的** + 自动压缩（审计）mode ───
     // 门槛与压缩点位同：抽屉真的开着才查（`autoCompactStatus` 要重建一次 system 容器 + 读 TTL 观测）。
     const [autoStatus] = createResource(
         () => (props.open ? props.uri : null),
         async (u) =>
             u
                 ? ((await localChatStore.autoCompactStatus(u)) as unknown as {
-                      config?: {
-                          mode: "off" | "notify" | "auto";
-                          triggers: { systemContextChanged: boolean; cacheExpired: boolean; contextWindowOver: number };
-                          history?: { keep?: KeepStage[] };
-                      };
-                      facts?: { ttl?: { prior?: number } };
+                      config?: { mode: "off" | "notify" | "auto" };
+                      /** ##432 事件制：已落盘的压缩边界（null = 从没压过） */
+                      facts?: { boundary?: { at: string; dropped: number; limitTokens: number } | null };
                   })
                 : undefined,
     );
-    const badgeCfg = (): DeliveryTriggerCfg | null => {
+    /** 自动压缩 mode：只说「要不要另记一条审计」，与投递切点无关（`null` = 未读到） */
+    const badgeMode = (): "off" | "notify" | "auto" | null => autoStatus()?.config?.mode ?? null;
+    /**
+     * 已落盘的压缩边界 —— `undefined` = 还没取到（不写这块），`null` = 确实没压过（投递 = 全量）。
+     * 两个值不能合成一个：没取到就说「没压过」等于编事实。
+     */
+    const badgeBoundary = (): DeliveryBoundary | null | undefined => {
         const st = autoStatus();
-        const c = st?.config;
-        if (!c) return null;
-        const prior = st?.facts?.ttl?.prior;
-        return {
-            mode: c.mode,
-            triggers: c.triggers,
-            ttlMs: typeof prior === "number" && prior > 0 ? prior : null,
-            mustStages: mustStagesOf(c.history?.keep),
-        };
+        if (!st) return undefined;
+        return st.facts?.boundary ?? null;
     };
     // 会话/本轮的**压缩次数**与**投递次数（= 步数）**（##423 ③：此前哪里都看不到这两个数）
     const compactList = () => compactEvents() ?? [];
@@ -1059,12 +1056,8 @@ export function ContextPartsDrawer(props: { open: boolean; uri: string | null; o
                                                                                         class="badge badge-ghost badge-xs"
                                                                                         title={deliveryBadgeTitle({
                                                                                             selection: d(),
-                                                                                            hits: (evs() ?? []).map((e) => ({
-                                                                                                trigger: e.trigger,
-                                                                                                by: e.by,
-                                                                                            })),
-                                                                                            cfg: badgeCfg(),
-                                                                                            stepTokens: v.buckets.total,
+                                                                                            boundary: badgeBoundary(),
+                                                                                            mode: badgeMode(),
                                                                                         })}
                                                                                     >
                                                                                         {deliveryBadgeText(d())}
@@ -1103,9 +1096,7 @@ export function ContextPartsDrawer(props: { open: boolean; uri: string | null; o
                                                                                             <span class="badge badge-ghost badge-xs">budget</span>
                                                                                             <span>
                                                                                                 上限{" "}
-                                                                                                {ev.policy.modeData.budgetBytes === 0
-                                                                                                    ? "0（=清零）"
-                                                                                                    : `${Math.round(ev.policy.modeData.budgetBytes / 1024)} KB`}
+                                                                                                {legacyBudgetKb(ev.policy)}
                                                                                             </span>
                                                                                             <span>{byText(ev.by)} · {triggerShort(ev.trigger)}</span>
                                                                                             <span class="tabular-nums">轮 {ev.size.before.turns} → {ev.size.after.turns}</span>

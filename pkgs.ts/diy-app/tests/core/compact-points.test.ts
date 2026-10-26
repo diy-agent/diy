@@ -16,7 +16,7 @@ function ev(ts: string, id = ts): CompactEventRecord {
         ts,
         by: "ui",
         trigger: "manual",
-        policy: { mode: "budget", modeData: { budgetBytes: 3072, toolResult: { render: "asis" } }, summary: false },
+        policy: { mode: "budget", modeData: { toolResult: { render: "asis" } }, summary: false },
         boundary: { keptFromTurnId: null, keepFromOpIndex: 0 },
         size: {
             before: { turns: 3, messages: 6, bytes: 300, estTokens: 75 },

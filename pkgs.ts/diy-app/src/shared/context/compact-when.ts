@@ -1,49 +1,58 @@
 // src/shared/context/compact-when.ts
-// 🎯 「**什么时候会压**」的文案真源（##423 块 2）：把配置里的触发器 + 当前阈值 + 实测用量
-//    拧成几句人能读懂的话。组件只管排版，**句子与数字都从这里出**（可单测钉住）。
+// 🎯 「**什么时候会压**」的文案真源（##423 块 2）——
+//    ##432 刀 2 之后压缩变成了**事件制**，这里的判据必须跟着换：不再讲「三触发器 × 字节预算」。
 //
-// ── 病根（用户 2026-10-25）──
-// 「我觉得我们缺少对什么时候会压缩…的 ui 呈现，我已经完全被搞懵了。」
-// 界面上只有「上限 xx KB」，没写**谁在何时把它推下去**：三条触发器、开着没开、阈值多少、
-// 现在离阈值还差多远 —— 全靠自己读 yaml。
+// ── 现行判据（真源 `main/services/local-agent.ts::appliedHistoryRange`，别在 UI 另起一套）──
+//   ① **第一次压**：还没有落盘边界 且 全量估算 > `history.limit.limitTokens`
+//      ⇒ 发请求前用 `selectCompactableRange` **算一次**切点，写一条压缩事件（turns.jsonl 的 compaction entry）。
+//   ② **之后再压**：已有边界，只有当**保留段自己**（保头 + 保留尾段，被丢掉那段不算）重新涨过上限时，
+//      才再算一次并写新事件。「全量」在这条判据里是错的 —— 被丢的段永远算在内，那样会每步都"超限"。
+//   ③ **每步投递**：按**已落盘边界**切，**不重算**（新增长只是追加到尾部，切点不动）。
+//   ④ **手动**：「压缩」按钮随时可用，按当前上限立刻重算一次。
 //
-// ── 口径（别在 UI 里另起一套）──
-// 判据真源 `shared/context/auto-compact.ts`：三个触发器都是**确定事实**，不是划算不划算的预测：
-//   · systemContextChanged —— system 容器变了 ⇒ 前缀缓存必作废，此刻压零代价
-//   · cacheExpired         —— 距上次请求 > 生效 TTL（实测优先，见 cache-ttl.ts）
-//   · contextWindowOver    —— 该会话最后一步实测 total ≥ 阈值（**撞墙前**就压，不是事后重试；
-//                            没有「溢出后收紧重试」这条机制，界面不许编）
-// 加一条人工触发：面板上的「压缩」按钮（= 手动，不属于三触发器）。
+// 三触发器（systemContextChanged / cacheExpired / contextWindowOver）**仍然存在**，但它们的
+// `mode=auto` 只决定要不要另写一条 `compact.jsonl` **审计记录**（##431 起降级为审计日志）——
+// **不改变投递切点**。界面上必须把这两件事分开说，否则又回到「用户被搞懵」的老路。
 //
 // 纯函数：禁止 import node:*（渲染层直接用）。
 
-import { fmtBudgetBytes } from "./delivery-badge";
-
 export type CompactWhenMode = "off" | "notify" | "auto";
 
+/** 已落盘的压缩边界（turns.jsonl 的 compaction entry，只取展示需要的三项） */
+export interface CompactWhenBoundary {
+    /** ISO 时间 */
+    at: string;
+    /** 那一次丢掉的条数 */
+    dropped: number;
+    /** 那一次生效的上限（token）—— 与当前上限不同就说明「压完之后改过上限」 */
+    limitTokens: number;
+}
+
 export interface CompactWhenInput {
+    /** 自动压缩模式（只管审计记录，不改投递切点） */
     mode: CompactWhenMode;
-    triggers: { systemContextChanged: boolean; cacheExpired: boolean; contextWindowOver: number };
-    /** 生效 TTL（毫秒，实测优先）；`null` = 无实测也无先验 → 不写时长 */
-    ttlMs: number | null;
-    /** 压缩上限（字节）：这就是「一条上限」—— 排版用 */
-    budgetBytes: number;
-    /** 该会话最后一步实测 token（输入 + 输出）；`null` = 没有实测 */
+    /** 唯一旋钮：历史 token 上限 */
+    limitTokens: number;
+    /** 已落盘边界；null = 从没压过（投递 = 全量） */
+    boundary: CompactWhenBoundary | null;
+    /** 上次真发时投递出去的那段历史 ≈ token（最后一步轮首的投递快照）；null = 没记录 */
+    retainedTokens: number | null;
+    /** 该会话最后一步实测 token（输入 + 输出）；null = 没有实测 */
     lastStepTokens: number | null;
-    /** 模型窗口上限（token）；`null` = 未知 */
+    /** 模型窗口上限（token）；null = 未知 */
     windowLimit: number | null;
 }
 
 export interface CompactWhenRow {
-    /** `systemContextChanged` / `cacheExpired` / `contextWindowOver` / `manual` */
-    key: "systemContextChanged" | "cacheExpired" | "contextWindowOver" | "manual";
+    /** `first` 首次 / `retained` 保留段再顶过上限 / `reuse` 每步按边界切 / `manual` 人工 */
+    key: "first" | "retained" | "reuse" | "manual";
     /** 人读名 */
     label: string;
-    /** `on` 开 / `off` 关 / `manual` 人工 */
+    /** `on` 现在满足 / `off` 现在用不上 / `manual` 人工 */
     state: "on" | "off" | "manual";
     /** 一句话：**判据 + 当前实际值** */
     text: string;
-    /** hover 补充解释（判据为什么成立；鼠标悬停即见） */
+    /** hover 补充解释（判据为什么长这样；鼠标悬停即见） */
     hint: string;
 }
 
@@ -55,94 +64,118 @@ export function fmtTtl(ms: number | null): string {
     return `${Math.round(ms / 1000)} 秒`;
 }
 
+/** token 人读：千位分隔 + 单位（与 `history.limit.limitTokens` 同一个数域） */
+export function fmtTokens(n: number): string {
+    return `${Math.round(n).toLocaleString()} tok`;
+}
+
 /** 窗口占用占比（百分数，1 位小数）；量不到 → null（不写 0） */
 export function windowRatio(lastStepTokens: number | null, windowLimit: number | null): number | null {
     if (lastStepTokens == null || windowLimit == null || windowLimit <= 0) return null;
     return Math.round((lastStepTokens / windowLimit) * 1000) / 10;
 }
 
+/** ISO → `MM-DD HH:mm`（只给刻度，不编时区） */
+export function fmtStamp(iso: string): string {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 /**
- * 三触发器 + 手动，逐条给「开着没开 + 判据 + 当前值」。
+ * 四行：**首次** / **保留段再顶过上限** / **每步按边界切** / **手动**，逐条给「现在满不满足 + 当前值」。
  *
- * 注意 `state` 与 `mode` 是**两件事**：`mode=off` 时触发器全都不跑（哪怕 `triggers.* = true`），
- * 所以 off 模式下每条都强制 `state: "off"` 并在 text 里说清「全局 off，三个都不跑」。
+ * 顺序 = 判据的时间顺序（先有第一次，才有之后的复用与再压），不是紧急度。
  */
 export function compactWhenRows(i: CompactWhenInput): CompactWhenRow[] {
-    const running = i.mode !== "off";
-    const st = (on: boolean): "on" | "off" => (running && on ? "on" : "off");
-    const ratio = windowRatio(i.lastStepTokens, i.windowLimit);
-    const measured =
-        i.lastStepTokens == null
-            ? "本会话还没有实测用量"
-            : `本会话最后一步 ${i.lastStepTokens} tok` +
-              (ratio == null ? "" : `（占窗口 ${ratio}%）`);
-    const winOff = i.triggers.contextWindowOver === 0;
+    const limit = i.limitTokens;
+    const b = i.boundary;
+    const retained = i.retainedTokens;
+    const gap = retained == null ? null : limit - retained;
+
+    const firstText = b
+        ? `已有边界（${fmtStamp(b.at)} 写的，丢 ${b.dropped} 条）⇒ 这条路只在「从没压过」时走`
+        : `还没有边界：全量估算一旦超 ${fmtTokens(limit)}，下一步**发请求之前**算一次切点并写压缩事件`;
+
+    const retainedText = !b
+        ? "还没有边界（先等第一次压）"
+        : retained == null
+          ? `上限 ${fmtTokens(limit)} · 保留段还没有实测（等下一次真发记进账本）`
+          : gap! <= 0
+            ? `保留段 ${fmtTokens(retained)} 已顶过上限 ${fmtTokens(limit)} ⇒ 下一步就再压一次`
+            : `保留段 ${fmtTokens(retained)} / 上限 ${fmtTokens(limit)} ⇒ 再涨 ${fmtTokens(gap!)} 才会再压一次`;
+
     return [
         {
-            key: "systemContextChanged",
-            label: "系统上下文变",
-            state: st(i.triggers.systemContextChanged),
-            text: i.triggers.systemContextChanged
-                ? running
-                    ? "开 · system 容器一改就压（前缀缓存此刻必作废，压了白赚）"
-                    : "开 · 但全局 mode=off，不跑"
-                : "关",
+            key: "first",
+            label: "第一次压",
+            state: b ? "off" : "on",
+            text: firstText,
             hint:
-                "判据：每轮开头的 system 容器（提示词 / 工具表）与上一步不同 ⇒ 前缀缓存必然失效。" +
-                "既然整段都要按全价重读，此刻压缩没有额外重建代价。不是「划不划算」的估算，是确定事实。",
+                "判据：没有落盘边界、且全量估算 > 上限 ⇒ 发请求前算一次切点（`selectCompactableRange`），" +
+                "写一条压缩事件。算一次就够：之后的每一步都不再重算。",
         },
         {
-            key: "cacheExpired",
-            label: "缓存过期",
-            state: st(i.triggers.cacheExpired),
-            text: i.triggers.cacheExpired
-                ? running
-                    ? `开 · 距上次请求 > ${fmtTtl(i.ttlMs)} 就压`
-                    : "开 · 但全局 mode=off，不跑"
-                : "关",
+            key: "retained",
+            label: "保留段再顶过上限",
+            state: b ? "on" : "off",
+            text: retainedText,
             hint:
-                "判据：距**上一次真实请求**的间隔 > 生效 TTL ⇒ 上游前缀缓存已过期，下一步本来就要全价读。" +
-                "TTL 取实测优先（无实测才用先验），所以这里显示的就是**当下生效值**。",
+                "判据：**只看保留段**（保头 + 尾部保留段）自己的 token，不把被丢掉那段算进来 ——" +
+                "拿全量判会每步都「超限」，那就退回成每步重算的老毛病了。" +
+                "一次压缩只保留到上限的一半，余下额度留给后续新增，所以正常是「涨一阵才再压一次」。",
         },
         {
-            key: "contextWindowOver",
-            label: "窗口超限",
-            state: winOff ? "off" : st(true),
-            text: winOff
-                ? "关（阈值 0）"
-                : `开 · 最后一步 ≥ ${i.triggers.contextWindowOver} tok 就压 · 现在 ${measured}`,
+            key: "reuse",
+            label: "每步投递",
+            state: "on",
+            text: "按**已落盘边界**切：切点固定，新增长只追加到尾部，每步不重算",
             hint:
-                "判据：该会话最后一步的实测 total（输入 + 输出）≥ 阈值。" +
-                "这是**硬约束**（再涨就撞墙），在发请求**之前**拦，不是请求失败后收紧重试 —— 全仓没有「溢出重试」这条路径，别在界面上编它。" +
-                "阈值该设得比模型窗口小一截：窗口上限 " +
-                (i.windowLimit == null ? "未知" : `${i.windowLimit} tok`) +
-                "，撞满前留出输出空间。",
+                "投递与压缩是两件事：投递每步都发生（按当前边界切），压缩只在事件时发生（改边界）。" +
+                "所以「这一步压过没有」要问边界最后一次是什么时候写的，而不是问这一步有没有触发条件。",
         },
         {
             key: "manual",
             label: "手动",
             state: "manual",
-            text: "随时可用：面板右上「压缩」按钮（压完历史保留、可撤销）",
-            hint: "人工触发，不受上面三个开关影响；mode=off 时这是**唯一**的压缩途径。",
+            text: "随时可用：面板右上「压缩」按钮 / `diy agent local compact run`（历史保留、可撤销）",
+            hint: "人工触发，不看 mode、不看上限是否已经顶过 —— 立刻按当前上限重算一次边界。",
         },
     ];
 }
 
+/**
+ * 自动压缩（mode + 三触发器）与投递的关系 —— **一句话划清**。
+ * ##431 起 `compact.jsonl` 是纯审计日志，三触发器不再决定投递切点。
+ */
+export function autoAuditSentence(i: Pick<CompactWhenInput, "mode">): string {
+    const mode =
+        i.mode === "off"
+            ? "off（不检测）"
+            : i.mode === "notify"
+              ? "notify（检测到只提示）"
+              : "auto（检测到就压，另记一条审计）";
+    return (
+        `自动压缩 mode=${mode}：三个触发器（系统上下文变 / 缓存过期 / 窗口超限）只决定要不要**另记一条审计**` +
+        "（`compact.jsonl`），**不改投递切点** —— 投递只认上面那个已落盘的边界。"
+    );
+}
+
 /** 一句话总结（徽章 / 表格里放不下四行时用） */
 export function compactWhenSummary(i: CompactWhenInput): string {
-    if (i.mode === "off") return "自动压缩：off（只有手动能压）";
-    const on = compactWhenRows(i)
-        .filter((r) => r.state === "on")
-        .map((r) => r.label);
-    const mode = i.mode === "auto" ? "检测到即压" : "检测到只提示";
-    return `自动压缩：${mode} · 触发 ${on.length ? on.join(" / ") : "无（三个都关了，只剩手动）"}`;
+    const where = i.boundary ? `已压过（${fmtStamp(i.boundary.at)}，丢 ${i.boundary.dropped} 条）` : "还没压过";
+    return `历史 ${where} · 上限 ${fmtTokens(i.limitTokens)}`;
 }
 
 /**
  * 「压成什么样」的一句话：上限 + 超出后的动作。
- * `modeData.budgetBytes` 是**唯一**的上限；它约束的是「按顺序挑历史」那部分的**值字节**。
+ * `history.limit.limitTokens` 是**唯一**的上限（token）：从最后一步往前累加，装不下就停；
+ * 保头 600 token 硬编码、切点 tool 配对平衡、一次压缩保留到上限的一半，边界只在压缩事件时算一次。
  */
-export function compactResultSentence(budgetBytes: number): string {
-    if (budgetBytes === 0) return "上限 0（= 清零）：历史一条都不留，只剩每轮现建的 system / 工具表";
-    return `上限 ${fmtBudgetBytes(budgetBytes)}：超出就按管道顺序挑，挑到装不下为止（挑剩下的不进本次请求）`;
+export function compactResultSentence(limitTokens: number): string {
+    return (
+        `上限 ${fmtTokens(limitTokens)}：从最后一步往前累加，装得下就装、装不下就停，一次只保留到上限的一半` +
+        "（保头 600 tok 硬编码永不丢；切点必须 tool 配对平衡）；边界**只在压缩事件时算一次**，之后每步只按它切"
+    );
 }

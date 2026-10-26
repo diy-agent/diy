@@ -14,7 +14,8 @@ import { diyHome } from "../../src/main/core/state";
 import { localDir, keyOf, sessionFile } from "../../src/main/core/local-paths";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
-import { LocalAgentManager, opsFile } from "../../src/main/services/local-agent";
+import { LocalAgentManager } from "../../src/main/services/local-agent";
+import { opsFile } from "../../src/main/core/local-paths";
 import { saveAutoCompact } from "../../src/main/core/auto-compact-config";
 import { DEFAULT_WINDOW_OVER_TOKENS } from "../../src/shared/context/auto-compact";
 import type { StepUsageRecord } from "../../src/shared/usage";
@@ -63,13 +64,13 @@ function seedOps(taskUri: string): void {
 }
 
 describe("投递压缩可见性：每轮首步的用量账带 historySelection", () => {
-    it("预算 0（清零）→ 轮首步记录：丢历史、0 段保留；其余步不带", async () => {
+    it("轮首步记录 historySelection（新口径 = token 上限）；其余步不带", async () => {
         const uri = createTask({ title: "投递事实", project: PROJECT });
         seedOps(uri);
         saveAutoCompact(diyHome(), {
             mode: "notify",
             triggers: { systemContextChanged: true, cacheExpired: true, contextWindowOver: DEFAULT_WINDOW_OVER_TOKENS },
-            policy: { mode: "budget", modeData: { budgetBytes: 0, toolResult: { render: "asis" } }, summary: false },
+            policy: { mode: "budget", modeData: { toolResult: { render: "asis" } }, summary: false },
         });
         const model = new MockLanguageModelV3({
             provider: "stub",
@@ -86,9 +87,10 @@ describe("投递压缩可见性：每轮首步的用量账带 historySelection",
         expect(recs.length).toBeGreaterThanOrEqual(1);
         const s1 = recs.find((r) => r.step === 1)!;
         expect(s1.historySelection).toBeTruthy();
-        expect(s1.historySelection!.budgetBytes).toBe(0);
+        // 报的是**唯一旋钮**的值（token 上限）；没有压缩边界 ⇒ 不丢消息
+        expect(s1.historySelection!.limitTokens).toBe(20000);
         expect(s1.historySelection!.totalMessages).toBeGreaterThan(0);
-        expect(s1.historySelection!.droppedMessages).toBeGreaterThan(0); // 清零 → 丢历史
+        expect(s1.historySelection!.droppedMessages).toBe(0);
         // 只有轮首记（配置驱动的重建点）；其余步不带
         for (const o of recs.filter((r) => r.step !== 1)) expect(o.historySelection).toBeUndefined();
     });

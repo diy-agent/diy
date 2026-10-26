@@ -15,7 +15,7 @@ import { ShellTest } from "./shell-test";
 import { startElectronTest, type ElectronTest } from "./electron-test";
 import { waitUntil } from "./wait";
 import { makeUiDriver, type A11yNode, type UiDriver } from "./ui-drive";
-import { opsFile } from "../src/main/services/local-agent";
+import { opsFile } from "../src/main/core/local-paths";
 
 /** 会话规模：48 轮（> 首载窗口 + 视口窗口，确保"虚拟化与否"可分辨） */
 const TURNS = 48;

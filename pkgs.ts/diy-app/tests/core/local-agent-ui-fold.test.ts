@@ -16,7 +16,8 @@ import { join } from "node:path";
 import { diyHome } from "../../src/main/core/state";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
-import { LocalAgentManager, compactFile, opsFile } from "../../src/main/services/local-agent";
+import { LocalAgentManager, compactFile } from "../../src/main/services/local-agent";
+import { opsFile } from "../../src/main/core/local-paths";
 import { llmFile } from "../../src/main/core/local-paths";
 import type { CompactEventRecord } from "../../src/shared/context/compaction";
 

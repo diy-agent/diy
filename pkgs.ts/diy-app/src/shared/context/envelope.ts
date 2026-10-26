@@ -44,7 +44,7 @@
 import { z } from "zod";
 import { AssembleGlobalsSchema } from "../prompt-schema";
 import { describeSchema, pruneSchemaDoc, type SchemaDoc } from "../schema-doc";
-import { HistoryNoteSchema } from "./budget-note";
+import { HistoryNoteSchema } from "./history-note";
 import { emitYamlTraced, renderPaths, subsetOf, toYaml } from "./render";
 import type { ContextPath, ContextTreeState } from "./types";
 
@@ -60,17 +60,13 @@ import type { ContextPath, ContextTreeState } from "./types";
  * 真正该动版本的只有 `WIRE_ENCODING` 里那些**语义**（system/runtime 投递形态、hash 口径、渲染格式）。
  */
 export const ENVELOPE_ABOUT = [
-    "本消息是一份 YAML 信封：顶层键只有 help / system / runtime / runtimeDiff / summary / history / from / user（见 help 各节）；其中 summary / history 只在会话历史被压缩时出现，from 只出现在**历史** user 消息里。",
-    "· **`from:`（发言者）**：只出现在**历史** user 消息上（每条历史 user 消息自己的一个小信封：`from` + `user.message`，与本轮尾部信封的 `user:` 并列而非嵌套）。`from.id` 是成员 id（`agent:<名>` / `human:<名>`），`from.name` 是当时的显示名。**老消息可能没有这一段**（那时块里没记发言者）—— 没有 = 未知，不要当成「同一个人」。",
-    "· 别把 `from:` 当成变量树：它只描述**那句话是谁说的**，不描述当前状态（当前状态看 system / runtime）。",
-    "· help 段是**结构说明**（由代码里的 zod 定义派生，随代码版本变化）——读它就知道每个键是什么、下面有哪些字段。",
-    "· 值段（system / runtime / runtimeDiff / history / user）只放**数据**，不放解释；解释一律在 help。",
-    "· system 段每次请求**全量重建**（稳定项），变更时直接以新值替换、不带历史。",
-    "· runtime 段是**易变项**：每轮首步给全量；轮中途某一步变了，就**追加**一条只含 runtimeDiff 的消息（键 = 变化的单元，值 = 该单元变更后的当前值）。新旧以**后出现**的为准。",
-    "· **历史压缩（`history:` 段）**：什么时候压 —— 三个可判定的触发（① 系统上下文变了 ⇒ 前缀缓存必作废、② 缓存已过期、③ 上下文窗口占用超阈值），压缩按 `budgetBytes` 预算从**全量历史**里挑保留哪些消息（主干优先：用户发言 > 结论 > 过程文本 > 工具调用 > 工具结果，新的先）。压完 messages 长什么样 —— `history:` **自占一条 user 消息**，紧跟在 system 之后、历史第一条之前（不是历史的内容，只是索引）；它后面的消息才是保留的历史。`kept` 是保留的行号区间（1-based，行号 = `file` 那份日志的行号），**区间之间的空隙就是被省掉的部分**，需要原文时按 `file` 取。⚠️ **什么都没丢时（没压缩）这条注记根本不出现** —— 看到它才说明历史真被压过。",
-    "· **历史压缩不影响变量树**：`history:` 段只说明「对话历史被压掉了哪些行」。system / runtime 两段**每次都是全量当前值**（system 段随每个请求重建；runtime 段在每轮第一条 user 消息里给全量，轮中途变了再追加 `runtimeDiff`）—— 变量树**不会**因压缩而丢失或陈旧。**不要**为「某个变量现在是什么值」去做额外查询（cat 文件 / 跑命令），直接看本消息里的值。",
-    "· `summary:` 是被压缩掉那段对话的**结论**（摘要功能启用时才有）—— 只做**背景**，不是变量树：要取某个变量的值仍看 system / runtime 段。",
-    "· `[]` / `{}` 表示「该变量存在但为空」，与「没有这个变量」不是一回事。",
+    "YAML 信封：顶层键只有 help / system / runtime / runtimeDiff / summary / history / from / user。",
+    "· help = 结构说明（zod 派生）；值段只放数据，解释在 help。",
+    "· system 每次全量重建；runtime 每轮首步全量，中途变了追加 runtimeDiff（以**后出现**者为准）。",
+    "· `history:` = 压缩注记（一条 token 上限、保头 600 token、tool 配对平衡；**边界只在压缩事件时算一次**）。自占一条 user 消息、紧跟 system；`mode: off` 只关自动触发，不关裁。",
+    "· **历史压缩不动变量树**（system / runtime 每次全量）：别为取值去 cat 文件或跑命令。",
+    "· `from:` 只在**历史** user 消息上，说明是谁说的（不是变量树）。",
+    "· `summary:` 是被压掉那段的结论，只做背景。`[]` / `{}` = 存在但为空（与「没有这个变量」不是一回事）。",
 ].join("\n");
 
 /** 易变变量树（作为信封的 `runtime` 键；每轮首步全量） */

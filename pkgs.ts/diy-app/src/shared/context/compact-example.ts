@@ -19,7 +19,7 @@ import { selectKeptBoundary, type KeptBoundary } from "./select-kept-boundary";
 
 export { HEAD_KEEP_TOKENS } from "./select-kept-boundary";
 
-/** 合成样例里的一条消息（`bytes` 按 UTF-8 字节；token 估算 = 字节 ÷ 4，与全仓同一口径） */
+/** 合成样例里的一条消息（`bytes` 按 UTF-8 字节；token 见 `bytesToTokens` 的口径说明） */
 export interface ExampleMessage {
     id: string;
     /** 哪一轮（`t1`…；与界面上的轮次对齐，纯展示） */
@@ -34,11 +34,19 @@ export interface ExampleMessage {
     callId?: string;
 }
 
-/** 字节 ÷ 4 = token（全仓同一口径，见 compaction.ts::estimateTokens） */
-export const bytesToTokens = (bytes: number): number => Math.round(bytes / 4);
+/**
+ * 样例的字节 → token：**3 字节 ≈ 1 token**。
+ *
+ * 为什么不是 ÷4：本文件每条 `label` 都是**中文**正文，而压缩的真实口径是
+ * `history-limit.ts::estimateTokensOf`（CJK 码点 1 token/字、其余 /4）。中文 UTF-8 是 3 字节/字
+ * ⇒ 一条「N 字节中文」的 token 数 ≈ `N / 3`。用 ÷4 会把样例低估 25%：
+ * 预览说「上限 4000 能留 8 条」、真压只留 6 条 —— 本文件头注那句「示例与真实行为不一致比没有示例更糟」
+ * 正是防这个。`tests/core/compact-example.test.ts` 有一条用例把这里的口径与 `estimateTokensOf` 对齐钉住。
+ */
+export const bytesToTokens = (bytes: number): number => Math.round(bytes / 3);
 
 /**
- * 合成样例：6 轮、含 4 组工具调用/结果，合计约 30 KB（≈7.5k token）。
+ * 合成样例：6 轮、含 4 组工具调用/结果，合计约 30 KB（≈10k token，按 3 字节 ≈ 1 token 的中文口径）。
  * 尺寸**故意不均匀**（工具结果远大于正文）—— 这正是压缩的主要作用对象，均匀样例看不出取舍。
  */
 export const EXAMPLE_MESSAGES: readonly ExampleMessage[] = [
@@ -68,7 +76,7 @@ export interface ExampleRow extends ExampleMessage {
     kept: boolean;
     /** 为什么留 / 为什么丢（界面 hover 用，别让人猜） */
     why: string;
-    /** 估算 token（= 字节 ÷ 4） */
+    /** 估算 token（= `bytesToTokens(bytes)`，3 字节 ≈ 1 token：样例正文是中文） */
     tokens: number;
 }
 
@@ -89,17 +97,17 @@ export interface CompactExampleResult {
 /**
  * 算出「按这个上限压完长什么样」。留谁丢谁 = `selectKeptBoundary` 说了算，这里只排版。
  *
- * @param budgetBytes 上限（字节，0 = 清零：只留保头）
+ * @param budgetTokens 上限（**token**，与真实压缩同一个口径 —— ##432 的唯一旋钮）
  * @param messages 默认用 `EXAMPLE_MESSAGES`（测试可传小样例）
  */
 export function buildCompactExample(
-    budgetBytes: number,
+    budgetTokens: number,
     messages: readonly ExampleMessage[] = EXAMPLE_MESSAGES,
 ): CompactExampleResult {
     const beforeBytes = messages.reduce((a, m) => a + m.bytes, 0);
     const { headEnd, cut }: KeptBoundary = selectKeptBoundary(
         messages.map((m) => ({ tokens: bytesToTokens(m.bytes), kind: m.kind, callId: m.callId })),
-        bytesToTokens(budgetBytes),
+        budgetTokens,
     );
 
     const rows: ExampleRow[] = messages.map((m, i) => {

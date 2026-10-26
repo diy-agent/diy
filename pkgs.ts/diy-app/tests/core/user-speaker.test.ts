@@ -14,7 +14,6 @@ import type { LanguageModelV3StreamPart, LanguageModelV3StreamResult, LanguageMo
 import { MockLanguageModelV3 } from "ai/test";
 import type { LanguageModel } from "ai";
 import { join } from "node:path";
-import { rmSync, writeFileSync } from "node:fs";
 import { diyHome } from "../../src/main/core/state";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
@@ -23,7 +22,7 @@ import { LocalAgentManager, normalizeUserRuns } from "../../src/main/services/lo
 import { isEnvelopeText, renderFromPart, tailEnvelope } from "../../src/shared/context/envelope";
 import type { Op } from "../../src/main/services/local-blocks";
 import type { ModelMessage } from "ai";
-import { utf8Bytes } from "../../src/shared/context/compaction";
+import { appendCompactionEntry } from "../../src/main/services/local-turns";
 
 let PROJECT = "";
 beforeAll(() => {
@@ -103,24 +102,21 @@ async function turn(
 }
 
 /**
- * 把历史预算写死（真源 = `$DIY_HOME/auto-compact.yaml`）—— 照抄 `history-note.test.ts` 的同一份口径：
+ * 压缩**事件**注入（##432 的口径：边界是事件落盘、之后每步只读）—— 照抄 `history-note.test.ts`：
  * `history.keep` 只留 `ladder` 一级（没有 `steps` 托底，小会话才压得掉东西）。
  */
-const setBudget = (budgetBytes: number): void => {
-    writeFileSync(
-        join(diyHome(), "auto-compact.yaml"),
-        JSON.stringify({
-            mode: "notify",
-            triggers: { systemContextChanged: true, cacheExpired: true, contextWindowOver: 38400 },
-            policy: { mode: "budget", modeData: { budgetBytes, toolResult: { render: "asis" } }, summary: false },
-            history: { keep: [{ type: "ladder" }] },
-        }),
-        "utf-8",
-    );
+const writeBoundary = (uri: string, cutLine: number, headLine = 1, dropped = 1): void => {
+    appendCompactionEntry(uri, {
+        at: new Date().toISOString(),
+        limitTokens: 20_000,
+        dropped,
+        headLine,
+        cut: { llmLine: cutLine, turnId: null },
+    });
 };
 
+
 /** 单条 user 消息的**投递**字节（与 `costOfWith` 同口径：`{role, content}` 的 JSON） */
-const userBytes = (text: string): number => utf8Bytes(JSON.stringify({ role: "user", content: text }));
 
 /** 历史里那条 user 消息（= prompt 里第一条 role=user 的正文；尾部信封另算） */
 const firstUserText = (prompt: PromptMsg[]): string => textOf(prompt.find((m) => m.role === "user")?.content);
@@ -213,16 +209,13 @@ describe("##422 合并规则：from 信封不参与相邻 user 合并（判据 �
     });
 
     it("压缩后：history 注记（[1]）与 from 信封（[2]）各占一条，互不合并（##421 的判据在新形态上仍成立）", async () => {
-        // 预算 = 「两条 user 的字节和」且第一轮回复很长 ⇒ 旧 user 留下、长 assistant 被丢（真压缩）。
-        // ⚠️ 旧 user 现在是 **from 信封**（比裸文本多几十字节），预算必须按信封算 —— 否则两个 user 都进不来，
-        //   就看不到「注记后面紧跟 from 信封」的现场（实测踩过：预算按裸文本算 ⇒ 历史全丢）。
-        const fromUser = tailEnvelope([renderFromPart({ id: "agent:main", name: PERSONA_NAME })], "第一句");
-        setBudget(utf8Bytes(JSON.stringify({ role: "user", content: fromUser })) + userBytes("第二句"));
+        // 边界切在 3 ⇒ 旧 user（from 信封）留下、assistant 被丢（真压缩）
         const uri = newUri();
         seedRoom(uri, uri);
         const sink = { prompts: [] as unknown[] };
         const mgr = new LocalAgentManager(() => stubModel(sink));
         await turn(uri, mgr, "第一句", { author: "agent:main" }, sink);
+        writeBoundary(uri, 3);
         const { prompt } = await turn(uri, mgr, "第二句", undefined, sink);
         expect(textOf(prompt[1]?.content).startsWith("history:")).toBe(true);
         // 紧随注记那条是**保留下来**的历史发言（from 信封），不是「索引 + 原话」一坨
@@ -230,7 +223,5 @@ describe("##422 合并规则：from 信封不参与相邻 user 合并（判据 �
         expect(hist.startsWith("from:\n")).toBe(true);
         expect(hist).not.toContain("history:");
         expect(hist).toContain("第一句");
-        // 恢复缺省（同目录其他用例不该被这份预算影响）
-        rmSync(join(diyHome(), "auto-compact.yaml"), { force: true });
     });
 });

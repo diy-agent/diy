@@ -13,12 +13,13 @@ import type { LanguageModelV3StreamPart, LanguageModelV3StreamResult, LanguageMo
 import { MockLanguageModelV3 } from "ai/test";
 import type { LanguageModel } from "ai";
 import { join } from "node:path";
-import { writeFileSync } from "node:fs";
+
 import { diyHome } from "../../src/main/core/state";
 import { createProject } from "../../src/main/core/project";
 import { createTask, updateTask } from "../../src/main/core/task";
 import { LocalAgentManager } from "../../src/main/services/local-agent";
 import { utf8Bytes } from "../../src/shared/context/compaction";
+import { appendCompactionEntry } from "../../src/main/services/local-turns";
 
 let PROJECT = "";
 beforeAll(() => {
@@ -54,22 +55,17 @@ const textReply = (text: string): LanguageModelV3StreamResult => ({
 });
 
 /**
- * 把历史预算写死（真源 = `$DIY_HOME/auto-compact.yaml`）。
- *
- * `history.keep` 只留 `ladder` 一级（**不放 `steps` 托底**）：托底级不耗预算、会把最近几条无条件留住，
- * 小会话里就永远压不到东西（本文件要的是「真丢掉一条」的现场）。
+ * 压缩**事件**的注入（##432 的口径）：边界是一次事件算好落进 `turns.jsonl` 的，
+ * 之后每步只读它 —— 所以测注记不必「把真实总量顶过上限」，直接落一条边界即可（确定性更好）。
  */
-const setBudget = (budgetBytes: number): void => {
-    writeFileSync(
-        join(diyHome(), "auto-compact.yaml"),
-        JSON.stringify({
-            mode: "notify",
-            triggers: { systemContextChanged: true, cacheExpired: true, contextWindowOver: 38400 },
-            policy: { mode: "budget", modeData: { budgetBytes, toolResult: { render: "asis" } }, summary: false },
-            history: { keep: [{ type: "ladder" }] },
-        }),
-        "utf-8",
-    );
+const writeBoundary = (uri: string, cutLine: number, headLine = 1, dropped = 1): void => {
+    appendCompactionEntry(uri, {
+        at: new Date().toISOString(),
+        limitTokens: 20_000,
+        dropped,
+        headLine,
+        cut: { llmLine: cutLine, turnId: null },
+    });
 };
 
 type PromptMsg = { role: string; content: unknown };
@@ -80,8 +76,7 @@ const textOf = (c: unknown): string =>
  * 跑两轮纯文本对话，返回第 2 次请求的 prompt（= 上游真实收到的形状）。
  * `firstReply` 特意可调长：预算只够两条 user 时，它会被丢 —— 但「保留集里有旧 user」才有意义。
  */
-async function twoTurns(budgetBytes: number, firstReply = "好"): Promise<PromptMsg[]> {
-    setBudget(budgetBytes);
+async function twoTurns(boundary: { cutLine: number } | null, firstReply = "好"): Promise<PromptMsg[]> {
     const uri = newUri("注记判据");
     let call = 0;
     const model = new MockLanguageModelV3({
@@ -91,6 +86,7 @@ async function twoTurns(budgetBytes: number, firstReply = "好"): Promise<Prompt
     });
     const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
     for await (const _op of mgr.chat(uri, "第一轮")) void _op;
+    if (boundary) writeBoundary(uri, boundary.cutLine);
     for await (const _op of mgr.chat(uri, "第二轮")) void _op;
     return (model.doStreamCalls[1]?.prompt ?? []) as PromptMsg[];
 }
@@ -100,7 +96,7 @@ const userBytes = (text: string): number => utf8Bytes(JSON.stringify({ role: "us
 
 describe("##421 压缩注记：只在真丢弃时出现（判据 ①）", () => {
     it("预算撑满（什么都没丢）⇒ 全程没有 history: 段", async () => {
-        const prompt = await twoTurns(1024 * 1024);
+        const prompt = await twoTurns(null);
         // 没有任何一条消息是注记（注意：system 的 help 里本来就有 `history:` 子节，不能全文搜字符串）
         expect(prompt.every((m) => !textOf(m.content).startsWith("history:"))).toBe(true);
         // 历史完整：第一轮那条 user 还在
@@ -112,7 +108,8 @@ describe("##421 压缩注记：只在真丢弃时出现（判据 ①）", () => 
 
 describe("##421 压缩注记：位置与形态（判据 ②③）", () => {
     it("压缩 ⇒ 注记 = messages[1]（system 之后），尾部信封里没有它", async () => {
-        const prompt = await twoTurns(64);
+        // 第 2 轮投递 = [user1(1), assistant(2), user2(3)]；边界切在 3 ⇒ 只丢 assistant
+        const prompt = await twoTurns({ cutLine: 3 });
         expect(prompt[0]?.role).toBe("system");
         const note = textOf(prompt[1]?.content);
         expect(note.startsWith("history:")).toBe(true);
@@ -126,25 +123,25 @@ describe("##421 压缩注记：位置与形态（判据 ②③）", () => {
     });
 
     it("注记不被并进相邻 user 正文：紧随其后那条 user 仍是原话（不是「索引 + 原话」）", async () => {
-        // 预算 = 两条 user 的字节和、且第一轮回复很长 ⇒ 旧 user 留下、长长的 assistant 被丢（真压缩）
-        const prompt = await twoTurns(userBytes("第一轮") + userBytes("第二轮"), "好".repeat(300));
+        // 边界切在 3 ⇒ 旧 user 留下、assistant 被丢（真压缩）
+        const prompt = await twoTurns({ cutLine: 3 }, "好".repeat(300));
         expect(textOf(prompt[1]?.content).startsWith("history:")).toBe(true);
         // ③ 紧随注记的那条 user 仍是**纯粹的原话**（旧坑：被并成「history 索引 + 用户原话」一坨）
         expect(textOf(prompt[2]?.content)).toBe("第一轮");
     });
 });
 
-describe("##421 压缩注记：keptBytes 记账（判据 ④）", () => {
-    it("kept 覆盖两行 user、keptBytes 只算历史那一条（扣掉本轮 user）", async () => {
-        // 预算 = 两条 user 的字节和 ⇒ 两条 user 都保留、assistant 被丢（阶梯：user > text）
-        const prompt = await twoTurns(userBytes("第一轮") + userBytes("第二轮"), "好".repeat(300));
+describe("##421 压缩注记：kept 区间就是真保留的行号（判据 ④）", () => {
+    it("kept 覆盖两行 user、不含被丢的 assistant（区间空隙 = 丢掉的）", async () => {
+        // 边界切在 3 ⇒ 保留 [user1(1)], [user2(3)]；assistant(2) 被丢
+        const prompt = await twoTurns({ cutLine: 3 }, "好".repeat(300));
         const note = textOf(prompt[1]?.content);
         expect(note.startsWith("history:")).toBe(true);
-        // kept 里两行都在（1 = 第一轮，3 = 本轮输入）
+        // kept 里两行都在
         expect(note).toContain("- 1");
         expect(note).toContain("- 3");
-        const keptBytes = Number(/keptBytes:\s*(\d+)/.exec(note)?.[1]);
-        // ④ 只算第一轮那条：本轮 user 走 `user.message`，不进历史字节
-        expect(keptBytes).toBe(userBytes("第一轮"));
+        // 丢掉的那条不在任何区间里（2 属于空隙）
+        expect(note).toContain("dropped: 1");
+        expect(note).toContain("limitTokens: 20000");
     });
 });

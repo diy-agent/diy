@@ -223,13 +223,15 @@ describe("轮内重算：变量变了 → 下一步请求即用新值", () => {
 
 describe("压缩注记的位置：自占一条 user 消息，挂在历史第一条之前（##421）", () => {
     it("历史被压缩时，注记 = messages[1]（system 之后、历史之前）；尾部信封只剩 runtime + user", async () => {
-        // 把历史预算调到极小 → 一定触发注记（真源 = $DIY_HOME/auto-compact.yaml 的 policy）
+        // 历史上限调到下限（4000 token）→ 两轮长正文一定触发注记
+        // （##432 刀 2：投递只按 history.limit.limitTokens 切，旧 policy.budgetBytes 已不决定）
         writeFileSync(
             join(diyHome(), "auto-compact.yaml"),
             JSON.stringify({
                 mode: "notify",
                 triggers: { systemContextChanged: true, cacheExpired: true, contextWindowOver: 0.8 },
                 policy: { mode: "budget", modeData: { budgetBytes: 64, toolResult: { render: "asis" } }, summary: false },
+                history: { limit: { limitTokens: 4000, summary: { enabled: false } } },
             }),
             "utf-8",
         );
@@ -240,8 +242,8 @@ describe("压缩注记的位置：自占一条 user 消息，挂在历史第一�
             doStream: () => Promise.resolve(textReply("好")),
         });
         const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
-        for await (const _op of mgr.chat(uri, "第一轮")) void _op;
-        for await (const _op of mgr.chat(uri, "第二轮")) void _op;
+        for await (const _op of mgr.chat(uri, `第一轮 ${"问".repeat(20000)}`)) void _op;
+        for await (const _op of mgr.chat(uri, `第二轮 ${"问".repeat(20000)}`)) void _op;
 
         const prompt = (model.doStreamCalls[1]?.prompt ?? []) as Array<{ role: string; content: unknown }>;
         // ⚠️ 经 SDK 后 user 的 content 一律是 part 数组（可能是单 part 或多 part）→ 取文本
@@ -260,7 +262,7 @@ describe("压缩注记的位置：自占一条 user 消息，挂在历史第一�
         // 子串判据会把它当成注记混进来。
         const hasHistoryKey = (t: string): boolean => /^history:/m.test(t);
         expect(hasHistoryKey(tail)).toBe(false);
-        expect(tail.endsWith('user:\n  message: "第二轮"')).toBe(true);
+        expect(tail).toContain('user:\n  message: "第二轮');
 
         // ③ 注记没被并进相邻消息的正文：紧跟其后的那一条不携带索引文本
         expect(hasHistoryKey(textOf(prompt[2]?.content))).toBe(false);
@@ -339,8 +341,8 @@ describe("跨轮变更：上一轮之后改的东西，下一轮必须落一条 
             doStream: () => Promise.resolve(textReply("好")),
         });
         const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
-        for await (const _op of mgr.chat(uri, "第一轮")) void _op;
-        for await (const _op of mgr.chat(uri, "第二轮")) void _op;
+        for await (const _op of mgr.chat(uri, `第一轮 ${"问".repeat(20000)}`)) void _op;
+        for await (const _op of mgr.chat(uri, `第二轮 ${"问".repeat(20000)}`)) void _op;
         const v2 = readCtxLog(uri).filter(isV2Entry);
         expect(v2.map((e) => e.type)).toEqual(["baseline"]);
     }, 60_000);

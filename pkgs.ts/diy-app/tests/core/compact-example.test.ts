@@ -5,6 +5,7 @@ import {
     bytesToTokens,
     type ExampleMessage,
 } from "../../src/shared/context/compact-example";
+import { estimateTokensOf } from "../../src/shared/context/history-limit";
 import { selectKeptBoundary } from "../../src/shared/context/select-kept-boundary";
 
 // ⚠️ 本文件**不复制算法**：留谁丢谁的唯一判据在 `select-kept-boundary.test.ts`。
@@ -29,10 +30,11 @@ function m(
 }
 
 /** 用同一个边界函数算「期望保留的 id」—— 期望值来自唯一实现点，不是另写一套 */
-function keptIdsByBoundary(messages: readonly ExampleMessage[], budgetBytes: number): string[] {
+/** 参照实现：**直接**调判据（`buildCompactExample` 现在收 token，不再是字节） */
+function keptIdsByBoundary(messages: readonly ExampleMessage[], budgetTokens: number): string[] {
     const { headEnd, cut } = selectKeptBoundary(
         messages.map((x) => ({ tokens: bytesToTokens(x.bytes), kind: x.kind, callId: x.callId })),
-        bytesToTokens(budgetBytes),
+        budgetTokens,
     );
     return messages.filter((_, i) => i <= headEnd || i >= cut).map((x) => x.id);
 }
@@ -46,12 +48,30 @@ describe("compact-example · 范例预览（展示层，判据走 selectKeptBoun
         expect(maxResult).toBeGreaterThan(maxText);
     });
 
-    it("tokens 口径 = 字节 ÷ 4", () => {
+    it("tokens 口径 = bytesToTokens（3 字节 ≈ 1 token，样例正文是中文）", () => {
         const r = buildCompactExample(3 * 1024);
         for (const row of r.rows) expect(row.tokens).toBe(bytesToTokens(row.bytes));
     });
 
-    it.each([0, 3 * 1024, 12 * 1024, 1_000_000])("保留集合与 selectKeptBoundary 完全一致（上限 %i B）", (budget) => {
+    it("样例口径与真压同源：中文文本上 bytesToTokens(字节) ≈ estimateTokensOf(文本)", () => {
+        // 真压走 estimateTokensOf（CJK 1 token/字、其余 /4）；样例只有字节，靠「中文 3 字节/字」对齐。
+        // 钉住这条：两边误差超过 20% ⇒ 预览说「留 8 条」、真压只剩 6 条（本文件头注禁止的那种不一致）。
+        // 原 ÷4 在纯中文上误差 33% —— 正是「预览说留八条、真压只剩六条」的成因。
+        // 用**纯中文**句（样例正文的主体）：中文 UTF-8 3 字节/字 ⇒ bytes/3 = 字数 = estimateTokensOf。
+        // 混 ASCII 时会差一成上下（ASCII 按 4 字符 1 token 计），故这里只钉纯中文这一段的口径。
+        const texts = [
+            "先定位：四百零一来自过期判断，时钟漂移会导致误判。",
+            "测试要覆盖两侧，否则漂移方向的问题测不出来。",
+            "已开请求已签未合并，检查通过零错误。",
+        ];
+        for (const t of texts) {
+            const byBytes = bytesToTokens(Buffer.byteLength(t, "utf-8"));
+            const real = estimateTokensOf(t);
+            expect(Math.abs(byBytes - real) / real).toBeLessThan(0.1);
+        }
+    });
+
+    it.each([0, 3 * 1024, 12 * 1024, 1_000_000])("保留集合与 selectKeptBoundary 完全一致（上限 %i token）", (budget) => {
         const r = buildCompactExample(budget);
         expect(r.rows.filter((x) => x.kept).map((x) => x.id)).toEqual(keptIdsByBoundary(r.rows, budget));
     });
@@ -96,8 +116,9 @@ describe("compact-example · 范例预览（展示层，判据走 selectKeptBoun
         expect(r.keptBytes).toBe(headRows.reduce((a, x) => a + x.bytes, 0));
     });
 
-    it("上限很大 ⇒ 一条不丢", () => {
-        const r = buildCompactExample(100_000);
+    it("上限足够大（≥ 总量 ÷ 保留比例）⇒ 一条不丢", () => {
+        // ##432 刀 2：一次压缩只保留到**上限的一半**（RETAIN_RATIO），所以「不丢」要上限 ≥ 总量 × 2
+        const r = buildCompactExample(200_000);
         expect(r.dropped).toBe(0);
         expect(r.keptBytes).toBe(r.beforeBytes);
     });

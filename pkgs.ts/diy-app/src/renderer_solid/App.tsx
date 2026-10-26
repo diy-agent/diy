@@ -48,6 +48,9 @@ import { Caches, NAV_W_MIN, NAV_W_MAX, NAV_W_DEFAULT } from "./lib/ui-state";
 import { VIEW_BAR_H } from "./lib/layout-metrics";
 import { TaskSideView } from "./components/TaskSideView";
 import { Breadcrumb } from "./components/Breadcrumb";
+import { InboxBell } from "./components/InboxBell";
+import { chatNavStore } from "./store/chatNavStore";
+import { hasAnchorOf, jumpOf } from "../shared/inbox";
 import { NAV_SEARCH_SHORTCUT, NavSearch } from "./components/NavSearch";
 import { FindBar } from "./components/FindBar";
 import { findStore } from "./store/findStore";
@@ -1212,6 +1215,34 @@ export default function App() {
                             setRoute({ kind: "section", section: id as Section });
                         }}
                         closeTab={closeTab}
+                        right={
+                            <InboxBell
+                                onOpenEntry={(e) => {
+                                    // 先切页再投定位请求：会话页可能是**整页新挂**（它自己等三个条件
+                                    // 齐了才消费请求，见 LocalChatPage 的 chatNavStore effect）
+                                    openSessionByUri(e.taskUri);
+                                    const j = jumpOf(e);
+                                    if (hasAnchorOf(j)) {
+                                        chatNavStore.request({ ...j, origin: "inbox" });
+                                    } else {
+                                        // 不许"只开 tab 还不说"（body 硬要求）：说清为什么没定位
+                                        notificationStore.addToast(
+                                            "info",
+                                            `已打开 ${e.taskUri}；这条通知没有轮次锚点，原文在信箱面板里`,
+                                            {
+                                                source: "通知信箱 · 去来源会话（##436）",
+                                                reason: `条目 ${e.id}（${e.kind}）只带 taskUri，没有 turnId/blockId/steerId ⇒ 会话页不知道该滚到哪里`,
+                                                detail:
+                                                    "为什么没有锚点：留言投递那一刻块还没生成（它插进的那一轮可能正在跑）；\n" +
+                                                    "滞留类条目（lost）指向的是「这条留言取不出来」，本来就还没进过任何一轮。\n" +
+                                                    "怎么补：在信箱面板展开该条看原文（未截断），再用页内查找（⌘F）搜其中的关键词。",
+                                            },
+                                            { duration: 10000 },
+                                        );
+                                    }
+                                }}
+                            />
+                        }
                     />
                     {/* 页内查找条：动态出现（关掉即消失），不是模态弹窗。它自己 Portal 到 body
                         顶层（Z_FIND），**不在流内占位**；这里只是挂载点。查找不搜自己（data-find-skip）。 */}
