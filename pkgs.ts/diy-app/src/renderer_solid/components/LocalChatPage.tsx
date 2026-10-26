@@ -64,7 +64,6 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { InputLimitDialog } from "./InputLimitDialog";
 import type { InputGate } from "../../shared/context/input-limit";
 import { OpsDownBar } from "./OpsDownBar";
-import { WatchCapsule } from "./WatchCapsule";
 import { copyFailMeta, copyOkMeta } from "../lib/notice-copy";
 import { chatNotice, DETAIL_CHAT_FIND, DETAIL_HISTORY } from "../lib/notice-chat";
 import { draftStore } from "../store/draftStore";
@@ -90,15 +89,7 @@ import { clearHitHighlight, paintHitHighlight } from "../lib/hit-highlight";
 import { MarkdownView } from "./MarkdownView";
 import { MdEditor } from "./MdEditor";
 import { memberCompletion, taskCompletion } from "../lib/completions";
-import {
-    bubbleAlignClass,
-    hasAuthor,
-    roomOriginOf,
-    systemEventHeadline,
-    systemEventLineCount,
-    systemEventOf,
-} from "../lib/user-bubble";
-import type { SystemEventKind } from "../lib/user-bubble";
+import { bubbleAlignClass, hasAuthor, roomOriginOf } from "../lib/user-bubble";
 import { bylineOf } from "../lib/assistant-byline";
 import {
     deliveryBadge,
@@ -1458,12 +1449,7 @@ function UserBubble(props: { node: BlockNode }) {
     /** 这句话的时刻：块 id 自带所属轮（turnId 内嵌毫秒），格式复用 agent 侧那个 `fmtTurnStamp`。
      *  取不到就不显示（绝不用渲染时刻顶替）—— 数据源与降级口径见 `lib/user-stamp` 头注。 */
     const stamp = () => userStamp(b().id);
-    /** 系统事件（watch / job 投进来的机器话）：不是人说的 ⇒ 走折叠条，不画气泡（##408 v2 C1） */
-    const sys = () => systemEventOf(author());
     return (
-        <Show
-            when={sys()}
-            fallback={
         <div class={bubbleAlignClass(author(), roomOrigin())}>
             <div class="max-w-[85%] bg-primary/10 border border-primary/20 rounded-2xl px-3.5 py-2 text-prose whitespace-pre-wrap break-words">
                 {/* 房间投递标记（##377 第 23 刀）：这句话**不是本任务的人说的** —— 是别的房间投过来的。
@@ -1504,57 +1490,6 @@ function UserBubble(props: { node: BlockNode }) {
                     )}
                 </Show>
             </div>
-        </div>
-            }
-        >
-            {(kind) => (
-                <SystemEventLine kind={kind()} content={str(b().attrs.content)} stamp={stamp()?.text} />
-            )}
-        </Show>
-    );
-}
-
-/**
- * **系统事件折叠条**（##408 v2 C1）：机器投进会话的一行提示，不占气泡的位置。
- *
- * 用户 2026-10-26：「系统间通知直接以类似用户消息的形式大幅显示……导致聊天很乱」。
- * 所以：默认只一行（`▸ 首行 · N 行 · 时刻`），点开才铺开全文。
- *
- * 与「过程 bar」的区别：那个折的是模型的思考/工具，属于这一轮；这个折的是**外部事件**
- * （watch 变化 / 后台 run 结束），它可能出现在任何位置、也不属于任何一轮的推理链。
- */
-function SystemEventLine(props: { kind: SystemEventKind; content: string; stamp?: string }) {
-    const [open, setOpen] = createSignal(false);
-    const lines = () => systemEventLineCount(props.content);
-    const bad = () => props.content.includes("坏了") || props.content.includes("失败");
-    return (
-        <div class="mb-2 max-w-[85%]">
-            <button
-                type="button"
-                class={`flex w-full items-center gap-2 rounded-lg border border-dashed px-2.5 py-1 text-left text-caption transition-colors ${
-                    bad()
-                        ? "border-error/40 bg-error/5 hover:bg-error/10"
-                        : "border-base-content/15 bg-base-200/30 hover:bg-base-200/60"
-                }`}
-                onClick={() => setOpen(!open())}
-                data-system-event={props.kind}
-                aria-expanded={open()}
-            >
-                <span class={bad() ? "text-error" : "opacity-50"}>{open() ? "▾" : "▸"}</span>
-                <span class="opacity-60">{props.kind === "watch" ? "👁" : "⚙"}</span>
-                <span class="flex-1 truncate">{systemEventHeadline(props.content, props.kind)}</span>
-                <Show when={lines() > 1}>
-                    <span class="shrink-0 opacity-40">{lines()} 行</span>
-                </Show>
-                <Show when={props.stamp}>
-                    {(t) => <span class="shrink-0 opacity-30">{t()}</span>}
-                </Show>
-            </button>
-            <Show when={open()}>
-                <div class="mt-1 whitespace-pre-wrap break-words rounded-lg border border-base-content/10 bg-base-200/40 px-2.5 py-1.5 font-mono text-caption opacity-80">
-                    {props.content}
-                </div>
-            </Show>
         </div>
     );
 }
@@ -4203,12 +4138,6 @@ export function LocalChatPage(props: {
                       · `data-md` 给测试/自动化一个不随皮肤变的口径
                     用 daisyUI 的 `btn-active` 而不是 `swap`：swap 的两图标交替需要两块图标，
                     而这里只有一个 `<>`（态由底色表达）。 */}
-                {/* JobWatch 统一入口（##408 v2 B1）：顶栏一颗胶囊，浮层列出所有被观察对象，
-                    当前任务在盯的置顶高亮。放在「展开级别」与「MD 切换」之后 —— 那两颗是
-                    **会话视图**的高频开关，这颗是**全局状态**，靠右不挡日常操作。 */}
-                <Show when={uri()}>
-                    {(u) => <WatchCapsule taskUri={u()} />}
-                </Show>
                 <button
                     class="btn btn-xs btn-ghost shrink-0"
                     classList={{ "btn-active": !md() }}

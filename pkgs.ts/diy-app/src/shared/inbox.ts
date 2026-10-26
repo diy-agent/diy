@@ -24,9 +24,6 @@ import { z } from "zod";
  *   · `lost`    —— 任务已结案而插话队列里还压着留言 ⇒ **没有下一次轮次来取走它**
  *                  （##229 的现实现场：`projects/4/tasks/229` 的 `.diy/drafts.yaml`
  *                  里那条 `steer/1`，任务从 2026-10-04 起就是 done）。
- *   · `system`  —— 宿主机 / 全局层面的跃迁（环境坏了、模型真发失败）。##408 v2 加的：
- *                  这类事件**没有归属任务**（`taskUri` 记 `global`），以前只能投 UI 顶栏 ——
- *                  人不在窗口前就完全错过。它仍是「跃迁」而不是「状态」：只记刚发生的那一次。
  *
  * ⚠️ **不叫 `delivery-lost`**（曾经叫过，改名理由）：`t266.room#queues` 里说的
  * `deliveries.jsonl` 是**补救方向**而不是现存数据 —— 全盘 `fd deliveries.jsonl` 是 0 个文件。
@@ -37,7 +34,7 @@ import { z } from "zod";
  * 留言就又能被取走 —— 所以条目文案是「已结案 ⇒ 现在不会被取出；改回 active 就能生效」，
  * 不是「已丢弃」（##416：不隐藏信息，说清为什么没被消费 + 怎么救）。
  */
-export const INBOX_KINDS = ["max-tokens", "cost-step", "cost-turn", "message", "lost", "system"] as const;
+export const INBOX_KINDS = ["max-tokens", "cost-step", "cost-turn", "message", "lost"] as const;
 
 /** kind → 中文短名（列表一行用；文案真源在这一处，别在组件里各写一份） */
 export const INBOX_KIND_LABEL: Readonly<Record<InboxKind, string>> = {
@@ -46,7 +43,6 @@ export const INBOX_KIND_LABEL: Readonly<Record<InboxKind, string>> = {
     "cost-turn": "单轮超支",
     message: "新留言",
     lost: "滞留留言",
-    system: "系统事件",
 };
 export const InboxKindSchema = z.enum(INBOX_KINDS);
 export type InboxKind = (typeof INBOX_KINDS)[number];

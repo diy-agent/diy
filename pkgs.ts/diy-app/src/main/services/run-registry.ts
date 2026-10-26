@@ -44,8 +44,6 @@ import { join } from "node:path";
 import { readRuntimeConfig } from "../../runtime";
 import { recordRunSettled, recordRunStarted } from "../../shared/metrics";
 import { MAX_TAIL_BYTES, notifyText, tailOf, type RunLike, type TailResult } from "../../shared/run-status";
-// 结束通知走触发器目录（##408 v2）：投给谁由定义里的 `sinks` 决定，不再是本类里那个回调。
-import { runSettled } from "../triggers";
 
 /** run 的来源锚点：哪一轮、哪一步、哪个工具调用起的（`toolCallId` 是定位键）。 */
 export interface RunOrigin {
@@ -861,22 +859,13 @@ export class RunRegistry {
     private async notify(info: RunInfo): Promise<void> {
         if (info.notified) return;
         const taskUri = info.origin?.taskUri;
-        if (!taskUri) return;
+        if (!taskUri || !this.notifier) return;
         // 接管来的 run 的日志是我们自己写的：先等写链落干净，tail 才不是半截
         const pending = this.pendingFlush.get(info.id);
         if (pending) await pending.catch(() => undefined);
         info.notified = true;
         try {
-            // 走触发器目录（##408 v2）：投给谁由 `sinks: ["owner"]` 决定，不再是这个类里写死的回调。
-            // 行为与旧 `setNotifier` 等价（`owner` 解析出的就是 run 的 taskUri），
-            // 但换地址只需改定义，不用改这里。
-            runSettled.emit({
-                runId: info.id,
-                owner: taskUri,
-                exitCode: info.exitCode ?? null,
-                durationMs: info.startedAt != null && info.endedAt != null ? info.endedAt - info.startedAt : null,
-                text: notifyText(info, tailOf(await this.readLogTail(info.logPath), 20)),
-            });
+            this.notifier(taskUri, notifyText(info, tailOf(await this.readLogTail(info.logPath), 20)));
         } catch (e) {
             // 观测不许把业务炸掉：通知失败只留痕
             console.warn("[run] 结束通知投递失败", info.id, e);

@@ -56,35 +56,3 @@ export function roomOriginOf(attrs: Record<string, unknown> | null | undefined):
 export function hasDelivery(attrs: Record<string, unknown> | null | undefined): boolean {
     return roomOriginOf(attrs) !== null;
 }
-
-/**
- * **系统事件**（##408 v2 / ##266）：哪些 `meta.author` 不是人，是机器投进来的。
- *
- * 用户 2026-10-26 的原话：「现在很多系统间通知都是直接以类似用户消息的形式大幅显示，
- * 没有对空间的缩紧和隐藏，导致聊天很乱」—— 所以这类块**不画气泡**，画成一行折叠条（C1）。
- *
- * 判据只认这里的两类（都是既有的投递来源，不是新造的通道）：
- *   · `watch` —— JobWatch 的变化事件（`watch-sinks/task.ts` 投递，`wakeTaskWithSteer(…, "watch")`）
- *   · `job`   —— 后台 run 结束通知（`runRegistry.setNotifier`，同一函数 author="job"）
- *
- * 返回 `null` = 人说的（含本任务本人与别的 agent/人代发），走原气泡。
- */
-export type SystemEventKind = "watch" | "job";
-
-export function systemEventOf(author: string | null | undefined): SystemEventKind | null {
-    if (author === "watch") return "watch";
-    if (author === "job") return "job";
-    return null;
-}
-
-/** 折叠条上的一句话摘要：首行正文（`watch` 的标题行），去掉前缀与多余空白。 */
-export function systemEventHeadline(content: string, kind: SystemEventKind): string {
-    const first = (content.split("\n").find((l) => l.trim() !== "") ?? "").trim();
-    const label = kind === "watch" ? "观察" : "后台";
-    return first === "" ? `（${label}事件）` : first;
-}
-
-/** 正文行数（折叠条右侧的「N 行」；`0` 时不画）。 */
-export function systemEventLineCount(content: string): number {
-    return content.split("\n").filter((l) => l.trim() !== "").length;
-}

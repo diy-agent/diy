@@ -5,15 +5,7 @@
 // "逐字不变"是硬约束 —— 老数据（本人在任务页发言）不带 author，渲染必须与改动前一致。
 
 import { describe, it, expect } from "vitest";
-import {
-    bubbleAlignClass,
-    hasAuthor,
-    hasDelivery,
-    roomOriginOf,
-    systemEventHeadline,
-    systemEventLineCount,
-    systemEventOf,
-} from "../../src/renderer_solid/lib/user-bubble";
+import { bubbleAlignClass, hasAuthor, hasDelivery, roomOriginOf } from "../../src/renderer_solid/lib/user-bubble";
 
 describe("用户气泡对齐判据", () => {
   it("有 author ⇒ 左对齐（这句话不是我说的）", () => {
@@ -72,26 +64,4 @@ describe("房间来源判据（##377 第 23 刀）", () => {
     expect(hasDelivery({ room: ROOM })).toBe(true);
     expect(hasDelivery({})).toBe(false);
   });
-});
-
-describe("系统事件（##408 v2 C1）", () => {
-    it("只有 watch / job 不是人；别的 author 一律当人（含 agent / human）", () => {
-        expect(systemEventOf("watch")).toBe("watch");
-        expect(systemEventOf("job")).toBe("job");
-        expect(systemEventOf("agent:166")).toBeNull();
-        expect(systemEventOf("human:chen56")).toBeNull();
-        expect(systemEventOf(null)).toBeNull();
-        expect(systemEventOf("")).toBeNull();
-    });
-
-    it("摘要取首行正文（跳过空行）；正文空也给一句兜底", () => {
-        expect(systemEventHeadline("watch daily-pr 有变化\n\n~ a: 1 → 2", "watch")).toBe("watch daily-pr 有变化");
-        expect(systemEventHeadline("\n\n后台进程结束 r-1 · 退出码 0", "job")).toBe("后台进程结束 r-1 · 退出码 0");
-        expect(systemEventHeadline("  \n ", "watch")).toBe("（观察事件）");
-    });
-
-    it("行数只数非空行（折叠条右侧的「N 行」）", () => {
-        expect(systemEventLineCount("a\n\nb\n")).toBe(2);
-        expect(systemEventLineCount("")).toBe(0);
-    });
 });

@@ -2591,29 +2591,6 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
       }),
 
       /**
-       * 触发器目录（##408 v2 · 2026-10-26）：「系统一共会告诉你几种事」的**唯一清单**。
-       *
-       * 在它之前，这些全散在代码里（每处一个 `if (出事了) 通知`），谁也说不清总数。
-       * 本域只读 —— 表是**产品定义**（改它要发版），用户能改的是 level 覆盖（另说）。
-       */
-      trigger: RpcSchema.group({
-        desc: `触发器目录（系统一共会告诉你几种事 · 各自多急 · 投给谁）；只读`,
-        children: {
-          list: RpcSchema.unary({
-            desc: `列出全部触发器（结构化；含 id / 命名空间 / 描述 / 强度 / 出口）。程序读这个，人读用 ls`,
-            input: {},
-            output: z
-              .object({ status: z.string(), data: z.any() })
-              .or(z.object({ status: z.string(), msg: z.string() })),
-          }),
-          ls: RpcSchema.unary({
-            desc: `列出全部触发器（人读表格）`,
-            input: {},
-            output: z.string(),
-          }),
-        },
-      }),
-      /**
        * 后台 job（##408 v1：只有 spawned 型 —— 会话里跑出来的长时命令）：
        * 定义在哪（哪个任务/轮/工具调用）、跑了多久、怎么结束的、输出尾巴。
        *
@@ -2745,99 +2722,6 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
               id: z.string().cliArg({ desc: "run id" }),
             },
             output: z.object({ status: z.string(), data: z.any() }).or(z.object({ status: z.string(), msg: z.string() })),
-          }),
-
-          /**
-           * JobWatch（##408 v2 刀 1-3）：**隔很久看一眼，变了才说话**。
-           *
-           * 与上面那些 run 命令的区别：run 是「一条已经起来的活」，watch 是「一件值得长期观察的事」。
-           * 它不烧模型 —— 每拍跑纯代码探针（v1 只有 `glob:`），指纹没变就什么都不做。
-           *
-           * 定义与指纹都落盘（`$DIY_HOME/jobs/watch/`）：停机两天回来首次探测只出一份 diff，
-           * 不需要「补跑 missed」。
-           */
-          watch: RpcSchema.group({
-            desc: `长期观察一件事（变化驱动唤醒；不烧模型，没变化就一声不响）`,
-            children: {
-              list: RpcSchema.unary({
-                desc: `列出 watch（结构化；含状态 / 下次探测时刻 / 上次 diff）。程序读这个，人读用 ls`,
-                input: {
-                  all: z.boolean().optional().cliOption({ desc: "也列已 ended 的（观察对象没了的）" }),
-                },
-                output: z
-                  .object({ status: z.string(), data: z.any() })
-                  .or(z.object({ status: z.string(), msg: z.string() })),
-              }),
-              ls: RpcSchema.unary({
-                desc: `列出 watch（人读表格）`,
-                input: {
-                  all: z.boolean().optional().cliOption({ desc: "也列已 ended 的" }),
-                },
-                output: z.string(),
-              }),
-              save: RpcSchema.unary({
-                desc: `
-                新建或覆盖一条 watch。
-
-                **幂等**：同 id 再 save 一次 = 全量覆盖（标题 / 节奏 / 探针 / 出口 / 对象）。
-                指纹与状态**不清**（改标题不该导致下次重探基线）—— 要清就 \`watch rm\` 再 save。
-
-                \`--subject\` 决定生命周期：\`run:<id>\` / \`task:<uri>\` 的对象没了 ⇒ watch 自动 ended；
-                \`command:<key>\` / \`none\` 永不自动结束（job 重开会自动改绑新 run 并清空指纹）。
-                `,
-                input: {
-                  id: z.string().cliArg({ desc: "watch id（也是落盘文件名：小写字母数字与 -，≤ 40）" }),
-                  title: z.string().cliOption({ short: "t", desc: "一行标题（≤ 80）" }),
-                  every: z
-                    .coerce
-                    .number()
-                    .cliOption({ desc: "基线探测间隔（分钟）：1 / 5 / 15 / 30 / 60 / 120 / 180 / 360" }),
-                  probe: z
-                    .string()
-                    .cliOption({ desc: "探针，逗号分隔；v1 只支持 glob:<pattern>（相对 $DIY_HOME）" }),
-                  sink: z
-                    .string()
-                    .optional()
-                    .cliOption({
-                      desc: "出口，逗号分隔：task:<uri>（真实现）/ room:<roomId> · inbox:<member> · member:<id>（未实现，先登记也能存）",
-                    }),
-                  subject: z
-                    .string()
-                    .optional()
-                    .cliOption({ desc: "观察对象：run:<id> / task:<uri> / command:<key> / none（缺省 none）" }),
-                  quietAfter: z
-                    .coerce
-                    .number()
-                    .optional()
-                    .cliOption({ desc: "连续多少拍无变化后开始降频（1~100，缺省 4；0 = 永不降频）" }),
-                  disabled: z
-                    .boolean()
-                    .optional()
-                    .cliOption({ desc: "存成停用状态（不参与拍）" }),
-                },
-                output: z
-                  .object({ status: z.string(), data: z.any() })
-                  .or(z.object({ status: z.string(), msg: z.string() })),
-              }),
-              rm: RpcSchema.unary({
-                desc: `删一条 watch（连指纹一起删；幂等）`,
-                input: {
-                  id: z.string().cliArg({ desc: "watch id" }),
-                },
-                output: z
-                  .object({ status: z.string(), data: z.any() })
-                  .or(z.object({ status: z.string(), msg: z.string() })),
-              }),
-              peek: RpcSchema.unary({
-                desc: `**立刻探一次**，只回 diff，不动指纹 / 不投递（排查「它到底在看什么」）`,
-                input: {
-                  id: z.string().cliArg({ desc: "watch id" }),
-                },
-                output: z
-                  .object({ status: z.string(), data: z.any() })
-                  .or(z.object({ status: z.string(), msg: z.string() })),
-              }),
-            },
           }),
         },
       }),

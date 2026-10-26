@@ -240,7 +240,7 @@ import {
 } from "../../shared/models";
 import { personaByIdOrName, personaForTask } from "../core/persona";
 import { personaOutputOverride, taskOutputOverride } from "../core/output-budget";
-import { inboxEntryOf, inboxHub, noteInbox } from "./inbox";
+import { inboxEntryOf, inboxHub } from "./inbox";
 import { DEFAULT_COST_ALARM, costAlarmsOf, newCostAlarmState, usdText } from "../../shared/cost-alarm";
 import {
     OUTPUT_SCENE_DEFAULTS,
@@ -255,8 +255,6 @@ import { ensureReasoningReplay, isDeepSeekWire, type ReasoningReplayOpts } from 
 import { resolveModelKey } from "../core/model-runtime";
 import { invariant } from "../../shared/error-triage";
 import { runRegistry, type RunInfo } from "./run-registry";
-import { setTriggerDelivery } from "./trigger-registry";
-import { planDelivery } from "../../shared/trigger-delivery";
 import { effectiveBashArgs } from "../../shared/tool-args";
 import { ownedGroups } from "./owned-groups";
 import { foregroundBash } from "./foreground-bash";
@@ -6480,46 +6478,11 @@ export function getLocalAgent(): LocalAgentManager {
 // 为什么是 `next-turn` 而不是 `next-step`：进程结束时模型通常已经不在当前步了
 // （它可能正写报告、也可能已结束本轮），"下一步前插一句"会把别人的步边界打乱；
 // 轮是人的/模型的自然停顿点。
-// 触发器投递（##408 v2）：**唯一的落地口**。run 结束 / watch 变化 / 会话中断……
-// 全都 emit 到同一张目录，由这里按 `level` 决定要不要叫醒 —— 而不是每个调用点自己判断。
-//
-// 出口名解析（变量，不是地址）：
-//   `owner`      → 载荷里的 taskUri（run 的归属任务）；**解析不出 ⇒ 落 `global` 信箱**
-//   `task:<uri>` → 显式地址
-//   `inbox`      → 同一收件人再落一份信箱（可回看）
-//   `ui`         → 界面自己重画（既有 notice 路径），这里不做事
-//   `def`        → 触发器自带地址（watch 接的时候补）
-//
-// 判据全在 `planDelivery`（纯函数，单测在那里）：这里只剩“把计划变成动作”。
-// `level` 的 N0 已在 planDelivery 里归一到 N1 —— 本函数不认得 N0。
-setTriggerDelivery((def, payload, sink) => {
-    const p = payload as { owner?: unknown; text?: string };
-    const plan = planDelivery(def, p, sink);
-    const text = p.text ?? def.desc;
-    for (const taskUri of plan.wake) wakeTaskWithSteer(taskUri, text, "job");
-    for (const addr of plan.inbox) {
-        noteInbox(
-            inboxEntryOf({
-                // 信箱只有 N1 / N2 两档（`shared/inbox.ts` 的 InboxLevel）：N0 已归一、N3 到不了这里。
-                level: def.level === "N1" || def.level === "N0" ? "N1" : "N2",
-                kind: "system",
-                taskUri: addr,
-                text,
-                source: def.id,
-                reason: def.desc,
-                detail: "",
-            }),
-        );
-    }
+runRegistry.setNotifier((taskUri, text) => {
+    wakeTaskWithSteer(taskUri, text);
 });
 
-/**
- * 往某个任务的会话投一句话并（空闲时）立刻开一轮。
- *
- * `author` 是**来源标记**，进 user 块的 `meta.author`：`job` = 后台 run 结束通知、
- * `watch` = 观察事件（##408 v2）。渲染层据它决定要不要画成「系统事件」而非人话。
- */
-export function wakeTaskWithSteer(taskUri: string, text: string, author = "job"): void {
+function wakeTaskWithSteer(taskUri: string, text: string): void {
     let agent: LocalAgentManager;
     try {
         agent = getLocalAgent();
@@ -6528,7 +6491,7 @@ export function wakeTaskWithSteer(taskUri: string, text: string, author = "job")
         return;
     }
     try {
-        agent.steerAdd(taskUri, "next-turn", text, author);
+        agent.steerAdd(taskUri, "next-turn", text, "job");
     } catch (e) {
         console.warn(`[job] 结束通知入队失败 ${taskUri}:`, e);
         return;
