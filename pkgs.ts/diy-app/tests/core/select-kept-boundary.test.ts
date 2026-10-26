@@ -102,6 +102,18 @@ describe("select-kept-boundary · 保留边界的唯一判据", () => {
         expect(kind).toBe("drop");
     });
 
+    it("**保头侧配平**：保头停在 call 上时，它的 result 必须一起留在保头里（##444 现场）", () => {
+        // 保头恰好装到第 2 条（assistant tool-call c1）为止，而它的 result 在丢弃段（cut 之前）
+        const msgs = [m(50), m(50, "call", "c1"), m(50, "result", "c1"), m(50), m(50)];
+        const { headEnd, cut, dropped } = selectKeptBoundary(msgs, 10, { headTokens: 100 });
+        // 不配平的话 headEnd === 1、第 2 条 result 被压掉 ⇒ 投递里 c1 永远等不到结果（SDK 报 missing）
+        expect(headEnd).toBe(2);
+        expect(msgs[headEnd].kind).toBe("result");
+        expect(msgs[headEnd].callId).toBe(msgs[1].callId);
+        expect(cut).toBe(4); // 切点不动（只延长保头）
+        expect(dropped).toBe(1);
+    });
+
     it("配平不会越过保头（切点至少停在 headEnd + 1）", () => {
         const msgs = [m(1000), m(50, "call", "c1"), m(50, "result", "c1")];
         const { headEnd, cut } = selectKeptBoundary(msgs, 10);

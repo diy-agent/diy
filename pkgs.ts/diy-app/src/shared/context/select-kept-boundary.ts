@@ -103,6 +103,44 @@ function balanceCut(messages: readonly BoundaryMessage[], cut: number, headEnd: 
 }
 
 /**
+ * 把**保头末端**也挪到 tool 配对平衡处：保头里留了 call，就必须把它后面的 result 一起留在保头里。
+ *
+ * 病灶（##444 / ##445 B 段实测）：`balanceCut` 只平衡了**切点侧**（留了 result ⇒ 留下它的 call），
+ * 但**保头侧**没人管 —— 保头恰好停在一条 `assistant(tool-call)` 上、而它的 `tool-result`
+ * 落在了被丢弃的那段里 ⇒ 投递出去的历史里这个 callId 永远等不到 result。
+ * SDK 的 `convertToLanguageModelPrompt` 立即报 `AI_MissingToolResultsError`，且**请求根本没发出去**
+ * （流量日志 97 条全 200），整轮打死 —— 一步结果缺失 vs 整个轮次挂掉，后者严重得多。
+ * 实测现场：##444 的 `headLine=5`（保头到 llm 第 5 行 = assistant call_248d…），
+ * 它的 result 在第 6 行，而 `cut.llmLine=129` ⇒ 第 6 行被压掉。
+ *
+ * 口径与 `balanceCut` 对称：**按 id 集合判**（一条 assistant 可带多个 call），
+ * 且可连续延长（延长到一条 result 时，中间可能夹着新的 call+result 对，下一轮再对齐）。
+ * 只**延长保头**、绝不动切点：切点前移会卸掉用户最近的上下文（用户口径是「保最新几步」）。
+ */
+export function balanceHeadPairing(messages: readonly BoundaryMessage[], headEnd: number, cut: number): number {
+    if (headEnd < 0) return headEnd;
+    let h = headEnd;
+    for (let guard = 0; guard < messages.length; guard++) {
+        const keptCalls = new Set<string>();
+        for (let i = 0; i <= h; i++) {
+            const m = messages[i]!;
+            if (m.kind !== "call") continue;
+            for (const id of idsOf(m)) keptCalls.add(id);
+        }
+        if (keptCalls.size === 0) return h;
+        let next = h;
+        for (let i = h + 1; i < cut; i++) {
+            const m = messages[i]!;
+            if (m.kind !== "result") continue;
+            if (idsOf(m).some((id) => keptCalls.has(id))) next = i;
+        }
+        if (next === h) return h;
+        h = next;
+    }
+    return h;
+}
+
+/**
  * 按 **step** 切组：同 step 的连续消息成组，**没有 step 的每条自成一组**（UI 范例预览不编 step，
  * 也要能按条切）。返回每组的起始下标（升序，首项恒 0）。
  */
@@ -177,6 +215,9 @@ export function selectKeptBoundary(
     if (cut <= headEnd) return done(headEnd, headEnd + 1, n); // 没有可丢的
     cut = balanceCut(messages, cut, headEnd);
     if (cut <= headEnd) return done(headEnd, headEnd + 1, n);
+    // 两侧都要配平：切点侧（`balanceCut`）+ 保头侧（`balanceHead`，##444 的现场就是这里断的）
+    headEnd = balanceHeadPairing(messages, headEnd, cut);
+    if (cut <= headEnd) return done(headEnd, headEnd + 1, n); // 保头延长后已没可丢的
     return done(headEnd, cut, n);
 }
 

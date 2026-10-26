@@ -45,9 +45,11 @@ import {
     type TurnRecordState,
 } from "./local-turns";
 import {
+    balanceHeadPairing,
     estimateTokensOf,
     normalizeHistoryLimit,
     selectCompactableRange,
+    toBoundaryMessages,
     type HistoryLimit,
 } from "../../shared/context/history-limit";
 
@@ -252,6 +254,7 @@ import {
 import type { InboxEntry } from "../../shared/inbox";
 import { taskTurnGate } from "../core/turn-gate";
 import { ensureReasoningReplay, isDeepSeekWire, type ReasoningReplayOpts } from "./reasoning-replay";
+import { ensureToolResultPairs, scanToolResultPairs } from "./tool-result-guard";
 import { resolveModelKey } from "../core/model-runtime";
 import { invariant } from "../../shared/error-triage";
 import { runRegistry, type RunInfo } from "./run-registry";
@@ -3441,6 +3444,11 @@ export class LocalAgentManager {
             if (c > 0) {
                 cut = Math.min(c, all.length);
                 headEnd = Math.max(0, Math.min(h, cut));
+                // ##445：落盘边界可能是**旧算法**写的（保头停在 tool-call 上、它的 result 掉进丢弃段
+                // ⇒ SDK 报 AI_MissingToolResultsError 打死整轮，##444 的现场）。读侧一律再配平一次：
+                // 只延长保头，切点不动，代价是几条消息，收益是这份历史**能重开轮次**。
+                // `headEnd` 在这里是**开区间右端**（= 保头条数），边界判据用的是**末条下标** ⇒ 差一
+                headEnd = balanceHeadPairing(toBoundaryMessages(all, (m: { content?: unknown }) => estimateTokensOf(JSON.stringify(m.content ?? ""))), headEnd - 1, cut) + 1;
             }
         }
         const tok = (m: LocalModelMessage): number => estimateTokensOf(JSON.stringify(m.content ?? ""));
@@ -5745,14 +5753,31 @@ export class LocalAgentManager {
             // 摘要段**算一次**：它既进 `sent`，也要原样进投递快照（##5 第 16 轮）。
             // 两处各调一次 `effectiveSummary` 是纯读、值相同，但"恰好相同"不该是快照正确的依据。
             const summaryPart = renderSummaryPart(this.effectiveSummary(taskUri));
+            // tool 配对兜底（##445）的提示：补了就必须出声 —— 它是「历史已坏」的现场证据
+            // （B 段定位就靠它把坏的 callId 打出来，而不是让用户看到一整轮莫名其妙地报错）。
+            const guardPairs = (msgs: ModelMessage[], where: string): ModelMessage[] => {
+                const guarded = ensureToolResultPairs(msgs);
+                if (guarded !== msgs) {
+                    const ids = scanToolResultPairs(msgs).missing.map((m) => m.toolCallId);
+                    console.warn(
+                        `[local-agent] 历史缺 tool-result，已补占位（${where}）${taskUri}：${ids.join(", ")}`,
+                    );
+                }
+                return guarded;
+            };
             const sentOf = (h: typeof hist): ModelMessage[] =>
-                ensureReasoningReplay(
-                    // 位置取 ##421（注记自占一条 user 消息、挂在历史第一条之前）；
-                    // `summaryPart` 仍按 ##5 提升到闭包外只算一次（它同时要进投递快照）。
-                    normalizeUserRuns(
-                        withRuntime(withHistoryNote(h.messages, h.note), delivery.runtime.text, summaryPart),
+                // tool 配对兜底（##445）放在**最外层**：它看的是「进 SDK 前的最终形状」，
+                // 内层任何一步（历史选择 / 注记 / runtime 信封 / 推理归一的拷贝）都不该改变配对。
+                guardPairs(
+                    ensureReasoningReplay(
+                        // 位置取 ##421（注记自占一条 user 消息、挂在历史第一条之前）；
+                        // `summaryPart` 仍按 ##5 提升到闭包外只算一次（它同时要进投递快照）。
+                        normalizeUserRuns(
+                            withRuntime(withHistoryNote(h.messages, h.note), delivery.runtime.text, summaryPart),
+                        ),
+                        replayOpts,
                     ),
-                    replayOpts,
+                    "轮首送信",
                 );
             let sent: ModelMessage[] = sentOf(hist);
             // 构成字节（##9 追加的历史段）：system / tools / **历史** 三段，才答得了
@@ -6023,7 +6048,12 @@ export class LocalAgentManager {
                     // `?=` 语义由函数自己保证：无需补时返回**同一个数组引用**（SDK 看到 messages 未变，
                     // 不砸前缀缓存、不重置 stepMessages）。
                     const base = nextMessages ?? messages;
-                    const replayed = ensureReasoningReplay(base, replayOpts);
+                    // 配对兜底（##445）同理每一步都跑：SDK 送回来的 messages 是它自己拼的，
+                    // 我们无法假设它一定配平（首步的兜底也保护不到后续步）。
+                    const replayed = guardPairs(
+                        ensureReasoningReplay(base, replayOpts),
+                        `第 ${stepNumber + 1} 步`,
+                    );
                     if (replayed !== base) nextMessages = replayed;
                     if (instructions === undefined && nextMessages === undefined) return {};
                     return {
@@ -6644,20 +6674,22 @@ export async function previewSimulatedRequest(opts: {
     // thinking 回放归一（##398）也要在预览里跑：否则预览显示「没补 reasoning_content」而真发补了
     // ⇒ 预览撒谎。档位取与真发同源（人物档位 || 模型默认档）。
     const previewRm = findModel(model);
-    const messages: ModelMessage[] = ensureReasoningReplay(
-        normalizeUserRuns(
-            withRuntime(
-                withHistoryNote(
-                    [...hist.messages, { role: "user", content: opts.lastUser ?? "[仿真占位]真实下一轮此处为用户输入" }],
-                    hist.note,
+    const messages: ModelMessage[] = ensureToolResultPairs(
+        ensureReasoningReplay(
+            normalizeUserRuns(
+                withRuntime(
+                    withHistoryNote(
+                        [...hist.messages, { role: "user", content: opts.lastUser ?? "[仿真占位]真实下一轮此处为用户输入" }],
+                        hist.note,
+                    ),
+                    opts.runtime ?? "",
+                    renderSummaryPart(getLocalAgent().effectiveSummary(taskUri)),
                 ),
-                opts.runtime ?? "",
-                renderSummaryPart(getLocalAgent().effectiveSummary(taskUri)),
             ),
+            previewRm
+                ? reasoningReplayOptsOf(previewRm, persona.reasoningEffort || reasoningOf(model).default)
+                : { thinking: false, deepseek: false },
         ),
-        previewRm
-            ? reasoningReplayOptsOf(previewRm, persona.reasoningEffort || reasoningOf(model).default)
-            : { thinking: false, deepseek: false },
     );
     let body: Record<string, unknown> | null = null;
     simBodySink = (b) => {
