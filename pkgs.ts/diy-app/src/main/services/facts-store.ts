@@ -63,9 +63,10 @@ type DtoProblem = { level: "error" | "warning"; code: string; detail: string; fa
  * `created` 是 **app 侧**加的（内核不知道"库刚诞生"这件事 —— 它只管写文件，
  * 而 `atomic-write` 顺手建目录；"是不是新建的"只有调用方在写前那次 `existsSync` 能答）。
  */
-function plainReport(r: SubmitReport, created?: { dir: string }) {
+function plainReport(r: SubmitReport, landing: FactsLanding, created?: { dir: string }) {
     return {
         dryRun: r.dryRun,
+        landing,
         added: [...r.added],
         updated: r.updated.map((u) => ({ id: u.id, before: u.before, after: u.after })),
         unchanged: [...r.unchanged],
@@ -74,6 +75,72 @@ function plainReport(r: SubmitReport, created?: { dir: string }) {
         files: r.files.map((f) => ({ file: f.file, before: f.before, after: f.after })),
         dropped: [...r.dropped],
         ...(created === undefined ? {} : { created }),
+    };
+}
+
+/**
+ * 落点回显（##437）：**实际写进哪个 `knowledge/`**。
+ *
+ * 为什么必须有：`--dir` / 向上找 / `--in` 三条路径都可能把人送到一个「语法上完全正确、
+ * 但不是他想写的」库（##408 实测：worktree 里提交，写进了主仓）。回显绝对路径 + 相对仓库根
+ * 的路径，错的落点就是**看得见的**一行，而不是事后 `git status` 才发现。`--dry-run` 同带
+ * （提前看见，不必先写错一次）。
+ */
+export interface FactsLanding {
+    /** 实际写入的 `knowledge/` **绝对路径** */
+    readonly dir: string;
+    /** 计算 `rel` 的根（仓库根；设备级库是家目录） */
+    readonly root: string;
+    /** 相对仓库根的路径（如 `knowledge`、`.diy/knowledge`） */
+    readonly rel: string;
+    /** 调用方 cwd（敲命令的那个 shell；没带就不给） */
+    readonly callerCwd?: string;
+}
+
+/**
+ * 仓库根（**不新增同步 IO** —— 走已有的 `walkUp`）：库目录是 `<仓库根>/knowledge`，
+ * 把它的最后一段去掉即是仓库根。判据与「这个目录是不是仓库」无关，只问「库在哪」——
+ * 跨仓告警要的就是这对比（写错仓 = 库不在你所在的那个仓里）。
+ */
+function repoRootOfLib(kbDir: string): string {
+    return path.dirname(path.resolve(kbDir));
+}
+
+/** 调用方所在的仓库根（同样从它的 `knowledge/` 反推；不在任何库里 ⇒ null）。 */
+function callerRepoRootOf(callerCwd: string): string | null {
+    const kb = walkUp(callerCwd);
+    return kb === null ? null : path.dirname(kb);
+}
+
+function landingOf(target: FactsTarget, callerCwd?: string): FactsLanding {
+    const dir = path.resolve(target.dir);
+    const root = repoRootOfLib(dir);
+    return {
+        dir,
+        root,
+        rel: path.relative(root, dir) === "" ? "." : path.relative(root, dir),
+        ...(callerCwd === undefined ? {} : { callerCwd }),
+    };
+}
+
+/**
+ * 跨仓写入的**告警**（##437）：写目标不在调用方所在的仓库里 ⇒ warn，不拒。
+ *
+ * 为什么不拒：合法场景确实存在（`--in global` 给设备级库写、给另一个项目的库补一条）。
+ * 但必须**出声**：##408 那次写错主仓就是「一切正常、只是落点不对」—— 判据是
+ * 「你在 X，写到了 Y」，一眼能看出这两个不是同一个仓。
+ * 调用方不在任何仓库里（cwd 是 /tmp）时不给：那种情况没有「调用方所在的 repo」可言。
+ */
+function crossRepoWarning(target: FactsTarget, callerCwd?: string): DtoProblem | null {
+    if (callerCwd === undefined || callerCwd === "") return null;
+    const callerRoot = callerRepoRootOf(callerCwd);
+    if (callerRoot === null) return null;
+    const kb = path.resolve(target.dir);
+    if (kb === callerRoot || kb.startsWith(`${callerRoot}${path.sep}`)) return null;
+    return {
+        level: "warning",
+        code: "facts/cross-repo-write",
+        detail: `你在 ${callerRoot}，写到了 ${kb}（库类型 ${target.kind ?? "project"}）—— 跨仓写入：确认这就是你要的库`,
     };
 }
 
@@ -154,11 +221,18 @@ function normalizeKbDir(p: string): string {
     return resolved;
 }
 
-export function resolveFactsDir(explicit?: string): string {
+export function resolveFactsDir(explicit?: string, callerCwd?: string): string {
     if (explicit !== undefined && explicit !== "") return normalizeKbDir(explicit);
     const fromEnv = process.env["DIY_FACTS_DIR"];
     if (fromEnv !== undefined && fromEnv !== "") return normalizeKbDir(fromEnv);
-    const hit = walkUp(process.cwd()) ?? walkUp(path.resolve(import.meta.dirname, "../../../.."));
+    // **调用方 cwd 在 `process.cwd()` 之前**（##437）：`diy facts submit` 是 CLI → 运行中
+    // 实例的 RPC，本函数跑在 app 主进程里 —— 它的 `process.cwd()` 是应用目录（主仓），
+    // 拿它当缺省会让 worktree 里的提交写进主仓（##408 实测）。调用方 cwd 由 CLI 层显式带上
+    // （`callerCwd`），缺省仍退回主进程 cwd / 包根（RPC 的其它调用方没有这个概念）。
+    const hit =
+        (callerCwd === undefined || callerCwd === "" ? null : walkUp(callerCwd)) ??
+        walkUp(process.cwd()) ??
+        walkUp(path.resolve(import.meta.dirname, "../../../.."));
     if (hit === null) {
         throw new FactsStoreError(
             "agent/facts-repo-missing",
@@ -221,7 +295,7 @@ const TASK_IN = /^task:(projects\/\d+\/tasks\/\d+)$/;
  * 为什么不给任务库留「当前任务」缺省：agent 常常同时在两个任务里干活（父任务排期、
  * 子任务开发），"当前"根本无从判断 —— 写错库比多敲十次 uri 危险得多。
  */
-export function resolveFactsTarget(opts: { dir?: string; in?: string } = {}): FactsTarget {
+export function resolveFactsTarget(opts: { dir?: string; in?: string; callerCwd?: string } = {}): FactsTarget {
     const spec = opts.in?.trim() ?? "";
     // 设备级库（`~/.diy/knowledge/`）：讲"这台机器 / 这个用户"的事实，跨项目可用
     // （`~/AGENTS.md` 的全局规则归它）。与仓库库分开是因为**归属不同**：全局规则换到
@@ -285,7 +359,7 @@ export function resolveFactsTarget(opts: { dir?: string; in?: string } = {}): Fa
         };
     }
     // 仓库库（缺省 / project）：读时同样并入设备级库 —— 与 runtime 投影同口径
-    const projectDir = resolveFactsDir(opts.dir);
+    const projectDir = resolveFactsDir(opts.dir, opts.callerCwd);
     const projectExtra = globalKbDirs().filter((d) => d !== projectDir);
     return {
         dir: projectDir,
@@ -1065,9 +1139,15 @@ function parseExpose(raw: unknown): Record<string, ExposeLevel> | undefined {
     return out;
 }
 
-export function submitPayload(payload: SubmitPayload, opts: { dir?: string; in?: string; dryRun?: boolean } = {}) {
+export function submitPayload(
+    payload: SubmitPayload,
+    opts: { dir?: string; in?: string; dryRun?: boolean; callerCwd?: string } = {},
+) {
     const target = resolveFactsTarget(opts);
     const kb = target.dir;
+    // 落点回显 + 跨仓告警（##437）：先算出「写到哪」，early-return（载荷不合规）那条路也带。
+    const landing = landingOf(target, opts.callerCwd);
+    const crossRepo = crossRepoWarning(target, opts.callerCwd);
     /**
      * 本批会不会**顺手建库**（写前磁盘状态）。
      *
@@ -1095,8 +1175,11 @@ export function submitPayload(payload: SubmitPayload, opts: { dir?: string; in?:
                 droppedSubjects: [],
                 files: [],
                 dropped: [],
-            }),
-            problems: plainProblems(issues.map((i) => ({ level: "error" as const, code: i.code, detail: i.detail, ...(i.facts ? { facts: i.facts } : {}) }))),
+            }, landing),
+            problems: plainProblems([
+                ...issues.map((i) => ({ level: "error" as const, code: i.code, detail: i.detail, ...(i.facts ? { facts: i.facts } : {}) })),
+                ...(crossRepo === null ? [] : [crossRepo]),
+            ]),
         };
     }
     const { report, problems } = submit(
@@ -1115,7 +1198,10 @@ export function submitPayload(payload: SubmitPayload, opts: { dir?: string; in?:
     const schemaProblems = issues.map((i) => ({ level: "error" as const, code: i.code, detail: i.detail, ...(i.facts ? { facts: i.facts } : {}) }));
     // 写成功后库才真的在：以**写后**的磁盘状态为准（写失败会抛，走不到这里）
     const created = willCreate && existsSync(path.join(kb, "facts")) ? { dir: kb } : undefined;
-    return { report: plainReport(report, created), problems: plainProblems([...schemaProblems, ...problems]) };
+    return {
+        report: plainReport(report, landing, created),
+        problems: plainProblems([...(crossRepo === null ? [] : [crossRepo]), ...schemaProblems, ...problems]),
+    };
 }
 
 export function affectedByFiles(files: readonly string[], opts: { dir?: string; in?: string } = {}): { ids: string[] } {

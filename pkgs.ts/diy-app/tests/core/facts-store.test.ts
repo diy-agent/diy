@@ -825,3 +825,74 @@ describe("空库语义：读就出空、写就直接写", () => {
         expect(snapshot(taskDir)).toEqual(before);
     });
 });
+
+// ──────────────────────────────────────────────────────────────
+// ##437：`diy facts submit` 是 CLI → 运行中实例的 RPC，解析库目录的代码跑在 app 主进程里，
+// 它的 `process.cwd()` 是应用目录（主仓）——不把**调用方 cwd** 显式带下来的话，
+// worktree 里提交就写进主仓（##408 实测）。这里压四件事：优先级 / 调用方 cwd / 兜底 / 跨仓告警。
+describe("缺省库目录 = 调用方 cwd（##437）", () => {
+    let mainRepo = "";
+    let mainKb = "";
+    let worktree = "";
+    let wtKb = "";
+
+    beforeEach(() => {
+        // 这几个用例专压「没有显式来源时缺省是谁」，所以先把 DIY_FACTS_DIR 摘掉，
+        // 否则它（优先级高于调用方 cwd，这是有意的）会把两种情况都盖成同一个答案。
+        delete process.env["DIY_FACTS_DIR"];
+        mainRepo = path.join(root, "main-repo");
+        mainKb = path.join(mainRepo, "knowledge");
+        worktree = path.join(mainRepo, "diy.worktrees", "t437-x");
+        wtKb = path.join(worktree, "knowledge");
+        // 主仓：`.git` 是目录；worktree：`.git` 是**文件**（真实形态，别只压目录那种）
+        mkdirSync(path.join(mainRepo, ".git"), { recursive: true });
+        mkdirSync(worktree, { recursive: true });
+        writeFileSync(path.join(worktree, ".git"), "gitdir: ../../.git/worktrees/t437-x\n");
+        for (const dir of [mainKb, wtKb]) {
+            mkdirSync(dir, { recursive: true });
+            writeFileSync(path.join(dir, "subjects.yaml"), "subjects: {}\n");
+        }
+    });
+
+    it("① 显式 dir 优先于调用方 cwd", () => {
+        const r = store.submitPayload({ facts: [], subjects: [] }, { dir: mainKb, callerCwd: worktree, dryRun: true });
+        expect(store.resolveFactsDir(mainKb, worktree)).toBe(path.resolve(mainKb));
+        // 回显落点（绝对路径 + 相对仓库根）——dry-run 也带，不必先写错一次
+        expect(r.report.landing).toEqual({
+            dir: path.resolve(mainKb),
+            root: path.resolve(mainRepo),
+            rel: "knowledge",
+            callerCwd: worktree,
+        });
+    });
+
+    it("② 无 dir ⇒ 用调用方 cwd（worktree 里提交落到 worktree）", () => {
+        expect(store.resolveFactsDir(undefined, worktree)).toBe(path.resolve(wtKb));
+        expect(store.resolveFactsTarget({ callerCwd: worktree }).dir).toBe(path.resolve(wtKb));
+        const r = store.submitPayload({ facts: [], subjects: [] }, { callerCwd: worktree, dryRun: true });
+        expect(r.report.landing.dir).toBe(path.resolve(wtKb));
+        // worktree 的 `.git` 是文件：仓库根也得认得出是 worktree，不是外层主仓
+        expect(r.report.landing.root).toBe(path.resolve(worktree));
+        expect(r.report.landing.rel).toBe("knowledge");
+    });
+
+    it("③ 调用方 cwd 也没有 ⇒ 退主进程 cwd 向上找（旧行为不变）", () => {
+        // 追一个不存在的位置（走不到 knowledge/subjects.yaml）⇒ 应该与「不带调用方 cwd」同答案
+        expect(store.resolveFactsDir(undefined, "/no/such/dir/for-t437")).toBe(store.resolveFactsDir());
+    });
+
+    it("④ 跨仓写入 ⇒ warn 而不是拒，文案是「你在 X，写到了 Y」", () => {
+        const r = store.submitPayload({ facts: [], subjects: [] }, { dir: mainKb, callerCwd: worktree, dryRun: true });
+        const warn = r.problems.find((p) => p.code === "facts/cross-repo-write");
+        expect(warn?.level).toBe("warning");
+        expect(warn?.detail).toContain(path.resolve(mainRepo));
+        expect(warn?.detail).toContain(path.resolve(mainKb));
+        // 不拒：报告照常给出落点
+        expect(r.report.landing.dir).toBe(path.resolve(mainKb));
+    });
+
+    it("④b 同仓写入不告警", () => {
+        const r = store.submitPayload({ facts: [], subjects: [] }, { callerCwd: worktree, dryRun: true });
+        expect(r.problems.some((p) => p.code === "facts/cross-repo-write")).toBe(false);
+    });
+});

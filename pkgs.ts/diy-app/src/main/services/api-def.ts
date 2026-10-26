@@ -2208,7 +2208,13 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
             input: {
               file: z.string().cliOption({ readFile: true, placeholder: "<file|->", desc: "载荷 JSON 文件（- = stdin）" }),
               dryRun: z.boolean().optional().cliOption({ desc: "只算不写：回显将新增 / 修改什么" }),
-              dir: z.string().optional().cliOption({ desc: "knowledge 目录（缺省自动向上找）" }),
+              dir: z.string().optional().cliOption({ desc: "knowledge 目录（缺省：DIY_FACTS_DIR > **调用方 cwd** 向上找 > 主进程 cwd）" }),
+              /**
+               * 调用方 cwd（parser 自动注入，不是可敲的选项）—— 缺省库目录的**判据**（##437）。
+               * handler 跑在 app 主进程，`process.cwd()` 是应用目录（主仓）：用它当缺省
+               * 会让 worktree 里的 `facts submit` 写进主仓（##408）。
+               */
+              cwd: z.string().optional().cliOption({ callerCwd: true }),
               in: z
                 .string()
                 .optional()
