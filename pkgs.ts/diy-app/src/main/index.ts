@@ -51,6 +51,9 @@ import { setWindowOps } from "./services/window-ops";
 import { startJobWatches } from "./services/job-watch-registry";
 import { refreshModelsOnStartup, startupRefreshEnabled } from "./services/models-startup-refresh";
 import { runRegistry } from "./services/run-registry";
+// 触发器目录（##408 v2）：**必须早于任何会 emit 的服务** —— 模块顶层 define 即注册，
+// 顺序反了第一批事件就丢（run-registry 的 onSettle / core-ticker 的第一拍都在后面）。
+import { registerBuiltinTriggers } from "./triggers";
 import type { InstanceSelf, RevealResult } from "../shared/instance-row";
 
 // Chromium 开关必须走 app.commandLine（ready 之前），跟在 app 路径后传 argv 无效。
@@ -108,6 +111,8 @@ app.setPath("cache", appConfig.cache);
 
 // 诊断设施必须早于任何 console 输出安装：EPIPE 防护 + 日志落 DIY_HOME/log/main.log
 installDiagnostics(appConfig.diyHome);
+// 触发器目录：**全部从零注册**（没有内置常量表）。放在这里 = 保证服务起来之前表已填满。
+registerBuiltinTriggers();
 // 流量观测：订阅 undici diagnostics_channel，早于任何请求（见 core/traffic.ts）
 traffic.init();
 // 原生崩溃采集：Crashpad minidump → <DIY_HOME>/log/crashes + 子进程消亡日志进 main.log

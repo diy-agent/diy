@@ -2591,6 +2591,29 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
       }),
 
       /**
+       * 触发器目录（##408 v2 · 2026-10-26）：「系统一共会告诉你几种事」的**唯一清单**。
+       *
+       * 在它之前，这些全散在代码里（每处一个 `if (出事了) 通知`），谁也说不清总数。
+       * 本域只读 —— 表是**产品定义**（改它要发版），用户能改的是 level 覆盖（另说）。
+       */
+      trigger: RpcSchema.group({
+        desc: `触发器目录（系统一共会告诉你几种事 · 各自多急 · 投给谁）；只读`,
+        children: {
+          list: RpcSchema.unary({
+            desc: `列出全部触发器（结构化；含 id / 命名空间 / 描述 / 强度 / 出口）。程序读这个，人读用 ls`,
+            input: {},
+            output: z
+              .object({ status: z.string(), data: z.any() })
+              .or(z.object({ status: z.string(), msg: z.string() })),
+          }),
+          ls: RpcSchema.unary({
+            desc: `列出全部触发器（人读表格）`,
+            input: {},
+            output: z.string(),
+          }),
+        },
+      }),
+      /**
        * 后台 job（##408 v1：只有 spawned 型 —— 会话里跑出来的长时命令）：
        * 定义在哪（哪个任务/轮/工具调用）、跑了多久、怎么结束的、输出尾巴。
        *
