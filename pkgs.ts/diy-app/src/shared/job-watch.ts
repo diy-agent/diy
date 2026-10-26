@@ -418,3 +418,22 @@ export function endWatch(state: JobWatchState, at: number, reason: string): JobW
 export function subjectIsPersistent(subject: WatchSubject): boolean {
     return subject.kind === "none" || subject.kind === "command";
 }
+
+/**
+ * `--subject` 字符串 → `WatchSubject`。`none` / 省略 = 无主观察。
+ *
+ * 解析失败**不抛**（一律化成合法值），交给 `validateWatchDef` 统一报 ——
+ * CLI 只该看到一处错误文案。认不出的形态落成 `command:<原文>`：
+ * 它是「可重开的身份」，语义上等价于「按这个名字观察，不跟某一次具体执行绑定」。
+ */
+export function parseSubjectSpec(spec: string | undefined): WatchSubject {
+    const raw = (spec ?? "").trim();
+    if (raw === "" || raw === "none") return { kind: "none" };
+    const i = raw.indexOf(":");
+    const kind = i < 0 ? "" : raw.slice(0, i);
+    const rest = i < 0 ? raw : raw.slice(i + 1);
+    if (kind === "run") return { kind: "run", runId: rest };
+    if (kind === "task") return { kind: "task", uri: rest };
+    if (kind === "command") return { kind: "command", key: rest };
+    return { kind: "command", key: raw };
+}

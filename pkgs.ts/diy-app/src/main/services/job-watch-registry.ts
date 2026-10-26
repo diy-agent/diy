@@ -60,6 +60,16 @@ export type WatchDeliver = (def: JobWatchDef, ev: WatchEvent) => void | Promise<
  * 让探针自己去失败，比凭一个空表把 watch 判死诚实。
  */
 export type SubjectState = "alive" | "gone" | "unknown";
+
+/** `probeOnce` 的结果：探针此刻看到什么（不落盘）。 */
+export interface WatchPeek {
+    readonly def: JobWatchDef;
+    readonly state: JobWatchState;
+    /** `baseline` = 还没有指纹（第一拍）；`changed` / `no-change` */
+    readonly verdict: string;
+    readonly diff: string;
+    readonly at: number;
+}
 export type SubjectChecker = (subject: WatchSubject) => SubjectState | Promise<SubjectState>;
 
 export interface JobWatchRegistryOptions {
@@ -234,6 +244,23 @@ export class JobWatchRegistry {
      * **不抛**：单个 watch 的失败记在它自己的 state 里（`errorStreak`），
      * 一拍结束照样返回报告 —— 定时器里的一个坏住户不该带走其他人。
      */
+    /**
+     * **立刻探一次，只回结果**：不落 state、不投递。
+     *
+     * 用途是排查「它到底在看什么」—— 面板上的「看一眼」与 `diy job watch peek`。
+     * 不落盘是刻意的：peek 不该改变「下次什么时候探」（那会让排障动作变成一次真实探测）。
+     */
+    async probeOnce(id: string): Promise<WatchPeek | null> {
+        const def = await this.getDef(id);
+        if (!def) return null;
+        const state = await this.getState(id);
+        const now = this.now();
+        const parts: ProbePart[] = [];
+        for (const spec of def.probes) parts.push(...(await this.probe(spec, { home: this.home, now })));
+        const outcome = probeSucceeded(def, state, parts, now);
+        return { def, state, verdict: outcome.verdict, diff: outcome.diff, at: now };
+    }
+
     async tickAll(): Promise<WatchTickReport> {
         const defs = await this.loadDefs();
         const now = this.now();

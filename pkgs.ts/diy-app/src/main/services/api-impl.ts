@@ -25,6 +25,16 @@ import * as health from "./health";
 import { apiDef } from "./api-def";
 import * as factsStore from "./facts-store";
 import * as journalStore from "./journal-store";
+import { jobWatchRegistry } from "./job-watch-registry";
+import {
+    isDue,
+    intervalMinOf,
+    nextDueAt,
+    parseSubjectSpec,
+    subjectLabel,
+    validateWatchDef,
+} from "../../shared/job-watch";
+import type { JobWatchDef, JobWatchState, WatchSubject } from "../../shared/job-watch";
 import { buildDocsIndex, DEFAULT_DOCS_ROOTS } from "./docs-index";
 import { TaskDetailSchema } from "../../shared/task-detail";
 import { noteRendererTouch } from "./runtime-context";
@@ -1298,6 +1308,138 @@ export function bindAppHandlers(binding: ServerBinding): void {
         dir: info.dir,
         logPath: info.logPath,
         outputBytes: (await runRegistry.outputBytes(input.id)) ?? null,
+      },
+    };
+  });
+
+  // ─── JobWatch（##408 v2）：隔很久看一眼，变了才说话 ──────────────────────
+  //
+  // 三个纪律：
+  //   ① **人读与程序读分开**：`ls` 给表格文本、`list` 给结构化行（与 `env.ls` / `env.list` 同一条约定）。
+  //   ② **状态一律现算**（`isDue` / `nextDueAt` / `intervalMinOf` 都是纯函数）——
+  //      不把"下次几点"写进盘里，否则停用 / 改节奏之后那个值就是错的。
+  //   ③ `save` 不清指纹（改标题不该重探基线）；要清就 `rm` 再 `save`。
+
+  /** 一条 watch 的展示行（`list` 与面板共用一份形状）。 */
+  const watchRow = (def: JobWatchDef, st: JobWatchState, now: number) => {
+    const intervalMin = intervalMinOf(def, st);
+    return {
+      id: def.id,
+      title: def.title,
+      enabled: def.enabled,
+      every: def.every,
+      /** **此刻**生效的探测间隔（降频后与 `every` 不同） */
+      intervalMin,
+      probes: def.probes,
+      sinks: def.sinks,
+      subject: subjectLabel(def.subject) ?? "none",
+      createdAt: def.createdAt,
+      state: stateLabelOf(def, st),
+      due: isDue(def, st, now),
+      nextDueAt: nextDueAt(def, st),
+      lastProbeAt: st.lastProbeAt,
+      lastChangeAt: st.lastChangeAt,
+      probesRun: st.probes,
+      quietStreak: st.quietStreak,
+      errorStreak: st.errorStreak,
+      lastError: st.lastError,
+      ended: st.ended,
+    };
+  };
+
+  /** 灯的语义（`state` 一列；纯展示，判据在 `shared/job-watch.ts`）。 */
+  const stateLabelOf = (def: JobWatchDef, st: JobWatchState): string => {
+    if (st.ended !== null) return "ended";
+    if (!def.enabled) return "paused";
+    if (st.errorStreak >= 3) return "broken";
+    if (st.lastProbeAt === null) return "new";
+    if (st.quietStreak > 0) return "quiet";
+    return "watching";
+  };
+
+  const pad = (s: string, n: number) => {
+    // 中文按两格算（表格在等宽字体里才对得齐）
+    const w = [...s].reduce((a, c) => a + (/[\u4e00-\u9fff\uff00-\uffef]/.test(c) ? 2 : 1), 0);
+    return s + " ".repeat(Math.max(1, n - w));
+  };
+
+  binding.on(app.job.watch.list, async ({ input }) => {
+    const reg = jobWatchRegistry();
+    const now = Date.now();
+    const defs = await reg.loadDefs();
+    const rows = await Promise.all(defs.map(async (d) => watchRow(d, await reg.getState(d.id), now)));
+    const picked = input.all === true ? rows : rows.filter((r) => r.ended === null && r.enabled);
+    return { status: "ok", data: { watches: picked, total: rows.length, now } };
+  });
+
+  binding.on(app.job.watch.ls, async ({ input }) => {
+    const res = await (async () => {
+      const reg = jobWatchRegistry();
+      const now = Date.now();
+      const defs = await reg.loadDefs();
+      return Promise.all(defs.map(async (d) => watchRow(d, await reg.getState(d.id), now)));
+    })();
+    const picked = input.all === true ? res : res.filter((r) => r.ended === null && r.enabled);
+    if (picked.length === 0) return res.length === 0 ? "还没有 watch（diy job watch save …）" : "没有生效中的 watch（--all 看全部）";
+    const head = `${pad("ID", 20)}${pad("状态", 12)}${pad("节奏", 10)}${pad("下次", 18)}${pad("上次变化", 18)}标题`;
+    const lines = picked.map((r) => {
+      const pace = r.state === "quiet" ? `${r.every}m→${r.intervalMin}m` : `${r.every}m`;
+      const next = r.nextDueAt === null ? "—" : new Date(r.nextDueAt).toLocaleString("zh-CN", { hour12: false });
+      const change =
+        r.lastChangeAt === null ? "—" : new Date(r.lastChangeAt).toLocaleString("zh-CN", { hour12: false });
+      return `${pad(r.id, 20)}${pad(r.state, 12)}${pad(pace, 10)}${pad(next, 18)}${pad(change, 18)}${r.title}`;
+    });
+    return [head, ...lines].join("\n");
+  });
+
+  binding.on(app.job.watch.save, async ({ input }) => {
+    const reg = jobWatchRegistry();
+    const now = Date.now();
+    const prev = await reg.getDef(input.id);
+    const keys = input.probe
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean);
+    const sinks = (input.sink ?? "")
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean);
+    const subject = parseSubjectSpec(input.subject);
+    const def: JobWatchDef = {
+      id: input.id,
+      title: input.title,
+      every: input.every as JobWatchDef["every"],
+      probes: keys,
+      sinks,
+      subject,
+      quietAfter: input.quietAfter ?? prev?.quietAfter ?? 4,
+      createdAt: prev?.createdAt ?? new Date(now).toISOString(),
+      enabled: input.disabled !== true,
+    };
+    const err = validateWatchDef(def);
+    if (err) return { status: "error", msg: `watch 定义非法：${err}` };
+    await reg.saveDef(def);
+    return { status: "ok", data: { saved: def.id, created: prev === null, watch: watchRow(def, await reg.getState(def.id), now) } };
+  });
+
+  binding.on(app.job.watch.rm, async ({ input }) => {
+    const existed = await jobWatchRegistry().removeDef(input.id);
+    return { status: "ok", data: { id: input.id, removed: existed } };
+  });
+
+  binding.on(app.job.watch.peek, async ({ input }) => {
+    const res = await jobWatchRegistry().probeOnce(input.id);
+    if (!res) return { status: "error", msg: `没有这条 watch：${input.id}` };
+    return {
+      status: "ok",
+      data: {
+        id: input.id,
+        verdict: res.verdict,
+        diff: res.diff,
+        // 刻意带出「现在真的会探吗」：peek 不动指纹，故 due/lastProbeAt 都还是旧的
+        due: isDue(res.def, res.state, Date.now()),
+        lastProbeAt: res.state.lastProbeAt,
+        ended: res.state.ended,
       },
     };
   });
