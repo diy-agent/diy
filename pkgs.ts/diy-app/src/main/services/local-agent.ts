@@ -3549,9 +3549,17 @@ export class LocalAgentManager {
         /** 读配置时的**出声条目**（##370）：非空 = 有键缺失/非法（已逐键回落缺省）。UI 据此说「为什么」 */
         warnings: AutoCompactIssue[];
     }> {
-        const { config, issues: warnings } = loadAutoCompactDetailed(diyHome());
         // 系统上下文：与上次真发那份比（口径与 steps.jsonl 的 systemText 完全一致）
         const home = diyHome();
+        const usages = readStepUsages(taskUri);
+        const last = usages.at(-1) ?? null;
+        // 模型窗口上限（刀 1：窗口触发改成比例后必须有这个数才判；取不到 ⇒ null ⇒ 不触发）。
+        // 优先用账本里当场记的 contextLimit，老账本没有就按模型 id 现查。
+        const windowLimitTokens =
+            (typeof last?.contextLimit === "number" && last.contextLimit > 0 ? last.contextLimit : undefined) ??
+            (last?.model ? contextLimitOf(last.model) : undefined) ??
+            null;
+        const { config, issues: warnings } = loadAutoCompactDetailed(home, { windowLimitTokens });
         // 与真发同一条链（预览 = 会发出去的）：房间上下文取**本任务自己的房间**
         // （自起轮的形状；投递轮看的是来源房间，这里给不出，边上注明即可）
         const roomCtx = (await roomRuntimeFact({ roomId: taskUri, taskUri }))?.value ?? null;
@@ -3563,8 +3571,6 @@ export class LocalAgentManager {
         const lastStep = readDeliverySteps(taskUri).at(-1) ?? null;
         const systemContextChanged = lastStep !== null && lastStep.systemText !== delivery.system.text;
 
-        const usages = readStepUsages(taskUri);
-        const last = usages.at(-1) ?? null;
         const sinceLastRequestMs = last ? Date.now() - Date.parse(last.ts) : null;
         // 窗口占用（**token 数**）：口径 = 该会话**最后一步实测用量** `usage.total`（真实 token 数，
         // 最后一步 = 窗口占用，见 ##211 §三；用户 2026-10-15 拍板 token 域，见 ##268 §6.9 D7）。
@@ -3587,6 +3593,7 @@ export class LocalAgentManager {
             sinceLastRequestMs,
             ttl: this.effectiveTtlOf(taskUri),
             windowTokens,
+            windowLimitTokens,
             retainedTokens,
             boundary,
             compactionCount,
@@ -4845,30 +4852,27 @@ export class LocalAgentManager {
         // ── 自动压缩（新请求之前，是唯一正确的时机）──
         // 为什么在这里：三个触发条件（缓存过期 / 系统上下文变 / 窗口超限）都要求"**发出去之前**"
         // 处理 —— 发完再压，那次已经按全价付过了。而且此处的 `deliveryOptsOf` 读的就是最新边界。
-        // 只读检测 → `mode: "auto"` 才动手；`notify` 只提供状态（UI 提示 + 一键），不静默改会话
-        // （静默丢用户历史与 `rule.no-silent-catch` 同一条原则）。
-        if (loadAutoCompact(diyHome()).mode === "auto") {
-            try {
-                const st = await this.autoCompactStatus(taskUri);
-                if (st.triggers.length > 0) {
-                    const rec = this.compact(
-                        taskUri,
-                        autoCompactPolicyInput(st.config),
-                        "auto",
-                        undefined,
-                        st.triggers[0],
-                    );
-                    console.log(
-                        `[local-agent] 自动压缩 ${taskUri}：${st.reasons.join("；")}` +
-                            `（before ${rec.size.before.turns} 轮 → after ${rec.size.after.turns} 轮）`,
-                    );
-                    // 边界变了 → 内存态必须重建（compact 内部已 delete sessions，这里重新加载）
-                    sess = this.getSession(taskUri);
-                }
-            } catch (e) {
-                // 自动压缩失败**不阻断本轮**（用户还是要能说话），但必须出声
-                console.error(`[local-agent] 自动压缩失败（已跳过，本轮照常发送）${taskUri}:`, e);
+        // ##442 刀 1：**删除 mode 三态** —— 到点就压，不再有 off/notify 的「只提示不执行」。
+        try {
+            const st = await this.autoCompactStatus(taskUri);
+            if (st.triggers.length > 0) {
+                const rec = this.compact(
+                    taskUri,
+                    autoCompactPolicyInput(st.config),
+                    "auto",
+                    undefined,
+                    st.triggers[0],
+                );
+                console.log(
+                    `[local-agent] 自动压缩 ${taskUri}：${st.reasons.join("；")}` +
+                        `（before ${rec.size.before.turns} 轮 → after ${rec.size.after.turns} 轮）`,
+                );
+                // 边界变了 → 内存态必须重建（compact 内部已 delete sessions，这里重新加载）
+                sess = this.getSession(taskUri);
             }
+        } catch (e) {
+            // 自动压缩失败**不阻断本轮**（用户还是要能说话），但必须出声
+            console.error(`[local-agent] 自动压缩失败（已跳过，本轮照常发送）${taskUri}:`, e);
         }
 
         // ── 建「轮次运行」并**分离启动驱动**（##305）────────────────────────

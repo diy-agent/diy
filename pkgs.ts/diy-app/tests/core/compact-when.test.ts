@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
-    autoAuditSentence,
+    autoCompactSentence,
     compactResultSentence,
     compactWhenRows,
     compactWhenSummary,
@@ -16,7 +16,6 @@ import {
 } from "../../src/shared/context/compact-when";
 
 const base: CompactWhenInput = {
-    mode: "auto",
     limitTokens: 20_000,
     boundary: { at: "2026-10-25T10:00:00.000Z", dropped: 12, limitTokens: 20_000 },
     retainedTokens: 12_000,
@@ -69,19 +68,18 @@ describe("compact-when · 「什么时候会压」的判据（事件制）", () 
         expect(r.hint).toContain("投递与压缩是两件事");
     });
 
-    it("手动不受 mode / 上限是否顶过影响", () => {
-        expect(rowOf({ ...base, mode: "off", boundary: null }, "manual").state).toBe("manual");
+    it("手动不受是否到点影响", () => {
+        expect(rowOf({ ...base, boundary: null }, "manual").state).toBe("manual");
     });
 });
 
 describe("compact-when · 三触发器只写审计（与投递划清界线）", () => {
-    it("mode 三态都说清「只另记一条审计、不改投递切点」", () => {
-        for (const m of ["off", "notify", "auto"] as const) {
-            const s = autoAuditSentence({ mode: m });
-            expect(s).toContain(`mode=${m}`);
-            expect(s).toContain("compact.jsonl");
-            expect(s).toContain("不改投递切点");
-        }
+    it("##442 删 mode 后：到点就压，只另记一条审计、不改投递切点", () => {
+        const s = autoCompactSentence();
+        expect(s).toContain("到点就压");
+        expect(s).toContain("compact.jsonl");
+        expect(s).toContain("不改投递切点");
+        expect(s).not.toContain("mode=");
     });
 });
 

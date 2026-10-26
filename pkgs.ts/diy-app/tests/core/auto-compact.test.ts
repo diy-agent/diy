@@ -11,12 +11,12 @@
 //      "静默回退 + 只见结果不见因"与 ##338 同族。
 
 import { describe, it, expect, afterAll } from "vitest";
-import { rmSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import * as yaml from "js-yaml";
 import {
     DEFAULT_AUTO_COMPACT,
-    DEFAULT_WINDOW_OVER_TOKENS,
+    DEFAULT_WINDOW_OVER_RATIO,
     autoCompactPolicyInput,
     detectAutoCompactTriggers,
     normalizeAutoCompact,
@@ -48,6 +48,7 @@ const facts = (over: Partial<AutoCompactFacts> = {}): AutoCompactFacts => ({
     sinceLastRequestMs: 5 * MIN,
     ttl: TTL,
     windowTokens: 10_000,
+    windowLimitTokens: 100_000,
     retainedTokens: null,
     boundary: null,
     compactionCount: 0,
@@ -73,7 +74,8 @@ describe("detectAutoCompactTriggers：确定事实的判定", () => {
         expect(detectAutoCompactTriggers(facts({ sinceLastRequestMs: 10 * MIN }), DEFAULT_AUTO_COMPACT)).toEqual([]);
     });
 
-    it("窗口超上限 → 触发；**排在首位**（撞墙最急）", () => {
+    it("窗口超比例 → 触发；**排在首位**（撞墙最急）", () => {
+        // 默认 ratio 0.5 × 100k 窗口 = 50k 阈值
         const tr = detectAutoCompactTriggers(
             facts({ windowTokens: 50_000, systemContextChanged: true, sinceLastRequestMs: 60 * MIN }),
             DEFAULT_AUTO_COMPACT,
@@ -81,10 +83,22 @@ describe("detectAutoCompactTriggers：确定事实的判定", () => {
         expect(tr).toEqual(["contextWindowOver", "systemContextChanged", "cacheExpired"]);
     });
 
-    it("阈值边界：等于上限即触发（>=）；未知（null）不触发", () => {
-        expect(detectAutoCompactTriggers(facts({ windowTokens: DEFAULT_WINDOW_OVER_TOKENS }), DEFAULT_AUTO_COMPACT)).toEqual([
-            "contextWindowOver",
-        ]);
+    it("【判据①】ratio=0.5 + 窗口 1M ⇒ 500k 才触发（499,999 不触发）", () => {
+        expect(
+            detectAutoCompactTriggers(facts({ windowTokens: 500_000, windowLimitTokens: 1_000_000 }), DEFAULT_AUTO_COMPACT),
+        ).toEqual(["contextWindowOver"]);
+        expect(
+            detectAutoCompactTriggers(
+                facts({ windowTokens: 499_999, windowLimitTokens: 1_000_000 }),
+                DEFAULT_AUTO_COMPACT,
+            ),
+        ).toEqual([]);
+    });
+
+    it("【判据②】窗口上限未知（null）⇒ 不触发，哪怕用量巨大", () => {
+        expect(
+            detectAutoCompactTriggers(facts({ windowTokens: 999_999, windowLimitTokens: null }), DEFAULT_AUTO_COMPACT),
+        ).toEqual([]);
         expect(detectAutoCompactTriggers(facts({ windowTokens: null }), DEFAULT_AUTO_COMPACT)).toEqual([]);
     });
 
@@ -92,9 +106,9 @@ describe("detectAutoCompactTriggers：确定事实的判定", () => {
         expect(detectAutoCompactTriggers(facts({ sinceLastRequestMs: null }), DEFAULT_AUTO_COMPACT)).toEqual([]);
     });
 
-    it("逐项开关：关掉谁，谁就不触发", () => {
+    it("逐项开关：关掉谁，谁就不触发（ratio 0 = 关闭）", () => {
         const cfg = normalizeAutoCompact({
-            triggers: { systemContextChanged: false, cacheExpired: false, contextWindowOver: 0 },
+            triggers: { systemContextChanged: false, cacheExpired: false, windowOverRatio: 0 },
         });
         expect(
             detectAutoCompactTriggers(
@@ -113,26 +127,67 @@ describe("detectAutoCompactTriggers：确定事实的判定", () => {
     });
 });
 
-describe("normalizeAutoCompact：初版紧凑、扩展松散", () => {
-    it("空 → 默认（notify + 三个触发开）+ **自动压默认 = 目标式预算 3KB**", () => {
+describe("normalizeAutoCompact：到点就压（无 mode）+ 比例阈值", () => {
+    it("空 → 默认（三个触发开、windowOverRatio=0.5、无 mode 字段）", () => {
         const c = normalizeAutoCompact(undefined);
         expect(c).toEqual(DEFAULT_AUTO_COMPACT);
-        expect(c.mode).toBe("notify");
+        expect("mode" in c).toBe(false);
+        expect(c.triggers.windowOverRatio).toBe(0.5);
         expect(c.policy).toEqual(DEFAULT_AUTO_COMPACT.policy);
     });
 
-    it("非法 mode 回落；token 阈值原样保留；0 = 关闭；旧**比例**值（0,1）→ 出声回落默认", () => {
-        expect(normalizeAutoCompact({ mode: "nope" }).mode).toBe("notify");
-        expect(normalizeAutoCompact({ triggers: { contextWindowOver: 20480 } }).triggers.contextWindowOver).toBe(20480);
-        expect(normalizeAutoCompact({ triggers: { contextWindowOver: 0 } }).triggers.contextWindowOver).toBe(0);
-        // 旧单位（比例 0~1）与 token 域冲突：0.8 绝不能当 0.8 token 用（会每轮都压）→ 回落默认 38400
-        expect(normalizeAutoCompact({ triggers: { contextWindowOver: 0.8 } }).triggers.contextWindowOver).toBe(
-            DEFAULT_WINDOW_OVER_TOKENS,
+    it("【判据④】旧比例 0.8 直接采纳为比例（不告警回落）", () => {
+        const issues: { path: string; message: string }[] = [];
+        const c = normalizeAutoCompact(
+            { triggers: { windowOverRatio: 0.8 } },
+            issues as unknown as Parameters<typeof normalizeAutoCompact>[1],
         );
+        expect(c.triggers.windowOverRatio).toBe(0.8);
+        expect(issues).toEqual([]);
     });
 
-    it("默认策略 → 压缩策略输入：目标式预算 3KB", () => {
-        // 策略**直接复用真源形状**（含 summary），不再经扁平形状转一道
+    it("0 = 关闭；非法值回落 0.5", () => {
+        expect(normalizeAutoCompact({ triggers: { windowOverRatio: 0 } }).triggers.windowOverRatio).toBe(0);
+        expect(normalizeAutoCompact({ triggers: { windowOverRatio: "nope" } }).triggers.windowOverRatio).toBe(0.5);
+    });
+
+    it("【判据③】旧 token 绝对数 800000 + 1M 窗口 ⇒ 折算成 0.8 并出声", () => {
+        const issues: { path: string; message: string }[] = [];
+        const c = normalizeAutoCompact(
+            { triggers: { contextWindowOver: 800_000 } },
+            issues as unknown as Parameters<typeof normalizeAutoCompact>[1],
+            1_000_000,
+        );
+        expect(c.triggers.windowOverRatio).toBe(0.8);
+        expect(issues.map((i) => i.path)).toContain("triggers.windowOverRatio");
+        expect(issues.find((i) => i.path === "triggers.windowOverRatio")!.message).toContain("折算");
+    });
+
+    it("旧 token 值但窗口未知 ⇒ 本次按缺省 0.5，并出声（不猜数）", () => {
+        const issues: { path: string; message: string }[] = [];
+        const c = normalizeAutoCompact(
+            { triggers: { contextWindowOver: 800_000 } },
+            issues as unknown as Parameters<typeof normalizeAutoCompact>[1],
+            null,
+        );
+        expect(c.triggers.windowOverRatio).toBe(0.5);
+        expect(issues.find((i) => i.path === "triggers.windowOverRatio")!.message).toContain("窗口上限未知");
+    });
+
+    it("【判据⑤】mode: notify 残留被**忽略并出声**", () => {
+        const issues: { path: string; message: string }[] = [];
+        const c = normalizeAutoCompact(
+            { mode: "notify", triggers: { windowOverRatio: 0.3 } },
+            issues as unknown as Parameters<typeof normalizeAutoCompact>[1],
+        );
+        expect("mode" in c).toBe(false);
+        expect(c.triggers.windowOverRatio).toBe(0.3);
+        const hit = issues.find((i) => i.path === "mode");
+        expect(hit).toBeTruthy();
+        expect(hit!.message).toContain("已删除");
+    });
+
+    it("默认策略 → 压缩策略输入：目标式预算", () => {
         const p = autoCompactPolicyInput(DEFAULT_AUTO_COMPACT);
         expect(p).toEqual(DEFAULT_AUTO_COMPACT.policy);
         expect(normalizePolicy(p)).toEqual(p);
@@ -143,21 +198,33 @@ describe("配置文件层：真源落盘（不是 localStorage）", () => {
     const fp = () => autoCompactFile(diyHome());
     afterAll(() => rmSync(fp(), { force: true }));
 
-    it("缺失 → 默认 notify；写回后再读得到（含手改 YAML 的宽松归一）", () => {
+    it("缺失 → 默认（无 mode）；写回后再读得到（含手改 YAML 的宽松归一）", () => {
         rmSync(fp(), { force: true });
-        expect(loadAutoCompact(diyHome()).mode).toBe("notify");
+        expect("mode" in loadAutoCompact(diyHome())).toBe(false);
 
-        saveAutoCompact(diyHome(), { mode: "auto", triggers: { contextWindowOver: 20480 } });
+        saveAutoCompact(diyHome(), { triggers: { windowOverRatio: 0.25 } });
         const c = loadAutoCompact(diyHome());
-        expect(c.mode).toBe("auto");
-        expect(c.triggers.contextWindowOver).toBe(20480);
-        // 未给的字段用默认补（初版紧凑）
+        expect(c.triggers.windowOverRatio).toBe(0.25);
         expect(c.policy).toEqual(DEFAULT_AUTO_COMPACT.policy);
+    });
+
+    it("旧 token 阈值 + 知道窗口 ⇒ **写回新形状**（判据③的落盘侧）", () => {
+        rmSync(fp(), { force: true });
+        writeFileSync(fp(), yaml.dump({ triggers: { contextWindowOver: 800_000 } }), "utf-8");
+        const { config } = loadAutoCompactDetailed(diyHome(), { windowLimitTokens: 1_000_000 });
+        expect(config.triggers.windowOverRatio).toBe(0.8);
+        const text = readFileSync(fp(), "utf-8");
+        expect(text).toContain("windowOverRatio: 0.8");
+        expect(text).not.toContain("contextWindowOver");
+        // 再读一次是干净的（不再迁移、不再出声折算）
+        const again = loadAutoCompactDetailed(diyHome(), { windowLimitTokens: 1_000_000 });
+        expect(again.config.triggers.windowOverRatio).toBe(0.8);
+        expect(again.issues.filter((i) => i.path === "triggers.windowOverRatio")).toEqual([]);
     });
 
     it("坏文件 → 默认 + 出声（不崩、不用坏数据）", () => {
         writeFileSync(fp(), "mode: [不是对象\n", "utf-8");
-        expect(loadAutoCompact(diyHome()).mode).toBe("notify");
+        expect("mode" in loadAutoCompact(diyHome())).toBe(false);
     });
 });
 
@@ -175,8 +242,7 @@ describe("##370 缺必填键：逐键回落缺省 + 出声", () => {
 
     /** 一份**全合法**的配置（基线）：漏谁都不能牵连别人 —— 这正是本任务要钉的语义 */
     const base = (): Record<string, unknown> => ({
-        mode: "auto",
-        triggers: { systemContextChanged: false, cacheExpired: true, contextWindowOver: 12345 },
+        triggers: { systemContextChanged: false, cacheExpired: true, windowOverRatio: 0.8 },
         policy: {
             mode: "budget",
             modeData: {
@@ -247,21 +313,13 @@ describe("##370 缺必填键：逐键回落缺省 + 出声", () => {
             path: "triggers.systemContextChanged",
             check: (c) => {
                 expect(c.triggers.systemContextChanged).toBe(true);
-                expect(c.triggers.contextWindowOver).toBe(12345);
+                expect(c.triggers.windowOverRatio).toBe(0.8);
             },
         },
         { path: "triggers.cacheExpired", check: (c) => expect(c.triggers.cacheExpired).toBe(true) },
         {
-            path: "triggers.contextWindowOver",
-            check: (c) => expect(c.triggers.contextWindowOver).toBe(DEFAULT_WINDOW_OVER_TOKENS),
-        },
-        // 顶层
-        {
-            path: "mode",
-            check: (c) => {
-                expect(c.mode).toBe("notify");
-                expect(limitOf(c)).toBe(12345);
-            },
+            path: "triggers.windowOverRatio",
+            check: (c) => expect(c.triggers.windowOverRatio).toBe(DEFAULT_WINDOW_OVER_RATIO),
         },
     ];
 
@@ -278,7 +336,7 @@ describe("##370 缺必填键：逐键回落缺省 + 出声", () => {
             // 🔑 其余全部保留（旧行为：整份作废 —— 这正是用户「配置不见了」的现场）
             if (!cs.path.startsWith("history.limit")) {
                 // 历史上限是**一个整体**（limitTokens / summary 同属一个对象）：改了其中一项，
-                // 落盘形状就是补齐后的那份 —— 唯一不变量是「其它键（mode / triggers / policy）没被牵连」
+                // 落盘形状就是补齐后的那份 —— 唯一不变量是「其它键（triggers / policy）没被牵连」
                 expect(limitOf(config)).toBe(12345);
                 expect(normalizeHistoryLimit(config.history?.limit).summary.enabled).toBe(true);
             }
@@ -290,8 +348,7 @@ describe("##370 缺必填键：逐键回落缺省 + 出声", () => {
         expect(loadAutoCompactDetailed(diyHome()).issues).toEqual([]); // 不存在 = 正常态
         const { config, issues } = read(base());
         expect(issues).toEqual([]);
-        expect(config.mode).toBe("auto");
-        expect(limitOf(config)).toBe(12345);
+        expect(config.triggers.windowOverRatio).toBe(0.8);
         expect(limitOf(config)).toBe(12345);
     });
 
@@ -305,15 +362,14 @@ describe("##370 缺必填键：逐键回落缺省 + 出声", () => {
         expect(loadAutoCompact(diyHome())).toEqual(DEFAULT_AUTO_COMPACT);
     });
 
-    it("**值**被归一也要出声（旧比例单位）—— 归一不再静默", () => {
+    it("【判据④】旧键 contextWindowOver=0.8 ⇒ 直接采纳为比例，不告警", () => {
         rmSync(fp(), { force: true });
         const doc = base();
+        delete (doc.triggers as Record<string, unknown>).windowOverRatio;
         (doc.triggers as Record<string, unknown>).contextWindowOver = 0.8;
         const { config, issues } = read(doc);
-        expect(config.triggers.contextWindowOver).toBe(DEFAULT_WINDOW_OVER_TOKENS);
-        expect(issues.map((i) => i.path)).toContain("triggers.contextWindowOver");
-        // mode/预算照用（schema 层没失败，只有归一改了一处）
-        expect(config.mode).toBe("auto");
+        expect(config.triggers.windowOverRatio).toBe(0.8);
+        expect(issues.filter((i) => i.path.startsWith("triggers"))).toEqual([]);
         expect(limitOf(config)).toBe(12345);
     });
 
@@ -323,16 +379,16 @@ describe("##370 缺必填键：逐键回落缺省 + 出声", () => {
         // 旧配置残留的级列表：不认识、也不该牵连别的键
         doc.history = { limit: { limitTokens: 12345, summary: { enabled: true } }, keep: [{ type: "nope" }] };
         const { config, issues } = read(doc);
-        expect(config.mode).toBe("auto");
+        expect(config.triggers.windowOverRatio).toBe(0.8);
         expect(limitOf(config)).toBe(12345);
         expect(issues.map((i) => i.path)).toContain("history.keep");
     });
 });
 
-// ─── 端到端：mode=auto 时真的压，且账本记下 trigger ────────
+// ─── 端到端：到点就压（无 mode），且账本记下 trigger ────────
 
 describe("自动压缩执行（真会话 + 桩模型）", () => {
-    it("mode=auto + 窗口超限 → chat() 之前自动压一次，账本 by=auto / trigger=contextWindowOver", async () => {
+    it("窗口超比例 → chat() 之前自动压一次，账本 by=auto / trigger=contextWindowOver", async () => {
         const { createProject } = await import("../../src/main/core/project");
         const { createTask } = await import("../../src/main/core/task");
         const { writeFileSync } = await import("node:fs");
@@ -377,6 +433,7 @@ describe("自动压缩执行（真会话 + 桩模型）", () => {
                 step: 1,
                 model: "mimo-v2.6-flash",
                 apiFace: "chat",
+                contextLimit: 1_000_000,
                 usage: {
                     inputTokens: 100000,
                     inputTokenDetails: { noCacheTokens: 100000, cacheReadTokens: 0, cacheWriteTokens: null },
@@ -388,11 +445,10 @@ describe("自动压缩执行（真会话 + 桩模型）", () => {
             "utf-8",
         );
 
-        // mode=auto，**token** 阈值：实测占用 = 最后一步用量 100010 token ≥ 38400 → 必触发
+        // 比例阈值 0.1 × 1M 窗口 = 100k；实测占用 100010 token ≥ 100k → 必触发
         // （用量账已手工写死，不依赖真实模型）
         saveAutoCompact(diyHome(), {
-            mode: "auto",
-            triggers: { contextWindowOver: DEFAULT_WINDOW_OVER_TOKENS, systemContextChanged: false, cacheExpired: false },
+            triggers: { windowOverRatio: 0.1, systemContextChanged: false, cacheExpired: false },
         });
 
         const stream = {
@@ -419,7 +475,7 @@ describe("自动压缩执行（真会话 + 桩模型）", () => {
         expect(c).toBeTruthy();
         expect(c.by).toBe("auto");
         expect(c.trigger).toBe("contextWindowOver");
-        // 自动压用的是默认策略：目标式预算 20KB（##343 M1 与生产 auto-compact.yaml 对齐）
+        // 自动压用的是默认策略：目标式预算（##343 M1 与生产 auto-compact.yaml 对齐）
         expect(c.policy).toEqual(DEFAULT_AUTO_COMPACT.policy);
         // 旧历史仍在（压缩只改投递）
         expect(readFileSync(opsFile(uri), "utf-8")).toContain("第 1 句");
@@ -441,8 +497,8 @@ describe("##432 review B1：history.limit 残缺/超界不许抛（宽松归一 
         const cfg = normalizeAutoCompact({ history: { limit: { limitTokens: 0, summary: { enabled: false } } } });
         expect(cfg.history?.limit?.limitTokens).toBe(4_000);
     });
-    it("limit 整个是个字符串（写坏了）⇒ 回落缺省（20000），不抛", () => {
+    it("limit 整个是个字符串（写坏了）⇒ 回落缺省（30000），不抛", () => {
         const cfg = normalizeAutoCompact({ history: { limit: "8000" } });
-        expect(cfg.history?.limit?.limitTokens).toBe(20_000);
+        expect(cfg.history?.limit?.limitTokens).toBe(30_000);
     });
 });

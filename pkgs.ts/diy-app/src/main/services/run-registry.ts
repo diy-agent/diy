@@ -42,6 +42,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { readRuntimeConfig } from "../../runtime";
+import { recordRunSettled, recordRunStarted } from "../../shared/metrics";
 import { MAX_TAIL_BYTES, notifyText, tailOf, type RunLike, type TailResult } from "../../shared/run-status";
 // 结束通知走触发器目录（##408 v2）：投给谁由定义里的 `sinks` 决定，不再是本类里那个回调。
 import { runSettled } from "../triggers";
@@ -297,6 +298,10 @@ export class RunRegistry {
         // 先登记再 spawn：spawn 同步抛（cwd 不存在等）时表里也要有一条 `failed`，
         // 否则"我起过它"这个事实凭空消失（用户会以为命令没发出去）。
         this.runs.set(id, info);
+        // 指标：**登记即算启动**（不是命令真跑起来）—— 起不来的那条也记，
+        // 由 `settle` 里的 -1 配平。放在这里而不是 spawn 成功之后：失败路径不经过
+        // 后半段，但一定经过 `settle`；只有这一对位置能让 `job.run.running` 不漂。
+        recordRunStarted({ taskUri: input.origin?.taskUri });
         // meta.json 写在 spawn **之前**：起不来的那条也要留下「我起过什么」。
         await this.writeMeta(info);
 
@@ -813,6 +818,22 @@ export class RunRegistry {
         info.endedAt = this.now();
         info.awaitingGroup = false;
         if (exit.errorText) info.error = exit.errorText;
+        // 指标：`settle` 是终态唯一落点（重复调用被上面的 running 判定挡掉），
+        // 所以这里就是 `settled_total` 与 `duration_ms` 的唯一记录点。
+        // `outcome` 由 state + exitCode 派生（够用，不另立字段）。
+        recordRunSettled({
+            taskUri: info.origin?.taskUri,
+            state: info.state,
+            outcome:
+                info.state === "killed"
+                    ? "canceled"
+                    : info.state === "failed"
+                      ? "fail"
+                      : info.exitCode === 0
+                        ? "ok"
+                        : "fail",
+            durationMs: (info.endedAt ?? this.now()) - info.startedAt,
+        });
         this.pendingExits.delete(id);
         this.children.delete(id);
         // 接管来的 run：把日志写完再算收口（否则通知里的 tail 会读到半截）

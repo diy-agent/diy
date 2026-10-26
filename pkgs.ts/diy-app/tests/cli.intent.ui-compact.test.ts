@@ -236,14 +236,16 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
     const text = await a11yText();
     expect(text).toContain("自动压缩");
     expect(text).toContain("费用对比");
-    // ##423 块 3：三态改 filter 组（旧 toggle 把 notify 压没了）
-    expect(await ui.query<boolean>(`!!document.querySelector('[aria-label="自动压缩模式"]')`)).toBe(true);
+    // ##442：删掉 off/notify/auto 三态 filter，只剩「到点就压」的说明
+    expect(await ui.query<boolean>(`!!document.querySelector('[aria-label="自动压缩模式"]')`)).toBe(false);
+    expect(await ui.query<boolean>(`!!document.querySelector('[data-compact-mode]')`)).toBe(true);
+    expect(text).toContain("到点就压");
     expect(await ui.query<boolean>(`!!document.querySelector('input[aria-label="历史上限token"]')`)).toBe(true);
     expect(await ui.query<boolean>(`!!document.querySelector('[aria-label="压缩（详情页）"]')`)).toBe(true);
     expect(await ui.query<string>(`document.querySelector('[aria-label="窗口构成视图"] button')?.textContent?.trim() ?? ''`)).toBe("压缩");
     expect(await ui.query<boolean>(`!!document.querySelector('[aria-label="窗口构成视图"] button.btn-active')`)).toBe(true);
-    // 缺省上限 = DEFAULT_HISTORY_LIMIT_TOKENS（20000 token，##432 刀 2）
-    expect(await limitTokensValue()).toBe("20000");
+    // 缺省上限 = DEFAULT_HISTORY_LIMIT_TOKENS（30000 token，##442 刀 1）
+    expect(await limitTokensValue()).toBe("30000");
   });
 
   it("M3：参数区按 mode → modeData → toolResult → renderData 层次展示（归属可见）", async () => {
@@ -303,16 +305,17 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
     );
   });
 
-  it("自动压缩：filter 三态写回真源 $DIY_HOME/auto-compact.yaml（off / notify / auto）", async () => {
-    // ##423 块 3：三态全可见（旧 toggle 只能 auto ⇄ off，notify 在界面上根本选不到）
-    // 缺省 = notify（见 AutoCompactConfigSchema.mode 的缺省注释），不是 off
-    expect(["off", "notify", "auto"]).toContain(await pickedFilter('[data-compact-mode]'));
-    expect(await pickFilter('[data-compact-mode]', "auto")).toBe("ok");
-    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("mode: auto"), { label: "auto 写回" });
-    expect(await pickFilter('[data-compact-mode]', "notify")).toBe("ok");
-    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("mode: notify"), { label: "notify 写回" });
-    expect(await pickFilter('[data-compact-mode]', "off")).toBe("ok");
-    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("mode: off"), { label: "off 写回" });
+  it("自动压缩：##442 删三态 → 面板只说「到点就压」，真源写成 windowOverRatio", async () => {
+    const text = await a11yText();
+    expect(text).toContain("到点就压");
+    expect(text).not.toContain("自动压缩 off");
+    const raw = await waitUntil(
+      () => Promise.resolve(autoYaml()),
+      (t) => t.includes("windowOverRatio"),
+      { label: "真源有 windowOverRatio" },
+    );
+    expect(raw).not.toContain("mode: notify");
+    expect(raw).not.toContain("mode: auto");
   });
 
   it("历史上限：手改写回真源（3000 → 夹到下限 4000，token 形状）", async () => {
@@ -624,10 +627,10 @@ describe("##339：分表投递徽标（配置驱动压缩的事实）", () => {
     // ① `must` / 字节预算这些词已随 ##432 清理（唯一旋钮是 token 上限）
     expect(tip).not.toContain("must");
     expect(tip).not.toContain("预算");
-    // ② 事件制：hover 讲「什么时候会压」，并把三触发器归位为「只写审计、不改切点」
+    // ② 事件制：hover 讲「什么时候会压」（##442 删 mode 后徽章只讲历史裁剪维度）
     expect(tip).toContain("压缩事件");
     expect(tip).toContain("只看保留段自己");
-    expect(tip).toContain("不改投递切点");
+    expect(tip).not.toContain("mode=");
 
     // ③ 统计补齐：会话/本轮的投递次数（= 步数）与压缩次数
     const stats = await ui.query<string>("document.querySelector('[data-delivery-stats]')?.textContent ?? ''");
