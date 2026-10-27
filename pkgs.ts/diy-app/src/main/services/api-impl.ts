@@ -810,7 +810,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
       input.summaryText !== undefined
         ? { text: input.summaryText, data: (input.summaryData ?? null) as never, cost: input.summaryCost ?? null }
         : undefined;
-    return getLocalAgent().compact(input.taskUri, policyOf(input), "cli", summary);
+    // UI / CLI 都是**手动**：无视触发线与内容大小，至少丢一步（##442 用户 2026-10-27）
+    return getLocalAgent().compact(input.taskUri, policyOf(input), "cli", summary, "manual", true);
   });
   binding.on(app.agent.local.autoCompactStatus, async ({ input }) => {
     noteRendererTouch("diy.agent.local.autoCompactStatus", input.taskUri);

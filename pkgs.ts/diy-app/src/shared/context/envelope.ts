@@ -56,7 +56,7 @@ export const ENVELOPE_ABOUT = [
     "YAML 信封：role:system 放 help / system / runtime（全量）；role:user 放 system / runtime（增量）/ notify / chat。",
     "· system / runtime = 控制变量（UI 不显示）：全量在 system 消息里；user 里只列变化 path 的新值，",
     "  后出现者覆盖，`path: null` = 该单元已消失。数组 / map 按整单元替换，不按下标 / key 打补丁。",
-    "· notify = 机器事件（UI 显示）：每项必有 kind + text，其余字段由 kind 决定。",
+    "· notify = 机器事件（UI 显示）：每项必有 kind；text / source / summary 等按 kind 带（compact 只有 source + summary）。",
     "· chat = 人 / agent 发言（UI 显示）：每项 {from, text}，from = human:<名> / agent:<名>。",
     "· 键序固定：system → runtime → notify → chat。`[]` / `{}` = 存在但为空（与「没有这个变量」不是一回事）。",
 ].join("\n");
@@ -122,18 +122,10 @@ export const ChatItemSchema = z
 export const NotifyItemSchema = z
     .object({
         kind: z.string().describe("事件类型：compact（会话压缩）/ job-done（后台进程结束）"),
-        text: z.string().describe("一行摘要（人和模型都读这一行）"),
-        // ── kind=compact ──
-        at: z.string().optional().describe("compact：压缩发生的 ISO 时间"),
-        lines: z
-            .object({ from: z.number(), to: z.number() })
-            .optional()
-            .describe("compact：被丢弃的 llm.jsonl 行号区间（1 基闭区间）"),
+        text: z.string().optional().describe("一行摘要（可省：compact 用 summary / source，job-done 用排障字段）"),
+        // ── kind=compact（##442 最大精简：只有 source + summary） ──
         source: z.string().optional().describe("compact：llm.jsonl 绝对路径（逐行 = 一条消息）"),
-        turns: z.string().optional().describe("compact：turns.jsonl 绝对路径（结构化轮次）"),
-        index: z.string().optional().describe("compact：llm.offsets 绝对路径（行号 → 字节偏移）"),
-        ask: z.string().optional().describe("compact：检索 + 摘要要求（先查 turns，再决定要不要查 ops）"),
-        summary: z.string().optional().describe("compact：压缩时已生成的结论；空 / 缺省 = 自己查"),
+        summary: z.string().optional().describe("compact：压缩时已生成的结论；空 = 按 source 自己查"),
         // ── kind=job-done ──
         run: z.string().optional().describe("job-done：run id（全文用 job output <id>）"),
         state: z.string().optional().describe("job-done：终态 exited / failed / killed"),
@@ -202,8 +194,6 @@ export function buildHelpDoc(opts: {
                 .describe("机器事件列表（UI 可见）。kind=compact 压缩；kind=job-done 后台进程结束。"),
         ),
         chat: describeSchema(z.array(ChatItemSchema).describe("人 / agent 发言列表（UI 可见，按时间顺序）。")),
-        // 旧压缩摘要（main 仍有投递路径；##442 重做后由 notify.kind=compact.summary 接替）
-        summary: describeSchema(SummarySchema),
     };
 }
 

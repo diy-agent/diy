@@ -106,12 +106,8 @@ describe("role:user：chat / notify 与键序", () => {
         const notify: NotifyItem[] = [
             {
                 kind: "compact",
-                text: "会话已压缩（第 1–2 行）",
-                at: "2026-10-27T06:18:00.000Z",
-                lines: { from: 1, to: 2 },
                 source: "/l/llm.jsonl",
-                turns: "/l/turns.jsonl",
-                ask: "先查 turns",
+                summary: "结论：已经修好 A",
             },
             {
                 kind: "job-done",
@@ -128,12 +124,12 @@ describe("role:user：chat / notify 与键序", () => {
         ];
         const out = userEnvelope({ notify });
         expect(out).toMatch(/^notify:\n/);
-        // compact 字段
+        // compact 字段（##442 最大精简：只有 source + summary）
         expect(out).toContain("  - kind: compact");
-        expect(out).toContain("      from: 1");
-        expect(out).toContain("      to: 2");
         expect(out).toContain("    source: /l/llm.jsonl");
-        expect(out).toContain('    ask: "先查 turns"');
+        expect(out).toContain('    summary: "结论：已经修好 A"');
+        expect(out).not.toContain("lines:");
+        expect(out).not.toContain("ask:");
         // job-done 字段
         expect(out).toContain("  - kind: job-done");
         expect(out).toContain("    run: r-1");

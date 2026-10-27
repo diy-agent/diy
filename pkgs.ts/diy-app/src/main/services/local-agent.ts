@@ -47,12 +47,8 @@ import {
     synthesizeTurnOps,
     type TurnRecordState,
 } from "./local-turns";
-import {
-    estimateTokensOf,
-    normalizeHistoryLimit,
-    selectCompactableRange,
-    type HistoryLimit,
-} from "../../shared/context/history-limit";
+import { estimateTokensOf, normalizeHistoryLimit, selectCompactableRange } from "../../shared/context/history-limit";
+import { retainTokensOf, triggerTokensOf } from "../../shared/context/select-kept-boundary";
 
 // 路径实现只在 `core/local-paths`（= `@diy/persistence`）一处 —— 测试也从那里取。
 import { createOpsAppender, type OpsAppender, type OpsRef } from "@diy/persistence";
@@ -142,7 +138,7 @@ import {
 import { buildDelivery, controlDeltaDelivery, isRuntimePlace, type Delivery } from "../../shared/context/delivery";
 import { assemblyHardCapBytes } from "../../shared/context/request-preflight";
 import { estimateRequest, tighterHistoryCapBytes } from "../../shared/context/request-preflight";
-import { chatEnvelope, isEnvelopeText, renderSummaryPart, userEnvelope, type NotifyItem } from "../../shared/context/envelope";
+import { chatEnvelope, isEnvelopeText, userEnvelope, type NotifyItem } from "../../shared/context/envelope";
 import { describeAnomalies, readLlmLog } from "../../shared/context/log-schema";
 import {
     autoCompactPolicyInput,
@@ -676,25 +672,6 @@ function isEnvelope(m: ModelMessage): boolean {
 }
 
 /**
- * 把**旧压缩摘要**（`summary:` 一段）拼到本轮最后一条 user 信封前面。
- *
- * 新形态（##442 用户 2026-10-27）：变量树全在 system 消息里，`runtime` 不再进 user；
- * 这里只剩「旧摘要」这一份历史背景。压缩重做后它会变成 `notify.kind=compact.summary`，
- * 本函数届时可以整体删掉 —— 现在保留只为**不把压缩一起改**（先一步步走）。
- *
- * 为什么是「拼在同一份信封前面」而不是另发一条 user：两条相邻 user 语义上是一轮里的两段，
- * 合成一份合法 YAML 才可控（与 ##310 同一条教训：别让合并产出「YAML + 裸文本」）。
- */
-function withSummary(hist: ModelMessage[], summaryPart: string): ModelMessage[] {
-    if (!summaryPart.trim()) return hist;
-    const last = hist[hist.length - 1];
-    if (last && last.role === "user" && typeof last.content === "string" && isEnvelopeText(last.content)) {
-        return [...hist.slice(0, -1), { ...last, content: `${summaryPart}\n${last.content}` }];
-    }
-    return [...hist, { role: "user" as const, content: summaryPart }];
-}
-
-/**
  * **段首 system 快照**（##442 用户 2026-10-27：变量树全在 system，压缩点前不重建）。
  *
  * 读**上一次真发**那一步的 `systemText`（`steps.jsonl` 末条）作为本条会话的基线：
@@ -714,6 +691,9 @@ function withSummary(hist: ModelMessage[], summaryPart: string): ModelMessage[] 
 function frozenSystemTextOf(taskUri: string, live: Delivery): string {
     try {
         const last = readDeliverySteps(taskUri).at(-1);
+        // ##442：压缩边界 = 新段。段首快照只在**同一段**内复用；边界变了必须用现状重建一次。
+        const boundaryAt = readBoundary(taskUri)?.at ?? null;
+        if ((last?.compactAt ?? null) !== boundaryAt) return live.system.text;
         if (!last?.systemText) return live.system.text;
         // 老格式的 system 没有顶格 runtime（help 里那段是缩进的）⇒ 不能当基线
         if (!last.systemText.split("\n").some((l) => l === "runtime:")) return live.system.text;
@@ -722,6 +702,30 @@ function frozenSystemTextOf(taskUri: string, live: Delivery): string {
         console.warn(`[local-agent] 读 system 快照失败（按本轮现算）${taskUri}:`, e);
         return live.system.text;
     }
+}
+
+/**
+ * **压缩通知**（##442 最大精简）：有边界时，在 system 之后放一条 user 消息。
+ *
+ * 只有两个字段：`source`（llm.jsonl 绝对路径）+ `summary`（model 摘要 / self 的固定提示 / 空）。
+ * 不再带 at / 行号 / 条数 / task —— 那些都是派生值或每轮会变的量。
+ * 两次压缩之间逐字节不变（source 固定；summary 只在压缩时写）。
+ */
+const COMPACT_SELF_HINT = "前文已压缩，未生成摘要。需要时按行查 source（每行一条消息）。";
+
+function compactNoticeMessage(taskUri: string, mode: "model" | "self", summary: string): ModelMessage | null {
+    let b: ReturnType<typeof readBoundary>;
+    try {
+        b = readBoundary(taskUri);
+    } catch {
+        return null;
+    }
+    if (!b) return null;
+    const text = mode === "self" ? COMPACT_SELF_HINT : summary || COMPACT_SELF_HINT;
+    return {
+        role: "user",
+        content: userEnvelope({ notify: [{ kind: "compact", source: llmFile(taskUri), summary: text }] }),
+    };
 }
 
 /**
@@ -3389,10 +3393,9 @@ export class LocalAgentManager {
          */
         writeBoundary = true,
     ): HistoryDelivery {
-        const limit = normalizeHistoryLimit(loadAutoCompact(diyHome()).history?.limit);
         const all = projectAll(store);
-        // ##432 刀 2：**边界只在压缩事件时算一次并落盘**；之后每步只按它切（不重算）
-        const range = this.appliedHistoryRange(taskUriOf, all, llmLineBase, limit, writeBoundary);
+        // ##442：边界只在压缩事件时算一次并落盘；之后每步只按它切（不重算）
+        const range = this.appliedHistoryRange(taskUriOf, all, llmLineBase, { write: writeBoundary });
         const opts: DeliveryOpts = policy
             ? { ...optsFor(policy, taskUriOf, collect, hardCapBytes), ...(range ? { historyCut: range } : {}) }
             : range
@@ -3412,69 +3415,62 @@ export class LocalAgentManager {
         taskUri: string,
         all: readonly LocalModelMessage[],
         llmLineBase: number,
-        limit: HistoryLimit,
-        /**
-         * `false` = **试算**：照样读已落盘边界、照样在新上限下重算（`selectCompactableRange` 本来就是纯函数），
-         * 只是**不落盘**（##432 review 第 3 条）—— 面板改上限要能立刻看到「压完长什么样」，
-         * 而看页面不该改账本（review E）。真发仍是 `true`，由它把边界落一次。
-         */
-        write = true,
-        /**
-         * `true` = **按给定上限试算**（面板预览专用）：**不看已落盘的边界**，直接 `selectCompactableRange`
-         * 现算一次。预览要回答的是「按现在这个上限压，会压成什么样」—— 复用旧边界会让
-         * 「改了上限右边纹丝不动」（##432 review 第 3 条）；而真发仍走「事件制」（看已落盘边界、
-         * 只在保留段重新顶过上限时才重算），两者语义不同，**不许**在真发路径上开这个开关。
-         */
-        simulate = false,
+        opts: { write?: boolean; force?: boolean } = {},
     ): { cut: number; headEnd: number } | null {
+        const cfgLimit = normalizeHistoryLimit(loadAutoCompact(diyHome()).history?.limit);
+        const windowTokens = cfgLimit.windowTokens ?? contextLimitOf(personaForTask(diyHome(), taskUri).model);
+        if (!windowTokens || windowTokens <= 0) return null;
+        const retainTokens = retainTokensOf(windowTokens);
+        const triggerTokens = triggerTokensOf(windowTokens);
+        if (!(retainTokens > 0) || !(triggerTokens > retainTokens)) return null;
+
         const tokOf = (m: LocalModelMessage): number => estimateTokensOf(JSON.stringify(m.content ?? ""));
-        if (simulate) {
-            const total0 = all.reduce((n, m) => n + tokOf(m), 0);
-            if (total0 <= limit.limitTokens) return null;
-            const r0 = selectCompactableRange(all, limit.limitTokens);
-            return r0 ? { cut: r0.cut, headEnd: r0.headEnd } : null;
-        }
         const entry = taskUri ? readBoundary(taskUri) : null;
         let cut = 0;
-        let headEnd = 0;
         if (entry) {
             const c = entry.cut.llmLine - 1 - llmLineBase;
-            const h = entry.headLine - llmLineBase;
-            if (c > 0) {
-                cut = Math.min(c, all.length);
-                headEnd = Math.max(0, Math.min(h, cut));
+            // v2 旧账把 limitTokens 当保留量；v3 用 retainTokens。
+            // 旧边界保留量 > 新窗口的保留量 ⇒ 换到更小窗口，旧边界作废（按新窗口重算一次）。
+            const oldRetain = entry.v === 2 ? (entry.limitTokens ?? 0) : (entry.retainTokens ?? 0);
+            if (c > 0 && (!(oldRetain > 0) || oldRetain <= retainTokens)) cut = Math.min(c, all.length);
+        }
+
+        // 自动：保留段还不到触发线 ⇒ 复用旧边界；总量都不到触发线 ⇒ 不压。
+        // 手动（force）：两条都跳过，至少再丢一步。
+        if (!opts.force) {
+            if (cut > 0) {
+                let retained = 0;
+                for (let i = cut; i < all.length; i++) retained += tokOf(all[i]!);
+                if (retained < triggerTokens) return { cut, headEnd: 0 };
             }
+            const total = all.reduce((n, m) => n + tokOf(m), 0);
+            if (total < triggerTokens) return cut > 0 ? { cut, headEnd: 0 } : null;
         }
-        const tok = (m: LocalModelMessage): number => estimateTokensOf(JSON.stringify(m.content ?? ""));
-        // ── 已有边界：只在**保留段本身**重新顶过上限时才重算（##432 review A 的事件化判据）──
-        // 用「全量 token」判断是错的：被丢弃的那段永远算在内 ⇒ 每新增一步都"超限" ⇒ 每步重算。
-        // 保留段 = 保头 `[0,headEnd)` + `[cut,n)`；新增只会让它慢慢长大，涨过上限才是一次新事件。
-        if (cut > 0) {
-            let retained = 0;
-            for (let i = 0; i < headEnd; i++) retained += tok(all[i]!);
-            for (let i = cut; i < all.length; i++) retained += tok(all[i]!);
-            if (retained <= limit.limitTokens) return { cut, headEnd };
-        }
-        // 没有边界：全量 token 才是「该不该开始压」的判据
-        const total = all.reduce((n, m) => n + tok(m), 0);
-        if (total <= limit.limitTokens) return cut > 0 ? { cut, headEnd } : null;
-        // 超限 ⇒ 算一次切点（已有边界更靠后就沿用；切点只往前推进，绝不回退）
-        const r = selectCompactableRange(all, limit.limitTokens);
-        if (!r || r.cut <= cut) return cut > 0 ? { cut, headEnd } : null;
-        if (taskUri && write) {
+
+        const r = selectCompactableRange(all, {
+            windowTokens,
+            force: opts.force === true,
+            // 已有边界不能把历史放回来；force 时至少前进一个 user。
+            minCut: cut,
+        });
+        if (!r || r.cut <= cut) return cut > 0 ? { cut, headEnd: 0 } : null;
+
+        if (taskUri && (opts.write ?? true)) {
             appendCompactionEntry(taskUri, {
                 at: new Date().toISOString(),
-                limitTokens: limit.limitTokens,
-                dropped: r.dropped,
-                // 保头最后一条的**全局行号**（1-based，含）
-                headLine: llmLineBase + r.headEnd,
+                retainTokens,
+                windowTokens,
                 cut: { llmLine: llmLineBase + r.cut + 1, turnId: all[r.cut]?.turn ?? null },
+                // v3 同时写旧读侧字段（旧 UI / 旧账本读取路径仍能显示；不参与新算法）
+                limitTokens: retainTokens,
+                dropped: r.dropped,
+                headLine: 0,
             });
             console.log(
-                `[local-agent] 压缩事件 ${taskUri}：丢 ${r.dropped} 条（保头 ${r.headEnd} 条，上限 ${limit.limitTokens} token）`,
+                `[local-agent] 压缩事件 ${taskUri}：丢 ${r.dropped} 条（保留 ${retainTokens} token = 窗口 ${windowTokens} × 0.16）`,
             );
         }
-        return { cut: r.cut, headEnd: r.headEnd };
+        return { cut: r.cut, headEnd: 0 };
     }
 
     /**
@@ -3555,6 +3551,8 @@ export class LocalAgentManager {
             (last?.model ? contextLimitOf(last.model) : undefined) ??
             null;
         const { config, issues: warnings } = loadAutoCompactDetailed(home, { windowLimitTokens });
+        // 窗口覆盖（自建/测试模型没有 contextLimit 时）：配置里的 windowTokens 优先。
+        const cfgWindow = normalizeHistoryLimit(config.history?.limit).windowTokens;
         // 新口径（##442 用户 2026-10-27）：system 是**段首快照**，跨轮变化走 user 增量。
         // 「system 全文变了」不再是压缩信号（否则 runtime 每轮都变 ⇒ 每轮都触发空转压缩）——
         // 压缩重做后由「窗口占比 / 边界事件」决定；这里先恒 false，别拿它当判据。
@@ -3571,7 +3569,14 @@ export class LocalAgentManager {
             typeof last?.historySelection?.keptTokens === "number" ? last.historySelection.keptTokens : null;
         // 已落盘的压缩边界（turns.jsonl 的 compaction entry）：有它 = 历史已被切过，之后每步只按它切
         const bEntry = readBoundary(taskUri);
-        const boundary = bEntry ? { at: bEntry.at, dropped: bEntry.dropped, limitTokens: bEntry.limitTokens } : null;
+        const boundary = bEntry
+            ? {
+                  at: bEntry.at,
+                  dropped:
+                      bEntry.v === 2 ? (bEntry.dropped ?? Math.max(0, bEntry.cut.llmLine - 1)) : Math.max(0, bEntry.cut.llmLine - 1),
+                  limitTokens: bEntry.v === 2 ? (bEntry.limitTokens ?? 0) : (bEntry.retainTokens ?? 0),
+              }
+            : null;
         // 压缩事件**总条数**（turns.jsonl 的 compaction entry）—— 与 compact.jsonl 的审计条数不是一回事
         const compactionCount = countCompactions(taskUri);
 
@@ -3580,7 +3585,7 @@ export class LocalAgentManager {
             sinceLastRequestMs,
             ttl: this.effectiveTtlOf(taskUri),
             windowTokens,
-            windowLimitTokens,
+            windowLimitTokens: cfgWindow ?? windowLimitTokens,
             retainedTokens,
             boundary,
             compactionCount,
@@ -4122,10 +4127,11 @@ export class LocalAgentManager {
      * 压缩预案（**只算不写**）：预览、panel「事实」行、真发前的记账共用同一份计算。
      * 抽出来是为了「预览看到的 = 真压出来的」——两条路径各算各的必然分叉。
      */
-    private planCompact(taskUri: string, policyInput: unknown): CompactPlan {
+    private planCompact(taskUri: string, policyInput: unknown, force = false): CompactPlan {
         const policy = normalizePolicy(policyInput);
         // 旧账本字段（级列表与 plan 版本链已删）：读旧事件仍要能解析，所以保留一个最小快照
-        const planSource: "config" | "default" = loadAutoCompact(diyHome()).history?.limit ? "config" : "default";
+        // 装配计划已删（##432）；这里只剩一个来源标记，恒为 default（历史口径）。
+        const planSource: "config" | "default" = "default";
         const planSnapshot: CompactPlanSnapshot = { source: planSource };
         const scan = scanOpsFile(taskUri);
         const turnIds = listTurnIds(scan.ops);
@@ -4134,9 +4140,8 @@ export class LocalAgentManager {
         // 保留 = 预算选择（实时算）。keptRuns = 预算的**过滤器表达**（存进事件，供历史回溯还原 diff）
         const all = projectAll(store);
         // ##432 review C：预览 / 记账也读**同一条已落盘边界**（不写账本：预览不改盘）
-        const recordsLimit = normalizeHistoryLimit(loadAutoCompact(diyHome()).history?.limit);
-        // `simulate: true` —— 预览 = 「按当前上限压会是什么样」，不吃已落盘的旧边界（review 第 3 条）
-        const recordsRange = this.appliedHistoryRange(taskUri, all, 0, recordsLimit, false, true);
+        // 预览/记账与真发同一条边界；`write: false` = 只算不落盘。
+        const recordsRange = this.appliedHistoryRange(taskUri, all, 0, { write: false, force });
         const sel = recordsRange
             ? selectHistoryByCut(all, recordsRange, optsFor(policy, taskUri))
             : selectHistoryByCut(all, { cut: all.length, headEnd: all.length });
@@ -4236,9 +4241,10 @@ export class LocalAgentManager {
         // 与真发**同一条链**（含压缩注记）：面板里的"压缩后预览"就是这一份
         const histView = this.deliveryHistoryForView(store, policy, taskUri, storeInput ? 0 : replayPlan.lineBase);
         const summaryText = summaryOverride !== undefined ? summaryOverride : this.effectiveSummary(taskUri);
-        // 摘要与注记一样是**自动生成的段** → 各占顶层键，不进 user.message（##310 九轮）
-        // 位置（##421）：注记在**历史首条之前**，摘要在尾部信封
-        const messages = normalizeUserRuns(withSummary(histView.messages, renderSummaryPart(summaryText)));
+        const mode = normalizeHistoryLimit(loadAutoCompact(home).history?.limit).summary.mode;
+        const notice = compactNoticeMessage(taskUri, mode, summaryText);
+        // 压缩通知在 system 之后、历史之前（##442）；没有边界 ⇒ 逐字不变。
+        const messages = normalizeUserRuns(notice ? [notice, ...histView.messages] : histView.messages);
         return {
             model: personaForTask(home, taskUri).model,
             system: delivery.system.text,
@@ -4371,10 +4377,16 @@ export class LocalAgentManager {
         /** 为什么压（手动 / 系统上下文变 / 缓存过期 / 窗口超限；缺省 manual）。
          *  放在 summary 之后：既有调用点全是位置参数，追加在尾部才不会把 summary 挤错位。 */
         trigger: CompactTrigger = "manual",
+        /** 手动压缩：无视「内容太小 / 压完仍超触发线」两条不压判据，至少丢一步（##442 用户 2026-10-27） */
+        force = false,
     ): CompactEventRecord {
         // 【用户 2026-10-07】允许**轮次中**压缩（长任务不能等一轮结束）。压缩只写快照 + 落盘被裁原文，
         // 不改 ops、不重置会话（投递按当前配置实时算），故对正在跑的轮次无副作用。
-        const p = this.planCompact(taskUri, policyInput);
+        const p = this.planCompact(taskUri, policyInput, force);
+        // 真压缩 = 边界必须落盘；否则下一次投递还会按旧边界（手动小会话尤其明显）。
+        if (p.droppedIds.length > 0) {
+            this.appliedHistoryRange(taskUri, projectAll(p.store), 0, { write: true, force });
+        }
         // 空操作：无轮被丢 + 无工具被裁 + 投递字节不缩 ⇒ 什么都没改，**不写账**（写一条"压缩"却
         // 没压任何东西是误导：历史页会把它当一次真压缩）。缓存过期 / 系统上下文变触发时预算本就够用，
         // 这条很常见（实测 auto cacheExpired 空转）。返回带 noop 的记录，调用方可据此提示"无需压缩"。
@@ -5805,7 +5817,7 @@ export class LocalAgentManager {
             // 抽成闭包：预检「再压一次」要按同一套拼装重算一遍 —— 两处各抄一遍必分叉（##227 老教训）。
             // 摘要段**算一次**：它既进 `sent`，也要原样进投递快照（##5 第 16 轮）。
             // 两处各调一次 `effectiveSummary` 是纯读、值相同，但"恰好相同"不该是快照正确的依据。
-            const summaryPart = renderSummaryPart(this.effectiveSummary(taskUri));
+            const summaryMode = normalizeHistoryLimit(loadAutoCompact(diyHome()).history?.limit).summary.mode;
             /**
              * 段首 system 是快照（见 `frozenSystemTextOf`），所以**跨轮变化必须落在 user 侧**：
              * 拿「上一次给模型看过的树」（`prevDeltaSnap`）和本轮实时树比，只追加变化的原子单元。
@@ -5815,7 +5827,8 @@ export class LocalAgentManager {
              * 系统刚重建（首轮 / 老格式升级）⇒ 基线就是当前值，不再补增量。
              */
             const sentOf = (h: typeof hist): ModelMessage[] => {
-                const messages = normalizeUserRuns(withSummary(h.messages, summaryPart));
+                const notice = compactNoticeMessage(taskUri, summaryMode, this.effectiveSummary(taskUri));
+                const messages = normalizeUserRuns(notice ? [notice, ...h.messages] : h.messages);
                 // 跨轮控制增量：`prevDeltaSnap` 是「上一次给模型看过的树」；本轮轮首 system 已冻结，
                 // 变化只补 user。**不在这里前移游标** —— 预检可能重算一次（`sentOf` 会再跑），
                 // 前移后第二次就少一段增量，预览/真发会对不上。
@@ -5915,9 +5928,8 @@ export class LocalAgentManager {
             // ##432 review C：这里必须与**真发**同一条口径（已落盘的压缩边界），否则面板/账本
             // 报的是旧算法的数字。`persist=false`：这一步的落盘已由 `buildHistory` 做过。
             const selPolicy = loadAutoCompact(diyHome()).policy;
-            const stepLimit = normalizeHistoryLimit(loadAutoCompact(diyHome()).history?.limit);
             const allMsgs = projectAll(sess.store);
-            const stepRange = this.appliedHistoryRange(taskUri, allMsgs, sess.llmBase, stepLimit, false);
+            const stepRange = this.appliedHistoryRange(taskUri, allMsgs, sess.llmBase, { write: false });
             const sel = stepRange
                 ? selectHistoryByCut(allMsgs, stepRange, {
                       ...optsFor(selPolicy, taskUri),
@@ -5933,7 +5945,7 @@ export class LocalAgentManager {
                 );
             }
             const historySelection = {
-                limitTokens: stepLimit.limitTokens,
+                limitTokens: retainTokensOf(contextLimitOf(model) ?? 0),
                 // ##423：丢 / 留都说 **token**（与上限同口径）—— 徽章不再拿字节和 token 上限比
                 keptTokens: sel.kept.reduce(
                     (n, i) => n + estimateTokensOf(JSON.stringify(allMsgs[i]?.content ?? "")),
@@ -5982,10 +5994,8 @@ export class LocalAgentManager {
                 valueHashes: delivery.valueHashes,
                 systemText: delivery.system.text,
                 runtimeText: delivery.runtime.text,
-                // 尾部信封里另外一段（##5 第 16 轮）：它**不是变量树单元**，不进 valueHashes，
-                // 也不出现在 `runtimeDiff` 里 —— 不记下来就永远看不见它变没变。
-                // （`historyText` 自 ##442 刀 2 起不再写：注记已删，老快照里的该字段只作读侧兼容）
-                summaryText: summaryPart,
+                ...(readBoundary(taskUri)?.at ? { compactAt: readBoundary(taskUri)!.at } : {}),
+                // `summaryText` 不再写：压缩结论现在只在 notify.kind=compact.summary（##442）。
             };
             appendStep(stepsFile(taskUri), step);
             // 变更统计（**按项目**累计；只存变化路径 → 体积小、可长期留）。
@@ -6778,10 +6788,14 @@ export async function previewSimulatedRequest(opts: {
         : chatEnvelope([{ from: HUMAN_MEMBER_ID, text: previewLast }]);
     const messages: ModelMessage[] = ensureReasoningReplay(
         normalizeUserRuns(
-            withSummary(
-                [...hist.messages, { role: "user", content: lastEnvelope }],
-                renderSummaryPart(getLocalAgent().effectiveSummary(taskUri)),
-            ),
+            (() => {
+                const notice = compactNoticeMessage(
+                    taskUri,
+                    normalizeHistoryLimit(loadAutoCompact(diyHome()).history?.limit).summary.mode,
+                    getLocalAgent().effectiveSummary(taskUri),
+                );
+                return notice ? [notice, ...hist.messages, { role: "user" as const, content: lastEnvelope }] : [...hist.messages, { role: "user" as const, content: lastEnvelope }];
+            })(),
         ),
         previewRm
             ? reasoningReplayOptsOf(previewRm, persona.reasoningEffort || reasoningOf(model).default)

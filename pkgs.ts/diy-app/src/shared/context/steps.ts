@@ -31,6 +31,11 @@ export interface DeliveryStepRecord {
     valueHashes: Record<string, string>;
     /** system 容器全文（含说明头）—— 每轮全量，故 diff 需要两份全文 */
     systemText: string;
+    /**
+     * 该步 system 快照所属的压缩段（生效边界的 `at`；缺省 = 从未压缩 / 旧快照）。
+     * 边界变了 ⇒ 新段必须用现状重建 system（`frozenSystemTextOf` 的判据）。
+     */
+    compactAt?: string;
     /** runtime 容器全文 */
     runtimeText: string;
     /**

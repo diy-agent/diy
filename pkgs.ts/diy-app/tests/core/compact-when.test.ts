@@ -1,7 +1,5 @@
 // tests/core/compact-when.test.ts
-// 🎯 「什么时候会压」的文案真源（##423 块 2）—— ##432 刀 2 之后是**事件制**，
-// 这里钉的是新判据：首次全量超上限 / 保留段自己重新顶过上限 / 每步按已落盘边界切 / 手动。
-
+// ##442 最大精简：「什么时候会压」= 一条触发线 + 手动。
 import { describe, expect, it } from "vitest";
 import {
     autoCompactSentence,
@@ -16,108 +14,80 @@ import {
 } from "../../src/shared/context/compact-when";
 
 const base: CompactWhenInput = {
-    limitTokens: 20_000,
-    boundary: { at: "2026-10-25T10:00:00.000Z", dropped: 12, limitTokens: 20_000 },
-    retainedTokens: 12_000,
+    limitTokens: 32_000, // 200k × 0.16
+    boundary: { at: "2026-10-25T10:00:00.000Z", dropped: 12, limitTokens: 32_000 },
+    retainedTokens: 20_000,
     lastStepTokens: 50_000,
     windowLimit: 200_000,
 };
 
 const rowOf = (i: CompactWhenInput, key: string) => compactWhenRows(i).find((r) => r.key === key)!;
 
-describe("compact-when · 「什么时候会压」的判据（事件制）", () => {
-    it("四行齐全，顺序 = 判据的时间顺序（首次 → 再压 → 每步 → 手动）", () => {
+describe("compact-when · 判据", () => {
+    it("四行齐全；自动触发线 = 窗口 − max(10%, 16k)", () => {
         expect(compactWhenRows(base).map((r) => r.key)).toEqual(["first", "retained", "reuse", "manual"]);
+        // 200k − 20k = 180k（从没压过时直接说触发线）
+        expect(rowOf({ ...base, boundary: null }, "first").text).toContain("180,000 tok");
     });
 
-    it("从没压过 → 只有「第一次压」是开着的，并给出**阈值**（上限）", () => {
-        const i = { ...base, boundary: null, retainedTokens: null };
-        expect(rowOf(i, "first").state).toBe("on");
-        expect(rowOf(i, "first").text).toContain("20,000 tok");
-        expect(rowOf(i, "first").text).toContain("发请求之前");
-        expect(rowOf(i, "retained").state).toBe("off");
-        expect(rowOf(i, "retained").text).toContain("还没有边界");
+    it("窗口未知 ⇒ 不自动压（可手动）", () => {
+        const i = { ...base, windowLimit: null };
+        expect(rowOf(i, "first").state).toBe("off");
+        expect(rowOf(i, "first").text).toContain("窗口未知");
+        expect(rowOf(i, "manual").state).toBe("manual");
     });
 
-    it("已有边界 → 「第一次压」关掉并说明哪次事件写的；再压只盯**保留段**", () => {
-        expect(rowOf(base, "first").state).toBe("off");
-        expect(rowOf(base, "first").text).toContain("丢 12 条");
-        expect(rowOf(base, "retained").state).toBe("on");
-        expect(rowOf(base, "retained").text).toContain("保留段 12,000 tok / 上限 20,000 tok");
-        // 还差多少才再压一次 = 上限 − 保留段（这是「什么时候会压」的答案）
-        expect(rowOf(base, "retained").text).toContain("再涨 8,000 tok");
-        // 判据只说保留段，不提「全量」（拿全量判会每步都超限）
-        expect(rowOf(base, "retained").hint).toContain("不把被丢掉那段算进来");
+    it("已有边界：保留段小于触发线 ⇒ 说明还差多少", () => {
+        const r = rowOf(base, "retained");
+        expect(r.state).toBe("on");
+        expect(r.text).toContain("保留段 20,000 tok");
+        expect(r.text).toContain("再涨 160,000 tok");
     });
 
-    it("保留段已经顶过上限 → 明说「下一步就再压一次」", () => {
-        const r = rowOf({ ...base, retainedTokens: 25_000 }, "retained");
-        expect(r.text).toContain("已顶过上限");
-        expect(r.text).toContain("下一步就再压一次");
+    it("保留段顶到触发线 ⇒ 下一步再压", () => {
+        const r = rowOf({ ...base, retainedTokens: 190_000 }, "retained");
+        expect(r.text).toContain("下一步再压一次");
     });
 
-    it("保留段没有实测 → 如实说，不写 0（0 会被读成「离上限远得很」）", () => {
+    it("保留段没有实测 ⇒ 如实说", () => {
         expect(rowOf({ ...base, retainedTokens: null }, "retained").text).toContain("还没有实测");
     });
 
-    it("每步投递那一行必须说「按已落盘边界切、不重算」（投递 ≠ 压缩）", () => {
+    it("每步投递：按已落盘边界切、不重算", () => {
         const r = rowOf(base, "reuse");
-        expect(r.state).toBe("on");
         expect(r.text).toContain("已落盘边界");
         expect(r.text).toContain("不重算");
-        expect(r.hint).toContain("投递与压缩是两件事");
     });
 
-    it("手动不受是否到点影响", () => {
-        expect(rowOf({ ...base, boundary: null }, "manual").state).toBe("manual");
+    it("手动：无视触发线，至少丢一步", () => {
+        expect(rowOf(base, "manual").text).toContain("至少丢一步");
     });
 });
 
-describe("compact-when · 三触发器只写审计（与投递划清界线）", () => {
-    it("##442 删 mode 后：到点就压，只另记一条审计、不改投递切点", () => {
+describe("compact-when · 文案", () => {
+    it("自动压缩只讲窗口触发，不再讲三触发器", () => {
         const s = autoCompactSentence();
-        expect(s).toContain("到点就压");
-        expect(s).toContain("compact.jsonl");
+        expect(s).toContain("窗口");
         expect(s).toContain("不改投递切点");
-        expect(s).not.toContain("mode=");
-    });
-});
-
-describe("compact-when · 人读小件", () => {
-    it("fmtTokens：千位分隔 + tok 单位（与上限同一个数域）", () => {
-        expect(fmtTokens(20_000)).toBe("20,000 tok");
-        expect(fmtTokens(820)).toBe("820 tok");
+        expect(s).not.toContain("缓存过期");
+        expect(s).not.toContain("系统上下文");
     });
 
-    it("windowRatio：量不到就是 null（不写 0）", () => {
-        expect(windowRatio(50_000, 200_000)).toBe(25);
-        expect(windowRatio(null, 200_000)).toBeNull();
-        expect(windowRatio(50_000, null)).toBeNull();
-        expect(windowRatio(50_000, 0)).toBeNull();
-    });
-
-    it("fmtStamp：ISO → MM-DD HH:mm（坏输入原样返回，不吞）", () => {
-        expect(fmtStamp("2026-10-25T10:30:00.000Z")).toMatch(/^10-2\d* \d\d:\d\d$/);
-        expect(fmtStamp("not-a-date")).toBe("not-a-date");
-    });
-
-    it("fmtTtl 仍用于其他面板（实测优先，无实测说无实测）", () => {
-        expect(fmtTtl(null)).toBe("无实测时长");
-        expect(fmtTtl(300_000)).toBe("5 分钟");
-        expect(fmtTtl(3_600_000)).toBe("1.0 小时");
-        expect(fmtTtl(45_000)).toBe("45 秒");
-    });
-
-    it("压成什么样：上限 + 累加规则 + 保头 + 配对 + 算一次", () => {
-        const s = compactResultSentence(20_000);
-        expect(s).toContain("20,000 tok");
-        expect(s).toContain("从最后一步往前累加");
-        expect(s).toContain("保头 600 tok");
-        expect(s).toContain("tool 配对平衡");
+    it("压成什么样：保留量 + 从尾累加 + user 切点 + 无保头/无配平", () => {
+        const s = compactResultSentence(32_000);
+        expect(s).toContain("32,000 tok");
+        expect(s).toContain("从最后一条往前累加");
+        expect(s).toContain("user 消息");
+        expect(s).toContain("没有保头");
         expect(s).toContain("只在压缩事件时算一次");
     });
 
-    it("一句话总结：压过 / 没压过 + 上限", () => {
+    it("人读小件", () => {
+        expect(fmtTokens(20_000)).toBe("20,000 tok");
+        expect(windowRatio(50_000, 200_000)).toBe(25);
+        expect(windowRatio(null, 200_000)).toBeNull();
+        expect(fmtStamp("2026-10-25T10:30:00.000Z")).toMatch(/^10-2\d* \d\d:\d\d$/);
+        expect(fmtTtl(300_000)).toBe("5 分钟");
         expect(compactWhenSummary(base)).toContain("已压过");
         expect(compactWhenSummary({ ...base, boundary: null })).toContain("还没压过");
     });

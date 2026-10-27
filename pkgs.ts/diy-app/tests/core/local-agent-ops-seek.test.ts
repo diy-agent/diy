@@ -262,19 +262,14 @@ describe("读者接线：deliveryMessages 只 replay 保留段", () => {
         writeFileSync(
             compactCfg,
             JSON.stringify({
-                mode: "notify",
-                triggers: { systemContextChanged: true, cacheExpired: true, contextWindowOver: 0 },
-                policy: { mode: "budget", modeData: { budgetBytes: 20480, toolResult: { render: "asis" } }, summary: false },
-                // 上限取下限（4000；更小的值会被夹上来，见 MIN_HISTORY_LIMIT_TOKENS），
-                // 而 CANON 的历史远短于它 ⇒ 保住全部、什么都没丢 ⇒ 不注入注记。
-                // 这正是新口径：小会话永远不该被压（旧实现会按预算切，切出空注记）。
-                history: { limit: { limitTokens: 5, summary: { enabled: false } } },
+                policy: { mode: "budget", modeData: { toolResult: { render: "asis" } }, summary: false },
+                // 窗口放大 ⇒ 小会话永远不该被压（旧实现会按预算切，切出空注记）。
+                history: { limit: { windowTokens: 10_000_000, summary: { mode: "model" } } },
             }),
             "utf-8",
         );
         try {
-            // 配置里写 5 ⇒ **读回来是夹取后的 4000**（下限，防止每步重算）
-            expect(loadAutoCompact(diyHome()).history?.limit?.limitTokens).toBe(4_000);
+            expect(loadAutoCompact(diyHome()).history?.limit?.windowTokens).toBe(10_000_000);
             const uriFull = newTask(CANON);
             const uriSeek = newTask(CANON, (ctx) => [compactEvent(ctx)]);
             // ##442 刀 2：注记已删 ⇒ 两种读法都必须**没有任何** `history:` 段（不存在「空注记」这回事）

@@ -846,7 +846,7 @@ export class RunRegistry {
         info.notified = true;
         try {
             const notify = jobDoneNotify(info, tailOf(await this.readLogTail(info.logPath), 20));
-            this.notifier(taskUri, notify.text, notify);
+            this.notifier(taskUri, notify.text ?? "", notify);
         } catch (e) {
             // 观测不许把业务炸掉：通知失败只留痕
             console.warn("[run] 结束通知投递失败", info.id, e);
