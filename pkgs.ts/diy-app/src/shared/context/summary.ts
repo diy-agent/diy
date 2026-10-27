@@ -44,8 +44,23 @@ export function summaryHasContent(s: SummaryData): boolean {
  * 约束写死为 JSON-only，是因为下游要用它当模版变量（必须可解析）——
  * 与「让模型自由写摘要」相比，牺牲一点文采换确定性，值。
  */
-export function summaryExtractionPrompt(droppedText: string, turns: number): string {
+export function summaryExtractionPrompt(droppedText: string, turns: number, previousSummary?: string): string {
+    const merge = (previousSummary ?? "").trim()
+        ? [
+              "⚠️ 下面还给了一份**上一次压缩的结论**。规则（照 dsh / pi 的增量做法）：",
+              "  · 仍然成立的事实**保留**（别丢、别改写成同义句）；",
+              "  · 已经过时 / 已被推翻的**丢掉**；",
+              "  · 新增信息**合并进同一份结构**，不要写成第二份；",
+              "  · 不要照抄整段旧结论，也不要提『上一次压缩』这件事。",
+              "",
+              "——— 上一次压缩的结论开始 ———",
+              previousSummary!,
+              "——— 上一次压缩的结论结束 ———",
+              "",
+          ]
+        : [];
     return [
+        ...merge,
         "你是会话压缩助手。下面是一段即将被丢弃的会话历史（工具输出可能很长）。",
         "请只输出一个 JSON 对象（不要 markdown 代码块、不要任何解释），字段：",
         "{",

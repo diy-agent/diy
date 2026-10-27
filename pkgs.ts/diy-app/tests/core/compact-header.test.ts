@@ -80,3 +80,30 @@ describe("压缩头部消息（##442）：**一份结构**，只有 summary 来�
         expect(t.match(/at:/g)?.length).toBe(1); // 只有压缩那一刻
     });
 });
+
+describe("上一次摘要的处置（##442 追问）：继承 + 增量合并", () => {
+    it("继承来的结论要在 task 里标明「可能已过时」（别当本轮结论）", () => {
+        const t = renderCompactHeader({ ...facts, summary: "## 结论\n- 旧结论", summaryCarried: true });
+        expect(t).toContain("上一次压缩");
+        expect(t).toContain("可能已经过时");
+        // 不是继承来的就不许出现这句
+        const fresh = renderCompactHeader({ ...facts, summary: "## 结论\n- 新结论" });
+        expect(fresh).not.toContain("可能已经过时");
+    });
+});
+
+describe("摘要抽取提示词：有无旧结论两种形态（##442）", () => {
+    it("无旧结论 ⇒ 不含合并段；有旧结论 ⇒ 明确三条合并规则 + 原文块", async () => {
+        const { summaryExtractionPrompt } = await import("../../src/shared/context/summary");
+        const plain = summaryExtractionPrompt("历史正文", 3);
+        expect(plain).not.toContain("上一次压缩的结论");
+
+        const merged = summaryExtractionPrompt("历史正文", 3, "## 旧结论\n- 保留这条");
+        expect(merged).toContain("上一次压缩的结论");
+        expect(merged).toContain("仍然成立的事实**保留**");
+        expect(merged).toContain("已经过时 / 已被推翻的**丢掉**");
+        expect(merged).toContain("不要写成第二份");
+        expect(merged).toContain("保留这条"); // 旧结论原文进输入
+        expect(merged).toContain("历史正文"); // 新被压段也在
+    });
+});

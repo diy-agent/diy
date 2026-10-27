@@ -748,6 +748,8 @@ function compactHeaderMessage(taskUri: string): ModelMessage | null {
         maxLineBytes: b.v === 2 ? undefined : b.maxLineBytes,
         // `model` 模式：压缩时产出的结论；没有（还没生成 / `self` 模式）就是空串 = 让模型自己查
         summary: mode === "model" ? getLocalAgent().effectiveSummary(taskUri) : "",
+        summaryCarried:
+            mode === "model" && Boolean(getLocalAgent().effectiveSummaryCarriedFrom(taskUri)),
     });
     return { role: "user", content: text };
 }
@@ -4268,6 +4270,14 @@ export class LocalAgentManager {
     }
 
     /**
+     * 生效摘要是否是**继承来的**（本次没生成新的）：返回来源压缩 id，否则 undefined。
+     * 头部据此告诉模型"结论可能已过时"（见 `renderCompactHeader` 的 `summaryCarried`）。
+     */
+    effectiveSummaryCarriedFrom(taskUri: string): string | undefined {
+        return this.effectiveCompactRecord(taskUri)?.details?.summary?.carriedFrom;
+    }
+
+    /**
      * 当前生效的那条 compact 账（带摘要等 details）。
      * 取法：快照给 `compactId`，账本**限读尾部**里找同 id 的行（摘要在 details 里，不在快照里）。
      * 尾部窗口里找不到（很老的压缩）⇒ undefined + 一句 warn —— 不整份读，也不静默装作“没摘要”。
@@ -4452,7 +4462,26 @@ export class LocalAgentManager {
                 droppedCount: p.droppedIds.length,
                 clippedIds: { count: p.clipped.length },
                 ...(p.keptRuns ? { kept: p.keptRuns } : {}),
-                summary: { text: summary?.text ?? null, data: summary?.data ?? null, cost: summary?.cost ?? null },
+                // 摘要**沿链继承**（##442）：本次没生成（self 模式 / 摘要失败 / 还没接自动摘要）时，
+                // 把上一次的搬过来。为什么必须搬：摘要是投递时**合成**的消息，不在 llm.jsonl 里，
+                // 下一次压缩的被丢区间里没有它 —— 不显式传递就会把上次的结论弄丢。
+                summary: summary
+                    ? { text: summary.text, data: summary.data, cost: summary.cost }
+                    : (() => {
+                          // 取**账本里上一条压缩**（不是"当前生效边界"那条：后者可能还没落 /
+                          // 被 undo 掉；继承要的是"上一次产出的结论"，与边界是否生效无关）
+                          const prevRec = readCompactLogTail(taskUri)
+                              .events.filter((e) => e.kind === "compact")
+                              .at(-1) as CompactEventRecord | undefined;
+                          const prev = prevRec?.details?.summary;
+                          const text = prev?.text ?? null;
+                          return {
+                              text,
+                              data: text ? (prev?.data ?? null) : null,
+                              cost: text ? (prev?.cost ?? null) : null,
+                              ...(text && prevRec ? { carriedFrom: prevRec.id } : {}),
+                          };
+                      })(),
             },
             ...(noop ? { noop: true } : {}),
         };

@@ -853,13 +853,24 @@ export interface CompactEventRecord {
          * 历史回溯 / 对比时据此还原那次投递了哪些消息（diff 的"保留侧"），不需要重放当前配置。
          */
         kept?: [number, number][];
-        /** 摘要（勾选 summary 且已生成） */
+        /**
+         * 摘要 —— **沿链继承**（##442）。
+         *
+         * 为什么需要"继承"：摘要在投递时是**合成消息**（`compact.summary`），**不在 llm.jsonl 里**
+         * ⇒ 下一次压缩被丢的区间里没有它。若不显式传递，第二次压缩就会把上一次的结论弄丢
+         * （dsh / pi 不会——它们的 checkpoint 本身就是会话里的一条消息，下一轮天然被包含）。
+         */
         summary?: {
             /** 走 summary.md 模版渲染出的文本 */
             text: string | null;
             /** 结构化数据（再生成/预览占位用；见 shared/context/summary.ts） */
             data: import("./summary").SummaryData | null;
             cost: number | null;
+            /**
+             * 这一段不是本次生成的，而是**从上一次压缩继承**来的（本次没生成新摘要：`self` 模式 /
+             * 摘要失败 / 还没接自动摘要）。读侧据此说"可能过时"，而不是把它当本轮结论。
+             */
+            carriedFrom?: string;
         };
     };
 }

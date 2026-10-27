@@ -18,6 +18,7 @@ import { diyHome } from "../../src/main/core/state";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
 import { getLocalAgent, compactFile, compactStateFile } from "../../src/main/services/local-agent";
+import { autoCompactFile } from "../../src/main/core/auto-compact-config";
 import { opsFile } from "../../src/main/core/local-paths";
 import { parseCompactLog } from "../../src/shared/context/compaction";
 
@@ -295,5 +296,52 @@ describe("④ v3 分组形状：看 JSON 就知道每块回答什么（D5「结�
         expect(c.details.summary.text).toBe("摘要");
         // 空分组不写（不是空壳）
         expect(c).not.toHaveProperty("__nonexistent");
+    });
+});
+
+describe("##442：摘要沿链继承（下一次压缩不许把上次的结论弄丢）", () => {
+    it("第二次压缩没有新摘要 ⇒ 继承上一次的 text，并标 carriedFrom", () => {
+        // 窗口调小，保证**真丢东西**（noop 不写账 ⇒ 没有可继承的对象）
+        const cfg = autoCompactFile(diyHome());
+        const saved = existsSync(cfg) ? readFileSync(cfg, "utf-8") : "";
+        writeFileSync(
+            cfg,
+            [
+                "triggers: {systemContextChanged: true, cacheExpired: true, windowOverRatio: 0.5}",
+                "policy: {mode: budget, modeData: {toolResult: {render: asis}}, summary: false}",
+                "history:",
+                "  limit: {retainRatio: 0.16, windowTokens: 8000, summary: {mode: model}}",
+                "",
+            ].join("\n"),
+            "utf-8",
+        );
+        try {
+            const uri = newUri();
+            seedOpsBigTools(uri, 8);
+            const rec1 = getLocalAgent().compact(uri, { mode: "budget", toolResult: { render: "asis" }, summary: false }, "cli", {
+                text: "## 结论\n- 旧结论：先做减法",
+                data: { turns: 1, conclusions: ["先做减法"], changes: [], todos: [], open: [] },
+                cost: null,
+            }) as { id: string; noop?: boolean; details?: { summary?: { text: string | null; carriedFrom?: string } } };
+            expect(rec1.noop).toBeUndefined();
+            expect(rec1.details?.summary?.text).toContain("先做减法");
+
+            // 再来几轮消息 → 再压一次（这次**不给** summary：模拟 self 模式 / 摘要失败）
+            seedOpsBigTools(uri, 12);
+            const rec2 = getLocalAgent().compact(uri, { mode: "budget", toolResult: { render: "asis" }, summary: false }, "cli") as {
+                id: string;
+                noop?: boolean;
+                details?: { summary?: { text: string | null; carriedFrom?: string } };
+            };
+            expect(rec2.noop).toBeUndefined();
+            // 继承：text 还是上次的，且标明来自哪一条压缩
+            expect(rec2.details?.summary?.text).toContain("先做减法");
+            expect(rec2.details?.summary?.carriedFrom).toBe(rec1.id);
+            // 生效摘要仍拿得到（不会因为新记录 summary 为空而丢）
+            expect(getLocalAgent().effectiveSummary(uri)).toContain("先做减法");
+            expect(getLocalAgent().effectiveSummaryCarriedFrom(uri)).toBe(rec1.id);
+        } finally {
+            if (saved) writeFileSync(cfg, saved, "utf-8");
+        }
     });
 });

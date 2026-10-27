@@ -51,6 +51,8 @@ export interface CompactFacts {
 export interface CompactHeaderInput extends CompactFacts {
     /** 现成结论（`model` 模式由压缩时那次模型调用产出）；**空串 = 没有，需要自己查**（`self`） */
     summary?: string;
+    /** 这份结论是**上一次压缩继承来的**（本次没生成新摘要）⇒ 提示"可能过时" */
+    summaryCarried?: boolean;
     /**
      * 下一步任务指导（两种模式都有）。
      * 传 `undefined` 用缺省文案；`summary` 为空时缺省文案会自动带上"怎么查"那一段。
@@ -84,9 +86,12 @@ function searchGuide(i: CompactFacts): string[] {
 function defaultTask(i: CompactHeaderInput): string {
     const head = `上面的对话被压缩掉了（第 ${fmt(i.lines.from)}–${fmt(i.lines.to)} 行，共 ${fmt(i.droppedMessages)} 条消息）。`;
     const hasSummary = (i.summary ?? "").trim().length > 0;
+    const stale = i.summaryCarried
+        ? "（注意：这份结论是**上一次压缩**留下的，本次没有重新生成 —— 可能已经过时，动手前先核一遍。）"
+        : "";
     const body = hasSummary
         ? [
-              "`summary` 是那段对话的结论。按它的「未完成 / 下一步」继续干活；结论不够时再按下面的办法查原文。",
+              "`summary` 是那段对话的结论。" + stale + "按它的「未完成 / 下一步」继续干活；结论不够时再按下面的办法查原文。",
               "",
               ...searchGuide(i),
           ]
