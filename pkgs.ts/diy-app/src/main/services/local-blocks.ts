@@ -201,6 +201,8 @@ const SCHEMA: Record<BlockKind, Record<string, FieldKind>> = {
         // （投影成历史 user 消息的 `from:` 段，带显示名）。两个字段同时落、同一写入点，
         // 但**读侧各自独立**：删掉任一个只会让那一侧退回老行为，不会把另一侧弄错。
         speaker: "Flag",
+        // 结构化机器事件（job 结束等）：投影时走 notify（##442 2026-10-27）。JSON 对象整写。
+        notify: "Flag",
     },
     // ms：这块**自己花掉的时间**（##399 活动框右侧角标）—— think = 从 reasoning-start 到
     // reasoning-end（模型生成这段思考的时长），tool = 从 tool-call 到 tool-result（真执行时长，
@@ -921,6 +923,8 @@ import {
     hasTopLevelKey,
     isEnvelopeText,
     stripRuntimeSections,
+    userEnvelope,
+    type NotifyItem,
     type Speaker,
 } from "../../shared/context/envelope";
 import { HUMAN_MEMBER_ID } from "../../shared/room";
@@ -1005,6 +1009,12 @@ export function projectAll(store: BlockStore): LocalModelMessage[] {
                 // 历史块里若存着一份完整信封，那些值是"当时"的，重放会把它伪装成现状；
                 // `notify` / `chat` / `summary` 是线索，一段不动（见 `stripRuntimeSections`）。
                 // 已是 chat 信封（回放旧块 / 同一份块被投影两次）⇒ 原样，不再嵌套。
+                // 结构化机器事件：整条走 notify（内容 = meta.notify，不用正文；正文仍留给 UI 列表）
+                const notify = b.notify as NotifyItem | undefined;
+                if (notify && typeof notify.kind === "string" && typeof notify.text === "string") {
+                    out.push({ role: "user", content: userEnvelope({ notify: [notify] }), turn, ...(step ? { step } : {}) });
+                    return;
+                }
                 const body = stripRuntimeSections(text);
                 if (!body.trim()) return; // 纯控制增量块（历史里不该有；有也跳过，别造空发言）
                 const speaker = b.speaker as Speaker | undefined;

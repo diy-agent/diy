@@ -142,7 +142,7 @@ import {
 import { buildDelivery, controlDeltaDelivery, isRuntimePlace, type Delivery } from "../../shared/context/delivery";
 import { assemblyHardCapBytes } from "../../shared/context/request-preflight";
 import { estimateRequest, tighterHistoryCapBytes } from "../../shared/context/request-preflight";
-import { chatEnvelope, isEnvelopeText, renderSummaryPart } from "../../shared/context/envelope";
+import { chatEnvelope, isEnvelopeText, renderSummaryPart, userEnvelope, type NotifyItem } from "../../shared/context/envelope";
 import { describeAnomalies, readLlmLog } from "../../shared/context/log-schema";
 import {
     autoCompactPolicyInput,
@@ -484,6 +484,11 @@ interface TurnInput {
      * （任务页本人发言 / 老数据）⇒ 气泡逐字不变。
      */
     room?: DeliveryOrigin;
+    /**
+     * **结构化机器事件**（可选）：job 结束等（##442 2026-10-27）。落点 = 该条 user 块的
+     * `meta.notify`，投影时走 `notify:` 而不是 `chat:`。
+     */
+    notify?: NotifyItem;
 }
 
 interface LocalSession {
@@ -4530,8 +4535,8 @@ export class LocalAgentManager {
      * （见同处的注释与 hasActiveTurn）：否则空闲时入队的留言**没有任何机制会因它启动一轮**，
      * 永远躺在 .diy/drafts.yaml 里（##303：模型永远看不到，用户以为发出去了）。
      */
-    steerAdd(taskUri: string, mode: SteerMode, text: string, author?: string): SteerItem[] {
-        const r = this.queue.add(taskUri, mode, text, undefined, author);
+    steerAdd(taskUri: string, mode: SteerMode, text: string, author?: string, notify?: NotifyItem): SteerItem[] {
+        const r = this.queue.add(taskUri, mode, text, undefined, author, notify);
         sessionRegistry.noteActivity(taskUri); // queue 是注册表的活态属性
         return r;
     }
@@ -4578,6 +4583,7 @@ export class LocalAgentManager {
             steerId: it.id,
             // 署名随队列项一起带进开场块（##166 §40 A）：排队跨轮次，投递时已无从查"谁说的"
             ...(it.author ? { author: it.author } : {}),
+            ...(it.notify ? { notify: it.notify } : {}),
         }));
         if (seed.length === 0) return;
         yield* this.chat(taskUri, "", modelOverride, reasoningEffortOverride, undefined, seed);
@@ -5155,6 +5161,7 @@ export class LocalAgentManager {
                         kind: it.mode,
                         steerId: it.id,
                         ...(it.author ? { author: it.author } : {}),
+                        ...(it.notify ? { notify: it.notify } : {}),
                     }));
                 } catch (e) {
                     console.error(`[local-agent] 插话队列读取失败，停止自动续轮 ${taskUri}:`, e);
@@ -5451,6 +5458,8 @@ export class LocalAgentManager {
                         steerId: item.id,
                         ...(item.author ? { author: item.author } : {}),
                         ...(sp ? { speaker: sp } : {}),
+                        // 结构化机器事件（job 结束等）：投影时走 notify，不走 chat（##442 2026-10-27）
+                        ...(item.notify ? { notify: item.notify } : {}),
                     },
                 },
                 { op: "delta", id, fields: { content: item.text } },
@@ -5722,6 +5731,8 @@ export class LocalAgentManager {
                         // 发言者之于**模型**（##422）：投影成 `from:` 段（带显示名）。
                         // 与 `author` 同写入点、同一来源，但读侧各管一边（UI / LLM）。
                         ...(sp ? { speaker: sp } : {}),
+                        // 结构化机器事件（job 结束等）：投影时走 notify，不走 chat（##442 2026-10-27）
+                        ...(item.notify ? { notify: item.notify } : {}),
                     },
                 },
                 { op: "delta", id: uid, fields: { content: item.text } },
@@ -6104,7 +6115,10 @@ export class LocalAgentManager {
                                 ...(nextMessages ?? messages),
                                 ...items.map((it) => ({
                                     role: "user" as const,
-                                    content: chatEnvelope([{ from: it.author ?? HUMAN_MEMBER_ID, text: it.text }]),
+                                    // 结构化机器事件走 notify；普通插话走 chat（##442 2026-10-27）
+                                    content: it.notify
+                                        ? userEnvelope({ notify: [it.notify] })
+                                        : chatEnvelope([{ from: it.author ?? HUMAN_MEMBER_ID, text: it.text }]),
                                 })),
                             ];
                         }
@@ -6596,11 +6610,11 @@ export function getLocalAgent(): LocalAgentManager {
 // 为什么是 `next-turn` 而不是 `next-step`：进程结束时模型通常已经不在当前步了
 // （它可能正写报告、也可能已结束本轮），"下一步前插一句"会把别人的步边界打乱；
 // 轮是人的/模型的自然停顿点。
-runRegistry.setNotifier((taskUri, text) => {
-    wakeTaskWithSteer(taskUri, text);
+runRegistry.setNotifier((taskUri, text, notify) => {
+    wakeTaskWithSteer(taskUri, text, notify);
 });
 
-function wakeTaskWithSteer(taskUri: string, text: string): void {
+function wakeTaskWithSteer(taskUri: string, text: string, notify?: NotifyItem): void {
     let agent: LocalAgentManager;
     try {
         agent = getLocalAgent();
@@ -6609,7 +6623,7 @@ function wakeTaskWithSteer(taskUri: string, text: string): void {
         return;
     }
     try {
-        agent.steerAdd(taskUri, "next-turn", text, "job");
+        agent.steerAdd(taskUri, "next-turn", text, "job", notify);
     } catch (e) {
         console.warn(`[job] 结束通知入队失败 ${taskUri}:`, e);
         return;

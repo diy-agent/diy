@@ -9,6 +9,8 @@
 //   · **不做日志管理**：输出只落该进程自己的 `out.log`（它是进程的产物，不是系统主数据）。
 //   · 判据仍然只有一条：**能在任何时候回答「它是死是活」**。
 
+import type { NotifyItem } from "./context/envelope";
+
 /** 进程四态。**不设 `lost`**：没有恢复就没有"不知道"——重启后表是空的，不是 lost。 */
 export type RunState = "running" | "exited" | "killed" | "failed";
 
@@ -151,6 +153,29 @@ export function notifyText(p: RunLike, tail: TailResult, maxLines = 20): string 
         "完整输出用 `job output " + p.id + "`。",
     );
     return head.join("\n");
+}
+
+/**
+ * 结束通知的**结构化形态**（`notify.kind=job-done`；##442 用户 2026-10-27 字段规格）。
+ *
+ * 与 `notifyText` 的关系：`text` 就是同一段人话（UI / 模型都能直接读），其余字段是
+ * **不拍平**的排障事实（run id / 退出码 / 命令 / 尾部输出）；要全文仍用 `job output <id>`。
+ */
+export function jobDoneNotify(p: RunLike, tail: TailResult, maxLines = 20): NotifyItem {
+    const rows = tail.lines === 0 ? [] : tail.text.split("\n");
+    const shown = rows.length > maxLines ? rows.slice(rows.length - maxLines) : rows;
+    return {
+        kind: "job-done",
+        text: notifyText(p, tail, maxLines),
+        run: p.id,
+        state: p.state,
+        exitCode: p.exitCode ?? null,
+        signal: p.signal ?? null,
+        durationMs: (p.endedAt ?? p.startedAt) - p.startedAt,
+        command: p.command.split("\n")[0] ?? "",
+        ...(shown.length > 0 ? { tail: shown.join("\n") } : {}),
+        ...(tail.droppedBytes > 0 ? { truncatedBytes: tail.droppedBytes } : {}),
+    };
 }
 
 /**

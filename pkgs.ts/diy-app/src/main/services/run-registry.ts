@@ -42,7 +42,8 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { readRuntimeConfig } from "../../runtime";
-import { MAX_TAIL_BYTES, notifyText, tailOf, type RunLike, type TailResult } from "../../shared/run-status";
+import { jobDoneNotify, MAX_TAIL_BYTES, tailOf, type RunLike, type TailResult } from "../../shared/run-status";
+import type { NotifyItem } from "../../shared/context/envelope";
 
 /** run 的来源锚点：哪一轮、哪一步、哪个工具调用起的（`toolCallId` 是定位键）。 */
 export interface RunOrigin {
@@ -129,7 +130,7 @@ export interface RunRegistryOptions {
     /** 时钟（测试注入假钟） */
     now?: () => number;
     /** 结束通知出口（缺省不通知）；真实 app 由 local-agent 注册「插话」实现 */
-    notifier?: (taskUri: string, text: string) => void;
+    notifier?: (taskUri: string, text: string, notify?: NotifyItem) => void;
     /** 进程组里还有没有活口（测试注入假判据；缺省 `kill(-pgid, 0)`） */
     probeGroup?: (pgid: number) => boolean;
     /** 组探活间隔（ms）；只在「根已退出、组里还有活口」期间跑，组空即停 */
@@ -253,7 +254,7 @@ export class RunRegistry {
      * `logPath` 存不存在去猜 —— 那条路径我们知道，只是文件写不出来。
      */
     private readonly logFailed = new Set<string>();
-    private notifier?: (taskUri: string, text: string) => void;
+    private notifier?: (taskUri: string, text: string, notify?: NotifyItem) => void;
 
     constructor(opts: RunRegistryOptions = {}) {
         this.rootDir = opts.rootDir ?? runRoot();
@@ -265,7 +266,7 @@ export class RunRegistry {
         void this.pruneOldDirs();
     }
 
-    setNotifier(fn: ((taskUri: string, text: string) => void) | undefined): void {
+    setNotifier(fn: ((taskUri: string, text: string, notify?: NotifyItem) => void) | undefined): void {
         this.notifier = fn;
     }
 
@@ -844,7 +845,8 @@ export class RunRegistry {
         if (pending) await pending.catch(() => undefined);
         info.notified = true;
         try {
-            this.notifier(taskUri, notifyText(info, tailOf(await this.readLogTail(info.logPath), 20)));
+            const notify = jobDoneNotify(info, tailOf(await this.readLogTail(info.logPath), 20));
+            this.notifier(taskUri, notify.text, notify);
         } catch (e) {
             // 观测不许把业务炸掉：通知失败只留痕
             console.warn("[run] 结束通知投递失败", info.id, e);

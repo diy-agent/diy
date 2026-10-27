@@ -361,6 +361,39 @@ describe("插话署名（author）读写", () => {
   });
 });
 
+describe("插话的结构化机器事件（notify）读写", () => {
+  const notify = {
+    kind: "job-done" as const,
+    text: "后台结束",
+    run: "r-1",
+    state: "exited",
+    exitCode: 0,
+  };
+
+  it("add 带 notify ⇒ 落盘且读回仍在（读侧白名单不洗字段）", () => {
+    const q = new SteerQueue();
+    const items = q.add(URI, "next-turn", "后台结束", new Date("2026-01-01T00:00:00.000Z"), "job", notify);
+    expect(items[0]!.notify).toEqual(notify);
+    expect(readDrafts(URI)!.steers[0]!.notify).toEqual(notify);
+  });
+
+  it("读→改→写（toggleMode）后 notify 不被洗掉", () => {
+    const q = new SteerQueue();
+    const items = q.add(URI, "next-turn", "后台结束", new Date("2026-01-01T00:00:00.000Z"), "job", notify);
+    q.toggleMode(URI, items[0]!.id);
+    const after = readDrafts(URI)!.steers[0]!;
+    expect(after.mode).toBe("next-step");
+    expect(after.notify).toEqual(notify);
+  });
+
+  it("无 notify 的队列项不写该键（人话 / 老数据）", () => {
+    const q = new SteerQueue();
+    const items = q.add(URI, "next-turn", "人话");
+    expect("notify" in items[0]!).toBe(false);
+    expect(readDrafts(URI)!.steers[0]!.notify).toBeUndefined();
+  });
+});
+
 // ##435：这条判据决定「有人在等你回复」的 L2 准入 —— 错了就是半夜抢焦点
 describe("isHumanAuthor —— 谁算「人」（##435）", () => {
   it("human:<名> ⇒ 人（room 投递 / 带署名的调用）", () => {

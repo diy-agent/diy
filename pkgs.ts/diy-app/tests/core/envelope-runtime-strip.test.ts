@@ -148,6 +148,22 @@ describe("##442 新形态：投影 chat / 剥控制段", () => {
         expect(build("那句原话", { id: "agent:main" })).toBe('chat:\n  - from: agent:main\n    text: "那句原话"');
     });
 
+    it("块上有 meta.notify ⇒ 投影成 notify 信封（不走 chat）", () => {
+        const notify = { kind: "job-done", text: "后台结束", run: "r-1", state: "exited", exitCode: 0 };
+        const s = new BlockStore();
+        for (const op of [
+            { op: "start", id: "t1", kind: "turn" },
+            { op: "start", id: "u1", kind: "text", parent: "t1", meta: { role: "user", notify } },
+            { op: "delta", id: "u1", fields: { content: "后台结束" } },
+            { op: "stop", id: "u1" },
+            { op: "stop", id: "t1" },
+        ] as Op[])
+            s.apply(op);
+        const first = projectAll(s)[0] as { content?: unknown } | undefined;
+        expect(first?.content).toBe(userEnvelope({ notify: [notify as never] }));
+        expect(String(first?.content)).not.toContain("chat:");
+    });
+
     it("块里存着带 runtime 的新信封 ⇒ 投影无 runtime、chat 保留", () => {
         const stored = userEnvelope({ runtime: { self: { steps: 3 } }, chat: [{ from: "agent:main", text: "原话" }] });
         const text = build(stored, { id: "agent:main" });
