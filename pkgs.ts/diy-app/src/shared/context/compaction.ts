@@ -693,7 +693,8 @@ export interface DroppedTurnDetail {
  * `ids` 另有硬用途：`clear()` / 落位迁移靠它找回「哪些工具原文是本会话的」。
  */
 export interface ClippedIdsSummary {
-    ids: string[];
+    /** v5 及以前才写：被裁剪工具原文的 id 清单（##442 起只写 `count`，id 真源 = `compact-state.opIds`） */
+    ids?: string[];
     count: number;
 }
 
@@ -765,9 +766,11 @@ export interface CompactEventRecord {
     /**
      * v2 = 只有 `policy`（旋钮）；v3 = 多一条 `plan` 快照（##344 M2）；**v4 = plan 只记版本指针**（##378）；
      * **v5 = 明细瘦身**（##431：不再写 `details.dropped` 全文与 `details.clipped` 明细，只留计数与 id 清单）。
-     * 读侧各版都收 —— 老行的大 details 照旧可读，只是新行不再产出。
+     * **v6 = `clippedIds` 只留 count**（##442：id 清单每次压缩重抄一遍，是唯一随压缩次数线性增长的字段；
+     * 现在 id 的唯一真源是 `compact-state.json` 的 `opIds`）。
+     * 读侧各版都收 —— 老行的 ids / 大 details 照旧可读，只是新行不再产出。
      */
-    v: 2 | 3 | 4 | 5;
+    v: 2 | 3 | 4 | 5 | 6;
     /** 压缩 id（= ts，供 measure / undo 回指） */
     id: string;
     ts: string;

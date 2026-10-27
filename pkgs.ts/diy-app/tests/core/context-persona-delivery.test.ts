@@ -130,8 +130,10 @@ describe("P0-1 修复不得打回 148 的治疗目标", () => {
 
     it("行为契约进 system 后仍在 system 预算内（不会把预算撑爆反而拒发）", () => {
         const { d } = deliveryOf(home);
-        // 内置三节合计只有几百字节；给一个宽松上限，防将来把整份 AGENTS.md 塞进契约节点
-        expect(d.system.bytes).toBeLessThan(16 * 1024);
+        // 内置三节合计只有几百字节；给一个宽松上限，防将来把整份 AGENTS.md 塞进契约节点。
+        // ##442 起上限 20 KB：`help:` 段改成按**候选全集**生成（常量，不再随本轮有哪些 runtime
+        // 单元变）—— 可变是被删掉的那个 bug 的根源，代价是固定多出未被投递单元的描述（实测 ~+2 KB）。
+        expect(d.system.bytes).toBeLessThan(20 * 1024);
     });
 
     it("system 名单可被 context.yaml 覆盖：把 guard 划走 → 它就不再投（配置真源生效）", () => {

@@ -280,13 +280,20 @@ describe("④ 账本瘦身：v5 单条 ≤ 1 KB，且不再存明细", () => {
 
         const rec = JSON.parse(line) as {
             v: number;
-            details?: { dropped?: unknown; clipped?: unknown; droppedCount?: number; clippedIds?: { ids: string[]; count: number } };
+            details?: {
+                dropped?: unknown;
+                clipped?: unknown;
+                droppedCount?: number;
+                clippedIds?: { ids?: string[]; count: number };
+            };
         };
-        expect(rec.v).toBe(5);
+        // ##442 v6：明细只留计数；`clippedIds` **不再抄 id 清单**（id 真源 = compact-state.opIds）
+        expect(rec.v).toBe(6);
         expect(rec.details?.dropped).toBeUndefined();
         expect(rec.details?.clipped).toBeUndefined();
         expect(rec.details?.droppedCount).toBe(0); // ##432 刀 2：`budgetBytes: 0` 不再清零（无边界 ⇒ 全保留）
-        expect(rec.details?.clippedIds?.count).toBe(rec.details?.clippedIds?.ids.length ?? -1);
+        expect(rec.details?.clippedIds?.ids).toBeUndefined();
+        expect(typeof rec.details?.clippedIds?.count).toBe("number");
     });
 
     it("老账（v4 带大 details）照旧能读 —— 读侧兼容", () => {

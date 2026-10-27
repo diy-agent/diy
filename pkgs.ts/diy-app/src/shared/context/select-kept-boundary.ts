@@ -53,7 +53,12 @@ export interface KeptBoundary {
  */
 export const RETAIN_RATIO = 0.16;
 
-const none = (n: number): KeptBoundary => ({ cut: n, dropped: 0, retainedTokens: 0, kind: "none" });
+/**
+ * 「不压」的返回值：`cut = 0` **保留一切**（不是 `cut = n` —— 那表示"一条都不留"）。
+ * 预览（`compact-example`）把 `i >= cut` 当"保留"，所以这里的 0 必须是"全都留"，
+ * 否则「样例比保留量还小」时会显示成"全丢"（##442 单测实测踩到）。
+ */
+const none = (): KeptBoundary => ({ cut: 0, dropped: 0, retainedTokens: 0, kind: "none" });
 
 /**
  * 算保留边界（**唯一判据**）。
@@ -70,7 +75,7 @@ export function selectKeptBoundary(
     triggerTokens: number,
 ): KeptBoundary {
     const n = messages.length;
-    if (n === 0 || !(retainTokens > 0)) return none(n);
+    if (n === 0 || !(retainTokens > 0)) return none();
 
     // ① 从尾往前累加到 ≥ 保留量（`i` = 这一轮累加到的位置）
     let acc = 0;
@@ -88,12 +93,12 @@ export function selectKeptBoundary(
         }
     }
     // 找不到 user 边界（整段没有 user）/ 切点落在开头 = 没有可丢的东西
-    if (cut <= 0) return none(n);
+    if (cut <= 0) return none();
 
     let retained = 0;
     for (let j = cut; j < n; j++) retained += messages[j]!.tokens;
     // ③ 压完仍超触发线 ⇒ 不压（空转判据）
-    if (retained >= triggerTokens) return none(n);
+    if (retained >= triggerTokens) return none();
 
     return { cut, dropped: cut, retainedTokens: retained, kind: "drop" };
 }

@@ -4364,8 +4364,10 @@ export class LocalAgentManager {
                 : -1;
         const rec: CompactEventRecord = {
             kind: "compact",
-            // ##431：v5 = 明细瘦身（不再写 dropped 全文 / clipped 明细）。读侧仍收 v1~v4 老行。
-            v: 5,
+            // ##431：v5 = 明细瘦身（不再写 dropped 全文 / clipped 明细）。
+            // ##442：v6 = `clippedIds` 只留 count（id 真源 = compact-state.opIds）。
+            // 读侧仍收 v1~v5 老行（它们的 ids 照样读）。
+            v: 6,
             id: ts,
             ts,
             // ##420：账本格式代号（升级 = 一次压缩，旧 ops 段退化为纯审计，永不再 replay）
@@ -4396,10 +4398,14 @@ export class LocalAgentManager {
             },
             cost: { ...(p.rateSnap ? { rates: p.rateSnap } : {}), ...p.stats },
             // ##431：单条账曾达 20~29 KB（dropped 每轮明细 + clipped 每项六个数字），而账本是**审计日志**。
-            // 现在只留计数与 id 清单：`kept`（过滤器表达，几条区间）保留 —— 它是历史回溯 diff 的"保留侧"。
+            // ##442 起 `clippedIds` **不再抄 id 清单**（266 实测：58 条记录各抄 580 个 id = 1.10 MB，
+            // 且是唯一随压缩次数线性增长的字段）—— 被裁剪工具原文的 id 唯一真源是
+            // `compact-state.json` 的 `opIds`（当前值快照，O(1) 读；那条链本来就是全量累积）。
+            // 审计这里只留计数：人看"这次裁了几个"，机器要 id 去快照取。
+            // 取舍：快照丢了/坏了 ⇒ 会话删除与迁移会**漏删**原文（留原地给人手查），不会误删。
             details: {
                 droppedCount: p.droppedIds.length,
-                clippedIds: { ids: p.clipped.map((c) => c.id), count: p.clipped.length },
+                clippedIds: { count: p.clipped.length },
                 ...(p.keptRuns ? { kept: p.keptRuns } : {}),
                 summary: { text: summary?.text ?? null, data: summary?.data ?? null, cost: summary?.cost ?? null },
             },
@@ -4415,7 +4421,8 @@ export class LocalAgentManager {
             // 同步刷新**当前值快照**（投递侧下一步就读它，不必再扫账本）。
             // `opIds` 合并：老工作集引用过的工具原文 id 仍可能被 `clear()` / 迁移用到，只增不减。
             const opIds = new Set<string>(prev?.opIds ?? []);
-            for (const id of clippedIdsOfEvent(rec)) opIds.add(id);
+            // ⚠️ 从**内存里的本次裁剪结果**取，不从 rec 回读 —— ##442 起 rec 只留 count
+            for (const c of p.clipped) if (c.id) opIds.add(c.id);
             writeCompactState(taskUri, {
                 v: 1,
                 boundary: compactPointOf(rec, at),

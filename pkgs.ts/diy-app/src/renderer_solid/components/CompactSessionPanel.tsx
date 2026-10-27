@@ -436,6 +436,7 @@ function WhenCompactBlock(props: { ctl: CompactPanelCtl; windowLimit: number | n
         const facts = props.ctl.auto()?.facts;
         return {
             retainRatio: props.ctl.retainRatio(),
+            windowOverRatio: cfg?.triggers?.windowOverRatio ?? 0.5,
             boundary: facts?.boundary ?? null,
             retainedTokens: typeof facts?.retainedTokens === "number" ? facts.retainedTokens : null,
             lastStepTokens: facts?.windowTokens ?? null,

@@ -17,6 +17,7 @@ import {
 
 const base: CompactWhenInput = {
     retainRatio: 0.16,
+    windowOverRatio: 0.5,
     windowLimit: 200_000,
     boundary: { at: "2026-10-25T10:00:00.000Z", dropped: 12, retainTokens: 32_000, windowTokens: 200_000 },
     retainedTokens: 12_000,
@@ -30,10 +31,12 @@ describe("compact-when · 「什么时候会压」的判据（事件制）", () 
         expect(compactWhenRows(base).map((r) => r.key)).toEqual(["first", "retained", "reuse", "manual"]);
     });
 
-    it("从没压过 → 只有「第一次压」是开着的，并给出**阈值**（上限）", () => {
+    it("从没压过 → 只有「第一次压」是开着的，并给出**保留量**（窗口 × 比例）", () => {
         const i = { ...base, boundary: null, retainedTokens: null };
         expect(rowOf(i, "first").state).toBe("on");
-        expect(rowOf(i, "first").text).toContain("20,000 tok");
+        // ##442：触发线 = 窗口 200,000 × 0.5 = 100,000；保留量 = × 0.16 = 32,000
+        expect(rowOf(i, "first").text).toContain("100,000 tok");
+        expect(rowOf(i, "first").text).toContain("窗口 200,000 tok × 0.5");
         expect(rowOf(i, "first").text).toContain("发请求之前");
         expect(rowOf(i, "retained").state).toBe("off");
         expect(rowOf(i, "retained").text).toContain("还没有边界");
@@ -43,20 +46,21 @@ describe("compact-when · 「什么时候会压」的判据（事件制）", () 
         expect(rowOf(base, "first").state).toBe("off");
         expect(rowOf(base, "first").text).toContain("丢 12 条");
         expect(rowOf(base, "retained").state).toBe("on");
-        expect(rowOf(base, "retained").text).toContain("保留段 12,000 tok / 上限 20,000 tok");
+        expect(rowOf(base, "retained").text).toContain("保留段 12,000 tok / 触发线 100,000 tok");
         // 还差多少才再压一次 = 上限 − 保留段（这是「什么时候会压」的答案）
-        expect(rowOf(base, "retained").text).toContain("再涨 8,000 tok");
+        // 触发线 100,000 − 保留段 12,000 = 88,000 才再压（##442：再压看触发线，不看保留量）
+        expect(rowOf(base, "retained").text).toContain("再涨 88,000 tok");
         // 判据只说保留段，不提「全量」（拿全量判会每步都超限）
         expect(rowOf(base, "retained").hint).toContain("不把被丢掉那段算进来");
     });
 
-    it("保留段已经顶过上限 → 明说「下一步就再压一次」", () => {
-        const r = rowOf({ ...base, retainedTokens: 25_000 }, "retained");
-        expect(r.text).toContain("已顶过上限");
+    it("保留段已经顶过触发线 → 明说「下一步就再压一次」", () => {
+        const r = rowOf({ ...base, retainedTokens: 120_000 }, "retained");
+        expect(r.text).toContain("已顶过触发线");
         expect(r.text).toContain("下一步就再压一次");
     });
 
-    it("保留段没有实测 → 如实说，不写 0（0 会被读成「离上限远得很」）", () => {
+    it("保留段没有实测 → 如实说，不写 0（0 会被读成「离触发线远得很」）", () => {
         expect(rowOf({ ...base, retainedTokens: null }, "retained").text).toContain("还没有实测");
     });
 
@@ -108,13 +112,14 @@ describe("compact-when · 人读小件", () => {
         expect(fmtTtl(45_000)).toBe("45 秒");
     });
 
-    it("压成什么样：上限 + 累加规则 + 保头 + 配对 + 算一次", () => {
-        const s = compactResultSentence(20_000);
-        expect(s).toContain("20,000 tok");
-        expect(s).toContain("从最后一步往前累加");
-        expect(s).toContain("保头 600 tok");
-        expect(s).toContain("tool 配对平衡");
+    it("压成什么样：比例 + 累加规则 + 切点落 user + 空转判据 + 算一次（##442 起无保头）", () => {
+        const s = compactResultSentence(0.16);
+        expect(s).toContain("16%");
+        expect(s).toContain("从最后一条往前累加");
+        expect(s).toContain("最近的 user 消息");
+        expect(s).toContain("不压");
         expect(s).toContain("只在压缩事件时算一次");
+        expect(s).not.toContain("保头");
     });
 
     it("一句话总结：压过 / 没压过 + 上限", () => {

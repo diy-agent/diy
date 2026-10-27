@@ -93,12 +93,12 @@ describe("compact-example · 范例预览（展示层，判据走 selectKeptBoun
         expect(r.beforeBytes).toBe(r.rows.reduce((a, x) => a + x.bytes, 0));
     });
 
-    it("why 三档文案：保头 / 装进上限 / 超出上限", () => {
+    it("why 两档文案：装进保留量 / 超出保留量（##442 起没有保头这一档）", () => {
         const r = buildCompactExample(3 * 1024);
         const whys = new Set(r.rows.map((x) => x.why));
-        expect([...whys].some((w) => w.includes("保头"))).toBe(true);
         expect([...whys].some((w) => w.includes("从最后往前数"))).toBe(true);
-        expect([...whys].some((w) => w.includes("超出上限"))).toBe(true);
+        expect([...whys].some((w) => w.includes("超出保留量"))).toBe(true);
+        expect([...whys].some((w) => w.includes("保头"))).toBe(false);
     });
 
     it("biggestDrop = 被丢掉的那块里最大的一个（样例里是工具结果）", () => {
@@ -109,10 +109,12 @@ describe("compact-example · 范例预览（展示层，判据走 selectKeptBoun
         expect(r.biggestDrop?.kind).toBe("result");
     });
 
-    it("保留量 0 ⇒ 一条都不保留（##442 起没有保头）", () => {
+    it("保留量 0 ⇒ **不压**（保留一切；0 不是「清零」，配置层最低 0.01）", () => {
+        // ##442：`retainTokens <= 0` 的语义是"没有保留量可算 ⇒ 不动"，不是"一条都不留"。
+        // 真实路径上 retainRatio 被夹在 (0.01, 0.5]，所以 0 只在"窗口未知"的预览里出现。
         const r = buildCompactExample(0);
-        expect(r.rows.every((x) => !x.kept)).toBe(true);
-        expect(r.keptBytes).toBe(0);
+        expect(r.rows.every((x) => x.kept)).toBe(true);
+        expect(r.keptBytes).toBe(r.beforeBytes);
     });
 
     it("上限足够大（≥ 总量 ÷ 保留比例）⇒ 一条不丢", () => {

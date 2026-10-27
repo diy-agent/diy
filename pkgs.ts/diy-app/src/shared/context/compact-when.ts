@@ -31,8 +31,10 @@ export interface CompactWhenBoundary {
 }
 
 export interface CompactWhenInput {
-    /** 唯一旋钮：保留比例（窗口 × 本值 = 保留量） */
+    /** 唯一旋钮：保留比例（窗口 × 本值 = 保留量，压缩后留这么多） */
     retainRatio: number;
+    /** 触发比例（`triggers.windowOverRatio`，窗口 × 本值 = 触发线，涨到这么高才再压） */
+    windowOverRatio: number;
     /** 模型窗口上限（token）；null = 未知 */
     windowLimit: number | null;
     /** 已落盘边界；null = 从没压过（投递 = 全量） */
@@ -89,27 +91,30 @@ export function fmtStamp(iso: string): string {
  * 顺序 = 判据的时间顺序（先有第一次，才有之后的复用与再压），不是紧急度。
  */
 export function compactWhenRows(i: CompactWhenInput): CompactWhenRow[] {
-    // 保留量 = 窗口 × 比例；窗口未知 ⇒ 不压（三家同一条），文案也直说
+    // 两个数别混：*保留量* = 压缩后留多少（窗口 × retainRatio）；
+    // *触发线* = 涨到多少才再压（窗口 × windowOverRatio）。再压判据用的是**触发线**
+    // —— 拿保留量当阈值会让"压完刚好≈保留量 ⇒ 下一步涨 1 token 就又超"（##442 单测实测）。
     const limit = i.windowLimit == null ? null : Math.floor(i.windowLimit * i.retainRatio);
+    const trigger = i.windowLimit == null ? null : Math.floor(i.windowLimit * i.windowOverRatio);
     const b = i.boundary;
     const retained = i.retainedTokens;
-    const gap = retained == null || limit == null ? null : limit - retained;
+    const gap = retained == null || trigger == null ? null : trigger - retained;
 
     const firstText = b
         ? `已有边界（${fmtStamp(b.at)} 写的，丢 ${b.dropped} 条）⇒ 这条路只在「从没压过」时走`
         : limit == null
           ? "模型窗口上限未知 ⇒ **不压**（不猜数）；确定模型后才会开始"
-          : `还没有边界：全量估算一旦超 ${fmtTokens(limit)}（窗口 ${fmtTokens(i.windowLimit!)} × ${i.retainRatio}），下一步**发请求之前**算一次切点并写压缩事件`;
+          : `还没有边界：全量估算一旦超**触发线** ${fmtTokens(trigger!)}（窗口 ${fmtTokens(i.windowLimit!)} × ${i.windowOverRatio}），下一步**发请求之前**算一次切点（保留 ${fmtTokens(limit)} = 窗口 × ${i.retainRatio}）并写压缩事件`;
 
     const retainedText = !b
         ? "还没有边界（先等第一次压）"
         : limit == null
           ? "窗口上限未知 ⇒ 不压"
           : retained == null
-          ? `上限 ${fmtTokens(limit)} · 保留段还没有实测（等下一次真发记进账本）`
+          ? `保留 ${fmtTokens(limit)} · 保留段还没有实测（等下一次真发记进账本）`
           : gap! <= 0
-            ? `保留段 ${fmtTokens(retained)} 已顶过上限 ${fmtTokens(limit)} ⇒ 下一步就再压一次`
-            : `保留段 ${fmtTokens(retained)} / 上限 ${fmtTokens(limit)} ⇒ 再涨 ${fmtTokens(gap!)} 才会再压一次`;
+            ? `保留段 ${fmtTokens(retained)} 已顶过触发线 ${fmtTokens(trigger!)} ⇒ 下一步就再压一次`
+            : `保留段 ${fmtTokens(retained)} / 触发线 ${fmtTokens(trigger!)} ⇒ 再涨 ${fmtTokens(gap!)} 才会再压一次`;
 
     return [
         {
@@ -164,7 +169,10 @@ export function autoCompactSentence(): string {
 /** 一句话总结（徽章 / 表格里放不下四行时用） */
 export function compactWhenSummary(i: CompactWhenInput): string {
     const where = i.boundary ? `已压过（${fmtStamp(i.boundary.at)}，丢 ${i.boundary.dropped} 条）` : "还没压过";
-    const keep = i.windowLimit == null ? `${i.retainRatio} × 窗口（窗口未知）` : fmtTokens(Math.floor(i.windowLimit * i.retainRatio));
+    const keep =
+        i.windowLimit == null
+            ? `${i.retainRatio} × 窗口（窗口未知）`
+            : `${fmtTokens(Math.floor(i.windowLimit * i.retainRatio))}（触发 ${fmtTokens(Math.floor(i.windowLimit * i.windowOverRatio))}）`;
     return `历史 ${where} · 保留 ${keep}`;
 }
 

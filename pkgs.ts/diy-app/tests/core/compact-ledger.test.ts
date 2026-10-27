@@ -9,7 +9,7 @@
 //   ③ 账目数字要圆整（`50.00000000000001` 是浮点残渣，不是精度）；空壳 `predicted: {}` 不写。
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { LanguageModelV3StreamPart, LanguageModelV3StreamResult, LanguageModelV3Usage } from "@ai-sdk/provider";
 import { MockLanguageModelV3 } from "ai/test";
@@ -17,10 +17,9 @@ import type { LanguageModel } from "ai";
 import { diyHome } from "../../src/main/core/state";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
-import { getLocalAgent, compactFile } from "../../src/main/services/local-agent";
+import { getLocalAgent, compactFile, compactStateFile } from "../../src/main/services/local-agent";
 import { opsFile } from "../../src/main/core/local-paths";
 import { parseCompactLog } from "../../src/shared/context/compaction";
-import { readFileSync } from "node:fs";
 
 let PROJECT = "";
 beforeAll(() => {
@@ -113,8 +112,8 @@ describe("④ 预算事件的**过滤器表达**（历史回溯可还原投递�
     });
 });
 
-describe("② details.clippedIds：同 id 只记一次（去重 —— 回归「虚胖一倍」；##431 起只存 id 清单）", () => {
-    it("headtail 裁剪时，每个工具 id 在 details.clippedIds.ids 里只出现一次", () => {
+describe("② 被裁工具 id：##442 起只在 compact-state.opIds 里（账本只留 count），且同 id 只记一次", () => {
+    it("headtail 裁剪时，每个工具 id 在快照 opIds 里只出现一次；账本只留 count", () => {
         const uri = newUri();
         // ⚠️ 必须**多于保底步数**（##343 M1：最近 6 步 `clip: full` ⇒ 不再被 headtail 裁）：
         //    8 轮 ⇒ 最早两轮的工具输出走阶梯级、照旧被裁，去重才有对象可验。
@@ -123,12 +122,17 @@ describe("② details.clippedIds：同 id 只记一次（去重 —— 回归「
             uri,
             { mode: "budget", toolResult: { render: "headtail" }, summary: false },
             "cli",
-        ) as { details?: { clippedIds?: { ids: string[]; count: number } } };
-        const ids = rec.details?.clippedIds?.ids ?? [];
-        // ##431：账本只留 id 清单（明细现场从 ops 算），但「同 id 只记一次」的去重口径不变
-        expect(ids.length).toBeGreaterThan(0);
-        expect(rec.details?.clippedIds?.count).toBe(ids.length);
-        expect(new Set(ids).size).toBe(ids.length); // 无重复
+        ) as { details?: { clippedIds?: { ids?: string[]; count: number } } };
+        // ##442：账本不再抄 id 清单（每次压缩都重抄一遍 = 唯一线性增长的字段），只留计数
+        expect(rec.details?.clippedIds?.ids).toBeUndefined();
+        expect(rec.details?.clippedIds?.count).toBeGreaterThan(0);
+        // id 的唯一真源 = 当前值快照；「同 id 只记一次」的去重口径搬到这里
+        // 快照是 id 的唯一真源（compact-state.json 的 opIds）
+        const snap = JSON.parse(readFileSync(compactStateFile(uri), "utf-8")) as { opIds?: string[] };
+        const opIds = snap.opIds ?? [];
+        expect(opIds.length).toBeGreaterThan(0);
+        expect(opIds.length).toBe(rec.details?.clippedIds?.count ?? -1);
+        expect(new Set(opIds).size).toBe(opIds.length); // 无重复
     });
 });
 
@@ -232,7 +236,7 @@ describe("④ v3 分组形状：看 JSON 就知道每块回答什么（D5「结�
         const rec = getLocalAgent().compact(uri, { toolResult: { render: "asis" } }, "cli") as unknown as Record<string, unknown>;
         expect(rec.kind).toBe("compact");
         // ##344 M2 的 plan 快照 → ##378 起只记**内容寻址版本**（全文在 $DIY_HOME/plan-store/）
-        expect(rec.v).toBe(5); // ##431：v5 = 明细瘦身
+        expect(rec.v).toBe(6); // ##431 v5 明细瘦身 → ##442 v6 clippedIds 只留 count
         expect(rec.trigger).toBe("manual");
         expect(Object.keys(rec)).toEqual(
             expect.arrayContaining(["policy", "boundary", "size", "cost", "details", "plan"]),
