@@ -5810,7 +5810,17 @@ export class LocalAgentManager {
                 const compactMsg = compactHeaderMessage(taskUri);
                 const all = h.messages;
                 const last = all[all.length - 1] as any | undefined;
-                const historyOuter = all.slice(0, -1) as unknown as ModelMessage[];
+                const historyOuter = all.slice(0, -1).map((m: any) => {
+                    const role = m.role as string;
+                    const fromId = role === "assistant" ? "agent:main" : "human:chen56";
+                    const raw = m.content;
+                    let content: string;
+                    if (typeof raw === "string") content = raw;
+                    else if (Array.isArray(raw)) content = raw.map((p: any) => (typeof p.text === "string" ? p.text : typeof p.content === "string" ? p.content : JSON.stringify(p))).join("");
+                    else content = JSON.stringify(raw ?? "");
+                    const yaml = role === "assistant" ? toYaml({ from: { id: fromId }, assistant: { message: content } }) : toYaml({ from: { id: fromId }, user: { message: content } });
+                    return { role, content: yaml } as unknown as ModelMessage;
+                });
                 // 当轮 messages 仅 1 条（当前输入），满足 messages.0.content == 当轮输入
                 const curPayloadMessages = last
                     ? (() => {
