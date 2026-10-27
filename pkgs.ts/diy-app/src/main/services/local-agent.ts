@@ -1653,7 +1653,6 @@ function usageStats(
         }, 0);
         if (totalCost > 0) taxShare = readCost / totalCost;
     }
-    const rebuildCost = rate ? (afterTokens * Math.max(0, rate.input - rate.cacheRead)) / 1_000_000 : undefined;
     const avgNew = buckets.reduce((a, b) => a + b.noCache, 0) / buckets.length;
     const windowNow = buckets[buckets.length - 1]!.total;
     const backfillSteps =
@@ -1661,7 +1660,6 @@ function usageStats(
     return {
         ...(taxShare !== undefined ? { taxShare } : {}),
         zeroOutputSteps,
-        ...(rebuildCost !== undefined ? { rebuildCost } : {}),
         ...(backfillSteps !== undefined ? { backfillSteps } : {}),
     };
 }
@@ -5830,7 +5828,11 @@ export class LocalAgentManager {
                 );
             }
             const historySelection = {
-                retainTokens: Math.max(1, Math.floor((contextLimitOf(model) ?? 0) * stepLimit.retainRatio)),
+                // 保留量（窗口 × retainRatio）：徽章文案直接说它（派生值，每轮一格，不值得再算一次）
+                retainTokens: Math.max(
+                    1,
+                    Math.floor((stepLimit.windowTokens ?? contextLimitOf(model) ?? 0) * stepLimit.retainRatio),
+                ),
                 // ##423：丢 / 留都说 **token**（与上限同口径）—— 徽章不再拿字节和 token 上限比
                 keptTokens: sel.kept.reduce((n, i) => n + estimateTokensOf(JSON.stringify(allMsgs[i]?.content ?? "")), 0),
                 droppedTokens: sel.dropped.reduce((n, i) => n + estimateTokensOf(JSON.stringify(allMsgs[i]?.content ?? "")), 0),

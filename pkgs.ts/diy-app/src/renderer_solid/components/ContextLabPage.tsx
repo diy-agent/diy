@@ -660,16 +660,6 @@ export function ContextLabPage(props: { uri: string }) {
                                                 <Show when={t.runtimeDiffers}>
                                                     <span class="badge badge-warning badge-xs ml-1">run</span>
                                                 </Show>
-                                                {/* history 段（压缩索引注记）变没变：它**不是变量树单元**，
-                                                    所以只看左上那些行永远看不出它变了 —— 用户 2026-10-23 实测踩到 */}
-                                                <Show when={t.historyDiffers === true}>
-                                                    <span
-                                                        class="badge badge-info badge-xs ml-1"
-                                                        title="history: 压缩索引注记段变了（不是变量树的变化）"
-                                                    >
-                                                        hist
-                                                    </span>
-                                                </Show>
                                             </td>
                                             <td class="font-mono">{t.ref.step}</td>
                                             <td>

@@ -824,7 +824,6 @@ export interface CompactEventRecord {
          * 一次性重建代价（$）= 保留部分按 (全价 − 缓存读) 重读一次 —— **纯账，不是预测**，
          * panel 的「事实」行直接显示这个数（不显示「省多少」，那是没底气的预测，见 ##230#25）。
          */
-        rebuildCost?: number;
         /**
          * 回填步数**估算**（##230 的「回填速度」）：会话上下文涨回压缩前水位大约还要几步。
          * 为什么它重要：清零的收益只在「回填期」存在 —— 实测清零后 19~37 步就涨回 50k~150k，
@@ -882,7 +881,6 @@ interface CompactEventRecordV1 {
     rates?: RateSnapshot;
     taxShare?: number;
     zeroOutputSteps?: number;
-    rebuildCost?: number;
     backfillSteps?: number;
     droppedDetail?: DroppedTurnDetail[];
     clipped?: ClippedToolDetail[];
@@ -910,7 +908,7 @@ function normalizeCompactEvent(e: CompactEventRecord | CompactEventRecordV1): Co
         v1.rates !== undefined ||
         v1.taxShare !== undefined ||
         v1.zeroOutputSteps !== undefined ||
-        v1.rebuildCost !== undefined ||
+
         v1.backfillSteps !== undefined;
     return {
         kind: "compact",
@@ -940,7 +938,6 @@ function normalizeCompactEvent(e: CompactEventRecord | CompactEventRecordV1): Co
                       ...(v1.rates !== undefined ? { rates: v1.rates } : {}),
                       ...(v1.taxShare !== undefined ? { taxShare: v1.taxShare } : {}),
                       ...(v1.zeroOutputSteps !== undefined ? { zeroOutputSteps: v1.zeroOutputSteps } : {}),
-                      ...(v1.rebuildCost !== undefined ? { rebuildCost: v1.rebuildCost } : {}),
                       ...(v1.backfillSteps !== undefined ? { backfillSteps: v1.backfillSteps } : {}),
                   },
               }

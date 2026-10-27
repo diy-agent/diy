@@ -63,7 +63,7 @@ function seedOps(taskUri: string): void {
 }
 
 describe("投递压缩可见性：每轮首步的用量账带 historySelection", () => {
-    it("轮首步记录 historySelection（新口径 = token 上限）；其余步不带", async () => {
+    it("轮首步记录 historySelection（新口径 = 窗口 × retainRatio）；其余步不带", async () => {
         const uri = createTask({ title: "投递事实", project: PROJECT });
         seedOps(uri);
         saveAutoCompact(diyHome(), {
@@ -85,8 +85,9 @@ describe("投递压缩可见性：每轮首步的用量账带 historySelection",
         expect(recs.length).toBeGreaterThanOrEqual(1);
         const s1 = recs.find((r) => r.step === 1)!;
         expect(s1.historySelection).toBeTruthy();
-        // 报的是**唯一旋钮**的值（token 上限）；没有压缩边界 ⇒ 不丢消息
-        expect(s1.historySelection!.retainTokens).toBe(30000);
+        // 报的是**唯一旋钮**算出的保留量：模型窗口 × 0.16（##442）
+        // 窗口取模型目录（stub 走缺省人物 ⇒ 1M 窗口），所以是 167,772 而不是绝对 token 上限
+        expect(s1.historySelection!.retainTokens).toBe(Math.floor(1_048_576 * 0.16));
         expect(s1.historySelection!.totalMessages).toBeGreaterThan(0);
         expect(s1.historySelection!.droppedMessages).toBe(0);
         // 只有轮首记（配置驱动的重建点）；其余步不带

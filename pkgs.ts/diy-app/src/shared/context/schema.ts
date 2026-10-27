@@ -77,17 +77,14 @@ export const StepSummarySchema: z.ZodType<StepSummary> = z.object({
             changed: z.array(z.string()),
             systemDiffers: z.boolean(),
             runtimeDiffers: z.boolean(),
-            /** `history:` 注记段是否变（老快照缺字段 = false，不下结论） */
-            historyDiffers: z.boolean(),
             summaryDiffers: z.boolean(),
             incomparable: z.boolean(),
             systemSize: z.object({ add: z.number(), del: z.number() }),
             runtimeSize: z.object({ add: z.number(), del: z.number() }),
-            historySize: z.object({ add: z.number(), del: z.number() }),
         })
         .nullable(),
     diff: z
-        .object({ system: z.array(diffLine), runtime: z.array(diffLine), history: z.array(diffLine) })
+        .object({ system: z.array(diffLine), runtime: z.array(diffLine) })
         .nullable()
         .optional(),
 });
@@ -110,22 +107,16 @@ export const ContextDiffSchema = z.object({
     changed: z.array(z.string()),
     systemDiffers: z.boolean(),
     runtimeDiffers: z.boolean(),
-    /** `history:` 注记段（压缩索引）是否变 —— 它不是变量树单元，故与 `changed` 无关 */
-    historyDiffers: z.boolean(),
     systemDiff: z.array(diffLine),
     runtimeDiff: z.array(diffLine),
-    historyDiff: z.array(diffLine),
     /** target 侧的**全文**（system 信封 / runtime 信封）—— `<>` 原始数据视图用。
      *  为什么随 diff 一起给：那两个 view 的"原始数据"就是这份文本本身，另开一个 RPC
      *  只会多一次 round-trip 且两份可能不同源（diff 是同一份 steps 记录算的）。 */
     systemText: z.string(),
     runtimeText: z.string(),
-    /** 同上，`history:` 段全文（空串 = 该轮没有这一段） */
-    historyText: z.string(),
     /** base 侧全文（没有上一步 = null）—— 供"两侧对照"看原始数据 */
     baseSystemText: z.string().nullable(),
     baseRuntimeText: z.string().nullable(),
-    baseHistoryText: z.string().nullable(),
 });
 export type ContextDiff = z.infer<typeof ContextDiffSchema>;
 
@@ -167,8 +158,6 @@ export interface HistoryEntryView {
     systemPlaces: string[];
     systemDiffers: boolean | null;
     runtimeDiffers: boolean | null;
-    /** `history:` 注记段是否变（快照缺字段 = null，UI 不画徽章） */
-    historyDiffers: boolean | null;
     incomparable: boolean | null;
     cacheHitRate: number | null;
     cost: number | null;
@@ -195,7 +184,6 @@ const historyEntrySchema: z.ZodType<HistoryEntryView> = z.object({
     systemPlaces: z.array(z.string()),
     systemDiffers: z.boolean().nullable(),
     runtimeDiffers: z.boolean().nullable(),
-    historyDiffers: z.boolean().nullable(),
     incomparable: z.boolean().nullable(),
     cacheHitRate: z.number().nullable(),
     cost: z.number().nullable(),

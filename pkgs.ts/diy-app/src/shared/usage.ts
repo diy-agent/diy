@@ -518,10 +518,10 @@ export interface StepUsageRecord {
      * optional：本版上线前的账本没有 → 分表不标注（不编造）。
      */
     historySelection?: {
-        /** 生效的**保留量**（token = 压缩时窗口 × `history.limit.retainRatio`） */
+        /** 本步生效的**保留量**（token = 窗口 × `history.limit.retainRatio`）—— 徽章文案要它 */
         retainTokens: number;
         /**
-         * 实际保留段估算 token（##423：与 `retainTokens` **同口径**，都用
+         * 实际保留段估算 token（##423：与压缩保留量**同口径**，都用
          * `history-limit.ts::estimateTokensOf` 粗估）—— 徽章说「丢多少 / 留多少」只认这个数，
          * 别用 `keptBytes` 去和 token 上限比（那是两个口径，用户 2026-10-23 的原话就是被这个坑到）。
          */
