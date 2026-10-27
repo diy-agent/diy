@@ -740,7 +740,6 @@ function compactHeaderMessage(taskUri: string): ModelMessage | null {
     const mode = normalizeHistoryLimit(loadAutoCompact(diyHome()).history?.limit).summary.mode;
     const text = renderCompactHeader({
         at: b.at,
-        droppedMessages: b.v === 2 ? b.dropped : b.droppedMessages,
         lines: { from, to },
         source: llmFile(taskUri),
         index: existsSync(llmOffsetsFile(taskUri)) ? llmOffsetsFile(taskUri) : undefined,

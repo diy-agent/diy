@@ -158,7 +158,9 @@ describe("##442 压缩头部消息：位置在 system 之后第一条，且两�
             const head = textOf(p[1]?.content);
             expect(head.startsWith("compact:\n")).toBe(true);
             // 一份结构：事实 + summary（可空）+ task 全在 compact 里面
-            expect(head).toContain("droppedMessages:");
+            // 头部不单列"丢了多少条"（= lines 区间长度的派生值），只给区间 + 叙述句
+            expect(head).toContain("lines:");
+            expect(head).toContain("条消息");
             expect(head).toContain("source:");
             expect(head).toContain("summary:");
             expect(head).toContain("task:");

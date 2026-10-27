@@ -31,9 +31,12 @@ import { toYaml } from "./render";
 export interface CompactFacts {
     /** 压缩时刻（ISO） */
     at: string;
-    /** 丢掉的**消息条数**（= llm.jsonl 行数；名字带单位，别叫 `dropped`） */
-    droppedMessages: number;
-    /** 被丢掉的**行号区间**（1-based，含两端；行号 == 消息序号） */
+    /**
+     * 被丢掉的**行号区间**（1-based，含两端；llm 一行 == 一条消息 ⇒ 区间长度就是条数）。
+     *
+     * 为什么不另给一个"丢了多少条"：它是 `to - from + 1` 的**派生值**，两处并存迟早对不上
+     * （第一版就写了 `droppedMessages`，模型看到 24 与 1–24 得自己核一遍）。
+     */
     lines: { from: number; to: number };
     /** llm.jsonl 绝对路径（每行一条消息） */
     source: string;
@@ -63,6 +66,9 @@ export interface CompactHeaderInput extends CompactFacts {
 /** 给人读的千分位（**只用于叙述文字**；命令行参数一律用原数 —— 逗号进 shell 会变成"多列地址"） */
 const fmt = (n: number): string => n.toLocaleString("en-US");
 
+/** 被丢掉的消息条数 = 行号区间长度（llm 一行 = 一条消息） */
+const droppedCount = (i: CompactFacts): number => Math.max(0, i.lines.to - i.lines.from + 1);
+
 /** 检索指令（`summary` 为空时必带；有结论时也给 —— 深挖原文仍然要用） */
 function searchGuide(i: CompactFacts): string[] {
     const { from, to } = i.lines;
@@ -84,7 +90,7 @@ function searchGuide(i: CompactFacts): string[] {
 
 /** 缺省的下一步指导：`summary` 空 ⇒ 先自查自写；非空 ⇒ 照着未完成项接着干 */
 function defaultTask(i: CompactHeaderInput): string {
-    const head = `上面的对话被压缩掉了（第 ${fmt(i.lines.from)}–${fmt(i.lines.to)} 行，共 ${fmt(i.droppedMessages)} 条消息）。`;
+    const head = `上面的对话被压缩掉了（第 ${fmt(i.lines.from)}–${fmt(i.lines.to)} 行，共 ${fmt(droppedCount(i))} 条消息）。`;
     const hasSummary = (i.summary ?? "").trim().length > 0;
     const stale = i.summaryCarried
         ? "（注意：这份结论是**上一次压缩**留下的，本次没有重新生成 —— 可能已经过时，动手前先核一遍。）"
@@ -118,7 +124,6 @@ export function renderCompactHeader(i: CompactHeaderInput): string {
     return toYaml({
         compact: {
             at: i.at,
-            droppedMessages: i.droppedMessages,
             lines: { from: i.lines.from, to: i.lines.to },
             ...(i.maxLineBytes ? { maxLineBytes: i.maxLineBytes } : {}),
             source: i.source,

@@ -4,7 +4,6 @@ import { ENVELOPE_TOP_KEYS, isEnvelopeText } from "../../src/shared/context/enve
 
 const facts: CompactFacts = {
     at: "2026-10-27T09:12:04.000Z",
-    droppedMessages: 14_684,
     lines: { from: 5, to: 14_688 },
     source: "/home/u/.diy/local/projects/4/tasks/266/abc/llm.jsonl",
     index: "/home/u/.diy/local/projects/4/tasks/266/abc/llmOffsets.jsonl",
@@ -13,7 +12,7 @@ const facts: CompactFacts = {
 };
 
 describe("压缩头部消息（##442）：**一份结构**，只有 summary 来源不同", () => {
-    it("两种来源的字段完全一样：at / droppedMessages / lines / source / index / turns / summary / task", () => {
+    it("两种来源的字段完全一样：at / lines / source / index / turns / summary / task", () => {
         const model = renderCompactHeader({ ...facts, summary: "## 结论\n- 改成窗口 × 0.16" });
         const self = renderCompactHeader({ ...facts, summary: "" });
         const keys = (t: string): string[] =>
