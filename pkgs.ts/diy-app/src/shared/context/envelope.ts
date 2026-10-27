@@ -56,7 +56,7 @@ import type { ContextPath, ContextTreeState } from "./types";
  * 真正该动版本的只有 `WIRE_ENCODING` 里那些**语义**（system/runtime 投递形态、hash 口径、渲染格式）。
  */
 export const ENVELOPE_ABOUT = [
-    "YAML 信封：顶层键只有 help / system / runtime / runtimeDiff / summary / from / user。",
+    "YAML 信封：顶层键只有 help / system / runtime / messages / compact / runtimeDiff / summary / from / user。",
     "· help = 结构说明（zod 派生）；值段只放数据，解释在 help。",
     "· system 每次全量重建；runtime 每轮首步全量，中途变了追加 runtimeDiff（以**后出现**者为准）。",
     "· **历史压缩不动变量树**（system / runtime 每次全量）：别为取值去 cat 文件或跑命令。",
@@ -108,6 +108,16 @@ export const UserEnvelopeSchema = z
     .object({ message: z.string().describe("用户本轮真实发言（原样，未加工）") })
     .describe("用户消息：与运行时变量变更**同处一个信封**（相邻 user 消息会被合并，故先合成一份）");
 
+/** 历史消息数组（单条 user 内 `messages: [{from, content}]`） */
+export const MessagesSchema = z
+    .array(
+        z.object({
+            from: z.string().describe("发言者（human:xxx / agent:xxx / agent:system）"),
+            content: z.string().describe("消息正文"),
+        }),
+    )
+    .describe("历史消息（按发送顺序）");
+
 /** 信封顶层键的 zod（唯一真源；`help` 由它 + 各值段 schema 派生，见 `buildHelpDoc`） */
 export const EnvelopeSchema = z
     .object({
@@ -117,6 +127,8 @@ export const EnvelopeSchema = z
         summary: SummarySchema,
         from: FromSchema,
         user: UserEnvelopeSchema,
+        messages: MessagesSchema,
+        compact: z.record(z.string(), z.unknown()).describe("压缩顶替段（仅压缩后）"),
     })
     .describe(ENVELOPE_ABOUT);
 
@@ -154,6 +166,8 @@ export function buildHelpDoc(opts: {
         runtime: { desc: key("runtime"), ...pruneSchemaDoc(globalsDoc, opts.runtimePlaces) },
         runtimeDiff: { desc: EnvelopeSchema.shape.runtimeDiff.description },
         summary: describeSchema(SummarySchema),
+        compact: describeSchema(EnvelopeSchema.shape.compact as any),
+        messages: describeSchema(MessagesSchema),
         from: describeSchema(FromSchema),
         user: { desc: key("user"), ...describeSchema(UserEnvelopeSchema) },
     };
@@ -169,6 +183,7 @@ export const ENVELOPE_TOP_KEYS = new Set([
     "compact",
     "from",
     "user",
+    "messages",
 ]);
 
 /**

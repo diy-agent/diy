@@ -148,6 +148,7 @@ import { assemblyHardCapBytes } from "../../shared/context/request-preflight";
 import { estimateRequest, tighterHistoryCapBytes } from "../../shared/context/request-preflight";
 import { renderCompactHeader } from "../../shared/context/compact-header";
 import { isEnvelopeText, tailEnvelope } from "../../shared/context/envelope";
+import { toYaml } from "../../shared/context/render";
 import { describeAnomalies, readLlmLog } from "../../shared/context/log-schema";
 import {
     autoCompactPolicyInput,
@@ -5804,15 +5805,38 @@ export class LocalAgentManager {
             const replayOpts = reasoningReplayOptsOf(rm, reasoningEffort);
             // 一份 `hist` → 最终 wire 形状（历史前注记 + 尾部 runtime 信封 + 摘要 + 推理回放归一）。
             // 抽成闭包：预检「再压一次」要按同一套拼装重算一遍 —— 两处各抄一遍必分叉（##227 老教训）。
-            const sentOf = (h: typeof hist): ModelMessage[] =>
-                ensureReasoningReplay(
-                    // 位置取 ##421（注记自占一条 user 消息、挂在历史第一条之前）；
-                    // `summaryPart` 仍按 ##5 提升到闭包外只算一次（它同时要进投递快照）。
-                    normalizeUserRuns(
-                        withRuntime(withCompactHeader(h.messages, taskUri), delivery.runtime.text),
-                    ),
-                    replayOpts,
-                );
+            // 新格式（你 10-27 定版）：单条 user 内 runtime全量 + messages[] + compact，无外层连续 user
+            const sentOf = (h: typeof hist): ModelMessage[] => {
+                const compactMsg = compactHeaderMessage(taskUri);
+                const payloadMessages = h.messages.map((m: any) => {
+                    const role = m.role as string;
+                    const from = role === "assistant" ? "agent:main" : "human:chen56";
+                    const raw = (m as any).content;
+                    let content: string;
+                    if (typeof raw === "string") content = raw;
+                    else if (Array.isArray(raw)) content = raw.map((p: any) => (typeof p.text === "string" ? p.text : typeof p.content === "string" ? p.content : JSON.stringify(p))).join("");
+                    else content = JSON.stringify(raw ?? "");
+                    // 若 content 本身是 envelope（含 user:），粗略取 user.message
+                    if (content.includes("user:")) {
+                        const mm = /message:\s*"([^"]*)"/.exec(content) || /message:\s*\|-?\n\s+([^\n]+)/.exec(content);
+                        if (mm && mm[1]) content = mm[1];
+                    }
+                    return { from, content };
+                });
+                const parts: string[] = [];
+                if (delivery.runtime.text) parts.push(delivery.runtime.text);
+                if (payloadMessages.length) {
+                    const msgsYaml = payloadMessages.map((x: any) => `  - from: ${x.from}\n    content: ${JSON.stringify(x.content)}`).join("\n");
+                    parts.push(`messages:\n${msgsYaml}`);
+                }
+                if (compactMsg) {
+                    const c = (compactMsg as any).content;
+                    parts.push(typeof c === "string" ? c : JSON.stringify(c));
+                }
+                const yaml = parts.join("\n");
+                const single = { role: "user", content: yaml } as unknown as ModelMessage;
+                return ensureReasoningReplay([single], replayOpts);
+            };
             let sent: ModelMessage[] = sentOf(hist);
             // 构成字节（##9 追加的历史段）：system / tools / **历史** 三段，才答得了
             // 「历史占了窗口多少、该不该压」。`historyBytes` 量的是**真发消息段**
