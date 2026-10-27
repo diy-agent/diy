@@ -37,15 +37,23 @@ function reply(text: string): LanguageModelV3StreamResult {
     };
 }
 
+/** 采集每次 doStream 的 prompt（断言 wire 形状用） */
+const prompts: Array<Array<{ role: string; content: unknown }>> = [];
 const model = new MockLanguageModelV3({
     provider: "stub",
     modelId: "stub-model",
-    doStream: () => Promise.resolve(reply("答".repeat(400))),
+    doStream: (opts: { prompt: unknown }) => {
+        prompts.push(opts.prompt as Array<{ role: string; content: unknown }>);
+        return Promise.resolve(reply("答".repeat(400)));
+    },
 });
 
 function manager(): LocalAgentManager {
     return new LocalAgentManager(() => model as unknown as LanguageModel);
 }
+
+const textOf = (c: unknown): string =>
+    typeof c === "string" ? c : ((c ?? []) as Array<{ text?: string }>).map((p) => p.text ?? "").join("\n");
 
 async function collect(gen: AsyncGenerator<Op>): Promise<void> {
     for await (const _op of gen) void _op;
@@ -129,6 +137,42 @@ describe("压缩边界：一次算、落盘、之后不重算", () => {
         expect(JSON.stringify(view.messages)).not.toContain("history:");
         // 切点仍需真生效：cutLine 之前至少丢了一条
         expect(entry!.cut.llmLine).toBeGreaterThan(1);
+    });
+});
+
+describe("##442 压缩头部消息：位置在 system 之后第一条，且两次压缩之间**逐字节不变**", () => {
+    it("有边界 ⇒ prompt[1] = `compact:` 消息（事实 + summary + task）；两轮之间逐字节相等", async () => {
+        const uri = newTask();
+        const mgr = manager();
+        prompts.length = 0;
+        // 压够多次以落定边界
+        for (let i = 0; i < 8; i++) await collect(mgr.chat(uri, `问 ${i}：${"问".repeat(1200)}`));
+        expect(compactions(uri).length).toBeGreaterThanOrEqual(1);
+
+        // 再连发两轮（都是「同一条边界」下的投递）
+        await collect(mgr.chat(uri, "第一句小话"));
+        await collect(mgr.chat(uri, "第二句小话"));
+        const last2 = prompts.slice(-2).map((p) => p);
+        for (const p of last2) {
+            expect(p[0]?.role).toBe("system");
+            const head = textOf(p[1]?.content);
+            expect(head.startsWith("compact:\n")).toBe(true);
+            // 一份结构：事实 + summary（可空）+ task 全在 compact 里面
+            expect(head).toContain("droppedMessages:");
+            expect(head).toContain("source:");
+            expect(head).toContain("summary:");
+            expect(head).toContain("task:");
+        }
+        // 头部在两次压缩之间**逐字节不变** —— 这正是 ##266 栽的那条（`history:` 的 kept 右端点每轮 +N）
+        const h0 = textOf(last2[0]![1]?.content);
+        const h1 = textOf(last2[1]![1]?.content);
+        if (h0 !== h1) {
+            const a = h0.split("\n");
+            const b = h1.split("\n");
+            const i = a.findIndex((l, k) => l !== b[k]);
+            throw new Error(`头部第 ${i + 1} 行变了：\n- ${a[i]}\n+ ${b[i]}`);
+        }
+        expect(h1).toBe(h0);
     });
 });
 

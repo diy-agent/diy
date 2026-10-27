@@ -31,7 +31,7 @@ import { writeFileAtomic, type FsLike } from "../core/atomic-write";
 import { fieldNames, renderFieldDocs } from "../../shared/schema-doc";
 import { findInOpsFile, type FindResult, type FindScopes } from "./local-find";
 import { diyHome, projectDir, projectFromUri } from "../core/state";
-import { keyOf, llmFile, llmLogRelPath, localDir, resolveSessionFile, sessionFileForWrite, sessionFilesToClear, sessionIdOf, sessionStateFile, streamPath, opsFile } from "../core/local-paths";
+import { keyOf, llmFile, llmLogRelPath, llmOffsetsFile, localDir, resolveSessionFile, sessionFileForWrite, sessionFilesToClear, sessionIdOf, sessionStateFile, streamPath, opsFile, turnsFile } from "../core/local-paths";
 import { readJsonlTail } from "../core/jsonl-tail";
 import {
     appendCompactionEntry,
@@ -53,7 +53,7 @@ import {
 } from "../../shared/context/history-limit";
 
 // 路径实现只在 `core/local-paths`（= `@diy/persistence`）一处 —— 测试也从那里取。
-import { createOpsAppender, type OpsAppender, type OpsRef } from "@diy/persistence";
+import { createOpsAppender, maxLineBytesOf, type OpsAppender, type OpsRef } from "@diy/persistence";
 import { resolveCwd as resolveCwdWithNote } from "../core/cwd";
 import {
     BlockStore,
@@ -146,6 +146,7 @@ import {
 import { buildDelivery, isRuntimePlace, runtimeDiffDelivery, type Delivery } from "../../shared/context/delivery";
 import { assemblyHardCapBytes } from "../../shared/context/request-preflight";
 import { estimateRequest, tighterHistoryCapBytes } from "../../shared/context/request-preflight";
+import { renderCompactHeader } from "../../shared/context/compact-header";
 import { isEnvelopeText, tailEnvelope } from "../../shared/context/envelope";
 import { describeAnomalies, readLlmLog } from "../../shared/context/log-schema";
 import {
@@ -717,6 +718,44 @@ function withRuntime(hist: ModelMessage[], runtime: string): ModelMessage[] {
     // 没有可并的输入：只有 runtime 一段时保持旧形（逐字一致）
     if (parts.length === 1 && runtime.trim()) return [...hist, { role: "user", content: runtime }];
     return [...hist, { role: "user", content: tailEnvelope(parts) }];
+}
+
+/**
+ * **压缩头部消息**（##442）：只在「已有压缩边界」时出现，位置 = system 之后第一条。
+ *
+ * 两条硬约束：
+ *   ① 结构只有一份（事实 + `summary` + `task`），两种摘要来源只差 `summary` 有没有内容；
+ *   ② 它在两次压缩之间必须**逐字节不变** —— 所以这里只读"压缩那一刻落盘的事实"
+ *      （边界时间 / 丢了多少 / 行号区间 / 文件路径），绝不掺任何每轮会变的量。
+ *
+ * 返回 `null` = 从没压过（投递 = 全量，不该有这条消息）。
+ */
+function compactHeaderMessage(taskUri: string): ModelMessage | null {
+    const b = taskUri ? readBoundary(taskUri) : null;
+    if (!b) return null;
+    const cutLine = b.cut.llmLine; // 1-based：这条及之后保留 ⇒ 丢掉的是它之前
+    // v2 老账有保头（`headLine`）：被丢区间从保头之后开始
+    const from = b.v === 2 ? Math.max(1, b.headLine + 1) : 1;
+    const to = Math.max(from - 1, cutLine - 1);
+    const mode = normalizeHistoryLimit(loadAutoCompact(diyHome()).history?.limit).summary.mode;
+    const text = renderCompactHeader({
+        at: b.at,
+        droppedMessages: b.v === 2 ? b.dropped : b.droppedMessages,
+        lines: { from, to },
+        source: llmFile(taskUri),
+        index: existsSync(llmOffsetsFile(taskUri)) ? llmOffsetsFile(taskUri) : undefined,
+        turns: turnsFile(taskUri),
+        maxLineBytes: b.v === 2 ? undefined : b.maxLineBytes,
+        // `model` 模式：压缩时产出的结论；没有（还没生成 / `self` 模式）就是空串 = 让模型自己查
+        summary: mode === "model" ? getLocalAgent().effectiveSummary(taskUri) : "",
+    });
+    return { role: "user", content: text };
+}
+
+/** 把头部消息挂到历史最前面（没有边界 ⇒ 原样返回，逐字不变） */
+function withCompactHeader(hist: ModelMessage[], taskUri: string): ModelMessage[] {
+    const head = compactHeaderMessage(taskUri);
+    return head ? [head, ...hist] : hist;
 }
 
 /**
@@ -3443,15 +3482,17 @@ export class LocalAgentManager {
         // 切点只往前推进，绝不回退（回退 = 把丢掉的原文又捞回来，账与投递会打架）
         if (!r || r.cut <= cut) return cut > 0 ? { cut, headEnd } : null;
         if (taskUri && write) {
+            // 先重建偏移索引（压缩之后「按需回查历史」才可能 O(1)），再取"最长一行"——
+            // 它要**冻结进账本**（头部消息每次现算会破坏"两次压缩之间逐字节不变"，单测抓到过）
+            refreshLlmOffsets(taskUri);
             appendCompactionEntry(taskUri, {
                 at: new Date().toISOString(),
                 retainTokens,
                 windowTokens,
                 droppedMessages: r.dropped,
+                maxLineBytes: maxLineBytesOf(diyHome(), taskUri) ?? undefined,
                 cut: { llmLine: llmLineBase + r.cut + 1, turnId: all[r.cut]?.turn ?? null },
             });
-            // 行号 → 字节偏移索引：压缩之后「按需回查历史」才可能 O(1)（##442）
-            refreshLlmOffsets(taskUri);
             console.log(
                 `[local-agent] 压缩事件 ${taskUri}：丢 ${r.dropped} 条（保留 ${retainTokens} token = 窗口 ${windowTokens} × ${limit.retainRatio}）`,
             );
@@ -4202,7 +4243,7 @@ export class LocalAgentManager {
         // 摘要与注记一样是**自动生成的段** → 各占顶层键，不进 user.message（##310 九轮）
         // 位置（##421）：注记在**历史首条之前**，摘要在尾部信封
         const messages = normalizeUserRuns(
-            withRuntime(histView.messages, delivery.runtime.text),
+            withRuntime(withCompactHeader(histView.messages, taskUri), delivery.runtime.text),
         );
         return {
             model: personaForTask(home, taskUri).model,
@@ -5740,7 +5781,7 @@ export class LocalAgentManager {
                     // 位置取 ##421（注记自占一条 user 消息、挂在历史第一条之前）；
                     // `summaryPart` 仍按 ##5 提升到闭包外只算一次（它同时要进投递快照）。
                     normalizeUserRuns(
-                        withRuntime(h.messages, delivery.runtime.text),
+                        withRuntime(withCompactHeader(h.messages, taskUri), delivery.runtime.text),
                     ),
                     replayOpts,
                 );
@@ -6639,7 +6680,10 @@ export async function previewSimulatedRequest(opts: {
     const messages: ModelMessage[] = ensureReasoningReplay(
         normalizeUserRuns(
             withRuntime(
-                [...hist.messages, { role: "user", content: opts.lastUser ?? "[仿真占位]真实下一轮此处为用户输入" }],
+                withCompactHeader(
+                    [...hist.messages, { role: "user", content: opts.lastUser ?? "[仿真占位]真实下一轮此处为用户输入" }],
+                    taskUri,
+                ),
                 opts.runtime ?? "",
             ),
         ),

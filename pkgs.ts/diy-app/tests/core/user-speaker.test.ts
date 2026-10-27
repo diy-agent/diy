@@ -208,7 +208,7 @@ describe("##422 合并规则：from 信封不参与相邻 user 合并（判据 �
         expect(out[1]!.content).toBe("裸文本");
     });
 
-    it("##442 刀 2：压缩后头部**没有**注记段 —— 保留的第一条历史消息（from 信封）直接紧跟 system", async () => {
+    it("##442 刀 2：压缩后头部是**压缩消息**（compact:），且不再有 history: 注记", async () => {
         // 边界切在 3 ⇒ 旧 user（from 信封）留下、assistant 被丢（真压缩）
         const uri = newUri();
         seedRoom(uri, uri);
@@ -222,8 +222,9 @@ describe("##422 合并规则：from 信封不参与相邻 user 合并（判据 �
         // ⚠️ 判据必须是「**行首**是 history:」（顶层键）：runtime 变量树里就有 `where#history:`
         // 这种键名本身含 history: 的单元，子串判据会假红（##432 实测踩过）
         expect(prompt.some((m) => /^history:/m.test(textOf(m.content)))).toBe(false);
-        // system 之后第一条不再有"注记占位"：要么是历史本身（from 信封），要么直接是尾部信封
+        // system 之后第一条 = 压缩头部消息（##442：事实 + summary + task 一份结构）
         const head = textOf(prompt[1]?.content);
-        expect(head.startsWith("from:\n") || head.startsWith("runtime:")).toBe(true);
+        expect(head.startsWith("compact:\n")).toBe(true);
+        expect(head).toContain("summary:");
     });
 });

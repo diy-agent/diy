@@ -89,6 +89,13 @@ export interface CompactionEntry {
      * 名字带单位：旧字段只叫 `dropped`，读的人得回去查是轮还是条（v2 老记录仍按 `dropped` 读）。
      */
     droppedMessages: number;
+    /**
+     * 压缩那一刻 `llm.jsonl` 里**最长一行**的字节数（##442）。
+     *
+     * 为什么必须冻结在账上：头部消息要告诉模型"取行先截断"，而"最长一行"会随新消息**每轮变**
+     * —— 现算就会破坏「头部两次压缩之间逐字节不变」（单测实测抓到过）。所以压缩时算一次、写死。
+     */
+    maxLineBytes?: number;
     cut: { llmLine: number; turnId: string | null };
     /** 切点那一轮的 ops 锚点（可选；用于下次 replay 少读前缀） */
     ref?: { ops: { offset: number; seq: number } };

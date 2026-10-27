@@ -115,6 +115,11 @@ export function turnsFile(taskUri: string): string {
     return sessionFileForWrite(taskUri, "turns");
 }
 
+/** `llm.jsonl` 的行号→字节偏移索引（##442；取行 O(1)，见 `@diy/persistence` 的 `llm-offsets`） */
+export function llmOffsetsFile(taskUri: string): string {
+    return sessionFileForWrite(taskUri, "llmOffsets");
+}
+
 /** 会话日志的相对路径（相对 `$DIY_HOME`）——写进投递文本给模型/人照此回取 */
 export function llmLogRelPath(taskUri: string): string {
     return llmLogRelPathAt(diyHome(), taskUri);

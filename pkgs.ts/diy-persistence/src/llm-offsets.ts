@@ -16,8 +16,7 @@
 // `llmOffsets.jsonl`：第 N 行 = llm.jsonl **第 N 行**（1-based）的起始字节偏移（0-based）。
 // 一行一个十进制数，append-only（每次压缩重建，见 `writeLlmOffsets`），随会话一起清（`SESSION_KINDS`）。
 
-import { readFileSync, renameSync, writeFileSync } from "node:fs";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { sessionFile, resolveSessionFile } from "./paths";
 
 /**
@@ -66,6 +65,29 @@ export function llmOffsetOf(home: string, taskUri: string, line: number): number
     const offsets = readLlmOffsets(home, taskUri);
     if (line < 1 || line > offsets.length) return null;
     return offsets[line - 1]!;
+}
+
+/**
+ * 文件里**最长一行**的字节数（从偏移索引算，不用再扫全文）：
+ * 相邻偏移之差 = 该行长度（含换行）；最后一行 = 文件大小 − 末条偏移。
+ *
+ * 为什么要这个数：压缩头部消息要告诉模型"单行可能几 MB，取行必须先 `head -c` 截断"
+ * （266 实测最长一行 9.98 MB —— 不截断一次就灌满窗口）。取不到（无索引 / 无文件）⇒ null。
+ */
+export function maxLineBytesOf(home: string, taskUri: string): number | null {
+    const offsets = readLlmOffsets(home, taskUri);
+    if (offsets.length === 0) return null;
+    const src = resolveSessionFile(home, taskUri, "llm");
+    if (!existsSync(src)) return null;
+    let size: number;
+    try {
+        size = statSync(src).size; // sync-io-ok: 只取 size，不读内容
+    } catch {
+        return null;
+    }
+    let max = 0;
+    for (let i = 1; i < offsets.length; i++) max = Math.max(max, offsets[i]! - offsets[i - 1]!);
+    return Math.max(max, size - offsets[offsets.length - 1]!);
 }
 
 /** 原子写（tmp + rename）：索引是派生物，写坏了顶多下次重建，但**不许**读到半份 */
