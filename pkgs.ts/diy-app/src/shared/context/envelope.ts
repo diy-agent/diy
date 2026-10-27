@@ -208,15 +208,6 @@ export function tailEnvelope(parts: readonly string[], userText?: string): strin
     return blocks.join("\n");
 }
 
-/**
- * 把摘要渲染成信封里的一个**顶层键片段**（`summary:` 一段；空文本 → 空串 = 不投递）。
- * 见 `SummarySchema` 头注：摘要是**自动生成的段**，必须有自己的顶层键，不进 `user.message`。
- */
-export function renderSummaryPart(text: string): string {
-    if (!text.trim()) return "";
-    return toYaml({ summary: text });
-}
-
 /** 一条发言的**发言者**（`from:` 段的值；见 `FromSchema`） */
 export interface Speaker {
     id: string;

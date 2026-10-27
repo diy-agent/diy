@@ -146,7 +146,7 @@ import {
 import { buildDelivery, isRuntimePlace, runtimeDiffDelivery, type Delivery } from "../../shared/context/delivery";
 import { assemblyHardCapBytes } from "../../shared/context/request-preflight";
 import { estimateRequest, tighterHistoryCapBytes } from "../../shared/context/request-preflight";
-import { isEnvelopeText, renderSummaryPart, tailEnvelope } from "../../shared/context/envelope";
+import { isEnvelopeText, tailEnvelope } from "../../shared/context/envelope";
 import { describeAnomalies, readLlmLog } from "../../shared/context/log-schema";
 import {
     autoCompactPolicyInput,
@@ -701,8 +701,10 @@ function isEnvelope(m: ModelMessage): boolean {
  * `user.message`，正是 `FromSchema` 说的不许，也把整份 YAML 缩进成块标量）。
  * 两条都是信封 ⇒ `normalizeUserRuns` 也不会合并（判据 `isEnvelopeText`），形状可控。
  */
-function withRuntime(hist: ModelMessage[], runtime: string, summaryPart = ""): ModelMessage[] {
-    const parts = [summaryPart, runtime].filter((t) => t.trim());
+function withRuntime(hist: ModelMessage[], runtime: string): ModelMessage[] {
+    // ⚠️ 摘要**不在**这里了（##442）：它随「压缩头部消息」走 `compact.summary`，位置在 system 之后。
+    // 尾部只剩 runtime / runtimeDiff + 本轮输入 —— 尾部的东西每步都变，正好不该放"压缩结论"。
+    const parts = [runtime].filter((t) => t.trim());
     if (parts.length === 0) return hist;
     const last = hist[hist.length - 1];
     const lastText = last?.role === "user" && typeof last.content === "string" ? last.content : "";
@@ -712,10 +714,8 @@ function withRuntime(hist: ModelMessage[], runtime: string, summaryPart = ""): M
     if (last && last.role === "user" && lastText.trim()) {
         return [...hist.slice(0, -1), { role: "user", content: tailEnvelope(parts, lastText) }];
     }
-    // 没有可并的输入：只有 runtime 一段时保持旧形（逐字一致）；否则各段各有顶层键
-    if (parts.length === 1 && runtime.trim() && !summaryPart.trim()) {
-        return [...hist, { role: "user", content: runtime }];
-    }
+    // 没有可并的输入：只有 runtime 一段时保持旧形（逐字一致）
+    if (parts.length === 1 && runtime.trim()) return [...hist, { role: "user", content: runtime }];
     return [...hist, { role: "user", content: tailEnvelope(parts) }];
 }
 
@@ -4202,7 +4202,7 @@ export class LocalAgentManager {
         // 摘要与注记一样是**自动生成的段** → 各占顶层键，不进 user.message（##310 九轮）
         // 位置（##421）：注记在**历史首条之前**，摘要在尾部信封
         const messages = normalizeUserRuns(
-            withRuntime(histView.messages, delivery.runtime.text, renderSummaryPart(summaryText)),
+            withRuntime(histView.messages, delivery.runtime.text),
         );
         return {
             model: personaForTask(home, taskUri).model,
@@ -5735,15 +5735,12 @@ export class LocalAgentManager {
             const replayOpts = reasoningReplayOptsOf(rm, reasoningEffort);
             // 一份 `hist` → 最终 wire 形状（历史前注记 + 尾部 runtime 信封 + 摘要 + 推理回放归一）。
             // 抽成闭包：预检「再压一次」要按同一套拼装重算一遍 —— 两处各抄一遍必分叉（##227 老教训）。
-            // 摘要段**算一次**：它既进 `sent`，也要原样进投递快照（##5 第 16 轮）。
-            // 两处各调一次 `effectiveSummary` 是纯读、值相同，但"恰好相同"不该是快照正确的依据。
-            const summaryPart = renderSummaryPart(this.effectiveSummary(taskUri));
             const sentOf = (h: typeof hist): ModelMessage[] =>
                 ensureReasoningReplay(
                     // 位置取 ##421（注记自占一条 user 消息、挂在历史第一条之前）；
                     // `summaryPart` 仍按 ##5 提升到闭包外只算一次（它同时要进投递快照）。
                     normalizeUserRuns(
-                        withRuntime(h.messages, delivery.runtime.text, summaryPart),
+                        withRuntime(h.messages, delivery.runtime.text),
                     ),
                     replayOpts,
                 );
@@ -5886,10 +5883,8 @@ export class LocalAgentManager {
                 valueHashes: delivery.valueHashes,
                 systemText: delivery.system.text,
                 runtimeText: delivery.runtime.text,
-                // 尾部信封里另外一段（##5 第 16 轮）：它**不是变量树单元**，不进 valueHashes，
-                // 也不出现在 `runtimeDiff` 里 —— 不记下来就永远看不见它变没变。
-                // （`historyText` 自 ##442 刀 2 起不再写：注记已删，老快照里的该字段只作读侧兼容）
-                summaryText: summaryPart,
+                // ##442：`historyText` / `summaryText` 都不再写 —— 注记已删、摘要已移到头部
+                // `compact.summary`；两个字段只作老快照的读侧兼容（diff 得 false = 不下结论）。
             };
             appendStep(stepsFile(taskUri), step);
             // 变更统计（**按项目**累计；只存变化路径 → 体积小、可长期留）。
@@ -6646,7 +6641,6 @@ export async function previewSimulatedRequest(opts: {
             withRuntime(
                 [...hist.messages, { role: "user", content: opts.lastUser ?? "[仿真占位]真实下一轮此处为用户输入" }],
                 opts.runtime ?? "",
-                renderSummaryPart(getLocalAgent().effectiveSummary(taskUri)),
             ),
         ),
         previewRm
