@@ -8,7 +8,6 @@ import {
     compactWhenSummary,
     fmtStamp,
     fmtTokens,
-    fmtTtl,
     windowRatio,
     type CompactWhenInput,
 } from "../../src/shared/context/compact-when";
@@ -87,7 +86,6 @@ describe("compact-when · 文案", () => {
         expect(windowRatio(50_000, 200_000)).toBe(25);
         expect(windowRatio(null, 200_000)).toBeNull();
         expect(fmtStamp("2026-10-25T10:30:00.000Z")).toMatch(/^10-2\d* \d\d:\d\d$/);
-        expect(fmtTtl(300_000)).toBe("5 分钟");
         expect(compactWhenSummary(base)).toContain("已压过");
         expect(compactWhenSummary({ ...base, boundary: null })).toContain("还没压过");
     });

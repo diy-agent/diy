@@ -37,7 +37,7 @@ describe("配置归一", () => {
 
 describe("触发线：W − max(10%W, 16k)，一个比较", () => {
     it("1M 窗口 899,999 不触发；900,000 触发", () => {
-        const base = { windowLimitTokens: 1_000_000, retainedTokens: null, boundary: null, compactionCount: 0 };
+        const base = { windowLimitTokens: 1_000_000 };
         expect(detectAutoCompactTriggers({ ...base, windowTokens: 899_999 })).toEqual([]);
         expect(detectAutoCompactTriggers({ ...base, windowTokens: 900_000 })).toEqual(["contextWindowOver"]);
     });
@@ -47,25 +47,18 @@ describe("触发线：W − max(10%W, 16k)，一个比较", () => {
             detectAutoCompactTriggers({
                 windowTokens: 112_000,
                 windowLimitTokens: 128_000,
-                retainedTokens: null,
-                boundary: null,
-                compactionCount: 0,
             }),
         ).toEqual(["contextWindowOver"]);
         expect(
             detectAutoCompactTriggers({
                 windowTokens: 230_400,
                 windowLimitTokens: 256_000,
-                retainedTokens: null,
-                boundary: null,
-                compactionCount: 0,
             }),
         ).toEqual(["contextWindowOver"]);
     });
 
     it("窗口 / 用量未知 ⇒ 不触发（不猜数）", () => {
-        const base = { retainedTokens: null, boundary: null, compactionCount: 0 };
-        expect(detectAutoCompactTriggers({ ...base, windowTokens: 999_999, windowLimitTokens: null })).toEqual([]);
-        expect(detectAutoCompactTriggers({ ...base, windowTokens: null, windowLimitTokens: 1_000_000 })).toEqual([]);
+        expect(detectAutoCompactTriggers({ windowTokens: 999_999, windowLimitTokens: null })).toEqual([]);
+        expect(detectAutoCompactTriggers({ windowTokens: null, windowLimitTokens: 1_000_000 })).toEqual([]);
     });
 });

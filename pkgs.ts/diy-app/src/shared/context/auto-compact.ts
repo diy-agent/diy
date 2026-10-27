@@ -118,29 +118,30 @@ export function normalizeAutoCompact(raw: unknown, issues?: AutoCompactIssue[]):
     };
 }
 
-/** 判定所需的**事实**（只保留窗口相关；其余字段留给旧 UI 读，不再参与触发） */
-export interface AutoCompactFacts {
+/** 触发判定只需要两个事实 */
+export interface AutoCompactTriggerFacts {
     /** 上下文窗口占用（token = 最后一步实测 usage.total）；null = 未知 */
     windowTokens: number | null;
     /** 模型窗口上限；null = 未知（不压，不猜数） */
     windowLimitTokens: number | null;
+}
+
+/** `autoCompactStatus` 的完整事实（触发 2 项 + UI 展示项） */
+export interface AutoCompactFacts extends AutoCompactTriggerFacts {
     /** 上次真发投递的历史 ≈ token（UI 展示用） */
     retainedTokens: number | null;
     /** 已落盘边界（UI 展示用） */
     boundary: { at: string; dropped: number; limitTokens: number } | null;
-    /** 压缩事件条数（UI 展示用） */
+    /** 压缩事件条数（UI 展示用；尾部限读可能截断） */
     compactionCount: number;
-    /** 旧 UI 字段（不再参与触发） */
-    systemContextChanged?: boolean;
-    sinceLastRequestMs?: number | null;
-    ttl?: unknown;
+    compactionCountTruncated?: boolean;
 }
 
 /**
  * 该不该压：**一个比较**。
  * `windowTokens >= W − max(10%W, 16k)`；任一未知 ⇒ 不触发。
  */
-export function detectAutoCompactTriggers(facts: AutoCompactFacts, _cfg?: AutoCompactConfig): CompactTrigger[] {
+export function detectAutoCompactTriggers(facts: AutoCompactTriggerFacts): CompactTrigger[] {
     const w = facts.windowLimitTokens;
     const used = facts.windowTokens;
     if (w === null || used === null || !(w > 0)) return [];

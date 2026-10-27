@@ -34,6 +34,7 @@ import {
     sessionStateFile,
     streamPath,
     opsFile,
+    turnsFile,
 } from "../core/local-paths";
 import { readJsonlTail } from "../core/jsonl-tail";
 import {
@@ -41,7 +42,6 @@ import {
     appendTurnRecord,
     checkOpsRef,
     clipTurnText,
-    countCompactions,
     readBoundary,
     readTurnRecords,
     synthesizeTurnOps,
@@ -154,8 +154,7 @@ import {
     loadAutoCompactDetailed,
     readAutoCompactText,
 } from "../core/auto-compact-config";
-import { cacheTtlMsOf } from "../../shared/models";
-import { effectiveTtl, ttlBoundsFrom, type CacheObservation, type EffectiveTtl } from "../../shared/context/cache-ttl";
+
 import { loadSystemPlaces } from "../core/context-config";
 import { appendContextStat } from "../core/context-stats";
 import { traffic } from "../core/traffic";
@@ -580,6 +579,18 @@ function usageFile(taskUri: string): string {
 /** 读取某任务的逐步用量（时间正序；文件不存在 = 还没实现落盘之前的会话） */
 export function readStepUsages(taskUri: string): StepUsageRecord[] {
     return readJsonl<StepUsageRecord>(usageFile(taskUri));
+}
+
+/** 只读最后一条用量（尾部限读；autoCompactStatus 每轮都要，不能整读 4.6 MB） */
+function readLastStepUsage(taskUri: string): StepUsageRecord | null {
+    const tail = readJsonlTail(usageFile(taskUri), { maxBytes: 64 * 1024, maxLines: 1 });
+    const line = tail.lines.at(-1);
+    if (!line) return null;
+    try {
+        return JSON.parse(line) as StepUsageRecord;
+    } catch {
+        return null;
+    }
 }
 
 /** 追加一条用量记录（append-only；写失败只出声 —— 观测不能阻断会话） */
@@ -3487,48 +3498,11 @@ export class LocalAgentManager {
     }
 
     /**
-     * 缓存观测序列（供 TTL 夹逼）——从 usage 账本 + steps 快照**离线**推（无额外请求）。
-     *
-     * 判据（见 cache-ttl.ts 头注）：
-     *   · gap = 本步 ts − 上一步 ts；hit = 本步缓存读 > 0
-     *   · `samePrefix`：同一轮内的步**必同前缀**（system/runtime 都不变）；跨轮比对两轮的
-     *     `systemText`（steps.jsonl 每条都记了全文）—— 变了就是"作废"不是"过期"，不进夹逼。
-     * 缺上游数据（老会话没 steps）时保守取 false（宁可少算，不可把作废当过期）。
-     */
-    private cacheObservations(taskUri: string): CacheObservation[] {
-        const usages = readStepUsages(taskUri);
-        if (usages.length < 2) return [];
-        const steps = readDeliverySteps(taskUri);
-        const sysOfTurn = new Map<string, string>();
-        for (const st of steps) sysOfTurn.set(st.turnId, st.systemText);
-        const out: CacheObservation[] = [];
-        for (let i = 1; i < usages.length; i++) {
-            const prev = usages[i - 1]!;
-            const cur = usages[i]!;
-            const gapMs = Date.parse(cur.ts) - Date.parse(prev.ts);
-            const b = bucketsOf(cur.usage as UsageLike);
-            const sameTurn = cur.turnId === prev.turnId;
-            const sPrev = sysOfTurn.get(prev.turnId);
-            const sCur = sysOfTurn.get(cur.turnId);
-            const samePrefix = sameTurn || (sPrev !== undefined && sCur !== undefined && sPrev === sCur);
-            out.push({ gapMs, hit: b.cacheRead > 0, samePrefix });
-        }
-        return out;
-    }
-
-    /** 该任务当前生效的 TTL（实测夹逼 + 先验；模型先验见 models.ts 的 cacheTtlMs） */
-    effectiveTtlOf(taskUri: string): EffectiveTtl {
-        const model = personaForTask(diyHome(), taskUri).model;
-        return effectiveTtl(ttlBoundsFrom(this.cacheObservations(taskUri)), cacheTtlMsOf(model));
-    }
-
-    /**
      * **自动压缩检测**（只读，不写任何东西）——UI 提示与 CLI 都用它。
      *
-     * 三个事实都从现成数据取（零额外请求、零额外模型调用）：
-     *   · systemContextChanged —— 当前 system 全文 vs 上一条 steps 快照的 systemText
-     *   · sinceLastRequestMs   —— now − 最后一条 usage 的 ts
+     * 只取两个事实（零额外请求、零额外模型调用）：
      *   · windowTokens         —— 最后一步**实测**用量（最后一步 = 窗口占用，见 ##211 §三）的 token 数
+     *   · windowLimitTokens    —— 模型窗口；取不到 ⇒ 不自动压
      */
     async autoCompactStatus(taskUri: string): Promise<{
         config: AutoCompactConfig;
@@ -3542,8 +3516,8 @@ export class LocalAgentManager {
     }> {
         // 系统上下文：与上次真发那份比（口径与 steps.jsonl 的 systemText 完全一致）
         const home = diyHome();
-        const usages = readStepUsages(taskUri);
-        const last = usages.at(-1) ?? null;
+        // 只读最后一条（尾部限读）：这里每轮都要跑，整读 usage.jsonl 是 4.6 MB
+        const last = readLastStepUsage(taskUri);
         // 模型窗口上限（刀 1：窗口触发改成比例后必须有这个数才判；取不到 ⇒ null ⇒ 不触发）。
         // 优先用账本里当场记的 contextLimit，老账本没有就按模型 id 现查。
         const windowLimitTokens =
@@ -3553,12 +3527,6 @@ export class LocalAgentManager {
         const { config, issues: warnings } = loadAutoCompactDetailed(home, { windowLimitTokens });
         // 窗口覆盖（自建/测试模型没有 contextLimit 时）：配置里的 windowTokens 优先。
         const cfgWindow = normalizeHistoryLimit(config.history?.limit).windowTokens;
-        // 新口径（##442 用户 2026-10-27）：system 是**段首快照**，跨轮变化走 user 增量。
-        // 「system 全文变了」不再是压缩信号（否则 runtime 每轮都变 ⇒ 每轮都触发空转压缩）——
-        // 压缩重做后由「窗口占比 / 边界事件」决定；这里先恒 false，别拿它当判据。
-        const systemContextChanged = false;
-
-        const sinceLastRequestMs = last ? Date.now() - Date.parse(last.ts) : null;
         // 窗口占用（**token 数**）：口径 = 该会话**最后一步实测用量** `usage.total`（真实 token 数，
         // 最后一步 = 窗口占用，见 ##211 §三；用户 2026-10-15 拍板 token 域，见 ##268 §6.9 D7）。
         // 没有用量账（老会话 / 手工造的会话）→ null：**无实测不判**，不退回「投影字节」估算
@@ -3577,20 +3545,27 @@ export class LocalAgentManager {
                   limitTokens: bEntry.v === 2 ? (bEntry.limitTokens ?? 0) : (bEntry.retainTokens ?? 0),
               }
             : null;
-        // 压缩事件**总条数**（turns.jsonl 的 compaction entry）—— 与 compact.jsonl 的审计条数不是一回事
-        const compactionCount = countCompactions(taskUri);
+        // 压缩事件**总条数**：尾部限读（整读 turns 只为数个数不值；截断时 UI 标 ≥N）
+        const turnsTail = readJsonlTail(turnsFile(taskUri), { maxBytes: 256 * 1024, maxLines: 200 });
+        let compactionCount = 0;
+        for (const line of turnsTail.lines) {
+            try {
+                const e = JSON.parse(line) as { kind?: string };
+                if (e.kind === "compaction") compactionCount++;
+            } catch {
+                /* 坏行跳过（与 readTurnEntries 同策略） */
+            }
+        }
 
         const facts: AutoCompactFacts = {
-            systemContextChanged,
-            sinceLastRequestMs,
-            ttl: this.effectiveTtlOf(taskUri),
             windowTokens,
             windowLimitTokens: cfgWindow ?? windowLimitTokens,
             retainedTokens,
             boundary,
             compactionCount,
+            ...(turnsTail.truncated ? { compactionCountTruncated: true } : {}),
         };
-        const triggers = detectAutoCompactTriggers(facts, config);
+        const triggers = detectAutoCompactTriggers(facts);
         const raw = { path: autoCompactFile(home), text: readAutoCompactText(home) };
         return { config, facts, triggers, reasons: triggers.map((t) => TRIGGER_TEXT[t]), raw, warnings };
     }

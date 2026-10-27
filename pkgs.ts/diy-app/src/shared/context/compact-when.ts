@@ -41,13 +41,6 @@ export interface CompactWhenRow {
     hint: string;
 }
 
-export function fmtTtl(ms: number | null): string {
-    if (ms == null) return "无实测时长";
-    if (ms >= 3_600_000) return `${(ms / 3_600_000).toFixed(1)} 小时`;
-    if (ms >= 60_000) return `${Math.round(ms / 60_000)} 分钟`;
-    return `${Math.round(ms / 1000)} 秒`;
-}
-
 export function fmtTokens(n: number): string {
     return `${Math.round(n).toLocaleString()} tok`;
 }
