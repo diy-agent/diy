@@ -20,7 +20,7 @@ import { diyHome } from "../../src/main/core/state";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
 import { advanceLastSeen, appendEvent, ensureRoom, readRoom, upsertMember } from "../../src/main/core/room";
-import { LocalAgentManager } from "../../src/main/services/local-agent";
+import { LocalAgentManager, readDeliverySteps } from "../../src/main/services/local-agent";
 import type { Op } from "../../src/main/services/local-blocks";
 
 let PROJECT = "1";
@@ -164,7 +164,8 @@ describe("房间上下文真的进了请求（runtime 单元）", () => {
     // 水位是异步写的（promise 链）—— 串到链尾再跑第二轮
     await advanceLastSeen(uri, {});
     const { prompt } = await run(uri, mgr, undefined, prompts);
-    expect(prompt).not.toContain("先跑一下测试");
+    // system 是段首快照，旧值仍在（##442 2026-10-27：冻结到压缩点）；删除由后续增量表达
+    expect(prompt).toContain("recent: null");
     // 成员单元仍在（低频、稳定）—— 别把"没有新发言"做成"没有房间"
     expect(prompt).toContain("room:");
   });
@@ -254,7 +255,10 @@ describe("房间上下文真的进了请求（runtime 单元）", () => {
     const uri = newUri();
     const prompts = { prompts: [] as unknown[] };
     const { prompt, ops } = await run(uri, new LocalAgentManager(() => stubModel(prompts)), undefined, prompts);
-    expect(prompt).not.toContain("room:");
+    // help 里永远有 room 的**结构说明**（那是 schema，不是值）—— 判据看真发快照的 places
+    const step = readDeliverySteps(uri).at(-1);
+    expect(step?.runtimePlaces ?? []).not.toContain("room.members");
+    expect(step?.runtimePlaces ?? []).not.toContain("room.recent");
     const turnId = ops.find((o) => o.op === "start" && o.kind === "turn")?.id ?? "";
     const mine = ops
       .filter((o) => o.op === "delta" && o.id === `${turnId}_u`)

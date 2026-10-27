@@ -973,11 +973,10 @@ export function bindAppHandlers(binding: ServerBinding): void {
       const model = input.model || getModelCatalog()[0]?.ref || "";
       const sim = await previewSimulatedRequest({
         taskUri,
+        // system 里已含 help / system / runtime 三份全量（##442 用户 2026-10-27 口径），
+        // runtime 不再单独进尾部 user 消息。
         system: lab.system.text,
         model,
-        // runtime 由 previewSimulatedRequest 经 withRuntime 拼进**尾部信封**（runtime + user）；
-        // 压缩注记（history:）则自占一条消息、挂在历史首条之前（##421）
-        runtime: lab.runtime.text,
       });
       request = { body: sim.body, note: sim.note, model };
     }

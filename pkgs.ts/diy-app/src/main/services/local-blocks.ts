@@ -90,7 +90,10 @@ export const RENDER_TEXT_CAP: TextCap = { head: 64 * 1024, tail: 64 * 1024 };
 export function displayText(b: Block | undefined, path = "content"): string {
     if (!b) return "";
     const raw = (b.__raw as Record<string, { head: string; tail: string }> | undefined)?.[path];
-    if (!raw) return typeof (b as Record<string, unknown>)[path] === "string" ? ((b as Record<string, unknown>)[path] as string) : "";
+    if (!raw)
+        return typeof (b as Record<string, unknown>)[path] === "string"
+            ? ((b as Record<string, unknown>)[path] as string)
+            : "";
     const cap = (b.__cap as Record<string, TextCapInfo> | undefined)?.[path];
     return raw.head + (cap ? capMark(cap.omitted, cap.total) : "") + raw.tail;
 }
@@ -226,8 +229,7 @@ const SCHEMA: Record<BlockKind, Record<string, FieldKind>> = {
  * 正是 `kill -9 Electron`，于是「一次对话 = 一次自杀」，用户那向「千万别 kill」
  * 在 90 万 token 的历史里盖不过它。
  */
-export const INTERRUPTED_TOOL_NOTICE =
-    "[此调用已中断（上一轮未跑完），没有结果；这是已结束的历史记录，不要重试]";
+export const INTERRUPTED_TOOL_NOTICE = "[此调用已中断（上一轮未跑完），没有结果；这是已结束的历史记录，不要重试]";
 
 /** 中断终态：收敛后才写进 ops；与 status 无关，未收 stop 也算（旧日志） */
 export const INTERRUPTED_STATUS = "interrupted";
@@ -371,7 +373,11 @@ export class BlockStore {
         const r0 = raws[path];
         const prev = caps[path];
         // 已裁过就直接读真身（**不要**读 `b[path]`：那是惰性拼装串，读一次就是一次 128 KB 重建）
-        const curStr = r0 ? "" : typeof (b as Record<string, unknown>)[path] === "string" ? (b as Record<string, unknown>)[path] as string : "";
+        const curStr = r0
+            ? ""
+            : typeof (b as Record<string, unknown>)[path] === "string"
+              ? ((b as Record<string, unknown>)[path] as string)
+              : "";
         const total = mode === "delta" ? (prev?.total ?? curStr.length) + val.length : val.length;
         if (!cap || total <= cap.head + cap.tail) {
             // 不超顶：仍是 cons string（`cur += val` 摊销 O(1)），并清掉旧的裁剪计数
@@ -506,14 +512,13 @@ export class BlockStore {
                         });
                         continue;
                     }
-                    const cur = path.includes(".")
-                        ? getPath(b, path)
-                        : (b as Record<string, unknown>)[path];
+                    const cur = path.includes(".") ? getPath(b, path) : (b as Record<string, unknown>)[path];
                     if (decl === "Text") {
                         const next = `${typeof cur === "string" ? cur : ""}${typeof val === "string" ? val : JSON.stringify(val)}`;
                         // 点分路径不参与硬顶（Text 字段都是顶层；带点的走 setPath 保持原语义）
                         if (path.includes(".")) setPath(b, path, next);
-                        else if (this.textCap) this.setText(b, path, typeof val === "string" ? val : JSON.stringify(val), "delta");
+                        else if (this.textCap)
+                            this.setText(b, path, typeof val === "string" ? val : JSON.stringify(val), "delta");
                         else (b as Record<string, unknown>)[path] = next;
                     } else {
                         // List：值本身是数组则逐元素追加，否则作为单元素 push。
@@ -578,7 +583,8 @@ export function compactOps(store: BlockStore): Op[] {
         out.push({ op: "start", id: b.id, kind: b.kind, parent: b.parent ?? null });
         const fields: Record<string, JSONVal> = {};
         for (const [k, v] of Object.entries(b)) {
-            if (k === "id" || k === "kind" || k === "parent" || k === "children" || k === "stopped" || k === "touched") continue;
+            if (k === "id" || k === "kind" || k === "parent" || k === "children" || k === "stopped" || k === "touched")
+                continue;
             // `__` 前缀 = fold 侧的本地记账（如 `__cap` 的裁剪计数，##93 D）：不是块数据，不进折叠流
             if (k.startsWith("__")) continue;
             if (v === undefined) continue;
@@ -910,7 +916,14 @@ export interface DeliveryOpts {
 // 于是：全量投影（= llm.jsonl 每行）→ 选择 → 渲染。预览与真发共用同一条链。
 
 import { clipReasoningText, utf8Bytes, type ClipSpec, type ReasoningClipSpec } from "../../shared/context/compaction";
-import { hasTopLevelKey, isEnvelopeText, renderFromPart, stripRuntimeSections, tailEnvelope, type Speaker } from "../../shared/context/envelope";
+import {
+    chatEnvelope,
+    hasTopLevelKey,
+    isEnvelopeText,
+    stripRuntimeSections,
+    type Speaker,
+} from "../../shared/context/envelope";
+import { HUMAN_MEMBER_ID } from "../../shared/room";
 /**
  * **选择结果**（投递侧唯一形状）：保留了哪些下标 / 丢了哪些 / 连续区间 / 渲染后字节。
  *
@@ -985,28 +998,29 @@ export function projectAll(store: BlockStore): LocalModelMessage[] {
             const text = (b.content as string) ?? "";
             if (!text) return;
             if (role === "user") {
-                // 发言者（##422）：有 speaker ⇒ 投影成「`from:` 段 + `user.message`」的小信封。
-                // **重放前先剥易变段**（##422 第二轮）：历史 user 块里若本身就存着一份信封
-                // （`runtime:` 是每步全量的当前值），重放它只会浪费字节并让旧值伪装成现状；
-                // 而 `from:` / `history:` / `summary:` 是**线索**，一段不动（`stripRuntimeSections`）。
-                // 普通正文（不是信封形态）**逐字不变** —— 该函数对它们直接原样返回。
+                // 新形态（##442 用户 2026-10-27）：**所有** user 消息的 content 都是
+                // `chat: [{from, text}]`；`from` = 块上的 speaker / author，缺省 = 本机用户。
                 //
-                // 剥完仍是一份信封（历史里存过整份信封的块）⇒ **不嵌套**（同 `withRuntime` 的判据）：
-                // body 自带 `from:` 就照用；没带才把它**放在顶层**拼在前面（拼进 `user.message`
-                // 会把整份 YAML 缩进成块标量，既不是信封也读不了）。
+                // 重放前先剥**控制段**（`system` / `runtime` / legacy `runtimeDiff`）：
+                // 历史块里若存着一份完整信封，那些值是"当时"的，重放会把它伪装成现状；
+                // `notify` / `chat` / `summary` 是线索，一段不动（见 `stripRuntimeSections`）。
+                // 已是 chat 信封（回放旧块 / 同一份块被投影两次）⇒ 原样，不再嵌套。
                 const body = stripRuntimeSections(text);
+                if (!body.trim()) return; // 纯控制增量块（历史里不该有；有也跳过，别造空发言）
                 const speaker = b.speaker as Speaker | undefined;
-                const from = speaker && typeof speaker.id === "string" && speaker.id ? renderFromPart(speaker) : "";
-                const content = !from
-                    ? body
-                    : !isEnvelopeText(body)
-                      ? tailEnvelope([from], body)
-                      : hasTopLevelKey(body, "from")
-                        ? body
-                        : tailEnvelope([from, body]);
+                const author = typeof b.author === "string" && b.author ? b.author : undefined;
+                // 机器来源先用合法身份兜住：job / system 的**结构化事件**（notify.kind=job-done/compact）
+                // 下一步再接；现在至少别在 chat 里冒出 `from: job`（不在 human/agent 词表里）。
+                const from =
+                    speaker && typeof speaker.id === "string" && speaker.id
+                        ? speaker.id
+                        : author === "job" || author === "system"
+                          ? "agent:system"
+                          : (author ?? HUMAN_MEMBER_ID);
+                const content =
+                    isEnvelopeText(body) && hasTopLevelKey(body, "chat") ? body : chatEnvelope([{ from, text: body }]);
                 out.push({ role: "user", content, turn, ...(step ? { step } : {}) });
-            }
-            else {
+            } else {
                 const lead = takePending(); // 本 step 攒下的推理，随第一条 assistant 消息落地
                 // assistant 文本并入最近的 assistant 消息（若上一条正是纯文本 assistant 则拼接）
                 const last = out[out.length - 1];
@@ -1263,7 +1277,9 @@ export function selectForDelivery(
 export function selectHistoryByCut(
     all: readonly LocalModelMessage[],
     range: { cut: number; headEnd: number },
-    opts: Pick<DeliveryOpts, "transformToolResult" | "defaultClip" | "defaultReasoningClip"> & { hardCapBytes?: number } = {},
+    opts: Pick<DeliveryOpts, "transformToolResult" | "defaultClip" | "defaultReasoningClip"> & {
+        hardCapBytes?: number;
+    } = {},
 ): BudgetSelection {
     const n = all.length;
     const cut = Math.max(0, Math.min(range.cut, n));

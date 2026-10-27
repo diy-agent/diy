@@ -97,6 +97,8 @@ interface JsonSchemaBit {
     items?: JsonSchemaBit | JsonSchemaBit[];
     prefixItems?: JsonSchemaBit[];
     additionalProperties?: unknown;
+    anyOf?: JsonSchemaBit[];
+    oneOf?: JsonSchemaBit[];
 }
 
 /**
@@ -149,7 +151,22 @@ function simplifyBit(bit: JsonSchemaBit, depth: number, maxDepth: number, descMa
     if (depth <= descMaxDepth && typeof bit.description === "string" && bit.description) {
         out["desc"] = bit.description;
     }
-    const type = typeof bit.type === "string" ? bit.type : undefined;
+    // `z.number().nullable()` / union → JSON Schema `anyOf`/`oneOf`。取**第一个非 null** 分支
+    // 作为主类型（值里允许 null 由字段 desc 说明）；否则 union 会被压成 `{type:"object"}`，
+    // help 里 `exitCode` 看起来像对象 —— 误导模型。
+    const variants = bit.anyOf ?? bit.oneOf;
+    if (Array.isArray(variants) && variants.length > 0) {
+        const chosen = variants.find((v) => v.type !== "null") ?? variants[0]!;
+        return simplifyBit(chosen, depth, maxDepth, descMaxDepth);
+    }
+    // `z.number().nullable()` 也可能产出 `type: ["number","null"]`（不是 anyOf）——
+    // 取第一个非 null 的主类型；否则会落到 `type:"object"`，help 里会误导。
+    const type =
+        typeof bit.type === "string"
+            ? bit.type
+            : Array.isArray(bit.type)
+              ? (bit.type.find((t): t is string => typeof t === "string" && t !== "null") ?? undefined)
+              : undefined;
     const props = bit.properties;
     if (type === "object" && props && Object.keys(props).length > 0 && depth < maxDepth) {
         for (const [k, v] of Object.entries(props)) out[k] = simplifyBit(v, depth + 1, maxDepth, descMaxDepth);
@@ -185,10 +202,7 @@ function simplifyBit(bit: JsonSchemaBit, depth: number, maxDepth: number, descMa
  * `maxDepth` 兜住自引用 schema（z.lazy 造的环）；到限即停在该层，不假装下面没有了
  * （子字段仍在上一层列着，读侧不会以为"这个对象没字段"）。
  */
-export function describeSchema(
-    schema: ZodType,
-    opts: { maxDepth?: number; descMaxDepth?: number } = {},
-): SchemaDoc {
+export function describeSchema(schema: ZodType, opts: { maxDepth?: number; descMaxDepth?: number } = {}): SchemaDoc {
     const maxDepth = opts.maxDepth ?? 8;
     // 缺省不限（老消费者行为不变）；信封的 `help:` 传 2 —— 只有前两层 desc 值得每轮发。
     const descMaxDepth = opts.descMaxDepth ?? Number.POSITIVE_INFINITY;
@@ -219,7 +233,7 @@ export function pruneSchemaDoc(doc: SchemaDoc, paths: readonly string[]): Schema
             const k = segs[i]!;
             const next = src?.[k];
             if (next === undefined || typeof next !== "object" || Array.isArray(next)) break;
-            const child = (next as SchemaDoc);
+            const child = next as SchemaDoc;
             if (i === segs.length - 1) {
                 // 叶子：整棵子树照抄（数组元素结构就是在这里带上的）
                 if (!(k in dst)) dst[k] = child;

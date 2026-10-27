@@ -71,10 +71,10 @@ describe("Op 流：插话只加可选字段", () => {
   it("不认识 steer 的旧读者也能 work：块字段是白名单外自由扩展，投影只关心 role/content", () => {
     const s = replay(STEER_OPS);
     const msgs = blocksToMessages(s);
-    // 插话块就是一条普通 user 消息（模型不需要知道它是"插进来的"）
+    // 插话块就是一条普通 user 消息（模型不需要知道它是"插进来的"）；content 统一是 chat 信封
     expect(msgs.map((m) => [m.role, typeof m.content === "string" ? m.content : ""])).toEqual([
-      ["user", "本轮开场消息"],
-      ["user", "插嘴的话"],
+      ["user", 'chat:\n  - from: human:chen56\n    text: "本轮开场消息"'],
+      ["user", 'chat:\n  - from: human:chen56\n    text: "插嘴的话"'],
     ]);
   });
 

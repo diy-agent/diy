@@ -74,7 +74,8 @@ function promptText(model: MockLanguageModelV3, callIndex: number): string {
         const content = msg.content;
         if (typeof content === "string") out.push(content);
         else if (Array.isArray(content)) {
-            for (const part of content as Array<{ text?: string }>) if (typeof part.text === "string") out.push(part.text);
+            for (const part of content as Array<{ text?: string }>)
+                if (typeof part.text === "string") out.push(part.text);
         }
     }
     return out.join("\n");
@@ -82,13 +83,8 @@ function promptText(model: MockLanguageModelV3, callIndex: number): string {
 
 describe("信封：尾部各段各占一个顶层键（tailEnvelope / appendUserKey）", () => {
     it("summary 段与 runtime 并列、user 在最后 —— 自动生成的段不混进 user.message", () => {
-        const out = tailEnvelope(
-            ["summary: 上一次压缩的结论", "runtime:\n  task:\n    body: x"],
-            "回复 1",
-        );
-        expect(out).toBe(
-            'summary: 上一次压缩的结论\nruntime:\n  task:\n    body: x\nuser:\n  message: "回复 1"',
-        );
+        const out = tailEnvelope(["summary: 上一次压缩的结论", "runtime:\n  task:\n    body: x"], "回复 1");
+        expect(out).toBe('summary: 上一次压缩的结论\nruntime:\n  task:\n    body: x\nuser:\n  message: "回复 1"');
         // 关键：`user.message` 只剩用户真话（曾经注记被并进这里，模型把它当任务去查 —— tasks/5 实测）
         expect(out.slice(out.indexOf("\nuser:"))).not.toContain("summary");
         // 自动段在前、user 在最后
@@ -173,13 +169,14 @@ describe("轮内重算：变量变了 → 下一步请求即用新值", () => {
         // 第一步：旧值
         expect(promptText(model, 0)).toContain("正文旧值-AAAAAAAAAA");
         expect(promptText(model, 0)).not.toContain("正文新值-BBBBBBBBBB");
-        // 第二步：新值（不必等下一轮）—— 且形态是**追加的 runtimeDiff 段**（让模型知道"哪几个单元变了"）
+        // 第二步：新值（不必等下一轮）—— 形态是**追加的 runtime: 控制增量**（让模型知道"哪几个单元变了"）
         const p1 = promptText(model, 1);
         expect(p1).toContain("正文新值-BBBBBBBBBB");
-        expect(p1).toContain("runtimeDiff:");
+        expect(p1).toContain("\nruntime:\n");
+        expect(p1).toContain('    body: "正文新值-BBBBBBBBBB"');
     });
 
-    it("轮内改任务标题（system）→ 第二步请求的 system 已刷新", async () => {
+    it("轮内改任务标题（system）→ 第二步请求追加 system 增量（system 快照本身不动）", async () => {
         const uri = newUri("标题旧值-AAAAAAAAAA");
         let call = 0;
         const model = new MockLanguageModelV3({
@@ -230,7 +227,11 @@ describe("压缩注记的位置：自占一条 user 消息，挂在历史第一�
             JSON.stringify({
                 mode: "notify",
                 triggers: { systemContextChanged: true, cacheExpired: true, contextWindowOver: 0.8 },
-                policy: { mode: "budget", modeData: { budgetBytes: 64, toolResult: { render: "asis" } }, summary: false },
+                policy: {
+                    mode: "budget",
+                    modeData: { budgetBytes: 64, toolResult: { render: "asis" } },
+                    summary: false,
+                },
                 history: { limit: { limitTokens: 4000, summary: { enabled: false } } },
             }),
             "utf-8",
@@ -249,7 +250,9 @@ describe("压缩注记的位置：自占一条 user 消息，挂在历史第一�
         const prompt0 = (model.doStreamCalls[0]?.prompt ?? []) as Array<{ role: string; content: unknown }>;
         // ⚠️ 经 SDK 后 user 的 content 一律是 part 数组（可能是单 part 或多 part）→ 取文本
         const textOf = (c: unknown): string =>
-            typeof c === "string" ? c : ((c ?? []) as Array<{ text?: string }>).map((part) => part.text ?? "").join("\n");
+            typeof c === "string"
+                ? c
+                : ((c ?? []) as Array<{ text?: string }>).map((part) => part.text ?? "").join("\n");
 
         // ① system 仍是第一条，紧随其后**没有**自动生成的注记段
         expect(prompt[0]?.role).toBe("system");
@@ -261,11 +264,12 @@ describe("压缩注记的位置：自占一条 user 消息，挂在历史第一�
         // ② 不变量：两轮之间 **system 逐字节相等**（头部出现任何每轮变的量，整段历史前缀缓存全废）
         expect(textOf(prompt[0]?.content)).toBe(textOf(prompt0[0]?.content));
 
-        // 尾部信封只剩 runtime + user
+        // 尾部信封 = 控制增量（runtime）+ 当轮 chat（新形态不再有顶层 user:）
         const tail = textOf(prompt[prompt.length - 1]?.content);
         expect(tail).toContain("runtime:");
         expect(hasHistoryKey(tail)).toBe(false);
-        expect(tail).toContain('user:\n  message: "第二轮');
+        expect(tail).toContain("chat:");
+        expect(tail).toContain('text: "第二轮');
     });
 });
 

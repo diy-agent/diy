@@ -537,7 +537,7 @@ describe("blocksToMessages 投递选项（压缩落点）", () => {
     it("sinceTurnId = 边界轮：只投该轮及其后（旧轮整棵子树不带）", () => {
         const m = blocksToMessages(twoTurns(), { sinceTurnId: "t2" });
         expect(m.map((x) => x.role)).toEqual(["user"]);
-        expect((m[0]!.content as string)).toBe("第二轮");
+        expect(m[0]!.content as string).toBe('chat:\n  - from: human:chen56\n    text: "第二轮"');
     });
 
     it("sinceTurnId = null：全部清零 —— 一条都不投", () => {

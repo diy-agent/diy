@@ -44,7 +44,10 @@ function makeHome(instructions: string, body = "第一版正文\n"): string {
 }
 
 const deliveryOf = (h: string) => {
-    const globals = assembleGlobals(h, PID, { taskUri: TASK, diyCli: "/repo/diy.sh" }) as unknown as Record<string, unknown>;
+    const globals = assembleGlobals(h, PID, { taskUri: TASK, diyCli: "/repo/diy.sh" }) as unknown as Record<
+        string,
+        unknown
+    >;
     return { globals, d: buildDelivery(globals, loadSystemPlaces(h)) };
 };
 
@@ -121,7 +124,9 @@ describe("P0-1 修复不得打回 148 的治疗目标", () => {
             "utf-8",
         );
         const after = deliveryOf(home);
-        expect(after.d.system.text).toBe(before.d.system.text);
+        // 新口径（##442 2026-10-27）：runtime 也进 system 消息，所以纯函数产物会变；
+        // 前缀缓存由运行层的**段首快照**保证。这里钉稳定树段（行为契约）逐字不变。
+        expect(after.d.systemData.text).toBe(before.d.systemData.text);
         expect(after.d.runtime.text).not.toBe(before.d.runtime.text);
         expect(after.d.runtime.text).toContain("第二版正文，改过一遍");
         // 行为契约属稳定侧：正文编辑不该让它们换位置/换字节
@@ -131,18 +136,19 @@ describe("P0-1 修复不得打回 148 的治疗目标", () => {
     it("行为契约进 system 后仍在 system 预算内（不会把预算撑爆反而拒发）", () => {
         const { d } = deliveryOf(home);
         // 内置三节合计只有几百字节；给一个宽松上限，防将来把整份 AGENTS.md 塞进契约节点
-        expect(d.system.bytes).toBeLessThan(16 * 1024);
+        // （判据只看**稳定树段**：runtime 现在也在 system 消息里，但那不是行为契约的预算）
+        expect(d.systemData.bytes).toBeLessThan(16 * 1024);
     });
 
-    it("system 名单可被 context.yaml 覆盖：把 guard 划走 → 它就不再投（配置真源生效）", () => {
+    it("system 名单可被 context.yaml 覆盖：把 guard 划走 → 它就不再进稳定树（落 runtime 段）", () => {
         writeFileSync(
             join(home, "context.yaml"),
             `systemPlaces:\n  - diy\n  - project\n  - cwd\n  - chain\n  - task.title\n  - task.uri\n  - task.state\n  - task.dir\n  - identity\n  - rules\n`,
             "utf-8",
         );
         const { d } = deliveryOf(home);
-        expect(d.system.text).toContain("<rules>");
-        expect(d.system.text).not.toContain("<guard>");
+        expect(d.systemData.text).toContain("<rules>");
+        expect(d.systemData.text).not.toContain("<guard>");
         expect(d.runtime.text).toContain("<guard>");
     });
 });

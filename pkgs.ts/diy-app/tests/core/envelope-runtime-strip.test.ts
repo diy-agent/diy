@@ -19,6 +19,7 @@ import {
     renderFromPart,
     stripRuntimeSections,
     tailEnvelope,
+    userEnvelope,
     ENVELOPE_TOP_KEYS,
 } from "../../src/shared/context/envelope";
 import { toYaml } from "../../src/shared/context/render";
@@ -121,109 +122,39 @@ describe("##422 判据 ③：幂等", () => {
     });
 });
 
-describe("##422 判据 ④：投影期剥（块树 → 消息）", () => {
-    it("块里存着带 runtime 的信封 ⇒ 投影出来的消息无 runtime、仍带 from", () => {
-        const ops: Op[] = [
+describe("##442 新形态：投影 chat / 剥控制段", () => {
+    const build = (content: string, speaker?: Record<string, unknown>): string => {
+        const s = new BlockStore();
+        for (const op of [
             { op: "start", id: "t1", kind: "turn" },
             {
                 op: "start",
                 id: "u1",
                 kind: "text",
                 parent: "t1",
-                meta: { role: "user", speaker: { id: "agent:main", name: "deepseek-4.1-flash" } },
+                meta: { role: "user", ...(speaker ? { speaker } : {}) },
             },
-            // 假设这一块里存的是一份**完整信封**（runtime 是当时的全量值）
-            { op: "delta", id: "u1", fields: { content: realEnvelope() } },
+            { op: "delta", id: "u1", fields: { content } },
             { op: "stop", id: "u1" },
             { op: "stop", id: "t1" },
-        ];
-        const s = new BlockStore();
-        for (const op of ops) s.apply(op);
-        const msgs = projectAll(s);
-        expect(msgs).toHaveLength(1);
-        const text = String(msgs[0]!.content);
+        ] as Op[])
+            s.apply(op);
+        const first = projectAll(s)[0] as { content?: unknown } | undefined;
+        return typeof first?.content === "string" ? first.content : "";
+    };
+
+    it("裸文本 ⇒ chat: [{from, text}]（默认 from = 本机用户）", () => {
+        expect(build("那句原话")).toBe('chat:\n  - from: human:chen56\n    text: "那句原话"');
+        expect(build("那句原话", { id: "agent:main" })).toBe('chat:\n  - from: agent:main\n    text: "那句原话"');
+    });
+
+    it("块里存着带 runtime 的新信封 ⇒ 投影无 runtime、chat 保留", () => {
+        const stored = userEnvelope({ runtime: { self: { steps: 3 } }, chat: [{ from: "agent:main", text: "原话" }] });
+        const text = build(stored, { id: "agent:main" });
         expect(text).not.toContain("runtime");
-        expect(topKeys(text)).toEqual(["summary", "from", "user"]);
-        // 发言者段是**这一条**的（不是从信封里再读一份，块 meta 是唯一真源）
-        expect(text).toContain(renderFromPart({ id: "agent:main", name: "deepseek-4.1-flash" }));
-        // 信封顶层键白名单仍认这份形状 ⇒ 不会被 `normalizeUserRuns` 并进相邻 user
+        expect(topKeys(text)).toEqual(["chat"]);
+        expect(text).toContain("  - from: agent:main");
+        expect(text).toContain('text: "原话"');
         expect(ENVELOPE_TOP_KEYS.has(topKeys(text)[0]!)).toBe(true);
-    });
-
-    it("块里那份信封**自己没带 from** ⇒ 补的 from 在**顶层**（不缩进进 user.message）", () => {
-        const inner = tailEnvelope([toYaml({ summary: "上一次压缩的结论" })], "原话");
-        const s = new BlockStore();
-        for (const op of [
-            { op: "start", id: "t1", kind: "turn" },
-            {
-                op: "start",
-                id: "u1",
-                kind: "text",
-                parent: "t1",
-                meta: { role: "user", speaker: { id: "human:chen56" } },
-            },
-            { op: "delta", id: "u1", fields: { content: inner } },
-            { op: "stop", id: "u1" },
-            { op: "stop", id: "t1" },
-        ] as Op[])
-            s.apply(op);
-        const text = String(projectAll(s)[0]!.content);
-        expect(topKeys(text)).toEqual(["from", "summary", "user"]);
-        expect(text.startsWith(renderFromPart({ id: "human:chen56" }))).toBe(true);
-        // 只有一份 `from:` 顶层键（段内的 `from` 是缩进/内层的，不算）
-        expect(topKeys(text).filter((k) => k === "from")).toHaveLength(1);
-        expect(text).toContain("原话");
-    });
-
-    it("块里的信封**自带 from** ⇒ 原样用它的（不重复加顶层 `from:`，YAML 不许重复键）", () => {
-        const inner = tailEnvelope(
-            [renderFromPart({ id: "agent:dev", name: "dev" }), toYaml({ runtime: { docs: { count: 3 } } })],
-            "原话",
-        );
-        const s = new BlockStore();
-        for (const op of [
-            { op: "start", id: "t1", kind: "turn" },
-            {
-                op: "start",
-                id: "u1",
-                kind: "text",
-                parent: "t1",
-                meta: { role: "user", speaker: { id: "agent:main" } },
-            },
-            { op: "delta", id: "u1", fields: { content: inner } },
-            { op: "stop", id: "u1" },
-            { op: "stop", id: "t1" },
-        ] as Op[])
-            s.apply(op);
-        const text = String(projectAll(s)[0]!.content);
-        expect(topKeys(text)).toEqual(["from", "user"]);
-        expect(topKeys(text).filter((k) => k === "from")).toHaveLength(1);
-        expect(text).toContain("agent:dev"); // 信封里记的那个（块 meta 不覆盖它）
-        expect(text).not.toContain("runtime");
-    });
-
-    it("普通正文块的投影与改动前**逐字相同**（存量行为不动）", () => {
-        const build = (content: string, speaker?: Record<string, unknown>): string => {
-            const s = new BlockStore();
-            for (const op of [
-                { op: "start", id: "t1", kind: "turn" },
-                {
-                    op: "start",
-                    id: "u1",
-                    kind: "text",
-                    parent: "t1",
-                    meta: { role: "user", ...(speaker ? { speaker } : {}) },
-                },
-                { op: "delta", id: "u1", fields: { content } },
-                { op: "stop", id: "u1" },
-                { op: "stop", id: "t1" },
-            ] as Op[])
-                s.apply(op);
-            return String(projectAll(s)[0]!.content);
-        };
-        expect(build("那句原话")).toBe("那句原话");
-        expect(build("那句原话", { id: "agent:main" })).toBe(
-            tailEnvelope([renderFromPart({ id: "agent:main" })], "那句原话"),
-        );
     });
 });
