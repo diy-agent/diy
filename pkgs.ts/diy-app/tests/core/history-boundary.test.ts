@@ -61,7 +61,7 @@ beforeAll(() => {
         [
             "policy: {mode: budget, modeData: {toolResult: {render: asis}}, summary: false}",
             "history:",
-            "  limit: {windowTokens: 20000, summary: {mode: self}}",
+            "  limit: {windowTokens: 50000, summary: {mode: self}}",
             "",
         ].join("\n"),
         "utf-8",
@@ -76,11 +76,21 @@ let seq = 0;
 const newTask = (): string => createTask({ title: `boundary 测试 ${++seq}`, project: PROJECT });
 const compactions = (uri: string) => readTurnEntries(uri).filter((e) => "kind" in e && e.kind === "compaction");
 
+/** 先低用量攒历史，再用一次高用量触发压缩（模拟真实：压完 usage 会掉） */
+async function seedAuto(mgr: LocalAgentManager, uri: string, turns = 12): Promise<void> {
+    usageTotal = 100;
+    for (let i = 0; i < turns; i++) await collect(mgr.chat(uri, `大 ${i}：${"问".repeat(3000)}`));
+    usageTotal = 35_000;
+    await collect(mgr.chat(uri, "记一笔高用量"));
+    usageTotal = 100;
+    await collect(mgr.chat(uri, "触发"));
+}
+
 describe("压缩边界：一次算、落盘、之后不重算", () => {
     it("压完之后连续几步小增量不再写新 entry（保留段没重新顶到触发线）", async () => {
         const uri = newTask();
         const mgr = manager();
-        for (let i = 0; i < 8; i++) await collect(mgr.chat(uri, `大 ${i}：${"问".repeat(1200)}`));
+        await seedAuto(mgr, uri);
         const n1 = compactions(uri).length;
         expect(n1).toBeGreaterThanOrEqual(1);
         // 之后用量降到触发线以下：先跑一轮让账本记下低用量（这一轮可能还按上一轮的高用量压一次），
@@ -95,7 +105,7 @@ describe("压缩边界：一次算、落盘、之后不重算", () => {
     it("多轮后 entry 带 v3 的 retainTokens / windowTokens；再取历史不会多写", async () => {
         const uri = newTask();
         const mgr = manager();
-        for (let i = 0; i < 4; i++) await collect(mgr.chat(uri, `第 ${i} 问：${"问".repeat(1200)}`));
+        await seedAuto(mgr, uri);
         const before = compactions(uri);
         expect(before.length).toBeGreaterThanOrEqual(1);
         const entry = before.at(-1) as {
@@ -105,8 +115,8 @@ describe("压缩边界：一次算、落盘、之后不重算", () => {
             cut: { llmLine: number };
         };
         expect(entry.v).toBe(3);
-        expect(entry.retainTokens).toBe(3_200);
-        expect(entry.windowTokens).toBe(20_000);
+        expect(entry.retainTokens).toBe(8_000);
+        expect(entry.windowTokens).toBe(50_000);
         expect(entry.cut.llmLine).toBeGreaterThan(1);
 
         mgr.deliveryMessages(uri);
@@ -117,7 +127,7 @@ describe("压缩边界：一次算、落盘、之后不重算", () => {
     it("投递 = 切点之后的原文；不再出现 history:", async () => {
         const uri = newTask();
         const mgr = manager();
-        for (let i = 0; i < 4; i++) await collect(mgr.chat(uri, `问 ${i}：${"问".repeat(1200)}`));
+        await seedAuto(mgr, uri);
         const entry = compactions(uri).at(-1) as { cut: { llmLine: number } } | undefined;
         expect(entry).toBeTruthy();
         const view = mgr.deliveryMessages(uri);
@@ -182,6 +192,21 @@ describe("手动压缩无限制（##442 用户 2026-10-27 选 C）", () => {
         expect(first).toContain("summary:");
         expect(first).not.toContain("at:");
         expect(first).not.toContain("dropped");
+    });
+
+    it("undo：投递边界也回退（不是只回滚审计）", async () => {
+        const uri = newTask();
+        const mgr = manager();
+        for (let i = 0; i < 3; i++) await collect(mgr.chat(uri, `小 ${i}：${"问".repeat(1200)}`));
+        const policy = loadAutoCompact(diyHome()).policy;
+        mgr.compact(uri, policy, "ui", undefined, "manual", true);
+        const beforeUndo = JSON.stringify(mgr.deliveryMessages(uri).messages);
+        const rec = mgr.compactEvents(uri).events.filter((e) => e.kind === "compact").at(-1);
+        expect(rec).toBeTruthy();
+        expect(mgr.undoCompact(uri, (rec as { id: string }).id)).toBe(true);
+        const afterUndo = JSON.stringify(mgr.deliveryMessages(uri).messages);
+        expect(afterUndo).not.toBe(beforeUndo);
+        expect(afterUndo).toContain("小 0");
     });
 
     it("再点一次：切点继续前进（不会把历史放回来）", async () => {

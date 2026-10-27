@@ -582,6 +582,20 @@ export function readStepUsages(taskUri: string): StepUsageRecord[] {
     return readJsonl<StepUsageRecord>(usageFile(taskUri));
 }
 
+/** 尾部用量（面板成本表用；不整读 4.6 MB） */
+function readStepUsagesTail(taskUri: string, maxLines = 500): StepUsageRecord[] {
+    const tail = readJsonlTail(usageFile(taskUri), { maxBytes: 512 * 1024, maxLines });
+    const out: StepUsageRecord[] = [];
+    for (const line of tail.lines) {
+        try {
+            out.push(JSON.parse(line) as StepUsageRecord);
+        } catch {
+            /* 坏行跳过 */
+        }
+    }
+    return out;
+}
+
 /** 只读最后一条用量（尾部限读；autoCompactStatus 每轮都要，不能整读 4.6 MB） */
 function readLastStepUsage(taskUri: string): StepUsageRecord | null {
     const tail = readJsonlTail(usageFile(taskUri), { maxBytes: 64 * 1024, maxLines: 1 });
@@ -3512,8 +3526,15 @@ export class LocalAgentManager {
         taskUri: string,
         all: readonly LocalModelMessage[],
         llmLineBase: number,
-        opts: { write?: boolean; force?: boolean; triggered?: boolean; usedTokens?: number | null } = {},
-    ): { cut: number; headEnd: number } | null {
+        opts: {
+            write?: boolean;
+            force?: boolean;
+            triggered?: boolean;
+            usedTokens?: number | null;
+            /** 固定开支（system + runtime + tools）估算；只用于「压完能不能降下来」 */
+            fixedTokens?: number;
+        } = {},
+    ): { cut: number; headEnd: number; wrote: boolean } | null {
         const cfgLimit = normalizeHistoryLimit(loadAutoCompact(diyHome()).history?.limit);
         const windowTokens = cfgLimit.windowTokens ?? contextLimitOf(personaForTask(diyHome(), taskUri).model);
         if (!windowTokens || windowTokens <= 0) return null;
@@ -3543,14 +3564,22 @@ export class LocalAgentManager {
         // 自动：保留段还不到触发线 ⇒ 复用旧边界；用量都不到触发线 ⇒ 不压。
         // 手动（force）：两条都跳过，至少再丢一步。
         if (!opts.force) {
-            if (!opts.triggered) return cut > 0 ? { cut, headEnd: 0 } : null;
+            if (!opts.triggered) return cut > 0 ? { cut, headEnd: 0, wrote: false } : null;
             if (cut > 0) {
                 let retained = 0;
                 for (let i = cut; i < all.length; i++) retained += tokOf(all[i]!);
-                if (retained < triggerTokens) return { cut, headEnd: 0 };
+                if (retained < triggerTokens) return { cut, headEnd: 0, wrote: false };
             }
             const used = opts.usedTokens ?? all.reduce((n, m) => n + tokOf(m), 0);
-            if (used < triggerTokens) return cut > 0 ? { cut, headEnd: 0 } : null;
+            if (used < triggerTokens) return cut > 0 ? { cut, headEnd: 0, wrote: false } : null;
+            // 压到目标 retain 也还在线上 ⇒ 结构性超限，写边界只会每轮空转
+            const afterBest = (opts.fixedTokens ?? 0) + retainTokens;
+            if (afterBest >= triggerTokens) {
+                console.warn(
+                    `[local-agent] 压缩无意义 ${taskUri}：fixed ${opts.fixedTokens ?? 0} + retain ${retainTokens} >= trigger ${triggerTokens}`,
+                );
+                return cut > 0 ? { cut, headEnd: 0, wrote: false } : null;
+            }
         }
 
         const r = selectCompactableRange(all, {
@@ -3559,7 +3588,7 @@ export class LocalAgentManager {
             // 已有边界不能把历史放回来；force 时至少前进一个 user。
             minCut: cut,
         });
-        if (!r || r.cut <= cut) return cut > 0 ? { cut, headEnd: 0 } : null;
+        if (!r || r.cut <= cut) return cut > 0 ? { cut, headEnd: 0, wrote: false } : null;
 
         if (taskUri && (opts.write ?? true)) {
             const cutTurnId = all[r.cut]?.turn ?? null;
@@ -3593,16 +3622,11 @@ export class LocalAgentManager {
                 headLine: 0,
             };
             state.compactionCount += 1;
-            try {
-                state.ledgerMtimeMs = statSync(compactFile(taskUri)).mtimeMs; // sync-io-ok: 写边界后刷新 mtime（低频）
-            } catch {
-                /* 写失败已出声；下次 mtime 校验会重载 */
-            }
             console.log(
                 `[local-agent] 压缩事件 ${taskUri}：丢 ${r.dropped} 条（保留 ${retainTokens} token = 窗口 ${windowTokens} × 0.16）`,
             );
         }
-        return { cut: r.cut, headEnd: 0 };
+        return { cut: r.cut, headEnd: 0, wrote: true };
     }
 
     /**
@@ -4214,7 +4238,7 @@ export class LocalAgentManager {
     private planCompact(
         taskUri: string,
         policyInput: unknown,
-        opts: { force?: boolean; triggered?: boolean; usedTokens?: number | null } = {},
+        opts: { force?: boolean; triggered?: boolean; usedTokens?: number | null; fixedTokens?: number } = {},
     ): CompactPlan {
         const policy = normalizePolicy(policyInput);
         // 旧账本字段（级列表与 plan 版本链已删）：读旧事件仍要能解析，所以保留一个最小快照
@@ -4234,6 +4258,7 @@ export class LocalAgentManager {
             force: opts.force,
             triggered: opts.triggered,
             usedTokens: opts.usedTokens,
+            fixedTokens: opts.fixedTokens,
         });
         const sel = recordsRange
             ? selectHistoryByCut(all, recordsRange, optsFor(policy, taskUri))
@@ -4273,7 +4298,7 @@ export class LocalAgentManager {
                   asOf: MODEL_COST_AS_OF,
               }
             : undefined;
-        const stats = usageStats(readStepUsages(taskUri), after.estTokens, rateSnap);
+        const stats = usageStats(readStepUsagesTail(taskUri), after.estTokens, rateSnap);
         return {
             policy,
             keptTurns,
@@ -4479,20 +4504,26 @@ export class LocalAgentManager {
         // 压缩请求 = 允许新建边界（是否真新建仍由 usedTokens 触发线把关；force 跳过）。
         const lastUsage = readLastStepUsage(taskUri);
         const usedTokens = lastUsage ? bucketsOf(lastUsage.usage as UsageLike).total : null;
-        const p = this.planCompact(taskUri, policyInput, { force, triggered: true, usedTokens });
+        const state = this.compactStateOf(taskUri);
+        const fixedTokens = state.lastStep
+            ? estimateTokensOf(`${state.lastStep.systemText}\n${state.lastStep.runtimeText}`)
+            : 0;
+        const p = this.planCompact(taskUri, policyInput, { force, triggered: true, usedTokens, fixedTokens });
         // 真压缩 = 边界必须落盘；否则下一次投递还会按旧边界（手动小会话尤其明显）。
+        let wroteBoundary = false;
         if (p.droppedIds.length > 0) {
-            this.appliedHistoryRange(taskUri, projectAll(p.store), 0, {
+            const applied = this.appliedHistoryRange(taskUri, projectAll(p.store), 0, {
                 write: true,
                 force,
                 triggered: true,
                 usedTokens,
+                fixedTokens,
             });
+            wroteBoundary = applied?.wrote === true;
         }
-        // 空操作：无轮被丢 + 无工具被裁 + 投递字节不缩 ⇒ 什么都没改，**不写账**（写一条"压缩"却
-        // 没压任何东西是误导：历史页会把它当一次真压缩）。缓存过期 / 系统上下文变触发时预算本就够用，
-        // 这条很常见（实测 auto cacheExpired 空转）。返回带 noop 的记录，调用方可据此提示"无需压缩"。
-        const noop = p.droppedIds.length === 0 && p.clipped.length === 0 && p.after.bytes >= p.before.bytes;
+        // 空操作：**边界没真的前进** + 无工具被裁 + 投递字节不缩 ⇒ 不写账。
+        // 不能用 droppedIds 判：压过一次后旧轮永远在 droppedIds 里，会写假审计（##442 step 6）。
+        const noop = !wroteBoundary && p.clipped.length === 0 && p.after.bytes >= p.before.bytes;
 
         // 原文落盘：marker 指的路径必须真的能打开（否则模型只能重跑命令 —— 那是真金白银）
         for (const c of noop ? [] : p.clipped) {
@@ -4562,6 +4593,14 @@ export class LocalAgentManager {
             // ensure 会先扫到新行、把边界换成新的 —— 值虽不错，但多扫一次且语义不清）。
             const prev = ensureCompactState(taskUri);
             const at = appendCompactEvent(taskUri, rec);
+            const cst = this.compactStates.get(taskUri);
+            if (cst) {
+                try {
+                    cst.ledgerMtimeMs = statSync(compactFile(taskUri)).mtimeMs; // sync-io-ok: 审计写完后刷新，避免缓存立刻失效
+                } catch {
+                    /* 下次 mtime 校验会重载 */
+                }
+            }
             // 同步刷新**当前值快照**（投递侧下一步就读它，不必再扫账本）。
             // `opIds` 合并：老工作集引用过的工具原文 id 仍可能被 `clear()` / 迁移用到，只增不减。
             const opIds = new Set<string>(prev?.opIds ?? []);
@@ -4623,6 +4662,35 @@ export class LocalAgentManager {
                 console.error(`[local-agent] 撤销后清理压缩状态快照失败 ${compactStateFile(taskUri)}:`, e);
             }
         }
+        // 投递边界在 turns.jsonl（不是 compact.jsonl）：undo 必须同步把 turns 也回退，
+        // 否则历史页回滚了、模型仍拿压过的历史（##442 step 6 P1-2）。
+        const prevEntry = (() => {
+            if (!next) return undefined;
+            const entries = readTurnEntries(taskUri).filter(
+                (e): e is CompactionEntry => (e as CompactionEntry).kind === "compaction",
+            );
+            for (let i = entries.length - 1; i >= 0; i--) {
+                const e = entries[i]!;
+                if (e.cut.turnId !== next.keptFromTurnId) continue;
+                if (next.keptFromLlmLine !== undefined && e.cut.llmLine !== next.keptFromLlmLine) continue;
+                return e;
+            }
+            return undefined;
+        })();
+        appendCompactionEntry(taskUri, {
+            at: new Date().toISOString(),
+            retainTokens: prevEntry?.retainTokens ?? 0,
+            windowTokens: prevEntry?.windowTokens ?? 0,
+            cut: {
+                llmLine: next?.keptFromLlmLine ?? 1,
+                turnId: next?.keptFromTurnId ?? null,
+            },
+            ...(prevEntry?.ref ? { ref: prevEntry.ref } : {}),
+            limitTokens: prevEntry?.retainTokens ?? 0,
+            dropped: 0,
+            headLine: 0,
+        });
+        this.invalidateCompactState(taskUri);
         this.sessions.delete(taskUri);
         return true;
     }
@@ -5979,10 +6047,21 @@ export class LocalAgentManager {
             let historyCapOverride: number | undefined;
             let preflightNotice: string | undefined;
             {
+                const toolsJson = JSON.stringify(tools);
+                const sentJson = JSON.stringify(sent);
+                const systemTokens = estimateTokensOf(delivery.system.text);
+                const toolsTokens = estimateTokensOf(toolsJson);
+                const messagesTokens = estimateTokensOf(sentJson);
+                const totalBytes = delivery.system.bytes + ctxParts.toolsBytes + utf8Bytes(sentJson);
+                const totalTokens = systemTokens + toolsTokens + messagesTokens;
+                const bytesPerToken = totalTokens > 0 ? totalBytes / totalTokens : 4;
                 const est0 = estimateRequest({
                     systemBytes: delivery.system.bytes,
                     toolsBytes: ctxParts.toolsBytes,
-                    messagesBytes: utf8Bytes(JSON.stringify(sent)),
+                    messagesBytes: utf8Bytes(sentJson),
+                    systemTokens,
+                    toolsTokens,
+                    messagesTokens,
                     contextLimitTokens: ctxLimitTokens,
                 });
                 if (est0.over && ctxLimitTokens !== null) {
@@ -5995,6 +6074,7 @@ export class LocalAgentManager {
                             contextLimitTokens: ctxLimitTokens,
                             systemBytes: delivery.system.bytes,
                             toolsBytes: ctxParts.toolsBytes,
+                            bytesPerToken,
                         }),
                     );
                     const hist2 = this.deliveryHistory(taskUri, sess.store, undefined, tightCap, sess.llmBase);
@@ -6005,6 +6085,9 @@ export class LocalAgentManager {
                         systemBytes: delivery.system.bytes,
                         toolsBytes: ctxParts.toolsBytes,
                         messagesBytes: utf8Bytes(JSON.stringify(sent2)),
+                        systemTokens,
+                        toolsTokens,
+                        messagesTokens: estimateTokensOf(JSON.stringify(sent2)),
                         contextLimitTokens: ctxLimitTokens,
                     });
                     if (est2.estTokens < est0.estTokens) {

@@ -194,9 +194,8 @@ export interface CompactPanelCtl {
             windowLimitTokens?: number | null;
             retainedTokens?: number | null;
             boundary?: { at: string; dropped: number; limitTokens: number } | null;
-            /** 本会话写过的压缩事件条数（turns.jsonl 的 compaction entry；尾部限读可能截断） */
+            /** 本会话写过的压缩事件条数（turns.jsonl 的 compaction entry） */
             compactionCount?: number;
-            compactionCountTruncated?: boolean;
         };
         raw?: { path: string; text: string };
         /** 读配置的出声条目（##370）：非空 = 有键缺失/非法，已逐键回落缺省 */
@@ -570,8 +569,6 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
      * ##432 后它才是「压过几次」；`compact.jsonl`（`compactRows()`）降为**纯审计**，两数分开叫。
      */
     const compactionCount = (): number => ctl.auto()?.facts?.compactionCount ?? 0;
-    const compactionCountLabel = (): string =>
-        `${ctl.auto()?.facts?.compactionCountTruncated ? "≥" : ""}${compactionCount()}`;
     /** 已落盘边界（最近一次压缩事件） */
     const boundary = () => ctl.auto()?.facts?.boundary ?? null;
     /** 窗口上限：取**最后一条**用量记录里的 `contextLimit`（用户要知道「上限 Y」是多少） */
@@ -795,7 +792,7 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                         {/* ##423 块 2：本会话计数 + 最近一次压缩的前后对比（此前哪里都看不到这两个数） */}
                         <div class="text-caption opacity-70" data-compact-stats>
                             本会话：<b class="tabular-nums">{deliveries()}</b> 次投递（= 步数）· <b class="tabular-nums">{turnCount()}</b> 轮 ·
-                            压缩<b class="tabular-nums">{compactionCountLabel()}</b> 次（事件，写边界）
+                            压缩<b class="tabular-nums">{compactionCount()}</b> 次（事件，写边界）
                             <span class="opacity-60">
                                 　另有审计 {compactRows().length} 条（手动/自动各次的 compact.jsonl 记录）
                             </span>

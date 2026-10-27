@@ -132,9 +132,8 @@ export interface AutoCompactFacts extends AutoCompactTriggerFacts {
     retainedTokens: number | null;
     /** 已落盘边界（UI 展示用） */
     boundary: { at: string; dropped: number; limitTokens: number } | null;
-    /** 压缩事件条数（UI 展示用；尾部限读可能截断） */
+    /** 压缩事件条数（UI 展示用） */
     compactionCount: number;
-    compactionCountTruncated?: boolean;
 }
 
 /**

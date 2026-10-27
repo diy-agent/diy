@@ -31,7 +31,7 @@ export function assemblyHardCapBytes(contextLimitTokens?: number): number {
 /** 预检线：占窗口比例超过它就先压/提示（缺省 80%，留 20% 给输出与上游自己的模板开销） */
 export const PREFLIGHT_RATIO = 0.8;
 
-/** 预检输入（全部是**已经算好的字节数**，本模块不碰对象、不碰 IO） */
+/** 预检输入（字节 + 可选 CJK 感知 token；本模块不碰对象、不碰 IO） */
 export interface RequestEstimateInput {
     /** system 容器（信封全文）字节 */
     systemBytes: number;
@@ -39,6 +39,10 @@ export interface RequestEstimateInput {
     toolsBytes: number;
     /** 历史 messages（含尾部 runtime 信封）JSON 字节 */
     messagesBytes: number;
+    /** 可选：三段各自的 CJK 感知 token（调用方有原文时传；缺省回落 bytes/4） */
+    systemTokens?: number;
+    toolsTokens?: number;
+    messagesTokens?: number;
     /** 模型上下文窗口（token）；缺省/未知 ⇒ 不做判断（没有判据就不报警） */
     contextLimitTokens?: number | null;
 }
@@ -62,7 +66,10 @@ export interface RequestEstimate {
 /** 量一份请求（纯算术；窗口未知时 `over` 恒 false） */
 export function estimateRequest(i: RequestEstimateInput): RequestEstimate {
     const bytes = Math.max(0, i.systemBytes) + Math.max(0, i.toolsBytes) + Math.max(0, i.messagesBytes);
-    const estTokens = estimateTokens(bytes);
+    const estTokens =
+        Math.max(0, i.systemTokens ?? estimateTokens(i.systemBytes)) +
+        Math.max(0, i.toolsTokens ?? estimateTokens(i.toolsBytes)) +
+        Math.max(0, i.messagesTokens ?? estimateTokens(i.messagesBytes));
     const win = i.contextLimitTokens && i.contextLimitTokens > 0 ? Math.floor(i.contextLimitTokens) : null;
     if (win === null) return { bytes, estTokens, contextLimitTokens: null, thresholdTokens: null, ratio: null, over: false };
     const thresholdTokens = Math.floor(win * PREFLIGHT_RATIO);
@@ -82,7 +89,9 @@ export function tighterHistoryCapBytes(i: {
     systemBytes: number;
     toolsBytes: number;
     reserveBytes?: number;
+    /** 字节/token（缺省 4；中文 CJK 约 3，调用方用实测比例传） */
+    bytesPerToken?: number;
 }): number {
-    const budget = Math.floor(i.contextLimitTokens * 4 * PREFLIGHT_RATIO);
+    const budget = Math.floor(i.contextLimitTokens * (i.bytesPerToken ?? 4) * PREFLIGHT_RATIO);
     return Math.max(0, budget - Math.max(0, i.systemBytes) - Math.max(0, i.toolsBytes) - (i.reserveBytes ?? 8 * 1024));
 }
