@@ -61,6 +61,7 @@ export const ENVELOPE_ABOUT = [
     "· system 每次全量重建；runtime 每轮首步全量，中途变了追加 runtimeDiff（以**后出现**者为准）。",
     "· **历史压缩不动变量树**（system / runtime 每次全量）：别为取值去 cat 文件或跑命令。",
     "· `from:` 只在**历史** user 消息上，说明是谁说的（不是变量树）。",
+    "· `summary:` / `compact:` = 历史被压缩后**顶替旧段**的一条消息（只在压缩事件之后出现）：`summary.text` 是结论，`compact` + 偏后的 `task:` 是检索指令 —— 别当成用户新说的话。",
     "· `summary:` 是被压掉那段的结论，只做背景。`[]` / `{}` = 存在但为空（与「没有这个变量」不是一回事）。",
 ].join("\n");
 
@@ -159,7 +160,16 @@ export function buildHelpDoc(opts: {
 }
 
 /** 信封的**顶层键名**（`ENVELOPE_ABOUT` 第一行那份名单；`isEnvelopeText` 的判据也用它） */
-export const ENVELOPE_TOP_KEYS = new Set(["help", "system", "runtime", "runtimeDiff", "summary", "from", "user"]);
+export const ENVELOPE_TOP_KEYS = new Set([
+    "help",
+    "system",
+    "runtime",
+    "runtimeDiff",
+    "summary",
+    "compact",
+    "from",
+    "user",
+]);
 
 /**
  * 这段文本是不是**一份信封**（自占顶层键的自动生成段）？
