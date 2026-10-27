@@ -3450,7 +3450,14 @@ export class LocalAgentManager {
         const entry = taskUri ? readBoundary(taskUri) : null;
         let cut = 0;
         if (entry) {
-            const c = entry.cut.llmLine - 1 - llmLineBase;
+            // 边界优先按 turnId 定位（切点已吸附轮首 ⇒ 消息级 ≡ 轮级）；没有 turnId 才回落行号。
+            // turnId 在已加载段里找不到 = 切点在本段之前（partial replay），cut=0 正确。
+            const c = entry.cut.turnId
+                ? (() => {
+                      const i = all.findIndex((m) => m.turn === entry.cut.turnId);
+                      return i >= 0 ? i : 0;
+                  })()
+                : entry.cut.llmLine - 1 - llmLineBase;
             // v2 旧账把 limitTokens 当保留量；v3 用 retainTokens。
             // 旧边界保留量 > 新窗口的保留量 ⇒ 换到更小窗口，旧边界作废（按新窗口重算一次）。
             const oldRetain = entry.v === 2 ? (entry.limitTokens ?? 0) : (entry.retainTokens ?? 0);
@@ -3480,11 +3487,17 @@ export class LocalAgentManager {
         if (!r || r.cut <= cut) return cut > 0 ? { cut, headEnd: 0 } : null;
 
         if (taskUri && (opts.write ?? true)) {
+            const cutTurnId = all[r.cut]?.turn ?? null;
+            // 补轮首 ops 锚点：之后 resolveOpsReplay 可以直接从 turns 边界 seek
+            const turnRec = cutTurnId ? readTurnRecords(taskUri).find((t) => t.turnId === cutTurnId) : undefined;
             appendCompactionEntry(taskUri, {
                 at: new Date().toISOString(),
                 retainTokens,
                 windowTokens,
-                cut: { llmLine: llmLineBase + r.cut + 1, turnId: all[r.cut]?.turn ?? null },
+                cut: { llmLine: llmLineBase + r.cut + 1, turnId: cutTurnId },
+                ...(turnRec
+                    ? { ref: { ops: { offset: turnRec.ref.ops.offset, seq: turnRec.ref.ops.seq } } }
+                    : {}),
                 // v3 同时写旧读侧字段（旧 UI / 旧账本读取路径仍能显示；不参与新算法）
                 limitTokens: retainTokens,
                 dropped: r.dropped,

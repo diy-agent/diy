@@ -11,7 +11,7 @@ import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
 import { diyHome } from "../../src/main/core/state";
 import { LocalAgentManager } from "../../src/main/services/local-agent";
-import { readTurnEntries } from "../../src/main/services/local-turns";
+import { readTurnEntries, readTurnRecords } from "../../src/main/services/local-turns";
 import type { Op } from "../../src/main/services/local-blocks";
 
 let usageTotal = 5_000; // 让「最后一步实测用量」过触发线（窗口 20k → 触发线 4k）

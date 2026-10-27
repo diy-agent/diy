@@ -22,6 +22,8 @@ export interface BoundaryMessage {
     tokens: number;
     /** 这条是不是 user 消息（切点只许落在这里） */
     user?: boolean;
+    /** 属于哪一轮（有它时切点必须落在**轮首**，保证消息级 ≡ 轮级） */
+    turn?: string;
 }
 
 export interface KeptBoundary {
@@ -79,7 +81,7 @@ export function selectKeptBoundary(
         acc += messages[i]!.tokens;
         if (acc >= retainTokens) break;
     }
-    // ② 切点往前挪到最近的 user
+    // ② 切点往前挪到最近的 user；有 turn 时再吸附到**轮首**（同轮插话不单独切）
     let cut = -1;
     for (let j = i; j >= 0; j--) {
         if (messages[j]!.user) {
@@ -88,6 +90,20 @@ export function selectKeptBoundary(
         }
     }
     if (cut <= 0) return none();
+    const cutTurn = messages[cut]!.turn;
+    if (cutTurn) {
+        let start = cut;
+        while (start > 0 && messages[start - 1]!.turn === cutTurn) start--;
+        // 轮首通常是开场 user；万一不是，退到该轮第一条 user
+        for (let j = start; j <= cut; j++) {
+            if (messages[j]!.user) {
+                start = j;
+                break;
+            }
+        }
+        cut = start;
+        if (cut <= 0) return none();
+    }
 
     let retained = 0;
     for (let j = cut; j < n; j++) retained += messages[j]!.tokens;

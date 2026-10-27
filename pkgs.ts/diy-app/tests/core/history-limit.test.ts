@@ -56,6 +56,19 @@ describe("selectCompactableRange：从尾装够 → user 切点", () => {
     });
 });
 
+describe("手动 force：下一刀必须落新轮轮首", () => {
+    it("turn a: 0-3；turn b: 4-9；force 从 0 起切到 4（不是轮中插话 6）", () => {
+        const all = Array.from({ length: 10 }, (_, i) => ({
+            role: i % 2 === 0 ? "user" : "assistant",
+            content: "x",
+            turn: i < 4 ? "a" : "b",
+        }));
+        const r = selectCompactableRange(all, { windowTokens: 100_000, force: true });
+        expect(r).not.toBeNull();
+        expect(r!.cut).toBe(4);
+    });
+});
+
 describe("token 粗估：中文不按 /4 低估", () => {
     it("CJK 1 token/字，其余 4 字符/1 token", () => {
         expect(estimateTokensOf("压缩")).toBe(2);

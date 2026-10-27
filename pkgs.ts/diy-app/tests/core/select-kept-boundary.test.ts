@@ -67,6 +67,26 @@ describe("选段：从尾装够 → 挪到最近 user", () => {
     });
 });
 
+describe("切点吸附轮首（消息级 ≡ 轮级）", () => {
+    it("尾段切点落在轮中插话 ⇒ 回退到该轮第一条 user", () => {
+        // turn a: 0-3；turn b: 4-9（4=开场 user，6=轮中插话）
+        const all = Array.from({ length: 10 }, (_, i) => ({
+            tokens: 500,
+            user: i % 2 === 0,
+            turn: i < 4 ? "a" : "b",
+        }));
+        const b = selectKeptBoundary(all, 1_500, 6_000);
+        // 尾段装 3 条（7..9 = 1500）→ i=7 → 回退 user 6 → 再吸附轮首 4
+        expect(b.cut).toBe(4);
+    });
+
+    it("没有 turn 字段时保持原行为（切到最近 user）", () => {
+        const all = Array.from({ length: 10 }, (_, i) => ({ tokens: 500, user: i % 2 === 0 }));
+        const b = selectKeptBoundary(all, 1_500, 6_000);
+        expect(b.cut).toBe(6);
+    });
+});
+
 describe("小窗口兜底值", () => {
     it("16k 是预留下限（不是保头）", () => {
         expect(TRIGGER_RESERVE_MIN).toBe(16_000);

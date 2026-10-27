@@ -90,6 +90,8 @@ export function estimateTokensOf(text: string): number {
 export interface CompactableMessage {
     role: string;
     content: unknown;
+    /** 属于哪一轮（有它时切点吸附到轮首） */
+    turn?: string;
 }
 
 export interface CompactableRange {
@@ -123,6 +125,17 @@ function firstUserAfter(msgs: readonly BoundaryMessage[], floor: number): number
     return -1;
 }
 
+/** 下一条 user 必须是**新轮轮首**（force 时也不能把切点落回轮中插话） */
+function firstTurnStartAfter(msgs: readonly BoundaryMessage[], floor: number): number {
+    const fromTurn = msgs[Math.max(0, floor)]?.turn;
+    if (!fromTurn) return firstUserAfter(msgs, floor);
+    for (let i = Math.max(0, floor) + 1; i < msgs.length; i++) {
+        const m = msgs[i]!;
+        if (m.turn && m.turn !== fromTurn && m.user) return i;
+    }
+    return -1;
+}
+
 /**
  * **core 侧适配层**：把消息序列喂给唯一判据 `selectKeptBoundary`，再处理手动 force。
  *
@@ -139,14 +152,18 @@ export function selectCompactableRange(
     const retainTokens = retainTokensOf(windowTokens);
     if (all.length === 0 || !(retainTokens > 0)) return null;
     const cost = opts.costOf ?? ((m: CompactableMessage) => estimateTokensOf(JSON.stringify(m.content ?? "")));
-    const msgs: BoundaryMessage[] = all.map((m, i) => ({ tokens: cost(m, i), user: m.role === "user" }));
+    const msgs: BoundaryMessage[] = all.map((m, i) => ({
+        tokens: cost(m, i),
+        user: m.role === "user",
+        ...(m.turn ? { turn: m.turn } : {}),
+    }));
     const triggerTokens = triggerTokensOf(windowTokens);
 
     const boundary = selectKeptBoundary(msgs, retainTokens, triggerTokens, { force });
     let cut = boundary.kind === "drop" ? boundary.cut : 0;
 
     if (force && cut <= minCut) {
-        const next = firstUserAfter(msgs, Math.max(cut, minCut));
+        const next = firstTurnStartAfter(msgs, Math.max(cut, minCut));
         if (next < 0) return null;
         cut = next;
     }
