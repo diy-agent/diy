@@ -5810,22 +5810,7 @@ export class LocalAgentManager {
                 const compactMsg = compactHeaderMessage(taskUri);
                 const all = h.messages;
                 const last = all[all.length - 1] as any | undefined;
-                // 历史外层亦结构化：每条 history 转为 from+user/assistant 单条 YAML（满足“所有user消息都是结构化”）
-                const historyOuter = all.slice(0, -1).map((m: any) => {
-                    const role = m.role as string;
-                    const fromId = role === "assistant" ? "agent:main" : "human:chen56";
-                    const raw = m.content;
-                    let content: string;
-                    if (typeof raw === "string") content = raw;
-                    else if (Array.isArray(raw)) content = raw.map((p: any) => (typeof p.text === "string" ? p.text : typeof p.content === "string" ? p.content : JSON.stringify(p))).join("");
-                    else content = JSON.stringify(raw ?? "");
-                    if (content.includes("user:") || content.includes("assistant:")) {
-                        const mm = /message:\s*"([^"]*)"/.exec(content) || /message:\s*\|-?\n\s+([^\n]+)/.exec(content);
-                        if (mm && mm[1]) content = mm[1];
-                    }
-                    const yaml = role === "assistant" ? toYaml({ from: { id: fromId }, assistant: { message: content } }) : toYaml({ from: { id: fromId }, user: { message: content } });
-                    return { role, content: yaml } as unknown as ModelMessage;
-                });
+                const historyOuter = all.slice(0, -1) as unknown as ModelMessage[];
                 // 当轮 messages 仅 1 条（当前输入），满足 messages.0.content == 当轮输入
                 const curPayloadMessages = last
                     ? (() => {
