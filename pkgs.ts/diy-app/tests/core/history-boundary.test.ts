@@ -103,11 +103,11 @@ describe("压缩边界：一次算、落盘、之后不重算", () => {
         // 至少发生过一次压缩事件；**条数不再等于步数**（旧实现是每步一条）
         expect(before.length).toBeGreaterThanOrEqual(1);
         expect(before.length).toBeLessThanOrEqual(2);
-        const entry = before[0] as { retainTokens: number; windowTokens: number; dropped: number; cut: { llmLine: number } };
+        const entry = before[0] as unknown as { retainTokens: number; windowTokens: number; droppedMessages: number; cut: { llmLine: number } };
         // ##442 v3：落的是「保留量 + 当时的窗口」，没有保头行号
         expect(entry.retainTokens).toBe(Math.floor(20_000 * 0.16));
         expect(entry.windowTokens).toBe(20_000);
-        expect(entry.dropped).toBeGreaterThan(0);
+        expect(entry.droppedMessages).toBeGreaterThan(0);
         expect(entry.cut.llmLine).toBeGreaterThan(1);
 
         // 再取两次投递视图（模拟"之后每步"）：边界不该被重算/重写

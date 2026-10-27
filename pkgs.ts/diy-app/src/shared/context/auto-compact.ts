@@ -353,7 +353,7 @@ export interface AutoCompactFacts {
      * null = 从没压过（投递 = 全量）。有它之后每步只按它切，不再重算。
      */
     /** 当前生效的压缩边界（v2 老账没有 windowTokens ⇒ 0） */
-    boundary: { at: string; dropped: number; retainTokens: number; windowTokens: number } | null;
+    boundary: { at: string; droppedMessages: number; retainTokens: number; windowTokens: number } | null;
     /**
      * 本会话**一共写过几条压缩事件**（`turns.jsonl` 的 compaction entry）—— 「压缩次数」的真源。
      * ⚠️ 不是 `compact.jsonl` 的条数：那份自 ##431 起是纯审计日志，两者在界面上要分开叫。

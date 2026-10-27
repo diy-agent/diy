@@ -14,7 +14,7 @@
 //
 // ── 行形状（v2；v1 = ##424 的轮次记录，v2 加 `kind` 与 compaction entry）──
 //   轮次记录：{ v:1, turnId, at, state, user, texts:[{seq,text}], ref:{ ops:{offset,len,seq} } }
-//   压缩边界：{ v:3, kind:"compaction", at, retainTokens, windowTokens, dropped, cut:{ llmLine, turnId }, ref?:{ ops:{offset,seq} } }
+//   压缩边界：{ v:3, kind:"compaction", at, retainTokens, windowTokens, droppedMessages, cut:{ llmLine, turnId }, ref?:{ ops:{offset,seq} } }
 //     （v2 遗留：`limitTokens` 绝对上限 + `headLine` 保头行号 —— ##442 起两者都不存在，读侧兼容一轮）
 // 约定：
 //   1. `offset` / `len` 一律**字节**，`len` 是**整行含换行**；
@@ -84,8 +84,11 @@ export interface CompactionEntry {
     retainTokens: number;
     /** 压缩时用的模型窗口上限（token；0 = 当时取不到）—— 换模型后要不要重算边界看它 */
     windowTokens: number;
-    /** 这次丢弃的消息条数 */
-    dropped: number;
+    /**
+     * 这次丢弃的**消息条数**（== `llm.jsonl` 的行数：一行 = 一条消息）。
+     * 名字带单位：旧字段只叫 `dropped`，读的人得回去查是轮还是条（v2 老记录仍按 `dropped` 读）。
+     */
+    droppedMessages: number;
     cut: { llmLine: number; turnId: string | null };
     /** 切点那一轮的 ops 锚点（可选；用于下次 replay 少读前缀） */
     ref?: { ops: { offset: number; seq: number } };

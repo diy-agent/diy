@@ -83,7 +83,7 @@ describe("##423 徽章 hover：维度 / 口径 / 什么时候会压 / 三触发�
     it("③ 事件制：没边界 → 说「投递的是全量」，有边界 → 说「哪次事件写的、之后不重算」", () => {
         expect(deliveryBadgeTitle(input({ boundary: null }))).toContain("还没有压缩事件");
         const t = deliveryBadgeTitle(
-            input({ boundary: { at: "2026-10-25T10:00:00.000Z", dropped: 7, retainTokens: 12_000 } }),
+            input({ boundary: { at: "2026-10-25T10:00:00.000Z", droppedMessages: 7, retainTokens: 12_000 } }),
         );
         expect(t).toContain("2026-10-25T10:00:00.000Z 写的压缩事件");
         expect(t).toContain("丢 7 条");

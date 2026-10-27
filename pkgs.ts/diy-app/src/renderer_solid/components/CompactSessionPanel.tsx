@@ -194,7 +194,7 @@ export interface CompactPanelCtl {
         facts?: {
             windowTokens: number | null;
             retainedTokens?: number | null;
-            boundary?: { at: string; dropped: number; retainTokens: number; windowTokens: number } | null;
+            boundary?: { at: string; droppedMessages: number; retainTokens: number; windowTokens: number } | null;
             /** 本会话写过的压缩事件条数（turns.jsonl 的 compaction entry） */
             compactionCount?: number;
             ttl?: { prior?: number };
@@ -808,7 +808,7 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                             <Show when={boundary()}>
                                 {(b) => (
                                     <span class="block opacity-80" data-compact-last>
-                                        最近一次事件：{new Date(b().at).toLocaleString()} · 丢 {b().dropped} 条 · 当时保留{" "}
+                                        最近一次事件：{new Date(b().at).toLocaleString()} · 丢 {b().droppedMessages} 条 · 当时保留{" "}
                                         {fmtTokens(b().retainTokens)}（窗口 {fmtTokens(b().windowTokens)}）
                                     </span>
                                 )}

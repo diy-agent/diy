@@ -33,7 +33,8 @@ export interface DeliverySelection {
 /** 已落盘的压缩边界（turns.jsonl 的 compaction entry） */
 export interface DeliveryBoundary {
     at: string;
-    dropped: number;
+    /** 那一次丢掉的**消息条数**（= llm.jsonl 行数） */
+    droppedMessages: number;
     retainTokens: number;
 }
 
@@ -113,7 +114,7 @@ export function deliveryBadgeTitle(input: DeliveryBadgeInput): string {
         const b = input.boundary;
         out.push(
             b
-                ? `切点来自 ${b.at} 写的压缩事件（当时丢 ${b.dropped} 条、保留 ${fmtLimitTokens(b.retainTokens)}）：` +
+                ? `切点来自 ${b.at} 写的压缩事件（当时丢 ${b.droppedMessages} 条、保留 ${fmtLimitTokens(b.retainTokens)}）：` +
                       "之后每步只按它切，不重算。"
                 : "还没有压缩事件：本步投递的是全量（全量估算一旦超上限，发请求前会算一次切点并写事件）。",
         );

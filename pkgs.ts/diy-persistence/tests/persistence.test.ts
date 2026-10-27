@@ -1,11 +1,15 @@
 // tests/persistence.test.ts
 // @diy/persistence 的基本契约：键算法稳定、路径分层、appender 给出的锚点可被 checkOpsRef 认回、
 // 压缩边界 append/read 往返。
-import { appendFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import {
+    llmOffsetOf,
+    readLlmOffsets,
+    sessionDir,
+    writeLlmOffsets,
     checkOpsRef,
     createOpsAppender,
     keyOf,
@@ -65,7 +69,7 @@ describe("ops 写入器 + turns", () => {
             at: new Date().toISOString(),
             retainTokens: 20_480,
             windowTokens: 128_000,
-            dropped: 3,
+            droppedMessages: 3,
             cut: { llmLine: 6, turnId: "t1" },
         });
         const b = readBoundary(home, uri);
@@ -77,6 +81,30 @@ describe("ops 写入器 + turns", () => {
         const line = readFileSync(sessionFile(home, uri, "turns"), "utf-8").trim().split("\n").at(-1)!;
         const row = JSON.parse(line) as { v: number; kind: string };
         expect(row).toMatchObject({ v: 3, kind: "compaction" });
+    });
+
+    it("llmOffsets：行号 → 字节偏移（O(1) 取行；##442）", () => {
+        const llm = join(sessionDir(home, uri), "llm.jsonl");
+        // 三行，第二行故意很长（模拟"单行几 MB"的形态）
+        const l1 = '{"role":"user","content":"甲"}\n';
+        const l2 = `{"role":"tool","content":"${"乙".repeat(50_000)}"}\n`;
+        const l3 = '{"role":"user","content":"丙"}\n';
+        mkdirSync(dirname(llm), { recursive: true });
+        writeFileSync(llm, l1 + l2 + l3, "utf-8");
+
+        expect(writeLlmOffsets(home, uri)).toBe(3);
+        const offsets = readLlmOffsets(home, uri);
+        expect(offsets).toHaveLength(3);
+        // 直接按偏移切片 ⇒ 逐字等于原行（这是"不扫全文件也能取第 N 行"的证明）
+        const buf = readFileSync(llm);
+        for (const [i, want] of [l1, l2, l3].entries()) {
+            const from = offsets[i]!;
+            const slice = buf.subarray(from, from + Buffer.byteLength(want)).toString("utf-8");
+            expect(slice).toBe(want);
+        }
+        expect(llmOffsetOf(home, uri, 2)).toBe(offsets[1]);
+        expect(llmOffsetOf(home, uri, 0)).toBeNull();
+        expect(llmOffsetOf(home, uri, 4)).toBeNull();
     });
 
     it("v2 老边界仍能读回（读侧兼容一轮，之后自然淘汰）", () => {

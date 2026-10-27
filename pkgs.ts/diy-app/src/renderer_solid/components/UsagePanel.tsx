@@ -834,7 +834,7 @@ export function ContextPartsDrawer(props: { open: boolean; uri: string | null; o
                 ? ((await localChatStore.autoCompactStatus(u)) as unknown as {
                       /** ##432 事件制：已落盘的压缩边界（null = 从没压过） */
                       facts?: {
-                          boundary?: { at: string; dropped: number; retainTokens: number; windowTokens: number } | null;
+                          boundary?: { at: string; droppedMessages: number; retainTokens: number; windowTokens: number } | null;
                       };
                   })
                 : undefined,

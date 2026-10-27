@@ -40,6 +40,7 @@ export {
     isTurnStartAt,
 } from "./ops-io";
 export { seekTurnStartAtOrBefore, seekWindowStart, encodeCursor, decodeCursor, SEEK_CHUNK_BYTES } from "./seek";
+export { writeLlmOffsets, readLlmOffsets, llmOffsetOf } from "./llm-offsets";
 export {
     TURN_TEXT_MAX_BYTES,
     TURN_SCHEMA_CURRENT,

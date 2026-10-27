@@ -22,8 +22,8 @@
 export interface CompactWhenBoundary {
     /** ISO 时间 */
     at: string;
-    /** 那一次丢掉的条数 */
-    dropped: number;
+    /** 那一次丢掉的**消息条数**（= llm.jsonl 行数） */
+    droppedMessages: number;
     /** 那一次生效的保留量（token = 当时窗口 × retainRatio）—— 与当前算出的不同就是「窗口/比例变了」 */
     retainTokens: number;
     /** 那次压缩时的模型窗口上限（token；0 = 当时取不到） */
@@ -101,7 +101,7 @@ export function compactWhenRows(i: CompactWhenInput): CompactWhenRow[] {
     const gap = retained == null || trigger == null ? null : trigger - retained;
 
     const firstText = b
-        ? `已有边界（${fmtStamp(b.at)} 写的，丢 ${b.dropped} 条）⇒ 这条路只在「从没压过」时走`
+        ? `已有边界（${fmtStamp(b.at)} 写的，丢 ${b.droppedMessages} 条）⇒ 这条路只在「从没压过」时走`
         : limit == null
           ? "模型窗口上限未知 ⇒ **不压**（不猜数）；确定模型后才会开始"
           : `还没有边界：全量估算一旦超**触发线** ${fmtTokens(trigger!)}（窗口 ${fmtTokens(i.windowLimit!)} × ${i.windowOverRatio}），下一步**发请求之前**算一次切点（保留 ${fmtTokens(limit)} = 窗口 × ${i.retainRatio}）并写压缩事件`;
@@ -168,7 +168,7 @@ export function autoCompactSentence(): string {
 
 /** 一句话总结（徽章 / 表格里放不下四行时用） */
 export function compactWhenSummary(i: CompactWhenInput): string {
-    const where = i.boundary ? `已压过（${fmtStamp(i.boundary.at)}，丢 ${i.boundary.dropped} 条）` : "还没压过";
+    const where = i.boundary ? `已压过（${fmtStamp(i.boundary.at)}，丢 ${i.boundary.droppedMessages} 条）` : "还没压过";
     const keep =
         i.windowLimit == null
             ? `${i.retainRatio} × 窗口（窗口未知）`

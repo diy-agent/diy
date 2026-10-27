@@ -28,6 +28,7 @@ import {
     readTurnEntries as readTurnEntriesAt,
     readBoundary as readBoundaryAt,
     appendCompactionEntry as appendCompactionEntryAt,
+    writeLlmOffsets as writeLlmOffsetsAt,
 } from "@diy/persistence";
 
 export { TURN_SCHEMA_CURRENT, TURN_TEXT_MAX_BYTES };
@@ -47,6 +48,21 @@ export function appendTurnRecord(taskUri: string, draft: TurnDraft | TurnRecord)
 /** 追加一条压缩边界（##432 刀 2） */
 export function appendCompactionEntry(taskUri: string, entry: Omit<CompactionEntry, "v" | "kind">): boolean {
     return appendCompactionEntryAt(diyHome(), taskUri, entry);
+}
+
+/**
+ * 重建 `llmOffsets.jsonl`（行号 → 字节偏移；##442）。
+ *
+ * 只在**压缩事件**后调用：压缩是"从此以后要按需回查历史"的起点，而索引正是那条通道的油门
+ * （`tail -c +offset | head -c N` = O(1)，不扫 50 MB）。失败只出声 —— 索引是派生物，
+ * 没有它顶多回落到 `sed -n`（慢但正确）。
+ */
+export function refreshLlmOffsets(taskUri: string): void {
+    try {
+        writeLlmOffsetsAt(diyHome(), taskUri);
+    } catch (e) {
+        console.warn(`[local-turns] llm 偏移索引重建失败 ${taskUri}（回落到按行扫）:`, e);
+    }
 }
 
 /** 当前生效的压缩边界（turns 里最后一条 compaction entry） */

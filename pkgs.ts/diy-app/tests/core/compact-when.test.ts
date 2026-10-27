@@ -19,7 +19,7 @@ const base: CompactWhenInput = {
     retainRatio: 0.16,
     windowOverRatio: 0.5,
     windowLimit: 200_000,
-    boundary: { at: "2026-10-25T10:00:00.000Z", dropped: 12, retainTokens: 32_000, windowTokens: 200_000 },
+    boundary: { at: "2026-10-25T10:00:00.000Z", droppedMessages: 12, retainTokens: 32_000, windowTokens: 200_000 },
     retainedTokens: 12_000,
     lastStepTokens: 50_000,
 };

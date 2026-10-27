@@ -110,7 +110,7 @@ const writeBoundary = (uri: string, cutLine: number, dropped = 1): void => {
         at: new Date().toISOString(),
         retainTokens: 20_000,
         windowTokens: 128_000,
-        dropped,
+        droppedMessages: dropped,
         cut: { llmLine: cutLine, turnId: null },
     });
 };

@@ -40,6 +40,7 @@ import {
     clipTurnText,
     countCompactions,
     readBoundary,
+    refreshLlmOffsets,
     readTurnRecords,
     synthesizeTurnOps,
     type TurnRecordState,
@@ -3446,9 +3447,11 @@ export class LocalAgentManager {
                 at: new Date().toISOString(),
                 retainTokens,
                 windowTokens,
-                dropped: r.dropped,
+                droppedMessages: r.dropped,
                 cut: { llmLine: llmLineBase + r.cut + 1, turnId: all[r.cut]?.turn ?? null },
             });
+            // 行号 → 字节偏移索引：压缩之后「按需回查历史」才可能 O(1)（##442）
+            refreshLlmOffsets(taskUri);
             console.log(
                 `[local-agent] 压缩事件 ${taskUri}：丢 ${r.dropped} 条（保留 ${retainTokens} token = 窗口 ${windowTokens} × ${limit.retainRatio}）`,
             );
@@ -3559,7 +3562,8 @@ export class LocalAgentManager {
         const boundary = bEntry
             ? {
                 at: bEntry.at,
-                dropped: bEntry.dropped,
+                // v2 老账的 `dropped` 与 v3 的 `droppedMessages` 同义（都是消息条数）
+                droppedMessages: bEntry.v === 2 ? bEntry.dropped : bEntry.droppedMessages,
                 // v2 老账没有 windowTokens/retainTokens：把老上限当保留量报（读侧统一口径）
                 retainTokens: bEntry.v === 2 ? bEntry.limitTokens : bEntry.retainTokens,
                 windowTokens: bEntry.v === 2 ? 0 : bEntry.windowTokens,

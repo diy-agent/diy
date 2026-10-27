@@ -14,7 +14,25 @@ import path from "node:path";
 import { keyOf } from "./keys";
 
 /** 会话子文件种类（**唯一清单**：双认 / 迁移 / clear 都按它走） */
-export const SESSION_KINDS = ["ops", "llm", "usage", "steps", "compact", "changelog", "raw", "turns"] as const;
+export const SESSION_KINDS = [
+    "ops",
+    "llm",
+    "usage",
+    "steps",
+    "compact",
+    "changelog",
+    "raw",
+    "turns",
+    /**
+     * `llm.jsonl` 的**行号 → 字节偏移**索引（##442）：第 N 行 = 第 N 条消息的起始字节。
+     *
+     * 为什么需要：llm.jsonl 一行可能几 MB（266 实测最长 9.98 MB），而 `sed -n 'Np'` 必须从 0 扫到 N
+     * （50 MB 文件 ~70 ms，175 MB 的 ops ~1 s）。有索引后取任意一行是 O(1)：
+     *   `tail -c +$(sed -n "${N}p" llmOffsets.jsonl) llm.jsonl | head -c 4000`
+     * 这也让「按需回查历史」这条形态（`summary.mode: self`）真的可用。
+     */
+    "llmOffsets",
+] as const;
 export type SessionKind = (typeof SESSION_KINDS)[number];
 
 /** 会话数据根 `<home>/local/`（不存在则创建） */
