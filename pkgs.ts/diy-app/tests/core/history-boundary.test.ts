@@ -169,6 +169,33 @@ describe("128k 窗口 + 24k fixed：到线必须真压（修 auto noop）", () =
     });
 });
 
+describe("preflight 超 0.8W：写边界，不是只 cap 这一轮（##442 step 6 P0-1）", () => {
+    it("小窗口 + 大消息：preflight 触发后 turns 里有压缩边界", async () => {
+        const uri = newTask();
+        const mgr = manager();
+        const cfg = autoCompactFile(diyHome());
+        const saved = readFileSync(cfg, "utf-8");
+        writeFileSync(
+            cfg,
+            [
+                "policy: {mode: budget, modeData: {toolResult: {render: asis}}, summary: false}",
+                "history:",
+                "  limit: {windowTokens: 40000, summary: {mode: self}}",
+                "",
+            ].join("\n"),
+            "utf-8",
+        );
+        try {
+            usageTotal = 100; // 不让 auto 触发，只让 preflight 触发
+            // 至少两轮才切得动；单条巨型 user 没有「更老的一段」可丢
+            for (let i = 0; i < 8; i++) await collect(mgr.chat(uri, `大消息 ${i}：${"问".repeat(5000)}`));
+            expect(compactions(uri).length).toBeGreaterThanOrEqual(1);
+        } finally {
+            writeFileSync(cfg, saved, "utf-8");
+        }
+    });
+});
+
 describe("手动压缩无限制（##442 用户 2026-10-27 选 C）", () => {
     it("小会话（总量远低于触发线）点压缩：仍写边界、至少丢一步", async () => {
         const uri = newTask();

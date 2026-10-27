@@ -46,6 +46,27 @@ describe("estimateRequest：窗口占用判定", () => {
     });
 });
 
+describe("CJK 感知 token（##442 step 6 P0-3）", () => {
+    it("调用方给 tokens 时不再走 bytes/4；中文 3000 字 ≈ 3000 token，不是 2250", () => {
+        const e = estimateRequest({
+            systemBytes: 0,
+            toolsBytes: 0,
+            messagesBytes: 9000, // 3000 个中文字 = 9000 字节
+            messagesTokens: 3000,
+            contextLimitTokens: 100_000,
+        });
+        expect(e.estTokens).toBe(3000);
+    });
+
+    it("bytesPerToken 传给 cap：中文 3 字节/token ⇒ 同一窗口的字节额度更小", () => {
+        const win = 100_000;
+        const ascii = tighterHistoryCapBytes({ contextLimitTokens: win, systemBytes: 0, toolsBytes: 0, bytesPerToken: 4 });
+        const cjk = tighterHistoryCapBytes({ contextLimitTokens: win, systemBytes: 0, toolsBytes: 0, bytesPerToken: 3 });
+        expect(cjk).toBeLessThan(ascii);
+        expect(cjk).toBe(Math.floor(win * 3 * PREFLIGHT_RATIO) - 8 * 1024);
+    });
+});
+
 describe("tighterHistoryCapBytes：压到预检线以内，历史还能占多少", () => {
     it("整份请求预算 − system − tools − 预留（缺省 8 KB）", () => {
         const win = 1_000_000;

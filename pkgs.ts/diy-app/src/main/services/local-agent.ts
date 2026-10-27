@@ -3533,6 +3533,8 @@ export class LocalAgentManager {
             usedTokens?: number | null;
             /** 固定开支（system + runtime + tools）估算；只用于「压完能不能降下来」 */
             fixedTokens?: number;
+            /** 本次事件的触发线（预检用 0.8W；缺省 = 正常 trigger） */
+            triggerAt?: number;
         } = {},
     ): { cut: number; headEnd: number; wrote: boolean } | null {
         const cfgLimit = normalizeHistoryLimit(loadAutoCompact(diyHome()).history?.limit);
@@ -3570,13 +3572,14 @@ export class LocalAgentManager {
                 for (let i = cut; i < all.length; i++) retained += tokOf(all[i]!);
                 if (retained < triggerTokens) return { cut, headEnd: 0, wrote: false };
             }
+            const triggerAt = opts.triggerAt ?? triggerTokens;
             const used = opts.usedTokens ?? all.reduce((n, m) => n + tokOf(m), 0);
-            if (used < triggerTokens) return cut > 0 ? { cut, headEnd: 0, wrote: false } : null;
+            if (used < triggerAt) return cut > 0 ? { cut, headEnd: 0, wrote: false } : null;
             // 压到目标 retain 也还在线上 ⇒ 结构性超限，写边界只会每轮空转
             const afterBest = (opts.fixedTokens ?? 0) + retainTokens;
-            if (afterBest >= triggerTokens) {
+            if (afterBest >= triggerAt) {
                 console.warn(
-                    `[local-agent] 压缩无意义 ${taskUri}：fixed ${opts.fixedTokens ?? 0} + retain ${retainTokens} >= trigger ${triggerTokens}`,
+                    `[local-agent] 压缩无意义 ${taskUri}：fixed ${opts.fixedTokens ?? 0} + retain ${retainTokens} >= trigger ${triggerAt}`,
                 );
                 return cut > 0 ? { cut, headEnd: 0, wrote: false } : null;
             }
@@ -6043,7 +6046,8 @@ export class LocalAgentManager {
             // 会话被锁死。这里在**发之前**量一次：越 80% 线就按剩余额度重装一次（能压就压），
             // 压不动才拒发并说清「啥到上限了」（`external-recognized`，见 shared/error-triage）。
             // 窗口未知 ⇒ 跳过（没有判据就不报警；装配层的 1 MiB 硬上限照旧生效）。
-            const ctxLimitTokens = contextLimitOf(model) ?? null;
+            const cfgWindow = normalizeHistoryLimit(loadAutoCompact(diyHome()).history?.limit).windowTokens;
+            const ctxLimitTokens = cfgWindow ?? contextLimitOf(model) ?? null;
             let historyCapOverride: number | undefined;
             let preflightNotice: string | undefined;
             {
@@ -6065,6 +6069,16 @@ export class LocalAgentManager {
                     contextLimitTokens: ctxLimitTokens,
                 });
                 if (est0.over && ctxLimitTokens !== null) {
+                    // 预检也是压缩事件：先按正常目标（retain）写边界，下一轮才会从新边界开始，
+                    // 而不是每轮 cap 一次、首条保留消息每轮往前滑（##442 step 6 P0-1）。
+                    const fixedTokens = systemTokens + toolsTokens;
+                    const capRange = this.appliedHistoryRange(taskUri, projectAll(sess.store), sess.llmBase, {
+                        write: true,
+                        triggered: true,
+                        usedTokens: est0.estTokens,
+                        fixedTokens,
+                        triggerAt: est0.thresholdTokens ?? undefined,
+                    });
                     // `tighterHistoryCapBytes` 返回 0 = 「system + tools 已顶满，历史一分不留」。
                     // 但装配层的约定是 `capBytes <= 0` ⇒ **不设上限**（老调用点兼容），所以这里钳到 1 字节
                     // —— 语义上等价于「历史全丢」，同时保住「必须降级」这条判据。
@@ -6077,9 +6091,12 @@ export class LocalAgentManager {
                             bytesPerToken,
                         }),
                     );
+                    const histBase = capRange?.wrote
+                        ? this.deliveryHistory(taskUri, sess.store, undefined, undefined, sess.llmBase)
+                        : hist;
                     const hist2 = this.deliveryHistory(taskUri, sess.store, undefined, tightCap, sess.llmBase);
-                    // 预检额外丢的历史也必须让模型看见（不新增消息：并进末条 user 的 notify）
-                    const capDropped = Math.max(0, hist.messages.length - hist2.messages.length);
+                    // 只把「cap 在边界之外又丢的」通知给模型；边界本身由 head compact 通知覆盖
+                    const capDropped = Math.max(0, histBase.messages.length - hist2.messages.length);
                     const sent2 = addCapNotify(sentOf(hist2), taskUri, capDropped);
                     const est2 = estimateRequest({
                         systemBytes: delivery.system.bytes,
