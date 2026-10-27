@@ -56,23 +56,21 @@ import type { ContextPath, ContextTreeState } from "./types";
  * 真正该动版本的只有 `WIRE_ENCODING` 里那些**语义**（system/runtime 投递形态、hash 口径、渲染格式）。
  */
 export const ENVELOPE_ABOUT = [
-    "YAML 信封：顶层键只有 help / system / runtime / runtimeDiff / summary / from / user。",
-    "· help = 结构说明（zod 派生）；值段只放数据，解释在 help。",
-    "· system 每次全量重建；runtime 每轮首步全量，中途变了追加 runtimeDiff（以**后出现**者为准）。",
-    "· **历史压缩不动变量树**（system / runtime 每次全量）：别为取值去 cat 文件或跑命令。",
-    "· `from:` 只在**历史** user 消息上，说明是谁说的（不是变量树）。",
-    "· `summary:` 是被压掉那段的结论，只做背景。`[]` / `{}` = 存在但为空（与「没有这个变量」不是一回事）。",
+    "YAML 信封：顶层键 help / system / runtime / runtimeDiff / summary / from / user。",
+    "· help = 结构说明（zod 派生）；值段只放数据。",
+    "· system 每次全量重建；runtime 每轮首步全量，变了追加 runtimeDiff（以后出现者为准）。取值看变量树，别去 cat 文件。",
+    "· summary 是被压掉那段的背景；`[]` / `{}` = 存在但为空，与「没有这个变量」不同。",
 ].join("\n");
 
 /** 易变变量树（作为信封的 `runtime` 键；每轮首步全量） */
 export const RuntimeSchema = z
     .record(z.string(), z.unknown())
-    .describe("易变上下文变量树（每轮首步给**全量**；键 = 原子单元路径）");
+    .describe("易变上下文变量树（每轮首步给全量；键 = 原子单元路径）");
 
 /** 本步的变化（作为信封的 `runtimeDiff` 键；只列**变化**的原子单元） */
 export const RuntimeDiffSchema = z
     .record(z.string(), z.unknown())
-    .describe("本步发生变化的原子单元 → 该单元**变更后的当前值**（全量；没变的单元不列）");
+    .describe("本步发生变化的原子单元 → 变更后的当前值（只列变化的）");
 
 /**
  * 历史摘要（作为信封的 `summary` 键；被压缩掉那段的结论）。
@@ -84,28 +82,26 @@ export const RuntimeDiffSchema = z
 export const SummarySchema = z
     .string()
     .describe(
-        "被压缩掉的那段对话的**摘要**（上一段会话的结论，由摘要模型生成；仅在摘要功能启用时出现）。" +
-            "它只做**背景**：变量树的**当前值**一律看 system / runtime 段（每次全量），**不要**为取某个变量的值去翻历史。",
+        "被压缩掉那段对话的摘要（背景，非当前值）。取变量一律看 system / runtime，不要翻历史。",
     );
 
 /** 发言者（`from:` 段；只出现在**历史** user 消息上，见 ##422） */
 export const FromSchema = z
     .object({
-        id: z.string().describe("发言者成员 id（`agent:<名>` / `human:<名>`）—— 谁说的这句话"),
+        id: z.string().describe("发言者成员 id（`agent:<名>` / `human:<名>`）"),
         name: z
             .string()
             .optional()
-            .describe("当时的显示名（房间成员表里的名字）；**取不到就省**（不猜，不编）"),
+            .describe("当时的显示名；取不到就省"),
     })
     .describe(
-        "这条历史发言的**发言者**（`from` 段）：只出现在历史 user 消息上，与 `user.message` 并列（不嵌套）。" +
-            "**老消息可能没有本段**（那时没记发言者）—— 没有 = 未知，不要当成「同一个人」。",
+        "这条历史发言的发言者：只在历史 user 消息上，与 user.message 并列。老消息可能没有本段 = 未知，别当成同一个人。",
     );
 
 /** 用户消息（信封的 `user` 键） */
 export const UserEnvelopeSchema = z
     .object({ message: z.string().describe("用户本轮真实发言（原样，未加工）") })
-    .describe("用户消息：与运行时变量变更**同处一个信封**（相邻 user 消息会被合并，故先合成一份）");
+    .describe("用户消息（相邻 user 消息会被合并，故与运行时变更同处一个信封）");
 
 /** 信封顶层键的 zod（唯一真源；`help` 由它 + 各值段 schema 派生，见 `buildHelpDoc`） */
 export const EnvelopeSchema = z

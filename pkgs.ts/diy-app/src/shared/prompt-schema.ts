@@ -66,11 +66,11 @@ export const FactsCellSchema = z
     resolvedBy: z
       .string()
       .optional()
-      .describe("按什么解析出这个值的（`env=development` / `paths=pkgs.ts/...`）。**缺省不输出** = 全局唯一（无变体歧义）"),
+      .describe("按什么解析出此值（`env=development` / `paths=…`）；缺省 = 全局唯一"),
     variants: z
       .number()
       .optional()
-      .describe("同 claim 的可用变体总数。**缺省不输出** = 1（没有别的值存在）"),
+      .describe("同 claim 的变体总数；缺省 = 1"),
   })
   .meta({ id: "FactsCell" });
 export type FactsCell = z.infer<typeof FactsCellSchema>;
@@ -175,46 +175,36 @@ export const AssembleGlobalsSchema = z.object({
     .object({
       algorithm: z
         .enum(["yaml-nested", "flat-gid", "md-list"])
-        .describe(
-          "投影算法（与 `@diy/facts` 的 `PROJECTION_ALGORITHMS` 同名，别在此另起一套）：" +
-            "`yaml-nested` = claim 分组的 map（缺省）；`flat-gid` = gid 扁平 map；`md-list` = 一段 markdown 表",
-        ),
+        .describe("投影算法：yaml-nested（缺省）/ flat-gid / md-list"),
       env: z.string().describe("解析变体用的环境（`DIY_ENV`）：production / development / test"),
       task: z
         .record(z.string(), FactsCellSchema)
         .optional()
-        .describe("**任务级库**的已解析值（claim → 值）。本任务自己的结论，优先级最高"),
+        .describe("任务级库的已解析值（claim → 值），优先级最高"),
       global: z
         .record(z.string(), FactsCellSchema)
         .optional()
-        .describe("**设备级库**（`~/.diy/knowledge/`）的已解析值（claim → 值）。跨项目的用户规则；同名 claim 时**项目库优先于它**（task > project > global）"),
+        .describe("设备级库（`~/.diy/knowledge/`）的已解析值；同名 claim 时项目库优先"),
       project: z
         .record(z.string(), FactsCellSchema)
         .optional()
-        .describe("**项目级库**的已解析值（claim → 值）。跨任务共享的结论"),
+        .describe("项目级库的已解析值（跨任务共享）"),
       text: z
         .string()
         .optional()
-        .describe("**仅 `md` 算法**：整份投影的 markdown 表（此时 task/project 缺席 —— 同一种内容不给两种形状）"),
-      omitted: z.number().describe("因预算被裁掉的条目数（>0 ⇒ 还有没带进来的，用 `diy facts status` 看）"),
+        .describe("仅 `md-list` 算法：整份投影的 markdown 表（此时 task/project 缺席）"),
+      omitted: z.number().describe("因预算被裁掉的条目数；>0 时用 `diy facts status` 看还有哪些"),
       omittedClaims: z
         .array(z.string())
         .optional()
-        .describe(
-          "被裁掉的 claim（采样，最多 5 个）：`diy facts get <其一>` 就能把它捞回来。" +
-            "数目看 `omitted`，这里只给「叫什么」—— 没有名字就没有动作",
-        ),
+        .describe("被裁掉的 claim 采样（≤5 个）；用 `diy facts get <claim>` 取回全文"),
       overhead: z
         .number()
         .optional()
-        .describe(
-          "包装开销（字节，不进预算）：`<claim>: {value,resolvedBy,variants}` 外壳本身。" +
-            "预算按**值字节**算（与 `diy facts submit` 的校验同口径），故实际文本 ≈ 预算 + 本字段 —— " +
-            "`omitted > 0` 才是「装不下」，这里大只是外壳多",
-        ),
+        .describe("包装开销（字节，不计入预算）：`<claim>: {value,resolvedBy,variants}` 外壳本身。`omitted > 0` 才是真的装不下"),
       problems: z
         .array(z.object({ gid: z.string().describe("哪一条（`<ns>:<claim>`）"), code: z.string().describe("机器码（`facts/*`）") }))
-        .describe("**真问题**：冲突 / 库内缺 claim。空数组 = 正常"),
+        .describe("真问题：冲突 / 库内缺 claim。空数组 = 正常"),
     })
     .optional()
     .describe("事实库投影（没有库时缺席）"),
@@ -233,26 +223,22 @@ export const AssembleGlobalsSchema = z.object({
     .object({
       claims: z
         .number()
-        .describe(
-          "全库条目总数，**claim 口径**（subject#aspect；跨库同 claim 只算一条，与 `facts brief` / `status` 同口径 —— 不是 facts 数：同一 claim 的多个 env 变体算一条）。与索引里各主题的条数之和对不上 ⇒ 有主题缺 description 没进索引",
-        ),
+        .describe("全库 claim 总数（subject#aspect；跨库同名只算一条）"),
       entries: z
         .array(
           z.object({
             subject: z.string().describe("主题（`diy facts get <主题>#<方面>` 的前半）"),
-            desc: z.string().describe("一句话说清这个对象（直接取自 subject 词表的 description）"),
-            claims: z.number().describe("该主题下的条目数（claim 口径，= `facts brief <主题>` 的 claims；跨库同 claim 只算一条）"),
+            desc: z.string().describe("这个主题是什么"),
+            claims: z.number().describe("该主题的条目数"),
             ns: z
               .array(z.string())
-              .describe(
-                "在哪些库：project（仓库 knowledge/）/ global（设备级）。两个都在 = 项目库覆盖设备库那份；查的时候带 `--in` 指定",
-              ),
+              .describe("在哪几个库：project（仓库 knowledge/）/ global（设备级）"),
           }),
         )
         .describe("可查主题索引（按主题名排序）"),
     })
     .optional()
-    .describe("知识库索引（没有库时整节缺席）"),
+    .describe("知识库索引（没有库时缺席）"),
   /**
    * **仓库文档索引（摘要）**（##404 / ##5 第 11 轮 B）：`docs/` 是设计的活真源，但它不在任何
    * AGENTS.md 链上 —— 只给一句"有这些、怎么查"，agent 才知道去 `diy docs index` 看全表。
@@ -266,12 +252,12 @@ export const AssembleGlobalsSchema = z.object({
    */
   docs: z
     .object({
-      roots: z.array(z.string()).describe("扫描根（仓库相对）：缺省只有 `docs/plans`（设计稿正区），可 `--roots` 扩到 `docs`"),
+      roots: z.array(z.string()).describe("扫描根（仓库相对）：缺省 `docs/plans`，可 `--roots` 扩到 `docs`"),
       count: z.number().describe("可索引篇数"),
-      newest: z.string().optional().describe("全部文档里最新的 git 改动日（`YY-MM-DD`）；非 git / 未提交则缺席"),
+      newest: z.string().optional().describe("全部文档最新的 git 改动日（`YY-MM-DD`）；非 git / 未提交则缺席"),
     })
     .optional()
-    .describe("仓库文档索引**摘要**（没有文档时整节缺席）。逐篇索引（路径 / 标题 / 字节 / 状态词 / 两日期）按需取：`diy docs index`"),
+    .describe("仓库文档索引摘要；逐篇索引按需取：`diy docs index`"),
   room: z
     .object({
       members: z
@@ -327,15 +313,15 @@ export const AssembleGlobalsSchema = z.object({
         .object({
           used: z.number().describe("上一步请求的总 token（输入 + 输出）；窗口占用的分子"),
           limit: z.number().describe("模型窗口上限（tokens）"),
-          ratio: z.number().describe("`used / limit` 的**百分数**（0~100，1 位小数）：>60 就该收尾 / 少堆长输出"),
+          ratio: z.number().describe("`used / limit` 百分数（0~100）：>60 就该收尾 / 少堆长输出"),
         })
         .optional()
-        .describe("上下文窗口占用（取**上一步**：本步发出去之前就已经知道用了多少）；窗口上限未知则缺席"),
+        .describe("上下文窗口占用（取上一步）；上限未知则缺席"),
       last: z
         .object({
-          cacheHit: z.number().optional().describe("上一步的缓存命中率**百分数**（0~100）。从 90+ 掉到 <50 ⇒ 前缀缓存被打断（多半是刚动了 system 段），输入成本会翻数倍"),
+          cacheHit: z.number().optional().describe("上一步缓存命中率（%）；骤然下跌 = 前缀缓存被打断"),
           output: z.number().describe("上一步的输出 token（文本 + 思考）"),
-          cost: z.number().optional().describe("上一步金额（USD）；无价目则缺席（**不是 0**）"),
+          cost: z.number().optional().describe("上一步金额（USD）；无价目则缺席（不是 0）"),
         })
         .optional()
         .describe("上一步的实际消耗"),
@@ -343,13 +329,13 @@ export const AssembleGlobalsSchema = z.object({
         .object({
           steps: z.number().describe("本轮已走步数"),
           cost: z.number().optional().describe("本轮累计金额（USD）；一步都没价目则缺席"),
-          unpriced: z.number().optional().describe("本轮无价目的步数（>0 ⇒ `cost` 是部分和，不是完整花费）"),
+          unpriced: z.number().optional().describe("本轮无价目的步数（>0 ⇒ `cost` 只是部分和）"),
         })
         .optional()
-        .describe("本轮累计（进程重启不影响它：来自本轮现场）"),
+        .describe("本轮累计（进程重启不影响：来自本轮现场）"),
     })
     .optional()
-    .describe("自量：窗口占用 / 上一步消耗 / 本轮累计（每步都变，故归 runtime；量不到的子项缺席，不写 0）"),
+    .describe("自量：窗口占用 / 上一步消耗 / 本轮累计（每步都变，故归 runtime；量不到的子项缺席）"),
 });
 export type AssembleGlobals = z.infer<typeof AssembleGlobalsSchema>;
 
