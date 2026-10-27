@@ -214,6 +214,7 @@ describe("##422 合并规则：from 信封不参与相邻 user 合并（判据 �
         const mgr = new LocalAgentManager(() => stubModel(sink));
         await turn(uri, mgr, "第一句", { author: "agent:main" }, sink);
         writeBoundary(uri, 3);
+        mgr.refreshCompactState(uri); // 测试直接写 turns 边界，模拟外部写
         const { prompt } = await turn(uri, mgr, "第二句", undefined, sink);
         expect(prompt[0]?.role).toBe("system");
         // ##442：system 之后先一条压缩通知（只有 source / summary），再是保留的历史发言
@@ -221,6 +222,7 @@ describe("##422 合并规则：from 信封不参与相邻 user 合并（判据 �
         expect(notice.startsWith("notify:\n")).toBe(true);
         expect(notice).toContain("kind: compact");
         expect(notice).toContain("source:");
+        expect(notice).toContain("原文从第 3 行开始");
         expect(notice).not.toContain("history:");
         const hist = textOf(prompt[2]?.content);
         expect(hist.startsWith("chat:\n")).toBe(true);

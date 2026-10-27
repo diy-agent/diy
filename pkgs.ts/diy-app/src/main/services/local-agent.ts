@@ -34,7 +34,6 @@ import {
     sessionStateFile,
     streamPath,
     opsFile,
-    turnsFile,
 } from "../core/local-paths";
 import { readJsonlTail } from "../core/jsonl-tail";
 import {
@@ -43,8 +42,10 @@ import {
     checkOpsRef,
     clipTurnText,
     readBoundary,
+    readTurnEntries,
     readTurnRecords,
     synthesizeTurnOps,
+    type CompactionEntry,
     type TurnRecordState,
 } from "./local-turns";
 import { estimateTokensOf, normalizeHistoryLimit, selectCompactableRange } from "../../shared/context/history-limit";
@@ -699,18 +700,19 @@ function isEnvelope(m: ModelMessage): boolean {
  * ⚠️ 压缩重做后这里要接边界事件（新段 = 新基线）；当前 main 的压缩注记还没迁完，
  * 本函数先把「不压缩的会话」钉住。真发生压缩时由投递侧另行重建。
  */
-function frozenSystemTextOf(taskUri: string, live: Delivery): string {
+function frozenSystemTextOf(
+    live: Delivery,
+    lastStep: DeliveryStepRecord | null,
+    boundaryAt: string | null,
+): string {
     try {
-        const last = readDeliverySteps(taskUri).at(-1);
         // ##442：压缩边界 = 新段。段首快照只在**同一段**内复用；边界变了必须用现状重建一次。
-        const boundaryAt = readBoundary(taskUri)?.at ?? null;
-        if ((last?.compactAt ?? null) !== boundaryAt) return live.system.text;
-        if (!last?.systemText) return live.system.text;
+        if ((lastStep?.compactAt ?? null) !== boundaryAt) return live.system.text;
+        if (!lastStep?.systemText) return live.system.text;
         // 老格式的 system 没有顶格 runtime（help 里那段是缩进的）⇒ 不能当基线
-        if (!last.systemText.split("\n").some((l) => l === "runtime:")) return live.system.text;
-        return last.systemText;
-    } catch (e) {
-        console.warn(`[local-agent] 读 system 快照失败（按本轮现算）${taskUri}:`, e);
+        if (!lastStep.systemText.split("\n").some((l) => l === "runtime:")) return live.system.text;
+        return lastStep.systemText;
+    } catch {
         return live.system.text;
     }
 }
@@ -724,15 +726,23 @@ function frozenSystemTextOf(taskUri: string, live: Delivery): string {
  */
 const COMPACT_SELF_HINT = "前文已压缩，未生成摘要。需要时按行查 source（每行一条消息）。";
 
-function compactNoticeMessage(taskUri: string, mode: "model" | "self", summary: string): ModelMessage | null {
-    let b: ReturnType<typeof readBoundary>;
+function compactNoticeMessage(
+    taskUri: string,
+    mode: "model" | "self",
+    summary: string,
+    boundary?: CompactionEntry | null,
+): ModelMessage | null {
+    let b: CompactionEntry | null;
     try {
-        b = readBoundary(taskUri);
+        b = boundary === undefined ? readBoundary(taskUri) : boundary;
     } catch {
         return null;
     }
     if (!b) return null;
-    const text = mode === "self" ? COMPACT_SELF_HINT : summary || COMPACT_SELF_HINT;
+    // ##442 step 5：只留 source/summary，但 self / 空摘要必须给一个起点，否则 12MB 文件无从查起。
+    // 起点写进 summary 文本（不加新字段），两次压缩之间仍是常量。
+    const locator = `原文从第 ${b.cut.llmLine} 行开始（source 每行一条消息）。`;
+    const text = mode === "self" || !summary ? `${COMPACT_SELF_HINT}\n${locator}` : `${summary}\n\n${locator}`;
     return {
         role: "user",
         content: userEnvelope({ notify: [{ kind: "compact", source: llmFile(taskUri), summary: text }] }),
@@ -2818,6 +2828,71 @@ function* rejectionOps(decision: Extract<TurnGateDecision, { allow: false }>): G
 export class LocalAgentManager {
     private sessions = new Map<string, LocalSession>();
     /**
+     * 压缩/快照的**会话内存态**（##442 step 4）：边界、最后一步、压缩次数。
+     * 冷启动读一次 turns 全量 + steps 尾行；之后每轮不再整读 8.5MB steps / 300KB turns。
+     * 外部写（undo / clear / 另一次 compact）由对应入口失效。
+     */
+    private compactStates = new Map<
+        string,
+        {
+            boundary: CompactionEntry | null;
+            lastStep: DeliveryStepRecord | null;
+            compactionCount: number;
+            ledgerMtimeMs: number;
+        }
+    >();
+
+    private compactStateOf(taskUri: string): {
+        boundary: CompactionEntry | null;
+        lastStep: DeliveryStepRecord | null;
+        compactionCount: number;
+        ledgerMtimeMs: number;
+    } {
+        let ledgerMtimeMs = 0;
+        try {
+            // 只探 compact.jsonl 的 mtime：turn 记录每轮追加，拿 turns mtime 当失效判据会每轮全量重读
+            ledgerMtimeMs = statSync(compactFile(taskUri)).mtimeMs; // sync-io-ok: 只探一次 mtime（undo / 另一次 compact 的失效判据）
+        } catch {
+            /* 文件不存在 = 0 */
+        }
+        const hit = this.compactStates.get(taskUri);
+        if (hit && hit.ledgerMtimeMs === ledgerMtimeMs) return hit;
+        if (hit) this.compactStates.delete(taskUri);
+        let boundary: CompactionEntry | null = null;
+        let compactionCount = 0;
+        try {
+            for (const e of readTurnEntries(taskUri)) {
+                if ((e as CompactionEntry).kind === "compaction") {
+                    boundary = e as CompactionEntry;
+                    compactionCount++;
+                }
+            }
+        } catch {
+            /* 冷启动读失败 = 按“从未压缩/没有 step”处理；发送不受阻 */
+        }
+        let lastStep: DeliveryStepRecord | null = null;
+        try {
+            const tail = readJsonlTail(stepsFile(taskUri), { maxBytes: 256 * 1024, maxLines: 1 });
+            const line = tail.lines.at(-1);
+            if (line) lastStep = JSON.parse(line) as DeliveryStepRecord;
+        } catch {
+            /* 坏尾行 = 没有快照；下一轮重建 */
+        }
+        const st = { boundary, lastStep, compactionCount, ledgerMtimeMs };
+        this.compactStates.set(taskUri, st);
+        return st;
+    }
+
+    private invalidateCompactState(taskUri: string): void {
+        this.compactStates.delete(taskUri);
+    }
+
+    /** 外部写了 turns 边界后刷新内存态（生产写路径已自动更新；测试 / 工具用） */
+    refreshCompactState(taskUri: string): void {
+        this.invalidateCompactState(taskUri);
+    }
+
+    /**
      * 插话队列（「插入到下一步 / 下一次对话后」）。
      *
      * 权威落盘在任务目录 .diy/drafts.yaml（与聊天草稿同文件、同类数据：都是"丢了 = 用户白打"），
@@ -3447,7 +3522,7 @@ export class LocalAgentManager {
         if (!(retainTokens > 0) || !(triggerTokens > retainTokens)) return null;
 
         const tokOf = (m: LocalModelMessage): number => estimateTokensOf(JSON.stringify(m.content ?? ""));
-        const entry = taskUri ? readBoundary(taskUri) : null;
+        const entry = taskUri ? this.compactStateOf(taskUri).boundary : null;
         let cut = 0;
         if (entry) {
             // 边界优先按 turnId 定位（切点已吸附轮首 ⇒ 消息级 ≡ 轮级）；没有 turnId 才回落行号。
@@ -3488,21 +3563,41 @@ export class LocalAgentManager {
 
         if (taskUri && (opts.write ?? true)) {
             const cutTurnId = all[r.cut]?.turn ?? null;
+            const at = new Date().toISOString();
             // 补轮首 ops 锚点：之后 resolveOpsReplay 可以直接从 turns 边界 seek
             const turnRec = cutTurnId ? readTurnRecords(taskUri).find((t) => t.turnId === cutTurnId) : undefined;
+            const ref = turnRec ? { ops: { offset: turnRec.ref.ops.offset, seq: turnRec.ref.ops.seq } } : undefined;
             appendCompactionEntry(taskUri, {
-                at: new Date().toISOString(),
+                at,
                 retainTokens,
                 windowTokens,
                 cut: { llmLine: llmLineBase + r.cut + 1, turnId: cutTurnId },
-                ...(turnRec
-                    ? { ref: { ops: { offset: turnRec.ref.ops.offset, seq: turnRec.ref.ops.seq } } }
-                    : {}),
+                ...(ref ? { ref } : {}),
                 // v3 同时写旧读侧字段（旧 UI / 旧账本读取路径仍能显示；不参与新算法）
                 limitTokens: retainTokens,
                 dropped: r.dropped,
                 headLine: 0,
             });
+            // 内存态同步：新边界 + 次数；lastStep 保留（下轮 frozenSystemTextOf 会因 compactAt 不同而重建）
+            const state = this.compactStateOf(taskUri);
+            state.boundary = {
+                v: 3,
+                kind: "compaction",
+                at,
+                retainTokens,
+                windowTokens,
+                cut: { llmLine: llmLineBase + r.cut + 1, turnId: cutTurnId },
+                ...(ref ? { ref } : {}),
+                limitTokens: retainTokens,
+                dropped: r.dropped,
+                headLine: 0,
+            };
+            state.compactionCount += 1;
+            try {
+                state.ledgerMtimeMs = statSync(compactFile(taskUri)).mtimeMs; // sync-io-ok: 写边界后刷新 mtime（低频）
+            } catch {
+                /* 写失败已出声；下次 mtime 校验会重载 */
+            }
             console.log(
                 `[local-agent] 压缩事件 ${taskUri}：丢 ${r.dropped} 条（保留 ${retainTokens} token = 窗口 ${windowTokens} × 0.16）`,
             );
@@ -3561,8 +3656,9 @@ export class LocalAgentManager {
         // ##423：投递出去的那段历史 ≈ token（最后一步轮首的投递选择快照）—— 「什么时候会压」拿它跟上限比
         const retainedTokens =
             typeof last?.historySelection?.keptTokens === "number" ? last.historySelection.keptTokens : null;
-        // 已落盘的压缩边界（turns.jsonl 的 compaction entry）：有它 = 历史已被切过，之后每步只按它切
-        const bEntry = readBoundary(taskUri);
+        // 已落盘的压缩边界（内存态；冷启动读一次 turns）
+        const compactState = this.compactStateOf(taskUri);
+        const bEntry = compactState.boundary;
         const boundary = bEntry
             ? {
                   at: bEntry.at,
@@ -3571,25 +3667,12 @@ export class LocalAgentManager {
                   limitTokens: bEntry.v === 2 ? (bEntry.limitTokens ?? 0) : (bEntry.retainTokens ?? 0),
               }
             : null;
-        // 压缩事件**总条数**：尾部限读（整读 turns 只为数个数不值；截断时 UI 标 ≥N）
-        const turnsTail = readJsonlTail(turnsFile(taskUri), { maxBytes: 256 * 1024, maxLines: 200 });
-        let compactionCount = 0;
-        for (const line of turnsTail.lines) {
-            try {
-                const e = JSON.parse(line) as { kind?: string };
-                if (e.kind === "compaction") compactionCount++;
-            } catch {
-                /* 坏行跳过（与 readTurnEntries 同策略） */
-            }
-        }
-
         const facts: AutoCompactFacts = {
             windowTokens,
             windowLimitTokens: cfgWindow ?? windowLimitTokens,
             retainedTokens,
             boundary,
-            compactionCount,
-            ...(turnsTail.truncated ? { compactionCountTruncated: true } : {}),
+            compactionCount: compactState.compactionCount,
         };
         const triggers = detectAutoCompactTriggers(facts);
         const raw = { path: autoCompactFile(home), text: readAutoCompactText(home) };
@@ -4234,7 +4317,8 @@ export class LocalAgentManager {
         }) as unknown as Record<string, unknown>;
         const liveDelivery = buildDelivery(globals, loadSystemPlaces(home));
         // 与真发同一条 system 快照（段首冻结；见 `frozenSystemTextOf`）
-        const frozenText = frozenSystemTextOf(taskUri, liveDelivery);
+        const state = this.compactStateOf(taskUri);
+        const frozenText = frozenSystemTextOf(liveDelivery, state.lastStep, state.boundary?.at ?? null);
         const delivery: Delivery =
             frozenText === liveDelivery.system.text
                 ? liveDelivery
@@ -4252,7 +4336,7 @@ export class LocalAgentManager {
         const histView = this.deliveryHistoryForView(store, policy, taskUri, storeInput ? 0 : replayPlan.lineBase);
         const summaryText = summaryOverride !== undefined ? summaryOverride : this.effectiveSummary(taskUri);
         const mode = normalizeHistoryLimit(loadAutoCompact(home).history?.limit).summary.mode;
-        const notice = compactNoticeMessage(taskUri, mode, summaryText);
+        const notice = compactNoticeMessage(taskUri, mode, summaryText, this.compactStateOf(taskUri).boundary);
         // 压缩通知在 system 之后、历史之前（##442）；没有边界 ⇒ 逐字不变。
         const messages = normalizeUserRuns(notice ? [notice, ...histView.messages] : histView.messages);
         return {
@@ -4501,6 +4585,7 @@ export class LocalAgentManager {
      *     —— 界面只列出尾部窗口里的记录，所以正常操作不会碰到这条。
      */
     undoCompact(taskUri: string, ref: string): boolean {
+        this.invalidateCompactState(taskUri);
         const tail = readCompactLogTail(taskUri);
         const current = latestBoundary(taskUri)?.compactId ?? null;
         const exists = tail.events.some((e) => e.kind === "compact" && e.id === ref) || current === ref;
@@ -4724,7 +4809,7 @@ export class LocalAgentManager {
      */
     private seedCtxSnap(taskUri: string): CtxSnapshot | null {
         try {
-            const lastStep = readDeliverySteps(taskUri).at(-1);
+            const lastStep = this.compactStateOf(taskUri).lastStep;
             if (!lastStep) return null;
             const tree = foldCtxTree(readCtxLogEntries(taskUri));
             if (!tree) return null;
@@ -4744,6 +4829,7 @@ export class LocalAgentManager {
      * 现在：失败也照样丢内存态（下次进入从盘上重建，两边一致），返回值只表示「盘上是否清干净」。
      */
     clear(taskUri: string): boolean {
+        this.invalidateCompactState(taskUri);
         this.cancel(taskUri);
         let ok = true;
         // 会话都要删了，排队中的插话无处可投 —— 一并清掉（否则横条会一直挂着"待发送"）
@@ -5668,7 +5754,8 @@ export class LocalAgentManager {
         const liveDelivery = buildDelivery(globals, loadSystemPlaces(diyHome()));
         // 段首 system 快照（##442 用户 2026-10-27）：变量树全在 system，压缩点前不重建。
         // 跨轮变化走 user 控制增量（`sentOf` 里按上一次真发的树算），不砸这条 system 的前缀缓存。
-        const frozenSystemText = frozenSystemTextOf(taskUri, liveDelivery);
+        const frozenState = this.compactStateOf(taskUri);
+        const frozenSystemText = frozenSystemTextOf(liveDelivery, frozenState.lastStep, frozenState.boundary?.at ?? null);
         const delivery: Delivery =
             frozenSystemText === liveDelivery.system.text
                 ? liveDelivery
@@ -5845,7 +5932,12 @@ export class LocalAgentManager {
              * 系统刚重建（首轮 / 老格式升级）⇒ 基线就是当前值，不再补增量。
              */
             const sentOf = (h: typeof hist): ModelMessage[] => {
-                const notice = compactNoticeMessage(taskUri, summaryMode, this.effectiveSummary(taskUri));
+                const notice = compactNoticeMessage(
+                    taskUri,
+                    summaryMode,
+                    this.effectiveSummary(taskUri),
+                    this.compactStateOf(taskUri).boundary,
+                );
                 const messages = normalizeUserRuns(notice ? [notice, ...h.messages] : h.messages);
                 // 跨轮控制增量：`prevDeltaSnap` 是「上一次给模型看过的树」；本轮轮首 system 已冻结，
                 // 变化只补 user。**不在这里前移游标** —— 预检可能重算一次（`sentOf` 会再跑），
@@ -6006,7 +6098,7 @@ export class LocalAgentManager {
             });
             // 投递快照（每轮真发一条）：投递事实，供 UI 的 step/diff 用（与 raw 那种旁路观测不同）。
             // 落盘失败不阻断发送（它只是观测），但必须出声。
-            const prevStep = readDeliverySteps(taskUri).at(-1) ?? null; // 本任务的上一轮（用于算变化）
+            const prevStep = this.compactStateOf(taskUri).lastStep; // 本任务的上一轮（用于算变化）
             const step: DeliveryStepRecord = {
                 ts: new Date().toISOString(),
                 turnId,
@@ -6017,10 +6109,13 @@ export class LocalAgentManager {
                 valueHashes: delivery.valueHashes,
                 systemText: delivery.system.text,
                 runtimeText: delivery.runtime.text,
-                ...(readBoundary(taskUri)?.at ? { compactAt: readBoundary(taskUri)!.at } : {}),
+                ...(this.compactStateOf(taskUri).boundary?.at
+                    ? { compactAt: this.compactStateOf(taskUri).boundary!.at }
+                    : {}),
                 // `summaryText` 不再写：压缩结论现在只在 notify.kind=compact.summary（##442）。
             };
             appendStep(stepsFile(taskUri), step);
+            this.compactStateOf(taskUri).lastStep = step;
             // 变更统计（**按项目**累计；只存变化路径 → 体积小、可长期留）。
             // 用途：跑几天后回答"这个节点到底变了几次" —— 划分位置的判据（见 task 178）。
             appendContextStat(
