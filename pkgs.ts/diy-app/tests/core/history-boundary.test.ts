@@ -126,6 +126,39 @@ describe("压缩边界：一次算、落盘、之后不重算", () => {
     });
 });
 
+describe("128k 窗口 + 24k fixed：到线必须真压（修 auto noop）", () => {
+    it("history 只有约 90k（< 112k 触发线），但 total 到线 ⇒ 必须写边界", async () => {
+        const uri = newTask();
+        const mgr = manager();
+        const cfg = autoCompactFile(diyHome());
+        const saved = readFileSync(cfg, "utf-8");
+        writeFileSync(
+            cfg,
+            [
+                "policy: {mode: budget, modeData: {toolResult: {render: asis}}, summary: false}",
+                "history:",
+                "  limit: {windowTokens: 128000, summary: {mode: self}}",
+                "",
+            ].join("\n"),
+            "utf-8",
+        );
+        try {
+            // 先攒约 90k 历史；用量压到触发线以下，保证攒历史期间不自动压
+            usageTotal = 100;
+            for (let i = 0; i < 26; i++) await collect(mgr.chat(uri, `大 ${i}：${"问".repeat(3000)}`));
+            expect(compactions(uri).length).toBe(0);
+            // 写一条 total=114k 的用量（仍 < 128k 窗口，但 >= 112k 触发线）
+            usageTotal = 114_000;
+            await collect(mgr.chat(uri, "记一笔用量"));
+            // 下一次 chat 的 autoCompactStatus 会读到 114k 并触发；history 只有约 90k
+            await collect(mgr.chat(uri, "触发"));
+            expect(compactions(uri).length).toBeGreaterThanOrEqual(1);
+        } finally {
+            writeFileSync(cfg, saved, "utf-8");
+        }
+    });
+});
+
 describe("手动压缩无限制（##442 用户 2026-10-27 选 C）", () => {
     it("小会话（总量远低于触发线）点压缩：仍写边界、至少丢一步", async () => {
         const uri = newTask();

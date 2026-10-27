@@ -3360,14 +3360,12 @@ export class LocalAgentManager {
         hardCapBytes?: number,
         /** ##420：`store` 在 llm.jsonl 里的行号偏移（只 replay 保留段时 = 被跳过的消息条数） */
         llmLineBase = 0,
-        /** 只读路径（预览）不许写账本（##432 review E） */
-        writeBoundary = true,
     ): HistoryDelivery {
         // 【配置 / 历史分离，用户 2026-10-07】投递口径 = **当前配置**（期望值），每次请求实时算 ——
         // 改预算**本轮即生效**。压缩账（compact.jsonl）只是**历史快照**（不可变，供回溯/对比），
         // 不再决定投递（旧实现读 `resolveBoundary` → 没压过就不生效，违反直觉）。
         const policy = loadAutoCompact(diyHome()).policy;
-        return this.buildHistory(store, policy, collect, taskUri, hardCapBytes, llmLineBase, writeBoundary);
+        return this.buildHistory(store, policy, collect, taskUri, hardCapBytes, llmLineBase);
     }
 
     /** 面板参数预览用（给定 policy + 边界现算，不读生效账本）—— 与真发同一条构造链 */
@@ -3377,7 +3375,7 @@ export class LocalAgentManager {
         taskUri: string,
         llmLineBase = 0,
     ): HistoryDelivery {
-        return this.buildHistory(store, policy, undefined, taskUri, undefined, llmLineBase, false);
+        return this.buildHistory(store, policy, undefined, taskUri, undefined, llmLineBase);
     }
 
     /**
@@ -3398,15 +3396,10 @@ export class LocalAgentManager {
          * 忘了加 = 注记把模型指向一批**别的**消息（行号错位，且只错在跳过段的长度上）。
          */
         llmLineBase = 0,
-        /**
-         * 只读路径（面板预览 / 该步实际请求）**不许写账本**（##432 review E）：
-         * 看页面不该改 turns.jsonl。`false` = **照样算**（含按当前上限试算），只是不落盘。
-         */
-        writeBoundary = true,
     ): HistoryDelivery {
         const all = projectAll(store);
-        // ##442：边界只在压缩事件时算一次并落盘；之后每步只按它切（不重算）
-        const range = this.appliedHistoryRange(taskUriOf, all, llmLineBase, { write: writeBoundary });
+        // ##442：边界只在压缩事件时算一次并落盘；投递/预览只按它切，绝不新建边界。
+        const range = this.appliedHistoryRange(taskUriOf, all, llmLineBase, { write: false, triggered: false });
         const opts: DeliveryOpts = policy
             ? { ...optsFor(policy, taskUriOf, collect, hardCapBytes), ...(range ? { historyCut: range } : {}) }
             : range
@@ -3426,7 +3419,7 @@ export class LocalAgentManager {
         taskUri: string,
         all: readonly LocalModelMessage[],
         llmLineBase: number,
-        opts: { write?: boolean; force?: boolean } = {},
+        opts: { write?: boolean; force?: boolean; triggered?: boolean; usedTokens?: number | null } = {},
     ): { cut: number; headEnd: number } | null {
         const cfgLimit = normalizeHistoryLimit(loadAutoCompact(diyHome()).history?.limit);
         const windowTokens = cfgLimit.windowTokens ?? contextLimitOf(personaForTask(diyHome(), taskUri).model);
@@ -3446,16 +3439,18 @@ export class LocalAgentManager {
             if (c > 0 && (!(oldRetain > 0) || oldRetain <= retainTokens)) cut = Math.min(c, all.length);
         }
 
-        // 自动：保留段还不到触发线 ⇒ 复用旧边界；总量都不到触发线 ⇒ 不压。
+        // 只有「压缩事件」才允许新建边界（triggered）；投递/预览/每轮 historySelection 只按旧边界切。
+        // 自动：保留段还不到触发线 ⇒ 复用旧边界；用量都不到触发线 ⇒ 不压。
         // 手动（force）：两条都跳过，至少再丢一步。
         if (!opts.force) {
+            if (!opts.triggered) return cut > 0 ? { cut, headEnd: 0 } : null;
             if (cut > 0) {
                 let retained = 0;
                 for (let i = cut; i < all.length; i++) retained += tokOf(all[i]!);
                 if (retained < triggerTokens) return { cut, headEnd: 0 };
             }
-            const total = all.reduce((n, m) => n + tokOf(m), 0);
-            if (total < triggerTokens) return cut > 0 ? { cut, headEnd: 0 } : null;
+            const used = opts.usedTokens ?? all.reduce((n, m) => n + tokOf(m), 0);
+            if (used < triggerTokens) return cut > 0 ? { cut, headEnd: 0 } : null;
         }
 
         const r = selectCompactableRange(all, {
@@ -3592,7 +3587,7 @@ export class LocalAgentManager {
                 : replayOpsInto(new BlockStore(), fp, replay.from);
         // 断代/截断的标记随消息一起回给 UI（**不许静默空白**：用户看到一个空会话时必须知道为什么）
         // ##432 review E：**只读预览**（面板「投递预览」）不写 turns.jsonl —— 看页面不该改账本
-        return { ...this.deliveryHistory(taskUri, store, undefined, undefined, replay.lineBase, false), replay };
+        return { ...this.deliveryHistory(taskUri, store, undefined, undefined, replay.lineBase), replay };
     }
 
     /** 可选模型（去掉密钥等连接隐私字段，只下发元数据 + 限定名供 UI/CLI 展示） */
@@ -4102,7 +4097,11 @@ export class LocalAgentManager {
      * 压缩预案（**只算不写**）：预览、panel「事实」行、真发前的记账共用同一份计算。
      * 抽出来是为了「预览看到的 = 真压出来的」——两条路径各算各的必然分叉。
      */
-    private planCompact(taskUri: string, policyInput: unknown, force = false): CompactPlan {
+    private planCompact(
+        taskUri: string,
+        policyInput: unknown,
+        opts: { force?: boolean; triggered?: boolean; usedTokens?: number | null } = {},
+    ): CompactPlan {
         const policy = normalizePolicy(policyInput);
         // 旧账本字段（级列表与 plan 版本链已删）：读旧事件仍要能解析，所以保留一个最小快照
         // 装配计划已删（##432）；这里只剩一个来源标记，恒为 default（历史口径）。
@@ -4116,7 +4115,12 @@ export class LocalAgentManager {
         const all = projectAll(store);
         // ##432 review C：预览 / 记账也读**同一条已落盘边界**（不写账本：预览不改盘）
         // 预览/记账与真发同一条边界；`write: false` = 只算不落盘。
-        const recordsRange = this.appliedHistoryRange(taskUri, all, 0, { write: false, force });
+        const recordsRange = this.appliedHistoryRange(taskUri, all, 0, {
+            write: false,
+            force: opts.force,
+            triggered: opts.triggered,
+            usedTokens: opts.usedTokens,
+        });
         const sel = recordsRange
             ? selectHistoryByCut(all, recordsRange, optsFor(policy, taskUri))
             : selectHistoryByCut(all, { cut: all.length, headEnd: all.length });
@@ -4271,7 +4275,7 @@ export class LocalAgentManager {
      */
     async summarize(taskUri: string): Promise<{ text: string; data: SummaryData; cost: number | null }> {
         // 摘要针对**当前配置下会被丢弃的轮**（与 compact 同一份预算），不再用旧的 keepTurns 旋钮。
-        const p = this.planCompact(taskUri, loadAutoCompact(diyHome()).policy);
+        const p = this.planCompact(taskUri, loadAutoCompact(diyHome()).policy, { force: true });
         if (p.droppedIds.length === 0) return { text: "", data: emptySummary(), cost: null };
         const model = personaForTask(diyHome(), taskUri).model;
         const { rm, key } = this.resolveModel(model);
@@ -4305,7 +4309,7 @@ export class LocalAgentManager {
 
     /** 压缩预览（只算不写）：面板左侧参数 + 右侧请求 YAML diff + 事实表的数据源 */
     async compactPreview(taskUri: string, policyInput: unknown, summaryText?: string): Promise<CompactPreview> {
-        const p = this.planCompact(taskUri, policyInput);
+        const p = this.planCompact(taskUri, policyInput, { force: true });
         // 一次算两份视图（base/mod）→ 复用 planCompact 刚折好的块树：整读 + 解析 + 折叠只做一次。
         // 同步链路内文件不会变，且投影只读（不回写块树），故两份视图看到的是**同一份**历史。
         const store = p.store;
@@ -4357,10 +4361,18 @@ export class LocalAgentManager {
     ): CompactEventRecord {
         // 【用户 2026-10-07】允许**轮次中**压缩（长任务不能等一轮结束）。压缩只写快照 + 落盘被裁原文，
         // 不改 ops、不重置会话（投递按当前配置实时算），故对正在跑的轮次无副作用。
-        const p = this.planCompact(taskUri, policyInput, force);
+        // 压缩请求 = 允许新建边界（是否真新建仍由 usedTokens 触发线把关；force 跳过）。
+        const lastUsage = readLastStepUsage(taskUri);
+        const usedTokens = lastUsage ? bucketsOf(lastUsage.usage as UsageLike).total : null;
+        const p = this.planCompact(taskUri, policyInput, { force, triggered: true, usedTokens });
         // 真压缩 = 边界必须落盘；否则下一次投递还会按旧边界（手动小会话尤其明显）。
         if (p.droppedIds.length > 0) {
-            this.appliedHistoryRange(taskUri, projectAll(p.store), 0, { write: true, force });
+            this.appliedHistoryRange(taskUri, projectAll(p.store), 0, {
+                write: true,
+                force,
+                triggered: true,
+                usedTokens,
+            });
         }
         // 空操作：无轮被丢 + 无工具被裁 + 投递字节不缩 ⇒ 什么都没改，**不写账**（写一条"压缩"却
         // 没压任何东西是误导：历史页会把它当一次真压缩）。缓存过期 / 系统上下文变触发时预算本就够用，
@@ -5904,7 +5916,10 @@ export class LocalAgentManager {
             // 报的是旧算法的数字。`persist=false`：这一步的落盘已由 `buildHistory` 做过。
             const selPolicy = loadAutoCompact(diyHome()).policy;
             const allMsgs = projectAll(sess.store);
-            const stepRange = this.appliedHistoryRange(taskUri, allMsgs, sess.llmBase, { write: false });
+            const stepRange = this.appliedHistoryRange(taskUri, allMsgs, sess.llmBase, {
+                write: false,
+                triggered: false,
+            });
             const sel = stepRange
                 ? selectHistoryByCut(allMsgs, stepRange, {
                       ...optsFor(selPolicy, taskUri),
