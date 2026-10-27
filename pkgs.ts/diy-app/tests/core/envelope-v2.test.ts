@@ -12,7 +12,7 @@
 
 import { describe, expect, it } from "vitest";
 import { buildDelivery, controlDeltaDelivery, defaultSystemPlaces } from "../../src/shared/context/delivery";
-import { chatEnvelope, isEnvelopeText, userEnvelope, type NotifyItem } from "../../src/shared/context/envelope";
+import { chatEnvelope, isEnvelopeText, userEnvelope, withNotify, type NotifyItem } from "../../src/shared/context/envelope";
 
 const globals = {
     diy: { cli: "/repo/diy.sh", home: "/home/u/.diy" },
@@ -136,6 +136,17 @@ describe("role:user：chat / notify 与键序", () => {
         expect(out).toContain("    exitCode: 0");
         expect(out).toContain("    signal: null");
         expect(out).toContain("    durationMs: 83000");
+    });
+
+    it("withNotify：把 notify 并进已有 user 信封，不新增消息，键序 runtime → notify → chat", () => {
+        const item: NotifyItem = { kind: "compact", source: "/l/llm.jsonl", summary: "预检超限" };
+        const plain = withNotify('chat:\n  - from: human:chen56\n    text: "说"', item);
+        expect(plain.startsWith("notify:\n")).toBe(true);
+        expect(plain.indexOf("notify:")).toBeLessThan(plain.indexOf("chat:"));
+        const mixed = withNotify("runtime:\n  self: { steps: 1 }\nchat:\n  - from: human:chen56\n    text: \"说\"", item);
+        expect(mixed.indexOf("runtime:")).toBeLessThan(mixed.indexOf("notify:"));
+        expect(mixed.indexOf("notify:")).toBeLessThan(mixed.indexOf("chat:"));
+        expect(mixed).toContain("kind: compact");
     });
 
     it("键序固定：system → runtime → notify → chat", () => {

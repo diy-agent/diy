@@ -138,7 +138,7 @@ import {
 import { buildDelivery, controlDeltaDelivery, isRuntimePlace, type Delivery } from "../../shared/context/delivery";
 import { assemblyHardCapBytes } from "../../shared/context/request-preflight";
 import { estimateRequest, tighterHistoryCapBytes } from "../../shared/context/request-preflight";
-import { chatEnvelope, isEnvelopeText, userEnvelope, type NotifyItem } from "../../shared/context/envelope";
+import { chatEnvelope, isEnvelopeText, userEnvelope, withNotify, type NotifyItem } from "../../shared/context/envelope";
 import { describeAnomalies, readLlmLog } from "../../shared/context/log-schema";
 import {
     autoCompactPolicyInput,
@@ -737,6 +737,24 @@ function compactNoticeMessage(taskUri: string, mode: "model" | "self", summary: 
         role: "user",
         content: userEnvelope({ notify: [{ kind: "compact", source: llmFile(taskUri), summary: text }] }),
     };
+}
+
+/** 预检 tightCap 额外丢历史时，把 cap 事件并进末条 user 的 notify（不新增消息） */
+function addCapNotify(messages: ModelMessage[], taskUri: string, dropped: number): ModelMessage[] {
+    if (dropped <= 0) return messages;
+    const item: NotifyItem = {
+        kind: "compact",
+        source: llmFile(taskUri),
+        summary: `预检超限：已额外丢弃 ${dropped} 条历史（原文见 source）`,
+    };
+    for (let i = messages.length - 1; i >= 0; i--) {
+        const m = messages[i]!;
+        if (m.role !== "user" || typeof m.content !== "string") continue;
+        const out = [...messages];
+        out[i] = { ...m, content: withNotify(m.content, item) };
+        return out;
+    }
+    return messages;
 }
 
 /**
@@ -5875,7 +5893,9 @@ export class LocalAgentManager {
                         }),
                     );
                     const hist2 = this.deliveryHistory(taskUri, sess.store, undefined, tightCap, sess.llmBase);
-                    const sent2 = sentOf(hist2);
+                    // 预检额外丢的历史也必须让模型看见（不新增消息：并进末条 user 的 notify）
+                    const capDropped = Math.max(0, hist.messages.length - hist2.messages.length);
+                    const sent2 = addCapNotify(sentOf(hist2), taskUri, capDropped);
                     const est2 = estimateRequest({
                         systemBytes: delivery.system.bytes,
                         toolsBytes: ctxParts.toolsBytes,

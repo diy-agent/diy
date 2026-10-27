@@ -465,6 +465,21 @@ export function chatEnvelope(items: readonly ChatItem[]): string {
     return userEnvelope({ chat: items });
 }
 
+/**
+ * 把一条 `notify` 并进已有 user 信封的末尾（不新增消息）。
+ *
+ * 用途：预检 `tightCap` 又丢了历史时，模型必须知道；但单独 push 一条 user 会多一条消息、
+ * 改前缀。并进末条 user 的 `notify` 段，键序仍是 runtime → notify → chat。
+ */
+export function withNotify(text: string, item: NotifyItem): string {
+    if (!text.trim()) return userEnvelope({ notify: [item] });
+    const block = userEnvelope({ notify: [item] });
+    if (text.startsWith("chat:")) return `${block}\n${text}`;
+    const at = text.indexOf("\nchat:");
+    if (at >= 0) return `${text.slice(0, at + 1)}${block}\n${text.slice(at + 1)}`;
+    return `${text.trimEnd()}\n${block}`;
+}
+
 /** system 的**纯数据**部分（不带 help 段）—— golden 比对 / 调试用 */
 export function systemDataText(tree: ContextTreeState, systemPlaces: readonly ContextPath[]): string {
     return renderPaths(tree, systemPlaces);
