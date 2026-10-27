@@ -5805,28 +5805,33 @@ export class LocalAgentManager {
             const replayOpts = reasoningReplayOptsOf(rm, reasoningEffort);
             // 一份 `hist` → 最终 wire 形状（历史前注记 + 尾部 runtime 信封 + 摘要 + 推理回放归一）。
             // 抽成闭包：预检「再压一次」要按同一套拼装重算一遍 —— 两处各抄一遍必分叉（##227 老教训）。
-            // 新格式（你 10-27 定版）：单条 user 内 runtime全量 + messages[] + compact，无外层连续 user
+            // 新格式（你 10-27 定版修正）：外层按轮次 system/user/assistant 交替，单条 user 内仅当轮 messages[0]
             const sentOf = (h: typeof hist): ModelMessage[] => {
                 const compactMsg = compactHeaderMessage(taskUri);
-                const payloadMessages = h.messages.map((m: any) => {
-                    const role = m.role as string;
-                    const from = role === "assistant" ? "agent:main" : "human:chen56";
-                    const raw = (m as any).content;
-                    let content: string;
-                    if (typeof raw === "string") content = raw;
-                    else if (Array.isArray(raw)) content = raw.map((p: any) => (typeof p.text === "string" ? p.text : typeof p.content === "string" ? p.content : JSON.stringify(p))).join("");
-                    else content = JSON.stringify(raw ?? "");
-                    // 若 content 本身是 envelope（含 user:），粗略取 user.message
-                    if (content.includes("user:")) {
-                        const mm = /message:\s*"([^"]*)"/.exec(content) || /message:\s*\|-?\n\s+([^\n]+)/.exec(content);
-                        if (mm && mm[1]) content = mm[1];
-                    }
-                    return { from, content };
-                });
+                const all = h.messages;
+                const last = all[all.length - 1] as any | undefined;
+                const historyOuter = all.slice(0, -1) as unknown as ModelMessage[];
+                // 当轮 messages 仅 1 条（当前输入），满足 messages.0.content == 当轮输入
+                const curPayloadMessages = last
+                    ? (() => {
+                          const role = (last as any).role as string;
+                          const from = role === "assistant" ? "agent:main" : "human:chen56";
+                          const raw = (last as any).content;
+                          let content: string;
+                          if (typeof raw === "string") content = raw;
+                          else if (Array.isArray(raw)) content = raw.map((p: any) => (typeof p.text === "string" ? p.text : typeof p.content === "string" ? p.content : JSON.stringify(p))).join("");
+                          else content = JSON.stringify(raw ?? "");
+                          if (content.includes("user:")) {
+                              const mm = /message:\s*"([^"]*)"/.exec(content) || /message:\s*\|-?\n\s+([^\n]+)/.exec(content);
+                              if (mm && mm[1]) content = mm[1];
+                          }
+                          return [{ from, content }];
+                      })()
+                    : [];
                 const parts: string[] = [];
                 if (delivery.runtime.text) parts.push(delivery.runtime.text);
-                if (payloadMessages.length) {
-                    const msgsYaml = payloadMessages.map((x: any) => `  - from: ${x.from}\n    content: ${JSON.stringify(x.content)}`).join("\n");
+                if (curPayloadMessages.length) {
+                    const msgsYaml = curPayloadMessages.map((x: any) => `  - from: ${x.from}\n    content: ${JSON.stringify(x.content)}`).join("\n");
                     parts.push(`messages:\n${msgsYaml}`);
                 }
                 if (compactMsg) {
@@ -5835,7 +5840,9 @@ export class LocalAgentManager {
                 }
                 const yaml = parts.join("\n");
                 const single = { role: "user", content: yaml } as unknown as ModelMessage;
-                return ensureReasoningReplay([single], replayOpts);
+                // 外层：历史按轮次交替 + 当轮单条 user（无连续 user）
+                const outer = [...(historyOuter as any), single] as unknown as ModelMessage[];
+                return ensureReasoningReplay(outer, replayOpts);
             };
             let sent: ModelMessage[] = sentOf(hist);
             // 构成字节（##9 追加的历史段）：system / tools / **历史** 三段，才答得了
