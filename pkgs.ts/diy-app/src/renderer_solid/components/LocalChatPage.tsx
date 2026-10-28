@@ -60,7 +60,18 @@ import {
 } from "./UsagePanel";
 import { CompactHistoryPanel } from "./CompactSessionPanel";
 import { TrafficDrawer } from "./TrafficDrawer";
-import { ConfirmDialog } from "./ConfirmDialog";
+import {
+    ConfirmDialog,
+    IconBolt,
+    IconChevron,
+    IconClock,
+    IconCode,
+    IconCompress,
+    IconExpand,
+    IconGrip,
+    IconTrash,
+    RowGutter,
+} from "@diy/ui-kit";
 import { InputLimitDialog } from "./InputLimitDialog";
 import type { InputGate } from "../../shared/context/input-limit";
 import { OpsDownBar } from "./OpsDownBar";
@@ -119,8 +130,6 @@ import type { SteerItem } from "../../main/core/drafts";
 import { reasoningEffortLabel } from "../../shared/reasoning-effort";
 import { DragDropProvider, DragOverlay, PointerSensor, useDraggable, useDroppable } from "@dnd-kit/solid";
 import type { DragDropProviderProps } from "@dnd-kit/solid";
-import { IconExpand, IconCompress, IconTrash, IconGrip, IconClock, IconBolt, IconChevron, IconCode } from "./icons";
-import { RowGutter } from "./RowGutter";
 import { VIEW_BAR_H, chatInputMaxHeight } from "../lib/layout-metrics";
 // 文本取行（窗口化，##93）：摘要 / 预览 / 折叠都只吃需要的那一小段，且不每帧 split 全文
 import { clampLines, countLines, firstLine, previewLines } from "../lib/chat-text";

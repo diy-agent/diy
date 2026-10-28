@@ -29,7 +29,7 @@ import { localChatStore } from "../store/localChatStore";
 // 时间口径唯一出处（shared/date-format）：面板里的轮次时刻（hover 卡标题 / 明细抽屉）与对话流
 // 首行同格式（fmtTurnStamp）；列头那处要「到秒」故用 fmtTurnFull。
 import { fmtTurnFull, fmtTurnStamp } from "../../shared/date-format";
-import { useDrawerMax, DrawerMaxButton } from "./DrawerMaximize";
+import { DrawerMaxButton, RowGutter, useDrawerMax } from "@diy/ui-kit";
 import { endMarkOf } from "../lib/chat-fold";
 import {
     cacheHitRate,
@@ -57,7 +57,6 @@ import { notificationStore } from "../store/notificationStore";
 import { copyFailMeta, copyOkMeta } from "../lib/notice-copy";
 import { compactNotice } from "../lib/notice-compact";
 import { useCompactPanel, CompactPanelContent } from "./CompactSessionPanel";
-import { RowGutter } from "./RowGutter";
 import type { CompactEventRecord, CompactTrigger } from "../../shared/context/compaction";
 import { mapCompactPointsToSteps, stepKey } from "../../shared/context/compact-points";
 import {

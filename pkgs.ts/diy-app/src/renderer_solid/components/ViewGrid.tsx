@@ -23,10 +23,9 @@ import {
     type Layout,
 } from "../../shared/grid-layout";
 import { findPage, groupViewsByArea, planPageViews, type Binding } from "../../shared/view-registry";
-import { ViewBoundary } from "./ViewBoundary";
+import { IconCollapse, IconCompress, IconExpand, ViewBoundary } from "@diy/ui-kit";
 import { layoutStore } from "../store/layoutStore";
 import { AREA_CHROME_W, VIEW_BAR_H } from "../lib/layout-metrics";
-import { IconExpand, IconCompress, IconCollapse } from "./icons";
 
 /** 拖线时两侧 track 的最小 px（防止把某块拖没，用户就再也抓不到线了） */
 const MIN_TRACK = 48;

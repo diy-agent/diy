@@ -26,6 +26,9 @@
       "path": "pkgs.ts/diy-persistence"
     },
     {
+      "path": "pkgs.ts/diy-ui-kit"
+    },
+    {
       "path": "pkgs.ts/diy-app"
     },
     {

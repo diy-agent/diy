@@ -17,7 +17,7 @@ import { Show, createEffect, createMemo } from "solid-js";
 import { Portal } from "solid-js/web";
 import { findStore } from "../store/findStore";
 import { chatFindStore } from "../store/chatFindStore";
-import { Z_FIND } from "../lib/z-layers";
+import { Z_FIND } from "@diy/ui-kit";
 
 export function FindBar() {
     let inputEl: HTMLInputElement | undefined;

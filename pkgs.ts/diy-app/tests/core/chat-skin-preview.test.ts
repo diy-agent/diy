@@ -9,7 +9,8 @@ import { resolve } from "node:path";
 
 const appDir = resolve(__dirname, "../..");
 const css = readFileSync(resolve(appDir, "src/renderer_solid/index.css"), "utf8");
-const preview = readFileSync(resolve(appDir, "src/renderer_solid/components/ChatSkinPreview.tsx"), "utf8");
+// ##448 刀 1：ChatSkinPreview / RowGutter 已搬进 @diy/ui-kit（纯展示组件），源码路径跟着走
+const preview = readFileSync(resolve(appDir, "../diy-ui-kit/src/ChatSkinPreview.tsx"), "utf8");
 
 /**
  * 取 `[data-skin]` 段的**全部**选择器（从第一处 `[data-skin=` 到文件末尾）。
@@ -81,7 +82,7 @@ describe("皮肤小样（ChatSkinPreview）与 index.css 规则一致", () => {
   // review ##253 RV-4：同一行的开合动作**不该有两个 tab 停靠点**。
   // 故条默认 `aria-hidden` + 不进 tab 序，只有"行头不是控件"的正文行才传 `sole`。
   it("折叠条默认**不进 tab 序**（键盘/读屏只认行头那一个开关）", () => {
-    const gutter = readFileSync(resolve(appDir, "src/renderer_solid/components/RowGutter.tsx"), "utf8");
+    const gutter = readFileSync(resolve(appDir, "../diy-ui-kit/src/RowGutter.tsx"), "utf8");
     expect(gutter).toMatch(/const focusable = \(\) => can\(\) && !!props\.sole;/);
     expect(gutter).toMatch(/tabindex=\{focusable\(\) \? 0 : undefined\}/);
     expect(gutter).toMatch(/role=\{focusable\(\) \? "button" : undefined\}/);

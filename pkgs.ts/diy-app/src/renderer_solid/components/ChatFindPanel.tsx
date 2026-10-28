@@ -14,7 +14,7 @@ import { For, Show, createMemo } from "solid-js";
 import { Portal } from "solid-js/web";
 import { chatFindStore, type ChatFindHit } from "../store/chatFindStore";
 import { fmtTurnFull, fmtTurnStamp } from "../../shared/date-format";
-import { Z_CHAT_FIND } from "../lib/z-layers";
+import { Z_CHAT_FIND } from "@diy/ui-kit";
 
 interface Group {
     turnId: string;

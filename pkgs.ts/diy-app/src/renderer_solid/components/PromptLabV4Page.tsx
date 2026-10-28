@@ -16,7 +16,7 @@ import { Caches, type CacheField } from "../lib/ui-state";
 import { projectFromUri } from "../../shared/task-uri";
 import { JsonTree } from "./JsonTree";
 import { MdEditor } from "./MdEditor";
-import { DynamicBar } from "./DynamicBar";
+import { DynamicBar } from "@diy/ui-kit";
 import { VIEW_BAR_H } from "../lib/layout-metrics";
 import { EditorThemePicker } from "./EditorThemePicker";
 import { collectTags } from "../../shared/xml-tags";

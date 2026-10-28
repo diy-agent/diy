@@ -22,7 +22,7 @@ import { diyService } from "../lib/rpc";
 import { findNode } from "../lib/task-lineage";
 import { taskStore } from "../store/taskStore";
 import { notificationStore } from "../store/notificationStore";
-import { ConfirmDialog } from "./ConfirmDialog";
+import { ConfirmDialog } from "@diy/ui-kit";
 import type { InstanceRow } from "../../shared/instance-row";
 import {
     INSTANCE_TONE_CLASS,
