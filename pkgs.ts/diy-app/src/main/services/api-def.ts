@@ -20,7 +20,7 @@ import { RpcSchema } from "@diy-agent/rpc";
 import { z } from "zod";
 // 引擎通用渲染器 id 的真源（别处不复制这份清单；内核加渲染器时这里的 schema 自动跟上）
 import { RENDERERS } from "@diy/flow";
-import { PromptEntrySchema, RequestPreviewSchema } from "../../shared/prompt-schema";
+import { PromptEntrySchema, RequestPreviewSchema } from "@diy/context/schema/prompt-schema";
 import { TrafficRecordSchema } from "../../shared/traffic-record";
 import { ContextDiffSchema, CtxLogSchema, StatsSchema, StepsSchema } from "../../shared/context/schema";
 import { ContextLabSchema, ContextPlaceCandidateSchema } from "../../shared/context/schema";

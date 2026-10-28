@@ -12,7 +12,7 @@
 
 import type { ZodType } from "zod";
 import { previewValue } from "@diy/template";
-import type { VarSpec } from "./prompt-schema";
+import type { VarSpec } from "@diy/context/schema/prompt-schema";
 
 /** 变量树节点（一个节点 = 路径上的一段） */
 export interface VarNode {

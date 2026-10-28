@@ -8,8 +8,8 @@
 //
 // 约定：本文件只放纯函数，禁止 import node:*（renderer 会打进包）。
 
-import { unitPathsOf } from "./delivery";
-import type { ContextContainer, ContextPath } from "./types";
+import { unitPathsOf } from "@diy/context/delivery";
+import type { ContextContainer, ContextPath } from "@diy/context/types";
 
 /** 一个投递单元（path → 容器） */
 export interface PlaceUnit {

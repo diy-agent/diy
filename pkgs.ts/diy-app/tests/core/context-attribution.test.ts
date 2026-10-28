@@ -17,7 +17,7 @@ import {
     unitsFromRules,
     unitsFromSystemPlaces,
 } from "../../src/shared/context/attribution";
-import { PLACE_CANDIDATES } from "../../src/shared/context/delivery";
+import { PLACE_CANDIDATES } from "@diy/context/delivery";
 
 const DEF_SYS = PLACE_CANDIDATES.filter((c) => c.system).map((c) => c.path);
 const units = () => unitsFromRules(PLACE_CANDIDATES.map((c) => ({ place: c.path, container: c.system ? "system" : "runtime" })));

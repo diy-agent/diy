@@ -57,8 +57,8 @@ import { notificationStore } from "../store/notificationStore";
 import { copyFailMeta, copyOkMeta } from "../lib/notice-copy";
 import { compactNotice } from "../lib/notice-compact";
 import { useCompactPanel, CompactPanelContent } from "./CompactSessionPanel";
-import type { CompactEventRecord, CompactTrigger } from "../../shared/context/compaction";
-import { mapCompactPointsToSteps, stepKey } from "../../shared/context/compact-points";
+import type { CompactEventRecord, CompactTrigger } from "@diy/compact/compaction";
+import { mapCompactPointsToSteps, stepKey } from "@diy/compact/compact-points";
 import {
     deliveryBadgeText,
     deliveryBadgeTitle,

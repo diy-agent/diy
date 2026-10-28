@@ -13,7 +13,7 @@ import {
     describeAnomalies,
     readLlmLog,
 } from "../../src/shared/context/log-schema";
-import { fieldDocs, fieldNames, renderFieldDocs } from "../../src/shared/schema-doc";
+import { fieldDocs, fieldNames, renderFieldDocs } from "@diy/context/schema/schema-doc";
 
 // ─── ① 日志行：必需严格 ────────────────────────────────
 

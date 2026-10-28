@@ -20,8 +20,8 @@ import {
     utf8Bytes,
     type CompactEventRecord,
     type OpLike,
-} from "../../src/shared/context/compaction";
-import { parseCutMarkers } from "../../src/shared/cut-marker";
+} from "@diy/compact/compaction";
+import { parseCutMarkers } from "@diy/context/format/cut-marker";
 
 // ─── 策略归一（只有 budget 一种算法）───
 

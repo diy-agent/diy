@@ -8,7 +8,7 @@ import {
     retainTokensOf,
     selectKeptBoundary,
     triggerTokensOf,
-} from "../../src/shared/context/select-kept-boundary";
+} from "@diy/compact/select-kept-boundary";
 
 const msg = (tokens: number, user = false) => ({ tokens, user });
 

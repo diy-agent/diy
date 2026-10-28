@@ -10,7 +10,7 @@
 // 所有 place 消失 → 必须发**显式清空**，不能只是「什么都不发」（用例 5）。
 
 import { hashText } from "./hash";
-import { placeText, renderPlaces } from "./render";
+import { placeText, renderPlaces } from "./wire-render";
 import { runtimeEnvelope, systemEnvelope } from "./envelope";
 import { placesIn } from "./tree";
 import { WIRE_VERSION } from "./wire";

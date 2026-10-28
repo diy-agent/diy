@@ -19,7 +19,7 @@ import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
 import { getLocalAgent, compactFile } from "../../src/main/services/local-agent";
 import { opsFile } from "../../src/main/core/local-paths";
-import { parseCompactLog } from "../../src/shared/context/compaction";
+import { parseCompactLog } from "@diy/compact/compaction";
 import { readFileSync } from "node:fs";
 
 let PROJECT = "";
@@ -263,7 +263,7 @@ describe("④ v3 分组形状：看 JSON 就知道每块回答什么（D5「结�
     });
 
     it("① v1 平铺账照样能读（读侧归一，旧账本无需迁移）", async () => {
-        const { parseCompactLog } = await import("../../src/shared/context/compaction");
+        const { parseCompactLog } = await import("@diy/compact/compaction");
         const v1 = JSON.stringify({
             kind: "compact",
             v: 1,

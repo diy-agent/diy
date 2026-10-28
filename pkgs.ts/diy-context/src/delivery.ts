@@ -18,7 +18,7 @@ import { hashValue } from "./hash";
 import { WIRE_VERSION } from "./wire";
 import { isPlainObject } from "./tree";
 import type { ContextFact, ContextPath, ContextTreeState } from "./types";
-import { TASK_HEAD_FIELDS, type TaskHeadField } from "../task-head";
+import { TASK_HEAD_FIELDS, type TaskHeadField } from "./schema/task-head";
 import { emptyCursor } from "./projection";
 
 /** 候选投递单元（规则表里可选的行；不重叠） */

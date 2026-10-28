@@ -17,7 +17,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { renderSystemDsl, type AssembleGlobals } from '../../src/main/services/prompt-registry';
-import { reqlogValue } from '../../src/shared/context/reqlog';
+import { reqlogValue } from '@diy/context/schema/reqlog';
 
 const golden = readFileSync(join(__dirname, '..', 'fixtures', 'system.golden.txt'), 'utf-8');
 

@@ -13,9 +13,9 @@
 //
 // 约定：本文件只放纯函数，禁止 import node:*（renderer 会打进包）。
 
-import { PLACE_CANDIDATES } from "./delivery";
-import { getValue, removePath, setValue } from "./tree";
-import type { ContextPath, ContextTreeState } from "./types";
+import { PLACE_CANDIDATES } from "@diy/context/delivery";
+import { getValue, removePath, setValue } from "@diy/context/tree";
+import type { ContextPath, ContextTreeState } from "@diy/context/types";
 
 /** 一次变更的种类 */
 export type CtxChangeKind = "add" | "update" | "remove";

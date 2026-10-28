@@ -2,7 +2,7 @@
 // 用法：npx tsx scripts/measure-think-size.mts <ops.jsonl> [...]
 import fs from "node:fs";
 import { replay, projectAll, type Op } from "../src/main/services/local-blocks";
-import { utf8Bytes } from "../src/shared/context/compaction";
+import { utf8Bytes } from "@diy/compact/compaction";
 
 for (const file of process.argv.slice(2)) {
     const ops: Op[] = fs

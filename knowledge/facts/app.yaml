@@ -466,13 +466,13 @@ facts:
       verifiedAt: '2026-10-22'
   app.find#context:
     value: |-
-      `src/shared/context/` 上下文树与投递：`README.md` 是**完整约定表**（领域模型 / 投递构造 / 划分真源 / step 快照 / 渲染坑）；投递构造唯一入口 `delivery.ts` 的 `buildDelivery`；划分真源 `$DIY_HOME/context.yaml`（契约 `config.ts`、I/O `src/main/core/context-config.ts`；**缺省最小 system 名单** `delivery.ts::defaultSystemPlaces` —— 只放存续期不变的单元，易变项（`task.state`/`task.updated`/`task.title`/`cwd`/`reqlog`…）一律 runtime，否则每轮砸前缀缓存，##426）· 输入超长门禁 `shared/context/input-limit.ts` + `renderer_solid/components/InputLimitDialog.tsx`（默认 10 万字符可配，超限弹窗报 ≈token / 预计 $，可转文件发送，##426）
+      `src/shared/context/` 上下文树与投递：`README.md` 是**完整约定表**（领域模型 / 投递构造 / 划分真源 / step 快照 / 渲染坑）；投递构造唯一入口 `@diy/context` 的 `delivery.ts::buildDelivery`（##447 起树/投影/投递/信封在 `pkgs.ts/diy-context/`，压缩决策在 `pkgs.ts/diy-compact/`）；划分真源 `$DIY_HOME/context.yaml`（契约 `config.ts`、I/O `src/main/core/context-config.ts`；**缺省最小 system 名单** `delivery.ts::defaultSystemPlaces` —— 只放存续期不变的单元，易变项（`task.state`/`task.updated`/`task.title`/`cwd`/`reqlog`…）一律 runtime，否则每轮砸前缀缓存，##426）· 输入超长门禁 `shared/context/input-limit.ts` + `renderer_solid/components/InputLimitDialog.tsx`（默认 10 万字符可配，超限弹窗报 ≈token / 预计 $，可转文件发送，##426）
     id: app.find.context
     review: accepted
     lifecycle: active
     evidence:
       source: code
-      at: pkgs.ts/diy-app/src/shared/context/delivery.ts:1
+      at: pkgs.ts/diy-context/src/delivery.ts:1
       verifiedAt: '2026-10-25'
   app.find#core:
     value: |-

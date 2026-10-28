@@ -21,8 +21,8 @@ import {
     tailEnvelope,
     userEnvelope,
     ENVELOPE_TOP_KEYS,
-} from "../../src/shared/context/envelope";
-import { toYaml } from "../../src/shared/context/render";
+} from "@diy/context/envelope";
+import { toYaml } from "@diy/context/wire-render";
 import { BlockStore, projectAll, type Op } from "../../src/main/services/local-blocks";
 
 /** 一份**真形态**的历史 user 信封：from + summary + runtime + runtimeDiff + user（顺序照 `withRuntime`/`projectAll`） */

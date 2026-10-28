@@ -19,7 +19,7 @@ import { load as yamlLoad } from "js-yaml";
 import { JsonTree } from "./JsonTree";
 import { MarkdownView } from "./MarkdownView";
 import type { StepMessage } from "../../shared/context/step-request";
-import { utf8Bytes } from "../../shared/context/mind";
+import { utf8Bytes } from "../../shared/context/request-budget";
 
 /** 角色配色（一份表，别在 JSX 里散着写） */
 const ROLE_META: Record<string, { cls: string; label: string }> = {

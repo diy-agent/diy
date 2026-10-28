@@ -19,8 +19,8 @@ import { LocalAgentManager } from "../../src/main/services/local-agent";
 import { readCtxLog } from "../../src/main/core/context-changelog";
 import { isV2Entry, entryToRows } from "../../src/shared/context/changelog";
 import * as yaml from "js-yaml";
-import { appendUserKey, renderSummaryPart, tailEnvelope } from "../../src/shared/context/envelope";
-import { buildDelivery, runtimeDiffDelivery } from "../../src/shared/context/delivery";
+import { appendUserKey, renderSummaryPart, tailEnvelope } from "@diy/context/envelope";
+import { buildDelivery, runtimeDiffDelivery } from "@diy/context/delivery";
 
 let PROJECT = "";
 beforeAll(() => {

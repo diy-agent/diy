@@ -19,7 +19,7 @@ import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
 import { ensureRoom, upsertMember } from "../../src/main/core/room";
 import { LocalAgentManager, normalizeUserRuns } from "../../src/main/services/local-agent";
-import { isEnvelopeText, renderFromPart, tailEnvelope } from "../../src/shared/context/envelope";
+import { isEnvelopeText, renderFromPart, tailEnvelope } from "@diy/context/envelope";
 import type { Op } from "../../src/main/services/local-blocks";
 import type { ModelMessage } from "ai";
 import { appendCompactionEntry } from "../../src/main/services/local-turns";

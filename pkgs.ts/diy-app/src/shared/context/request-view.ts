@@ -7,7 +7,7 @@
 // 分层核算（system / tools / user / assistant.text / assistant.tool / tool.result）是「事实表」
 // 的数据源：它是纯账（字节 → token），不含任何预测。
 
-import { utf8Bytes } from "./compaction";
+import { utf8Bytes } from "@diy/compact/compaction";
 
 /** 展示用的一次请求（字段名对齐真发：model / system / tools / messages） */
 export interface RequestView {

@@ -5,6 +5,12 @@
       "path": "pkgs.ts/diy-talk"
     },
     {
+      "path": "pkgs.ts/diy-context"
+    },
+    {
+      "path": "pkgs.ts/diy-compact"
+    },
+    {
       "path": "pkgs.ts/diy-flow"
     },
     {

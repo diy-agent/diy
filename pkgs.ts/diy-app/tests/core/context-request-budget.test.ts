@@ -1,4 +1,4 @@
-// tests/core/context-mind.test.ts
+// tests/core/context-request-budget.test.ts
 // 「大脑账本」的判据：信封文本 → 段（字节），以及多步形态。
 //
 // 最关键的回归是**块标量**：信封里的值（task.body / facts 的 value）是多行 md，
@@ -15,7 +15,7 @@ import {
     unchangedSegments,
     utf8Bytes,
     type MindGroup,
-} from "../../src/shared/context/mind";
+} from "../../src/shared/context/request-budget";
 import type { StepMessage } from "../../src/shared/context/step-request";
 
 function msg(role: string, text: string, index = 1): StepMessage {

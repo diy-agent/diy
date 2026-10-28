@@ -28,7 +28,7 @@ import * as journalStore from "./journal-store";
 import { buildDocsIndex, DEFAULT_DOCS_ROOTS } from "./docs-index";
 import { TaskDetailSchema } from "../../shared/task-detail";
 import { noteRendererTouch } from "./runtime-context";
-import type { ToolResultMode } from "../../shared/context/compaction";
+import type { ToolResultMode } from "@diy/compact/compaction";
 import type { HistoryEntryView } from "../../shared/context/schema";
 import { readFileWindow, formatReadOutput, ReadWindowError } from "../core/file-read";
 import { resolve as resolvePath, relative as relativePath, isAbsolute as isAbsolutePath } from "node:path";
@@ -917,7 +917,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
   // ── context（上下文树页：**当前任务的真实上下文**，不落盘、不发 LLM）──
   binding.on(app.context.config, async () => {
     const { loadSystemPlaces, contextConfigFile } = await import("../core/context-config");
-    const { defaultSystemPlaces } = await import("../../shared/context/delivery");
+    const { defaultSystemPlaces } = await import("@diy/context/delivery");
     const { existsSync } = await import("node:fs");
     const { diyHome } = await import("../core/state");
     const { loadInputLimitChars } = await import("../core/context-config");
@@ -1137,7 +1137,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     // 未选中：**当前变量树** vs 最后一步（"我现在改的东西会带来什么变化"）
     const { assembleGlobals } = await import("./prompt-registry");
     const { diyHome, projectFromUri } = await import("../core/state");
-    const { buildDelivery } = await import("../../shared/context/delivery");
+    const { buildDelivery } = await import("@diy/context/delivery");
     const { loadSystemPlaces } = await import("../core/context-config");
     const project = projectFromUri(input.taskUri) || input.project;
     // 房间上下文（##377 第 26 刀）：预览与真发同一份装配（取**本任务自己的房间**）

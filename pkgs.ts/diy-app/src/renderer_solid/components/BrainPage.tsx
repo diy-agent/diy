@@ -11,7 +11,7 @@
  *     多步之间谁在长（曲线），哪些步的形态值得看一眼（信号），以及记分（合并在本页，
  *     结果与原因必须同屏：只给分不给出处，人只能猜它是怎么来的）。
  *
- * 段的分组口径（`shared/context/mind.ts` 的真源）：**谁生成的、能不能减** ——
+ * 段的分组口径（`shared/context/request-budget.ts` 的真源）：**谁生成的、能不能减** ——
  * 不是「在哪个容器里」。所以是 `chain · ~/AGENTS.md` / `help` / `runtime.facts` /
  * `历史 · tool` 这个粒度，而不是 `system / runtime` 两个大桶（大桶永远看不出该砍谁）。
  *
@@ -32,8 +32,8 @@ import {
     unchangedSegments,
     type MindGroup,
     type MindSegment,
-} from "../../shared/context/mind";
-import { PLACE_CANDIDATES } from "../../shared/context/delivery";
+} from "../../shared/context/request-budget";
+import { PLACE_CANDIDATES } from "@diy/context/delivery";
 import { LayoutAreaToggles } from "./LayoutAreaToggles";
 import { BrainMessages } from "./BrainMessages";
 

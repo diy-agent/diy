@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { describeSchema } from "../../src/shared/schema-doc";
+import { describeSchema } from "@diy/context/schema/schema-doc";
 
 describe("describeSchema · record", () => {
   it("record 的值结构进 `values:`（key 动态、值有形状）", () => {
@@ -39,7 +39,7 @@ describe("describeSchema · record", () => {
   });
 
   it("真实契约：AssembleGlobalsSchema.facts.task 的值结构可见", async () => {
-    const { AssembleGlobalsSchema } = await import("../../src/shared/prompt-schema");
+    const { AssembleGlobalsSchema } = await import("@diy/context/schema/prompt-schema");
     const doc = describeSchema(AssembleGlobalsSchema);
     const facts = doc["facts"] as Record<string, unknown>;
     const task = facts["task"] as Record<string, unknown>;

@@ -8,22 +8,22 @@
 //
 // 规则表只声明 **system 名单**：没进名单的自动归 runtime（不是两套表，避免两边打架）。
 
-import { previewOf } from "./render";
-import { getValue, isPlainObject, placeOf, rendererOf } from "./tree";
-import { hashValue } from "./hash";
-import { emptyCursor, project as projectTree } from "./projection";
+import { previewOf } from "@diy/context/wire-render";
+import { getValue, isPlainObject, placeOf, rendererOf } from "@diy/context/tree";
+import { hashValue } from "@diy/context/hash";
+import { emptyCursor, project as projectTree } from "@diy/context/projection";
 import {
     buildDelivery,
     PLACE_CANDIDATES,
     type Delivery,
     type DeliveryPart,
-} from "./delivery";
-import type { ContextContainer, ContextPath, ContextTreeState } from "./types";
+} from "@diy/context/delivery";
+import type { ContextContainer, ContextPath, ContextTreeState } from "@diy/context/types";
 
 // 划分策略与投递构造住在 delivery.ts（真发与预览共用那一条链），这里只做转出，
 // 让"页面数据"与"投递内容"两个概念在 import 处也分得清。
-export { PLACE_CANDIDATES, defaultSystemPlaces } from "./delivery";
-export type { PlaceCandidate, DeliveryPart as LabDelivery, Delivery } from "./delivery";
+export { PLACE_CANDIDATES, defaultSystemPlaces } from "@diy/context/delivery";
+export type { PlaceCandidate, DeliveryPart as LabDelivery, Delivery } from "@diy/context/delivery";
 
 /** 树节点（扁平列表；path 点分段自带层级，UI 按前缀缩进） */
 export interface LabTreeNode {

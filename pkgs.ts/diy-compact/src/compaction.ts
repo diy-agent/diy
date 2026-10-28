@@ -19,7 +19,7 @@
 //   「彻底删除」仍归现有 clear（物理删文件）。
 
 import { z } from "zod";
-import { cutMarker } from "../cut-marker";
+import { cutMarker } from "@diy/context/format/cut-marker";
 
 // ─── ① 策略 ───────────────────────────────────────────
 

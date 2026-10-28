@@ -40,7 +40,7 @@ export const DRAFTS_VERSION = 3;
  * 草稿字段名白名单。
  * 加字段必须同时改这里 —— 防止前端拼错字段名后静默写进文件（读侧永远读不出来）。
  */
-import type { NotifyItem } from "../../shared/context/envelope";
+import type { NotifyItem } from "@diy/context/envelope";
 
 export const DRAFT_FIELDS = ["title", "body", "agent_input"] as const;
 export type DraftField = (typeof DRAFT_FIELDS)[number];
