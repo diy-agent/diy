@@ -51,7 +51,7 @@
  */
 
 import { createSignal, createEffect, createMemo, on, For, Show } from "solid-js";
-import { useDrawerMax, DrawerMaxButton } from "./DrawerMaximize";
+import { useDrawerMax, DrawerMaxButton } from "@diy/ui-kit";
 import { Caches, PERSONA_DRAWER_H_MIN, PERSONA_DRAWER_H_MAX, PERSONA_LEFT_W_MIN, PERSONA_LEFT_W_MAX } from "../lib/ui-state";
 import { personaStore } from "../store/personaStore";
 import { taskStore } from "../store/taskStore";

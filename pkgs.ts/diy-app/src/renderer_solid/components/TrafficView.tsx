@@ -4,7 +4,7 @@ import { diyService } from "../lib/rpc";
 import { JsonViewer } from "./JsonViewer";
 import { findStore } from "../store/findStore";
 import type { TrafficFocus } from "../store/trafficStore";
-import { fmtBytes } from "../lib/bytes";
+import { fmtBytes } from "@diy/ui-kit";
 import { bodyValue } from "../lib/traffic-body";
 import { TrafficLogCleanButton } from "./TrafficLogCleanup";
 

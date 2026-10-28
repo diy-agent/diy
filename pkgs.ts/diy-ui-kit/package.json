@@ -1,0 +1,23 @@
+{
+    "name": "@diy/ui-kit",
+    "version": "0.1.0",
+    "private": true,
+    "description": "diy 纯展示组件库（零业务依赖：不碰 store / RPC，props 进 DOM 出）",
+    "type": "module",
+    "main": "./src/index.ts",
+    "exports": {
+        ".": "./src/index.ts"
+    },
+    "files": [
+        "src/"
+    ],
+    "dependencies": {
+        "solid-js": "^1.9.3"
+    },
+    "devDependencies": {
+        "oxfmt": "^0.57.0",
+        "oxlint": "^1.72.0",
+        "typescript": "^7.0.2",
+        "vitest": "^4.1.10"
+    }
+}

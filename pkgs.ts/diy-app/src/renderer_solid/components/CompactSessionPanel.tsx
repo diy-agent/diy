@@ -52,7 +52,7 @@ import {
     type YamlDiffRow,
 } from "../../shared/yaml-lines";
 import { clipForPreview, requestViewYaml, type LayerRow, type PreviewClipStats, type RequestView } from "../../shared/context/request-view";
-import { DrawerMaxButton } from "./DrawerMaximize";
+import { DrawerMaxButton } from "@diy/ui-kit";
 import { notificationStore } from "../store/notificationStore";
 import {
     autoCompactSentence,
