@@ -217,16 +217,17 @@ describe("##422 合并规则：from 信封不参与相邻 user 合并（判据 �
         mgr.refreshCompactState(uri); // 测试直接写 turns 边界，模拟外部写
         const { prompt } = await turn(uri, mgr, "第二句", undefined, sink);
         expect(prompt[0]?.role).toBe("system");
-        // ##442：system 之后先一条压缩通知（只有 source / summary），再是保留的历史发言
-        const notice = textOf(prompt[1]?.content);
-        expect(notice.startsWith("notify:\n")).toBe(true);
-        expect(notice).toContain("kind: compact");
-        expect(notice).toContain("source:");
-        expect(notice).toContain("原文从第 3 行开始");
-        expect(notice).not.toContain("history:");
-        const hist = textOf(prompt[2]?.content);
-        expect(hist.startsWith("chat:\n")).toBe(true);
-        expect(hist).toContain("  - from: human:chen56");
-        expect(hist).toContain("第二句");
+        // ##442：压缩通知并进第一条保留 user（notify + chat 同一信封，避免连续两条 user）
+        const merged = textOf(prompt[1]?.content);
+        expect(merged.startsWith("notify:\n")).toBe(true);
+        expect(merged).toContain("kind: compact");
+        expect(merged).toContain("source:");
+        expect(merged).toContain("原文从第 3 行开始");
+        expect(merged).toContain("chat:\n");
+        expect(merged).toContain("  - from: human:chen56");
+        expect(merged).toContain("第二句");
+        expect(merged).not.toContain("history:");
+        // 只剩 system + 合并后的本条 user（本轮 assistant 还没生成）
+        expect(prompt).toHaveLength(2);
     });
 });

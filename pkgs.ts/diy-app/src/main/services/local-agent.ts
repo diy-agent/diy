@@ -739,13 +739,15 @@ function frozenSystemTextOf(
  * 两次压缩之间逐字节不变（source 固定；summary 只在压缩时写）。
  */
 const COMPACT_SELF_HINT = "前文已压缩，未生成摘要。需要时按行查 source（每行一条消息）。";
+const COMPACT_MODEL_MISSING_HINT = "前文已压缩；model 模式摘要未生成。需要时按行查 source（每行一条消息）。";
 
-function compactNoticeMessage(
+/** 有边界时产出一条压缩通知；没有边界 ⇒ null（调用方逐字不变） */
+function compactNoticeItem(
     taskUri: string,
     mode: "model" | "self",
     summary: string,
     boundary?: CompactionEntry | null,
-): ModelMessage | null {
+): NotifyItem | null {
     let b: CompactionEntry | null;
     try {
         b = boundary === undefined ? readBoundary(taskUri) : boundary;
@@ -754,13 +756,25 @@ function compactNoticeMessage(
     }
     if (!b) return null;
     // ##442 step 5：只留 source/summary，但 self / 空摘要必须给一个起点，否则 12MB 文件无从查起。
-    // 起点写进 summary 文本（不加新字段），两次压缩之间仍是常量。
     const locator = `原文从第 ${b.cut.llmLine} 行开始（source 每行一条消息）。`;
-    const text = mode === "self" || !summary ? `${COMPACT_SELF_HINT}\n${locator}` : `${summary}\n\n${locator}`;
-    return {
-        role: "user",
-        content: userEnvelope({ notify: [{ kind: "compact", source: llmFile(taskUri), summary: text }] }),
-    };
+    const hint = mode === "self" ? COMPACT_SELF_HINT : COMPACT_MODEL_MISSING_HINT;
+    const text = !summary || mode === "self" ? `${hint}\n${locator}` : `${summary}\n\n${locator}`;
+    return { kind: "compact", source: llmFile(taskUri), summary: text };
+}
+
+/**
+ * 把头部 notify 并进 system 之后**第一条 user**，避免 `notify` 单发造成连续两条 user。
+ * 历史 user 一律是信封（chat:），所以键序仍是 notify → chat。
+ */
+function withHeadNotice(messages: ModelMessage[], item: NotifyItem | null): ModelMessage[] {
+    if (!item) return messages;
+    const out = [...messages];
+    const idx = out.findIndex((m) => m.role === "user" && typeof m.content === "string");
+    if (idx < 0) return [{ role: "user", content: userEnvelope({ notify: [item] }) }, ...out];
+    const content = out[idx]!.content as string;
+    if (!isEnvelopeText(content)) return [{ role: "user", content: userEnvelope({ notify: [item] }) }, ...out];
+    out[idx] = { ...out[idx]!, role: "user", content: withNotify(content, item) } as ModelMessage;
+    return out;
 }
 
 /** 预检 tightCap 额外丢历史时，把 cap 事件并进末条 user 的 notify（不新增消息） */
@@ -4272,8 +4286,13 @@ export class LocalAgentManager {
             keptFromTurnId !== null ? (scan.turnOpIndex.get(keptFromTurnId) ?? -1) : scan.ops.length;
 
         const clipped: ClippedToolDetail[] = [];
-        const before = sizeOfStore(store);
-        const after = sizeOfStore(store, optsFor(policy, taskUri, clipped));
+        // before/after 必须走**同一条投递选择**（historyCut），否则 after.turns 会和 keptTurns 打架
+        const fullRange = { cut: all.length, headEnd: all.length };
+        const before = sizeOfStore(store, { historyCut: fullRange });
+        const after = sizeOfStore(store, {
+            ...optsFor(policy, taskUri, clipped),
+            historyCut: recordsRange ?? fullRange,
+        });
 
         const droppedDetail = droppedIds.map((id) =>
             describeTurn(store, id, scan.turnOffsets.get(id) ?? 0, scan.turnBytes.get(id) ?? 0),
@@ -4359,9 +4378,9 @@ export class LocalAgentManager {
         const histView = this.deliveryHistoryForView(store, policy, taskUri, storeInput ? 0 : replayPlan.lineBase);
         const summaryText = summaryOverride !== undefined ? summaryOverride : this.effectiveSummary(taskUri);
         const mode = normalizeHistoryLimit(loadAutoCompact(home).history?.limit).summary.mode;
-        const notice = compactNoticeMessage(taskUri, mode, summaryText, this.compactStateOf(taskUri).boundary);
-        // 压缩通知在 system 之后、历史之前（##442）；没有边界 ⇒ 逐字不变。
-        const messages = normalizeUserRuns(notice ? [notice, ...histView.messages] : histView.messages);
+        const notice = compactNoticeItem(taskUri, mode, summaryText, this.compactStateOf(taskUri).boundary);
+        // 压缩通知并进第一条保留 user（不单发，避免连续两条 user）；没有边界 ⇒ 逐字不变。
+        const messages = normalizeUserRuns(withHeadNotice(histView.messages, notice));
         return {
             model: personaForTask(home, taskUri).model,
             system: delivery.system.text,
@@ -4447,7 +4466,7 @@ export class LocalAgentManager {
 
     /** 压缩预览（只算不写）：面板左侧参数 + 右侧请求 YAML diff + 事实表的数据源 */
     async compactPreview(taskUri: string, policyInput: unknown, summaryText?: string): Promise<CompactPreview> {
-        const p = this.planCompact(taskUri, policyInput, { force: true });
+        const p = this.planCompact(taskUri, policyInput);
         // 一次算两份视图（base/mod）→ 复用 planCompact 刚折好的块树：整读 + 解析 + 折叠只做一次。
         // 同步链路内文件不会变，且投影只读（不回写块树），故两份视图看到的是**同一份**历史。
         const store = p.store;
@@ -5931,13 +5950,13 @@ export class LocalAgentManager {
              * 系统刚重建（首轮 / 老格式升级）⇒ 基线就是当前值，不再补增量。
              */
             const sentOf = (h: typeof hist): ModelMessage[] => {
-                const notice = compactNoticeMessage(
+                const notice = compactNoticeItem(
                     taskUri,
                     summaryMode,
                     this.effectiveSummary(taskUri),
                     this.compactStateOf(taskUri).boundary,
                 );
-                const messages = normalizeUserRuns(notice ? [notice, ...h.messages] : h.messages);
+                const messages = normalizeUserRuns(withHeadNotice(h.messages, notice));
                 // 跨轮控制增量：`prevDeltaSnap` 是「上一次给模型看过的树」；本轮轮首 system 已冻结，
                 // 变化只补 user。**不在这里前移游标** —— 预检可能重算一次（`sentOf` 会再跑），
                 // 前移后第二次就少一段增量，预览/真发会对不上。
@@ -6935,12 +6954,12 @@ export async function previewSimulatedRequest(opts: {
     const messages: ModelMessage[] = ensureReasoningReplay(
         normalizeUserRuns(
             (() => {
-                const notice = compactNoticeMessage(
+                const notice = compactNoticeItem(
                     taskUri,
                     normalizeHistoryLimit(loadAutoCompact(diyHome()).history?.limit).summary.mode,
                     getLocalAgent().effectiveSummary(taskUri),
                 );
-                return notice ? [notice, ...hist.messages, { role: "user" as const, content: lastEnvelope }] : [...hist.messages, { role: "user" as const, content: lastEnvelope }];
+                return withHeadNotice([...hist.messages, { role: "user" as const, content: lastEnvelope }], notice);
             })(),
         ),
         previewRm

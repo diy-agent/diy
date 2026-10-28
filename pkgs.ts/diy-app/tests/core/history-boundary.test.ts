@@ -347,6 +347,9 @@ describe("手动压缩无限制（##442 用户 2026-10-27 选 C）", () => {
         const policy = loadAutoCompact(diyHome()).policy;
         const rec = mgr.compact(uri, policy, "ui", undefined, "manual", true);
         expect(rec.noop).not.toBe(true);
+        // 审计 size 必须与 keptTurns/实际消息一致（不能 before/after 都写 3 轮 6 条）
+        expect(rec.size.after.turns).toBe(rec.size.keptTurns);
+        expect(rec.size.after.messages).toBeLessThan(rec.size.before.messages);
         const entries = compactions(uri);
         expect(entries.length).toBeGreaterThanOrEqual(1);
         const cut = (entries.at(-1) as { cut: { llmLine: number } }).cut.llmLine;
@@ -359,7 +362,7 @@ describe("手动压缩无限制（##442 用户 2026-10-27 选 C）", () => {
         expect(first).toContain("kind: compact");
         expect(first).toContain("source:");
         expect(first).toContain("summary:");
-        expect(first).not.toContain("at:");
+        expect(first).not.toMatch(/^\s+at:/m);
         expect(first).not.toContain("dropped");
     });
 
