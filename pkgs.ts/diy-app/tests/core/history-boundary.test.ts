@@ -10,9 +10,10 @@ import { autoCompactFile, loadAutoCompact } from "../../src/main/core/auto-compa
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
 import { diyHome } from "../../src/main/core/state";
-import { LocalAgentManager } from "../../src/main/services/local-agent";
+import { LocalAgentManager, readOpsFrom } from "../../src/main/services/local-agent";
 import { readTurnEntries, readTurnRecords } from "../../src/main/services/local-turns";
-import type { Op } from "../../src/main/services/local-blocks";
+import { opsFile } from "../../src/main/core/local-paths";
+import { BlockStore, projectAll, type Op } from "../../src/main/services/local-blocks";
 
 let usageTotal = 5_000; // 让「最后一步实测用量」过触发线（窗口 20k → 触发线 4k）
 const usage = (): LanguageModelV3Usage => ({
@@ -169,6 +170,94 @@ describe("128k 窗口 + 24k fixed：到线必须真压（修 auto noop）", () =
     });
 });
 
+describe("⑩ 拒发循环：压到目标也救不回来时不再写边界（##442 step 6c）", () => {
+    it("窗口 10k、system 已接近窗口：连续 3 次重试 0 条新边界", async () => {
+        const uri = newTask();
+        const mgr = manager();
+        const cfg = autoCompactFile(diyHome());
+        const saved = readFileSync(cfg, "utf-8");
+        writeFileSync(
+            cfg,
+            [
+                "policy: {mode: budget, modeData: {toolResult: {render: asis}}, summary: false}",
+                "history:",
+                "  limit: {windowTokens: 10000, summary: {mode: self}}",
+                "",
+            ].join("\n"),
+            "utf-8",
+        );
+        try {
+            usageTotal = 5_000;
+            for (let i = 0; i < 3; i++) await collect(mgr.chat(uri, `问 ${i}：${"问".repeat(2000)}`));
+            expect(compactions(uri)).toHaveLength(0);
+        } finally {
+            writeFileSync(cfg, saved, "utf-8");
+        }
+    });
+});
+
+describe("② 第二次压缩：压完再涨到触发线还能再压（##442 step 6c）", () => {
+    it("窗口 128k：第一次压完后继续涨，第二次仍写边界", async () => {
+        const uri = newTask();
+        const mgr = manager();
+        const cfg = autoCompactFile(diyHome());
+        const saved = readFileSync(cfg, "utf-8");
+        writeFileSync(
+            cfg,
+            [
+                "policy: {mode: budget, modeData: {toolResult: {render: asis}}, summary: false}",
+                "history:",
+                "  limit: {windowTokens: 128000, summary: {mode: self}}",
+                "",
+            ].join("\n"),
+            "utf-8",
+        );
+        try {
+            const seed = async (turns: number) => {
+                usageTotal = 100;
+                for (let i = 0; i < turns; i++) await collect(mgr.chat(uri, `大 ${i}：${"问".repeat(10_000)}`));
+                usageTotal = 120_000;
+                await collect(mgr.chat(uri, "记一笔高用量"));
+                usageTotal = 100;
+                await collect(mgr.chat(uri, "触发"));
+            };
+            await seed(8);
+            const first = compactions(uri).length;
+            expect(first).toBeGreaterThanOrEqual(1);
+            await seed(8);
+            expect(compactions(uri).length).toBeGreaterThan(first);
+        } finally {
+            writeFileSync(cfg, saved, "utf-8");
+        }
+    });
+});
+
+describe("output-heavy：usage 到线时允许压，不要被 afterBest 误杀（##442 step 6c）", () => {
+    it("窗口 128k、usage 120k、history 30k：能写边界且不拒发", async () => {
+        const uri = newTask();
+        const mgr = manager();
+        const cfg = autoCompactFile(diyHome());
+        const saved = readFileSync(cfg, "utf-8");
+        writeFileSync(
+            cfg,
+            [
+                "policy: {mode: budget, modeData: {toolResult: {render: asis}}, summary: false}",
+                "history:",
+                "  limit: {windowTokens: 128000, summary: {mode: self}}",
+                "",
+            ].join("\n"),
+            "utf-8",
+        );
+        try {
+            usageTotal = 120_000; // input+output 到线；output-heavy 不把 afterBest 撑到误杀
+            for (let i = 0; i < 6; i++) await collect(mgr.chat(uri, `大 ${i}：${"问".repeat(6000)}`));
+            expect(compactions(uri).length).toBeGreaterThanOrEqual(1);
+        } finally {
+            writeFileSync(cfg, saved, "utf-8");
+        }
+    });
+});
+
 describe("preflight 超 0.8W：写边界，不是只 cap 这一轮（##442 step 6 P0-1）", () => {
     it("小窗口 + 大消息：preflight 触发后 turns 里有压缩边界", async () => {
         const uri = newTask();
@@ -190,9 +279,62 @@ describe("preflight 超 0.8W：写边界，不是只 cap 这一轮（##442 step 
             // 至少两轮才切得动；单条巨型 user 没有「更老的一段」可丢
             for (let i = 0; i < 8; i++) await collect(mgr.chat(uri, `大消息 ${i}：${"问".repeat(5000)}`));
             expect(compactions(uri).length).toBeGreaterThanOrEqual(1);
+            // ⑪ cap 写边界后不再滑窗：下一轮低用量不新增边界，首条保留消息不变
+            const n1 = compactions(uri).length;
+            const first1 = JSON.stringify(mgr.deliveryMessages(uri).messages[0]);
+            usageTotal = 100;
+            await collect(mgr.chat(uri, "安静一轮"));
+            expect(compactions(uri).length).toBe(n1);
+            expect(JSON.stringify(mgr.deliveryMessages(uri).messages[0])).toBe(first1);
         } finally {
             writeFileSync(cfg, saved, "utf-8");
         }
+    });
+});
+
+describe("四值全等（##442 step 6c P1-3）", () => {
+    it("3 轮 + 第 2 轮 steer：turns cut / compact kept / findIndex / notice 起点一致", async () => {
+        const uri = newTask();
+        // 手工 ops：3 轮；第 2 轮带一条轮中 steer
+        const lines: string[] = [];
+        const push = (o: unknown) => lines.push(JSON.stringify(o));
+        for (let i = 1; i <= 3; i++) {
+            const t = `t${i}`;
+            push({ op: "start", id: t, kind: "turn" });
+            push({ op: "start", id: `${t}_u`, kind: "text", parent: t, meta: { role: "user" } });
+            push({ op: "delta", id: `${t}_u`, fields: { content: `第 ${i} 问` } });
+            push({ op: "stop", id: `${t}_u` });
+            if (i === 2) {
+                push({ op: "start", id: `${t}_su`, kind: "text", parent: t, meta: { role: "user" } });
+                push({ op: "delta", id: `${t}_su`, fields: { content: "插话" } });
+                push({ op: "stop", id: `${t}_su` });
+            }
+            push({ op: "start", id: `${t}_s1`, kind: "step", parent: t });
+            push({ op: "start", id: `${t}_a`, kind: "text", parent: `${t}_s1`, meta: { role: "assistant" } });
+            push({ op: "delta", id: `${t}_a`, fields: { content: `第 ${i} 答` } });
+            push({ op: "stop", id: `${t}_a` });
+            push({ op: "stop", id: `${t}_s1` });
+            push({ op: "stop", id: t });
+        }
+        writeFileSync(opsFile(uri), lines.join("\n") + "\n", "utf-8");
+        const mgr = manager();
+        const rec = mgr.compact(uri, loadAutoCompact(diyHome()).policy, "ui", undefined, "manual", true);
+        const entry = compactions(uri).at(-1) as {
+            cut: { llmLine: number; turnId: string | null };
+        };
+        expect(rec.boundary.keptFromTurnId).toBe(entry.cut.turnId);
+        expect(rec.boundary.keptFromLlmLine).toBe(entry.cut.llmLine);
+
+        const store = new BlockStore();
+        for (const op of readOpsFrom(opsFile(uri), 0) as Op[]) store.apply(op);
+        const all = projectAll(store);
+        const idx = all.findIndex((m) => m.turn === entry.cut.turnId);
+        expect(idx + 1).toBe(entry.cut.llmLine);
+
+        // notice 的起点 = cut.llmLine
+        const view = await mgr.requestView(uri);
+        const first = (view.messages[0] as { content?: string } | undefined)?.content ?? "";
+        expect(first).toContain(`原文从第 ${entry.cut.llmLine} 行开始`);
     });
 });
 
@@ -219,21 +361,6 @@ describe("手动压缩无限制（##442 用户 2026-10-27 选 C）", () => {
         expect(first).toContain("summary:");
         expect(first).not.toContain("at:");
         expect(first).not.toContain("dropped");
-    });
-
-    it("undo：投递边界也回退（不是只回滚审计）", async () => {
-        const uri = newTask();
-        const mgr = manager();
-        for (let i = 0; i < 3; i++) await collect(mgr.chat(uri, `小 ${i}：${"问".repeat(1200)}`));
-        const policy = loadAutoCompact(diyHome()).policy;
-        mgr.compact(uri, policy, "ui", undefined, "manual", true);
-        const beforeUndo = JSON.stringify(mgr.deliveryMessages(uri).messages);
-        const rec = mgr.compactEvents(uri).events.filter((e) => e.kind === "compact").at(-1);
-        expect(rec).toBeTruthy();
-        expect(mgr.undoCompact(uri, (rec as { id: string }).id)).toBe(true);
-        const afterUndo = JSON.stringify(mgr.deliveryMessages(uri).messages);
-        expect(afterUndo).not.toBe(beforeUndo);
-        expect(afterUndo).toContain("小 0");
     });
 
     it("再点一次：切点继续前进（不会把历史放回来）", async () => {

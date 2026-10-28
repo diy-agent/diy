@@ -1348,9 +1348,9 @@ export const apiDef = RpcSchema.router({
               /**
                * 压缩（compact）命令族。**升为 group 的理由**（##344 M2）：RPC 树的不变量是
                * 「一个节点要么是组、要么是叶子」，命令族要能容下多个动作就得是 group。
-               * ##432 起装配计划子命令（`compact plan *`）已整体删除 —— 只留 run / preview / undo /
+               * ##432 起装配计划子命令（`compact plan *`）已整体删除 —— 只留 run / preview /
                * events / summarize。旧平铺名随之归位：`compact` → `compact.run`、
-               * `compactPreview` → `compact.preview`、`undoCompact` → `compact.undo`、
+               * `compactPreview` → `compact.preview`、
                * `compactEvents` → `compact.events`、`summarize` → `compact.summarize`。
                */
               compact: RpcSchema.group({
@@ -1401,15 +1401,6 @@ export const apiDef = RpcSchema.router({
                 // 用户 2026-10-25 拍板「该清理的清理掉」—— 不让人/agent 去编排装配计划，
                 // 配置面只剩 `history.limit.limitTokens`（+ `summary.enabled`）。
 
-                /** 撤销一次压缩（append-only 的 undo 标记；不删账，可审计） */
-                undo: RpcSchema.unary({
-                  desc: `撤销一次压缩（按压缩 id；恢复为上一次生效边界）`,
-                  input: {
-                    taskUri: z.string().cliArg({ desc: "任务 URI" }),
-                    ref: z.string().cliArg({ desc: "压缩 id（见 compactEvents 或 compact 返回）" }),
-                  },
-                  output: z.object({ undone: z.boolean() }),
-                }),
                 /**
                  * 压缩事件账（历史页数据源）：**不可变快照列表**。
                  * 每条自带**算法**（`policy.mode`）与**当时整条 plan**（v3 起：`plan` 快照 ⇒ 可回放

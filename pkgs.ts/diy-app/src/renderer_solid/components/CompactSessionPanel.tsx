@@ -1190,28 +1190,15 @@ interface CompactEventsPage {
 }
 
 export function CompactHistoryPanel(props: { uri: string; onClose: () => void }) {
-    const [page, { refetch }] = createResource(
+    const [page] = createResource(
         () => props.uri,
         async (u) => (await localChatStore.compactEvents(u)) as CompactEventsPage,
     );
-    const [busy, setBusy] = createSignal(false);
     const [maximized, setMaximized] = createSignal(false);
 
     const all = () => page()?.events ?? [];
     /** 只列 compact 事件（measure / undo 是附属记录，不单独成行） */
     const rows = () => all().filter((e) => e.kind === "compact");
-    /** 已被 undo 的 compact id（行上标"已撤销"） */
-    const undone = () => new Set(all().filter((e) => e.kind === "undo").map((e) => e.ref));
-
-    const undo = async (ref: string) => {
-        setBusy(true);
-        try {
-            await localChatStore.undoCompact(props.uri, ref);
-            await refetch();
-        } finally {
-            setBusy(false);
-        }
-    };
 
     return (
         <div
@@ -1249,13 +1236,11 @@ export function CompactHistoryPanel(props: { uri: string; onClose: () => void })
                                     <th class="text-right">消息</th>
                                     <th class="text-right">字节</th>
                                     <th>方式 / 理由</th>
-                                    <th />
                                 </tr>
                             </thead>
                             <tbody>
                                 <For each={rows()}>
                                     {(e) => {
-                                        const isUndone = () => !!e.id && undone().has(e.id);
                                         return (
                                             <tr>
                                                 <td class="opacity-70 whitespace-nowrap">
@@ -1279,21 +1264,6 @@ export function CompactHistoryPanel(props: { uri: string; onClose: () => void })
                                                         {e.by === "auto" ? "自动" : e.by === "ui" ? "界面" : "命令行"}
                                                     </span>
                                                     <span class="ml-1">{triggerText(e.trigger)}</span>
-                                                    <Show when={isUndone()}>
-                                                        <span class="ml-1 badge badge-warning badge-xs">已撤销</span>
-                                                    </Show>
-                                                </td>
-                                                <td class="text-right">
-                                                    <Show when={!isUndone() && e.id}>
-                                                        <button
-                                                            class="btn btn-ghost btn-xs text-warning"
-                                                            disabled={busy()}
-                                                            title="标记这次压缩作废（append-only，可审计）"
-                                                            onClick={() => void undo(e.id!)}
-                                                        >
-                                                            撤销
-                                                        </button>
-                                                    </Show>
                                                 </td>
                                             </tr>
                                         );

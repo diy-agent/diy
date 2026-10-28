@@ -3567,11 +3567,6 @@ export class LocalAgentManager {
         // 手动（force）：两条都跳过，至少再丢一步。
         if (!opts.force) {
             if (!opts.triggered) return cut > 0 ? { cut, headEnd: 0, wrote: false } : null;
-            if (cut > 0) {
-                let retained = 0;
-                for (let i = cut; i < all.length; i++) retained += tokOf(all[i]!);
-                if (retained < triggerTokens) return { cut, headEnd: 0, wrote: false };
-            }
             const triggerAt = opts.triggerAt ?? triggerTokens;
             const used = opts.usedTokens ?? all.reduce((n, m) => n + tokOf(m), 0);
             if (used < triggerAt) return cut > 0 ? { cut, headEnd: 0, wrote: false } : null;
@@ -4485,6 +4480,22 @@ export class LocalAgentManager {
         };
     }
 
+    /** 固定开支：system 全文（已含 help+system+runtime）+ 工具定义。压缩事件低频，现算即可。 */
+    private fixedTokensOf(taskUri: string): number {
+        try {
+            const globals = assembleGlobals(diyHome(), projectFromUri(taskUri), {
+                taskUri,
+                room: null,
+            }) as unknown as Record<string, unknown>;
+            const delivery = buildDelivery(globals, loadSystemPlaces(diyHome()));
+            const { cwd } = resolveCwdWithNote(diyHome(), taskUri);
+            const tools = buildTools(cwd, this.getLimits(), taskUri);
+            return estimateTokensOf(delivery.system.text) + estimateTokensOf(JSON.stringify(tools));
+        } catch {
+            return 0;
+        }
+    }
+
     /**
      * 执行压缩：写一条账（append-only）+ 落盘被裁原文 + 重置内存态。
      *
@@ -4507,10 +4518,7 @@ export class LocalAgentManager {
         // 压缩请求 = 允许新建边界（是否真新建仍由 usedTokens 触发线把关；force 跳过）。
         const lastUsage = readLastStepUsage(taskUri);
         const usedTokens = lastUsage ? bucketsOf(lastUsage.usage as UsageLike).total : null;
-        const state = this.compactStateOf(taskUri);
-        const fixedTokens = state.lastStep
-            ? estimateTokensOf(`${state.lastStep.systemText}\n${state.lastStep.runtimeText}`)
-            : 0;
+        const fixedTokens = this.fixedTokensOf(taskUri);
         const p = this.planCompact(taskUri, policyInput, { force, triggered: true, usedTokens, fixedTokens });
         // 真压缩 = 边界必须落盘；否则下一次投递还会按旧边界（手动小会话尤其明显）。
         let wroteBoundary = false;
@@ -4616,86 +4624,6 @@ export class LocalAgentManager {
             });
         }
         return rec;
-    }
-
-    /**
-     * 撤销某次压缩（append-only 的 undo：不删账，只标）。
-     *
-     * ##431：判据走**限读尾部 + 当前快照**（账本可能几百 MB，不许整份读）：
-     *   · 目标在尾部窗口内，或就是当前生效边界 ⇒ 能撤销；
-     *   · 窗口外且也不是当前边界（很老的压缩）⇒ 返回 false，并 warn 一句「更早的记录未加载」
-     *     —— 界面只列出尾部窗口里的记录，所以正常操作不会碰到这条。
-     */
-    undoCompact(taskUri: string, ref: string): boolean {
-        this.invalidateCompactState(taskUri);
-        const tail = readCompactLogTail(taskUri);
-        const current = latestBoundary(taskUri)?.compactId ?? null;
-        const exists = tail.events.some((e) => e.kind === "compact" && e.id === ref) || current === ref;
-        if (!exists) {
-            if (tail.truncated) {
-                console.warn(`[local-agent] 撤销目标 ${ref} 不在账本尾部窗口内（更早的压缩记录未加载）—— 不撤销`);
-            }
-            return false;
-        }
-        if (tail.events.some((e) => e.kind === "undo" && e.ref === ref)) return false;
-        const prevState = ensureCompactState(taskUri);
-        appendCompactEvent(taskUri, { kind: "undo", v: 1, ref, ts: new Date().toISOString() });
-        // 边界变了 ⇒ 快照必须重算。**从尾部窗口现推**（不删了等懒迁移）：
-        // undo 一定追加在它撤的那条 compact 之后 ⇒ 新边界（上一条未被 undo 的 compact）也在尾部窗口内；
-        // 窗口里干脆没有 compact（更早的记录未加载）⇒ 删快照，交下一次 `ensureCompactState` 扫账本。
-        const after = readCompactLogTail(taskUri);
-        const next = resolveBoundary(after.events);
-        if (next) {
-            writeCompactState(taskUri, {
-                v: 1,
-                boundary: compactPointOf(
-                    after.events.find((e) => e.kind === "compact" && e.id === next.compactId) as CompactEventRecord,
-                ),
-                opIds: prevState?.opIds ?? [],
-                // measure 属于被撤掉的那次压缩：一并清空
-            });
-        } else if (after.events.some((e) => e.kind === "compact")) {
-            // 窗口内的 compact 全被撤销 ⇒ 「当前无生效边界」是确定事实，直接落盘
-            writeCompactState(taskUri, { v: 1, boundary: null, opIds: prevState?.opIds ?? [] });
-        } else {
-            try {
-                // sync-io-ok: undo 是显式用户操作（不在每步热路径），一次删除的同步代价可忽略
-                rmSync(compactStateFile(taskUri), { force: true });
-            } catch (e) {
-                console.error(`[local-agent] 撤销后清理压缩状态快照失败 ${compactStateFile(taskUri)}:`, e);
-            }
-        }
-        // 投递边界在 turns.jsonl（不是 compact.jsonl）：undo 必须同步把 turns 也回退，
-        // 否则历史页回滚了、模型仍拿压过的历史（##442 step 6 P1-2）。
-        const prevEntry = (() => {
-            if (!next) return undefined;
-            const entries = readTurnEntries(taskUri).filter(
-                (e): e is CompactionEntry => (e as CompactionEntry).kind === "compaction",
-            );
-            for (let i = entries.length - 1; i >= 0; i--) {
-                const e = entries[i]!;
-                if (e.cut.turnId !== next.keptFromTurnId) continue;
-                if (next.keptFromLlmLine !== undefined && e.cut.llmLine !== next.keptFromLlmLine) continue;
-                return e;
-            }
-            return undefined;
-        })();
-        appendCompactionEntry(taskUri, {
-            at: new Date().toISOString(),
-            retainTokens: prevEntry?.retainTokens ?? 0,
-            windowTokens: prevEntry?.windowTokens ?? 0,
-            cut: {
-                llmLine: next?.keptFromLlmLine ?? 1,
-                turnId: next?.keptFromTurnId ?? null,
-            },
-            ...(prevEntry?.ref ? { ref: prevEntry.ref } : {}),
-            limitTokens: prevEntry?.retainTokens ?? 0,
-            dropped: 0,
-            headLine: 0,
-        });
-        this.invalidateCompactState(taskUri);
-        this.sessions.delete(taskUri);
-        return true;
     }
 
     /**

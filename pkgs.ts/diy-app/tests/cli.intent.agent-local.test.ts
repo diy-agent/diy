@@ -736,7 +736,7 @@ describe("agent.local — 压缩 compact（无网络）", () => {
     it("compactPreview 只算不写：after<before 且不产生 compact 账本文件", async () => {
         const uri = await seededSession("压缩预览");
         const compactCount = () => (existsSync(homeFile(uri, "compact")) ? 1 : 0);
-        // 基线而不是"目录里没有"：**同文件的其它用例会真落账**（compact/undoCompact…），
+        // 基线而不是"目录里没有"：**同文件的其它用例会真落账**（compact/measure…），
         // 而 `project remove` 之后项目 id 会被**复用**（新项目又拿到 projects/1）——
         // 于是同一个 key 的账本文件可能已经存在。本用例断言的是「**预览**不落账」，
         // 看**增量**才对；断言"目录里没有"会把同文件其它用例的合法落账算成预览的锅。
@@ -749,23 +749,7 @@ describe("agent.local — 压缩 compact（无网络）", () => {
         await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
     });
 
-    it("undoCompact：标记某次压缩作废（append-only，事件留痕可审计）", async () => {
-        const uri = await seededSession("压缩撤销");
-        const rec = (await fx.sh.getJson(`./diy.sh agent local compact run ${uri} --budget-bytes 0`)).data as { id: string };
-        const u = (await fx.sh.getJson(`./diy.sh agent local compact undo ${uri} ${rec.id}`)).data as { undone: boolean };
-        expect(u.undone).toBe(true);
-        // 事件账里出现一条 undo（不删原 compact 行 —— append-only、可审计）
-        const events = (
-            (await fx.sh.getJson(`./diy.sh agent local compact events ${uri}`)).data as {
-                events: Array<{ kind: string; ref?: string }>;
-            }
-        ).events;
-        expect(events.some((e) => e.kind === "undo" && e.ref === rec.id)).toBe(true);
-        expect(events.some((e) => e.kind === "compact" && (e as { id?: string }).id === rec.id)).toBe(true);
-        // 原文一字未删
-        expect(JSON.stringify((await fx.sh.getJson(`./diy.sh agent local history ${uri}`)).data)).toContain("第一轮");
-        await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
-    });
+
 
     it("clear 是「彻底删除」：连同 compact 账本一起清（与 compact 的正交语义）", async () => {
         const uri = await seededSession("压缩与彻底删除");

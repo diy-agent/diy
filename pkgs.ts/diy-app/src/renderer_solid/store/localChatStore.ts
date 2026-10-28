@@ -1801,13 +1801,6 @@ async function compact(
     return rec;
 }
 
-/** 撤销一次压缩（append-only 的 undo）；成功后重建到恢复后的边界 */
-async function undoCompact(taskUri: string, ref: string) {
-    const r = await diyService.diy.agent.local.compact.undo({ taskUri, ref });
-    if (r.undone) await reload(taskUri);
-    return r.undone;
-}
-
 /** 压缩事件账（历史页：不可变快照列表） */
 async function compactEvents(taskUri: string) {
     return diyService.diy.agent.local.compact.events({ taskUri });
@@ -1932,7 +1925,6 @@ export const localChatStore = {
     compact,
     autoCompactStatus,
     autoCompactSetConfig,
-    undoCompact,
     compactEvents,
     /** 上滚补一段更早的历史；返回是否真的插入了内容（调用方据此做滚动位置补偿） */
     loadOlder,

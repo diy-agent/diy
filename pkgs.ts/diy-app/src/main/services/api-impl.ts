@@ -845,11 +845,6 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const txt = (input as { summaryText?: string }).summaryText;
     return await getLocalAgent().compactPreview(input.taskUri, policyOf(input), txt);
   });
-  binding.on(app.agent.local.compact.undo, async ({ input }) => {
-    noteRendererTouch("diy.agent.local.compact.undo", input.taskUri);
-    const { getLocalAgent } = await import("./local-agent");
-    return { undone: getLocalAgent().undoCompact(input.taskUri, input.ref) };
-  });
   binding.on(app.agent.local.compact.events, async ({ input }) => {
     noteRendererTouch("diy.agent.local.compact.events", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");
