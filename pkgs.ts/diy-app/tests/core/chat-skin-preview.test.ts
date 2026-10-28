@@ -4,10 +4,20 @@
 // `[data-skin]` 段每个选择器用到的钩子；漏一个，小样在该皮肤下就悄悄不变，
 // 又变回"点了没反应"。这里直接**从 css 反推钩子清单**，而不是让人肉维护。
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 
 const appDir = resolve(__dirname, "../..");
+/**
+ * 对话页源码（##448 刀 2）：原 `LocalChatPage.tsx` 已拆成 `components/local-chat/*`。
+ * 这里断言的是接线（`sole` / 尾叶子 / clampLines），与文件边界无关 ⇒ 拼全部拆分文件来查。
+ */
+const chatDir = resolve(appDir, "src/renderer_solid/components/local-chat");
+const chatSource = (): string =>
+    readdirSync(chatDir)
+        .filter((f) => f.endsWith(".ts") || f.endsWith(".tsx"))
+        .map((f) => readFileSync(resolve(chatDir, f), "utf8"))
+        .join("\n");
 const css = readFileSync(resolve(appDir, "src/renderer_solid/index.css"), "utf8");
 // ##448 刀 1：ChatSkinPreview / RowGutter 已搬进 @diy/ui-kit（纯展示组件），源码路径跟着走
 const preview = readFileSync(resolve(appDir, "../diy-ui-kit/src/ChatSkinPreview.tsx"), "utf8");
@@ -88,7 +98,7 @@ describe("皮肤小样（ChatSkinPreview）与 index.css 规则一致", () => {
     expect(gutter).toMatch(/role=\{focusable\(\) \? "button" : undefined\}/);
     expect(gutter).toMatch(/aria-hidden=\{focusable\(\) \? undefined : "true"\}/);
     // `sole` 只有一个调用点：正文行（它的行头是正文本身，不是 DisclosureHead）
-    const chat = readFileSync(resolve(appDir, "src/renderer_solid/components/LocalChatPage.tsx"), "utf8");
+    const chat = chatSource();
     expect([...chat.matchAll(/sole=\{/g)].length, "sole 只该给正文行（行头没开关的那一行）").toBe(1);
   });
 
@@ -96,7 +106,7 @@ describe("皮肤小样（ChatSkinPreview）与 index.css 规则一致", () => {
   // 这三处缺陷都在"组件喂给纯函数的东西"上 —— 单测直接喂对的输入，永远抓不到。
   // 故这里对 `LocalChatPage.tsx` 做**接线断言**（本文件已有 `sole` 那一条同款先例）。
   describe("接线：纯函数喂对了没有", () => {
-    const chat = readFileSync(resolve(appDir, "src/renderer_solid/components/LocalChatPage.tsx"), "utf8");
+    const chat = chatSource();
 
     it("RV-5：结束点的 tooltip 用 **turn** 算，不是用尾叶子算", () => {
       // `endLeafTip` 读 `turn.attrs.endReason`，而 `EndLeafBox` 的 `node` 是尾叶子（还要拿去画

@@ -15,7 +15,7 @@ import { findPage } from "../../shared/view-registry";
 import type { Layout } from "../../shared/grid-layout";
 import { ViewGrid } from "./ViewGrid";
 import { TaskSideView } from "./TaskSideView";
-import { LocalChatPage } from "./LocalChatPage";
+import { LocalChatPage } from "./local-chat";
 import { TaskRoomRoster } from "./TaskRoomRoster";
 import { JobRunsPanel } from "./JobRunsPanel";
 import { jobRunsStore } from "../store/jobRunsStore";

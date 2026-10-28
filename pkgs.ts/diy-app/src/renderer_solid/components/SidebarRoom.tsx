@@ -57,7 +57,7 @@ import {
     type RoomEvent,
     type RoomMember,
 } from "../../shared/room";
-import { ChatView, TurnView } from "./LocalChatPage";
+import { ChatView, TurnView } from "./local-chat";
 import { MdEditor } from "./MdEditor";
 import { memberCompletion, taskCompletion } from "../lib/completions";
 import { onStreamScroll, pinnedTo, streamFollowInit, type StreamFollowState } from "../lib/chat-scroll";

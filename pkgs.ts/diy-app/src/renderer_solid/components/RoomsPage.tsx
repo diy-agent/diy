@@ -37,7 +37,7 @@ import {
 } from "../../shared/room";
 // 进度消息（##166 §28.7 A）：**复用任务对话那套块渲染**，不为 room 另写一套 ——
 // `TurnView` + `ChatView` 就是任务对话页在用的同两个东西，这里只是把数据源换成"成员会话的那一轮"。
-import { ChatView, TurnView } from "./LocalChatPage";
+import { ChatView, TurnView } from "./local-chat";
 import { onStreamScroll, pinnedTo, streamFollowInit, type StreamFollowState } from "../lib/chat-scroll";
 import type { BlockNode } from "../../main/services/local-blocks";
 
