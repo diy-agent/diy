@@ -4,7 +4,7 @@
 //（2026-10-04 现象），实时区判错一次就是"步骤一完就空白"或"同一句出现两遍"（review P1-1）。
 // 故钉在这里，组件只管画。
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import {
     DEFAULT_TURN_LEVEL,
@@ -49,6 +49,14 @@ import {
     turnRows,
 } from "../../src/renderer_solid/lib/chat-fold";
 import type { BlockNode } from "../../src/main/services/local-blocks";
+
+// 对话页源码（##448 刀 2）：原 `LocalChatPage.tsx` 已拆成 `components/local-chat/*`。
+// 这些护栏断言的是「组件真的走纯函数」，与文件边界无关 ⇒ 拼**全部**拆分文件来查。
+const chatSource = (): string =>
+    readdirSync(join(__dirname, "..", "..", "src", "renderer_solid", "components", "local-chat"))
+        .filter((f) => f.endsWith(".ts") || f.endsWith(".tsx"))
+        .map((f) => readFileSync(join(__dirname, "..", "..", "src", "renderer_solid", "components", "local-chat", f), "utf-8"))
+        .join("\n");
 
 function n(
     tag: string,
@@ -735,10 +743,7 @@ describe("过程行状态：✗ 与失败块恒开（##329）", () => {
     // 上面几条全绿而 ✗ 照旧不出现 —— 那正是 ##329 的原始形态（数据对了、界面没变）。
     // 同款先例：`prompt-registry.test.ts` 的 ★「两条链路都真的调它」。
     it("★ 源码护栏：组件真的走这两个纯函数，且没把判据抄回去", () => {
-        const src = readFileSync(
-            join(__dirname, "..", "..", "src", "renderer_solid", "components", "LocalChatPage.tsx"),
-            "utf-8",
-        );
+        const src = chatSource();
         expect(src).toContain("procStatusOf("); // 状态灯接上了
         expect(src).toContain("procOpenOf("); // 默认开合接上了
         expect(src).not.toMatch(/attrs\.status\s*===\s*"error"/); // 失败判据没被内联回来
@@ -792,10 +797,7 @@ describe("liveTurnOf：直播中的那一轮", () => {
     });
 
     it("★ 源码护栏：组件走这个纯函数，没把「最后一个 turn」抄回去", () => {
-        const src = readFileSync(
-            join(__dirname, "..", "..", "src", "renderer_solid", "components", "LocalChatPage.tsx"),
-            "utf-8",
-        );
+        const src = chatSource();
         expect(src).toContain("liveTurnOf(");
         expect(src).not.toMatch(/const last = turns\[turns\.length - 1\]/);
     });
@@ -822,10 +824,7 @@ describe("receiptStateOf：回执条是「待投递」还是「已投递」", ()
     });
 
     it("源码护栏：组件用的是这个纯函数（判据只有一处）", () => {
-        const src = readFileSync(
-            join(__dirname, "..", "..", "src", "renderer_solid", "components", "LocalChatPage.tsx"),
-            "utf-8",
-        );
+        const src = chatSource();
         expect(src).toContain("receiptStateOf(");
         // 回执轮上的 steerId 必须**从轮块取**（子 error 块自己没有它），经由 prop 传进去
         expect(src).toContain("receiptSteerId");
