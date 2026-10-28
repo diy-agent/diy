@@ -79,12 +79,61 @@ sync-deps() {
 }
 
 # mono所有workspaced的sync（= 依赖 + dev 数据根配置投影）
+#
+# ##452：**幂等短路**。原先每调一次就是 `npm i --workspaces` + 子模块 + electron 检查 +
+# 各包 sync + 真配置投影 ≈ 45s，而 agent 每轮验前都会 sync 一次 —— 其中 99% 的调用
+# 什么都没变。现在先做一个毫秒级判断（`_sync_uptodate`）：
+#   stamp 存在 且 比 lock / 根与各包 package.json 都新 且 workspace 软链齐全 且子模块已 init
+# ⇒ 直接返回（实测 ~30ms），不碰 node_modules 一下。
+# 判据故意**只用 mtime 与 exists**（不重算哈希）：宁可误判「不新鲜」走全量，
+# 也不许误判「新鲜」跳过真正的变更 —— 内容哈希那份权威判断在 check-sync.mjs 里，
+# 全量路径仍会跑它；`--force` 强制无条件全量。
 sync()  {
+    case "${1:-}" in
+        --force|-f) ;;
+        "")        if _sync_uptodate; then
+                       echo "${info}依赖未变（stamp 命中、workspace 链接齐全）→ 跳过 npm i${reset}"
+                       sync-dev-home
+                       return 0
+                   fi ;;
+        *) echo "${error}用法：./sha.sh sync [--force]${reset}" >&2; return 2 ;;
+    esac
+
     sync-deps
 
     # 本 worktree 的变体数据根缺「真配置」（真账号 / 投递划分 / 真人物），
     # 补齐它 —— 见下条 sync-dev-home
     sync-dev-home
+}
+
+# sync 的幂等快判：**只读、不写任何东西**，ms 级（sync 自己不能挂 ensure-sync，故这里自判）
+_sync_uptodate() {
+    local stamp="node_modules/.diy-sync.stamp"
+    [[ -f "$stamp" ]] || return 1
+    local f ws
+    for f in package.json package-lock.json pkgs.ts/*/package.json; do
+        [[ -e "$f" ]] || continue
+        # stamp 必须比每个 manifest 都新（`-nt` = 严格更新；同秒也判「不新鲜」，保守）
+        [[ "$stamp" -nt "$f" ]] || return 1
+    done
+    # workspace 软链齐全（包改名 / node_modules 被部分清掉时这里会漏，交给全量）
+    # 名字用 sed 直接抠（不起 node：13 个包 × node 启动 ~60ms 就吃掉了整个预算）
+    local name
+    for ws in pkgs.ts/*/; do
+        [[ -f "$ws/package.json" ]] || continue
+        name=$(sed -n 's/^[[:space:]]*"name":[[:space:]]*"\([^"]*\)".*/\1/p' "$ws/package.json" | head -1)
+        [[ -n "$name" ]] || return 1
+        [[ -e "node_modules/$name" ]] || return 1
+    done
+    # 子模块已 init：看每个 submodule 目录下的 `.git`（init 过的子模块是个 gitfile）
+    # 不用 `git submodule status`：实测 0.59s，光它就吃掉了整个预算
+    if [[ -f .gitmodules ]]; then
+        local sub
+        while IFS= read -r sub; do
+            [[ -e "$sub/.git" ]] || return 1
+        done < <(sed -n 's/^[[:space:]]*path[[:space:]]*=[[:space:]]*//p' .gitmodules)
+    fi
+    return 0
 }
 
 # ── 同步闸门：入口前置「没 sync 就先 sync」 ────────────────────────────────────
@@ -162,10 +211,113 @@ link() {      _ws_run command npm link; }
 unlink() {    _ws_run command npm unlink -g ; }
 # 全仓唯一检查入口：全项目类型 + 全仓 lint + rpc 浏览器安全 + 产物护栏 + 可执行位护栏
 #（子包目录下单用见 pkgs.ts/*/sha.sh check）
+#
+# ##452：`--changed` 只跑**受影响的那部分**（判据在 scripts/changed-plan.mjs，头注有全部规则）
+#   ./sha.sh check                      # 全量（CI / 提交前 / 拿不准）—— **行为与以前完全一致**
+#   ./sha.sh check --changed            # 按 git 改动裁剪（基线缺省 origin/main → main → HEAD~1）
+#   ./sha.sh check --changed --base m   # 换基线
+# 为什么这里需要 `exit`：vendor/sha 会把命令后面的参数当作**下一级子命令**继续注册/解析，
+# `check --changed` 跑完后它会把 `--changed` 当命令名而报 unknown command（详见 ##452）。
 check() {
+  case "${1:-}" in
+    "")        _check_full ;;
+    --changed) shift; _check_changed "$@"; exit $? ;;
+    *)         echo "${error}用法：./sha.sh check [--changed [--base <ref>]]${reset}" >&2; exit 2 ;;
+  esac
+}
+
+# 读 scripts/changed-plan.mjs 的 shell 片段（plan_* 变量）
+_plan_load() {
+  eval "$(node scripts/changed-plan.mjs --sh "$@")"
+}
+
+# 相对基线有没有任何改动：**只走 git 内建**（不启 node = 不白花 0.3s）。
+# Review 第 2 轮 ② 要的就是这条：无改动直接跑全量，别先算一遍 plan。
+_has_changes() {
+  local base="${DIY_CHECK_BASE:-origin/main}"
+  git rev-parse --verify --quiet "$base" >/dev/null || return 0  # 认不出基线 ⇒ 当作有改动（保守）
+  local f
+  for f in "$@"; do
+    [[ "$f" == --base ]] && return 0   # 显式给了基线就别猜（交给 --class 统一定面）
+  done
+  git diff --quiet "$base"...HEAD -- . || return 0   # 已提交部分（三点 = merge-base 比）
+  git diff --quiet -- . || return 0                  # 未暂存
+  git diff --quiet --cached -- . || return 0         # 已暂存
+  f=$(git ls-files --others --exclude-standard | head -1)
+  [[ -n "$f" ]] && return 0                          # 未跟踪
+  return 1
+}
+
+# 增量检查：先问「这轮跑多大面」（`--class`，只看路径、毫秒级），再按面跑
+_check_changed() {
   ensure-sync
   # 先编能力包：各包 exports 指 lib/*.js，类型解析要靠它（见 build-pkgs 上方注释）
   build-pkgs
+  if ! _has_changes "$@"; then
+    echo "${info}相对基线没有任何改动 → 直接全量（判据：--changed ≤ 全量）${reset}"
+    _check_full_body
+    return $?
+  fi
+  # 第一步：只花几个 git 调用定面（不做包图 / 护栏计算）——
+  # 干净 worktree 里 `check --changed` 曾因「先算 plan 再退回全量」比全量还慢 2s（##452 Review ①）
+  local mode
+  mode=$(node scripts/changed-plan.mjs --class "$@") || { echo "${error}changed-plan --class 失败${reset}" >&2; return 1; }
+  # full / none 都直接走全量本体：
+  #   full —— 碰了根级配置 / 脚本，或不含 pkgs.ts/**（无法按包收敛）
+  #   none —— 没有任何改动（Review 第 2 轮 ②：无改动不白算，直接跑全量；它本身 ~10s，
+  #           但比「按面裁剪 + 一堆空跑」更可信，且 `--changed ≤ 全量` 自然成立）
+  # 注意：`_check_full_body` 而不是 `_check_full` —— ensure-sync 上面已经跑过（差 0.5~0.9s）
+  if [[ "$mode" == full || "$mode" == none ]]; then
+    if [[ "$mode" == full ]]; then
+      echo "${warning}↑ 改动碰了根级配置 / 脚本，或根本不含 pkgs.ts/**（无法按包收敛）→ 直接全量${reset}"
+    else
+      echo "${info}相对基线没有任何改动 → 直接全量（--changed ≤ 全量）${reset}"
+    fi
+    _check_full_body
+    return $?
+  fi
+  # data：纯数据改动（knowledge/ · docs/ · *.md）连 tsc / oxlint 都不用跑（Review ②）
+  # none：没有改动 —— 但仍要跑「扫文件系统」的护栏（产物护栏：误 emit 的 .js 常被 .gitignore
+  # 吞掉，git 改动集里根本看不见它），故不在这里直接返回
+  _plan_load "$@"
+  local g skip
+  echo "${secondary}改动面：${plan_summary}（面=${mode}）${reset}"
+  for skip in "${plan_skip[@]:-}"; do
+    [[ -n "$skip" ]] && echo "${secondary}  · 跳过 ${skip}${reset}"
+  done
+
+  if [[ "$plan_mode" != data ]]; then
+    # 类型检查：**全图**（不收窄）。理由实测（##452）：tsc -b 自己有增量（.tsbuildinfo
+    # 命中就跳过该 project）—— 改一个包内文件后全图 1.9s、只跑受影响包 1.6~4.6s，没差；
+    # 而自己维护「受影响包 + 反向闭包」漏一个依赖方就是漏报。故「只跑该跑的」交给 TS 自己。
+    run npx tsc -b tsconfig.all.json --noEmit
+    # rpc 浏览器安全用的是非 composite 的独立 config（不写 buildinfo、每次全量 ~2s），
+    # 而它只读 diy-rpc ⇒ 只在 diy-rpc 受影响时跑
+    if ((plan_browser)); then
+      run npx tsc --noEmit -p pkgs.ts/diy-rpc/tsconfig.browser.json
+    fi
+    # lint：逐文件判据，只需受影响包的目录
+    if (( ${#plan_lint[@]} > 0 )); then
+      run npx oxlint "${plan_lint[@]}"
+    fi
+  fi
+  # 护栏：只跑扫描根与改动集相交的（每条跳过都带 why，上面的 · 行）
+  local -a argv=()
+  for g in "${plan_guard_cmds[@]:-}"; do
+    [[ -n "$g" ]] || continue
+    read -r -a argv <<<"$g"
+    run "${argv[@]}"
+  done
+}
+
+# 全量检查（`check` 不带参数 = 这条：CI / 提交前 / 拿不准时用；判据**不得**为提速而缩小）
+_check_full() {
+  ensure-sync
+  _check_full_body
+}
+
+# 全量检查的本体（不含 ensure-sync：给已经做过前置检查的调用方复用，避免重复付 0.5~0.9s）
+_check_full_body() {
   run npx tsc -b tsconfig.all.json --noEmit
   run npx oxlint pkgs.ts/
   run npx tsc --noEmit -p pkgs.ts/diy-rpc/tsconfig.browser.json
@@ -201,10 +353,35 @@ fix() {
   run npx oxlint --fix pkgs.ts/
 }
 # 全部测试：各包 test 子命令（diy-app 含意图测试，起隔离 Electron，最慢放最后）
+#
+# ##452：`test --related <改动文件…>` 只跑**导入链上受影响的测试**（静态 import 图反查）
+#   ./sha.sh test --related pkgs.ts/x/src/a.ts   # 给文件
+#   ./sha.sh test --related                      # 不给 = 用当前 git 改动集（判据同 check --changed）
+#   ./sha.sh test --related --dry-run            # 只列选中哪些，不跑（排查「怎么没选我这条」）
+# 判据在 scripts/related-tests.mjs（头注：为什么不用 vitest related —— 它要跑全套模块图，
+# 实测 diy-app 上 92s ≈ 全量，等于没省）。
 test() {
-  ensure-sync
-  _ws_run command ./sha.sh test
+  case "${1:-}" in
+    "")        ensure-sync; _ws_run command ./sha.sh test ;;
+    --related) shift; _test_related "$@"; exit $? ;;
+    *)         echo "${error}用法：./sha.sh test [--related [<文件…>]]${reset}" >&2; exit 2 ;;
+  esac
 }
+
+_test_related() {
+  ensure-sync
+  local has_files=0
+  local a
+  for a in "$@"; do
+    case "$a" in --*) ;; *) has_files=1 ;; esac
+  done
+  if ((has_files)); then
+    run node scripts/related-tests.mjs --files "$@"
+  else
+    run node scripts/related-tests.mjs "$@"
+  fi
+}
+
 # 编程中快速验证：各包单测，不构建、不起 Electron
 test-unit() {  ensure-sync; _ws_run command ./sha.sh test-unit; }
 
