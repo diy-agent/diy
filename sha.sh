@@ -231,11 +231,9 @@ _vendors_run() {
 #    git add vendor/sha
 #    git commit -m "chore: update vendor/sha"
 #  ```
-vendor() {
-  exec()    { _vendors_run command "$@"; }
-  status()  { _vendors_run git status; }
-  update() {  run git submodule update --init --recursive --remote --merge; }
-}
+vendor.exec()    { _vendors_run command "$@"; }
+vendor.status()  { _vendors_run git status; }
+vendor.update() {  run git submodule update --init --recursive --remote --merge; }
 
 ####################################################
 # Python 包发布

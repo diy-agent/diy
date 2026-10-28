@@ -89,11 +89,9 @@ web() {
   run npx vite --port 19000  --strictHost
 }
 
-examples() {
-  chat() { npx tsx examples/chat_demo.ts; }
-  counter() { npx tsx examples/counter.ts; }
-  tui() { npx tsx examples/tui.ts; }
-  reactive() { npx tsx examples/reactive.ts; }
-}
+examples.chat() { npx tsx examples/chat_demo.ts; }
+examples.counter() { npx tsx examples/counter.ts; }
+examples.tui() { npx tsx examples/tui.ts; }
+examples.reactive() { npx tsx examples/reactive.ts; }
 
 sha "$@"
