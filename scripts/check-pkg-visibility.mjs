@@ -112,3 +112,39 @@ const publicCount = rows.filter((r) => r.shouldBePublic).length;
 console.log(
     `✓ 包可见性通过（${rows.length} 个包：对外 ${publicCount} 个 = ${[...PUBLIC_PACKAGES].join(" / ")}，其余 private）`,
 );
+
+// ── ④ workspace 打包清单（2026-10-28 追加，##266 实测事故）──────────────────
+// 事故：拆出 @diy/context / @diy/compact / @diy/ui-kit 后忘了加进 diy-app 的
+// `vite.pkg-deps.ts::WORKSPACE_TS_DEPS` ⇒ 产物里留下裸 `import "@diy/context/…"` ⇒
+// Electron 启动即 `ERR_MODULE_NOT_FOUND`，**intent 测试全 skipped**，而 `./sha.sh check`
+// 与单元测试全绿（它们不走打包路径）—— 出一条「check 绿但跑不起来」的隐性红。
+//
+// 判据：diy-app 的 dependencies 里每个 `@diy/*`，都必须在 WORKSPACE_TS_DEPS 里出现。
+{
+    const pkgDepsFile = join(PKGS_DIR, "diy-app", "vite.pkg-deps.ts");
+    const appPkgFile = join(PKGS_DIR, "diy-app", "package.json");
+    if (existsSync(pkgDepsFile) && existsSync(appPkgFile)) {
+        const src = readFileSync(pkgDepsFile, "utf8");
+        const block = src.match(/WORKSPACE_TS_DEPS\s*=\s*\[([\s\S]*?)\]/);
+        const listed = new Set(
+            [...(block?.[1] ?? "").matchAll(/["']([^"']+)["']/g)].map((m) => m[1]),
+        );
+        const appPkg = JSON.parse(readFileSync(appPkgFile, "utf8"));
+        const needed = Object.keys(appPkg.dependencies ?? {}).filter((d) => d.startsWith("@diy/"));
+        const missing = needed.filter((d) => !listed.has(d));
+        if (missing.length > 0) {
+            problems.push(
+                `diy-app 依赖了 ${missing.join(", ")}，但 vite.pkg-deps.ts 的 WORKSPACE_TS_DEPS 里没有` +
+                    ` —— 产物会留裸 import ⇒ Electron 启动即 ERR_MODULE_NOT_FOUND（intent 全 skipped，而 check 仍绿）。`,
+            );
+        }
+    }
+}
+
+// 上面第 ④ 段在 problems 已打印之后才追加，故此处重新判定一次
+if (problems.length > 0) {
+    console.error(`✗ 包可见性白名单：${problems.length} 处违规`);
+    for (const p of problems) console.error(`  · ${p}`);
+    console.error(`\n  白名单真源：scripts/check-pkg-visibility.mjs 的 PUBLIC_PACKAGES / vite.pkg-deps.ts`);
+    process.exit(1);
+}

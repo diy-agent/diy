@@ -19,6 +19,9 @@ export const WORKSPACE_TS_DEPS = [
   "@diy/talk",
   "@diy/facts",
   "@diy/persistence",
+  "@diy/context",
+  "@diy/compact",
+  "@diy/ui-kit",
 ];
 
 /** 变体产物根：prod|test|lab（见根 AGENTS.md「实例三态」） */
