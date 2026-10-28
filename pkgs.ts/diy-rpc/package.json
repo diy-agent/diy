@@ -10,7 +10,6 @@
   },
   "homepage": "https://github.com/diy-agent/diy/tree/main/pkgs.ts/diy-rpc",
   "keywords": ["rpc", "diy", "typescript", "streaming", "electron"],
-  "private": true,
   "type": "module",
   "main": "./src/index.ts",
   "exports": {

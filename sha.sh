@@ -179,6 +179,9 @@ check() {
   # 异常码护栏（##394）：新增 `throw new` 必须带 code（<域>/<kebab-case>）；存量按 LEGACY_THROW_BASELINE 比例递减
   #（实现见 scripts/check-error-code.sh，判据见 rule.err-triage；**别改成整文件豁免** —— 那会让新代码永远不被拦）
   run bash scripts/check-error-code.sh
+  # 包可见性白名单：对外发布只有 @diy-agent/rpc 与 @diy-agent/ui（不许 private），其余必须 private；
+  # 且对外包不许依赖 @diy/* 内部包（否则使用时 registry 找不到）。实现见 scripts/check-pkg-visibility.mjs
+  run node scripts/check-pkg-visibility.mjs
   # 同步 IO 护栏（##408 刀 16）：主进程 / shared / preload 里新增 `*Sync` 的磁盘或子进程调用一律 ✗
   #（实现见 scripts/check-sync-io.sh；用户口径「app 不允许有 sync 的 io 操作」；存量按
   # LEGACY_SYNC_IO_BASELINE 棘轮递减，逃生口 `// sync-io-ok: <理由>`）
