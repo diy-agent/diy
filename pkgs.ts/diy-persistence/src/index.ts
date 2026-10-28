@@ -30,6 +30,7 @@ export {
     llmFile,
     llmLogRelPath,
     hasConversation,
+    hasAnySessionData,
 } from "./paths";
 export {
     fileSize,

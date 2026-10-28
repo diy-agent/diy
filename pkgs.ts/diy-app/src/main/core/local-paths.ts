@@ -9,6 +9,7 @@ import path from "node:path";
 import {
     CLEARED_SESSION_KINDS,
     SESSION_KINDS,
+    hasAnySessionData as hasAnySessionDataAt,
     hasConversation as hasConversationAt,
     keyOf,
     legacySessionFile as legacySessionFileAt,
@@ -123,4 +124,19 @@ export function llmLogRelPath(taskUri: string): string {
 /** 该任务**是否对话过**（##355「干净任务」的判据：ops 存在且非空） */
 export function hasConversation(taskUri: string): boolean {
     return hasConversationAt(diyHome(), taskUri);
+}
+
+/**
+ * 该会话在两个落位下是否留下过**任何**痕迹（任何 kind 的文件 / 目录里有东西）。
+ *
+ * 用途（##444 文案分档）：「从未跑过轮次」与「跑过但明细没了」是两件事，判据就是这条。
+ * **纯读**：不建目录。
+ */
+export function hasAnySessionData(taskUri: string): boolean {
+    return hasAnySessionDataAt(diyHome(), taskUri);
+}
+
+/** `turns.jsonl` **实际落位**的相对路径（读侧双认后的那个文件；横幅里给人照此回取） */
+export function turnsFileRel(taskUri: string): string {
+    return path.relative(diyHome(), resolveSessionFile(taskUri, "turns")).split(path.sep).join("/");
 }
