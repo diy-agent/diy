@@ -999,6 +999,12 @@ export const apiDef = RpcSchema.router({
                   degraded: z
                     .object({
                       cause: z.enum(["missing", "empty", "schema-break", "truncated"]),
+                      /**
+                       * 三档事实（##444）：`never-ran` = 还没跑过轮次（不说「不可用」）；
+                       * `conclusion-only` = 结论在、明细原文不在；`degraded` = 真降级。
+                       * 文案由 `shared/degraded-history::degradedBannerText` 一处拼。
+                       */
+                      tier: z.enum(["never-ran", "conclusion-only", "degraded"]),
                       note: z.string().describe("人话原因（横幅「历史明细不可用（<note>）」）"),
                       turns: z.number().describe("重建出来的轮数"),
                       dangling: z.number().describe("其中锚点已悬空的轮数（行内「原始记录已清理」）"),

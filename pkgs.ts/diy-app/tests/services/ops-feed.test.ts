@@ -23,7 +23,8 @@ import type { LanguageModel } from "ai";
 import { diyHome } from "../../src/main/core/state";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
-import { opsFile } from "../../src/main/core/local-paths";
+import { existsSync } from "node:fs";
+import { opsFile, sessionDir } from "../../src/main/core/local-paths";
 import { LocalAgentManager } from "../../src/main/services/local-agent";
 import { opsFeed, __test, type OpsFrame } from "../../src/main/services/ops-feed";
 import type { Op } from "../../src/main/services/local-blocks";
@@ -300,6 +301,28 @@ function readDisk(uri: string): string {
 }
 
 // ─── ③ readOpLines 边界 ─────────────────────────────────
+
+// ─── ④ 读口不建目录（##444 P2）────────────────────────
+
+describe("opsFeed — 读口不建目录（##444 P2）", () => {
+  it("watermark / subscribe 不得建出空会话目录（只看一眼 ≠ 写过）", async () => {
+    const uri = newUri();
+    const dir = sessionDir(uri);
+    expect(existsSync(dir)).toBe(false);
+
+    // UI 开会话页的第一件事就是问水位；紧接着建订阅（两处曾都用写侧 `opsFile`）
+    expect(opsFeed.watermark(uri).seq).toBe(0);
+    const it2 = opsFeed.subscribe(uri, 0, 0)[Symbol.asyncIterator]();
+    await it2.next(); // hello
+    expect(existsSync(dir)).toBe(false);
+
+    // 真写了才建（写侧 opsFile）+ 水位能起来
+    writeOps(uri, [{ op: "start", id: "t1", kind: "turn" }]);
+    expect(existsSync(dir)).toBe(true);
+    __test.resetFeeds();
+    expect(opsFeed.watermark(uri).seq).toBe(1);
+  });
+});
 
 describe("readOpLines — 边界", () => {
   it("UTF-8 跨块不破行（中文/emoji 恰好压在块边界上）", () => {

@@ -23,7 +23,9 @@ import { join } from "node:path";
 import { diyHome } from "../../src/main/core/state";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
-import { opsFile, turnsFile } from "../../src/main/core/local-paths";
+import { existsSync as existsSyncAt } from "node:fs";
+import { legacySessionFile, opsFile, sessionDir, turnsFile } from "../../src/main/core/local-paths";
+import { degradedBannerText } from "../../src/shared/degraded-history";
 import { LocalAgentManager, compactFile } from "../../src/main/services/local-agent";
 import {
     TURN_TEXT_MAX_BYTES,
@@ -281,8 +283,11 @@ describe("降级链：ops 不可用时用 turns 重建只读文本历史", () =>
         rmSync(opsFile(uri), { force: true }); // 真删一次（自动化里的"oper 被清理"）
         const fresh = manager(); // 新 manager = 冷会话（不借用内存块树）
         const w = fresh.historyWindow(uri, {});
-        expect(w.degraded).toMatchObject({ cause: "missing", turns: 2, dangling: 2 });
-        expect(w.degraded!.note).toContain("不存在");
+        expect(w.degraded).toMatchObject({ cause: "missing", tier: "conclusion-only", turns: 2, dangling: 2 });
+        // ##444 档 2：说得清「结论还在、明细原文不在」，并给出 turns 路径（用户能自己回取）
+        expect(w.degraded!.note).toContain("轮次结论还在");
+        expect(w.degraded!.note).toContain("turns.jsonl");
+        expect(degradedBannerText(w.degraded!)).toContain("历史明细不可用");
         expect(w.hasMore).toBe(false);
 
         // 折成文本历史：两轮 turn 块，每轮 user + assistant
@@ -343,6 +348,64 @@ describe("降级链：ops 不可用时用 turns 重建只读文本历史", () =>
         expect(w.degraded?.cause).toBe("truncated");
         expect(w.stale).toBe(false);
         expect(w.ops.filter((o) => o.op === "start" && o.kind === "turn")).toHaveLength(1);
+    });
+
+    // ─── ##444 刀 1：文案按事实分三档 ─────────────────────
+    //
+    // 病根：三件事（还没跑过 / 结论在原文不在 / 真丢明细）被写成同一句「不存在（被清理 / 换了数据根 /
+    // 从未写出）」。##410 实测那是「还没跑过」，用户却读成「历史丢了」。
+
+    it("档 1 · 从没跑过轮次：不报「不可用」，说「还没跑过」", () => {
+        const uri = newTask(); // 建了任务就从没对话过（两个落位都没有任何会话文件）
+        const w = manager().historyWindow(uri, {});
+        expect(w.degraded).toMatchObject({ cause: "missing", tier: "never-ran", turns: 0 });
+        const text = degradedBannerText(w.degraded!);
+        expect(text).toBe("这个会话还没跑过轮次（历史从第一条消息开始）");
+        expect(text).not.toContain("不可用");
+        expect(text).not.toContain("被清理");
+    });
+
+    it("档 3 · 真降级（空 ops）：cause=empty，仍说「不可用」", () => {
+        const uri = newTask();
+        const fp = opsFile(uri); // 写侧路径 = 顺带把会话目录建出来
+        writeFileSync(fp, "", "utf-8"); // 0 字节 = 「空」而不是「从未写出」
+        const w = manager().historyWindow(uri, {});
+        expect(w.degraded).toMatchObject({ cause: "empty", tier: "degraded", turns: 0 });
+        expect(degradedBannerText(w.degraded!)).toContain("历史明细不可用");
+    });
+
+    it("验收：档 1（##410 类）与旧落位有 ops 的会话（本机 78 类）文案必须不同", () => {
+        // 78 类 = 新目录空、旧平铺有 ops ⇒ 读侧双认能读，**根本不报横幅**
+        const uri = newTask();
+        const legacy = legacySessionFile(uri, "ops");
+        const turn = { id: "t1", user: "旧平铺里的一问" };
+        const lines = [
+            JSON.stringify({ op: "start", id: turn.id, kind: "turn" }),
+            JSON.stringify({ op: "start", id: `${turn.id}_u`, kind: "text", parent: turn.id, meta: { role: "user" } }),
+            JSON.stringify({ op: "delta", id: `${turn.id}_u`, fields: { content: turn.user } }),
+            JSON.stringify({ op: "stop", id: `${turn.id}_u` }),
+            JSON.stringify({ op: "stop", id: turn.id }),
+        ];
+        mkdirSync(sessionDir(uri), { recursive: true }); // 新目录在但是空的（真实形态）
+        writeFileSync(legacy, `${lines.join("\n")}\n`, "utf-8");
+        const w = manager().historyWindow(uri, {});
+        expect(w.degraded).toBeUndefined(); // 不挂横幅
+        expect(w.ops.filter((o) => o.op === "start" && o.kind === "turn")).toHaveLength(1);
+        // 与档 1 的文案对比：一边没有横幅，一边是「还没跑过轮次」—— 两者不可能混同
+        expect(w.degraded?.tier).not.toBe("never-ran");
+    });
+
+    it("##444 P2 · 只看历史不建会话目录：historyWindow 不得建出空目录", () => {
+        const uri = newTask();
+        const dir = sessionDir(uri);
+        expect(existsSyncAt(dir)).toBe(false);
+        const w = manager().historyWindow(uri, {}); // 读口（降级链也是读）
+        expect(w.degraded?.tier).toBe("never-ran");
+        // 本函数的唯一产物应该是「结论」，不是盘上的空目录
+        expect(existsSyncAt(dir)).toBe(false);
+        // 对照：真正要写的时候照旧建（opsFile = 写侧）
+        expect(opsFile(uri)).toContain("ops.jsonl");
+        expect(existsSyncAt(dir)).toBe(true);
     });
 
     it("正常路径（ops 可读）不降级：degraded 缺省 undefined、行为与改动前一致", async () => {

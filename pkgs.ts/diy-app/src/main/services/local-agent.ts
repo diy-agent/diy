@@ -24,6 +24,7 @@ import { findInOpsFile, type FindResult, type FindScopes } from "./local-find";
 import { diyHome, projectDir, projectFromUri } from "../core/state";
 import {
     keyOf,
+    hasAnySessionData,
     llmFile,
     llmLogRelPath,
     localDir,
@@ -33,6 +34,7 @@ import {
     sessionIdOf,
     sessionStateFile,
     streamPath,
+    turnsFileRel,
     opsFile,
 } from "../core/local-paths";
 import { readJsonlTail } from "../core/jsonl-tail";
@@ -102,7 +104,7 @@ import { capToolOutput, toolOutFile, toolOutFileCandidates, toolOutRelPath } fro
 import { abortText } from "../../shared/turn-end";
 import type { TurnGate, TurnGateDecision } from "../../shared/turn-gate";
 import { triageOf, triageOfTurnEnd } from "../../shared/error-triage";
-import type { DegradedCause, DegradedHistory } from "../../shared/degraded-history";
+import type { DegradedCause, DegradedHistory, DegradedTier } from "../../shared/degraded-history";
 import { errText } from "../../shared/error-report";
 import { reportError } from "./error-report";
 import { readCauseEvidence } from "./interrupted-cause";
@@ -1264,7 +1266,7 @@ function ensureCompactState(taskUri: string): CompactState | null {
             `[local-agent] 压缩状态快照不可用（${compactStateFile(taskUri)}）：${read.error} —— 回落扫一次账本重建（本步仍可继续）`,
         );
     }
-    const ledger = compactFile(taskUri);
+    const ledger = resolveSessionFile(taskUri, "compact");
     if (!existsSync(ledger)) return null;
     const sc = scanLatestCompact(taskUri);
     // 命中 / 未命中都要写：`boundary: null` = 账本在但没有生效压缩（全被 undo），这份事实同样要缓存。
@@ -1329,12 +1331,15 @@ export function resetOpsReplayCache(): void {
  * 账本本身已降为**纯审计日志**：删了 / 坏了只丢历史页，不阻碍本轮。
  */
 export function resolveOpsReplay(taskUri: string): OpsReplay {
-    const fp = opsFile(taskUri);
+    // ⚠️ **只读解析**（`streamPath`，不建目录）：这是纯读口（大小 / 账本 mtime），
+    // 却每轮真发、每次开会话页都被调 —— 用写侧 `opsFile` 会顺手把空会话目录建出来（##444 P2）。
+    const fp = streamPath(taskUri);
     const streamSize = fileSize(fp);
     let cSize = -1;
     let cMtime = -1;
     try {
-        const st = statSync(compactFile(taskUri)); // sync-io-ok: 压缩账本尾部定位/读取（O(1)~几 MB），与 readOpsRange 同一同步 fold 窗口；改异步会把整条 replay 链染成 async
+        // 账本也是**读**口（只探 mtime）：用写侧 `compactFile` 会把空会话目录建出来（##444 P2）。
+        const st = statSync(resolveSessionFile(taskUri, "compact")); // sync-io-ok: 压缩账本尾部定位/读取（O(1)~几 MB），与 readOpsRange 同一同步 fold 窗口；改异步会把整条 replay 链染成 async
         cSize = st.size;
         cMtime = st.mtimeMs;
     } catch {
@@ -1445,7 +1450,8 @@ export function readCompactLogTail(
     taskUri: string,
     opts: { maxBytes?: number; maxLines?: number } = {},
 ): CompactLogTail {
-    const fp = compactFile(taskUri);
+    // 纯读：`compactFile` 是写侧（会建目录），这里用解析后的实际落位（##444 P2）
+    const fp = resolveSessionFile(taskUri, "compact");
     const tail = readJsonlTail(fp, {
         maxBytes: opts.maxBytes ?? COMPACT_TAIL_BYTES,
         maxLines: opts.maxLines ?? COMPACT_TAIL_LINES,
@@ -2879,7 +2885,7 @@ export class LocalAgentManager {
         let ledgerMtimeMs = 0;
         try {
             // 只探 compact.jsonl 的 mtime：turn 记录每轮追加，拿 turns mtime 当失效判据会每轮全量重读
-            ledgerMtimeMs = statSync(compactFile(taskUri)).mtimeMs; // sync-io-ok: 只探一次 mtime（undo / 另一次 compact 的失效判据）
+            ledgerMtimeMs = statSync(resolveSessionFile(taskUri, "compact")).mtimeMs; // sync-io-ok: 只探一次 mtime（undo / 另一次 compact 的失效判据）；**读口不建目录**（##444 P2）
         } catch {
             /* 文件不存在 = 0 */
         }
@@ -3723,7 +3729,7 @@ export class LocalAgentManager {
     deliveryMessages(taskUri: string): HistoryDelivery {
         // ##420：只 replay 压缩账本起点之后那段（与 getSession 同一个起点、同一份判定）
         const replay = resolveOpsReplay(taskUri);
-        const fp = opsFile(taskUri);
+        const fp = streamPath(taskUri);
         const uiStart = this.uiReplayStart(taskUri);
         // ##92：本地预览与 UI 重放**同起点**时复用同一份块树（`foldedOps` 那条缓存）——
         // 266 实测冷启动 4.5s，打开一次投递预览面板就再吃一遍；而两条路径要的只是
@@ -3766,7 +3772,7 @@ export class LocalAgentManager {
         // 降级链优先（##424 刀 2）：ops 读不出明细时用 turns.jsonl 重建；正常路径只是两次廉价判据
         const deg = this.degradedHistory(taskUri);
         if (deg) return deg.ops;
-        return this.foldedOps(taskUri, opsFile(taskUri), this.uiReplayStart(taskUri));
+        return this.foldedOps(taskUri, streamPath(taskUri), this.uiReplayStart(taskUri));
     }
 
     /**
@@ -3784,7 +3790,7 @@ export class LocalAgentManager {
     private uiReplayStart(taskUri: string): number {
         const replay = resolveOpsReplay(taskUri);
         if (replay.kind !== "offset" || replay.from <= 0) return 0;
-        return isTurnStartAt(opsFile(taskUri), replay.from) ? replay.from : 0;
+        return isTurnStartAt(streamPath(taskUri), replay.from) ? replay.from : 0;
     }
 
     /**
@@ -3826,7 +3832,24 @@ export class LocalAgentManager {
         }
         if (cause === null) return null;
 
+        // ── 三档事实（##444）：**判据全在盘上**，文案只是它的投影 ─────────────
+        // 旧实现把三种不同的事写成同一句「不存在（被清理 / 换了数据根 / 从未写出）」——
+        // 用户看到无法判断自己是不是丢了历史（##410 实测：那是「还没跑过轮次」，不是丢了）。
+        //   ① 无任何会话痕迹且 turns 为空 ⇒ 还没跑过轮次（说「还没有」，不说「不可用」）；
+        //   ② 有 turns 但 ops 不在 ⇒ 结论在、明细原文不在（给 turns 路径供回取）；
+        //   ③ 其余 ⇒ 真降级（空 / 断代 / 被截断；旧落位有 ops 却解析不到也落在这一档 = 真 bug）。
         const records = readTurnRecords(taskUri);
+        const tier: DegradedTier =
+            cause === "missing" && records.length === 0 && !hasAnySessionData(taskUri)
+                ? "never-ran"
+                : cause === "missing" && records.length > 0
+                  ? "conclusion-only"
+                  : "degraded";
+        if (tier === "never-ran") {
+            note = ""; // 档 1 的句子在 shared（`degradedBannerText`），此处不带「不存在」
+        } else if (tier === "conclusion-only") {
+            note = `轮次结论还在，明细原文已不在（turns: ${turnsFileRel(taskUri)}）`;
+        }
         const surviving = present ? readOpsFrom(fp, replay.from) : [];
         const aliveTurns = new Set<string>();
         for (const op of surviving) if (op.op === "start" && op.kind === "turn") aliveTurns.add(op.id);
@@ -3853,7 +3876,7 @@ export class LocalAgentManager {
             // `missing` / `empty` 不走这条：那两种确实没有可重放的内容，degraded 标记必须留着。
             return null;
         }
-        return { ops, degraded: { cause, note, turns, dangling } };
+        return { ops, degraded: { cause, tier, note, turns, dangling } };
     }
 
     /**
@@ -4084,7 +4107,7 @@ export class LocalAgentManager {
                 degraded: deg.degraded,
             };
         }
-        const fp = opsFile(taskUri);
+        const fp = streamPath(taskUri);
         const at = opts.cursor ? decodeCursor(opts.cursor, fp) : null;
         // 带了游标却失效（清空 / 覆盖写 / 换了文件）⇒ 退全量：**绝不把两段历史缝在一起**，
         // 与折叠缓存的判据同一取向（宁可重放整份，也不给出错位的窗口）。
@@ -4115,7 +4138,7 @@ export class LocalAgentManager {
         // 降级态没有「更早的段」：ops 明细已经不可信，文本历史一次给完（hasMore 恒 false）
         const deg = this.degradedHistory(taskUri);
         if (deg) return { ops: [], cursor: opts.cursor, hasMore: false, stale: false, degraded: deg.degraded };
-        const fp = opsFile(taskUri);
+        const fp = streamPath(taskUri);
         const at = decodeCursor(opts.cursor, fp);
         if (at === null || !isTurnStartAt(fp, at)) return this.segmentOf(taskUri, fp, 0, undefined, true); // 游标失效 ⇒ 全量 + stale
         if (at <= 0) return { ops: [], cursor: encodeCursor(fp, 0), hasMore: false, stale: false };
@@ -4157,7 +4180,7 @@ export class LocalAgentManager {
                 degraded: deg.degraded,
             };
         }
-        const fp = opsFile(taskUri);
+        const fp = streamPath(taskUri);
         const fallback = { ...this.segmentOf(taskUri, fp, 0, undefined, true), hasNewer: false };
         if (!isTurnStartAt(fp, opts.at)) return fallback;
         let size = 0;
@@ -4190,7 +4213,7 @@ export class LocalAgentManager {
         taskUri: string,
         opts: { query: string; scopes?: Partial<FindScopes>; maxTurns?: number; signal?: AbortSignal },
     ): Promise<FindResult> {
-        const fp = opsFile(taskUri);
+        const fp = streamPath(taskUri);
         let compactedBefore: number | null = null;
         let compactedFromTurnId: string | null = null;
         // ##431：账本降为审计日志 ⇒ 限读尾部（整份读 = 266 会话 274 MB 秒级卡主线程）。
@@ -4373,7 +4396,7 @@ export class LocalAgentManager {
         const tools = buildTools(cwd, L, taskUri);
         // ##420：没传块树时只 replay 保留段（传了 = 调用方手里已是同一次加载的树，如 compactPreview）
         const replayPlan = storeInput ? { from: 0, lineBase: 0 } : resolveOpsReplay(taskUri);
-        const store = storeInput ?? replay(readOpsFrom(opsFile(taskUri), replayPlan.from));
+        const store = storeInput ?? replay(readOpsFrom(streamPath(taskUri), replayPlan.from));
         // 与真发**同一条链**（含压缩注记）：面板里的"压缩后预览"就是这一份
         const histView = this.deliveryHistoryForView(store, policy, taskUri, storeInput ? 0 : replayPlan.lineBase);
         const summaryText = summaryOverride !== undefined ? summaryOverride : this.effectiveSummary(taskUri);

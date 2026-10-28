@@ -20,7 +20,7 @@
 
 import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
-import { opsFile } from "../core/local-paths";
+import { streamPath } from "../core/local-paths";
 import type { Op } from "./local-blocks";
 import { AsyncQueue, withCleanup } from "./async-queue";
 import { type OpsFrame } from "../../shared/ops-frame";
@@ -153,7 +153,12 @@ class OpsFeed {
     if (!s) {
       // 水位从**盘上现有内容**起步：本进程可能是在会话已写了一段之后才首次被问水位
       // （例如 UI 打开一个由 CLI 早先写过的会话）。
-      s = { epoch: 0, seq: countLines(opsFile(taskUri)), subs: new Set() };
+      // ⚠️ **只读路径**（`streamPath`，不建目录）：本模块的三个出口（`watermark` / `subscribe` /
+      // 补发读文）都是**读**，而 `opsFile` 是写侧（`sessionFileForWrite` = 解析 + mkdir）。
+      // 用错一次的后果（##444 实测）：UI 一开会话页就问一次水位 ⇒ 每个「看过」的任务
+      // 都被建出一个**空会话目录**（本机 256 个新目录里 188 个是空壳，其中 78 个还靠旧平铺回落在读）。
+      // 建目录只该发生在真正要写的时候（`opSink` → `createOpsAppender`）。
+      s = { epoch: 0, seq: countLines(streamPath(taskUri)), subs: new Set() };
       this.feeds.set(taskUri, s);
     }
     return s;
@@ -236,7 +241,7 @@ class OpsFeed {
     if (epoch !== undefined && epoch !== s.epoch) {
       q.push({ kind: "reset", epoch: s.epoch });
     } else if (since < s.seq) {
-      const ops = readOpLines(opsFile(taskUri), since + 1, s.seq);
+      const ops = readOpLines(streamPath(taskUri), since + 1, s.seq);
       if (ops.length > 0) q.push({ kind: "batch", epoch: s.epoch, fromSeq: since + 1, ops });
     }
     s.subs.add(q);

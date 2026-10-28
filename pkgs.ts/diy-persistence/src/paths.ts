@@ -9,7 +9,7 @@
 //
 // 本模块只做路径计算与目录创建，不含任何会话逻辑。
 
-import { existsSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { keyOf } from "./keys";
 
@@ -70,6 +70,32 @@ export function sessionFileForWrite(home: string, taskUri: string, kind: Session
     const file = resolveSessionFile(home, taskUri, kind);
     mkdirSync(path.dirname(file), { recursive: true });
     return file;
+}
+
+/** 本地根 `local/` 的路径（**不带建目录**；给纯读判据用，别用 `localDir`） */
+function localDirPath(home: string): string {
+    return path.join(home, "local");
+}
+
+/**
+ * 该会话在两个落位下**是否留下过任何痕迹**（任何 kind 的文件 / 会话目录里的任何东西）。
+ *
+ * 用途（##444）：降级横幅要区分「从未跑过轮次」与「跑过但明细没了」—— 判据就是这条。
+ * ⚠️ **纯读**：不建目录（同 `hasConversation` 的取向）。把这里换成 `localDir` /
+ * `sessionDir` / `sessionFileForWrite` 会重新制造「看一眼就多一个空会话目录」的垃圾。
+ */
+export function hasAnySessionData(home: string, taskUri: string): boolean {
+    const root = localDirPath(home);
+    const key = keyOf(taskUri);
+    for (const kind of SESSION_KINDS) {
+        if (existsSync(path.join(root, `${key}.${kind}.jsonl`))) return true;
+    }
+    const dir = path.join(root, ...uriSegments(taskUri), key);
+    try {
+        return statSync(dir).isDirectory() && readdirSync(dir).length > 0;
+    } catch {
+        return false;
+    }
 }
 
 /** 该会话在**新老两个落位**下的全部文件（迁移用） */

@@ -10,11 +10,24 @@
 export type DegradedCause = "missing" | "empty" | "schema-break" | "truncated";
 
 /**
+ * 横幅的**三档事实**（##444）——文案不再把三件事混成一句：
+ *   · `never-ran`        这个会话**从没跑过轮次**（两个落位都没有任何会话痕迹）
+ *                        ⇒ 是「还没有」，不是「不可用」，横幅只说「还没跑过轮次」；
+ *   · `conclusion-only`  跑过，**轮次结论还在**（turns.jsonl），明细原文（ops）没了
+ *                        ⇒ 说「结论在、原文不在」并给出 turns 路径；
+ *   · `degraded`         其余（空的 / 断代 / 被截断；或旧落位有 ops 却解析不到 = 真 bug）。
+ * 判据全部归 main（`local-agent.ts::degradedHistory`），这里只定值域。
+ */
+export type DegradedTier = "never-ran" | "conclusion-only" | "degraded";
+
+/**
  * 降级重建的可见标记。**有它就意味着「这份历史不是 ops 原文」** ——
  * 此时回包的 ops 是 `turns.jsonl` 折成的只读文本历史（user + assistant 正文）。
  */
 export interface DegradedHistory {
     cause: DegradedCause;
+    /** 三档事实（##444）：决定横幅说「还没有」还是「不可用」 */
+    tier: DegradedTier;
     /** 人话原因（横幅里「历史明细不可用（<note>）」那半句） */
     note: string;
     /** 重建出来的轮数 */
@@ -31,8 +44,15 @@ export const DEGRADED_CAUSE_TEXT: Record<DegradedCause, string> = {
     truncated: "会话明细被截断或替换",
 };
 
-/** 会话页顶部横幅的全句（body 刀 2 §2 定死的口径） */
+/**
+ * 会话页顶部横幅的全句。
+ *
+ * `never-ran` **不说「不可用」**（##444）：这个会话只是还没跑过轮次 —— 说成「被清理 / 换过数据根」
+ * 必然让人以为丢了历史（用户 2026-10-26 的两次追问都源于这一句）。
+ * 其余两档仍是「不可用」句式，但主语来自 `note`（main 按事实写：结论在/原文不在、断代、被截断…）。
+ */
 export function degradedBannerText(d: DegradedHistory): string {
+    if (d.tier === "never-ran") return "这个会话还没跑过轮次（历史从第一条消息开始）";
     return `历史明细不可用（${d.note || DEGRADED_CAUSE_TEXT[d.cause] || d.cause}），以下为结论文本记录（${d.turns} 轮）`;
 }
 
