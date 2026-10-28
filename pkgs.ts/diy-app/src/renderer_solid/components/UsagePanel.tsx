@@ -575,7 +575,7 @@ export function WindowRing(props: { uri: string | null }) {
             if (rec?.noop) {
                 notificationStore.addToast(
                     "info",
-                    "无需压缩（历史已在预算内）",
+                    "内容不足一步，无法压缩",
                     compactNotice({
                         kind: "noop",
                         limitTokens: limitTok(),
@@ -603,23 +603,23 @@ export function WindowRing(props: { uri: string | null }) {
     const [anchor, setAnchor] = createSignal<{ left: number; top: number } | null>(null);
     let closeT: ReturnType<typeof setTimeout> | undefined;
 
-    /** 历史上限（token）—— 取配置真源 `auto-compact.yaml` 的 history.limit.limitTokens；缺省 20000 */
+    /** 保留量（token）—— ##442 固定 = 窗口 × 0.16；窗口未知 ⇒ 0 */
     // 门槛 = 卡或抽屉真的开着：本组件常挂（会话页脚常驻），无门槛则**每次切会话页**都白打一次
     // `autoCompactStatus`（##321 复核补记的次级成本；非主因，但同属"抽屉关着也算"）。
     const [limitRes] = createResource(() => (open() || drawerOpen() ? props.uri : null), async (u) => {
         if (!u) return null;
         const st = (await localChatStore.autoCompactStatus(u)) as {
-            config?: { history?: { limit?: { limitTokens?: number } } };
+            facts?: { windowLimitTokens?: number | null };
         };
-        const n = st?.config?.history?.limit?.limitTokens;
-        return typeof n === "number" ? n : 20_000;
+        const w = st?.facts?.windowLimitTokens;
+        return typeof w === "number" && w > 0 ? Math.floor(w * 0.16) : 0;
     });
-    const limitTok = (): number => limitRes() ?? 20_000;
-    /** 压缩后估算 token：固定开支（system+工具）+ 历史上限（保留段按上限的一半计） */
+    const limitTok = (): number => limitRes() ?? 0;
+    /** 压缩后估算 token：固定开支（system+工具）+ 保留量（窗口 × 0.16） */
     const afterTokens = (): number | null => {
         const p = partsOf(win());
         const fixed = (p.system ?? 0) + (p.tools ?? 0);
-        return fixed + Math.round(limitTok() / 2);
+        return fixed + Math.round(limitTok());
     };
 
     const openCard = (el: HTMLElement) => {

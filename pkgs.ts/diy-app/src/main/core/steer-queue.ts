@@ -16,6 +16,7 @@
 // 语义（顺序即投递顺序，合并会打乱它），所以只共用存储，不共用合并逻辑。
 
 import { STEER_MODES, readDrafts, writeSteers, type SteerItem, type SteerMode } from "./drafts";
+import type { NotifyItem } from "../../shared/context/envelope";
 
 /** 插话 id 的前缀：形如 `steer/1`、`steer/2`（"实体/序号"，见仓库约定的 id 风格） */
 export const STEER_ID_PREFIX = "steer/";
@@ -78,7 +79,14 @@ export class SteerQueue {
   }
 
   /** 入队（FIFO 尾部）。空内容直接拒绝：空插话投进去只会污染提示词 */
-  add(uri: string, mode: SteerMode, text: string, now: Date = new Date(), author?: string): SteerItem[] {
+  add(
+    uri: string,
+    mode: SteerMode,
+    text: string,
+    now: Date = new Date(),
+    author?: string,
+    notify?: NotifyItem,
+  ): SteerItem[] {
     const body = text.trim();
     if (!body) throw new Error("插话内容为空");
     if (!(STEER_MODES as readonly string[]).includes(mode)) {
@@ -104,6 +112,8 @@ export class SteerQueue {
       created: now.toISOString(),
       // 署名随队列项一起落盘（##166 §40 A）：排队可能跨轮次，投递时再问"谁说的"已无从查起
       ...(author ? { author } : {}),
+      // 结构化机器事件（job 结束等）：投递时走 notify，不走 chat（##442 2026-10-27）
+      ...(notify ? { notify } : {}),
     };
     const items = [...existing, item];
     this.port.write(uri, items);

@@ -115,7 +115,6 @@ const writeBoundary = (uri: string, cutLine: number, headLine = 1, dropped = 1):
     });
 };
 
-
 /** 单条 user 消息的**投递**字节（与 `costOfWith` 同口径：`{role, content}` 的 JSON） */
 
 /** 历史里那条 user 消息（= prompt 里第一条 role=user 的正文；尾部信封另算） */
@@ -136,18 +135,17 @@ describe("##422 历史 user 消息带 from（发言者）", () => {
         expect(start?.meta?.["author"]).toBe("agent:main");
         expect(start?.meta?.["speaker"]).toEqual({ id: "agent:main", name: PERSONA_NAME });
 
-        // 第二轮再问一句 ⇒ 第一轮那条成了**历史**，投影里带 from:
+        // 第二轮再问一句 ⇒ 第一轮那条成了**历史**，投影里带 chat.from
         await turn(uri, mgr, "第二句", undefined, sink);
         const hist = firstUserText((sink.prompts.at(-1) ?? []) as PromptMsg[]);
-        expect(hist.startsWith("from:\n")).toBe(true);
-        expect(hist).toContain("  id: agent:main");
-        expect(hist).toContain(`  name: ${PERSONA_NAME}`);
+        expect(hist.startsWith("chat:\n")).toBe(true);
+        expect(hist).toContain("  - from: agent:main");
         // 正文原样（不是被改写、不是被塞进别处）
-        expect(hist).toContain("第一句");
+        expect(hist).toContain('text: "第一句"');
         expect(hist).not.toContain("第二句");
     });
 
-    it("② 无 speaker（任务页本人发言）⇒ 裸文本逐字不变", async () => {
+    it("② 无 speaker（任务页本人发言）⇒ from 落默认 human:chen56", async () => {
         const uri = newUri();
         seedRoom(uri, uri);
         const sink = { prompts: [] as unknown[] };
@@ -160,9 +158,9 @@ describe("##422 历史 user 消息带 from（发言者）", () => {
         // 不落 speaker 键（也不落 author —— 与存量逐字一致）
         expect(start?.meta?.["speaker"]).toBeUndefined();
         expect(start?.meta?.["author"]).toBeUndefined();
-        // 历史里那条就是裸文本：一个字节都没多
+        // 历史里那条也是 chat 信封；没有 speaker 时 from = 本机用户
         const hist = firstUserText((sink.prompts.at(-1) ?? []) as PromptMsg[]);
-        expect(hist).toBe("第一句");
+        expect(hist).toBe('chat:\n  - from: human:chen56\n    text: "第一句"');
     });
 
     it("③ from: 段不进 user.message（顶层键并列）—— 末尾那轮也照此（不嵌套）", async () => {
@@ -171,19 +169,15 @@ describe("##422 历史 user 消息带 from（发言者）", () => {
         const sink = { prompts: [] as unknown[] };
         const mgr = new LocalAgentManager(() => stubModel(sink));
         await turn(uri, mgr, "第一句", { author: "agent:main" }, sink);
-        // 本轮输入**也**带 speaker ⇒ 尾部不许把它嵌进 `user.message`（那会让 from 变成正文一部分）
+        // 本轮输入**也**带 speaker ⇒ from 在 chat 项里（与 text 同级，不是顶层键）
         const { prompt } = await turn(uri, mgr, "第二句", { author: "agent:main" }, sink);
         const last = textOf(prompt[prompt.length - 1]?.content);
-        // 尾部信封只放 runtime（from 另占一条消息，各段顶层键并列）
-        expect(last.startsWith("runtime:")).toBe(true);
-        expect(last).not.toContain("from:");
-        // 它前一条就是这条发言的 from 信封：`from:` 与 `user:` 都在行首（并列而非嵌套）
-        const own = textOf(prompt[prompt.length - 2]?.content);
-        const lines = own.split("\n");
-        expect(lines[0]).toBe("from:");
-        expect(lines).toContain("user:");
-        expect(lines.some((l) => /^\s+from:/.test(l))).toBe(false);
-        expect(own).toContain("第二句");
+        // 可能带跨轮控制增量（room 变化）→ chat 不一定在首行，但必须在同一份信封里
+        expect(last).toContain("chat:");
+        expect(last).toContain("  - from: agent:main");
+        expect(last).toContain('text: "第二句"');
+        // from 不在顶层（顶格 `from:` 是旧格式；新格式只在 chat 项里缩进出现）
+        expect(last).not.toMatch(/^from:/m);
     });
 });
 
@@ -203,12 +197,16 @@ describe("##422 合并规则：from 信封不参与相邻 user 合并（判据 �
     });
 
     it("普通正文夹在两条 from 信封之间也不被并（三条各占一条）", () => {
-        const out = normalizeUserRuns([fromMsg("agent:main", "一"), { role: "user", content: "裸文本" } as ModelMessage, fromMsg("human:chen56", "二")]);
+        const out = normalizeUserRuns([
+            fromMsg("agent:main", "一"),
+            { role: "user", content: "裸文本" } as ModelMessage,
+            fromMsg("human:chen56", "二"),
+        ]);
         expect(out).toHaveLength(3);
         expect(out[1]!.content).toBe("裸文本");
     });
 
-    it("##442 刀 2：压缩后头部**没有**注记段 —— 保留的第一条历史消息（from 信封）直接紧跟 system", async () => {
+    it("##442：压缩后头部是 notify.compact，随后才是保留的历史消息（chat 信封）", async () => {
         // 边界切在 3 ⇒ 旧 user（from 信封）留下、assistant 被丢（真压缩）
         const uri = newUri();
         seedRoom(uri, uri);
@@ -216,12 +214,20 @@ describe("##422 合并规则：from 信封不参与相邻 user 合并（判据 �
         const mgr = new LocalAgentManager(() => stubModel(sink));
         await turn(uri, mgr, "第一句", { author: "agent:main" }, sink);
         writeBoundary(uri, 3);
+        mgr.refreshCompactState(uri); // 测试直接写 turns 边界，模拟外部写
         const { prompt } = await turn(uri, mgr, "第二句", undefined, sink);
         expect(prompt[0]?.role).toBe("system");
-        // 注记已删：system 之后的第一条 user 就是**保留下来**的历史发言（from 信封）
-        const hist = textOf(prompt[1]?.content);
-        expect(hist.startsWith("from:\n")).toBe(true);
-        expect(hist).not.toContain("history:");
-        expect(hist).toContain("第一句");
+        // ##442：压缩通知并进第一条保留 user（notify + chat 同一信封，避免连续两条 user）
+        const merged = textOf(prompt[1]?.content);
+        expect(merged.startsWith("notify:\n")).toBe(true);
+        expect(merged).toContain("kind: compact");
+        expect(merged).toContain("source:");
+        expect(merged).toContain("原文从第 3 行开始");
+        expect(merged).toContain("chat:\n");
+        expect(merged).toContain("  - from: human:chen56");
+        expect(merged).toContain("第二句");
+        expect(merged).not.toContain("history:");
+        // 只剩 system + 合并后的本条 user（本轮 assistant 还没生成）
+        expect(prompt).toHaveLength(2);
     });
 });

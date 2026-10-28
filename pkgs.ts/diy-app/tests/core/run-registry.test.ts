@@ -100,8 +100,11 @@ describe("查询与停止", () => {
 
 describe("结束通知（插话唤醒的数据面）", () => {
     it("带 origin 的进程结束时通知恰好一次，内容是「结论 + 尾巴」", async () => {
-        const seen: Array<{ taskUri: string; text: string }> = [];
-        const local = new RunRegistry({ rootDir: root, notifier: (taskUri, text) => seen.push({ taskUri, text }) });
+        const seen: Array<{ taskUri: string; text: string; notify?: unknown }> = [];
+        const local = new RunRegistry({
+            rootDir: root,
+            notifier: (taskUri, text, notify) => seen.push({ taskUri, text, notify }),
+        });
         const p = await local.spawn({ command: "echo shipped", cwd: root, origin });
         await local.wait(p.id, 10_000);
         // close 事件在 wait 之后一拍
@@ -110,6 +113,15 @@ describe("结束通知（插话唤醒的数据面）", () => {
         expect(seen[0]!.taskUri).toBe(origin.taskUri);
         expect(seen[0]!.text).toContain(p.id);
         expect(seen[0]!.text).toContain("shipped");
+        // 结构化同行（##442 2026-10-27）：投递侧拿它走 notify，不必解析正文
+        expect(seen[0]!.notify).toMatchObject({
+            kind: "job-done",
+            run: p.id,
+            state: "exited",
+            exitCode: 0,
+            command: "echo shipped",
+        });
+        expect((seen[0]!.notify as { tail?: string }).tail).toContain("shipped");
         local.clear();
     });
 

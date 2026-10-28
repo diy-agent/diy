@@ -14,7 +14,8 @@
 //
 // ── 行形状（v2；v1 = ##424 的轮次记录，v2 加 `kind` 与 compaction entry）──
 //   轮次记录：{ v:1, turnId, at, state, user, texts:[{seq,text}], ref:{ ops:{offset,len,seq} } }
-//   压缩边界：{ v:2, kind:"compaction", at, limitTokens, dropped, headLine, cut:{ llmLine, turnId }, ref?:{ ops:{offset,seq} } }
+//   压缩边界 v3：{ v:3, kind:"compaction", at, retainTokens, windowTokens, cut:{ llmLine, turnId }, ref?:{ ops:{offset,seq} } }
+//                 （v2 旧账仍可读：limitTokens 当保留量、headLine 当保头）
 // 约定：
 //   1. `offset` / `len` 一律**字节**，`len` 是**整行含换行**；
 //   2. `offset` 在**写侧**取（append 之前的 fileSize）；
@@ -29,8 +30,8 @@ import { opsFile, resolveSessionFile, turnsFile } from "./paths";
 /** 单条正文（user / text）的落盘上限：超了截断该条，不丢整轮 */
 export const TURN_TEXT_MAX_BYTES = 64 * 1024;
 
-/** 当前 `turns.jsonl` 的行格式版本（变了就是一次断代：v1 轮次记录 + v2 压缩边界） */
-export const TURN_SCHEMA_CURRENT = 2;
+/** 当前 `turns.jsonl` 的行格式版本（v1 轮次记录 + v3 压缩边界） */
+export const TURN_SCHEMA_CURRENT = 3;
 
 /** ops 里的字节锚点（一条 op 行的物理位置） */
 export interface OpsRef {
@@ -75,16 +76,19 @@ export interface TurnRecord {
  * `cut.turnId` = 切点所在那轮的 id（下一轮 ops replay 的起点优化用；null = 拿不到）。
  */
 export interface CompactionEntry {
-    v: 2;
+    /** 2 = 旧账（limitTokens + headLine）；3 = ##442 精简账（retainTokens + windowTokens） */
+    v: 2 | 3;
     kind: "compaction";
     /** 压缩发生时刻（ISO） */
     at: string;
-    /** 单条上限（token；字符数 / 4 的粗估口径） */
-    limitTokens: number;
-    /** 这次丢弃的消息条数（不含保头） */
-    dropped: number;
-    /** 保头的最后一条消息行号（1-based，含） —— 它及其之前永远保留（##432：保头 600 token） */
-    headLine: number;
+    /** v3：保留量 = 窗口 × 0.16 */
+    retainTokens?: number;
+    /** v3：压缩时用的模型窗口 */
+    windowTokens?: number;
+    /** v2 旧字段（只读兼容；v3 不再写） */
+    limitTokens?: number;
+    dropped?: number;
+    headLine?: number;
     cut: { llmLine: number; turnId: string | null };
     /** 切点那一轮的 ops 锚点（可选；用于下次 replay 少读前缀） */
     ref?: { ops: { offset: number; seq: number } };
@@ -176,7 +180,7 @@ export function appendCompactionEntry(
     taskUri: string,
     entry: Omit<CompactionEntry, "v" | "kind">,
 ): boolean {
-    const rec: CompactionEntry = { v: 2, kind: "compaction", ...entry };
+    const rec: CompactionEntry = { v: 3, kind: "compaction", ...entry };
     let fp: string;
     try {
         fp = turnsFile(home, taskUri);
@@ -205,7 +209,7 @@ export function readTurnEntries(home: string, taskUri: string): TurnEntry[] {
         try {
             const rec = JSON.parse(t) as TurnEntry;
             if (isCompaction(rec)) {
-                if (rec.v === 2) out.push(rec);
+                if (rec.v === 2 || rec.v === 3) out.push(rec);
             } else if (rec && rec.v === 1 && typeof rec.turnId === "string" && rec.ref?.ops) {
                 out.push(rec);
             }

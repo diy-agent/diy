@@ -372,6 +372,22 @@ export function subsetOf(state: ContextTreeState, paths: readonly ContextPath[])
     return composeSubset(state, [...paths].sort());
 }
 
+/**
+ * 同 `subsetOf`，但**缺失的 path 落成 `null`** —— 增量信封用它表达「这个单元已消失」。
+ *
+ * 为什么不能像 `subsetOf` 那样直接跳过：跳过 = 模型上下文里保留旧值（它不知道这是"没了"），
+ * 下一轮继续按旧值干活。`null` 是「存在但为空」之外的另一档，见 `ENVELOPE_ABOUT`。
+ */
+export function subsetOfDelta(state: ContextTreeState, paths: readonly ContextPath[]): unknown {
+    const view = buildView(state, state.values, "");
+    let out: unknown = {};
+    for (const p of [...paths].sort()) {
+        const sub = pick(view, p);
+        out = merge(out, nest(p, sub === undefined ? null : sub));
+    }
+    return out;
+}
+
 /** 渲染一组 path → YAML 文本（空则空串；path 先排序保证输出稳定） */
 export function renderPaths(state: ContextTreeState, paths: readonly ContextPath[]): string {
     if (paths.length === 0) return "";

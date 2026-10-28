@@ -89,7 +89,7 @@ describe("请求预览：内嵌文本就地解析展开", () => {
     it("系统上下文本身就是合法 YAML（说明头已换成 help 段，不再需要「按注释拆」）", () => {
         expect(() => yaml.load(sys, { schema: yaml.JSON_SCHEMA })).not.toThrow();
         const loaded = yaml.load(sys, { schema: yaml.JSON_SCHEMA }) as any;
-        expect(Object.keys(loaded)).toEqual(["help", "system"]);
+        expect(Object.keys(loaded)).toEqual(["help", "system", "runtime"]);
         expect(loaded.help.system.desc).toContain("系统上下文变量树");
     });
 

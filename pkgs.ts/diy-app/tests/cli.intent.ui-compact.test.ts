@@ -229,7 +229,7 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
   it("点环 → 窗口构成抽屉：**第一 tab 是压缩**（自动压缩 + 参数区 + 费用对比），tab 栏有「压缩」执行按钮", async () => {
     await openDrawer();
     await waitUntil(
-      () => ui.query<boolean>(`!!document.querySelector('input[aria-label="历史上限token"]')`),
+      () => ui.query<boolean>(`!!document.querySelector('[data-history-limit]')`),
       (v) => v === true,
       { label: "压缩 tab 上屏" },
     );
@@ -240,17 +240,18 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
     expect(await ui.query<boolean>(`!!document.querySelector('[aria-label="自动压缩模式"]')`)).toBe(false);
     expect(await ui.query<boolean>(`!!document.querySelector('[data-compact-mode]')`)).toBe(true);
     expect(text).toContain("到点就压");
-    expect(await ui.query<boolean>(`!!document.querySelector('input[aria-label="历史上限token"]')`)).toBe(true);
+    expect(await ui.query<boolean>(`!!document.querySelector('[data-history-limit]')`)).toBe(true);
     expect(await ui.query<boolean>(`!!document.querySelector('[aria-label="压缩（详情页）"]')`)).toBe(true);
     expect(await ui.query<string>(`document.querySelector('[aria-label="窗口构成视图"] button')?.textContent?.trim() ?? ''`)).toBe("压缩");
     expect(await ui.query<boolean>(`!!document.querySelector('[aria-label="窗口构成视图"] button.btn-active')`)).toBe(true);
-    // 缺省上限 = DEFAULT_HISTORY_LIMIT_TOKENS（30000 token，##442 刀 1）
-    expect(await limitTokensValue()).toBe("30000");
+    // ##442：保留量固定为窗口 × 0.16（不再有可编辑的 token 上限）
+    expect(text).toContain("固定 W × 0.16");
+    expect(await ui.query<boolean>(`!!document.querySelector('input[aria-label="历史上限token"]')`)).toBe(false);
   });
 
   it("M3：参数区按 mode → modeData → toolResult → renderData 层次展示（归属可见）", async () => {
     const text = await a11yText();
-    for (const k of ["modeData", "limitTokens", "toolResult", "render", "renderData", "summary"]) {
+    for (const k of ["modeData", "toolResult", "render", "renderData", "summary"]) {
       expect(text).toContain(k);
     }
     // 层次结构的字段键（renderData 私有参数）在 DOM 里
@@ -294,37 +295,45 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
       (t) => t.includes("mode:") && t.includes("policy:"),
       { label: "原始 YAML 上屏" },
     );
-    expect(raw).toContain("limitTokens");
+    expect(raw).toContain("summary");
     expect(raw).toContain("toolResult");
     // 切回参数视图
     await ui.clickSelector('[aria-label="压缩配置视图"] button:nth-child(1)');
     await waitUntil(
-      () => ui.query<boolean>(`!!document.querySelector('input[aria-label="历史上限token"]')`),
+      () => ui.query<boolean>(`!!document.querySelector('[data-history-limit]')`),
       (v) => v === true,
       { label: "参数视图回归" },
     );
   });
 
-  it("自动压缩：##442 删三态 → 面板只说「到点就压」，真源写成 windowOverRatio", async () => {
+  it("自动压缩：##442 零旋钮 → 面板只说「到点就压」，真源没有 triggers / windowOverRatio", async () => {
     const text = await a11yText();
     expect(text).toContain("到点就压");
     expect(text).not.toContain("自动压缩 off");
     const raw = await waitUntil(
       () => Promise.resolve(autoYaml()),
-      (t) => t.includes("windowOverRatio"),
-      { label: "真源有 windowOverRatio" },
+      (t) => t.includes("summary"),
+      { label: "真源有 summary" },
     );
+    const dataLines = raw
+      .split("\n")
+      .filter((l) => l.trim() && !l.trim().startsWith("#"))
+      .join("\n");
+    expect(dataLines).not.toContain("windowOverRatio");
+    expect(dataLines).not.toContain("triggers:");
     expect(raw).not.toContain("mode: notify");
-    expect(raw).not.toContain("mode: auto");
   });
 
-  it("历史上限：手改写回真源（3000 → 夹到下限 4000，token 形状）", async () => {
-    await setLimitTokens(3000);
-    // 小于下限的值会被夹上来（##432 review 第 2 条：太快触发 = 每步都重算）
-    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("limitTokens: 4000"), { label: "上限写回真源（夹到 4000）" });
-    await setLimitTokens(9000);
-    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("limitTokens: 9000"), { label: "上限写回真源（9000）" });
-    expect(autoYaml()).toContain("limit:");
+  it("摘要模式：model / self 写回真源", async () => {
+    const sel = `document.querySelector('[data-history-limit] select')`;
+    await ui.query<string>(
+      `(() => { const s=${sel}; s.value='self'; s.dispatchEvent(new Event('change',{bubbles:true})); return 'x'; })()`,
+    );
+    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("mode: self"), { label: "写回 self" });
+    await ui.query<string>(
+      `(() => { const s=${sel}; s.value='model'; s.dispatchEvent(new Event('change',{bubbles:true})); return 'x'; })()`,
+    );
+    await waitUntil(() => Promise.resolve(autoYaml()), (t) => t.includes("mode: model"), { label: "写回 model" });
   });
 
   it("费用对比（图形）：当前 / 压缩后两条 + 省 $x（−y%）", async () => {
@@ -380,7 +389,7 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
   it("切「总表（按轮）/ 分表（按步）」：压缩内容退场（无用量记录 → 空态），可切回", async () => {
     await ui.clickSelector('[data-drawer-tab="total"]');
     await waitUntil(
-      () => ui.query<boolean>(`!!document.querySelector('input[aria-label="历史上限token"]')`),
+      () => ui.query<boolean>(`!!document.querySelector('[data-history-limit]')`),
       (v) => v === false,
       { label: "压缩 tab 退场" },
     );
@@ -390,7 +399,7 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
     expect(await ui.query<boolean>("!!document.querySelector('table')")).toBe(false);
     await ui.clickSelector('[data-drawer-tab="compact"]');
     await waitUntil(
-      () => ui.query<boolean>(`!!document.querySelector('input[aria-label="历史上限token"]')`),
+      () => ui.query<boolean>(`!!document.querySelector('[data-history-limit]')`),
       (v) => v === true,
       { label: "压缩 tab 回归" },
     );
@@ -647,7 +656,7 @@ describe("##339：分表投递徽标（配置驱动压缩的事实）", () => {
 // ##432 起：级列表编辑器**退场**（历史投递只按 `history.limit.limitTokens` 一条上限）。
 // 这里守的是「原生机制仍可看」+「编辑面确实没了」+ CLI 面仍在（`compact plan get|set|check`）。
 // ═══════════════════════════════════════════════════════════════
-describe("压缩面板（##344 M2）：历史上限 + 候选预览 + 旧级列表只读回显", () => {
+describe("压缩面板（##344 M2）：固定保留量 + 摘要模式 + 范例预览", () => {
   /** 该 describe 接在分表用例之后 —— 那时抽屉在「分表」tab 上，先切回「压缩」tab */
   async function gotoCompactTab(): Promise<void> {
     if (!(await ui.query<boolean>(`!!document.querySelector('[data-drawer-tab="compact"]')`))) {
@@ -658,7 +667,7 @@ describe("压缩面板（##344 M2）：历史上限 + 候选预览 + 旧级列�
     }
     await ui.clickSelector('[data-drawer-tab="compact"]');
     await waitUntil(
-      () => ui.query<boolean>(`!!document.querySelector('input[aria-label="历史上限token"]')`),
+      () => ui.query<boolean>(`!!document.querySelector('[data-history-limit]')`),
       (v) => v === true,
       { label: "压缩 tab 上屏" },
     );
@@ -672,8 +681,8 @@ describe("压缩面板（##344 M2）：历史上限 + 候选预览 + 旧级列�
     expect(
       await ui.query<string[]>(`[...document.querySelectorAll('[data-when-row]')].map(e=>e.getAttribute('data-when-row'))`),
     ).toEqual(["first", "retained", "reuse", "manual"]);
-    expect(text).toContain("第一次压");
-    expect(text).toContain("保留段再顶过上限");
+    expect(text).toContain("自动触发");
+    expect(text).toContain("保留段再顶到触发线");
     expect(text).toContain("每步投递");
     expect(text).toContain("压成什么样");
     // 三触发器归位：只写审计、不改投递切点（与投递划清界线）

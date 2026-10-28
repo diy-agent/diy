@@ -7,11 +7,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, expect } from "vitest";
-import {
-    buildDelivery,
-    defaultSystemPlaces,
-    PLACE_CANDIDATES,
-} from "../../src/shared/context/delivery";
+import { buildDelivery, defaultSystemPlaces, PLACE_CANDIDATES } from "../../src/shared/context/delivery";
 import { buildLab } from "../../src/shared/context/preview";
 import { project } from "../../src/shared/context/projection";
 
@@ -42,21 +38,20 @@ const globals = {
 };
 
 describe("投递构造：两个容器", () => {
-    it("system = 信封（help 段 + system 段）；易变项（task.body / skills / task.state）不在里面", () => {
+    it("system = 信封（help + system + runtime 全量）；易变项也在 system 里（##442 2026-10-27 口径）", () => {
         const d = buildDelivery(globals, defaultSystemPlaces());
-        // 信封两个顶层键：结构说明（help）在前、变量树（system）在后
+        // 信封三个顶层键：结构说明（help）在前、稳定树（system）、易变树（runtime）
         expect(d.system.text.startsWith("help:")).toBe(true);
         expect(d.system.text).toContain("\nsystem:\n");
-        // 变量树本身：只留「存续期内不变」的（##426）
+        expect(d.system.text).toContain("\nruntime:\n");
+        // 两条树都在 system 消息里：稳定项 + 易变项
         expect(d.system.text).toContain("家目录规范");
         expect(d.system.text).toContain("created: 2026-10-01");
-        expect(d.system.text).not.toContain("正文一");
-        // 易变的头字段 / 按天变的 reqlog 都不在 system（它们进 runtime 信封的 help）
-        expect(d.systemData.text).not.toContain('title: "投递任务"');
-        // ⚠️ 判据用 systemData（纯数据段）：system.text 的 help 段由**整份 schema** 派生，
-        // 里面本来就列出 cwd / reqlog 这类 runtime 节点的结构说明（help 解释的是"这棵树有什么"，不是"谁进 system"）。
+        expect(d.system.text).toContain("正文一");
+        expect(d.system.text).toContain("reqlog:");
+        // systemData 仍是**稳定树**的纯数据段（调试 / 旧 diff 用），不含 runtime
+        expect(d.systemData.text).not.toContain("正文一");
         expect(d.systemData.text).not.toContain("reqlog");
-        // systemData 是 system 的纯数据部分（不带 help 段）
         expect(d.systemData.text.startsWith("chain:")).toBe(true);
         expect(d.systemData.text).not.toContain("help:");
     });
@@ -98,7 +93,10 @@ describe("投递构造：两个容器", () => {
     });
 
     it("runtime 一份都不剩（全划进 system）→ 文本为空串（调用方据此跳过那条 user 消息）", () => {
-        const d = buildDelivery(globals, PLACE_CANDIDATES.map((c) => c.path));
+        const d = buildDelivery(
+            globals,
+            PLACE_CANDIDATES.map((c) => c.path),
+        );
         expect(d.runtime.places).toEqual([]);
         expect(d.runtime.text).toBe("");
         expect(d.runtime.bytes).toBe(0);
@@ -116,7 +114,10 @@ describe("投递构造：两个容器", () => {
         // 判据 =「整条 path 真的存在」，对**任何**可选子单元成立；`room.recent` 是当前唯一的
         // 嵌套可选**候选**（`PLACE_CANDIDATES`），故这里用它当样本。
         const room = { roomId: "projects/1/tasks/1", name: "#1", list: [] };
-        const full = { ...globals, room: { members: room, recent: { items: [{ from: "human:chen56", at: "t", text: "一" }] } } };
+        const full = {
+            ...globals,
+            room: { members: room, recent: { items: [{ from: "human:chen56", at: "t", text: "一" }] } },
+        };
         const partial = { ...globals, room: { members: room } };
 
         const d1 = buildDelivery(full, defaultSystemPlaces());
@@ -159,7 +160,15 @@ describe("默认最小 system 名单（##426）", () => {
             ].sort(),
         );
         // 头号缓存杀手：state / updated（每改一次任务就变）
-        for (const p of ["task.state", "task.updated", "task.title", "task.change_type", "task.module", "task.priority", "task.persona"]) {
+        for (const p of [
+            "task.state",
+            "task.updated",
+            "task.title",
+            "task.change_type",
+            "task.module",
+            "task.priority",
+            "task.persona",
+        ]) {
             expect(defaultSystemPlaces(), p).not.toContain(p);
         }
         // 按天变的 reqlog、含回退判定的 cwd 也不在 system
@@ -167,22 +176,24 @@ describe("默认最小 system 名单（##426）", () => {
         expect(defaultSystemPlaces()).not.toContain("cwd");
     });
 
-    it("★ 构造一次 state 迁移（pending → in_progress）→ system 逐字节不变（前缀缓存不被砸）", () => {
+    it("★ 变量树全在 system：state 迁移只改 runtime 段，稳定树段（systemData）逐字节不变", () => {
         const before = buildDelivery(globals, defaultSystemPlaces());
         const after = buildDelivery(
             { ...globals, task: { ...globals.task, state: "in_progress", updated: "2026-10-25" } },
             defaultSystemPlaces(),
         );
-        // 判据是真发字节：system 文本完全一致 ⇒ 上游前缀缓存可整段命中；变化只落在 runtime
-        expect(after.system.text).toBe(before.system.text);
-        expect(after.system.bytes).toBe(before.system.bytes);
+        // 新口径（##442 2026-10-27）：runtime 也进 system，所以 **纯函数产物** 会随 state 变；
+        // 「前缀缓存不被砸」由运行层的**段首快照**保证（`frozenSystemTextOf`，见 context-refresh 用例），
+        // 不在 `buildDelivery` 这一层。这里钉稳定树段本身不变。
+        expect(after.systemData.text).toBe(before.systemData.text);
+        expect(after.system.text).not.toBe(before.system.text);
         expect(after.runtime.text).not.toBe(before.runtime.text);
-        // 同样地，cwd 的回退 / reqlog 换日期也不该动 system
+        // 同样地，cwd 的回退 / reqlog 换日期也不该动**稳定树段**
         const cwdChanged = buildDelivery(
             { ...globals, cwd: { ...globals.cwd, note: "回退", isFallback: true } },
             defaultSystemPlaces(),
         );
-        expect(cwdChanged.system.text).toBe(before.system.text);
+        expect(cwdChanged.systemData.text).toBe(before.systemData.text);
     });
 
     it("每个候选都有非空理由（页面「划分规则」表直接显示它）", () => {
@@ -223,8 +234,10 @@ describe("行为契约（identity / rules / guard）默认归 system", () => {
     it("把行为契约划到 runtime → 它们从 system 消失、出现在 runtime（名单真源说了算）", () => {
         const sys = defaultSystemPlaces().filter((p) => p !== "guard");
         const d = buildDelivery(globals, sys);
-        expect(d.system.text).not.toContain("<guard>");
+        // 稳定树段（systemData）里没有；它落在 runtime 段（而 runtime 段现在也在 system 消息里）
+        expect(d.systemData.text).not.toContain("<guard>");
         expect(d.runtime.text).toContain("<guard>");
+        expect(d.system.text).toContain("<guard>");
     });
 });
 

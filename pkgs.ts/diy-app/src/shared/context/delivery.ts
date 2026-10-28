@@ -13,7 +13,7 @@
 
 import { project as projectTree } from "./projection";
 import { applyFacts, createTree, setPlacement, setPlaces } from "./reducer";
-import { runtimeDiffEnvelope, systemDataText, systemEnvelope, runtimeEnvelope } from "./envelope";
+import { controlDeltaEnvelope, runtimeDiffEnvelope, systemDataText, systemEnvelope, runtimeEnvelope } from "./envelope";
 import { hashValue } from "./hash";
 import { WIRE_VERSION } from "./wire";
 import { isPlainObject } from "./tree";
@@ -178,17 +178,18 @@ export interface DeliveryPart {
 /**
  * 一轮请求的投递（真发用它发；预览用它显示；快照把它记下来给 diff 用）。
  *
- * 文本形态 = **信封**（见 envelope.ts）：`system.text` = `help:` + `system:` 两段的一份 YAML；
- * `runtime.text` = `runtime:` 一段（首投全量）。轮中途的 `runtimeDiff:` 由
- * `runtimeDiffDelivery` 按"变化的原子单元"现造。
+ * 文本形态 = **信封**（见 envelope.ts）：`system.text` = `help:` + `system:` + `runtime:` 三段的
+ * 一份 YAML（**两条树全量**，##442 用户 2026-10-27「dsh 方式 B」）。`runtime.text` 仍单独给一份
+ * （`runtime:` 一段），只为 diff / 测试 / 旧调用点；**真发不再把它插进 user 消息**。
+ * 轮中途/跨轮的变化由 `controlDeltaDelivery` 按"变化的原子单元"现造。
  */
 export interface Delivery {
     tree: ContextTreeState;
-    /** system 容器全文（信封：`help:` + `system:`）→ 放 `streamText` 的 system 参数 */
+    /** system 容器全文（信封：`help:` + `system:` + `runtime:`）→ 放 `streamText` 的 system 参数 */
     system: DeliveryPart;
     /** system 的**纯数据**部分（只有变量树、不带 help 段）—— golden 比对与调试用 */
     systemData: DeliveryPart;
-    /** runtime 容器全文（信封：`runtime:` 一段）→ 作为尾部 user 消息 */
+    /** runtime 容器全文（信封：`runtime:` 一段）—— 已并入 `system.text`；本字段留给 diff / 测试 */
     runtime: DeliveryPart;
     /** path → 子树值 hash（前 12 位）：步间比较"哪些变量变了" */
     valueHashes: Record<ContextPath, string>;
@@ -321,6 +322,26 @@ export function runtimeDiffDelivery(tree: ContextTreeState, paths: readonly Cont
     const sorted = [...paths].sort();
     const r = runtimeDiffEnvelope(tree, sorted);
     return { places: sorted, text: r.text, bytes: byteLen(r.text), lines: r.lines };
+}
+
+/**
+ * **控制变量增量**：只列变化的原子单元（system / runtime 分开），值 = 变更后的新值。
+ * 单元整体消失 ⇒ 该 path 落 `null`（见 `envelope.subsetOfDelta`）。
+ *
+ * 两段都空 → 空串（调用方据此**不注入**，不砸前缀缓存）。
+ */
+export function controlDeltaDelivery(
+    tree: ContextTreeState,
+    systemPaths: readonly ContextPath[],
+    runtimePaths: readonly ContextPath[],
+): DeliveryPart {
+    const r = controlDeltaEnvelope(tree, systemPaths, runtimePaths);
+    return {
+        places: [...systemPaths, ...runtimePaths].sort(),
+        text: r.text,
+        bytes: byteLen(r.text),
+        lines: r.lines,
+    };
 }
 
 /**

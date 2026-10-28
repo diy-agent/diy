@@ -810,7 +810,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
       input.summaryText !== undefined
         ? { text: input.summaryText, data: (input.summaryData ?? null) as never, cost: input.summaryCost ?? null }
         : undefined;
-    return getLocalAgent().compact(input.taskUri, policyOf(input), "cli", summary);
+    // UI / CLI 都是**手动**：无视触发线与内容大小，至少丢一步（##442 用户 2026-10-27）
+    return getLocalAgent().compact(input.taskUri, policyOf(input), "cli", summary, "manual", true);
   });
   binding.on(app.agent.local.autoCompactStatus, async ({ input }) => {
     noteRendererTouch("diy.agent.local.autoCompactStatus", input.taskUri);
@@ -843,11 +844,6 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { getLocalAgent } = await import("./local-agent");
     const txt = (input as { summaryText?: string }).summaryText;
     return await getLocalAgent().compactPreview(input.taskUri, policyOf(input), txt);
-  });
-  binding.on(app.agent.local.compact.undo, async ({ input }) => {
-    noteRendererTouch("diy.agent.local.compact.undo", input.taskUri);
-    const { getLocalAgent } = await import("./local-agent");
-    return { undone: getLocalAgent().undoCompact(input.taskUri, input.ref) };
   });
   binding.on(app.agent.local.compact.events, async ({ input }) => {
     noteRendererTouch("diy.agent.local.compact.events", input.taskUri);
@@ -973,11 +969,10 @@ export function bindAppHandlers(binding: ServerBinding): void {
       const model = input.model || getModelCatalog()[0]?.ref || "";
       const sim = await previewSimulatedRequest({
         taskUri,
+        // system 里已含 help / system / runtime 三份全量（##442 用户 2026-10-27 口径），
+        // runtime 不再单独进尾部 user 消息。
         system: lab.system.text,
         model,
-        // runtime 由 previewSimulatedRequest 经 withRuntime 拼进**尾部信封**（runtime + user）；
-        // 压缩注记（history:）则自占一条消息、挂在历史首条之前（##421）
-        runtime: lab.runtime.text,
       });
       request = { body: sim.body, note: sim.note, model };
     }

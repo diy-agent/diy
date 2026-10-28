@@ -40,6 +40,8 @@ export const DRAFTS_VERSION = 3;
  * 草稿字段名白名单。
  * 加字段必须同时改这里 —— 防止前端拼错字段名后静默写进文件（读侧永远读不出来）。
  */
+import type { NotifyItem } from "../../shared/context/envelope";
+
 export const DRAFT_FIELDS = ["title", "body", "agent_input"] as const;
 export type DraftField = (typeof DRAFT_FIELDS)[number];
 
@@ -82,6 +84,13 @@ export interface SteerItem {
   text: string;
   /** 入队时间（ISO） */
   created: string;
+  /**
+   * **结构化机器事件**（可选）：job 结束等不是"人说的话"，投递时走 `notify:`
+   * 而不是 `chat:`（见 ##442 用户 2026-10-27 字段规格）。
+   *
+   * `text` 仍保留（UI 列表 / CLI 预览用），wire 上以 `notify[0].text` 为准。
+   */
+  notify?: NotifyItem;
   /**
    * 发言者署名（##166 §40 A）：入队时是谁说的，投递时原样落到 user 块 `meta.author`。
    * 省略 = 本任务本人。**存在队列项里而不是投递时才问** —— 排队可能跨轮次 / 跨小时，
@@ -270,6 +279,8 @@ function parseSteers(raw: unknown): SteerItem[] {
       // 否则下一次 `读→改→写`（add / remove / toggleMode / reorder）就把新字段洗掉 ——
       // 症状是"刚发的有署名、过一会儿署名没了"（##166 §26.3 坑 1 实测：首条丢、次条在）。
       ...(typeof o["author"] === "string" && o["author"] ? { author: o["author"] } : {}),
+      // ⚠️ 白名单重建：写侧加了 notify，这里必须同步（否则下一次读→改→写就洗掉）
+      ...(o["notify"] && typeof o["notify"] === "object" ? { notify: o["notify"] as NotifyItem } : {}),
     });
   }
   return out;

@@ -4,6 +4,7 @@ import {
     exitText,
     formatDuration,
     isTerminal,
+    jobDoneNotify,
     MAX_TAIL_BYTES,
     notifyText,
     runLine,
@@ -108,6 +109,29 @@ describe("花名册与结束通知", () => {
 
     it("无输出也明说「无输出」（不说「输出：」然后空着）", () => {
         expect(notifyText(base, { text: "", lines: 0, droppedBytes: 0 })).toContain("（无输出）");
+    });
+
+    it("结构化结束通知：字段齐全（run / state / exitCode / signal / duration / command / tail）", () => {
+        const n = jobDoneNotify({ ...base, signal: null }, { text: "1\n2\n3", lines: 3, droppedBytes: 0 });
+        expect(n).toMatchObject({
+            kind: "job-done",
+            run: "p-abc-1",
+            state: "exited",
+            exitCode: 0,
+            signal: null,
+            durationMs: 18_000,
+            command: "sleep 18; echo done",
+            tail: "1\n2\n3",
+        });
+        expect(n.text).toContain("后台进程结束");
+        expect(n.text).toContain("job output p-abc-1");
+    });
+
+    it("结构化通知：无输出不带 tail；截断带 truncatedBytes", () => {
+        const empty = jobDoneNotify(base, { text: "", lines: 0, droppedBytes: 0 });
+        expect(empty.tail).toBeUndefined();
+        const cut = jobDoneNotify(base, { text: "x", lines: 1, droppedBytes: 42 });
+        expect(cut.truncatedBytes).toBe(42);
     });
 });
 
