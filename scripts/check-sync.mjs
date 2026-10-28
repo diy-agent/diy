@@ -114,7 +114,12 @@ function realOrNull(p) {
   }
 }
 
-/** node_modules 与其一级 @scope 目录下的软链接（相对仓根的路径，排序后） */
+/** node_modules 与其一级 @scope 目录下的软链接（仓根相对、**正斜杠**路径，排序后）
+ *
+ * 必须用 path.posix.join：package-lock.json 的键恒为正斜杠，而 Windows 上 path.join
+ * 产出反斜杠 → `expected.has(link)` 永不命中 → 所有 workspace 链接被误判「改名残留」，
+ * 且 `--fix` 会把它们真的删掉（表现为 sync 后仍然「链接缺失」，build 永远过不了闸门）。
+ */
 function scanLinks() {
   const found = [];
   const entriesOf = (dir) => {
@@ -126,11 +131,11 @@ function scanLinks() {
   };
   for (const e of entriesOf('node_modules')) {
     if (e.isSymbolicLink()) {
-      found.push(path.join('node_modules', e.name));
+      found.push(path.posix.join('node_modules', e.name));
     } else if (e.isDirectory() && e.name.startsWith('@')) {
-      const scope = path.join('node_modules', e.name);
+      const scope = path.posix.join('node_modules', e.name);
       for (const s of entriesOf(scope)) {
-        if (s.isSymbolicLink()) found.push(path.join(scope, s.name));
+        if (s.isSymbolicLink()) found.push(path.posix.join(scope, s.name));
       }
     }
   }
