@@ -1,4 +1,4 @@
-// src/shared/context/mind.ts
+// src/shared/context/request-budget.ts
 // 🎯 「agent 大脑」的**账本**：一条真发请求 → 它的脑容量都花在哪了（段 → 字节），
 //    以及多步之间「哪些步值得看一眼」。
 //
