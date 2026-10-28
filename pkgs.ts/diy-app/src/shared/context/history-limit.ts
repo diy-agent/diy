@@ -9,6 +9,10 @@
 // 这里只负责 ① 摘要模式 schema ② 消息 → 边界形状的适配 ③ token 粗估。
 // 没有 limitTokens / 下限夹取 / 保头 / 事后配平 / windowOverRatio。
 //
+// ⚠️ `summary.mode: model` 目前只表示「优先用已生成的摘要」；**压缩时自动生成摘要**
+//    还没接进 compact 事务（2026-10-28 已知项）。摘要为空时通知会写「model 模式摘要未生成」，
+//    与 `self` 区分。别把 model 当成已自动摘要。
+//
 // 纯函数：禁止 import node:*。
 
 import { z } from "zod";
