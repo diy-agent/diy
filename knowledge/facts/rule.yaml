@@ -296,7 +296,7 @@ facts:
       verifiedAt: '2026-10-25'
   rule#session-start:
     value: |-
-      新会话先列：①已加载的上下文文件绝对路径 ②可用 skills 的绝对路径
+      **新会话不默认报备**，只在需要自证时列：用户问「你加载了什么 / 有哪些能力」、或工作目录与任务归属不明、或交接给别人 —— 此时才列 ①已加载的上下文文件绝对路径 ②可用 skills 绝对路径。日常开工直接干活（清单动辄上千字，与「对话 ≤5 行」相抵）。
     id: agents.rule.session-start
     review: accepted
     lifecycle: active

@@ -25,20 +25,11 @@ export const ReqlogSchema = z
         file: z
             .string()
             .describe(
-                "今天的流量日志文件（绝对路径；`$DIY_HOME/log/network/<YYYY-MM-DD>.jsonl`，按天切分）。" +
-                    "本应用**每次真发 HTTP 请求**都往它追加一行（一行 = 一条 JSON，含请求体与响应）——" +
-                    "自己刚发出去的那条就在里面。定位自己这一步的那条：" +
-                    "`grep -n '\"taskUri\":\"<你的 task.uri>\"' <file> | tail -20`（行号 = 文件内第几行）；" +
-                    "一轮多步 = 同一个 turnId 多行；定位某一步用 `stepSeq`（逻辑步，1 起，同变更历史的 stepNo）、" +
-                    "这一步重试了几次看 `attemptInStep`（1 = 首试，2 = 第 1 次重试…；同一步多条按它排就是重试链）；" +
-                    "⚠️ 老字段 `attempt` 是**本 run 内的往返序号**（跨步累计、重试也 +1）—— 既不是步序也不是重试序号，" +
-                    "老记录没有 stepSeq / attemptInStep 时才退用它。字段表见日志行本身的键" +
-                    "（真源 `pkgs.ts/diy-app/src/shared/traffic-record.ts`）。" +
-                    "reqBody 默认只留首尾各一段（`truncated: true` 时 JSON 解不开）；要看全文先开" +
-                    "「记录完整请求内容」（流量页右上角开关；CLI 侧 = 本应用 CLI 的 `traffic setFullCapture true`，" +
-                    "参数是**位置参数**、不是 `--on`）再复现。" +
-                    "`log/network/` 等同 cache，可随时清理 —— 老日期查不到是正常的。" +
-                    "⚠️ **只有 `log/` 是 cache**：`local/` 下的 ops/llm/steps 是会话数据，不在可清之列。",
+                "今天的流量日志（绝对路径，按天切分）。本应用每次真发 HTTP 请求追加一行 JSON（含请求体与响应），" +
+                    "自己刚发出的那条就在里面。定位本步：`grep -n '\"taskUri\":\"<task.uri>\"' <file> | tail -20`；" +
+                    "一步一行，按 `stepSeq` 找步、`attemptInStep` 看重试（老记录只有 `attempt`）。" +
+                    "reqBody 默认截断（`truncated: true`）；要全文先 `traffic setFullCapture true`（位置参数）再复现。" +
+                    "`log/` 等同 cache 可清；`local/` 下 ops/llm/steps 是会话数据，**不可清**。",
             ),
     })
     .describe("本应用真发请求的**流量日志**：一行 = 一次真发 HTTP 请求（含请求体与响应）");
