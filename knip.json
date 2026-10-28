@@ -1,0 +1,71 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": ["scripts/*.{mjs,mts,ts}", "scripts/**/*.{mjs,mts,ts}", "scripts/ui-smoke/*.mjs"],
+      "project": ["scripts/**/*.{mjs,mts,ts}"]
+    },
+    "pkgs.ts/diy-app": {
+      "entry": [
+        "src/main/index.ts",
+        "src/preload/index.ts",
+        "src/cli/index.ts",
+        "src/serve/index.ts",
+        "src/renderer_solid/index.html",
+        "src/renderer_solid/main.tsx",
+        "vite.*.config.ts",
+        "scripts/**/*.mts",
+        "tests/**/*.ts"
+      ],
+      "project": ["src/**/*.{ts,tsx}", "scripts/**/*.mts", "tests/**/*.ts"]
+    },
+    "pkgs.ts/diy-ui": {
+      "entry": [
+        "src/index.ts",
+        "src/browser.ts",
+        "src/signal.ts",
+        "src/host.ts",
+        "src/providers/dom.ts",
+        "src/providers/dom-dsl.ts",
+        "src/providers/dom-gen.ts",
+        "web/*.html",
+        "web/vite.config.ts",
+        "web/src/*.ts",
+        "web/src/demos/**/*.{ts,tsx}",
+        "examples/**/*.{ts,tsx}",
+        "tools/**/*.ts",
+        "test/**/*.ts",
+        "**/*.test.{ts,tsx}"
+      ],
+      "project": ["src/**/*.{ts,tsx}", "web/src/**/*.{ts,tsx}", "examples/**/*.{ts,tsx}", "tools/**/*.ts", "test/**/*.{ts,tsx}"]
+    },
+    "pkgs.ts/diy-rpc": {
+      "entry": ["src/index.ts", "src/http.ts", "src/ws.ts", "src/electron.ts", "src/cli/index.ts", "probes/**/*.ts", "test/**/*.ts"],
+      "project": ["src/**/*.ts", "probes/**/*.ts", "test/**/*.ts"]
+    },
+    "pkgs.ts/diy-dev": {
+      "entry": ["src/cli/index.ts", "src/runtime.ts", "vite.cli.config.ts"],
+      "project": ["src/**/*.ts"]
+    },
+    "pkgs.ts/workbench-plugin": {
+      "entry": ["src/index.ts", "src/manifest.ts", "src/panel.ts", "src/spec.ts"],
+      "project": ["src/**/*.{ts,tsx}"]
+    },
+    "pkgs.ts/*": {
+      "entry": ["src/index.ts", "**/*.test.ts", "test/**/*.ts", "src/node/index.ts"],
+      "project": ["src/**/*.ts"]
+    }
+  },
+  "ignore": [
+    "**/build/**",
+    "**/dist/**",
+    "**/node_modules/**",
+    "vendor/**",
+    "pkgs.ts/diy-app/tests/types/**"
+  ],
+  "ignoreBinaries": ["diya", "diy", "fd", "rg", "shasum", "ps", "ffmpeg"],
+  "ignoreDependencies": ["@types/*"],
+  "vitest": {
+    "entry": ["**/*.test.{ts,tsx}", "tests/**/*.ts", "probes/**/*.ts"]
+  }
+}

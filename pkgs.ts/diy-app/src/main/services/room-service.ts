@@ -441,11 +441,6 @@ interface MemberQueue {
 
 const queues = new Map<string, MemberQueue>();
 
-/** 队列里还有多少条没跑完（UI/CLI 想看"谁在排队"时用；0 = 空闲） */
-export function memberQueueDepth(roomId: string, memberId: string): number {
-    return queues.get(`${roomId}|${memberId}`)?.depth ?? 0;
-}
-
 /**
  * 发一条发言并投递。**逐条 yield 事件**（say → 各 agent 的 reply，按回复先后）——
  * RPC 侧把它当 serverStream 转发，UI 就能"发言一落盘就显示、谁的回复先到先回显"。

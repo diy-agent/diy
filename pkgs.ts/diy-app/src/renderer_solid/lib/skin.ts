@@ -8,12 +8,8 @@
 //
 // 本期只作用于 **agent 输出区**（聊天），其他页面暂无差异；后续扩面时**不改本文件**，
 // 只给对应区块加 `diy-skin-scope` 语义类。
-import { createSignal } from "solid-js";
 import { Caches, type DiySkin } from "./ui-state";
 export type { DiySkin };
-
-/** 当前皮肤的**响应式**信号（Caches 只是持久化，读它不触发重渲染；需要随皮肤改样的地方读这个） */
-export const [skinSignal, setSkinSignal] = createSignal<DiySkin>(Caches.diy_app_skin.get());
 
 export function getSkin(): DiySkin {
   return Caches.diy_app_skin.get();
@@ -26,7 +22,6 @@ export function applySkin(s: DiySkin): void {
 export function setSkin(s: DiySkin): void {
   Caches.diy_app_skin.set(s);
   applySkin(s);
-  setSkinSignal(s);
 }
 
 /** 皮肤清单（设置页与其它入口共用的唯一真源：加皮肤只改这里） */

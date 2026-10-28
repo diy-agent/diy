@@ -259,13 +259,6 @@ export function ensureDiskPoller(): EnvDiskPoller {
     return _poller;
 }
 
-/** 测试/探针用：换掉轮询器（不填真卷） */
-export function setDiskPoller(p: EnvDiskPoller | null): void {
-    _poller?.stop();
-    _poller = p;
-    _poller?.start();
-}
-
 // ─── 被动事实 ─────────────────────────────────────────
 
 /**

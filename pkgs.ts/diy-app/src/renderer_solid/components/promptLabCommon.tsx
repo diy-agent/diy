@@ -2,7 +2,7 @@
 // 行级 diff + 即时悬浮提示；**类型一律从 shared/prompt-schema 取**（曾经手抄一份 PromptEntry，必然会漂移）。
 import { createSignal, Show } from "solid-js";
 
-export type { PromptEntry, RequestPreview } from "@diy/context/schema/prompt-schema";
+export type { PromptEntry } from "@diy/context/schema/prompt-schema";
 
 /** 即时悬浮提示（viewport fixed）：daisyUI tooltip 在 overflow-auto 窗格里会被裁掉，
  * 原生 title 又有 OS 级延迟；这个悬停即显、永不裁剪，样式与 daisyUI tooltip 一致。
@@ -34,4 +34,4 @@ export function useHoverTip() {
 }
 
 // diff 实现移入 shared/line-diff.ts（纯模块，可在 node 里跑基准）；这里保持原导出名不变
-export { lineDiff, type DiffLine } from "../../shared/line-diff";
+export { lineDiff } from "../../shared/line-diff";

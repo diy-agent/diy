@@ -159,9 +159,6 @@ export function parseImportPayload(text: string): JournalAddInput[] {
   });
 }
 
-/** 标题上限：不是硬规则，是"写不出短标题 = 这条该拆"的提示（超了不拒，CLI 只提醒） */
-export const TITLE_SOFT_LIMIT = 120;
-
 export function journalFile(taskUri: string): string {
   return join(taskDir(taskUri), "journal.jsonl");
 }

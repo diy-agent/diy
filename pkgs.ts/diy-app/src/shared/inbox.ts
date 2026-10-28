@@ -59,7 +59,6 @@ export type InboxKind = (typeof INBOX_KINDS)[number];
  * `core/drafts.isHumanAuthor` 决定（与 `session-alerts` 的 L1/L2 同一把尺子）。
  */
 export const InboxLevelSchema = z.enum(["N1", "N2"]);
-export type InboxLevel = z.infer<typeof InboxLevelSchema>;
 
 export const InboxEntrySchema = z.object({
     /** `ib-<毫秒>-<序号>`：唯一且按时间可排（与 model-notice 的 id 同形） */

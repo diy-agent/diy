@@ -57,11 +57,6 @@ export function windowTable(): WindowTable {
     return load().windows;
 }
 
-/** 扩展层加载期的告警（缺失/非法/坏段） */
-export function windowIssues(): string[] {
-    return load().issues;
-}
-
 /** 时段表清单（RPC 下发用：id + 展示名 + 人读摘要；定义本身不下发） */
 export function windowChoices(): WindowChoice[] {
     return Object.entries(load().windows).map(([id, def]) => ({

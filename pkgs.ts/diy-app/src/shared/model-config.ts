@@ -34,8 +34,6 @@ import { WINDOW_ID_RE } from "./cost-windows";
 export const MODELS_DEV_FILE = "models.dev.json";
 /** diy 对 models.dev 的**扩展层**（手写：具名时段表 `windows`；只增不改） */
 export const MODELS_DEV_DIY_FILE = "models.dev.diy.json";
-/** 内置工作日日历（`scripts/gen-calendars.mts` 产物，chinese-days 数据） */
-export const CALENDARS_FILE = "calendars.json";
 
 /** 账号名字符集：禁 `@` `/`（保证限定名唯一切点） */
 const ACCOUNT_NAME_RE = /^[A-Za-z0-9._-]+$/;
@@ -140,11 +138,6 @@ export function reasoningFromSpec(
     return { supported: [DEFAULT_EFFORT], default: DEFAULT_EFFORT, declared: false };
 }
 
-/** 模型运行时的档位能力（与 shared/models.LocalModelReasoning 同形，供 runtime 直用） */
-export function reasoningSupportOf(s: ReasoningSupport): { supported: string[]; default: string } {
-    return { supported: s.supported, default: s.default };
-}
-
 /** 单价字段（spec 的 snake_case；单位 $/1M tokens）—— base 档与各阶档共用同一组键 */
 export const COST_PRICE_FIELDS = ["input", "output", "cache_read", "cache_write"] as const;
 export type CostPriceField = (typeof COST_PRICE_FIELDS)[number];
@@ -226,8 +219,6 @@ export const TierWhenSchema = z.discriminatedUnion("type", [
         }),
     z.object({ type: z.literal("utc-range"), data: UtcRangeDataSchema }),
 ]);
-export type TierWhenSpec = z.infer<typeof TierWhenSchema>;
-
 /**
  * models.dev 的**阶梯价条目**（snake_case，与 api.json 同构）：
  *   `tiers: [{ input, output, cache_read, cache_write, tier: { type: "context", size: 272000 } }]`
@@ -312,8 +303,6 @@ export const SpecModelSchema = z
         cost: CostSchema.optional(),
     })
     .passthrough();
-export type SpecModel = z.infer<typeof SpecModelSchema>;
-
 /** models.dev 的 provider 条目（扁平：npm = 字符串，api = baseUrl —— 与 api.json 同构） */
 export const SpecProviderSchema = z.object({
     id: z.string(),
@@ -424,8 +413,6 @@ export const ProbeModelSchema = z.object({
     /** `supported_endpoints`（扩展；缺省 []）→ 解析成模型级 npm（面） */
     endpoints: z.array(z.string()),
 });
-export type ProbeModel = z.infer<typeof ProbeModelSchema>;
-
 /** `llmConfig.probe` 输出：拉 `${baseUrl}/models`（连通性 + 模型清单 + 可用元数据） */
 export const ProbeResultSchema = z.object({
     ok: z.boolean(),
@@ -435,8 +422,6 @@ export const ProbeResultSchema = z.object({
     models: z.array(ProbeModelSchema),
     error: z.string().nullable(),
 });
-export type ProbeResult = z.infer<typeof ProbeResultSchema>;
-
 /**
  * `/models` 的 `supported_endpoints` → diy 的 npm 包名（`faceOfNpm` 的逆）。
  * 同 support 两个端点时优先 chat（更通用的 openai-compatible）；只支持 anthropic `/messages`
@@ -505,8 +490,6 @@ export const ModelCostViewSchema = z.object({
     /** 可写落点（spec：仅 custom 且该模型在 spec 里；override：该 provider 已配在 model.yaml） */
     writable: z.array(CostTargetSchema),
 });
-export type ModelCostView = z.infer<typeof ModelCostViewSchema>;
-
 /** `llmConfig costs` 输出 */
 export const ProviderCostsViewSchema = z.object({
     /** 限定名（custom 恒带 `custom:` 前缀） */
@@ -585,8 +568,6 @@ export const ImportEnvResultSchema = z.object({
     imported: z.array(z.string()),
     skipped: z.array(z.object({ provider: z.string(), note: z.string() })),
 });
-export type ImportEnvResult = z.infer<typeof ImportEnvResultSchema>;
-
 /** `seed.run` 输出：种入结果（幂等，已存在即 skipped） */
 export const SeedReportSchema = z.object({
     /** 数据根 */

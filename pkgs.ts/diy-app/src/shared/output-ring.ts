@@ -170,8 +170,6 @@ export function tailOfRing(ring: OutputRing, keepBytes: number): OutputRing {
 
 export type OutputCursorKind = "live" | "settle";
 
-export const OUTPUT_CURSOR_KINDS = ["live", "settle"] as const;
-
 export interface OutputCursor {
     /** 稳定标识：`<kind>:<runId>` —— 两种 kind 永不共用一个游标 */
     readonly id: string;

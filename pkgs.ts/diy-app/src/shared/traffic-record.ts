@@ -88,4 +88,3 @@ export const TrafficRecordSchema = z.object({
   err: z.string().nullable().describe("网络层异常消息"),
   log: LogLocSchema.nullable().describe("该条落盘位置（界面按位置随机读；null = 未落盘）"),
 });
-export type TrafficRecord = z.infer<typeof TrafficRecordSchema>;

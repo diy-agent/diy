@@ -124,11 +124,6 @@ export function setCalendarCatalog(calendars: CalendarTable): void {
     _calendars = calendars;
 }
 
-/** 当前日历表（UI 展示「工作日定义」用） */
-export function getCalendarCatalog(): CalendarTable {
-    return _calendars;
-}
-
 /**
  * 按**完全限定名**或**裸模型 id** 查模型。
  * 裸 id 命中多个**不同 provider** → undefined（歧义，调用方报错；不猜）。

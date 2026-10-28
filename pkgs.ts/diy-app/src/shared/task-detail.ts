@@ -25,8 +25,6 @@ export const DraftsData = z.object({
   saved: z.string().optional(),
   fields: DraftFieldsSchema,
 });
-export type Drafts = z.infer<typeof DraftsData>;
-
 /**
  * 任务详情载荷（getTask 的 data）。
  *

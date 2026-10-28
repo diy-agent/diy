@@ -85,7 +85,6 @@ export const MAIN_MEMBER_ID = "agent:main";
 export const HUMAN_MEMBER_ID = "human:chen56";
 
 export const RoomMemberKindSchema = z.enum(["human", "agent"]);
-export type RoomMemberKind = z.infer<typeof RoomMemberKindSchema>;
 
 /**
  * 成员 backend —— 该成员**自己的会话**在哪（§28.5 A 连带结论 2：每个成员必须有 backend）。

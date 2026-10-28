@@ -53,18 +53,6 @@ export function readBoundary(taskUri: string): CompactionEntry | null {
     return readBoundaryAt(diyHome(), taskUri);
 }
 
-/**
- * 本会话**一共写过几条压缩事件**（turns 里的 compaction entry 计数）—— ##423「压缩次数」的真源。
- * 不是 `compact.jsonl` 的条数：那份自 ##431 起是**纯审计日志**（只有手动 / mode=auto 才写），
- * 而投递切点来自这里。两个数在界面上要分开叫，别混成一个。
- */
-export function countCompactions(taskUri: string): number {
-    let n = 0;
-    // `TurnEntry` = 轮记录 ∪ 压缩边界：判别靠 `kind` 字段（轮记录没有 kind）
-    for (const e of readTurnEntriesAt(diyHome(), taskUri)) if ((e as CompactionEntry).kind === "compaction") n++;
-    return n;
-}
-
 /** 读全量 turns 行（降级 / 边界路径专用） */
 export function readTurnEntries(taskUri: string): TurnEntry[] {
     return readTurnEntriesAt(diyHome(), taskUri);

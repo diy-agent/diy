@@ -11,7 +11,7 @@
  */
 import { createSignal } from "solid-js";
 import { Caches } from "../lib/ui-state";
-import { px, resolveLayout, trackPairAfterDrag, type Layout, type TrackSize } from "../../shared/grid-layout";
+import { resolveLayout, trackPairAfterDrag, type Layout, type TrackSize } from "../../shared/grid-layout";
 import {
     applyHiddenViews,
     defaultBinding,
@@ -289,6 +289,3 @@ export const layoutStore = {
         patch(pageId, () => defaultState(pageId));
     },
 };
-
-/** 供拖拽时把「算出来的 px 尺寸」转成 track（保持全 px，避免 fr 抖动） */
-export const pxTracks = (values: number[]): TrackSize[] => values.map((v) => px(v));

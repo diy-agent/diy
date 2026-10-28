@@ -132,8 +132,6 @@ export const JournalStatsSchema = z.object({
     problems: z.array(JournalProblemSchema),
 });
 
-/** 批量导入的载荷：JSON 数组（`--file` 指向的整份文件）；`ts` 可自带（回灌历史） */
-export const JournalImportItemSchema = JournalEntrySchema.omit({ task: true }).partial({ ts: true });
 export const JournalImportSchema = z.object({
     task: z.string(),
     dryRun: z.boolean(),

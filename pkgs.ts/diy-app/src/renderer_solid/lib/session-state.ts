@@ -30,12 +30,6 @@ export interface SessionStateFallback {
     hasDraft?: boolean;
 }
 
-/** 这个任务**聊过没有**：落盘对话存在 / 账本有内容（两者取或 —— 各自覆盖对方看不到的那段时间） */
-export function sessionStartedOf(uri: string): boolean {
-    if (sessionStore.byUri(uri)) return true;
-    return usageLedgerStore.startedOf(uri) === true;
-}
-
 /**
  * 会话状态（**唯一入口**）。
  *
@@ -67,10 +61,5 @@ export function sessionGlyphFor(uri: string, fallback: SessionStateFallback = {}
     const state = sessionStateFor(uri, fallback);
     const node = findNode(taskStore.nodes, uri);
     if (node?.state && SILENT_STATES.has(node.state) && state.run !== "running") return null;
-    return glyphOf(state, uri);
-}
-
-/** 直接给状态（测试 / 非渲染用途）；同 `sessionStateFor` */
-export function sessionGlyphViewOf(state: SessionState, uri = ""): SessionGlyphView {
     return glyphOf(state, uri);
 }

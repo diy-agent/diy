@@ -15,8 +15,6 @@
 //
 // 约定：本文件只放 schema/类型/纯函数，禁止 import node:*。
 
-import { z } from "zod";
-
 /**
  * 场景 = 「这次请求是干什么用的」。
  *
@@ -25,7 +23,6 @@ import { z } from "zod";
  * **不同用途的合理预算本来就不同**，一个数管全部只会两头都不对。
  */
 export const OUTPUT_SCENES = ["chat", "summary", "small"] as const;
-export const OutputSceneSchema = z.enum(OUTPUT_SCENES);
 export type OutputScene = (typeof OUTPUT_SCENES)[number];
 
 /** 场景缺省软上限（tokens）。只在**没有更具体的覆盖**时生效（见 `resolveOutputBudget`） */
@@ -42,7 +39,6 @@ export const OUTPUT_SCENE_DEFAULTS: Record<OutputScene, number> = {
  * 让解析结果自带来源层，事后翻 `raw` 日志 / 流量页就能对上账。
  */
 export const OUTPUT_BUDGET_LAYERS = ["task", "persona", "global", "scene-default"] as const;
-export const OutputBudgetLayerSchema = z.enum(OUTPUT_BUDGET_LAYERS);
 export type OutputBudgetLayer = (typeof OUTPUT_BUDGET_LAYERS)[number];
 
 export interface OutputBudgetInput {

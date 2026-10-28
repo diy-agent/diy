@@ -64,12 +64,6 @@ export const FactSchema = z.object({
     refs: z.array(RefSchema).optional(),
 });
 
-export const SubjectSchema = z.object({
-    key: z.string(),
-    description: z.string().optional(),
-    aliases: z.array(z.string()).optional(),
-});
-
 /** 一条问题（与 `@diy/facts/node` 的 RepoProblem 同形：level 决定阻不阻断） */
 export const ProblemSchema = z.object({
     level: z.enum(['error', 'warning']),
