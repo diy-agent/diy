@@ -43,8 +43,6 @@ export const CHANGE_TYPES = [
   "revert",
 ] as const;
 
-export type ChangeType = (typeof CHANGE_TYPES)[number];
-
 export const ChangeTypeSchema = z.enum(CHANGE_TYPES);
 
 // ═══════════════════════════════════════
@@ -59,8 +57,6 @@ export const ChangeTypeSchema = z.enum(CHANGE_TYPES);
  * 排序上 P0<P1<P2<P3 恰是字典序，无需额外权重表。
  */
 export const PRIORITIES = ["P0", "P1", "P2", "P3"] as const;
-
-export type Priority = (typeof PRIORITIES)[number];
 
 export const PrioritySchema = z.enum(PRIORITIES);
 

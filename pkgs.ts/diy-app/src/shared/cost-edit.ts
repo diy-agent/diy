@@ -20,7 +20,6 @@ export const COST_FIELDS: readonly CostField[] = COST_PRICE_FIELDS;
 
 /** base 档可清字段（比 `CostField` 多一个展示名 `baseLabel`）—— 真源同上 */
 export type { CostClearField };
-export const COST_CLEAR_FIELDS: readonly CostClearField[] = [...COST_PRICE_FIELDS, "baseLabel"];
 
 /**
  * 「中国法定工作日」日历 id —— 内置 `calendars.json` 里**唯一带数据**的日历

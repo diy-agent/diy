@@ -161,11 +161,6 @@ export function createRenderRegistry(): PluginRegistry {
         .register('render', 'text', text);
 }
 
-/** 已注册的 render 插件名（诊断 / 文档用；注册序） */
-export function renderPluginNames(): string[] {
-    return [...createRenderRegistry().names('render')];
-}
-
 // ═══════════════════════════════════════════════════════════════
 // guard / action 槽：外部世界的「过没过 / 动不动手」（##341）
 // ═══════════════════════════════════════════════════════════════

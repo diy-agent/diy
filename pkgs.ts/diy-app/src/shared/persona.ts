@@ -60,15 +60,6 @@ export type Persona = z.infer<typeof PersonaSchema>;
 export type PersonaView = Persona & { taskCount: number };
 
 /**
- * 人物清单下发形状 = 人物列表 + **跟随缺省的任务数**。
- *
- * 为什么必须单独给这个数：跟随缺省的任务**不写 persona 键**，因此不会计入任何人的 taskCount。
- * 但它恰恰是"改缺省会影响谁"的那批任务 —— 面板上写着"缺省人物：0 个任务在用"而实际有 30 个
- * 任务跟着它跑，就是**假的影响面**，比不显示更糟。
- */
-export type PersonaList = { default: string; personas: PersonaView[]; followCount: number };
-
-/**
  * personas.yaml 的结构（全局一份）。
  * key = 人物 id（稳定）；`default` 也是 id（新建任务物化它）。
  */

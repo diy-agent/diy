@@ -42,10 +42,6 @@ export type Triage = "defect" | "external-recognized" | "external-unknown";
 /** UI 三档的样式键（判据与样式分离：这里只给档位，颜色/图标归渲染层，铁律 5） */
 export const TRIAGE_VALUES = ["defect", "external-recognized", "external-unknown"] as const;
 
-export function isTriage(v: unknown): v is Triage {
-    return typeof v === "string" && (TRIAGE_VALUES as readonly string[]).includes(v);
-}
-
 /** 从异常里能取到的**事实**（各字段可缺：错误链上的形状不止一种） */
 export interface TriageProbe {
     /** 错误码（Node `err.code` / 本仓的 `<域>/<kebab>`；拿不到 = null） */

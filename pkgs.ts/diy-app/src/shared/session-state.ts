@@ -502,11 +502,3 @@ export function endReasonText(end: EndCause): string {
             return "本轮未跑完（崩溃 / 被杀后补的收尾）";
     }
 }
-
-/** `TurnEndReason` → 人话（给"结束原因"那一列/详情用；内部走 `turn-end.ts`） */
-export function endTextOf(end: TurnEndReason | null | undefined, notice?: string | null): string {
-    const cause = endCauseOf(end);
-    if (!cause) return "无记录";
-    const fromTurn = turnEndText(end!, notice);
-    return fromTurn ?? endReasonText(cause);
-}

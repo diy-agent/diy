@@ -195,20 +195,6 @@ export function judgeSelfKill(command: string, self: SelfProcessInfo): KillVerdi
   return PASS;
 }
 
-/** 拦截时回给模型的说明（要能指导它换正确做法，否则模型会反复重试） */
-export function selfKillNotice(verdict: KillVerdict): string {
-  return [
-    "[已拦截] 该命令可能杀死 diy 自身进程，未执行。",
-    `原因：${verdict.reason}`,
-    "diy 的界面（renderer/GPU/network 子进程）与本地 agent 都跑在同一个 Electron 进程树里，",
-    "杀掉它们等于自杀：窗口白屏、进程被 SIGKILL 不留 minidump。",
-    "正确做法：",
-    "  1) 只做查询（ps/pgrep 不加 kill）确认现状；",
-    "  2) 确实要清理别的进程时，用精确 pid 且先核对不是自身进程树；",
-    "  3) 重启 diy 交给用户手动执行（终端里跑 diy doctor / 重启图标），不要在 agent 里杀进程。",
-  ].join("\n");
-}
-
 interface PsRow {
   pid: number;
   ppid: number;

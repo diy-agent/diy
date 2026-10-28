@@ -44,8 +44,3 @@ export function detectGpu(): GpuInfo {
     return defaults;
   }
 }
-
-export function gpuCompatArgs(): string[] {
-  const gpu = detectGpu();
-  return gpu.shouldUseAngle ? ["--use-gl=angle"] : [];
-}

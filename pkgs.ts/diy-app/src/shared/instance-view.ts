@@ -154,14 +154,6 @@ export interface InstanceSort {
 /** 缺省排序 = CLI 的排序（按数据根聚类），同一份数据在 CLI 与页面上顺序一致 */
 export const DEFAULT_INSTANCE_SORT: InstanceSort = { key: "home", dir: "asc" };
 
-export const SORT_COLUMNS: Array<{ key: InstanceSortKey; title: string; tip: string }> = [
-  { key: "home", title: "数据根", tip: "同一数据根的实例相邻（CLI instances ls 的缺省序）" },
-  { key: "pid", title: "PID", tip: "按进程号" },
-  { key: "status", title: "状态", tip: "有问题的排前面（无响应 → 无端口 → 未注册 → 就绪）" },
-  { key: "started", title: "启动", tip: "按启动时刻；没有启动时刻的（老实例）恒排最后" },
-  { key: "variant", title: "变体", tip: "按产物变体" },
-];
-
 /** 状态严重度（越小越"该先看"）：故障在前，健康在后 */
 export function statusSeverity(status: string): number {
   switch (status) {

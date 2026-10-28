@@ -166,11 +166,6 @@ export function changesOf(
     return out;
 }
 
-/** 一条记录的变更数（baseline = 整棵树，不计入"变了几次"） */
-export function changeCountOf(entry: CtxLogEntry): number {
-    return entry.type === "changed" ? (entry.data as { changes: CtxChangeItem[] }).changes.length : 0;
-}
-
 // ══════════════════════════════════════════════════════════════════════════
 // legacy（一版）：老任务文件里已落盘、**不再回放**，读侧仅作降级兼容
 // ══════════════════════════════════════════════════════════════════════════

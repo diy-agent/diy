@@ -1135,13 +1135,6 @@ export function projectAll(store: BlockStore): LocalModelMessage[] {
 /** 消息的内容类别（**只看结构，不解析文本** —— 文本是用户数据，格式不可控） */
 export type MessageKind = "user" | "assistant-text" | "tool-chain";
 
-export function kindOfMessage(m: LocalModelMessage): MessageKind {
-    if (m.role === "user") return "user";
-    if (m.role === "tool") return "tool-chain";
-    const parts = Array.isArray(m.content) ? m.content : [];
-    return parts.some((p) => p.type === "tool-call") ? "tool-chain" : "assistant-text";
-}
-
 /** 选择结果：全量投影里的下标（升序）——**行号 = 下标 + 1** */
 export interface HistorySelection {
     kept: number[];

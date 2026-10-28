@@ -18,9 +18,6 @@
  */
 export const VIEW_BAR_H = "h-8";
 
-/** 同上，px 数值（测量/断言/文档用；不要拿它去拼 class） */
-export const VIEW_BAR_H_PX = 32;
-
 /**
  * area chrome（右上角的「最大化 / 最小化 / 收起」浮层）占的**宽度** —— 像素。
  *

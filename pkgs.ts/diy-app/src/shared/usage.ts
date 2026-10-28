@@ -377,21 +377,6 @@ export function fmtCost(n: number): string {
     return n.toFixed(6);
 }
 
-/**
- * 组成项文本：可测 → `非缓存54+缓存读198`；不可测项**省略**（不写 0）。
- * 钉死「总输入(组成)」这一种句式，UI/CLI 都调它，防止又冒出并列句式。
- */
-export function composeInput(b: Pick<UsageBuckets, "noCache" | "cacheRead" | "cacheWrite">): string {
-    const parts = [`非缓存${fmtTokens(b.noCache)}`, `缓存读${fmtTokens(b.cacheRead)}`];
-    if (b.cacheWrite != null) parts.push(`缓存写${fmtTokens(b.cacheWrite)}`);
-    return parts.join("+");
-}
-
-/** 组成项文本：`文本22+思考7`（思考可测时；不可测则不写） */
-export function composeOutput(b: Pick<UsageBuckets, "text" | "reasoning">): string {
-    return `文本${fmtTokens(b.text)}+思考${fmtTokens(b.reasoning)}`;
-}
-
 // ─── 落盘记录（`<key>.usage.jsonl` 一行 = 一个请求步）──
 
 /** 照抄 ai-sdk `LanguageModelUsage` 的落盘形状：字段全在，缺失一律 `null`（不吞字段） */

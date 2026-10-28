@@ -21,8 +21,6 @@ export interface YamlLine {
 
 import { lineDiff } from "./line-diff";
 
-const INDENT = "  ";
-
 /** 标量原地渲染（含转义）；返回 null 表示"不是原地可写"，需换行块 */
 function inlineScalar(v: unknown): string | null {
     if (v === null) return "null";
@@ -131,11 +129,6 @@ export function toYamlLines(value: unknown, pathPrefix = ""): YamlLine[] {
     return out;
 }
 
-/** 整行文本（含缩进）—— 供复制/导出用 */
-export function yamlText(lines: readonly YamlLine[]): string {
-    return lines.map((l) => INDENT.repeat(l.indent) + l.text).join("\n");
-}
-
 /**
  * 折叠：给定「已折叠的行索引集合」，返回应显示的行。
  * 折叠某行 = 隐藏其后所有缩进更深的行。
@@ -154,11 +147,6 @@ export function visibleLineIndexes(lines: readonly YamlLine[], collapsed: Readon
         if (l.foldable && collapsed.has(i)) skipIndent = l.indent;
     }
     return out;
-}
-
-/** 某行是否有「变化后代」（add/del）—— 用于决定折叠态默认展开哪里 */
-export function foldHeaders(lines: readonly YamlLine[]): number[] {
-    return lines.map((l, i) => (l.foldable ? i : -1)).filter((i) => i >= 0);
 }
 
 // ─── 对齐（两侧 diff 行）─────────────────────────────────

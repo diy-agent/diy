@@ -23,7 +23,7 @@ import type { ContextContainer, ContextPath, ContextTreeState } from "@diy/conte
 // 划分策略与投递构造住在 delivery.ts（真发与预览共用那一条链），这里只做转出，
 // 让"页面数据"与"投递内容"两个概念在 import 处也分得清。
 export { PLACE_CANDIDATES, defaultSystemPlaces } from "@diy/context/delivery";
-export type { PlaceCandidate, DeliveryPart as LabDelivery, Delivery } from "@diy/context/delivery";
+export type { PlaceCandidate } from "@diy/context/delivery";
 
 /** 树节点（扁平列表；path 点分段自带层级，UI 按前缀缩进） */
 export interface LabTreeNode {
@@ -159,6 +159,3 @@ function renderUnits(state: ContextTreeState, place: ContextPath): ContextPath[]
     walk(state.values, "");
     return out.sort();
 }
-
-/** 调试用：确认投影与 project() 口径一致 */
-export const labProjection = (s: ContextTreeState) => projectTree(s, emptyCursor()).projection;

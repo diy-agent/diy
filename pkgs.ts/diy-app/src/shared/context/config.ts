@@ -29,8 +29,6 @@ export const ContextConfigSchema = z.object({
    */
   inputLimitChars: z.unknown().optional(),
 });
-export type ContextConfig = z.infer<typeof ContextConfigSchema>;
-
 /**
  * 净化一份名单（**读侧一律走它**：手改文件、旧版本残留、写坏的路径都从这里兜住）。
  *

@@ -281,10 +281,6 @@ function buildNode(store: BlockStore, rootId: string, cache: Map<string, TreeCac
   return node;
 }
 
-export function toTree(store: BlockStore, rootId: string): BlockNode {
-  return buildNode(store, rootId, cacheOf(store));
-}
-
 export function toForest(store: BlockStore): BlockNode[] {
   const cache = cacheOf(store);
   return store.roots().map((r) => buildNode(store, r.id, cache));

@@ -50,8 +50,6 @@ export const ModelsDevDiyFileSchema = z.object({
     /** id → 时段表 */
     windows: z.record(z.string(), WindowDefSchema).default({}),
 });
-export type ModelsDevDiyFile = z.infer<typeof ModelsDevDiyFileSchema>;
-
 /** 时段表 id → 定义（运行时由 main 读 `models.dev.diy.json` 灌入） */
 export type WindowTable = Record<string, WindowDef>;
 

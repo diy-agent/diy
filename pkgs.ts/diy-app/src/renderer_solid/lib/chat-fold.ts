@@ -599,7 +599,6 @@ export function linesFromDrag(
  * 拆两处必然漂移（本任务开工前它们就是对同一个"行"各写了一遍口径）。
  */
 export const clampLines = clampLinesOf;
-export type { Clamped } from "./chat-text";
 
 // ─── 过程行的**状态**（图标 / 默认开合）──────────────────────
 //
