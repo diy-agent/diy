@@ -36,9 +36,9 @@
 // 约定：本文件只放纯函数/常量，禁止 import node:*（renderer 会打进包）。
 
 import { z } from "zod";
-import { AssembleGlobalsSchema } from "../prompt-schema";
-import { describeSchema, pruneSchemaDoc, type SchemaDoc } from "../schema-doc";
-import { emitYamlTraced, renderPaths, subsetOf, subsetOfDelta, toYaml } from "./render";
+import { AssembleGlobalsSchema } from "./schema/prompt-schema";
+import { describeSchema, pruneSchemaDoc, type SchemaDoc } from "./schema/schema-doc";
+import { emitYamlTraced, renderPaths, subsetOf, subsetOfDelta, toYaml } from "./wire-render";
 import type { ContextPath, ContextTreeState } from "./types";
 
 /**

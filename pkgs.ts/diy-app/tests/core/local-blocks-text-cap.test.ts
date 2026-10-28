@@ -10,7 +10,7 @@
 
 import { describe, it, expect } from "vitest";
 import { BlockStore, RENDER_TEXT_CAP, compactOps, displayText, toTree, type Op } from "../../src/main/services/local-blocks";
-import { parseCutMarkers } from "../../src/shared/cut-marker";
+import { parseCutMarkers } from "@diy/context/format/cut-marker";
 
 const store = () => new BlockStore({ textCap: RENDER_TEXT_CAP });
 const textOf = (s: BlockStore, id: string) => displayText(s.blocks.get(id));

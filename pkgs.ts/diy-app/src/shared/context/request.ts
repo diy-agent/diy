@@ -19,7 +19,7 @@
 // 约定：本文件只放纯函数，禁止 import node:*（renderer 会打进包）。
 
 import * as yaml from "js-yaml";
-import { emitYamlTraced, type EmbedSpec, type RenderedYaml } from "./render";
+import { emitYamlTraced, type EmbedSpec, type RenderedYaml } from "@diy/context/wire-render";
 
 /**
  * 拆「说明头 + 数据」。

@@ -9,7 +9,7 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { sanitizeSystemPlaces } from "../../src/shared/context/config";
-import { defaultSystemPlaces } from "../../src/shared/context/delivery";
+import { defaultSystemPlaces } from "@diy/context/delivery";
 
 describe("sanitizeSystemPlaces", () => {
     it("正常名单：保留 + 排序（输出稳定，便于比对/落盘）", () => {

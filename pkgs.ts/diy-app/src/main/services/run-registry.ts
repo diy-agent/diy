@@ -43,7 +43,7 @@ import { mkdir, open, readdir, readFile, rm, stat, writeFile } from "node:fs/pro
 import { join } from "node:path";
 import { readRuntimeConfig } from "../../runtime";
 import { jobDoneNotify, MAX_TAIL_BYTES, tailOf, type RunLike, type TailResult } from "../../shared/run-status";
-import type { NotifyItem } from "../../shared/context/envelope";
+import type { NotifyItem } from "@diy/context/envelope";
 
 /** run 的来源锚点：哪一轮、哪一步、哪个工具调用起的（`toolCallId` 是定位键）。 */
 export interface RunOrigin {

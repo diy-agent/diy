@@ -33,7 +33,7 @@ import {
     type MindGroup,
     type MindSegment,
 } from "../../shared/context/mind";
-import { PLACE_CANDIDATES } from "../../shared/context/delivery";
+import { PLACE_CANDIDATES } from "@diy/context/delivery";
 import { LayoutAreaToggles } from "./LayoutAreaToggles";
 import { BrainMessages } from "./BrainMessages";
 

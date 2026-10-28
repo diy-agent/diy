@@ -2,7 +2,7 @@
 // 行级 diff + 即时悬浮提示；**类型一律从 shared/prompt-schema 取**（曾经手抄一份 PromptEntry，必然会漂移）。
 import { createSignal, Show } from "solid-js";
 
-export type { PromptEntry, RequestPreview } from "../../shared/prompt-schema";
+export type { PromptEntry, RequestPreview } from "@diy/context/schema/prompt-schema";
 
 /** 即时悬浮提示（viewport fixed）：daisyUI tooltip 在 overflow-auto 窗格里会被裁掉，
  * 原生 title 又有 OS 级延迟；这个悬停即显、永不裁剪，样式与 daisyUI tooltip 一致。

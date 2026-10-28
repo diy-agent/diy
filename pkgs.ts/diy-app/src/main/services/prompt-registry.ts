@@ -18,8 +18,8 @@ import { homedir } from "node:os";
 import { dirname, join, normalize, resolve, sep } from "node:path";
 import { analyze, renderWithTrace, type IncludeResolver, type TraceNode, type VarSpec } from "@diy/template";
 import { writeFileAtomic } from "../core/atomic-write";
-import { TASK_HEAD_FIELDS } from "../../shared/task-head";
-import { AssembleGlobalsSchema, type AssembleGlobals } from "../../shared/prompt-schema";
+import { TASK_HEAD_FIELDS } from "@diy/context/schema/task-head";
+import { AssembleGlobalsSchema, type AssembleGlobals } from "@diy/context/schema/prompt-schema";
 
 // 契约类型从 schema 推导（单一真源）；装配方按它注入，漂移由 safeParse 兜住
 export type { AssembleGlobals };
@@ -31,16 +31,16 @@ import {
   summaryHasContent,
   SUMMARY_TEMPLATE_RELPATH,
   type SummaryData,
-} from "../../shared/context/summary";
+} from "@diy/compact/summary";
 import { parseTaskFile } from "../core/state";
 import { resolveCwd } from "../core/cwd";
 import { personaForTask } from "../core/persona";
 import { getProjectPath } from "../core/project";
 import { readRuntimeConfig } from "../../runtime";
-import { reqlogValue } from "../../shared/context/reqlog";
+import { reqlogValue } from "@diy/context/schema/reqlog";
 import { LOG_DIR_REL, dayFile } from "../core/traffic-log";
 // 契约类型唯一源（shared/prompt-schema.ts，纯 zod）——renderer 也用它，避免手抄第二份
-import type { AssembledSystem, PromptEntry } from "../../shared/prompt-schema";
+import type { AssembledSystem, PromptEntry } from "@diy/context/schema/prompt-schema";
 import { buildFactsContext, buildKbIndex } from "./facts-context";
 import { buildDocsIndex, summarizeDocsIndex } from "./docs-index";
 

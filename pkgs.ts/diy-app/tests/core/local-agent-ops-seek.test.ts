@@ -18,7 +18,7 @@ import { opsFile } from "../../src/main/core/local-paths";
 import { autoCompactFile, loadAutoCompact } from "../../src/main/core/auto-compact-config";
 import { llmFile } from "../../src/main/core/local-paths";
 import { BlockStore, projectAll, type Op } from "../../src/main/services/local-blocks";
-import type { CompactEventRecord } from "../../src/shared/context/compaction";
+import type { CompactEventRecord } from "@diy/compact/compaction";
 
 /** 一轮的行（user 文本 + 一个 assistant 文本 = 每轮 2 条消息）；中文内容制造多字节字节序列 */
 function turnLines(i: number): string[] {

@@ -6,23 +6,22 @@
 //   const r = applyFacts(tree, facts);          // facts 来自任意适配层
 //   const { projection, cursor } = project(r.state, prevCursor);
 //
-// 旧事件流的接入在 legacy-adapter（108 后换成 EventRecord 适配器，其余不动）。
+// 树 / 投影 / 投递 / 信封已独立成 `@diy/context`（##447）；本目录只剩观测、流量、请求视图与配置。
 
-export * from "./types";
-export * from "./path";
-export * from "./hash";
-export * from "./wire";
-export * from "./tree";
-export * from "./render";
-export * from "./reducer";
-export * from "./projection";
-export * from "./legacy-adapter";
+export * from "@diy/context/types";
+export * from "@diy/context/path";
+export * from "@diy/context/hash";
+export * from "@diy/context/wire";
+export * from "@diy/context/tree";
+export * from "@diy/context/wire-render";
+export * from "@diy/context/reducer";
+export * from "@diy/context/projection";
 export * from "./request";
-export * from "./delivery";
+export * from "@diy/context/delivery";
 export * from "./steps";
 export * from "./match";
 export * from "./config";
 export * from "./stats";
-export * from "./envelope";
-export * from "./reqlog";
+export * from "@diy/context/envelope";
+export * from "@diy/context/schema/reqlog";
 export * from "./request-preflight";

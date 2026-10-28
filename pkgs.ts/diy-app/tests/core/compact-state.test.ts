@@ -17,7 +17,7 @@ import { compactFile, compactStateFile, getLocalAgent, readCompactLogFull, readC
 import { opsFile } from "../../src/main/core/local-paths";
 import { realFs } from "../../src/main/core/atomic-write";
 import { readJsonlTail } from "../../src/main/core/jsonl-tail";
-import { boundaryOfPoint, compactPointOf, parseCompactLog, resolveBoundary } from "../../src/shared/context/compaction";
+import { boundaryOfPoint, compactPointOf, parseCompactLog, resolveBoundary } from "@diy/compact/compaction";
 
 let PROJECT = "";
 beforeAll(() => {
