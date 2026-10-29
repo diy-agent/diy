@@ -251,8 +251,6 @@ _has_changes() {
 # 增量检查：先问「这轮跑多大面」（`--class`，只看路径、毫秒级），再按面跑
 _check_changed() {
   ensure-sync
-  # 先编能力包：各包 exports 指 lib/*.js，类型解析要靠它（见 build-pkgs 上方注释）
-  build-pkgs
   if ! _has_changes "$@"; then
     echo "${info}相对基线没有任何改动 → 直接全量（判据：--changed ≤ 全量）${reset}"
     _check_full_body
@@ -273,6 +271,8 @@ _check_changed() {
     else
       echo "${info}相对基线没有任何改动 → 直接全量（--changed ≤ 全量）${reset}"
     fi
+    # 编能力包：各包 exports 指 lib/*.js，类型解析要靠它（#365 前置）
+    build-pkgs
     _check_full_body
     return $?
   fi
@@ -287,6 +287,8 @@ _check_changed() {
   done
 
   if [[ "$plan_mode" != data ]]; then
+    # 编能力包：tsc 要靠 lib/*.js 的类型（#365 前置）。data 分支不跑 tsc ⇒ 不编
+    build-pkgs
     # 类型检查：**全图**（不收窄）。理由实测（##452）：tsc -b 自己有增量（.tsbuildinfo
     # 命中就跳过该 project）—— 改一个包内文件后全图 1.9s、只跑受影响包 1.6~4.6s，没差；
     # 而自己维护「受影响包 + 反向闭包」漏一个依赖方就是漏报。故「只跑该跑的」交给 TS 自己。
