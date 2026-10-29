@@ -14,7 +14,8 @@ facts:
       verifiedAt: '2026-10-22'
   rule.code#discriminated-union:
     value: |-
-      **判别联合（带判别键的对象）一律「判别键同级 = 公共字段；分支私有数据进 `data`」**：判别键默认 `type`（历史 `kind`/`op`/`mode`/`render` 不动），与 `type` 同级的字段 = **所有分支共有**；每个分支**私有**的数据一律放 `data`。**用统一 `data` 而非 `<判别键>Data`**：这样「任何类型化节点 = `{ type, 公共…, data }`」**自相似**——通用序列化/校验/UI 只认 `.data` 即可，不必先知道判别键名才能找到载荷。**嵌套同构**：子对象也是 `{ type, data }`，逐层递归（`data.data` 是不同深度，**不撞车**）。理由：① 读结构即知归属；② 私有字段平铺会与公共字段抢同级空间；③ 统一 `data` 使机器可泛化处理。历史形状（`mode`+`modeData` / `render`+`renderData`）保留不追溯。
+      **判别联合 = `{ type, 公共字段…, data }`，自相似**：判别键默认 `type`（历史 `kind`/`op`/`mode`/`render` 不动），同级字段**所有分支共有**，分支私有数据一律进 `data`（用统一 `data` 而非 `<判别键>Data`，否则通用代码要拼字符串取载荷）。嵌套同构：子对象也是 `{ type, data }`。
+      **判据问未来，不问现在**：不问「它现在是不是判别键」，问「**取值会不会让对象需要额外字段**」。会（`mediaType`：png 要 encoding、mp4 要 codec）⇒ 嵌套；不会（`id`/`text`/`seq`）⇒ 可平铺。⚠️ 判成「值」是赌博 —— 某取值一旦长出私有字段，它事实上已是判别键而形式上没建，字段被平铺「凑合」，事后改造要动所有消费方。仓库里 `kind`/`op`/`mode`/`render` 并存就是「遇到新维度起个新名字」的产物：存量不主动追溯，但**改动已在动那个 interface 时顺手改掉**。
     id: agents.rule.discriminated-union
     review: accepted
     lifecycle: active
@@ -50,7 +51,7 @@ facts:
       verifiedAt: '2026-10-24'
   rule.dev#lab-owner:
     value: |-
-      **lab 一律开在「自己任务的 worktree」里**（`~/git/diy/diy/diy.worktrees/t<号>-*/` 内 `./sha.sh lab`；数据根随之隔离在该 worktree 的 `build/lab/home`）。**根 worktree（`~/git/diy/diy`）的 `build/lab/home` 是「无主」的** —— 只与用户联合使用（人在那儿看效果），**agent 不自己去开**：判别不了谁在用，撞 `SingletonLock` 或把种子 / 真配置写进用户正开着的根。要实验先给自己任务开 worktree。
+      **lab 一律开在「自己任务的 worktree」里**（`~/git/diy.worktrees/t<号>-*/` 内 `./sha.sh lab`；数据根随之隔离在该 worktree 的 `build/lab/home`）。**根 worktree（`~/git/diy/diy`）的 `build/lab/home` 是「无主」的** —— 只与用户联合使用（人在那儿看效果），**agent 不自己去开**：判别不了谁在用，撞 `SingletonLock` 或把种子 / 真配置写进用户正开着的根。要实验先给自己任务开 worktree。
     id: agents.rule.lab-owner
     review: accepted
     lifecycle: active
@@ -68,7 +69,8 @@ facts:
       verifiedAt: '2026-10-21'
   rule.dev#worktree-path:
     value: |-
-      **worktree 一律放仓库内部的 `<repo>/diy.worktrees/<标识>`**（示例：`~/git/diy/diy` → `~/git/diy/diy/diy.worktrees/t323-xxx`）。**前置条件**：该目录必须在仓的 `.gitignore` 里（漏了会让 `git add -A` 把整棵 worktree 收进去、`rg`/`fd` 也会扫）。**仓外同级目录（`~/git/<项目>.worktrees/`）2026-10-23 起停用** —— 用户裁：`diy` 与 `diy.worktrees` 并排极易认错；旧禁令「落进主仓 AGENTS.md 链 = 嵌套覆盖」不成立。
+      **worktree 放仓外同级 `~/git/<项目名>.worktrees/<标识>`**（`~/git/diy/diy` → `~/git/diy.worktrees/t323-xxx`）。
+      前提：`~/git` 不是 git 仓 ⇒ 无需 `.gitignore`。**仓内 `<repo>/diy.worktrees/` 已停用**（2026-10-29）：会让 AGENTS.md 链加载两份（worktree 自带 + 父目录主仓）。
     id: agents.rule.worktree-path
     review: accepted
     lifecycle: active
