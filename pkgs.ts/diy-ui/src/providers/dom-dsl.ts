@@ -21,8 +21,9 @@
  *
  * 文本 vs 子节点二选一：`text: "…"` 是叶子文本；要子节点就用尾部函数。同时给会报错。
  *
- * 异步重跑块：尾部函数可以是 async/generator。**依赖必须提前读**（同步前缀）——
- * await/yield 之后读的信号不会被自动追踪（TS 无法跨挂起追踪）。
+ * ⚠️ 尾部函数只支持**同步**。传 async / generator 函数不会被执行（返回值被丢弃），
+ * 因此运行时直接报错提示。需要异步重跑块请用 `providers/dom` 的 `node.cell(fn)`
+ * （它按 async/generator/async-generator 分型驱动，并做 stage 隔离）。
  */
 
 import { effect, stop } from "@vue/reactivity";
@@ -164,6 +165,7 @@ export class Reconciler<H extends { el: HTMLElement }> {
       if (this.next.get(key) !== old) {
         disposeAll(old.scope);
         old.el.remove();
+        untrackNode(old.handle);
       }
     }
   }
@@ -199,16 +201,39 @@ export interface TrackedNode {
   loc?: string;
 }
 
-/** 所有创建过的节点（dev：rerun 计数快照用；不回收，仅调试）。 */
-export const allNodes = new Set<TrackedNode>();
+/**
+ * 被追踪的节点（按元素索引；值用**弱引用**兜底 —— 忘记调 `untrackNode` 的路径
+ * 也能被 GC 收掉，避免长跑页面无限增长）。
+ *
+ * 之前是强引用 Set：每个创建过的节点（含其 DOM 元素）永久驻留，
+ * 实测「建 50 个再移除」→ 仍 +50。
+ */
+const tracked = new Map<HTMLElement, WeakRef<TrackedNode>>();
 
 /** 元素 → 节点 反查（dev：悬浮查看某元素 rerun 次数）。 */
 const nodeByEl = new WeakMap<HTMLElement, TrackedNode>();
 
 /** 登记节点到 rerun 统计。 */
 export function trackNode(n: TrackedNode): void {
-  allNodes.add(n);
+  tracked.set(n.el, new WeakRef(n));
   nodeByEl.set(n.el, n);
+}
+
+/** 摘除节点的 rerun 统计（节点被移除/销毁时调用 → 统计立即如实）。 */
+export function untrackNode(n: { el: HTMLElement }): void {
+  tracked.delete(n.el);
+  nodeByEl.delete(n.el);
+}
+
+/** 当前仍存活的被追踪节点（dev：rerun 计数快照用）。 */
+export function allNodes(): TrackedNode[] {
+  const out: TrackedNode[] = [];
+  for (const [el, ref] of tracked) {
+    const n = ref.deref();
+    if (n) out.push(n);
+    else tracked.delete(el);
+  }
+  return out;
 }
 
 /** 某真实元素对应的节点（未登记则 undefined）。 */
@@ -243,7 +268,7 @@ export function captureLoc(): string {
 /** 跑过不止一次的节点（dev 排查异常 rerun）。 */
 export function dumpReruns(): Array<{ el: HTMLElement; reruns: number }> {
   const out: Array<{ el: HTMLElement; reruns: number }> = [];
-  for (const n of allNodes) if (n.reruns > 1) out.push({ el: n.el, reruns: n.reruns });
+  for (const n of allNodes()) if (n.reruns > 1) out.push({ el: n.el, reruns: n.reruns });
   return out;
 }
 
@@ -257,13 +282,13 @@ export function computeRerunStats(): {
   let rerun = 0;
   let max = 0;
   const histogram: Record<string, number> = {};
-  for (const n of allNodes) {
+  for (const n of allNodes()) {
     const k = String(n.reruns);
     histogram[k] = (histogram[k] ?? 0) + 1;
     if (n.reruns > 1) rerun++;
     if (n.reruns > max) max = n.reruns;
   }
-  return { nodes: allNodes.size, rerun, max, histogram };
+  return { nodes: allNodes().length, rerun, max, histogram };
 }
 
 /** 当前组装节点（ambient），没有则为 undefined。 */
@@ -379,6 +404,7 @@ export class El {
     }
     if (this.ownScope) disposeAll(this.ownScope);
     this.el.remove();
+    untrackNode(this);
   }
 
   /** 按 key 移除本节点里的一个子节点（释放其作用域）。 */
@@ -389,6 +415,7 @@ export class El {
     t.delete(key);
     disposeAll(e.scope);
     e.el.remove();
+    untrackNode(e.handle);
   }
 
   /**
@@ -556,7 +583,21 @@ function attachBuild(node: El, build: Build): void {
     nodeStack.push(node);
     reconcileStack.push({ parent: node, rec });
     try {
-      build(node);
+      // 尾部函数只支持同步：async / generator 的返回值会被丢弃（子节点永远不出现），
+      // 所以这里当场报错，而不是静默变成空块。
+      const r = (build as (self: El) => unknown)(node);
+      const kind =
+        r && typeof (r as { then?: unknown }).then === "function"
+          ? "async"
+          : r && typeof (r as { next?: unknown }).next === "function"
+            ? "generator"
+            : "";
+      if (kind) {
+        throw new Error(
+          `dom-dsl: <${node.el.tagName.toLowerCase()}> 的尾部函数是 ${kind}；` +
+            "尾部函数只支持同步（异步重跑块请用 node.cell()，见 providers/dom）",
+        );
+      }
     } finally {
       reconcileStack.pop();
       nodeStack.pop();

@@ -24,6 +24,7 @@ import { Signal } from "../signal.js";
 export { Signal };
 import {
   applyProps,
+  untrackNode,
   pushScope,
   popScope,
   addDisposer,
@@ -90,6 +91,7 @@ export class GenNode {
     }
     if (this.ownScope) disposeAll(this.ownScope);
     this.el.remove();
+    untrackNode(this);
   }
 
   /** 按 key 移除本节点里的一个子节点（释放其作用域）。 */
@@ -100,6 +102,7 @@ export class GenNode {
     t.delete(key);
     disposeAll(e.scope);
     e.el.remove();
+    untrackNode(e.handle);
   }
 
   /** 往本节点插一个子 Spec。带 `key` 时进本节点 key 表（同 key 同 rev → 复用）。 */

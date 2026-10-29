@@ -64,7 +64,7 @@ export function installDevtools(root: HTMLElement): void {
     const vw = window.innerWidth;
     const vh = window.innerHeight;
     const wanted = new Set<HTMLElement>();
-    for (const n of allNodes) {
+    for (const n of allNodes()) {
       if (!n.rerunCell || !root.contains(n.el)) continue;
       const r = n.el.getBoundingClientRect();
       if (r.bottom < -20 || r.top > vh + 20 || r.right < 0 || r.left > vw) continue;

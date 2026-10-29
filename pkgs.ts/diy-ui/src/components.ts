@@ -30,13 +30,15 @@ export abstract class UIComponent extends ScopeNode implements Component {
   }
 
   /**
-   * 将自己挂载到父 ScopeNode 的 pi-tui children 中。
-   * 父节点必须是 ContainerComponent（有 piContainer）。
+   * 将自己挂载到父 ScopeNode 的原生容器中。
+   *
+   * 走 `addPiChild` 而不是直接 `p.piContainer.addChild(this)`：子类可以决定
+   * 「原生容器」是哪个（TsBox 的容器是内部 `piBox`，不是 `piContainer`）。
    */
   protected mountToParentPiContainer(): void {
     const p = this.parent;
-    if (p && p instanceof ContainerComponent) {
-      p.piContainer.addChild(this);
+    if (p instanceof ContainerComponent) {
+      p.addPiChild(this);
     }
     // 如果是 App 根节点或其他特殊父节点，mount() 时处理
   }
@@ -54,32 +56,55 @@ export abstract class ContainerComponent extends UIComponent {
   constructor(config?: ScopeConfig, parent?: ScopeNode) {
     super(config, parent);
     this.piContainer = new PiContainer();
-    // 将自己挂到父的 piContainer
+    // 将自己挂到父的容器
     this.mountToParentPiContainer();
   }
 
+  /**
+   * 子组件的**原生容器**：默认就是 `piContainer`。
+   * 包装型容器（如 TsBox）覆写成内部容器，`addPiChild/removePiChild/render` 都会跟着走。
+   */
+  protected get nativeContainer(): PiContainer {
+    return this.piContainer;
+  }
+
   render(width: number): string[] {
-    // 默认：让 pi-tui Container 渲染
-    return this.piContainer.render(width);
+    // 默认：让原生 Container 渲染
+    return this.nativeContainer.render(width);
   }
 
   override invalidate(): void {
-    this.piContainer.invalidate();
+    this.nativeContainer.invalidate();
   }
 
-  /** 将 ScopeNode child 添加到 piContainer */
+  /** 将 ScopeNode child 添加到原生容器 */
   addPiChild(child: UIComponent): void {
-    this.piContainer.addChild(child);
+    this.nativeContainer.addChild(child);
   }
 
-  /** 从 piContainer 移除 */
+  /** 从原生容器移除 */
   removePiChild(child: UIComponent): void {
-    this.piContainer.removeChild(child);
+    this.nativeContainer.removeChild(child);
   }
 
-  /** 清空 piContainer */
+  /** 清空原生容器 */
   clearPiChildren(): void {
-    this.piContainer.clear();
+    this.nativeContainer.clear();
+  }
+
+  /** 移除子节点：逻辑树与原生渲染**一起**摘（否则移除后仍在渲染）。 */
+  override removeChild(child: ScopeNode): void {
+    super.removeChild(child);
+    if (child instanceof UIComponent) this.nativeContainer.removeChild(child);
+  }
+
+  /** 全量替换：逻辑树与原生渲染保持一致（cell 失败回滚也走这里）。 */
+  override replaceChildren(children: ScopeNode[]): void {
+    super.replaceChildren(children);
+    this.nativeContainer.clear();
+    for (const c of children) {
+      if (c instanceof UIComponent) this.nativeContainer.addChild(c);
+    }
   }
 
   override clearChildren(): void {
