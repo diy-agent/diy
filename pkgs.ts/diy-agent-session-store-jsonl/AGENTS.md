@@ -1,6 +1,6 @@
-# @diy/agent-session-store-jsonl — 分桶 jsonl 会话存储
+# @diy/session-store-jsonl — 分桶 jsonl 会话存储
 
-> 全仓契约见仓库根 `AGENTS.md`。本包是 `@diy/agent-session` 的**可选适配器**：core 零 IO，落盘归这里。
+> 全仓契约见仓库根 `AGENTS.md`。本包是 `@diy/session` 的**可选适配器**：core 零 IO，落盘归这里。
 > 需求真源是 `tests/intent.store.test.ts`（T1–T7）。
 
 ## 三条最容易破的约束

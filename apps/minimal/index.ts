@@ -5,7 +5,7 @@
 //        导出类型也一起进来；包名写错一个字母就是编译错，不必等到起窗口。
 //   以前：`{ id, name: "@diy/chat-page/main" }` + 运行时 dynamic import → 只有运行时才知道。
 //
-// 外壳（@diy/workbench）+ 骨架（@diy/ui-workbench）都不认识具体页面，页面由这里带进来。
+// 外壳（@diy/workbench）+ 骨架（@diy/workbench-ui）都不认识具体页面，页面由这里带进来。
 
 import * as chatPageMain from "@diy/chat-page/main";
 import { DEFAULT_MODEL_ID, createOpenAiCompatible, type LlmProvider } from "@diy/llm-provider";

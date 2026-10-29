@@ -17,7 +17,7 @@ subjects:
       入口注入的环境变量（DIY_HOME / DIY_CLI / DIY_ENV / DIY_VARIANT…）
   app.find:
     description: |-
-      包内定位：各目录与关键文件在哪（diy-app 源码地图）
+      包内定位：各目录与关键文件在哪（@diy/app 源码地图）
   app.flow:
     description: |-
       工作流：状态权威 / 两段式插件 / 讨论线程 / 驱动环
@@ -35,7 +35,7 @@ subjects:
       - 端口缺省
   app.rule:
     description: |-
-      diy-app 包内硬约束（测试纪律 / 原子写 / 提示词 / 联动契约）
+      @diy/app 包内硬约束（测试纪律 / 原子写 / 提示词 / 联动契约）
   app.tool:
     description: |-
       验证与调试打法（UI 改动顺序 / 喊人 / 叫醒机制缺口）
@@ -88,13 +88,13 @@ subjects:
       - worktree
   diydev.find:
     description: |-
-      diy-dev 包内定位：进程内 RPC 入口 / ref 子模块 / runtime / 两条跑法（dev 命令 CLI）
+      @diy/dev 包内定位：进程内 RPC 入口 / ref 子模块 / runtime / 两条跑法（dev 命令 CLI）
   diydev.rule:
     description: |-
-      diy-dev 硬约束：cwd 即作用域 / ref.lock v1 唯一写入方 / 镜像路径 / 版本钉法
+      @diy/dev 硬约束：cwd 即作用域 / ref.lock v1 唯一写入方 / 镜像路径 / 版本钉法
   diydev.tool:
     description: |-
-      diy-dev 的命令入口与自检方式
+      @diy/dev 的命令入口与自检方式
   entry:
     description: |-
       实例三态（**先问：操作谁的数据 / 谁看 UI**）
@@ -186,7 +186,7 @@ subjects:
       diy 自己的 ref 镜像实现（diy.yaml 注册 → clone/pull → lock）
   rpc.find:
     description: |-
-      diy-rpc 包内定位：核 / 传输 / CLI 桥 / 发布形态（@diy-agent/rpc 协议内核）
+      diy-rpc 包内定位：核 / 传输 / CLI 桥 / 发布形态（@diy/rpc 协议内核）
   rpc.rule:
     description: |-
       diy-rpc 硬约束：ESM 扩展名 / 浏览器安全边界 / 发布流程
@@ -226,7 +226,7 @@ subjects:
     aliases: []
   ui.find:
     description: |-
-      diy-ui 包内定位：核心树形运行时 / 浏览器入口 / HostAdapter / providers / demo 站（@diy-agent/ui 声明式 UI 层）
+      diy-ui 包内定位：核心树形运行时 / 浏览器入口 / HostAdapter / providers / demo 站（@diy/ui 声明式 UI 层）
   ui.rule:
     description: |-
       diy-ui 硬约束：DOM 类型自取 / 浏览器入口不许走根 / 控件层交给 Web Awesome / 发布与 lock

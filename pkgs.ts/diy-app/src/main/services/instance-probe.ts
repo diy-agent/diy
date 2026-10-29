@@ -13,7 +13,7 @@
 // 传裸 `{}` 会被解成 `input: undefined` → INVALID_ARGUMENT → 被 catch 吞成「无响应」，
 // 于是「端口上是别人/版本太老」这类真信息全丢。
 
-import { HttpClientBinding } from "@diy-agent/rpc/http";
+import { HttpClientBinding } from "@diy/rpc/http";
 import type { InstanceSelf, RevealResult } from "../../shared/instance-row";
 
 // 类型从共享契约来（**单源**：schema 在 shared/instance-row.ts，UI 与 main 同一份）；

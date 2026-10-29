@@ -11,7 +11,7 @@
  *   - list 读 cwd/.diy/ref.lock.yaml，对齐本地目录存在性（缺失提示 sync）+ 最后 sync 时间
  */
 
-import { RpcSchema } from "@diy-agent/rpc";
+import { RpcSchema } from "@diy/rpc";
 import { z } from "zod";
 
 /** list 单条输出：lock 条目 + 本地目录实时对齐 */

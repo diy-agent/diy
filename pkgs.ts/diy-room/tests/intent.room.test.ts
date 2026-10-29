@@ -13,13 +13,13 @@
 //       增量过大截断且 @ 他的 / 最后 human 必在；**成功才推进水位**（失败下次重投，不丢不重）
 //   R7  零 task / 零 IO：src/** 里没有任务标识 / @diy/task / 文件系统模块 / electron / 应用数据根
 //
-// 测试风格：真实 @diy/agent-session（假 LlmPort / 假 Clock）跑 R1；其余用极简假会话控时序。
+// 测试风格：真实 @diy/session（假 LlmPort / 假 Clock）跑 R1；其余用极简假会话控时序。
 // ═══════════════════════════════════════════════════════════════
 
 /// <reference types="vite/client" />
 // ↑ 只为 import.meta.glob 的类型（读源码做静态扫描）；本包源码不使用任何 IO
 import { describe, expect, it } from 'vitest';
-import { createSession, type Clock, type LlmPort, type SessionPeer } from '@diy/agent-session';
+import { createSession, type Clock, type LlmPort, type SessionPeer } from '@diy/session';
 import {
     RoomError,
     createRoom,

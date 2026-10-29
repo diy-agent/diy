@@ -1,4 +1,4 @@
-// types.ts — @diy/agent-session 的公开契约（纯类型 + 一个缺省 Clock）
+// types.ts — @diy/session 的公开契约（纯类型 + 一个缺省 Clock）
 //
 // 边界（##456「关键设计决策 ②」）：
 //   属于 Session：消息列表 / 一次 LLM 调用 + 流式增量 / 单会话压缩（注入策略）/ token 计量

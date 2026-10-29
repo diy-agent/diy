@@ -1,4 +1,4 @@
-// errors.ts — @diy/agent-session-store-jsonl 统一错误类型
+// errors.ts — @diy/session-store-jsonl 统一错误类型
 //
 // 存储是「删了就读不回来」的那一层：任何异常都不许降级成「跳过这一桶」。
 // 缺桶 / 缺号 / 坏行一律抛带 code 的错误（rule.err-triage#code）。

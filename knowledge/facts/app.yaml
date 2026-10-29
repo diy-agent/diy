@@ -1363,7 +1363,7 @@ facts:
       verifiedAt: '2026-10-22'
   app.rule#test-isolate:
     value: |-
-      **`unit` 跑 `--no-isolate`（每个 worker 共享一份模块图）⇒ 测试之间共享模块级状态，三条硬约束**（##402）：① **禁 `vi.mock`**（改全局模块表，先加载的实现会把它静默顶掉 ⇒ 「单跑绿、一起跑红」且无报错；机械护栏 `scripts/check-no-vi-mock.sh`，替代写法 = 依赖注入 / 手写假对象 / `server.deps.inline` alias）；② **模块顶层的可变状态必须在 `beforeEach` 复位**（真踩过：`sessionStore` 水位 / `usageLedgerStore` 缓存 / `rpc` 的 `setDiyService` 假实现残留 —— 症状是 `--sequence.shuffle` 换序即红）；③ **模块图顺序是语义的一部分**（`@diy-agent/rpc` 用原型补丁给 zod 装 `cliArg`，schema 创建时定死原型链 ⇒ 谁先建 schema 谁就看不见补丁；`tests/setup.ts` 已先引 rpc 钉死这条，别删）。验收判据：`test-unit` 与 `test-unit --sequence.shuffle` 两遍都全绿
+      **`unit` 跑 `--no-isolate`（每个 worker 共享一份模块图）⇒ 测试之间共享模块级状态，三条硬约束**（##402）：① **禁 `vi.mock`**（改全局模块表，先加载的实现会把它静默顶掉 ⇒ 「单跑绿、一起跑红」且无报错；机械护栏 `scripts/check-no-vi-mock.sh`，替代写法 = 依赖注入 / 手写假对象 / `server.deps.inline` alias）；② **模块顶层的可变状态必须在 `beforeEach` 复位**（真踩过：`sessionStore` 水位 / `usageLedgerStore` 缓存 / `rpc` 的 `setDiyService` 假实现残留 —— 症状是 `--sequence.shuffle` 换序即红）；③ **模块图顺序是语义的一部分**（`@diy/rpc` 用原型补丁给 zod 装 `cliArg`，schema 创建时定死原型链 ⇒ 谁先建 schema 谁就看不见补丁；`tests/setup.ts` 已先引 rpc 钉死这条，别删）。验收判据：`test-unit` 与 `test-unit --sequence.shuffle` 两遍都全绿
     id: app.rule.test-isolate
     review: accepted
     lifecycle: active

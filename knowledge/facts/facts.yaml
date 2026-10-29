@@ -14,7 +14,7 @@ facts:
       verifiedAt: '2026-10-21'
   facts.find#atomic-write:
     value: |-
-      `src/node/atomic-write.ts` 落盘原语：**两阶段**（先把 N 份 tmp 全写出来 → 再逐个 rename）；任一步失败清掉本批所有 tmp、目标保持原样、原错误上抛。tmp 名 `<目标>.tmp-<pid>-<rand>`（rand 防并发互踩；后缀不是 `.yaml`，`isFactFile` 另显式排除 `.tmp-`）。目标已存在 ⇒ tmp 继承权限位。**与 `diy-app` 的 `core/atomic-write.ts` 同范式、但各自持有一份**（依赖方向 `diy-app → diy-facts`，反向 import 会成环）；改语义两边一起改
+      `src/node/atomic-write.ts` 落盘原语：**两阶段**（先把 N 份 tmp 全写出来 → 再逐个 rename）；任一步失败清掉本批所有 tmp、目标保持原样、原错误上抛。tmp 名 `<目标>.tmp-<pid>-<rand>`（rand 防并发互踩；后缀不是 `.yaml`，`isFactFile` 另显式排除 `.tmp-`）。目标已存在 ⇒ tmp 继承权限位。**与 `@diy/app` 的 `core/atomic-write.ts` 同范式、但各自持有一份**（依赖方向 `@diy/app` → `@diy/facts`，反向 import 会成环）；改语义两边一起改
     review: accepted
     lifecycle: active
     evidence:
@@ -270,7 +270,7 @@ facts:
       verifiedAt: '2026-10-22'
   facts.rule#workspace-dep:
     value: |-
-      diy-app 新增 workspace 依赖**必须**同步 `pkgs.ts/diy-app/vite.pkg-deps.ts::WORKSPACE_TS_DEPS`，否则 main 产物留裸 `import "@diy/x"`、运行时加载 `.ts` 源码直接炸（本任务实测踩中一次）
+      @diy/app 新增 workspace 依赖**必须**同步 `pkgs.ts/diy-app/vite.pkg-deps.ts::WORKSPACE_TS_DEPS`，否则 main 产物留裸 `import "@diy/x"`、运行时加载 `.ts` 源码直接炸（本任务实测踩中一次）
     review: accepted
     lifecycle: active
     evidence:

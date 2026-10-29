@@ -19,9 +19,9 @@ const REPO = resolve(PKGS, "..");
  * 路径相对仓根：`pkgs.ts/*` 的源码在 `src/`；`apps/*` 是 profile（摊在目录根，##458）。
  */
 const LOCATIONS: Record<string, { dir: string; entry: string }> = {
-    "@diy/agent-session": { dir: "pkgs.ts/diy-agent-session", entry: "src/index.ts" },
-    "@diy/agent-session-store-jsonl": { dir: "pkgs.ts/diy-agent-session-store-jsonl", entry: "src/index.ts" },
-    "@diy/compact": { dir: "pkgs.ts/diy-compact", entry: "src/index.ts" },
+    "@diy/session": { dir: "pkgs.ts/diy-agent-session", entry: "src/index.ts" },
+    "@diy/session-store-jsonl": { dir: "pkgs.ts/diy-agent-session-store-jsonl", entry: "src/index.ts" },
+    "@diy/compaction": { dir: "pkgs.ts/diy-compact", entry: "src/index.ts" },
     "@diy/context": { dir: "pkgs.ts/diy-context", entry: "src/index.ts" },
     "@diy/facts": { dir: "pkgs.ts/diy-facts", entry: "src/index.ts" },
     "@diy/flow": { dir: "pkgs.ts/diy-flow", entry: "src/index.ts" },
@@ -31,11 +31,11 @@ const LOCATIONS: Record<string, { dir: string; entry: string }> = {
     "@diy/talk": { dir: "pkgs.ts/diy-talk", entry: "src/index.ts" },
     "@diy/template": { dir: "pkgs.ts/diy-template", entry: "src/index.ts" },
     "@diy/ui-kit": { dir: "pkgs.ts/diy-ui-kit", entry: "src/index.ts" },
-    "@diy-agent/rpc": { dir: "pkgs.ts/diy-rpc", entry: "src/index.ts" },
-    "@diy-agent/ui": { dir: "pkgs.ts/diy-ui", entry: "src/index.ts" },
+    "@diy/rpc": { dir: "pkgs.ts/diy-rpc", entry: "src/index.ts" },
+    "@diy/ui": { dir: "pkgs.ts/diy-ui", entry: "src/index.ts" },
     "@diy-agent/workbench-plugin": { dir: "pkgs.ts/workbench-plugin", entry: "src/index.ts" },
     "@diy/workbench": { dir: "pkgs.ts/workbench", entry: "src/index.ts" },
-    "@diy/ui-workbench": { dir: "pkgs.ts/ui-workbench", entry: "src/index.ts" },
+    "@diy/workbench-ui": { dir: "pkgs.ts/ui-workbench", entry: "src/index.ts" },
     "@diy/chat-page": { dir: "pkgs.ts/chat-page", entry: "src/index.ts" },
     "@diy/app-minimal": { dir: "apps/minimal", entry: "index.ts" },
 };

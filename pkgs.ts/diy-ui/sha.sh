@@ -48,7 +48,7 @@ check() {
 }
 
 ####################################################################################
-# 发布（npm → @diy-agent/ui）
+# 发布（npm → @diy/ui）
 #
 # 仓内 package.json 的 main/exports 指 src/*.ts（vite demo 直接吃源码）且带 private:true
 # 当护栏；发行物另生成在 lib/（分发逻辑见 scripts/npm-publish.mjs）。

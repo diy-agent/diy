@@ -2,7 +2,7 @@
   "name": "@diy/room",
   "version": "0.1.0",
   "private": true,
-  "description": "diy 协作空间内核：成员表 + @ 投递 + 忙闲（依赖 @diy/agent-session，不认识 task / 不碰文件系统）",
+  "description": "diy 协作空间内核：成员表 + @ 投递 + 忙闲（依赖 @diy/session，不认识 task / 不碰文件系统）",
   "files": [
     "src/"
   ],
@@ -19,7 +19,7 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
-    "@diy/agent-session": "*"
+    "@diy/session": "*"
   },
   "devDependencies": {
     "oxfmt": "^0.57.0",

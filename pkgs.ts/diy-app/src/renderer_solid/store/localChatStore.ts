@@ -45,7 +45,7 @@ import { sessionView, type SessionView } from "../../shared/session-view";
 import { StopTicker } from "../lib/stop-ticker";
 // 用量账本类型：与 main 落盘、CLI 报表、看板共用同一份形状（shared/usage 是唯一口径处）
 import type { StepUsageRecord } from "../../shared/usage";
-import type { FlatCompactPolicy, HeadTailPolicy } from "@diy/compact/compaction";
+import type { FlatCompactPolicy, HeadTailPolicy } from "@diy/compaction/compaction";
 import type { DegradedHistory } from "../../shared/degraded-history";
 
 /**

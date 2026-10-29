@@ -5,7 +5,7 @@ import {
     DEFAULT_AUTO_COMPACT,
     detectAutoCompactTriggers,
     normalizeAutoCompact,
-} from "@diy/compact/compact-config";
+} from "@diy/compaction/compact-config";
 
 describe("配置归一", () => {
     it("缺省：policy 完整、summary=model", () => {

@@ -9,7 +9,7 @@ import {
     type CompactEventRecord,
     normalizePolicy,
     type OpLike,
-} from "@diy/compact/compaction";
+} from "@diy/compaction/compaction";
 
 /** 一条 compact 账（全清：keptFromTurnId=null，锚点 = 压缩时刻已有 op 数） */
 function clearAllLedger(keepFromOpIndex: number): CompactEventRecord {

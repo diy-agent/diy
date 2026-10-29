@@ -4,7 +4,7 @@
 // 而 `full` 原先直接原样返回 ⇒ 投递层 50 KB 的封顶在**历史重放**时被绕过，
 // ##401 的请求从 282 KB 一步跳到 4.95 MB（`~/.diy/log/network/2026-10-21.jsonl`）。
 import { describe, expect, it } from "vitest";
-import { clipToolResult, HARD_MAX_TOOL_RESULT_BYTES, toToolResultPolicy, type ToolResultPolicy } from "@diy/compact/compaction";
+import { clipToolResult, HARD_MAX_TOOL_RESULT_BYTES, toToolResultPolicy, type ToolResultPolicy } from "@diy/compaction/compaction";
 import { parseCutMarkers } from "@diy/context/format/cut-marker";
 
 /** 缺省 plan 的保底级 `clip:{type:"full"}` —— 经 toToolResultPolicy 映射成 `asis`（原样不裁） */

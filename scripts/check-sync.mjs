@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // scripts/check-sync.mjs — 「node_modules 是否落后于 package-lock.json / 源树」的只读快检。
 //
-// 为什么需要它：workspace 包改名（`@diy/rpc` → `@diy-agent/rpc`）或加依赖后若没重装
+// 为什么需要它：workspace 包改名（如 ##460 全仓统一到 `@diy/` scope）或加依赖后若没重装
 // node_modules，症状是**远离根因**的错 —— 例如 `Rolldown failed to resolve import
-// "@diy-agent/rpc/electron"`、`Failed to resolve import "remark-gfm"`，人只会去看代码，
+// "@diy/rpc/electron"`、`Failed to resolve import "remark-gfm"`，人只会去看代码，
 // 不会想到去比 package-lock.json 与 node_modules。本脚本把这类「忘了 sync」变成一行结论，
 // 由根 sha.sh 的 ensure-sync 在 build/check/test/lab 入口前置调用。
 //

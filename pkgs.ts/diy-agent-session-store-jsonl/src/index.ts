@@ -1,13 +1,13 @@
-// @diy/agent-session-store-jsonl — 按大小切桶的 jsonl 会话存储
+// @diy/session-store-jsonl — 按大小切桶的 jsonl 会话存储
 //
-// 核心（@diy/agent-session）零 IO：要落盘就装这个适配器。目录形态：
+// 核心（@diy/session）零 IO：要落盘就装这个适配器。目录形态：
 //
 //   <dir>/index.json       桶索引（勿与桶混合）
 //   <dir>/log-0001.jsonl   一桶 ≤ maxBucketBytes（缺省 8 MB）
 //   <dir>/log-0002.jsonl
 //
-//   import { createSession } from '@diy/agent-session';
-//   import { openJsonlSessionStore } from '@diy/agent-session-store-jsonl';
+//   import { createSession } from '@diy/session';
+//   import { openJsonlSessionStore } from '@diy/session-store-jsonl';
 //
 //   const store = await openJsonlSessionStore({ dir: '~/.diy/sessions/s1'.replace('~', home) });
 //   const history = await store.readFrom(0);                       // 恢复：读全部

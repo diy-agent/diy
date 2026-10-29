@@ -1,5 +1,5 @@
 {
-  "name": "@diy/compact",
+  "name": "@diy/compaction",
   "version": "0.1.0",
   "private": true,
   "description": "压缩决策（纯算不写盘）：保留边界、触发线、保留量、压缩策略与压缩后形态范例",

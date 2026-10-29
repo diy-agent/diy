@@ -1,6 +1,6 @@
-# @diy-agent/rpc — RPC 协议内核
+# @diy/rpc — RPC 协议内核
 
-> 全仓契约见**仓库根 `AGENTS.md`**。npm 发布名 `@diy-agent/rpc`（发布流程见根 `tool.publish`）。
+> 全仓契约见**仓库根 `AGENTS.md`**。npm 发布名 `@diy/rpc`（发布流程见根 `tool.publish`）。
 >
 > 需求真源是测试：`test/*.test.ts`。
 

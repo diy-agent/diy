@@ -3,7 +3,7 @@
 //
 // 为什么需要（##455，设计见 diy-research/.../07-electron-plugin-strategy.md 五、九节）：
 //   打包后 `files:` 明确排除了 `node_modules/**`，安装形态里没有 npm 包结构；
-//   主进程要 `createRequire(runtime/package.json).resolve('@diy/compact')` 就必须自己铺一份。
+//   主进程要 `createRequire(runtime/package.json).resolve('@diy/compaction')` 就必须自己铺一份。
 //
 // 产物（构建产物，不进 git —— 见根 .gitignore）：
 //   runtime/

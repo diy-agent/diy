@@ -113,7 +113,7 @@ facts:
       verifiedAt: '2026-10-25'
   find#rpc:
     value: |-
-      `pkgs.ts/diy-rpc/` RPC 协议 + 传输（纯内核，零 Node/Electron 依赖）；**npm 发布名 `@diy-agent/rpc`**（见 `tool.publish`）
+      `pkgs.ts/diy-rpc/` RPC 协议 + 传输（纯内核，零 Node/Electron 依赖）；**npm 发布名 `@diy/rpc`**（见 `tool.publish`）
     id: agents.find.rpc
     review: accepted
     lifecycle: active

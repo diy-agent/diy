@@ -18,7 +18,7 @@
 
 import { createSignal, createResource, createEffect, on, For, Show, createMemo, type JSX } from "solid-js";
 import { localChatStore } from "../store/localChatStore";
-import type { AutoCompactIssue } from "@diy/compact/compact-config";
+import type { AutoCompactIssue } from "@diy/compaction/compact-config";
 import {
     DEFAULT_TOOL_RESULT_POLICY,
     flatPolicyOf,
@@ -28,7 +28,7 @@ import {
     type FlatCompactPolicy,
     type ToolResultMode,
     type ToolResultPolicy,
-} from "@diy/compact/compaction";
+} from "@diy/compaction/compaction";
 /** 触发理由的短文案（表里空间小；完整版在 TRIGGER_TEXT_FULL，提示条上用） */
 function triggerText(t: string | undefined): string {
     switch (t) {
@@ -61,9 +61,9 @@ import {
     fmtTokens,
     windowRatio,
     type CompactWhenInput,
-} from "@diy/compact/compact-when";
-import { EXAMPLE_MESSAGES, buildCompactExample, bytesToTokens, type ExampleRow } from "@diy/compact/compact-example";
-import { normalizeHistoryLimit } from "@diy/compact/history-limit";
+} from "@diy/compaction/compact-when";
+import { EXAMPLE_MESSAGES, buildCompactExample, bytesToTokens, type ExampleRow } from "@diy/compaction/compact-example";
+import { normalizeHistoryLimit } from "@diy/compaction/history-limit";
 
 const INDENT = "  ";
 

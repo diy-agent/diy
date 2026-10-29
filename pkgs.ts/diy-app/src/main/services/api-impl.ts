@@ -6,9 +6,9 @@
  * 命名体系：diy.*（Main 进程域，本地处理）。diy.ui.* 由调用方 onForward 转发。
  */
 
-import type { ServerBinding } from "@diy-agent/rpc";
-import { ChannelServerBinding } from "@diy-agent/rpc";
-import type { EnvelopeTransport } from "@diy-agent/rpc";
+import type { ServerBinding } from "@diy/rpc";
+import { ChannelServerBinding } from "@diy/rpc";
+import type { EnvelopeTransport } from "@diy/rpc";
 import * as task from "../core/task";
 import { DRAFT_FIELDS, clearDrafts, readDrafts, writeDrafts, type DraftField } from "../core/drafts";
 import * as project from "../core/project";
@@ -28,7 +28,7 @@ import * as journalStore from "./journal-store";
 import { buildDocsIndex, DEFAULT_DOCS_ROOTS } from "./docs-index";
 import { TaskDetailSchema } from "../../shared/task-detail";
 import { noteRendererTouch } from "./runtime-context";
-import type { ToolResultMode } from "@diy/compact/compaction";
+import type { ToolResultMode } from "@diy/compaction/compaction";
 import type { HistoryEntryView } from "../../shared/context/schema";
 import { readFileWindow, formatReadOutput, ReadWindowError } from "../core/file-read";
 import { resolve as resolvePath, relative as relativePath, isAbsolute as isAbsolutePath } from "node:path";

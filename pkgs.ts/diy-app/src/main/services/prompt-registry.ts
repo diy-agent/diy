@@ -31,7 +31,7 @@ import {
   summaryHasContent,
   SUMMARY_TEMPLATE_RELPATH,
   type SummaryData,
-} from "@diy/compact/summary";
+} from "@diy/compaction/summary";
 import { parseTaskFile } from "../core/state";
 import { resolveCwd } from "../core/cwd";
 import { personaForTask } from "../core/persona";

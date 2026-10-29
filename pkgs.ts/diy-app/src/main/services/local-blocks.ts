@@ -917,7 +917,7 @@ export interface DeliveryOpts {
 //   · **渲染**（怎么呈现）才涉及工具结果裁剪/origin 自证位等形状问题。
 // 于是：全量投影（= llm.jsonl 每行）→ 选择 → 渲染。预览与真发共用同一条链。
 
-import { clipReasoningText, utf8Bytes, type ClipSpec, type ReasoningClipSpec } from "@diy/compact/compaction";
+import { clipReasoningText, utf8Bytes, type ClipSpec, type ReasoningClipSpec } from "@diy/compaction/compaction";
 import {
     chatEnvelope,
     hasTopLevelKey,

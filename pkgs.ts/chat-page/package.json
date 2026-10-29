@@ -2,7 +2,7 @@
   "name": "@diy/chat-page",
   "version": "0.1.0",
   "private": true,
-  "description": "聊天页面插件：主进程侧用 @diy/agent-session + 假 LlmPort，renderer 侧输入框 + 消息列表",
+  "description": "聊天页面插件：主进程侧用 @diy/session + 假 LlmPort，renderer 侧输入框 + 消息列表",
   "files": [
     "src/"
   ],
@@ -27,8 +27,8 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
-    "@diy/agent-session": "*",
-    "@diy/ui-workbench": "*",
+    "@diy/session": "*",
+    "@diy/workbench-ui": "*",
     "@diy/workbench": "*"
   },
   "devDependencies": {

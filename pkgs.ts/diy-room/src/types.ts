@@ -2,13 +2,13 @@
 //
 // 边界（##456「关键设计决策 ②／③」）：
 //   属于 Room：成员表 / 收件人解析（`@X` / focus / `@all`）/ 投递 / 忙闲 / 事件流聚合
-//   不属于 Room：单个会话怎么跑（@diy/agent-session）/ 任务状态（task 依赖 room，反向不行）/
+//   不属于 Room：单个会话怎么跑（@diy/session）/ 任务状态（task 依赖 room，反向不行）/
 //                文件系统（RoomStore 适配器）
 //
 // ⚠️ 本包里**不认识任务**：没有任务 URI、没有任务标识，也没有「room id 就是任务 URI」这类假设。
 // 现有数据恰好 id == 任务 URI 只说明可以原样沿用，不代表房间知道任务存在（意图测试 R7 静态扫）。
 
-import type { Clock, SessionDelta, SessionPeer } from '@diy/agent-session';
+import type { Clock, SessionDelta, SessionPeer } from '@diy/session';
 
 export type { Clock, SessionDelta, SessionPeer };
 

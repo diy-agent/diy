@@ -19,7 +19,7 @@ import {
     normalizeAutoCompact,
     type AutoCompactConfig,
     type AutoCompactIssue,
-} from "@diy/compact/compact-config";
+} from "@diy/compaction/compact-config";
 
 export function autoCompactFile(home: string): string {
     return join(home, "auto-compact.yaml");

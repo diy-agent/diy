@@ -143,7 +143,7 @@ _sync_uptodate() {
 #   · 命中 → 自动 sync-deps 后继续；`DIY_AUTO_SYNC=0` 关掉自动修（改为报错停下）
 #   · 只挂 build/check/test/lab 入口；**sync 自身不挂**（否则递归）
 # 为什么值得：包改名 / 加依赖后 node_modules 落后，症状是构建报**远离根因**的错，如
-# `Rolldown failed to resolve import "@diy-agent/rpc/electron"`（人只会去翻代码，
+# `Rolldown failed to resolve import "@diy/rpc/electron"`（人只会去翻代码，
 # 不会想到比 package-lock.json 与 node_modules）。
 ensure-sync() {
     if node scripts/check-sync.mjs --quiet; then
@@ -335,7 +335,7 @@ _check_full_body() {
   # 异常码护栏（##394）：新增 `throw new` 必须带 code（<域>/<kebab-case>）；存量按 LEGACY_THROW_BASELINE 比例递减
   #（实现见 scripts/check-error-code.sh，判据见 rule.err-triage；**别改成整文件豁免** —— 那会让新代码永远不被拦）
   run bash scripts/check-error-code.sh
-  # 包可见性白名单：对外发布只有 @diy-agent/rpc 与 @diy-agent/ui（不许 private），其余必须 private；
+  # 包可见性白名单：对外发布只有 @diy/rpc 与 @diy/ui（不许 private），其余必须 private；
   # 且对外包不许依赖 @diy/* 内部包（否则使用时 registry 找不到）。实现见 scripts/check-pkg-visibility.mjs
   run node scripts/check-pkg-visibility.mjs
   # runtime 依赖闭包（##455 #5）：runtime/node_modules 里每个包 dependencies 的 @diy* 必须也在其中；
@@ -423,13 +423,13 @@ vendor.update() {  run git submodule update --init --recursive --remote --merge;
 ####################################################
 # Python 包发布
 ####################################################
-# 编 10 个能力包的 lib/（Node 可直接 import 的 ESM + .d.ts，##453）。
-# 顺序 = 依赖拓扑：@diy/template → @diy/context → @diy/compact；@diy/talk → @diy/flow
+# 编各能力包的 lib/（Node 可直接 import 的 ESM + .d.ts，##453）。
+# 顺序 = 依赖拓扑：@diy/template → @diy/context → @diy/compaction；@diy/talk → @diy/flow
 #（各包 tsc 要靠被依赖包的 lib/*.d.ts 做类型解析，故不能乱序、也不能并行）。
 build-pkgs() {
     # workbench / ui-workbench / chat-page：插件化体系的第一个活样本（##457）；
     # 顺序 = 被依赖方在前（chat-page 依赖 agent-session）。
-    local _pkg_order=(diy-template diy-talk diy-context diy-compact diy-flow diy-facts diy-persistence diy-rpc diy-ui workbench-plugin diy-agent-session diy-agent-session-store-jsonl diy-room workbench ui-workbench chat-page)
+    local _pkg_order=(diy-template diy-talk diy-context diy-compact diy-flow diy-facts diy-persistence diy-llm-provider diy-rpc diy-ui workbench-plugin diy-agent-session diy-agent-session-store-jsonl diy-room workbench ui-workbench chat-page)
     for _pkg in "${_pkg_order[@]}"; do
         echo "${inverse_surface}info: workspace: build 'pkgs.ts/${_pkg}'${reset}"
         ( cd "pkgs.ts/${_pkg}" && ./sha.sh build )

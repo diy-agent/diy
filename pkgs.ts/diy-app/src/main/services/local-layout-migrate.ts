@@ -14,7 +14,7 @@
 // ⚠️ uri 集合取自**磁盘上的任务目录**（`projects/<pid>/tasks/<tid>/`），不走 `core/task`。
 // 两个理由：① 迁移面对的就是磁盘现状（state.yaml 可能滞后于目录）；② `core/task` 带着
 // `TaskStateSchema` 等 zod schema，静态 import 它会让本 chunk 与 `room-service` 共用 task chunk，
-// 把 task 模块提升成**先于 `@diy-agent/rpc` 补丁求值**的共享 chunk —— 症状正是启动即
+// 把 task 模块提升成**先于 `@diy/rpc` 补丁求值**的共享 chunk —— 症状正是启动即
 // `TypeError: TaskStateSchema.cliArg is not a function`（##322 记过的坑，本次实测复现）。
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";

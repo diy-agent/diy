@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, expect, it } from 'vitest';
-import type { ChatMessage, SessionDelta } from '@diy/agent-session';
+import type { ChatMessage, SessionDelta } from '@diy/session';
 import {
     DEFAULT_MODEL_ID,
     LlmProviderError,

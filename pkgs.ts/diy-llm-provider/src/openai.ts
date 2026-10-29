@@ -10,7 +10,7 @@
 
 import { streamText, type ModelMessage } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import type { ChatMessage, ChatOptions, LlmPort, SessionDelta } from '@diy/agent-session';
+import type { ChatMessage, ChatOptions, LlmPort, SessionDelta } from '@diy/session';
 import { classifyError } from './errors.js';
 import type { ProviderConfig, UsageDetail } from './types.js';
 

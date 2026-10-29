@@ -18,7 +18,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { writeFileAtomic } from "../core/atomic-write";
-import { clipToolResult, type ToolResultPolicy } from "@diy/compact/compaction";
+import { clipToolResult, type ToolResultPolicy } from "@diy/compaction/compaction";
 import { diyHome } from "../core/state";
 import { localDir, sessionDir } from "../core/local-paths";
 import { READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";

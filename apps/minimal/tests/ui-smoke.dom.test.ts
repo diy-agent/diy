@@ -7,10 +7,10 @@
 // 这是环境限制、不是链路问题；人在本机仍可用 `./sha.sh smoke`（CDP 驱动真窗口）。
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { mountWorkbench, registerPage, resetPages } from "@diy/ui-workbench";
+import { mountWorkbench, registerPage, resetPages } from "@diy/workbench-ui";
 import { chatPageView } from "@diy/chat-page/renderer";
 import { createPage, FAKE_REPLY } from "@diy/chat-page";
-import type { WorkbenchGateway } from "@diy/ui-workbench";
+import type { WorkbenchGateway } from "@diy/workbench-ui";
 
 const page = createPage();
 

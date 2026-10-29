@@ -50,8 +50,8 @@ import {
     type CompactionEntry,
     type TurnRecordState,
 } from "./local-turns";
-import { estimateTokensOf, normalizeHistoryLimit, selectCompactableRange } from "@diy/compact/history-limit";
-import { retainTokensOf, triggerTokensOf } from "@diy/compact/select-kept-boundary";
+import { estimateTokensOf, normalizeHistoryLimit, selectCompactableRange } from "@diy/compaction/history-limit";
+import { retainTokensOf, triggerTokensOf } from "@diy/compaction/select-kept-boundary";
 
 // 路径实现只在 `core/local-paths`（= `@diy/persistence`）一处 —— 测试也从那里取。
 import { createOpsAppender, type OpsAppender, type OpsRef } from "@diy/persistence";
@@ -150,7 +150,7 @@ import {
     type AutoCompactConfig,
     type AutoCompactFacts,
     type AutoCompactIssue,
-} from "@diy/compact/compact-config";
+} from "@diy/compaction/compact-config";
 import {
     autoCompactFile,
     loadAutoCompact,
@@ -201,7 +201,7 @@ import {
     type MeasureEventRecord,
     type RateSnapshot,
     type SizeSnapshot,
-} from "@diy/compact/compaction";
+} from "@diy/compaction/compaction";
 import { layerFacts, type LayerRow, type RequestView } from "../../shared/context/request-view";
 import {
     emptySummary,
@@ -209,7 +209,7 @@ import {
     summaryExtractionPrompt,
     summaryPlaceholder,
     type SummaryData,
-} from "@diy/compact/summary";
+} from "@diy/compaction/summary";
 import { renderSummarySection } from "./prompt-registry";
 import { assembleGlobals, systemOverBudget } from "./prompt-registry";
 import { readFileWindow, formatReadOutput, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";

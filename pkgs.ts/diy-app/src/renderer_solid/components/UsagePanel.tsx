@@ -54,7 +54,7 @@ import { copyFailMeta, copyOkMeta } from "../lib/notice-copy";
 import { compactNotice } from "../lib/notice-compact";
 import { useCompactPanel, CompactPanelContent } from "./CompactSessionPanel";
 import { UsageTable, usageTableMd, type UsageView } from "./UsageTable";
-import type { CompactEventRecord } from "@diy/compact/compaction";
+import type { CompactEventRecord } from "@diy/compaction/compaction";
 import { type DeliveryBoundary } from "../../shared/context/delivery-badge";
 
 // ─── 共用小件 ────────────────────────────────────────

@@ -1,7 +1,7 @@
 // index.ts — 工作台布局骨架的公开入口。
 //
 // 用法（renderer 装配入口）：
-//   import { mountWorkbench, registerPage } from '@diy/ui-workbench';
+//   import { mountWorkbench, registerPage } from '@diy/workbench-ui';
 //   registerPage(myPageView);                       // 每个页面插件各来一行
 //   await mountWorkbench(document.getElementById('app')!, window.bridge);
 

@@ -1,5 +1,5 @@
 // src/index.ts
-// 🎯 包入口（barrel）：`import { ... } from "@diy/compact"` 一次拿全。
+// 🎯 包入口（barrel）：`import { ... } from "@diy/compaction"` 一次拿全。
 export * from "./select-kept-boundary.js";
 export * from "./history-limit.js";
 export * from "./compact-config.js";

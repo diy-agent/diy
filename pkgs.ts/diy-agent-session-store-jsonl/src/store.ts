@@ -13,7 +13,7 @@
 
 import { appendFile, mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { parseMessage, type ChatMessage, type SessionStore } from '@diy/agent-session';
+import { parseMessage, type ChatMessage, type SessionStore } from '@diy/session';
 import { StoreError } from './errors.js';
 import {
     DEFAULT_MAX_BUCKET_BYTES,

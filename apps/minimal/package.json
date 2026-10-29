@@ -22,7 +22,7 @@
   "dependencies": {
     "@diy/chat-page": "*",
     "@diy/llm-provider": "*",
-    "@diy/ui-workbench": "*",
+    "@diy/workbench-ui": "*",
     "@diy/workbench": "*"
   },
   "devDependencies": {

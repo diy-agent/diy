@@ -260,7 +260,7 @@ describe('S5 压缩是注入策略', () => {
             clock: fakeClock(),
             compact: (messages) => {
                 seen.push([...messages]);
-                // 策略：只留最后一条（真实的窗口压缩归 @diy/compact）
+                // 策略：只留最后一条（真实的窗口压缩归 @diy/compaction）
                 return messages.slice(-1);
             },
         });

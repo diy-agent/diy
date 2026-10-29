@@ -3,7 +3,7 @@
 //
 // 为什么独立成文件、而不写进 `core/task.ts`：**构建硬约束**（`pit.zod-cli-meta-order` 同款）。
 //   `core/task.ts` 带 `TaskStateSchema`（zod）等 schema，被静态 import 进 `local-agent` 会把它
-//   提升成**先于 `@diy-agent/rpc` 的 cliArg 原型补丁求值**的共享 chunk —— 启动即
+//   提升成**先于 `@diy/rpc` 的 cliArg 原型补丁求值**的共享 chunk —— 启动即
 //   `TypeError: TaskStateSchema.cliArg is not a function`（本任务 lab 实测复现）。
 //   本文件只依赖 `core/state.getTask`（type-only 引 TaskState，不牵 zod）与 shared 纯函数，
 //   判据、文案、终态词表都还在任务域里，只是不把 schema 拖下水。

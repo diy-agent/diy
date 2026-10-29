@@ -20,7 +20,7 @@ import {
     utf8Bytes,
     type CompactEventRecord,
     type OpLike,
-} from "@diy/compact/compaction";
+} from "@diy/compaction/compaction";
 import { parseCutMarkers } from "@diy/context/format/cut-marker";
 
 // ─── 策略归一（只有 budget 一种算法）───

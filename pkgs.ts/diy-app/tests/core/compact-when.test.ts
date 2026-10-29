@@ -10,7 +10,7 @@ import {
     fmtTokens,
     windowRatio,
     type CompactWhenInput,
-} from "@diy/compact/compact-when";
+} from "@diy/compaction/compact-when";
 
 const base: CompactWhenInput = {
     limitTokens: 32_000, // 200k × 0.16

@@ -18,8 +18,8 @@
  */
 
 import { createMemo, createSignal, For, Show } from "solid-js";
-import type { CompactEventRecord } from "@diy/compact/compaction";
-import { mapCompactPointsToSteps } from "@diy/compact/compact-points";
+import type { CompactEventRecord } from "@diy/compaction/compaction";
+import { mapCompactPointsToSteps } from "@diy/compaction/compact-points";
 import {
     USAGE_FIELDS,
     aggregateUsage,

@@ -1,10 +1,10 @@
-// @diy/agent-session — diy 单会话内核：消息列表 + 一次 LLM 调用 + 流式增量
+// @diy/session — diy 单会话内核：消息列表 + 一次 LLM 调用 + 流式增量
 //
 // 边界一句话：**一个会话 = 一条消息线 + 一次 LLM 调用**。多成员投递归 @diy/room，
 // 任务状态 / 文件系统归宿主适配器 —— 所以本包 import 清单里绝不允许出现
 // 文件系统模块 / electron / 应用数据根 / 任务标识（##456 硬判据，意图测试 S7 静态扫）。
 //
-//   import { createSession, systemClock, type LlmPort } from '@diy/agent-session';
+//   import { createSession, systemClock, type LlmPort } from '@diy/session';
 //
 //   const llm: LlmPort = {
 //       async *chat(messages, { signal } = {}) {     // 适配器负责翻译自家 SDK 的流
@@ -19,7 +19,7 @@
 //
 // 可选注入（都不传 = 纯内存、真时间、不压缩）：
 //   clock   —— 假 Clock 让 `at` 确定
-//   compact —— 每轮调用前的压缩策略（保留边界 / 摘要归 @diy/compact）
+//   compact —— 每轮调用前的压缩策略（保留边界 / 摘要归 @diy/compaction）
 //   store   —— 快照落盘（jsonl / sqlite 由独立适配器包实现）
 //
 // LLM 形状 / 流式增量 / 边界的细节见 ./types.ts 与 ./session.ts 头注。

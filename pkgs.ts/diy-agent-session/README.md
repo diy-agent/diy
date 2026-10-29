@@ -1,4 +1,4 @@
-# @diy/agent-session
+# @diy/session
 
 diy **单会话内核**：消息列表 + 一次 LLM 调用 + 流式增量。
 
@@ -12,7 +12,7 @@ diy **单会话内核**：消息列表 + 一次 LLM 调用 + 流式增量。
 | `SessionStore` | `append / readFrom(seq) / readRange(at) / latestSeq()` | 纯内存 |
 
 ```ts
-import { createSession, type LlmPort } from '@diy/agent-session';
+import { createSession, type LlmPort } from '@diy/session';
 
 const llm: LlmPort = {
     async *chat(messages, { signal } = {}) {
@@ -46,7 +46,7 @@ interface SessionStore {
 
 - 每条消息有**会话内全局单调的 `seq`**（1 起，压缩/跨桶都不重置）——水位与分桶都按它对齐
 - 恢复历史：宿主 `readFrom(0)` 后传 `initialMessages`，本包续上 `lastSeq`（不重号）
-- 分桶 jsonl 适配器见 `@diy/agent-session-store-jsonl`（core 依然零 IO）
+- 分桶 jsonl 适配器见 `@diy/session-store-jsonl`（core 依然零 IO）
 
 ## 消息分类（判别键 `type`，6 种；设计定稿 `session-design.md` §二）
 

@@ -6,7 +6,7 @@ import {
     estimateTokensOf,
     normalizeHistoryLimit,
     selectCompactableRange,
-} from "@diy/compact/history-limit";
+} from "@diy/compaction/history-limit";
 
 const msg = (tokens: number, user = false) => ({ role: user ? "user" : "assistant", content: "x".repeat(tokens * 4) });
 

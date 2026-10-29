@@ -6,9 +6,9 @@ import {
     buildCompactExample,
     bytesToTokens,
     type ExampleMessage,
-} from "@diy/compact/compact-example";
-import { estimateTokensOf } from "@diy/compact/history-limit";
-import { RETAIN_RATIO, selectKeptBoundary, triggerTokensOf } from "@diy/compact/select-kept-boundary";
+} from "@diy/compaction/compact-example";
+import { estimateTokensOf } from "@diy/compaction/history-limit";
+import { RETAIN_RATIO, selectKeptBoundary, triggerTokensOf } from "@diy/compaction/select-kept-boundary";
 
 function m(id: string, bytes: number, kind: ExampleMessage["kind"] = "text"): ExampleMessage {
     return {

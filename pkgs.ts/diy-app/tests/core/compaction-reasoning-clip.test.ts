@@ -14,7 +14,7 @@
 //   ④ 只落投递层：块树 / ops 原文一字不动。
 
 import { describe, it, expect } from "vitest";
-import { DEFAULT_REASONING_CLIP, clipReasoningText, utf8Bytes, type ReasoningClipSpec } from "@diy/compact/compaction";
+import { DEFAULT_REASONING_CLIP, clipReasoningText, utf8Bytes, type ReasoningClipSpec } from "@diy/compaction/compaction";
 import { blocksToMessages, replay, type Op } from "../../src/main/services/local-blocks";
 import { parseCutMarkers } from "@diy/context/format/cut-marker";
 

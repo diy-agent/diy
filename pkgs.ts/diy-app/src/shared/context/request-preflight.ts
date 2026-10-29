@@ -12,7 +12,7 @@
 //
 // 口径：1 token ≈ 4 字节（与全仓同一个粗估口径 `estimateTokens`，无 tokenizer）。
 
-import { estimateTokens } from "@diy/compact/compaction";
+import { estimateTokens } from "@diy/compaction/compaction";
 
 /** 拿不到模型窗口时，装配层硬上限的兜底（1 MiB） */
 export const DEFAULT_ASSEMBLY_HARD_CAP_BYTES = 1024 * 1024;

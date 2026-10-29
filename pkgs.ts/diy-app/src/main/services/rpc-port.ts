@@ -21,9 +21,9 @@ import {
   type EnvelopeTransport,
   type ServerBinding,
   type StreamHandle,
-} from '@diy-agent/rpc';
-import { HttpServerBinding } from '@diy-agent/rpc/http';
-import { CliApp } from '@diy-agent/rpc/cli';
+} from '@diy/rpc';
+import { HttpServerBinding } from '@diy/rpc/http';
+import { CliApp } from '@diy/rpc/cli';
 import type { AppConfig } from '../core/app-config';
 import { apiDef } from './api-def';
 import { factsGetExitCode } from '../../shared/facts';
@@ -126,7 +126,7 @@ export class RpcPortService {
     bindApp: (binding: ServerBinding) => void,
     appConfig: AppConfig,
     preferredPort?: number,
-    rendererTransport?: import('@diy-agent/rpc').EnvelopeTransport,
+    rendererTransport?: import('@diy/rpc').EnvelopeTransport,
   ): Promise<void> {
     // 缺省首选端口由调用方（main）按 env 给定（见 runtime.ts::defaultPort）；
     // 这里的 18888 只是最后一道防御 —— 走到它说明调用方没给值，那按生产的门牌兜。
@@ -313,7 +313,7 @@ export class RpcPortService {
   }
 }
 
-/** 读完整请求体（/cli 端点用；@diy-agent/rpc/http 的 readBody 未导出，这里最小实现） */
+/** 读完整请求体（/cli 端点用；@diy/rpc/http 的 readBody 未导出，这里最小实现） */
 function readAllBody(stream: http2.ServerHttp2Stream): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];

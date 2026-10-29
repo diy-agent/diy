@@ -1,9 +1,9 @@
-# @diy-agent/ui（目录 `diy-ui`）— 声明式 UI 层
+# @diy/ui（目录 `diy-ui`）— 声明式 UI 层
 
-> 全仓契约见**仓库根 `AGENTS.md`**。npm 发布名 `@diy-agent/ui`（发布流程见根 `tool.publish`）；历史名 `diyui`。
+> 全仓契约见**仓库根 `AGENTS.md`**。npm 发布名 `@diy/ui`（发布流程见根 `tool.publish`）；历史名 `diyui`。
 >
 > ⚠️ 浏览器侧**绝不 import 根入口** —— 根入口 re-export 了 pi-tui（Node-only），打包器会把它拖进 bundle。
-> 安全入口 = `@diy-agent/ui/browser`（细粒度另有 `./signal` `./host` `./dom` `./dom-dsl` `./dom-gen`）。
+> 安全入口 = `@diy/ui/browser`（细粒度另有 `./signal` `./host` `./dom` `./dom-dsl` `./dom-gen`）。
 
 ## 正文在知识库，本节只留目录
 

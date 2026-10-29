@@ -41,7 +41,7 @@ facts:
       verifiedAt: '2026-10-23'
   ui.find#publish:
     value: |-
-      `tsconfig.build.json`（NodeNext + emit 到 `dist/`）· 分发脚本 `scripts/npm-publish.mjs`（仓根）；npm 名 `@diy-agent/ui`（目录名 `diy-ui`，历史名 `diyui`）
+      `tsconfig.build.json`（NodeNext + emit 到 `dist/`）· 分发脚本 `scripts/npm-publish.mjs`（仓根）；npm 名 `@diy/ui`（目录名 `diy-ui`，历史名 `diyui`）
     review: accepted
     lifecycle: active
     evidence:
@@ -59,7 +59,7 @@ facts:
       verifiedAt: '2026-10-23'
   ui.rule#browser-entry:
     value: |-
-      **浏览器侧只能走浏览器安全入口，绝不 import 根入口**：根 `@diy-agent/ui`（`src/index.ts`）re-export 了 `providers/pi-tui.js`（Node-only），浏览器打包器一 import 它就把 pi-tui 拖进 bundle。安全入口 = `./browser`（统一入口）或细粒度 `./signal` / `./host` / `./dom` / `./dom-dsl` / `./dom-gen`（`package.json::exports` 实测共 7 个键：根 + 这 6 个）。**禁止 deep-import `node_modules/@diy-agent/ui/...`**（包管理器一换就断）
+      **浏览器侧只能走浏览器安全入口，绝不 import 根入口**：根 `@diy/ui`（`src/index.ts`）re-export 了 `providers/pi-tui.js`（Node-only），浏览器打包器一 import 它就把 pi-tui 拖进 bundle。安全入口 = `./browser`（统一入口）或细粒度 `./signal` / `./host` / `./dom` / `./dom-dsl` / `./dom-gen`（`package.json::exports` 实测共 7 个键：根 + 这 6 个）。**禁止 deep-import `node_modules/@diy/ui/...`**（包管理器一换就断）
     review: accepted
     lifecycle: active
     evidence:

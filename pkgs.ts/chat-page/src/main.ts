@@ -1,11 +1,11 @@
 // main.ts — 页面插件的主进程侧：一条会话 + 一个假 LlmPort + `send` 方法。
 //
 // 第一刀刻意**不接真模型**：把「UI 骨架对不对」从「LLM 通不通」里隔离出来。
-// 会话本身是真的（@diy/agent-session）：发一条 user、收一条 assistant、消息线自己攒。
+// 会话本身是真的（@diy/session）：发一条 user、收一条 assistant、消息线自己攒。
 // 换真模型时只换 LlmPort，页面与外壳都不动 —— 现在就是这一步（##459）：
 // profile（apps/minimal）在 `config.llm` 里塞一个真 provider，本插件不传就退回假回复。
 
-import { createSession, type ChatMessage, type LlmPort } from "@diy/agent-session";
+import { createSession, type ChatMessage, type LlmPort } from "@diy/session";
 import type { PageContribution } from "@diy/workbench";
 import { ChatPageError } from "./errors.js";
 import type { SendResult, WireMessage } from "./shared.js";

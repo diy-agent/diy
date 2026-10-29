@@ -1,5 +1,5 @@
 {
-  "name": "@diy-agent/ui",
+  "name": "@diy/ui",
   "version": "0.2.0",
   "description": "diyui —— 纯 TS / 零框架的声明式 UI 层：Signal / Scope / Component / Cell / Scheduler + provider（pi-tui / DOM）",
   "license": "MIT",

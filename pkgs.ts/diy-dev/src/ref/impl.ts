@@ -9,7 +9,7 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { ServerBinding } from "@diy-agent/rpc";
+import type { ServerBinding } from "@diy/rpc";
 import { refApi, type RefEntry } from "./api";
 import * as store from "./store";
 import * as git from "./git";

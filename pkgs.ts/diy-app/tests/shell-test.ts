@@ -351,7 +351,7 @@ export class ShellTest {
 
   /**
    * 运行 --json 命令并解析；对「exit 0 但 stdout 为空」的偶发空响应重试（最多 2 次）。
-   * 原因：CLI 每命令是独立 tsx 进程，HttpClientBinding 首连 @diy-agent/rpc 偶发空响应（预存 flake）。
+   * 原因：CLI 每命令是独立 tsx 进程，HttpClientBinding 首连 @diy/rpc 偶发空响应（预存 flake）。
    * 空 stdout 在意图 JSON 命令里永远不该发生，故重试安全，不掩盖真实错误。
    */
   private async runJson(cmd: string): Promise<{ json: Record<string, unknown> }> {
