@@ -1,38 +1,38 @@
 {
-    "name": "@diy/workbench",
-    "version": "0.1.0",
-    "private": true,
-    "description": "工作台主进程外壳：窗口 + page:invoke 通道 + 插件 loader（不认识任何具体页面）",
-    "files": [
-        "src/"
-    ],
-    "type": "module",
-    "main": "./lib/index.js",
-    "types": "./lib/index.d.ts",
-    "exports": {
-        ".": {
-            "types": "./lib/index.d.ts",
-            "default": "./lib/index.js"
-        },
-        "./channels": {
-            "types": "./lib/channels.d.ts",
-            "default": "./lib/channels.js"
-        },
-        "./page": {
-            "types": "./lib/page.d.ts",
-            "default": "./lib/page.js"
-        }
+  "name": "@diy/workbench",
+  "version": "0.1.0",
+  "private": true,
+  "description": "工作台主进程外壳：窗口 + page:invoke 通道 + 插件 loader（不认识任何具体页面）",
+  "files": [
+    "src/"
+  ],
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./lib/index.js"
     },
-    "scripts": {
-        "build": "tsc -p tsconfig.build.json"
+    "./channels": {
+      "types": "./src/channels.ts",
+      "default": "./lib/channels.js"
     },
-    "dependencies": {},
-    "devDependencies": {
-        "@types/node": "^26.1.0",
-        "electron": "^43.0.0",
-        "oxfmt": "^0.57.0",
-        "oxlint": "^1.72.0",
-        "typescript": "^7.0.2",
-        "vitest": "^4.1.10"
+    "./page": {
+      "types": "./src/page.ts",
+      "default": "./lib/page.js"
     }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "electron": "^43.0.0",
+    "oxfmt": "^0.57.0",
+    "oxlint": "^1.72.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
 }
