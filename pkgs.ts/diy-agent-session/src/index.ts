@@ -28,8 +28,8 @@ export { SessionError } from './errors.js';
 export type { SessionErrorCode } from './errors.js';
 
 export {
-    MESSAGE_KINDS,
     MESSAGE_ROLES,
+    MESSAGE_TYPES,
     assertDelta,
     parseMessage,
     parseMessages,
@@ -46,7 +46,7 @@ export type {
     Clock,
     Compactor,
     LlmPort,
-    MessageKind,
+    MessageType,
     MessageRole,
     SessionDelta,
     SessionPeer,

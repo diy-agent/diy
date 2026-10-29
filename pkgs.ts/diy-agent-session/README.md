@@ -48,9 +48,9 @@ interface SessionStore {
 - 恢复历史：宿主 `readFrom(0)` 后传 `initialMessages`，本包续上 `lastSeq`（不重号）
 - 分桶 jsonl 适配器见 `@diy/agent-session-store-jsonl`（core 依然零 IO）
 
-## 消息分类（6 种 kind，设计定稿 `session-design.md` §二）
+## 消息分类（判别键 `type`，6 种；设计定稿 `session-design.md` §二）
 
-| kind               | 来源                     | 进 Room 主线？     |
+| `type`             | 来源                     | 进 Room 主线？     |
 | ------------------ | ------------------------ | ------------------ |
 | `human`            | 人说的话                 | ✅                 |
 | `agent-conclusion` | 一轮结束时的自然语言答复 | ✅                 |
@@ -59,8 +59,13 @@ interface SessionStore {
 | `tool-result`      | 工具结果                 | ❌                 |
 
 判据：正文在遇到 `tool-call` 时先 flush 成 `agent-trace`（说明这一轮还没结束），
-本轮最后剩下的一段字节才是 `agent-conclusion`。`kind` 不传时按 role 推导
+本轮最后剩下的一段字节才是 `agent-conclusion`。`type` 不传时按 role 推导
 （user→human / assistant→agent-conclusion / tool→tool-result）。
+
+**字段归属**（规范 `rule.code#discriminated-union`）：与 `type` 同级只放公共字段
+（`seq` / `role` / `type` / `text?` / `mentions?` / `at?` / `data?`），分支私有的载荷一律进 `data`
+—— 例如 tool-call ⇒ `message.data.tool = { name, args, id }`。`data` 是**能力槽位**：本包只保证
+「装得下、原样吐出」（写入时校验可 JSON 序列化），**不解释里面的 schema**。
 
 ## 边界
 

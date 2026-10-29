@@ -53,7 +53,7 @@
       "path": "pkgs.ts/chat-page"
     },
     {
-      "path": "pkgs.ts/app-minimal"
+      "path": "apps/minimal"
     },
     {
       "path": "pkgs.ts/diy-app"

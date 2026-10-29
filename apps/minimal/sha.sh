@@ -6,7 +6,8 @@
 # ── 执行链 ──────────────────────────────────────
 # sha.sh → source ../../sha.common.sh → source vendor/sha/sha.bash → sha "$@"
 #
-# 产物按变体分根：build/<variant>/{main,preload,renderer,home}
+# 产物按变体分根：build/<variant>/{main,preload,renderer}
+# 数据根在**仓库根** build/<variant>/home（与 pkgs.ts 各包同一约定）
 #
 
 # shellcheck disable=SC2329,SC2317,SC2034
@@ -35,11 +36,11 @@ _ensure_electron() { run node ../../scripts/ensure-electron.mjs --quiet; }
 build-deps() {
   local pkg
   for pkg in workbench ui-workbench chat-page; do
-    ( cd "$SCRIPT_DIR/../$pkg" && ./sha.sh build )
+    ( cd "$SCRIPT_DIR/../../pkgs.ts/$pkg" && ./sha.sh build )
   done
 }
 
-# 本包 build = 四包 lib（tsc）+ 三个产物（esbuild）
+# 本 app build = 四包 lib（tsc）+ 三个产物（esbuild）
 build() {
   run npx tsc -p tsconfig.build.json
   build-deps
@@ -51,26 +52,26 @@ build() {
 build-main() {
   local d; d="$(_build_dir)"
   # @diy/* 保持外部：运行时按包名解析（真插件边界，不把插件打成一个巨型 bundle）
-  run npx esbuild src/main.ts --bundle --platform=node --format=esm --target=node22 \
+  run npx esbuild main.ts --bundle --platform=node --format=esm --target=node22 \
     --external:electron "--external:@diy/*" --outfile="$d/main/index.mjs"
 }
 
 build-preload() {
   local d; d="$(_build_dir)"
   # sandbox 下的 preload 只能是 CJS；只外置 electron
-  run npx esbuild src/preload.ts --bundle --platform=node --format=cjs --target=node22 \
+  run npx esbuild preload.ts --bundle --platform=node --format=cjs --target=node22 \
     --external:electron --outfile="$d/preload/index.cjs"
 }
 
 build-renderer() {
   local d; d="$(_build_dir)"
-  run npx esbuild src/renderer.ts --bundle --platform=browser --format=iife --target=es2022 \
+  run npx esbuild renderer.ts --bundle --platform=browser --format=iife --target=es2022 \
     --outfile="$d/renderer/index.js"
   run mkdir -p "$d/renderer"
-  run cp src/index.html "$d/renderer/index.html"
+  run cp index.html "$d/renderer/index.html"
 }
 
-# 开发实例：构建后直接起（无 HMR —— 第一刀只验链路）
+# 开发实例：构建后直接起（无 HMR —— 这一刀只验链路）。lab 变体下 main.ts 自带 CDP 9222。
 lab() {
   _ensure_electron
   build
@@ -90,9 +91,9 @@ smoke() {
 
 build-lib() { run npx tsc -p tsconfig.build.json; }
 typecheck() { run npx tsc --noEmit; }
-lint() { run npx oxlint src/ tests/ scripts/; }
-lint-fix() { run npx oxlint --fix src/ tests/ scripts/; }
-fmt() { run npx oxfmt --check src/ tests/ scripts/; }
-fmt-fix() { run npx oxfmt --write src/ tests/ scripts/; }
+lint() { run npx oxlint .; }
+lint-fix() { run npx oxlint --fix .; }
+fmt() { run npx oxfmt --check .; }
+fmt-fix() { run npx oxfmt --write .; }
 
 sha "$@"

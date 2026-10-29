@@ -4,14 +4,15 @@
   "private": true,
   "description": "最小工作台装配：外壳 + 布局骨架 + 页面插件（第一刀：假 LlmPort，只验 UI 链路）",
   "files": [
-    "src/"
+    "*.ts",
+    "*.html"
   ],
   "type": "module",
   "main": "./lib/index.js",
-  "types": "./src/index.ts",
+  "types": "./index.ts",
   "exports": {
     ".": {
-      "types": "./src/index.ts",
+      "types": "./index.ts",
       "default": "./lib/index.js"
     }
   },

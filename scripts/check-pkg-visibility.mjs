@@ -20,6 +20,8 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PKGS_DIR = join(ROOT, "pkgs.ts");
+// apps/* 也是 workspace 包（app profile，##458）：可见性 / 类型入口判据同样适用
+const PKG_ROOTS = [PKGS_DIR, join(ROOT, "apps")];
 
 /** 对外发布白名单（**唯一真源**；加一个包 = 改这里 + 去掉它的 private） */
 const PUBLIC_PACKAGES = new Set(["@diy-agent/rpc", "@diy-agent/ui"]);
@@ -31,10 +33,13 @@ function collect() {
     const out = [];
     const rootPkg = join(ROOT, "package.json");
     if (existsSync(rootPkg)) out.push({ dir: ".", file: rootPkg });
-    for (const name of readdirSync(PKGS_DIR, { withFileTypes: true })) {
-        if (!name.isDirectory()) continue;
-        const file = join(PKGS_DIR, name.name, "package.json");
-        if (existsSync(file)) out.push({ dir: name.name, file });
+    for (const root of PKG_ROOTS) {
+        if (!existsSync(root)) continue;
+        for (const name of readdirSync(root, { withFileTypes: true })) {
+            if (!name.isDirectory()) continue;
+            const file = join(root, name.name, "package.json");
+            if (existsSync(file)) out.push({ dir: join(root, name.name).slice(ROOT.length + 1), file });
+        }
     }
     return out;
 }
@@ -110,7 +115,10 @@ if (listOnly) {
 // 判据：`types` 与 `exports.*.types` 一律指 `./src/…`（tsc 直接读 TS 源，不依赖产物）；
 //       `main` / `exports.*.default` 保持指 `./lib/…`（运行时 Node 加载）。
 {
-    for (const file of readdirSync(PKGS_DIR).map((d) => join(PKGS_DIR, d, "package.json")).filter(existsSync)) {
+    const pkgJsons = PKG_ROOTS.filter(existsSync).flatMap((root) =>
+        readdirSync(root).map((d) => join(root, d, "package.json")).filter(existsSync),
+    );
+    for (const file of pkgJsons) {
         let pkg;
         try { pkg = JSON.parse(readFileSync(file, "utf8")); } catch { continue; }
         const bad = [];

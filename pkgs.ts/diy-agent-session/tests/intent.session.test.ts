@@ -118,7 +118,7 @@ describe('S1 流式对话', () => {
     });
 });
 
-describe('S1b 消息分类（6 种 kind）', () => {
+describe('S1b 消息分类（6 种 type）', () => {
     it('遇 tool-call 把缓冲 flush 成 trace；最后一段才是 agent-conclusion', async () => {
         const llm = scriptedLlm([
             [
@@ -133,21 +133,46 @@ describe('S1b 消息分类（6 种 kind）', () => {
 
         await collect(session.send('看下 a.ts'));
 
-        expect(session.messages.map((message) => [message.role, message.kind, message.text])).toEqual([
+        expect(session.messages.map((message) => [message.role, message.type, message.text])).toEqual([
             ['user', 'human', '看下 a.ts'],
             ['assistant', 'agent-trace', '我先看看'],
             ['assistant', 'tool-call', undefined],
             ['tool', 'tool-result', 'ok'],
             ['assistant', 'agent-conclusion', '结论：可以合并'],
         ]);
-        expect(session.messages[2].tool).toEqual({ name: 'read', args: { path: 'a.ts' }, id: 't1' });
+        // 分支私有载荷进 data（判别键同级只放公共字段）
+        expect((session.messages[2].data as { tool: unknown }).tool).toEqual({
+            name: 'read',
+            args: { path: 'a.ts' },
+            id: 't1',
+        });
     });
 
-    it('kind 不传时按 role 推导；非法 kind 报错；agent-notice 可直接追加', () => {
-        expect(parseMessage({ role: 'assistant', text: 'x' }).kind).toBe('agent-conclusion');
-        expect(() => parseMessage({ role: 'assistant', text: 'x', kind: 'thought' })).toThrow(/未知消息分类/);
-        const notice = parseMessage({ role: 'assistant', kind: 'agent-notice', text: '我开工了' });
-        expect(notice.kind).toBe('agent-notice');
+    it('type 不传时按 role 推导；非法 type 报错；agent-notice 可直接追加', () => {
+        expect(parseMessage({ role: 'assistant', text: 'x' }).type).toBe('agent-conclusion');
+        expect(() => parseMessage({ role: 'assistant', text: 'x', type: 'thought' })).toThrow(/未知消息分类/);
+        const notice = parseMessage({ role: 'assistant', type: 'agent-notice', text: '我开工了' });
+        expect(notice.type).toBe('agent-notice');
+    });
+
+    it('data 是能力槽位：原样装下、原样吐出，不解释 schema', () => {
+        const payload = { type: 'todo-list', data: { items: [{ type: 'todo', data: { text: '写测试' } }] } };
+        const message = parseMessage({ role: 'assistant', type: 'agent-notice', text: '计划如上', data: payload });
+        expect(message.data).toEqual(payload);
+        // 非对象也照收（Session 不解释）
+        expect(parseMessage({ role: 'assistant', text: 'x', data: [1, 2, 3] }).data).toEqual([1, 2, 3]);
+        // 装不下（不可 JSON 序列化）就在边界上失败，不静默丢
+        expect(() => parseMessage({ role: 'assistant', text: 'x', data: { fn: () => 1 } })).toThrow(/不可 JSON 序列化/);
+        const circular: Record<string, unknown> = {};
+        circular['self'] = circular;
+        expect(() => parseMessage({ role: 'assistant', text: 'x', data: circular })).toThrow(/不可 JSON 序列化/);
+    });
+
+    it('tool-call 分支的 data.tool 形状错了要报错', () => {
+        expect(() => parseMessage({ role: 'assistant', type: 'tool-call' })).toThrow(/session\/invalid-message/);
+        expect(() =>
+            parseMessage({ role: 'assistant', type: 'tool-call', data: { tool: { name: 'read', id: 't1' } } }),
+        ).toThrow(/tool.args 缺失/);
     });
 });
 

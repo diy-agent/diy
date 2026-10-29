@@ -354,9 +354,9 @@ function serialize(message: ChatMessage): Record<string, unknown> {
     return {
         seq: message.seq,
         role: message.role,
-        ...(message.kind === undefined ? {} : { kind: message.kind }),
+        ...(message.type === undefined ? {} : { type: message.type }),
         ...(message.text === undefined ? {} : { text: message.text }),
-        ...(message.tool === undefined ? {} : { tool: message.tool }),
+        ...(message.data === undefined ? {} : { data: message.data }),
         ...(message.mentions === undefined ? {} : { mentions: message.mentions }),
         ...(message.at === undefined ? {} : { at: message.at }),
     };

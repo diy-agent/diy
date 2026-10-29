@@ -5,7 +5,7 @@
         "moduleResolution": "NodeNext",
         "target": "ES2022",
         "lib": ["ES2022", "DOM", "DOM.Iterable"],
-        "rootDir": "src",
+        "rootDir": ".",
         "outDir": "lib",
         "noEmit": false,
         "composite": false,
@@ -13,6 +13,6 @@
         "declaration": true,
         "sourceMap": true
     },
-    "include": ["src/**/*"],
-    "exclude": ["tests/**/*"]
+    "include": ["index.ts", "title.ts", "main.ts", "preload.ts", "renderer.ts"],
+    "exclude": ["tests/**/*", "scripts/**/*", "vitest.config.ts"]
 }

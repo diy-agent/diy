@@ -2,7 +2,8 @@
   "name": "diy-monorepo",
   "private": true,
   "workspaces": [
-    "pkgs.ts/*"
+    "pkgs.ts/*",
+    "apps/*"
   ],
   "devDependencies": {
     "js-yaml": "^5.2.1",

@@ -46,10 +46,12 @@ const RESOLVE_EXT = [...SOURCE_EXT, '/index.ts', '/index.tsx', '/index.mts', '/i
 // ── 工作区包表（名字 → 目录 / exports 映射）──────────────────────────────────
 const pkgByName = new Map();
 const pkgDirs = [];
-if (existsSync(path.join(ROOT, 'pkgs.ts'))) {
-  for (const e of readdirSync(path.join(ROOT, 'pkgs.ts'), { withFileTypes: true })) {
+// workspace 包表：pkgs.ts/*（能力包）+ apps/*（app profile，源码摊在目录根，##458）
+for (const root of ['pkgs.ts', 'apps']) {
+  if (!existsSync(path.join(ROOT, root))) continue;
+  for (const e of readdirSync(path.join(ROOT, root), { withFileTypes: true })) {
     if (!e.isDirectory()) continue;
-    const dir = `pkgs.ts/${e.name}`;
+    const dir = `${root}/${e.name}`;
     const manifestPath = path.join(ROOT, dir, 'package.json');
     if (!existsSync(manifestPath)) continue;
     let manifest;

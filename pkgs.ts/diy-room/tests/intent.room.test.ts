@@ -334,8 +334,8 @@ describe('R6++ 主线只收结论（正文副本）', () => {
         expect(events.filter((event) => event.kind === 'response').map((event) => event.content)).toEqual([
             '结论：没问题',
         ]);
-        // 二级日志里 5 种 kind 齐全
-        expect(session.messages.map((message) => message.kind)).toEqual([
+        // 二级日志里 5 种 type 齐全
+        expect(session.messages.map((message) => message.type)).toEqual([
             'human',
             'agent-trace',
             'tool-call',

@@ -5,7 +5,7 @@
 
 import { mountWorkbench, registerPage, type WorkbenchGateway } from "@diy/ui-workbench";
 import { chatPageView } from "@diy/chat-page/renderer";
-import { ASSEMBLY } from "./index.js";
+import { TITLE } from "./title.js";
 
 declare global {
     interface Window {
@@ -19,7 +19,7 @@ async function main(): Promise<void> {
     const gateway = window.workbench;
     if (!gateway) throw new Error("preload 桥没注入 window.workbench");
     registerPage(chatPageView);
-    await mountWorkbench(host, gateway, { title: ASSEMBLY.title });
+    await mountWorkbench(host, gateway, { title: TITLE });
 }
 
 void main();

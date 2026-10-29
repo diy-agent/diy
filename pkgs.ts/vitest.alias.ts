@@ -8,37 +8,44 @@
 // 用法（每个会 import 能力包的 vitest 配置里）：
 //   import { workspaceAliases } from "../vitest.alias";
 //   resolve: { alias: [...workspaceAliases] }
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const PKGS = resolve(fileURLToPath(new URL(".", import.meta.url)));
+const REPO = resolve(PKGS, "..");
 
-/** 包名 → 仓内目录（新增能力包 = 这里加一行） */
-const PKG_DIRS: Record<string, string> = {
-    "@diy/agent-session": "diy-agent-session",
-    "@diy/agent-session-store-jsonl": "diy-agent-session-store-jsonl",
-    "@diy/compact": "diy-compact",
-    "@diy/context": "diy-context",
-    "@diy/facts": "diy-facts",
-    "@diy/flow": "diy-flow",
-    "@diy/persistence": "diy-persistence",
-    "@diy/room": "diy-room",
-    "@diy/talk": "diy-talk",
-    "@diy/template": "diy-template",
-    "@diy/ui-kit": "diy-ui-kit",
-    "@diy-agent/rpc": "diy-rpc",
-    "@diy-agent/ui": "diy-ui",
-    "@diy-agent/workbench-plugin": "workbench-plugin",
-    "@diy/workbench": "workbench",
-    "@diy/ui-workbench": "ui-workbench",
-    "@diy/chat-page": "chat-page",
-    "@diy/app-minimal": "app-minimal",
+/**
+ * 包名 → 目录与**类型入口**（新增能力包 = 这里加一行）。
+ * 路径相对仓根：`pkgs.ts/*` 的源码在 `src/`；`apps/*` 是 profile（摊在目录根，##458）。
+ */
+const LOCATIONS: Record<string, { dir: string; entry: string }> = {
+    "@diy/agent-session": { dir: "pkgs.ts/diy-agent-session", entry: "src/index.ts" },
+    "@diy/agent-session-store-jsonl": { dir: "pkgs.ts/diy-agent-session-store-jsonl", entry: "src/index.ts" },
+    "@diy/compact": { dir: "pkgs.ts/diy-compact", entry: "src/index.ts" },
+    "@diy/context": { dir: "pkgs.ts/diy-context", entry: "src/index.ts" },
+    "@diy/facts": { dir: "pkgs.ts/diy-facts", entry: "src/index.ts" },
+    "@diy/flow": { dir: "pkgs.ts/diy-flow", entry: "src/index.ts" },
+    "@diy/persistence": { dir: "pkgs.ts/diy-persistence", entry: "src/index.ts" },
+    "@diy/room": { dir: "pkgs.ts/diy-room", entry: "src/index.ts" },
+    "@diy/talk": { dir: "pkgs.ts/diy-talk", entry: "src/index.ts" },
+    "@diy/template": { dir: "pkgs.ts/diy-template", entry: "src/index.ts" },
+    "@diy/ui-kit": { dir: "pkgs.ts/diy-ui-kit", entry: "src/index.ts" },
+    "@diy-agent/rpc": { dir: "pkgs.ts/diy-rpc", entry: "src/index.ts" },
+    "@diy-agent/ui": { dir: "pkgs.ts/diy-ui", entry: "src/index.ts" },
+    "@diy-agent/workbench-plugin": { dir: "pkgs.ts/workbench-plugin", entry: "src/index.ts" },
+    "@diy/workbench": { dir: "pkgs.ts/workbench", entry: "src/index.ts" },
+    "@diy/ui-workbench": { dir: "pkgs.ts/ui-workbench", entry: "src/index.ts" },
+    "@diy/chat-page": { dir: "pkgs.ts/chat-page", entry: "src/index.ts" },
+    "@diy/app-minimal": { dir: "apps/minimal", entry: "index.ts" },
 };
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** 裸包名与子路径都指回 src（子路径 `$1` 不带扩展名，由 vite 按 extensions 补 .ts） */
-export const workspaceAliases = Object.entries(PKG_DIRS).flatMap(([name, dir]) => [
-    { find: new RegExp(`^${esc(name)}$`), replacement: resolve(PKGS, dir, "src/index.ts") },
-    { find: new RegExp(`^${esc(name)}/(.*)$`), replacement: `${resolve(PKGS, dir, "src")}/$1` },
-]);
+/** 裸包名与子路径都指回源码（子路径 `$1` 不带扩展名，由 vite 按 extensions 补 .ts） */
+export const workspaceAliases = Object.entries(LOCATIONS).flatMap(([name, { dir, entry }]) => {
+    const abs = resolve(REPO, dir);
+    return [
+        { find: new RegExp(`^${esc(name)}$`), replacement: resolve(abs, entry) },
+        { find: new RegExp(`^${esc(name)}/(.*)$`), replacement: `${resolve(abs, dirname(entry))}/$1` },
+    ];
+});

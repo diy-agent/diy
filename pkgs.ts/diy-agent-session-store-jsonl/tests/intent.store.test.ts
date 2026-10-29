@@ -38,7 +38,7 @@ let clock = 0;
 /** 一条消息（带 seq；内容可控大小） */
 function message(seq: number, content: string): ChatMessage {
     clock += 1;
-    return { seq, role: 'user', kind: 'human', text: content, at: T0 + clock * 1000 };
+    return { seq, role: 'user', type: 'human', text: content, at: T0 + clock * 1000 };
 }
 
 async function bucketFiles(target = dir): Promise<string[]> {

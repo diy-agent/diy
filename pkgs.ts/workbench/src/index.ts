@@ -3,8 +3,9 @@
 // 用法（宿主装配入口）：
 //   import { app } from 'electron';
 //   import { createWorkbench } from '@diy/workbench';
+//   import * as myPage from '@scope/my-page/main';   // ← 直接 import：tsc 检查包存在
 //   const wb = await createWorkbench({
-//       plugins: [{ id: 'my-page', name: '@scope/my-page/main' }],
+//       plugins: [{ id: 'my-page', module: myPage }],
 //       preloadFile: '/abs/preload/index.cjs',
 //       rendererFile: '/abs/renderer/index.html',
 //   });
@@ -15,14 +16,14 @@
 
 import { app, BrowserWindow, ipcMain } from "electron";
 import { WorkbenchError } from "./errors.js";
-import { loadPages, type ModuleLoader, type PluginEntry } from "./loader.js";
+import { loadPages, type PluginEntry } from "./loader.js";
 import type { PageContribution, PageInfo } from "./page.js";
 import { PAGE_INVOKE_CHANNEL, PAGE_LIST_CHANNEL, type PageInvokeRequest } from "./channels.js";
 
 export { WorkbenchError } from "./errors.js";
 export { orderPlugins, loadPages } from "./loader.js";
 export { PAGE_INVOKE_CHANNEL, PAGE_LIST_CHANNEL } from "./channels.js";
-export type { ModuleLoader, PluginEntry } from "./loader.js";
+export type { PluginEntry } from "./loader.js";
 export type { PageContribution, PageInfo, PageMethod } from "./page.js";
 export type { PageInvokeRequest, WorkbenchBridge } from "./channels.js";
 
@@ -37,8 +38,6 @@ export interface CreateWorkbenchOptions {
     readonly rendererFile: string;
     readonly width?: number;
     readonly height?: number;
-    /** 可注入的模块加载器（单测 / 特殊宿主用） */
-    readonly load?: ModuleLoader;
 }
 
 /** 外壳句柄：拿页面清单、直接调方法（测试 / 无窗口场景），以及释放 */
@@ -50,7 +49,7 @@ export interface Workbench {
 }
 
 export async function createWorkbench(options: CreateWorkbenchOptions): Promise<Workbench> {
-    const contributions = await loadPages(options.plugins, options.load);
+    const contributions = await loadPages(options.plugins);
     const byId = new Map<string, PageContribution>(contributions.map((page) => [page.id, page]));
 
     const listPages = (): PageInfo[] => contributions.map(({ id, title }) => ({ id, title }));

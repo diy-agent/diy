@@ -148,7 +148,7 @@ export function createSession(options: CreateSessionOptions): AgentSession {
                 let outputTokens = 0;
                 const flushTrace = (): void => {
                     if (buffer === '') return;
-                    appendMessage({ role: 'assistant', kind: 'agent-trace', text: buffer });
+                    appendMessage({ role: 'assistant', type: 'agent-trace', text: buffer });
                     buffer = '';
                 };
                 try {
@@ -163,12 +163,13 @@ export function createSession(options: CreateSessionOptions): AgentSession {
                             toolCalls += 1;
                             appendMessage({
                                 role: 'assistant',
-                                kind: 'tool-call',
-                                tool: { name: delta.name, args: toolArgsFromInput(delta.input), id: delta.id },
+                                type: 'tool-call',
+                                // 分支私有载荷进 data（判别键同级只放公共字段）
+                                data: { tool: { name: delta.name, args: toolArgsFromInput(delta.input), id: delta.id } },
                             });
                             yield delta;
                         } else if (delta.type === 'tool-result') {
-                            appendMessage({ role: 'tool', kind: 'tool-result', text: delta.content });
+                            appendMessage({ role: 'tool', type: 'tool-result', text: delta.content });
                             yield delta;
                         } else if (delta.type === 'usage') {
                             inputTokens += delta.inputTokens;
@@ -188,7 +189,7 @@ export function createSession(options: CreateSessionOptions): AgentSession {
                 // ④ 收尾：正常结束剩下的是结论；被取消且中间调过工具 ⇒ 只能算 trace
                 if (buffer !== '') {
                     if (aborted && toolCalls > 0) flushTrace();
-                    else appendMessage({ role: 'assistant', kind: 'agent-conclusion', text: buffer });
+                    else appendMessage({ role: 'assistant', type: 'agent-conclusion', text: buffer });
                 }
 
                 // ⑤ 记账 + 落盘

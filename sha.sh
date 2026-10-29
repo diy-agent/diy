@@ -22,7 +22,7 @@ cd "$ROOT_DIR"
 source sha.common.sh
 
 # _workspaces=(pkgs/*/)
-_workspaces=(pkgs.ts/*/)
+_workspaces=(pkgs.ts/*/ apps/*/)
 _vendors=(vendor/*/)
 
 ####################################################################################
@@ -111,7 +111,7 @@ _sync_uptodate() {
     local stamp="node_modules/.diy-sync.stamp"
     [[ -f "$stamp" ]] || return 1
     local f ws
-    for f in package.json package-lock.json pkgs.ts/*/package.json; do
+    for f in package.json package-lock.json pkgs.ts/*/package.json apps/*/package.json; do
         [[ -e "$f" ]] || continue
         # stamp 必须比每个 manifest 都新（`-nt` = 严格更新；同秒也判「不新鲜」，保守）
         [[ "$stamp" -nt "$f" ]] || return 1
@@ -119,7 +119,7 @@ _sync_uptodate() {
     # workspace 软链齐全（包改名 / node_modules 被部分清掉时这里会漏，交给全量）
     # 名字用 sed 直接抠（不起 node：13 个包 × node 启动 ~60ms 就吃掉了整个预算）
     local name
-    for ws in pkgs.ts/*/; do
+    for ws in pkgs.ts/*/ apps/*/; do
         [[ -f "$ws/package.json" ]] || continue
         name=$(sed -n 's/^[[:space:]]*"name":[[:space:]]*"\([^"]*\)".*/\1/p' "$ws/package.json" | head -1)
         [[ -n "$name" ]] || return 1
@@ -321,7 +321,7 @@ _check_full() {
 # 全量检查的本体（不含 ensure-sync：给已经做过前置检查的调用方复用，避免重复付 0.5~0.9s）
 _check_full_body() {
   run npx tsc -b tsconfig.all.json --noEmit
-  run npx oxlint pkgs.ts/
+  run npx oxlint pkgs.ts/ apps/
   run npx tsc --noEmit -p pkgs.ts/diy-rpc/tsconfig.browser.json
   # 产物护栏：TS 包源码目录旁不得出现编译产物（实现见 scripts/check-no-emit.sh）
   run bash scripts/check-no-emit.sh
@@ -355,8 +355,8 @@ _check_full_body() {
 }
 # 全仓唯一自动修复入口：格式化 + lint 可修项，能修的全修
 fix() {
-  run npx oxfmt --write pkgs.ts/
-  run npx oxlint --fix pkgs.ts/
+  run npx oxfmt --write pkgs.ts/ apps/
+  run npx oxlint --fix pkgs.ts/ apps/
 }
 # 全部测试：各包 test 子命令（diy-app 含意图测试，起隔离 Electron，最慢放最后）
 #
@@ -427,13 +427,14 @@ vendor.update() {  run git submodule update --init --recursive --remote --merge;
 # 顺序 = 依赖拓扑：@diy/template → @diy/context → @diy/compact；@diy/talk → @diy/flow
 #（各包 tsc 要靠被依赖包的 lib/*.d.ts 做类型解析，故不能乱序、也不能并行）。
 build-pkgs() {
-    # workbench / ui-workbench / chat-page / app-minimal：插件化体系的第一个活样本（##457）；
-    # 顺序 = 被依赖方在前（chat-page 依赖 agent-session，app-minimal 依赖前三者）。
-    local _pkg_order=(diy-template diy-talk diy-context diy-compact diy-flow diy-facts diy-persistence diy-rpc diy-ui workbench-plugin diy-agent-session diy-agent-session-store-jsonl diy-room workbench ui-workbench chat-page app-minimal)
+    # workbench / ui-workbench / chat-page：插件化体系的第一个活样本（##457）；
+    # 顺序 = 被依赖方在前（chat-page 依赖 agent-session）。
+    local _pkg_order=(diy-template diy-talk diy-context diy-compact diy-flow diy-facts diy-persistence diy-rpc diy-ui workbench-plugin diy-agent-session diy-agent-session-store-jsonl diy-room workbench ui-workbench chat-page)
     for _pkg in "${_pkg_order[@]}"; do
         echo "${inverse_surface}info: workspace: build 'pkgs.ts/${_pkg}'${reset}"
         ( cd "pkgs.ts/${_pkg}" && ./sha.sh build )
     done
+    # profile（apps/*）**不进** build-pkgs：它们是产物入口不是能力包，按需各自 ./sha.sh build
 }
 
 build() {
@@ -483,7 +484,33 @@ github-actions-cicd()    {
 }
 
 # lab：HMR 开发实例（人看效果 / agent 实验都用它），独占 build/lab/**，与 test 互不干扰。
-lab()     {  ensure-sync; pkgs.ts/diy-app/sha.sh lab; }
+# lab [--app <name>]：缺省起 diy-app（行为不变）；`--app minimal` 起 apps/minimal（##458）
+#   ./sha.sh lab                  → pkgs.ts/diy-app/sha.sh lab
+#   ./sha.sh lab --app minimal    → apps/minimal/sha.sh lab（lab 变体下拉 CDP 9222）
+lab()     {
+    local app_name="diy-app"
+    while (($#)); do
+        case "$1" in
+            --app) [[ -n "${2:-}" ]] || { echo "${error}用法：./sha.sh lab --app <name>（可用：diy-app $(_apps_list)）${reset}" >&2; exit 2; }
+                   app_name="$2"; shift 2 ;;
+            --app=*) app_name="${1#--app=}"; shift ;;
+            *) break ;;
+        esac
+    done
+    ensure-sync
+    if [[ "$app_name" == "diy-app" ]]; then
+        pkgs.ts/diy-app/sha.sh lab "$@"
+        exit $?
+    fi
+    if [[ -x "apps/$app_name/sha.sh" ]]; then
+        "apps/$app_name/sha.sh" lab "$@"
+        exit $?
+    fi
+    echo "${error}✗ 没有这个 app：${app_name}（可用：diy-app $(_apps_list)）${reset}" >&2
+    exit 2
+}
+# apps/ 下可起的 app 名（给 --app 的报错与提示用）
+_apps_list() { for d in apps/*/; do [[ -f "$d/sha.sh" ]] && basename "$d"; done | tr '\n' ' '; }
 # preview：编译后运行（无 watch）的稳定实例 —— 长会话 / 人要持续对话时用它，改码不打断。
 preview() {  ensure-sync; DIY_VARIANT=preview pkgs.ts/diy-app/sha.sh preview "$@"; }
 

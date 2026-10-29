@@ -10,7 +10,7 @@
 export type MessageRole = 'system' | 'user' | 'assistant' | 'tool';
 
 /**
- * 消息的**语义分类**（设计定稿 `session-design.md` §二，6 种）：
+ * 消息的**语义分类**（判别键 `type`，设计定稿 `session-design.md` §二，6 种）：
  *   human              —— 人说的
  *   agent-conclusion   —— 一轮结束时的自然语言答复（进 Room 主线的那个）
  *   agent-notice       —— agent 主动播报（room_say 类工具）
@@ -21,10 +21,16 @@ export type MessageRole = 'system' | 'user' | 'assistant' | 'tool';
  * 只有 human + agent-conclusion + agent-notice 会进 @diy/room 的主线（`publicLog`），
  * 其余（trace / tool）只在会话日志里。
  * 判据：有 tool-call ⇒ 这一轮还没结束，之前的文字是 trace；本轮最后一段文字才是 conclusion。
+ *
+ * 判别键按 diy 规范（`knowledge/facts/rule.yaml` rule.code#discriminated-union）用 `type`：
+ * 与 `type` 同级的字段 = 所有分支共有；分支私有的载荷一律进 `data`。
  */
-export type MessageKind = 'human' | 'agent-conclusion' | 'agent-notice' | 'agent-trace' | 'tool-call' | 'tool-result';
+export type MessageType = 'human' | 'agent-conclusion' | 'agent-notice' | 'agent-trace' | 'tool-call' | 'tool-result';
 
-/** 工具调用（kind=tool-call 消息的内容） */
+/**
+ * 工具调用 —— **tool-call 消息的私有载荷**，落在 `message.data.tool`（`{ type: 'tool-call', data: { tool } }`）。
+ * Session 产出它时按这个形状写；`data` 其余内容本包不解释。
+ */
 export interface ChatToolCall {
     readonly name: string;
     /** 参数（宿主原样给的 JSON 值） */
@@ -41,28 +47,35 @@ export interface ChatMessage {
     readonly seq?: number;
     readonly role: MessageRole;
     /**
-     * 语义分类。缺省按 role 推导（user→human / assistant→agent-conclusion / tool→tool-result）；
+     * 语义分类（判别键）。缺省按 role 推导（user→human / assistant→agent-conclusion / tool→tool-result）；
      * `system` 消息没有分类（它不是对话内容）。
      */
-    readonly kind?: MessageKind;
+    readonly type?: MessageType;
     /** 正文（tool-call 消息没有正文） */
     readonly text?: string;
-    /** kind=tool-call 的工具调用 */
-    readonly tool?: ChatToolCall;
     /** 提到了谁（Room 用；Session 原样保存，不解释） */
     readonly mentions?: readonly string[];
     /** 写入时刻（毫秒）；调用方不传则由 session 用 Clock 补 */
     readonly at?: number;
+    /**
+     * **结构化能力槽位**：分支私有载荷都放这里（如 `tool-call` ⇒ `{ tool }`）。
+     *
+     * Session 只保证「装得下、原样吐出」：写入时校验它可 JSON 序列化（能落盘、能跨进程），
+     * **不解释里面的 schema** —— 怎么理解 / 渲染是上层策略（UI、Room、压缩策略各自决定）。
+     * 嵌套同构：`data` 里的子对象也可以再是 `{ type, data }`，本包递归不管。
+     */
+    readonly data?: unknown;
 }
 
 /** append / send 的入参：`at` 可省（session 补） */
 export interface ChatMessageInit {
     role: MessageRole;
-    kind?: MessageKind;
+    type?: MessageType;
     text?: string;
-    tool?: ChatToolCall;
     mentions?: readonly string[];
     at?: number;
+    /** 同 `ChatMessage.data`：分支私有载荷，Session 原样保存 */
+    data?: unknown;
 }
 
 /**
