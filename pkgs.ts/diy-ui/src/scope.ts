@@ -1,7 +1,7 @@
 /**
  * ScopeNode + ScopeConfig — 树形运行时配置节点
  *
- * 组件树同时也是运行时配置树（mode、maxRerunDepth 等）。
+ * 组件树同时也是运行时配置树（mode 等）。
  * 配置向上查找：子节点未设置时继承父节点的配置。
  */
 
@@ -25,14 +25,10 @@ export interface ContextManager {
 export class ScopeConfig {
   /** dev 模式开启 scope violation 检查（signal 越界访问警告） */
   mode?: "dev" | "prod";
-  /** cell rerun 最大嵌套深度，默认 100 */
-  maxRerunDepth?: number;
 
   constructor(opts?: Partial<ScopeConfig>) {
     if (opts) {
       if (opts.mode !== undefined) this.mode = opts.mode;
-      if (opts.maxRerunDepth !== undefined)
-        this.maxRerunDepth = opts.maxRerunDepth;
     }
   }
 }
@@ -107,14 +103,6 @@ export class ScopeNode {
     if (this.config?.mode) return this.config.mode;
     if (this.parent) return this.parent.getEffectiveMode();
     return "dev"; // 默认 dev
-  }
-
-  /** 获取最近祖先的有效 maxRerunDepth */
-  getEffectiveMaxRerunDepth(): number {
-    if (this.config?.maxRerunDepth !== undefined)
-      return this.config.maxRerunDepth;
-    if (this.parent) return this.parent.getEffectiveMaxRerunDepth();
-    return 100; // 默认 100
   }
 
   // ── children 管理 ──────────────────────────────────────
