@@ -101,6 +101,34 @@ if (listOnly) {
     process.exit(0);
 }
 
+// ── ⑤ 包的**类型入口**不许指向 lib/（2026-10-29 事故）────────────────────────
+// 事故：#453 把各包 `main` 指向 `./lib/index.js` 时，`types` 也一起指向 `./lib/index.d.ts`。
+// 而 `lib/` 在 `.gitignore` 里（产物不入库）⇒ **任何没跑过 build-pkgs 的仓库**
+// 类型解析全失败（实测 main 上 52 个 error TS，`Cannot find module '@diy/agent-session'`），
+// 而跑过 build 的 worktree 里 check 是绿的 —— 典型的「验了脏工作区，没验干净态」。
+//
+// 判据：`types` 与 `exports.*.types` 一律指 `./src/…`（tsc 直接读 TS 源，不依赖产物）；
+//       `main` / `exports.*.default` 保持指 `./lib/…`（运行时 Node 加载）。
+{
+    for (const file of readdirSync(PKGS_DIR).map((d) => join(PKGS_DIR, d, "package.json")).filter(existsSync)) {
+        let pkg;
+        try { pkg = JSON.parse(readFileSync(file, "utf8")); } catch { continue; }
+        const bad = [];
+        if (String(pkg.types ?? "").startsWith("./lib/")) bad.push(`types: ${pkg.types}`);
+        for (const [k, v] of Object.entries(pkg.exports ?? {})) {
+            if (v && typeof v === "object" && String(v.types ?? "").startsWith("./lib/")) {
+                bad.push(`exports["${k}"].types: ${v.types}`);
+            }
+        }
+        if (bad.length) {
+            problems.push(
+                `${pkg.name}: 类型入口指向 lib/（${bad.join(" / ")}）—— lib 不入库，干净仓库会 Cannot find module。` +
+                    ` 改成 ./src/…（main 仍指 lib）。`,
+            );
+        }
+    }
+}
+
 if (problems.length > 0) {
     console.error(`✗ 包可见性白名单：${problems.length} 处违规`);
     for (const p of problems) console.error(`  · ${p}`);

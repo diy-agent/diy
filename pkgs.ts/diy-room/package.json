@@ -1,30 +1,30 @@
 {
-    "name": "@diy/room",
-    "version": "0.1.0",
-    "private": true,
-    "description": "diy 协作空间内核：成员表 + @ 投递 + 忙闲（依赖 @diy/agent-session，不认识 task / 不碰文件系统）",
-    "files": [
-        "src/"
-    ],
-    "type": "module",
-    "main": "./lib/index.js",
-    "types": "./lib/index.d.ts",
-    "exports": {
-        ".": {
-            "types": "./lib/index.d.ts",
-            "default": "./lib/index.js"
-        }
-    },
-    "scripts": {
-        "build": "tsc -p tsconfig.build.json"
-    },
-    "dependencies": {
-        "@diy/agent-session": "*"
-    },
-    "devDependencies": {
-        "oxfmt": "^0.57.0",
-        "oxlint": "^1.72.0",
-        "typescript": "^7.0.2",
-        "vitest": "^4.1.10"
+  "name": "@diy/room",
+  "version": "0.1.0",
+  "private": true,
+  "description": "diy 协作空间内核：成员表 + @ 投递 + 忙闲（依赖 @diy/agent-session，不认识 task / 不碰文件系统）",
+  "files": [
+    "src/"
+  ],
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./lib/index.js"
     }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@diy/agent-session": "*"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.57.0",
+    "oxlint": "^1.72.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
 }

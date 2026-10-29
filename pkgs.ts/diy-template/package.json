@@ -5,10 +5,10 @@
   "description": "diy 提示词模版引擎：XML 控制节点 + 属性路径，无表达式、不转义、逐字节保真",
   "type": "module",
   "main": "./lib/index.js",
-  "types": "./lib/index.d.ts",
+  "types": "./src/index.ts",
   "exports": {
     ".": {
-      "types": "./lib/index.d.ts",
+      "types": "./src/index.ts",
       "default": "./lib/index.js"
     }
   },

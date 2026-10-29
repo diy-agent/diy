@@ -1,71 +1,71 @@
 {
-    "name": "@diy-agent/workbench-plugin",
-    "version": "0.1.0",
-    "private": true,
-    "description": "工作台插件契约：清单（plugin.json）schema + 档 2 面板描述符 + 插件服务端方法契约（definePlugin）",
-    "keywords": [
-        "contract",
-        "diy",
-        "plugin",
-        "workbench",
-        "zod"
-    ],
-    "homepage": "https://github.com/diy-agent/diy/tree/main/pkgs.ts/workbench-plugin",
-    "license": "MIT",
-    "repository": {
-        "type": "git",
-        "url": "git+https://github.com/diy-agent/diy.git",
-        "directory": "pkgs.ts/workbench-plugin"
+  "name": "@diy-agent/workbench-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "工作台插件契约：清单（plugin.json）schema + 档 2 面板描述符 + 插件服务端方法契约（definePlugin）",
+  "keywords": [
+    "contract",
+    "diy",
+    "plugin",
+    "workbench",
+    "zod"
+  ],
+  "homepage": "https://github.com/diy-agent/diy/tree/main/pkgs.ts/workbench-plugin",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/diy-agent/diy.git",
+    "directory": "pkgs.ts/workbench-plugin"
+  },
+  "files": [
+    "src/"
+  ],
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./lib/index.js"
     },
-    "files": [
-        "src/"
-    ],
-    "type": "module",
-    "main": "./lib/index.js",
-    "types": "./lib/index.d.ts",
-    "exports": {
-        ".": {
-            "types": "./lib/index.d.ts",
-            "default": "./lib/index.js"
-        },
-        "./manifest": {
-            "types": "./lib/manifest.d.ts",
-            "default": "./lib/manifest.js"
-        },
-        "./panel": {
-            "types": "./lib/panel.d.ts",
-            "default": "./lib/panel.js"
-        },
-        "./spec": {
-            "types": "./lib/spec.d.ts",
-            "default": "./lib/spec.js"
-        }
+    "./manifest": {
+      "types": "./src/manifest.ts",
+      "default": "./lib/manifest.js"
     },
-    "dependencies": {
-        "zod": "^4.4.3"
+    "./panel": {
+      "types": "./src/panel.ts",
+      "default": "./lib/panel.js"
     },
-    "devDependencies": {
-        "oxfmt": "^0.57.0",
-        "oxlint": "^1.72.0",
-        "typescript": "^6.0.3",
-        "vitest": "^4.1.10"
-    },
-    "oxlint": {
-        "rules": {
-            "no-unused-vars": "warn",
-            "no-console": "off",
-            "@typescript-eslint/no-unused-vars": [
-                "warn",
-                {
-                    "argsIgnorePattern": "^_"
-                }
-            ]
-        },
-        "ignorePatterns": [
-            "node_modules/"
-        ]
-    },
-    "scripts": {
-        "build": "tsc -p tsconfig.build.json"
+    "./spec": {
+      "types": "./src/spec.ts",
+      "default": "./lib/spec.js"
     }
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.57.0",
+    "oxlint": "^1.72.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  },
+  "oxlint": {
+    "rules": {
+      "no-unused-vars": "warn",
+      "no-console": "off",
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        {
+          "argsIgnorePattern": "^_"
+        }
+      ]
+    },
+    "ignorePatterns": [
+      "node_modules/"
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  }
 }

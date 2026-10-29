@@ -5,10 +5,10 @@
   "description": "diy 对话容器内核：事件 / 锚点 / 反应原语 + role 翻译铁律 + 装配器（零依赖纯内核，不做存储）",
   "type": "module",
   "main": "./lib/index.js",
-  "types": "./lib/index.d.ts",
+  "types": "./src/index.ts",
   "exports": {
     ".": {
-      "types": "./lib/index.d.ts",
+      "types": "./src/index.ts",
       "default": "./lib/index.js"
     }
   },

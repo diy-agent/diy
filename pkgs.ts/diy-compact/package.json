@@ -5,14 +5,14 @@
   "description": "压缩决策（纯算不写盘）：保留边界、触发线、保留量、压缩策略与压缩后形态范例",
   "type": "module",
   "main": "./lib/index.js",
-  "types": "./lib/index.d.ts",
+  "types": "./src/index.ts",
   "exports": {
     ".": {
-      "types": "./lib/index.d.ts",
+      "types": "./src/index.ts",
       "default": "./lib/index.js"
     },
     "./*": {
-      "types": "./lib/*.d.ts",
+      "types": "./src/*.ts",
       "default": "./lib/*.js"
     }
   },

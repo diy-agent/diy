@@ -1,28 +1,28 @@
 {
-    "name": "@diy/agent-session",
-    "version": "0.1.0",
-    "private": true,
-    "description": "diy 单会话内核：消息列表 + 一次 LLM 调用 + 流式增量（LlmPort / Clock / SessionStore 全注入，零 fs、零 task）",
-    "files": [
-        "src/"
-    ],
-    "type": "module",
-    "main": "./lib/index.js",
-    "types": "./lib/index.d.ts",
-    "exports": {
-        ".": {
-            "types": "./lib/index.d.ts",
-            "default": "./lib/index.js"
-        }
-    },
-    "scripts": {
-        "build": "tsc -p tsconfig.build.json"
-    },
-    "dependencies": {},
-    "devDependencies": {
-        "oxfmt": "^0.57.0",
-        "oxlint": "^1.72.0",
-        "typescript": "^7.0.2",
-        "vitest": "^4.1.10"
+  "name": "@diy/agent-session",
+  "version": "0.1.0",
+  "private": true,
+  "description": "diy 单会话内核：消息列表 + 一次 LLM 调用 + 流式增量（LlmPort / Clock / SessionStore 全注入，零 fs、零 task）",
+  "files": [
+    "src/"
+  ],
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./lib/index.js"
     }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "oxfmt": "^0.57.0",
+    "oxlint": "^1.72.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
 }

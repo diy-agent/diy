@@ -1,26 +1,26 @@
 {
-    "name": "@diy/persistence",
-    "version": "0.1.0",
-    "description": "diy 本地 agent 的会话持久化：ops 写入 / turns 账 / 压缩边界（core 只依赖窄接口）",
-    "license": "MIT",
-    "private": true,
-    "type": "module",
-    "main": "./lib/index.js",
-    "types": "./lib/index.d.ts",
-    "exports": {
-        ".": {
-            "types": "./lib/index.d.ts",
-            "default": "./lib/index.js"
-        }
-    },
-    "files": [
-        "src/"
-    ],
-    "devDependencies": {
-        "typescript": "^7.0.2",
-        "vitest": "^4.1.10"
-    },
-    "scripts": {
-        "build": "tsc -p tsconfig.build.json"
+  "name": "@diy/persistence",
+  "version": "0.1.0",
+  "description": "diy 本地 agent 的会话持久化：ops 写入 / turns 账 / 压缩边界（core 只依赖窄接口）",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./lib/index.js"
     }
+  },
+  "files": [
+    "src/"
+  ],
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  }
 }

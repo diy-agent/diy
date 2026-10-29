@@ -18,26 +18,26 @@
   ],
   "type": "module",
   "main": "./lib/index.js",
-  "types": "./lib/index.d.ts",
+  "types": "./src/index.ts",
   "exports": {
     ".": {
-      "types": "./lib/index.d.ts",
+      "types": "./src/index.ts",
       "default": "./lib/index.js"
     },
     "./http": {
-      "types": "./lib/transport/http/index.d.ts",
+      "types": "./src/transport/http/index.ts",
       "default": "./lib/transport/http/index.js"
     },
     "./ws": {
-      "types": "./lib/transport/ws/index.d.ts",
+      "types": "./src/transport/ws/index.ts",
       "default": "./lib/transport/ws/index.js"
     },
     "./electron": {
-      "types": "./lib/transport/electron/index.d.ts",
+      "types": "./src/transport/electron/index.ts",
       "default": "./lib/transport/electron/index.js"
     },
     "./cli": {
-      "types": "./lib/cli/index.d.ts",
+      "types": "./src/cli/index.ts",
       "default": "./lib/cli/index.js"
     }
   },
