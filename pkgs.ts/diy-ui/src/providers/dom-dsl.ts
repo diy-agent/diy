@@ -33,6 +33,17 @@ import { Signal } from "../signal.js";
 /** 普通值 / Signal / getter，三者写法一致。 */
 export type Reactive<T> = T | Signal<T> | (() => T);
 export type ClassValue = string | null | undefined | false;
+/**
+ * `class` 的**分段组合**：静态串 / Signal / getter 一段一段拼。
+ *
+ *   class: ["flex items-baseline gap-2", sizeSig, () => active.value && "is-active"]
+ *
+ * - falsy 段（`false`/`null`/`undefined`/`""`）跳过 → 条件类名直接 `&&`；
+ * - 不去重（同样的类名写两段就出现两次）；
+ * - getter 段返回**最终字符串**（要拼就在回调里自己拼），不做数组展平；
+ * - 整个 `class` 只有一个 effect、只 `setAttribute` 一次 → 原子，无中间态。
+ */
+export type ClassList = ReadonlyArray<Reactive<ClassValue>>;
 export type StyleValue = string | Partial<CSSStyleDeclaration>;
 
 /**
@@ -40,7 +51,7 @@ export type StyleValue = string | Partial<CSSStyleDeclaration>;
  * 所以任意 HTML 属性（含 `data-*` / `aria-*`）都能直接写。
  */
 export interface Props {
-  class?: Reactive<ClassValue>;
+  class?: Reactive<ClassValue> | ClassList;
   style?: Reactive<StyleValue>;
   /**
    * 行级增量：身份令牌（任何 `===` 可比的）。同一父块里，同 key 的上一轮子节点会被
@@ -613,7 +624,17 @@ function bindClass(el: HTMLElement, v: unknown): void {
     if (x) el.setAttribute("class", String(x));
     else el.removeAttribute("class");
   };
-  if (isReactive(v)) {
+  if (Array.isArray(v)) {
+    // 分段组合：读全部段 → 拼一次 → 写一次（原子）
+    const parts = v as ClassList;
+    const join = (): string =>
+      parts
+        .map((p) => unwrap(p as Reactive<ClassValue>))
+        .filter(Boolean)
+        .join(" ");
+    if (parts.some(isReactive)) autoEffect(() => set(join()));
+    else set(join());
+  } else if (isReactive(v)) {
     autoEffect(() => set(unwrap(v) as ClassValue));
   } else {
     set(v as ClassValue);
