@@ -16,7 +16,7 @@
  * 追踪「首次 await/yield 之前的同步读」——TS 里 await 之后无法自动追踪（见 DESIGN 讨论）。
  */
 
-import { effect } from "@vue/reactivity";
+import { effect, stop } from "@vue/reactivity";
 import {
   ScopeNode,
   ScopeConfig,
@@ -60,11 +60,13 @@ export class DomComponent extends ScopeNode {
     if (p instanceof DomContainer) p.hostEl.append(this.el);
   }
 
-  /** 从树与 DOM 中摘除自身。 */
+  /**
+   * 从树与 DOM 中摘除自身，并**递归停止**子树的 effect。
+   * 根节点（DomApp）不摘用户的挂载元素。
+   */
   dispose(): void {
-    this.el.remove();
-    if (this.parent) this.parent.removeChild(this);
-    this.parent = undefined;
+    if (this.parent) this.el.remove();
+    super.dispose();
   }
 }
 
@@ -267,12 +269,14 @@ class CellBinding {
   run(): void {
     const epoch = ++this.epoch;
 
-    // 丢弃上一次 run 的 stage（过期 async 续写随之不可见）
-    this.stage?.dispose();
+    // 新一轮先**离屏**构建 stage：逻辑上已接父（app 查找依赖 parent 链），但 DOM 暂不挂；
+    // 成功才替换旧的 → 抛错时界面保留上一次成功的内容
+    const stage = new DomColumn(undefined, undefined);
+    stage.parent = this.node;
+    this.node.children.push(stage);
 
-    const stage = new DomColumn(undefined, this.node);
-    this.stage = stage;
-
+    // cell 里用 app.xxx() 时挂到本 stage —— 否则会落到根节点（内容和 cell 不同步）
+    this.app.pushContext(stage);
     try {
       switch (cellKind(this.fn)) {
         case "sync":
@@ -291,8 +295,17 @@ class CellBinding {
           break;
       }
     } catch (e) {
+      stage.dispose(); // 半成品丢弃，旧 stage 原样保留
       this.onError(epoch, e);
+      return;
+    } finally {
+      this.app.popContext();
     }
+
+    // 上台：先丢弃上一轮（过期 async 续写随之不可见；子树 effect 一起停），再挂新的
+    this.stage?.dispose();
+    this.node.hostEl.append(stage.el);
+    this.stage = stage;
   }
 
   private async driveAsync(epoch: number, gen: AsyncGenerator<unknown>): Promise<void> {
@@ -371,9 +384,11 @@ export class DomApp extends DomContainer implements ContextManager {
       throw new Error("cell(): 只能标记在 DomContainer 上");
     }
     const binding = new CellBinding(this, node, fn);
-    effect(() => {
+    const runner = effect(() => {
       binding.run();
     });
+    // effect 随节点销毁一起停：否则节点移除后信号变化仍会重跑（往已脱离文档的 stage 里写）
+    node.onDispose(() => stop(runner));
   }
 
   // ── 生命周期 ───────────────────────────────────────────

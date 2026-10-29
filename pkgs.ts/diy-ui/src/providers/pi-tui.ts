@@ -15,8 +15,8 @@ import {
   Input as PiInput,
   Spacer as PiSpacer,
 } from "@mariozechner/pi-tui";
-import type { Component } from "@mariozechner/pi-tui";
-import { effect } from "@vue/reactivity";
+import type { Component, Container as PiContainer } from "@mariozechner/pi-tui";
+import { effect, stop } from "@vue/reactivity";
 import {
   ScopeNode,
   ScopeConfig,
@@ -228,6 +228,9 @@ class TsRow extends ContainerComponent {
  * Box — 包装 pi-tui Box 容器
  *
  * 通过回调参数形式 `app.box({ x: 1, y: 2 }, (ctx) => { ... })`
+ *
+ * 原生容器是内部的 `piBox`（不是 `piContainer`）：覆写 `nativeContainer` 之后，
+ * 子节点挂载 / 移除 / 全量替换 / 渲染全部自动走 piBox。
  */
 class TsBox extends ContainerComponent {
   private piBox: PiBox;
@@ -242,47 +245,25 @@ class TsBox extends ContainerComponent {
     this.piBox = new PiBox(paddingX, paddingY);
   }
 
+  protected override get nativeContainer(): PiContainer {
+    return this.piBox;
+  }
+
   static create(
     app: PiTuiApp,
     props: { x?: number; y?: number },
     children: (ctx: TsBox) => void,
     config?: ScopeConfig,
   ): TsBox {
+    // 构造时已经把自己挂进父容器（UIComponent.mountToParentPiContainer），不要再挂一次
     const box = new TsBox(config, app.currentContext, props.x, props.y);
-    box.mountToParentPiContainerVia(box);
     app.pushContext(box);
     try {
       children(box);
     } finally {
       app.popContext();
     }
-    // 把 children 迁移到 piBox
-    for (const child of box.children) {
-      if (child instanceof UIComponent) {
-        box.piBox.addChild(child);
-      }
-    }
     return box;
-  }
-
-  private mountToParentPiContainerVia(box: TsBox): void {
-    const p = this.parent;
-    if (p && p instanceof ContainerComponent) {
-      p.piContainer.addChild(box);
-    }
-  }
-
-  override render(width: number): string[] {
-    return this.piBox.render(width);
-  }
-
-  override invalidate(): void {
-    this.piBox.invalidate();
-  }
-
-  // 重写 addPiChild 以委托给内部 piBox
-  override addPiChild(child: UIComponent): void {
-    this.piBox.addChild(child);
   }
 }
 
@@ -478,9 +459,16 @@ export class PiTuiApp extends ContainerComponent implements ContextManager {
     this.cells.push(host);
 
     // 用 vue effect 包裹，cell 回调中读 signal.value 时自动建立依赖
-    effect(() => {
+    const runner = effect(() => {
       host.rerun();
       this.tui.requestRender();
+    });
+
+    // cell 的 effect 随节点销毁一起停：否则节点移除后仍会响应信号（幽灵重跑）
+    node.onDispose(() => {
+      stop(runner);
+      const i = this.cells.indexOf(host);
+      if (i !== -1) this.cells.splice(i, 1);
     });
 
     return host;

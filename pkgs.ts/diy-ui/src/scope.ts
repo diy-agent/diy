@@ -60,6 +60,10 @@ export class ScopeNode {
   config?: ScopeConfig;
   /** 当前节点注册的 signal（用于 scope violation 检测） */
   private _signals: Set<Signal<unknown>> = new Set();
+  /** 随本节点销毁的回调（effect 停止 / 定时器 / 事件监听）。 */
+  private _disposers: Array<() => void> = [];
+  /** 是否已销毁（重复 dispose 幂等）。 */
+  private _disposed = false;
 
   constructor(config?: ScopeConfig, parent?: ScopeNode) {
     this.config = config;
@@ -67,6 +71,45 @@ export class ScopeNode {
       this.parent = parent;
       parent.children.push(this);
     }
+  }
+
+  // ── 生命周期（销毁 = 停副作用 + 递归子节点 + 摘树） ──────
+
+  /** 是否已销毁。 */
+  get disposed(): boolean {
+    return this._disposed;
+  }
+
+  /**
+   * 登记随本节点销毁的回调（effect 停止 / 事件监听 / 定时器）。
+   *
+   * 节点的副作用**必须**走这里：否则节点被移除后 effect 仍订阅信号，
+   * 会继续往已经不在文档里的节点写（实测：dispose 后信号变化仍重跑）。
+   */
+  onDispose(fn: () => void): void {
+    if (this._disposed) {
+      fn(); // 已销毁：立刻执行，避免静默泄漏
+      return;
+    }
+    this._disposers.push(fn);
+  }
+
+  /**
+   * 销毁本节点：停掉登记的回调 → **递归**销毁子节点 → 从父节点摘下。幂等。
+   *
+   * 递归是必须的：cell 的 stage 是一棵子树，只销毁根会留下子节点里
+   * 注册的 effect（实测：嵌套 cell 每次外层重跑累积一个幽灵订阅）。
+   */
+  dispose(): void {
+    if (this._disposed) return;
+    this._disposed = true;
+    for (let i = this._disposers.length - 1; i >= 0; i--) this._disposers[i]();
+    this._disposers.length = 0;
+    for (const child of [...this.children]) child.dispose();
+    this.children.length = 0;
+    this._signals.clear();
+    if (this.parent) this.parent.removeChild(this);
+    this.parent = undefined;
   }
 
   // ── 配置查找（向上冒泡） ──────────────────────────────
