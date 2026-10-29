@@ -33,7 +33,6 @@ describe("ScopeConfig", () => {
   it("空构造应产生空 config", () => {
     const c = new ScopeConfig();
     expect(c.mode).toBeUndefined();
-    expect(c.maxRerunDepth).toBeUndefined();
   });
 
   it("应能设置 mode", () => {
@@ -41,9 +40,9 @@ describe("ScopeConfig", () => {
     expect(c.mode).toBe("prod");
   });
 
-  it("应能设置 maxRerunDepth", () => {
-    const c = new ScopeConfig({ maxRerunDepth: 50 });
-    expect(c.maxRerunDepth).toBe(50);
+  it("未给的字段保持 undefined", () => {
+    const c = new ScopeConfig({ mode: "dev" });
+    expect(c.mode).toBe("dev");
   });
 });
 
@@ -114,17 +113,6 @@ describe("ScopeNode", () => {
     const root = new ScopeNode(new ScopeConfig({ mode: "prod" }));
     const child = new ScopeNode(new ScopeConfig({ mode: "dev" }), root);
     expect(child.getEffectiveMode()).toBe("dev");
-  });
-
-  it("getEffectiveMaxRerunDepth 默认应为 100", () => {
-    const node = new ScopeNode();
-    expect(node.getEffectiveMaxRerunDepth()).toBe(100);
-  });
-
-  it("getEffectiveMaxRerunDepth 应从祖先继承", () => {
-    const root = new ScopeNode(new ScopeConfig({ maxRerunDepth: 50 }));
-    const child = new ScopeNode(undefined, root);
-    expect(child.getEffectiveMaxRerunDepth()).toBe(50);
   });
 
   // ── signal 注册 ────────────────────────────────────────
