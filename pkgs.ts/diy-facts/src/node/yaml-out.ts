@@ -10,7 +10,7 @@
 //   ② **round-trip 精确**：`|-` 去掉末尾换行，故 `load(dump(x)) === x`（实测，含空行与列表）。
 //      这正是不能靠"给字符串补 \n 骗它选块风格"的原因 —— 那会在读回时多一个换行。
 //
-// 实现用 `transform` 钩子改 AST 的 `style.literal`，不动内容、不加引号、不带 tag。
+// 实现用 `transform` 钩子把 AST 标量节点的 `style` 改成枚举值，不动内容、不加引号、不带 tag。
 // ⚠️ js-yaml 5.5 起 `style` 是**单个枚举值**（`SCALAR_STYLE.LITERAL_BLOCK`），不再是
 // 5.2 的布尔标志集合（`{literal, folded, …}`）—— 旧写法在 5.5 上类型即报错，且运行时会静默不生效。
 
