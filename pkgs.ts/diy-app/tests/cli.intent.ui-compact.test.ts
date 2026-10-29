@@ -386,17 +386,16 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
     await expandAll();
   });
 
-  it("切「总表（按轮）/ 分表（按步）」：压缩内容退场（无用量记录 → 空态），可切回", async () => {
-    await ui.clickSelector('[data-drawer-tab="total"]');
+  it("切「构成」：压缩内容退场（无用量记录 → 空态，不画表），可切回", async () => {
+    await ui.clickSelector('[data-drawer-tab="parts"]');
     await waitUntil(
       () => ui.query<boolean>(`!!document.querySelector('[data-history-limit]')`),
       (v) => v === false,
       { label: "压缩 tab 退场" },
     );
+    // ##443 刀 3：构成 = 统一表的一个视图；没有用量记录时**整张表都不画**（空态文案）
     expect(await ui.query<boolean>("!!document.querySelector('table')")).toBe(false);
-    await ui.clickSelector('[data-drawer-tab="step"]');
-    await new Promise((r) => setTimeout(r, 150));
-    expect(await ui.query<boolean>("!!document.querySelector('table')")).toBe(false);
+    expect(await ui.query<boolean>("!!document.querySelector('[data-usage-empty]')")).toBe(true);
     await ui.clickSelector('[data-drawer-tab="compact"]');
     await waitUntil(
       () => ui.query<boolean>(`!!document.querySelector('[data-history-limit]')`),
@@ -519,7 +518,7 @@ describe("M4：分表压缩点位", () => {
 
   it("打开抽屉 → 分表：事件后那步有「压缩」按钮，展开显示算法/过滤器/规模", async () => {
     await openDrawer();
-    await ui.clickSelector('[data-drawer-tab="step"]');
+    await ui.clickSelector('[data-drawer-tab="parts"]');
     await waitUntil(
       () => ui.query<number>("document.querySelectorAll('[data-compact-point]').length"),
       (n) => n >= 1,
@@ -614,7 +613,7 @@ describe("##339：分表投递徽标（配置驱动压缩的事实）", () => {
 
   it("分表：**只有轮首步**有「历史」徽标（其余步无）；悬停给出维度 / token 口径 / 什么时候会压", async () => {
     await openDrawer();
-    await ui.clickSelector('[data-drawer-tab="step"]');
+    await ui.clickSelector('[data-drawer-tab="parts"]');
     await waitUntil(
       () => ui.query<number>("document.querySelectorAll('[data-delivery-compact]').length"),
       (n) => n >= 1,

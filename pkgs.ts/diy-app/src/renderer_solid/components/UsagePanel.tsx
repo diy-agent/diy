@@ -7,8 +7,9 @@
  *     · SessionUsageChip —— 发送区人物右侧：会话累计 `N tok · $X`
  *   L2 hover 汇总卡：纵向 8 项（token 桶加总 + 输入$/输出$/合计$），
  *     卡顶 viewbar 右侧「明细」→ L3
- *   L3 drawer（覆盖页面）：本轮逐步明细 / 会话看板 —— 旧的两张表合成**一张双表头表**
- *     （原生 HTML `<table>` 的 colspan 分组行；md 表格语法做不了双表头，这里不是 md）
+ *   L3 drawer（覆盖页面，##443 刀 3 起）：**一张表**（`UsageTable`）+ 一个 group 选项
+ *     （step / turn / persona / session / 窗口构成）；下钻是同一张表换参数，不再有"本轮专用表"。
+ *     列定义与聚合都在 `shared/usage-fields.ts`，这里只剩容器与状态。
  *
  * 数字来源两条，**不许混**：
  *   · L1/L2 = turn 块属性（main 每步 patch，实时；会话数 = 各轮 attrs 累加，同为累计口径）
@@ -23,31 +24,26 @@
  *   · 不可测桶写 `–`/`n/a`，**不写 0**；旧记录（无四桶字段）按原样降级，不假装能拆
  */
 
-import { createEffect, createMemo, createResource, createSignal, For, Match, Show, Switch, onCleanup } from "solid-js";
+import { createEffect, createResource, createSignal, For, Match, Show, Switch, onCleanup } from "solid-js";
 import { Portal } from "solid-js/web";
 import { localChatStore } from "../store/localChatStore";
 // 时间口径唯一出处（shared/date-format）：面板里的轮次时刻（hover 卡标题 / 明细抽屉）与对话流
-// 首行同格式（fmtTurnStamp）；列头那处要「到秒」故用 fmtTurnFull。
-import { fmtTurnFull, fmtTurnStamp } from "../../shared/date-format";
+// 首行同格式（fmtTurnStamp）；表格的「时间」列走 `usage-fields` 的 fmtCell（到秒）。
+import { fmtTurnStamp } from "../../shared/date-format";
 import { DrawerMaxButton, RowGutter, useDrawerMax } from "@diy/ui-kit";
 import { endMarkOf } from "../lib/chat-fold";
 import {
     cacheHitRate,
     fmtCost,
-    fmtRate,
     fmtInt,
     fmtTokens,
-    groupByAgent,
     groupByTurn,
     recordsAvgRate,
     stepView,
-    sumBuckets,
     sumCosts,
     stepRate,
     windowRate,
-    type AgentGroup,
     type CostBreakdown,
-    type StepUsageRecord,
     type TurnGroup,
     type TurnUsagePatch,
 } from "../../shared/usage";
@@ -57,22 +53,11 @@ import { notificationStore } from "../store/notificationStore";
 import { copyFailMeta, copyOkMeta } from "../lib/notice-copy";
 import { compactNotice } from "../lib/notice-compact";
 import { useCompactPanel, CompactPanelContent } from "./CompactSessionPanel";
-import type { CompactEventRecord, CompactTrigger } from "@diy/compact/compaction";
-import { mapCompactPointsToSteps, stepKey } from "@diy/compact/compact-points";
-import {
-    deliveryBadgeText,
-    deliveryBadgeTitle,
-    TRIGGER_LABEL,
-    type DeliveryBoundary,
-} from "../../shared/context/delivery-badge";
+import { UsageTable, usageTableMd, type UsageView } from "./UsageTable";
+import type { CompactEventRecord } from "@diy/compact/compaction";
+import { type DeliveryBoundary } from "../../shared/context/delivery-badge";
 
 // ─── 共用小件 ────────────────────────────────────────
-
-/** 旧账本里的字节预算（`policy.modeData.budgetBytes` 已删；只有旧事件还带着它） */
-function legacyBudgetKb(policy: unknown): string {
-    const bb = (policy as { modeData?: { budgetBytes?: number } } | undefined)?.modeData?.budgetBytes;
-    return typeof bb === "number" ? `${Math.round(bb / 1024)} KB（旧口径）` : "边界在 turns.jsonl";
-}
 
 /** 占用率文案；上限未知 → `—`（编一个百分比比留白更坏） */
 function pctText(rate: number | null): string {
@@ -89,19 +74,6 @@ function pctClass(rate: number | null): string {
 
 /** 不可测桶 → `–`（与 0 区分：0 是"实测为零"这个另一个事实） */
 const optCell = (n: number | null | undefined): string => (n == null ? "–" : fmtTokens(n));
-const optCellInt = (n: number | null | undefined): string => (n == null ? "–" : fmtInt(n));
-
-/** 各项金额总占比：v ÷ 表内总$（分母缺失/0 → –，不编 0%） */
-const costShare = (v: number | null, total: number | null): string =>
-    v == null || total == null || total <= 0 ? "–" : `${((v / total) * 100).toFixed(1)}%`;
-
-function cellMs(ms: number | undefined): string {
-    if (ms == null) return "–";
-    return ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${Math.round(ms)}ms`;
-}
-
-const faceLabel = (api: string): string => (api === "responses" ? "resp" : "chat");
-
 /**
  * 旧版 ops.jsonl 里的 usage 属性只有 {in,out,cached,total}（无四桶字段）。
  * 历史日志是 append-only 的史书，读侧必须兼容 —— 不当成"没有用量"，也不假装它是新格式。
@@ -526,29 +498,6 @@ function partsOf(x: {
     return { system, tools, messages, prompt: x.prompt };
 }
 
-/** `YYYY-MM-DD HH:MM:SS`（本地时区）；非法日期 → 空串（调用方回退原文） */
-const fmtDateSec = (d: Date | number): string => {
-    const dt = typeof d === "number" ? new Date(d) : d;
-    if (Number.isNaN(dt.getTime())) return "";
-    const p = (n: number) => String(n).padStart(2, "0");
-    return `${dt.getFullYear()}-${p(dt.getMonth() + 1)}-${p(dt.getDate())} ${p(dt.getHours())}:${p(dt.getMinutes())}:${p(dt.getSeconds())}`;
-};
-
-/** 步时间（日期 + 时间到秒）：账本 ts（ISO）；非法 → 原文 */
-const stepStamp = (ts: string): string => fmtDateSec(new Date(ts)) || ts;
-
-/** 构成数量格：`~N`（字节÷4 估）；缺数据 → – */
-const numCell = (v: number | null) =>
-    v == null ? <span class="opacity-50">–</span> : <span class="tabular-nums">~{fmtTokens(v)}</span>;
-
-/** 占比格：该段 ÷ 同行 prompt；缺数据 → –（与数量分列展示，2026-10-03 用户定） */
-const pctCell = (v: number | null, prompt: number | null) =>
-    v == null || !prompt ? (
-        <span class="opacity-50">–</span>
-    ) : (
-        <span class="tabular-nums">{((v / prompt) * 100).toFixed(1)}%</span>
-    );
-
 /**
  * L1 窗口占用环：发送区会话 chip 右侧（token/金额总量右边）。
  * · 环 = RingBar（底轨 + 五档色）；% 与环同侧。
@@ -780,7 +729,8 @@ export function WindowRing(props: { uri: string | null }) {
  * 单元格口径：数量 = 字节÷4 估（~）；占比 = 该段 ÷ 同行 prompt；– = 未落盘构成（本版前的记录）。
  */
 export function ContextPartsDrawer(props: { open: boolean; uri: string | null; onClose: () => void }) {
-    const [view, setView] = createSignal<"compact" | "total" | "step">("compact");
+    /** 第一 tab = 压缩（##246 用户定的顺序；UI 用例也按这个顺序断言） */
+    const [view, setView] = createSignal<"compact" | "parts">("compact");
     // 打开对账一次账本 + Escape 自管（stopPropagation：别把别的抽屉连带关了）
     createEffect(() => {
         if (!props.open) return;
@@ -797,17 +747,12 @@ export function ContextPartsDrawer(props: { open: boolean; uri: string | null; o
         onCleanup(() => document.removeEventListener("keydown", onKey, true));
     });
     const steps = () => localChatStore.usage;
-    const groups = () => groupByTurn(steps());
     /** 压缩面板控制器（供 tab 栏执行按钮 + 压缩 tab 内容共享）。
      *  第二个参数 = **成本闸门**：抽屉关着时组件仍挂在树上，不加门槛则任何会话页一打开
      *  就全量算一次压缩预案（78MB 会话 8~16s 卡住 main，见 ##321）。 */
     const ctl = useCompactPanel(() => props.uri ?? "", () => props.open);
 
-    // ─── M4：压缩点位（分表按步标注「哪次请求被压过」）───
-    // 【用户 2026-10-08】压缩可能发生在**一轮中间** ⇒ 用**轮次总表**表达不了「哪个请求压过」，
-    // 必须落在**分表（按步）**：一步 = 一次请求。判据 = 该步 ts 是该压缩事件之后的**第一步**。
-    // ##431：`compact.events` 改为限读尾部（回包 = `{ events, truncated }`）——
-    // 这里只用来定位「哪次请求被压过」，更早的记录缺失不影响标注；`truncated` 在表尾提示一句。
+    // 压缩事件账（步视图的「压缩点位」列 + 徽章 hover 的边界）——限读尾部（##431）
     const [compactPage, { refetch: refetchCompactEvents }] = createResource(
         () => (props.open ? props.uri : null),
         async (u) =>
@@ -816,16 +761,12 @@ export function ContextPartsDrawer(props: { open: boolean; uri: string | null; o
                 : { events: [] as CompactEventRecord[], truncated: false },
     );
     const compactEvents = () => compactPage()?.events ?? [];
-    /** 展开的压缩点位（键 = `<turnId>#<step>`；同时只开一个） */
-    const [openPoint, setOpenPoint] = createSignal<string | null>(null);
-    /** 步键 → 该步命中的压缩事件（按 ts 升序；可能多条）。纯函数在 shared（可单测）。 */
-    const compactPoints = createMemo(() => mapCompactPointsToSteps(steps(), compactEvents()));
-    const fmtB = (n?: number) => (n === undefined ? "—" : n >= 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} B`);
-    const byText = (by: CompactEventRecord["by"]) => (by === "auto" ? "自动" : by === "ui" ? "界面" : "命令行");
-    const triggerShort = (t: CompactTrigger) => TRIGGER_LABEL[t];
-
-    // ─── ##423：徽章 hover 要讲清**这个切点是哪次压缩事件写的** + 自动压缩（审计）mode ───
-    // 门槛与压缩点位同：抽屉真的开着才查（`autoCompactStatus` 要重建一次 system 容器 + 读 TTL 观测）。
+    const compactList = () => compactEvents();
+    const latestTurnId = () => steps().at(-1)?.turnId;
+    const turnCompactCount = (turnId: string) => {
+        const first = steps().find((r) => r.turnId === turnId)?.ts ?? "";
+        return compactList().filter((e) => e.kind === "compact" && String(e.ts) >= first).length;
+    };
     const [autoStatus] = createResource(
         () => (props.open ? props.uri : null),
         async (u) =>
@@ -845,75 +786,6 @@ export function ContextPartsDrawer(props: { open: boolean; uri: string | null; o
         if (!st) return undefined;
         return st.facts?.boundary ?? null;
     };
-    // 会话/本轮的**压缩次数**与**投递次数（= 步数）**（##423 ③：此前哪里都看不到这两个数）
-    const compactList = () => compactEvents() ?? [];
-    const turnCompactCount = (turnId: string) => {
-        let n = 0;
-        for (const [k, list] of compactPoints()) if (k.startsWith(`${turnId}#`)) n += list.length;
-        return n;
-    };
-    const lastTurn = () => groups().at(-1);
-
-    /** 一行的三段（cp = 该行记录的构成字节；prompt = 该行输入 token，精确） */
-    const rowParts = (cp: { systemBytes: number; toolsBytes: number } | undefined, prompt: number) => {
-        if (!cp) return { system: null, tools: null, messages: null, prompt };
-        const system = Math.round(cp.systemBytes / 4);
-        const tools = Math.round(cp.toolsBytes / 4);
-        return { system, tools, messages: Math.max(0, prompt - system - tools), prompt };
-    };
-
-    /** 一行的构成 6 格：数量 3 列 + 占比 3 列（分组表头两组各 3） */
-    const cellsOf = (cp: { systemBytes: number; toolsBytes: number } | undefined, prompt: number) => {
-        const p = rowParts(cp, prompt);
-        return (
-            <>
-                <td class="text-right">{numCell(p.system)}</td>
-                <td class="text-right">{numCell(p.tools)}</td>
-                <td class="text-right">{numCell(p.messages)}</td>
-                <td class="text-right">{pctCell(p.system, prompt)}</td>
-                <td class="text-right">{pctCell(p.tools, prompt)}</td>
-                <td class="text-right">{pctCell(p.messages, prompt)}</td>
-            </>
-        );
-    };
-
-    /** 分组表头（两行：跨行键列 + 数量/占比两组）；两表共用 */
-    const headRows = (keyCols: { label: string; cls?: string; title?: string }[], tailCols: { label: string; title?: string }[]) => (
-        <>
-            <tr class="text-caption">
-                {keyCols.map((c) => (
-                    <th rowspan={2} class={c.cls ?? ""} title={c.title}>{c.label}</th>
-                ))}
-                <th colspan={3} class="text-center font-medium opacity-60" title="真发字节 ÷ 4 估算（标 ~）">构成数量</th>
-                <th colspan={3} class="text-center font-medium opacity-60" title="该段 ÷ 同行 prompt">占比</th>
-                {tailCols.map((c) => (
-                    <th rowspan={2} class="text-right" title={c.title}>{c.label}</th>
-                ))}
-            </tr>
-            <tr class="text-caption">
-                <th class="text-right">系统提示词</th>
-                <th class="text-right">工具定义</th>
-                <th class="text-right">历史消息</th>
-                <th class="text-right">系统%</th>
-                <th class="text-right">工具%</th>
-                <th class="text-right">消息%</th>
-            </tr>
-        </>
-    );
-
-    /** 总表合计（含老轮 → 部分和，title 注明） */
-    const totals = () => {
-        let prompt = 0, system = 0, tools = 0, messages = 0;
-        for (const g of groups()) {
-            const p = rowParts(g.last.record.contextParts, g.last.buckets.inputTotal);
-            prompt += p.prompt;
-            if (p.system != null) { system += p.system; tools += p.tools!; }
-            if (p.messages != null) messages += p.messages;
-        }
-        return { prompt, system, tools, messages };
-    };
-    const partial = () => groups().some((g) => !g.last.record.contextParts);
-    const partialHint = partial() ? "部分和：仅含已落盘构成的轮（本版前的老轮不计）" : undefined;
 
     const DM = useDrawerMax();
     return (
@@ -940,20 +812,12 @@ export function ContextPartsDrawer(props: { open: boolean; uri: string | null; o
                                 压缩
                             </button>
                             <button
-                                class={`btn btn-xs join-item ${view() === "total" ? "btn-active" : "btn-ghost"}`}
-                                aria-pressed={view() === "total"}
-                                data-drawer-tab="total"
-                                onClick={() => setView("total")}
+                                class={`btn btn-xs join-item ${view() === "parts" ? "btn-active" : "btn-ghost"}`}
+                                aria-pressed={view() === "parts"}
+                                data-drawer-tab="parts"
+                                onClick={() => setView("parts")}
                             >
-                                总表（按轮）
-                            </button>
-                            <button
-                                class={`btn btn-xs join-item ${view() === "step" ? "btn-active" : "btn-ghost"}`}
-                                aria-pressed={view() === "step"}
-                                data-drawer-tab="step"
-                                onClick={() => setView("step")}
-                            >
-                                分表（按步）
+                                构成
                             </button>
                         </div>
                         <button
@@ -987,189 +851,43 @@ export function ContextPartsDrawer(props: { open: boolean; uri: string | null; o
                             >
                                 <span>
                                     本会话：<b class="tabular-nums">{steps().length}</b> 次投递（= 步数）·
-                                    <b class="tabular-nums">{groups().length}</b> 轮 · 压缩 <b class="tabular-nums">{compactList().length}</b> 次
-                                    （自动 {compactList().filter((e) => e.by === "auto").length} / 手动{" "}
-                                    {compactList().filter((e) => e.by !== "auto").length}）
+                                    <b class="tabular-nums">{new Set(steps().map((r) => r.turnId)).size}</b> 轮 · 压缩{" "}
+                                    <b class="tabular-nums">{compactList().filter((e) => e.kind === "compact").length}</b> 次
+                                    （自动 {compactList().filter((e) => e.kind === "compact" && e.by === "auto").length} / 手动{" "}
+                                    {compactList().filter((e) => e.kind === "compact" && e.by !== "auto").length}）
                                 </span>
-                                <Show when={lastTurn()}>
-                                    {(g) => (
+                                <Show when={latestTurnId()}>
+                                    {(id) => (
                                         <span title="本轮步数 = 本轮投递次数；压缩 = 本轮生效（下一个轮首请求用上新历史）的压缩事件数">
-                                            本轮 {g().turnId}：<b class="tabular-nums">{g().steps.length}</b> 步 · 压缩生效{" "}
-                                            <b class="tabular-nums">{turnCompactCount(g().turnId)}</b> 次
+                                            本轮 {id()}：<b class="tabular-nums">{steps().filter((r) => r.turnId === id()).length}</b> 步 · 压缩生效{" "}
+                                            <b class="tabular-nums">{turnCompactCount(id())}</b> 次
                                         </span>
                                     )}
                                 </Show>
                             </div>
                         </Show>
-                        <Show
-                            when={steps().length > 0}
-                            fallback={<div class="text-body opacity-60">还没有用量记录（跑一轮后每步写入账本）。</div>}
-                        >
-                            <Show
-                                when={view() === "total"}
-                                fallback={
-                                    /* 分表：每步一行（步时间到秒 + 轮 id + 该步 prompt 与执行时窗口 + 数量/占比 3+3） */
-                                    <div class="overflow-x-auto rounded-box border border-base-300 bg-base-100 p-2">
-                                        <table class="table table-xs w-full whitespace-nowrap">
-                                            <thead>
-                                                {headRows(
-                                                    [
-                                                        { label: "时间（到秒）", cls: "text-right" },
-                                                        { label: "轮次 id", cls: "text-right" },
-                                                        { label: "步", cls: "text-right" },
-                                                        { label: "该步 prompt", cls: "text-right", title: "该步总输入（账本精确）" },
-                                                    ],
-                                                    [
-                                                        { label: "窗口%", title: "该步 总输入+总输出 ÷ 上限（执行时的窗口情况）" },
-                                                        { label: "压缩", title: "该步（请求）的压缩：投递=按配置（每轮重建，无需事件）；压缩=触发/手动事件（点击展开）" },
-                                                    ],
-                                                )}
-                                            </thead>
-                                            <tbody>
-                                                <For each={steps()}>
-                                                    {(r) => {
-                                                        const v = stepView(r);
-                                                        const k = stepKey(r);
-                                                        const evs = () => compactPoints().get(k);
-                                                        // 投递压缩事实：只在**轮首**（step===1）—— 每轮按当前配置重建
-                                                        const hs = () => r.historySelection;
-                                                        const hasDelivery = () => r.step === 1 && !!r.historySelection;
-                                                        return (
-                                                            <>
-                                                                <tr>
-                                                                    <td class="text-right tabular-nums" title={r.ts}>{stepStamp(r.ts)}</td>
-                                                                    <td class="text-right font-mono text-caption opacity-70">{r.turnId}</td>
-                                                                    <td class="text-right tabular-nums">s{r.step}</td>
-                                                                    <td class="text-right tabular-nums">{fmtInt(v.buckets.inputTotal)}</td>
-                                                                    {cellsOf(r.contextParts, v.buckets.inputTotal)}
-                                                                    <td class={`text-right ${pctClass(v.windowRate)}`}>{pctText(v.windowRate)}</td>
-                                                                    <td class="text-right">
-                                                                        <div class="flex items-center justify-end gap-1">
-                                                                            <Show when={hasDelivery() ? hs() : undefined}>
-                                                                                {(d) => (
-                                                                                    <span
-                                                                                        data-delivery-compact
-                                                                                        class="badge badge-ghost badge-xs"
-                                                                                        title={deliveryBadgeTitle({
-                                                                                            selection: d(),
-                                                                                            boundary: badgeBoundary(),
-                                                                                        })}
-                                                                                    >
-                                                                                        {deliveryBadgeText(d())}
-                                                                                    </span>
-                                                                                )}
-                                                                            </Show>
-                                                                            <Show
-                                                                                when={evs()}
-                                                                                fallback={
-                                                                                    <Show when={!hasDelivery()}>
-                                                                                        <span class="opacity-30">—</span>
-                                                                                    </Show>
-                                                                                }
-                                                                            >
-                                                                                {(list) => (
-                                                                                    <button
-                                                                                        class="btn btn-ghost btn-xs text-info"
-                                                                                        aria-label="压缩点位"
-                                                                                        data-compact-point
-                                                                                        onClick={() => setOpenPoint((cur) => (cur === k ? null : k))}
-                                                                                    >
-                                                                                        压缩{list().length > 1 ? ` ×${list().length}` : ""}
-                                                                                    </button>
-                                                                                )}
-                                                                            </Show>
-                                                                        </div>
-                                                                    </td>
-                                                                </tr>
-                                                                <Show when={openPoint() === k && evs()}>
-                                                                    <tr data-compact-point-detail>
-                                                                        <td colspan={12} class="bg-base-200/60 p-2">
-                                                                            <div class="space-y-1 text-caption">
-                                                                                <For each={evs() ?? []}>
-                                                                                    {(ev) => (
-                                                                                        <div class="flex flex-wrap items-center gap-x-3 gap-y-0.5">
-                                                                                            <span class="badge badge-ghost badge-xs">budget</span>
-                                                                                            <span>
-                                                                                                上限{" "}
-                                                                                                {legacyBudgetKb(ev.policy)}
-                                                                                            </span>
-                                                                                            <span>{byText(ev.by)} · {triggerShort(ev.trigger)}</span>
-                                                                                            <span class="tabular-nums">轮 {ev.size.before.turns} → {ev.size.after.turns}</span>
-                                                                                            <span class="tabular-nums">字节 {fmtB(ev.size.before.bytes)} → {fmtB(ev.size.after.bytes)}</span>
-                                                                                            <span>保留区间 {(ev.details?.kept ?? []).length} 段</span>
-                                                                                            <span class="opacity-50">{new Date(ev.ts).toLocaleString()}</span>
-                                                                                        </div>
-                                                                                    )}
-                                                                                </For>
-                                                                            </div>
-                                                                        </td>
-                                                                    </tr>
-                                                                </Show>
-                                                            </>
-                                                        );
-                                                    }}
-                                                </For>
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                }
-                            >
-                                {/* 总表：每轮一行（轮时间到秒 + 轮 id；不带末步 prompt/窗口，2026-10-03 用户定） */}
-                                <div class="overflow-x-auto rounded-box border border-base-300 bg-base-100 p-2">
-                                    <table class="table table-xs w-full whitespace-nowrap">
-                                        <thead>
-                                            {headRows(
-                                                [
-                                                    { label: "时间（到秒）", cls: "text-right" },
-                                                    { label: "轮次 id", cls: "text-right" },
-                                                    { label: "步", cls: "text-right" },
-                                                ],
-                                                [],
-                                            )}
-                                        </thead>
-                                        <tbody>
-                                            <For each={groups()}>
-                                                {(g) => (
-                                                    <tr>
-                                                        <td class="text-right tabular-nums" title={g.turnId}>{fmtTurnFull(g.turnId) ?? g.turnId}</td>
-                                                        <td class="text-right font-mono text-caption opacity-70">{g.turnId}</td>
-                                                        <td class="text-right">{g.steps.length}</td>
-                                                        {cellsOf(g.last.record.contextParts, g.last.buckets.inputTotal)}
-                                                    </tr>
-                                                )}
-                                            </For>
-                                        </tbody>
-                                        <tfoot>
-                                            <tr class="font-medium">
-                                                <td class="opacity-70" title={partialHint}>合计{partial() ? "（部分和）" : ""}</td>
-                                                <td />
-                                                <td class="text-right">{groups().reduce((s, g) => s + g.steps.length, 0)}</td>
-                                                <td class="text-right">{numCell(totals().system)}</td>
-                                                <td class="text-right">{numCell(totals().tools)}</td>
-                                                <td class="text-right">{numCell(totals().messages)}</td>
-                                                <td class="text-right" title={partialHint}>{pctCell(totals().system, totals().prompt)}</td>
-                                                <td class="text-right" title={partialHint}>{pctCell(totals().tools, totals().prompt)}</td>
-                                                <td class="text-right" title={partialHint}>{pctCell(totals().messages, totals().prompt)}</td>
-                                            </tr>
-                                        </tfoot>
-                                    </table>
+
+                        {/* 构成 = 统一表的一个视图（group=窗口构成）：与逐步同列定义，只是列子集 + 仅 step 粒度 */}
+                        <UsageTable
+                            rows={steps()}
+                            view="contextParts"
+                            compactEvents={compactEvents()}
+                            boundary={badgeBoundary()}
+                        />
+
+                        <div class="mt-2 text-caption opacity-60">
+                            ~ = 字节 ÷ 4 估算（中英混排会偏差）；历史消息 = 同行 prompt（账本精确）− 系统 − 工具；
+                            占比 = 该段 ÷ 同行 prompt。
+                            <br />
+                            `–` = 该记录未落盘构成（本版前的旧轮）；窗口% = 该步 总输入+总输出 ÷ 上限（与环同源）；
+                            压缩列 = 该步（请求）的压缩：**投递**=按当前配置（每轮首重建，**无需事件**）→ 悬停看预算/丢几条；
+                            **压缩**=触发/手动事件（点开看算法/过滤器/规模）。
+                            <Show when={compactPage()?.truncated}>
+                                <div class="mt-1 text-warning" data-compact-truncated>
+                                    ⓘ 更早的压缩记录未加载（审计日志，可清理）—— 只标注了最近 200 条压缩事件
                                 </div>
                             </Show>
-                            <div class="mt-2 text-caption opacity-60">
-                                ~ = 字节 ÷ 4 估算（中英混排会偏差）；历史消息 = 同行 prompt（账本精确）− 系统 − 工具；
-                                占比 = 该段 ÷ 同行 prompt（合计 = Σ段 ÷ Σprompt）。
-                                <br />
-                                `–` = 该记录未落盘构成（本版前的旧轮）；窗口% = 该步 总输入+总输出 ÷ 上限（与环同源）；
-                                压缩列 = 该步（请求）的压缩：**投递**=按当前配置（每轮首重建，**无需事件**）→ 悬停看预算/丢几条；
-                                **压缩**=触发/手动事件（点开看算法/过滤器/规模）。
-                                <Show when={compactPage()?.truncated}>
-                                    {/* ##431：账本限读尾部 ⇒ 更早的压缩点位未加载，必须说出来。 */}
-                                    <div class="mt-1 text-warning" data-compact-truncated>
-                                        ⓘ 更早的压缩记录未加载（审计日志，可清理）—— 只标注了最近 200 条压缩事件
-                                    </div>
-                                </Show>
-                            </div>
-                        </Show>
+                        </div>
                     </div>
                     </Show>
                 </div>
@@ -1674,176 +1392,7 @@ function FmtBody(props: { text: () => string }) {
     );
 }
 
-/** 金额格：主值 + 小字「占表内总$比例」（各项金额总占比，估花费变化用） */
-const moneyCell = (v: number | null, total: number | null) =>
-    v == null ? (
-        <span class="opacity-50">n/a</span>
-    ) : (
-        <div class="leading-tight">
-            <div>{fmtCost(v)}</div>
-            <Show when={total != null && total > 0}>
-                <div class="text-caption tabular-nums opacity-50" title="占表内总金额比例">{costShare(v, total)}</div>
-            </Show>
-        </div>
-    );
-
-/** L3 轮明细 → Markdown 源码（列与表格一致；% 同口径） */
-function turnDetailMd(g: TurnGroup | null, rows: StepUsageRecord[], clock: string | null): string {
-    const out: string[] = [`## 本轮逐步用量${clock ? ` · ${clock}` : ""}`, ""];
-    if (g) {
-        out.push(
-            `- 窗口占用（最后一步）${pctText(g.last.windowRate)} · 步数 ${g.steps.length} · 缓存命中 ${pctText(cacheHitRate(g.buckets))} · 合计 ${g.cost ? `$${fmtCost(g.cost.total)}` : "n/a"}`,
-            "",
-        );
-    }
-    const total$ = g?.cost?.total ?? null;
-    const m = (n: number | null | undefined): string => (n == null ? "n/a" : `${fmtCost(n)}（${costShare(n, total$)}）`);
-    out.push(
-        "| 步 | 人物 | 模型 | 面 | 档位 | 非缓存 | 缓存读 | 缓存写 | 总输出 | 文本 | 思考 | 缓存命中 | 耗时 | TTFT | 速度 | 窗口% | 单价快照 | 非缓存$ | 缓存读$ | 缓存写$ | 文本$ | 思考$ | 合计$ |",
-        "|---:|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|",
-    );
-    for (const r of rows) {
-        const v = stepView(r);
-        const c = v.cost;
-        const rates = r.rates
-            ? `${r.rates.input}/${r.rates.output}/${r.rates.cacheRead ?? "–"}/${r.rates.cacheWrite ?? "–"} · ${r.rates.tier}`
-            : "无价目";
-        out.push(
-            `| ${r.step} | ${r.persona ?? "—"} | ${r.model} | ${faceLabel(r.apiFace)} | ${r.reasoningEffort ?? "—"} ` +
-                `| ${fmtInt(v.buckets.noCache)} | ${fmtInt(v.buckets.cacheRead)} | ${optCellInt(v.buckets.cacheWrite)} ` +
-                `| ${fmtInt(v.buckets.outputTotal)} | ${fmtInt(v.buckets.text)} | ${fmtInt(v.buckets.reasoning)} ` +
-                `| ${pctText(cacheHitRate(v.buckets))} | ${cellMs(r.performance?.stepTimeMs)} | ${cellMs(r.performance?.timeToFirstOutputMs)} ` +
-                `| ${fmtRate(stepRate(r.performance, v.buckets.outputTotal))} ` +
-                `| ${pctText(v.windowRate)} | ${rates} ` +
-                `| ${c ? m(c.noCache) : "n/a"} | ${c ? m(c.cacheRead) : "n/a"} | ${c?.cacheWrite == null ? "n/a" : m(c.cacheWrite)} ` +
-                `| ${c ? m(c.text) : "n/a"} | ${c ? m(c.reasoning) : "n/a"} | ${c ? m(c.total) : "n/a"} |`,
-        );
-    }
-    return out.join("\n");
-}
-
-/** L3 会话看板 → Markdown 源码（按人物分行，列与表格一致） */
-function sessionBoardMd(groups: AgentGroup[]): string {
-    const costs = groups.filter((g) => g.cost != null).map((g) => g.cost!);
-    const totalCost = costs.length ? sumCosts(costs) : null;
-    const total$ = totalCost?.total ?? null;
-    const m = (n: number | null | undefined): string => (n == null ? "n/a" : `${fmtCost(n)}（${costShare(n, total$)}）`);
-    const steps = groups.reduce((s, g) => s + g.stepCount, 0);
-    const buckets = sumBuckets(groups.map((g) => g.buckets));
-    const out: string[] = ["## 会话用量（按人物）", ""];
-    out.push(
-        "| 人物 | 步 | 非缓存 | 缓存读 | 缓存写 | 总输入 | 总输出 | 文本 | 思考 | 缓存命中 | 非缓存$ | 缓存读$ | 缓存写$ | 文本$ | 思考$ | 合计$ |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
-    );
-    for (const g of groups) {
-        out.push(
-            `| ${g.persona} | ${g.stepCount} | ${fmtInt(g.buckets.noCache)} | ${fmtInt(g.buckets.cacheRead)} | ${optCellInt(g.buckets.cacheWrite)} ` +
-                `| ${fmtInt(g.buckets.inputTotal)} | ${fmtInt(g.buckets.outputTotal)} | ${fmtInt(g.buckets.text)} | ${fmtInt(g.buckets.reasoning)} ` +
-                `| ${pctText(cacheHitRate(g.buckets))} ` +
-                `| ${g.cost ? m(g.cost.noCache) : "n/a"} | ${g.cost ? m(g.cost.cacheRead) : "n/a"} | ${g.cost?.cacheWrite == null ? "n/a" : m(g.cost.cacheWrite)} ` +
-                `| ${g.cost ? m(g.cost.text) : "n/a"} | ${g.cost ? m(g.cost.reasoning) : "n/a"} | ${g.cost ? m(g.cost.total) : "n/a"} |`,
-        );
-    }
-    out.push(
-        `| **合计** | **${steps}** | **${fmtInt(buckets.noCache)}** | **${fmtInt(buckets.cacheRead)}** | **${optCellInt(buckets.cacheWrite)}** ` +
-            `| **${fmtInt(buckets.inputTotal)}** | **${fmtInt(buckets.outputTotal)}** | **${fmtInt(buckets.text)}** | **${fmtInt(buckets.reasoning)}** ` +
-            `| **${pctText(cacheHitRate(buckets))}** ` +
-            `| **${totalCost ? fmtCost(totalCost.noCache) : "n/a"}** | **${totalCost ? fmtCost(totalCost.cacheRead) : "n/a"}** ` +
-            `| **${totalCost?.cacheWrite == null ? "n/a" : fmtCost(totalCost.cacheWrite)}** | **${totalCost ? fmtCost(totalCost.text) : "n/a"}** ` +
-            `| **${totalCost ? fmtCost(totalCost.reasoning) : "n/a"}** | **${totalCost ? fmtCost(totalCost.total) : "n/a"}** |`,
-    );
-    return out.join("\n");
-}
-
 // ─── L3① 本轮逐步明细抽屉（旧两张表 → 一张双表头表） ───
-
-/** 双表头明细表：第一行 = 大类（colspan 分组），第二行 = 列名。共 21 列 */
-function TurnDetailTable(props: { rows: StepUsageRecord[] }) {
-    /** 表内总$（各项金额占比的分母；与合计同口径：只算有价步） */
-    const grand = (): number | null => {
-        const costs = props.rows.map((r) => r.cost).filter((c): c is CostBreakdown => c != null);
-        return costs.length ? sumCosts(costs).total : null;
-    };
-    return (
-        <table class="table table-xs w-full whitespace-nowrap">
-            <thead>
-                <tr class="text-caption">
-                    <th colspan="5" class="text-center font-medium opacity-60">身份</th>
-                    <th colspan="7" class="text-center font-medium opacity-60">Token 桶</th>
-                    <th colspan="4" class="text-center font-medium opacity-60">性能</th>
-                    <th colspan="7" class="text-center font-medium opacity-60" title="各项金额下方小字 = 占本轮合计$比例">金额（$）· 占比</th>
-                </tr>
-                <tr>
-                    <th>步</th>
-                    <th>人物</th>
-                    <th>模型</th>
-                    <th>面</th>
-                    <th>档位</th>
-                    <th class="text-right">非缓存</th>
-                    <th class="text-right">缓存读</th>
-                    <th class="text-right">缓存写</th>
-                    <th class="text-right" title="总输出 = 文本输出 + 思考输出">总输出</th>
-                    <th class="text-right">文本</th>
-                    <th class="text-right">思考</th>
-                    <th class="text-right" title="缓存读 ÷ 总输入">缓存命中</th>
-                    <th class="text-right">耗时</th>
-                    <th class="text-right">TTFT</th>
-                    <th class="text-right" title="生成速度 = 总输出 ÷ (响应耗时 − 首字耗时 TTFT)；响应耗时不含客户端工具执行">速度</th>
-                    <th class="text-right">窗口%</th>
-                    <th title="该步生效单价（$/1M，入/出/读/写 · 生效档）">单价快照</th>
-                    <th class="text-right">非缓存$</th>
-                    <th class="text-right">缓存读$</th>
-                    <th class="text-right">缓存写$</th>
-                    <th class="text-right">文本$</th>
-                    <th class="text-right">思考$</th>
-                    <th class="text-right">合计$</th>
-                </tr>
-            </thead>
-            <tbody>
-                <For each={props.rows}>
-                    {(r) => {
-                        const v = () => stepView(r);
-                        return (
-                            <tr>
-                                <td>{r.step}</td>
-                                <td>{r.persona ?? "—"}</td>
-                                <td>{r.model}</td>
-                                <td>{faceLabel(r.apiFace)}</td>
-                                <td>{r.reasoningEffort ?? "—"}</td>
-                                <td class="text-right">{fmtInt(v().buckets.noCache)}</td>
-                                <td class="text-right">{fmtInt(v().buckets.cacheRead)}</td>
-                                <td class="text-right">{optCellInt(v().buckets.cacheWrite)}</td>
-                                <td class="text-right">{fmtInt(v().buckets.outputTotal)}</td>
-                                <td class="text-right">{fmtInt(v().buckets.text)}</td>
-                                <td class="text-right">{fmtInt(v().buckets.reasoning)}</td>
-                                <td class="text-right">{pctText(cacheHitRate(v().buckets))}</td>
-                                <td class="text-right">{cellMs(r.performance?.stepTimeMs)}</td>
-                                <td class="text-right">{cellMs(r.performance?.timeToFirstOutputMs)}</td>
-                                <td class="text-right">{fmtRate(stepRate(r.performance, v().buckets.outputTotal))}</td>
-                                <td class={`text-right ${pctClass(v().windowRate)}`}>{pctText(v().windowRate)}</td>
-                                <td class="opacity-70">
-                                    <Show when={r.rates} fallback={<span>无价目（该模型不在价格表内）</span>}>
-                                        {(x) => (
-                                            <span>
-                                                {x().input}/{x().output}/{x().cacheRead ?? "–"}/{x().cacheWrite ?? "–"} · {x().tier}
-                                            </span>
-                                        )}
-                                    </Show>
-                                </td>
-                                <td class="text-right">{moneyCell(v().cost?.noCache ?? null, grand())}</td>
-                                <td class="text-right">{moneyCell(v().cost?.cacheRead ?? null, grand())}</td>
-                                <td class="text-right">{moneyCell(v().cost?.cacheWrite ?? null, grand())}</td>
-                                <td class="text-right">{moneyCell(v().cost?.text ?? null, grand())}</td>
-                                <td class="text-right">{moneyCell(v().cost?.reasoning ?? null, grand())}</td>
-                                <td class="text-right">{moneyCell(v().cost?.total ?? null, grand())}</td>
-                            </tr>
-                        );
-                    }}
-                </For>
-            </tbody>
-        </table>
-    );
-}
 
 /** 抽屉顶部汇总条：窗口（最后一步口径）与累计数**分行标注**，不再并排裸奔 */
 function TurnDetailSummary(props: { group: TurnGroup | null }) {
@@ -1916,7 +1465,9 @@ export function TurnUsageDetailDrawer(props: { turnId: string | null; live: bool
     /** 表格 / MD 源码 / 账本源码（两键皆不亮 = 表格；再点已亮键回表格） */
     const [fmtView, setFmtView] = createSignal<"table" | "md" | "raw">("table");
     const toggleFmt = (v: "md" | "raw") => setFmtView((x) => (x === v ? "table" : v));
-    const mdText = () => turnDetailMd(group(), rows(), clock());
+    /** MD 导出与表格同一份列定义（`usageTableMd`），不再各写一套表头 */
+    const mdText = () =>
+        props.turnId ? usageTableMd(localChatStore.usage, "step", { field: "turnId", value: props.turnId }) : "";
     const rawText = () => rows().map((r) => JSON.stringify(r)).join("\n");
 
     const DM = useDrawerMax();
@@ -1962,9 +1513,12 @@ export function TurnUsageDetailDrawer(props: { turnId: string | null; live: bool
                         }
                     >
                         <TurnDetailSummary group={group()} />
-                        <div class="overflow-x-auto rounded-box border border-base-300 bg-base-100 p-2">
-                            <TurnDetailTable rows={rows()} />
-                        </div>
+                        {/* 表 = 统一表的一个视图（group=step + turnId 过滤），不再有「本轮专用表」 */}
+                        <Show when={props.turnId}>
+                            {(id) => (
+                                <UsageTable rows={localChatStore.usage} view="step" filter={{ field: "turnId", value: id() }} />
+                            )}
+                        </Show>
                         {/* 合计句式：等式写法是口径规范（禁止"输出 X · 思考 Y"并列句） */}
                         <div class="mt-2 text-caption opacity-60">
                             合计$ = 非缓存$ + 缓存读$ + 缓存写$ + 文本$ + 思考$；思考是总输出的拆解子项，
@@ -1980,100 +1534,19 @@ export function TurnUsageDetailDrawer(props: { turnId: string | null; live: bool
     );
 }
 
-// ─── L3② 会话看板抽屉（旧两张表 → 一张双表头表） ───
-
-/** 双表头会话表：身份(2) + Token 桶(8，含缓存命中) + 金额(6，带总占比) = 16 列，tfoot 带会话合计 */
-function SessionUsageTable(props: { groups: AgentGroup[] }) {
-    const totals = () => ({
-        buckets: sumBuckets(props.groups.map((g) => g.buckets)),
-        cost: (() => {
-            const priced = props.groups.filter((g) => g.cost != null).map((g) => g.cost!);
-            return priced.length ? sumCosts(priced) : null;
-        })(),
-        steps: props.groups.reduce((s, g) => s + g.stepCount, 0),
-    });
-    /** 表内总$（各项金额占比的分母） */
-    const grand = (): number | null => totals().cost?.total ?? null;
-    return (
-        <table class="table table-xs w-full whitespace-nowrap">
-            <thead>
-                <tr class="text-caption">
-                    <th colspan="2" class="text-center font-medium opacity-60">身份</th>
-                    <th colspan="8" class="text-center font-medium opacity-60">Token 桶（累计）</th>
-                    <th colspan="6" class="text-center font-medium opacity-60" title="各项金额下方小字 = 占会话总金额比例">金额（$）· 占比</th>
-                </tr>
-                <tr>
-                    <th>人物</th>
-                    <th class="text-right">步</th>
-                    <th class="text-right">非缓存</th>
-                    <th class="text-right">缓存读</th>
-                    <th class="text-right">缓存写</th>
-                    <th class="text-right">总输入</th>
-                    <th class="text-right" title="总输出 = 文本输出 + 思考输出">总输出</th>
-                    <th class="text-right">文本</th>
-                    <th class="text-right">思考</th>
-                    <th class="text-right" title="缓存读 ÷ 总输入">缓存命中</th>
-                    <th class="text-right">非缓存$</th>
-                    <th class="text-right">缓存读$</th>
-                    <th class="text-right">缓存写$</th>
-                    <th class="text-right">文本$</th>
-                    <th class="text-right">思考$</th>
-                    <th class="text-right">合计$</th>
-                </tr>
-            </thead>
-            <tbody>
-                <For each={props.groups}>
-                    {(g) => (
-                        <tr>
-                            <td>{g.persona}</td>
-                            <td class="text-right">{g.stepCount}</td>
-                            <td class="text-right">{fmtInt(g.buckets.noCache)}</td>
-                            <td class="text-right">{fmtInt(g.buckets.cacheRead)}</td>
-                            <td class="text-right">{optCellInt(g.buckets.cacheWrite)}</td>
-                            <td class="text-right">{fmtInt(g.buckets.inputTotal)}</td>
-                            <td class="text-right">{fmtInt(g.buckets.outputTotal)}</td>
-                            <td class="text-right">{fmtInt(g.buckets.text)}</td>
-                            <td class="text-right">{fmtInt(g.buckets.reasoning)}</td>
-                            <td class="text-right">{pctText(cacheHitRate(g.buckets))}</td>
-                            <td class="text-right">{moneyCell(g.cost?.noCache ?? null, grand())}</td>
-                            <td class="text-right">{moneyCell(g.cost?.cacheRead ?? null, grand())}</td>
-                            <td class="text-right">{moneyCell(g.cost?.cacheWrite ?? null, grand())}</td>
-                            <td class="text-right">{moneyCell(g.cost?.text ?? null, grand())}</td>
-                            <td class="text-right">{moneyCell(g.cost?.reasoning ?? null, grand())}</td>
-                            <td class="text-right">{moneyCell(g.cost?.total ?? null, grand())}</td>
-                        </tr>
-                    )}
-                </For>
-            </tbody>
-            <tfoot>
-                <tr class="font-medium">
-                    <td colspan="2" class="opacity-70">会话合计（估算 · {totals().steps} 步）</td>
-                    <td class="text-right">{fmtInt(totals().buckets.noCache)}</td>
-                    <td class="text-right">{fmtInt(totals().buckets.cacheRead)}</td>
-                    <td class="text-right">{optCellInt(totals().buckets.cacheWrite)}</td>
-                    <td class="text-right">{fmtInt(totals().buckets.inputTotal)}</td>
-                    <td class="text-right">{fmtInt(totals().buckets.outputTotal)}</td>
-                    <td class="text-right">{fmtInt(totals().buckets.text)}</td>
-                    <td class="text-right">{fmtInt(totals().buckets.reasoning)}</td>
-                    <td class="text-right">{pctText(cacheHitRate(totals().buckets))}</td>
-                    <td class="text-right">{totals().cost ? fmtCost(totals().cost!.noCache) : "n/a"}</td>
-                    <td class="text-right">{totals().cost ? fmtCost(totals().cost!.cacheRead) : "n/a"}</td>
-                    <td class="text-right">{totals().cost?.cacheWrite == null ? "n/a" : fmtCost(totals().cost!.cacheWrite!)}</td>
-                    <td class="text-right">{totals().cost ? fmtCost(totals().cost!.text) : "n/a"}</td>
-                    <td class="text-right">{totals().cost ? fmtCost(totals().cost!.reasoning) : "n/a"}</td>
-                    <td class="text-right">{totals().cost ? `$${fmtCost(totals().cost!.total)}` : "n/a"}</td>
-                </tr>
-            </tfoot>
-        </table>
-    );
-}
+// ─── L3② 会话用量抽屉（= 统一表 + group 选项 + 下钻） ───
 
 /**
- * 会话用量看板（L3 抽屉）。
+ * 会话用量入口（L3）—— **唯一的用量表**（##443 刀 3）。
  *
- * 内容顺序照用户的决策链：**先看窗口占用**（决定要不要重置）→ 再看花了多少（决定值不值）
- * → 最后看单价依据（为什么是这个数）。行键 = **人物**（模型/面/档位是步级属性、可能步间变化，
- * 不进分组键 —— 见 shared/usage.ts keyOfGroup；步级身份看轮明细表），与 CLI 的 `--by-agent` 同源同口径。
+ * 一个 group 选项切四个粒度 + 「窗口构成」，**不是四张表**：
+ *   · 表体、表头、合计行、下钻全部由 `UsageTable` 按 `shared/usage-fields.ts` 的列契约渲染；
+ *   · 下钻 = 同一张表换参数（`turn` 行 → step + turnId 过滤；`persona` 行 → turn + persona 过滤），
+ *     面包屑只负责让你回得去 —— 不存在「另一张明细表」；
+ *   · 合计行恒为 `session` 粒度那一行（与组行同源同口径），置顶（用户决策链：先看值不值）。
+ *
+ * 数字来源仍是 `localChatStore.usage`（`usage.jsonl` 镜像），打开时对账刷新一次。
+ * 窗口环保留在顶部：那是「距上限多远」的常驻判断，不属于表格字段。
  */
 export function UsageDrawer(props: { open: boolean; uri: string | null; onClose: () => void }) {
     // 每次打开顺手对一次账本：轮次间隙里**别人**（CLI / 另一窗口）跑的轮次，
@@ -2082,6 +1555,47 @@ export function UsageDrawer(props: { open: boolean; uri: string | null; onClose:
         if (props.open && props.uri) void localChatStore.refreshUsage(props.uri);
     });
     const steps = () => localChatStore.usage;
+
+    // ─── 视图状态：一个 group + 一条下钻栈（栈顶的 view/filter 覆盖 group）───
+    const [group, setGroup] = createSignal<UsageView>("step");
+    const [stack, setStack] = createSignal<
+        { view: UsageView; filter: { field: "turnId" | "persona"; value: string }; label: string }[]
+    >([]);
+    const effView = (): UsageView => stack().at(-1)?.view ?? group();
+    const filter = () => stack().at(-1)?.filter;
+    /** 切 group 一律清空下钻栈（否则 group=turn 还带着 turnId 过滤 = 空表） */
+    const pick = (v: UsageView) => {
+        setStack([]);
+        setGroup(v);
+    };
+    const drill = (t: { view: UsageView; filter: { field: "turnId" | "persona"; value: string }; label: string }) =>
+        setStack((st) => [...st, t]);
+    const back = () => setStack((st) => st.slice(0, -1));
+
+    // 压缩事件账 + 边界（步视图的「压缩点位」列与「投递裁剪」徽章 hover 要用；抽屉开着才查）
+    const [compactPage] = createResource(
+        () => (props.open ? props.uri : null),
+        async (u) =>
+            u
+                ? ((await localChatStore.compactEvents(u)) as { events: CompactEventRecord[]; truncated: boolean })
+                : { events: [] as CompactEventRecord[], truncated: false },
+    );
+    const [autoStatus] = createResource(
+        () => (props.open ? props.uri : null),
+        async (u) =>
+            u
+                ? ((await localChatStore.autoCompactStatus(u)) as unknown as {
+                      facts?: { boundary?: { at: string; dropped: number; limitTokens: number } | null };
+                  })
+                : undefined,
+    );
+    /** `undefined` = 还没取到（徽章 hover 少一段，不编事实）；`null` = 确实没压过 */
+    const boundary = (): DeliveryBoundary | null | undefined => {
+        const st = autoStatus();
+        if (!st) return undefined;
+        return st.facts?.boundary ?? null;
+    };
+
     /** 窗口占用取**最后一步**：上下文压力是当前状态，不是历史累加（##211 §三） */
     const last = () => {
         const list = steps();
@@ -2094,14 +1608,21 @@ export function UsageDrawer(props: { open: boolean; uri: string | null; onClose:
     /** 表格 / MD 源码 / 账本源码（两键皆不亮 = 表格；再点已亮键回表格） */
     const [fmtView, setFmtView] = createSignal<"table" | "md" | "raw">("table");
     const toggleFmt = (v: "md" | "raw") => setFmtView((x) => (x === v ? "table" : v));
-    const mdText = () => sessionBoardMd(groupByAgent(steps()));
+    const mdText = () => usageTableMd(steps(), effView(), filter());
     const rawText = () => steps().map((r) => JSON.stringify(r)).join("\n");
+
+    const GROUPS: { v: UsageView; label: string }[] = [
+        { v: "step", label: "逐步" },
+        { v: "turn", label: "按轮" },
+        { v: "persona", label: "按人物" },
+        { v: "session", label: "按会话" },
+        { v: "contextParts", label: "窗口构成" },
+    ];
 
     const DM = useDrawerMax();
     return (
         <Show when={props.open}>
-            {/* 与 TurnUsageDetailDrawer 同款形态（与 PersonaDrawer 同构）：全宽贴顶、高 2/3 屏，
-                下方留 1/3 空位；点遮罩 / ✕ / Escape 退出（2026-10-03 定稿） */}
+            {/* 与 TurnUsageDetailDrawer 同款形态（与 PersonaDrawer 同构）：全宽贴顶、高 2/3 屏 */}
             <div class="fixed inset-0 z-50 flex flex-col" data-find-surface onClick={props.onClose}>
                 <div class="absolute inset-0 bg-black/30" />
                 <div
@@ -2109,12 +1630,26 @@ export function UsageDrawer(props: { open: boolean; uri: string | null; onClose:
                     onClick={(e) => e.stopPropagation()}
                 >
                     <div class={`flex shrink-0 items-center gap-2 border-b px-4 ${VIEW_BAR_H}`}>
-                        <div class="text-title font-medium">会话用量</div>
+                        <div class="text-title font-medium">用量</div>
+                        <div class="join shrink-0" role="group" aria-label="用量分组">
+                            <For each={GROUPS}>
+                                {(g) => (
+                                    <button
+                                        class={`btn btn-xs join-item ${effView() === g.v ? "btn-active" : "btn-ghost"}`}
+                                        aria-pressed={effView() === g.v}
+                                        data-usage-group={g.v}
+                                        onClick={() => pick(g.v)}
+                                    >
+                                        {g.label}
+                                    </button>
+                                )}
+                            </For>
+                        </div>
                         <div class="ml-auto">
                             <FmtToggle view={fmtView()} onView={toggleFmt} />
                         </div>
                         <DrawerMaxButton max={DM.max()} onToggle={DM.toggle} />
-                        <button class="btn btn-ghost btn-xs" onClick={props.onClose} aria-label="关闭看板">
+                        <button class="btn btn-ghost btn-xs" onClick={props.onClose} aria-label="关闭用量">
                             ✕
                         </button>
                     </div>
@@ -2128,7 +1663,7 @@ export function UsageDrawer(props: { open: boolean; uri: string | null; onClose:
                             </div>
                         }
                     >
-                        {/* 窗口占用：用户点名的「最重要的一个数」——距上限多远、何时该重置 */}
+                        {/* 窗口占用：用户点名的「最重要的一个数」——距上限多远、何时该重置（不是表格字段） */}
                         <div class="mb-3 rounded-box border border-base-300 p-3">
                             <div class="mb-1 flex items-baseline justify-between">
                                 <span class="text-body opacity-70">窗口占用（= 总输入 + 总输出，取最近一步）</span>
@@ -2143,21 +1678,43 @@ export function UsageDrawer(props: { open: boolean; uri: string | null; onClose:
                                 {last()
                                     ? `${fmtInt(last()!.buckets.total)} / ${last()!.record.contextLimit ? fmtInt(last()!.record.contextLimit!) : "—"} tokens（= 总输入 ${fmtInt(last()!.buckets.inputTotal)} + 总输出 ${fmtInt(last()!.buckets.outputTotal)}）`
                                     : "—"}
-                                <Show when={last()?.record.contextLimit}>
-                                    {(lim) => (
-                                        <span class="ml-1">
-                                            · 距上限还有 {fmtInt(Math.max(0, lim() - (last()?.buckets.total ?? 0)))} tokens
-                                        </span>
-                                    )}
-                                </Show>
                             </div>
                         </div>
 
-                        {/* 按人物分行（模型/面/档位是步级属性，不进分组键）；token 与金额一张表（双表头），tfoot 带合计 */}
-                        <div class="mb-2 text-body opacity-70">按人物分行（模型/面/档位会随步变化，步级身份看轮明细）</div>
-                        <div class="overflow-x-auto">
-                            <SessionUsageTable groups={groupByAgent(steps())} />
+                        {/* 面包屑：下钻后回得去（同一张表换参数，栈里只记「从哪来」） */}
+                        <Show when={stack().length > 0}>
+                            <div class="mb-2 flex flex-wrap items-center gap-1 text-caption" data-usage-crumbs>
+                                <button class="btn btn-ghost btn-xs" data-usage-back onClick={back}>
+                                    ← 返回
+                                </button>
+                                <span class="opacity-60">会话</span>
+                                <For each={stack()}>
+                                    {(t) => (
+                                        <>
+                                            <span class="opacity-40">›</span>
+                                            <span class="font-medium">{t.label}</span>
+                                        </>
+                                    )}
+                                </For>
+                            </div>
+                        </Show>
+
+                        <div class="mb-1 text-caption opacity-60" data-usage-scope>
+                            {effView() === "step" ? "每行一步（点「按轮」看合计；轮内明细从这里下钻）" : null}
+                            {effView() === "turn" ? "每行一轮（点行看该轮逐步）" : null}
+                            {effView() === "persona" ? "每行一个人物（点行看该人物的轮）" : null}
+                            {effView() === "session" ? "整个会话一行（合计口径，与其余视图同源）" : null}
+                            {effView() === "contextParts" ? "每行一次请求的构成（字节÷4 估算，标 ~；高层不求和）" : null}
                         </div>
+
+                        <UsageTable
+                            rows={steps()}
+                            view={effView()}
+                            filter={filter()}
+                            compactEvents={compactPage()?.events ?? []}
+                            boundary={boundary()}
+                            onDrill={drill}
+                        />
 
                         <div class="mt-2 text-caption opacity-60">
                             单价依据 models.dev
@@ -2167,11 +1724,9 @@ export function UsageDrawer(props: { open: boolean; uri: string | null; onClose:
                             {" · "}
                             生效档位：{tiers().length ? tiers().join(", ") : "—"}
                             {windows().length ? ` · 时段：${windows().join(", ")}` : ""}
-                            （tier = 上下文档：按总输入 token 取满足条件的最大阈值；时段 = 峰谷档：
-                            按请求时刻 + 内置日历判定）
                             <br />
                             `合计$` = 非缓存 + 缓存读 + 缓存写 + 文本 + 思考；思考是总输出的拆解子项，
-                            <span class="font-medium">不重复加</span>。缓存写 `n/a` = 该 API 面不可测（不是 0）。
+                            <span class="font-medium">不重复加</span>。缓存写 `–` = 该 API 面不可测（不是 0）。
                         </div>
                     </Show>
                     </Show>

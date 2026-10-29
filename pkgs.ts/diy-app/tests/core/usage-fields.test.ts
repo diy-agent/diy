@@ -398,7 +398,16 @@ describe("过滤与下钻", () => {
         expect(drill[0]!.fields).toHaveProperty("noCacheTokens");
     });
 
-    it("persona 行 → turn + persona 过滤", () => {
+    it("下钻后**合计行**也走同一过滤（session 粒度 + filter = 该轮之和，不是会话总和）", () => {
+    const steps = aggregateUsage(rows, "step", { field: "turnId", value: "t1" });
+    const session = aggregateUsage(rows, "session", { field: "turnId", value: "t1" })[0]!;
+    expect(sumOrNull(steps, "totalTokens")).toBe(session.fields["totalTokens"]);
+    expect(session.fields["stepCount"]).toBe(2);
+    // 未过滤的会话合计必然更大 —— 证明不是"碰巧相等"
+    expect(aggregateUsage(rows, "session")[0]!.fields["totalTokens"]).toBeGreaterThan(session.fields["totalTokens"] as number);
+  });
+
+  it("persona 行 → turn + persona 过滤", () => {
         const drill = aggregateUsage(rows, "turn", { field: "persona", value: "p2" });
         expect(drill.map((r) => r.key)).toEqual(["t2"]);
     });

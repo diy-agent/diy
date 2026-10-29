@@ -1226,51 +1226,32 @@ export function CompactHistoryPanel(props: { uri: string; onClose: () => void })
                         when={rows().length > 0}
                         fallback={<div class="p-6 opacity-60">还没有压缩记录。</div>}
                     >
-                        <table class="table table-xs">
-                            <thead>
-                                <tr>
-                                    <th>时间</th>
-                                    <th>算法</th>
-                                    <th>过滤器</th>
-                                    <th class="text-right">轮次</th>
-                                    <th class="text-right">消息</th>
-                                    <th class="text-right">字节</th>
-                                    <th>方式 / 理由</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <For each={rows()}>
-                                    {(e) => {
-                                        return (
-                                            <tr>
-                                                <td class="opacity-70 whitespace-nowrap">
-                                                    {e.ts ? new Date(e.ts).toLocaleString() : "—"}
-                                                </td>
-                                                <td>
-                                                    <span class="badge badge-ghost badge-xs">{algoName(e.policy?.mode)}</span>
-                                                </td>
-                                                <td class="opacity-80 text-caption">{filterText(e.policy)}</td>
-                                                <td class="text-right tabular-nums">
-                                                    {e.size?.before?.turns ?? "?"} → {e.size?.after?.turns ?? "?"}
-                                                </td>
-                                                <td class="text-right tabular-nums">
-                                                    {e.size?.before?.messages ?? "?"} → {e.size?.after?.messages ?? "?"}
-                                                </td>
-                                                <td class="text-right tabular-nums">
-                                                    {fmtBytes(e.size?.before?.bytes)} → {fmtBytes(e.size?.after?.bytes)}
-                                                </td>
-                                                <td class="opacity-80 text-caption">
-                                                    <span class="badge badge-xs" classList={{ "badge-info": e.by === "auto" }}>
-                                                        {e.by === "auto" ? "自动" : e.by === "ui" ? "界面" : "命令行"}
-                                                    </span>
-                                                    <span class="ml-1">{triggerText(e.trigger)}</span>
-                                                </td>
-                                            </tr>
-                                        );
-                                    }}
-                                </For>
-                            </tbody>
-                        </table>
+                        {/* ##443 刀 3：压缩历史不再是「第五张表」—— 逐条列成行内清单
+                            （主入口已是用量表的 step 行「压缩」标记；这里保留审计视图）。 */}
+                        <div class="px-4 py-1" data-compact-history>
+                            <For each={rows()}>
+                                {(e) => (
+                                    <div class="flex flex-wrap items-center gap-x-3 gap-y-0.5 border-b border-base-200 py-1.5 text-caption">
+                                        <span class="w-36 shrink-0 opacity-70">{e.ts ? new Date(e.ts).toLocaleString() : "—"}</span>
+                                        <span class="badge badge-ghost badge-xs">{algoName(e.policy?.mode)}</span>
+                                        <span class="tabular-nums" title="轮次：压缩前 → 压缩后">
+                                            轮 {e.size?.before?.turns ?? "?"} → {e.size?.after?.turns ?? "?"}
+                                        </span>
+                                        <span class="tabular-nums" title="消息条数：压缩前 → 压缩后">
+                                            消息 {e.size?.before?.messages ?? "?"} → {e.size?.after?.messages ?? "?"}
+                                        </span>
+                                        <span class="tabular-nums" title="投递字节：压缩前 → 压缩后">
+                                            {fmtBytes(e.size?.before?.bytes)} → {fmtBytes(e.size?.after?.bytes)}
+                                        </span>
+                                        <span class="badge badge-xs" classList={{ "badge-info": e.by === "auto" }}>
+                                            {e.by === "auto" ? "自动" : e.by === "ui" ? "界面" : "命令行"}
+                                        </span>
+                                        <span class="opacity-80">{triggerText(e.trigger)}</span>
+                                        <span class="opacity-50">{filterText(e.policy)}</span>
+                                    </div>
+                                )}
+                            </For>
+                        </div>
                     </Show>
                 </div>
                 {/* ##431：限读尾部 ⇒ 更早的记录确实没读。必须显式说出来（不许静默截断）。 */}
