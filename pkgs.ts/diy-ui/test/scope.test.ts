@@ -4,28 +4,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import {
-  ScopeNode,
-  ScopeConfig,
-  type Scheduler,
-  type ContextManager,
-} from "../src/scope.js";
+import { ScopeNode, ScopeConfig, type ContextManager } from "../src/scope.js";
 import { Signal } from "../src/signal.js";
-
-// ── 测试用 Scheduler ──────────────────────────────────────
-
-class NoopScheduler implements Scheduler {
-  scheduled: unknown[] = [];
-  schedule(cell: unknown): void {
-    this.scheduled.push(cell);
-  }
-  flush(): void {}
-}
-
-class DevScheduler implements Scheduler {
-  schedule(_cell: unknown): void {}
-  flush(): void {}
-}
 
 // ── 测试用 ContextManager ─────────────────────────────────
 
@@ -53,19 +33,12 @@ describe("ScopeConfig", () => {
   it("空构造应产生空 config", () => {
     const c = new ScopeConfig();
     expect(c.mode).toBeUndefined();
-    expect(c.scheduler).toBeUndefined();
     expect(c.maxRerunDepth).toBeUndefined();
   });
 
   it("应能设置 mode", () => {
     const c = new ScopeConfig({ mode: "prod" });
     expect(c.mode).toBe("prod");
-  });
-
-  it("应能设置 scheduler", () => {
-    const s = new NoopScheduler();
-    const c = new ScopeConfig({ scheduler: s });
-    expect(c.scheduler).toBe(s);
   });
 
   it("应能设置 maxRerunDepth", () => {
@@ -141,20 +114,6 @@ describe("ScopeNode", () => {
     const root = new ScopeNode(new ScopeConfig({ mode: "prod" }));
     const child = new ScopeNode(new ScopeConfig({ mode: "dev" }), root);
     expect(child.getEffectiveMode()).toBe("dev");
-  });
-
-  it("getEffectiveScheduler 应从祖先继承", () => {
-    const s = new NoopScheduler();
-    const root = new ScopeNode(new ScopeConfig({ scheduler: s }));
-    const child = new ScopeNode(undefined, root);
-    expect(child.getEffectiveScheduler()).toBe(s);
-  });
-
-  it("getEffectiveScheduler 没配置时应抛出", () => {
-    const node = new ScopeNode();
-    expect(() => node.getEffectiveScheduler()).toThrow(
-      "No scheduler configured",
-    );
   });
 
   it("getEffectiveMaxRerunDepth 默认应为 100", () => {

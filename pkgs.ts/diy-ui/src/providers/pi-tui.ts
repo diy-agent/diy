@@ -20,7 +20,6 @@ import { effect, stop } from "@vue/reactivity";
 import {
   ScopeNode,
   ScopeConfig,
-  type Scheduler,
   type ContextManager,
 } from "../scope.js";
 import { Signal } from "../signal.js";
@@ -30,7 +29,6 @@ import {
   LeafComponent,
 } from "../components.js";
 import { CellHost } from "../cell.js";
-import { ImmediateScheduler } from "../scheduler.js";
 
 // ── 基础组件实现 ──────────────────────────────────────────
 
@@ -315,8 +313,8 @@ let currentApp: PiTuiApp | undefined;
  * PiTuiApp — pi-tui 框架的 App 入口
  *
  * 用法:
- *   import { App, ImmediateScheduler } from "@diy/ui";
- *   const app = new App({ mode: "dev", scheduler: new ImmediateScheduler() });
+ *   import { App } from "@diy/ui";
+ *   const app = new App(new ScopeConfig({ mode: "dev" }));
  *   app.column(() => {
  *     app.label("hello");
  *   });
@@ -329,7 +327,6 @@ export class PiTuiApp extends ContainerComponent implements ContextManager {
 
   private contextStack: ScopeNode[] = [this];
   private cells: CellHost[] = [];
-  private defaultScheduler: Scheduler;
   private isVSCodeTerminal: boolean;
 
   constructor(config: ScopeConfig) {
@@ -337,8 +334,6 @@ export class PiTuiApp extends ContainerComponent implements ContextManager {
     super(config);
     // 设置全局引用供 cell() 链式调用
     currentApp = this;
-
-    this.defaultScheduler = config.scheduler ?? new ImmediateScheduler();
 
     this.terminal = new PiProcessTerminal();
     this.isVSCodeTerminal = process.env.TERM_PROGRAM === "vscode";
@@ -557,10 +552,6 @@ export class PiTuiApp extends ContainerComponent implements ContextManager {
     this.tui.stop();
     this.terminal.stop();
     process.exit(0);
-  }
-
-  override getEffectiveScheduler(): Scheduler {
-    return this.defaultScheduler;
   }
 }
 

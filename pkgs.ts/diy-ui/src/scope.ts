@@ -1,13 +1,11 @@
 /**
  * ScopeNode + ScopeConfig — 树形运行时配置节点
  *
- * 组件树同时也是运行时配置树（scheduler、mode、maxRerunDepth 等）。
+ * 组件树同时也是运行时配置树（mode、maxRerunDepth 等）。
  * 配置向上查找：子节点未设置时继承父节点的配置。
  */
 
 import type { Signal } from "./signal.js";
-
-// ── Scheduler 接口（前向声明，实现在 scheduler.ts） ───────
 
 /**
  * Context 管理器接口 — 由 App 实现
@@ -22,27 +20,17 @@ export interface ContextManager {
   popContext(): void;
 }
 
-export interface Scheduler {
-  /** 标记 cell 为脏，等待 rerun */
-  schedule(cell: unknown): void;
-  /** 立即处理所有挂起的 rerun */
-  flush(): void;
-}
-
 // ── ScopeConfig ───────────────────────────────────────────
 
 export class ScopeConfig {
   /** dev 模式开启 scope violation 检查（signal 越界访问警告） */
   mode?: "dev" | "prod";
-  /** rerun 调度策略 */
-  scheduler?: Scheduler;
   /** cell rerun 最大嵌套深度，默认 100 */
   maxRerunDepth?: number;
 
   constructor(opts?: Partial<ScopeConfig>) {
     if (opts) {
       if (opts.mode !== undefined) this.mode = opts.mode;
-      if (opts.scheduler !== undefined) this.scheduler = opts.scheduler;
       if (opts.maxRerunDepth !== undefined)
         this.maxRerunDepth = opts.maxRerunDepth;
     }
@@ -113,16 +101,6 @@ export class ScopeNode {
   }
 
   // ── 配置查找（向上冒泡） ──────────────────────────────
-
-  /** 获取最近祖先的有效 scheduler */
-  getEffectiveScheduler(): Scheduler {
-    if (this.config?.scheduler) return this.config.scheduler;
-    if (this.parent) return this.parent.getEffectiveScheduler();
-    // 根节点没有 scheduler 时应有默认实现
-    throw new Error(
-      "No scheduler configured. App root must provide a default Scheduler.",
-    );
-  }
 
   /** 获取最近祖先的有效 mode */
   getEffectiveMode(): "dev" | "prod" {

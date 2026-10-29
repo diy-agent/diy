@@ -16,11 +16,9 @@ export { Signal } from "./signal.js";
 export {
   ScopeNode,
   type ScopeConfig,
-  type Scheduler,
   type ContextManager,
 } from "./scope.js";
 export { CellHost, type CellCapable } from "./cell.js";
-export { ImmediateScheduler, PeriodicScheduler } from "./scheduler.js";
 export {
   GenApp,
   html,
