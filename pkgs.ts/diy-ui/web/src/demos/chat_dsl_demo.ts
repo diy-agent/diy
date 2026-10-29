@@ -15,7 +15,7 @@ import { BlockStore, toForest, type Op, type BlockNode } from "../lib/op-fold.js
  *   - 唯一直操作 DOM 的地方：`.chat-scroll` 的滚动定位（`d.el`）。
  *
  * 参照：renderer_solid/components/LocalChatPage.tsx（配色/结构用 CDP 比对过）。
- * 对照：demos/chat_ui_demo.tsx（⚠️ 实验、未采纳的 JSX 版）。
+ * （原 JSX 对照版 demos/chat_ui_demo.tsx 与 src/providers/dom-jsx.ts 已删除：实验方向未采纳。）
  */
 
 const DEFAULT_FILE = "/sessions/projects_4_tasks_262-8bc858df8037.ops.jsonl";

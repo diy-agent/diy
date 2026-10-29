@@ -41,13 +41,6 @@ function sessionsPlugin(): Plugin {
 }
 
 export default defineConfig({
-  // JSX classic runtime：jsxFactory = h（见 src/providers/dom-jsx.ts）。
-  // esbuild 会读取 tsconfig 的 jsxFactory，这里显式写一遍以免配置漂移。
-  esbuild: {
-    jsx: "transform",
-    jsxFactory: "h",
-    jsxFragment: "Fragment",
-  },
   plugins: [sessionsPlugin()],
   build: {
     rollupOptions: {
