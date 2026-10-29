@@ -347,12 +347,15 @@ export interface LocalAgentLimits {
     /** 单轮累计成本告警阈值（USD）；`0` = 关闭该类告警 */
     costWarnTurnUsd: number;
     /**
-     * 单条 bash 命令超时（缺省 300s = 5 分钟）。
+     * `runBash` 在**没收到显式 `timeoutMs`** 时的兜底（缺省 300s）。
      *
-     * 曾经的 30s 是**反被利用**的：全量单测 / 构建这类命令本来就跑不完，必然被杀 ⇒
+     * ⚠️ **工具路径不再用它**（##454 用户裁决 2026-10-29：「默认不超时，有人设置 tool 超时
+     * 就要尊重」）：`bash` 工具补的缺省值是 `0`（不设超时），见 `shared/tool-args.ts`。
+     * 这个字段只剩直接调 `runBash(…, undefined)` 的内部代码与单测在用。
+     *
+     * 历史：曾经的 30s 是**反被利用**的 —— 全量单测 / 构建这类命令本来就跑不完，必然被杀 ⇒
      * agent 学会 `nohup … &` + `sleep N` 轮询，一次工作被切成十几步、每步还要重发整个上下文
-     * （##402 实测：87 分钟里约 20 分钟是 sleep 空转、18 次被超时杀）。宁给足时间，
-     * 也不要把「等」变成「轮询」—— 长任务的正式解法见 ##401（异步事件激活）。
+     * （##402 实测：87 分钟里约 20 分钟是 sleep 空转、18 次被超时杀）。
      */
     bashTimeoutMs: number;
     /** bash 输出回喂模型/展示的截断长度（字符） */
@@ -1794,7 +1797,7 @@ const BASH_RESULT_HEAD_SCHEMA = z.object({
     ok: z.boolean().describe("是否正常结束（退出码 0，且没超时 / 没被杀 / 没因输出溢出被终止）"),
     exit_code: z.number().optional().describe("退出码；超时 / 取消 / 命令没跑起来时整行缺席"),
     duration_ms: z.number().describe("墙钟耗时（毫秒）：从 spawn 前到收尾"),
-    timeout_ms: z.number().describe("本次生效的超时（毫秒），环境变量 DIY_LOCAL_BASH_TIMEOUT_MS 可调"),
+    timeout_ms: z.number().describe("本次生效的超时（毫秒）；0 = 不设超时（缺省，##454）"),
     timed_out: z.boolean().describe("是否因超时被终止"),
     killed: z.boolean().describe("是否被我们主动杀掉（超时 / 取消 / 输出溢出）"),
     truncated: z.boolean().describe("投递层是否截断了正文（超 2000 行 / 50KB）；原文可 read 回取"),
@@ -2116,7 +2119,7 @@ export function runBash(
                 resolve({
                     text:
                         head({ ok: false, signal: sig }) +
-                        `[命令超时被杀]（超过 ${fmtTimeout(effectiveTimeoutMs)}，可用 timeout 参数或 DIY_LOCAL_BASH_TIMEOUT_MS 调整；长任务请后台跑 + 取增量日志）\n${out}`,
+                        `[命令超时被杀]（超过 ${fmtTimeout(effectiveTimeoutMs)}，由本步显式给 timeout 指定；缺省是不设超时。长任务请后台跑 + 取增量日志）\n${out}`,
                     failed: false,
                     outcome: "timeout",
                     ...(sig ? { signal: sig } : {}),
@@ -2229,6 +2232,31 @@ export function runBash(
                         dump("out"),
                         dump("err"),
                     );
+            });
+            // ── 退出宽限（##454）：命令**已经结束**但 'close' 可能永远不来 ──
+            // 'close' 的语义是「stdio 全关之后」；命令自己 `nohup … &` / `Popen` 起的孙进程会
+            // 继承 stdout/stderr 写端，命令退出了它们还握着 ⇒ 'close' 挂到孙进程死为止
+            // （##451 实证：最长一条 4,953s，两条都是这种形状）。
+            // 所以再挂一条 'exit'：**命令退出 = 结局已定**，最多等 EXIT_GRACE_MS 收下残余输出，
+            // 然后收尾（`settle` 里的 `destroyPipes` 会把流关掉，孙进程再写就是 EPIPE，是它自己的事）。
+            // 正常命令 'close' 几乎总是早于宽限到点 ⇒ `done` 已真，这里整个 no-op，语义不变。
+            const EXIT_GRACE_MS = 200;
+            child.on("exit", (code, exitSignal) => {
+                if (logSink) return; // 已转后台：输出归 logSink，**不截断**
+                const grace = setTimeout(() => {
+                    if (done || logSink) return;
+                    if (code === 0) finish(null, dump("out"), dump("err"));
+                    else
+                        finish(
+                            { code, killed, message: `Command failed: /bin/bash -c ${command}` },
+                            dump("out"),
+                            dump("err"),
+                            false,
+                            exitSignal ?? undefined,
+                        );
+                }, EXIT_GRACE_MS);
+                // 不拖住进程退出（Electron 主进程 / 单测进程都不该为这条定时器多活 200ms）
+                grace.unref?.();
             });
             // 超时：自己计时（不用 execFile 的 timeout —— 它只杀直接子进程，同一类孤儿缺口）
             // `effectiveTimeoutMs === 0` = 显式不设超时（长任务），此时不留定时器。
@@ -2357,9 +2385,10 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
         bash: tool({
             description: [
                 "在项目目录执行 bash 命令并返回输出（查文件、跑命令、看系统信息）。",
-                `超时缺省 ${fmtTimeout(limits.bashTimeoutMs)}（环境变量 DIY_LOCAL_BASH_TIMEOUT_MS 调整）：超时 / 取消 / 输出溢出都会杀掉整个进程组，并**照样返回结果**（不抛错）—— 正文是已收到的部分，看头里 timed_out / killed 判断怎么结束的。`,
-                "每步的 `timeout`（毫秒，0 = 不设超时）可覆盖缺省；`background: true` 把长任务转到后台并**立即返回**作业 id —— 结束时会插话通知你，**不要轮询**（sleep 再查属于轮询），期间可以放心结束本轮去做别的事。查状态 / 取输出 / 停止用 `job` 工具。",
-                "长任务写法：`nohup <命令> > /tmp/x.log 2>&1 < /dev/null & disown` 立刻返回，然后用**另一条**命令 `tail /tmp/x.log` 取增量；不要在同一条命令里 sleep 等它跑完 —— 那只会撞上自己的超时。",
+                "**缺省不设超时**（命令跑多久工具就等多久）；要限时就显式给 `timeout`（毫秒，到点整组 SIGKILL，并照样返回已收到的输出）。超时 / 取消 / 输出溢出都会杀掉整个进程组，且**照样返回结果**（不抛错）—— 看头里 timed_out / killed 判断怎么结束的。",
+                "命令退出后若有子孙进程还握着输出管道，最多再等 200ms 就返回（拿到已收到的输出），不会因为 `nohup … &` 这类后台孙进程挂死。",
+                "`background: true` 把长任务转到后台并**立即返回**作业 id —— 结束时会插话通知你，**不要轮询**（sleep 再查属于轮询），期间可以放心结束本轮去做别的事。查状态 / 取输出 / 停止用 `job` 工具。",
+                "长任务写法：`nohup <命令> > /tmp/x.log 2>&1 < /dev/null & disown` 立刻返回，然后用**另一条**命令 `tail /tmp/x.log` 取增量；不要在同一条命令里 sleep 等它跑完。",
                 "stdin 已接 /dev/null：`cat`、无参 `grep` / `rg` 立刻拿到 EOF，不会挂住等输入。相对路径一律按 cwd（项目目录）解析。",
                 "结果 = YAML 头 + 正文原文（正文逐字不动）。头的字段：",
                 ...renderFieldDocs(BASH_RESULT_HEAD_SCHEMA),
@@ -2370,16 +2399,15 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                     .number()
                     .optional()
                     .describe(
-                        "本次执行的超时（毫秒）；0 = 不设超时；省略 = 前台缺省 300s（DIY_LOCAL_BASH_TIMEOUT_MS 可调）/" +
-                            "后台缺省不设超时",
+                        "本次执行的超时（毫秒）；0 = 不设超时；省略 = 不设超时（##454：默认不超时，显式设置就尊重）",
                     ),
                 background: z
                     .boolean()
                     .optional()
                     .describe(
                         "后台执行：立即返回作业 id，输出落日志文件；结束时会插话通知你。不需要在命令末尾加 &。" +
-                            "查状态/输出/停止用 job 工具。**后台缺省不设超时**（前台缺省 300s）；" +
-                            "要给后台限时就显式给 timeout，到点整组停止。",
+                            "查状态/输出/停止用 job 工具。**后台同样缺省不设超时**；" +
+                            "要限时就显式给 timeout，到点整组停止。",
                     ),
             }),
             // ##127：单条工具输出的截断**只落投递层** —— `toModelOutput` 改写「发给模型的那一份」
@@ -2403,10 +2431,10 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                 const execOpts = opts as { abortSignal?: AbortSignal; toolCallId?: string } | undefined;
                 // **生效参数**：缺省值只在这里补一次（`shared/tool-args.ts`），聊天里显示的
                 // 「工具实际收到」用的也是这同一份 —— 两处各补一次必然漂成"界面说前台、实际跑后台"。
-                const eff = effectiveBashArgs({ command, timeout, background }, limits);
+                const eff = effectiveBashArgs({ command, timeout, background });
                 // ── 后台模式（##408 刀 8）──
                 // 与前台共用**同一个** bash 工具和同一套入参，只由 `background` 一位分叉：
-                //   · 前台 = 阻塞到结束（超时可调，缺省 300s）——「现在就要结果」
+                //   · 前台 = 阻塞到结束（缺省不设超时，显式 timeout 才限时）——「现在就要结果」
                 //   · 后台 = 立即返回 id + 日志路径，结束时插话唤醒——「等得起，先干别的」
                 // 这也是 opencode `shell` 工具的形状（`background` + `timeout` 两位），
                 // 两边的口径一致，模型不必学两套。
@@ -2424,7 +2452,7 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                                   },
                               }
                             : { origin: { taskUri } }),
-                        // 后台缺省**不设超时**（daemon 不该在 300s 被静默做掉）；
+                        // 缺省**不设超时**（##454，前台后台同一条规则）；
                         // 模型显式给的正数才真的到点整组 SIGTERM（见 `shared/tool-args.ts`）。
                         ...((eff.args.timeout as number) > 0 ? { deadlineMs: eff.args.timeout as number } : {}),
                     });
@@ -6455,7 +6483,7 @@ export class LocalAgentManager {
                             // 模型发的原文之外，再给一份**补完缺省的**实参（##408 用户 2026-10-23）：
                             // 用户看见 `{"command":…}` 会以为 background/timeout 不存在，其实它们
                             // 是代码里补的缺省值 —— 只显示原文等于让界面撒谎。
-                            const effArgs = part.toolName === "bash" ? effectiveBashArgs(input, L) : null;
+                            const effArgs = part.toolName === "bash" ? effectiveBashArgs(input) : null;
                             const title =
                                 input && typeof input === "object" && !Array.isArray(input) && "command" in input
                                     ? String((input as Record<string, unknown>).command)

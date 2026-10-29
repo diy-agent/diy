@@ -104,13 +104,13 @@ const textReply = (text: string): LanguageModelV3StreamResult =>
     ]);
 
 /** 一次 bash 工具调用 */
-const bashCallReply = (callId: string, command: string): LanguageModelV3StreamResult =>
+const bashCallReply = (callId: string, command: string, extra: Record<string, unknown> = {}): LanguageModelV3StreamResult =>
     stream([
         { type: "stream-start", warnings: [] },
         { type: "tool-input-start", id: callId, toolName: "bash" },
-        { type: "tool-input-delta", id: callId, delta: JSON.stringify({ command }) },
+        { type: "tool-input-delta", id: callId, delta: JSON.stringify({ command, ...extra }) },
         { type: "tool-input-end", id: callId },
-        { type: "tool-call", toolCallId: callId, toolName: "bash", input: JSON.stringify({ command }) },
+        { type: "tool-call", toolCallId: callId, toolName: "bash", input: JSON.stringify({ command, ...extra }) },
         { type: "finish", finishReason: { unified: "tool-calls", raw: "tool_calls" }, usage },
     ]);
 
@@ -244,19 +244,16 @@ describe("既有语义不回归（本任务只动 ③）", () => {
     });
 
     it("② 超时仍当数据（done + [命令超时被杀]），不因 ③ 变 ✗", async () => {
-        process.env["DIY_LOCAL_BASH_TIMEOUT_MS"] = "400"; // 环境变量优先级最高，下一条用例前清掉
-        try {
-            const uri = newUri(PROJECT_OK);
-            const model = stubModel([bashCallReply("c1", "sleep 5"), textReply("太慢了")]);
+        // ##454：缺省不再设超时（`DIY_LOCAL_BASH_TIMEOUT_MS` 也不再是工具的缺省），
+        // 限时只能由**这一步的 `timeout` 实参**指定 —— 用例照这条新口径走。
+        const uri = newUri(PROJECT_OK);
+        const model = stubModel([bashCallReply("c1", "sleep 5", { timeout: 400 }), textReply("太慢了")]);
 
-            const ops = await run(uri, model);
+        const ops = await run(uri, model);
 
-            const id = toolIds(ops)[0];
-            expect(statusOf(ops, id!)).toBe("done");
-            expect(outputOf(ops, id!)).toContain("[命令超时被杀]");
-        } finally {
-            delete process.env["DIY_LOCAL_BASH_TIMEOUT_MS"];
-        }
+        const id = toolIds(ops)[0];
+        expect(statusOf(ops, id!)).toBe("done");
+        expect(outputOf(ops, id!)).toContain("[命令超时被杀]");
     });
 
     it("② 取消不落入 ③（不许被当成 spawn 失败画 ✗）", async () => {

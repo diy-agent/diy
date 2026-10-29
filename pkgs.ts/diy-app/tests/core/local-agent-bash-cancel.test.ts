@@ -67,13 +67,13 @@ const textReply = (text: string): LanguageModelV3StreamResult =>
     { type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage },
   ]);
 
-const bashCallReply = (callId: string, command: string): LanguageModelV3StreamResult =>
+const bashCallReply = (callId: string, command: string, extra: Record<string, unknown> = {}): LanguageModelV3StreamResult =>
   stream([
     { type: "stream-start", warnings: [] },
     { type: "tool-input-start", id: callId, toolName: "bash" },
-    { type: "tool-input-delta", id: callId, delta: JSON.stringify({ command }) },
+    { type: "tool-input-delta", id: callId, delta: JSON.stringify({ command, ...extra }) },
     { type: "tool-input-end", id: callId },
-    { type: "tool-call", toolCallId: callId, toolName: "bash", input: JSON.stringify({ command }) },
+    { type: "tool-call", toolCallId: callId, toolName: "bash", input: JSON.stringify({ command, ...extra }) },
     { type: "finish", finishReason: { unified: "tool-calls", raw: "tool_calls" }, usage },
   ]);
 
@@ -218,22 +218,21 @@ describe("取消串到 bash 工具执行（##375）", () => {
   });
 
   it("超时同样杀整组（同类孤儿缺口的顺手锁）：[命令超时被杀] 语义不变", async () => {
-    process.env["DIY_LOCAL_BASH_TIMEOUT_MS"] = "500"; // 环境变量优先级最高
-    try {
-      const uri = newUri();
-      const marker = join(tmpdir(), `t375-timeout-child-${Date.now()}-${seq}.txt`);
-      const model = stubModel([bashCallReply("c1", `(sleep 2; echo late > ${marker}) & wait`), textReply("太慢")]);
+    // ##454：缺省不设超时，限时只能由这一步的 `timeout` 实参指定（env 不再是工具缺省）
+    const uri = newUri();
+    const marker = join(tmpdir(), `t375-timeout-child-${Date.now()}-${seq}.txt`);
+    const model = stubModel([
+      bashCallReply("c1", `(sleep 2; echo late > ${marker}) & wait`, { timeout: 500 }),
+      textReply("太慢"),
+    ]);
 
-      const ops = await run(uri, model);
+    const ops = await run(uri, model);
 
-      const id = toolIds(ops)[0];
-      expect(id).toBeTruthy();
-      expect(outputOf(ops, id!)).toContain("[命令超时被杀]"); // 既有语义（##332 ②）
-      expect(statusOf(ops, id!)).toBe("done");
-      await sleep(2500);
-      expect(existsSync(marker)).toBe(false); // 子女进程也被带走
-    } finally {
-      delete process.env["DIY_LOCAL_BASH_TIMEOUT_MS"];
-    }
+    const id = toolIds(ops)[0];
+    expect(id).toBeTruthy();
+    expect(outputOf(ops, id!)).toContain("[命令超时被杀]"); // 既有语义（##332 ②）
+    expect(statusOf(ops, id!)).toBe("done");
+    await sleep(2500);
+    expect(existsSync(marker)).toBe(false); // 子女进程也被带走
   });
 });
