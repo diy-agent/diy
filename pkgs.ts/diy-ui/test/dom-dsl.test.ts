@@ -67,7 +67,7 @@ function run(
     rec.put(it.id, rev, el, [(): void => void disposed.push(it.id)]);
   }
   rec.prune();
-  rec.reorder(container);
+  rec.reorder(container as unknown as HTMLElement);
   return rec.next;
 }
 

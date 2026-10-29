@@ -4,18 +4,15 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import {
-  ImmediateScheduler,
-  PeriodicScheduler,
-  type CellRef,
-} from "../src/scheduler.js";
+import { ImmediateScheduler, PeriodicScheduler } from "../src/scheduler.js";
 
-function makeCellRef(name: string, depth: number): CellRef {
+/** 返回带 mock 的 cell ref（保留 vi.fn 类型，测试里可直接断言调用次数）。 */
+function makeCellRef(name: string, depth: number) {
   return {
     rerun: vi.fn(),
     getDepth: () => depth,
     _name: name,
-  } as CellRef & { _name: string };
+  };
 }
 
 describe("ImmediateScheduler", () => {
