@@ -1,0 +1,40 @@
+{
+    "name": "@diy/chat-page",
+    "version": "0.1.0",
+    "private": true,
+    "description": "聊天页面插件：主进程侧用 @diy/agent-session + 假 LlmPort，renderer 侧输入框 + 消息列表",
+    "files": [
+        "src/"
+    ],
+    "type": "module",
+    "main": "./lib/index.js",
+    "types": "./lib/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./lib/index.d.ts",
+            "default": "./lib/index.js"
+        },
+        "./main": {
+            "types": "./lib/main.d.ts",
+            "default": "./lib/main.js"
+        },
+        "./renderer": {
+            "types": "./lib/renderer.d.ts",
+            "default": "./lib/renderer.js"
+        }
+    },
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json"
+    },
+    "dependencies": {
+        "@diy/agent-session": "*",
+        "@diy/ui-workbench": "*",
+        "@diy/workbench": "*"
+    },
+    "devDependencies": {
+        "oxfmt": "^0.57.0",
+        "oxlint": "^1.72.0",
+        "typescript": "^7.0.2",
+        "vitest": "^4.1.10"
+    }
+}

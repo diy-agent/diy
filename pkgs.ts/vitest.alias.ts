@@ -29,6 +29,10 @@ const PKG_DIRS: Record<string, string> = {
     "@diy-agent/rpc": "diy-rpc",
     "@diy-agent/ui": "diy-ui",
     "@diy-agent/workbench-plugin": "workbench-plugin",
+    "@diy/workbench": "workbench",
+    "@diy/ui-workbench": "ui-workbench",
+    "@diy/chat-page": "chat-page",
+    "@diy/app-minimal": "app-minimal",
 };
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

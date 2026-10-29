@@ -427,7 +427,9 @@ vendor.update() {  run git submodule update --init --recursive --remote --merge;
 # 顺序 = 依赖拓扑：@diy/template → @diy/context → @diy/compact；@diy/talk → @diy/flow
 #（各包 tsc 要靠被依赖包的 lib/*.d.ts 做类型解析，故不能乱序、也不能并行）。
 build-pkgs() {
-    local _pkg_order=(diy-template diy-talk diy-context diy-compact diy-flow diy-facts diy-persistence diy-rpc diy-ui workbench-plugin diy-agent-session diy-agent-session-store-jsonl diy-room)
+    # workbench / ui-workbench / chat-page / app-minimal：插件化体系的第一个活样本（##457）；
+    # 顺序 = 被依赖方在前（chat-page 依赖 agent-session，app-minimal 依赖前三者）。
+    local _pkg_order=(diy-template diy-talk diy-context diy-compact diy-flow diy-facts diy-persistence diy-rpc diy-ui workbench-plugin diy-agent-session diy-agent-session-store-jsonl diy-room workbench ui-workbench chat-page app-minimal)
     for _pkg in "${_pkg_order[@]}"; do
         echo "${inverse_surface}info: workspace: build 'pkgs.ts/${_pkg}'${reset}"
         ( cd "pkgs.ts/${_pkg}" && ./sha.sh build )

@@ -1,0 +1,38 @@
+{
+    "name": "@diy/app-minimal",
+    "version": "0.1.0",
+    "private": true,
+    "description": "最小工作台装配：外壳 + 布局骨架 + 页面插件（第一刀：假 LlmPort，只验 UI 链路）",
+    "files": [
+        "src/"
+    ],
+    "type": "module",
+    "main": "./lib/index.js",
+    "types": "./lib/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./lib/index.d.ts",
+            "default": "./lib/index.js"
+        }
+    },
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json"
+    },
+    "dependencies": {
+        "@diy/chat-page": "*",
+        "@diy/ui-workbench": "*",
+        "@diy/workbench": "*"
+    },
+    "devDependencies": {
+        "@types/node": "^26.1.0",
+        "electron": "^43.0.0",
+        "esbuild": "^0.28.1",
+        "happy-dom": "^20.0.0",
+        "oxfmt": "^0.57.0",
+        "oxlint": "^1.72.0",
+        "playwright-core": "^1.63.0",
+        "tsx": "^4.23.0",
+        "typescript": "^7.0.2",
+        "vitest": "^4.1.10"
+    }
+}
