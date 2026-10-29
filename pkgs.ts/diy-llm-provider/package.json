@@ -1,0 +1,32 @@
+{
+  "name": "@diy/llm-provider",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenAI 兼容 LLM provider：HTTP 请求 + 流式解析 + 模型目录（无人设、零宿主依赖）",
+  "files": [
+    "src/"
+  ],
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "^3.0.55",
+    "ai": "^7.0.113"
+  },
+  "devDependencies": {
+    "@diy/agent-session": "*",
+    "oxfmt": "^0.57.0",
+    "oxlint": "^1.72.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

@@ -17,4 +17,12 @@ describe("装配清单", () => {
         expect(entry!.type).toBe("module");
         expect(typeof (entry!.data as { module: { default?: unknown } }).module.default).toBe("function");
     });
+
+    it("没有 LLM_* 环境变量时不注入 provider（退回假回复，##457 行为不变）", () => {
+        // 测试环境不带 LLM_BASE_URL / LLM_API_KEY；注入与否只看那一对变量
+        expect(process.env["LLM_BASE_URL"]).toBeUndefined();
+        const entry = ASSEMBLY.plugins.find((plugin) => plugin.id === "chat-page");
+        const config = (entry as { config?: { llm?: unknown } }).config;
+        expect(config?.llm).toBeUndefined();
+    });
 });
