@@ -20,8 +20,10 @@ if [ -z "$dirs" ]; then
 fi
 
 # shellcheck disable=SC2086
+# 例外：build-runtime.mjs 是手写构建脚本（不是 tsc 产物，见 ##455），.gitignore 同样开了 ! 反选。
 bad=$(find $dirs -type f \
   \( -name '*.js' -o -name '*.jsx' -o -name '*.mjs' -o -name '*.cjs' -o -name '*.d.ts' \) \
+  ! -path 'pkgs.ts/diy-app/scripts/build-runtime.mjs' \
   2>/dev/null | sort || true)
 
 if [ -n "$bad" ]; then

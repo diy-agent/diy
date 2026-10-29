@@ -82,7 +82,13 @@ build() {
   # CLI 产物也带内置数据：否则打包安装（无源树）时 build/<V>/cli 找不到数据，模型目录退化为空（##275 R1-5）
   run mkdir -p "$d/cli/data" && cp src/main/data/*.json "$d/cli/data/"
   build-renderer
+  # 能力包 runtime/（##455）：npm 结构 + 各包 lib/，electron-builder 的 extraResources 源。
+  # 必须在 build-pkgs 之后（根 build 已保证），否则各包 lib/index.js 还不存在。
+  build-runtime
 }
+
+# 生成 runtime/：打包后主进程用 createRequire 按名字解析 @diy/*（##455）
+build-runtime() { run node scripts/build-runtime.mjs; }
 
 # 本包全部测试：快速单测 → 构建 → 意图测试（起隔离 Electron，慢）
 test() {

@@ -22,6 +22,8 @@ dist/
 build/
 # 能力包编译产物（##453：main/exports 指 lib/*.js，Node/Electron 直接加载；产物不入库）
 lib/
+# 能力包运行时目录（##455：scripts/build-runtime.mjs 生成，electron-builder 的 extraResources 源）
+pkgs.ts/diy-app/runtime/
 
 # 护栏：TS 包内不得出现编译产物（各包 tsconfig 已 noEmit:true，这里只做兜底）。
 # 为什么拦截：.js/.jsx/.d.ts 落在源码旁后，vite/vitest/node 的无扩展名解析会优先命中产物
@@ -32,6 +34,8 @@ lib/
 pkgs.ts/**/*.js
 pkgs.ts/**/*.jsx
 pkgs.ts/**/*.mjs
+# 例外：构建脚本是真源码（##455），不是编译产物
+!pkgs.ts/diy-app/scripts/build-runtime.mjs
 pkgs.ts/**/*.cjs
 pkgs.ts/**/*.d.ts
 
