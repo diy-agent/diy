@@ -16,6 +16,7 @@ import {
   Spacer as PiSpacer,
 } from "@mariozechner/pi-tui";
 import type { Component, Container as PiContainer } from "@mariozechner/pi-tui";
+import { visibleWidth } from "@mariozechner/pi-tui";
 import { effect, stop } from "@vue/reactivity";
 import {
   ScopeNode,
@@ -39,7 +40,6 @@ class TsText extends LeafComponent {
   constructor(content: string, config?: ScopeConfig, parent?: ScopeNode) {
     super(config, parent);
     this.piText = new PiText(content);
-    this.mountToParentPiContainer();
   }
 
   render(width: number): string[] {
@@ -62,7 +62,6 @@ class TsLabel extends LeafComponent {
   constructor(content: string, config?: ScopeConfig, parent?: ScopeNode) {
     super(config, parent);
     this.piText = new PiText(content);
-    this.mountToParentPiContainer();
   }
 
   render(width: number): string[] {
@@ -88,7 +87,6 @@ class TsButton extends LeafComponent {
     super(config, parent);
     this.name = name;
     this.piText = new PiText(` [${name}] `);
-    this.mountToParentPiContainer();
   }
 
   render(width: number): string[] {
@@ -107,7 +105,6 @@ class TsSpacer extends LeafComponent {
   constructor(lines: number = 1, config?: ScopeConfig, parent?: ScopeNode) {
     super(config, parent);
     this.piSpacer = new PiSpacer(lines);
-    this.mountToParentPiContainer();
   }
 
   render(width: number): string[] {
@@ -128,7 +125,11 @@ class TsSpacer extends LeafComponent {
  * 通过自定义 children 排列来实现渲染，重写 render。
  */
 class TsColumn extends ContainerComponent {
-  constructor(config?: ScopeConfig, parent?: ScopeNode) {
+  constructor(
+    private readonly app: PiTuiApp,
+    config?: ScopeConfig,
+    parent?: ScopeNode,
+  ) {
     super(config, parent);
   }
 
@@ -140,7 +141,7 @@ class TsColumn extends ContainerComponent {
     children: (ctx: TsColumn) => void,
     config?: ScopeConfig,
   ): TsColumn {
-    const col = new TsColumn(config, app.currentContext);
+    const col = new TsColumn(app, config, app.currentContext);
     app.pushContext(col);
     try {
       children(col);
@@ -156,7 +157,7 @@ class TsColumn extends ContainerComponent {
   cell(children: (node: TsColumn) => void): TsColumn;
   cell(children: () => void): TsColumn;
   cell(children: ((node: TsColumn) => void) | (() => void)): TsColumn {
-    currentApp?.markCell(this, children as (node: ScopeNode) => void);
+    this.app.markCell(this, children as (node: ScopeNode) => void);
     return this;
   }
 }
@@ -166,7 +167,11 @@ class TsColumn extends ContainerComponent {
  * 通过自定义 render 实现平均分配宽度
  */
 class TsRow extends ContainerComponent {
-  constructor(config?: ScopeConfig, parent?: ScopeNode) {
+  constructor(
+    private readonly app: PiTuiApp,
+    config?: ScopeConfig,
+    parent?: ScopeNode,
+  ) {
     super(config, parent);
   }
 
@@ -175,7 +180,7 @@ class TsRow extends ContainerComponent {
     children: (ctx: TsRow) => void,
     config?: ScopeConfig,
   ): TsRow {
-    const row = new TsRow(config, app.currentContext);
+    const row = new TsRow(app, config, app.currentContext);
     app.pushContext(row);
     try {
       children(row);
@@ -188,7 +193,7 @@ class TsRow extends ContainerComponent {
   cell(children: (node: TsRow) => void): TsRow;
   cell(children: () => void): TsRow;
   cell(children: ((node: TsRow) => void) | (() => void)): TsRow {
-    currentApp?.markCell(this, children as (node: ScopeNode) => void);
+    this.app.markCell(this, children as (node: ScopeNode) => void);
     return this;
   }
 
@@ -282,7 +287,6 @@ class TsTextInput extends LeafComponent {
     this.piInput = new PiInput();
     if (opts.value) this.piInput.setValue(opts.value);
     if (opts.onSubmit) this.piInput.onSubmit = opts.onSubmit;
-    this.mountToParentPiContainer();
   }
 
   get value(): string {
@@ -301,11 +305,6 @@ class TsTextInput extends LeafComponent {
     this.piInput.invalidate();
   }
 }
-
-// ── CellHost ────────────────────────────────────────────────
-
-// 全局 App 引用（用于 cell() 链式调用时找到 App）
-let currentApp: PiTuiApp | undefined;
 
 // ── PiTuiApp ───────────────────────────────────────────────
 
@@ -327,14 +326,13 @@ export class PiTuiApp extends ContainerComponent implements ContextManager {
 
   private contextStack: ScopeNode[] = [this];
   private cells: CellHost[] = [];
+  private sigintHandler?: () => void;
+  private quitKeyRegistered = false;
   private isVSCodeTerminal: boolean;
 
   constructor(config: ScopeConfig) {
     // 根节点没有 parent
     super(config);
-    // 设置全局引用供 cell() 链式调用
-    currentApp = this;
-
     this.terminal = new PiProcessTerminal();
     this.isVSCodeTerminal = process.env.TERM_PROGRAM === "vscode";
     const useRawMode = !this.isVSCodeTerminal;
@@ -526,41 +524,46 @@ export class PiTuiApp extends ContainerComponent implements ContextManager {
    * 启动事件循环
    */
   run(): void {
-    // VSCode 终端下 Ctrl+C 可能以 SIGINT 而非 \u0003 到达，
-    // 注册 SIGINT handler 作为后备退出方式
-    process.on("SIGINT", () => {
-      this.stop();
-    });
+    // VSCode 终端下 Ctrl+C 可能以 SIGINT 而非 \u0003 到达：注册一次后备退出，
+    // 由 stop() 负责摘掉（多次 run() 不叠加）
+    if (!this.sigintHandler) {
+      this.sigintHandler = () => this.stop();
+      process.on("SIGINT", this.sigintHandler);
+    }
 
-    // 默认退出逻辑（q 或 Ctrl+C）—— 高优先级全局监听器
-    this.tui.addInputListener((data: string) => {
-      // Ctrl+C 或 q 退出
-      if (data === "\u0003" || data.toLowerCase() === "q") {
-        this.stop();
-        return { consume: true };
-      }
-      return undefined;
-    });
+    // 默认退出键（q / Ctrl+C）：只注册一次
+    if (!this.quitKeyRegistered) {
+      this.quitKeyRegistered = true;
+      this.tui.addInputListener((data: string) => {
+        if (data === "\u0003" || data.toLowerCase() === "q") {
+          this.stop();
+          return { consume: true };
+        }
+        return undefined;
+      });
+    }
 
     this.tui.start();
   }
 
-  /**
-   * 停止 App
-   */
+  /** 停止 App。**不**退出进程 —— 由宿主决定（库不该替调用方结束进程）。 */
   stop(): void {
+    if (this.sigintHandler) {
+      process.off("SIGINT", this.sigintHandler);
+      this.sigintHandler = undefined;
+    }
     this.tui.stop();
     this.terminal.stop();
-    process.exit(0);
   }
 }
 
 // ── 辅助函数 ────────────────────────────────────────────────
 
-/** 右填充字符串到指定宽度 */
+/** 右填充到指定**显示宽度**（CJK 双宽 / ANSI 转义不计宽）。 */
 function padRight(str: string, width: number): string {
-  if (str.length >= width) return str;
-  return str + " ".repeat(width - str.length);
+  const w = visibleWidth(str);
+  if (w >= width) return str;
+  return str + " ".repeat(width - w);
 }
 
 // ── 公共导出别名 ────────────────────────────────────────────
