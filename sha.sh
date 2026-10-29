@@ -164,6 +164,8 @@ unlink() {    _ws_run command npm unlink -g ; }
 #（子包目录下单用见 pkgs.ts/*/sha.sh check）
 check() {
   ensure-sync
+  # 先编能力包：各包 exports 指 lib/*.js，类型解析要靠它（见 build-pkgs 上方注释）
+  build-pkgs
   run npx tsc -b tsconfig.all.json --noEmit
   run npx oxlint pkgs.ts/
   run npx tsc --noEmit -p pkgs.ts/diy-rpc/tsconfig.browser.json
@@ -238,9 +240,24 @@ vendor.update() {  run git submodule update --init --recursive --remote --merge;
 ####################################################
 # Python 包发布
 ####################################################
+# 编 10 个能力包的 lib/（Node 可直接 import 的 ESM + .d.ts，##453）。
+# 顺序 = 依赖拓扑：@diy/template → @diy/context → @diy/compact；@diy/talk → @diy/flow
+#（各包 tsc 要靠被依赖包的 lib/*.d.ts 做类型解析，故不能乱序、也不能并行）。
+build-pkgs() {
+    local _pkg_order=(diy-template diy-talk diy-context diy-compact diy-flow diy-facts diy-persistence diy-rpc diy-ui workbench-plugin)
+    for _pkg in "${_pkg_order[@]}"; do
+        echo "${inverse_surface}info: workspace: build 'pkgs.ts/${_pkg}'${reset}"
+        ( cd "pkgs.ts/${_pkg}" && ./sha.sh build )
+    done
+}
+
 build() {
-    # 构建只在 diy-app（含 cli 产物），细节见 pkgs.ts/diy-app/sha.sh build
     ensure-sync
+    # ① 先编能力包的 lib/。为什么必须先编：各包 package.json 的 main/exports 已指 lib/*.js，
+    #    类型检查（tsc -b）与 diy-app 打包 resolve 它们时都命中 lib/ ⇒ 缺 lib 就红一片
+    #    （这正是「开发也读 lib」的代价，见 ##453 方案 B）。
+    build-pkgs
+    # ② 再构建 diy-app（含 cli 产物），细节见 pkgs.ts/diy-app/sha.sh build
     run ./pkgs.ts/diy-app/sha.sh build
 }
 

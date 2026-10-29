@@ -19,9 +19,9 @@
 // 本模块只回答「有哪些参数 / 什么类型 / 缺省多少 / 这个值合不合法」：
 // 控件长什么样归 ##320，值从哪来（落库 / 表单 / CLI）归 ##319。
 
-import type { NodeDef } from './define';
-import { FlowError, type FlowErrorCode } from './errors';
-import { isObject, rejectUnknown } from './validate';
+import type { NodeDef } from './define.js';
+import { FlowError, type FlowErrorCode } from './errors.js';
+import { isObject, rejectUnknown } from './validate.js';
 
 /** 参数类型全集 —— **引擎能画出一个控件**的才算（##311 §二 / ##166 §13.1） */
 export const PARAM_TYPES = ['string', 'number', 'boolean', 'enum', 'list'] as const;

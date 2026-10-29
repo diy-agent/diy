@@ -9,17 +9,41 @@
     "directory": "pkgs.ts/diy-rpc"
   },
   "homepage": "https://github.com/diy-agent/diy/tree/main/pkgs.ts/diy-rpc",
-  "keywords": ["rpc", "diy", "typescript", "streaming", "electron"],
+  "keywords": [
+    "rpc",
+    "diy",
+    "typescript",
+    "streaming",
+    "electron"
+  ],
   "type": "module",
-  "main": "./src/index.ts",
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./http": "./src/transport/http/index.ts",
-    "./ws": "./src/transport/ws/index.ts",
-    "./electron": "./src/transport/electron/index.ts",
-    "./cli": "./src/cli/index.ts"
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./http": {
+      "types": "./lib/transport/http/index.d.ts",
+      "default": "./lib/transport/http/index.js"
+    },
+    "./ws": {
+      "types": "./lib/transport/ws/index.d.ts",
+      "default": "./lib/transport/ws/index.js"
+    },
+    "./electron": {
+      "types": "./lib/transport/electron/index.d.ts",
+      "default": "./lib/transport/electron/index.js"
+    },
+    "./cli": {
+      "types": "./lib/cli/index.d.ts",
+      "default": "./lib/cli/index.js"
+    }
   },
-  "files": ["src/"],
+  "files": [
+    "src/"
+  ],
   "dependencies": {
     "zod": "^4.4.3"
   },
@@ -53,5 +77,8 @@
     "ignorePatterns": [
       "node_modules/"
     ]
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
   }
 }

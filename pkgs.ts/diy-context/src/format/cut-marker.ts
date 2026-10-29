@@ -39,7 +39,7 @@
 //   （`<cut …/>` 在**走 markdown 渲染**的视图里同样有被当成 HTML 吞掉的风险 ⇒ `fence: true`
 //     会包一层行内代码，让它照常可见。）
 
-import { invariant } from "./invariant";
+import { invariant } from "./invariant.js";
 
 /** 三种截断语义（见头注的判据表）。非法值必抛 —— 这是本模块存在的理由。 */
 export const CUT_SCOPES = ["wire", "view", "archive"] as const;

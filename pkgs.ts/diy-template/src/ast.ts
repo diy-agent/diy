@@ -12,7 +12,7 @@
 // `:if`/`:for` 的 `loc` 指向**控制属性**（报错要指到属性上），整段起点单列 `from`（开标签位置）。
 // 试验场据此把「模版结构树节点 ↔ 模版里那段源码 ↔ 预览里那段产出」连起来高亮。
 
-import type { Loc } from './errors';
+import type { Loc } from './errors.js';
 
 export interface TextNode {
     type: 'text';

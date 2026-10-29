@@ -12,10 +12,10 @@
 //
 // 本包不做存储（不碰 fs / 不认识 task 目录）：落地位置与版本化归宿主接入（##319）。
 
-import { parseEvent, type Event } from './event';
-import { TalkError } from './errors';
-import { parseReaction, parseThread, type Reaction } from './reaction';
-import type { ParseOptions } from './validate';
+import { parseEvent, type Event } from './event.js';
+import { TalkError } from './errors.js';
+import { parseReaction, parseThread, type Reaction } from './reaction.js';
+import type { ParseOptions } from './validate.js';
 
 /** 序列化选项：`compact` 输出紧凑单行（jsonl 用），缺省缩进多行 */
 export interface SerializeOptions {

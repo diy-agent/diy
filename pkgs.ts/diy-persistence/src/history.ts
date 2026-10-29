@@ -10,9 +10,9 @@
 //   · 降级（ops 缺失 / 空 / 断代）：`{ ops, degraded }` —— 已由 turns 折好的只读文本历史。
 
 import { existsSync } from "node:fs";
-import { countFileLines, fileSize, isTurnStartAt, readOpsFrom, readOpsRange } from "./ops-io";
-import { llmFile, opsFile, resolveSessionFile } from "./paths";
-import { checkOpsRef, readBoundary, readTurnRecords, synthesizeTurnOps, type TurnOp } from "./turns";
+import { countFileLines, fileSize, isTurnStartAt, readOpsFrom, readOpsRange } from "./ops-io.js";
+import { llmFile, opsFile, resolveSessionFile } from "./paths.js";
+import { checkOpsRef, readBoundary, readTurnRecords, synthesizeTurnOps, type TurnOp } from "./turns.js";
 
 /** 重放起点（core 用它决定从 ops 的哪个字节开始读） */
 export interface ReplayInfo {

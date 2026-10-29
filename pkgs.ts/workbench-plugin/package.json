@@ -21,12 +21,25 @@
         "src/"
     ],
     "type": "module",
-    "main": "./src/index.ts",
+    "main": "./lib/index.js",
+    "types": "./lib/index.d.ts",
     "exports": {
-        ".": "./src/index.ts",
-        "./manifest": "./src/manifest.ts",
-        "./panel": "./src/panel.ts",
-        "./spec": "./src/spec.ts"
+        ".": {
+            "types": "./lib/index.d.ts",
+            "default": "./lib/index.js"
+        },
+        "./manifest": {
+            "types": "./lib/manifest.d.ts",
+            "default": "./lib/manifest.js"
+        },
+        "./panel": {
+            "types": "./lib/panel.d.ts",
+            "default": "./lib/panel.js"
+        },
+        "./spec": {
+            "types": "./lib/spec.d.ts",
+            "default": "./lib/spec.js"
+        }
     },
     "dependencies": {
         "zod": "^4.4.3"
@@ -51,5 +64,8 @@
         "ignorePatterns": [
             "node_modules/"
         ]
+    },
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json"
     }
 }

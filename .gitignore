@@ -20,6 +20,8 @@ __pycache__/
 # Build output
 dist/
 build/
+# 能力包编译产物（##453：main/exports 指 lib/*.js，Node/Electron 直接加载；产物不入库）
+lib/
 
 # 护栏：TS 包内不得出现编译产物（各包 tsconfig 已 noEmit:true，这里只做兜底）。
 # 为什么拦截：.js/.jsx/.d.ts 落在源码旁后，vite/vitest/node 的无扩展名解析会优先命中产物

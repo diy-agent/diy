@@ -10,7 +10,7 @@
  *     ... <DrawerMaxButton max={dm.max()} onToggle={dm.toggle} />
  */
 import { createSignal, type Accessor } from "solid-js";
-import { IconExpand, IconCollapse } from "./icons";
+import { IconExpand, IconCollapse } from "./icons.js";
 
 export interface DrawerMax {
     /** 当前是否最大化 */

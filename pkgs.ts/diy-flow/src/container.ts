@@ -27,9 +27,9 @@
 // **不碰存储**（落盘位置 / 文件布局归 ##319）。
 
 import type { Event } from '@diy/talk';
-import type { EdgeKind, WorkflowDef } from './define';
-import { FlowError, type FlowErrorCode } from './errors';
-import { isIsoString, isObject, rejectUnknown, sameJson } from './validate';
+import type { EdgeKind, WorkflowDef } from './define.js';
+import { FlowError, type FlowErrorCode } from './errors.js';
+import { isIsoString, isObject, rejectUnknown, sameJson } from './validate.js';
 
 /**
  * 一次驻留：折线在某个节点上停留的一次（同一节点可驻留多次 —— 打回后再穿过）。

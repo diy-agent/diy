@@ -3,9 +3,9 @@
 // 五条判定（##404「解析语义」）：命中 → 取特定度最高 → 并列同值取其一 → 并列异值报冲突 → 无命中报悬空。
 // **不返回 null**：悬空与冲突都能让库腐坏得很安静，必须显式失败。
 
-import { claimOf } from './claim';
-import { scopeMatches, scopeSpecificity } from './scope';
-import { fail, ok, type Env, type Evidence, type Fact, type Lifecycle, type Result, type Scope } from './types';
+import { claimOf } from './claim.js';
+import { scopeMatches, scopeSpecificity } from './scope.js';
+import { fail, ok, type Env, type Evidence, type Fact, type Lifecycle, type Result, type Scope } from './types.js';
 
 export interface ReadCtx {
     readonly env?: Env;

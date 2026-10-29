@@ -20,7 +20,7 @@
  * 传 `sole` —— 那时条才是全行唯一的键盘入口。
  */
 import { Show } from "solid-js";
-import { IconChevron, IconDot } from "./icons";
+import { IconChevron, IconDot } from "./icons.js";
 
 export function RowGutter(props: {
     /** 这一行**点开会不会多出东西**（false = 静态点，不承诺可展开） */

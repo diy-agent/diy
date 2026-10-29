@@ -8,8 +8,8 @@
 // 或「永远通过」，工作流就会**悄悄偏到另一条路径**上 —— 而「偏了一步」正是折线投影最难肉眼
 // 发现的失败形态（##166 §7.4 痛点 2：靠肉眼对齐会幻觉）。所以：绝不降级，重名也绝不静默覆盖。
 
-import { FlowError } from './errors';
-import { SLOTS, type Slot, type SlotPlugins } from './plugins';
+import { FlowError } from './errors.js';
+import { SLOTS, type Slot, type SlotPlugins } from './plugins.js';
 
 export interface PluginRegistry {
     /** 注册一个插件；同名同槽重复注册 → `duplicate-plugin`（返回自身，可链式） */

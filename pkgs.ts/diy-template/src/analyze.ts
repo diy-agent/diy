@@ -5,9 +5,9 @@
 //   2. include 参数双向校验：传了没用的（unknown-arg）、用了没传的（missing-arg）
 //   3. 打错字体检：条件名 / 参数名写错在这里就能发现，不必等渲染时静默为假
 
-import type { ArgValue, Node } from './ast';
-import type { Loc } from './errors';
-import { CONTROL_ATTRS, parse, type ParseOptions } from './parser';
+import type { ArgValue, Node } from './ast.js';
+import type { Loc } from './errors.js';
+import { CONTROL_ATTRS, parse, type ParseOptions } from './parser.js';
 
 export interface PathRef {
     path: string;

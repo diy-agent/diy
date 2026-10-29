@@ -5,7 +5,7 @@
 // WIRE_ENCODING 是「wire 长什么样」的唯一描述，改动它 → WIRE_VERSION 自动变 → 旧 runtime
 // patch 与新编码不可比 → 触发 rebaseline（144 用例 18）。
 
-import { canonical, sha256Hex } from "./hash";
+import { canonical, sha256Hex } from "./hash.js";
 
 /** wire 编码语义（**改这里就等于换 wire 版本**，投影侧会自动要求 rebaseline） */
 export const WIRE_ENCODING = {

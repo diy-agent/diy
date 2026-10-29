@@ -1,5 +1,8 @@
 import { defineConfig } from 'vitest/config';
 
+// 注意（##453）：各包 package.json 的 main/exports 已指 lib/*.js（Electron 用 Node 直接加载），
+// 单测必须解析回 src —— 故 alias 配在**各 project 自己的 config** 里（projects 模式下根
+// resolve 不下发）：真源 `pkgs.ts/vitest.alias.ts`，diy-app / diy-flow 两个 config 已接。
 export default defineConfig({
   test: {
     projects: ['pkgs.ts/diy-app', 'pkgs.ts/diy-rpc', 'pkgs.ts/diy-template', 'pkgs.ts/diy-talk', 'pkgs.ts/diy-dev', 'pkgs.ts/diy-flow'],

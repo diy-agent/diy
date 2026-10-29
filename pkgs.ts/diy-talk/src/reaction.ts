@@ -11,8 +11,8 @@
 // 案例里轮次靠肉眼对齐编号 → 人被迫纠正「最后一条是 R19，不是你说的 R21」。
 // **寻址结构化 = 引 id；引 id 才能被机器校验（悬空即报错），引文字只能靠人对齐。**
 
-import { parseAnchor, type Anchor } from './anchor';
-import { TalkError } from './errors';
+import { parseAnchor, type Anchor } from './anchor.js';
+import { TalkError } from './errors.js';
 import {
     rejectUnknown,
     takeIsoString,
@@ -20,7 +20,7 @@ import {
     takeObject,
     takeString,
     type ParseOptions,
-} from './validate';
+} from './validate.js';
 
 export interface Reaction {
     readonly id: string;

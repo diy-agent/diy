@@ -18,19 +18,19 @@
 //
 // 硬规则：不转义、不 trim、不删行（逐字节可预测）；未知路径/参数一律报错，不静默。
 
-export { TemplateError } from './errors';
-export type { Loc, TemplateErrorCode, TemplateErrorInit } from './errors';
+export { TemplateError } from './errors.js';
+export type { Loc, TemplateErrorCode, TemplateErrorInit } from './errors.js';
 
-export { parse } from './parser';
-export type { ParseOptions } from './parser';
+export { parse } from './parser.js';
+export type { ParseOptions } from './parser.js';
 
-export { render, renderWithTrace, byteLength, previewValue } from './render';
-export type { IncludeResolver, IncludeTarget, RenderOptions, RenderResult, TraceKind, TraceNode } from './render';
+export { render, renderWithTrace, byteLength, previewValue } from './render.js';
+export type { IncludeResolver, IncludeTarget, RenderOptions, RenderResult, TraceKind, TraceNode } from './render.js';
 
-export { isTruthy, falsyReason, resolvePath, resolveForOutput } from './scope';
-export type { DynamicFrame, RenderContext } from './scope';
+export { isTruthy, falsyReason, resolvePath, resolveForOutput } from './scope.js';
+export type { DynamicFrame, RenderContext } from './scope.js';
 
-export { analyze, analyzeNodes, collectDynamicRefs } from './analyze';
-export type { Analysis, AnalyzeOptions, ConditionRef, IncludeRef, LintIssue, LoopRef, PathRef, VarSpec } from './analyze';
+export { analyze, analyzeNodes, collectDynamicRefs } from './analyze.js';
+export type { Analysis, AnalyzeOptions, ConditionRef, IncludeRef, LintIssue, LoopRef, PathRef, VarSpec } from './analyze.js';
 
-export type { ForNode, IfNode, IncludeArg, IncludeNode, InterpNode, Node, TagNode, TextNode } from './ast';
+export type { ForNode, IfNode, IncludeArg, IncludeNode, InterpNode, Node, TagNode, TextNode } from './ast.js';

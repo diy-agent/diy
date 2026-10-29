@@ -18,15 +18,37 @@
     "signals"
   ],
   "type": "module",
-  "main": "./src/index.ts",
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./browser": "./src/browser.ts",
-    "./signal": "./src/signal.ts",
-    "./host": "./src/host.ts",
-    "./dom": "./src/providers/dom.ts",
-    "./dom-dsl": "./src/providers/dom-dsl.ts",
-    "./dom-gen": "./src/providers/dom-gen.ts"
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./browser": {
+      "types": "./lib/browser.d.ts",
+      "default": "./lib/browser.js"
+    },
+    "./signal": {
+      "types": "./lib/signal.d.ts",
+      "default": "./lib/signal.js"
+    },
+    "./host": {
+      "types": "./lib/host.d.ts",
+      "default": "./lib/host.js"
+    },
+    "./dom": {
+      "types": "./lib/providers/dom.d.ts",
+      "default": "./lib/providers/dom.js"
+    },
+    "./dom-dsl": {
+      "types": "./lib/providers/dom-dsl.d.ts",
+      "default": "./lib/providers/dom-dsl.js"
+    },
+    "./dom-gen": {
+      "types": "./lib/providers/dom-gen.d.ts",
+      "default": "./lib/providers/dom-gen.js"
+    }
   },
   "files": [
     "src/"

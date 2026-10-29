@@ -20,12 +20,12 @@
 // 字符串；窗口 / 摘要是**注入式钩子**（宿主给裁剪函数），内核不自作主张（##166 §五：
 // 「上下文窗口裁剪 / 摘要策略是真正的取舍点」）。
 
-import { type Anchor } from './anchor';
-import { TalkError, type TalkErrorCode } from './errors';
-import { parseEvent, type Event } from './event';
-import { parseReaction, type Reaction } from './reaction';
-import { assemblyRole, assertRoleAssignments, type AssemblyRole, type SourceKind } from './role';
-import { rejectUnknown, takeObject, takeString } from './validate';
+import { type Anchor } from './anchor.js';
+import { TalkError, type TalkErrorCode } from './errors.js';
+import { parseEvent, type Event } from './event.js';
+import { parseReaction, type Reaction } from './reaction.js';
+import { assemblyRole, assertRoleAssignments, type AssemblyRole, type SourceKind } from './role.js';
+import { rejectUnknown, takeObject, takeString } from './validate.js';
 
 const CODE: TalkErrorCode = 'invalid-assembly';
 

@@ -25,7 +25,7 @@ source "../../sha.common.sh"
 ####################################################################################
 
 clean() {
-  run rm -rf ./build ./dist
+  run rm -rf ./build ./dist ./lib
 }
 
 # 本包检查：类型 + lint
@@ -50,6 +50,9 @@ test-unit() { run npx vitest run "$@"; }
 ####################################################################################
 
 test-watch() { run npx vitest "$@"; }
+# build：把 src/ 编成 lib/（Node 可直接 import 的 ESM + .d.ts，见 tsconfig.build.json）
+# 为什么必须编：Electron 从 node_modules 动态加载能力包时 Node 加载不了 `.ts`（##453 判据①）
+build() { run npx tsc -p tsconfig.build.json; }
 typecheck() { run npx tsc --noEmit; }
 lint() { run npx oxlint src/ tests/; }
 lint-fix() { run npx oxlint --fix src/ tests/; }

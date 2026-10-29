@@ -9,8 +9,12 @@ import { builtinModules } from "node:module";
 import { isAbsolute } from "node:path";
 
 /**
- * 要**打包进来**的 workspace 包（它们只有 TS 源码；external 化 = 产物里留 `import "@diy/x"`，
- * node 加载 `.ts` 直接炸）。**新增 workspace 依赖必须同步加这里**。
+ * 要**打包进来**的 workspace 包（external 化 = 产物里留 `import "@diy/x"`，安装形态下也许能
+ * resolve，但代价是把运行时的包发现交给部署环境 —— Electron 从 `Resources/runtime/node_modules/`
+ * 动态加载能力包时容易踩空）。**新增 workspace 依赖必须同步加这里**。
+ *
+ * ##453 之后这些包的 `main` 已指 `lib/*.js`（不是 TS 源码了）：打包会吃掉**编译产物**，
+ * 故 `./sha.sh build` 必须先 `build-pkgs`（顺序见根 sha.sh）。
  */
 export const WORKSPACE_TS_DEPS = [
   "@diy-agent/rpc",

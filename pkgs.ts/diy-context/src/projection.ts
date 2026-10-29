@@ -9,11 +9,11 @@
 // 值变了但模板没引用到 → renderedHash 不变 → 不投递（144 用例 14）。
 // 所有 place 消失 → 必须发**显式清空**，不能只是「什么都不发」（用例 5）。
 
-import { hashText } from "./hash";
-import { placeText, renderPlaces } from "./wire-render";
-import { runtimeEnvelope, systemEnvelope } from "./envelope";
-import { placesIn } from "./tree";
-import { WIRE_VERSION } from "./wire";
+import { hashText } from "./hash.js";
+import { placeText, renderPlaces } from "./wire-render.js";
+import { runtimeEnvelope, systemEnvelope } from "./envelope.js";
+import { placesIn } from "./tree.js";
+import { WIRE_VERSION } from "./wire.js";
 import type {
     ContextPath,
     ContextProjection,
@@ -22,7 +22,7 @@ import type {
     RuntimeCursor,
     RuntimeDelivery,
     RuntimePatchOp,
-} from "./types";
+} from "./types.js";
 
 /** 空水位（还没有任何一次投递） */
 export function emptyCursor(): RuntimeCursor {

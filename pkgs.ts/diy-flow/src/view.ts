@@ -15,7 +15,7 @@
 //    `import type { ViewData } from '@diy/flow'`；跨包**子路径** import（`@diy/flow/src/view`）才是 hack
 //    （`exports` 只有 `.`）。类型导出零运行时代价：不产出运行时成员，`import` 侧也不留副作用。
 
-import type { Renderer } from './define';
+import type { Renderer } from './define.js';
 
 /**
  * 语义色调：行业说「这行 / 这条 / 这枚是**什么性质**」，引擎只照它上色，**不解释含义**（不给 = 引擎默认色）。

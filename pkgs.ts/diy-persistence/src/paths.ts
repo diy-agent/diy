@@ -11,7 +11,7 @@
 
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
-import { keyOf } from "./keys";
+import { keyOf } from "./keys.js";
 
 /** 会话子文件种类（**唯一清单**：双认 / 迁移 / clear 都按它走） */
 export const SESSION_KINDS = ["ops", "llm", "usage", "steps", "compact", "changelog", "raw", "turns"] as const;

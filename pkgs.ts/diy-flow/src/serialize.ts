@@ -27,10 +27,10 @@
 // 第二次 `createRuntime` 仍会用 `resolveParams` 拒掉（`requireParamsMatch` 只比相等、不比合法性）。
 // 要连值一起核：`resolveParams(paramsOf(def), state.params)`。
 
-import { parseRef, type FlowState, type Visit } from './container';
-import { EDGE_KINDS, type EdgeKind } from './define';
-import { FlowError } from './errors';
-import { isIsoString, isObject, rejectUnknown } from './validate';
+import { parseRef, type FlowState, type Visit } from './container.js';
+import { EDGE_KINDS, type EdgeKind } from './define.js';
+import { FlowError } from './errors.js';
+import { isIsoString, isObject, rejectUnknown } from './validate.js';
 
 /** 序列化选项：`compact` 输出紧凑单行（jsonl 用），缺省缩进多行 */
 export interface SerializeOptions {

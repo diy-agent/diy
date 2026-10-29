@@ -4,7 +4,7 @@
 // 为什么单独一层：places 校验、patch 边界、父节点 hash 聚合三处都要判「谁是谁的祖先」，
 // 三处各写一次 startsWith 必然口径漂移（`a` vs `ab` 的前缀误判是经典坑）。
 
-import type { ContextPath } from "./types";
+import type { ContextPath } from "./types.js";
 
 /**
  * 路径段的两种写法（JSONPath 风格，与 YAML 的键写法一致）：

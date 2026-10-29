@@ -55,8 +55,8 @@
 // 校验与默认合并由 `createRuntime` 在**工作流声明了参数**时执行（没声明 = 参数层未启用，`params` 仍是透传袋）。
 // 事件形状与 `@diy/talk` 的 `Event` 完全一致（##312）：**不另造一套历史**（##166 §八）。
 
-export { FlowError } from './errors';
-export type { FlowErrorCode } from './errors';
+export { FlowError } from './errors.js';
+export type { FlowErrorCode } from './errors.js';
 
 export {
     ACTORS,
@@ -66,38 +66,38 @@ export {
     findNode,
     isWorkflow,
     parseWorkflow,
-} from './define';
-export type { Actor, Art, DefineInput, EdgeDef, EdgeKind, NodeDef, Renderer, WorkflowDef } from './define';
+} from './define.js';
+export type { Actor, Art, DefineInput, EdgeDef, EdgeKind, NodeDef, Renderer, WorkflowDef } from './define.js';
 
-export { PARAM_TYPES, interpolate, paramsOf, parseParamsSchema, renderHint, resolveParams } from './params';
-export type { InterpolateOptions, ParamDef, ParamEntry, ParamsSchema, ParamScalar, ParamType, ParamValue, ParamValues } from './params';
+export { PARAM_TYPES, interpolate, paramsOf, parseParamsSchema, renderHint, resolveParams } from './params.js';
+export type { InterpolateOptions, ParamDef, ParamEntry, ParamsSchema, ParamScalar, ParamType, ParamValue, ParamValues } from './params.js';
 
-export { advance, apply, createContainer, initialState, parseRef } from './container';
-export type { Advance, AdvanceRequest, Container, FlowState, Visit } from './container';
+export { advance, apply, createContainer, initialState, parseRef } from './container.js';
+export type { Advance, AdvanceRequest, Container, FlowState, Visit } from './container.js';
 
-export { flowStateFromJson, flowStateToJson, isFlowState, parseFlowState } from './serialize';
-export type { ParseOptions, SerializeOptions } from './serialize';
+export { flowStateFromJson, flowStateToJson, isFlowState, parseFlowState } from './serialize.js';
+export type { ParseOptions, SerializeOptions } from './serialize.js';
 
-export { project } from './project';
-export type { Projection } from './project';
+export { project } from './project.js';
+export type { Projection } from './project.js';
 
-export { SLOTS, parseActionResult, parseGuardResult, parseReceipt, parseView } from './plugins';
-export type { ActionResult, ActionPlugin, GuardPlugin, GuardResult, NotifyPlugin, Plugin, PluginContext, PluginOf, Receipt, RenderPlugin, Slot, SlotPlugins, SourcePlugin, View } from './plugins';
+export { SLOTS, parseActionResult, parseGuardResult, parseReceipt, parseView } from './plugins.js';
+export type { ActionResult, ActionPlugin, GuardPlugin, GuardResult, NotifyPlugin, Plugin, PluginContext, PluginOf, Receipt, RenderPlugin, Slot, SlotPlugins, SourcePlugin, View } from './plugins.js';
 
-export { createRegistry } from './registry';
-export type { PluginRegistry } from './registry';
+export { createRegistry } from './registry.js';
+export type { PluginRegistry } from './registry.js';
 
-export { GUARD_PREFIXES, classifyGuards, evaluateGuards, isObservable, parseGuardRef, selectEdge, unevaluatedGuards } from './eval';
-export type { GuardCheck, GuardEvaluation, GuardMode, GuardPrefix, GuardRef } from './eval';
+export { GUARD_PREFIXES, classifyGuards, evaluateGuards, isObservable, parseGuardRef, selectEdge, unevaluatedGuards } from './eval.js';
+export type { GuardCheck, GuardEvaluation, GuardMode, GuardPrefix, GuardRef } from './eval.js';
 
-export { createRuntime } from './execute';
-export type { DeclareRequest, EventSeed, Move, NodeStatus, NotifyFailure, Runtime, RuntimeOptions, StepResult, Transition } from './execute';
+export { createRuntime } from './execute.js';
+export type { DeclareRequest, EventSeed, Move, NodeStatus, NotifyFailure, Runtime, RuntimeOptions, StepResult, Transition } from './execute.js';
 
-export { callPlugin, isIsoString, isObject, rejectUnknown } from './validate';
+export { callPlugin, isIsoString, isObject, rejectUnknown } from './validate.js';
 
 // 通用渲染器契约（九种 renderer 各自吃哪种 `data` 形状，##166 §14.7 / ##318）——
 // **纯类型导出、零运行时代价**：类型导出不产出任何运行时成员，也不改 `exports` 的子路径策略。
 // 消费者（行业工作流包、宿主 UI ##320）按形状**收窄** `View.payload` 的正路就是
 //   import type { ViewData, ViewShapes } from '@diy/flow';
 // —— 跨包**子路径** import（`@diy/flow/src/view`）才是 hack（`exports` 只有 `"."`）。
-export type * from './view';
+export type * from './view.js';

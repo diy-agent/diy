@@ -8,7 +8,7 @@
 // 形状封闭，写侧/读侧遇到不认识的键一律抛 `TalkError`，绝不静默抹掉调用方的数据。
 // 读侧若要前向兼容（新版本加的字段），显式传 `{ allowUnknown: true }` 逐层放行。
 
-import { TalkError, type TalkErrorCode } from './errors';
+import { TalkError, type TalkErrorCode } from './errors.js';
 
 /**
  * 解析选项。

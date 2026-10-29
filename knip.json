@@ -59,6 +59,7 @@
   "ignore": [
     "**/build/**",
     "**/dist/**",
+    "**/lib/**",
     "**/node_modules/**",
     "vendor/**",
     "pkgs.ts/diy-app/tests/types/**"

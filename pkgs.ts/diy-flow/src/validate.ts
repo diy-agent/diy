@@ -10,7 +10,7 @@
 //     （`code = plugin-threw`，`cause` 保留原异常），不让原生 Error 直穿内核（内核自己的诊断
 //     全是 `FlowError`，调用方按 `code` 处置，不必猜「这个 Error 是谁的」）。
 
-import { FlowError, type FlowErrorCode } from './errors';
+import { FlowError, type FlowErrorCode } from './errors.js';
 
 /**
  * ISO-8601 时刻的**词法**校验（形状 `YYYY-MM-DDTHH:mm:ss[.sss][Z|±HH:mm]`）。

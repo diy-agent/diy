@@ -26,8 +26,8 @@
 //
 // 空白规则：控制节点不产出任何字符；不做 trim、不删行（逐字节可预测）。
 
-import type { ArgValue, InterpNode, Node } from './ast';
-import { TemplateError, type Loc, type TemplateErrorCode } from './errors';
+import type { ArgValue, InterpNode, Node } from './ast.js';
+import { TemplateError, type Loc, type TemplateErrorCode } from './errors.js';
 
 /** 已知控制属性（供 lint 复用；写错会明确报"未知控制属性"+ 已知清单） */
 export const CONTROL_ATTRS = ['if', 'if-not', 'for', 'as', 'include'] as const;

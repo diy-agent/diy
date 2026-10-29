@@ -15,8 +15,8 @@
 // 且 shared/ 要能进 renderer 包（零 node 依赖）。
 
 import { render as renderTemplate } from "@diy/template";
-import { getValue, hasValue, isPlainObject } from "./tree";
-import type { ContextPath, ContextTreeState } from "./types";
+import { getValue, hasValue, isPlainObject } from "./tree.js";
+import type { ContextPath, ContextTreeState } from "./types.js";
 
 const YAML_RESERVED = new Set(["true", "false", "null", "yes", "no", "on", "off", "~", ""]);
 

@@ -11,9 +11,9 @@
 // 在**编译期**即报错（`defineWorkflow` 用 `const` 元组泛型把 `nodes[].id` 推成字面量联合，见
 // `DefineInput`）。运行期再兜一层：悬空边 / 重号 / 入口不唯一一律抛 `FlowError`。
 
-import { FlowError } from './errors';
-import { parseParamDefs, scanPlaceholders, type ParamDef } from './params';
-import { isObject, rejectUnknown } from './validate';
+import { FlowError } from './errors.js';
+import { parseParamDefs, scanPlaceholders, type ParamDef } from './params.js';
+import { isObject, rejectUnknown } from './validate.js';
 
 /** 谁能在这里动作并宣布推进（##166 §14.4） */
 export const ACTORS = ['agent', 'system', 'human'] as const;

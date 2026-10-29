@@ -13,8 +13,9 @@
 // 用法：node scripts/npm-publish.mjs <pkgDir> [--prepare-only] [--dry-run]
 //
 // 约定（脚本假设，见各包 tsconfig.build.json）：
-//   * `tsc -p tsconfig.build.json` 的 rootDir = src、outDir = dist
-//     ⇒ dist/ 与 src/ 同构，`./src/a/b.ts` 对应 `./a/b.js`。
+//   * `tsc -p tsconfig.build.json` 的 rootDir = src、outDir = lib（缺省；老包曾是 dist）
+//     ⇒ 产物目录与 src/ 同构，`./src/a/b.ts` 对应 `./a/b.js`。
+//   * 产物目录用 `--out=<dir>` 指定（缺省 dist，与历史行为一致）；内部包统一 lib。
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -44,6 +45,8 @@ const PASSTHROUGH = [
 const REGISTRY = 'https://registry.npmjs.org/';
 
 const args = process.argv.slice(2);
+const outFlag = args.find((a) => a.startsWith('--out='));
+const outName = outFlag ? outFlag.slice('--out='.length) : 'dist';
 const flags = new Set(args.filter((a) => a.startsWith('-')));
 const pkgDirArg = args.find((a) => !a.startsWith('-'));
 if (!pkgDirArg) {
@@ -53,20 +56,21 @@ if (!pkgDirArg) {
 
 const pkgDir = path.resolve(pkgDirArg);
 const pkg = JSON.parse(readFileSync(path.join(pkgDir, 'package.json'), 'utf8'));
-const distDir = path.join(pkgDir, 'dist');
+const distDir = path.join(pkgDir, outName);
 
 if (!existsSync(distDir)) {
   console.error(`✗ ${path.relative(process.cwd(), distDir)} 不存在 —— 先 build（./sha.sh build）`);
   process.exit(1);
 }
 
-/** `./src/index.ts` → `./index.js`；目录型条目（`./src/core/index.ts`）同样成立 */
+/** `./src/index.ts`（或 `./lib/index.js`）→ `./index.js`；目录型条目同样成立 */
 const toDistPath = (spec, ext) => {
   const rel = spec.replace(/^\.\//, '');
-  if (!rel.startsWith('src/')) {
-    throw new Error(`exports 条目不在 src/ 下，无法推导 dist 路径：${spec}`);
+  const m = rel.match(/^(?:src|lib)\/(.+)$/);
+  if (!m) {
+    throw new Error(`exports 条目不在 src/ 或 lib/ 下，无法推导产物路径：${spec}`);
   }
-  return `./${rel.slice('src/'.length).replace(/\.ts$/, ext)}`;
+  return `./${m[1].replace(/\.(ts|js)$/, ext)}`;
 };
 
 if (!pkg.exports || typeof pkg.exports !== 'object') {
@@ -76,13 +80,15 @@ if (!pkg.exports || typeof pkg.exports !== 'object') {
 
 const distExports = {};
 for (const [key, value] of Object.entries(pkg.exports)) {
-  if (typeof value !== 'string' || !value.endsWith('.ts')) {
-    throw new Error(`exports["${key}"] 只支持字符串形式的 .ts 源（当前：${JSON.stringify(value)}）`);
+  // 兼容两种仓内形态：老的字符串形式（`./src/index.ts`）与新的条件对象（`{types, default}`）
+  const spec = typeof value === 'string' ? value : value?.default;
+  if (typeof spec !== 'string') {
+    throw new Error(`exports["${key}"] 取不到出口路径（当前：${JSON.stringify(value)}）`);
   }
   distExports[key] = {
-    types: toDistPath(value, '.d.ts'),
-    import: toDistPath(value, '.js'),
-    default: toDistPath(value, '.js'),
+    types: toDistPath(spec, '.d.ts'),
+    import: toDistPath(spec, '.js'),
+    default: toDistPath(spec, '.js'),
   };
 }
 

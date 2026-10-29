@@ -5,10 +5,10 @@
 //   2. 控制节点（<template>）不产出任何字符
 //   3. include 创建**新的**动态作用域（只含参数），不继承调用者的动态链；globals 全程可见
 
-import { analyzeNodes, collectDynamicRefs } from './analyze';
-import type { IncludeNode, Node } from './ast';
-import { TemplateError } from './errors';
-import { parse } from './parser';
+import { analyzeNodes, collectDynamicRefs } from './analyze.js';
+import type { IncludeNode, Node } from './ast.js';
+import { TemplateError } from './errors.js';
+import { parse } from './parser.js';
 import {
     falsyReason,
     isTruthy,
@@ -18,7 +18,7 @@ import {
     type DynamicFrame,
     type EvalContext,
     type RenderContext,
-} from './scope';
+} from './scope.js';
 
 /** include 目标（由宿主注册表提供：项目覆盖 > 内置 + 白名单） */
 export interface IncludeTarget {

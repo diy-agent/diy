@@ -10,8 +10,8 @@
 // 约定：本文件只放 schema/类型，禁止 import node:fs 等 main 专属模块 —— renderer 会打进包。
 
 import { z } from "zod";
-import { ReqlogSchema } from "./reqlog";
-import { TASK_HEAD_FIELDS, type TaskHeadField } from "./task-head";
+import { ReqlogSchema } from "./reqlog.js";
+import { TASK_HEAD_FIELDS, type TaskHeadField } from "./task-head.js";
 
 /** 头字段的 zod 形状：从 TASK_HEAD_FIELDS 派生（清单在 ./task-head，见该文件头注）*/
 const TASK_HEAD_SHAPE = Object.fromEntries(

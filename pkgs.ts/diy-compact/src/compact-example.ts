@@ -15,7 +15,7 @@
 //
 // 纯函数：禁止 import node:*。
 
-import { RETAIN_RATIO, selectKeptBoundary, triggerTokensOf } from "./select-kept-boundary";
+import { RETAIN_RATIO, selectKeptBoundary, triggerTokensOf } from "./select-kept-boundary.js";
 
 /** 合成样例里的一条消息（`bytes` 按 UTF-8 字节；token 见 `bytesToTokens` 的口径说明） */
 export interface ExampleMessage {

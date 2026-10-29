@@ -17,7 +17,7 @@
 // 现成形状（`task.uri`），再发明一种短形 = 同一实体两种写法（且 tid 跨项目重复 13 个，
 // 实测 `tid=1` 同时存在于 projects 5~10）。
 
-import { fail, ok, type Result } from './types';
+import { fail, ok, type Result } from './types.js';
 
 export type Ns =
     | { readonly kind: 'global' }

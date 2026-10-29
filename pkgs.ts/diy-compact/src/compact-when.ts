@@ -10,7 +10,7 @@
 // 没有 mode / 三触发器 / limitTokens / 保头 / 事后配平。
 // 纯函数：禁止 import node:*。
 
-import { triggerTokensOf } from "./select-kept-boundary";
+import { triggerTokensOf } from "./select-kept-boundary.js";
 
 /** 已落盘的压缩边界（turns.jsonl 的 compaction entry，只取展示需要的三项） */
 export interface CompactWhenBoundary {

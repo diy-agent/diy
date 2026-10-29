@@ -8,15 +8,15 @@
 //   · 旧字段（triggers / limitTokens / summary.enabled / mode）读时忽略并出声。
 
 import { z } from "zod";
-import { triggerTokensOf } from "./select-kept-boundary";
-import { HistoryLimitSchema, isCompleteHistoryLimit, normalizeHistoryLimit, type HistoryLimit } from "./history-limit";
+import { triggerTokensOf } from "./select-kept-boundary.js";
+import { HistoryLimitSchema, isCompleteHistoryLimit, normalizeHistoryLimit, type HistoryLimit } from "./history-limit.js";
 import {
     CompactPolicySchema,
     DEFAULT_TOOL_RESULT_POLICY,
     normalizePolicy,
     type CompactPolicy,
     type CompactTrigger,
-} from "./compaction";
+} from "./compaction.js";
 
 /** 压缩配置：工具结果呈现 + 摘要模式（就这两项） */
 export const AutoCompactConfigSchema = z.object({

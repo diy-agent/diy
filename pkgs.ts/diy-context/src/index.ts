@@ -1,19 +1,19 @@
 // src/index.ts
 // 🎯 包入口（barrel）：`import { ... } from "@diy/context"` 一次拿全。
 // 只用一个模块时走子路径（`@diy/context/envelope`）—— 与 barrel 同一份代码，不另起真源。
-export * from "./types";
-export * from "./path";
-export * from "./hash";
-export * from "./wire";
-export * from "./tree";
-export * from "./wire-render";
-export * from "./reducer";
-export * from "./projection";
-export * from "./delivery";
-export * from "./envelope";
-export * from "./schema/task-head";
-export * from "./schema/schema-doc";
-export * from "./schema/reqlog";
-export * from "./schema/prompt-schema";
-export * from "./format/invariant";
-export * from "./format/cut-marker";
+export * from "./types.js";
+export * from "./path.js";
+export * from "./hash.js";
+export * from "./wire.js";
+export * from "./tree.js";
+export * from "./wire-render.js";
+export * from "./reducer.js";
+export * from "./projection.js";
+export * from "./delivery.js";
+export * from "./envelope.js";
+export * from "./schema/task-head.js";
+export * from "./schema/schema-doc.js";
+export * from "./schema/reqlog.js";
+export * from "./schema/prompt-schema.js";
+export * from "./format/invariant.js";
+export * from "./format/cut-marker.js";
