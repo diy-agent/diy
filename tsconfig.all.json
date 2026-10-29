@@ -35,6 +35,12 @@
       "path": "pkgs.ts/diy-ui-kit"
     },
     {
+      "path": "pkgs.ts/diy-agent-session"
+    },
+    {
+      "path": "pkgs.ts/diy-room"
+    },
+    {
       "path": "pkgs.ts/diy-app"
     },
     {
