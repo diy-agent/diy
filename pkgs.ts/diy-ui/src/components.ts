@@ -16,6 +16,9 @@ import { ScopeNode, ScopeConfig } from "./scope.js";
  * 子类必须实现 render(width)。
  */
 export abstract class UIComponent extends ScopeNode implements Component {
+  /** 是否已经挂进父容器（挂载幂等：叶子构造时自动挂，子类手动再挂也不会重复）。 */
+  private _piMounted = false;
+
   constructor(config?: ScopeConfig, parent?: ScopeNode) {
     super(config, parent);
   }
@@ -36,9 +39,11 @@ export abstract class UIComponent extends ScopeNode implements Component {
    * 「原生容器」是哪个（TsBox 的容器是内部 `piBox`，不是 `piContainer`）。
    */
   protected mountToParentPiContainer(): void {
+    if (this._piMounted) return;
     const p = this.parent;
     if (p instanceof ContainerComponent) {
       p.addPiChild(this);
+      this._piMounted = true;
     }
     // 如果是 App 根节点或其他特殊父节点，mount() 时处理
   }
@@ -115,9 +120,13 @@ export abstract class ContainerComponent extends UIComponent {
 
 /**
  * LeafComponent — 不可挂载子 UI 的叶子组件
+ *
+ * 创建即挂到父容器（子类不用再手动 `mountToParentPiContainer()`）。
+ * 容器类不在此列：它们要等自己的内部容器建好再挂（见 `ContainerComponent`）。
  */
 export abstract class LeafComponent extends UIComponent {
   constructor(config?: ScopeConfig, parent?: ScopeNode) {
     super(config, parent);
+    this.mountToParentPiContainer();
   }
 }

@@ -18,9 +18,7 @@ class Txt extends LeafComponent {
     private readonly text: string,
     parent?: ScopeNode,
   ) {
-    super(undefined, parent);
-    // 叶子必须显式挂到父容器（LeafComponent 不自挂 —— 这是现状，测试如实使用）
-    this.mountToParentPiContainer();
+    super(undefined, parent); // LeafComponent 构造时已自动挂到父容器
   }
   render(): string[] {
     return [this.text];
@@ -66,6 +64,14 @@ describe("特性：容器增删子节点 → 渲染跟着变", () => {
     expect(root.render(80)).toEqual(["fresh"]);
     expect(root.children).toEqual([fresh]);
     expect(old.children.length).toBe(0);
+  });
+});
+
+describe("特性：叶子创建即挂载（不用手动挂）", () => {
+  it("new Text(...) 直接出现在父容器的渲染里", () => {
+    const root = new Col();
+    new Txt("auto", root);
+    expect(root.render(80)).toEqual(["auto"]);
   });
 });
 
