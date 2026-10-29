@@ -11,10 +11,10 @@
 //      这正是不能靠"给字符串补 \n 骗它选块风格"的原因 —— 那会在读回时多一个换行。
 //
 // 实现用 `transform` 钩子改 AST 的 `style.literal`，不动内容、不加引号、不带 tag。
-// ⚠️ js-yaml（本仓 5.x）的 `Style` 各标志**互斥**：置 `literal` 必须同时清掉其它标量风格，
-// 否则输出仍是单引号一行（症状：改了没反应）。
+// ⚠️ js-yaml 5.5 起 `style` 是**单个枚举值**（`SCALAR_STYLE.LITERAL_BLOCK`），不再是
+// 5.2 的布尔标志集合（`{literal, folded, …}`）—— 旧写法在 5.5 上类型即报错，且运行时会静默不生效。
 
-import { dump, type Document, type DumpOptions, type Node } from 'js-yaml';
+import { dump, SCALAR_STYLE, type Document, type DumpOptions, type Node } from 'js-yaml';
 
 /** 一律用块标量的字段（人读的长文本；id / at / probe 这类短 token 不在此列，别扩大） */
 const LITERAL_KEYS = new Set(['value', 'description']);
@@ -26,10 +26,7 @@ function walk(node: Node | null): void {
             const key = item.key.kind === 'scalar' ? item.key.value : '';
             const value = item.value;
             if (LITERAL_KEYS.has(key) && value.kind === 'scalar') {
-                value.style.literal = true;
-                value.style.folded = false;
-                value.style.singleQuoted = false;
-                value.style.doubleQuoted = false;
+                value.style = SCALAR_STYLE.LITERAL_BLOCK;
             }
             walk(item.key);
             walk(value);
