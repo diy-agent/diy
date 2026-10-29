@@ -338,6 +338,10 @@ _check_full_body() {
   # 包可见性白名单：对外发布只有 @diy-agent/rpc 与 @diy-agent/ui（不许 private），其余必须 private；
   # 且对外包不许依赖 @diy/* 内部包（否则使用时 registry 找不到）。实现见 scripts/check-pkg-visibility.mjs
   run node scripts/check-pkg-visibility.mjs
+  # runtime 依赖闭包（##455 #5）：runtime/node_modules 里每个包 dependencies 的 @diy* 必须也在其中；
+  # 缺失 = 运行时才炸（WORKSPACE_TS_DEPS 那类事故）。runtime/ 未生成时自动跳过。
+  # 实现见 scripts/check-runtime-closure.mjs
+  run node scripts/check-runtime-closure.mjs
   # 同步 IO 护栏（##408 刀 16）：主进程 / shared / preload 里新增 `*Sync` 的磁盘或子进程调用一律 ✗
   #（实现见 scripts/check-sync-io.sh；用户口径「app 不允许有 sync 的 io 操作」；存量按
   # LEGACY_SYNC_IO_BASELINE 棘轮递减，逃生口 `// sync-io-ok: <理由>`）

@@ -371,6 +371,15 @@ guards.push({
   why: manifestTouched.length ? `${manifestTouched.length} 个 package.json 改动` : '没改 package.json',
 });
 
+// runtime 依赖闭包：扫的是 runtime/ 产物目录（不进 git），与 git 改动集基本无关；
+// 未生成时脚本自己跳过，故常驻跑（一次 readdir，可忽略）。
+guards.push({
+  id: 'runtime-closure',
+  script: 'node scripts/check-runtime-closure.mjs',
+  run: true,
+  why: '扫 runtime/ 的 @diy 依赖闭包（未生成时自动跳过）',
+});
+
 const syncIo = fileList.filter((f) => /^pkgs\.ts\/diy-app\/src\/(main|shared|preload)\//.test(f));
 guards.push({
   id: 'sync-io',

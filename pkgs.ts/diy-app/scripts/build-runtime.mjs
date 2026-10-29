@@ -10,6 +10,7 @@
 //     package.json                        { name: "diy-runtime", private: true, type: "module" }
 //     node_modules/@diy/<pkg>/
 //       package.json                      精简：只留 name / version / type / main / exports
+//                                         + 内部依赖（@diy*，供 check-runtime-closure 判闭包）
 //       lib/**                            只拷编译产物（js / d.ts / map），不拷 src / tests
 //
 // 纳入判据：`pkgs.ts/*/package.json` 里 `main` 以 `./lib/` 开头（##453 之后能力包都是）。
@@ -28,12 +29,24 @@ const outDir = join(appDir, "runtime");
 const quiet = process.argv.includes("--quiet");
 const log = (...a) => !quiet && console.log(...a);
 
-/** 精简 package.json：只留解析与 ESM 判型需要的字段 */
+/** 内部包 scope（runtime 里只有这些包，依赖闭包也只关心它们） */
+const INTERNAL_SCOPES = ["@diy/", "@diy-agent/"];
+
+/**
+ * 精简 package.json：只留解析与 ESM 判型需要的字段。
+ *
+ * `dependencies` 只留**内部**（@diy*）——第三方依赖不随 runtime 分发（由打包产物自带），
+ * 留着会让人误以为 runtime 里有它；而内部依赖是 check-runtime-closure 的判据来源（##455 #5）。
+ */
 function slimPackageJson(pkg) {
     const out = { name: pkg.name, version: pkg.version };
     if (pkg.type) out.type = pkg.type; // type: "module" 必须保留，否则 .js 按 CJS 解析即炸
     if (pkg.main) out.main = pkg.main;
     if (pkg.exports) out.exports = pkg.exports;
+    const internalDeps = Object.fromEntries(
+        Object.entries(pkg.dependencies ?? {}).filter(([name]) => INTERNAL_SCOPES.some((scope) => name.startsWith(scope))),
+    );
+    if (Object.keys(internalDeps).length > 0) out.dependencies = internalDeps;
     return out;
 }
 
