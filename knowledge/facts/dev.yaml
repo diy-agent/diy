@@ -267,13 +267,13 @@ facts:
       verifiedAt: '2026-10-25'
   dev#long-task:
     value: |-
-      **长命令不靠 `sleep` 轮询**：bash 超时缺省 300s（`DIY_LOCAL_BASH_TIMEOUT_MS` 可调）；仍超长就 `nohup … &` **一次**，然后做别的事/汇报，用一次 `tail` 取增量 —— 绝不用「`sleep 30` → 看一眼 → 再 `sleep 30`」把一步工作切成十步（每步都是一次完整请求）。
+      **长命令不靠 `sleep` 轮询**：bash 工具**缺省不设超时**（##454 用户 2026-10-29 裁决：默认不超时，显式给 `timeout` 才限时），命令跑多久就等多久；要限时/防挂就自己给 `timeout`。仍超长就 `nohup … &` **一次**，然后做别的事/汇报，用一次 `tail` 取增量 —— 绝不用「`sleep 30` → 看一眼 → 再 `sleep 30`」把一步工作切成十步（每步都是一次完整请求）。
     id: agents.dev.long-task
     review: accepted
     lifecycle: active
     evidence:
       source: user
-      verifiedAt: '2026-10-22'
+      verifiedAt: '2026-10-29'
   dev#model-cheap:
     value: |-
       实验一律用**免费或最便宜**的模型（缺省先挑 `diy/AGENTS.md` 的 `model.free` 可用项，退 `mimo-v2.5`；`mimo-v2.6-flash` 自 2026-10-17 起**不作缺省** —— 上游返回 `[model_coming_soon]`）；贵模型只在用户明确许可下、一次一条用例

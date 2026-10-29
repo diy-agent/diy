@@ -24,9 +24,6 @@ export interface EffectiveArgs {
     defaulted: string[];
 }
 
-/** `bash` 工具缺省超时的兜底（`limits` 缺字段时用；与 `DEFAULT_LIMITS.bashTimeoutMs` 同值） */
-export const DEFAULT_BASH_TIMEOUT_MS = 300_000;
-
 function num(v: unknown): number | undefined {
     return typeof v === "number" && Number.isFinite(v) ? v : undefined;
 }
@@ -34,19 +31,18 @@ function num(v: unknown): number | undefined {
 /**
  * `bash` 的生效参数。
  *
- * 口径与 `runBash` **完全一致**（那是执行侧的真源，这里的单测钉住两边同形）：
- * - `timeout` 省略 **且前台** ⇒ `limits.bashTimeoutMs`（缺省 300s）
- * - `timeout` 省略 **且后台** ⇒ `0` = 不设超时（后台的缺省语义，见下）
- * - `timeout === 0` ⇒ 0 = **不设超时**（不是"立刻超时"）
+ * 口径（##454 用户裁决 2026-10-29：「**默认不超时，有人设置工具超时就要尊重**」）：
+ * - `timeout` 省略 ⇒ `0` = **不设超时**（不再有 300s 缺省）
+ * - `timeout === 0` ⇒ 0 = 不设超时（不是"立刻超时"）
  * - 负数 / 小数 ⇒ 夹到 0 / 向下取整（`Math.max(0, Math.floor(x))`）
- * - 非数字（模型偶尔给字符串）⇒ 当没给，回缺省
+ * - 非数字（模型偶尔给字符串）⇒ 当没给，回缺省（0）
  * - `background` 只认严格 `true`（schema 是 `z.boolean()`；早先 `Boolean(x)` 会把 `"false"` 读成后台）
  *
- * 后台为什么缺省不设超时：前台超时的意义是「别让工具调用永远挂着」，后台本来就不挂；
- * 若沿用 300s，一条 `background:true` 的 daemon 会在 5 分钟被**静默做掉**，
- * 而模型以为自己只是「丢到后台」。想限时就显式给 `timeout`（到点整组 SIGTERM）。
+ * 为什么删掉「像后台就不设超时」的判定（##408 的 `background ? 0 : limits.bashTimeoutMs`）：
+ * 那是**猜意图** —— 命令里出现 `&` / `nohup` 就由工具替模型决定超时策略，规则藏在代码里，
+ * 当事人看不见也改不了。现在只剩一条可预期的规则：显式给 `timeout` 就尊重，没给就不设。
  */
-export function effectiveBashArgs(raw: unknown, limits: { bashTimeoutMs?: number }): EffectiveArgs {
+export function effectiveBashArgs(raw: unknown): EffectiveArgs {
     const src = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
     const defaulted: string[] = [];
 
@@ -54,10 +50,10 @@ export function effectiveBashArgs(raw: unknown, limits: { bashTimeoutMs?: number
     if (src.background === undefined) defaulted.push("background");
 
     const rawTimeout = num(src.timeout);
-    const fallback = background ? 0 : (num(limits.bashTimeoutMs) ?? DEFAULT_BASH_TIMEOUT_MS);
     let timeout: number;
     if (rawTimeout === undefined) {
-        timeout = fallback;
+        // 缺省 = 不设超时（##454）；显式给的一律原样尊重
+        timeout = 0;
         defaulted.push("timeout");
     } else {
         timeout = Math.max(0, Math.floor(rawTimeout));
