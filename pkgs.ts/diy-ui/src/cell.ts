@@ -3,7 +3,7 @@
  *
  * .cell(fn) 标记 ScopeNode 为 rerun 块：
  *   - 定义时立即执行首次挂载
- *   - signal 变化通过 scheduler 触发 rerun
+ *   - signal 变化由 provider 的 effect 驱动（core 不再持有调度器）
  *   - staging rerun：清空 children → 执行 fn → 失败恢复旧 children
  *
  * 参考: design doc §5
@@ -11,9 +11,7 @@
 
 import type { ScopeNode } from "./scope.js";
 import type { ContextManager } from "./scope.js";
-import type { Scheduler, CellRef } from "./scheduler.js";
-
-export class CellHost<T extends ScopeNode = ScopeNode> implements CellRef {
+export class CellHost<T extends ScopeNode = ScopeNode> {
   private ctxMgr: ContextManager;
   private cellNode: T;
   private fn: (node: T) => void;

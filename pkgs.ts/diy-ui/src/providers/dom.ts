@@ -2,7 +2,7 @@
 /**
  * DomApp — 浏览器 DOM 的 App 实现（web 原型）。
  *
- * 与 providers/pi-tui.ts 同构：core（signal/scope/cell/scheduler）与框架无关，
+ * 与 providers/pi-tui.ts 同构：core（signal/scope/cell）与框架无关，
  * 本文件只是 DOM 的薄适配层 ——
  *   - 组件 = 真实 HTMLElement（无 target 代理、无 VDOM）
  *   - cell rerun = 清空真实子节点 → 重跑 fn
@@ -21,10 +21,8 @@ import {
   ScopeNode,
   ScopeConfig,
   type ContextManager,
-  type Scheduler,
 } from "../scope.js";
 import { Signal } from "../signal.js";
-import { ImmediateScheduler } from "../scheduler.js";
 import type { HostAdapter } from "../host.js";
 
 // ── DOM HostAdapter（对标 py _HostCtrl） ──────────────────────
@@ -330,13 +328,11 @@ class CellBinding {
 export interface DomAppOptions {
   mount: string | HTMLElement;
   mode?: "dev" | "prod";
-  scheduler?: Scheduler;
 }
 
 export class DomApp extends DomContainer implements ContextManager {
   readonly root: HTMLElement;
   private contextStack: ScopeNode[];
-  private defaultScheduler: Scheduler;
 
   constructor(opts: DomAppOptions) {
     const root =
@@ -346,12 +342,11 @@ export class DomApp extends DomContainer implements ContextManager {
     if (!root) throw new Error(`DomApp: 挂载点未找到: ${String(opts.mount)}`);
     super(
       root,
-      new ScopeConfig({ mode: opts.mode ?? "dev", scheduler: opts.scheduler }),
+      new ScopeConfig({ mode: opts.mode ?? "dev" }),
       undefined,
     );
     this.root = root;
     this.contextStack = [this];
-    this.defaultScheduler = opts.scheduler ?? new ImmediateScheduler();
   }
 
   /** app.xxx() 挂到「当前上下文」而非根。 */
@@ -398,10 +393,6 @@ export class DomApp extends DomContainer implements ContextManager {
   }
   run(): void {
     /* 事件循环由浏览器提供 */
-  }
-
-  override getEffectiveScheduler(): Scheduler {
-    return this.defaultScheduler;
   }
 }
 
