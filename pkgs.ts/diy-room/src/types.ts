@@ -87,8 +87,9 @@ export interface RoomSnapshot {
 /**
  * Room 主线的消息分类（##456「数据分层修订」）：**只有**人说的话和 agent 的结论进主线。
  * 过程（agent-trace / tool-call / tool-result）永远只在二级会话日志里。
+ * `agent-notice` 留给系统给 agent 的说明（首次加入 / 增量省略），它也进主线。
  */
-export type PublicLogKind = 'human' | 'agent-conclusion';
+export type PublicLogKind = 'human' | 'agent-conclusion' | 'agent-notice';
 
 /**
  * Room 主线的一条（一级数据：长期保留、可同步/查询）。
@@ -97,6 +98,8 @@ export type PublicLogKind = 'human' | 'agent-conclusion';
  * 主线要在这之后还读得到原话。`sessionId` / `messageId` 只是溯源线索，不能作为唯一存储。
  */
 export interface PublicLogEntry {
+    /** 房间内单调递增（append 时分配，1 起）；成员水位按它比较 */
+    readonly seq: number;
     /** ISO-8601，由 Clock 决定 */
     readonly at: string;
     /** 谁说的（成员 id） */
@@ -104,10 +107,50 @@ export interface PublicLogEntry {
     readonly kind: PublicLogKind;
     /** 正文副本（不是引用） */
     readonly text: string;
+    /** 这条投给了谁（成员 id；用于「增量过大时 @ 他的必在」） */
+    readonly mentions?: readonly string[];
     /** 来自哪个会话（agent 的结论才有） */
     readonly sessionId?: string;
     /** 对应哪条房间事件（溯源用；不保证二级日志里还能找到） */
     readonly messageId?: string;
+}
+
+/**
+ * 成员在主线上的已读水位（宿主持久化；与 ##395 会话已读水位同口径）。
+ * `lastSeenSeq` = 已经**真的进了 session** 的最大 seq，下次只投 `seq > lastSeenSeq`。
+ */
+export interface MemberCursor {
+    readonly memberId: string;
+    readonly lastSeenSeq: number;
+}
+
+/** 投递参数（按水位增量，不是按窗口重发） */
+export interface DeliveryOptions {
+    /** 首次加入（无 cursor）给最近多少条；缺省 20 */
+    readonly initialN?: number;
+    /** 一次最多给多少条（增量过大时截断）；缺省 50 */
+    readonly maxBatch?: number;
+}
+
+/** 一次投递的结果（进没进 session、跳过了多少，全在这里） */
+export interface DeliveryResult {
+    readonly memberId: string;
+    /** 这次投递前的水位（= 上次成功投递的最后一条） */
+    readonly fromSeq: number;
+    /** 成功后的水位（失败 / 没投则不变） */
+    readonly toSeq: number;
+    /** 真正进了 session 的条目（按 seq 升序） */
+    readonly entries: readonly PublicLogEntry[];
+    /** 因 maxBatch 省略的更早条数 */
+    readonly omitted: number;
+    /** 随正文一起送去的说明行（首次加入 / 省略 M 条） */
+    readonly notices: readonly string[];
+    /** 状态：delivered 成功推进水位；failed / skipped 不推进 */
+    readonly state: 'delivered' | 'failed' | 'skipped';
+    /** agent 这一轮的结论（没有结论 / 失败则缺席） */
+    readonly conclusion?: string;
+    /** 这一轮追加的 response 事件（有结论时才有，已带署名） */
+    readonly response?: RoomEvent;
 }
 
 /**
@@ -147,6 +190,13 @@ export interface Room {
     busy(memberId: string): boolean;
     /** 某个事件对某个成员的投递状态（没投过 = undefined） */
     deliveryOf(eventId: string, memberId: string): Delivery | undefined;
+    /** 某成员当前水位（没投过 = 0） */
+    cursorOf(memberId: string): MemberCursor;
+    /**
+     * 把 `seq > 水位` 的主线增量投给这个成员（同一成员串行）。
+     * **成功才推进水位**：失败 / 被取消不推进 —— 下次重投，不丢不重。
+     */
+    deliverTo(memberId: string, options?: DeliveryOptions): Promise<DeliveryResult>;
     /** 发一条发言：先落事件再 yield；返回的流里会陆续出现各 agent 的回复事件 */
     post(input: PostInput): AsyncGenerator<RoomEvent>;
 }

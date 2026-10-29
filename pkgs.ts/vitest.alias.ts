@@ -16,6 +16,7 @@ const PKGS = resolve(fileURLToPath(new URL(".", import.meta.url)));
 /** 包名 → 仓内目录（新增能力包 = 这里加一行） */
 const PKG_DIRS: Record<string, string> = {
     "@diy/agent-session": "diy-agent-session",
+    "@diy/agent-session-store-jsonl": "diy-agent-session-store-jsonl",
     "@diy/compact": "diy-compact",
     "@diy/context": "diy-context",
     "@diy/facts": "diy-facts",

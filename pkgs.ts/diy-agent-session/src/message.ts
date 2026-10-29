@@ -1,19 +1,23 @@
 // message.ts — 消息与增量的解析 / 自检
 //
+// 消息形状 = 设计定稿 `session-design.md` §二的 Entry（多一个给 LLM 看的 `role`）：
+//   { seq, at, kind, text?, tool?, mentions? , role }
+//
 // 两条铁律：
 //   ① 消息形状不对 ⇒ `session/invalid-message`（带点路径）；
 //   ② LlmPort 吐出别的东西 ⇒ `session/invalid-delta`——适配器写错了要立刻炸在边界上，
 //      不能让半条内容流进历史。
 
 import { SessionError } from './errors.js';
-import type { ChatMessage, MessageKind, MessageRole, SessionDelta } from './types.js';
-import { rejectUnknown, takeIsoString, takeNonNegativeNumber, takeObject, takeString } from './validate.js';
+import type { ChatMessage, ChatToolCall, MessageKind, MessageRole, SessionDelta } from './types.js';
+import { rejectUnknown, takeNonNegativeInteger, takeNonNegativeNumber, takeObject, takeString } from './validate.js';
 
 export const MESSAGE_ROLES: readonly MessageRole[] = ['system', 'user', 'assistant', 'tool'];
 
 export const MESSAGE_KINDS: readonly MessageKind[] = [
     'human',
     'agent-conclusion',
+    'agent-notice',
     'agent-trace',
     'tool-call',
     'tool-result',
@@ -26,12 +30,14 @@ const DEFAULT_KIND: Partial<Record<MessageRole, MessageKind>> = {
     tool: 'tool-result',
 };
 
-const MESSAGE_KEYS = ['role', 'kind', 'content', 'at', 'name', 'toolCallId'] as const;
+const MESSAGE_KEYS = ['seq', 'role', 'kind', 'text', 'tool', 'mentions', 'at'] as const;
+const TOOL_KEYS = ['name', 'args', 'id'] as const;
 
 /** 解析一条消息（非法即抛 `session/invalid-message`） */
 export function parseMessage(value: unknown, path = 'message'): ChatMessage {
     const obj = takeObject(value, path, 'session/invalid-message');
     rejectUnknown(obj, MESSAGE_KEYS, path, 'session/invalid-message');
+
     const role = takeString(obj.role, `${path}.role`, 'session/invalid-message');
     if (!MESSAGE_ROLES.includes(role as MessageRole)) {
         throw new SessionError(
@@ -40,6 +46,7 @@ export function parseMessage(value: unknown, path = 'message'): ChatMessage {
             `${path}.role`,
         );
     }
+
     const rawKind = obj.kind === undefined ? DEFAULT_KIND[role as MessageRole] : obj.kind;
     if (rawKind !== undefined && !MESSAGE_KINDS.includes(rawKind as MessageKind)) {
         throw new SessionError(
@@ -48,21 +55,26 @@ export function parseMessage(value: unknown, path = 'message'): ChatMessage {
             `${path}.kind`,
         );
     }
-    const kind = rawKind as MessageKind | undefined;
-    const content = takeString(obj.content, `${path}.content`, 'session/invalid-message');
-    const at = obj.at === undefined ? undefined : takeIsoString(obj.at, `${path}.at`, 'session/invalid-message');
-    const name = obj.name === undefined ? undefined : takeString(obj.name, `${path}.name`, 'session/invalid-message');
-    const toolCallId =
-        obj.toolCallId === undefined
+
+    const seq =
+        obj.seq === undefined ? undefined : takeNonNegativeInteger(obj.seq, `${path}.seq`, 'session/invalid-message');
+    const at =
+        obj.at === undefined ? undefined : takeNonNegativeNumber(obj.at, `${path}.at`, 'session/invalid-message');
+    const text = obj.text === undefined ? undefined : takeString(obj.text, `${path}.text`, 'session/invalid-message');
+    const tool = obj.tool === undefined ? undefined : parseTool(obj.tool, `${path}.tool`);
+    const mentions =
+        obj.mentions === undefined
             ? undefined
-            : takeString(obj.toolCallId, `${path}.toolCallId`, 'session/invalid-message');
-    const message: ChatMessage = { role: role as MessageRole, content };
+            : parseMentions(obj.mentions, `${path}.mentions`, 'session/invalid-message');
+
     return {
-        ...message,
-        ...(kind === undefined ? {} : { kind }),
+        role: role as MessageRole,
+        ...(seq === undefined ? {} : { seq }),
+        ...(rawKind === undefined ? {} : { kind: rawKind as MessageKind }),
+        ...(text === undefined ? {} : { text }),
+        ...(tool === undefined ? {} : { tool }),
+        ...(mentions === undefined ? {} : { mentions }),
         ...(at === undefined ? {} : { at }),
-        ...(name === undefined ? {} : { name }),
-        ...(toolCallId === undefined ? {} : { toolCallId }),
     };
 }
 
@@ -72,6 +84,26 @@ export function parseMessages(value: unknown, path = 'messages'): ChatMessage[] 
         throw new SessionError('session/invalid-message', `期望消息数组，拿到 ${typeof value}`, path);
     }
     return value.map((item, index) => parseMessage(item, `${path}[${index}]`));
+}
+
+function parseTool(value: unknown, path: string): ChatToolCall {
+    const obj = takeObject(value, path, 'session/invalid-message');
+    rejectUnknown(obj, TOOL_KEYS, path, 'session/invalid-message');
+    if (!('args' in obj)) {
+        throw new SessionError('session/invalid-message', 'tool.args 缺失（没有参数也要写 null）', `${path}.args`);
+    }
+    return {
+        name: takeString(obj.name, `${path}.name`, 'session/invalid-message'),
+        args: obj.args,
+        id: takeString(obj.id, `${path}.id`, 'session/invalid-message'),
+    };
+}
+
+function parseMentions(value: unknown, path: string, code: 'session/invalid-message'): string[] {
+    if (!Array.isArray(value)) {
+        throw new SessionError(code, `期望字符串数组，拿到 ${typeof value}`, path);
+    }
+    return value.map((item, index) => takeString(item, `${path}[${index}]`, code));
 }
 
 /** 自检一个流式增量（非法即抛 `session/invalid-delta`） */
@@ -122,4 +154,14 @@ export function assertDelta(value: unknown, path = 'delta'): SessionDelta {
         `未知增量类型 ${type}（允许：text / tool-call / tool-result / usage / done）`,
         `${path}.type`,
     );
+}
+
+/** 工具参数：字符串按 JSON 解析（解析失败就原样保留字符串） */
+export function toolArgsFromInput(input: string | undefined): unknown {
+    if (input === undefined) return null;
+    try {
+        return JSON.parse(input);
+    } catch {
+        return input;
+    }
 }

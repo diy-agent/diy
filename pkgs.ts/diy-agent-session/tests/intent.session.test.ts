@@ -26,7 +26,6 @@ import {
     type Clock,
     type LlmPort,
     type SessionDelta,
-    type SessionSnapshot,
 } from '../src/index.js';
 
 const T0 = Date.parse('2026-10-29T00:00:00.000Z');
@@ -95,7 +94,7 @@ describe('S1 流式对话', () => {
             { type: 'text', text: '好' },
             { type: 'done', stopReason: 'stop' },
         ]);
-        expect(session.messages.map((m) => [m.role, m.content])).toEqual([
+        expect(session.messages.map((m) => [m.role, m.text])).toEqual([
             ['user', '在吗'],
             ['assistant', '你好'],
         ]);
@@ -119,7 +118,7 @@ describe('S1 流式对话', () => {
     });
 });
 
-describe('S1b 消息分类（5 种 kind）', () => {
+describe('S1b 消息分类（6 种 kind）', () => {
     it('遇 tool-call 把缓冲 flush 成 trace；最后一段才是 agent-conclusion', async () => {
         const llm = scriptedLlm([
             [
@@ -134,18 +133,21 @@ describe('S1b 消息分类（5 种 kind）', () => {
 
         await collect(session.send('看下 a.ts'));
 
-        expect(session.messages.map((message) => [message.role, message.kind, message.content])).toEqual([
+        expect(session.messages.map((message) => [message.role, message.kind, message.text])).toEqual([
             ['user', 'human', '看下 a.ts'],
             ['assistant', 'agent-trace', '我先看看'],
-            ['assistant', 'tool-call', '{"path":"a.ts"}'],
+            ['assistant', 'tool-call', undefined],
             ['tool', 'tool-result', 'ok'],
             ['assistant', 'agent-conclusion', '结论：可以合并'],
         ]);
+        expect(session.messages[2].tool).toEqual({ name: 'read', args: { path: 'a.ts' }, id: 't1' });
     });
 
-    it('kind 不传时按 role 推导；非法 kind 报错', () => {
-        expect(parseMessage({ role: 'assistant', content: 'x' }).kind).toBe('agent-conclusion');
-        expect(() => parseMessage({ role: 'assistant', content: 'x', kind: 'thought' })).toThrow(/未知消息分类/);
+    it('kind 不传时按 role 推导；非法 kind 报错；agent-notice 可直接追加', () => {
+        expect(parseMessage({ role: 'assistant', text: 'x' }).kind).toBe('agent-conclusion');
+        expect(() => parseMessage({ role: 'assistant', text: 'x', kind: 'thought' })).toThrow(/未知消息分类/);
+        const notice = parseMessage({ role: 'assistant', kind: 'agent-notice', text: '我开工了' });
+        expect(notice.kind).toBe('agent-notice');
     });
 });
 
@@ -181,15 +183,15 @@ describe('S3 一个会话同一时刻只有一轮', () => {
 
 describe('S4 响亮失败', () => {
     it('非法消息带点路径报 session/invalid-message', () => {
-        expect(() => parseMessage({ role: 'robot', content: 'x' })).toThrow(SessionError);
+        expect(() => parseMessage({ role: 'robot', text: 'x' })).toThrow(SessionError);
         try {
-            parseMessage({ role: 'robot', content: 'x' });
+            parseMessage({ role: 'robot', text: 'x' });
         } catch (error) {
             expect((error as SessionError).code).toBe('session/invalid-message');
             expect((error as SessionError).path).toBe('message.role');
         }
         // 拼错字段名必须是显式失败（不能表现为「字段没生效」）
-        expect(() => parseMessage({ role: 'user', content: 'x', extra: 1 })).toThrow(/未知字段/);
+        expect(() => parseMessage({ role: 'user', text: 'x', extra: 1 })).toThrow(/未知字段/);
     });
 
     it('LlmPort 吐出未知增量 ⇒ session/invalid-delta（不半条流进历史）', async () => {
@@ -237,13 +239,13 @@ describe('S5 压缩是注入策略', () => {
                 return messages.slice(-1);
             },
         });
-        session.append({ role: 'system', content: '你是助手' });
+        session.append({ role: 'system', text: '你是助手' });
 
         await collect(session.send('新问题'));
 
         expect(seen[0].map((m) => m.role)).toEqual(['system', 'user']);
-        expect(llm.calls[0].map((m) => m.content)).toEqual(['新问题']);
-        expect(session.messages.map((m) => m.content)).toEqual(['新问题', 'ok']);
+        expect(llm.calls[0].map((m) => m.text)).toEqual(['新问题']);
+        expect(session.messages.map((m) => m.text)).toEqual(['新问题', 'ok']);
     });
 
     it('策略返回非法形状 ⇒ session/invalid-message（不静默接受）', async () => {
@@ -252,36 +254,46 @@ describe('S5 压缩是注入策略', () => {
             llm: scriptedLlm([]),
             clock: fakeClock(),
             // @ts-expect-error 故意返回非法形状
-            compact: () => [{ role: 'bot', content: 'x' }],
+            compact: () => [{ role: 'bot', text: 'x' }],
         });
         await expect(collect(session.send('hi'))).rejects.toMatchObject({ code: 'session/invalid-message' });
         expect(session.busy).toBe(false);
     });
 });
 
-describe('S6 存储是注入适配器', () => {
-    it('传了 store：每轮结束拿到完整快照（含刚落的 assistant）', async () => {
-        const snapshots: SessionSnapshot[] = [];
+describe('S6 存储是注入的追加日志（append / readFrom / latestSeq）', () => {
+    it('传了 store：新消息逐条 append，带连续 seq（跨轮不重号）', async () => {
+        const written: ChatMessage[] = [];
         const session = createSession({
             id: 's1',
-            llm: scriptedLlm([[{ type: 'text', text: '收到' }, { type: 'done' }]]),
+            llm: scriptedLlm([
+                [{ type: 'text', text: '收到' }, { type: 'done' }],
+                [{ type: 'text', text: '再收到' }, { type: 'done' }],
+            ]),
             clock: fakeClock(),
             store: {
-                save(snapshot) {
-                    snapshots.push(snapshot);
+                append(messages) {
+                    written.push(...messages);
                 },
+                readFrom: () => [],
+                readRange: () => [],
+                latestSeq: () => 0,
             },
         });
 
         await collect(session.send('记一下'));
+        await collect(session.send('再记一下'));
 
-        expect(snapshots).toHaveLength(1);
-        expect(snapshots[0].id).toBe('s1');
-        expect(snapshots[0].messages.map((m) => m.content)).toEqual(['记一下', '收到']);
-        expect(snapshots[0].usage.turns).toBe(1);
+        expect(written.map((m) => [m.seq, m.role, m.text])).toEqual([
+            [1, 'user', '记一下'],
+            [2, 'assistant', '收到'],
+            [3, 'user', '再记一下'],
+            [4, 'assistant', '再收到'],
+        ]);
+        expect(session.lastSeq).toBe(4);
     });
 
-    it('不传 store：纯内存（不发任何写调用）', async () => {
+    it('不传 store：纯内存（不产生任何写）', async () => {
         const session = createSession({
             id: 's1',
             llm: scriptedLlm([[{ type: 'text', text: 'x' }, { type: 'done' }]]),
@@ -289,6 +301,42 @@ describe('S6 存储是注入适配器', () => {
         });
         await collect(session.send('hi'));
         expect(session.messages).toHaveLength(2);
+        expect(session.lastSeq).toBe(2);
+    });
+
+    it('恢复历史：initialMessages 续上 lastSeq（不重号），且新消息接着追', async () => {
+        const session = createSession({
+            id: 's1',
+            llm: scriptedLlm([[{ type: 'text', text: '续上' }, { type: 'done' }]]),
+            clock: fakeClock(),
+            initialMessages: [
+                { seq: 1, role: 'user', text: '旧的一问' },
+                { seq: 2, role: 'assistant', text: '旧的一答' },
+            ],
+        });
+
+        await collect(session.send('新的一问'));
+
+        expect(session.messages.map((m) => m.seq)).toEqual([1, 2, 3, 4]);
+        expect(session.lastSeq).toBe(4);
+    });
+
+    it('落盘失败会让这一轮报错（不静默吞）', async () => {
+        const session = createSession({
+            id: 's1',
+            llm: scriptedLlm([[{ type: 'text', text: '好' }, { type: 'done' }]]),
+            clock: fakeClock(),
+            store: {
+                append() {
+                    throw new Error('磁盘满');
+                },
+                readFrom: () => [],
+                readRange: () => [],
+                latestSeq: () => 0,
+            },
+        });
+
+        await expect(collect(session.send('hi'))).rejects.toThrow(/磁盘满/);
     });
 });
 

@@ -4,9 +4,14 @@
 > 不认识 task。存储 / 时钟 / 压缩 / LLM 全部走注入端口 ⇒ 现在即可拆成单独项目。
 > 需求真源是 `tests/intent.session.test.ts`（S1–S7，S7 静态扫源码）。
 
-## 消息分类（5 种 kind）
+## 存储与 seq
 
-`human` / `agent-conclusion` 进 Room 主线；`agent-trace` / `tool-call` / `tool-result` 只在二级日志。
+每条消息有会话内全局单调的 `seq`（1 起，压缩/恢复都不重置）；`SessionStore` = `append / readFrom(seq) / readRange(at) / latestSeq`。
+分桶 jsonl 在 `@diy/agent-session-store-jsonl`，本包不碰文件系统。
+
+## 消息分类（6 种 kind）
+
+`human` / `agent-conclusion` / `agent-notice` 进 Room 主线；`agent-trace` / `tool-call` / `tool-result` 只在二级日志。
 判据：本轮遇过 `tool-call` ⇒ 之前的文字是 trace，最后一段才是 conclusion（别把过程当结论）。
 
 ## 三条最容易破的约束

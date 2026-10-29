@@ -13,6 +13,7 @@ export default defineConfig({
         'pkgs.ts/diy-dev',
         'pkgs.ts/diy-flow',
         'pkgs.ts/diy-agent-session',
+        'pkgs.ts/diy-agent-session-store-jsonl',
         'pkgs.ts/diy-room',
     ],
     // diy-app 的 cli.intent 是真实 Electron + http2 集成测试，diy-rpc 的

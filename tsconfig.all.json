@@ -38,6 +38,9 @@
       "path": "pkgs.ts/diy-agent-session"
     },
     {
+      "path": "pkgs.ts/diy-agent-session-store-jsonl"
+    },
+    {
       "path": "pkgs.ts/diy-room"
     },
     {

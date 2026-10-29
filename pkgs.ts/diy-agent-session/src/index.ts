@@ -27,13 +27,21 @@
 export { SessionError } from './errors.js';
 export type { SessionErrorCode } from './errors.js';
 
-export { MESSAGE_KINDS, MESSAGE_ROLES, assertDelta, parseMessage, parseMessages } from './message.js';
+export {
+    MESSAGE_KINDS,
+    MESSAGE_ROLES,
+    assertDelta,
+    parseMessage,
+    parseMessages,
+    toolArgsFromInput,
+} from './message.js';
 
 export { systemClock } from './types.js';
 export type {
     AgentSession,
     ChatMessage,
     ChatMessageInit,
+    ChatToolCall,
     ChatOptions,
     Clock,
     Compactor,

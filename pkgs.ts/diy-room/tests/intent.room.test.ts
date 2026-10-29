@@ -9,6 +9,8 @@
 //   R4  `@all` = 全部 agent（发言人自己除外）；点名不存在的人 ⇒ `room/unknown-recipient`
 //   R5  同一成员串行：连发两条，第二条等第一条投完才投（顺序不丢、不合并）
 //   R6  投递状态可查：delivered / skipped（人没有会话）/ failed（会话报错不拖垮别人）
+//   R8  按水位增量投递：只给 `seq > lastSeenSeq`；首次加入给最近 initialN + 说明；
+//       增量过大截断且 @ 他的 / 最后 human 必在；**成功才推进水位**（失败下次重投，不丢不重）
 //   R7  零 task / 零 IO：src/** 里没有任务标识 / @diy/task / 文件系统模块 / electron / 应用数据根
 //
 // 测试风格：真实 @diy/agent-session（假 LlmPort / 假 Clock）跑 R1；其余用极简假会话控时序。
@@ -106,7 +108,7 @@ describe('R1 一个 room 含 2 个 session：各自独立回复', () => {
         ]);
         // 各自的会话历史里只有自己那一轮
         expect(a.messages.map((message) => message.role)).toEqual(['user', 'assistant']);
-        expect(b.messages.map((message) => message.content)).toEqual([expect.stringContaining('开工'), '乙收到']);
+        expect(b.messages.map((message) => message.text)).toEqual([expect.stringContaining('开工'), '乙收到']);
         expect(room.members).toHaveLength(3);
     });
 });
@@ -362,6 +364,114 @@ describe('R6++ 主线只收结论（正文副本）', () => {
         expect(room.publicLog.map((entry) => entry.kind)).toEqual(['human']);
         expect(room.deliveryOf(events[0].id, 'agent:a')?.state).toBe('delivered');
         expect(room.deliveryOf(events[0].id, 'agent:a')?.note).toContain('没有结论');
+    });
+});
+
+describe('R8 按水位增量投递', () => {
+    it('首次加入给最近 initialN 条 + 说明；之后只投新增（不重发）', async () => {
+        const room = createRoom({ id: 'room-1', clock: fakeClock(), delivery: { initialN: 2 } });
+        const a = fakePeer('agent:a');
+        room.addMember(human);
+        room.addMember({ id: 'agent:a', name: '甲', kind: 'agent', session: a });
+        for (const text of ['第1句', '第2句', '第3句', '第4句']) {
+            await collect(room.post({ from: 'human:me', text, to: [] }));
+        }
+        expect(room.publicLog.map((entry) => entry.seq)).toEqual([1, 2, 3, 4]);
+
+        // 首次加入：只给最近 2 条 + 说明
+        await collect(room.post({ from: 'human:me', text: '@甲 新消息' }));
+        expect(a.received).toHaveLength(1);
+        expect(a.received[0]).toContain('你是新加入的');
+        expect(a.received[0]).toContain('第4句');
+        expect(a.received[0]).toContain('新消息');
+        expect(a.received[0]).not.toContain('第1句');
+        expect(room.cursorOf('agent:a').lastSeenSeq).toBe(5);
+
+        // 第二次：只给新的那条，不带任何旧内容
+        await collect(room.post({ from: 'human:me', text: '@甲 再来一条' }));
+        expect(a.received[1]).toContain('再来一条');
+        expect(a.received[1]).not.toContain('新消息');
+        expect(a.received[1]).not.toContain('第4句');
+        // 水位只按 seq 推进：agent 自己也在这条主线里，它上一轮的结论也是 seq 增量的一部分
+        expect(room.cursorOf('agent:a').lastSeenSeq).toBe(7);
+    });
+
+    it('失败不推进水位：下一轮重投同一批（不丢），成功后不重复', async () => {
+        const room = createRoom({ id: 'room-1', clock: fakeClock() });
+        const received: string[] = [];
+        let fail = true;
+        const peer: SessionPeer = {
+            id: 's-a',
+            busy: false,
+            async *send(text: string) {
+                received.push(text);
+                if (fail) {
+                    fail = false;
+                    throw new Error('上游 429');
+                }
+                yield { type: 'text' as const, text: '收到' };
+                yield { type: 'done' as const };
+            },
+        };
+        room.addMember(human);
+        room.addMember({ id: 'agent:a', name: '甲', kind: 'agent', session: peer });
+
+        await collect(room.post({ from: 'human:me', text: '@甲 第一条' }));
+        expect(room.deliveryOf('evt-1', 'agent:a')?.state).toBe('failed');
+        expect(room.cursorOf('agent:a').lastSeenSeq).toBe(0);
+
+        // 下一轮把失败的那条 + 新的那条一起投（不丢）
+        await collect(room.post({ from: 'human:me', text: '@甲 第二条' }));
+        expect(received[1]).toContain('第一条');
+        expect(received[1]).toContain('第二条');
+        expect(room.cursorOf('agent:a').lastSeenSeq).toBe(2);
+
+        // 成功过的那批不会再来一遍（不重）
+        await collect(room.post({ from: 'human:me', text: '@甲 第三条' }));
+        expect(received[2]).not.toContain('第一条');
+        expect(received[2]).toContain('第三条');
+    });
+
+    it('增量过大：给最近 maxBatch 条 + 省略说明，且 @ 他的与最后 human 必在', async () => {
+        const room = createRoom({ id: 'room-1', clock: fakeClock(), delivery: { maxBatch: 2 } });
+        const received: string[] = [];
+        const control = { fail: false };
+        const peer: SessionPeer = {
+            id: 's-a',
+            busy: false,
+            async *send(text: string) {
+                received.push(text);
+                if (control.fail) {
+                    control.fail = false;
+                    throw new Error('故意失败一次，让水位停住');
+                }
+                yield { type: 'done' as const };
+            },
+        };
+        room.addMember(human);
+        room.addMember({ id: 'agent:a', name: '甲', kind: 'agent', session: peer });
+
+        // seq1 成功投递（水位 1）
+        await collect(room.post({ from: 'human:me', text: '@甲 第一句' }));
+        expect(room.cursorOf('agent:a').lastSeenSeq).toBe(1);
+
+        // seq2：点名但投递失败 ⇒ 水位不推进
+        control.fail = true;
+        await collect(room.post({ from: 'human:me', text: '@甲 点名这一条' }));
+        expect(room.cursorOf('agent:a').lastSeenSeq).toBe(1);
+
+        // seq3~6：不投递的静默背景
+        for (const text of ['背景3', '背景4', '背景5', '背景6']) {
+            await collect(room.post({ from: 'human:me', text, to: [] }));
+        }
+
+        // 下一次投递：fresh = seq2..6（5 条）> maxBatch 2 ⇒ 截断，但点名的那条必须在内
+        await collect(room.post({ from: 'human:me', text: '@甲 现在' }));
+        const last = received[received.length - 1];
+        expect(last).toContain('省略了更早的');
+        expect(last).toContain('点名这一条');
+        expect(last).toContain('现在');
+        expect(room.cursorOf('agent:a').lastSeenSeq).toBe(7);
     });
 });
 

@@ -4,14 +4,17 @@
 //   ① 追加 user 消息（空正文报 `session/empty-text`）
 //   ② 若有压缩策略，先跑一次（结果过 parseMessages —— 策略写坏了要炸在这里）
 //   ③ 调 LlmPort 拿流：text 增量边收边吐、usage 记账、done 收尾
-//   ④ 正文非空则追加 assistant 消息（**流式被取消也保留已收到的部分**：删掉它就等于
-//      "agent 没说过"，而它确实说过半句）
-//   ⑤ 落一次快照（store 缺省 = 不落盘）
+//      正文先攒缓冲：遇 tool-call 就把缓冲落成 agent-trace（这轮还没结束），
+//      本轮最后剩下的那段才是 agent-conclusion（##456 判据）
+//   ④ 记账 + 把新消息**追加**给 SessionStore（缺省不落盘）
+//
+// seq：会话内全局单调（1 起），由本包分配；压缩只改「这一段历史」，不重置 seq
+// （存储适配器/水位按 seq 对齐，跨桶连续的前提就在这一条）。
 //
 // 并发：一个会话同一时刻只有一轮（`session/busy`）。取消 = abort 信号，适配器负责尽快收流。
 
 import { SessionError } from './errors.js';
-import { assertDelta, parseMessage, parseMessages } from './message.js';
+import { assertDelta, parseMessage, parseMessages, toolArgsFromInput } from './message.js';
 import {
     systemClock,
     type AgentSession,
@@ -42,6 +45,11 @@ export interface CreateSessionOptions {
     model?: string;
     /** 初始 system 消息（可选） */
     system?: string;
+    /**
+     * 恢复历史（宿主从 store.readFrom(0) 拿到后传进来）。
+     * 每条必须带 seq；本包据此续上 lastSeq，不会重号。
+     */
+    initialMessages?: readonly ChatMessage[];
 }
 
 const ZERO_USAGE: TokenUsage = { inputTokens: 0, outputTokens: 0, turns: 0 };
@@ -59,16 +67,41 @@ export function createSession(options: CreateSessionOptions): AgentSession {
     const model = options.model;
 
     const messages: ChatMessage[] = [];
+    let lastSeq = 0;
+    for (const message of parseMessages(options.initialMessages ?? [], 'initialMessages')) {
+        if (message.seq === undefined) {
+            throw new SessionError('session/invalid-message', '恢复历史的消息必须带 seq', 'initialMessages');
+        }
+        if (message.seq <= lastSeq) {
+            throw new SessionError(
+                'session/invalid-message',
+                `seq 必须严格递增（${message.seq} 在 ${lastSeq} 之后）`,
+                'initialMessages',
+            );
+        }
+        lastSeq = message.seq;
+        messages.push(message);
+    }
+
     let usage = ZERO_USAGE;
     let busy = false;
     let controller: AbortController | null = null;
     const createdAt = iso(clock.now());
     let updatedAt = createdAt;
+    /** store 的写链：append 排队、串行落盘（宿主不需要自己排序） */
+    let writes: Promise<void> = Promise.resolve();
+    /** 还没写完的消息（send 结束 / flush() 时统一 await） */
+    let pendingWrites = 0;
+    /** 落盘错误：不丢，在 flush() / send 收尾处抛出来 */
+    let writeError: unknown;
 
     const session: AgentSession = {
         id,
         get messages() {
             return messages.slice();
+        },
+        get lastSeq() {
+            return lastSeq;
         },
         get usage() {
             return usage;
@@ -96,7 +129,7 @@ export function createSession(options: CreateSessionOptions): AgentSession {
             controller = new AbortController();
             const signal = controller.signal;
             try {
-                appendMessage({ role: 'user', content: text });
+                appendMessage({ role: 'user', text });
 
                 // ② 压缩（可选）：策略只改「这一轮看到的历史」，不替它判断对错
                 let history = messages.slice();
@@ -108,8 +141,6 @@ export function createSession(options: CreateSessionOptions): AgentSession {
                 }
 
                 // ③ 流式调用
-                // 正文先攒在缓冲里：遇到 tool-call 就说明「这轮还没结束」，
-                // 刚才那一段是 trace；本轮最后剩下的那段才是 agent-conclusion（##456 判据）。
                 let buffer = '';
                 let toolCalls = 0;
                 let stopReason: string | undefined;
@@ -117,7 +148,7 @@ export function createSession(options: CreateSessionOptions): AgentSession {
                 let outputTokens = 0;
                 const flushTrace = (): void => {
                     if (buffer === '') return;
-                    appendMessage({ role: 'assistant', kind: 'agent-trace', content: buffer });
+                    appendMessage({ role: 'assistant', kind: 'agent-trace', text: buffer });
                     buffer = '';
                 };
                 try {
@@ -133,18 +164,11 @@ export function createSession(options: CreateSessionOptions): AgentSession {
                             appendMessage({
                                 role: 'assistant',
                                 kind: 'tool-call',
-                                content: delta.input ?? '',
-                                name: delta.name,
-                                toolCallId: delta.id,
+                                tool: { name: delta.name, args: toolArgsFromInput(delta.input), id: delta.id },
                             });
                             yield delta;
                         } else if (delta.type === 'tool-result') {
-                            appendMessage({
-                                role: 'tool',
-                                kind: 'tool-result',
-                                content: delta.content,
-                                toolCallId: delta.id,
-                            });
+                            appendMessage({ role: 'tool', kind: 'tool-result', text: delta.content });
                             yield delta;
                         } else if (delta.type === 'usage') {
                             inputTokens += delta.inputTokens;
@@ -164,17 +188,17 @@ export function createSession(options: CreateSessionOptions): AgentSession {
                 // ④ 收尾：正常结束剩下的是结论；被取消且中间调过工具 ⇒ 只能算 trace
                 if (buffer !== '') {
                     if (aborted && toolCalls > 0) flushTrace();
-                    else appendMessage({ role: 'assistant', kind: 'agent-conclusion', content: buffer });
+                    else appendMessage({ role: 'assistant', kind: 'agent-conclusion', text: buffer });
                 }
 
-                // ⑤ 记账 + 快照
+                // ⑤ 记账 + 落盘
                 usage = {
                     inputTokens: usage.inputTokens + inputTokens,
                     outputTokens: usage.outputTokens + outputTokens,
                     turns: usage.turns + 1,
                 };
                 updatedAt = iso(clock.now());
-                await persist();
+                await flush();
 
                 yield stopReason === undefined ? { type: 'done' } : { type: 'done', stopReason };
             } finally {
@@ -188,22 +212,40 @@ export function createSession(options: CreateSessionOptions): AgentSession {
         snapshot(): SessionSnapshot {
             return { id, messages: messages.slice(), usage, createdAt, updatedAt };
         },
+        flush,
     };
 
     if (options.system !== undefined) {
-        session.append({ role: 'system', content: options.system });
+        session.append({ role: 'system', text: options.system });
     }
 
     function appendMessage(init: ChatMessageInit): ChatMessage {
-        const message = parseMessage({ ...init, at: init.at ?? iso(clock.now()) }, `message(${messages.length})`);
+        lastSeq += 1;
+        const message = parseMessage(
+            { ...init, seq: lastSeq, at: init.at ?? clock.now() },
+            `message(${messages.length})`,
+        );
         messages.push(message);
-        updatedAt = message.at ?? updatedAt;
+        updatedAt = iso(clock.now());
+        if (store) {
+            pendingWrites += 1;
+            writes = writes.then(async () => {
+                try {
+                    await store.append([message]);
+                } catch (error) {
+                    writeError ??= error;
+                } finally {
+                    pendingWrites -= 1;
+                }
+            });
+        }
         return message;
     }
 
-    async function persist(): Promise<void> {
-        if (!store) return;
-        await store.save(session.snapshot());
+    async function flush(): Promise<void> {
+        if (pendingWrites === 0) return;
+        await writes;
+        if (writeError !== undefined) throw writeError;
     }
 
     return session;
@@ -248,8 +290,18 @@ function takeCompactor(value: Compactor | undefined): Compactor | undefined {
 
 function takeStore(value: SessionStore | undefined): SessionStore | undefined {
     if (value === undefined) return undefined;
-    if (typeof value !== 'object' || value === null || typeof value.save !== 'function') {
-        throw new SessionError('session/invalid-options', 'store 必须是带 save() 的 SessionStore', 'store');
+    if (
+        typeof value !== 'object' ||
+        value === null ||
+        typeof value.append !== 'function' ||
+        typeof value.readFrom !== 'function' ||
+        typeof value.latestSeq !== 'function'
+    ) {
+        throw new SessionError(
+            'session/invalid-options',
+            'store 必须是带 append() / readFrom() / latestSeq() 的 SessionStore',
+            'store',
+        );
     }
     return value;
 }

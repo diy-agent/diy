@@ -10,43 +10,59 @@
 export type MessageRole = 'system' | 'user' | 'assistant' | 'tool';
 
 /**
- * 消息的**语义分类**（##456「数据分层修订」，5 种）：
+ * 消息的**语义分类**（设计定稿 `session-design.md` §二，6 种）：
  *   human              —— 人说的
  *   agent-conclusion   —— 一轮结束时的自然语言答复（进 Room 主线的那个）
+ *   agent-notice       —— agent 主动播报（room_say 类工具）
  *   agent-trace        —— 中间步骤 / 过渡语（只在二级日志里）
  *   tool-call          —— 工具调用
  *   tool-result        —— 工具结果
  *
- * 只有 human + agent-conclusion 会进 @diy/room 的主线（`publicLog`），其余只在会话日志里。
+ * 只有 human + agent-conclusion + agent-notice 会进 @diy/room 的主线（`publicLog`），
+ * 其余（trace / tool）只在会话日志里。
  * 判据：有 tool-call ⇒ 这一轮还没结束，之前的文字是 trace；本轮最后一段文字才是 conclusion。
  */
-export type MessageKind = 'human' | 'agent-conclusion' | 'agent-trace' | 'tool-call' | 'tool-result';
+export type MessageKind = 'human' | 'agent-conclusion' | 'agent-notice' | 'agent-trace' | 'tool-call' | 'tool-result';
+
+/** 工具调用（kind=tool-call 消息的内容） */
+export interface ChatToolCall {
+    readonly name: string;
+    /** 参数（宿主原样给的 JSON 值） */
+    readonly args: unknown;
+    readonly id: string;
+}
 
 /** 会话里的一条消息（不可变；`at` 由 session 用 Clock 补齐） */
 export interface ChatMessage {
+    /**
+     * 会话内全局单调递增序号（1 起，跨压缩/跨桶连续）；由 session 分配。
+     * 存储适配器与水位（Room 的 lastSeenSeq）都按它对齐。
+     */
+    readonly seq?: number;
     readonly role: MessageRole;
     /**
      * 语义分类。缺省按 role 推导（user→human / assistant→agent-conclusion / tool→tool-result）；
      * `system` 消息没有分类（它不是对话内容）。
      */
     readonly kind?: MessageKind;
-    readonly content: string;
-    /** ISO-8601，写入时刻；调用方不传则由 session 补 */
-    readonly at?: string;
-    /** 可选署名（多人物 / 多 agent 场景里区分同一个 role） */
-    readonly name?: string;
-    /** role=tool 时指回哪个 tool call（宿主约定） */
-    readonly toolCallId?: string;
+    /** 正文（tool-call 消息没有正文） */
+    readonly text?: string;
+    /** kind=tool-call 的工具调用 */
+    readonly tool?: ChatToolCall;
+    /** 提到了谁（Room 用；Session 原样保存，不解释） */
+    readonly mentions?: readonly string[];
+    /** 写入时刻（毫秒）；调用方不传则由 session 用 Clock 补 */
+    readonly at?: number;
 }
 
 /** append / send 的入参：`at` 可省（session 补） */
 export interface ChatMessageInit {
     role: MessageRole;
     kind?: MessageKind;
-    content: string;
-    at?: string;
-    name?: string;
-    toolCallId?: string;
+    text?: string;
+    tool?: ChatToolCall;
+    mentions?: readonly string[];
+    at?: number;
 }
 
 /**
@@ -110,10 +126,24 @@ export interface SessionSnapshot {
 
 /**
  * 存储端口（可选）。缺省 = 纯内存，一个字节也不落盘。
- * 落盘形态（jsonl / sqlite / 远端）由适配器决定，本包不碰文件系统。
+ *
+ * 四个方法就是**追加日志**的全部语义（设计定稿 `session-design.md` §三）：
+ *   append(messages)      —— 只追加；每条必须带 seq（适配器按 seq 排序 / 分桶）
+ *   readFrom(seq)         —— 读 `seq > X` 的那些（按桶的 toSeq 定位，不扫全量）
+ *   readRange({from,to})  —— 读 at 在 [from, to] 的那些（按桶的 fromAt/toAt 二分，不扫全量）
+ *   latestSeq()           —— 已落盘的最大 seq（新会话从 0 开始）
+ *
+ * 落盘形态（分桶 jsonl / sqlite / 远端）由适配器决定，本包不碰文件系统。
  */
 export interface SessionStore {
-    save(snapshot: SessionSnapshot): void | Promise<void>;
+    append(messages: readonly ChatMessage[]): void | Promise<void>;
+    readFrom(seq: number): readonly ChatMessage[] | Promise<readonly ChatMessage[]>;
+    /** 按时间读（毫秒，闭区间） */
+    readRange(range: {
+        readonly from: number;
+        readonly to: number;
+    }): readonly ChatMessage[] | Promise<readonly ChatMessage[]>;
+    latestSeq(): number | Promise<number>;
 }
 
 /**
@@ -132,6 +162,8 @@ export interface SessionPeer {
  */
 export interface AgentSession extends SessionPeer {
     readonly messages: readonly ChatMessage[];
+    /** 已分配的最大 seq（没消息 = 0） */
+    readonly lastSeq: number;
     readonly usage: TokenUsage;
     readonly createdAt: string;
     readonly updatedAt: string;
@@ -141,6 +173,8 @@ export interface AgentSession extends SessionPeer {
     send(text: string): AsyncIterable<SessionDelta>;
     /** 取消正在跑的一轮（abort 信号；已收到的正文保留） */
     cancel(): void;
-    /** 当前快照（交给 SessionStore / 宿主） */
+    /** 当前快照（给宿主做展示 / 调试；落盘走 SessionStore.append） */
     snapshot(): SessionSnapshot;
+    /** 等 store 把已追加的消息写完（append 在 send 外调用时用） */
+    flush(): Promise<void>;
 }

@@ -35,6 +35,12 @@ export function takeNonNegativeNumber(value: unknown, path: string, code: Sessio
     return value;
 }
 
+export function takeNonNegativeInteger(value: unknown, path: string, code: SessionErrorCode): number {
+    const n = takeNonNegativeNumber(value, path, code);
+    if (!Number.isInteger(n)) throw new SessionError(code, `期望非负整数，拿到 ${n}`, path);
+    return n;
+}
+
 export function takeIsoString(value: unknown, path: string, code: SessionErrorCode): string {
     const s = takeString(value, path, code);
     if (!ISO_RE.test(s) || Number.isNaN(Date.parse(s))) {

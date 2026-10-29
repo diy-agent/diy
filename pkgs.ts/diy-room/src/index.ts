@@ -26,7 +26,10 @@ export { parseMentions, resolveRecipients } from './mentions.js';
 export type {
     Clock,
     Delivery,
+    DeliveryOptions,
+    DeliveryResult,
     DeliveryState,
+    MemberCursor,
     MemberKind,
     PostInput,
     PublicLogEntry,
@@ -43,5 +46,5 @@ export type {
     SessionPeer,
 } from './types.js';
 
-export { createRoom } from './room.js';
+export { DEFAULT_INITIAL_N, DEFAULT_MAX_BATCH, createRoom } from './room.js';
 export type { CreateRoomOptions } from './room.js';
