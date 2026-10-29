@@ -15,9 +15,9 @@
 // 三者都只能由**落盘的状态文件**给出（重建路径拿回的是位置与折线）。
 
 import type { Event } from '@diy/talk';
-import { apply, initialState, type Visit } from './container';
-import type { WorkflowDef } from './define';
-import { FlowError } from './errors';
+import { apply, initialState, type Visit } from './container.js';
+import type { WorkflowDef } from './define.js';
+import { FlowError } from './errors.js';
 
 /** 投影结果：当前节点 + 折线 + 各节点驻留次数 */
 export interface Projection<Id extends string = string> {

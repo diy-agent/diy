@@ -3,9 +3,9 @@
 // 生成物四件：claim 表 · 反查表 · 结构问题 · 冲突清单。
 // 「影响面」= 给定本轮触达的文件，反查哪些事实需要复核（`affected`）。
 
-import { claimOf } from './claim';
-import { pathCovers, scopeKey } from './scope';
-import type { Fact, FactsErrorCode } from './types';
+import { claimOf } from './claim.js';
+import { pathCovers, scopeKey } from './scope.js';
+import type { Fact, FactsErrorCode } from './types.js';
 
 export interface Issue {
     readonly code: FactsErrorCode;

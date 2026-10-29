@@ -11,15 +11,15 @@
 //
 // 划分只声明 **system 名单**：没进名单的自动归 runtime（不是两套表，避免两边打架）。
 
-import { project as projectTree } from "./projection";
-import { applyFacts, createTree, setPlacement, setPlaces } from "./reducer";
-import { controlDeltaEnvelope, runtimeDiffEnvelope, systemDataText, systemEnvelope, runtimeEnvelope } from "./envelope";
-import { hashValue } from "./hash";
-import { WIRE_VERSION } from "./wire";
-import { isPlainObject } from "./tree";
-import type { ContextFact, ContextPath, ContextTreeState } from "./types";
-import { TASK_HEAD_FIELDS, type TaskHeadField } from "./schema/task-head";
-import { emptyCursor } from "./projection";
+import { project as projectTree } from "./projection.js";
+import { applyFacts, createTree, setPlacement, setPlaces } from "./reducer.js";
+import { controlDeltaEnvelope, runtimeDiffEnvelope, systemDataText, systemEnvelope, runtimeEnvelope } from "./envelope.js";
+import { hashValue } from "./hash.js";
+import { WIRE_VERSION } from "./wire.js";
+import { isPlainObject } from "./tree.js";
+import type { ContextFact, ContextPath, ContextTreeState } from "./types.js";
+import { TASK_HEAD_FIELDS, type TaskHeadField } from "./schema/task-head.js";
+import { emptyCursor } from "./projection.js";
 
 /** 候选投递单元（规则表里可选的行；不重叠） */
 export interface PlaceCandidate {

@@ -36,7 +36,7 @@ export {
     type ProjectItem,
     type ProjectOutput,
     type ProjectProblem,
-} from './project';
+} from './project.js';
 
 /** 校验问题（与 check 脚本 / CLI 同一形状；`level=warning` 不阻断） */
 export interface RepoProblem {

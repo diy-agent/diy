@@ -1,8 +1,8 @@
 {
-  // 发布构建：把 src/ 编成 Node 可直接 import 的 ESM + .d.ts（rootDir=src ⇒ dist/ 与 src/ 同构）。
+  // 发布构建：把 src/ 编成 Node 可直接 import 的 ESM + .d.ts（rootDir=src ⇒ lib/ 与 src/ 同构）。
   // 与 tsconfig.json（noEmit 类型检查，含 tools/）并存：check 用那份，发布用这份。
   // DOM provider（src/providers/dom*.ts）要 DOM 类型；那几个文件另有 /// <reference lib="dom" /> 自证。
-  // ⚠️ 产物只落 dist/，绝不落源码旁（见根 AGENTS.md rule.check 与 scripts/check-no-emit.sh）。
+  // ⚠️ 产物只落 lib/，绝不落源码旁（见根 AGENTS.md rule.check 与 scripts/check-no-emit.sh）。
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "module": "NodeNext",
@@ -11,7 +11,7 @@
     "lib": ["ES2024", "DOM", "DOM.Iterable"],
     "types": ["node"],
     "rootDir": "src",
-    "outDir": "dist",
+    "outDir": "lib",
     "noEmit": false,
     "composite": false,
     "incremental": false,

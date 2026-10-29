@@ -7,8 +7,8 @@
 //   2. **变化只由最终值决定**：applyFact 只改状态；「算不算变化」由 step 前后比 hash 得出
 //      （见 stepDelta）。中途改十次、最后改回原值 = 没变。
 
-import { hashText, hashValue } from "./hash";
-import { isValidPath } from "./path";
+import { hashText, hashValue } from "./hash.js";
+import { isValidPath } from "./path.js";
 import {
     emptyState,
     getValue,
@@ -18,15 +18,15 @@ import {
     setValue,
     validatePlaces,
     valueHashOf,
-} from "./tree";
-import { WIRE_VERSION } from "./wire";
+} from "./tree.js";
+import { WIRE_VERSION } from "./wire.js";
 import type {
     ContextApplyResult,
     ContextFact,
     ContextPath,
     ContextStepDelta,
     ContextTreeState,
-} from "./types";
+} from "./types.js";
 
 /** 新树（空） */
 export function createTree(wireVersion: string = WIRE_VERSION): ContextTreeState {

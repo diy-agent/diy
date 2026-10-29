@@ -36,10 +36,10 @@
 // 约定：本文件只放纯函数/常量，禁止 import node:*（renderer 会打进包）。
 
 import { z } from "zod";
-import { AssembleGlobalsSchema } from "./schema/prompt-schema";
-import { describeSchema, pruneSchemaDoc, type SchemaDoc } from "./schema/schema-doc";
-import { emitYamlTraced, renderPaths, subsetOf, subsetOfDelta, toYaml } from "./wire-render";
-import type { ContextPath, ContextTreeState } from "./types";
+import { AssembleGlobalsSchema } from "./schema/prompt-schema.js";
+import { describeSchema, pruneSchemaDoc, type SchemaDoc } from "./schema/schema-doc.js";
+import { emitYamlTraced, renderPaths, subsetOf, subsetOfDelta, toYaml } from "./wire-render.js";
+import type { ContextPath, ContextTreeState } from "./types.js";
 
 /**
  * 信封的**总逻辑**（zod 描述不了的那部分）—— 固定话术，逐条讲清「help 描述不了的事」。

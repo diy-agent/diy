@@ -8,7 +8,7 @@
 // 严格性：**首段必须存在**（否则 unresolved-path）；后续字段缺失返回 undefined（可选字段）。
 // 这一条把「打错变量名」和「字段可选」区分开：前者报错，后者静默为假值。
 
-import { TemplateError, type Loc } from './errors';
+import { TemplateError, type Loc } from './errors.js';
 
 /** 一层动态作用域。`:for` 绑定**一个名字**（值是一个迭代信封）；`:include` 绑定参数集合 */
 export interface DynamicFrame {

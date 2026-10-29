@@ -7,14 +7,14 @@
 //   2. **渲染声明与值分离**（renderers 挂在 path 上，值在 values 里）。模板节点可以没有
 //      自己的值，只是「渲染这个 path 时用模板」；于是「值变了但渲染没变」可判（144 用例 14）。
 
-import { hashValue } from "./hash";
-import { isAncestor, isValidPath, parsePath } from "./path";
+import { hashValue } from "./hash.js";
+import { isAncestor, isValidPath, parsePath } from "./path.js";
 import type {
     ContextContainer,
     ContextPath,
     ContextRendererSpec,
     ContextTreeState,
-} from "./types";
+} from "./types.js";
 
 /** 初始空树（wireVersion 由 wire.ts 提供，避免此处 import 循环） */
 export function emptyState(wireVersion: string): ContextTreeState {

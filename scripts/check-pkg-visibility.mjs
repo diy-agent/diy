@@ -141,6 +141,41 @@ console.log(
     }
 }
 
+// ── ⑤ 包出口不许再指 `.ts`（2026-10-29 追加，##453 薄壳子前置 #1~#2）────────────
+// 事故背景：Electron 要从 `Resources/runtime/node_modules/` **动态加载能力包**，那是
+// Node 直接 `import()` —— Node 加载不了 `.ts`。原先 11 个包的 main 全指 `./src/index.ts`，
+// 「打包时才发现加载不了」。判据：main / exports 的出口必须以 `.js` 结尾（产物是 lib/）。
+// 修法：每包 `tsconfig.build.json`（outDir=lib）→ `./sha.sh build` → main 指 `./lib/index.js`。
+//
+// 例外（判据：**Node 能不能真的加载**）：`@diy/ui-kit` 是 Solid JSX 组件库 —— JSX 必须由
+// 渲染端编译器（vite 的 solid 插件）编译，tsc 只能 `jsx: preserve` 出带 JSX 的 `.js`（Node 解析即炸），
+// 故它没有 lib、只被 vite 打进 renderer，出口保持 `./src/index.ts`。
+const TS_ENTRY_EXEMPT = new Set(["@diy/ui-kit"]);
+{
+    for (const { dir, file } of pkgs) {
+        let pkg;
+        try {
+            pkg = JSON.parse(readFileSync(file, "utf8"));
+        } catch {
+            continue; // 解析失败已在上面报过
+        }
+        if (TS_ENTRY_EXEMPT.has(pkg.name)) continue;
+        const bad = [];
+        if (typeof pkg.main === "string" && pkg.main.endsWith(".ts")) bad.push(`main=${pkg.main}`);
+        for (const [key, value] of Object.entries(pkg.exports ?? {})) {
+            const spec = typeof value === "string" ? value : (value?.default ?? value?.import);
+            if (typeof spec === "string" && spec.endsWith(".ts")) bad.push(`exports["${key}"]=${spec}`);
+        }
+        if (bad.length > 0) {
+            problems.push(
+                `${pkg.name}: 出口仍指向 .ts（${bad.join(", ")}）—— Node 加载不了 .ts，` +
+                    `Electron 从 node_modules 动态加载时会 ERR_UNKNOWN_FILE_EXTENSION。` +
+                    `应指 ./lib/*.js（先 ./sha.sh build）。`,
+            );
+        }
+    }
+}
+
 // 上面第 ④ 段在 problems 已打印之后才追加，故此处重新判定一次
 if (problems.length > 0) {
     console.error(`✗ 包可见性白名单：${problems.length} 处违规`);

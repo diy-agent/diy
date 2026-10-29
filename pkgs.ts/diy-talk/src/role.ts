@@ -6,7 +6,7 @@
 //
 // 本包只给「一条内容该装配成哪个 role」的纯函数与断言；装配成 messages[] 是 ##314 的事。
 
-import { TalkError } from './errors';
+import { TalkError } from './errors.js';
 
 /** 装配到 LLM 请求时的 role（本包只产出这两种；程序化系统事件归 ##313 的泳道容器） */
 export type AssemblyRole = 'user' | 'assistant';

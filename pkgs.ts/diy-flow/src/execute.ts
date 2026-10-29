@@ -49,14 +49,14 @@
 // 内核**不取时间、不生成 id**：`at` 必填（领域事实，要落盘），`id` 给了才落审计事件。
 
 import { createEvent, nodeAnchor, type Event } from '@diy/talk';
-import { advance, parseRef, type AdvanceRequest, type FlowState } from './container';
-import { findNode, type EdgeDef, type NodeDef, type WorkflowDef } from './define';
-import { FlowError, type FlowErrorCode } from './errors';
-import { classifyGuards, evaluateGuards, isObservable, parseGuardRef, selectEdge, unevaluatedGuards, type GuardEvaluation, type GuardRef } from './eval';
-import { paramsOf, resolveParams } from './params';
-import { parseReceipt, type PluginContext, type Receipt, type Slot } from './plugins';
-import type { PluginRegistry } from './registry';
-import { callPlugin, isIsoString, isObject, rejectUnknown, sameJson } from './validate';
+import { advance, parseRef, type AdvanceRequest, type FlowState } from './container.js';
+import { findNode, type EdgeDef, type NodeDef, type WorkflowDef } from './define.js';
+import { FlowError, type FlowErrorCode } from './errors.js';
+import { classifyGuards, evaluateGuards, isObservable, parseGuardRef, selectEdge, unevaluatedGuards, type GuardEvaluation, type GuardRef } from './eval.js';
+import { paramsOf, resolveParams } from './params.js';
+import { parseReceipt, type PluginContext, type Receipt, type Slot } from './plugins.js';
+import type { PluginRegistry } from './registry.js';
+import { callPlugin, isIsoString, isObject, rejectUnknown, sameJson } from './validate.js';
 
 /** 去掉 `readonly`（构造请求对象时先摆必填项、再按条件补可选项，比三层三元清楚） */
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };

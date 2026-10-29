@@ -5,8 +5,8 @@
 // 未知字段一律报错（拼错 `verifedAt` 若被静默丢弃，探针就永远不跑）。
 
 import { derivedFactId } from './claim.js';
-import type { Issue } from './index-build';
-import type { Env, Evidence, Fact, FactsErrorCode, Format, Ref, Scope } from './types';
+import type { Issue } from './index-build.js';
+import type { Env, Evidence, Fact, FactsErrorCode, Format, Ref, Scope } from './types.js';
 
 export interface Validation {
     readonly facts: readonly Fact[];

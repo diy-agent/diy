@@ -13,11 +13,11 @@
 //   3. **不降级**：`pred:` / `action:` 名字没注册 → 抛 `unknown-plugin`（绝不当成「不通过」糊过去，
 //      否则打错一个字母就会静默把工作流推成另一条路径，见 registry.ts 头注）。
 
-import type { EdgeDef, EdgeKind } from './define';
-import { FlowError } from './errors';
-import { parseActionResult, parseGuardResult, type PluginContext } from './plugins';
-import type { PluginRegistry } from './registry';
-import { callPlugin } from './validate';
+import type { EdgeDef, EdgeKind } from './define.js';
+import { FlowError } from './errors.js';
+import { parseActionResult, parseGuardResult, type PluginContext } from './plugins.js';
+import type { PluginRegistry } from './registry.js';
+import { callPlugin } from './validate.js';
 
 /** guard 引用的三种前缀 —— `prompt:` 之外都可观测 */
 export const GUARD_PREFIXES = ['prompt', 'pred', 'action'] as const;

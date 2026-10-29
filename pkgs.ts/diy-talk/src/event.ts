@@ -8,9 +8,9 @@
 //
 // 本包只做数据 + 纯函数：**不取时间**（`at` 由调用方传入）、不做存储、不做装配。
 
-import { parseAnchor, type Anchor } from './anchor';
-import { TalkError } from './errors';
-import { rejectUnknown, takeIsoString, takeObject, takeString, takeStringArray, type ParseOptions } from './validate';
+import { parseAnchor, type Anchor } from './anchor.js';
+import { TalkError } from './errors.js';
+import { rejectUnknown, takeIsoString, takeObject, takeString, takeStringArray, type ParseOptions } from './validate.js';
 
 export interface Event {
     readonly id: string;

@@ -4,10 +4,17 @@
   "private": true,
   "description": "diy 事实库内核：事实身份 / 作用域解析 / claim 图 / 结构校验（零依赖纯内核，不做存储、不做 IO）",
   "type": "module",
-  "main": "./src/index.ts",
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./node": "./src/node/index.ts"
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./node": {
+      "types": "./lib/node/index.d.ts",
+      "default": "./lib/node/index.js"
+    }
   },
   "files": [
     "src/"
@@ -20,5 +27,8 @@
     "oxlint": "^1.72.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.10"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
   }
 }

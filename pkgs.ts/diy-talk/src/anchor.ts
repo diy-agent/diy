@@ -8,8 +8,8 @@
 // 形状遵循仓库 rule.discriminated-union：判别键 `type` 同级只放**所有分支共有**的字段，
 // 分支私有数据进 `data`。锚点没有公共字段 ⇒ 每个分支就是 `{ type, data }`。
 
-import { TalkError } from './errors';
-import { rejectUnknown, takeObject, takeOffset, takeString, type ParseOptions } from './validate';
+import { TalkError } from './errors.js';
+import { rejectUnknown, takeObject, takeOffset, takeString, type ParseOptions } from './validate.js';
 
 /** 合法锚点类型全集（引擎枚举；新增类型 = 改代码 + 发版，不做行业自定义，见 ##166 §13.2） */
 export const ANCHOR_TYPES = ['message', 'doc-range', 'task-field', 'node'] as const;

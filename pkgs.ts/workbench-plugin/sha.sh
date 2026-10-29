@@ -24,7 +24,7 @@ source "../../sha.common.sh"
 ####################################################################################
 
 clean() {
-  run rm -rf ./dist
+  run rm -rf ./dist ./lib
 }
 sync() {
   :
@@ -39,19 +39,19 @@ check() {
 # 发布（npm → @diy-agent/workbench-plugin）
 #
 # 仓内 package.json 的 main/exports 指 src/*.ts 且带 private:true 当护栏；
-# 发行物另生成在 dist/（分发逻辑见 scripts/npm-publish.mjs）。
+# 发行物另生成在 lib/（分发逻辑见 scripts/npm-publish.mjs）。
 # 认证：NPM_PUBLISH_TOKEN（环境变量，或 ~/.bashrc 里那份；脚本自己找，不必先 source）
 ####################################################################################
 
-# build：编译 dist（ESM + d.ts）并生成发行版 package.json
+# build：编译 lib（ESM + d.ts）并生成发行版 package.json
 build() {
   run npx tsc -p tsconfig.build.json
-  run node ../../scripts/npm-publish.mjs . --prepare-only
+  run node ../../scripts/npm-publish.mjs . --prepare-only --out=lib
 }
 # publish：build 后发布到 npm（加 --dry-run 只演练：打包 + 校验，不上传）
 publish() {
   build
-  run node ../../scripts/npm-publish.mjs . "$@"
+  run node ../../scripts/npm-publish.mjs . --out=lib "$@"
 }
 
 # test：运行 vitest 单元测试

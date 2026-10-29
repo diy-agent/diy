@@ -18,9 +18,9 @@
 // 因此这里只定义「长什么样」，一个具体实现的字节都不写。
 
 import type { Anchor, Event } from '@diy/talk';
-import { RENDERERS, type NodeDef, type Renderer, type WorkflowDef } from './define';
-import { FlowError } from './errors';
-import { isObject } from './validate';
+import { RENDERERS, type NodeDef, type Renderer, type WorkflowDef } from './define.js';
+import { FlowError } from './errors.js';
+import { isObject } from './validate.js';
 
 /** 插件槽位全集（引擎枚举；工作流只能引用这五个） */
 export const SLOTS = ['guard', 'source', 'action', 'render', 'notify'] as const;

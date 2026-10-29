@@ -26,8 +26,8 @@
 // 边界：本包**不做存储、不碰 LLM SDK**（不 import node:fs / electron / @diy/app，不拼 prompt 的具体 SDK 形状）——
 // 工作流容器归 ##313，落地格式与宿主接入归 ##319。
 
-export { TalkError } from './errors';
-export type { TalkErrorCode } from './errors';
+export { TalkError } from './errors.js';
+export type { TalkErrorCode } from './errors.js';
 
 export {
     ANCHOR_TYPES,
@@ -38,7 +38,7 @@ export {
     parseAnchor,
     pinsRevision,
     taskFieldAnchor,
-} from './anchor';
+} from './anchor.js';
 export type {
     Anchor,
     AnchorType,
@@ -46,16 +46,16 @@ export type {
     MessageAnchorData,
     NodeAnchorData,
     TaskFieldAnchorData,
-} from './anchor';
+} from './anchor.js';
 
-export { createEvent, isEvent, parseEvent } from './event';
-export type { Event, EventInit } from './event';
+export { createEvent, isEvent, parseEvent } from './event.js';
+export type { Event, EventInit } from './event.js';
 
-export { assertThreadRefs, createReaction, parseReaction, parseThread } from './reaction';
-export type { Reaction, ReactionInit } from './reaction';
+export { assertThreadRefs, createReaction, parseReaction, parseThread } from './reaction.js';
+export type { Reaction, ReactionInit } from './reaction.js';
 
-export { assemblyRole, assertRoleAssignments, SOURCE_KINDS } from './role';
-export type { AssemblyRole, RoleAssignment, RoleInput, SourceKind } from './role';
+export { assemblyRole, assertRoleAssignments, SOURCE_KINDS } from './role.js';
+export type { AssemblyRole, RoleAssignment, RoleInput, SourceKind } from './role.js';
 
 export {
     assemble,
@@ -68,7 +68,7 @@ export {
     STRATEGIES,
     STRATEGY_NAMES,
     TEXT_ONLY,
-} from './assemble';
+} from './assemble.js';
 export type {
     AssembleInput,
     AssemblyItem,
@@ -79,9 +79,9 @@ export type {
     StrategyContext,
     StrategyName,
     WindowHook,
-} from './assemble';
+} from './assemble.js';
 
-export { eventFromJson, eventToJson, reactionFromJson, reactionToJson, threadFromJson, threadToJson } from './serialize';
-export type { SerializeOptions } from './serialize';
+export { eventFromJson, eventToJson, reactionFromJson, reactionToJson, threadFromJson, threadToJson } from './serialize.js';
+export type { SerializeOptions } from './serialize.js';
 
-export type { ParseOptions } from './validate';
+export type { ParseOptions } from './validate.js';

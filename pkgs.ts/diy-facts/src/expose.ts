@@ -13,7 +13,7 @@
 //
 // 判据（##5 实测账）：搬走一条 X 字节的规则每轮省 X，但查它一次 ≈ 一次完整请求的
 // 前缀重发（41 KB）。故 `full` 给"每轮都要知道"的，`index` 给"知道有、偶尔查"的。
-import type { Fact } from './types';
+import type { Fact } from './types.js';
 
 export const EXPOSE_LEVELS = ['full', 'index', 'none'] as const;
 export type ExposeLevel = (typeof EXPOSE_LEVELS)[number];

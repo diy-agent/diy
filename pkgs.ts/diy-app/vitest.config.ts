@@ -1,5 +1,7 @@
 import { createRequire } from "node:module";
 import { defineConfig } from "vitest/config";
+// workspace 能力包在测试期指回 src（##453 方案 B：包 main 已指 lib/*.js，运行读 lib、单测读 src）
+import { workspaceAliases } from "../vitest.alias";
 
 // node 条件下 `solid-js` 解析到 **SSR 构建**（`createEffect` 是空实现、不追踪依赖），
 // 而本仓的单测要验的是 renderer 真跑的**客户端构建**。旧做法是在个别用例里
@@ -11,7 +13,7 @@ const solidClient = require.resolve("solid-js/dist/solid.js");
 
 export default defineConfig({
   resolve: {
-    alias: [{ find: /^solid-js$/, replacement: solidClient }],
+    alias: [...workspaceAliases, { find: /^solid-js$/, replacement: solidClient }],
   },
   test: {
     // isolate:false（##402）下 `vi.resetModules()` 会重建**本项目**模块，但默认把

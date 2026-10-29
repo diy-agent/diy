@@ -8,7 +8,7 @@
 //   - fact 声明的轴必须在 ctx 里有同类声明，且两边**有交集**
 //   - ctx 未声明某轴 ⇒ 该轴 scoped 的 fact 查不到（宁可「查不到」也别「误用别的模块的结论」）
 
-import type { Scope, Env } from './types';
+import type { Scope, Env } from './types.js';
 
 export function envsOf(scope?: Scope): readonly Env[] {
     if (scope?.env === undefined) return [];

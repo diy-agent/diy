@@ -13,7 +13,7 @@
 // 为什么按 ts 对时而不用边界：配置/历史分离后，投递按**当前配置**实时算（`pit.config-vs-history`），
 // 压缩事件只写一条快照；「哪次请求被这次配置改动影响」只能由**时间先后**判定（事件 ts ≤ 请求 ts）。
 
-import type { CompactEventRecord } from "./compaction";
+import type { CompactEventRecord } from "./compaction.js";
 
 /** 定时所需的最小步信息（真身是 shared/usage 的 StepUsageRecord） */
 export interface StepRef {

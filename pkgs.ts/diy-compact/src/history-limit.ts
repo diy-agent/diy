@@ -17,7 +17,7 @@
 
 import { z } from "zod";
 
-import { retainTokensOf, selectKeptBoundary, triggerTokensOf, type BoundaryMessage } from "./select-kept-boundary";
+import { retainTokensOf, selectKeptBoundary, triggerTokensOf, type BoundaryMessage } from "./select-kept-boundary.js";
 
 /** 摘要模式：`model` = 压缩时生成摘要；`self` = 只给 source，让模型自己查 */
 export const SummaryModeSchema = z

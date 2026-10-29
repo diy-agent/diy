@@ -4,9 +4,13 @@
   "private": true,
   "description": "diy 提示词模版引擎：XML 控制节点 + 属性路径，无表达式、不转义、逐字节保真",
   "type": "module",
-  "main": "./src/index.ts",
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    }
   },
   "files": [
     "src/"
@@ -17,5 +21,8 @@
     "oxlint": "^1.72.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
   }
 }

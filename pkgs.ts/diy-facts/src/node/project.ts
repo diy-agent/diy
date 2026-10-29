@@ -12,11 +12,11 @@
 //   ③ **投影不具身份**：gid 才是身份（审计锚点 / 跨库引用 / 迁移）。投影只是能重算的视图。
 
 import { dump } from 'js-yaml';
-import { claimOf } from '../claim';
-import { formatGid, formatNs, nsRank, type Ns } from '../ns';
-import { resolveClaim, type ReadCtx } from '../resolve';
-import { scopeKey } from '../scope';
-import type { FactsErrorCode, Fact } from '../types';
+import { claimOf } from '../claim.js';
+import { formatGid, formatNs, nsRank, type Ns } from '../ns.js';
+import { resolveClaim, type ReadCtx } from '../resolve.js';
+import { scopeKey } from '../scope.js';
+import type { FactsErrorCode, Fact } from '../types.js';
 
 export const PROJECTION_ALGORITHMS = ['yaml-nested', 'flat-gid', 'md-list'] as const;
 export type ProjectionAlgorithm = (typeof PROJECTION_ALGORITHMS)[number];

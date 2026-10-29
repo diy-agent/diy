@@ -856,7 +856,7 @@ export interface CompactEventRecord {
             /** 走 summary.md 模版渲染出的文本 */
             text: string | null;
             /** 结构化数据（再生成/预览占位用；见 shared/context/summary.ts） */
-            data: import("./summary").SummaryData | null;
+            data: import("./summary.js").SummaryData | null;
             cost: number | null;
         };
     };
@@ -887,7 +887,7 @@ interface CompactEventRecordV1 {
     droppedDetail?: DroppedTurnDetail[];
     clipped?: ClippedToolDetail[];
     summaryText?: string | null;
-    summaryData?: import("./summary").SummaryData | null;
+    summaryData?: import("./summary.js").SummaryData | null;
     summaryCost?: number | null;
 }
 

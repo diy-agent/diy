@@ -25,7 +25,7 @@
 
 import { appendFileSync, closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { TextDecoder } from "node:util";
-import { opsFile, resolveSessionFile, turnsFile } from "./paths";
+import { opsFile, resolveSessionFile, turnsFile } from "./paths.js";
 
 /** 单条正文（user / text）的落盘上限：超了截断该条，不丢整轮 */
 export const TURN_TEXT_MAX_BYTES = 64 * 1024;

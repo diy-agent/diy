@@ -5,7 +5,7 @@
 //   fact id 是**审计锚点** —— `supersedes.to` 指向它、证据与版本挂在它上。
 
 import { scopeKey } from './scope.js';
-import type { Fact } from './types';
+import type { Fact } from './types.js';
 
 /** claim 分隔符：`#` 不出现在 subject / aspect 里（校验器保证） */
 export const CLAIM_SEP = '#';

@@ -4,10 +4,17 @@
   "private": true,
   "description": "上下文树 → 模型 wire 的纯投影：ContextFact/ContextTree 的类型契约、reducer、projection、投递（delivery）与 YAML 信封（envelope）",
   "type": "module",
-  "main": "./src/index.ts",
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./*": "./src/*.ts"
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./*": {
+      "types": "./lib/*.d.ts",
+      "default": "./lib/*.js"
+    }
   },
   "files": [
     "src/"
@@ -21,5 +28,8 @@
     "oxlint": "^1.72.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
   }
 }

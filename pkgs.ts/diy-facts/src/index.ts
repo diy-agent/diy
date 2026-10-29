@@ -13,13 +13,13 @@
 // 三条粒度（别混）：subject（对象）· claim = subject#aspect（**派生**查询键）·
 // fact.id（**不可派生**的审计锚点，supersedes.to 指向它）。
 
-export * from './types';
-export { CLAIM_SEP, claimOf, parseClaim } from './claim';
-export { NS_KINDS, formatGid, formatNs, nsRank, parseGid, parseNs, resolveRef, sameNs, type Ns } from './ns';
-export { pathCovers, scopeEqual, scopeKey, scopeMatches, scopeSpecificity, envsOf } from './scope';
-export { resolveClaim, resolveClaims, type ReadCtx, type Resolved } from './resolve';
-export { affected, buildIndex, refsOf, type Conflict, type FactsIndex, type Issue } from './index-build';
-export { validateFacts, type Validation } from './validate';
+export * from './types.js';
+export { CLAIM_SEP, claimOf, parseClaim } from './claim.js';
+export { NS_KINDS, formatGid, formatNs, nsRank, parseGid, parseNs, resolveRef, sameNs, type Ns } from './ns.js';
+export { pathCovers, scopeEqual, scopeKey, scopeMatches, scopeSpecificity, envsOf } from './scope.js';
+export { resolveClaim, resolveClaims, type ReadCtx, type Resolved } from './resolve.js';
+export { affected, buildIndex, refsOf, type Conflict, type FactsIndex, type Issue } from './index-build.js';
+export { validateFacts, type Validation } from './validate.js';
 export {
     DEFAULT_EXPOSE,
     DEFAULT_EXPOSE_BY_KIND,
@@ -38,5 +38,5 @@ export {
     type ExposeProblem,
     type LeveledFact,
     type SubjectWeight,
-} from './expose';
-export { foldKbIndex, KB_FOLD_MIN_GROUP, type KbFoldOptions, type KbNs, type KbSubjectEntry } from './kb-index';
+} from './expose.js';
+export { foldKbIndex, KB_FOLD_MIN_GROUP, type KbFoldOptions, type KbNs, type KbSubjectEntry } from './kb-index.js';
