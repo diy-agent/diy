@@ -102,6 +102,38 @@ export function loadCatalog(home: string, options?: CatalogOptions): ModelCatalo
     return entries;
 }
 
+/** 一个 provider 的只读摘要（provider 列表页用；不含任何 key） */
+export interface ProviderSummary {
+    readonly providerId: string;
+    readonly kind: "std" | "custom";
+    /** upstream baseURL；spec 没写 = 缺省（这类 provider 的模型不进目录） */
+    readonly api?: string;
+    /** ai-sdk 包名 */
+    readonly npm?: string;
+    /** 过滤后进入目录的模型数 */
+    readonly modelCount: number;
+}
+
+/**
+ * 列出 model.yaml 里配置的每个 provider（含没有 api 的 —— 它们不进目录，但仍要能看见 / 删掉）。
+ * **不含 key**：账号另走 listAccountStates / readAccountValue。
+ */
+export function listProviders(home: string, options?: CatalogOptions): ProviderSummary[] {
+    const out: ProviderSummary[] = [];
+    for (const input of providerInputs(home, options)) {
+        const api = typeof input.spec?.api === "string" && input.spec.api.trim() !== "" ? input.spec.api : undefined;
+        const npm = typeof input.spec?.npm === "string" ? input.spec.npm : undefined;
+        out.push({
+            providerId: input.providerId,
+            kind: input.kind,
+            ...(api === undefined ? {} : { api }),
+            ...(npm === undefined ? {} : { npm }),
+            modelCount: api === undefined ? 0 : modelsOf(input, api, npm).length,
+        });
+    }
+    return out;
+}
+
 /**
  * 列出 model.yaml 里每个 provider 的账号名（**只有名字**，按配置顺序）。
  * 未配置的 provider 不出现。
@@ -118,6 +150,54 @@ export function listAccounts(home: string): ProviderAccounts[] {
                 providerId,
                 kind,
                 names: accountNames(provider.accounts ?? []),
+            });
+        }
+    }
+    return out;
+}
+
+/** 一个账号的**状态**（不含 key）：名字 / 是否已填 / 字符数 */
+export interface AccountState {
+    readonly name: string;
+    /** 有值就算「已填」（`$VAR` 未定义也算填了，只是展开不出来） */
+    readonly configured: boolean;
+    /** 字面量的字符数；值是 `$VAR` 引用时缺省（长度没有意义，也不该暴露原值） */
+    readonly chars?: number;
+    /** 值是不是 `$VAR` / `${VAR}` 环境引用 */
+    readonly env: boolean;
+}
+
+/** 一个 provider 的账号状态清单（不含 key） */
+export interface ProviderAccountStates {
+    readonly providerId: string;
+    readonly kind: "std" | "custom";
+    readonly accounts: readonly AccountState[];
+}
+
+/**
+ * 列出每个 provider 的账号**状态**（名字 / 是否已填 / 字符数）。
+ *
+ * 与 listAccounts 的区别：那个只要名字；这个给配置页判断「已设置 / 未设置」。
+ * **依然不含 value** —— `chars` 是长度，不是值；值只经 `readAccountValue` 流出。
+ */
+export function listAccountStates(home: string): ProviderAccountStates[] {
+    const config = loadModelYaml(home);
+    const out: ProviderAccountStates[] = [];
+    for (const [kind, group] of [
+        ["std", config.stdProviders ?? {}],
+        ["custom", config.customProviders ?? {}],
+    ] as const) {
+        for (const [providerId, provider] of Object.entries(group)) {
+            out.push({
+                providerId,
+                kind,
+                accounts: (provider.accounts ?? []).map((account, index) => {
+                    const name = account.name ?? String(index);
+                    const value = account.data?.value ?? "";
+                    if (value.trim() === "") return { name, configured: false, env: false };
+                    if (/\$\{?[A-Za-z_]/.test(value)) return { name, configured: true, env: true };
+                    return { name, configured: true, env: false, chars: value.length };
+                }),
             });
         }
     }

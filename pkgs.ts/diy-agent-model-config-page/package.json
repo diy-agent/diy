@@ -1,0 +1,36 @@
+{
+  "name": "@diy-agent/model-config-page",
+  "version": "0.1.0",
+  "private": true,
+  "description": "模型配置页面插件：provider / 模型 / 账号 / 默认模型（key 只写不回显）；不装就没有入口",
+  "files": [
+    "src/"
+  ],
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./lib/index.js"
+    },
+    "./renderer": {
+      "types": "./src/view.ts",
+      "default": "./lib/view.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@diy-agent/model-catalog": "*",
+    "@diy-agent/workbench": "*",
+    "@diy-agent/workbench-ui": "*"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.57.0",
+    "oxlint": "^1.72.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

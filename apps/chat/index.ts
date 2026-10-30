@@ -6,6 +6,7 @@
 //   · chat-page 插件本身不认识文件系统 / 模型配置：它只认注入的 ChatSessionHost 端口
 
 import * as chatPageMain from "@diy-agent/chat-page/main";
+import * as modelConfigPageMain from "@diy-agent/model-config-page";
 import type { PluginEntry } from "@diy-agent/workbench";
 import { createChatSessions } from "./sessions.js";
 import { TITLE } from "./title.js";
@@ -26,6 +27,14 @@ export const ASSEMBLY: Assembly = {
             data: { module: chatPageMain },
             config: chatConfig(),
         },
+        {
+            // ##467：模型配置页是**独立插件** —— 删掉这一项，主进程就不再交付该页，
+            // 侧栏里的「模型配置」随之消失（renderer 侧注册与否只决定「怎么画」）。
+            id: "model-config-page",
+            type: "module",
+            data: { module: modelConfigPageMain },
+            config: homeConfig(),
+        },
     ],
 };
 
@@ -37,4 +46,10 @@ function chatConfig(): unknown {
     const home = process.env["DIY_HOME"];
     if (!home) return {};
     return { sessions: createChatSessions({ home }) };
+}
+
+/** 模型配置页只认数据根（`$DIY_HOME`）；缺席时页面方法会明确报错，不猜路径。 */
+function homeConfig(): unknown {
+    const home = process.env["DIY_HOME"];
+    return home ? { home } : {};
 }

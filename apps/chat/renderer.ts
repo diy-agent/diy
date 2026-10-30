@@ -9,6 +9,8 @@ import { mountWorkbench, registerPage, type WorkbenchGateway } from "@diy-agent/
 //   @diy-agent/chat-page/renderer        ← 裸 DOM（最小依赖对照组）
 //   @diy-agent/chat-page/renderer-diui   ← diyui 版（不闪 / 滚动不跳 / 焦点不丢）
 import { chatPageView } from "@diy-agent/chat-page/renderer-diui";
+// ##467：模型配置页（独立插件，删掉这行就没有配置入口）
+import { modelConfigPageView } from "@diy-agent/model-config-page/renderer";
 import { TITLE } from "./title.js";
 
 declare global {
@@ -23,6 +25,8 @@ async function main(): Promise<void> {
     const gateway = window.workbench;
     if (!gateway) throw new Error("preload 桥没注入 window.workbench");
     registerPage(chatPageView);
+    // ##467：配置页的 view 也在这里注册；但**有没有入口由主进程插件清单决定**（见 index.ts）
+    registerPage(modelConfigPageView);
     await mountWorkbench(host, gateway, { title: TITLE });
 }
 

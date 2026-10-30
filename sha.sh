@@ -429,7 +429,7 @@ vendor.update() {  run git submodule update --init --recursive --remote --merge;
 build-pkgs() {
     # workbench / ui-workbench / chat-page：插件化体系的第一个活样本（##457）；
     # 顺序 = 被依赖方在前（chat-page 依赖 agent-session）。
-    local _pkg_order=(diy-template diy-talk diy-context diy-compact diy-flow diy-facts diy-persistence diy-llm-provider diy-rpc diy-ui workbench-plugin diy-agent-session diy-agent-session-store-jsonl diy-agent-model-catalog diy-room workbench ui-workbench chat-page)
+    local _pkg_order=(diy-template diy-talk diy-context diy-compact diy-flow diy-facts diy-persistence diy-llm-provider diy-rpc diy-ui workbench-plugin diy-agent-session diy-agent-session-store-jsonl diy-agent-model-catalog diy-room workbench ui-workbench chat-page diy-agent-model-config-page)
     for _pkg in "${_pkg_order[@]}"; do
         echo "${inverse_surface}info: workspace: build 'pkgs.ts/${_pkg}'${reset}"
         ( cd "pkgs.ts/${_pkg}" && ./sha.sh build )
