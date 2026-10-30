@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="data:," />
+    <title>diy-ui · A/B 对照（app.div vs yield html.div）</title>
+    <style>
+      :root {
+        --bg: #0d1117;
+        --panel: #161b22;
+        --border: #30363d;
+        --fg: #e6edf3;
+        --muted: #8b949e;
+        --accent: #4493f8;
+        --accent2: #3fb950;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 28px;
+        background: var(--bg);
+        color: var(--fg);
+        font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      header { max-width: 1200px; margin: 0 auto 20px; }
+      h1 { font-size: 18px; margin: 0 0 6px; }
+      header p { margin: 0; color: var(--muted); }
+      main { max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+      .pair { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+      .pair > h2 { margin: 0; padding: 10px 14px; font-size: 13px; background: #11161c; border-bottom: 1px solid var(--border); }
+      .pair > h2 em { color: var(--muted); font-style: normal; margin-left: 8px; }
+      .cols { display: grid; grid-template-columns: 1fr 1fr; }
+      .col { padding: 12px 14px; min-width: 0; }
+      .col + .col { border-left: 1px solid var(--border); }
+      .col-h { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+      .col-h b { color: var(--accent); font-weight: 600; }
+      .col-h.b b { color: var(--accent2); }
+      .col-h code { color: var(--fg); }
+
+      /* 两边 demo 共用的一套朴素样式 */
+      .panel-body { display: flex; flex-direction: column; gap: 8px; }
+      .panel-tag { font-size: 11px; color: var(--muted); }
+      .panel-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: flex-start; }
+      .panel-btn { background: #21262d; color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; font: inherit; cursor: pointer; }
+      .panel-btn:hover { border-color: var(--accent); }
+      .panel-out { white-space: pre-wrap; color: #c9d1d9; }
+      .panel-input { background: #0b0f14; color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font: inherit; width: 100%; }
+      .panel-muted { color: var(--muted); font-size: 11px; }
+      .panel-line { white-space: pre-wrap; }
+      .panel-block { border-left: 2px solid var(--border); padding-left: 8px; display: flex; flex-direction: column; gap: 3px; }
+      .panel-cards { gap: 10px; }
+      .panel-card { flex: 1 1 180px; min-width: 0; border: 1px solid var(--border); border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+      .panel-card-title { font-size: 11px; color: var(--muted); }
+      .panel-lines, .chat-list { display: flex; flex-direction: column; gap: 3px; min-height: 8px; }
+      .chat-list { margin-top: 4px; max-height: 240px; overflow: auto; }
+      .chat-msg { background: #1f3a5f; border: 1px solid #2f5f9f; border-radius: 6px; padding: 4px 8px; }
+
+      /* ── A 风格（dom.ts）输出的类 ── */
+      .diy-column { display: flex; flex-direction: column; gap: 8px; }
+      .diy-row { display: flex; flex-direction: row; gap: 8px; flex-wrap: wrap; align-items: flex-start; }
+      .diy-text { white-space: pre-wrap; }
+      .diy-button {
+        background: #21262d; color: var(--fg); border: 1px solid var(--border);
+        border-radius: 6px; padding: 4px 12px; font: inherit; cursor: pointer;
+      }
+      .diy-button:hover { border-color: var(--accent); }
+      .diy-input {
+        background: #0d1117; color: var(--fg); border: 1px solid var(--border);
+        border-radius: 6px; padding: 4px 8px; font: inherit; min-width: 160px;
+      }
+      .diy-input:focus { outline: none; border-color: var(--accent); }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>diy-ui · A/B 两种 API 对照</h1>
+      <p>
+        A = <code>app.div(&quot;&quot;)</code>（<code>providers/dom.ts</code>，eager / 命令式，最小更新单位是「重跑整块」）
+        　·　B = <code>yield html.div()</code>（<code>providers/dom-gen.ts</code>，pull / Spec，重跑 + keyed 对账）
+      </p>
+    </header>
+    <main>
+      <section class="pair">
+        <h2>Counter <em>信号 → 界面</em></h2>
+        <div class="cols">
+          <div class="col">
+            <div class="col-h"><b>A</b> · <code>app.column().cell(() =&gt; app.label(...))</code> —— 每次重跑清空重建这一列</div>
+            <div id="a-counter"></div>
+          </div>
+          <div class="col">
+            <div class="col-h b"><b>B</b> · <code>text: () =&gt; ...</code> —— 重跑块只建结构，文本走 getter 原子更新</div>
+            <div id="b-counter"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="pair">
+        <h2>Reactive <em>多信号 + 历史列表</em></h2>
+        <div class="cols">
+          <div class="col">
+            <div class="col-h"><b>A</b> · 两个 cell（历史 / 状态）各自重建</div>
+            <div id="a-reactive"></div>
+          </div>
+          <div class="col">
+            <div class="col-h b"><b>B</b> · 一个重跑块；历史 keyed 只追加、状态走 getter</div>
+            <div id="b-reactive"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="pair">
+        <h2>Generator 步进 <em>yield 到底能不能「一条一条出」</em></h2>
+        <div class="cols">
+          <div class="col">
+            <div class="col-h"><b>A</b> · <code>cell(function* (n) {{ yield n.label(...) }})</code> —— 同步 generator 同样一轮 drain（要逐步得用 <code>cell(async …)</code>）</div>
+            <div id="a-generator"></div>
+          </div>
+          <div class="col">
+            <div class="col-h b"><b>B</b> · children 生成器同步 drain（三步同时出现）；要逐步必须 <code>mountStream</code></div>
+            <div id="b-generator"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="pair">
+        <h2>异步并发 <em>三路任务互不干扰</em></h2>
+        <div class="cols">
+          <div class="col">
+            <div class="col-h"><b>A</b> · <code>cell(async function* (n) {{ await …; n.label(…) }})</code> —— 重跑整块重建</div>
+            <div id="a-async"></div>
+          </div>
+          <div class="col">
+            <div class="col-h b"><b>B</b> · <code>mountStream(node, source, …)</code> —— 0 重跑，历史行保留</div>
+            <div id="b-async"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="pair">
+        <h2>流式消息 <em>append-only</em></h2>
+        <div class="cols">
+          <div class="col">
+            <div class="col-h"><b>A</b> · 没有增量入口：cell 重跑 → 每来一条**清空整列重建**</div>
+            <div id="a-stream"></div>
+          </div>
+          <div class="col">
+            <div class="col-h b"><b>B</b> · <code>mountStream</code>：每条一条 insert，0 重跑 0 查表</div>
+            <div id="b-stream"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/src/compare-main.ts"></script>
+  </body>
+</html>
