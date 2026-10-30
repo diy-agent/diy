@@ -66,9 +66,13 @@ function llmFromEnv(): LlmProvider | undefined {
     const baseURL = process.env["LLM_BASE_URL"];
     const apiKey = process.env["LLM_API_KEY"];
     if (!baseURL || !apiKey) return undefined;
+    // 额外 header（JSON）：有些 provider 要求非标准头，比如 opencode 的
+    // `x-opencode-session`（缺了直接 400 MissingSessionID）
+    const rawHeaders = process.env["LLM_HEADERS"];
     return createOpenAiCompatible({
         baseURL,
         apiKey,
         model: process.env["LLM_MODEL"] ?? DEFAULT_MODEL_ID,
+        ...(rawHeaders === undefined ? {} : { headers: JSON.parse(rawHeaders) as Record<string, string> }),
     });
 }

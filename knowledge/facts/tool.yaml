@@ -12,6 +12,13 @@ facts:
     evidence:
       source: user
       verifiedAt: '2026-10-24'
+  tool#bash-sync:
+    value: |-
+      **同步就同步，不要诱导转后台**。给 bash 设短超时再引导 model 走 nohup 会破坏同步语义（「搜完再做一件事」变成叫醒服务）。长命令可以慢，问题只在「命令早结束但工具调用还挂着」这类故障点（见 ##454）。默认不超时；显式给了 `timeout` 就尊重它。
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
   tool#check:
     value: |-
       `./sha.sh check` 是**提交前唯一检查**（tsc `--noEmit` + oxlint + 产物 / 可执行位 / 规范索引护栏）；改一行只跑受影响测试，全量收工前一次
@@ -181,6 +188,13 @@ facts:
     evidence:
       source: user
       verifiedAt: '2026-10-22'
+  tool#scan-scope:
+    value: |-
+      rg/fd 必须限定范围，禁 `rg … .` 全仓扫。排除：`-g '!*.jsonl'`（`.diy/local/*.jsonl` 单文件可达 181MB）、`-g '!**/{node_modules,.venv}/**'`、`-g '!**/{build,dist,lib,release}/**'`、`-g '!diy.worktrees/**'`。跨仓扫前先 `fd -t d -d 1` 看体量。
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
   tool#sha:
     value: |-
       每个项目自带开发入口 `./sha.sh`（`./sha.sh --help` 看子命令）；公共函数库 `sha.common.sh`
