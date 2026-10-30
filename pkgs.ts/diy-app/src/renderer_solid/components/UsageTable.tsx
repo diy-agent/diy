@@ -195,15 +195,19 @@ export function UsageTable(props: UsageTableProps) {
         if (opts.total) return spec === specs()[0] ? "合计" : fmtCell(valueOf(spec, row), spec.fmt);
         if (spec.key === "deliveryCompact") {
             const sel = stepRecord(row)?.historySelection;
-            return sel ? (
+            if (!sel) return null;
+            // ##476：没裁剪 → 文案为 null → **整块不插节点**（不是空 span、也不是 display:none）
+            const text = deliveryBadgeText(sel);
+            if (text === null) return null;
+            return (
                 <span
                     data-delivery-compact
                     class="badge badge-ghost badge-xs"
                     title={deliveryBadgeTitle({ selection: sel, boundary: props.boundary })}
                 >
-                    {deliveryBadgeText(sel)}
+                    {text}
                 </span>
-            ) : null;
+            );
         }
         if (spec.key === "compactEvents") {
             const n = points().get(row.key)?.length ?? 0;

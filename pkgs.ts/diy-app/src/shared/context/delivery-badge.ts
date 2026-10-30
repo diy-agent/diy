@@ -75,9 +75,13 @@ export function fmtTokensShort(n: number): string {
  *
  * 数字口径 = **token**（与上限同一个数域）：`历史·丢 3.4k tok`。
  * 老账本没有 token 数时退回条数（`历史·丢 3 条`）—— 宁可少说，也不拿字节换算。
+ *
+ * ##476（用户 2026-10-30）：**没裁剪就不显示徽章** —— 返回 `null`，调用方见 `null` 就不插节点。
+ * 「历史·无裁剪」是零信息量的常亮字：每行都亮，反而把真正压过的那几行淹掉 ——
+ * 没压的时候，连「历史裁剪」这个维度都不必标。
  */
-export function deliveryBadgeText(sel: DeliverySelection): string {
-    if (sel.droppedMessages <= 0) return "历史·无裁剪";
+export function deliveryBadgeText(sel: DeliverySelection): string | null {
+    if (sel.droppedMessages <= 0) return null;
     return typeof sel.droppedTokens === "number"
         ? `历史·丢 ${fmtTokensShort(sel.droppedTokens)} tok`
         : `历史·丢 ${sel.droppedMessages} 条`;
