@@ -9,6 +9,7 @@
 import { describe, expect, it } from "vitest";
 import {
   groupByProject,
+  navSections,
   projectColor,
   projectHue,
   projectIndexOf,
@@ -141,6 +142,33 @@ describe("nav 按项目分组", () => {
     const pinned = groupByProject([a, b], idx, new Set([b.key]));
     expect(pinned).not.toBe(base);
     expect(pinned[0]!.pinnedCount).toBe(1);
+  });
+
+  it("navSections（##466 ①）：置顶项跨项目提为最上独立段，其余顺序不变", () => {
+    const idx = projectIndexOf([projNode("4", "diy"), projNode("14", "sha")]);
+    const a = tab(uri("4", "166"));
+    const n = tab(uri("4", "266"));
+    const one = tab(uri("14", "1"));
+    const other = tab(uri("4", "87"));
+
+    // 输入 = tab 的全局显示序（项目 4 在前）。只钉第二个项目里的那一项：
+    // 旧行为（组内置顶）它永远到不了顶部，因为它那组排在后面。
+    const secs = navSections([a, other, n, one], idx, [one.key]);
+    expect(secs[0]!.pinned).toBe(true);
+    expect(secs[0]!.project).toBeNull();
+    expect(secs[0]!.tabs.map((t) => t.ctx)).toEqual([uri("14", "1")]);
+    expect(secs.slice(1).map((g) => g.project?.id)).toEqual(["4"]);
+    expect(secs[1]!.tabs.map((t) => t.ctx)).toEqual([uri("4", "166"), uri("4", "87"), uri("4", "266")]);
+
+    // 多个项目的置顶项：同段共存；段内顺序 = 调用方给的有序数组（最近置顶在前）
+    const two = navSections([a, other, n, one], idx, [one.key, a.key]);
+    expect(two[0]!.tabs.map((t) => t.ctx)).toEqual([uri("14", "1"), uri("4", "166")]);
+    expect(two.slice(1).map((g) => g.project?.id)).toEqual(["4"]);
+    expect(two[1]!.tabs.map((t) => t.ctx)).toEqual([uri("4", "87"), uri("4", "266")]);
+
+    // 没有置顶 / 空集合 → 与 groupByProject 同形（无置顶段）
+    expect(navSections([a, other], idx, []).some((g) => g.pinned)).toBe(false);
+    expect(navSections([a, other], idx).map((g) => g.project?.id)).toEqual(["4"]);
   });
 
   it("项目色由 id 派生：确定、同 id 同色、不同 id 不同色", () => {

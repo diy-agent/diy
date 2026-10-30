@@ -9,7 +9,7 @@
 //   · App 侧只做渲染，判据可被单测覆盖（不必起 Electron）。
 //
 // 与缩进语义的关系（**正交，别混**）：
-//   缩进 = 任务层级（shared/tab-order 的 taskIndentOf），项目归属 = 这个 tab 挂在哪个项目。
+//   缩进 = 任务层级（shared/tab-order 的 taskDepths），项目归属 = 这个 tab 挂在哪个项目。
 //   祖先链必在同一项目内（task.move 强制同项目），子页面与父共享 ctx → 分组不会拆开
 //   「父子族」，缩进不会指向组外。
 
@@ -66,10 +66,10 @@ export interface NavProjectGroup<T> {
  * 「把同项目的挪到一起」，不该顺手按 id 重排一遍 —— 那会让「刚打开的那个」
  * 莫名跑到中间去。项目排序若确要，是另一个决策（见任务 body 待拍板 ④）。
  *
- * 与置顶（##356 ②）的关系：**组序不由置顶决定**，只由输入顺序决定 ——
- * 调用方（App）喂的是 `navTabs().all`（置顶项已固定在前），故「含置顶项的组」
- * 自然排到最前：整组跟着走，因为**组是整体**（不可能只把组里一行提到别的组前面
- * 而不拆散分组）。本函数只负责「组内把置顶项提到最前」+ 报出 `pinnedCount`。
+ * 与置顶（##356 ②）的关系：**组序不由置顶决定**，只由输入顺序决定。
+ * ⚠️ ##466 之后 App **不再**走「先全量分区、再分组」这条路（那会让置顶只到本组最前，
+ * 别的项目组在前时永远到不了 nav 顶部）—— 置顶改由 `navSections` 拎成最上的独立段。
+ * `pinnedKeys` 参数保留（组内分区规则本身没错，单测也直接测它），但 App 侧只喂 `rest`。
  *
  * ═══ 结果缓存：内容不变则返回**同一个数组 / 同一批组对象** ═══
  *
@@ -130,6 +130,46 @@ export function groupByProject<T extends { ctx: string | null; key?: string }>(
   if (cacheOut.length > 0 && sameGroups(groups as AnyGroup[], cacheOut)) return cacheOut as NavProjectGroup<T>[];
   cacheOut = groups as AnyGroup[];
   return groups;
+}
+
+/** nav 的一个渲染段：置顶区（跨项目，恒在最上）或某个项目组 */
+export interface NavSection<T> extends NavProjectGroup<T> {
+  /** true = 置顶区（##466）：各行来自不同项目，project 恒为 null。缺省 = 普通项目组 */
+  pinned?: boolean;
+}
+
+/**
+ * nav 任务区的**最终分段**（渲染顺序）：**置顶区在最上，其后才是项目组**。
+ *
+ * 为什么置顶区必须跨项目单独成段（##466 ①）：早先把置顶只做在**组内**（groupByProject 的
+ * pinned 参数），于是置顶只把项提到它**自己项目组的开头** —— 别的项目组若排在前面，
+ * 那个置顶项永远到不了 nav 顶部（实测：`projects/14/tasks/1` 置顶后仍在第 39 行，
+ * 因为 `projects/4` 组在前面）。用户的心智是「钉到最上面」，不是「钉到本项目最上面」。
+ *
+ * `pinnedKeys` 是**有序数组**（= 期望的显示顺序，调用方给「最近置顶在前」）：置顶区里
+ * 位置由置顶动作决定，与任务树序无关 —— 「点了 📌 就在第一行」是可预期的。
+ * 代价：置顶区内父子不保证相邻，缩进因此由 taskDepths 的栈判据兜底（祖先不在上方就不缩进）。
+ */
+export function navSections<T extends { ctx: string | null; key?: string }>(
+  tabs: T[],
+  index: Map<string, ProjectRef>,
+  pinnedKeys?: readonly string[],
+): NavSection<T>[] {
+  if (!pinnedKeys || pinnedKeys.length === 0) {
+    // 原样返回 groupByProject 的结果（它自己做了引用复用 —— nav 的 DOM 复用靠它）
+    return groupByProject(tabs, index) as NavSection<T>[];
+  }
+  const set = new Set(pinnedKeys);
+  const byKey = new Map(tabs.map((t) => [t.key ?? "", t]));
+  // 置顶区内顺序 = 调用方给的有序数组；已关掉的 tab 的键自动落空（App 侧 prune 也会清）
+  const pinned = pinnedKeys.map((k) => byKey.get(k)).filter((t): t is T => !!t);
+  const rest = tabs.filter((t) => !set.has(t.key ?? ""));
+  const out: NavSection<T>[] = [];
+  if (pinned.length > 0) {
+    out.push({ pinned: true, project: null, tabs: pinned, pinnedCount: pinned.length });
+  }
+  for (const g of groupByProject(rest, index)) out.push({ ...g, pinned: false });
+  return out;
 }
 
 /**

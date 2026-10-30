@@ -7,7 +7,8 @@
  * 两条边界（与 tabStore 的契约一致：只存真信息、派生数据现算）：
  *  - 集合里存的是 **tab key**（`<pageId>:<ctx>`，与 `diy_tabs_opened` 同源），不是任务 uri ——
  *    置顶的单位是「导航里的那一项」（同一任务可开多个 tab，各自的置顶互不影响）。
- *  - 展示顺序**不由集合决定**（集合无序）：置顶区内的顺序取全局 tab 顺序，见 partitionByPin。
+ *  - 展示顺序**不由集合决定**（集合无序）：置顶段内顺序取全局 tab 顺序（见 partitionByPin），
+ *    而置顶段本身跨项目固定在最上（见 shared/nav-project 的 navSections，##466）。
  */
 import { createSignal, untrack } from "solid-js";
 import { Caches } from "../lib/ui-state";

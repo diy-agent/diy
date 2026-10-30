@@ -37,15 +37,51 @@ export function pageParentKeyOf(
 }
 
 /**
- * 某 tab 的**任务缩进层级** = 打开列表里存在的祖先任务个数。
+ * 一份**按显示顺序排好的**行列表 → 每行的任务缩进层级（key → 层数）。
  *
- * 只在「祖先也开着」时缩进：祖先没开却缩进，视觉上会指向一个不存在的父。
- * 层级用**计数**而非任务树深度：侧栏是扁平列表，缩进表达的是「相对已开项」的
- * 从属关系，不是绝对深度（绝对深度会让两个不同分支的兄弟缩进不同，看着更乱）。
+ * 判据是**显示序上的最近可见祖先**（栈），不是「祖先开着的个数」：
+ * 缩进只在「它的祖先就是它上方的那条任务行链」时成立 —— 否则缩进就是在撒谎
+ * （子 tab 上面坐着的不是它的父）。这条对**置顶**尤其必要（##466 ②）：置顶项被提到
+ * nav 顶部后，它原来的祖先可能留在下面（或它自己被提到无关任务上面），
+ * 按「开着几个祖先」算出来的缩进会把它挂到一个不相干的任务下面。
+ *
+ * 子页面行（`isSubPage`）**不参与栈**：既不推（不充当别人的父）、也不触发弹栈，
+ * 只按它所属任务行的层级取值（子页面与父共享 ctx）。
  */
-export function taskIndentOf(item: TabLike, opened: TabLike[]): number {
-  const openCtx = new Set(opened.map((t) => t.ctx).filter((c): c is string => !!c));
-  return (item.taskAncestors ?? []).filter((a) => openCtx.has(a)).length;
+export function taskDepths<T extends TabLike>(
+  rows: readonly T[],
+  isSubPage: (t: T) => boolean = (t) => !!t.parent,
+): Map<string, number> {
+  const out = new Map<string, number>();
+  const stack: string[] = [];
+  for (const t of rows) {
+    if (!t.ctx) {
+      out.set(t.key, 0);
+      continue;
+    }
+    if (isSubPage(t)) {
+      // 子页面不推栈：层级 = 它所属任务行的层级（栈顶正是那个任务时取它的层数）
+      out.set(t.key, stack[stack.length - 1] === t.ctx ? stack.length - 1 : stack.length);
+      continue;
+    }
+    const ancestors = t.taskAncestors ?? [];
+    // 弹到「最近的仍在我祖先链上的行」——上面那些无关行不再是可视父
+    while (stack.length > 0 && !ancestors.includes(stack[stack.length - 1]!)) stack.pop();
+    out.set(t.key, stack.length);
+    if (stack[stack.length - 1] !== t.ctx) stack.push(t.ctx);
+  }
+  return out;
+}
+
+/**
+ * 某 tab 的**任务缩进层级**（在给定的显示顺序里）。
+ *
+ * 语义真源是 taskDepths（栈判据）；这里只是「按 key 取一条」的便捷入口。
+ * 调用方喂的 `opened` 必须是**它真正被渲染的那个顺序**（分组 / 置顶分区之后的子序列），
+ * 喂全量列表会得到「按全量算的层级」——那正是 ##466 的错法。
+ */
+export function taskIndentOf(item: TabLike, opened: readonly TabLike[]): number {
+  return taskDepths(opened).get(item.key) ?? 0;
 }
 
 /**

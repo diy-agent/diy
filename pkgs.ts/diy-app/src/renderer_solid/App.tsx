@@ -39,9 +39,8 @@ import { modelNoticeStore } from "./store/modelNoticeStore";
 import { inboxStore } from "./store/inboxStore";
 import { MAX_BARS, envWatchStore } from "./store/envWatchStore";
 import { defaultBinding, findPage, findView, viewInstanceKey } from "../shared/view-registry";
-import { taskIndentOf } from "../shared/tab-order";
-import { partitionByPin } from "../shared/nav-pin";
-import { groupByProject, projectColor, projectIndexOf, projectOfCtx } from "../shared/nav-project";
+import { taskDepths } from "../shared/tab-order";
+import { navSections, projectColor, projectIndexOf, projectOfCtx } from "../shared/nav-project";
 import { taskStateColor } from "../main/core/task-state";
 import { instanceTitle } from "../shared/instance-title";
 import { Caches, NAV_W_MIN, NAV_W_MAX, NAV_W_DEFAULT } from "./lib/ui-state";
@@ -405,18 +404,6 @@ export default function App() {
 
     /** ⌘K 快速打开会话的弹层开关（##254）。内容与键盘导航见 components/NavSearch.tsx */
     const [navSearchOpen, setNavSearchOpen] = createSignal(false);
-
-    /**
-     * nav 任务项列表 = **置顶项固定在前**（##356 ②）。
-     *
-     * 只**分区**、不排序：区内顺序仍是 `tabStore.opened` 的全局顺序（任务树序），
-     * 故置顶不会打乱父子相邻关系；缩进也照旧由全局层级算（置顶不改层级，
-     * 也不隐式把置顶项的祖先一起置顶）。规则本体是纯函数，见 shared/nav-pin。
-     */
-    const navTabs = createMemo(() => {
-        const { pinned, rest } = partitionByPin(tabStore.opened, (t) => t.key, new Set(navPinStore.keys));
-        return { all: [...pinned, ...rest], pinnedCount: pinned.length };
-    });
 
     // 关掉的 tab（或其任务被删）不留置顶键：tab 列表一变就剪枝。
     // 语义边界：只剪「键已不存在」的，**不管它现在指什么** —— 同 key 再打开仍是置顶。
@@ -1101,15 +1088,13 @@ export default function App() {
      * 组内保持 navTabs 的顺序（缩进 / 父子相邻语义因此不受影响）。项目显示名从任务树
      * 现查（projectIndexOf），故树刷新后组头文案自动跟上。
      *
-     * 与置顶（##356 ②）的合流：喂进去的是 `navTabs().all`（**置顶项固定在前**），
-     * 于是「钉住的项在最上面」原样成立 —— 它所在的**组**也跟着排到最前（组是整体：
-     * 不能只把组里一行提到别的组前面而不拆散分组）。组内顺序同样是 navTabs 的顺序，
-     * 分隔线按组内 pinnedCount 画（见 groupByProject 的 pinned 参数）。
-     * 副作用：置顶会让**该项目的整组**上移 —— 这是「分组」与「置顶」不可兼得处的取舍，
-     * 已在任务 body 标为待拍板项。
+     * 与置顶（##356 ② / ##466）的合流：置顶项**跨项目**提到最前的独立段（`pinned: true`），
+     * 其后才是各项目组。早先把置顶只做在组内，别的项目组在前时置顶项永远到不了顶部
+     * （##466 ①）。段内顺序 = **最近置顶在最上**（`navPinStore.keys` 是置顶时间序，取反），
+     * 于是「点了 📌 就在第一行」。规则本体是纯函数，见 shared/nav-project 的 navSections。
      */
     const navProjectGroups = createMemo(() =>
-        groupByProject(navTabs().all, projectIndexOf(taskStore.nodes), new Set(navPinStore.keys)),
+        navSections(tabStore.opened, projectIndexOf(taskStore.nodes), [...navPinStore.keys].reverse()),
     );
 
     /** 打开/聚焦某个 tab（含子页面） */
@@ -1583,18 +1568,30 @@ export default function App() {
                                         层级与选中语义（收缩态不显示标题与关闭按钮，装不下）。 */}
                                     <Show when={item.id === "task"}>
                                         <For each={navProjectGroups()}>
-                                            {(g) => (
+                                            {(g) => {
+                                                /** 页面层次的子页面（lab 挂 task-run 下）—— 与缩进共用同一判据 */
+                                                const isSubPageOf = (x: { parent?: string; pageId: string }) =>
+                                                    !!x.parent || !!findPage(x.pageId)?.parentPage;
+                                                /** 缩进层级按**本段实际渲染顺序**算（栈判据，见 shared/tab-order 的 taskDepths）：
+                                                    置顶把行提到顶部后，祖先不在上方就不缩进 —— 否则假缩进会把它挂到无关任务下面（##466 ②）。*/
+                                                const depths = createMemo(() => taskDepths(g.tabs, isSubPageOf));
+                                                return (
                                                 <>
-                                                    {/* 项目分组标题（##302）：**仅展开态** —— rail（40px）装不下文字，
+                                                    {/* 分段标题：**仅展开态** —— rail（40px）装不下文字，
                                                         那一态靠每行左缘的项目色条区分（同一个颜色 = 同一个项目）。
-                                                        组序 = 该组在 navTabs（置顶项在前）里的首次出现位置，组内保持 navTabs 顺序、
-                                                        置顶项在组内最前 —— 缩进 / 父子相邻语义因此不受影响。 */}
+                                                        置顶段（##466）跨项目恒在最上；其余段序 = 该项目组首次出现位置。 */}
                                                     <Show when={expanded()}>
                                                         <li class="flex justify-center">
                                                             <div
                                                                 class="flex items-center gap-1.5 w-full min-w-0 px-3 pt-2 pb-0.5 text-caption opacity-60 select-none"
-                                                                data-nav-project-head={g.project?.id ?? ""}
-                                                                title={g.project ? (g.project.path ?? g.project.label) : "没有项目归属的页面"}
+                                                                data-nav-project-head={g.pinned ? "__pinned__" : (g.project?.id ?? "")}
+                                                                title={
+                                                                    g.pinned
+                                                                        ? "置顶（跨项目，固定在最上）"
+                                                                        : g.project
+                                                                          ? (g.project.path ?? g.project.label)
+                                                                          : "没有项目归属的页面"
+                                                                }
                                                             >
                                                                 <Show when={g.project}>
                                                                     {(p) => (
@@ -1604,17 +1601,19 @@ export default function App() {
                                                                         />
                                                                     )}
                                                                 </Show>
-                                                                <span class="truncate">📁 {g.project?.label ?? "未归属项目"}</span>
+                                                                <span class="truncate">
+                                                                    {g.pinned ? "📌 置顶" : `📁 ${g.project?.label ?? "未归属项目"}`}
+                                                                </span>
                                                             </div>
                                                         </li>
                                                     </Show>
                                                     <For each={g.tabs}>
-                                                        {(t, i) => {
+                                                        {(t) => {
                                                     const isActive = () => activeKey() === t.key;
                                                     /** 页面层次的子页面（lab 挂 task-run 下） */
-                                                    const isSubPage = () => !!t.parent || !!findPage(t.pageId)?.parentPage;
-                                                    /** 任务层次的缩进层级（已打开的祖先任务个数；0 = 顶级） */
-                                                    const taskIndent = () => taskIndentOf(t, tabStore.opened);
+                                                    const isSubPage = () => isSubPageOf(t);
+                                                    /** 任务层次的缩进层级（本段显示顺序里的可见祖先层数；0 = 顶级） */
+                                                    const taskIndent = () => depths().get(t.key) ?? 0;
                                                     const num = () => (t.ctx ? findNode(taskStore.nodes, t.ctx)?.num : undefined);
                                                     // 非 task-run 的页面 tab 一律用 registry 的 title（避免"新页面忘了加特判"
                                                     // 就显示成所属任务名 —— R3 那个 bug 的成因；见 review RV-05）。
@@ -1661,14 +1660,6 @@ export default function App() {
                                                     const pinned = () => navPinStore.has(t.key);
                                                     return (
                                                         <>
-                                                            {/* 置顶区与普通区之间一条细分隔线（##356 ②；**##302 之后按组内计**）：
-                                                                分组后置顶项仍是各组的前缀（组序由 navTabs 决定 —— 含置顶项的组排在最前），
-                                                                故分隔线画在**本组**置顶段的末尾；本组无置顶项时不出现。 */}
-                                                            <Show when={g.pinnedCount > 0 && i() === g.pinnedCount}>
-                                                                <li class="px-1 py-0.5" aria-hidden="true">
-                                                                    <div class="border-t border-base-content/15" />
-                                                                </li>
-                                                            </Show>
                                                         <li class="flex justify-center">
                                                             <Show
                                                                 when={expanded()}
@@ -1819,7 +1810,8 @@ export default function App() {
                                                         }}
                                                     </For>
                                                 </>
-                                            )}
+                                                );
+                                            }}
                                         </For>
                                     </Show>
                                     {/* ── 「会话」项下的会话列表（##358 D1/D2/D4/D5 合成一份）──────

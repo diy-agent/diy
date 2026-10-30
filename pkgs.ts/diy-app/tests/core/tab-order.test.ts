@@ -9,6 +9,7 @@ import {
   insertionIndex,
   normalizeOrder,
   pageParentKeyOf,
+  taskDepths,
   taskIndentOf,
   type TabLike,
 } from "../../src/shared/tab-order";
@@ -62,6 +63,45 @@ describe("taskIndentOf —— 层级 = 已打开的祖先个数", () => {
 
   it("非任务 tab（无 ancestors）→ 0", () => {
     expect(taskIndentOf(lab(A), [lab(A), task(A)])).toBe(0);
+  });
+});
+
+describe("taskDepths —— 缩进只在「祖先就在上方」时成立（##466 ②）", () => {
+  it("置顶把子项提到无关任务下面 → 不缩进（不把它读成那人的子）", () => {
+    const b = task(B, [A]);
+    const c = task(C, [A, B]);
+    const u = task(X); // 顶级、无关（置顶段里排在 c 上面）
+    // 全量顺序（祖先就在上方）→ 2 级
+    expect(taskDepths([task(A), b, c], () => false).get(c.key)).toBe(2);
+    // 置顶段顺序（祖先不在本段）→ 0 级（真实场景：266 的父 87 不在置顶段 → 不挂在 166 下）
+    expect(taskDepths([u, c], () => false).get(c.key)).toBe(0);
+  });
+
+  it("父就在上方 → 逐层 1 / 2 级；兄弟不被上一个兄弟的子树带偏", () => {
+    const a = task(A);
+    const b = task(B, [A]);
+    const c = task(C, [A, B]);
+    const d = task(X, [A]); // a 的另一个子（兄弟）
+    const depths = taskDepths([a, b, c, d], () => false);
+    expect([a, b, c, d].map((t) => depths.get(t.key))).toEqual([0, 1, 2, 1]);
+  });
+
+  it("祖先与它之间隔着无关行 → 不缩进（缩进必须有「就在上方」兜底）", () => {
+    const a = task(A);
+    const x = task(X);
+    const c = task(C, [A, B]); // 祖父 A 在上方，但中间隔着无关的 x
+    const depths = taskDepths([a, x, c], () => false);
+    // 缩进 1 级 = 指着 x 说「我是它的子」，那是撒谎 → 只能平铺
+    expect(depths.get(c.key)).toBe(0);
+  });
+
+  it("子页面不推栈（不充当别人的父），自己的层级与父一致", () => {
+    const a = task(A);
+    const l = lab(A);
+    const b = task(B, [A]);
+    const depths = taskDepths([a, l, b], (t) => t.pageId === "lab");
+    expect(depths.get(l.key)).toBe(0);
+    expect(depths.get(b.key)).toBe(1); // 若子页面推了栈，这里会变成 2
   });
 });
 
