@@ -105,6 +105,8 @@ export type SessionDelta =
 export interface ChatOptions {
     readonly model?: string;
     readonly signal?: AbortSignal;
+    /** 会话标识：由 Session 自动传入，调用方不用管。provider 用它填上游路由 / 缓存 header。 */
+    readonly sessionId?: string;
 }
 
 /**

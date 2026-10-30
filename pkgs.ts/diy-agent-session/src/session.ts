@@ -152,7 +152,8 @@ export function createSession(options: CreateSessionOptions): AgentSession {
                     buffer = '';
                 };
                 try {
-                    for await (const raw of llm.chat(history.slice(), { model, signal })) {
+                    // sessionId 由会话自动带上（provider 拿它填上游路由 / 缓存 header，调用方不用管）
+                    for await (const raw of llm.chat(history.slice(), { model, signal, sessionId: id })) {
                         const delta = assertDelta(raw);
                         if (signal.aborted) break;
                         if (delta.type === 'text') {

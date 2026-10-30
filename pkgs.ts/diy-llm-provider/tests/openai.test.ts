@@ -204,3 +204,40 @@ describe('请求形状（判据 4：配置全外部传入）', () => {
         ]);
     });
 });
+
+describe('$SESSION 占位符（判据 5：会话 header 逐次填）', () => {
+    function sessionProvider(fetchImpl: typeof globalThis.fetch): LlmProvider {
+        return createOpenAiCompatible({
+            baseURL: BASE_URL,
+            apiKey: 'test-key',
+            model: DEFAULT_MODEL_ID,
+            headers: { 'x-static': 'on', 'x-opencode-session': '$SESSION' },
+            fetch: fetchImpl,
+        });
+    }
+
+    it('带了 sessionId ⇒ 占位符贴成会话 id，静态 header 照旧', async () => {
+        const fake = fakeFetch(() =>
+            sseResponse([{ ...(chunk({}) as object), choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }]),
+        );
+        for await (const _delta of sessionProvider(fake.fetch).chat(USER, { sessionId: 'ses_123' })) {
+            // 只关心请求头
+        }
+        const request = fake.requests[0]!;
+        expect(request.headers.get('x-opencode-session')).toBe('ses_123');
+        expect(request.headers.get('x-static')).toBe('on');
+    });
+
+    it('没带 sessionId ⇒ 整条 header 不传（不是空串）', async () => {
+        const fake = fakeFetch(() =>
+            sseResponse([{ ...(chunk({}) as object), choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }]),
+        );
+        for await (const _delta of sessionProvider(fake.fetch).chat(USER)) {
+            // 只关心请求头
+        }
+        const request = fake.requests[0]!;
+        expect(request.headers.has('x-opencode-session')).toBe(false);
+        // 静态 header 不受占位符逻辑牵连
+        expect(request.headers.get('x-static')).toBe('on');
+    });
+});

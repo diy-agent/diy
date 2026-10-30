@@ -12,6 +12,7 @@ import { streamText, type ModelMessage } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { ChatMessage, ChatOptions, LlmPort, SessionDelta } from '@diy-agent/session';
 import { classifyError } from './errors.js';
+import { SESSION_PLACEHOLDER } from './provider-defaults.js';
 import type { ProviderConfig, UsageDetail } from './types.js';
 
 /** 带缓存桶的 `usage` 增量（结构上是合法 `SessionDelta`，多带两个可选字段） */
@@ -37,21 +38,59 @@ export interface LlmProvider extends LlmPort {
  */
 export function createOpenAiCompatible(config: ProviderConfig): LlmProvider {
     requireConfig(config);
+    // 静态 header 在建 provider 时固定；带 `$SESSION` 的要等每次调用的 sessionId 才知道值，单独拿出来
+    const { fixed, templated } = splitHeaders(config.headers);
     const provider = createOpenAICompatible({
         name: config.name ?? 'diy-llm-provider',
         baseURL: config.baseURL,
         apiKey: config.apiKey,
         includeUsage: true, // 流里带上 usage（不写这行，多数兼容上游不给流式用量）
-        ...(config.headers === undefined ? {} : { headers: { ...config.headers } }),
+        ...(Object.keys(fixed).length === 0 ? {} : { headers: fixed }),
         ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
     });
 
     return {
         model: config.model,
         chat(messages: readonly ChatMessage[], options?: ChatOptions) {
-            return chatStream(provider.chatModel(options?.model ?? config.model), messages, options);
+            return chatStream(
+                provider.chatModel(options?.model ?? config.model),
+                messages,
+                options,
+                sessionHeaders(templated, options?.sessionId),
+            );
         },
     };
+}
+
+/**
+ * 把 header 拆成「静态」与「含 `$SESSION` 占位符」两组。
+ * 占位符必须在每次 chat 时才替换 —— 会话 id 是调用方逐次给的，不是建 provider 时就知道的。
+ */
+function splitHeaders(headers: Readonly<Record<string, string>> | undefined): {
+    fixed: Record<string, string>;
+    templated: Record<string, string>;
+} {
+    const fixed: Record<string, string> = {};
+    const templated: Record<string, string> = {};
+    for (const [key, value] of Object.entries(headers ?? {})) {
+        if (value.includes(SESSION_PLACEHOLDER)) templated[key] = value;
+        else fixed[key] = value;
+    }
+    return { fixed, templated };
+}
+
+/**
+ * 本次调用要补的 header：`$SESSION` → sessionId。
+ * 无 sessionId ⇒ 整条 header 不传（**不是**空字符串：空值 header 会被上游当成显式路由键）。
+ */
+function sessionHeaders(
+    templated: Readonly<Record<string, string>>,
+    sessionId: string | undefined,
+): Record<string, string> | undefined {
+    if (sessionId === undefined || sessionId.length === 0) return undefined;
+    const out: Record<string, string> = {};
+    for (const [key, value] of Object.entries(templated)) out[key] = value.split(SESSION_PLACEHOLDER).join(sessionId);
+    return Object.keys(out).length === 0 ? undefined : out;
 }
 
 /** 一次调用的流：text 增量 → usage → done；上游失败抛 `LlmProviderError` */
@@ -59,6 +98,7 @@ async function* chatStream(
     model: ReturnType<ReturnType<typeof createOpenAICompatible>['chatModel']>,
     messages: readonly ChatMessage[],
     options: ChatOptions | undefined,
+    headers: Record<string, string> | undefined,
 ): AsyncGenerator<SessionDelta> {
     let fullStream: AsyncIterable<{ type: string } & Record<string, unknown>>;
     const mapped = toModelMessages(messages);
@@ -70,6 +110,7 @@ async function* chatStream(
             ...(mapped.system === undefined ? {} : { system: mapped.system }),
             messages: mapped.messages,
             maxRetries: 0, // 重试不归 provider（见 errors.ts 头注）
+            ...(headers === undefined ? {} : { headers }),
             ...(options?.signal === undefined ? {} : { abortSignal: options.signal }),
         });
         fullStream = result.fullStream as unknown as AsyncIterable<{ type: string } & Record<string, unknown>>;

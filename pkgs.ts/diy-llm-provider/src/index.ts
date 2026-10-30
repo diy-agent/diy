@@ -6,4 +6,11 @@ export { createOpenAiCompatible } from './openai.js';
 export type { LlmProvider, UsageDelta } from './openai.js';
 export { LlmProviderError, classifyError, type LlmProviderErrorCode } from './errors.js';
 export { DEFAULT_MODEL_ID, DEFAULT_MODELS, findModel } from './catalog.js';
+export {
+    PROVIDER_DEFAULTS,
+    SESSION_PLACEHOLDER,
+    resolveProviderConfig,
+    type ProviderDefaults,
+    type ResolveProviderOptions,
+} from './provider-defaults.js';
 export type { ModelCost, ModelInfo, ProviderConfig, UsageDetail } from './types.js';
