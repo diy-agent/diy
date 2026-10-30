@@ -66,7 +66,9 @@ def discover() -> dict[str, list[dict]]:
             continue
         category = parts[0]
         name = parts[-1].removesuffix(".pn.py")
-        slug = f"/{str(rel.parent / name)}"
+        # slug 必须是 POSIX 形式：Bokeh 把路由当正则，Windows 反斜杠会变成
+        # `bad escape \l`（`/features\long_task_demo`）而整站起不来。
+        slug = "/" + (rel.parent / name).as_posix()
         meta = _parse_script_meta(str(f))
         grouped.setdefault(category, []).append({
             "slug": slug,
