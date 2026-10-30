@@ -8,9 +8,13 @@
 //   · 模型目录由 @diy-agent/model-catalog 投影（只有名字，无 key）
 //   · key 只在建 provider 的那一刻从 readAccountValue 取，**不打印、不落盘**
 //   · 真 provider 走 @diy-agent/llm-provider；provider 表没有的（custom）直接用 catalog 的 baseURL
+//
+// ##469（单 bot 一刀）：新建会话在会话目录里写 `bot.json { botId }`（方案 B）。
+// 左栏仍是会话列表、UI 不变；多 bot 切换下一刀。
 
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createBot, createFileBotStore, ensureBot, type Bot } from "@diy-agent/bot";
 import { createSession, type AgentSession, type ChatMessage, type LlmPort } from "@diy-agent/session";
 import { openJsonlSessionStore, type JsonlSessionStore } from "@diy-agent/session-store-jsonl";
 import { createOpenAiCompatible, resolveProviderConfig } from "@diy-agent/llm-provider";
@@ -27,6 +31,13 @@ interface SessionMeta {
     readonly updatedAt: string;
     readonly messageCount: number;
 }
+
+/** 单 bot 一刀的缺省身份（多 bot 切换后面再做） */
+export const DEFAULT_BOT = {
+    id: "bot-1",
+    name: "大王助手",
+    persona: "你是「大王助手」，在 diy 的聊天窗口里陪大王干活。回答要短、要具体，能查证的不靠猜。",
+} as const;
 
 export interface ChatSessionsOptions {
     /** 数据根（`$DIY_HOME`） */
@@ -49,6 +60,15 @@ export function createChatSessions(options: ChatSessionsOptions): ChatSessionHos
     const home = options.home;
     const root = join(home, "sessions", "chat");
     const openStore = options.openStore ?? ((dir: string) => openJsonlSessionStore({ dir }));
+    // bot 身份在 `<home>/bots/`；会话归属落在会话自己的目录里（方案 B）
+    const botStore = createFileBotStore({ home, sessionsDir: root });
+    let botPromise: Promise<Bot> | null = null;
+
+    const defaultBot = () =>
+        (botPromise ??= (async () => {
+            const config = await ensureBot(botStore, DEFAULT_BOT);
+            return createBot({ store: botStore, config });
+        })());
 
     let catalogCache: ModelCatalogEntry[] | null = null;
     let metas: SessionMeta[] | null = null;
@@ -177,6 +197,8 @@ export function createChatSessions(options: ChatSessionsOptions): ChatSessionHos
                 messageCount: 0,
             };
             await writeMeta(meta);
+            // 归属：会话目录里写 bot.json（单 bot ⇒ 都归「大王助手」）
+            await botStore.assign(id, (await defaultBot()).config.id);
             remember(meta);
             selectedModel = meta.model;
             activeId = id;

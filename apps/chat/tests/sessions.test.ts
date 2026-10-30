@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -103,8 +103,14 @@ describe("apps/chat 多会话宿主", () => {
         const files = readdirSync(join(home, "sessions", "chat", id)).sort();
         expect(files).toContain("index.json");
         expect(files).toContain("meta.json");
-        // 桶名以 store 的契约为准（`log-…jsonl`；##464 之后带 UTC 时间前缀，正则仍匹配）
-        expect(files.filter((file) => /^log-.+\.jsonl$/.test(file))).toHaveLength(1);
+        // ##469 判据 2：会话目录里的 bot.json 标归属（方案 B）
+        expect(files).toContain("bot.json");
+        expect(JSON.parse(readFileSync(join(home, "sessions", "chat", id, "bot.json"), "utf-8"))).toEqual({
+            botId: "bot-1",
+        });
+        // 桶名以 store 的契约为准（##464 后为 `<序号>-<本地时间>.jsonl`，旧 `log-…` 仍认；
+        // 这里只认「一个桶」——两套命名都算）
+        expect(files.filter((file) => /^(log-|\d{4,}-).+\.jsonl$/.test(file))).toHaveLength(1);
     });
 
     it("重启后会话还在：新宿主实例仍能列出并恢复消息（判据 4）", async () => {
@@ -121,6 +127,17 @@ describe("apps/chat 多会话宿主", () => {
             { role: "user", text: "重启前的话" },
             { role: "assistant", text: "收到：重启前的话" },
         ]);
+    });
+
+    it("##469 判据 1：默认 bot「大王助手」落 ~/.diy/bots/bot-1/bot.json，字段完整", async () => {
+        const home = makeHome();
+        await host(home).create({});
+        const config = JSON.parse(readFileSync(join(home, "bots", "bot-1", "bot.json"), "utf-8"));
+        expect(config.id).toBe("bot-1");
+        expect(config.name).toBe("大王助手");
+        expect(typeof config.persona).toBe("string");
+        expect(typeof config.createdAt).toBe("string");
+        expect(typeof config.updatedAt).toBe("string");
     });
 
     it("没有模型配置 ⇒ 新建时报错（不静默建空会话）", async () => {

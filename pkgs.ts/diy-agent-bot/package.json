@@ -1,0 +1,27 @@
+{
+  "name": "@diy-agent/bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "diy 的 bot 实体：身份配置（BotConfig）+ 文件存储（~/.diy/bots/<id>/bot.json）+ 会话归属（session 目录里的 bot.json）",
+  "files": [
+    "src/"
+  ],
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.57.0",
+    "oxlint": "^1.72.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

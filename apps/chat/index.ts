@@ -3,6 +3,7 @@
 // ##465：与 apps/minimal 的差别只有装配这一层 ——
 //   · 会话宿主 = `$DIY_HOME/sessions/chat/` 下的多会话（落盘走 session-store-jsonl）
 //   · 模型目录 = @diy-agent/model-catalog（读 model.yaml / providers.custom.yaml，**不含 key**）
+//   · bot = @diy-agent/bot 的「大王助手」（##469 单 bot 一刀；会话归属写 session 目录里的 bot.json）
 //   · chat-page 插件本身不认识文件系统 / 模型配置：它只认注入的 ChatSessionHost 端口
 
 import * as chatPageMain from "@diy-agent/chat-page/main";

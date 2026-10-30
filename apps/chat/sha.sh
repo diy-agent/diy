@@ -36,7 +36,7 @@ _ensure_electron() { run node ../../scripts/ensure-electron.mjs --quiet; }
 build-deps() {
   local pkg
   # diy-ui 不能省：chat-page 的 renderer-diui 入口依赖 `@diy-agent/ui/browser`（##468）
-  for pkg in workbench ui-workbench diy-ui chat-page diy-agent-session diy-agent-session-store-jsonl diy-llm-provider diy-agent-model-catalog diy-agent-model-config-page; do
+  for pkg in workbench ui-workbench diy-ui chat-page diy-agent-session diy-agent-session-store-jsonl diy-llm-provider diy-agent-model-catalog diy-agent-model-config-page diy-agent-bot; do
     ( cd "$SCRIPT_DIR/../../pkgs.ts/$pkg" && ./sha.sh build )
   done
 }

@@ -20,6 +20,7 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
+    "@diy-agent/bot": "*",
     "@diy-agent/chat-page": "*",
     "@diy-agent/llm-provider": "*",
     "@diy-agent/model-catalog": "*",

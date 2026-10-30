@@ -27,6 +27,7 @@ const LOCATIONS: Record<string, { dir: string; entry: string }> = {
     "@diy-agent/flow": { dir: "pkgs.ts/diy-flow", entry: "src/index.ts" },
     "@diy-agent/llm-provider": { dir: "pkgs.ts/diy-llm-provider", entry: "src/index.ts" },
     "@diy-agent/persistence": { dir: "pkgs.ts/diy-persistence", entry: "src/index.ts" },
+    "@diy-agent/bot": { dir: "pkgs.ts/diy-agent-bot", entry: "src/index.ts" },
     "@diy-agent/room": { dir: "pkgs.ts/diy-room", entry: "src/index.ts" },
     "@diy-agent/talk": { dir: "pkgs.ts/diy-talk", entry: "src/index.ts" },
     "@diy-agent/template": { dir: "pkgs.ts/diy-template", entry: "src/index.ts" },
