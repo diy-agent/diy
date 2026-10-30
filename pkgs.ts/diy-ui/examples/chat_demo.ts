@@ -6,13 +6,12 @@
  * 退出：按 q 或 Ctrl+C
  */
 
-import { App, ImmediateScheduler } from "../src/index.js";
+import { App } from "../src/index.js";
 import { ScopeConfig } from "../src/scope.js";
 
 const app = new App(
   new ScopeConfig({
     mode: "dev",
-    scheduler: new ImmediateScheduler(),
   }),
 );
 

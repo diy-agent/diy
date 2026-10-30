@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="data:," />
+    <title>diy-ui · 增量 chat demo</title>
+    <style>
+      :root {
+        --bg: #0d1117;
+        --panel: #161b22;
+        --border: #30363d;
+        --fg: #e6edf3;
+        --muted: #8b949e;
+        --accent: #4493f8;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 24px;
+        background: var(--bg);
+        color: var(--fg);
+        font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      h1 { font-size: 16px; margin: 0 0 4px; }
+      p.lead { margin: 0 0 16px; color: var(--muted); }
+      .layout { display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: 16px; }
+      .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+      .panel-title { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+      .list { display: flex; flex-direction: column; gap: 8px; min-height: 260px; }
+      .msg { display: flex; gap: 8px; align-items: flex-start; }
+      .msg .role { flex: 0 0 32px; color: var(--muted); font-size: 11px; padding-top: 4px; }
+      .bubble {
+        flex: 1; min-width: 0; padding: 6px 10px; border-radius: 8px;
+        background: #21262d; border: 1px solid var(--border); white-space: pre-wrap; word-break: break-word;
+      }
+      .msg-user .bubble { background: #1f3a5f; border-color: #2f5f9f; }
+      .stream-log { margin-top: 14px; display: flex; flex-direction: column; gap: 4px; }
+      .log-row { color: var(--muted); font-size: 11px; }
+      .side { display: flex; flex-direction: column; gap: 10px; }
+      .report { margin: 0; padding: 10px; background: #0b0f14; border: 1px solid var(--border); border-radius: 8px; font-size: 11px; min-height: 118px; max-height: 46vh; overflow: auto; white-space: pre-wrap; }
+      .row { display: flex; gap: 8px; flex-wrap: wrap; }
+      .btn {
+        background: #21262d; color: var(--fg); border: 1px solid var(--border);
+        border-radius: 6px; padding: 6px 10px; font: inherit; cursor: pointer;
+      }
+      .btn:hover { border-color: var(--accent); }
+      .hint { color: var(--muted); font-size: 11px; align-self: center; }
+    </style>
+  </head>
+  <body>
+    <h1>增量 chat demo</h1>
+    <p class="lead">yield 是同步全量重跑；真正增量的是 keyed 对账 / props getter / node.insert。看右栏每次操作动了几个 DOM 节点。</p>
+    <div id="app"></div>
+    <script type="module" src="./chat_incremental.ts"></script>
+  </body>
+</html>
