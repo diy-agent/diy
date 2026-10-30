@@ -35,7 +35,8 @@ _ensure_electron() { run node ../../scripts/ensure-electron.mjs --quiet; }
 # 依赖包先编 lib：主进程按包名 import、renderer 打包读 exports，都指向 lib/*.js
 build-deps() {
   local pkg
-  for pkg in workbench ui-workbench chat-page diy-agent-session diy-agent-session-store-jsonl diy-llm-provider diy-agent-model-catalog; do
+  # diy-ui 不能省：chat-page 的 renderer-diui 入口依赖 `@diy-agent/ui/browser`（##468）
+  for pkg in workbench ui-workbench diy-ui chat-page diy-agent-session diy-agent-session-store-jsonl diy-llm-provider diy-agent-model-catalog; do
     ( cd "$SCRIPT_DIR/../../pkgs.ts/$pkg" && ./sha.sh build )
   done
 }
@@ -80,6 +81,15 @@ lab() {
   run mkdir -p "$home"
   echo "${info}数据根：$home${reset}"
   run env DIY_HOME="$home" DIY_VARIANT="$DIY_VARIANT" npx electron "$d/main/index.mjs" "$@"
+}
+
+# ##468 渲染层判据：CDP 实测 1–6（不闪 / 滚动不跳 / 焦点不丢 / 切会话外壳不重建）
+#   ./sha.sh verify-render          # 期望 diui 版
+#   RENDERER=dom ./sha.sh verify-render  # 期望裸 DOM 版（切回 import 重新 build 后）
+verify-render() {
+  _ensure_electron
+  build
+  run env DIY_VARIANT="$DIY_VARIANT" npx tsx scripts/verify-render.mts
 }
 
 # 冒烟：起实例 + 走一遍「输入一句话 → 看到用户消息与固定回复」的判据

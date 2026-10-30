@@ -2,7 +2,7 @@
   "name": "@diy-agent/chat-page",
   "version": "0.1.0",
   "private": true,
-  "description": "聊天页面插件：主进程侧用 @diy-agent/session + 假 LlmPort，renderer 侧输入框 + 消息列表",
+  "description": "聊天页面插件：主进程侧用 @diy-agent/session + 假 LlmPort；renderer 两版并存（裸 DOM / diyui）",
   "files": [
     "src/"
   ],
@@ -21,6 +21,10 @@
     "./renderer": {
       "types": "./src/renderer.ts",
       "default": "./lib/renderer.js"
+    },
+    "./renderer-diui": {
+      "types": "./src/renderer-diui.ts",
+      "default": "./lib/renderer-diui.js"
     }
   },
   "scripts": {
@@ -28,8 +32,9 @@
   },
   "dependencies": {
     "@diy-agent/session": "*",
-    "@diy-agent/workbench-ui": "*",
-    "@diy-agent/workbench": "*"
+    "@diy-agent/ui": "*",
+    "@diy-agent/workbench": "*",
+    "@diy-agent/workbench-ui": "*"
   },
   "devDependencies": {
     "oxfmt": "^0.57.0",

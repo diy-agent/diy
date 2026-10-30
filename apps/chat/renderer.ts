@@ -4,7 +4,11 @@
 // 骨架只通过注册表按 id 找实现。
 
 import { mountWorkbench, registerPage, type WorkbenchGateway } from "@diy-agent/workbench-ui";
-import { chatPageView } from "@diy-agent/chat-page/renderer";
+// ##468：渲染层两版并存（同包两个入口，wire 协议同一份）。
+// 换这一行 + 重新 build 就在「裸 DOM 版 / diyui 版」之间切：
+//   @diy-agent/chat-page/renderer        ← 裸 DOM（最小依赖对照组）
+//   @diy-agent/chat-page/renderer-diui   ← diyui 版（不闪 / 滚动不跳 / 焦点不丢）
+import { chatPageView } from "@diy-agent/chat-page/renderer-diui";
 import { TITLE } from "./title.js";
 
 declare global {
