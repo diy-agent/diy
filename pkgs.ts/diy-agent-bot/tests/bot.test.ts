@@ -38,28 +38,28 @@ describe("BotStore 文件实现", () => {
         const at = new Date("2026-10-30T08:00:00.000Z");
         const config = await ensureBot(
             store,
-            { id: "bot-1", name: "大王助手", persona: "你是谁", model: "deepseek/deepseek-chat" },
+            { id: "bot-1", name: "大王助手", instructions: "你是谁", model: "deepseek/deepseek-chat" },
             () => at,
         );
         const raw = readJson(join(home, "bots", "bot-1", "bot.json")) as Record<string, unknown>;
         expect(raw).toEqual({
             id: "bot-1",
             name: "大王助手",
-            persona: "你是谁",
+            instructions: "你是谁",
             model: "deepseek/deepseek-chat",
             createdAt: at.toISOString(),
             updatedAt: at.toISOString(),
         });
         expect(config).toEqual(raw);
         // 再 ensure 不覆盖（存在即返回）
-        expect(await ensureBot(store, { id: "bot-1", name: "改名了", persona: "x" })).toEqual(config);
+        expect(await ensureBot(store, { id: "bot-1", name: "改名了", instructions: "x" })).toEqual(config);
     });
 
     it("load / list / save / remove 走 bots 目录", async () => {
         const home = makeHome();
         const store = createFileBotStore({ home });
-        const a = await ensureBot(store, { id: "bot-1", name: "甲", persona: "a" });
-        const b = await ensureBot(store, { id: "bot-2", name: "乙", persona: "b" });
+        const a = await ensureBot(store, { id: "bot-1", name: "甲", instructions: "a" });
+        const b = await ensureBot(store, { id: "bot-2", name: "乙", instructions: "b" });
         expect((await store.list()).map((item) => item.id)).toEqual(["bot-1", "bot-2"]);
         expect(await store.load("bot-1")).toEqual(a);
         expect(await store.load("nope")).toBeNull();
@@ -84,7 +84,7 @@ describe("会话归属（方案 B：session 目录里的 bot.json）", () => {
     it("判据 2：newSession 后会话目录里有 bot.json 标 botId", async () => {
         const home = makeHome();
         const store = createFileBotStore({ home });
-        const config = await ensureBot(store, { id: "bot-1", name: "大王助手", persona: "p" });
+        const config = await ensureBot(store, { id: "bot-1", name: "大王助手", instructions: "p" });
         const bot = createBot({ store, config, createSession: fakeCreateSession(home) });
 
         const id = await bot.newSession();
@@ -95,8 +95,8 @@ describe("会话归属（方案 B：session 目录里的 bot.json）", () => {
     it("判据 3：bot.sessions() 只列自己的会话", async () => {
         const home = makeHome();
         const store = createFileBotStore({ home });
-        const one = await ensureBot(store, { id: "bot-1", name: "甲", persona: "a" });
-        const two = await ensureBot(store, { id: "bot-2", name: "乙", persona: "b" });
+        const one = await ensureBot(store, { id: "bot-1", name: "甲", instructions: "a" });
+        const two = await ensureBot(store, { id: "bot-2", name: "乙", instructions: "b" });
         const bot1 = createBot({ store, config: one, createSession: fakeCreateSession(home) });
         const bot2 = createBot({ store, config: two, createSession: fakeCreateSession(home) });
 
@@ -117,7 +117,7 @@ describe("会话归属（方案 B：session 目录里的 bot.json）", () => {
     it("宿主指定 sessionsDir（apps/chat 用 sessions/chat）", async () => {
         const home = makeHome();
         const store = createFileBotStore({ home, sessionsDir: join(home, "sessions", "chat") });
-        const config = await ensureBot(store, { id: "bot-1", name: "大王助手", persona: "p" });
+        const config = await ensureBot(store, { id: "bot-1", name: "大王助手", instructions: "p" });
         const bot = createBot({ store, config, createSession: fakeCreateSession(home, "sessions/chat") });
 
         const id = await bot.newSession();
@@ -128,7 +128,7 @@ describe("会话归属（方案 B：session 目录里的 bot.json）", () => {
     it("删 bot 不丢会话数据：会话目录与归属文件都还在", async () => {
         const home = makeHome();
         const store = createFileBotStore({ home });
-        const config = await ensureBot(store, { id: "bot-1", name: "甲", persona: "a" });
+        const config = await ensureBot(store, { id: "bot-1", name: "甲", instructions: "a" });
         const bot = createBot({ store, config, createSession: fakeCreateSession(home) });
         const id = await bot.newSession();
 
@@ -141,7 +141,7 @@ describe("会话归属（方案 B：session 目录里的 bot.json）", () => {
     it("按 updatedAt 倒序（拿得到 meta.json 就用它）", async () => {
         const home = makeHome();
         const store = createFileBotStore({ home });
-        const config = await ensureBot(store, { id: "bot-1", name: "甲", persona: "a" });
+        const config = await ensureBot(store, { id: "bot-1", name: "甲", instructions: "a" });
         for (const [id, at] of [
             ["old", "2026-10-01T00:00:00.000Z"],
             ["new", "2026-11-01T00:00:00.000Z"],
@@ -158,7 +158,7 @@ describe("会话归属（方案 B：session 目录里的 bot.json）", () => {
         const store = createFileBotStore({ home });
         await expect(openBot(store, "nope")).rejects.toBeInstanceOf(BotError);
 
-        const config = await ensureBot(store, { id: "bot-1", name: "甲", persona: "a" });
+        const config = await ensureBot(store, { id: "bot-1", name: "甲", instructions: "a" });
         const id = await createBot({ store, config, createSession: fakeCreateSession(home) }).newSession();
         const reopened = await openBot(store, "bot-1");
         expect(reopened.config).toEqual(config);

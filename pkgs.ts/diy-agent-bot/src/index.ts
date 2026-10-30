@@ -3,7 +3,7 @@
 //   import { createFileBotStore, ensureBot } from '@diy-agent/bot';
 //
 //   const store = createFileBotStore({ home: '/Users/me/.diy' });
-//   const config = await ensureBot(store, { id: 'bot-1', name: '大王助手', persona: '…' });
+//   const config = await ensureBot(store, { id: 'bot-1', name: '大王助手', instructions: '…' });
 //   const bot = createBot({ store, config });
 //
 //   const id = await bot.newSession();       // 会话目录里写 bot.json { botId }
@@ -11,6 +11,9 @@
 //
 // 边界（##469 判据 4）：源码里不出现「协作空间」内核的字样；
 // 不依赖会话内核 / 桌面壳 / 任务包；记忆接口先留空。
+//
+// ##470：人物（persona）的 schema / 类型 / 内置缺省值也住在本包（`./persona` 子路径，
+// 纯 zod 无 node:*，renderer 可引；主入口带文件存储，renderer 不要引）。
 
 export { BotError } from "./errors.js";
 export type { BotErrorCode } from "./errors.js";
@@ -21,3 +24,7 @@ export { createFileBotStore } from "./store-fs.js";
 export type { FileBotStoreOptions } from "./store-fs.js";
 
 export type { Bot, BotConfig, BotDraft, BotId, BotSessionRef, BotStore, CreateBotOptions } from "./types.js";
+
+// 人物 schema / 类型 / 内置缺省（##470：bot = 人设）。
+// 也可从子路径 `@diy-agent/bot/persona` 单独取（纯 zod，renderer 用那个）。
+export * from "./persona.js";

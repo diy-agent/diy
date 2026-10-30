@@ -11,7 +11,8 @@
 ## 落盘形态（方案 B）
 
 ```
-<home>/bots/<botId>/bot.json            BotConfig（id / name / persona / model / createdAt / updatedAt）
+<home>/bots/<botId>/bot.json            BotConfig（id / name / instructions / model / reasoningEffort? / maxOutputTokens? / createdAt / updatedAt）
+                                        旧字段名 `persona` 读兼容 → instructions（store-fs）
 <sessionsDir>/<sessionId>/bot.json      { "botId": "<botId>" }   ← 归属
 ```
 
@@ -25,6 +26,8 @@
 2. 删 bot 只删 `bots/<id>/`，会话目录一个不动。
 3. `sessionsOf(botId)` 只返回归属该 bot 的会话。
 4. 记忆接口**先留空**（##469 body 明确：这一刀不做记忆）。
+5. 人物 schema 唯一源在本包（##470）：persona 相关的 `z.object` 只允许出现在 `src/persona.ts`；
+   diy-app 的 `src/shared/persona.ts` 只许 re-export（`@diy-agent/bot/persona`）。
 
 ## 取法
 

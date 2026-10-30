@@ -53,8 +53,10 @@ export async function ensureBot(
     const config: BotConfig = {
         id: draft.id,
         name: draft.name,
-        persona: draft.persona,
+        instructions: draft.instructions,
         ...(draft.model === undefined ? {} : { model: draft.model }),
+        ...(draft.reasoningEffort === undefined ? {} : { reasoningEffort: draft.reasoningEffort }),
+        ...(draft.maxOutputTokens === undefined ? {} : { maxOutputTokens: draft.maxOutputTokens }),
         createdAt: now,
         updatedAt: now,
     };

@@ -135,7 +135,7 @@ describe("apps/chat 多会话宿主", () => {
         const config = JSON.parse(readFileSync(join(home, "bots", "bot-1", "bot.json"), "utf-8"));
         expect(config.id).toBe("bot-1");
         expect(config.name).toBe("大王助手");
-        expect(typeof config.persona).toBe("string");
+        expect(typeof config.instructions).toBe("string"); // ##470：行为指令改名 instructions
         expect(typeof config.createdAt).toBe("string");
         expect(typeof config.updatedAt).toBe("string");
     });

@@ -13,10 +13,17 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./lib/index.js"
+    },
+    "./persona": {
+      "types": "./src/persona.ts",
+      "default": "./lib/persona.js"
     }
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "oxfmt": "^0.57.0",

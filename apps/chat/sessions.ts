@@ -36,7 +36,7 @@ interface SessionMeta {
 export const DEFAULT_BOT = {
     id: "bot-1",
     name: "大王助手",
-    persona: "你是「大王助手」，在 diy 的聊天窗口里陪大王干活。回答要短、要具体，能查证的不靠猜。",
+    instructions: "你是「大王助手」，在 diy 的聊天窗口里陪大王干活。回答要短、要具体，能查证的不靠猜。",
 } as const;
 
 export interface ChatSessionsOptions {

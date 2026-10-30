@@ -156,21 +156,35 @@ export function createFileBotStore(options: FileBotStoreOptions): BotStore {
 }
 
 function validateConfig(config: BotConfig): void {
-    if (typeof config.name !== "string" || typeof config.persona !== "string") {
-        throw new BotError("bot/invalid-config", "bot 配置缺 name / persona");
+    if (typeof config.name !== "string" || typeof config.instructions !== "string") {
+        throw new BotError("bot/invalid-config", "bot 配置缺 name / instructions");
     }
     if (typeof config.createdAt !== "string" || typeof config.updatedAt !== "string") {
         throw new BotError("bot/invalid-config", "bot 配置缺 createdAt / updatedAt");
     }
 }
 
+/**
+ * 行为指令的读兼容（##470）：新字段 `instructions` 优先，旧字段名 `persona` 兜底。
+ *
+ * 为什么只做读：bot.json 的写路径本来就走新字段名；存量文件（##469 那一刀写的）里
+ * 只有一个 `persona` 字符串。读时映射进 `instructions`，不要求改写文件 —— 下次 save
+ * 时自然落成新字段名。两个都没有 = 配置不完整（同旧行为：返回 null）。
+ */
+function readInstructions(record: { readonly instructions?: unknown; readonly persona?: unknown }): string | null {
+    if (typeof record.instructions === "string") return record.instructions;
+    if (typeof record.persona === "string") return record.persona;
+    return null;
+}
+
 function parseConfig(value: unknown): BotConfig | null {
     if (value === null || typeof value !== "object") return null;
-    const config = value as Partial<Record<keyof BotConfig, unknown>>;
+    const config = value as Partial<Record<keyof BotConfig, unknown>> & { readonly persona?: unknown };
+    const instructions = readInstructions(config);
     if (
         typeof config.id !== "string" ||
         typeof config.name !== "string" ||
-        typeof config.persona !== "string" ||
+        instructions === null ||
         typeof config.createdAt !== "string" ||
         typeof config.updatedAt !== "string"
     ) {
@@ -179,8 +193,10 @@ function parseConfig(value: unknown): BotConfig | null {
     return {
         id: config.id,
         name: config.name,
-        persona: config.persona,
+        instructions,
         ...(typeof config.model === "string" ? { model: config.model } : {}),
+        ...(typeof config.reasoningEffort === "string" ? { reasoningEffort: config.reasoningEffort } : {}),
+        ...(typeof config.maxOutputTokens === "number" ? { maxOutputTokens: config.maxOutputTokens } : {}),
         createdAt: config.createdAt,
         updatedAt: config.updatedAt,
     };
