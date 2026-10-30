@@ -6,7 +6,7 @@
 import { createSession } from '@diy-agent/session';
 import { openJsonlSessionStore } from '@diy-agent/session-store-jsonl';
 
-const store = await openJsonlSessionStore({ dir: '/path/to/session-1' }); // 缺省桶 8 MB
+const store = await openJsonlSessionStore({ dir: '/path/to/session-1' }); // 缺省桶 16 MB
 const history = await store.readFrom(0);
 const session = createSession({ id: 's1', llm, store, initialMessages: history });
 
@@ -19,9 +19,19 @@ for await (const delta of session.send('在吗')) {
 
 ```
 <dir>/index.json        桶索引（勿与桶混合）
-<dir>/log-0001.jsonl    一桶 ≤ maxBucketBytes（缺省 8 MB）
-<dir>/log-0002.jsonl
+<dir>/0001-20261030-115000+0800.jsonl    一桶 ≤ maxBucketBytes（缺省 16 MB）
+<dir>/0002-20261030-121530+0800.jsonl    文件名 = 序号 + 首条 entry 的 at（本地时刻 + 偏移）
 ```
+
+文件名 = `<序号>-<本地日期>-<本地时间><时区偏移>.jsonl`（如 `0001-20261030-115000+0800.jsonl`）：
+
+- **序号在前** ⇒ 排序靠序号不靠时间（夏令时 / 换时区都不乱序）；4 位够 9999 × 16 MB ≈ 156 GB，溢出自然加宽且排序仍对
+- 时间是**本地时刻**（给人读），偏移说明它在哪个时区；取的是**首条 entry 的 `at` 那一刻**的偏移，不是「现在」
+  （历史数据可能在不同时区写入）；不用 `CST` 这类有歧义的缩写
+- 秒精度、`-` 分隔日期与时间（`T` 是 ISO 标准但不好读）；Windows 文件名禁 `:`，所以不写 `11:50:00`
+
+文件名**只是提示**：有些不查 `index.json` 的工具（`ls` / `grep` / 日志查看器）靠它就能看出日期。
+真值以桶内首尾行为准，两者不一致时以数据为准（重建不改名、不报错）。
 
 `index.json`：
 
@@ -53,4 +63,4 @@ interface BucketIndex {
 | 单条消息 > maxBucketBytes     | 允许独占一桶（不切、不丢） |
 | append 的 seq 不连续 / 缺 seq | 整批拒绝（先校验再写）     |
 
-需求真源：[`tests/intent.store.test.ts`](./tests/intent.store.test.ts)（T1–T7）。
+需求真源：[`tests/intent.store.test.ts`](./tests/intent.store.test.ts)（T1–T9）。

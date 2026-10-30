@@ -22,8 +22,19 @@ import {
     type JsonlSessionStoreOptions,
 } from './types.js';
 
-/** 桶文件名：log-0001.jsonl（序号从 1 起，定长 4 位，超出自然加宽） */
-const BUCKET_RE = /^log-(\d+)\.jsonl$/;
+/**
+ * 桶文件名：`<序号>-<本地日期>-<本地时间><时区偏移>.jsonl` —— 如 `0001-20261030-115000+0800.jsonl`（##464）。
+ *
+ * · **序号在前**：排序靠序号，不靠时间 —— 夏令时切换 / 跨时区旅行都不会让 `ls` 顺序错乱
+ * · 时间是**本地时刻**（给人读）+ 偏移说明它在哪个时区（`+0800`，不用 `CST` 这类有歧义的缩写）
+ * · 秒精度、`-` 分隔日期与时间（`T` 虽 ISO 标准但不好读，用户裁）；Windows 文件名禁 `:`，故不写 `11:50:00`
+ * · 序号定长 4 位、超出自然加宽（`10000`），同一秒切两个桶也不重名
+ *
+ * 时间取桶内**首条 entry 的 at**（不是「现在」）与其**那一刻**的时区偏移：历史数据可能在不同时区写入。
+ */
+const BUCKET_RE = /^(\d{4,})-(\d{8})-(\d{6})([+-]\d{4})\.jsonl$/;
+/** 旧命名 `log-0001.jsonl`（无时间）：读侧仍认，写侧不再产出（##464 不迁移旧数据） */
+const LEGACY_BUCKET_RE = /^log-(\d+)\.jsonl$/;
 const INDEX_FILE = 'index.json';
 
 /** 本包对外暴露的存储（SessionStore + 索引查询） */
@@ -104,10 +115,10 @@ export async function openJsonlSessionStore(options: JsonlSessionStoreOptions): 
                 const bytes = Buffer.byteLength(line, 'utf8');
                 let current = records[records.length - 1];
                 if (!current) {
-                    current = await createBucket();
+                    current = await createBucket(message.at ?? 0);
                     rotated = true;
                 } else if (current.bytes > 0 && current.bytes + bytes > maxBucketBytes) {
-                    current = await createBucket();
+                    current = await createBucket(message.at ?? 0);
                     rotated = true;
                 }
                 await appendFile(join(dir, current.file), line, 'utf8');
@@ -194,14 +205,16 @@ export async function openJsonlSessionStore(options: JsonlSessionStoreOptions): 
 
     // ── 内部实现 ────────────────────────────────────────────────
 
-    async function createBucket(): Promise<BucketRecord> {
-        // 以磁盘上最大编号 +1 命名：崩溃留下的空桶 / 手工补档都不会撞名
+    async function createBucket(firstAt: number): Promise<BucketRecord> {
+        // 时间来自**首条 entry 的 at**，不是 Date.now()：恢复旧数据时「现在」是错的（##464）
+        // 序号以磁盘上最大编号 +1：崩溃留下的空桶 / 手工补档都不会撞名，同一秒切两个桶也不重名
         const existing = await listBucketFiles(dir);
         const maxNumber = existing.reduce((max, name) => {
-            const match = BUCKET_RE.exec(name);
-            return match ? Math.max(max, Number(match[1])) : max;
+            const number = bucketNumber(name);
+            return number === undefined ? max : Math.max(max, number);
         }, 0);
-        const file = `log-${String(maxNumber + 1).padStart(4, '0')}.jsonl`;
+        const number = String(maxNumber + 1).padStart(4, '0');
+        const file = `${number}-${formatLocalStamp(firstAt)}.jsonl`;
         await writeFile(join(dir, file), '', 'utf8');
         const record: BucketRecord = { file, bytes: 0, fromSeq: lastSeq + 1, toSeq: lastSeq, fromAt: 0, toAt: 0 };
         records = [...records, record];
@@ -265,6 +278,8 @@ async function loadOrRebuild(dir: string): Promise<BucketRecord[]> {
 }
 
 async function rebuild(dir: string, files: readonly string[]): Promise<BucketRecord[]> {
+    // 文件名只当提示（给人看的时间 / 序号），**桶内数据说了算**：
+    // fromSeq/toSeq/fromAt/toAt 全来自首尾行；与文件名不一致时不报错、也不改名（##464）
     const records: BucketRecord[] = [];
     let expected: number | undefined;
     for (const file of files) {
@@ -341,12 +356,42 @@ function parseLine(line: string, where: string): ChatMessage {
     }
 }
 
+/**
+ * 桶文件列表，**按序号排序**（不是按文件名 —— 旧命名 `log-0001.jsonl` 与新命名
+ * `0001-…jsonl` 的字典序会把新旧混放目录排乱，而 seq 连续性检查依赖这个顺序）。
+ */
 async function listBucketFiles(dir: string): Promise<string[]> {
     const entries = await readdir(dir, { withFileTypes: true });
     return entries
-        .filter((entry) => entry.isFile() && BUCKET_RE.test(entry.name))
+        .filter((entry) => entry.isFile() && (BUCKET_RE.test(entry.name) || LEGACY_BUCKET_RE.test(entry.name)))
         .map((entry) => entry.name)
-        .sort();
+        .sort((left, right) => {
+            const a = bucketNumber(left) ?? 0;
+            const b = bucketNumber(right) ?? 0;
+            return a === b ? left.localeCompare(right) : a - b;
+        });
+}
+
+/** 桶文件名里的序号（新命名在第 1 段、旧命名是唯一段）；不是桶文件 = undefined */
+function bucketNumber(file: string): number | undefined {
+    const match = BUCKET_RE.exec(file) ?? LEGACY_BUCKET_RE.exec(file);
+    if (match === null) return undefined;
+    const number = Number(match[1]);
+    return Number.isSafeInteger(number) ? number : undefined;
+}
+
+/** 毫秒时间戳 → `YYYYMMDD-HHMMSS+HHMM`（**本地**时刻 + 那一刻的时区偏移；非法值当 0） */
+function formatLocalStamp(at: number): string {
+    const date = new Date(Number.isFinite(at) ? at : 0);
+    const pad = (value: number, width = 2): string => String(value).padStart(width, '0');
+    const ymd = `${pad(date.getFullYear(), 4)}${pad(date.getMonth() + 1)}${pad(date.getDate())}`;
+    const hms = `${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+    // getTimezoneOffset() = UTC - 本地（分钟）；UTC+8 ⇒ -480 ⇒ 文件名写 `+0800`
+    const offset = date.getTimezoneOffset();
+    const sign = offset > 0 ? '-' : '+';
+    const abs = Math.abs(offset);
+    const zone = `${sign}${pad(Math.floor(abs / 60))}${pad(abs % 60)}`;
+    return `${ymd}-${hms}${zone}`;
 }
 
 /** 落盘只用已知字段（不把内存里的多余属性带进文件） */

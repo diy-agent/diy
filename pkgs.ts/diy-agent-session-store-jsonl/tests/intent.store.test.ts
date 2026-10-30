@@ -2,7 +2,7 @@
 // ═══════════════════════════════════════════════════════════════
 // 🎯 分桶 jsonl 存储「意图测试」—— 需求级（对应 ##456「存储分桶」判据）
 //
-//   T1  按大小切桶（不按日期）：写 20 MB 后 ≥3 个桶，每桶 ≤ maxBucketBytes
+//   T1  按大小切桶（不按日期）：写 40 MB 后 ≥3 个桶，每桶 ≤ maxBucketBytes
 //   T2  seq 全局单调、跨桶连续：readFrom(seq) 跨桶拼接无损（前后 seq 连续）
 //   T3  readFrom 只读需要的桶（不扫全量）：前面的桶被删也不会影响只读尾部
 //   T4  删中间桶 ⇒ open 报 `store/missing-bucket`（不静默丢数据）
@@ -10,11 +10,15 @@
 //   T6  追加语义：seq 不连续 / 缺 seq 一律拒绝（半批落盘比不落更糟）
 //   T7  重开后续写：lastSeq 不重号（末桶刷新）
 //   T8  按时间查：readRange({from,to}) 只打开时间相交的桶（桶的 fromAt/toAt 可二分）
+//   T9  桶文件名 = <序号>-<本地日期>-<本地时间><偏移>.jsonl（##464）
+//       · 形如 0001-20261030-115000+0800.jsonl：时间取首条 at（不是 Date.now()），偏移取那一刻
+//       · 同一秒切两个桶 ⇒ 序号递增、不重名
+//       · index 丢失重建：以桶内数据为准，文件名只当提示
 //
 // 真文件系统（临时目录），不 mock fs —— 这层要验的就是落盘行为本身。
 // ═══════════════════════════════════════════════════════════════
 
-import { mkdtemp, readdir, rm, stat, unlink } from 'node:fs/promises';
+import { mkdtemp, readdir, rename, rm, stat, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -41,15 +45,44 @@ function message(seq: number, content: string): ChatMessage {
     return { seq, role: 'user', type: 'human', text: content, at: T0 + clock * 1000 };
 }
 
+/** 桶文件名（新命名 `<序号>-<日期>T<时间><+HHMM>.jsonl`；旧命名 `log-<序号>.jsonl` 读侧仍认） */
+const BUCKET_NAME_RE = /^(?:\d{4,}-\d{8}-\d{6}[+-]\d{4}|log-\d+)\.jsonl$/;
+const NEW_BUCKET_NAME_RE = /^\d{4,}-\d{8}-\d{6}[+-]\d{4}\.jsonl$/;
+
 async function bucketFiles(target = dir): Promise<string[]> {
-    return (await readdir(target)).filter((name) => /^log-\d+\.jsonl$/.test(name)).sort();
+    // 按**序号**排序（不是字典序：旧命名 log-0001.jsonl 与新命名混放时字典序会排乱）
+    const number = (name: string): number => Number(/^(?:log-)?(\d+)/.exec(name)?.[1] ?? '0');
+    return (await readdir(target))
+        .filter((name) => BUCKET_NAME_RE.test(name))
+        .sort((left, right) => {
+            const a = number(left);
+            const b = number(right);
+            return a === b ? left.localeCompare(right) : a - b;
+        });
+}
+
+/** 毫秒 → `YYYYMMDD-HHMMSS+HHMM`（本地时刻 + 那一刻的偏移；独立算期望文件名用） */
+function localStamp(at: number): string {
+    const date = new Date(at);
+    const pad = (value: number, width = 2): string => String(value).padStart(width, '0');
+    const ymd = `${pad(date.getFullYear(), 4)}${pad(date.getMonth() + 1)}${pad(date.getDate())}`;
+    const hms = `${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+    const offset = date.getTimezoneOffset();
+    const sign = offset > 0 ? '-' : '+';
+    const abs = Math.abs(offset);
+    return `${ymd}-${hms}${sign}${pad(Math.floor(abs / 60))}${pad(abs % 60)}`;
+}
+
+/** 第 n 个桶的文件名（序号定长 4 位） */
+function bucketName(n: number, at: number): string {
+    return `${String(n).padStart(4, '0')}-${localStamp(at)}.jsonl`;
 }
 
 describe('T1 按大小切桶', () => {
-    it('写 20 MB 后 ≥3 个桶，每个 ≤ 8 MB（缺省上界）', async () => {
+    it('写 40 MB 后 ≥3 个桶，每个 ≤ 16 MB（缺省上界）', async () => {
         const store = await openJsonlSessionStore({ dir });
         const chunk = 'x'.repeat(1024 * 1024); // 1 MB
-        for (let seq = 1; seq <= 20; seq += 1) {
+        for (let seq = 1; seq <= 40; seq += 1) {
             await store.append([message(seq, `${String(seq).padStart(2, '0')}${chunk}`)]);
         }
 
@@ -57,9 +90,9 @@ describe('T1 按大小切桶', () => {
         expect(files.length).toBeGreaterThanOrEqual(3);
         for (const file of files) {
             const { size } = await stat(join(dir, file));
-            expect(size).toBeLessThanOrEqual(8 * 1024 * 1024);
+            expect(size).toBeLessThanOrEqual(16 * 1024 * 1024);
         }
-        expect(store.latestSeq()).toBe(20);
+        expect(store.latestSeq()).toBe(40);
     });
 
     it('按大小不按日期：同一毫秒的一堆消息也会切桶', async () => {
@@ -213,6 +246,87 @@ describe('T7 重开后续写', () => {
         await second.append([message(7, '继续'.padEnd(100, '。'))]);
         expect(second.latestSeq()).toBe(7);
         expect((await second.readFrom(6)).map((item) => item.seq)).toEqual([7]);
+    });
+});
+
+describe('T9 桶文件名 = <序号>-<本地日期>-<时间><偏移>.jsonl（##464）', () => {
+    it('文件名形如 0001-20261030-115000+0800.jsonl；时间取桶内首条 entry 的 at（不是「现在」）', async () => {
+        const store = await openJsonlSessionStore({ dir, maxBucketBytes: 400 });
+        for (let seq = 1; seq <= 12; seq += 1) {
+            await store.append([message(seq, `第${seq}句`.padEnd(100, '。'))]);
+        }
+        const files = await bucketFiles();
+        expect(files.length).toBeGreaterThan(1);
+        for (const file of files) expect(file).toMatch(NEW_BUCKET_NAME_RE);
+
+        // 首桶 = 第 1 条消息的 at（T0 + 1000），不是 Date.now()
+        expect(files[0]).toBe(bucketName(1, T0 + 1000));
+
+        // 每个桶的文件名 = 序号 + 桶内首条消息的 at 的本地时刻 / 偏移（与 index 的 fromAt 一致）
+        const buckets = store.index().buckets;
+        expect(buckets.map((bucket) => bucket.file)).toEqual(files);
+        for (const [index, bucket] of buckets.entries()) {
+            expect(bucket.file).toBe(bucketName(index + 1, bucket.fromAt));
+        }
+    });
+
+    it('同一秒切两个桶 ⇒ 序号递增、文件不重名', async () => {
+        const store = await openJsonlSessionStore({ dir, maxBucketBytes: 120 });
+        for (let seq = 1; seq <= 6; seq += 1) {
+            // 所有 entry 同一毫秒（同一秒），每条独立成桶
+            await store.append([{ seq, role: 'user', type: 'human', text: 'x'.repeat(60), at: T0 }]);
+        }
+        const files = await bucketFiles();
+        expect(files.length).toBeGreaterThan(1);
+        expect(new Set(files).size).toBe(files.length);
+        expect(files).toEqual(files.map((_, index) => bucketName(index + 1, T0)));
+        // 序号在前 ⇒ 字典序 = 序号序（不靠时间）
+        expect(files).toEqual([...files].sort());
+        expect(store.latestSeq()).toBe(6);
+        expect((await store.readFrom(0)).map((item) => item.seq)).toEqual([1, 2, 3, 4, 5, 6]);
+    });
+
+    it('时间取首条 entry 的 at：at=0 ⇒ 1970 年（不是 Date.now()），偏移取那一刻', async () => {
+        const store = await openJsonlSessionStore({ dir });
+        await store.append([{ seq: 1, role: 'user', type: 'human', text: '零', at: 0 }]);
+        const files = await bucketFiles();
+        expect(files).toEqual([bucketName(1, 0)]);
+        // TZ 无关：日期部分必是 1970 年的某天（东八区是 19700101-080000+0800），绝不是今年
+        expect(files[0]).toMatch(/^0001-1970\d{4}-\d{6}[+-]\d{4}\.jsonl$/);
+    });
+
+    it('index 丢失后重建：以桶内数据为准，文件名只当提示（不改名、不报错）', async () => {
+        const store = await openJsonlSessionStore({ dir, maxBucketBytes: 400 });
+        for (let seq = 1; seq <= 12; seq += 1) {
+            await store.append([message(seq, `第${seq}句`.padEnd(100, '。'))]);
+        }
+        const files = await bucketFiles();
+        const realFirstAt = store.index().buckets[0].fromAt;
+        // 把首桶改成错误的时间（1970），桶内数据不变 ⇒ 重建后仍以数据为准
+        const wrong = '0001-19700101-000000+0000.jsonl';
+        await rename(join(dir, files[0]), join(dir, wrong));
+        await unlink(join(dir, 'index.json'));
+
+        const reopened = await openJsonlSessionStore({ dir, maxBucketBytes: 400 });
+        expect(reopened.index().buckets[0].file).toBe(wrong); // 不改名
+        expect(reopened.index().buckets[0].fromAt).toBe(realFirstAt); // 时间来自桶内首行
+        expect(reopened.latestSeq()).toBe(12);
+        expect((await reopened.readFrom(0)).map((item) => item.seq)).toEqual(
+            Array.from({ length: 12 }, (_, index) => index + 1),
+        );
+    });
+
+    it('旧命名 log-0001.jsonl 与新命名混放：按序号排序（字典序会把新旧排乱）', async () => {
+        const { writeFile } = await import('node:fs/promises');
+        const at = T0;
+        await writeFile(join(dir, 'log-0001.jsonl'), `${JSON.stringify({ seq: 1, role: 'user', text: '旧', at })}\n`);
+        const store = await openJsonlSessionStore({ dir, maxBucketBytes: 400 });
+        expect(store.latestSeq()).toBe(1);
+        await store.append([message(2, '新'.padEnd(100, '。'))]);
+        const files = await bucketFiles();
+        expect(files[0]).toBe('log-0001.jsonl');
+        expect(files[1]).toBe(bucketName(2, T0 + 1000));
+        expect((await store.readFrom(0)).map((item) => item.seq)).toEqual([1, 2]);
     });
 });
 

@@ -3,8 +3,8 @@
 // 核心（@diy-agent/session）零 IO：要落盘就装这个适配器。目录形态：
 //
 //   <dir>/index.json       桶索引（勿与桶混合）
-//   <dir>/log-0001.jsonl   一桶 ≤ maxBucketBytes（缺省 8 MB）
-//   <dir>/log-0002.jsonl
+//   <dir>/0001-20261030-115000+0800.jsonl   一桶 ≤ maxBucketBytes（缺省 16 MB）
+//   <dir>/0002-20261030-121530+0800.jsonl   文件名 = 序号 + 首条 entry 的 at（本地时刻 + 偏移，##464）
 //
 //   import { createSession } from '@diy-agent/session';
 //   import { openJsonlSessionStore } from '@diy-agent/session-store-jsonl';
