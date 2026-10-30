@@ -162,6 +162,11 @@ function parseMentions(value: unknown, path: string, code: 'session/invalid-mess
     return value.map((item, index) => takeString(item, `${path}[${index}]`, code));
 }
 
+/** 可选的非负数字：缺席 = undefined（不补 0 —— 「上游没报」与「报 0」是两回事） */
+function optionalNonNegativeNumber(value: unknown, path: string): number | undefined {
+    return value === undefined ? undefined : takeNonNegativeNumber(value, path, 'session/invalid-delta');
+}
+
 /** 自检一个流式增量（非法即抛 `session/invalid-delta`） */
 export function assertDelta(value: unknown, path = 'delta'): SessionDelta {
     const obj = takeObject(value, path, 'session/invalid-delta');
@@ -190,11 +195,22 @@ export function assertDelta(value: unknown, path = 'delta'): SessionDelta {
         };
     }
     if (type === 'usage') {
-        rejectUnknown(obj, ['type', 'inputTokens', 'outputTokens'], path, 'session/invalid-delta');
+        // 缓存桶是 provider 层的附加事实（见 @diy/llm-provider 的 UsageDetail 头注）：
+        // 允许出现，但**不并入** inputTokens —— 上游报的 input 已经含了它们。
+        rejectUnknown(
+            obj,
+            ['type', 'inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens'],
+            path,
+            'session/invalid-delta',
+        );
+        const cacheReadTokens = optionalNonNegativeNumber(obj.cacheReadTokens, `${path}.cacheReadTokens`);
+        const cacheWriteTokens = optionalNonNegativeNumber(obj.cacheWriteTokens, `${path}.cacheWriteTokens`);
         return {
             type,
             inputTokens: takeNonNegativeNumber(obj.inputTokens, `${path}.inputTokens`, 'session/invalid-delta'),
             outputTokens: takeNonNegativeNumber(obj.outputTokens, `${path}.outputTokens`, 'session/invalid-delta'),
+            ...(cacheReadTokens === undefined ? {} : { cacheReadTokens }),
+            ...(cacheWriteTokens === undefined ? {} : { cacheWriteTokens }),
         };
     }
     if (type === 'done') {
