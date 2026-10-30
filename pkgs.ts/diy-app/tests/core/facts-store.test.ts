@@ -1,7 +1,7 @@
 // tests/core/facts-store.test.ts — 事实库 RPC 侧适配（##404）
 //
 // 压的是 RPC 边界上才有的三种失败：定位真源（cwd 不是仓库）、载荷形状、readonly→DTO。
-// 判据本身在 @diy/facts 已各自单测，这里**不重复验判据**，只验"接线没接歪"。
+// 判据本身在 @diy-agent/facts 已各自单测，这里**不重复验判据**，只验"接线没接歪"。
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -658,7 +658,7 @@ describe("find", () => {
 
 // ── 字节账与 expose 暴露档（##5 第 7 轮）────────────────────────────────────────
 //
-// 判据在 @diy/facts 的 checkExpose / weightsOf 已单测；这里只验**接线**：
+// 判据在 @diy-agent/facts 的 checkExpose / weightsOf 已单测；这里只验**接线**：
 //   ① status 给出按 subject 的字节账（预算是字节单位，claims 数看不出来）
 //   ② submit 的 expose 载荷与事实**同一事务**（超预算 ⇒ 整批拒写，磁盘不动）
 describe("字节账 / expose 档", () => {

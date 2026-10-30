@@ -1,7 +1,7 @@
 // src/main/prompts/defaults.ts
 // 🎯 内置提示词模版 —— 唯一真相源（随 app 发布走，运行时只读）
 //
-// 结构：**节标签内联在模版里、节顺序与分隔写在 system.md 里**，渲染交给 @diy/template；
+// 结构：**节标签内联在模版里、节顺序与分隔写在 system.md 里**，渲染交给 @diy-agent/template；
 //   代码不再拼 `<tag>`、不再 join("\n\n")、不再 trim（模版源逐字节进引擎）。
 //   与换引擎前的输出逐字节一致（唯一差异：system 末尾多一个 \n，因模版自带末尾换行），
 //   验收见 tests/core/template-dsl-golden.test.ts 与 tests/fixtures/system.golden.txt。

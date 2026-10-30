@@ -13,7 +13,7 @@ import { writeFileAtomic } from "./atomic-write";
 import * as yaml from "js-yaml";
 import { sanitizeInputLimitChars, sanitizeSystemPlaces } from "../../shared/context/config";
 import { ContextConfigSchema } from "../../shared/context/config";
-import { defaultSystemPlaces } from "@diy/context/delivery";
+import { defaultSystemPlaces } from "@diy-agent/context/delivery";
 import { DEFAULT_INPUT_LIMIT_CHARS } from "../../shared/context/input-limit";
 
 export function contextConfigFile(home: string): string {

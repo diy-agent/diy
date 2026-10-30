@@ -16,11 +16,11 @@
  * 所有 desc 用反引号模板字符串，便于扩展成多行（help 第一行作命令列表摘要）。
  */
 
-import { RpcSchema } from "@diy/rpc";
+import { RpcSchema } from "@diy-agent/rpc";
 import { z } from "zod";
 // 引擎通用渲染器 id 的真源（别处不复制这份清单；内核加渲染器时这里的 schema 自动跟上）
-import { RENDERERS } from "@diy/flow";
-import { PromptEntrySchema, RequestPreviewSchema } from "@diy/context/schema/prompt-schema";
+import { RENDERERS } from "@diy-agent/flow";
+import { PromptEntrySchema, RequestPreviewSchema } from "@diy-agent/context/schema/prompt-schema";
 import { TrafficRecordSchema } from "../../shared/traffic-record";
 import { ContextDiffSchema, CtxLogSchema, StatsSchema, StepsSchema } from "../../shared/context/schema";
 import { ContextLabSchema, ContextPlaceCandidateSchema } from "../../shared/context/schema";
@@ -33,7 +33,7 @@ import { PersonaSchema } from "../../shared/persona";
 import { ModelCostSchema } from "../../shared/usage";
 // 「模型不可用」通知契约（纯 zod，renderer 同源；判据函数也在同文件，见 ##369）
 import { ModelUnavailableNoticeSchema } from "../../shared/model-unavailable";
-// 事实库契约（##404）：形状在 shared/facts.ts，语义校验在内核 @diy/facts
+// 事实库契约（##404）：形状在 shared/facts.ts，语义校验在内核 @diy-agent/facts
 import {
   EnvSchema,
   FactsAffectedSchema,
@@ -2138,7 +2138,7 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
 
       facts: RpcSchema.group({
         desc:
-            `项目级事实库（##404）：agent **只经这里读写事实，不碰 YAML 文件**（手改必错）。真源 knowledge/facts/*.yaml，判据在 @diy/facts。` +
+            `项目级事实库（##404）：agent **只经这里读写事实，不碰 YAML 文件**（手改必错）。真源 knowledge/facts/*.yaml，判据在 @diy-agent/facts。` +
             `\n\n**不知道一件东西该去哪查 → \`diy facts brief where\`**：\`where\` 主题是「统一汇入点」，每个通道（facts / runtime / journal / traffic / 文件）一条，只写"去哪查"、不写值（通道才变，所以不腐坏）`,
         children: {
           status: RpcSchema.unary({

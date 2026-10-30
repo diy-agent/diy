@@ -34,7 +34,7 @@ import {
     type AdvanceRequest,
     type FlowState,
     type WorkflowDef,
-} from "@diy/flow";
+} from "@diy-agent/flow";
 import { taskDir } from "./state";
 
 /** 实例绑定（`instance.json` 的形状）。`params` 是绑定期的**生效全量值**回显（权威仍是 state.json）。 */

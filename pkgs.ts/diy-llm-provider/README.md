@@ -1,4 +1,4 @@
-# @diy/llm-provider
+# @diy-agent/llm-provider
 
 OpenAI 兼容的 LLM provider：**发请求 + 翻流 + 模型目录**，仅此而已。
 
@@ -17,8 +17,8 @@ OpenAI 兼容的 LLM provider：**发请求 + 翻流 + 模型目录**，仅此�
 ## 用法
 
 ```ts
-import { createOpenAiCompatible, DEFAULT_MODEL_ID } from "@diy/llm-provider";
-import { createSession } from "@diy/session";
+import { createOpenAiCompatible, DEFAULT_MODEL_ID } from "@diy-agent/llm-provider";
+import { createSession } from "@diy-agent/session";
 
 const llm = createOpenAiCompatible({
     baseURL: process.env["LLM_BASE_URL"]!,   // 如 https://api.deepseek.com/v1

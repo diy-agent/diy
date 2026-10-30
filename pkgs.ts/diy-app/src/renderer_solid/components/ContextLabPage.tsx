@@ -33,7 +33,7 @@ import { findPage } from "../../shared/view-registry";
 import { Caches } from "../lib/ui-state";
 import { projectFromUri } from "../../shared/task-uri";
 import { buildVarTree, type VarNode } from "../../shared/var-tree";
-import { AssembleGlobalsSchema } from "@diy/context/schema/prompt-schema";
+import { AssembleGlobalsSchema } from "@diy-agent/context/schema/prompt-schema";
 import { notificationStore } from "../store/notificationStore";
 import type { ContextLab, PlaceCandidate } from "../../shared/context/preview";
 import { diffSize } from "../../shared/context/steps";

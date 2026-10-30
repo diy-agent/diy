@@ -4,7 +4,7 @@
 // 从 `main/services/api-def.ts` 搬到这里的原因（##310）：
 //   变量树里有个 `reqlog` 节点要**列字段名**，而"字段名真源"只能是这份 schema。
 //   若由 `prompt-registry` 直接 import `api-def`，就在 main 的启动链上多出一条边 ——
-//   实测把打包后的模块初始化顺序顶歪：`api-def` 的顶层代码**先于** `@diy/rpc` 的
+//   实测把打包后的模块初始化顺序顶歪：`api-def` 的顶层代码**先于** `@diy-agent/rpc` 的
 //   zod 扩展（`n` / `cliArg` / `cliOption`，side-effect 安装）执行 → 主进程启动即崩
 //   （`TypeError: TaskStateSchema.cliArg is not a function`）。
 //   搬进 shared 后：api-def 从 shared 取（契约仍是一份），prompt-registry 也只依赖 shared。

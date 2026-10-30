@@ -11,8 +11,8 @@
 //   3. CliApp.parse(): 解析 argv 并调用对应 handler
 //
 
-import { CliApp } from "@diy/rpc/cli";
-import { ChannelClientBinding, ChannelServerBinding, createMemTransportPair } from "@diy/rpc";
+import { CliApp } from "@diy-agent/rpc/cli";
+import { ChannelClientBinding, ChannelServerBinding, createMemTransportPair } from "@diy-agent/rpc";
 import { readRuntimeConfig } from "../runtime";
 import { refApi } from "../ref/api";
 import { bindRefHandlers } from "../ref/impl";

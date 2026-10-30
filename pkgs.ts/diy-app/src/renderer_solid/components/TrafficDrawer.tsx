@@ -1,7 +1,7 @@
 import { createSignal, Show } from "solid-js";
 import { TrafficView } from "./TrafficView";
 import { trafficStore } from "../store/trafficStore";
-import { DrawerMaxButton } from "@diy/ui-kit";
+import { DrawerMaxButton } from "@diy-agent/ui-kit";
 import { VIEW_BAR_H } from "../lib/layout-metrics";
 
 /**

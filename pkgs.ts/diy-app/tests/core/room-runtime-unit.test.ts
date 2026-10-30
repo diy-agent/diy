@@ -10,9 +10,9 @@
 //   · 空 recent ⇒ 该单元**缺席**（不产出空节点，也不产生高频 diff）
 
 import { describe, it, expect } from "vitest";
-import { buildDelivery, PLACE_CANDIDATES } from "@diy/context/delivery";
-import { project } from "@diy/context/projection";
-import type { ContextPath } from "@diy/context/types";
+import { buildDelivery, PLACE_CANDIDATES } from "@diy-agent/context/delivery";
+import { project } from "@diy-agent/context/projection";
+import type { ContextPath } from "@diy-agent/context/types";
 import type { RoomMembersValue, RoomRecentValue } from "../../src/shared/room";
 
 const MEMBERS: RoomMembersValue = {

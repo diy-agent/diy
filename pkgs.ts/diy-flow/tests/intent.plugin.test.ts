@@ -21,7 +21,7 @@
 // 错误码，不断言内部实现；插件全是假实现（真 CI / 真行情接入是 ##319 的事）。
 // ═══════════════════════════════════════════════════════════════
 
-import { type Event } from '@diy/talk';
+import { type Event } from '@diy-agent/talk';
 import { describe, expect, it } from 'vitest';
 import {
     FlowError,

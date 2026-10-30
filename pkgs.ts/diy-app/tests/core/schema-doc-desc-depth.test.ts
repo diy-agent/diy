@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { describeSchema } from "@diy/context/schema/schema-doc";
+import { describeSchema } from "@diy-agent/context/schema/schema-doc";
 
 const schema = z
     .object({

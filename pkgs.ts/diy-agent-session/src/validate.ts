@@ -1,6 +1,6 @@
 // validate.ts — 输入校验原语：非法一律抛 SessionError（带点路径），不做「容错一下」
 //
-// 理由同 @diy/talk：静默丢弃一条消息 / 一个增量，事后无法从历史里分辨
+// 理由同 @diy-agent/talk：静默丢弃一条消息 / 一个增量，事后无法从历史里分辨
 // 「本来就没有」与「被悄悄扔了」。测试断言的是 code，不是报错文案。
 
 import { SessionError, type SessionErrorCode } from './errors.js';

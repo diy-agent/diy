@@ -21,14 +21,14 @@ asar: true
 
 # ── 能力包运行时（##455）──
 # runtime/ 由 scripts/build-runtime.mjs 生成（npm 结构 + 各包 lib/），附到 Resources/runtime；
-# 主进程用 createRequire(Resources/runtime/package.json) 解析 @diy/*。
+# 主进程用 createRequire(Resources/runtime/package.json) 解析 @diy-agent/*。
 # 与 files 段的 `!node_modules/**` 无关：extraResources 走 Resources/ 根，不进 asar。
 extraResources:
   - from: runtime
     to: runtime
   # electron-builder 的拷贝过滤器无条件跳过「相对层的根 node_modules」
   # （app-builder-lib/out/util/filter.js: relative === "node_modules" → false），
-  # 故 runtime/node_modules 必须单独挂一次：此时相对路径是 @diy/...，不再命中那条规则。
+  # 故 runtime/node_modules 必须单独挂一次：此时相对路径是 @diy-agent/...，不再命中那条规则。
   - from: runtime/node_modules
     to: runtime/node_modules
 

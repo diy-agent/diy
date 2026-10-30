@@ -3,8 +3,8 @@
 // 页面实现是**构建期**装进来的（renderer 侧不做动态 import）：装配层知道装了哪个页面，
 // 骨架只通过注册表按 id 找实现。
 
-import { mountWorkbench, registerPage, type WorkbenchGateway } from "@diy/workbench-ui";
-import { chatPageView } from "@diy/chat-page/renderer";
+import { mountWorkbench, registerPage, type WorkbenchGateway } from "@diy-agent/workbench-ui";
+import { chatPageView } from "@diy-agent/chat-page/renderer";
 import { TITLE } from "./title.js";
 
 declare global {

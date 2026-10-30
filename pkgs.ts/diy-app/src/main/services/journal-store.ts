@@ -14,7 +14,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from "n
 import { join } from "node:path";
 import { ValidationError } from "../core/task";
 import { taskDir, taskFilePath } from "../core/state";
-import { docRangeAnchor, messageAnchor, nodeAnchor, parseAnchor, taskFieldAnchor, type Anchor } from "@diy/talk";
+import { docRangeAnchor, messageAnchor, nodeAnchor, parseAnchor, taskFieldAnchor, type Anchor } from "@diy-agent/talk";
 import {
   JOURNAL_AUTHOR_ROLES,
   JOURNAL_KINDS,
@@ -76,7 +76,7 @@ export function parseAuthorSpec(text: string): JournalAuthor {
 }
 
 /**
- * `--anchor <type>:<...>` → `@diy/talk` 的 Anchor。
+ * `--anchor <type>:<...>` → `@diy-agent/talk` 的 Anchor。
  *
  *   node:<nodeId>
  *   message:<messageId>
@@ -178,7 +178,7 @@ export interface JournalAddInput {
   readonly round?: string;
   /** 谁写的（决定能否当证据；缺省 = 未标，**不默认成 agent**） */
   readonly author?: JournalAuthor;
-  /** 指向哪（`@diy/talk` 的 Anchor 形状；写入时经 parseAnchor 规范化） */
+  /** 指向哪（`@diy-agent/talk` 的 Anchor 形状；写入时经 parseAnchor 规范化） */
   readonly anchor?: Anchor;
   /** 仅在回灌历史时给（缺省 = 现在） */
   readonly ts?: string;

@@ -1,15 +1,15 @@
 // vite.pkg-deps.ts — vite 构建配置的**共享真源**（main / serve / preload 共用）
 //
 // 为什么单列一份（##319 review1 P2-A）：三份配置原先各写一份 `pkgDeps` ⇒ 加了 workspace 依赖
-// `@diy/flow` / `@diy/talk` 只补了 main，`serve` 产物就留下裸 `import "@diy/flow"`
+// `@diy-agent/flow` / `@diy-agent/talk` 只补了 main，`serve` 产物就留下裸 `import "@diy-agent/flow"`
 // （node 加载 workspace 的 `.ts` 源码直接炸：`ERR_MODULE_NOT_FOUND … /pkgs.ts/diy-flow/src/errors`）
-// —— 而改动前 serve 产物**零**裸 `@diy/*` import，即「只新增、不改既有行为」被破坏。
+// —— 而改动前 serve 产物**零**裸 `@diy-agent/*` import，即「只新增、不改既有行为」被破坏。
 // 包清单只有一份之后，换包漏加的可能只剩「忘了加进这个数组」一种。
 import { builtinModules } from "node:module";
 import { isAbsolute } from "node:path";
 
 /**
- * 要**打包进来**的 workspace 包（external 化 = 产物里留 `import "@diy/x"`，安装形态下也许能
+ * 要**打包进来**的 workspace 包（external 化 = 产物里留 `import "@diy-agent/x"`，安装形态下也许能
  * resolve，但代价是把运行时的包发现交给部署环境 —— Electron 从 `Resources/runtime/node_modules/`
  * 动态加载能力包时容易踩空）。**新增 workspace 依赖必须同步加这里**。
  *
@@ -17,15 +17,15 @@ import { isAbsolute } from "node:path";
  * 故 `./sha.sh build` 必须先 `build-pkgs`（顺序见根 sha.sh）。
  */
 export const WORKSPACE_TS_DEPS = [
-  "@diy/rpc",
-  "@diy/template",
-  "@diy/flow",
-  "@diy/talk",
-  "@diy/facts",
-  "@diy/persistence",
-  "@diy/context",
-  "@diy/compaction",
-  "@diy/ui-kit",
+  "@diy-agent/rpc",
+  "@diy-agent/template",
+  "@diy-agent/flow",
+  "@diy-agent/talk",
+  "@diy-agent/facts",
+  "@diy-agent/persistence",
+  "@diy-agent/context",
+  "@diy-agent/compaction",
+  "@diy-agent/ui-kit",
 ];
 
 /** 变体产物根：prod|test|lab（见根 AGENTS.md「实例三态」） */

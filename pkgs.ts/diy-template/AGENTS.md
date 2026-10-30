@@ -1,4 +1,4 @@
-# @diy/template — 提示词模版引擎
+# @diy-agent/template — 提示词模版引擎
 
 > 全仓契约见**仓库根 `AGENTS.md`**。本包是**零依赖纯内核**（不认识文件系统，`include` 由宿主注入
 > resolver），Node / 浏览器 / Electron 通用。

@@ -6,7 +6,7 @@
  */
 import { ErrorBox, nearBottom, turnById } from "./MessageStream";
 import { For, Show } from "solid-js";
-import { IconChevron, IconCode, IconTrash } from "@diy/ui-kit";
+import { IconChevron, IconCode, IconTrash } from "@diy-agent/ui-kit";
 import { OpsDownBar } from "../OpsDownBar";
 import { RoomReplyRow, RoomSayRow, VirtRow } from "./RoomRows";
 import { TURN_LEVEL_MAX, turnLevelTip } from "../../lib/chat-fold";

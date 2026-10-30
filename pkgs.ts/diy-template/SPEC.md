@@ -1,4 +1,4 @@
-# @diy/template —— 提示词模版引擎（阶段 1）
+# @diy-agent/template —— 提示词模版引擎（阶段 1）
 
 > **本文档状态：意图测试为唯一真源** — `tests/intent.template.test.ts`（R1–R15）与 `tests/parser.test.ts` 已覆盖本 SPEC 全部可验证行为；本文保留作**决策记录与索引**，新增需求先写意图测试，再补实现。今后以意图测试为准，本文仅作索引与背景。
 >

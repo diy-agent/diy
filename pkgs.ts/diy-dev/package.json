@@ -1,5 +1,5 @@
 {
-  "name": "@diy/dev",
+  "name": "@diy-agent/dev",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,7 +11,7 @@
     "out/"
   ],
   "dependencies": {
-    "@diy/rpc": "^0.2.0",
+    "@diy-agent/rpc": "^0.2.0",
     "js-yaml": "^5.5.0",
     "zod": "^4.4.3"
   },

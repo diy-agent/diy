@@ -17,7 +17,7 @@ import { advanceFlow, putArtifact, showFlow, startFlow } from "../../src/main/co
 import type { FlowView } from "../../src/main/core/flow";
 import { composeTurnMessage, routeOf, verdictOf } from "../../src/main/services/flow-runner";
 import { collectFacts, createRenderRegistry } from "../../src/main/workflows/plugins";
-import type { PluginContext } from "@diy/flow";
+import type { PluginContext } from "@diy-agent/flow";
 import { DEV_WORKFLOW } from "../../src/main/workflows/dev";
 import { executorOf } from "../../src/main/workflows";
 

@@ -7,9 +7,9 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, expect } from "vitest";
-import { buildDelivery, defaultSystemPlaces, PLACE_CANDIDATES } from "@diy/context/delivery";
+import { buildDelivery, defaultSystemPlaces, PLACE_CANDIDATES } from "@diy-agent/context/delivery";
 import { buildLab } from "../../src/shared/context/preview";
-import { project } from "@diy/context/projection";
+import { project } from "@diy-agent/context/projection";
 
 const globals = {
     diy: { cli: "/repo/diy.sh", home: "/home/u/.diy" },

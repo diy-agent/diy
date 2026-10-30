@@ -1,4 +1,4 @@
-# @diy/ui-kit — 纯展示组件库
+# @diy-agent/ui-kit — 纯展示组件库
 
 ## 进包判据（三条，全满足才进，见 ##448）
 
@@ -6,7 +6,7 @@
 2. 不 import `lib/rpc` 或任何 RPC 调用
 3. props 进、DOM 出；自身无跨组件共享状态（含 `lib/theme` / `lib/ui-state` 这类全局单例）
 
-`package.json` 的 `dependencies` **只允许 `solid-js`**：`@diy/*`、三方渲染库（`solid-markdown` / `shiki` / `js-yaml` …）都不许进来。
+`package.json` 的 `dependencies` **只允许 `solid-js`**：`@diy-agent/*`、三方渲染库（`solid-markdown` / `shiki` / `js-yaml` …）都不许进来。
 
 ## 现有内容
 

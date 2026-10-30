@@ -12,7 +12,7 @@
 // `agent` → 无名 agent）。于是驱动环（`services/flow-runner.ts`）对**任意**定义都通用，
 // 不写死这一个工作流；将来「工作流开发包」自带执行者表时，这里只是换供给方。
 
-import type { Actor } from '@diy/flow';
+import type { Actor } from '@diy-agent/flow';
 import { DEV_WORKFLOW, DEV_EXECUTORS } from './dev';
 
 /** 一个节点的执行者（宿主侧知识：内核只给 `actor`，这一层说清「到底谁去干」） */

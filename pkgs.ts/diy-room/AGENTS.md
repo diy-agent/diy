@@ -1,7 +1,7 @@
-# @diy/room — 协作空间内核（成员表 + `@` 投递 + 忙闲）
+# @diy-agent/room — 协作空间内核（成员表 + `@` 投递 + 忙闲）
 
-> 全仓契约见**仓库根 `AGENTS.md`**。本包**不认识任务**：没有任务 URI / 任务标识 / `@diy/task`。
-> 依赖 `@diy/session` 的 `SessionPeer`（只要求 `id` / `busy` / `send()` 三样）。
+> 全仓契约见**仓库根 `AGENTS.md`**。本包**不认识任务**：没有任务 URI / 任务标识 / `@diy-agent/task`。
+> 依赖 `@diy-agent/session` 的 `SessionPeer`（只要求 `id` / `busy` / `send()` 三样）。
 > 需求真源是 `tests/intent.room.test.ts`（R1–R7，R7 静态扫源码）。
 
 ## 主线日志（publicLog）

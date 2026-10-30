@@ -9,7 +9,7 @@ import {
     summaryHasContent,
     summaryPlaceholder,
     type SummaryData,
-} from "@diy/compaction/summary";
+} from "@diy-agent/compaction/summary";
 import { renderSystemDsl } from "../../src/main/services/prompt-registry";
 import { PROMPT_DEFAULTS } from "../../src/main/prompts/defaults";
 

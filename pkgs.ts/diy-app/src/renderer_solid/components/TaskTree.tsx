@@ -9,7 +9,7 @@ import { notificationStore } from "../store/notificationStore";
 import { diyService } from "../lib/rpc";
 import { Caches } from "../lib/ui-state";
 import { CreateProjectSheet } from "./CreateProjectSheet";
-import { ConfirmDialog, DeleteEntryButton, DynamicBar } from "@diy/ui-kit";
+import { ConfirmDialog, DeleteEntryButton, DynamicBar } from "@diy-agent/ui-kit";
 import { deleteTaskViaUi, removeProjectViaUi } from "../lib/delete-entry";
 import { isAncestorOf } from "../lib/task-lineage";
 import { TASK_STATES, taskStateColor } from "../../main/core/task-state";

@@ -18,7 +18,7 @@
 // guard 的分水岭仍是**可观测性**（##166 §10.3）：`prompt:` 只能 actor 宣布（topic / script / storyboard /
 // shoot / cut / approve），`pred:` / `action:` 由系统求值并自动转移（render / checks / publish）。
 
-import { defineWorkflow, type WorkflowDef } from '@diy/flow';
+import { defineWorkflow, type WorkflowDef } from '@diy-agent/flow';
 
 /** 泳道 ≡ 节点（1:1）：九个 id 就是九条泳道（也是折线上可能出现的全部节点） */
 export const VIDEO_NODE_IDS = [

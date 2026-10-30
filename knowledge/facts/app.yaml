@@ -466,7 +466,7 @@ facts:
       verifiedAt: '2026-10-22'
   app.find#context:
     value: |-
-      `src/shared/context/` 上下文树与投递：`README.md` 是**完整约定表**（领域模型 / 投递构造 / 划分真源 / step 快照 / 渲染坑）；投递构造唯一入口 `@diy/context` 的 `delivery.ts::buildDelivery`（##447 起树/投影/投递/信封在 `pkgs.ts/diy-context/`，压缩决策在 `pkgs.ts/diy-compact/`）；划分真源 `$DIY_HOME/context.yaml`（契约 `config.ts`、I/O `src/main/core/context-config.ts`；**缺省最小 system 名单** `delivery.ts::defaultSystemPlaces` —— 只放存续期不变的单元，易变项（`task.state`/`task.updated`/`task.title`/`cwd`/`reqlog`…）一律 runtime，否则每轮砸前缀缓存，##426）· 输入超长门禁 `shared/context/input-limit.ts` + `renderer_solid/components/InputLimitDialog.tsx`（默认 10 万字符可配，超限弹窗报 ≈token / 预计 $，可转文件发送，##426）
+      `src/shared/context/` 上下文树与投递：`README.md` 是**完整约定表**（领域模型 / 投递构造 / 划分真源 / step 快照 / 渲染坑）；投递构造唯一入口 `@diy-agent/context` 的 `delivery.ts::buildDelivery`（##447 起树/投影/投递/信封在 `pkgs.ts/diy-context/`，压缩决策在 `pkgs.ts/diy-compact/`）；划分真源 `$DIY_HOME/context.yaml`（契约 `config.ts`、I/O `src/main/core/context-config.ts`；**缺省最小 system 名单** `delivery.ts::defaultSystemPlaces` —— 只放存续期不变的单元，易变项（`task.state`/`task.updated`/`task.title`/`cwd`/`reqlog`…）一律 runtime，否则每轮砸前缀缓存，##426）· 输入超长门禁 `shared/context/input-limit.ts` + `renderer_solid/components/InputLimitDialog.tsx`（默认 10 万字符可配，超限弹窗报 ≈token / 预计 $，可转文件发送，##426）
     id: app.find.context
     review: accepted
     lifecycle: active
@@ -794,7 +794,7 @@ facts:
       verifiedAt: '2026-10-22'
   app.flow#flow-authority:
     value: |-
-      工作流实例**读只读 `flow/state.json`**（`path.jsonl` 只用于重建：重建态必须与快照**同形**，不一致即**亮错**、不许静默择一；它有三种记录 `config`/`advance`/`finish`，`FlowState` 三部分各一种来源）；改参数值**只允许尚未进入**（已进入 = 换配置 ⇒ 另起一次运行）；`done` 有两个来源：`diy flow finish`（**宣布**，只许在**结构终端节点**＝无 `next` 出边＝`next.terminal` 上敲门）与**内核 `step` 的终态分支**（##341 起走得通：`flow step`/`flow run` 对 `actor: system` 节点真求值，全过且无 `next` 出边即置 `done`）—— 两者都要留重建材料（`path.jsonl` 的 `finish` 记录）；`--param` 是**数组型**选项，重复给会**后者覆盖前者**（parser 逐项 `input[key]=value`），多项必须写成 JSON 数组那一种；`prompts/flow.ts` 的模版**故意不进 `PROMPT_DEFAULTS`**（那份清单是用户可编辑面，并进去就会改既有 `template list` 输出与 golden 快照）；`vite.pkg-deps.ts` 的 `WORKSPACE_TS_DEPS` 是「要打包的 workspace 包」白名单（**main/serve/preload 的唯一真源**），加 workspace 依赖必须同步加那里（漏加 = 产物里留裸 `import "@diy/x"`，node 加载 `.ts` 直接炸；判据 `rg '^import .*"@diy/' build/<v>/{main,serve}/*.mjs` 应零命中）；**产物袋**（`flow/artifacts/<节点 id>.json`，JSON 数组、下标 = 驻留 `seq` − 1）**不是领域态**：不进 `state.json`、不产生 `path.jsonl` 增量、删了不影响 `advance`/对账 —— 立场是「缺项 = 无产物（`view: null`，正常态）」与「袋坏 = 亮错（不静默降级）」两分，且**坏袋不许拖垮领域读**（`flow show` 照出整页 + `FlowView.viewError` 亮错，只有产物专读的 `diy flow view` 抛）；`view.renderer` 必须与 `art.renderer` 一致（声明是 UI 预选渲染器的契约），`art.plugin` 留空只在「raw 本身已是该 renderer 的 data」时合法（纯文本 raw ≠ `doc` 的 `{ text }` ⇒ 挂 `text` 插件）
+      工作流实例**读只读 `flow/state.json`**（`path.jsonl` 只用于重建：重建态必须与快照**同形**，不一致即**亮错**、不许静默择一；它有三种记录 `config`/`advance`/`finish`，`FlowState` 三部分各一种来源）；改参数值**只允许尚未进入**（已进入 = 换配置 ⇒ 另起一次运行）；`done` 有两个来源：`diy flow finish`（**宣布**，只许在**结构终端节点**＝无 `next` 出边＝`next.terminal` 上敲门）与**内核 `step` 的终态分支**（##341 起走得通：`flow step`/`flow run` 对 `actor: system` 节点真求值，全过且无 `next` 出边即置 `done`）—— 两者都要留重建材料（`path.jsonl` 的 `finish` 记录）；`--param` 是**数组型**选项，重复给会**后者覆盖前者**（parser 逐项 `input[key]=value`），多项必须写成 JSON 数组那一种；`prompts/flow.ts` 的模版**故意不进 `PROMPT_DEFAULTS`**（那份清单是用户可编辑面，并进去就会改既有 `template list` 输出与 golden 快照）；`vite.pkg-deps.ts` 的 `WORKSPACE_TS_DEPS` 是「要打包的 workspace 包」白名单（**main/serve/preload 的唯一真源**），加 workspace 依赖必须同步加那里（漏加 = 产物里留裸 `import "@diy-agent/x"`，node 加载 `.ts` 直接炸；判据 `rg '^import .*"@diy-agent/' build/<v>/{main,serve}/*.mjs` 应零命中）；**产物袋**（`flow/artifacts/<节点 id>.json`，JSON 数组、下标 = 驻留 `seq` − 1）**不是领域态**：不进 `state.json`、不产生 `path.jsonl` 增量、删了不影响 `advance`/对账 —— 立场是「缺项 = 无产物（`view: null`，正常态）」与「袋坏 = 亮错（不静默降级）」两分，且**坏袋不许拖垮领域读**（`flow show` 照出整页 + `FlowView.viewError` 亮错，只有产物专读的 `diy flow view` 抛）；`view.renderer` 必须与 `art.renderer` 一致（声明是 UI 预选渲染器的契约），`art.plugin` 留空只在「raw 本身已是该 renderer 的 data」时合法（纯文本 raw ≠ `doc` 的 `{ text }` ⇒ 挂 `text` 插件）
     id: app.flow.flow-authority
     review: accepted
     lifecycle: active
@@ -1363,7 +1363,7 @@ facts:
       verifiedAt: '2026-10-22'
   app.rule#test-isolate:
     value: |-
-      **`unit` 跑 `--no-isolate`（每个 worker 共享一份模块图）⇒ 测试之间共享模块级状态，三条硬约束**（##402）：① **禁 `vi.mock`**（改全局模块表，先加载的实现会把它静默顶掉 ⇒ 「单跑绿、一起跑红」且无报错；机械护栏 `scripts/check-no-vi-mock.sh`，替代写法 = 依赖注入 / 手写假对象 / `server.deps.inline` alias）；② **模块顶层的可变状态必须在 `beforeEach` 复位**（真踩过：`sessionStore` 水位 / `usageLedgerStore` 缓存 / `rpc` 的 `setDiyService` 假实现残留 —— 症状是 `--sequence.shuffle` 换序即红）；③ **模块图顺序是语义的一部分**（`@diy/rpc` 用原型补丁给 zod 装 `cliArg`，schema 创建时定死原型链 ⇒ 谁先建 schema 谁就看不见补丁；`tests/setup.ts` 已先引 rpc 钉死这条，别删）。验收判据：`test-unit` 与 `test-unit --sequence.shuffle` 两遍都全绿
+      **`unit` 跑 `--no-isolate`（每个 worker 共享一份模块图）⇒ 测试之间共享模块级状态，三条硬约束**（##402）：① **禁 `vi.mock`**（改全局模块表，先加载的实现会把它静默顶掉 ⇒ 「单跑绿、一起跑红」且无报错；机械护栏 `scripts/check-no-vi-mock.sh`，替代写法 = 依赖注入 / 手写假对象 / `server.deps.inline` alias）；② **模块顶层的可变状态必须在 `beforeEach` 复位**（真踩过：`sessionStore` 水位 / `usageLedgerStore` 缓存 / `rpc` 的 `setDiyService` 假实现残留 —— 症状是 `--sequence.shuffle` 换序即红）；③ **模块图顺序是语义的一部分**（`@diy-agent/rpc` 用原型补丁给 zod 装 `cliArg`，schema 创建时定死原型链 ⇒ 谁先建 schema 谁就看不见补丁；`tests/setup.ts` 已先引 rpc 钉死这条，别删）。验收判据：`test-unit` 与 `test-unit --sequence.shuffle` 两遍都全绿
     id: app.rule.test-isolate
     review: accepted
     lifecycle: active

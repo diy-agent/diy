@@ -17,7 +17,7 @@
 // 本包**不触外部世界**（##315 硬约束）：所有副作用都在宿主给的函数体里，内核只按名调用（见 registry.ts）。
 // 因此这里只定义「长什么样」，一个具体实现的字节都不写。
 
-import type { Anchor, Event } from '@diy/talk';
+import type { Anchor, Event } from '@diy-agent/talk';
 import { RENDERERS, type NodeDef, type Renderer, type WorkflowDef } from './define.js';
 import { FlowError } from './errors.js';
 import { isObject } from './validate.js';

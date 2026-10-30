@@ -23,7 +23,7 @@ import {
     type Layout,
 } from "../../shared/grid-layout";
 import { findPage, groupViewsByArea, planPageViews, type Binding } from "../../shared/view-registry";
-import { IconCollapse, IconCompress, IconExpand, ViewBoundary } from "@diy/ui-kit";
+import { IconCollapse, IconCompress, IconExpand, ViewBoundary } from "@diy-agent/ui-kit";
 import { layoutStore } from "../store/layoutStore";
 import { AREA_CHROME_W, VIEW_BAR_H } from "../lib/layout-metrics";
 

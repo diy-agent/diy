@@ -1,8 +1,8 @@
-# @diy/flow — 工作流内核（定义 DSL + 泳道容器 + 插件槽 + 参数层 + guard 求值 + 转移执行器 + 领域态序列化 + 轨迹投影）
+# @diy-agent/flow — 工作流内核（定义 DSL + 泳道容器 + 插件槽 + 参数层 + guard 求值 + 转移执行器 + 领域态序列化 + 轨迹投影）
 
 > 全仓契约见**仓库根 `AGENTS.md`**。本文件只写**包内定位**与**去哪查**。
 >
-> 本包是**纯内核**：不 import `node:fs` / `electron` / `@diy/app`，不触外部世界（插件副作用全在宿主给的函数体里）、不取时间（`at` 由调用方传入）⇒ 现在即可拆成单独项目。唯一依赖是 `@diy/talk`（复用 `Event` 原语，`anchor = node` 指目标节点）。
+> 本包是**纯内核**：不 import `node:fs` / `electron` / `@diy-agent/app`，不触外部世界（插件副作用全在宿主给的函数体里）、不取时间（`at` 由调用方传入）⇒ 现在即可拆成单独项目。唯一依赖是 `@diy-agent/talk`（复用 `Event` 原语，`anchor = node` 指目标节点）。
 >
 > 需求真源是意图测试（共 180 例）：`tests/intent.flow.test.ts`（定义 / 容器 / 投影 26）+ `tests/intent.plugin.test.ts`（槽位 / 求值 / 执行器 43）+ `tests/intent.params.test.ts`（参数层 41）+ `tests/intent.domain.test.ts`（领域态一等 / 落盘 / 关联 / 终态 / params 入态 / 正路自足 / 不许换配置 49）+ `tests/examples.dev.test.ts`（**范例①**：开发工作流端到端含打回 21）。
 >

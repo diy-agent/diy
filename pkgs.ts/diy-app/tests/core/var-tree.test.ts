@@ -1,6 +1,6 @@
 // tests/core/var-tree.test.ts — 变量契约的两种派生（树 / 扁平清单）
 import { describe, expect, it } from "vitest";
-import { AssembleGlobalsSchema } from "@diy/context/schema/prompt-schema";
+import { AssembleGlobalsSchema } from "@diy-agent/context/schema/prompt-schema";
 import { buildValueTree, buildVarTree, flattenVars, type VarNode } from "../../src/shared/var-tree";
 
 /** 两种树（契约 VarNode / 值 ValueNode）共用：按名字深度优先找节点 */

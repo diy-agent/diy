@@ -16,7 +16,7 @@
 // 语义（顺序即投递顺序，合并会打乱它），所以只共用存储，不共用合并逻辑。
 
 import { STEER_MODES, readDrafts, writeSteers, type SteerItem, type SteerMode } from "./drafts";
-import type { NotifyItem } from "@diy/context/envelope";
+import type { NotifyItem } from "@diy-agent/context/envelope";
 
 /** 插话 id 的前缀：形如 `steer/1`、`steer/2`（"实体/序号"，见仓库约定的 id 风格） */
 export const STEER_ID_PREFIX = "steer/";

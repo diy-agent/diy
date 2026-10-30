@@ -25,7 +25,7 @@
 // 断言公开 API 的行为与错误码，不断言内部实现。
 // ═══════════════════════════════════════════════════════════════
 
-import { createEvent, type Event } from '@diy/talk';
+import { createEvent, type Event } from '@diy-agent/talk';
 import { describe, expect, it } from 'vitest';
 import {
     FlowError,
@@ -258,7 +258,7 @@ describe('R2 落盘 / 读回可信（serialize）', () => {
         expect(isFlowState({ position: 'x', path: [] })).toBe(false);
     });
 
-    it('`allowUnknown` 只放行、不保留（同 @diy/talk 的口径）', () => {
+    it('`allowUnknown` 只放行、不保留（同 @diy-agent/talk 的口径）', () => {
         const { state } = walked();
         const withExtra = { ...state, 新版本字段: 1 };
         expect(caught(() => parseFlowState(withExtra)).code).toBe('invalid-state');

@@ -9,7 +9,7 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { buildSelfValue } from "../../src/shared/context/self";
-import { buildDelivery, defaultSystemPlaces, PLACE_CANDIDATES } from "@diy/context/delivery";
+import { buildDelivery, defaultSystemPlaces, PLACE_CANDIDATES } from "@diy-agent/context/delivery";
 import { atomicUnitPaths, changelogUnitPaths } from "../../src/shared/context/changelog";
 import { noteSelfStep, resetSelfUsage, selfOf } from "../../src/main/services/self-usage";
 

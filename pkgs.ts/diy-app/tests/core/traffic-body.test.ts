@@ -7,7 +7,7 @@
 
 import { describe, it, expect } from "vitest";
 import { bodyValue, type BodyCapture } from "../../src/renderer_solid/lib/traffic-body";
-import { parseCutMarkers } from "@diy/context/format/cut-marker";
+import { parseCutMarkers } from "@diy-agent/context/format/cut-marker";
 
 const capture = (over: Partial<BodyCapture> = {}): BodyCapture => ({
     head: "HEAD",

@@ -7,7 +7,7 @@
  * 349 KB，其中绝大部分是日志）。
  *
  * 三分法的判据（写在这里，防止再混回去）：
- *   · 能改写成「现在是什么」且可校验、带证据 → **fact**（`@diy/facts`）
+ *   · 能改写成「现在是什么」且可校验、带证据 → **fact**（`@diy-agent/facts`）
  *   · 能改写成「我某时刻做了什么 / 踩了什么 / 否掉了什么」 → **journal**（本契约）
  *   · 能改写成「接下来要做什么」 → **任务 body**
  *
@@ -15,7 +15,7 @@
  * 不是「每轮都读」 —— 这正是它能把 body 摘小的原因。它**不替代 git log**：git 记的是
  * 代码怎么变，journal 记的是当时为什么这么定、踩过什么、什么被否掉了。
  */
-import { isAnchor, type Anchor } from '@diy/talk';
+import { isAnchor, type Anchor } from '@diy-agent/talk';
 import { z } from 'zod';
 
 /**
@@ -44,14 +44,14 @@ export const JournalAuthorSchema = z.object({
 export type JournalAuthor = z.infer<typeof JournalAuthorSchema>;
 
 /**
- * 锚点直接复用 `@diy/talk` 的 `Anchor`：`message` / `doc-range` / `task-field` / `node`。
+ * 锚点直接复用 `@diy-agent/talk` 的 `Anchor`：`message` / `doc-range` / `task-field` / `node`。
  *
  * 为什么不自己定义一套（##404 待办 2）：仓里已有四套「作者+时间+引用」的记录
  * （talk / room / journal / llm），talk 那套最完备且零依赖 —— 再发明第五套，
  * 五套之间的漂移就是下一个"知识散落"。
  */
 export const JournalAnchorSchema = z.custom<Anchor>((value) => isAnchor(value), {
-    message: '不是合法锚点（合法：message / doc-range / task-field / node，见 @diy/talk）',
+    message: '不是合法锚点（合法：message / doc-range / task-field / node，见 @diy-agent/talk）',
 });
 
 export const JOURNAL_KINDS = ['decision', 'pitfall', 'review', 'progress', 'learn'] as const;
@@ -74,7 +74,7 @@ export const JournalEntrySchema = z.object({
     round: z.string().optional(),
     /** 谁写的 —— 决定能否当证据（见 JOURNAL_AUTHOR_ROLES） */
     author: JournalAuthorSchema.optional(),
-    /** 指向哪 —— 形状复用 `@diy/talk` 的 Anchor */
+    /** 指向哪 —— 形状复用 `@diy-agent/talk` 的 Anchor */
     anchor: JournalAnchorSchema.optional(),
 });
 export type JournalEntry = z.infer<typeof JournalEntrySchema>;

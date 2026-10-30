@@ -1,5 +1,5 @@
 // src/main/services/local-turns.ts
-// 🎯 core 侧转出：turns.jsonl / ops 写入的实现全在 `@diy/persistence`（##432 刀 1）。
+// 🎯 core 侧转出：turns.jsonl / ops 写入的实现全在 `@diy-agent/persistence`（##432 刀 1）。
 //
 // 为什么搬走：`turns` 的 `ref` 是 **ops 行号的锚点**（`{offset,len,seq}`）—— 「一行 turns 指向
 // ops 的哪一字节」是存储知识，core 不该知道。于是写 ops 与写 turns 都在包里同一处，
@@ -27,7 +27,7 @@ import {
     readTurnEntries as readTurnEntriesAt,
     readBoundary as readBoundaryAt,
     appendCompactionEntry as appendCompactionEntryAt,
-} from "@diy/persistence";
+} from "@diy-agent/persistence";
 
 export { TURN_SCHEMA_CURRENT, TURN_TEXT_MAX_BYTES };
 export type { OpsRef, OpsRefCheck, OpsRefReason, TurnEntry, TurnRecord, TurnRecordState, TurnTextV1, TurnDraft, TurnOp, CompactionEntry };

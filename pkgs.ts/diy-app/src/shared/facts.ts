@@ -1,7 +1,7 @@
 /**
  * shared/facts.ts — 事实库 RPC 契约（##404）
  *
- * 为什么这里有 zod 而内核没有：内核（`@diy/facts`）是纯 TS 类型 + 纯函数，**不认识 zod**
+ * 为什么这里有 zod 而内核没有：内核（`@diy-agent/facts`）是纯 TS 类型 + 纯函数，**不认识 zod**
  * （它要被 CLI 之外的消费者复用）；RPC 边界才需要"从任意输入解析出形状"。
  *
  * 形状漂移的护栏：文件末尾那条 `_SchemaMatchesKernel` 编译期断言 —— schema 与内核 `Fact`
@@ -10,7 +10,7 @@
  * 校验的两层分工（别混）：
  *   1. zod（这里）—— **形状**：字段名 / 类型 / 未知字段
  *   2. 内核 `validateFacts` —— **语义**：subject 不许含 `#`、probe 档必须有命令、scope 三轴合法
- * 走 RPC 时两层都跑：zod 在入参，内核在落盘前（`@diy/facts/node` 的 submit）。
+ * 走 RPC 时两层都跑：zod 在入参，内核在落盘前（`@diy-agent/facts/node` 的 submit）。
  */
 import { z } from 'zod';
 
@@ -64,7 +64,7 @@ export const FactSchema = z.object({
     refs: z.array(RefSchema).optional(),
 });
 
-/** 一条问题（与 `@diy/facts/node` 的 RepoProblem 同形：level 决定阻不阻断） */
+/** 一条问题（与 `@diy-agent/facts/node` 的 RepoProblem 同形：level 决定阻不阻断） */
 export const ProblemSchema = z.object({
     level: z.enum(['error', 'warning']),
     code: z.string(),
@@ -289,5 +289,5 @@ export const FactsProjectSchema = z.object({
  * 编译期护栏：schema 与内核 `Fact` 形状必须一致（不一致 → `tsc` 红，不用等运行时）。
  * 用 `extends` 而不是 `Equals`：schema 允许多出可选字段是无害的，**少了或类型不对**才是病。
  */
-export type _SchemaMatchesKernel = z.infer<typeof FactSchema> extends import('@diy/facts').Fact ? true : never;
+export type _SchemaMatchesKernel = z.infer<typeof FactSchema> extends import('@diy-agent/facts').Fact ? true : never;
 export const _schemaShapeOk: _SchemaMatchesKernel = true;

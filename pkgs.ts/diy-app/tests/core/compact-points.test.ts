@@ -2,8 +2,8 @@
 // 🎯 压缩点位 → 请求（步）的映射：压缩事件之后的**第一条「轮首请求」(step===1)** 被标记（##272 M4）
 //    —— 与 M2「在途轮次用轮首快照、轮中改配置要到下一轮才生效」一致（review 2026-10-08）。
 import { describe, it, expect } from "vitest";
-import { mapCompactPointsToSteps, stepKey } from "@diy/compaction/compact-points";
-import type { CompactEventRecord } from "@diy/compaction/compaction";
+import { mapCompactPointsToSteps, stepKey } from "@diy-agent/compaction/compact-points";
+import type { CompactEventRecord } from "@diy-agent/compaction/compaction";
 
 const step = (turnId: string, s: number, ts: string) => ({ turnId, step: s, ts });
 

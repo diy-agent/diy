@@ -28,7 +28,7 @@
 import { flowFile, anchorKey, parseAnchorKey, readPosts, appendPost, requirePostText, type FlowAnchor, type FlowPost, type FlowPostType } from "./flow-store";
 import { loadInstance } from "./flow";
 import { randomUUID } from "node:crypto";
-import type { FlowState, WorkflowDef } from "@diy/flow";
+import type { FlowState, WorkflowDef } from "@diy-agent/flow";
 
 /** 线程状态（由发言推：最后一条「状态发言」说了算；没有状态发言 ⇒ `open`） */
 export type FlowThreadStatus = "open" | "resolved" | "escalated";

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { ENVELOPE_ABOUT } from "@diy/context/envelope";
+import { ENVELOPE_ABOUT } from "@diy-agent/context/envelope";
 
 /**
  * `help.about` 是**每轮都付**的固定话术（进 system 前缀）。

@@ -1,6 +1,6 @@
 // src/index.ts
-// 🎯 包入口（barrel）：`import { ... } from "@diy/context"` 一次拿全。
-// 只用一个模块时走子路径（`@diy/context/envelope`）—— 与 barrel 同一份代码，不另起真源。
+// 🎯 包入口（barrel）：`import { ... } from "@diy-agent/context"` 一次拿全。
+// 只用一个模块时走子路径（`@diy-agent/context/envelope`）—— 与 barrel 同一份代码，不另起真源。
 export * from "./types.js";
 export * from "./path.js";
 export * from "./hash.js";

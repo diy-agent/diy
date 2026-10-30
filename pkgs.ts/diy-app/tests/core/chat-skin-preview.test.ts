@@ -19,7 +19,7 @@ const chatSource = (): string =>
         .map((f) => readFileSync(resolve(chatDir, f), "utf8"))
         .join("\n");
 const css = readFileSync(resolve(appDir, "src/renderer_solid/index.css"), "utf8");
-// ##448 刀 1：ChatSkinPreview / RowGutter 已搬进 @diy/ui-kit（纯展示组件），源码路径跟着走
+// ##448 刀 1：ChatSkinPreview / RowGutter 已搬进 @diy-agent/ui-kit（纯展示组件），源码路径跟着走
 const preview = readFileSync(resolve(appDir, "../diy-ui-kit/src/ChatSkinPreview.tsx"), "utf8");
 
 /**

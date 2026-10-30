@@ -377,7 +377,7 @@ guards.push({
   id: 'runtime-closure',
   script: 'node scripts/check-runtime-closure.mjs',
   run: true,
-  why: '扫 runtime/ 的 @diy 依赖闭包（未生成时自动跳过）',
+  why: '扫 runtime/ 的 @diy-agent 依赖闭包（未生成时自动跳过）',
 });
 
 const syncIo = fileList.filter((f) => /^pkgs\.ts\/diy-app\/src\/(main|shared|preload)\//.test(f));

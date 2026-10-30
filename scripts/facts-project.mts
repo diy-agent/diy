@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // scripts/facts-project.mts — 事实库的**投影预览 / A/B 对比**（##404）
 //
-// 投影 = 真源面向读取侧的视图（`@diy/facts/node` 的 `project`）。同真源可换算法，
+// 投影 = 真源面向读取侧的视图（`@diy-agent/facts/node` 的 `project`）。同真源可换算法，
 // 本脚本就是用来**实测哪种更省 token / 更好用的**（不靠推演）：
 //
 //   npx tsx scripts/facts-project.mts                          # 三种算法字节对比 + 问题清单
@@ -15,8 +15,8 @@
 // 退出码：0 = 正常（有投影冲突就是 1 —— 冲突不是"没事"，是库坏了）
 import path from 'node:path';
 import process from 'node:process';
-import { loadRepo, PROJECTION_ALGORITHMS, project, type ProjectionAlgorithm } from '@diy/facts/node';
-import { formatNs, parseNs, type Env } from '@diy/facts';
+import { loadRepo, PROJECTION_ALGORITHMS, project, type ProjectionAlgorithm } from '@diy-agent/facts/node';
+import { formatNs, parseNs, type Env } from '@diy-agent/facts';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 

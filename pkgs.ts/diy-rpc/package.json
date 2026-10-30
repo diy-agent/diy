@@ -1,5 +1,5 @@
 {
-  "name": "@diy/rpc",
+  "name": "@diy-agent/rpc",
   "version": "0.2.0",
   "description": "diy RPC 协议内核：三层（Envelope 传输抽象 / Raw Client·Server / 声明式 RPC）+ http / ws / electron / CLI 四种传输绑定",
   "license": "MIT",

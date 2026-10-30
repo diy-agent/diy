@@ -1,5 +1,5 @@
 {
-  "name": "@diy/template",
+  "name": "@diy-agent/template",
   "version": "0.1.0",
   "private": true,
   "description": "diy 提示词模版引擎：XML 控制节点 + 属性路径，无表达式、不转义、逐字节保真",

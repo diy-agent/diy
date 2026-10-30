@@ -2,12 +2,12 @@
 // scripts/check-pkg-visibility.mjs —— 包可见性白名单（2026-10-28，已接 ./sha.sh check）
 //
 // 判据（用户 2026-10-28：「除了 rpc/ui 两个包外目前都是 private，白名单」）：
-//   ① **对外发布白名单** = `@diy/rpc` · `@diy/ui` —— 这两个**不许** `private: true`
+//   ① **对外发布白名单** = `@diy-agent/rpc` · `@diy-agent/ui` —— 这两个**不许** `private: true`
 //      （带了就发不出去：npm publish 会直接拒绝，--force 也不行）
-//   ② 其余所有包（`@diy/app`、`@diy/dev`、`@diy-agent/workbench-plugin` 等）**必须** `private: true`
-//   ③ 对外包**不许依赖**内部包（`@diy/*` 里除白名单外的）—— 一旦依赖，那个内部包事实上就被发布了：
+//   ② 其余所有包（`@diy-agent/app`、`@diy-agent/dev`、`@diy-agent/workbench-plugin` 等）**必须** `private: true`
+//   ③ 对外包**不许依赖**内部包（`@diy-agent/*` 里除白名单外的）—— 一旦依赖，那个内部包事实上就被发布了：
 //      使用者装上对外包后，npm 会去 registry 找这个内部包 ⇒ 404 或误装同名包。
-//      ##460 改名后对外包自己也在 `@diy/` 下，故判据按「依赖名是否在白名单里」区分，不按 scope。
+//      ##460 改名后对外包自己也在 `@diy-agent/` 下，故判据按「依赖名是否在白名单里」区分，不按 scope。
 //
 // 为什么用脚本而不是写进文档：能自动判的别靠人记（同 ##442「能推导的不许让用户设」的思路）。
 //
@@ -25,7 +25,7 @@ const PKGS_DIR = join(ROOT, "pkgs.ts");
 const PKG_ROOTS = [PKGS_DIR, join(ROOT, "apps")];
 
 /** 对外发布白名单（**唯一真源**；加一个包 = 改这里 + 去掉它的 private） */
-const PUBLIC_PACKAGES = new Set(["@diy/rpc", "@diy/ui"]);
+const PUBLIC_PACKAGES = new Set(["@diy-agent/rpc", "@diy-agent/ui"]);
 
 const listOnly = process.argv.includes("--list");
 
@@ -88,7 +88,7 @@ for (const { dir, file } of pkgs) {
     }
     // ③ 对外包不许依赖内部包
     if (shouldBePublic) {
-        const bad = depNames(pkg).filter((d) => d.startsWith("@diy/"));
+        const bad = depNames(pkg).filter((d) => d.startsWith("@diy-agent/"));
         if (bad.length > 0) {
             problems.push(
                 `${name}: 对外包依赖了内部包 ${bad.join(", ")} —— 使用者装它会去 registry 找这些内部包（404 或误装同名包）。` +
@@ -110,7 +110,7 @@ if (listOnly) {
 // ── ⑤ 包的**类型入口**不许指向 lib/（2026-10-29 事故）────────────────────────
 // 事故：#453 把各包 `main` 指向 `./lib/index.js` 时，`types` 也一起指向 `./lib/index.d.ts`。
 // 而 `lib/` 在 `.gitignore` 里（产物不入库）⇒ **任何没跑过 build-pkgs 的仓库**
-// 类型解析全失败（实测 main 上 52 个 error TS，`Cannot find module '@diy/session'`），
+// 类型解析全失败（实测 main 上 52 个 error TS，`Cannot find module '@diy-agent/session'`），
 // 而跑过 build 的 worktree 里 check 是绿的 —— 典型的「验了脏工作区，没验干净态」。
 //
 // 判据：`types` 与 `exports.*.types` 一律指 `./src/…`（tsc 直接读 TS 源，不依赖产物）；
@@ -151,12 +151,12 @@ console.log(
 );
 
 // ── ④ workspace 打包清单（2026-10-28 追加，##266 实测事故）──────────────────
-// 事故：拆出 @diy/context / @diy/compaction / @diy/ui-kit 后忘了加进 diy-app 的
-// `vite.pkg-deps.ts::WORKSPACE_TS_DEPS` ⇒ 产物里留下裸 `import "@diy/context/…"` ⇒
+// 事故：拆出 @diy-agent/context / @diy-agent/compaction / @diy-agent/ui-kit 后忘了加进 diy-app 的
+// `vite.pkg-deps.ts::WORKSPACE_TS_DEPS` ⇒ 产物里留下裸 `import "@diy-agent/context/…"` ⇒
 // Electron 启动即 `ERR_MODULE_NOT_FOUND`，**intent 测试全 skipped**，而 `./sha.sh check`
 // 与单元测试全绿（它们不走打包路径）—— 出一条「check 绿但跑不起来」的隐性红。
 //
-// 判据：diy-app 的 dependencies 里每个 `@diy/*`，都必须在 WORKSPACE_TS_DEPS 里出现。
+// 判据：diy-app 的 dependencies 里每个 `@diy-agent/*`，都必须在 WORKSPACE_TS_DEPS 里出现。
 {
     const pkgDepsFile = join(PKGS_DIR, "diy-app", "vite.pkg-deps.ts");
     const appPkgFile = join(PKGS_DIR, "diy-app", "package.json");
@@ -167,7 +167,7 @@ console.log(
             [...(block?.[1] ?? "").matchAll(/["']([^"']+)["']/g)].map((m) => m[1]),
         );
         const appPkg = JSON.parse(readFileSync(appPkgFile, "utf8"));
-        const needed = Object.keys(appPkg.dependencies ?? {}).filter((d) => d.startsWith("@diy/"));
+        const needed = Object.keys(appPkg.dependencies ?? {}).filter((d) => d.startsWith("@diy-agent/"));
         const missing = needed.filter((d) => !listed.has(d));
         if (missing.length > 0) {
             problems.push(
@@ -184,10 +184,10 @@ console.log(
 // 「打包时才发现加载不了」。判据：main / exports 的出口必须以 `.js` 结尾（产物是 lib/）。
 // 修法：每包 `tsconfig.build.json`（outDir=lib）→ `./sha.sh build` → main 指 `./lib/index.js`。
 //
-// 例外（判据：**Node 能不能真的加载**）：`@diy/ui-kit` 是 Solid JSX 组件库 —— JSX 必须由
+// 例外（判据：**Node 能不能真的加载**）：`@diy-agent/ui-kit` 是 Solid JSX 组件库 —— JSX 必须由
 // 渲染端编译器（vite 的 solid 插件）编译，tsc 只能 `jsx: preserve` 出带 JSX 的 `.js`（Node 解析即炸），
 // 故它没有 lib、只被 vite 打进 renderer，出口保持 `./src/index.ts`。
-const TS_ENTRY_EXEMPT = new Set(["@diy/ui-kit"]);
+const TS_ENTRY_EXEMPT = new Set(["@diy-agent/ui-kit"]);
 {
     for (const { dir, file } of pkgs) {
         let pkg;

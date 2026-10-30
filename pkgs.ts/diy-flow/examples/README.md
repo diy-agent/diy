@@ -25,7 +25,7 @@ tests/examples.<行业>.test.ts 契约测试：定义 / 轨迹 / view / 事件�
 
 三条纪律：
 
-1. **只用公开 API**：`examples/**` 从 `@diy/flow` 取东西（像外部工作流包那样写），**不摸 `../src/` 的内部模块**；
+1. **只用公开 API**：`examples/**` 从 `@diy-agent/flow` 取东西（像外部工作流包那样写），**不摸 `../src/` 的内部模块**；
    不碰 `fs` / 网络 / 新依赖（真接入是宿主的事，见 ##319）。
 2. **先注册齐、再 `createRuntime`**：组合期就按名查 `pred:` / `action:` / `notify`，
    错字（`pred:ci_grenn`）与漏注册当场 `unknown-plugin` —— 不留到「走到那一步」才炸（##166 §13.1）。
@@ -80,13 +80,13 @@ tests/examples.<行业>.test.ts 契约测试：定义 / 轨迹 / view / 事件�
 
 ## 发版时：升为独立包
 
-`@diy/flow` 的 `package.json` 的 `exports` **只有 `"."`** —— 跨包按**子路径** import（`@diy/flow/src/view`）是 hack。因此：
+`@diy-agent/flow` 的 `package.json` 的 `exports` **只有 `"."`** —— 跨包按**子路径** import（`@diy-agent/flow/src/view`）是 hack。因此：
 
 - **通用渲染器契约**（`src/view.ts`）已从 `index.ts` 末尾以 `export type *` **类型导出**：消费者按形状收窄
-  `View.payload` 直接 `import type { ViewData, ViewShapes } from '@diy/flow'` —— 纯类型 ⇒ **零运行时代价**
+  `View.payload` 直接 `import type { ViewData, ViewShapes } from '@diy-agent/flow'` —— 纯类型 ⇒ **零运行时代价**
   （不产出运行时成员、不改 `exports` 策略）。宿主 ##320 要按 renderer id 渲染九种 `data`，从这里取形状即可，
   **不必自持第二份形状清单**。
-- `examples/**` 目前**只在本包内**被引用：范例自己走 `@diy/flow` 公开面（模拟外部工作流包的写法），
+- `examples/**` 目前**只在本包内**被引用：范例自己走 `@diy-agent/flow` 公开面（模拟外部工作流包的写法），
   测试走包内公开面 `../src/index`（含上面这行类型导出）。
 - **发版时把 `examples/` 升为独立包**（本仓 `pkgs.ts/*` 一目录一包）：那时行业包按**正式包名**取用，
   子路径（或独立包名）即正式 API，**不必再 hack**。

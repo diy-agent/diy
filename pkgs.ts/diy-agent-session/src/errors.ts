@@ -1,4 +1,4 @@
-// errors.ts — @diy/session 统一错误类型
+// errors.ts — @diy-agent/session 统一错误类型
 //
 // 任何一条诊断都不降级为静默丢弃：非法消息 / 非法增量 / 并发发话一律抛带 code 的错误
 // （判据见 rule.err-triage#code，`<域>/<kebab-case>`）。宿主按 code 决定处置方式。

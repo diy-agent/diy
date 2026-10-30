@@ -9,7 +9,7 @@
 //   · **不做日志管理**：输出只落该进程自己的 `out.log`（它是进程的产物，不是系统主数据）。
 //   · 判据仍然只有一条：**能在任何时候回答「它是死是活」**。
 
-import type { NotifyItem } from "@diy/context/envelope";
+import type { NotifyItem } from "@diy-agent/context/envelope";
 
 /** 进程四态。**不设 `lost`**：没有恢复就没有"不知道"——重启后表是空的，不是 lost。 */
 export type RunState = "running" | "exited" | "killed" | "failed";

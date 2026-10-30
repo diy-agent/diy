@@ -1,5 +1,5 @@
 // tests/persistence.test.ts
-// @diy/persistence 的基本契约：键算法稳定、路径分层、appender 给出的锚点可被 checkOpsRef 认回、
+// @diy-agent/persistence 的基本契约：键算法稳定、路径分层、appender 给出的锚点可被 checkOpsRef 认回、
 // 压缩边界 append/read 往返。
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

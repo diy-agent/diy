@@ -1,9 +1,9 @@
-// @diy/talk — diy 对话容器内核：事件 / 锚点 / 反应原语 + role 翻译铁律
+// @diy-agent/talk — diy 对话容器内核：事件 / 锚点 / 反应原语 + role 翻译铁律
 //
-// 零依赖、纯 TypeScript：不 import `node:fs` / `electron` / `@diy/app`，**不取时间**
+// 零依赖、纯 TypeScript：不 import `node:fs` / `electron` / `@diy-agent/app`，**不取时间**
 // （`at` 由调用方传入）。因此现在就能拆成单独项目（##311 §四）。
 //
-//   import { createReaction, docRangeAnchor, assertThreadRefs, assemblyRole } from '@diy/talk';
+//   import { createReaction, docRangeAnchor, assertThreadRefs, assemblyRole } from '@diy-agent/talk';
 //
 //   const target = docRangeAnchor('rev-7', 31 * 40, '此处有问题');   // 钉 revision
 //   const a = createReaction({ id: 'r1', author: 'b', turnId: 't1', target,
@@ -23,7 +23,7 @@
 // 装配（##314）：`assemble({ sources, strategy, window, selfId }) → Message[]` ——
 // 多源 + 投影 + 窗口 装配成一次 LLM 请求；三内置策略 `full` / `text-only` / `changes-only`。
 //
-// 边界：本包**不做存储、不碰 LLM SDK**（不 import node:fs / electron / @diy/app，不拼 prompt 的具体 SDK 形状）——
+// 边界：本包**不做存储、不碰 LLM SDK**（不 import node:fs / electron / @diy-agent/app，不拼 prompt 的具体 SDK 形状）——
 // 工作流容器归 ##313，落地格式与宿主接入归 ##319。
 
 export { TalkError } from './errors.js';

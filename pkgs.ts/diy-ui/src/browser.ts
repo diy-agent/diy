@@ -3,10 +3,10 @@
  *
  * 为什么需要它：根入口 `index.ts` re-export 了 `providers/pi-tui.js`（Node-only），
  * 浏览器打包器一旦 import 根入口就会把 pi-tui 拖进 bundle。于是浏览器侧不得不
- * deep-import `node_modules/@diy/ui/signal.js` 这种路径（脆：包管理器一换就断）。
+ * deep-import `node_modules/@diy-agent/ui/signal.js` 这种路径（脆：包管理器一换就断）。
  *
  * 浏览器侧统一从这里取：
- *   import { Signal, html, GenApp } from "@diy/ui/browser";
+ *   import { Signal, html, GenApp } from "@diy-agent/ui/browser";
  *
  * 组件层用 **Web Awesome**（`wa-*` 自定义元素）：diyui 只管声明式结构与响应式，
  * 交互控件交给 Web Awesome（`html.tag("wa-button", {...})`）。两者互不依赖，可换。

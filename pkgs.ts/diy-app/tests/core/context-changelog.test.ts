@@ -28,7 +28,7 @@ import {
     readCtxLog,
     readCtxLogEntries,
 } from "../../src/main/core/context-changelog";
-import type { ContextTreeState } from "@diy/context/types";
+import type { ContextTreeState } from "@diy-agent/context/types";
 
 const stateOf = (values: Record<string, unknown>): ContextTreeState => ({
     values,

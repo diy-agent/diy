@@ -1,5 +1,5 @@
 {
-  "name": "@diy/app-minimal",
+  "name": "@diy-agent/app-minimal",
   "version": "0.1.0",
   "private": true,
   "description": "最小工作台装配：外壳 + 布局骨架 + 页面插件（第一刀：假 LlmPort，只验 UI 链路）",
@@ -20,12 +20,12 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
-    "@diy/chat-page": "*",
-    "@diy/llm-provider": "*",
-    "@diy/session": "*",
-    "@diy/session-store-jsonl": "*",
-    "@diy/workbench": "*",
-    "@diy/workbench-ui": "*"
+    "@diy-agent/chat-page": "*",
+    "@diy-agent/llm-provider": "*",
+    "@diy-agent/session": "*",
+    "@diy-agent/session-store-jsonl": "*",
+    "@diy-agent/workbench": "*",
+    "@diy-agent/workbench-ui": "*"
   },
   "devDependencies": {
     "@types/node": "^26.1.0",

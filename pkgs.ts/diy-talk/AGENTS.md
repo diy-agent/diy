@@ -1,6 +1,6 @@
-# @diy/talk — 对话容器内核（事件 / 锚点 / 反应 + role 铁律 + 装配器）
+# @diy-agent/talk — 对话容器内核（事件 / 锚点 / 反应 + role 铁律 + 装配器）
 
-> 全仓契约见**仓库根 `AGENTS.md`**。本包是**零依赖纯内核**：不 import `node:fs` / `electron` / `@diy/app`，
+> 全仓契约见**仓库根 `AGENTS.md`**。本包是**零依赖纯内核**：不 import `node:fs` / `electron` / `@diy-agent/app`，
 > **不取时间**（`at` 由调用方传入）⇒ 现在即可拆成单独项目。这条不是口号：意图测试 R7 静态扫 `src/**`。
 > 需求真源是 `tests/intent.talk.test.ts`（R1–R7）与 `tests/intent.assemble.test.ts`（A1–A6）。
 

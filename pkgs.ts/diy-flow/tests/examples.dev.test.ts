@@ -11,11 +11,11 @@
 //   D5 参数层：hint 插值 · 插件按 `ctx.params[本节点 id]` 读值 · 参数值驱动宿主护栏（maxBounces）
 //
 // 风格：**只用包内公开 API**（`../src/index`，与其它意图测试一致）断言行为，不摸内核私有模块；
-// 范例那边走 `@diy/flow`（模拟外部工作流包的写法），两边解析到同一份模块。
+// 范例那边走 `@diy-agent/flow`（模拟外部工作流包的写法），两边解析到同一份模块。
 
 import { describe, expect, it } from 'vitest';
-// `Event` 的原语归 `@diy/talk`（内核的 `Transition.event` 就复用它）—— 内核目前未再导出，故从依赖取
-import type { Event } from '@diy/talk';
+// `Event` 的原语归 `@diy-agent/talk`（内核的 `Transition.event` 就复用它）—— 内核目前未再导出，故从依赖取
+import type { Event } from '@diy-agent/talk';
 import {
     FlowError,
     advance,

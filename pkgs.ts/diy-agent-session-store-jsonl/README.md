@@ -1,10 +1,10 @@
-# @diy/session-store-jsonl
+# @diy-agent/session-store-jsonl
 
-`@diy/session` 的**分桶 jsonl** 存储适配器（可选包；core 本身零 IO）。
+`@diy-agent/session` 的**分桶 jsonl** 存储适配器（可选包；core 本身零 IO）。
 
 ```ts
-import { createSession } from '@diy/session';
-import { openJsonlSessionStore } from '@diy/session-store-jsonl';
+import { createSession } from '@diy-agent/session';
+import { openJsonlSessionStore } from '@diy-agent/session-store-jsonl';
 
 const store = await openJsonlSessionStore({ dir: '/path/to/session-1' }); // 缺省桶 8 MB
 const history = await store.readFrom(0);

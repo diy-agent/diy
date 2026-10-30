@@ -8,7 +8,7 @@
 //   · `wire` 档 marker 不显著膨胀（固定部分 ≤ 120 字符，路径另计）。
 
 import { describe, it, expect } from "vitest";
-import { cutMarker, parseCutMarkers, CUT_SCOPES } from "@diy/context/format/cut-marker";
+import { cutMarker, parseCutMarkers, CUT_SCOPES } from "@diy-agent/context/format/cut-marker";
 
 describe("cutMarker：构造", () => {
     it("属性齐全时逐个写出来（unit=lines 是缺省 ⇒ 不写）", () => {

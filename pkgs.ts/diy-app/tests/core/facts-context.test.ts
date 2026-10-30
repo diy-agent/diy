@@ -1,6 +1,6 @@
 // tests/core/facts-context.test.ts — 事实库 → 上下文变量树单元（##404 待办 4）
 //
-// 压的是**接线**，不是判据（判据在 @diy/facts 已各自单测）：
+// 压的是**接线**，不是判据（判据在 @diy-agent/facts 已各自单测）：
 //   ① 没有库 ⇒ 单元**缺席**（不是空对象 —— `facts: {}` 会被读成"库在但没事实"）
 //   ② 有任务库 ⇒ claim 作 key（不是数组里塞 id）
 //   ③ env 决定解析出哪个变体，并带 resolvedBy / variants

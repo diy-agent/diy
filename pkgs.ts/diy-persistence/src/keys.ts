@@ -1,5 +1,5 @@
 // src/keys.ts
-// 🎯 会话键算法（**唯一真源**）：`@diy/persistence` 与 diy-app 的 local-paths 都从这里取。
+// 🎯 会话键算法（**唯一真源**）：`@diy-agent/persistence` 与 diy-app 的 local-paths 都从这里取。
 //
 // 为什么必须只有一份：`keyOf` 决定「哪些文件属于同一个会话」，`sessionIdOf` 决定上游的会话
 // 亲和头 / 注册表条目 id。两处漂移 = 两个任务互相串历史 / 串上游会话，而症状与键算法毫无关系。

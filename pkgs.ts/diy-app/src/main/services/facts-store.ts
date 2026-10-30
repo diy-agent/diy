@@ -1,7 +1,7 @@
 /**
  * facts-store.ts — 事实库的 RPC 侧适配（##404）
  *
- * 分工：**判据与存储都在 `@diy/facts`**（内核纯函数 + `@diy/facts/node` 读写/事务），
+ * 分工：**判据与存储都在 `@diy-agent/facts`**（内核纯函数 + `@diy-agent/facts/node` 读写/事务），
  * 本文件只做三件 RPC 才有的事：
  *   1. 定位真源目录（`--dir` > `DIY_FACTS_DIR` > 从 cwd / 包根向上找 `knowledge/subjects.yaml`）
  *   2. 把 CLI 的一行参数（逗号分隔的 claim / files）摊成表
@@ -31,7 +31,7 @@ import {
     type Ns,
     type Ref,
     type Scope,
-} from "@diy/facts";
+} from "@diy-agent/facts";
 import {
     checkFacts,
     checkRepo,
@@ -43,7 +43,7 @@ import {
     type SubjectDef,
     type Repo,
     type SubmitReport,
-} from "@diy/facts/node";
+} from "@diy-agent/facts/node";
 import type { z } from "zod";
 import { diyHome } from "../core/state";
 import type { FactSchema, RefSchema } from "../../shared/facts";

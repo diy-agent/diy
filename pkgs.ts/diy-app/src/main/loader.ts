@@ -9,7 +9,7 @@
 // apply 约定：`export default function apply(ctx, config)` 或 `export function apply(...)`。
 // `ctx` 就是 host —— 包之间只通过 `host.get(id)` 拿彼此，不互相 import。
 
-import { InvariantError } from "@diy/context/format/invariant";
+import { InvariantError } from "@diy-agent/context/format/invariant";
 import { loadPackage } from "./runtime-resolve";
 
 export interface LoaderEntry {

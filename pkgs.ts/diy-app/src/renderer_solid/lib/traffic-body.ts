@@ -5,7 +5,7 @@
 // 原实现只插一句 `<中间省略 N 字节（正文共 M 字节）>`，读者分不出「原文完整、只是日志没存」
 // 和「发出去的就是残缺的」—— 最初那次误判（把任务 body 的 425 KB 当成真被塞进请求）就出在这。
 
-import { cutMarker } from "@diy/context/format/cut-marker";
+import { cutMarker } from "@diy-agent/context/format/cut-marker";
 import type { BodyCaptureSchema } from "../../shared/traffic-record";
 import type { z } from "zod";
 

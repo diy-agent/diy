@@ -10,7 +10,7 @@
 //   R4  打回不增节点：一条 `bounce` 边只是让目标节点**再驻留一次**（`seq` 递增），节点数不变
 //   R5  三场景轨迹投影：##166 §14.3 的三条完整轨迹（开发 8 步 / 视频 12 步 / 金融 10 步）逐节点复现
 //   R6  非法转移一律报错：未进入口 / 未知节点 / 无对应边 / 事件 id 重复（带点路径定位）
-//   R7  纯内核：不 import node:fs / electron / @diy/app，不取时间（at 由调用方传入）
+//   R7  纯内核：不 import node:fs / electron / @diy-agent/app，不取时间（at 由调用方传入）
 //
 // 测试风格：**以 ##166 §14.3 的真实工作流为素材**（开发 / 视频 / 金融），断言公开 API 的
 // 行为与错误码，不断言内部实现。
@@ -18,7 +18,7 @@
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { createEvent, type Event } from '@diy/talk';
+import { createEvent, type Event } from '@diy-agent/talk';
 import { describe, expect, it } from 'vitest';
 import {
     ACTORS,
@@ -50,7 +50,7 @@ function caught(fn: () => unknown): FlowError {
 const AT = '2026-10-13T00:00:00.000Z';
 
 let seq = 0;
-/** 造一条「位置变更」事件：以 node 锚点指向目标节点（复用 @diy/talk 的 Event 原语） */
+/** 造一条「位置变更」事件：以 node 锚点指向目标节点（复用 @diy-agent/talk 的 Event 原语） */
 function move(to: string, opts: { author?: string; at?: string } = {}): Event {
     seq += 1;
     return createEvent({
@@ -389,13 +389,13 @@ describe('R7 纯内核（##311 §四）', () => {
     const SRC_DIR = fileURLToPath(new URL('../src', import.meta.url));
     const files = readdirSync(SRC_DIR).filter((f) => f.endsWith('.ts'));
 
-    it('不 import node:fs / electron / @diy/app', () => {
+    it('不 import node:fs / electron / @diy-agent/app', () => {
         expect(files.length).toBeGreaterThan(0);
         for (const f of files) {
             const text = readFileSync(`${SRC_DIR}/${f}`, 'utf8');
             expect(text, `${f} 不应 import node:*`).not.toMatch(/from\s+['"]node:/);
             expect(text, `${f} 不应 import electron`).not.toMatch(/from\s+['"]electron['"]/);
-            expect(text, `${f} 不应 import @diy/app`).not.toMatch(/from\s+['"]@diy\/app['"]/);
+            expect(text, `${f} 不应 import @diy-agent/app`).not.toMatch(/from\s+['"]@diy-agent\/app['"]/);
         }
     });
 

@@ -1,5 +1,5 @@
 // src/main/core/local-paths.ts
-// 🎯 会话落盘路径的**core 侧薄包装**（##432 刀 1）：算法全在 `@diy/persistence`，
+// 🎯 会话落盘路径的**core 侧薄包装**（##432 刀 1）：算法全在 `@diy-agent/persistence`，
 //    这里只把 `diyHome()` 注入进去，保持调用方原有的 `taskUri`-only 签名。
 //
 // 为什么要搬（用户 2026-10-25 口径）：「turns 的 ref 是 ops 行号」这种**存储知识**不许泄漏给 core；
@@ -25,7 +25,7 @@ import {
     sessionStateFile as sessionStateFileAt,
     resolveSessionFile as resolveSessionFileAt,
     type SessionKind,
-} from "@diy/persistence";
+} from "@diy-agent/persistence";
 import { diyHome } from "./state";
 
 export { CLEARED_SESSION_KINDS, SESSION_KINDS, keyOf, type SessionKind };

@@ -51,9 +51,9 @@ build() {
 
 build-main() {
   local d; d="$(_build_dir)"
-  # @diy/* 保持外部：运行时按包名解析（真插件边界，不把插件打成一个巨型 bundle）
+  # @diy-agent/* 保持外部：运行时按包名解析（真插件边界，不把插件打成一个巨型 bundle）
   run npx esbuild main.ts --bundle --platform=node --format=esm --target=node22 \
-    --external:electron "--external:@diy/*" --outfile="$d/main/index.mjs"
+    --external:electron "--external:@diy-agent/*" --outfile="$d/main/index.mjs"
 }
 
 build-preload() {

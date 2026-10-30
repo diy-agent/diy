@@ -8,7 +8,7 @@ import {
     retainTokensOf,
     selectKeptBoundary,
     triggerTokensOf,
-} from "@diy/compaction/select-kept-boundary";
+} from "@diy-agent/compaction/select-kept-boundary";
 
 const msg = (tokens: number, user = false) => ({ tokens, user });
 

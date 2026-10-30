@@ -21,7 +21,7 @@
 // ⚠️ 零 task：房间只认成员 id。房间 id 由宿主给，本包不拿它去查任何东西。
 // ⚠️ 零 IO：水位（MemberCursor）只是内存 + 入参/出参，持久化由宿主的 RoomStore 负责。
 
-import { systemClock } from '@diy/session';
+import { systemClock } from '@diy-agent/session';
 import { RoomError } from './errors.js';
 import { parseMentions, resolveRecipients } from './mentions.js';
 import type {

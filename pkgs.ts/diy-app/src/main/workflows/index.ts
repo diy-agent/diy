@@ -8,7 +8,7 @@
 // ##341 起，本注册表还**转出「执行者绑定」的取法**（`executors.ts`）—— 定义说「哪一类主体推得动」，
 // 执行者表说「到底谁去干」，两者都按定义 id 关联，故同住这一层。
 
-import type { WorkflowDef } from '@diy/flow';
+import type { WorkflowDef } from '@diy-agent/flow';
 import { DEV_WORKFLOW } from './dev';
 
 export { executorOf } from './executors';

@@ -13,7 +13,7 @@
 // ⚠️ 判据只看**本条用户消息**，不看历史累计 —— 历史累计归压缩策略（`auto-compact`），
 // 两件事混成一个数会让「超长粘贴」和「会话变长」互相背锅。
 
-import { estimateTokens } from "@diy/compaction/compaction";
+import { estimateTokens } from "@diy-agent/compaction/compaction";
 
 /** 缺省阈值：10 万字符（≈ 25k token；一般上下文窗口下这是「明显异常」的起点） */
 export const DEFAULT_INPUT_LIMIT_CHARS = 100_000;

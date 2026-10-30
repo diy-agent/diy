@@ -4,7 +4,7 @@
  * 从 `LocalChatPage` 的 JSX 逐字搬出（##448 刀 2）；状态由 `useLocalChatPage` 持有。
  */
 import type { ReasoningEffort } from "../../../main/services/local-agent";
-import { IconCompress, IconExpand } from "@diy/ui-kit";
+import { IconCompress, IconExpand } from "@diy-agent/ui-kit";
 import { Match, on, Show, Switch } from "solid-js";
 import { MdEditor } from "../MdEditor";
 import { NoticeDetail } from "../NoticeDetail";

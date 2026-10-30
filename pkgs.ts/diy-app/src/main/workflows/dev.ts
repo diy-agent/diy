@@ -1,7 +1,7 @@
 // src/main/workflows/dev.ts — 宿主自持的**开发工作流**定义（##341 升级：6 节点形状 + 1 个人工审批点）
 //
 // 为什么宿主持有一份定义（##319 owner 口径 §1）：`diy flow` 域要进真实系统，需要一个确定、可断言的
-// 定义把「存储 + CLI + 提示词装配」串起来。**不 import ##317 的 `examples/**`**（`@diy/flow` 的
+// 定义把「存储 + CLI + 提示词装配」串起来。**不 import ##317 的 `examples/**`**（`@diy-agent/flow` 的
 // `exports` 只有 `"."`，跨包子路径 import 是 hack）；「工作流开发包」成熟为独立包后，换的只是注册表
 // 来源（`workflows/index.ts`），域与存储不动。
 //
@@ -29,7 +29,7 @@
 // 纯文本 raw ≠ `doc` 的 `DocData`（`{ text }`），故文本类节点必须挂 `text` 插件。
 // `approve` 故意**不声明** `art`：人工审批没有机器产物（意见正文的载体归 ##342），不编一个假产物出来。
 
-import { defineWorkflow } from '@diy/flow';
+import { defineWorkflow } from '@diy-agent/flow';
 import type { NodeExecutor } from './index';
 
 export const DEV_WORKFLOW = defineWorkflow({

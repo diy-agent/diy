@@ -9,7 +9,7 @@
 // **范例态**：外部事实由 `FinanceFacts` 注入，缺省「都过」；节点产物（raw）由 `FINANCE_NODE_DATA` 供给。
 // 测试里把 `weightOk` 先置 `false`（风控打回）再置 `true`（调完权重通过），两条路都跑到。
 
-import type { ActionPlugin, GuardPlugin, PluginRegistry, RenderPlugin } from '@diy/flow';
+import type { ActionPlugin, GuardPlugin, PluginRegistry, RenderPlugin } from '@diy-agent/flow';
 import type { FinanceNodeId } from './finance';
 
 /** 外部世界的事实（真实现此刻去读行情 / 跑风控 / 连券商；范例用注入的假数据） */

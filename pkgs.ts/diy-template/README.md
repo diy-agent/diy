@@ -1,4 +1,4 @@
-# @diy/template
+# @diy-agent/template
 
 diy 提示词模版引擎：XML 控制节点 + 属性路径，**无表达式、不转义、逐字节保真**。
 零依赖、纯 TypeScript、Node / 浏览器 / Electron 通用（不认识文件系统，include 由宿主注入 resolver）。
@@ -8,7 +8,7 @@ diy 提示词模版引擎：XML 控制节点 + 属性路径，**无表达式、�
 ## 快速开始
 
 ```ts
-import { render } from '@diy/template';
+import { render } from '@diy-agent/template';
 
 render('<diy>{{diy.cli}}</diy>', { globals: { diy: { cli: '/repo/diy.sh' } } });
 // => '<diy>/repo/diy.sh</diy>'

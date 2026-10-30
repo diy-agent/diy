@@ -1,18 +1,18 @@
 // index.ts — profile：这份 app 装哪些页面，只由这一份 TS 决定（不用 json 配置）。
 //
 // ##458 的裁决：插件引用 = **直接 import**，不是字符串包名。
-//   现在：`import * as chatPageMain from "@diy/chat-page/main"` → tsc 检查包存在、
+//   现在：`import * as chatPageMain from "@diy-agent/chat-page/main"` → tsc 检查包存在、
 //        导出类型也一起进来；包名写错一个字母就是编译错，不必等到起窗口。
-//   以前：`{ id, name: "@diy/chat-page/main" }` + 运行时 dynamic import → 只有运行时才知道。
+//   以前：`{ id, name: "@diy-agent/chat-page/main" }` + 运行时 dynamic import → 只有运行时才知道。
 //
-// 外壳（@diy/workbench）+ 骨架（@diy/workbench-ui）都不认识具体页面，页面由这里带进来。
+// 外壳（@diy-agent/workbench）+ 骨架（@diy-agent/workbench-ui）都不认识具体页面，页面由这里带进来。
 
-import * as chatPageMain from "@diy/chat-page/main";
-import { openJsonlSessionStore, type JsonlSessionStore } from "@diy/session-store-jsonl";
-import type { SessionStore } from "@diy/session";
+import * as chatPageMain from "@diy-agent/chat-page/main";
+import { openJsonlSessionStore, type JsonlSessionStore } from "@diy-agent/session-store-jsonl";
+import type { SessionStore } from "@diy-agent/session";
 import { join } from "node:path";
-import { DEFAULT_MODEL_ID, createOpenAiCompatible, type LlmProvider } from "@diy/llm-provider";
-import type { PluginEntry } from "@diy/workbench";
+import { DEFAULT_MODEL_ID, createOpenAiCompatible, type LlmProvider } from "@diy-agent/llm-provider";
+import type { PluginEntry } from "@diy-agent/workbench";
 import { TITLE } from "./title.js";
 
 export interface Assembly {

@@ -13,7 +13,7 @@ export interface PageInvokeRequest {
     readonly args?: unknown;
 }
 
-/** preload 暴露到 window 上的桥（renderer 侧实现见 @diy/workbench-ui 的 WorkbenchGateway） */
+/** preload 暴露到 window 上的桥（renderer 侧实现见 @diy-agent/workbench-ui 的 WorkbenchGateway） */
 export interface WorkbenchBridge {
     listPages(): Promise<PageInfo[]>;
     invoke(pageId: string, method: string, args?: unknown): Promise<unknown>;

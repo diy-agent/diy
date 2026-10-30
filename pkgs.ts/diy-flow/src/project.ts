@@ -14,7 +14,7 @@
 //      `initialState()` 起步 ⇒ 重放出来的态没有 `params`。
 // 三者都只能由**落盘的状态文件**给出（重建路径拿回的是位置与折线）。
 
-import type { Event } from '@diy/talk';
+import type { Event } from '@diy-agent/talk';
 import { apply, initialState, type Visit } from './container.js';
 import type { WorkflowDef } from './define.js';
 import { FlowError } from './errors.js';

@@ -31,8 +31,8 @@ setDefaultResultOrder("ipv4first");
 console.log('[net] 已钉死 IPv4 优先（setDefaultResultOrder("ipv4first")）：本机无 IPv6 出口，避免 AAAA 排头时 ENETUNREACH');
 import { fileURLToPath } from "node:url";
 import { mkdirSync } from "node:fs";
-import type { ServerBinding } from "@diy/rpc";
-import { createMainTransport } from "@diy/rpc/electron";
+import type { ServerBinding } from "@diy-agent/rpc";
+import { createMainTransport } from "@diy-agent/rpc/electron";
 import { RpcPortService } from "./services/rpc-port";
 import { AppConfig } from "./core/app-config";
 import { bindApi, bindAppHandlers, setRpcPort } from "./services/api-impl";
@@ -263,7 +263,7 @@ function applyWindowTitle(): void {
   console.log(`[diy] 窗口标题: ${title}`);
 }
 
-function createWindow(): { binding: ServerBinding; ipcTransport: import("@diy/rpc").EnvelopeTransport } {
+function createWindow(): { binding: ServerBinding; ipcTransport: import("@diy-agent/rpc").EnvelopeTransport } {
   const WIDTH = 1200;
   const HEIGHT = 800;
   // 窗口标题 = 实例标识（`diy(<数据根>) [dev|test] <分支> :<端口> pid <PID>`）。
@@ -360,7 +360,7 @@ app.on("render-process-gone", (_event, webContents, details) => {
 
 // ── RPC 端口服务（外部 CLI 接入） ──
 
-async function startRpcPort(ipcTransport: import("@diy/rpc").EnvelopeTransport): Promise<boolean> {
+async function startRpcPort(ipcTransport: import("@diy-agent/rpc").EnvelopeTransport): Promise<boolean> {
   // 裁决逻辑（含「非生产不沿用记录里的 18888」）在 runtime.ts::resolvePort —— 纯函数、可单测。
   const resolved = resolvePort({
     env: cfg.env,

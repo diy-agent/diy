@@ -5,7 +5,7 @@ domain: diydev
 facts:
   diydev.find#cli:
     value: |-
-      `src/cli/index.ts` 入口：**进程内 RPC**（`createMemTransportPair` + `ChannelServerBinding`），零网络零 Electron —— 只为复用 `@diy/app` 同一套命令解析（zod schema + `cliArg`/`cliOption` → help / did-you-mean）
+      `src/cli/index.ts` 入口：**进程内 RPC**（`createMemTransportPair` + `ChannelServerBinding`），零网络零 Electron —— 只为复用 `@diy-agent/app` 同一套命令解析（zod schema + `cliArg`/`cliOption` → help / did-you-mean）
     review: accepted
     lifecycle: active
     evidence:
@@ -50,7 +50,7 @@ facts:
       verifiedAt: '2026-10-23'
   diydev.rule#lock-format:
     value: |-
-      `ref.lock.yaml` 本包写 **v1**：`{version:1, generated, source:{key:{url,version,dir,lastSync}}}`；`@diy/app` 侧的 v5 写引擎**已删（##387）**，本格式是全仓唯一写入方 —— 改动格式无需再比对另一侧
+      `ref.lock.yaml` 本包写 **v1**：`{version:1, generated, source:{key:{url,version,dir,lastSync}}}`；`@diy-agent/app` 侧的 v5 写引擎**已删（##387）**，本格式是全仓唯一写入方 —— 改动格式无需再比对另一侧
     review: accepted
     lifecycle: active
     evidence:

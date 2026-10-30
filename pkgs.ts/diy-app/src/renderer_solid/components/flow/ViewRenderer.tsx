@@ -4,7 +4,7 @@
  * 判据（§13.2「把插件做薄」）：行业只写 **raw → 该渲染器的 data** 的形状翻译（`render` 插件），
  * 页面长什么样归这里 —— 行业一个字节的视图代码都不写。
  *
- * 数据形状的**真源**是 `@diy/flow` 的类型导出（`ViewShapes` / `ViewData`，##318 交付 A）——
+ * 数据形状的**真源**是 `@diy-agent/flow` 的类型导出（`ViewShapes` / `ViewData`，##318 交付 A）——
  * 本文件按 `renderer` 收窄 `payload`，**不自持第二份形状**（自持一份必然与内核漂移）。
  * 但 `payload` 出参是 `unknown`（内核不管形状），故每个渲染器都做**最小结构校验**：
  * 形状不符就直说「形状不符」，不猜、不兜（猜出来的图会让人以为数据没问题）。
@@ -14,7 +14,7 @@ import type { FlowRenderer } from "../../lib/flow-view";
 
 type Tone = "ok" | "warn" | "danger" | "muted";
 
-/** 语义色调 → 色值（行业只给语义，配色归引擎 —— 见 `@diy/flow` 的 `Tone` 注释） */
+/** 语义色调 → 色值（行业只给语义，配色归引擎 —— 见 `@diy-agent/flow` 的 `Tone` 注释） */
 const TONE_COLOR: Record<Tone, string> = {
     ok: "#10b981",
     warn: "#f59e0b",

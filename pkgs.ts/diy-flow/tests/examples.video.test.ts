@@ -10,11 +10,11 @@
 //   V4 有事件 / 无事件：`seed.id` 给了才落审计事件、才唤醒 notify；不给 = 纯领域推进 ⇒ 领域态逐字节相同
 //
 // 风格：只用包内公开 API（`../src/index`）+ 契约类型（`../src/index` —— 即包公开面导出的 `src/view.ts` 形状）断言行为，不摸内核私有模块；
-// 范例那边走 `@diy/flow`（模拟外部工作流包的写法），两边解析到同一份模块。
+// 范例那边走 `@diy-agent/flow`（模拟外部工作流包的写法），两边解析到同一份模块。
 
 import { describe, expect, it } from 'vitest';
-import type { Event } from '@diy/talk';
-import { nodeAnchor } from '@diy/talk';
+import type { Event } from '@diy-agent/talk';
+import { nodeAnchor } from '@diy-agent/talk';
 import {
     FlowError,
     advance,

@@ -35,7 +35,7 @@ import { PersonaDrawer } from "../PersonaDrawer";
 import { TurnUsageDetailDrawer, SessionUsageChip, WindowRing, OverallRateChip, sessionAvgRate, UsageDrawer, UsageHoverCard, armHoverClose, cancelHoverClose, type UsageHoverState } from "../UsagePanel";
 import { CompactHistoryPanel } from "../CompactSessionPanel";
 import { TrafficDrawer } from "../TrafficDrawer";
-import { ConfirmDialog, IconChevron, IconCode, IconCompress, IconExpand, IconTrash } from "@diy/ui-kit";
+import { ConfirmDialog, IconChevron, IconCode, IconCompress, IconExpand, IconTrash } from "@diy-agent/ui-kit";
 import { InputLimitDialog } from "../InputLimitDialog";
 import type { InputGate } from "../../../shared/context/input-limit";
 import { OpsDownBar } from "../OpsDownBar";

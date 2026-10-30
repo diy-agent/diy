@@ -14,7 +14,7 @@
 // YAML 自己实现而不引 js-yaml：输出必须**逐字节可预测**（golden 测试拿它当基准），
 // 且 shared/ 要能进 renderer 包（零 node 依赖）。
 
-import { render as renderTemplate } from "@diy/template";
+import { render as renderTemplate } from "@diy-agent/template";
 import { getValue, hasValue, isPlainObject } from "./tree.js";
 import type { ContextPath, ContextTreeState } from "./types.js";
 

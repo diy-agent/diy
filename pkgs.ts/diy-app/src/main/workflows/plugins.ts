@@ -40,11 +40,11 @@
 //    调用点唯一：`core/flow.ts` 的 `translateArtifact`（见那里的立场：无产物 ⇒ null，坏 ⇒ 抛）。
 
 import { exec } from 'node:child_process';
-import { createRegistry, type ActionResult, type GuardResult, type PluginContext, type PluginRegistry, type RenderPlugin, type View } from '@diy/flow';
-// ⚠️ `ViewData<'…'>` 就是「这个 renderer 要吃的 data 形状」（真源 = `@diy/flow` 的 `view.ts`，##318）。
+import { createRegistry, type ActionResult, type GuardResult, type PluginContext, type PluginRegistry, type RenderPlugin, type View } from '@diy-agent/flow';
+// ⚠️ `ViewData<'…'>` 就是「这个 renderer 要吃的 data 形状」（真源 = `@diy-agent/flow` 的 `view.ts`，##318）。
 //    下面每个插件都用它给 payload 站岗：**插件产出**与**渲染器消费**因此由 `tsc` 对齐 ——
 //    ##337 review1 P2-A 正是这条缝（声明 `doc`、却把裸文本当 `DocData`），当时没有任何一道机器判据管它。
-import type { DiffData, DocData, TableData } from '@diy/flow';
+import type { DiffData, DocData, TableData } from '@diy-agent/flow';
 
 // ═══════════════════════════════════════════════════════════════
 // render 槽：raw → 引擎通用渲染器（纯函数，不碰外部世界）
@@ -61,7 +61,7 @@ function asText(data: unknown, plugin: string): string {
 }
 
 /**
- * `patch` —— raw 是 unified diff 文本 ⇒ `diff` 渲染器要吃的 `DiffData` = `{ lines }`（真源 = `@diy/flow` 的 `view.ts`：`ViewData<'diff'>`）。
+ * `patch` —— raw 是 unified diff 文本 ⇒ `diff` 渲染器要吃的 `DiffData` = `{ lines }`（真源 = `@diy-agent/flow` 的 `view.ts`：`ViewData<'diff'>`）。
  *
  * `DiffLine.text` **含或不含行首标记都行**（渲染器只按 `kind` 上色），故这里按首字符分类后**原样保留文本**：
  * 插件只补「加 / 删 / 上下文」这个语义，剥不剥标记是渲染器的事。
@@ -99,7 +99,7 @@ function cellsOf(row: unknown, columns: readonly string[] | undefined, plugin: s
 }
 
 /**
- * `records` —— raw 是「若干条记录」的清单 ⇒ `table` 渲染器要吃的 `TableData` = `{ columns?, rows }`（真源 = `@diy/flow` 的 `view.ts`：`ViewData<'table'>`）。
+ * `records` —— raw 是「若干条记录」的清单 ⇒ `table` 渲染器要吃的 `TableData` = `{ columns?, rows }`（真源 = `@diy-agent/flow` 的 `view.ts`：`ViewData<'table'>`）。
  *
  * 认三种 raw（都不猜语义，只做形状收窄）：
  *   · `{ columns?, rows }` —— 显式列；
@@ -138,7 +138,7 @@ const records: RenderPlugin = (data): View => {
  * `text` —— raw 是**一段纯文本**（CI 日志 / 正文 / 说明）⇒ `doc` 渲染器要吃的 `{ text: string }`。
  *
  * 为什么非有它不可（##337 review1 P2-A）：`doc` 的 data 是 `DocData` = `{ text }`（真源 =
- * `@diy/flow` 的 `view.ts`），**裸字符串不是它** —— 一句 `plugin` 留空就把裸文本当 `doc` 的 data，
+ * `@diy-agent/flow` 的 `view.ts`），**裸字符串不是它** —— 一句 `plugin` 留空就把裸文本当 `doc` 的 data，
  * UI 上只会显示「形状不符」，用户永远看不到 CI 输出。纯文本 → `{ text }` 这件事只有行业（= 这里）知道。
  *
  * 认两种 raw：裸字符串（管道进来的正文）与已经是 `{ text }` 的对象（幂等，便于二次加工）。

@@ -1,7 +1,7 @@
-// @diy/ui-kit — 纯展示组件与纯工具的**唯一出口**。
+// @diy-agent/ui-kit — 纯展示组件与纯工具的**唯一出口**。
 //
 // 判据（##448）：不 import 任何 `store/*`、不 import `lib/rpc`、props 进 DOM 出；
-// `dependencies` 只允许 `solid-js`（不含 `@diy/*`、不含三方渲染库）。
+// `dependencies` 只允许 `solid-js`（不含 `@diy-agent/*`、不含三方渲染库）。
 // 加新组件前先核这三条 —— 带全局状态（theme / ui-state）或三方依赖的一律不进本包。
 export { ChatGlyph, type ChatGlyphTone } from "./ChatGlyph.js";
 export { ChatSkinPreview, SKIN_PREVIEW_HOOKS } from "./ChatSkinPreview.js";

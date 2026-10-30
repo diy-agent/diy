@@ -1,5 +1,5 @@
 // src/index.ts
-// @diy/persistence —— 本地 agent 的会话持久化边界（##432 刀 1）
+// @diy-agent/persistence —— 本地 agent 的会话持久化边界（##432 刀 1）
 //
 // core（diy-app）只依赖这里导出的**窄接口**：
 //   · 路径：`keyOf` / `sessionIdOf` / `sessionFilesToClear` / `llmLogRelPath`（core 的 local-paths 转出）

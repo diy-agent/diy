@@ -15,7 +15,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { assembleGlobals, assembleSystem, DELIVERED_SECTIONS } from "../../src/main/services/prompt-registry";
-import { buildDelivery } from "@diy/context/delivery";
+import { buildDelivery } from "@diy-agent/context/delivery";
 import { loadSystemPlaces } from "../../src/main/core/context-config";
 
 const PID = "1";

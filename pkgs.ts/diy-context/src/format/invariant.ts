@@ -2,7 +2,7 @@
 // 🎯 「不变量被打破」的**唯一承载物**（从 diy-app 的 shared/error-triage.ts 原样搬来，##447）。
 //
 // 为什么单独成文件：`cut-marker.ts`（wire 截断标记的语法）也需要它，而截断标记被
-// `@diy/context` / `@diy/compaction` 共用 —— 整份 error-triage 搬不动（它牵 `TurnEndReason`
+// `@diy-agent/context` / `@diy-agent/compaction` 共用 —— 整份 error-triage 搬不动（它牵 `TurnEndReason`
 // 与 main 侧错误分流），故只把这条判据链整体搬出，error-triage 反过来从本包 re-export。
 // 判据本身一字未改（见原文件头注的「三档」定义）。
 // ═══════════════════════════════════════════════

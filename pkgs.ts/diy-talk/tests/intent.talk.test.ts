@@ -11,7 +11,7 @@
 //   R4  引用完整性：悬空 replyTo / 指向自己 / 重复 id / 异锚点混串 / 事件 causes 自指·重复 一律报错
 //   R5  非法 anchor 一律拒绝：未知 type、缺 data、字段类型错、未知字段（带点路径定位）
 //   R6  反序列化边界：非 JSON、缺字段（含 replyTo 键缺失）、未知字段（写侧拒绝 / 读侧可选放行）、at 非 ISO
-//   R7  零依赖纯内核：不 import node:fs / electron / @diy/app，不取时间（at 由调用方传入）
+//   R7  零依赖纯内核：不 import node:fs / electron / @diy-agent/app，不取时间（at 由调用方传入）
 //
 // 测试风格：**以真实讨论形态为素材**（文档批注线、群争论线、工作流泳道节点），断言
 // 公开 API 的行为与错误码，不断言内部实现。
@@ -483,13 +483,13 @@ describe('R6 反序列化边界', () => {
 describe('R7 零依赖纯内核（##311 §四：现在就能拆离成单独项目）', () => {
     const srcDir = fileURLToPath(new URL('../src/', import.meta.url));
 
-    it('src 不 import node:fs / electron / @diy/app，也不自己取时间', () => {
+    it('src 不 import node:fs / electron / @diy-agent/app，也不自己取时间', () => {
         const files = readdirSync(srcDir).filter((f) => f.endsWith('.ts'));
         expect(files.length).toBeGreaterThan(0);
         for (const file of files) {
             const text = readFileSync(`${srcDir}${file}`, 'utf8');
             expect(text, `${file} 不应 import 宿主模块`).not.toMatch(
-                /import[^\n]*from\s+['"](node:|electron|@diy\/app)/,
+                /import[^\n]*from\s+['"](node:|electron|@diy-agent\/app)/,
             );
             expect(text, `${file} 不应自己取时间（at 由调用方传入）`).not.toMatch(
                 /\bDate\.now\b|new Date\(/,

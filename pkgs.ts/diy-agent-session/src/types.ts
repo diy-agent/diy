@@ -1,8 +1,8 @@
-// types.ts — @diy/session 的公开契约（纯类型 + 一个缺省 Clock）
+// types.ts — @diy-agent/session 的公开契约（纯类型 + 一个缺省 Clock）
 //
 // 边界（##456「关键设计决策 ②」）：
 //   属于 Session：消息列表 / 一次 LLM 调用 + 流式增量 / 单会话压缩（注入策略）/ token 计量
-//   不属于 Session：多成员投递（@diy/room）/ 任务状态 / 文件系统（store 适配器）
+//   不属于 Session：多成员投递（@diy-agent/room）/ 任务状态 / 文件系统（store 适配器）
 //
 // 因此本文件里没有任何文件系统 / 应用数据根 / 任务概念——IO 一律由调用方注入。
 
@@ -18,7 +18,7 @@ export type MessageRole = 'system' | 'user' | 'assistant' | 'tool';
  *   tool-call          —— 工具调用
  *   tool-result        —— 工具结果
  *
- * 只有 human + agent-conclusion + agent-notice 会进 @diy/room 的主线（`publicLog`），
+ * 只有 human + agent-conclusion + agent-notice 会进 @diy-agent/room 的主线（`publicLog`），
  * 其余（trace / tool）只在会话日志里。
  * 判据：有 tool-call ⇒ 这一轮还没结束，之前的文字是 trace；本轮最后一段文字才是 conclusion。
  *
@@ -168,7 +168,7 @@ export interface SessionStore {
 }
 
 /**
- * 「能发话的最小会话」—— @diy/room 只依赖这个形状，不依赖 AgentSession 的全部方法。
+ * 「能发话的最小会话」—— @diy-agent/room 只依赖这个形状，不依赖 AgentSession 的全部方法。
  * 这样 room 的测试可以注入极简假会话，宿主也能把别家实现接进来。
  */
 export interface SessionPeer {

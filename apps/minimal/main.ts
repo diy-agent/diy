@@ -1,12 +1,12 @@
 // main.ts — Electron 主进程入口（本 app 的装配入口）。
 //
 // 只做装配：把清单交给外壳，外壳负责窗口 / IPC / 插件装配。
-// 产物 = build/<variant>/main/index.mjs（esbuild 打包；@diy/* 与 electron 走运行时解析）。
+// 产物 = build/<variant>/main/index.mjs（esbuild 打包；@diy-agent/* 与 electron 走运行时解析）。
 
 import { app } from "electron";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createWorkbench } from "@diy/workbench";
+import { createWorkbench } from "@diy-agent/workbench";
 import { ASSEMBLY } from "./index.js";
 
 // ##458 ③：lab 变体开 CDP（缺省 9222），agent 用 `curl 127.0.0.1:9222/json` / playwright

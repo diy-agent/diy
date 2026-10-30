@@ -1,5 +1,5 @@
 {
-  "name": "@diy/workbench",
+  "name": "@diy-agent/workbench",
   "version": "0.1.0",
   "private": true,
   "description": "工作台主进程外壳：窗口 + page:invoke 通道 + 插件 loader（不认识任何具体页面）",

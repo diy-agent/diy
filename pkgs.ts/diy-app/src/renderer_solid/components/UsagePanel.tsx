@@ -30,7 +30,7 @@ import { localChatStore } from "../store/localChatStore";
 // 时间口径唯一出处（shared/date-format）：面板里的轮次时刻（hover 卡标题 / 明细抽屉）与对话流
 // 首行同格式（fmtTurnStamp）；表格的「时间」列走 `usage-fields` 的 fmtCell（到秒）。
 import { fmtTurnStamp } from "../../shared/date-format";
-import { DrawerMaxButton, RowGutter, useDrawerMax } from "@diy/ui-kit";
+import { DrawerMaxButton, RowGutter, useDrawerMax } from "@diy-agent/ui-kit";
 import { endMarkOf } from "../lib/chat-fold";
 import {
     cacheHitRate,
@@ -54,7 +54,7 @@ import { copyFailMeta, copyOkMeta } from "../lib/notice-copy";
 import { compactNotice } from "../lib/notice-compact";
 import { useCompactPanel, CompactPanelContent } from "./CompactSessionPanel";
 import { UsageTable, usageTableMd, type UsageView } from "./UsageTable";
-import type { CompactEventRecord } from "@diy/compaction/compaction";
+import type { CompactEventRecord } from "@diy-agent/compaction/compaction";
 import { type DeliveryBoundary } from "../../shared/context/delivery-badge";
 
 // ─── 共用小件 ────────────────────────────────────────

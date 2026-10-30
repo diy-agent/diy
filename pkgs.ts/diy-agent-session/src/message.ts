@@ -195,7 +195,7 @@ export function assertDelta(value: unknown, path = 'delta'): SessionDelta {
         };
     }
     if (type === 'usage') {
-        // 缓存桶是 provider 层的附加事实（见 @diy/llm-provider 的 UsageDetail 头注）：
+        // 缓存桶是 provider 层的附加事实（见 @diy-agent/llm-provider 的 UsageDetail 头注）：
         // 允许出现，但**不并入** inputTokens —— 上游报的 input 已经含了它们。
         rejectUnknown(
             obj,

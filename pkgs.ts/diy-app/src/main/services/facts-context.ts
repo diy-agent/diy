@@ -15,13 +15,13 @@
  */
 import { existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
-import { foldKbIndex, KB_FOLD_MIN_GROUP } from "@diy/facts";
-import { loadRepo, project, projectItems, readExpose, type ProjectEntry, type ProjectionAlgorithm, type Repo } from "@diy/facts/node";
-import { budgetBytesOf, bytesOf, claimOf, checkExposeLeveled, defaultExposeOf, exposeOf, type ExposeLevel, type ExposeMap, type LeveledFact, type Ns } from "@diy/facts";
+import { foldKbIndex, KB_FOLD_MIN_GROUP } from "@diy-agent/facts";
+import { loadRepo, project, projectItems, readExpose, type ProjectEntry, type ProjectionAlgorithm, type Repo } from "@diy-agent/facts/node";
+import { budgetBytesOf, bytesOf, claimOf, checkExposeLeveled, defaultExposeOf, exposeOf, type ExposeLevel, type ExposeMap, type LeveledFact, type Ns } from "@diy-agent/facts";
 import { diyHome } from "../core/state";
 import { readRuntimeConfig } from "../../runtime";
 import { resolveFactsDir } from "./facts-store";
-import type { FactsCell } from "@diy/context/schema/prompt-schema";
+import type { FactsCell } from "@diy-agent/context/schema/prompt-schema";
 
 /** 投影的一个值（与 `FactsContextSchema` 的 cell 同形；renderer 侧由 schema 推） */
 export type FactsContextCell = FactsCell;

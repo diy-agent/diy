@@ -2,7 +2,7 @@
 /**
  * electron/index.ts — Electron EnvelopeTransport 实现（第1层）
  *
- * 依赖：@diy/rpc（EnvelopeTransport/_Envelope 类型）+ electron
+ * 依赖：@diy-agent/rpc（EnvelopeTransport/_Envelope 类型）+ electron
  * 只在 Electron 主进程和 preload 中使用。
  *
  * 安全机制：

@@ -2,7 +2,7 @@
 //
 // 用法（宿主装配入口）：
 //   import { app } from 'electron';
-//   import { createWorkbench } from '@diy/workbench';
+//   import { createWorkbench } from '@diy-agent/workbench';
 //   import * as myPage from '@scope/my-page/main';   // ← 直接 import：tsc 检查包存在
 //   const wb = await createWorkbench({
 //       plugins: [{ id: 'my-page', module: myPage }],

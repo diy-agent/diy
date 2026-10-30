@@ -1,7 +1,7 @@
 import { createEffect, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import { localChatStore } from "../../store/localChatStore";
-import { IconBolt, IconClock, IconCompress, IconExpand, IconGrip } from "@diy/ui-kit";
+import { IconBolt, IconClock, IconCompress, IconExpand, IconGrip } from "@diy-agent/ui-kit";
 import { copyFailMeta, copyOkMeta } from "../../lib/notice-copy";
 import { notificationStore } from "../../store/notificationStore";
 import { deliveryStateText, memberAvatar, memberColor, memberName, orderedMembers, steerTurnRefs, type Room, type RoomEvent } from "../../../shared/room";

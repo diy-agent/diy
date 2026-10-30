@@ -11,7 +11,7 @@
 // ─── 类型 ─────────────────────────────────────────────
 
 import type { Triage } from "../../shared/error-triage";
-import { cutMarker } from "@diy/context/format/cut-marker";
+import { cutMarker } from "@diy-agent/context/format/cut-marker";
 
 export type JSONVal = string | number | boolean | null | JSONVal[] | { [k: string]: JSONVal };
 
@@ -917,7 +917,7 @@ export interface DeliveryOpts {
 //   · **渲染**（怎么呈现）才涉及工具结果裁剪/origin 自证位等形状问题。
 // 于是：全量投影（= llm.jsonl 每行）→ 选择 → 渲染。预览与真发共用同一条链。
 
-import { clipReasoningText, utf8Bytes, type ClipSpec, type ReasoningClipSpec } from "@diy/compaction/compaction";
+import { clipReasoningText, utf8Bytes, type ClipSpec, type ReasoningClipSpec } from "@diy-agent/compaction/compaction";
 import {
     chatEnvelope,
     hasTopLevelKey,
@@ -926,7 +926,7 @@ import {
     userEnvelope,
     type NotifyItem,
     type Speaker,
-} from "@diy/context/envelope";
+} from "@diy-agent/context/envelope";
 import { HUMAN_MEMBER_ID } from "../../shared/room";
 /**
  * **选择结果**（投递侧唯一形状）：保留了哪些下标 / 丢了哪些 / 连续区间 / 渲染后字节。

@@ -4,7 +4,7 @@
 // 「**读回可信**」—— 此前 `FlowState` 只能靠结构化类型假装（`as FlowState`），包内零校验入口，
 // 盘上那份东西是不是 FlowState 全凭运气（owner 探针事实 4）。本文件补上这个入口。
 //
-// 契约与 `@diy/talk` 的 `serialize.ts` **同形**（读侧可信、写侧严格）：
+// 契约与 `@diy-agent/talk` 的 `serialize.ts` **同形**（读侧可信、写侧严格）：
 // - **写**：先 `parseFlowState` 校验并规范化（键序固定、字段封闭）⇒ 落盘文本稳定、diff 友好；
 //   写侧同样严格（未知字段报错）—— 绝不静默抹掉调用方传进来的数据。
 // - **读**：同样走 `parseFlowState` ⇒ 读进来的一律可信；非法输入抛 `FlowError`（不静默丢弃）。
@@ -40,7 +40,7 @@ export interface SerializeOptions {
 /**
  * 解析选项。`allowUnknown`：放行未知字段（**仅供读侧前向兼容**，缺省严格）。
  *
- * ⚠️ 契约（同 `@diy/talk`）：`allowUnknown` 是**只读检查闸** —— 它只让解析「不报错」，
+ * ⚠️ 契约（同 `@diy-agent/talk`）：`allowUnknown` 是**只读检查闸** —— 它只让解析「不报错」，
  * **不保留**未知字段（返回的仍是「只含已知字段」的规范化对象）。故用它读进来的对象**不得**
  * 再经 `flowStateToJson` 写回落盘：写侧严格，且未知字段已不在返回值里 —— 读-改-写一次就把新字段抹了。
  */

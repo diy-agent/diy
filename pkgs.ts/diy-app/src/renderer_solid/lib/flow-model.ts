@@ -93,7 +93,7 @@ export interface FlowInstanceView {
 // 产物（##337 契约；UI 侧只依赖命令，不依赖 FlowView 的新字段）
 // ═══════════════════════════════════════════════════════════════
 
-/** 引擎侧九种固定渲染器（真源 = `@diy/flow` 的 `RENDERERS`；此处为 UI 侧镜像，改动要一起改） */
+/** 引擎侧九种固定渲染器（真源 = `@diy-agent/flow` 的 `RENDERERS`；此处为 UI 侧镜像，改动要一起改） */
 export type FlowRenderer = "doc" | "diff" | "table" | "timeline" | "video" | "badge" | "kline" | "heatmap" | "equity";
 
 /** `art` 三段链：`raw`（节点产出的原始数据）→ `plugin`（render 插件名，可为 null）→ `renderer`（引擎渲染器） */
@@ -104,7 +104,7 @@ export interface FlowArt {
     readonly note?: string;
 }
 
-/** `render` 插件的产物：renderer + 该渲染器要吃的 data（形状见 `@diy/flow` 的 `ViewShapes`） */
+/** `render` 插件的产物：renderer + 该渲染器要吃的 data（形状见 `@diy-agent/flow` 的 `ViewShapes`） */
 export interface FlowViewPayload {
     readonly renderer: FlowRenderer;
     readonly payload: unknown;

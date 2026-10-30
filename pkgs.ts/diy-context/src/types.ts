@@ -33,7 +33,7 @@ export type ContextContainer = "system" | "runtime";
 export type ContextRendererSpec =
     | { renderer: "yaml" }
     | { renderer: "text" }
-    /** 模板节点：source 是 @diy/template 源码，渲染作用域 = 整棵值树 */
+    /** 模板节点：source 是 @diy-agent/template 源码，渲染作用域 = 整棵值树 */
     | { renderer: "template"; source: string };
 
 // ─── 事实（ContextFact）─────────────────────────────────

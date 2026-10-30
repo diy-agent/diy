@@ -249,7 +249,7 @@ describe('S4 响亮失败', () => {
         expect(() => assertDelta({ type: 'usage', inputTokens: -1, outputTokens: 0 })).toThrow(/非负/);
     });
 
-    it('usage 带缓存桶（@diy/llm-provider 的 UsageDetail）照样合法；没报则字段缺席', () => {
+    it('usage 带缓存桶（@diy-agent/llm-provider 的 UsageDetail）照样合法；没报则字段缺席', () => {
         expect(assertDelta({ type: 'usage', inputTokens: 9, outputTokens: 2, cacheReadTokens: 7 })).toEqual({
             type: 'usage',
             inputTokens: 9,
@@ -277,7 +277,7 @@ describe('S5 压缩是注入策略', () => {
             clock: fakeClock(),
             compact: (messages) => {
                 seen.push([...messages]);
-                // 策略：只留最后一条（真实的窗口压缩归 @diy/compaction）
+                // 策略：只留最后一条（真实的窗口压缩归 @diy-agent/compaction）
                 return messages.slice(-1);
             },
         });

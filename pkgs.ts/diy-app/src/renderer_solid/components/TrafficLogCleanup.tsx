@@ -15,7 +15,7 @@
 import { createMemo, createSignal, For, Show, onCleanup, onMount } from "solid-js";
 import { diyService } from "../lib/rpc";
 import { notificationStore } from "../store/notificationStore";
-import { ConfirmDialog, fmtBytes } from "@diy/ui-kit";
+import { ConfirmDialog, fmtBytes } from "@diy-agent/ui-kit";
 
 /** 与 RPC `traffic.logFiles` 的 `detail` 同构（前端只读） */
 interface LogFileRow {

@@ -12,8 +12,8 @@
 // 风格：只用包内公开 API（`../src/index`）+ 契约类型（`../src/index` —— 即包公开面导出的 `src/view.ts` 形状）断言行为，不摸内核私有模块。
 
 import { describe, expect, it } from 'vitest';
-import type { Event } from '@diy/talk';
-import { nodeAnchor } from '@diy/talk';
+import type { Event } from '@diy-agent/talk';
+import { nodeAnchor } from '@diy-agent/talk';
 import {
     FlowError,
     advance,

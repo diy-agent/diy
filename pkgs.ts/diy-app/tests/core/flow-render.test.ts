@@ -18,7 +18,7 @@ import { createRenderRegistry } from "../../src/main/workflows/plugins";
 
 /** 只作错误消息 / 袋路径的落点，本文件从不落盘（翻译是纯函数） */
 const URI = "projects/1/tasks/1";
-/** 与宿主 `core/flow.ts::anchorOf` 同形的「这条泳道的节点」锚点（`@diy/talk` 的 `node` 分支） */
+/** 与宿主 `core/flow.ts::anchorOf` 同形的「这条泳道的节点」锚点（`@diy-agent/talk` 的 `node` 分支） */
 const ANCHOR = { type: "node", data: { nodeId: "implement" } } as const;
 
 /** 每个注册插件的样本 raw（形状由插件自己认；缺样本 = 该补，见下面的覆盖断言） */

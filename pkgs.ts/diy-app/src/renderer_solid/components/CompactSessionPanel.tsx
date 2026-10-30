@@ -18,7 +18,7 @@
 
 import { createSignal, createResource, createEffect, on, For, Show, createMemo, type JSX } from "solid-js";
 import { localChatStore } from "../store/localChatStore";
-import type { AutoCompactIssue } from "@diy/compaction/compact-config";
+import type { AutoCompactIssue } from "@diy-agent/compaction/compact-config";
 import {
     DEFAULT_TOOL_RESULT_POLICY,
     flatPolicyOf,
@@ -28,7 +28,7 @@ import {
     type FlatCompactPolicy,
     type ToolResultMode,
     type ToolResultPolicy,
-} from "@diy/compaction/compaction";
+} from "@diy-agent/compaction/compaction";
 /** 触发理由的短文案（表里空间小；完整版在 TRIGGER_TEXT_FULL，提示条上用） */
 function triggerText(t: string | undefined): string {
     switch (t) {
@@ -52,7 +52,7 @@ import {
     type YamlDiffRow,
 } from "../../shared/yaml-lines";
 import { clipForPreview, requestViewYaml, type LayerRow, type PreviewClipStats, type RequestView } from "../../shared/context/request-view";
-import { DrawerMaxButton } from "@diy/ui-kit";
+import { DrawerMaxButton } from "@diy-agent/ui-kit";
 import { notificationStore } from "../store/notificationStore";
 import {
     autoCompactSentence,
@@ -61,9 +61,9 @@ import {
     fmtTokens,
     windowRatio,
     type CompactWhenInput,
-} from "@diy/compaction/compact-when";
-import { EXAMPLE_MESSAGES, buildCompactExample, bytesToTokens, type ExampleRow } from "@diy/compaction/compact-example";
-import { normalizeHistoryLimit } from "@diy/compaction/history-limit";
+} from "@diy-agent/compaction/compact-when";
+import { EXAMPLE_MESSAGES, buildCompactExample, bytesToTokens, type ExampleRow } from "@diy-agent/compaction/compact-example";
+import { normalizeHistoryLimit } from "@diy-agent/compaction/history-limit";
 
 const INDENT = "  ";
 

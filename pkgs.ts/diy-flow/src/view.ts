@@ -12,7 +12,7 @@
 //
 // ⚠️ **纯类型、零运行时代码**（##318 硬约束）：类型只在编译期起作用，运行期一个字节都不产出。
 //    故 `index.ts` 末尾以 `export type *` 把它**类型导出** —— 消费者按形状收窄 `View.payload` 的正路是
-//    `import type { ViewData } from '@diy/flow'`；跨包**子路径** import（`@diy/flow/src/view`）才是 hack
+//    `import type { ViewData } from '@diy-agent/flow'`；跨包**子路径** import（`@diy-agent/flow/src/view`）才是 hack
 //    （`exports` 只有 `.`）。类型导出零运行时代价：不产出运行时成员，`import` 侧也不留副作用。
 
 import type { Renderer } from './define.js';

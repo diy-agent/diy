@@ -23,7 +23,7 @@ facts:
       verifiedAt: '2026-10-23'
   talk.find#consumers:
     value: |-
-      `@diy/flow`（##313 泳道容器）已依赖；装配器 `assemble` 供 ##319（宿主接入与提示词装配）消费
+      `@diy-agent/flow`（##313 泳道容器）已依赖；装配器 `assemble` 供 ##319（宿主接入与提示词装配）消费
     review: accepted
     lifecycle: active
     evidence:
@@ -113,7 +113,7 @@ facts:
       verifiedAt: '2026-10-23'
   talk.rule#zero-dep:
     value: |-
-      **零依赖纯内核**：不 import `node:fs` / `electron` / `@diy/app`，不取时间 ⇒ 现在即可拆成单独项目。新增 import 前先问「这还能单独拆出去吗」—— 意图测试 R7 静态拦：`src/**` 匹配到 `import … from "node:|electron|@diy/app"` 或 `Date.now` / `new Date(` 即红，且断言 `package.json` 零 dependencies
+      **零依赖纯内核**：不 import `node:fs` / `electron` / `@diy-agent/app`，不取时间 ⇒ 现在即可拆成单独项目。新增 import 前先问「这还能单独拆出去吗」—— 意图测试 R7 静态拦：`src/**` 匹配到 `import … from "node:|electron|@diy-agent/app"` 或 `Date.now` / `new Date(` 即红，且断言 `package.json` 零 dependencies
     review: accepted
     lifecycle: active
     evidence:

@@ -13,7 +13,7 @@
 // 三件事：排版、把动作接到既有出口（进会话 / cancel / setLimits）、把"为什么这么显示"写进 tooltip。
 import { createMemo, createSignal, createEffect, For, Show } from "solid-js";
 import { SessionGlyph, TONE_TEXT } from "./SessionGlyph";
-import { ConfirmDialog } from "@diy/ui-kit";
+import { ConfirmDialog } from "@diy-agent/ui-kit";
 import { sessionStore } from "../store/sessionStore";
 import { taskStore } from "../store/taskStore";
 import { usageLedgerStore } from "../store/usageLedgerStore";

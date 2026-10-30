@@ -5,7 +5,7 @@
 // 状态判据唯一真源 = shared/session-state.ts，图标唯一实现 = components/SessionGlyph.tsx）。
 import { createResource, Show } from "solid-js";
 import { windowUsageOf } from "../../shared/task-agent-state";
-import { triggerTokensOf } from "@diy/compaction/select-kept-boundary";
+import { triggerTokensOf } from "@diy-agent/compaction/select-kept-boundary";
 import { fmtTokens } from "../../shared/usage";
 import { sessionStore } from "../store/sessionStore";
 import { localChatStore } from "../store/localChatStore";

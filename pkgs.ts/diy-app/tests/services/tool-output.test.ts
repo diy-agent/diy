@@ -21,7 +21,7 @@ import {
     capToolOutput,
 } from "../../src/main/services/tool-output";
 import { READ_MAX_BYTES, READ_MAX_LINES, formatReadOutput, readFileWindow } from "../../src/main/core/file-read";
-import { parseCutMarkers, type CutMarker } from "@diy/context/format/cut-marker";
+import { parseCutMarkers, type CutMarker } from "@diy-agent/context/format/cut-marker";
 
 let workDir: string;
 const BIG_LINES = 60_000; // ≈ 0.5MB 的「cat 大文件」现场

@@ -1,5 +1,5 @@
 {
-  "name": "@diy/persistence",
+  "name": "@diy-agent/persistence",
   "version": "0.1.0",
   "description": "diy 本地 agent 的会话持久化：ops 写入 / turns 账 / 压缩边界（core 只依赖窄接口）",
   "license": "MIT",

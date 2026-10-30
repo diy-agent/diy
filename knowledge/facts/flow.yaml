@@ -284,7 +284,7 @@ facts:
       at: 25da9072:pkgs.ts/diy-flow/AGENTS.md:22
   flow.find#examples:
     value: |-
-      `examples/dev.ts`（**范例①：工作流开发包长什么样** —— 6 节点开发工作流声明）+ `examples/dev.plugins.ts`（`pred:ci_green` / `action:pr_mergeable` 假数据实现）+ `tests/examples.dev.test.ts`（跑 ##166 §14.3 轨迹：8 步 / 6 泳道 / 1 打回）。范例**只用公开 API**（`@diy/flow`）、不碰 fs、不引新依赖；`tsconfig.json` 的 `include` 含 `examples/**/*`（否则范例一个字符都不被 `tsc` 检查）
+      `examples/dev.ts`（**范例①：工作流开发包长什么样** —— 6 节点开发工作流声明）+ `examples/dev.plugins.ts`（`pred:ci_green` / `action:pr_mergeable` 假数据实现）+ `tests/examples.dev.test.ts`（跑 ##166 §14.3 轨迹：8 步 / 6 泳道 / 1 打回）。范例**只用公开 API**（`@diy-agent/flow`）、不碰 fs、不引新依赖；`tsconfig.json` 的 `include` 含 `examples/**/*`（否则范例一个字符都不被 `tsc` 检查）
     id: flow.examples
     review: accepted
     lifecycle: active

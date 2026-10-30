@@ -48,7 +48,7 @@
 //
 // 内核**不取时间、不生成 id**：`at` 必填（领域事实，要落盘），`id` 给了才落审计事件。
 
-import { createEvent, nodeAnchor, type Event } from '@diy/talk';
+import { createEvent, nodeAnchor, type Event } from '@diy-agent/talk';
 import { advance, parseRef, type AdvanceRequest, type FlowState } from './container.js';
 import { findNode, type EdgeDef, type NodeDef, type WorkflowDef } from './define.js';
 import { FlowError, type FlowErrorCode } from './errors.js';

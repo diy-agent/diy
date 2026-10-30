@@ -1,15 +1,15 @@
-# @diy/room
+# @diy-agent/room
 
 diy **协作空间内核**：成员表 + `@` 投递 + 忙闲。
 
-依赖 `@diy/session`（只依赖 `SessionPeer` 这个最小形状），**不认识任务**：
+依赖 `@diy-agent/session`（只依赖 `SessionPeer` 这个最小形状），**不认识任务**：
 
 - 房间 id 由宿主给，本包不拿它去查任何东西
 - 投递 = 把发言送进某个成员的会话（「会话在哪」是成员自己的事）
 - 忙闲粒度 = 成员：两个 agent 可以同时说话，同一成员的消息串行
 
 ```ts
-import { createRoom } from '@diy/room';
+import { createRoom } from '@diy-agent/room';
 
 const room = createRoom({ id: 'room-1' });
 room.addMember({ id: 'human:me', name: '我', kind: 'human' });
@@ -52,8 +52,8 @@ room.publicLog; // [{ at, from, kind: 'human', text }, { at, from, kind: 'agent-
 ## 边界
 
 - **属于本包**：成员表、收件人解析、投递状态机、事件流聚合、忙闲、主线日志（正文副本）
-- **不属于本包**：单会话怎么跑与过程日志（`@diy/session`）、任务状态（task 依赖 room，反向不行）、文件系统（`RoomStore` 适配器）
+- **不属于本包**：单会话怎么跑与过程日志（`@diy-agent/session`）、任务状态（task 依赖 room，反向不行）、文件系统（`RoomStore` 适配器）
 
-判据（意图测试 R7 静态扫 `src/**`）：任务 URI / 任务标识 / `@diy/task` / 文件系统模块 / `electron` / 应用数据根 命中即红。
+判据（意图测试 R7 静态扫 `src/**`）：任务 URI / 任务标识 / `@diy-agent/task` / 文件系统模块 / `electron` / 应用数据根 命中即红。
 
 需求真源：[`tests/intent.room.test.ts`](./tests/intent.room.test.ts)（R1–R7）。

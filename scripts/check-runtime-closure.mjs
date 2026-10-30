@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-// scripts/check-runtime-closure.mjs —— runtime/ 的 `@diy/*` 依赖闭包检查（##455 #5）
+// scripts/check-runtime-closure.mjs —— runtime/ 的 `@diy-agent/*` 依赖闭包检查（##455 #5）
 //
 // 为什么必须有：`WORKSPACE_TS_DEPS` 那次事故的核心 —— 包能加载但它的依赖不在，
 // 只有运行到那行 import 才炸（且症状离根因很远）。这里是**静态**判据：
 // 扫 `pkgs.ts/diy-app/runtime/node_modules` 里每个包的 `dependencies`，
-// 凡以 `@diy/` / `@diy-agent/` 开头的，必须也在同一份 runtime 里存在。
+// 凡以 `` 开头的，必须也在同一份 runtime 里存在。
 //
 // 判据：
 //   · runtime/ 未生成（干净 worktree / 没跑过 build）⇒ **跳过**（exit 0，带一行提示）——
@@ -59,7 +59,7 @@ function main() {
 
     const packages = collectRuntimePackages();
     if (packages.size === 0) {
-        console.error(`[runtime-closure] ✗ ${RUNTIME_DIR}/node_modules 里没有任何 @diy* 包 —— 产物异常`);
+        console.error(`[runtime-closure] ✗ ${RUNTIME_DIR}/node_modules 里没有任何 @diy-agent/* 包 —— 产物异常`);
         process.exit(1);
     }
 
@@ -89,7 +89,7 @@ function main() {
         process.exit(1);
     }
 
-    console.log(`[runtime-closure] ✓ 通过（${packages.size} 个包 / ${rows.length} 条 @diy 内部依赖全部在闭包内）`);
+    console.log(`[runtime-closure] ✓ 通过（${packages.size} 个包 / ${rows.length} 条 @diy-agent 内部依赖全部在闭包内）`);
 }
 
 main();

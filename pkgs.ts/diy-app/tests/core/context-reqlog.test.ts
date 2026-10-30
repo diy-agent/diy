@@ -10,8 +10,8 @@
 // 它是 help 里最长的一条（实测占 help 的 6%），涨回去要有理由。
 
 import { describe, expect, it } from "vitest";
-import { ReqlogSchema, reqlogValue } from "@diy/context/schema/reqlog";
-import { describeSchema } from "@diy/context/schema/schema-doc";
+import { ReqlogSchema, reqlogValue } from "@diy-agent/context/schema/reqlog";
+import { describeSchema } from "@diy-agent/context/schema/schema-doc";
 
 describe("reqlog 节点", () => {
     it("值只有一个字段 file（绝对路径 = 今天的按天文件）", () => {

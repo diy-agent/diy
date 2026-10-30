@@ -1,7 +1,7 @@
-# @diy/flow
+# @diy-agent/flow
 
 diy **工作流内核**：工作流定义 DSL + 泳道容器（单指针 / 打回）+ 插件槽 + 参数层（L2）+ guard 求值 + 转移执行器 + 轨迹折线投影。
-纯内核（仅依赖 `@diy/talk` 的事件原语）：不认识文件系统、**不触外部世界**（插件副作用全在宿主给的函数体里）、
+纯内核（仅依赖 `@diy-agent/talk` 的事件原语）：不认识文件系统、**不触外部世界**（插件副作用全在宿主给的函数体里）、
 **不取时间**（事件的 `at` 由调用方传入）。
 
 一句话概括它解决的问题：一条工作流 = 泳道图上的一条折线 —— 状态自上而下在泳道间变迁，打回时
@@ -32,7 +32,7 @@ diy **工作流内核**：工作流定义 DSL + 泳道容器（单指针 / 打�
 ## 快速开始
 
 ```ts
-import { advance, createRegistry, createRuntime, defineWorkflow, flowStateToJson, initialState, parseFlowState } from '@diy/flow';
+import { advance, createRegistry, createRuntime, defineWorkflow, flowStateToJson, initialState, parseFlowState } from '@diy-agent/flow';
 
 // 两个节点 + 一条打回边：泳道 ≡ 节点，打回不新建节点
 const wf = defineWorkflow({
@@ -146,7 +146,7 @@ Visit     { node: Id; seq: number; kind: 'next' | 'bounce'; at: string; ref?: Re
   **`params` 只兜纯 JSON 性、不兜值语义**（立场，非疏漏）：读回路径不经过 `resolveParams`（它只吃状态、不吃
   `def`）⇒ 盘上的 `params` 可能是脏的；但脏值**进不了运行态**（唯一闸门仍是 `createRuntime`）。
 - `isFlowState(value)`：非抛出版试探（给 UI / 宿主读盘前用）。
-- `allowUnknown` 是**只读检查闸**（同 `@diy/talk`）：只让解析不报错、**不保留**未知字段 ⇒ 别拿它读进来的对象
+- `allowUnknown` 是**只读检查闸**（同 `@diy-agent/talk`）：只让解析不报错、**不保留**未知字段 ⇒ 别拿它读进来的对象
   再 `flowStateToJson` 写回（读-改-写会抹掉新字段）。
 - `apply(def, state, event)` / `project(events, def)` 是**审计侧**的入口：把日志重放成折线（重建路径）。
   事件的 `id` / `author` / `content` **一律不进领域态**；`done`、`params` 与 `Visit.ref` 都**重建不出来**
@@ -169,7 +169,7 @@ Visit     { node: Id; seq: number; kind: 'next' | 'bounce'; at: string; ref?: Re
 | `parseParamsSchema(snapshot)` | 参数快照的反向校验（形状封闭 + `defaults` 与 `schema` 对齐） |
 | `interpolate(template, params)` / `renderHint(node, params)` | `hint` 插值（`${局部名}` / `${节点 id.局部名}`，`$$` 转义）；`renderHint` 出错定位到 `nodes.<id>.hint` |
 
-`Event` 复用 `@diy/talk` 原语：`{ id, author, anchor, content, causes, at }`，其中 `anchor = { type: 'node', data: { nodeId } }`。
+`Event` 复用 `@diy-agent/talk` 原语：`{ id, author, anchor, content, causes, at }`，其中 `anchor = { type: 'node', data: { nodeId } }`。
 **它是消息、不是状态载体**（##333）：`step` / `declare` 的 `seed.id` 给了才落，`Transition.event` 因此是可选字段。
 
 ## 插件槽位（五个，固定；工作流只能**引用**）
@@ -290,7 +290,7 @@ createRuntime(wf, { registry, params });                      // ctx.params = �
 | `tests/examples.dev.test.ts` | 端到端复现 ##166 §14.3 的开发轨迹：**8 步 / 6 泳道 / 1 次打回**，逐步断言领域态与 `project` 重放相等 |
 
 ```ts
-import { createRegistry, createRuntime, initialState } from '@diy/flow';
+import { createRegistry, createRuntime, initialState } from '@diy-agent/flow';
 import { devWorkflow, type DevNodeId } from './examples/dev';
 import { registerDevPlugins } from './examples/dev.plugins';
 
@@ -311,7 +311,7 @@ const toDesign = rt.declare(entered.transition.state, {
 ## 硬约束
 
 - **泳道 ≡ 节点，1:1**；**打回不新建节点**（只让目标节点再驻留一次）。
-- **零 IDE 依赖**：不 import `node:fs` / `electron` / `@diy/app`；**不取时间**（`at` 由调用方传入）⇒ 可重放、可测试。
+- **零 IDE 依赖**：不 import `node:fs` / `electron` / `@diy-agent/app`；**不取时间**（`at` 由调用方传入）⇒ 可重放、可测试。
 - **不触外部世界**：插件的副作用全在宿主给的函数体里；`status` 只做静态分类，不调用插件（轮询请用它）。
 - **不校验宣布者身份**：`declare` 只拒内核保留字 `system`；「谁能代表哪个 actor」（agent id / human 的映射）是
   **宿主知识**（归 ##319），内核管不了 —— 宿主须自己保证传给 `declare` 的 `author` 可信。

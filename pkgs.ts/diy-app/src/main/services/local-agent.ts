@@ -19,7 +19,7 @@ import type { ChildProcess } from "node:child_process";
 import { appendFileSync, closeSync, existsSync, openSync, readFileSync, readSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import { writeFileAtomic, type FsLike } from "../core/atomic-write";
-import { fieldNames, renderFieldDocs } from "@diy/context/schema/schema-doc";
+import { fieldNames, renderFieldDocs } from "@diy-agent/context/schema/schema-doc";
 import { findInOpsFile, type FindResult, type FindScopes } from "./local-find";
 import { diyHome, projectDir, projectFromUri } from "../core/state";
 import {
@@ -50,11 +50,11 @@ import {
     type CompactionEntry,
     type TurnRecordState,
 } from "./local-turns";
-import { estimateTokensOf, normalizeHistoryLimit, selectCompactableRange } from "@diy/compaction/history-limit";
-import { retainTokensOf, triggerTokensOf } from "@diy/compaction/select-kept-boundary";
+import { estimateTokensOf, normalizeHistoryLimit, selectCompactableRange } from "@diy-agent/compaction/history-limit";
+import { retainTokensOf, triggerTokensOf } from "@diy-agent/compaction/select-kept-boundary";
 
-// 路径实现只在 `core/local-paths`（= `@diy/persistence`）一处 —— 测试也从那里取。
-import { createOpsAppender, type OpsAppender, type OpsRef } from "@diy/persistence";
+// 路径实现只在 `core/local-paths`（= `@diy-agent/persistence`）一处 —— 测试也从那里取。
+import { createOpsAppender, type OpsAppender, type OpsRef } from "@diy-agent/persistence";
 import { resolveCwd as resolveCwdWithNote } from "../core/cwd";
 import {
     BlockStore,
@@ -138,10 +138,10 @@ import {
     type UsageBuckets,
     type UsageLike,
 } from "../../shared/usage";
-import { buildDelivery, controlDeltaDelivery, isRuntimePlace, type Delivery } from "@diy/context/delivery";
+import { buildDelivery, controlDeltaDelivery, isRuntimePlace, type Delivery } from "@diy-agent/context/delivery";
 import { assemblyHardCapBytes } from "../../shared/context/request-preflight";
 import { estimateRequest, tighterHistoryCapBytes } from "../../shared/context/request-preflight";
-import { chatEnvelope, isEnvelopeText, userEnvelope, withNotify, type NotifyItem } from "@diy/context/envelope";
+import { chatEnvelope, isEnvelopeText, userEnvelope, withNotify, type NotifyItem } from "@diy-agent/context/envelope";
 import { describeAnomalies, readLlmLog } from "../../shared/context/log-schema";
 import {
     autoCompactPolicyInput,
@@ -150,7 +150,7 @@ import {
     type AutoCompactConfig,
     type AutoCompactFacts,
     type AutoCompactIssue,
-} from "@diy/compaction/compact-config";
+} from "@diy-agent/compaction/compact-config";
 import {
     autoCompactFile,
     loadAutoCompact,
@@ -201,7 +201,7 @@ import {
     type MeasureEventRecord,
     type RateSnapshot,
     type SizeSnapshot,
-} from "@diy/compaction/compaction";
+} from "@diy-agent/compaction/compaction";
 import { layerFacts, type LayerRow, type RequestView } from "../../shared/context/request-view";
 import {
     emptySummary,
@@ -209,7 +209,7 @@ import {
     summaryExtractionPrompt,
     summaryPlaceholder,
     type SummaryData,
-} from "@diy/compaction/summary";
+} from "@diy-agent/compaction/summary";
 import { renderSummarySection } from "./prompt-registry";
 import { assembleGlobals, systemOverBudget } from "./prompt-registry";
 import { readFileWindow, formatReadOutput, READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
@@ -3259,7 +3259,7 @@ export class LocalAgentManager {
      */
     private opSink(sess: LocalSession, taskUri: string): (op: Op) => void {
         return (op) => {
-            // ##432 刀 1：写盘与记账（字节偏移 / 行号）都在 `@diy/persistence`
+            // ##432 刀 1：写盘与记账（字节偏移 / 行号）都在 `@diy-agent/persistence`
             if (!sess.stream.append(op)) {
                 // 落盘失败不阻断流，但必须出声（否则丢行不可观测）；**不 publish**（水位不许超前盘）
                 console.error(`[local-agent] 会话流落盘失败 ${taskUri}（本条不广播）`);

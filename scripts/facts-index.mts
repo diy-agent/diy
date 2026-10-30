@@ -13,7 +13,7 @@
 //   W1 证据陈旧        —— verifiedAt 超过 --max-age 天（缺省 180）= warning，不算失败
 //   W2 文件非内核渲染   —— 手改 / merge 坏序（内容等价但字节不等）= warning，修法是 submit 重写
 //
-// **判据本身不在这里**：实现归 `@diy/facts/node`（`checkRepo`），因为同一套判据还有第二个
+// **判据本身不在这里**：实现归 `@diy-agent/facts/node`（`checkRepo`），因为同一套判据还有第二个
 // 消费者 —— `diy facts submit` 落盘前要拿候选集跑一遍同样的检查（否则会出现「CLI 能写进去、
 // CI 却红」的分叉）。本文件只负责：解析参数 / 打印 / 退出码 / 顺带生成 index.json。
 //
@@ -28,8 +28,8 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import { buildIndex } from '@diy/facts';
-import { checkRepo } from '@diy/facts/node';
+import { buildIndex } from '@diy-agent/facts';
+import { checkRepo } from '@diy-agent/facts/node';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 

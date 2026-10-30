@@ -5,7 +5,7 @@ import { createSignal, For } from "solid-js";
 import { getTheme, setTheme, type DiyTheme } from "../lib/theme";
 import { getSkin, setSkin, SKINS, type DiySkin } from "../lib/skin";
 import { clearUiCache } from "../lib/ui-state";
-import { ChatSkinPreview } from "@diy/ui-kit";
+import { ChatSkinPreview } from "@diy-agent/ui-kit";
 
 export function ThemeSettings() {
   const [theme, setThemeSig] = createSignal<DiyTheme>(getTheme());

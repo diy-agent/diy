@@ -2,7 +2,7 @@
 //
 // 假包用注入的 load 提供（不打真实 runtime/）：判据是「装配语义」，
 // 真实解析链路已由 tests/core/runtime-resolve 之外的 check-runtime-closure 与手工验证覆盖。
-import { isInvariantError } from "@diy/context/format/invariant";
+import { isInvariantError } from "@diy-agent/context/format/invariant";
 import { describe, expect, it } from "vitest";
 import { loadAll, orderEntries, type LoaderHost } from "../../src/main/loader";
 

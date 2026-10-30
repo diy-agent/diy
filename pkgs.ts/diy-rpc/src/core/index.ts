@@ -1,7 +1,7 @@
 /**
- * core/index.ts — @diy/rpc 平台无关浏览器安全核 barrel
+ * core/index.ts — @diy-agent/rpc 平台无关浏览器安全核 barrel
  *
- * 这是 @diy/rpc 根导出的统一公共代码。只含纯 TS + zod，无 node/electron/http/ws 依赖，
+ * 这是 @diy-agent/rpc 根导出的统一公共代码。只含纯 TS + zod，无 node/electron/http/ws 依赖，
  * tsconfig.browser 只 include 本目录（+ src/index.ts 根 barrel）。具体线协议绑定
  * （transport/http|ws|electron）与 CLI（cli/）另立目录，经子路径导出。
  */

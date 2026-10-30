@@ -59,7 +59,7 @@ export const ContextLabSchema: z.ZodType<ContextLab> = z.object({
     }),
 });
 
-/** 行级 diff 的一行（`@diy/line-diff` 的形状） */
+/** 行级 diff 的一行（`@diy-agent/line-diff` 的形状） */
 const diffLine = z.object({ t: z.string(), s: z.string() });
 
 /** 一步的摘要（见 shared/context/steps.ts 的 summarizeSteps） */

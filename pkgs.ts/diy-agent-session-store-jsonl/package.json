@@ -1,5 +1,5 @@
 {
-  "name": "@diy/session-store-jsonl",
+  "name": "@diy-agent/session-store-jsonl",
   "version": "0.1.0",
   "private": true,
   "description": "diy 会话存储适配器：按大小切桶的 jsonl（index.json + log-0001.jsonl…），seq 跨桶连续、readFrom 不扫全量",
@@ -19,7 +19,7 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
-    "@diy/session": "*"
+    "@diy-agent/session": "*"
   },
   "devDependencies": {
     "oxfmt": "^0.57.0",

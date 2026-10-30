@@ -1,4 +1,4 @@
-# @diy/persistence
+# @diy-agent/persistence
 
 > 命名 owner：**diy 主线（pkgs.ts）维护者**（当前 = 用户 ccc）。改包名 / 改导出面先问 owner。
 
@@ -44,7 +44,7 @@
 ## 用法
 
 ```ts
-import { createOpsAppender, appendTurnRecord, readBoundary } from "@diy/persistence";
+import { createOpsAppender, appendTurnRecord, readBoundary } from "@diy-agent/persistence";
 
 const appender = createOpsAppender(home, taskUri);
 const ref = appender.append(op);            // null = 写失败（不阻断流，但调用方不许广播）

@@ -1,5 +1,5 @@
 {
-  "name": "@diy/context",
+  "name": "@diy-agent/context",
   "version": "0.1.0",
   "private": true,
   "description": "上下文树 → 模型 wire 的纯投影：ContextFact/ContextTree 的类型契约、reducer、projection、投递（delivery）与 YAML 信封（envelope）",
@@ -20,7 +20,7 @@
     "src/"
   ],
   "dependencies": {
-    "@diy/template": "^0.1.0",
+    "@diy-agent/template": "^0.1.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

@@ -11,8 +11,8 @@
 // 约定：本文件只放纯函数，禁止 import node:*（renderer 会打进包）。
 
 import type { ZodType } from "zod";
-import { previewValue } from "@diy/template";
-import type { VarSpec } from "@diy/context/schema/prompt-schema";
+import { previewValue } from "@diy-agent/template";
+import type { VarSpec } from "@diy-agent/context/schema/prompt-schema";
 
 /** 变量树节点（一个节点 = 路径上的一段） */
 export interface VarNode {

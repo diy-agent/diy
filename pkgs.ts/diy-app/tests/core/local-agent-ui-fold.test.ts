@@ -19,7 +19,7 @@ import { createTask } from "../../src/main/core/task";
 import { LocalAgentManager, compactFile } from "../../src/main/services/local-agent";
 import { opsFile } from "../../src/main/core/local-paths";
 import { llmFile } from "../../src/main/core/local-paths";
-import type { CompactEventRecord } from "@diy/compaction/compaction";
+import type { CompactEventRecord } from "@diy-agent/compaction/compaction";
 
 /** 一轮的行（user 文本 + assistant 文本）；`filler` 用来把单轮撑大（段封顶用例） */
 function turnLines(i: number, filler = 0): string[] {

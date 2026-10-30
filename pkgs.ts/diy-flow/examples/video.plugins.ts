@@ -10,7 +10,7 @@
 // 节点产物（raw）由 `VIDEO_NODE_DATA` 供给（真接入时从节点产出里取）。于是「绿 → 推」与「红 → 停在边上」
 // 两条路都能在测试里跑到，且**不碰 fs、不引新依赖**。
 
-import type { ActionPlugin, GuardPlugin, PluginRegistry, RenderPlugin } from '@diy/flow';
+import type { ActionPlugin, GuardPlugin, PluginRegistry, RenderPlugin } from '@diy-agent/flow';
 import type { VideoNodeId } from './video';
 
 /** 外部世界的事实（真实现此刻去跑 ffprobe / 问平台 API；范例用注入的假数据） */

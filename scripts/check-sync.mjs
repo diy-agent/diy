@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 // scripts/check-sync.mjs — 「node_modules 是否落后于 package-lock.json / 源树」的只读快检。
 //
-// 为什么需要它：workspace 包改名（如 ##460 全仓统一到 `@diy/` scope）或加依赖后若没重装
+// 为什么需要它：workspace 包改名（如 ##460 全仓统一到 `@diy-agent/` scope）或加依赖后若没重装
 // node_modules，症状是**远离根因**的错 —— 例如 `Rolldown failed to resolve import
-// "@diy/rpc/electron"`、`Failed to resolve import "remark-gfm"`，人只会去看代码，
+// "@diy-agent/rpc/electron"`、`Failed to resolve import "remark-gfm"`，人只会去看代码，
 // 不会想到去比 package-lock.json 与 node_modules。本脚本把这类「忘了 sync」变成一行结论，
 // 由根 sha.sh 的 ensure-sync 在 build/check/test/lab 入口前置调用。
 //
 // 判据（三条，全部只读、毫秒级）：
 //   1. workspace 链接：`package-lock.json` 里 `link: true` 的条目必须在 node_modules 下存在、
 //      且指向对应 workspace 目录；反向也查 —— node_modules 里**任何**指进 workspace 目录的
-//      软链接都必须是 lock 认可的（多出来的 = 改名残留，如 `node_modules/@diy/rpc`）
+//      软链接都必须是 lock 认可的（多出来的 = 改名残留，如 `node_modules/@diy-agent/rpc`）
 //   2. sync 印记：`node_modules/.diy-sync.stamp`（内容 = package-lock.json + 根与各包
 //      package.json 的 sha256，`sync-deps` 成功时写入）与当前哈希不符 → lock/manifest 变了
 //      但没 sync。**不用**「lock vs node_modules/.package-lock.json 比对」：npm 不装其它平台的
@@ -28,7 +28,7 @@
 //   node scripts/check-sync.mjs --json          机器读
 //   node scripts/check-sync.mjs --fix           清理过期 workspace 链接后退出 0（由 sync-deps 调用：
 //                                               `npm i` 只补缺失、**不清改名残留**，实测它会把
-//                                               残留的 `node_modules/@diy/rpc` 留着）
+//                                               残留的 `node_modules/@diy-agent/rpc` 留着）
 //   node scripts/check-sync.mjs --write-stamp   sync 成功后写印记（由 sha.sh sync-deps 调用）
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -168,7 +168,7 @@ function checkLinks(lock, wsRealPaths, wsAbsPaths) {
     }
   }
 
-  // 反向：多出来的、指进 workspace 的链接 = 改名 / 移包残留（如 node_modules/@diy/rpc）
+  // 反向：多出来的、指进 workspace 的链接 = 改名 / 移包残留（如 node_modules/@diy-agent/rpc）
   for (const link of scanLinks()) {
     if (expected.has(link)) continue;
     const real = realOrNull(abs(link));

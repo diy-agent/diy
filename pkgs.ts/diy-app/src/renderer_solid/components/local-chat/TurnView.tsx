@@ -1,7 +1,7 @@
 import { createMemo, For, Match, Show, Switch } from "solid-js";
 import { personaStore } from "../../store/personaStore";
 import { TurnUsageBar, type UsageHoverState } from "../UsagePanel";
-import { RowGutter } from "@diy/ui-kit";
+import { RowGutter } from "@diy-agent/ui-kit";
 import { taskStore } from "../../store/taskStore";
 import { CONCLUSION_LINES_MAX, CONCLUSION_LINES_MIN } from "../../lib/ui-state";
 import { MarkdownView } from "../MarkdownView";

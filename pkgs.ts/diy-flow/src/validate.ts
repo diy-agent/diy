@@ -5,7 +5,7 @@
 //     依据：把 `maxBounces` 拼成 `maxBounce` 若被静默忽略，死循环护栏就**悄悄关掉**了 ——
 //     与「未注册插件不降级」同型（见 registry.ts 头注）。
 //   · `isIsoString` —— 时刻的词法护栏：领域态要落盘（##333），`at` 必须先是**事实**才能是**数据**；
-//     口径与 `@diy/talk` 的 `takeIsoString` 一致（只校形态、不校日历合法性，内核不引 `Date`）。
+//     口径与 `@diy-agent/talk` 的 `takeIsoString` 一致（只校形态、不校日历合法性，内核不引 `Date`）。
 //   · `callPlugin` —— 插件是宿主代码，**抛出异常也是宿主边界**：统一包成 `FlowError`
 //     （`code = plugin-threw`，`cause` 保留原异常），不让原生 Error 直穿内核（内核自己的诊断
 //     全是 `FlowError`，调用方按 `code` 处置，不必猜「这个 Error 是谁的」）。
@@ -15,7 +15,7 @@ import { FlowError, type FlowErrorCode } from './errors.js';
 /**
  * ISO-8601 时刻的**词法**校验（形状 `YYYY-MM-DDTHH:mm:ss[.sss][Z|±HH:mm]`）。
  *
- * 与 `@diy/talk` 同口径（review3 意见 2）：只校形态、**不校日历合法性** —— `2026-99-99T99:99:99Z`
+ * 与 `@diy-agent/talk` 同口径（review3 意见 2）：只校形态、**不校日历合法性** —— `2026-99-99T99:99:99Z`
  * 会放行。内核保持轻、不引 `Date`；「这个时刻是否真实存在」属语义，归宿主按需校验。
  */
 const ISO_8601 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$/;

@@ -1,5 +1,5 @@
 // src/main/runtime-resolve.ts
-// 🎯 能力包运行时解析（##455，薄壳子准备 #3）：证明 Electron 能按名字加载 `@diy/*`。
+// 🎯 能力包运行时解析（##455，薄壳子准备 #3）：证明 Electron 能按名字加载 `@diy-agent/*`。
 //
 // 两个形态共用一个锚点：
 //   开发态：`pkgs.ts/diy-app/runtime/`（scripts/build-runtime.mjs 生成，脚本 cp 到这里）
@@ -8,7 +8,7 @@
 // 本模块**不接业务 import** —— 只提供 runtimeRequire() / loadPackage()，供后续 loader 使用。
 // 判定全收敛在 runtimeDir() 一个函数里，别把路径散落到调用方。
 
-import { InvariantError } from "@diy/context/format/invariant";
+import { InvariantError } from "@diy-agent/context/format/invariant";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";

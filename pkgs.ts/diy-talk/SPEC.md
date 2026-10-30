@@ -1,4 +1,4 @@
-# @diy/talk —— 对话容器内核：事件 / 锚点 / 反应原语 + role 铁律
+# @diy-agent/talk —— 对话容器内核：事件 / 锚点 / 反应原语 + role 铁律
 
 > **本文档状态：意图测试为唯一真源** —— `tests/intent.talk.test.ts`（R1–R7）已覆盖本 SPEC 全部可验证行为。
 > 本文保留作**决策记录与索引**：新增需求先写意图测试，再补实现。
@@ -30,7 +30,7 @@
 | R4 | **引用完整性**：悬空 `replyTo` / 指向自己 / `id` 重号 / **异锚点混串** / **事件 `causes` 自指·重复** 一律报错 | `describe('R4 …')` |
 | R5 | **非法 anchor 一律拒绝**（未知 type、缺 `data`、字段类型错、**未知字段**），带点路径定位 | `describe('R5 …')` |
 | R6 | **反序列化边界**：非 JSON、缺字段（含 `replyTo` 键缺失）、**未知字段（写侧拒绝 / 读侧可选放行）**、**`at` 非 ISO** 一律报错 | `describe('R6 …')` |
-| R7 | **零依赖纯内核**：不 import `node:fs` / `electron` / `@diy/app`，不取时间 | `describe('R7 …')` |
+| R7 | **零依赖纯内核**：不 import `node:fs` / `electron` / `@diy-agent/app`，不取时间 | `describe('R7 …')` |
 
 ## 2. 形状
 
@@ -79,7 +79,7 @@ role     = 自己 → 'assistant'；他人发言 / 资料 → 'user'
 5. **role 铁律不做例外开关**（结论 5）。「例外仅限真正共用同一 API session 的连续轮次」，DIY 不属此例；
    留一个参数就等于留一条把他人发言标成 `assistant` 的后门。将来真有共用 session 的形态，应是**显式的新 `kind`**，
    由意图测试先定义，而不是一个布尔开关。`assemblyRole` 对非法 `kind` **抛错**（review1 意见 1），不得静默降级。
-6. **诊断一律不静默**（沿用 `@diy/template` 的教训）：非法 anchor / 悬空 replyTo / role 违规全部抛 `TalkError`（带 `code` + `path`）。
+6. **诊断一律不静默**（沿用 `@diy-agent/template` 的教训）：非法 anchor / 悬空 replyTo / role 违规全部抛 `TalkError`（带 `code` + `path`）。
    静默丢弃的后果是「装配出来的历史少一条反驳」，而这正是决策线断掉最难发现的形态。
    **「绝不静默丢弃」的精确口径**（review2 意见 4 收口）：**已识别字段的非法值 / 引用悬空 / 未知字段**一律报错；
    未知字段写侧拒绝（防调用方数据被抹）、读侧缺省拒绝（可 `allowUnknown` 放行做前向兼容）。
@@ -105,7 +105,7 @@ role     = 自己 → 'assistant'；他人发言 / 资料 → 'user'
 - **不做存储**：不 import `node:fs`，不认识 task 目录、不决定落地格式与版本号（归 ##319 宿主接入）。
 - **不做存储 / 不碰 LLM SDK**：本包的装配（§7）只把结构渲染成纯 `Message[]` 数据，不 import 任何
   LLM SDK、不拼 prompt 的具体形状 —— 输出形状由宿主映射。
-- **不做工作流**：泳道单指针、guard 求值、轨迹折线归 ##313（`@diy/flow`，依赖本包）。
+- **不做工作流**：泳道单指针、guard 求值、轨迹折线归 ##313（`@diy-agent/flow`，依赖本包）。
 - **不做 fuzzy 搜索算法**（见决策 2）。
 - **不做插件 / 可见性规则 / 通知投递**（§13.2 的五个插件槽与 §10.5 待决 7 的调度，均属后续任务）。
 
@@ -113,7 +113,7 @@ role     = 自己 → 'assistant'；他人发言 / 资料 → 'user'
 
 | 后续 | 接什么 |
 |---|---|
-| ##313 `@diy/flow` | 用 `anchor.type = 'node'` 表达泳道节点；容器不变量（单指针 / 可回退）在那边 |
+| ##313 `@diy-agent/flow` | 用 `anchor.type = 'node'` 表达泳道节点；容器不变量（单指针 / 可回退）在那边 |
 | ##314 装配器 | **已完成**（本包含 `src/assemble.ts`）；消费 `Reaction[]` / `Event[]` + `assemblyRole`，产出 `Message[]`；三种装配策略 + 注入式窗口钩子 |
 | ##319 宿主接入 | 事件流落地（jsonl）+ `diy flow` CLI 域 + 提示词装配；本包 `*ToJson` 负责**校验 / 规范化**（`compact` 供 jsonl），行分隔与文件布局由 ##319 定 |
 

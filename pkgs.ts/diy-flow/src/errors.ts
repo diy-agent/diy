@@ -1,6 +1,6 @@
-// errors.ts — @diy/flow 统一错误类型
+// errors.ts — @diy-agent/flow 统一错误类型
 //
-// 与 @diy/talk 同口径：**任何一条诊断都不允许降级为静默丢弃**。工作流是「位置 = 单指针」的容器，
+// 与 @diy-agent/talk 同口径：**任何一条诊断都不允许降级为静默丢弃**。工作流是「位置 = 单指针」的容器，
 // 一条非法的边 / 一个未知节点若被静默忽略，轨迹就会悄悄偏到另一条路径上 —— 而「偏了一步」
 // 正是折线投影最难肉眼发现的失败形态（##166 §7.4 痛点 2：靠肉眼对齐会幻觉）。
 
@@ -56,7 +56,7 @@ export type FlowErrorCode =
     | 'invalid-param'
     /** 领域状态快照非法（##333）：形状不对 / `position` 与折线不一致 / `seq` 不单调 / `at` 非 ISO */
     | 'invalid-state'
-    /** JSON 文本解析失败（`flowStateFromJson`；同 `@diy/talk` 的 `invalid-json`） */
+    /** JSON 文本解析失败（`flowStateFromJson`；同 `@diy-agent/talk` 的 `invalid-json`） */
     | 'invalid-json'
     /** 参数名不在声明里（未知节点 / 未知局部名）—— 与 `unknown-plugin` 同型：绝不静默忽略 */
     | 'unknown-param'

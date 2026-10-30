@@ -6,7 +6,7 @@
 import { Show } from "solid-js";
 import { ChatFindPanel } from "../ChatFindPanel";
 import { CompactHistoryPanel } from "../CompactSessionPanel";
-import { ConfirmDialog } from "@diy/ui-kit";
+import { ConfirmDialog } from "@diy-agent/ui-kit";
 import { FullscreenModal } from "./RoomRows";
 import { InputLimitDialog } from "../InputLimitDialog";
 import { PersonaDrawer } from "../PersonaDrawer";

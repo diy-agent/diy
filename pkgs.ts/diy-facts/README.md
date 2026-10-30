@@ -1,4 +1,4 @@
-# @diy/facts
+# @diy-agent/facts
 
 diy 事实库的**内核**：事实身份、作用域解析、claim 图、结构校验。零依赖、不 IO、不取时间。
 
@@ -13,7 +13,7 @@ diy 事实库的**内核**：事实身份、作用域解析、claim 图、结构
 ## 用法
 
 ```ts
-import { validateFacts, buildIndex, resolveClaim, affected } from '@diy/facts';
+import { validateFacts, buildIndex, resolveClaim, affected } from '@diy-agent/facts';
 
 const { facts, issues } = validateFacts(parsed);        // 一次报全部问题
 const index = buildIndex(facts);                        // claim 表 / 反查 / 冲突 / 结构问题

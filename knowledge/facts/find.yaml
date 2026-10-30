@@ -59,7 +59,7 @@ facts:
       verifiedAt: '2026-10-21'
   find#flow:
     value: |-
-      `pkgs.ts/diy-flow/` 工作流内核（定义 DSL + 泳道容器 + 插件槽 + 参数层 L2 + guard 求值 + 转移执行器 + 轨迹投影；零 IDE 依赖，唯一依赖 `@diy/talk` 的 `Event` 原语；接 ##319）
+      `pkgs.ts/diy-flow/` 工作流内核（定义 DSL + 泳道容器 + 插件槽 + 参数层 L2 + guard 求值 + 转移执行器 + 轨迹投影；零 IDE 依赖，唯一依赖 `@diy-agent/talk` 的 `Event` 原语；接 ##319）
     id: agents.find.flow
     review: accepted
     lifecycle: active
@@ -113,7 +113,7 @@ facts:
       verifiedAt: '2026-10-25'
   find#rpc:
     value: |-
-      `pkgs.ts/diy-rpc/` RPC 协议 + 传输（纯内核，零 Node/Electron 依赖）；**npm 发布名 `@diy/rpc`**（见 `tool.publish`）
+      `pkgs.ts/diy-rpc/` RPC 协议 + 传输（纯内核，零 Node/Electron 依赖）；**npm 发布名 `@diy-agent/rpc`**（见 `tool.publish`）
     id: agents.find.rpc
     review: accepted
     lifecycle: active
@@ -131,7 +131,7 @@ facts:
       verifiedAt: '2026-10-25'
   find#talk:
     value: |-
-      `pkgs.ts/diy-talk/` 对话容器内核（事件 / 锚点 / 反应原语 + role 铁律，零依赖；消费者 `@diy/flow`（`Event` 原语）；接 ##319 存储/装配）
+      `pkgs.ts/diy-talk/` 对话容器内核（事件 / 锚点 / 反应原语 + role 铁律，零依赖；消费者 `@diy-agent/flow`（`Event` 原语）；接 ##319 存储/装配）
     id: agents.find.talk
     review: accepted
     lifecycle: active

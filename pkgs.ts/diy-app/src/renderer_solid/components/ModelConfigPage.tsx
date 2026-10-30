@@ -35,7 +35,7 @@ import { EnvImportBar, type EnvScanScope } from "./EnvImportBar";
 import { createModelsSync } from "../lib/models-sync";
 import { notificationStore } from "../store/notificationStore";
 import { modelNoticeStore } from "../store/modelNoticeStore";
-import { ConfirmDialog } from "@diy/ui-kit";
+import { ConfirmDialog } from "@diy-agent/ui-kit";
 import { ANCHOR_MODEL_PICK, remedyOf, type Remedy } from "../../shared/error-remedy";
 import { MODEL_UNAVAILABLE_KIND_LABEL } from "../../shared/model-unavailable";
 

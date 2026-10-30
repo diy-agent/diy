@@ -11,15 +11,15 @@
 //   R6  投递状态可查：delivered / skipped（人没有会话）/ failed（会话报错不拖垮别人）
 //   R8  按水位增量投递：只给 `seq > lastSeenSeq`；首次加入给最近 initialN + 说明；
 //       增量过大截断且 @ 他的 / 最后 human 必在；**成功才推进水位**（失败下次重投，不丢不重）
-//   R7  零 task / 零 IO：src/** 里没有任务标识 / @diy/task / 文件系统模块 / electron / 应用数据根
+//   R7  零 task / 零 IO：src/** 里没有任务标识 / @diy-agent/task / 文件系统模块 / electron / 应用数据根
 //
-// 测试风格：真实 @diy/session（假 LlmPort / 假 Clock）跑 R1；其余用极简假会话控时序。
+// 测试风格：真实 @diy-agent/session（假 LlmPort / 假 Clock）跑 R1；其余用极简假会话控时序。
 // ═══════════════════════════════════════════════════════════════
 
 /// <reference types="vite/client" />
 // ↑ 只为 import.meta.glob 的类型（读源码做静态扫描）；本包源码不使用任何 IO
 import { describe, expect, it } from 'vitest';
-import { createSession, type Clock, type LlmPort, type SessionPeer } from '@diy/session';
+import { createSession, type Clock, type LlmPort, type SessionPeer } from '@diy-agent/session';
 import {
     RoomError,
     createRoom,
@@ -476,7 +476,7 @@ describe('R8 按水位增量投递', () => {
 });
 
 describe('R7 零 task / 零 IO', () => {
-    it('src/** 不含任务标识 / @diy/task / 文件系统模块 / electron / 应用数据根', () => {
+    it('src/** 不含任务标识 / @diy-agent/task / 文件系统模块 / electron / 应用数据根', () => {
         // 用 vite 的 raw 导入读源码（测试自己也不 import 文件系统）
         const sources = import.meta.glob('../src/**/*.ts', { query: '?raw', import: 'default', eager: true }) as Record<
             string,
@@ -490,7 +490,7 @@ describe('R7 零 task / 零 IO', () => {
         const forbidden = [
             new RegExp(taskWord),
             new RegExp(`task${'Id'}`),
-            /@diy\/task/,
+            /@diy-agent\/task/,
             new RegExp(`from\\s+['"]${fsModule}`),
             /\belectron\b/,
             new RegExp(`\\b${appHome}\\b`),

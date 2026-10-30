@@ -1,6 +1,6 @@
 // src/main/core/flow.ts — 工作流实例的**领域操作**（`diy flow` 域的业务层）
 //
-// 这一层的存在理由（##319 交付物）：内核（`@diy/flow`）**不碰 fs**、**不取时间**、**不编人类文本** ——
+// 这一层的存在理由（##319 交付物）：内核（`@diy-agent/flow`）**不碰 fs**、**不取时间**、**不编人类文本** ——
 // 于是「实例落在哪 / 现在几点 / 这条转移怎么说人话」全是宿主的活，本文件就是这三件的唯一落点。
 //
 // 三条口径（与内核对齐，别在别处另立）：
@@ -40,7 +40,7 @@ import {
     type View,
     type Visit,
     type WorkflowDef,
-} from "@diy/flow";
+} from "@diy-agent/flow";
 import { listWorkflows, workflowById, workflowIds, type WorkflowSummary } from "../workflows";
 import { collectFacts, createHostRegistry, type CommandFact, type HostPluginDeps } from "../workflows/plugins";
 import { diyHome, projectsRoot, taskDir, taskExists } from "./state";
@@ -384,8 +384,8 @@ function artOf(def: WorkflowDef<string>, nodeId: string): Art | null {
 /**
  * 交给 render 插件的**锚点**：这条泳道的节点 id。
  *
- * 与内核执行器给事件用的 `nodeAnchor(to)` 同形（`@diy/talk` 的 `Anchor` 的 `node` 分支）。
- * 这里只手搓同形字面量、**不 import `@diy/talk`**：宿主不因一个只读锚点多一条包依赖；
+ * 与内核执行器给事件用的 `nodeAnchor(to)` 同形（`@diy-agent/talk` 的 `Anchor` 的 `node` 分支）。
+ * 这里只手搓同形字面量、**不 import `@diy-agent/talk`**：宿主不因一个只读锚点多一条包依赖；
  * 形状对不对由调用点的类型核对（`RenderPlugin` 的第二个参数）。
  */
 function anchorOf(nodeId: string): { readonly type: "node"; readonly data: { readonly nodeId: string } } {

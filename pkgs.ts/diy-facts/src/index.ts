@@ -1,9 +1,9 @@
-// @diy/facts — diy 事实库内核：事实身份 / 作用域解析 / claim 图 / 结构校验
+// @diy-agent/facts — diy 事实库内核：事实身份 / 作用域解析 / claim 图 / 结构校验
 //
-// 零依赖、纯 TypeScript：不 import `node:fs` / `electron` / `@diy/app`，**不取时间**
+// 零依赖、纯 TypeScript：不 import `node:fs` / `electron` / `@diy-agent/app`，**不取时间**
 // （`verifiedAt` 由调用方传入）。存储、生成器、CLI 都在消费侧（##404）。
 //
-//   import { validateFacts, buildIndex, resolveClaim, affected } from '@diy/facts';
+//   import { validateFacts, buildIndex, resolveClaim, affected } from '@diy-agent/facts';
 //
 //   const { facts, issues } = validateFacts(parsedYaml);   // 一次报全部问题
 //   const index = buildIndex(facts);                       // claim 表 / 反查 / 冲突

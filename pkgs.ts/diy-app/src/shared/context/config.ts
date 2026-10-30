@@ -10,9 +10,9 @@
 // 空 = 用推荐名单（defaultSystemPlaces）。
 
 import { z } from "zod";
-import { defaultSystemPlaces } from "@diy/context/delivery";
+import { defaultSystemPlaces } from "@diy-agent/context/delivery";
 import { DEFAULT_INPUT_LIMIT_CHARS } from "./input-limit";
-import { isValidPath } from "@diy/context/path";
+import { isValidPath } from "@diy-agent/context/path";
 
 /** context.yaml 的结构（全局一份） */
 export const ContextConfigSchema = z.object({

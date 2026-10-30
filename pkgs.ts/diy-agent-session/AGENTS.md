@@ -1,4 +1,4 @@
-# @diy/session — 单会话内核（消息 + 一次 LLM 调用 + 流式增量）
+# @diy-agent/session — 单会话内核（消息 + 一次 LLM 调用 + 流式增量）
 
 > 全仓契约见**仓库根 `AGENTS.md`**。本包是**零 IO 纯内核**：不碰文件系统 / `electron` / 应用数据根，
 > 不认识 task。存储 / 时钟 / 压缩 / LLM 全部走注入端口 ⇒ 现在即可拆成单独项目。
@@ -7,7 +7,7 @@
 ## 存储与 seq
 
 每条消息有会话内全局单调的 `seq`（1 起，压缩/恢复都不重置）；`SessionStore` = `append / readFrom(seq) / readRange(at) / latestSeq`。
-分桶 jsonl 在 `@diy/session-store-jsonl`，本包不碰文件系统。
+分桶 jsonl 在 `@diy-agent/session-store-jsonl`，本包不碰文件系统。
 
 ## 消息分类（判别键 `type`，6 种）
 

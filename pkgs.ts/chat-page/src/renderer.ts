@@ -3,7 +3,7 @@
 // 只做展示与转发：输入一句话 → `ctx.invoke('send', text)` → 用返回的消息线重画。
 // 本文件不认识 Electron / IPC（那些在 preload 与主进程），也拿不到 LlmPort。
 
-import type { PageContext, PageView } from "@diy/workbench-ui";
+import type { PageContext, PageView } from "@diy-agent/workbench-ui";
 import type { SendResult, WireMessage } from "./shared.js";
 
 const STYLE_ID = "chat-page-style";

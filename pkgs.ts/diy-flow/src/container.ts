@@ -26,7 +26,7 @@
 // 本文件只做「位置」：**不做 guard 求值**（在 `eval.ts` + `execute.ts`）、**不做参数校验**（归 ##316）、
 // **不碰存储**（落盘位置 / 文件布局归 ##319）。
 
-import type { Event } from '@diy/talk';
+import type { Event } from '@diy-agent/talk';
 import type { EdgeKind, WorkflowDef } from './define.js';
 import { FlowError, type FlowErrorCode } from './errors.js';
 import { isIsoString, isObject, rejectUnknown, sameJson } from './validate.js';
@@ -48,7 +48,7 @@ export interface Visit<Id extends string = string> {
     /**
      * 宿主关联标识（`taskUri` / `turnId` / `stepId`…）—— **开放袋，内核只透传不解释**（##333 交付 E）。
      *
-     * 与 `@diy/talk` 的 `Anchor` / `DocRangeAnchorData.revisionId` 同一用意：横向模块之间靠**显式 ref**
+     * 与 `@diy-agent/talk` 的 `Anchor` / `DocRangeAnchorData.revisionId` 同一用意：横向模块之间靠**显式 ref**
      * 对齐，不靠共享日志（##310 的 `ctxlog.ref` 同形）。键不封闭（宿主自己命名），值必须是字符串。
      */
     readonly ref?: Readonly<Record<string, string>>;
@@ -284,7 +284,7 @@ export function createContainer<Id extends string>(def: WorkflowDef<Id>): Contai
 }
 
 // ── 审计 / 消息入口（**不参与状态构造**）──────────────────────────────────────────
-// `apply` 只是把一条**消息**（`@diy/talk` 的 `Event`，`anchor.data.nodeId` = 目标节点）翻译成一次
+// `apply` 只是把一条**消息**（`@diy-agent/talk` 的 `Event`，`anchor.data.nodeId` = 目标节点）翻译成一次
 // 领域操作 —— ##333 之后它**不再是状态的来源**，领域态的正路是 `advance`。留它有两个用处：
 //   ① 从旧日志 / 审计流**重建**领域态（`project.ts` 的重放路径）；
 //   ② 兼容「一条转移 = 一条 Event」的老调用方（##312~##315 的既有语义不变）。

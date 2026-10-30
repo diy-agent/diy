@@ -1,5 +1,5 @@
 import { defineConfig } from 'vitest/config';
-// tests 里 `import { createEvent } from '@diy/talk'`：包 main 已指 lib/*.js，测试期指回 src
+// tests 里 `import { createEvent } from '@diy-agent/talk'`：包 main 已指 lib/*.js，测试期指回 src
 import { workspaceAliases } from '../vitest.alias';
 
 export default defineConfig({

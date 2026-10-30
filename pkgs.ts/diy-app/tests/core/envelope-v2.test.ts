@@ -11,8 +11,8 @@
 // 这里只钉**产出字节**，不碰 UI / 压缩。
 
 import { describe, expect, it } from "vitest";
-import { buildDelivery, controlDeltaDelivery, defaultSystemPlaces } from "@diy/context/delivery";
-import { chatEnvelope, isEnvelopeText, userEnvelope, withNotify, type NotifyItem } from "@diy/context/envelope";
+import { buildDelivery, controlDeltaDelivery, defaultSystemPlaces } from "@diy-agent/context/delivery";
+import { chatEnvelope, isEnvelopeText, userEnvelope, withNotify, type NotifyItem } from "@diy-agent/context/envelope";
 
 const globals = {
     diy: { cli: "/repo/diy.sh", home: "/home/u/.diy" },

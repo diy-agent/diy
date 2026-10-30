@@ -22,7 +22,7 @@ export default defineConfig({
     // 这些 workspace 包本就在仓内、且带 side-effect 补丁，必须与项目模块同生共死 → 内联。
     server: {
       deps: {
-        inline: ["@diy/rpc", "@diy/flow", "@diy/talk", "solid-js"],
+        inline: ["@diy-agent/rpc", "@diy-agent/flow", "@diy-agent/talk", "solid-js"],
       },
     },
     include: ["tests/**/*.test.ts"],

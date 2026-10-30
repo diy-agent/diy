@@ -1,8 +1,8 @@
-// @diy/template — 提示词模版引擎（阶段 1）
+// @diy-agent/template — 提示词模版引擎（阶段 1）
 //
 // 纯 TS、零依赖、无 fs / 无 Electron：include 的解析由宿主注入 resolver。
 //
-//   import { parse, render, renderWithTrace, analyze } from '@diy/template';
+//   import { parse, render, renderWithTrace, analyze } from '@diy-agent/template';
 //
 //   render('<diy>{{diy.cli}}</diy>', { globals: { diy: { cli: '/repo/diy.sh' } } });
 //   // => '<diy>/repo/diy.sh</diy>'

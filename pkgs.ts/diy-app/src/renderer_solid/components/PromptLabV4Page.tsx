@@ -4,7 +4,7 @@
 // + 右 Views 区（实时预览）。单一编辑器模式：树上点开一份，dirty 在树行与标题栏两处标注，
 // 保存按钮两处都有。数据模型与 V1~V3 一致（同一套 template.* RPC）。
 import { createSignal, createMemo, createEffect, on, For, Show } from "solid-js";
-import { analyze } from "@diy/template";
+import { analyze } from "@diy-agent/template";
 import { diyService } from "../lib/rpc";
 import { notificationStore } from "../store/notificationStore";
 import { taskStore } from "../store/taskStore";
@@ -16,13 +16,13 @@ import { Caches, type CacheField } from "../lib/ui-state";
 import { projectFromUri } from "../../shared/task-uri";
 import { JsonTree } from "./JsonTree";
 import { MdEditor } from "./MdEditor";
-import { DynamicBar } from "@diy/ui-kit";
+import { DynamicBar } from "@diy-agent/ui-kit";
 import { VIEW_BAR_H } from "../lib/layout-metrics";
 import { EditorThemePicker } from "./EditorThemePicker";
 import { collectTags } from "../../shared/xml-tags";
 import { lineDiff, useHoverTip, type PromptEntry } from "./promptLabCommon";
-import type { RequestPreview, TraceNode } from "@diy/context/schema/prompt-schema";
-import { AssembleGlobalsSchema } from "@diy/context/schema/prompt-schema";
+import type { RequestPreview, TraceNode } from "@diy-agent/context/schema/prompt-schema";
+import { AssembleGlobalsSchema } from "@diy-agent/context/schema/prompt-schema";
 import { buildValueTree, buildVarTree, flattenVars, type ValueNode, type VarNode } from "../../shared/var-tree";
 import type { HlLines } from "./MdEditor";
 import { lineNumbersOf, type HlSpan } from "../../shared/hl-lines";

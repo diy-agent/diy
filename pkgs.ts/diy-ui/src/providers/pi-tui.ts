@@ -312,7 +312,7 @@ class TsTextInput extends LeafComponent {
  * PiTuiApp — pi-tui 框架的 App 入口
  *
  * 用法:
- *   import { App } from "@diy/ui";
+ *   import { App } from "@diy-agent/ui";
  *   const app = new App(new ScopeConfig({ mode: "dev" }));
  *   app.column(() => {
  *     app.label("hello");

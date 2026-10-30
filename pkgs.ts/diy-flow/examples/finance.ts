@@ -18,7 +18,7 @@
 // （`render_bars` / `render_factor` / `render_basket` / `render_equity` / `render_risk` / `render_orders`）——
 // demo 是基准，不是重新发明。
 
-import { defineWorkflow, type WorkflowDef } from '@diy/flow';
+import { defineWorkflow, type WorkflowDef } from '@diy-agent/flow';
 
 /** 泳道 ≡ 节点（1:1）：七个 id 就是七条泳道 */
 export const FINANCE_NODE_IDS = ['fetch', 'factor', 'select', 'backtest', 'risk', 'signoff', 'order'] as const;

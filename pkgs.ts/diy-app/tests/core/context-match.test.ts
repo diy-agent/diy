@@ -86,7 +86,7 @@ describe("结构树 path → 匹配区间", () => {
 });
 
 // ── 路径段：裸段 vs 引号段（map 化集合用稳定键寻址）──
-import { joinPath, parsePath, isValidPath } from "@diy/context/path";
+import { joinPath, parsePath, isValidPath } from "@diy-agent/context/path";
 
 describe("路径段语法（引号段）", () => {
     it("裸段照旧（向后兼容）", () => {

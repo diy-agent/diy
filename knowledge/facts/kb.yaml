@@ -5,7 +5,7 @@ domain: kb
 facts:
   kb.journal#anchor:
     value: |-
-      anchor 复用 @diy/talk 的 Anchor（message / doc-range 带 revisionId+offset+quote+fuzzy 校正 / task-field / node）+ causes 因果链，不另造第五套事件记录
+      anchor 复用 @diy-agent/talk 的 Anchor（message / doc-range 带 revisionId+offset+quote+fuzzy 校正 / task-field / node）+ causes 因果链，不另造第五套事件记录
     review: accepted
     lifecycle: active
     evidence:

@@ -1,7 +1,7 @@
 import { createContext, createEffect, createMemo, createSignal, For, Match, Show, Switch, useContext } from "solid-js";
 import type { JSX } from "solid-js";
 import { loadFullBlockFields, localChatStore } from "../../store/localChatStore";
-import { IconExpand, RowGutter } from "@diy/ui-kit";
+import { IconExpand, RowGutter } from "@diy-agent/ui-kit";
 import { chatNotice, DETAIL_HISTORY } from "../../lib/notice-chat";
 import { trafficStore } from "../../store/trafficStore";
 import { notificationStore } from "../../store/notificationStore";

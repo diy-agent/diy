@@ -8,7 +8,7 @@
 // **范例态**：不接真 CI / 真仓库（真接入是 ##319 的事）—— 外部事实由 `DevFacts` 注入，缺省「都过」。
 // 于是「绿 → 推」与「红 → 停在边上」两条路都能在测试里跑到，且**不碰 fs、不引新依赖**。
 
-import type { ActionPlugin, GuardPlugin, PluginContext, PluginRegistry } from '@diy/flow';
+import type { ActionPlugin, GuardPlugin, PluginContext, PluginRegistry } from '@diy-agent/flow';
 
 /** 外部世界的事实（真实现此刻去读 CI / 仓库；范例用注入的假数据） */
 export interface DevFacts {

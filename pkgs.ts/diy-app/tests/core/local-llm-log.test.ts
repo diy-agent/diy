@@ -18,7 +18,7 @@ import { llmFile, opsFile } from "../../src/main/core/local-paths";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
 import { LocalAgentManager } from "../../src/main/services/local-agent";
-import { DEFAULT_COMPACT_POLICY } from "@diy/compaction/compaction";
+import { DEFAULT_COMPACT_POLICY } from "@diy-agent/compaction/compaction";
 
 let PROJECT = "";
 beforeAll(() => {

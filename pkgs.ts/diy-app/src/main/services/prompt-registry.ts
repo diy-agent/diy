@@ -5,7 +5,7 @@
 //   覆盖: $DIY_HOME/projects/<id>/template/<relpath>（与 tasks/ 同级，listTasks 只扫 tasks/ 数字目录）
 //   元数据: template/.meta.yaml {<relpath>: {baseVersion}}（save 时记内置版本，供 stale 判定）
 // 解析 = 覆盖存在 ? 覆盖 : 内置（覆盖文件只取 body，frontmatter 不算）；状态只有 builtin | overridden。
-// 装配 = 以内置 system.md 为入口，交给 @diy/template 渲染：
+// 装配 = 以内置 system.md 为入口，交给 @diy-agent/template 渲染：
 //   节顺序与节间分隔写在 system.md 里，节标签内联在各节模版里，include 经本模块的 resolver
 //   （项目覆盖 > 内置 + locked 标记 + 草稿）。
 // 本模块只做组装与渲染，不发任何 LLM 请求（试验场试跑 = dry-run，看请求长什么样）。
@@ -16,10 +16,10 @@ import * as yaml from "js-yaml";
 import { existsSync, readFileSync, readdirSync, rmSync, rmdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, normalize, resolve, sep } from "node:path";
-import { analyze, renderWithTrace, type IncludeResolver, type TraceNode, type VarSpec } from "@diy/template";
+import { analyze, renderWithTrace, type IncludeResolver, type TraceNode, type VarSpec } from "@diy-agent/template";
 import { writeFileAtomic } from "../core/atomic-write";
-import { TASK_HEAD_FIELDS } from "@diy/context/schema/task-head";
-import { AssembleGlobalsSchema, type AssembleGlobals } from "@diy/context/schema/prompt-schema";
+import { TASK_HEAD_FIELDS } from "@diy-agent/context/schema/task-head";
+import { AssembleGlobalsSchema, type AssembleGlobals } from "@diy-agent/context/schema/prompt-schema";
 
 // 契约类型从 schema 推导（单一真源）；装配方按它注入，漂移由 safeParse 兜住
 export type { AssembleGlobals };
@@ -31,16 +31,16 @@ import {
   summaryHasContent,
   SUMMARY_TEMPLATE_RELPATH,
   type SummaryData,
-} from "@diy/compaction/summary";
+} from "@diy-agent/compaction/summary";
 import { parseTaskFile } from "../core/state";
 import { resolveCwd } from "../core/cwd";
 import { personaForTask } from "../core/persona";
 import { getProjectPath } from "../core/project";
 import { readRuntimeConfig } from "../../runtime";
-import { reqlogValue } from "@diy/context/schema/reqlog";
+import { reqlogValue } from "@diy-agent/context/schema/reqlog";
 import { LOG_DIR_REL, dayFile } from "../core/traffic-log";
 // 契约类型唯一源（shared/prompt-schema.ts，纯 zod）——renderer 也用它，避免手抄第二份
-import type { AssembledSystem, PromptEntry } from "@diy/context/schema/prompt-schema";
+import type { AssembledSystem, PromptEntry } from "@diy-agent/context/schema/prompt-schema";
 import { buildFactsContext, buildKbIndex } from "./facts-context";
 import { buildDocsIndex, summarizeDocsIndex } from "./docs-index";
 

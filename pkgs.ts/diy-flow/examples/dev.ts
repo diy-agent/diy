@@ -1,6 +1,6 @@
 // examples/dev.ts — 范例①：开发工作流（6 泳道 · 含一次打回）
 //
-// 这是「**一个工作流开发包长什么样**」的样板：只用 `@diy/flow` 的**公开 API**（模拟外部包怎么写，
+// 这是「**一个工作流开发包长什么样**」的样板：只用 `@diy-agent/flow` 的**公开 API**（模拟外部包怎么写，
 // 不走相对路径摸内核内部）—— 顺带当集成测试的素材（`tests/examples.dev.test.ts`）。
 //
 // 一个工作流开发包自己要管理的，就三样东西：
@@ -21,7 +21,7 @@
 //   · ci（`pred:ci_green`）/ merge（`action:pr_mergeable`，且是**写**外部世界）⇒ **系统求值、自动转移**，
 //     无人发言（审计 Event 的 `author = 'system'`）。
 
-import { defineWorkflow, type WorkflowDef } from '@diy/flow';
+import { defineWorkflow, type WorkflowDef } from '@diy-agent/flow';
 
 /** 泳道 ≡ 节点（1:1）：六个 id 就是六条泳道（也是折线上可能出现的全部节点） */
 export const DEV_NODE_IDS = ['clarify', 'design', 'implement', 'review', 'ci', 'merge'] as const;
