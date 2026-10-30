@@ -339,8 +339,7 @@ function attachGen(node: GenNode, gen: ChildGen): void {
 }
 
 /** 一个 yield 出来的子节点：keyed 的按 key 复用，否则新建（无 key = 每轮唯一 token）。 */
-function reconcileChild(spec: Spec, parent: GenNode, rec: Reconciler<GenNode>): void {
-  const hasKey = spec.key !== undefined;
+function reconcileChild(spec: Spec, parent: GenNode, rec: Reconciler<GenNode>): void {  const hasKey = spec.key !== undefined;
   const key = hasKey ? spec.key : {};
   const rev = spec.rev !== undefined ? spec.rev : key;
   if (hasKey) {
@@ -352,4 +351,71 @@ function reconcileChild(spec: Spec, parent: GenNode, rec: Reconciler<GenNode>): 
   }
   const gn = instantiate(spec, parent.el, parent.app);
   rec.put(key, rev, gn, gn.ownScope ?? []);
+}
+
+// ── mountStream：把「异步流」挂到一个节点上（真·增量投递） ─────
+
+export interface MountStreamOptions<T> {
+  /** 每条的身份 key（传给 `node.insert`；同 key 会复用而不是重复插入）。 */
+  key?: (item: T, index: number) => unknown;
+  /** 变更令牌；同 key + 不同 rev 会替换该条（就地更新）。 */
+  rev?: (item: T, index: number) => unknown;
+  /** 外部取消信号（组件卸载 / 用户切走时 abort）。 */
+  signal?: AbortSignal;
+  onError?: (e: unknown) => void;
+}
+
+/**
+ * 消费一个异步流，**每来一条就 insert 一条**：
+ *
+ *   mountStream(node, sseSource, (m) => bubble(m), { key: (m) => m.id });
+ *
+ * 与 children 生成器的区别（也是它存在的理由）：
+ *   - **不重跑**：整棵重跑块一次都不 drain，0 次 key 查表、0 次 reorder；
+ *   - **实时**：每条到达立即上屏，不等一批凑齐；
+ *   - **代价**：只能追加/按 key 替换，不能重排整表、不能整表重渲染。
+ *
+ * 语义对齐 py 版 `_execute_cell_generator`（每 yield 一次就 `_add_child`），
+ * 但 JS 没有跨 await 的 ambient 上下文，所以挂载点是**显式传入的 node**。
+ *
+ * 返回停止函数；节点被销毁时也会自动停止（挂在其 `ownScope` 上）。
+ */
+export function mountStream<T>(
+  node: GenNode,
+  source: AsyncIterable<T>,
+  render: (item: T, index: number) => Spec,
+  opts: MountStreamOptions<T> = {},
+): () => void {
+  const ac = new AbortController();
+  const stop = (): void => ac.abort();
+  // 节点销毁（removeSelf / keyed prune）时自动停，避免消费循环挂在一个死节点上
+  node.ownScope?.push(stop);
+  opts.signal?.addEventListener("abort", stop, { once: true });
+
+  void (async () => {
+    const it = source[Symbol.asyncIterator]();
+    // 取消时把迭代器也 return 掉，否则它永远停在 await 上（泄漏）
+    const onAbort = (): void => void it.return?.(undefined);
+    ac.signal.addEventListener("abort", onAbort, { once: true });
+    let i = 0;
+    try {
+      for (;;) {
+        const r = await it.next();
+        if (ac.signal.aborted) break;
+        if (r.done) break;
+        const item = r.value;
+        node.insert(render(item, i), { key: opts.key?.(item, i), rev: opts.rev?.(item, i) });
+        i++;
+      }
+    } catch (e) {
+      if (!ac.signal.aborted) {
+        (opts.onError ?? ((err: unknown) => console.error("[mountStream]", err)))(e);
+      }
+    } finally {
+      ac.signal.removeEventListener("abort", onAbort);
+      opts.signal?.removeEventListener("abort", stop);
+    }
+  })();
+
+  return stop;
 }

@@ -22,6 +22,8 @@ export { CellHost, type CellCapable } from "./cell.js";
 export {
   GenApp,
   html,
+  mountStream,
+  type MountStreamOptions,
   type Spec,
   type ChildGen,
   type GenNode,
