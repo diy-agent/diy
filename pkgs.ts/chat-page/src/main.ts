@@ -5,7 +5,7 @@
 // 换真模型时只换 LlmPort，页面与外壳都不动 —— 现在就是这一步（##459）：
 // profile（apps/minimal）在 `config.llm` 里塞一个真 provider，本插件不传就退回假回复。
 
-import { createSession, type ChatMessage, type LlmPort } from "@diy/session";
+import { createSession, type ChatMessage, type LlmPort, type SessionStore } from "@diy/session";
 import type { PageContribution } from "@diy/workbench";
 import { ChatPageError } from "./errors.js";
 import type { SendResult, WireMessage } from "./shared.js";
@@ -30,9 +30,12 @@ export function createPage(config?: unknown): PageContribution {
     const reply = replyFrom(config);
     // 真 provider 由 profile 传入；不传 = 假回复（UI 链路可单独验，见 ##457/#458）
     const llm = llmFrom(config);
+    const store = storeFrom(config);
     const session = createSession({
         id: "chat-page",
         llm: llm ?? createFakeLlm(reply),
+        // 落盘也由宿主注入（同 llm：位置归宿主，插件只认端口；不传 = 纯内存）
+        ...(store === undefined ? {} : { store }),
         // 系统话术只属于「假模型」这条路：真 provider 那边提示词归 profile，本插件不代写
         ...(llm === undefined ? { system: "你是最小工作台的示例会话；当前使用的是假模型。" } : {}),
     });
@@ -65,6 +68,16 @@ function llmFrom(config: unknown): LlmPort | undefined {
     if (!candidate || typeof candidate !== "object") return undefined;
     const chat = (candidate as { chat?: unknown }).chat;
     return typeof chat === "function" ? (candidate as LlmPort) : undefined;
+}
+
+/** 从 config 取注入的 SessionStore（形状对不上就当没传 —— 与 llmFrom 同一把尺子） */
+function storeFrom(config: unknown): SessionStore | undefined {
+    if (!config || typeof config !== "object") return undefined;
+    const candidate = (config as { store?: unknown }).store;
+    if (!candidate || typeof candidate !== "object") return undefined;
+    const port = candidate as Record<string, unknown>;
+    const ok = ["append", "readFrom", "readRange", "latestSeq"].every((key) => typeof port[key] === "function");
+    return ok ? (candidate as SessionStore) : undefined;
 }
 
 function replyFrom(config: unknown): string {

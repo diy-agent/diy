@@ -22,8 +22,10 @@
   "dependencies": {
     "@diy/chat-page": "*",
     "@diy/llm-provider": "*",
-    "@diy/workbench-ui": "*",
-    "@diy/workbench": "*"
+    "@diy/session": "*",
+    "@diy/session-store-jsonl": "*",
+    "@diy/workbench": "*",
+    "@diy/workbench-ui": "*"
   },
   "devDependencies": {
     "@types/node": "^26.1.0",

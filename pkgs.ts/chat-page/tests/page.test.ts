@@ -32,6 +32,26 @@ describe("createPage（主进程侧）", () => {
         await expect(page.methods!["send"]!("   ")).rejects.toThrow(/正文为空/);
     });
 
+    it("config.store 注入即落盘（宿主给端口，插件不碰文件系统）", async () => {
+        const appended: unknown[] = [];
+        const store = {
+            append: (messages: readonly unknown[]) => void appended.push(...messages),
+            readFrom: () => [],
+            readRange: () => [],
+            latestSeq: () => 0,
+        };
+        const page = createPage({ store });
+        await page.methods!["send"]!("要落盘的话");
+        // 假模型这条路带一条 system 话术，也一并在内（真 provider 那条不写 system）
+        expect(appended.map((m) => (m as { role: string }).role)).toEqual(["system", "user", "assistant"]);
+    });
+
+    it("store 形状不对 ⇒ 退回纯内存（不炸，也不静默丢半条）", async () => {
+        const page = createPage({ store: { append: "不是函数" } });
+        const result = (await page.methods!["send"]!("在吗")) as SendResult;
+        expect(result.messages).toHaveLength(2);
+    });
+
     it("config.reply 可以换固定文本（装配层用）", async () => {
         const page = createPage({ reply: "另一句" });
         const result = (await page.methods!["send"]!("嗨")) as SendResult;

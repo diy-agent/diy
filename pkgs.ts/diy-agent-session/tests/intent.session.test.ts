@@ -248,6 +248,23 @@ describe('S4 响亮失败', () => {
         });
         expect(() => assertDelta({ type: 'usage', inputTokens: -1, outputTokens: 0 })).toThrow(/非负/);
     });
+
+    it('usage 带缓存桶（@diy/llm-provider 的 UsageDetail）照样合法；没报则字段缺席', () => {
+        expect(assertDelta({ type: 'usage', inputTokens: 9, outputTokens: 2, cacheReadTokens: 7 })).toEqual({
+            type: 'usage',
+            inputTokens: 9,
+            outputTokens: 2,
+            cacheReadTokens: 7,
+        });
+        expect(assertDelta({ type: 'usage', inputTokens: 9, outputTokens: 2 })).not.toHaveProperty('cacheReadTokens');
+        expect(() => assertDelta({ type: 'usage', inputTokens: 9, outputTokens: 2, cacheReadTokens: -1 })).toThrow(
+            /非负/,
+        );
+        // 拼错的桶名仍然是显式失败（放行 ≠ 什么都收）
+        expect(() => assertDelta({ type: 'usage', inputTokens: 9, outputTokens: 2, cacheRead: 3 })).toThrow(
+            /未知字段/,
+        );
+    });
 });
 
 describe('S5 压缩是注入策略', () => {

@@ -8,6 +8,9 @@
 // 外壳（@diy/workbench）+ 骨架（@diy/workbench-ui）都不认识具体页面，页面由这里带进来。
 
 import * as chatPageMain from "@diy/chat-page/main";
+import { openJsonlSessionStore, type JsonlSessionStore } from "@diy/session-store-jsonl";
+import type { SessionStore } from "@diy/session";
+import { join } from "node:path";
 import { DEFAULT_MODEL_ID, createOpenAiCompatible, type LlmProvider } from "@diy/llm-provider";
 import type { PluginEntry } from "@diy/workbench";
 import { TITLE } from "./title.js";
@@ -27,10 +30,31 @@ export const ASSEMBLY: Assembly = {
             type: "module",
             data: { module: chatPageMain },
             // 有完整 LLM_* 环境变量 ⇒ 真 provider；缺一个 ⇒ 不传，插件退回假回复（##457 行为不变）
-            config: { llm: llmFromEnv() },
+            config: { llm: llmFromEnv(), store: sessionStoreFromEnv() },
         },
     ],
 };
+
+/**
+ * 会话落盘：`$DIY_HOME/sessions/chat-page/**`（判据见 ##461 —— 「Session 真的工作了」要看得到 jsonl）。
+ *
+ * 懒打开：profile 在模块求值时就被 main.ts 导入，那时 `app.whenReady()` 还没到、
+ * 也不该在启动路径上做同步 IO；第一次 append 才 open，失败只影响落盘不影响对话。
+ * `DIY_HOME` 缺席（如被当纯库 import）= 不传 store，行为退回纯内存。
+ */
+function sessionStoreFromEnv(): SessionStore | undefined {
+    const home = process.env["DIY_HOME"];
+    if (!home) return undefined;
+    let opening: Promise<JsonlSessionStore> | undefined;
+    const open = (): Promise<JsonlSessionStore> =>
+        (opening ??= openJsonlSessionStore({ dir: join(home, "sessions", "chat-page") }));
+    return {
+        append: async (messages) => (await open()).append(messages),
+        readFrom: async (seq) => (await open()).readFrom(seq),
+        readRange: async (range) => (await open()).readRange(range),
+        latestSeq: async () => (await open()).latestSeq(),
+    };
+}
 
 /**
  * 从环境拿连接信息建 provider（配置**全部外部传入**，provider 自己不读任何东西）。

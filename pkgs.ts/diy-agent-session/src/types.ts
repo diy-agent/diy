@@ -90,7 +90,15 @@ export type SessionDelta =
     | { readonly type: 'text'; readonly text: string }
     | { readonly type: 'tool-call'; readonly id: string; readonly name: string; readonly input?: string }
     | { readonly type: 'tool-result'; readonly id: string; readonly content: string }
-    | { readonly type: 'usage'; readonly inputTokens: number; readonly outputTokens: number }
+    | {
+          readonly type: 'usage';
+          readonly inputTokens: number;
+          readonly outputTokens: number;
+          /** 缓存读（命中）；缺省 = 上游没报。`inputTokens` 已含它，本包不重复累计 */
+          readonly cacheReadTokens?: number;
+          /** 缓存写；缺省 = 上游没报 */
+          readonly cacheWriteTokens?: number;
+      }
     | { readonly type: 'done'; readonly stopReason?: string };
 
 /** 一次 LLM 调用的选项（本包不解释具体含义，原样交给适配器） */
