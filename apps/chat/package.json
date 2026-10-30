@@ -1,0 +1,43 @@
+{
+  "name": "@diy-agent/app-chat",
+  "version": "0.1.0",
+  "private": true,
+  "description": "多会话聊天应用：左侧会话列表 + 主区消息流 + 顶部模型选择器；会话落盘 jsonl，模型来自 model.yaml",
+  "files": [
+    "*.ts",
+    "*.html"
+  ],
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./index.ts",
+  "exports": {
+    ".": {
+      "types": "./index.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@diy-agent/chat-page": "*",
+    "@diy-agent/llm-provider": "*",
+    "@diy-agent/model-catalog": "*",
+    "@diy-agent/session": "*",
+    "@diy-agent/session-store-jsonl": "*",
+    "@diy-agent/workbench": "*",
+    "@diy-agent/workbench-ui": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "electron": "^43.0.0",
+    "esbuild": "^0.28.1",
+    "happy-dom": "^20.0.0",
+    "oxfmt": "^0.57.0",
+    "oxlint": "^1.72.0",
+    "playwright-core": "^1.63.0",
+    "tsx": "^4.23.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

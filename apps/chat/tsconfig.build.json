@@ -1,0 +1,18 @@
+{
+    "extends": "../../tsconfig.base.json",
+    "compilerOptions": {
+        "module": "NodeNext",
+        "moduleResolution": "NodeNext",
+        "target": "ES2022",
+        "lib": ["ES2022", "DOM", "DOM.Iterable"],
+        "rootDir": ".",
+        "outDir": "lib",
+        "noEmit": false,
+        "composite": false,
+        "incremental": false,
+        "declaration": true,
+        "sourceMap": true
+    },
+    "include": ["index.ts", "sessions.ts", "title.ts", "main.ts", "preload.ts", "renderer.ts"],
+    "exclude": ["tests/**/*", "scripts/**/*", "vitest.config.ts"]
+}

@@ -60,6 +60,12 @@
     },
     {
       "path": "pkgs.ts/workbench-plugin"
+    },
+    {
+      "path": "pkgs.ts/diy-agent-model-catalog"
+    },
+    {
+      "path": "apps/chat"
     }
   ]
 }

@@ -37,7 +37,9 @@ const LOCATIONS: Record<string, { dir: string; entry: string }> = {
     "@diy-agent/workbench": { dir: "pkgs.ts/workbench", entry: "src/index.ts" },
     "@diy-agent/workbench-ui": { dir: "pkgs.ts/ui-workbench", entry: "src/index.ts" },
     "@diy-agent/chat-page": { dir: "pkgs.ts/chat-page", entry: "src/index.ts" },
+    "@diy-agent/model-catalog": { dir: "pkgs.ts/diy-agent-model-catalog", entry: "src/index.ts" },
     "@diy-agent/app-minimal": { dir: "apps/minimal", entry: "index.ts" },
+    "@diy-agent/app-chat": { dir: "apps/chat", entry: "index.ts" },
 };
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

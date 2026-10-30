@@ -1,0 +1,135 @@
+import { mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import type { LlmPort } from "@diy-agent/session";
+import { createChatSessions, splitModelKey } from "../sessions.js";
+
+/** 临时数据根：一个 custom provider（test/echo-1），key 是假值（不会被用，llmFor 注入假模型） */
+function makeHome(model = true): string {
+    const home = mkdtempSync(join(tmpdir(), "app-chat-"));
+    if (model) {
+        writeFileSync(
+            join(home, "model.yaml"),
+            `customProviders:
+  test:
+    accounts:
+      - type: apiKey
+        name: main
+        data:
+          value: fake-key
+`,
+            "utf-8",
+        );
+        writeFileSync(
+            join(home, "providers.custom.yaml"),
+            `test:
+  id: test
+  npm: "@ai-sdk/openai-compatible"
+  api: http://127.0.0.1:1/v1
+  models:
+    echo-1:
+      name: Echo 1
+    echo-2:
+      name: Echo 2
+`,
+            "utf-8",
+        );
+    }
+    return home;
+}
+
+const fakeLlm: LlmPort = {
+    async *chat(messages) {
+        const last = [...messages].reverse().find((message) => message.role === "user");
+        const reply = `收到：${last?.text ?? ""}`;
+        yield { type: "text", text: reply };
+        yield { type: "usage", inputTokens: 1, outputTokens: 1 };
+        yield { type: "done", stopReason: "stop" };
+    },
+};
+
+const host = (home: string) => createChatSessions({ home, llmFor: () => fakeLlm });
+
+describe("apps/chat 多会话宿主", () => {
+    it("模型目录来自 model.yaml / providers.custom.yaml（provider×model）", async () => {
+        const sessions = host(makeHome());
+        const snapshot = await sessions.snapshot();
+        expect(snapshot.models.map((choice) => `${choice.providerId}/${choice.modelId}`)).toEqual([
+            "test/echo-1",
+            "test/echo-2",
+        ]);
+        expect(snapshot.sessions).toEqual([]);
+    });
+
+    it("新建 → 发消息 → 列表出现标题，消息线是 user + assistant", async () => {
+        const sessions = host(makeHome());
+        let snapshot = await sessions.create({});
+        expect(snapshot.sessions).toHaveLength(1);
+        const id = snapshot.activeId!;
+        snapshot = await sessions.send(id, "你好呀", () => {});
+        expect(snapshot.messages).toEqual([
+            { role: "user", text: "你好呀" },
+            { role: "assistant", text: "收到：你好呀" },
+        ]);
+        expect(snapshot.sessions[0]?.title).toBe("你好呀");
+        expect(snapshot.sessions[0]?.messageCount).toBe(2);
+    });
+
+    it("多会话隔离：第二个会话的消息不出现在第一个里（判据 2）", async () => {
+        const sessions = host(makeHome());
+        const first = (await sessions.create({})).activeId!;
+        await sessions.send(first, "会话一的暗号：ALPHA", () => {});
+        const second = (await sessions.create({})).activeId!;
+        await sessions.send(second, "会话二的暗号：BETA", () => {});
+
+        const secondView = await sessions.select(second);
+        expect(secondView.messages.map((message) => message.text)).toEqual([
+            "会话二的暗号：BETA",
+            "收到：会话二的暗号：BETA",
+        ]);
+        const firstView = await sessions.select(first);
+        expect(firstView.messages.map((message) => message.text)).toEqual([
+            "会话一的暗号：ALPHA",
+            "收到：会话一的暗号：ALPHA",
+        ]);
+    });
+
+    it("落盘：会话目录有 meta.json + 桶文件（判据 3）", async () => {
+        const home = makeHome();
+        const sessions = host(home);
+        const id = (await sessions.create({})).activeId!;
+        await sessions.send(id, "写盘", () => {});
+        const files = readdirSync(join(home, "sessions", "chat", id)).sort();
+        expect(files).toContain("index.json");
+        expect(files).toContain("meta.json");
+        // 桶名以 store 的契约为准（`log-…jsonl`；##464 之后带 UTC 时间前缀，正则仍匹配）
+        expect(files.filter((file) => /^log-.+\.jsonl$/.test(file))).toHaveLength(1);
+    });
+
+    it("重启后会话还在：新宿主实例仍能列出并恢复消息（判据 4）", async () => {
+        const home = makeHome();
+        const before = host(home);
+        const id = (await before.create({})).activeId!;
+        await before.send(id, "重启前的话", () => {});
+
+        const after = host(home);
+        const snapshot = await after.snapshot();
+        expect(snapshot.sessions.map((session) => session.id)).toEqual([id]);
+        const reopened = await after.select(id);
+        expect(reopened.messages).toEqual([
+            { role: "user", text: "重启前的话" },
+            { role: "assistant", text: "收到：重启前的话" },
+        ]);
+    });
+
+    it("没有模型配置 ⇒ 新建时报错（不静默建空会话）", async () => {
+        const sessions = host(makeHome(false));
+        await expect(sessions.create({})).rejects.toThrow(/没有可用模型/);
+    });
+
+    it("splitModelKey 按第一个 / 切（模型 id 自身可含 /）", () => {
+        expect(splitModelKey("goat/gpt-5.5")).toEqual({ providerId: "goat", modelId: "gpt-5.5" });
+        expect(splitModelKey("goat/deepseek/v4")).toEqual({ providerId: "goat", modelId: "deepseek/v4" });
+    });
+});

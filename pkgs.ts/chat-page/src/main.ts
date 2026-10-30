@@ -4,11 +4,20 @@
 // 会话本身是真的（@diy-agent/session）：发一条 user、收一条 assistant、消息线自己攒。
 // 换真模型时只换 LlmPort，页面与外壳都不动 —— 现在就是这一步（##459）：
 // profile（apps/minimal）在 `config.llm` 里塞一个真 provider，本插件不传就退回假回复。
+//
+// ##465：`config.sessions` 注入一个 **ChatSessionHost** 时切换成多会话模式（左侧列表 /
+// 顶部模型选择器 / 主区消息流）。单会话模式（不注入）行为一字不变 —— apps/minimal 不受影响。
 
 import { createSession, type ChatMessage, type LlmPort, type SessionStore } from "@diy-agent/session";
 import type { PageContribution } from "@diy-agent/workbench";
 import { ChatPageError } from "./errors.js";
-import type { SendResult, WireMessage } from "./shared.js";
+import type {
+    ChatSessionHost,
+    ChatSnapshot,
+    MultiSendArgs,
+    SendResult,
+    WireMessage,
+} from "./shared.js";
 
 /** 假回复的固定正文（第一刀的唯一输出） */
 export const FAKE_REPLY = "这是一条固定的假回复 —— 第一刀只验 UI 链路，还没接真模型。";
@@ -27,6 +36,29 @@ export function createFakeLlm(reply: string = FAKE_REPLY): LlmPort {
 
 /** 插件加载器会调用它（default 导出 = 本函数） */
 export function createPage(config?: unknown): PageContribution {
+    const host = hostFrom(config);
+    if (host !== undefined) {
+        return {
+            id: "chat",
+            title: "聊天",
+            methods: {
+                snapshot: (): Promise<ChatSnapshot> => host.snapshot(),
+                createSession: (args: unknown): Promise<ChatSnapshot> =>
+                    host.create(args !== null && typeof args === "object" && typeof (args as { model?: unknown }).model === "string"
+                        ? { model: (args as { model: string }).model }
+                        : {}),
+                selectSession: (args: unknown): Promise<ChatSnapshot> => host.select(sessionIdOf(args)),
+                deleteSession: (args: unknown): Promise<ChatSnapshot> => host.remove(sessionIdOf(args)),
+                send: async (args: unknown): Promise<ChatSnapshot> => {
+                    const { sessionId, text } = multiSendArgsOf(args);
+                    return host.send(sessionId, text, () => {
+                        // 当前通道只有「最终消息线」；增量消费留给将来加事件通道
+                    });
+                },
+            },
+        };
+    }
+
     const reply = replyFrom(config);
     // 真 provider 由 profile 传入；不传 = 假回复（UI 链路可单独验，见 ##457/#458）
     const llm = llmFrom(config);
@@ -61,6 +93,8 @@ export function createPage(config?: unknown): PageContribution {
 
 export default createPage;
 
+// ── 单会话模式的配置解析 ─────────────────────────
+
 /** 从 config 取注入的 LlmPort（形状对不上就当没传 —— 配置错误不该静默变成空回复） */
 function llmFrom(config: unknown): LlmPort | undefined {
     if (!config || typeof config !== "object") return undefined;
@@ -87,7 +121,36 @@ function replyFrom(config: unknown): string {
     return FAKE_REPLY;
 }
 
-function wireOf(messages: readonly ChatMessage[]): WireMessage[] {
+// ── 多会话模式的配置解析 ─────────────────────────
+
+/** 从 config 取注入的 ChatSessionHost（形状对不上 = 单会话模式） */
+function hostFrom(config: unknown): ChatSessionHost | undefined {
+    if (!config || typeof config !== "object") return undefined;
+    const candidate = (config as { sessions?: unknown }).sessions;
+    if (!candidate || typeof candidate !== "object") return undefined;
+    const port = candidate as Record<string, unknown>;
+    const ok = ["snapshot", "create", "select", "remove", "send"].every((key) => typeof port[key] === "function");
+    return ok ? (candidate as ChatSessionHost) : undefined;
+}
+
+function sessionIdOf(args: unknown): string {
+    const id = args !== null && typeof args === "object" ? (args as { id?: unknown }).id : args;
+    if (typeof id !== "string" || id.trim() === "") {
+        throw new ChatPageError("chat/empty-text", "缺少会话 id");
+    }
+    return id;
+}
+
+function multiSendArgsOf(args: unknown): MultiSendArgs {
+    if (args === null || typeof args !== "object") throw new ChatPageError("chat/empty-text", "缺少参数");
+    const { sessionId, text } = args as { sessionId?: unknown; text?: unknown };
+    if (typeof sessionId !== "string" || sessionId.trim() === "") throw new ChatPageError("chat/empty-text", "缺少会话 id");
+    if (typeof text !== "string" || text.trim() === "") throw new ChatPageError("chat/empty-text", "消息正文为空");
+    return { sessionId, text };
+}
+
+/** session 消息 → 线上形状 */
+export function wireOf(messages: readonly ChatMessage[]): WireMessage[] {
     const out: WireMessage[] = [];
     for (const message of messages) {
         if (message.role !== "user" && message.role !== "assistant") continue;

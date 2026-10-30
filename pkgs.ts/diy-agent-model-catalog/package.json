@@ -1,0 +1,31 @@
+{
+  "name": "@diy-agent/model-catalog",
+  "version": "0.1.0",
+  "private": true,
+  "description": "模型目录：读 $DIY_HOME/model.yaml + providers.custom.yaml（+ models.dev 快照）→ provider×model 列表；不含 key 值，不依赖 llm-provider",
+  "files": [
+    "src/"
+  ],
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "js-yaml": "^5.5.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "oxfmt": "^0.57.0",
+    "oxlint": "^1.72.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}
