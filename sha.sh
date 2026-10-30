@@ -424,13 +424,19 @@ vendor.update() {  run git submodule update --init --recursive --remote --merge;
 # Python 包发布
 ####################################################
 # 编各能力包的 lib/（Node 可直接 import 的 ESM + .d.ts，##453）。
-# 顺序 = 依赖拓扑：@diy-agent/template → @diy-agent/context → @diy-agent/compaction；@diy-agent/talk → @diy-agent/flow
-#（各包 tsc 要靠被依赖包的 lib/*.d.ts 做类型解析，故不能乱序、也不能并行）。
+# 名单与顺序都由 scripts/build-order.mjs 算：入选 = pkgs.ts/* 里 main 指 ./lib/ 的包；
+# 顺序 = 内部 @diy/* · @diy-agent/* 依赖的拓扑序（各包 tsc 要靠被依赖包的 lib/*.d.ts 做类型
+# 解析，故不能乱序、也不能并行）。
+# 为什么不再手写数组：这里原先是一行 `_pkg_order=(...)`，**两次漏登记新包**（#465
+# model-catalog、#469 bot）。漏登记的报错长在别处 —— build-runtime 撞见缺 lib/index.js 就喊
+# 「先跑根 ./sha.sh build」，正是刚失败的那条命令，人被引去原地重跑。
 build-pkgs() {
-    # workbench / ui-workbench / chat-page：插件化体系的第一个活样本（##457）；
-    # 顺序 = 被依赖方在前（chat-page 依赖 agent-session）。
-    local _pkg_order=(diy-template diy-talk diy-context diy-compact diy-flow diy-facts diy-persistence diy-llm-provider diy-rpc diy-ui workbench-plugin diy-agent-session diy-agent-session-store-jsonl diy-agent-model-catalog diy-room workbench ui-workbench chat-page diy-agent-model-config-page)
-    for _pkg in "${_pkg_order[@]}"; do
+    local _pkgs _pkg
+    if ! _pkgs=$(node scripts/build-order.mjs); then
+        echo "${error}✗ 算不出能力包构建顺序（见上一条报错）${reset}" >&2
+        return 1
+    fi
+    for _pkg in $_pkgs; do
         echo "${inverse_surface}info: workspace: build 'pkgs.ts/${_pkg}'${reset}"
         ( cd "pkgs.ts/${_pkg}" && ./sha.sh build )
     done
