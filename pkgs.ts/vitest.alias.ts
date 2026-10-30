@@ -21,6 +21,7 @@ const REPO = resolve(PKGS, "..");
 const LOCATIONS: Record<string, { dir: string; entry: string }> = {
     "@diy-agent/session": { dir: "pkgs.ts/diy-agent-session", entry: "src/index.ts" },
     "@diy-agent/session-store-jsonl": { dir: "pkgs.ts/diy-agent-session-store-jsonl", entry: "src/index.ts" },
+    "@diy-agent/session-store-memory": { dir: "pkgs.ts/diy-agent-session-store-memory", entry: "src/index.ts" },
     "@diy-agent/compaction": { dir: "pkgs.ts/diy-compact", entry: "src/index.ts" },
     "@diy-agent/context": { dir: "pkgs.ts/diy-context", entry: "src/index.ts" },
     "@diy-agent/facts": { dir: "pkgs.ts/diy-facts", entry: "src/index.ts" },
@@ -39,6 +40,8 @@ const LOCATIONS: Record<string, { dir: string; entry: string }> = {
     "@diy-agent/workbench-ui": { dir: "pkgs.ts/ui-workbench", entry: "src/index.ts" },
     "@diy-agent/chat-page": { dir: "pkgs.ts/chat-page", entry: "src/index.ts" },
     "@diy-agent/model-catalog": { dir: "pkgs.ts/diy-agent-model-catalog", entry: "src/index.ts" },
+    "@diy-agent/model-config-page": { dir: "pkgs.ts/diy-agent-model-config-page", entry: "src/index.ts" },
+    "@diy-agent/bot-config-page": { dir: "pkgs.ts/diy-agent-bot-config-page", entry: "src/index.ts" },
     "@diy-agent/app-minimal": { dir: "apps/minimal", entry: "index.ts" },
     "@diy-agent/app-chat": { dir: "apps/chat", entry: "index.ts" },
 };

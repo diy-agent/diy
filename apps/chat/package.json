@@ -21,12 +21,14 @@
   },
   "dependencies": {
     "@diy-agent/bot": "*",
+    "@diy-agent/bot-config-page": "*",
     "@diy-agent/chat-page": "*",
     "@diy-agent/llm-provider": "*",
     "@diy-agent/model-catalog": "*",
     "@diy-agent/model-config-page": "*",
     "@diy-agent/session": "*",
     "@diy-agent/session-store-jsonl": "*",
+    "@diy-agent/session-store-memory": "*",
     "@diy-agent/workbench": "*",
     "@diy-agent/workbench-ui": "*"
   },

@@ -1,0 +1,30 @@
+{
+  "name": "@diy-agent/session-store-memory",
+  "version": "0.1.0",
+  "private": true,
+  "description": "diy 会话存储适配器：纯内存（进程退出即消失，一个字节不落盘）；与 jsonl 适配器同接口",
+  "files": [
+    "src/"
+  ],
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@diy-agent/session": "*"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.57.0",
+    "oxlint": "^1.72.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

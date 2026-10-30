@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 import { ASSEMBLY } from "../index.js";
 
 describe("apps/chat 装配清单", () => {
-    it("装的是 chat-page + model-config-page 插件（type: module，真模块）", () => {
-        expect(ASSEMBLY.plugins.map((entry) => entry.id)).toEqual(["chat-page", "model-config-page"]);
+    it("装的是 chat-page + model-config-page + bot-config-page 插件（type: module，真模块）", () => {
+        expect(ASSEMBLY.plugins.map((entry) => entry.id)).toEqual([
+            "chat-page",
+            "model-config-page",
+            "bot-config-page",
+        ]);
         for (const entry of ASSEMBLY.plugins) {
             expect(entry.type).toBe("module");
             expect(typeof (entry.data as { module: { default?: unknown } }).module.default).toBe("function");
@@ -12,6 +16,15 @@ describe("apps/chat 装配清单", () => {
 
     it("model-config 页的装配配置带数据根（DIY_HOME 存在时）", () => {
         const config = (ASSEMBLY.plugins[1] as { config?: { home?: string } }).config;
+        if (process.env["DIY_HOME"] === undefined) {
+            expect(config?.home).toBeUndefined();
+            return;
+        }
+        expect(config?.home).toBe(process.env["DIY_HOME"]);
+    });
+
+    it("bot-config 页的装配配置带数据根（DIY_HOME 存在时）", () => {
+        const config = (ASSEMBLY.plugins[2] as { config?: { home?: string } }).config;
         if (process.env["DIY_HOME"] === undefined) {
             expect(config?.home).toBeUndefined();
             return;
