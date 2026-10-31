@@ -140,7 +140,7 @@ import {
     type UsageBuckets,
     type UsageLike,
 } from "../../shared/usage";
-import { buildDelivery, controlDeltaDelivery, isRuntimePlace, type Delivery } from "@diy-agent/context/delivery";
+import { buildDelivery, type Delivery } from "@diy-agent/context/delivery";
 import { assemblyHardCapBytes } from "../../shared/context/request-preflight";
 import { estimateRequest, tighterHistoryCapBytes } from "../../shared/context/request-preflight";
 import { chatEnvelope, isEnvelopeText, userEnvelope, withNotify, type NotifyItem } from "@diy-agent/context/envelope";
@@ -173,6 +173,8 @@ import {
     type CtxSnapshot,
 } from "../../shared/context/changelog";
 import type { DeliveryStepRecord } from "../../shared/context/steps";
+import { segmentSystemTextOf } from "../../shared/context/segment-snapshot";
+import { stepDeltaOf } from "../../shared/context/step-delta";
 import {
     clipSpecOf,
     clippedIdsOfEvent,
@@ -718,24 +720,16 @@ function isEnvelope(m: ModelMessage): boolean {
  * ⚠️ 配置换了（`context.yaml` 的 system 名单）时本函数仍会复用旧快照：那是**用户主动改投递划分**，
  * 不是变量变化。当前阶段先不自动重建（要重启会话 / 等压缩）；接边界事件时一并处理。
  *
- * ⚠️ 压缩重做后这里要接边界事件（新段 = 新基线）；当前 main 的压缩注记还没迁完，
- * 本函数先把「不压缩的会话」钉住。真发生压缩时由投递侧另行重建。
+ * 判据本体在 `shared/context/segment-snapshot.ts`（纯函数、可单测）：`runtime: {}` 也算新格式，
+ * 老实现按 `line === "runtime:"` 判会把「全部单元划进 system」的配置误判成老格式 ⇒ 每轮砸缓存。
  */
-function frozenSystemTextOf(
-    live: Delivery,
-    lastStep: DeliveryStepRecord | null,
-    boundaryAt: string | null,
-): string {
-    try {
-        // ##442：压缩边界 = 新段。段首快照只在**同一段**内复用；边界变了必须用现状重建一次。
-        if ((lastStep?.compactAt ?? null) !== boundaryAt) return live.system.text;
-        if (!lastStep?.systemText) return live.system.text;
-        // 老格式的 system 没有顶格 runtime（help 里那段是缩进的）⇒ 不能当基线
-        if (!lastStep.systemText.split("\n").some((l) => l === "runtime:")) return live.system.text;
-        return lastStep.systemText;
-    } catch {
-        return live.system.text;
-    }
+function frozenSystemTextOf(live: Delivery, lastStep: DeliveryStepRecord | null, boundaryAt: string | null): string {
+    return segmentSystemTextOf({
+        liveText: live.system.text,
+        lastText: lastStep?.systemText ?? null,
+        lastCompactAt: lastStep?.compactAt ?? null,
+        boundaryAt,
+    });
 }
 
 /**
@@ -3735,7 +3729,9 @@ export class LocalAgentManager {
             ? {
                   at: bEntry.at,
                   dropped:
-                      bEntry.v === 2 ? (bEntry.dropped ?? Math.max(0, bEntry.cut.llmLine - 1)) : Math.max(0, bEntry.cut.llmLine - 1),
+                      bEntry.v === 2
+                          ? (bEntry.dropped ?? Math.max(0, bEntry.cut.llmLine - 1))
+                          : Math.max(0, bEntry.cut.llmLine - 1),
                   limitTokens: bEntry.v === 2 ? (bEntry.limitTokens ?? 0) : (bEntry.retainTokens ?? 0),
               }
             : null;
@@ -5834,7 +5830,11 @@ export class LocalAgentManager {
         // 段首 system 快照（##442 用户 2026-10-27）：变量树全在 system，压缩点前不重建。
         // 跨轮变化走 user 控制增量（`sentOf` 里按上一次真发的树算），不砸这条 system 的前缀缓存。
         const frozenState = this.compactStateOf(taskUri);
-        const frozenSystemText = frozenSystemTextOf(liveDelivery, frozenState.lastStep, frozenState.boundary?.at ?? null);
+        const frozenSystemText = frozenSystemTextOf(
+            liveDelivery,
+            frozenState.lastStep,
+            frozenState.boundary?.at ?? null,
+        );
         const delivery: Delivery =
             frozenSystemText === liveDelivery.system.text
                 ? liveDelivery
@@ -6021,19 +6021,14 @@ export class LocalAgentManager {
                 // 跨轮控制增量：`prevDeltaSnap` 是「上一次给模型看过的树」；本轮轮首 system 已冻结，
                 // 变化只补 user。**不在这里前移游标** —— 预检可能重算一次（`sentOf` 会再跑），
                 // 前移后第二次就少一段增量，预览/真发会对不上。
-                const changed = changesOf(prevDeltaSnap, delivery, ctxUnits);
-                if (changed.length > 0) {
-                    const paths = changed.map((c) => c.path);
-                    const sysPaths = paths.filter((p) => !isRuntimePlace(delivery.tree, p));
-                    const runPaths = paths.filter((p) => isRuntimePlace(delivery.tree, p));
-                    const delta = controlDeltaDelivery(delivery.tree, sysPaths, runPaths);
-                    if (delta.text) {
-                        const last = messages[messages.length - 1];
-                        if (last?.role === "user" && typeof last.content === "string" && isEnvelopeText(last.content)) {
-                            messages[messages.length - 1] = { ...last, content: `${delta.text}\n${last.content}` };
-                        } else {
-                            messages.push({ role: "user", content: delta.text });
-                        }
+                // 只列变化的原子单元、按本步划分分流（口径见 `shared/context/step-delta.ts`）。
+                const delta = stepDeltaOf(prevDeltaSnap, delivery, ctxUnits);
+                if (delta.text) {
+                    const last = messages[messages.length - 1];
+                    if (last?.role === "user" && typeof last.content === "string" && isEnvelopeText(last.content)) {
+                        messages[messages.length - 1] = { ...last, content: `${delta.text}\n${last.content}` };
+                    } else {
+                        messages.push({ role: "user", content: delta.text });
                     }
                 }
                 return ensureReasoningReplay(messages, replayOpts);
@@ -6299,13 +6294,14 @@ export class LocalAgentManager {
                     // 不再用 SDK 的 `instructions` 覆盖 system（那会把段首快照撕掉）。
                     try {
                         const fresh = rebuildDelivery();
+                        // ── 本步控制增量（只列变化的原子单元）──
+                        const delta = stepDeltaOf(prevDeltaSnap, fresh, ctxUnits);
                         // ── 变更历史（##310）：每步一条，**有变才写** ──
                         // 首条写 baseline（整棵树，会话起点）；之后只写真变的步 —— "什么都没变"不落盘。
                         const stepNo = stepNumber + 1;
                         const ref = { turnId, stepId: `${turnId}_s${stepNo}`, step: stepNo };
                         // 增量口径要**含 self**（它不在变更历史里，但模型必须看到最新窗口占用）；
                         // 变更历史仍用 `ctxLogUnits`（去掉每步必变的仪表盘单元）。
-                        const changedAll = changesOf(prevDeltaSnap, fresh, ctxUnits);
                         if (!ctxBaselineWritten) {
                             appendCtxLog(taskUri, {
                                 seq: ++ctxSeq,
@@ -6339,14 +6335,8 @@ export class LocalAgentManager {
                         // ⚠️ 第 1 步（`stepNumber === 0`）**不注入**：跨轮变化已经由 `sentOf` 并进
                         // 本轮输入那条 user 信封；这里再发一条就是「chat + 增量」两条相邻 user。
                         // 只前移游标（否则第 2 步会把同一批变化再发一遍）。
-                        if (stepNumber > 0 && changedAll.length > 0) {
-                            const paths = changedAll.map((c) => c.path);
-                            const sysPaths = paths.filter((p) => !isRuntimePlace(fresh.tree, p));
-                            const runPaths = paths.filter((p) => isRuntimePlace(fresh.tree, p));
-                            const delta = controlDeltaDelivery(fresh.tree, sysPaths, runPaths);
-                            if (delta.text) {
-                                nextMessages = [...messages, { role: "user" as const, content: delta.text }];
-                            }
+                        if (stepNumber > 0 && delta.text) {
+                            nextMessages = [...messages, { role: "user" as const, content: delta.text }];
                         }
                         prevDeltaSnap = { tree: fresh.tree, valueHashes: fresh.valueHashes };
                         ctxPrevSnap = { tree: fresh.tree, valueHashes: fresh.valueHashes };
