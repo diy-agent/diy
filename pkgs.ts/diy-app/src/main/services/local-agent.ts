@@ -177,7 +177,7 @@ import {
     type CtxSnapshot,
 } from "../../shared/context/changelog";
 import type { DeliveryStepRecord } from "../../shared/context/steps";
-import { segmentSystemTextOf } from "../../shared/context/segment-snapshot";
+import { segmentSystemSnapshotOf, segmentSystemTextOf, type SnapshotReason } from "../../shared/context/segment-snapshot";
 import { stepDeltaOf } from "../../shared/context/step-delta";
 import {
     clipSpecOf,
@@ -711,7 +711,7 @@ function isEnvelope(m: ModelMessage): boolean {
 }
 
 /**
- * **段首 system 快照**（##442 用户 2026-10-27：变量树全在 system，压缩点前不重建）。
+ * **段首 system 快照**（##442 用户 2026-10-27；铁律见 2026-10-31 口径）。
  *
  * 读**上一次真发**那一步的 `systemText`（`steps.jsonl` 末条）作为本条会话的基线：
  *   · 没有历史 / 老格式（system 里没有顶格 `runtime:`）⇒ 用本轮现算的（重建一次）；
@@ -722,11 +722,26 @@ function isEnvelope(m: ModelMessage): boolean {
  * 就砸一次前缀缓存，正是这条要防的）。
  *
  * ⚠️ 配置换了（`context.yaml` 的 system 名单）时本函数仍会复用旧快照：那是**用户主动改投递划分**，
- * 不是变量变化。当前阶段先不自动重建（要重启会话 / 等压缩）；接边界事件时一并处理。
+ * 不是变量变化 —— 而且按 2026-10-31 口径它本来就**不该**重建（名单内单元后来变了，补在 user
+ * 的 `system:` 段里就够，见 `step-delta.ts`）。要让它立刻进段首，等下一次压缩。
  *
  * 判据本体在 `shared/context/segment-snapshot.ts`（纯函数、可单测）：`runtime: {}` 也算新格式，
  * 老实现按 `line === "runtime:"` 判会把「全部单元划进 system」的配置误判成老格式 ⇒ 每轮砸缓存。
  */
+function frozenSystemSnapshotOf(
+    live: Delivery,
+    lastStep: DeliveryStepRecord | null,
+    boundaryAt: string | null,
+): { text: string; reason: SnapshotReason } {
+    return segmentSystemSnapshotOf({
+        liveText: live.system.text,
+        lastText: lastStep?.systemText ?? null,
+        lastCompactAt: lastStep?.compactAt ?? null,
+        boundaryAt,
+    });
+}
+
+/** 只要文本（预览路径用；真发要顺带留痕，用 `frozenSystemSnapshotOf`） */
 function frozenSystemTextOf(live: Delivery, lastStep: DeliveryStepRecord | null, boundaryAt: string | null): string {
     return segmentSystemTextOf({
         liveText: live.system.text,
@@ -5885,11 +5900,19 @@ export class LocalAgentManager {
         // 段首 system 快照（##442 用户 2026-10-27）：变量树全在 system，压缩点前不重建。
         // 跨轮变化走 user 控制增量（`sentOf` 里按上一次真发的树算），不砸这条 system 的前缀缓存。
         const frozenState = this.compactStateOf(taskUri);
-        const frozenSystemText = frozenSystemTextOf(
+        const frozenSnap = frozenSystemSnapshotOf(
             liveDelivery,
             frozenState.lastStep,
             frozenState.boundary?.at ?? null,
         );
+        const frozenSystemText = frozenSnap.text;
+        // 重建 = 本轮它的全部历史按全价重算。这四种原因里只有前两种是正常的，另两种必须留痕
+        // （否则“某天账单贵了”又只能靠 flow 猜——##487 就是这么查了半个钟头）。
+        if (frozenSnap.reason === "segment-changed") {
+            console.log(`[local-agent] 段首 system 随压缩重建 ${taskUri}`);
+        } else if (frozenSnap.reason === "legacy-format") {
+            console.warn(`[local-agent] 段首 system 快照是老格式（升级前落的），本轮重建一次：${taskUri}`);
+        }
         const delivery: Delivery =
             frozenSystemText === liveDelivery.system.text
                 ? liveDelivery
