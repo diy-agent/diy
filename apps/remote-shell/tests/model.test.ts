@@ -11,6 +11,7 @@ import {
     rectsOverlap,
     sourceRank,
     withBadge,
+    type CurrentInstance,
     type DiscoveredInstance,
 } from '../index.js';
 
@@ -122,11 +123,14 @@ describe('横条几何', () => {
     });
 
     it('状态 → 圆点 / 文案（横条只显示，不判断）', () => {
-        expect(withBadge({ endpoint: 'http://a', displayName: 'a', status: 'connected' })).toMatchObject({
-            dot: '●',
-            label: '已连',
+        const current = (status: 'connected' | 'disconnected' | 'connecting'): CurrentInstance => ({
+            endpoint: 'http://a',
+            displayName: 'a',
+            address: 'alice@a/diy.lab',
+            status,
         });
-        expect(withBadge({ endpoint: 'http://a', displayName: 'a', status: 'disconnected' }).dot).toBe('⚠');
-        expect(withBadge({ endpoint: 'http://a', displayName: 'a', status: 'connecting' }).label).toBe('连接中');
+        expect(withBadge(current('connected'))).toMatchObject({ dot: '●', label: '已连' });
+        expect(withBadge(current('disconnected')).dot).toBe('⚠');
+        expect(withBadge(current('connecting')).label).toBe('连接中');
     });
 });

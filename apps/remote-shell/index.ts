@@ -64,15 +64,25 @@ export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 export interface CurrentInstance {
     endpoint: string;
     displayName: string;
+    /**
+     * 人读地址 `user@host/app.variant[:port]`（##484：横条显示的**就是它**，不再是 URL）。
+     * null = 还没 ping 到 app / variant（此时横条退回显示名）。
+     */
+    address: string | null;
     status: ConnectionStatus;
     /** 断线 / 加载失败的一句话原因（连上时没有） */
     detail?: string;
 }
 
+/** 横条列表里的一行：候选 + 人读地址（null = 身份还没 ping 到，横条退回显示名 / endpoint） */
+export interface BarInstance extends MergedCandidate {
+    address: string | null;
+}
+
 /** 横条拿到的完整状态（一次推全量，横条只负责画） */
 export interface BarState {
     current: (CurrentInstance & { dot: string; label: string }) | null;
-    instances: readonly MergedCandidate[];
+    instances: readonly BarInstance[];
     /** 哪几路发现器失败（空 = 全部正常） */
     errors: readonly DiscoveryError[];
 }
@@ -156,6 +166,176 @@ export function displayNameOf(instance: { displayName: string | null; endpoint: 
     } catch {
         return instance.endpoint;
     }
+}
+
+// ── 显示身份地址（##484）─────────────────────────────────────────────────
+//
+// 人看 `alice@c-mac/diy-chat.lab`（用户@机器/app.variant[:端口][?属性]）；
+// 程序连**永远**用 id + endpoint —— 两套标识各司其职，自动化测试不该看地址。
+//
+// ⚠️ 下面是 `@diy-agent/remote`（`pkgs.ts/diy-remote/src/address.ts`）的**同构副本**：
+// 本壳刻意不与那个包做构建期耦合（见 discover.ts 头注：包不在也要能独立跑），故纯函数抄一份。
+// `tests/address.test.ts` 对着两份实现逐例对拍 —— 改了一边没改另一边就红。
+
+/** 拆开的身份地址（与 `@diy-agent/remote` 的 `InstanceAddress` 逐字段一致） */
+export interface InstanceAddress {
+    /** 本机登录名（`os.userInfo().username`） */
+    user: string;
+    /** 机器显示名（用户可改；id 才是稳定标识） */
+    host: string;
+    /** app 短名（`@diy-agent/app-chat` → `diy-chat`） */
+    app: string;
+    /** 产物变体：prod / lab / test / preview */
+    variant: string;
+    /** 端口：仅同格多实例时才出现在地址里 */
+    port?: number;
+    /** 任意附加属性（`?x=s&b=2`） */
+    attrs?: Record<string, string>;
+}
+
+/** 段内保留字符（见 `@diy-agent/remote` 同名注释）；`.` 只在 app / variant 段里算保留 */
+const ADDRESS_RESERVED = /[/@:?#&\s]/;
+const ADDRESS_RESERVED_APP = /[/@:?#&\s.]/;
+
+function assertAddressSegment(label: string, value: string, pattern: RegExp): void {
+    if (typeof value !== 'string' || value.trim() === '') throw new TypeError(`地址段「${label}」不能为空`);
+    if (pattern.test(value)) throw new TypeError(`地址段「${label}」含保留字符（${value}）`);
+}
+
+function formatAddressAttrs(attrs: Record<string, string>): string {
+    const pairs = Object.entries(attrs).filter(([, value]) => typeof value === 'string');
+    if (pairs.length === 0) return '';
+    return `?${pairs.map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`).join('&')}`;
+}
+
+/** 组装地址（严格：段非法 / 端口不对就抛；调用方要兜底用 `safeDisplayAddress`） */
+export function formatAddress(addr: InstanceAddress): string {
+    assertAddressSegment('user', addr.user, ADDRESS_RESERVED);
+    assertAddressSegment('host', addr.host, ADDRESS_RESERVED);
+    assertAddressSegment('app', addr.app, ADDRESS_RESERVED_APP);
+    assertAddressSegment('variant', addr.variant, ADDRESS_RESERVED_APP);
+    if (addr.port !== undefined && (!Number.isInteger(addr.port) || addr.port <= 0 || addr.port > 65535)) {
+        throw new TypeError(`端口不合法：${String(addr.port)}`);
+    }
+    const port = addr.port === undefined ? '' : `:${String(addr.port)}`;
+    const attrs = addr.attrs === undefined ? '' : formatAddressAttrs(addr.attrs);
+    return `${addr.user}@${addr.host}/${addr.app}.${addr.variant}${port}${attrs}`;
+}
+
+const ADDRESS_PATTERN = /^([^/@:?#&\s]+)@([^/@:?#&\s]+)\/([^/@:?#&\s.]+)\.([^/@:?#&\s.]+)(?::(\d+))?(?:\?(.*))?$/;
+
+/** 反解地址（宽松：不是地址 ⇒ null，不抛） */
+export function parseAddress(text: string): InstanceAddress | null {
+    if (typeof text !== 'string') return null;
+    const m = ADDRESS_PATTERN.exec(text.trim());
+    if (m === null) return null;
+    const [, user, host, app, variant, portText, attrText] = m;
+    if (user === undefined || host === undefined || app === undefined || variant === undefined) return null;
+    let port: number | undefined;
+    if (portText !== undefined) {
+        const n = Number(portText);
+        if (!Number.isInteger(n) || n <= 0 || n > 65535) return null;
+        port = n;
+    }
+    let attrs: Record<string, string> | undefined;
+    if (attrText !== undefined && attrText !== '') {
+        const out: Record<string, string> = {};
+        for (const pair of attrText.split('&')) {
+            if (pair === '') continue;
+            const eq = pair.indexOf('=');
+            const rawKey = eq === -1 ? pair : pair.slice(0, eq);
+            const rawValue = eq === -1 ? '' : pair.slice(eq + 1);
+            try {
+                out[decodeURIComponent(rawKey)] = decodeURIComponent(rawValue);
+            } catch {
+                return null;
+            }
+        }
+        attrs = out;
+    }
+    return {
+        user,
+        host,
+        app,
+        variant,
+        ...(port === undefined ? {} : { port }),
+        ...(attrs === undefined ? {} : { attrs }),
+    };
+}
+
+/** 两个地址是不是「同一格」（判「要不要带端口」的键）：user + host + app + variant 全同 */
+export function sameAddressGroup(a: InstanceAddress, b: InstanceAddress): boolean {
+    return a.user === b.user && a.host === b.host && a.app === b.app && a.variant === b.variant;
+}
+
+/** 同格里的实例数（含自己）：> 1 ⇒ 地址必须带端口才分得清 */
+export function addressGroupSize(addr: InstanceAddress, peers: readonly InstanceAddress[] = []): number {
+    return 1 + peers.filter((peer) => sameAddressGroup(peer, addr)).length;
+}
+
+/** 人看的地址：**默认不带端口**，同格多实例才带（端口是连接的实际信息） */
+export function displayAddress(addr: InstanceAddress, peers: readonly InstanceAddress[] = []): string {
+    const conflict = addressGroupSize(addr, peers) > 1;
+    const { port, ...rest } = addr;
+    return formatAddress(conflict && port !== undefined ? { ...rest, port } : rest);
+}
+
+/** `displayAddress` 的不抛版本：显示名是用户可改的，拼不出来退回 `user@host` */
+export function safeDisplayAddress(addr: InstanceAddress, peers: readonly InstanceAddress[] = []): string {
+    try {
+        return displayAddress(addr, peers);
+    } catch {
+        return `${addr.user}@${addr.host}`;
+    }
+}
+
+/** 从 endpoint 取端口（`http://127.0.0.1:9401` → 9401）；不合法 / 没端口 ⇒ null */
+export function portOfEndpoint(endpoint: string): number | null {
+    try {
+        const url = new URL(endpoint);
+        if (url.port === '') return null;
+        const n = Number(url.port);
+        return Number.isInteger(n) && n > 0 && n <= 65535 ? n : null;
+    } catch {
+        return null;
+    }
+}
+
+/** 一台实例的地址原料：发现器给 displayName + meta（app / variant），/ping 也能补 */
+export interface AddressSource {
+    endpoint: string;
+    displayName: string | null;
+    app: string | null;
+    variant: string | null;
+}
+
+/** 原料 → 地址；缺 app / variant / host 就 null（宁可只显示名字，也不编一段地址出来） */
+export function addressOf(source: AddressSource, user: string): InstanceAddress | null {
+    const host = source.displayName?.trim() ?? '';
+    const app = source.app?.trim() ?? '';
+    const variant = source.variant?.trim() ?? '';
+    if (host === '' || app === '' || variant === '') return null;
+    const port = portOfEndpoint(source.endpoint);
+    return { user, host, app, variant, ...(port === null ? {} : { port }) };
+}
+
+/**
+ * 一组实例 → 每台的人读地址（`Map<endpoint, 地址 | null>`）。
+ * 同格多实例自动带端口 —— 判据就靠「这一整组」而不是单台，故必须整组一起算。
+ */
+export function displayAddresses(sources: readonly AddressSource[], user: string): Map<string, string | null> {
+    const rows = sources.map((source) => ({ endpoint: source.endpoint, address: addressOf(source, user) }));
+    const known = rows.filter((row): row is { endpoint: string; address: InstanceAddress } => row.address !== null);
+    const out = new Map<string, string | null>();
+    for (const row of rows) {
+        if (row.address === null) {
+            out.set(row.endpoint, null);
+            continue;
+        }
+        const peers = known.filter((other) => other.endpoint !== row.endpoint).map((other) => other.address);
+        out.set(row.endpoint, safeDisplayAddress(row.address, peers));
+    }
+    return out;
 }
 
 /**

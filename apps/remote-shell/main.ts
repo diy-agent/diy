@@ -17,6 +17,7 @@
 // 模块求值卡在事件循环启动之前 —— app ready 永不触发、窗口不出现、CDP 也不监听。
 
 import { app, BaseWindow, ipcMain, net, WebContentsView } from 'electron';
+import { userInfo } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { logs } from '@opentelemetry/api-logs';
@@ -30,6 +31,7 @@ import {
     HEARTBEAT_INTERVAL_MS,
     HEARTBEAT_TIMEOUT_MS,
     TITLE,
+    displayAddresses,
     displayNameOf,
     mergeCandidates,
     messageOf,
@@ -39,6 +41,8 @@ import {
     pingUrl,
     rectsOverlap,
     withBadge,
+    type AddressSource,
+    type BarInstance,
     type BarState,
     type CliArgs,
     type ConnectionStatus,
@@ -124,18 +128,98 @@ let refreshing: Promise<void> | null = null;
 
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
+/** 本机登录名（地址里的 user 段，##484）；取不到给 unknown —— 地址仍可读，不因它起不来 */
+const USER: string = (() => {
+    try {
+        const name = userInfo().username.trim();
+        return name === '' ? 'unknown' : name;
+    } catch {
+        return 'unknown';
+    }
+})();
+
+/** `/ping` 拿到的身份（发现器只保证 displayName；app / variant 靠 ping 补） */
+interface PingIdentity {
+    displayName: string;
+    app: string;
+    variant: string;
+}
+
+/** endpoint → 身份 */
+const pinged = new Map<string, PingIdentity>();
+/** 正在补身份的 endpoint（避免 ⟳ 连点 / 心跳叠出重复请求） */
+const enriching = new Set<string>();
+
+/**
+ * 把 `/ping` 的 JSON 记进 `pinged`（返回**有没有变化**）。
+ * 不是 JSON / 一个字段都没有 ⇒ false（老实例、静态站：地址就只显示名字，绝不影响连通性判断）。
+ */
+function rememberPing(endpoint: string, raw: unknown): boolean {
+    if (typeof raw !== 'object' || raw === null) return false;
+    const o = raw as { displayName?: unknown; app?: unknown; variant?: unknown };
+    const name = typeof o.displayName === 'string' ? o.displayName.trim() : '';
+    const app = typeof o.app === 'string' ? o.app.trim() : '';
+    const variant = typeof o.variant === 'string' ? o.variant.trim() : '';
+    if (name === '' && app === '' && variant === '') return false;
+    const previous = pinged.get(endpoint);
+    const next: PingIdentity = { displayName: name === '' ? (previous?.displayName ?? '') : name, app, variant };
+    const changed =
+        previous === undefined ||
+        previous.displayName !== next.displayName ||
+        previous.app !== next.app ||
+        previous.variant !== next.variant;
+    pinged.set(endpoint, next);
+    return changed;
+}
+
+/** 这一行还缺身份吗（缺 app / variant / 显示名 ⇒ 拼不出地址，值得补一次 ping） */
+function needsPing(item: MergedCandidate): boolean {
+    const p = pinged.get(item.endpoint);
+    const app = p?.app || item.meta?.['app'] || '';
+    const variant = p?.variant || item.meta?.['variant'] || '';
+    return app === '' || variant === '' || (item.displayName ?? '').trim() === '';
+}
+
 // ── 状态 ────────────────────────────────────────────────────────────────
 
 function currentEntry(): PageEntry | null {
     return currentKey === null ? null : (pages.get(currentKey) ?? null);
 }
 
-function currentInstance(): CurrentInstance | null {
+/**
+ * 拼地址用的原料：发现链的候选 + `/ping` 补到的身份（ping 说了算 —— 那是对端自报）。
+ * 手输 / `--url` 连上但不在发现列表里的实例也要算进来：同格多实例的判据不能漏人。
+ */
+function addressSources(): AddressSource[] {
+    const rows = new Map<string, AddressSource>();
+    for (const item of instances) {
+        const p = pinged.get(item.endpoint);
+        rows.set(item.endpoint, {
+            endpoint: item.endpoint,
+            displayName: p?.displayName ?? item.displayName,
+            app: p?.app ?? item.meta?.['app'] ?? null,
+            variant: p?.variant ?? item.meta?.['variant'] ?? null,
+        });
+    }
+    for (const [endpoint, p] of pinged) {
+        if (rows.has(endpoint)) continue;
+        rows.set(endpoint, { endpoint, displayName: p.displayName, app: p.app, variant: p.variant });
+    }
+    return [...rows.values()];
+}
+
+/** 整组一起算：端口只在同格（user+host+app+variant 全同）多实例时出现 */
+function addresses(): Map<string, string | null> {
+    return displayAddresses(addressSources(), USER);
+}
+
+function currentInstance(addressMap: Map<string, string | null> = addresses()): CurrentInstance | null {
     const entry = currentEntry();
     if (!entry) return null;
     return {
         endpoint: entry.endpoint,
         displayName: entry.displayName,
+        address: addressMap.get(entry.endpoint) ?? null,
         status: entry.status,
         ...(entry.detail === undefined ? {} : { detail: entry.detail }),
     };
@@ -144,12 +228,18 @@ function currentInstance(): CurrentInstance | null {
 function refreshTitle(): void {
     if (!win) return;
     const current = currentKey === null ? null : currentInstance();
-    win.setTitle(current === null ? TITLE : `${current.displayName} — ${TITLE}`);
+    // 标题显示人读地址（##484）：窗口切来切去时，一眼看出是哪台机器的哪个 app
+    win.setTitle(current === null ? TITLE : `${current.address ?? current.displayName} — ${TITLE}`);
 }
 
 function barState(): BarState {
-    const current = currentInstance();
-    return { current: current === null ? null : withBadge(current), instances, errors: discoveryErrors };
+    const map = addresses();
+    const current = currentInstance(map);
+    return {
+        current: current === null ? null : withBadge(current),
+        instances: instances.map((item): BarInstance => ({ ...item, address: map.get(item.endpoint) ?? null })),
+        errors: discoveryErrors,
+    };
 }
 
 function pushState(): void {
@@ -354,7 +444,7 @@ async function probe(entry: PageEntry): Promise<void> {
             cache: 'no-store',
         });
         setStatus(entry, 'connected');
-        await adoptPingName(entry, response);
+        await adoptPing(entry, response);
     } catch (cause) {
         log.error('探活失败', { endpoint: entry.endpoint }, cause);
         setStatus(entry, 'disconnected', messageOf(cause));
@@ -364,23 +454,64 @@ async function probe(entry: PageEntry): Promise<void> {
 }
 
 /**
- * `/ping` 里带了 displayName 就采用（##479 的 PingInfo）。
- * 只在「名字还只是 host 兜底」时采纳；不是 JSON（老实例 / 静态站）就当没有 —— **绝不影响连通性判断**。
+ * `/ping` 里的身份（##479 的 PingInfo + ##484 的 app）：
+ *   · displayName 只在「名字还只是 host 兜底」时采纳（用户手输 / 发现器给的名字不被覆盖）；
+ *   · app / variant 一律记进 `pinged` —— 人读地址靠它们才拼得出来。
+ * 不是 JSON（老实例 / 静态站）就当没有 —— **绝不影响连通性判断**。
  */
-async function adoptPingName(entry: PageEntry, response: { ok: boolean; json: () => Promise<unknown> }): Promise<void> {
-    if (entry.named || !response.ok) return;
+async function adoptPing(entry: PageEntry, response: { ok: boolean; json: () => Promise<unknown> }): Promise<void> {
+    if (!response.ok) return;
     try {
-        const info = (await response.json()) as { displayName?: unknown };
+        const raw = await response.json();
+        const changed = rememberPing(entry.endpoint, raw);
+        const info = (raw ?? {}) as { displayName?: unknown };
         const name = typeof info.displayName === 'string' ? info.displayName.trim() : '';
-        if (name === '') return;
-        entry.named = true;
-        entry.displayName = name;
-        if (entry.endpoint === currentKey) {
+
+        if (!entry.named && name !== '') {
+            entry.named = true;
+            entry.displayName = name;
+        }
+        // 身份变了 ⇒ 地址 / 标题跟着变（心跳每 3s 一次，没变就不惊动横条）
+        if (changed && entry.endpoint === currentKey) {
             pushState();
             refreshTitle();
         }
     } catch {
         // 不是 JSON ⇒ 对端没实现 /ping 的语义，保持 host 兜底
+    }
+}
+
+/**
+ * 给「身份不全」的候选补一次 `/ping`（app / variant / 显示名）。
+ * 一台连不上只让那一行退回显示名，**不连坐**别的行（与发现链同口径）。
+ */
+async function enrichIdentities(): Promise<void> {
+    const pending = instances.filter((item) => !enriching.has(item.endpoint) && needsPing(item));
+    if (pending.length === 0) return;
+    let changed = false;
+    await Promise.all(
+        pending.map(async (item) => {
+            enriching.add(item.endpoint);
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), HEARTBEAT_TIMEOUT_MS);
+            try {
+                const response = await net.fetch(pingUrl(item.endpoint), {
+                    method: 'GET',
+                    signal: controller.signal,
+                    cache: 'no-store',
+                });
+                if (response.ok && rememberPing(item.endpoint, await response.json())) changed = true;
+            } catch {
+                // 连不上 / 不是 JSON：那一行退回显示名
+            } finally {
+                clearTimeout(timer);
+                enriching.delete(item.endpoint);
+            }
+        }),
+    );
+    if (changed) {
+        pushState();
+        refreshTitle();
     }
 }
 
@@ -396,6 +527,8 @@ async function refreshDiscovery(): Promise<void> {
         const result = await discoverInstances({ manual });
         instances = mergeCandidates(result.items);
         discoveryErrors = result.errors;
+        // 发现链只保证 displayName（manual 甚至没有）：补一次 /ping 拿 app / variant，列表才显示得出地址
+        void enrichIdentities();
         // 发现器失败不连坐：每一路失败各一条 warn，汇总一条 info
         for (const error of result.errors) log.warn('发现器失败', { source: error.source, message: error.message });
         log.info('发现完成', { count: instances.length, errors: result.errors.length });

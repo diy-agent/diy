@@ -11,7 +11,7 @@ afterEach(async () => {
 
 async function start(port = 0, fallbackPorts?: number): Promise<PingServerHandle> {
     const h = await startPingServer({
-        identity: { id: 'diy-abcdef12', displayName: 'c-mac 的 lab' },
+        identity: { id: 'diy-abcdef12', displayName: 'c-mac 的 lab', app: 'diy-chat' },
         variant: 'lab',
         version: '0.1.0',
         host: '127.0.0.1',
@@ -30,6 +30,8 @@ describe('startPingServer / fetchPing', () => {
         expect(r.ok).toBe(true);
         expect(r.info?.id).toBe('diy-abcdef12');
         expect(r.info?.displayName).toBe('c-mac 的 lab');
+        // ##484 判据 1：/ping 必须带 app（地址里那段；光有 variant 分不清 app）
+        expect(r.info?.app).toBe('diy-chat');
         expect(r.info?.variant).toBe('lab');
         expect(r.info?.pid).toBe(process.pid);
         expect(r.info?.uptimeMs).toBeGreaterThanOrEqual(5000);
@@ -66,6 +68,7 @@ describe('parsePingInfo', () => {
         const good = {
             id: 'diy-1',
             displayName: 'x',
+            app: 'diy-chat',
             variant: 'lab',
             version: '0.1.0',
             pid: 1,
@@ -73,6 +76,8 @@ describe('parsePingInfo', () => {
             uptimeMs: 1,
         };
         expect(parsePingInfo(good)).toEqual(good);
+        // 老实例（##484 之前）没有 app：给空串，身份仍然可用（不因缺字段整条作废）
+        expect(parsePingInfo({ ...good, app: undefined })).toEqual({ ...good, app: '' });
         expect(parsePingInfo({ ...good, pid: '1' })).toBeNull();
         expect(parsePingInfo({ ...good, id: '' })).toBeNull();
         expect(parsePingInfo(null)).toBeNull();

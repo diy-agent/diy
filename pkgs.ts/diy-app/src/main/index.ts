@@ -49,7 +49,7 @@ import { SINGLETON_LOCK, classifyLock, lockAdvice, readLock } from "./core/singl
 // window-ops 让 RPC 层能请出本实例窗口而不 import Electron（serve 模式不注入 ⇒ 如实报「无窗口」）。
 import { dropSelfRecord, setSelfPort, writeSelfRecord } from "./services/instances";
 import { remoteService } from "./services/remote";
-import { APP_VERSION } from "../shared/app-version";
+import { APP_PACKAGE_NAME, APP_VERSION } from "../shared/app-version";
 import { setWindowOps } from "./services/window-ops";
 import { refreshModelsOnStartup, startupRefreshEnabled } from "./services/models-startup-refresh";
 import { runRegistry } from "./services/run-registry";
@@ -438,6 +438,7 @@ app.whenReady().then(async () => {
   if (cfg.env !== "test") {
     await remoteService.start({
       home: appConfig.diyHome,
+      app: APP_PACKAGE_NAME,
       variant: process.env["DIY_VARIANT"] ?? "prod",
       version: APP_VERSION,
     });

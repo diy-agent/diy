@@ -49,7 +49,7 @@ describe('resolveIdentity', () => {
             { storedId: 'diy-aaaaaaaa', storedName: '服务器 prod', hostname: 'whatever' },
             () => 'diy-bbbbbbbb',
         );
-        expect(identity).toEqual({ id: 'diy-aaaaaaaa', displayName: '服务器 prod' });
+        expect(identity).toEqual({ id: 'diy-aaaaaaaa', displayName: '服务器 prod', app: 'diy' });
     });
 
     it('空/空白文件不算「有值」', () => {
@@ -60,6 +60,16 @@ describe('resolveIdentity', () => {
         expect(identity.id).toBe('diy-cccccccc');
         expect(identity.displayName).toBe('host-x');
         expect(newId).toBe('diy-cccccccc');
+    });
+
+    it('app 取调用方给的包名并归一成短名（##484）', () => {
+        const { identity } = resolveIdentity(
+            { storedId: 'diy-aaaaaaaa', storedName: null, hostname: 'c-mac', appName: '@diy-agent/app-chat' },
+            () => 'diy-bbbbbbbb',
+        );
+        expect(identity.app).toBe('diy-chat');
+        // 没给 appName ⇒ 缺省 diy（老调用方不必改）
+        expect(resolveIdentity({ storedId: null, storedName: null, hostname: 'h' }).identity.app).toBe('diy');
     });
 
     it('hostname 取不到时给一个稳定兜底名', () => {

@@ -46,7 +46,14 @@ export function recordToInstance(rec: MdnsServiceRecord): DiscoveredInstance | n
             rec.name,
         endpoint: `http://${host.includes(':') ? `[${host}]` : host}:${rec.port}`,
         source: 'mdns',
-        ...(txt['variant'] ? { meta: { variant: txt['variant'] } } : {}),
+        ...(txt['variant'] || txt['app']
+            ? {
+                  meta: {
+                      ...(txt['variant'] ? { variant: txt['variant'] } : {}),
+                      ...(txt['app'] ? { app: txt['app'] } : {}),
+                  },
+              }
+            : {}),
     };
 }
 
@@ -126,6 +133,8 @@ export interface MdnsPublishOptions {
     id: string;
     displayName: string;
     variant: string;
+    /** app 短名（##484；地址里那段）。缺省不广播 —— 读侧对缺字段是宽松的 */
+    app?: string;
     /** 绑定的网卡地址（缺省由 bonjour 自己挑） */
     host?: string;
 }
@@ -138,7 +147,12 @@ export function publishMdns(opts: MdnsPublishOptions): MdnsPublisher {
             name: opts.displayName,
             type: MDNS_SERVICE_TYPE,
             port: opts.port,
-            txt: { id: opts.id, displayName: opts.displayName, variant: opts.variant },
+            txt: {
+                id: opts.id,
+                displayName: opts.displayName,
+                variant: opts.variant,
+                ...(opts.app ? { app: opts.app } : {}),
+            },
             ...(opts.host ? { host: opts.host } : {}),
         });
         return {

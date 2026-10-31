@@ -6,6 +6,7 @@ import type { PingInfo } from '../src/types.js';
 const info = (patch: Partial<PingInfo>): PingInfo => ({
     id: 'diy-aaaa1111',
     displayName: 'c-mac 的 lab',
+    app: 'diy-chat',
     variant: 'lab',
     version: '0.1.0',
     pid: 111,
@@ -61,7 +62,8 @@ describe('localDiscoverer', () => {
                 displayName: 'c-mac 的 lab',
                 endpoint: 'http://127.0.0.1:9400',
                 source: 'local',
-                meta: { pid: '111', variant: 'lab', env: 'development', diyHome: '/tmp/lab' },
+                // app 也进 meta（##484）：横条列表不用额外 ping 就能显示地址
+                meta: { pid: '111', variant: 'lab', app: 'diy-chat', env: 'development', diyHome: '/tmp/lab' },
             },
         ]);
     });

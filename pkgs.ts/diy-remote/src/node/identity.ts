@@ -28,12 +28,13 @@ function readText(file: string): string | null {
     }
 }
 
-/** 读两样原料（id / 名字 / 当前 hostname） */
-export function readStoredIdentity(home: string, opts: { hostname?: string } = {}): StoredIdentity {
+/** 读两样原料（id / 名字 / 当前 hostname）+ 运行期已知的 app 名（不落盘） */
+export function readStoredIdentity(home: string, opts: { hostname?: string; appName?: string } = {}): StoredIdentity {
     return {
         storedId: readText(join(home, ID_FILENAME)),
         storedName: readText(join(home, NAME_FILENAME)),
         hostname: opts.hostname ?? hostname() ?? '',
+        ...(opts.appName === undefined ? {} : { appName: opts.appName }),
     };
 }
 
@@ -45,7 +46,7 @@ export function readStoredIdentity(home: string, opts: { hostname?: string } = {
  */
 export function ensureIdentity(
     home: string,
-    opts: { hostname?: string; generateId?: () => string } = {},
+    opts: { hostname?: string; generateId?: () => string; appName?: string } = {},
 ): ResolvedIdentity {
     const resolved = resolveIdentity(readStoredIdentity(home, opts), opts.generateId);
     if (resolved.newId !== null) {
@@ -61,7 +62,11 @@ export function ensureIdentity(
 }
 
 /** 改显示名（空串 = 清除用户设定，回落到 hostname）；返回改完的身份 */
-export function setDisplayName(home: string, displayName: string, opts: { hostname?: string } = {}): InstanceIdentity {
+export function setDisplayName(
+    home: string,
+    displayName: string,
+    opts: { hostname?: string; appName?: string } = {},
+): InstanceIdentity {
     const name = displayName.trim();
     const file = join(home, NAME_FILENAME);
     if (name === '') {

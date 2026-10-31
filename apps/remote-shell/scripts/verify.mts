@@ -2,7 +2,8 @@
 //
 // 判据（编号照任务 body）：
 //   1 能起：`--url` 起得来，远程页面加载出来
-//   2 横条常显：显示当前 displayName（/ping 给的）+ 连接状态（● 已连）
+//   2 横条常显：显示当前**人读地址** `user@host/app.variant`（/ping 给的 app / variant，##484）
+//     + 连接状态（● 已连）—— 不再显示 `http://127.0.0.1:…`（看不出是哪台机器的哪个 app）
 //   3 横条不被远程页面覆盖：横条与页面是**两个独立 webContents**、几何不重叠；
 //     远程页面画 `position:fixed; inset:0` 的全屏红块也只在它自己的矩形里（页面 innerHeight = 页面区高度）
 //   4 切换 + 连接保留：A → B → A，A 的输入框与计数还在，且 A 的页面没被重建
@@ -15,6 +16,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import electronPath from 'electron';
@@ -27,6 +29,8 @@ const outDir = join(pkgDir, 'build', variant, 'verify');
 // 用构建目录当数据根：应用日志落在 <home>/log/app（##482），本脚本顺手验一眼
 const home = join(pkgDir, 'build', variant, 'home');
 const cdpPort = 9400 + Math.floor(Math.random() * 200);
+/** 地址里的 user 段（与壳自己取的同一个来源） */
+const user = userInfo().username;
 
 if (!existsSync(entry)) {
     console.error(`✗ 产物不存在：${entry}（先跑 ./sha.sh build）`);
@@ -119,6 +123,8 @@ ${hostile ? `<div id="cover">HOSTILE: position:fixed; inset:0 —— 它只想�
                 JSON.stringify({
                     id: `fake-diy-${kind}`,
                     displayName,
+                    // ##484：/ping 带 app（地址里那段）—— 只有 variant 分不清 diy-chat / video / …
+                    app: 'diy-chat',
                     variant: 'fake',
                     version: '0.0.0',
                     pid: process.pid,
@@ -265,8 +271,8 @@ async function switchTo(bar: Page, endpoint: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
-    const remoteA = await startFakeRemote('A', 'fake A lab', false);
-    const remoteB = await startFakeRemote('B', 'fake B tailnet', true);
+    const remoteA = await startFakeRemote('A', 'fake-a', false);
+    const remoteB = await startFakeRemote('B', 'fake-b', true);
     await mkdir(outDir, { recursive: true });
 
     const { bar, pageA } = await launch(remoteA.endpoint, remoteB.endpoint);
@@ -276,7 +282,10 @@ async function main(): Promise<void> {
         const snapshot = await readBar(bar);
         return snapshot.status === 'connected' ? snapshot : null;
     });
-    assert(connected.name === remoteA.displayName, `横条没显示 /ping 的 displayName：${connected.name}`);
+    // 判据 4：横条显示人读地址（user@host/app.variant），不是 URL
+    const expectedA = `${user}@fake-a/diy-chat.fake`;
+    assert(connected.name === expectedA, `横条没显示人读地址（期望 ${expectedA}）：${connected.name}`);
+    assert(!connected.name.startsWith('http'), `横条还在显示 URL：${connected.name}`);
     assert(connected.dot === '●' && connected.label === '已连', `横条状态不对：${connected.dot} ${connected.label}`);
     ok(`判据 1+2：起得来；横条显示「${connected.name}」${connected.dot} ${connected.label}`);
 
@@ -368,7 +377,7 @@ async function main(): Promise<void> {
         const snapshot = await readBar(bar);
         return snapshot.endpoint === remoteA.endpoint && snapshot.status === 'connected' ? snapshot : null;
     });
-    assert(backToA.name === remoteA.displayName, `切回 A 后横条名字不对：${backToA.name}`);
+    assert(backToA.name === expectedA, `切回 A 后横条地址不对：${backToA.name}`);
     assert((await pageA.inputValue('#draft')) === '草稿别丢', '切回 A 后草稿丢了');
     assert((await pageA.textContent('#count')) === '2', '切回 A 后计数丢了');
     const pagesAfter =

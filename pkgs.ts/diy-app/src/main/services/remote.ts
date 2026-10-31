@@ -11,7 +11,13 @@
 // 本文件只做编排与容错：纯逻辑在 `@diy-agent/remote`，IO 在 `@diy-agent/remote/node`，
 // 于是这里几乎没有可单测的分支，测试打在包内（`pkgs.ts/diy-remote/tests`）。
 
-import { formatDiscoveryList, type InstanceIdentity, type MergedInstance } from "@diy-agent/remote";
+import {
+    addressOfPing,
+    formatDiscoveryList,
+    safeDisplayAddress,
+    type InstanceIdentity,
+    type MergedInstance,
+} from "@diy-agent/remote";
 import {
     discoverAll,
     ensureIdentity,
@@ -22,12 +28,18 @@ import {
     type MdnsPublisher,
     type PingServerHandle,
 } from "@diy-agent/remote/node";
+import { userInfo } from "node:os";
 import type { DiscoverFailure, RemoteDiscoverResult, RemotePingResult, RemoteSelf } from "../../shared/remote";
 import { setSelfPingPort } from "./instances";
 
 export interface RemoteStartOptions {
     /** 数据根（身份文件落这里） */
     home: string;
+    /**
+     * 本 app 的包名（##484：地址里 `user@host/<app>.<variant>` 的 app 段）。
+     * 传包名而不是短名：归一（`@diy-agent/app-chat` → `diy-chat`）只做一次，在身份解析里。
+     */
+    app: string;
     /** 产物变体（prod / lab / test / preview） */
     variant: string;
     /** 实例版本（app.getVersion()） */
@@ -82,7 +94,7 @@ export class RemoteService {
         this.variant = opts.variant;
         this.home = opts.home;
         try {
-            const { identity } = ensureIdentity(opts.home);
+            const { identity } = ensureIdentity(opts.home, { appName: opts.app });
             this.identity = identity;
             const handle = await startPingServer({
                 identity,
@@ -100,10 +112,11 @@ export class RemoteService {
                           id: identity.id,
                           displayName: identity.displayName,
                           variant: opts.variant,
+                          app: identity.app,
                       });
             const loopback = handle.host === "127.0.0.1" || handle.host === "::1" || handle.host === "localhost";
             console.log(
-                `[remote] /ping ${handle.baseUrl}  id=${identity.id} name=${identity.displayName}` +
+                `[remote] /ping ${handle.baseUrl}  id=${identity.id} name=${identity.displayName} app=${identity.app}` +
                     (loopback ? "  (仅本机可连；跨机发现请设 DIY_PING_HOST=<内网/tailscale 地址>，勿暴露公网)" : "") +
                     (this.publisher === null
                         ? "  (mDNS 未启用)"
@@ -135,15 +148,20 @@ export class RemoteService {
         }
         // 绑 0.0.0.0 / :: 时不能把它当可连地址给出去 —— 换成回环
         const advertised = this.handle.host === "0.0.0.0" || this.handle.host === "::" ? "127.0.0.1" : this.handle.host;
+        const endpoint = `http://${advertised}:${this.handle.port}`;
+        const ping = this.handle.info();
         return {
             id: this.identity.id,
             displayName: this.identity.displayName,
+            app: this.identity.app,
+            // 人读地址：本实例不知道同机还有没有别的同格实例，故不带端口（冲突判定在发现侧）
+            address: safeDisplayAddress(addressOfPing(ping, endpoint, { user: currentUser() })),
             variant: this.variant,
-            endpoint: `http://${advertised}:${this.handle.port}`,
+            endpoint,
             host: this.handle.host,
             port: this.handle.port,
             mdns: this.publisher?.published ?? false,
-            ping: this.handle.info(),
+            ping,
         };
     }
 
@@ -180,6 +198,16 @@ export class RemoteService {
                 ? formatDiscoveryList(rows)
                 : `${formatDiscoveryList(rows)}\n${errors.map((e) => `  ⚠ ${e.source} 发现失败：${e.message}`).join("\n")}`;
         return { rows, text, errors };
+    }
+}
+
+/** 本机登录名（地址里的 user 段）；取不到给 `unknown` —— 地址仍可读，不因它起不来 */
+function currentUser(): string {
+    try {
+        const name = userInfo().username.trim();
+        return name === "" ? "unknown" : name;
+    } catch {
+        return "unknown";
     }
 }
 
