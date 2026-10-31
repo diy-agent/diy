@@ -6093,10 +6093,18 @@ export class LocalAgentManager {
             // 「历史占了窗口多少、该不该压」。`historyBytes` 量的是**真发消息段**
             // （含尾部 runtime 信封 + 摘要 + 注记，即 wire 上的 messages 全量），不是块树字节 ——
             // 后者少三条注入（差异见 `sentOf`）。选在 `sent` 之后算，就是为了量"真发"。
+            //
+            // ⚠️ 三段字节一律走 `utf8Bytes`，**不用 `JSON.stringify(x).length`**：后者是 UTF-16 码元数，
+            // 中文 / emoji 会低估 —— 而下游（预检的占比、记账的构成报表）拿它跟字节域的数相加，
+            // 口径不一致就会出现「报表说没超、预检说超了」。序列化也**只做一次**（1.3 MB × 多次是白烧 CPU）。
+            const toolsJson = JSON.stringify(tools);
+            const toolsBytes = utf8Bytes(toolsJson);
+            const sentJson = JSON.stringify(sent);
+            const sentBytes = utf8Bytes(sentJson);
             const ctxParts = {
                 systemBytes: delivery.system.bytes,
-                toolsBytes: JSON.stringify(tools).length,
-                historyBytes: utf8Bytes(JSON.stringify(sent)),
+                toolsBytes,
+                historyBytes: sentBytes,
             };
 
             // ── 发请求**前**的 token 预检（##406 刀 2 后半）────────────────────────
@@ -6109,18 +6117,16 @@ export class LocalAgentManager {
             let historyCapOverride: number | undefined;
             let preflightNotice: string | undefined;
             {
-                const toolsJson = JSON.stringify(tools);
-                const sentJson = JSON.stringify(sent);
                 const systemTokens = estimateTokensOf(delivery.system.text);
                 const toolsTokens = estimateTokensOf(toolsJson);
                 const messagesTokens = estimateTokensOf(sentJson);
-                const totalBytes = delivery.system.bytes + ctxParts.toolsBytes + utf8Bytes(sentJson);
+                const totalBytes = delivery.system.bytes + toolsBytes + sentBytes;
                 const totalTokens = systemTokens + toolsTokens + messagesTokens;
                 const bytesPerToken = totalTokens > 0 ? totalBytes / totalTokens : 4;
                 const est0 = estimateRequest({
                     systemBytes: delivery.system.bytes,
-                    toolsBytes: ctxParts.toolsBytes,
-                    messagesBytes: utf8Bytes(sentJson),
+                    toolsBytes,
+                    messagesBytes: sentBytes,
                     systemTokens,
                     toolsTokens,
                     messagesTokens,
@@ -6145,7 +6151,7 @@ export class LocalAgentManager {
                         tighterHistoryCapBytes({
                             contextLimitTokens: ctxLimitTokens,
                             systemBytes: delivery.system.bytes,
-                            toolsBytes: ctxParts.toolsBytes,
+                            toolsBytes,
                             bytesPerToken,
                         }),
                     );
@@ -6156,13 +6162,14 @@ export class LocalAgentManager {
                     // 只把「cap 在边界之外又丢的」通知给模型；边界本身由 head compact 通知覆盖
                     const capDropped = Math.max(0, histBase.messages.length - hist2.messages.length);
                     const sent2 = addCapNotify(sentOf(hist2), taskUri, capDropped);
+                    const sent2Json = JSON.stringify(sent2);
                     const est2 = estimateRequest({
                         systemBytes: delivery.system.bytes,
-                        toolsBytes: ctxParts.toolsBytes,
-                        messagesBytes: utf8Bytes(JSON.stringify(sent2)),
+                        toolsBytes,
+                        messagesBytes: utf8Bytes(sent2Json),
                         systemTokens,
                         toolsTokens,
-                        messagesTokens: estimateTokensOf(JSON.stringify(sent2)),
+                        messagesTokens: estimateTokensOf(sent2Json),
                         contextLimitTokens: ctxLimitTokens,
                     });
                     if (est2.estTokens < est0.estTokens) {
@@ -6170,7 +6177,7 @@ export class LocalAgentManager {
                         hist = hist2;
                         sent = sent2;
                         // 压缩换掉了消息段 ⇒ 构成字节跟着换（否则报表会把"压之前"的字节当"发出去的"）
-                        ctxParts.historyBytes = utf8Bytes(JSON.stringify(sent));
+                        ctxParts.historyBytes = utf8Bytes(sent2Json);
                         historyCapOverride = tightCap;
                         preflightNotice =
                             `上下文接近窗口上限（${est0.estTokens} tokens > 窗口 ${ctxLimitTokens} 的 80%），` +
