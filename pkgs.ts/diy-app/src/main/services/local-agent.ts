@@ -151,7 +151,8 @@ import { assemblyHardCapBytes } from "../../shared/context/request-preflight";
 import { estimateRequest, tighterHistoryCapBytes } from "../../shared/context/request-preflight";
 import { chatEnvelope, isEnvelopeText, userEnvelope, withNotify, type NotifyItem } from "@diy-agent/context/envelope";
 import { describeAnomalies, readLlmLog } from "../../shared/context/log-schema";
-import { isOpencodeEndpoint, withPromptCacheRetention } from "../../shared/prompt-cache";
+// ##491：provider 私有约定（补什么字段 / 要什么 header）全在策略层，应用层只问「这个端点要补什么」
+import { bodyTransformFor, headersFor } from "@diy-agent/llm-provider/strategies";
 import {
     autoCompactPolicyInput,
     detectAutoCompactTriggers,
@@ -3119,6 +3120,8 @@ export class LocalAgentManager {
     private modelFor(m: ResolvedModel, key: string): LanguageModel {
         if (this.modelResolver) return this.modelResolver(m.id, key);
         const baseUrl = resolveBaseUrl(m);
+        // 该端点要补的 body 变换（未验证的端点 = undefined，不挂恒等函数）
+        const transformBody = bodyTransformFor(baseUrl);
         const ck = `${baseUrl}|${key}`;
         let entry = this.providers.get(ck);
         if (!entry) {
@@ -3133,19 +3136,23 @@ export class LocalAgentManager {
             name: m.provider,
             baseURL: baseUrl,
             apiKey: key,
-            // ##486：opencode 网关的自动前缀缓存只活 ~5 分钟，跨轮（间隔常 >5min）会整段重算。
-            // 补 retention 后实测 6m40s 冷却仍整段命中（见 shared/prompt-cache.ts 的实测记录）。
-            // 只对 opencode 端点挂：其它上游没验证过这个字段。
-            ...(isOpencodeEndpoint(baseUrl) ? { transformRequestBody: withPromptCacheRetention } : {}),
+            // ##486 / ##491：opencode 网关的自动前缀缓存只活 ~5 分钟，跨轮（间隔常 >5min）会整段重算，
+            // 靠策略补 retention（实测记录见 @diy-agent/llm-provider 的 strategies/opencode.ts）。
+            // 其它上游没验证过这个字段 ⇒ 策略层不给变换，这里也就什么都不挂。
+            ...(transformBody === undefined ? {} : { transformRequestBody: transformBody }),
         });
         return entry.chat(m.id);
     }
 
     /**
      * 发请求前登记归属 —— 流量观测（undici diagnostics_channel，见 core/traffic.ts）靠
-     * 请求头里的 `x-opencode-session` 反查「这条记录属于谁」，因此每次真发（streamText /
+     * 请求头里的**会话归属头**反查「这条记录属于谁」（头名与注入时机归 provider 策略，
+     * 见 @diy-agent/llm-provider 的 strategies/opencode.ts），因此每次真发（streamText /
      * generateText）前必须登记一次：同时把计数归零（`attempt` 与步归属，见 ##409）。
      * 之后的**逻辑步**由 prepareStep 里的 `traffic.noteStep` 逐个标出。
+     *
+     * ##491 起只有认领会话头的端点（opencode 网关）才真带这个头；其它上游靠
+     * `noteRun` 登记的 origin 兜底归属（见 traffic.ts 的 `originKind`）。
      */
     private noteTraffic(taskUri: string, turnId: string, rm: ResolvedModel, maxRetries: number): void {
         traffic.noteRun({
@@ -4575,7 +4582,7 @@ export class LocalAgentManager {
         const res = await generateText({
             model: this.modelFor(rm, key),
             prompt: summaryExtractionPrompt(dropped, p.droppedIds.length),
-            headers: { "x-opencode-session": sessionIdOf(taskUri) },
+            headers: headersFor(resolveBaseUrl(rm), { sessionId: sessionIdOf(taskUri) }),
             maxOutputTokens: budget.tokens,
             maxRetries: 2,
         });
@@ -6335,7 +6342,7 @@ export class LocalAgentManager {
                 tools,
                 stopWhen: stepCountIs(L.maxSteps),
                 abortSignal: signal,
-                headers: { "x-opencode-session": sessionIdOf(taskUri) },
+                headers: headersFor(resolveBaseUrl(rm), { sessionId: sessionIdOf(taskUri) }),
                 maxOutputTokens: modelMax, // 按模型硬上限（models.dev），reasoning 模型会先吃一部分
                 // none 用 AI SDK 标准关闭语义；"default"（平台默认）**什么都不发**（交上游默认行为，
                 // 见 shared/model-config.DEFAULT_EFFORT）；其他值由 OpenAI-compatible provider 原样转发。
@@ -7184,7 +7191,8 @@ export async function previewSimulatedRequest(opts: {
             messages,
             tools: buildTools(cwd, L, taskUri),
             stopWhen: stepCountIs(L.maxSteps),
-            headers: { "x-opencode-session": sessionIdOf(taskUri) },
+            // 预览的端点按预览模型算（预览不真发，header 只为「预览 = 真发」同形）
+            headers: headersFor(previewRm ? resolveBaseUrl(previewRm) : "", { sessionId: sessionIdOf(taskUri) }),
             maxOutputTokens: modelMax,
             maxRetries: 0,
         });

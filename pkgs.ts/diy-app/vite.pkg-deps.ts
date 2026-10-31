@@ -27,6 +27,7 @@ export const WORKSPACE_TS_DEPS = [
   "@diy-agent/facts",
   "@diy-agent/persistence",
   "@diy-agent/context",
+  "@diy-agent/llm-provider",
   "@diy-agent/compaction",
   "@diy-agent/ui-kit",
 ];
