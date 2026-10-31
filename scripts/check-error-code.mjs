@@ -70,7 +70,6 @@ const LEGACY_THROW_BASELINE = new Map(Object.entries({
   "pkgs.ts/diy-app/src/main/core/model-runtime.ts": 2,
   "pkgs.ts/diy-app/src/main/core/persona.ts": 2,
   "pkgs.ts/diy-app/src/main/services/instances.ts": 2,
-  "pkgs.ts/diy-app/src/main/services/room-service.ts": 2,
   "pkgs.ts/diy-app/src/main/core/app-root.ts": 1,
   "pkgs.ts/diy-app/src/main/core/context-config.ts": 1,
   "pkgs.ts/diy-app/src/main/core/data-file.ts": 1,

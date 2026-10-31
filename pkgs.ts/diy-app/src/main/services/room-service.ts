@@ -71,6 +71,7 @@ import {
 } from "../../shared/room";
 import type { Op } from "./local-blocks";
 import { errText } from "../../shared/error-report";
+import { InvariantError } from "../../shared/error-triage";
 import { reportError } from "./error-report";
 
 /** 人成员（「我」）—— 任务 room 与侧边栏 room 同一份（页面操作者本人，无 backend） */
@@ -93,6 +94,7 @@ export async function createShadowTask(hostId: string, p: { id: string; name: st
     const { listProjects } = await import("../core/project");
     const host = getTask(hostId);
     const project = host?.project ?? listProjects()[0]?.id ?? "";
+    // error-code-ok: 「一个新项目都没建」是合法环境状态（不是缺陷链上的判据）；UI/CLI 已有建项目引导
     if (!project) throw new Error("没有可用 project，建不了影子 task（先 diy project create）");
     const reusable = await findReusableShadowTask(project, p.id);
     if (reusable) return reusable;
@@ -187,7 +189,11 @@ export async function ensureSidebarRoom(id: string): Promise<Room> {
         room = readRoom(id);
         if (!room) {
             // 探针写成功了、这里却读不回来：只说一句实话，别再走「没房间 ⇒ 建任务」那条路
-            throw new Error(`侧边栏房间写后读不回：${id}（落盘路径异常，已停止自动重建）`);
+            // 写成功却读不回 = 路径/落盘不变式被破坏（##4864 那类路径 bug 的现场）
+            throw new InvariantError(
+                "agent/room-read-after-write",
+                `侧边栏房间写后读不回：${id}（落盘路径异常，已停止自动重建）`,
+            );
         }
     }
     if (!room.members.some((m) => m.kind === "human")) room = upsertMember(id, humanMember());
@@ -503,7 +509,9 @@ export async function* postToRoom(roomId: string, rawText: string): AsyncGenerat
     // roomId 自 §28.7 G 起就是 taskUri：取房间 = 取那个任务的 room（缺则补齐主人格成员）
     const room = await ensureRoomForTask(roomId);
     const text = rawText.trim();
-    if (!text) throw new Error("空发言：没内容可发（UI/CLI 应提前拦）");
+    // 空掏言 = 调用链前提被破（UI/CLI 本就该拦）—— 判 defect，别再当成未知异常
+    if (!text)
+        throw new InvariantError("agent/room-empty-message", "空发言：没内容可发（UI/CLI 应提前拦）");
 
     const human = humanOf(room);
     const author = human?.id ?? "human:unknown";
