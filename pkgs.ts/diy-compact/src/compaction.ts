@@ -718,7 +718,7 @@ export type CompactTrigger =
     | "manual"
     /** 系统上下文（system 容器）变了 → 前缀缓存必**作废**（invalidated） */
     | "systemContextChanged"
-    /** 缓存**过期**（距上次请求 > 生效 TTL，见 cache-ttl.ts） */
+    /** 缓存**过期**（旧口径：距上次请求 > 生效 TTL）—— ##442 已删该触发器，只为读老账本保留 */
     | "cacheExpired"
     /** 上下文窗口占用超上限（撞墙即压） */
     | "contextWindowOver";

@@ -18,7 +18,11 @@ import { describe, expect, it } from "vitest";
 import * as yaml from "js-yaml";
 import { buildDelivery, defaultSystemPlaces, PLACE_CANDIDATES } from "@diy-agent/context/delivery";
 import { userEnvelope } from "@diy-agent/context/envelope";
-import { hasTopLevelRuntime, segmentSystemTextOf } from "../../src/shared/context/segment-snapshot";
+import {
+    hasTopLevelRuntime,
+    segmentSystemSnapshotOf,
+    segmentSystemTextOf,
+} from "../../src/shared/context/segment-snapshot";
 import { stepDeltaOf } from "../../src/shared/context/step-delta";
 
 /** 一份标称 globals（与 envelope-v2 / context-delivery 同一形状，便于跨文件对照） */
@@ -109,6 +113,27 @@ describe("段首快照：什么时候复用、什么时候重建（缓存命中�
         expect(allSystem.system.text).toContain("\nruntime: {}");
         // live 已变（self 之类），但同段 ⇒ 复用快照
         expect(segmentSystemTextOf({ liveText: live, lastText: allSystem.system.text })).toBe(allSystem.system.text);
+    });
+});
+
+describe("快照判据的原因：重建必须留痕（否则账单贵了只能靠猜）", () => {
+    const snap = "help:\n  x: y\nsystem:\n  a: 1\nruntime:\n  b: 2\n";
+
+    it("四种原因各归各的", () => {
+        expect(segmentSystemSnapshotOf({ liveText: "live" }).reason).toBe("first");
+        expect(segmentSystemSnapshotOf({ liveText: "live", lastText: snap }).reason).toBe("reuse");
+        expect(
+            segmentSystemSnapshotOf({ liveText: "live", lastText: snap, lastCompactAt: "T1", boundaryAt: "T2" }).reason,
+        ).toBe("segment-changed");
+        expect(segmentSystemSnapshotOf({ liveText: "live", lastText: "help:\n  system:\n    a: 1\n" }).reason).toBe(
+            "legacy-format",
+        );
+    });
+
+    it("reuse 给的是快照原文（不是重新渲染的 live），文本与 reason 同源同一次判定", () => {
+        const r = segmentSystemSnapshotOf({ liveText: "live-变了", lastText: snap });
+        expect(r.text).toBe(snap);
+        expect(segmentSystemTextOf({ liveText: "live-变了", lastText: snap })).toBe(r.text);
     });
 });
 
