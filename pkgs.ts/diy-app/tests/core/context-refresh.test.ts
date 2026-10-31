@@ -66,6 +66,15 @@ const toolCallReply = (callId: string, command: string) =>
         { type: "finish", finishReason: { unified: "tool-calls", raw: "tool_calls" }, usage },
     ]);
 
+/** 第 i 次请求里 **role:system** 那条的正文（= 前缀缓存的第一块） */
+function systemTextOf(model: MockLanguageModelV3, callIndex: number): string {
+    const prompt = (model.doStreamCalls[callIndex]?.prompt ?? []) as Array<{ role: string; content: unknown }>;
+    const sys = prompt.find((m) => m.role === "system");
+    const content = sys?.content;
+    if (typeof content === "string") return content;
+    return ((content ?? []) as Array<{ text?: string }>).map((part) => part.text ?? "").join("\n");
+}
+
 /** 上游第 i 次请求的 prompt 全文（system + user + assistant 都算） */
 function promptText(model: MockLanguageModelV3, callIndex: number): string {
     const prompt = model.doStreamCalls[callIndex]?.prompt ?? [];
@@ -195,7 +204,43 @@ describe("轮内重算：变量变了 → 下一步请求即用新值", () => {
         expect(model.doStreamCalls.length).toBeGreaterThanOrEqual(2);
         expect(promptText(model, 0)).toContain("标题旧值-AAAAAAAAAA");
         expect(promptText(model, 1)).toContain("标题新值-BBBBBBBBBB");
+        // ★ 用例名承诺的「system 快照本身不动」：system 消息必须逐字节不变，
+        // 变化只能落在 user 增量里的 `system:` 段。旧断言只验了"第二步能看到新值" ——
+        // 那种断言对"把整条 system 重建一遍"同样是绿的，而那正是最贵的 bug（##486）。
+        expect(systemTextOf(model, 1)).toBe(systemTextOf(model, 0));
+        expect(promptText(model, 1)).toContain("\nsystem:\n");
     });
+
+    it("★ 跨轮：system 逐字复用段首快照，历史消息逐条不变（前缀缓存从 system 一直覆盖到历史末尾）", async () => {
+        const uri = newUri("跨轮稳定", "正文固定-DDDDDDDDDD");
+        const model = new MockLanguageModelV3({
+            provider: "stub",
+            modelId: "stub-model",
+            doStream: () => Promise.resolve(textReply("好")),
+        });
+        const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
+        for await (const _op of mgr.chat(uri, "第一轮")) void _op;
+        for await (const _op of mgr.chat(uri, "第二轮")) void _op;
+
+        const p0 = (model.doStreamCalls[0]?.prompt ?? []) as Array<{ role: string; content: unknown }>;
+        const p1 = (model.doStreamCalls[1]?.prompt ?? []) as Array<{ role: string; content: unknown }>;
+        // ① 第一条永远是 system（变量树全在它里面）
+        expect(p0[0]?.role).toBe("system");
+        expect(p1[0]?.role).toBe("system");
+        // 首轮那条 system 里两类变量都在：help（结构说明）+ system（稳定树）+ runtime（易变树）
+        const sys0 = systemTextOf(model, 0);
+        expect(sys0.startsWith("help:\n")).toBe(true);
+        expect(sys0).toContain("\nsystem:\n");
+        expect(sys0).toContain("\nruntime:\n");
+        // 并且整个 prompt 只有一条 system
+        expect(p0.filter((m) => m.role === "system")).toHaveLength(1);
+        // ② system 逐字节相同 —— 跨轮不重建（重建 = 整段历史按 cache miss 计费）
+        expect(systemTextOf(model, 1)).toBe(systemTextOf(model, 0));
+        // ③ 上一轮发过的消息逐条照旧（历史不许被改写 / 重排 / 合并）
+        for (let i = 0; i < p0.length; i += 1) expect(p1[i]).toEqual(p0[i]);
+        // ④ 本轮只往后追加（不插进历史中间）
+        expect(p1.length).toBeGreaterThan(p0.length);
+    }, 60_000);
 
     it("没变就不注入：第二步请求里不出现重复的 runtime 段", async () => {
         const uri = newUri("不变量", "正文固定值-CCCCCCCCCC");
