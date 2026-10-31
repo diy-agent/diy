@@ -47,6 +47,7 @@ export function writeSelfRecord(opts: { diyHome: string; variant: string; env: s
   writeRecord(registryDir(), {
     pid: process.pid,
     port: null,
+    pingPort: null,
     diyHome: opts.diyHome,
     variant: opts.variant,
     env: opts.env,
@@ -61,6 +62,11 @@ export function writeSelfRecord(opts: { diyHome: string; variant: string; env: s
 /** 就绪后回填端口（CLI / 别的实例据此找到我） */
 export function setSelfPort(port: number): void {
   updateRecord(registryDir(), process.pid, { port });
+}
+
+/** `/ping` 就绪后回填（远程发现器据此找本机实例；老实例没有这个字段 = 不提供 /ping） */
+export function setSelfPingPort(port: number): void {
+  updateRecord(registryDir(), process.pid, { pingPort: port });
 }
 
 /** 退出清理；**不保证执行**（SIGKILL / 崩溃 / 测试 harness 的 SIGTERM），故读侧另有 pid 存活过滤 */

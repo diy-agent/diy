@@ -71,6 +71,13 @@ import {
 import { DraftFieldSchema, DraftFieldsSchema, DraftsData, TaskDetailSchema } from "../../shared/task-detail";
 // 实例大盘契约（shared，renderer 同源）：一行 = 一个实例
 import { InstanceRowSchema, InstanceSelfSchema, RevealResultSchema } from "../../shared/instance-row";
+// 远程实例契约（##479，shared，renderer 同源）：/ping 身份 + 发现结果
+import {
+  DiscoverFailureSchema,
+  RemoteDiscoverResultSchema,
+  RemotePingResultSchema,
+  RemoteSelfSchema,
+} from "../../shared/remote";
 
 // 任务状态枚举 — 单一真相源 task-state.ts（纯 zod，无 Node 依赖，浏览器安全） */
 import { TaskStateSchema } from "../core/task-state";
@@ -2718,6 +2725,63 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
               message: z.string().optional(),
               raw: z.string().optional(),
             })),
+          }),
+        },
+      }),
+
+      /**
+       * 远程实例（##479 第一刀）：实例身份 + 四路 endpoint 发现 + `/ping`。
+       *
+       * ⚠️ **当前无鉴权**（本轮明确不做）：`/ping` 缺省只绑 127.0.0.1；跨机发现要显式
+       * `DIY_PING_HOST=<内网 / tailscale 地址>`，**绝不要绑公网**（判据见 `remote/node/ping-server.ts`）。
+       *
+       * 判据 4：发现结果**合并去重后列出来选**，本域没有任何「自动连接 / 自动配对」入口。
+       */
+      remote: RpcSchema.group({
+        desc: `远程实例（本机 /ping 身份 + local·mdns·tailscale·manual 四路发现；无鉴权，仅限内网）`,
+        children: {
+          self: RpcSchema.unary({
+            desc: `本实例的远程身份与 /ping 端点（id 永不变；displayName 可改）`,
+            input: {},
+            output: RemoteSelfSchema,
+          }),
+          rename: RpcSchema.unary({
+            desc: `改本实例显示名（id 不变；空串 = 回落 hostname）`,
+            input: { name: z.string().cliArg({ desc: "新显示名（空串 = 回落 hostname）" }) },
+            output: RemoteSelfSchema,
+          }),
+          ping: RpcSchema.unary({
+            desc: `ping 一台 diy 实例的 /ping（拿身份 / 判存活；失败返回 ok:false 而不是报错）`,
+            input: {
+              endpoint: z.string().cliArg({ desc: "目标基址，如 http://192.168.1.5:9400（缺端口时嘟 9400）" }),
+              timeoutMs: z.number().optional().cliOption({ desc: "超时毫秒（缺省 1500）" }),
+            },
+            output: RemotePingResultSchema,
+          }),
+          discover: RpcSchema.unary({
+            desc: `发现可用 diy 实例（人读列表；合并去重后列出来选，不自动连接）`,
+            input: {
+              sources: z.union([z.string(), z.array(z.string())]).optional().cliOption({
+                desc: "只跑这几路（逗号分隔或 JSON 数组；缺省 local,mdns,tailscale，给了 manual 时再加 manual）",
+              }),
+              manual: z.union([z.string(), z.array(z.string())]).optional().cliOption({
+                desc: "手动输入的地址（逗号分隔或 JSON 数组；缺端口时嘟 9400）",
+              }),
+              mdnsTimeoutMs: z.number().optional().cliOption({ desc: "mDNS 收集时长毫秒（缺省 1500）" }),
+            },
+            output: z.string().describe("人读列表（无结果时给一句提示）"),
+          }),
+          list: RpcSchema.unary({
+            desc: `发现可用 diy 实例（结构化行，供 UI / 程序消费）`,
+            input: {
+              sources: z.union([z.string(), z.array(z.string())]).optional().cliOption({ desc: "只跑这几路（同上）" }),
+              manual: z.union([z.string(), z.array(z.string())]).optional().cliOption({ desc: "手动输入的地址（同上）" }),
+              mdnsTimeoutMs: z.number().optional().cliOption({ desc: "mDNS 收集时长毫秒" }),
+            },
+            output: z.object({
+              rows: RemoteDiscoverResultSchema.shape.rows,
+              errors: z.array(DiscoverFailureSchema),
+            }),
           }),
         },
       }),

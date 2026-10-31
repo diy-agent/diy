@@ -33,6 +33,11 @@ export interface InstanceRecord {
   pid: number;
   /** RPC 端口；未就绪为 null（启动早期写的那一份） */
   port: number | null;
+  /**
+   * `/ping` 端口（##479 远程发现）。`null` / 缺字段 = 本轮之前启动的老实例（不提供 /ping）。
+   * 与 `port` 分开：RPC 是 h2c + 身份校验，ping 是**无鉴权**的极简 HTTP/1.1，两者别共用端口。
+   */
+  pingPort: number | null;
   /** 实例自己认定的数据根（`AppConfig.diyHome`，**经 dev-home 纠正**后的那个） */
   diyHome: string;
   /** 产物变体（prod|test|lab） */
@@ -84,6 +89,8 @@ export function parseRecord(raw: unknown): InstanceRecord | null {
   return {
     pid: o["pid"],
     port: (o["port"] as number | null) ?? null,
+    // 可选的增量字段：老记录没有它 → null（读侧宽松，见文件头）
+    pingPort: num(o["pingPort"]) ? (o["pingPort"] as number) : null,
     diyHome: o["diyHome"],
     variant: typeof o["variant"] === "string" ? o["variant"] : "",
     env: typeof o["env"] === "string" ? o["env"] : "",

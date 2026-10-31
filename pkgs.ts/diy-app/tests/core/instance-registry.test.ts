@@ -34,6 +34,7 @@ function record(over: Partial<InstanceRecord> = {}): InstanceRecord {
   return {
     pid: process.pid,
     port: null,
+    pingPort: null,
     diyHome: "/tmp/home",
     variant: "lab",
     env: "development",
@@ -51,6 +52,12 @@ describe("parseRecord（宽松：拿不准就作废整条）", () => {
     const r = parseRecord(record({ pid: 7, port: 18888 }));
     expect(r).toMatchObject({ pid: 7, port: 18888, diyHome: "/tmp/home", variant: "lab" });
     expect(r?.parents).toEqual([{ pid: 42, command: "bash ./sha.sh lab" }]);
+  });
+
+  it("pingPort 是可选的增量字段：缺省 null，给对了就带上（##479）", () => {
+    expect(parseRecord(record())?.pingPort).toBeNull();
+    expect(parseRecord(record({ pingPort: 9400 }))?.pingPort).toBe(9400);
+    expect(parseRecord({ ...record(), pingPort: "9400" })?.pingPort).toBeNull();
   });
 
   it("缺 pid / pid 非数 / 缺 diyHome / port 类型不对 → null（绝不拿半个对象去渲染）", () => {

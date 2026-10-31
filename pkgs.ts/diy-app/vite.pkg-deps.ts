@@ -18,6 +18,7 @@ import { isAbsolute } from "node:path";
  */
 export const WORKSPACE_TS_DEPS = [
   "@diy-agent/rpc",
+  "@diy-agent/remote",
   "@diy-agent/bot",
   "@diy-agent/template",
   "@diy-agent/flow",

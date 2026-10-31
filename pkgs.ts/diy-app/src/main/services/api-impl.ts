@@ -44,6 +44,7 @@ import { envWatchHub, ensureDiskPoller, noteWriteError, realStatfs, simulateEnvF
 import { envNoticeFromDisk, fmtDiskBytes, type EnvNotice } from "../../shared/env-watch";
 import { setWriteErrorHook } from "../core/atomic-write";
 import { collectInstances, focusInstance, renderInstanceList, selfReport } from "./instances";
+import { remoteService } from "./remote";
 import { revealSelf, windowState } from "./window-ops";
 import { HUMAN_MEMBER_ID, shortName } from "../../shared/room";
 import { runRegistry } from "./run-registry";
@@ -2047,6 +2048,27 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return { pid: r.pid, port: r.port, via: r.via, reason: r.reason };
   });
 
+  // ── remote（远程实例：身份 + 四路发现 + /ping；##479）──
+  // ⚠️ 无鉴权（本轮不做）：`/ping` 缺省只绑回环，跨机须 DIY_PING_HOST=内网地址，绝不要暴露公网。
+  // 发现结果**只列出来**，连哪台由用户决定（判据 4）。
+  const discoverInput = (input: {
+    sources?: string | string[];
+    manual?: string | string[];
+    mdnsTimeoutMs?: number;
+  }) => ({
+    sources: splitListOption(input.sources),
+    manual: splitListOption(input.manual),
+    mdnsTimeoutMs: input.mdnsTimeoutMs,
+  });
+  binding.on(app.remote.self, async () => remoteService.self());
+  binding.on(app.remote.rename, async ({ input }) => remoteService.rename(input.name));
+  binding.on(app.remote.ping, async ({ input }) => remoteService.ping(input.endpoint, input.timeoutMs));
+  binding.on(app.remote.discover, async ({ input }) => (await remoteService.discover(discoverInput(input))).text);
+  binding.on(app.remote.list, async ({ input }) => {
+    const r = await remoteService.discover(discoverInput(input));
+    return { rows: r.rows, errors: r.errors };
+  });
+
   // ── tool ──
   // 文件读取（行窗口 + 续读）：与内置 read 工具共用 core/file-read.ts。
   // 相对路径由 CLI 侧 parser 按调用方 cwd 解析成绝对路径（见 api-def 的 resolvePath 注解）；
@@ -2080,4 +2102,17 @@ export function bindApi(transport: EnvelopeTransport): ServerBinding {
   const binding = new ChannelServerBinding(transport);
   bindAppHandlers(binding);
   return binding;
+}
+
+/**
+ * CLI 的「一串值」选项：`--sources local,mdns` 与 `--sources '["local","mdns"]'` 都收。
+ * 空值 / 空串 → undefined（= 用缺省），别把 [] 当成「一路都不跑」。
+ */
+function splitListOption(value: string | string[] | undefined): string[] | undefined {
+  if (value === undefined) return undefined;
+  const parts = Array.isArray(value) ? value : value.split(",");
+  const out = parts
+    .map((v) => v.trim().replace(/^\[|\]$/g, "").replace(/^"|"$/g, ""))
+    .filter((v) => v !== "");
+  return out.length > 0 ? out : undefined;
 }

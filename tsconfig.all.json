@@ -23,6 +23,9 @@
       "path": "pkgs.ts/diy-rpc"
     },
     {
+      "path": "pkgs.ts/diy-remote"
+    },
+    {
       "path": "pkgs.ts/diy-ui"
     },
     {
