@@ -38,6 +38,7 @@ import * as flowThread from "../core/flow-thread";
 import { flowPrompt } from "./flow-prompt";
 import { AsyncQueue } from "./async-queue";
 import { modelNoticeHub } from "./model-notice";
+import { cacheHint } from "./cache-hint";
 import { inboxHub } from "./inbox";
 import { envWatchHub, ensureDiskPoller, noteWriteError, realStatfs, simulateEnvFact } from "./env-watch";
 import { envNoticeFromDisk, fmtDiskBytes, type EnvNotice } from "../../shared/env-watch";
@@ -1410,6 +1411,27 @@ export function bindAppHandlers(binding: ServerBinding): void {
     if (notice) envWatchHub.push(notice);
     else envWatchHub.resolveDisk(sample);
     return { sample, notice };
+  });
+
+  // ── cacheHint（冷缓存提示；##477）──
+  // 数据源 = main 侧装配层（首步请求前算 gap、首步 usage 到手后回填成败）：renderer 只订阅/关闭。
+  // 用量面板的「缓存时效柱」走 stats（按模型解析出渠道，返回两个边界 + 上次请求时刻）。
+  binding.on(app.cacheHint.current, async () => cacheHint.currentOf());
+  binding.on(app.cacheHint.stats, async ({ input }) => cacheHint.viewOf(input.model));
+  binding.on(app.cacheHint.simulate, async ({ input }) => {
+    // 与 env simulate 同一条线：探针只改"事实来源"，不放宽任何开关
+    if (readRuntimeConfig().env === "production") {
+      // error-code-ok: 探针拒绝（用户主动触发、非缺陷链，没有可比判据）
+      throw new Error("cacheHint simulate 是探针命令，生产环境一律拒绝（DIY_ENV=production）");
+    }
+    return cacheHint.simulate(input);
+  });
+  binding.on(app.cacheHint.dismiss, async ({ input }) => {
+    cacheHint.dismiss(input.id);
+    return { status: "ok" };
+  });
+  binding.on(app.cacheHint.watch, async function* ({ signal }) {
+    for await (const ev of cacheHint.subscribe(signal)) yield ev;
   });
 
   // ── llmConfig（模型 provider 配置）──

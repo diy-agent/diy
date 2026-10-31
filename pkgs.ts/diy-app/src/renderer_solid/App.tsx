@@ -26,6 +26,8 @@ import { ToastContainer } from "./components/ToastContainer";
 import { ModelUnavailableBar } from "./components/ModelUnavailableBar";
 import type { Remedy } from "../shared/error-remedy";
 import { EnvStatusBar } from "./components/EnvStatusBar";
+// 「缓存可能已冷」顶栏单行条（##477）：距上次请求太久 → 这一轮整段按全价重付
+import { CacheHintBar } from "./components/CacheHintBar";
 import { taskStore, type TreeNode } from "./store/taskStore";
 import { tabStore } from "./store/tabStore";
 import { staleTaskTabCtxs } from "../shared/tab-prune";
@@ -38,6 +40,7 @@ import { notificationStore } from "./store/notificationStore";
 import { modelNoticeStore } from "./store/modelNoticeStore";
 import { inboxStore } from "./store/inboxStore";
 import { MAX_BARS, envWatchStore } from "./store/envWatchStore";
+import { cacheHintStore } from "./store/cacheHintStore";
 import { defaultBinding, findPage, findView, viewInstanceKey } from "../shared/view-registry";
 import { taskDepths } from "../shared/tab-order";
 import { navSections, projectColor, projectIndexOf, projectOfCtx } from "../shared/nav-project";
@@ -1031,6 +1034,8 @@ export default function App() {
         // 「环境感知」通知订阅（##384）：磁盘满 / 网断 → 顶栏红条（条件恢复自动消）。
         // 与 modelNoticeStore 各自一份订阅：两者的产生源与生命周期语义不同（见 main/services/env-watch.ts 头注）。
         envWatchStore.start();
+        // 「缓存可能已冷」提示订阅（##477）：main 侧首步请求前判定 → 顶栏**一行**（不叠加）。
+        cacheHintStore.start();
     });
     onCleanup(() => {
         fsAbort?.abort();
@@ -1038,6 +1043,7 @@ export default function App() {
         modelNoticeStore.stop();
         inboxStore.stop();
         envWatchStore.stop();
+        cacheHintStore.stop();
         resetRendererActions();
     });
 
@@ -1181,6 +1187,11 @@ export default function App() {
                             overflow={envWatchStore.overflow}
                             onDismiss={(id) => envWatchStore.dismiss(id)}
                         />
+                    </Show>
+                    {/* 「缓存可能已冷」顶栏**单行**条（##477）：距上次请求太久 → 这一轮整段按全价重付。
+                        只有一行（用户硬要求：不叠加、不弹窗），新提示替换旧的；✕ 关掉当前这条。 */}
+                    <Show when={cacheHintStore.hint}>
+                        {(h) => <CacheHintBar hint={h()} onDismiss={() => cacheHintStore.dismiss()} />}
                     </Show>
                     {/* 面包屑导航：从当前页面回溯到根，每个非叶子节点带 ▾ 下拉（列出同级 tab） */}
                     <Breadcrumb

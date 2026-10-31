@@ -113,6 +113,8 @@ import { opsFeed } from "./ops-feed";
 import { HUMAN_MEMBER_ID, type DeliveryOrigin, type TurnOrigin } from "../../shared/room";
 // 「模型不可用」通知（##369 ①）：判据在 shared/model-unavailable，通知中心在 model-notice
 import { modelNoticeHub, noticeFromError, unavailableNoticeFromLocal } from "./model-notice";
+// 冷缓存提示（##477）：首步请求前算 gap、首步 usage 到手后回填成败（判据在 shared/cache-hint）
+import { cacheHint } from "./cache-hint";
 import { networkStreak } from "./env-watch";
 import { AsyncQueue, withCleanup } from "./async-queue";
 import { sessionRegistry } from "./session-registry";
@@ -5550,6 +5552,14 @@ export class LocalAgentManager {
         const blockT0 = new Map<string, number>();
         let stepId = turnId;
         let stepN = 0;
+        /**
+         * 冷缓存提示（##477）：首步的 gap，等这一步的 usage 到手再回填成败。
+         * 用 holder 而不是裸 `let`：赋值发生在 prepareStep 回调里，TS 的控制流分析看不到它，
+         * 裸变量在 finish-step 那侧会被收窄成 never（编译报 Property 'channel' does not exist）。
+         */
+        const cacheGap: { current: { channel: string; gapMs: number | null; hinted: boolean } | null } = {
+            current: null,
+        };
         let rN = 0;
         let aN = 0;
         let uN = 0;
@@ -6269,6 +6279,18 @@ export class LocalAgentManager {
                     // 编号与下面变更历史的 stepNo / stepId(`_s<N>`) 同一个（1 起）。
                     traffic.noteStep(sessionIdOf(taskUri), turnId, stepNumber + 1);
                     if (signal.aborted) return {};
+                    // ── 冷缓存提示（##477）：只记**首步** ──
+                    // 轮内后续步挨着发（秒级 gap），记进来只会把 safePoint 的 P90 拖歪；
+                    // 而"这次请求贵不贵"的判定恰好只需要每轮第一个请求的间隔。
+                    if (stepNumber === 0) {
+                        const r = cacheHint.noteRequest({
+                            provider: rm.provider,
+                            model: rm.id,
+                            taskUri,
+                            ...(identity.persona ? { persona: identity.persona } : {}),
+                        });
+                        cacheGap.current = { channel: r.channel, gapMs: r.gapMs, hinted: r.hint !== null };
+                    }
                     let nextMessages: ModelMessage[] | undefined;
                     // ── 上下文及时刷新（##310）──
                     // 每步重算；**变了才注入**（没变什么都不返回 ⇒ 不砸前缀缓存）。
@@ -6583,6 +6605,19 @@ export class LocalAgentManager {
                             if (su) {
                                 addStepUsage(acc, su as TurnUsage);
                                 const b = bucketsOf(su);
+                                // 冷缓存提示（##477）：首步命中率决定 safePoint / failPoint 怎么走
+                                // （成功 → gap 进 P90 窗口；≈0 → failPoint 只降不升；灰区不记）
+                                const pending = cacheGap.current;
+                                if (stepN === 1 && pending) {
+                                    cacheHint.noteFirstStepResult({
+                                        channel: pending.channel,
+                                        gapMs: pending.gapMs,
+                                        inputTokens: b.inputTotal,
+                                        cacheRead: b.cacheRead,
+                                        taskUri,
+                                        hinted: pending.hinted,
+                                    });
+                                }
                                 turnBuckets = sumBuckets([turnBuckets, b]);
                                 lastStepBuckets = b;
                                 // **测不出就留着上一次的**：有的步没有输出 token（空回复 / 纯工具步），

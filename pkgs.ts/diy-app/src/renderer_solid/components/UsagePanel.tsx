@@ -56,6 +56,18 @@ import { useCompactPanel, CompactPanelContent } from "./CompactSessionPanel";
 import { UsageTable, usageTableMd, type UsageView } from "./UsageTable";
 import type { CompactEventRecord } from "@diy-agent/compaction/compaction";
 import { type DeliveryBoundary } from "../../shared/context/delivery-badge";
+// 缓存时效柱（##477 追加）：对数刻度 / 三区判据都在 shared（纯函数、可单测）
+import {
+    CACHE_AGE_DOMAIN_MAX_MS,
+    CACHE_AGE_DOMAIN_MIN_MS,
+    CACHE_AGE_TICKS_MS,
+    cacheAgeZone,
+    effectiveFailLine,
+    formatGap,
+    logScalePos,
+    type CacheChannelView,
+} from "../../shared/cache-hint";
+import { diyService } from "../lib/rpc";
 
 // ─── 共用小件 ────────────────────────────────────────
 
@@ -428,6 +440,194 @@ function currentWindow(
         best = { total: u.windowTotal, contextLimit: u.contextLimit, rate: u.windowTotal / u.contextLimit, prompt, parts: u.contextParts ?? null };
     }
     return best;
+}
+
+/**
+ * 会话**当前模型**（取 id 最新、带 model 的 turn）—— 缓存时效柱按它解析渠道（provider × model）。
+ * 与 {@link currentWindow} 同一个"最新"判据：同一个会话里两个读数不该指着不同的轮。
+ */
+function currentModelRef(trees: BlockNode[]): string | null {
+    let best: string | null = null;
+    let bestId = -1;
+    for (const t of trees) {
+        if (t.tag !== "turn") continue;
+        const m = t.attrs.model;
+        if (typeof m !== "string" || m === "") continue;
+        const n = Number(String(t.id).replace(/^t/, ""));
+        if (!Number.isFinite(n) || n < bestId) continue;
+        bestId = n;
+        best = m;
+    }
+    return best;
+}
+
+/**
+ * 缓存时效柱（##477 追加需求）—— 与「窗口占用环」是**两个维度**（token vs 时间），环不动、柱另起一块。
+ *
+ *   缓存时效
+ *   ├────●─────────▲──────────────┃──────────┤
+ *   1min 5min     10min          42min       24h
+ *        安全点     失效点          现在
+ *
+ * 三条设计要求（用户 10-30）：
+ *   ① **对数刻度**：1min → 24h 跨度太大，线性的话 5min 与 10min 会挤成一点
+ *   ② 区域着色：安全点左 = 安全（绿）· 两标记之间 = 警告（黄）· 失效点右 = 危险（红）
+ *   ③ 当前时刻的点要醒目，落在危险区时整条柱变红（与顶栏那行提示联动）
+ * failPoint = +∞（从没失败过）时只画安全点与当前点，右半段**不标红** —— 没证据就不吓人。
+ */
+function CacheAgeBar(props: { model: string | null }) {
+    const [view, setView] = createSignal<CacheChannelView | null>(null);
+    const [now, setNow] = createSignal(Date.now());
+
+    // 数据 = main 侧 store（重启后仍是上次的边界）；卡一开就取一次，卡卸载后丢弃旧响应
+    createEffect(() => {
+        const m = props.model;
+        if (!m) {
+            setView(null);
+            return;
+        }
+        let alive = true;
+        void diyService.diy.cacheHint
+            .stats({ model: m })
+            .then((v) => {
+                if (alive) setView(v);
+            })
+            .catch(() => {
+                if (alive) setView(null);
+            });
+        onCleanup(() => {
+            alive = false;
+        });
+    });
+
+    // 「现在」每秒重算：停在这里看，间隔本来就该继续长大（冻结在渲染那一刻等于说谎）
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    onCleanup(() => clearInterval(timer));
+
+    const gap = (): number | null => {
+        const v = view();
+        return v && v.lastRequestAt !== null ? Math.max(0, now() - v.lastRequestAt) : null;
+    };
+    const pos = (ms: number): string => `${(logScalePos(ms) * 100).toFixed(2)}%`;
+    /** 柱上生效的失效线：安全点更高时两条线重合在安全点（否则警告段宽度会变负） */
+    const failAt = (): number | null => {
+        const v = view();
+        return v ? effectiveFailLine(v.safePointMs, v.failPointMs) : null;
+    };
+    const zone = (): "safe" | "warn" | "danger" | null => {
+        const v = view();
+        const g = gap();
+        return v && g !== null ? cacheAgeZone(g, v.safePointMs, v.failPointMs) : null;
+    };
+    const zoneText = (): string =>
+        zone() === "danger" ? "危险区" : zone() === "warn" ? "警告区" : zone() === "safe" ? "安全区" : "—";
+    const tone = (): string =>
+        zone() === "danger" ? "text-error" : zone() === "warn" ? "text-warning" : "text-success";
+
+    return (
+        <Show when={view()}>
+            {(v) => (
+                <div class="border-b border-base-300 px-3 py-2" data-cache-age-bar data-cache-age-zone={zone() ?? ""}>
+                    <div class="mb-1 flex items-baseline justify-between gap-2">
+                        <span class="text-body opacity-70">缓存时效（距上次请求 · 对数刻度）</span>
+                        <span class={`text-body font-medium tabular-nums ${tone()}`}>
+                            {gap() === null ? "—" : `${formatGap(gap()!)} · ${zoneText()}`}
+                        </span>
+                    </div>
+                    <div
+                        class="relative h-2 w-full rounded-full bg-base-300"
+                        classList={{ "ring-1 ring-error": zone() === "danger" }}
+                        role="img"
+                        aria-label={`缓存时效：安全点 ${formatGap(v().safePointMs)}，${
+                            v().failPointMs === null ? "失效点未记录" : `失效点 ${formatGap(v().failPointMs!)}`
+                        }，当前 ${gap() === null ? "未知" : formatGap(gap()!)}`}
+                    >
+                        {/* 安全区（绿）：0 → 安全点 */}
+                        <span
+                            class="absolute inset-y-0 left-0 rounded-l-full bg-success/40"
+                            style={{ width: pos(v().safePointMs) }}
+                        />
+                        {/* 警告区（黄）：安全点 → 失效点 / 右边（failPoint = +∞） */}
+                        <span
+                            class="absolute inset-y-0 bg-warning/40"
+                            style={{
+                                left: pos(v().safePointMs),
+                                width:
+                                    failAt() === null
+                                        ? `calc(100% - ${pos(v().safePointMs)})`
+                                        : `${((logScalePos(failAt()!) - logScalePos(v().safePointMs)) * 100).toFixed(2)}%`,
+                            }}
+                        />
+                        {/* 危险区（红）：失效点 → 右边；+∞ 时整段不画 */}
+                        <Show when={failAt() !== null}>
+                            <span
+                                class="absolute inset-y-0 rounded-r-full bg-error/40"
+                                style={{
+                                    left: pos(failAt()!),
+                                    width: `calc(100% - ${pos(failAt()!)})`,
+                                }}
+                            />
+                        </Show>
+                        {/* 安全点（▲） */}
+                        <span
+                            class="absolute -top-0.5 h-3 w-0.5 bg-success"
+                            style={{ left: pos(v().safePointMs) }}
+                            title={`安全点 ${formatGap(v().safePointMs)}（成功样本的 P90）`}
+                        />
+                        {/* 失效点（▲） */}
+                        <Show when={failAt() !== null}>
+                            <span
+                                class="absolute -top-0.5 h-3 w-0.5 bg-error"
+                                style={{ left: pos(failAt()!) }}
+                                title={`失效点 ${formatGap(v().failPointMs!)}（首步几乎全未命中过的间隔）`}
+                            />
+                        </Show>
+                        {/* 当前时刻（●）：落点醒目；危险区时整条柱已变红 */}
+                        <Show when={gap() !== null}>
+                            <span
+                                class={`absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full ring-2 ring-base-100 ${
+                                    zone() === "danger" ? "bg-error" : zone() === "warn" ? "bg-warning" : "bg-success"
+                                }`}
+                                style={{ left: pos(gap()!) }}
+                                title={`现在：距上次请求 ${formatGap(gap()!)}`}
+                            />
+                        </Show>
+                    </div>
+                    {/* 刻度：1min / 5min / 1h / 24h（对数位置） */}
+                    <div class="relative mt-0.5 h-4 text-caption opacity-60">
+                        <span class="absolute left-0">1min</span>
+                        <For each={CACHE_AGE_TICKS_MS}>
+                            {(ms) => (
+                                <Show when={ms > CACHE_AGE_DOMAIN_MIN_MS && ms < CACHE_AGE_DOMAIN_MAX_MS}>
+                                    <span class="absolute -translate-x-1/2" style={{ left: pos(ms) }}>
+                                        {formatGap(ms)}
+                                    </span>
+                                </Show>
+                            )}
+                        </For>
+                        <span class="absolute right-0">24h</span>
+                    </div>
+                    <div class="text-caption opacity-70">
+                        <span class="text-success">▲ 安全点 {formatGap(v().safePointMs)}</span>
+                        <Show
+                            when={v().failPointMs !== null}
+                            fallback={<span class="ml-2">失效点：未记录（从没失败过 → 右半段不标红）</span>}
+                        >
+                            <span class="ml-2 text-error">
+                                ▲ 失效点 {formatGap(v().failPointMs!)}
+                                <Show when={v().failPointMs! < v().safePointMs}>
+                                    （安全点更高，按 {formatGap(v().safePointMs)} 算）
+                                </Show>
+                            </span>
+                        </Show>
+                        <Show when={v().samples === 0}>
+                            <span class="ml-2">· 暂无历史（安全点 = 60s 保护值）</span>
+                        </Show>
+                    </div>
+                </div>
+            )}
+        </Show>
+    );
 }
 
 /**
@@ -1040,6 +1240,8 @@ export function UsageHoverCard(props: {
                             </div>
                         )}
                     </Show>
+                    {/* 缓存时效柱（##477 追加）：与上面的环**不同维度**（时间 vs token），环保持不动 */}
+                    <CacheAgeBar model={currentModelRef(localChatStore.trees)} />
                     <Show when={model()} fallback={
                         <div class="px-3 py-2 text-body opacity-60">暂无用量记录（该会话还没跑出带用量的轮次）</div>
                     }>
