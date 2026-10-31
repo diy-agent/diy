@@ -78,6 +78,8 @@ export async function startPingServer(opts: PingServerOptions): Promise<PingServ
     const makeInfo = (): PingInfo => ({
         id: opts.identity.id,
         displayName: opts.identity.displayName,
+        // ##484：地址里那段 app（`diy-chat` / `video` / …）—— 只有 variant 分不清并存的多个 app
+        app: opts.identity.app,
         variant: opts.variant,
         version: opts.version,
         pid,

@@ -5,7 +5,7 @@
 
 ```
 ┌──────────────────────────────────────────────┐
-│ ● 本机 lab   ○ srv tailnet   ＋ 连接…   ⟳     │ ← 横条 32px（本地 data: 页，壳渲染）
+│ ● alice@c-mac/diy-chat.lab   ＋ 连接…   ⟳     │ ← 横条 32px（本地 data: 页，壳渲染）
 ├──────────────────────────────────────────────┤
 │            远程页面（http://…）                │ ← y 从 32 开始
 └──────────────────────────────────────────────┘
@@ -42,6 +42,20 @@ apps/remote-shell/sha.sh lab --url http://127.0.0.1:8080      # 本目录
 `DiscoveredInstance` 的形状与 ##479 逐字段一致（`index.ts` 顶部注释标了真源位置）；合入后
 把那份类型改成 `import type` 即可。
 
+## 显示的是**人读地址**，不是 URL（##484）
+
+横条显示 `user@host/app.variant[:端口]`（例：`alice@c-mac/diy-chat.lab`）——
+`http://127.0.0.1:9411` 认不出「哪台机器的哪个 app」。
+
+- 地址由主进程算好放进 state（`CurrentInstance.address` / `BarInstance.address`），
+  横条只负责画；拿不到身份（老实例 `/ping` 没有 app）时退回显示名。
+- **端口只在冲突时出现**：同一格（user + host + app + variant 全同）有多个实例才带 `:9401`，
+  单个实例不带。端口是连接的实际信息，人看到就能用。
+- 程序连**永远**用 id + endpoint（`item.endpoint` 仍在悬停提示里）——
+  自动化测试不该看地址：它随显示名 / 端口 / 同机实例数变。
+- 纯函数在 `index.ts`，是 `@diy-agent/remote`（`src/address.ts`）的同构副本；
+  本壳刻意不在运行期依赖那个包，故 `tests/address.test.ts` 拿两份实现对拍防走样。
+
 ## 状态与探活
 
 - 加载事件（`did-finish-load` / `did-fail-load` / `render-process-gone` / `unresponsive`）→ 立即改状态。
@@ -75,5 +89,5 @@ apps/remote-shell/sha.sh verify
 ```
 
 起两个假远程实例（一个带计数 / 输入状态、一个全屏红），真 Electron + CDP 过一遍判据：
-能起 · 横条显示 displayName/状态 · 横条与页面几何不重叠且是两个 webContents ·
+能起 · 横条显示人读地址/状态（`alice@c-mac/diy-chat.lab`，不是 URL）· 横条与页面几何不重叠且是两个 webContents ·
 切换 + 切回来状态还在 · 停掉远程后横条变红并给原因 · 列表来自发现链。

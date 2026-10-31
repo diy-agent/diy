@@ -20,11 +20,11 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
-    "@diy-agent/log": "*",
     "@diy-agent/bot": "*",
     "@diy-agent/bot-config-page": "*",
     "@diy-agent/chat-page": "*",
     "@diy-agent/llm-provider": "*",
+    "@diy-agent/log": "*",
     "@diy-agent/model-catalog": "*",
     "@diy-agent/model-config-page": "*",
     "@diy-agent/session": "*",
@@ -32,6 +32,8 @@
     "@diy-agent/session-store-memory": "*",
     "@diy-agent/workbench": "*",
     "@diy-agent/workbench-ui": "*",
+    "@opentelemetry/api-logs": "^0.223.0",
+    "@opentelemetry/sdk-logs": "^3.0.0",
     "electron": "^43.8.6"
   },
   "devDependencies": {

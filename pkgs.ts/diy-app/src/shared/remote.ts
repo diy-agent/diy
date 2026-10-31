@@ -9,6 +9,8 @@ import { z } from "zod";
 export const PingInfoSchema = z.object({
     id: z.string().describe("永不变的实例 id（首次启动生成，存 $DIY_HOME/instance-id）"),
     displayName: z.string().describe("可改的显示名（缺省 hostname）"),
+    // 老实例（##484 之前）没有这个字段 ⇒ 缺省空串（身份仍可用，别让整条校验失败）
+    app: z.string().default("").describe("app 短名（diy-chat / video / quant…，地址里那段）"),
     variant: z.string().describe("产物变体：prod / lab / test / preview"),
     version: z.string().describe("实例版本"),
     pid: z.number().describe("进程 pid"),
@@ -48,6 +50,8 @@ export const RemotePingResultSchema = z.object({
 export const RemoteSelfSchema = z.object({
     id: z.string().describe("本实例 id（永不变）"),
     displayName: z.string().describe("本实例显示名"),
+    app: z.string().describe("本实例 app 短名（地址里那段）"),
+    address: z.string().describe("本实例的人读地址（user@host/app.variant；不知道同机其它实例故不带端口）"),
     variant: z.string().describe("产物变体"),
     endpoint: z.string().describe("本实例对外可连基址（绑 0.0.0.0 时给 127.0.0.1）"),
     host: z.string().describe("实际绑定地址"),

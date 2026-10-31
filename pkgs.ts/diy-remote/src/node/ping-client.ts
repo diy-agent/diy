@@ -27,6 +27,8 @@ export function parsePingInfo(raw: unknown): PingInfo | null {
     return {
         id: o['id'],
         displayName: o['displayName'],
+        // 老实例（##484 之前）没有 app 字段：给空串而不是整条作废 —— 身份仍然可用，地址里那段留空
+        app: str(o['app']) ? o['app'] : '',
         variant: o['variant'],
         version: o['version'],
         pid: o['pid'],

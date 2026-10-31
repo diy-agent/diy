@@ -2,7 +2,7 @@
 //   · 按天：文件名 `YYYY-MM-DD.log`（本地日期），跨天自动新建；按天清理旧组（maxDays）
 //   · 按大小：单文件超 maxBytes ⇒ `2026-10-31.log` → `.1` → `.2` …，超 maxFiles 删最旧
 //
-// 为什么日期用本地时刻：人看日志先看「今天」，而 `at` 字段仍是 ISO（机器读）。
+// 为什么日期用本地时刻：人看日志先看「今天」，而记录里的 `at` 字段仍是 ISO（机器读）。
 // 日期只进文件名，**不改记录内容**。
 
 import { readdir, rename, unlink } from 'node:fs/promises';

@@ -5,6 +5,11 @@
 //
 // ⚠️ 绝对不要拿 hostname 当 id：hostname 可以改（换机器名 / 公司改名 / DHCP 反查变），
 //    一改 id 就漂移 —— 已配对的远端、缓存的 endpoint 全部失效。单测钉住这条（hostname 改了 id 不变）。
+//
+// app（##484）：身份里还带 **app 短名**（`diy-chat` / `video` / `quant`）。只有 variant（lab / prod）
+// 区分不了并存的多个 app，地址 `alice@c-mac/diy-chat.lab` 里那段就是它。
+
+import { shortAppName } from './address.js';
 
 /** id 前缀（示例：`diy-7f3a2c91`） */
 export const INSTANCE_ID_PREFIX = 'diy-';
@@ -18,6 +23,11 @@ export interface InstanceIdentity {
     id: string;
     /** 可改的显示名 */
     displayName: string;
+    /**
+     * app 短名（地址里 `user@host/<app>.<variant>` 那一段，##484）。
+     * 光有 variant 分不清 diy-chat / video / quant / mini 这些 app —— 故它进身份。
+     */
+    app: string;
 }
 
 /** 从盘上读到的三样原材料（IO 在 `@diy-agent/remote/node`，本模块纯函数） */
@@ -28,6 +38,11 @@ export interface StoredIdentity {
     storedName: string | null;
     /** `os.hostname()`（取不到给空串） */
     hostname: string;
+    /**
+     * app 的包名或短名（**不落盘**：调用方从自己的 package.json 取，如 `@diy-agent/app-chat`）。
+     * 归一成地址里的短名在 `resolveIdentity` 里做（`shortAppName`）；缺省 = `diy`。
+     */
+    appName?: string;
 }
 
 export interface ResolvedIdentity {
@@ -74,5 +89,6 @@ export function resolveIdentity(store: StoredIdentity, generateId: () => string 
     const id = storedId ?? generateId();
     const displayName =
         normalizeDisplayName(store.storedName) ?? normalizeDisplayName(store.hostname) ?? 'diy-instance';
-    return { identity: { id, displayName }, newId: storedId === null ? id : null };
+    const app = shortAppName(store.appName ?? 'diy');
+    return { identity: { id, displayName, app }, newId: storedId === null ? id : null };
 }

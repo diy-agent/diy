@@ -40,6 +40,15 @@ describe('横条页（本地 data: 页）', () => {
         expect(BAR_HTML).not.toContain('alert(');
     });
 
+    it('显示人读地址而不是 URL（##484 判据 4）', () => {
+        // 当前实例：address 优先，拿不到才退回显示名
+        expect(BAR_HTML).toContain('current.address || current.displayName');
+        // 列表：address → displayName → endpoint 三级兜底
+        expect(BAR_HTML).toContain('item.address || item.displayName || item.endpoint');
+        // 悬停同时给地址与 endpoint（地址给人看，endpoint 才是程序连的）
+        expect(BAR_HTML).toContain('item.address ? item.address + " · " : ""');
+    });
+
     it('状态色三档：连上 / 连接中 / 断线（断线整条变红）', () => {
         expect(BAR_HTML).toContain('#bar[data-status="disconnected"]');
         expect(BAR_HTML).toContain('#f85149');

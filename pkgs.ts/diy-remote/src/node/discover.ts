@@ -95,7 +95,12 @@ export async function discoverAll(opts: DiscoverAllOptions = {}): Promise<Discov
                 ...row,
                 id: r.info.id,
                 displayName: row.displayName ?? r.info.displayName,
-                meta: { ...(row.meta ?? {}), reachable: 'true', variant: r.info.variant },
+                meta: {
+                    ...row.meta,
+                    reachable: 'true',
+                    variant: r.info.variant,
+                    ...(r.info.app !== '' ? { app: r.info.app } : {}),
+                },
             };
         }),
     );

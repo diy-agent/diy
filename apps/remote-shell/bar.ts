@@ -7,6 +7,10 @@
 // 横条只做「当前位置 + 切换」（硬规则二）：没有确认弹窗、没有危险操作拦截 ——
 // 本机怎么操作，远程就怎么操作（VSCode remote ssh 同理）。
 //
+// ##484：横条显示**人读地址** `alice@c-mac/diy-chat.lab`（user@host/app.variant[:端口]），
+// 不再显示 `http://127.0.0.1:9411` —— 光看 URL 认不出「哪台机器的哪个 app」。
+// 地址由主进程算好放进 state（`address`）；还没 ping 到身份时为 null ⇒ 退回显示名 / endpoint。
+//
 // 这个模块**不 import electron**：纯字符串，单测可以直接 import 做结构断言。
 
 import { BAR_HEIGHT } from './index.js';
@@ -101,7 +105,8 @@ export const BAR_HTML = `<!doctype html>
       bar.dataset.endpoint = current ? current.endpoint : "";
       if (current) {
         dotEl.textContent = current.dot;
-        nameEl.textContent = current.displayName;
+        // ##484：人读地址优先；身份还没 ping 到（老实例）就退回显示名
+        nameEl.textContent = current.address || current.displayName;
         labelEl.textContent = current.label;
         detailEl.textContent = current.detail ? "· " + current.detail : "";
       } else {
@@ -128,12 +133,13 @@ export const BAR_HTML = `<!doctype html>
         button.dataset.active = active ? "1" : "0";
         button.setAttribute("data-testid", "instance");
         const sources = item.sources && item.sources.length ? item.sources.join(" + ") : item.source;
-        button.title = item.endpoint + "（" + sources + "）";
+        // 地址给人看，endpoint 才是程序连的 —— 悬停两样都给（排查时不用猜端口）
+        button.title = (item.address ? item.address + " · " : "") + item.endpoint + "（" + sources + "）";
         const mini = document.createElement("span");
         mini.className = "mini";
         mini.textContent = active ? current.dot : "○";
         const label = document.createElement("span");
-        label.textContent = item.displayName || item.endpoint;
+        label.textContent = item.address || item.displayName || item.endpoint;
         button.appendChild(mini);
         button.appendChild(label);
         button.addEventListener("click", function () {

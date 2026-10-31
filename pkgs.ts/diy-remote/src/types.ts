@@ -45,6 +45,11 @@ export interface PingInfo {
     id: string;
     /** 可改的显示名（缺省 hostname，用户可改） */
     displayName: string;
+    /**
+     * app 短名（##484：`@diy-agent/app-chat` → `diy-chat`，不带 scope）。
+     * 光有 variant 分不清 diy-chat / video / quant / mini —— 地址里那段就是它。
+     */
+    app: string;
     /** 产物变体：prod / lab / test / preview */
     variant: string;
     /** 实例版本 */

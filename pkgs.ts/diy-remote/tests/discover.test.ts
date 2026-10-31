@@ -29,6 +29,7 @@ describe('discoverAll', () => {
                     info: {
                         id: 'diy-aaaa1111',
                         displayName: '本机 lab',
+                        app: 'diy-chat',
                         variant: 'lab',
                         version: '0.1.0',
                         pid: 111,
@@ -58,6 +59,7 @@ describe('discoverAll', () => {
                               info: {
                                   id: 'diy-bbbb2222',
                                   displayName: '服务器 prod',
+                                  app: 'diy',
                                   variant: 'prod',
                                   version: '0.1.0',
                                   pid: 2,
@@ -109,7 +111,7 @@ describe('discoverAll', () => {
 
     it('没有 id 的候选补一次 /ping 拿身份（enrich 缺省开）', async () => {
         const server = await startPingServer({
-            identity: { id: 'diy-eeee5555', displayName: '手动连上的实例' },
+            identity: { id: 'diy-eeee5555', displayName: '手动连上的实例', app: 'diy-chat' },
             variant: 'lab',
             version: '0.1.0',
             host: '127.0.0.1',

@@ -6,6 +6,7 @@
 
 export * from './types.js';
 export * from './identity.js';
+export * from './address.js';
 export * from './merge.js';
 export * from './format.js';
 export * from './discover/manual.js';

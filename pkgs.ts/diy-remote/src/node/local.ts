@@ -90,6 +90,7 @@ export function localDiscoverer(deps: LocalDiscoverDeps = {}): Discoverer {
                         meta: {
                             pid: String(r.info.pid),
                             variant: r.info.variant,
+                            ...(r.info.app !== '' ? { app: r.info.app } : {}),
                             ...(rec.env !== '' ? { env: rec.env } : {}),
                             ...(rec.diyHome !== '' ? { diyHome: rec.diyHome } : {}),
                         },
