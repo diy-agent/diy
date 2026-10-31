@@ -6,6 +6,7 @@
 //    任务数据按项目聚合在 $DIY_HOME/projects/<id>/tasks/，删项目连带任务一次清空。
 
 import * as yaml from "js-yaml";
+import { removeDirRobust } from "./rm";
 import { existsSync, mkdirSync, readFileSync, rmSync, readdirSync, unlinkSync } from "node:fs";
 import { writeFileAtomic } from "./atomic-write";
 import { join, resolve } from "node:path";
@@ -110,7 +111,8 @@ export function removeProject(id: string): void {
     const meta = readYaml(join(pid, "meta.yaml"));
     const repoPath = meta["path"] as string | undefined;
     if (repoPath) removeNamecard(repoPath);
-    rmSync(pid, { recursive: true, force: true });
+    // 走带重试的实现：Windows 上 recursive rm 会间歇 ENOTEMPTY / EPERM（见 core/rm.ts 头注）
+    removeDirRobust(pid);
   }
 }
 

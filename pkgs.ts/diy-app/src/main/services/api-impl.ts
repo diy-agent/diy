@@ -251,8 +251,10 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return { status: "ok", data: { uri: input.uri } };
   });
   binding.on(app.task.delete, async ({ input }) => {
-    // 草稿在任务目录 .diy/ 内，随 rmSync(dir, {recursive:true}) 一并删除，无需单独清理
-    task.deleteTask(input.uri);
+    // 草稿在任务目录 .diy/ 内，随整体删目录一并删除，无需单独清理。
+    // 删之前**暂停文件监听**：chokidar 在 Windows 上对被删目录持有句柄 ⇒ EPERM（见 file-watcher.pauseDuring）
+    const { fileWatcher } = await import("./file-watcher");
+    await fileWatcher.pauseDuring(() => task.deleteTask(input.uri));
     return { status: "ok", data: { uri: input.uri } };
   });
 
@@ -294,7 +296,9 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return { status: "ok", data: { projects: project.listProjects() } };
   });
   binding.on(app.project.remove, async ({ input }) => {
-    project.removeProject(input.id);
+    // 同上：Windows 上不暂停监听就删不掉（EPERM scandir …\projects\<id>\tasks）
+    const { fileWatcher } = await import("./file-watcher");
+    await fileWatcher.pauseDuring(() => project.removeProject(input.id));
     return { status: "ok", data: { id: input.id } };
   });
 

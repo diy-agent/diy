@@ -4,6 +4,7 @@
 //    所有输入验证用 zod，收集全部错误再抛出（不短路）。
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { removeDirRobust } from "./rm";
 import { join } from "node:path";
 import * as yaml from "js-yaml";
 import { z } from "zod";
@@ -571,7 +572,8 @@ export function moveTask(uri: string, parent: string): void {
 export function deleteTask(uri: string): void {
   const dir = taskDir(uri);
   if (existsSync(dir)) {
-    rmSync(dir, { recursive: true, force: true });
+    // 同上：Windows 上 recursive rm 需要重试（见 core/rm.ts 头注）
+    removeDirRobust(dir);
   }
 }
 

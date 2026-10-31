@@ -88,8 +88,8 @@ describe("capToolOutput：marker 格式 + 原文可 read 回取", () => {
         const posix = (p: string) => p.split(sep).join("/");
         expect(isAbsolute(r.origPath!)).toBe(true);
         // ##379：不在共享的 local/toolout/ 里，而是本会话目录下（撞 id 不再互相覆盖）
-        expect(posix(r.origPath)).toContain("/local/projects/1/tasks/379/");
-        expect(posix(r.origPath)).toContain("/toolout/call_big.txt");
+        expect(posix(r.origPath!)).toContain("/local/projects/1/tasks/379/");
+        expect(posix(r.origPath!)).toContain("/toolout/call_big.txt");
     });
 
     it("原文落盘 = 逐字符全文（不是「落了个裁过的」）", () => {

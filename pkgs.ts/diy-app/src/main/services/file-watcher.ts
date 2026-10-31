@@ -121,10 +121,39 @@ class FileWatcher {
   }
 
   private _stop(): void {
-    this.watcher?.close();
+    void this._stopAsync();
+  }
+
+  /** 停监听并**等它真的关掉**（chokidar 的 close() 是异步的） */
+  private async _stopAsync(): Promise<void> {
+    const w = this.watcher;
     this.watcher = null;
     for (const timer of this.debounceTimers.values()) clearTimeout(timer);
     this.debounceTimers.clear();
+    if (w) await w.close();
+  }
+
+  /**
+   * 删数据目录期间**暂停监听**（Windows 必需）。
+   *
+   * 为什么：chokidar 在 Windows 上为每个被监听的子目录持有句柄（本模块 watch 的是
+   * `$DIY_HOME/projects/`，`depth: 5`），删 `projects/<id>` 时它正在扫 `tasks/` ——
+   * 两边相撞的结果是 **`EPERM: operation not permitted, scandir …\projects\<id>\tasks`**
+   * （实测 `diy.sh project remove <id>` 直接 exit=1；已验证：不在 app 实例里删同一个目录则一切正常
+   *  ⇒ 不是 OS/杀毒，就是本 watcher 的句柄）。
+   * 这条病会连锁：intent 里所有「建了再删」的用例都跟着红。
+   *
+   * 语义：停 → 跑 fn → 重启（chokidar 重启是幂等的，会重扫一遍并补发 add 事件；
+   * 删除本身不需要事件）。没有订阅者时不重启。
+   */
+  async pauseDuring<T>(fn: () => T | Promise<T>): Promise<T> {
+    const running = this.watcher !== null;
+    if (running) await this._stopAsync();
+    try {
+      return await fn();
+    } finally {
+      if (running && this.queues.size > 0) this._start();
+    }
   }
 }
 

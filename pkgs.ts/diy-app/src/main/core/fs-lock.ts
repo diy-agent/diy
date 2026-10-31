@@ -2,6 +2,7 @@
 // 🎯 文件锁：pid 文件 + 原子 mkdir，防止多实例冲突
 
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { removeDirRobust } from "./rm";
 import { join } from "node:path";
 import { writeFileAtomic } from "./atomic-write";
 import { diyHome } from "./state";
@@ -21,7 +22,7 @@ export function tryLock(lockPath: string, timeout = 3000): { release(): void } |
       return {
         release: () => {
           try {
-            rmSync(lockPath, { recursive: true, force: true });
+            removeDirRobust(lockPath);
           } catch {
             /* 其他进程可能已清理 */
           }
@@ -41,7 +42,7 @@ export function tryLock(lockPath: string, timeout = 3000): { release(): void } |
           } catch {
             // 进程已死，释放锁
             try {
-              rmSync(lockPath, { recursive: true, force: true });
+              removeDirRobust(lockPath);
             } catch {}
             continue;
           }
