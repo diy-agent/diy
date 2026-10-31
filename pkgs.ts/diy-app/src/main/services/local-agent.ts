@@ -149,6 +149,7 @@ import { assemblyHardCapBytes } from "../../shared/context/request-preflight";
 import { estimateRequest, tighterHistoryCapBytes } from "../../shared/context/request-preflight";
 import { chatEnvelope, isEnvelopeText, userEnvelope, withNotify, type NotifyItem } from "@diy-agent/context/envelope";
 import { describeAnomalies, readLlmLog } from "../../shared/context/log-schema";
+import { isOpencodeEndpoint, withPromptCacheRetention } from "../../shared/prompt-cache";
 import {
     autoCompactPolicyInput,
     detectAutoCompactTriggers,
@@ -3125,7 +3126,15 @@ export class LocalAgentManager {
             entry.resp ??= createOpenAI({ name: m.provider, baseURL: baseUrl, apiKey: key });
             return entry.resp.responses(m.id);
         }
-        entry.chat ??= createOpenAICompatible({ name: m.provider, baseURL: baseUrl, apiKey: key });
+        entry.chat ??= createOpenAICompatible({
+            name: m.provider,
+            baseURL: baseUrl,
+            apiKey: key,
+            // ##486：opencode 网关的自动前缀缓存只活 ~5 分钟，跨轮（间隔常 >5min）会整段重算。
+            // 补 retention 后实测 6m40s 冷却仍整段命中（见 shared/prompt-cache.ts 的实测记录）。
+            // 只对 opencode 端点挂：其它上游没验证过这个字段。
+            ...(isOpencodeEndpoint(baseUrl) ? { transformRequestBody: withPromptCacheRetention } : {}),
+        });
         return entry.chat(m.id);
     }
 
