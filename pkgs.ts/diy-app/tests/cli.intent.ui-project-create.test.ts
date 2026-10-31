@@ -53,7 +53,7 @@ async function treeText(): Promise<string> {
 describe("ui project create", () => {
   it("经 renderer 入口创建项目 → ui tree 可见（与 App 按钮同一逻辑）", async () => {
     const repo = `${fx.HOME}/uip`;
-    const r = await fx.sh.getJson(`./diy.sh ui project create ${repo} --label UI创建`);
+    const r = await fx.sh.getJson(`./diy.sh ui project create "${repo}" --label UI创建`);
     const id = String((r.data as any)?.data?.id);
     expect(id).toMatch(/^\d+$/);
 

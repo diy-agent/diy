@@ -181,7 +181,7 @@ describe("##385 §3.3/§3.4 手工刷新三态（RPC 与 UI 同一实现）", ()
 describe("##385 §3.3 故障现场入口：模型不可用 bar 上的按钮", () => {
     it("真发因模型不可用失败 → bar 出现，且带「更新模型数据」按钮（可点、有状态）", async () => {
         // 造一条可复现的「模型不可用」：本地装配期就失败（模型 id 不在清单里）→ 不经网络
-        const proj = await fx.sh.getJson(`./diy.sh ui project create ${fx.HOME}/bar-proj --label barP`);
+        const proj = await fx.sh.getJson(`./diy.sh ui project create "${fx.HOME}"/bar-proj --label barP`);
         const pid = String((proj as any).data?.data?.id);
         const t = await fx.sh.getJson(`./diy.sh ui task create bar任务 ${pid}`);
         const uri = String((t as any).data?.data?.uri);

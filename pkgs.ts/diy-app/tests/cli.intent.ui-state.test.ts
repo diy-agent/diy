@@ -64,7 +64,7 @@ describe("diy.ui.state — 单读快照", () => {
 
   it("写命令自检：tab open 回 status + rev/uiRev + 目标 active；uiRev 随之前进", async () => {
     const before = await snapshot();
-    const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/state --label ST`);
+    const p = await fx.sh.getJson(`./diy.sh project create "${fx.HOME}"/state --label ST`);
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create 状态任务 ${pid}`);
     const uri = String((t.data as any)?.data?.uri);
@@ -125,7 +125,7 @@ describe("diy.ui.watch.uiState — 事件流", () => {
       expect(first.rev).toBeGreaterThan(0);
 
       // ② 本地 UI 写 → uiRev 前进
-      const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/watch --label W`);
+      const p = await fx.sh.getJson(`./diy.sh project create "${fx.HOME}"/watch --label W`);
       const pid = String((p.data as any)?.data?.id);
       const t = await fx.sh.getJson(`./diy.sh task create 流任务 ${pid}`);
       const uri = String((t.data as any)?.data?.uri);
@@ -166,7 +166,7 @@ describe("diy.ui.watch.uiState — 事件流", () => {
 
 describe("就绪保证 — 外部刚建任务即可开 tab（跨进程链，不依赖 CLI 慢）", () => {
   it("CLI 建三层嵌套后立刻开 tab → 祖孙相邻（依赖任务树已含该 ctx）", async () => {
-    const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/ready --label RD`);
+    const p = await fx.sh.getJson(`./diy.sh project create "${fx.HOME}"/ready --label RD`);
     const pid = String((p.data as any)?.data?.id);
     const uriOf = (r: any) => String((r.data as any)?.data?.uri);
     const a = uriOf(await fx.sh.getJson(`./diy.sh task create 就绪-祖父 ${pid}`));

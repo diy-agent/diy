@@ -217,7 +217,7 @@ const turnRows = () =>
 // 写成 `it` 时 `-t` 过滤会把它跳过 —— 后面 R5 / R6 的用例拿到的就是空 uri（##433 同款假红）。
 // R6 也用它，故挂在**文件级** hook；describe 级 hook 在只跑 R6 时不会执行。
 beforeAll(async () => {
-        const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/composer --label Composer`);
+        const p = await fx.sh.getJson(`./diy.sh project create "${fx.HOME}"/composer --label Composer`);
         const pid = String((p.data as any)?.data?.id);
         const t = await fx.sh.getJson(`./diy.sh task create "输入框高度 + 消息时间" ${pid}`);
         uri = String((t.data as any)?.data?.uri);

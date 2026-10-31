@@ -56,7 +56,7 @@ async function a11y(): Promise<A11yNode | undefined> {
 /** 建「项目 + 一条任务 + dev 工作流实例」，返回任务 URI */
 async function freshInstance(name: string, started = true): Promise<string> {
     const repo = `${fx.HOME}/flow-ui-${name}`;
-    const res = await fx.sh.getJson(`./diy.sh project create ${repo}`);
+    const res = await fx.sh.getJson(`./diy.sh project create "${repo}"`);
     const pid = String(((res.data as Record<string, unknown>)?.data as Record<string, unknown>)?.id);
     await fx.sh.run(`./diy.sh task create 泳道视图任务 ${pid}`);
     const uri = `projects/${pid}/tasks/1`;

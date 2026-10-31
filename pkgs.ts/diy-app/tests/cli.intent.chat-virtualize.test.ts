@@ -118,7 +118,7 @@ async function skipIfHidden(ctx: { skip: () => void }): Promise<boolean> {
 
 describe("大会话 DOM 虚拟化（##301）：渲染端", () => {
     beforeAll(async () => {
-        const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/virt --label 虚拟化`);
+        const p = await fx.sh.getJson(`./diy.sh project create "${fx.HOME}/virt" --label 虚拟化`);
         const pid = String((p.data as any)?.data?.id);
         const t = await fx.sh.getJson(`./diy.sh task create "大会话虚拟化" ${pid}`);
         uri = String((t.data as any)?.data?.uri);
@@ -170,7 +170,7 @@ describe("大会话 DOM 虚拟化（##301）：渲染端", () => {
     }, 180_000);
 
     it("DOM 规模与会话轮数无关：12 轮会话与 48 轮会话同量级（这是「虚拟化」的字面验证）", async () => {
-        const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/small --label 小会话`);
+        const p = await fx.sh.getJson(`./diy.sh project create "${fx.HOME}/small" --label 小会话`);
         const pid = String((p.data as any)?.data?.id);
         const t = await fx.sh.getJson(`./diy.sh task create "小会话" ${pid}`);
         const uri2 = String((t.data as any)?.data?.uri);

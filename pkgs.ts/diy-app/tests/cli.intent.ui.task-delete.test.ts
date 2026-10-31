@@ -72,7 +72,7 @@ async function createTaskViaUi(title: string, pid: string, parentUri?: string): 
 
 describe("ui 删除入口（##352）", () => {
   it("ui task delete：任务从树与磁盘消失；子任务不随删（失父升为一级）", async () => {
-    const p = await fx.sh.getJson(`./diy.sh ui project create ${fx.HOME}/ui-del-task --label UI删除任务`);
+    const p = await fx.sh.getJson(`./diy.sh ui project create "${fx.HOME}"/ui-del-task --label UI删除任务`);
     const pid = String((p.data as any)?.data?.id);
 
     const parentUri = await createTaskViaUi("被删父任务", pid);
@@ -99,7 +99,7 @@ describe("ui 删除入口（##352）", () => {
   });
 
   it("ui project remove：项目及其任务从树与磁盘一起消失", async () => {
-    const p = await fx.sh.getJson(`./diy.sh ui project create ${fx.HOME}/ui-del-proj --label UI删除项目`);
+    const p = await fx.sh.getJson(`./diy.sh ui project create "${fx.HOME}"/ui-del-proj --label UI删除项目`);
     const pid = String((p.data as any)?.data?.id);
     const uri = await createTaskViaUi("项目内任务", pid);
     expect(taskFileExists(uri)).toBe(true);

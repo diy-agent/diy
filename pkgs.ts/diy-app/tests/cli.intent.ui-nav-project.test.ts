@@ -41,9 +41,9 @@ beforeAll(async () => {
   };
   ui = await makeUiDriver(fx.electron.cdpUrl, () => a11y());
 
-  const pA = await fx.sh.getJson(`./diy.sh ui project create ${HOME}/navproj-a --label 分组甲项目`);
+  const pA = await fx.sh.getJson(`./diy.sh ui project create "${HOME}"/navproj-a --label 分组甲项目`);
   const pidA = String((pA.data as any)?.data?.id);
-  const pB = await fx.sh.getJson(`./diy.sh ui project create ${HOME}/navproj-b --label 分组乙项目`);
+  const pB = await fx.sh.getJson(`./diy.sh ui project create "${HOME}"/navproj-b --label 分组乙项目`);
   const pidB = String((pB.data as any)?.data?.id);
 
   const mk = async (title: string, pid: string, parent?: string): Promise<string> => {

@@ -53,7 +53,7 @@ beforeAll(async () => {
         return (r.data as any)?.data?.tree as A11yNode | undefined;
     });
 
-    const p = await fx.sh.getJson(`./diy.sh project create ${HOME}/findwin --label 查找窗口`);
+    const p = await fx.sh.getJson(`./diy.sh project create "${HOME}/findwin" --label 查找窗口`);
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create "查找窗口边界" ${pid}`);
     uri = String((t.data as any)?.data?.uri);

@@ -70,7 +70,7 @@ describe("chat 正文：Markdown 原文 / 渲染两态切换", () => {
   // 夹具（##434）：造任务 + 一段带 markdown 的会话落进 ops.jsonl。
   // 写成 `it` 时 `-t` 过滤会跳过它 ⇒ 后续用例的 `uri` 是空串（##433 同款）。
   beforeAll(async () => {
-    const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/md --label MD`);
+    const p = await fx.sh.getJson(`./diy.sh project create "${fx.HOME}"/md --label MD`);
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create "MD 切换验证" ${pid}`);
     uri = String((t.data as any)?.data?.uri);

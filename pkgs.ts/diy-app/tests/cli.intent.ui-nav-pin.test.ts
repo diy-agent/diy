@@ -90,14 +90,14 @@ beforeAll(async () => {
   await lockNavOpen(ui);
 
   // 项目 1（先出现 → 组序在前的那个）
-  const p1 = await fx.sh.getJson(`./diy.sh project create ${HOME}/t466-a --label T466A`);
+  const p1 = await fx.sh.getJson(`./diy.sh project create "${HOME}"/t466-a --label T466A`);
   const pid1 = String((p1.data as any)?.data?.id);
   await fx.sh.getJson(`./diy.sh task create 甲项目任务A ${pid1}`);
   const list1 = ((await fx.sh.getJson(`./diy.sh task list --project ${pid1}`)).data as any).data.tasks as string[];
   A = list1[0]!;
 
   // 项目 2（后出现 → 组序在后；它的任务置顶时必须能跨到最顶）
-  const p2 = await fx.sh.getJson(`./diy.sh project create ${HOME}/t466-b --label T466B`);
+  const p2 = await fx.sh.getJson(`./diy.sh project create "${HOME}"/t466-b --label T466B`);
   const pid2 = String((p2.data as any)?.data?.id);
   await fx.sh.getJson(`./diy.sh task create 乙项目任务E ${pid2}`);
   await fx.sh.getJson(`./diy.sh task create 乙项目子任务C ${pid2}`);

@@ -72,7 +72,7 @@ beforeAll(async () => {
     HOME,
     sh: new ShellTest({ cwd: join(__dirname, "..", "..", ".."), env: { HOME, DIY_HOME: HOME } }),
   };
-  const p = await fx.sh.getJson(`./diy.sh project create ${HOME}/env-net --label EnvNet`);
+  const p = await fx.sh.getJson(`./diy.sh project create "${HOME}/env-net" --label EnvNet`);
   // project/task create 的输出是 `{ status, data: { id } }`（StatusDataUri），getJson 已剥掉最外层 `{ok,data}`
   const pid = String((p as any)?.data?.data?.id ?? "");
   const t = await fx.sh.getJson(`./diy.sh task create "环境感知网络路径" ${pid}`);

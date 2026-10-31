@@ -39,7 +39,7 @@ beforeAll(async () => {
   };
   ui = await makeUiDriver(fx.electron.cdpUrl, () => a11y());
 
-  const p = await fx.sh.getJson(`./diy.sh ui project create ${HOME}/navdnd-repo --label 拖拽项目`);
+  const p = await fx.sh.getJson(`./diy.sh ui project create "${HOME}"/navdnd-repo --label 拖拽项目`);
   PID = String((p.data as any)?.data?.id);
   const mk = async (title: string): Promise<string> => {
     const r = await fx.sh.getJson(`./diy.sh task create ${title} ${PID}`);

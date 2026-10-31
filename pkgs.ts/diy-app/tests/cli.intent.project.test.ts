@@ -39,7 +39,7 @@ afterAll(async () => {
 /** 建一个专属 project（隔离 home 下唯一路径），返回系统自动生成的 id */
 async function createFresh(name: string): Promise<string> {
   const repo = `${fx.HOME}/it-${name}`;
-  const res = await fx.sh.getJson(`./diy.sh project create ${repo} --label ${name}`);
+  const res = await fx.sh.getJson(`./diy.sh project create "${repo}" --label ${name}`);
   return String((res.data as any)?.data?.id);
 }
 
@@ -60,7 +60,7 @@ describe("project", () => {
     const repo = `${fx.HOME}/it-b`;
     await fx.sh.run(`mkdir -p ${repo}`); // 目标仓库需存在才会写名片
 
-    const res = await fx.sh.getJson(`./diy.sh project create ${repo} --label b`);
+    const res = await fx.sh.getJson(`./diy.sh project create "${repo}" --label b`);
     const id = String((res.data as any)?.data?.id);
 
     await fx.sh.assertSession(`

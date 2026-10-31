@@ -61,7 +61,7 @@ afterAll(async () => {
 /** 新建「项目 + 一条任务」并返回任务 URI（每个用例一个，互不干扰） */
 async function freshTask(name: string): Promise<string> {
     const repo = `${fx.HOME}/flow-${name}`;
-    const res = await fx.sh.getJson(`./diy.sh project create ${repo}`);
+    const res = await fx.sh.getJson(`./diy.sh project create "${repo}"`);
     const pid = String(((res.data as Record<string, unknown>)?.data as Record<string, unknown>)?.id);
     await fx.sh.run(`./diy.sh task create 工作流任务 ${pid}`);
     return `projects/${pid}/tasks/1`;

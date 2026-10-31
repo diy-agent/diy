@@ -51,7 +51,7 @@ describe("试验场：变量定义 / 变量值 / 模版结构树 三个 view + �
   it("导航到试验场 → 四块 view 上屏，内容来自 analyze/trace", async () => {
     // 1. 造一个项目 + 任务（试验场以选中任务为场景）
     const repo = `${fx.HOME}/lab`;
-    const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label 试验场`);
+    const p = await fx.sh.getJson(`./diy.sh project create "${repo}" --label 试验场`);
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create 试验场任务 ${pid}`);
     const uri = String((t.data as any)?.data?.uri);

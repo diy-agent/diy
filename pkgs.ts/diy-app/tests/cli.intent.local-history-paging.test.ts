@@ -154,7 +154,7 @@ const domTurns = () =>
 
 describe("大会话分页：CLI 契约（真实 main）", () => {
     beforeAll(async () => {
-        const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/paging --label 分页`);
+        const p = await fx.sh.getJson(`./diy.sh project create "${fx.HOME}"/paging --label 分页`);
         const pid = String((p.data as any)?.data?.id);
         const t = await fx.sh.getJson(`./diy.sh task create "大会话分页" ${pid}`);
         uri = String((t.data as any)?.data?.uri);
@@ -365,7 +365,7 @@ describe("大会话分页：渲染端（真实 UI）", () => {
      * 且排在最后（它会切走当前 tab）。
      */
     it("窗口不满一屏时点顶部提示条：照样补出更早的轮（补段不再只有滚动一条路）", async () => {
-        const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/clickolder --label 点击补段`);
+        const p = await fx.sh.getJson(`./diy.sh project create "${fx.HOME}"/clickolder --label 点击补段`);
         const pid = String((p.data as any)?.data?.id);
         const t = await fx.sh.getJson(`./diy.sh task create "点击补段" ${pid}`);
         const uri2 = String((t.data as any)?.data?.uri);

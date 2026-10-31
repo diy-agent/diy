@@ -92,7 +92,7 @@ beforeAll(async () => {
         HOME,
         sh: new ShellTest({ cwd: join(__dirname, "..", "..", ".."), env: { HOME, DIY_HOME: HOME } }),
     };
-    const p = await fx.sh.getJson(`./diy.sh project create ${HOME}/chat-single --label ChatSingle`);
+    const p = await fx.sh.getJson(`./diy.sh project create "${HOME}/chat-single" --label ChatSingle`);
     const pid = String(((p.data as Record<string, unknown>)?.data as Record<string, unknown>)?.id ?? "");
     const t = await fx.sh.getJson(`./diy.sh task create 单通道渲染 ${pid}`);
     uri = String(((t.data as Record<string, unknown>)?.data as Record<string, unknown>)?.uri ?? "");

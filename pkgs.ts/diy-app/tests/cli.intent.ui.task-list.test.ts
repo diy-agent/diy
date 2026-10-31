@@ -33,7 +33,7 @@ beforeAll(async () => {
   ui = await makeUiDriver(fx.electron.cdpUrl, () => a11y());
 
   // 走 renderer 入口建项目 + 任务（同人类点按钮一套逻辑）
-  const p = await fx.sh.getJson(`./diy.sh ui project create ${HOME}/list-repo --label 列表项目`);
+  const p = await fx.sh.getJson(`./diy.sh ui project create "${HOME}"/list-repo --label 列表项目`);
   PID = String((p.data as any)?.data?.id);
 
   // 三个任务，建序 = 1,2,3；正文里埋一个只有第二个任务才有的词，用于验证"正文命中"的片段

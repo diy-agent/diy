@@ -96,7 +96,7 @@ beforeAll(async () => {
         HOME,
         sh: new ShellTest({ cwd: join(__dirname, "..", "..", ".."), env: { HOME, DIY_HOME: HOME } }),
     };
-    const p = await fx.sh.getJson(`./diy.sh project create ${HOME}/chat-read --label 阅读体验`);
+    const p = await fx.sh.getJson(`./diy.sh project create "${HOME}"/chat-read --label 阅读体验`);
     const pid = String((p.data as any)?.data?.id);
     const ta = await fx.sh.getJson(`./diy.sh task create 阅读体验A ${pid}`);
     uriA = String((ta.data as any)?.data?.uri);

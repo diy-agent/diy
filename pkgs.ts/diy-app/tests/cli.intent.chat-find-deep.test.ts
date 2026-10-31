@@ -56,7 +56,7 @@ beforeAll(async () => {
         return (r.data as any)?.data?.tree as A11yNode | undefined;
     });
 
-    const p = await fx.sh.getJson(`./diy.sh project create ${HOME}/finddeep --label 深层检索`);
+    const p = await fx.sh.getJson(`./diy.sh project create "${HOME}/finddeep" --label 深层检索`);
     const pid = String((p.data as any)?.data?.id);
 
     const t1 = await fx.sh.getJson(`./diy.sh task create "深层检索小会话" ${pid}`);

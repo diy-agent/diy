@@ -9,7 +9,7 @@
 
 import * as yaml from "js-yaml";
 import { existsSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { writeFileAtomic } from "./atomic-write";
 import { homedir } from "node:os";
 
@@ -302,8 +302,12 @@ export function norm(p: string): string {
   const home = homedir();
   const expanded = resolve(p.replace(/^~/, home));
   if (expanded === home) return "~";
-  if (expanded.startsWith(home + "/")) {
-    return "~" + expanded.slice(home.length);
+  // ⚠️ 分隔符必须用 `sep`，不能用写死的 "/"：Windows 的 home 是 `C:\\Users\\x`，
+  // `startsWith(home + "/")` 永远为假 ⇒ 家目录内的路径全以**绝对路径**存盘（该省成 `~/…` 而没省）。
+  // 后果：同一份数据换机器 / 换用户名就指错方向，且 `path: ~/…` 这个入库约定在 Windows 上不成立。
+  // 产出仍统一成 `/` 形式（`~/a/b`）：消费方 `expand()` 判的是 `startsWith("~/")`。
+  if (expanded.startsWith(home + sep)) {
+    return "~/" + expanded.slice(home.length + 1).split(sep).join("/");
   }
   return expanded;
 }

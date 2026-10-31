@@ -167,7 +167,7 @@ afterAll(async () => {
 
 /** 新建「项目 + 一条任务」，起 dev 工作流，并把系统节点换成**不碰网络**的命令 */
 async function freshFlow(name: string, params: readonly string[]): Promise<string> {
-    const res = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/run-${name}`);
+    const res = await fx.sh.getJson(`./diy.sh project create "${fx.HOME}/run-${name}"`);
     const pid = String(((res.data as Record<string, unknown>)?.data as Record<string, unknown>)?.id);
     await fx.sh.run(`./diy.sh task create 自动轮转 ${pid}`);
     const uri = `projects/${pid}/tasks/1`;

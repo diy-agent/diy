@@ -202,7 +202,7 @@ describe("##321 压缩预览懒算：抽屉关着 = main 零成本", () => {
   // 夹具（##434）：两个会话各自落盘 + 主进程探针生效 + 先把 B 打开。
   // 写成 `it` 时 `-t` 过滤会跳过它 ⇒ 后续用例的 `uriA`/`uriB`/探针路径都是空（##433 同款）。
   beforeAll(async () => {
-    const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/lazy --label 懒算`);
+    const p = await fx.sh.getJson(`./diy.sh project create "${fx.HOME}"/lazy --label 懒算`);
     const pid = String((p.data as any)?.data?.id);
     const a = await fx.sh.getJson(`./diy.sh task create "懒算 A" ${pid}`);
     const b = await fx.sh.getJson(`./diy.sh task create "懒算 B" ${pid}`);

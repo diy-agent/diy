@@ -190,7 +190,7 @@ describe("压缩会话：窗口卡快捷直压 + 窗口构成页第一 tab 压�
   // 读侧拿空 uri 拼出 `local/-e3b0c44298fc/ops.jsonl`（空串 sha256 前 12 位）而 ENOENT。
   // 夹具必须在 describe 级 hook 里跑，与「跑哪几条用例」无关。
   beforeAll(async () => {
-    const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/cp --label 压缩`);
+    const p = await fx.sh.getJson(`./diy.sh project create "${fx.HOME}"/cp --label 压缩`);
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create "压缩 UI 验证" ${pid}`);
     uri = String((t.data as any)?.data?.uri);
@@ -457,7 +457,7 @@ describe("M4：分表压缩点位", () => {
 
   // 同上：夹具放 describe 级 hook，别让「跑单条用例」把它跳过（##433）。
   beforeAll(async () => {
-    const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/cp2 --label 点位`);
+    const p = await fx.sh.getJson(`./diy.sh project create "${fx.HOME}"/cp2 --label 点位`);
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create "压缩点位" ${pid}`);
     uri2 = String((t.data as any)?.data?.uri);
@@ -559,7 +559,7 @@ describe("##339：分表投递徽标（配置驱动压缩的事实）", () => {
   let uri3 = "";
 
   it("种 usage.jsonl：t3000 轮首步真裁剪过（带 historySelection）、同轮第二步不带、t3001 轮首步没裁剪（dropped=0）", async () => {
-    const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/cp3 --label 投递`);
+    const p = await fx.sh.getJson(`./diy.sh project create "${fx.HOME}"/cp3 --label 投递`);
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create "投递徽标" ${pid}`);
     uri3 = String((t.data as any)?.data?.uri);

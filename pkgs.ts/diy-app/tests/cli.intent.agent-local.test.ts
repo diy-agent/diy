@@ -58,7 +58,7 @@ afterAll(async () => {
 
 async function setup(taskTitle: string): Promise<string> {
     const repo = `${fx.HOME}/local-${Date.now()}`;
-    const r = await fx.sh.getJson(`./diy.sh project create ${repo} --label 本地实验`);
+    const r = await fx.sh.getJson(`./diy.sh project create "${repo}" --label 本地实验`);
     const pid = String(
         ((r.data as Record<string, unknown>)?.data as Record<string, unknown>)?.id ?? "",
     );

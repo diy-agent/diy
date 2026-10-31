@@ -31,7 +31,7 @@ beforeAll(async () => {
   };
   ui = await makeUiDriver(fx.electron.cdpUrl, () => a11y());
 
-  const p = await fx.sh.getJson(`./diy.sh ui project create ${HOME}/find-repo --label 查找项目`);
+  const p = await fx.sh.getJson(`./diy.sh ui project create "${HOME}"/find-repo --label 查找项目`);
   const pid = String((p.data as any)?.data?.id);
   // 三个任务标题都含「查找」，保证有多处命中
   for (const t of ["查找甲任务", "查找乙任务", "查找丙任务"]) {

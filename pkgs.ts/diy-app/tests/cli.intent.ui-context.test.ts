@@ -111,7 +111,7 @@ describe("上下文树：RPC 契约（真实数据）", () => {
     mkdirSync(repo, { recursive: true });
     writeFileSync(join(fx.HOME, "AGENTS.md"), "# 家目录规范\n- 中文回复\n");
     writeFileSync(join(repo, "AGENTS.md"), "# 项目规范\n- 先读代码\n");
-    const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label 上下文树`);
+    const p = await fx.sh.getJson(`./diy.sh project create "${repo}" --label 上下文树`);
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create 上下文树任务 ${pid}`);
     const uri = String((t.data as any)?.data?.uri);
@@ -177,7 +177,7 @@ describe("上下文树：RPC 契约（真实数据）", () => {
   it("改 system 名单 → 归属随之变化（task.body 从 runtime 移到 system）", async () => {
     const repo = `${fx.HOME}/ctxlab2`;
     mkdirSync(repo, { recursive: true });
-    const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label 划分`);
+    const p = await fx.sh.getJson(`./diy.sh project create "${repo}" --label 划分`);
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create 划分任务 ${pid}`);
     const uri = String((t.data as any)?.data?.uri);
@@ -207,7 +207,7 @@ describe("上下文树：划分规则（真源）", () => {
   it("默认读推荐名单；setConfig 落盘成 context.yaml；lab 不传名单时读的也是它", async () => {
     const repo = `${fx.HOME}/ctxlab-config`;
     mkdirSync(repo, { recursive: true });
-    const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label 划分真源`);
+    const p = await fx.sh.getJson(`./diy.sh project create "${repo}" --label 划分真源`);
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create 划分任务 ${pid}`);
     const uri = String((t.data as any)?.data?.uri);
@@ -261,7 +261,7 @@ describe("上下文树：投递快照（steps）", () => {
   it("空会话 0 条；写入快照后能读出，且相邻 diff 算在 main 侧（默认只给统计）", async () => {
     const repo = `${fx.HOME}/ctxlab-steps`;
     mkdirSync(repo, { recursive: true });
-    const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label 快照`);
+    const p = await fx.sh.getJson(`./diy.sh project create "${repo}" --label 快照`);
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create 快照任务 ${pid}`);
     const uri = String((t.data as any)?.data?.uri);
@@ -354,7 +354,7 @@ describe("上下文树：变更统计（按项目累计）", () => {
   it("空项目 0 轮；手写统计后能聚合出变了几次/共多少轮；可按任务过滤", async () => {
     const repo = `${fx.HOME}/ctxlab-stats`;
     mkdirSync(repo, { recursive: true });
-    const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label 统计`);
+    const p = await fx.sh.getJson(`./diy.sh project create "${repo}" --label 统计`);
     const pid = String((p.data as any)?.data?.id);
     const t1 = await fx.sh.getJson(`./diy.sh task create 统计任务一 ${pid}`);
     const uri1 = String((t1.data as any)?.data?.uri);
@@ -417,7 +417,7 @@ describe("上下文树：变更历史（事件粒度）", () => {
   it("空任务 0 轮；无日志时从投递快照**折算**（只有 path）；有日志时按事件回放（op + 旧→新）", async () => {
     const repo = `${fx.HOME}/ctxlab-log`;
     mkdirSync(repo, { recursive: true });
-    const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label 变更历史`);
+    const p = await fx.sh.getJson(`./diy.sh project create "${repo}" --label 变更历史`);
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create 变更历史任务 ${pid}`);
     const uri = String((t.data as any)?.data?.uri);
@@ -517,7 +517,7 @@ describe("上下文树：变更历史**表格**上屏（轮次 | 步 | 实际请
   it("三列表格：只到「步」这一层（不列具体变化字段）；点行选中该步", async () => {
     const repo = `${fx.HOME}/ctxlab-logui`;
     mkdirSync(repo, { recursive: true });
-    const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label 变更历史上屏`);
+    const p = await fx.sh.getJson(`./diy.sh project create "${repo}" --label 变更历史上屏`);
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create 变更历史上屏任务 ${pid}`);
     const uri = String((t.data as any)?.data?.uri);
@@ -594,7 +594,7 @@ describe("上下文树：UI 上屏（两列 + 信封原始数据 `<>`）", () =>
     const repo = `${fx.HOME}/ctxlab3`;
     mkdirSync(repo, { recursive: true });
     writeFileSync(join(repo, "AGENTS.md"), "## 本项目的规范\n- 精简\n");
-    const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label 上屏`);
+    const p = await fx.sh.getJson(`./diy.sh project create "${repo}" --label 上屏`);
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create 上屏任务 ${pid}`);
     const uri = String((t.data as any)?.data?.uri);
@@ -774,7 +774,7 @@ describe("上下文树：可见性增强（统计接页 / 变更原因 / tab 标
   it("统计块上屏（行单元格）；sys 徽章显示变更原因；nav tab 标题为「上下文树」", async () => {
     const repo = `${fx.HOME}/ctxlab-vis`;
     mkdirSync(repo, { recursive: true });
-    const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label 可见性`);
+    const p = await fx.sh.getJson(`./diy.sh project create "${repo}" --label 可见性`);
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create 可见性任务 ${pid}`);
     const uri = String((t.data as any)?.data?.uri);
@@ -870,7 +870,7 @@ describe("上下文树：归属三态与中间容器折叠（review RV-01 / RV-0
   it("单元 / 未投递 分别标注；中间容器（task）折叠不单列", async () => {
     const repo = `${fx.HOME}/ctxlab-attr`;
     mkdirSync(repo, { recursive: true });
-    const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label 归属`);
+    const p = await fx.sh.getJson(`./diy.sh project create "${repo}" --label 归属`);
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create 归属任务 ${pid}`);
     const uri = String((t.data as any)?.data?.uri);
@@ -917,7 +917,7 @@ describe("上下文树：sys 归因基于当轮快照（review RV-02）", () => 
   it("改划分后，同一历史轮次的 sys 原因不变（不随页面当前划分漂移）", async () => {
     const repo = `${fx.HOME}/ctxlab-cause`;
     mkdirSync(repo, { recursive: true });
-    const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label 归因`);
+    const p = await fx.sh.getJson(`./diy.sh project create "${repo}" --label 归因`);
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create 归因任务 ${pid}`);
     const uri = String((t.data as any)?.data?.uri);
@@ -983,7 +983,7 @@ describe("上下文树：统计与归因的边界（review RV-07 / RV-08）", ()
     // ① 空项目：stats 空态文案（不是永久「加载中…」）
     const repoA = `${fx.HOME}/ctxlab-empty`;
     mkdirSync(repoA, { recursive: true });
-    const pa = await fx.sh.getJson(`./diy.sh project create ${repoA} --label 空统计`);
+    const pa = await fx.sh.getJson(`./diy.sh project create "${repoA}" --label 空统计`);
     const pidA = String((pa.data as any)?.data?.id);
     const ta = await fx.sh.getJson(`./diy.sh task create 空统计任务 ${pidA}`);
     const uriA = String((ta.data as any)?.data?.uri);
@@ -1001,7 +1001,7 @@ describe("上下文树：统计与归因的边界（review RV-07 / RV-08）", ()
     // ② sys 徽章「无原因」fallback：systemText 变了但没有 system 单元值变化 → 只显示 sys，不编原因
     const repoB = `${fx.HOME}/ctxlab-nocause`;
     mkdirSync(repoB, { recursive: true });
-    const pb = await fx.sh.getJson(`./diy.sh project create ${repoB} --label 无原因`);
+    const pb = await fx.sh.getJson(`./diy.sh project create "${repoB}" --label 无原因`);
     const pidB = String((pb.data as any)?.data?.id);
     const tb = await fx.sh.getJson(`./diy.sh task create 无原因任务 ${pidB}`);
     const uriB = String((tb.data as any)?.data?.uri);
@@ -1048,7 +1048,7 @@ describe("上下文树：归属口径标注与 URI 解析失败出口（review R
     //    RV-17：**折叠数**同样随当前划分变，标注必须一并覆盖它，否则用户以为只有归属列受影响）
     const repo = `${fx.HOME}/ctxlab-scope`;
     mkdirSync(repo, { recursive: true });
-    const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label 口径`);
+    const p = await fx.sh.getJson(`./diy.sh project create "${repo}" --label 口径`);
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create 口径任务 ${pid}`);
     const uri = String((t.data as any)?.data?.uri);
@@ -1116,7 +1116,7 @@ describe("上下文树：变量树变更 view + 该步实际请求（真发 · �
   const emptyAndWrite = async (label: string, entries: unknown[]) => {
     const repo = `${fx.HOME}/ctxlab-${label}`;
     mkdirSync(repo, { recursive: true });
-    const p = await fx.sh.getJson(`./diy.sh project create ${repo} --label ${label}`);
+    const p = await fx.sh.getJson(`./diy.sh project create "${repo}" --label ${label}`);
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create ${label}任务 ${pid}`);
     const uri = String((t.data as any)?.data?.uri);

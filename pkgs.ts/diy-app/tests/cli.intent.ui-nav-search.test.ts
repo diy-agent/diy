@@ -146,7 +146,7 @@ beforeAll(async () => {
     if (await ui.query<boolean>(`!!document.querySelector('.drawer-side .menu')`)) break;
     await new Promise((r) => setTimeout(r, 200));
   }
-  const p = await fx.sh.getJson(`./diy.sh project create ${HOME}/navsearch --label NavSearch`);
+  const p = await fx.sh.getJson(`./diy.sh project create "${HOME}"/navsearch --label NavSearch`);
   pid = String((p.data as any)?.data?.id);
   const a = await fx.sh.getJson(`./diy.sh task create navsearch-早期 ${pid}`);
   uriEarly = String((a.data as any)?.data?.uri);

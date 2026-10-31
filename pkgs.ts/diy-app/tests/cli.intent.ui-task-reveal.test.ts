@@ -38,7 +38,7 @@ beforeAll(async () => {
   };
   ui = await makeUiDriver(fx.electron.cdpUrl, () => a11y());
 
-  const p = await fx.sh.getJson(`./diy.sh ui project create ${HOME}/reveal-repo --label 定位项目`);
+  const p = await fx.sh.getJson(`./diy.sh ui project create "${HOME}"/reveal-repo --label 定位项目`);
   PID = String((p.data as any)?.data?.id);
 
   const mk = async (title: string, parent?: string): Promise<string> => {

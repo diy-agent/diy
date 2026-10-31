@@ -83,7 +83,7 @@ beforeAll(async () => {
   await lockNavOpen(ui);
 
   // 造数据：一个项目 + 两个一级任务（A 与 B 同项目，符合 main 的同项目约束）
-  const p = await fx.sh.getJson(`./diy.sh project create ${HOME}/t356 --label T356`);
+  const p = await fx.sh.getJson(`./diy.sh project create "${HOME}"/t356 --label T356`);
   pid = String((p.data as any)?.data?.id);
   await fx.sh.getJson(`./diy.sh task create 父任务A ${pid}`);
   await fx.sh.getJson(`./diy.sh task create 子任务B ${pid}`);

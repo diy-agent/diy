@@ -64,7 +64,7 @@ describe("ui 人类点击顺序（CLI diy.ui.*，agent 可复用）", () => {
 
     // ② 点击「创建项目」→ 填路径 → 提交（= ui.project.create，与按钮共用 createProjectViaUi）
     const repo = `${HOME}/uihuman`;
-    const r = await sh.getJson(`./diy.sh ui project create ${repo} --label UI演示项目`);
+    const r = await sh.getJson(`./diy.sh ui project create "${repo}" --label UI演示项目`);
     // 不写 String(...)：create 失败时 id 为 undefined，String() 会得到非空的 "undefined"，
     // 让下方 if (fixtureProj) 判真 → 拿着假 id 去跑后续 CLI
     fixtureProj = (r.data as any)?.data?.id ?? "";

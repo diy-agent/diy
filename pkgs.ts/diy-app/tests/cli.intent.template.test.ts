@@ -53,7 +53,7 @@ afterAll(async () => {
 
 async function freshProj(name: string): Promise<string> {
     const repo = `${fx.HOME}/tpl-${name}`;
-    const res = await fx.sh.getJson(`./diy.sh project create ${repo}`);
+    const res = await fx.sh.getJson(`./diy.sh project create "${repo}"`);
     return String(((res.data as Record<string, unknown>)?.data as Record<string, unknown>)?.id);
 }
 

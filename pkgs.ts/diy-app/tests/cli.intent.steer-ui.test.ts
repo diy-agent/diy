@@ -105,7 +105,7 @@ beforeAll(async () => {
         HOME,
         sh: new ShellTest({ cwd: join(__dirname, "..", "..", ".."), env: { HOME, DIY_HOME: HOME } }),
     };
-    const p = await fx.sh.getJson(`./diy.sh project create ${HOME}/steer-ui --label SteerUI`);
+    const p = await fx.sh.getJson(`./diy.sh project create "${HOME}"/steer-ui --label SteerUI`);
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create 插话界面 ${pid}`);
     uri = String((t.data as any)?.data?.uri);
@@ -427,7 +427,7 @@ describe("##303 —— 留言的投递入口", () => {
         );
 
     const newTask = async (label: string): Promise<string> => {
-        const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/steer303-${label} --label Steer303`);
+        const p = await fx.sh.getJson(`./diy.sh project create "${fx.HOME}"/steer303-${label} --label Steer303`);
         const pid = String((p.data as any)?.data?.id);
         const t = await fx.sh.getJson(`./diy.sh task create ${label} ${pid}`);
         return String((t.data as any)?.data?.uri);

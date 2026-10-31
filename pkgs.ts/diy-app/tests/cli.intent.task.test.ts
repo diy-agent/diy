@@ -52,14 +52,14 @@ afterAll(async () => {
 /** 建专属 project，返回系统自动生成的 id */
 async function freshProj(name: string): Promise<string> {
   const repo = `${fx.HOME}/t-${name}`;
-  const res = await fx.sh.getJson(`./diy.sh project create ${repo}`);
+  const res = await fx.sh.getJson(`./diy.sh project create "${repo}"`);
   return String((res.data as any)?.data?.id);
 }
 
 /** 清理：删 project 连带其全部任务 */
 /** 建一个**指定目录**的 project（可带 label），返回 id —— 归属用例需要知道 path。 */
 async function projAt(path: string, label?: string): Promise<string> {
-  const res = await fx.sh.getJson(`./diy.sh project create ${path}${label ? ` -l ${label}` : ""}`);
+  const res = await fx.sh.getJson(`./diy.sh project create "${path}"${label ? ` -l ${label}` : ""}`);
   return String((res.data as any)?.data?.id);
 }
 

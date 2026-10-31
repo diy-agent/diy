@@ -89,7 +89,7 @@ async function personaIdByName(name: string): Promise<string> {
 /** 建一个项目 + 一个任务，返回任务 URI（每次新项目：任务号从 1 起，避免猜 id） */
 async function setupTask(title: string): Promise<string> {
     const repo = `${fx.HOME}/persona-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`;
-    const r = await fx.sh.getJson(`./diy.sh project create ${repo} --label 人物实验`);
+    const r = await fx.sh.getJson(`./diy.sh project create "${repo}" --label 人物实验`);
     const pid = String(
         ((r.data as Record<string, unknown>)?.data as Record<string, unknown>)?.id ?? "",
     );
@@ -301,7 +301,7 @@ describe("任务 ↔ 人物绑定（引用存 id）", () => {
     it("创建任务时可显式指定人物（按 id）", async () => {
         const id = await addPersona(uniq("被指定的"), "mimo-v2.6-flash");
         const repo = `${fx.HOME}/persona-create-${Date.now()}`;
-        const r = await fx.sh.getJson(`./diy.sh project create ${repo} --label 指定人物`);
+        const r = await fx.sh.getJson(`./diy.sh project create "${repo}" --label 指定人物`);
         const pid = String(
             ((r.data as Record<string, unknown>)?.data as Record<string, unknown>)?.id ?? "",
         );

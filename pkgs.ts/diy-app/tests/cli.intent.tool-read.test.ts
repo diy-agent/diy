@@ -31,7 +31,7 @@ beforeAll(async () => {
 
   projDir = join(HOME, "t-tool-read");
   mkdirSync(projDir, { recursive: true });
-  const res = await sh.getJson(`./diy.sh project create ${projDir}`);
+  const res = await sh.getJson(`./diy.sh project create "${projDir}"`);
   pid = String((res.data as any)?.data?.id);
 
   // 夹具：小文件 / 大文件（超 50KB 字节上限）

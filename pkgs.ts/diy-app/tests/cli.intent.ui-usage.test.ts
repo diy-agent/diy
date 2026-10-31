@@ -35,7 +35,7 @@ beforeAll(async () => {
     HOME,
     sh: new ShellTest({ cwd: join(__dirname, "..", "..", ".."), env: { HOME, DIY_HOME: HOME } }),
   };
-  const p = await fx.sh.getJson(`./diy.sh project create ${HOME}/usage --label 用量`);
+  const p = await fx.sh.getJson(`./diy.sh project create "${HOME}"/usage --label 用量`);
   const pid = String((p.data as any)?.data?.id);
   const t = await fx.sh.getJson(`./diy.sh task create 用量四级视图 ${pid}`);
   uri = String((t.data as any)?.data?.uri);

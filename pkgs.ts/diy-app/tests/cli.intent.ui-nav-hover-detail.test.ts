@@ -59,7 +59,7 @@ beforeAll(async () => {
     if (await ui.query<boolean>(`!!document.querySelector('.drawer-side .menu')`)) break;
     await new Promise((r) => setTimeout(r, 200));
   }
-  const p = await fx.sh.getJson(`./diy.sh project create ${HOME}/hovdetail --label Hov`);
+  const p = await fx.sh.getJson(`./diy.sh project create "${HOME}"/hovdetail --label Hov`);
   const pid = String((p.data as any)?.data?.id);
   titleA = "悬停目标任务A";
   const rA = await fx.sh.getJson(`./diy.sh task create ${titleA} ${pid}`);

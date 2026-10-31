@@ -3,7 +3,7 @@
 // 🎯 task 创建链路验证 — 走 renderer 真实入口（CLI 驱动，同人类点按钮一套逻辑）
 //
 // 全部通过 CLI 的 diy.ui.* 驱动（renderer 域），模拟人类点 app 的操作序列：
-//   1. diy ui project create → 建项目（= 点「创建项目」按钮）
+//   1. diy ui project create "→" 建项目（= 点「创建项目」按钮）
 //   2. diy ui task create     → 建任务（= 点项目行「+」按钮 → 填表单 → 提交）
 //   3. diy ui tree            → 取 UI 树，验证新任务出现在对应项目下
 //
@@ -48,7 +48,7 @@ async function treeData(): Promise<any[]> {
 /** 建一个项目（走 renderer 入口，返回 id） */
 async function createProjectViaUi(label: string): Promise<string> {
   const repo = `${fx.HOME}/ui-${label}`;
-  const r = await fx.sh.getJson(`./diy.sh ui project create ${repo} --label ${label}`);
+  const r = await fx.sh.getJson(`./diy.sh ui project create "${repo}" --label ${label}`);
   return String((r.data as any)?.data?.id);
 }
 
