@@ -2,7 +2,7 @@
   "name": "@diy-agent/session-store-memory",
   "version": "0.1.0",
   "private": true,
-  "description": "diy 会话存储适配器：纯内存（进程退出即消失，一个字节不落盘）；与 jsonl 适配器同接口",
+  "description": "diy 会话存储适配器：纯内存（兼容入口，实现已移入 @diy-agent/session 的缺省 store）",
   "files": [
     "src/"
   ],

@@ -7,7 +7,9 @@
 ## 存储与 seq
 
 每条消息有会话内全局单调的 `seq`（1 起，压缩/恢复都不重置）；`SessionStore` = `append / readFrom(seq) / readRange(at) / latestSeq`。
-分桶 jsonl 在 `@diy-agent/session-store-jsonl`，本包不碰文件系统。
+
+**缺省存储是本包的内存实现**（`src/store-memory.ts`，`openMemorySessionStore()`；`createSession({})` 不传 store 用的就是它，零落盘）。
+要持久化由装配器实例化后传实例（分桶 jsonl 在 `@diy-agent/session-store-jsonl`），**不用策略枚举 / switch 分派**（全仓没有策略字符串分派）；将来加远程 store 只是多一个构造器。本包仍不碰文件系统。
 
 ## 消息分类（判别键 `type`，6 种）
 

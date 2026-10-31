@@ -1,19 +1,24 @@
 // @diy-agent/session-store-memory — 纯内存会话存储（进程退出即消失）
 //
-//   import { createSession } from '@diy-agent/session';
+// ⚠️ ##480 之后本包只是**兼容入口**：实现已移进 `@diy-agent/session` 的缺省存储
+// （`createSession({})` 不传 store 用的就是它）。原因（用户裁决）：session 是「一次对话」，
+// 默认活在内存里；要不要持久化由**装配器**决定 —— 装配器传实例，不传枚举。
+//
+// 仍然从这里 import 的老调用方（##474 的 bot 配置页测试对话）行为完全不变：
+//
 //   import { openMemorySessionStore } from '@diy-agent/session-store-memory';
+//   const session = createSession({ id: 'try-1', llm, store: openMemorySessionStore({ maxEntries: 200 }) });
 //
-//   const store = openMemorySessionStore({ maxEntries: 200 });
-//   const session = createSession({ id: 'try-1', llm, store });
-//   for await (const delta of session.send('试试看')) { /* ... */ }
-//   // 说完就丢：没有任何文件被写，会话也不出现在任何列表里（##474 判据 4）
-//
-// 为什么要独立包（而不是 `openJsonlSessionStore({ inMemory: true })`）：
-// 存储实现归存储包，一个包里塞两种持久化语义会让「会不会落盘」变成运行期才知道的选项；
-// 独立包 = 依赖图里就没有 node:fs，看得见。
+// 新代码建议直接从 `@diy-agent/session` 取（`createSession({})` 已经是内存语义）。
 
-export { MemoryStoreError } from './errors.js';
-export type { MemoryStoreErrorCode } from './errors.js';
-
-export { DEFAULT_MAX_ENTRIES, openMemorySessionStore } from './store.js';
-export type { MemorySessionStore, MemorySessionStoreOptions } from './store.js';
+export {
+    DEFAULT_MAX_ENTRIES,
+    openMemorySessionStore,
+    // 错误类与 session 共用同一实现 / 同一套 code（store/invalid-options、store/gap…）
+    SessionError as MemoryStoreError,
+} from '@diy-agent/session';
+export type {
+    MemorySessionStore,
+    MemorySessionStoreOptions,
+    SessionErrorCode as MemoryStoreErrorCode,
+} from '@diy-agent/session';

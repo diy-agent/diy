@@ -148,7 +148,8 @@ export interface SessionSnapshot {
 }
 
 /**
- * 存储端口（可选）。缺省 = 纯内存，一个字节也不落盘。
+ * 存储端口（可选）。缺省 = 本包自带的内存实现（`openMemorySessionStore()`，一个字节也不落盘）；
+ * 要落盘 / 远程由装配器实例化后传进来 —— 本包不认识任何具体实现（##480）。
  *
  * 四个方法就是**追加日志**的全部语义（设计定稿 `session-design.md` §三）：
  *   append(messages)      —— 只追加；每条必须带 seq（适配器按 seq 排序 / 分桶）

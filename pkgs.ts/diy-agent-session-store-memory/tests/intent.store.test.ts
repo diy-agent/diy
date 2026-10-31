@@ -17,7 +17,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSession, type ChatMessage, type LlmPort } from '@diy-agent/session';
-import { MemoryStoreError, openMemorySessionStore } from '../src/index.js';
+import { DEFAULT_MAX_ENTRIES, MemoryStoreError, openMemorySessionStore } from '../src/index.js';
 
 const roots: string[] = [];
 
@@ -120,11 +120,30 @@ describe('内存会话存储', () => {
         expect(before).toEqual([]);
     });
 
-    it('T7：源码不 import node:*（零文件系统是看得见的）', () => {
-        const src = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src');
-        for (const file of ['index.ts', 'store.ts', 'errors.ts']) {
-            const text = readFileSync(join(src, file), 'utf-8');
-            expect(text).not.toMatch(/from ['"]node:/);
+    it('T7：实现源码不 import node:*（零文件系统是看得见的）', () => {
+        // ##480：实现搬进 @diy-agent/session（就是 createSession 不传 store 用的那个）；
+        // 本包只剩转出入口，所以两边一起扫。
+        const own = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'index.ts');
+        const impl = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'diy-agent-session', 'src');
+        const files = [own, join(impl, 'store-memory.ts'), join(impl, 'session.ts'), join(impl, 'types.ts')];
+        for (const file of files) {
+            expect(readFileSync(file, 'utf-8'), file).not.toMatch(/from ['"]node:/);
         }
+    });
+
+    it('T9：首批可以从中途 seq 开始（恢复截断历史），之后照样严格连续', () => {
+        const store = openMemorySessionStore();
+        store.append([message(41, '早先'), message(42, '更早')]);
+        expect(store.latestSeq()).toBe(42);
+        expect(store.readFrom(0).length).toBe(2); // 首条 seq 不是 1 也照收
+        expect(() => store.append([message(44, '断了')])).toThrow(/store\/gap/);
+        store.append([message(43, '接着')]);
+        expect(store.latestSeq()).toBe(43);
+    });
+
+    it('T8：老入口与 session 的缺省实现是同一个函数（不是两份实现）', async () => {
+        const session = await import('@diy-agent/session');
+        expect(openMemorySessionStore).toBe(session.openMemorySessionStore);
+        expect(DEFAULT_MAX_ENTRIES).toBe(session.DEFAULT_MAX_ENTRIES);
     });
 });

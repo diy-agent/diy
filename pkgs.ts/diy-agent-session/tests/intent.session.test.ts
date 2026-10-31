@@ -335,15 +335,29 @@ describe('S6 存储是注入的追加日志（append / readFrom / latestSeq）',
         expect(session.lastSeq).toBe(4);
     });
 
-    it('不传 store：纯内存（不产生任何写）', async () => {
+    it('不传 store：本包内存 store 接管（可 flush、seq 连续、不落盘）', async () => {
         const session = createSession({
             id: 's1',
             llm: scriptedLlm([[{ type: 'text', text: 'x' }, { type: 'done' }]]),
             clock: fakeClock(),
         });
         await collect(session.send('hi'));
+        // 缺省 store 恒存在（##480）：append 排队写内存，flush 不抛错
+        await expect(session.flush()).resolves.toBeUndefined();
         expect(session.messages).toHaveLength(2);
         expect(session.lastSeq).toBe(2);
+    });
+
+    it('缺省内存 store 的 seq 判据与 jsonl 同级：拦下坏 store（非法形状 / 挂盘失败）', async () => {
+        // 形状不对在 createSession 就拒（不是等到第一次 append 才炸）
+        expect(() =>
+            createSession({
+                id: 's1',
+                llm: scriptedLlm([]),
+                clock: fakeClock(),
+                store: { append: () => {}, readFrom: () => [], readRange: () => [] } as never,
+            }),
+        ).toThrowError(/session\/invalid-options/);
     });
 
     it('恢复历史：initialMessages 续上 lastSeq（不重号），且新消息接着追', async () => {

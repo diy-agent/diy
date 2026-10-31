@@ -7,6 +7,7 @@ import {
     BotError,
     createBot,
     createFileBotStore,
+    createMemoryBotStore,
     ensureBot,
     newSessionId,
     openBot,
@@ -163,6 +164,37 @@ describe("会话归属（方案 B：session 目录里的 bot.json）", () => {
         const reopened = await openBot(store, "bot-1");
         expect(reopened.config).toEqual(config);
         expect((await reopened.sessions()).map((item) => item.id)).toEqual([id]);
+    });
+});
+
+describe("内存 BotStore（##480 缺省实现）", () => {
+    it("createBot 不传 store 也能工作：身份在内存、归属记在内存（零落盘）", async () => {
+        const config = await ensureBot(createMemoryBotStore(), { id: "bot-1", name: "甲", instructions: "a" });
+        const bot = createBot({ config });
+
+        expect(await bot.sessions()).toEqual([]);
+        const id = await bot.newSession();
+        expect((await bot.sessions()).map((item) => item.id)).toEqual([id]);
+    });
+
+    it("BotStore 四个方法：save / load / list / ownerOf / sessionsOf / remove（删 bot 不动归属）", async () => {
+        const store = createMemoryBotStore();
+        const at = "2026-10-31T00:00:00.000Z";
+        await store.save({ id: "bot-2", name: "乙", instructions: "b", createdAt: at, updatedAt: at });
+        await store.save({ id: "bot-1", name: "甲", instructions: "a", createdAt: at, updatedAt: at });
+
+        expect((await store.list()).map((item) => item.id)).toEqual(["bot-1", "bot-2"]);
+        expect((await store.load("bot-1"))?.name).toBe("甲");
+        expect(await store.load("nope")).toBeNull();
+
+        await store.assign("s-a", "bot-1");
+        await store.assign("s-b", "bot-2");
+        expect(await store.ownerOf("s-a")).toBe("bot-1");
+        expect((await store.sessionsOf("bot-1")).map((item) => item.id)).toEqual(["s-a"]);
+
+        await store.remove("bot-1");
+        expect(await store.load("bot-1")).toBeNull();
+        expect(await store.ownerOf("s-a")).toBe("bot-1"); // 删 bot 不丢会话归属（与文件实现同一判据）
     });
 });
 

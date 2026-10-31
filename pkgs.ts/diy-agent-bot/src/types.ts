@@ -68,7 +68,11 @@ export interface Bot {
 
 /** 建 bot 句柄的选项 */
 export interface CreateBotOptions {
-    readonly store: BotStore;
+    /**
+     * 存储端口。**缺省 = 本包自带的内存实现**（`createMemoryBotStore()`，不落盘）。
+     * 要落盘由装配器实例化后传进来（`createFileBotStore({ home, sessionsDir })`）—— 本包不分派策略（##480）。
+     */
+    readonly store?: BotStore;
     readonly config: BotConfig;
     /**
      * 建会话本体（写 meta / 开桶是宿主的事）；缺省 = 只生成一个 id 并记归属。

@@ -11,6 +11,11 @@
 //
 // ##469（单 bot 一刀）：新建会话在会话目录里写 `bot.json { botId }`（方案 B）。
 // 左栏仍是会话列表、UI 不变；多 bot 切换下一刀。
+//
+// ##480（store 方向）：session 的缺省存储是**内存**，所以装配器（本文件）必须**显式**构造并注入
+// jsonl store —— 不注入的话消息不落盘、重启就没了。
+// store 的选择是直接构造调用（`openJsonlSessionStore({ dir })`），不是 `if (strategy === …)` 枚举分派：
+// 将来换远程 store，也只是这里换一个构造器。
 
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -42,8 +47,6 @@ export const DEFAULT_BOT = {
 export interface ChatSessionsOptions {
     /** 数据根（`$DIY_HOME`） */
     readonly home: string;
-    /** 打开桶存储（测试可注入临时 maxBucketBytes） */
-    readonly openStore?: (dir: string) => Promise<JsonlSessionStore>;
     /** 建 LLM 端口（测试注入假实现；缺省 = 真 provider，key 从 readAccountValue 取） */
     readonly llmFor?: (modelKey: string) => LlmPort;
 }
@@ -59,7 +62,6 @@ export function splitModelKey(key: string): { providerId: string; modelId: strin
 export function createChatSessions(options: ChatSessionsOptions): ChatSessionHost {
     const home = options.home;
     const root = join(home, "sessions", "chat");
-    const openStore = options.openStore ?? ((dir: string) => openJsonlSessionStore({ dir }));
     // bot 身份在 `<home>/bots/`；会话归属落在会话自己的目录里（方案 B）
     const botStore = createFileBotStore({ home, sessionsDir: root });
     let botPromise: Promise<Bot> | null = null;
@@ -144,7 +146,9 @@ export function createChatSessions(options: ChatSessionsOptions): ChatSessionHos
         const dir = join(root, id);
         const meta = await readMeta(dir);
         if (meta === null) throw new Error(`没有会话 ${id}`);
-        const store = await openStore(dir);
+        // ##480：装配器是决定者 —— 直接构造 jsonl store（session 自己的缺省是内存 store），
+        // 传实例而不是策略名：将来换远程 store 只改这一行，不存在 switch 分派。
+        const store = await openJsonlSessionStore({ dir });
         const initialMessages: readonly ChatMessage[] = await store.readFrom(0);
         const { modelId } = splitModelKey(meta.model);
         const session = createSession({
