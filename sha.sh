@@ -423,8 +423,25 @@ fix() {
 #
 # 唯一例外：diy-app 有专属目标（unit / os / intent 三套，各自的排除与 Electron 准备都在它自己
 # 的 sha.sh 里）——仍调它自己的 `./sha.sh test`，不在这里重复一份 flag（重复 = 必然漂移）。
-_ws_vitest() {
+# 逐包结果汇总：**默认跑完再报**（2026-10-31）——
+# 以前遇红即停（`set -e` 一刀切），实测把 **14 个从没跑过的包 + 22 条红**一起藏掉：
+# 人只看到「第一个红的包」，会以为那就是全部。现在默认继续跑、末尾列失败清单，
+# 有失败就非零退出；要旧行为传 `--fail-fast`。
+_ws_report() {
+    if [[ $# -eq 0 ]]; then
+        echo "${info}✓ 所有 workspace 测试通过${reset}"
+        return 0
+    fi
+    echo "${error}✗ ${#} 个 workspace 有失败（清单如下；--fail-fast 可改回遇红即停）：${reset}" >&2
     local ws
+    for ws in "$@"; do echo "  ${error}·${reset} $ws" >&2; done
+    return 1
+}
+
+# $1 = fail_fast（1 = 遇到第一个红就收工）
+_ws_vitest() {
+    local fail_fast="${1:-0}" ws rc=0
+    local failed=()
     for ws in "${_workspaces[@]}"; do
         [[ -f "$ws/vitest.config.ts" ]] || continue
         # 有 config 不等于有测试（diy-compact / diy-context / workbench-plugin …）：vitest 在
@@ -433,18 +450,45 @@ _ws_vitest() {
         [[ -d "$ws/tests" ]] || continue
         case "$ws" in pkgs.ts/diy-app/) continue ;; esac
         echo "${inverse_surface}info: workspace: test '$ws'${reset}"
-        run node_modules/.bin/vitest run --root "$ws"
+        if run node_modules/.bin/vitest run --root "$ws"; then
+            :
+        else
+            failed+=("$ws")
+            if [[ "$fail_fast" == "1" ]]; then
+                _ws_report "${failed[@]}" || rc=1
+                return "$rc"
+            fi
+        fi
     done
+    _ws_report "${failed[@]}" || return 1
+    return 0
 }
 
 test() {
+  local fail_fast=0
+  # 参数解析：--fail-fast 可与 --related 共存（后者不跑 workspace 循环，故 fail_fast 对它无意义）
+  local args=()
+  local a
+  for a in "$@"; do
+    case "$a" in
+      --fail-fast) fail_fast=1 ;;
+      *)           args+=("$a") ;;
+    esac
+  done
+  set -- "${args[@]:-}"
   case "${1:-}" in
     "")        ensure-sync
-              _ws_vitest
+              local rc=0
+              _ws_vitest "$fail_fast" || rc=1
               # diy-app 最后跑（含意图测试，起隔离 Electron，最慢）——它自己的 `test` = unit + os + intent
-              ( cd pkgs.ts/diy-app && ./sha.sh test ) ;;
+              if ( cd pkgs.ts/diy-app && ./sha.sh test ); then :; else
+                  rc=1
+                  echo "${error}✗ pkgs.ts/diy-app 有失败${reset}" >&2
+                  [[ "$fail_fast" == "1" ]] && return 1
+              fi
+              return "$rc" ;;
     --related) shift; _test_related "$@"; exit $? ;;
-    *)         echo "${error}用法：./sha.sh test [--related [<文件…>]]${reset}" >&2; exit 2 ;;
+    *)         echo "${error}用法：./sha.sh test [--fail-fast] [--related [<文件…>]]${reset}" >&2; exit 2 ;;
   esac
 }
 
@@ -463,10 +507,19 @@ _test_related() {
 }
 
 # 编程中快速验证：各包单测，不构建、不起 Electron
+# 默认**跑完再汇总**（`--fail-fast` 改回遇红即停）
 test-unit() {
+  local fail_fast=0
+  local a
+  for a in "$@"; do [[ "$a" == "--fail-fast" ]] && fail_fast=1; done
   ensure-sync
-  _ws_vitest
-  ( cd pkgs.ts/diy-app && ./sha.sh test-unit )
+  local rc=0
+  _ws_vitest "$fail_fast" || rc=1
+  if ( cd pkgs.ts/diy-app && ./sha.sh test-unit ); then :; else
+      rc=1
+      echo "${error}✗ pkgs.ts/diy-app 有失败${reset}" >&2
+  fi
+  return "$rc"
 }
 
 _vendors_run() {

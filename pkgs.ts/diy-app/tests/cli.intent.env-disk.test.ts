@@ -132,7 +132,7 @@ describe.skipIf(!HAS_HDIUTIL)("##384 真卷活体（hdiutil 小镜像，绝不�
     expect(row!.data.dev).not.toBe(statSync("/").dev);
     expect(kb * 1024).toBeLessThan(512 * 1024 ** 2); // 确实在 full 阈值之下
     // `env probe <path>`（探针入口，AGENTS.md 里写了它）：指定路径现采一次 —— 数字同样要对得上 df
-    const p = await fx.sh.getJson(`./diy.sh env probe --path ${MOUNT}`);
+    const p = await fx.sh.getJson(`./diy.sh env probe --path "${MOUNT}"`);
     const sample = (p as any).data?.sample as { dev: number | null; mount: string; availBytes: number; totalBytes: number };
     expect(sample.mount).toBe(MOUNT);
     expect(Math.abs(sample.availBytes - kb * 1024)).toBeLessThan(64 * 1024);

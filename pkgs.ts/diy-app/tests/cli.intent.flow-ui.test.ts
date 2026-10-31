@@ -175,7 +175,7 @@ async function artifactCommandsReady(uri: string): Promise<boolean> {
 async function putArtifact(uri: string, node: string, seq: number, content: unknown): Promise<void> {
     const file = join(fx.HOME, `artifact-${node}-${seq}.json`);
     writeFileSync(file, JSON.stringify(content), "utf-8");
-    const r = await fx.sh.run(`./diy.sh flow artifact put ${uri} --node ${node} --seq ${seq} --file ${file}`);
+    const r = await fx.sh.run(`./diy.sh flow artifact put ${uri} --node ${node} --seq ${seq} --file "${file}"`);
     expect(r.code, `放产物失败（${node}#${seq}）：${r.stdout}${r.stderr}`).toBe(0);
 }
 

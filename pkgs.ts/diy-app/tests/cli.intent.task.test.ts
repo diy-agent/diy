@@ -938,7 +938,7 @@ describe("task create / drafts set 正文护栏（##376）", () => {
     const bPath = `${fx.HOME}/t-own-b`;
     const a = await projAt(aPath);
     const b = await projAt(bPath);
-    await fx.sh.run(`mkdir -p ${aPath}/sub`);
+    await fx.sh.run(`mkdir -p "${aPath}/sub"`);
 
     // 在 A 的子目录（worktree 同理）里给 B 建任务 → 拦，并列出候选
     await fx.sh.assertSession(`
@@ -962,7 +962,7 @@ describe("task create / drafts set 正文护栏（##376）", () => {
     const bPath = `${fx.HOME}/t-force-b`;
     const a = await projAt(aPath);
     const b = await projAt(bPath);
-    await fx.sh.run(`mkdir -p ${aPath}/sub`);
+    await fx.sh.run(`mkdir -p "${aPath}/sub"`);
 
     const d = (await jsonIn(`${aPath}/sub`, `task create 强行越仓 ${b} --force`)).data.data;
     expect(d.uri).toBe(`projects/${b}/tasks/1`);

@@ -476,7 +476,7 @@ describe("flow 产物与视图下发（art + render 插件）", () => {
         // 一段 unified diff（**非 JSON ⇒ 原样当字符串**交给插件）：头两行 `---`/`+++` 不算增删
         const diffFile = join(fx.HOME, "t337-step.diff");
         writeFileSync(diffFile, "--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n context\n-旧\n+新\n", "utf-8");
-        const put = (await fx.sh.getJson(`./diy.sh flow artifact put ${uri} --node implement --file ${diffFile}`)).data as Record<string, unknown>;
+        const put = (await fx.sh.getJson(`./diy.sh flow artifact put ${uri} --node implement --file "${diffFile}"`)).data as Record<string, unknown>;
         expect(put).toMatchObject({ node: "implement", seq: 1, plugin: "patch" });
         expect(put["view"]).toEqual({
             renderer: "diff", // **与 art.renderer 一致**（宿主另有一道校验：不一致当场报错）
@@ -508,7 +508,7 @@ describe("flow 产物与视图下发（art + render 插件）", () => {
         const ciFile = join(fx.HOME, "t337-ci.txt");
         writeFileSync(ciFile, "./sha.sh check\nEXIT=0\n", "utf-8");
         // `-` = 读 stdin（管道；内容在**调用方进程**读，见 _cli-meta.readFile）
-        const ciPut = (await fx.sh.getJson(`cat ${ciFile} | ./diy.sh flow artifact put ${uri} --node ci --file -`)).data as Record<string, unknown>;
+        const ciPut = (await fx.sh.getJson(`cat "${ciFile}" | ./diy.sh flow artifact put ${uri} --node ci --file -`)).data as Record<string, unknown>;
         expect(ciPut["art"]).toMatchObject({ renderer: "doc", plugin: "text" });
         expect(ciPut).toMatchObject({ node: "ci", seq: 1, plugin: "text" });
         const ciView = ciPut["view"] as Record<string, unknown>;
@@ -525,7 +525,7 @@ describe("flow 产物与视图下发（art + render 插件）", () => {
         const f1 = join(fx.HOME, "t337-review1.json");
         writeFileSync(f1, JSON.stringify({ columns: ["项", "结论"], rows: [["落点", "P0 未落"]] }), "utf-8");
         await fx.sh.run(`./diy.sh flow advance ${uri} --to review`);
-        await fx.sh.getJson(`./diy.sh flow artifact put ${uri} --node review --file ${f1}`);
+        await fx.sh.getJson(`./diy.sh flow artifact put ${uri} --node review --file "${f1}"`);
 
         // 打回 → implement#2 → 再回 review（review#2）
         await fx.sh.run(`./diy.sh flow bounce ${uri} --to implement`);
@@ -540,7 +540,7 @@ describe("flow 产物与视图下发（art + render 插件）", () => {
         const f2 = join(fx.HOME, "t337-review2.json");
         // 裸数组（= 只有 rows，列序取该行的键序 —— 上面那份给了 columns，这份没给）
         writeFileSync(f2, JSON.stringify([{ 项: "落点", 结论: "已补" }]), "utf-8");
-        const put2 = (await fx.sh.getJson(`./diy.sh flow artifact put ${uri} --node review --file ${f2}`)).data as Record<string, unknown>;
+        const put2 = (await fx.sh.getJson(`./diy.sh flow artifact put ${uri} --node review --file "${f2}"`)).data as Record<string, unknown>;
         expect(put2["seq"]).toBe(2);
         expect(put2["view"]).toEqual({ renderer: "table", payload: { rows: [{ cells: ["落点", "已补"] }] } });
 
@@ -564,19 +564,19 @@ describe("flow 产物与视图下发（art + render 插件）", () => {
 
         const cases: Array<[string, RegExp]> = [
             // `--node` 必填
-            [`./diy.sh flow artifact put ${uri} --file ${good}`, /node/],
+            [`./diy.sh flow artifact put ${uri} --file "${good}"`, /node/],
             // 未知节点：报错要把本工作流的节点列出来（别让人猜）
-            [`./diy.sh flow artifact put ${uri} --node nope --file ${good}`, /未知节点/],
+            [`./diy.sh flow artifact put ${uri} --node nope --file "${good}"`, /未知节点/],
             // 还没驻留过的节点：产物属于某一次驻留
-            [`./diy.sh flow artifact put ${uri} --node review --file ${good}`, /还没驻留过/],
+            [`./diy.sh flow artifact put ${uri} --node review --file "${good}"`, /还没驻留过/],
             [`./diy.sh flow view ${uri} --node review`, /还没驻留过/],
             // seq 越界（implement 只驻留过 1 次）
-            [`./diy.sh flow artifact put ${uri} --node implement --seq 3 --file ${good}`, /只驻留过 1 次/],
+            [`./diy.sh flow artifact put ${uri} --node implement --seq 3 --file "${good}"`, /只驻留过 1 次/],
             [`./diy.sh flow view ${uri} --node implement --seq 0`, /不存在/],
             // 空内容：不写空产物
             [`./diy.sh flow artifact put ${uri} --node implement --file /dev/null`, /内容为空/],
             // 插件译不出来的 raw（implement 挂的是 patch，只吃文本）⇒ **写之前**就拒
-            [`./diy.sh flow artifact put ${uri} --node implement --file ${wrongShape}`, /应为字符串/],
+            [`./diy.sh flow artifact put ${uri} --node implement --file "${wrongShape}"`, /应为字符串/],
             // 非形状 URI：形状闸门在**读实例之前**（single point）
             [`./diy.sh flow view ../evil-337`, /形状应为 projects/],
         ];
@@ -590,7 +590,7 @@ describe("flow 产物与视图下发（art + render 插件）", () => {
 
         // 袋坏：**产物专读**（`flow view`）亮错并指出路径与出路（删掉它不影响推进），不静默当「没产物」。
         // `flow show`（领域读）**不抛** —— 立场见下一节「坏袋不拖垮领域读」（##337 review1 P2-B）
-        await fx.sh.getJson(`./diy.sh flow artifact put ${uri} --node implement --file ${good}`);
+        await fx.sh.getJson(`./diy.sh flow artifact put ${uri} --node implement --file "${good}"`);
         const bag = join(fx.HOME, uri, "flow", "artifacts", "implement.json");
         writeFileSync(bag, "{ 半截 JSON", "utf-8");
         const badView = await fx.sh.run(`./diy.sh flow view ${uri} --node implement`);
@@ -612,7 +612,7 @@ describe("flow 产物坏袋不拖垮领域读（##337 review1 P2-B）", () => {
         await advanceTo(uri, "clarify", "design", "implement");
         const good = join(fx.HOME, "t337-bage-left.diff");
         writeFileSync(good, "-旧\n+新\n", "utf-8");
-        await fx.sh.getJson(`./diy.sh flow artifact put ${uri} --node implement --file ${good}`);
+        await fx.sh.getJson(`./diy.sh flow artifact put ${uri} --node implement --file "${good}"`);
         const bag = join(fx.HOME, uri, "flow", "artifacts", "implement.json");
 
         // 先证「不坏时 show 的产物路是好的」（后面不是本来就空）
@@ -669,7 +669,7 @@ describe("flow 产物不是领域态", () => {
 
         const f = join(fx.HOME, "t337-nostate.diff");
         writeFileSync(f, "-旧\n+新\n", "utf-8");
-        await fx.sh.getJson(`./diy.sh flow artifact put ${uri} --node implement --file ${f}`);
+        await fx.sh.getJson(`./diy.sh flow artifact put ${uri} --node implement --file "${f}"`);
         // 产物**不进**领域态、**不产生**重建材料（`rule.domain-first`：领域态只有 position/path/params/done）
         expect(readFileSync(flowFile(uri, "state.json"), "utf-8")).toBe(stateBefore);
         expect(readFileSync(flowFile(uri, "path.jsonl"), "utf-8")).toBe(pathBefore);
