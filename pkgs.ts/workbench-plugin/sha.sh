@@ -44,10 +44,14 @@ check() {
 ####################################################################################
 
 # build：编译 lib（ESM + d.ts）并生成发行版 package.json
+# 编译本体（单包单独编时用；仓根 `./sha.sh build-pkgs` 是**一次 tsc -b 编全部**，见根 sha.sh）
 build() {
   run npx tsc -p tsconfig.build.json
-  run node ../../scripts/npm-publish.mjs . --prepare-only --out=lib
+  build-artifact
 }
+# 发行形态（lib/package.json 等）：tsc 之后的额外步骤，单独成命令 ——
+# 这样仓根批编时只需再跑这一步，不必重跑本包的 tsc（2026-10-31）
+build-artifact() { run node ../../scripts/npm-publish.mjs . --prepare-only --out=lib; }
 # publish：build 后发布到 npm（加 --dry-run 只演练：打包 + 校验，不上传）
 publish() {
   build

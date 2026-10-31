@@ -391,6 +391,9 @@ _check_full_body() {
   # OS 边界护栏（2026-10-31）：系统假设（process.platform / wmic / taskkill / powershell /
   # osascript / /bin/bash …）只许出现在 pkgs.ts/diy-app/src/main/os/**；实现见 scripts/check-os-boundary.mjs
   run node scripts/check-os-boundary.mjs
+  # 构建配置漂移护栏（2026-10-31）：各包 tsconfig.build.json 的 composite/references 与
+  # tsconfig.build-all.json 都是**生成物**（node scripts/gen-tsconfig-build-all.mjs）——手改就报
+  run node scripts/gen-tsconfig-build-all.mjs --check
   # 各领域规范索引护栏（##388）：~/SPECS.md 的 key 唯一 / 指针可解析 / 链上新增未收录（ratchet：存量基线 scripts/specs-unindexed.txt）
   #（实现见 scripts/check-specs.mts；**总表缺失 = skip + 提示、不算失败**，跨机器 / CI 没有家目录那份文件）
   run npx tsx scripts/check-specs.mts
@@ -475,15 +478,22 @@ vendor.update() {  run git submodule update --init --recursive --remote --merge;
 # 为什么不再手写数组：这里原先是一行 `_pkg_order=(...)`，**两次漏登记新包**（#465
 # model-catalog、#469 bot）。漏登记的报错长在别处 —— build-runtime 撞见缺 lib/index.js 就喊
 # 「先跑根 ./sha.sh build」，正是刚失败的那条命令，人被引去原地重跑。
+# 能力包构建：**一次 `tsc -b` 编全部**（单进程 + 增量 + 依赖 DAG）。
+#
+# 为什么改（2026-10-31 实测本机）：原先是 bash 循环、每包一个 `bash sha.sh build`（内含 `npx tsc`）——
+# 每包光进程启动就 ~1.9s（bash + sha 引擎 1.0s、node + npx + tsc 0.9s），25 个包 ≈ 60s，
+# 真正在编译的不到三分之一。改成单进程后：冷 ~4s / 热 ~0.4s，改一个包只重编它与**依赖它的**。
+# 顺序与 references 由 `scripts/gen-tsconfig-build-all.mjs` 生成（幂等；手改漂移由 check 拦）。
 build-pkgs() {
-    local _pkgs _pkg
-    if ! _pkgs=$(node scripts/build-order.mjs); then
-        echo "${error}✗ 算不出能力包构建顺序（见上一条报错）${reset}" >&2
-        return 1
-    fi
-    for _pkg in $_pkgs; do
-        echo "${inverse_surface}info: workspace: build 'pkgs.ts/${_pkg}'${reset}"
-        ( cd "pkgs.ts/${_pkg}" && ./sha.sh build )
+    run node scripts/gen-tsconfig-build-all.mjs
+    run npx tsc -b tsconfig.build-all.json
+    # tsc 之后的**额外**步骤（生成发行形态 package.json）：只有这几个包有，仍由各包自己拥有。
+    # 为什么不跟 tsc 一起批：它们是 npm 发行物的事（scripts/npm-publish.mjs），不是编译。
+    # 为什么从仓根直接 node、不平进包目录再 `./sha.sh build-artifact`：后者每包多一个
+    # bash + sha 引擎（~1s），三个包就是 3s —— 实测占了热构建的一半（2026-10-31）。
+    local _p
+    for _p in diy-rpc diy-ui workbench-plugin; do
+        run node scripts/npm-publish.mjs "pkgs.ts/${_p}" --prepare-only --out=lib
     done
     # profile（apps/*）**不进** build-pkgs：它们是产物入口不是能力包，按需各自 ./sha.sh build
 }

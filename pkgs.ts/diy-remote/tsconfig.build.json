@@ -2,6 +2,9 @@
     // 发布/被 Electron 加载：把 src/ 编成 Node 可直接 import 的 ESM + .d.ts（与 diy-facts 同形态）。
     "extends": "../../tsconfig.base.json",
     "compilerOptions": {
+    // tsc -b 需要 composite；增量信息落 node_modules/.cache（不污染包目录、不进 git）
+    "composite": true,
+    "tsBuildInfoFile": "node_modules/.cache/tsbuildinfo/tsconfig.build.tsbuildinfo",
         "module": "NodeNext",
         "moduleResolution": "NodeNext",
         "target": "ES2022",
@@ -9,9 +12,7 @@
         "types": ["node"],
         "rootDir": "src",
         "outDir": "lib",
-        "noEmit": false,
-        "composite": false,
-        "incremental": false,
+        "noEmit": false,
         "declaration": true,
         "sourceMap": true
     },

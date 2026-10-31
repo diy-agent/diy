@@ -186,8 +186,11 @@ export async function ensureSidebarRoom(id: string): Promise<Room> {
         }
         room = readRoom(id);
         if (!room) {
-            // 探针写成功了、这里却读不回来：只说一句实话，别再走「没房间 ⇒ 建任务」那条路
-            throw new Error(`侧边栏房间写后读不回：${id}（落盘路径异常，已停止自动重建）`);
+            // 探针写成功了、这里却读不回来：只说一句实话，别再走「没房间 ⇒ 建任务」那条路。
+            // 带 code（rule.err-triage）：否则上层只能拿到一句字符串，分不出“房间坏了”与“房间不存在”。
+            throw Object.assign(new Error(`侧边栏房间写后读不回：${id}（落盘路径异常，已停止自动重建）`), {
+                code: "room/sidebar-unwritable",
+            });
         }
     }
     if (!room.members.some((m) => m.kind === "human")) room = upsertMember(id, humanMember());

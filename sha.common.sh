@@ -129,17 +129,22 @@ _test_colors() {
 # 在vscode中，按住macbook的cmd键,点终端上输出的‘./sake:106’, 可以让编辑器跳转到对应的脚本行，很方便
 # 获取调用栈的原理：
 #   `caller 0`输出为`22 foo ./sake`，即调用_run函数的调用栈信息：行号、函数,脚本
+# 行首的调用者信息：脚本:行 命令名() 当前目录 命令
+#
+# 为什么不用 `caller 0 | awk` + `sed`：那是**每条命令 4 个子进程**（caller/awk/sed×2）。
+# Windows 上一次子进程启动就是 30~100ms ⇒ 5 个 run 就多出 1.5s（实测本条 build-pkgs 的 2.4s
+# 谜之开销全在这）。BASH_SOURCE / BASH_LINENO 是 bash 内建，零子进程；`${var/#pat/rep}`
+# 同理（bash 3.2+ 的字符串替换，不需 sed）。
 run() {
-  local caller_script=$(caller 0 | awk '{print $3}')
-    # shellcheck disable=SC2001
-  local caller_script=$(echo "$caller_script" | sed "s@^$HOME@~@" )
+  local caller_script="${BASH_SOURCE[1]}"
+  caller_script="${caller_script/#$HOME/~}"
 
-  local caller_line=$(caller 0 | awk '{print $1}')
+  local caller_line="${BASH_LINENO[0]}"
   # 把 /home/ubuntu/current_work_dir 替换为 ~/current_work_dir 短格式
-  # 使用 @ 作为分隔符，避免与路径中的 / 冲突
-  # shellcheck disable=SC2001
-  local current_pwd=$(echo "$PWD" | sed "s@^$HOME@~@" )
-  local color_caller="${secondary}${caller_script}:${caller_line} ${FUNCNAME[1]}() ${reset}"
+  local current_pwd="${PWD/#$HOME/~}"
+  # FUNCNAME[1] = 调 run 的那个函数（被 source 进来时可能是空串，故兜底空值）
+  local caller_fn="${FUNCNAME[1]:-}"
+  local color_caller="${secondary}${caller_script}:${caller_line} ${caller_fn}() ${reset}"
   local color_pwd="${info}${current_pwd} ${reset}"
 
   # 只给包含空格的参数加上引号，方便复制粘贴
@@ -159,6 +164,26 @@ run() {
   "$@"
 }
 
+# ── npx 快路径：Windows 上 3.6s/次 → 0.45s/次（2026-10-31 实测）────────────────
+# 本仓的 `npx X` 全是 workspace 本地 bin（tsc / vitest / oxlint / oxfmt / tsx…）。
+# npm 的 npx 每次都点一个 npm 进程并解析 bin（本机 `npx tsc -p …` 3.6s，而 `node
+# node_modules/typescript/bin/tsc -p …` 0.43s —— **8 倍全在启动开销上**）；
+# `.bin/X` 正是它解析出来的 shim，语义相同：`npx foo a b` ≡ `node_modules/.bin/foo a b`。
+# 所以：能命中本地 bin 就直执，否则（`npx --yes pkg` / 真要用远端包）回落真正的 npx。
+# 为什么用函数覆盖而不是改 20 个包：函数优先于外部命令，一处覆盖全仓（且 `run npx …` 照样生效）。
+npx() {
+  case "${1:-}" in
+    '' | -*) command npx "$@"; return $? ;;
+  esac
+  local bin="$__SHA_COMMON_DIR/node_modules/.bin/$1"
+  if [[ -x "$bin" ]]; then
+    shift
+    "$bin" "$@"
+    return $?
+  fi
+  command npx "$@"
+}
+
 # run pwd
 # shellcheck source=../vendor/sha.bash
 if [ ! -d "$__SHA_COMMON_DIR/vendor/sha" ] || [ -z "$(ls -A "$__SHA_COMMON_DIR/vendor/sha" 2>/dev/null)" ]; then
@@ -169,5 +194,5 @@ source "$__SHA_COMMON_DIR/vendor/sha/sha.bash"
 # 新 sha 引擎把所有函数名当命令：run 是跨脚本共用的 helper，必须排除注册
 # （_sha_cmd_exclude 在每次 sha 调用时读取，集中改一处，16 个 sha.sh 零改动）。
 # 约定：各脚本私有的 helper 一律 _ 前缀；需要对外暴露的才注册为命令。
-_sha_cmd_exclude+=("run")
+_sha_cmd_exclude+=("run" "npx")
 shopt -s expand_aliases  # bash默认不开启alias 扩展

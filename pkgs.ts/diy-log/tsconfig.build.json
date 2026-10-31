@@ -3,6 +3,9 @@
     // 与 tsconfig.json（noEmit 类型检查）并存：check 用那份，构建用这份，别合并。
     "extends": "../../tsconfig.base.json",
     "compilerOptions": {
+    // tsc -b 需要 composite；增量信息落 node_modules/.cache（不污染包目录、不进 git）
+    "composite": true,
+    "tsBuildInfoFile": "node_modules/.cache/tsbuildinfo/tsconfig.build.tsbuildinfo",
         "module": "NodeNext",
         "moduleResolution": "NodeNext",
         "target": "ES2022",
@@ -10,9 +13,7 @@
         "types": ["node"],
         "rootDir": "src",
         "outDir": "lib",
-        "noEmit": false,
-        "composite": false,
-        "incremental": false,
+        "noEmit": false,
         "declaration": true,
         "sourceMap": true
     },
