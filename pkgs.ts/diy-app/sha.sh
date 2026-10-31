@@ -214,18 +214,26 @@ test-intent() {
   #       ./sha.sh test-intent tests/cli.intent.ui-find.test.ts → 原样
   # 为什么不能写成 `... tests/cli.intent "$@"`：vitest 多个 filter 取**并集**，
   #   写死的全量 filter 会让任何单文件参数都退化成全量（##255 §2 的成因）。
+  # `--bail` 的默认值（2026-10-31）：**默认跑完再汇总**。vitest.config.ts 里写的是 `bail: 1`
+  # （理由：intent 串行起真 Electron，红一条没必要跑完）—— 但实测它的代价太大了：
+  # 57 个 intent 文件里一条红就把剩下 50+ 个全挡掉，于是“1 失败”看着像“只有一个问题”，
+  # 实跑 494 例才发现 **82 条红 / 20 个文件**（2026-10-31 实测）。
+  # 要快迭代就显式传 `--fail-fast`（= 旧的 bail:1 行为）。
+  local fail_fast=0
   local filters=() arg
   for arg in "$@"; do
-    if [[ "$arg" == */* || "$arg" == *.test.ts || "$arg" == cli.intent.* ]]; then
-      filters+=("$arg")
-    else
-      filters+=("tests/cli.intent.$arg")
-    fi
+    case "$arg" in
+      --fail-fast) fail_fast=1 ;;
+      */* | *.test.ts | cli.intent.*) filters+=("$arg") ;;
+      *) filters+=("tests/cli.intent.$arg") ;;
+    esac
   done
   if [[ ${#filters[@]} -eq 0 ]]; then
     filters=("tests/cli.intent")
   fi
-  run npx vitest run --no-file-parallelism "${filters[@]}"
+  local bail_args=("--bail=0")
+  [[ "$fail_fast" == "1" ]] && bail_args=("--bail=1")
+  run npx vitest run --no-file-parallelism "${bail_args[@]}" "${filters[@]}"
 }
 
 typecheck() { run npx tsc --noEmit; }
