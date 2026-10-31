@@ -1,0 +1,32 @@
+{
+    "name": "@diy-agent/app-remote-shell",
+    "version": "0.1.0",
+    "private": true,
+    "description": "A1 远程壳：本地 Electron 壳加载远程 web UI；本地横条（当前位置 + 切换）+ 单窗口 + 连接保留",
+    "files": [
+        "*.ts"
+    ],
+    "type": "module",
+    "main": "./lib/index.js",
+    "types": "./index.ts",
+    "exports": {
+        ".": {
+            "types": "./index.ts",
+            "default": "./lib/index.js"
+        }
+    },
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json"
+    },
+    "devDependencies": {
+        "@types/node": "^26.1.0",
+        "electron": "^43.0.0",
+        "esbuild": "^0.28.1",
+        "oxfmt": "^0.57.0",
+        "oxlint": "^1.72.0",
+        "playwright-core": "^1.63.0",
+        "tsx": "^4.23.0",
+        "typescript": "^7.0.2",
+        "vitest": "^4.1.10"
+    }
+}

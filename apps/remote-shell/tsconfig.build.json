@@ -1,0 +1,18 @@
+{
+    "extends": "../../tsconfig.base.json",
+    "compilerOptions": {
+        "module": "NodeNext",
+        "moduleResolution": "NodeNext",
+        "target": "ES2022",
+        "lib": ["ES2022"],
+        "rootDir": ".",
+        "outDir": "lib",
+        "noEmit": false,
+        "composite": false,
+        "incremental": false,
+        "declaration": true,
+        "sourceMap": true
+    },
+    "include": ["index.ts", "channels.ts", "discover.ts", "bar.ts", "main.ts", "preload.ts", "bar-preload.ts"],
+    "exclude": ["tests/**/*", "scripts/**/*", "vitest.config.ts"]
+}
