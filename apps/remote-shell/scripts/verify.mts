@@ -14,7 +14,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import electronPath from 'electron';
@@ -24,6 +24,8 @@ const pkgDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const variant = process.env['DIY_VARIANT'] ?? 'lab';
 const entry = join(pkgDir, 'build', variant, 'main', 'index.mjs');
 const outDir = join(pkgDir, 'build', variant, 'verify');
+// 用构建目录当数据根：应用日志落在 <home>/log/app（##482），本脚本顺手验一眼
+const home = join(pkgDir, 'build', variant, 'home');
 const cdpPort = 9400 + Math.floor(Math.random() * 200);
 
 if (!existsSync(entry)) {
@@ -155,6 +157,7 @@ async function launch(urlA: string, urlB: string): Promise<{ bar: Page; pageA: P
             env: {
                 ...process.env,
                 DIY_VARIANT: variant,
+                DIY_HOME: home,
                 DIY_REMOTE_ENDPOINTS: `${urlA},${urlB}`,
             },
             stdio: ['ignore', 'pipe', 'pipe'],
@@ -389,6 +392,24 @@ async function main(): Promise<void> {
     assert(offline.background === 'rgb(61, 29, 31)', `断线时横条没有变红：${offline.background}`);
     assert(offline.detail.trim() !== '', '断线时横条没给原因');
     ok(`判据 5：远程断开 ⇒ 横条整条变红并提示「${offline.detail.trim()}」`);
+
+    // 附带：应用日志（##482）落盘，且启动 / 切换 / 失败都有记录
+    const logDir = join(home, 'log', 'app');
+    const logText = await waitFor(
+        '应用日志落盘（含本壳的 source）',
+        async () => {
+            const files = (await readdir(logDir).catch(() => [])).filter((name) => name.endsWith('.log'));
+            if (files.length === 0) return null;
+            const text = (await Promise.all(files.map((name) => readFile(join(logDir, name), 'utf-8')))).join('');
+            return text.includes('"source":"main:remote-shell"') ? text : null;
+        },
+        10_000,
+    );
+    for (const msg of ['远程壳启动', '窗口已创建', '连接状态变化', '切换实例', '探活失败']) {
+        assert(logText.includes(msg), `应用日志缺「${msg}」：${logText.slice(-800)}`);
+    }
+    assert(logText.includes('"level":"error"'), '应用日志里没有 error 级记录（失败没带 cause？）');
+    ok(`附带：应用日志落盘 ${logDir}（启动 / 切换 / 探活失败均有记录）`);
 
     console.log(`\n✓ 判据 1–6 全部通过（截图：${join(outDir, 'page-b-hostile.png')}）`);
 }

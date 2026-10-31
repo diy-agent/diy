@@ -57,6 +57,17 @@ apps/remote-shell/sha.sh lab --url http://127.0.0.1:8080      # 本目录
 - 不改远程页面（`apps/web` 一行不动）。
 - **不落盘**：连接列表只活在内存里（用户口径「以内存开发为主，非必要不存储」）。
 
+## 应用日志（##482）
+
+`main.ts` 入口建一次 `createLogger`，句柄固定 `main:remote-shell`，落位 `<DIY_HOME>/log/app/<日期>.log`
+（`DIY_HOME` 缺席 - Electron `userData`）。记什么：
+
+- `远程壳启动` / `窗口已创建`（带 variant / url / 尺寸）
+- `连接状态变化`（`from` / `to` / `detail`；断线是 warn，其余 info）
+- `切换实例`（带 `reused`：是否复用了还活着的 webContents —— 连接保留的证据）
+- 失败：`页面加载失败` / `探活失败`（error 第三个参数传 cause）/ `渲染进程退出` / `发现器失败`
+- 退出前 `await logger.close()`（先 flush 再 quit）
+
 ## 验证
 
 ```bash

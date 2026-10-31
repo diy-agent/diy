@@ -19,6 +19,7 @@
 import { app, BaseWindow, ipcMain, net, WebContentsView } from 'electron';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createLogger, isLogLevel } from '@diy-agent/log';
 import { barDataUrl } from './bar.js';
 import { BAR_INVOKE_CHANNEL, BAR_STATE_CHANNEL, SHELL_CURRENT_CHANNEL, type BarRequest } from './channels.js';
 import { discoverInstances } from './discover.js';
@@ -58,6 +59,21 @@ const BAR_PRELOAD = join(here, '../preload/bar.cjs');
 const SHELL_PRELOAD = join(here, '../preload/shell.cjs');
 
 const args: CliArgs = parseCliArgs(process.argv.slice(2));
+
+// ##482：应用日志（全 app 一份 jsonl 流，按 source 过滤）。装配层只在入口建一次，句柄往下传；
+// DIY_HOME 缺席（被当纯库 import / 单测）⇒ 落到 Electron 的 userData，绝不写当前目录。
+const logger = createLogger({
+    dir: join(process.env['DIY_HOME'] ?? app.getPath('userData'), 'log', 'app'),
+    level: isLogLevel(process.env['DIY_LOG_LEVEL']) ? process.env['DIY_LOG_LEVEL'] : 'info',
+});
+const log = logger.child('main:remote-shell');
+
+log.info('远程壳启动', {
+    variant: process.env['DIY_VARIANT'] ?? '',
+    url: args.url ?? '',
+    barHeight: BAR_HEIGHT,
+    manual: process.env['DIY_REMOTE_ENDPOINTS'] ?? '',
+});
 
 /** 一个远程页面（连接保留的单元：按 endpoint 存在 pages 里，永不淘汰） */
 interface PageEntry {
@@ -130,6 +146,17 @@ function pushState(): void {
 /** 只有「当前那台」的状态变化才需要推横条（后台保留的连接不必惊动用户） */
 function setStatus(entry: PageEntry, status: ConnectionStatus, detail?: string): void {
     const changed = entry.status !== status || entry.detail !== detail;
+    if (changed) {
+        // 连接状态变化各一条（断了才算异常：warn；其余 info）——诊断「什么时候断的」只看这一条
+        const data = {
+            endpoint: entry.endpoint,
+            from: entry.status,
+            to: status,
+            ...(detail === undefined ? {} : { detail }),
+        };
+        if (status === 'disconnected') log.warn('连接状态变化', data);
+        else log.info('连接状态变化', data);
+    }
     entry.status = status;
     entry.detail = detail;
     if (changed && entry.endpoint === currentKey) pushState();
@@ -227,6 +254,7 @@ function createPage(endpoint: string, displayName: string, named: boolean): Page
     });
     contents.on('render-process-gone', (_event, details) => {
         entry.alive = false;
+        log.error('渲染进程退出', { endpoint: entry.endpoint, reason: details.reason, exitCode: details.exitCode });
         setStatus(entry, 'disconnected', `渲染进程退出：${details.reason}`);
     });
     contents.on('unresponsive', () => setStatus(entry, 'disconnected', '页面无响应'));
@@ -236,6 +264,7 @@ function createPage(endpoint: string, displayName: string, named: boolean): Page
     win?.contentView.addChildView(view, 0);
     void contents.loadURL(endpoint).catch((cause: unknown) => {
         entry.alive = true;
+        log.error('页面加载失败', { endpoint }, cause);
         setStatus(entry, 'disconnected', messageOf(cause));
     });
     relayout();
@@ -263,6 +292,8 @@ async function connect(rawEndpoint: string): Promise<void> {
     const displayName = known === undefined ? displayNameOf({ displayName: null, endpoint }) : displayNameOf(known);
 
     let entry = pages.get(endpoint);
+    // 连接保留的证据：同一 endpoint 复用了还活着的 webContents（页面状态还在）
+    const reused = entry !== undefined && entry.alive;
     if (entry !== undefined && !entry.alive) {
         // 渲染进程死过 ⇒ 这个 WebContents 不能再用（地址栏相同也得换一个）
         win?.contentView.removeChildView(entry.view);
@@ -284,6 +315,12 @@ async function connect(rawEndpoint: string): Promise<void> {
         }
     }
     show(endpoint);
+    log.info('切换实例', {
+        endpoint,
+        displayName: currentEntry()?.displayName ?? displayName,
+        reused,
+        pages: pages.size,
+    });
 }
 
 // ── 探活（页面自己不会喊「远程没了」） ─────────────────────────────────────
@@ -305,6 +342,7 @@ async function probe(entry: PageEntry): Promise<void> {
         setStatus(entry, 'connected');
         await adoptPingName(entry, response);
     } catch (cause) {
+        log.error('探活失败', { endpoint: entry.endpoint }, cause);
         setStatus(entry, 'disconnected', messageOf(cause));
     } finally {
         clearTimeout(timer);
@@ -344,6 +382,9 @@ async function refreshDiscovery(): Promise<void> {
         const result = await discoverInstances({ manual });
         instances = mergeCandidates(result.items);
         discoveryErrors = result.errors;
+        // 发现器失败不连坐：每一路失败各一条 warn，汇总一条 info
+        for (const error of result.errors) log.warn('发现器失败', { source: error.source, message: error.message });
+        log.info('发现完成', { count: instances.length, errors: result.errors.length });
         pushState();
     })();
     try {
@@ -430,6 +471,7 @@ function createWindow(): void {
     placeholderView = placeholder;
     relayout();
     created.show();
+    log.info('窗口已创建', { width: args.width, height: args.height, barHeight: BAR_HEIGHT });
 }
 
 app.whenReady()
@@ -440,16 +482,21 @@ app.whenReady()
             const entry = currentEntry();
             if (entry) void probe(entry);
         }, HEARTBEAT_INTERVAL_MS);
-        void refreshDiscovery().then(() => {
-            // 有 --url 就直接连（无 --url 留在占位页，等用户从横条选）
-            if (args.url !== null) void connect(args.url);
-        });
+        void refreshDiscovery()
+            .catch((cause: unknown) => log.error('发现失败', undefined, cause))
+            .then(() => {
+                // 有 --url 就直接连（无 --url 留在占位页，等用户从横条选）
+                if (args.url !== null) void connect(args.url);
+            });
     })
     .catch((cause: unknown) => {
         console.error('✗ 远程壳启动失败：', cause);
-        app.exit(1);
+        log.error('远程壳启动失败', undefined, cause);
+        // 先 flush 再退：close 的 promise 不会 reject（写盘失败走 onError）
+        void logger.close().finally(() => app.exit(1));
     });
 
 app.on('window-all-closed', () => {
-    app.quit();
+    log.info('窗口全部关闭，退出', { pages: pages.size });
+    void logger.close().finally(() => app.quit());
 });

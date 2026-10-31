@@ -18,6 +18,9 @@
     "scripts": {
         "build": "tsc -p tsconfig.build.json"
     },
+    "dependencies": {
+        "@diy-agent/log": "*"
+    },
     "devDependencies": {
         "@types/node": "^26.1.0",
         "electron": "^43.0.0",
