@@ -14,7 +14,7 @@ import type { Fact } from '../src/types';
 
 const tmp: string[] = [];
 afterEach(() => {
-    for (const d of tmp.splice(0)) rmSync(d, { recursive: true, force: true });
+    for (const d of tmp.splice(0)) rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 });
 
 function makeRepo(): string {

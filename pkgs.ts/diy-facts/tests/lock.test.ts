@@ -30,7 +30,7 @@ function tempDir(prefix = 'facts-lock-'): string {
     return d;
 }
 afterEach(() => {
-    for (const d of tmp.splice(0)) rmSync(d, { recursive: true, force: true });
+    for (const d of tmp.splice(0)) rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 });
 
 /** 起一个子进程跑给定 TS 源（源写在临时文件里，import 绝对路径指向本包 src）。 */

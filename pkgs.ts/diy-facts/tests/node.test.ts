@@ -32,7 +32,7 @@ function mkdirp(p: string): void {
     mkdirSync(p, { recursive: true });
 }
 afterEach(() => {
-    for (const d of tmp.splice(0)) rmSync(d, { recursive: true, force: true });
+    for (const d of tmp.splice(0)) rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 });
 
 function fact(over: Partial<Fact> & { id: string; subject: string; aspect: string; value: string }): Fact {

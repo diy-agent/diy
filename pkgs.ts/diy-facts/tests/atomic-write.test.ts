@@ -11,7 +11,7 @@ import { loadRepo, submit } from '../src/node/index';
 
 const tmps: string[] = [];
 afterEach(() => {
-    for (const d of tmps.splice(0)) rmSync(d, { recursive: true, force: true });
+    for (const d of tmps.splice(0)) rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 });
 function mk(): string {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'facts-atomic-'));
