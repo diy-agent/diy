@@ -19,6 +19,7 @@ const REPO = resolve(PKGS, "..");
  * 路径相对仓根：`pkgs.ts/*` 的源码在 `src/`；`apps/*` 是 profile（摊在目录根，##458）。
  */
 const LOCATIONS: Record<string, { dir: string; entry: string }> = {
+    "@diy-agent/log": { dir: "pkgs.ts/diy-log", entry: "src/index.ts" },
     "@diy-agent/session": { dir: "pkgs.ts/diy-agent-session", entry: "src/index.ts" },
     "@diy-agent/session-store-jsonl": { dir: "pkgs.ts/diy-agent-session-store-jsonl", entry: "src/index.ts" },
     "@diy-agent/session-store-memory": { dir: "pkgs.ts/diy-agent-session-store-memory", entry: "src/index.ts" },

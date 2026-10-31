@@ -6,6 +6,7 @@
 import { app } from "electron";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createLogger, isLogLevel } from "@diy-agent/log";
 import { createWorkbench } from "@diy-agent/workbench";
 import { ASSEMBLY } from "./index.js";
 
@@ -24,6 +25,15 @@ const here = dirname(fileURLToPath(import.meta.url)); // build/<variant>/main
 // ⚠️ 不要用**顶层 await**（`const wb = await createWorkbench(...)`）：Electron 的 ESM 入口
 // 里顶层 await 会让模块求值卡在事件循环启动之前 —— app ready 永不触发、窗口不出现、
 // CDP 端口也不监听（实测：进程活着、零输出、`lsof` 连 9222 都不 bind）。改成 promise 链。
+// ##482：应用日志（全 app 一份流，按 source 过滤）。装配层只在入口建一次，句柄往下传。
+// DIY_HOME 缺席（被当纯库 import / 单测）⇒ 落到 Electron 的 userData，绝不写当前目录。
+const log = createLogger({
+    dir: join(process.env["DIY_HOME"] ?? app.getPath("userData"), "log", "app"),
+    level: isLogLevel(process.env["DIY_LOG_LEVEL"]) ? process.env["DIY_LOG_LEVEL"] : "info",
+}).child("main:minimal");
+
+log.info("应用启动", { variant: process.env["DIY_VARIANT"] ?? "", pid: process.pid });
+
 createWorkbench({
     title: ASSEMBLY.title,
     plugins: ASSEMBLY.plugins,
@@ -32,11 +42,14 @@ createWorkbench({
 })
     .then((workbench) => {
         app.on("window-all-closed", () => {
+            log.info("窗口全部关闭，退出");
             workbench.dispose();
-            app.quit();
+            // 先 flush 再退：close 的 promise 不会 reject（写盘失败走 onError）
+            void log.close().finally(() => app.quit());
         });
     })
     .catch((cause: unknown) => {
+        log.error("工作台启动失败", undefined, cause);
         console.error("✗ 工作台启动失败：", cause);
-        app.exit(1);
+        void log.close().finally(() => app.exit(1));
     });

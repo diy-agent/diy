@@ -1,0 +1,27 @@
+{
+  "name": "@diy-agent/log",
+  "version": "0.1.0",
+  "private": true,
+  "description": "统一应用日志：全 app 一份 jsonl 流（结构化记录 + source 来源标识 + 按天/按大小轮转），不给全局单例",
+  "files": [
+    "src/"
+  ],
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.57.0",
+    "oxlint": "^1.72.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

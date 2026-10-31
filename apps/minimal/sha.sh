@@ -35,7 +35,7 @@ _ensure_electron() { run node ../../scripts/ensure-electron.mjs --quiet; }
 # 依赖包先编 lib：主进程按包名 import、renderer 打包读 exports，都指向 lib/*.js
 build-deps() {
   local pkg
-  for pkg in workbench ui-workbench chat-page; do
+  for pkg in diy-log workbench ui-workbench chat-page; do
     ( cd "$SCRIPT_DIR/../../pkgs.ts/$pkg" && ./sha.sh build )
   done
 }
