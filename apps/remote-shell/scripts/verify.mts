@@ -401,7 +401,8 @@ async function main(): Promise<void> {
             const files = (await readdir(logDir).catch(() => [])).filter((name) => name.endsWith('.log'));
             if (files.length === 0) return null;
             const text = (await Promise.all(files.map((name) => readFile(join(logDir, name), 'utf-8')))).join('');
-            return text.includes('"source":"main:remote-shell"') ? text : null;
+            // 等「探活失败」落盘：导出器是批处理的（scheduledDelayMillis），不能只看启动那几条
+            return text.includes('"source":"main:remote-shell"') && text.includes('探活失败') ? text : null;
         },
         10_000,
     );

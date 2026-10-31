@@ -19,7 +19,9 @@
         "build": "tsc -p tsconfig.build.json"
     },
     "dependencies": {
-        "@diy-agent/log": "*"
+        "@diy-agent/log": "*",
+        "@opentelemetry/api-logs": "^0.223.0",
+        "@opentelemetry/sdk-logs": "^3.0.0"
     },
     "devDependencies": {
         "@types/node": "^26.1.0",

@@ -19,7 +19,9 @@
 import { app, BaseWindow, ipcMain, net, WebContentsView } from 'electron';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createLogger, isLogLevel } from '@diy-agent/log';
+import { logs } from '@opentelemetry/api-logs';
+import { BatchLogRecordProcessor, LoggerProvider } from '@opentelemetry/sdk-logs';
+import { child, FileLogRecordExporter, isLogLevel, severityOf } from '@diy-agent/log';
 import { barDataUrl } from './bar.js';
 import { BAR_INVOKE_CHANNEL, BAR_STATE_CHANNEL, SHELL_CURRENT_CHANNEL, type BarRequest } from './channels.js';
 import { discoverInstances } from './discover.js';
@@ -60,13 +62,25 @@ const SHELL_PRELOAD = join(here, '../preload/shell.cjs');
 
 const args: CliArgs = parseCliArgs(process.argv.slice(2));
 
-// ##482：应用日志（全 app 一份 jsonl 流，按 source 过滤）。装配层只在入口建一次，句柄往下传；
+// ##482：应用日志 = OTel 日志 API + 文件导出器（全 app 一份流，按 source 过滤）。
+// 只有装配层 import OTel SDK 包；业务包只依赖 api-logs（判据 2）。
 // DIY_HOME 缺席（被当纯库 import / 单测）⇒ 落到 Electron 的 userData，绝不写当前目录。
-const logger = createLogger({
-    dir: join(process.env['DIY_HOME'] ?? app.getPath('userData'), 'log', 'app'),
-    level: isLogLevel(process.env['DIY_LOG_LEVEL']) ? process.env['DIY_LOG_LEVEL'] : 'info',
+const logLevel = isLogLevel(process.env['DIY_LOG_LEVEL']) ? process.env['DIY_LOG_LEVEL'] : 'info';
+const logProvider = new LoggerProvider({
+    processors: [
+        new BatchLogRecordProcessor({
+            // 200ms：日志要「马上能在文件里看到」（排查时不等人），批处理只用来合并高频写入
+            scheduledDelayMillis: 200,
+            exporter: new FileLogRecordExporter({
+                dir: join(process.env['DIY_HOME'] ?? app.getPath('userData'), 'log', 'app'),
+            }),
+        }),
+    ],
+    // 级别过滤交给 SDK（Logger.enabled 按 minimumSeverity 丢记录）
+    loggerConfigurator: () => ({ enabled: true, minimumSeverity: severityOf(logLevel), traceBased: false }),
 });
-const log = logger.child('main:remote-shell');
+logs.setGlobalLoggerProvider(logProvider);
+const log = child('main:remote-shell');
 
 log.info('远程壳启动', {
     variant: process.env['DIY_VARIANT'] ?? '',
@@ -492,11 +506,11 @@ app.whenReady()
     .catch((cause: unknown) => {
         console.error('✗ 远程壳启动失败：', cause);
         log.error('远程壳启动失败', undefined, cause);
-        // 先 flush 再退：close 的 promise 不会 reject（写盘失败走 onError）
-        void logger.close().finally(() => app.exit(1));
+        // 先 flush 再退：provider.shutdown 会 flush 批处理器与导出器（写盘失败走 onError，不 reject）
+        void logProvider.shutdown().finally(() => app.exit(1));
     });
 
 app.on('window-all-closed', () => {
     log.info('窗口全部关闭，退出', { pages: pages.size });
-    void logger.close().finally(() => app.quit());
+    void logProvider.shutdown().finally(() => app.quit());
 });

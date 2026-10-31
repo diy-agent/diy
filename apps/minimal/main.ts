@@ -34,6 +34,8 @@ const logLevel = isLogLevel(process.env["DIY_LOG_LEVEL"]) ? process.env["DIY_LOG
 const logProvider = new LoggerProvider({
     processors: [
         new BatchLogRecordProcessor({
+            // 200ms：日志要「马上能在文件里看到」（排查时不等人），批处理只用来合并高频写入
+            scheduledDelayMillis: 200,
             exporter: new FileLogRecordExporter({
                 dir: join(process.env["DIY_HOME"] ?? app.getPath("userData"), "log", "app"),
             }),
