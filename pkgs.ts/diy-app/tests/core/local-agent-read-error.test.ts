@@ -21,6 +21,7 @@ import type { LanguageModelV3StreamPart, LanguageModelV3StreamResult, LanguageMo
 import { MockLanguageModelV3 } from "ai/test";
 import type { LanguageModel } from "ai";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { diyHome } from "../../src/main/core/state";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
@@ -213,7 +214,7 @@ describe("read 失败 → tool 块 status:error（##329）", () => {
   it("成功路径不受影响：正常读取仍是 done + 正文", async () => {
     const uri = newUri();
     // 相对路径按任务 cwd 解析；用绝对路径避免依赖任务 cwd 是否存在
-    const real = new URL("./local-agent-read-error.test.ts", import.meta.url).pathname;
+    const real = fileURLToPath(new URL("./local-agent-read-error.test.ts", import.meta.url));
     const model = stubModel([readCallReply("c1", real), textReply("看到了")]);
 
     const ops = await run(uri, model);

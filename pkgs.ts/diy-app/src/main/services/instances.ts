@@ -6,17 +6,16 @@
 //      唯一能枚举本机实例的办法是扫进程。
 //   2. **「谁开的」靠启动时自报**：实测生产实例 `ppid=1`（父已退、被 launchd 接管）——
 //      事后追父链追不出来，故注册表（`core/instance-registry.ts`）在启动瞬间快照。
-//   3. **真数据根靠自报**：`ps eww` 里的 `DIY_HOME` 是**继承**来的，不等于实例真根
+//   3. **真数据根靠自报**：环境变量里的 `DIY_HOME` 是**继承**来的，不等于实例真根
 //      （实测 `pid=11419 DIY_HOME=~/.diy` 而它的子进程真根在 worktree 的 `build/<v>/home`）。
 //      故 hint 只作线索，`homeSource=self` 的行才是真根。
 //
-// 纯逻辑（ps 解析 / 分类 / 去重 / 排序 / 排版）都在 core，这里只做 I/O 与编排：
-// 起 ps、读注册表、发探测、合并 —— 于是「规则」可单测，「网络」可注入（见 CollectDeps）。
+// 纯逻辑（分类 / 去重 / 排序 / 排版）都在 core，这里只做 I/O 与编排：
+// 取进程快照（`os/` 策略）、读注册表、发探测、合并 —— 于是「规则」可单测，「网络」可注入。
 
-import { execFileSync } from "node:child_process";
 import { AppConfig } from "../core/app-config";
 import { homeDisplayOf } from "../core/instance-identity";
-import { cmdlineSummary, parsePsOutput, pickInstanceProcesses, type InstanceProcess } from "../core/instance-scan";
+import { cmdlineSummary, pickInstanceProcesses, type InstanceProcess } from "../core/instance-scan";
 import {
   readRecords,
   registryDir,
@@ -30,6 +29,7 @@ import { renderInstanceTable } from "../core/instance-table";
 import { fetchAppInfo, fetchInstanceSelf, revealInstance, type AppInfoLite, type InstanceSelf } from "./instance-probe";
 import { sessionRegistry } from "./session-registry";
 import * as state from "../core/state";
+import { os } from "../os";
 import type { InstanceRow, InstanceTurn } from "../../shared/instance-row";
 
 /** 本进程的启动时刻（`process.uptime()` 反推 —— 不依赖模块加载时机） */
@@ -103,8 +103,8 @@ export function selfReport(opts: {
 // ── 扫描 + 聚合 ───────────────────────────────────────────────
 
 export interface CollectDeps {
-  /** `ps -Ao pid=,ppid=,command=` 的原文 */
-  ps?: () => string;
+  /** 进程快照（缺省 `os.snapshot()`，异步；注入只为单测能摆桩） */
+  rows?: () => readonly { pid: number; ppid: number; command: string }[] | null | Promise<readonly { pid: number; ppid: number; command: string }[] | null>;
   /** 老实例（无注册表）的环境变量批量取法 —— 只作线索，绝不当作真根 */
   envOf?: (pids: number[]) => Map<number, Record<string, string>>;
   dir?: string;
@@ -113,44 +113,6 @@ export interface CollectDeps {
   probeSelf?: (port: number) => Promise<InstanceSelf | null>;
   probeAppInfo?: (port: number) => Promise<AppInfoLite>;
   readPortFile?: (home: string) => number | null;
-}
-
-function defaultPs(): string {
-  return execFileSync("ps", ["-Ao", "pid=,ppid=,command="], {
-    encoding: "utf-8",
-    timeout: 5000,
-    maxBuffer: 8 * 1024 * 1024,
-  });
-}
-
-/**
- * 批量取环境变量（**一次** `ps eww -p a,b,c`，不是每 pid 一次）。
- * 行格式：`  PID  TT  STAT   TIME  COMMAND ENV=… ENV=…`（`ps eww` 无法抑制表头，跳过非数据行）。
- */
-export function psEnvironments(
-  pids: number[],
-  run: (args: string[]) => string = (a) =>
-    execFileSync("ps", a, { encoding: "utf-8", timeout: 5000, maxBuffer: 16 * 1024 * 1024 }),
-): Map<number, Record<string, string>> {
-  const out = new Map<number, Record<string, string>>();
-  if (pids.length === 0) return out;
-  let text: string;
-  try {
-    text = run(["eww", "-p", pids.join(",")]);
-  } catch {
-    return out; // 取不到就取不到（老实例只是少一条线索），绝不因此让整表失败
-  }
-  for (const line of text.split("\n")) {
-    const m = /^\s*(\d+)\s+\S+\s+\S+\s+\S+\s+(.*)$/.exec(line);
-    if (!m) continue;
-    const env: Record<string, string> = {};
-    for (const tok of (m[2] ?? "").split(/\s+/)) {
-      const eq = tok.indexOf("=");
-      if (eq > 0) env[tok.slice(0, eq)] = tok.slice(eq + 1);
-    }
-    out.set(Number(m[1]), env);
-  }
-  return out;
 }
 
 /** 「谁开的」摘要：父链第一跳的 command；拿不到写「来源未知」（老实例的常态，不藏） */
@@ -235,15 +197,17 @@ function recordOnlyRow(rec: InstanceRecord): InstanceRow {
  */
 export async function collectInstances(deps: CollectDeps = {}): Promise<InstanceRow[]> {
   const dir = deps.dir ?? registryDir();
-  const psText = (deps.ps ?? defaultPs)();
+  const procRows = await (deps.rows ?? (() => os.snapshot()))();
+  if (!procRows) throw Object.assign(new Error("进程快照失败（os 策略未返回任何行）"), { code: "os/snapshot-unavailable" });
   const probeSelf = deps.probeSelf ?? ((port: number) => fetchInstanceSelf(port, PROBE_TIMEOUT_MS));
   const probeAppInfo = deps.probeAppInfo ?? ((port: number) => fetchAppInfo(port, PROBE_TIMEOUT_MS));
   const readPortFile = deps.readPortFile ?? ((home: string) => new AppConfig(home).readPort());
 
-  const procs = pickInstanceProcesses(parsePsOutput(psText));
+  const procs = pickInstanceProcesses(procRows.map((r) => ({ pid: r.pid, ppid: r.ppid, command: r.command })));
   const records = new Map(readRecords(dir, deps.alive).map((r) => [r.pid, r] as const));
   const needEnv = procs.filter((p) => !records.has(p.pid)).map((p) => p.pid);
-  const envs = (deps.envOf ?? psEnvironments)(needEnv);
+  // R2：L2 不再暴露「读别人环境变量」这种机制；老实例的 hint 只作线索，默认没有。
+  const envs = (deps.envOf ?? (() => new Map<number, Record<string, string>>()))(needEnv);
 
   const rows = procs.map((p) => baseRow(p, records.get(p.pid), envs.get(p.pid), readPortFile));
   for (const rec of records.values()) {
@@ -318,20 +282,21 @@ export async function renderInstanceList(deps: CollectDeps = {}): Promise<string
 export interface FocusResult {
   pid: number | null;
   port: number | null;
-  /** rpc = 目标实例自己 show+focus+全屏；osascript = 系统级降级 */
-  via: "rpc" | "osascript";
+  /** rpc = 目标实例自己 show+focus+全屏；system = 系统级降级（实现由 os 策略给） */
+  via: "rpc" | "system";
   reason: string;
 }
 
 export interface FocusDeps {
   collect?: () => Promise<InstanceRow[]>;
   reveal?: (port: number) => Promise<{ ok: boolean; reason: string; fullScreen: boolean }>;
-  osascript?: (pid: number) => boolean;
+  /** 系统级前置（缺省 `os.focusProcess`；注入只为单测） */
+  focus?: (pid: number) => boolean;
 }
 
 /**
  * 唤起目标：先 RPC（确定、无需系统权限、由目标实例自己 show+focus+全屏），
- * 失败再 osascript 降级（需 Automation 权限，可能弹窗）；**两路都失败 → 抛错**（不静默吞）。
+ * 失败再走系统级降级（macOS = osascript；其他平台由策略声明不支持）；**两路都失败 → 抛错**（不静默吞）。
  */
 export async function focusInstance(target: { pid?: number; port?: number }, deps: FocusDeps = {}): Promise<FocusResult> {
   const rows = await (deps.collect ?? (() => collectInstances()))();
@@ -358,27 +323,9 @@ export async function focusInstance(target: { pid?: number; port?: number }, dep
     reasons.push("该实例没有可用的 RPC 端口（未就绪 / 未注册）");
   }
 
-  if (row.kind === "electron" && (deps.osascript ?? osascriptFocus)(row.pid)) {
-    return { pid: row.pid, port: row.port, via: "osascript", reason: "已用 osascript 前置（RPC 不可用时的降级）" };
+  if (row.kind === "electron" && (deps.focus ?? ((pid: number) => os.focusProcess(pid)))(row.pid)) {
+    return { pid: row.pid, port: row.port, via: "system", reason: "已用系统级唤起前置（RPC 不可用时的降级）" };
   }
-  reasons.push("osascript 降级也失败（需「辅助功能/Automation」权限，或该进程无窗口可前置）");
+  reasons.push("系统级降级也失败（平台不支持，或需「辅助功能/Automation」权限 / 该进程无窗口可前置）");
   throw new Error(`唤起 pid=${row.pid} 失败：\n  - ${reasons.join("\n  - ")}`);
-}
-
-/**
- * 降级：让 macOS 把某 pid 的进程置前。
- * 需要「自动化 → System Events」权限（可能弹一次系统授权窗），故只作降级用；失败返回 false（由上层汇总原因）。
- */
-export function osascriptFocus(pid: number): boolean {
-  if (process.platform !== "darwin") return false;
-  try {
-    execFileSync(
-      "osascript",
-      ["-e", `tell application "System Events" to set frontmost of (first process whose unix id is ${pid}) to true`],
-      { encoding: "utf-8", timeout: 3000, stdio: ["ignore", "pipe", "ignore"] },
-    );
-    return true;
-  } catch {
-    return false;
-  }
 }

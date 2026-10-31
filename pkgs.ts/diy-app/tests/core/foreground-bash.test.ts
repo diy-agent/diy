@@ -31,7 +31,8 @@ beforeEach(() => {
 afterEach(() => {
     for (const p of reg.list()) if (p.state === "running") reg.kill(p.id);
     reg.clear();
-    rmSync(root, { recursive: true, force: true });
+    // Windows 上杀树是异步的（os 策略的 taskkill /T），句柄可能还开着 ⇒ rm 需要重试
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 /** 起一条前台命令并登记进表（模拟 bash 工具的 `onControl`）。 */
@@ -96,7 +97,8 @@ describe("前台转后台（入口表）", () => {
     it("list 只列本任务、还在跑的（别的任务看不见，结束的不列）", async () => {
         start("sleep 0.6", "call-a");
         start("true", "call-b");
-        await sleep(150);
+        // Windows 上 Git Bash 冷启动可能 >150ms；等 call-b 真退出，别用毫秒赌时序
+        for (let i = 0; i < 200 && table.list(taskUri).some((v) => v.toolCallId === "call-b"); i++) await sleep(20);
         const mine = table.list(taskUri);
         expect(mine.map((v) => v.toolCallId)).toEqual(["call-a"]);
         expect(mine[0]!.runningMs).toBeGreaterThan(0);

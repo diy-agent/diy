@@ -23,7 +23,7 @@
 //   node scripts/check-error-code.mjs --by-file    # 每文件计数（刷新基线用）
 
 import { readFileSync, readdirSync, existsSync } from "node:fs";
-import { join, relative, resolve, dirname } from "node:path";
+import { join, relative, resolve, dirname, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { maskNonCode, matchingParen } from "./lib/source-scan.mjs";
 
@@ -94,7 +94,8 @@ const ANNOTATION = /\/\/\s*error-code-ok\s*:\s*(.*)$/;
 export function scanSource(src, file = "<fixture>") {
   if (file === SELF) return [];
   const masked = maskNonCode(src);
-  const lines = src.split("\n");
+  // 行尾去掉 `\r`：CRLF 文件下 `ANNOTATION` 的 `(.*)$` 不匹配 `\r`，逃生口会静默失效
+  const lines = src.split(/\r?\n/);
   const lineStarts = [0];
   for (let i = 0; i < src.length; i += 1) if (src[i] === "\n") lineStarts.push(i + 1);
   const lineOf = (idx) => {
@@ -159,7 +160,8 @@ function walk(dir) {
 export function scanAll() {
   const out = [];
   for (const abs of walk(SCAN_DIR)) {
-    const rel = relative(ROOT, abs);
+    // 基线键用 `/`：`relative()` 在 Windows 上给 `\`，不归一化会让全部条目失配（同 check-sync-io）
+    const rel = relative(ROOT, abs).split(sep).join("/");
     const src = readFileSync(abs, "utf-8");
     for (const hit of scanSource(src, rel)) out.push({ file: rel, ...hit });
   }

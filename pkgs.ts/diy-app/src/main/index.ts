@@ -40,6 +40,7 @@ import { installDiagnostics } from "./services/diagnostics";
 import { traffic } from "./core/traffic";
 import { installCrashReporting } from "./services/crash-reporting";
 import { detectGpu } from "./core/gpu-detect";
+import { os } from "./os";
 import { readRuntimeConfig, resolvePort } from "../runtime";
 import { instanceTitle } from "../shared/instance-title";
 import { cliEntryForRepo, findRepoRoot, homeDisplayOf, repoDisplayOf } from "./core/instance-identity";
@@ -465,7 +466,7 @@ app.on("window-all-closed", () => {
   // diy.ui.* 的转发目标随之失效：让「窗口没了还在调界面 RPC」立刻得到明确错误，
   // 而不是等在死通道上超时（重建窗口时由 activate 换回新通道）
   rpcPort?.clearRendererTransport();
-  if (process.platform !== "darwin") app.quit();
+  if (!os.caps.keepRunningOnWindowClose) app.quit();
 });
 
 // RPC 服务与窗口通道的停止点：真正退出前（非 darwin 由 window-all-closed 的 app.quit() 触发；

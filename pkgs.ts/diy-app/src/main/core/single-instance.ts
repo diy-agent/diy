@@ -10,7 +10,6 @@
 // 实测锁定的经验：三种处境（活占锁 / 陈旧锁 / 无锁）必须给不同下一步。
 
 import { lstatSync, readlinkSync } from "node:fs";
-import { execFileSync } from "node:child_process";
 import { hostname } from "node:os";
 
 /** Chromium 单实例锁在 userData 下的 symlink 名（requestSingleInstanceLock 创建） */
@@ -55,18 +54,14 @@ export function readLock(lockPath: string): LockInfo {
   return { ...base, raw, holderPid: m ? Number(m[1]) : null };
 }
 
-/** 探活：`ps -p <n> -o pid=`（存在则回显一行）；ps 本身缺失/出错 → false */
+/** 探活（策略层：POSIX 跑 ps / Windows 查进程句柄）；失败一律 false */
 export function holderAlive(holderPid: number): boolean {
   if (!Number.isInteger(holderPid) || holderPid <= 0) return false;
   try {
-    const out = execFileSync("ps", ["-p", String(holderPid), "-o", "pid="], {
-      encoding: "utf-8",
-      timeout: 2000,
-      stdio: ["ignore", "pipe", "ignore"], // stderr 丢弃：进程不在时 ps 会刷一条
-    }).trim();
-    return out !== "";
-  } catch {
-    return false; // ps 非零退出 = 该 pid 不在
+    process.kill(holderPid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
   }
 }
 

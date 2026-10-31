@@ -184,7 +184,8 @@ export interface ProcRow {
     /** `pid:<n>` —— 表格行键，和 run 的 `r-…` 不会撞 */
     id: string;
     pid: number;
-    pgid: number;
+    /** POSIX 进程组；Windows 无此概念（null） */
+    pgid: number | null;
     ppid: number;
     /** 一行标题（命令首行） */
     title: string;

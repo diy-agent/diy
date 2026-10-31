@@ -8,6 +8,7 @@
 // 用法（每个会 import 能力包的 vitest 配置里）：
 //   import { workspaceAliases } from "../vitest.alias";
 //   resolve: { alias: [...workspaceAliases] }
+import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -45,11 +46,42 @@ const LOCATIONS: Record<string, { dir: string; entry: string }> = {
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** 裸包名与子路径都指回源码（子路径 `$1` 不带扩展名，由 vite 按 extensions 补 .ts） */
+/**
+ * 子路径别名优先取 package.json 的 `exports["types"]`：
+ * 各包导出布局并不统一（`@diy-agent/rpc/http` 在 `src/transport/http/index.ts`，
+ * `@diy-agent/compaction/compaction` 在 `src/compaction.ts`），按目录硬套 `src/<sub>` 会漏。
+ */
+function exportAliases(name: string, dir: string): Array<{ find: RegExp; replacement: string }> {
+    const abs = resolve(REPO, dir);
+    let exports: Record<string, unknown> = {};
+    try {
+        exports = (JSON.parse(readFileSync(resolve(abs, "package.json"), "utf8")) as { exports?: Record<string, unknown> })
+            .exports ?? {};
+    } catch {
+        return [];
+    }
+    const out: Array<{ find: RegExp; replacement: string }> = [];
+    for (const [key, value] of Object.entries(exports)) {
+        if (key === ".") continue;
+        const target = typeof value === "string" ? value : (value as { types?: unknown } | null)?.types;
+        if (typeof target !== "string" || !target.endsWith(".ts")) continue;
+        const rel = target.replace(/^\.\//, "");
+        if (key.includes("*")) {
+            // `./*` → `./src/*.ts`：把 `*` 换成正则捕获 `$1`
+            out.push({ find: new RegExp(`^${esc(name)}/(.*)$`), replacement: resolve(abs, rel).replace(/\*/g, "$1") });
+        } else {
+            out.push({ find: new RegExp(`^${esc(name)}/${esc(key.replace(/^\.\//, ""))}$`), replacement: resolve(abs, rel) });
+        }
+    }
+    return out;
+}
+
+/** 裸包名指回源码；子路径优先按 exports 精确映射，再退回目录映射（`$1` 不带扩展名，由 vite 补 .ts） */
 export const workspaceAliases = Object.entries(LOCATIONS).flatMap(([name, { dir, entry }]) => {
     const abs = resolve(REPO, dir);
     return [
         { find: new RegExp(`^${esc(name)}$`), replacement: resolve(abs, entry) },
+        ...exportAliases(name, dir),
         { find: new RegExp(`^${esc(name)}/(.*)$`), replacement: `${resolve(abs, dirname(entry))}/$1` },
     ];
 });

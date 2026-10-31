@@ -1,41 +1,31 @@
-// ##408 刀 10：`nohup xxx &` 起的进程也要被管理器看见 —— 判据在这里钉死。
+// ##408 刀 10：`nohup xxx &` 起的进程也要被管理器看见 —— 判据在这里钉死（OS 无关）。
 //
-// 关键坑（写在测试名里）：`bash -c "nohup cmd &"` 退出后，`cmd` 被 reparent 到 launchd
+// 关键坑（写在测试名里）：`bash -c "nohup cmd &"` 退出后，`cmd` 被 reparent 到 init/launchd
 // （ppid=1），按父子关系扫会漏——只能按**进程组**认领。
+//
+// 解析 `ps` 文本的测试在 `tests/os/posix/`（平台相关，单独集合）。
 import { describe, expect, it } from "vitest";
 import {
   childrenOfRun,
   isAppHelperProc,
-  parsePsRows,
   selectOwnedProcs,
   type GroupOwner,
   type PsRow,
 } from "../../src/shared/proc-scan";
 
-/** 一行 ps 的夹具（列序与 `process-scan.ts::PS_ARGS` 一致） */
-const line = (pid: number, ppid: number, pgid: number, cmd: string, etime = "00:12", cpu = "0.0", rss = "1024"): string =>
-  `${String(pid).padStart(6)} ${String(ppid).padStart(6)} ${String(pgid).padStart(6)} ${etime.padStart(9)} ${cpu.padStart(4)} ${String(rss).padStart(7)} ${cmd}`;
-
-const rows = (...lines: string[]): PsRow[] => parsePsRows(lines.join("\n"));
-
-describe("parsePsRows — ps 文本 → 结构化（command 含空格也必须完整）", () => {
-  it("六列 + 命令行全文", () => {
-    const [r] = rows(line(120, 1, 120, "/bin/bash -c sleep 300", "01:02", "3.5", "2048"));
-    expect(r).toEqual({
-      pid: 120,
-      ppid: 1,
-      pgid: 120,
-      etimeText: "01:02",
-      pcpu: 3.5,
-      rssKb: 2048,
-      command: "/bin/bash -c sleep 300",
-    });
-  });
-
-  it("空行 / 畸形行跳过，不抛", () => {
-    expect(rows("", "garbage", "  1 2 3")).toEqual([]);
-  });
+/** 一条归一化进程行（策略层产物；测试里直接构造，不再经过 ps 文本）。 */
+const line = (pid: number, ppid: number, pgid: number, command: string, createdAt?: number): PsRow => ({
+  pid,
+  ppid,
+  pgid,
+  command,
+  etimeText: "00:12",
+  pcpu: 0,
+  rssKb: 1024,
+  ...(createdAt === undefined ? {} : { createdAt }),
 });
+
+const rows = (...list: PsRow[]): PsRow[] => list;
 
 describe("isAppHelperProc — 不把 Electron 自己的渲染进程当成 agent 的活", () => {
   it("Chromium 子进程（--type=）与 Crashpad 都算 helper", () => {
@@ -142,6 +132,78 @@ describe("selectOwnedProcs — 认领判据（组号 ∪ 子孙）", () => {
   it("祖先链成环也不死循环（脏 ps 快照不许把面板拖死）", () => {
     const all = rows(line(200, 201, 200, "a"), line(201, 200, 200, "b"));
     expect(() => selectOwnedProcs(all, { selfPid: 100, groups: new Map(), runPids: new Map() })).not.toThrow();
+  });
+});
+
+describe("lineage 认领（Windows 无进程组：PPID 锚点）", () => {
+  const at = 1_000_000;
+  const groups = new Map<number, GroupOwner>([
+    [500, { at, command: "bash -c 'nohup sleep 600 &'", cwd: "/tmp", runId: "r-1" }],
+  ]);
+  const runPids = new Map([[500, "r-1"]]);
+  const now = at + 1_000;
+
+  it("根 bash 已退：孤儿的 PPID 仍指向死掉的根 pid ⇒ 锚点不在快照里也能认领", () => {
+    // Windows 不 reparent：sleep 的 ppid 还是 500（已退出），pgid 是自己
+    const all = [line(501, 500, 501, "sleep 600", at + 100)];
+    const procs = selectOwnedProcs(all, { selfPid: 100, groups, runPids, now });
+    expect(procs).toHaveLength(1);
+    expect(procs[0]).toMatchObject({
+      pid: 501,
+      runId: "r-1",
+      claim: "lineage",
+      anchorPid: 500,
+      isRunRoot: false,
+    });
+  });
+
+  it("中间节点还活着：孙进程也能沿父链回到死掉的根", () => {
+    const all = [line(600, 500, 600, "sh -c x", at + 100), line(601, 600, 601, "sleep 600", at + 200)];
+    const procs = selectOwnedProcs(all, { selfPid: 100, groups, runPids, now });
+    expect(procs.map((p) => [p.pid, p.claim, p.anchorPid])).toEqual([
+      [600, "lineage", 500],
+      [601, "lineage", 500],
+    ]);
+  });
+
+  it("锚点 pid 被复用（快照里的创建时刻与登记不符）⇒ 立刻退休，连根自己也不算 run-root", () => {
+    const reused = at + 60_000;
+    const all = [line(500, 1, 5000, "unrelated-new.exe", reused), line(501, 500, 5001, "child.exe", reused)];
+    expect(selectOwnedProcs(all, { selfPid: 100, groups, runPids, now: reused + 100 })).toEqual([]);
+  });
+
+  it("长跑 >24h：锚点还活着且创建时刻吻合 ⇒ 晚出生的孩子仍被认领", () => {
+    const all = [line(500, 1, 5000, "dev-server", at), line(501, 500, 5001, "worker", at + 29 * 60 * 60 * 1000)];
+    const procs = selectOwnedProcs(all, { selfPid: 100, groups, runPids, now: at + 30 * 60 * 60 * 1000 });
+    expect(procs.map((p) => [p.pid, p.claim])).toEqual([
+      [500, "run-root"],
+      [501, "lineage"],
+    ]);
+  });
+
+  it("锚点不在快照里 ⇒ 不按年龄退休（号空着 = 没被复用），30 天后仍认领孤儿", () => {
+    const all = [line(501, 500, 501, "sleep 600", at + 100)];
+    const procs = selectOwnedProcs(all, { selfPid: 100, groups, runPids, now: at + 30 * 24 * 60 * 60 * 1000 });
+    expect(procs.map((p) => [p.pid, p.claim])).toEqual([[501, "lineage"]]);
+  });
+
+  it("拿不到创建时刻 ⇒ 7 天保险丝：超龄锚点退休", () => {
+    const all = [line(500, 1, 5000, "old-root"), line(501, 500, 5001, "sleep 600", at + 100)];
+    expect(selectOwnedProcs(all, { selfPid: 100, groups, runPids, now: at + 8 * 24 * 60 * 60 * 1000 })).toEqual([]);
+  });
+
+  it("父链断在快照外（中间节点缺失）⇒ 不猜、不认领", () => {
+    const all = [line(601, 999, 601, "sleep 600", at + 100)];
+    expect(selectOwnedProcs(all, { selfPid: 100, groups, runPids, now })).toEqual([]);
+  });
+
+  it("前台命令（锚点无 runId 且还活着）⇒ 子孙不列；锚点一退才列孤儿", () => {
+    const fg = new Map<number, GroupOwner>([[700, { at, command: "bash -c rg x", cwd: "/tmp" }]]);
+    const alive = [line(700, 1, 700, "bash -c rg x", at + 10), line(701, 700, 701, "rg x", at + 20)];
+    expect(selectOwnedProcs(alive, { selfPid: 100, groups: fg, runPids: new Map(), now })).toEqual([]);
+    const orphan = [line(701, 700, 701, "rg x", at + 20)];
+    const procs = selectOwnedProcs(orphan, { selfPid: 100, groups: fg, runPids: new Map(), now });
+    expect(procs.map((p) => [p.pid, p.claim, p.runId])).toEqual([[701, "lineage", null]]);
   });
 });
 

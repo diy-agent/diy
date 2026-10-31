@@ -3,8 +3,7 @@
 // 这条诊断链是「关窗常驻」的配套：锁被看不见的实例占着时，dev 与 CLI 都会沉默失败，
 // 必须能回答「锁在哪 / 谁占着 / 是死是活 / 下一步」。
 import { describe, it, expect, afterEach } from "vitest";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -33,6 +32,24 @@ function fakeLock(target: string): string {
   return lock;
 }
 
+/**
+ * Windows 默认不允许普通用户建 symlink（需开发者模式 / 管理员）。
+ * 建不了的机器上，依赖 lock symlink 的用例跳过 —— 这是**环境能力**，不是产品行为。
+ */
+const canSymlink = (() => {
+  const dir = mkdtempSync(join(tmpdir(), "diy-lockprobe-"));
+  try {
+    symlinkSync("probe-target", join(dir, "probe-link"));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+})();
+
+const itLink = canSymlink ? it : it.skip;
+
 describe("readLock —— 读锁文件（异常折叠，不抛错）", () => {
   it("不存在 → free（无锁）", () => {
     const info = readLock(join(tmp(), SINGLETON_LOCK));
@@ -41,7 +58,7 @@ describe("readLock —— 读锁文件（异常折叠，不抛错）", () => {
     expect(info.unreadable).toBe(false);
   });
 
-  it("symlink → 解析出本机 hostname 与持有者 pid", () => {
+  itLink("symlink → 解析出本机 hostname 与持有者 pid", () => {
     const lock = fakeLock(`${hostname()}-4242`);
     const info = readLock(lock);
     expect(info.raw).toBe(`${hostname()}-4242`);
@@ -49,7 +66,7 @@ describe("readLock —— 读锁文件（异常折叠，不抛错）", () => {
     expect(info.host).toBe(hostname());
   });
 
-  it("主机名带 - 也能按尾部 -数字 切出 pid（hostname 可含连字符）", () => {
+  itLink("主机名带 - 也能按尾部 -数字 切出 pid（hostname 可含连字符）", () => {
     const lock = fakeLock("my-host-2-999");
     expect(readLock(lock).holderPid).toBe(999);
   });
@@ -63,19 +80,19 @@ describe("readLock —— 读锁文件（异常折叠，不抛错）", () => {
 });
 
 describe("classifyLock —— 三种处境", () => {
-  it("本机 + 活进程 → held（关窗常驻实例的形态）", () => {
-    // holderAlive 用 ps 查真实存在性：这里拿**自己**的 pid 当持有者，必然活
+  itLink("本机 + 活进程 → held（关窗常驻实例的形态）", () => {
+    // holderAlive 走进程 0 信号（真查存在性）：这里拿**自己**的 pid 当持有者，必然活
     const lock = fakeLock(`${hostname()}-${process.pid}`);
     expect(classifyLock(readLock(lock))).toEqual({ kind: "held", holderPid: process.pid });
   });
 
-  it("本机 + 进程已不在 → stale（陈旧锁）", () => {
+  itLink("本机 + 进程已不在 → stale（陈旧锁）", () => {
     const lock = fakeLock(`${hostname()}-999999`);
     const s = classifyLock(readLock(lock));
     expect(s.kind).toBe("stale");
   });
 
-  it("别处的 hostname → alien（跨机共享文件系统）", () => {
+  itLink("别处的 hostname → alien（跨机共享文件系统）", () => {
     const lock = fakeLock("other-host-4242");
     expect(classifyLock(readLock(lock)).kind).toBe("alien");
     expect(lockIsLocal(readLock(lock))).toBe(false);
@@ -93,7 +110,7 @@ describe("classifyLock —— 三种处境", () => {
   });
 });
 
-describe("holderAlive —— 探活（ps，不递送信号）", () => {
+describe("holderAlive —— 探活（不递送信号）", () => {
   it("自己 → 活", () => expect(holderAlive(process.pid)).toBe(true));
   it("非法值 → 不活（不误查）", () => {
     expect(holderAlive(0)).toBe(false);

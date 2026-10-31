@@ -109,6 +109,10 @@ import { errText } from "../../shared/error-report";
 import { reportError } from "./error-report";
 import { readCauseEvidence } from "./interrupted-cause";
 import { classifyInterruptedCause, turnStartedAtOf } from "../../shared/interrupted-cause";
+import { os } from "../os";
+import { noShellHint } from "../os/shell-hint";
+import { buildInvocation, preferredShell, shellSpecs, shellToolName } from "../os/shell";
+import type { ShellSpec } from "../os";
 import { opsFeed } from "./ops-feed";
 import { HUMAN_MEMBER_ID, type DeliveryOrigin, type TurnOrigin } from "../../shared/room";
 // 「模型不可用」通知（##369 ①）：判据在 shared/model-unavailable，通知中心在 model-notice
@@ -1959,11 +1963,8 @@ function killProcessGroup(child: ChildProcess): void {
     // ⚠️ 已收尸就不再动它：pid 是**可复用**的，此时 `-pid` 可能指向一个毫不相干的进程组
     //    （取消信号比命令活得久是常态 —— 用户可能在这条命令早就跑完之后才点停止）。
     if (child.exitCode !== null || child.signalCode !== null) return;
-    try {
-        process.kill(-child.pid, "SIGKILL");
-    } catch {
-        // 组已空（子进程全收）或 pid 已回收：无可杀
-    }
+    // 跨平台：POSIX 走进程组，Windows 走 `taskkill /T /F`（见 os/）
+    os.killOwned([{ pid: child.pid }], "SIGKILL");
 }
 
 /**
@@ -2006,7 +2007,10 @@ export function runBash(
      * 而 limits 是人配的上限。两者混在一起，"临时放宽一次"就得改全局配置。
      */
     timeoutMs?: number,
+    /** 用哪个 shell。缺省 = 本机首选能力（`shellSpecs()[0]`）；由 buildTools 按工具名显式传入。 */
+    shell: ShellSpec = preferredShell(),
 ): Promise<BashRun> {
+    // **同步**取：runBash 的执行器里有 onControl（转后台交接），await 会把它推到微任务之后。
     return new Promise((resolve) => {
         /** 本次生效的超时：0 = 不设（`setTimeout(0)` 会立刻开火，故 0 必须跳过而不是照传） */
         const effectiveTimeoutMs = timeoutMs === undefined ? limits.bashTimeoutMs : Math.max(0, Math.floor(timeoutMs));
@@ -2027,6 +2031,27 @@ export function runBash(
                     }) + "[已取消]",
                 failed: false,
                 outcome: "canceled",
+            });
+            return;
+        }
+        // Windows 上没装 Git Bash 等任何 bash：**在 spawn 之前**收口，给一条能照着办的错误，
+        // 不把 `spawn bash.exe ENOENT` 这种原生文案丢给模型（用户看到的就是「没有可用工具」）。
+        if (shell.missing) {
+            resolve({
+                text:
+                    renderBashHead({
+                        ok: false,
+                        duration_ms: 0,
+                        timeout_ms: effectiveTimeoutMs,
+                        timed_out: false,
+                        killed: false,
+                        truncated: false,
+                        stdout_bytes: 0,
+                        stderr_bytes: 0,
+                        cwd,
+                    }) + `[命令未能启动] ${noShellHint([shell])}（工作目录：${cwd}）`,
+                failed: true,
+                outcome: "fail",
             });
             return;
         }
@@ -2167,10 +2192,14 @@ export function runBash(
             //    就阻塞到工具超时（实测：不带路径的 `rg` 跑满 300s，user CPU 只用几毫秒）。
             //    `ignore`（= /dev/null）让它正常搜 cwd；`cat`（无参）/ 无文件参数的 `grep` 也立刻拿到 EOF。
             //    stdout / stderr 必须仍是 `pipe`：超时 / 溢出 / 取消三条判据都依赖 `onData`。
-            const child = spawn("/bin/bash", ["-c", command], {
+            const inv = buildInvocation(shell, command);
+            const child = spawn(inv.file, inv.args, {
                 cwd,
-                detached: true,
+                // Windows 的 detached（CREATE_NEW_PROCESS_GROUP）会让 PowerShell 5.1 丢 stdout 管道；
+                // 那边杀树走 taskkill /T，不依赖进程组 ⇒ 按能力位决定，不做平台名分支。
+                detached: os.caps.processGroups,
                 stdio: ["ignore", "pipe", "pipe"],
+                windowsHide: true,
             });
             // 管道释放句柄交给 settle（它跨 try 作用域，不能直接碰 child）
             destroyPipes = () => {
@@ -2228,7 +2257,7 @@ export function runBash(
                 if (code === 0) finish(null, dump("out"), dump("err"));
                 else
                     finish(
-                        { code, killed, message: `Command failed: /bin/bash -c ${command}` },
+                        { code, killed, message: `Command failed: ${shell.label} ${command}` },
                         dump("out"),
                         dump("err"),
                     );
@@ -2248,7 +2277,7 @@ export function runBash(
                     if (code === 0) finish(null, dump("out"), dump("err"));
                     else
                         finish(
-                            { code, killed, message: `Command failed: /bin/bash -c ${command}` },
+                            { code, killed, message: `Command failed: ${shell.label} ${command}` },
                             dump("out"),
                             dump("err"),
                             false,
@@ -2380,21 +2409,38 @@ function detail(info: RunInfo, tail: { text: string; lines: number; droppedBytes
     return rows.join("\n");
 }
 
-export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: string, anchor?: TurnToolAnchor) {
-    return {
-        bash: tool({
-            description: [
-                "在项目目录执行 bash 命令并返回输出（查文件、跑命令、看系统信息）。",
-                "**缺省不设超时**（命令跑多久工具就等多久）；要限时就显式给 `timeout`（毫秒，到点整组 SIGKILL，并照样返回已收到的输出）。超时 / 取消 / 输出溢出都会杀掉整个进程组，且**照样返回结果**（不抛错）—— 看头里 timed_out / killed 判断怎么结束的。",
-                "命令退出后若有子孙进程还握着输出管道，最多再等 200ms 就返回（拿到已收到的输出），不会因为 `nohup … &` 这类后台孙进程挂死。",
-                "`background: true` 把长任务转到后台并**立即返回**作业 id —— 结束时会插话通知你，**不要轮询**（sleep 再查属于轮询），期间可以放心结束本轮去做别的事。查状态 / 取输出 / 停止用 `job` 工具。",
-                "长任务写法：`nohup <命令> > /tmp/x.log 2>&1 < /dev/null & disown` 立刻返回，然后用**另一条**命令 `tail /tmp/x.log` 取增量；不要在同一条命令里 sleep 等它跑完。",
-                "stdin 已接 /dev/null：`cat`、无参 `grep` / `rg` 立刻拿到 EOF，不会挂住等输入。相对路径一律按 cwd（项目目录）解析。",
-                "结果 = YAML 头 + 正文原文（正文逐字不动）。头的字段：",
-                ...renderFieldDocs(BASH_RESULT_HEAD_SCHEMA),
-            ].join("\n"),
+function makeShellTool(
+    spec: ShellSpec,
+    cwd: string,
+    limits: LocalAgentLimits,
+    taskUri: string,
+    anchor?: TurnToolAnchor,
+) {
+    const isBash = spec.kind === "bash";
+    return tool({
+            description: (isBash
+                ? [
+                      "在项目目录执行 bash 命令并返回输出（查文件、跑命令、看系统信息）。",
+                      "**缺省不设超时**（命令跑多久工具就等多久）；要限时就显式给 `timeout`（毫秒，到点整组 SIGKILL，并照样返回已收到的输出）。超时 / 取消 / 输出溢出都会杀掉整个进程组，且**照样返回结果**（不抛错）—— 看头里 timed_out / killed 判断怎么结束的。",
+                      "命令退出后若有子孙进程还握着输出管道，最多再等 200ms 就返回（拿到已收到的输出），不会因为 `nohup … &` 这类后台孙进程挂死。",
+                      "`background: true` 把长任务转到后台并**立即返回**作业 id —— 结束时会插话通知你，**不要轮询**（sleep 再查属于轮询），期间可以放心结束本轮去做别的事。查状态 / 取输出 / 停止用 `job` 工具。",
+                      "长任务写法：`nohup <命令> > /tmp/x.log 2>&1 < /dev/null & disown` 立刻返回，然后用**另一条**命令 `tail /tmp/x.log` 取增量；不要在同一条命令里 sleep 等它跑完。",
+                      "stdin 已接 /dev/null：`cat`、无参 `grep` / `rg` 立刻拿到 EOF，不会挂住等输入。相对路径一律按 cwd（项目目录）解析。",
+                      "结果 = YAML 头 + 正文原文（正文逐字不动）。头的字段：",
+                      ...renderFieldDocs(BASH_RESULT_HEAD_SCHEMA),
+                  ]
+                : [
+                      "在项目目录执行 **PowerShell** 命令并返回输出（查文件、跑命令、看系统信息）。", // os-boundary-ok: 用户可见文案
+                      // os-boundary-ok: 用户可见文案（语法边界）
+                      "语法是 PowerShell，不是 bash：没有 `ls -la` / `grep` / `&&` 这套；文件用 `Get-ChildItem` / `Select-String` / `Get-Content`。Windows PowerShell 5.1 不支持 `&&` / `??`，需要串行就写两条命令或用 `;`。",
+                      "**缺省不设超时**；要限时就显式给 `timeout`（毫秒，到点杀整棵进程树，并照样返回已收到的输出）。超时 / 取消 / 输出溢出都会杀掉整棵树，且**照样返回结果**（不抛错）。",
+                      "`background: true` 把长任务转到后台并**立即返回**作业 id —— 结束时会插话通知你，**不要轮询**；查状态 / 取输出 / 停止用 `job` 工具。长任务用 `Start-Process` 或 `background: true`，不要在同一条命令里 `Start-Sleep` 等它。",
+                      "相对路径按 cwd（项目目录）解析；结果 = YAML 头 + 正文原文（正文逐字不动）。头的字段：",
+                      ...renderFieldDocs(BASH_RESULT_HEAD_SCHEMA),
+                  ]
+            ).join("\n"),
             inputSchema: z.object({
-                command: z.string().describe("要执行的 bash 命令"),
+                command: z.string().describe(isBash ? "要执行的 bash 命令" : "要执行的 PowerShell 命令"), // os-boundary-ok: 用户可见文案
                 timeout: z
                     .number()
                     .optional()
@@ -2524,6 +2570,7 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                                 : {}),
                         },
                         eff.args.timeout as number,
+                        spec,
                     );
                 } finally {
                     // 正常结束（含异常）就把登记摘掉：结束的进程没有「转」这回事，
@@ -2550,7 +2597,15 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
                 if (run.failed) throw new Error(run.text);
                 return run.text;
             },
-        }),
+    });
+}
+
+export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: string, anchor?: TurnToolAnchor) {
+    const shellTools = Object.fromEntries(
+        shellSpecs().map((spec) => [shellToolName(spec), makeShellTool(spec, cwd, limits, taskUri, anchor)]),
+    );
+    return {
+        ...shellTools,
         read: tool({
             description:
                 "读取文件的文本内容（带行号；相对路径按项目目录解析）。" +
@@ -2660,7 +2715,7 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
             description:
                 "整文件写入（新建或覆盖；相对路径按项目目录解析）。" +
                 `**父目录不存在会自动创建**（mkdir -p），这不是错误。` +
-                `护栏：路径必须落在项目目录内（越界报 fs/path-escape）；content 上限 ${Math.round(WRITE_MAX_BYTES / 1024)}KB（报 fs/content-too-large）；` +
+                `content 上限 ${Math.round(WRITE_MAX_BYTES / 1024)}KB（报 fs/content-too-large）；` +
                 "目标是目录报 fs/is-directory。UTF-8 原样写：行尾不转换，原文件有 BOM 会保留。" +
                 "返回 `+N/-M 行` 与 unified diff 摘要。改几行不要用本工具重写整个文件。",
             inputSchema: z.object({

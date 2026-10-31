@@ -25,7 +25,7 @@ describe("OwnedGroups — 登记与补录", () => {
     const g = new OwnedGroups();
     g.record(120, base);
     g.record(120, { ...base, command: "另一条命令", taskUri: "projects/1/tasks/1", runId: "r-1" });
-    expect(g.get(120)).toEqual({ ...base, taskUri: "projects/1/tasks/1", runId: "r-1" });
+    expect(g.get(120)).toEqual({ ...base, createdAt: base.at, taskUri: "projects/1/tasks/1", runId: "r-1" });
   });
 
   it("release：组里没活口就撤记录；有活口必须留（那就是孤儿认领线索）", () => {
@@ -121,7 +121,7 @@ describe("OwnedGroups — 落盘索引（app 重启后仍认得出孤儿）", ()
   it("读盘不覆盖启动早期刚登记的组（内存优先；##5 review 抓到的竞态）", () => {
     // 直接测合并函数：`record` 抢在 `load` 的 `await readFile` 之前跑完时，
     // 盘上那条旧条目（上一轮会话的命令、缺 taskUri/runId）不许把它整条盖掉。
-    const map = new Map<number, { at: number; command: string; cwd: string; taskUri?: string }>();
+    const map = new Map<number, { at: number; createdAt?: number; command: string; cwd: string; taskUri?: string }>();
     map.set(60534, { at: 9000, command: "新登记的这条", cwd: "/new", taskUri: "projects/1/tasks/5" });
     applyLoaded(map, [
         { pgid: 60534, owner: { at: 1000, command: "盘上的旧条目", cwd: "/old" } },
@@ -129,6 +129,7 @@ describe("OwnedGroups — 落盘索引（app 重启后仍认得出孤儿）", ()
     ]);
     expect(map.get(60534)).toEqual({ at: 9000, command: "新登记的这条", cwd: "/new", taskUri: "projects/1/tasks/5" });
     expect(map.get(60535)?.command).toBe("只有盘上有的那条"); // 盘上独有的照常并进来
+    expect(map.get(60535)?.createdAt).toBe(1000); // 老条目缺 createdAt ⇒ 用 at 兜底（身份判据）
   });
 
   it("清理后落盘也跟着少（不会越积越多）", async () => {

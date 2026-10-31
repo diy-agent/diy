@@ -163,7 +163,8 @@ const donePatches = (ops: Op[], id: string): Op[] =>
     ops.filter((o) => o.op === "patch" && o.id === id && (o.fields as { status?: string }).status === "done");
 
 describe("bash spawn / IO 失败 → tool 块 status:error（##332 ③）", () => {
-    it("cwd 无权限（EACCES，callback 路径）→ status:error，正文给失败文案 + 工作目录", async () => {
+    // Windows 的 chmod 不产生真实权限位（目录仍可进入），EACCES 这条路径只在 POSIX 可复现
+    it.skipIf(process.platform === "win32")("cwd 无权限（EACCES，callback 路径）→ status:error，正文给失败文案 + 工作目录", async () => {
         const uri = newUri(PROJECT_NOPERM);
         const model = stubModel([bashCallReply("c1", "echo hi"), textReply("换个目录")]);
 
@@ -189,10 +190,11 @@ describe("bash spawn / IO 失败 → tool 块 status:error（##332 ③）", () =
         const id = toolIds(ops)[0];
         expect(id).toBeTruthy();
         expect(statusOf(ops, id!)).toBe("error");
-        expect(outputOf(ops, id!)).toContain("[命令未能启动 ENOTDIR]");
+        // Windows 对「cwd 是普通文件」报 ENOENT（POSIX 是 ENOTDIR）——判据是「没跑起来」，不是具体 errno
+        expect(outputOf(ops, id!)).toMatch(/\[命令未能启动 (ENOTDIR|ENOENT)\]/);
     });
 
-    it("模型侧不受影响：失败文案随 tool 结果回灌给下一步，且历史重建是 error-text", async () => {
+    it.skipIf(process.platform === "win32")("模型侧不受影响：失败文案随 tool 结果回灌给下一步，且历史重建是 error-text", async () => {
         const uri = newUri(PROJECT_NOPERM);
         const model = stubModel([bashCallReply("c1", "echo hi"), textReply("换个目录")]);
 

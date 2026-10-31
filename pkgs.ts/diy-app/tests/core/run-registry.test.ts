@@ -11,6 +11,15 @@ let root: string;
 let reg: RunRegistry;
 const origin = { taskUri: "projects/4/tasks/408", turnId: "t1", stepId: "t1_s1", toolCallId: "call-1" };
 
+/** 等一个条件成立（Windows 上 Git Bash 启动可能慢于固定 sleep，别用毫秒赌时序）。 */
+async function until(fn: () => boolean, ms = 10_000): Promise<void> {
+    const end = Date.now() + ms;
+    while (!fn()) {
+        if (Date.now() > end) throw new Error("until: 条件超时");
+        await new Promise((r) => setTimeout(r, 10));
+    }
+}
+
 beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "diy-proc-"));
     reg = new RunRegistry({ rootDir: root });
@@ -19,7 +28,8 @@ beforeEach(() => {
 afterEach(() => {
     for (const p of reg.list()) if (p.state === "running") reg.kill(p.id);
     reg.clear();
-    rmSync(root, { recursive: true, force: true });
+    // Windows 上杀树是异步的（os 策略的 taskkill /T），子进程句柄可能还开着 ⇒ rm 需要重试
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 describe("登记与判活", () => {
@@ -75,7 +85,8 @@ describe("查询与停止", () => {
         expect(reg.kill(p.id)).toBe(true);
         const done = await reg.wait(p.id, 10_000);
         expect(done?.state).toBe("killed");
-        expect(done?.signal).toBe("SIGTERM");
+        // Windows 没有信号：杀树只留退出码，signal 为 null（见 main/os/）
+        if (process.platform !== "win32") expect(done?.signal).toBe("SIGTERM");
     });
 
     it("kill 已结束的进程返回 false（幂等，不误伤——pid 会复用）", async () => {
@@ -239,7 +250,7 @@ describe("寿命按进程组算（不是根 bash）", () => {
     it("根退出但组里还有活口 ⇒ 状态仍是 running（不许写「已结束」）", async () => {
         const r = new RunRegistry({ rootDir: root, probeGroup: () => true, reapMs: 60_000 });
         const p = await r.spawn({ command: "exit 0", cwd: root, origin });
-        await new Promise((res) => setTimeout(res, 120));
+        await until(() => p.rootExitedAt !== undefined);
         expect(p.state).toBe("running");
         expect(p.awaitingGroup).toBe(true);
         expect(p.rootExitedAt).toBeGreaterThanOrEqual(p.startedAt);
@@ -250,7 +261,7 @@ describe("寿命按进程组算（不是根 bash）", () => {
         let alive = true;
         const r = new RunRegistry({ rootDir: root, probeGroup: () => alive, reapMs: 20 });
         const p = await r.spawn({ command: "exit 3", cwd: root, origin });
-        await new Promise((res) => setTimeout(res, 80));
+        await until(() => p.rootExitedAt !== undefined);
         expect(p.state).toBe("running");
         alive = false;
         const done = await r.wait(p.id, 5_000);
@@ -260,10 +271,12 @@ describe("寿命按进程组算（不是根 bash）", () => {
         r.clear();
     });
 
-    it("真进程：`nohup sleep &` 的父命令秒退，run 活到后台进程真的没了才结束", async () => {
+    // Windows 上 `jobAlive` 只能判根进程（没有进程组语义，见 main/os/）⇒ 根 bash 一退
+    // 就收口，等不到 `nohup` 留下的子孙。这是已知边界，不是回归。
+    it.skipIf(process.platform === "win32")("真进程：`nohup sleep &` 的父命令秒退，run 活到后台进程真的没了才结束", async () => {
         const p = await reg.spawn({ command: "nohup sleep 0.6 > /dev/null 2>&1 & echo ok", cwd: root, origin });
         // 根命令本身 20ms 级就退；此时不许收口
-        await new Promise((res) => setTimeout(res, 150));
+        await until(() => p.rootExitedAt !== undefined);
         expect(p.state).toBe("running");
         expect(p.awaitingGroup).toBe(true);
         const done = await reg.wait(p.id, 10_000);
@@ -326,7 +339,11 @@ describe("review 修正（刀 15）", () => {
 
     it("读尾是**定长偏移读**：大文件末尾若干行正确、且不产生替换字符", async () => {
         // 4MB 日志：整文件读进内存就是每次刷新一次卡顿（面板每 3s 一次）
-        const p = await reg.spawn({ command: `python3 -c "print('x' * 200, end='\\n'); [print('line%d' % i) for i in range(20000)]"`, cwd: root });
+        // 用 awk 而非 python3：Windows 上没有 python3（且可能命中 Store 的占位别名）。
+        const p = await reg.spawn({
+            command: `awk 'BEGIN{printf "%0200d\\n",0; for(i=0;i<20000;i++) printf "line%d\\n", i}'`,
+            cwd: root,
+        });
         await reg.wait(p.id, 20_000);
         const t = await reg.tail(p.id, 3);
         expect(t?.text).toBe("line19997\nline19998\nline19999");
@@ -334,26 +351,27 @@ describe("review 修正（刀 15）", () => {
     });
 
     it("内存表有上限：淘汰最老的**已结束** run，运行中的永不淘汰", async () => {
-        const { MAX_RUNS } = await import("../../src/main/services/run-registry");
-        const live = await reg.spawn({ command: "sleep 30", cwd: root });
-        // 直接塞已结束的假 run（真起 300 个进程没必要）
-        const before = reg.list().length;
-        for (let i = 0; i < MAX_RUNS + 20; i++) {
-            const q = await reg.spawn({ command: "true", cwd: root });
-            await reg.wait(q.id, 10_000);
+        // 上限可注入 ⇒ 不必真起 300+ 个进程（Windows 上那要一分钟），淘汰逻辑本身不受影响
+        const r = new RunRegistry({ rootDir: root, maxRuns: 8 });
+        const live = await r.spawn({ command: "sleep 300", cwd: root });
+        const before = r.list().length;
+        for (let i = 0; i < 8 + 5; i++) {
+            const q = await r.spawn({ command: "true", cwd: root });
+            await r.wait(q.id, 10_000);
         }
-        expect(reg.list().length).toBeLessThanOrEqual(MAX_RUNS);
-        expect(reg.get(live.id)?.state).toBe("running");
-        expect(reg.list().length).toBeGreaterThan(1);
+        expect(r.list().length).toBeLessThanOrEqual(8);
+        expect(r.get(live.id)?.state).toBe("running");
+        expect(r.list().length).toBeGreaterThan(1);
         expect(before).toBeGreaterThan(0);
-        reg.kill(live.id);
+        r.kill(live.id);
     });
 
     it("后台显式 timeout：到点整组停，终态 killed（不是命令自己失败）", async () => {
         const p = await reg.spawn({ command: "sleep 30", cwd: root, deadlineMs: 300 });
         const done = await reg.wait(p.id, 10_000);
         expect(done?.state).toBe("killed");
-        expect(done?.signal).toBe("SIGTERM");
+        // Windows 没有信号（杀树只留退出码），见 main/os/
+        if (process.platform !== "win32") expect(done?.signal).toBe("SIGTERM");
     });
 
     it("pruneOldDirs 只删过期日期目录（今天的绝不动）", async () => {
@@ -376,6 +394,15 @@ describe("退出即收（shutdown）", () => {
         const notes: string[] = [];
         reg.setNotifier((_t, text) => notes.push(text));
         const plain = await reg.spawn({ command: "sleep 30", cwd: root, origin });
+        if (process.platform === "win32") {
+            // Windows 上 jobAlive 只判根进程（见 main/os/）⇒ 「根已退、只剩子孙」这态认不出来；
+            // 这里退一步钉「在跑的 run 能被 shutdown 收掉」。
+            const n = await reg.shutdown({ graceMs: 2_000 });
+            expect(n).toBe(1);
+            expect(reg.get(plain.id)?.state).toBe("killed");
+            expect(notes).toEqual([]);
+            return;
+        }
         const orphan = await reg.spawn({ command: "nohup sleep 30 > /dev/null 2>&1 & echo started", cwd: root, origin });
         // 等它进入"组还有活口"的态：这才是最难收的那一类（根已退出、活的是被 reparent 的子孙）
         for (let i = 0; i < 100 && !reg.get(orphan.id)?.awaitingGroup; i++) await new Promise((r) => setTimeout(r, 20));
