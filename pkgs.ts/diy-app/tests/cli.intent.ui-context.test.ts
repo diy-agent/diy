@@ -158,9 +158,15 @@ describe("上下文树：RPC 契约（真实数据）", () => {
     // responses 面里 user 的 content 是 [{type:"input_text",text}]，取文本要比出两种形状
     const textOf = (m: any): string =>
       typeof m.content === "string" ? m.content : (m.content ?? []).map((p: any) => p.text ?? "").join("");
-    // 合并后的这一条里，runtime 份（task.body 在 runtime）与占位输入都在
-    expect(textOf(lastUser)).toContain("body:");
+    // ⚠️ 口径已变（##442 用户 2026-10-27）：**system 里含 help / system / runtime 三份全量**，
+    // runtime 不再单独进尾部 user 消息 ⇒ 末条 user 只有 `chat:`（占位输入）。
+    // 之前这里断言末条 user 还应带 `body:`，是旧形态；它同时也把「runtime 全量到底在哪」搅混了。
+    expect(textOf(lastUser)).toContain("chat:");
     expect(textOf(lastUser)).toContain("仿真占位");
+    expect(textOf(lastUser)).not.toContain("runtime:"); // 防有人把全量 runtime 又塞回尾部（砸缓存）
+    // 三份全量都在 system 里，且 task.body（归 runtime 划分）确实在内
+    expect(d.system.text).toContain("runtime:");
+    expect(d.system.text).toContain("body:");
     expect(d.request.model).toBeTruthy();
 
     // 行号映射与文本同源（选中联动高亮靠它）
