@@ -21,10 +21,12 @@ if [ -z "$dirs" ]; then
 fi
 
 # shellcheck disable=SC2086
-# 例外：build-runtime.mjs 是手写构建脚本（不是 tsc 产物，见 ##455），.gitignore 同样开了 ! 反选。
+# 例外：build-runtime.mjs 是手写构建脚本（不是 tsc 产物，见 ##455），.gitignore 同样开了 ! 反选；
+#      apps/*/bin/ 是 app 的手写 CLI 入口（##478：发行包的 bin 必须能从仓库复现，所以入库而不是生成）。
 bad=$(find $dirs -type f \
   \( -name '*.js' -o -name '*.jsx' -o -name '*.mjs' -o -name '*.cjs' -o -name '*.d.ts' \) \
   ! -path 'pkgs.ts/diy-app/scripts/build-runtime.mjs' \
+  ! -path 'apps/*/bin/*' \
   ! -path '*/build/*' ! -path '*/lib/*' ! -path '*/dist/*' ! -path '*/node_modules/*' \
   2>/dev/null | sort || true)
 

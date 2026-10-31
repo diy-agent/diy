@@ -1,6 +1,6 @@
 {
   "name": "@diy-agent/model-config-page",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "模型配置页面插件：provider / 模型 / 账号 / 默认模型（key 只写不回显）；不装就没有入口",
   "files": [

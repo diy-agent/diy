@@ -106,4 +106,11 @@ lint-fix() { run npx oxlint --fix .; }
 fmt() { run npx oxfmt --check .; }
 fmt-fix() { run npx oxfmt --write .; }
 
+# ── 发布（npm → @diy-agent/app-chat）─────────────────────────────────────────
+# 发行形态 = bin/（CLI 入口）+ build/（esbuild 产物）+ 生成的 package.json，由
+# scripts/npm-publish-app.mjs 组装到 dist/；仓内 package.json 的 private:true 只是护栏。
+# publish：build → 组装 dist → npm publish（--dry-run 只演练）
+dist() { build; run node ../../scripts/npm-publish-app.mjs . --prepare-only --variant "$DIY_VARIANT" "$@"; }
+publish() { build; run node ../../scripts/npm-publish-app.mjs . --variant "$DIY_VARIANT" "$@"; }
+
 sha "$@"

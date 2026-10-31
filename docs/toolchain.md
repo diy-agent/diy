@@ -49,14 +49,19 @@ build / check / test / lab 入口先跑只读快检：workspace 链接缺失或�
 - 布局收口在 `scripts/ensure-electron.mjs`：全机一份 store + worktree 的 `dist` 只留软链 + 补 `path.txt`。
 - 跑点：`sync-deps` 末尾自动跑且**不联网**；`pkgs.ts/diy-app/sha.sh` 的 `lab|test-intent|start` 起 Electron 前硬校验；**CLI 两条入口**（`diy.sh` / `bin/diy`）先过 `scripts/ensure-electron-if-needed.sh`（纯 bash 快检，就绪零 node 开销）—— CLI 顶层 `import electronPath from "electron"`，**每条命令**都经它。
 - **缓存里明明有 zip 却重下**：`@electron/get` 缓存键 = 下载 URL 目录的 sha256；`~/.npmrc` 的 `electron_mirror` 只在 npm 上下文生效（运行时直接 node 没有 `npm_config_electron_mirror`）⇒ 走 GitHub 键必 miss。`ensure-electron` 显式读 npmrc 把镜像传下去，键才与 npm 安装时一致。
+- **发行 CLI 不走惰性下载**（##478）：`diy-chat` 用 `apps/chat/bin/electron-bootstrap.mjs` 自己收口 —— 每个阶段先打印、镜像**并发探测**（各 3s 超时，逐个 ✓/✗ + 毫秒）、选**最快**的源、下载带百分比/速度/ETA、sha256 校验、解压心跳（静默 ≤ 2s）。`scripts/ensure-electron.mjs` 与它共用同一份探测/下载实现。
 - 开关 / store 位置详见脚本头注。
 
 ## publish — npm（`@diy-agent` scope）
 
-- 根 `./sha.sh publish [--dry-run]` → 清单 `_npm_publish_pkgs`（`diy-rpc` / `diy-ui`）各自 `./sha.sh publish`。
-- 各包 publish = `tsc -p tsconfig.build.json` + `scripts/npm-publish.mjs` 在 `dist/` 生成发行版 `package.json`，再 `npm publish dist`。
-- 仓内 `package.json` 恒指 `src/*.ts` 且留 `private:true`（护栏，别为了让 publish 通过而改）。
-- 认证 `NPM_PUBLISH_TOKEN`（环境变量或 `~/.bashrc`）；CI 无则跳过而非报错。
+- 根 `./sha.sh publish [--dry-run]` → 清单 `_npm_publish_pkgs`（**顺序 = 依赖在前**）：`diy-rpc` / `diy-ui` / session / session-store-jsonl / workbench / workbench-ui / model-catalog / model-config-page / llm-provider / bot / chat-page / workbench-plugin / **apps/chat**。
+- 能力包 publish = `tsc -p tsconfig.build.json` + `scripts/npm-publish.mjs`：在 `lib/` 生成发行版 `package.json`（`exports` 指 `*.js` + `.d.ts`）→ `npm publish lib`。
+- app publish = `apps/chat/sha.sh publish` → `scripts/npm-publish-app.mjs` 把 `bin/` + `build/<variant>/` 组装到 `dist/`（`main` = `build/main/index.mjs`，`bin` = `diy-chat`）→ `npm publish dist`。
+- 仓内 `package.json` 恒指 `src/*.ts` 且留 `private:true`（护栏，别为了让 publish 通过而改）；发行物由脚本剥离。
+- **仓内依赖改写**：仓内写 `*` / `workspace:*`，发布时统一改成 `^${仓内版本}`（唯一实现在 `scripts/npm-publish-common.mjs`）。不改写就会装回旧版 —— ##478 里 chat-page 依赖 `ui: ^0.1.0` 而 ui 已是 0.2.0，用户装到的是旧 ui。
+- **可重复跑**：发布前 `npm view <name>@<version>` 探一下，已存在就跳过（npm 不允许重发同版本），部分失败后直接重跑整条即可。
+- app 的 `bin/` 必须**入库**：##478 事故 = app-chat@0.1.0 是手工攒 `dist/` 发的，`bin/diy-chat.mjs` 只存在于某台机器的磁盘上，仓库里没有 ⇒ 发布形态无从修。
+- 认证 `NPM_PUBLISH_TOKEN`（环境变量或 `~/.bashrc`）；CI 无则跳过而非报错。registry 恒指 `registry.npmjs.org`（本机 `~/.npmrc` 的淘宝镜像会被临时 userconfig 覆盖）。
 
 ## 单包动作
 

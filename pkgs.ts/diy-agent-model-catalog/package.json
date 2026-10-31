@@ -1,6 +1,6 @@
 {
   "name": "@diy-agent/model-catalog",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "模型目录：读 $DIY_HOME/model.yaml + providers.custom.yaml（+ models.dev 快照）→ provider×model 列表；不含 key 值，不依赖 llm-provider",
   "files": [

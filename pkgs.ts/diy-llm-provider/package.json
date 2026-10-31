@@ -1,6 +1,6 @@
 {
   "name": "@diy-agent/llm-provider",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "OpenAI 兼容 LLM provider：HTTP 请求 + 流式解析 + 模型目录（无人设、零宿主依赖）",
   "files": [

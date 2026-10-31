@@ -1,6 +1,6 @@
 {
   "name": "@diy-agent/session-store-jsonl",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "diy 会话存储适配器：按大小切桶的 jsonl（index.json + <序号>-<日期>-<时间><偏移>.jsonl…），seq 跨桶连续、readFrom 不扫全量",
   "files": [

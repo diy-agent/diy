@@ -40,6 +40,14 @@ import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+// Electron 二进制的「并发探测镜像 + 带进度下载」与发行 CLI（apps/chat/bin）**共用一份实现**：
+// 两边都写一遍必然漂移，而 2026-10-30 的事故正是「静默下载 + 单个镜像」（##478）。
+import {
+  chooseMirror,
+  DEFAULT_MIRRORS,
+  downloadZipFile,
+  probeMirrors,
+} from '../apps/chat/bin/electron-bootstrap.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // 仓根（`scripts/` 的上一级）；`DIY_ENSURE_ELECTRON_ROOT` 只为可测性留的口子（沙箱树里验行为）
@@ -242,51 +250,59 @@ function npmrcValue(key) {
   return null;
 }
 
-function resolveMirror() {
-  return (
+/** 用户指定的镜像：环境变量优先，其次 ~/.npmrc 的 electron_mirror（dev 期 npm 装依赖带的就是它） */
+function userMirror() {
+  const raw =
     process.env.ELECTRON_MIRROR ||
     process.env.DIY_ELECTRON_MIRROR ||
     process.env.npm_config_electron_mirror ||
     process.env.NPM_CONFIG_ELECTRON_MIRROR ||
-    npmrcValue('electron_mirror') ||
-    null
-  );
+    npmrcValue('electron_mirror');
+  if (!raw) return null;
+  const base = raw.endsWith('/') ? raw : `${raw}/`;
+  return { id: 'user', label: '你指定的', kind: 'mirror', base };
 }
 
-function withTimeout(promise, ms, message) {
-  let timer;
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), ms);
-  });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
-}
-
+/** 并发探测所有镜像，选最快的（用户指定优先）；全不通则抛错并给出手动命令 */
 async function downloadZip({ version, platform, arch, root }) {
-  const { downloadArtifact } = await import('@electron/get');
-  const mirror = resolveMirror();
-  const timeoutMs = Number(process.env.DIY_ELECTRON_TIMEOUT_MS || 300_000);
+  const zip = zipName(version, platform, arch);
+  const timeoutMs = Number(process.env.DIY_ELECTRON_TIMEOUT_MS || 600_000);
+  const wanted = userMirror();
+  const mirrors = wanted ? [wanted, ...DEFAULT_MIRRORS] : DEFAULT_MIRRORS;
   // 下载过程的消息**不受 --quiet 抑制**：几百 MB 静默几分钟跟卡死无法区分（这正是本脚本要消灭的症状）
-  console.log(
-    `[ensure-electron] 没有现成二进制 → 开始下载 electron v${version}（约 118MB，镜像 ${mirror || 'GitHub 官方'}，` +
-      `超时 ${Math.round(timeoutMs / 1000)}s）…`,
-  );
-  const pending = downloadArtifact({
-    version,
-    artifactName: 'electron',
-    platform,
-    arch,
-    // 显式传镜像：让缓存键（= 下载 URL 目录的 sha256）与 npm 安装时一致 —— 否则运行时（无
-    // npm_config_electron_mirror）会走 GitHub URL，缓存里已有的 zip 也命中不了（"每次都要下载"的根因）
-    mirrorOptions: mirror ? { mirror } : undefined,
-    checksums: readChecksums(root) ?? undefined,
-  });
-  const zipPath = await withTimeout(
-    pending,
+  console.log('[ensure-electron] 没有现成二进制 → 探测镜像（并发，各 3s 超时）…');
+  const results = await probeMirrors({ mirrors, version, zip });
+  for (const r of results) {
+    console.log(`  ${r.ok ? '✓' : '✗'} ${r.label.padEnd(14)}${r.ok ? `${r.ms}ms` : `${r.error}（${r.ms}ms）`}`);
+  }
+  const { chosen, reason } = chooseMirror(results, wanted);
+  if (!chosen) {
+    throw new Error(
+      [
+        '所有 Electron 镜像都不可用（网络不通 / 镜像挂了）',
+        ...results.map((r) => `  ✗ ${r.label} ${r.url}：${r.error}`),
+        '手动下载后用本地 zip 离线安装：',
+        `  curl -L -o /tmp/${zip} ${results[0]?.url ?? ''}`,
+        `  DIY_ELECTRON_ZIP=/tmp/${zip} node scripts/ensure-electron.mjs`,
+      ].join('\n'),
+    );
+  }
+  console.log(`[ensure-electron] → 使用 ${chosen.label}：${reason}，下载 ${zip}（约 118MB，超时 ${Math.round(timeoutMs / 1000)}s）…`);
+  const dest = path.join(storeRoot(), 'zips', zip);
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  const { bytes, elapsedMs } = await downloadZipFile({
+    url: chosen.url,
+    dest,
+    totalHint: chosen.total,
+    log: (msg) => console.log(`[ensure-electron]${msg}`),
     timeoutMs,
-    `下载超时（${timeoutMs}ms）。重跑本脚本，或设 ELECTRON_MIRROR 用镜像 / DIY_ELECTRON_ZIP 指定本地 zip`,
-  );
-  console.log(`[ensure-electron] 下载完成：${zipPath}`);
-  return zipPath;
+  });
+  const expected = readChecksums(root)?.[zip];
+  if (expected && sha256(dest) !== expected) {
+    throw new Error(`下载的 zip 校验不符（期望 ${expected.slice(0, 12)}…）：${dest}`);
+  }
+  console.log(`[ensure-electron] 下载完成：${(bytes / 1024 / 1024).toFixed(1)}MB / ${(elapsedMs / 1000).toFixed(1)}s → ${dest}`);
+  return dest;
 }
 
 /** 反复留痕的脏东西：`<dist>/dist` 自指软链（在已软链的目录里又跑了一次软链命令）→ realpath 会 ELOOP */
