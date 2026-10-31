@@ -49,6 +49,7 @@ import { trafficStore } from "../store/trafficStore";
 import { TrafficDrawer } from "./TrafficDrawer";
 import { getRendererActions } from "../lib/renderer-actions";
 import { LayoutAreaToggles } from "./LayoutAreaToggles";
+import { localISOString } from "@diy-agent/time";
 
 const PAGE = "ctxlab";
 
@@ -1028,7 +1029,7 @@ export function ContextLabPage(props: { uri: string }) {
         return (
             <div class="flex flex-col gap-1 p-1">
                 <div class="flex flex-wrap items-center gap-2 px-1 text-body">
-                    <span class="badge badge-xs font-mono">{fmtShortTime(new Date(rec.ts).toISOString())}</span>
+                    <span class="badge badge-xs font-mono">{fmtShortTime(localISOString(new Date(rec.ts)))}</span>
                     <span
                         class="badge badge-xs"
                         classList={{

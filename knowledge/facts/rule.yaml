@@ -257,6 +257,20 @@ facts:
     evidence:
       source: user
       verifiedAt: '2026-10-21'
+  rule#datetime:
+    value: |-
+      **日志 / 事件 / 记录的日期一律「本地时区 + 偏移」**：`2026-10-31T11:29:25.403+0800`，用 `@diy-agent/time` 的 `localISOString()`（`pkgs.ts/diy-time`）。不用 `Date.prototype.toISOString()`：它恒 UTC，人读要心算时区、串里又没偏移 ⇒ 跨时区说不清是哪的时间。
+      **例外**：必须 UTC 的字段（跨机器排序等）—— 字段名带 `utc` 后缀 + 注释写明原因（如 `utcAt`）。
+      **日期键**用 `localDateKey()`（`YYYY-MM-DD`）；`toISOString().slice(0, 10)` 是 UTC 日期，东八区 0~8 点差一天。
+      **偏移不带冒号**（`+0800`，不是 `+08:00`）：与 session 桶文件名同一形态，`new Date()` 两种都认 —— round-trip 由 `pkgs.ts/diy-time/tests/intent.time.test.ts` 钉住（判据正则 `^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{4}$`）。
+      ⚠️ **不同偏移的 ISO 串不能比字典序**（`…03:00Z` 与 `…11:00+0800` 是同一时刻，字典序差 8 小时；历史数据还全是 `Z`）⇒ 比先后用 `compareInstant()`（或 `Date.parse`），别写 `a < b`。
+      只保证**新写入**：老记录里的 `Z` 串照旧能解析（会话 / flow 的 ISO 校验已收两种偏移写法），不迁移历史数据。
+    id: agents.rule.datetime
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-31'
   rule#deps:
     value: |-
       不加载第三方依赖目录的 AGENTS.md：`node_modules/`、`.venv/`、`vendor/` 等

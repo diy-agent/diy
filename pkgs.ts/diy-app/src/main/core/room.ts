@@ -37,6 +37,7 @@ import {
     type RoomEvent,
     type RoomMember,
 } from "../../shared/room";
+import { localISOString } from "@diy-agent/time";
 
 /** 房间根目录（`$DIY_HOME/rooms`） */
 export function roomsRoot(): string {
@@ -94,7 +95,7 @@ export function writeRoom(room: Room): void {
         // channel 表**恒有 `default`**（##166 §28.K ①）：老房间（占位符之前建的）与手改过的
         // room.yaml 都可能没有这个键 —— 写回时补齐，别让"缺 channel"变成一种状态。
         channels: room.channels?.length ? room.channels : defaultChannels(),
-        updated: new Date().toISOString(),
+        updated: localISOString(),
     };
     writeFileAtomic(f, yaml.dump(next, { lineWidth: 200, noRefs: true }));
 }
@@ -149,7 +150,7 @@ export interface EnsureRoomInput {
 export function ensureRoom(id: string, input: EnsureRoomInput = {}): Room {
     const existing = readRoom(id);
     if (existing) return existing;
-    const now = new Date().toISOString();
+    const now = localISOString();
     const room: Room = {
         id,
         ...(input.title ? { title: input.title } : {}),

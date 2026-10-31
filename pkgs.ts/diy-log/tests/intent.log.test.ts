@@ -20,6 +20,7 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { localISOString } from '@diy-agent/time';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createLogger, isLogLevel, LogError, type LogRecord } from '../src/index.js';
 
@@ -73,8 +74,9 @@ describe('@diy-agent/log', () => {
             data: { variant: 'lab' },
         });
         expect(records[1]).toMatchObject({ level: 'warn', msg: '连接断开' });
-        // at 是事件发生那一刻（不是 flush 那一刻）
-        expect(records[0]?.at).toBe(new Date(T0).toISOString());
+        // at 是事件发生那一刻（不是 flush 那一刻），且是**本地时区 + 偏移**（##483）
+        expect(records[0]?.at).toBe(localISOString(new Date(T0)));
+        expect(records[0]?.at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{4}$/);
     });
 
     it('T2 级别过滤：level=warn 时 debug / info 不落盘', async () => {

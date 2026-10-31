@@ -86,6 +86,7 @@ import { fmtAgo } from "../shared/session-overview";
 import { resumeOf, resumeWhenOf } from "../shared/session-resume";
 import { usageLedgerStore } from "./store/usageLedgerStore";
 import { alertPrefsStore } from "./store/alertPrefsStore";
+import { compareInstant } from "@diy-agent/time";
 
 /** 会话提示的**来源**（##391 R1：机制名 + 代码位置）—— 所有 kind 共用一句，便于顺着它找代码 */
 const ALERT_NOTICE_SOURCE = "会话提示 · session-alerts.pick()（src/shared/session-alerts.ts）";
@@ -709,7 +710,7 @@ export default function App() {
         rows.sort(
             (a, b) =>
                 rankOf(a.row) - rankOf(b.row) ||
-                (b.row.lastTs ?? "").localeCompare(a.row.lastTs ?? "") ||
+                compareInstant(b.row.lastTs ?? "", a.row.lastTs ?? "") ||
                 a.row.uri.localeCompare(b.row.uri),
         );
         return { items: rows.slice(0, NAV_SESSION_LIMIT), more: Math.max(0, rows.length - NAV_SESSION_LIMIT) };

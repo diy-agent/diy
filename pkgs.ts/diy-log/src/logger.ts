@@ -11,6 +11,7 @@
 import { Buffer } from 'node:buffer';
 import { appendFile, mkdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { localISOString } from '@diy-agent/time';
 import { LogError } from './errors.js';
 import { dayKey, pruneDays, rotateFiles } from './rotate.js';
 import { sanitizeData, toLogError, truncateText } from './sanitize.js';
@@ -230,7 +231,7 @@ class LoggerImpl implements Logger {
         const safeData = sanitizeData(data, core.maxDataBytes);
         const safeError = toLogError(err);
         const record: LogRecord = {
-            at: at.toISOString(),
+            at: localISOString(at),
             level,
             source: this.source,
             msg: truncateText(String(msg), MAX_MSG),

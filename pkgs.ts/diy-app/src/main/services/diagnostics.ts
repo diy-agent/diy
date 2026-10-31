@@ -20,6 +20,7 @@
 
 import { appendFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
 import path from "node:path";
+import { localISOString } from "@diy-agent/time";
 
 /** 单文件上限，超过则滚动为 .1（防止 dev 长跑把磁盘吃满） */
 const MAX_LOG_BYTES = 5 * 1024 * 1024;
@@ -121,7 +122,7 @@ export function installDiagnostics(diyHome: string, name = "main"): void {
   };
   const tee = (level: keyof typeof originals) =>
     (...args: unknown[]) => {
-      appendLine(`[${new Date().toISOString()}] [${level.toUpperCase()}] ${fmt(args)}\n`);
+      appendLine(`[${localISOString()}] [${level.toUpperCase()}] ${fmt(args)}\n`);
       originals[level](...args);
     };
   console.log = tee("log");
@@ -140,15 +141,15 @@ export function installDiagnostics(diyHome: string, name = "main"): void {
   //   后续接 webContents.on("console-message")（建议只收 error 级 + 节流）
   //   与 on("render-process-gone") 转写进本日志。
   process.on("uncaughtException", (err) => {
-    appendLine(`[${new Date().toISOString()}] [FATAL] uncaughtException: ${fmt([err])}\n`);
+    appendLine(`[${localISOString()}] [FATAL] uncaughtException: ${fmt([err])}\n`);
     originals.error(`[diy] 未捕获异常（已记入 ${logFilePath}，不弹框）:`, err);
   });
   process.on("unhandledRejection", (reason) => {
-    appendLine(`[${new Date().toISOString()}] [FATAL] unhandledRejection: ${fmt([reason])}\n`);
+    appendLine(`[${localISOString()}] [FATAL] unhandledRejection: ${fmt([reason])}\n`);
     originals.error(`[diy] 未处理 Promise 拒绝（已记入 ${logFilePath}）:`, reason);
   });
 
   appendLine(
-    `\n${"─".repeat(60)}\n[${new Date().toISOString()}] [INFO] === ${name} 进程启动 pid=${process.pid} ===\n`,
+    `\n${"─".repeat(60)}\n[${localISOString()}] [INFO] === ${name} 进程启动 pid=${process.pid} ===\n`,
   );
 }

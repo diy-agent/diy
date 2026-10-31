@@ -5,6 +5,8 @@
 // 出现"有的显示秒、有的不显示"的漂移。格式按**扫读**优化：不含年份、分钟精度
 // （列表里一眼看出"多久以前"就够，秒是噪音；要精确值走 title 属性看原始 ISO）。
 
+import { localISOString } from "@diy-agent/time";
+
 /** `MM-DD HH:MM`（无效/空 → 空串；调用方自己决定占位） */
 export function fmtShortTime(iso: string | undefined | null): string {
     if (!iso) return "";
@@ -67,7 +69,7 @@ export function turnTimeOf(turnId: string | undefined | null): Date | null {
 export function fmtTurnStamp(turnId: string | undefined | null): string | null {
     const d = turnTimeOf(turnId);
     if (!d) return null;
-    return fmtShortTime(d.toISOString());
+    return fmtShortTime(localISOString(d));
 }
 
 /** turnId → `YYYY-MM-DD HH:MM:SS`（title 里的精确值；hover 才看，不占版面） */

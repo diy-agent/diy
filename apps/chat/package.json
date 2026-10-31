@@ -30,6 +30,7 @@
     "@diy-agent/session": "*",
     "@diy-agent/session-store-jsonl": "*",
     "@diy-agent/session-store-memory": "*",
+    "@diy-agent/time": "*",
     "@diy-agent/workbench": "*",
     "@diy-agent/workbench-ui": "*",
     "electron": "^43.8.6"

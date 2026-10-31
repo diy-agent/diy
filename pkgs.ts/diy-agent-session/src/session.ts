@@ -13,6 +13,7 @@
 //
 // 并发：一个会话同一时刻只有一轮（`session/busy`）。取消 = abort 信号，适配器负责尽快收流。
 
+import { localISOString } from '@diy-agent/time';
 import { SessionError } from './errors.js';
 import { assertDelta, parseMessage, parseMessages, toolArgsFromInput } from './message.js';
 import { openMemorySessionStore } from './store-memory.js';
@@ -266,7 +267,7 @@ function iso(ms: number): string {
     if (typeof ms !== 'number' || !Number.isFinite(ms)) {
         throw new SessionError('session/invalid-options', `Clock.now() 必须返回有限数字，拿到 ${String(ms)}`, 'clock');
     }
-    return new Date(ms).toISOString();
+    return localISOString(new Date(ms));
 }
 
 function takeId(value: unknown): string {

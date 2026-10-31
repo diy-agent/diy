@@ -34,6 +34,7 @@ export { TaskStateSchema } from "./task-state";
 import { TaskStateSchema } from "./task-state";
 // 结构化字段单一真相源在 task-fields.ts（硬编码临时方案，见该文件注释）
 import { ChangeTypeSchema, PrioritySchema, MODULE_MAX_LENGTH } from "./task-fields";
+import { localISOString } from "@diy-agent/time";
 
 // ═══════════════════════════════════════
 // 错误类型
@@ -247,7 +248,7 @@ export function createTask(params: CreateTaskParams): string {
   const dir = taskDir(uri);
   mkdirSync(dir, { recursive: true });
 
-  const now = new Date().toISOString();
+  const now = localISOString();
   const meta: TaskMeta = {
     title,
     state: "pending",
@@ -435,7 +436,7 @@ export function updateTask(uri: string, changes: UpdateTaskChanges): TaskWriteRe
     throw new ValidationError(errors);
   }
 
-  const now = new Date().toISOString();
+  const now = localISOString();
   /**
    * 三态字段求值：`undefined` 未指定→保持原值 / `""` 清除→undefined / 有值→用新值。
    * 与 parent 的语义对齐，让所有可清除字段共用一套规则。

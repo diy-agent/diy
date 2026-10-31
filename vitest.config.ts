@@ -6,6 +6,7 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     projects: [
+        'pkgs.ts/diy-time',
         'pkgs.ts/diy-log',
         'pkgs.ts/diy-app',
         'pkgs.ts/diy-rpc',

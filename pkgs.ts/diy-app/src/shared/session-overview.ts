@@ -29,6 +29,7 @@ import {
     stalledOf,
     type SessionGlyphView,
 } from "./session-state";
+import { compareInstant } from "@diy-agent/time";
 
 /** 此刻累计步数（在跑轮次的当前步 + 本进程内已收尾轮次的累计） */
 export function stepsNow(e: SessionEntry): number {
@@ -157,7 +158,8 @@ export function tipOf(e: SessionEntry, maxSteps: number | null, now: number): st
 export function mergeTs(a: string | undefined, b: string | undefined): string | undefined {
     if (!a) return b;
     if (!b) return a;
-    return a > b ? a : b;
+    // 按**时刻**取后者（串的偏移可能不同，`a > b` 比的是字典序，跨格式会取反，##483）
+    return compareInstant(a, b) >= 0 ? a : b;
 }
 
 /** 时刻（ISO → `09-25 14:23` **本地时间**）：列宽有限，完整时刻放 title。

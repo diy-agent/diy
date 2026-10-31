@@ -12,6 +12,7 @@
 import { appendFileSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { AppExitRecord, CauseEvidence, MinidumpRecord } from "../../shared/interrupted-cause";
+import { localISOString } from "@diy-agent/time";
 
 /** 退出日志（相对 DIY_HOME） */
 export const APP_EXIT_LOG_REL = join("log", "app-exit.jsonl");
@@ -90,7 +91,7 @@ export function readCauseEvidence(home: string): CauseEvidence {
 export function appendAppExit(home: string, kind: string, detail = "", pid = process.pid): void {
     try {
         mkdirSync(join(home, "log"), { recursive: true });
-        const row: AppExitRecord = { ts: new Date().toISOString(), kind, pid, detail };
+        const row: AppExitRecord = { ts: localISOString(), kind, pid, detail };
         appendFileSync(join(home, APP_EXIT_LOG_REL), `${JSON.stringify(row)}\n`, "utf-8");
     } catch {
         /* 退出路径上尽力而为 */

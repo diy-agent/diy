@@ -4,6 +4,7 @@
 // 这里只做**有界化**，不做业务裁剪：调用方给什么键就留什么键（顺序按 Object.keys）。
 
 import { Buffer } from 'node:buffer';
+import { localISOString } from '@diy-agent/time';
 import type { LogData, LogErrorInfo } from './types.js';
 
 /** 字符串字段的显示上限（人读的一行，不是数据仓库） */
@@ -46,7 +47,8 @@ export function sanitize(value: unknown, depth = 0, seen = new WeakSet<object>()
     if (depth >= MAX_DEPTH) return '[depth-limit]';
     if (seen.has(value)) return '[circular]';
     seen.add(value);
-    if (value instanceof Date) return Number.isNaN(value.getTime()) ? 'Invalid Date' : value.toISOString();
+    // Date 值按本包同一口径（本地 + 偏移）：同一份日志里两种时间格式并存 = 读的人要来回换算
+    if (value instanceof Date) return Number.isNaN(value.getTime()) ? 'Invalid Date' : localISOString(value);
     if (value instanceof Error) return toLogError(value, true);
     if (Array.isArray(value)) {
         const out = value.slice(0, MAX_ARRAY).map((item) => sanitize(item, depth + 1, seen));

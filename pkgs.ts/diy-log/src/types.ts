@@ -26,7 +26,7 @@ export interface LogErrorInfo {
 
 /** 一行 jsonl = 一条记录（字段名即对外契约，改字段 = 破坏 grep / 查看器） */
 export interface LogRecord {
-    /** ISO 时间（`Date.toISOString()`） */
+    /** 本地时区 ISO 串（`@diy-agent/time` 的 `localISOString`，如 `2026-10-31T11:29:25.403+0800`；##483） */
     readonly at: string;
     readonly level: LogLevel;
     /** 来源标识：包名 / 页面 id / 模块（必填，用于过滤） */

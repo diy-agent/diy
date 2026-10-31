@@ -29,6 +29,7 @@ import { flowFile, anchorKey, parseAnchorKey, readPosts, appendPost, requirePost
 import { loadInstance } from "./flow";
 import { randomUUID } from "node:crypto";
 import type { FlowState, WorkflowDef } from "@diy-agent/flow";
+import { localISOString } from "@diy-agent/time";
 
 /** 线程状态（由发言推：最后一条「状态发言」说了算；没有状态发言 ⇒ `open`） */
 export type FlowThreadStatus = "open" | "resolved" | "escalated";
@@ -188,7 +189,7 @@ export function postThread(uri: string, thread: string, text: string, type: Flow
     const anchor = parseAnchorKey(thread);
     requireRealBounce(state, anchor);
     requirePostText(text); // 唯一真源在 flow-store（与 `appendBounceOpinion` 共用一道闸，见其头注）
-    appendPost(uri, { id: randomUUID(), at: new Date().toISOString(), author, type, anchor, text });
+    appendPost(uri, { id: randomUUID(), at: localISOString(), author, type, anchor, text });
     return listThreads(uri);
 }
 

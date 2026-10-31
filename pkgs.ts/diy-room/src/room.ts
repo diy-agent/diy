@@ -22,6 +22,7 @@
 // ⚠️ 零 IO：水位（MemberCursor）只是内存 + 入参/出参，持久化由宿主的 RoomStore 负责。
 
 import { systemClock } from '@diy-agent/session';
+import { localISOString } from '@diy-agent/time';
 import { RoomError } from './errors.js';
 import { parseMentions, resolveRecipients } from './mentions.js';
 import type {
@@ -186,7 +187,7 @@ export function createRoom(options: CreateRoomOptions): Room {
         if (typeof ms !== 'number' || !Number.isFinite(ms)) {
             throw new RoomError('room/invalid-options', `Clock.now() 必须返回有限数字，拿到 ${String(ms)}`, 'clock');
         }
-        return new Date(ms).toISOString();
+        return localISOString(new Date(ms));
     }
 
     function touch(): void {

@@ -26,7 +26,6 @@ import {
     decideHint,
     emptyChannelStats,
     firstStepHitRate,
-    localDateKey,
     safePointOf,
     splitChannel,
     SAFE_POINT_WINDOW,
@@ -38,6 +37,7 @@ import {
     type ChannelStats,
     type HintDecision,
 } from "../../shared/cache-hint";
+import { localDateKey, localISOString } from "@diy-agent/time";
 
 /** 一次首步请求的输入（调用点已解析好渠道；本服务不碰 persona / provider 配置） */
 export interface NoteRequestInput {
@@ -75,14 +75,14 @@ class CacheHintService {
 
     /** 一个渠道的统计（必返回；没有历史就给缺省，调用方不必判空） */
     stats(channel: string, now = new Date()): ChannelStats {
-        return this.ensure(now).channels[channel] ?? emptyChannelStats(now.toISOString());
+        return this.ensure(now).channels[channel] ?? emptyChannelStats(localISOString(now));
     }
 
     /** 首步请求发出前：算 gap、问判据、更新 lastRequestAt、必要时亮/撤那一行 */
     noteRequest(input: NoteRequestInput): NoteRequestResult {
         const now = input.now ?? Date.now();
         const nowDate = new Date(now);
-        const nowIso = nowDate.toISOString();
+        const nowIso = localISOString(nowDate);
         const channel = channelKey(input.provider, input.model);
         const store = this.ensure(nowDate);
         const prev = store.channels[channel] ?? emptyChannelStats(nowIso);
@@ -145,7 +145,7 @@ class CacheHintService {
         if (input.gapMs === null) return null;
         const verdict = classifyFirstStep(firstStepHitRate(input.inputTokens, input.cacheRead));
         const nowDate = new Date(input.now ?? Date.now());
-        const nowIso = nowDate.toISOString();
+        const nowIso = localISOString(nowDate);
         const store = this.ensure(nowDate);
         const prev = store.channels[input.channel] ?? emptyChannelStats(nowIso);
         if (verdict === "success") {
@@ -210,7 +210,7 @@ class CacheHintService {
     }): CacheChannelView & { hint: CacheHint | null } {
         const times = Math.max(1, Math.min(SAFE_POINT_WINDOW + 20, Math.floor(input.repeat ?? 1)));
         const now = Date.now();
-        const nowIso = new Date(now).toISOString();
+        const nowIso = localISOString(new Date(now));
         const channel = channelKey(input.provider, input.model);
         let lastHint: CacheHint | null = null;
         for (let i = 0; i < times; i++) {
