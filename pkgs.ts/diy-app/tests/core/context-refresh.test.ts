@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import type { LanguageModelV3StreamPart, LanguageModelV3StreamResult, LanguageModelV3Usage } from "@ai-sdk/provider";
 import { MockLanguageModelV3 } from "ai/test";
-import type { LanguageModel, ModelMessage } from "ai";
+import type { LanguageModel } from "ai";
 import { join } from "node:path";
 import { writeFileSync } from "node:fs";
 import { diyHome } from "../../src/main/core/state";
@@ -20,7 +20,8 @@ import { readCtxLog } from "../../src/main/core/context-changelog";
 import { isV2Entry, entryToRows } from "../../src/shared/context/changelog";
 import * as yaml from "js-yaml";
 import { appendUserKey, renderSummaryPart, tailEnvelope } from "@diy-agent/context/envelope";
-import { buildDelivery, runtimeDiffDelivery } from "@diy-agent/context/delivery";
+import { buildDelivery, defaultSystemPlaces, runtimeDiffDelivery } from "@diy-agent/context/delivery";
+import { saveSystemPlaces } from "../../src/main/core/context-config";
 
 let PROJECT = "";
 beforeAll(() => {
@@ -73,6 +74,20 @@ function systemTextOf(model: MockLanguageModelV3, callIndex: number): string {
     const content = sys?.content;
     if (typeof content === "string") return content;
     return ((content ?? []) as Array<{ text?: string }>).map((part) => part.text ?? "").join("\n");
+}
+
+/** SDK 消息 content → 纯文本（可能是 string，也可能是 part 数组） */
+function contentTextOf(content: unknown): string {
+    if (typeof content === "string") return content;
+    return ((content ?? []) as Array<{ text?: string }>).map((part) => part.text ?? "").join("\n");
+}
+
+/** 该次请求**末条 user** 的正文（增量补丁就拼在这里） */
+function lastUserTextOf(prompt: ReadonlyArray<{ role: string; content: unknown }>): string {
+    for (let i = prompt.length - 1; i >= 0; i -= 1) {
+        if (prompt[i]!.role === "user") return contentTextOf(prompt[i]!.content);
+    }
+    return "";
 }
 
 /** 上游第 i 次请求的 prompt 全文（system + user + assistant 都算） */
@@ -395,4 +410,54 @@ describe("跨轮变更：上一轮之后改的东西，下一轮必须落一条 
         const v2 = readCtxLog(uri).filter(isV2Entry);
         expect(v2.map((e) => e.type)).toEqual(["baseline"]);
     }, 60_000);
+});
+
+describe("段首冻结（用户 2026-10-31 铁律）：非压缩时 system 与历史一个字都不许改", () => {
+    /**
+     * 口径原话：「一旦发出 role:system 消息后，啥变都不要更新 history，除非压缩才会真重建 history」。
+     *
+     * 这条用例故意把 **task.state 划进 system 名单** —— 那正是最容易被误判成「必须重建 system」的
+     * 场景（旧注释就写着「放进 system 会砸缓存」）。实际应该：state 变了只在**末条 user** 里补一条
+     * `system:` 增量，system 本身逐字不动。
+     */
+    it("★ 三轮 + 跨轮改变量（名单里的 state 也变了）→ system 逐字相同，变化只补在末条 user", async () => {
+        const uri = newUri("冻结三段", "正文固定-EEEEEEEEEE");
+        saveSystemPlaces(diyHome(), [...defaultSystemPlaces(), "task.state"]);
+        try {
+            const model = new MockLanguageModelV3({
+                provider: "stub",
+                modelId: "stub-model",
+                doStream: () => Promise.resolve(textReply("好")),
+            });
+            const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
+            for await (const _op of mgr.chat(uri, "第一轮")) void _op;
+            // 跨轮变更：一个在 system 名单（state）、一个在 runtime（body）
+            updateTask(uri, { state: "active", body: "正文固定-FFFFFFFFFF" });
+            for await (const _op of mgr.chat(uri, "第二轮")) void _op;
+            updateTask(uri, { state: "done" });
+            for await (const _op of mgr.chat(uri, "第三轮")) void _op;
+
+            const prompts = [0, 1, 2].map(
+                (i) => (model.doStreamCalls[i]?.prompt ?? []) as Array<{ role: string; content: unknown }>,
+            );
+            const p0 = prompts[0]!;
+            // ① system 三轮逐字相同 —— 即使名单里有会变的 state
+            expect(systemTextOf(model, 1)).toBe(systemTextOf(model, 0));
+            expect(systemTextOf(model, 2)).toBe(systemTextOf(model, 0));
+            // ② 已发出的历史逐条照旧（不许重排 / 合并 / 改写）
+            for (const later of [prompts[1]!, prompts[2]!]) {
+                for (let i = 0; i < p0.length; i += 1) expect(later[i]).toEqual(p0[i]);
+            }
+            // ③ 变化补在**末条 user**：state 走 `system:` 段（它在名单里），body 走 `runtime:` 段
+            const last1 = lastUserTextOf(prompts[1]!);
+            expect(last1).toMatch(/system:\n\s+task:\n\s+state: active/);
+            expect(last1).toContain("正文固定-FFFFFFFFFF");
+            // ④ 第三轮只补 state，不重发 body（未变就不发）
+            const last2 = lastUserTextOf(prompts[2]!);
+            expect(last2).toMatch(/system:\n\s+task:\n\s+state: done/);
+            expect(last2).not.toContain("正文固定-FFFFFFFFFF");
+        } finally {
+            saveSystemPlaces(diyHome(), defaultSystemPlaces());
+        }
+    }, 90_000);
 });

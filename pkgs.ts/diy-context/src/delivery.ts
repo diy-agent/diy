@@ -47,20 +47,24 @@ export interface PlaceCandidate {
  *
  * 判据（##426）：**只有「任务存续期内不变 + 值得缓存」的才进 system**。
  * 任务头大部分字段是**编辑就变**（title / state / updated / change_type / module / priority / persona）——
- * 放 system 等于每改一次任务就砸一次前缀缓存，整段 system 重算（实测 cacheHit 98% → 0、单步成本 ×12）。
- * 它们体量很小，放 runtime 的代价远低于收益（runtime 每轮全量重发，几行字而已）。
+ * 放 runtime 更合适：
+ *   ⚠️ **但别再用“会砸前缀缓存”当理由**（2026-10-31 更正）。那是 ##426 时期（还没有段首冻结）
+ *   的事实：现在 system 一旦发出就是**段首快照**，名单里的单元后来变了**不会**重写 system，
+ *   而是以 `system:` 增量的形式补在 `role:user` 上（`step-delta.ts`）。
+ *   真实的代价只有两笔，都很小：① 首轮 / 压缩重建那一次，system 字节更大（按全价）；
+ *   ② 这些值每轮都变 → 进 system 也只能靠补丁传达，不如一开始就归 runtime（字段少、语义清）。
  */
 const TASK_HEAD_DELIVERY: Record<TaskHeadField, { system: boolean; reason: string }> = {
-    title: { system: false, reason: "任务标题：改一次任务就变 → runtime（进 system 会砸前缀缓存）" },
+    title: { system: false, reason: "任务标题：改一次任务就变（每次都得补一条 system 增量）→ runtime" },
     state: {
         system: false,
-        reason: "任务状态：每轮都可能变（pending→in_progress→done），头号缓存杀手 → runtime",
+        reason: "任务状态：每轮都可能变（pending→in_progress→done），每变都得补增量 → runtime",
     },
     parent: { system: true, reason: "父任务 URI：只在 move 时变（任务存续期内基本不变）→ system" },
     created: { system: true, reason: "创建时间：整个存续期不变 → system（可缓存）" },
     updated: {
         system: false,
-        reason: "最后编辑时间：任何一次编辑都刷新（与 state 同频，是第二大头号缓存杀手）→ runtime",
+        reason: "最后编辑时间：任何一次编辑都刷新（与 state 同频）→ runtime",
     },
     change_type: { system: false, reason: "变更性质：编辑任务时会变 → runtime" },
     module: { system: false, reason: "模块：编辑任务时会变 → runtime" },
@@ -78,20 +82,26 @@ const TASK_HEAD_REASONS: Record<TaskHeadField, string> = Object.fromEntries(
  *
  * 为什么顶层之外还要拆：`task` 下面 `uri/dir/created/parent` 在任务存续期内不变，
  * 而 `state/updated/title/body` 每改一次任务就变 —— 按第一层粗暴划分会把这两类塞进同一份，
- * 要么浪费 system 缓存，要么让易变内容污染 system。规则表的意义正在这里（##426）。
+ * 规则表的意义正在这里（##426）。
  */
 export const PLACE_CANDIDATES: PlaceCandidate[] = [
     { path: "diy", system: true, reason: "进程身份（CLI / 数据根）：整个会话不变" },
     { path: "project", system: true, reason: "项目路径：只在切项目时变" },
-    // ##426：**默认最小 system 名单** —— 只有「绝对有信心不变 + 值得缓存」的才留 system，
-    // 其余一律回 runtime。用户口径（2026-10-25）：「理论上除了绝对有信心的一些字段外，
-    // 其他默认应该把所有变量都放到 run，只有觉得统计上需要放到 sys 的才回放到 sys」。
-    // 依据：system 每轮全量重建，任何一点变化 ⇒ 前缀缓存整段失效（实测生产 2 轮间 system 逐字节
-    // 相同却因名单含易变字段而 cacheHit 0 → 单步成本 ×12）。
+    // ##426：**默认最小 system 名单** —— 只有「绝对有信心不变」的才留 system，其余一律回 runtime。
+    // 用户口径（2026-10-25）：「理论上除了绝对有信心的一些字段外，默认把所有变量都放到 run，
+    // 只有觉得统计上需要放到 sys 的才回放到 sys」。
+    //
+    // ⚠️ **理由已更新（2026-10-31）**：原文写的是「system 每轮全量重建，名单含易变字段就砸前缀
+    // 缓存」—— 那是 ##426 时期的事实。现在 system 是**段首快照**（压缩才重建，见
+    // `shared/context/segment-snapshot.ts`）：名单里的单元后来变了**不会**重写 system，
+    // 只会在 `role:user` 里补一条 `system:` 增量。
+    // 所以把易变项留在 system 不会“每轮砸缓存”；真正的代价只有首轮 / 压缩重建那一次多一些字节。
+    // 默认仍取最小名单：段首越短，重建（收费那一次）越便宜，也不至于让易变值占着本该属于
+    // 稳定项的 help 描述空间。**别再拿“会砸缓存”当让用户改配置的理由**。
     {
         path: "cwd",
         system: false,
-        reason: "工作目录整段含 note/isFallback/isTaskDir/isAppDir —— 回退与目录判定会变、会砸缓存；体量小，放 runtime 代价低于收益",
+        reason: "工作目录整段含 note/isFallback/isTaskDir/isAppDir —— 目录判定会变（变了需补增量）；体量小，放 runtime 更干净",
     },
     { path: "chain", system: true, reason: "AGENTS.md 链：只在目录/文件改动时变" },
     // 任务头（frontmatter）字段（##322：**读侧显式给头**，确认任务/取父级不必去 cat 文件）。
@@ -120,7 +130,7 @@ export const PLACE_CANDIDATES: PlaceCandidate[] = [
     {
         path: "reqlog",
         system: false,
-        reason: "真发请求的流量日志在哪：**文件名按天变** —— 跨天就砸一次前缀缓存；且只是定位信息、本就不常查 → runtime",
+        reason: "真发请求的流量日志在哪：**文件名按天变**（跨天得补一条增量）；且只是定位信息、本就不常查 → runtime",
     },
     { path: "task.body", system: false, reason: "任务正文：每次编辑正文就变 → 放 runtime，不污染 system 缓存" },
     { path: "skills", system: false, reason: "技能清单：安装/升级技能就变" },
@@ -129,19 +139,20 @@ export const PLACE_CANDIDATES: PlaceCandidate[] = [
     { path: "room.members", system: false, reason: "房间成员：低频（改成员才变）" },
     { path: "room.recent", system: false, reason: "房间近期发言：高频（有人说话就变）" },
     // 事实库投影（##404 待办 4）：**runtime 而不是 system** —— 它是"任务当前的真身"，
-    // 每轮都变（agent 自己在本轮里就可能 submit 一批）；放 system 会把前缀缓存砸掉。
+    // 每轮都变（agent 自己在本轮里就可能 submit 一批）—— 段首冻结后它不会重写 system，
+    // 但每变一次都得补一条 system 增量，不如直接归 runtime（增量本来就走这条路）。
     // 与 `task.body` 同一道理：内容随工作推进而变，但变化**稀疏**（不是每轮都有新事实），
     // 故单列一个原子单元比并进 body 更好 —— body 是 prose、facts 是结构化键值，
     // 混在一起既不能按 claim diff，也没法在页面上分开看。
     { path: "facts", system: false, reason: "事实库投影：随 submit 变（稀疏）；结构化，与 body 的散文分开" },
     // 知识库索引（##404 待办 1）：AGENTS.md 链里「按需才查」的条目迁进库后，agent 靠它知道
     // **库里有什么**。为什么与 facts 同样进 runtime：索引里的 `claims` 计数**随 submit 变**
-    // （新增一条事实 → 那个主题的条数就变），放 system 同样会砸前缀缓存。
+    // （新增一条事实 → 那个主题的条数就变），归 runtime 才能按单元补增量。
     // 为什么单列而不并进 facts：二者字节量与变化频率差一个量级（索引 ~1.5 KB 随主题数，
     // 投影 4 KB 随条目数），合并后"改一个主题名"会把 4 KB 投影整段重发。
     { path: "kb", system: false, reason: "知识库索引：随库主题/条数变（低频）；与 facts 投影分开计价" },
     // 仓库文档索引（##5 第 11 轮 B）：`docs/` 不在 AGENTS.md 链上，不列出来 agent 就不知道
-    // 有哪些设计稿。与 kb 同样进 runtime：**文档增删 / 改标题就变**，放 system 会砸前缀缓存。
+    // 有哪些设计稿。与 kb 同样进 runtime：**文档增删 / 改标题就变**（变了要补增量）。
     // 为什么单列而不并进 kb：真源不同（文件树 vs 事实库），变更频率也不同（kb 随 submit 变、
     // docs 随 git 提交变）。合并后"submit 一条事实"会把整段文档索引重发。
     { path: "docs", system: false, reason: "仓库文档索引：随文档增删/改标题变（低频）；真源是文件树" },

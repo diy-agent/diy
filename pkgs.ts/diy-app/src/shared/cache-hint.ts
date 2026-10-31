@@ -25,7 +25,7 @@
 //
 // ── 不做（用户明确）──
 //   · 不自动压缩（压缩汇总还没做好，自动压会失忆）
-//   · 不改压缩触发线（那是 shared/context/cache-ttl.ts 的夹逼口径，两件事）
+//   · 不改压缩触发线（那是 `appliedHistoryRange` 的触发线口径，两件事）
 //   · 不做跨 app 汇总（本 app 的 store 就够）
 
 import { z } from "zod";

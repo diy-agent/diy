@@ -56,12 +56,6 @@ export interface LocalModel {
     reasoning: LocalModelReasoning;
     /** 单价（$/1M tokens，真源 models.dev，抓取日期见 MODEL_COST_AS_OF）；缺失 = 无价目，不算钱 */
     cost?: ModelCost;
-    /**
-     * 提示词缓存的**存活时长**（ms）—— 官方一律不给这个数字（只能实测夹逼）。
-     * 用途：判断"距上次请求这么久 → 缓存已过期（expired）→ 此刻压缩零重建代价"（##269 自动压缩）。
-     * ⚠️ 填的是**先验**（缺省 1 小时），真正的判据是**从 usage 实测回归出来的区间**。
-     */
-    cacheTtlMs?: number;
 }
 
 /**
@@ -83,12 +77,6 @@ export interface ResolvedModel extends LocalModel {
     /** 展开后的 apiKey；null = 未配置/展开失败（运行时 fail-fast） */
     key: string | null;
 }
-
-/**
- * 缓存 TTL 的**先验缺省**：1 小时。官网不提供该数字，必须有个兜底；
- * 实测区间会把它夹紧（见 shared/context/cache-ttl）。
- */
-export const CACHE_TTL_PRIOR_MS = 60 * 60 * 1000;
 
 /** 保留 3 位小数（账目数字：浮点残渣只会让人以为是 bug） */
 export function round3(x: number): number {
@@ -261,11 +249,6 @@ export function maxOutputTokensOf(modelId: string): number | undefined {
 export function effectiveMaxOutputTokens(modelId: string, fallback: number): number {
     const n = maxOutputTokensOf(modelId);
     return n !== undefined && n >= 1 ? n : fallback;
-}
-
-/** 某模型的缓存 TTL 先验（缺省见 CACHE_TTL_PRIOR_MS） */
-export function cacheTtlMsOf(modelId: string): number {
-    return findModel(modelId)?.cacheTtlMs ?? CACHE_TTL_PRIOR_MS;
 }
 
 /**
