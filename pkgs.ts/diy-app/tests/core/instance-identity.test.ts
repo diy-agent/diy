@@ -144,7 +144,12 @@ describe("sameDataHome —— 同一数据根的写法归一", () => {
     const real = join(base, "real");
     mkdirSync(real);
     const link = join(base, "link");
-    symlinkSync(real, link);
+    try {
+      symlinkSync(real, link);
+    } catch {
+      // Windows 默认不允许建软链（EPERM，需管理员 / 开发者模式）⇒ 本环境造不出前置条件，跳过
+      return;
+    }
     expect(sameDataHome(link, real)).toBe(true);
   });
 
@@ -160,6 +165,9 @@ describe("sameDataHome —— 同一数据根的写法归一", () => {
   // TMPDIR 通常指向 /var/folders（另有 /private/var 符号链接侧），要触这条边界必须点名 /tmp。
 
   it("已存在的 /tmp 与 /private/tmp 写法 → 判等（正常路径不受影响）", () => {
+    // 纯 macOS 边界（/private/tmp 是 /tmp 的真实位置）；Windows 上 "/tmp" 会 resolve 成 `C:\\tmp`，
+    // 下面的 startsWith("/tmp/") 立刻失败 —— 那不是缺陷，是这条边界在别的平台不存在。
+    if (process.platform !== "darwin") return;
     const a = tempDir("diy-samehome-tmp-", "/tmp");
     expect(a.startsWith("/tmp/")).toBe(true);
     const privateSide = a.replace(/^\/tmp\//, "/private/tmp/");
@@ -168,6 +176,7 @@ describe("sameDataHome —— 同一数据根的写法归一", () => {
   });
 
   it("⚠️ 边界：路径**不存在**时 /tmp 与 /private/tmp 判不等（方向安全）", () => {
+    if (process.platform !== "darwin") return; // 同上：macOS 专有边界
     const missing = `/tmp/diy-samehome-missing-${Date.now()}`;
     const privateSide = missing.replace(/^\/tmp\//, "/private/tmp/");
     if (privateSide === missing) return;

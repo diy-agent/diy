@@ -228,16 +228,18 @@ describe("卷槽键（##384 review2 R1：mount 是采样路径，dev 才是卷�
 
 describe("写失败被动升级（ENOSPC → 立刻 disk-full，不等轮询）", () => {
     it("ENOSPC → 推 disk-full（source=write-error），数字来自失败路径所在卷", async () => {
-        // 用 /tmp 当"失败路径"（真 statfs，不填盘）：验的是**接线**，不是真满盘
+        // 用系统临时目录当"失败路径"（真 statfs，不填盘）：验的是**接线**，不是真满盘。
+        // ⚠️ 不能用字面 "/tmp"：Windows 会 resolve 成 `C:\\tmp`（可能不存在），mount 断言就成不了。
+        const tmp = tmpdir();
         const err = Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
-        await noteWriteError(err, "/tmp/whatever.txt");
+        await noteWriteError(err, join(tmp, "whatever.txt"));
         const rows = envWatchHub.list();
         expect(rows).toHaveLength(1);
         expect(rows[0]!.type).toBe("disk-full");
         const data = rows[0]!.type === "disk-full" ? rows[0]!.data : null;
         expect(data?.source).toBe("write-error");
         // mount 是失败文件的**父目录**（目标文件此刻可能不存在，statfs 它会 ENOENT）
-        expect(data?.mount).toBe("/tmp");
+        expect(data?.mount).toBe(tmp);
         expect(data!.availBytes).toBeGreaterThan(0);
     });
 

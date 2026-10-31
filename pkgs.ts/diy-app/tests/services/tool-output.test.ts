@@ -143,7 +143,7 @@ describe("bash 工具：截断落投递层（toModelOutput），execute 仍返�
         const m = cutOf(modelOut.value)!;
         expect(m).toMatchObject({ by: "tool-output", scope: "wire", unit: "lines" });
         expect(m.total).toBeGreaterThan(m.kept);
-        expect(m.resume).toContain("/toolout/call_err.txt");
+        expect(m.resume!.split(sep).join("/")).toContain("/toolout/call_err.txt");
     });
 });
 

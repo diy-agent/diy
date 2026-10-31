@@ -9,8 +9,8 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { homedir, userInfo } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { homedir, tmpdir, userInfo } from "node:os";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { abbrevHome } from "../../shared/instance-title";
 
@@ -31,7 +31,17 @@ export function realHomeDir(): string {
 
 /** DIY_HOME 的展示形式：相对真实家目录缩 `~`；隔离/临时数据根照实显示绝对路径 */
 export function homeDisplayOf(diyHome: string): string {
+  // 临时数据根**不缩写**。POSIX 上 tmpdir 在家目录之外，本来就缩不了；
+  // **Windows 上 tmpdir 就在 `C:\\Users\\<u>\\AppData\\Local\\Temp` 之下** —— 不显式挡一道就会被缩成
+  // `~/AppData/Local/Temp/…`，那正是「把隔离实例伪装成真数据根」的错方向（模板 / 文档都写着“隔离实例照实显示”）。
+  if (isUnder(diyHome, tmpdir())) return diyHome;
   return abbrevHome(diyHome, realHomeDir());
+}
+
+/** `p` 是否在 `root` 之下（跨平台；上跳 / 跨盘都算不在） */
+function isUnder(p: string, root: string): boolean {
+  const rel = relative(resolve(root), resolve(p));
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
 }
 
 /** 当前代码所在仓库的展示路径：worktree 也显示为它自己的具体目录。 */
