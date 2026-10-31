@@ -1,1 +1,6 @@
 .github/workflows/*.lock.yml linguist-generated=true merge=ours
+# 带 shebang 的可执行脚本必须 LF：core.autocrlf=true 会把首行变成 `#!/usr/bin/env node` + CR，
+# 而 Vite/vitest 剥 shebang 的正则切到 CR 之前 → 剩下一个裸 CR ⇒ SyntaxError: Invalid or unexpected token
+# （实测：apps/chat 的 electron-bootstrap.test.ts 整个文件加载失败，2026-10-31）
+apps/*/bin/* text eol=lf
+pkgs.ts/*/bin/* text eol=lf
