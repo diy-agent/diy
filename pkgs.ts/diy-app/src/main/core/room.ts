@@ -24,6 +24,8 @@ import * as yaml from "js-yaml";
 import { diyHome } from "./state";
 import {
     isValidRoomId,
+    roomDirName,
+    roomIdFromDirName,
     defaultChannels,
     DEFAULT_CHANNEL_ID,
     DeliveryStateSchema,
@@ -41,8 +43,23 @@ export function roomsRoot(): string {
     return join(diyHome(), "rooms");
 }
 
+/**
+ * 房间目录（**路径安全**：id 里的 `:` 等字符先编码，见 `shared/room.ts::roomDirName`）。
+ *
+ * ⚠️ 不能拿 id 直接当目录名：Windows 上 `:` 是 NTFS 的 ADS 分隔符 —— `mkdir` ENOENT、
+ * 写文件静默落进不可见的流（##166 §30 侧边栏 room 的 id 就带两个冒号）。
+ * 后果实测过：房间读不回 ⇒ `ensureSidebarRoom` 每次重试新建一个影子任务（2026-10-31 攒了 6789 个）。
+ */
 export function roomDir(id: string): string {
-    return join(roomsRoot(), id);
+    return join(roomsRoot(), roomDirName(id));
+}
+
+/**
+ * 兼容读：老版本把 id **原样**当目录名（macOS/Linux 上 `agent:room:ui/sidebar-x` 能建）。
+ * 编码后的路径读不到时再试老路径，读到就算命中；新写入一律走编码名。
+ */
+function legacyRoomYamlPath(id: string): string {
+    return join(roomsRoot(), id, "room.yaml");
 }
 
 export function roomYamlPath(id: string): string {
@@ -56,8 +73,9 @@ export function roomEventsPath(id: string): string {
 /** 读房间。不存在 / 解析失败 → null（调用方决定是"没建过"还是"坏了"） */
 export function readRoom(id: string): Room | null {
     if (!isValidRoomId(id)) return null;
-    const f = roomYamlPath(id);
-    if (!existsSync(f)) return null;
+    const candidates = [roomYamlPath(id), legacyRoomYamlPath(id)];
+    const f = candidates.find((p) => existsSync(p));
+    if (!f) return null;
     let raw: unknown;
     try {
         raw = yaml.load(readFileSync(f, "utf8"));
@@ -96,7 +114,9 @@ export function listRooms(): Room[] {
     const walk = (dir: string, rel: string): void => {
         for (const ent of readdirSync(dir, { withFileTypes: true })) {
             if (!ent.isDirectory()) continue;
-            const childRel = rel ? `${rel}/${ent.name}` : ent.name;
+            // 目录名是**编码后**的（`roomDirName`）⇒ 拼 rel 前要解回 id；老的原样目录名解不开，原样用
+            const seg = roomIdFromDirName(ent.name);
+            const childRel = rel ? `${rel}/${seg}` : seg;
             const childAbs = join(dir, ent.name);
             if (existsSync(join(childAbs, "room.yaml"))) {
                 const r = readRoom(childRel);
