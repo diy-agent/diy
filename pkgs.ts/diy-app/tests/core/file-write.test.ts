@@ -1,13 +1,13 @@
 // ##414：整文件写的唯一实现（core/file-write.ts）。
 //
-// 钉住的是**护栏与回执**，不是"能写文件"这件事本身：
-//   · 路径护栏对 `../` 与 **symlink** 都拦得住（纯字符串前缀判断挡不住后者）
-//   · 上限 / 目录 / 越界都**抛** FileWriteError（catch-and-return 会被画成 ✓，##353）
+// 钉住的是**路径解析与回执**，不是"能写文件"这件事本身：
+//   · 路径解析：`../` 与 symlink **一律照解**（cwd 越界护栏已按用户要求移除，不拦）
+//   · 上限 / 空路径 / 目录仍**抛** FileWriteError（catch-and-return 会被画成 ✓，##353）
 //   · BOM 保留、行尾原样（模型看不见 BOM / CR，不该被一次覆盖悄悄改掉）
 //   · diff 摘要的计数是真值（`+N/-M` 直接进审计与模型回执）
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
     FileWriteError,
@@ -41,14 +41,18 @@ const codeOf = (fn: () => unknown): string => {
     throw new Error("期望抛错，但没有抛");
 };
 
-describe("路径护栏", () => {
-    it("`../` 越界 → fs/path-escape", () => {
-        expect(codeOf(() => resolveWritePath(root, "../escape.txt"))).toBe("fs/path-escape");
+describe("路径解析（cwd 越界护栏已移除：不拦）", () => {
+    it("`../` 不拦：照解成 cwd 外的真实路径", () => {
+        expect(resolveWritePath(root, "../escape.txt")).toBe(join(dirname(realpathSync(root)), "escape.txt"));
     });
 
-    it("symlink 指向 cwd 外 → fs/path-escape（字符串前缀判断档不住的形态）", () => {
-        symlinkSync(outside, join(root, "link"));
-        expect(codeOf(() => resolveWritePath(root, "link/x.txt"))).toBe("fs/path-escape");
+    it("symlink 指向 cwd 外：不拦，返回软链解析后的真实路径", () => {
+        try {
+            symlinkSync(outside, join(root, "link"));
+        } catch {
+            return; // Windows 无权限建软链（少见）：跳过，别把环境问题当断言失败
+        }
+        expect(resolveWritePath(root, "link/x.txt")).toBe(join(realpathSync(outside), "x.txt"));
     });
 
     it("`..notes.md` 是合法文件名，不是越界（##266 review1）", () => {
@@ -58,8 +62,12 @@ describe("路径护栏", () => {
         expect(r.isNew).toBe(true);
     });
 
-    it("解析不了的路径（symlink 环）+ 出界 → fail-closed 报 fs/path-escape", () => {
-        symlinkSync("loop", join(root, "loop"));
+    it("解析不了的路径（symlink 环）→ fail-closed 报 fs/path-escape", () => {
+        try {
+            symlinkSync("loop", join(root, "loop"));
+        } catch {
+            return; // Windows 无权限建软链（EPERM）：跳过，别把环境问题当断言失败
+        }
         expect(codeOf(() => resolveWritePath(root, "loop/x.txt"))).toBe("fs/path-escape");
     });
 

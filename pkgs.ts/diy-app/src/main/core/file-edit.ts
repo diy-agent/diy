@@ -12,7 +12,7 @@
 //   · 默认 oldText 必须唯一；多条命中 ⇒ `fs/ambiguous-match`（带出现次数）；
 //     `replaceAll: true` 才允许全部替换。
 //   · 归一命中时**只重写被命中的那几行**，其余行逐字保留（原文的行尾 / 缩进不被顺手改掉）。
-//   · 路径护栏复用 `file-write.ts::resolveWritePath`（write/edit 只有一份，##266 review2），
+//   · 路径解析复用 `file-write.ts::resolveWritePath`（write/edit 只有一份，##266 review2；护栏已移除），
 //     这里只补 edit 独有的两条：目标必须**已存在**且**是普通文件**；
 //     unified patch 来自 `unified-diff.ts`（write 的摘要与 edit 的 patch 同一个 LCS）。
 //
@@ -331,8 +331,8 @@ export function applyEdits(content: string, edits: EditOp[]): ApplyResult {
 // ═══════════════════════════════════════════════
 
 /**
- * 解析 edit 的目标路径：**护栏只有一份** —— 直接复用 write 的 {@link resolveWritePath}
- * （相对 cwd 解析 + 最近存在祖先 realpath 后仍须落在 cwd 内，越界 `fs/path-escape`）。
+ * 解析 edit 的目标路径：**实现只有一份** —— 直接复用 write 的 {@link resolveWritePath}
+ * （相对 cwd 解析 + 最近存在祖先 realpath；**不拦 cwd 越界**，工作护栏已移除）。
  *
  * edit 与 write 的**唯一差异**补在这里：目标必须**已存在**且**是普通文件**
  * （edit 只能改已有内容，新建没有 oldText 可匹配 → 那是 write 的事）。

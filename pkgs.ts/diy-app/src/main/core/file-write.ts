@@ -5,10 +5,10 @@
 // `edit` 工具（##415）共用**同三件东西** —— 路径护栏、diff 生成、错误码。
 // 各写一份必然分叉：分叉就是「有的越界拦得住、有的拦不住」，而路径逃逸是会写到仓库外去的。
 //
-// 契约（与 ##414 任务 body 一致）：
-//   · 相对路径按 cwd 解析；解析后（realpath）必须落在 cwd 内，否则 `fs/path-escape`。
-//     realpath 的对象是「目标存在就解析目标，不存在就解析最近存在的祖先 + 剩余段」——
-//     只对字符串做 `startsWith` 挡不住 symlink：`./link` 指向 /etc 时字符串看着在 cwd 里。
+// 契约（与 ##414 任务 body 一致；**cwd 越界拦截已按用户要求移除**）：
+//   · 相对路径按 cwd 解析，**不限制落在 cwd 内** —— 写到 cwd 之外照样放行。
+//     realpath 的对象仍是「目标存在就解析目标，不存在就解析最近存在的祖先 + 剩余段」——
+//     留下来的只是「折成真实绝对路径」，不再有「拦不拦」这一步。
 //   · content 上限 1 MB，超限 `fs/content-too-large`（文案给出实际字节与上限）。
 //   · 目标是目录 → `fs/is-directory`；父目录不存在 → mkdir -p（走 writeFileAtomic 自带）。
 //   · UTF-8 原样写：行尾不转换（不擅自 CRLF↔LF）；原文件有 BOM 而新内容没有 → 补回。
@@ -63,11 +63,11 @@ function realpathOfNearest(abs: string): string {
             const code = (e as NodeJS.ErrnoException).code;
             // ENOENT / ENOTDIR：这段还不存在（或中间某段是文件）→ 上溯一层继续解析。
             // 其它错误（EACCES / ELOOP）**fail-closed**：解析不了就不放行 ——
-            // ELOOP 的自引用 symlink 尤其不能靠"反正写不进去"来兜（护栏要保守，不能指望下游）。
+            // ELOOP 的自引用 symlink 尤其不能靠"反正写不进去"来兜（解析不了就不写）。
             if (code !== "ENOENT" && code !== "ENOTDIR") {
                 throw new FileWriteError({
                     code: "fs/path-escape",
-                    message: `无法解析路径 ${probe}（${code}）：为避免绕过 cwd 护栏，拒绝写入`,
+                    message: `无法解析路径 ${probe}（${code}）：路径不可解析，拒绝写入`,
                 });
             }
             const parent = path.dirname(probe);
@@ -79,25 +79,20 @@ function realpathOfNearest(abs: string): string {
 }
 
 /**
- * 路径护栏：把相对路径解析成 cwd 内的绝对路径。
+ * 路径解析：把（相对 cwd 解析的）路径折成真实绝对路径。
  *
- * @throws FileWriteError `fs/path-escape`（越界 / 空路径）· `fs/is-directory`（cwd 自身）
+ * **不做 cwd 越界拦截**：写 cwd 之外同样放行（工作护栏已移除）。只剩两条判断：
+ * 空路径 / 路径不可解析（`fs/path-escape`）、目标就是 cwd 本身（`fs/is-directory`）。
+ *
+ * @throws FileWriteError `fs/path-escape`（空路径 / 不可解析）· `fs/is-directory`（cwd 自身）
  */
 export function resolveWritePath(cwd: string, relPath: string): string {
     const raw = relPath.trim();
     if (!raw) throw new FileWriteError({ code: "fs/path-escape", message: "path 不能为空" });
     const root = realpathSync(path.resolve(cwd));
     const real = realpathOfNearest(path.resolve(root, raw));
-    const rel = path.relative(root, real);
-    if (rel === "") {
+    if (path.relative(root, real) === "") {
         throw new FileWriteError({ code: "fs/is-directory", message: `${relPath} 是工作目录本身（write 只写文件）` });
-    }
-    // `..` 必须是**独立路径段**：`..notes.md` 是合法文件名，不能按前缀判成逃逸（##266 review1）
-    if (rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
-        throw new FileWriteError({
-            code: "fs/path-escape",
-            message: `路径越界：${relPath}（解析后 ${real} 不在工作目录 ${root} 内；只能写 cwd 里的文件）`,
-        });
     }
     return real;
 }
@@ -227,7 +222,7 @@ function hasBom(abs: string): boolean {
 /**
  * 整文件写（原子）：新建或覆盖。
  *
- * @throws FileWriteError（路径越界 / 超限 / 目标是目录）；底层 IO 错误原样上抛
+ * @throws FileWriteError（空路径·不可解析 / 超限 / 目标是目录）；底层 IO 错误原样上抛
  */
 export function writeFileWhole(cwd: string, relPath: string, content: string, opts: WriteFileOptions = {}): FileWriteResult {
     const target = resolveWritePath(cwd, relPath);
