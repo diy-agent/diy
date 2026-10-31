@@ -85,7 +85,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/git/AGENTS.md:17
       verifiedAt: '2026-10-22'
   rule.dev#worktree:
     value: |-
@@ -95,7 +94,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/git/AGENTS.md:16
       verifiedAt: '2026-10-22'
   rule.doc#doc-format:
     value: |-
@@ -132,7 +130,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/git/AGENTS.md:19
       verifiedAt: '2026-10-22'
   rule.doc#sketch-html:
     value: |-

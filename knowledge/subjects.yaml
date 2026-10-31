@@ -166,6 +166,9 @@ subjects:
       未指定模型时的缺省选择规则
     aliases:
       - 缺省模型
+  os.rule:
+    description: |-
+      OS 依赖的三层边界与判据：什么该归一、什么必须说不会、成本怎么算（唯一允许假设系统的地方是 src/main/os/**）
   plan.acp:
     description: |-
       ACP（Agent Client Protocol）v1 协议事实与接入要点
