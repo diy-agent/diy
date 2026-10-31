@@ -328,8 +328,12 @@ describe("回归：评审修复项", () => {
     writeFileSync(join(projDir, "AGENTS.md"), "项目级规范\n", "utf-8");
 
     // HOME/DIY_HOME 都指向 homeDir，复现真实布局（项目在 ~ 下）
+    // ⚠️ 只改 HOME 不够：`homedir()` 在 Windows 上读 **USERPROFILE**（posix 才读 HOME），
+    // 于是「家目录」仍指 setup.ts 的隔离目录 ⇒ `underHome` 判错、链只走一层（实测本机必红）。
     const oldHome = process.env["HOME"];
+    const oldProfile = process.env["USERPROFILE"];
     process.env["HOME"] = homeDir;
+    process.env["USERPROFILE"] = homeDir;
     try {
       const p = assembleSystem(homeDir, PID, { taskUri: TASK });
       expect(p.system).toContain("项目级规范");
@@ -341,6 +345,8 @@ describe("回归：评审修复项", () => {
       expect(p.system.indexOf("中间层规范")).toBeLessThan(p.system.indexOf("项目级规范"));
     } finally {
       process.env["HOME"] = oldHome;
+      if (oldProfile === undefined) delete process.env["USERPROFILE"];
+      else process.env["USERPROFILE"] = oldProfile;
       rmSync(outer, { recursive: true, force: true });
     }
   });

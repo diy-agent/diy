@@ -138,7 +138,8 @@ describe("遗留清单：addToastLegacy 的条数按文件钉死（只许减少�
                 const src = readFileSync(p, "utf8");
                 // 只数**调用点**（带 notificationStore. 前缀），不算定义/注释里的名字
                 const n = src.split("notificationStore.addToastLegacy(").length - 1;
-                if (n > 0) out[relative(SRC, p)] = n;
+                // 键归一成 `/`：基线是按 posix 分隔符写的，Windows 的 `relative()` 给 `\`
+                if (n > 0) out[relative(SRC, p).split("\\").join("/")] = n;
             }
         };
         walk(dir);

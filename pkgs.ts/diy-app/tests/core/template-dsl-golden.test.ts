@@ -19,7 +19,10 @@ import { describe, expect, it } from 'vitest';
 import { renderSystemDsl, type AssembleGlobals } from '../../src/main/services/prompt-registry';
 import { reqlogValue } from '@diy-agent/context/schema/reqlog';
 
-const golden = readFileSync(join(__dirname, '..', 'fixtures', 'system.golden.txt'), 'utf-8');
+// 读快照前先归一 `\r\n` → `\n`：渲染结果一律 LF，而 Windows 的 autocrlf=true 会把工作区快照
+// checkout 成 CRLF ⇒ 不归一时这条逐字节比较在任何 Windows 机器上都必红（已顺手把
+// `.gitattributes` 里 `*.golden.txt` 钉成 eol=lf，这里是第二道保险）。
+const golden = readFileSync(join(__dirname, '..', 'fixtures', 'system.golden.txt'), 'utf-8').replace(/\r\n/g, '\n');
 
 /** 与生成 golden 时完全相同的输入（只是换成命名空间版变量） */
 const GLOBALS: AssembleGlobals = {

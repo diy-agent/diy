@@ -114,7 +114,8 @@ describe("markRead：人成员的阅读游标前移", () => {
         expect(readRoom("t5")?.lastSeen).toEqual({});
     });
 
-    it("⑤ 写盘失败 ⇒ 不 reject（与 advanceLastSeen 同口径：游标丢了最坏多提示一条未读）", async () => {
+    // 同上：靠 chmod 0o555 造写失败，Windows 上不生效 ⇒ 跳过
+    it.skipIf(process.platform === "win32")("⑤ 写盘失败 ⇒ 不 reject（与 advanceLastSeen 同口径：游标丢了最坏多提示一条未读）", async () => {
         ensureRoom("t6", { members: [HUMAN] });
         await appendEvent("t6", ev("e1", "agent:dev"));
         chmodSync(roomDir("t6"), 0o555);

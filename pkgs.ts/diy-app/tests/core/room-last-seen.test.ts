@@ -39,7 +39,8 @@ describe("advanceLastSeen（水位前移）", () => {
         expect(readRoom("t1")?.lastSeen["human:chen56"]).toBe("e-1");
     });
 
-    it("② 写失败 ⇒ resolve（不 reject）—— P1：水位失败不许挂死投递流", async () => {
+    // POSIX 权限位在 Windows 上不存在（chmod 0o555 不阻止写入）⇒ 这条"写失败"构造不出来，跳过
+    it.skipIf(process.platform === "win32")("② 写失败 ⇒ resolve（不 reject）—— P1：水位失败不许挂死投递流", async () => {
         ensureRoom("t2");
         // 目录只读 ⇒ `writeFileAtomic` 在目标同目录建 tmp 时 EACCES
         chmodSync(roomDir("t2"), 0o555);

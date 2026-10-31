@@ -2,7 +2,7 @@
 // 流量日志落盘：按天切文件、追加并回读位置、版本兼容口径、失效提示。
 import { describe, it, expect } from "vitest";
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { existsSync } from "node:fs";
 import {
@@ -88,7 +88,9 @@ describe("traffic-log", () => {
     it("位置带回行号与绝对路径（1 起算）", () => {
         const loc = appendRecord({ url: "https://a.example/l", status: 200 });
         expect(loc.line).toBeGreaterThan(0);
-        expect(loc.abs.endsWith(loc.file)).toBe(true);
+        // `file` 是**跨平台稳定的相对键**（含盘符日志里也写 `log/network/<day>`，用 `/`），
+        // 而 `abs` 是本机真实路径（Windows 是 `\`）⇒ 比之前先归一，否则这条在 Windows 上必红。
+        expect(loc.abs.split(sep).join("/").endsWith(loc.file)).toBe(true);
         const back = readRecord(loc) as Record<string, unknown>;
         expect(back.url).toBe("https://a.example/l");
     });

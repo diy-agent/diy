@@ -40,8 +40,12 @@ describe("write 工具", () => {
     });
 
     it("失败**抛**（不是 return 一段失败文案）", async () => {
+        // ⚠️ 不能再用「写到 cwd 之外」当失败例子：那个越界护栏已经**去掉**了（写家目录外的路径是
+        // 正当需求，路径护栏现在由 write 之外的层负责）。拿一个必然失败的情形：目标是个目录。
         const tools = buildTools(workDir, DEFAULT_LIMITS, "test/task") as any;
-        await expect(tools.write.execute({ path: "../escape.txt", content: "x" })).rejects.toThrow(/越界/);
+        await expect(tools.write.execute({ path: "sub", content: "x" })).rejects.toThrow();
+        // 越界且**不再**报错（契约变更的正面证据，防有人把护栏又加回去）
+        await expect(tools.write.execute({ path: "../escape.txt", content: "x" })).resolves.toContain("escape.txt");
     });
 
     it("审计落一条 phase=file-write", async () => {

@@ -35,10 +35,15 @@
  */
 export function abbrevHome(home: string, homeDir: string): string {
   if (!home) return "";
-  const base = homeDir.replace(/\/+$/, "");
+  // 两边都归一成 `/` 再比：Windows 的 homeDir 是 `C:\\Users\\x`，写死 `startsWith(base + "/")`
+  // 永远为假 ⇒ 家目录内的数据根**从不缩写**（实测本机：`C:\\Users\\chen\\.diy` 本该显 `~/.diy`）。
+  // 输出也统一用 `/`：这是**展示串**（不参与路径运算），`~/a/b` 在两边都好读。
+  const posix = (s: string) => s.replace(/\\/g, "/");
+  const h = posix(home);
+  const base = posix(homeDir).replace(/\/+$/, "");
   if (!base) return home;
-  if (home === base) return "~";
-  if (home.startsWith(`${base}/`)) return `~${home.slice(base.length)}`;
+  if (h === base) return "~";
+  if (h.startsWith(`${base}/`)) return `~${h.slice(base.length)}`;
   return home;
 }
 

@@ -107,7 +107,9 @@ describe("writeFileAtomic — 正常路径", () => {
 });
 
 describe("writeFileAtomic — 失败注入：原文件逐字不变 + tmp 清理 + 错误上抛", () => {
-    it("写临时文件失败（只读目录 → 真 EACCES）", () => {
+    // 靠 `chmod 0o500` 把目录变不可写来造真 EACCES —— POSIX 专有（Windows 的 chmod 不改变写权限，
+    // 写入照常成功）⇒ 在 Windows 上跳过。代价如实记：这条失败注入路径在 Windows 上无覆盖。
+    it.skipIf(process.platform === "win32")("写临时文件失败（只读目录 → 真 EACCES）", () => {
         const before = seedOld();
         chmodSync(dir, 0o500); // 目录不可写：tmp 建不出来
         let err: NodeJS.ErrnoException | undefined;
@@ -173,7 +175,8 @@ describe("writeFileAtomic — 失败注入：原文件逐字不变 + tmp 清理 
 });
 
 describe("writeFileAtomic — 权限位继承（##383）", () => {
-    it("覆盖 chmod 600 的既有文件后仍是 600：绝不把私密文件放宽成 0644", () => {
+    // 同上：POSIX 权限位判据，Windows 上没有 0600/0644 这回事 ⇒ 跳过
+    it.skipIf(process.platform === "win32")("覆盖 chmod 600 的既有文件后仍是 600：绝不把私密文件放宽成 0644", () => {
         writeFileAtomic(fp, OLD);
         chmodSync(fp, 0o600); // 如含 API key 的 providers.custom.yaml
         writeFileAtomic(fp, "新的正文");

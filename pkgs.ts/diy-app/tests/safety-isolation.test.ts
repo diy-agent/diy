@@ -32,13 +32,22 @@ describe("测试隔离安全", () => {
     // 复刻 project.ts expandPath 的展开方式
     const expanded = resolve("~/git/diy/diy".replace(/^~/, homedir()));
     expect(expanded.startsWith(diyHome())).toBe(true);
-    expect(expanded.startsWith(process.env["DIY_REAL_HOME"]!)).toBe(false);
+    // ⚠️ 不能拿「落在真实家目录之下」当危险判据：Windows 的 tmpdir 本身就是
+    // `C:\\Users\\<user>\\AppData\\Local\\Temp`，隔离 HOME 天然是真实家目录的**子树**
+    // （POSIX 的 /tmp 在家目录外，所以这个断言在 mac/Linux 上是巧合成立的）。
+    // 真正的危险是「落回真实仓库路径」—— 直接比那个。
+    const realRepo = [String(process.env["DIY_REAL_HOME"]), "git", "diy", "diy"].join("/");
+    expect(resolve(expanded.replace(/\\/g, "/"))).not.toBe(resolve(realRepo));
+    expect(expanded.startsWith(diyHome())).toBe(true);
   });
 
   it("norm() 不会把隔离目录外的绝对路径误判为 ~", () => {
     const real = process.env["DIY_REAL_HOME"]!;
-    // 真实家目录下的路径在隔离环境里应保持绝对形式（不折叠成 ~）
-    expect(norm(`${real}/git/diy/diy`)).toBe(`${real}/git/diy/diy`);
+    // 真实家目录下的路径在隔离环境里应保持绝对形式（不折叠成 ~）。
+    // 比对时两边都过 `resolve()`：Windows 下 `${real}/git/diy/diy` 是混合分隔符，
+    // 而 norm 返回的是 resolve 过的纯 `\` 形式 —— 不归一就是拿字串比“写法”而不是比路径。
+    const realRepo = `${real}/git/diy/diy`;
+    expect(norm(realRepo)).toBe(resolve(realRepo));
     // 隔离目录内的路径才折叠成 ~
     expect(norm(`${diyHome()}/repos/a`)).toBe("~/repos/a");
   });

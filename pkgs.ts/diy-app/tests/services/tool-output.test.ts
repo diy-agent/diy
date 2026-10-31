@@ -12,7 +12,7 @@
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { buildTools, DEFAULT_LIMITS, type LocalAgentLimits } from "../../src/main/services/local-agent";
 import {
@@ -83,10 +83,13 @@ describe("capToolOutput：marker 格式 + 原文可 read 回取", () => {
         expect(m).toMatchObject({ by: "tool-output", scope: "wire", unit: "lines", total: 10_000 });
         expect(m.total - m.kept).toBeGreaterThan(0);
         expect(m.resume).toBe(r.origPath);
-        expect(r.origPath!.startsWith("/")).toBe(true);
+        // 绝对路径：用 isAbsolute（Windows 是 `C:\\…`，不是以 `/` 开头），
+        // 后续片段比较先归一成 `/` 再比 —— 否则 Windows 的 `\\` 全不命中。
+        const posix = (p: string) => p.split(sep).join("/");
+        expect(isAbsolute(r.origPath!)).toBe(true);
         // ##379：不在共享的 local/toolout/ 里，而是本会话目录下（撞 id 不再互相覆盖）
-        expect(r.origPath).toContain("/local/projects/1/tasks/379/");
-        expect(r.origPath).toContain("/toolout/call_big.txt");
+        expect(posix(r.origPath)).toContain("/local/projects/1/tasks/379/");
+        expect(posix(r.origPath)).toContain("/toolout/call_big.txt");
     });
 
     it("原文落盘 = 逐字符全文（不是「落了个裁过的」）", () => {

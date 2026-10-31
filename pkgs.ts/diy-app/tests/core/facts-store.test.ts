@@ -4,7 +4,7 @@
 // 判据本身在 @diy-agent/facts 已各自单测，这里**不重复验判据**，只验"接线没接歪"。
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
-import path from "node:path";
+import path, { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as store from "../../src/main/services/facts-store";
 
@@ -65,10 +65,13 @@ describe("定位真源", () => {
     // 顺带说明这里为什么不再"预检路径"：预检 + 读取两处判同一件事，就是"三处保护"的来源。
     it("显式目录原样返回，指到不存在的路径 ⇒ 空库（零计数，不抛）", () => {
         delete process.env["DIY_FACTS_DIR"];
-        expect(store.resolveFactsDir("/definitely/not/here")).toBe("/definitely/not/here");
-        const s = store.status({ dir: "/definitely/not/here" });
+        // 路径过 resolve 归一（Windows 上 `/a/b` 会被解成 `C:\\a\\b`）—— 比“解析后的绝对形式”，
+        // 不是比字面串（POSIX 上两者恰好相等，这条以前才没暴露）。
+        const missing = resolve("/definitely/not/here");
+        expect(store.resolveFactsDir(missing)).toBe(missing);
+        const s = store.status({ dir: missing });
         expect(s.facts).toBe(0);
-        expect(existsSync("/definitely/not/here")).toBe(false);
+        expect(existsSync(missing)).toBe(false);
     });
 });
 
