@@ -34,6 +34,7 @@ import { snapshotProviders } from "./model-registry";
 import { savePersonas } from "./persona";
 import { createProject, listProjects } from "./project";
 import { createTask, updateTask } from "./task";
+import { localISOString } from "@diy-agent/time";
 
 /** 种子只配这一家 provider（用户规则：本地 agent 测试的模型只指 opencode-go） */
 export const SEED_PROVIDER = "opencode-go";
@@ -191,6 +192,6 @@ export function seedHome(
     }
 
     mkdirSync(home, { recursive: true });
-    writeFileAtomic(marker, `${new Date().toISOString()}\n`);
+    writeFileAtomic(marker, `${localISOString()}\n`);
     return report;
 }

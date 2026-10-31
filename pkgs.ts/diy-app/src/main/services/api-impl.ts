@@ -73,6 +73,7 @@ async function getLlmProxy() {
 }
 
 import { traffic } from "../core/traffic";
+import { localISOString } from "@diy-agent/time";
 
 const app = apiDef.diy;
 
@@ -781,7 +782,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     // `(await import(...)).invariant(...)` 与解构出来的裸名都不算（TS2775 / TS2776）。
     const triage: typeof import("../../shared/error-triage") = await import("../../shared/error-triage");
     triage.invariant(isTaskUri(input.taskUri), "fs/illegal-task-uri", `非法任务 URI：${input.taskUri}`);
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const stamp = localISOString().replace(/[:.]/g, "-");
     const dir = join(taskDir(input.taskUri), "gen", "paste");
     const path = join(dir, `${stamp}.txt`);
     // 原子写（##382 的唯一写原语；父目录由它 mkdir -p）。用户正文只落这一份，

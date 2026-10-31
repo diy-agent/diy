@@ -108,6 +108,8 @@ export function isoWeekday(d: Date): number {
 export function localParts(atMs: number, offsetMs: number): { ymd: string; minutes: number; weekday: number; date: Date } {
     const d = new Date(atMs + offsetMs);
     return {
+        // 这里的 `toISOString()` **不是**记录时间戳，而是「偏移已折算进 ms 之后取日历日」：
+        // 后面 `getUTCHours` / `isoWeekday` 同样读 UTC 字段。换成宿主本地时区 = 多叠一层偏移，错档。
         ymd: d.toISOString().slice(0, 10),
         minutes: d.getUTCHours() * 60 + d.getUTCMinutes(),
         weekday: isoWeekday(d),

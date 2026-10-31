@@ -21,6 +21,7 @@ import { join } from "node:path";
 import { writeFileAtomic } from "./atomic-write";
 import { realHomeDir } from "./instance-identity";
 import { os } from "../os";
+import { localISOString } from "@diy-agent/time";
 
 /** 启动时快照的一跳父进程（`parents[0]` = 直接父亲） */
 export interface ParentHop {
@@ -138,7 +139,7 @@ export function readRecord(dir: string, pid: number): InstanceRecord | null {
 export function updateRecord(dir: string, pid: number, patch: Partial<InstanceRecord>): void {
   const cur = readRecord(dir, pid);
   if (!cur) return;
-  writeRecord(dir, { ...cur, ...patch, updatedAt: new Date().toISOString() });
+  writeRecord(dir, { ...cur, ...patch, updatedAt: localISOString() });
 }
 
 /** 删除记录（退出清理）；不存在不算错 */

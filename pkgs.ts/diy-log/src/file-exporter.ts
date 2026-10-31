@@ -18,6 +18,7 @@
 import { Buffer } from 'node:buffer';
 import { appendFile, mkdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { localISOString } from '@diy-agent/time';
 import { LogError } from './errors.js';
 import { dayKey, pruneDays, rotateFiles } from './rotate.js';
 import { bodyToMessage, sanitizeData, splitException, truncateText } from './sanitize.js';
@@ -123,7 +124,7 @@ function toEntry(record: ExportedLogRecord, at: Date, maxDataBytes: number): Fil
     const data = sanitizeData(rest, maxDataBytes);
     const span = validSpanContext(record.spanContext);
     return {
-        at: at.toISOString(),
+        at: localISOString(at),
         level: levelOf(record),
         source: record.instrumentationScope?.name ?? 'unknown',
         msg: bodyToMessage(record.body),

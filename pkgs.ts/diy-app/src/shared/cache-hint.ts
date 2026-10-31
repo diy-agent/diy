@@ -35,6 +35,10 @@
 
 import { z } from "zod";
 
+// 本地日期键（`YYYY-MM-DD`）是跨包约定（##483）：唯一实现在 `@diy-agent/time`，
+// 这里只转出 —— 旧调用点照旧从本文件拿，但实现只有一份（两份实现必然在某天漂移）。
+export { localDateKey } from "@diy-agent/time";
+
 /** 无历史时的 safePoint：60s（刚起来的实例没有历史就靠它） */
 export const SAFE_POINT_DEFAULT_MS = 60_000;
 /** safePoint 的滚动窗口：最近 N 次首步成功请求的 gap */
@@ -280,14 +284,6 @@ export function bumpTodayCount(
     today: string,
 ): { date: string; count: number } {
     return prev.date === today ? { date: today, count: prev.count + 1 } : { date: today, count: 1 };
-}
-
-/** 本地日期键（`YYYY-MM-DD`） */
-export function localDateKey(now: Date): string {
-    const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, "0");
-    const d = String(now.getDate()).padStart(2, "0");
-    return `${y}-${m}-${d}`;
 }
 
 // ─── 缓存时效柱（用量面板；对数刻度，##477 追加） ─────────────

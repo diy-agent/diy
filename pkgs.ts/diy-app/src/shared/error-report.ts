@@ -15,6 +15,7 @@
  */
 
 import { probeTriage } from "./error-triage";
+import { localISOString } from "@diy-agent/time";
 
 // ═══════════════════════════════════════════════
 //  错误 → 一句话（全仓唯一实现）
@@ -86,7 +87,7 @@ export function buildErrorReport(e: unknown, ctx: ErrorReportContext, now: Date 
               : typeof e;
     const stack = (e instanceof Error ? e.stack : undefined) ?? (o && typeof o["stack"] === "string" ? o["stack"] : "");
     return {
-        ts: now.toISOString(),
+        ts: localISOString(now),
         code: errorCodeOf(e),
         name,
         message: errText(e),

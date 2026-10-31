@@ -47,6 +47,7 @@ import type { NotifyItem } from "@diy-agent/context/envelope";
 import { os } from "../os";
 import { noShellHint } from "../os/shell-hint";
 import { buildInvocation, preferredShell, shellSpecs } from "../os/shell";
+import { localISOString } from "@diy-agent/time";
 
 /** run 的来源锚点：哪一轮、哪一步、哪个工具调用起的（`toolCallId` 是定位键）。 */
 export interface RunOrigin {
@@ -648,7 +649,7 @@ export class RunRegistry {
             command: info.command,
             ...(info.title ? { title: info.title } : {}),
             cwd: info.cwd,
-            startedAt: new Date(info.startedAt).toISOString(),
+            startedAt: localISOString(new Date(info.startedAt)),
             ...(info.pid !== undefined ? { pid: info.pid } : {}),
             ...(info.origin ? { origin: info.origin } : {}),
         };

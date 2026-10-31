@@ -22,6 +22,7 @@
  */
 import type { NavRow } from "./session-nav";
 import { fmtStamp } from "./session-overview";
+import { compareInstant } from "@diy-agent/time";
 
 /** 本区最多列几行——nav 上它是**第三顺位**的区，长了就把前两区挤出视野 */
 export const RESUME_LIMIT = 5;
@@ -43,8 +44,9 @@ export function resumeOf(rows: NavRow[], taken: Iterable<string>, limit: number 
     const skip = new Set(taken);
     const cand = rows
         .filter((r) => !r.opened && !skip.has(r.uri) && !!r.lastTs)
-        .sort((a, b) => (b.lastTs ?? "").localeCompare(a.lastTs ?? "") || a.uri.localeCompare(b.uri));
-    // 排序键是 ISO 串：字典序 = 时间序（同一时区、同一格式），故不必 new Date（也避开 NaN 比较）
+        .sort((a, b) => compareInstant(b.lastTs ?? "", a.lastTs ?? "") || a.uri.localeCompare(b.uri));
+    // 排序键是 ISO 串，但**不能比字典序**：偏移可能不同（历史数据 `Z`、新数据 `+0800`），
+    // 字典序只在「同一偏移 + 同一格式」时等于时间序（##483 起不成立）⇒ 走 compareInstant。
     return { items: cand.slice(0, Math.max(0, limit)), more: Math.max(0, cand.length - limit) };
 }
 

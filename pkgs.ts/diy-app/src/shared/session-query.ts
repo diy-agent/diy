@@ -8,6 +8,7 @@
 // 边界：本文件只认 `SessionOverviewRow`（行模型）。谁把注册表/账本/任务树揉成行（`overviewRowOf`）
 // 是上一层的事 —— 过滤与排序不该知道数据从哪来。
 import type { SessionOverviewRow, SessionSlice } from "./session-overview";
+import { compareInstant } from "@diy-agent/time";
 
 /** 状态切片清单 = 过滤 chips 的**声明序**（也是展示序：越靠前越"该看"） */
 export const SESSION_SLICES: readonly { key: SessionSlice; label: string; title: string }[] = [
@@ -159,8 +160,8 @@ function cmpNum(a: number | undefined, b: number | undefined, sign: number): num
 
 function cmpStr(a: string | undefined, b: string | undefined, sign: number): number {
     if (a === undefined || b === undefined) return a === b ? 0 : a === undefined ? 1 : -1;
-    // ISO 8601（带 Z）字典序 == 时间序，无需 Date 解析
-    return sign * (a < b ? -1 : a > b ? 1 : 0);
+    // ISO 串**不能比字典序**：偏移可能不同（老数据 `Z` / 新数据 `+0800`）⇒ 按时刻比（##483）
+    return sign * compareInstant(a, b);
 }
 
 function cmpOf(key: SessionSortKey, a: SessionOverviewRow, b: SessionOverviewRow, sign: number): number {

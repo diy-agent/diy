@@ -14,6 +14,7 @@
 
 import { AsyncQueue, withCleanup } from "./async-queue";
 import { classifyModelUnavailable, probeModelError, type ModelUnavailableNotice } from "../../shared/model-unavailable";
+import { localISOString } from "@diy-agent/time";
 
 /** ring 上限：bar 只显示最新一条，留一小段历史够 CLI 排查即可 */
 const MAX_NOTICES = 20;
@@ -42,7 +43,7 @@ export function noticeFromError(e: unknown, ctx: ModelNoticeContext, now = new D
     if (!verdict.hit) return null;
     return {
         id: `mu-${now.getTime()}-${++seq}`,
-        ts: now.toISOString(),
+        ts: localISOString(now),
         kind: verdict.kind,
         reason: verdict.reason,
         upstream: verdict.upstream,
@@ -68,7 +69,7 @@ const MAX_LOCAL_CHARS = 300;
 export function unavailableNoticeFromLocal(message: string, ctx: ModelNoticeContext, now = new Date()): ModelUnavailableNotice {
     return {
         id: `mu-${now.getTime()}-${++seq}`,
-        ts: now.toISOString(),
+        ts: localISOString(now),
         kind: "unknown-model",
         reason: "本地模型清单里没有这个 id：人物指向的模型可能已下架，或 provider 还没配",
         upstream: message.replace(/\s+/g, " ").trim().slice(0, MAX_LOCAL_CHARS),

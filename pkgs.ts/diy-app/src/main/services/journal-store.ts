@@ -25,6 +25,7 @@ import {
   type JournalProblem,
   type JournalRow,
 } from "../../shared/journal";
+import { localISOString } from "@diy-agent/time";
 
 /**
  * 正文三选一（`--body` 内联 / `--body-text` 显式内联 / `--body-file` 文件）。
@@ -219,7 +220,7 @@ function validateOne(input: JournalAddInput, index: number): JournalEntry {
   if (errs.length > 0) throw new ValidationError(errs);
 
   const parsed = JournalEntrySchema.safeParse({
-    ts: input.ts ?? new Date().toISOString(),
+    ts: input.ts ?? localISOString(),
     kind: input.kind,
     title,
     ...(input.body === undefined || input.body === "" ? {} : { body: input.body }),

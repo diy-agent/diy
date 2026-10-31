@@ -48,14 +48,15 @@ export function takeString(value: unknown, path: string, code: TalkErrorCode, al
 /**
  * 取 ISO-8601 时刻字符串（`at` 专用）。
  * 「时间是事实，不能凭空补」—— 格式也是事实：`'昨天下午'` 这种非 ISO 文本无法被下游排序 / 比较，
- * 必须在入口拦下（review1 意见 2）。接受形状：`YYYY-MM-DDTHH:mm:ss[.sss][Z|±HH:mm]`。
+ * 必须在入口拦下（review1 意见 2）。接受形状：`YYYY-MM-DDTHH:mm:ss[.sss][Z|±HH:mm|±HHmm]`
+ * （`+0800` 是 `@diy-agent/time` 的 `localISOString` 写法，##483）。
  *
  * 边界（review3 意见 2，选「只校形态」）：本函数只做**词法**校验（数字位数 + 分隔符），
  * **不校验日历合法性** —— `2026-99-99T99:99:99Z`、`2026-02-30T25:00:00Z` 之类会放行。
  * 理由是内核保持轻、不引 `Date`（零依赖 + 可脱离 Node 运行）；「这个时刻是否真实存在」属语义，
  * 归宿主（##319）在落盘 / 消费时按需校验。
  */
-const ISO_8601 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$/;
+const ISO_8601 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/;
 
 export function takeIsoString(value: unknown, path: string, code: TalkErrorCode): string {
     const text = takeString(value, path, code);

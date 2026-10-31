@@ -1,6 +1,9 @@
 import { defineConfig } from 'vitest/config';
+// tests 里 `import ... from '@diy-agent/*'`：包 main 已指 lib/*.js，测试期指回 src
+import { workspaceAliases } from '../vitest.alias';
 
 export default defineConfig({
+    resolve: { alias: [...workspaceAliases] },
     test: {
         include: ['tests/**/*.test.ts'],
         environment: 'node',

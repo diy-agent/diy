@@ -19,6 +19,7 @@
 
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { localISOString } from "@diy-agent/time";
 import { createBot, createFileBotStore, ensureBot, type Bot } from "@diy-agent/bot";
 import { createSession, type AgentSession, type ChatMessage, type LlmPort } from "@diy-agent/session";
 import { openJsonlSessionStore, type JsonlSessionStore } from "@diy-agent/session-store-jsonl";
@@ -190,7 +191,7 @@ export function createChatSessions(options: ChatSessionsOptions): ChatSessionHos
             if (entry === null) {
                 throw new Error("model.yaml 里没有可用模型 —— 检查 $DIY_HOME/model.yaml 与 providers.custom.yaml");
             }
-            const now = new Date().toISOString();
+            const now = localISOString();
             const id = `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
             const meta: SessionMeta = {
                 id,
@@ -236,7 +237,7 @@ export function createChatSessions(options: ChatSessionsOptions): ChatSessionHos
             const next: SessionMeta = {
                 ...meta,
                 title: meta.title === "新会话" && messages.length > 0 ? titleFrom(text) : meta.title,
-                updatedAt: new Date().toISOString(),
+                updatedAt: localISOString(),
                 messageCount: meta.messageCount + Math.max(grown, 0),
             };
             await writeMeta(next);
@@ -273,8 +274,8 @@ async function readMeta(dir: string): Promise<SessionMeta | null> {
             id: meta.id,
             title: meta.title,
             model: meta.model,
-            createdAt: typeof meta.createdAt === "string" ? meta.createdAt : new Date(0).toISOString(),
-            updatedAt: typeof meta.updatedAt === "string" ? meta.updatedAt : new Date(0).toISOString(),
+            createdAt: typeof meta.createdAt === "string" ? meta.createdAt : localISOString(new Date(0)),
+            updatedAt: typeof meta.updatedAt === "string" ? meta.updatedAt : localISOString(new Date(0)),
             messageCount: typeof meta.messageCount === "number" ? meta.messageCount : 0,
         };
     } catch {

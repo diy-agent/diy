@@ -12,6 +12,7 @@ import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { projectsRoot, projectDir, norm, nextNumericId } from "./state";
 import type { ProjectInfo } from "./state";
+import { localISOString } from "@diy-agent/time";
 
 // ═══════════════════════════════════════
 // 内部工具
@@ -93,7 +94,7 @@ export function createProject(
   const pid = projectDir(id);
   mkdirSync(join(pid, "tasks"), { recursive: true });
 
-  const meta: Record<string, unknown> = { id, path: norm(path), created: new Date().toISOString() };
+  const meta: Record<string, unknown> = { id, path: norm(path), created: localISOString() };
   if (opts.label !== undefined) meta["label"] = opts.label;
   if (opts.desc !== undefined) meta["desc"] = opts.desc;
   if (opts.state !== undefined) meta["state"] = opts.state;

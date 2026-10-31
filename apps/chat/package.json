@@ -34,6 +34,7 @@
     "@diy-agent/session": "*",
     "@diy-agent/session-store-jsonl": "*",
     "@diy-agent/session-store-memory": "*",
+    "@diy-agent/time": "*",
     "@diy-agent/workbench": "*",
     "@diy-agent/workbench-ui": "*",
     "@opentelemetry/api-logs": "^0.223.0",

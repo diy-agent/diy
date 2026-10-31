@@ -10,6 +10,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ServerBinding } from "@diy-agent/rpc";
+import { localISOString } from "@diy-agent/time";
 import { refApi, type RefEntry } from "./api";
 import * as store from "./store";
 import * as git from "./git";
@@ -64,7 +65,7 @@ export function bindRefHandlers(binding: ServerBinding, rt: RefRuntime): void {
     binding.on(ref.sync, async function* () {
         git.requireGit();
         const specs = store.listSpecs(rt.cwd);
-        const now = new Date().toISOString();
+        const now = localISOString();
         const sourceMap: Record<string, store.LockEntry> = {};
         let cloned = 0;
         let pulled = 0;

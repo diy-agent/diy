@@ -21,6 +21,7 @@ import { join } from "node:path";
 import * as yaml from "js-yaml";
 import { writeFileAtomic } from "./atomic-write";
 import { emptyChannelStats, safePointOf, type ChannelStats, type SessionStats } from "../../shared/cache-hint";
+import { localISOString } from "@diy-agent/time";
 
 /** 落盘版本：结构不兼容时整份忽略（宁可退回没历史，也不要拿半懂的字段算数） */
 export const CACHE_HINT_STORE_VERSION = 1;
@@ -89,7 +90,7 @@ export function loadCacheHintStore(home: string, now = new Date()): CacheHintSto
     }
     const channelsRaw = o["channels"];
     if (!channelsRaw || typeof channelsRaw !== "object") return empty;
-    const nowIso = now.toISOString();
+    const nowIso = localISOString(now);
     const channels: Record<string, ChannelStats> = {};
     for (const [key, val] of Object.entries(channelsRaw as Record<string, unknown>)) {
         const stats = normalizeStats(val, nowIso);

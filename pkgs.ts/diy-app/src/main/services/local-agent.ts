@@ -270,6 +270,7 @@ import { effectiveBashArgs } from "../../shared/tool-args";
 import { ownedGroups } from "./owned-groups";
 import { foregroundBash } from "./foreground-bash";
 import { exitText, formatDuration, runLine, runsOfTask, stateLabel, type RunOutcome } from "../../shared/run-status";
+import { localISOString } from "@diy-agent/time";
 
 // 模型查询函数抽到 shared/models.ts（core 不能被 services 反向依赖，否则循环 import）。
 // 这里**原样 re-export**：历史引用路径（tests/…/local-models-*.test.ts 等）保持不变。
@@ -1263,7 +1264,7 @@ function readCompactState(taskUri: string): CompactStateRead {
 /** 原子覆盖写快照（`fs` 注入仅供单测做确定性故障注入：验证「写一半不毁旧文件」）。 */
 export function writeCompactState(taskUri: string, state: CompactState, opts: { fs?: FsLike } = {}): void {
     const fp = compactStateFile(taskUri);
-    const next: CompactState = { ...state, savedAt: new Date().toISOString() };
+    const next: CompactState = { ...state, savedAt: localISOString() };
     try {
         writeFileAtomic(fp, `${JSON.stringify(next)}\n`, opts.fs ? { fs: opts.fs } : {});
     } catch (e) {
@@ -1539,7 +1540,7 @@ function maybeRecordMeasure(taskUri: string, rec: StepUsageRecord): void {
         kind: "measure",
         v: 1,
         ref: point.compactId,
-        ts: new Date().toISOString(),
+        ts: localISOString(),
         firstTurnId: rec.turnId,
         // predicted 只在**真有预测值**时才写：空对象 `{}` 落到盘上毫无信息量，
         // 只会让读账的人以为"预测过但没算出来"（实测账本里就有这种空壳）。
@@ -3427,7 +3428,7 @@ export class LocalAgentManager {
                             turnId: turn.id,
                             why: cause.why,
                             evidence: cause.evidence,
-                            evidenceAt: new Date(cause.at).toISOString(),
+                            evidenceAt: localISOString(new Date(cause.at)),
                         },
                     );
                     return { why: cause.why, evidence: cause.evidence };
@@ -3715,7 +3716,7 @@ export class LocalAgentManager {
 
         if (taskUri && (opts.write ?? true)) {
             const cutTurnId = all[r.cut]?.turn ?? null;
-            const at = new Date().toISOString();
+            const at = localISOString();
             // 补轮首 ops 锚点：之后 resolveOpsReplay 可以直接从 turns 边界 seek
             const turnRec = cutTurnId ? readTurnRecords(taskUri).find((t) => t.turnId === cutTurnId) : undefined;
             const ref = turnRec ? { ops: { offset: turnRec.ref.ops.offset, seq: turnRec.ref.ops.seq } } : undefined;
@@ -4696,7 +4697,7 @@ export class LocalAgentManager {
             }
         }
 
-        const ts = new Date().toISOString();
+        const ts = localISOString();
         // ##420：保留起点在 **llm.jsonl 里的行号**（1-based）= 该轮第一条消息在 `projectAll` 里的下标 + 1。
         // 读取侧靠它把「跳过的消息条数」换算回来（注记行号 / llm 对账都按行号对齐）。
         // 同轮内首条被保留的消息之前可能还有被丢的消息，但重放是从**轮首**开始的，
@@ -5531,7 +5532,7 @@ export class LocalAgentManager {
                 const user = textOf(input.map((i) => i.text).join("\n"));
                 appendTurnRecord(taskUri, {
                     turnId,
-                    at: new Date().toISOString(),
+                    at: localISOString(),
                     state: turnStateOf(reason),
                     user: user.text,
                     ...(user.truncated ? { userTruncated: true as const } : {}),
@@ -6281,7 +6282,7 @@ export class LocalAgentManager {
             };
             rawSink({
                 kind: "request",
-                ts: new Date().toISOString(),
+                ts: localISOString(),
                 model: model,
                 system: delivery.system.text,
                 tools: Object.keys(tools),
@@ -6304,7 +6305,7 @@ export class LocalAgentManager {
             // 落盘失败不阻断发送（它只是观测），但必须出声。
             const prevStep = this.compactStateOf(taskUri).lastStep; // 本任务的上一轮（用于算变化）
             const step: DeliveryStepRecord = {
-                ts: new Date().toISOString(),
+                ts: localISOString(),
                 turnId,
                 model,
                 wireVersion: delivery.wireVersion,
@@ -6426,7 +6427,7 @@ export class LocalAgentManager {
                             appendCtxLog(taskUri, {
                                 seq: ++ctxSeq,
                                 type: "baseline",
-                                ts: new Date().toISOString(),
+                                ts: localISOString(),
                                 model,
                                 wireVersion: fresh.wireVersion,
                                 ref,
@@ -6441,7 +6442,7 @@ export class LocalAgentManager {
                                 appendCtxLog(taskUri, {
                                     seq: ++ctxSeq,
                                     type: "changed",
-                                    ts: new Date().toISOString(),
+                                    ts: localISOString(),
                                     model,
                                     wireVersion: fresh.wireVersion,
                                     ref,
@@ -6499,7 +6500,7 @@ export class LocalAgentManager {
 
             try {
                 for await (const part of result.fullStream) {
-                    rawSink({ kind: "part", seq: ++rawSeq, ts: new Date().toISOString(), part });
+                    rawSink({ kind: "part", seq: ++rawSeq, ts: localISOString(), part });
                     switch (part.type) {
                         case "start-step":
                             shape = newShape();
@@ -6782,7 +6783,7 @@ export class LocalAgentManager {
                                 noteSelfStep(taskUri, b, cost);
                                 sessionRegistry.noteTurnUsage(taskUri, acc.total);
                                 appendUsage(taskUri, {
-                                    ts: new Date().toISOString(),
+                                    ts: localISOString(),
                                     turnId,
                                     step: stepN,
                                     persona: identity.persona,

@@ -1,0 +1,28 @@
+{
+  "name": "@diy-agent/time",
+  "version": "0.1.0",
+  "private": true,
+  "description": "时间格式约定（##483）：本地时区 ISO 串（带偏移）/ 本地日期键 / 按时刻比较（偏移不同不能比字典序），零依赖零 IO",
+  "files": [
+    "src/"
+  ],
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "oxfmt": "^0.57.0",
+    "oxlint": "^1.72.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}
