@@ -37,6 +37,10 @@ process.env["DIY_REAL_HOME"] = process.env["HOME"] ?? homedir();
 //   于是 removeProject 会按 meta.yaml 里的 `path: ~/git/...` 去真实仓库摘 diy.yaml 名片，
 //   单测进程内直接调 removeProject/deleteTask 就能写坏生产数据。
 process.env["HOME"] = testHome;
+// Windows 的 `os.homedir()` 读 **USERPROFILE**（不是 HOME）：只隔 HOME 时它仍指向真实家目录，
+// 于是 `~/` 展开、`~/.diy*` 派生路径全部落回真实用户目录 —— 既让 `cwd.test.ts` 的 `~/` 用例
+// 挂掉（实测），也让“只隔 DIY_HOME” 的雷在 Windows 上真实存在（见上一条注释）。两个都隔。
+process.env["USERPROFILE"] = testHome;
 process.env["DIY_HOME"] = testHome;
 // 端口由入口注入，不再由 isTemp 派生：测试用 0=随机端口，避免与生产 18888 冲突
 process.env["DIY_PORT"] = "0";

@@ -14,6 +14,11 @@
 //   · `data-proc-children` → 过程 bar 铺开后的子层容器（card 不另给位移、rail 给线+缩进）
 //   · `data-tail-box`（+ `data-failing`）/ `data-block-tag="proc-bar"[data-has-error]` → 结尾槽与出错态
 //   · `data-chat-list` → **每轮的过程历史容器**（rail 那条贯穿线的作用点；结尾槽与状态行在它之外）
+//   · `data-hit-flash` → 会话里的**定位高亮**（「刚跳过来的就是这一条」，##389 检索定位 / ##408 作业来源）；
+//     套在**块本体**上（不是行头），且不带位移/尺寸（高亮不能改变布局）
+//   · `data-focus-phase` → **错误引导**的定位高亮（##407）：目标可以是任意卡片（配置页的字段卡也是），
+//     故小样用一个独立小卡演示；`rest` = 4s 后自动降级的稳态（`flash` 的呼吸光晕 + 👉 角标不在小样里
+//     永久循环，否则设置页会一直在闪）
 //   · `data-turn-status` → 状态行（末行恒显，两皮肤同一形态：上虚线 + 纯文本，不卡片化）；
 //     其内的 `data-turn-stat` / `data-turn-live-rate` / `data-turn-rate` / `data-turn-usage`
 //     是**按容器宽逐档退场**的（`@container`，##298）—— 小样给两行（直播 ⚡ / 轮结束 ⌀）才两档齐
@@ -121,10 +126,11 @@ export function ChatSkinPreview() {
             <span class="truncate text-error">工具出错</span>
           </div>
         </div>
-        {/* 过程历史里的正文行（与结尾槽的结论同组件：行数超阈值时可折，点它折的是它自己） */}
-        <div data-block-tag="text" data-block-id="skin-preview-text">
+        {/* 过程历史里的正文行（与结尾槽的结论同组件：行数超阈值时可折，点它折的是它自己）；
+            这条同时是**定位高亮**的样本（「刚跳过来的就是这一条」） */}
+        <div data-block-tag="text" data-block-id="skin-preview-text" data-hit-flash="1">
           <Gutter open />
-          <div class="text-base-content/80">历史里的一段正文……</div>
+          <div class="text-base-content/80">历史里的一段正文……（刚跳到的那条）</div>
         </div>
       </div>
       {/* 结尾槽（结论）：**在历史容器之外** —— 它自己就是那块（恒显、与状态同级），rail 的线不穿过它 */}
@@ -141,6 +147,11 @@ export function ChatSkinPreview() {
             本轮结束点
           </span>
         </div>
+      </div>
+      {/* 错误引导的定位高亮（##407）：目标通常是**配置页的字段卡**（不是聊天块），故单独一张卡演示；
+          用 `rest` 展示降级后的稳态（`flash` 阶段是呼吸光晕 + 「👉 改这里」角标，4s 后降到这个形态） */}
+      <div class="rounded-md px-2 py-1.5 text-body" data-focus-phase="rest">
+        <span class="opacity-70">配置卡片 · 缺 API key（引导高亮）</span>
       </div>
       {/* 结尾槽（失败现场）：框原地转红 —— 只有错误/警告吃色 */}
       <div data-block-id="skin-preview-scene" data-block-tag="error" data-tail-box="scene" data-failing="1">

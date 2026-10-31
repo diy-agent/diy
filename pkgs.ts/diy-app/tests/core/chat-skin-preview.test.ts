@@ -124,7 +124,11 @@ describe("皮肤小样（ChatSkinPreview）与 index.css 规则一致", () => {
       // 判据只留在 chat-fold 一处：组件里不许再有"原始行数"这套（注释里提到旧写法不算）
       expect(chat, "第二套行数判据必须删掉").not.toMatch(/const countLines =/);
       expect(chat, "canFold 不许再按原始行数判").not.toMatch(/canFold = \(\) => countLines/);
-      expect(chat).toMatch(/const canFold = \(\) => clampLines\(raw\(\), props\.lines\)\.omitted > 0;/);
+      // 判据仍然是**同源**（`omitted` 来自 `clampLines`），但形式已从「每次调 clampLines」
+      // 改成「读 memo 的 `clamped()`」（##93 性能：原来 canFold 与 view 各算一次，每帧两遍全文 split）。
+      // 所以这里钉两件事：canFold 由 `omitted` 派生、且 `clamped` 确实来自 `clampLines`。
+      expect(chat, "canFold 必须读 clampLines 的 omitted").toMatch(/const canFold = \(\) => clamped\(\)\.omitted > 0;/);
+      expect(chat, "clamped 必须由 clampLines 算").toMatch(/clampLines\(raw\(\), props\.lines/);
     });
 
     it("小项1：直播中的正文**不承诺**可展开，条显示态取 `folded()`", () => {
