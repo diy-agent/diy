@@ -1,0 +1,10 @@
+{
+    "extends": "../../tsconfig.base.json",
+    "compilerOptions": {
+        "composite": true,
+        // 类型检查不 emit（同其它包，见根 AGENTS.md rule.check）
+        "noEmit": true,
+        "types": ["node"]
+    },
+    "include": ["src/**/*", "tests/**/*"]
+}

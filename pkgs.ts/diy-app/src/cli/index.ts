@@ -22,6 +22,7 @@ import { readRuntimeConfig, type RuntimeConfig } from "../runtime";
 import { resolveAppRoot } from "../main/core/app-root";
 import { AppConfig } from "../main/core/app-config";
 import { factsGetExitCode } from "../shared/facts";
+import { APP_VERSION } from "../shared/app-version";
 import { installDiagnostics } from "../main/services/diagnostics";
 import { SINGLETON_LOCK, classifyLock, lockAdvice, readLock } from "../main/core/single-instance";
 /** app 就绪等待上限 */
@@ -232,7 +233,7 @@ async function main() {
   try {
     await new CliApp({
       name: "diy",
-      version: "0.1.0",
+      version: APP_VERSION,
       router: apiDef.diy,
       transport,
       // 路径参数（如 tool read 的 path）按**调用者**目录解析：入口脚本已 cd 到应用目录，

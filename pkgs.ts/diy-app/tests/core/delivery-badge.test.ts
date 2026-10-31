@@ -38,8 +38,10 @@ const input = (over: Partial<DeliveryBadgeInput> = {}): DeliveryBadgeInput => ({
 });
 
 describe("##423 徽章文本：维度写在词里，且数一律 token", () => {
-    it("没丢消息 → 「历史·无裁剪」", () => {
-        expect(deliveryBadgeText(sel())).toBe("历史·无裁剪");
+    it("没丢消息 → null（##476：没裁剪就不显示徽章，调用方不插节点）", () => {
+        // droppedMessages=0 即使 droppedTokens 有值（本夹具默认 12.3k）也不标 —— 判据只看「丢没丢」
+        expect(deliveryBadgeText(sel())).toBeNull();
+        expect(deliveryBadgeText(sel({ droppedMessages: 0, droppedTokens: 0 }))).toBeNull();
     });
 
     it("丢了 → 报 **token**（不是条数、更不是字节）：`历史·丢 12.3k tok`", () => {
@@ -53,7 +55,7 @@ describe("##423 徽章文本：维度写在词里，且数一律 token", () => {
     });
 
     it("任何情况下都不出现裸「全量」", () => {
-        for (const d of [0, 3]) expect(deliveryBadgeText(sel({ droppedMessages: d }))).not.toContain("全量");
+        for (const d of [0, 3]) expect(deliveryBadgeText(sel({ droppedMessages: d })) ?? "").not.toContain("全量");
     });
 });
 

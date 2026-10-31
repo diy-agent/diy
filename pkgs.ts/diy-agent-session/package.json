@@ -1,6 +1,6 @@
 {
   "name": "@diy-agent/session",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "diy 单会话内核：消息列表 + 一次 LLM 调用 + 流式增量（LlmPort / Clock / SessionStore 全注入，零 fs、零 task）",
   "files": [

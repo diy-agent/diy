@@ -35,7 +35,7 @@ const SELF = "pkgs.ts/diy-app/src/shared/error-triage.ts";
  * 「首参即 code」的错误类白名单。加新人前先确认：**首参真的是 `err.code`**（而不是 message），
  * 否则护栏会被骗过 —— 例如 `ValidationError(errors)` 的 code 在 errors 载荷里，不在此列。
  */
-const CODE_FIRST_ARG_CLASSES = new Set(["InvariantError", "FactsStoreError"]);
+const CODE_FIRST_ARG_CLASSES = new Set(["InvariantError", "FactsStoreError", "RemoteError"]);
 
 /** code 命名约定（与 shared/error-triage.ts::isErrorCode 同一份口径） */
 const CODE_RE = /^(llm|fs|net|rpc|agent|db|ui)\/[a-z0-9]+(?:-[a-z0-9]+)*$/;

@@ -8,6 +8,12 @@
 一个 bot = **一个身份（`BotConfig`）+ 一堆属于它的会话**。会话是主体，bot 只是标签：
 删 bot 不删会话，会话可以没有 bot。
 
+## 存储方向（##480）
+
+bot 默认**活在内存里**：`createBot({ config })` 不传 store 就用本包的 `createMemoryBotStore()`。
+要落盘由**装配器**实例化后传进来（`createFileBotStore({ home, sessionsDir })`）。
+**不用策略枚举 / switch 分派**（代码里没有策略字符串分派）：将来加远程 store 只是多一个构造器。
+
 ## 落盘形态（方案 B）
 
 ```
@@ -23,6 +29,7 @@
 ## 硬约束（判据）
 
 1. **源码里 `grep -c room` = 0**（`tests/bot.test.ts` 静态扫）；也不 import `@diy-agent/session` / `electron` / `@diy-agent/task`。
+   `src/store-memory.ts` 同样不 import 任何 `node:*`（零落盘是编译期可见的事实）。
 2. 删 bot 只删 `bots/<id>/`，会话目录一个不动。
 3. `sessionsOf(botId)` 只返回归属该 bot 的会话。
 4. 记忆接口**先留空**（##469 body 明确：这一刀不做记忆）。

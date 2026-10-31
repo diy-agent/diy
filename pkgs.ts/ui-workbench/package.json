@@ -1,6 +1,6 @@
 {
   "name": "@diy-agent/workbench-ui",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "工作台布局骨架（renderer）：侧栏 + 主区 + 顶栏 + 页面注册表（不认识任何具体页面）",
   "files": [

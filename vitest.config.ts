@@ -6,8 +6,10 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     projects: [
+        'pkgs.ts/diy-log',
         'pkgs.ts/diy-app',
         'pkgs.ts/diy-rpc',
+        'pkgs.ts/diy-remote',
         'pkgs.ts/diy-template',
         'pkgs.ts/diy-talk',
         'pkgs.ts/diy-dev',

@@ -1,5 +1,8 @@
 // @diy-agent/bot — bot 实体：身份（BotConfig）+ 会话归属（方案 B）
 //
+// ##480 方向：bot 默认活在内存里（`createBot({ config })` 不传 store 即可）；
+// 要不要落盘由**装配器**决定 —— 装配器实例化 store 后传进来：
+//
 //   import { createFileBotStore, ensureBot } from '@diy-agent/bot';
 //
 //   const store = createFileBotStore({ home: '/Users/me/.diy' });
@@ -22,6 +25,9 @@ export { createBot, ensureBot, newSessionId, openBot } from "./bot.js";
 
 export { createFileBotStore } from "./store-fs.js";
 export type { FileBotStoreOptions } from "./store-fs.js";
+
+// 缺省存储：内存实现住在本包（`createBot({ config })` 不传 store 时用的就是它）
+export { createMemoryBotStore } from "./store-memory.js";
 
 export type { Bot, BotConfig, BotDraft, BotId, BotSessionRef, BotStore, CreateBotOptions } from "./types.js";
 

@@ -552,11 +552,13 @@ describe("M4：分表压缩点位", () => {
 // ─── ##272 B1 / ##339：投递压缩可见性进「分表（按步）」────────────
 // 「投递」徽标 = 配置驱动压缩的**事实**（每轮首按当前配置重建，与 compact 事件无关）：
 // 只在**轮首步**（step===1，且账本落了 `historySelection`）标注；其余步不标。
+// ##476：轮首步落了 `historySelection` 但 **droppedMessages=0（没裁剪）** 也不标 ——
+// 「历史·无裁剪」已删，徽标只在真有裁剪的那几步出现（DOM 里根本不插节点）。
 // 与上面的「压缩」事件列语义分离：两列可同时出现。
 describe("##339：分表投递徽标（配置驱动压缩的事实）", () => {
   let uri3 = "";
 
-  it("种 usage.jsonl：轮首步带 historySelection（丢过），其余步不带", async () => {
+  it("种 usage.jsonl：t3000 轮首步真裁剪过（带 historySelection）、同轮第二步不带、t3001 轮首步没裁剪（dropped=0）", async () => {
     const p = await fx.sh.getJson(`./diy.sh project create ${fx.HOME}/cp3 --label 投递`);
     const pid = String((p.data as any)?.data?.id);
     const t = await fx.sh.getJson(`./diy.sh task create "投递徽标" ${pid}`);
@@ -591,6 +593,19 @@ describe("##339：分表投递徽标（配置驱动压缩的事实）", () => {
         }),
         // 同轮第二步：**不带**（配置驱动的重建点只在轮首）
         step("t3000", 2, {}),
+        // ##476：这一轮**没被裁剪**（轮首步有 historySelection，但 droppedMessages=0）
+        // → 旧实现会亮「历史·无裁剪」，现在必须整块不插节点
+        step("t3001", 1, {
+          historySelection: {
+            limitTokens: 3072,
+            keptTokens: 1200,
+            droppedTokens: 0,
+            keptBytes: 800,
+            keptRuns: 1,
+            droppedMessages: 0,
+            totalMessages: 3,
+          },
+        }),
       ].join("\n") + "\n",
       "utf-8",
     );
@@ -603,6 +618,11 @@ describe("##339：分表投递徽标（配置驱动压缩的事实）", () => {
         { op: "delta", id: "t3000_u", fields: { content: "投递话题" } },
         { op: "stop", id: "t3000_u" },
         { op: "stop", id: "t3000" },
+        { op: "start", id: "t3001", kind: "turn" },
+        { op: "start", id: "t3001_u", kind: "text", parent: "t3001", meta: { role: "user" } },
+        { op: "delta", id: "t3001_u", fields: { content: "未裁剪话题" } },
+        { op: "stop", id: "t3001_u" },
+        { op: "stop", id: "t3001" },
       ].map((o) => JSON.stringify(o)).join("\n") + "\n",
       "utf-8",
     );
@@ -611,7 +631,7 @@ describe("##339：分表投递徽标（配置驱动压缩的事实）", () => {
     await waitUntil(a11yText, (t) => t.includes("投递话题"), { label: "会话上屏" });
   });
 
-  it("分表：**只有轮首步**有「历史」徽标（其余步无）；悬停给出维度 / token 口径 / 什么时候会压", async () => {
+  it("分表：只有**真裁剪过的轮首步**有「历史」徽标（其余步 / 没裁剪的轮都无）；悬停给出维度 / token 口径 / 什么时候会压", async () => {
     await openDrawer();
     await ui.clickSelector('[data-drawer-tab="parts"]');
     await waitUntil(
@@ -619,8 +639,13 @@ describe("##339：分表投递徽标（配置驱动压缩的事实）", () => {
       (n) => n >= 1,
       { label: "投递徽标出现" },
     );
-    // 恰好一处（= 轮首步）；第二步不标
+    // 恰好一处（= 真裁剪过的 t3000 轮首步）：同轮第二步不标、**没裁剪的 t3001 轮首步也不标**（##476）
     expect(await ui.query<number>("document.querySelectorAll('[data-delivery-compact]').length")).toBe(1);
+    // ##476：页面上再没有「历史·无裁剪」这种常亮字（整块不渲染，不是空字符串）
+    const allBadges = await ui.query<string>(
+      "[...document.querySelectorAll('[data-delivery-compact]')].map((e) => e.textContent ?? '').join('|')",
+    );
+    expect(allBadges).not.toContain("无裁剪");
     const badge = await ui.query<string>("document.querySelector('[data-delivery-compact]')?.textContent?.trim() ?? ''");
     // ##423：维度写进词里 —— 不再有裸「全量」/「投递」这种跨维度歧义词；数一律 token
     expect(badge).toContain("历史");
@@ -642,8 +667,8 @@ describe("##339：分表投递徽标（配置驱动压缩的事实）", () => {
 
     // ③ 统计补齐：会话/本轮的投递次数（= 步数）与压缩次数
     const stats = await ui.query<string>("document.querySelector('[data-delivery-stats]')?.textContent ?? ''");
-    expect(stats).toContain("2 次投递");
-    expect(stats).toContain("1 轮");
+    expect(stats).toContain("3 次投递"); // t3000 第 1/2 步 + t3001 第 1 步
+    expect(stats).toContain("2 轮");
     expect(stats).toContain("压缩");
     await ui.clickSelector('[aria-label="关闭窗口构成"]');
   });

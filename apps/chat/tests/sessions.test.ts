@@ -149,4 +149,13 @@ describe("apps/chat 多会话宿主", () => {
         expect(splitModelKey("goat/gpt-5.5")).toEqual({ providerId: "goat", modelId: "gpt-5.5" });
         expect(splitModelKey("goat/deepseek/v4")).toEqual({ providerId: "goat", modelId: "deepseek/v4" });
     });
+
+    it("##480 判据 3/5：装配器直接构造 jsonl store 并注入（session 缺省是内存，不注入就不落盘）", () => {
+        const source = readFileSync(join(import.meta.dirname, "..", "sessions.ts"), "utf-8");
+        // 直接构造调用，不是 if (strategy === ...) / switch 枚举分派（禁止的字面量拼着写，免得自己命中判据）
+        expect(source).not.toMatch(new RegExp(`${'Store'}${'Strategy'}`));
+        expect(source).toContain("openJsonlSessionStore({ dir })");
+        // createSession 的入参里必须带 store（从装配器传进去的那个实例）
+        expect(source).toMatch(/createSession\(\{[\s\S]{0,300}?\n\s+store,/);
+    });
 });

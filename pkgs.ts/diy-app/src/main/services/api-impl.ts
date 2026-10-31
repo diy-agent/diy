@@ -38,11 +38,13 @@ import * as flowThread from "../core/flow-thread";
 import { flowPrompt } from "./flow-prompt";
 import { AsyncQueue } from "./async-queue";
 import { modelNoticeHub } from "./model-notice";
+import { cacheHint } from "./cache-hint";
 import { inboxHub } from "./inbox";
 import { envWatchHub, ensureDiskPoller, noteWriteError, realStatfs, simulateEnvFact } from "./env-watch";
 import { envNoticeFromDisk, fmtDiskBytes, type EnvNotice } from "../../shared/env-watch";
 import { setWriteErrorHook } from "../core/atomic-write";
 import { collectInstances, focusInstance, renderInstanceList, selfReport } from "./instances";
+import { remoteService } from "./remote";
 import { revealSelf, windowState } from "./window-ops";
 import { HUMAN_MEMBER_ID, shortName } from "../../shared/room";
 import { runRegistry } from "./run-registry";
@@ -1416,6 +1418,27 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return { sample, notice };
   });
 
+  // ── cacheHint（冷缓存提示；##477）──
+  // 数据源 = main 侧装配层（首步请求前算 gap、首步 usage 到手后回填成败）：renderer 只订阅/关闭。
+  // 用量面板的「缓存时效柱」走 stats（按模型解析出渠道，返回两个边界 + 上次请求时刻）。
+  binding.on(app.cacheHint.current, async () => cacheHint.currentOf());
+  binding.on(app.cacheHint.stats, async ({ input }) => cacheHint.viewOf(input.model));
+  binding.on(app.cacheHint.simulate, async ({ input }) => {
+    // 与 env simulate 同一条线：探针只改"事实来源"，不放宽任何开关
+    if (readRuntimeConfig().env === "production") {
+      // error-code-ok: 探针拒绝（用户主动触发、非缺陷链，没有可比判据）
+      throw new Error("cacheHint simulate 是探针命令，生产环境一律拒绝（DIY_ENV=production）");
+    }
+    return cacheHint.simulate(input);
+  });
+  binding.on(app.cacheHint.dismiss, async ({ input }) => {
+    cacheHint.dismiss(input.id);
+    return { status: "ok" };
+  });
+  binding.on(app.cacheHint.watch, async function* ({ signal }) {
+    for await (const ev of cacheHint.subscribe(signal)) yield ev;
+  });
+
   // ── llmConfig（模型 provider 配置）──
   binding.on(app.llmConfig.read, async () => {
     const { registryView } = await import("../core/model-registry");
@@ -2029,6 +2052,27 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return { pid: r.pid, port: r.port, via: r.via, reason: r.reason };
   });
 
+  // ── remote（远程实例：身份 + 四路发现 + /ping；##479）──
+  // ⚠️ 无鉴权（本轮不做）：`/ping` 缺省只绑回环，跨机须 DIY_PING_HOST=内网地址，绝不要暴露公网。
+  // 发现结果**只列出来**，连哪台由用户决定（判据 4）。
+  const discoverInput = (input: {
+    sources?: string | string[];
+    manual?: string | string[];
+    mdnsTimeoutMs?: number;
+  }) => ({
+    sources: splitListOption(input.sources),
+    manual: splitListOption(input.manual),
+    mdnsTimeoutMs: input.mdnsTimeoutMs,
+  });
+  binding.on(app.remote.self, async () => remoteService.self());
+  binding.on(app.remote.rename, async ({ input }) => remoteService.rename(input.name));
+  binding.on(app.remote.ping, async ({ input }) => remoteService.ping(input.endpoint, input.timeoutMs));
+  binding.on(app.remote.discover, async ({ input }) => (await remoteService.discover(discoverInput(input))).text);
+  binding.on(app.remote.list, async ({ input }) => {
+    const r = await remoteService.discover(discoverInput(input));
+    return { rows: r.rows, errors: r.errors };
+  });
+
   // ── tool ──
   // 文件读取（行窗口 + 续读）：与内置 read 工具共用 core/file-read.ts。
   // 相对路径由 CLI 侧 parser 按调用方 cwd 解析成绝对路径（见 api-def 的 resolvePath 注解）；
@@ -2062,4 +2106,17 @@ export function bindApi(transport: EnvelopeTransport): ServerBinding {
   const binding = new ChannelServerBinding(transport);
   bindAppHandlers(binding);
   return binding;
+}
+
+/**
+ * CLI 的「一串值」选项：`--sources local,mdns` 与 `--sources '["local","mdns"]'` 都收。
+ * 空值 / 空串 → undefined（= 用缺省），别把 [] 当成「一路都不跑」。
+ */
+function splitListOption(value: string | string[] | undefined): string[] | undefined {
+  if (value === undefined) return undefined;
+  const parts = Array.isArray(value) ? value : value.split(",");
+  const out = parts
+    .map((v) => v.trim().replace(/^\[|\]$/g, "").replace(/^"|"$/g, ""))
+    .filter((v) => v !== "");
+  return out.length > 0 ? out : undefined;
 }

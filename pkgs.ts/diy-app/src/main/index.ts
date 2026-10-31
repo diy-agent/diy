@@ -48,6 +48,8 @@ import { SINGLETON_LOCK, classifyLock, lockAdvice, readLock } from "./core/singl
 // 实例注册表 + 窗口能力注入（##366）：注册表让「本机有哪些实例」可枚举、「谁开的」在启动瞬间落档；
 // window-ops 让 RPC 层能请出本实例窗口而不 import Electron（serve 模式不注入 ⇒ 如实报「无窗口」）。
 import { dropSelfRecord, setSelfPort, writeSelfRecord } from "./services/instances";
+import { remoteService } from "./services/remote";
+import { APP_VERSION } from "../shared/app-version";
 import { setWindowOps } from "./services/window-ops";
 import { refreshModelsOnStartup, startupRefreshEnabled } from "./services/models-startup-refresh";
 import { runRegistry } from "./services/run-registry";
@@ -428,6 +430,19 @@ app.whenReady().then(async () => {
     enabled: readRuntimeConfig().env !== "test" && startupRefreshEnabled(),
   });
 
+  // 远程可见性（##479 第一刀）：/ping + mDNS 广播。内部全吞错（失败只意味着「别的机器发现不到我」），
+  // 故这里 await 不会挡启动，只保证「RPC 可用时 /ping 一定也已就绪」（`diy remote self` 不会撞空窗）。
+  // ⚠️ 无鉴权：缺省只绑 127.0.0.1；跨机发现要 DIY_PING_HOST=<内网/tailscale 地址>，绝不要绑公网。
+  // test 变体一律不起：意图测试要的是「起→测→收」的确定现场，不该凭空多一个监听端口与多播广播
+  //（远程能力由 `tests/services/remote.test.ts` 直接起服务覆盖，不依赖 Electron）。
+  if (cfg.env !== "test") {
+    await remoteService.start({
+      home: appConfig.diyHome,
+      variant: process.env["DIY_VARIANT"] ?? "prod",
+      version: APP_VERSION,
+    });
+  }
+
   const ok = await startRpcPort(ipcTransport);
   // 端口已定（含 EADDRINUSE 后的随机端口兜底）→ 重设标题补上 `:<port>`
   applyWindowTitle();
@@ -484,6 +499,8 @@ app.on("before-quit", (event) => {
   cancelModelsStartupRefresh?.();
   cancelModelsStartupRefresh = null;
   rpcPort?.stop();
+  // 远程可见性收尾：停 /ping + 撤 mDNS 广播（不保证执行 —— 读侧本来就不信过期记录）
+  void remoteService.stop();
   // 注册表清理：正常退出即删自己的条目。**但不能只靠它** —— SIGKILL / 崩溃时这里不会跑，
   // 故读侧（core/instance-registry.ts::readRecords）一律按 pid 存活过滤并顺手删死者。
   dropSelfRecord();

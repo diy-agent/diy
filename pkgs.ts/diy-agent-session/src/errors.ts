@@ -14,7 +14,13 @@ export type SessionErrorCode =
     /** send() 的正文为空（没有可发给 LLM 的内容） */
     | 'session/empty-text'
     /** 上一轮还没结束就再次 send（一个会话同一时刻只有一轮） */
-    | 'session/busy';
+    | 'session/busy'
+    /** 缺省内存存储的出入口参非法（maxEntries 非正整数 / seq 非法 / readRange 反向） */
+    | 'store/invalid-options'
+    /** 内存存储的 seq 不连续（缺号 / 重号）—— 与 jsonl 适配器同一判据，不静默丢数据 */
+    | 'store/gap'
+    /** append 的消息没有 seq（core 必然分配；到这里没有就是调用方绕过了 core） */
+    | 'store/message-without-seq';
 
 /** 本包唯一错误类型：带 `code`（机器判据）与 `path`（从根到字段的点路径） */
 export class SessionError extends Error {

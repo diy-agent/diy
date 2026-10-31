@@ -20,8 +20,10 @@ const REPO = resolve(PKGS, "..");
  * 路径相对仓根：`pkgs.ts/*` 的源码在 `src/`；`apps/*` 是 profile（摊在目录根，##458）。
  */
 const LOCATIONS: Record<string, { dir: string; entry: string }> = {
+    "@diy-agent/log": { dir: "pkgs.ts/diy-log", entry: "src/index.ts" },
     "@diy-agent/session": { dir: "pkgs.ts/diy-agent-session", entry: "src/index.ts" },
     "@diy-agent/session-store-jsonl": { dir: "pkgs.ts/diy-agent-session-store-jsonl", entry: "src/index.ts" },
+    "@diy-agent/session-store-memory": { dir: "pkgs.ts/diy-agent-session-store-memory", entry: "src/index.ts" },
     "@diy-agent/compaction": { dir: "pkgs.ts/diy-compact", entry: "src/index.ts" },
     "@diy-agent/context": { dir: "pkgs.ts/diy-context", entry: "src/index.ts" },
     "@diy-agent/facts": { dir: "pkgs.ts/diy-facts", entry: "src/index.ts" },
@@ -34,14 +36,33 @@ const LOCATIONS: Record<string, { dir: string; entry: string }> = {
     "@diy-agent/template": { dir: "pkgs.ts/diy-template", entry: "src/index.ts" },
     "@diy-agent/ui-kit": { dir: "pkgs.ts/diy-ui-kit", entry: "src/index.ts" },
     "@diy-agent/rpc": { dir: "pkgs.ts/diy-rpc", entry: "src/index.ts" },
+    "@diy-agent/remote": { dir: "pkgs.ts/diy-remote", entry: "src/index.ts" },
     "@diy-agent/ui": { dir: "pkgs.ts/diy-ui", entry: "src/index.ts" },
     "@diy-agent/workbench-plugin": { dir: "pkgs.ts/workbench-plugin", entry: "src/index.ts" },
     "@diy-agent/workbench": { dir: "pkgs.ts/workbench", entry: "src/index.ts" },
     "@diy-agent/workbench-ui": { dir: "pkgs.ts/ui-workbench", entry: "src/index.ts" },
     "@diy-agent/chat-page": { dir: "pkgs.ts/chat-page", entry: "src/index.ts" },
     "@diy-agent/model-catalog": { dir: "pkgs.ts/diy-agent-model-catalog", entry: "src/index.ts" },
+    "@diy-agent/model-config-page": { dir: "pkgs.ts/diy-agent-model-config-page", entry: "src/index.ts" },
+    "@diy-agent/bot-config-page": { dir: "pkgs.ts/diy-agent-bot-config-page", entry: "src/index.ts" },
     "@diy-agent/app-minimal": { dir: "apps/minimal", entry: "index.ts" },
     "@diy-agent/app-chat": { dir: "apps/chat", entry: "index.ts" },
+};
+
+/**
+ * 子路径**不镜像** `src/` 目录的包：显式给出真源（值 = 仓内相对路径）。
+ *
+ * 为什么需要：下面的通用子路径规则是 `<包>/<其后>` → `src/<其后>`，它默认包内布局与包名子路径同构
+ * （`@diy-agent/facts/node` → `src/node/index.ts` 成立）。rpc 的传输层不成立 ——
+ * `@diy-agent/rpc/http` 的真源在 `src/transport/http/index.ts`，通用规则会指向不存在的 `src/http`
+ * （vite 报 `Cannot find package '@diy-agent/rpc/http'`）。新增这类包 = 这里加一行。
+ */
+const SUBPATH_SOURCES: Record<string, string> = {
+    "@diy-agent/rpc/http": "pkgs.ts/diy-rpc/src/transport/http/index.ts",
+    "@diy-agent/rpc/ws": "pkgs.ts/diy-rpc/src/transport/ws/index.ts",
+    "@diy-agent/rpc/electron": "pkgs.ts/diy-rpc/src/transport/electron/index.ts",
+    "@diy-agent/rpc/cli": "pkgs.ts/diy-rpc/src/cli/index.ts",
+    "@diy-agent/remote/node": "pkgs.ts/diy-remote/src/node/index.ts",
 };
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -76,12 +97,26 @@ function exportAliases(name: string, dir: string): Array<{ find: RegExp; replace
     return out;
 }
 
-/** 裸包名指回源码；子路径优先按 exports 精确映射，再退回目录映射（`$1` 不带扩展名，由 vite 补 .ts） */
-export const workspaceAliases = Object.entries(LOCATIONS).flatMap(([name, { dir, entry }]) => {
+/**
+ * 裸包名与子路径都指回源码（子路径 `$1` 不带扩展名，由 vite 按 extensions 补 .ts）。
+ *
+ * 优先级（高 → 低）——合并时的两边**都要**（各自解决真问题）：
+ *   ① `SUBPATH_SOURCES` 精确匹配：子路径不镜像 `src/` 的包（如 `@diy-agent/remote/node`）；
+ *   ② 裸包名 → 包入口；
+ *   ③ `exports["types"]` 驱动的精确子路径（见 `exportAliases`，解决非镜像布局）；
+ *   ④ 兜底：`<包>/<其后>` → 入口同级目录下的 `<其后>`。
+ */
+export const workspaceAliases = [
+    ...Object.entries(SUBPATH_SOURCES).map(([name, file]) => ({
+        find: new RegExp(`^${esc(name)}$`),
+        replacement: resolve(REPO, file),
+    })),
+    ...Object.entries(LOCATIONS).flatMap(([name, { dir, entry }]) => {
     const abs = resolve(REPO, dir);
     return [
         { find: new RegExp(`^${esc(name)}$`), replacement: resolve(abs, entry) },
         ...exportAliases(name, dir),
         { find: new RegExp(`^${esc(name)}/(.*)$`), replacement: `${resolve(abs, dirname(entry))}/$1` },
     ];
-});
+    }),
+];

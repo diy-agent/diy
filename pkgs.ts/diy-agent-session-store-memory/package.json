@@ -1,0 +1,30 @@
+{
+  "name": "@diy-agent/session-store-memory",
+  "version": "0.1.0",
+  "private": true,
+  "description": "diy 会话存储适配器：纯内存（兼容入口，实现已移入 @diy-agent/session 的缺省 store）",
+  "files": [
+    "src/"
+  ],
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@diy-agent/session": "*"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.57.0",
+    "oxlint": "^1.72.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

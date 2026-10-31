@@ -6,7 +6,7 @@
 //   ③ 调 LlmPort 拿流：text 增量边收边吐、usage 记账、done 收尾
 //      正文先攒缓冲：遇 tool-call 就把缓冲落成 agent-trace（这轮还没结束），
 //      本轮最后剩下的那段才是 agent-conclusion（##456 判据）
-//   ④ 记账 + 把新消息**追加**给 SessionStore（缺省不落盘）
+//   ④ 记账 + 把新消息**追加**给 SessionStore（缺省 = 本包自带的内存 store，不落盘）
 //
 // seq：会话内全局单调（1 起），由本包分配；压缩只改「这一段历史」，不重置 seq
 // （存储适配器/水位按 seq 对齐，跨桶连续的前提就在这一条）。
@@ -15,6 +15,7 @@
 
 import { SessionError } from './errors.js';
 import { assertDelta, parseMessage, parseMessages, toolArgsFromInput } from './message.js';
+import { openMemorySessionStore } from './store-memory.js';
 import {
     systemClock,
     type AgentSession,
@@ -39,7 +40,10 @@ export interface CreateSessionOptions {
     clock?: Clock;
     /** 压缩策略（每轮调用前跑一次；缺省 = 不压缩） */
     compact?: Compactor;
-    /** 存储端口（缺省 = 纯内存，不落盘） */
+    /**
+     * 存储端口。**缺省 = 本包自带的内存 store**（`openMemorySessionStore()`，不落盘）。
+     * 要持久化由装配器实例化后传进来（如 `openJsonlSessionStore({ dir })`）—— 本包不分派策略。
+     */
     store?: SessionStore;
     /** 原样传给 LlmPort 的模型标识 */
     model?: string;
@@ -63,7 +67,9 @@ export function createSession(options: CreateSessionOptions): AgentSession {
     const llm = takeLlm(options.llm);
     const clock = takeClock(options.clock);
     const compact = takeCompactor(options.compact);
-    const store = takeStore(options.store);
+    const store = takeStore(options.store ?? openMemorySessionStore());
+    /** store 是否本包自建（缺省内存实现）：自建的是空的，恢复历史要自己灌进去；外部 store 已经装着 */
+    const ownsStore = options.store === undefined;
     const model = options.model;
 
     const messages: ChatMessage[] = [];
@@ -82,6 +88,10 @@ export function createSession(options: CreateSessionOptions): AgentSession {
         lastSeq = message.seq;
         messages.push(message);
     }
+
+    // 自建 store 是空的：把恢复历史先灌进去，否则接下来的 append 会从 seq=1 断号
+    // （内存 store 允许首批从中途 seq 开始，所以截断过的历史也装得下）
+    if (ownsStore && messages.length > 0) store.append(messages.slice());
 
     let usage = ZERO_USAGE;
     let busy = false;
@@ -221,6 +231,7 @@ export function createSession(options: CreateSessionOptions): AgentSession {
         session.append({ role: 'system', text: options.system });
     }
 
+    /** store 恒存在（缺省内存实现）：append 一律排队写，flush 统一收口错误。 */
     function appendMessage(init: ChatMessageInit): ChatMessage {
         lastSeq += 1;
         const message = parseMessage(
@@ -229,18 +240,16 @@ export function createSession(options: CreateSessionOptions): AgentSession {
         );
         messages.push(message);
         updatedAt = iso(clock.now());
-        if (store) {
-            pendingWrites += 1;
-            writes = writes.then(async () => {
-                try {
-                    await store.append([message]);
-                } catch (error) {
-                    writeError ??= error;
-                } finally {
-                    pendingWrites -= 1;
-                }
-            });
-        }
+        pendingWrites += 1;
+        writes = writes.then(async () => {
+            try {
+                await store.append([message]);
+            } catch (error) {
+                writeError ??= error;
+            } finally {
+                pendingWrites -= 1;
+            }
+        });
         return message;
     }
 
@@ -290,14 +299,16 @@ function takeCompactor(value: Compactor | undefined): Compactor | undefined {
     return value;
 }
 
-function takeStore(value: SessionStore | undefined): SessionStore | undefined {
-    if (value === undefined) return undefined;
+function takeStore(value: unknown): SessionStore {
+    if (value === undefined) return openMemorySessionStore();
+    if (typeof value !== 'object' || value === null) {
+        throw new SessionError('session/invalid-options', 'store 必须是对象', 'store');
+    }
+    const store = value as SessionStore;
     if (
-        typeof value !== 'object' ||
-        value === null ||
-        typeof value.append !== 'function' ||
-        typeof value.readFrom !== 'function' ||
-        typeof value.latestSeq !== 'function'
+        typeof store.append !== 'function' ||
+        typeof store.readFrom !== 'function' ||
+        typeof store.latestSeq !== 'function'
     ) {
         throw new SessionError(
             'session/invalid-options',
@@ -305,5 +316,5 @@ function takeStore(value: SessionStore | undefined): SessionStore | undefined {
             'store',
         );
     }
-    return value;
+    return store;
 }

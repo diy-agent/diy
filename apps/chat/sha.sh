@@ -36,7 +36,7 @@ _ensure_electron() { run node ../../scripts/ensure-electron.mjs --quiet; }
 build-deps() {
   local pkg
   # diy-ui 不能省：chat-page 的 renderer-diui 入口依赖 `@diy-agent/ui/browser`（##468）
-  for pkg in workbench ui-workbench diy-ui chat-page diy-agent-session diy-agent-session-store-jsonl diy-llm-provider diy-agent-model-catalog diy-agent-model-config-page diy-agent-bot; do
+  for pkg in diy-log workbench ui-workbench diy-ui chat-page diy-agent-session diy-agent-session-store-jsonl diy-agent-session-store-memory diy-llm-provider diy-agent-model-catalog diy-agent-model-config-page diy-agent-bot diy-agent-bot-config-page; do
     ( cd "$SCRIPT_DIR/../../pkgs.ts/$pkg" && ./sha.sh build )
   done
 }
@@ -105,5 +105,12 @@ lint() { run npx oxlint .; }
 lint-fix() { run npx oxlint --fix .; }
 fmt() { run npx oxfmt --check .; }
 fmt-fix() { run npx oxfmt --write .; }
+
+# ── 发布（npm → @diy-agent/app-chat）─────────────────────────────────────────
+# 发行形态 = bin/（CLI 入口）+ build/（esbuild 产物）+ 生成的 package.json，由
+# scripts/npm-publish-app.mjs 组装到 dist/；仓内 package.json 的 private:true 只是护栏。
+# publish：build → 组装 dist → npm publish（--dry-run 只演练）
+dist() { build; run node ../../scripts/npm-publish-app.mjs . --prepare-only --variant "$DIY_VARIANT" "$@"; }
+publish() { build; run node ../../scripts/npm-publish-app.mjs . --variant "$DIY_VARIANT" "$@"; }
 
 sha "$@"

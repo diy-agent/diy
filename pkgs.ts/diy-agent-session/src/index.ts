@@ -17,10 +17,14 @@
 //   for await (const delta of session.send('在吗')) { /* text 增量 */ }
 //   session.messages; // [user, assistant]
 //
-// 可选注入（都不传 = 纯内存、真时间、不压缩）：
+// 可选注入（不传 = 自带内存 store / 真时间 / 不压缩）：
 //   clock   —— 假 Clock 让 `at` 确定
 //   compact —— 每轮调用前的压缩策略（保留边界 / 摘要归 @diy-agent/compaction）
-//   store   —— 快照落盘（jsonl / sqlite 由独立适配器包实现）
+//   store   —— 换掉缺省的内存 store（jsonl / sqlite / 远程由独立适配器包实现，装配器实例化后传）
+//
+// 方向（##480）：session 是「一次对话」，**默认活在内存里**；要不要持久化由装配器决定。
+// 装配器直接构造实例（`createSession({ id, llm, store: openJsonlSessionStore({ dir }) })`），
+// 不用策略枚举 / switch 分派 —— 将来有远程 store，也只是多一个构造器。
 //
 // LLM 形状 / 流式增量 / 边界的细节见 ./types.ts 与 ./session.ts 头注。
 
@@ -57,3 +61,7 @@ export type {
 
 export { createSession } from './session.js';
 export type { CreateSessionOptions } from './session.js';
+
+// 缺省存储：内存实现住在本包（这就是「不传 store」时用的那个）
+export { DEFAULT_MAX_ENTRIES, openMemorySessionStore } from './store-memory.js';
+export type { MemorySessionStore, MemorySessionStoreOptions } from './store-memory.js';

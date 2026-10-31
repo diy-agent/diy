@@ -6,6 +6,7 @@
 //   · bot = @diy-agent/bot 的「大王助手」（##469 单 bot 一刀；会话归属写 session 目录里的 bot.json）
 //   · chat-page 插件本身不认识文件系统 / 模型配置：它只认注入的 ChatSessionHost 端口
 
+import * as botConfigPageMain from "@diy-agent/bot-config-page";
 import * as chatPageMain from "@diy-agent/chat-page/main";
 import * as modelConfigPageMain from "@diy-agent/model-config-page";
 import type { PluginEntry } from "@diy-agent/workbench";
@@ -34,6 +35,15 @@ export const ASSEMBLY: Assembly = {
             id: "model-config-page",
             type: "module",
             data: { module: modelConfigPageMain },
+            config: homeConfig(),
+        },
+        {
+            // ##474：Bot 配置页同构（独立插件）。**这一行就是「装不装」的开关**：
+            // 注释掉 ⇒ listPages 里没有 bot-config ⇒ nav 里没有「Bot 配置」。
+            // 测试对话用内存会话（@diy-agent/session-store-memory），说完不落盘。
+            id: "bot-config-page",
+            type: "module",
+            data: { module: botConfigPageMain },
             config: homeConfig(),
         },
     ],

@@ -1,0 +1,40 @@
+{
+  "name": "@diy-agent/bot-config-page",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bot 配置页面插件：bot 列表 / 身份编辑（name / instructions / model）/ 新建删除 / 测试对话（内存会话，零落盘）；不装就没有入口",
+  "files": [
+    "src/"
+  ],
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./lib/index.js"
+    },
+    "./renderer": {
+      "types": "./src/view.ts",
+      "default": "./lib/view.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@diy-agent/bot": "*",
+    "@diy-agent/llm-provider": "*",
+    "@diy-agent/model-catalog": "*",
+    "@diy-agent/session": "*",
+    "@diy-agent/session-store-memory": "*",
+    "@diy-agent/workbench": "*",
+    "@diy-agent/workbench-ui": "*"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.57.0",
+    "oxlint": "^1.72.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

@@ -509,7 +509,11 @@ ci() {
 
 # 发布到 npm（@diy-agent scope）。清单单列：**只有**做了 npm 分发准备的包才有 publish 子命令，
 # 不能沿用 _ws_run（其余 workspace 包会以「未知命令」中止）。
-_npm_publish_pkgs=(pkgs.ts/diy-rpc pkgs.ts/diy-ui pkgs.ts/workbench-plugin)
+_npm_publish_pkgs=(
+  pkgs.ts/diy-rpc pkgs.ts/diy-ui pkgs.ts/diy-agent-session pkgs.ts/diy-agent-session-store-jsonl
+  pkgs.ts/workbench pkgs.ts/ui-workbench pkgs.ts/diy-agent-model-catalog pkgs.ts/diy-agent-model-config-page
+  pkgs.ts/diy-llm-provider pkgs.ts/diy-agent-bot pkgs.ts/chat-page pkgs.ts/workbench-plugin apps/chat
+)
 
 publish() {
   # CI（github-actions-cicd）里没有 ~/.bashrc 与 token ⇒ 跳过而非报错；本地有 token 照发

@@ -11,6 +11,8 @@ import { mountWorkbench, registerPage, type WorkbenchGateway } from "@diy-agent/
 import { chatPageView } from "@diy-agent/chat-page/renderer-diui";
 // ##467：模型配置页（独立插件，删掉这行就没有配置入口）
 import { modelConfigPageView } from "@diy-agent/model-config-page/renderer";
+// ##474：Bot 配置页（同构独立插件）
+import { botConfigPageView } from "@diy-agent/bot-config-page/renderer";
 import { TITLE } from "./title.js";
 
 declare global {
@@ -27,6 +29,8 @@ async function main(): Promise<void> {
     registerPage(chatPageView);
     // ##467：配置页的 view 也在这里注册；但**有没有入口由主进程插件清单决定**（见 index.ts）
     registerPage(modelConfigPageView);
+    // ##474：注册决定「怎么画」；有没有入口仍由主进程插件清单决定（见 index.ts）
+    registerPage(botConfigPageView);
     await mountWorkbench(host, gateway, { title: TITLE });
 }
 
