@@ -1,85 +1,45 @@
-// 🎯 真跑 `ps` 拿全机快照，再按判据挑出「归我们管」的进程 —— ##408 刀 10
+// 🎯 拿「我们起的那些进程」—— ##408 刀 10
 //
-// 分工：解析/认领判据在 `shared/proc-scan.ts`（纯函数，单测用文本夹具），本文件只做两件事
-// —— 跑 `ps`、把两份表（组名册 + run 根 pid）喂给判据。
+// 分工：**取数 + 认领**在 `os.ownProcesses()`（意图级，见 os/types.ts R2）；本文件只做编排：
+// 准备两组登记表、给名册做回收、把结果包装成面板要的形状。
 //
 // 拉式：**只在有人问的时候扫**（面板刷新 / `<tool>job ps</tool>`）。没有定时器、没有后台轮询 ——
 // 「观测」不该自己变成负担。
 //
-// **异步**：用户 2026-10-24 定下硬规范「app 里不许有同步 IO」。`execFileSync` 会把主进程
-// （含渲染与 RPC）按在 `ps` 上几十~几百毫秒，面板每 3s 一刷就是每 3s 掉一次帧。
+// **异步**：用户 2026-10-24 定下硬规范「app 里不许有同步 IO」。
 
-import { execFile } from "node:child_process";
+import { os, type OwnedSnapshot } from "../os";
 import { ownedGroups, type OwnedGroups } from "./owned-groups";
 import { KILL_GRACE_MS } from "./run-registry";
-import {
-    parsePsRows,
-    selectOwnedProcs,
-    type GroupOwner,
-    type OwnedProc,
-} from "../../shared/proc-scan";
-
-let lastScanWarnAt = 0;
+import type { GroupOwner, OwnedProc } from "../../shared/proc-scan";
 
 export interface ScanDeps {
-    /** 跑命令拿 stdout；失败返回 `""`（采集失败退化成"看不见"，不许炸业务）。 */
-    run(cmd: string, args: readonly string[], timeoutMs?: number): Promise<string>;
+    /** 取「归我们管的进程」（缺省 `os.ownProcesses`；注入只为单测） */
+    own(query: {
+        selfPid: number;
+        groups: ReadonlyMap<number, GroupOwner>;
+        runPids: ReadonlyMap<number, string>;
+    }): Promise<OwnedSnapshot>;
     now(): number;
     /** app 主进程 pid（子孙也算我们起的） */
     selfPid: number;
 }
 
 export const DEFAULT_SCAN_DEPS: ScanDeps = {
-    run(cmd, args, timeoutMs = 1500) {
-        return new Promise<string>((resolve) => {
-            execFile(
-                cmd,
-                args as string[],
-                {
-                    encoding: "utf8",
-                    timeout: timeoutMs,
-                    maxBuffer: 8 * 1024 * 1024,
-                },
-                (err, stdout) => {
-                    if (!err) {
-                        resolve(stdout ?? "");
-                        return;
-                    }
-                    onScanFailed(err);
-                    resolve("");
-                },
-            );
-        });
-    },
+    own: (query) => os.ownProcesses(query),
     now: () => Date.now(),
     selfPid: process.pid,
 };
 
-/** 扫描失败：退化成"看不见"，但**不许静默**（限流打日志，见下）。 */
-function onScanFailed(e: unknown): void {
-    // 面板会显示「没扫到」，而人要能查出为什么
-    // （实测的第一次：机器内存只剩 0.2GB，fork 出 ps 失败 ⇒ EAGAIN，界面像"没有进程"）。
-    // 限流打印，避免每 3 秒刷一次。
-    const now = Date.now();
-    if (now - lastScanWarnAt > 60_000) {
-        lastScanWarnAt = now;
-        const code = (e as NodeJS.ErrnoException | undefined)?.code;
-        console.warn("[scan] ps 失败:", code ?? (e instanceof Error ? e.message : String(e)));
-    }
-}
-
 export interface ScanResult {
     at: number;
-    /** app 主进程自己的进程组（判"按组杀会不会连累 app"，见 `killOwnedProc`）；扫不到给 null */
-    selfPgid: number | null;
     /** 归我们管的进程（含未登记的野进程），pid 升序 */
     procs: OwnedProc[];
-    /** 本轮 `ps` 是否成功（失败时 procs 为空，调用方要如实说"没扫到"而不是"没有进程"） */
+    /** 本轮快照是否成功（失败时 procs 为空，调用方要如实说"没扫到"而不是"没有进程"） */
     ok: boolean;
+    /** 平台能力/寿命差异的事实句（R10；UI / `job ps` 直接展示） */
+    facts: string[];
 }
-
-/** ps 的列：pid ppid pgid etime pcpu rss command（command 必须最后，它含空格）。 */
-const PS_ARGS = ["-axo", "pid=,ppid=,pgid=,etime=,pcpu=,rss=,command="] as const;
 
 /**
  * 扫一次。
@@ -97,62 +57,60 @@ export async function scanOwnedProcs(opts: {
     const groups = opts.groups ?? ownedGroups;
     // 首读（跨重启认领）可能还没完成：等它，否则会把老孤儿当"别人的进程"
     await groups.ready;
-    const stdout = await deps.run("ps", PS_ARGS);
+    const res = await deps.own({ selfPid: deps.selfPid, groups: groups.snapshot(), runPids: opts.runPids });
     const at = deps.now();
-    if (!stdout.trim()) return { at, selfPgid: null, procs: [], ok: false };
-    const rows = parsePsRows(stdout);
-    const selfRow = rows.find((r) => r.pid === deps.selfPid);
-    const procs = selectOwnedProcs(rows, {
-        selfPid: deps.selfPid,
-        groups: groups.snapshot(),
-        runPids: opts.runPids,
-    });
+    if (!res.ok) {
+        onScanFailed();
+        return { at, procs: [], ok: false, facts: os.facts() };
+    }
     // 清理名册：本轮扫不到进程的组（过宽限期）丢掉，名册不会无限长
-    const live = new Set(rows.map((r) => r.pgid));
-    groups.retain(live, at);
-    return { at, selfPgid: selfRow?.pgid ?? null, procs, ok: true };
+    groups.retain(res.live, at);
+    return { at, procs: res.procs, ok: true, facts: os.facts() };
 }
 
-/**
- * 结束一条"归我们管"的进程。
- *
- * ⚠️ 两个安全判据（都不是洁癖）：
- *   ① 只在**同组**时才按组杀（`kill(-pgid)`）—— 若那条进程和 app 同组（没走 detached 的漏网），
- *      按组杀会把 app 自己一起带走；那种情况只杀它自己。
- *   ② 先 SIGTERM 后（`KILL_GRACE_MS` 后）SIGKILL：给进程自己收尾的机会（写盘 / 关连接）。
- * 返回是否真的发出了信号（pid 已被回收 ⇒ false，不抛）。
- */
-export function killOwnedProc(proc: { pid: number; pgid: number }, selfPgid: number | null): boolean {
-    // 判据 ①：和 app 同组 ⇒ 只能杀它自己（按组杀会把 app 一起带走）
-    const sameGroupAsApp = selfPgid !== null && proc.pgid === selfPgid;
-    const send = (sig: NodeJS.Signals): boolean => {
-        try {
-            if (!sameGroupAsApp && proc.pgid > 1) process.kill(-proc.pgid, sig);
-            else process.kill(proc.pid, sig);
-            return true;
-        } catch {
-            return false;
-        }
-    };
-    const ok = send("SIGTERM");
-    const timer = setTimeout(() => {
-        if (!isAlive(proc.pid)) return;
-        send("SIGKILL");
-    }, KILL_GRACE_MS);
-    timer.unref?.();
-    return ok;
-}
-
-function isAlive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch {
-        return false;
+/** 扫描失败：退化成"看不见"，但**不许静默**（限流打日志）。 */
+let lastScanWarnAt = 0;
+function onScanFailed(): void {
+    const now = Date.now();
+    if (now - lastScanWarnAt > 60_000) {
+        lastScanWarnAt = now;
+        console.warn("[scan] 进程快照失败（见 os 策略 / 控制台）");
     }
 }
 
+/**
+ * 结束一条"归我们管"的进程（**意图**，R3：只代表「结束请求已发出」）。
+ *
+ * ⚠️ lineage-only 认领不能直接杀：父链指向我们记录过的根，不等于不是 pid 复用出来的新进程；
+ * 必须带创建时刻（选择阶段的时间窗已经过滤过一次）。
+ */
+export function killOwnedProc(proc: {
+    pid: number;
+    pgid: number | null;
+    claim?: "pgid" | "run-root" | "descendant" | "lineage";
+    createdAt?: number | null;
+}): boolean {
+    if (proc.claim === "lineage" && proc.createdAt == null) return false;
+    const target = [{ pid: proc.pid, pgid: proc.pgid }];
+    if (!os.caps.gracefulSignals) {
+        os.killOwned(target, "SIGKILL");
+        return true;
+    }
+    os.killOwned(target, "SIGTERM");
+    const timer = setTimeout(() => {
+        // 单 pid 判活用 Node 的 0 信号（跨平台，不是系统假设）
+        try {
+            process.kill(proc.pid, 0);
+        } catch {
+            return;
+        }
+        os.killOwned(target, "SIGKILL");
+    }, KILL_GRACE_MS);
+    timer.unref?.();
+    return true;
+}
+
 /** 组名册里某组的自述（面板"这条命令是谁留下的"）；扫不到给 `undefined`。 */
-export function groupOwnerOf(pgid: number): GroupOwner | undefined {
-    return ownedGroups.get(pgid);
+export function groupOwnerOf(pgid: number | null): GroupOwner | undefined {
+    return pgid === null ? undefined : ownedGroups.get(pgid);
 }

@@ -1,0 +1,73 @@
+# knowledge/facts/os.yaml
+
+# 生成物式的真源：整篇由 `diy facts submit` 写入（字段顺序、条目排序都由程序定）。
+domain: os
+facts:
+  os.rule#cap-shape:
+    value: |-
+      **caps 与数据形状必须一致**：cap 只用于真能力/事实（GPU、能否读别人环境变量、有没有 bash），不用于实现差异；且「说没有」必须体现在类型上 —— 反例：`ProcessRow.pgid` 曾是 `number`、Win32 拿 `pid` 冒充，于是 `caps.processGroups=false` 成摆设；正解 `pgid: number | null`（posix 真 pgid / win32 `null`）。**保证不等价的动作不许折叠成 bool**（杀进程组 vs 杀进程树）：动作可以归一、事实不许归一 —— `killOwned` 只代表「结束请求已发出」，做不到的（Windows 作业寿命跟根进程、脱组孤儿、无信号语义）由 `facts()` 出人话给 UI。
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: 297e5e36:pkgs.ts/diy-app/src/main/os/types.ts:1
+      verifiedAt: '2026-10-31'
+  os.rule#cost:
+    value: |-
+      **Windows 的成本是「起进程」，不是查询大小**（2026-10-31 本机实测）：`wmic` 全量 7 列 510ms · `wmic` 单 pid **492ms**（同价）· `tasklist /fo csv` 184ms · **PowerShell 任意查询 3.3–3.9s**（冷启动主导，连 `Get-Process` 都 3.3s）。判据：需要 ≥2 个进程的信息 ⇒ **一次全量 + 缓存**（同步 2s 常量超时，超时返回 null —— 「看不见」好过「卡死」）；PowerShell 永进热路径；`tasklist` 只有 Image/PID/Mem，**没有 PPID/CommandLine**，实例发现不能用它。另：同步取数只许用在「必须当拍完成」的地方（runBash 的 onControl 交接、启动父链），其余一律 async。
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: probe
+      probe: for c in 'wmic process get ...7列 /format:list' 'tasklist /fo csv' 'powershell Get-Process' 'powershell Get-CimInstance|ConvertTo-Json'; do time $c; done
+      verifiedAt: '2026-10-31'
+  os.rule#guard:
+    value: |-
+      **规则要机检，不能只活在 README**：`scripts/check-os-boundary.mjs`（挂 `./sha.sh check`）扫 `src/main`，令牌 = `process.platform` / `wmic` / `tasklist` / `taskkill` / `powershell` / `pwsh` / `Get-CimInstance` / `osascript` / `system_profiler` / `/bin/bash` / `bash.exe` / `darwin` / `win32`，白名单只有 `src/main/os/**`；**整行注释**放行（防「注释开头 + 代码」混写绕过）。测试分层：平台实现（解析器/命令拼装/探测降级）放 `tests/os/**` 且**必须注入 deps**（真跑 PowerShell 一次 3.3s，CI 必爆）；OS 无关判据留 `tests/core/**`；`sha.sh` 另设 `test-os` 目标。
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: 297e5e36:scripts/check-os-boundary.mjs:1
+      verifiedAt: '2026-10-31'
+  os.rule#intent-api:
+    value: |-
+      **L2 只表达意图，不暴露机制**：进程意图只有 4 个 —— `ownProcesses()` / `killOwned()` / `jobAlive(pid)` / `facts(): string[]`。观测（`snapshot` / `snapshotSync` / `hopSync` / `probe`）与系统能力（`resolveShells` / `gpu` / `focusProcess`）是独立分区，不在这 4 个之内（意图与保证两边相同，可直接归一）。`ownProcesses(query)` 的 query 是**调用方状态注入**（selfPid / groups / runPids），不是选项；**不许**再加「模式 / 覆盖度 / 预算」这类决策参数 —— 用户裁定「没人能拿它做决策」。
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-31'
+  os.rule#layers:
+    value: |-
+      **三层**：L1 业务（local-agent / run-registry / process-scan / instances / agent-guard）只调 L2，不出现平台名与系统命令；L2 功能（`os/<platform>.ts` 实现的同一组意图）动作归一、降级可见；L3 原子（`ps`/`wmic`/`Get-CimInstance`/`taskkill`/`kill(-pgid)`/`osascript`）只出现在 `os/*.ts` 且可注入 deps。**唯一按平台选型处 = `os/index.ts`**（`DIY_OS_STRATEGY` 仅排障覆盖，非法值 warn 回落）；实现文件内部按 macOS/Linux 细分能力（top 第二块 / osascript）**合法**，那是 deps 注入的实现细节，不是越界 —— 措辞别写成「唯一允许看 platform 的文件」，会误伤 `defaultPosixDeps`。
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-31'
+  os.rule#proc-claim:
+    value: |-
+      **归我们管的进程怎么认**：① pgid ∈ 我们发过的组（POSIX，抓 reparent 的孤儿）② 祖先是 app 本身（没 detached 的漏网）③ **lineage**（Windows 无进程组：PPID 链命中登记过的根 pid，锚点本身可以已退 —— Windows 不 reparent，孤儿的 PPID 仍指向死掉的根）。lineage 的防误认靠**身份判据不是年龄**：锚点 pid 若在快照里，其 `createdAt` 与登记时刻偏差 >5s ⇒ pid 已被复用 ⇒ 立刻退休；号空着 ⇒ 有效；拿不到创建时刻才用 7 天保险丝。名册回收的 `live` = 「登记号 ∩ 快照」∪「仍有后代被认领的锚点」（前半让老组退休，后半让 `nohup` 孤儿不失联）。
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: 297e5e36:pkgs.ts/diy-app/src/shared/proc-scan.ts:1
+      verifiedAt: '2026-10-31'
+  os.rule#scope-out:
+    value: |-
+      **本层不做**（各自独立任务，别顺手加进来）：① Win32 Job Object 让「作业寿命」等价 POSIX（要原生 addon）② 常驻 PowerShell helper（stdin/stdout 行协议，把 3.3s 冷启动摊成一次性）③ `JobRunsPanel` 展示 `facts` 一行（数据层已下发）④ WSL / SSH / 容器多执行目标 —— 只有 ④ 会把维度变掉：那时「OS 策略」不再属于进程，而属于每次工具调用解析出的 execution target，`os` 单例才该改成按 target 创建（现有 `createPosixOs/ createWin32Os(deps)` 已可实例化，为那天留门）。
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-31'
+  os.rule#shell-capability:
+    value: |-
+      **shell 是能力，不是回退**：`ShellSpec.kind = bash | pwsh`，两种能力语法/参数/退出码语义都不同 → **工具面并存、各自一个工具**（没有 bash 就**不注册** `bash`，另注册 `pwsh`）；执行器 = 模型**实际调用的那个工具**的能力，不许拿探测顺序第 0 个代替选择。把 PowerShell 藏在 `bash` 名字后面比「没有工具」更糟（模型继续写 bash 语法，拿到无名报错）。**Windows 不依赖 Git Bash**（多数用户没装）：探测 `DIY_SHELL` → Git Bash 已知位置 → `pwsh.exe` → `powershell.exe`。pwsh 调用契约：`-NoProfile -NonInteractive`、输出前置 `[Console]::OutputEncoding=UTF8`、**`& { <cmd> }; exit $LASTEXITCODE` 透传退出码**、含换行改 `-EncodedCommand`（UTF-16LE base64）。
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-10-31'

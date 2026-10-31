@@ -15,8 +15,9 @@ shopt -s globstar
 shopt -s extglob
 
 # Get the real path of the script directory
-ROOT_PATH="$(realpath "$(command -v "${BASH_SOURCE[0]}")")"
-ROOT_DIR="$(dirname "$C_MAC_PATH")"
+# 用 dirname 直接取脚本所在目录：`command -v "${BASH_SOURCE[0]}"` 在 `bash sha.sh` 形态下
+# （BASH_SOURCE[0] 不带斜杠、脚本又不在 PATH）返回空 → realpath "" 报错 → set -e 立刻退 1。
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 cd "$ROOT_DIR"
 source sha.common.sh
@@ -207,7 +208,48 @@ sync-dev-home() {
     echo "${secondary}提示：配置是启动时读入的，已在跑的老实例要重启才看得到${reset}"
     echo "${info}✅ 本 worktree 已可起 ./sha.sh lab 做真 LLM 实验（变体 ${variant}）${reset}"
 }
-link() {      _ws_run command npm link; }
+# 全局 bin 目录：Windows 的 `npm prefix -g` 本身就是 bin 目录（%APPDATA%\npm）；
+# POSIX 下 bin 在 prefix/bin。
+_link_global_bin() {
+  local prefix
+  prefix="$(npm prefix -g)"
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) printf '%s\n' "$prefix" ;;
+    *) printf '%s\n' "$prefix/bin" ;;
+  esac
+}
+
+# 本仓各 workspace 声明的 bin 名（`package.json.bin` 的对象键；字符串形态取包名末段）。
+_ws_bin_names() {
+  node -e '
+    const fs = require("fs"), path = require("path");
+    const out = [];
+    for (const root of ["pkgs.ts", "apps"]) {
+      if (!fs.existsSync(root)) continue;
+      for (const d of fs.readdirSync(root)) {
+        const p = path.join(root, d, "package.json");
+        if (!fs.existsSync(p)) continue;
+        const j = JSON.parse(fs.readFileSync(p, "utf8"));
+        if (!j.bin) continue;
+        if (typeof j.bin === "string") out.push(String(j.name).split("/").pop());
+        else out.push(...Object.keys(j.bin));
+      }
+    }
+    console.log(out.join("\n"));
+  '
+}
+
+# npm link 在 Windows 上**不覆盖**已存在的全局 shim（EEXIST: %APPDATA%\npm\<bin>）。
+# 先删掉本仓会生成的那几个入口（<bin> / <bin>.cmd / <bin>.ps1）再 link，保证可重复执行。
+link() {
+  local bindir name
+  bindir="$(_link_global_bin)"
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    rm -f "$bindir/$name" "$bindir/$name.cmd" "$bindir/$name.ps1"
+  done < <(_ws_bin_names)
+  _ws_run command npm link
+}
 unlink() {    _ws_run command npm unlink -g ; }
 # 全仓唯一检查入口：全项目类型 + 全仓 lint + rpc 浏览器安全 + 产物护栏 + 可执行位护栏
 #（子包目录下单用见 pkgs.ts/*/sha.sh check）
@@ -346,6 +388,9 @@ _check_full_body() {
   #（实现见 scripts/check-sync-io.sh；用户口径「app 不允许有 sync 的 io 操作」；存量按
   # LEGACY_SYNC_IO_BASELINE 棘轮递减，逃生口 `// sync-io-ok: <理由>`）
   run bash scripts/check-sync-io.sh
+  # OS 边界护栏（2026-10-31）：系统假设（process.platform / wmic / taskkill / powershell /
+  # osascript / /bin/bash …）只许出现在 pkgs.ts/diy-app/src/main/os/**；实现见 scripts/check-os-boundary.mjs
+  run node scripts/check-os-boundary.mjs
   # 各领域规范索引护栏（##388）：~/SPECS.md 的 key 唯一 / 指针可解析 / 链上新增未收录（ratchet：存量基线 scripts/specs-unindexed.txt）
   #（实现见 scripts/check-specs.mts；**总表缺失 = skip + 提示、不算失败**，跨机器 / CI 没有家目录那份文件）
   run npx tsx scripts/check-specs.mts

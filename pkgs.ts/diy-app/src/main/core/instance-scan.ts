@@ -1,9 +1,8 @@
-// src/main/core/instance-scan.ts
-// 🎯 「ps 输出 → 实例进程行」的**纯函数**层：解析 / 分类 / 去重。
+// 🎯 「进程表 → 实例进程行」的**纯函数**层：分类 / 去重（解析在 os 策略，见 os/posix.ts）。
 //
 // 为什么必须纯：实例发现没有索引（`app.port` 是「一个数据根一份」，回答不了「本机有哪几个根」），
-// 只能扫进程；而扫描/分类/去重的规则一旦埋在 RPC handler 里，就只能靠起 Electron 才能验。
-// 这里零 I/O（ps 由调用方跑），单测直接喂 ps 文本。
+// 只能扫进程；而分类/去重的规则一旦埋在 RPC handler 里，就只能靠起 Electron 才能验。
+// 这里零 I/O（快照由调用方给），单测直接喂行。
 //
 // 判据来源（本机实测，见任务 body）：
 //   Electron 主进程：  <…>/Electron.app/Contents/MacOS/Electron <…>/build/<v>/main/index.mjs --remote-debugging-port=0
@@ -14,6 +13,8 @@
 //
 // 去重 = 「只留每个实例的 Electron 主进程」：helper 靠 `--type=` 现形，且它们的入口 token
 // 不是 `main/index.mjs`（实测 helper 的命令行里没有那个 token，双保险）。
+//
+// 路径判据**同时接受 `/` 与 `\`**：Windows 的 CommandLine 是反斜杠，不为此在调用方加平台分支。
 
 export interface PsProcess {
   pid: number;
@@ -34,22 +35,7 @@ export interface InstanceProcess {
   kind: "electron" | "serve";
 }
 
-/** `ps -Ao pid=,ppid=,command=` 的一行；表头/空行/畸形行一律跳过（不猜） */
-const PS_LINE_RE = /^\s*(\d+)\s+(\d+)\s+(.*)$/;
-
-export function parsePsOutput(text: string): PsProcess[] {
-  const out: PsProcess[] = [];
-  for (const line of text.split("\n")) {
-    const m = PS_LINE_RE.exec(line);
-    if (!m) continue;
-    const pid = Number(m[1]);
-    const ppid = Number(m[2]);
-    const command = (m[3] ?? "").trim();
-    if (!Number.isFinite(pid) || !command) continue;
-    out.push({ pid, ppid, command });
-  }
-  return out;
-}
+/** `ps -Ao pid=,ppid=,command=` 的一行；表头/空行/畸形行一律跳过（不猜）。 */
 
 /** 入口 token：`…/build/<variant>/{main,serve}/index.{mjs,js}`（绝对路径才认，防误命中参数里的字符串） */
 const ENTRY_RE = /^(?:\/|.*\/)build\/([^/\s]+)\/(main|serve)\/index\.(?:mjs|js)$/;
@@ -58,9 +44,11 @@ const ENTRY_RE = /^(?:\/|.*\/)build\/([^/\s]+)\/(main|serve)\/index\.(?:mjs|js)$
  * 从命令行里挑出实例入口。
  * 判据 = **某个 token 本身是入口产物路径**（不是「命令行里出现过这个词」）——
  * `node …/cli/index.js` 里出现的 `index.js` 不匹配（它不是 `main|serve/index.js`）。
+ * token 两侧的引号（Windows CommandLine 会保留）先剥掉；分隔符统一成正斜杠。
  */
 export function instanceEntryOf(command: string): { entry: string; variant: string | null; kind: "electron" | "serve" } | null {
-  for (const tok of command.split(/\s+/)) {
+  for (const raw of command.split(/\s+/)) {
+    const tok = raw.replace(/^"+|"+$/g, "").replace(/\\/g, "/");
     if (!tok.includes("/")) continue;
     const m = ENTRY_RE.exec(tok);
     if (!m) continue;

@@ -1,3 +1,6 @@
+project:
+  id: '1'
+  name: C:\Users\chen\git\diy\diy
 ref:
   source:
     - https://github.com/nodeca/js-yaml@4.1.1

@@ -7,7 +7,7 @@
 //   · oldText 默认必须唯一；replaceAll 才允许多处
 //   · 精确失败 → 字符归一重试，且结果里**如实说明**用了归一
 //   · 同文件并发串行（不丢更新）
-//   · 返回 unified patch；越界路径 fs/path-escape
+//   · 返回 unified patch（cwd 越界护栏已移除：越界路径照常放行）
 //
 // 无网络、无 LLM、无 Electron — 纯函数 + 临时目录
 // ═══════════════════════════════════════════════════════════════
@@ -170,7 +170,7 @@ describe("generateUnifiedPatch — patch 形状（真源在 core/unified-diff，
   });
 });
 
-describe("resolveEditablePath — 路径护栏（复用 write 的 resolveWritePath，##266 review2）", () => {
+describe("resolveEditablePath — 路径解析（复用 write 的 resolveWritePath，##266 review2；越界不拦）", () => {
   it("cwd 内已存在文件放行（返回 realpath）", () => {
     const sub = join(dir, "a");
     mkdirSync(sub, { recursive: true });
@@ -180,19 +180,21 @@ describe("resolveEditablePath — 路径护栏（复用 write 的 resolveWritePa
     expect(resolveEditablePath(dir, "a/b.txt")).toBe(realpathSync(target));
   });
 
-  it("越界路径 fs/path-escape", () => {
-    expectCode(() => resolveEditablePath(dir, "../outside.txt"), "fs/path-escape");
-    expectCode(() => resolveEditablePath(dir, "/etc/passwd"), "fs/path-escape");
+  it("越界路径不拦：cwd 外的已存在文件照解", () => {
+    const outFile = join(tmpdir(), `diy-edit-outside-${process.pid}.txt`);
+    writeFileSync(outFile, "x\n", "utf-8");
+    expect(resolveEditablePath(dir, `../${outFile.slice(tmpdir().length + 1)}`)).toBe(realpathSync(outFile));
+    expect(resolveEditablePath(dir, outFile)).toBe(realpathSync(outFile));
   });
 
-  it("cwd 内的软链指向外部：fs/path-escape（不只做字符串前缀判断）", () => {
+  it("cwd 内的软链指向外部：不拦，返回软链解析后的真实路径", () => {
     const link = join(dir, "escape-link");
     try {
       symlinkSync("/etc", link);
     } catch {
       return; // 无权限建软链（少见）：跳过，别把环境问题当断言失败
     }
-    expectCode(() => resolveEditablePath(dir, "escape-link/passwd"), "fs/path-escape");
+    expect(resolveEditablePath(dir, "escape-link/passwd")).toBe(realpathSync("/etc/passwd"));
   });
 
   it("目标不存在：fs/not-a-file（edit 不允许新建，那是 write 的事）", () => {
@@ -210,7 +212,7 @@ describe("resolveEditablePath — 路径护栏（复用 write 的 resolveWritePa
   });
 
   it("错误类同源：EditError 是 FileWriteError 的子类（上层一次 catch 接得住）", () => {
-    const err = expectCode(() => resolveEditablePath(dir, "../outside.txt"), "fs/path-escape");
+    const err = expectCode(() => resolveEditablePath(dir, "not-there.txt"), "fs/not-a-file");
     expect(err).toBeInstanceOf(FileWriteError);
   });
 });

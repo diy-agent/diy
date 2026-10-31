@@ -8,6 +8,7 @@
 // 用法（每个会 import 能力包的 vitest 配置里）：
 //   import { workspaceAliases } from "../vitest.alias";
 //   resolve: { alias: [...workspaceAliases] }
+import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -66,18 +67,55 @@ const SUBPATH_SOURCES: Record<string, string> = {
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** 裸包名与子路径都指回源码（子路径 `$1` 不带扩展名，由 vite 按 extensions 补 .ts） */
+/**
+ * 子路径别名优先取 package.json 的 `exports["types"]`：
+ * 各包导出布局并不统一（`@diy-agent/rpc/http` 在 `src/transport/http/index.ts`，
+ * `@diy-agent/compaction/compaction` 在 `src/compaction.ts`），按目录硬套 `src/<sub>` 会漏。
+ */
+function exportAliases(name: string, dir: string): Array<{ find: RegExp; replacement: string }> {
+    const abs = resolve(REPO, dir);
+    let exports: Record<string, unknown> = {};
+    try {
+        exports = (JSON.parse(readFileSync(resolve(abs, "package.json"), "utf8")) as { exports?: Record<string, unknown> })
+            .exports ?? {};
+    } catch {
+        return [];
+    }
+    const out: Array<{ find: RegExp; replacement: string }> = [];
+    for (const [key, value] of Object.entries(exports)) {
+        if (key === ".") continue;
+        const target = typeof value === "string" ? value : (value as { types?: unknown } | null)?.types;
+        if (typeof target !== "string" || !target.endsWith(".ts")) continue;
+        const rel = target.replace(/^\.\//, "");
+        if (key.includes("*")) {
+            // `./*` → `./src/*.ts`：把 `*` 换成正则捕获 `$1`
+            out.push({ find: new RegExp(`^${esc(name)}/(.*)$`), replacement: resolve(abs, rel).replace(/\*/g, "$1") });
+        } else {
+            out.push({ find: new RegExp(`^${esc(name)}/${esc(key.replace(/^\.\//, ""))}$`), replacement: resolve(abs, rel) });
+        }
+    }
+    return out;
+}
+
+/**
+ * 裸包名与子路径都指回源码（子路径 `$1` 不带扩展名，由 vite 按 extensions 补 .ts）。
+ *
+ * 优先级（高 → 低）——合并时的两边**都要**（各自解决真问题）：
+ *   ① `SUBPATH_SOURCES` 精确匹配：子路径不镜像 `src/` 的包（如 `@diy-agent/remote/node`）；
+ *   ② 裸包名 → 包入口；
+ *   ③ `exports["types"]` 驱动的精确子路径（见 `exportAliases`，解决非镜像布局）；
+ *   ④ 兜底：`<包>/<其后>` → 入口同级目录下的 `<其后>`。
+ */
 export const workspaceAliases = [
-    // ① 子路径不镜像 src 的包：精确匹配，优先级最高
     ...Object.entries(SUBPATH_SOURCES).map(([name, file]) => ({
         find: new RegExp(`^${esc(name)}$`),
         replacement: resolve(REPO, file),
     })),
-    // ② 通用规则：裸包名 → src 入口；子路径 → src/<子路径>
     ...Object.entries(LOCATIONS).flatMap(([name, { dir, entry }]) => {
     const abs = resolve(REPO, dir);
     return [
         { find: new RegExp(`^${esc(name)}$`), replacement: resolve(abs, entry) },
+        ...exportAliases(name, dir),
         { find: new RegExp(`^${esc(name)}/(.*)$`), replacement: `${resolve(abs, dirname(entry))}/$1` },
     ];
     }),

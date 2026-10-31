@@ -156,10 +156,10 @@ describe("能唤起吗：先给判据，再让按钮说话", () => {
     expect(r.reason).toContain("目标实例自己");
   });
 
-  it("无端口但有窗口（electron）→ 允许，但说明要走 osascript 降级", () => {
+  it("无端口但有窗口（electron）→ 允许，但说明要走系统级降级", () => {
     const r = focusReadiness(row({ port: null, status: "no-port" }));
     expect(r.ok).toBe(true);
-    expect(r.reason).toContain("osascript");
+    expect(r.reason).toContain("系统级唤起");
   });
 
   it("无端口且不是 Electron（serve 源码跑）→ 不可唤起并说清原因", () => {

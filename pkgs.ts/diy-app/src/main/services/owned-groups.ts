@@ -16,20 +16,17 @@ import type { GroupOwner } from "../../shared/proc-scan";
 import { uptime } from "node:os";
 import { dirname, join } from "node:path";
 import { readRuntimeConfig } from "../../runtime";
+import { os } from "../os";
 
 /**
- * 组里还有没有活口（信号 0：**同步且不起进程**，比 `ps` 便宜一个数量级）。
+ * 组里还有没有活口（POSIX 走信号 0：**同步且不起进程**，比 `ps` 便宜一个数量级；
+ * Windows 退化成判根进程，见 os/jobAlive）。
  *
  * `EPERM` 也算活着：组里确实有进程，只是不归我们发信号。
  */
 export function aliveGroup(pgid: number): boolean {
     if (!Number.isInteger(pgid) || pgid <= 0) return false;
-    try {
-        process.kill(-pgid, 0);
-        return true;
-    } catch (e) {
-        return (e as NodeJS.ErrnoException).code === "EPERM";
-    }
+    return os.jobAlive(pgid);
 }
 
 /** 名册上限：一次会话里起过的组不该无界（超了先丢没活口的，再丢最老的）。 */
@@ -89,6 +86,7 @@ export function applyLoaded(map: Map<number, GroupOwner>, raw: unknown, bootAt?:
         if (bootAt !== undefined && at < bootAt - BOOT_SKEW_MS) continue;
         map.set(pgid, {
             at,
+            createdAt: typeof (o as { createdAt?: unknown }).createdAt === "number" ? (o as { createdAt: number }).createdAt : at,
             command: o.command,
             cwd: typeof o.cwd === "string" ? o.cwd : "",
             ...(typeof o.runId === "string" ? { runId: o.runId } : {}),
@@ -204,13 +202,18 @@ export class OwnedGroups {
                 exist.runId = owner.runId;
                 patched = true;
             }
+            if (exist.createdAt == null) {
+                exist.createdAt = owner.createdAt ?? owner.at;
+                patched = true;
+            }
             if (patched) {
                 this.map.set(pgid, exist);
                 this.save();
             }
             return;
         }
-        this.map.set(pgid, owner);
+        // 根进程就在 `at` 前后创建；用它当 createdAt 代理（身份判据：复用者的创建时刻会显著不同）。
+        this.map.set(pgid, { ...owner, createdAt: owner.createdAt ?? owner.at });
         this.prune();
         this.save();
     }

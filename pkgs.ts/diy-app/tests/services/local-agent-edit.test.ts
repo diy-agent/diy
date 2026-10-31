@@ -6,7 +6,7 @@
 //   · 注册名 / 参数名 = edit(path, edits[])
 //   · 成功返回「摘要 + unified patch」，并真的写盘
 //   · 失败**抛**（→ SDK 发 tool-error → status:"error"，不能 return 失败字符串）
-//   · 越界路径由工具层拦成 fs/path-escape
+//   · 越界路径不再拦（cwd 越界护栏已移除）：写入照常落到 cwd 之外
 //   · 审计留痕（file-edit-start / file-edit-end）
 //
 // 无网络、无 LLM、无 Electron
@@ -61,14 +61,12 @@ describe("edit 工具 — 装配层契约", () => {
         expect(readFileSync(p, "utf-8")).toBe("x\n");
     });
 
-    it("越界路径：fs/path-escape", async () => {
+    it("越界路径：不拦，照常改到 cwd 之外", async () => {
         const outside = join(outsideDir, "secret.txt");
         writeFileSync(outside, "secret\n", "utf-8");
         const tools = buildTools(workDir, limits, "test/task") as any;
-        await expect(
-            tools.edit.execute({ path: outside, edits: [{ oldText: "secret", newText: "x" }] }),
-        ).rejects.toMatchObject({ code: "fs/path-escape" });
-        expect(readFileSync(outside, "utf-8")).toBe("secret\n");
+        await tools.edit.execute({ path: outside, edits: [{ oldText: "secret", newText: "x" }] });
+        expect(readFileSync(outside, "utf-8")).toBe("x\n");
     });
 
     it("审计：写前 / 写后各一条（带路径）", async () => {

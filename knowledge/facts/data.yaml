@@ -38,7 +38,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/git/AGENTS.md:11
       verifiedAt: '2026-10-22'
   data#local:
     value: |-
@@ -93,5 +92,4 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/git/AGENTS.md:12
       verifiedAt: '2026-10-22'

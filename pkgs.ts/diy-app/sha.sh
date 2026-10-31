@@ -90,9 +90,10 @@ build() {
 # 生成 runtime/：打包后主进程用 createRequire 按名字解析 @diy-agent/*（##455）
 build-runtime() { run node scripts/build-runtime.mjs; }
 
-# 本包全部测试：快速单测 → 构建 → 意图测试（起隔离 Electron，慢）
+# 本包全部测试：OS 无关单测 → OS 策略单测 → 构建 → 意图测试（起隔离 Electron，慢）
 test() {
   test-unit
+  test-os
   # 按前缀全收 tests/cli.intent.*：不点名文件，新增用例自动纳入
   test-intent
 }
@@ -105,9 +106,17 @@ test() {
 # 会同时命中 intent 文件，那份默认必须留给它。
 # `--no-isolate`（##402）：每个 worker 共享一份模块图，省掉**每文件**的
 # transform + setup + import 固定成本（实测占单文件工作量 ~71%：834ms 里 tests 只 344ms）。
-# 前提是**没有 vi.mock**（它改全局模块表，isolate:false 下会静默失效）——
-# `rg -l 'vi\.mock\(' tests --glob '*.test.ts'` 必须是 0 命中（tests/ 下有护栏注释说明替代注入法）。
-test-unit() { run npx vitest run --exclude '**/cli.intent*' --fileParallelism --no-isolate; }
+# 前提是**没有 vi.mock**（它改全局模块表，isolate:false 下会静默失效）；
+# `rg -l 'vi\.mock\(' tests --glob '*.test.ts'` 必须是 0 命中（替代写法 = 注入 / 手写假对象 / server.deps.inline alias）。
+#
+# **测试集合边界（2026-10-31 用户口径）**：
+#   · tests/core、tests/services … = **OS 无关**：不许出现 ps/PowerShell/taskkill/osascript 文本格式；
+#   · tests/os/**               = **OS 相关**：按 posix / win32 策略分目录，命令执行可注入，
+#                                  所以任意平台都能跑（真集成才按平台 skipIf）。
+test-unit() {
+  run npx vitest run --exclude '**/cli.intent*' --exclude '**/tests/os/**' --fileParallelism --no-isolate
+}
+test-os() { run npx vitest run tests/os --no-file-parallelism --no-isolate; }
 
 ####################################################################################
 # 子项目自己的命令（原 package.json scripts）

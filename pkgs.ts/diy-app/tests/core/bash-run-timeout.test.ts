@@ -36,7 +36,9 @@ function splitHead(text: string): { head: Record<string, string>; body: string }
     for (const line of text.slice(4, end).split("\n")) {
         const i = line.indexOf(": ");
         expect(i, `头部行不是 key: value 形状：${line}`).toBeGreaterThan(0);
-        head[line.slice(0, i)] = line.slice(i + 2);
+        const raw = line.slice(i + 2);
+        // YAML 双引号标量（Windows 的 cwd 含反斜杠 ⇒ 渲染层会加引号转义）按 JSON 反转义
+        head[line.slice(0, i)] = /^".*"$/.test(raw) ? (JSON.parse(raw) as string) : raw;
     }
     return { head, body: text.slice(end + 5) };
 }
@@ -106,7 +108,8 @@ describe("runBash 的收尾（##419）", () => {
         expect(run.outcome).toBe("timeout");
     });
 
-    it("④ 后台作业持管道（离开进程组）时按超时返回，不永挂", async () => {
+    // POSIX::setsid 在 Windows 上不存在（Git Bash 的 perl 里 setsid 不可用）⇒ 造不出「脱离进程组的孙进程」
+    it.skipIf(process.platform === "win32")("④ 后台作业持管道（离开进程组）时按超时返回，不永挂", async () => {
         const t0 = Date.now();
         // POSIX::setsid：孙进程换 session/pgid ⇒ killProcessGroup 打空、且它继承着 stdout 管道
         const cmd = `perl -e 'use POSIX; POSIX::setsid(); sleep 20' & echo started`;

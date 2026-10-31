@@ -2821,7 +2821,7 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
             唤起指定实例（窗口前置 + 全屏）
 
             主路 = 让目标实例**自己** show+focus+setFullScreen（RPC，确定且无需系统权限）；
-            RPC 不可用（无端口 / 无响应）时降级 osascript（需 Automation 权限，可能弹窗）。
+            RPC 不可用（无端口 / 无响应）时降级到**系统级唤起**（平台支持时才可用；macOS 上需 Automation 权限，可能弹窗）。
             两路都失败即报错 —— 不静默吞。
             `,
             input: {
@@ -2831,7 +2831,7 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
             output: z.object({
               pid: z.number().nullable(),
               port: z.number().nullable(),
-              via: z.string().describe("rpc（目标实例自己唤起）| osascript（系统级降级）"),
+              via: z.string().describe("rpc（目标实例自己唤起）| system（系统级降级）"),
               reason: z.string(),
             }),
           }),

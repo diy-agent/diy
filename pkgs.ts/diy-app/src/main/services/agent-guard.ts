@@ -21,7 +21,7 @@
 //
 // 本文件只放纯逻辑 + 一次 ps 采样，便于单测。
 
-import { execFileSync } from "node:child_process";
+import { os } from "../os";
 
 export interface SelfProcessInfo {
   /** 自身 pid */
@@ -195,19 +195,6 @@ export function judgeSelfKill(command: string, self: SelfProcessInfo): KillVerdi
   return PASS;
 }
 
-interface PsRow {
-  pid: number;
-  ppid: number;
-  pgid: number;
-  command: string;
-}
-
-function parsePsLine(line: string): PsRow | null {
-  const m = line.match(/^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.*)$/);
-  if (!m) return null;
-  return { pid: Number(m[1]), ppid: Number(m[2]), pgid: Number(m[3]), command: m[4] ?? "" };
-}
-
 // ⚠️ 已知精度问题（2026-09-16 实测复现，先留痕，暂不改判定）：
 //   `pids` 是「保守超集」，有两类判据会把**并非同生共死**的进程也算进来，造成误拦：
 //   a) 同 pgid：agent 起的任何进程都继承宿主 main 的进程组（实测新起的隔离实例
@@ -238,32 +225,22 @@ function parsePsLine(line: string): PsRow | null {
  *   c) 同进程组             —— kill -<pgid> 会波及
  *   d) diy 进程全家         —— 命令行提到 DIY_HOME / main/index.mjs 的（crashpad 的 ppid 是 1，靠这条兜住）
  */
-export function collectSelfInfo(home: string): SelfProcessInfo | null {
+export function collectSelfInfo(_home: string): SelfProcessInfo | null {
   try {
-    const raw = execFileSync("ps", ["-eo", "pid=,ppid=,pgid=,command="], {
-      encoding: "utf-8",
-      maxBuffer: 16 * 1024 * 1024,
-    });
-    const rows = raw.split("\n").map(parsePsLine).filter((r): r is PsRow => r !== null);
-    const byPid = new Map(rows.map((r) => [r.pid, r]));
-
+    // R9：只查**自己祖先链**（4 次单 pid），不拉全机快照。
+    // 直接子进程 / 同组不再枚举（guard 当前没有调用点；真要用再按需补窄查询）。
     const pids = new Set<number>([process.pid]);
-    let cur = byPid.get(process.pid);
-    while (cur && cur.ppid > 1) {
-      pids.add(cur.ppid);
-      cur = byPid.get(cur.ppid);
+    const cmdlines: string[] = [process.argv.join(" ").toLowerCase(), process.execPath.toLowerCase()];
+    let cur = process.ppid;
+    for (let i = 0; i < 4 && cur > 1; i++) {
+      const hop = os.hopSync(cur);
+      if (!hop) break;
+      pids.add(hop.pid);
+      cmdlines.push(hop.command.toLowerCase());
+      if (hop.ppid === cur) break;
+      cur = hop.ppid;
     }
-    const pgid = byPid.get(process.pid)?.pgid ?? process.pid;
-    const markers = [home, `${home}/electron_user_data`, "main/index.mjs"];
-    for (const r of rows) {
-      if (r.pgid === pgid) pids.add(r.pid);
-      if (r.ppid === process.pid) pids.add(r.pid);
-      if (markers.some((m) => m && r.command.includes(m))) pids.add(r.pid);
-    }
-
-    const cmdlines = rows.filter((r) => pids.has(r.pid)).map((r) => r.command.toLowerCase());
-    cmdlines.push(process.argv.join(" ").toLowerCase(), process.execPath.toLowerCase());
-    return { pid: process.pid, pgid, pids, cmdlines };
+    return { pid: process.pid, pgid: process.pid, pids, cmdlines };
   } catch {
     return null;
   }

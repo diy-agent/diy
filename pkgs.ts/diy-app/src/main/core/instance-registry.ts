@@ -16,11 +16,11 @@
 //   （SIGKILL / 崩溃 / 测试 harness 的 SIGTERM）：故读取侧一律按 **pid 是否存活**过滤，
 //   并把死条目顺手删掉 —— 「关掉一个实例下次就不再出现」靠的是这条，不是退出钩子。
 
-import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { writeFileAtomic } from "./atomic-write";
 import { realHomeDir } from "./instance-identity";
+import { os } from "../os";
 
 /** 启动时快照的一跳父进程（`parents[0]` = 直接父亲） */
 export interface ParentHop {
@@ -104,12 +104,13 @@ export function parseRecord(raw: unknown): InstanceRecord | null {
 
 /** pid 是否活着。EPERM = 有那个进程但没权限发信号 ⇒ **活着**（不能当死处理） */
 export function isPidAlive(pid: number): boolean {
-  if (!Number.isFinite(pid) || pid <= 0) return false;
+  if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
+    // 0 信号是 Node 的跨平台存在性检查（不是系统命令）
     process.kill(pid, 0);
     return true;
   } catch (e) {
-    return (e as NodeJS.ErrnoException)?.code === "EPERM";
+    return (e as NodeJS.ErrnoException).code === "EPERM";
   }
 }
 
@@ -182,22 +183,11 @@ export function readRecords(dir: string, alive: (pid: number) => boolean = isPid
 /** 父进程链最多快照几跳（祖先再多也没有信息量，且每跳多一次 ps） */
 export const PARENT_DEPTH = 4;
 
-/** 跑一次 `ps -p <pid> -o pid=,ppid=,command=`；失败/进程已退 → null */
-export function psHop(pid: number): { hop: ParentHop; ppid: number } | null {
+/** 取一个进程的一跳（策略层实现：POSIX 跑 ps、Windows 查 CIM） */
+export function processHop(pid: number): { hop: ParentHop; ppid: number } | null {
   if (!Number.isFinite(pid) || pid <= 1) return null;
-  try {
-    const out = execFileSync("ps", ["-p", String(pid), "-o", "pid=,ppid=,command="], {
-      encoding: "utf-8",
-      timeout: 2000,
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    if (!out) return null;
-    const m = /^(\d+)\s+(\d+)\s+(.*)$/.exec(out);
-    if (!m) return null;
-    return { hop: { pid: Number(m[1]), command: (m[3] ?? "").trim() }, ppid: Number(m[2]) };
-  } catch {
-    return null;
-  }
+  const got = os.hopSync(pid);
+  return got ? { hop: { pid: got.pid, command: got.command }, ppid: got.ppid } : null;
 }
 
 /**
@@ -208,7 +198,7 @@ export function psHop(pid: number): { hop: ParentHop; ppid: number } | null {
  */
 export function snapshotParents(
   ppid: number = process.ppid,
-  lookup: (pid: number) => { hop: ParentHop; ppid: number } | null = psHop,
+  lookup: (pid: number) => { hop: ParentHop; ppid: number } | null = processHop,
   depth: number = PARENT_DEPTH,
 ): ParentHop[] {
   const out: ParentHop[] = [];

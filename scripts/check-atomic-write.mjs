@@ -80,7 +80,9 @@ function nthArg(masked, openIdx, closeIdx, n = 0) {
 /** 扫描一份源码，返回违规调用 [{ line, name, snippet }] */
 export function scanSource(src, file = "<fixture>") {
   const masked = maskNonCode(src);
-  const lines = src.split("\n");
+  // 行尾统一去掉 `\r`：仓库文件在 Windows 上是 CRLF，而 `ANNOTATION` 的 `(.*)$` 里
+  // `.` 不匹配 `\r` ⇒ 不归一化会让所有「同行/上一行的 non-atomic-ok」在 Windows 上**静默失效**。
+  const lines = src.split(/\r?\n/);
   // 临时文件变量：`const tmp = p + ".tmp"` / `const tmp = `${p}.tmp-${pid}``
   const tempVars = new Set();
   for (const tm of src.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([^;\n]+)/g)) {

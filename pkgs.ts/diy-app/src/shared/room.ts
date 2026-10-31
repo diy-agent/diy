@@ -25,9 +25,37 @@ import { z } from "zod";
  * room id 允许的字符。
  *
  * **含 `:`** —— ##166 §31 待拍 82/85 拍板侧边栏 room 的 id 是
- * `agent:room:ui/sidebar-<实例>`（id 直接当落盘目录名，实测 macOS 可建含冒号目录）。
+ * `agent:room:ui/sidebar-<实例>`。
+ *
+ * ⚠️ id **不是**目录名：`:` 在 Windows 上是 NTFS 的 ADS 分隔符（`mkdir` 直接 ENOENT，
+ * 写文件会**静默写进不可见的流**）⇒ 落盘一律过 {@link roomDirName}。
+ * 2026-10-31 的 6789 个影子任务就是这么来的：目录建不出来 → 房间读不回 → 每次重试新建一个任务。
  */
 export const ROOM_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_:./-]*$/;
+
+/** 目录名里**原样保留**的字符；其余一律百分号编码（`/` 保留 ⇒ 任务 room 仍是嵌套目录，不迁移）。 */
+const DIR_SAFE_CHAR = /^[A-Za-z0-9._/-]$/;
+
+/**
+ * room id → 落盘目录名（**路径安全、可逆**）。
+ *
+ * 只编码不安全字符（冒号、空格、中文…）：安全字符原样，`%` 自身编成 `%25`。
+ * `/` 保留 ⇒ 任务 room（id = taskUri）仍是 `rooms/projects/1/tasks/1/`，老数据零迁移。
+ */
+export function roomDirName(id: string): string {
+  let out = "";
+  for (const ch of id) out += DIR_SAFE_CHAR.test(ch) ? ch : encodeURIComponent(ch);
+  return out;
+}
+
+/** 目录名 → room id（`%` 后不是合法转义序列 ⇒ 当老的原样目录名，原样返回）。 */
+export function roomIdFromDirName(name: string): string {
+  try {
+    return decodeURIComponent(name);
+  } catch {
+    return name;
+  }
+}
 
 /** 房间 id 是否安全（同时是**目录名**判据：不许 `..` / 不许结尾 `/`） */
 export function isValidRoomId(id: string): boolean {

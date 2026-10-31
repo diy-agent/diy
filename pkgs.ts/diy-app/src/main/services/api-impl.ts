@@ -51,7 +51,7 @@ import { runRegistry } from "./run-registry";
 import { foregroundBash } from "./foreground-bash";
 import { scanOwnedProcs, groupOwnerOf, killOwnedProc } from "./process-scan";
 import { procRowOf, runViewOf } from "../../shared/run-view";
-import { parseEtime } from "./process-sampler";
+import { parseEtime } from "../os/duration";
 import { stateLabel } from "../../shared/run-status";
 import { fenceTaskOwner } from "../../shared/job-fence";
 
@@ -1210,7 +1210,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     // —— 实测症状：`diy job ps` 永远 `scanOk:false`、看不见 `nohup xxx &` 起的孤儿。
     const scan = input.noScan === true ? null : await scanOwnedProcs({ runPids: runRegistry.pidMap() });
     const procRows = (scan?.procs ?? []).map((p) =>
-        procRowOf(p, parseEtime(p.etimeText), groupOwnerOf(p.pgid)),
+        procRowOf(p, parseEtime(p.etimeText), groupOwnerOf(p.anchorPid ?? p.pgid)),
     );
     const byRun: Record<string, typeof procRows> = {};
     for (const row of procRows) if (row.runId) (byRun[row.runId] ??= []).push(row);
@@ -1228,6 +1228,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
         total: all.length,
         scanAt: scan?.at ?? null,
         scanOk: scan?.ok ?? false,
+        /** R10：平台能力/寿命差异的事实句（Windows 明说「寿命跟根进程」） */
+        facts: scan?.facts ?? [],
       },
     };
   });
@@ -1252,7 +1254,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
       data: {
         at: scan.at,
         ok: scan.ok,
-        procs: scan.procs.map((p) => procRowOf(p, parseEtime(p.etimeText), groupOwnerOf(p.pgid))),
+        facts: scan.facts,
+        procs: scan.procs.map((p) => procRowOf(p, parseEtime(p.etimeText), groupOwnerOf(p.anchorPid ?? p.pgid))),
       },
     };
   });
@@ -1265,10 +1268,11 @@ export function bindAppHandlers(binding: ServerBinding): void {
     }
     // 归属闸（`shared/job-fence.ts`）：声明必须与我们记下的归属一致。
     // 组名册是首选（野进程只有它有记录）；登记过的 run 再退到它的 origin。
-    const owner = groupOwnerOf(hit.pgid)?.taskUri ?? (hit.runId ? runRegistry.get(hit.runId)?.origin?.taskUri : undefined);
+    const owner = groupOwnerOf(hit.anchorPid ?? hit.pgid)?.taskUri ?? (hit.runId ? runRegistry.get(hit.runId)?.origin?.taskUri : undefined);
     const fence = fenceTaskOwner(input.taskUri, owner ?? null, `进程 ${hit.pid}`);
     if (!fence.ok) return { status: "error", msg: fence.msg };
-    const ok = killOwnedProc(hit, scan.selfPgid);
+    const ok = killOwnedProc(hit);
+    // ok = 「结束请求已发出」（Windows 的 taskkill 是异步的，不承诺此刻已死）
     return { status: "ok", data: { ok, pid: hit.pid, pgid: hit.pgid } };
   });
   binding.on(app.job.kill, async ({ input }) => {

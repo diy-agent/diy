@@ -131,10 +131,10 @@ export function focusReadiness(row: InstanceRow): { ok: boolean; reason: string 
     return { ok: false, reason: "该实例没有 RPC 端口，也不是 Electron（没有窗口可唤起）" };
   }
   if (row.port === null) {
-    return { ok: true, reason: "无 RPC 端口 → 只能走 osascript 系统级唤起（需要自动化权限，可能弹系统授权窗）" };
+    return { ok: true, reason: "无 RPC 端口 → 只能走系统级唤起（平台支持时才可用；macOS 需要自动化权限，可能弹系统授权窗）" };
   }
   if (row.status !== "ready") {
-    return { ok: true, reason: `RPC 未答话（status=${row.status}）→ 多半会降级到 osascript，可能失败` };
+    return { ok: true, reason: `RPC 未答话（status=${row.status}）→ 多半会降级到系统级唤起，可能失败` };
   }
   if (row.window?.fullScreen) {
     return { ok: true, reason: "目标窗口当前已是全屏 —— 唤起只会把它前置" };

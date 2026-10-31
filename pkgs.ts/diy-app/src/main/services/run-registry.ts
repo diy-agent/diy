@@ -44,6 +44,9 @@ import { join } from "node:path";
 import { readRuntimeConfig } from "../../runtime";
 import { jobDoneNotify, MAX_TAIL_BYTES, tailOf, type RunLike, type TailResult } from "../../shared/run-status";
 import type { NotifyItem } from "@diy-agent/context/envelope";
+import { os } from "../os";
+import { noShellHint } from "../os/shell-hint";
+import { buildInvocation, preferredShell, shellSpecs } from "../os/shell";
 
 /** run 的来源锚点：哪一轮、哪一步、哪个工具调用起的（`toolCallId` 是定位键）。 */
 export interface RunOrigin {
@@ -135,6 +138,8 @@ export interface RunRegistryOptions {
     probeGroup?: (pgid: number) => boolean;
     /** 组探活间隔（ms）；只在「根已退出、组里还有活口」期间跑，组空即停 */
     reapMs?: number;
+    /** 内存表上限（缺省 `MAX_RUNS`；测试注入小值，避免真起数百个进程） */
+    maxRuns?: number;
 }
 
 /** 根进程的退出信息：组空之前先存着，收口时才用。 */
@@ -148,17 +153,13 @@ interface PendingExit {
 /**
  * 进程组里还有活口吗？
  *
- * 用 `kill(-pgid, 0)` 只发信号 0（存在性检查），**不起进程**（比每次都 `ps` 便宜一个数量级）。
+ * POSIX：`kill(-pgid, 0)` 只发信号 0（存在性检查），**不起进程**（比每次都 `ps` 便宜一个数量级）。
+ * Windows：没有进程组语义，退化成判**根进程**存活（`os.jobAlive`；边界见那里）。
  * `EPERM` 也算活着：组里确实有进程，只是不归我们发信号。
  */
 export function groupAlive(pgid: number): boolean {
     if (!Number.isInteger(pgid) || pgid <= 0) return false;
-    try {
-        process.kill(-pgid, 0);
-        return true;
-    } catch (e) {
-        return (e as NodeJS.ErrnoException).code === "EPERM";
-    }
+    return os.jobAlive(pgid);
 }
 
 /**
@@ -233,6 +234,7 @@ export class RunRegistry {
     private readonly rootDir: string;
     private readonly now: () => number;
     private readonly probeGroup: (pgid: number) => boolean;
+    private readonly maxRuns: number;
     private readonly reapMs: number;
     private reapTimer?: ReturnType<typeof setTimeout>;
     /** 后台显式 timeout 的定时器（到点整组 SIGTERM；收口即清） */
@@ -260,6 +262,7 @@ export class RunRegistry {
         this.rootDir = opts.rootDir ?? runRoot();
         this.now = opts.now ?? Date.now;
         this.probeGroup = opts.probeGroup ?? groupAlive;
+        this.maxRuns = opts.maxRuns ?? MAX_RUNS;
         this.reapMs = opts.reapMs ?? 1000;
         this.notifier = opts.notifier;
         // 垃圾回收不挡启动：自有 Promise，失败静默（见 `pruneOldDirs`）
@@ -299,6 +302,15 @@ export class RunRegistry {
         // meta.json 写在 spawn **之前**：起不来的那条也要留下「我起过什么」。
         await this.writeMeta(info);
 
+        // shell 解析由 OS 策略给（见 main/os/），同步且缓存。
+        // 放在 spawn 之前是硬要求：spawn 之后任何 await 都会让 `spawn` / `error` 事件抢先发。
+        const shells = shellSpecs();
+        const shell = preferredShell();
+        if (shell.missing) {
+            this.settle(id, { exitCode: null, signal: null, errorText: noShellHint(shells) });
+            return this.runs.get(id) ?? info;
+        }
+
         let child: ChildProcess;
         // ⚠️ 挂监听的时机是有讲究的（改异步 IO 时踩过一次，别再犯）：
         //   `spawn` / `error` 是**下一个 tick** 才发的一次性事件。只要 `spawn()` 之后夹了
@@ -307,18 +319,39 @@ export class RunRegistry {
         //   卡满 60s 超时）。所以**紧贴 spawn 同步挂监听**，别的 await 一律排在后面。
         let opened: Promise<{ ok: boolean; error?: string }>;
         try {
-            // stdio 必须传 fd，所以这里得先 `await open`（异步打开，不阻塞主进程）
-            const fh = await open(logPath, "a");
-            try {
-                child = spawn("/bin/bash", ["-c", input.command], {
+            if (os.caps.shellRedirectsLog) {
+                // Windows 上不能把父进程的 fd 直接当子进程 stdio：Git Bash（MSYS 运行时）拿到
+                // Node 传进来的文件句柄后**静默丢弃输出**（实测：`bash --version` 退出码 0、
+                // 日志为空）。改为让 bash 自己重定向（`exec >> log 2>&1`），stdio 全 ignore ——
+                // 既绕开句柄问题，也仍然是「直落文件、不走管道」，`close` 语义不变。
+                const fh = await open(logPath, "a");
+                await fh.close();
+                const inv = buildInvocation(shell, input.command, logPath);
+                child = spawn(inv.file, inv.args, {
                     cwd: input.cwd,
-                    detached: true,
-                    stdio: ["ignore", fh.fd, fh.fd],
+                    // Windows 的 CREATE_NEW_PROCESS_GROUP 会让 PowerShell 丢管道/重定向；杀树走
+                    // taskkill /T，不依赖进程组 ⇒ 按能力位决定（POSIX 仍需 detached 来按组收孤儿）。
+                    detached: os.caps.processGroups,
+                    stdio: ["ignore", "ignore", "ignore"],
+                    windowsHide: true,
                 });
                 opened = awaitOpened(child);
-            } finally {
-                // 子进程已 dup 走自己的那份，父进程这条句柄立刻还回去
-                await fh.close();
+            } else {
+                // stdio 必须传 fd，所以这里得先 `await open`（异步打开，不阻塞主进程）
+                const fh = await open(logPath, "a");
+                try {
+                    const inv = buildInvocation(shell, input.command);
+                    child = spawn(inv.file, inv.args, {
+                        cwd: input.cwd,
+                        detached: true,
+                        stdio: ["ignore", fh.fd, fh.fd],
+                        windowsHide: true,
+                    });
+                    opened = awaitOpened(child);
+                } finally {
+                    // 子进程已 dup 走自己的那份，父进程这条句柄立刻还回去
+                    await fh.close();
+                }
             }
         } catch (e) {
             this.settle(id, { exitCode: null, signal: null, errorText: e instanceof Error ? e.message : String(e) });
@@ -360,6 +393,11 @@ export class RunRegistry {
             const info = this.runs.get(id);
             if (!info || info.state !== "running" || info.pid === undefined) return;
             this.killedByUs.add(id);
+            if (!os.caps.gracefulSignals) {
+                // 无 SIGTERM 语义（Windows）：直接强杀，别排一个必然打空的宽限定时器
+                this.signalGroup(info.pid, "SIGKILL");
+                return;
+            }
             this.signalGroup(info.pid, "SIGTERM");
             const grace = setTimeout(() => {
                 if (this.runs.get(id)?.state === "running") this.signalGroup(info.pid as number, "SIGKILL");
@@ -372,12 +410,12 @@ export class RunRegistry {
 
     /** 淘汰最老的**已结束** run（运行中的永不淘汰）；只清内存，不动盘上产物。 */
     private evictOld(): void {
-        if (this.runs.size <= MAX_RUNS) return;
+        if (this.runs.size <= this.maxRuns) return;
         const ended = [...this.runs.values()]
             .filter((r) => r.state !== "running")
             .sort((a, b) => a.startedAt - b.startedAt);
         for (const r of ended) {
-            if (this.runs.size <= MAX_RUNS) break;
+            if (this.runs.size <= this.maxRuns) break;
             this.runs.delete(r.id);
         }
     }
@@ -459,7 +497,8 @@ export class RunRegistry {
     }
 
     /**
-     * 停止：先按**进程组**发 SIGTERM，`KILL_GRACE_MS` 后还在就 SIGKILL。
+     * 停止：有 SIGTERM 语义的平台先按**进程组**发 SIGTERM，`KILL_GRACE_MS` 后还在就 SIGKILL；
+     * 没有的平台（Windows）直接一次强杀（`caps.gracefulSignals`，别白等宽限期）。
      *
      * 没有 pid 的 run（**预留**的进程内任务形状）返回 false —— 那种 run 得由它自己
      * 的 cancel 收手，而 cancel 目前还不存在（见文件头：别把它当已实现）。
@@ -474,6 +513,10 @@ export class RunRegistry {
         const pid = info.pid;
         if (!pid) return false;
         this.killedByUs.add(id);
+        if (!os.caps.gracefulSignals) {
+            this.signalGroup(pid, "SIGKILL");
+            return true;
+        }
         this.signalGroup(pid, "SIGTERM");
         const timer = setTimeout(() => {
             if (this.runs.get(id)?.state === "running") this.signalGroup(pid, "SIGKILL");
@@ -504,9 +547,19 @@ export class RunRegistry {
      * 返回本应收掉的 run 条数（`0` = 本来就没在跑）。
      */
     async shutdown(opts: { graceMs?: number } = {}): Promise<number> {
-        const graceMs = opts.graceMs ?? KILL_GRACE_MS;
         const targets = [...this.runs.values()].filter((r) => r.state === "running");
         if (targets.length === 0) return 0;
+        if (!os.caps.gracefulSignals) {
+            // 无 SIGTERM 语义：一次强杀；taskkill 是异步的，给一个短的收口窗口即可
+            for (const info of targets) {
+                if (info.pid === undefined) continue;
+                this.killedByUs.add(info.id);
+                this.signalGroup(info.pid, "SIGKILL");
+            }
+            await this.awaitSettled(targets, 500);
+            return targets.length;
+        }
+        const graceMs = opts.graceMs ?? KILL_GRACE_MS;
         for (const info of targets) {
             if (info.pid === undefined) continue;
             this.killedByUs.add(info.id);
@@ -584,11 +637,8 @@ export class RunRegistry {
     }
 
     private signalGroup(pid: number, sig: NodeJS.Signals): void {
-        try {
-            process.kill(-pid, sig);
-        } catch {
-            // 组已空（全收完）或 pid 已回收：无可杀
-        }
+        // 平台差异（进程组 / taskkill）只在 os/ 里；这里只表达「收掉这棵由 pid 领头的树」
+        os.killOwned([{ pid }], sig);
     }
 
     /** `meta.json`：一条 run 的自述（**写一次就不再改**，终态不进这个文件）。 */

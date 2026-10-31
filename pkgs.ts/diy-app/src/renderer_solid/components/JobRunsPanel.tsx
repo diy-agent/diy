@@ -575,7 +575,7 @@ export function JobRunsPanel(props: { uri: string }) {
                                         <button
                                             class="btn btn-xs btn-warning shrink-0"
                                             data-job-kill-pid={(row() as { kind: "proc"; proc: ProcRow }).proc.pid}
-                                            data-tip="结束这条进程（按进程组；main 侧重扫 ps + 校验归属）"
+                                            data-tip="结束这条进程（按进程组；main 侧重扫 + 校验归属；Windows 上只保证『结束请求已发出』）"
                                             onClick={() => void stopProc((row() as { kind: "proc"; proc: ProcRow }).proc)}
                                         >
                                             结束进程
@@ -816,7 +816,7 @@ function ProcFields(props: { proc: ProcRow }) {
             <span class="font-mono">{props.proc.pid}</span>
             <span class="opacity-60">进程组</span>
             <span class="font-mono opacity-80">
-                {props.proc.pgid} · 父 {props.proc.ppid}
+                {props.proc.pgid ?? "—"} · 父 {props.proc.ppid}
             </span>
             <span class="opacity-60">已运行</span>
             <span class="opacity-80">{props.proc.elapsedText}</span>

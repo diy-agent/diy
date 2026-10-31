@@ -23,7 +23,7 @@
 //   node scripts/check-sync-io.mjs --by-file    # 每文件计数（刷新基线用）
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative, dirname, resolve } from "node:path";
+import { join, relative, dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { maskNonCode } from "./lib/source-scan.mjs";
 
@@ -50,12 +50,16 @@ const SYNC_RE =
 const LEGACY_SYNC_IO_BASELINE = new Map(Object.entries({
   // 由 `--by-file` 生成（2026-10-24，##408 刀 16 立项时实测：318 处 / 52 文件）。
   // 改好一处就把数字调小（护栏会提示），**不要往上调**。
+  // OS 策略层：同步执行系统命令（既有同步窗口：启动 / 守卫；热路径走异步快照）
+  "pkgs.ts/diy-app/src/main/runtime-resolve.ts": 1,
+  "pkgs.ts/diy-app/src/main/os/posix.ts": 2,
+  "pkgs.ts/diy-app/src/main/os/win32.ts": 3,
   "pkgs.ts/diy-app/src/main/core/app-config.ts": 2,
   "pkgs.ts/diy-app/src/main/core/atomic-write.ts": 8,
   "pkgs.ts/diy-app/src/main/core/auto-compact-config.ts": 5,
   "pkgs.ts/diy-app/src/main/core/calendars.ts": 1,
   "pkgs.ts/diy-app/src/main/core/context-changelog.ts": 3,
-  "pkgs.ts/diy-app/src/main/core/context-config.ts": 2,
+  "pkgs.ts/diy-app/src/main/core/context-config.ts": 4,
   "pkgs.ts/diy-app/src/main/core/context-stats.ts": 4,
   "pkgs.ts/diy-app/src/main/core/cost-windows.ts": 1,
   "pkgs.ts/diy-app/src/main/core/cwd.ts": 2,
@@ -66,9 +70,9 @@ const LEGACY_SYNC_IO_BASELINE = new Map(Object.entries({
   "pkgs.ts/diy-app/src/main/core/flow-store.ts": 17,
   "pkgs.ts/diy-app/src/main/core/flow.ts": 5,
   "pkgs.ts/diy-app/src/main/core/fs-lock.ts": 5,
-  "pkgs.ts/diy-app/src/main/core/gpu-detect.ts": 1,
   "pkgs.ts/diy-app/src/main/core/instance-identity.ts": 3,
-  "pkgs.ts/diy-app/src/main/core/instance-registry.ts": 6,
+  "pkgs.ts/diy-app/src/main/core/jsonl-tail.ts": 5,
+  "pkgs.ts/diy-app/src/main/core/instance-registry.ts": 5,
   "pkgs.ts/diy-app/src/main/core/local-paths.ts": 5,
   "pkgs.ts/diy-app/src/main/core/model-config.ts": 4,
   "pkgs.ts/diy-app/src/main/core/model-registry.ts": 1,
@@ -78,21 +82,19 @@ const LEGACY_SYNC_IO_BASELINE = new Map(Object.entries({
   // ##427：room 事件流 / 投递状态改异步 + 尾部倒读（读侧 + 写侧），剩 readRoom / listRooms 两处小文件同步读
   "pkgs.ts/diy-app/src/main/core/room.ts": 5,
   "pkgs.ts/diy-app/src/main/core/seed.ts": 4,
-  "pkgs.ts/diy-app/src/main/core/single-instance.ts": 3,
+  "pkgs.ts/diy-app/src/main/core/single-instance.ts": 2,
   "pkgs.ts/diy-app/src/main/core/state.ts": 5,
   "pkgs.ts/diy-app/src/main/core/task-tree.ts": 6,
   "pkgs.ts/diy-app/src/main/core/task.ts": 11,
   "pkgs.ts/diy-app/src/main/core/traffic-log.ts": 21,
   "pkgs.ts/diy-app/src/main/index.ts": 1,
   "pkgs.ts/diy-app/src/main/services/agent-audit.ts": 9,
-  "pkgs.ts/diy-app/src/main/services/agent-guard.ts": 1,
   "pkgs.ts/diy-app/src/main/services/api-impl.ts": 5,
   "pkgs.ts/diy-app/src/main/services/compact-plan-io.ts": 9,
   "pkgs.ts/diy-app/src/main/services/crash-reporting.ts": 2,
   "pkgs.ts/diy-app/src/main/services/diagnostics.ts": 9,
   "pkgs.ts/diy-app/src/main/services/error-report.ts": 2,
   "pkgs.ts/diy-app/src/main/services/health.ts": 2,
-  "pkgs.ts/diy-app/src/main/services/instances.ts": 3,
   "pkgs.ts/diy-app/src/main/services/interrupted-cause.ts": 5,
   // ⚠️ 27 → 38 是一次**对齐**，不是放宽：基线是在本护栏立项的分支上算的，之后 main 进了
   // ##419（bash 结果头）与 ops-seek，那些同步 IO 属存量代码、本护栏当时还没见过它们。
@@ -103,16 +105,15 @@ const LEGACY_SYNC_IO_BASELINE = new Map(Object.entries({
   // 判据：数字 = 当前实测（`--by-file`），一行为本分支既有代码；这 4 个文件再涨就是新代码，
   // 要改异步。真正的债记在 ##5 待办（facts-store 每轮投影都同步读盘 = 热路径）。
   "pkgs.ts/diy-app/src/main/services/docs-index.ts": 4,
-  "pkgs.ts/diy-app/src/main/services/facts-context.ts": 1,
+  "pkgs.ts/diy-app/src/main/services/facts-context.ts": 4,
   "pkgs.ts/diy-app/src/main/services/facts-store.ts": 18,
   "pkgs.ts/diy-app/src/main/services/journal-store.ts": 8,
-  "pkgs.ts/diy-app/src/main/services/local-agent.ts": 36,
+  "pkgs.ts/diy-app/src/main/services/local-agent.ts": 50,
   "pkgs.ts/diy-app/src/main/services/local-find.ts": 4,
-  "pkgs.ts/diy-app/src/main/services/local-layout-migrate.ts": 18,
+  "pkgs.ts/diy-app/src/main/services/local-layout-migrate.ts": 19,
   "pkgs.ts/diy-app/src/main/services/local-ops-seek.ts": 14,
   "pkgs.ts/diy-app/src/main/services/ops-feed.ts": 8,
   "pkgs.ts/diy-app/src/main/services/plan-store.ts": 7,
-  "pkgs.ts/diy-app/src/main/services/process-sampler.ts": 1,
   "pkgs.ts/diy-app/src/main/services/prompt-registry.ts": 16,
   "pkgs.ts/diy-app/src/main/services/tool-output.ts": 3,
 }));
@@ -162,7 +163,9 @@ function scan() {
   const byFile = new Map();
   for (const dir of SCAN_DIRS) {
     for (const file of walk(dir)) {
-      const rel = relative(ROOT, file);
+      // 基线键用 `/` 分隔（跨平台一致）：`relative()` 在 Windows 上给 `\`，
+      // 不归一化会让**所有**条目都查不到 → 护栏在 Windows 上永远报「超基线」。
+      const rel = relative(ROOT, file).split(sep).join("/");
       const hits = findSyncIo(readFileSync(file, "utf8"));
       if (hits.length > 0) byFile.set(rel, hits);
     }

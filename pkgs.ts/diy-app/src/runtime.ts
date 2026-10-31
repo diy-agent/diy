@@ -19,6 +19,8 @@
 //   DIY_SEED            初始种入开关（空数据根种入 model/persona/示例项目·任务）。
 //                       0/false/off = 关，1/true/on = 开；缺省 = 仅 DIY_VARIANT 为 lab 时开
 //                       （prod 是用户真实数据，永不种）。
+//   DIY_SHELL           bash 工具使用的 shell 绝对路径（仅 Windows 有意义：缺省按 Git for Windows
+//                       的常见安装位置 / PATH 里的 bash.exe 解析，见 src/main/os/）。
 //
 // 产物根（out/ 所在目录）由各进程自己通过 import.meta.url 计算，不需要环境变量注入。
 

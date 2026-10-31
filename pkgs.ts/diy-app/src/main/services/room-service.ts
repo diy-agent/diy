@@ -94,12 +94,41 @@ export async function createShadowTask(hostId: string, p: { id: string; name: st
     const host = getTask(hostId);
     const project = host?.project ?? listProjects()[0]?.id ?? "";
     if (!project) throw new Error("没有可用 project，建不了影子 task（先 diy project create）");
+    const reusable = await findReusableShadowTask(project, p.id);
+    if (reusable) return reusable;
     return createTask({
         title: `[成员] ${p.name}`,
         project,
         persona: p.id,
         body: `影子任务：房间成员「${p.name}」的会话底座（##166 §28.7 D 的 B 方案）。\n\n宿主：${hostId}\n`,
     });
+}
+
+/**
+ * 找一个**可复用的**影子 task：同 project + 同 persona，且**没有被任何 room 的成员表绑过**。
+ *
+ * 为什么要幂等（2026-10-31 实测事故）：房间目录写不进去时，`ensureSidebarRoom` 每次重试都会
+ * 走一遍「没房间 ⇒ 建影子 task」—— 于是一夜攒了 6789 个孤儿任务（每个只有 298 B 的 AGENTS.md）。
+ * 落盘修好后这条不该再被触发，但**幂等是第二道防线**：只要有一环还会失败，增长也有界（不增）。
+ */
+async function findReusableShadowTask(project: string, personaId: string): Promise<string | null> {
+    const { listTasks } = await import("../core/task");
+    const { listRooms } = await import("../core/room");
+    const bound = new Set<string>();
+    for (const r of listRooms()) {
+        for (const m of r.members) if (m.backend?.type === "task") bound.add(m.backend.data.taskUri);
+    }
+    // 只扫**最新 50 个**：全量扫是几千次读盘（事故现场 6789 个影子任务），而可复用的影子任务
+    // 必然在尾部（它们是最近建的）；扫不到就新建，不会错。代价有界才敢在热路径上幂等。
+    const uris = listTasks(project).slice(-50);
+    for (const uri of uris) {
+        if (bound.has(uri)) continue;
+        const t = getTask(uri);
+        if (!t || t.project !== project || t.persona !== personaId) continue;
+        if (!t.body.startsWith("影子任务：")) continue; // 只复用影子 task，不抢用户的真任务
+        return uri;
+    }
+    return null;
 }
 
 /**
@@ -118,26 +147,51 @@ export async function ensureSidebarRoom(id: string): Promise<Room> {
         const personas = listPersonas(home);
         const personaId = defaultPersonaId(home);
         const p = personas.find((x) => x.id === personaId) ?? personas[0];
-        const members: RoomMember[] = [humanMember()];
-        if (p) {
-            members.push({
-                id: MAIN_MEMBER_ID,
-                name: p.name,
-                kind: "agent",
-                main: true,
-                persona: p.id,
-                backend: { type: "task", data: { taskUri: await createShadowTask(id, p) } },
-                role: "主人格",
-            });
+        // ① **先确认房间能落盘**（只带人的占位成员）：落不了盘就先停下，**绝不能先建任务** ——
+        //    2026-10-31 的事故就是这个顺序：目录建不出来 → 房间读不回 → 每次重试都多一个影子任务（6789 个）。
+        try {
+            ensureRoom(id, { title: "侧边栏助手", members: [humanMember()], focus: null });
+        } catch (e) {
+            reportError(e, { where: "room/sidebar-ensure-probe", roomId: id });
+            throw e;
         }
-        room = ensureRoom(id, {
-            title: "侧边栏助手",
-            members,
-            focus: p ? MAIN_MEMBER_ID : null,
-        });
+        // ② 再建/复用影子 task，然后补上主人格（写不进去就回滚任务 + 据实上报）
+        let shadowUri: string | undefined;
+        try {
+            if (p) {
+                shadowUri = await createShadowTask(id, p);
+                upsertMember(id, {
+                    id: MAIN_MEMBER_ID,
+                    name: p.name,
+                    kind: "agent",
+                    main: true,
+                    persona: p.id,
+                    backend: { type: "task", data: { taskUri: shadowUri } },
+                    role: "主人格",
+                });
+                setFocus(id, MAIN_MEMBER_ID);
+            }
+        } catch (e) {
+            // 没写进成员表 ⇒ 刚建的影子 task 是孤儿：删掉 + 把错误报出来（不静默）
+            if (shadowUri) {
+                try {
+                    const { deleteTask } = await import("../core/task");
+                    deleteTask(shadowUri);
+                } catch (delErr) {
+                    reportError(delErr, { where: "room/sidebar-shadow-rollback", roomId: id, taskUri: shadowUri });
+                }
+            }
+            reportError(e, { where: "room/sidebar-ensure", roomId: id });
+            throw e;
+        }
+        room = readRoom(id);
+        if (!room) {
+            // 探针写成功了、这里却读不回来：只说一句实话，别再走「没房间 ⇒ 建任务」那条路
+            throw new Error(`侧边栏房间写后读不回：${id}（落盘路径异常，已停止自动重建）`);
+        }
     }
     if (!room.members.some((m) => m.kind === "human")) room = upsertMember(id, humanMember());
-    return readRoom(id) ?? room;
+    return room;
 }
 
 /**

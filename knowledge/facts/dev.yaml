@@ -219,7 +219,6 @@ facts:
     lifecycle: active
     evidence:
       source: user
-      at: ~/git/AGENTS.md:17
       verifiedAt: '2026-10-21'
   dev#by-type:
     value: |-

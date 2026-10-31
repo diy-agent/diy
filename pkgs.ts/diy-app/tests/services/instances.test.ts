@@ -1,4 +1,4 @@
-// 实例大盘的聚合层：扫进程 + 注册表 + 活体探测 → 一行行实例；唤起的两条路（RPC / osascript）。
+// 实例大盘的聚合层：扫进程 + 注册表 + 活体探测 → 一行行实例；唤起的两条路（RPC / 系统级降级）。
 //
 // 这里测的是**合并与降级规则**（网络与 ps 全部注入）：哪些字段谁能覆盖谁、
 // 探测失败要标成什么、老实例（没有 instances.self）怎么退、唤起失败为什么必须抛。
@@ -7,18 +7,18 @@ import { describe, expect, it, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { collectInstances, focusInstance, psEnvironments, sourceSummary } from "../../src/main/services/instances";
+import { collectInstances, focusInstance, sourceSummary } from "../../src/main/services/instances";
 import { writeRecord } from "../../src/main/core/instance-registry";
 import type { InstanceRow, InstanceSelf } from "../../src/shared/instance-row";
 
 const ELECTRON = "/repo/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron";
 const APP = "/repo/pkgs.ts/diy-app";
 
-const PS = [
-  ` 10     1 ${ELECTRON} ${APP}/build/prod/main/index.mjs --remote-debugging-port=0`,
-  ` 11     1 ${ELECTRON} ${APP}/build/lab/main/index.mjs --remote-debugging-port=0`,
-  ` 12     1 ${ELECTRON} ${APP}/build/prod/main/index.mjs --remote-debugging-port=0`,
-].join("\n");
+const ROWS = [
+  { pid: 10, ppid: 1, command: `${ELECTRON} ${APP}/build/prod/main/index.mjs --remote-debugging-port=0` },
+  { pid: 11, ppid: 1, command: `${ELECTRON} ${APP}/build/lab/main/index.mjs --remote-debugging-port=0` },
+  { pid: 12, ppid: 1, command: `${ELECTRON} ${APP}/build/prod/main/index.mjs --remote-debugging-port=0` },
+];
 
 const dirs: string[] = [];
 function scratch(): string {
@@ -66,7 +66,7 @@ describe("collectInstances：注册表 ⊕ 进程 ⊕ 自报", () => {
       parents: [{ pid: 9, command: "bash ./sha.sh lab" }],
     });
     const rows = await collectInstances({
-      ps: () => PS,
+      rows: () => ROWS,
       dir,
       alive: () => true,
       envOf: () => new Map(),
@@ -109,7 +109,7 @@ describe("collectInstances：注册表 ⊕ 进程 ⊕ 自报", () => {
       parents: [],
     });
     const rows = await collectInstances({
-      ps: () => PS,
+      rows: () => ROWS,
       dir,
       alive: () => true,
       envOf: () => new Map(),
@@ -132,7 +132,7 @@ describe("collectInstances：注册表 ⊕ 进程 ⊕ 自报", () => {
       startedAt: "t", updatedAt: "t", parents: [],
     });
     const rows = await collectInstances({
-      ps: () => PS, dir, alive: () => true, envOf: () => new Map(),
+      rows: () => ROWS, dir, alive: () => true, envOf: () => new Map(),
       probeSelf: async () => null,
       probeAppInfo: async () => { throw new Error("ECONNREFUSED"); },
     });
@@ -143,7 +143,7 @@ describe("collectInstances：注册表 ⊕ 进程 ⊕ 自报", () => {
 
   it("未注册的老实例：数据根只当线索（带 `?`），来源标未知，端口来自 app.port 文件", async () => {
     const rows = await collectInstances({
-      ps: () => PS,
+      rows: () => ROWS,
       dir: scratch(),
       alive: () => true,
       // 只有 pid 12 带着环境线索（pid 10/11 连线索都没有 —— 那才是「什么都拿不到」的老实例）
@@ -171,7 +171,7 @@ describe("collectInstances：注册表 ⊕ 进程 ⊕ 自报", () => {
       cwd: "/repo", startedAt: "t", updatedAt: "t", parents: [{ pid: 3, command: "npm run serve" }],
     });
     const rows = await collectInstances({
-      ps: () => PS, dir, alive: () => true, envOf: () => new Map(),
+      rows: () => ROWS, dir, alive: () => true, envOf: () => new Map(),
       probeSelf: async () => null,
       probeAppInfo: async () => ({ diyHome: "/repo/build/prod/home", pid: 77, env: "development" }),
     });
@@ -183,7 +183,7 @@ describe("collectInstances：注册表 ⊕ 进程 ⊕ 自报", () => {
 
   it("行按 pid 稳定（同根聚类由 instance-table 负责）", async () => {
     const rows = await collectInstances({
-      ps: () => PS, dir: scratch(), alive: () => true, envOf: () => new Map(),
+      rows: () => ROWS, dir: scratch(), alive: () => true, envOf: () => new Map(),
       probeSelf: async () => null, probeAppInfo: async () => { throw new Error("no"); },
     });
     expect(rows.map((r) => r.pid)).toEqual([10, 11, 12]);
@@ -193,7 +193,10 @@ describe("collectInstances：注册表 ⊕ 进程 ⊕ 自报", () => {
 describe("两台同变体实例 ≠ 同一实例（pid 不同就是两行）", () => {
   it("同是 prod 产物、同变体名，但 pid/数据根/端口各不同 → 两行（绝不按「变体名」合并）", async () => {
     const rows = await collectInstances({
-      ps: () => ` 10 1 ${ELECTRON} ${APP}/build/prod/main/index.mjs\n 12 1 ${ELECTRON} ${APP}/build/prod/main/index.mjs`,
+      rows: () => [
+        { pid: 10, ppid: 1, command: `${ELECTRON} ${APP}/build/prod/main/index.mjs` },
+        { pid: 12, ppid: 1, command: `${ELECTRON} ${APP}/build/prod/main/index.mjs` },
+      ],
       dir: scratch(),
       alive: () => true,
       envOf: (pids) => new Map(pids.map((p) => [p, { DIY_HOME: p === 10 ? "/h1" : "/h2" }])),
@@ -222,24 +225,24 @@ describe("focusInstance：RPC 优先，失败降级，双失败必抛", () => {
     },
   ];
 
-  it("RPC 成功 → via=rpc，不碰 osascript", async () => {
+  it("RPC 成功 → via=rpc，不碰系统级降级", async () => {
     let osa = 0;
     const r = await focusInstance({ pid: 10 }, {
       collect: rowsOf,
       reveal: async () => ({ ok: true, reason: "已前置并全屏", fullScreen: true }),
-      osascript: () => { osa++; return true; },
+      focus: () => { osa++; return true; },
     });
     expect(r.via).toBe("rpc");
     expect(osa).toBe(0);
   });
 
-  it("目标实例拒绝（serve 无窗口）→ 降级 osascript 成功则 via=osascript", async () => {
+  it("目标实例拒绝（serve 无窗口）→ 降级系统级唤起成功则 via=system", async () => {
     const r = await focusInstance({ pid: 10 }, {
       collect: rowsOf,
       reveal: async () => ({ ok: false, reason: "本实例没有窗口（serve 模式 / 未运行 GUI）", fullScreen: false }),
-      osascript: () => true,
+      focus: () => true,
     });
-    expect(r).toMatchObject({ via: "osascript", pid: 10 });
+    expect(r).toMatchObject({ via: "system", pid: 10 });
   });
 
   it("两路都失败 → 抛错，并把**两条**原因都带上（不静默吞）", async () => {
@@ -247,42 +250,26 @@ describe("focusInstance：RPC 优先，失败降级，双失败必抛", () => {
       focusInstance({ pid: 10 }, {
         collect: rowsOf,
         reveal: async () => { throw new Error("probe timeout 2500ms"); },
-        osascript: () => false,
+        focus: () => false,
       }),
-    ).rejects.toThrow(/RPC 唤起失败[\s\S]*osascript 降级也失败/);
+    ).rejects.toThrow(/RPC 唤起失败[\s\S]*系统级降级也失败/);
   });
 
   it("目标不存在 → 明确说「可能已退出」并指路", async () => {
-    await expect(focusInstance({ pid: 999 }, { collect: async () => [], osascript: () => false })).rejects.toThrow(/找不到实例 pid=999/);
+    await expect(focusInstance({ pid: 999 }, { collect: async () => [], focus: () => false })).rejects.toThrow(/找不到实例 pid=999/);
   });
 
   it("无端口的行：不发 RPC（没有端口可发）", async () => {
     let revealed = 0;
     const rows = await rowsOf();
     rows[0]!.port = null;
-    const r = await focusInstance({ pid: 10 }, { collect: async () => rows, reveal: async () => { revealed++; return { ok: true, reason: "", fullScreen: true }; }, osascript: () => true });
+    const r = await focusInstance({ pid: 10 }, { collect: async () => rows, reveal: async () => { revealed++; return { ok: true, reason: "", fullScreen: true }; }, focus: () => true });
     expect(revealed).toBe(0);
-    expect(r.via).toBe("osascript");
+    expect(r.via).toBe("system");
   });
 });
 
-describe("psEnvironments / sourceSummary（小工具）", () => {
-  it("批量 ps eww：一行解析出 pid → 环境变量表", () => {
-    const text = [
-      "  PID   TT  STAT      TIME COMMAND",
-      " 10   ??  Ss     0:01.00 /x/Electron /x/build/prod/main/index.mjs DIY_HOME=/Users/ccc/.diy DIY_ENV=production",
-      " 11   ??  Ss     0:02.00 /x/Electron /x/build/lab/main/index.mjs DIY_HOME=/Users/ccc/.diy DIY_VARIANT=lab",
-    ].join("\n");
-    const envs = psEnvironments([10, 11], () => text);
-    expect(envs.get(10)?.["DIY_HOME"]).toBe("/Users/ccc/.diy");
-    expect(envs.get(11)?.["DIY_VARIANT"]).toBe("lab");
-  });
-
-  it("ps 失败 → 空表（老实例只是少一条线索，不该拖垮整表）", () => {
-    expect(psEnvironments([10], () => { throw new Error("ps: 权限"); }).size).toBe(0);
-    expect(psEnvironments([]).size).toBe(0);
-  });
-
+describe("sourceSummary（小工具）", () => {
   it("无父链记录 → 「来源未知」；有则给父命令摘要", () => {
     expect(sourceSummary(undefined)).toBe("来源未知");
     expect(
