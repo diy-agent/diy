@@ -1,0 +1,35 @@
+{
+    "name": "@diy-agent/app-web",
+    "version": "0.1.0",
+    "private": true,
+    "description": "无 Electron 的 web 宿主：托管 chat-page 的 renderer + 声明式 RPC（@diy-agent/rpc）+ 单向授权（token 由副方生成、可 revoke）",
+    "files": [
+        "*.ts",
+        "*.mjs",
+        "index.html"
+    ],
+    "type": "module",
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json"
+    },
+    "dependencies": {
+        "@diy-agent/app-chat": "*",
+        "@diy-agent/chat-page": "*",
+        "@diy-agent/rpc": "*",
+        "@diy-agent/workbench": "*",
+        "@diy-agent/workbench-ui": "*",
+        "ws": "^8.21.0",
+        "zod": "^4.4.3"
+    },
+    "devDependencies": {
+        "@types/node": "^26.1.0",
+        "@types/ws": "^8.18.1",
+        "esbuild": "^0.28.1",
+        "happy-dom": "^20.0.0",
+        "oxfmt": "^0.57.0",
+        "oxlint": "^1.72.0",
+        "tsx": "^4.23.0",
+        "typescript": "^7.0.2",
+        "vitest": "^4.1.10"
+    }
+}

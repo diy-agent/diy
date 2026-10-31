@@ -14,6 +14,10 @@
     ".": {
       "types": "./index.ts",
       "default": "./lib/index.js"
+    },
+    "./sessions": {
+      "types": "./sessions.ts",
+      "default": "./lib/sessions.js"
     }
   },
   "scripts": {

@@ -21,6 +21,10 @@
     "./page": {
       "types": "./src/page.ts",
       "default": "./lib/page.js"
+    },
+    "./loader": {
+      "types": "./src/loader.ts",
+      "default": "./lib/loader.js"
     }
   },
   "scripts": {
