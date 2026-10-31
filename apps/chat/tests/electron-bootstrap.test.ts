@@ -289,7 +289,12 @@ describe("diy-chat 入口（单 bin + 子命令，##478 补充决策）", () => 
     it("通过软链执行（= npm 装出来的 <prefix>/bin/diy-chat）也能跑到 main", () => {
         // npm 的 bin 一律是软链；入口判据若直接比 pathToFileURL(argv[1]) 就会「运行什么都不发生」
         const link = join(makeDir("bin-link-"), "diy-chat");
-        symlinkSync(join(import.meta.dirname, "..", "bin", "diy-chat.mjs"), link);
+        try {
+            symlinkSync(join(import.meta.dirname, "..", "bin", "diy-chat.mjs"), link);
+        } catch {
+            // Windows 默认不允许建软链（EPERM，需管理员 / 开发者模式）：跳过，不把环境限制当断言失败
+            return;
+        }
         const r = spawnSync(process.execPath, [link, "--version"], { encoding: "utf8" });
         expect(r.status).toBe(0);
         expect(r.stdout).toContain("@diy-agent/app-chat");

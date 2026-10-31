@@ -13,8 +13,15 @@ import { FactsLockError, lockPathOf, withLibraryLock } from '../src/node/lock';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.resolve(here, '../src/node');
-/** 仓库根的 tsx（子进程直接跑 TS 源；不依赖构建产物 —— 测试不该要求先 build） */
-const TSX = path.resolve(here, '../../..', 'node_modules/.bin/tsx');
+/**
+ * 仓库根的 tsx **CLI 入口**（子进程直接跑 TS 源；不依赖构建产物 —— 测试不该要求先 build）。
+ *
+ * ⚠️ 不能 spawn `node_modules/.bin/tsx`：那是给 shell 用的 shim（POSIX 下是 `#!/bin/sh` 脚本、
+ * Windows 下真正的可执行是 `tsx.cmd`），`spawn()` 直接执行它在两边都可能 ENOENT/EPERM
+ * （实测 Windows：子进程根本没起来 → 锁目录永远不存在 → 本组用例全红）。
+ * 稳妥形状 = `node <cli.mjs>`，两个平台同一套。
+ */
+const TSX_CLI = path.resolve(here, '../../..', 'node_modules/tsx/dist/cli.mjs');
 
 const tmp: string[] = [];
 function tempDir(prefix = 'facts-lock-'): string {
@@ -32,7 +39,7 @@ function runScript(script: string, args: readonly string[]): Promise<{ code: num
     const file = path.join(dir, 'child.ts');
     writeFileSync(file, script);
     return new Promise((resolve, reject) => {
-        const child = spawn(TSX, [file, ...args], { stdio: ['ignore', 'ignore', 'pipe'] });
+        const child = spawn(process.execPath, [TSX_CLI, file, ...args], { stdio: ['ignore', 'ignore', 'pipe'] });
         let stderr = '';
         child.stderr.on('data', (b: Buffer) => {
             stderr += b.toString();

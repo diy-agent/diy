@@ -6,7 +6,7 @@
 // 连纯单测（prompt-registry 等）都会被迫拉 electron。这里只用 node:fs/os，零副作用。
 
 import { rmSync, readdirSync, statSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join, relative } from "node:path";
 import { tmpdir } from "node:os";
 
 /** electron-test 隔离 HOME 的目录名前缀（与 makeIsolatedHome 的 mkdtemp 模板一致） */
@@ -29,6 +29,19 @@ function isOursName(name: string): boolean {
 }
 
 /**
+ * `home` 是否在系统临时目录之下（**跨平台**）。
+ *
+ * 为什么不能用 `home.startsWith(tmp + "/")`：Windows 的 tmpdir 与 mkdtemp 返回的路径用 `\`
+ * （`C:\Users\…\Temp\diy-app-test-xxx`），拼 `/` 永远不匹配 —— 于是 removeIsolatedHome 直接
+ * return，隔离 HOME 一个都不删（实测本机 `temp-home.test.ts` 挂在这条；macOS/Linux 不会暴露）。
+ * 用 `relative` 判：上跳（`..`）或绝对路径（不同盘）都算「不在其中」。
+ */
+function isUnderTmp(home: string, tmp: string): boolean {
+  const rel = relative(tmp, home);
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+}
+
+/**
  * 删除一个隔离 HOME —— 只删「我们自己造的、位于系统临时目录下」的那种。
  *
  * 两道校验缺一不可（历史注释「测试目录不删除」正是怕 rm -rf 打偏到生产数据）：
@@ -40,7 +53,7 @@ function isOursName(name: string): boolean {
  */
 export function removeIsolatedHome(home: string): void {
   const tmp = tmpdir();
-  if (!home.startsWith(tmp + "/") || !isOursName(basename(home))) return;
+  if (!isUnderTmp(home, tmp) || !isOursName(basename(home))) return;
   try {
     rmSync(home, { recursive: true, force: true });
   } catch {

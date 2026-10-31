@@ -92,7 +92,9 @@ describe('writeFilesAtomic', () => {
         expect(t1.endsWith('.yaml')).toBe(false);
     });
 
-    it('目标原有权限位被继承（0600 不被放宽成 0644）', () => {
+    // POSIX 权限位在 Windows 上不存在（chmod 只切只读位，statSync().mode 拿不到 0600）⇒ 跳过。
+    // 这是"判据本身不成立"，不是实现缺陷；macOS/Linux 仍由本条覆盖。
+    it.skipIf(process.platform === 'win32')('目标原有权限位被继承（0600 不被放宽成 0644）', () => {
         const dir = mk();
         const a = path.join(dir, 'a.yaml');
         writeFileSync(a, 'old');

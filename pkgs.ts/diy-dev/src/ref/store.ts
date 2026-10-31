@@ -64,9 +64,15 @@ export function sourceKey(info: RepoInfo): string {
     return `${info.host}/${info.owner}/${info.repo}`;
 }
 
-/** 镜像目录相对 $DIY_HOME 的路径：ref/<host>/<owner>/<repo>/<version>。 */
+/**
+ * 镜像目录相对 $DIY_HOME 的路径：`ref/<host>/<owner>/<repo>/<version>`。
+ *
+ * ⚠️ **分隔符固定为 `/`，不用 `path.join`**：这个值会写进 `ref.lock.yaml` 并随仓库提交
+ * （见文件头第 7 行），Windows 的 `\\` 会让同一份 lock 在 macOS/Linux 上变成「一个带反斜杠的
+ * 目录名」。消费端仍用 `join(home, rel)` —— 它在两边都能把 `/` 归一（实测这两条用例挂在 Windows）。
+ */
 export function mirrorRelDir(info: RepoInfo, version: string): string {
-    return join("ref", info.host, info.owner, info.repo, version);
+    return ["ref", info.host, info.owner, info.repo, version].join("/");
 }
 
 /**

@@ -414,9 +414,35 @@ fix() {
 #   ./sha.sh test --related --dry-run            # 只列选中哪些，不跑（排查「怎么没选我这条」）
 # 判据在 scripts/related-tests.mjs（头注：为什么不用 vitest related —— 它要跑全套模块图，
 # 实测 diy-app 上 92s ≈ 全量，等于没省）。
+# 直接跑各 workspace 的 vitest（**不经** `<ws>/sha.sh`）——
+#
+# 为什么（2026-10-31 实测本机）：`_ws_run command ./sha.sh test-unit` 每个包都要起一个 bash 并
+# `source` 整个 sha 引擎（vendor/sha 很大）：**~1.0s/包** × 24 个包 = 24s 纯启动，而 vitest 自己
+# 启动只要 ~0.4s。语义不变：仍然**每包一个独立进程**（一个包红了不影响其余、也不会把别人拖崩），
+# 只是去掉中间那一层脚本。
+#
+# 唯一例外：diy-app 有专属目标（unit / os / intent 三套，各自的排除与 Electron 准备都在它自己
+# 的 sha.sh 里）——仍调它自己的 `./sha.sh test`，不在这里重复一份 flag（重复 = 必然漂移）。
+_ws_vitest() {
+    local ws
+    for ws in "${_workspaces[@]}"; do
+        [[ -f "$ws/vitest.config.ts" ]] || continue
+        # 有 config 不等于有测试（diy-compact / diy-context / workbench-plugin …）：vitest 在
+        # 「一个测试文件都没找到」时退出码 1，会让整串跑不动 —— 直接跳过（旧路径
+        # `<ws>/sha.sh test-unit` 也是直接退 1，只是那时被包一层看着像“跑过了”）。
+        [[ -d "$ws/tests" ]] || continue
+        case "$ws" in pkgs.ts/diy-app/) continue ;; esac
+        echo "${inverse_surface}info: workspace: test '$ws'${reset}"
+        run node_modules/.bin/vitest run --root "$ws"
+    done
+}
+
 test() {
   case "${1:-}" in
-    "")        ensure-sync; _ws_run command ./sha.sh test ;;
+    "")        ensure-sync
+              _ws_vitest
+              # diy-app 最后跑（含意图测试，起隔离 Electron，最慢）——它自己的 `test` = unit + os + intent
+              ( cd pkgs.ts/diy-app && ./sha.sh test ) ;;
     --related) shift; _test_related "$@"; exit $? ;;
     *)         echo "${error}用法：./sha.sh test [--related [<文件…>]]${reset}" >&2; exit 2 ;;
   esac
@@ -437,7 +463,11 @@ _test_related() {
 }
 
 # 编程中快速验证：各包单测，不构建、不起 Electron
-test-unit() {  ensure-sync; _ws_run command ./sha.sh test-unit; }
+test-unit() {
+  ensure-sync
+  _ws_vitest
+  ( cd pkgs.ts/diy-app && ./sha.sh test-unit )
+}
 
 _vendors_run() {
   for submodule in "${_vendors[@]}"; do

@@ -72,9 +72,9 @@ describe("ops 写入器 + turns", () => {
         expect(b?.limitTokens).toBe(1000);
         expect(b?.cut.llmLine).toBe(6);
         expect(b?.headLine).toBe(2);
-        // 落盘形状：一行一条 JSON（v2 + kind）
+        // 落盘形状：一行一条 JSON（kind 判别 + v 版本号；写侧当前是 v3，读侧仍兼容 v2 —— ##442 起）
         const line = readFileSync(sessionFile(home, uri, "turns"), "utf-8").trim().split("\n").at(-1)!;
         const row = JSON.parse(line) as { v: number; kind: string };
-        expect(row).toMatchObject({ v: 2, kind: "compaction" });
+        expect(row).toMatchObject({ v: 3, kind: "compaction" });
     });
 });

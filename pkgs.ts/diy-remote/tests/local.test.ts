@@ -1,4 +1,5 @@
 // local 发现器：扫注册表 → 只收 ping 得通的（判据：文件只说明「它启动时这么想」）。
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { localDiscoverer, parseRegistryRecord } from '../src/node/local.js';
 import type { PingInfo } from '../src/types.js';
@@ -50,7 +51,8 @@ describe('localDiscoverer', () => {
         const d = localDiscoverer({
             dir: '/fake/.diy-instances',
             listFiles: () => Object.keys(files),
-            readFile: (f) => files[f.split('/').pop() ?? ''] ?? null,
+            // 用 basename 而不是 split('/')：实现在 Windows 上用 join 拼 `\`，split('/') 拿不到文件名
+            readFile: (f) => files[path.basename(f)] ?? null,
             ping: async (endpoint) =>
                 endpoint === 'http://127.0.0.1:9400' ? { ok: true, info: info({}) } : { ok: false, info: null },
         });

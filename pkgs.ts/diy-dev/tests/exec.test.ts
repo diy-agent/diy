@@ -14,6 +14,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runStreaming, runBuffered, gitEnv } from "../src/git/exec";
 
+/**
+ * 本组用例的假 git 是 **POSIX shell 脚本**（`#!/bin/sh` + `chmod` + `PATH` 用 `:` 拼接）——
+ * Windows 上执行不了：`git` 无扩展名不是可执行文件（要找 `git.exe` / `git.cmd`），
+ * 且 PATH 分隔符是 `;`。故这两组在 Windows 上跳过（不是“测试偶发”，是载体本身不成立）。
+ * 代价如实记：`runStreaming` / `runBuffered` 的行为在 Windows 上目前没有单测覆盖 ——
+ * 要补就得把假 git 换成 `git.cmd`（spawn 需 `shell:true`，行为面不一样）或直接起真 git。
+ */
+const FAKE_GIT_POSIX_ONLY = process.platform === "win32";
+
 let fakeBin: string;
 const savedPath = process.env.PATH;
 
@@ -39,7 +48,7 @@ function fakeEnv(): Record<string, string> {
     return { PATH: `${fakeBin}:${savedPath}` };
 }
 
-describe("runStreaming", () => {
+describe.skipIf(FAKE_GIT_POSIX_ONLY)("runStreaming", () => {
     it("流式增量：输出到达即回调，不等命令跑完", async () => {
         // 判据只用「回调间隔 vs 脚本 sleep 时长」，不依赖机器启动速度：
         // 旧 spawnSync 是收尾一次性 dump（两次回调间隔 ≈ 0），流式执行器间隔 ≈ sleep
@@ -136,7 +145,7 @@ describe("runStreaming", () => {
     });
 });
 
-describe("runBuffered", () => {
+describe.skipIf(FAKE_GIT_POSIX_ONLY)("runBuffered", () => {
     it("缓冲成功：stdout/stderr 分开收集", () => {
         writeGit(`echo "out"\necho "err" >&2\n`);
         const res = runBuffered([], { env: fakeEnv() });
