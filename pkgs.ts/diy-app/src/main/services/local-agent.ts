@@ -128,7 +128,9 @@ import { commitSelfStartContext, roomRuntimeFact, type RoomRuntimeValue } from "
 import { addStepUsage, newUsageAcc, setTurnUsage, type TurnUsage } from "./turn-usage";
 // 自量（##404 / ##9 提案）：本进程里的「最近一步」账。记账点 = finish-step（与 appendUsage 同一处），
 // 读点 = 每步重建上下文 —— 读时零 IO（理由见 services/self-usage.ts 头注）。
-import { noteSelfStep, selfOf } from "./self-usage";
+import { noteSelfStep, selfLastBuckets, selfOf } from "./self-usage";
+// 冷缓存等待（##486）：上一步全冷 ⇒ 本步真发前等 1s（判据在 shared/warm-wait.ts）。
+import { warmWaitIfCold } from "./warm-wait";
 import {
     bucketsOf,
     costBreakdown,
@@ -5655,6 +5657,11 @@ export class LocalAgentManager {
             total: 0,
         };
         let lastStepBuckets: UsageBuckets | null = null;
+        // 冷缓存等待（##486）的记账位：
+        //   · `stepWarmWaitMs` = 本步真发前等掉的毫秒（prepareStep 写、finish-step 落账后清零）
+        //   · `warmWaitedStep` = 已经等过的步号（SDK 重试会再次进 prepareStep，同一步只等一次）
+        let stepWarmWaitMs = 0;
+        let warmWaitedStep = -1;
         // 本轮**最后一步**的生成速度（tok/s = 该步输出 ÷ (响应耗时 − TTFT)，口径见 shared/usage.stepRate）。
         // 为什么要进 turn patch：状态栏的 ⚡ 要能"没在跑时也留在那儿"（老的速度不消失），
         // 而流内部的 token 计数拿不到 ⇒ 只能每步落一次、由 UI 显示最后一次实测值。
@@ -6361,13 +6368,32 @@ export class LocalAgentManager {
                 // 塞一段，用户看到的是「总结 → 插话 → 又总结」的夹层；收益只是早一个**恰好会
                 // 立刻发生**的轮次边界生效。让这一轮干净地结束、由 chat() 开下一轮（插话就是
                 // 下一轮的开场白）语义更准，轮次结构/usage/停止边界也不用为夹层做特例。
-                prepareStep: ({ messages, stepNumber }) => {
+                prepareStep: async ({ messages, stepNumber, steps: priorSteps }) => {
                     // 流量观测（##409）：这一步的编号先登记进 traffic，然后才发这一步的请求 ——
                     // 于是该步内的 SDK 重试（同一步的多次 HTTP 往返）在记录里带
                     // stepSeq = 步号、attemptInStep = 该步第几次往返，重试链可复盘。
                     // 编号与下面变更历史的 stepNo / stepId(`_s<N>`) 同一个（1 起）。
                     traffic.noteStep(sessionIdOf(taskUri), turnId, stepNumber + 1);
                     if (signal.aborted) return {};
+                    // ── 冷缓存等待（##486）──
+                    // 上一步全冷 ⇒ 本步真发前等 1s（给上游缓存落位留窗口）；**正常路径零延迟**：
+                    // 判据说不等就不排定时器。轮内后续步取 SDK 给的「上一步」，轮首步取本进程内存
+                    // 里的上一步（跨轮 / 跨 run，见 self-usage）；都没有（进程刚起）⇒ 不等。
+                    // 重试会再次进 prepareStep（同一步号）—— 同一个步只等一次。
+                    if (warmWaitedStep !== stepNumber) {
+                        stepWarmWaitMs = 0; // 上一步的等待不带到这一步（重试路径靠 stepNumber 守卫）
+                        const prevUsage = priorSteps.at(-1)?.usage;
+                        const prev = prevUsage ? bucketsOf(prevUsage as UsageLike) : selfLastBuckets(taskUri);
+                        const warm = await warmWaitIfCold(
+                            prev ? { cacheRead: prev.cacheRead, inputTotal: prev.inputTotal } : null,
+                            { signal },
+                        );
+                        if (warm.waitedMs > 0) {
+                            warmWaitedStep = stepNumber;
+                            stepWarmWaitMs = warm.waitedMs;
+                        }
+                    }
+                    if (signal.aborted) return {}; // 等的那 1 秒里用户按了停止：别接着发
                     // ── 冷缓存提示（##477）：只记**首步** ──
                     // 轮内后续步挨着发（秒级 gap），记进来只会把 safePoint 的 P90 拖歪；
                     // 而"这次请求贵不贵"的判定恰好只需要每轮第一个请求的间隔。
@@ -6780,10 +6806,14 @@ export class LocalAgentManager {
                                     priceBasis: priced.basis,
                                     ...(priced.model ? { priceRef: priced.model.ref } : {}),
                                     contextParts: ctxParts,
+                                    // 冷缓存等待（##486）：本步真发前等掉的毫秒。缺席 = 没等（正常路径不写 0）
+                                    ...(stepWarmWaitMs > 0 ? { waitedMs: stepWarmWaitMs } : {}),
                                     // 投递选择事实**只在轮首**（stepN===1）：一轮只在轮首按当前配置重建投递，
                                     // 后续步复用同一份历史（##272 B1 / ##321）。
                                     ...(stepN === 1 ? { historySelection } : {}),
                                 });
+                                // 一步一份账：等待的记账只属于这一步，落了账就清零（下一步重新判）
+                                stepWarmWaitMs = 0;
                                 yield* emit({
                                     op: "patch",
                                     id: turnId,

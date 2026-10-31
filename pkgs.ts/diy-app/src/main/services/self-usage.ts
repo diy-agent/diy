@@ -48,6 +48,15 @@ export function noteSelfStep(taskUri: string, buckets: SelfBuckets, cost: CostBr
 }
 
 /**
+ * 该任务**上一步**的四桶快照（跨轮、跨 run；进程重启后没有 ⇒ null）。
+ * 给冷缓存等待的判据用（##486）：轮首步没有 SDK 给的「上一步」，只能取这里。
+ * 只读内存、零 IO —— 与 `runtime.self` 同一份账，别另开一个 Map。
+ */
+export function selfLastBuckets(taskUri: string): SelfBuckets | null {
+    return lastOf.get(taskUri)?.buckets ?? null;
+}
+
+/**
  * 组出该任务的 `runtime.self`（给 `assembleGlobals` 的 `self` 入参）。
  * 返回 null = 无可报（新进程首轮首步）⇒ 整节缺席。
  */
