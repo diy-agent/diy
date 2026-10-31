@@ -104,17 +104,25 @@ test() {
 #              全量 98s → 约 30s。
 # 为什么在命令行给而**不改** vitest.config.ts 的 `fileParallelism: false`：裸跑 `npx vitest run`
 # 会同时命中 intent 文件，那份默认必须留给它。
-# `--no-isolate`（##402）：每个 worker 共享一份模块图，省掉**每文件**的
-# transform + setup + import 固定成本（实测占单文件工作量 ~71%：834ms 里 tests 只 344ms）。
-# 前提是**没有 vi.mock**（它改全局模块表，isolate:false 下会静默失效）；
-# `rg -l 'vi\.mock\(' tests --glob '*.test.ts'` 必须是 0 命中（替代写法 = 注入 / 手写假对象 / server.deps.inline alias）。
+# `--no-isolate`（##402）的取舍 —— **2026-10-31 实测后改为 隔离 + 限并发**：
+#   `--no-isolate` 省掉每文件的 transform + setup + import（单文件工作量 ~71% 是这块），但它让所有
+#   测试文件**共享同一份 `process.env`**；而 `tests/setup.ts` 是**每文件**分配一个隔离 HOME 并写
+#   `DIY_HOME` —— 并行时互相覆盖：A 文件写的数据落进 B 文件的 home，自己读成空。
+#   实测症状：`context-refresh` 的 `runtime:` 断言偶发失败（单跑必绿，整串并行才红）。
+#   本机四种跑法的数据（全量 unit 3276 例）：
+#     串行 + 隔离                        → 0 失败 / 380s
+#     并行 + 隔离                        → 5 失败 / 109s（真实进程类用例超时）
+#     并行 + 隔离 + workers=4            → 1 失败 / 141s（仅一条性能阈值，已按平台放宽）
+#     并行 + --no-isolate（原设置）       → 1 失败 / ~120s（env 串台）
+#   故选「并行 + 隔离 + workers=4」：正确性（隔离）保住，并发限到 4 不让真实 IO 用例饿死。
+#   另：`vi.mock` 在 isolate=false 下会静默失效（历史约束，改回隔离后这条自动不再适用）。
 #
 # **测试集合边界（2026-10-31 用户口径）**：
 #   · tests/core、tests/services … = **OS 无关**：不许出现 ps/PowerShell/taskkill/osascript 文本格式；
 #   · tests/os/**               = **OS 相关**：按 posix / win32 策略分目录，命令执行可注入，
 #                                  所以任意平台都能跑（真集成才按平台 skipIf）。
 test-unit() {
-  run npx vitest run --exclude '**/cli.intent*' --exclude '**/tests/os/**' --fileParallelism --no-isolate
+  run npx vitest run --exclude '**/cli.intent*' --exclude '**/tests/os/**' --fileParallelism --maxWorkers=4
 }
 test-os() { run npx vitest run tests/os --no-file-parallelism --no-isolate; }
 
