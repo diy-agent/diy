@@ -474,21 +474,26 @@ function currentModelRef(trees: BlockNode[]): string | null {
  *   ② 区域着色：安全点左 = 安全（绿）· 两标记之间 = 警告（黄）· 失效点右 = 危险（红）
  *   ③ 当前时刻的点要醒目，落在危险区时整条柱变红（与顶栏那行提示联动）
  * failPoint = +∞（从没失败过）时只画安全点与当前点，右半段**不标红** —— 没证据就不吓人。
+ *
+ * ⚠️ 两个维度（##492）：柱上两条线（安全点 / 失效点）是**渠道**的，那个点（「现在」）是**本会话**的。
+ *    曾经「现在」也按渠道算 ⇒ 别的任务刚发过请求，本会话就显示「刚聊过」，用户据此做错过决策。
  */
-function CacheAgeBar(props: { model: string | null }) {
+function CacheAgeBar(props: { model: string | null; session: string | null }) {
     const [view, setView] = createSignal<CacheChannelView | null>(null);
     const [now, setNow] = createSignal(Date.now());
 
     // 数据 = main 侧 store（重启后仍是上次的边界）；卡一开就取一次，卡卸载后丢弃旧响应
     createEffect(() => {
         const m = props.model;
+        const s = props.session;
         if (!m) {
             setView(null);
             return;
         }
         let alive = true;
         void diyService.diy.cacheHint
-            .stats({ model: m })
+            // session 可省：不给 = 只算渠道边界，`lastRequestAt` 为 null（柱上显示「—」）
+            .stats({ model: m, session: s ?? undefined })
             .then((v) => {
                 if (alive) setView(v);
             })
@@ -504,6 +509,7 @@ function CacheAgeBar(props: { model: string | null }) {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     onCleanup(() => clearInterval(timer));
 
+    /** 「现在」的点：**本会话**距上次请求；本会话没发过请求 → null（显示「—」） */
     const gap = (): number | null => {
         const v = view();
         return v && v.lastRequestAt !== null ? Math.max(0, now() - v.lastRequestAt) : null;
@@ -529,7 +535,7 @@ function CacheAgeBar(props: { model: string | null }) {
             {(v) => (
                 <div class="border-b border-base-300 px-3 py-2" data-cache-age-bar data-cache-age-zone={zone() ?? ""}>
                     <div class="mb-1 flex items-baseline justify-between gap-2">
-                        <span class="text-body opacity-70">缓存时效（距上次请求 · 对数刻度）</span>
+                        <span class="text-body opacity-70">缓存时效（本会话距上次请求 · 对数刻度）</span>
                         <span class={`text-body font-medium tabular-nums ${tone()}`}>
                             {gap() === null ? "—" : `${formatGap(gap()!)} · ${zoneText()}`}
                         </span>
@@ -1241,7 +1247,7 @@ export function UsageHoverCard(props: {
                         )}
                     </Show>
                     {/* 缓存时效柱（##477 追加）：与上面的环**不同维度**（时间 vs token），环保持不动 */}
-                    <CacheAgeBar model={currentModelRef(localChatStore.trees)} />
+                    <CacheAgeBar model={currentModelRef(localChatStore.trees)} session={localChatStore.currentUri} />
                     <Show when={model()} fallback={
                         <div class="px-3 py-2 text-body opacity-60">暂无用量记录（该会话还没跑出带用量的轮次）</div>
                     }>

@@ -3048,9 +3048,13 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
             output: CacheHintSchema.nullable(),
           }),
           stats: RpcSchema.unary({
-            desc: `某模型（按当前 provider 解析）的缓存边界：safePoint / failPoint / 上次请求时刻`,
+            desc: `某模型（按当前 provider 解析）的缓存边界（safePoint / failPoint）+ 某会话距上次请求的时刻`,
             input: {
               model: z.string().cliArg({ desc: "模型完全限定名（account@provider/model）或唯一 id" }),
+              session: z
+                .string()
+                .optional()
+                .cliOption({ desc: "会话（任务 uri）；给了才返回「本会话距上次请求」，不给 = null" }),
             },
             output: CacheChannelViewSchema.nullable(),
           }),
@@ -3081,6 +3085,7 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
               safePointMs: z.number(),
               failPointMs: z.number().nullable(),
               lastRequestAt: z.number().nullable(),
+              session: z.string().nullable(),
               samples: z.number(),
               hintsToday: z.number(),
               hint: CacheHintSchema.nullable(),

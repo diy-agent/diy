@@ -1420,9 +1420,10 @@ export function bindAppHandlers(binding: ServerBinding): void {
 
   // ── cacheHint（冷缓存提示；##477）──
   // 数据源 = main 侧装配层（首步请求前算 gap、首步 usage 到手后回填成败）：renderer 只订阅/关闭。
-  // 用量面板的「缓存时效柱」走 stats（按模型解析出渠道，返回两个边界 + 上次请求时刻）。
+  // 用量面板的「缓存时效柱」走 stats（按模型解析出渠道，返回两个边界 + **本会话**上次请求时刻）。
+  // 两个维度分开：边界按渠道、时刻按会话（##492；曾经共用一个渠道键 ⇒ 任意任务都能刷热别的任务）。
   binding.on(app.cacheHint.current, async () => cacheHint.currentOf());
-  binding.on(app.cacheHint.stats, async ({ input }) => cacheHint.viewOf(input.model));
+  binding.on(app.cacheHint.stats, async ({ input }) => cacheHint.viewOf(input.model, input.session ?? null));
   binding.on(app.cacheHint.simulate, async ({ input }) => {
     // 与 env simulate 同一条线：探针只改"事实来源"，不放宽任何开关
     if (readRuntimeConfig().env === "production") {

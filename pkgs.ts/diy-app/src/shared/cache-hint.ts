@@ -6,6 +6,11 @@
 // 这个事实原本完全沉默：用户只看到「这轮怎么这么贵」，agent 也不知道该不该建议换模型。
 // 本文件只回答两件事：**边界在哪**（safePoint / failPoint）与**该不该提示**。
 //
+// ── 三个数，两个维度（##492 拆开）──
+//   · 「距上次请求多久」是**会话**的事实（维度 = 任务 uri）：任务 B 发请求跟任务 A 的
+//     缓存一点关系都没有 —— 上下文前缀毫无重叠。放渠道上就是「任意任务都刷新这个时间」。
+//   · 「缓存能活多久」是**渠道**的属性（维度 = provider × model）。同一个 key 会同时算错两件事。
+//
 // ── 两个数（维度 = provider × model，**不是 model**；实测同模型不同渠道差 12 倍：
 //    opencode-go 15–30min 命中 6.8%，直连 deepseek 81.8%）──
 //   · safePoint（安全点）：最近 N=100 次**首步成功**请求的 gap 的 **P90**。
@@ -56,10 +61,19 @@ export interface ChannelStats {
     samples: number[];
     /** 最后更新时间（ISO） */
     updatedAt: string;
-    /** 上一次请求（首步）的开始时刻（ms）；null = 本渠道还没有可算 gap 的请求 */
-    lastRequestAt: number | null;
     /** 今日已提示次数（按渠道记；跨 turn、跨进程重启累计，日期一变归零） */
     hints: { date: string; count: number };
+}
+
+/**
+ * 一个**会话**的统计（##492）。
+ *
+ * 维度是会话（任务 uri），不是渠道：`lastRequestAt` 回答的是「**这个会话**距上次请求多久」，
+ * 用户据此决定「要不要为了省钱先压缩」。别的任务刚发过请求不会让它变热，所以不能共享。
+ */
+export interface SessionStats {
+    /** 上一次请求（首步）的开始时刻（ms）；null = 本会话还没有可算 gap 的请求 */
+    lastRequestAt: number | null;
 }
 
 /** 一条「缓存可能已冷」提示（顶栏 bar 的数据） */
@@ -100,8 +114,10 @@ export const CacheChannelViewSchema = z.object({
     safePointMs: z.number(),
     /** null = +∞（从没失败过 → 柱右半段不标红） */
     failPointMs: z.number().nullable(),
-    /** 上一次首步请求的开始时刻（ms）；null = 算不出"现在" */
+    /** 本会话上一次首步请求的开始时刻（ms）；null = 本会话还没发过请求（UI 显示「—」） */
     lastRequestAt: z.number().nullable(),
+    /** 这个视图的「会话」是哪一条（null = 调用方没给会话，gap 无从算起） */
+    session: z.string().nullable(),
     /** 参与 safePoint 的样本数（0 = 还没历史，safePoint 是 60s 的保护值） */
     samples: z.number(),
     hintsToday: z.number(),
@@ -126,9 +142,19 @@ export function emptyChannelStats(nowIso: string): ChannelStats {
         failPoint: null,
         samples: [],
         updatedAt: nowIso,
-        lastRequestAt: null,
         hints: { date: "", count: 0 },
     };
+}
+
+/**
+ * 会话键：任务 uri（会话事实的维度）。空串 / null → null（没有会话就不记、不算 gap）。
+ *
+ * 为什么不另造 id：任务 uri 是会话的**权威身份**（`sessionIdOf()` 也只是它的派生），
+ * 落盘时可读，CLI 里能直接贴任务号。
+ */
+export function sessionKeyOf(taskUri: string | null | undefined): string | null {
+    const s = (taskUri ?? "").trim();
+    return s === "" ? null : s;
 }
 
 /** 升序数组的 P90（最近秩法）；空数组返回 null */
@@ -242,7 +268,8 @@ export function cacheHintText(h: CacheHint): string {
             ? `超过记录的 ${formatGap(h.thresholdMs)} 失效点`
             : `超过 ${formatGap(h.thresholdMs)} 安全期`;
     return (
-        `⚠ 缓存可能已冷 · 距上次 ${formatGap(h.gapMs)}（${why}）` +
+        // 「本会话」三个字不能省：曾经它算的是**所有任务共用**的时间，用户据此做过错决策（##492）
+        `⚠ 缓存可能已冷 · 本会话距上次 ${formatGap(h.gapMs)}（${why}）` +
         ` · 今日第 ${h.todayCount} 次 · 建议换个模型或先压缩`
     );
 }
