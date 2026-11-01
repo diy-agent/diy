@@ -24,6 +24,7 @@
         "build": "tsc -p tsconfig.build.json"
     },
     "dependencies": {
+        "@diy-agent/time": "*",
         "bonjour-service": "^1.4.4"
     },
     "devDependencies": {

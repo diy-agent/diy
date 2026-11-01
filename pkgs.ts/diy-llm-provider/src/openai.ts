@@ -12,7 +12,7 @@ import { streamText, type ModelMessage } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { ChatMessage, ChatOptions, LlmPort, SessionDelta } from '@diy-agent/session';
 import { classifyError } from './errors.js';
-import { SESSION_PLACEHOLDER } from './provider-defaults.js';
+import { SESSION_PLACEHOLDER } from './strategies/opencode.js';
 import type { ProviderConfig, UsageDetail } from './types.js';
 
 /** 带缓存桶的 `usage` 增量（结构上是合法 `SessionDelta`，多带两个可选字段） */

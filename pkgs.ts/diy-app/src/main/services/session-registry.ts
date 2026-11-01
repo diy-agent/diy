@@ -30,6 +30,7 @@ import { AsyncQueue, withCleanup } from "./async-queue";
 import { opsFeed } from "./ops-feed";
 import { sessionIdOf } from "../core/local-paths";
 import type { RegistryFrame, SessionEntry, SessionRef, SessionTurn } from "../../shared/registry-frame";
+import { localISOString } from "@diy-agent/time";
 
 export type { RegistryFrame, SessionEntry, SessionRef, SessionTurn };
 
@@ -114,7 +115,7 @@ class SessionRegistry {
   }
 
   private now(): string {
-    return new Date().toISOString();
+    return localISOString();
   }
 
   private entry(uri: string): CoreEntry {

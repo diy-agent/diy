@@ -17,6 +17,7 @@
 
 import { STEER_MODES, readDrafts, writeSteers, type SteerItem, type SteerMode } from "./drafts";
 import type { NotifyItem } from "@diy-agent/context/envelope";
+import { localISOString } from "@diy-agent/time";
 
 /** 插话 id 的前缀：形如 `steer/1`、`steer/2`（"实体/序号"，见仓库约定的 id 风格） */
 export const STEER_ID_PREFIX = "steer/";
@@ -109,7 +110,7 @@ export class SteerQueue {
       id: newSteerId(existing),
       mode,
       text: body,
-      created: now.toISOString(),
+      created: localISOString(now),
       // 署名随队列项一起落盘（##166 §40 A）：排队可能跨轮次，投递时再问"谁说的"已无从查起
       ...(author ? { author } : {}),
       // 结构化机器事件（job 结束等）：投递时走 notify，不走 chat（##442 2026-10-27）

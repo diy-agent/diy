@@ -18,7 +18,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@diy-agent/time": "*"
+  },
   "devDependencies": {
     "oxfmt": "^0.57.0",
     "oxlint": "^1.72.0",

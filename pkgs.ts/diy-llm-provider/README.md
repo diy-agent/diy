@@ -35,6 +35,27 @@ for await (const delta of session.send("你好")) {
 配置**全部外部传入**：本包不读环境变量、不读应用数据根、不碰文件系统。
 因此同一份代码能在 Electron 主进程、CLI、单测里跑，测试给它一个假 `fetch` 就行。
 
+## provider 策略（`@diy-agent/llm-provider/strategies`）
+
+某个 provider 的**私有约定**（网关专属请求字段 / 必需 header）写在它自己的策略文件里，
+不写在应用层，也不写成「按 provider 名分支」（##491）。
+
+```ts
+import { bodyTransformFor, headersFor } from "@diy-agent/llm-provider/strategies";
+
+const transformBody = bodyTransformFor(baseUrl);            // undefined = 不补（别挂恒等函数）
+const headers = headersFor(baseUrl, { sessionId });        // {} = 不补
+```
+
+| 文件 | 认领 | 做什么 |
+|---|---|---|
+| `strategies/opencode.ts` | `host === opencode.ai` | 补 `prompt_cache_retention=24h` + 会话路由头 |
+| `strategies/venice.ts` | 无（占位） | 什么都不做：字段未实测 ⇒ 不发（##486 原则） |
+| `strategies/passthrough.ts` | 一切（注册表末尾） | 什么都不做：安全默认值 |
+
+注册表 `STRATEGIES` **按顺序匹配，第一个命中的生效**。加新 provider = **新增一个文件 + 在
+`index.ts` 里加一行**；不认识的端点一律走 passthrough（未验证的字段不发）。
+
 ## 失败
 
 所有上游失败统一抛 `LlmProviderError`：

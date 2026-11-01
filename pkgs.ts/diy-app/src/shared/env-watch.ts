@@ -21,6 +21,7 @@
  */
 
 import { z } from "zod";
+import { localISOString } from "@diy-agent/time";
 
 // ═══════════════════════════════════════════════
 //  磁盘水位判据
@@ -304,9 +305,9 @@ export function envNoticeFromDisk(
     };
     // 两个分支各自成字面量（判别联合要求 `type` 与 `level` 同时收窄，不能拼一个变量）
     if (v.level === "full") {
-        return { id: nextId("disk-full", now), ts: now.toISOString(), type: "disk-full", level: "error", data };
+        return { id: nextId("disk-full", now), ts: localISOString(now), type: "disk-full", level: "error", data };
     }
-    return { id: nextId("disk-low", now), ts: now.toISOString(), type: "disk-low", level: "warn", data };
+    return { id: nextId("disk-low", now), ts: localISOString(now), type: "disk-low", level: "warn", data };
 }
 
 /** 连败事实 → 通知。**未达阈值返回 null**（偶发抖动不该亮 bar）。 */
@@ -315,7 +316,7 @@ export function envNoticeFromNetwork(probe: NetworkProbe, streak: number, now = 
     if (!v.down) return null;
     return {
         id: nextId("network-down", now),
-        ts: now.toISOString(),
+        ts: localISOString(now),
         type: "network-down",
         level: "error",
         data: { code: probe.code, streak, message: probe.message, reason: v.reason },
@@ -348,7 +349,7 @@ export type EnvNoticeEvent = z.infer<typeof EnvNoticeEventSchema>;
 export function envNoticeFromWriteError(sample: DiskSample | null, now = new Date()): EnvNotice {
     return {
         id: nextId("disk-full", now),
-        ts: now.toISOString(),
+        ts: localISOString(now),
         type: "disk-full",
         level: "error",
         data: {

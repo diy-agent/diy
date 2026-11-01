@@ -11,6 +11,7 @@ import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { BotError } from "./errors.js";
 import type { BotConfig, BotId, BotSessionRef, BotStore } from "./types.js";
+import { compareInstant } from "@diy-agent/time";
 
 export interface FileBotStoreOptions {
     /** 数据根（`$DIY_HOME`） */
@@ -35,7 +36,8 @@ function checkId(kind: "bot" | "session", id: string): void {
 }
 
 function compareUpdated(a: BotSessionRef, b: BotSessionRef): number {
-    return (b.updatedAt ?? "").localeCompare(a.updatedAt ?? "");
+    // 倒序按**时刻**（偏移可能不同：老数据 `Z`、新数据 `+0800`，字典序会错，##483）
+    return compareInstant(b.updatedAt ?? "", a.updatedAt ?? "");
 }
 
 /** 建一个文件型 BotStore（懒 IO：构造不碰磁盘） */

@@ -13,7 +13,7 @@
 // 的同名模型钉住这一点。
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -167,7 +167,7 @@ describe("提示判据：gap > max(safePoint, failPoint)", () => {
 describe("文案：一行说清「多久 / 越过什么 / 今日几次 / 怎么办」", () => {
     it("按失效点触发", () => {
         expect(cacheHintText(hint())).toBe(
-            "⚠ 缓存可能已冷 · 距上次 42min（超过记录的 15min 失效点） · 今日第 3 次 · 建议换个模型或先压缩",
+            "⚠ 缓存可能已冷 · 本会话距上次 42min（超过记录的 15min 失效点） · 今日第 3 次 · 建议换个模型或先压缩",
         );
     });
 
@@ -234,13 +234,18 @@ describe("落盘 store（判据 1：能查到 <provider>/<model> → {safePoint,
                     samples,
                     safePoint: 123, // 故意写错：读回要按 samples 重算
                     failPoint: 10 * MIN,
-                    lastRequestAt: 1_700_000_000_000,
                 },
                 "direct/deepseek-v4.1-flash": {
                     ...emptyChannelStats("2026-10-31T00:00:00.000Z"),
                     samples: [30 * MIN],
                     failPoint: null,
                 },
+            },
+            // 会话区：维度 = 任务 uri（##492）；与上面的渠道区互不干扰
+            sessions: {
+                "projects/4/tasks/492": { lastRequestAt: 1_700_000_000_000 },
+                "projects/14/tasks/1": { lastRequestAt: null },
+                "projects/4/tasks/broken": { lastRequestAt: "nope" } as never,
             },
         });
         expect(readFileSync(cacheHintFile(home), "utf-8")).toContain(CH);
@@ -249,15 +254,46 @@ describe("落盘 store（判据 1：能查到 <provider>/<model> → {safePoint,
         const a = back.channels[CH]!;
         expect(a.safePoint).toBe(5 * MIN);
         expect(a.failPoint).toBe(10 * MIN);
-        expect(a.lastRequestAt).toBe(1_700_000_000_000);
         // 维度是 provider × model：同名模型的另一个渠道是**另一条**
         expect(back.channels["direct/deepseek-v4.1-flash"]!.safePoint).toBe(30 * MIN);
         expect(back.channels["direct/deepseek-v4.1-flash"]!.failPoint).toBeNull();
+        // 会话区：能用的留着，坏字段归一成 null（不让一处坏掉整份）
+        expect(back.sessions["projects/4/tasks/492"]!.lastRequestAt).toBe(1_700_000_000_000);
+        expect(back.sessions["projects/14/tasks/1"]!.lastRequestAt).toBeNull();
+        expect(back.sessions["projects/4/tasks/broken"]!.lastRequestAt).toBeNull();
+    });
+
+    it("旧文件（channel 里有 lastRequestAt、没有 sessions）→ 照读、不报错，那个时刻丢弃（判据 4）", () => {
+        const home = newHome();
+        // 手写一份 ##491 时代的文件形状：lastRequestAt 在 channel 上
+        writeFileSync(
+            cacheHintFile(home),
+            [
+                "version: 1",
+                "channels:",
+                `  ${CH}:`,
+                "    samples: [300000]",
+                "    safePoint: 300000",
+                "    failPoint: 600000",
+                "    updatedAt: 2026-10-30T00:00:00.000Z",
+                "    lastRequestAt: 1700000000000",
+                "    hints: { date: \"2026-10-30\", count: 2 }",
+                "",
+            ].join("\n"),
+            "utf-8",
+        );
+        const back = loadCacheHintStore(home);
+        // 边界（渠道属性）照旧可用
+        expect(back.channels[CH]!.safePoint).toBe(5 * MIN);
+        expect(back.channels[CH]!.failPoint).toBe(10 * MIN);
+        expect(back.channels[CH]!.hints.count).toBe(2);
+        // 旧时刻不可信（跨任务串的）⇒ 丢弃，没有会话历史就等于「本会话还没发过请求」
+        expect(back.sessions).toEqual({});
     });
 
     it("版本不符 → 空 store（不抛：边界缺失等于不提示）", () => {
         const home = newHome();
-        saveCacheHintStore(home, { version: 99, channels: {} });
+        saveCacheHintStore(home, { version: 99, channels: {}, sessions: {} });
         expect(loadCacheHintStore(home).channels).toEqual({});
     });
 });
@@ -416,27 +452,136 @@ describe("装配层：首步事实 → 边界 → 那一行提示", () => {
             taskUri: "t",
             now: T0 + MIN,
         });
-        cacheHint.noteFirstStepResult({ channel: a.channel, gapMs: null, ...HIT });
-        expect(cacheHint.stats(CH).lastRequestAt).toBe(T0);
-        expect(cacheHint.stats("direct/deepseek-v4.1-flash").lastRequestAt).toBe(T0 + MIN);
+        // 只往第一个渠道回填一次成功：样本只能落在它自己身上（另一个渠道不受影响）
+        cacheHint.noteFirstStepResult({ channel: a.channel, gapMs: 5 * MIN, now: T0 + 5 * MIN, ...HIT });
+        expect(cacheHint.stats(CH).samples).toEqual([5 * MIN]);
+        expect(cacheHint.stats("direct/deepseek-v4.1-flash").samples).toEqual([]);
     });
 
-    it("用量面板的 stats 视图：按模型 ref 解析出渠道 + 两个边界 + 上次请求时刻", () => {
+    it("用量面板的 stats 视图：按模型 ref 解析出渠道 + 两个边界 + **本会话**上次请求时刻", () => {
         cacheHint.reset();
         cacheHint.noteRequest({
             provider: "opencode-go",
             model: "deepseek-v4.1-flash",
-            taskUri: "t",
+            taskUri: "projects/4/tasks/492",
             now: 1_700_000_000_000,
         });
-        const v = cacheHint.viewOf("0@opencode-go/deepseek-v4.1-flash")!;
+        const v = cacheHint.viewOf("0@opencode-go/deepseek-v4.1-flash", "projects/4/tasks/492")!;
         expect(v.channel).toBe(CH);
         expect(v.safePointMs).toBe(SAFE_POINT_DEFAULT_MS);
         expect(v.failPointMs).toBeNull();
         expect(v.lastRequestAt).toBe(1_700_000_000_000);
+        expect(v.session).toBe("projects/4/tasks/492");
         expect(v.samples).toBe(0);
+        // 不给会话 / 别的会话 → 没有「距上次请求」（UI 显示「—」，不是一个巨大的数）
+        expect(cacheHint.viewOf("0@opencode-go/deepseek-v4.1-flash")!.lastRequestAt).toBeNull();
+        expect(
+            cacheHint.viewOf("0@opencode-go/deepseek-v4.1-flash", "projects/14/tasks/1")!.lastRequestAt,
+        ).toBeNull();
         // 未知模型 → null（不编一个渠道）
         expect(cacheHint.viewOf("不存在@no/where")).toBeNull();
         expect(cacheHint.viewOf(null)).toBeNull();
+    });
+});
+
+describe("##492 会话维度：距上次请求属于本会话，边界属于渠道", () => {
+    const wipe = (): void => {
+        rmSync(cacheHintFile(process.env["DIY_HOME"]!), { force: true });
+        cacheHint.reset();
+    };
+    beforeEach(wipe);
+    afterEach(wipe);
+
+    const A = "projects/4/tasks/1";
+    const B = "projects/14/tasks/1";
+
+    it("判据 1：A 刚发请求、B 三小时没动 ⇒ B 看到 gap≈3h（不是刚聊过）", () => {
+        // B 先聊一次，三小时后 A 才聊（同一个渠道）
+        cacheHint.noteRequest({ provider: "opencode-go", model: "deepseek-v4.1-flash", taskUri: B, now: T0 });
+        cacheHint.noteRequest({
+            provider: "opencode-go",
+            model: "deepseek-v4.1-flash",
+            taskUri: A,
+            now: T0 + 3 * HOUR,
+        });
+        const at = new Date(T0 + 3 * HOUR + 5 * MIN);
+        const vA = cacheHint.viewOf("0@opencode-go/deepseek-v4.1-flash", A, at)!;
+        const vB = cacheHint.viewOf("0@opencode-go/deepseek-v4.1-flash", B, at)!;
+        // A 刚聊过（gap 5min）；B 是 3h05min —— 两个任务各算各的
+        expect(vA.lastRequestAt).toBe(T0 + 3 * HOUR);
+        expect(vB.lastRequestAt).toBe(T0);
+        expect(at.getTime() - vB.lastRequestAt!).toBe(3 * HOUR + 5 * MIN);
+    });
+
+    it("判据 2：safePoint / failPoint 在两个任务里是同一个值（渠道属性）", () => {
+        // 先在 A 上造出边界：failPoint=10min（首步全未命中，安全区还是 60s 保护值）
+        cacheHint.noteRequest({ provider: "opencode-go", model: "deepseek-v4.1-flash", taskUri: B, now: T0 });
+        const miss = cacheHint.noteRequest({
+            provider: "opencode-go",
+            model: "deepseek-v4.1-flash",
+            taskUri: B,
+            now: T0 + 10 * MIN,
+        });
+        cacheHint.noteFirstStepResult({
+            channel: miss.channel,
+            gapMs: miss.gapMs,
+            now: T0 + 10 * MIN,
+            ...MISS,
+        });
+        const at = new Date(T0 + 20 * MIN);
+        const vA = cacheHint.viewOf("0@opencode-go/deepseek-v4.1-flash", A, at)!;
+        const vB = cacheHint.viewOf("0@opencode-go/deepseek-v4.1-flash", B, at)!;
+        expect(vA.failPointMs).toBe(10 * MIN);
+        expect(vB.failPointMs).toBe(10 * MIN);
+        expect(vA.safePointMs).toBe(vB.safePointMs);
+    });
+
+    it("提示的 gap 也是本会话的：A 刚聊完不会让 B 在 3h 后少报", () => {
+        // B 在 T0 聊过一次（之后就没动了）
+        cacheHint.noteRequest({ provider: "opencode-go", model: "deepseek-v4.1-flash", taskUri: B, now: T0 });
+        // 先把渠道的失效点压到 10min（用 A 自己聊出来的）
+        cacheHint.noteRequest({ provider: "opencode-go", model: "deepseek-v4.1-flash", taskUri: A, now: T0 });
+        const m = cacheHint.noteRequest({
+            provider: "opencode-go",
+            model: "deepseek-v4.1-flash",
+            taskUri: A,
+            now: T0 + 10 * MIN,
+        });
+        cacheHint.noteFirstStepResult({ channel: m.channel, gapMs: m.gapMs, now: T0 + 10 * MIN, ...MISS });
+        cacheHint.dismiss();
+
+        // A 紧接着又发一次 ⇒ 不提示（gap 2min、且 A 自己的时间被刷新）
+        const a2 = cacheHint.noteRequest({
+            provider: "opencode-go",
+            model: "deepseek-v4.1-flash",
+            taskUri: A,
+            now: T0 + 12 * MIN,
+        });
+        expect(a2.gapMs).toBe(2 * MIN);
+        expect(a2.hint).toBeNull();
+
+        // B 三小时没动 ⇒ 它的 gap 照实是 3h12min（若按渠道算，会被 A 刚才那次刷成 3h）
+        const b2 = cacheHint.noteRequest({
+            provider: "opencode-go",
+            model: "deepseek-v4.1-flash",
+            taskUri: B,
+            now: T0 + 12 * MIN + 3 * HOUR,
+        });
+        expect(b2.gapMs).toBe(3 * HOUR + 12 * MIN);
+        expect(b2.hint?.gapMs).toBe(3 * HOUR + 12 * MIN);
+    });
+
+    it("判据 3：新建会话（从没发过请求）⇒ gap 算不出，不提示", () => {
+        cacheHint.noteRequest({ provider: "opencode-go", model: "deepseek-v4.1-flash", taskUri: A, now: T0 });
+        const fresh = cacheHint.noteRequest({
+            provider: "opencode-go",
+            model: "deepseek-v4.1-flash",
+            taskUri: "projects/4/tasks/999",
+            now: T0 + 5 * HOUR,
+        });
+        expect(fresh.gapMs).toBeNull();
+        expect(fresh.hint).toBeNull();
+        const v = cacheHint.viewOf("0@opencode-go/deepseek-v4.1-flash", "projects/4/tasks/999", new Date(T0 + 5 * HOUR))!;
+        expect(v.lastRequestAt).toBe(T0 + 5 * HOUR); // 这次请求之后就有了
     });
 });

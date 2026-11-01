@@ -17,6 +17,7 @@
 import { appendFileSync, existsSync, mkdirSync, openSync, readSync, closeSync, renameSync, statSync } from "node:fs";
 import { activeTurnList, lastRenderer } from "./runtime-context";
 import { join } from "node:path";
+import { localISOString } from "@diy-agent/time";
 
 export type AuditPhase =
   | "turn-start"
@@ -75,7 +76,7 @@ export function appendAudit(home: string, entry: Omit<AuditEntry, "ts" | "pid"> 
     } catch {
       /* 首次写入或轮转失败都无所谓 */
     }
-    const row: AuditEntry = { ts: entry.ts ?? new Date().toISOString(), pid: process.pid, ...entry };
+    const row: AuditEntry = { ts: entry.ts ?? localISOString(), pid: process.pid, ...entry };
     appendFileSync(p, `${JSON.stringify(row)}\n`, "utf-8");
   } catch (e) {
     console.warn("[agent-audit] 审计写入失败:", e);

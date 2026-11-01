@@ -12,6 +12,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { hostname } from 'node:os';
+import { localISOString } from '@diy-agent/time';
 import { PING_DEFAULT_PORT, PING_PATH, type PingInfo } from '../types.js';
 import type { InstanceIdentity } from '../identity.js';
 
@@ -83,7 +84,7 @@ export async function startPingServer(opts: PingServerOptions): Promise<PingServ
         variant: opts.variant,
         version: opts.version,
         pid,
-        startedAt: new Date(startedMs).toISOString(),
+        startedAt: localISOString(new Date(startedMs)),
         uptimeMs: Math.max(0, Date.now() - startedMs),
     });
 

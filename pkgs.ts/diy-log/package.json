@@ -26,6 +26,7 @@
     "vitest": "^4.1.10"
   },
   "dependencies": {
+    "@diy-agent/time": "*",
     "@opentelemetry/api": "^1.10.0",
     "@opentelemetry/api-logs": "^0.223.0"
   }

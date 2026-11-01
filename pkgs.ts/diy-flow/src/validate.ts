@@ -13,12 +13,14 @@
 import { FlowError, type FlowErrorCode } from './errors.js';
 
 /**
- * ISO-8601 时刻的**词法**校验（形状 `YYYY-MM-DDTHH:mm:ss[.sss][Z|±HH:mm]`）。
+ * ISO-8601 时刻的**词法**校验（形状 `YYYY-MM-DDTHH:mm:ss[.sss][Z|±HH:mm|±HHmm]`）。
+ *
+ * 偏移收两种写法：`+08:00`（标准）与 `+0800`（`@diy-agent/time` 的 `localISOString`，##483）。
  *
  * 与 `@diy-agent/talk` 同口径（review3 意见 2）：只校形态、**不校日历合法性** —— `2026-99-99T99:99:99Z`
  * 会放行。内核保持轻、不引 `Date`；「这个时刻是否真实存在」属语义，归宿主按需校验。
  */
-const ISO_8601 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$/;
+const ISO_8601 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/;
 
 export function isIsoString(value: unknown): value is string {
     return typeof value === 'string' && ISO_8601.test(value);

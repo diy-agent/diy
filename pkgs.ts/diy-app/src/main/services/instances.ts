@@ -31,10 +31,11 @@ import { sessionRegistry } from "./session-registry";
 import * as state from "../core/state";
 import { os } from "../os";
 import type { InstanceRow, InstanceTurn } from "../../shared/instance-row";
+import { localISOString } from "@diy-agent/time";
 
 /** 本进程的启动时刻（`process.uptime()` 反推 —— 不依赖模块加载时机） */
 export function selfStartedAt(): string {
-  return new Date(Date.now() - process.uptime() * 1000).toISOString();
+  return localISOString(new Date(Date.now() - process.uptime() * 1000));
 }
 
 /** 探测预算：单行最坏 = self 超时 + getAppInfo 超时；各行并发，故整表延迟 ≈ 这个量级 */
@@ -54,7 +55,7 @@ export function writeSelfRecord(opts: { diyHome: string; variant: string; env: s
     argv: [...process.argv],
     cwd: process.cwd(),
     startedAt: selfStartedAt(),
-    updatedAt: new Date().toISOString(),
+    updatedAt: localISOString(),
     parents: snapshotParents(),
   });
 }

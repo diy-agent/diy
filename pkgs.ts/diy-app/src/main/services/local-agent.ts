@@ -128,7 +128,9 @@ import { commitSelfStartContext, roomRuntimeFact, type RoomRuntimeValue } from "
 import { addStepUsage, newUsageAcc, setTurnUsage, type TurnUsage } from "./turn-usage";
 // 自量（##404 / ##9 提案）：本进程里的「最近一步」账。记账点 = finish-step（与 appendUsage 同一处），
 // 读点 = 每步重建上下文 —— 读时零 IO（理由见 services/self-usage.ts 头注）。
-import { noteSelfStep, selfOf } from "./self-usage";
+import { noteSelfStep, selfLastBuckets, selfOf } from "./self-usage";
+// 冷缓存等待（##486）：上一步全冷 ⇒ 本步真发前等 1s（判据在 shared/warm-wait.ts）。
+import { warmWaitIfCold } from "./warm-wait";
 import {
     bucketsOf,
     costBreakdown,
@@ -149,7 +151,8 @@ import { assemblyHardCapBytes } from "../../shared/context/request-preflight";
 import { estimateRequest, tighterHistoryCapBytes } from "../../shared/context/request-preflight";
 import { chatEnvelope, isEnvelopeText, userEnvelope, withNotify, type NotifyItem } from "@diy-agent/context/envelope";
 import { describeAnomalies, readLlmLog } from "../../shared/context/log-schema";
-import { isOpencodeEndpoint, withPromptCacheRetention } from "../../shared/prompt-cache";
+// ##491：provider 私有约定（补什么字段 / 要什么 header）全在策略层，应用层只问「这个端点要补什么」
+import { bodyTransformFor, headersFor } from "@diy-agent/llm-provider/strategies";
 import {
     autoCompactPolicyInput,
     detectAutoCompactTriggers,
@@ -268,6 +271,7 @@ import { effectiveBashArgs } from "../../shared/tool-args";
 import { ownedGroups } from "./owned-groups";
 import { foregroundBash } from "./foreground-bash";
 import { exitText, formatDuration, runLine, runsOfTask, stateLabel, type RunOutcome } from "../../shared/run-status";
+import { localISOString } from "@diy-agent/time";
 
 // 模型查询函数抽到 shared/models.ts（core 不能被 services 反向依赖，否则循环 import）。
 // 这里**原样 re-export**：历史引用路径（tests/…/local-models-*.test.ts 等）保持不变。
@@ -1261,7 +1265,7 @@ function readCompactState(taskUri: string): CompactStateRead {
 /** 原子覆盖写快照（`fs` 注入仅供单测做确定性故障注入：验证「写一半不毁旧文件」）。 */
 export function writeCompactState(taskUri: string, state: CompactState, opts: { fs?: FsLike } = {}): void {
     const fp = compactStateFile(taskUri);
-    const next: CompactState = { ...state, savedAt: new Date().toISOString() };
+    const next: CompactState = { ...state, savedAt: localISOString() };
     try {
         writeFileAtomic(fp, `${JSON.stringify(next)}\n`, opts.fs ? { fs: opts.fs } : {});
     } catch (e) {
@@ -1537,7 +1541,7 @@ function maybeRecordMeasure(taskUri: string, rec: StepUsageRecord): void {
         kind: "measure",
         v: 1,
         ref: point.compactId,
-        ts: new Date().toISOString(),
+        ts: localISOString(),
         firstTurnId: rec.turnId,
         // predicted 只在**真有预测值**时才写：空对象 `{}` 落到盘上毫无信息量，
         // 只会让读账的人以为"预测过但没算出来"（实测账本里就有这种空壳）。
@@ -3116,6 +3120,8 @@ export class LocalAgentManager {
     private modelFor(m: ResolvedModel, key: string): LanguageModel {
         if (this.modelResolver) return this.modelResolver(m.id, key);
         const baseUrl = resolveBaseUrl(m);
+        // 该端点要补的 body 变换（未验证的端点 = undefined，不挂恒等函数）
+        const transformBody = bodyTransformFor(baseUrl);
         const ck = `${baseUrl}|${key}`;
         let entry = this.providers.get(ck);
         if (!entry) {
@@ -3130,19 +3136,23 @@ export class LocalAgentManager {
             name: m.provider,
             baseURL: baseUrl,
             apiKey: key,
-            // ##486：opencode 网关的自动前缀缓存只活 ~5 分钟，跨轮（间隔常 >5min）会整段重算。
-            // 补 retention 后实测 6m40s 冷却仍整段命中（见 shared/prompt-cache.ts 的实测记录）。
-            // 只对 opencode 端点挂：其它上游没验证过这个字段。
-            ...(isOpencodeEndpoint(baseUrl) ? { transformRequestBody: withPromptCacheRetention } : {}),
+            // ##486 / ##491：opencode 网关的自动前缀缓存只活 ~5 分钟，跨轮（间隔常 >5min）会整段重算，
+            // 靠策略补 retention（实测记录见 @diy-agent/llm-provider 的 strategies/opencode.ts）。
+            // 其它上游没验证过这个字段 ⇒ 策略层不给变换，这里也就什么都不挂。
+            ...(transformBody === undefined ? {} : { transformRequestBody: transformBody }),
         });
         return entry.chat(m.id);
     }
 
     /**
      * 发请求前登记归属 —— 流量观测（undici diagnostics_channel，见 core/traffic.ts）靠
-     * 请求头里的 `x-opencode-session` 反查「这条记录属于谁」，因此每次真发（streamText /
+     * 请求头里的**会话归属头**反查「这条记录属于谁」（头名与注入时机归 provider 策略，
+     * 见 @diy-agent/llm-provider 的 strategies/opencode.ts），因此每次真发（streamText /
      * generateText）前必须登记一次：同时把计数归零（`attempt` 与步归属，见 ##409）。
      * 之后的**逻辑步**由 prepareStep 里的 `traffic.noteStep` 逐个标出。
+     *
+     * ##491 起只有认领会话头的端点（opencode 网关）才真带这个头；其它上游靠
+     * `noteRun` 登记的 origin 兜底归属（见 traffic.ts 的 `originKind`）。
      */
     private noteTraffic(taskUri: string, turnId: string, rm: ResolvedModel, maxRetries: number): void {
         traffic.noteRun({
@@ -3425,7 +3435,7 @@ export class LocalAgentManager {
                             turnId: turn.id,
                             why: cause.why,
                             evidence: cause.evidence,
-                            evidenceAt: new Date(cause.at).toISOString(),
+                            evidenceAt: localISOString(new Date(cause.at)),
                         },
                     );
                     return { why: cause.why, evidence: cause.evidence };
@@ -3713,7 +3723,7 @@ export class LocalAgentManager {
 
         if (taskUri && (opts.write ?? true)) {
             const cutTurnId = all[r.cut]?.turn ?? null;
-            const at = new Date().toISOString();
+            const at = localISOString();
             // 补轮首 ops 锚点：之后 resolveOpsReplay 可以直接从 turns 边界 seek
             const turnRec = cutTurnId ? readTurnRecords(taskUri).find((t) => t.turnId === cutTurnId) : undefined;
             const ref = turnRec ? { ops: { offset: turnRec.ref.ops.offset, seq: turnRec.ref.ops.seq } } : undefined;
@@ -4572,7 +4582,7 @@ export class LocalAgentManager {
         const res = await generateText({
             model: this.modelFor(rm, key),
             prompt: summaryExtractionPrompt(dropped, p.droppedIds.length),
-            headers: { "x-opencode-session": sessionIdOf(taskUri) },
+            headers: headersFor(resolveBaseUrl(rm), { sessionId: sessionIdOf(taskUri) }),
             maxOutputTokens: budget.tokens,
             maxRetries: 2,
         });
@@ -4694,7 +4704,7 @@ export class LocalAgentManager {
             }
         }
 
-        const ts = new Date().toISOString();
+        const ts = localISOString();
         // ##420：保留起点在 **llm.jsonl 里的行号**（1-based）= 该轮第一条消息在 `projectAll` 里的下标 + 1。
         // 读取侧靠它把「跳过的消息条数」换算回来（注记行号 / llm 对账都按行号对齐）。
         // 同轮内首条被保留的消息之前可能还有被丢的消息，但重放是从**轮首**开始的，
@@ -5529,7 +5539,7 @@ export class LocalAgentManager {
                 const user = textOf(input.map((i) => i.text).join("\n"));
                 appendTurnRecord(taskUri, {
                     turnId,
-                    at: new Date().toISOString(),
+                    at: localISOString(),
                     state: turnStateOf(reason),
                     user: user.text,
                     ...(user.truncated ? { userTruncated: true as const } : {}),
@@ -5655,6 +5665,11 @@ export class LocalAgentManager {
             total: 0,
         };
         let lastStepBuckets: UsageBuckets | null = null;
+        // 冷缓存等待（##486）的记账位：
+        //   · `stepWarmWaitMs` = 本步真发前等掉的毫秒（prepareStep 写、finish-step 落账后清零）
+        //   · `warmWaitedStep` = 已经等过的步号（SDK 重试会再次进 prepareStep，同一步只等一次）
+        let stepWarmWaitMs = 0;
+        let warmWaitedStep = -1;
         // 本轮**最后一步**的生成速度（tok/s = 该步输出 ÷ (响应耗时 − TTFT)，口径见 shared/usage.stepRate）。
         // 为什么要进 turn patch：状态栏的 ⚡ 要能"没在跑时也留在那儿"（老的速度不消失），
         // 而流内部的 token 计数拿不到 ⇒ 只能每步落一次、由 UI 显示最后一次实测值。
@@ -6274,7 +6289,7 @@ export class LocalAgentManager {
             };
             rawSink({
                 kind: "request",
-                ts: new Date().toISOString(),
+                ts: localISOString(),
                 model: model,
                 system: delivery.system.text,
                 tools: Object.keys(tools),
@@ -6297,7 +6312,7 @@ export class LocalAgentManager {
             // 落盘失败不阻断发送（它只是观测），但必须出声。
             const prevStep = this.compactStateOf(taskUri).lastStep; // 本任务的上一轮（用于算变化）
             const step: DeliveryStepRecord = {
-                ts: new Date().toISOString(),
+                ts: localISOString(),
                 turnId,
                 model,
                 wireVersion: delivery.wireVersion,
@@ -6327,7 +6342,7 @@ export class LocalAgentManager {
                 tools,
                 stopWhen: stepCountIs(L.maxSteps),
                 abortSignal: signal,
-                headers: { "x-opencode-session": sessionIdOf(taskUri) },
+                headers: headersFor(resolveBaseUrl(rm), { sessionId: sessionIdOf(taskUri) }),
                 maxOutputTokens: modelMax, // 按模型硬上限（models.dev），reasoning 模型会先吃一部分
                 // none 用 AI SDK 标准关闭语义；"default"（平台默认）**什么都不发**（交上游默认行为，
                 // 见 shared/model-config.DEFAULT_EFFORT）；其他值由 OpenAI-compatible provider 原样转发。
@@ -6361,13 +6376,32 @@ export class LocalAgentManager {
                 // 塞一段，用户看到的是「总结 → 插话 → 又总结」的夹层；收益只是早一个**恰好会
                 // 立刻发生**的轮次边界生效。让这一轮干净地结束、由 chat() 开下一轮（插话就是
                 // 下一轮的开场白）语义更准，轮次结构/usage/停止边界也不用为夹层做特例。
-                prepareStep: ({ messages, stepNumber }) => {
+                prepareStep: async ({ messages, stepNumber, steps: priorSteps }) => {
                     // 流量观测（##409）：这一步的编号先登记进 traffic，然后才发这一步的请求 ——
                     // 于是该步内的 SDK 重试（同一步的多次 HTTP 往返）在记录里带
                     // stepSeq = 步号、attemptInStep = 该步第几次往返，重试链可复盘。
                     // 编号与下面变更历史的 stepNo / stepId(`_s<N>`) 同一个（1 起）。
                     traffic.noteStep(sessionIdOf(taskUri), turnId, stepNumber + 1);
                     if (signal.aborted) return {};
+                    // ── 冷缓存等待（##486）──
+                    // 上一步全冷 ⇒ 本步真发前等 1s（给上游缓存落位留窗口）；**正常路径零延迟**：
+                    // 判据说不等就不排定时器。轮内后续步取 SDK 给的「上一步」，轮首步取本进程内存
+                    // 里的上一步（跨轮 / 跨 run，见 self-usage）；都没有（进程刚起）⇒ 不等。
+                    // 重试会再次进 prepareStep（同一步号）—— 同一个步只等一次。
+                    if (warmWaitedStep !== stepNumber) {
+                        stepWarmWaitMs = 0; // 上一步的等待不带到这一步（重试路径靠 stepNumber 守卫）
+                        const prevUsage = priorSteps.at(-1)?.usage;
+                        const prev = prevUsage ? bucketsOf(prevUsage as UsageLike) : selfLastBuckets(taskUri);
+                        const warm = await warmWaitIfCold(
+                            prev ? { cacheRead: prev.cacheRead, inputTotal: prev.inputTotal } : null,
+                            { signal },
+                        );
+                        if (warm.waitedMs > 0) {
+                            warmWaitedStep = stepNumber;
+                            stepWarmWaitMs = warm.waitedMs;
+                        }
+                    }
+                    if (signal.aborted) return {}; // 等的那 1 秒里用户按了停止：别接着发
                     // ── 冷缓存提示（##477）：只记**首步** ──
                     // 轮内后续步挨着发（秒级 gap），记进来只会把 safePoint 的 P90 拖歪；
                     // 而"这次请求贵不贵"的判定恰好只需要每轮第一个请求的间隔。
@@ -6400,7 +6434,7 @@ export class LocalAgentManager {
                             appendCtxLog(taskUri, {
                                 seq: ++ctxSeq,
                                 type: "baseline",
-                                ts: new Date().toISOString(),
+                                ts: localISOString(),
                                 model,
                                 wireVersion: fresh.wireVersion,
                                 ref,
@@ -6415,7 +6449,7 @@ export class LocalAgentManager {
                                 appendCtxLog(taskUri, {
                                     seq: ++ctxSeq,
                                     type: "changed",
-                                    ts: new Date().toISOString(),
+                                    ts: localISOString(),
                                     model,
                                     wireVersion: fresh.wireVersion,
                                     ref,
@@ -6473,7 +6507,7 @@ export class LocalAgentManager {
 
             try {
                 for await (const part of result.fullStream) {
-                    rawSink({ kind: "part", seq: ++rawSeq, ts: new Date().toISOString(), part });
+                    rawSink({ kind: "part", seq: ++rawSeq, ts: localISOString(), part });
                     switch (part.type) {
                         case "start-step":
                             shape = newShape();
@@ -6756,7 +6790,7 @@ export class LocalAgentManager {
                                 noteSelfStep(taskUri, b, cost);
                                 sessionRegistry.noteTurnUsage(taskUri, acc.total);
                                 appendUsage(taskUri, {
-                                    ts: new Date().toISOString(),
+                                    ts: localISOString(),
                                     turnId,
                                     step: stepN,
                                     persona: identity.persona,
@@ -6780,10 +6814,14 @@ export class LocalAgentManager {
                                     priceBasis: priced.basis,
                                     ...(priced.model ? { priceRef: priced.model.ref } : {}),
                                     contextParts: ctxParts,
+                                    // 冷缓存等待（##486）：本步真发前等掉的毫秒。缺席 = 没等（正常路径不写 0）
+                                    ...(stepWarmWaitMs > 0 ? { waitedMs: stepWarmWaitMs } : {}),
                                     // 投递选择事实**只在轮首**（stepN===1）：一轮只在轮首按当前配置重建投递，
                                     // 后续步复用同一份历史（##272 B1 / ##321）。
                                     ...(stepN === 1 ? { historySelection } : {}),
                                 });
+                                // 一步一份账：等待的记账只属于这一步，落了账就清零（下一步重新判）
+                                stepWarmWaitMs = 0;
                                 yield* emit({
                                     op: "patch",
                                     id: turnId,
@@ -7153,7 +7191,8 @@ export async function previewSimulatedRequest(opts: {
             messages,
             tools: buildTools(cwd, L, taskUri),
             stopWhen: stepCountIs(L.maxSteps),
-            headers: { "x-opencode-session": sessionIdOf(taskUri) },
+            // 预览的端点按预览模型算（预览不真发，header 只为「预览 = 真发」同形）
+            headers: headersFor(previewRm ? resolveBaseUrl(previewRm) : "", { sessionId: sessionIdOf(taskUri) }),
             maxOutputTokens: modelMax,
             maxRetries: 0,
         });

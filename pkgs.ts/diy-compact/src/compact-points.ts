@@ -14,6 +14,7 @@
 // 压缩事件只写一条快照；「哪次请求被这次配置改动影响」只能由**时间先后**判定（事件 ts ≤ 请求 ts）。
 
 import type { CompactEventRecord } from "./compaction.js";
+import { compareInstant } from "@diy-agent/time";
 
 /** 定时所需的最小步信息（真身是 shared/usage 的 StepUsageRecord） */
 export interface StepRef {
@@ -38,15 +39,16 @@ export function mapCompactPointsToSteps(
     steps: readonly StepRef[],
     events: readonly CompactEventRecord[],
 ): Map<string, CompactEventRecord[]> {
-    const ss = steps.slice().sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
+    // 时刻按 instant 比：`ts` 串的偏移可能不同（老记录 `Z`、新记录 `+0800`），字典序会错位（##483）
+    const ss = steps.slice().sort((a, b) => compareInstant(a.ts, b.ts));
     const evs = events
         .filter((e) => e.kind === "compact")
         .slice()
-        .sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
+        .sort((a, b) => compareInstant(a.ts, b.ts));
     const map = new Map<string, CompactEventRecord[]>();
     for (const ev of evs) {
         // 轮首请求（step===1）且在其后 —— 见文件头注（在途轮次不换历史）
-        const hit = ss.find((s) => s.step === 1 && s.ts >= ev.ts);
+        const hit = ss.find((s) => s.step === 1 && compareInstant(s.ts, ev.ts) >= 0);
         if (!hit) continue;
         const k = stepKey(hit);
         const arr = map.get(k);

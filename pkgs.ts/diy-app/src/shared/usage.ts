@@ -522,6 +522,13 @@ export interface StepUsageRecord {
         /** 全量投影消息条数 */
         totalMessages: number;
     };
+    /**
+     * 冷缓存等待（##486）：本步**真发前实际等掉**的毫秒数。
+     * 缺席 = 没等（正常路径零延迟，不写 0 —— 与 `null` 口径一致：没有这件事）。
+     * 判据 4 的数据源：「带 waitedMs 的步 → 下一步缓存读」= 等待组的再全冷率，
+     * 与历史基线 3.5% 对比即可（undefined 的步不参与）。
+     */
+    waitedMs?: number;
 }
 
 /**

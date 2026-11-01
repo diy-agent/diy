@@ -5,8 +5,11 @@
 
 import { SessionError, type SessionErrorCode } from './errors.js';
 
-/** ISO-8601 时间戳的形状判据（`Date.parse` 兜底真伪） */
-const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
+/** ISO-8601 时间戳的形状判据（`Date.parse` 兜底真伪）
+ *
+ * 偏移两种写法都收：`+08:00`（标准）与 `+0800`（`@diy-agent/time` 的 `localISOString`，##483）。
+ * 不收「无偏移」：同一串在不同机器上指不同时刻，写进会话就是静默歧义。 */
+const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:?\d{2})$/;
 
 export function takeObject(value: unknown, path: string, code: SessionErrorCode): Record<string, unknown> {
     if (typeof value !== 'object' || value === null || Array.isArray(value)) {

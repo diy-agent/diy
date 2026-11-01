@@ -4,6 +4,7 @@
 // OTel 的 attributes 是扁平的 AnyValue，但调用方可能把任意对象塞进来 —— 这里统一有界化。
 
 import { Buffer } from 'node:buffer';
+import { localISOString } from '@diy-agent/time';
 import type { FileLogError } from './types.js';
 
 /** 字符串字段的显示上限（人读的一行，不是数据仓库） */
@@ -47,7 +48,8 @@ export function sanitizeValue(value: unknown, depth = 0, seen = new WeakSet<obje
     if (depth >= MAX_DEPTH) return '[depth-limit]';
     if (seen.has(value)) return '[circular]';
     seen.add(value);
-    if (value instanceof Date) return Number.isNaN(value.getTime()) ? 'Invalid Date' : value.toISOString();
+    // Date 值按本包同一口径（本地 + 偏移）：同一份日志里两种时间格式并存 = 读的人要来回换算
+    if (value instanceof Date) return Number.isNaN(value.getTime()) ? 'Invalid Date' : localISOString(value);
     if (value instanceof Error) return toLogError(value);
     if (Array.isArray(value)) {
         const out = value.slice(0, MAX_ARRAY).map((item) => sanitizeValue(item, depth + 1, seen));

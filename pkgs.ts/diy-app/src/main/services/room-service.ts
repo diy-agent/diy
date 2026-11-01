@@ -73,6 +73,7 @@ import type { Op } from "./local-blocks";
 import { errText } from "../../shared/error-report";
 import { InvariantError } from "../../shared/error-triage";
 import { reportError } from "./error-report";
+import { localISOString } from "@diy-agent/time";
 
 /** 人成员（「我」）—— 任务 room 与侧边栏 room 同一份（页面操作者本人，无 backend） */
 function humanMember(): RoomMember {
@@ -295,7 +296,7 @@ async function mirrorIntoTarget(input: {
             ...(input.turnId ? { turnId: input.turnId } : {}),
             ...(input.error ? { error: input.error } : {}),
             ids: { say: nextEventId(), reply: nextEventId() },
-            ts: new Date().toISOString(),
+            ts: localISOString(),
         });
         if (!built) return;
         // 只补缺的那条（`mirrorMissingParts` 的判据）—— 两条都在时上面已 return
@@ -527,7 +528,7 @@ export async function* postToRoom(roomId: string, rawText: string): AsyncGenerat
     // record = 落盘 + 补 channel（唯一写入口）；返回的那份才是盘上的形状 ⇒ yield 它
     const sayEvent = await record(roomId, {
         id: sayId,
-        ts: new Date().toISOString(),
+        ts: localISOString(),
         kind: "say",
         author,
         to: recipients,
@@ -576,7 +577,7 @@ export async function* postToRoom(roomId: string, rawText: string): AsyncGenerat
             const replyId = nextEventId();
             const skip = await record(roomId, {
                 id: replyId,
-                ts: new Date().toISOString(),
+                ts: localISOString(),
                 kind: "reply",
                 author: id,
                 to: [author],
@@ -590,7 +591,7 @@ export async function* postToRoom(roomId: string, rawText: string): AsyncGenerat
                 status: "skipped",
                 error: why,
                 replyId,
-                ts: new Date().toISOString(),
+                ts: localISOString(),
             };
             await appendDelivery(roomId, { eventId: sayId, ...st });
             states.set(id, st);
@@ -665,7 +666,7 @@ function deliverOne(input: DeliverInput): Promise<void> {
             memberId: member.id,
             status,
             taskUri,
-            ts: new Date().toISOString(),
+            ts: localISOString(),
             ...extra,
         } as DeliveryState;
         await appendDelivery(roomId, { eventId: sayId, ...st });
@@ -691,7 +692,7 @@ function deliverOne(input: DeliverInput): Promise<void> {
         const replyId = nextEventId();
         const ev = await record(roomId, {
             id: replyId,
-            ts: new Date().toISOString(),
+            ts: localISOString(),
             kind: "reply",
             author: member.id,
             to: [author],
@@ -868,7 +869,7 @@ function deliverOne(input: DeliverInput): Promise<void> {
             try {
                 ev = await record(roomId, {
                     id: nextEventId(),
-                    ts: new Date().toISOString(),
+                    ts: localISOString(),
                     kind: "reply",
                     author: member.id,
                     to: [author],
@@ -888,7 +889,7 @@ function deliverOne(input: DeliverInput): Promise<void> {
             input.done(
                 ev ?? {
                     id: nextEventId(),
-                    ts: new Date().toISOString(),
+                    ts: localISOString(),
                     // 盘写都失败时的**内存事件**：`room.post` 的流照样能收尾、UI 照样看得见失败
                     channel: DEFAULT_CHANNEL_ID,
                     kind: "reply",

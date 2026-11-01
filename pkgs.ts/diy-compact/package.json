@@ -21,6 +21,7 @@
   ],
   "dependencies": {
     "@diy-agent/context": "^0.1.0",
+    "@diy-agent/time": "*",
     "zod": "^4.4.3"
   },
   "devDependencies": {

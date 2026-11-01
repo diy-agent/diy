@@ -16,6 +16,7 @@ import { createOpenAiCompatible, resolveProviderConfig } from '@diy-agent/llm-pr
 import { loadCatalog, readAccountValue, readDefaultModel, type ModelCatalogEntry } from '@diy-agent/model-catalog';
 import { createSession, type AgentSession, type ChatMessage, type LlmPort } from '@diy-agent/session';
 import { openMemorySessionStore } from '@diy-agent/session-store-memory';
+import { localISOString } from '@diy-agent/time';
 import { BotConfigPageError } from './errors.js';
 import type { BotSnapshot, BotView, ModelOptionView, TestChatView, TestMessageView } from './shared.js';
 
@@ -86,7 +87,7 @@ export function createBotActions(options: BotActionsOptions): BotActions {
             throw new BotConfigPageError('bot-config/id-taken', `bot id 已存在：${id}`);
         }
         checkModel(model);
-        const at = now().toISOString();
+        const at = localISOString(now());
         await store.save({
             id,
             name,
@@ -115,7 +116,7 @@ export function createBotActions(options: BotActionsOptions): BotActions {
             ...(current.reasoningEffort === undefined ? {} : { reasoningEffort: current.reasoningEffort }),
             ...(current.maxOutputTokens === undefined ? {} : { maxOutputTokens: current.maxOutputTokens }),
             createdAt: current.createdAt,
-            updatedAt: now().toISOString(),
+            updatedAt: localISOString(now()),
             // 空模型 = 跟随缺省：**不写这个键**（与任务的 persona 同一套「缺省不写」约定）
             ...(model === null ? {} : { model }),
         };

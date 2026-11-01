@@ -19,6 +19,7 @@ import { diyHome } from "../core/state";
 import { isHumanAuthor } from "../core/drafts";
 import { AsyncQueue, withCleanup } from "./async-queue";
 import { INBOX_MAX, inboxPreviewOf, type InboxEntry } from "../../shared/inbox";
+import { localISOString } from "@diy-agent/time";
 
 /** 信箱文件（**不按天切**：条目本就稀疏，按天切只会让"翻上周那条"变成翻十个文件） */
 export function inboxFile(): string {
@@ -32,7 +33,7 @@ export function inboxEntryOf(
     partial: Omit<InboxEntry, "id" | "ts">,
     now = new Date(),
 ): InboxEntry {
-    return { id: `ib-${now.getTime()}-${String(++seq).padStart(4, "0")}`, ts: now.toISOString(), ...partial };
+    return { id: `ib-${now.getTime()}-${String(++seq).padStart(4, "0")}`, ts: localISOString(now), ...partial };
 }
 
 /**

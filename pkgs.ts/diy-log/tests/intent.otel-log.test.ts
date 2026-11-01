@@ -126,7 +126,9 @@ describe('@diy-agent/log（OTel + 文件导出器）', () => {
         expect(entries.map((entry) => entry.source)).toEqual(['main:chat', 'page:chat']);
         expect(entries[0]).toMatchObject({ level: 'info', msg: '窗口已创建', data: { variant: 'lab' } });
         expect(entries[1]).toMatchObject({ level: 'warn', msg: '未选中会话' });
-        expect(entries[0]?.at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+        // at 是**本地时区 + 偏移**（##483）：形状对、且解析回来是刚才那一刻
+        expect(entries[0]?.at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{4}$/);
+        expect(Math.abs(Date.parse(entries[0]?.at ?? '') - Date.now())).toBeLessThan(60_000);
     });
 
     it('T2 级别过滤：minimumSeverity 生效，debug 不落盘', async () => {

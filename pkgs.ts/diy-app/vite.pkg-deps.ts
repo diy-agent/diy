@@ -17,6 +17,7 @@ import { isAbsolute } from "node:path";
  * 故 `./sha.sh build` 必须先 `build-pkgs`（顺序见根 sha.sh）。
  */
 export const WORKSPACE_TS_DEPS = [
+  "@diy-agent/time",
   "@diy-agent/rpc",
   "@diy-agent/remote",
   "@diy-agent/bot",
@@ -26,6 +27,7 @@ export const WORKSPACE_TS_DEPS = [
   "@diy-agent/facts",
   "@diy-agent/persistence",
   "@diy-agent/context",
+  "@diy-agent/llm-provider",
   "@diy-agent/compaction",
   "@diy-agent/ui-kit",
 ];

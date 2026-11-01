@@ -13,6 +13,10 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./lib/index.js"
+    },
+    "./strategies": {
+      "types": "./src/strategies/index.ts",
+      "default": "./lib/strategies/index.js"
     }
   },
   "scripts": {

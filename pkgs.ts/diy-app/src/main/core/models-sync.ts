@@ -21,6 +21,7 @@ import { MODELS_DEV_FILE, type ModelsRefreshResult, type ModelsSnapshotInfo, typ
 import { writeFileAtomic } from "./atomic-write";
 import { dataFileHit, dataHomeFile, type DataFileHit } from "./data-file";
 import { buildModelsSnapshot, diffSnapshot, snapshotCounts } from "./models-snapshot";
+import { localISOString } from "@diy-agent/time";
 
 /** 缺省上游（真源见 `diy/AGENTS.md::model.truth`） */
 export const MODELS_DEV_ORIGIN = "https://models.dev/api.json";
@@ -94,7 +95,7 @@ export function activeSnapshot(home: string): { hit: DataFileHit; info: ModelsSn
  */
 export async function refreshModelsOnce(o: RefreshModelsOptions): Promise<ModelsRefreshResult> {
     const now = o.now ?? (() => new Date());
-    const checkedAt = now().toISOString();
+    const checkedAt = localISOString(now());
     const origin = o.origin ?? process.env["DIY_MODELS_DEV_ORIGIN"] ?? MODELS_DEV_ORIGIN;
     const dest = dataHomeFile(MODELS_DEV_FILE, o.home);
 

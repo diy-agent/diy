@@ -2,6 +2,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { localISOString } from "@diy-agent/time";
 import { describe, expect, it } from "vitest";
 import {
     BotError,
@@ -48,8 +49,9 @@ describe("BotStore 文件实现", () => {
             name: "大王助手",
             instructions: "你是谁",
             model: "deepseek/deepseek-chat",
-            createdAt: at.toISOString(),
-            updatedAt: at.toISOString(),
+            // 时间戳口径 = 本地时区 + 偏移（##483）
+            createdAt: localISOString(at),
+            updatedAt: localISOString(at),
         });
         expect(config).toEqual(raw);
         // 再 ensure 不覆盖（存在即返回）

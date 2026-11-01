@@ -11,6 +11,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { localISOString } from '@diy-agent/time';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { LlmPort } from '@diy-agent/session';
 import { createBotActions } from '../src/actions.js';
@@ -139,7 +140,8 @@ describe('bot-config 页面（主进程侧）', () => {
         expect(Object.keys(onDisk).sort()).toEqual(
             ['createdAt', 'id', 'instructions', 'model', 'name', 'updatedAt'].sort(),
         );
-        expect(onDisk['createdAt']).toBe('2026-10-30T10:00:00.000Z');
+        // 时间戳口径 = 本地时区 + 偏移（##483）
+        expect(onDisk['createdAt']).toBe(localISOString(new Date('2026-10-30T10:00:00.000Z')));
 
         const second = await actions.create({ name: '二号' });
         expect(second.bots.map((item) => item.id).sort()).toEqual(['bot-1', 'bot-2']);
@@ -168,8 +170,9 @@ describe('bot-config 页面（主进程侧）', () => {
         expect(bot.name).toBe('改名了');
         expect(bot.instructions).toBe('新指令');
         expect(bot.model).toBeNull();
-        expect(bot.createdAt).toBe('2026-10-30T10:00:00.000Z');
-        expect(bot.updatedAt).toBe('2026-10-30T11:00:00.000Z');
+        // 时间戳口径 = 本地时区 + 偏移（##483）
+        expect(bot.createdAt).toBe(localISOString(new Date('2026-10-30T10:00:00Z')));
+        expect(bot.updatedAt).toBe(localISOString(new Date('2026-10-30T11:00:00Z')));
         const onDisk = JSON.parse(readFileSync(join(home, 'bots', 'bot-1', 'bot.json'), 'utf-8')) as Record<
             string,
             unknown

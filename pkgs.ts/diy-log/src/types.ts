@@ -26,7 +26,7 @@ export interface FileLogError {
 
 /** 落盘的一行（jsonl）—— 字段名即 grep 契约，改字段 = 破坏查看习惯 */
 export interface FileLogEntry {
-    /** ISO 时间 */
+    /** 本地时区 ISO 串（`@diy-agent/time` 的 `localISOString`，如 `2026-10-31T11:29:25.403+0800`；##483） */
     readonly at: string;
     readonly level: string;
     /** 来源标识：包名 / 页面 id / 模块（OTel 的 instrumentationScope.name） */

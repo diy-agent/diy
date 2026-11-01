@@ -23,6 +23,7 @@
 // 需要跨进程死亡留痕的场景仍由 agent-audit 的 write-ahead 日志负责（两者互补，不是替代）。
 
 import { sessionRegistry } from "./session-registry";
+import { localISOString } from "@diy-agent/time";
 
 export interface ActiveTurn {
   taskUri: string;
@@ -59,7 +60,7 @@ export function activeTurnList(): ActiveTurn[] {
 
 /** 渲染进程交互留痕（主进程 RPC 入口调用）：它崩了之后我们才知道 UI 最后在动哪个任务 */
 export function noteRendererTouch(channel: string, taskUri?: string): void {
-  lastRendererTouch = { channel, taskUri, at: new Date().toISOString() };
+  lastRendererTouch = { channel, taskUri, at: localISOString() };
 }
 
 export function lastRenderer(): LastRendererTouch | null {

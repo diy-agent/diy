@@ -34,6 +34,7 @@ import {
 } from "../../src/main/services/error-report";
 import { collectTurn } from "../../src/main/services/room-service";
 import type { Op } from "../../src/main/services/local-blocks";
+import { localISOString } from "@diy-agent/time";
 
 /** 带 code 的异常（本仓约定：`<域>/<kebab>`） */
 function codedError(message = "Cannot read properties of undefined", code = "agent/stub-crash"): Error {
@@ -93,7 +94,8 @@ describe("errorCodeOf / buildErrorReport", () => {
 
     it("报告形状 = {ts, code, name, message, stack, ctx}，stack 超长截断", () => {
         const r = buildErrorReport(codedError(), { where: "test/unit" }, now);
-        expect(r.ts).toBe(now.toISOString());
+        // ts 口径 = 本地时区 + 偏移（##483）
+        expect(r.ts).toBe(localISOString(now));
         expect(r.code).toBe("agent/stub-crash");
         expect(r.name).toBe("Error");
         expect(r.message).toBe("Cannot read properties of undefined");

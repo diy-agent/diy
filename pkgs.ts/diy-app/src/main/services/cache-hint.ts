@@ -10,7 +10,7 @@
 // （换个模型 / 先压缩）对每个渠道都一样；新的一条**替换**旧的，不叠加、不弹窗。
 //
 // 谁在什么时候调用（唯一调用点 = local-agent 的 runTurn）：
-//   · 每轮**首步请求发出前** `noteRequest(...)` —— 只有这里拿得到"距上次多久"
+//   · 每轮**首步请求发出前** `noteRequest(...)` —— 只有这里拿得到"本会话距上次多久"（##492）
 //   · 该首步的 usage 到手后 `noteFirstStepResult(...)` —— 命中率是这一步的硬事实
 //   · 首步之外的步一律不参与（它们在轮内挨着发，gap 是秒级噪声，会把 P90 拖歪）
 
@@ -28,6 +28,7 @@ import {
     firstStepHitRate,
     localDateKey,
     safePointOf,
+    sessionKeyOf,
     splitChannel,
     SAFE_POINT_WINDOW,
     recordFailureGap,
@@ -38,6 +39,7 @@ import {
     type ChannelStats,
     type HintDecision,
 } from "../../shared/cache-hint";
+import { localISOString } from "@diy-agent/time";
 
 /** 一次首步请求的输入（调用点已解析好渠道；本服务不碰 persona / provider 配置） */
 export interface NoteRequestInput {
@@ -52,7 +54,7 @@ export interface NoteRequestInput {
 /** noteRequest 的回报：调用点据此在本步 usage 到手后回填结果 */
 export interface NoteRequestResult {
     channel: string;
-    /** 距上次首步请求的间隔；null = 本渠道第一次（算不出，不参与统计） */
+    /** 本**会话**距上次首步请求的间隔；null = 本会话第一次（算不出，不参与统计） */
     gapMs: number | null;
     /** 命中的边界（null = 不提示） */
     decision: HintDecision | null;
@@ -75,19 +77,32 @@ class CacheHintService {
 
     /** 一个渠道的统计（必返回；没有历史就给缺省，调用方不必判空） */
     stats(channel: string, now = new Date()): ChannelStats {
-        return this.ensure(now).channels[channel] ?? emptyChannelStats(now.toISOString());
+        return this.ensure(now).channels[channel] ?? emptyChannelStats(localISOString(now));
     }
 
-    /** 首步请求发出前：算 gap、问判据、更新 lastRequestAt、必要时亮/撤那一行 */
+    /** 一个会话的上次请求时刻（null = 没发过 / 没给会话） */
+    lastRequestAtOf(session: string | null, now = new Date()): number | null {
+        if (!session) return null;
+        return this.ensure(now).sessions[session]?.lastRequestAt ?? null;
+    }
+
+    /**
+     * 首步请求发出前：算 gap、问判据、更新 lastRequestAt、必要时亮/撤那一行。
+     *
+     * gap 读的是**本会话**的 lastRequestAt（##492）：别的任务刚发过请求，与本会话的缓存
+     * 毫无关系（前缀不重叠）；而边界仍按**渠道**算。两个维度分开取，才不互相带歪。
+     */
     noteRequest(input: NoteRequestInput): NoteRequestResult {
         const now = input.now ?? Date.now();
         const nowDate = new Date(now);
-        const nowIso = nowDate.toISOString();
+        const nowIso = localISOString(nowDate);
         const channel = channelKey(input.provider, input.model);
+        const session = sessionKeyOf(input.taskUri);
         const store = this.ensure(nowDate);
         const prev = store.channels[channel] ?? emptyChannelStats(nowIso);
 
-        const gapMs = prev.lastRequestAt !== null && now > prev.lastRequestAt ? now - prev.lastRequestAt : null;
+        const prevAt = session ? (store.sessions[session]?.lastRequestAt ?? null) : null;
+        const gapMs = prevAt !== null && now > prevAt ? now - prevAt : null;
         const safePointMs = safePointOf(prev.samples);
         const decision = decideHint({ gapMs, safePointMs, failPointMs: prev.failPoint });
 
@@ -110,10 +125,12 @@ class CacheHintService {
                 taskUri: input.taskUri,
                 ...(input.persona ? { persona: input.persona } : {}),
             };
-            store.channels[channel] = { ...prev, hints, updatedAt: nowIso, lastRequestAt: now };
+            store.channels[channel] = { ...prev, hints, updatedAt: nowIso };
+            if (session) store.sessions[session] = { lastRequestAt: now };
             this.show(hint);
         } else {
-            store.channels[channel] = { ...prev, updatedAt: nowIso, lastRequestAt: now };
+            store.channels[channel] = { ...prev, updatedAt: nowIso };
+            if (session) store.sessions[session] = { lastRequestAt: now };
             // 只撤**本渠道**那条：别的渠道的提示不该被这次请求顺手擦掉（一行也得说对是谁）
             if (this.current?.channel === channel) this.clear();
         }
@@ -145,7 +162,7 @@ class CacheHintService {
         if (input.gapMs === null) return null;
         const verdict = classifyFirstStep(firstStepHitRate(input.inputTokens, input.cacheRead));
         const nowDate = new Date(input.now ?? Date.now());
-        const nowIso = nowDate.toISOString();
+        const nowIso = localISOString(nowDate);
         const store = this.ensure(nowDate);
         const prev = store.channels[input.channel] ?? emptyChannelStats(nowIso);
         if (verdict === "success") {
@@ -210,18 +227,19 @@ class CacheHintService {
     }): CacheChannelView & { hint: CacheHint | null } {
         const times = Math.max(1, Math.min(SAFE_POINT_WINDOW + 20, Math.floor(input.repeat ?? 1)));
         const now = Date.now();
-        const nowIso = new Date(now).toISOString();
+        const nowIso = localISOString(new Date(now));
         const channel = channelKey(input.provider, input.model);
+        // 探针自己也占一条会话（缺省 probe）：lastRequestAt 现在按会话记（##492）
+        const session = sessionKeyOf(input.taskUri) ?? "probe";
         let lastHint: CacheHint | null = null;
         for (let i = 0; i < times; i++) {
-            // 把「上次请求」拨到 now - gap：noteRequest 算出来的 gap 就是 assert 的那个数
+            // 把「本会话上次请求」拨到 now - gap：noteRequest 算出来的 gap 就是 assert 的那个数
             const store = this.ensure(new Date(now));
-            const prev = store.channels[channel] ?? emptyChannelStats(nowIso);
-            store.channels[channel] = { ...prev, lastRequestAt: now - input.gapMs };
+            store.sessions[session] = { lastRequestAt: now - input.gapMs };
             const r = this.noteRequest({
                 provider: input.provider,
                 model: input.model,
-                taskUri: input.taskUri ?? "probe",
+                taskUri: session,
                 now,
             });
             lastHint = r.hint;
@@ -231,7 +249,7 @@ class CacheHintService {
                     gapMs: r.gapMs,
                     inputTokens: 1000,
                     cacheRead: input.hit === "success" ? 950 : 0,
-                    taskUri: input.taskUri ?? "probe",
+                    taskUri: session,
                     hinted: r.hint !== null,
                     now,
                 });
@@ -240,28 +258,34 @@ class CacheHintService {
                 if (cur && cur.channel === channel) lastHint = cur;
             }
         }
-        return { ...this.viewOfChannel(input.provider, input.model, new Date(now))!, hint: lastHint };
+        return { ...this.viewOfChannel(input.provider, input.model, new Date(now), session), hint: lastHint };
     }
 
-    /** 「缓存时效柱」的数据；`modelRef` 是对话事实里的 `account@provider/model` */
-    viewOf(modelRef: string | null | undefined, now = new Date()): CacheChannelView | null {
+    /**
+     * 「缓存时效柱」的数据；`modelRef` 是对话事实里的 `account@provider/model`。
+     * `taskUri` = 会话（缺省 null ⇒ `lastRequestAt` 为 null，柱上显示「—」）。
+     */
+    viewOf(modelRef: string | null | undefined, taskUri?: string | null, now = new Date()): CacheChannelView | null {
         if (!modelRef) return null;
         const rm = findModel(modelRef);
         if (!rm) return null;
-        return this.viewOfChannel(rm.provider, rm.id, now);
+        return this.viewOfChannel(rm.provider, rm.id, now, taskUri);
     }
 
     /** 已知 provider/model 的视图（探针与 viewOf 共用，别在两边各拼一遍） */
-    viewOfChannel(provider: string, model: string, now = new Date()): CacheChannelView {
+    viewOfChannel(provider: string, model: string, now = new Date(), taskUri?: string | null): CacheChannelView {
         const channel = channelKey(provider, model);
         const s = this.stats(channel, now);
+        const session = sessionKeyOf(taskUri);
         return {
             channel,
             provider,
             model,
+            // 边界是**渠道**的（不变）；「距上次请求」是**会话**的（##492）
             safePointMs: safePointOf(s.samples),
             failPointMs: s.failPoint,
-            lastRequestAt: s.lastRequestAt,
+            lastRequestAt: this.lastRequestAtOf(session, now),
+            session,
             samples: s.samples.length,
             hintsToday: s.hints.date === localDateKey(now) ? s.hints.count : 0,
         };

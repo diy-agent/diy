@@ -66,6 +66,7 @@ import {
     type FlowPost,
     type FlowPostType,
 } from "./flow-store";
+import { localISOString } from "@diy-agent/time";
 
 // ═══════════════════════════════════════════════════════════════
 // 视图（RPC 出参形状；renderer 后续可复用同一份语义）
@@ -635,7 +636,7 @@ function commit(
     note?: string,
     author = "cli",
 ): FlowView {
-    const at = new Date().toISOString();
+    const at = localISOString();
     // 正路必须带 params（##333 review2 P1）：交回状态自己那份 —— 内核据此保证「读回同配置」
     const request = state.params === undefined
         ? { to, at, ref }
@@ -725,7 +726,7 @@ export function startFlow(uri: string, workflowId: string, paramArgs: readonly s
     writeBinding(uri, { workflowId: def.id, params, ref: { taskUri: uri } });
     appendAudit(uri, {
         id: randomUUID(),
-        at: new Date().toISOString(),
+        at: localISOString(),
         kind: "start",
         from: null,
         to: null,
@@ -830,7 +831,7 @@ export function finishFlow(uri: string, note?: string): FlowView {
                 `（先 \`diy flow advance\` 到终端节点，或 \`diy flow bounce\`）`,
         );
     }
-    const at = new Date().toISOString();
+    const at = localISOString();
     const next = applyFinish(state);
     // 与 commit 同一落盘次序：先权威快照、再重建材料、最后审计（中途崩最坏是「快照多一条增量少一条」⇒ 对账亮错）
     writeState(uri, next);
@@ -923,7 +924,7 @@ export async function stepFlow(uri: string, deps: HostPluginDeps = {}): Promise<
     // ⚠️ `at` **只取一次**：内核把它写进 `Visit.at`（权威快照），宿主又把它写进 `path.jsonl`（重建材料）
     // —— 两边各取一次时间会差几毫秒，而两份必须**逐字同形**（`assertSnapshotMatches`），于是下一次读
     // 就亮「重建不出快照」的错。这不是洁癖：对账/NTP 对时下 `at` 本来就不单调（见内核 rule.state-serialize）。
-    const at = new Date().toISOString();
+    const at = localISOString();
     const result = runtimeOf(def, params, registry).step(state, { at, ref: { taskUri: uri } });
 
     if (result.status === "moved") {
@@ -1034,7 +1035,7 @@ export function paramsSet(uri: string, paramArgs: readonly string[]): FlowView {
     if (binding) writeBinding(uri, { ...binding, params });
     appendAudit(uri, {
         id: randomUUID(),
-        at: new Date().toISOString(),
+        at: localISOString(),
         kind: "params",
         from: null,
         to: null,

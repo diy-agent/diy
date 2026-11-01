@@ -28,6 +28,7 @@
     "@diy-agent/model-catalog": "*",
     "@diy-agent/session": "*",
     "@diy-agent/session-store-memory": "*",
+    "@diy-agent/time": "*",
     "@diy-agent/workbench": "*",
     "@diy-agent/workbench-ui": "*"
   },

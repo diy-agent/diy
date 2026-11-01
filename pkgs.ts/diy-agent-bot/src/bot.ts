@@ -2,6 +2,7 @@
 //
 // 本文件不碰文件系统：会话归属 / 身份读写全走注入的 BotStore。
 
+import { localISOString } from "@diy-agent/time";
 import { BotError } from "./errors.js";
 import { createMemoryBotStore } from "./store-memory.js";
 import type { Bot, BotConfig, BotDraft, BotStore, CreateBotOptions } from "./types.js";
@@ -55,7 +56,7 @@ export async function ensureBot(
 ): Promise<BotConfig> {
     const existing = await store.load(draft.id);
     if (existing !== null) return existing;
-    const now = clock().toISOString();
+    const now = localISOString(clock());
     const config: BotConfig = {
         id: draft.id,
         name: draft.name,
