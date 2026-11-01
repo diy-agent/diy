@@ -143,17 +143,17 @@ describe('bot-config 页面（主进程侧）', () => {
         // 时间戳口径 = 本地时区 + 偏移（##483）
         expect(onDisk['createdAt']).toBe(localISOString(new Date('2026-10-30T10:00:00.000Z')));
 
-        const second = await actions.create({ name: '二号' });
+        // ##497：model 必填（不再有「跟随缺省」）
+        const second = await actions.create({ name: '二号', model: 'goat/m1' });
         expect(second.bots.map((item) => item.id).sort()).toEqual(['bot-1', 'bot-2']);
-        // 没指定模型 = 不写 model 键
         const secondDisk = JSON.parse(readFileSync(join(home, 'bots', 'bot-2', 'bot.json'), 'utf-8')) as Record<
             string,
             unknown
         >;
-        expect('model' in secondDisk).toBe(false);
+        expect(secondDisk['model']).toBe('goat/m1');
     });
 
-    it('T4：改身份；createdAt 不动，model 置空 = 删键', async () => {
+    it('T4：改身份；createdAt 不动；model 置空 ⇒ 拒绝（##497 必填）', async () => {
         const home = makeHome();
         let now = new Date('2026-10-30T10:00:00Z');
         const actions = createBotActions({ home, clock: () => now });
@@ -164,20 +164,20 @@ describe('bot-config 页面（主进程侧）', () => {
             id: 'bot-1',
             name: '改名了',
             instructions: '新指令',
-            model: '',
+            model: 'goat/m1',
         });
         const bot = saved.bots[0]!;
         expect(bot.name).toBe('改名了');
         expect(bot.instructions).toBe('新指令');
-        expect(bot.model).toBeNull();
+        expect(bot.model).toBe('goat/m1');
         // 时间戳口径 = 本地时区 + 偏移（##483）
         expect(bot.createdAt).toBe(localISOString(new Date('2026-10-30T10:00:00Z')));
         expect(bot.updatedAt).toBe(localISOString(new Date('2026-10-30T11:00:00Z')));
-        const onDisk = JSON.parse(readFileSync(join(home, 'bots', 'bot-1', 'bot.json'), 'utf-8')) as Record<
-            string,
-            unknown
-        >;
-        expect('model' in onDisk).toBe(false);
+
+        // ##497：model 必填 —— 置空不再「删键」，而是拒绝
+        await expect(actions.save({ id: 'bot-1', name: '改名了', model: '' })).rejects.toThrow(
+            /必须先选一个模型/,
+        );
     });
 
     it('T4b：模型不在目录里 ⇒ 拒绝（不写坏数据）', async () => {
@@ -190,7 +190,7 @@ describe('bot-config 页面（主进程侧）', () => {
     it('T5：删 bot 只删 bots/<id>/，会话目录不动', async () => {
         const home = makeHome();
         const actions = createBotActions({ home });
-        await actions.create({ name: '小助手' });
+        await actions.create({ name: '小助手', model: 'goat/m1' });
         // 模拟一个归属 bot-1 的会话目录
         const sessionDir = join(home, 'sessions', 'chat', 's-1');
         mkdirSync(sessionDir, { recursive: true });

@@ -86,13 +86,13 @@ export function createBotActions(options: BotActionsOptions): BotActions {
         if (existing.some((config) => config.id === id)) {
             throw new BotConfigPageError('bot-config/id-taken', `bot id 已存在：${id}`);
         }
-        checkModel(model);
+        const checked = checkModel(model);
         const at = localISOString(now());
         await store.save({
             id,
             name,
             instructions,
-            ...(model === null ? {} : { model }),
+            model: checked,
             createdAt: at,
             updatedAt: at,
         });
@@ -108,11 +108,12 @@ export function createBotActions(options: BotActionsOptions): BotActions {
         const name = requiredString(input['name'], 'name');
         const instructions = optionalString(input['instructions'], 'instructions') ?? current.instructions;
         const model = input['model'] === undefined ? (current.model ?? null) : modelOf(input['model']);
-        checkModel(model);
+        const checked = checkModel(model);
         const next: BotConfig = {
             id: current.id,
             name,
             instructions,
+            model: checked,
             ...(current.reasoningEffort === undefined ? {} : { reasoningEffort: current.reasoningEffort }),
             ...(current.maxOutputTokens === undefined ? {} : { maxOutputTokens: current.maxOutputTokens }),
             createdAt: current.createdAt,
@@ -175,12 +176,16 @@ export function createBotActions(options: BotActionsOptions): BotActions {
         return session;
     };
 
-    const checkModel = (model: string | null): void => {
-        if (model === null) return;
+    /** ##497：model 必填（没有「跟随宿主缺省」这条路） */
+    const checkModel = (model: string | null): string => {
+        if (model === null || model.trim() === '') {
+            throw new BotConfigPageError('bot-config/no-model', '必须先选一个模型');
+        }
         const found = catalog().some((entry) => `${entry.providerId}/${entry.modelId}` === model);
         if (!found) {
             throw new BotConfigPageError('bot-config/unknown-model', `模型目录里没有 ${model}`);
         }
+        return model;
     };
 
     return { snapshot, create, save, remove, testSend, testReset };
