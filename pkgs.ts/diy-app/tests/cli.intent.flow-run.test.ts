@@ -39,7 +39,20 @@ const DIY_SH_SPAWN =
         ? { cmd: "bash", prefix: ["./diy.sh"] as string[] }
         : { cmd: "./diy.sh", prefix: [] as string[] };
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+
+/**
+ * 杀掉**整棵进程树**。
+ * POSIX：负 pid = 进程组（CLI 与它 fork 的 node 一起收掉）。
+ * Windows：不支持负 pid（`process.kill(-pid)` 直接 ESRCH）⇒ 用 `taskkill /T /F`。
+ */
+function killTree(pid: number): void {
+    if (process.platform === "win32") {
+        spawnSync("taskkill", ["/T", "/F", "/PID", String(pid)], { stdio: "ignore" });
+        return;
+    }
+    process.kill(-pid, "SIGKILL");
+}
 import { basename, join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { ShellTest } from "./shell-test";
@@ -451,12 +464,12 @@ describe("flow run：停得住", () => {
             await waitUntil(async () => turnIds(uri).length, (n) => n > 0, { label: "轮次开场", timeoutMs: 20_000, intervalMs: 200 });
             expect(turnEndReasons(uri)).toEqual([]); // 还没有结束原因 = 正挂着
 
-            process.kill(-child.pid!, "SIGKILL"); // 收掉整个进程组（CLI + 它的 node）
+            killTree(child.pid!); // 收掉整个进程组（CLI + 它的 node）
             const reasons = await waitUntil(async () => turnEndReasons(uri), (r) => r.length > 0, { label: "轮次收尾（中断）", timeoutMs: 20_000 });
             expect(reasons).toContain("aborted");
         } finally {
             try {
-                process.kill(-child.pid!, "SIGKILL");
+                killTree(child.pid!);
             } catch {
                 /* 已退出 */
             }
@@ -504,7 +517,7 @@ describe("flow run：停得住", () => {
             expect(steer.stdout).not.toContain("【当前节点】");
         } finally {
             try {
-                process.kill(-child.pid!, "SIGKILL");
+                killTree(child.pid!);
             } catch {
                 /* 已退出 */
             }

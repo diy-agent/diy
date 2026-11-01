@@ -179,7 +179,15 @@ async function centerOf(selector: string, nth = 0): Promise<{ x: number; y: numb
 const draftsFile = () => join(fx.HOME, uri, ".diy", "drafts.yaml");
 const draftsRaw = () => (existsSync(draftsFile()) ? readFileSync(draftsFile(), "utf-8") : "");
 
-describe("插话界面 —— 生成中插嘴、横条、取消", () => {
+// ⚠️ 整组跳过：本文件测的是**已删除的『留言』按钮**形态。
+// ##377 第 27 刀把「忙时只给停止 + 另给一个小『留言』按钮」改成**一个入口一套语义**：
+// 发送按钮恒在，忙时按它就是排队/插话（先落 room，再由投递层插进正在跑的那一轮）——
+// 见 components/local-chat/Composer.tsx 的注释「原来"忙时只给停止、另给一个小『留言』按钮"= 两个入口两套语义」。
+// ⇒ 本文件里所有「留言按钮出现 / 点留言 / 钉住留言时机」的断言都指向一个**不存在的控件**（11 条恒红，
+//    与 Windows 无关；单跑与整串都红）。
+// 待办：按新语义重写（忙时点发送 → 落 room → 投递层插进当前轮；横条 = 队列视图，时机开关仍在横条上）。
+//    重写前宁可显式 skip，也不留一堆「看着像 Windows bug」的假红。
+describe.skip("插话界面 —— 生成中插嘴、横条、取消", () => {
     // 夹具（##434）：建 ui driver + 打开该任务的对话视图，并核对“起始无生成”这个前提。
     // 写成 `it` 时 `-t` 过滤会跳过它 ⇒ 后续用例的 `ui` 未初始化（##433 同款）。
     beforeAll(async () => {
@@ -415,7 +423,7 @@ describe("插话界面 —— 生成中插嘴、横条、取消", () => {
 //   b) 每行「修改」——撤回编辑器（输入框已有内容时接在 `---` 之后，不冲掉正在打的字）。
 // ═══════════════════════════════════════════════════════════════
 
-describe("##303 —— 留言的投递入口", () => {
+describe.skip("##303 —— 留言的投递入口（同上：测的是已删除的『留言』按钮）", () => {
     /** 编辑器里的文本（CodeMirror 的 .cm-content） */
     const editorText = () =>
         ui.query<string>("document.querySelector('[data-agent-input] .cm-content')?.textContent ?? ''");
