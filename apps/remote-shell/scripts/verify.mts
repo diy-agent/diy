@@ -2,13 +2,14 @@
 //
 // 判据（编号照任务 body）：
 //   1 能起：`--url` 起得来，远程页面加载出来
-//   2 横条常显：显示当前**人读地址** `user@host/app.variant`（/ping 给的 app / variant，##484）
-//     + 连接状态（● 已连）—— 不再显示 `http://127.0.0.1:…`（看不出是哪台机器的哪个 app）
+//   2 横条常显：纯 tab 条（##493）—— 当前实例只在 tab 里出现一次（没有单独的「当前连接」块）。
+//     当前 tab 有可见高亮；tab 上显示**人读地址** `user@host/app.variant`（##484），不是 URL；
+//     状态只占一个小圆点：● 已连 / ⚠ 连接中或断线 / ○ 未连
 //   3 横条不被远程页面覆盖：横条与页面是**两个独立 webContents**、几何不重叠；
 //     远程页面画 `position:fixed; inset:0` 的全屏红块也只在它自己的矩形里（页面 innerHeight = 页面区高度）
 //   4 切换 + 连接保留：A → B → A，A 的输入框与计数还在，且 A 的页面没被重建
 //   5 远程断开：停掉服务后横条变红（整条 #3d1d1f）并给出原因
-//   6 列表来自发现链：横条列出发现到的实例（本脚本用 manual 兜底那一路验链路）
+//   6 tab 条来自发现链：横条列出发现到的实例（本脚本用 manual 兜底那一路验链路），悬停给全名
 //
 // 用法：./sha.sh verify（前置：本目录 ./sha.sh build）
 
@@ -214,15 +215,24 @@ async function launch(urlA: string, urlB: string): Promise<{ bar: Page; pageA: P
 
 // ── 判据 ───────────────────────────────────────────────────────────────
 
+interface BarTabSnapshot {
+    endpoint: string;
+    label: string;
+    dot: string;
+    status: string;
+    active: boolean;
+    title: string;
+    background: string;
+}
+
 interface BarSnapshot {
     status: string;
     endpoint: string;
-    name: string;
-    dot: string;
-    label: string;
     detail: string;
-    instances: { endpoint: string; text: string; title: string }[];
     background: string;
+    tabs: BarTabSnapshot[];
+    /** 横条里还有没有「当前连接」那一块（##493 判据 1：必须没有） */
+    hasCurrentBlock: boolean;
 }
 
 async function readBar(bar: Page): Promise<BarSnapshot> {
@@ -232,18 +242,31 @@ async function readBar(bar: Page): Promise<BarSnapshot> {
         return {
             status: root.dataset.status ?? '',
             endpoint: root.dataset.endpoint ?? '',
-            name: text('name'),
-            dot: text('dot'),
-            label: text('label'),
             detail: text('detail'),
-            instances: Array.from(document.querySelectorAll("[data-testid='instance']")).map((node) => ({
-                endpoint: (node as HTMLElement).dataset.endpoint ?? '',
-                text: node.textContent ?? '',
-                title: node.getAttribute('title') ?? '',
-            })),
             background: getComputedStyle(root).backgroundColor,
+            hasCurrentBlock: document.querySelector("[data-testid='current']") !== null,
+            tabs: Array.from(document.querySelectorAll("[data-testid='tab']")).map((node) => {
+                const tab = node as HTMLElement;
+                return {
+                    endpoint: tab.dataset.endpoint ?? '',
+                    label: tab.querySelector('.name')?.textContent ?? '',
+                    dot: tab.querySelector('.dot')?.textContent ?? '',
+                    status: tab.dataset.status ?? '',
+                    active: tab.dataset.active === '1',
+                    title: tab.getAttribute('title') ?? '',
+                    background: getComputedStyle(tab).backgroundColor,
+                };
+            }),
         };
     });
+}
+
+/** 当前 tab（判据 2/3：高亮跟随，且全横条只有它一个 active） */
+function activeTab(snapshot: BarSnapshot): BarTabSnapshot {
+    const actives = snapshot.tabs.filter((tab) => tab.active);
+    return actives.length === 1 && actives[0] !== undefined
+        ? actives[0]
+        : fail(`当前 tab 不唯一（${String(actives.length)} 个）：${JSON.stringify(snapshot.tabs)}`);
 }
 
 interface Layout {
@@ -282,12 +305,21 @@ async function main(): Promise<void> {
         const snapshot = await readBar(bar);
         return snapshot.status === 'connected' ? snapshot : null;
     });
-    // 判据 4：横条显示人读地址（user@host/app.variant），不是 URL
-    const expectedA = `${user}@fake-a/diy-chat.fake`;
-    assert(connected.name === expectedA, `横条没显示人读地址（期望 ${expectedA}）：${connected.name}`);
-    assert(!connected.name.startsWith('http'), `横条还在显示 URL：${connected.name}`);
-    assert(connected.dot === '●' && connected.label === '已连', `横条状态不对：${connected.dot} ${connected.label}`);
-    ok(`判据 1+2：起得来；横条显示「${connected.name}」${connected.dot} ${connected.label}`);
+    // 判据 1 + 2：起得来；当前实例只出现一次（tab 里那一项），横条上没有单独的「当前连接」块
+    assert(!connected.hasCurrentBlock, '横条里还有左侧「当前连接」块（##493 判据 1）');
+    const tabA = activeTab(connected);
+    const labelA = `${user}@fake-a/diy-chat.fake`;
+    assert(tabA.endpoint === remoteA.endpoint, `当前 tab 不是 A：${tabA.endpoint}`);
+    // 判据 4：两个假实例 host 不同（fake-a / fake-b）⇒ tab 给全名，且不是 URL
+    assert(tabA.label === labelA, `tab 没显示人读地址（期望 ${labelA}）：${tabA.label}`);
+    assert(!tabA.label.startsWith('http'), `tab 还在显示 URL：${tabA.label}`);
+    assert(tabA.dot === '●' && tabA.status === 'connected', `当前 tab 状态不对：${tabA.dot} ${tabA.status}`);
+    // 判据 2：当前 tab 有可见高亮（背景与未选中的不同）
+    const tabBIdle = connected.tabs.find((tab) => tab.endpoint === remoteB.endpoint);
+    assert(tabBIdle !== undefined, `tab 条里没有 B：${JSON.stringify(connected.tabs)}`);
+    assert(tabA.background !== tabBIdle.background, `当前 tab 没有高亮（背景同色：${tabA.background}）`);
+    assert(tabBIdle.dot === '○' && tabBIdle.status === 'idle', `未连的 tab 状态不对：${tabBIdle.dot} ${tabBIdle.status}`);
+    ok(`判据 1+2：当前只在 tab 里出现一次「${tabA.label}」${tabA.dot}，高亮 ${tabA.background}`);
 
     // 判据 3：横条与页面是两个独立 webContents，几何上不重叠
     const layoutA = await waitFor('布局自述', () => readLayout(bar));
@@ -318,17 +350,25 @@ async function main(): Promise<void> {
         `判据 3：横条 ${layoutA.bar.bounds.width}×32 @y=0 与页面 ${layoutA.page.bounds.width}×${layoutA.page.bounds.height} @y=32 是两个 webContents，不重叠`,
     );
 
-    // 判据 6：列表来自发现链（manual 兜底那一路）
+    // 判据 3 + 6：两个实例两个 tab 并列；tab 条来自发现链（manual 兜底那一路）
     assert(
-        connected.instances.some((item) => item.endpoint === remoteA.endpoint) &&
-            connected.instances.some((item) => item.endpoint === remoteB.endpoint),
-        `横条列表缺实例：${JSON.stringify(connected.instances)}`,
+        connected.tabs.some((tab) => tab.endpoint === remoteA.endpoint) &&
+            connected.tabs.some((tab) => tab.endpoint === remoteB.endpoint),
+        `tab 条缺实例：${JSON.stringify(connected.tabs)}`,
+    );
+    // 只看本脚本自己起的两台（本机真跑着的 diy 也会被 local 发现器报上来，那是正常现象）
+    const ourTabs = connected.tabs.filter(
+        (tab) => tab.endpoint === remoteA.endpoint || tab.endpoint === remoteB.endpoint,
     );
     assert(
-        connected.instances.every((item) => item.title.includes('manual')),
-        `横条列表没标来源：${JSON.stringify(connected.instances)}`,
+        ourTabs.every((tab) => tab.title.includes('manual')),
+        `tab 没标来源：${JSON.stringify(ourTabs)}`,
     );
-    ok(`判据 6：横条列表来自发现链（${String(connected.instances.length)} 个，来源 manual）`);
+    assert(
+        connected.tabs.every((tab) => tab.title.includes(tab.label)),
+        `悬停提示没给全名：${JSON.stringify(connected.tabs)}`,
+    );
+    ok(`判据 3+6：两个实例两个 tab 并列（${String(connected.tabs.length)} 个，来源 manual）`);
 
     // 判据 4 上半：在 A 里留下状态
     await pageA.fill('#draft', '草稿别丢');
@@ -377,7 +417,7 @@ async function main(): Promise<void> {
         const snapshot = await readBar(bar);
         return snapshot.endpoint === remoteA.endpoint && snapshot.status === 'connected' ? snapshot : null;
     });
-    assert(backToA.name === expectedA, `切回 A 后横条地址不对：${backToA.name}`);
+    assert(activeTab(backToA).label === labelA, `切回 A 后高亮没跟进：${activeTab(backToA).label}`);
     assert((await pageA.inputValue('#draft')) === '草稿别丢', '切回 A 后草稿丢了');
     assert((await pageA.textContent('#count')) === '2', '切回 A 后计数丢了');
     const pagesAfter =
@@ -400,7 +440,9 @@ async function main(): Promise<void> {
     );
     assert(offline.background === 'rgb(61, 29, 31)', `断线时横条没有变红：${offline.background}`);
     assert(offline.detail.trim() !== '', '断线时横条没给原因');
-    ok(`判据 5：远程断开 ⇒ 横条整条变红并提示「${offline.detail.trim()}」`);
+    // 判据 5：状态点三态里的「断线」——当前 tab 的圆点变 ⚠
+    assert(activeTab(offline).dot === '⚠', `断线时当前 tab 的圆点不是 ⚠：${activeTab(offline).dot}`);
+    ok(`判据 5：远程断开 ⇒ 横条整条变红、当前 tab ⚠、提示「${offline.detail.trim()}」`);
 
     // 附带：应用日志（##482）落盘，且启动 / 切换 / 失败都有记录
     const logDir = join(home, 'log', 'app');

@@ -60,7 +60,7 @@ export function sourceRank(source: string): number {
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 
-/** 当前所在实例（横条左侧显示的就是它） */
+/** 当前所在实例（决定窗口标题 / 横条底色 / 断线原因；tab 上靠高亮表达） */
 export interface CurrentInstance {
     endpoint: string;
     displayName: string;
@@ -74,15 +74,12 @@ export interface CurrentInstance {
     detail?: string;
 }
 
-/** 横条列表里的一行：候选 + 人读地址（null = 身份还没 ping 到，横条退回显示名 / endpoint） */
-export interface BarInstance extends MergedCandidate {
-    address: string | null;
-}
-
 /** 横条拿到的完整状态（一次推全量，横条只负责画） */
 export interface BarState {
+    /** 当前实例：横条只拿它定**整条底色**与断线原因（不再单独占一块显示） */
     current: (CurrentInstance & { dot: string; label: string }) | null;
-    instances: readonly BarInstance[];
+    /** tab 条：发现到的候选 + 已开的连接，当前那个只是其中一项（`active`） */
+    tabs: readonly BarTab[];
     /** 哪几路发现器失败（空 = 全部正常） */
     errors: readonly DiscoveryError[];
 }
@@ -130,6 +127,104 @@ export function statusLabel(status: ConnectionStatus): string {
 /** 给横条补上圆点与文案（派生字段只在主进程算一次） */
 export function withBadge(instance: CurrentInstance): CurrentInstance & { dot: string; label: string } {
     return { ...instance, dot: statusDot(instance.status), label: statusLabel(instance.status) };
+}
+
+// ── 横条 tab（##493）─────────────────────────────────────────────────────
+//
+// 用户裁决：横条只放 tab 条 —— 当前实例只出现**一次**（靠高亮表达），状态只占一个小圆点。
+// 判据要能单测，故标签与状态点都在这里算；bar.ts 只负责把算好的字画出来。
+
+/**
+ * tab 的状态：三种连接态之外多一个 `idle` —— 发现到、但还没连过（纯列表项）。
+ * 用户裁决的三种点：● 已连 / ⚠ 连接中或断线 / ○ 未连。
+ */
+export type TabStatus = ConnectionStatus | 'idle';
+
+/** 状态 → tab 上的小圆点 */
+export function tabDot(status: TabStatus): string {
+    if (status === 'connected') return '●';
+    if (status === 'connecting' || status === 'disconnected') return '⚠';
+    return '○';
+}
+
+/** 状态 → 一句话（悬停提示用） */
+export function tabStatusLabel(status: TabStatus): string {
+    if (status === 'idle') return '未连';
+    return statusLabel(status);
+}
+
+/** 一台候选（发现器报的，或已经开了的连）→ tab 的原料 */
+export interface TabSource {
+    endpoint: string;
+    displayName: string | null;
+    /** 人读地址（null = 身份还没 ping 到，退回显示名） */
+    address: string | null;
+    status: TabStatus;
+    /** 参与发现的来源（排查用，进悬停提示） */
+    sources?: readonly string[];
+    /** 断线 / 加载失败的一句话原因 */
+    detail?: string;
+}
+
+/** 横条 tab 条上的一格（主进程算好，横条只负责画） */
+export interface BarTab {
+    endpoint: string;
+    /** tab 上显示的短名：同 host 只留 `app.variant[:端口]`，多 host 才给全名 */
+    label: string;
+    /** 悬停提示：**永远是全名**（地址 + endpoint + 来源） */
+    title: string;
+    dot: string;
+    status: TabStatus;
+    statusLabel: string;
+    /** 当前所在的那个（高亮它，别的都不高亮） */
+    active: boolean;
+    detail: string;
+}
+
+/** 地址里的 host 段（不是地址 ⇒ null）；判「同 host 才省略 user@host」用 */
+export function hostOf(address: string | null): string | null {
+    if (address === null) return null;
+    return parseAddress(address)?.host ?? null;
+}
+
+/** 人读地址去掉 `user@host/` 前缀（`alice@c-mac/diy-chat.lab` → `diy-chat.lab`） */
+export function shortAddress(address: string): string {
+    const slash = address.indexOf('/');
+    return slash === -1 ? address : address.slice(slash + 1);
+}
+
+/**
+ * 一组候选 → tab 条。
+ *
+ * 标签规则（用户裁决）：**所有 tab 同一个 host ⇒ 只显示 `app.variant`**（`user@host` 是重复噪音），
+ * 出现不同 host 时才整组回到全名（否则 `diy-web.lab` 会分不清是哪台机器上的）。
+ * 拿不到地址（老实例 /ping 没有 app）的退回显示名 —— 宁可少信息，不编地址。
+ */
+export function buildTabs(sources: readonly TabSource[], currentEndpoint: string | null): BarTab[] {
+    const hosts = new Set<string>();
+    for (const source of sources) {
+        const host = hostOf(source.address);
+        if (host !== null) hosts.add(host);
+    }
+    const sameHost = hosts.size <= 1;
+    return sources.map((source) => {
+        const named = source.displayName?.trim() ?? '';
+        const fallback = named === '' ? source.endpoint : named;
+        const full = source.address ?? fallback;
+        const label = source.address !== null && sameHost ? shortAddress(source.address) : full;
+        const parts = source.address !== null ? [source.address, source.endpoint] : full === source.endpoint ? [source.endpoint] : [full, source.endpoint];
+        const origin = source.sources !== undefined && source.sources.length > 0 ? `（${source.sources.join(' + ')}）` : '';
+        return {
+            endpoint: source.endpoint,
+            label,
+            title: `${parts.join(' · ')}${origin}`,
+            dot: tabDot(source.status),
+            status: source.status,
+            statusLabel: tabStatusLabel(source.status),
+            active: currentEndpoint !== null && currentEndpoint === source.endpoint,
+            detail: source.detail ?? '',
+        };
+    });
 }
 
 /**

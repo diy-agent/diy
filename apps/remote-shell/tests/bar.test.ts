@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { BAR_HTML, barDataUrl } from '../bar.js';
+import { BAR_HTML, BAR_HTML_HEIGHT_HINT, barDataUrl } from '../bar.js';
+import { BAR_HEIGHT } from '../index.js';
 
 describe('横条页（本地 data: 页）', () => {
     it('是 data: URL（不依赖任何本地文件 / 远程资源）', () => {
@@ -15,20 +16,21 @@ describe('横条页（本地 data: 页）', () => {
         expect(BAR_HTML).not.toMatch(/<img[^>]+src=/);
     });
 
-    it('有画横条需要的锚点（当前实例 / 列表 / 连接输入 / 刷新）', () => {
-        for (const id of [
-            'bar',
-            'current',
-            'current-dot',
-            'current-name',
-            'current-label',
-            'instances',
-            'add',
-            'endpoint',
-            'refresh',
-        ]) {
+    it('有画横条需要的锚点（tab 条 / 断线原因 / 连接输入 / 刷新）', () => {
+        for (const id of ['bar', 'tabs', 'detail', 'add', 'endpoint', 'refresh']) {
             expect(BAR_HTML).toContain(`data-testid="${id}"`);
         }
+        // tab 是脚本里一个个建出来的
+        expect(BAR_HTML).toContain('setAttribute("data-testid", "tab")');
+    });
+
+    it('**没有**左侧「当前连接」区（##493 判据 1：当前只在 tab 里出现一次）', () => {
+        expect(BAR_HTML).not.toContain('data-testid="current"');
+        expect(BAR_HTML).not.toContain('id="current"');
+        expect(BAR_HTML).not.toContain('current-dot');
+        expect(BAR_HTML).not.toContain('current-name');
+        // 候选列表也合并进了 tab 条
+        expect(BAR_HTML).not.toContain('data-testid="instances"');
     });
 
     it('只调桥上的四个方法，且**没有**确认 / 拦截（硬规则二）', () => {
@@ -40,18 +42,32 @@ describe('横条页（本地 data: 页）', () => {
         expect(BAR_HTML).not.toContain('alert(');
     });
 
-    it('显示人读地址而不是 URL（##484 判据 4）', () => {
-        // 当前实例：address 优先，拿不到才退回显示名
-        expect(BAR_HTML).toContain('current.address || current.displayName');
-        // 列表：address → displayName → endpoint 三级兜底
-        expect(BAR_HTML).toContain('item.address || item.displayName || item.endpoint');
-        // 悬停同时给地址与 endpoint（地址给人看，endpoint 才是程序连的）
-        expect(BAR_HTML).toContain('item.address ? item.address + " · " : ""');
+    it('tab 上只放短名，悬停才是全名（##493 判据 4）', () => {
+        // 标签由主进程算好（buildTabs），横条只管画 tab.label / tab.title
+        expect(BAR_HTML).toContain('name.textContent = tab.label');
+        expect(BAR_HTML).toContain('button.title = tab.title');
+        expect(BAR_HTML).toContain('dot.textContent = tab.dot');
     });
 
-    it('状态色三档：连上 / 连接中 / 断线（断线整条变红）', () => {
+    it('当前 tab 的高亮只用背景（不叠下划线）', () => {
+        expect(BAR_HTML).toContain('.tab[data-active="1"] { background: #30363d;');
+        expect(BAR_HTML).not.toContain('text-decoration');
+        expect(BAR_HTML).not.toContain('border-bottom: 2px');
+    });
+
+    it('状态色三档：连上 / 连接中或断线 / 未连（断线整条变红）', () => {
+        expect(BAR_HTML).toContain('.tab[data-status="connected"] .dot { color: #3fb950; }');
+        expect(BAR_HTML).toContain('.tab[data-status="connecting"] .dot { color: #d29922; }');
+        expect(BAR_HTML).toContain('.tab[data-status="idle"] .dot { color: #8b949e; }');
         expect(BAR_HTML).toContain('#bar[data-status="disconnected"]');
         expect(BAR_HTML).toContain('#f85149');
-        expect(BAR_HTML).toContain('#bar[data-status="connecting"]');
+    });
+
+    it('横条高度仍是 32px（tab 不把横条撑高）', () => {
+        expect(BAR_HTML_HEIGHT_HINT).toBe(BAR_HEIGHT);
+        expect(BAR_HTML).toContain('#bar {');
+        expect(BAR_HTML).toContain('height: 100%; box-sizing: border-box;');
+        // tab 自己定高（24px < 32px），不靠内容撑
+        expect(BAR_HTML).toContain('height: 24px;');
     });
 });
