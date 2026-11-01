@@ -114,6 +114,8 @@ export function createBotActions(options: BotActionsOptions): BotActions {
             name,
             instructions,
             model: checked,
+            // ##498：长期会话 id 也是身份的一部分 —— 改配置不能把它弄丢（否则聊天气泡换一个）
+            ...(current.primarySessionId === undefined ? {} : { primarySessionId: current.primarySessionId }),
             ...(current.reasoningEffort === undefined ? {} : { reasoningEffort: current.reasoningEffort }),
             ...(current.maxOutputTokens === undefined ? {} : { maxOutputTokens: current.maxOutputTokens }),
             createdAt: current.createdAt,

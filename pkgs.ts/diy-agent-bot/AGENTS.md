@@ -8,6 +8,19 @@
 一个 bot = **一个身份（`BotConfig`）+ 一堆属于它的会话**。会话是主体，bot 只是标签：
 删 bot 不删会话，会话可以没有 bot。
 
+## 长期会话（##498）
+
+chat 以 bot 为中心之后，「一个 bot 一条长期对话」：
+
+```ts
+const ref = await bot.primary();   // 第一次建 + 把 id 写回 bot.json；之后幂等
+```
+
+- 写回 `primarySessionId`（`bot.json` 的一个字段），重启后 `primary()` 还是同一条
+- 会话目录被外部删了（`ownerOf` 认不出）⇒ 下一次 `primary()` 重建一个，不返回幽灵 id
+- `newSession()` 保留为**原语**（`primary()` 内部就用它）；chat UI 不再暴露 —— 产品上没有「新建会话」
+- **删 bot 时的级联删会话是应用策略**（apps/chat 的 `removeBot`），本包只删 `bots/<id>/`
+
 ## 存储方向（##480）
 
 bot 默认**活在内存里**：`createBot({ config })` 不传 store 就用本包的 `createMemoryBotStore()`。
@@ -17,7 +30,7 @@ bot 默认**活在内存里**：`createBot({ config })` 不传 store 就用本�
 ## 落盘形态（方案 B）
 
 ```
-<home>/bots/<botId>/bot.json            BotConfig（id / name / instructions / model / reasoningEffort? / maxOutputTokens? / createdAt / updatedAt）
+<home>/bots/<botId>/bot.json            BotConfig（id / name / instructions / model / primarySessionId? / reasoningEffort? / maxOutputTokens? / createdAt / updatedAt）
                                         旧字段名 `persona` 读兼容 → instructions（store-fs）
 <sessionsDir>/<sessionId>/bot.json      { "botId": "<botId>" }   ← 归属
 ```

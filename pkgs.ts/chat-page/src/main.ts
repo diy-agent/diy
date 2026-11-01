@@ -7,17 +7,22 @@
 //
 // ##465：`config.sessions` 注入一个 **ChatSessionHost** 时切换成多会话模式（左侧列表 /
 // 顶部模型选择器 / 主区消息流）。单会话模式（不注入）行为一字不变 —— apps/minimal 不受影响。
+//
+// ##498：多会话模式升级成**多 bot** 模式 —— 左栏是 bot（一个 bot 一个长期会话），
+// `createSession` / `selectSession` / `deleteSession` 三个方法随之消失，换成
+// `createBot` / `updateBot` / `removeBot` / `selectBot`。`send` 只带正文（会话由当前 bot 决定）。
 
 import { createSession, type ChatMessage, type LlmPort, type SessionStore } from "@diy-agent/session";
 import type { PageContribution } from "@diy-agent/workbench";
 import { wireOf } from "./blocks.js";
 import { ChatPageError } from "./errors.js";
 import type {
-    BotModelInput,
+    BotDraftInput,
+    BotUpdateInput,
     ChatSessionHost,
     ChatSnapshot,
     FirstBotInput,
-    MultiSendArgs,
+    SendArgs,
     SendResult,
     WireMessage,
 } from "./shared.js";
@@ -48,16 +53,14 @@ export function createPage(config?: unknown): PageContribution {
                 snapshot: (): Promise<ChatSnapshot> => host.snapshot(),
                 // ##497：首启/补选模型（没有这两步，聊天页面在 bots 为空时无从下手）
                 createFirstBot: (args: unknown): Promise<ChatSnapshot> => host.createFirstBot(firstBotInputOf(args)),
-                setBotModel: (args: unknown): Promise<ChatSnapshot> => host.setBotModel(botModelInputOf(args)),
-                createSession: (args: unknown): Promise<ChatSnapshot> =>
-                    host.create(args !== null && typeof args === "object" && typeof (args as { model?: unknown }).model === "string"
-                        ? { model: (args as { model: string }).model }
-                        : {}),
-                selectSession: (args: unknown): Promise<ChatSnapshot> => host.select(sessionIdOf(args)),
-                deleteSession: (args: unknown): Promise<ChatSnapshot> => host.remove(sessionIdOf(args)),
+                // ##498：新增的是 **bot**（不是会话）；建好即选中
+                createBot: (args: unknown): Promise<ChatSnapshot> => host.createBot(botDraftInputOf(args)),
+                updateBot: (args: unknown): Promise<ChatSnapshot> => host.updateBot(botUpdateInputOf(args)),
+                removeBot: (args: unknown): Promise<ChatSnapshot> => host.removeBot(idOf(args)),
+                selectBot: (args: unknown): Promise<ChatSnapshot> => host.selectBot(idOf(args)),
                 send: async (args: unknown): Promise<ChatSnapshot> => {
-                    const { sessionId, text } = multiSendArgsOf(args);
-                    return host.send(sessionId, text, () => {
+                    const { text } = sendArgsOf(args);
+                    return host.send(text, () => {
                         // 当前通道只有「最终消息线」；增量消费留给将来加事件通道
                     });
                 },
@@ -138,14 +141,18 @@ function hostFrom(config: unknown): ChatSessionHost | undefined {
     const candidate = (config as { sessions?: unknown }).sessions;
     if (!candidate || typeof candidate !== "object") return undefined;
     const port = candidate as Record<string, unknown>;
-    const ok = ["snapshot", "create", "select", "remove", "send"].every((key) => typeof port[key] === "function");
+    // ##498：方法表就是「宿主能力」的判据 —— 缺 createBot / selectBot 的旧宿主不算多 bot 宿主
+    const ok = ["snapshot", "createBot", "updateBot", "removeBot", "selectBot", "send"].every(
+        (key) => typeof port[key] === "function",
+    );
     return ok ? (candidate as ChatSessionHost) : undefined;
 }
 
-function sessionIdOf(args: unknown): string {
+/** 取 `{ id }`（切 bot / 删 bot 共用；也认裸字符串，CLI / 脚本用着方便） */
+function idOf(args: unknown): string {
     const id = args !== null && typeof args === "object" ? (args as { id?: unknown }).id : args;
     if (typeof id !== "string" || id.trim() === "") {
-        throw new ChatPageError("chat/empty-text", "缺少会话 id");
+        throw new ChatPageError("chat/empty-text", "缺少 bot id");
     }
     return id;
 }
@@ -166,20 +173,47 @@ function firstBotInputOf(args: unknown): FirstBotInput {
     };
 }
 
-/** 存量数据补选模型：只有一个 `model` */
-function botModelInputOf(args: unknown): BotModelInput {
+/** `+ 新 bot`：name / model 必填（##498 与 ##497 同一把尺子：没有「缺省模型」） */
+function botDraftInputOf(args: unknown): BotDraftInput {
     const input = args !== null && typeof args === "object" ? (args as Record<string, unknown>) : {};
+    const name = input["name"];
+    if (typeof name !== "string" || name.trim() === "") {
+        throw new ChatPageError("chat/bot-required", "新 bot 必须有个名字");
+    }
     const model = input["model"];
     if (typeof model !== "string" || model.trim() === "") {
         throw new ChatPageError("chat/bot-required", "必须先选一个模型（##497：bot 的 model 必填）");
     }
-    return { model };
+    const instructions = input["instructions"];
+    const reasoningEffort = input["reasoningEffort"];
+    return {
+        name: name.trim(),
+        model,
+        ...(typeof instructions === "string" ? { instructions } : {}),
+        ...(typeof reasoningEffort === "string" && reasoningEffort !== "" ? { reasoningEffort } : {}),
+    };
 }
 
-function multiSendArgsOf(args: unknown): MultiSendArgs {
+/** 改配置：只带 `id` + 要改的字段（缺省 = 不改） */
+function botUpdateInputOf(args: unknown): BotUpdateInput {
+    const input = args !== null && typeof args === "object" ? (args as Record<string, unknown>) : {};
+    const id = idOf(input);
+    const out: { -readonly [K in keyof BotUpdateInput]: BotUpdateInput[K] } = { id };
+    for (const key of ["name", "model", "instructions", "reasoningEffort"] as const) {
+        const value = input[key];
+        if (typeof value === "string") out[key] = value;
+    }
+    return out;
+}
+
+/** `send` 的参数：只带正文（#498：会话由当前 bot 决定）；也认裸字符串 */
+function sendArgsOf(args: unknown): SendArgs {
+    if (typeof args === "string") {
+        if (args.trim() === "") throw new ChatPageError("chat/empty-text", "消息正文为空");
+        return { text: args };
+    }
     if (args === null || typeof args !== "object") throw new ChatPageError("chat/empty-text", "缺少参数");
-    const { sessionId, text } = args as { sessionId?: unknown; text?: unknown };
-    if (typeof sessionId !== "string" || sessionId.trim() === "") throw new ChatPageError("chat/empty-text", "缺少会话 id");
+    const text = (args as { text?: unknown }).text;
     if (typeof text !== "string" || text.trim() === "") throw new ChatPageError("chat/empty-text", "消息正文为空");
-    return { sessionId, text };
+    return { text };
 }

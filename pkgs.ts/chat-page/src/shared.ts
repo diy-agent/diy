@@ -57,20 +57,14 @@ export interface SendResult {
     readonly messages: readonly WireMessage[];
 }
 
-// ── 多会话模式（config.sessions 注入时启用；单会话模式不受影响） ──
+// ── 多 bot 模式（config.sessions 注入时启用；单会话模式不受影响） ──
+//
+// ##498：左栏从「会话列表」换成「bot 列表」。
+//   · 一个 bot 一个**长期会话**（`primary()`），点进去就是它 —— 没有「新建会话」这个概念
+//   · 新建的是 **bot**（`+ 新 bot`），缺省选中第一个 / 上次选中的
+//   · 消息线仍是 `@diy-agent/session` 的那一条，只是归属从「会话」挪到了「bot」
 
-/** 左侧会话列表的一项 */
-export interface SessionSummary {
-    readonly id: string;
-    readonly title: string;
-    /** 模型限定名 `providerId/modelId` */
-    readonly model: string;
-    /** ISO 时间 */
-    readonly updatedAt: string;
-    readonly messageCount: number;
-}
-
-/** 顶部模型选择器的一项（来自 model-catalog；不含任何 key） */
+/** 模型选择器的一项（来自 model-catalog；不含任何 key） */
 export interface ModelChoice {
     readonly providerId: string;
     readonly modelId: string;
@@ -82,7 +76,7 @@ export interface ModelChoice {
 }
 
 /**
- * 当前 bot 的可见状态（##497）。
+ * 左栏里的一行 bot（##498）。
  *
  * `model` 为空串 / `needsModel: true` ⇒ 存量数据还没选过模型，**UI 必须拦住**：
  * 不进聊天，先走模型补选页（绝不静默用「宿主缺省」替用户做决定）。
@@ -90,26 +84,57 @@ export interface ModelChoice {
 export interface BotView {
     readonly id: string;
     readonly name: string;
+    /** 行为指令（配置页回填用） */
+    readonly instructions: string;
+    /** 默认模型限定名 `providerId/modelId` */
     readonly model: string;
     readonly needsModel: boolean;
+    /** 推理强度档位；没设 = 缺省 */
+    readonly reasoningEffort?: string;
+    /** 归属这个 bot 的会话数（扫会话目录的投影；卡片与配置页显示用） */
+    readonly sessionCount: number;
+    readonly createdAt: string;
+    readonly updatedAt: string;
 }
 
-/** 多会话模式下整页的快照（切换 / 新建 / 删除后都回这一份） */
+/**
+ * 底部一条里的指标（##498）。
+ *
+ * 语义与 `runtime.self` 同一把尺子，但只取「**上一步**」：
+ *   · `inputTokens` / `outputTokens` / `cacheReadTokens` = 上一次 send 的那一步
+ *   · `contextWindow` = 模型目录里该模型的上下文窗口（未知 ⇒ 缺席，不编数字）
+ *   · `cost` = 上一步花费（USD；模型无价目 ⇒ 缺席）
+ *   · `turns` = 这条会话已完成的轮数（「上下文 N step」里的 N）
+ *
+ * 全部缺席 = 还没发过消息 / 宿主不计量 —— UI 显示「—」，不显示 0。
+ */
+export interface ChatMetrics {
+    readonly inputTokens?: number;
+    readonly outputTokens?: number;
+    readonly cacheReadTokens?: number;
+    readonly contextWindow?: number;
+    readonly cost?: number;
+    readonly turns: number;
+}
+
+/** 整页的快照（选 bot / 改配置 / 删除 / 发送后都回这一份） */
 export interface ChatSnapshot {
-    /** 当前 bot；`null` = 还没有 bot（首启 ⇒ 显示模型选择页，不进聊天） */
+    /** 左栏：全部 bot（按 id 序） */
+    readonly bots: readonly BotView[];
+    /** 当前 bot；`null` = 还没有 bot（首启 ⇒ 显示引导页，不进聊天） */
     readonly bot: BotView | null;
-    readonly sessions: readonly SessionSummary[];
     readonly models: readonly ModelChoice[];
-    /** 当前打开的会话；null = 还没有会话 */
+    /** 当前 bot 的长期会话；null = 还没有（首启 / 刚建 bot） */
     readonly activeId: string | null;
     readonly messages: readonly WireMessage[];
-    /** 新建会话将使用的模型限定名 */
+    /** 底部指标；没东西可报 = null */
+    readonly metrics: ChatMetrics | null;
+    /** 新建 bot 的缺省模型（模型目录第一个） */
     readonly selectedModel: string | null;
 }
 
-/** 多会话模式下 `send` 的参数 */
-export interface MultiSendArgs {
-    readonly sessionId: string;
+/** `send` 的参数（#498：会话由当前 bot 决定，所以只带正文） */
+export interface SendArgs {
     readonly text: string;
 }
 
@@ -120,24 +145,41 @@ export interface FirstBotInput {
     readonly instructions?: string;
 }
 
-/** 存量数据补选模型的输入（只改 model） */
-export interface BotModelInput {
+/** 新建 bot 的输入（`+ 新 bot`；模型必选） */
+export interface BotDraftInput {
+    readonly name: string;
     readonly model: string;
+    readonly instructions?: string;
+    readonly reasoningEffort?: string;
+}
+
+/** 改 bot 配置的输入（字段缺省 = 不改） */
+export interface BotUpdateInput {
+    readonly id: string;
+    readonly name?: string;
+    readonly model?: string;
+    readonly instructions?: string;
+    readonly reasoningEffort?: string;
 }
 
 /**
- * 多会话宿主端口（由装配层注入；插件不碰文件系统 / 不读配置）。
- * 方法都是 async，宿主自己决定懒打开。
+ * 多 bot 宿主端口（由装配层注入；插件不碰文件系统 / 不读配置）。
+ *
+ * ##498：没有 `createSession` / `selectSession` / `deleteSession` —— 会话跟着 bot 走，
+ * 点一个 bot 就是打开它的长期会话。
  */
 export interface ChatSessionHost {
     snapshot(): Promise<ChatSnapshot>;
     /** 首启：建第一个 bot（已有 bot 就抛）；#497 */
     createFirstBot(input: FirstBotInput): Promise<ChatSnapshot>;
-    /** 存量数据补选模型（bot 存在但 model 缺失）；#497 */
-    setBotModel(input: BotModelInput): Promise<ChatSnapshot>;
-    create(input: { readonly model?: string }): Promise<ChatSnapshot>;
-    select(id: string): Promise<ChatSnapshot>;
-    remove(id: string): Promise<ChatSnapshot>;
+    /** 新建 bot（`+ 新 bot`）；建好即选中 */
+    createBot(input: BotDraftInput): Promise<ChatSnapshot>;
+    /** 改 bot 配置（名字 / 模型 / 推理强度 / 指令） */
+    updateBot(input: BotUpdateInput): Promise<ChatSnapshot>;
+    /** 删 bot（#498 判据 7：它的会话一并删除），并选中下一个 */
+    removeBot(id: string): Promise<ChatSnapshot>;
+    /** 切 bot（= 打开它的长期会话） */
+    selectBot(id: string): Promise<ChatSnapshot>;
     /** 发送并等流结束；`onDelta` 用于把中间态推给 renderer */
-    send(id: string, text: string, onDelta: (messages: readonly WireMessage[]) => void): Promise<ChatSnapshot>;
+    send(text: string, onDelta: (messages: readonly WireMessage[]) => void): Promise<ChatSnapshot>;
 }

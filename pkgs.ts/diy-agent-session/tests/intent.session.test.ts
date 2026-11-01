@@ -189,6 +189,28 @@ describe('S2 token 计量', () => {
 
         expect(session.usage).toEqual({ inputTokens: 30, outputTokens: 10, turns: 2 });
     });
+
+    it('##498：缓存读桶也累计；上游没报 ⇒ 字段缺席（不补 0）', async () => {
+        const llm = scriptedLlm([
+            [{ type: 'usage', inputTokens: 10, outputTokens: 4, cacheReadTokens: 7 }, { type: 'done' }],
+            [{ type: 'usage', inputTokens: 20, outputTokens: 6, cacheReadTokens: 15 }, { type: 'done' }],
+            [{ type: 'usage', inputTokens: 5, outputTokens: 1 }, { type: 'done' }],
+        ]);
+        const session = createSession({ id: 's1', llm, clock: fakeClock() });
+
+        await collect(session.send('一'));
+        await collect(session.send('二'));
+        expect(session.usage).toEqual({ inputTokens: 30, outputTokens: 10, turns: 2, cacheReadTokens: 22 });
+
+        // 没有缓存桶的会话：字段整个缺席
+        const plain = createSession({
+            id: 's2',
+            llm: scriptedLlm([[{ type: 'usage', inputTokens: 3, outputTokens: 1 }, { type: 'done' }]]),
+            clock: fakeClock(),
+        });
+        await collect(plain.send('一'));
+        expect(plain.usage).not.toHaveProperty('cacheReadTokens');
+    });
 });
 
 describe('S3 一个会话同一时刻只有一轮', () => {

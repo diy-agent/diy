@@ -35,6 +35,12 @@ export interface BotConfig {
     readonly maxOutputTokens?: number;
     readonly createdAt: string;
     readonly updatedAt: string;
+    /**
+     * 这个 bot 的**长期会话** id（##498：一个 bot 一个对话）。
+     * 由 `primary()` 首次调用时建出来并写回 bot.json；之后每次 `primary()` 都返回同一个。
+     * 缺省（旧数据 / 没调用过）⇒ 还没有长期会话。
+     */
+    readonly primarySessionId?: string;
 }
 
 /** 一条会话归属（session 是主体；这里只是投影给 bot 列表用） */
@@ -66,12 +72,22 @@ export interface BotStore {
     sessionsOf(botId: BotId): Promise<readonly BotSessionRef[]>;
 }
 
-/** 一个 bot 句柄：配置 + 会话集合 + 新建会话 */
+/** 一个 bot 句柄：配置 + 会话集合 + 长期会话 */
 export interface Bot {
     readonly config: BotConfig;
+    /**
+     * 这个 bot 的**唯一长期会话**（##498）：第一次调用建出来并把 id 写回 bot.json，
+     * 之后幂等返回同一个；会话目录被外部删了会重新建一个。
+     *
+     * 这是 chat 的「点进 bot 就进对话」—— 产品上**没有「新建会话」**，所以 UI 不走 `newSession()`。
+     */
+    primary(): Promise<BotSessionRef>;
     /** 这个 bot 的所有会话（按更新时间倒序；**不含**别的 bot 的） */
     sessions(): Promise<readonly BotSessionRef[]>;
-    /** 新建一个会话（归属这个 bot），返回会话 id */
+    /**
+     * 新建一个会话（归属这个 bot），返回会话 id。
+     * ##498：`primary()` 的实现会用它；**chat UI 不再暴露**（没有「新建会话」这个概念）。
+     */
     newSession(): Promise<string>;
 }
 

@@ -157,6 +157,7 @@ export function createSession(options: CreateSessionOptions): AgentSession {
                 let stopReason: string | undefined;
                 let inputTokens = 0;
                 let outputTokens = 0;
+                let cacheReadTokens = 0;
                 const flushTrace = (): void => {
                     if (buffer === '') return;
                     appendMessage({ role: 'assistant', type: 'agent-trace', text: buffer });
@@ -186,6 +187,7 @@ export function createSession(options: CreateSessionOptions): AgentSession {
                         } else if (delta.type === 'usage') {
                             inputTokens += delta.inputTokens;
                             outputTokens += delta.outputTokens;
+                            cacheReadTokens += delta.cacheReadTokens ?? 0;
                         } else {
                             stopReason = delta.stopReason;
                         }
@@ -205,10 +207,13 @@ export function createSession(options: CreateSessionOptions): AgentSession {
                 }
 
                 // ⑤ 记账 + 落盘
+                // 缓存读桶：上游一步都没报就**字段缺席**（不补 0 —— 「没报」与「命中 0」不是一回事）
+                const cacheTotal = (usage.cacheReadTokens ?? 0) + cacheReadTokens;
                 usage = {
                     inputTokens: usage.inputTokens + inputTokens,
                     outputTokens: usage.outputTokens + outputTokens,
                     turns: usage.turns + 1,
+                    ...(cacheTotal > 0 ? { cacheReadTokens: cacheTotal } : {}),
                 };
                 updatedAt = iso(clock.now());
                 await flush();

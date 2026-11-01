@@ -214,3 +214,59 @@ describe("边界（判据 4）", () => {
         }
     });
 });
+
+describe("长期会话 primary()（##498）", () => {
+    it("第一次建、之后幂等；id 写回 bot.json（重启后还是同一个）", async () => {
+        const home = makeHome();
+        const store = createFileBotStore({ home });
+        const config = await ensureBot(store, { id: "bot-1", name: "大王助手", instructions: "p", model: "test/echo" });
+        const bot = createBot({ store, config, createSession: fakeCreateSession(home) });
+
+        const first = await bot.primary();
+        const second = await bot.primary();
+        expect(second.id).toBe(first.id);
+        expect(first.botId).toBe("bot-1");
+        // 只建了一个会话目录
+        expect(readdirSync(join(home, "sessions")).filter((name) => name.startsWith("s-"))).toEqual([first.id]);
+        // 写回 bot.json（重开一个句柄还是它）
+        expect((readJson(join(home, "bots", "bot-1", "bot.json")) as { primarySessionId?: string }).primarySessionId).toBe(
+            first.id,
+        );
+        const reopened = await openBot(store, "bot-1", fakeCreateSession(home));
+        expect((await reopened.primary()).id).toBe(first.id);
+    });
+
+    it("长期会话被外部删掉 ⇒ 下一次 primary() 重建一个（不返回幽灵 id）", async () => {
+        const home = makeHome();
+        const store = createFileBotStore({ home });
+        const config = await ensureBot(store, { id: "bot-1", name: "甲", instructions: "p", model: "test/echo" });
+        const bot = createBot({ store, config, createSession: fakeCreateSession(home) });
+        const first = await bot.primary();
+
+        // 只删会话目录（模拟用户 / 别的工具清掉了）
+        const { rmSync } = await import("node:fs");
+        rmSync(join(home, "sessions", first.id), { recursive: true, force: true });
+
+        const again = await bot.primary();
+        expect(again.id).not.toBe(first.id);
+        expect((readJson(join(home, "bots", "bot-1", "bot.json")) as { primarySessionId?: string }).primarySessionId).toBe(
+            again.id,
+        );
+    });
+
+    it("primary() 不碰别的 bot 的会话；newSession() 仍可建（装配层的原语）", async () => {
+        const home = makeHome();
+        const store = createFileBotStore({ home });
+        const one = await ensureBot(store, { id: "bot-1", name: "甲", instructions: "a", model: "test/echo" });
+        const two = await ensureBot(store, { id: "bot-2", name: "乙", instructions: "b", model: "test/echo" });
+        const bot1 = createBot({ store, config: one, createSession: fakeCreateSession(home) });
+        const bot2 = createBot({ store, config: two, createSession: fakeCreateSession(home) });
+
+        const primary = await bot1.primary();
+        const extra = await bot1.newSession();
+        const other = await bot2.primary();
+        expect(new Set([primary.id, extra, other.id]).size).toBe(3);
+        expect((await bot1.sessions()).map((item) => item.id).sort()).toEqual([primary.id, extra].sort());
+        expect((await bot2.sessions()).map((item) => item.id)).toEqual([other.id]);
+    });
+});

@@ -130,6 +130,11 @@ export interface TokenUsage {
     readonly inputTokens: number;
     readonly outputTokens: number;
     readonly turns: number;
+    /**
+     * 累计的缓存读 tokens（##498：底部指标条的「缓存」分母/分子要用）。
+     * `inputTokens` **已含**它（与上游口径一致，本包不重复计）；上游一步都没报 ⇒ 字段缺席。
+     */
+    readonly cacheReadTokens?: number;
 }
 
 /**

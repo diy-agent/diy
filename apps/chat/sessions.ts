@@ -1,53 +1,49 @@
-// sessions.ts — 多会话宿主（apps/chat 的实现，注入给 @diy-agent/chat-page 的 config.sessions）。
+// sessions.ts — 多 bot 宿主（apps/chat 的实现，注入给 @diy-agent/chat-page 的 config.sessions）。
 //
-// 一个会话 = `$DIY_HOME/sessions/chat/<id>/`：
-//   meta.json                 标题 / 模型 / 时间（列表用；不含任何 key）
-//   index.json + log-*.jsonl  @diy-agent/session-store-jsonl 的桶（消息正文）
+// ##498：这是「chat 以 bot 为中心」那一刀的数据层：
+//   · 左栏是 **bot**（`$DIY_HOME/bots/<id>/bot.json`），不是会话
+//   · 一个 bot 一个**长期会话**：`bot.primary()` 懒创建 + 幂等，id 写回 bot.json
+//   · 会话本体还是老地方：`$DIY_HOME/sessions/chat/<id>/`（meta.json + @diy-agent/session-store-jsonl 的桶）
+//   · **没有「新建会话」**：要新对话 = 新建 bot（或以后做「重置这个 bot 的对话」，本刀不做）
 //
 // 边界（##465）：
 //   · 模型目录由 @diy-agent/model-catalog 投影（只有名字，无 key）
 //   · key 只在建 provider 的那一刻从 readAccountValue 取，**不打印、不落盘**
 //   · 真 provider 走 @diy-agent/llm-provider；provider 表没有的（custom）直接用 catalog 的 baseURL
 //
-// ##469（单 bot 一刀）：新建会话在会话目录里写 `bot.json { botId }`（方案 B）。
-// 左栏仍是会话列表、UI 不变；多 bot 切换下一刀。
-//
-// ##497（首启必选模型）：不再有「缺省 bot 静默创建」这条路。
-//   · bots 为空 ⇒ snapshot.bot = null，create() 直接拒绝（UI 走模型选择页）
-//   · 存量 bot.json 没有 model ⇒ snapshot.bot.needsModel = true，同样拦住（补选后落盘）
-//   · 模型是 bot 身份的一部分：新会话缺省用它（不是目录第一个）
+// ##497：bots 为空 ⇒ snapshot.bot = null（UI 走首启引导）；模型是 bot 身份的一部分。
 //
 // ##480（store 方向）：session 的缺省存储是**内存**，所以装配器（本文件）必须**显式**构造并注入
 // jsonl store —— 不注入的话消息不落盘、重启就没了。
-// store 的选择是直接构造调用（`openJsonlSessionStore({ dir })`），不是 `if (strategy === …)` 枚举分派：
-// 将来换远程 store，也只是这里换一个构造器。
 
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { localISOString } from "@diy-agent/time";
 import {
+    createBot,
     createFileBotStore,
     createFirstBot as createFirstBotIn,
-    setBotModel as setBotModelIn,
+    type Bot,
     type BotConfig,
 } from "@diy-agent/bot";
-import { createSession, type AgentSession, type ChatMessage, type LlmPort } from "@diy-agent/session";
+import { createSession, type AgentSession, type ChatMessage, type LlmPort, type TokenUsage } from "@diy-agent/session";
 import { openJsonlSessionStore, type JsonlSessionStore } from "@diy-agent/session-store-jsonl";
 import { createOpenAiCompatible, resolveProviderConfig } from "@diy-agent/llm-provider";
-import { loadCatalog, readAccountValue, type ModelCatalogEntry } from "@diy-agent/model-catalog";
+import { loadCatalog, readAccountValue, type ModelCatalogCost, type ModelCatalogEntry } from "@diy-agent/model-catalog";
 import {
     wireOf,
-    type BotModelInput,
+    type BotDraftInput,
+    type BotUpdateInput,
     type BotView,
+    type ChatMetrics,
     type ChatSessionHost,
     type ChatSnapshot,
     type FirstBotInput,
     type ModelChoice,
-    type SessionSummary,
     type WireMessage,
 } from "@diy-agent/chat-page";
 
-/** `meta.json` 的形状（会话列表的全部信息；消息正文在桶里） */
+/** `meta.json` 的形状（会话自己的身份；消息正文在桶里） */
 interface SessionMeta {
     readonly id: string;
     readonly title: string;
@@ -56,6 +52,18 @@ interface SessionMeta {
     readonly createdAt: string;
     readonly updatedAt: string;
     readonly messageCount: number;
+}
+
+/** `$DIY_HOME/chat-ui.json`：只记「上次选中的 bot」这类界面状态（不是领域真源） */
+interface UiState {
+    activeBotId?: string;
+}
+
+/** 上一步的用量（底部指标条的「输入 / 缓存 / 本轮」都取这一步，不是会话累计） */
+interface StepUsage {
+    readonly inputTokens: number;
+    readonly outputTokens: number;
+    readonly cacheReadTokens?: number;
 }
 
 /**
@@ -84,34 +92,33 @@ export function splitModelKey(key: string): { providerId: string; modelId: strin
     return { providerId: key.slice(0, at), modelId: key.slice(at + 1) };
 }
 
-/** 建一个多会话宿主（懒打开：第一次调用才读目录 / 建目录） */
+/** 新 bot id：`bot-<n>`，n = 现有 `bot-<数字>` 的最大值 + 1（人可读） */
+export function nextBotId(existing: Iterable<string>): string {
+    let max = 0;
+    for (const id of existing) {
+        const match = /^bot-(\d+)$/.exec(id);
+        if (match !== null) max = Math.max(max, Number(match[1]));
+    }
+    return `bot-${String(max + 1)}`;
+}
+
+/** 建一个多 bot 宿主（懒打开：第一次调用才读目录 / 建目录） */
 export function createChatSessions(options: ChatSessionsOptions): ChatSessionHost {
     const home = options.home;
     const root = join(home, "sessions", "chat");
     // bot 身份在 `<home>/bots/`；会话归属落在会话自己的目录里（方案 B）
     const botStore = createFileBotStore({ home, sessionsDir: root });
-
-    /**
-     * 当前 bot（单 bot 一刀：取列表第一个）。
-     * 不缓存：`list()` 就是读一个目录，换 bot / 补选模型后必须立刻看见。
-     */
-    const currentBot = async (): Promise<BotConfig | null> => (await botStore.list())[0] ?? null;
-
-    /** 模型没选过的 bot = 闸门关着（不存在 / 存量数据没 model） */
-    const gated = (config: BotConfig | null): boolean =>
-        config === null || config.needsModel === true || config.model.trim() === "";
+    const uiFile = join(home, "chat-ui.json");
 
     let catalogCache: ModelCatalogEntry[] | null = null;
-    let metas: SessionMeta[] | null = null;
-    let activeId: string | null = null;
-    let selectedModel: string | null = null;
+    let ui: UiState | null = null;
 
-    /** 打开中的会话（桶 + session 都缓存；切换不回退消息线） */
+    /** 打开中的会话（桶 + session 都缓存；同一个 bot 反复点进来必须是同一条消息线） */
     const open = new Map<string, { store: JsonlSessionStore; session: AgentSession; meta: SessionMeta }>();
+    /** 每个会话「上一步」的用量（进程内；重启后指标为空 — 不编数字） */
+    const lastStep = new Map<string, StepUsage>();
 
-    const catalog = (): ModelCatalogEntry[] => {
-        return (catalogCache ??= loadCatalog(home));
-    };
+    const catalog = (): ModelCatalogEntry[] => (catalogCache ??= loadCatalog(home));
 
     const choices = (): ModelChoice[] =>
         catalog().map((entry) => ({
@@ -120,34 +127,32 @@ export function createChatSessions(options: ChatSessionsOptions): ChatSessionHos
             name: entry.name,
         }));
 
-    const keyOf = (entry: ModelCatalogEntry | null): string => (entry === null ? "" : `${entry.providerId}/${entry.modelId}`);
+    const keyOf = (entry: ModelCatalogEntry | null): string =>
+        entry === null ? "" : `${entry.providerId}/${entry.modelId}`;
 
-    const loadMetas = async (): Promise<SessionMeta[]> => {
-        if (metas !== null) return metas;
-        await mkdir(root, { recursive: true });
-        const out: SessionMeta[] = [];
-        for (const item of await readdir(root, { withFileTypes: true })) {
-            if (!item.isDirectory()) continue;
-            const meta = await readMeta(join(root, item.name));
-            if (meta !== null) out.push(meta);
+    const loadUi = async (): Promise<UiState> => {
+        if (ui !== null) return ui;
+        let parsed: unknown = null;
+        try {
+            parsed = JSON.parse(await readFile(uiFile, "utf-8"));
+        } catch {
+            // 没有就是没有（首启 / 老数据）—— 默认选第一个 bot
         }
-        out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-        metas = out;
-        return out;
+        const record = parsed !== null && typeof parsed === "object" ? (parsed as { activeBotId?: unknown }) : {};
+        ui = typeof record.activeBotId === "string" ? { activeBotId: record.activeBotId } : {};
+        return ui;
+    };
+
+    const saveUi = async (): Promise<void> => {
+        const state = ui ?? {};
+        await mkdir(home, { recursive: true });
+        await writeFile(uiFile, `${JSON.stringify(state, null, 4)}\n`, "utf-8");
     };
 
     const writeMeta = async (meta: SessionMeta): Promise<void> => {
         const dir = join(root, meta.id);
         await mkdir(dir, { recursive: true });
         await writeFile(join(dir, "meta.json"), `${JSON.stringify(meta, null, 4)}\n`, "utf-8");
-    };
-
-    const remember = (meta: SessionMeta): void => {
-        const list = metas ?? [];
-        const index = list.findIndex((item) => item.id === meta.id);
-        if (index >= 0) list[index] = meta;
-        else list.unshift(meta);
-        metas = list;
     };
 
     const llmFor = (modelKey: string): LlmPort => {
@@ -169,140 +174,278 @@ export function createChatSessions(options: ChatSessionsOptions): ChatSessionHos
         }
     };
 
-    const opened = async (id: string): Promise<{ store: JsonlSessionStore; session: AgentSession; meta: SessionMeta }> => {
+    /** 建一个 bot 句柄：createSession 回调负责建会话目录（meta.json），归属由 bot 包写 */
+    const handleOf = (config: BotConfig): Bot =>
+        createBot({
+            store: botStore,
+            config,
+            createSession: async (bot) => {
+                const now = localISOString();
+                const meta: SessionMeta = {
+                    id: newSessionId(),
+                    title: "新会话",
+                    model: bot.model,
+                    createdAt: now,
+                    updatedAt: now,
+                    messageCount: 0,
+                };
+                await writeMeta(meta);
+                return meta.id;
+            },
+        });
+
+    const opened = async (
+        id: string,
+    ): Promise<{ store: JsonlSessionStore; session: AgentSession; meta: SessionMeta }> => {
         const hit = open.get(id);
         if (hit !== undefined) return hit;
         const dir = join(root, id);
         const meta = await readMeta(dir);
         if (meta === null) throw new Error(`没有会话 ${id}`);
+        // ##498：模型以 **bot 的当前配置**为准（一个 bot 一条长期会话，改模型就是改这条会话）
+        const ownerId = await botStore.ownerOf(id);
+        const owner = ownerId === null ? null : await botStore.load(ownerId);
+        const modelKey = owner !== null && owner.model.trim() !== "" ? owner.model : meta.model;
+        const instructions = owner?.instructions.trim() ?? "";
         // ##480：装配器是决定者 —— 直接构造 jsonl store（session 自己的缺省是内存 store），
         // 传实例而不是策略名：将来换远程 store 只改这一行，不存在 switch 分派。
         const store = await openJsonlSessionStore({ dir });
         const initialMessages: readonly ChatMessage[] = await store.readFrom(0);
-        const { modelId } = splitModelKey(meta.model);
+        const { modelId } = splitModelKey(modelKey);
         const session = createSession({
             id,
-            llm: llmFor(meta.model),
+            llm: llmFor(modelKey),
             store,
             initialMessages,
             ...(modelId === "" ? {} : { model: modelId }),
+            // 行为指令 = system 话术；只在新建会话时写一次（历史里已经有一条，别重复追加）
+            ...(initialMessages.length === 0 && instructions !== "" ? { system: instructions } : {}),
         });
-        const value = { store, session, meta };
+        const nextMeta: SessionMeta = meta.model === modelKey ? meta : { ...meta, model: modelKey };
+        if (nextMeta !== meta) await writeMeta(nextMeta);
+        const value = { store, session, meta: nextMeta };
         open.set(id, value);
         return value;
     };
 
-    const snapshot = async (): Promise<ChatSnapshot> => {
-        const list = await loadMetas();
-        if (selectedModel === null) selectedModel = keyOf(catalog()[0] ?? null) || null;
-        // 重启后默认打开最近的会话（判据 4：列表在，点开就完整；这里连点都不用点）
-        activeId ??= list[0]?.id ?? null;
-        let messages: readonly WireMessage[] = [];
-        const current = activeId === null ? null : await opened(activeId).catch(() => null);
-        if (current !== null) messages = wireOf(current.session.messages);
-        const cfg = await currentBot();
+    /** bot 配置 → 左栏一行（sessionCount 是扫会话目录的投影，不是 bot.json 的一部分） */
+    const botView = async (config: BotConfig): Promise<BotView> => ({
+        id: config.id,
+        name: config.name,
+        instructions: config.instructions,
+        model: config.model,
+        needsModel: config.needsModel === true || config.model.trim() === "",
+        ...(config.reasoningEffort === undefined ? {} : { reasoningEffort: config.reasoningEffort }),
+        sessionCount: (await botStore.sessionsOf(config.id)).length,
+        createdAt: config.createdAt,
+        updatedAt: config.updatedAt,
+    });
+
+    /** 底部指标：上一步的桶 + 模型目录里的窗口 / 价目（缺就缺席，不补 0） */
+    const metricsOf = (config: BotConfig, sessionId: string, usage: TokenUsage): ChatMetrics => {
+        const last = lastStep.get(sessionId);
+        const entry = catalog().find((item) => keyOf(item) === config.model) ?? null;
+        const cost = last === undefined ? undefined : stepCost(entry?.cost, last);
         return {
-            bot: cfg === null ? null : botViewOf(cfg),
-            sessions: list.map(summaryOf),
+            ...(last === undefined ? {} : { inputTokens: last.inputTokens, outputTokens: last.outputTokens }),
+            ...(last?.cacheReadTokens === undefined ? {} : { cacheReadTokens: last.cacheReadTokens }),
+            ...(entry?.contextWindow === undefined ? {} : { contextWindow: entry.contextWindow }),
+            ...(cost === undefined ? {} : { cost }),
+            turns: usage.turns,
+        };
+    };
+
+    /** 当前 bot（上次选中的那个；没有 / 已删 ⇒ 列表第一个） */
+    const activeConfig = async (): Promise<BotConfig | null> => {
+        const configs = await botStore.list();
+        if (configs.length === 0) return null;
+        const state = await loadUi();
+        const active = configs.find((config) => config.id === state.activeBotId) ?? configs[0]!;
+        if (state.activeBotId !== active.id) {
+            state.activeBotId = active.id;
+            await saveUi();
+        }
+        return active;
+    };
+
+    const snapshot = async (): Promise<ChatSnapshot> => {
+        const configs = await botStore.list();
+        const bots = await Promise.all(configs.map(botView));
+        const selectedModel = keyOf(catalog()[0] ?? null) || null;
+        const active = configs.length === 0 ? null : ((await activeConfig()) ?? configs[0]!);
+        if (active === null) {
+            return {
+                bots: [],
+                bot: null,
+                models: choices(),
+                activeId: null,
+                messages: [],
+                metrics: null,
+                selectedModel,
+            };
+        }
+        // 存量 bot 没选过模型（##497）：UI 要先拦到配置页 —— 这里也不能替它开会话
+        if (active.needsModel === true || active.model.trim() === "") {
+            return {
+                bots,
+                bot: await botView(active),
+                models: choices(),
+                activeId: null,
+                messages: [],
+                metrics: null,
+                selectedModel,
+            };
+        }
+        // 长期会话：第一次进来才建（幂等；建过就一直是它 —— 判据 3/4）
+        const ref = await handleOf(active).primary();
+        const current = await opened(ref.id);
+        const messages: readonly WireMessage[] = wireOf(current.session.messages);
+        return {
+            bots,
+            bot: await botView(active),
             models: choices(),
-            activeId,
+            activeId: ref.id,
             messages,
+            metrics: metricsOf(active, ref.id, current.session.usage),
             selectedModel,
         };
     };
 
-    /** bot 配置 → UI 视图（needsModel = 旧数据缺 model，要拦住补选） */
-    const botViewOf = (cfg: BotConfig): BotView => ({
-        id: cfg.id,
-        name: cfg.name,
-        model: cfg.model ?? "",
-        needsModel: cfg.model === undefined || cfg.model === "",
-    });
+    /** 模型必须是目录里的（##497：没有「跟随宿主缺省」这条路） */
+    const checkModel = (model: string): string => {
+        if (model.trim() === "") throw new Error("必须先选一个模型（bot 的 model 必填）");
+        const found = catalog().some((entry) => keyOf(entry) === model);
+        if (!found) throw new Error(`模型目录里没有 ${model}`);
+        return model;
+    };
+
+    const focus = async (id: string): Promise<void> => {
+        const state = await loadUi();
+        state.activeBotId = id;
+        await saveUi();
+    };
 
     return {
         snapshot,
 
         /** 首启建 bot（##497：必须有 model；已存在则报错） */
-        async createFirstBot(input): Promise<ChatSnapshot> {
-            await createFirstBotIn(botStore, {
-                id: "bot-1",
-                name: input.name ?? "大王助手",
-                instructions:
-                    input.instructions ??
-                    "你是「大王助手」，在 diy 的聊天窗口里陪大王干活。回答要短、要具体，能查证的不靠猜。",
-                model: input.model,
+        async createFirstBot(input: FirstBotInput): Promise<ChatSnapshot> {
+            const config = await createFirstBotIn(botStore, {
+                id: FIRST_BOT_DRAFT.id,
+                name: input.name?.trim() || FIRST_BOT_DRAFT.name,
+                instructions: input.instructions ?? FIRST_BOT_DRAFT.instructions,
+                model: checkModel(input.model),
             });
+            await focus(config.id);
             return snapshot();
         },
 
-        /** 旧数据补选模型（只改 model） */
-        async setBotModel(input): Promise<ChatSnapshot> {
-            const cfg = await currentBot();
-            if (cfg === null) throw new Error("还没有 bot");
-            await setBotModelIn(botStore, cfg.id, input.model);
-            return snapshot();
-        },
-
-        async create(input): Promise<ChatSnapshot> {
-            const requested = input.model ?? selectedModel;
-            const entry =
-                catalog().find((item) => keyOf(item) === requested) ?? catalog()[0] ?? null;
-            if (entry === null) {
-                throw new Error("model.yaml 里没有可用模型 —— 检查 $DIY_HOME/model.yaml 与 providers.custom.yaml");
+        /** `+ 新 bot`：建好即选中（点进去就是它的长期会话） */
+        async createBot(input: BotDraftInput): Promise<ChatSnapshot> {
+            const name = input.name.trim();
+            if (name === "") throw new Error("新 bot 必须有个名字");
+            const existing = await botStore.list();
+            if (existing.some((config) => config.name === name)) {
+                throw new Error(`已经有同名 bot「${name}」`);
             }
-            const now = localISOString();
-            const id = `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-            const meta: SessionMeta = {
-                id,
-                title: "新会话",
-                model: keyOf(entry),
-                createdAt: now,
-                updatedAt: now,
-                messageCount: 0,
+            const model = checkModel(input.model);
+            const at = localISOString();
+            const config: BotConfig = {
+                id: nextBotId(existing.map((item) => item.id)),
+                name,
+                instructions: input.instructions ?? "",
+                model,
+                ...(input.reasoningEffort === undefined || input.reasoningEffort === ""
+                    ? {}
+                    : { reasoningEffort: input.reasoningEffort }),
+                createdAt: at,
+                updatedAt: at,
             };
-            await writeMeta(meta);
-            // 归属：会话目录里写 bot.json（单 bot ⇒ 都归「大王助手」）
-            // 兜底：API 调用方（测试 / CLI）不一定走过首启引导 —— 没有 bot 就用目录里第一个模型建一个。
-            // UI 层仍由 snapshot().bot === null 拦住显示引导页（人参与的那步在 UI，不在这里）。
-            const owner =
-                (await currentBot()) ??
-                (await createFirstBotIn(botStore, {
-                    id: "bot-1",
-                    name: "大王助手",
-                    instructions:
-                        "你是「大王助手」，在 diy 的聊天窗口里陪大王干活。回答要短、要具体，能查证的不靠猜。",
-                    model: keyOf(catalog()[0] ?? null) || "",
-                }));
-            await botStore.assign(id, owner.id);
-            remember(meta);
-            selectedModel = meta.model;
-            activeId = id;
+            await botStore.save(config);
+            await focus(config.id);
             return snapshot();
         },
 
-        async select(id): Promise<ChatSnapshot> {
-            await opened(id);
-            activeId = id;
+        /** 改配置：模型 / 指令变了 ⇒ 把打开中的会话丢掉重开（llm 与 system 都要重新装配） */
+        async updateBot(input: BotUpdateInput): Promise<ChatSnapshot> {
+            const current = await botStore.load(input.id);
+            if (current === null) throw new Error(`没有 bot ${input.id}`);
+            const name = (input.name ?? current.name).trim();
+            if (name === "") throw new Error("名字不能为空");
+            const model = input.model === undefined ? current.model : checkModel(input.model);
+            const instructions = input.instructions ?? current.instructions;
+            const effort =
+                input.reasoningEffort === undefined
+                    ? current.reasoningEffort
+                    : input.reasoningEffort.trim() === ""
+                      ? undefined
+                      : input.reasoningEffort;
+            const next: BotConfig = {
+                id: current.id,
+                name,
+                instructions,
+                model,
+                ...(current.primarySessionId === undefined ? {} : { primarySessionId: current.primarySessionId }),
+                ...(effort === undefined ? {} : { reasoningEffort: effort }),
+                ...(current.maxOutputTokens === undefined ? {} : { maxOutputTokens: current.maxOutputTokens }),
+                createdAt: current.createdAt,
+                updatedAt: localISOString(),
+            };
+            await botStore.save(next);
+            if (model !== current.model || instructions !== current.instructions) {
+                if (current.primarySessionId !== undefined) open.delete(current.primarySessionId);
+            }
             return snapshot();
         },
 
-        async remove(id): Promise<ChatSnapshot> {
-            await rm(join(root, id), { recursive: true, force: true });
-            open.delete(id);
-            metas = (metas ?? []).filter((item) => item.id !== id);
-            if (activeId === id) activeId = null;
+        /** 删 bot（##498 判据 7：它的**会话一并删除**）—— 级联是应用策略，bot 包本身只删身份 */
+        async removeBot(id: string): Promise<ChatSnapshot> {
+            const refs = await botStore.sessionsOf(id);
+            for (const ref of refs) {
+                await rm(join(root, ref.id), { recursive: true, force: true });
+                open.delete(ref.id);
+                lastStep.delete(ref.id);
+            }
+            await botStore.remove(id);
+            const state = await loadUi();
+            if (state.activeBotId === id) {
+                delete state.activeBotId;
+                await saveUi();
+            }
             return snapshot();
         },
 
-        async send(id, text, onDelta): Promise<ChatSnapshot> {
-            const { session, meta } = await opened(id);
-            activeId = id;
+        /** 切 bot = 打开它的长期会话 */
+        async selectBot(id: string): Promise<ChatSnapshot> {
+            const config = await botStore.load(id);
+            if (config === null) throw new Error(`没有 bot ${id}`);
+            await focus(id);
+            return snapshot();
+        },
+
+        async send(text, onDelta): Promise<ChatSnapshot> {
+            const active = await activeConfig();
+            if (active === null) throw new Error("还没有 bot —— 先建一个（首启引导）");
+            const ref = await handleOf(active).primary();
+            const { session, meta } = await opened(ref.id);
             const before = session.messages.length;
+            const usageBefore = session.usage;
             for await (const delta of session.send(text)) {
                 if (delta.type === "text") onDelta(wireOf(session.messages));
             }
             const messages = wireOf(session.messages);
             onDelta(messages);
+
+            // 上一步的桶 = 累计值的差（底部指标条要的是「这一步」，不是「这条会话」）
+            const usageAfter = session.usage;
+            lastStep.set(ref.id, {
+                inputTokens: usageAfter.inputTokens - usageBefore.inputTokens,
+                outputTokens: usageAfter.outputTokens - usageBefore.outputTokens,
+                ...(usageAfter.cacheReadTokens === undefined
+                    ? {}
+                    : { cacheReadTokens: usageAfter.cacheReadTokens - (usageBefore.cacheReadTokens ?? 0) }),
+            });
+
             const grown = session.messages.length - before;
             const next: SessionMeta = {
                 ...meta,
@@ -311,21 +454,25 @@ export function createChatSessions(options: ChatSessionsOptions): ChatSessionHos
                 messageCount: meta.messageCount + Math.max(grown, 0),
             };
             await writeMeta(next);
-            remember(next);
-            open.set(id, { store: open.get(id)!.store, session, meta: next });
-            return { ...(await snapshot()), messages, activeId: id };
+            open.set(ref.id, { store: open.get(ref.id)!.store, session, meta: next });
+            return { ...(await snapshot()), messages, activeId: ref.id };
         },
     };
 }
 
-function summaryOf(meta: SessionMeta): SessionSummary {
-    return {
-        id: meta.id,
-        title: meta.title,
-        model: meta.model,
-        updatedAt: meta.updatedAt,
-        messageCount: meta.messageCount,
-    };
+/** 上一步花费（USD）：目录价目 × tokens（无价目 ⇒ undefined，不编 0） */
+function stepCost(cost: ModelCatalogCost | undefined, step: StepUsage): number | undefined {
+    if (cost === undefined) return undefined;
+    const cacheRead = step.cacheReadTokens ?? 0;
+    const input = step.inputTokens - cacheRead;
+    const total =
+        (input * cost.input + step.outputTokens * cost.output) / 1_000_000 +
+        (cacheRead * (cost.cacheRead ?? cost.input)) / 1_000_000;
+    return total;
+}
+
+function newSessionId(): string {
+    return `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function titleFrom(text: string): string {
@@ -339,7 +486,8 @@ async function readMeta(dir: string): Promise<SessionMeta | null> {
         const parsed: unknown = JSON.parse(raw);
         if (parsed === null || typeof parsed !== "object") return null;
         const meta = parsed as Partial<Record<keyof SessionMeta, unknown>>;
-        if (typeof meta.id !== "string" || typeof meta.title !== "string" || typeof meta.model !== "string") return null;
+        if (typeof meta.id !== "string" || typeof meta.title !== "string" || typeof meta.model !== "string")
+            return null;
         return {
             id: meta.id,
             title: meta.title,

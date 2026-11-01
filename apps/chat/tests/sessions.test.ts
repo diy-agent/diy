@@ -4,16 +4,18 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { LlmPort } from "@diy-agent/session";
 import type { WireMessage } from "@diy-agent/chat-page";
-import { createChatSessions, splitModelKey } from "../sessions.js";
+import { createChatSessions, nextBotId, splitModelKey } from "../sessions.js";
 
 /** 消息线 → 每条的纯文本（##499 起消息是 Block 列表） */
 function textsOf(messages: readonly WireMessage[]): string[] {
     return messages.map((message) =>
-        message.blocks.map((block) => (block.kind === "text" ? String(block.data["text"]) : `[${block.kind}]`)).join(""),
+        message.blocks
+            .map((block) => (block.kind === "text" ? String(block.data["text"]) : `[${block.kind}]`))
+            .join(""),
     );
 }
 
-/** 临时数据根：一个 custom provider（test/echo-1），key 是假值（不会被用，llmFor 注入假模型） */
+/** 临时数据根：一个 custom provider（test/echo-1、test/echo-2），key 是假值（不会被用，llmFor 注入假模型） */
 function makeHome(model = true): string {
     const home = mkdtempSync(join(tmpdir(), "app-chat-"));
     if (model) {
@@ -38,6 +40,8 @@ function makeHome(model = true): string {
   models:
     echo-1:
       name: Echo 1
+      cost: { input: 1, output: 2 }
+      limit: { context: 1000 }
     echo-2:
       name: Echo 2
 `,
@@ -52,101 +56,176 @@ const fakeLlm: LlmPort = {
         const last = [...messages].reverse().find((message) => message.role === "user");
         const reply = `收到：${last?.text ?? ""}`;
         yield { type: "text", text: reply };
-        yield { type: "usage", inputTokens: 1, outputTokens: 1 };
+        // 带缓存读桶：底部指标条的「缓存 / 本轮」有数可算
+        yield { type: "usage", inputTokens: 100, outputTokens: 10, cacheReadTokens: 40 };
         yield { type: "done", stopReason: "stop" };
     },
 };
 
 const host = (home: string) => createChatSessions({ home, llmFor: () => fakeLlm });
 
-describe("apps/chat 多会话宿主", () => {
+/** 首启建第一个 bot（##498：bots 为空 ⇒ 必须先建 bot 才有会话） */
+async function firstBot(sessions: ReturnType<typeof host>, model = "test/echo-1") {
+    return sessions.createFirstBot({ model });
+}
+
+describe("apps/chat 多 bot 宿主（##498）", () => {
     it("模型目录来自 model.yaml / providers.custom.yaml（provider×model）", async () => {
-        const sessions = host(makeHome());
-        const snapshot = await sessions.snapshot();
+        const snapshot = await host(makeHome()).snapshot();
         expect(snapshot.models.map((choice) => `${choice.providerId}/${choice.modelId}`)).toEqual([
             "test/echo-1",
             "test/echo-2",
         ]);
-        expect(snapshot.sessions).toEqual([]);
+        expect(snapshot.bots).toEqual([]);
+        // 判据 8：bots 为空 ⇒ bot = null（UI 走首启引导，不进聊天）
+        expect(snapshot.bot).toBeNull();
+        expect(snapshot.activeId).toBeNull();
     });
 
-    it("新建 → 发消息 → 列表出现标题，消息线是 user + assistant", async () => {
+    it("首启建 bot 后就有了长期会话：发消息 → 消息线 user + assistant（判据 3）", async () => {
         const sessions = host(makeHome());
-        let snapshot = await sessions.create({});
-        expect(snapshot.sessions).toHaveLength(1);
+        let snapshot = await firstBot(sessions);
+        expect(snapshot.bot?.name).toBe("大王助手");
+        expect(snapshot.bots).toHaveLength(1);
         const id = snapshot.activeId!;
-        snapshot = await sessions.send(id, "你好呀", () => {});
+        expect(id).toMatch(/^s-/);
+        snapshot = await sessions.send("你好呀", () => {});
         expect(snapshot.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
         expect(textsOf(snapshot.messages)).toEqual(["你好呀", "收到：你好呀"]);
-        expect(snapshot.sessions[0]?.title).toBe("你好呀");
-        expect(snapshot.sessions[0]?.messageCount).toBe(2);
+        expect(snapshot.activeId).toBe(id);
     });
 
-    it("多会话隔离：第二个会话的消息不出现在第一个里（判据 2）", async () => {
+    it("同一 bot 反复进：永远是同一个会话（判据 3：不是新建）", async () => {
+        const home = makeHome();
+        const first = await firstBot(host(home));
+        const id = first.activeId!;
+        // 新宿主实例 = 重启后的进程：还是那一条
+        const again = await host(home).snapshot();
+        expect(again.activeId).toBe(id);
+        // primarySessionId 已落盘（判据 4）
+        const config = JSON.parse(readFileSync(join(home, "bots", "bot-1", "bot.json"), "utf-8"));
+        expect(config.primarySessionId).toBe(id);
+        // 会话目录只有一个
+        expect(readdirSync(join(home, "sessions", "chat")).filter((name) => name.startsWith("s-"))).toEqual([id]);
+    });
+
+    it("多 bot 隔离：各自的会话互不串（判据 2）", async () => {
         const sessions = host(makeHome());
-        const first = (await sessions.create({})).activeId!;
-        await sessions.send(first, "会话一的暗号：ALPHA", () => {});
-        const second = (await sessions.create({})).activeId!;
-        await sessions.send(second, "会话二的暗号：BETA", () => {});
+        await firstBot(sessions);
+        await sessions.send("第一个 bot 的暗号：ALPHA", () => {});
+        let snapshot = await sessions.createBot({ name: "小助手", model: "test/echo-2" });
+        expect(snapshot.bots.map((bot) => bot.name)).toEqual(["大王助手", "小助手"]);
+        expect(snapshot.bot?.name).toBe("小助手"); // 建好即选中
+        const secondId = snapshot.activeId!;
+        await sessions.send("第二个 bot 的暗号：BETA", () => {});
 
-        const secondView = await sessions.select(second);
-        expect(textsOf(secondView.messages)).toEqual([
-            "会话二的暗号：BETA",
-            "收到：会话二的暗号：BETA",
-        ]);
-        const firstView = await sessions.select(first);
-        expect(textsOf(firstView.messages)).toEqual([
-            "会话一的暗号：ALPHA",
-            "收到：会话一的暗号：ALPHA",
-        ]);
+        snapshot = await sessions.selectBot("bot-1");
+        expect(textsOf(snapshot.messages)).toEqual(["第一个 bot 的暗号：ALPHA", "收到：第一个 bot 的暗号：ALPHA"]);
+        snapshot = await sessions.selectBot("bot-2");
+        expect(snapshot.activeId).toBe(secondId);
+        expect(textsOf(snapshot.messages)).toEqual(["第二个 bot 的暗号：BETA", "收到：第二个 bot 的暗号：BETA"]);
     });
 
-    it("落盘：会话目录有 meta.json + 桶文件（判据 3）", async () => {
+    it("落盘：会话目录有 meta.json + 桶文件 + bot.json（判据 3）", async () => {
         const home = makeHome();
         const sessions = host(home);
-        const id = (await sessions.create({})).activeId!;
-        await sessions.send(id, "写盘", () => {});
+        const snapshot = await firstBot(sessions);
+        const id = snapshot.activeId!;
+        await sessions.send("写盘", () => {});
         const files = readdirSync(join(home, "sessions", "chat", id)).sort();
         expect(files).toContain("index.json");
         expect(files).toContain("meta.json");
-        // ##469 判据 2：会话目录里的 bot.json 标归属（方案 B）
+        // 方案 B：会话目录里的 bot.json 标归属
         expect(files).toContain("bot.json");
         expect(JSON.parse(readFileSync(join(home, "sessions", "chat", id, "bot.json"), "utf-8"))).toEqual({
             botId: "bot-1",
         });
-        // 桶名以 store 的契约为准（##464 后为 `<序号>-<本地时间>.jsonl`，旧 `log-…` 仍认；
-        // 这里只认「一个桶」——两套命名都算）
         expect(files.filter((file) => /^(log-|\d{4,}-).+\.jsonl$/.test(file))).toHaveLength(1);
     });
 
-    it("重启后会话还在：新宿主实例仍能列出并恢复消息（判据 4）", async () => {
+    it("重启后消息还在（判据 4）", async () => {
         const home = makeHome();
         const before = host(home);
-        const id = (await before.create({})).activeId!;
-        await before.send(id, "重启前的话", () => {});
+        await firstBot(before);
+        await before.send("重启前的话", () => {});
 
         const after = host(home);
         const snapshot = await after.snapshot();
-        expect(snapshot.sessions.map((session) => session.id)).toEqual([id]);
-        const reopened = await after.select(id);
-        expect(reopened.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
-        expect(textsOf(reopened.messages)).toEqual(["重启前的话", "收到：重启前的话"]);
+        expect(snapshot.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+        expect(textsOf(snapshot.messages)).toEqual(["重启前的话", "收到：重启前的话"]);
     });
 
-    it("##469 判据 1：默认 bot「大王助手」落 ~/.diy/bots/bot-1/bot.json，字段完整", async () => {
+    it("删 bot ⇒ 它的会话一并删除（判据 7）", async () => {
         const home = makeHome();
-        await host(home).create({});
-        const config = JSON.parse(readFileSync(join(home, "bots", "bot-1", "bot.json"), "utf-8"));
-        expect(config.id).toBe("bot-1");
-        expect(config.name).toBe("大王助手");
-        expect(typeof config.instructions).toBe("string"); // ##470：行为指令改名 instructions
-        expect(typeof config.createdAt).toBe("string");
-        expect(typeof config.updatedAt).toBe("string");
+        const sessions = host(home);
+        const snapshot = await firstBot(sessions);
+        const id = snapshot.activeId!;
+        await sessions.send("这条会一起消失", () => {});
+
+        const after = await sessions.removeBot("bot-1");
+        expect(after.bots).toEqual([]);
+        expect(after.bot).toBeNull();
+        expect(after.messages).toEqual([]);
+        expect(readdirSync(join(home, "sessions", "chat"))).not.toContain(id);
     });
 
-    it("没有模型配置 ⇒ 新建时报错（不静默建空会话）", async () => {
+    it("改 bot 配置：名字 / 模型 / 指令都落盘；换模型后会话按新模型重开", async () => {
+        const home = makeHome();
+        const sessions = host(home);
+        const snapshot = await firstBot(sessions);
+        const updated = await sessions.updateBot({
+            id: "bot-1",
+            name: "改名了",
+            model: "test/echo-2",
+            instructions: "新指令",
+        });
+        expect(updated.bot?.name).toBe("改名了");
+        expect(updated.bot?.model).toBe("test/echo-2");
+        expect(updated.bot?.instructions).toBe("新指令");
+        const config = JSON.parse(readFileSync(join(home, "bots", "bot-1", "bot.json"), "utf-8"));
+        expect(config.model).toBe("test/echo-2");
+        // 长期会话 id 不因改配置而丢（换模型 ≠ 换会话）
+        expect(updated.activeId).toBe(snapshot.activeId);
+    });
+
+    it("底部指标：上一步的输入 / 缓存 / 窗口 / 本轮花费（##498 硬要求 3）", async () => {
+        const sessions = host(makeHome());
+        await firstBot(sessions);
+        await sessions.send("指标来一条", () => {});
+        const snapshot = await sessions.snapshot();
+        expect(snapshot.metrics?.turns).toBe(1);
+        expect(snapshot.metrics?.inputTokens).toBe(100);
+        expect(snapshot.metrics?.outputTokens).toBe(10);
+        expect(snapshot.metrics?.cacheReadTokens).toBe(40);
+        expect(snapshot.metrics?.contextWindow).toBe(1000);
+        // 价目：input 1/1M、output 2/1M → (60*1 + 10*2 + 40*1)/1e6
+        expect(snapshot.metrics?.cost).toBeCloseTo(0.00012, 9);
+    });
+
+    it("没有模型配置 ⇒ 先启建 bot 时报错（不静默建空 bot）", async () => {
         const sessions = host(makeHome(false));
-        await expect(sessions.create({})).rejects.toThrow(/没有可用模型/);
+        await expect(firstBot(sessions)).rejects.toThrow(/模型目录里没有/);
+    });
+
+    it("存量 bot 没 model ⇒ snapshot 不给会话（UI 拦到补选页）", async () => {
+        const home = makeHome();
+        const dir = join(home, "bots", "bot-1");
+        const { mkdirSync } = await import("node:fs");
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(
+            join(dir, "bot.json"),
+            JSON.stringify({
+                id: "bot-1",
+                name: "老 bot",
+                instructions: "",
+                createdAt: "2026-01-01T00:00:00.000+0800",
+                updatedAt: "2026-01-01T00:00:00.000+0800",
+            }),
+            "utf-8",
+        );
+        const snapshot = await host(home).snapshot();
+        expect(snapshot.bot?.needsModel).toBe(true);
+        expect(snapshot.activeId).toBeNull();
     });
 
     it("splitModelKey 按第一个 / 切（模型 id 自身可含 /）", () => {
@@ -154,12 +233,17 @@ describe("apps/chat 多会话宿主", () => {
         expect(splitModelKey("goat/deepseek/v4")).toEqual({ providerId: "goat", modelId: "deepseek/v4" });
     });
 
+    it("nextBotId 取现有 bot-<n> 的最大值 + 1", () => {
+        expect(nextBotId([])).toBe("bot-1");
+        expect(nextBotId(["bot-1", "bot-7", "x"])).toBe("bot-8");
+    });
+
     it("##480 判据 3/5：装配器直接构造 jsonl store 并注入（session 缺省是内存，不注入就不落盘）", () => {
         const source = readFileSync(join(import.meta.dirname, "..", "sessions.ts"), "utf-8");
         // 直接构造调用，不是 if (strategy === ...) / switch 枚举分派（禁止的字面量拼着写，免得自己命中判据）
-        expect(source).not.toMatch(new RegExp(`${'Store'}${'Strategy'}`));
+        expect(source).not.toMatch(new RegExp(`${"Store"}${"Strategy"}`));
         expect(source).toContain("openJsonlSessionStore({ dir })");
         // createSession 的入参里必须带 store（从装配器传进去的那个实例）
-        expect(source).toMatch(/createSession\(\{[\s\S]{0,300}?\n\s+store,/);
+        expect(source).toMatch(/createSession\(\{[\s\S]{0,400}?\n\s+store,/);
     });
 });

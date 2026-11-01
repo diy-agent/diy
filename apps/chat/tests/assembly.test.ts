@@ -33,13 +33,16 @@ describe("apps/chat 装配清单", () => {
     });
 
     it("DIY_HOME 存在 ⇒ 注入多会话宿主；缺席 ⇒ 不注入（退回插件单会话形态）", () => {
-        const sessions = (ASSEMBLY.plugins[0] as { config?: { sessions?: Record<string, unknown> } }).config
-            ?.sessions;
+        const sessions = (ASSEMBLY.plugins[0] as { config?: { sessions?: Record<string, unknown> } }).config?.sessions;
         if (process.env["DIY_HOME"] === undefined) {
             expect(sessions).toBeUndefined();
             return;
         }
         expect(typeof sessions?.["snapshot"]).toBe("function");
         expect(typeof sessions?.["send"]).toBe("function");
+        // ##498：多 bot 的那几个方法（宿主能力判据就是这一串）
+        for (const method of ["createFirstBot", "createBot", "updateBot", "removeBot", "selectBot"]) {
+            expect(typeof sessions?.[method]).toBe("function");
+        }
     });
 });

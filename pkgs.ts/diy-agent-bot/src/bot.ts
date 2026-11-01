@@ -5,7 +5,7 @@
 import { localISOString } from "@diy-agent/time";
 import { BotError } from "./errors.js";
 import { createMemoryBotStore } from "./store-memory.js";
-import type { Bot, BotConfig, BotDraft, BotStore, CreateBotOptions } from "./types.js";
+import type { Bot, BotConfig, BotDraft, BotSessionRef, BotStore, CreateBotOptions } from "./types.js";
 
 /** 建一个 bot 句柄（config 已在手；要按 id 打开用 `openBot`）
  *
@@ -13,23 +13,54 @@ import type { Bot, BotConfig, BotDraft, BotStore, CreateBotOptions } from "./typ
  * 要落盘由装配器传实例（`createFileBotStore(...)`），本包不分派策略。
  */
 export function createBot(options: CreateBotOptions): Bot {
-    const { config } = options;
+    // `config` 会因为 primary() 写回而变（primarySessionId）：句柄对外始终是**当前**那一份
+    let config = options.config;
     const store = options.store ?? createMemoryBotStore();
 
+    const openSession = async (): Promise<string> => {
+        const id = options.createSession === undefined ? newSessionId() : await options.createSession(config);
+        if (typeof id !== "string" || id === "") {
+            throw new BotError("bot/invalid-id", "createSession 返回了空 id");
+        }
+        await store.assign(id, config.id);
+        return id;
+    };
+
+    /** 把长期会话 id 写回 bot.json（只有变了才写：幂等路径零 IO 写入） */
+    const rememberPrimary = async (id: string): Promise<void> => {
+        if (config.primarySessionId === id) return;
+        const next: BotConfig = { ...config, primarySessionId: id };
+        await store.save(next);
+        config = next;
+    };
+
+    const refOf = async (id: string): Promise<BotSessionRef> => {
+        const hit = (await store.sessionsOf(config.id)).find((item) => item.id === id);
+        return hit ?? { id, botId: config.id };
+    };
+
     return {
-        config,
+        get config() {
+            return config;
+        },
 
         sessions() {
             return store.sessionsOf(config.id);
         },
 
-        async newSession(): Promise<string> {
-            const id = options.createSession === undefined ? newSessionId() : await options.createSession(config);
-            if (typeof id !== "string" || id === "") {
-                throw new BotError("bot/invalid-id", "createSession 返回了空 id");
+        async primary(): Promise<BotSessionRef> {
+            const id = config.primarySessionId;
+            // 幂等：写回过的那个还在（归属仍是本 bot）就直接用
+            if (id !== undefined && id !== "" && (await store.ownerOf(id)) === config.id) {
+                return refOf(id);
             }
-            await store.assign(id, config.id);
-            return id;
+            const created = await openSession();
+            await rememberPrimary(created);
+            return refOf(created);
+        },
+
+        async newSession(): Promise<string> {
+            return openSession();
         },
     };
 }
@@ -107,6 +138,8 @@ export async function setBotModel(
         name: current.name,
         instructions: current.instructions,
         model,
+        // ##498：长期会话不因补选模型而丢（旧数据也可能已经有 primarySessionId）
+        ...(current.primarySessionId === undefined ? {} : { primarySessionId: current.primarySessionId }),
         ...(current.reasoningEffort === undefined ? {} : { reasoningEffort: current.reasoningEffort }),
         ...(current.maxOutputTokens === undefined ? {} : { maxOutputTokens: current.maxOutputTokens }),
         createdAt: current.createdAt,

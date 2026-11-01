@@ -178,6 +178,8 @@ function persistable(config: BotConfig): Record<string, unknown> {
         name: config.name,
         instructions: config.instructions,
         model: config.model,
+        // ##498：长期会话 id 是身份的一部分（重启后要回到同一个对话），必须落盘
+        ...(config.primarySessionId === undefined ? {} : { primarySessionId: config.primarySessionId }),
         ...(config.reasoningEffort === undefined ? {} : { reasoningEffort: config.reasoningEffort }),
         ...(config.maxOutputTokens === undefined ? {} : { maxOutputTokens: config.maxOutputTokens }),
         createdAt: config.createdAt,
@@ -218,6 +220,9 @@ function parseConfig(value: unknown): BotConfig | null {
         // ##497：model 必填；存量文件没有 / 为空 ⇒ 空串 + needsModel，让 UI 拦住要求补选
         model: typeof config.model === "string" ? config.model : "",
         ...(typeof config.model === "string" && config.model.trim() !== "" ? {} : { needsModel: true }),
+        ...(typeof config.primarySessionId === "string" && config.primarySessionId !== ""
+            ? { primarySessionId: config.primarySessionId }
+            : {}),
         ...(typeof config.reasoningEffort === "string" ? { reasoningEffort: config.reasoningEffort } : {}),
         ...(typeof config.maxOutputTokens === "number" ? { maxOutputTokens: config.maxOutputTokens } : {}),
         createdAt: config.createdAt,
