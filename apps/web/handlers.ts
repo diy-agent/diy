@@ -20,6 +20,7 @@ import type { AuthCore } from './auth.js';
 import type { PagesHost } from './pages.js';
 import {
     contextFromRequest,
+    defaultUsername,
     parseCookies,
     SESSION_COOKIE,
     type WebAuthnContext,
@@ -159,6 +160,7 @@ export function registerWebApi(binding: ServerBinding, peer: WebPeer, deps: WebR
     binding.on(webApi.web.webauthn.register.options, async ({ input }) => {
         const created = await webauthn.registrationOptions({
             context: requireContext(),
+            ...(input.username === undefined ? {} : { username: input.username }),
             ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
         });
         return { options: created.options as unknown as Record<string, unknown> };
@@ -193,7 +195,12 @@ export function registerWebApi(binding: ServerBinding, peer: WebPeer, deps: WebR
 
     binding.on(webApi.web.webauthn.me, () => {
         const user = sessionUser();
-        return { hasUser: webauthn.hasUser(), user };
+        return {
+            hasUser: webauthn.hasUser(),
+            user,
+            // 还没有主用户时才给建议值（= 系统用户名）；已有用户时它没有意义
+            suggestedUsername: webauthn.hasUser() ? null : defaultUsername(),
+        };
     });
 
     binding.on(webApi.web.webauthn.logout, () => {

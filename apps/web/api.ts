@@ -99,7 +99,11 @@ const OptionsOutput = z.object({ options: z.record(z.string(), z.unknown()) });
 const RegistrationResponseInput = { response: z.unknown() };
 const AuthenticationResponseInput = { response: z.unknown() };
 
-const RegisterOptionsInput = { displayName: z.string().max(80).optional() };
+/** 用户名会原样出现在系统钥匙串里 —— 缺省由服务端取系统用户名，不写死 'owner' */
+const RegisterOptionsInput = {
+    username: z.string().min(1).max(80).optional(),
+    displayName: z.string().max(80).optional(),
+};
 const RegisterVerifyInput = { ...RegistrationResponseInput, credentialName: z.string().max(80).optional() };
 const RegisterVerifyOutput = z.object({
     user: WebAuthnUserOutput,
@@ -120,8 +124,15 @@ const LoginVerifyOutput = z.object({
     expiresAt: z.number(),
 });
 
-/** `web.webauthn.me` —— 当前会话是谁（null = 未登录）；`hasUser` = 要不要显示「创建主用户」 */
-const MeOutput = z.object({ hasUser: z.boolean(), user: WebAuthnUserOutput.nullable() });
+/**
+ * `web.webauthn.me` —— 当前会话是谁（null = 未登录）；`hasUser` = 要不要显示「创建主用户」。
+ * `suggestedUsername` 只在还没有用户时给（= 系统用户名），页面拿它做默认值。
+ */
+const MeOutput = z.object({
+    hasUser: z.boolean(),
+    user: WebAuthnUserOutput.nullable(),
+    suggestedUsername: z.string().nullable(),
+});
 
 /** 页面（与 @diy-agent/workbench 的 PageInfo / page:invoke 同形 —— chat-page 的 ctx.invoke 直接对接） */
 const PageInfoOutput = z.array(z.object({ id: z.string(), title: z.string() }));

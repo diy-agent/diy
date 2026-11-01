@@ -46,6 +46,8 @@ interface MeView {
     readonly hasUser: boolean;
     readonly user: { readonly id: string; readonly displayName: string } | null;
     readonly rpID: string;
+    /** 还没主用户时服务端给的建议用户名（= 系统用户名）；有用户则 null */
+    readonly suggestedUsername: string | null;
 }
 
 /**
@@ -189,7 +191,7 @@ async function readMe(): Promise<MeView> {
     try {
         return await getJson<MeView>('/webauthn/me');
     } catch {
-        return { hasUser: false, user: null, rpID: location.hostname };
+        return { hasUser: false, user: null, rpID: location.hostname, suggestedUsername: null };
     }
 }
 
@@ -224,26 +226,32 @@ function showCreate(host: HTMLElement, me: MeView): void {
     const note = el('div', 'note');
     note.textContent = `本机还没有任何用户。创建一次即可 —— 之后注册入口永久关闭（RP ID：${me.rpID}）。`;
 
+    // 用户名会写进通行密钥（凭它就能在系统钥匙串 / iPhone 里认出这条）—— 默认系统用户名，用户可改
     const label = el('label');
-    label.textContent = '显示名';
+    label.textContent = '用户名（显示在系统钥匙串里）';
     const input = el('input');
-    input.value = 'owner';
+    input.value = me.suggestedUsername ?? '';
     input.maxLength = 80;
+    input.placeholder = '系统用户名';
     label.append(input);
+    const hint = el('div', 'note');
+    hint.textContent = 'Touch ID 弹窗里会用这个名字 —— 默认取本机系统用户名，不满意可以直接改。';
 
     const submit = el('button');
     submit.type = 'button';
     submit.textContent = '创建（Touch ID）';
 
-    box.append(note, label, submit);
+    box.append(note, label, hint, submit);
 
     submit.addEventListener('click', () => {
         submit.disabled = true;
         setStatus(status, 'warn', '正在请求 Touch ID…');
         void (async () => {
+            const name = input.value.trim();
             const { options } = await postJson<{ options: PublicKeyCredentialCreationOptionsJSON }>(
                 '/webauthn/register/options',
-                { displayName: input.value.trim() },
+                // 用户名与显示名同义（单 owner 没有区分它们的需求），两个都给，后端各自取缺省
+                { username: name, displayName: name },
             );
             const response = await startRegistration({ optionsJSON: options });
             const created = await postJson<{ user: { displayName: string } }>('/webauthn/register/verify', {
@@ -405,7 +413,7 @@ async function showChat(host: HTMLElement, connection: WebConnection): Promise<v
         connection.close();
         showPasskeyLogin(
             host,
-            { hasUser: true, user: null, rpID: location.hostname },
+            { hasUser: true, user: null, rpID: location.hostname, suggestedUsername: null },
             isUnauthenticated(error) ? '登录已失效：请重新用 Passkey 登录' : `连接中断：${messageOf(error)}`,
         );
     };

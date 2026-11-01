@@ -20,6 +20,7 @@
 
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { userInfo } from 'node:os';
 import { dirname } from 'node:path';
 import { RpcError } from '@diy-agent/rpc';
 import {
@@ -37,8 +38,21 @@ import { decodeClientDataJSON, isoBase64URL, isoUint8Array } from '@simplewebaut
 /** RP 显示名（浏览器弹窗里那一行） */
 export const RP_NAME = 'diy';
 
-/** 第一版只有一个 owner（body「不做账号切换」） */
-export const OWNER_USERNAME = 'owner';
+/**
+ * 主用户的缺省用户名：**系统用户名**（`os.userInfo().username`），拿不到就 `diy`。
+ *
+ * 为什么不能写死 'owner'：这个串会原样出现在系统钥匙串 / iPhone 通行密钥列表里，
+ * 用户看到的是「owner」而不是自己（##496 用户澄清 3）。
+ */
+export function defaultUsername(): string {
+    try {
+        const name = userInfo().username.trim();
+        if (name !== '') return name;
+    } catch {
+        // 无 passwd 条目的容器里 userInfo() 会抛：回落到 `diy`
+    }
+    return 'diy';
+}
 
 /** challenge 存活时间：5 分钟（body） */
 export const CHALLENGE_TTL_MS = 5 * 60_000;
@@ -109,6 +123,9 @@ export interface WebAuthnCore {
     /** ① 注册参数（仅当还没有主用户时允许） */
     registrationOptions(input: {
         readonly context: WebAuthnContext;
+        /** 通行密钥里的用户名（缺省 = 系统用户名，见 defaultUsername） */
+        readonly username?: string;
+        /** 通行密钥里的显示名（缺省 = username） */
         readonly displayName?: string;
     }): Promise<{ readonly options: PublicKeyCredentialCreationOptionsJSON }>;
     /** ② 验注册响应 → 建用户 + 存凭证（**不发会话**：判据 2/4 要求创建后刷新仍是登录页） */
@@ -292,10 +309,11 @@ export function createWebAuthn(
                 throw new RpcError('FAILED_PRECONDITION', '已存在主用户：不再接受新的注册（第一版单用户）');
             }
             const now = deps.now();
+            const username = (input.username ?? '').trim() || defaultUsername();
             const pending: PendingUser = {
                 id: `usr_${deps.newId()}`,
-                username: OWNER_USERNAME,
-                displayName: (input.displayName ?? '').trim() || 'owner',
+                username,
+                displayName: (input.displayName ?? '').trim() || username,
                 createdAt: now,
             };
             const options = await generateRegistrationOptions({

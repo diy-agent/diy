@@ -74,8 +74,13 @@ b / c 机制一样，只是谁发起 —— 本刀把「配对 + 授权」实现
 
 ## Passkey 登录（##496，与 `web.auth.*` 并存）
 
-第一版只做**本机单用户**：Touch ID 注册一个 Passkey，之后用它登录。`web.auth.*`（token 授权）
-一行没改，两条路同时可用 —— 页面登录页上那个「使用旧式 token 授权」就是老路。
+只做**单 owner**：`users` 恒为一条，没有多用户 UI、没有角色（注册过一次就永久关闭）。
+Touch ID 注册一个 Passkey，之后用它登录。`web.auth.*`（token 授权）一行没改，两条路同时可用
+—— 页面登录页上那个「使用旧式 token 授权」就是老路。
+
+用户名（`userName` / `userDisplayName`）**不写死 'owner'**：它原样出现在系统钥匙串 / iPhone
+通行密钥列表里，所以缺省取 `os.userInfo().username`（`webauthn.ts` 的 `defaultUsername()`），
+页面把它填进输入框供用户改；`/webauthn/me` 在「还没有主用户」时把这个建议值一并发给页面。
 
 ```
 ① GET  /webauthn/me                 → { hasUser, user, rpID }

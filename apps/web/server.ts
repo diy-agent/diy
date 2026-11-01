@@ -41,6 +41,7 @@ import { createPagesHost, type PagesHost } from './pages.js';
 import {
     clearSessionCookie,
     contextFromRequest,
+    defaultUsername,
     defaultWebAuthnDeps,
     openWebAuthnStore,
     parseCookies,
@@ -422,6 +423,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
                     hasUser: webauthn.hasUser(),
                     user: webauthn.userOfSession(sessionId()),
                     rpID: context.rpID,
+                    // 还没用户时给页面一个默认用户名（= 系统用户名，不写死 'owner'）
+                    suggestedUsername: webauthn.hasUser() ? null : defaultUsername(),
                 });
                 return;
             }
@@ -433,9 +436,11 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
 
             if (route === 'register/options') {
                 const body = await readJsonBody(req);
+                const username = typeof body['username'] === 'string' ? body['username'] : undefined;
                 const displayName = typeof body['displayName'] === 'string' ? body['displayName'] : undefined;
                 const created = await webauthn.registrationOptions({
                     context,
+                    ...(username === undefined ? {} : { username }),
                     ...(displayName === undefined ? {} : { displayName }),
                 });
                 reply(200, { options: created.options });

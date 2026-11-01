@@ -18,6 +18,7 @@ import {
     CHALLENGE_TTL_MS,
     createWebAuthn,
     contextFromRequest,
+    defaultUsername,
     emptyWebAuthnStore,
     openWebAuthnStore,
     parseCookies,
@@ -58,7 +59,9 @@ describe('Passkey 内核（判据 1/2/3/5/6/7）', () => {
         expect(core.hasUser()).toBe(false);
 
         const { device, created } = await register(core);
-        expect(created.user.username).toBe('owner');
+        // 用户名不写死 'owner'（会原样显示在系统钥匙串里）：缺省 = 系统用户名
+        expect(created.user.username).toBe(defaultUsername());
+        expect(created.user.username).not.toBe('owner');
         expect(created.user.displayName).toBe('大王');
         expect(created.user.id.startsWith('usr_')).toBe(true);
         // 判据 7 的一半：落盘只有公钥（这里先看内存态里存的是什么）
@@ -143,7 +146,7 @@ describe('Passkey 内核（判据 1/2/3/5/6/7）', () => {
         const file = webauthnStorePath(home);
         const core = await openWebAuthnStore(file, deps);
         const device = createVirtualAuthenticator();
-        const { options } = await core.registrationOptions({ context: CTX, displayName: 'owner' });
+        const { options } = await core.registrationOptions({ context: CTX, displayName: '大王' });
         const created = await core.verifyRegistration({
             context: CTX,
             response: device.register({ options, origin: CTX.origin, rpID: CTX.rpID }),
@@ -218,7 +221,12 @@ describe('Passkey HTTP 面（/webauthn/*）', () => {
         return handle;
     }
 
-    type Me = { hasUser: boolean; user: { id: string; displayName: string } | null; rpID: string };
+    type Me = {
+        hasUser: boolean;
+        user: { id: string; displayName: string } | null;
+        rpID: string;
+        suggestedUsername: string | null;
+    };
 
     async function me(base: string, cookie?: string): Promise<Me> {
         const response = await fetch(`${base}/webauthn/me`, {
@@ -258,9 +266,13 @@ describe('Passkey HTTP 面（/webauthn/*）', () => {
         const before = await me(base);
         expect(before.hasUser).toBe(false);
         expect(before.user).toBeNull();
+        // 澄清 3：默认用户名 = 系统用户名（页面拿它做默认值），不是写死的 'owner'
+        expect(before.suggestedUsername).toBe(defaultUsername());
 
         const device = createVirtualAuthenticator();
-        const options = await post<{ options: never }>(base, '/webauthn/register/options', { displayName: '大王' });
+        const options = await post<{ options: never }>(base, '/webauthn/register/options', {
+            displayName: '大王',
+        });
         expect(options.status).toBe(200);
         const registration = device.register({
             options: options.body.options,
@@ -285,6 +297,8 @@ describe('Passkey HTTP 面（/webauthn/*）', () => {
         const after = await me(base);
         expect(after.hasUser).toBe(true);
         expect(after.user).toBeNull();
+        // 已经有主用户了：建议值不再有意义
+        expect(after.suggestedUsername).toBeNull();
     });
 
     it('判据 5/6：登录 → HttpOnly cookie → me 认 cookie → 连 WS 直接进业务面 → 登出', async () => {
@@ -362,9 +376,13 @@ describe('Passkey HTTP 面（/webauthn/*）', () => {
             const before = await client.web.webauthn.me({});
             expect(before.hasUser).toBe(false);
             expect(before.user).toBeNull();
+            expect(before.suggestedUsername).toBe(defaultUsername());
 
             const device = createVirtualAuthenticator();
-            const { options } = await client.web.webauthn.register.options({ displayName: '大王' });
+            const { options } = await client.web.webauthn.register.options({
+                username: undefined,
+                displayName: '大王',
+            });
             const created = await client.web.webauthn.register.verify({
                 response: device.register({
                     options: options as never,
