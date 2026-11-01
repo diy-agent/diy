@@ -508,6 +508,18 @@ describe('W2 文件必须是内核渲染的结果（##9 review P1②：手改 / 
         expect(checkRepo(dir).problems.map((p) => p.code)).not.toContain('facts/file-not-canonical');
     });
 
+    it('磁盘那份是 CRLF（Windows autocrlf 检出）⇒ 不报（否则每个 Windows 检出全都红）', () => {
+        const dir = makeRepo();
+        writeFileSync(path.join(dir, '..', 'README.md'), 'x\n');
+        submit(dir, {
+            facts: [fact({ id: 'app.port.default', subject: 'app.port', aspect: 'default', value: '18888' })],
+        });
+        // 模拟 Windows 检出：把磁盘那份改成 CRLF（内容不变，只多 \r）
+        const fp = path.join(dir, 'facts', 'app.yaml');
+        writeFileSync(fp, readFileSync(fp, 'utf-8').replace(/\n/g, '\r\n'), 'utf-8');
+        expect(checkRepo(dir).problems.map((p) => p.code)).not.toContain('facts/file-not-canonical');
+    });
+
     it('手改（多一行空行）⇒ warning，且不阻断（内容仍能读）', () => {
         const dir = makeRepo();
         writeFileSync(path.join(dir, '..', 'README.md'), 'x\n');

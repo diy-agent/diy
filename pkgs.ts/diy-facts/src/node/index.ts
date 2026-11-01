@@ -605,7 +605,11 @@ function canonicalProblems(repo: Repo): RepoProblem[] {
             domain: repo.domains.get(file) ?? path.basename(file, '.yaml'),
             facts: list,
         });
-        if (text === before) continue;
+        // ⚠️ 比较前先把**磁盘那份**的 CRLF 归一成 LF：`renderDoc` 一律产出 LF，而 Windows 的
+        // `core.autocrlf=true` 会把 checkout 成 CRLF ⇒ 不归一的话**每个 Windows 检出都会**把
+        // 每一篇 facts 报成 file-not-canonical（实测 rule.yaml 内核 14704 B / 磁盘 15058 B，
+        // 差异全在 \r 上，`git diff` 是空的 —— 一度被我当成「merge 按分支拼序」）。
+        if (text === before.replace(/\r\n/g, '\n')) continue;
         out.push({
             level: 'warning',
             code: 'facts/file-not-canonical',
