@@ -74,6 +74,9 @@ sync-deps() {
     # 真起 Electron 的入口（pkgs.ts/diy-app/sha.sh 的 lab/test-intent/start）会硬校验。
     run node scripts/ensure-electron.mjs --no-download --soft --quiet
 
+    # 生成物冲突免手解：注册 merge=ours（见 scripts/ensure-merge-driver.mjs；本地仓库配置，幂等）
+    run node scripts/ensure-merge-driver.mjs
+
     # 记下本次同步覆盖的 lock/manifest 指纹：build/check/test/lab 入口的
     # ensure-sync 拿 scripts/check-sync.mjs 比对它，判「有没有落后」
     run node scripts/check-sync.mjs --write-stamp
@@ -569,7 +572,7 @@ vendor.update() {  run git submodule update --init --recursive --remote --merge;
 # 顺序与 references 由 `scripts/gen-tsconfig-build-all.mjs` 生成（幂等；手改漂移由 check 拦）。
 build-pkgs() {
     run node scripts/gen-tsconfig-build-all.mjs
-    run npx tsc -b tsconfig.build-all.json
+    run npx tsc -b build/tsconfig.build-all.json
     # tsc 之后的**额外**步骤（生成发行形态 package.json）：只有这几个包有，仍由各包自己拥有。
     # 为什么不跟 tsc 一起批：它们是 npm 发行物的事（scripts/npm-publish.mjs），不是编译。
     # 为什么从仓根直接 node、不平进包目录再 `./sha.sh build-artifact`：后者每包多一个

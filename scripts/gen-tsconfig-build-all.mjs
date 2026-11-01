@@ -15,12 +15,14 @@
 // 用法：
 //   node scripts/gen-tsconfig-build-all.mjs           写入
 //   node scripts/gen-tsconfig-build-all.mjs --check   只校验（给 check 用，防止手改漂移）
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const ROOT = join(import.meta.dirname, "..");
-const SOLUTION = join(ROOT, "tsconfig.build-all.json");
+// 生成物放 build/（.gitignore 里已忽略 `build/`）：它是**纯构建产物** —— 进了版本库就会和
+// 「别人重新生成」撞冲突（实测 diy-time/tsconfig.build.json 在 30 个提交里被改 3 次、每次合并都冲突）。
+const SOLUTION = join(ROOT, "build", "tsconfig.build-all.json");
 const TS_BUILD_INFO = "node_modules/.cache/tsbuildinfo/tsconfig.build.tsbuildinfo";
 const checkOnly = process.argv.includes("--check");
 
@@ -114,9 +116,10 @@ for (const p of projects) {
 // ③ solution 文件
 const solution = {
     $comment:
-        "生成物：`node scripts/gen-tsconfig-build-all.mjs`（勿手改）。`tsc -b tsconfig.build-all.json` = 一次编全部能力包（增量；改一个包只重编它与依赖它的）。",
+        "生成物：`node scripts/gen-tsconfig-build-all.mjs`（勿手改）。`tsc -b build/tsconfig.build-all.json` = 一次编全部能力包（增量；改一个包只重编它与依赖它的）。",
     files: [],
-    references: projects.map((path) => ({ path: `${path}/tsconfig.build.json` })),
+    // 唯一要注意的：references 相对**本文件**解析，放在 build/ 下就要 `../`
+    references: projects.map((path) => ({ path: `../${path}/tsconfig.build.json` })),
 };
 const solutionText = `${JSON.stringify(solution, null, 2)}\n`;
 const solutionBefore = existsSync(SOLUTION) ? readFileSync(SOLUTION, "utf8") : "";
@@ -136,6 +139,7 @@ for (const [file, next, what] of changes) {
     console.log(`✓ ${what}`);
 }
 if (solutionBefore !== solutionText) {
+    mkdirSync(dirname(SOLUTION), { recursive: true });
     writeFileSync(SOLUTION, solutionText, "utf8");
     console.log(`✓ 写出 tsconfig.build-all.json（${projects.length} 个项目）`);
 } else if (changes.length === 0) {

@@ -69,7 +69,7 @@ const LEGACY_SYNC_IO_BASELINE = new Map(Object.entries({
   "pkgs.ts/diy-app/src/main/core/file-write.ts": 7,
   "pkgs.ts/diy-app/src/main/core/flow-store.ts": 17,
   "pkgs.ts/diy-app/src/main/core/flow.ts": 5,
-  "pkgs.ts/diy-app/src/main/core/fs-lock.ts": 5,
+  "pkgs.ts/diy-app/src/main/core/fs-lock.ts": 3,
   "pkgs.ts/diy-app/src/main/core/instance-identity.ts": 3,
   "pkgs.ts/diy-app/src/main/core/jsonl-tail.ts": 5,
   "pkgs.ts/diy-app/src/main/core/instance-registry.ts": 5,
@@ -78,14 +78,14 @@ const LEGACY_SYNC_IO_BASELINE = new Map(Object.entries({
   "pkgs.ts/diy-app/src/main/core/model-registry.ts": 1,
   "pkgs.ts/diy-app/src/main/core/models-sync.ts": 2,
   "pkgs.ts/diy-app/src/main/core/persona.ts": 4,
-  "pkgs.ts/diy-app/src/main/core/project.ts": 12,
+  "pkgs.ts/diy-app/src/main/core/project.ts": 11,
   // ##427：room 事件流 / 投递状态改异步 + 尾部倒读（读侧 + 写侧），剩 readRoom / listRooms 两处小文件同步读
   "pkgs.ts/diy-app/src/main/core/room.ts": 5,
   "pkgs.ts/diy-app/src/main/core/seed.ts": 4,
   "pkgs.ts/diy-app/src/main/core/single-instance.ts": 2,
   "pkgs.ts/diy-app/src/main/core/state.ts": 5,
   "pkgs.ts/diy-app/src/main/core/task-tree.ts": 6,
-  "pkgs.ts/diy-app/src/main/core/task.ts": 11,
+  "pkgs.ts/diy-app/src/main/core/task.ts": 10,
   "pkgs.ts/diy-app/src/main/core/traffic-log.ts": 21,
   "pkgs.ts/diy-app/src/main/index.ts": 1,
   "pkgs.ts/diy-app/src/main/services/agent-audit.ts": 9,
@@ -105,12 +105,12 @@ const LEGACY_SYNC_IO_BASELINE = new Map(Object.entries({
   // 判据：数字 = 当前实测（`--by-file`），一行为本分支既有代码；这 4 个文件再涨就是新代码，
   // 要改异步。真正的债记在 ##5 待办（facts-store 每轮投影都同步读盘 = 热路径）。
   "pkgs.ts/diy-app/src/main/services/docs-index.ts": 4,
-  "pkgs.ts/diy-app/src/main/services/facts-context.ts": 4,
+  "pkgs.ts/diy-app/src/main/services/facts-context.ts": 1,
   "pkgs.ts/diy-app/src/main/services/facts-store.ts": 18,
   "pkgs.ts/diy-app/src/main/services/journal-store.ts": 8,
-  "pkgs.ts/diy-app/src/main/services/local-agent.ts": 50,
+  "pkgs.ts/diy-app/src/main/services/local-agent.ts": 36,
   "pkgs.ts/diy-app/src/main/services/local-find.ts": 4,
-  "pkgs.ts/diy-app/src/main/services/local-layout-migrate.ts": 19,
+  "pkgs.ts/diy-app/src/main/services/local-layout-migrate.ts": 18,
   "pkgs.ts/diy-app/src/main/services/local-ops-seek.ts": 14,
   "pkgs.ts/diy-app/src/main/services/ops-feed.ts": 8,
   "pkgs.ts/diy-app/src/main/services/plan-store.ts": 7,
@@ -143,8 +143,11 @@ function walk(dir, out = []) {
 
 /** 一个文件里的同步 IO 命中（行号 + 片段），已扣除逃生口与注释里的字样。 */
 function findSyncIo(text) {
-  const lines = text.split("\n");
-  const masked = maskNonCode(text).split("\n");
+  // ⚠️ 按 `\r?\n` 切：Windows 的 checkout 是 CRLF，若只按 `\n` 切，每行末尾会留一个 `\r`，
+  // 而逃生口判据是 `/\/\/\s*sync-io-ok:\s*(\S.*)$/` —— `.` 不跨行终止符、`$` 也不在 `\r` 前成立，
+  // 于是**写了 `sync-io-ok` 也不生效**（实测 cache-hint-store.ts 两条明明写了逃生口仍然被算进基线）。
+  const lines = text.split(/\r?\n/);
+  const masked = maskNonCode(text).split(/\r?\n/);
   const hits = [];
   masked.forEach((line, i) => {
     SYNC_RE.lastIndex = 0;

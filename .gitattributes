@@ -8,3 +8,7 @@ pkgs.ts/*/bin/* text eol=lf
 # 逐字节 golden 快照必须 LF：autocrlf=true 会把工作区变 CRLF，
 # 而渲染结果一律 LF ⇒ 「渲染 vs 快照」永远差 CR（实测 template-dsl-golden 在 Windows 上必红）。
 *.golden.txt text eol=lf
+
+# 生成物：`node scripts/gen-tsconfig-build-all.mjs` 会重写它们（composite + references）。
+# 冲突时自动取本侧（随后生成器会重新补齐），避免每次合并都手解：见 scripts/ensure-merge-driver.mjs。
+pkgs.ts/*/tsconfig.build.json merge=ours

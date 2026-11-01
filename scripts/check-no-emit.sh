@@ -23,13 +23,14 @@ fi
 # shellcheck disable=SC2086
 # 例外：build-runtime.mjs 是手写构建脚本（不是 tsc 产物，见 ##455），.gitignore 同样开了 ! 反选；
 #      apps/*/bin/ 是 app 的手写 CLI 入口（##478：发行包的 bin 必须能从仓库复现，所以入库而不是生成）；
-#      apps/web/main.mjs 同理 —— 它是手写的启动器（esbuild 现编 TS 再起），不是任何编译产物（##485）。
-#      （这条写成 `apps/web//main.mjs`：扫描目录取自 `apps/*/`，带尾斜杠 ⇒ 拼出来的路径是双斜杠。）
+#      apps/*/main.mjs 同理 —— apps/web 的手写启动器（##485：一条 node 命令起无 Electron 宿主），
+#      它自己按需把 TS 编到 build/<variant>/web/，本身不是 emit 产物。
+
 bad=$(find $dirs -type f \
   \( -name '*.js' -o -name '*.jsx' -o -name '*.mjs' -o -name '*.cjs' -o -name '*.d.ts' \) \
   ! -path 'pkgs.ts/diy-app/scripts/build-runtime.mjs' \
   ! -path 'apps/*/bin/*' \
-  ! -path 'apps/web//main.mjs' \
+  ! -path 'apps/*/main.mjs' \
   ! -path '*/build/*' ! -path '*/lib/*' ! -path '*/dist/*' ! -path '*/node_modules/*' \
   2>/dev/null | sort || true)
 
