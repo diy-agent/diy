@@ -21,7 +21,7 @@
 export { BotError } from "./errors.js";
 export type { BotErrorCode } from "./errors.js";
 
-export { createBot, ensureBot, newSessionId, openBot } from "./bot.js";
+export { createBot, createFirstBot, ensureBot, hasAnyBot, newSessionId, openBot, setBotModel } from "./bot.js";
 
 export { createFileBotStore } from "./store-fs.js";
 export type { FileBotStoreOptions } from "./store-fs.js";
@@ -30,6 +30,10 @@ export type { FileBotStoreOptions } from "./store-fs.js";
 export { createMemoryBotStore } from "./store-memory.js";
 
 export type { Bot, BotConfig, BotDraft, BotId, BotSessionRef, BotStore, CreateBotOptions } from "./types.js";
+
+// ##497：bot 的全局标识（稳定标识 / 显示地址）。纯函数，renderer 也能引。
+export { BOT_ID_PATTERN, NODE_ID_PATTERN, botUri, isStableBotUri, parseBotUri } from "./uri.js";
+export type { BotUriDisplayRef, BotUriParts, BotUriRef, ParsedBotUri } from "./uri.js";
 
 // 人物 schema / 类型 / 内置缺省（##470：bot = 人设）。
 // 也可从子路径 `@diy-agent/bot/persona` 单独取（纯 zod，renderer 用那个）。

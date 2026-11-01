@@ -3,8 +3,11 @@
 export { FAKE_REPLY, createFakeLlm, createPage, default, wireOf } from "./main.js";
 export { ChatPageError } from "./errors.js";
 export type {
+    BotModelInput,
+    BotView,
     ChatSessionHost,
     ChatSnapshot,
+    FirstBotInput,
     ModelChoice,
     MultiSendArgs,
     SendResult,
