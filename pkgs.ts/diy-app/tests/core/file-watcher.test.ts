@@ -21,6 +21,18 @@ describe("classifyWatchEvent —— 目录整棵被删也必须重载树", () =>
     expect(classifyWatchEvent("unlinkDir", TASK)).toBe("task-change");
   });
 
+  it("Windows 反斜杠路径同样要分类（chokidar 在 Windows 给 `\\`——不归一就每条都丢）", () => {
+    // 这条守的是一个真故障：判据全按 `/` 写，而 Windows 的 chokidar 给 `\` ⇒ 每条事件返回 null
+    // ⇒ UI 收不到 task-change（新建/改名/删除任务后 nav 树不刷新、tab 不跟、详情不更新）。
+    const home = "C:\\Users\\u\\.diy";
+    expect(classifyWatchEvent("add", `${home}\\projects\\p1\\tasks\\t1\\AGENTS.md`)).toBe("task-change");
+    expect(classifyWatchEvent("addDir", `${home}\\projects\\p1\\tasks\\t1`)).toBe("task-change");
+    expect(classifyWatchEvent("unlinkDir", `${home}\\projects\\p1`)).toBe("task-change");
+    expect(classifyWatchEvent("change", `${home}\\projects\\p1\\meta.yaml`)).toBe("task-change");
+    expect(classifyWatchEvent("change", `${home}\\state.yaml`)).toBe("state-change");
+    expect(classifyWatchEvent("change", `${home}\\agents\\a.yaml`)).toBe("agent-change");
+  });
+
   it("unlinkDir 项目目录 → task-change（项目没了，树也变）", () => {
     expect(classifyWatchEvent("unlinkDir", `${HOME}/projects/p1`)).toBe("task-change");
   });

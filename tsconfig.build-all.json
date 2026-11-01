@@ -3,19 +3,7 @@
   "files": [],
   "references": [
     {
-      "path": "pkgs.ts/diy-agent-bot/tsconfig.build.json"
-    },
-    {
       "path": "pkgs.ts/diy-agent-model-catalog/tsconfig.build.json"
-    },
-    {
-      "path": "pkgs.ts/diy-agent-session/tsconfig.build.json"
-    },
-    {
-      "path": "pkgs.ts/diy-agent-session-store-jsonl/tsconfig.build.json"
-    },
-    {
-      "path": "pkgs.ts/diy-agent-session-store-memory/tsconfig.build.json"
     },
     {
       "path": "pkgs.ts/diy-facts/tsconfig.build.json"
@@ -24,16 +12,7 @@
       "path": "pkgs.ts/diy-llm-provider/tsconfig.build.json"
     },
     {
-      "path": "pkgs.ts/diy-log/tsconfig.build.json"
-    },
-    {
       "path": "pkgs.ts/diy-persistence/tsconfig.build.json"
-    },
-    {
-      "path": "pkgs.ts/diy-remote/tsconfig.build.json"
-    },
-    {
-      "path": "pkgs.ts/diy-room/tsconfig.build.json"
     },
     {
       "path": "pkgs.ts/diy-rpc/tsconfig.build.json"
@@ -51,7 +30,31 @@
       "path": "pkgs.ts/diy-context/tsconfig.build.json"
     },
     {
+      "path": "pkgs.ts/diy-time/tsconfig.build.json"
+    },
+    {
+      "path": "pkgs.ts/diy-agent-bot/tsconfig.build.json"
+    },
+    {
+      "path": "pkgs.ts/diy-agent-session/tsconfig.build.json"
+    },
+    {
+      "path": "pkgs.ts/diy-agent-session-store-jsonl/tsconfig.build.json"
+    },
+    {
+      "path": "pkgs.ts/diy-agent-session-store-memory/tsconfig.build.json"
+    },
+    {
       "path": "pkgs.ts/diy-compact/tsconfig.build.json"
+    },
+    {
+      "path": "pkgs.ts/diy-log/tsconfig.build.json"
+    },
+    {
+      "path": "pkgs.ts/diy-remote/tsconfig.build.json"
+    },
+    {
+      "path": "pkgs.ts/diy-room/tsconfig.build.json"
     },
     {
       "path": "pkgs.ts/diy-ui/tsconfig.build.json"

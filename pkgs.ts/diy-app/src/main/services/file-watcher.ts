@@ -40,13 +40,20 @@ const isTaskDoc = (p: string): boolean => p.endsWith("AGENTS.md") || p.includes(
  * 会让「保存一次提示词模版」也重载任务树（名不副实 + 日志噪音）。
  */
 export function classifyWatchEvent(ev: WatchFsEvent, p: string): WatchChangeEvent | null {
-  if (p.endsWith("state.yaml")) return ev === "change" ? "state-change" : null;
-  if (p.includes("/projects/")) {
+  // ⚠️ **先把分隔符归一成 `/`**：chokidar 在 Windows 上给的是
+  // `C:\\Users\\…\\projects\\1\\tasks\\2\\AGENTS.md`（反斜杠），而下面所有判据都按 `/` 写。
+  // 不归一的后果不是“少分类”——是**每条事件都返回 null**：UI 根本收不到 task-change，
+  // 于是新建/改名/删除任务后 nav 树不刷新、tab 不跟、详情不更新（实测 intent：
+  // `ui-nav-search` 12 条全红——建完任务搜不到；其余“建完看不到”的 UI 用例连带失败）。
+  // POSIX 上 chokidar 本就用 `/`，这行是无害的等价变换。
+  const q = p.replace(/\\/g, "/");
+  if (q.endsWith("state.yaml")) return ev === "change" ? "state-change" : null;
+  if (q.includes("/projects/")) {
     if (ev === "addDir" || ev === "unlinkDir") return "task-change";
-    if (ev === "change") return PROJECT_META_RE.test(p) || isTaskDoc(p) ? "task-change" : null;
-    return isTaskDoc(p) ? "task-change" : null; // add / unlink：与 change 判据对齐
+    if (ev === "change") return PROJECT_META_RE.test(q) || isTaskDoc(q) ? "task-change" : null;
+    return isTaskDoc(q) ? "task-change" : null; // add / unlink：与 change 判据对齐
   }
-  if (p.includes("/agents/")) return ev === "change" ? "agent-change" : null;
+  if (q.includes("/agents/")) return ev === "change" ? "agent-change" : null;
   return null;
 }
 
