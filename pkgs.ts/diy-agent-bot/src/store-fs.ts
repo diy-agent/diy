@@ -99,7 +99,8 @@ export function createFileBotStore(options: FileBotStoreOptions): BotStore {
             checkId("bot", config.id);
             validateConfig(config);
             await mkdir(join(botsDir, config.id), { recursive: true });
-            await writeFile(botPath(config.id), `${JSON.stringify(config, null, 4)}\n`, "utf-8");
+            // `needsModel` 是**读兼容标记**，不是身份的一部分：绝不落盘（##497）
+            await writeFile(botPath(config.id), `${JSON.stringify(persistable(config), null, 4)}\n`, "utf-8");
         },
 
         async list(): Promise<readonly BotConfig[]> {
@@ -161,9 +162,27 @@ function validateConfig(config: BotConfig): void {
     if (typeof config.name !== "string" || typeof config.instructions !== "string") {
         throw new BotError("bot/invalid-config", "bot 配置缺 name / instructions");
     }
+    // ##497：model 必填 —— 不许再落一个「没有默认模型」的 bot（那种 bot 跨机器不成立）
+    if (typeof config.model !== "string" || config.model.trim() === "") {
+        throw new BotError("bot/invalid-config", "bot 配置缺 model（##497：必填）");
+    }
     if (typeof config.createdAt !== "string" || typeof config.updatedAt !== "string") {
         throw new BotError("bot/invalid-config", "bot 配置缺 createdAt / updatedAt");
     }
+}
+
+/** 落盘形状：只写身份本身（`needsModel` 这类读兼容标记不进文件） */
+function persistable(config: BotConfig): Record<string, unknown> {
+    return {
+        id: config.id,
+        name: config.name,
+        instructions: config.instructions,
+        model: config.model,
+        ...(config.reasoningEffort === undefined ? {} : { reasoningEffort: config.reasoningEffort }),
+        ...(config.maxOutputTokens === undefined ? {} : { maxOutputTokens: config.maxOutputTokens }),
+        createdAt: config.createdAt,
+        updatedAt: config.updatedAt,
+    };
 }
 
 /**
@@ -196,7 +215,9 @@ function parseConfig(value: unknown): BotConfig | null {
         id: config.id,
         name: config.name,
         instructions,
-        ...(typeof config.model === "string" ? { model: config.model } : {}),
+        // ##497：model 必填；存量文件没有 / 为空 ⇒ 空串 + needsModel，让 UI 拦住要求补选
+        model: typeof config.model === "string" ? config.model : "",
+        ...(typeof config.model === "string" && config.model.trim() !== "" ? {} : { needsModel: true }),
         ...(typeof config.reasoningEffort === "string" ? { reasoningEffort: config.reasoningEffort } : {}),
         ...(typeof config.maxOutputTokens === "number" ? { maxOutputTokens: config.maxOutputTokens } : {}),
         createdAt: config.createdAt,

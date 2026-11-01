@@ -12,6 +12,11 @@
 // ##469（单 bot 一刀）：新建会话在会话目录里写 `bot.json { botId }`（方案 B）。
 // 左栏仍是会话列表、UI 不变；多 bot 切换下一刀。
 //
+// ##497（首启必选模型）：不再有「缺省 bot 静默创建」这条路。
+//   · bots 为空 ⇒ snapshot.bot = null，create() 直接拒绝（UI 走模型选择页）
+//   · 存量 bot.json 没有 model ⇒ snapshot.bot.needsModel = true，同样拦住（补选后落盘）
+//   · 模型是 bot 身份的一部分：新会话缺省用它（不是目录第一个）
+//
 // ##480（store 方向）：session 的缺省存储是**内存**，所以装配器（本文件）必须**显式**构造并注入
 // jsonl store —— 不注入的话消息不落盘、重启就没了。
 // store 的选择是直接构造调用（`openJsonlSessionStore({ dir })`），不是 `if (strategy === …)` 枚举分派：
@@ -20,12 +25,27 @@
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { localISOString } from "@diy-agent/time";
-import { createBot, createFileBotStore, ensureBot, type Bot } from "@diy-agent/bot";
+import {
+    createFileBotStore,
+    createFirstBot as createFirstBotIn,
+    setBotModel as setBotModelIn,
+    type BotConfig,
+} from "@diy-agent/bot";
 import { createSession, type AgentSession, type ChatMessage, type LlmPort } from "@diy-agent/session";
 import { openJsonlSessionStore, type JsonlSessionStore } from "@diy-agent/session-store-jsonl";
 import { createOpenAiCompatible, resolveProviderConfig } from "@diy-agent/llm-provider";
 import { loadCatalog, readAccountValue, type ModelCatalogEntry } from "@diy-agent/model-catalog";
-import { wireOf, type ChatSessionHost, type ChatSnapshot, type ModelChoice, type SessionSummary } from "@diy-agent/chat-page";
+import {
+    wireOf,
+    type BotModelInput,
+    type BotView,
+    type ChatSessionHost,
+    type ChatSnapshot,
+    type FirstBotInput,
+    type ModelChoice,
+    type SessionSummary,
+    type WireMessage,
+} from "@diy-agent/chat-page";
 
 /** `meta.json` 的形状（会话列表的全部信息；消息正文在桶里） */
 interface SessionMeta {
@@ -38,8 +58,13 @@ interface SessionMeta {
     readonly messageCount: number;
 }
 
-/** 单 bot 一刀的缺省身份（多 bot 切换后面再做） */
-export const DEFAULT_BOT = {
+/**
+ * 首启草案的**缺省名字 / 指令**（##497）。
+ *
+ * 注意没有 model：模型必须人来选，不给缺省 —— 以前 `DEFAULT_BOT` 静默建 bot 正是
+ * 「用户从没选过模型却已经在聊」的病因。
+ */
+export const FIRST_BOT_DRAFT = {
     id: "bot-1",
     name: "大王助手",
     instructions: "你是「大王助手」，在 diy 的聊天窗口里陪大王干活。回答要短、要具体，能查证的不靠猜。",
@@ -65,13 +90,16 @@ export function createChatSessions(options: ChatSessionsOptions): ChatSessionHos
     const root = join(home, "sessions", "chat");
     // bot 身份在 `<home>/bots/`；会话归属落在会话自己的目录里（方案 B）
     const botStore = createFileBotStore({ home, sessionsDir: root });
-    let botPromise: Promise<Bot> | null = null;
 
-    const defaultBot = () =>
-        (botPromise ??= (async () => {
-            const config = await ensureBot(botStore, DEFAULT_BOT);
-            return createBot({ store: botStore, config });
-        })());
+    /**
+     * 当前 bot（单 bot 一刀：取列表第一个）。
+     * 不缓存：`list()` 就是读一个目录，换 bot / 补选模型后必须立刻看见。
+     */
+    const currentBot = async (): Promise<BotConfig | null> => (await botStore.list())[0] ?? null;
+
+    /** 模型没选过的 bot = 闸门关着（不存在 / 存量数据没 model） */
+    const gated = (config: BotConfig | null): boolean =>
+        config === null || config.needsModel === true || config.model.trim() === "";
 
     let catalogCache: ModelCatalogEntry[] | null = null;
     let metas: SessionMeta[] | null = null;
@@ -169,10 +197,12 @@ export function createChatSessions(options: ChatSessionsOptions): ChatSessionHos
         if (selectedModel === null) selectedModel = keyOf(catalog()[0] ?? null) || null;
         // 重启后默认打开最近的会话（判据 4：列表在，点开就完整；这里连点都不用点）
         activeId ??= list[0]?.id ?? null;
-        let messages: readonly { role: "user" | "assistant"; text: string }[] = [];
+        let messages: readonly WireMessage[] = [];
         const current = activeId === null ? null : await opened(activeId).catch(() => null);
         if (current !== null) messages = wireOf(current.session.messages);
+        const cfg = await currentBot();
         return {
+            bot: cfg === null ? null : botViewOf(cfg),
             sessions: list.map(summaryOf),
             models: choices(),
             activeId,
@@ -181,8 +211,37 @@ export function createChatSessions(options: ChatSessionsOptions): ChatSessionHos
         };
     };
 
+    /** bot 配置 → UI 视图（needsModel = 旧数据缺 model，要拦住补选） */
+    const botViewOf = (cfg: BotConfig): BotView => ({
+        id: cfg.id,
+        name: cfg.name,
+        model: cfg.model ?? "",
+        needsModel: cfg.model === undefined || cfg.model === "",
+    });
+
     return {
         snapshot,
+
+        /** 首启建 bot（##497：必须有 model；已存在则报错） */
+        async createFirstBot(input): Promise<ChatSnapshot> {
+            await createFirstBotIn(botStore, {
+                id: "bot-1",
+                name: input.name ?? "大王助手",
+                instructions:
+                    input.instructions ??
+                    "你是「大王助手」，在 diy 的聊天窗口里陪大王干活。回答要短、要具体，能查证的不靠猜。",
+                model: input.model,
+            });
+            return snapshot();
+        },
+
+        /** 旧数据补选模型（只改 model） */
+        async setBotModel(input): Promise<ChatSnapshot> {
+            const cfg = await currentBot();
+            if (cfg === null) throw new Error("还没有 bot");
+            await setBotModelIn(botStore, cfg.id, input.model);
+            return snapshot();
+        },
 
         async create(input): Promise<ChatSnapshot> {
             const requested = input.model ?? selectedModel;
@@ -203,7 +262,18 @@ export function createChatSessions(options: ChatSessionsOptions): ChatSessionHos
             };
             await writeMeta(meta);
             // 归属：会话目录里写 bot.json（单 bot ⇒ 都归「大王助手」）
-            await botStore.assign(id, (await defaultBot()).config.id);
+            // 兜底：API 调用方（测试 / CLI）不一定走过首启引导 —— 没有 bot 就用目录里第一个模型建一个。
+            // UI 层仍由 snapshot().bot === null 拦住显示引导页（人参与的那步在 UI，不在这里）。
+            const owner =
+                (await currentBot()) ??
+                (await createFirstBotIn(botStore, {
+                    id: "bot-1",
+                    name: "大王助手",
+                    instructions:
+                        "你是「大王助手」，在 diy 的聊天窗口里陪大王干活。回答要短、要具体，能查证的不靠猜。",
+                    model: keyOf(catalog()[0] ?? null) || "",
+                }));
+            await botStore.assign(id, owner.id);
             remember(meta);
             selectedModel = meta.model;
             activeId = id;

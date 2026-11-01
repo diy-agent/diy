@@ -20,7 +20,12 @@ import { GenApp, html, Signal, type Spec } from '@diy-agent/ui/browser';
 import type { PageContext, PageView } from '@diy-agent/workbench-ui';
 import type { ChatSnapshot, SendResult, WireMessage } from './shared.js';
 import type { ModelChoice, SessionSummary } from './shared.js';
+import { textMessage } from './shared.js';
+import { renderBlocks } from './block-renderers.js';
 import { ensureChatStyle } from './style.js';
+
+// ##499：与裸 DOM 版同一份注册表（插件自造 kind 从这里登记）
+export { registerBlockRenderer, renderBlock, renderBlocks } from './block-renderers.js';
 
 interface Store {
     /** `snapshot` 方法存在（多会话宿主注入）→ 左栏 + 顶栏可见 */
@@ -209,10 +214,18 @@ function messageList(my: number): Spec {
         } else {
             let index = 0;
             for (const message of store.messages) {
-                const key = `${index}:${message.role}:${message.text.length}:${hash(message.text)}`;
-                yield html.li({ key, class: 'chat-row', 'data-role': message.role }, function* () {
+                // 指纹 = 块内容本身：tool 块从 running → ok 时 rev 变，只重建那一行
+                const fingerprint = message.blocks.map((block) => `${block.kind}:${block.id}:${JSON.stringify(block.data)}`).join('\n');
+                const key = `${index}:${message.role}:${hash(fingerprint)}`;
+                yield html.li({ key, rev: fingerprint, class: 'chat-row', 'data-role': message.role }, function* () {
                     yield html.span({ class: 'chat-role', text: message.role === 'user' ? '我' : '助手' });
-                    yield html.div({ class: 'chat-text', text: message.text });
+                    // ##499：一行 = 若干 Block（渲染器注册表在 block-renderers.ts，这里不认 kind）
+                    yield html.div({
+                        class: 'chat-blocks',
+                        ref: (el: HTMLElement) => {
+                            el.replaceChildren(...renderBlocks(message.blocks));
+                        },
+                    });
                 });
                 index++;
             }
@@ -297,7 +310,7 @@ async function send(ctx: PageContext): Promise<void> {
     if (text.length === 0) return;
     inputEl.value = '';
     store.busy = true;
-    store.messages = [...store.messages, { role: 'user', text }];
+    store.messages = [...store.messages, textMessage('user', text)];
     bump();
     const activeId = store.activeId;
     const multi = store.multi && activeId !== null;
@@ -334,7 +347,7 @@ function applySnapshot(next: ChatSnapshot): void {
 }
 
 function appendError(text: string): void {
-    store.messages = [...store.messages, { role: 'assistant', text }];
+    store.messages = [...store.messages, textMessage('assistant', text)];
     bump();
 }
 

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
     BAR_HEIGHT,
+    buildTabs,
     displayNameOf,
+    hostOf,
     mergeCandidates,
     normalizeEndpoint,
     originOf,
@@ -9,10 +11,14 @@ import {
     parseEndpointList,
     pingUrl,
     rectsOverlap,
+    shortAddress,
     sourceRank,
+    tabDot,
+    tabStatusLabel,
     withBadge,
     type CurrentInstance,
     type DiscoveredInstance,
+    type TabSource,
 } from '../index.js';
 
 function instance(overrides: Partial<DiscoveredInstance> = {}): DiscoveredInstance {
@@ -132,5 +138,87 @@ describe('横条几何', () => {
         expect(withBadge(current('connected'))).toMatchObject({ dot: '●', label: '已连' });
         expect(withBadge(current('disconnected')).dot).toBe('⚠');
         expect(withBadge(current('connecting')).label).toBe('连接中');
+    });
+});
+
+describe('横条 tab（##493）', () => {
+    const tab = (overrides: Partial<TabSource> = {}): TabSource => ({
+        endpoint: 'http://127.0.0.1:9400',
+        displayName: 'c-mac',
+        address: 'alice@c-mac/diy-web.lab',
+        status: 'connected',
+        ...overrides,
+    });
+
+    it('状态点三态：● 已连 / ⚠ 连接中或断线 / ○ 未连', () => {
+        expect(tabDot('connected')).toBe('●');
+        expect(tabDot('connecting')).toBe('⚠');
+        expect(tabDot('disconnected')).toBe('⚠');
+        expect(tabDot('idle')).toBe('○');
+        expect(tabStatusLabel('idle')).toBe('未连');
+        expect(tabStatusLabel('connecting')).toBe('连接中');
+    });
+
+    it('同 host ⇒ 只显示 app.variant（省略 user@host）', () => {
+        const tabs = buildTabs(
+            [
+                tab({ endpoint: 'http://a:9400', address: 'alice@c-mac/diy-web.lab' }),
+                tab({ endpoint: 'http://b:9400', address: 'alice@c-mac/diy.prod', status: 'idle' }),
+            ],
+            'http://a:9400',
+        );
+        expect(tabs.map((item) => item.label)).toEqual(['diy-web.lab', 'diy.prod']);
+        // 悬停永远是全名
+        expect(tabs[0]?.title.startsWith('alice@c-mac/diy-web.lab · http://a:9400')).toBe(true);
+        // 当前只高亮一个
+        expect(tabs.map((item) => item.active)).toEqual([true, false]);
+        expect(tabs.map((item) => item.dot)).toEqual(['●', '○']);
+    });
+
+    it('不同 host ⇒ 整组回到全名（短名会分不清是哪台机器）', () => {
+        const tabs = buildTabs(
+            [
+                tab({ endpoint: 'http://a:9400', address: 'alice@c-mac/diy-web.lab' }),
+                tab({ endpoint: 'http://b:9400', address: 'bob@other/diy-web.lab', status: 'idle' }),
+            ],
+            'http://b:9400',
+        );
+        expect(tabs.map((item) => item.label)).toEqual(['alice@c-mac/diy-web.lab', 'bob@other/diy-web.lab']);
+        expect(tabs.map((item) => item.active)).toEqual([false, true]);
+    });
+
+    it('同格多实例带的端口留在标签里（否则两个 tab 同名）', () => {
+        const tabs = buildTabs(
+            [
+                tab({ endpoint: 'http://a:9401', address: 'alice@c-mac/diy-web.lab:9401' }),
+                tab({ endpoint: 'http://b:9402', address: 'alice@c-mac/diy-web.lab:9402', status: 'idle' }),
+            ],
+            'http://a:9401',
+        );
+        expect(tabs.map((item) => item.label)).toEqual(['diy-web.lab:9401', 'diy-web.lab:9402']);
+    });
+
+    it('拿不到地址（身份还没 ping 到）⇒ 退回显示名，不编地址', () => {
+        const tabs = buildTabs(
+            [tab({ endpoint: 'http://127.0.0.1:9400', displayName: 'c-mac', address: null, status: 'connecting' })],
+            null,
+        );
+        expect(tabs[0]?.label).toBe('c-mac');
+        expect(tabs[0]?.title).toContain('http://127.0.0.1:9400');
+        expect(tabs[0]?.active).toBe(false);
+        expect(tabs[0]?.dot).toBe('⚠');
+    });
+
+    it('来源进悬停提示（排查「这行是哪发现的」）', () => {
+        const tabs = buildTabs([tab({ sources: ['manual', 'local'] })], 'http://127.0.0.1:9400');
+        expect(tabs[0]?.title).toContain('（manual + local）');
+    });
+
+    it('地址解析的两个小工具', () => {
+        expect(hostOf('alice@c-mac/diy-web.lab')).toBe('c-mac');
+        expect(hostOf(null)).toBeNull();
+        expect(hostOf('不是地址')).toBeNull();
+        expect(shortAddress('alice@c-mac/diy-web.lab:9401')).toBe('diy-web.lab:9401');
+        expect(shortAddress('c-mac')).toBe('c-mac');
     });
 });

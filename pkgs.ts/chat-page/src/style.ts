@@ -7,10 +7,28 @@ export const STYLE_ID = 'chat-page-style';
 export const CHAT_STYLE = `
 .chat-page { display: flex; flex-direction: column; height: 100%; box-sizing: border-box; }
 .chat-list { flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 20px; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+/* ##499：一行 = 若干 Block */
+.chat-blocks { display: flex; flex-direction: column; gap: 6px; min-width: 0; max-width: 68ch; }
+.chat-block { min-width: 0; }
 .chat-row { display: flex; gap: 8px; align-items: flex-start; }
 .chat-row[data-role="user"] { flex-direction: row-reverse; }
 .chat-role { flex: none; width: 52px; color: #6b7280; font-size: 12px; padding-top: 6px; text-align: center; }
-.chat-text { max-width: 68ch; padding: 8px 12px; border-radius: 10px; white-space: pre-wrap; word-break: break-word; background: #f1f3f5; }
+.chat-text { padding: 8px 12px; border-radius: 10px; white-space: pre-wrap; word-break: break-word; background: #f1f3f5; }
+/* think / tool：折叠块（运行中展开，结束收起） */
+.chat-block-think, .chat-block-tool, .chat-block-unknown { border: 1px solid #e4e7eb; border-radius: 10px; background: #fafbfc; padding: 6px 10px; font-size: 13px; }
+.chat-block-think > summary, .chat-block-tool > summary, .chat-block-unknown > summary { cursor: pointer; color: #4b5563; }
+.chat-think-text { white-space: pre-wrap; word-break: break-word; margin-top: 6px; color: #6b7280; }
+.chat-tool-head { display: flex; align-items: baseline; gap: 6px; }
+.chat-tool-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #9ca3af; }
+.chat-tool-dot[data-state="running"] { background: #eab308; }
+.chat-tool-dot[data-state="ok"] { background: #22c55e; }
+.chat-tool-dot[data-state="error"] { background: #ef4444; }
+.chat-tool-name { font-weight: 600; color: #1f2937; }
+.chat-tool-args { color: #8b95a1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-tool-summary { margin-left: auto; color: #6b7280; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-tool-output { max-height: 260px; overflow: auto; margin: 6px 0 0; padding: 8px; border-radius: 6px; background: #f1f3f5; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+.chat-unknown-head { color: #b45309; }
+.chat-unknown-json { max-height: 260px; overflow: auto; margin: 6px 0 0; font-size: 12px; }
 .chat-row[data-role="user"] .chat-text { background: #dfe6f2; }
 .chat-row[data-role="assistant"] .chat-text { background: #eef6ee; }
 .chat-empty { color: #9aa1a9; padding: 20px; }

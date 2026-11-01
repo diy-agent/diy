@@ -31,6 +31,7 @@ import {
     HEARTBEAT_INTERVAL_MS,
     HEARTBEAT_TIMEOUT_MS,
     TITLE,
+    buildTabs,
     displayAddresses,
     displayNameOf,
     mergeCandidates,
@@ -42,7 +43,6 @@ import {
     rectsOverlap,
     withBadge,
     type AddressSource,
-    type BarInstance,
     type BarState,
     type CliArgs,
     type ConnectionStatus,
@@ -50,6 +50,7 @@ import {
     type DiscoveryError,
     type MergedCandidate,
     type ShellLayout,
+    type TabSource,
 } from './index.js';
 
 // ##458 ③：lab 变体开 CDP（缺省 9222），agent 用 curl / playwright 连上来查 DOM。
@@ -232,12 +233,44 @@ function refreshTitle(): void {
     win.setTitle(current === null ? TITLE : `${current.address ?? current.displayName} — ${TITLE}`);
 }
 
+/**
+ * tab 条的原料：发现到的候选在前，**已开的连接**在后（手输连上、发现器没报的那台也要有 tab，
+ * 否则「当前」在横条里没有落脚处）。状态：连过的看页面真实状态，没连过的是 idle。
+ */
+function tabSources(addressMap: Map<string, string | null>): TabSource[] {
+    const rows: TabSource[] = [];
+    const seen = new Set<string>();
+    for (const item of instances) {
+        seen.add(item.endpoint);
+        const page = pages.get(item.endpoint);
+        rows.push({
+            endpoint: item.endpoint,
+            displayName: item.displayName,
+            address: addressMap.get(item.endpoint) ?? null,
+            status: page?.status ?? 'idle',
+            sources: item.sources,
+            ...(page?.detail === undefined ? {} : { detail: page.detail }),
+        });
+    }
+    for (const [endpoint, page] of pages) {
+        if (seen.has(endpoint)) continue;
+        rows.push({
+            endpoint,
+            displayName: page.displayName,
+            address: addressMap.get(endpoint) ?? null,
+            status: page.status,
+            ...(page.detail === undefined ? {} : { detail: page.detail }),
+        });
+    }
+    return rows;
+}
+
 function barState(): BarState {
     const map = addresses();
     const current = currentInstance(map);
     return {
         current: current === null ? null : withBadge(current),
-        instances: instances.map((item): BarInstance => ({ ...item, address: map.get(item.endpoint) ?? null })),
+        tabs: buildTabs(tabSources(map), currentKey),
         errors: discoveryErrors,
     };
 }

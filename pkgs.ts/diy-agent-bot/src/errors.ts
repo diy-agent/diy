@@ -1,6 +1,11 @@
 // errors.ts — bot 域的错误码（caller 按 code 分类，不解析 message）
 
-export type BotErrorCode = "bot/invalid-id" | "bot/invalid-config" | "bot/not-found";
+export type BotErrorCode =
+    | "bot/invalid-id"
+    | "bot/invalid-uri"
+    | "bot/invalid-config"
+    | "bot/not-found"
+    | "bot/exists";
 
 export class BotError extends Error {
     readonly code: BotErrorCode;

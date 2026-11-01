@@ -18,6 +18,8 @@
         "@diy-agent/rpc": "*",
         "@diy-agent/workbench": "*",
         "@diy-agent/workbench-ui": "*",
+        "@simplewebauthn/browser": "^14.0.0",
+        "@simplewebauthn/server": "^14.0.3",
         "ws": "^8.21.0",
         "zod": "^4.4.3"
     },

@@ -3,7 +3,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { LlmPort } from "@diy-agent/session";
+import type { WireMessage } from "@diy-agent/chat-page";
 import { createChatSessions, splitModelKey } from "../sessions.js";
+
+/** 消息线 → 每条的纯文本（##499 起消息是 Block 列表） */
+function textsOf(messages: readonly WireMessage[]): string[] {
+    return messages.map((message) =>
+        message.blocks.map((block) => (block.kind === "text" ? String(block.data["text"]) : `[${block.kind}]`)).join(""),
+    );
+}
 
 /** 临时数据根：一个 custom provider（test/echo-1），key 是假值（不会被用，llmFor 注入假模型） */
 function makeHome(model = true): string {
@@ -68,10 +76,8 @@ describe("apps/chat 多会话宿主", () => {
         expect(snapshot.sessions).toHaveLength(1);
         const id = snapshot.activeId!;
         snapshot = await sessions.send(id, "你好呀", () => {});
-        expect(snapshot.messages).toEqual([
-            { role: "user", text: "你好呀" },
-            { role: "assistant", text: "收到：你好呀" },
-        ]);
+        expect(snapshot.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+        expect(textsOf(snapshot.messages)).toEqual(["你好呀", "收到：你好呀"]);
         expect(snapshot.sessions[0]?.title).toBe("你好呀");
         expect(snapshot.sessions[0]?.messageCount).toBe(2);
     });
@@ -84,12 +90,12 @@ describe("apps/chat 多会话宿主", () => {
         await sessions.send(second, "会话二的暗号：BETA", () => {});
 
         const secondView = await sessions.select(second);
-        expect(secondView.messages.map((message) => message.text)).toEqual([
+        expect(textsOf(secondView.messages)).toEqual([
             "会话二的暗号：BETA",
             "收到：会话二的暗号：BETA",
         ]);
         const firstView = await sessions.select(first);
-        expect(firstView.messages.map((message) => message.text)).toEqual([
+        expect(textsOf(firstView.messages)).toEqual([
             "会话一的暗号：ALPHA",
             "收到：会话一的暗号：ALPHA",
         ]);
@@ -123,10 +129,8 @@ describe("apps/chat 多会话宿主", () => {
         const snapshot = await after.snapshot();
         expect(snapshot.sessions.map((session) => session.id)).toEqual([id]);
         const reopened = await after.select(id);
-        expect(reopened.messages).toEqual([
-            { role: "user", text: "重启前的话" },
-            { role: "assistant", text: "收到：重启前的话" },
-        ]);
+        expect(reopened.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+        expect(textsOf(reopened.messages)).toEqual(["重启前的话", "收到：重启前的话"]);
     });
 
     it("##469 判据 1：默认 bot「大王助手」落 ~/.diy/bots/bot-1/bot.json，字段完整", async () => {

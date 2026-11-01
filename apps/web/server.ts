@@ -38,6 +38,19 @@ import { WebSocketServer } from 'ws';
 import { openAuthStore, authStorePath, type AuthCore } from './auth.js';
 import { newWebRpcStats, registerWebApi, type WebPeer, type WebRpcStats } from './handlers.js';
 import { createPagesHost, type PagesHost } from './pages.js';
+import {
+    clearSessionCookie,
+    contextFromRequest,
+    defaultUsername,
+    defaultWebAuthnDeps,
+    openWebAuthnStore,
+    parseCookies,
+    sessionCookie,
+    SESSION_COOKIE,
+    webauthnStorePath,
+    type WebAuthnCore,
+} from './webauthn.js';
+import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 import type { LlmPort } from '@diy-agent/session';
 
 /** 应用短名（##484 的 displayAddress 里那一段，别用 `@diy-agent/app-web`） */
@@ -72,6 +85,11 @@ export interface WebServerOptions {
     readonly staticDir: string;
     /** 变体（prod / lab / test）——只用于身份地址与 /ping；缺省 `DIY_VARIANT` 或 lab */
     readonly variant?: string;
+    /**
+     * 部署前缀（如 `/diy`）：反代把 `https://host/diy/*` **原样**转进来时用它剥前缀。
+     * 缺省读 `DIY_WEB_BASE_PATH`，再缺省 `''`（= 挂在根上）。
+     */
+    readonly basePath?: string;
     /** 测试注入假 LLM；生产不传（真 provider，key 从 model.yaml 账号表取） */
     readonly llmFor?: (modelKey: string) => LlmPort;
     /**
@@ -84,11 +102,15 @@ export interface WebServerOptions {
 export interface WebServerHandle {
     /** `http://<host>:<port>` */
     readonly url: string;
+    /** 部署前缀（`''` = 挂在根上） */
+    readonly basePath: string;
     readonly port: number;
     /** 起了 h2c 端口时给出（否则 null） */
     readonly httpRpcPort: number | null;
     readonly ping: () => WebPingInfo;
     readonly auth: AuthCore;
+    /** Passkey（##496）内核：注册 / 登录 / 会话 */
+    readonly webauthn: WebAuthnCore;
     readonly pages: PagesHost;
     readonly stats: WebRpcStats;
     close(): Promise<void>;
@@ -143,9 +165,7 @@ async function resolveAddress(input: {
     } catch {
         /* 扫不到别人不是错：当作「本机只有我」，地址不带端口 */
     }
-    const clash = peers.some(
-        (peer) => peer.meta?.['app'] === APP_NAME && peer.meta?.['variant'] === input.variant,
-    );
+    const clash = peers.some((peer) => peer.meta?.['app'] === APP_NAME && peer.meta?.['variant'] === input.variant);
     const address = tryFormatAddress({
         user: input.user,
         host: input.host,
@@ -156,6 +176,21 @@ async function resolveAddress(input: {
     return address ?? `${input.user}@${input.host}`;
 }
 
+/** 部署前缀归一：`/diy/` / `diy` / `` ⇒ `/diy` / `/diy` / `` */
+function normalizeBase(value: string): string {
+    const trimmed = value.trim().replace(/\/+$/, '');
+    if (trimmed === '' || trimmed === '/') return '';
+    return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+}
+
+/** 剥掉部署前缀；不在前缀之下返回 null（= 404，不把别人家的路径当成自己的） */
+function stripBase(pathname: string, base: string): string | null {
+    if (base === '') return pathname;
+    if (pathname === base) return '/';
+    if (pathname.startsWith(`${base}/`)) return pathname.slice(base.length);
+    return null;
+}
+
 /** 对端是否回环（副方管理面的唯一判据） */
 export function isLoopback(address: string | undefined): boolean {
     if (address === undefined) return false;
@@ -163,15 +198,32 @@ export function isLoopback(address: string | undefined): boolean {
     return value === '::1' || value === '127.0.0.1' || value.startsWith('127.');
 }
 
-function peerOf(address: string | undefined, fallback: string): WebPeer {
+/** 建连请求的 HTTP 头：Passkey 要从这里推 rpID / origin，并读会话 cookie */
+function peerOf(address: string | undefined, fallback: string, headers?: http.IncomingHttpHeaders): WebPeer {
     const raw = address ?? fallback;
-    return { address: raw, loopback: isLoopback(raw) };
+    const host = headers?.host;
+    const cookie = headers?.cookie;
+    const forwardedProto = headerOf(headers?.['x-forwarded-proto']);
+    return {
+        address: raw,
+        loopback: isLoopback(raw),
+        ...(host === undefined ? {} : { host }),
+        ...(cookie === undefined ? {} : { cookie }),
+        ...(forwardedProto === undefined ? {} : { forwardedProto }),
+    };
+}
+
+/** 头字段可能是 string / string[] / undefined（Node 的类型），统一取 string */
+function headerOf(value: string | string[] | undefined): string | undefined {
+    if (value === undefined) return undefined;
+    return Array.isArray(value) ? value[0] : value;
 }
 
 export async function startWebServer(options: WebServerOptions): Promise<WebServerHandle> {
     const port = options.port ?? DEFAULT_PORT;
     const host = options.host ?? '127.0.0.1';
     const variant = options.variant ?? process.env['DIY_VARIANT'] ?? 'lab';
+    const basePath = normalizeBase(options.basePath ?? process.env['DIY_WEB_BASE_PATH'] ?? '');
 
     // 身份：`$DIY_HOME/instance-id` 由 ##479 落盘，重启不变（别拿 hostname 当 id）
     const identity = ensureIdentity(options.home);
@@ -230,6 +282,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         newId: () => randomUUID(),
         newToken: () => `diyweb_${randomUUID().replace(/-/g, '')}`,
     });
+    // Passkey（##496）：用户 / 公钥落 `$DIY_HOME/web/users.json`；challenge 与会话只在内存
+    const webauthn = await openWebAuthnStore(webauthnStorePath(options.home), defaultWebAuthnDeps());
     const pages = await createPagesHost(
         options.llmFor === undefined ? { home: options.home } : { home: options.home, llmFor: options.llmFor },
     );
@@ -237,6 +291,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     // getter：连接建立时才读当前地址（多实例带入端口是后来才成立的）
     const rpcDeps = {
         auth,
+        webauthn,
         pages,
         stats,
         get address(): string {
@@ -268,7 +323,15 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
 
     const handleHttp = async (req: http.IncomingMessage, res: http.ServerResponse): Promise<void> => {
         const url = new URL(req.url ?? '/', `http://${req.headers.host ?? `${host}:${port}`}`);
-        if (url.pathname === '/ping') {
+        // 部署前缀（`/diy`）：反代把 `https://host/diy/*` 原样转进来（tailscale serve 不剥前缀），
+        // 这里剥掉再路由 —— 否则 `/diy/ping` 会被当成静态文件 404。前缀为空时什么也不做。
+        const pathname = stripBase(url.pathname, basePath);
+        if (pathname === null) {
+            res.writeHead(404, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ error: 'NOT_FOUND', message: `不在部署前缀 ${basePath} 之下：${url.pathname}` }));
+            return;
+        }
+        if (pathname === '/ping') {
             if (req.method !== 'GET' && req.method !== 'HEAD') {
                 res.writeHead(405, { allow: 'GET, HEAD' });
                 res.end();
@@ -284,7 +347,166 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
             res.end(req.method === 'HEAD' ? undefined : body);
             return;
         }
-        await serveStatic(options.staticDir, url.pathname, req, res);
+        if (pathname === '/webauthn' || pathname.startsWith('/webauthn/')) {
+            await handleWebAuthn(req, res, pathname);
+            return;
+        }
+        // 目录没带尾斜杠（`/diy`）⇒ 补一个：页面的相对资源（`./index.js`）靠它才能解析对
+        const lastSegment = pathname.slice(pathname.lastIndexOf('/') + 1);
+        if (!pathname.endsWith('/') && !lastSegment.includes('.')) {
+            res.writeHead(302, { location: `${pathname}/${url.search}` });
+            res.end();
+            return;
+        }
+        await serveStatic(options.staticDir, pathname, req, res);
+    };
+
+    // ── Passkey（##496）：HTTP 面 ────────────────────────────────────
+    //
+    // 为什么这几条是 HTTP 路由而不是 RPC 方法：**HttpOnly cookie 只能由 HTTP 响应的
+    // `Set-Cookie` 下发**（WebSocket 升级响应带不了）。业务逻辑一行都不在这几段里 —— 全部转手给
+    // webauthn.ts（同一份内核也挂在 `web.webauthn.*` 上，给 Node 客户端用）。
+    //
+    // 路由与 api.ts 的方法一一对应：
+    //   GET  /webauthn/me                ↔ web.webauthn.me
+    //   POST /webauthn/register/options  ↔ web.webauthn.register.options
+    //   POST /webauthn/register/verify   ↔ web.webauthn.register.verify
+    //   POST /webauthn/login/options     ↔ web.webauthn.login.options
+    //   POST /webauthn/login/verify      ↔ web.webauthn.login.verify（成功时 Set-Cookie）
+    //   POST /webauthn/logout            ↔ web.webauthn.logout（清 cookie）
+
+    const handleWebAuthn = async (
+        req: http.IncomingMessage,
+        res: http.ServerResponse,
+        pathname: string,
+    ): Promise<void> => {
+        const route = pathname.replace(/^\/webauthn\/?/, '');
+        const method = req.method ?? 'GET';
+        const reply = (status: number, body: unknown, headers: Record<string, string> = {}): void => {
+            res.writeHead(status, {
+                'content-type': 'application/json; charset=utf-8',
+                'cache-control': 'no-store',
+                ...headers,
+            });
+            res.end(req.method === 'HEAD' ? undefined : JSON.stringify(body));
+        };
+
+        let context;
+        try {
+            context = contextFromRequest({
+                host: req.headers.host,
+                forwardedProto: headerOf(req.headers['x-forwarded-proto']),
+            });
+        } catch (cause) {
+            reply(400, { error: 'INVALID_ARGUMENT', message: String(cause) });
+            return;
+        }
+        const secure = context.origin.startsWith('https://');
+        const sessionId = (): string | null => parseCookies(req.headers.cookie)[SESSION_COOKIE] ?? null;
+
+        // CSRF：写操作必须同源。浏览器一定会带 Origin；非浏览器客户端（curl / 测试）不带 ⇒ 放行
+        if (method !== 'GET' && method !== 'HEAD') {
+            const origin = req.headers.origin;
+            if (origin !== undefined && origin !== context.origin) {
+                reply(403, { error: 'PERMISSION_DENIED', message: `Origin 与本服务的 origin 不一致：${origin}` });
+                return;
+            }
+        }
+
+        try {
+            if (route === 'me') {
+                if (method !== 'GET' && method !== 'HEAD') {
+                    reply(405, { error: 'METHOD_NOT_ALLOWED', message: 'me 只接受 GET' }, { allow: 'GET, HEAD' });
+                    return;
+                }
+                reply(200, {
+                    hasUser: webauthn.hasUser(),
+                    user: webauthn.userOfSession(sessionId()),
+                    rpID: context.rpID,
+                    // 还没用户时给页面一个默认用户名（= 系统用户名，不写死 'owner'）
+                    suggestedUsername: webauthn.hasUser() ? null : defaultUsername(),
+                });
+                return;
+            }
+
+            if (method !== 'POST') {
+                reply(405, { error: 'METHOD_NOT_ALLOWED', message: `${route} 只接受 POST` }, { allow: 'POST' });
+                return;
+            }
+
+            if (route === 'register/options') {
+                const body = await readJsonBody(req);
+                const username = typeof body['username'] === 'string' ? body['username'] : undefined;
+                const displayName = typeof body['displayName'] === 'string' ? body['displayName'] : undefined;
+                const created = await webauthn.registrationOptions({
+                    context,
+                    ...(username === undefined ? {} : { username }),
+                    ...(displayName === undefined ? {} : { displayName }),
+                });
+                reply(200, { options: created.options });
+                return;
+            }
+
+            if (route === 'register/verify') {
+                // 创建成功**不发会话**：判据 2/4 —— 页面显示「已创建」，刷新后仍是「用 Passkey 登录」
+                const body = await readJsonBody(req);
+                const response = requireResponse<RegistrationResponseJSON>(body, 'registration');
+                const created = await webauthn.verifyRegistration({ context, response });
+                await webauthn.flush();
+                reply(200, created);
+                return;
+            }
+
+            if (route === 'login/options') {
+                const created = await webauthn.authenticationOptions({ context });
+                reply(200, { options: created.options });
+                return;
+            }
+
+            if (route === 'login/verify') {
+                const body = await readJsonBody(req);
+                const response = requireResponse<AuthenticationResponseJSON>(body, 'authentication');
+                const result = await webauthn.verifyAuthentication({ context, response });
+                await webauthn.flush();
+                console.info(`[web] Passkey 登录成功：${result.user.id}`);
+                reply(
+                    200,
+                    { user: result.user, expiresAt: result.expiresAt },
+                    {
+                        'set-cookie': sessionCookie(result.sessionId, {
+                            secure,
+                            // ceil：过期时刻与「现在」差几毫秒，floor 会写出 604799（差一秒也是差）
+                            maxAgeMs: Math.max(0, Math.ceil((result.expiresAt - Date.now()) / 1000) * 1000),
+                        }),
+                    },
+                );
+                return;
+            }
+
+            if (route === 'logout') {
+                webauthn.logout(sessionId());
+                reply(200, { ok: true }, { 'set-cookie': clearSessionCookie({ secure }) });
+                return;
+            }
+
+            reply(404, { error: 'NOT_FOUND', message: `没有这条 Passkey 路由：${pathname}` });
+        } catch (cause) {
+            const code = (cause as { code?: unknown }).code;
+            const status =
+                code === 'FAILED_PRECONDITION' || code === 'INVALID_ARGUMENT'
+                    ? 400
+                    : code === 'UNAUTHENTICATED'
+                      ? 401
+                      : code === 'NOT_FOUND'
+                        ? 404
+                        : code === 'PERMISSION_DENIED'
+                          ? 403
+                          : 500;
+            const message = cause instanceof Error ? cause.message : String(cause);
+            if (status >= 500) console.error('[web] Passkey 处理失败', cause);
+            else console.warn(`[web] Passkey 请求被拒（${pathname}）：${message}`);
+            reply(status, { error: typeof code === 'string' ? code : 'INTERNAL', message });
+        }
     };
 
     const wss = new WebSocketServer({ noServer: true, maxPayload: 4 * 1024 * 1024 });
@@ -295,7 +517,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
             return;
         }
         wss.handleUpgrade(req, socket, head, (ws) => {
-            const peer = peerOf(req.socket.remoteAddress, host);
+            // 建连请求的头一起带进去：Passkey 要从 Host 推 rpID/origin、从 Cookie 读会话
+            const peer = peerOf(req.socket.remoteAddress, host, req.headers);
             const binding = new ChannelServerBinding(new WsTransport(ws));
             registerWebApi(binding, peer, rpcDeps);
             ws.on('close', () => binding.destroy());
@@ -334,7 +557,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     let httpRpcPort: number | null = null;
     if (options.httpRpcPort !== undefined && options.httpRpcPort > 0) {
         const httpBinding = new HttpServerBinding();
-        registerWebApi(httpBinding, peerOf(host, host), rpcDeps);
+        registerWebApi(httpBinding, peerOf(host, host, { host: `${host}:${options.httpRpcPort}` }), rpcDeps);
         httpRpcServer = http2.createServer();
         httpRpcServer.on('stream', (stream, headers) => {
             // node 的 'stream' 事件给的是 Http2Stream，绑定的签名要 ServerHttp2Stream（同一对象）
@@ -346,10 +569,12 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
 
     return {
         url: `http://${host}:${actualPort}`,
+        basePath,
         port: actualPort,
         httpRpcPort,
         ping,
         auth,
+        webauthn,
         pages,
         stats,
         async close(): Promise<void> {
@@ -361,6 +586,41 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
             await new Promise<void>((done) => server.close(() => done()));
         },
     };
+}
+
+/** `{ response: <WebAuthn 响应> }` 里取出来（和 api.ts 的 input 同形）；缺了就是 400 不是 500 */
+function requireResponse<T>(body: Record<string, unknown>, label: string): T {
+    const value = body['response'];
+    if (value === null || typeof value !== 'object') {
+        throw Object.assign(new Error(`请求体缺少 response（${label} 响应对象）`), { code: 'INVALID_ARGUMENT' });
+    }
+    return value as T;
+}
+
+/** 读 JSON 请求体（上限 256 KB：WebAuthn 响应的量级是 KB，不是 MB） */
+async function readJsonBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
+    const MAX_BYTES = 256 * 1024;
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of req) {
+        const buffer = chunk as Buffer;
+        size += buffer.length;
+        if (size > MAX_BYTES) {
+            throw Object.assign(new Error(`请求体过大（> ${MAX_BYTES} 字节）`), { code: 'INVALID_ARGUMENT' });
+        }
+        chunks.push(buffer);
+    }
+    const raw = Buffer.concat(chunks).toString('utf-8').trim();
+    if (raw === '') return {};
+    try {
+        const parsed: unknown = JSON.parse(raw);
+        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            throw new Error('不是 JSON 对象');
+        }
+        return parsed as Record<string, unknown>;
+    } catch (cause) {
+        throw Object.assign(new Error(`请求体不是合法 JSON：${String(cause)}`), { code: 'INVALID_ARGUMENT' });
+    }
 }
 
 async function listen(server: http.Server | http2.Http2Server, port: number, host: string): Promise<void> {

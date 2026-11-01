@@ -10,10 +10,13 @@
 
 import { createSession, type ChatMessage, type LlmPort, type SessionStore } from "@diy-agent/session";
 import type { PageContribution } from "@diy-agent/workbench";
+import { wireOf } from "./blocks.js";
 import { ChatPageError } from "./errors.js";
 import type {
+    BotModelInput,
     ChatSessionHost,
     ChatSnapshot,
+    FirstBotInput,
     MultiSendArgs,
     SendResult,
     WireMessage,
@@ -43,6 +46,9 @@ export function createPage(config?: unknown): PageContribution {
             title: "聊天",
             methods: {
                 snapshot: (): Promise<ChatSnapshot> => host.snapshot(),
+                // ##497：首启/补选模型（没有这两步，聊天页面在 bots 为空时无从下手）
+                createFirstBot: (args: unknown): Promise<ChatSnapshot> => host.createFirstBot(firstBotInputOf(args)),
+                setBotModel: (args: unknown): Promise<ChatSnapshot> => host.setBotModel(botModelInputOf(args)),
                 createSession: (args: unknown): Promise<ChatSnapshot> =>
                     host.create(args !== null && typeof args === "object" && typeof (args as { model?: unknown }).model === "string"
                         ? { model: (args as { model: string }).model }
@@ -93,6 +99,9 @@ export function createPage(config?: unknown): PageContribution {
 
 export default createPage;
 
+// ##499：core 事件 → Block 的归一化在主进程侧（blocks.ts）；renderer 不碰 core 类型。
+export { wireOf };
+
 // ── 单会话模式的配置解析 ─────────────────────────
 
 /** 从 config 取注入的 LlmPort（形状对不上就当没传 —— 配置错误不该静默变成空回复） */
@@ -141,20 +150,36 @@ function sessionIdOf(args: unknown): string {
     return id;
 }
 
+/** 首启建 bot 的参数：`model` 必填（##497），名字 / 指令可选 */
+function firstBotInputOf(args: unknown): FirstBotInput {
+    const input = args !== null && typeof args === "object" ? (args as Record<string, unknown>) : {};
+    const model = input["model"];
+    if (typeof model !== "string" || model.trim() === "") {
+        throw new ChatPageError("chat/bot-required", "必须先选一个模型（##497：bot 的 model 必填）");
+    }
+    const name = input["name"];
+    const instructions = input["instructions"];
+    return {
+        model,
+        ...(typeof name === "string" ? { name } : {}),
+        ...(typeof instructions === "string" ? { instructions } : {}),
+    };
+}
+
+/** 存量数据补选模型：只有一个 `model` */
+function botModelInputOf(args: unknown): BotModelInput {
+    const input = args !== null && typeof args === "object" ? (args as Record<string, unknown>) : {};
+    const model = input["model"];
+    if (typeof model !== "string" || model.trim() === "") {
+        throw new ChatPageError("chat/bot-required", "必须先选一个模型（##497：bot 的 model 必填）");
+    }
+    return { model };
+}
+
 function multiSendArgsOf(args: unknown): MultiSendArgs {
     if (args === null || typeof args !== "object") throw new ChatPageError("chat/empty-text", "缺少参数");
     const { sessionId, text } = args as { sessionId?: unknown; text?: unknown };
     if (typeof sessionId !== "string" || sessionId.trim() === "") throw new ChatPageError("chat/empty-text", "缺少会话 id");
     if (typeof text !== "string" || text.trim() === "") throw new ChatPageError("chat/empty-text", "消息正文为空");
     return { sessionId, text };
-}
-
-/** session 消息 → 线上形状 */
-export function wireOf(messages: readonly ChatMessage[]): WireMessage[] {
-    const out: WireMessage[] = [];
-    for (const message of messages) {
-        if (message.role !== "user" && message.role !== "assistant") continue;
-        out.push({ role: message.role, text: message.text ?? "" });
-    }
-    return out;
 }

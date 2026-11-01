@@ -12,14 +12,23 @@ export type BotId = string;
  * ##470（bot = 人设）：本形状 = 人物定义（`persona.ts` 的 PersonaDef）+ id + 时间。
  * 行为指令字段名与 PersonaDef 一致叫 `instructions`（旧字段名 `persona` 由 store-fs 读兼容）。
  * `reasoningEffort` / `maxOutputTokens` 跟随人物定义保持可选（bot.json 允许只写最小身份）。
+ *
+ * ##497：`model` **必填** —— bot 要跨机器引用（`diy://<nodeId>/bot/<id>`），
+ * 「未指定 = 跟随宿主缺省」在别的机器上不成立。存量数据（##497 之前写的、没有 model）
+ * 由 store 读成 `model: ""` + `needsModel: true`，UI 拦住要求补选，绝不静默挑一个。
  */
 export interface BotConfig {
     readonly id: BotId;
     readonly name: string;
     /** 行为指令（注入 system prompt 的身份节；空串 = 不注入） */
     readonly instructions: string;
-    /** 默认模型限定名 `providerId/modelId`；未指定 = 跟随宿主缺省 */
-    readonly model?: string;
+    /** 默认模型限定名 `providerId/modelId`（##497 必填） */
+    readonly model: string;
+    /**
+     * 存量数据标记：文件里没有 model ⇒ true（**不落盘**，只在读出来时补）。
+     * UI 见到它就拦住，要求补选模型；补选后写回时自然消失。
+     */
+    readonly needsModel?: boolean;
     /** 推理强度档位；未指定 = 跟随模型缺省 */
     readonly reasoningEffort?: string;
     /** 输出软上限（tokens）；未指定 = 跟随场景缺省 */
@@ -86,7 +95,8 @@ export interface BotDraft {
     readonly id: BotId;
     readonly name: string;
     readonly instructions: string;
-    readonly model?: string;
+    /** ##497：必填（没有「跟随宿主缺省」这条路了） */
+    readonly model: string;
     readonly reasoningEffort?: string;
     readonly maxOutputTokens?: number;
 }

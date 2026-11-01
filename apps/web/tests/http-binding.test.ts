@@ -16,6 +16,7 @@ import { HttpClientBinding, HttpServerBinding } from '@diy-agent/rpc/http';
 import { webApi } from '../api.js';
 import { createAuth, emptyAuthState } from '../auth.js';
 import { newWebRpcStats, registerWebApi } from '../handlers.js';
+import { createWebAuthn, emptyWebAuthnStore } from '../webauthn.js';
 import { createPagesHost } from '../pages.js';
 import { codeOf, makeFakeLlm, makeHome } from './helpers.js';
 
@@ -52,6 +53,11 @@ async function startHttpRig(): Promise<Rig> {
         { address: '127.0.0.1', loopback: true },
         {
             auth,
+            // Passkey 内核：这条测试不走它，给一份空内存态（无落盘）
+            webauthn: createWebAuthn(emptyWebAuthnStore(), {
+                now: () => Date.now(),
+                newId: () => globalThis.crypto.randomUUID(),
+            }),
             pages,
             address: 'alice@c-mac/diy-web.test',
             stats,

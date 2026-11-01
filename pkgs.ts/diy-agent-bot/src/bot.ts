@@ -56,19 +56,81 @@ export async function ensureBot(
 ): Promise<BotConfig> {
     const existing = await store.load(draft.id);
     if (existing !== null) return existing;
-    const now = localISOString(clock());
-    const config: BotConfig = {
+    const config = fromDraft(draft, localISOString(clock()));
+    await store.save(config);
+    return config;
+}
+
+/** 有没有任何一个 bot（首启判断：空 ⇒ 必须先选模型建 bot，##497） */
+export async function hasAnyBot(store: BotStore): Promise<boolean> {
+    return (await store.list()).length > 0;
+}
+
+/**
+ * 建**第一个** bot（##497 首启引导）：已经有 bot 就抛 `bot/exists`。
+ *
+ * 与 `ensureBot` 的差别：后者是「存在即返回」的幂等建，前者是**一次性**的 ——
+ * 首启引导只该走一次，重入就是状态搞错了（不要静默覆盖用户改过的身份）。
+ */
+export async function createFirstBot(
+    store: BotStore,
+    draft: BotDraft,
+    clock: () => Date = () => new Date(),
+): Promise<BotConfig> {
+    if (await hasAnyBot(store)) {
+        throw new BotError("bot/exists", "已经有 bot —— 首启引导不该再走一次");
+    }
+    const config = fromDraft(draft, localISOString(clock()));
+    await store.save(config);
+    return config;
+}
+
+/**
+ * 给存量 bot 补选模型（##497：旧数据 `bot.json` 里没有 model）。
+ *
+ * 只改 `model` + `updatedAt`：名字 / 指令 / 创建时间一字不动，也不新建 bot。
+ * 补选后 `needsModel` 不再出现在写回的文件里（store 本来就不落它）。
+ */
+export async function setBotModel(
+    store: BotStore,
+    id: string,
+    model: string,
+    clock: () => Date = () => new Date(),
+): Promise<BotConfig> {
+    const current = await store.load(id);
+    if (current === null) throw new BotError("bot/not-found", `没有 bot ${id}`);
+    if (typeof model !== "string" || model.trim() === "") {
+        throw new BotError("bot/invalid-config", "model 不能为空（##497：bot 必须有默认模型）");
+    }
+    const next: BotConfig = {
+        id: current.id,
+        name: current.name,
+        instructions: current.instructions,
+        model,
+        ...(current.reasoningEffort === undefined ? {} : { reasoningEffort: current.reasoningEffort }),
+        ...(current.maxOutputTokens === undefined ? {} : { maxOutputTokens: current.maxOutputTokens }),
+        createdAt: current.createdAt,
+        updatedAt: localISOString(clock()),
+    };
+    await store.save(next);
+    return next;
+}
+
+/** 草案 → 完整配置（id / 时间由调用方补） */
+function fromDraft(draft: BotDraft, now: string): BotConfig {
+    if (typeof draft.model !== "string" || draft.model.trim() === "") {
+        throw new BotError("bot/invalid-config", "model 不能为空（##497：bot 必须有默认模型）");
+    }
+    return {
         id: draft.id,
         name: draft.name,
         instructions: draft.instructions,
-        ...(draft.model === undefined ? {} : { model: draft.model }),
+        model: draft.model,
         ...(draft.reasoningEffort === undefined ? {} : { reasoningEffort: draft.reasoningEffort }),
         ...(draft.maxOutputTokens === undefined ? {} : { maxOutputTokens: draft.maxOutputTokens }),
         createdAt: now,
         updatedAt: now,
     };
-    await store.save(config);
-    return config;
 }
 
 /** 新会话 id（与 apps/chat 的既有形态一致：`s-<时间36>-<随机6>`） */
