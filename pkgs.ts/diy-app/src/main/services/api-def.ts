@@ -2730,6 +2730,147 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
       }),
 
       /**
+       * Hub 配对（##500）：地址即身份 —— 人比对真实 URL，6 位码只管「谁被允许进来」。
+       *
+       * 协议真源 `docs/plans/2026-11-01-hub-pairing.md`。v1 只接受 tailscale 地址（可信 HTTPS），
+       * 不做指纹核对 / SAS / 自签证书 pinning / mDNS 配对路径。
+       *
+       * 卫星侧分两步：`join <url>`（只显示要连接的地址，不发秘密）→ `join <url> --code`（提交申请）。
+       */
+      hub: RpcSchema.group({
+        desc: `Hub 配对（邀请码 + Owner 审批 + Token 长连；地址即身份）`,
+        children: {
+          init: RpcSchema.unary({
+            desc: `生成 / 复用 Hub 身份（私钥进系统钥匙串；hub.json 只有公钥）并记下对外地址`,
+            input: {
+              endpoint: z.string().optional().cliOption({ desc: "对外真实地址，如 https://c-mac.gute-fish.ts.net/hub" }),
+              tlsCert: z.string().optional().cliOption({ desc: "TLS 证书路径（tailscale cert 之类）" }),
+              tlsKey: z.string().optional().cliOption({ desc: "TLS 私钥路径" }),
+            },
+            output: z.object({
+              status: z.string(),
+              data: z.object({
+                hubNodeId: z.string(),
+                domainId: z.string(),
+                publicKey: z.string(),
+                endpoint: z.string().nullable(),
+              }),
+            }),
+          }),
+          invite: RpcSchema.unary({
+            desc: `建邀请：6 位码 + 真实地址 + 邀请 URL（二维码内容就是 URL，不含码）`,
+            input: {},
+            output: z.object({
+              status: z.string(),
+              data: z.object({
+                code: z.string(),
+                address: z.string(),
+                inviteUrl: z.string(),
+                expiresAt: z.string(),
+              }),
+            }),
+          }),
+          pending: RpcSchema.unary({
+            desc: `待审批的配对申请（人据此决定放不放进来）`,
+            input: {},
+            output: z.object({
+              status: z.string(),
+              data: z.object({
+                requests: z.array(
+                  z.object({
+                    requestId: z.string(),
+                    nodeId: z.string(),
+                    displayName: z.string(),
+                    requestedAt: z.string(),
+                  }),
+                ),
+              }),
+            }),
+          }),
+          approve: RpcSchema.unary({
+            desc: `批准配对申请（Token 经卫星的长轮询回到它自己的钥匙串，这里不回显）`,
+            input: { requestId: z.string().cliArg({ desc: "配对申请 id" }) },
+            output: z.object({
+              status: z.string(),
+              data: z.object({ nodeId: z.string(), displayName: z.string(), requestStatus: z.string() }),
+            }),
+          }),
+          reject: RpcSchema.unary({
+            desc: `拒绝配对申请`,
+            input: { requestId: z.string().cliArg({ desc: "配对申请 id" }) },
+            output: z.object({ status: z.string(), data: z.object({ requestStatus: z.string() }) }),
+          }),
+          revoke: RpcSchema.unary({
+            desc: `撤销已配对成员（断现有连接 + 拒绝重连 403）`,
+            input: { nodeId: z.string().cliArg({ desc: "卫星 node id" }) },
+            output: z.object({ status: z.string(), data: z.object({ nodeId: z.string(), membershipStatus: z.string() }) }),
+          }),
+          status: RpcSchema.unary({
+            desc: `Hub 身份 + 已配对成员（在线数 / 已撤销）`,
+            input: {},
+            output: z.object({
+              status: z.string(),
+              data: z.object({
+                identity: z
+                  .object({
+                    hubNodeId: z.string(),
+                    domainId: z.string(),
+                    publicKey: z.string(),
+                    endpoint: z.string().optional(),
+                    createdAt: z.string(),
+                  })
+                  .nullable(),
+                memberships: z.array(
+                  z.object({
+                    nodeId: z.string(),
+                    displayName: z.string(),
+                    status: z.string(),
+                    online: z.number(),
+                    createdAt: z.string(),
+                  }),
+                ),
+              }),
+            }),
+          }),
+          join: RpcSchema.unary({
+            desc: `卫星入网：不带 --code 只显示要连接的地址（不发秘密）；带 --code 才提交申请并等待批准`,
+            input: {
+              url: z.string().cliArg({ desc: "邀请 URL（https://host/hub/pair?inv=...）" }),
+              code: z.string().optional().cliOption({ desc: "主控屏幕上的 6 位码；不给则只显示地址" }),
+              waitMs: z.number().optional().cliOption({ desc: "等待批准毫秒数（缺省 120000）" }),
+            },
+            output: z.object({
+              status: z.string(),
+              data: z.object({
+                preview: z.boolean(),
+                address: z.string(),
+                hubNodeId: z.string(),
+                domainId: z.string().optional(),
+                joinStatus: z.string().optional(),
+                membershipId: z.string().optional(),
+                endpoint: z.string().optional(),
+              }),
+            }),
+          }),
+          link: RpcSchema.unary({
+            desc: `卫星侧本地连接信息（link.json；不含 token）`,
+            input: {},
+            output: z.object({
+              status: z.string(),
+              data: z
+                .object({
+                  domainId: z.string(),
+                  hubNodeId: z.string(),
+                  hubPublicKey: z.string(),
+                  hubEndpoint: z.string(),
+                })
+                .nullable(),
+            }),
+          }),
+        },
+      }),
+
+      /**
        * 远程实例（##479 第一刀）：实例身份 + 四路 endpoint 发现 + `/ping`。
        *
        * ⚠️ **当前无鉴权**（本轮明确不做）：`/ping` 缺省只绑 127.0.0.1；跨机发现要显式

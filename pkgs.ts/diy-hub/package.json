@@ -1,0 +1,47 @@
+{
+    "name": "@diy-agent/hub",
+    "version": "0.1.0",
+    "private": true,
+    "description": "diy hub 配对：邀请（6 位 Base32 + HMAC）/ Hub 身份核对 / Owner 审批 / Node Token 长连（WSS）",
+    "license": "MIT",
+    "files": [
+        "src/"
+    ],
+    "type": "module",
+    "main": "./lib/index.js",
+    "types": "./src/index.ts",
+    "exports": {
+        ".": {
+            "types": "./src/index.ts",
+            "default": "./lib/index.js"
+        }
+    },
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json"
+    },
+    "dependencies": {
+        "@diy-agent/time": "*",
+        "ws": "^8.21.0"
+    },
+    "devDependencies": {
+        "@types/ws": "^8.18.1",
+        "oxfmt": "^0.57.0",
+        "oxlint": "^1.72.0",
+        "typescript": "^7.0.2",
+        "vitest": "^4.1.10"
+    },
+    "oxlint": {
+        "rules": {
+            "no-unused-vars": "warn",
+            "@typescript-eslint/no-unused-vars": [
+                "warn",
+                {
+                    "argsIgnorePattern": "^_"
+                }
+            ]
+        },
+        "ignorePatterns": [
+            "node_modules/"
+        ]
+    }
+}

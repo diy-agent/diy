@@ -29,6 +29,9 @@
       "path": "pkgs.ts/diy-remote"
     },
     {
+      "path": "pkgs.ts/diy-hub"
+    },
+    {
       "path": "pkgs.ts/diy-ui"
     },
     {

@@ -28,6 +28,7 @@
         "@diy-agent/rpc": "^0.2.0",
         "@diy-agent/time": "*",
         "@diy-agent/remote": "^0.1.0",
+        "@diy-agent/hub": "^0.1.0",
         "@diy-agent/bot": "^0.1.0",
         "@diy-agent/compaction": "^0.1.0",
         "@diy-agent/context": "^0.1.0",

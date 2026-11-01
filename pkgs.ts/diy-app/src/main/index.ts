@@ -49,6 +49,7 @@ import { SINGLETON_LOCK, classifyLock, lockAdvice, readLock } from "./core/singl
 // window-ops 让 RPC 层能请出本实例窗口而不 import Electron（serve 模式不注入 ⇒ 如实报「无窗口」）。
 import { dropSelfRecord, setSelfPort, writeSelfRecord } from "./services/instances";
 import { remoteService } from "./services/remote";
+import { hubService } from "./services/hub";
 import { APP_PACKAGE_NAME, APP_VERSION } from "../shared/app-version";
 import { setWindowOps } from "./services/window-ops";
 import { refreshModelsOnStartup, startupRefreshEnabled } from "./services/models-startup-refresh";
@@ -503,6 +504,8 @@ app.on("before-quit", (event) => {
   rpcPort?.stop();
   // 远程可见性收尾：停 /ping + 撤 mDNS 广播（不保证执行 —— 读侧本来就不信过期记录）
   void remoteService.stop();
+  // Hub 配对服务收尾（懒启动的监听器；没起过就是空操作）
+  void hubService.stop();
   // 注册表清理：正常退出即删自己的条目。**但不能只靠它** —— SIGKILL / 崩溃时这里不会跑，
   // 故读侧（core/instance-registry.ts::readRecords）一律按 pid 存活过滤并顺手删死者。
   dropSelfRecord();
