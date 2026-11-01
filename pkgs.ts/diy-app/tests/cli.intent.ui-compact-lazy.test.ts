@@ -94,7 +94,7 @@ beforeAll(async () => {
   writeFileSync(hookPath, HOOK_SRC, "utf-8");
   prevNodeOptions = process.env["NODE_OPTIONS"];
   prevCountFile = process.env["DIY_RPC_COUNT_FILE"];
-  process.env["NODE_OPTIONS"] = `${prevNodeOptions ?? ""} --require ${hookPath}`.trim();
+  process.env["NODE_OPTIONS"] = `${prevNodeOptions ?? ""} --require "${hookPath}"`.trim();
   process.env["DIY_RPC_COUNT_FILE"] = rpcLog;
 
   const electron = await startElectronTest();

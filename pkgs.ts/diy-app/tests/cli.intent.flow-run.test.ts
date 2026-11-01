@@ -30,6 +30,15 @@ import { describe, it, beforeAll, afterAll, expect } from "vitest";
 import { sessionFileRel } from "../src/main/core/local-paths";
 import { createServer, type Server } from "node:http";
 import { AddressInfo } from "node:net";
+/**
+ * 直接 spawn `./diy.sh` 在 Windows 上会 EFTYPE（bad exe format）—— .sh 只能由 shell 解释。
+ * POSIX 上靠 shebang 直接执行，所以这个坑只在 Windows 露头（实测 flow-run 两条「停得住」用例）。
+ */
+const DIY_SH_SPAWN =
+    process.platform === "win32"
+        ? { cmd: "bash", prefix: ["./diy.sh"] as string[] }
+        : { cmd: "./diy.sh", prefix: [] as string[] };
+
 import { spawn } from "node:child_process";
 import { basename, join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
@@ -428,7 +437,7 @@ describe("flow run：停得住", () => {
         const uri = await freshFlow("abort", []);
         stub.reviewBounceLeft = 0;
         stub.mode = "hang"; // 上游挂着不回 = 这一轮永远不会自己结束
-        const child = spawn("./diy.sh", ["flow", "run", uri], {
+        const child = spawn(DIY_SH_SPAWN.cmd, [...DIY_SH_SPAWN.prefix, "flow", "run", uri], {
             cwd: join(__dirname, "..", "..", ".."),
             env: { ...process.env, DIY_HOME: fx.HOME, HOME: fx.HOME, DIY_VARIANT: "test", DIY_CLI_MODE: "compiled" },
             detached: true,
@@ -466,7 +475,7 @@ describe("flow run：停得住", () => {
         const uri = await freshFlow("busy", []);
         stub.mode = "hang"; // 用户那一轮永远不结束 ⇒ 该任务会话一直「在跑」
         // 用户自己的轮次（同一条任务会话）—— 驱动环**不许**把自己那一步塞进他后面排队
-        const child = spawn("./diy.sh", ["agent", "local", "chat", uri, "用户插话：先别动"], {
+        const child = spawn(DIY_SH_SPAWN.cmd, [...DIY_SH_SPAWN.prefix, "agent", "local", "chat", uri, "用户插话：先别动"], {
             cwd: join(__dirname, "..", "..", ".."),
             env: { ...process.env, DIY_HOME: fx.HOME, HOME: fx.HOME, DIY_VARIANT: "test", DIY_CLI_MODE: "compiled" },
             detached: true,

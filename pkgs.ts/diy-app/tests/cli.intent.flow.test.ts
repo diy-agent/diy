@@ -740,7 +740,7 @@ describe("flow 讨论线程（##342）", () => {
         await advanceTo(uri, "clarify", "design", "implement", "review");
         const opinion = join(fx.HOME, "opinion.txt");
         writeFileSync(opinion, "P0：边界条件没覆盖\nP1：错误信息没说清", "utf-8");
-        const bounced = await fx.sh.run(`./diy.sh flow bounce ${uri} --to implement --note '审计后缀' --opinion ${opinion} --author '评审 agent'`);
+        const bounced = await fx.sh.run(`./diy.sh flow bounce ${uri} --to implement --note '审计后缀' --opinion "${opinion}" --author '评审 agent'`);
         expect(bounced.code, bounced.stderr).toBe(0);
 
         // 讨论流：一行一条 JSON（append-only）；锚点 = 这次打回的**落点驻留**（implement#2）
@@ -797,7 +797,7 @@ describe("flow 讨论线程（##342）", () => {
         await advanceTo(uri, "clarify", "design", "implement", "review");
         const blank = join(fx.HOME, "opinion-blank.txt");
         writeFileSync(blank, "   \n\t\n", "utf-8");
-        const r = await fx.sh.run(`./diy.sh flow bounce ${uri} --to implement --opinion ${blank}`);
+        const r = await fx.sh.run(`./diy.sh flow bounce ${uri} --to implement --opinion "${blank}"`);
         expect(r.code).not.toBe(0);
         expect(`${r.stdout}${r.stderr}`).toMatch(/正文为空/);
         // 领域态没动：位置仍在 review、一次打回都没记、讨论流根本没被创建
@@ -814,14 +814,14 @@ describe("flow 讨论线程（##342）", () => {
         await advanceTo(uri, "clarify", "design", "implement", "review");
         const one = join(fx.HOME, "opinion-one.txt");
         writeFileSync(one, "ONE：第一轮打回", "utf-8");
-        await fx.sh.run(`./diy.sh flow bounce ${uri} --to implement --opinion ${one}`);
+        await fx.sh.run(`./diy.sh flow bounce ${uri} --to implement --opinion "${one}"`);
         // 出口 (a) **撤销打回**：implement → review 是**现有合法 next 边**（dev 定义里就有）——
         // 不改内核语义、不加新命令，位置回到评审（review#2），折线留痕
         const back = (await fx.sh.getJson(`./diy.sh flow advance ${uri} --to review`)).data as Record<string, unknown>;
         expect(back["position"], "撤销打回走的是现有合法边（implement --next--> review）").toBe("review");
         const two = join(fx.HOME, "opinion-two.txt");
         writeFileSync(two, "TWO：第二轮打回", "utf-8");
-        await fx.sh.run(`./diy.sh flow bounce ${uri} --to implement --opinion ${two}`);
+        await fx.sh.run(`./diy.sh flow bounce ${uri} --to implement --opinion "${two}"`);
 
         const t = await listThreads(uri);
         expect(t.threads.map((x) => x["id"])).toEqual(["review->implement#2", "review->implement#3"]);
@@ -888,7 +888,7 @@ describe("flow 讨论线程（##342）", () => {
         await advanceTo(uri, "clarify", "design", "implement", "review");
         const op = join(fx.HOME, "exit-opinion.txt");
         writeFileSync(op, "打回：边界条件没覆盖", "utf-8");
-        await fx.sh.run(`./diy.sh flow bounce ${uri} --to implement --opinion ${op} --author '评审 agent'`);
+        await fx.sh.run(`./diy.sh flow bounce ${uri} --to implement --opinion "${op}" --author '评审 agent'`);
         const key = "review->implement#2";
 
         // (b) 开发被说服 ⇒ 线程 resolved（位置不动）
@@ -917,7 +917,7 @@ describe("flow 讨论线程（##342）", () => {
         await advanceTo(uri, "clarify", "design", "implement", "review");
         const op = join(fx.HOME, "drop-opinion.txt");
         writeFileSync(op, "ONLY：这条意见删流后就没了", "utf-8");
-        await fx.sh.run(`./diy.sh flow bounce ${uri} --to implement --opinion ${op}`);
+        await fx.sh.run(`./diy.sh flow bounce ${uri} --to implement --opinion "${op}"`);
 
         // ① 删掉整个讨论流：领域态照常、对账照常、还能继续推进；线程结构仍在（从折线推，不靠文件）
         rmSync(flowFile(uri, "threads.jsonl"));

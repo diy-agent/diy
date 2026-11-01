@@ -451,13 +451,13 @@ describe("讨论线程视图（##342）", () => {
         await cliAdvance(uri, "review"); // → review
         const one = join(fx.HOME, "ui-opinion-one.txt");
         writeFileSync(one, "UI-ONE：边界条件没覆盖", "utf-8");
-        const b1 = await fx.sh.run(`./diy.sh flow bounce ${uri} --to implement --opinion ${one} --author '评审 agent'`);
+        const b1 = await fx.sh.run(`./diy.sh flow bounce ${uri} --to implement --opinion "${one}" --author '评审 agent'`);
         expect(b1.code, b1.stderr).toBe(0);
         // 出口 (a) 撤销打回（合法 next 边）→ 再打回一次 ⇒ 两条**不同锚点**的线程（不串台）
         await cliAdvance(uri, "review");
         const two = join(fx.HOME, "ui-opinion-two.txt");
         writeFileSync(two, "UI-TWO：第二轮意见", "utf-8");
-        const b2 = await fx.sh.run(`./diy.sh flow bounce ${uri} --to implement --opinion ${two} --author '评审 agent'`);
+        const b2 = await fx.sh.run(`./diy.sh flow bounce ${uri} --to implement --opinion "${two}" --author '评审 agent'`);
         expect(b2.code, b2.stderr).toBe(0);
 
         await openFlowPage(uri);
