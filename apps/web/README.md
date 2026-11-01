@@ -59,17 +59,57 @@ b / c 机制一样，只是谁发起 —— 本刀把「配对 + 授权」实现
 
 ## 组成
 
-| 文件          | 干什么                                                                                    |
-| ------------- | ----------------------------------------------------------------------------------------- |
-| `api.ts`      | 声明式 RPC 定义（`RpcSchema` + zod）：`web.auth.*` / `web.page.*`                         |
-| `auth.ts`     | 授权内核（纯状态机）+ 落盘 store（`$DIY_HOME/web/auth.json`，0600）                       |
-| `handlers.ts` | 把方法挂到某个 binding：每连接一份授权状态；副方管理面仅回环                              |
-| `pages.ts`    | 页面宿主：`loadPages` 装 `@diy-agent/chat-page/main` + `@diy-agent/app-chat/sessions`     |
-| `server.ts`   | HTTP（/ping + 静态）+ WebSocket upgrade；可选 h2c RPC 端口                                |
+| 文件          | 干什么                                                                                      |
+| ------------- | ------------------------------------------------------------------------------------------- |
+| `api.ts`      | 声明式 RPC 定义（`RpcSchema` + zod）：`web.auth.*` / `web.page.*`                           |
+| `auth.ts`     | 授权内核（纯状态机）+ 落盘 store（`$DIY_HOME/web/auth.json`，0600）                         |
+| `handlers.ts` | 把方法挂到某个 binding：每连接一份授权状态；副方管理面仅回环                                |
+| `pages.ts`    | 页面宿主：`loadPages` 装 `@diy-agent/chat-page/main` + `@diy-agent/app-chat/sessions`       |
+| `server.ts`   | HTTP（/ping + 静态）+ WebSocket upgrade；可选 h2c RPC 端口                                  |
 | `registry.ts` | 实例注册表自报：启动/退出写删 `~/.diy-instances/<pid>.json`（##495，与 diy-app 同一份格式） |
-| `gateway.ts`  | 浏览器侧：WebSocket → `ChannelClientBinding` → `createTypedClient` → `WorkbenchGateway`   |
-| `renderer.ts` | 浏览器入口：登录页 / 等待确认 / 工作台（`registerPage(chatPageView)` + `mountWorkbench`） |
-| `main.mjs`    | 启动器：esbuild 现编 → import 真入口（判据 1 的那条命令）                                 |
+| `webauthn.ts` | Passkey 内核（##496）：注册 / 登录 / 会话 + `$DIY_HOME/web/users.json` 落盘                 |
+| `gateway.ts`  | 浏览器侧：WebSocket → `ChannelClientBinding` → `createTypedClient` → `WorkbenchGateway`     |
+| `renderer.ts` | 浏览器入口：登录页 / 等待确认 / 工作台（`registerPage(chatPageView)` + `mountWorkbench`）   |
+| `main.mjs`    | 启动器：esbuild 现编 → import 真入口（判据 1 的那条命令）                                   |
+
+## Passkey 登录（##496，与 `web.auth.*` 并存）
+
+第一版只做**本机单用户**：Touch ID 注册一个 Passkey，之后用它登录。`web.auth.*`（token 授权）
+一行没改，两条路同时可用 —— 页面登录页上那个「使用旧式 token 授权」就是老路。
+
+```
+① GET  /webauthn/me                 → { hasUser, user, rpID }
+② POST /webauthn/register/options   → 注册参数（仅当 users 为空）
+③ POST /webauthn/register/verify    → 验签 + 建主用户 + 存公钥（**不发会话**）
+④ POST /webauthn/login/options      → 登录参数（发现式：allowCredentials 留空）
+⑤ POST /webauthn/login/verify       → 验签 + 更新 counter + **Set-Cookie**（7 天）
+⑥ POST /webauthn/logout             → 清 cookie
+```
+
+同一份内核也挂在 RPC 面（`web.webauthn.*`，给 Node 客户端 / 测试用）；HTTP 路由只是为了
+**HttpOnly cookie** —— `Set-Cookie` 只能由 HTTP 响应下发，WebSocket 升级响应带不了。
+
+三条硬约束（改这三条等于改设计）：
+
+1. **RP ID / origin 从请求的 Host 头现推**（`contextFromRequest`），不硬编码：prod 是
+   `c-mac.gute-fish.ts.net`，lab 是 `localhost` —— 两边凭证天然隔离，不会串。`DIY_WEBAUTHN_RP_ID` /
+   `DIY_WEBAUTHN_ORIGIN` 只是反代纠偏的显式覆盖口。
+2. **challenge 不落盘**：内存 Map + 5 分钟 TTL + 一次性消费（进程重启丢失 = 重新点一次）。
+3. **counter 必须更新**（`authenticationInfo.newCounter` 写回 store）：这是防克隆检测的判据。
+
+会话在内存里（重启 → 重新登录），凭证落 `$DIY_HOME/web/users.json`（0600，**只有公钥**，私钥在
+系统钥匙串）。页面进入工作台靠的就是这枚 cookie：WebSocket 升级请求会带上它，`requireClient`
+认它 —— 所以 Passkey 登录后**不需要**再拿 token。
+
+验签一律交给 `@simplewebauthn/server`（测试用真 ECDSA 造的虚拟 authenticator，见
+`tests/virtual-authenticator.ts`）；不自己实现 FIDO2。
+
+## 部署前缀（`--base-path`，##496）
+
+反代把 `https://host/diy/*` **原样**转进来（tailscale serve 不剥前缀）时，用 `--base-path /diy`
+（或 `DIY_WEB_BASE_PATH=/diy`）启动：服务端剥掉前缀再路由，页面侧从 `location.pathname` 推同一个
+前缀（`/diy/` ⇒ WS 走 `/diy/rpc`、接口走 `/diy/webauthn/*`）。不传 = 挂在根上；两者都设成了
+**严格**模式（前缀外一律 404，别家的路径不被本服务吃掉）。
 
 ## 装配复用（页面一行不改）
 

@@ -4,26 +4,46 @@
 // 的 handler 拿不到连接上下文 —— 于是 handler 闭包持有本连接的 ConnectionState。
 // 注册本身是廉价的（就是往 binding 的四张表里填条目），一线程一连接完全可接受。
 //
-// 两类鉴权（与 api.ts 的分类一致）：
+// 三类鉴权（与 api.ts 的分类一致）：
 //   · 副方管理面（pending / approve / deny / revoke / tokens）→ 仅**回环**。跨机的主方
 //     拿不到 approve，所以「主方自签」在拓扑上就不可达 —— 这是铁律①的落地方式。
-//   · 业务面（web.page.*）→ 本连接必须带有效 token；无效 / 已 revoke / 过期一律
-//     UNAUTHENTICATED（HTTP 绑定下就是 401）。**只报错、不重试、不续签** —— 铁律②。
+//   · Passkey（web.webauthn.*）→ 对任何来源开放；能不能注册由「有没有主用户」决定（判据 3）。
+//     RP ID / origin **从这条连接的 Host 头现推**（不硬编码，也不信客户端自报）。
+//   · 业务面（web.page.*）→ 两条路并存：本连接的 token，或本连接带来的 Passkey 会话 cookie。
+//     无效 / 已 revoke / 过期一律 UNAUTHENTICATED（HTTP 绑定下就是 401）。
+//     **只报错、不重试、不续签** —— 铁律②。
 
 import { RpcError, type ServerBinding } from '@diy-agent/rpc';
+import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 import { webApi } from './api.js';
 import type { AuthCore } from './auth.js';
 import type { PagesHost } from './pages.js';
+import {
+    contextFromRequest,
+    parseCookies,
+    SESSION_COOKIE,
+    type WebAuthnContext,
+    type WebAuthnCore,
+    type WebAuthnUser,
+} from './webauthn.js';
 
-/** 连接的对端：地址 + 是否回环（回环 = 副方自己的机器） */
+/** 连接的对端：地址 + 是否回环（回环 = 副方自己的机器）+ 建连时的 HTTP 头 */
 export interface WebPeer {
     readonly address: string;
     readonly loopback: boolean;
+    /** 建连请求的 Host（Passkey 用它推 RP ID / origin；不传就采不到，相关方法会报错） */
+    readonly host?: string | undefined;
+    /** 建连请求的 Cookie 头（Passkey 会话从这里读） */
+    readonly cookie?: string | undefined;
+    /** 建连请求的 x-forwarded-proto（反代 / tailscale serve 才有） */
+    readonly forwardedProto?: string | undefined;
 }
 
 /** 一条连接的授权状态（login 写入，logout / 撤销后失效） */
 export interface ConnectionState {
     token: string | null;
+    /** Passkey 会话 id：建连时来自 cookie，RPC 面 logout 清掉 */
+    sessionId: string | null;
 }
 
 /** 计数（测试拿它当「没有自动重试」的结构证据：被拒一次 ⇒ 服务端只被调用一次） */
@@ -34,6 +54,7 @@ export interface WebRpcStats {
 
 export interface WebRpcDeps {
     readonly auth: AuthCore;
+    readonly webauthn: WebAuthnCore;
     readonly pages: PagesHost;
     /** 本实例的身份地址（`alice@c-mac/diy-web.lab`，##484） */
     readonly address: string;
@@ -44,9 +65,19 @@ export function newWebRpcStats(): WebRpcStats {
     return { pageInvokes: 0, pageRejects: 0 };
 }
 
+/** 浏览器侧 `startRegistration()` 的响应：只做「是个对象」这一层兜底，形状由 @simplewebauthn 校验 */
+function asWebAuthnResponse<T>(value: unknown, label: string): T {
+    if (value === null || typeof value !== 'object') {
+        throw new RpcError('INVALID_ARGUMENT', `${label} 必须是 WebAuthn 响应对象`);
+    }
+    return value as T;
+}
+
 export function registerWebApi(binding: ServerBinding, peer: WebPeer, deps: WebRpcDeps): ConnectionState {
-    const connection: ConnectionState = { token: null };
-    const { auth, pages, stats } = deps;
+    const cookies = parseCookies(peer.cookie);
+    const cookieSession = cookies[SESSION_COOKIE] ?? null;
+    const connection: ConnectionState = { token: null, sessionId: cookieSession };
+    const { auth, webauthn, pages, stats } = deps;
 
     /** 副方管理面：只对回环开放（跨机主方连 approve 都调不到 ⇒ 无法自签） */
     const requireOperator = (): void => {
@@ -58,17 +89,30 @@ export function registerWebApi(binding: ServerBinding, peer: WebPeer, deps: WebR
         }
     };
 
-    /** 业务面：本连接必须持有有效 token。失败即 UNAUTHENTICATED（HTTP 绑定下 = 401） */
+    /** Passkey 的域：从建连请求的 Host 推（不硬编码、不信客户端自报） */
+    const requireContext = (): WebAuthnContext => {
+        try {
+            return contextFromRequest({ host: peer.host, forwardedProto: peer.forwardedProto });
+        } catch (cause) {
+            throw new RpcError('FAILED_PRECONDITION', `Passkey 不可用：${String(cause)}`);
+        }
+    };
+
+    const sessionUser = (): WebAuthnUser | null => webauthn.userOfSession(connection.sessionId);
+
+    /** 业务面：持有有效 token 或有效 Passkey 会话。失败即 UNAUTHENTICATED（HTTP 绑定下 = 401） */
     const requireClient = (): string => {
         const token = connection.token;
-        const record = token === null ? null : auth.verify(token);
-        if (record === null) {
-            stats.pageRejects += 1;
-            throw new RpcError('UNAUTHENTICATED', '未连接：需要副方（本机）重新授权——revoke 之后不会自动重连', {
-                details: { reason: token === null ? 'no-token' : 'token-invalid' },
-            });
+        if (token !== null) {
+            const record = auth.verify(token);
+            if (record !== null) return record.subject;
         }
-        return record.subject;
+        const user = sessionUser();
+        if (user !== null) return `passkey:${user.id}`;
+        stats.pageRejects += 1;
+        throw new RpcError('UNAUTHENTICATED', '未连接：需要副方（本机）授权或用 Passkey 登录——不会自动重连', {
+            details: { reason: token === null ? 'no-token' : 'token-invalid' },
+        });
     };
 
     // ── 授权：建立关系（对任何来源开放）────────────────────────────
@@ -108,6 +152,54 @@ export function registerWebApi(binding: ServerBinding, peer: WebPeer, deps: WebR
             return { connected: false, subject: null, expiresAt: null };
         }
         return { connected: true, subject: record.subject, expiresAt: record.expiresAt };
+    });
+
+    // ── Passkey（##496）：对任何来源开放，能否注册由「有没有主用户」定 ──
+
+    binding.on(webApi.web.webauthn.register.options, async ({ input }) => {
+        const created = await webauthn.registrationOptions({
+            context: requireContext(),
+            ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
+        });
+        return { options: created.options as unknown as Record<string, unknown> };
+    });
+
+    binding.on(webApi.web.webauthn.register.verify, async ({ input }) => {
+        const response = asWebAuthnResponse<RegistrationResponseJSON>(input.response, 'response');
+        const created = await webauthn.verifyRegistration({
+            context: requireContext(),
+            response,
+            ...(input.credentialName === undefined ? {} : { credentialName: input.credentialName }),
+        });
+        // 判据 7：交出去之前必须已落盘（公钥存进 users.json，私钥始终在钥匙串）
+        await webauthn.flush();
+        console.info(`[web] 已创建主用户 ${created.user.id}（凭据 ${created.credential.id}）`);
+        return created;
+    });
+
+    binding.on(webApi.web.webauthn.login.options, async () => {
+        const created = await webauthn.authenticationOptions({ context: requireContext() });
+        return { options: created.options as unknown as Record<string, unknown> };
+    });
+
+    binding.on(webApi.web.webauthn.login.verify, async ({ input }) => {
+        const response = asWebAuthnResponse<AuthenticationResponseJSON>(input.response, 'response');
+        const result = await webauthn.verifyAuthentication({ context: requireContext(), response });
+        await webauthn.flush();
+        connection.sessionId = result.sessionId;
+        console.info(`[web] Passkey 登录成功：${result.user.id}（来自 ${peer.address}）`);
+        return result;
+    });
+
+    binding.on(webApi.web.webauthn.me, () => {
+        const user = sessionUser();
+        return { hasUser: webauthn.hasUser(), user };
+    });
+
+    binding.on(webApi.web.webauthn.logout, () => {
+        webauthn.logout(connection.sessionId);
+        connection.sessionId = null;
+        return { ok: true };
     });
 
     // ── 授权：副方管理面（仅回环）──────────────────────────────────
@@ -170,7 +262,7 @@ export function registerWebApi(binding: ServerBinding, peer: WebPeer, deps: WebR
         return result;
     });
 
-    // ── 业务面：页面调用（需要 token）──────────────────────────────
+    // ── 业务面：页面调用（需要 token 或 Passkey 会话）──────────────
 
     binding.on(webApi.web.page.list, () => {
         requireClient();

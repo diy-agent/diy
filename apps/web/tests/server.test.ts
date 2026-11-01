@@ -13,6 +13,7 @@ import { ChannelClientBinding, ChannelServerBinding, createMemTransportPair, cre
 import { webApi } from '../api.js';
 import { emptyAuthState, createAuth } from '../auth.js';
 import { newWebRpcStats, registerWebApi } from '../handlers.js';
+import { createWebAuthn, emptyWebAuthnStore } from '../webauthn.js';
 import { startWebServer, type WebServerHandle } from '../server.js';
 import { codeOf, connectWs, makeFakeLlm, makeHome, makeStaticDir } from './helpers.js';
 
@@ -238,6 +239,11 @@ describe('跨机主方拿不到副方管理面（铁律① 的拓扑落地）', 
             { address: '10.0.0.9', loopback: false },
             {
                 auth,
+                // Passkey 内核：这条测试不走它，给一份空内存态（无落盘）
+                webauthn: createWebAuthn(emptyWebAuthnStore(), {
+                    now: () => Date.now(),
+                    newId: () => Math.random().toString(36).slice(2),
+                }),
                 pages,
                 address: 'alice@c-mac/diy-web.test',
                 stats: newWebRpcStats(),

@@ -8,10 +8,13 @@
 //
 // 方法命名 `web.<域>.<方法>`（与 `diy.app.*` 同一口径；全名 = 拍平的路径）。
 //
-// 授权分两类，别混：
-//   · `web.auth.*`  —— 建立授权关系本身（request / status / login 对任何人开放；
-//                      pending / approve / deny / revoke / tokens 是**副方管理面**，仅回环）；
-//   · `web.page.*`  —— 真正的业务调用（页面清单 / 页面方法），**必须带有效 token**。
+// 授权分三类，别混：
+//   · `web.auth.*`     —— 建立授权关系本身（request / status / login 对任何人开放；
+//                         pending / approve / deny / revoke / tokens 是**副方管理面**，仅回环）；
+//   · `web.webauthn.*` —— Passkey（##496）：注册参数 / 验注册 / 登录参数 / 验登录 / me / logout，
+//                         对任何来源开放（注册是否允许由「有没有主用户」决定，不由来源决定）；
+//   · `web.page.*`     —— 真正的业务调用（页面清单 / 页面方法），**必须带有效凭据**
+//                         （旧式 token 或 Passkey 会话，两条路并存）。
 
 import { RpcSchema } from '@diy-agent/rpc';
 import { z } from 'zod';
@@ -78,6 +81,47 @@ const DecideInput = { requestId: z.string() };
 const DecideOutput = z.object({ requestId: z.string() });
 const RevokeInput = { token: z.string().min(1) };
 const RevokeOutput = z.object({ revoked: z.number() });
+
+/** Passkey 用户视图（##496：无凭证字段，落盘结构见 webauthn.ts） */
+const WebAuthnUserOutput = z.object({
+    id: z.string(),
+    username: z.string(),
+    displayName: z.string(),
+    role: z.literal('owner'),
+    status: z.literal('active'),
+    createdAt: z.number(),
+});
+
+/** 注册 / 登录参数：直接透传 @simplewebauthn 的 options JSON（形状由它定，这里不重复建模） */
+const OptionsOutput = z.object({ options: z.record(z.string(), z.unknown()) });
+
+/** 浏览器侧 `startRegistration()` / `startAuthentication()` 的响应（形状同样由 @simplewebauthn 定） */
+const RegistrationResponseInput = { response: z.unknown() };
+const AuthenticationResponseInput = { response: z.unknown() };
+
+const RegisterOptionsInput = { displayName: z.string().max(80).optional() };
+const RegisterVerifyInput = { ...RegistrationResponseInput, credentialName: z.string().max(80).optional() };
+const RegisterVerifyOutput = z.object({
+    user: WebAuthnUserOutput,
+    credential: z.object({
+        id: z.string(),
+        name: z.string(),
+        deviceType: z.enum(['singleDevice', 'multiDevice']),
+        backedUp: z.boolean(),
+        createdAt: z.number(),
+        lastUsedAt: z.number(),
+    }),
+});
+
+/** 登录成功：RPC 面把会话交回调用方（HttpOnly cookie 的 Set-Cookie 只能走 HTTP，见 server.ts） */
+const LoginVerifyOutput = z.object({
+    user: WebAuthnUserOutput,
+    sessionId: z.string(),
+    expiresAt: z.number(),
+});
+
+/** `web.webauthn.me` —— 当前会话是谁（null = 未登录）；`hasUser` = 要不要显示「创建主用户」 */
+const MeOutput = z.object({ hasUser: z.boolean(), user: WebAuthnUserOutput.nullable() });
 
 /** 页面（与 @diy-agent/workbench 的 PageInfo / page:invoke 同形 —— chat-page 的 ctx.invoke 直接对接） */
 const PageInfoOutput = z.array(z.object({ id: z.string(), title: z.string() }));
@@ -149,8 +193,53 @@ export const webApi = RpcSchema.router({
                     }),
                 },
             }),
+            webauthn: RpcSchema.group({
+                desc: 'Passkey 登录（##496）：注册 / 登录 / 会话（与 web.auth.* 并存）',
+                children: {
+                    register: RpcSchema.group({
+                        desc: '首次注册（仅当还没有主用户）',
+                        children: {
+                            options: RpcSchema.unary({
+                                desc: '注册参数（PublicKeyCredentialCreationOptionsJSON）',
+                                input: RegisterOptionsInput,
+                                output: OptionsOutput,
+                            }),
+                            verify: RpcSchema.unary({
+                                desc: '验注册响应 → 建主用户 + 存公钥（不发会话）',
+                                input: RegisterVerifyInput,
+                                output: RegisterVerifyOutput,
+                            }),
+                        },
+                    }),
+                    login: RpcSchema.group({
+                        desc: 'Passkey 登录（发现式：不用先输用户名）',
+                        children: {
+                            options: RpcSchema.unary({
+                                desc: '登录参数（allowCredentials 留空）',
+                                input: {},
+                                output: OptionsOutput,
+                            }),
+                            verify: RpcSchema.unary({
+                                desc: '验登录响应 → 更新 counter → 发会话',
+                                input: AuthenticationResponseInput,
+                                output: LoginVerifyOutput,
+                            }),
+                        },
+                    }),
+                    me: RpcSchema.unary({
+                        desc: '本连接 / 本会话是谁（user 为 null = 未登录）',
+                        input: {},
+                        output: MeOutput,
+                    }),
+                    logout: RpcSchema.unary({
+                        desc: '清掉本连接的 Passkey 会话',
+                        input: {},
+                        output: z.object({ ok: z.boolean() }),
+                    }),
+                },
+            }),
             page: RpcSchema.group({
-                desc: '页面调用（需要有效 token）',
+                desc: '页面调用（需要有效 token 或 Passkey 会话）',
                 children: {
                     list: RpcSchema.unary({
                         desc: '页面清单（= 工作台 page:list）',

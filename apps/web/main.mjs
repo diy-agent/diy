@@ -36,6 +36,8 @@ const home = String(flag('home', process.env.DIY_HOME ?? join(REPO, 'build', var
 const port = Number(flag('port', 8080));
 const host = String(flag('host', '127.0.0.1'));
 const httpRpcPort = Number(flag('http-rpc-port', 0));
+// 部署前缀（反代把 /diy/* 原样转进来时用）：`--base-path /diy` 或 DIY_WEB_BASE_PATH
+const basePath = String(flag('base-path', process.env.DIY_WEB_BASE_PATH ?? ''));
 
 const OUT = join(REPO, 'build', variant, 'web');
 const STATIC = join(OUT, 'renderer');
@@ -71,6 +73,7 @@ const SOURCES = [
     'pages.ts',
     'renderer.ts',
     'server.ts',
+    'webauthn.ts',
     'index.html',
 ];
 
@@ -135,10 +138,10 @@ process.env.DIY_VARIANT = variant;
 process.env.DIY_HOME = home;
 
 const { startWebServer } = await import(pathToFileURL(join(OUT, 'server.mjs')).href);
-const handle = await startWebServer({ port, host, home, staticDir: STATIC, variant, httpRpcPort });
+const handle = await startWebServer({ port, host, home, staticDir: STATIC, variant, httpRpcPort, basePath });
 
-console.log(`[web] 已启动：${handle.url}   （数据根 ${home}，变体 ${variant}）`);
-console.log(`[web] /ping：${handle.url}/ping`);
+console.log(`[web] 已启动：${handle.url}${handle.basePath}/   （数据根 ${home}，变体 ${variant}）`);
+console.log(`[web] /ping：${handle.url}${handle.basePath}/ping`);
 if (handle.httpRpcPort !== null) console.log(`[web] h2c RPC：${handle.url.replace(/:\d+$/, `:${handle.httpRpcPort}`)}`);
 
 const stop = async () => {
