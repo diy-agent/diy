@@ -75,8 +75,10 @@ describe("getAppInfo", () => {
         // 窗口标题组装用：数据根的展示形式（缩 `~`）与运行环境
         diyHomeDisplay: "*",
         env: "*",
-        cache: `${HOME}/cache`,
-        userData: `${HOME}/electron_user_data`,
+        // ⚠️ 用 join 拼：真值来自 path.join（Windows 是 ``），而 `${HOME}/cache` 是混合分隔符，
+        // 断言比的是字符串 ⇒ 只有 posix 上恰好相等。
+        cache: join(HOME, "cache"),
+        userData: join(HOME, "electron_user_data"),
         electron: "*",
         node: "*",
         chrome: "*",

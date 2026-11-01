@@ -172,9 +172,15 @@ if [[ "$DIY_CLI_MODE" == "http" ]]; then
     # （旧版 server / UNIMPLEMENTED）——两者都回退直连，body 丢弃不污染 stdout。
     if [[ $_has_stdin_arg == 1 ]]; then
       : # 见上方：读 stdin 的调用跳过 /cli
-    elif curl -sS --http2-prior-knowledge -D "$_hdr" -o "$_body" -X POST \
+    # 为什么是 `-s` 而不是 `-sS`：这里的失败是**预期路径**（h2 不支持 / 旧版 server）——
+    # `-S` 会把它打到 stderr，而调用方（测试/agent）把 stderr 当「出了真事」：
+    # 实测 Windows 的 libcurl 不认 `--http2-prior-knowledge` ⇒ **每条命令都吐一行**
+    # `curl: option --http2-prior-knowledge …`，既污染 `stderr === ""` 这类断言，也误导人。
+    # 还要 `2>/dev/null`：curl 的**选项解析错误**不受 `-s` 管（`-s` 只压进度条），
+    # 不支持 h2 的 libcurl 会照样往 stderr 吐一行 —— 而这是预期回退路径。
+    elif curl -s --http2-prior-knowledge -D "$_hdr" -o "$_body" -X POST \
         -H 'content-type: application/json' --data-binary "$_json" \
-        "http://127.0.0.1:${_port}/cli"; then
+        "http://127.0.0.1:${_port}/cli" 2>/dev/null; then
       _hdrs="$(< "$_hdr")"
       _hdrs=${_hdrs//$'\r'/}
       _code=""

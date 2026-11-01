@@ -162,8 +162,18 @@ export class Session {
     //     "__ST_…__(0)__ Error: 未知模型 …"
     // 旧写法 `errLines.filter(l => !markerRe.test(l))` 会把这**含真实错误**的整行一起丢掉 →
     // stderr 变空 → 错误路径断言 `expected '' to match /…/` 偶发红（~2%）且 retry 无效。
-    const cleanErr = stripStderrNoise(this.errBuf, markerPrefix, sentinel);
-    const cleanOut = stripStdoutNoise(this.outBuf, sentinel);
+    // PTY 会把我们敲进去的命令行回显一遍；正常情况它被 marker/PS1 一起剥掉了，但只要上一轮的
+    // prompt 没对齐（Windows 上偶发），回显就残留成一条“输出”。这不是被调用方的输出 ——
+    // 直接按「整行等于本命令」剔掉（命令文本不会合法地出现在结果里）。
+    // 先把**我们自己的记账行**从原始输出里剔掉，再做 marker 剥离 —— 顺序很关键：
+    // 先剥离的话，哨兵/命令行里的 sentinel 子串被抹掉，残留行不再含 sentinel，
+    // 之后再按 sentinel 过滤就抓不到（实测 Windows 上回显的 printf 哨兵行被剥成
+    // `printf '%s\n' '' >&2` 留下来，把 `stderr === ""` 的断言弄红）。
+    const isBookkeeping = (l: string) =>
+      l.trim() === cmd.trim() || l.includes(sentinel) || /^\s*printf '.*(>&2|__ST_)/.test(l);
+    const dropBookkeeping = (text: string) => text.split("\n").filter((l) => !isBookkeeping(l)).join("\n");
+    const cleanErr = dropBookkeeping(stripStderrNoise(dropBookkeeping(this.errBuf), markerPrefix, sentinel));
+    const cleanOut = dropBookkeeping(stripStdoutNoise(dropBookkeeping(this.outBuf), sentinel));
 
     if (!found) {
       // 超时：挂死的前台 CLI 进程阻塞了 bash 会话，发 Ctrl+C 释放前台 + kill 旧 job
