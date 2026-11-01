@@ -24,6 +24,7 @@
     { "path": "../diy-agent-model-catalog/tsconfig.build.json" },
     { "path": "../diy-agent-session/tsconfig.build.json" },
     { "path": "../diy-agent-session-store-memory/tsconfig.build.json" },
+    { "path": "../diy-time/tsconfig.build.json" },
     { "path": "../workbench/tsconfig.build.json" },
     { "path": "../ui-workbench/tsconfig.build.json" }
   ]

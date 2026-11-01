@@ -308,18 +308,18 @@ describe("updateTask 保留非托管字段", () => {
 // ═══════════════════════════════════════
 
 describe("deleteTask", () => {
-  it("删除后目录和文件都不存在", () => {
+  it("删除后目录和文件都不存在", async () => {
     const uri = createTask({ title: "待删除", project: PROJECT });
     const dir = join(diyHome(), uri);
     expect(existsSync(dir)).toBe(true);
 
-    deleteTask(uri);
+    await deleteTask(uri);
     expect(existsSync(dir)).toBe(false);
     expect(existsSync(join(dir, "AGENTS.md"))).toBe(false);
   });
 
-  it("不存在的任务不抛异常", () => {
-    expect(() => deleteTask("nonexistent")).not.toThrow();
+  it("不存在的任务不抛异常", async () => {
+    await expect(deleteTask("nonexistent")).resolves.toBeUndefined();
   });
 });
 

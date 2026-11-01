@@ -22,6 +22,7 @@
   "exclude": ["tests/**/*", "test/**/*", "examples/**/*"]
 ,
   "references": [
-    { "path": "../diy-context/tsconfig.build.json" }
+    { "path": "../diy-context/tsconfig.build.json" },
+    { "path": "../diy-time/tsconfig.build.json" }
   ]
 }
