@@ -12,3 +12,16 @@ pkgs.ts/*/bin/* text eol=lf
 # 生成物：`node scripts/gen-tsconfig-build-all.mjs` 会重写它们（composite + references）。
 # 冲突时自动取本侧（随后生成器会重新补齐），避免每次合并都手解：见 scripts/ensure-merge-driver.mjs。
 pkgs.ts/*/tsconfig.build.json merge=ours
+
+# ── 行尾统一 LF（2026-11-01）─────────────────────────────────────────────
+# 为什么：Windows 的 `core.autocrlf=true` 会把检出变 CRLF，而 Mac/Linux 是 LF ——
+# 于是所有「字节比较」的判据在 Windows 上假红，今天因此踩了 3 次：
+#   · template-dsl-golden 的快照比对（渲染 LF vs 快照 CRLF）
+#   · check-sync-io 的 `sync-io-ok` 逃生口（正则 `$` 不在 `\r` 前成立）
+#   · facts 的 file-not-canonical（内核渲染 LF vs 磁盘 CRLF，字节数差 = 行数）
+# 修法选「全仓 LF」而不是「每处比较都归一」：后者要靠人记，必然漏（今天已漏 3 处）。
+# 仓库里没有 .bat/.cmd/.ps1，所以没有必须 CRLF 的文件；将来加 Windows 专有脚本时按下面三类例外。
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
