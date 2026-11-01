@@ -75,7 +75,15 @@ async function appInfo(timeoutMs = 10000): Promise<AppInfo> {
   return (JSON.parse(r.stdout) as { data: AppInfo }).data;
 }
 
-describe("关掉窗口后 RPC 服务继续可用", () => {
+// ⚠️ 本文件整组只在「关窗后进程常驻」的平台上有意义。
+// 该行为由 OS 能力位决定：`src/main/os/win32.ts` 的 `keepRunningOnWindowClose: false`
+// （Windows 没有托盘入口，关窗即 `app.quit()` —— 见 main/index.ts 的 window-all-closed），
+// macOS 为 true。于是 Windows 上这两组必然红：它们断言的是「关窗后 RPC 仍在、窗口可被重建」。
+//
+// 如实记覆盖缺口：**Windows 上「关窗即退出」这条路径没有 intent 覆盖**。
+// 要补就写 Windows 专属断言（关窗后 CLI 探测失败 → 拉起新实例 → 单实例锁让位），
+// 或者产品侧给 Windows 加托盘、把能力位翻成 true（那是功能变更，不是测试修复）。
+describe.skipIf(process.platform === "win32")("关掉窗口后 RPC 服务继续可用", () => {
   it("窗口关掉 → CLI 仍连同一实例（端口/PID 不变，app.port 不被改写）", async () => {
     const before = await appInfo();
     const portFile = join(fx.HOME, "app.port");
@@ -172,7 +180,7 @@ async function closeWindow(): Promise<void> {
   await waitUntil(windowGone, (gone) => gone, { label: "窗口已关闭" });
 }
 
-describe("关窗后再启动一次（second-instance）→ 窗口请回来", () => {
+describe.skipIf(process.platform === "win32")("关窗后再启动一次（second-instance）→ 窗口请回来", () => {
   it("spawn 第二进程撞锁 → 常驻实例重建窗口，界面 RPC 恢复", async () => {
     await closeWindow();
     await spawnClash(); // 真实 second-instance 路径（同 activate 共用 ensureWindow）
