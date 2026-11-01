@@ -143,10 +143,11 @@ describe('apps/web 服务端', () => {
                 pageId: 'chat',
                 method: 'send',
                 args: { sessionId: snapshot.activeId, text: '你好呀' },
-            })) as { messages: Array<{ role: string; text: string }> };
-            expect(sent.messages).toEqual([
-                { role: 'user', text: '你好呀' },
-                { role: 'assistant', text: '收到：你好呀' },
+            })) as { messages: Array<{ role: string; blocks: Array<{ kind: string; data: { text?: string } }> }> };
+            // ##499：消息是 Block 列表（这段对话只有 text 块）
+            expect(sent.messages.map((message) => [message.role, message.blocks[0]?.kind, message.blocks[0]?.data.text])).toEqual([
+                ['user', 'text', '你好呀'],
+                ['assistant', 'text', '收到：你好呀'],
             ]);
             expect(llmCalls()).toBe(1);
         } finally {

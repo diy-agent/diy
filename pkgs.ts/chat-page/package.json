@@ -18,6 +18,14 @@
       "types": "./src/main.ts",
       "default": "./lib/main.js"
     },
+    "./blocks": {
+      "types": "./src/blocks.ts",
+      "default": "./lib/blocks.js"
+    },
+    "./block-renderers": {
+      "types": "./src/block-renderers.ts",
+      "default": "./lib/block-renderers.js"
+    },
     "./renderer": {
       "types": "./src/renderer.ts",
       "default": "./lib/renderer.js"

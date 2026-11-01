@@ -1,9 +1,55 @@
 // shared.ts — 主进程与 renderer 之间的线上形状（两端共用，避免各写一份）。
+//
+// ##499：消息由一段纯文本改成 **Block 列表**。Block 的 kind 是 **string 面不是字面量枚举** ——
+// 插件可以自造 kind，UI 主代码一行不改；不认识的 kind 由 renderer 的 fallback 兜底。
+// core 事件 → Block 的归一化在**主进程**（blocks.ts），renderer 不认识任何 core 事件名。
+
+export interface Block {
+    /** 类型标签。**string 不是字面量枚举** —— 插件可以自造 */
+    readonly kind: string;
+    /** 稳定 id（同一条消息内唯一；折叠状态 / diff 用） */
+    readonly id: string;
+    /** 所有载荷；UI 只对**内置 kind** 解析 */
+    readonly data: Record<string, unknown>;
+}
+
+/** 内置 kind：UI 自带这三个渲染器，其余走注册表 / fallback */
+export const BUILTIN_BLOCK_KINDS = ["text", "think", "tool"] as const;
+
+// ── 内置三个 kind 的 data 形状（UI 认识这三个） ──
+
+/** kind: "text" */
+export interface TextBlockData {
+    readonly text: string;
+}
+
+/** kind: "think" */
+export interface ThinkBlockData {
+    readonly text: string;
+    readonly done?: boolean;
+}
+
+/** kind: "tool" */
+export interface ToolBlockData {
+    readonly name: string;
+    /** 已格式化的参数摘要 */
+    readonly args: string;
+    readonly state: "running" | "ok" | "error";
+    /** 一行结果摘要 */
+    readonly summary?: string;
+    /** 完整输出（折叠区里放） */
+    readonly output?: string;
+}
 
 /** 一条展示用的消息（只有生成侧关心的字段；seq / at 等内部字段不过桥） */
 export interface WireMessage {
     readonly role: "user" | "assistant";
-    readonly text: string;
+    readonly blocks: readonly Block[];
+}
+
+/** 一条只有文本块的消息（本地占位：错误提示 / 乐观显示用） */
+export function textMessage(role: "user" | "assistant", text: string): WireMessage {
+    return { role, blocks: [{ kind: "text", id: "text-0", data: { text } }] };
 }
 
 /** `send` 方法的返回值：整条会话的当前消息线 */

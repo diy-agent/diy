@@ -8,7 +8,7 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import { mountWorkbench, registerPage, resetPages } from "@diy-agent/workbench-ui";
-import { chatPageView } from "@diy-agent/chat-page/renderer";
+import { chatPageView, registerBlockRenderer, renderBlock } from "@diy-agent/chat-page/renderer";
 import { createPage, FAKE_REPLY } from "@diy-agent/chat-page";
 import type { WorkbenchGateway } from "@diy-agent/workbench-ui";
 
@@ -55,6 +55,58 @@ describe("UI 链路（happy-dom）", () => {
             { role: "user", text: "你好" },
             { role: "assistant", text: FAKE_REPLY },
         ]);
+    });
+
+    it("##499 判据 3 / 4：插件注册的 kind 用自己的渲染器；未注册的走 fallback 不崩", async () => {
+        // 插件自造 kind：编译期显式注册，UI 主代码一行不改
+        registerBlockRenderer("my-test", (block) => {
+            const el = document.createElement("div");
+            el.className = "my-test";
+            el.textContent = `自定义:${String(block.data["value"])}`;
+            return el;
+        });
+        const custom: WorkbenchGateway = {
+            listPages: async () => [{ id: page.id, title: page.title }],
+            invoke: async (_pageId, method) => {
+                if (method === "snapshot") throw new Error("单会话模式");
+                return {
+                    messages: [
+                        {
+                            role: "assistant",
+                            blocks: [
+                                { kind: "my-test", id: "x", data: { value: "hi" } },
+                                { kind: "nope", id: "y", data: { a: 1 } },
+                            ],
+                        },
+                    ],
+                };
+            },
+        };
+        registerPage(chatPageView);
+        const host = document.createElement("div");
+        document.body.append(host);
+        await mountWorkbench(host, custom, { title: "测试工作台" });
+
+        const input = host.querySelector<HTMLInputElement>(".chat-input")!;
+        input.value = "触发";
+        host.querySelector<HTMLFormElement>(".chat-composer")!.dispatchEvent(
+            new Event("submit", { bubbles: true, cancelable: true }),
+        );
+
+        await waitFor(() => host.querySelector(".my-test") !== null);
+        expect(host.querySelector(".my-test")?.textContent).toBe("自定义:hi");
+        // 未注册的 kind：fallback 显示 JSON + 「未知块类型」，不崩不白屏
+        const unknown = host.querySelector(".chat-block-unknown");
+        expect(unknown?.textContent).toContain("未知块类型: nope");
+        expect(unknown?.textContent).toContain('"a": 1');
+    });
+
+    it("##499 判据 6：tool 块运行中展开、结束后收起", () => {
+        const running = renderBlock({ kind: "tool", id: "t1", data: { name: "read", args: "{}", state: "running" } }) as HTMLDetailsElement;
+        expect(running.open).toBe(true);
+        expect(running.dataset["state"]).toBe("running");
+        const ok = renderBlock({ kind: "tool", id: "t2", data: { name: "read", args: "{}", state: "ok", summary: "完成" } }) as HTMLDetailsElement;
+        expect(ok.open).toBe(false);
     });
 });
 

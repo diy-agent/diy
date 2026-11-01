@@ -25,7 +25,7 @@ import { createSession, type AgentSession, type ChatMessage, type LlmPort } from
 import { openJsonlSessionStore, type JsonlSessionStore } from "@diy-agent/session-store-jsonl";
 import { createOpenAiCompatible, resolveProviderConfig } from "@diy-agent/llm-provider";
 import { loadCatalog, readAccountValue, type ModelCatalogEntry } from "@diy-agent/model-catalog";
-import { wireOf, type ChatSessionHost, type ChatSnapshot, type ModelChoice, type SessionSummary } from "@diy-agent/chat-page";
+import { wireOf, type ChatSessionHost, type ChatSnapshot, type ModelChoice, type SessionSummary, type WireMessage } from "@diy-agent/chat-page";
 
 /** `meta.json` 的形状（会话列表的全部信息；消息正文在桶里） */
 interface SessionMeta {
@@ -169,7 +169,7 @@ export function createChatSessions(options: ChatSessionsOptions): ChatSessionHos
         if (selectedModel === null) selectedModel = keyOf(catalog()[0] ?? null) || null;
         // 重启后默认打开最近的会话（判据 4：列表在，点开就完整；这里连点都不用点）
         activeId ??= list[0]?.id ?? null;
-        let messages: readonly { role: "user" | "assistant"; text: string }[] = [];
+        let messages: readonly WireMessage[] = [];
         const current = activeId === null ? null : await opened(activeId).catch(() => null);
         if (current !== null) messages = wireOf(current.session.messages);
         return {

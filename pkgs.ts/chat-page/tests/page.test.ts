@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { createPage } from "../src/main.js";
 import { FAKE_REPLY } from "../src/main.js";
-import type { SendResult } from "../src/shared.js";
+import type { SendResult, WireMessage } from "../src/shared.js";
+
+/** 块列表 → 纯文本（测试只关心「说了什么」，id 不逐个比对） */
+function texts(message: WireMessage): string[] {
+    return message.blocks.map((block) => (block.kind === "text" ? String(block.data["text"]) : `[${block.kind}]`));
+}
 
 describe("createPage（主进程侧）", () => {
     it("交付 id / title / methods", () => {
@@ -11,13 +16,12 @@ describe("createPage（主进程侧）", () => {
         expect(typeof page.methods?.["send"]).toBe("function");
     });
 
-    it("send 回一条固定回复，消息线 = user + assistant", async () => {
+    it("send 回一条固定回复，消息线 = user + assistant（都是 text 块）", async () => {
         const page = createPage();
         const result = (await page.methods!["send"]!("在吗")) as SendResult;
-        expect(result.messages).toEqual([
-            { role: "user", text: "在吗" },
-            { role: "assistant", text: FAKE_REPLY },
-        ]);
+        expect(result.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+        expect(result.messages.map(texts)).toEqual([["在吗"], [FAKE_REPLY]]);
+        expect(result.messages[0]?.blocks[0]).toEqual({ kind: "text", id: "b0", data: { text: "在吗" } });
     });
 
     it("第二条消息追加在消息线后面", async () => {
@@ -55,6 +59,6 @@ describe("createPage（主进程侧）", () => {
     it("config.reply 可以换固定文本（装配层用）", async () => {
         const page = createPage({ reply: "另一句" });
         const result = (await page.methods!["send"]!("嗨")) as SendResult;
-        expect(result.messages[1]).toEqual({ role: "assistant", text: "另一句" });
+        expect(texts(result.messages[1]!)).toEqual(["另一句"]);
     });
 });

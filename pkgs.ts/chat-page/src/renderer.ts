@@ -9,7 +9,12 @@
 
 import type { PageContext, PageView } from "@diy-agent/workbench-ui";
 import type { ChatSnapshot, ModelChoice, SendResult, SessionSummary, WireMessage } from "./shared.js";
+import { textMessage } from "./shared.js";
+import { renderBlocks } from "./block-renderers.js";
 import { ensureChatStyle } from "./style.js";
+
+// ##499：renderer 对外提供块渲染器注册口（插件自造 kind 从这里登记）
+export { registerBlockRenderer, renderBlock, renderBlocks } from "./block-renderers.js";
 
 export const chatPageView: PageView = {
     id: "chat",
@@ -89,7 +94,7 @@ export const chatPageView: PageView = {
                     void ctx
                         .invoke<ChatSnapshot>("selectSession", { id: session.id })
                         .then(apply)
-                        .catch((cause: unknown) => paint([...current, { role: "assistant", text: `切换失败：${messageOf(cause)}` }]));
+                        .catch((cause: unknown) => paint([...current, textMessage("assistant", `切换失败：${messageOf(cause)}`)]));
                 });
                 item.append(button);
                 sessionList.append(item);
@@ -143,7 +148,7 @@ export const chatPageView: PageView = {
             void ctx
                 .invoke<ChatSnapshot>("createSession", model)
                 .then(apply)
-                .catch((cause: unknown) => paint([...current, { role: "assistant", text: `新建失败：${messageOf(cause)}` }]))
+                .catch((cause: unknown) => paint([...current, textMessage("assistant", `新建失败：${messageOf(cause)}`)]))
                 .finally(() => {
                     busy = false;
                     newButton.disabled = false;
@@ -159,7 +164,7 @@ export const chatPageView: PageView = {
             send.disabled = true;
             modelSelect.disabled = true;
             input.value = "";
-            paint([...current, { role: "user", text }]);
+            paint([...current, textMessage("user", text)]);
             const multi = snapshot !== null && snapshot.activeId !== null;
             const request: Promise<unknown> = multi
                 ? ctx.invoke<ChatSnapshot>("send", { sessionId: snapshot!.activeId, text })
@@ -170,7 +175,7 @@ export const chatPageView: PageView = {
                     else paint((result as SendResult).messages);
                 })
                 .catch((cause: unknown) => {
-                    paint([...current, { role: "assistant", text: `出错了：${messageOf(cause)}` }]);
+                    paint([...current, textMessage("assistant", `出错了：${messageOf(cause)}`)]);
                 })
                 .finally(() => {
                     busy = false;
@@ -221,9 +226,10 @@ function row(doc: Document, message: WireMessage): HTMLElement {
     item.dataset["role"] = message.role;
     const role = node(doc, "span", "chat-role");
     role.textContent = message.role === "user" ? "我" : "助手";
-    const text = node(doc, "div", "chat-text");
-    text.textContent = message.text;
-    item.append(role, text);
+    // ##499：一行 = 若干 Block；renderer 只认 Block，不认识任何单个 kind 的数据语义
+    const blocks = node(doc, "div", "chat-blocks");
+    blocks.append(...renderBlocks(message.blocks));
+    item.append(role, blocks);
     return item;
 }
 

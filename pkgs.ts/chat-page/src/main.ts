@@ -10,14 +10,9 @@
 
 import { createSession, type ChatMessage, type LlmPort, type SessionStore } from "@diy-agent/session";
 import type { PageContribution } from "@diy-agent/workbench";
+import { wireOf } from "./blocks.js";
 import { ChatPageError } from "./errors.js";
-import type {
-    ChatSessionHost,
-    ChatSnapshot,
-    MultiSendArgs,
-    SendResult,
-    WireMessage,
-} from "./shared.js";
+import type { ChatSessionHost, ChatSnapshot, MultiSendArgs, SendResult } from "./shared.js";
 
 /** 假回复的固定正文（第一刀的唯一输出） */
 export const FAKE_REPLY = "这是一条固定的假回复 —— 第一刀只验 UI 链路，还没接真模型。";
@@ -93,6 +88,9 @@ export function createPage(config?: unknown): PageContribution {
 
 export default createPage;
 
+// ##499：core 事件 → Block 的归一化在主进程侧（blocks.ts）；renderer 不碰 core 类型。
+export { wireOf };
+
 // ── 单会话模式的配置解析 ─────────────────────────
 
 /** 从 config 取注入的 LlmPort（形状对不上就当没传 —— 配置错误不该静默变成空回复） */
@@ -147,14 +145,4 @@ function multiSendArgsOf(args: unknown): MultiSendArgs {
     if (typeof sessionId !== "string" || sessionId.trim() === "") throw new ChatPageError("chat/empty-text", "缺少会话 id");
     if (typeof text !== "string" || text.trim() === "") throw new ChatPageError("chat/empty-text", "消息正文为空");
     return { sessionId, text };
-}
-
-/** session 消息 → 线上形状 */
-export function wireOf(messages: readonly ChatMessage[]): WireMessage[] {
-    const out: WireMessage[] = [];
-    for (const message of messages) {
-        if (message.role !== "user" && message.role !== "assistant") continue;
-        out.push({ role: message.role, text: message.text ?? "" });
-    }
-    return out;
 }
