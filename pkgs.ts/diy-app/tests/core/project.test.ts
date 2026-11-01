@@ -56,14 +56,14 @@ describe("createProject", () => {
 });
 
 describe("removeProject", () => {
-  it("删除数据目录 + 摘除目标仓库名片", () => {
+  it("删除数据目录 + 摘除目标仓库名片", async () => {
     mkdirSync(repo("f"), { recursive: true });
     writeFileSync(repo("f") + "/diy.yaml", yaml.dump({ ref: { source: [] } }));
 
     const id = createProject(repo("f"), { label: "删我" });
     expect(projectExists(id)).toBe(true);
 
-    removeProject(id);
+    await removeProject(id);
     expect(projectExists(id)).toBe(false);
     expect(existsSync(join(projectsRoot(), id))).toBe(false);
 
@@ -73,8 +73,8 @@ describe("removeProject", () => {
     expect(doc["ref"]).toEqual({ source: [] });
   });
 
-  it("删除不存在的 project 不抛异常", () => {
-    expect(() => removeProject("999")).not.toThrow();
+  it("删除不存在的 project 不抛异常", async () => {
+    await expect(removeProject("999")).resolves.toBeUndefined();
   });
 });
 

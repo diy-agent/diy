@@ -13,7 +13,7 @@
         "types": [],
         "rootDir": "src",
         "outDir": "lib",
-        "noEmit": false,
+        "noEmit": false,
         "declaration": true,
         "sourceMap": true
     },

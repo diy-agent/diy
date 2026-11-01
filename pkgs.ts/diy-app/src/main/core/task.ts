@@ -570,11 +570,11 @@ export function moveTask(uri: string, parent: string): void {
 // ═══════════════════════════════════════
 
 /** 删除任务目录（含 AGENTS.md） */
-export function deleteTask(uri: string): void {
+export async function deleteTask(uri: string): Promise<void> {
   const dir = taskDir(uri);
   if (existsSync(dir)) {
     // 同上：Windows 上 recursive rm 需要重试（见 core/rm.ts 头注）
-    removeDirRobust(dir);
+    await removeDirRobust(dir);
   }
 }
 

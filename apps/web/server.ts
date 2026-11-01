@@ -15,14 +15,25 @@
 import http from 'node:http';
 import http2 from 'node:http2';
 import { randomUUID } from 'node:crypto';
-import { createReadStream } from 'node:fs';
+import { createReadStream, readdirSync, readFileSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { userInfo } from 'node:os';
 import { extname, normalize, resolve } from 'node:path';
 import { ChannelServerBinding } from '@diy-agent/rpc';
 import { HttpServerBinding } from '@diy-agent/rpc/http';
 import { WsTransport } from '@diy-agent/rpc/ws';
-import { ensureIdentity } from '@diy-agent/remote/node';
+import { tryFormatAddress, type DiscoveredInstance } from '@diy-agent/remote';
+import { ensureIdentity, localDiscoverer } from '@diy-agent/remote/node';
+import {
+    isOwnRecordFile,
+    localISOString,
+    registryDir,
+    removeRecord,
+    snapshotParents,
+    updateRecord,
+    writeRecord,
+    type WebInstanceRecord,
+} from './registry.js';
 import { WebSocketServer } from 'ws';
 import { openAuthStore, authStorePath, type AuthCore } from './auth.js';
 import { newWebRpcStats, registerWebApi, type WebPeer, type WebRpcStats } from './handlers.js';
@@ -96,14 +107,53 @@ const MIME: Record<string, string> = {
     '.map': 'application/json; charset=utf-8',
 };
 
-/** 身份地址（##484 的格式：`user@host/app.variant`）。##484 合入后换成它的 formatAddress() */
-export function displayAddress(input: {
+/** 地址多久重算一次（超出就重扫）：定死会漏掉「同格第二台」（判据 1） */
+const ADDRESS_TTL_MS = 2000;
+
+/** 本机实例扫描：跳过自己那条（自己 ping 自己既浪费又可能跨实例递归成立） */
+const addressDiscoverer = localDiscoverer({
+    timeoutMs: 300,
+    readFile: (file) => (isOwnRecordFile(file) ? null : readFileOrNull(file)),
+});
+
+function readFileOrNull(file: string): string | null {
+    try {
+        return readFileSync(file, 'utf-8');
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * 身份地址（##484 的规则）：默认 `user@host/app.variant`；**同格**（本机还有 app+variant 相同的
+ * 实例）时带端口才分得清。
+ *
+ * 冲突判据走 local 发现器（注册表 + /ping 探活），而不是「读注册表就当数」——进程卡死 / 端口已关
+ * 的旧条目不该让地址凭空多出端口。拼不出来（显示名含保留字符）退回 `user@host`，不抛。
+ */
+async function resolveAddress(input: {
     readonly user: string;
     readonly host: string;
-    readonly app?: string;
     readonly variant: string;
-}): string {
-    return `${input.user}@${input.host}/${input.app ?? APP_NAME}.${input.variant}`;
+    readonly port: number;
+}): Promise<string> {
+    let peers: DiscoveredInstance[] = [];
+    try {
+        peers = await addressDiscoverer.discover();
+    } catch {
+        /* 扫不到别人不是错：当作「本机只有我」，地址不带端口 */
+    }
+    const clash = peers.some(
+        (peer) => peer.meta?.['app'] === APP_NAME && peer.meta?.['variant'] === input.variant,
+    );
+    const address = tryFormatAddress({
+        user: input.user,
+        host: input.host,
+        app: APP_NAME,
+        variant: input.variant,
+        ...(clash ? { port: input.port } : {}),
+    });
+    return address ?? `${input.user}@${input.host}`;
 }
 
 /** 对端是否回环（副方管理面的唯一判据） */
@@ -126,11 +176,54 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     // 身份：`$DIY_HOME/instance-id` 由 ##479 落盘，重启不变（别拿 hostname 当 id）
     const identity = ensureIdentity(options.home);
     const startedAt = new Date().toISOString();
-    const address = displayAddress({
-        user: userInfo().username,
-        host: identity.identity.displayName,
-        variant,
-    });
+    const selfPid = process.pid;
+
+    // ── 自报注册表 + 地址（##495）：启动/退出写/删 `~/.diy-instances/<pid>.json` ──
+    // 端口要 listen 之后才知道，故记录在 listen 后写（web 没有 diy-app 那种「先写 null 再回填」的必要）。
+    const recordsDir = registryDir();
+    let listeningPort = port;
+    let address = `${userInfo().username}@${identity.identity.displayName}`;
+    let addressAt = 0;
+    let addressRefresh: Promise<void> | null = null;
+    let addressSignature = '';
+
+    /** 注册表目录的「名单签名」：别的实例起来 / 退出 = 名单变 = 地址必须重算（不等 TTL） */
+    const registrySignature = (): string => {
+        try {
+            return readdirSync(recordsDir).sort().join(',');
+        } catch {
+            return '';
+        }
+    };
+
+    const refreshAddress = (): Promise<void> => {
+        // 已有一次在跑：**立刻用旧值返回**，不排队等它 —— 否则跨实例互 ping 会等到超时（环）
+        if (addressRefresh !== null) return Promise.resolve();
+        const signature = registrySignature();
+        const changed = signature !== addressSignature;
+        if (!changed && Date.now() - addressAt < ADDRESS_TTL_MS) return Promise.resolve();
+        addressRefresh = (async () => {
+            try {
+                address = await resolveAddress({
+                    user: userInfo().username,
+                    host: identity.identity.displayName,
+                    variant,
+                    port: listeningPort,
+                });
+                updateRecord(recordsDir, selfPid, { address });
+            } catch {
+                /* 算不出来就保留上一次的 —— /ping 永远有东西可答 */
+            } finally {
+                addressAt = Date.now();
+                addressSignature = registrySignature();
+                addressRefresh = null;
+            }
+        })();
+        return addressRefresh;
+    };
+
+    const dropSelfRecord = (): void => removeRecord(recordsDir, selfPid);
+    process.once('exit', dropSelfRecord);
 
     const auth = await openAuthStore(authStorePath(options.home), {
         now: () => new Date(),
@@ -141,7 +234,15 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         options.llmFor === undefined ? { home: options.home } : { home: options.home, llmFor: options.llmFor },
     );
     const stats = newWebRpcStats();
-    const rpcDeps = { auth, pages, address, stats } as const;
+    // getter：连接建立时才读当前地址（多实例带入端口是后来才成立的）
+    const rpcDeps = {
+        auth,
+        pages,
+        stats,
+        get address(): string {
+            return address;
+        },
+    };
 
     const ping = (): WebPingInfo => ({
         id: identity.identity.id,
@@ -173,6 +274,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
                 res.end();
                 return;
             }
+            // 地址现算：同格第二台可能刚起来 / 刚退出（判据 1/2）
+            await refreshAddress();
             const body = JSON.stringify(ping(), null, 4);
             res.writeHead(200, {
                 'content-type': 'application/json; charset=utf-8',
@@ -201,6 +304,26 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
 
     await listen(server, port, host);
     const actualPort = (server.address() as { port: number }).port;
+    listeningPort = actualPort;
+
+    // 就绪后自报：此时「要不要带端口」还不确定，先写基础形态，refreshAddress 会回填
+    const selfRecord: WebInstanceRecord = {
+        pid: selfPid,
+        port: actualPort,
+        pingPort: actualPort,
+        diyHome: options.home,
+        variant,
+        env: process.env['DIY_ENV'] ?? 'production',
+        argv: [...process.argv],
+        cwd: process.cwd(),
+        startedAt,
+        updatedAt: localISOString(),
+        parents: snapshotParents(),
+        app: APP_NAME,
+        address,
+    };
+    writeRecord(recordsDir, selfRecord);
+    await refreshAddress();
 
     // ── 可选的 h2c RPC 端口：同一份 router 挂到 HttpServerBinding（Node 客户端）──
     //
@@ -230,6 +353,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         pages,
         stats,
         async close(): Promise<void> {
+            process.removeListener('exit', dropSelfRecord);
+            dropSelfRecord();
             for (const client of wss.clients) client.close();
             wss.close();
             await new Promise<void>((done) => httpRpcServer?.close(() => done()) ?? done());

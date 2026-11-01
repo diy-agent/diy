@@ -8,23 +8,23 @@ import { diyHome } from "../../src/main/core/state";
 import { tryLock } from "../../src/main/core/fs-lock";
 
 describe("tryLock", () => {
-  it("获取成功返回 release 函数", () => {
+  it("获取成功返回 release 函数", async () => {
     const lockPath = join(diyHome(), "test-lock");
-    const lock = tryLock(lockPath, 1000);
+    const lock = await tryLock(lockPath, 1000);
     expect(lock).not.toBeNull();
     expect(lock!.release).toBeTypeOf("function");
-    lock!.release();
+    await lock!.release();
     expect(existsSync(lockPath)).toBe(false);
   });
 
-  it("释放后可以重新获取", () => {
+  it("释放后可以重新获取", async () => {
     const lockPath = join(diyHome(), "test-lock-2");
-    const lock1 = tryLock(lockPath, 1000);
+    const lock1 = await tryLock(lockPath, 1000);
     expect(lock1).not.toBeNull();
-    lock1!.release();
+    await lock1!.release();
 
-    const lock2 = tryLock(lockPath, 1000);
+    const lock2 = await tryLock(lockPath, 1000);
     expect(lock2).not.toBeNull();
-    lock2!.release();
+    await lock2!.release();
   });
 });

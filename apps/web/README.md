@@ -66,6 +66,7 @@ b / c 机制一样，只是谁发起 —— 本刀把「配对 + 授权」实现
 | `handlers.ts` | 把方法挂到某个 binding：每连接一份授权状态；副方管理面仅回环                              |
 | `pages.ts`    | 页面宿主：`loadPages` 装 `@diy-agent/chat-page/main` + `@diy-agent/app-chat/sessions`     |
 | `server.ts`   | HTTP（/ping + 静态）+ WebSocket upgrade；可选 h2c RPC 端口                                |
+| `registry.ts` | 实例注册表自报：启动/退出写删 `~/.diy-instances/<pid>.json`（##495，与 diy-app 同一份格式） |
 | `gateway.ts`  | 浏览器侧：WebSocket → `ChannelClientBinding` → `createTypedClient` → `WorkbenchGateway`   |
 | `renderer.ts` | 浏览器入口：登录页 / 等待确认 / 工作台（`registerPage(chatPageView)` + `mountWorkbench`） |
 | `main.mjs`    | 启动器：esbuild 现编 → import 真入口（判据 1 的那条命令）                                 |
@@ -106,6 +107,15 @@ b / c 机制一样，只是谁发起 —— 本刀把「配对 + 授权」实现
 }
 ```
 
-`address` 按 ##484 的 displayAddress 格式拼（`user@host/app.variant`）；##484 合入后换成它的
-`formatAddress()`（含多实例带端口）。`/ping` 无鉴权（它只答「我是谁、我活着」），所以缺省只绑
-`127.0.0.1` —— 跨机要显式 `--host`。
+`address` 由 `@diy-agent/remote` 的 `tryFormatAddress` 拼（##484 的规则，`user@host/app.variant`）：
+**同格多实例**（本机还有 `app + variant` 相同的实例）时带端口（`…/diy-web.lab:8124`），只有一个时不带。
+冲突判据走 local 发现器（注册表 + `/ping` 探活），故启动后 /ping 会按注册表名单变化重算地址。
+
+`/ping` 无鉴权（它只答「我是谁、我活着」），所以缺省只绑 `127.0.0.1` —— 跨机要显式 `--host`。
+
+## 实例注册表（##495）
+
+启动时写 `~/.diy-instances/<pid>.json`（`port` / `pingPort` / `diyHome` / `variant` / `env` / `argv` /
+`cwd` / `startedAt` / `updatedAt` / `parents`，外加 `app` 与 `address`），退出（`close()` 或进程 `exit`）删除。
+这样 local 发现器（remote-shell 横条、别的实例）才看得见 web 实例。
+异常退出留下的条目由读侧的 `/ping` 探活过滤；测试用 `DIY_INSTANCE_REGISTRY` 指到临时目录。

@@ -179,7 +179,7 @@ export async function ensureSidebarRoom(id: string): Promise<Room> {
             if (shadowUri) {
                 try {
                     const { deleteTask } = await import("../core/task");
-                    deleteTask(shadowUri);
+                    await deleteTask(shadowUri);
                 } catch (delErr) {
                     reportError(delErr, { where: "room/sidebar-shadow-rollback", roomId: id, taskUri: shadowUri });
                 }

@@ -106,14 +106,14 @@ export function createProject(
 }
 
 /** 删除 project：摘除目标仓库名片 + 删除数据目录（连带任务） */
-export function removeProject(id: string): void {
+export async function removeProject(id: string): Promise<void> {
   const pid = projectDir(id);
   if (existsSync(pid)) {
     const meta = readYaml(join(pid, "meta.yaml"));
     const repoPath = meta["path"] as string | undefined;
     if (repoPath) removeNamecard(repoPath);
     // 走带重试的实现：Windows 上 recursive rm 会间歇 ENOTEMPTY / EPERM（见 core/rm.ts 头注）
-    removeDirRobust(pid);
+    await removeDirRobust(pid);
   }
 }
 

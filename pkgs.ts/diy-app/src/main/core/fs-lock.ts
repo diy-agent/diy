@@ -1,5 +1,8 @@
 // src/main/core/fs-lock.ts
 // 🎯 文件锁：pid 文件 + 原子 mkdir，防止多实例冲突
+//
+// ⚠️ 2026-11-01：`tryLock` 变 async —— `removeDirRobust` 改成异步后，release 不能在里面
+//   await 同步函数。Node 单线程，同步 IO 卡死主进程是原则问题（用户裁）。
 
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { removeDirRobust } from "./rm";
@@ -11,7 +14,7 @@ import { diyHome } from "./state";
  * 尝试获取文件锁（基于 pid 文件）。
  * 获取成功返回 release 函数，失败返回 null。
  */
-export function tryLock(lockPath: string, timeout = 3000): { release(): void } | null {
+export async function tryLock(lockPath: string, timeout = 3000): Promise<{ release(): Promise<void> } | null> {
   const start = Date.now();
   while (Date.now() - start < timeout) {
     try {
@@ -20,9 +23,9 @@ export function tryLock(lockPath: string, timeout = 3000): { release(): void } |
       // 写入 pid
       writeFileAtomic(join(lockPath, "pid"), String(process.pid));
       return {
-        release: () => {
+        release: async () => {
           try {
-            removeDirRobust(lockPath);
+            await removeDirRobust(lockPath);
           } catch {
             /* 其他进程可能已清理 */
           }
@@ -42,7 +45,7 @@ export function tryLock(lockPath: string, timeout = 3000): { release(): void } |
           } catch {
             // 进程已死，释放锁
             try {
-              removeDirRobust(lockPath);
+              await removeDirRobust(lockPath);
             } catch {}
             continue;
           }
