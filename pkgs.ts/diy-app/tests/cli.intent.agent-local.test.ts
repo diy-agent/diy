@@ -522,7 +522,7 @@ describe("agent.local — 真实对话（zen/go）", () => {
             const uri = await setup("注册表 watch 任务");
             const out = join(fx.HOME, "sessions-watch.jsonl");
             const snap = await fx.sh.run(
-                `rm -f ${out}; ./diy.sh agent local sessions --watch > ${out} 2>&1 & echo $!`,
+                `rm -f "${out}"; ./diy.sh agent local sessions --watch > ${out} 2>&1 & echo $!`,
             );
             const watchPid = (snap.stdout.trim().split("\n").pop() ?? "").trim();
             expect(watchPid, "后台 watch 应回报 pid").toMatch(/^\d+$/);

@@ -34,11 +34,13 @@ beforeAll(async () => {
   const res = await sh.getJson(`./diy.sh project create "${projDir}"`);
   pid = String((res.data as any)?.data?.id);
 
-  // 夹具：小文件 / 大文件（超 50KB 字节上限）
+  // 夹具：小文件 / 大文件。大文件要**确实超过上限**（原先 500×150≈80KB，而上限被 0331eba2
+  // 从 50KB 放大到 100KB 之后就不再触发了 —— 用例名字里有 50KB，实际上没截断，断言自然红）。
+  // 取 500×400≈200KB：保留「500 行」这个真值断言，同时留出足够的超限空间。
   writeFileSync(join(projDir, "small.txt"), "alpha\nbeta\ngamma\n", "utf-8");
   writeFileSync(
     join(projDir, "big.txt"),
-    Array.from({ length: 500 }, (_, i) => `row-${i + 1}-${"x".repeat(150)}`).join("\n") + "\n",
+    Array.from({ length: 500 }, (_, i) => `row-${i + 1}-${"x".repeat(400)}`).join("\n") + "\n",
     "utf-8",
   );
 }, 120_000);
@@ -75,10 +77,12 @@ describe("tool read — 输出契约", () => {
     expect(r.stdout).toContain("[文件结束，共 3 行]");
   });
 
-  it("字节上限：超 50KB 时截断但仍报准确总行数", async () => {
+  it("字节上限：超上限时截断但仍报准确总行数", async () => {
     const r = await sh.diy2("tool", "read", join(projDir, "big.txt"));
     expect(r.code).toBe(0);
-    expect(r.stdout).toContain("已达 50KB 输出上限");
+    // ⚠️ 不钉具体 KB：上限是产品旋钮（0331eba2 把它从 50KB 放大到 100KB，这条当时就红了）。
+    // 判据要守的是「截断了 + 报了准确总行数」，不是「上限恰好是多少」。
+    expect(r.stdout).toMatch(/已达 \d+KB 输出上限/);
     expect(r.stdout).toContain("共 500 行"); // 真值：没有被 break 截小
   });
 });
@@ -128,7 +132,7 @@ describe("tool read — 相对路径基准 = 敲命令的 shell", () => {
   // 所以解析必须发生在 CLI 侧的 parser 里（api-def 的 resolvePath 注解），
   // 否则 `cd <dir> && diy tool read small.txt` 会去应用目录找文件。
   it("cd 到别处后相对路径仍可读（不依赖 app 进程 cwd）", async () => {
-    const r = await sh.run(`(cd ${projDir} && ${REPO_ROOT}/diy.sh tool read small.txt)`);
+    const r = await sh.run(`(cd "${projDir}" && "${REPO_ROOT}"/diy.sh tool read small.txt)`);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain("1: alpha");
     expect(r.stdout).toContain("[文件结束，共 3 行]");
@@ -136,8 +140,8 @@ describe("tool read — 相对路径基准 = 敲命令的 shell", () => {
 
   it("相对路径的解析基准是 shell cwd：同一命令换目录读到的就是另一份文件", async () => {
     writeFileSync(join(HOME, "small.txt"), "elsewhere\n", "utf-8");
-    const inProj = await sh.run(`(cd ${projDir} && ${REPO_ROOT}/diy.sh tool read small.txt)`);
-    const inHome = await sh.run(`(cd ${HOME} && ${REPO_ROOT}/diy.sh tool read small.txt)`);
+    const inProj = await sh.run(`(cd "${projDir}" && "${REPO_ROOT}"/diy.sh tool read small.txt)`);
+    const inHome = await sh.run(`(cd "${HOME}" && "${REPO_ROOT}"/diy.sh tool read small.txt)`);
     expect(inProj.stdout).toContain("1: alpha");
     expect(inHome.stdout).toContain("1: elsewhere");
   });

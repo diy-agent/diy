@@ -58,13 +58,13 @@ describe("project", () => {
 
   it("create — 在目标仓库写 diy.yaml 名片（含 project 段）", async () => {
     const repo = `${fx.HOME}/it-b`;
-    await fx.sh.run(`mkdir -p ${repo}`); // 目标仓库需存在才会写名片
+    await fx.sh.run(`mkdir -p "${repo}"`); // 目标仓库需存在才会写名片
 
     const res = await fx.sh.getJson(`./diy.sh project create "${repo}" --label b`);
     const id = String((res.data as any)?.data?.id);
 
     await fx.sh.assertSession(`
-      $ test -f ${repo}/diy.yaml
+      $ test -f "${repo}"/diy.yaml
       $ grep -q "project:" ${repo}/diy.yaml
     `);
 

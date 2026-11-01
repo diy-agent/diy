@@ -174,7 +174,7 @@ describe.skipIf(!HAS_HDIUTIL)("##384 真卷活体（hdiutil 小镜像，绝不�
 
   it.skipIf(!CAN_RECOVER)("真腾出空间 → **自动消**（不要用户手动关）", async () => {
     // 上一用例已把该槽静音：清掉填充文件后水位回 ok —— 恢复时静音解除、红条消失
-    await fx.sh.run(`rm -f ${MOUNT}/fill`);
+    await fx.sh.run(`rm -f "${MOUNT}"/fill`);
     const rows = await waitUntil(envList, (v) => v.length === 0, { label: "腾空间后自动消", timeoutMs: 20_000 });
     expect(rows).toHaveLength(0);
     const kb = await dfAvailKb();

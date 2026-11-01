@@ -561,6 +561,10 @@ describe("flow 产物与视图下发（art + render 插件）", () => {
         writeFileSync(good, "一段文本", "utf-8");
         const wrongShape = join(fx.HOME, "t337-wrong.json");
         writeFileSync(wrongShape, JSON.stringify({ rows: [["表格不是 diff 文本"]] }), "utf-8");
+        // ⚠️ 空内容用例不能用 `/dev/null`：它是 shell 的重定向目标，作为 **CLI 参数** 传进去时
+        // node 会去开 `C:\\dev\\null`（Windows 上不存在）⇒ 报的是“读不到文件”而不是预期的“内容为空”。
+        const emptyFile = join(fx.HOME, "t337-empty.txt");
+        writeFileSync(emptyFile, "", "utf-8");
 
         const cases: Array<[string, RegExp]> = [
             // `--node` 必填
@@ -574,7 +578,7 @@ describe("flow 产物与视图下发（art + render 插件）", () => {
             [`./diy.sh flow artifact put ${uri} --node implement --seq 3 --file "${good}"`, /只驻留过 1 次/],
             [`./diy.sh flow view ${uri} --node implement --seq 0`, /不存在/],
             // 空内容：不写空产物
-            [`./diy.sh flow artifact put ${uri} --node implement --file /dev/null`, /内容为空/],
+            [`./diy.sh flow artifact put ${uri} --node implement --file "${emptyFile}"`, /内容为空/],
             // 插件译不出来的 raw（implement 挂的是 patch，只吃文本）⇒ **写之前**就拒
             [`./diy.sh flow artifact put ${uri} --node implement --file "${wrongShape}"`, /应为字符串/],
             // 非形状 URI：形状闸门在**读实例之前**（single point）

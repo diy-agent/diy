@@ -27,8 +27,8 @@ const REPO_ROOT = join(__dirname, "..", "..", "..");
 /** 在**指定目录**下跑 diy 子命令并取 JSON（归属用例需要把 cwd 放到别处）。
  *  不能用 `fx.sh.getJson`：它把 `--json` 拼在整行末尾，`(cd x && …)` 这种写法会变成语法错。 */
 async function jsonIn(dir: string, args: string): Promise<any> {
-  const r = await fx.sh.run(`cd ${dir} && ${REPO_ROOT}/diy.sh ${args} --json`);
-  await fx.sh.run(`cd ${REPO_ROOT}`); // 会话 cwd 复位（上面那条会把它留在 dir）
+  const r = await fx.sh.run(`cd "${dir}" && "${REPO_ROOT}"/diy.sh ${args} --json`);
+  await fx.sh.run(`cd "${REPO_ROOT}"`); // 会话 cwd 复位（上面那条会把它留在 dir）
   if (r.code !== 0) throw new Error(`[jsonIn ${dir}: ${args}] exit=${r.code}\n${r.stderr}`);
   return JSON.parse(r.stdout);
 }
@@ -942,7 +942,7 @@ describe("task create / drafts set 正文护栏（##376）", () => {
 
     // 在 A 的子目录（worktree 同理）里给 B 建任务 → 拦，并列出候选
     await fx.sh.assertSession(`
-      $! (cd ${aPath}/sub && ${REPO_ROOT}/diy.sh task create 落错仓 ${b})
+      $! (cd "${aPath}"/sub && "${REPO_ROOT}"/diy.sh task create 落错仓 ${b})
       *拒绝创建*
       *${a}*
     `);
