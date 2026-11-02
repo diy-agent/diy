@@ -8,6 +8,7 @@ import { LlmPage } from "./components/LlmPage";
 import { TrafficPage } from "./components/TrafficPage";
 import { SessionOverviewPage } from "./components/SessionOverviewPage";
 import { InstancesPage } from "./components/InstancesPage";
+import { HubPage } from "./components/HubPage";
 import { RoomsPage } from "./components/RoomsPage";
 import { SidebarRoom } from "./components/SidebarRoom";
 import { SessionGlyph, SessionGlyphDot } from "./components/SessionGlyph";
@@ -165,7 +166,7 @@ function topFindSurface(): HTMLElement | undefined {
  * 「任务执行页」不在顶级导航里 —— 它是**动态页面**：每打开一个任务就多一个，
  * 挂在导航「任务」之下（等同浏览器/编辑器开 tab）。故用 route 而不是扁平 page id。
  */
-type Section = "task" | "llm" | "traffic" | "sessions" | "rooms" | "instances" | "settings";
+type Section = "task" | "llm" | "traffic" | "sessions" | "rooms" | "instances" | "hub" | "settings";
 
 /**
  * 路由 = 顶级 section，或一个**已打开的 tab**（key 形如 `task-run:<uri>` / `lab:<uri>`）。
@@ -192,6 +193,8 @@ const NAV_ITEMS: Array<{ id: Section; label: string; icon: string }> = [
     // 房间看的是「谁对谁说了什么」—— 两者是不同层的东西，刻意并列而不是互相嵌套。
     { id: "rooms", label: "房间", icon: "🏠" },
     { id: "instances", label: "实例", icon: "🖥" },
+    // 「配对」= hub 主控 / 卫星（##500）：地址即身份，人比对真实 URL，6 位码只管「谁被允许进来」。
+    { id: "hub", label: "配对", icon: "🔗" },
     { id: "settings", label: "设置", icon: "⚙️" },
 ];
 
@@ -219,7 +222,7 @@ const NAV_TONE_CLASS: Record<GlyphTone, string> = {
 /** 「会话」列表最多列几行：nav 是"扫一眼"的地方，不是账页（更多的折成表尾一句纯文本） */
 const NAV_SESSION_LIMIT = 8;
 
-const VALID_PAGES = new Set(["task", "task-run", "lab", "llm", "traffic", "sessions", "rooms", "instances", "settings"]);
+const VALID_PAGES = new Set(["task", "task-run", "lab", "llm", "traffic", "sessions", "rooms", "instances", "hub", "settings"]);
 
 /**
  * 窄窗断点。**必须与 index.css 的 `@media (width < 1024px)`、daisyUI 的 `lg:` 分支
@@ -1288,6 +1291,9 @@ export default function App() {
                     </Show>
                     <Show when={route().kind === "section" && (route() as { section: Section }).section === "instances"}>
                         <InstancesPage />
+                    </Show>
+                    <Show when={route().kind === "section" && (route() as { section: Section }).section === "hub"}>
+                        <HubPage />
                     </Show>
                     <Show when={route().kind === "section" && (route() as { section: Section }).section === "settings"}>
                         <div class="flex flex-col h-full">

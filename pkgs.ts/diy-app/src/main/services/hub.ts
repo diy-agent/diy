@@ -287,7 +287,8 @@ export class HubService {
 
   private async start(): Promise<HubServer> {
     const identity = await this.requireIdentity();
-    const tls = resolveTlsMaterial(await this.tlsSources());
+    // 显式允许明文（单测 / lab）时不要求证书；生产一律要求受信任 HTTPS（判据 8）
+    const tls = this.allowInsecure() ? null : resolveTlsMaterial(await this.tlsSources());
     return createHubServer({
       identity,
       store: new FileHubStore({
