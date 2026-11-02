@@ -102,9 +102,6 @@ async function build() {
         outfile: join(OUT, 'server.mjs'),
         // 真包边界：@diy-agent/* 运行时按包名解析（与 apps/chat 的主进程同一口径）
         packages: 'external',
-        // 例外：apps/chat 的 sessions.ts 是**源码**（它的 lib/ 要另起 tsc 才能编，且它不是一个能
-        // 直接 import 的应用包）—— 这里把源码打进来，避免「起 web 之前得先把 apps/chat 编一遍」。
-        alias: { '@diy-agent/app-chat/sessions': join(REPO, 'apps/chat/sessions.ts') },
         logLevel: 'warning',
     });
 

@@ -21,6 +21,10 @@
 export { CatalogError } from "./errors.js";
 export type { CatalogErrorCode } from "./errors.js";
 
+// 价目 × 用量 = 金额（纯函数；价目表在本包，算价跟它住一起）
+export { costOf } from "./cost.js";
+export type { CostUsage } from "./cost.js";
+
 export {
     listAccountStates,
     listAccounts,

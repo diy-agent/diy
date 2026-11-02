@@ -39,6 +39,7 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
+    "@diy-agent/bot": "*",
     "@diy-agent/session": "*",
     "@diy-agent/ui": "*",
     "@diy-agent/workbench": "*",

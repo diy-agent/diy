@@ -2,7 +2,7 @@
   "name": "@diy-agent/bot",
   "version": "0.1.1",
   "private": true,
-  "description": "diy 的 bot 实体：身份配置（BotConfig）+ 文件存储（~/.diy/bots/<id>/bot.json）+ 会话归属（session 目录里的 bot.json）",
+  "description": "diy 的 bot 实体：身份配置 + 文件/内存存储 + 会话归属 + bot 对话宿主（createBotChat）",
   "files": [
     "src/"
   ],
@@ -17,6 +17,10 @@
     "./persona": {
       "types": "./src/persona.ts",
       "default": "./lib/persona.js"
+    },
+    "./protocol": {
+      "types": "./src/protocol.ts",
+      "default": "./lib/protocol.js"
     }
   },
   "scripts": {
@@ -24,7 +28,11 @@
   },
   "dependencies": {
     "@diy-agent/time": "*",
-    "zod": "^4.4.3"
+    "zod": "^4.4.3",
+    "@diy-agent/session": "*",
+    "@diy-agent/session-store-jsonl": "*",
+    "@diy-agent/llm-provider": "*",
+    "@diy-agent/model-catalog": "*"
   },
   "devDependencies": {
     "oxfmt": "^0.57.0",

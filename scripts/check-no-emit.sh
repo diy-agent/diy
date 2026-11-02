@@ -25,12 +25,14 @@ fi
 #      apps/*/bin/ 是 app 的手写 CLI 入口（##478：发行包的 bin 必须能从仓库复现，所以入库而不是生成）；
 #      apps/*/main.mjs 同理 —— apps/web 的手写启动器（##485：一条 node 命令起无 Electron 宿主），
 #      它自己按需把 TS 编到 build/<variant>/web/，本身不是 emit 产物。
+#      apps/*/main-memory.mjs 是 apps/chat 的内存模式入口（##505-E），由 esbuild 打包，同属手写源码。
 
 bad=$(find $dirs -type f \
   \( -name '*.js' -o -name '*.jsx' -o -name '*.mjs' -o -name '*.cjs' -o -name '*.d.ts' \) \
   ! -path 'pkgs.ts/diy-app/scripts/build-runtime.mjs' \
   ! -path 'apps/*/bin/*' \
   ! -path 'apps/*/main.mjs' \
+  ! -path 'apps/*/main-memory.mjs' \
   ! -path '*/build/*' ! -path '*/lib/*' ! -path '*/dist/*' ! -path '*/node_modules/*' \
   2>/dev/null | sort || true)
 

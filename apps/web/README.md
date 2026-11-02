@@ -64,7 +64,7 @@ b / c 机制一样，只是谁发起 —— 本刀把「配对 + 授权」实现
 | `api.ts`      | 声明式 RPC 定义（`RpcSchema` + zod）：`web.auth.*` / `web.page.*`                           |
 | `auth.ts`     | 授权内核（纯状态机）+ 落盘 store（`$DIY_HOME/web/auth.json`，0600）                         |
 | `handlers.ts` | 把方法挂到某个 binding：每连接一份授权状态；副方管理面仅回环                                |
-| `pages.ts`    | 页面宿主：`loadPages` 装 `@diy-agent/chat-page/main` + `@diy-agent/app-chat/sessions`       |
+| `pages.ts`    | 页面宿主：`loadPages` 装 `@diy-agent/chat-page/main` + `@diy-agent/bot` 的 `createBotChat`      |
 | `server.ts`   | HTTP（/ping + 静态）+ WebSocket upgrade；可选 h2c RPC 端口                                  |
 | `registry.ts` | 实例注册表自报：启动/退出写删 `~/.diy-instances/<pid>.json`（##495，与 diy-app 同一份格式） |
 | `webauthn.ts` | Passkey 内核（##496）：注册 / 登录 / 会话 + `$DIY_HOME/web/users.json` 落盘                 |
@@ -119,8 +119,7 @@ Touch ID 注册一个 Passkey，之后用它登录。`web.auth.*`（token 授权
 ## 装配复用（页面一行不改）
 
 - 页面：`@diy-agent/chat-page`（renderer 用它的 `renderer-diui` 入口，与 apps/chat 一致）
-- 多会话宿主：`@diy-agent/app-chat/sessions` 的 `createChatSessions({ home })`
-  —— 为此给 apps/chat 的 `exports` 加了 `"./sessions"`（只是导出，不改它一行）
+- bot 对话宿主：`@diy-agent/bot` 的 `createBotChat({ home })`（##505 起不再从 apps/chat 取）
 - 装配器：`@diy-agent/workbench/loader` 的 `loadPages`（纯装配、不含 electron；为此给 workbench
   加了 `"./loader"` 子路径 —— `main` 入口要 electron，Node 侧起不来）
 - chat-page 认的只有 `ctx.invoke`：这里把 `page.*` 两个方法接到它原来的 `send` / `snapshot` …上，

@@ -23,6 +23,15 @@ export type { BotErrorCode } from "./errors.js";
 
 export { createBot, createFirstBot, ensureBot, hasAnyBot, newSessionId, openBot, setBotModel } from "./bot.js";
 
+// ##505：bot 对话宿主（send / snapshot / 模型解析 / 会话标题 / actor 队列）。
+// 会话只是内部技术：没有会话列表，一个 bot 一条长期会话。
+export { FIRST_BOT_DRAFT, createBotChat, createSerial, nextBotId, splitModelKey } from "./chat.js";
+export type { BotChatOptions, Serial } from "./chat.js";
+
+// 线上形状（纯数据 + 纯映射）也可从子路径 `@diy-agent/bot/protocol` 单独取
+// —— renderer 用那个，不会把 node:* 带进浏览器包。
+export * from "./protocol.js";
+
 export { createFileBotStore } from "./store-fs.js";
 export type { FileBotStoreOptions } from "./store-fs.js";
 

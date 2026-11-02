@@ -5,7 +5,7 @@
 // 换真模型时只换 LlmPort，页面与外壳都不动 —— 现在就是这一步（##459）：
 // profile（apps/minimal）在 `config.llm` 里塞一个真 provider，本插件不传就退回假回复。
 //
-// ##465：`config.sessions` 注入一个 **ChatSessionHost** 时切换成多会话模式（左侧列表 /
+// ##465：`config.sessions` 注入一个 **BotChatHost** 时切换成多会话模式（左侧列表 /
 // 顶部模型选择器 / 主区消息流）。单会话模式（不注入）行为一字不变 —— apps/minimal 不受影响。
 //
 // ##498：多会话模式升级成**多 bot** 模式 —— 左栏是 bot（一个 bot 一个长期会话），
@@ -19,8 +19,8 @@ import { ChatPageError } from "./errors.js";
 import type {
     BotDraftInput,
     BotUpdateInput,
-    ChatSessionHost,
-    ChatSnapshot,
+    BotChatHost,
+    BotChatSnapshot,
     FirstBotInput,
     SendArgs,
     SendResult,
@@ -51,15 +51,15 @@ export function createPage(config?: unknown): PageContribution {
             icon: "💬",
             group: "对话",
             methods: {
-                snapshot: (): Promise<ChatSnapshot> => host.snapshot(),
+                snapshot: (): Promise<BotChatSnapshot> => host.snapshot(),
                 // ##497：首启/补选模型（没有这两步，聊天页面在 bots 为空时无从下手）
-                createFirstBot: (args: unknown): Promise<ChatSnapshot> => host.createFirstBot(firstBotInputOf(args)),
+                createFirstBot: (args: unknown): Promise<BotChatSnapshot> => host.createFirstBot(firstBotInputOf(args)),
                 // ##498：新增的是 **bot**（不是会话）；建好即选中
-                createBot: (args: unknown): Promise<ChatSnapshot> => host.createBot(botDraftInputOf(args)),
-                updateBot: (args: unknown): Promise<ChatSnapshot> => host.updateBot(botUpdateInputOf(args)),
-                removeBot: (args: unknown): Promise<ChatSnapshot> => host.removeBot(idOf(args)),
-                selectBot: (args: unknown): Promise<ChatSnapshot> => host.selectBot(idOf(args)),
-                send: async (args: unknown): Promise<ChatSnapshot> => {
+                createBot: (args: unknown): Promise<BotChatSnapshot> => host.createBot(botDraftInputOf(args)),
+                updateBot: (args: unknown): Promise<BotChatSnapshot> => host.updateBot(botUpdateInputOf(args)),
+                removeBot: (args: unknown): Promise<BotChatSnapshot> => host.removeBot(idOf(args)),
+                selectBot: (args: unknown): Promise<BotChatSnapshot> => host.selectBot(idOf(args)),
+                send: async (args: unknown): Promise<BotChatSnapshot> => {
                     const { text } = sendArgsOf(args);
                     return host.send(text, () => {
                         // 当前通道只有「最终消息线」；增量消费留给将来加事件通道
@@ -138,8 +138,8 @@ function replyFrom(config: unknown): string {
 
 // ── 多会话模式的配置解析 ─────────────────────────
 
-/** 从 config 取注入的 ChatSessionHost（形状对不上 = 单会话模式） */
-function hostFrom(config: unknown): ChatSessionHost | undefined {
+/** 从 config 取注入的 BotChatHost（形状对不上 = 单会话模式） */
+function hostFrom(config: unknown): BotChatHost | undefined {
     if (!config || typeof config !== "object") return undefined;
     const candidate = (config as { sessions?: unknown }).sessions;
     if (!candidate || typeof candidate !== "object") return undefined;
@@ -148,7 +148,7 @@ function hostFrom(config: unknown): ChatSessionHost | undefined {
     const ok = ["snapshot", "createBot", "updateBot", "removeBot", "selectBot", "send"].every(
         (key) => typeof port[key] === "function",
     );
-    return ok ? (candidate as ChatSessionHost) : undefined;
+    return ok ? (candidate as BotChatHost) : undefined;
 }
 
 /** 取 `{ id }`（切 bot / 删 bot 共用；也认裸字符串，CLI / 脚本用着方便） */

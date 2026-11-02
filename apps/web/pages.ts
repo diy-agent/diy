@@ -1,14 +1,14 @@
 // pages.ts — 页面宿主：把插件清单装成 { list, invoke }，与 Electron 壳里的 page:invoke 同形。
 //
-// 装配复用了 apps/chat 的两块现成能力（**页面代码一行不改**）：
-//   · 页面插件：`@diy-agent/chat-page/main`（它只认注入的 ChatSessionHost 端口）
-//   · 多会话宿主：`@diy-agent/app-chat/sessions` 的 createChatSessions({ home })
-//     （会话落盘 / 模型目录 / 真 provider 都在那里；本文件不碰文件系统与 key）
+// 装配复用了两块现成能力（**页面代码一行不改**）：
+//   · 页面插件：`@diy-agent/chat-page/main`（它只认注入的 BotChatHost 端口）
+//   · bot 对话宿主：`@diy-agent/bot` 的 createBotChat({ home })
+//     （bot 领域 / 会话落盘 / 模型目录 / 真 provider 都在那里；本文件不碰文件系统与 key）
 //
 // 装配器用 `@diy-agent/workbench/loader`（纯装配，**不 import electron** —— 那是这个包
 // 之所以单独导出 `./loader` 子路径的原因：`main` 入口要 electron，Node 侧起不来）。
 
-import { createChatSessions } from '@diy-agent/app-chat/sessions';
+import { createBotChat } from '@diy-agent/bot';
 import * as chatPageMain from '@diy-agent/chat-page/main';
 import type { PageInfo, PageMethod } from '@diy-agent/workbench/page';
 import { loadPages, type PluginEntry } from '@diy-agent/workbench/loader';
@@ -39,7 +39,7 @@ export async function createPagesHost(options: PagesOptions): Promise<PagesHost>
             type: 'module',
             data: { module: chatPageMain },
             config: {
-                sessions: createChatSessions(
+                sessions: createBotChat(
                     options.llmFor === undefined
                         ? { home: options.home }
                         : { home: options.home, llmFor: options.llmFor },

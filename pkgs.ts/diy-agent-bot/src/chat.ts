@@ -1,47 +1,49 @@
-// sessions.ts — 多 bot 宿主（apps/chat 的实现，注入给 @diy-agent/chat-page 的 config.sessions）。
+// chat.ts — bot 对话宿主：把「一个 bot 一个长期会话」这件事做成可直接注入界面的端口。
 //
-// ##498：这是「chat 以 bot 为中心」那一刀的数据层：
-//   · 左栏是 **bot**（`$DIY_HOME/bots/<id>/bot.json`），不是会话
-//   · 一个 bot 一个**长期会话**：`bot.primary()` 懒创建 + 幂等，id 写回 bot.json
-//   · 会话本体还是老地方：`$DIY_HOME/sessions/chat/<id>/`（meta.json + @diy-agent/session-store-jsonl 的桶）
-//   · **没有「新建会话」**：要新对话 = 新建 bot（或以后做「重置这个 bot 的对话」，本刀不做）
+// ##505 的边界（与 apps/chat 拆开）：
+//   · **bot 领域逻辑**住这里：首启建 bot / 建 bot / 改配置 / 删 bot / 切 bot、对话编排
+//     （`send`）、快照（`snapshot`）、模型解析、会话标题。
+//   · **会话只是内部技术**：没有「会话列表 / 新建会话」—— UI 看到的是 bot，点进去就是
+//     它的长期会话（`bot.primary()` 懒创建 + 幂等，id 写回 bot.json）。
+//   · **成本计算**不在这里：价目表与算价都在 @diy-agent/model-catalog（`costOf`）。
 //
-// 边界（##465）：
-//   · 模型目录由 @diy-agent/model-catalog 投影（只有名字，无 key）
-//   · key 只在建 provider 的那一刻从 readAccountValue 取，**不打印、不落盘**
-//   · 真 provider 走 @diy-agent/llm-provider；provider 表没有的（custom）直接用 catalog 的 baseURL
+// ##498（沿用）：左栏是 bot（`<home>/bots/<id>/bot.json`）；会话本体在
+// `<home>/sessions/chat/<id>/`（meta.json + session-store 的桶）；bots 为空 ⇒ snapshot.bot = null
+// （UI 走首启引导）；模型是 bot 身份的一部分。
 //
-// ##497：bots 为空 ⇒ snapshot.bot = null（UI 走首启引导）；模型是 bot 身份的一部分。
+// ##505-B：不再写 `<home>/chat-ui.json`（它只存「上次选中的 bot」—— 没有会话列表就不需要
+// 持久化这个界面状态；本次进程内记住，重启回落到第一个 bot）。
 //
-// ##480（store 方向）：session 的缺省存储是**内存**，所以装配器（本文件）必须**显式**构造并注入
-// jsonl store —— 不注入的话消息不落盘、重启就没了。
+// ##480（store 方向）：会话缺省存储是**内存**，所以装配器必须**显式**注入具体 store ——
+// 缺省用 jsonl（落盘），内存入口（main-memory）注入内存实现。
+//
+// 并发（docs/plans/2026-11-02-concurrency-actor.md）：单实例 = 单 actor。
+//   · 所有改状态的操作（读—改—写）排进同一条队列（`createSerial`），一次跑一个
+//   · 纯读（snapshot）不排队
+//   · 消息按会话各排一条队列（同一会话两条 send 串行；不同会话互不阻塞）
 
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { localISOString } from "@diy-agent/time";
-import {
-    createBot,
-    createFileBotStore,
-    createFirstBot as createFirstBotIn,
-    type Bot,
-    type BotConfig,
-} from "@diy-agent/bot";
-import { createSession, type AgentSession, type ChatMessage, type LlmPort, type TokenUsage } from "@diy-agent/session";
-import { openJsonlSessionStore, type JsonlSessionStore } from "@diy-agent/session-store-jsonl";
+import { createSession, type AgentSession, type ChatMessage, type LlmPort, type SessionStore, type TokenUsage } from "@diy-agent/session";
+import { openJsonlSessionStore } from "@diy-agent/session-store-jsonl";
 import { createOpenAiCompatible, resolveProviderConfig } from "@diy-agent/llm-provider";
-import { loadCatalog, readAccountValue, type ModelCatalogCost, type ModelCatalogEntry } from "@diy-agent/model-catalog";
+import { costOf, loadCatalog, readAccountValue, type ModelCatalogEntry } from "@diy-agent/model-catalog";
+import { createBot, createFirstBot as createFirstBotIn } from "./bot.js";
+import type { Bot, BotConfig, BotStore } from "./types.js";
+import { createFileBotStore } from "./store-fs.js";
 import {
     wireOf,
+    type BotChatHost,
+    type BotChatSnapshot,
     type BotDraftInput,
     type BotUpdateInput,
     type BotView,
     type ChatMetrics,
-    type ChatSessionHost,
-    type ChatSnapshot,
     type FirstBotInput,
     type ModelChoice,
     type WireMessage,
-} from "@diy-agent/chat-page";
+} from "./protocol.js";
 
 /** `meta.json` 的形状（会话自己的身份；消息正文在桶里） */
 interface SessionMeta {
@@ -52,11 +54,6 @@ interface SessionMeta {
     readonly createdAt: string;
     readonly updatedAt: string;
     readonly messageCount: number;
-}
-
-/** `$DIY_HOME/chat-ui.json`：只记「上次选中的 bot」这类界面状态（不是领域真源） */
-interface UiState {
-    activeBotId?: string;
 }
 
 /** 上一步的用量（底部指标条的「输入 / 缓存 / 本轮」都取这一步，不是会话累计） */
@@ -78,9 +75,23 @@ export const FIRST_BOT_DRAFT = {
     instructions: "你是「大王助手」，在 diy 的聊天窗口里陪大王干活。回答要短、要具体，能查证的不靠猜。",
 } as const;
 
-export interface ChatSessionsOptions {
+export interface BotChatOptions {
     /** 数据根（`$DIY_HOME`） */
     readonly home: string;
+    /** bot 身份存储；缺省 = `createFileBotStore({ home, sessionsDir })` */
+    readonly botStore?: BotStore;
+    /** 会话目录根；缺省 `<home>/sessions/chat` */
+    readonly sessionsDir?: string;
+    /**
+     * 会话存储工厂（按会话 id 打开；同一条会话反复进来必须拿到**同一个** store 实例）。
+     * 缺省 = `openJsonlSessionStore({ dir })`（落盘）；内存入口传内存实现（##505-E）。
+     */
+    readonly openSessionStore?: (sessionId: string, dir: string) => Promise<SessionStore> | SessionStore;
+    /**
+     * 会话 meta（`meta.json`：标题 / 模型 / 消息数）是否落盘；缺省 true。
+     * 内存入口传 false —— 连 meta 都不写，`$DIY_HOME/sessions` 一个字节不碰（判据：mtime 不变）。
+     */
+    readonly persistMeta?: boolean;
     /** 建 LLM 端口（测试注入假实现；缺省 = 真 provider，key 从 readAccountValue 取） */
     readonly llmFor?: (modelKey: string) => LlmPort;
 }
@@ -121,19 +132,23 @@ export function createSerial(): Serial {
     };
 }
 
-/** 建一个多 bot 宿主（懒打开：第一次调用才读目录 / 建目录） */
-export function createChatSessions(options: ChatSessionsOptions): ChatSessionHost {
+/** 建一个 bot 对话宿主（懒打开：第一次调用才读目录 / 建目录） */
+export function createBotChat(options: BotChatOptions): BotChatHost {
     const home = options.home;
-    const root = join(home, "sessions", "chat");
+    const root = options.sessionsDir ?? join(home, "sessions", "chat");
     // bot 身份在 `<home>/bots/`；会话归属落在会话自己的目录里（方案 B）
-    const botStore = createFileBotStore({ home, sessionsDir: root });
-    const uiFile = join(home, "chat-ui.json");
+    const botStore = options.botStore ?? createFileBotStore({ home, sessionsDir: root });
+    const openSessionStore = options.openSessionStore ?? ((_id: string, dir: string) => openJsonlSessionStore({ dir }));
+    /** 内存模式：meta 也只活在进程里（不写 `sessions/chat/<id>/meta.json`） */
+    const persistMeta = options.persistMeta ?? true;
+    const metaMemory = new Map<string, SessionMeta>();
 
     let catalogCache: ModelCatalogEntry[] | null = null;
-    let ui: UiState | null = null;
+    /** 「上次选中的 bot」只活在本次进程里（##505-B：不落 chat-ui.json） */
+    let activeBotId: string | null = null;
 
     /** 打开中的会话（桶 + session 都缓存；同一个 bot 反复点进来必须是同一条消息线） */
-    const open = new Map<string, { store: JsonlSessionStore; session: AgentSession; meta: SessionMeta }>();
+    const open = new Map<string, { store: SessionStore; session: AgentSession; meta: SessionMeta }>();
     /** 每个会话「上一步」的用量（进程内；重启后指标为空 — 不编数字） */
     const lastStep = new Map<string, StepUsage>();
     /** 状态操作的队列（bot 增删改 / 选中 / meta 落盘）—— 单实例顺序执行 */
@@ -160,30 +175,18 @@ export function createChatSessions(options: ChatSessionsOptions): ChatSessionHos
     const keyOf = (entry: ModelCatalogEntry | null): string =>
         entry === null ? "" : `${entry.providerId}/${entry.modelId}`;
 
-    const loadUi = async (): Promise<UiState> => {
-        if (ui !== null) return ui;
-        let parsed: unknown = null;
-        try {
-            parsed = JSON.parse(await readFile(uiFile, "utf-8"));
-        } catch {
-            // 没有就是没有（首启 / 老数据）—— 默认选第一个 bot
-        }
-        const record = parsed !== null && typeof parsed === "object" ? (parsed as { activeBotId?: unknown }) : {};
-        ui = typeof record.activeBotId === "string" ? { activeBotId: record.activeBotId } : {};
-        return ui;
-    };
-
-    const saveUi = async (): Promise<void> => {
-        const state = ui ?? {};
-        await mkdir(home, { recursive: true });
-        await writeFile(uiFile, `${JSON.stringify(state, null, 4)}\n`, "utf-8");
-    };
-
     const writeMeta = async (meta: SessionMeta): Promise<void> => {
+        if (!persistMeta) {
+            metaMemory.set(meta.id, meta);
+            return;
+        }
         const dir = join(root, meta.id);
         await mkdir(dir, { recursive: true });
         await writeFile(join(dir, "meta.json"), `${JSON.stringify(meta, null, 4)}\n`, "utf-8");
     };
+
+    const readMetaOf = async (id: string): Promise<SessionMeta | null> =>
+        persistMeta ? readMeta(join(root, id)) : (metaMemory.get(id) ?? null);
 
     const llmFor = (modelKey: string): LlmPort => {
         if (options.llmFor !== undefined) return options.llmFor(modelKey);
@@ -226,20 +229,20 @@ export function createChatSessions(options: ChatSessionsOptions): ChatSessionHos
 
     const opened = async (
         id: string,
-    ): Promise<{ store: JsonlSessionStore; session: AgentSession; meta: SessionMeta }> => {
+    ): Promise<{ store: SessionStore; session: AgentSession; meta: SessionMeta }> => {
         const hit = open.get(id);
         if (hit !== undefined) return hit;
         const dir = join(root, id);
-        const meta = await readMeta(dir);
+        const meta = await readMetaOf(id);
         if (meta === null) throw new Error(`没有会话 ${id}`);
         // ##498：模型以 **bot 的当前配置**为准（一个 bot 一条长期会话，改模型就是改这条会话）
         const ownerId = await botStore.ownerOf(id);
         const owner = ownerId === null ? null : await botStore.load(ownerId);
         const modelKey = owner !== null && owner.model.trim() !== "" ? owner.model : meta.model;
         const instructions = owner?.instructions.trim() ?? "";
-        // ##480：装配器是决定者 —— 直接构造 jsonl store（session 自己的缺省是内存 store），
-        // 传实例而不是策略名：将来换远程 store 只改这一行，不存在 switch 分派。
-        const store = await openJsonlSessionStore({ dir });
+        // ##480：装配器是决定者 —— 传实例而不是策略名：将来换远程 store 只改这一行，
+        // 不存在 switch 分派。
+        const store = await openSessionStore(id, dir);
         const initialMessages: readonly ChatMessage[] = await store.readFrom(0);
         const { modelId } = splitModelKey(modelKey);
         const session = createSession({
@@ -275,7 +278,7 @@ export function createChatSessions(options: ChatSessionsOptions): ChatSessionHos
     const metricsOf = (config: BotConfig, sessionId: string, usage: TokenUsage): ChatMetrics => {
         const last = lastStep.get(sessionId);
         const entry = catalog().find((item) => keyOf(item) === config.model) ?? null;
-        const cost = last === undefined ? undefined : stepCost(entry?.cost, last);
+        const cost = last === undefined ? undefined : costOf(entry?.cost, last);
         return {
             ...(last === undefined ? {} : { inputTokens: last.inputTokens, outputTokens: last.outputTokens }),
             ...(last?.cacheReadTokens === undefined ? {} : { cacheReadTokens: last.cacheReadTokens }),
@@ -285,20 +288,16 @@ export function createChatSessions(options: ChatSessionsOptions): ChatSessionHos
         };
     };
 
-    /** 当前 bot（上次选中的那个；没有 / 已删 ⇒ 列表第一个） */
+    /** 当前 bot（本次进程里上次选中的那个；没有 / 已删 ⇒ 列表第一个） */
     const activeConfig = async (): Promise<BotConfig | null> => {
         const configs = await botStore.list();
         if (configs.length === 0) return null;
-        const state = await loadUi();
-        const active = configs.find((config) => config.id === state.activeBotId) ?? configs[0]!;
-        if (state.activeBotId !== active.id) {
-            state.activeBotId = active.id;
-            await saveUi();
-        }
+        const active = configs.find((config) => config.id === activeBotId) ?? configs[0]!;
+        activeBotId = active.id;
         return active;
     };
 
-    const snapshot = async (): Promise<ChatSnapshot> => {
+    const snapshot = async (): Promise<BotChatSnapshot> => {
         const configs = await botStore.list();
         const bots = await Promise.all(configs.map(botView));
         const selectedModel = keyOf(catalog()[0] ?? null) || null;
@@ -308,7 +307,6 @@ export function createChatSessions(options: ChatSessionsOptions): ChatSessionHos
                 bots: [],
                 bot: null,
                 models: choices(),
-                activeId: null,
                 messages: [],
                 metrics: null,
                 selectedModel,
@@ -320,7 +318,6 @@ export function createChatSessions(options: ChatSessionsOptions): ChatSessionHos
                 bots,
                 bot: await botView(active),
                 models: choices(),
-                activeId: null,
                 messages: [],
                 metrics: null,
                 selectedModel,
@@ -334,7 +331,6 @@ export function createChatSessions(options: ChatSessionsOptions): ChatSessionHos
             bots,
             bot: await botView(active),
             models: choices(),
-            activeId: ref.id,
             messages,
             metrics: metricsOf(active, ref.id, current.session.usage),
             selectedModel,
@@ -349,17 +345,15 @@ export function createChatSessions(options: ChatSessionsOptions): ChatSessionHos
         return model;
     };
 
-    const focus = async (id: string): Promise<void> => {
-        const state = await loadUi();
-        state.activeBotId = id;
-        await saveUi();
+    const focus = (id: string): void => {
+        activeBotId = id;
     };
 
     return {
         snapshot,
 
         /** 首启建 bot（##497：必须有 model；已存在则报错） */
-        createFirstBot(input: FirstBotInput): Promise<ChatSnapshot> {
+        createFirstBot(input: FirstBotInput): Promise<BotChatSnapshot> {
             return act(async () => {
                 const config = await createFirstBotIn(botStore, {
                     id: FIRST_BOT_DRAFT.id,
@@ -367,13 +361,13 @@ export function createChatSessions(options: ChatSessionsOptions): ChatSessionHos
                     instructions: input.instructions ?? FIRST_BOT_DRAFT.instructions,
                     model: checkModel(input.model),
                 });
-                await focus(config.id);
+                focus(config.id);
                 return snapshot();
             });
         },
 
         /** `+ 新 bot`：建好即选中（点进去就是它的长期会话） */
-        createBot(input: BotDraftInput): Promise<ChatSnapshot> {
+        createBot(input: BotDraftInput): Promise<BotChatSnapshot> {
             return act(async () => {
                 const name = input.name.trim();
                 if (name === "") throw new Error("新 bot 必须有个名字");
@@ -395,13 +389,13 @@ export function createChatSessions(options: ChatSessionsOptions): ChatSessionHos
                     updatedAt: at,
                 };
                 await botStore.save(config);
-                await focus(config.id);
+                focus(config.id);
                 return snapshot();
             });
         },
 
         /** 改配置：模型 / 指令变了 ⇒ 把打开中的会话丢掉重开（llm 与 system 都要重新装配） */
-        updateBot(input: BotUpdateInput): Promise<ChatSnapshot> {
+        updateBot(input: BotUpdateInput): Promise<BotChatSnapshot> {
             return act(async () => {
                 const current = await botStore.load(input.id);
                 if (current === null) throw new Error(`没有 bot ${input.id}`);
@@ -437,36 +431,33 @@ export function createChatSessions(options: ChatSessionsOptions): ChatSessionHos
         },
 
         /** 删 bot（##498 判据 7：它的**会话一并删除**）—— 级联是应用策略，bot 包本身只删身份 */
-        removeBot(id: string): Promise<ChatSnapshot> {
+        removeBot(id: string): Promise<BotChatSnapshot> {
             return act(async () => {
                 const refs = await botStore.sessionsOf(id);
                 for (const ref of refs) {
-                    await rm(join(root, ref.id), { recursive: true, force: true });
+                    if (persistMeta) await rm(join(root, ref.id), { recursive: true, force: true });
+                    else metaMemory.delete(ref.id);
                     open.delete(ref.id);
                     lastStep.delete(ref.id);
                     messageQueues.delete(ref.id);
                 }
                 await botStore.remove(id);
-                const state = await loadUi();
-                if (state.activeBotId === id) {
-                    delete state.activeBotId;
-                    await saveUi();
-                }
+                if (activeBotId === id) activeBotId = null;
                 return snapshot();
             });
         },
 
         /** 切 bot = 打开它的长期会话（只改「上次选中」，也走队列） */
-        selectBot(id: string): Promise<ChatSnapshot> {
+        selectBot(id: string): Promise<BotChatSnapshot> {
             return act(async () => {
                 const config = await botStore.load(id);
                 if (config === null) throw new Error(`没有 bot ${id}`);
-                await focus(id);
+                focus(id);
                 return snapshot();
             });
         },
 
-        send(text, onDelta): Promise<ChatSnapshot> {
+        send(text, onDelta): Promise<BotChatSnapshot> {
             // 消息也串行 —— 但**按会话**排：同一会话两条 send 不并发（否则 session 直接 busy），
             // 不同会话 / bot 增删改 互不阻塞（LLM 回复可能几十秒，不该把整个 UI 卡住）
             return (async () => {
@@ -474,50 +465,39 @@ export function createChatSessions(options: ChatSessionsOptions): ChatSessionHos
                 if (active === null) throw new Error("还没有 bot —— 先建一个（首启引导）");
                 const ref = await handleOf(active).primary();
                 return queueFor(ref.id)(async () => {
-                const { session, meta } = await opened(ref.id);
-                const before = session.messages.length;
-                const usageBefore = session.usage;
-                for await (const delta of session.send(text)) {
-                    if (delta.type === "text") onDelta(wireOf(session.messages));
-                }
-                const messages = wireOf(session.messages);
-                onDelta(messages);
+                    const { session, meta } = await opened(ref.id);
+                    const before = session.messages.length;
+                    const usageBefore = session.usage;
+                    for await (const delta of session.send(text)) {
+                        if (delta.type === "text") onDelta(wireOf(session.messages));
+                    }
+                    const messages = wireOf(session.messages);
+                    onDelta(messages);
 
-                // 上一步的桶 = 累计值的差（底部指标条要的是「这一步」，不是「这条会话」）
-                const usageAfter = session.usage;
-                lastStep.set(ref.id, {
-                    inputTokens: usageAfter.inputTokens - usageBefore.inputTokens,
-                    outputTokens: usageAfter.outputTokens - usageBefore.outputTokens,
-                    ...(usageAfter.cacheReadTokens === undefined
-                        ? {}
-                        : { cacheReadTokens: usageAfter.cacheReadTokens - (usageBefore.cacheReadTokens ?? 0) }),
-                });
+                    // 上一步的桶 = 累计值的差（底部指标条要的是「这一步」，不是「这条会话」）
+                    const usageAfter = session.usage;
+                    lastStep.set(ref.id, {
+                        inputTokens: usageAfter.inputTokens - usageBefore.inputTokens,
+                        outputTokens: usageAfter.outputTokens - usageBefore.outputTokens,
+                        ...(usageAfter.cacheReadTokens === undefined
+                            ? {}
+                            : { cacheReadTokens: usageAfter.cacheReadTokens - (usageBefore.cacheReadTokens ?? 0) }),
+                    });
 
-                const grown = session.messages.length - before;
-                const next: SessionMeta = {
-                    ...meta,
-                    title: meta.title === "新会话" && messages.length > 0 ? titleFrom(text) : meta.title,
-                    updatedAt: localISOString(),
-                    messageCount: meta.messageCount + Math.max(grown, 0),
-                };
-                await writeMeta(next);
-                open.set(ref.id, { store: open.get(ref.id)!.store, session, meta: next });
-                return { ...(await snapshot()), messages, activeId: ref.id };
+                    const grown = session.messages.length - before;
+                    const next: SessionMeta = {
+                        ...meta,
+                        title: meta.title === "新会话" && messages.length > 0 ? titleFrom(text) : meta.title,
+                        updatedAt: localISOString(),
+                        messageCount: meta.messageCount + Math.max(grown, 0),
+                    };
+                    await writeMeta(next);
+                    open.set(ref.id, { store: open.get(ref.id)!.store, session, meta: next });
+                    return { ...(await snapshot()), messages };
                 });
             })();
         },
     };
-}
-
-/** 上一步花费（USD）：目录价目 × tokens（无价目 ⇒ undefined，不编 0） */
-function stepCost(cost: ModelCatalogCost | undefined, step: StepUsage): number | undefined {
-    if (cost === undefined) return undefined;
-    const cacheRead = step.cacheReadTokens ?? 0;
-    const input = step.inputTokens - cacheRead;
-    const total =
-        (input * cost.input + step.outputTokens * cost.output) / 1_000_000 +
-        (cacheRead * (cost.cacheRead ?? cost.input)) / 1_000_000;
-    return total;
 }
 
 function newSessionId(): string {

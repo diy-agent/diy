@@ -12,7 +12,7 @@
 // diui 版走增量。判据 1 要求两版长得一样，所以结构、class 名、文案都对着写。
 
 import type { PageContext, PageView } from "@diy-agent/workbench-ui";
-import type { BotView, ChatMetrics, ChatSnapshot, ModelChoice, SendResult, WireMessage } from "./shared.js";
+import type { BotView, ChatMetrics, BotChatSnapshot, ModelChoice, SendResult, WireMessage } from "./shared.js";
 import { textMessage } from "./shared.js";
 import { renderBlocks } from "./block-renderers.js";
 import { ensureChatStyle } from "./style.js";
@@ -74,7 +74,7 @@ export const chatPageView: PageView = {
         page.append(card);
         root.append(page);
 
-        let snapshot: ChatSnapshot | null = null;
+        let snapshot: BotChatSnapshot | null = null;
         let current: readonly WireMessage[] = [];
         let selectedModel = "";
         let busy = false;
@@ -106,7 +106,7 @@ export const chatPageView: PageView = {
 
         // ── bot 条 ───────────────────────────────────────
 
-        const paintBots = (next: ChatSnapshot): void => {
+        const paintBots = (next: BotChatSnapshot): void => {
             botList.replaceChildren();
             // ##后端：新 bot 按钮放**列表最上面**（用户 2026-11-02 要求）
             const item = node(doc, "li", "chat-bot chat-bot-new");
@@ -151,7 +151,7 @@ export const chatPageView: PageView = {
                 button.addEventListener("click", () => {
                     hideCard();
                     // 点 bot **只打开对话**（配置入口是 ⚙ / hover 卡片里的「配置」）
-                    void ctx.invoke<ChatSnapshot>("selectBot", { id: bot.id }).then(refresh).catch(fail("切换失败"));
+                    void ctx.invoke<BotChatSnapshot>("selectBot", { id: bot.id }).then(refresh).catch(fail("切换失败"));
                 });
                 item.append(button);
                 botList.append(item);
@@ -160,7 +160,7 @@ export const chatPageView: PageView = {
 
         // ── 底部指标 ─────────────────────────────────────
 
-        const paintMetrics = (next: ChatSnapshot): void => {
+        const paintMetrics = (next: BotChatSnapshot): void => {
             metrics.replaceChildren();
             const bot = next.bot;
             if (bot === null) return;
@@ -224,7 +224,7 @@ export const chatPageView: PageView = {
         });
         card.addEventListener("mouseleave", scheduleHide);
 
-        const showCard = (next: ChatSnapshot, bot: BotView, anchor: HTMLElement): void => {
+        const showCard = (next: BotChatSnapshot, bot: BotView, anchor: HTMLElement): void => {
             if (hideTimer !== null) {
                 clearTimeout(hideTimer);
                 hideTimer = null;
@@ -249,7 +249,7 @@ export const chatPageView: PageView = {
             open.type = "button";
             open.addEventListener("click", () => {
                 hideCard();
-                if (bot.id !== next.bot?.id) void ctx.invoke<ChatSnapshot>("selectBot", { id: bot.id }).then(refresh);
+                if (bot.id !== next.bot?.id) void ctx.invoke<BotChatSnapshot>("selectBot", { id: bot.id }).then(refresh);
             });
             acts.append(cfg, open);
             card.append(acts);
@@ -357,7 +357,7 @@ export const chatPageView: PageView = {
                         doc.defaultView.confirm(`删除 bot「${bot.name}」？它的会话会一并删除（不可撤销）。`);
                     if (!ok) return;
                     void ctx
-                        .invoke<ChatSnapshot>("removeBot", { id: bot.id })
+                        .invoke<BotChatSnapshot>("removeBot", { id: bot.id })
                         .then(() => {
                             closeEditor();
                             return refresh();
@@ -381,8 +381,8 @@ export const chatPageView: PageView = {
                     reasoningEffort: effortSelect.value,
                 };
                 const request = isNew
-                    ? ctx.invoke<ChatSnapshot>("createBot", payload)
-                    : ctx.invoke<ChatSnapshot>("updateBot", { id: bot?.id, ...payload });
+                    ? ctx.invoke<BotChatSnapshot>("createBot", payload)
+                    : ctx.invoke<BotChatSnapshot>("updateBot", { id: bot?.id, ...payload });
                 submit.disabled = true;
                 void request
                     .then(() => {
@@ -450,7 +450,7 @@ export const chatPageView: PageView = {
                 }
                 submit.disabled = true;
                 void ctx
-                    .invoke<ChatSnapshot>("createFirstBot", {
+                    .invoke<BotChatSnapshot>("createFirstBot", {
                         model,
                         name: nameInput.value.trim() || undefined,
                         instructions: instructions.value,
@@ -479,9 +479,9 @@ export const chatPageView: PageView = {
             };
 
         /** 重新取整份快照（操作后统一走这里） */
-        const refresh = (): Promise<void> => ctx.invoke<ChatSnapshot>("snapshot").then(apply);
+        const refresh = (): Promise<void> => ctx.invoke<BotChatSnapshot>("snapshot").then(apply);
 
-        const apply = (next: ChatSnapshot): void => {
+        const apply = (next: BotChatSnapshot): void => {
             snapshot = next;
             aside.hidden = false;
             metrics.hidden = false;
@@ -509,7 +509,7 @@ export const chatPageView: PageView = {
             // 每次操作后**重新取快照**（不拿返回值当状态；见 concurrency-actor 判据 5）。
             // 单会话模式没有 snapshot 能力，只能画 send 返回的那条消息线。
             const request: Promise<void> = multi
-                ? ctx.invoke<ChatSnapshot>("send", { text }).then(refresh)
+                ? ctx.invoke<BotChatSnapshot>("send", { text }).then(refresh)
                 : ctx.invoke<SendResult>("send", text).then((result) => paint(result.messages));
             void request
                 .catch((cause: unknown) => paint([...current, textMessage("assistant", `出错了：${messageOf(cause)}`)]))
@@ -523,7 +523,7 @@ export const chatPageView: PageView = {
 
         // 先问主进程有没有多 bot 能力；没有就按单会话画（消息线从空开始）
         void ctx
-            .invoke<ChatSnapshot>("snapshot")
+            .invoke<BotChatSnapshot>("snapshot")
             .then((next) => {
                 apply(next);
                 if (next.bot === null) {

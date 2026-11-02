@@ -10,6 +10,8 @@ import { describe, expect, it } from "vitest";
 const here = import.meta.dirname;
 const appDir = join(here, "..");
 const chatPageSrc = join(appDir, "..", "..", "pkgs.ts", "chat-page", "src");
+// ##505：actor 队列与 bot 领域逻辑在 @diy-agent/bot（apps/chat 只剩装配）
+const botChatSrc = join(appDir, "..", "..", "pkgs.ts", "diy-agent-bot", "src", "chat.ts");
 
 /** 渲染层文件（会在浏览器里跑的）：chat-page 的 renderer* / style / 块渲染器 + apps/chat 的 renderer.ts */
 function rendererSources(): { file: string; text: string }[] {
@@ -37,7 +39,7 @@ describe("并发架构（##actor）", () => {
     });
 
     it("判据 2：主进程侧每个「读—改—写」都走 serial（createBot / updateBot / removeBot / selectBot）", () => {
-        const source = readFileSync(join(appDir, "sessions.ts"), "utf-8");
+        const source = readFileSync(botChatSrc, "utf-8");
         // 四个改状态的方法都以 `return act(async () =>` 开头 —— 队列的入口是可见的
         for (const method of ["createFirstBot", "createBot", "updateBot", "removeBot", "selectBot"]) {
             // 找**方法定义**（顶格 8 空格缩进、参数表里是 input/id），不是 handleOf 里对 bot 包的调用
@@ -49,7 +51,7 @@ describe("并发架构（##actor）", () => {
     });
 
     it("判据：serial 的失败不污染队列（tail 吞掉异常）", async () => {
-        const { createSerial } = await import("../sessions.js");
+        const { createSerial } = await import("@diy-agent/bot");
         const serial = createSerial();
         const order: string[] = [];
         const a = serial(async () => {
@@ -66,7 +68,7 @@ describe("并发架构（##actor）", () => {
     });
 
     it("判据：serial 严格顺序执行（不交叠）", async () => {
-        const { createSerial } = await import("../sessions.js");
+        const { createSerial } = await import("@diy-agent/bot");
         const serial = createSerial();
         const log: string[] = [];
         const job = (name: string): Promise<void> =>

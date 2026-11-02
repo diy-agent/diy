@@ -1,6 +1,6 @@
 // renderer-diui.ts — 页面插件的 renderer 侧（**diyui 版**，##468），与 renderer.ts（裸 DOM 版）并存。
 //
-// 两版只差「怎么画」：线上形状（shared.ts 的 ChatSnapshot / WireMessage）、`ctx.invoke`
+// 两版只差「怎么画」：线上形状（shared.ts 的 BotChatSnapshot / WireMessage）、`ctx.invoke`
 // 的方法名与调用时机**一字不动**，所以装配层换一行 import 就能切：
 //
 //   import { chatPageView } from "@diy-agent/chat-page/renderer";        // 裸 DOM 版
@@ -19,7 +19,7 @@
 
 import { GenApp, html, Signal, type Spec } from "@diy-agent/ui/browser";
 import type { PageContext, PageView } from "@diy-agent/workbench-ui";
-import type { BotView, ChatMetrics, ChatSnapshot, ModelChoice, SendResult, WireMessage } from "./shared.js";
+import type { BotView, ChatMetrics, BotChatSnapshot, ModelChoice, SendResult, WireMessage } from "./shared.js";
 import { textMessage } from "./shared.js";
 import { renderBlocks } from "./block-renderers.js";
 import { ensureChatStyle } from "./style.js";
@@ -33,7 +33,6 @@ interface Store {
     bots: readonly BotView[];
     bot: BotView | null;
     models: readonly ModelChoice[];
-    activeId: string | null;
     messages: readonly WireMessage[];
     metrics: ChatMetrics | null;
     /** 新建 bot 的缺省模型 `providerId/modelId` */
@@ -48,7 +47,6 @@ const store: Store = {
     bots: [],
     bot: null,
     models: [],
-    activeId: null,
     messages: [],
     metrics: null,
     selectedModel: "",
@@ -131,7 +129,7 @@ export const chatPageView: PageView = {
             if (store.busy) return;
             hideCard();
             void ctx
-                .invoke<ChatSnapshot>("selectBot", { id })
+                .invoke<BotChatSnapshot>("selectBot", { id })
                 .then(() => refresh())
                 .catch((cause: unknown) => appendError(`切换失败：${messageOf(cause)}`));
         };
@@ -259,7 +257,7 @@ export const chatPageView: PageView = {
                         doc.defaultView.confirm(`删除 bot「${bot.name}」？它的会话会一并删除（不可撤销）。`);
                     if (!ok) return;
                     void ctx
-                        .invoke<ChatSnapshot>("removeBot", { id: bot.id })
+                        .invoke<BotChatSnapshot>("removeBot", { id: bot.id })
                         .then(() => {
                             closeEditor();
                             return refresh();
@@ -294,8 +292,8 @@ export const chatPageView: PageView = {
                     reasoningEffort: effortSelect.value,
                 };
                 const request = isNew
-                    ? ctx.invoke<ChatSnapshot>("createBot", payload)
-                    : ctx.invoke<ChatSnapshot>("updateBot", { id: bot?.id, ...payload });
+                    ? ctx.invoke<BotChatSnapshot>("createBot", payload)
+                    : ctx.invoke<BotChatSnapshot>("updateBot", { id: bot?.id, ...payload });
                 submit.disabled = true;
                 void request
                     .then(() => {
@@ -364,7 +362,7 @@ export const chatPageView: PageView = {
                 }
                 submit.disabled = true;
                 void ctx
-                    .invoke<ChatSnapshot>("createFirstBot", {
+                    .invoke<BotChatSnapshot>("createFirstBot", {
                         model,
                         name: nameInput.value.trim() || undefined,
                         instructions: instructions.value,
@@ -728,12 +726,12 @@ export const chatPageView: PageView = {
          * UI 不增量改 `store.bots` / `store.messages` —— 那是显示状态，不是真源。
          */
         async function refresh(): Promise<void> {
-            applySnapshot(await ctx.invoke<ChatSnapshot>("snapshot"));
+            applySnapshot(await ctx.invoke<BotChatSnapshot>("snapshot"));
         }
 
         async function load(context: PageContext): Promise<void> {
             try {
-                applySnapshot(await context.invoke<ChatSnapshot>("snapshot"));
+                applySnapshot(await context.invoke<BotChatSnapshot>("snapshot"));
             } catch {
                 // 没有多 bot 能力（apps/minimal 的单会话）：消息线从空开始
                 store.multi = false;
@@ -754,7 +752,7 @@ export const chatPageView: PageView = {
             try {
                 if (multi) {
                     // send 的返回值只是这一条会话的消息线；整份状态**重新取**
-                    await context.invoke<ChatSnapshot>("send", { text });
+                    await context.invoke<BotChatSnapshot>("send", { text });
                     await refresh();
                 } else {
                     const result = await context.invoke<SendResult>("send", text);
@@ -770,12 +768,11 @@ export const chatPageView: PageView = {
             }
         }
 
-        function applySnapshot(next: ChatSnapshot): void {
+        function applySnapshot(next: BotChatSnapshot): void {
             store.multi = true;
             store.bots = next.bots;
             store.bot = next.bot;
             store.models = next.models;
-            store.activeId = next.activeId;
             store.messages = next.messages;
             store.metrics = next.metrics;
             store.selectedModel = next.selectedModel ?? firstKey(next.models);

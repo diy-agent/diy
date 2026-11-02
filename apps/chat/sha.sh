@@ -36,7 +36,8 @@ _ensure_electron() { run node ../../scripts/ensure-electron.mjs --quiet; }
 build-deps() {
   local pkg
   # diy-ui 不能省：chat-page 的 renderer-diui 入口依赖 `@diy-agent/ui/browser`（##468）
-  for pkg in diy-log workbench ui-workbench diy-ui chat-page diy-agent-session diy-agent-session-store-jsonl diy-agent-session-store-memory diy-llm-provider diy-agent-model-catalog diy-agent-model-config-page diy-agent-bot diy-agent-bot-config-page; do
+  # 顺序 = 依赖顺序：tsc 的 project references 要求被引包 lib/ 已存在（TS6305）。
+  for pkg in diy-log diy-time diy-agent-session diy-agent-session-store-jsonl diy-agent-session-store-memory diy-llm-provider diy-agent-model-catalog diy-agent-bot workbench ui-workbench diy-ui chat-page diy-agent-model-config-page diy-agent-bot-config-page; do
     ( cd "$SCRIPT_DIR/../../pkgs.ts/$pkg" && ./sha.sh build )
   done
 }
@@ -46,6 +47,7 @@ build() {
   run npx tsc -p tsconfig.build.json
   build-deps
   build-main
+  build-main-memory
   build-preload
   build-renderer
 }
@@ -55,6 +57,13 @@ build-main() {
   # @diy-agent/* 保持外部：运行时按包名解析（真插件边界，不把插件打成一个巨型 bundle）
   run npx esbuild main.ts --bundle --platform=node --format=esm --target=node22 \
     --external:electron "--external:@diy-agent/*" --outfile="$d/main/index.mjs"
+}
+
+# 内存模式入口（##505-E / 原 ##504）：同一份界面 bundle，只换装配（不落盘）
+build-main-memory() {
+  local d; d="$(_build_dir)"
+  run npx esbuild main-memory.mjs --bundle --platform=node --format=esm --target=node22 \
+    --external:electron "--external:@diy-agent/*" --outfile="$d/main-memory/index.mjs"
 }
 
 build-preload() {
@@ -70,6 +79,8 @@ build-renderer() {
     --outfile="$d/renderer/index.js"
   run mkdir -p "$d/renderer"
   run cp index.html "$d/renderer/index.html"
+  # 内存模式 html（标题 + __DIY_CHAT_MODE__）：与 index.html 共用 index.js
+  run cp memory.html "$d/renderer/memory.html"
 }
 
 # 开发实例：构建后直接起（无 HMR —— 这一刀只验链路）。lab 变体下 main.ts 自带 CDP 9222。
@@ -81,6 +92,18 @@ lab() {
   run mkdir -p "$home"
   echo "${info}数据根：$home${reset}"
   run env DIY_HOME="$home" DIY_VARIANT="$DIY_VARIANT" npx electron "$d/main/index.mjs" "$@"
+}
+
+# 内存模式实例（##505-E）：同一 UI，bot / 会话全在内存 —— 重启就没了，别拿它当真用。
+# 判据：$DIY_HOME/bots 与 $DIY_HOME/sessions 的 mtime 不变。
+lab:memory() {
+  _ensure_electron
+  build
+  local d; d="$(_build_dir)"
+  local home; home="$(_repo_root)/build/$DIY_VARIANT/home"
+  run mkdir -p "$home"
+  echo "${info}数据根：$home（内存模式：bots / sessions 不落盘）${reset}"
+  run env DIY_HOME="$home" DIY_VARIANT="$DIY_VARIANT" npx electron "$d/main-memory/index.mjs" "$@"
 }
 
 # ##468 渲染层判据：CDP 实测 1–6（不闪 / 滚动不跳 / 焦点不丢 / 切会话外壳不重建）

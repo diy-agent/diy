@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <!-- 窗口标题跟 document.title 走（内存模式必须一眼能看出来，##505-E 判据 3） -->
+        <title>diy 聊天 · 内存模式（重启后丢失）</title>
+        <style>
+            html,
+            body {
+                margin: 0;
+                height: 100%;
+            }
+            #app {
+                height: 100%;
+            }
+        </style>
+    </head>
+    <body>
+        <div id="app"></div>
+        <!-- 与落盘版共用同一个 renderer bundle；这行让品牌条也显示内存模式 -->
+        <script>
+            window.__DIY_CHAT_MODE__ = "memory";
+        </script>
+        <script src="./index.js"></script>
+    </body>
+</html>

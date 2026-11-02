@@ -13,7 +13,9 @@
         "types": ["node"],
         "rootDir": "src",
         "outDir": "lib",
-        "noEmit": false,
+        "noEmit": false,
+
+
         "declaration": true,
         "sourceMap": true
     },
@@ -21,6 +23,10 @@
     "exclude": ["tests/**/*", "test/**/*", "examples/**/*"]
 ,
   "references": [
-    { "path": "../diy-time/tsconfig.build.json" }
+    { "path": "../diy-time/tsconfig.build.json" },
+    { "path": "../diy-agent-session/tsconfig.build.json" },
+    { "path": "../diy-agent-session-store-jsonl/tsconfig.build.json" },
+    { "path": "../diy-llm-provider/tsconfig.build.json" },
+    { "path": "../diy-agent-model-catalog/tsconfig.build.json" }
   ]
 }

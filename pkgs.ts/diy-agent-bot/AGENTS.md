@@ -1,7 +1,8 @@
 # @diy-agent/bot — bot 实体（身份 + 会话归属）
 
-> 全仓契约见**仓库根 `AGENTS.md`**。本包**不认识 room / task / session 内核**：
-> 身份只是 `BotConfig`，会话归属只是 session 目录里的一个 `bot.json`。
+> 全仓契约见**仓库根 `AGENTS.md`**。本包**不认识 room / task 内核**：
+> 身份只是 `BotConfig`，会话归属只是 session 目录里的一个 `bot.json`；
+> ##505 起**对话编排**（`createBotChat`：send / snapshot / 模型解析）也住本包 —— 会话是 bot 的内部技术。
 
 ## 一句话
 
@@ -19,7 +20,7 @@ const ref = await bot.primary();   // 第一次建 + 把 id 写回 bot.json；�
 - 写回 `primarySessionId`（`bot.json` 的一个字段），重启后 `primary()` 还是同一条
 - 会话目录被外部删了（`ownerOf` 认不出）⇒ 下一次 `primary()` 重建一个，不返回幽灵 id
 - `newSession()` 保留为**原语**（`primary()` 内部就用它）；chat UI 不再暴露 —— 产品上没有「新建会话」
-- **删 bot 时的级联删会话是应用策略**（apps/chat 的 `removeBot`），本包只删 `bots/<id>/`
+- **删 bot 时的级联删会话是应用策略**：`createBotChat` 的 `removeBot` 做级联；底层的 `Bot` 原语只删 `bots/<id>/`
 
 ## 存储方向（##480）
 

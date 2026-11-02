@@ -1,23 +1,19 @@
-// renderer.ts — renderer 入口：注册页面实现，然后挂骨架。
-//
-// 页面实现是**构建期**装进来的（renderer 侧不做动态 import）：装配层知道装了哪个页面，
-// 骨架只通过注册表按 id 找实现。
+// renderer.ts — renderer 入口：注册页面实现，然后挂骨架（页面实现构建期装进，不做动态 import）。
 
 import { mountWorkbench, registerPage, type WorkbenchGateway } from "@diy-agent/workbench-ui";
-// ##468：渲染层两版并存（同包两个入口，wire 协议同一份）。
-// 换这一行 + 重新 build 就在「裸 DOM 版 / diyui 版」之间切：
-//   @diy-agent/chat-page/renderer        ← 裸 DOM（最小依赖对照组）
-//   @diy-agent/chat-page/renderer-diui   ← diyui 版（不闪 / 滚动不跳 / 焦点不丢）
+// ##468：两版并存；换这一行 + rebuild 就切「裸 DOM 版 / diyui 版」。
 import { chatPageView } from "@diy-agent/chat-page/renderer-diui";
 // ##467：模型配置页（独立插件，删掉这行就没有配置入口）
 import { modelConfigPageView } from "@diy-agent/model-config-page/renderer";
 // ##474：Bot 配置页（同构独立插件）
 import { botConfigPageView } from "@diy-agent/bot-config-page/renderer";
-import { TITLE } from "./title.js";
+import { titleForMode } from "./title.js";
 
 declare global {
     interface Window {
         workbench?: WorkbenchGateway;
+        /** 内存入口的 html 里注入（##505-E / 原 ##504）；落盘版没有 ⇒ undefined */
+        __DIY_CHAT_MODE__?: string;
     }
 }
 
@@ -31,7 +27,8 @@ async function main(): Promise<void> {
     registerPage(modelConfigPageView);
     // ##474：注册决定「怎么画」；有没有入口仍由主进程插件清单决定（见 index.ts）
     registerPage(botConfigPageView);
-    await mountWorkbench(host, gateway, { title: TITLE });
+    // 品牌条标题跟入口走：内存模式必须在界面上看得见（##504 判据 5）
+    await mountWorkbench(host, gateway, { title: titleForMode(window.__DIY_CHAT_MODE__) });
 }
 
 void main();

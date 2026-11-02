@@ -201,16 +201,20 @@ describe("内存 BotStore（##480 缺省实现）", () => {
 });
 
 describe("边界（判据 4）", () => {
-    it("源码里 grep room = 0（也不依赖 session / electron / task）", () => {
+    it("源码里 grep room = 0（身份 / 存储不依赖 session / electron / task）", () => {
         const dir = join(import.meta.dirname, "..", "src");
         const files = readdirSync(dir).filter((name) => name.endsWith(".ts"));
         expect(files.length).toBeGreaterThan(0);
+        // ##505：对话编排（chat.ts）与线上形状（protocol.ts）**本来就要**用 session 的消息 / 端口；
+        // 身份与存储仍在「不认识会话内核」那一侧。
+        const conversational = new Set(["chat.ts", "protocol.ts"]);
         for (const name of files) {
             const text = readFileSync(join(dir, name), "utf-8");
             expect(text.toLowerCase()).not.toContain("room");
-            expect(text).not.toContain("@diy-agent/session");
             expect(text).not.toContain("electron");
             expect(text).not.toContain("@diy-agent/task");
+            if (conversational.has(name)) continue;
+            expect(text).not.toContain("@diy-agent/session");
         }
     });
 });

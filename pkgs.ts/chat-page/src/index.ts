@@ -7,12 +7,12 @@ export { ChatPageError } from "./errors.js";
 export type { AgentEvent } from "./blocks.js";
 export type {
     Block,
+    BotChatHost,
+    BotChatSnapshot,
     BotDraftInput,
     BotUpdateInput,
     BotView,
     ChatMetrics,
-    ChatSessionHost,
-    ChatSnapshot,
     FirstBotInput,
     ModelChoice,
     SendArgs,
