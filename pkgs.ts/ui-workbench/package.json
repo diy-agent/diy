@@ -20,6 +20,7 @@
   },
   "dependencies": {},
   "devDependencies": {
+    "happy-dom": "^20.0.0",
     "oxfmt": "^0.57.0",
     "oxlint": "^1.72.0",
     "typescript": "^7.0.2",

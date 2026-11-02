@@ -304,8 +304,9 @@ function createWindow(): { binding: ServerBinding; ipcTransport: import("@diy-ag
 
   // test：只渲染窗口不激活 app —— 测试实例不能抢走正在运行的生产 app 的焦点。
   // dev/prod：保持 show()，用户自己起的窗口应当被激活。
+  // DIY_NO_FOCUS=1：dev 启动器拉起实例时同理（起来即副屏，当前窗口不失焦）。
   mainWindow.once("ready-to-show", () => {
-    if (cfg.env === "test") mainWindow?.showInactive();
+    if (cfg.env === "test" || process.env["DIY_NO_FOCUS"] === "1") mainWindow?.showInactive();
     else mainWindow?.show();
   });
 

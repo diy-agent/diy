@@ -8,5 +8,7 @@
 export { registerPage, getPage, registeredPages, resetPages } from "./registry.js";
 export { mountWorkbench } from "./frame.js";
 export type { MountOptions } from "./frame.js";
+export { createSplitPane, clampPaneWidth } from "./split.js";
+export type { SplitPane, SplitPaneOptions } from "./split.js";
 export { WorkbenchUiError } from "./errors.js";
 export type { PageContext, PageInfo, PageView, WorkbenchFrame, WorkbenchGateway } from "./contract.js";

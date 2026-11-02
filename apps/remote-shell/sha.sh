@@ -38,7 +38,8 @@ _ensure_electron() { run node ../../scripts/ensure-electron.mjs --quiet; }
 # 依赖包先编 lib：主进程按包名 import（main 里 @diy-agent/* 是外部），运行时加载的是 lib/*.js
 build-deps() {
   local pkg
-  for pkg in diy-log; do
+  # workbench：只取其 instance-record（自报注册表），主进程按包名运行时解析
+  for pkg in diy-log workbench; do
     ( cd "$SCRIPT_DIR/../../pkgs.ts/$pkg" && ./sha.sh build )
   done
 }

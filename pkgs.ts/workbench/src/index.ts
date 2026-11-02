@@ -14,15 +14,19 @@
 // 边界：本包**不认识任何具体页面**（不 import 页面插件、不读业务数据）。
 // 页面清单来自 plugins 清单，页面行为来自插件导出的 methods —— 加页面不改本包。
 
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, screen } from "electron";
 import { WorkbenchError } from "./errors.js";
 import { loadPages, type PluginEntry } from "./loader.js";
 import type { PageContribution, PageInfo } from "./page.js";
 import { PAGE_INVOKE_CHANNEL, PAGE_LIST_CHANNEL, type PageInvokeRequest } from "./channels.js";
+import { removeSelfRecord, writeSelfRecord } from "./instance-record.js";
+import { sidecarWindowOptions } from "./window.js";
 
 export { WorkbenchError } from "./errors.js";
 export { orderPlugins, loadPages } from "./loader.js";
 export { PAGE_INVOKE_CHANNEL, PAGE_LIST_CHANNEL } from "./channels.js";
+export { sidecarWindowOptions, type DisplayLike, type WorkArea } from "./window.js";
+export { registryDir, writeSelfRecord, removeSelfRecord } from "./instance-record.js";
 export type { PluginEntry } from "./loader.js";
 export type { PageContribution, PageInfo, PageMethod } from "./page.js";
 export type { PageInvokeRequest, WorkbenchBridge } from "./channels.js";
@@ -38,6 +42,17 @@ export interface CreateWorkbenchOptions {
     readonly rendererFile: string;
     readonly width?: number;
     readonly height?: number;
+    /**
+     * app 短名（写进实例注册表 `~/.diy-instances/<pid>.json`，dev 启动器靠它认人）。
+     * 缺省不注册 —— 显式给名字才自报，避免把临时 / 测试宿主也塞进注册表。
+     */
+    readonly app?: string;
+    /** 是否自报实例（缺省 = 给了 app 且 `DIY_HOME` 存在） */
+    readonly registerInstance?: boolean;
+    /** 窗口起来时**不抢焦点**（`showInactive`）；缺省读 `DIY_NO_FOCUS === "1"` */
+    readonly showInactive?: boolean;
+    /** 开在非主屏（副屏）；缺省 = `DIY_ENV !== "production"` */
+    readonly sidecar?: boolean;
 }
 
 /** 外壳句柄：拿页面清单、直接调方法（测试 / 无窗口场景），以及释放 */
@@ -83,11 +98,31 @@ export async function createWorkbench(options: CreateWorkbenchOptions): Promise<
 
     await app.whenReady();
 
+    const width = options.width ?? 1040;
+    const height = options.height ?? 720;
+    const env = process.env["DIY_ENV"] ?? "production";
+    const variant = process.env["DIY_VARIANT"] ?? "lab";
+    const diyHome = process.env["DIY_HOME"];
+    const showInactive = options.showInactive ?? process.env["DIY_NO_FOCUS"] === "1";
+    const sidecar = options.sidecar ?? env !== "production";
+    const sidecarPos = sidecar
+        ? sidecarWindowOptions(screen.getAllDisplays(), screen.getPrimaryDisplay().id, width, height)
+        : {};
+
+    const shouldRegister = options.registerInstance ?? (options.app !== undefined && diyHome !== undefined);
+    if (shouldRegister && options.app !== undefined && diyHome !== undefined) {
+        const file = writeSelfRecord({ app: options.app, diyHome, variant, env });
+        console.log(`[workbench] 实例注册：${file}`);
+        const drop = (): void => removeSelfRecord();
+        app.once("will-quit", drop);
+    }
+
     const win = new BrowserWindow({
         title: options.title ?? "Workbench",
-        width: options.width ?? 1040,
-        height: options.height ?? 720,
-        show: true,
+        width,
+        height,
+        show: false,
+        ...sidecarPos,
         webPreferences: {
             preload: options.preloadFile,
             contextIsolation: true,
@@ -95,7 +130,14 @@ export async function createWorkbench(options: CreateWorkbenchOptions): Promise<
             sandbox: true,
         },
     });
-    win.on("closed", () => disposeHandlers());
+    win.on("closed", () => {
+        removeSelfRecord();
+        disposeHandlers();
+    });
+    win.once("ready-to-show", () => {
+        if (showInactive) win.showInactive();
+        else win.show();
+    });
     await win.loadFile(options.rendererFile);
 
     const disposeHandlers = (): void => {

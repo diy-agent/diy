@@ -20,6 +20,7 @@
     },
     "dependencies": {
         "@diy-agent/log": "*",
+        "@diy-agent/workbench": "*",
         "@opentelemetry/api-logs": "^0.223.0",
         "@opentelemetry/sdk-logs": "^3.0.0"
     },

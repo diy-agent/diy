@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 import { logs } from '@opentelemetry/api-logs';
 import { BatchLogRecordProcessor, LoggerProvider } from '@opentelemetry/sdk-logs';
 import { child, FileLogRecordExporter, isLogLevel, severityOf } from '@diy-agent/log';
+import { removeSelfRecord, writeSelfRecord } from '@diy-agent/workbench';
 import { barDataUrl } from './bar.js';
 import { BAR_INVOKE_CHANNEL, BAR_STATE_CHANNEL, SHELL_CURRENT_CHANNEL, type BarRequest } from './channels.js';
 import { discoverInstances } from './discover.js';
@@ -650,7 +651,20 @@ function createWindow(): void {
     barView = bar;
     placeholderView = placeholder;
     relayout();
-    created.show();
+    // 自报实例（`~/.diy-instances/<pid>.json`）：dev 启动器据此认「这个 app 活着」
+    const diyHome = process.env['DIY_HOME'];
+    if (diyHome !== undefined && diyHome !== '') {
+        writeSelfRecord({
+            app: 'diy-remote-shell',
+            diyHome,
+            variant: process.env['DIY_VARIANT'] ?? 'lab',
+            env: process.env['DIY_ENV'] ?? 'production',
+        });
+    }
+    created.on('closed', () => removeSelfRecord());
+    // dev 启动器拉起时不抢焦点（副屏起来，当前窗口不失焦）
+    if (process.env['DIY_NO_FOCUS'] === '1') created.showInactive();
+    else created.show();
     log.info('窗口已创建', { width: args.width, height: args.height, barHeight: BAR_HEIGHT });
 }
 

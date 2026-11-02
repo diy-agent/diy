@@ -51,6 +51,8 @@ log.info("应用启动", { variant: process.env["DIY_VARIANT"] ?? "", pid: proce
 
 createWorkbench({
     title: ASSEMBLY.title,
+    // 实例注册表里的 app 短名：dev 启动器据此认「这个 app 活着」
+    app: "diy-minimal",
     plugins: ASSEMBLY.plugins,
     preloadFile: join(here, "../preload/index.cjs"),
     rendererFile: join(here, "../renderer/index.html"),
