@@ -57,7 +57,7 @@ import type { LlmPort } from '@diy-agent/session';
 /** 应用短名（##484 的 displayAddress 里那一段，别用 `@diy-agent/app-web`） */
 export const APP_NAME = 'diy-web';
 
-/** 缺省端口（与 remote-shell 的 --url 示例一致） */
+/** 缺省端口 */
 export const DEFAULT_PORT = 8080;
 
 /** `GET /ping` 的响应（在 ##479 的 PingInfo 之上补 app / address / auth） */

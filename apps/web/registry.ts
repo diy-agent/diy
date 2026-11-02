@@ -2,7 +2,7 @@
 //
 // 为什么 web 要自己写：注册表原先只有 diy-app（Electron）启动时自报，`apps/web` 不写 ⇒
 // local 发现器（`@diy-agent/remote/node` 的 localDiscoverer）永远扫不到 web 实例，
-// 于是 remote-shell 的横条列不出它、同格多实例也无从判定（##495 根因一）。
+// 于是 local 发现器的远程导航页列不出它、同格多实例也无从判定（##495 根因一）。
 //
 // 落盘格式与 `pkgs.ts/diy-app/src/main/core/instance-registry.ts` **同一份**（那个文件是读侧）：
 //   pid / app / launch / worktree / port / pingPort / diyHome / variant / env / argv / cwd / startedAt / updatedAt / parents

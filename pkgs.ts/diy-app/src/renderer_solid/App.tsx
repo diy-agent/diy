@@ -8,7 +8,7 @@ import { LlmPage } from "./components/LlmPage";
 import { TrafficPage } from "./components/TrafficPage";
 import { SessionOverviewPage } from "./components/SessionOverviewPage";
 import { InstancesPage } from "./components/InstancesPage";
-import { HubPage } from "./components/HubPage";
+import { RemotePage } from "./components/RemotePage";
 import { RoomsPage } from "./components/RoomsPage";
 import { SidebarRoom } from "./components/SidebarRoom";
 import { SessionGlyph, SessionGlyphDot } from "./components/SessionGlyph";
@@ -193,8 +193,8 @@ const NAV_ITEMS: Array<{ id: Section; label: string; icon: string }> = [
     // 房间看的是「谁对谁说了什么」—— 两者是不同层的东西，刻意并列而不是互相嵌套。
     { id: "rooms", label: "房间", icon: "🏠" },
     { id: "instances", label: "实例", icon: "🖥" },
-    // 「配对」= hub 主控 / 卫星（##500）：地址即身份，人比对真实 URL，6 位码只管「谁被允许进来」。
-    { id: "hub", label: "配对", icon: "🔗" },
+    // 「远程」= 远程导航页（##507）：我 + 发现的机器 + 配对入口；配对五屏在弹层里复用 HubPage（##500）。
+    { id: "hub", label: "远程", icon: "🔗" },
     { id: "settings", label: "设置", icon: "⚙️" },
 ];
 
@@ -1293,7 +1293,7 @@ export default function App() {
                         <InstancesPage />
                     </Show>
                     <Show when={route().kind === "section" && (route() as { section: Section }).section === "hub"}>
-                        <HubPage />
+                        <RemotePage />
                     </Show>
                     <Show when={route().kind === "section" && (route() as { section: Section }).section === "settings"}>
                         <div class="flex flex-col h-full">

@@ -49,8 +49,20 @@ interface DiscoverRow {
 
 type Tab = "host" | "join";
 
-export function HubPage() {
-  const [tab, setTab] = createSignal<Tab>("host");
+/**
+ * HubPage 可复用（##507）：远程导航页把它当**弹层/详情区**嵌入，不再占整级导航 tab。
+ *
+ * props 全可选 —— 不传时行为与 ##500 的整页版完全一致（配对五屏不回归）：
+ *   · `initialTab` —— 打开哪一屏（「添加为卫星节点」→ host；「申请成为它的卫星」→ join）
+ *   · `initialUrl` —— join 屏预填入网基址（从发现行拼，见 shared/remote-nav.joinUrlFor）
+ *   · `onClose`    —— 有值则显示关闭按钮（弹层模式）；无值 = 仍可当整页用
+ */
+export function HubPage(props: {
+  initialTab?: Tab;
+  initialUrl?: string;
+  onClose?: () => void;
+}) {
+  const [tab, setTab] = createSignal<Tab>(props.initialTab ?? "host");
   const [error, setError] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal<string | null>(null);
 
@@ -66,7 +78,7 @@ export function HubPage() {
   const [tlsKey, setTlsKey] = createSignal("");
 
   // 卫星状态
-  const [urlInput, setUrlInput] = createSignal("");
+  const [urlInput, setUrlInput] = createSignal(props.initialUrl ?? "");
   const [discoverRows, setDiscoverRows] = createSignal<DiscoverRow[]>([]);
   const [discoverNote, setDiscoverNote] = createSignal<string | null>(null);
   const [preview, setPreview] = createSignal<{ address: string; hubNodeId: string; endpoint: string } | null>(null);
@@ -236,7 +248,7 @@ export function HubPage() {
   });
 
   return (
-    <div class="flex flex-col h-full min-h-0">
+    <div class="flex flex-col h-full min-h-0" data-hub-page>
       <div class="border-b px-3 py-2 shrink-0 flex items-center gap-3">
         <div class="tabs tabs-box">
           <button class="tab" classList={{ "tab-active": tab() === "host" }} onClick={() => setTab("host")}>
@@ -252,6 +264,11 @@ export function HubPage() {
               {id().hubNodeId} · domain {id().domainId}
             </span>
           )}
+        </Show>
+        <Show when={props.onClose}>
+          <button class="btn btn-xs btn-ghost ml-auto" data-hub-close onClick={() => props.onClose?.()}>
+            关闭
+          </button>
         </Show>
       </div>
 

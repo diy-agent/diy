@@ -1,7 +1,7 @@
 // instance-record.ts — 外壳宿主启动时**自报**一条实例记录（`~/.diy-instances/<pid>.json`）。
 //
 // 为什么外壳要管：dev 启动器靠这份注册表判断「哪个 app 活着」（`app` 字段 = 短名），
-// 而 apps/chat / apps/minimal / apps/remote-shell 都跑在本外壳上。原先只有 diy-app 与
+// 而 apps/chat / apps/minimal 都跑在本外壳上。原先只有 diy-app 与
 // apps/web 自报，其余 app 在启动器里永远显示「未启动」。这里补上通用的那份。
 //
 // 格式与 diy-app 的 `core/instance-registry.ts` 同一份（那个文件是读侧）：
