@@ -43,10 +43,6 @@
       "entry": ["src/index.ts", "src/http.ts", "src/ws.ts", "src/electron.ts", "src/cli/index.ts", "probes/**/*.ts", "test/**/*.ts"],
       "project": ["src/**/*.ts", "probes/**/*.ts", "test/**/*.ts"]
     },
-    "pkgs.ts/diy-dev": {
-      "entry": ["src/cli/index.ts", "src/runtime.ts", "vite.cli.config.ts"],
-      "project": ["src/**/*.ts"]
-    },
     "pkgs.ts/workbench-plugin": {
       "entry": ["src/index.ts", "src/manifest.ts", "src/panel.ts", "src/spec.ts"],
       "project": ["src/**/*.{ts,tsx}"]

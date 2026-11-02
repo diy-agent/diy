@@ -2,7 +2,7 @@
 
 > **本文档状态：意图测试为唯一真源** — `tests/intent.template.test.ts`（R1–R15）与 `tests/parser.test.ts` 已覆盖本 SPEC 全部可验证行为；本文保留作**决策记录与索引**，新增需求先写意图测试，再补实现。今后以意图测试为准，本文仅作索引与背景。
 >
-> 接入状态：已接入 `diy-app`（`./sha.sh check` ✅ / `./sha.sh test` 4 包全绿：`diy-template 83` + `diy-app 247+` + `diy-rpc 31` + `diy-dev 41`）。
+> 接入状态：已接入 `diy-app`（`./sha.sh check` ✅ / `./sha.sh test` 3 包全绿：`diy-template 83` + `diy-app 247+` + `diy-rpc 31`）。
 
 ## 目录
 

@@ -312,7 +312,7 @@ guards.push({
 });
 
 // 判据按**内容**：索引里丢了可执行位的是「首行 shebang 是 shell」的文件，
-// 而这类文件不一定叫 `.sh`（`pkgs.ts/diy-dev/bin/dev`、`bin/diy`）。
+// 而这类文件不一定叫 `.sh`（如 `bin/diy`）。
 const shTouched = fileList.filter((f) => {
   if (f.endsWith('.sh')) return true;
   if (untracked.has(f)) return true; // 新增文件一律看一眼（新脚本 = 最容易丢位）

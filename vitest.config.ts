@@ -13,7 +13,6 @@ export default defineConfig({
         'pkgs.ts/diy-remote',
         'pkgs.ts/diy-template',
         'pkgs.ts/diy-talk',
-        'pkgs.ts/diy-dev',
         'pkgs.ts/diy-flow',
         'pkgs.ts/diy-agent-session',
         'pkgs.ts/diy-agent-session-store-jsonl',

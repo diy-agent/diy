@@ -8,8 +8,7 @@
 # 轮到谁谁炸）。`.gitattributes` 表达不了 file mode，配置层面无解，只能在门口拦一道。
 #
 # 判据：索引里首行 shebang 解释器是 bash/sh/zsh/dash/ksh 的文件，mode 必须 100755。
-#   按 shebang 判而非按 `.sh` 后缀 —— 顺带覆盖 `bin/diy`、`pkgs.ts/diy-dev/bin/dev`
-#   这类无扩展名入口；也不会误伤 `#!/usr/bin/env node|python3|npx tsx` 的 `.ts/.mts/.py`
+#   按 shebang 判而非按 `.sh` 后缀 —— 顺带覆盖 `bin/diy` 这类无扩展名入口；也不会误伤 `#!/usr/bin/env node|python3|npx tsx` 的 `.ts/.mts/.py`
 #   （它们由解释器显式调用，不需要 exec 位）。
 # 处置：`git update-index --chmod=+x <文件>`（**须在 Windows 之外的平台提交才生效**）。
 set -euo pipefail
