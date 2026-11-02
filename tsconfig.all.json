@@ -77,9 +77,6 @@
       "path": "apps/chat"
     },
     {
-      "path": "apps/remote-shell"
-    },
-    {
       "path": "apps/web"
     }
   ]

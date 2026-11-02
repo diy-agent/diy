@@ -2024,6 +2024,14 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
               message: z.string().nullable().describe("失败原因（人话）"),
             }),
           }),
+          openUrl: RpcSchema.unary({
+            desc: `在系统默认浏览器打开 URL（远程导航页「web 远程访问」；仅 http/https）`,
+            input: { url: z.string().cliArg({ desc: "http(s) URL" }) },
+            output: z.object({
+              ok: z.boolean(),
+              message: z.string().nullable().describe("失败原因（人话）"),
+            }),
+          }),
           setFullCapture: RpcSchema.unary({
             desc: `开关「记录完整请求内容」（开 = 正文不再截断，全留；默认关 = 超长正文只留首尾一段）`,
             input: { on: z.boolean().cliArg({ desc: "true 开 / false 关" }) },

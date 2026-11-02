@@ -190,7 +190,10 @@ export class RemoteService {
             mdnsTimeoutMs: opts.mdnsTimeoutMs,
             pingTimeoutMs: opts.pingTimeoutMs,
         });
-        const rows: MergedInstance[] = result.items;
+        // ##507 bug：发现结果里会包含本机自己（注册表里自己那条 / 本机 mDNS 广播）。
+        // 「其他机器」列表不该把自己列进去 —— 自己已经在「我」那一栏了，人不需要「加自己」。
+        const selfId = this.identity?.id;
+        const rows: MergedInstance[] = selfId === undefined ? result.items : result.items.filter((r) => r.id !== selfId);
         const errors: DiscoverFailure[] = result.errors;
         // 失败的那几路必须**出声**（别让「tailscale 明明装了却没结果」变成静默谜团）
         const text =

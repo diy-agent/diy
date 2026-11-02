@@ -6,6 +6,7 @@
  * 命名体系：diy.*（Main 进程域，本地处理）。diy.ui.* 由调用方 onForward 转发。
  */
 
+import { openUrlWith } from "../core/open-url";
 import type { ServerBinding } from "@diy-agent/rpc";
 import { ChannelServerBinding } from "@diy-agent/rpc";
 import type { EnvelopeTransport } from "@diy-agent/rpc";
@@ -1349,6 +1350,11 @@ export function bindAppHandlers(binding: ServerBinding): void {
     } catch (e) {
       return { ok: false, message: e instanceof Error ? e.message : String(e), };
     }
+  });
+  binding.on(app.traffic.openUrl, async ({ input }) => {
+    // 校验 + 调用的可单测部分在 core/open-url.ts（vi.mock 禁令下用注入端口测，##402/##507）
+    const { shell } = await import("electron");
+    return openUrlWith(shell, input.url);
   });
   binding.on(app.traffic.events, async function* () {
     for await (const ev of traffic.events()) yield ev;

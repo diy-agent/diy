@@ -161,5 +161,5 @@ Touch ID 注册一个 Passkey，之后用它登录。`web.auth.*`（token 授权
 
 启动时写 `~/.diy-instances/<pid>.json`（`port` / `pingPort` / `diyHome` / `variant` / `env` / `argv` /
 `cwd` / `startedAt` / `updatedAt` / `parents`，外加 `app` 与 `address`），退出（`close()` 或进程 `exit`）删除。
-这样 local 发现器（remote-shell 横条、别的实例）才看得见 web 实例。
+这样 local 发现器（远程导航页、别的实例）才看得见 web 实例。
 异常退出留下的条目由读侧的 `/ping` 探活过滤；测试用 `DIY_INSTANCE_REGISTRY` 指到临时目录。
