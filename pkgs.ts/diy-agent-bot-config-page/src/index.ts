@@ -10,6 +10,7 @@
 //   · 测试对话的会话只活在**本页面实例**的内存里（@diy-agent/session-store-memory），
 //     页面不关、会话就不落盘；页面关了也就没了（##474 判据 4）
 
+import type { BotStore } from '@diy-agent/bot';
 import type { PageContribution } from '@diy-agent/workbench';
 import { createBotActions, type BotActions } from './actions.js';
 import { BotConfigPageError } from './errors.js';
@@ -17,6 +18,11 @@ import { BotConfigPageError } from './errors.js';
 export interface BotConfigPageOptions {
     /** 数据根（`$DIY_HOME`）；缺省 = `process.env.DIY_HOME` */
     readonly home?: string;
+    /**
+     * 注入的 bot 存储；缺省按 `home` 建文件实现。
+     * 内存入口必须传聊天页那一个 —— 否则两页各写各的（##505 bug：内存模式建 bot 列表里看不到）。
+     */
+    readonly store?: BotStore;
 }
 
 /** 插件加载器会调用它（default 导出 = 本函数） */
@@ -32,7 +38,8 @@ export function createPage(config?: unknown): PageContribution {
                 'Bot 配置页没有数据根：装配层没传 config.home，环境里也没有 DIY_HOME',
             );
         }
-        actions = createBotActions({ home });
+        const store = storeOf(config);
+        actions = createBotActions(store === null ? { home } : { home, store });
         return actions;
     };
 
@@ -64,6 +71,16 @@ export type {
     TestChatView,
     TestMessageView,
 } from './shared.js';
+
+/** 从配置取注入的 BotStore（形状不对 = 没传；不静默退回文件实现，那是这个 bug 的成因） */
+function storeOf(config: unknown): BotStore | null {
+    if (config === null || typeof config !== 'object') return null;
+    const store = (config as { store?: unknown }).store;
+    if (store === null || typeof store !== 'object') return null;
+    const port = store as Record<string, unknown>;
+    const ok = ['load', 'save', 'list', 'remove'].every((key) => typeof port[key] === 'function');
+    return ok ? (store as BotStore) : null;
+}
 
 function homeOf(config: unknown): string | null {
     if (config !== null && typeof config === 'object') {

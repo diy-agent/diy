@@ -28,6 +28,11 @@ export interface BotActionsOptions {
     readonly clock?: () => Date;
     /** 建 LLM 端口（测试注入假实现；缺省 = 按模型目录 + provider key 建真 provider） */
     readonly llmFor?: (modelKey: string) => LlmPort;
+    /**
+     * 注入的 bot 存储（##505 bug：内存入口必须与聊天页**共用同一个 store**）。
+     * 缺省 = `createFileBotStore({ home })`（落盘入口的行为，一个字节不改）。
+     */
+    readonly store?: BotStore;
 }
 
 export interface BotActions {
@@ -43,7 +48,7 @@ export interface BotActions {
 export function createBotActions(options: BotActionsOptions): BotActions {
     const home = options.home;
     const now = options.clock ?? (() => new Date());
-    const store: BotStore = createFileBotStore({ home, sessionsDir: sessionsDirOf(home) });
+    const store: BotStore = options.store ?? createFileBotStore({ home, sessionsDir: sessionsDirOf(home) });
 
     let catalogCache: ModelCatalogEntry[] | null = null;
     const catalog = (): ModelCatalogEntry[] => (catalogCache ??= loadCatalog(home));

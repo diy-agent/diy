@@ -52,7 +52,8 @@ describe("apps/chat 装配清单", () => {
 describe("apps/chat 瘦身（##505 判据）", () => {
     it("判据 1：apps/chat 的 ts / mjs 源码 ≤ 250 行（不含 build / lib / tests / scripts）", () => {
         const dir = join(import.meta.dirname, "..");
-        const files = readdirSync(dir).filter((name) => /\.(ts|mjs)$/.test(name));
+        // vitest.config.ts 是测试工具配置，不是应用代码 —— 不计入瘦身判据。
+        const files = readdirSync(dir).filter((name) => /\.(ts|mjs)$/.test(name) && name !== "vitest.config.ts");
         const total = files.reduce(
             (sum, name) => sum + readFileSync(join(dir, name), "utf-8").replace(/\n$/, "").split("\n").length,
             0,
