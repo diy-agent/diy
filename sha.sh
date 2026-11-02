@@ -660,6 +660,44 @@ lab()     {
     echo "${error}✗ 没有这个 app：${app_name}（可用：diy-app $(_apps_list)）${reset}" >&2
     exit 2
 }
+
+# ── 每个 apps/<name>/ 一个同名函数：`./sha.sh <name> [launch]` → `apps/<name>/sha.sh [launch]`
+# 破折号换成下划线（shell 函数名不能带 -）：remote-shell → remote_shell
+# 2026-11-02 用户裁：不搞 apps 二级子命令，直接按 app 名调。
+_apps_list() { for d in apps/*/; do [[ -x "${d}sha.sh" ]] && basename "$d"; done | tr '\n' ' '; }
+_app_launches() {
+    local dir="$1" out=""
+    if [[ -f "${dir}app.yaml" ]]; then
+        out="$(awk '/^launches:/{f=1;next} /^[a-zA-Z]/{f=0} f' "${dir}app.yaml" 2>/dev/null | grep -oE 'id: *[a-z][a-z0-9:_-]*' | sed 's/id: *//' | tr '\n' ' ')"
+    fi
+    if [[ -z "$out" ]]; then
+        local fn
+        for fn in lab preview prod lab:memory; do
+            grep -qE "^${fn}\(\)" "${dir}sha.sh" 2>/dev/null && out+="$fn "
+        done
+    fi
+    echo "${out% }"
+}
+
+apps() {
+    local d name
+    for d in apps/*/; do
+        [[ -x "${d}sha.sh" ]] || continue
+        name="$(basename "$d")"
+        printf "  %-14s %s\n" "$name" "$(_app_launches "$d")"
+    done
+    printf "  %-14s %s\n" "diy-app" "$(_app_launches "pkgs.ts/diy-app/")"
+}
+
+for _d in apps/*/; do
+    [[ -x "${_d}sha.sh" ]] || continue
+    _n="$(basename "$_d")"
+    _fn="${_n//-/_}"
+    # exec 前 ensure-sync：依赖落后时自动补，之后 stamp 对上就直接启动
+    eval "${_fn}() { ensure-sync; if [[ \$# -eq 0 ]]; then exec \"\${PWD}/${_d}sha.sh\" lab; else exec \"\${PWD}/${_d}sha.sh\" \"\$@\"; fi }"
+done
+unset _d _n _fn
+
 # apps/ 下可起的 app 名（给 --app 的报错与提示用）
 _apps_list() { for d in apps/*/; do [[ -f "$d/sha.sh" ]] && basename "$d"; done | tr '\n' ' '; }
 # preview：编译后运行（无 watch）的稳定实例 —— 长会话 / 人要持续对话时用它，改码不打断。
