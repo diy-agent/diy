@@ -13,10 +13,3 @@ launches:
     entries:
       - kind: app
         title: Electron 窗口
-
-  - id: lab:memory
-    title: 内存模式（重启后丢失）
-    command: ./sha.sh lab:memory
-    entries:
-      - kind: app
-        title: Electron 窗口（内存）
