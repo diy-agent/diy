@@ -100,10 +100,13 @@ export async function createHubServer(opts: HubServerOptions): Promise<HubServer
     const requestHandler = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
         try {
             const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-            if (req.method === 'GET' && url.pathname === '/hub/info') {
+            // ##507 实测：`tailscale serve --set-path /hub` 会把前缀**去掉**再转发（/hub/info → /info）。
+            // 所以两种形状都要认：直连后端是 /hub/info，经 tailscale 是 /info。
+            const path = url.pathname.replace(/^\/hub(?=\/)/, '');
+            if (req.method === 'GET' && path === '/info') {
                 return json(res, 200, info);
             }
-            if (req.method === 'POST' && url.pathname === '/hub/pair') {
+            if (req.method === 'POST' && path === '/pair') {
                 const body = await readJsonBody<PairRequestBody>(req);
                 if (body.protocolVersion !== HUB_PROTOCOL_VERSION) {
                     return json(res, 400, { error: 'hub/protocol-mismatch', message: '协议版本不一致' });
