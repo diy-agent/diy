@@ -1,0 +1,37 @@
+{
+    "name": "@diy-agent/store-contract",
+    "version": "0.1.0",
+    "private": true,
+    "description": "diy 存储适配器的**契约测试**（只有测试工具，无生产代码）：一份用例，所有实现跑同一批",
+    "files": [
+        "src/"
+    ],
+    "type": "module",
+    "main": "./lib/index.js",
+    "types": "./src/index.ts",
+    "exports": {
+        ".": {
+            "types": "./src/index.ts",
+            "default": "./lib/index.js"
+        },
+        "./session": {
+            "types": "./src/session.ts",
+            "default": "./lib/session.js"
+        },
+        "./bot": {
+            "types": "./src/bot.ts",
+            "default": "./lib/bot.js"
+        }
+    },
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json"
+    },
+    "devDependencies": {
+        "@diy-agent/bot": "*",
+        "@diy-agent/session": "*",
+        "oxfmt": "^0.57.0",
+        "oxlint": "^1.72.0",
+        "typescript": "^7.0.2",
+        "vitest": "^4.1.10"
+    }
+}

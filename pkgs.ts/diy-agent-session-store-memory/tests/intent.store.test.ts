@@ -2,13 +2,18 @@
 // ═══════════════════════════════════════════════════════════════
 // 🎯 内存会话存储「意图测试」—— 需求级（对应 ##474 判据 4）
 //
-//   T1  与 SessionStore 同接口：append / readFrom / readRange / latestSeq
-//   T2  seq 判据与 jsonl 一致：缺 seq / 不连续一律拒绝（半批不写）
-//   T3  readFrom(seq) 只返回 seq 更大的；readRange 按 at 闭区间
-//   T4  maxEntries：超了丢最旧，latestSeq 不回退（读尾部仍然正确）
-//   T5  clear()：清空后 latestSeq 归零、size = 0
-//   T6  零落盘：拿真 Session 跑完一轮后，工作目录 / 数据根下**没有任何新文件**
-//   T7  静态判据：源码不 import 任何 node:*（这层不该有文件系统）
+// ⚠️ ##506 之后本文件**只留内存实现特有的行为**；接口语义（append / readFrom / readRange /
+//    latestSeq / seq 判据，原 T1–T3）已移进 `tests/contract.test.ts`
+//    （用例在 @diy-agent/store-contract/session，与 jsonl 实现跑同一批）。
+//    判据：这条行为换一个实现还成立吗？**成立 ⇒ 进契约；不成立 ⇒ 留在本文件。**
+//
+//   T-sz  只读视图 size（契约里没有这个属性，是内存实现独有的排障出口）  ← 内存特有
+//   T4  maxEntries：超了丢最旧，latestSeq 不回退（读尾部仍然正确）        ← 内存特有
+//   T5  clear()：清空后 latestSeq 归零、size = 0                    ← 内存特有
+//   T6  零落盘：拿真 Session 跑完一轮后，工作目录 / 数据根下**没有任何新文件**  ← 内存特有
+//   T7  静态判据：源码不 import 任何 node:*（这层不该有文件系统）          ← 内存特有
+//   T8  老入口与 session 的缺省实现是同一个函数（不是两份实现）          ← 本包特有
+//   T9  首批可以从中途 seq 开始（jsonl 要求从 1 开）；之后照样严格连续      ← 内存特有
 // ═══════════════════════════════════════════════════════════════
 
 import { readdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -60,25 +65,19 @@ const fixedLlm: LlmPort = {
 };
 
 describe('内存会话存储', () => {
-    it('T1/T2/T3：接口与 seq 判据（追加连续 / 缺 seq 拒绝 / 越界不返回）', () => {
+    // T1–T3（接口与 seq 判据）已移进契约。
+    // 这里只验内存实现独有的只读视图 `size`：它不在 SessionStore 背上，jsonl 没有。
+    it('T-sz：size 跟随 append；半批被拒时 size 不变（内存特有视图）', () => {
         const store = openMemorySessionStore();
-        expect(store.latestSeq()).toBe(0);
-        expect(store.readFrom(0)).toEqual([]);
+        expect(store.size).toBe(0);
 
         store.append([message(1, 'a'), message(2, 'b', T0 + 5000)]);
-        expect(store.latestSeq()).toBe(2);
         expect(store.size).toBe(2);
-        expect(store.readFrom(0).map((item) => item.text)).toEqual(['a', 'b']);
-        expect(store.readFrom(1).map((item) => item.text)).toEqual(['b']);
-        expect(store.readRange({ from: T0, to: T0 + 1000 }).map((item) => item.text)).toEqual(['a']);
 
-        // 半批不写：第一条合法、第二条断号 ⇒ 整批拒绝
+        // 半批不写：第一条合法、第二条断号 ⇒ 整批拒绝（size 不能只涨一半）
         expect(() => store.append([message(3, 'c'), message(5, 'd')])).toThrowError(MemoryStoreError);
-        expect(store.latestSeq()).toBe(2);
         expect(store.size).toBe(2);
-
-        expect(() => store.append([{ role: 'user', text: 'no seq' }])).toThrow(/message-without-seq/);
-        expect(() => store.append([message(4, 'e')])).toThrow(/store\/gap/);
+        expect(store.latestSeq()).toBe(2);
     });
 
     it('T4：maxEntries 丢最旧、latestSeq 不回退', () => {

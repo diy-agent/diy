@@ -2,13 +2,17 @@
 // ═══════════════════════════════════════════════════════════════
 // 🎯 分桶 jsonl 存储「意图测试」—— 需求级（对应 ##456「存储分桶」判据）
 //
-//   T1  按大小切桶（不按日期）：写 40 MB 后 ≥3 个桶，每桶 ≤ maxBucketBytes
-//   T2  seq 全局单调、跨桶连续：readFrom(seq) 跨桶拼接无损（前后 seq 连续）
-//   T3  readFrom 只读需要的桶（不扫全量）：前面的桶被删也不会影响只读尾部
-//   T4  删中间桶 ⇒ open 报 `store/missing-bucket`（不静默丢数据）
-//   T5  index 坏了 / 丢了 ⇒ 扫目录重建；重建时发现缺号 ⇒ `store/gap`
-//   T6  追加语义：seq 不连续 / 缺 seq 一律拒绝（半批落盘比不落更糟）
-//   T7  重开后续写：lastSeq 不重号（末桶刷新）
+// ⚠️ ##506 之后本文件**只留 jsonl 实现特有的行为**；接口语义（seq 判据 / 读侧越界 /
+//    readRange 闭区间 / 入参校验，原 T6 与 T2/T8 的接口部分）已移进 `tests/contract.test.ts`
+//    （用例在 @diy-agent/store-contract/session，与 memory 实现跑同一批）。
+//    判据：这条行为换一个实现还成立吗？**成立 ⇒ 进契约；不成立 ⇒ 留在本文件。**
+//
+//   T1  按大小切桶（不按日期）：写 40 MB 后 ≥3 个桶，每桶 ≤ maxBucketBytes      ← 分桶特有
+//   T2  seq 全局单调、跨桶连续：readFrom(seq) 跨桶拼接无损（前后 seq 连续）      ← 跨桶特有
+//   T3  readFrom 只读需要的桶（不扫全量）：前面的桶被删也不会影响只读尾部        ← 跨桶特有
+//   T4  删中间桶 ⇒ open 报 `store/missing-bucket`（不静默丢数据）              ← 分桶特有
+//   T5  index 坏了 / 丢了 ⇒ 扫目录重建；重建时发现缺号 ⇒ `store/gap`           ← 分桶特有
+//   T7  重开后续写：lastSeq 不重号（末桶刷新）                                ← 分桶特有
 //   T8  按时间查：readRange({from,to}) 只打开时间相交的桶（桶的 fromAt/toAt 可二分）
 //   T9  桶文件名 = <序号>-<本地日期>-<本地时间><偏移>.jsonl（##464）
 //       · 形如 0001-20261030-115000+0800.jsonl：时间取首条 at（不是 Date.now()），偏移取那一刻
@@ -23,7 +27,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ChatMessage } from '@diy-agent/session';
-import { StoreError, openJsonlSessionStore } from '../src/index.js';
+import { openJsonlSessionStore } from '../src/index.js';
 
 let dir: string;
 
@@ -188,28 +192,7 @@ describe('T5 index 坏了 / 丢了就重建', () => {
     });
 });
 
-describe('T6 追加语义', () => {
-    it('缺 seq ⇒ store/message-without-seq；seq 不连续 ⇒ store/gap（先校验再写）', async () => {
-        const store = await openJsonlSessionStore({ dir, maxBucketBytes: 400 });
-        await store.append([message(1, '一')]);
-
-        const noSeq: ChatMessage = { role: 'user', text: '没有 seq' };
-        await expect(store.append([noSeq])).rejects.toMatchObject({ code: 'store/message-without-seq' });
-
-        await expect(store.append([message(3, '跳号')])).rejects.toMatchObject({ code: 'store/gap' });
-
-        // 失败的追加没写进去
-        expect(store.latestSeq()).toBe(1);
-        expect((await store.readFrom(0)).map((item) => item.seq)).toEqual([1]);
-    });
-
-    it('一批消息中途造成的半批也不落盘（先全量校验）', async () => {
-        const store = await openJsonlSessionStore({ dir, maxBucketBytes: 400 });
-        await expect(store.append([message(1, '一'), message(3, '三')])).rejects.toBeInstanceOf(StoreError);
-        expect(store.latestSeq()).toBe(0);
-        expect(await store.readFrom(0)).toEqual([]);
-    });
-});
+// T6（追加的 seq 判据 / 半批不落盘）已整体移进契约：那两个判据 memory 实现同样必须成立。
 
 describe('T8 按时间读', () => {
     it('readRange 只返回时间相交的消息（跨桶按 at 排序）', async () => {

@@ -35,6 +35,7 @@
     "@diy-agent/model-catalog": "*"
   },
   "devDependencies": {
+    "@diy-agent/store-contract": "*",
     "oxfmt": "^0.57.0",
     "oxlint": "^1.72.0",
     "typescript": "^7.0.2",

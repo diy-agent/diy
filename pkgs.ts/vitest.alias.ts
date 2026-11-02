@@ -25,6 +25,7 @@ const LOCATIONS: Record<string, { dir: string; entry: string }> = {
     "@diy-agent/session": { dir: "pkgs.ts/diy-agent-session", entry: "src/index.ts" },
     "@diy-agent/session-store-jsonl": { dir: "pkgs.ts/diy-agent-session-store-jsonl", entry: "src/index.ts" },
     "@diy-agent/session-store-memory": { dir: "pkgs.ts/diy-agent-session-store-memory", entry: "src/index.ts" },
+    "@diy-agent/store-contract": { dir: "pkgs.ts/diy-agent-store-contract", entry: "src/index.ts" },
     "@diy-agent/compaction": { dir: "pkgs.ts/diy-compact", entry: "src/index.ts" },
     "@diy-agent/context": { dir: "pkgs.ts/diy-context", entry: "src/index.ts" },
     "@diy-agent/facts": { dir: "pkgs.ts/diy-facts", entry: "src/index.ts" },
