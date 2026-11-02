@@ -166,8 +166,8 @@ export function HubPage(props: {
     if (r) await refreshStatus();
   }
 
-  async function doInvite(): Promise<void> {
-    const r = await run("invite", () => diyService.diy.hub.invite({}));
+  async function doInvite(autoApprove = false): Promise<void> {
+    const r = await run("invite", () => diyService.diy.hub.invite({ autoApprove }));
     if (!r) return;
     setInvite(r.data);
     setQr(await QRCode.toDataURL(r.data.inviteUrl, { margin: 1, width: 220 }));
@@ -214,7 +214,7 @@ export function HubPage(props: {
   async function doPreview(): Promise<void> {
     const url = urlInput().trim();
     if (!url) return;
-    const r = await run("preview", () => diyService.diy.hub.join({ url, code: undefined, waitMs: undefined }));
+    const r = await run("preview", () => diyService.diy.hub.join({ url, code: undefined, waitMs: undefined, autoJoin: undefined }));
     if (!r || !r.data.preview) return;
     setPreview({
       address: r.data.address,
@@ -229,7 +229,7 @@ export function HubPage(props: {
     const url = urlInput().trim();
     if (!url || !code().trim()) return;
     setJoinState("submitting");
-    const r = await run("join", () => diyService.diy.hub.join({ url, code: code().trim(), waitMs: 120_000 }));
+    const r = await run("join", () => diyService.diy.hub.join({ url, code: code().trim(), waitMs: 120_000, autoJoin: undefined }));
     if (!r || r.data.preview) {
       setJoinState("idle");
       return;
@@ -339,9 +339,14 @@ export function HubPage(props: {
                 <div class="card-body py-3 gap-2">
                   <div class="flex items-center justify-between">
                     <h2 class="card-title text-base">建邀请</h2>
-                    <button class="btn btn-sm btn-primary" disabled={busy() === "invite"} onClick={() => void doInvite()}>
-                      {busy() === "invite" ? "生成中…" : "添加设备"}
-                    </button>
+                    <div class="flex gap-2">
+                      <button class="btn btn-sm" disabled={busy() === "invite"} onClick={() => void doInvite(true)} data-hub-quick>
+                        一键连接
+                      </button>
+                      <button class="btn btn-sm btn-primary" disabled={busy() === "invite"} onClick={() => void doInvite()}>
+                        {busy() === "invite" ? "生成中…" : "添加设备"}
+                      </button>
+                    </div>
                   </div>
                   <Show
                     when={invite()}

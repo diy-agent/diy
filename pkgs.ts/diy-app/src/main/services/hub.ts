@@ -142,8 +142,9 @@ export class HubService {
     };
   }
 
-  /** `diy hub invite`：建邀请，返回三样（码 / 地址 / 邀请 URL） */
-  async invite(): Promise<HubInviteResult> {
+  /** `diy hub invite`：建邀请，返回三样（码 / 地址 / 邀请 URL）。
+   *  `autoApprove` = 一键连接：邀请自带授权（60 秒），卫星点了直接连上，不用人批准。 */
+  async invite(opts: { autoApprove?: boolean } = {}): Promise<HubInviteResult> {
     const server = await this.ensureServer();
     const identity = await this.requireIdentity();
     if (!identity.endpoint) {
@@ -152,7 +153,7 @@ export class HubService {
         message: "还没有对外地址：先跑 diy hub init --endpoint https://<host>/hub",
       });
     }
-    const invite = await server.invite();
+    const invite = await server.invite(opts.autoApprove === true ? { autoApprove: true } : undefined);
     return {
       code: formatInviteCode(invite.code),
       address: displayAddress(identity.endpoint),
@@ -214,15 +215,16 @@ export class HubService {
   }
 
   /** `diy hub join <url> --code 7K9M-Q2`：提交申请并等待批准，拿到 Token 后进钥匙串 */
-  async join(url: string, input: { code?: string; waitMs?: number } = {}): Promise<HubJoinResult | HubJoinPreview> {
-    if (!input.code) return this.joinPreview(url);
+  async join(url: string, input: { code?: string; waitMs?: number; autoJoin?: boolean } = {}): Promise<HubJoinResult | HubJoinPreview> {
+    // autoJoin：一键连接（邀请自带授权）—— 不需要人抄码，直接提交
+    if (!input.code && input.autoJoin !== true) return this.joinPreview(url);
 
     const prepared = await preparePairing(url, { allowInsecure: this.allowInsecure() });
     const local = ensureIdentity(this.home, { hostname: hostname(), appName: "diy" });
     const { result, keyPair } = await completePairing(
       prepared,
       {
-        code: input.code,
+        code: input.code ?? "",
         nodeId: local.identity.id,
         displayName: local.identity.displayName,
         waitMs: input.waitMs ?? 120_000,

@@ -38,7 +38,7 @@ export interface CreatedInvitation {
 
 export async function createInvitation(
     store: HubStore,
-    opts: InvitationOptions & { domainId?: DomainId; hubNodeId: NodeId },
+    opts: InvitationOptions & { domainId?: DomainId; hubNodeId: NodeId; autoApprove?: boolean },
 ): Promise<CreatedInvitation> {
     const now = opts.now?.() ?? new Date();
     const ttl = opts.ttlMs ?? INVITE_TTL_MS;
@@ -53,6 +53,7 @@ export async function createInvitation(
         hmac: hmacSha256Hex(opts.serverKey, normalized),
         createdAt: localISOString(now),
         expiresAt: localISOString(new Date(now.getTime() + ttl)),
+        ...(opts.autoApprove === true ? { autoApprove: true } : {}),
         attempts: 0,
         maxAttempts,
         status: 'created',
@@ -104,6 +105,14 @@ export function consumeInvitationInState(
     if (invitation.status === 'expired' || Date.parse(invitation.expiresAt) <= now.getTime()) {
         invitation.status = 'expired';
         return { ok: false, code: 'invite/expired', message: '邀请已过期' };
+    }
+
+    // ##一键连接：邀请自带授权（autoApprove）⇒ 不验码 —— inviteId 本身就是凭证（60 秒）。
+    // 这条路径下 code 可以是空串，人也不需要从主控屏幕上抄 6 位码。
+    if (invitation.autoApprove === true) {
+        invitation.status = 'consumed';
+        invitation.consumedByRequestId = input.requestId;
+        return { ok: true, invitation };
     }
 
     let code: string;

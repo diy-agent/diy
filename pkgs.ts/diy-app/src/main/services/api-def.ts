@@ -2766,8 +2766,10 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
             }),
           }),
           invite: RpcSchema.unary({
-            desc: `建邀请：6 位码 + 真实地址 + 邀请 URL（二维码内容就是 URL，不含码）`,
-            input: {},
+            desc: `建邀请：6 位码 + 真实地址 + 邀请 URL（二维码内容就是 URL，不含码）。--auto-approve = 一键连接（60 秒有效，无需输码/批准）`,
+            input: {
+              autoApprove: z.boolean().optional().cliOption({ desc: "一键连接：卫星点开链接直接连上，不走批准（--auto-approve）" }),
+            },
             output: z.object({
               status: z.string(),
               data: z.object({
@@ -2846,6 +2848,7 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
               url: z.string().cliArg({ desc: "邀请 URL（https://host/hub/pair?inv=...）" }),
               code: z.string().optional().cliOption({ desc: "主控屏幕上的 6 位码；不给则只显示地址" }),
               waitMs: z.number().optional().cliOption({ desc: "等待批准毫秒数（缺省 120000）" }),
+              autoJoin: z.boolean().optional().cliOption({ desc: "一键连接：邀请自带授权，不需要输码（--auto-join）" }),
             },
             output: z.object({
               status: z.string(),

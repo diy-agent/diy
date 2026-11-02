@@ -65,6 +65,12 @@ export interface Invitation {
     status: InvitationStatus;
     /** 消费掉它的申请 id（并发消费时只有一个能写进来） */
     consumedByRequestId?: string;
+    /**
+     * 一键连接：邀请**自带授权** —— 卫星提交后立即批准，不走 pending。
+     * 用户 2026-11-02 裁：「改成一键连接，最简单方式」。
+     * 安全性：谁拿到链接谁就能加（链接有效期压到 60 秒）。
+     */
+    autoApprove?: boolean;
 }
 
 /** 一个待审批 / 已决的配对申请 */

@@ -2090,7 +2090,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
   // 协议真源 docs/plans/2026-11-01-hub-pairing.md：地址即身份（人比对真实 URL），码只管「谁被允许进来」。
   // ⚠️ 卫星侧 `join` 分两步：不带 code 只显示地址；带 code 才发秘密（判据 6/7）。
   binding.on(app.hub.init, async ({ input }) => ({ status: "ok", data: await hubService.init(input) }));
-  binding.on(app.hub.invite, async () => ({ status: "ok", data: await hubService.invite() }));
+  binding.on(app.hub.invite, async ({ input }) => ({ status: "ok", data: await hubService.invite(input ?? {}) }));
   binding.on(app.hub.pending, async () => ({ status: "ok", data: { requests: await hubService.pending() } }));
   binding.on(app.hub.approve, async ({ input }) => {
     const r = await hubService.approve(input.requestId);
@@ -2123,7 +2123,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     };
   });
   binding.on(app.hub.join, async ({ input }) => {
-    const r = await hubService.join(input.url, { code: input.code, waitMs: input.waitMs });
+    const r = await hubService.join(input.url, { ...(input.code === undefined ? {} : { code: input.code }), ...(input.waitMs === undefined ? {} : { waitMs: input.waitMs }), ...(input.autoJoin === true ? { autoJoin: true } : {}) });
     return {
       status: "ok",
       data: r.preview

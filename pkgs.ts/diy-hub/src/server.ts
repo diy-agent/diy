@@ -58,7 +58,7 @@ export interface HubServer {
     readonly info: HubInfo;
     readonly port: number;
     readonly url: string;
-    invite(opts?: { ttlMs?: number }): Promise<{ inviteId: string; code: string; expiresAt: string }>;
+    invite(opts?: { ttlMs?: number; autoApprove?: boolean }): Promise<{ inviteId: string; code: string; expiresAt: string }>;
     pair(body: PairRequestBody): Promise<PairSuccess>;
     pending(): Promise<PairingRequest[]>;
     approve(requestId: string): Promise<ApprovalResult>;
@@ -112,6 +112,20 @@ export async function createHubServer(opts: HubServerOptions): Promise<HubServer
                     return json(res, 400, { error: 'hub/protocol-mismatch', message: '协议版本不一致' });
                 }
                 const created = await submitPairingRequest(opts.store, pairingOpts, body);
+                // ##一键连接：邀请自带授权 ⇒ 立即批准，不走 pending、人也不用点同意。
+                // 前提是邀请被标记 autoApprove（链接本身就是凭证，60 秒有效）。
+                const state = await opts.store.read();
+                const inv = state.invitations.find((i) => i.inviteId === body.inviteId);
+                if (inv?.autoApprove === true && created.status === 'pending') {
+                    const r = await approveRequest(opts.store, created.requestId, pairingOpts);
+                    return json(res, 200, {
+                        status: 'approved',
+                        requestId: created.requestId,
+                        token: r.token,
+                        nodeId: r.membership.nodeId,
+                        displayName: r.membership.displayName,
+                    });
+                }
                 if (!body.waitMs || body.waitMs <= 0) {
                     return json(res, 200, created);
                 }
@@ -185,7 +199,13 @@ export async function createHubServer(opts: HubServerOptions): Promise<HubServer
         port,
         url,
         async invite(inviteOpts) {
-            const created = await createInvitation(opts.store, { ...invitationOpts, ttlMs: inviteOpts?.ttlMs });
+            // ##一键连接：autoApprove 时把有效期压到 60 秒（链接即凭证，越短越安全）
+            const auto = inviteOpts?.autoApprove === true;
+            const created = await createInvitation(opts.store, {
+                ...invitationOpts,
+                ttlMs: inviteOpts?.ttlMs ?? (auto ? 60_000 : undefined),
+                ...(auto ? { autoApprove: true } : {}),
+            });
             return {
                 inviteId: created.invitation.inviteId,
                 code: created.code,
