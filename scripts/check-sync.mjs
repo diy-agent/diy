@@ -176,16 +176,18 @@ function checkLinks(lock, wsRealPaths, wsAbsPaths) {
       issues.push({ kind: 'link-stale', link, actual: path.relative(ROOT, real) });
       continue;
     }
-    // 悬空链接：包目录已被删（realpath 解不出来），按原始目标判是否曾指向 workspace
+    // 悬空链接：目标已不存在 ⇒ 必然是移包/改名残留，**不再看它“曾否指向 workspace”**。
+    // 原先按 `wsAbsPaths.has(target)` 判，而迁出的包（##501 把 diy-dev 迁出主仓）已经不在
+    // 当前 workspace 列表里 ⇒ 这条悬空链接被漏掉 ⇒ `npm install` 报
+    // `EMISSINGTARGET: "pkgs.ts/diy-dev" is referenced by node_modules/@diy-agent/dev` ⇒ build 直接失败。
+    // node_modules 里的悬空链接没有任何合法用途。
     let raw;
     try {
       raw = readlinkSync(abs(link));
     } catch {
       continue;
     }
-    if (wsAbsPaths.has(path.resolve(path.dirname(abs(link)), raw))) {
-      issues.push({ kind: 'link-stale', link, actual: `${raw}（悬空）` });
-    }
+    issues.push({ kind: 'link-stale', link, actual: `${raw}（悬空：目标不存在）` });
   }
   return issues;
 }

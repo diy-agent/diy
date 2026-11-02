@@ -12,6 +12,16 @@ set -o pipefail  # default pipeline status==last command status, If set, status=
 ## 开启globstar模式，允许使用**匹配所有子目录,bash4特性，默认是关闭的
 shopt -s globstar
 ## 开启后可用排除语法：_workspaces=(~ ~/git/chen56/!(applab)/ ~/git/botsay/*/ )
+#
+# 只收**真正的 workspace**（有 package.json）：目录残留不该把整套命令拖死。
+# 实测 ##501 把 diy-dev 迁出主仓后，本地留下的 pkgs.ts/diy-dev/ 只剩 node_modules，
+# glob 仍会命中 → `./sha.sh sync` 报 "No such file or directory" → build 直接 exit 127。
+_pick_workspaces() {
+  local w
+  for w in pkgs.ts/*/ apps/*/; do
+    [[ -f "$w/package.json" ]] && echo "$w"
+  done
+}
 shopt -s extglob
 
 # Get the real path of the script directory
@@ -23,7 +33,7 @@ cd "$ROOT_DIR"
 source sha.common.sh
 
 # _workspaces=(pkgs/*/)
-_workspaces=(pkgs.ts/*/ apps/*/)
+readarray -t _workspaces < <(_pick_workspaces)
 _vendors=(vendor/*/)
 
 ####################################################################################
