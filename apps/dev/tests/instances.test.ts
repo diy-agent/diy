@@ -144,6 +144,40 @@ describe("displayPath / buildSnapshot", () => {
         ]);
         expect(snapshot.runningCount).toBe(0);
         expect(snapshot.launches[1]?.entries[0]?.href).toBe("http://localhost:8123");
+        // 四级树的第一层：仓库名 / 主分支（取第一个 worktree）
+        expect(snapshot.repoName).toBe("repo");
+        expect(snapshot.repoBranch).toBe("main");
+        // 每条 launch 带上详情页要用的静态属性
+        const first = snapshot.launches[0]!;
+        expect(first.worktreePath).toBe("/repo");
+        expect(first.env).toEqual({});
+        expect(first.yamlPath).toBe("/repo/apps/chat/app.yaml");
+        expect(first.home).toBe("/repo/build/lab/home");
+    });
+
+    it("实例 URI：nodeId 从数据根读，没有 instance-id 就是 null", () => {
+        const worktrees: WorktreeInfo[] = [{ path: "/repo", branch: null }];
+        const snapshot = buildSnapshot(worktrees, {
+            repoRoot: "/repo",
+            worktrees,
+            appsOf: () => [chatApp()],
+            records: [],
+            starting: new Set(),
+            builtOf: () => true,
+            nodeIdOf: (home) => (home === "/repo/build/lab/home" ? "diy-9c5cdc25" : null),
+        });
+        expect(snapshot.launches[0]?.uri).toBe("diy://diy-9c5cdc25/chat.lab");
+
+        const none = buildSnapshot(worktrees, {
+            repoRoot: "/repo",
+            worktrees,
+            appsOf: () => [chatApp()],
+            records: [],
+            starting: new Set(),
+            nodeIdOf: () => null,
+        });
+        expect(none.launches[0]?.uri).toBeNull();
+        expect(none.launches[0]?.nodeId).toBeNull();
     });
 
     it("注册表按三元组对上 ⇒ running，web entry 用实际端口并标配置值", () => {

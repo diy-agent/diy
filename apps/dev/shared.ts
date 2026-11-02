@@ -22,6 +22,11 @@ export interface LaunchSpec {
     readonly command: string;
     /** 额外环境变量（如 web 的 PORT） */
     readonly env?: Readonly<Record<string, string>>;
+    /**
+     * 数据根（相对 worktree 根）；缺省 `build/lab/home`（apps/* 的 sha.sh 同一口径）。
+     * 实例 URI 的 nodeId 从 `<worktree>/<home>/instance-id` 读。
+     */
+    readonly home?: string;
     readonly entries: readonly EntrySpec[];
 }
 
@@ -70,16 +75,28 @@ export interface LaunchStatus {
     /** `(worktree, app, launch)` 的稳定 key（UI 选中 / 定位用） */
     readonly key: string;
     readonly worktree: string;
-    /** worktree 的展示形式（仓库名 · 分支 / `~` 缩写） */
+    /** worktree 的展示形式（路径 + 分支，右侧面板用） */
     readonly worktreeLabel: string;
+    /** worktree 路径的展示形式（左侧树只放这一行） */
+    readonly worktreePath: string;
     readonly branch: string | null;
     readonly app: string;
     readonly appTitle: string;
     readonly launch: string;
     readonly launchTitle: string;
     readonly command: string;
+    /** app.yaml 里声明的 env（详情页「环境变量」） */
+    readonly env: Readonly<Record<string, string>>;
     /** app 目录（命令在这儿执行；路径打开也用它） */
     readonly appDir: string;
+    /** app.yaml 路径（详情页可打开） */
+    readonly yamlPath: string;
+    /** 数据根（绝对路径；app.yaml 的 home 相对 worktree 解析） */
+    readonly home: string;
+    /** 数据根的 instance-id；从未启动过 = null */
+    readonly nodeId: string | null;
+    /** `diy://<nodeId>/<app>.<launch>`；nodeId 缺席 = null */
+    readonly uri: string | null;
     /** 该 worktree 是否构建过（存在 `build/`）；未构建 = 条目标灰 + 给「构建」按钮 */
     readonly built: boolean;
     readonly running: boolean;
@@ -91,6 +108,10 @@ export interface LaunchStatus {
 
 export interface DevSnapshot {
     readonly repoRoot: string;
+    /** 仓库名（主 worktree 目录名），左侧树第一层 */
+    readonly repoName: string;
+    /** 主 worktree 的分支（第一个 worktree；detached = null） */
+    readonly repoBranch: string | null;
     readonly registryDir: string;
     readonly worktreeCount: number;
     readonly appCount: number;

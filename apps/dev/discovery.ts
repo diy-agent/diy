@@ -122,12 +122,14 @@ export function parseAppYaml(text: string, opts: { dir: string; dirName: string;
         for (const [key, value] of Object.entries(isRecord(envRaw) ? envRaw : {})) {
             if (typeof value === "string" || typeof value === "number") env[key] = String(value);
         }
+        const home = str(item["home"]);
         const launchTitle = str(item["title"]);
         return {
             id,
             ...(launchTitle === null ? {} : { title: launchTitle }),
             command,
             ...(Object.keys(env).length === 0 ? {} : { env }),
+            ...(home === null ? {} : { home }),
             entries,
         };
     });
