@@ -34,6 +34,8 @@ function record(over: Partial<InstanceRecord> = {}): InstanceRecord {
   return {
     pid: process.pid,
     app: null,
+    launch: null,
+    worktree: null,
     port: null,
     pingPort: null,
     diyHome: "/tmp/home",

@@ -5,17 +5,34 @@
 // 于是 remote-shell 的横条列不出它、同格多实例也无从判定（##495 根因一）。
 //
 // 落盘格式与 `pkgs.ts/diy-app/src/main/core/instance-registry.ts` **同一份**（那个文件是读侧）：
-//   pid / port / pingPort / diyHome / variant / env / argv / cwd / startedAt / updatedAt / parents
-// 额外的两个字段是 web 侧的增量：`app`（发现器要靠它拼地址）与 `address`（自报算好的地址）。
+//   pid / app / launch / worktree / port / pingPort / diyHome / variant / env / argv / cwd / startedAt / updatedAt / parents
+// 额外的两个字段是 web 侧的增量：`address`（自报算好的地址）与 `app`（发现器要靠它拼地址）。
+// `launch` / `worktree` 是 ##502 第二轮新增：dev 启动器靠 `(worktree, app, launch)` 把运行时对回
+// app.yaml 的静态清单；手工跑（没给 `DIY_LAUNCH`）时为 null，读侧宽松。
 // diy-app 的 parseRecord 对多余字段是宽松的，加了不影响它读。
 //
 // ⚠️ 清理不保证执行（SIGKILL / 崩溃）：读侧（local 发现器）以 /ping 探活过滤死条目，
 //    本文件的 remove 只是「正常退出时立刻消失」的快路径。
 
-import { readFileSync, unlinkSync } from 'node:fs';
-import { join, sep } from 'node:path';
+import { existsSync, readFileSync, unlinkSync } from 'node:fs';
+import { dirname, join, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { defaultRegistryDir, writeFileAtomic } from '@diy-agent/remote/node';
+
+/**
+ * 仓库根 = 往上找到第一个带 `.git` 的目录（与 @diy-agent/workbench 的 `repoRootOf` 同一判据）。
+ * 不调 git：启动路径上不多一次子进程；认不出就退回起点。
+ */
+export function repoRootOf(start: string = process.cwd()): string {
+    let dir = resolve(start);
+    for (let i = 0; i < 12; i++) {
+        if (existsSync(join(dir, '.git'))) return dir;
+        const parent = dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+    }
+    return resolve(start);
+}
 
 /** 启动瞬间快照的一跳父进程（与 diy-app 同一形状） */
 export interface ParentHop {
@@ -40,6 +57,10 @@ export interface WebInstanceRecord {
     parents: ParentHop[];
     /** app 短名（发现器据此判「同格」） */
     app: string;
+    /** launch id（app.yaml 里的一条启动命令，如 `web-8123`）；缺省 null（老记录 / 手工跑） */
+    launch: string | null;
+    /** 启动它的 git worktree 根；缺省 null */
+    worktree: string | null;
     /** 自报的显示地址（含冲突端口，见 server.ts 的 resolveAddress） */
     address: string;
 }

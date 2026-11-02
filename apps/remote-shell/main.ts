@@ -656,6 +656,8 @@ function createWindow(): void {
     if (diyHome !== undefined && diyHome !== '') {
         writeSelfRecord({
             app: 'diy-remote-shell',
+            // launch = app.yaml 里那条启动命令（dev 启动器注入 DIY_LAUNCH）；手工跑就是 lab
+            launch: process.env['DIY_LAUNCH'] ?? 'lab',
             diyHome,
             variant: process.env['DIY_VARIANT'] ?? 'lab',
             env: process.env['DIY_ENV'] ?? 'production',

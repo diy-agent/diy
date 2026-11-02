@@ -11,9 +11,9 @@
 // 生命周期：启动写 → 退出删。「退出清理不保证执行」（SIGKILL / 崩溃），读侧另有 pid 存活过滤。
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 /** 启动瞬间快照的一跳父进程 */
 export interface ParentHop {
@@ -26,6 +26,22 @@ export function registryDir(env: NodeJS.ProcessEnv = process.env): string {
     const override = env["DIY_INSTANCE_REGISTRY"];
     if (override !== undefined && override.trim() !== "") return override.trim();
     return join(realHomeDir(), ".diy-instances");
+}
+
+/**
+ * 仓库根 = 往上找到第一个带 `.git`（目录或 worktree 的 `.git` 文件）的目录。
+ * 不调 git 命令：启动路径上不能多一次子进程（且 packaged 环境不一定有 git）。
+ * 认不出来就退回起点（宁可少一个字段，不抛）。
+ */
+export function repoRootOf(start: string = process.cwd()): string {
+    let dir = resolve(start);
+    for (let i = 0; i < 12; i++) {
+        if (existsSync(join(dir, ".git"))) return dir;
+        const parent = dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+    }
+    return resolve(start);
 }
 
 /** 真实家目录（不读 $HOME：测试 / 隔离实例会改写它） */
@@ -110,6 +126,10 @@ export function recordPath(dir: string, pid: number): string {
 export interface SelfRecordOptions {
     /** app 短名（`diy-app` / `diy-chat`…） */
     readonly app: string;
+    /** launch id（app.yaml 里的一条启动命令：`lab` / `web-8123`）；缺省 null */
+    readonly launch?: string | null;
+    /** 启动它的 git worktree 根；缺省 = 从 cwd 往上找 */
+    readonly worktree?: string | null;
     readonly diyHome: string;
     readonly variant: string;
     readonly env: string;
@@ -132,6 +152,8 @@ export function writeSelfRecord(options: SelfRecordOptions): string {
     const record = {
         pid,
         app: options.app,
+        launch: options.launch ?? null,
+        worktree: options.worktree === undefined ? repoRootOf() : options.worktree,
         port: null,
         pingPort: null,
         diyHome: options.diyHome,

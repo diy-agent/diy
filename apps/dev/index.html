@@ -65,12 +65,58 @@
                 padding: 4px 0;
             }
             .app {
-                padding: 8px 14px 3px;
+                padding: 10px 14px 3px;
                 font-size: 10.5px;
                 color: var(--dim);
-                text-transform: uppercase;
-                letter-spacing: 0.6px;
-                margin-top: 5px;
+                letter-spacing: 0.4px;
+                margin-top: 6px;
+                border-top: 1px solid #eef0f3;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                font-family: ui-monospace, Menlo, monospace;
+            }
+            .app .badge {
+                margin-left: auto;
+                font-size: 9.5px;
+                padding: 1px 6px;
+            }
+            .appsub {
+                padding: 6px 14px 2px;
+                font-size: 11px;
+                color: #5b6470;
+                font-weight: 600;
+            }
+            .leaf {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                padding: 2px 12px 2px 34px;
+                font-size: 11px;
+                color: #4a5563;
+            }
+            .leaficon {
+                font-size: 10px;
+                color: var(--dim);
+            }
+            .leaf .link,
+            .kv .link {
+                color: var(--accent);
+                text-decoration: none;
+                font-family: ui-monospace, Menlo, monospace;
+                font-size: 11px;
+                word-break: break-all;
+            }
+            .leaf .link:hover,
+            .kv .link:hover {
+                text-decoration: underline;
+            }
+            .muted {
+                color: var(--dim);
+                font-size: 10.5px;
+            }
+            .entry.dim .nm {
+                opacity: 0.5;
             }
             .entry {
                 display: flex;

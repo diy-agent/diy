@@ -55,6 +55,8 @@ describe("collectInstances：注册表 ⊕ 进程 ⊕ 自报", () => {
     writeRecord(dir, {
       pid: 10,
       app: null,
+      launch: null,
+      worktree: null,
       port: 18888,
       pingPort: null,
       diyHome: "/Users/ccc/.diy",
@@ -99,6 +101,8 @@ describe("collectInstances：注册表 ⊕ 进程 ⊕ 自报", () => {
     writeRecord(dir, {
       pid: 10,
       app: null,
+      launch: null,
+      worktree: null,
       port: 18888,
       pingPort: null,
       diyHome: "/Users/ccc/.diy",
@@ -129,7 +133,7 @@ describe("collectInstances：注册表 ⊕ 进程 ⊕ 自报", () => {
   it("有端口但两路都不答 → unreachable（**明确区别于 no-port**）", async () => {
     const dir = scratch();
     writeRecord(dir, {
-      pid: 10, app: null, port: 18888, pingPort: null, diyHome: "/h", variant: "prod", env: "production",
+      pid: 10, app: null, launch: null, worktree: null, port: 18888, pingPort: null, diyHome: "/h", variant: "prod", env: "production",
       argv: [ELECTRON, `${APP}/build/prod/main/index.mjs`], cwd: "/x",
       startedAt: "t", updatedAt: "t", parents: [],
     });
@@ -168,7 +172,7 @@ describe("collectInstances：注册表 ⊕ 进程 ⊕ 自报", () => {
   it("注册表里有、进程扫描没命中（如 serve 跑源码）→ 仍成行，并标注来源", async () => {
     const dir = scratch();
     writeRecord(dir, {
-      pid: 77, app: null, port: 18889, pingPort: null, diyHome: "/repo/build/prod/home", variant: "prod", env: "development",
+      pid: 77, app: null, launch: null, worktree: null, port: 18889, pingPort: null, diyHome: "/repo/build/prod/home", variant: "prod", env: "development",
       argv: ["node", "/repo/pkgs.ts/diy-app/src/serve/index.ts", "--port", "18889"],
       cwd: "/repo", startedAt: "t", updatedAt: "t", parents: [{ pid: 3, command: "npm run serve" }],
     });
@@ -276,7 +280,7 @@ describe("sourceSummary（小工具）", () => {
     expect(sourceSummary(undefined)).toBe("来源未知");
     expect(
       sourceSummary({
-        pid: 1, app: null, port: null, pingPort: null, diyHome: "/h", variant: "", env: "", argv: [], cwd: "", startedAt: "", updatedAt: "", parents: [],
+        pid: 1, app: null, launch: null, worktree: null, port: null, pingPort: null, diyHome: "/h", variant: "", env: "", argv: [], cwd: "", startedAt: "", updatedAt: "", parents: [],
       }),
     ).toContain("无父进程记录");
   });

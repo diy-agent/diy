@@ -86,6 +86,8 @@ describe("RemoteService", () => {
         writeRecord(registryDir(), {
             pid: process.pid,
             app: null,
+            launch: null,
+            worktree: null,
             port: null,
             pingPort: null,
             diyHome: home,

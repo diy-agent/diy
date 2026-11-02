@@ -48,6 +48,9 @@ export function writeSelfRecord(opts: { diyHome: string; variant: string; env: s
   writeRecord(registryDir(), {
     pid: process.pid,
     app: "diy-app",
+    // 遗留 app（不在 apps/ 下，##502 第二轮起 dev 启动器不管它）—— 这两个字段留 null
+    launch: null,
+    worktree: null,
     port: null,
     pingPort: null,
     diyHome: opts.diyHome,

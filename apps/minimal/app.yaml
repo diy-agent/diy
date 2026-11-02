@@ -1,0 +1,12 @@
+# apps/minimal 的启动清单（##502 第二轮）
+
+name: minimal
+title: 最小壳
+
+launches:
+  - id: lab
+    title: 开发（lab）
+    command: ./sha.sh lab
+    entries:
+      - kind: app
+        title: Electron 窗口

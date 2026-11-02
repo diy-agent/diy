@@ -28,6 +28,7 @@ import {
     isOwnRecordFile,
     localISOString,
     registryDir,
+    repoRootOf,
     removeRecord,
     snapshotParents,
     updateRecord,
@@ -543,6 +544,10 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         updatedAt: localISOString(),
         parents: snapshotParents(),
         app: APP_NAME,
+        // ##502 第二轮：launch = app.yaml 里那条启动命令（dev 启动器注入 DIY_LAUNCH）；
+        // 手工跑没有 env，就按实际端口回推（app.yaml 里 launch id 是 `web-<port>`）
+        launch: process.env['DIY_LAUNCH'] ?? `web-${actualPort}`,
+        worktree: repoRootOf(),
         address,
     };
     writeRecord(recordsDir, selfRecord);

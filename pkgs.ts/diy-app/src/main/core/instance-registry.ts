@@ -37,6 +37,13 @@ export interface InstanceRecord {
    * dev 启动器靠它判断「谁活着」，不用从 argv 猜。
    */
   app: string | null;
+  /**
+   * launch id（app.yaml 里的一条启动命令，如 `lab` / `web-8123`）。**老记录 ⇒ null**（读侧宽松）。
+   * dev 启动器按 `(worktree, app, launch)` 三元组把运行时对回静态清单。
+   */
+  launch: string | null;
+  /** 启动它的 git worktree 根（绝对路径）；老记录 ⇒ null */
+  worktree: string | null;
   /** RPC 端口；未就绪为 null（启动早期写的那一份） */
   port: number | null;
   /**
@@ -97,6 +104,9 @@ export function parseRecord(raw: unknown): InstanceRecord | null {
     port: (o["port"] as number | null) ?? null,
     // 可选的增量字段：老记录没有它 → null（读侧宽松，见文件头）
     app: str(o["app"]) ? (o["app"] as string) : null,
+    // 同理：老记录没有这两个字段 → null（##502 第二轮新增）
+    launch: str(o["launch"]) ? (o["launch"] as string) : null,
+    worktree: str(o["worktree"]) ? (o["worktree"] as string) : null,
     pingPort: num(o["pingPort"]) ? (o["pingPort"] as number) : null,
     diyHome: o["diyHome"],
     variant: typeof o["variant"] === "string" ? o["variant"] : "",

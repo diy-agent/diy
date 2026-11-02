@@ -53,6 +53,8 @@ createWorkbench({
     title: ASSEMBLY.title,
     // 实例注册表里的 app 短名：dev 启动器据此认「这个 app 活着」
     app: "diy-chat",
+    // launch = app.yaml 里那条启动命令（dev 启动器注入 DIY_LAUNCH）；手工跑就是 lab
+    launch: process.env["DIY_LAUNCH"] ?? "lab",
     plugins: ASSEMBLY.plugins,
     preloadFile: join(here, "../preload/index.cjs"),
     rendererFile: join(here, "../renderer/index.html"),

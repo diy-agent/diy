@@ -2,17 +2,20 @@ import { describe, expect, it } from "vitest";
 import {
     buildSnapshot,
     displayPath,
-    inferApp,
-    instanceUri,
     matchRecord,
     parseRecord,
+    sameApp,
+    samePath,
+    withPort,
     type InstanceRecordLite,
 } from "../instances.js";
-import { resolveTargets } from "../targets.js";
+import type { AppSpec, WorktreeInfo } from "../shared.js";
 
 const record = (patch: Partial<InstanceRecordLite> = {}): InstanceRecordLite => ({
     pid: 1234,
     app: "diy-chat",
+    launch: "lab",
+    worktree: "/repo",
     port: null,
     diyHome: "/repo/build/lab/home",
     variant: "lab",
@@ -25,95 +28,164 @@ const record = (patch: Partial<InstanceRecordLite> = {}): InstanceRecordLite => 
     ...patch,
 });
 
-describe("parseRecord", () => {
-    it("宽松读取：缺字段给缺省值，坏 pid 整条作废", () => {
+const chatApp = (dir = "/repo/apps/chat"): AppSpec => ({
+    name: "chat",
+    title: "diy 聊天",
+    dir,
+    launches: [
+        {
+            id: "lab",
+            title: "开发（lab）",
+            command: "./sha.sh lab",
+            entries: [{ kind: "app", title: "Electron 窗口" }],
+        },
+    ],
+});
+
+const webApp = (): AppSpec => ({
+    name: "web",
+    title: "diy web",
+    dir: "/repo/apps/web",
+    launches: [
+        {
+            id: "web-8123",
+            command: "./sha.sh lab",
+            env: { PORT: "8123" },
+            entries: [{ kind: "web", title: "浏览器", url: "http://localhost:8123" }],
+        },
+    ],
+});
+
+describe("parseRecord（宽松）", () => {
+    it("缺字段给缺省值；坏 pid 整条作废", () => {
         expect(parseRecord({})).toBeNull();
-        const parsed = parseRecord({ pid: 7, app: null, port: "x" });
+        const parsed = parseRecord({ pid: 7, app: null, launch: null, worktree: null, port: "x" });
         expect(parsed?.pid).toBe(7);
         expect(parsed?.app).toBeNull();
+        expect(parsed?.launch).toBeNull();
+        expect(parsed?.worktree).toBeNull();
         expect(parsed?.port).toBeNull();
-        expect(parsed?.argv).toEqual([]);
     });
 
-    it("老记录（app 为 null）不报错", () => {
-        const parsed = parseRecord({ pid: 7, app: null, diyHome: "/h", variant: "lab" });
-        expect(parsed?.app).toBeNull();
-        expect(parsed?.variant).toBe("lab");
-    });
-});
-
-describe("inferApp", () => {
-    it("从 argv / cwd 认出 app 短名", () => {
-        expect(inferApp(record({ app: null, cwd: "/w/pkgs.ts/diy-app" }))).toBe("diy-app");
-        expect(inferApp(record({ app: null }))).toBe("diy-chat");
-        expect(inferApp(record({ app: null, cwd: "/nowhere", argv: ["x"] }))).toBeNull();
+    it("老记录（没有 launch / worktree）不报错", () => {
+        const parsed = parseRecord({ pid: 7, app: "chat", diyHome: "/h", variant: "lab" });
+        expect(parsed?.launch).toBeNull();
+        expect(parsed?.worktree).toBeNull();
     });
 });
 
-describe("matchRecord", () => {
-    const targets = resolveTargets("/repo").list;
-    const chat = targets.find((t) => t.id === "chat-lab")!;
-    const web8123 = targets.find((t) => t.id === "web-8123")!;
-    const web8124 = targets.find((t) => t.id === "web-8124")!;
-
-    it("按 app + 变体匹配", () => {
-        expect(matchRecord(chat, [record()])?.pid).toBe(1234);
-        expect(matchRecord(chat, [record({ app: "diy-app" })])).toBeNull();
-        expect(matchRecord(chat, [record({ variant: "prod" })])).toBeNull();
+describe("匹配键 (worktree, app, launch)", () => {
+    it("app 允许 chat / diy-chat 两种历史口径", () => {
+        expect(sameApp("chat", "chat")).toBe(true);
+        expect(sameApp("diy-chat", "chat")).toBe(true);
+        expect(sameApp("diy-chat", "minimal")).toBe(false);
+        expect(sameApp(null, "chat")).toBe(false);
     });
 
-    it("web 两个入口按端口区分", () => {
-        const rec = record({ app: "diy-web", port: 8123, cwd: "/repo/apps/web" });
-        expect(matchRecord(web8123, [rec])).not.toBeNull();
-        expect(matchRecord(web8124, [rec])).toBeNull();
+    it("worktree 路径相等（写法不同也算同一个）", () => {
+        expect(samePath("/repo", "/repo")).toBe(true);
+        expect(samePath("/repo/", "/repo")).toBe(true);
+        expect(samePath("/wt/t502", "/repo")).toBe(false);
+        expect(samePath(null, "/repo")).toBe(false);
     });
 
-    it("老记录（app=null）靠 argv 兜底", () => {
-        expect(matchRecord(chat, [record({ app: null })])).not.toBeNull();
+    it("三元组全中才算同一个 launch", () => {
+        const ref = { worktree: "/repo", app: "chat", launch: "lab" };
+        expect(matchRecord(record(), ref)).toBe(true);
+        expect(matchRecord(record({ app: "chat" }), ref)).toBe(true);
+        expect(matchRecord(record({ launch: null }), ref)).toBe(false);
+        expect(matchRecord(record({ app: "diy-minimal" }), ref)).toBe(false);
+        expect(matchRecord(record({ worktree: "/repo/" }), ref)).toBe(true);
+        expect(matchRecord(record({ worktree: "/wt/other" }), ref)).toBe(false);
     });
 });
 
-describe("displayPath / instanceUri", () => {
+describe("withPort（配置端口 vs 实际端口）", () => {
+    it("一致时原样，不一致时换端口并标 mismatch", () => {
+        expect(withPort("http://localhost:8123", 8123)).toEqual({ href: "http://localhost:8123", mismatch: false });
+        const actual = withPort("http://localhost:8123", 8124);
+        expect(actual.href).toBe("http://localhost:8124/");
+        expect(actual.mismatch).toBe(true);
+    });
+
+    it("没有实际端口（未运行）= 用配置值、不标 mismatch", () => {
+        expect(withPort("http://localhost:8123", null)).toEqual({ href: "http://localhost:8123", mismatch: false });
+    });
+});
+
+describe("displayPath / buildSnapshot", () => {
     it("仓库内显示相对路径，家目录缩 ~", () => {
         expect(displayPath("/repo/build/lab/home", "/repo")).toBe("build/lab/home");
-        expect(displayPath("/Users/ccc/.diy", "/repo")).toMatch(/^~\/\.diy$/);
+        expect(displayPath(`${process.env["HOME"]}/.diy`, "/repo")).toMatch(/^~\/\.diy$/);
     });
 
-    it("实例 URI 格式 diy://<nodeId>/<app>.<variant>", () => {
-        expect(instanceUri("diy-9c5cdc25", "diy-app", "lab")).toBe("diy://diy-9c5cdc25/diy-app.lab");
+    it("静态清单不依赖注册表：空注册表也能列出全部 launch", () => {
+        const worktrees: WorktreeInfo[] = [
+            { path: "/repo", branch: "main" },
+            { path: "/wt/t502", branch: "t502-dev-app" },
+        ];
+        const appsOf = (worktree: string): AppSpec[] =>
+            worktree === "/repo" ? [chatApp(), webApp()] : [chatApp("/wt/t502/apps/chat")];
+        const snapshot = buildSnapshot(worktrees, {
+            repoRoot: "/repo",
+            worktrees,
+            appsOf,
+            records: [],
+            starting: new Set(),
+            builtOf: () => true,
+            registry: "/home/u/.diy-instances",
+        });
+        expect(snapshot.worktreeCount).toBe(2);
+        expect(snapshot.appCount).toBe(3);
+        expect(snapshot.launches.map((item) => `${item.worktree}|${item.app}|${item.launch}`)).toEqual([
+            "/repo|chat|lab",
+            "/repo|web|web-8123",
+            "/wt/t502|chat|lab",
+        ]);
+        expect(snapshot.runningCount).toBe(0);
+        expect(snapshot.launches[1]?.entries[0]?.href).toBe("http://localhost:8123");
     });
-});
 
-describe("buildSnapshot", () => {
-    const targets = resolveTargets("/repo").list;
-    const inputs = {
-        repoRoot: "/repo",
-        records: [record({ pid: 4321, app: "diy-chat", startedAt: "2026-11-02T10:00:00.000+0800" })],
-        starting: new Set<string>(["diy-app-lab"]),
-        nodeIdOf: () => "diy-9c5cdc25",
-        memOf: () => 256 * 1024 * 1024,
-        now: Date.parse("2026-11-02T10:10:00.000+0800"),
-        registry: "/home/u/.diy-instances",
-    };
-
-    it("运行中的带 runtime，启动中的标 starting", () => {
-        const snapshot = buildSnapshot(targets, inputs);
-        const chat = snapshot.entries.find((entry) => entry.id === "chat-lab")!;
-        expect(chat.running).toBe(true);
-        expect(chat.runtime?.pid).toBe(4321);
-        expect(chat.runtime?.uptimeMs).toBe(10 * 60 * 1000);
-        expect(chat.runtime?.memBytes).toBe(256 * 1024 * 1024);
-        expect(chat.uri).toBe("diy://diy-9c5cdc25/diy-chat.lab");
-
-        const app = snapshot.entries.find((entry) => entry.id === "diy-app-lab")!;
-        expect(app.running).toBe(false);
-        expect(app.starting).toBe(true);
+    it("注册表按三元组对上 ⇒ running，web entry 用实际端口并标配置值", () => {
+        const worktrees: WorktreeInfo[] = [{ path: "/repo", branch: "main" }];
+        const snapshot = buildSnapshot(worktrees, {
+            repoRoot: "/repo",
+            worktrees,
+            appsOf: () => [webApp()],
+            records: [
+                record({ pid: 4321, app: "diy-web", launch: "web-8123", worktree: "/repo", port: 8124 }),
+                record({ pid: 9999, app: "diy-chat", launch: "lab", worktree: "/repo" }),
+            ],
+            starting: new Set(),
+            builtOf: () => true,
+            memOf: () => 128 * 1024 * 1024,
+            now: Date.parse("2026-11-02T10:10:00.000+0800"),
+        });
+        const web = snapshot.launches[0]!;
+        expect(web.running).toBe(true);
+        expect(web.runtime?.pid).toBe(4321);
+        expect(web.runtime?.uptimeMs).toBe(10 * 60 * 1000);
+        expect(web.runtime?.memBytes).toBe(128 * 1024 * 1024);
+        expect(web.entries[0]?.href).toBe("http://localhost:8124/");
+        expect(web.entries[0]?.configuredUrl).toBe("http://localhost:8123");
+        expect(web.entries[0]?.portMismatch).toBe(true);
+        // chat 的那条记录在静态清单里没有对应 launch ⇒ 不算 running（清单来自 app.yaml）
         expect(snapshot.runningCount).toBe(1);
     });
 
-    it("未运行时 runtime 为 null（不编造 PID）", () => {
-        const snapshot = buildSnapshot(targets, { ...inputs, records: [] });
-        expect(snapshot.entries.every((entry) => entry.runtime === null)).toBe(true);
-        expect(snapshot.runningCount).toBe(0);
+    it("started 但还没注册表 ⇒ starting；未构建 ⇒ built=false", () => {
+        const worktrees: WorktreeInfo[] = [{ path: "/repo", branch: null }];
+        const key = `/repo\u0000chat\u0000lab`;
+        const snapshot = buildSnapshot(worktrees, {
+            repoRoot: "/repo",
+            worktrees,
+            appsOf: () => [chatApp()],
+            records: [],
+            starting: new Set([key]),
+            builtOf: () => false,
+        });
+        expect(snapshot.launches[0]?.starting).toBe(true);
+        expect(snapshot.launches[0]?.running).toBe(false);
+        expect(snapshot.launches[0]?.built).toBe(false);
     });
 });

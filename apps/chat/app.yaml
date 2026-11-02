@@ -1,0 +1,15 @@
+# apps/chat 的启动清单（##502 第二轮：dev 启动器 glob apps/*/app.yaml 得到「有什么能启动」）
+#
+# 三层：app → launch（一条启动命令）→ entries（它产生的入口，静态声明）。
+# 没有 variant 概念 —— 启动器只管「跑哪条命令、跑出来的东西长什么样」。
+
+name: chat
+title: diy 聊天
+
+launches:
+  - id: lab
+    title: 开发（lab）
+    command: ./sha.sh lab
+    entries:
+      - kind: app
+        title: Electron 窗口

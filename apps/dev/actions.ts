@@ -1,30 +1,30 @@
-// actions.ts — 启停 / 唤出 / 打开路径 / 跑构建命令的真正执行层。
+// actions.ts — 启停 / 唤出 / 打开 / 跑命令的真正执行层。
 //
 // 三条边界：
-//   · **启动不聚焦**：子进程带 `DIY_NO_FOCUS=1`（外壳据此 showInactive，见 @diy-agent/workbench），
-//     并且独立进程组（`detached`）—— 关闭时整组 SIGTERM，不留 vite / tsx 孤儿。
+//   · **启动不聚焦**：子进程带 `DIY_NO_FOCUS=1`（外壳据此 showInactive），并且独立进程组
+//     （`detached`）—— 关闭时整组 SIGTERM，不留 vite / tsx 孤儿。
 //   · **只认白名单命令**：构建组固定为 build/check/test/sync/build-pkgs/clean，拒绝任意命令。
-//   · **输出进内存 + 文件**：UI 只读尾部；完事后日志还在 `log/dev/` 里可查。
+//   · **输出进内存 + 文件**：UI 只读尾部；完事后日志还在 `<数据根>/log/dev/` 里可查。
 
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { createWriteStream, mkdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { CommandSession } from "./shared.js";
-import type { ResolvedTarget } from "./targets.js";
+import type { CommandSession, LaunchSpec } from "./shared.js";
 import type { InstanceRecordLite } from "./instances.js";
 
-/** 跑命令时可继承、但**会误导子进程**的变量：全部剔除（数据根 / 变体由目标自己决定） */
-const STRIPPED_ENV = ["DIY_HOME", "DIY_ENV", "DIY_VARIANT", "DIY_CLI"] as const;
+/** 跑命令时可继承、但**会误导子进程**的变量：全部剔除（数据根 / 变体 / launch 由这一层决定） */
+const STRIPPED_ENV = ["DIY_HOME", "DIY_ENV", "DIY_VARIANT", "DIY_LAUNCH", "DIY_CLI"] as const;
 
-/** 子进程环境：剔除继承来的数据根类变量，再叠目标的（`DIY_INSTANCE_REGISTRY` 保留 = 测试隔离） */
-export function launchEnv(target: ResolvedTarget, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+/** 子进程环境：剔除继承的数据根类变量，再叠这条 launch 的（`DIY_INSTANCE_REGISTRY` 保留 = 测试隔离） */
+export function launchEnv(launch: LaunchSpec, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
     const env: NodeJS.ProcessEnv = { ...base };
     for (const key of STRIPPED_ENV) delete env[key];
-    env["DIY_VARIANT"] = target.variant;
     env["DIY_ENV"] = "development";
     env["DIY_NO_FOCUS"] = "1";
-    return { ...env, ...target.env };
+    // 注册表靠它把运行时对回 app.yaml 的那一条（匹配键之一）
+    env["DIY_LAUNCH"] = launch.id;
+    return { ...env, ...launch.env };
 }
 
 /** 去掉 ANSI 转义（sha.sh 的彩色输出进 UI 会变成乱码方块） */
@@ -32,13 +32,6 @@ export function stripAnsi(text: string): string {
     // oxlint-disable-next-line no-control-regex
     return text.replace(/\u001b\[[0-9;]*m/g, "");
 }
-
-/**
- * 跑 sha.sh 用的 shell：**按 PATH 找 bash**，不能用 `/bin/bash`。
- * macOS 自带的 /bin/bash 是 3.2，`shopt -s globstar` 直接报 invalid option（实测踩过）；
- * 与用户自己 `./sha.sh` 走的 shebang（`#!/usr/bin/env bash`）同一个解释器。
- */
-const SHELL = "bash";
 
 /** 日志目录：dev app 自己的数据根下 `log/dev/` */
 export function devLogDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -80,9 +73,15 @@ export function killPlan(record: InstanceRecordLite | null): number[] {
 
 const SESSION_LIMIT = 2000;
 
+/** 每个 launch 一条日志文件；key 里的路径分隔符不能进文件名 */
+export function logFileName(key: string): string {
+    // oxlint-disable-next-line no-control-regex -- key 里的分隔符就是 NUL（见 instances.launchKey）
+    return `${key.replace(/[\\/]+/g, "_").replace(/\u0000/g, "--")}.log`;
+}
+
 interface MutableSession {
     id: number;
-    targetId: string;
+    key: string;
     command: string;
     commandLine: string;
     running: boolean;
@@ -91,41 +90,52 @@ interface MutableSession {
     child: ChildProcess | null;
 }
 
+export interface StartInput {
+    /** `(worktree, app, launch)` 的 key */
+    readonly key: string;
+    /** 命令在哪执行（app 目录） */
+    readonly appDir: string;
+    readonly launch: LaunchSpec;
+}
+
 export class DevRunner {
     private readonly children = new Map<string, ChildProcess>();
     private session: MutableSession | null = null;
     private seq = 0;
 
     constructor(
-        private readonly repoRoot: string,
         private readonly logDir: string = devLogDir(),
         private readonly spawnFn: typeof spawn = spawn,
     ) {
         mkdirSync(this.logDir, { recursive: true });
     }
 
-    /** 已经拉起、但还没出现在注册表里的目标（构建 / 启动中） */
+    /** 已经拉起、但还没出现在注册表里的 launch（构建 / 启动中） */
     starting(): Set<string> {
         const out = new Set<string>();
-        for (const [id, child] of this.children) {
-            if (child.exitCode === null && child.signalCode === null) out.add(id);
+        for (const [key, child] of this.children) {
+            if (child.exitCode === null && child.signalCode === null) out.add(key);
         }
         return out;
     }
 
     /** 启动：独立进程组 + 输出落文件；立即返回 pid（不等待构建完成） */
-    start(target: ResolvedTarget): { pid: number | null; logFile: string } {
-        const existing = this.children.get(target.id);
+    start(input: StartInput): { pid: number | null; logFile: string } {
+        const existing = this.children.get(input.key);
         if (existing && existing.exitCode === null && existing.signalCode === null) {
-            return { pid: existing.pid ?? null, logFile: this.logFile(target) };
+            return { pid: existing.pid ?? null, logFile: this.logFileFor(input.key) };
         }
         mkdirSync(this.logDir, { recursive: true });
-        const logFile = this.logFile(target);
+        const logFile = this.logFileFor(input.key);
         const out = createWriteStream(logFile, { flags: "a" });
-        out.write(`\n===== ${new Date().toISOString()} 启动 ${target.commandLine}（cwd=${target.cwd}）=====\n`);
-        const child = this.spawnFn(SHELL, ["./sha.sh", ...target.args], {
-            cwd: target.cwd,
-            env: launchEnv(target),
+        out.write(
+            `\n===== ${new Date().toISOString()} 启动 ${input.launch.command}（cwd=${input.appDir}）=====\n`,
+        );
+        // 一条启动命令 = 一段 shell（app.yaml 里写的就是人怎么手工跑它）
+        const child = this.spawnFn(input.launch.command, {
+            cwd: input.appDir,
+            env: launchEnv(input.launch),
+            shell: true,
             detached: true,
             stdio: ["ignore", "pipe", "pipe"],
         });
@@ -133,14 +143,14 @@ export class DevRunner {
         child.stderr?.pipe(out);
         child.on("exit", () => out.end());
         child.unref();
-        this.children.set(target.id, child);
+        this.children.set(input.key, child);
         return { pid: child.pid ?? null, logFile };
     }
 
     /** 停止：先整组 SIGTERM，2 秒后还活着就 SIGKILL；返回实际发过信号的 pid */
-    async stop(target: ResolvedTarget, record: InstanceRecordLite | null): Promise<{ killed: number[]; forced: boolean }> {
+    async stop(key: string, record: InstanceRecordLite | null): Promise<{ killed: number[]; forced: boolean }> {
         const killed: number[] = [];
-        const spawned = this.children.get(target.id);
+        const spawned = this.children.get(key);
         if (spawned !== undefined && spawned.pid !== undefined && spawned.exitCode === null) {
             try {
                 process.kill(-spawned.pid, "SIGTERM");
@@ -180,19 +190,16 @@ export class DevRunner {
                 }
             }
         }
-        this.children.delete(target.id);
+        this.children.delete(key);
         return { killed, forced };
     }
 
     /** 跑构建 / 检查命令（白名单在调用方校验）；输出逐行进 session */
-    run(target: ResolvedTarget, command: string): CommandSession {
-        // 同一时刻只跑一条：上一条先收掉（UI 只有一个日志区）
-        if (this.session?.running) {
-            this.session.child?.kill("SIGTERM");
-        }
+    run(key: string, appDir: string, command: string): CommandSession {
+        if (this.session?.running) this.session.child?.kill("SIGTERM");
         const session: MutableSession = {
             id: ++this.seq,
-            targetId: target.id,
+            key,
             command,
             commandLine: `./sha.sh ${command}`,
             running: true,
@@ -201,11 +208,9 @@ export class DevRunner {
             child: null,
         };
         this.session = session;
-        const child = this.spawnFn(SHELL, ["./sha.sh", command], {
-            cwd: target.cwd,
-            env: this.commandEnv(),
-            stdio: ["ignore", "pipe", "pipe"],
-        });
+        const env: NodeJS.ProcessEnv = { ...process.env };
+        for (const name of STRIPPED_ENV) delete env[name];
+        const child = this.spawnFn("./sha.sh", [command], { cwd: appDir, env, stdio: ["ignore", "pipe", "pipe"] });
         session.child = child;
         const push = (chunk: Buffer): void => {
             for (const line of stripAnsi(chunk.toString()).split(/\r?\n/)) {
@@ -220,21 +225,11 @@ export class DevRunner {
             session.running = false;
             session.lines.push(`—— 结束（${signal === null ? `exit ${code ?? "?"}` : signal}）——`);
         });
-        return this.sessionSnapshot() as CommandSession;
+        return sessionSnapshotOf(session);
     }
 
     sessionSnapshot(): CommandSession | null {
-        const s = this.session;
-        if (s === null) return null;
-        return {
-            id: s.id,
-            targetId: s.targetId,
-            command: s.command,
-            commandLine: s.commandLine,
-            running: s.running,
-            startedAt: s.startedAt,
-            lines: [...s.lines],
-        };
+        return this.session === null ? null : sessionSnapshotOf(this.session);
     }
 
     clearSession(): void {
@@ -254,16 +249,21 @@ export class DevRunner {
         this.children.clear();
     }
 
-    private commandEnv(): NodeJS.ProcessEnv {
-        // 构建命令不启动实例：数据根类变量同样剔除，避免脚本读到 agent 会话里的生产根
-        const env: NodeJS.ProcessEnv = { ...process.env };
-        for (const key of STRIPPED_ENV) delete env[key];
-        return env;
+    private logFileFor(key: string): string {
+        return join(this.logDir, logFileName(key));
     }
+}
 
-    private logFile(target: ResolvedTarget): string {
-        return join(this.logDir, `${target.id}.log`);
-    }
+function sessionSnapshotOf(session: MutableSession): CommandSession {
+    return {
+        id: session.id,
+        key: session.key,
+        command: session.command,
+        commandLine: session.commandLine,
+        running: session.running,
+        startedAt: session.startedAt,
+        lines: [...session.lines],
+    };
 }
 
 function sleep(ms: number): Promise<void> {
@@ -286,24 +286,36 @@ export interface OpenResult {
     readonly reason: string;
 }
 
-/** 用系统方式打开一个路径：Finder / VS Code / 终端（macOS；其他平台给可用的近似） */
-export function openPath(path: string, mode: "finder" | "editor" | "terminal"): OpenResult {
+/** 用系统方式打开一个路径 / URL：Finder / VS Code / 终端 / 默认浏览器（macOS；其他平台给近似） */
+export function openPath(pathOrUrl: string, mode: "finder" | "editor" | "terminal"): OpenResult {
     const mac = process.platform === "darwin";
-    const [cmd, args]: [string, string[]] =
-        mode === "editor"
-            ? ["code", [path]]
-            : mode === "terminal"
-              ? mac
-                  ? ["open", ["-a", "Terminal", path]]
-                  : ["x-terminal-emulator", [`--working-directory=${path}`]]
-              : mac
-                ? ["open", [path]]
-                : ["xdg-open", [path]];
+    const isUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(pathOrUrl);
+    let cmd: string;
+    let args: string[];
+    if (mode === "editor") {
+        cmd = "code";
+        args = [pathOrUrl];
+    } else if (mode === "terminal") {
+        if (mac) {
+            cmd = "open";
+            args = ["-a", "Terminal", pathOrUrl];
+        } else {
+            cmd = "x-terminal-emulator";
+            args = [`--working-directory=${pathOrUrl}`];
+        }
+    } else if (mac) {
+        // Finder 打开本地路径 / 默认浏览器打开 URL —— 都是 `open`
+        cmd = "open";
+        args = [pathOrUrl];
+    } else {
+        cmd = "xdg-open";
+        args = [pathOrUrl];
+    }
     try {
         const child = spawn(cmd, args, { detached: true, stdio: "ignore" });
         child.on("error", () => undefined);
         child.unref();
-        return { ok: true, reason: `${cmd} ${args.join(" ")}` };
+        return { ok: true, reason: `${cmd} ${args.join(" ")}${isUrl ? "（默认浏览器）" : ""}` };
     } catch (e) {
         return { ok: false, reason: e instanceof Error ? e.message : String(e) };
     }
@@ -312,7 +324,6 @@ export function openPath(path: string, mode: "finder" | "editor" | "terminal"): 
 /**
  * 把目标窗口拉到前台：macOS 走 System Events（与 diy-app 的 `focusProcess` 同一手法）。
  * **同步取结果**：失败（没辅助功能权限 / 进程已走）要如实报给用户，不能先回 ok 再说。
- * 其它平台明确说不会 —— 不假装成功。
  */
 export function focusPid(pid: number): OpenResult {
     if (process.platform !== "darwin") {
@@ -327,7 +338,6 @@ export function focusPid(pid: number): OpenResult {
         return { ok: true, reason: `已把 pid ${pid} 拉到前台` };
     } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
-        // -1743 = 没授权发 Apple 事件；这是「系统设置里要手动点一下」的事，不是代码错
         const hint = message.includes("-1743")
             ? "（系统设置 → 隐私与安全性 → 自动化：允许 diy 控制 System Events）"
             : "";

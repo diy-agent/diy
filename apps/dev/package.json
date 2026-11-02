@@ -20,9 +20,9 @@
         "build": "tsc -p tsconfig.build.json"
     },
     "dependencies": {
-        "@diy-agent/remote": "*",
         "@diy-agent/workbench": "*",
-        "@diy-agent/workbench-ui": "*"
+        "@diy-agent/workbench-ui": "*",
+        "js-yaml": "^5.5.0"
     },
     "devDependencies": {
         "@types/node": "^26.1.0",

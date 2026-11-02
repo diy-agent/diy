@@ -1,16 +1,17 @@
-// instances.ts — 把「注册表 + 进程表」合成 UI 要的每一条状态。
+// instances.ts — **动态状态**：注册表（`~/.diy-instances/*.json`）+ 进程细节 → 每条 launch 运行与否。
 //
-// 数据源只有一个：`~/.diy-instances/<pid>.json`（##495 的注册表，##502 之前加了 `app` 字段）。
-// **不轮询 ps 判断谁在跑** —— 只在拿到一条活记录之后，才补 PID 的内存 / 运行时长这类细节。
+// ##502 第二轮：注册表只回答「谁活着」，不参与「有什么能启动」。
+// 匹配键 = `(worktree, app, launch)`：
+//   · worktree：绝对路径相等（resolve 后再比）
+//   · app：注册表里的 `app` 允许写作 `<name>` 或 `diy-<name>`（历史口径并存）
+//   · launch：app.yaml 里那条启动命令的 id；老记录为 null ⇒ 匹配不上（读侧不报错，只是显示未启动）
 //
-// 老记录（没有 `app`，字段是 null）要能容忍：不报错、不当作「在跑」；只有能从 argv / cwd
-// 认出是哪个 app 时才补一条兜底（见 inferApp）。
+// 老记录（没有 launch / worktree 字段，甚至没有 app）一律宽松：parseRecord 给 null，绝不抛。
 
 import { readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative, isAbsolute, resolve } from "node:path";
-import type { DevSnapshot, TargetRuntime, TargetStatus } from "./shared.js";
-import type { ResolvedTarget } from "./targets.js";
+import type { AppSpec, DevSnapshot, EntryStatus, LaunchRuntime, LaunchStatus, WorktreeInfo } from "./shared.js";
 
 /** 注册表目录：与 diy-app / apps/web 同一口径（`DIY_INSTANCE_REGISTRY` 可覆盖，测试隔离用） */
 export function registryDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -22,8 +23,12 @@ export function registryDir(env: NodeJS.ProcessEnv = process.env): string {
 /** 注册表一条（宽松版：只取 UI 用得到的字段；缺字段 = 缺省值） */
 export interface InstanceRecordLite {
     readonly pid: number;
-    /** ##495 起的字段；老记录 = null */
+    /** app 短名；老记录 = null */
     readonly app: string | null;
+    /** launch id；老记录 = null */
+    readonly launch: string | null;
+    /** 启动它的 git worktree 根；老记录 = null */
+    readonly worktree: string | null;
     readonly port: number | null;
     readonly diyHome: string;
     readonly variant: string;
@@ -40,6 +45,7 @@ export function parseRecord(raw: unknown): InstanceRecordLite | null {
     const o = raw as Record<string, unknown>;
     if (typeof o["pid"] !== "number" || !Number.isFinite(o["pid"]) || o["pid"] <= 0) return null;
     const str = (v: unknown): string => (typeof v === "string" ? v : "");
+    const nullableStr = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
     const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
     const parents = Array.isArray(o["parents"])
         ? (o["parents"] as unknown[])
@@ -49,7 +55,9 @@ export function parseRecord(raw: unknown): InstanceRecordLite | null {
         : [];
     return {
         pid: o["pid"],
-        app: typeof o["app"] === "string" && o["app"] !== "" ? o["app"] : null,
+        app: nullableStr(o["app"]),
+        launch: nullableStr(o["launch"]),
+        worktree: nullableStr(o["worktree"]),
         port: num(o["port"]),
         diyHome: str(o["diyHome"]),
         variant: str(o["variant"]),
@@ -97,15 +105,7 @@ export function readRecords(
         } catch {
             rec = null;
         }
-        if (rec === null) {
-            try {
-                unlinkSync(file);
-            } catch {
-                /* 忽略 */
-            }
-            continue;
-        }
-        if (!alive(rec.pid)) {
+        if (rec === null || !alive(rec.pid)) {
             try {
                 unlinkSync(file);
             } catch {
@@ -118,35 +118,27 @@ export function readRecords(
     return out;
 }
 
-/** 老记录的兜底：从 argv / cwd 认出 app 短名（认不出 = null） */
-export function inferApp(rec: InstanceRecordLite): string | null {
-    const haystack = `${rec.cwd} ${rec.argv.join(" ")}`;
-    const table: readonly (readonly [string, string])[] = [
-        ["pkgs.ts/diy-app", "diy-app"],
-        ["apps/chat", "diy-chat"],
-        ["apps/web", "diy-web"],
-        ["apps/remote-shell", "diy-remote-shell"],
-        ["apps/minimal", "diy-minimal"],
-        ["apps/dev", "diy-dev"],
-    ];
-    for (const [dir, app] of table) {
-        if (haystack.includes(dir)) return app;
-    }
-    return null;
+/** 注册表里的 app 名与 app.yaml 的 name 是否指同一个 app（`chat` / `diy-chat` 两种历史口径） */
+export function sameApp(recordApp: string | null, appName: string): boolean {
+    if (recordApp === null) return false;
+    return recordApp === appName || recordApp === `diy-${appName}`;
 }
 
-/** 这条记录是否属于该目标（app + 变体 + 端口；web 两个入口靠端口区分） */
-export function matchRecord(target: ResolvedTarget, records: readonly InstanceRecordLite[]): InstanceRecordLite | null {
-    const app = target.app;
-    return (
-        records.find((rec) => {
-            const recApp = rec.app ?? inferApp(rec);
-            if (recApp !== app) return false;
-            if (rec.variant !== "" && rec.variant !== target.variant) return false;
-            if (target.port !== undefined && rec.port !== target.port) return false;
-            return true;
-        }) ?? null
-    );
+/** 路径相等（resolve 后比；不同写法 / 尾斜杠不该判成两个 worktree） */
+export function samePath(a: string | null, b: string): boolean {
+    if (a === null) return false;
+    return resolve(a) === resolve(b);
+}
+
+export interface LaunchRefLike {
+    readonly worktree: string;
+    readonly app: string;
+    readonly launch: string;
+}
+
+/** 这条记录是否对应这个 launch（三元组） */
+export function matchRecord(record: InstanceRecordLite, ref: LaunchRefLike): boolean {
+    return samePath(record.worktree, ref.worktree) && sameApp(record.app, ref.app) && record.launch === ref.launch;
 }
 
 /** 展示形式的路径：仓库内相对路径优先，其次 `~` 缩写，最后原样 */
@@ -159,69 +151,120 @@ export function displayPath(path: string, repoRoot: string): string {
     return path;
 }
 
-/** 实例 URI：`diy://<nodeId>/<app>.<variant>` */
-export function instanceUri(nodeId: string, app: string, variant: string): string {
-    return `diy://${nodeId}/${app}.${variant}`;
+/** worktree 的展示名：`<家目录缩写或路径>（<分支>）` */
+export function worktreeLabel(worktree: string, branch: string | null, repoRoot: string): string {
+    const where = displayPath(worktree, repoRoot);
+    return branch === null ? where : `${where}  ${branch}`;
+}
+
+/** 端口替换：`http://localhost:8123` + 实际端口 8124 → `http://localhost:8124` */
+export function withPort(url: string, port: number | null): { href: string; mismatch: boolean } {
+    if (port === null) return { href: url, mismatch: false };
+    try {
+        const parsed = new URL(url);
+        const configuredPort =
+            parsed.port !== "" ? Number(parsed.port) : parsed.protocol === "https:" ? 443 : parsed.protocol === "http:" ? 80 : null;
+        if (configuredPort === port) return { href: url, mismatch: false };
+        parsed.port = String(port);
+        return { href: parsed.toString(), mismatch: true };
+    } catch {
+        return { href: url, mismatch: false };
+    }
 }
 
 export interface SnapshotInputs {
     readonly repoRoot: string;
+    readonly worktrees: readonly WorktreeInfo[];
+    /** worktree → apps（调用方负责 IO 与解析问题收集） */
+    readonly appsOf: (worktree: string) => readonly AppSpec[];
     readonly records: readonly InstanceRecordLite[];
-    /** 已拉起但还没写注册表的（构建 / 启动中） */
+    /** 已拉起但还没写注册表的（key = `(worktree, app, launch)`） */
     readonly starting: ReadonlySet<string>;
-    /** 数据根 → instance-id（读文件 / 首次生成，由调用方负责 IO） */
-    readonly nodeIdOf: (home: string, app: string) => string;
+    readonly problems?: readonly string[];
+    /** worktree 是否构建过 */
+    readonly builtOf?: (worktree: string) => boolean;
     /** pid → 内存字节数（注入：单测不跑 ps） */
     readonly memOf?: (pid: number) => number | null;
     readonly now?: number;
     readonly registry?: string;
 }
 
-/** 纯合成：目标清单 + 注册表记录 → 每条的状态（不碰 IO，便于单测） */
-export function buildSnapshot(targets: readonly ResolvedTarget[], inputs: SnapshotInputs): DevSnapshot {
+export function launchKey(worktree: string, app: string, launch: string): string {
+    return `${resolve(worktree)}\u0000${app}\u0000${launch}`;
+}
+
+/** 纯合成：静态清单 + 注册表记录 → 每条 launch 的状态（不碰 IO，便于单测） */
+export function buildSnapshot(targets: readonly WorktreeInfo[], inputs: SnapshotInputs): DevSnapshot {
     const now = inputs.now ?? Date.now();
     const memOf = inputs.memOf ?? (() => null);
-    const entries: TargetStatus[] = targets.map((target) => {
-        const rec = matchRecord(target, inputs.records);
-        const nodeId = inputs.nodeIdOf(target.homePath, target.app);
-        const base = {
-            id: target.id,
-            group: target.group,
-            name: target.name,
-            app: target.app,
-            variant: target.variant,
-            cwd: target.cwd,
-            home: target.homePath,
-            homeDisplay: displayPath(target.homePath, inputs.repoRoot),
-            command: target.commandLine,
-            ...(target.port === undefined ? {} : { port: target.port }),
-            uri: instanceUri(nodeId, target.app, target.variant),
-        };
-        if (rec === null) {
-            return {
-                ...base,
-                running: false,
-                starting: inputs.starting.has(target.id),
-                runtime: null,
-            };
+    const builtOf = inputs.builtOf ?? (() => true);
+    const launches: LaunchStatus[] = [];
+    let appCount = 0;
+    for (const worktree of targets) {
+        const apps = inputs.appsOf(worktree.path);
+        appCount += apps.length;
+        const built = builtOf(worktree.path);
+        for (const app of apps) {
+            for (const launch of app.launches) {
+                const key = launchKey(worktree.path, app.name, launch.id);
+                const record = inputs.records.find((rec) => matchRecord(rec, { worktree: worktree.path, app: app.name, launch: launch.id }));
+                const running = record !== undefined;
+                const actualPort = running ? record.port : null;
+                const entries: EntryStatus[] = launch.entries.map((entry) => {
+                    if (entry.kind !== "web" || entry.url === undefined) {
+                        return { ...entry, href: null, configuredUrl: entry.url ?? null, portMismatch: false };
+                    }
+                    const { href, mismatch } = withPort(entry.url, running ? actualPort : null);
+                    return {
+                        ...entry,
+                        href,
+                        configuredUrl: entry.url,
+                        portMismatch: mismatch,
+                    };
+                });
+                const runtime: LaunchRuntime | null =
+                    record === undefined
+                        ? null
+                        : {
+                              pid: record.pid,
+                              port: record.port,
+                              startedAt: record.startedAt,
+                              uptimeMs: (() => {
+                                  const started = Date.parse(record.startedAt);
+                                  return Number.isFinite(started) ? Math.max(0, now - started) : 0;
+                              })(),
+                              memBytes: memOf(record.pid),
+                              cmdline: record.argv.join(" "),
+                              cwd: record.cwd,
+                              diyHome: record.diyHome,
+                          };
+                launches.push({
+                    key,
+                    worktree: worktree.path,
+                    worktreeLabel: worktreeLabel(worktree.path, worktree.branch, inputs.repoRoot),
+                    branch: worktree.branch,
+                    app: app.name,
+                    appTitle: app.title,
+                    launch: launch.id,
+                    launchTitle: launch.title ?? launch.id,
+                    command: launch.command,
+                    appDir: app.dir,
+                    built,
+                    running,
+                    starting: !running && inputs.starting.has(key),
+                    entries,
+                    runtime,
+                });
+            }
         }
-        const started = Date.parse(rec.startedAt);
-        const runtime: TargetRuntime = {
-            pid: rec.pid,
-            port: rec.port,
-            startedAt: rec.startedAt,
-            uptimeMs: Number.isFinite(started) ? Math.max(0, now - started) : 0,
-            memBytes: memOf(rec.pid),
-            cmdline: rec.argv.join(" "),
-            cwd: rec.cwd,
-            env: rec.env,
-        };
-        return { ...base, running: true, starting: false, runtime };
-    });
+    }
     return {
         repoRoot: inputs.repoRoot,
         registryDir: inputs.registry ?? registryDir(),
-        runningCount: entries.filter((e) => e.running).length,
-        entries,
+        worktreeCount: targets.length,
+        appCount,
+        runningCount: launches.filter((item) => item.running).length,
+        problems: inputs.problems ?? [],
+        launches,
     };
 }

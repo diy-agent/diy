@@ -26,7 +26,7 @@ export { WorkbenchError } from "./errors.js";
 export { orderPlugins, loadPages } from "./loader.js";
 export { PAGE_INVOKE_CHANNEL, PAGE_LIST_CHANNEL } from "./channels.js";
 export { sidecarWindowOptions, type DisplayLike, type WorkArea } from "./window.js";
-export { registryDir, writeSelfRecord, removeSelfRecord } from "./instance-record.js";
+export { registryDir, writeSelfRecord, removeSelfRecord, repoRootOf } from "./instance-record.js";
 export type { PluginEntry } from "./loader.js";
 export type { PageContribution, PageInfo, PageMethod } from "./page.js";
 export type { PageInvokeRequest, WorkbenchBridge } from "./channels.js";
@@ -47,6 +47,8 @@ export interface CreateWorkbenchOptions {
      * 缺省不注册 —— 显式给名字才自报，避免把临时 / 测试宿主也塞进注册表。
      */
     readonly app?: string;
+    /** launch id（app.yaml 里的一条启动命令）；缺省读 `DIY_LAUNCH`，再缺省 null */
+    readonly launch?: string;
     /** 是否自报实例（缺省 = 给了 app 且 `DIY_HOME` 存在） */
     readonly registerInstance?: boolean;
     /** 窗口起来时**不抢焦点**（`showInactive`）；缺省读 `DIY_NO_FOCUS === "1"` */
@@ -111,7 +113,13 @@ export async function createWorkbench(options: CreateWorkbenchOptions): Promise<
 
     const shouldRegister = options.registerInstance ?? (options.app !== undefined && diyHome !== undefined);
     if (shouldRegister && options.app !== undefined && diyHome !== undefined) {
-        const file = writeSelfRecord({ app: options.app, diyHome, variant, env });
+        const file = writeSelfRecord({
+            app: options.app,
+            launch: options.launch ?? process.env["DIY_LAUNCH"] ?? null,
+            diyHome,
+            variant,
+            env,
+        });
         console.log(`[workbench] 实例注册：${file}`);
         const drop = (): void => removeSelfRecord();
         app.once("will-quit", drop);

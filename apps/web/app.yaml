@@ -1,0 +1,28 @@
+# apps/web 的启动清单（##502 第二轮）
+#
+# 两个 launch = 两个端口（同格多实例：:8123 与 :8124 可以同时跑）。
+# `url` 写的是**配置**端口；实际端口从实例注册表读，不一样时 UI 两个都显示。
+
+name: web
+title: diy web
+
+launches:
+  - id: web-8123
+    title: web（:8123）
+    command: ./sha.sh lab
+    env:
+      PORT: "8123"
+    entries:
+      - kind: web
+        title: 浏览器
+        url: http://localhost:8123
+
+  - id: web-8124
+    title: web（:8124）
+    command: ./sha.sh lab
+    env:
+      PORT: "8124"
+    entries:
+      - kind: web
+        title: 浏览器
+        url: http://localhost:8124

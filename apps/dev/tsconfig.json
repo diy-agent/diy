@@ -9,7 +9,7 @@
         "index.ts",
         "title.ts",
         "shared.ts",
-        "targets.ts",
+        "discovery.ts",
         "instances.ts",
         "actions.ts",
         "dev-page.ts",

@@ -1,7 +1,8 @@
 // renderer.ts — dev 启动器的界面（纯 DOM，无框架）。
 //
+// 四层树（##502 第二轮）：worktree → app → launch → entries。
 // 数据全部来自 `page:invoke`（主进程插件）：每秒拉一次快照，所以「启动后自己刷新成运行中」
-// 不靠额外的推送机制。分隔条来自 @diy-agent/workbench-ui 的 createSplitPane（260–520px）。
+// 不靠额外推送。分隔条来自 @diy-agent/workbench-ui 的 createSplitPane（260–520px）。
 
 import { createSplitPane } from "@diy-agent/workbench-ui";
 import {
@@ -10,8 +11,9 @@ import {
     type BuildCommand,
     type CommandSession,
     type DevSnapshot,
+    type LaunchRef,
+    type LaunchStatus,
     type OpenMode,
-    type TargetStatus,
 } from "./shared.js";
 
 interface WorkbenchBridge {
@@ -40,7 +42,6 @@ const headTitle = requireEl("head-title");
 const headBadge = requireEl("head-badge");
 const headMeta = requireEl("head-meta");
 const toastLabel = requireEl("toast");
-
 const gateway = bridge;
 
 async function invoke<T>(method: string, args?: unknown): Promise<T> {
@@ -49,16 +50,12 @@ async function invoke<T>(method: string, args?: unknown): Promise<T> {
 
 let snapshot: DevSnapshot | null = null;
 let session: CommandSession | null = null;
-let selectedId: string | null = null;
+let selectedKey: string | null = null;
 let polling = false;
 
 // ── DOM 小工具 ───────────────────────────────────────────────
 
-function el<K extends keyof HTMLElementTagNameMap>(
-    tag: K,
-    className = "",
-    text?: string,
-): HTMLElementTagNameMap[K] {
+function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text?: string): HTMLElementTagNameMap[K] {
     const node = document.createElement(tag);
     if (className !== "") node.className = className;
     if (text !== undefined) node.textContent = text;
@@ -106,7 +103,6 @@ function formatStartedAt(iso: string): string {
 }
 
 function copyText(text: string): void {
-    // 先走 Clipboard API（要 secure context + 用户手势）；不行就退回老办法
     const fallback = (): void => {
         const area = document.createElement("textarea");
         area.value = text;
@@ -117,7 +113,7 @@ function copyText(text: string): void {
         try {
             document.execCommand("copy");
         } catch {
-            /* 两条路都失败：仍要把原文留在面板上（用户可手动选中） */
+            /* 两条路都失败：原文仍在面板上，可手动选中 */
         }
         area.remove();
     };
@@ -129,9 +125,7 @@ function copyText(text: string): void {
 }
 
 let toastTimer: number | undefined;
-
 function toast(message: string): void {
-    // 不用 alert（会打断每秒轮询的焦点）：在顶栏闪一行状态，几秒后自动消失
     toastLabel.textContent = message;
     if (toastTimer !== undefined) window.clearTimeout(toastTimer);
     toastTimer = window.setTimeout(() => {
@@ -139,19 +133,40 @@ function toast(message: string): void {
     }, 5000);
 }
 
+function refOf(launch: LaunchStatus): LaunchRef {
+    return { worktree: launch.worktree, app: launch.app, launch: launch.launch };
+}
+
+function openUrl(url: string): void {
+    void invoke<{ ok: boolean; reason: string }>(DEV_METHODS.open, { url })
+        .then((result) => toast(result.ok ? `已打开：${result.reason}` : `打开失败：${result.reason}`))
+        .catch((error: unknown) => toast(`打开失败：${String(error)}`));
+}
+
+function openDir(launch: LaunchStatus, which: "app" | "worktree", mode: OpenMode): void {
+    void invoke<{ ok: boolean; reason: string }>(DEV_METHODS.open, {
+        worktree: launch.worktree,
+        app: launch.app,
+        which: which === "app" ? "app" : "worktree",
+        mode,
+    })
+        .then((result) => toast(result.ok ? `已打开：${result.reason}` : `打开失败：${result.reason}`))
+        .catch((error: unknown) => toast(`打开失败：${String(error)}`));
+}
+
 // ── 左侧树 ───────────────────────────────────────────────────
 
-function shortcutsOf(entry: TargetStatus): HTMLElement {
+function hoverActions(launch: LaunchStatus): HTMLElement {
     const acts = el("div", "acts");
-    if (entry.running) {
+    if (launch.running) {
         acts.append(
-            button("聚焦", "", () => void focusEntry(entry)),
-            button("关闭", "stop", () => void stopEntry(entry)),
+            button("聚焦", "", () => void focusLaunch(launch)),
+            button("关闭", "stop", () => void stopLaunch(launch)),
         );
-    } else if (entry.starting) {
+    } else if (launch.starting) {
         acts.append(el("span", "hint", "启动中…"));
     } else {
-        acts.append(button("启动", "", () => void startEntry(entry)));
+        acts.append(button("启动", "", () => void startLaunch(launch)));
     }
     return acts;
 }
@@ -159,48 +174,87 @@ function shortcutsOf(entry: TargetStatus): HTMLElement {
 function renderTree(): void {
     tree.replaceChildren();
     if (snapshot === null) return;
-    const groups = new Map<string, TargetStatus[]>();
-    for (const entry of snapshot.entries) {
-        const list = groups.get(entry.group);
-        if (list === undefined) groups.set(entry.group, [entry]);
-        else list.push(entry);
-    }
-    for (const [group, entries] of groups) {
-        tree.append(el("div", "app", group));
-        for (const entry of entries) {
-            const row = el("div", `entry${entry.id === selectedId ? " sel" : ""}`);
-            row.dataset["id"] = entry.id;
-            const dot = el("span", `dot ${entry.running ? "on" : entry.starting ? "wait" : "off"}`);
-            const name = el("span", "nm", entry.name);
-            name.append(el("span", "", entry.homeDisplay));
-            row.append(dot, name, shortcutsOf(entry));
-            row.addEventListener("click", () => {
-                selectedId = entry.id;
-                render();
-            });
-            tree.append(row);
+
+    // worktree → app → launch，保持主进程给的顺序
+    const byWorktree = new Map<string, { label: string; running: number; apps: Map<string, { title: string; launches: LaunchStatus[] }> }>();
+    for (const launch of snapshot.launches) {
+        let wt = byWorktree.get(launch.worktree);
+        if (wt === undefined) {
+            wt = { label: launch.worktreeLabel, running: 0, apps: new Map() };
+            byWorktree.set(launch.worktree, wt);
         }
+        if (launch.running) wt.running += 1;
+        let app = wt.apps.get(launch.app);
+        if (app === undefined) {
+            app = { title: launch.appTitle, launches: [] };
+            wt.apps.set(launch.app, app);
+        }
+        app.launches.push(launch);
+    }
+
+    for (const [worktree, group] of byWorktree) {
+        const head = el("div", "app");
+        head.textContent = group.label;
+        if (group.running > 0) head.append(el("span", "badge run", `● ${group.running}`));
+        tree.append(head);
+
+        for (const [appName, app] of group.apps) {
+            const appHead = el("div", "appsub");
+            appHead.textContent = `${appName}  ${app.title}`;
+            tree.append(appHead);
+
+            for (const launch of app.launches) {
+                const row = el("div", `entry${launch.key === selectedKey ? " sel" : ""}${launch.built ? "" : " dim"}`);
+                row.dataset["key"] = launch.key;
+                const dot = el("span", `dot ${launch.running ? "on" : launch.starting ? "wait" : "off"}`);
+                const name = el("span", "nm", launch.launchTitle);
+                name.append(el("span", "", launch.command));
+                row.append(dot, name, hoverActions(launch));
+                row.addEventListener("click", () => {
+                    selectedKey = launch.key;
+                    render();
+                });
+                tree.append(row);
+
+                // entries：静态声明（web 的 URL 可点）
+                for (const entry of launch.entries) {
+                    const leaf = el("div", "leaf");
+                    const label = entry.kind === "web" ? "🔗" : "▣";
+                    leaf.append(el("span", "leaficon", label));
+                    if (entry.kind === "web" && entry.href !== null) {
+                        const link = el("a", "link", entry.href);
+                        link.href = "#";
+                        link.addEventListener("click", (event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            openUrl(entry.href ?? "");
+                        });
+                        leaf.append(link);
+                        if (entry.portMismatch && entry.configuredUrl !== null) {
+                            leaf.append(el("span", "muted", `（配置 ${entry.configuredUrl}）`));
+                        }
+                    } else {
+                        leaf.append(el("span", "muted", entry.title ?? "Electron 窗口"));
+                    }
+                    tree.append(leaf);
+                }
+            }
+        }
+        // 视觉分组（最后一个 worktree 之后不再画线）
+        void worktree;
     }
 }
 
 // ── 右侧详情 ─────────────────────────────────────────────────
 
-function openButtons(entry: TargetStatus, which: "workdir" | "home"): HTMLElement {
+function openButtons(launch: LaunchStatus, which: "app" | "worktree"): HTMLElement {
     const wrap = el("span", "open");
     const modes: readonly (readonly [string, OpenMode])[] = [
         ["open", "finder"],
         ["VS Code", "editor"],
         ["终端", "terminal"],
     ];
-    for (const [label, mode] of modes) {
-        wrap.append(
-            button(label, "", () => {
-                void invoke<{ ok: boolean; reason: string }>(DEV_METHODS.open, { id: entry.id, which, mode })
-                    .then((result) => toast(result.ok ? `已打开：${result.reason}` : `打开失败：${result.reason}`))
-                    .catch((error: unknown) => toast(`打开失败：${String(error)}`));
-            }),
-        );
-    }
+    for (const [label, mode] of modes) wrap.append(button(label, "", () => openDir(launch, which, mode)));
     return wrap;
 }
 
@@ -216,102 +270,110 @@ function card(title: string, extra?: Node): HTMLElement {
     return box;
 }
 
-function renderUriCard(entry: TargetStatus): HTMLElement {
-    const box = card("实例 URI（出问题时 copy 给 agent）");
-    const uri = el("div", "uri");
-    uri.append(document.createTextNode(entry.uri));
-    const copy = button("复制", "", () => {
-        copyText(entry.uri);
-        toast("实例 URI 已复制");
-    });
-    uri.append(copy);
-    box.append(uri);
-    return box;
-}
-
-function renderParamsCard(entry: TargetStatus): HTMLElement {
-    const box = card("启动参数");
+function renderEntriesCard(launch: LaunchStatus): HTMLElement | null {
+    if (launch.entries.length === 0) return null;
+    const box = card("入口", el("span", "hint", "静态声明（app.yaml）"));
     const list = el("dl", "kv");
-    for (const [label, path, which] of [
-        ["工作目录", entry.cwd, "workdir"],
-        ["数据根", entry.home, "home"],
-    ] as const) {
-        const value = el("span", "", path);
-        value.append(openButtons(entry, which));
-        list.append(...kv(label, value));
+    for (const entry of launch.entries) {
+        const value = el("span");
+        if (entry.kind === "web" && entry.href !== null) {
+            const link = el("a", "link", entry.href);
+            link.href = "#";
+            link.addEventListener("click", (event) => {
+                event.preventDefault();
+                openUrl(entry.href ?? "");
+            });
+            value.append(link);
+            if (entry.portMismatch && entry.configuredUrl !== null) {
+                value.append(el("span", "muted", `（配置 ${entry.configuredUrl}）`));
+            }
+        } else {
+            value.append(document.createTextNode(entry.title ?? "Electron 窗口"));
+            value.append(el("span", "muted", "（桌面窗口，用「聚焦」拉前台）"));
+        }
+        list.append(...kv(entry.kind === "web" ? "浏览器" : "窗口", value));
     }
-    list.append(...kv("变体", `${entry.variant}（env=development）`));
-    list.append(...kv("启动命令", entry.command));
     box.append(list);
     return box;
 }
 
-function renderRuntimeCard(entry: TargetStatus): HTMLElement {
-    const runtime = entry.runtime;
+function renderParamsCard(launch: LaunchStatus): HTMLElement {
+    const box = card("启动参数");
+    const list = el("dl", "kv");
+    const dir = el("span", "", launch.appDir);
+    dir.append(openButtons(launch, "app"));
+    list.append(...kv("工作目录", dir));
+    const wt = el("span", "", launch.worktree);
+    wt.append(openButtons(launch, "worktree"));
+    list.append(...kv("worktree", wt));
+    list.append(...kv("启动命令", launch.command));
+    list.append(...kv("构建状态", launch.built ? "已构建" : "未构建（先用下面的「构建」）"));
+    box.append(list);
+    return box;
+}
+
+function renderRuntimeCard(launch: LaunchStatus): HTMLElement {
+    const runtime = launch.runtime;
     if (runtime === null) {
-        const box = card("运行时", el("span", "hint", entry.starting ? "启动中" : "未启动"));
-        box.append(el("div", "hint", entry.starting ? "进程已拉起，正在等待它写实例注册表……" : "点左上「启动」把它拉起来。"));
-        if (!entry.starting) {
-            box.append(button("启动", "pri", () => void startEntry(entry)));
-        }
+        const box = card("运行时", el("span", "hint", launch.starting ? "启动中" : "未启动"));
+        box.append(
+            el(
+                "div",
+                "hint",
+                launch.starting
+                    ? "进程已拉起，正在等待它写实例注册表……"
+                    : launch.built
+                      ? "点左上「启动」把它拉起来。"
+                      : "该 worktree 还没构建过 —— 先点下面「构建」，再启动。",
+            ),
+        );
+        if (!launch.starting) box.append(button("启动", "pri", () => void startLaunch(launch)));
         return box;
     }
     const box = card("运行时", el("span", "hint", `已运行 ${formatUptime(runtime.uptimeMs)}`));
     const list = el("dl", "kv");
     const pidValue = el("span", "", String(runtime.pid));
-    pidValue.append(
-        (() => {
-            const wrap = el("span", "open");
-            wrap.append(
-                button("copy", "", () => {
-                    copyText(String(runtime.pid));
-                    toast("PID 已复制");
-                }),
-            );
-            return wrap;
-        })(),
+    const copy = el("span", "open");
+    copy.append(
+        button("copy", "", () => {
+            copyText(String(runtime.pid));
+            toast("PID 已复制");
+        }),
     );
+    pidValue.append(copy);
     list.append(...kv("PID", pidValue));
-    list.append(...kv("端口", runtime.port === null ? "—（无 RPC 端口）" : `${runtime.port}（CDP）`));
+    list.append(...kv("端口", runtime.port === null ? "—（未回填）" : String(runtime.port)));
     list.append(...kv("启动于", formatStartedAt(runtime.startedAt)));
     list.append(...kv("内存", formatBytes(runtime.memBytes)));
     list.append(...kv("命令行", runtime.cmdline || "—"));
+    list.append(...kv("数据根", runtime.diyHome || "—"));
     box.append(list);
     const acts = el("div", "acts");
     acts.append(
-        button("聚焦窗口", "pri", () => void focusEntry(entry)),
-        button("重启", "", () => void restartEntry(entry)),
+        button("聚焦窗口", "pri", () => void focusLaunch(launch)),
+        button("重启", "", () => void restartLaunch(launch)),
         button("打开 CDP", "", () => {
-            void invoke<{ ok: boolean; reason: string }>(DEV_METHODS.revealCdp, { id: entry.id })
+            void invoke<{ ok: boolean; reason: string }>(DEV_METHODS.revealCdp, refOf(launch))
                 .then((result) => toast(result.ok ? `已打开：${result.reason}` : `打不开 CDP：${result.reason}`))
                 .catch((error: unknown) => toast(`打不开 CDP：${String(error)}`));
         }),
-        button("停止", "danger", () => void stopEntry(entry)),
+        button("停止", "danger", () => void stopLaunch(launch)),
     );
     box.append(acts);
     return box;
 }
 
-function renderBuildCard(entry: TargetStatus): HTMLElement {
-    const box = card("构建与检查", el("span", "hint", `在 ${entry.cwd} 下执行`));
+function renderBuildCard(launch: LaunchStatus): HTMLElement {
+    const box = card("构建与检查", el("span", "hint", `在 ${launch.appDir} 下执行`));
+    if (!launch.built) {
+        const hint = el("div", "hint", "该 worktree 还没有 build/ 目录（未构建）—— 建议先跑 build。");
+        box.append(hint);
+    }
     const grid = el("div", "cmdgrid");
     for (const command of BUILD_COMMANDS) {
-        grid.append(button(command, "", () => void runCommand(entry, command)));
+        grid.append(button(command, "", () => void runCommand(launch, command)));
     }
     box.append(grid);
-    const acts = el("div", "acts");
-    acts.append(
-        button("在终端里打开这个目录", "small", () => {
-            void invoke<{ ok: boolean; reason: string }>(DEV_METHODS.open, {
-                id: entry.id,
-                which: "workdir",
-                mode: "terminal",
-            })
-                .then((result) => toast(result.ok ? `已打开：${result.reason}` : `打开失败：${result.reason}`))
-                .catch((error: unknown) => toast(`打开失败：${String(error)}`));
-        }),
-    );
-    box.append(acts);
     return box;
 }
 
@@ -329,7 +391,6 @@ function renderLogCard(): HTMLElement {
         log.textContent = session === null ? "点上面的构建按钮，输出会出现在这里。" : "";
     } else {
         log.textContent = session.lines.slice(-300).join("\n");
-        // 滚到底（看最新一行）
         requestAnimationFrame(() => {
             log.scrollTop = log.scrollHeight;
         });
@@ -341,31 +402,30 @@ function renderLogCard(): HTMLElement {
 function renderDetail(): void {
     body.replaceChildren();
     if (snapshot === null) return;
-    const entry = snapshot.entries.find((item) => item.id === selectedId) ?? null;
-    if (entry === null) {
-        body.append(el("div", "empty", "左侧选一个目标"));
+    const launch = snapshot.launches.find((item) => item.key === selectedKey) ?? null;
+    if (launch === null) {
+        body.append(el("div", "empty", "左侧选一个启动项"));
         return;
     }
-    headTitle.textContent = `${entry.app} · ${entry.name}`;
-    headBadge.className = `badge ${entry.running ? "run" : entry.starting ? "wait" : "stop"}`;
-    headBadge.textContent = entry.running ? "● 运行中" : entry.starting ? "● 启动中" : "○ 未启动";
+    headTitle.textContent = `${launch.app} · ${launch.launchTitle}`;
+    headBadge.className = `badge ${launch.running ? "run" : launch.starting ? "wait" : "stop"}`;
+    headBadge.textContent = launch.running ? "● 运行中" : launch.starting ? "● 启动中" : "○ 未启动";
     headMeta.textContent =
-        entry.running && entry.runtime !== null
-            ? `PID ${entry.runtime.pid}${entry.runtime.port === null ? "" : ` · :${entry.runtime.port}`}`
-            : entry.command;
-    body.append(
-        renderUriCard(entry),
-        renderParamsCard(entry),
-        renderRuntimeCard(entry),
-        renderBuildCard(entry),
-        renderLogCard(),
-    );
+        launch.running && launch.runtime !== null
+            ? `PID ${launch.runtime.pid}${launch.runtime.port === null ? "" : ` · :${launch.runtime.port}`}`
+            : launch.command;
+    const entries = renderEntriesCard(launch);
+    if (entries !== null) body.append(entries);
+    body.append(renderParamsCard(launch), renderRuntimeCard(launch), renderBuildCard(launch), renderLogCard());
 }
 
 function render(): void {
     if (snapshot !== null) {
         runningLabel.textContent = `${snapshot.runningCount} 个在跑`;
-        repoLabel.textContent = snapshot.repoRoot;
+        repoLabel.textContent = `${snapshot.worktreeCount} worktree · ${snapshot.appCount} app`;
+        if (snapshot.problems.length > 0) {
+            repoLabel.title = snapshot.problems.join("\n");
+        }
     }
     renderTree();
     renderDetail();
@@ -373,9 +433,9 @@ function render(): void {
 
 // ── 动作 ─────────────────────────────────────────────────────
 
-async function startEntry(entry: TargetStatus): Promise<void> {
+async function startLaunch(launch: LaunchStatus): Promise<void> {
     try {
-        const result = await invoke<{ ok: boolean; reason: string }>(DEV_METHODS.start, { id: entry.id });
+        const result = await invoke<{ ok: boolean; reason: string }>(DEV_METHODS.start, refOf(launch));
         toast(result.ok ? `已启动：${result.reason}` : `启动失败：${result.reason}`);
     } catch (error) {
         toast(`启动失败：${String(error)}`);
@@ -383,9 +443,9 @@ async function startEntry(entry: TargetStatus): Promise<void> {
     await refresh();
 }
 
-async function stopEntry(entry: TargetStatus): Promise<void> {
+async function stopLaunch(launch: LaunchStatus): Promise<void> {
     try {
-        const result = await invoke<{ ok: boolean; forced: boolean; reason: string }>(DEV_METHODS.stop, { id: entry.id });
+        const result = await invoke<{ ok: boolean; reason: string; forced: boolean }>(DEV_METHODS.stop, refOf(launch));
         toast(result.reason);
     } catch (error) {
         toast(`停止失败：${String(error)}`);
@@ -393,24 +453,24 @@ async function stopEntry(entry: TargetStatus): Promise<void> {
     await refresh();
 }
 
-async function restartEntry(entry: TargetStatus): Promise<void> {
-    await invoke(DEV_METHODS.stop, { id: entry.id });
-    await invoke(DEV_METHODS.start, { id: entry.id });
+async function restartLaunch(launch: LaunchStatus): Promise<void> {
+    await invoke(DEV_METHODS.stop, refOf(launch));
+    await invoke(DEV_METHODS.start, refOf(launch));
     await refresh();
 }
 
-async function focusEntry(entry: TargetStatus): Promise<void> {
+async function focusLaunch(launch: LaunchStatus): Promise<void> {
     try {
-        const result = await invoke<{ ok: boolean; reason: string }>(DEV_METHODS.focus, { id: entry.id });
+        const result = await invoke<{ ok: boolean; reason: string }>(DEV_METHODS.focus, refOf(launch));
         toast(result.ok ? `已聚焦：${result.reason}` : `聚焦失败：${result.reason}`);
     } catch (error) {
         toast(`聚焦失败：${String(error)}`);
     }
 }
 
-async function runCommand(entry: TargetStatus, command: BuildCommand): Promise<void> {
+async function runCommand(launch: LaunchStatus, command: BuildCommand): Promise<void> {
     try {
-        session = await invoke<CommandSession>(DEV_METHODS.run, { id: entry.id, command });
+        session = await invoke<CommandSession>(DEV_METHODS.run, { ...refOf(launch), command });
         render();
     } catch (error) {
         toast(`命令启动失败：${String(error)}`);
@@ -429,12 +489,11 @@ async function refresh(): Promise<void> {
         ]);
         snapshot = next;
         session = nextSession;
-        if (selectedId === null && next.entries.length > 0) selectedId = next.entries[0].id;
-        if (selectedId !== null && !next.entries.some((entry) => entry.id === selectedId)) selectedId = null;
+        if (selectedKey === null && next.launches.length > 0) selectedKey = next.launches[0].key;
+        if (selectedKey !== null && !next.launches.some((item) => item.key === selectedKey)) selectedKey = null;
         render();
     } catch (error) {
-        // 主进程没起来 / 通道断了：别让界面停在「正在读取」而不说话
-        body.replaceChildren(el("div", "empty", `读取实例失败：${String(error)}`));
+        body.replaceChildren(el("div", "empty", `读取清单失败：${String(error)}`));
     } finally {
         polling = false;
     }
