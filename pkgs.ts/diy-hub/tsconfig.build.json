@@ -16,6 +16,9 @@
         "sourceMap": true
     },
     "include": ["src/**/*"],
-    "exclude": ["tests/**/*"],
-    "references": [{ "path": "../diy-time/tsconfig.build.json" }]
+    "exclude": ["tests/**/*"]
+,
+  "references": [
+    { "path": "../diy-time/tsconfig.build.json" }
+  ]
 }

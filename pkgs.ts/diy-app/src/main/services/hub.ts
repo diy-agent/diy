@@ -37,7 +37,7 @@ import {
   type PairingRequest,
 } from "@diy-agent/hub";
 import { ensureIdentity } from "@diy-agent/remote/node";
-import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { diyHome } from "../core/state";
@@ -91,6 +91,22 @@ export interface HubJoinResult {
   membershipId?: string;
 }
 
+/**
+ * 主进程编排层的前置条件不满足（**不是** hub 协议错误）：
+ * 所以不用 `HubError` —— 它的 code 是 `@diy-agent/hub` 包内的封闭词表（`hub/` `pair/` `tls/` …），
+ * 而 diy-app 的码口径是 `<域>/<kebab-case>`（`rule.err-triage`，域 = llm|fs|net|rpc|agent|db|ui|os）。
+ * 「还没 init」「还没有对外地址」是本地编排的前置条件，走 `net/hub-*`（##500 收尾）。
+ */
+export class HubServiceError extends Error {
+  readonly code: "net/hub-not-initialized" | "net/hub-endpoint-missing";
+
+  constructor(input: { code: HubServiceError["code"]; message: string }) {
+    super(input.message);
+    this.name = "HubServiceError";
+    this.code = input.code;
+  }
+}
+
 export class HubService {
   private server: HubServer | null = null;
   private starting: Promise<HubServer> | null = null;
@@ -131,7 +147,10 @@ export class HubService {
     const server = await this.ensureServer();
     const identity = await this.requireIdentity();
     if (!identity.endpoint) {
-      throw new HubError("hub/bad-input", "还没有对外地址：先跑 diy hub init --endpoint https://<host>/hub");
+      throw new HubServiceError({
+        code: "net/hub-endpoint-missing",
+        message: "还没有对外地址：先跑 diy hub init --endpoint https://<host>/hub",
+      });
     }
     const invite = await server.invite();
     return {
@@ -269,7 +288,7 @@ export class HubService {
 
   private async requireIdentity(): Promise<HubIdentity> {
     const identity = await this.readIdentity();
-    if (!identity) throw new HubError("hub/not-initialized", "先跑 diy hub init");
+    if (!identity) throw new HubServiceError({ code: "net/hub-not-initialized", message: "先跑 diy hub init" });
     return identity;
   }
 
@@ -306,7 +325,7 @@ export class HubService {
 
   private async tlsSources(): Promise<{ certPath?: string; keyPath?: string }> {
     try {
-      const parsed = JSON.parse(readFileSync(join(hubDir(this.home), "tls.json"), "utf-8")) as {
+      const parsed = JSON.parse(await readFile(join(hubDir(this.home), "tls.json"), "utf-8")) as {
         cert?: string;
         key?: string;
       };

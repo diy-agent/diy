@@ -30,6 +30,8 @@ export const WORKSPACE_TS_DEPS = [
   "@diy-agent/llm-provider",
   "@diy-agent/compaction",
   "@diy-agent/ui-kit",
+  // ##500：主进程 services/hub.ts 直接 import —— 漏了会在产物里留裸 import
+  "@diy-agent/hub",
 ];
 
 /** 变体产物根：prod|test|lab（见根 AGENTS.md「实例三态」） */

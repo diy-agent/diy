@@ -59,7 +59,7 @@ const LEGACY_SYNC_IO_BASELINE = new Map(Object.entries({
   "pkgs.ts/diy-app/src/main/core/auto-compact-config.ts": 5,
   "pkgs.ts/diy-app/src/main/core/calendars.ts": 1,
   "pkgs.ts/diy-app/src/main/core/context-changelog.ts": 3,
-  "pkgs.ts/diy-app/src/main/core/context-config.ts": 4,
+  "pkgs.ts/diy-app/src/main/core/context-config.ts": 2,
   "pkgs.ts/diy-app/src/main/core/context-stats.ts": 4,
   "pkgs.ts/diy-app/src/main/core/cost-windows.ts": 1,
   "pkgs.ts/diy-app/src/main/core/cwd.ts": 2,
