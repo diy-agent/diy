@@ -42,6 +42,7 @@ const headTitle = requireEl("head-title");
 const headBadge = requireEl("head-badge");
 const headMeta = requireEl("head-meta");
 const toastLabel = requireEl("toast");
+const filterToggle = requireEl("filter-running");
 const gateway = bridge;
 
 async function invoke<T>(method: string, args?: unknown): Promise<T> {
@@ -52,6 +53,15 @@ let snapshot: DevSnapshot | null = null;
 let session: CommandSession | null = null;
 let selectedKey: string | null = null;
 let polling = false;
+/** 「只显示运行中」过滤（titlebar 的 toggle；只影响左侧树） */
+let onlyRunning = false;
+
+const FILTER_KEY = "dev.onlyRunning";
+try {
+    onlyRunning = window.localStorage.getItem(FILTER_KEY) === "1";
+} catch {
+    onlyRunning = false;
+}
 
 // ── DOM 小工具 ───────────────────────────────────────────────
 
@@ -143,11 +153,12 @@ function openUrl(url: string): void {
         .catch((error: unknown) => toast(`打开失败：${String(error)}`));
 }
 
-function openDir(launch: LaunchStatus, which: "app" | "worktree", mode: OpenMode): void {
+function openDir(launch: LaunchStatus, which: "app" | "worktree" | "home" | "yaml", mode: OpenMode): void {
     void invoke<{ ok: boolean; reason: string }>(DEV_METHODS.open, {
         worktree: launch.worktree,
         app: launch.app,
-        which: which === "app" ? "app" : "worktree",
+        launch: launch.launch,
+        which,
         mode,
     })
         .then((result) => toast(result.ok ? `已打开：${result.reason}` : `打开失败：${result.reason}`))
@@ -175,79 +186,76 @@ function renderTree(): void {
     tree.replaceChildren();
     if (snapshot === null) return;
 
-    // worktree → app → launch，保持主进程给的顺序
-    const byWorktree = new Map<string, { label: string; running: number; apps: Map<string, { title: string; launches: LaunchStatus[] }> }>();
-    for (const launch of snapshot.launches) {
-        let wt = byWorktree.get(launch.worktree);
-        if (wt === undefined) {
-            wt = { label: launch.worktreeLabel, running: 0, apps: new Map() };
-            byWorktree.set(launch.worktree, wt);
-        }
-        if (launch.running) wt.running += 1;
-        let app = wt.apps.get(launch.app);
-        if (app === undefined) {
-            app = { title: launch.appTitle, launches: [] };
-            wt.apps.set(launch.app, app);
-        }
-        app.launches.push(launch);
+    // 「只显示运行中」：连祖先一起过滤（没在跑的 launch 不列 ⇒ 它的 app / worktree 也不列）
+    const visible = snapshot.launches.filter((item) => !onlyRunning || item.running || item.starting);
+    if (visible.length === 0) {
+        tree.append(el("div", "empty", onlyRunning ? "没有在跑的 launch" : "（清单为空）"));
+        return;
     }
 
-    for (const [worktree, group] of byWorktree) {
-        const head = el("div", "app");
-        head.textContent = group.label;
-        if (group.running > 0) head.append(el("span", "badge run", `● ${group.running}`));
-        tree.append(head);
+    // 严格四级：repo → worktree → app → launch，每层一行、只放名字
+    tree.append(
+        el(
+            "div",
+            "lvl lvl-repo",
+            snapshot.repoBranch === null
+                ? snapshot.repoName
+                : `${snapshot.repoName}（${snapshot.repoBranch}）`,
+        ),
+    );
 
-        for (const [appName, app] of group.apps) {
-            const appHead = el("div", "appsub");
-            appHead.textContent = `${appName}  ${app.title}`;
-            tree.append(appHead);
+    const byWorktree = new Map<string, Map<string, LaunchStatus[]>>();
+    const wtOrder: string[] = [];
+    for (const launch of visible) {
+        let apps = byWorktree.get(launch.worktree);
+        if (apps === undefined) {
+            apps = new Map();
+            byWorktree.set(launch.worktree, apps);
+            wtOrder.push(launch.worktree);
+        }
+        const list = apps.get(launch.app);
+        if (list === undefined) apps.set(launch.app, [launch]);
+        else list.push(launch);
+    }
 
-            for (const launch of app.launches) {
+    let wtIndex = 0;
+    for (const worktree of wtOrder) {
+        const apps = byWorktree.get(worktree);
+        if (apps === undefined) continue;
+        const sample = [...apps.values()][0]?.[0];
+        if (sample === undefined) continue;
+        // 首个 worktree = 主工作树（git worktree list 的第一行），树里用 `.` 表示仓库根本身
+        tree.append(el("div", "lvl lvl-wt", wtIndex === 0 ? "." : worktreeName(sample)));
+        wtIndex += 1;
+
+        for (const [appName, launches] of apps) {
+            tree.append(el("div", "lvl lvl-app", `apps/${appName}`));
+            for (const launch of launches) {
                 const row = el("div", `entry${launch.key === selectedKey ? " sel" : ""}${launch.built ? "" : " dim"}`);
                 row.dataset["key"] = launch.key;
-                const dot = el("span", `dot ${launch.running ? "on" : launch.starting ? "wait" : "off"}`);
-                const name = el("span", "nm", launch.launchTitle);
-                name.append(el("span", "", launch.command));
-                row.append(dot, name, hoverActions(launch));
+                // 一行只放：绿点 + launch id；其余属性全在右侧面板
+                row.append(el("span", `dot ${launch.running ? "on" : launch.starting ? "wait" : "off"}`));
+                row.append(el("span", "nm", launch.launch));
+                row.append(hoverActions(launch));
                 row.addEventListener("click", () => {
                     selectedKey = launch.key;
                     render();
                 });
                 tree.append(row);
-
-                // entries：静态声明（web 的 URL 可点）
-                for (const entry of launch.entries) {
-                    const leaf = el("div", "leaf");
-                    const label = entry.kind === "web" ? "🔗" : "▣";
-                    leaf.append(el("span", "leaficon", label));
-                    if (entry.kind === "web" && entry.href !== null) {
-                        const link = el("a", "link", entry.href);
-                        link.href = "#";
-                        link.addEventListener("click", (event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            openUrl(entry.href ?? "");
-                        });
-                        leaf.append(link);
-                        if (entry.portMismatch && entry.configuredUrl !== null) {
-                            leaf.append(el("span", "muted", `（配置 ${entry.configuredUrl}）`));
-                        }
-                    } else {
-                        leaf.append(el("span", "muted", entry.title ?? "Electron 窗口"));
-                    }
-                    tree.append(leaf);
-                }
             }
         }
-        // 视觉分组（最后一个 worktree 之后不再画线）
-        void worktree;
     }
+}
+
+/** worktree 行的名字：目录名（分支名与目录名不同时补在括号里） */
+function worktreeName(launch: LaunchStatus): string {
+    const base = launch.worktreePath.split("/").filter(Boolean).pop() ?? launch.worktreePath;
+    return launch.branch !== null && launch.branch !== base ? `${base}（${launch.branch}）` : base;
 }
 
 // ── 右侧详情 ─────────────────────────────────────────────────
 
-function openButtons(launch: LaunchStatus, which: "app" | "worktree"): HTMLElement {
+function openButtons(launch: LaunchStatus, which: "app" | "worktree" | "home" | "yaml"): HTMLElement {
     const wrap = el("span", "open");
     const modes: readonly (readonly [string, OpenMode])[] = [
         ["open", "finder"],
@@ -297,17 +305,54 @@ function renderEntriesCard(launch: LaunchStatus): HTMLElement | null {
     return box;
 }
 
+function renderUriCard(launch: LaunchStatus): HTMLElement {
+    const box = card("实例 URI（出问题时 copy 给 agent）");
+    const uri = el("div", "uri");
+    if (launch.uri === null) {
+        uri.append(
+            document.createTextNode(`—（数据根还没有 instance-id：${launch.home}）`),
+        );
+    } else {
+        uri.append(document.createTextNode(launch.uri));
+        uri.append(
+            button("复制", "", () => {
+                copyText(launch.uri ?? "");
+                toast("实例 URI 已复制");
+            }),
+        );
+    }
+    box.append(uri);
+    return box;
+}
+
 function renderParamsCard(launch: LaunchStatus): HTMLElement {
-    const box = card("启动参数");
+    const box = card("启动参数", el("span", "hint", `launch ${launch.launch}`));
     const list = el("dl", "kv");
+    list.append(...kv("标题", launch.launchTitle));
+    list.append(...kv("启动命令", launch.command));
+    // 环境变量（app.yaml 的 env；没有就如实写「无」）
+    const envKeys = Object.keys(launch.env);
+    list.append(
+        ...kv(
+            "环境变量",
+            envKeys.length === 0
+                ? "—（app.yaml 未声明）"
+                : envKeys.map((key) => `${key}=${launch.env[key]}`).join("  "),
+        ),
+    );
     const dir = el("span", "", launch.appDir);
     dir.append(openButtons(launch, "app"));
     list.append(...kv("工作目录", dir));
+    const home = el("span", "", launch.home);
+    home.append(openButtons(launch, "home"));
+    list.append(...kv("数据根", home));
+    const yaml = el("span", "", launch.yamlPath);
+    yaml.append(openButtons(launch, "yaml"));
+    list.append(...kv("app.yaml", yaml));
     const wt = el("span", "", launch.worktree);
     wt.append(openButtons(launch, "worktree"));
     list.append(...kv("worktree", wt));
-    list.append(...kv("启动命令", launch.command));
-    list.append(...kv("构建状态", launch.built ? "已构建" : "未构建（先用下面的「构建」）"));
+    list.append(...kv("构建状态", launch.built ? "已构建（有 build/ 产物）" : "未构建（先用下面的「构建」）"));
     box.append(list);
     return box;
 }
@@ -416,7 +461,13 @@ function renderDetail(): void {
             : launch.command;
     const entries = renderEntriesCard(launch);
     if (entries !== null) body.append(entries);
-    body.append(renderParamsCard(launch), renderRuntimeCard(launch), renderBuildCard(launch), renderLogCard());
+    body.append(
+        renderUriCard(launch),
+        renderParamsCard(launch),
+        renderRuntimeCard(launch),
+        renderBuildCard(launch),
+        renderLogCard(),
+    );
 }
 
 function render(): void {
@@ -505,6 +556,24 @@ const side = requireEl("side");
 const split = createSplitPane(side, { min: 260, max: 520, initial: 360, storageKey: "dev.splitWidth" });
 split.handle.id = "split";
 side.after(split.handle);
+
+// 「只显示运行中」：只改左侧树的可见集，选中项与右侧面板不动
+function syncFilterToggle(): void {
+    filterToggle.setAttribute("aria-pressed", onlyRunning ? "true" : "false");
+    filterToggle.classList.toggle("on", onlyRunning);
+    filterToggle.textContent = onlyRunning ? "只显示运行中 · 开" : "只显示运行中";
+}
+filterToggle.addEventListener("click", () => {
+    onlyRunning = !onlyRunning;
+    try {
+        window.localStorage.setItem(FILTER_KEY, onlyRunning ? "1" : "0");
+    } catch {
+        /* 隐私模式：本次会话内生效即可 */
+    }
+    syncFilterToggle();
+    renderTree();
+});
+syncFilterToggle();
 
 void refresh();
 setInterval(() => void refresh(), 1000);

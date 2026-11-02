@@ -10,7 +10,7 @@
 
 import { readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, relative, isAbsolute, resolve } from "node:path";
+import { basename, join, relative, isAbsolute, resolve } from "node:path";
 import type { AppSpec, DevSnapshot, EntryStatus, LaunchRuntime, LaunchStatus, WorktreeInfo } from "./shared.js";
 
 /** 注册表目录：与 diy-app / apps/web 同一口径（`DIY_INSTANCE_REGISTRY` 可覆盖，测试隔离用） */
@@ -185,8 +185,23 @@ export interface SnapshotInputs {
     readonly builtOf?: (worktree: string) => boolean;
     /** pid → 内存字节数（注入：单测不跑 ps） */
     readonly memOf?: (pid: number) => number | null;
+    /** 数据根 → instance-id（注入：单测不读盘）；缺省读 `<home>/instance-id` */
+    readonly nodeIdOf?: (home: string) => string | null;
     readonly now?: number;
     readonly registry?: string;
+}
+
+/** 数据根缺省（与 apps/* 的 sha.sh 同口径） */
+export const DEFAULT_HOME = "build/lab/home";
+
+/** 读 `<home>/instance-id`（不存在 / 空 = null；不写盘 —— 启动器只读不代建身份） */
+export function readNodeId(home: string): string | null {
+    try {
+        const text = readFileSync(join(home, "instance-id"), "utf-8").trim();
+        return text === "" ? null : text;
+    } catch {
+        return null;
+    }
 }
 
 export function launchKey(worktree: string, app: string, launch: string): string {
@@ -198,6 +213,7 @@ export function buildSnapshot(targets: readonly WorktreeInfo[], inputs: Snapshot
     const now = inputs.now ?? Date.now();
     const memOf = inputs.memOf ?? (() => null);
     const builtOf = inputs.builtOf ?? (() => true);
+    const nodeIdOf = inputs.nodeIdOf ?? readNodeId;
     const launches: LaunchStatus[] = [];
     let appCount = 0;
     for (const worktree of targets) {
@@ -209,6 +225,8 @@ export function buildSnapshot(targets: readonly WorktreeInfo[], inputs: Snapshot
                 const key = launchKey(worktree.path, app.name, launch.id);
                 const record = inputs.records.find((rec) => matchRecord(rec, { worktree: worktree.path, app: app.name, launch: launch.id }));
                 const running = record !== undefined;
+                const home = resolve(worktree.path, launch.home ?? DEFAULT_HOME);
+                const nodeId = nodeIdOf(home);
                 const actualPort = running ? record.port : null;
                 const entries: EntryStatus[] = launch.entries.map((entry) => {
                     if (entry.kind !== "web" || entry.url === undefined) {
@@ -242,13 +260,19 @@ export function buildSnapshot(targets: readonly WorktreeInfo[], inputs: Snapshot
                     key,
                     worktree: worktree.path,
                     worktreeLabel: worktreeLabel(worktree.path, worktree.branch, inputs.repoRoot),
+                    worktreePath: displayPath(worktree.path, inputs.repoRoot),
                     branch: worktree.branch,
                     app: app.name,
                     appTitle: app.title,
                     launch: launch.id,
                     launchTitle: launch.title ?? launch.id,
                     command: launch.command,
+                    env: launch.env ?? {},
                     appDir: app.dir,
+                    yamlPath: join(app.dir, "app.yaml"),
+                    home,
+                    nodeId,
+                    uri: nodeId === null ? null : `diy://${nodeId}/${app.name}.${launch.id}`,
                     built,
                     running,
                     starting: !running && inputs.starting.has(key),
@@ -258,8 +282,12 @@ export function buildSnapshot(targets: readonly WorktreeInfo[], inputs: Snapshot
             }
         }
     }
+    // 仓库名 / 主分支：第一个 worktree（git worktree list 的首行 = 主工作树）
+    const main = targets[0];
     return {
         repoRoot: inputs.repoRoot,
+        repoName: main === undefined ? basename(inputs.repoRoot) : basename(main.path),
+        repoBranch: main?.branch ?? null,
         registryDir: inputs.registry ?? registryDir(),
         worktreeCount: targets.length,
         appCount,

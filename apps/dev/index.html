@@ -118,11 +118,62 @@
             .entry.dim .nm {
                 opacity: 0.5;
             }
+            /* 四级树：每层一行、只放名字 */
+            .lvl {
+                padding: 5px 14px 2px;
+                font-size: 12px;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                color: #2f353c;
+            }
+            .lvl-repo {
+                font-weight: 600;
+                font-size: 12.5px;
+                padding-top: 9px;
+                color: #1f2328;
+            }
+            .lvl-wt {
+                color: #5b6470;
+                padding-left: 14px;
+                font-family: ui-monospace, Menlo, monospace;
+                font-size: 11.5px;
+            }
+            .lvl-app {
+                color: #5b6470;
+                padding-left: 26px;
+                font-family: ui-monospace, Menlo, monospace;
+                font-size: 11.5px;
+            }
+            .entry .nm {
+                font-family: ui-monospace, Menlo, monospace;
+                font-size: 11.5px;
+            }
+            /* titlebar 的过滤开关 */
+            button.toggle {
+                padding: 3px 10px;
+                font-size: 11.5px;
+                border-radius: 12px;
+                border: 1px solid #cbd5e1;
+                background: #fff;
+                color: #555;
+                cursor: pointer;
+            }
+            button.toggle:hover {
+                border-color: var(--accent);
+                color: var(--accent);
+            }
+            button.toggle.on {
+                background: var(--accent);
+                border-color: var(--accent);
+                color: #fff;
+            }
             .entry {
                 display: flex;
                 align-items: center;
                 gap: 8px;
-                padding: 6px 10px 6px 16px;
+                /* 左缩进对齐到四级树的 launch 层（lvl-app 是 26px） */
+                padding: 5px 10px 5px 38px;
                 cursor: pointer;
                 position: relative;
             }
@@ -422,6 +473,7 @@
                 <span class="badge stop" id="head-badge">—</span>
                 <span class="m" id="head-meta"></span>
                 <span class="m" id="toast"></span>
+                <button id="filter-running" type="button" class="toggle" aria-pressed="false">只显示运行中</button>
                 <span class="m" id="repo" style="margin-left: auto"></span>
             </div>
             <div id="body"><div class="empty">正在读取实例……</div></div>

@@ -8,11 +8,11 @@
 // renderer 只负责画 DOM 与调 `page:invoke`；spawn / kill / 读注册表都是宿主能力。
 
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { repoRootOf, type PageContribution } from "@diy-agent/workbench";
 import { DevRunner, cdpUrl, devLogDir, focusPid, memoryOf, openPath } from "./actions.js";
 import { discoverAppsIn, listWorktrees } from "./discovery.js";
-import { buildSnapshot, launchKey, matchRecord, readRecords, registryDir } from "./instances.js";
+import { DEFAULT_HOME, buildSnapshot, launchKey, matchRecord, readRecords, registryDir } from "./instances.js";
 import {
     DEV_METHODS,
     isBuildCommand,
@@ -118,9 +118,16 @@ export function focusLaunch(ref: LaunchRef): { ok: boolean; reason: string } {
     return focusPid(record.pid);
 }
 
-/** 打开：URL（浏览器）或某个路径（app 目录 / worktree 根） */
+/** 打开：URL（浏览器）或某个路径（app 目录 / worktree 根 / app.yaml / 数据根） */
 export function openTarget(args: unknown): { ok: boolean; reason: string } {
-    const input = (args ?? {}) as { url?: unknown; which?: unknown; worktree?: unknown; app?: unknown; mode?: unknown };
+    const input = (args ?? {}) as {
+        url?: unknown;
+        which?: unknown;
+        worktree?: unknown;
+        app?: unknown;
+        launch?: unknown;
+        mode?: unknown;
+    };
     if (typeof input.url === "string" && input.url !== "") {
         return openPath(input.url, "finder");
     }
@@ -129,8 +136,27 @@ export function openTarget(args: unknown): { ok: boolean; reason: string } {
     }
     if (!isOpenMode(input.mode)) return { ok: false, reason: `不支持打开方式：${String(input.mode)}` };
     const apps = discoverAppsIn(input.worktree).apps;
-    const path = input.which === "worktree" ? input.worktree : apps.find((app) => app.name === input.app)?.dir;
-    if (path === undefined) return { ok: false, reason: `找不到 app 目录：${input.app}` };
+    const app = apps.find((item) => item.name === input.app);
+    if (app === undefined) return { ok: false, reason: `找不到 app：${input.app}` };
+    let path: string;
+    switch (input.which) {
+        case "worktree":
+            path = input.worktree;
+            break;
+        case "yaml":
+            path = join(app.dir, "app.yaml");
+            break;
+        case "home": {
+            const launch =
+                typeof input.launch === "string" ? app.launches.find((item) => item.id === input.launch) : undefined;
+            path = resolve(input.worktree, launch?.home ?? DEFAULT_HOME);
+            break;
+        }
+        case "app":
+        default:
+            path = app.dir;
+            break;
+    }
     return openPath(path, input.mode);
 }
 
