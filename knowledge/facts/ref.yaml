@@ -11,7 +11,7 @@ facts:
     lifecycle: active
     evidence:
       source: code
-      at: _diy/pkgs/dev/src/ref/git.ts:20
+      at: ../_diy/pkgs/dev/src/ref/git.ts:20
       verifiedAt: '2026-11-02'
   ref.diy#layers:
     value: |-
@@ -21,7 +21,7 @@ facts:
     lifecycle: active
     evidence:
       source: code
-      at: _diy/pkgs/dev/src/ref/store.ts:1
+      at: ../_diy/pkgs/dev/src/ref/store.ts:1
       verifiedAt: '2026-11-02'
   ref.diy#simplified:
     value: |-
@@ -31,7 +31,7 @@ facts:
     lifecycle: active
     evidence:
       source: code
-      at: _diy/pkgs/dev/src/ref/store.ts:1
+      at: ../_diy/pkgs/dev/src/ref/store.ts:1
       verifiedAt: '2026-11-02'
   ref.diy#tree-ambiguity:
     value: |-
@@ -41,7 +41,7 @@ facts:
     lifecycle: active
     evidence:
       source: code
-      at: _diy/pkgs/dev/src/ref/store.ts:110
+      at: ../_diy/pkgs/dev/src/ref/store.ts:110
       verifiedAt: '2026-11-02'
   ref.diy#url-shape:
     value: |-
@@ -51,7 +51,7 @@ facts:
     lifecycle: active
     evidence:
       source: code
-      at: _diy/pkgs/dev/src/ref/store.ts:77
+      at: ../_diy/pkgs/dev/src/ref/store.ts:77
       verifiedAt: '2026-11-02'
   ref.diy#version-semantics:
     value: |-
@@ -61,7 +61,7 @@ facts:
     lifecycle: active
     evidence:
       source: code
-      at: _diy/pkgs/dev/src/ref/git.ts:12
+      at: ../_diy/pkgs/dev/src/ref/git.ts:12
       verifiedAt: '2026-11-02'
   ref#dir:
     value: |-
