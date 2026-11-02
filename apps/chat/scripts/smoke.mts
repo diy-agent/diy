@@ -90,7 +90,8 @@ async function ensureBot(page: Page, model: string): Promise<void> {
 async function newBot(page: Page, name: string, model: string, text: string): Promise<void> {
     const before = await page.$$eval(".chat-bot", (items) => items.length);
     await page.click(".chat-bot-new-btn");
-    const panel = ".chat-panel[data-show=true]";
+    // 新建 bot 走右侧 panel（viewset）
+    const panel = ".chat-viewset[data-show=true]";
     await page.waitForSelector(panel, { timeout: 10_000 });
     await page.fill(`${panel} input`, name);
     await page.selectOption(`${panel} select`, model);
@@ -123,7 +124,9 @@ async function send(page: Page, model: string, text: string): Promise<string> {
 
 const page = await launch();
 try {
-    const nav = (await page.textContent(".wb-nav"))?.trim() ?? "";
+    await page.click(".wb-rail-expand");
+    const nav = (await page.textContent(".wb-drawer"))?.trim() ?? "";
+    await page.keyboard.press("Escape");
     if (!nav.includes("聊天")) fail(`侧栏没有「聊天」：${JSON.stringify(nav)}`);
     console.log(`✓ 侧栏：${nav}`);
 

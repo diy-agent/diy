@@ -119,7 +119,8 @@ async function ensureBot(page: Page): Promise<void> {
 /** 新建一个 bot（`+ 新 bot` → 填名字 / 选模型 → 创建） */
 async function createBot(page: Page, name: string, model?: string): Promise<void> {
     await page.locator(".chat-bot-new-btn").click();
-    const panel = page.locator('.chat-panel[data-show="true"]');
+    // 新建 bot 走右侧 panel（viewset），不再是覆盖式面板
+    const panel = page.locator('.chat-viewset[data-show="true"]');
     await panel.waitFor({ timeout: 15_000 });
     await panel.locator("input").first().fill(name);
     if (model !== undefined) await panel.locator("select").first().selectOption(model);
@@ -212,6 +213,47 @@ async function main(): Promise<void> {
         if (!foot.includes(word)) fail(`底部一行缺「${word}」：${foot}`);
     }
     ok("判据 0：无顶部横幅 / bot 条 64→200 / hover 卡片 / 底部一行指标（硬要求 1–4）");
+
+    // ── 判据 0b：左侧菜单窄 bar + 抽屉（2026-11-02 #5） ──
+    const railWidth = await page.evaluate(() =>
+        Math.round(document.querySelector(".wb-rail")!.getBoundingClientRect().width),
+    );
+    if (railWidth < 44 || railWidth > 60) fail(`左侧窄 bar 宽 ${String(railWidth)}，期望 ~52`);
+    if ((await page.locator(".wb-drawer").isVisible()) === true) fail("抽屉默认应该是收起的");
+    if ((await page.locator(".wb-sidebar").count()) !== 0) fail("还有常驻的 220px 侧栏（.wb-sidebar）");
+    await page.click(".wb-rail-expand");
+    await page.waitForSelector(".wb-drawer .wb-nav-item", { state: "visible", timeout: 5_000 });
+    const groups = await page.$$eval(".wb-drawer .wb-group-head", (items) => items.map((item) => item.textContent));
+    if (groups.length === 0) fail("抽屉里没有分组（Web Awesome 风格的菜单树）");
+    // 分组可收起
+    await page.locator(".wb-drawer .wb-group-head").first().click();
+    const collapsed = await page.$eval(".wb-drawer .wb-group", (node) => (node as HTMLElement).dataset["collapsed"]);
+    if (collapsed !== "true") fail("点分组标题没有收起该组");
+    await page.locator(".wb-drawer .wb-group-head").first().click();
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => document.querySelector(".wb-root")?.getAttribute("data-drawer") === "closed", undefined, {
+        timeout: 5_000,
+    });
+    ok(`判据 0b：窄 bar ${String(railWidth)}px / 抽屉分组 ${JSON.stringify(groups)} / 可收起 / Esc 关闭`);
+
+    // ── 判据 0c：新 bot 在列表顶部；点 bot 只开对话；配置走右侧 panel（#2/#4/#6） ──
+    const firstBotRow = await page.$eval(".chat-bot-list", (list) => list.firstElementChild?.className ?? "");
+    if (!firstBotRow.includes("chat-bot-new")) fail(`「新 bot」不在列表顶部：第一项是 ${firstBotRow}`);
+    await page.locator(".chat-bot[data-active] .chat-bot-btn").first().click();
+    await page.waitForTimeout(200);
+    if ((await page.locator('.chat-viewset[data-show="true"]').count()) !== 0) fail("点 bot 弹出了配置 panel（#2：只该开对话）");
+    // hover 一会儿 ⇒ 右侧 panel 预览
+    await page.locator('.chat-bot[data-active="false"] .chat-bot-btn').first().hover();
+    await page.waitForSelector('.chat-viewset[data-show="true"]', { timeout: 5_000 });
+    await page.hover(".chat-viewset");
+    const mode0 = await page.$eval(".chat-viewset", (node) => (node as HTMLElement).dataset["mode"]);
+    if (mode0 !== "floating") fail(`panel 缺省应是悬浮，实得 ${String(mode0)}`);
+    await page.click(".chat-viewset-pin");
+    const mode1 = await page.$eval(".chat-viewset", (node) => (node as HTMLElement).dataset["mode"]);
+    if (mode1 !== "pinned") fail("点「固定」没有切成 pinned");
+    await page.click(".chat-viewset-close");
+    await page.mouse.move(600, 500);
+    ok("判据 0c：新 bot 在顶部 / 点 bot 只开对话 / hover 出右侧 panel / 悬浮⇄固定可切");
     // 鼠标挪开，收起卡片（别挡住后面的点击）
     await page.mouse.move(600, 300);
 

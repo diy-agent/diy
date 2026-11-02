@@ -2,7 +2,11 @@
 
 以 **bot 为中心**的聊天应用（##498，早先是 ##465 的多会话形态）：
 
+- **架构**：UI 只负责显示与发请求，**所有读—改—写都在主进程**（`sessions.ts`），并按
+  `serial()` 单实例顺序执行（`docs/plans/2026-11-02-concurrency-actor.md`）
 - 左侧是 **bot 条**（64px，hover 展开 200px），**一个 bot 一条长期会话**（`bot.primary()` 幂等）
+- 最左侧是工作台**窄 bar**（52px 图标）+ 抽屉菜单（分组 / 收起）；bot 配置走**右侧 panel**
+  （viewset：悬浮 / 固定两态，hover 列表可预览）
 - **没有「新建会话」**：要新对话 = 新建 bot；底栏一行合并「bot 名 ⚙ | 输入 / 窗口 / 缓存 / 本轮 / 上下文」
 - bot 身份：`$DIY_HOME/bots/<id>/bot.json`（含 `primarySessionId`）；上次选中的 bot 记在 `$DIY_HOME/chat-ui.json`
 - 会话落盘：`$DIY_HOME/sessions/chat/<id>/`（`@diy-agent/session-store-jsonl` 的桶 + `meta.json` + 归属 `bot.json`）

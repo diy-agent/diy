@@ -39,6 +39,8 @@ export function createPage(config?: unknown): PageContribution {
     return {
         id: 'bot-config',
         title: 'Bot 配置',
+        icon: '🤖',
+        group: '设置',
         methods: {
             snapshot: () => requireActions().snapshot(),
             createBot: (args: unknown) => requireActions().create(args),

@@ -7,6 +7,10 @@
 export interface PageInfo {
     readonly id: string;
     readonly title: string;
+    /** 侧栏图标（emoji / 单字；缺省 = 标题首字）。##侧栏窄条 */
+    readonly icon?: string;
+    /** 侧栏分组名（缺省 = 未分组）。##侧栏窄条 */
+    readonly group?: string;
 }
 
 /** 页面在主进程侧的一个方法：参数原样来自 renderer，返回值必须能被结构化克隆 */

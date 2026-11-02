@@ -228,6 +228,49 @@ describe("apps/chat 多 bot 宿主（##498）", () => {
         expect(snapshot.activeId).toBeNull();
     });
 
+    it("##并发 判据 3：两个 createBot 同时发起 ⇒ 列表 +2（不是 +1）", async () => {
+        const home = makeHome();
+        const sessions = host(home);
+        await firstBot(sessions);
+        const [one, two] = await Promise.all([
+            sessions.createBot({ name: "并发 A", model: "test/echo-1" }),
+            sessions.createBot({ name: "并发 B", model: "test/echo-2" }),
+        ]);
+        // 各自的返回值是「自己那一刻」的快照（串行的必然），**最终**状态才是判据
+        expect(one.bots).toHaveLength(2);
+        expect(two.bots).toHaveLength(3);
+        // 落盘为准：真的两个 bot 目录，id 不撞
+        const ids = readdirSync(join(home, "bots")).sort();
+        expect(ids).toEqual(["bot-1", "bot-2", "bot-3"]);
+        const final = await sessions.snapshot();
+        expect(final.bots.map((bot) => bot.name)).toEqual(["大王助手", "并发 A", "并发 B"]);
+    });
+
+    it("##并发 判据 4：一个操作抛错不污染队列（下一个照常跑）", async () => {
+        const sessions = host(makeHome());
+        await firstBot(sessions);
+        await expect(
+            // 与第一个 bot 同名 ⇒ 抛错（而且是队列里执行时抛的）
+            sessions.createBot({ name: "大王助手", model: "test/echo-1" }),
+        ).rejects.toThrow(/同名/);
+        const after = await sessions.createBot({ name: "照常", model: "test/echo-2" });
+        expect(after.bots.map((bot) => bot.name)).toEqual(["大王助手", "照常"]);
+    });
+
+    it("##并发 判据 5：并发 createBot 与 updateBot 交错，不丢改动", async () => {
+        const sessions = host(makeHome());
+        await firstBot(sessions);
+        await Promise.all([
+            sessions.createBot({ name: "并行 1", model: "test/echo-1" }),
+            sessions.updateBot({ id: "bot-1", name: "改名了" }),
+            sessions.createBot({ name: "并行 2", model: "test/echo-2" }),
+        ]);
+        const final = await sessions.snapshot();
+        expect(final.bots).toHaveLength(3);
+        const first = final.bots.find((bot) => bot.id === "bot-1");
+        expect(first?.name).toBe("改名了");
+    });
+
     it("splitModelKey 按第一个 / 切（模型 id 自身可含 /）", () => {
         expect(splitModelKey("goat/gpt-5.5")).toEqual({ providerId: "goat", modelId: "gpt-5.5" });
         expect(splitModelKey("goat/deepseek/v4")).toEqual({ providerId: "goat", modelId: "deepseek/v4" });

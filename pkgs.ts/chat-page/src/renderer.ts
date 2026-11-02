@@ -20,6 +20,9 @@ import { ensureChatStyle } from "./style.js";
 // ##499：renderer 对外提供块渲染器注册口（插件自造 kind 从这里登记）
 export { registerBlockRenderer, renderBlock, renderBlocks } from "./block-renderers.js";
 
+/** 右侧 panel 的模式（固定 / 悬浮）：换 bot 也保持上次选择 */
+let viewsetPinned = false;
+
 export const chatPageView: PageView = {
     id: "chat",
     title: "聊天",
@@ -37,10 +40,12 @@ export const chatPageView: PageView = {
         aside.append(botList);
 
         const main = node(doc, "section", "chat-main");
-        const editor = node(doc, "div", "chat-panel");
-        editor.dataset["show"] = "false";
         const first = node(doc, "div", "chat-panel");
         first.dataset["show"] = "false";
+        // 右侧 panel（viewset）：列表明细编辑的统一形态
+        const editor = node(doc, "aside", "chat-viewset");
+        editor.dataset["show"] = "false";
+        editor.dataset["mode"] = "floating";
         const list = node(doc, "ol", "chat-list");
         const empty = node(doc, "li", "chat-empty");
         empty.textContent = "还没有消息，说一句话开始。";
@@ -56,7 +61,11 @@ export const chatPageView: PageView = {
         send.textContent = "发送";
         form.append(input, send);
         foot.append(metrics, form);
-        main.append(editor, first, list, foot);
+        const stream = node(doc, "div", "chat-stream");
+        stream.append(list, foot);
+        const chatBody = node(doc, "div", "chat-body");
+        chatBody.append(stream, editor);
+        main.append(first, chatBody);
         app.append(aside, main);
         page.append(app);
 
@@ -70,6 +79,16 @@ export const chatPageView: PageView = {
         let selectedModel = "";
         let busy = false;
         let hideTimer: ReturnType<typeof setTimeout> | null = null;
+        /** 悬停预览右侧 panel 的延时器 / 当前是不是预览打开的 */
+        let peekTimer: ReturnType<typeof setTimeout> | null = null;
+        let peeked = false;
+
+        const cancelPeek = (): void => {
+            if (peekTimer !== null) {
+                clearTimeout(peekTimer);
+                peekTimer = null;
+            }
+        };
 
         // ── 消息线 ───────────────────────────────────────
 
@@ -89,6 +108,17 @@ export const chatPageView: PageView = {
 
         const paintBots = (next: ChatSnapshot): void => {
             botList.replaceChildren();
+            // ##后端：新 bot 按钮放**列表最上面**（用户 2026-11-02 要求）
+            const item = node(doc, "li", "chat-bot chat-bot-new");
+            const button = node(doc, "button", "chat-bot-btn chat-bot-new-btn") as HTMLButtonElement;
+            button.type = "button";
+            const avatar = node(doc, "span", "chat-bot-avatar", "+");
+            const text = node(doc, "span", "chat-bot-text");
+            text.append(node(doc, "span", "chat-bot-name", "新 bot"), node(doc, "span", "chat-bot-model", "创建一个"));
+            button.append(avatar, text);
+            button.addEventListener("click", () => openViewset("create", null));
+            item.append(button);
+            botList.append(item);
             for (const bot of next.bots) {
                 const item = node(doc, "li", "chat-bot");
                 item.dataset["active"] = String(bot.id === next.bot?.id);
@@ -103,26 +133,29 @@ export const chatPageView: PageView = {
                     node(doc, "span", "chat-bot-model", bot.needsModel ? "未选模型" : bot.model),
                 );
                 button.append(avatar, text);
-                button.addEventListener("mouseenter", () => showCard(next, bot, button));
-                button.addEventListener("mouseleave", scheduleHide);
+                button.addEventListener("mouseenter", () => {
+                    showCard(next, bot, button);
+                    // 悬停预览：panel 没开着时，稍等一下把它拉出来（固定态 / 正在编辑时不抢）
+                    if (peekTimer !== null) clearTimeout(peekTimer);
+                    peekTimer = setTimeout(() => {
+                        peekTimer = null;
+                        if (viewsetPinned || editor.dataset["show"] === "true") return;
+                        peeked = true;
+                        openViewset("config", bot);
+                    }, 400);
+                });
+                button.addEventListener("mouseleave", () => {
+                    cancelPeek();
+                    scheduleHide();
+                });
                 button.addEventListener("click", () => {
                     hideCard();
-                    if (bot.id === next.bot?.id) openEditor("config", bot, bot.needsModel);
-                    else void ctx.invoke<ChatSnapshot>("selectBot", { id: bot.id }).then(apply).catch(fail("切换失败"));
+                    // 点 bot **只打开对话**（配置入口是 ⚙ / hover 卡片里的「配置」）
+                    void ctx.invoke<ChatSnapshot>("selectBot", { id: bot.id }).then(refresh).catch(fail("切换失败"));
                 });
                 item.append(button);
                 botList.append(item);
             }
-            const item = node(doc, "li", "chat-bot chat-bot-new");
-            const button = node(doc, "button", "chat-bot-btn chat-bot-new-btn") as HTMLButtonElement;
-            button.type = "button";
-            const avatar = node(doc, "span", "chat-bot-avatar", "+");
-            const text = node(doc, "span", "chat-bot-text");
-            text.append(node(doc, "span", "chat-bot-name", "新 bot"), node(doc, "span", "chat-bot-model", "创建一个"));
-            button.append(avatar, text);
-            button.addEventListener("click", () => openEditor("create", null));
-            item.append(button);
-            botList.append(item);
         };
 
         // ── 底部指标 ─────────────────────────────────────
@@ -134,7 +167,7 @@ export const chatPageView: PageView = {
             const label = node(doc, "button", "chat-bot-label") as HTMLButtonElement;
             label.type = "button";
             label.append(node(doc, "span", "", bot.name), node(doc, "span", "", "⚙"));
-            label.addEventListener("click", () => openEditor("config", bot, bot.needsModel));
+            label.addEventListener("click", () => openViewset("config", bot, bot.needsModel));
             metrics.append(label, node(doc, "span", "chat-sep", "|"));
             const m: ChatMetrics | null = next.metrics;
             const ratio =
@@ -176,6 +209,13 @@ export const chatPageView: PageView = {
             }
             card.dataset["show"] = "false";
         };
+        editor.addEventListener("mouseenter", cancelPeek);
+        editor.addEventListener("mouseleave", () => {
+            if (peeked && !viewsetPinned) {
+                peeked = false;
+                closeEditor();
+            }
+        });
         card.addEventListener("mouseenter", () => {
             if (hideTimer !== null) {
                 clearTimeout(hideTimer);
@@ -204,12 +244,12 @@ export const chatPageView: PageView = {
             const acts = node(doc, "div", "chat-card-acts");
             const cfg = node(doc, "button", "chat-primary", "配置") as HTMLButtonElement;
             cfg.type = "button";
-            cfg.addEventListener("click", () => openEditor("config", bot));
+            cfg.addEventListener("click", () => openViewset("config", bot));
             const open = node(doc, "button", "", "打开对话") as HTMLButtonElement;
             open.type = "button";
             open.addEventListener("click", () => {
                 hideCard();
-                if (bot.id !== next.bot?.id) void ctx.invoke<ChatSnapshot>("selectBot", { id: bot.id }).then(apply);
+                if (bot.id !== next.bot?.id) void ctx.invoke<ChatSnapshot>("selectBot", { id: bot.id }).then(refresh);
             });
             acts.append(cfg, open);
             card.append(acts);
@@ -225,22 +265,32 @@ export const chatPageView: PageView = {
             editor.dataset["show"] = "false";
         };
 
-        const openEditor = (mode: "config" | "create", bot: BotView | null, forced = false): void => {
+        const openViewset = (mode: "config" | "create", bot: BotView | null, forced = false): void => {
             hideCard();
             first.dataset["show"] = "false";
             const isNew = mode === "create";
             editor.replaceChildren();
             editor.dataset["show"] = "true";
+            editor.dataset["mode"] = viewsetPinned ? "pinned" : "floating";
 
-            const head = node(doc, "div", "chat-panel-head");
-            head.append(node(doc, "h2", "chat-panel-title", isNew ? "新建 bot" : `${bot?.name ?? ""} · 配置`));
-            const close = node(doc, "button", "", "关闭") as HTMLButtonElement;
+            const head = node(doc, "div", "chat-viewset-head");
+            head.append(node(doc, "span", "chat-viewset-title", isNew ? "新建 bot" : (bot?.name ?? "")));
+            const pin = node(doc, "button", "chat-viewset-pin", viewsetPinned ? "📌 固定" : "📌 悬浮") as HTMLButtonElement;
+            pin.type = "button";
+            pin.title = "在「固定」（占一栏）和「悬浮」（浮在消息上）之间切换";
+            pin.addEventListener("click", () => {
+                viewsetPinned = !viewsetPinned;
+                editor.dataset["mode"] = viewsetPinned ? "pinned" : "floating";
+                pin.textContent = viewsetPinned ? "📌 固定" : "📌 悬浮";
+            });
+            const close = node(doc, "button", "chat-viewset-close", "✕") as HTMLButtonElement;
             close.type = "button";
+            close.title = "关闭";
             close.hidden = forced;
             close.addEventListener("click", closeEditor);
-            head.append(close);
+            head.append(pin, close);
 
-            const body = node(doc, "div", "chat-panel-body");
+            const body = node(doc, "div", "chat-viewset-body");
             const formEl = node(doc, "div", "chat-form");
             const nameInput = inputOf(doc, "text", bot?.name ?? "");
             const modelSelect = selectOf(
@@ -279,7 +329,7 @@ export const chatPageView: PageView = {
                     node(
                         doc,
                         "p",
-                        "chat-panel-note",
+                        "chat-viewset-note",
                         `会话 ${String(bot.sessionCount)} · 创建于 ${bot.createdAt.slice(0, 10)} · 模型 ${
                             bot.needsModel ? "未选" : bot.model
                         }`,
@@ -294,12 +344,12 @@ export const chatPageView: PageView = {
                 error.hidden = false;
             };
 
-            const actions = node(doc, "div", "chat-panel-actions");
+            const actions = node(doc, "div", "chat-viewset-actions");
             const submit = node(doc, "button", "chat-primary", isNew ? "创建" : "保存") as HTMLButtonElement;
             submit.type = "button";
             actions.append(submit);
             if (!isNew && bot !== null) {
-                const remove = node(doc, "button", "chat-danger", "删除 bot") as HTMLButtonElement;
+                const remove = node(doc, "button", "chat-danger", "删除") as HTMLButtonElement;
                 remove.type = "button";
                 remove.addEventListener("click", () => {
                     const ok =
@@ -308,9 +358,9 @@ export const chatPageView: PageView = {
                     if (!ok) return;
                     void ctx
                         .invoke<ChatSnapshot>("removeBot", { id: bot.id })
-                        .then((next) => {
+                        .then(() => {
                             closeEditor();
-                            apply(next);
+                            return refresh();
                         })
                         .catch((cause: unknown) => fail(`删除失败：${messageOf(cause)}`));
                 });
@@ -335,9 +385,9 @@ export const chatPageView: PageView = {
                     : ctx.invoke<ChatSnapshot>("updateBot", { id: bot?.id, ...payload });
                 submit.disabled = true;
                 void request
-                    .then((next) => {
+                    .then(() => {
                         closeEditor();
-                        apply(next);
+                        return refresh();
                     })
                     .catch((cause: unknown) => fail(`保存失败：${messageOf(cause)}`))
                     .finally(() => {
@@ -381,7 +431,7 @@ export const chatPageView: PageView = {
             body.append(formEl);
             const error = node(doc, "p", "chat-panel-error");
             error.hidden = true;
-            const actions = node(doc, "div", "chat-panel-actions");
+            const actions = node(doc, "div", "chat-viewset-actions");
             const submit = node(doc, "button", "chat-primary", "创建并开始") as HTMLButtonElement;
             submit.type = "button";
             actions.append(submit);
@@ -405,9 +455,9 @@ export const chatPageView: PageView = {
                         name: nameInput.value.trim() || undefined,
                         instructions: instructions.value,
                     })
-                    .then((next) => {
+                    .then(() => {
                         first.dataset["show"] = "false";
-                        apply(next);
+                        return refresh();
                     })
                     .catch((cause: unknown) => {
                         error.textContent = `创建失败：${messageOf(cause)}`;
@@ -428,6 +478,9 @@ export const chatPageView: PageView = {
                 paint([...current, textMessage("assistant", `${prefix}：${messageOf(cause)}`)]);
             };
 
+        /** 重新取整份快照（操作后统一走这里） */
+        const refresh = (): Promise<void> => ctx.invoke<ChatSnapshot>("snapshot").then(apply);
+
         const apply = (next: ChatSnapshot): void => {
             snapshot = next;
             aside.hidden = false;
@@ -441,7 +494,7 @@ export const chatPageView: PageView = {
             input.disabled = blocked;
             send.disabled = blocked;
             if (next.bot === null) openFirstBoot();
-            else if (next.bot.needsModel) openEditor("config", next.bot, true);
+            else if (next.bot.needsModel) openViewset("config", next.bot, true);
         };
 
         form.addEventListener("submit", (event) => {
@@ -453,14 +506,12 @@ export const chatPageView: PageView = {
             input.value = "";
             paint([...current, textMessage("user", text)]);
             const multi = snapshot !== null && snapshot.bot !== null;
-            const request: Promise<unknown> = multi
-                ? ctx.invoke<ChatSnapshot>("send", { text })
-                : ctx.invoke<SendResult>("send", text);
+            // 每次操作后**重新取快照**（不拿返回值当状态；见 concurrency-actor 判据 5）。
+            // 单会话模式没有 snapshot 能力，只能画 send 返回的那条消息线。
+            const request: Promise<void> = multi
+                ? ctx.invoke<ChatSnapshot>("send", { text }).then(refresh)
+                : ctx.invoke<SendResult>("send", text).then((result) => paint(result.messages));
             void request
-                .then((result) => {
-                    if (isSnapshot(result)) apply(result);
-                    else paint((result as SendResult).messages);
-                })
                 .catch((cause: unknown) => paint([...current, textMessage("assistant", `出错了：${messageOf(cause)}`)]))
                 .finally(() => {
                     busy = false;
@@ -499,10 +550,6 @@ export const chatPageView: PageView = {
 export default chatPageView;
 
 // ── 小工具 ───────────────────────────────────────────────
-
-function isSnapshot(value: unknown): value is ChatSnapshot {
-    return value !== null && typeof value === "object" && Array.isArray((value as ChatSnapshot).bots);
-}
 
 function row(doc: Document, message: WireMessage): HTMLElement {
     const item = node(doc, "li", "chat-row");

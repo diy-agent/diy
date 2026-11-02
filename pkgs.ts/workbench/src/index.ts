@@ -52,7 +52,14 @@ export async function createWorkbench(options: CreateWorkbenchOptions): Promise<
     const contributions = await loadPages(options.plugins);
     const byId = new Map<string, PageContribution>(contributions.map((page) => [page.id, page]));
 
-    const listPages = (): PageInfo[] => contributions.map(({ id, title }) => ({ id, title }));
+    // 侧栏还要图标 / 分组（可选）：缺省字段不传（结构化克隆保真，别补空串）
+    const listPages = (): PageInfo[] =>
+        contributions.map(({ id, title, icon, group }) => ({
+            id,
+            title,
+            ...(icon === undefined ? {} : { icon }),
+            ...(group === undefined ? {} : { group }),
+        }));
 
     const invoke = async (pageId: string, method: string, args?: unknown): Promise<unknown> => {
         const page = byId.get(pageId);

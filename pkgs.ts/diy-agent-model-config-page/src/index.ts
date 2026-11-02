@@ -41,6 +41,8 @@ export function createPage(config?: unknown): PageContribution {
     return {
         id: 'model-config',
         title: '模型配置',
+        icon: '🧠',
+        group: '设置',
         methods: {
             snapshot: () => readSnapshot(requireHome()),
             saveProvider: (args: unknown) => saveProviderAction(requireHome(), args),

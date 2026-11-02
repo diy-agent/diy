@@ -154,7 +154,13 @@ function parsePage(raw: unknown, entry: PluginEntry): PageContribution {
             `插件 ${entry.id} 没有产出页面对象（应为 { id, title, methods? }）`,
         );
     }
-    const { id, title, methods } = raw as { id?: unknown; title?: unknown; methods?: unknown };
+    const { id, title, icon, group, methods } = raw as {
+        id?: unknown;
+        title?: unknown;
+        icon?: unknown;
+        group?: unknown;
+        methods?: unknown;
+    };
     if (typeof id !== "string" || id.length === 0) {
         throw new WorkbenchError("workbench/plugin-shape", `插件 ${entry.id} 的页面缺 id`);
     }
@@ -171,5 +177,11 @@ function parsePage(raw: unknown, entry: PluginEntry): PageContribution {
             }
         }
     }
-    return { id, title, methods: methods as Record<string, PageMethod> | undefined };
+    return {
+        id,
+        title,
+        ...(typeof icon === "string" && icon !== "" ? { icon } : {}),
+        ...(typeof group === "string" && group !== "" ? { group } : {}),
+        methods: methods as Record<string, PageMethod> | undefined,
+    };
 }

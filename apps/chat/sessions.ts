@@ -102,6 +102,25 @@ export function nextBotId(existing: Iterable<string>): string {
     return `bot-${String(max + 1)}`;
 }
 
+/**
+ * 单实例 = 单 actor（docs/plans/2026-11-02-concurrency-actor.md）。
+ *
+ * 一个宿主一份队列：所有会**改变状态**的操作（读—改—写）排进来，一次跑一个。
+ * 纯读（snapshot）不排队 —— 读不需要互斥，只要写是串行的。
+ *
+ * `tail` 永远指向「最后一个入队的操作」，且**吞掉失败**（前一个抛错，下一个照常跑）。
+ */
+export type Serial = <T>(fn: () => Promise<T>) => Promise<T>;
+
+export function createSerial(): Serial {
+    let tail: Promise<unknown> = Promise.resolve();
+    return <T>(fn: () => Promise<T>): Promise<T> => {
+        const next = tail.then(fn, fn);
+        tail = next.catch(() => {});
+        return next;
+    };
+}
+
 /** 建一个多 bot 宿主（懒打开：第一次调用才读目录 / 建目录） */
 export function createChatSessions(options: ChatSessionsOptions): ChatSessionHost {
     const home = options.home;
@@ -117,6 +136,17 @@ export function createChatSessions(options: ChatSessionsOptions): ChatSessionHos
     const open = new Map<string, { store: JsonlSessionStore; session: AgentSession; meta: SessionMeta }>();
     /** 每个会话「上一步」的用量（进程内；重启后指标为空 — 不编数字） */
     const lastStep = new Map<string, StepUsage>();
+    /** 状态操作的队列（bot 增删改 / 选中 / meta 落盘）—— 单实例顺序执行 */
+    const act = createSerial();
+    /** 每个会话一条消息队列：同一会话的两条 send 也串行（不同会话互不阻塞） */
+    const messageQueues = new Map<string, Serial>();
+    const queueFor = (sessionId: string): Serial => {
+        const hit = messageQueues.get(sessionId);
+        if (hit !== undefined) return hit;
+        const queue = createSerial();
+        messageQueues.set(sessionId, queue);
+        return queue;
+    };
 
     const catalog = (): ModelCatalogEntry[] => (catalogCache ??= loadCatalog(home));
 
@@ -329,133 +359,152 @@ export function createChatSessions(options: ChatSessionsOptions): ChatSessionHos
         snapshot,
 
         /** 首启建 bot（##497：必须有 model；已存在则报错） */
-        async createFirstBot(input: FirstBotInput): Promise<ChatSnapshot> {
-            const config = await createFirstBotIn(botStore, {
-                id: FIRST_BOT_DRAFT.id,
-                name: input.name?.trim() || FIRST_BOT_DRAFT.name,
-                instructions: input.instructions ?? FIRST_BOT_DRAFT.instructions,
-                model: checkModel(input.model),
+        createFirstBot(input: FirstBotInput): Promise<ChatSnapshot> {
+            return act(async () => {
+                const config = await createFirstBotIn(botStore, {
+                    id: FIRST_BOT_DRAFT.id,
+                    name: input.name?.trim() || FIRST_BOT_DRAFT.name,
+                    instructions: input.instructions ?? FIRST_BOT_DRAFT.instructions,
+                    model: checkModel(input.model),
+                });
+                await focus(config.id);
+                return snapshot();
             });
-            await focus(config.id);
-            return snapshot();
         },
 
         /** `+ 新 bot`：建好即选中（点进去就是它的长期会话） */
-        async createBot(input: BotDraftInput): Promise<ChatSnapshot> {
-            const name = input.name.trim();
-            if (name === "") throw new Error("新 bot 必须有个名字");
-            const existing = await botStore.list();
-            if (existing.some((config) => config.name === name)) {
-                throw new Error(`已经有同名 bot「${name}」`);
-            }
-            const model = checkModel(input.model);
-            const at = localISOString();
-            const config: BotConfig = {
-                id: nextBotId(existing.map((item) => item.id)),
-                name,
-                instructions: input.instructions ?? "",
-                model,
-                ...(input.reasoningEffort === undefined || input.reasoningEffort === ""
-                    ? {}
-                    : { reasoningEffort: input.reasoningEffort }),
-                createdAt: at,
-                updatedAt: at,
-            };
-            await botStore.save(config);
-            await focus(config.id);
-            return snapshot();
+        createBot(input: BotDraftInput): Promise<ChatSnapshot> {
+            return act(async () => {
+                const name = input.name.trim();
+                if (name === "") throw new Error("新 bot 必须有个名字");
+                const existing = await botStore.list();
+                if (existing.some((config) => config.name === name)) {
+                    throw new Error(`已经有同名 bot「${name}」`);
+                }
+                const model = checkModel(input.model);
+                const at = localISOString();
+                const config: BotConfig = {
+                    id: nextBotId(existing.map((item) => item.id)),
+                    name,
+                    instructions: input.instructions ?? "",
+                    model,
+                    ...(input.reasoningEffort === undefined || input.reasoningEffort === ""
+                        ? {}
+                        : { reasoningEffort: input.reasoningEffort }),
+                    createdAt: at,
+                    updatedAt: at,
+                };
+                await botStore.save(config);
+                await focus(config.id);
+                return snapshot();
+            });
         },
 
         /** 改配置：模型 / 指令变了 ⇒ 把打开中的会话丢掉重开（llm 与 system 都要重新装配） */
-        async updateBot(input: BotUpdateInput): Promise<ChatSnapshot> {
-            const current = await botStore.load(input.id);
-            if (current === null) throw new Error(`没有 bot ${input.id}`);
-            const name = (input.name ?? current.name).trim();
-            if (name === "") throw new Error("名字不能为空");
-            const model = input.model === undefined ? current.model : checkModel(input.model);
-            const instructions = input.instructions ?? current.instructions;
-            const effort =
-                input.reasoningEffort === undefined
-                    ? current.reasoningEffort
-                    : input.reasoningEffort.trim() === ""
-                      ? undefined
-                      : input.reasoningEffort;
-            const next: BotConfig = {
-                id: current.id,
-                name,
-                instructions,
-                model,
-                ...(current.primarySessionId === undefined ? {} : { primarySessionId: current.primarySessionId }),
-                ...(effort === undefined ? {} : { reasoningEffort: effort }),
-                ...(current.maxOutputTokens === undefined ? {} : { maxOutputTokens: current.maxOutputTokens }),
-                createdAt: current.createdAt,
-                updatedAt: localISOString(),
-            };
-            await botStore.save(next);
-            if (model !== current.model || instructions !== current.instructions) {
-                if (current.primarySessionId !== undefined) open.delete(current.primarySessionId);
-            }
-            return snapshot();
+        updateBot(input: BotUpdateInput): Promise<ChatSnapshot> {
+            return act(async () => {
+                const current = await botStore.load(input.id);
+                if (current === null) throw new Error(`没有 bot ${input.id}`);
+                const name = (input.name ?? current.name).trim();
+                if (name === "") throw new Error("名字不能为空");
+                const model = input.model === undefined ? current.model : checkModel(input.model);
+                const instructions = input.instructions ?? current.instructions;
+                const effort =
+                    input.reasoningEffort === undefined
+                        ? current.reasoningEffort
+                        : input.reasoningEffort.trim() === ""
+                          ? undefined
+                          : input.reasoningEffort;
+                const next: BotConfig = {
+                    id: current.id,
+                    name,
+                    instructions,
+                    model,
+                    ...(current.primarySessionId === undefined
+                        ? {}
+                        : { primarySessionId: current.primarySessionId }),
+                    ...(effort === undefined ? {} : { reasoningEffort: effort }),
+                    ...(current.maxOutputTokens === undefined ? {} : { maxOutputTokens: current.maxOutputTokens }),
+                    createdAt: current.createdAt,
+                    updatedAt: localISOString(),
+                };
+                await botStore.save(next);
+                if (model !== current.model || instructions !== current.instructions) {
+                    if (current.primarySessionId !== undefined) open.delete(current.primarySessionId);
+                }
+                return snapshot();
+            });
         },
 
         /** 删 bot（##498 判据 7：它的**会话一并删除**）—— 级联是应用策略，bot 包本身只删身份 */
-        async removeBot(id: string): Promise<ChatSnapshot> {
-            const refs = await botStore.sessionsOf(id);
-            for (const ref of refs) {
-                await rm(join(root, ref.id), { recursive: true, force: true });
-                open.delete(ref.id);
-                lastStep.delete(ref.id);
-            }
-            await botStore.remove(id);
-            const state = await loadUi();
-            if (state.activeBotId === id) {
-                delete state.activeBotId;
-                await saveUi();
-            }
-            return snapshot();
-        },
-
-        /** 切 bot = 打开它的长期会话 */
-        async selectBot(id: string): Promise<ChatSnapshot> {
-            const config = await botStore.load(id);
-            if (config === null) throw new Error(`没有 bot ${id}`);
-            await focus(id);
-            return snapshot();
-        },
-
-        async send(text, onDelta): Promise<ChatSnapshot> {
-            const active = await activeConfig();
-            if (active === null) throw new Error("还没有 bot —— 先建一个（首启引导）");
-            const ref = await handleOf(active).primary();
-            const { session, meta } = await opened(ref.id);
-            const before = session.messages.length;
-            const usageBefore = session.usage;
-            for await (const delta of session.send(text)) {
-                if (delta.type === "text") onDelta(wireOf(session.messages));
-            }
-            const messages = wireOf(session.messages);
-            onDelta(messages);
-
-            // 上一步的桶 = 累计值的差（底部指标条要的是「这一步」，不是「这条会话」）
-            const usageAfter = session.usage;
-            lastStep.set(ref.id, {
-                inputTokens: usageAfter.inputTokens - usageBefore.inputTokens,
-                outputTokens: usageAfter.outputTokens - usageBefore.outputTokens,
-                ...(usageAfter.cacheReadTokens === undefined
-                    ? {}
-                    : { cacheReadTokens: usageAfter.cacheReadTokens - (usageBefore.cacheReadTokens ?? 0) }),
+        removeBot(id: string): Promise<ChatSnapshot> {
+            return act(async () => {
+                const refs = await botStore.sessionsOf(id);
+                for (const ref of refs) {
+                    await rm(join(root, ref.id), { recursive: true, force: true });
+                    open.delete(ref.id);
+                    lastStep.delete(ref.id);
+                    messageQueues.delete(ref.id);
+                }
+                await botStore.remove(id);
+                const state = await loadUi();
+                if (state.activeBotId === id) {
+                    delete state.activeBotId;
+                    await saveUi();
+                }
+                return snapshot();
             });
+        },
 
-            const grown = session.messages.length - before;
-            const next: SessionMeta = {
-                ...meta,
-                title: meta.title === "新会话" && messages.length > 0 ? titleFrom(text) : meta.title,
-                updatedAt: localISOString(),
-                messageCount: meta.messageCount + Math.max(grown, 0),
-            };
-            await writeMeta(next);
-            open.set(ref.id, { store: open.get(ref.id)!.store, session, meta: next });
-            return { ...(await snapshot()), messages, activeId: ref.id };
+        /** 切 bot = 打开它的长期会话（只改「上次选中」，也走队列） */
+        selectBot(id: string): Promise<ChatSnapshot> {
+            return act(async () => {
+                const config = await botStore.load(id);
+                if (config === null) throw new Error(`没有 bot ${id}`);
+                await focus(id);
+                return snapshot();
+            });
+        },
+
+        send(text, onDelta): Promise<ChatSnapshot> {
+            // 消息也串行 —— 但**按会话**排：同一会话两条 send 不并发（否则 session 直接 busy），
+            // 不同会话 / bot 增删改 互不阻塞（LLM 回复可能几十秒，不该把整个 UI 卡住）
+            return (async () => {
+                const active = await activeConfig();
+                if (active === null) throw new Error("还没有 bot —— 先建一个（首启引导）");
+                const ref = await handleOf(active).primary();
+                return queueFor(ref.id)(async () => {
+                const { session, meta } = await opened(ref.id);
+                const before = session.messages.length;
+                const usageBefore = session.usage;
+                for await (const delta of session.send(text)) {
+                    if (delta.type === "text") onDelta(wireOf(session.messages));
+                }
+                const messages = wireOf(session.messages);
+                onDelta(messages);
+
+                // 上一步的桶 = 累计值的差（底部指标条要的是「这一步」，不是「这条会话」）
+                const usageAfter = session.usage;
+                lastStep.set(ref.id, {
+                    inputTokens: usageAfter.inputTokens - usageBefore.inputTokens,
+                    outputTokens: usageAfter.outputTokens - usageBefore.outputTokens,
+                    ...(usageAfter.cacheReadTokens === undefined
+                        ? {}
+                        : { cacheReadTokens: usageAfter.cacheReadTokens - (usageBefore.cacheReadTokens ?? 0) }),
+                });
+
+                const grown = session.messages.length - before;
+                const next: SessionMeta = {
+                    ...meta,
+                    title: meta.title === "新会话" && messages.length > 0 ? titleFrom(text) : meta.title,
+                    updatedAt: localISOString(),
+                    messageCount: meta.messageCount + Math.max(grown, 0),
+                };
+                await writeMeta(next);
+                open.set(ref.id, { store: open.get(ref.id)!.store, session, meta: next });
+                return { ...(await snapshot()), messages, activeId: ref.id };
+                });
+            })();
         },
     };
 }

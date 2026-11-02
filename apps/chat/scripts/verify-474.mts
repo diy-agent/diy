@@ -80,6 +80,8 @@ async function launch(): Promise<Page> {
     const browser = await chromium.connectOverCDP(endpoint);
     const page = browser.contexts()[0]?.pages()[0] ?? fail("没有页面");
     await page.waitForSelector(".wb-nav-item", { timeout: 15_000 });
+    // 侧栏是窄 bar + 抽屉：菜单项在抽屉里，点之前先展开
+    await page.click(".wb-rail-expand");
     return page;
 }
 
@@ -96,6 +98,7 @@ if (process.env["DIY_VERIFY_ABSENT"] === "1") {
 if (!navText.includes("Bot 配置")) fail(`侧栏没有「Bot 配置」：${navText.join(" / ")}`);
 ok(`侧栏含「Bot 配置」（nav = ${navText.join(" / ")}）`);
 
+await page.click(".wb-rail-expand");
 await page.click('.wb-nav-item[data-page-id="bot-config"]');
 await page.waitForSelector(".bc-page", { timeout: 10_000 });
 await page.waitForFunction(() => document.querySelectorAll(".bc-section").length >= 3, null, {

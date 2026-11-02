@@ -24,7 +24,6 @@ import type {
     FirstBotInput,
     SendArgs,
     SendResult,
-    WireMessage,
 } from "./shared.js";
 
 /** 假回复的固定正文（第一刀的唯一输出） */
@@ -49,6 +48,8 @@ export function createPage(config?: unknown): PageContribution {
         return {
             id: "chat",
             title: "聊天",
+            icon: "💬",
+            group: "对话",
             methods: {
                 snapshot: (): Promise<ChatSnapshot> => host.snapshot(),
                 // ##497：首启/补选模型（没有这两步，聊天页面在 bots 为空时无从下手）
@@ -84,6 +85,8 @@ export function createPage(config?: unknown): PageContribution {
     return {
         id: "chat",
         title: "聊天",
+        icon: "💬",
+        group: "对话",
         methods: {
             async send(args: unknown): Promise<SendResult> {
                 const text = typeof args === "string" ? args : "";

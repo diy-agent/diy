@@ -60,7 +60,9 @@ const browser = await chromium.connectOverCDP(endpoint);
 try {
     const page = browser.contexts()[0]?.pages()[0] ?? fail("没有页面");
     await page.waitForSelector(".wb-nav-item", { timeout: 15_000 });
-    const navText = (await page.textContent(".wb-nav"))?.trim() ?? "";
+    // 侧栏是窄 bar + 抽屉（桌面 2026-11-02）：先点「展开」再把菜单文字读出来
+    await page.click(".wb-rail-expand");
+    const navText = (await page.textContent(".wb-drawer"))?.trim() ?? "";
     if (!navText.includes("聊天")) fail(`侧栏没有「聊天」：${JSON.stringify(navText)}`);
 
     await page.fill(".chat-input", "你好");

@@ -7,6 +7,10 @@
 export interface PageInfo {
     readonly id: string;
     readonly title: string;
+    /** 侧栏图标（emoji / 单字；缺省 = 标题首字） */
+    readonly icon?: string;
+    /** 侧栏分组名（缺省 = 未分组） */
+    readonly group?: string;
 }
 
 /** 页面可用的通道：调用自己（pageId = 本页 id）在主进程侧的方法 */

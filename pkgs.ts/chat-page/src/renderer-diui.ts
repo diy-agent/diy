@@ -56,6 +56,9 @@ const store: Store = {
     emptyText: "还没有消息，说一句话开始。",
 };
 
+/** 右侧 panel 的模式（固定 / 悬浮）：换 bot 也保持上次选择 */
+let viewsetPinned = false;
+
 /** 唯一的变更信号：状态改了 → bump() → 只有动态块重跑。 */
 const rev = new Signal(0);
 
@@ -92,6 +95,10 @@ export const chatPageView: PageView = {
         let firstEl: HTMLElement | null = null;
         let cardEl: HTMLElement | null = null;
         let hideTimer: ReturnType<typeof setTimeout> | null = null;
+        /** 悬停预览右侧 panel 的延时器（「看一眼就出、移开就收」） */
+        let peekTimer: ReturnType<typeof setTimeout> | null = null;
+        /** 当前 panel 是悬停预览打开的 ⇒ 鼠标离开就收（点开的/固定的一直在） */
+        let peeked = false;
 
         // ── 面板：配置 / 新建 bot / 首启引导 ──────────────────
 
@@ -121,33 +128,72 @@ export const chatPageView: PageView = {
         };
 
         const selectBot = (id: string): void => {
-            if (store.busy || id === store.bot?.id) return;
+            if (store.busy) return;
             hideCard();
             void ctx
                 .invoke<ChatSnapshot>("selectBot", { id })
-                .then(applySnapshot)
+                .then(() => refresh())
                 .catch((cause: unknown) => appendError(`切换失败：${messageOf(cause)}`));
         };
 
-        /** 配置 / 新建面板（同一个壳，两种模式） */
-        const openEditor = (mode: "config" | "create", bot: BotView | null, forced = false): void => {
+        /**
+         * 悬停预览：列表 hover 一会儿就把该 bot 的编辑 panel 拉出来（右侧、悬浮态）。
+         * 只在 panel **没开着** 的时候预览 —— 已经在编辑/已固定的面板绝不被 hover 抢走。
+         */
+        const peekViewset = (bot: BotView): void => {
+            if (peekTimer !== null) clearTimeout(peekTimer);
+            peekTimer = setTimeout(() => {
+                peekTimer = null;
+                if (viewsetPinned) return;
+                if (editorEl !== null && editorEl.dataset["show"] === "true") return;
+                peeked = true;
+                openViewset("config", bot);
+            }, 400);
+        };
+
+        const cancelPeek = (): void => {
+            if (peekTimer !== null) {
+                clearTimeout(peekTimer);
+                peekTimer = null;
+            }
+        };
+
+        /**
+         * 右侧 panel（viewset）：列表项的「明细编辑」统一走这里，不再整页切换。
+         *
+         * 两种模式（同一份内容，只换摆法）：
+         *   · `floating`（缺省）：浮在消息区右侧，不挤压正文
+         *   · `pinned`：停靠成右侧一栏，消息区让出宽度
+         * 模式记在模块级（`viewsetPinned`）：换 bot / 重开都保持上次的选择。
+         */
+        const openViewset = (mode: "config" | "create", bot: BotView | null, forced = false): void => {
             if (editorEl === null) return;
             hideCard();
             closeFirst();
             const isNew = mode === "create";
             editorEl.replaceChildren();
             editorEl.dataset["show"] = "true";
-            editorEl.dataset["mode"] = mode;
+            editorEl.dataset["mode"] = viewsetPinned ? "pinned" : "floating";
 
-            const head = el(doc, "div", "chat-panel-head");
-            head.append(el(doc, "h2", "chat-panel-title", isNew ? "新建 bot" : `${bot?.name ?? ""} · 配置`));
-            const close = el(doc, "button", "", "关闭") as HTMLButtonElement;
+            const head = el(doc, "div", "chat-viewset-head");
+            head.append(el(doc, "span", "chat-viewset-title", isNew ? "新建 bot" : (bot?.name ?? "")));
+            const pin = el(doc, "button", "chat-viewset-pin", viewsetPinned ? "📌 固定" : "📌 悬浮") as HTMLButtonElement;
+            pin.type = "button";
+            pin.title = "在「固定」（占一栏）和「悬浮」（浮在消息上）之间切换";
+            pin.addEventListener("click", () => {
+                viewsetPinned = !viewsetPinned;
+                if (editorEl === null) return;
+                editorEl.dataset["mode"] = viewsetPinned ? "pinned" : "floating";
+                pin.textContent = viewsetPinned ? "📌 固定" : "📌 悬浮";
+            });
+            const close = el(doc, "button", "chat-viewset-close", "✕") as HTMLButtonElement;
             close.type = "button";
+            close.title = "关闭";
             close.hidden = forced;
             close.addEventListener("click", closeEditor);
-            head.append(close);
+            head.append(pin, close);
 
-            const body = el(doc, "div", "chat-panel-body");
+            const body = el(doc, "div", "chat-viewset-body");
             const form = el(doc, "div", "chat-form");
 
             const nameInput = inputOf(doc, "text", bot?.name ?? "");
@@ -189,7 +235,7 @@ export const chatPageView: PageView = {
                     el(
                         doc,
                         "p",
-                        "chat-panel-note",
+                        "chat-viewset-note",
                         `会话 ${String(bot.sessionCount)} · 创建于 ${dateOf(bot.createdAt)} · 模型 ${
                             bot.needsModel ? "未选" : bot.model
                         }`,
@@ -200,12 +246,12 @@ export const chatPageView: PageView = {
             const error = el(doc, "p", "chat-panel-error");
             error.hidden = true;
 
-            const actions = el(doc, "div", "chat-panel-actions");
+            const actions = el(doc, "div", "chat-viewset-actions");
             const submit = el(doc, "button", "chat-primary", isNew ? "创建" : "保存") as HTMLButtonElement;
             submit.type = "button";
             actions.append(submit);
             if (!isNew && bot !== null) {
-                const remove = el(doc, "button", "chat-danger", "删除 bot") as HTMLButtonElement;
+                const remove = el(doc, "button", "chat-danger", "删除") as HTMLButtonElement;
                 remove.type = "button";
                 remove.addEventListener("click", () => {
                     const ok =
@@ -214,9 +260,9 @@ export const chatPageView: PageView = {
                     if (!ok) return;
                     void ctx
                         .invoke<ChatSnapshot>("removeBot", { id: bot.id })
-                        .then((next) => {
+                        .then(() => {
                             closeEditor();
-                            applySnapshot(next);
+                            return refresh();
                         })
                         .catch((cause: unknown) => fail(`删除失败：${messageOf(cause)}`));
                 });
@@ -252,9 +298,9 @@ export const chatPageView: PageView = {
                     : ctx.invoke<ChatSnapshot>("updateBot", { id: bot?.id, ...payload });
                 submit.disabled = true;
                 void request
-                    .then((next) => {
+                    .then(() => {
                         closeEditor();
-                        applySnapshot(next);
+                        return refresh();
                     })
                     .catch((cause: unknown) => fail(`保存失败：${messageOf(cause)}`))
                     .finally(() => {
@@ -323,9 +369,9 @@ export const chatPageView: PageView = {
                         name: nameInput.value.trim() || undefined,
                         instructions: instructions.value,
                     })
-                    .then((next) => {
+                    .then(() => {
                         closeFirst();
-                        applySnapshot(next);
+                        return refresh();
                     })
                     .catch((cause: unknown) => {
                         error.textContent = `创建失败：${messageOf(cause)}`;
@@ -362,7 +408,11 @@ export const chatPageView: PageView = {
             const acts = el(doc2, "div", "chat-card-acts");
             const cfg = el(doc2, "button", "chat-primary", "配置") as HTMLButtonElement;
             cfg.type = "button";
-            cfg.addEventListener("click", () => openEditor("config", bot));
+            cfg.addEventListener("click", () => {
+                peeked = false;
+                cancelPeek();
+                openViewset("config", bot);
+            });
             const open = el(doc2, "button", "", "打开对话") as HTMLButtonElement;
             open.type = "button";
             open.addEventListener("click", () => selectBot(bot.id));
@@ -373,6 +423,19 @@ export const chatPageView: PageView = {
             cardEl.style.top = `${String(Math.round(rect.top))}px`;
             cardEl.style.left = `${String(Math.round(rect.right + 8))}px`;
             cardEl.dataset["show"] = "true";
+        };
+
+        /** panel 自己也要挡住「移开就收」：鼠标进了预览面板就算在编辑 */
+        const wireViewset = (): void => {
+            const node = editorEl;
+            if (node === null) return;
+            node.addEventListener("mouseenter", cancelPeek);
+            node.addEventListener("mouseleave", () => {
+                if (peeked && !viewsetPinned) {
+                    peeked = false;
+                    closeEditor();
+                }
+            });
         };
 
         /** 卡片自己也要挡住「离开 bot 就收」：移进卡片算仍在看 */
@@ -397,14 +460,7 @@ export const chatPageView: PageView = {
                 yield html.div({ class: "chat-app" }, function* () {
                     yield botsPane(my);
                     yield html.section({ class: "chat-main" }, function* () {
-                        // 面板挂在消息区上（覆盖整块消息区，不动左右结构）
-                        yield html.div({
-                            class: "chat-panel",
-                            "data-show": "false",
-                            ref: (node: HTMLElement) => {
-                                editorEl = node;
-                            },
-                        });
+                        // 首启引导是**硬闸门**：覆盖整块消息区，没得关（##498 判据 8）
                         yield html.div({
                             class: "chat-panel",
                             "data-show": "false",
@@ -412,8 +468,25 @@ export const chatPageView: PageView = {
                                 firstEl = node;
                             },
                         });
-                        yield messageList(my);
-                        yield footBar(my, ctx);
+                        // 消息流 + 右侧 panel（viewset）：pinned 时并排，floating 时浮在消息上
+                        yield html.div({ class: "chat-body" }, function* () {
+                            yield html.div({ class: "chat-stream" }, function* () {
+                                yield messageList(my);
+                                yield footBar(my, ctx);
+                            });
+                            yield html.tag(
+                                "aside",
+                                {
+                                    class: "chat-viewset",
+                                    "data-show": "false",
+                                    "data-mode": "floating",
+                                    ref: (node: HTMLElement) => {
+                                        editorEl = node;
+                                    },
+                                },
+                                function* () {},
+                            );
+                        });
                     });
                 });
                 // hover 卡片：fixed 定位，左栏 overflow:hidden 也裁不到它
@@ -427,6 +500,7 @@ export const chatPageView: PageView = {
             }),
         );
         wireCard();
+        wireViewset();
         inputEl?.focus();
         // `data-ready`：首份快照落地后置 1（CDP 判据等「页面就绪」用；不影响渲染）
         void load(ctx).finally(() => {
@@ -455,6 +529,23 @@ export const chatPageView: PageView = {
                     yield html.ul({ class: "chat-bot-list" }, function* () {
                         if (gen !== generation) return;
                         void rev.value;
+                        // ##后端：新 bot 按钮放**列表最上面**（用户 2026-11-02 要求）
+                        yield html.li({ key: "new-bot", class: "chat-bot chat-bot-new" }, function* () {
+                            yield html.button(
+                                {
+                                    class: "chat-bot-btn chat-bot-new-btn",
+                                    type: "button",
+                                    onClick: () => openViewset("create", null),
+                                },
+                                function* () {
+                                    yield html.span({ class: "chat-bot-avatar", text: "+" });
+                                    yield html.span({ class: "chat-bot-text" }, function* () {
+                                        yield html.span({ class: "chat-bot-name", text: "新 bot" });
+                                        yield html.span({ class: "chat-bot-model", text: "创建一个" });
+                                    });
+                                },
+                            );
+                        });
                         for (const bot of store.bots) {
                             const active = bot.id === store.bot?.id;
                             yield html.li(
@@ -474,12 +565,16 @@ export const chatPageView: PageView = {
                                             onMouseEnter: (event: MouseEvent) => {
                                                 const anchor = event.currentTarget as HTMLElement;
                                                 showCard(bot, anchor);
+                                                peekViewset(bot);
                                             },
-                                            onMouseLeave: () => scheduleHide(),
+                                            onMouseLeave: () => {
+                                                cancelPeek();
+                                                scheduleHide();
+                                            },
+                                            // 点 bot **只打开对话**（配置入口是 ⚙ / hover 卡片里的「配置」）
                                             onClick: () => {
                                                 hideCard();
-                                                if (active) openEditor("config", bot, bot.needsModel);
-                                                else selectBot(bot.id);
+                                                selectBot(bot.id);
                                             },
                                         },
                                         function* () {
@@ -500,22 +595,6 @@ export const chatPageView: PageView = {
                                 },
                             );
                         }
-                        yield html.li({ key: "new-bot", class: "chat-bot chat-bot-new" }, function* () {
-                            yield html.button(
-                                {
-                                    class: "chat-bot-btn chat-bot-new-btn",
-                                    type: "button",
-                                    onClick: () => openEditor("create", null),
-                                },
-                                function* () {
-                                    yield html.span({ class: "chat-bot-avatar", text: "+" });
-                                    yield html.span({ class: "chat-bot-text" }, function* () {
-                                        yield html.span({ class: "chat-bot-name", text: "新 bot" });
-                                        yield html.span({ class: "chat-bot-model", text: "创建一个" });
-                                    });
-                                },
-                            );
-                        });
                     });
                 },
             );
@@ -575,7 +654,7 @@ export const chatPageView: PageView = {
                         {
                             class: "chat-bot-label",
                             type: "button",
-                            onClick: () => openEditor("config", bot, bot.needsModel),
+                            onClick: () => openViewset("config", bot, bot.needsModel),
                         },
                         function* () {
                             yield html.span({ text: bot.name });
@@ -644,6 +723,14 @@ export const chatPageView: PageView = {
 
         // ── 行为 ───────────────────────────────────────────
 
+        /**
+         * 唯一的状态入口：从核心层**重新取整份快照**（docs/plans/2026-11-02-concurrency-actor.md 判据 5）。
+         * UI 不增量改 `store.bots` / `store.messages` —— 那是显示状态，不是真源。
+         */
+        async function refresh(): Promise<void> {
+            applySnapshot(await ctx.invoke<ChatSnapshot>("snapshot"));
+        }
+
         async function load(context: PageContext): Promise<void> {
             try {
                 applySnapshot(await context.invoke<ChatSnapshot>("snapshot"));
@@ -665,11 +752,12 @@ export const chatPageView: PageView = {
             bump();
             const multi = store.multi && store.bot !== null;
             try {
-                const result = multi
-                    ? await context.invoke<ChatSnapshot>("send", { text })
-                    : await context.invoke<SendResult>("send", text);
-                if (isSnapshot(result)) applySnapshot(result);
-                else {
+                if (multi) {
+                    // send 的返回值只是这一条会话的消息线；整份状态**重新取**
+                    await context.invoke<ChatSnapshot>("send", { text });
+                    await refresh();
+                } else {
+                    const result = await context.invoke<SendResult>("send", text);
                     store.messages = result.messages;
                     bump();
                 }
@@ -695,7 +783,7 @@ export const chatPageView: PageView = {
             bump();
             // 面板：首启 / 存量缺模型 ⇒ 强制拦在配置页（关不掉），不许静默用「宿主缺省」
             if (next.bot === null) openFirstBoot();
-            else if (next.bot.needsModel) openEditor("config", next.bot, true);
+            else if (next.bot.needsModel) openViewset("config", next.bot, true);
         }
 
         function appendError(text: string): void {
@@ -758,10 +846,6 @@ function metric(label: string, value: string, warn = false): Spec {
         yield html.span({ text: `${label} ` });
         yield html.tag("b", { class: warn ? "chat-warn" : "", text: value });
     });
-}
-
-function isSnapshot(value: unknown): value is ChatSnapshot {
-    return value !== null && typeof value === "object" && Array.isArray((value as ChatSnapshot).bots);
 }
 
 function messageOf(cause: unknown): string {

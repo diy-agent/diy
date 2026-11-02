@@ -36,7 +36,7 @@ describe("UI 链路（happy-dom）", () => {
         await mountWorkbench(host, gateway, { title: "测试工作台" });
 
         // ① 左侧栏有页面入口
-        expect(host.querySelector(".wb-nav")?.textContent).toContain("聊天");
+        expect(host.querySelector(".wb-drawer")?.textContent).toContain("聊天");
 
         // ② 输入一句话回车 ⇒ 用户消息 + 固定回复
         const input = host.querySelector<HTMLInputElement>(".chat-input");

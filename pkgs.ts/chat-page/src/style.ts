@@ -42,6 +42,7 @@ export const CHAT_STYLE = `
 .chat-bots:hover .chat-bot-text, .chat-bots[data-open="true"] .chat-bot-text { opacity: 1; }
 .chat-bot-name { display: block; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
 .chat-bot-model { display: block; font-size: 11px; color: var(--chat-dim); overflow: hidden; text-overflow: ellipsis; }
+.chat-bot-new { margin-bottom: 4px; border-bottom: 1px solid var(--chat-line); padding-bottom: 4px; }
 .chat-bot-new .chat-bot-avatar { background: #c9ced6; font-size: 20px; font-weight: 400; }
 
 /* ── hover 卡片（fixed 定位：左栏 overflow hidden 也挡不住它） ── */
@@ -57,7 +58,29 @@ export const CHAT_STYLE = `
 
 /* ── 主区：消息流（顶天，没有顶部横幅） ── */
 .chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+/* 消息流 + 右侧 panel：pinned 时并排（消息让宽），floating 时 panel 浮在消息上 */
+.chat-body { flex: 1; min-height: 0; display: flex; flex-direction: row; position: relative; }
+.chat-stream { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .chat-list { flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 20px 24px; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+/* ── 右侧 panel（viewset）：列表明细编辑的统一形态（##viewset） ── */
+.chat-viewset { display: none; flex-direction: column; min-height: 0; background: #fff; }
+.chat-viewset[data-show="true"] { display: flex; }
+.chat-viewset[data-mode="pinned"] { flex: none; width: 340px; border-left: 1px solid var(--chat-line); }
+.chat-viewset[data-mode="floating"] { position: absolute; top: 12px; right: 12px; bottom: 12px; width: 340px; border: 1px solid #d8dde5; border-radius: 12px; box-shadow: 0 8px 28px rgba(0, 0, 0, .14); z-index: 15; overflow: hidden; }
+.chat-viewset-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--chat-line); }
+.chat-viewset-title { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-viewset-pin, .chat-viewset-close { flex: none; border: 1px solid #d3d8de; border-radius: 6px; background: #fff; font: inherit; font-size: 12px; padding: 3px 8px; cursor: pointer; }
+.chat-viewset-pin:hover, .chat-viewset-close:hover { background: #f1f3f5; }
+.chat-viewset-body { flex: 1; min-height: 0; overflow: auto; padding: 14px; font-size: 13px; }
+.chat-viewset-actions { display: flex; gap: 8px; margin-top: 16px; }
+.chat-viewset-actions button { padding: 6px 14px; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; font: inherit; font-size: 13px; cursor: pointer; }
+.chat-viewset-actions button.chat-primary { background: var(--chat-accent); border-color: var(--chat-accent); color: #fff; }
+.chat-viewset-actions button.chat-danger { color: #b91c1c; border-color: #fca5a5; }
+.chat-viewset-note { margin-top: 12px; font-size: 12px; color: var(--chat-dim); }
+/* panel 里的表单：一列（比覆盖式面板窄） */
+.chat-viewset .chat-form { display: flex; flex-direction: column; gap: 4px; max-width: none; }
+.chat-viewset .chat-form label { padding-top: 6px; }
+.chat-viewset .chat-form input, .chat-viewset .chat-form select, .chat-viewset .chat-form textarea { width: 100%; box-sizing: border-box; }
 /* ##499：一行 = 若干 Block */
 .chat-blocks { display: flex; flex-direction: column; gap: 6px; min-width: 0; max-width: 68ch; }
 .chat-block { min-width: 0; }
