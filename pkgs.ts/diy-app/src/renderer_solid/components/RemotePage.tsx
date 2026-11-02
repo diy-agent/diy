@@ -381,7 +381,7 @@ export function RemotePage() {
             {/* ── 配对弹层：HubPage 复用（判据 4/5：五屏都在这里） ── */}
             <Show when={hubLayer()}>
                 {(layer) => (
-                    <dialog class="modal open" data-hub-layer>
+                    <dialog class="modal modal-open" data-hub-layer open>
                         <div class="modal-box max-w-4xl w-[min(92vw,880px)] max-h-[90vh] p-0 overflow-hidden">
                             <div class="h-[min(80vh,720px)] min-h-0">
                                 <HubPage
