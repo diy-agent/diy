@@ -32,6 +32,11 @@ export interface ParentHop {
 /** 一条实例注册记录（`<pid>.json`） */
 export interface InstanceRecord {
   pid: number;
+  /**
+   * app 短名（`diy-app` / `diy-web` / `diy-chat`…）。**老记录没有这个字段 ⇒ null**（读侧宽松）。
+   * dev 启动器靠它判断「谁活着」，不用从 argv 猜。
+   */
+  app: string | null;
   /** RPC 端口；未就绪为 null（启动早期写的那一份） */
   port: number | null;
   /**
@@ -91,6 +96,7 @@ export function parseRecord(raw: unknown): InstanceRecord | null {
     pid: o["pid"],
     port: (o["port"] as number | null) ?? null,
     // 可选的增量字段：老记录没有它 → null（读侧宽松，见文件头）
+    app: str(o["app"]) ? (o["app"] as string) : null,
     pingPort: num(o["pingPort"]) ? (o["pingPort"] as number) : null,
     diyHome: o["diyHome"],
     variant: typeof o["variant"] === "string" ? o["variant"] : "",

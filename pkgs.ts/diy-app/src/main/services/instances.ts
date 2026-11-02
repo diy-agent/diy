@@ -47,6 +47,7 @@ const PROBE_TIMEOUT_MS = 1200;
 export function writeSelfRecord(opts: { diyHome: string; variant: string; env: string }): void {
   writeRecord(registryDir(), {
     pid: process.pid,
+    app: "diy-app",
     port: null,
     pingPort: null,
     diyHome: opts.diyHome,
