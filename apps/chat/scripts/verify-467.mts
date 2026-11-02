@@ -49,8 +49,8 @@ async function launch(): Promise<Page> {
     const browser = await chromium.connectOverCDP(endpoint);
     const page = browser.contexts()[0]?.pages()[0] ?? fail("没有页面");
     await page.waitForSelector(".wb-nav-item", { timeout: 15_000 });
-    // 侧栏是窄 bar + 抽屉：菜单项在抽屉里，点之前先展开
-    await page.click(".wb-rail-expand");
+    // 侧栏窄态只有图标：点 ☰ 钉住展开，菜单项文字才可见（2026-11-02 起不再有抽屉）
+    await page.click(".wb-side-toggle");
     return page;
 }
 

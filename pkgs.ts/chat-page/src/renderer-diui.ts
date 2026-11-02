@@ -93,10 +93,6 @@ export const chatPageView: PageView = {
         let firstEl: HTMLElement | null = null;
         let cardEl: HTMLElement | null = null;
         let hideTimer: ReturnType<typeof setTimeout> | null = null;
-        /** 悬停预览右侧 panel 的延时器（「看一眼就出、移开就收」） */
-        let peekTimer: ReturnType<typeof setTimeout> | null = null;
-        /** 当前 panel 是悬停预览打开的 ⇒ 鼠标离开就收（点开的/固定的一直在） */
-        let peeked = false;
 
         // ── 面板：配置 / 新建 bot / 首启引导 ──────────────────
 
@@ -134,27 +130,8 @@ export const chatPageView: PageView = {
                 .catch((cause: unknown) => appendError(`切换失败：${messageOf(cause)}`));
         };
 
-        /**
-         * 悬停预览：列表 hover 一会儿就把该 bot 的编辑 panel 拉出来（右侧、悬浮态）。
-         * 只在 panel **没开着** 的时候预览 —— 已经在编辑/已固定的面板绝不被 hover 抢走。
-         */
-        const peekViewset = (bot: BotView): void => {
-            if (peekTimer !== null) clearTimeout(peekTimer);
-            peekTimer = setTimeout(() => {
-                peekTimer = null;
-                if (viewsetPinned) return;
-                if (editorEl !== null && editorEl.dataset["show"] === "true") return;
-                peeked = true;
-                openViewset("config", bot);
-            }, 400);
-        };
-
-        const cancelPeek = (): void => {
-            if (peekTimer !== null) {
-                clearTimeout(peekTimer);
-                peekTimer = null;
-            }
-        };
+        // 悬停**不再**拉出配置 panel（用户 2026-11-02 裁）：hover 只是看（浮层卡片里带
+        // 「配置」按钮），panel 只由显式点击打开 —— 点 bot 行只切对话，点「配置」/⚙ 才弹。
 
         /**
          * 右侧 panel（viewset）：列表项的「明细编辑」统一走这里，不再整页切换。
@@ -407,8 +384,6 @@ export const chatPageView: PageView = {
             const cfg = el(doc2, "button", "chat-primary", "配置") as HTMLButtonElement;
             cfg.type = "button";
             cfg.addEventListener("click", () => {
-                peeked = false;
-                cancelPeek();
                 openViewset("config", bot);
             });
             const open = el(doc2, "button", "", "打开对话") as HTMLButtonElement;
@@ -421,19 +396,6 @@ export const chatPageView: PageView = {
             cardEl.style.top = `${String(Math.round(rect.top))}px`;
             cardEl.style.left = `${String(Math.round(rect.right + 8))}px`;
             cardEl.dataset["show"] = "true";
-        };
-
-        /** panel 自己也要挡住「移开就收」：鼠标进了预览面板就算在编辑 */
-        const wireViewset = (): void => {
-            const node = editorEl;
-            if (node === null) return;
-            node.addEventListener("mouseenter", cancelPeek);
-            node.addEventListener("mouseleave", () => {
-                if (peeked && !viewsetPinned) {
-                    peeked = false;
-                    closeEditor();
-                }
-            });
         };
 
         /** 卡片自己也要挡住「离开 bot 就收」：移进卡片算仍在看 */
@@ -498,7 +460,6 @@ export const chatPageView: PageView = {
             }),
         );
         wireCard();
-        wireViewset();
         inputEl?.focus();
         // `data-ready`：首份快照落地后置 1（CDP 判据等「页面就绪」用；不影响渲染）
         void load(ctx).finally(() => {
@@ -562,11 +523,11 @@ export const chatPageView: PageView = {
                                             "data-bot-id": bot.id,
                                             onMouseEnter: (event: MouseEvent) => {
                                                 const anchor = event.currentTarget as HTMLElement;
+                                                // 悬停只出「概览卡片」（会话数 / 花费 + 配置 / 打开对话两个按钮），
+                                                // **不**自动拉出右侧配置 panel（用户 2026-11-02 裁）
                                                 showCard(bot, anchor);
-                                                peekViewset(bot);
                                             },
                                             onMouseLeave: () => {
-                                                cancelPeek();
                                                 scheduleHide();
                                             },
                                             // 点 bot **只打开对话**（配置入口是 ⚙ / hover 卡片里的「配置」）

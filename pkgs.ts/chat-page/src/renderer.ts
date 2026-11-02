@@ -79,16 +79,8 @@ export const chatPageView: PageView = {
         let selectedModel = "";
         let busy = false;
         let hideTimer: ReturnType<typeof setTimeout> | null = null;
-        /** 悬停预览右侧 panel 的延时器 / 当前是不是预览打开的 */
-        let peekTimer: ReturnType<typeof setTimeout> | null = null;
-        let peeked = false;
-
-        const cancelPeek = (): void => {
-            if (peekTimer !== null) {
-                clearTimeout(peekTimer);
-                peekTimer = null;
-            }
-        };
+        // 悬停**不再**拉出配置 panel（用户 2026-11-02 裁）：hover 只出概览卡片，
+        // panel 只由显式点击打开 —— 点 bot 行只切对话，点「配置」/⚙ 才弹。
 
         // ── 消息线 ───────────────────────────────────────
 
@@ -134,18 +126,10 @@ export const chatPageView: PageView = {
                 );
                 button.append(avatar, text);
                 button.addEventListener("mouseenter", () => {
+                    // 悬停只出「概览卡片」（会话 / 花费 + 配置 / 打开对话），不自动弹出右侧 panel
                     showCard(next, bot, button);
-                    // 悬停预览：panel 没开着时，稍等一下把它拉出来（固定态 / 正在编辑时不抢）
-                    if (peekTimer !== null) clearTimeout(peekTimer);
-                    peekTimer = setTimeout(() => {
-                        peekTimer = null;
-                        if (viewsetPinned || editor.dataset["show"] === "true") return;
-                        peeked = true;
-                        openViewset("config", bot);
-                    }, 400);
                 });
                 button.addEventListener("mouseleave", () => {
-                    cancelPeek();
                     scheduleHide();
                 });
                 button.addEventListener("click", () => {
@@ -209,13 +193,6 @@ export const chatPageView: PageView = {
             }
             card.dataset["show"] = "false";
         };
-        editor.addEventListener("mouseenter", cancelPeek);
-        editor.addEventListener("mouseleave", () => {
-            if (peeked && !viewsetPinned) {
-                peeked = false;
-                closeEditor();
-            }
-        });
         card.addEventListener("mouseenter", () => {
             if (hideTimer !== null) {
                 clearTimeout(hideTimer);

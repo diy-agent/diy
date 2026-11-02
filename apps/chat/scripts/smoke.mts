@@ -124,8 +124,9 @@ async function send(page: Page, model: string, text: string): Promise<string> {
 
 const page = await launch();
 try {
-    await page.click(".wb-rail-expand");
-    const nav = (await page.textContent(".wb-drawer"))?.trim() ?? "";
+    // 侧栏窄态只有图标：点 ☰ 钉住展开再读菜单文字（2026-11-02 起不再有抽屉）
+    await page.click(".wb-side-toggle");
+    const nav = (await page.textContent(".wb-side"))?.trim() ?? "";
     await page.keyboard.press("Escape");
     if (!nav.includes("聊天")) fail(`侧栏没有「聊天」：${JSON.stringify(nav)}`);
     console.log(`✓ 侧栏：${nav}`);

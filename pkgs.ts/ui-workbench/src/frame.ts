@@ -1,13 +1,15 @@
-// frame.ts — 布局骨架：左侧窄 bar（图标）+ 抽屉菜单 + 主区（页面内容 + 顶栏）。
+// frame.ts — 布局骨架：左侧可展开的窄栏（图标 → 图标+文字）+ 主区（页面内容 + 顶栏）。
 //
 // 页面清单来自主进程（gateway.listPages()），页面内容来自注册表（registry.ts）。
 // 本文件不做任何异步业务：切页 = 调页面的 render，仅此而已。
 //
-// ##侧栏窄条（2026-11-02 用户裁）：左栏常驻 52px 只放**图标**（不占阅读宽度），
-// 顶端一个「展开」按钮把**抽屉**拉出来 —— 抽屉里是分组 + 层级 + 收起/展开的菜单树
-// （形状参考 webawesome.com 的侧边栏）。选一个页面 ⇒ 抽屉自动收起。
-//
-// 分组 / 图标来自 PageInfo（可选字段）：没写 group 的落「未分组」，没写 icon 的取标题首字。
+// ##侧栏（2026-11-02 用户裁 ②）：**一份菜单，展开即变宽**，不再「窄 bar + 抽屉」两份列表。
+// 起初是 52px 窄 bar 只放图标、☰ 拉出浮层抽屉 —— 实测糟糕：抽屉里又是同一批页面，
+// 展开后 3 个入口变成 6 个按钮，看得人发懵（用户原话）。现在的形状跟聊天页的 bot 侧栏一致：
+//   · 常驻 52px，只有图标（不占阅读宽度）
+//   · **悬停自动变宽**到 232px，图标旁淡入文字；点 ☰ 可以把展开「钉住」（再点 / Esc 收回）
+//   · 菜单树只有一份：DOM 里每个页面就一个 .wb-nav-item（分组标题在窄态隐藏、宽态出现）
+// 选一个页面 ⇒ 直接切页，不收起（收不收由鼠标 / ☰ 决定，切页不该附带别的动作）。
 
 import { WorkbenchUiError } from "./errors.js";
 import { getPage } from "./registry.js";
@@ -21,37 +23,43 @@ export interface MountOptions {
 }
 
 const STYLE_ID = "wb-frame-style";
+/** 窄态宽 / 宽态宽（px）：窄态与聊天页 bot 侧栏同宽，切换时主区跟着让位 */
+const NARROW_WIDTH = 52;
+const WIDE_WIDTH = 232;
 const STYLE = `
 .wb-root { position: fixed; inset: 0; display: flex; font: 14px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; color: #1f2328; background: #fff; }
-/* ── 左侧窄 bar：常驻 52px，只有图标 ── */
-.wb-rail { flex: none; width: 52px; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 0; background: #f6f7f9; border-right: 1px solid #e4e7eb; box-sizing: border-box; z-index: 30; }
-.wb-rail-btn { width: 36px; height: 36px; display: grid; place-items: center; border: 0; border-radius: 9px; background: transparent; color: #3a3f46; font: inherit; font-size: 16px; cursor: pointer; }
-.wb-rail-btn:hover { background: #e9ecf0; }
-.wb-rail-btn[aria-current="page"] { background: #dfe6f2; }
-.wb-rail-sep { width: 24px; height: 1px; margin: 4px 0; background: #e0e3e8; }
-.wb-rail-expand { margin-bottom: 4px; }
-/* ── 抽屉：浮在窄 bar 右边，不挤压主区 ── */
-.wb-drawer { position: absolute; top: 0; bottom: 0; left: 52px; width: 232px; display: none; flex-direction: column; gap: 6px; padding: 12px; background: #fbfbfc; border-right: 1px solid #e4e7eb; box-shadow: 2px 0 12px rgba(0, 0, 0, .06); box-sizing: border-box; z-index: 20; overflow: auto; }
-.wb-root[data-drawer="open"] .wb-drawer { display: flex; }
-.wb-brand { font-size: 15px; font-weight: 600; margin: 0 0 6px; padding: 0 8px; color: #3a3f46; }
+/* ── 侧栏：一份菜单；窄态只有图标，悬停 / 钉住变宽后图标旁淡入文字 ── */
+.wb-side { flex: none; width: ${String(NARROW_WIDTH)}px; display: flex; flex-direction: column; gap: 2px; padding: 8px 6px; background: #f6f7f9; border-right: 1px solid #e4e7eb; box-sizing: border-box; overflow: hidden; transition: width .18s ease; z-index: 30; }
+.wb-side:hover, .wb-side[data-open="true"] { width: ${String(WIDE_WIDTH)}px; }
+.wb-side-toggle { flex: none; width: 40px; height: 36px; display: grid; place-items: center; margin-bottom: 4px; border: 0; border-radius: 9px; background: transparent; color: #3a3f46; font: inherit; font-size: 16px; cursor: pointer; }
+.wb-side-toggle:hover { background: #e9ecf0; }
+.wb-brand { flex: none; margin: 0; padding: 2px 6px 6px; font-size: 15px; font-weight: 600; color: #3a3f46; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wb-nav { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 2px; overflow: auto; }
 .wb-group { display: flex; flex-direction: column; gap: 2px; }
-.wb-group-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border: 0; background: transparent; font: inherit; font-size: 12px; color: #6b7280; text-align: left; cursor: pointer; border-radius: 6px; }
+.wb-group-head { display: none; align-items: center; gap: 6px; padding: 6px 6px 4px; border: 0; background: transparent; font: inherit; font-size: 12px; color: #6b7280; text-align: left; white-space: nowrap; cursor: pointer; border-radius: 6px; }
+.wb-side:hover .wb-group-head, .wb-side[data-open="true"] .wb-group-head { display: flex; }
 .wb-group-head:hover { background: #eef1f5; }
 .wb-group-chevron { width: 12px; font-size: 10px; color: #9aa1a9; transition: transform .12s; }
 .wb-group[data-collapsed="true"] .wb-group-chevron { transform: rotate(-90deg); }
+/* 分组「收起」只在**宽态**有意义（那时才看得见标题）：窄态一律把图标露出来，
+   否则收起的组在窄栏里整组消失，人找不到入口 */
 .wb-group[data-collapsed="true"] .wb-group-items { display: none; }
+.wb-side:not(:hover):not([data-open="true"]) .wb-group[data-collapsed="true"] .wb-group-items { display: flex; }
 .wb-group-items { display: flex; flex-direction: column; gap: 2px; }
-.wb-nav-item { appearance: none; display: flex; align-items: center; gap: 8px; border: 0; text-align: left; padding: 7px 10px; border-radius: 8px; background: transparent; color: #2f353c; font: inherit; cursor: pointer; }
+.wb-nav-item { appearance: none; display: flex; align-items: center; gap: 10px; width: 100%; box-sizing: border-box; padding: 7px 8px; border: 0; border-radius: 8px; background: transparent; color: #2f353c; font: inherit; text-align: left; white-space: nowrap; cursor: pointer; }
 .wb-nav-item:hover { background: #e9ecf0; }
 .wb-nav-item[aria-current="page"] { background: #dfe6f2; color: #123a6b; font-weight: 600; }
-.wb-nav-icon { width: 18px; text-align: center; font-size: 14px; }
+.wb-nav-icon { flex: none; width: 20px; text-align: center; font-size: 14px; }
+.wb-nav-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; opacity: 0; transition: opacity .12s; }
+.wb-side:hover .wb-nav-label, .wb-side[data-open="true"] .wb-nav-label { opacity: 1; }
+.wb-sep { flex: none; height: 1px; margin: 4px 2px; background: #e0e3e8; }
 .wb-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .wb-header { flex: none; padding: 14px 20px; border-bottom: 1px solid #e4e7eb; font-size: 15px; font-weight: 600; }
 .wb-page { flex: 1; min-height: 0; }
 .wb-missing { padding: 24px; color: #8a5a00; }
 `;
 
-/** 挂载骨架：先问主进程要页面清单，再渲染窄 bar / 抽屉与首屏 */
+/** 挂载骨架：先问主进程要页面清单，再渲染侧栏与首屏 */
 export async function mountWorkbench(
     root: HTMLElement,
     gateway: WorkbenchGateway,
@@ -66,33 +74,34 @@ export async function mountWorkbench(
 
     root.replaceChildren();
     const shell = el(doc, "div", "wb-root");
-    shell.dataset["drawer"] = "closed";
 
-    // ── 窄 bar ───────────────────────────────────────
-    const rail = el(doc, "aside", "wb-rail");
-    const expand = el<HTMLButtonElement>(doc, "button", "wb-rail-btn wb-rail-expand");
-    expand.type = "button";
-    expand.title = "展开菜单";
-    expand.setAttribute("aria-label", "展开菜单");
-    expand.setAttribute("aria-expanded", "false");
-    expand.textContent = "☰";
-    rail.append(expand);
+    // ── 侧栏（只有一份菜单） ─────────────────────────
+    const side = el(doc, "aside", "wb-side");
+    side.dataset["open"] = "false";
 
-    // ── 抽屉 ─────────────────────────────────────────
-    const drawer = el(doc, "aside", "wb-drawer");
+    const toggle = el<HTMLButtonElement>(doc, "button", "wb-side-toggle");
+    toggle.type = "button";
+    toggle.title = "展开菜单";
+    toggle.setAttribute("aria-label", "展开菜单");
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.textContent = "☰";
+    side.append(toggle);
+
     const brand = el(doc, "h1", "wb-brand");
     brand.textContent = options.title ?? "Workbench";
-    drawer.append(brand);
+    side.append(brand);
+
+    const nav = el(doc, "nav", "wb-nav");
+    side.append(nav);
 
     const main = el(doc, "main", "wb-main");
     const header = el(doc, "header", "wb-header");
     const body = el(doc, "section", "wb-page");
     main.append(header, body);
-    shell.append(rail, drawer, main);
+    shell.append(side, main);
     root.append(shell);
 
     const buttons = new Map<string, HTMLButtonElement>();
-    const railButtons = new Map<string, HTMLButtonElement>();
 
     /** 分组 → 页面（没写 group 的落「未分组」；顺序 = 清单里首次出现的顺序） */
     const groups = new Map<string, PageInfo[]>();
@@ -105,7 +114,7 @@ export async function mountWorkbench(
 
     let firstGroup = true;
     for (const [groupName, items] of groups) {
-        if (!firstGroup) rail.append(el(doc, "div", "wb-rail-sep"));
+        if (!firstGroup) nav.append(el(doc, "div", "wb-sep"));
         firstGroup = false;
 
         const group = el(doc, "div", "wb-group");
@@ -121,57 +130,35 @@ export async function mountWorkbench(
         }
         const list = el(doc, "div", "wb-group-items");
         group.append(list);
-        drawer.append(group);
+        nav.append(group);
 
         for (const info of items) {
             const icon = info.icon ?? [...info.title][0] ?? "•";
 
-            // 窄 bar：只有图标（title 属性 + aria-label 兜住可读性）
-            const railButton = el<HTMLButtonElement>(doc, "button", "wb-rail-btn");
-            railButton.type = "button";
-            railButton.title = info.title;
-            railButton.setAttribute("aria-label", info.title);
-            railButton.dataset["pageIcon"] = icon;
-            railButton.textContent = icon;
-            railButton.addEventListener("click", () => show(info.id));
-            rail.append(railButton);
-            railButtons.set(info.id, railButton);
-
-            // 抽屉：图标 + 标题（分组 + 层级）
+            // 每个页面**只有一个**按钮：窄态只见图标，宽态图标旁淡入标题
             const button = el<HTMLButtonElement>(doc, "button", "wb-nav-item");
             button.type = "button";
+            button.title = info.title;
             button.dataset["pageId"] = info.id;
-            button.append(el(doc, "span", "wb-nav-icon", icon), el(doc, "span", "", info.title));
-            button.addEventListener("click", () => {
-                show(info.id);
-                setDrawer(false);
-            });
+            button.append(el(doc, "span", "wb-nav-icon", icon), el(doc, "span", "wb-nav-label", info.title));
+            button.addEventListener("click", () => show(info.id));
             list.append(button);
             buttons.set(info.id, button);
         }
     }
 
-    const setDrawer = (open: boolean): void => {
-        shell.dataset["drawer"] = open ? "open" : "closed";
-        expand.setAttribute("aria-expanded", open ? "true" : "false");
-        expand.textContent = open ? "✕" : "☰";
-        expand.title = open ? "收起菜单" : "展开菜单";
+    /** 展开/收起：`open` = 钉住；不钉住时靠悬停（纯 CSS），点 ☰ 才把它留在打开态 */
+    const setOpen = (open: boolean): void => {
+        side.dataset["open"] = open ? "true" : "false";
+        toggle.setAttribute("aria-expanded", open ? "true" : "false");
+        toggle.textContent = open ? "✕" : "☰";
+        toggle.title = open ? "收起菜单" : "展开菜单";
     };
+    toggle.addEventListener("click", () => setOpen(side.dataset["open"] !== "true"));
 
-    expand.addEventListener("click", () => setDrawer(shell.dataset["drawer"] !== "open"));
-
-    // 点抽屉外面 = 收起（只认抽屉外的区域，别把切页的点击吃掉）
-    const onDocClick = (event: MouseEvent): void => {
-        if (shell.dataset["drawer"] !== "open") return;
-        const target = event.target;
-        if (!(target instanceof Node)) return;
-        if (drawer.contains(target) || rail.contains(target)) return;
-        setDrawer(false);
-    };
     const onKeyDown = (event: KeyboardEvent): void => {
-        if (event.key === "Escape") setDrawer(false);
+        if (event.key === "Escape" && side.dataset["open"] === "true") setOpen(false);
     };
-    doc.addEventListener("click", onDocClick);
     doc.addEventListener("keydown", onKeyDown);
 
     let cleanup: (() => void) | undefined;
@@ -183,10 +170,6 @@ export async function mountWorkbench(
         cleanup = undefined;
         header.textContent = info.title;
         for (const [id, button] of buttons) {
-            if (id === pageId) button.setAttribute("aria-current", "page");
-            else button.removeAttribute("aria-current");
-        }
-        for (const [id, button] of railButtons) {
             if (id === pageId) button.setAttribute("aria-current", "page");
             else button.removeAttribute("aria-current");
         }
@@ -213,7 +196,6 @@ export async function mountWorkbench(
         dispose: () => {
             cleanup?.();
             cleanup = undefined;
-            doc.removeEventListener("click", onDocClick);
             doc.removeEventListener("keydown", onKeyDown);
             root.replaceChildren();
         },

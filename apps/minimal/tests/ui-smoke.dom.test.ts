@@ -36,7 +36,8 @@ describe("UI 链路（happy-dom）", () => {
         await mountWorkbench(host, gateway, { title: "测试工作台" });
 
         // ① 左侧栏有页面入口
-        expect(host.querySelector(".wb-drawer")?.textContent).toContain("聊天");
+        // 侧栏只有一份菜单（窄态图标 / 宽态图标+文字），文字始终在 DOM 里（##用户裁：不再有抽屉）
+        expect(host.querySelector(".wb-side")?.textContent).toContain("聊天");
 
         // ② 输入一句话回车 ⇒ 用户消息 + 固定回复
         const input = host.querySelector<HTMLInputElement>(".chat-input");
@@ -55,6 +56,38 @@ describe("UI 链路（happy-dom）", () => {
             { role: "user", text: "你好" },
             { role: "assistant", text: FAKE_REPLY },
         ]);
+    });
+
+    it("侧栏是**一份**菜单：每个页面一个入口，展开只是原地变宽（用户 2026-11-02 裁）", async () => {
+        registerPage(chatPageView);
+        const pages = [
+            { id: "chat", title: "聊天", icon: "💬", group: "对话" },
+            { id: "models", title: "模型配置", icon: "🧠", group: "设置" },
+            { id: "bots", title: "Bot 配置", icon: "🤖", group: "设置" },
+        ];
+        for (const info of pages.slice(1)) {
+            registerPage({ ...info, render: () => undefined });
+        }
+        const host = document.createElement("div");
+        document.body.append(host);
+        await mountWorkbench(
+            host,
+            { listPages: async () => pages, invoke: async () => undefined },
+            { title: "测试工作台" },
+        );
+
+        // 每个页面**一个**按钮（窄态只见图标、宽态图标+文字）；抽屉 / 窄 bar 按钮都已不存在
+        expect(host.querySelectorAll(".wb-nav-item").length).toBe(3);
+        expect(host.querySelector(".wb-drawer")).toBeNull();
+        expect(host.querySelector(".wb-rail-btn")).toBeNull();
+        // 标题就在同一份按钮里，不需要第二份列表才有文字
+        const labels = [...host.querySelectorAll(".wb-nav-label")].map((node) => node.textContent);
+        expect(labels).toEqual(["聊天", "模型配置", "Bot 配置"]);
+
+        // 展开 = 钉住（`data-open`）：宽窄是 CSS 的事，DOM 里菜单项数量不变
+        (host.querySelector(".wb-side-toggle") as HTMLButtonElement).click();
+        expect(host.querySelector(".wb-side")?.getAttribute("data-open")).toBe("true");
+        expect(host.querySelectorAll(".wb-nav-item").length).toBe(3);
     });
 
     it("##499 判据 3 / 4：插件注册的 kind 用自己的渲染器；未注册的走 fallback 不崩", async () => {

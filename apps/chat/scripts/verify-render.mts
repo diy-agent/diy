@@ -214,27 +214,44 @@ async function main(): Promise<void> {
     }
     ok("判据 0：无顶部横幅 / bot 条 64→200 / hover 卡片 / 底部一行指标（硬要求 1–4）");
 
-    // ── 判据 0b：左侧菜单窄 bar + 抽屉（2026-11-02 #5） ──
-    const railWidth = await page.evaluate(() =>
-        Math.round(document.querySelector(".wb-rail")!.getBoundingClientRect().width),
-    );
-    if (railWidth < 44 || railWidth > 60) fail(`左侧窄 bar 宽 ${String(railWidth)}，期望 ~52`);
-    if ((await page.locator(".wb-drawer").isVisible()) === true) fail("抽屉默认应该是收起的");
-    if ((await page.locator(".wb-sidebar").count()) !== 0) fail("还有常驻的 220px 侧栏（.wb-sidebar）");
-    await page.click(".wb-rail-expand");
-    await page.waitForSelector(".wb-drawer .wb-nav-item", { state: "visible", timeout: 5_000 });
-    const groups = await page.$$eval(".wb-drawer .wb-group-head", (items) => items.map((item) => item.textContent));
-    if (groups.length === 0) fail("抽屉里没有分组（Web Awesome 风格的菜单树）");
-    // 分组可收起
-    await page.locator(".wb-drawer .wb-group-head").first().click();
-    const collapsed = await page.$eval(".wb-drawer .wb-group", (node) => (node as HTMLElement).dataset["collapsed"]);
-    if (collapsed !== "true") fail("点分组标题没有收起该组");
-    await page.locator(".wb-drawer .wb-group-head").first().click();
-    await page.keyboard.press("Escape");
-    await page.waitForFunction(() => document.querySelector(".wb-root")?.getAttribute("data-drawer") === "closed", undefined, {
+    // ── 判据 0b：左侧菜单 = **一份**可展开的侧栏（2026-11-02 #5，用户二次裁） ──
+    // 初版是「窄 bar + 浮层抽屉」，抽屉里又是同一批页面 ⇒ 展开后 3 个入口变 6 个按钮。
+    // 现在跟聊天页 bot 侧栏同款：窄态只有图标，悬停 / 钉住后原地变宽、图标旁淡入文字。
+    const sideWidth = async (): Promise<number> =>
+        page.evaluate(() => Math.round(document.querySelector(".wb-side")!.getBoundingClientRect().width));
+    const wide0 = await sideWidth();
+    if (wide0 < 44 || wide0 > 60) fail(`左侧窄栏宽 ${String(wide0)}，期望 ~52`);
+    const navCount = await page.locator(".wb-nav-item").count();
+    const pageCount = await page.evaluate(() => document.querySelectorAll(".wb-nav-item").length);
+    if ((await page.locator(".wb-rail-btn, .wb-drawer, .wb-rail").count()) !== 0) fail("还留着旧的窄 bar / 抽屉（两份菜单）");
+    if (navCount !== pageCount) fail("菜单项数量与页面数不一致");
+    // 窄态：文字不可见（opacity 0），图标可见
+    const labelOpacity = await page.$eval(".wb-side .wb-nav-label", (node) => getComputedStyle(node).opacity);
+    if (labelOpacity !== "0") fail(`窄态菜单文字应当隐藏（opacity=${labelOpacity}）`);
+    await page.click(".wb-side-toggle");
+    await page.waitForFunction(() => document.querySelector(".wb-side")?.getAttribute("data-open") === "true", undefined, {
         timeout: 5_000,
     });
-    ok(`判据 0b：窄 bar ${String(railWidth)}px / 抽屉分组 ${JSON.stringify(groups)} / 可收起 / Esc 关闭`);
+    await page.waitForFunction(() => document.querySelector(".wb-side")!.getBoundingClientRect().width >= 200, undefined, {
+        timeout: 5_000,
+    });
+    const wide1 = await sideWidth();
+    const label2 = await page.$eval(".wb-side .wb-nav-label", (node) => getComputedStyle(node).opacity);
+    if (label2 !== "1") fail(`展开后菜单文字应当可见（opacity=${label2}）`);
+    const groups = await page.$$eval(".wb-side .wb-group-head", (items) =>
+        items.filter((item) => getComputedStyle(item).display !== "none").map((item) => item.textContent ?? ""),
+    );
+    if (groups.length === 0) fail("展开后没有分组标题");
+    // 分组可收起
+    await page.locator(".wb-side .wb-group-head").first().click();
+    const collapsed = await page.$eval(".wb-side .wb-group", (node) => (node as HTMLElement).dataset["collapsed"]);
+    if (collapsed !== "true") fail("点分组标题没有收起该组");
+    await page.locator(".wb-side .wb-group-head").first().click();
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => document.querySelector(".wb-side")?.getAttribute("data-open") !== "true", undefined, {
+        timeout: 5_000,
+    });
+    ok(`判据 0b：一份侧栏 ${String(wide0)}→${String(wide1)}px / 菜单项 ${String(navCount)} 个（= 页面数）/ 分组 ${JSON.stringify(groups)} / Esc 收起`);
 
     // ── 判据 0c：新 bot 在列表顶部；点 bot 只开对话；配置走右侧 panel（#2/#4/#6） ──
     const firstBotRow = await page.$eval(".chat-bot-list", (list) => list.firstElementChild?.className ?? "");
@@ -242,10 +259,15 @@ async function main(): Promise<void> {
     await page.locator(".chat-bot[data-active] .chat-bot-btn").first().click();
     await page.waitForTimeout(200);
     if ((await page.locator('.chat-viewset[data-show="true"]').count()) !== 0) fail("点 bot 弹出了配置 panel（#2：只该开对话）");
-    // hover 一会儿 ⇒ 右侧 panel 预览
+    // hover **不该**弹出配置 panel（用户 2026-11-02 裁：panel 只由显式点击打开）
     await page.locator('.chat-bot[data-active="false"] .chat-bot-btn').first().hover();
+    await page.waitForTimeout(700);
+    if ((await page.locator('.chat-viewset[data-show="true"]').count()) !== 0) {
+        fail("hover bot 行弹出了配置 panel（应只在点「配置」/⚙ 时弹）");
+    }
+    // hover 卡片里的「配置」⇒ 才弹
+    await page.locator(".chat-card .chat-primary").first().click();
     await page.waitForSelector('.chat-viewset[data-show="true"]', { timeout: 5_000 });
-    await page.hover(".chat-viewset");
     const mode0 = await page.$eval(".chat-viewset", (node) => (node as HTMLElement).dataset["mode"]);
     if (mode0 !== "floating") fail(`panel 缺省应是悬浮，实得 ${String(mode0)}`);
     await page.click(".chat-viewset-pin");
@@ -253,7 +275,7 @@ async function main(): Promise<void> {
     if (mode1 !== "pinned") fail("点「固定」没有切成 pinned");
     await page.click(".chat-viewset-close");
     await page.mouse.move(600, 500);
-    ok("判据 0c：新 bot 在顶部 / 点 bot 只开对话 / hover 出右侧 panel / 悬浮⇄固定可切");
+    ok("判据 0c：新 bot 在顶部 / 点 bot 只开对话 / hover 不弹 panel / 点「配置」才弹 / 悬浮⇄固定可切");
     // 鼠标挪开，收起卡片（别挡住后面的点击）
     await page.mouse.move(600, 300);
 
