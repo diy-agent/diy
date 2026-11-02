@@ -214,6 +214,33 @@ function peerOf(address: string | undefined, fallback: string, headers?: http.In
     };
 }
 
+/**
+ * 回环 IP 打开的页面重定向到 `localhost`（WebAuthn 不接受 IP 当 RP ID）。
+ *
+ * 只对「人打开的页面」生效：GET + Accept 含 `text/html`。机器接口（`/ping`）/ RPC / `/webauthn/*`
+ * 都是 JSON 或 fetch 请求，不满足条件 —— 不让重定向影响 remote 壳发现与命令行调用。
+ *
+ * @returns 重定向目标（同路径 + 查询串，只换 host）；不需要重定向 = null
+ */
+export function loopbackPageRedirect(req: http.IncomingMessage): string | null {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return null;
+    if (!(headerOf(req.headers.accept) ?? '').includes('text/html')) return null;
+    const hostHeader = req.headers.host ?? '';
+    if (hostHeader === '') return null;
+    // 用 URL 解析拿主机名 / 端口：`[::1]:8080` 这种方括号写法也吃
+    let parsed: URL;
+    try {
+        parsed = new URL(`http://${hostHeader}`);
+    } catch {
+        return null;
+    }
+    const hostname = parsed.hostname.replace(/^\[|\]$/g, '');
+    const loopbackIp = hostname === '::1' || hostname === '127.0.0.1' || hostname.startsWith('127.');
+    if (!loopbackIp) return null;
+    const port = parsed.port === '' ? '' : `:${parsed.port}`;
+    return `http://localhost${port}${req.url ?? '/'}`;
+}
+
 /** 头字段可能是 string / string[] / undefined（Node 的类型），统一取 string */
 function headerOf(value: string | string[] | undefined): string | undefined {
     if (value === undefined) return undefined;
@@ -324,6 +351,17 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
 
     const handleHttp = async (req: http.IncomingMessage, res: http.ServerResponse): Promise<void> => {
         const url = new URL(req.url ?? '/', `http://${req.headers.host ?? `${host}:${port}`}`);
+        // 回环 IP 打开的**页面**一律 302 到 `localhost`（2026-11-02 实测挡路）。
+        // 原因：WebAuthn 的 RP ID 从 Host 推，而 `127.0.0.1` / `::1` 是 IP 字面量 ——
+        // 规范不允许 IP 当 RP ID，浏览器直接报 `127.0.0.1 is an invalid domain`（passkey 创建失败）。
+        // 换到 `localhost` 后 rpID/origin 合法；同一台机器的多个实例还能共用同一个 RP ID。
+        // 只重定向**页面导航**（GET + Accept 含 text/html）：`/ping` 等机器接口与 `/webauthn/*` 不受影响。
+        const redirectTo = loopbackPageRedirect(req);
+        if (redirectTo !== null) {
+            res.writeHead(302, { location: redirectTo });
+            res.end();
+            return;
+        }
         // 部署前缀（`/diy`）：反代把 `https://host/diy/*` 原样转进来（tailscale serve 不剥前缀），
         // 这里剥掉再路由 —— 否则 `/diy/ping` 会被当成静态文件 404。前缀为空时什么也不做。
         const pathname = stripBase(url.pathname, basePath);

@@ -105,7 +105,8 @@ describe('同一份 router 走 HttpServerBinding（h2c）', () => {
         await rig.client.web.auth.login({ token: approved.token });
         expect(await rig.client.web.page.list({})).toEqual([{ id: 'chat', title: '聊天' }]);
         const snapshot = await rig.client.web.page.invoke({ pageId: 'chat', method: 'snapshot', args: {} });
-        expect(snapshot).toMatchObject({ sessions: [], activeId: null });
+        // ##505 瘦身了快照（会话列表 / activeId 已删）：现在只剩 bot / models / messages / selectedModel
+        expect(snapshot).toMatchObject({ messages: [] });
     });
 
     it('判据 4（401 的字面证据）：revoke 之后 curl 拿到 HTTP 401，且没有自动重试', async () => {

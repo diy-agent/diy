@@ -69,6 +69,33 @@ describe('apps/web 服务端', () => {
         expect(post.status).toBe(405);
     });
 
+    it('回环 IP 打开的页面 302 到 localhost（WebAuthn 不接受 IP 当 RP ID）；机器接口不重定向', async () => {
+        const { handle } = await start();
+        const port = new URL(handle.url).port;
+
+        // 人用浏览器打开：Accept 含 text/html ⇒ 换 host，路径与查询串原样带过去
+        const page = await fetch(`${handle.url}/?x=1`, {
+            headers: { accept: 'text/html,application/xhtml+xml' },
+            redirect: 'manual',
+        });
+        expect(page.status).toBe(302);
+        expect(page.headers.get('location')).toBe(`http://localhost:${port}/?x=1`);
+
+        // 机器接口（`/ping` 是 JSON 抓取，Accept 不带 text/html）⇒ 不重定向
+        const ping = await fetch(`${handle.url}/ping`, { redirect: 'manual' });
+        expect(ping.status).toBe(200);
+        const pingHtml = await fetch(`${handle.url}/ping`, { headers: { accept: 'text/html' }, redirect: 'manual' });
+        expect(pingHtml.status).toBe(302);
+        expect(pingHtml.headers.get('location')).toBe(`http://localhost:${port}/ping`);
+
+        // 本来就是 localhost ⇒ 不动（防重定向循环）
+        const already = await fetch(`http://localhost:${port}/`, {
+            headers: { accept: 'text/html' },
+            redirect: 'manual',
+        });
+        expect(already.status).toBe(200);
+    });
+
     it('静态托管：/ → index.html；越界路径 404', async () => {
         const { handle } = await start();
         const index = await fetch(`${handle.url}/`);
@@ -119,7 +146,8 @@ describe('apps/web 服务端', () => {
                 method: 'snapshot',
                 args: {},
             });
-            expect(snapshot).toMatchObject({ sessions: [], activeId: null });
+            // ##505 瘦身了快照（会话列表 / activeId 已删）：只剩 bot / models / messages / selectedModel
+        expect(snapshot).toMatchObject({ messages: [] });
         } finally {
             main.close();
         }
