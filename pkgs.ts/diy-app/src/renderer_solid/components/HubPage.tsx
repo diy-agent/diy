@@ -13,7 +13,12 @@ import QRCode from "qrcode";
 import { diyService } from "../lib/rpc";
 
 function msgOf(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
+  // AbortError 是正常的「这次等待被取消」（长轮询超时 / 重复提交时取消前一个），
+  // 不该显示成"We're broken"的样子 —— 用户看到 "This operation was aborted" 只会困惑。
+  const raw = e instanceof Error ? e.message : String(e);
+  if (e instanceof DOMException && e.name === "AbortError") return "等待已取消（可重新提交）";
+  if (/operation was aborted|AbortError/i.test(raw)) return "等待已取消（可重新提交）";
+  return raw;
 }
 
 interface InviteView {
@@ -231,6 +236,8 @@ export function HubPage(props: {
     }
     setJoinState(r.data.joinStatus === "approved" ? "approved" : "idle");
     await refreshLink();
+    // 已加入：关掉弹层，人已经能在外面的「我」一栏看到角色变化
+    if (r.data.joinStatus === "approved") props.onClose?.();
   }
 
   const remaining = createMemo(() => {
