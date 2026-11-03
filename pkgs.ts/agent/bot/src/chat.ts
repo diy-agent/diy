@@ -77,6 +77,27 @@ export const FIRST_BOT_DRAFT = {
     instructions: "你是「大王助手」，在 diy 的聊天窗口里陪大王干活。回答要短、要具体，能查证的不靠猜。",
 } as const;
 
+/**
+ * 写进 system 的「工作目录说明」（##514 第 5 步，用户 2026-11-04 裁：**不设权限限制**）。
+ *
+ * 只说三件事：cwd 在哪、相对路径怎么解析、临时产物别丢在别人的仓里。
+ * 刻意不写「你只能访问这里」—— 工具仍可读写任何路径，那才是它能干活的前提。
+ */
+export function workspaceOf(home: string, botId: string): string {
+    return `${home}/bots/${botId}/workspace`;
+}
+
+function workspaceNote(home: string, botId: string): string {
+    if (home === "") return "";
+    const dir = workspaceOf(home, botId);
+    return [
+        `你的工作目录是 ${dir}。`,
+        "相对路径按它解析，shell 命令默认在这里执行；目录不存在时先建。",
+        "这不是权限边界：你仍可以读写任何路径。但新建文件、试验脚本、下载物默认放工作目录里，",
+        "不要在主仓或用户的项目目录里留临时产物。",
+    ].join("");
+}
+
 export interface BotChatOptions {
     /** 数据根（`$DIY_HOME`） */
     readonly home: string;
@@ -97,10 +118,14 @@ export interface BotChatOptions {
     /** 建 LLM 端口（测试注入假实现；缺省 = 真 provider，key 从 readAccountValue 取） */
     readonly llmFor?: (modelKey: string) => LlmPort;
     /**
-     * 工具集（##514 第 3 步；**缺省 = 不装工具**，纯对话）。
-     * 装配器传 `buildTools({ cwd, limits, onAudit })`（`@diy-agent/tools`）；bot 只负责执行。
+     * 工具集**工厂**（##514 第 5 步；缺省 = 不装工具，纯对话）。
+     *
+     * 为什么是工厂而不是固定对象：一个宿主可能管多个 bot，每个 bot 有**自己的 cwd**
+     * （`$DIY_HOME/bots/<id>/workspace/`）。传固定对象等于所有 bot 共用一个目录。
+     *
+     * 装配器示例：`toolsFor: (botId) => buildTools({ cwd: workspaceOf(botId) })`
      */
-    readonly tools?: BotToolSet;
+    readonly toolsFor?: (botId: string) => BotToolSet | undefined;
     /**
      * 工具循环的**工具步上限**（缺省 20）。计数单位 = 「执行了工具的那几步」，
      * 不是「LLM 调用次数」（后者 = 步数 + 1：最后一步不再调工具）。
@@ -252,6 +277,7 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
         const owner = ownerId === null ? null : await botStore.load(ownerId);
         const modelKey = owner !== null && owner.model.trim() !== "" ? owner.model : meta.model;
         const instructions = owner?.instructions.trim() ?? "";
+        const systemText = [instructions, workspaceNote(options.home, id)].filter((x) => x !== "").join("\n\n");
         // ##480：装配器是决定者 —— 传实例而不是策略名：将来换远程 store 只改这一行，
         // 不存在 switch 分派。
         const store = await openSessionStore(id, dir);
@@ -263,8 +289,9 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
             store,
             initialMessages,
             ...(modelId === "" ? {} : { model: modelId }),
-            // 行为指令 = system 话术；只在新建会话时写一次（历史里已经有一条，别重复追加）
-            ...(initialMessages.length === 0 && instructions !== "" ? { system: instructions } : {}),
+            // 行为指令 = system 话术；只在新建会话时写一次（历史里已经有一条，别重复追加）。
+            // 工作目录说明一并写进去：模型不知道 cwd 就会把临时文件丢得到处都是。
+            ...(initialMessages.length === 0 && systemText !== "" ? { system: systemText } : {}),
         });
         const nextMeta: SessionMeta = meta.model === modelKey ? meta : { ...meta, model: modelKey };
         if (nextMeta !== meta) await writeMeta(nextMeta);
@@ -309,7 +336,15 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
         return active;
     };
 
-    const snapshot = async (): Promise<BotChatSnapshot> => {
+    /**
+     * 快照本体（**必须在队列里跑**：见 return 里的 snapshot 包装）。
+     *
+     * 为什么读也要排队（docs/plans/2026-11-02-concurrency-actor.md）：
+     * 写操作是「save bot → focus」这类多步，读要是插在中间就会看到**半成品**——
+     * 实测：新建 bot 后 UI 列表里已有它，但当前 bot 还是上一个（`createBot` 的 save 与 focus 之间
+     * 夹进了一次 snapshot），于是 UI 永远显示旧会话。读进同一个队列 ⇒ 只能看到写完的状态。
+     */
+    const snapshotNow = async (): Promise<BotChatSnapshot> => {
         const configs = await botStore.list();
         const bots = await Promise.all(configs.map(botView));
         const selectedModel = keyOf(catalog()[0] ?? null) || null;
@@ -362,7 +397,8 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
     };
 
     return {
-        snapshot,
+        // 读也排队：一次只跑一个，读到的永远是某个操作的**完成态**（不是半路）
+        snapshot: () => act(snapshotNow),
 
         /** 首启建 bot（##497：必须有 model；已存在则报错） */
         createFirstBot(input: FirstBotInput): Promise<BotChatSnapshot> {
@@ -374,7 +410,7 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                     model: checkModel(input.model),
                 });
                 focus(config.id);
-                return snapshot();
+                return snapshotNow();
             });
         },
 
@@ -402,7 +438,7 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                 };
                 await botStore.save(config);
                 focus(config.id);
-                return snapshot();
+                return snapshotNow();
             });
         },
 
@@ -438,7 +474,7 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                 if (model !== current.model || instructions !== current.instructions) {
                     if (current.primarySessionId !== undefined) open.delete(current.primarySessionId);
                 }
-                return snapshot();
+                return snapshotNow();
             });
         },
 
@@ -455,7 +491,7 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                 }
                 await botStore.remove(id);
                 if (activeBotId === id) activeBotId = null;
-                return snapshot();
+                return snapshotNow();
             });
         },
 
@@ -465,7 +501,7 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                 const config = await botStore.load(id);
                 if (config === null) throw new Error(`没有 bot ${id}`);
                 focus(id);
-                return snapshot();
+                return snapshotNow();
             });
         },
 
@@ -483,7 +519,7 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                     await runToolLoop({
                         session,
                         text,
-                        tools: options.tools,
+                        tools: options.toolsFor?.(ref.id),
                         maxTools: options.maxToolSteps ?? DEFAULT_MAX_TOOL_STEPS,
                         onDelta,
                     });
@@ -509,7 +545,7 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                     };
                     await writeMeta(next);
                     open.set(ref.id, { store: open.get(ref.id)!.store, session, meta: next });
-                    return { ...(await snapshot()), messages };
+                    return { ...(await snapshotNow()), messages };
                 });
             })();
         },

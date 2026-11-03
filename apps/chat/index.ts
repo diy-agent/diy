@@ -5,7 +5,9 @@ import * as botConfigPageMain from "@diy-agent/bot-config-page";
 import * as chatPageMain from "@diy-agent/chat-page/main";
 import * as modelConfigPageMain from "@diy-agent/model-config-page";
 import type { PluginEntry } from "@diy-agent/workbench";
-import { createBotChat, createFileBotStore, type BotStore } from "@diy-agent/bot";
+import { asToolSet, createBotChat, createFileBotStore, workspaceOf, type BotStore } from "@diy-agent/bot";
+import { buildTools } from "@diy-agent/tools";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { TITLE } from "./title.js";
 
@@ -52,7 +54,22 @@ export const ASSEMBLY: Assembly = createAssembly();
 function chatConfig(home: string | undefined, sessions: unknown, botStore: BotStore | undefined): unknown {
     if (sessions !== undefined) return { sessions };
     if (home === undefined || home === "") return {};
-    return { sessions: createBotChat({ home, botStore }) };
+    return {
+        sessions: createBotChat({
+            home,
+            botStore,
+            // ##514 第 5 步：每个 bot 一个工作目录（只是 **cwd**，不限制权限 ——
+            // 工具仍可访问任何路径，只是相对路径按这里解析、bash 在这里跑）。
+            // `buildTools` 返回 ai-sdk 的 `ToolSet`（带 description / inputSchema 等），
+            // bot 只取其中的 `execute`（见 @diy-agent/bot 的 BotTool 结构化类型）。
+            // 形状够用，但 TS 的 execute 签名不同 —— 断言而不是逐字段重包。
+            toolsFor: (botId) => {
+                const cwd = workspaceOf(home, botId);
+                mkdirSync(cwd, { recursive: true });
+                return asToolSet(buildTools({ cwd }));
+            },
+        }),
+    };
 }
 
 /** Bot 配置页：注入了 store 就共用（内存入口），否则按数据根建文件实现（落盘入口）。 */

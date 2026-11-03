@@ -82,6 +82,8 @@ export const chatPageView: PageView = {
         let hideTimer: ReturnType<typeof setTimeout> | null = null;
         /** `/demo-tool` 的收尾定时器（running → ok 用） */
         let demoTimer: ReturnType<typeof setTimeout> | null = null;
+        /** 快照请求的单调序号：只有最新一次的结果才允许落地 */
+        let snapshotSeq = 0;
         // 悬停**不再**拉出配置 panel（用户 2026-11-02 裁）：hover 只出概览卡片，
         // panel 只由显式点击打开 —— 点 bot 行只切对话，点「配置」/⚙ 才弹。
 
@@ -459,7 +461,13 @@ export const chatPageView: PageView = {
             };
 
         /** 重新取整份快照（操作后统一走这里） */
-        const refresh = (): Promise<void> => ctx.invoke<BotChatSnapshot>("snapshot").then(apply);
+        /** 重新取整份快照；单调化（只有最后发起的请求结果落地，旧的不覆盖新的） */
+        const refresh = async (): Promise<void> => {
+            const seq = ++snapshotSeq;
+            const next = await ctx.invoke<BotChatSnapshot>("snapshot");
+            if (seq !== snapshotSeq) return;
+            apply(next);
+        };
 
         const apply = (next: BotChatSnapshot): void => {
             snapshot = next;

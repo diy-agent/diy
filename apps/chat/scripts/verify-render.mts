@@ -91,13 +91,28 @@ const rows = (page: Page): Promise<number> => page.locator(".chat-row").count();
 
 /** 发一条消息并等回复落地（行数 +2）。 */
 async function send(page: Page, text: string): Promise<void> {
-    const before = await rows(page);
+    // 按「助手行数 +1」等，不按总行数：/demo-tool 的演示行会在下一次快照时被抹掉，
+    // 总行数可能先涨后落（只看总数会假死到超时）
+    const before = await page.locator('.chat-row[data-role="assistant"]').count();
     const input = page.locator(".chat-input");
     await input.fill(text);
     await input.press("Enter");
-    await page.waitForFunction((n) => document.querySelectorAll(".chat-row").length >= n, before + 2, {
-        timeout: 120_000,
-    });
+    await page
+        .waitForFunction((n) => document.querySelectorAll('.chat-row[data-role="assistant"]').length > n, before, {
+            timeout: 120_000,
+        })
+        .catch(async () => {
+            // 超时先看清楚「卡在哪」再判失败（比单纯 Tiemout 有用得多）
+            const state = await page.evaluate(() => ({
+                rows: document.querySelectorAll(".chat-row").length,
+                asst: document.querySelectorAll('.chat-row[data-role="assistant"]').length,
+                bot: document.querySelector('.chat-bot[data-active="true"] .chat-bot-name')?.textContent,
+                inputDisabled: (document.querySelector(".chat-input") as HTMLInputElement | null)?.disabled,
+                sendDisabled: (document.querySelector(".chat-send") as HTMLButtonElement | null)?.disabled,
+                last: document.querySelector(".chat-row:last-child .chat-text")?.textContent?.slice(0, 80),
+            }));
+            fail(`发送后等不到回复（before=${String(before)}）：${JSON.stringify(state)}`);
+        });
 }
 
 /**
@@ -105,13 +120,13 @@ async function send(page: Page, text: string): Promise<void> {
  * 这里按引导建第一个 bot（选模型 + 创建），之后才谈得上发消息。
  */
 async function ensureBot(page: Page): Promise<void> {
-    if ((await page.locator(".chat-bot[data-active]").count()) > 0) return;
+    if ((await page.locator('.chat-bot[data-active="true"]').count()) > 0) return;
     const panel = page.locator('.chat-panel[data-show="true"]');
     await panel.waitFor({ timeout: 30_000 });
     const model = await panel.locator("select").first().inputValue();
     if (model === "") fail("首启引导里没有可选模型（model.yaml 空？）");
     await panel.locator("button.chat-primary").click();
-    await page.waitForFunction(() => document.querySelectorAll(".chat-bot[data-active]").length > 0, undefined, {
+    await page.waitForFunction(() => document.querySelectorAll('.chat-bot[data-active="true"]').length > 0, undefined, {
         timeout: 30_000,
     });
 }
@@ -125,14 +140,20 @@ async function createBot(page: Page, name: string, model?: string): Promise<void
     await panel.locator("input").first().fill(name);
     if (model !== undefined) await panel.locator("select").first().selectOption(model);
     await panel.locator("button.chat-primary").click();
-    await page.waitForFunction(
-        (n) => {
-            const names = Array.from(document.querySelectorAll(".chat-bot-name")).map((el) => el.textContent);
-            return names.includes(n);
-        },
-        name,
-        { timeout: 30_000 },
-    );
+    // 等它**成为当前 bot**（建好即选中）—— 只等「名字出现在列表里」会跟刷新抢跑
+    await page
+        .waitForFunction((n) => document.querySelector('.chat-bot[data-active="true"] .chat-bot-name')?.textContent === n, name, {
+            timeout: 30_000,
+        })
+        .catch(async () => {
+            const state = await page.evaluate(() => ({
+                active: document.querySelector('.chat-bot[data-active="true"] .chat-bot-name')?.textContent,
+                bots: Array.from(document.querySelectorAll(".chat-bot-name")).map((el) => el.textContent),
+                error: document.querySelector(".chat-panel-error, .chat-viewset .chat-panel-error")?.textContent,
+                panelShown: document.querySelector(".chat-viewset")?.getAttribute("data-show"),
+            }));
+            fail(`新建 bot 后没有切过去：${JSON.stringify(state)}`);
+        });
 }
 
 /** 等「新来一条消息」时给消息列表挂 MutationObserver 数新增元素（含自身）。 */
@@ -197,10 +218,17 @@ async function main(): Promise<void> {
     if (listTop !== 0) fail(`消息区没有顶天：相对 .chat-main 顶部 ${listTop}px（有横幅？）`);
     const botsWidth = (): Promise<number> =>
         page.evaluate(() => Math.round(document.querySelector(".chat-bots")!.getBoundingClientRect().width));
-    // 宽度含 1px 边框，给 ±6 的容差（硬要求 2：平时窄条只露头像 / hover 展开）
+    // 宽度含 1px 边框，给 ±6 的容差（硬要求 2：平时窄条只露头像 / hover 展开）。
+    // 先把鼠标挪开并等过渡跑完 —— 上一步点过 bot 行，指针可能还压在上面（76px 是动画中间值）
+    await page.mouse.move(700, 400);
+    await page
+        .waitForFunction(() => document.querySelector(".chat-bots")!.getBoundingClientRect().width <= 70, undefined, {
+            timeout: 5_000,
+        })
+        .catch(async () => fail(`bot 条没有收回到窄态（宽 ${String(await botsWidth())}）`));
     const narrow = await botsWidth();
     if (narrow < 64 || narrow > 70) fail(`bot 条宽 ${String(narrow)}，期望 ≈64`);
-    await page.hover(".chat-bot[data-active] .chat-bot-btn");
+    await page.hover('.chat-bot[data-active="true"] .chat-bot-btn');
     await page
         .waitForFunction(() => document.querySelector(".chat-bots")!.getBoundingClientRect().width >= 190, undefined, {
             timeout: 5_000,
@@ -266,7 +294,7 @@ async function main(): Promise<void> {
     // ── 判据 0c：新 bot 在列表顶部；点 bot 只开对话；配置走右侧 panel（#2/#4/#6） ──
     const firstBotRow = await page.$eval(".chat-bot-list", (list) => list.firstElementChild?.className ?? "");
     if (!firstBotRow.includes("chat-bot-new")) fail(`「新 bot」不在列表顶部：第一项是 ${firstBotRow}`);
-    await page.locator(".chat-bot[data-active] .chat-bot-btn").first().click();
+    await page.locator('.chat-bot[data-active="true"] .chat-bot-btn').first().click();
     await page.waitForTimeout(200);
     if ((await page.locator('.chat-viewset[data-show="true"]').count()) !== 0) fail("点 bot 弹出了配置 panel（#2：只该开对话）");
     // hover **不该**弹出配置 panel（用户 2026-11-02 裁：panel 只由显式点击打开）

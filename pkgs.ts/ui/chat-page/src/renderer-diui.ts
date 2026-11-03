@@ -95,6 +95,8 @@ export const chatPageView: PageView = {
         let cardEl: HTMLElement | null = null;
         /** `/demo-tool` 的收尾定时器（running → ok 用） */
         let demoTimer: ReturnType<typeof setTimeout> | null = null;
+        /** 快照请求的单调序号：只有最新一次的结果才允许落地 */
+        let snapshotSeq = 0;
         let hideTimer: ReturnType<typeof setTimeout> | null = null;
 
         // ── 面板：配置 / 新建 bot / 首启引导 ──────────────────
@@ -465,7 +467,7 @@ export const chatPageView: PageView = {
         wireCard();
         inputEl?.focus();
         // `data-ready`：首份快照落地后置 1（CDP 判据等「页面就绪」用；不影响渲染）
-        void load(ctx).finally(() => {
+        void load().finally(() => {
             root.dataset['ready'] = '1';
         });
         return () => {
@@ -690,12 +692,18 @@ export const chatPageView: PageView = {
          * UI 不增量改 `store.bots` / `store.messages` —— 那是显示状态，不是真源。
          */
         async function refresh(): Promise<void> {
-            applySnapshot(await ctx.invoke<BotChatSnapshot>("snapshot"));
+            // 单调化：只认「最后发起的那个」快照。
+            // 并发刷新时先发出的可能后到（旧状态盖新状态），丢弃它 —— 否则切 bot / 建 bot
+            // 之后 UI 会显回上一个 bot 的消息线（真状态在核心层，UI 只是显示）。
+            const seq = ++snapshotSeq;
+            const next = await ctx.invoke<BotChatSnapshot>("snapshot");
+            if (seq !== snapshotSeq) return;
+            applySnapshot(next);
         }
 
-        async function load(context: PageContext): Promise<void> {
+        async function load(): Promise<void> {
             try {
-                applySnapshot(await context.invoke<BotChatSnapshot>("snapshot"));
+                await refresh();
             } catch {
                 // 没有多 bot 能力（apps/minimal 的单会话）：消息线从空开始
                 store.multi = false;

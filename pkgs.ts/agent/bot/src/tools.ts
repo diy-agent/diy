@@ -23,6 +23,18 @@ export interface BotTool {
 /** 工具集（按模型给的名字查） */
 export type BotToolSet = Readonly<Record<string, BotTool>>;
 
+/**
+ * 把任意工具集的形状收成 `BotToolSet`。
+ *
+ * 为什么要它：工具**定义**来自外部包（`@diy-agent/tools` 返回 ai-sdk 的 `ToolSet`，
+ * 带 description / inputSchema / execute，execute 签名也不同）。bot 只用到 `execute` 一件事，
+ * 但这个形状差异在 TS 上是硬错误 —— 每个装配点各写一次 `as unknown as` 不如收成一处，
+ * 且这里能写明「只取 execute」这个契约。
+ */
+export function asToolSet(input: unknown): BotToolSet {
+    return (input ?? {}) as BotToolSet;
+}
+
 /** 模型要求的一次调用（从 `SessionDelta` 的 tool-call 提取） */
 export interface PendingToolCall {
     readonly id: string;

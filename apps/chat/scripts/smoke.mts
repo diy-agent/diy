@@ -75,12 +75,12 @@ async function stop(): Promise<void> {
 
 /** 首启引导：bots 为空时面板盖在消息区上（判据 8），按引导建第一个 bot */
 async function ensureBot(page: Page, model: string): Promise<void> {
-    if ((await page.$$eval(".chat-bot[data-active]", (items) => items.length)) > 0) return;
+    if ((await page.$$eval('.chat-bot[data-active="true"]', (items) => items.length)) > 0) return;
     const panel = ".chat-panel[data-show=true]";
     await page.waitForSelector(panel, { timeout: 30_000 });
     await page.selectOption(`${panel} select`, model);
     await page.click(`${panel} button.chat-primary`);
-    await page.waitForFunction(() => document.querySelectorAll(".chat-bot[data-active]").length > 0, null, {
+    await page.waitForFunction(() => document.querySelectorAll('.chat-bot[data-active="true"]').length > 0, null, {
         timeout: 30_000,
     });
     console.log("✓ 首启引导：建了第一个 bot");

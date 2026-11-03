@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { buildTools } from "@diy-agent/tools";
 import { openMemorySessionStore, type ChatMessage, type LlmPort, type SessionDelta } from "@diy-agent/session";
-import { createBotChat, DEFAULT_MAX_TOOL_STEPS, type BotChatHost, type WireMessage } from "../src/index.js";
+import { asToolSet, createBotChat, DEFAULT_MAX_TOOL_STEPS, type BotChatHost, type WireMessage } from "../src/index.js";
 
 const dir = mkdtempSync(join(tmpdir(), "bot-tools-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -74,7 +74,7 @@ function scriptedLlm(path: string, seen: { calls: number; toolMessages: ChatMess
 const seen = { calls: 0, toolMessages: [] as ChatMessage[] };
 
 function host(home: string, tools = buildTools({ cwd: dir })): BotChatHost {
-    return createBotChat({ home, llmFor: () => scriptedLlm("a.txt", seen), tools });
+    return createBotChat({ home, llmFor: () => scriptedLlm("a.txt", seen), toolsFor: () => asToolSet(tools) });
 }
 
 describe("bot 工具循环（##514 第 3 步）", () => {
@@ -114,7 +114,7 @@ describe("bot 工具循环（##514 第 3 步）", () => {
                 yield { type: "done", stopReason: "stop" };
             },
         };
-        const chat = createBotChat({ home, llmFor: () => llm, tools: buildTools({ cwd: dir }) });
+        const chat = createBotChat({ home, llmFor: () => llm, toolsFor: () => asToolSet(buildTools({ cwd: dir })) });
         await chat.createFirstBot({ model: "test/echo-1" });
         const snapshot = await chat.send("用不存在的工具", () => {});
         expect(calls.count).toBe(2);
@@ -132,7 +132,7 @@ describe("bot 工具循环（##514 第 3 步）", () => {
                 yield { type: "done", stopReason: "tool-calls" };
             },
         };
-        const chat = createBotChat({ home, llmFor: () => llm, tools: buildTools({ cwd: dir }), maxToolSteps: 2 });
+        const chat = createBotChat({ home, llmFor: () => llm, toolsFor: () => asToolSet(buildTools({ cwd: dir })), maxToolSteps: 2 });
         await chat.createFirstBot({ model: "test/echo-1" });
         const snapshot = await chat.send("一直调工具", () => {});
 

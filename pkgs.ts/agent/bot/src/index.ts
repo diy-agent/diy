@@ -31,12 +31,12 @@ export {
     createBotChat,
     createSerial,
     nextBotId,
-    splitModelKey,
+    splitModelKey, workspaceOf,
 } from "./chat.js";
 export type { BotChatOptions, Serial } from "./chat.js";
 
 // ##514 第 3 步：工具**执行**（定义在 @diy-agent/tools，bot 只按名字执行 + 把结果交回 Session）
-export { TOOL_RESULT_MAX_CHARS, runToolCalls } from "./tools.js";
+export { TOOL_RESULT_MAX_CHARS, asToolSet, runToolCalls } from "./tools.js";
 export type { BotTool, BotToolOptions, BotToolSet, PendingToolCall } from "./tools.js";
 
 // 线上形状（纯数据 + 纯映射）也可从子路径 `@diy-agent/bot/protocol` 单独取
