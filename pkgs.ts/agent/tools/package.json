@@ -23,6 +23,7 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
+    "@diy-agent/context": "^0.1.0",
     "ai": "^7.0.113",
     "zod": "^4.4.3"
   },

@@ -48,8 +48,8 @@ lineage 的锚点判据是**身份**不是年龄：
 | `win32.ts` | Windows：wmic（~0.5s）优先 → CIM 回退；`taskkill /T /F`；Git Bash / pwsh 探测 |
 | `index.ts` | **唯一按平台选型**的地方；`DIY_OS_STRATEGY` 只作 CI/排障覆盖（非法值 warn + 回落） |
 | `duration.ts` / `tree.ts` | 两平台共用的纯工具（时长格式、进程树聚合） |
-| `shell.ts` | shell 能力缓存 + `buildInvocation()`（bash / pwsh 的命令拼装，R8） |
-| `shell-hint.ts` | 两种 shell 都没有时的事实句 |
+| `shell.ts` | shell 能力**探测缓存**（`shellSpecs()` / `preferredShell()`）；命令拼装与工具名已搬 `@diy-agent/tools`（##515），这里只重导出 |
+| `shell-hint.ts` | 两种 shell 都没有时的事实句（实现同样在 `@diy-agent/tools`） |
 
 ## 加一个 OS 能力的流程
 

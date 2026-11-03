@@ -12,19 +12,14 @@
 import type { OwnedProc, GroupOwner } from "../../shared/proc-scan";
 import type { ConnectionInfo } from "../../shared/process-health";
 
-/** 一次 shell 能力探测的结果（bash / pwsh 是**两种能力**，语法与退出码语义都不同）。 */
-export interface ShellSpec {
-    /** 能力种类：决定工具名（`bash` / `pwsh`）与命令拼装方式 */
-    kind: "bash" | "pwsh";
-    /** 可执行文件路径 */
-    file: string;
-    /** 给人看的名字（错误文案里用） */
-    label: string;
-    /** 本平台确实没找到这个能力 */
-    missing: boolean;
-    /** 找过哪些位置（`missing` 时写进错误文案） */
-    tried: string[];
-}
+/**
+ * 一次 shell 能力探测的结果（bash / pwsh 是**两种能力**，语法与退出码语义都不同）。
+ *
+ * 形状的真源在 `@diy-agent/tools`（##515 搬包：工具层要按它选工具名与拼命令）——
+ * 这里只重导出，别在本文件再写一份（两份结构一漂，探测与执行就对不上）。
+ */
+import type { ShellSpec } from "@diy-agent/tools";
+export type { ShellSpec };
 
 /** 进程表的一行（策略层归一化后的形状；列名不带任何 ps 痕迹）。 */
 export interface ProcessRow {

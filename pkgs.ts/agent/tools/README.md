@@ -1,10 +1,22 @@
 # @diy-agent/tools
 
 diy **工具层内核**：`read` / `write` / `edit` 三个工具的装配，外加它们依赖的文件原语
-（原子写 / 行窗口读取 / 局部替换 / unified diff）。
+（原子写 / 行窗口读取 / 局部替换 / unified diff）；以及 `bash` / `pwsh` 的**执行器与工具定义**
+（##515：`makeShellTool` + `runBash` + 结果头 + 命令拼装）。
 
 宿主无关：只认 `cwd`、可选预算、可选审计回调。任务系统（taskUri / 会话目录 / 审计落盘位置）、
-进程与后台作业（`bash` / `job`）、OS 策略选型（shell 探测）都不在这里 —— 那些由宿主注入或自己装配。
+后台作业账本（`job` / `background: true`）、OS 策略选型（shell 探测 / 「杀整组」的实现）都不在这里
+—— 那些由宿主注入（`ShellToolHost` / `ShellRuntime`）或自己装配。
+
+```ts
+import { makeShellTool, runBash } from "@diy-agent/tools";
+
+// 只要执行器（bot / CLI）
+const run = await runBash("ls -la", cwd, { bashTimeoutMs: 0 });
+
+// 要一个给模型的工具（宿主切片全可选）
+const bash = makeShellTool(shellSpec, { cwd, limits: { bashTimeoutMs: 0 } });
+```
 
 ```ts
 import { buildTools } from "@diy-agent/tools";
