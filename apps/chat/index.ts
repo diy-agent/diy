@@ -6,10 +6,12 @@ import * as chatPageMain from "@diy-agent/chat-page/main";
 import * as modelConfigPageMain from "@diy-agent/model-config-page";
 import type { PluginEntry } from "@diy-agent/workbench";
 import { asToolSet, createBotChat, createFileBotStore, workspaceOf, type BotStore } from "@diy-agent/bot";
-import { buildTools } from "@diy-agent/tools";
+import { buildTools, detectShells, makeShellTool, shellToolName } from "@diy-agent/tools";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { TITLE } from "./title.js";
+
+const SHELLS = detectShells(); // 本机 shell 能力（探测一次；shell 路径不会变）
 
 export interface Assembly {
     readonly title: string;
@@ -55,21 +57,21 @@ function chatConfig(home: string | undefined, sessions: unknown, botStore: BotSt
     if (sessions !== undefined) return { sessions };
     if (home === undefined || home === "") return {};
     return {
-        sessions: createBotChat({
-            home,
-            botStore,
-            // ##514 第 5 步：每个 bot 一个工作目录（只是 **cwd**，不限制权限 ——
-            // 工具仍可访问任何路径，只是相对路径按这里解析、bash 在这里跑）。
-            // `buildTools` 返回 ai-sdk 的 `ToolSet`（带 description / inputSchema 等），
-            // bot 只取其中的 `execute`（见 @diy-agent/bot 的 BotTool 结构化类型）。
-            // 形状够用，但 TS 的 execute 签名不同 —— 断言而不是逐字段重包。
-            toolsFor: (botId) => {
-                const cwd = workspaceOf(home, botId);
-                mkdirSync(cwd, { recursive: true });
-                return asToolSet(buildTools({ cwd }));
-            },
-        }),
+        sessions: createBotChat({ home, botStore, toolsFor: (botId) => botToolsFor(home, botId).tools }),
     };
+}
+
+/**
+ * 给一个 bot 造工具集（##514 第 5 步 / ##515 第 2 步）：cwd = bot 自己的工作目录（只影响相对路径，
+ * **不限制权限**）；shell 工具（bash / pwsh）与 diy-app **同一份内核**，本层只注入 cwd ——
+ * 不给 `background`（job 账本归 diy-app，第 3 步再评估）也不给审计（bot 没有 `agent-bash.jsonl`）。
+ * `buildTools` 返回 ai-sdk 的 `ToolSet`；bot 只取 `execute`（结构化类型）⇒ 断言而不逐字段重包。
+ */
+export function botToolsFor(home: string, botId: string): { cwd: string; tools: ReturnType<typeof asToolSet> } {
+    const cwd = workspaceOf(home, botId);
+    mkdirSync(cwd, { recursive: true });
+    const shell = SHELLS.map((spec) => [shellToolName(spec), makeShellTool(spec, { cwd, limits: { bashTimeoutMs: 0 } })]);
+    return { cwd, tools: asToolSet(buildTools({ cwd, extraTools: Object.fromEntries(shell) })) };
 }
 
 /** Bot 配置页：注入了 store 就共用（内存入口），否则按数据根建文件实现（落盘入口）。 */

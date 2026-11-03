@@ -14,7 +14,6 @@
 
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { win32 as winPath } from "node:path";
 import { formatEtime } from "./duration";
 import { aggregateTree } from "./tree";
 import { selectOwnedProcs } from "../../shared/proc-scan";
@@ -255,81 +254,15 @@ export function parseCimRows(stdout: string, now: number = Date.now()): ProcessR
     return out;
 }
 
-/** Windows 上 bash 的候选顺序（Git for Windows → 用户级安装 → scoop → PATH）。 */
-export function shellCandidates(env: NodeJS.ProcessEnv): string[] {
-    const out: string[] = [];
-    const add = (p: string | undefined): void => {
-        if (p && p.trim()) out.push(p);
-    };
-    add(env["DIY_SHELL"]);
-    const gitBin = (...root: Array<string | undefined>): string | undefined => {
-        const base = root.filter((x): x is string => Boolean(x)).join("\\");
-        return base ? winPath.join(base, "Git", "bin", "bash.exe") : undefined;
-    };
-    add(gitBin(env["ProgramFiles"]));
-    add(gitBin(env["ProgramW6432"]));
-    add(gitBin(env["ProgramFiles(x86)"]));
-    add(env["LOCALAPPDATA"] ? winPath.join(env["LOCALAPPDATA"], "Programs", "Git", "bin", "bash.exe") : undefined);
-    add(
-        env["USERPROFILE"]
-            ? winPath.join(env["USERPROFILE"], "scoop", "apps", "git", "current", "bin", "bash.exe")
-            : undefined,
-    );
-    for (const dir of (env["PATH"] ?? env["Path"] ?? "").split(";")) {
-        const d = dir.trim().replace(/^"|"$/g, "");
-        // System32 里的 bash.exe 是 WSL 启动桩，语义不同，不自动用
-        if (!d || /[\\/]system32[\\/]?$/i.test(d) || /[\\/]syswow64[\\/]?$/i.test(d)) continue;
-        add(winPath.join(d, "bash.exe"));
-    }
-    return [...new Set(out)];
-}
-
-/** Windows 上 pwsh 的候选（优先 PowerShell 7，最后才是 5.1）。 */
-export function pwshCandidates(env: NodeJS.ProcessEnv): string[] {
-    const out: string[] = [];
-    const add = (p: string | undefined): void => {
-        if (p && p.trim()) out.push(p);
-    };
-    for (const dir of (env["PATH"] ?? env["Path"] ?? "").split(";")) {
-        const d = dir.trim().replace(/^"|"$/g, "");
-        if (!d) continue;
-        add(winPath.join(d, "pwsh.exe"));
-    }
-    add(env["ProgramFiles"] ? winPath.join(env["ProgramFiles"], "PowerShell", "7", "pwsh.exe") : undefined);
-    add(env["SystemRoot"] ? winPath.join(env["SystemRoot"], "System32", "WindowsPowerShell", "v1.0", "powershell.exe") : undefined);
-    for (const dir of (env["PATH"] ?? env["Path"] ?? "").split(";")) {
-        const d = dir.trim().replace(/^"|"$/g, "");
-        if (!d) continue;
-        add(winPath.join(d, "powershell.exe"));
-    }
-    return [...new Set(out)];
-}
-
-/** 按可执行文件名判定能力种类（bash/sh vs pwsh/powershell）。 */
-function shellKindOf(file: string): "bash" | "pwsh" {
-    return /(?:^|[\\/])(?:bash|sh)(?:\.exe)?$/i.test(file) ? "bash" : "pwsh";
-}
-
 /**
- * Windows 的 shell 能力探测（R6/R7）：`DIY_SHELL` → Git Bash 已知位置 → `pwsh.exe` → `powershell.exe`。
+ * Windows 的 shell 能力探测 — **实现已搬到 `@diy-agent/tools`**（##515 第 2 步：bot / CLI 这类
+ * 没有 os 策略层的宿主也要探测，候选清单只能有一份）。这里原样重导出，单测 import 路径不变。
+ *
+ * 候选顺序（R6/R7）：`DIY_SHELL` → Git Bash 已知位置 → `pwsh.exe` → `powershell.exe`；
  * **bash 缺席不是错误** —— 有 pwsh 就够用；两者都有时都返回（工具面并存）。
  */
-export function discoverShellSpecs(env: NodeJS.ProcessEnv, exists: (p: string) => boolean): ShellSpec[] {
-    const diy = (env["DIY_SHELL"] ?? "").trim();
-    // 显式 DIY_SHELL 是**权威覆盖**：设了（哪怕指错）就不再猜 Git Bash ——
-    // 这样「把 bash 关掉看 pwsh 降级」是可复现的，而不是"指错也照样找到 Git Bash"。
-    const bashList = diy ? [diy] : shellCandidates(env);
-    const tried = [...bashList, ...pwshCandidates(env)];
-    const out: ShellSpec[] = [];
-    const seen = new Set<string>();
-    for (const file of tried) {
-        const key = file.toLowerCase();
-        if (seen.has(key) || !exists(file)) continue;
-        seen.add(key);
-        out.push({ kind: shellKindOf(file), file, label: file, missing: false, tried });
-    }
-    return out;
-}
+import { discoverShellSpecs, pwshCandidates, winShellCandidates } from "@diy-agent/tools";
+export { discoverShellSpecs, pwshCandidates, winShellCandidates as shellCandidates };
 
 /** 「这是观测工具自己」：两种取数方式（wmic 优先 / CIM 回退）各自会出现在自己的快照里。 */
 function isObserverCommand(command: string): boolean {
