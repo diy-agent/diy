@@ -29,6 +29,8 @@ export const WORKSPACE_TS_DEPS = [
   "@diy-agent/context",
   "@diy-agent/llm-provider",
   "@diy-agent/compaction",
+  // ##514：工具层内核（read / write / edit + 文件原语）
+  "@diy-agent/tools",
   "@diy-agent/ui-kit",
   // ##500：主进程 services/hub.ts 直接 import —— 漏了会在产物里留裸 import
   "@diy-agent/hub",

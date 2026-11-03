@@ -16,7 +16,7 @@ import {
     resolveWritePath,
     unifiedDiff,
     writeFileWhole,
-} from "../../src/main/core/file-write";
+} from "../src/file-write.js";
 
 let root = "";
 let outside = "";

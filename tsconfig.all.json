@@ -50,6 +50,9 @@
       "path": "pkgs.ts/agent/store-jsonl"
     },
     {
+      "path": "pkgs.ts/agent/tools"
+    },
+    {
       "path": "pkgs.ts/room"
     },
     {

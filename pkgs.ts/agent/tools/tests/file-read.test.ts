@@ -17,7 +17,7 @@ import {
   formatReadOutput,
   ReadWindowError,
   READ_MAX_BYTES,
-} from "../../src/main/core/file-read";
+} from "../src/file-read.js";
 
 let dir: string;
 

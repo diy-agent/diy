@@ -1,0 +1,35 @@
+{
+  "name": "@diy-agent/tools",
+  "version": "0.1.0",
+  "private": true,
+  "description": "diy 工具层内核：read / write / edit + 原子写 / 文件窗口 / 局部替换 / unified diff（不依赖任务系统）",
+  "files": [
+    "src/"
+  ],
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./lib/index.js"
+    },
+    "./*": {
+      "types": "./src/*.ts",
+      "default": "./lib/*.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "ai": "^7.0.113",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.57.0",
+    "oxlint": "^1.72.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

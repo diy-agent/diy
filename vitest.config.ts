@@ -15,6 +15,7 @@ export default defineConfig({
         'pkgs.ts/agent/talk',
         'pkgs.ts/flow',
         'pkgs.ts/agent/session',
+        'pkgs.ts/agent/tools',
         'pkgs.ts/agent/store-jsonl',
         'pkgs.ts/room',
     ],

@@ -38,6 +38,7 @@
         "@diy-agent/talk": "^0.1.0",
         "@diy-agent/template": "^0.1.0",
         "@diy-agent/time": "*",
+        "@diy-agent/tools": "^0.1.0",
         "@diy-agent/ui-kit": "^0.1.0",
         "@dnd-kit/solid": "^0.5.0",
         "@fastify/cors": "^11.2.0",

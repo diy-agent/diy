@@ -20,7 +20,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { realFs, writeFileAtomic, type FsLike } from "../../src/main/core/atomic-write";
+import { realFs, writeFileAtomic, type FsLike } from "../src/atomic-write.js";
 
 // 故障注入**走依赖参数**（##402），不 mock 全局 `node:fs`：mock 改的是全局模块表，
 // `isolate:false` 下谁先加载了 fs 它就会静默失效。这里造一份「除故障点外全转发真 fs」的桩

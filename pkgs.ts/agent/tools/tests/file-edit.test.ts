@@ -24,11 +24,11 @@ import {
   normalizeForFuzzyMatch,
   resolveEditablePath,
   withFileEditQueue,
-} from "../../src/main/core/file-edit";
-import { generateUnifiedPatch } from "../../src/main/core/unified-diff";
-import { unifiedDiff } from "../../src/main/core/file-write";
-import { writeFileAtomic } from "../../src/main/core/atomic-write";
-import { FileWriteError } from "../../src/main/core/file-write";
+} from "../src/file-edit.js";
+import { generateUnifiedPatch } from "../src/unified-diff.js";
+import { unifiedDiff } from "../src/file-write.js";
+import { writeFileAtomic } from "../src/atomic-write.js";
+import { FileWriteError } from "../src/file-write.js";
 
 let dir: string;
 
