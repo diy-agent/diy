@@ -23,7 +23,7 @@ facts:
       verifiedAt: '2026-10-22'
   level#inbox:
     value: |-
-      **`N1` / `N2` 一律落「通知信箱」**（右上角，可回看、可计数 `+1`）：toast 会消失，**信箱不丢** —— 「我刚才错过了什么」的唯一答案在信箱里，不在 toast 的历史里。⚠️ 机制未实现，缺口记录见 `pkgs.ts/diy-app/AGENTS.md::tool.wake-gap`。
+      **`N1` / `N2` 一律落「通知信箱」**（右上角，可回看、可计数 `+1`）：toast 会消失，**信箱不丢** —— 「我刚才错过了什么」的唯一答案在信箱里，不在 toast 的历史里。⚠️ 机制未实现，缺口记录见 `apps/diy-app/AGENTS.md::tool.wake-gap`。
     id: agents.level.inbox
     review: accepted
     lifecycle: active

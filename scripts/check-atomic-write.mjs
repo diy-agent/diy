@@ -30,10 +30,10 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // `src/preload/index.ts`）；为此本脚本另有一条精确检查：renderer 里出现 `fs` 导入即违规
 // （见 checkRendererFsImports）。
 const SCAN_DIRS = [
-  ...["main", "serve", "preload"].map((d) => join(ROOT, "pkgs.ts/diy-app/src", d)),
+  ...["main", "serve", "preload"].map((d) => join(ROOT, "apps/diy-app/src", d)),
   // ##5 第 11 轮 A：事实库的落盘也在射程内。原先只扫 diy-app ⇒ `facts submit` 的
   // 半截写（固定 tmp 名 / 不做两阶段 / 不继承权限）永远不会被 check 拦。
-  join(ROOT, "pkgs.ts/diy-facts/src"),
+  join(ROOT, "pkgs.ts/core/facts/src"),
 ];
 /**
  * 共享原语（**豁免**：它们内部就是要直接调 `writeFileSync`）。
@@ -41,12 +41,12 @@ const SCAN_DIRS = [
  * 故各自自持一份、语义必须一致（改一处要改两处）。
  */
 const UTIL_FILES = new Set([
-  join(ROOT, "pkgs.ts/diy-app/src/main/core/atomic-write.ts"),
-  join(ROOT, "pkgs.ts/diy-facts/src/node/atomic-write.ts"),
+  join(ROOT, "apps/diy-app/src/main/core/atomic-write.ts"),
+  join(ROOT, "pkgs.ts/core/facts/src/node/atomic-write.ts"),
 ]);
 const ALLOWLIST = join(ROOT, "scripts/atomic-write-allowlist.txt");
 
-const RENDERER_DIR = join(ROOT, "pkgs.ts/diy-app/src/renderer_solid");
+const RENDERER_DIR = join(ROOT, "apps/diy-app/src/renderer_solid");
 /** 直接覆盖目标文件的 API；`openSync(..., "w")` 单独判 flags。
  *  `truncateSync` / `ftruncateSync` 把目标截成 0 字节，`cpSync` / `cp` 覆盖第二个实参 —— 同罪。 */
 const WRITE_APIS = new Set([

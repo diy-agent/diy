@@ -13,7 +13,7 @@
 //          （写变量 = 统计时 grep 不到，等于没码）
 //   · 逃生口：`// error-code-ok: <非空理由>`（写在本行或上一行）—— 理由空着不算数
 //
-// 扫描范围 = `pkgs.ts/diy-app/src`（renderer 的 `.tsx` 不扫：手写 lexer 不认 JSX，
+// 扫描范围 = `apps/diy-app/src`（renderer 的 `.tsx` 不扫：手写 lexer 不认 JSX，
 // 假阴性比不扫更糟 —— 与 `check-atomic-write.mjs` 同一条边界理由）。
 //
 // 用法：
@@ -28,8 +28,8 @@ import { fileURLToPath } from "node:url";
 import { maskNonCode, matchingParen } from "./lib/source-scan.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const SCAN_DIR = join(ROOT, "pkgs.ts/diy-app/src");
-const SELF = "pkgs.ts/diy-app/src/shared/error-triage.ts";
+const SCAN_DIR = join(ROOT, "apps/diy-app/src");
+const SELF = "apps/diy-app/src/shared/error-triage.ts";
 
 /**
  * 「首参即 code」的错误类白名单。加新人前先确认：**首参真的是 `err.code`**（而不是 message），
@@ -51,34 +51,34 @@ const LITERAL_RE = /^["'`]([^"'`$]*)["'`]$/;
 const LEGACY_THROW_BASELINE = new Map(Object.entries({
   // 由 `--by-file` 生成（2026-10-20，##394 立项时实测：177 处 / 31 文件）。
   // 改好一处就把数字调小（护栏会提示），**不要往上调**。
-  "pkgs.ts/diy-app/src/main/services/api-impl.ts": 32,
-  "pkgs.ts/diy-app/src/main/core/flow.ts": 29,
-  "pkgs.ts/diy-app/src/main/core/flow-store.ts": 21,
-  "pkgs.ts/diy-app/src/main/core/llm-cost.ts": 11,
-  "pkgs.ts/diy-app/src/main/core/task.ts": 8,
-  "pkgs.ts/diy-app/src/main/services/local-agent.ts": 5,
-  "pkgs.ts/diy-app/src/main/core/traffic-log.ts": 7,
-  "pkgs.ts/diy-app/src/main/services/prompt-registry.ts": 5,
-  "pkgs.ts/diy-app/src/cli/index.ts": 4,
-  "pkgs.ts/diy-app/src/main/core/flow-thread.ts": 4,
-  "pkgs.ts/diy-app/src/main/workflows/plugins.ts": 4,
-  "pkgs.ts/diy-app/src/renderer_solid/lib/renderer-api-impl.ts": 4,
-  "pkgs.ts/diy-app/src/main/core/steer-queue.ts": 3,
-  "pkgs.ts/diy-app/src/main/services/rpc-port.ts": 3,
-  "pkgs.ts/diy-app/src/main/core/file-read.ts": 2,
-  "pkgs.ts/diy-app/src/main/core/model-config.ts": 2,
-  "pkgs.ts/diy-app/src/main/core/model-runtime.ts": 2,
-  "pkgs.ts/diy-app/src/main/core/persona.ts": 2,
-  "pkgs.ts/diy-app/src/main/services/instances.ts": 2,
-  "pkgs.ts/diy-app/src/main/core/app-root.ts": 1,
-  "pkgs.ts/diy-app/src/main/core/context-config.ts": 1,
-  "pkgs.ts/diy-app/src/main/core/data-file.ts": 1,
-  "pkgs.ts/diy-app/src/main/core/serial-queue.ts": 1,
-  "pkgs.ts/diy-app/src/main/services/flow-prompt.ts": 1,
-  "pkgs.ts/diy-app/src/main/services/flow-runner.ts": 1,
-  "pkgs.ts/diy-app/src/main/services/local-layout-migrate.ts": 1,
-  "pkgs.ts/diy-app/src/renderer_solid/lib/notice.ts": 1,
-  "pkgs.ts/diy-app/src/renderer_solid/store/notificationStore.ts": 1,
+  "apps/diy-app/src/main/services/api-impl.ts": 32,
+  "apps/diy-app/src/main/core/flow.ts": 29,
+  "apps/diy-app/src/main/core/flow-store.ts": 21,
+  "apps/diy-app/src/main/core/llm-cost.ts": 11,
+  "apps/diy-app/src/main/core/task.ts": 8,
+  "apps/diy-app/src/main/services/local-agent.ts": 5,
+  "apps/diy-app/src/main/core/traffic-log.ts": 7,
+  "apps/diy-app/src/main/services/prompt-registry.ts": 5,
+  "apps/diy-app/src/cli/index.ts": 4,
+  "apps/diy-app/src/main/core/flow-thread.ts": 4,
+  "apps/diy-app/src/main/workflows/plugins.ts": 4,
+  "apps/diy-app/src/renderer_solid/lib/renderer-api-impl.ts": 4,
+  "apps/diy-app/src/main/core/steer-queue.ts": 3,
+  "apps/diy-app/src/main/services/rpc-port.ts": 3,
+  "apps/diy-app/src/main/core/file-read.ts": 2,
+  "apps/diy-app/src/main/core/model-config.ts": 2,
+  "apps/diy-app/src/main/core/model-runtime.ts": 2,
+  "apps/diy-app/src/main/core/persona.ts": 2,
+  "apps/diy-app/src/main/services/instances.ts": 2,
+  "apps/diy-app/src/main/core/app-root.ts": 1,
+  "apps/diy-app/src/main/core/context-config.ts": 1,
+  "apps/diy-app/src/main/core/data-file.ts": 1,
+  "apps/diy-app/src/main/core/serial-queue.ts": 1,
+  "apps/diy-app/src/main/services/flow-prompt.ts": 1,
+  "apps/diy-app/src/main/services/flow-runner.ts": 1,
+  "apps/diy-app/src/main/services/local-layout-migrate.ts": 1,
+  "apps/diy-app/src/renderer_solid/lib/notice.ts": 1,
+  "apps/diy-app/src/renderer_solid/store/notificationStore.ts": 1,
 }));
 
 /** 掩码文本上的 `throw new X(` —— 注释/字符串里的 `throw new` 天然不算 */

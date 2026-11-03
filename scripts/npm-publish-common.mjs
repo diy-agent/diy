@@ -9,6 +9,8 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSy
 import os from 'node:os';
 import path from 'node:path';
 
+import { workspaceDirs } from './workspace-dirs.mjs';
+
 /** 发布目标：官方 registry（本机 ~/.npmrc 常指淘宝镜像，必须显式覆盖） */
 export const REGISTRY = 'https://registry.npmjs.org/';
 
@@ -64,22 +66,16 @@ function alreadyPublished(name, version) {
     }
 }
 
-/** 仓内所有 workspace 包：包名 → { version, dir }（pkgs.ts/* 与 apps/*） */
+/** 仓内所有 workspace 包：包名 → { version, dir }（pkgs.ts/** 与 apps/*） */
 export function workspacePackages(root) {
     const out = new Map();
-    for (const parent of ['pkgs.ts', 'apps']) {
-        const base = path.join(root, parent);
-        if (!existsSync(base)) continue;
-        for (const entry of readdirSync(base, { withFileTypes: true })) {
-            if (!entry.isDirectory()) continue;
-            const file = path.join(base, entry.name, 'package.json');
-            if (!existsSync(file)) continue;
-            try {
-                const pkg = JSON.parse(readFileSync(file, 'utf8'));
-                if (pkg.name) out.set(pkg.name, { version: pkg.version, dir: path.join(base, entry.name) });
-            } catch {
-                // 坏 package.json 不归本脚本管（check 会红）
-            }
+    for (const dir of workspaceDirs(root)) {
+        const file = path.join(root, dir, 'package.json');
+        try {
+            const pkg = JSON.parse(readFileSync(file, 'utf8'));
+            if (pkg.name) out.set(pkg.name, { version: pkg.version, dir: path.join(root, dir) });
+        } catch {
+            // 坏 package.json 不归本脚本管（check 会红）
         }
     }
     return out;

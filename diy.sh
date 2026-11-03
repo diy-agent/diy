@@ -9,35 +9,35 @@
 #   2. GUI：CLI 通过 ensureAppPort() 复用或拉起 Electron 产物
 #      build/<variant>/main/index.mjs + .../preload/index.js + .../renderer/index.html
 #      → GUI 必须先构建才会存在，未构建直接报错（见下方检查）
-#   3. lab 模式另走：cd pkgs.ts/diy-app && ./sha.sh lab
+#   3. lab 模式另走：cd apps/diy-app && ./sha.sh lab
 #      起 Vite dev server 并注入 DIY_DEV_SERVER_URL，走 loadURL 热更新（HMR），无需 build
 #   4. 数据隔离：DIY_HOME 默认 ./build/<variant>/home（本 worktree × 变体独立），注入后由
 #      src/runtime.ts readRuntimeConfig() 统一读取；测试用 mkdtemp 隔离
 #      环境声明：DIY_ENV 默认 development（dev/test 专属能力的判据，缺省按 production）
-#   5. 发布入口：pkgs.ts/diy-app/bin/diy 跑编译产物 build/prod/cli/index.js，数据落 ~/.diy
+#   5. 发布入口：apps/diy-app/bin/diy 跑编译产物 build/prod/cli/index.js，数据落 ~/.diy
 #
 # 前置要求：首次使用或改动 main/preload/renderer 后，需先构建：
-#   cd pkgs.ts/diy-app && ./sha.sh build
+#   cd apps/diy-app && ./sha.sh build
 # 否则 build/<variant>/main/index.mjs 不存在，CLI 会在 stderr 提示并退出（不污染 stdout JSON）。
 # 变体：DIY_VARIANT=prod|test|lab|preview（缺省 lab）。
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP_DIR="$SCRIPT_DIR/pkgs.ts/diy-app"
+APP_DIR="$SCRIPT_DIR/apps/diy-app"
 # 变体根：决定连/起哪个实例（prod 一般由全局 diy 负责，这里缺省 lab）。
 # lab 与 prod 共用 ./diy.sh 作为「通用 CLI 客户端」，连谁由 DIY_VARIANT + DIY_HOME 决定。
 DIY_VARIANT="${DIY_VARIANT:-lab}"
 export DIY_VARIANT
 # preview（2026-10-23 恢复，##404）= 编译后运行的稳定实例（无 watch）；连它需先
-# `pkgs.ts/diy-app/sha.sh preview` 把产物与数据根（build/preview/home）备好。
+# `apps/diy-app/sha.sh preview` 把产物与数据根（build/preview/home）备好。
 
 # 前置检查：GUI 产物必须存在（CLI 本身是 tsx 源码无需构建，但要拉起的 Electron 必须已构建）
 GUI_ENTRY="$APP_DIR/build/${DIY_VARIANT}/main/index.mjs"
 if [[ ! -f "$GUI_ENTRY" ]]; then
   echo "[diy.sh] 未找到 Electron 产物: $GUI_ENTRY" >&2
   echo "[diy.sh] 机制: CLI(编译产物/tsx 源码) 需拉起 GUI 产物(build/<variant>/main)才能响应 RPC" >&2
-  echo "[diy.sh] 请先构建（变体 ${DIY_VARIANT}）: DIY_VARIANT=${DIY_VARIANT} ./pkgs.ts/diy-app/sha.sh build" >&2
-  echo "[diy.sh] 或开发模式（HMR，无需 build）: cd pkgs.ts/diy-app && ./sha.sh lab" >&2
+  echo "[diy.sh] 请先构建（变体 ${DIY_VARIANT}）: DIY_VARIANT=${DIY_VARIANT} ./apps/diy-app/sha.sh build" >&2
+  echo "[diy.sh] 或开发模式（HMR，无需 build）: cd apps/diy-app && ./sha.sh lab" >&2
   exit 1
 fi
 
@@ -217,7 +217,7 @@ if [[ "$DIY_CLI_MODE" != "tsx" && -f "$CLI_JS" ]]; then
   if [[ "$DIY_CLI_MODE" == "compiled" ]]; then
     DIY_CLI_EFFECTIVE="compiled"
   else
-    _stale="$(find "$APP_DIR/src" "$SCRIPT_DIR/pkgs.ts/diy-rpc/src" "$SCRIPT_DIR/pkgs.ts/diy-template/src" \
+    _stale="$(find "$APP_DIR/src" "$SCRIPT_DIR/pkgs.ts/core/rpc/src" "$SCRIPT_DIR/pkgs.ts/core/template/src" \
       -newer "$CLI_JS" -print -quit 2>/dev/null || true)"
     [[ -z "$_stale" ]] && DIY_CLI_EFFECTIVE="compiled"
     unset _stale

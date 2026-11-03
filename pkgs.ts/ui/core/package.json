@@ -1,0 +1,74 @@
+{
+  "name": "@diy-agent/ui",
+  "version": "0.2.0",
+  "description": "diyui —— 纯 TS / 零框架的声明式 UI 层：Signal / Scope / Component / Cell / Scheduler + provider（pi-tui / DOM）",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/diy-agent/diy.git",
+    "directory": "pkgs.ts/ui/core"
+  },
+  "homepage": "https://github.com/diy-agent/diy/tree/main/pkgs.ts/ui/core",
+  "keywords": [
+    "ui",
+    "diy",
+    "declarative",
+    "tui",
+    "dom",
+    "signals"
+  ],
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./lib/index.js"
+    },
+    "./browser": {
+      "types": "./src/browser.ts",
+      "default": "./lib/browser.js"
+    },
+    "./signal": {
+      "types": "./src/signal.ts",
+      "default": "./lib/signal.js"
+    },
+    "./host": {
+      "types": "./src/host.ts",
+      "default": "./lib/host.js"
+    },
+    "./dom": {
+      "types": "./src/providers/dom.ts",
+      "default": "./lib/providers/dom.js"
+    },
+    "./dom-dsl": {
+      "types": "./src/providers/dom-dsl.ts",
+      "default": "./lib/providers/dom-dsl.js"
+    },
+    "./dom-gen": {
+      "types": "./src/providers/dom-gen.ts",
+      "default": "./lib/providers/dom-gen.js"
+    }
+  },
+  "files": [
+    "src/"
+  ],
+  "scripts": {
+    "check": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "check-pitui": "npx tsx tools/check-pitui.ts",
+    "test": "vitest run",
+    "web": "vite web",
+    "web:build": "vite build web"
+  },
+  "dependencies": {
+    "@mariozechner/pi-tui": "^0.57.1",
+    "@vue/reactivity": "^3.5.31"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.6"
+  }
+}

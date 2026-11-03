@@ -38,7 +38,7 @@ facts:
       verifiedAt: '2026-10-22'
   app.cli#cli-readfile:
     value: |-
-      CLI 的 `readFile` 选项（如 `task edit --append-body <file|->`）**在调用方进程的 parser 里读**（`pkgs.ts/diy-rpc/src/cli/_parser.ts`）：handler 跑在 app 进程，它的 fd 0 / cwd 都不是调用方的，在调用方读才两件事都对。故含 `-`（stdin）的调用必须**绕开 /cli 转发**（`diy.sh` 的 http 模式已按 argv 判定并落回直连 CLI）
+      CLI 的 `readFile` 选项（如 `task edit --append-body <file|->`）**在调用方进程的 parser 里读**（`pkgs.ts/core/rpc/src/cli/_parser.ts`）：handler 跑在 app 进程，它的 fd 0 / cwd 都不是调用方的，在调用方读才两件事都对。故含 `-`（stdin）的调用必须**绕开 /cli 转发**（`diy.sh` 的 http 模式已按 argv 判定并落回直连 CLI）
     id: app.cli.cli-readfile
     review: accepted
     lifecycle: active
@@ -68,7 +68,7 @@ facts:
       verifiedAt: '2026-10-22'
   app.cli#rpc-output-schema:
     value: |-
-      RPC 的 `outputSchema` **只用于类型推导，运行期不校验也不剥字段**（`pkgs.ts/diy-rpc/src/core/meta.ts`；只有 input 走 zod）。故漏写字段**不会报错**：handler 原样送出的字段仍在，但类型上没有 → 消费端「拿不到、画不出」，且改起来像幽灵 bug。共享形状必须落成 schema（如 `shared/usage.ts` 的 `ModelCostSchema`）并被两侧引用，别手写第二份子集
+      RPC 的 `outputSchema` **只用于类型推导，运行期不校验也不剥字段**（`pkgs.ts/core/rpc/src/core/meta.ts`；只有 input 走 zod）。故漏写字段**不会报错**：handler 原样送出的字段仍在，但类型上没有 → 消费端「拿不到、画不出」，且改起来像幽灵 bug。共享形状必须落成 schema（如 `shared/usage.ts` 的 `ModelCostSchema`）并被两侧引用，别手写第二份子集
     id: app.cli.rpc-output-schema
     review: accepted
     lifecycle: active
@@ -256,7 +256,7 @@ facts:
       verifiedAt: '2026-10-22'
   app.dev#watch-restart:
     value: |-
-      改 `src/**` 会触发 lab watch 重启 Electron，**正在跑的本机 agent 轮次会被打断**（tool 被标 `interrupted`；这是「本轮未完成/流中断」的头号成因，实测 12/12 —— facts `dev.turn-interrupt#rate`）。三条对策：① 轮次中别拿源码当探针，探针写 `/tmp`；② **要持续对话的实例改用 preview**（`pkgs.ts/diy-app/sha.sh preview` = 编译后运行、无 watch，改 src 波及不到它；lab 留给边改边看，见 `app.entry#variant`）；③ `interrupted.data` 今天为空，热重启与真流断仍无法区分（`dev.turn-interrupt#blind`）。
+      改 `src/**` 会触发 lab watch 重启 Electron，**正在跑的本机 agent 轮次会被打断**（tool 被标 `interrupted`；这是「本轮未完成/流中断」的头号成因，实测 12/12 —— facts `dev.turn-interrupt#rate`）。三条对策：① 轮次中别拿源码当探针，探针写 `/tmp`；② **要持续对话的实例改用 preview**（`apps/diy-app/sha.sh preview` = 编译后运行、无 watch，改 src 波及不到它；lab 留给边改边看，见 `app.entry#variant`）；③ `interrupted.data` 今天为空，热重启与真流断仍无法区分（`dev.turn-interrupt#blind`）。
     id: app.dev.watch-restart
     review: accepted
     lifecycle: active
@@ -416,13 +416,13 @@ facts:
       verifiedAt: '2026-10-22'
   app.entry#variant:
     value: |-
-      `DIY_VARIANT` = `prod|test|lab|preview`，**产物/数据分根的唯一轴**：vite 配置据此定 `outDir=build/<variant>/*`，运行时据此选 `build/<variant>/main`，缺省 `prod`（`./diy.sh` 缺省 `lab`）。**`lab` = watch/HMR（边改边看）**；**`preview` = 编译后运行、无 watch 的稳定实例**（2026-10-23 恢复，##404：lab 每改一处 src 就重启主进程、打断正在跑的轮次，实测 129 轮里 128 轮这么死的 ⇒ 要持续对话的实例用 preview）。产物 `<包>/build/preview/**`、数据根**仓库根** `build/preview/home`（两处基准不同，别照产物路径推）。入口 `pkgs.ts/diy-app/sha.sh preview`（`--build` 强制重编译 / `--from <variant>` 首次克隆该变体的 home 续用其任务与会话）。`scripts/electron-dev.mts` 仍拒绝 preview（它不是 watch 模式）；web 的 `src/serve` 也不认这个变体。
+      `DIY_VARIANT` = `prod|test|lab|preview`，**产物/数据分根的唯一轴**：vite 配置据此定 `outDir=build/<variant>/*`，运行时据此选 `build/<variant>/main`，缺省 `prod`（`./diy.sh` 缺省 `lab`）。**`lab` = watch/HMR（边改边看）**；**`preview` = 编译后运行、无 watch 的稳定实例**（2026-10-23 恢复，##404：lab 每改一处 src 就重启主进程、打断正在跑的轮次，实测 129 轮里 128 轮这么死的 ⇒ 要持续对话的实例用 preview）。产物 `<包>/build/preview/**`、数据根**仓库根** `build/preview/home`（两处基准不同，别照产物路径推）。入口 `apps/diy-app/sha.sh preview`（`--build` 强制重编译 / `--from <variant>` 首次克隆该变体的 home 续用其任务与会话）。`scripts/electron-dev.mts` 仍拒绝 preview（它不是 watch 模式）；web 的 `src/serve` 也不认这个变体。
     id: app.entry.variant
     review: accepted
     lifecycle: active
     evidence:
       source: code
-      at: pkgs.ts/diy-app/sha.sh:113
+      at: apps/diy-app/sha.sh:113
       verifiedAt: '2026-10-23'
   app.find#chat-fold:
     value: |-
@@ -442,7 +442,7 @@ facts:
     lifecycle: active
     evidence:
       source: code
-      at: pkgs.ts/diy-app/src/renderer_solid/lib/chat-text.ts:1
+      at: apps/diy-app/src/renderer_solid/lib/chat-text.ts:1
       verifiedAt: '2026-10-25'
   app.find#cli:
     value: |-
@@ -466,13 +466,13 @@ facts:
       verifiedAt: '2026-10-22'
   app.find#context:
     value: |-
-      `src/shared/context/` 上下文树与投递：`README.md` 是**完整约定表**（领域模型 / 投递构造 / 划分真源 / step 快照 / 渲染坑）；投递构造唯一入口 `@diy-agent/context` 的 `delivery.ts::buildDelivery`（##447 起树/投影/投递/信封在 `pkgs.ts/diy-context/`，压缩决策在 `pkgs.ts/diy-compact/`）；划分真源 `$DIY_HOME/context.yaml`（契约 `config.ts`、I/O `src/main/core/context-config.ts`；**缺省最小 system 名单** `delivery.ts::defaultSystemPlaces` —— 只放存续期不变的单元，易变项（`task.state`/`task.updated`/`task.title`/`cwd`/`reqlog`…）一律 runtime，否则每轮砸前缀缓存，##426）· 输入超长门禁 `shared/context/input-limit.ts` + `renderer_solid/components/InputLimitDialog.tsx`（默认 10 万字符可配，超限弹窗报 ≈token / 预计 $，可转文件发送，##426）
+      `src/shared/context/` 上下文树与投递：`README.md` 是**完整约定表**（领域模型 / 投递构造 / 划分真源 / step 快照 / 渲染坑）；投递构造唯一入口 `@diy-agent/context` 的 `delivery.ts::buildDelivery`（##447 起树/投影/投递/信封在 `pkgs.ts/agent/context/`，压缩决策在 `pkgs.ts/agent/compaction/`）；划分真源 `$DIY_HOME/context.yaml`（契约 `config.ts`、I/O `src/main/core/context-config.ts`；**缺省最小 system 名单** `delivery.ts::defaultSystemPlaces` —— 只放存续期不变的单元，易变项（`task.state`/`task.updated`/`task.title`/`cwd`/`reqlog`…）一律 runtime，否则每轮砸前缀缓存，##426）· 输入超长门禁 `shared/context/input-limit.ts` + `renderer_solid/components/InputLimitDialog.tsx`（默认 10 万字符可配，超限弹窗报 ≈token / 预计 $，可转文件发送，##426）
     id: app.find.context
     review: accepted
     lifecycle: active
     evidence:
       source: code
-      at: pkgs.ts/diy-context/src/delivery.ts:1
+      at: pkgs.ts/agent/context/src/delivery.ts:1
       verifiedAt: '2026-10-25'
   app.find#core:
     value: |-
@@ -482,7 +482,7 @@ facts:
     lifecycle: active
     evidence:
       source: code
-      at: pkgs.ts/diy-app/src/main/core/room-view-cache.ts:1
+      at: apps/diy-app/src/main/core/room-view-cache.ts:1
       verifiedAt: '2026-10-25'
   app.find#data-file:
     value: |-
@@ -600,7 +600,7 @@ facts:
     lifecycle: active
     evidence:
       source: code
-      at: pkgs.ts/diy-app/src/main/services/local-turns.ts:1
+      at: apps/diy-app/src/main/services/local-turns.ts:1
       verifiedAt: '2026-10-25'
   app.find#main-proc:
     value: |-
@@ -660,7 +660,7 @@ facts:
     lifecycle: active
     evidence:
       source: code
-      at: pkgs.ts/diy-app/src/main/services/local-agent.ts:1
+      at: apps/diy-app/src/main/services/local-agent.ts:1
       verifiedAt: '2026-10-25'
   app.find#ops-seek:
     value: |-
@@ -1144,7 +1144,7 @@ facts:
       lifecycle: active
       evidence:
         source: code
-        at: pkgs.ts/diy-app/src/runtime.ts:103
+        at: apps/diy-app/src/runtime.ts:103
         verifiedAt: '2026-10-21'
     - value: |-
         18888
@@ -1154,7 +1154,7 @@ facts:
       lifecycle: active
       evidence:
         source: code
-        at: pkgs.ts/diy-app/src/runtime.ts:90
+        at: apps/diy-app/src/runtime.ts:90
         verifiedAt: '2026-10-21'
   app.port#resolution:
     value: |-
@@ -1163,7 +1163,7 @@ facts:
     lifecycle: active
     evidence:
       source: code
-      at: pkgs.ts/diy-app/src/runtime.ts:116
+      at: apps/diy-app/src/runtime.ts:116
       verifiedAt: '2026-10-21'
     refs:
       - rel: depends-on
@@ -1706,7 +1706,7 @@ facts:
     lifecycle: active
     evidence:
       source: code
-      at: pkgs.ts/diy-app/src/runtime.ts:38
+      at: apps/diy-app/src/runtime.ts:38
       verifiedAt: '2026-10-21'
   env.variant#values:
     value: |-
@@ -1715,5 +1715,5 @@ facts:
     lifecycle: active
     evidence:
       source: code
-      at: pkgs.ts/diy-app/sha.sh:113
+      at: apps/diy-app/sha.sh:113
       verifiedAt: '2026-10-23'

@@ -30,7 +30,7 @@ interface InstanceIdentity {
 }
 ```
 
-- 服务端：`pkgs.ts/diy-remote/src/node/ping-server.ts`，HTTP/1.1、150 行以内，只答 `GET/HEAD /ping`，
+- 服务端：`pkgs.ts/remote/link/src/node/ping-server.ts`，HTTP/1.1、150 行以内，只答 `GET/HEAD /ping`，
   不提供任何读写数据的能力。
 - 端口：`DIY_PING_PORT`（缺省 9400），被占则**缺省端口**顺延最多 10 个；显式给的端口不换。
 - 绑定：`DIY_PING_HOST`（缺省 `127.0.0.1`）。

@@ -10,7 +10,7 @@ facts:
     lifecycle: active
     evidence:
       source: code
-      at: pkgs.ts/diy-talk/src/anchor.ts:1
+      at: pkgs.ts/agent/talk/src/anchor.ts:1
       verifiedAt: '2026-10-21'
   kb.journal#author:
     value: |-
@@ -19,7 +19,7 @@ facts:
     lifecycle: active
     evidence:
       source: code
-      at: pkgs.ts/diy-talk/src/anchor.ts:1
+      at: pkgs.ts/agent/talk/src/anchor.ts:1
       verifiedAt: '2026-10-21'
   kb.layer#attribution:
     value: |-

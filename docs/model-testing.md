@@ -1,7 +1,7 @@
 # 本地 agent 测试用什么模型
 
 > 二次披露文档：`AGENTS.md::model.*` 只留一行结论，核对流程住这里。
-> 代码真源：`pkgs.ts/diy-app/src/shared/model-default.ts`（`FREE_MODEL_CANDIDATES` / `FALLBACK_MODEL` / `FREE_MODEL_CHECKED_AT`）。
+> 代码真源：`apps/diy-app/src/shared/model-default.ts`（`FREE_MODEL_CANDIDATES` / `FALLBACK_MODEL` / `FREE_MODEL_CHECKED_AT`）。
 > **别在文档里抄名单** —— 名单必然分叉，读真源。
 
 ## 允许清单（三档）
@@ -24,4 +24,4 @@
 
 - 价目 / 上下文上限：`https://models.dev/api.json`（`opencode-go` 的 cost / limit）
 - 思考档位只有 `none/low/medium/high`（上游 400 拒绝 `minimal` / `xhigh` / `max`）
-- 模型不可用（`model_coming_soon` / 404 / 401·403 / 429）→ **停工 + 通知，不换模型硬试**；实验实例页顶出 bar 的判据见 `pkgs.ts/diy-app/src/shared/model-unavailable.ts`（上游 5xx 与超时不算，那是另一类问题）
+- 模型不可用（`model_coming_soon` / 404 / 401·403 / 429）→ **停工 + 通知，不换模型硬试**；实验实例页顶出 bar 的判据见 `apps/diy-app/src/shared/model-unavailable.ts`（上游 5xx 与超时不算，那是另一类问题）

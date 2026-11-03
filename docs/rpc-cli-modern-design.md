@@ -2,7 +2,7 @@
 
 日期：2026-08-11　分支：`feat/cli-meta-gen`（worktree: `../diy-feat-cli-meta-gen`）
 依据：CLIG (Command Line Interface Guidelines, clig.dev) 全 18 章 + 当前 diy 代码事实源
-（`pkgs.ts/diy-rpc/src/cli/*`、`pkgs.ts/diy-app/src/cli/index.ts`、`api-def.ts`、py `_forward.py`）
+（`pkgs.ts/core/rpc/src/cli/*`、`apps/diy-app/src/cli/index.ts`、`api-def.ts`、py `_forward.py`）
 
 ---
 

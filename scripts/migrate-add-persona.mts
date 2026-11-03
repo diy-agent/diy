@@ -26,7 +26,7 @@ import { copyFileSync, existsSync, readFileSync, readdirSync, statSync, writeFil
 import { homedir } from "node:os";
 import { join } from "node:path";
 import * as yaml from "js-yaml";
-import { BUILTIN_PERSONA_NAME, PersonasFileSchema } from "../pkgs.ts/diy-app/src/shared/persona";
+import { BUILTIN_PERSONA_NAME, PersonasFileSchema } from "../apps/diy-app/src/shared/persona";
 
 const args = process.argv.slice(2);
 const APPLY = args.includes("--apply");

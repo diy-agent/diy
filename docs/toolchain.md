@@ -9,7 +9,7 @@
 
 1. `tsc -b tsconfig.all.json --noEmit`
 2. oxlint
-3. rpc 浏览器安全（`pkgs.ts/diy-rpc` 不得引入 Node 能力）
+3. rpc 浏览器安全（`pkgs.ts/core/rpc` 不得引入 Node 能力）
 4. 产物护栏（源码旁不得残留 `.js` / `.d.ts`，见 `AGENTS.md::rule.check`）
 5. 可执行位护栏：shell 脚本索引 mode 必须 100755（`scripts/check-exec-bit.sh`）
 6. 各领域规范索引护栏（`scripts/check-specs.mts`）：`~/SPECS.md` 的 key 唯一（G1）/ 指针可解析（G2）/ 链上**新增**未收录（G3，ratchet：存量基线 `scripts/specs-unindexed.txt`，`--update-baseline` 刷新）；总表缺失 = 跳过不算失败（##388）
@@ -26,8 +26,8 @@
 ## test
 
 - `./sha.sh test` 全仓 · `./sha.sh test-unit` 快测（不起 Electron）。
-- 意图测试：`pkgs.ts/diy-app/sha.sh test-intent [片段...]` —— 位置参数**过滤文件**（短名补 `tests/cli.intent.` 前缀，如 `test-intent ui-find`；带 `/` 或 `.test.ts` 原样传），无参才全量。
-- 需求契约 = 意图测试：`pkgs.ts/diy-app/tests/cli.intent.*.test.ts` + `diy-template` / `diy-talk` / `diy-flow` 的 `tests/intent.*`。
+- 意图测试：`apps/diy-app/sha.sh test-intent [片段...]` —— 位置参数**过滤文件**（短名补 `tests/cli.intent.` 前缀，如 `test-intent ui-find`；带 `/` 或 `.test.ts` 原样传），无参才全量。
+- 需求契约 = 意图测试：`apps/diy-app/tests/cli.intent.*.test.ts` + `diy-template` / `diy-talk` / `diy-flow` 的 `tests/intent.*`。
 
 ## sync — 新开 worktree 第一件事
 
@@ -47,7 +47,7 @@ build / check / test / lab 入口先跑只读快检：workspace 链接缺失或�
 - `require('electron')` 时二进制缺就在**当时进程里**下载、**无超时**：症状＝静默卡死数分钟、CPU 0%，日志看着像「在跑」。
 - `dist` 是**悬空软链**（store 被缓存清理工具删）时更糟：自带 `install.js` 直接失败 `failed to create destination …: File exists`，并误导「删掉 node_modules/electron」，**不会自己重下**。
 - 布局收口在 `scripts/ensure-electron.mjs`：全机一份 store + worktree 的 `dist` 只留软链 + 补 `path.txt`。
-- 跑点：`sync-deps` 末尾自动跑且**不联网**；`pkgs.ts/diy-app/sha.sh` 的 `lab|test-intent|start` 起 Electron 前硬校验；**CLI 两条入口**（`diy.sh` / `bin/diy`）先过 `scripts/ensure-electron-if-needed.sh`（纯 bash 快检，就绪零 node 开销）—— CLI 顶层 `import electronPath from "electron"`，**每条命令**都经它。
+- 跑点：`sync-deps` 末尾自动跑且**不联网**；`apps/diy-app/sha.sh` 的 `lab|test-intent|start` 起 Electron 前硬校验；**CLI 两条入口**（`diy.sh` / `bin/diy`）先过 `scripts/ensure-electron-if-needed.sh`（纯 bash 快检，就绪零 node 开销）—— CLI 顶层 `import electronPath from "electron"`，**每条命令**都经它。
 - **缓存里明明有 zip 却重下**：`@electron/get` 缓存键 = 下载 URL 目录的 sha256；`~/.npmrc` 的 `electron_mirror` 只在 npm 上下文生效（运行时直接 node 没有 `npm_config_electron_mirror`）⇒ 走 GitHub 键必 miss。`ensure-electron` 显式读 npmrc 把镜像传下去，键才与 npm 安装时一致。
 - **发行 CLI 不走惰性下载**（##478）：`diy-chat` 用 `apps/chat/bin/electron-bootstrap.mjs` 自己收口 —— 每个阶段先打印、镜像**并发探测**（各 3s 超时，逐个 ✓/✗ + 毫秒）、选**最快**的源、下载带百分比/速度/ETA、sha256 校验、解压心跳（静默 ≤ 2s）。`scripts/ensure-electron.mjs` 与它共用同一份探测/下载实现。
 - 开关 / store 位置详见脚本头注。
@@ -65,10 +65,10 @@ build / check / test / lab 入口先跑只读快检：workspace 链接缺失或�
 
 ## 单包动作
 
-`pkgs.ts/diy-app/sha.sh lab|build|test|cli` —— 只动这一个包。
+`apps/diy-app/sha.sh lab|build|test|cli` —— 只动这一个包。
 
 ## 其他
 
 - 真实 UI 验证走 CDP：`playwright-cli attach --cdp=…`（取值见 `diy getAppInfo`）。
-- 环境变量 → provider 导入候选（只列不写；UI 模型页提示条 / `diy llmConfig scanEnv|importEnv`）→ `pkgs.ts/diy-app/src/main/core/model-import.ts`。
+- 环境变量 → provider 导入候选（只列不写；UI 模型页提示条 / `diy llmConfig scanEnv|importEnv`）→ `apps/diy-app/src/main/core/model-import.ts`。
 - 破坏性操作的应用内二次确认走 `renderer_solid/components/ConfirmDialog.tsx`；**禁用原生 `window.confirm`**（窗口级模态：卡住整个渲染进程，且非 DOM 节点 —— 自动化点不到）。

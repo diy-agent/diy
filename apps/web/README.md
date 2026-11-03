@@ -42,7 +42,7 @@ b / c 机制一样，只是谁发起 —— 本刀把「配对 + 授权」实现
 
 ## 为什么 RPC 走 WebSocket 而不是 HttpServerBinding（重要）
 
-`pkgs.ts/diy-rpc/src/transport/http/` 那套绑定是 **node:http2** 的：
+`pkgs.ts/core/rpc/src/transport/http/` 那套绑定是 **node:http2** 的：
 服务端吃 `ServerHttp2Stream`（`http-server-binding.ts:23`），客户端 `http2.connect()`（`http-client-binding.ts:12,38`）。
 浏览器**不支持 h2c**（明文 HTTP/2），本轮又不做 TLS（反代解决）—— 于是浏览器侧没有可用的 http 绑定。
 

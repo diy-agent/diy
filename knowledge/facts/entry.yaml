@@ -20,7 +20,7 @@ facts:
     lifecycle: active
     evidence:
       source: code
-      at: pkgs.ts/diy-app/src/cli/index.ts:113
+      at: apps/diy-app/src/cli/index.ts:113
       verifiedAt: '2026-10-22'
   entry#client:
     value: |-
@@ -43,7 +43,7 @@ facts:
       verifiedAt: '2026-10-21'
   entry#home-guard:
     value: |-
-      「继承来的生产 `DIY_HOME` 一律拒绝」：判据 `core/instance-identity.ts::isProdDataHome`、回落 `core/dev-home.ts::resolveDevHome`（`./diy.sh` 与 `./sha.sh lab` 共用；不拦则 lab 开着生产数据根跑、还会把种子写进去；放行需 `DIY_ALLOW_PROD_HOME=1`）。细节见 `pkgs.ts/diy-app/AGENTS.md::env.home`
+      「继承来的生产 `DIY_HOME` 一律拒绝」：判据 `core/instance-identity.ts::isProdDataHome`、回落 `core/dev-home.ts::resolveDevHome`（`./diy.sh` 与 `./sha.sh lab` 共用；不拦则 lab 开着生产数据根跑、还会把种子写进去；放行需 `DIY_ALLOW_PROD_HOME=1`）。细节见 `apps/diy-app/AGENTS.md::env.home`
     id: agents.entry.home-guard
     review: accepted
     lifecycle: active
@@ -63,7 +63,7 @@ facts:
       verifiedAt: '2026-10-21'
   entry#port:
     value: |-
-      端口**不承载身份**：探活后必须问 `getAppInfo.diyHome` 验身份，不是本数据根就另起（##328）。优先级 / 缺省 / 非生产不沿用记录里的 `18888` 见 `pkgs.ts/diy-app/AGENTS.md::env.port`
+      端口**不承载身份**：探活后必须问 `getAppInfo.diyHome` 验身份，不是本数据根就另起（##328）。优先级 / 缺省 / 非生产不沿用记录里的 `18888` 见 `apps/diy-app/AGENTS.md::env.port`
     id: agents.entry.port
     review: accepted
     lifecycle: active
@@ -92,7 +92,7 @@ facts:
       verifiedAt: '2026-10-21'
   entry#seed:
     value: |-
-      空数据根的初始种入：**生产根永不种入**；`lab` 缺省自动只跑一次（`.seed-done` 标记，删掉的 provider 不会被种回来）。开关三态 / 补缺命令 / 落点见 `pkgs.ts/diy-app/AGENTS.md::env.seed`
+      空数据根的初始种入：**生产根永不种入**；`lab` 缺省自动只跑一次（`.seed-done` 标记，删掉的 provider 不会被种回来）。开关三态 / 补缺命令 / 落点见 `apps/diy-app/AGENTS.md::env.seed`
     id: agents.entry.seed
     review: accepted
     lifecycle: active
@@ -117,7 +117,7 @@ facts:
     lifecycle: active
     evidence:
       source: code
-      at: pkgs.ts/diy-app/sha.sh:113
+      at: apps/diy-app/sha.sh:113
       verifiedAt: '2026-10-23'
   entry#verify:
     value: |-

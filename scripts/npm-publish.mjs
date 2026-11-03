@@ -2,7 +2,7 @@
 // scripts/npm-publish.mjs — 把「仓内源码形态」的包组装成「发行形态」并发布到 npm。
 //
 // 为什么不直接 `npm publish`：仓内 package.json 的 `main`/`exports` 指 `src/*.ts`
-// （workspace 内部由 vite 直接吃源码，见 pkgs.ts/diy-app/vite.pkg-deps.ts 的
+// （workspace 内部由 vite 直接吃源码，见 apps/diy-app/vite.pkg-deps.ts 的
 // WORKSPACE_TS_DEPS），且带 `private: true` 当防手滑护栏。发行物必须换一份
 // package.json：`exports` 指 `lib/*.js` + `*.d.ts`，去掉 `private`，`*` 依赖改成 `^<仓内版本>`。
 //

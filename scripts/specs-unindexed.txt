@@ -1,5 +1,5 @@
 # G3 存量基线（ratchet）：链上有、总表还没有的 key（##388）；只报「基线外」的新增遗漏。
-# 扫描范围：~/AGENTS.md → ~/git/AGENTS.md → ~/git/diy/AGENTS.md → 仓根 AGENTS.md → pkgs.ts/diy-app/AGENTS.md（5 份，不含其余包）。
+# 扫描范围：~/AGENTS.md → ~/git/AGENTS.md → ~/git/diy/AGENTS.md → 仓根 AGENTS.md → apps/diy-app/AGENTS.md（5 份，不含其余包）。
 # 批量补录后刷新：npx tsx scripts/check-specs.mts --update-baseline
 rule.lang
 rule.verify

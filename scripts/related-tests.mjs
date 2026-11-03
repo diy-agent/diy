@@ -27,6 +27,8 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { workspaceDirs } from './workspace-dirs.mjs';
+
 const ROOT = path.resolve(process.env.DIY_CHECK_SYNC_ROOT ?? path.join(path.dirname(fileURLToPath(import.meta.url)), '..'));
 const norm = (p) => path.relative(ROOT, path.resolve(ROOT, p)).replace(/\\/g, '/');
 
@@ -46,23 +48,17 @@ const RESOLVE_EXT = [...SOURCE_EXT, '/index.ts', '/index.tsx', '/index.mts', '/i
 // ── 工作区包表（名字 → 目录 / exports 映射）──────────────────────────────────
 const pkgByName = new Map();
 const pkgDirs = [];
-// workspace 包表：pkgs.ts/*（能力包）+ apps/*（app profile，源码摊在目录根，##458）
-for (const root of ['pkgs.ts', 'apps']) {
-  if (!existsSync(path.join(ROOT, root))) continue;
-  for (const e of readdirSync(path.join(ROOT, root), { withFileTypes: true })) {
-    if (!e.isDirectory()) continue;
-    const dir = `${root}/${e.name}`;
-    const manifestPath = path.join(ROOT, dir, 'package.json');
-    if (!existsSync(manifestPath)) continue;
-    let manifest;
-    try {
-      manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-    } catch {
-      continue;
-    }
-    pkgDirs.push(dir);
-    pkgByName.set(manifest.name, { dir, manifest });
+// workspace 包表：pkgs.ts/**（能力包，##512 起分层）+ apps/*（app profile，源码摊在目录根，##458）
+for (const dir of workspaceDirs(ROOT)) {
+  const manifestPath = path.join(ROOT, dir, 'package.json');
+  let manifest;
+  try {
+    manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  } catch {
+    continue;
   }
+  pkgDirs.push(dir);
+  pkgByName.set(manifest.name, { dir, manifest });
 }
 
 // ── tsconfig paths 别名（JSONC：注释先剥再 parse；解析不了就当作没有别名）────

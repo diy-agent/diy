@@ -24,8 +24,9 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { workspaceDirs } from "./workspace-dirs.mjs";
+
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const PKGS_DIR = join(ROOT, "pkgs.ts");
 /** 内部包的 scope（与 check-runtime-closure.mjs / check-pkg-visibility.mjs 同口径） */
 const INTERNAL_SCOPES = ["@diy", "@diy-agent"];
 
@@ -35,9 +36,10 @@ const asJson = process.argv.includes("--json");
 /** 收集需要编 lib/ 的包：dir → { dir, name, deps } */
 function collectPackages() {
     const out = new Map();
-    for (const entry of readdirSync(PKGS_DIR, { withFileTypes: true })) {
-        if (!entry.isDirectory()) continue;
-        const pkgPath = join(PKGS_DIR, entry.name, "package.json");
+    // 包目录 = pkgs.ts/... 的 workspace（##512 起分层：pkgs.ts/<组>/<包>，另有 pkgs.ts/flow、pkgs.ts/room）
+    for (const dir of workspaceDirs(ROOT)) {
+        if (!dir.startsWith("pkgs.ts/")) continue;
+        const pkgPath = join(ROOT, dir, "package.json");
         if (!existsSync(pkgPath)) continue;
         const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
         if (typeof pkg.main !== "string" || !pkg.main.startsWith("./lib/")) continue;
@@ -47,7 +49,7 @@ function collectPackages() {
                 ...Object.keys(pkg.peerDependencies ?? {}),
             ].filter(isInternal),
         );
-        out.set(pkg.name, { dir: entry.name, name: pkg.name, deps });
+        out.set(pkg.name, { dir, name: pkg.name, deps });
     }
     return out;
 }

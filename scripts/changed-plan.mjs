@@ -34,9 +34,11 @@
 //   · 护栏脚本：按各自的**扫描根**与改动集是否相交决定（每条都有 why，见 --explain）
 //   · 认不出的改动（根配置 / 构建脚本 / sha.sh 自身）⇒ full = true，退回全量
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { workspaceDirs } from './workspace-dirs.mjs';
 
 const ROOT = path.resolve(process.env.DIY_CHECK_SYNC_ROOT ?? path.join(path.dirname(fileURLToPath(import.meta.url)), '..'));
 
@@ -182,14 +184,8 @@ if (explicitFiles.length === 0 && !CLASS_ONLY) {
 }
 const deletedList = [...deleted].sort();
 
-// ── 包图（pkgs.ts/*）────────────────────────────────────────────────────────
-const PKGS_DIR = 'pkgs.ts';
-const pkgDirs = existsSync(path.join(ROOT, PKGS_DIR))
-  ? readdirSync(path.join(ROOT, PKGS_DIR), { withFileTypes: true })
-      .filter((e) => e.isDirectory() && existsSync(path.join(ROOT, PKGS_DIR, e.name, 'package.json')))
-      .map((e) => `${PKGS_DIR}/${e.name}`)
-      .sort()
-  : [];
+// ── 包图（pkgs.ts/**）────────────────────────────────────────────────────────
+const pkgDirs = workspaceDirs(ROOT).filter((d) => d.startsWith('pkgs.ts/'));
 
 const pkgName = new Map(); // dir → name
 const pkgByDir = new Map(); // dir → manifest
@@ -214,12 +210,9 @@ for (const [dir, manifest] of pkgByDir) {
   }
 }
 
-/** 文件 → 所属包（`pkgs.ts/<x>/…` 取第一段；根文件返回 null） */
+/** 文件 → 所属包（匹配包目录前缀；根文件返回 null） */
 function ownerOf(file) {
-  const m = /^pkgs\.ts\/([^/]+)\//.exec(file);
-  if (!m) return null;
-  const dir = `${PKGS_DIR}/${m[1]}`;
-  return pkgByDir.has(dir) ? dir : null;
+  return pkgDirs.find((dir) => file.startsWith(`${dir}/`)) ?? null;
 }
 
 const directPackages = new Set();
@@ -344,15 +337,15 @@ guards.push({
       : '没碰 Node 侧（src/{main,serve,preload}）源文件、也没删文件',
 });
 
-const appTests = fileList.filter((f) => f.startsWith('pkgs.ts/diy-app/tests/'));
+const appTests = fileList.filter((f) => f.startsWith('apps/diy-app/tests/'));
 guards.push({
   id: 'no-vi-mock',
   script: 'bash scripts/check-no-vi-mock.sh',
   run: appTests.length > 0,
-  why: appTests.length ? `${appTests.length} 个 diy-app 测试文件改动` : '没碰 pkgs.ts/diy-app/tests',
+  why: appTests.length ? `${appTests.length} 个 diy-app 测试文件改动` : '没碰 apps/diy-app/tests',
 });
 
-// 异常码：扫描根 = pkgs.ts/diy-app/src；只看**该扫描根下**新增的 `throw new`
+// 异常码：扫描根 = apps/diy-app/src；只看**该扫描根下**新增的 `throw new`
 // （删/改不会让存量基线变差，故不必跑）
 const ecRoot = fileList.filter((f) => /^pkgs\.ts\/diy-app\/src\//.test(f));
 const throwsNew = addedMatches(ecRoot, /\bthrow new\b/);
@@ -360,7 +353,7 @@ guards.push({
   id: 'error-code',
   script: 'bash scripts/check-error-code.sh',
   run: throwsNew,
-  why: throwsNew ? 'pkgs.ts/diy-app/src 下有新增的 `throw new`' : 'pkgs.ts/diy-app/src 下没有新增的 `throw new`（删/改不会让基线变差）',
+  why: throwsNew ? 'apps/diy-app/src 下有新增的 `throw new`' : 'apps/diy-app/src 下没有新增的 `throw new`（删/改不会让基线变差）',
 });
 
 const manifestTouched = fileList.filter((f) => f.endsWith('package.json'));
@@ -423,7 +416,7 @@ const plan = {
   directPackages: [...directPackages].sort(),
   affectedPackages: [...affectedPackages].sort(),
   lintPaths: [...new Set([...directPackages, ...affectedPackages])].sort(),
-  browserTsc: affectedPackages.has('pkgs.ts/diy-rpc'),
+  browserTsc: affectedPackages.has('pkgs.ts/core/rpc'),
   guards,
 };
 

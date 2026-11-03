@@ -6,7 +6,7 @@
   ~/.diy/task/local/task/<n>/AGENTS.md        ← 数字任务
   frontmatter: title/state/subject/source{type,uri}/parent/agent/detail/closed/...
 
-新布局（pkgs.ts/diy-app/src/main/core/{state,task,project}.ts）：
+新布局（apps/diy-app/src/main/core/{state,task,project}.ts）：
   $DIY_HOME/projects/<pid>/tasks/<tid>/AGENTS.md
   URI = projects/<pid>/tasks/<tid>（pid/tid 必须纯数字，否则 listTasks 扫不到）
   frontmatter: title/state/parent/detail/created/updated/source_type/source_uri

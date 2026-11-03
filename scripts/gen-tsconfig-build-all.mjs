@@ -15,9 +15,10 @@
 // 用法：
 //   node scripts/gen-tsconfig-build-all.mjs           写入
 //   node scripts/gen-tsconfig-build-all.mjs --check   只校验（给 check 用，防止手改漂移）
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
+import { workspaceDirs } from "./workspace-dirs.mjs";
 
 const ROOT = join(import.meta.dirname, "..");
 // 生成物放 build/（.gitignore 里已忽略 `build/`）：它是**纯构建产物** —— 进了版本库就会和
@@ -41,14 +42,14 @@ const order = execFileSync(process.execPath, [join(ROOT, "scripts/build-order.mj
     .split(/\s+/)
     .filter(Boolean);
 
-const projects = order
-    .map((name) => `pkgs.ts/${name}`)
-    .filter((p) => existsSync(join(ROOT, p, "tsconfig.build.json")));
+// build-order 输出的是**仓相对目录**（`pkgs.ts/agent/bot`），直接就是 project 路径
+const projects = order.filter((p) => existsSync(join(ROOT, p, "tsconfig.build.json")));
 
-/** 包名 → 目录（`@diy-agent/context` → `pkgs.ts/diy-context`） */
+/** 包名 → 仓相对目录（`@diy-agent/context` → `pkgs.ts/agent/context`） */
 const nameToDir = new Map();
-for (const dir of readdirSync(join(ROOT, "pkgs.ts"))) {
-    const pkgJson = join(ROOT, "pkgs.ts", dir, "package.json");
+for (const dir of workspaceDirs(ROOT)) {
+    if (!dir.startsWith("pkgs.ts/")) continue;
+    const pkgJson = join(ROOT, dir, "package.json");
     if (!existsSync(pkgJson)) continue;
     const name = JSON.parse(readFileSync(pkgJson, "utf8")).name;
     if (name) nameToDir.set(name, dir);
@@ -90,8 +91,9 @@ for (const p of projects) {
         : [];
     const refs = deps
         .map((n) => nameToDir.get(n))
-        .filter((d) => d && `pkgs.ts/${d}` !== p && existsSync(join(ROOT, "pkgs.ts", d, "tsconfig.build.json")))
-        .map((d) => `../${d}/tsconfig.build.json`);
+        .filter((d) => d && d !== p && existsSync(join(ROOT, d, "tsconfig.build.json")))
+        // references 相对**本配置文件所在目录**：分层后 `../<组>/<包>` 不一定对，一律算相对
+        .map((d) => relative(dirname(file), join(ROOT, d, "tsconfig.build.json")));
 
     const current = changes.find(([f]) => f === file)?.[1] ?? readFileSync(file, "utf8");
     // 去掉旧的 references 块，再把文件尾**归一**成 "}" + 一个换行 ——

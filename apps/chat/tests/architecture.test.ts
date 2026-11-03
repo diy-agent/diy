@@ -9,9 +9,9 @@ import { describe, expect, it } from "vitest";
 
 const here = import.meta.dirname;
 const appDir = join(here, "..");
-const chatPageSrc = join(appDir, "..", "..", "pkgs.ts", "chat-page", "src");
+const chatPageSrc = join(appDir, "..", "..", "pkgs.ts", "ui", "chat-page", "src");
 // ##505：actor 队列与 bot 领域逻辑在 @diy-agent/bot（apps/chat 只剩装配）
-const botChatSrc = join(appDir, "..", "..", "pkgs.ts", "diy-agent-bot", "src", "chat.ts");
+const botChatSrc = join(appDir, "..", "..", "pkgs.ts", "agent", "bot", "src", "chat.ts");
 
 /** 渲染层文件（会在浏览器里跑的）：chat-page 的 renderer* / style / 块渲染器 + apps/chat 的 renderer.ts */
 function rendererSources(): { file: string; text: string }[] {

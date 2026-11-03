@@ -18,7 +18,8 @@ shopt -s globstar
 # glob 仍会命中 → `./sha.sh sync` 报 "No such file or directory" → build 直接 exit 127。
 _pick_workspaces() {
   local w
-  for w in pkgs.ts/*/ apps/*/; do
+  # ##512 起 pkgs.ts 分层（pkgs.ts/<组>/<包>），另有单包分组 pkgs.ts/flow、pkgs.ts/room 留在一层
+  for w in pkgs.ts/*/ pkgs.ts/*/*/ apps/*/; do
     [[ -f "$w/package.json" ]] && echo "$w"
   done
 }
@@ -81,7 +82,7 @@ sync-deps() {
 
     # electron 二进制：全机一份 store + 本 worktree 只留软链（细节见 scripts/ensure-electron.mjs
     # 头注）。这里**不联网**（--no-download）：构建/检查用不到二进制，缺就一行提示；
-    # 真起 Electron 的入口（pkgs.ts/diy-app/sha.sh 的 lab/test-intent/start）会硬校验。
+    # 真起 Electron 的入口（apps/diy-app/sha.sh 的 lab/test-intent/start）会硬校验。
     run node scripts/ensure-electron.mjs --no-download --soft --quiet
 
     # 生成物冲突免手解：注册 merge=ours（见 scripts/ensure-merge-driver.mjs；本地仓库配置，幂等）
@@ -125,7 +126,7 @@ _sync_uptodate() {
     local stamp="node_modules/.diy-sync.stamp"
     [[ -f "$stamp" ]] || return 1
     local f ws
-    for f in package.json package-lock.json pkgs.ts/*/package.json apps/*/package.json; do
+    for f in package.json package-lock.json pkgs.ts/*/package.json pkgs.ts/*/*/package.json apps/*/package.json; do
         [[ -e "$f" ]] || continue
         # stamp 必须比每个 manifest 都新（`-nt` = 严格更新；同秒也判「不新鲜」，保守）
         [[ "$stamp" -nt "$f" ]] || return 1
@@ -133,7 +134,7 @@ _sync_uptodate() {
     # workspace 软链齐全（包改名 / node_modules 被部分清掉时这里会漏，交给全量）
     # 名字用 sed 直接抠（不起 node：13 个包 × node 启动 ~60ms 就吃掉了整个预算）
     local name
-    for ws in pkgs.ts/*/ apps/*/; do
+    for ws in pkgs.ts/*/ pkgs.ts/*/*/ apps/*/; do
         [[ -f "$ws/package.json" ]] || continue
         name=$(sed -n 's/^[[:space:]]*"name":[[:space:]]*"\([^"]*\)".*/\1/p' "$ws/package.json" | head -1)
         [[ -n "$name" ]] || return 1
@@ -237,15 +238,29 @@ _ws_bin_names() {
   node -e '
     const fs = require("fs"), path = require("path");
     const out = [];
+    // ##512 起 pkgs.ts 分层（pkgs.ts/<组>/<包>），故每个根都要“先看一眼自己、再看下一层”
+    const walk = (dir) => {
+      const p = path.join(dir, "package.json");
+      if (fs.existsSync(p)) {
+        const j = JSON.parse(fs.readFileSync(p, "utf8"));
+        if (j.bin) {
+          if (typeof j.bin === "string") out.push(String(j.name).split("/").pop());
+          else out.push(...Object.keys(j.bin));
+        }
+      }
+      for (const d of fs.readdirSync(dir)) {
+        const sub = path.join(dir, d);
+        if (d.startsWith(".") || !fs.statSync(sub).isDirectory()) continue;
+        if (d === "node_modules" || d === "src" || d === "tests" || d === "test" || d === "build" || d === "lib") continue;
+        walk(sub);
+      }
+    };
     for (const root of ["pkgs.ts", "apps"]) {
       if (!fs.existsSync(root)) continue;
       for (const d of fs.readdirSync(root)) {
-        const p = path.join(root, d, "package.json");
-        if (!fs.existsSync(p)) continue;
-        const j = JSON.parse(fs.readFileSync(p, "utf8"));
-        if (!j.bin) continue;
-        if (typeof j.bin === "string") out.push(String(j.name).split("/").pop());
-        else out.push(...Object.keys(j.bin));
+        const sub = path.join(root, d);
+        if (d.startsWith(".") || !fs.statSync(sub).isDirectory()) continue;
+        walk(sub);
       }
     }
     console.log(out.join("\n"));
@@ -351,7 +366,7 @@ _check_changed() {
     # rpc 浏览器安全用的是非 composite 的独立 config（不写 buildinfo、每次全量 ~2s），
     # 而它只读 diy-rpc ⇒ 只在 diy-rpc 受影响时跑
     if ((plan_browser)); then
-      run npx tsc --noEmit -p pkgs.ts/diy-rpc/tsconfig.browser.json
+      run npx tsc --noEmit -p pkgs.ts/core/rpc/tsconfig.browser.json
     fi
     # lint：逐文件判据，只需受影响包的目录
     if (( ${#plan_lint[@]} > 0 )); then
@@ -377,7 +392,7 @@ _check_full() {
 _check_full_body() {
   run npx tsc -b tsconfig.all.json --noEmit
   run npx oxlint pkgs.ts/ apps/
-  run npx tsc --noEmit -p pkgs.ts/diy-rpc/tsconfig.browser.json
+  run npx tsc --noEmit -p pkgs.ts/core/rpc/tsconfig.browser.json
   # 产物护栏：TS 包源码目录旁不得出现编译产物（实现见 scripts/check-no-emit.sh）
   run bash scripts/check-no-emit.sh
   # 可执行位护栏：shell 脚本在 git 索引里必须 100755（Windows 提交会静默丢位，实现见 scripts/check-exec-bit.sh，详见 ##304(Windows 提交丢可执行位)）
@@ -402,7 +417,7 @@ _check_full_body() {
   # LEGACY_SYNC_IO_BASELINE 棘轮递减，逃生口 `// sync-io-ok: <理由>`）
   run bash scripts/check-sync-io.sh
   # OS 边界护栏（2026-10-31）：系统假设（process.platform / wmic / taskkill / powershell /
-  # osascript / /bin/bash …）只许出现在 pkgs.ts/diy-app/src/main/os/**；实现见 scripts/check-os-boundary.mjs
+  # osascript / /bin/bash …）只许出现在 apps/diy-app/src/main/os/**；实现见 scripts/check-os-boundary.mjs
   run node scripts/check-os-boundary.mjs
   # 构建配置漂移护栏（2026-10-31）：各包 tsconfig.build.json 的 composite/references 与
   # tsconfig.build-all.json 都是**生成物**（node scripts/gen-tsconfig-build-all.mjs）——手改就报
@@ -411,7 +426,7 @@ _check_full_body() {
   #（实现见 scripts/check-specs.mts；**总表缺失 = skip + 提示、不算失败**，跨机器 / CI 没有家目录那份文件）
   run npx tsx scripts/check-specs.mts
   # 事实库真源护栏（##404）：schema / claim 冲突 / 边悬空 / subject 词表 / 证据可解析（掉文件即 error）
-  #（实现见 scripts/facts-index.mts；真源 knowledge/facts/*.yaml，内核 pkgs.ts/diy-facts）
+  #（实现见 scripts/facts-index.mts；真源 knowledge/facts/*.yaml，内核 pkgs.ts/core/facts）
   run npx tsx scripts/facts-index.mts
 }
 # 全仓唯一自动修复入口：格式化 + lint 可修项，能修的全修
@@ -461,7 +476,7 @@ _ws_vitest() {
         # 「一个测试文件都没找到」时退出码 1，会让整串跑不动 —— 直接跳过（旧路径
         # `<ws>/sha.sh test-unit` 也是直接退 1，只是那时被包一层看着像“跑过了”）。
         [[ -d "$ws/tests" ]] || continue
-        case "$ws" in pkgs.ts/diy-app/) continue ;; esac
+        case "$ws" in apps/diy-app/) continue ;; esac
         echo "${inverse_surface}info: workspace: test '$ws'${reset}"
         if run node_modules/.bin/vitest run --root "$ws"; then
             :
@@ -494,9 +509,9 @@ test() {
               local rc=0
               _ws_vitest "$fail_fast" || rc=1
               # diy-app 最后跑（含意图测试，起隔离 Electron，最慢）——它自己的 `test` = unit + os + intent
-              if ( cd pkgs.ts/diy-app && ./sha.sh test ); then :; else
+              if ( cd apps/diy-app && ./sha.sh test ); then :; else
                   rc=1
-                  echo "${error}✗ pkgs.ts/diy-app 有失败${reset}" >&2
+                  echo "${error}✗ apps/diy-app 有失败${reset}" >&2
                   [[ "$fail_fast" == "1" ]] && return 1
               fi
               return "$rc" ;;
@@ -528,9 +543,9 @@ test-unit() {
   ensure-sync
   local rc=0
   _ws_vitest "$fail_fast" || rc=1
-  if ( cd pkgs.ts/diy-app && ./sha.sh test-unit ); then :; else
+  if ( cd apps/diy-app && ./sha.sh test-unit ); then :; else
       rc=1
-      echo "${error}✗ pkgs.ts/diy-app 有失败${reset}" >&2
+      echo "${error}✗ apps/diy-app 有失败${reset}" >&2
   fi
   return "$rc"
 }
@@ -588,8 +603,8 @@ build-pkgs() {
     # 为什么从仓根直接 node、不平进包目录再 `./sha.sh build-artifact`：后者每包多一个
     # bash + sha 引擎（~1s），三个包就是 3s —— 实测占了热构建的一半（2026-10-31）。
     local _p
-    for _p in diy-rpc diy-ui workbench-plugin; do
-        run node scripts/npm-publish.mjs "pkgs.ts/${_p}" --prepare-only --out=lib
+    for _p in pkgs.ts/core/rpc pkgs.ts/ui/core pkgs.ts/ui/workbench-plugin; do
+        run node scripts/npm-publish.mjs "$_p" --prepare-only --out=lib
     done
     # profile（apps/*）**不进** build-pkgs：它们是产物入口不是能力包，按需各自 ./sha.sh build
 }
@@ -600,8 +615,8 @@ build() {
     #    类型检查（tsc -b）与 diy-app 打包 resolve 它们时都命中 lib/ ⇒ 缺 lib 就红一片
     #    （这正是「开发也读 lib」的代价，见 ##453 方案 B）。
     build-pkgs
-    # ② 再构建 diy-app（含 cli 产物），细节见 pkgs.ts/diy-app/sha.sh build
-    run ./pkgs.ts/diy-app/sha.sh build
+    # ② 再构建 diy-app（含 cli 产物），细节见 apps/diy-app/sha.sh build
+    run ./apps/diy-app/sha.sh build
 }
 
 ci() {
@@ -616,9 +631,9 @@ ci() {
 # 发布到 npm（@diy-agent scope）。清单单列：**只有**做了 npm 分发准备的包才有 publish 子命令，
 # 不能沿用 _ws_run（其余 workspace 包会以「未知命令」中止）。
 _npm_publish_pkgs=(
-  pkgs.ts/diy-rpc pkgs.ts/diy-ui pkgs.ts/diy-agent-session pkgs.ts/diy-agent-session-store-jsonl
-  pkgs.ts/workbench pkgs.ts/ui-workbench pkgs.ts/diy-agent-model-catalog pkgs.ts/diy-agent-model-config-page
-  pkgs.ts/diy-llm-provider pkgs.ts/diy-agent-bot pkgs.ts/chat-page pkgs.ts/workbench-plugin apps/chat
+  pkgs.ts/core/rpc pkgs.ts/ui/core pkgs.ts/agent/session pkgs.ts/agent/store-jsonl
+  pkgs.ts/ui/workbench pkgs.ts/ui/workbench-ui pkgs.ts/model/catalog pkgs.ts/ui/model-config
+  pkgs.ts/model/provider pkgs.ts/agent/bot pkgs.ts/ui/chat-page pkgs.ts/ui/workbench-plugin apps/chat
 )
 
 publish() {
@@ -646,7 +661,7 @@ github-actions-cicd()    {
 
 # lab：HMR 开发实例（人看效果 / agent 实验都用它），独占 build/lab/**，与 test 互不干扰。
 # lab [--app <name>]：缺省起 diy-app（行为不变）；`--app minimal` 起 apps/minimal（##458）
-#   ./sha.sh lab                  → pkgs.ts/diy-app/sha.sh lab
+#   ./sha.sh lab                  → apps/diy-app/sha.sh lab
 #   ./sha.sh lab --app minimal    → apps/minimal/sha.sh lab（lab 变体下拉 CDP 9222）
 lab()     {
     local app_name="diy-app"
@@ -660,7 +675,7 @@ lab()     {
     done
     ensure-sync
     if [[ "$app_name" == "diy-app" ]]; then
-        pkgs.ts/diy-app/sha.sh lab "$@"
+        apps/diy-app/sha.sh lab "$@"
         exit $?
     fi
     if [[ -x "apps/$app_name/sha.sh" ]]; then
@@ -673,7 +688,7 @@ lab()     {
 # apps/ 下可起的 app 名（给 --app 的报错与提示用）
 _apps_list() { for d in apps/*/; do [[ -f "$d/sha.sh" ]] && basename "$d"; done | tr '\n' ' '; }
 # preview：编译后运行（无 watch）的稳定实例 —— 长会话 / 人要持续对话时用它，改码不打断。
-preview() {  ensure-sync; DIY_VARIANT=preview pkgs.ts/diy-app/sha.sh preview "$@"; }
+preview() {  ensure-sync; DIY_VARIANT=preview apps/diy-app/sha.sh preview "$@"; }
 
 
 ####################################################

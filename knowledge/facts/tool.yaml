@@ -121,7 +121,7 @@ facts:
       verifiedAt: '2026-10-22'
   tool#model-import:
     value: |-
-      环境变量 → provider 导入候选（只列不写）→ `pkgs.ts/diy-app/src/main/core/model-import.ts`
+      环境变量 → provider 导入候选（只列不写）→ `apps/diy-app/src/main/core/model-import.ts`
     id: agents.tool.model-import
     review: accepted
     lifecycle: active
@@ -139,7 +139,7 @@ facts:
       verifiedAt: '2026-10-22'
   tool#pkg-action:
     value: |-
-      `pkgs.ts/diy-app/sha.sh lab|build|test|cli` 单包动作
+      `apps/diy-app/sha.sh lab|build|test|cli` 单包动作
     id: agents.tool.pkg-action
     review: accepted
     lifecycle: active
@@ -252,7 +252,7 @@ facts:
       verifiedAt: '2026-10-21'
   tool#test:
     value: |-
-      `./sha.sh test` 全仓 · `test-unit` 不起 Electron · `pkgs.ts/diy-app/sha.sh test-intent [片段…]`（位置参数过滤文件，带 `/` 或 `.test.ts` 原样传，无参全量）
+      `./sha.sh test` 全仓 · `test-unit` 不起 Electron · `apps/diy-app/sha.sh test-intent [片段…]`（位置参数过滤文件，带 `/` 或 `.test.ts` 原样传，无参全量）
     id: agents.tool.test
     review: accepted
     lifecycle: active

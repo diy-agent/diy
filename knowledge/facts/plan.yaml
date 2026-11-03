@@ -35,7 +35,7 @@ facts:
       verifiedAt: '2026-10-22'
   plan.acp#sdk-decision:
     value: |-
-      **注意演进**：这份 2026-07-10 文档主张「不用 `@agentclientprotocol/sdk`、自建 ~150 行（避免版本漂移）」；后来 acp-opencode 接入时**推翻**了它，改用官方 `@agentclientprotocol/sdk`（现 `diy-app` 依赖 1.4.0）。所以「自建」只是历史决策，**现行看代码** `pkgs.ts/diy-app/package.json`。
+      **注意演进**：这份 2026-07-10 文档主张「不用 `@agentclientprotocol/sdk`、自建 ~150 行（避免版本漂移）」；后来 acp-opencode 接入时**推翻**了它，改用官方 `@agentclientprotocol/sdk`（现 `diy-app` 依赖 1.4.0）。所以「自建」只是历史决策，**现行看代码** `apps/diy-app/package.json`。
     id: plan.acp.sdk-decision
     review: accepted
     lifecycle: active

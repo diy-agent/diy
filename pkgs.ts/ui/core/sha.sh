@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+#
+# ts-pkgs-diyui 开发脚本入口
+#
+# ── 编写规则 ────────────────────────────────────
+# 1. 定义函数即为子命令：`foo() { ... }` → `./sha.sh foo`
+# 2. 命令可嵌套：函数内再定义函数 → `./sha.sh foo bar`
+# 3. 用 `run` 执行外部命令（带彩色日志）：`run npx vitest run`
+# 4. 可用颜色变量：$primary $secondary $error $info $reset
+# 5. 文件末尾保留 `sha "$@"` 调度入口
+#
+# ── 执行链 ──────────────────────────────────────
+# sha.sh → source ../../../sha.common.sh → source vendor/sha/sha.bash
+#        → sha "$@" 解析命令 → 调用对应函数
+#
+# ── 示例 ─────────────────────────────────────────
+# build() {
+#   subcommand() { run echo "subcommand"; }
+#   run npm run build
+# }
+# 调用：./sha.sh build subcommand
+#
+
+# shellcheck disable=SC2329,SC2317,SC2034
+set -o errtrace -o errexit -o functrace -o pipefail
+shopt -s globstar extglob
+
+# Get the real path of the script directory
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+cd "$ROOT_DIR"
+source "../../../sha.common.sh"
+
+####################################################################################
+# ts-pkgs-diyui 开发工作流
+####################################################################################
+
+clean() {
+  run rm -rf ./dist ./lib
+}
+sync() {
+  :
+}
+
+# check：类型检查
+check() {
+  run npx tsc --noEmit
+}
+
+####################################################################################
+# 发布（npm → @diy-agent/ui）
+#
+# 仓内 package.json 的 main/exports 指 src/*.ts（vite demo 直接吃源码）且带 private:true
+# 当护栏；发行物另生成在 lib/（分发逻辑见 scripts/npm-publish.mjs）。
+# 认证：NPM_PUBLISH_TOKEN（环境变量，或 ~/.bashrc 里那份；脚本自己找，不必先 source）
+####################################################################################
+
+# build：编译 lib（ESM + d.ts）并生成发行版 package.json
+# 编译本体（单包单独编时用；仓根 `./sha.sh build-pkgs` 是**一次 tsc -b 编全部**，见根 sha.sh）
+build() {
+  run npx tsc -p tsconfig.build.json
+  build-artifact
+}
+# 发行形态（lib/package.json 等）：tsc 之后的额外步骤，单独成命令 ——
+# 这样仓根批编时只需再跑这一步，不必重跑本包的 tsc（2026-10-31）
+build-artifact() { run node ../../../scripts/npm-publish.mjs . --prepare-only --out=lib; }
+# publish：build 后发布到 npm（加 --dry-run 只演练：打包 + 校验，不上传）
+publish() {
+  build
+  run node ../../../scripts/npm-publish.mjs . --out=lib "$@"
+}
+
+# test：运行 vitest 单元测试
+#   ./sha.sh test                       # 全部测试
+#   ./sha.sh test test/cell.test.ts    # 单个测试文件
+test() { run npx vitest run "${@:-}"; }
+# 本包全是快速单测，无慢测试：test ≡ test-unit
+test-unit() { run npx vitest run "$@"; }
+
+# test-unit：workspace 统一入口（根 ./sha.sh test-unit 对每个包跑它 —— 缺了它整轮会在这里中止；
+# 与其余 4 个包对齐）
+test-unit() { run npx vitest run "$@"; }
+
+# ci：check + test
+ci() { check; test; }
+
+# fix：代码格式化
+fix() {
+  run npx prettier --write 'src/**/*.ts' 'test/**/*.ts' 'tools/**/*.ts' 'examples/**/*.ts'
+}
+
+web() {
+  run npx vite --port 19000  --strictHost
+}
+
+examples.chat() { npx tsx examples/chat_demo.ts; }
+examples.counter() { npx tsx examples/counter.ts; }
+examples.tui() { npx tsx examples/tui.ts; }
+examples.reactive() { npx tsx examples/reactive.ts; }
+
+sha "$@"

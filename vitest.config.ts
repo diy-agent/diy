@@ -6,17 +6,17 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     projects: [
-        'pkgs.ts/diy-time',
-        'pkgs.ts/diy-log',
-        'pkgs.ts/diy-app',
-        'pkgs.ts/diy-rpc',
-        'pkgs.ts/diy-remote',
-        'pkgs.ts/diy-template',
-        'pkgs.ts/diy-talk',
-        'pkgs.ts/diy-flow',
-        'pkgs.ts/diy-agent-session',
-        'pkgs.ts/diy-agent-session-store-jsonl',
-        'pkgs.ts/diy-room',
+        'pkgs.ts/core/time',
+        'pkgs.ts/core/log',
+        'apps/diy-app',
+        'pkgs.ts/core/rpc',
+        'pkgs.ts/remote/link',
+        'pkgs.ts/core/template',
+        'pkgs.ts/agent/talk',
+        'pkgs.ts/flow',
+        'pkgs.ts/agent/session',
+        'pkgs.ts/agent/store-jsonl',
+        'pkgs.ts/room',
     ],
     // diy-app 的 cli.intent 是真实 Electron + http2 集成测试，diy-rpc 的
     // transport-raw/http-raw 也做真实 IO；两个 project 并发跑时 setTimeout/

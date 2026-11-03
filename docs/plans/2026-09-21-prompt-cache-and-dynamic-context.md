@@ -151,7 +151,7 @@ in-history 支路的验证方式（观察口是 `cacheReadTokens`）：
 
 ## 7. `diy` 现状与差距
 
-### 现状（`pkgs.ts/diy-app/src/main/prompts/defaults.ts`）
+### 现状（`apps/diy-app/src/main/prompts/defaults.ts`）
 
 ```
 _system.md 顺序：identity → diy → project → task → rules → skills → guard
@@ -275,7 +275,7 @@ snapshot（尾部 user，每轮可变）
 
 本轮（`prompt-lab` 分支）已完成的、与本文相关的基础：
 
-- `@diy/template` 引擎（`pkgs.ts/diy-template/`）：**逐字节保真** + `<raw>` / 代码围栏逃生 + 严格报错（未知路径/参数不静默）—— 是本文「逐字节不变」类断言（R1）能成立的前提。
+- `@diy/template` 引擎（`pkgs.ts/core/template/`）：**逐字节保真** + `<raw>` / 代码围栏逃生 + 严格报错（未知路径/参数不静默）—— 是本文「逐字节不变」类断言（R1）能成立的前提。
 - `assembleSystem` 已是**真发与预览的唯一入口**（`prompt-registry.ts`），快照入口按同构方式并列即可，试验场可同时预览两者。
 - 试验场的 trace / `analyze` 区间能力可直接复用给「快照来源」的高亮。
 

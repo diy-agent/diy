@@ -23,7 +23,7 @@ facts:
       verifiedAt: '2026-10-23'
   template.find#host:
     value: |-
-      宿主侧接入：`pkgs.ts/diy-app/src/main/services/prompt-registry.ts`（唯一装配入口）
+      宿主侧接入：`apps/diy-app/src/main/services/prompt-registry.ts`（唯一装配入口）
     review: accepted
     lifecycle: active
     evidence:

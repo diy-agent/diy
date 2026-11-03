@@ -10,7 +10,7 @@
 # 修这两种状态的是 scripts/ensure-electron.mjs（重建 store + 重写 path.txt + 重挂软链）。
 #
 # 快检用**纯 bash**（读 path.txt + test 可执行文件），只有真缺了才起 node ——
-# 不给每条 CLI 命令加 node 启动开销。调用方：diy.sh（dev 客户端）· pkgs.ts/diy-app/bin/diy（全局 diy）。
+# 不给每条 CLI 命令加 node 启动开销。调用方：diy.sh（dev 客户端）· apps/diy-app/bin/diy（全局 diy）。
 # 用法：<repo>/scripts/ensure-electron-if-needed.sh（仓库根 = 本文件上一级）；就绪则静默退出 0。
 set -euo pipefail
 

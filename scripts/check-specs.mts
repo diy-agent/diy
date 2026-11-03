@@ -16,7 +16,7 @@
 //   · `--update-baseline` 把当前 missing 写进基线（批量补录后刷新一次）。
 //
 // **G3 扫描范围（一句话）**：`~/AGENTS.md` → `~/git/AGENTS.md` → `~/git/diy/AGENTS.md` → 仓根
-// `AGENTS.md` → `pkgs.ts/diy-app/AGENTS.md`，共 5 份；**不含** `pkgs.ts/` 其余各包（包内是
+// `AGENTS.md` → `apps/diy-app/AGENTS.md`，共 5 份；**不含** `pkgs.ts/` 其余各包（包内是
 // 包局部事实，不是跨领域规范 —— 扫进来只会制造常驻噪声，review1 裁决）。
 //
 // 前缀白名单**只收跨领域规范**：`find.*`（去哪找）/ `pit.*`（坑）是**导航**不是规范，不收
@@ -109,7 +109,7 @@ function repoContainerDir(): string | null {
 
 /**
  * G3 的扫描范围（**一句话**）：`~/AGENTS.md` → `~/git/AGENTS.md` → `~/git/diy/AGENTS.md`
- * → 仓根 `AGENTS.md` → `pkgs.ts/diy-app/AGENTS.md`，共 5 份；**不含** `pkgs.ts/` 其余各包。
+ * → 仓根 `AGENTS.md` → `apps/diy-app/AGENTS.md`，共 5 份；**不含** `pkgs.ts/` 其余各包。
  *
  * 为什么收窄到 5 份（review1 裁决）：本表是「**跨领域**规范索引」，包内 `find.*` / `pit.*`
  * 是包局部事实（去哪找代码 / 这个包什么坑）。把 7 个包全扫进来只会让「265/300 未收录」这种
@@ -266,7 +266,7 @@ const missing = [...onChain].filter((k) => !indexed.has(k));
 let baseline = readBaseline();
 const baselineKnown = existsSync(BASELINE) || UPDATE_BASELINE;
 if (UPDATE_BASELINE) {
-  writeFileSync(BASELINE, `# G3 存量基线（ratchet）：链上有、总表还没有的 key（##388）；只报「基线外」的新增遗漏。\n# 扫描范围：~/AGENTS.md → ~/git/AGENTS.md → ~/git/diy/AGENTS.md → 仓根 AGENTS.md → pkgs.ts/diy-app/AGENTS.md（5 份，不含其余包）。\n# 批量补录后刷新：npx tsx scripts/check-specs.mts --update-baseline\n${missing.join('\n')}\n`);
+  writeFileSync(BASELINE, `# G3 存量基线（ratchet）：链上有、总表还没有的 key（##388）；只报「基线外」的新增遗漏。\n# 扫描范围：~/AGENTS.md → ~/git/AGENTS.md → ~/git/diy/AGENTS.md → 仓根 AGENTS.md → apps/diy-app/AGENTS.md（5 份，不含其余包）。\n# 批量补录后刷新：npx tsx scripts/check-specs.mts --update-baseline\n${missing.join('\n')}\n`);
   baseline = new Set(missing);
   console.log(`[check-specs] 基线已更新：scripts/specs-unindexed.txt（${missing.length} 条）`);
 }

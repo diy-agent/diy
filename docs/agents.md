@@ -7,7 +7,7 @@ UI 层当前使用 **Local Agent**（`local-agent.ts`）作为唯一的对话后
 **保留的 RPC 端点：**
 - `diy.agent.local.chat` — 流式对话
 - `diy.agent.local.cancel` — 中断生成
-- `diy.agent.local.history` — 读取 Op 日志（**折叠流**：逐 token 碎片压成每块一条终值，见 `pkgs.ts/diy-app/AGENTS.md` 的 `pit.ops-fold`）
+- `diy.agent.local.history` — 读取 Op 日志（**折叠流**：逐 token 碎片压成每块一条终值，见 `apps/diy-app/AGENTS.md` 的 `pit.ops-fold`）
 - `diy.agent.local.clear` — 清空会话
 - `diy.agent.local.models` — 可选模型列表
 - `diy.agent.local.limits` — 运行限制查询
@@ -18,7 +18,7 @@ UI 层当前使用 **Local Agent**（`local-agent.ts`）作为唯一的对话后
 
 ## ACP Agent（已从 UI 层移除）
 
-2025-07 从 `pkgs.ts/diy-app` 中移除了 ACP agent 相关代码，原因：
+2025-07 从 `apps/diy-app` 中移除了 ACP agent 相关代码，原因：
 - Local agent 已测试通过，能力可替代 ACP
 - ACP 依赖 `@agentclientprotocol/sdk` 和外部 agent 进程（opencode），部署复杂度高
 - 暂时不关注 ACP，后续有需要可从 Python 侧或 git history 恢复

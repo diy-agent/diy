@@ -2,76 +2,76 @@
   "files": [],
   "references": [
     {
-      "path": "pkgs.ts/diy-time"
+      "path": "pkgs.ts/core/time"
     },
     {
-      "path": "pkgs.ts/diy-log"
+      "path": "pkgs.ts/core/log"
     },
     {
-      "path": "pkgs.ts/diy-talk"
+      "path": "pkgs.ts/agent/talk"
     },
     {
-      "path": "pkgs.ts/diy-context"
+      "path": "pkgs.ts/agent/context"
     },
     {
-      "path": "pkgs.ts/diy-compact"
+      "path": "pkgs.ts/agent/compaction"
     },
     {
-      "path": "pkgs.ts/diy-flow"
+      "path": "pkgs.ts/flow"
     },
     {
-      "path": "pkgs.ts/diy-template"
+      "path": "pkgs.ts/core/template"
     },
     {
-      "path": "pkgs.ts/diy-rpc"
+      "path": "pkgs.ts/core/rpc"
     },
     {
-      "path": "pkgs.ts/diy-remote"
+      "path": "pkgs.ts/remote/link"
     },
     {
-      "path": "pkgs.ts/diy-hub"
+      "path": "pkgs.ts/remote/hub"
     },
     {
-      "path": "pkgs.ts/diy-ui"
+      "path": "pkgs.ts/ui/core"
     },
     {
-      "path": "pkgs.ts/diy-facts"
+      "path": "pkgs.ts/core/facts"
     },
     {
-      "path": "pkgs.ts/diy-persistence"
+      "path": "pkgs.ts/core/persistence"
     },
     {
-      "path": "pkgs.ts/diy-ui-kit"
+      "path": "pkgs.ts/ui/kit"
     },
     {
-      "path": "pkgs.ts/diy-agent-session"
+      "path": "pkgs.ts/agent/session"
     },
     {
-      "path": "pkgs.ts/diy-agent-session-store-jsonl"
+      "path": "pkgs.ts/agent/store-jsonl"
     },
     {
-      "path": "pkgs.ts/diy-room"
+      "path": "pkgs.ts/room"
     },
     {
-      "path": "pkgs.ts/workbench"
+      "path": "pkgs.ts/ui/workbench"
     },
     {
-      "path": "pkgs.ts/ui-workbench"
+      "path": "pkgs.ts/ui/workbench-ui"
     },
     {
-      "path": "pkgs.ts/chat-page"
+      "path": "pkgs.ts/ui/chat-page"
     },
     {
       "path": "apps/minimal"
     },
     {
-      "path": "pkgs.ts/diy-app"
+      "path": "apps/diy-app"
     },
     {
-      "path": "pkgs.ts/workbench-plugin"
+      "path": "pkgs.ts/ui/workbench-plugin"
     },
     {
-      "path": "pkgs.ts/diy-agent-model-catalog"
+      "path": "pkgs.ts/model/catalog"
     },
     {
       "path": "apps/chat"

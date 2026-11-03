@@ -148,7 +148,7 @@ export async function main(argv = process.argv.slice(2)) {
     return new Promise((resolve) => {
         const child = spawn(ready.exe, [mainFile, ...args.passthrough], {
             stdio: "inherit",
-            // DIY_CLI 自证：入口报的必须是「跑的是谁」（与 pkgs.ts/diy-app/bin/diy 同口径）
+            // DIY_CLI 自证：入口报的必须是「跑的是谁」（与 apps/diy-app/bin/diy 同口径）
             env: { ...process.env, DIY_CLI: process.argv[1] ?? "diy-chat" },
         });
         child.on("error", (cause) => {

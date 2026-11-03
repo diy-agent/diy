@@ -65,7 +65,7 @@ facts:
     lifecycle: active
     evidence:
       source: code
-      at: pkgs.ts/diy-app/src/main/services/facts-context.ts:1
+      at: apps/diy-app/src/main/services/facts-context.ts:1
       verifiedAt: '2026-10-23'
   facts.find#resolve:
     value: |-
@@ -261,7 +261,7 @@ facts:
       verifiedAt: '2026-10-22'
   facts.rule#tasklib-root:
     value: |-
-      任务级库的 `root`（证据 / `scope.paths` 的解析根）**是仓库根**，不是任务目录：任务写的事实讲的是代码仓的事（`pkgs.ts/diy-app/src/x.ts:10`），按任务目录解析会让每条证据都悬空
+      任务级库的 `root`（证据 / `scope.paths` 的解析根）**是仓库根**，不是任务目录：任务写的事实讲的是代码仓的事（`apps/diy-app/src/x.ts:10`），按任务目录解析会让每条证据都悬空
     review: accepted
     lifecycle: active
     evidence:
@@ -270,7 +270,7 @@ facts:
       verifiedAt: '2026-10-22'
   facts.rule#workspace-dep:
     value: |-
-      @diy-agent/app 新增 workspace 依赖**必须**同步 `pkgs.ts/diy-app/vite.pkg-deps.ts::WORKSPACE_TS_DEPS`，否则 main 产物留裸 `import "@diy-agent/x"`、运行时加载 `.ts` 源码直接炸（本任务实测踩中一次）
+      @diy-agent/app 新增 workspace 依赖**必须**同步 `apps/diy-app/vite.pkg-deps.ts::WORKSPACE_TS_DEPS`，否则 main 产物留裸 `import "@diy-agent/x"`、运行时加载 `.ts` 源码直接炸（本任务实测踩中一次）
     review: accepted
     lifecycle: active
     evidence:

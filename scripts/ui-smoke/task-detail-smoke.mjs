@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// playwright 是 pkgs.ts/diy-app 的 devDependency（playwright-core：纯协议库，
+// playwright 是 apps/diy-app 的 devDependency（playwright-core：纯协议库，
 // postinstall **不下载浏览器** —— 本脚本只用 connectOverCDP 连 Electron 自带的 CDP，
 // 不需要 playwright 的浏览器二进制，故不用 `playwright` 那个包）。
 // 没装依赖时给一句明确的下一步，而不是抛一堆模块解析栈。
@@ -33,7 +33,7 @@ try {
 
 // 路径全部相对**脚本自身**推导（仓库根 = 本文件上溯两级）：换机器 / 换 checkout 位置都不影响。
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const APP = join(REPO, "pkgs.ts/diy-app");
+const APP = join(REPO, "apps/diy-app");
 const ELECTRON = join(REPO, "node_modules/electron/dist/Electron.app/Contents/MacOS/Electron");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

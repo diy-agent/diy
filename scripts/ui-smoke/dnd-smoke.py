@@ -18,7 +18,7 @@ import argparse, json, os, subprocess, sys, tempfile, time
 
 # 仓库根 = <repo>/scripts/ui-smoke/<本文件> 上溯两级
 REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
-APP = os.path.join(REPO, "pkgs.ts", "diy-app")
+APP = os.path.join(REPO, "apps", "diy-app")
 ELECTRON = os.path.join(REPO, "node_modules", "electron", "dist", "Electron.app", "Contents", "MacOS", "Electron")
 
 

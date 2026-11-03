@@ -19,7 +19,7 @@ import { fileURLToPath } from "node:url";
 
 // 路径全部相对**脚本自身**推导（仓库根 = 本文件上溯两级）：换机器 / 换 checkout 位置都不影响。
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const APP = join(REPO, "pkgs.ts/diy-app");
+const APP = join(REPO, "apps/diy-app");
 const ELECTRON = join(REPO, "node_modules/electron/dist/Electron.app/Contents/MacOS/Electron");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

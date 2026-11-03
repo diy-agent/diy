@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 // scripts/check-os-boundary.mjs —— OS 边界护栏（2026-10-31，配合 src/main/os/）
 //
-// 规则（见 pkgs.ts/diy-app/src/main/os/README.md）：
-//   · 系统假设只允许出现在 `pkgs.ts/diy-app/src/main/os/**`；
+// 规则（见 apps/diy-app/src/main/os/README.md）：
+//   · 系统假设只允许出现在 `apps/diy-app/src/main/os/**`；
 //   · 其余 main 代码必须走 `os.*` + `caps`，不许出现平台名 / 系统命令 / `process.platform`。
 //
 // 判据：
-//   · 扫 `pkgs.ts/diy-app/src/main`（不含 os/）；
+//   · 扫 `apps/diy-app/src/main`（不含 os/）；
 //   · 用 maskNonCode 去掉注释与字符串（注释里的历史说明是合法引用），只在**代码**上匹配；
 //   · 命中令牌：process.platform / win32 / darwin / wmic / taskkill / tasklist / powershell /
 //     osascript / system_profiler / Get-CimInstance / /bin/bash / bash.exe；
@@ -22,7 +22,7 @@ import { join, relative, dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const SCAN_DIR = join(ROOT, "pkgs.ts/diy-app/src/main");
+const SCAN_DIR = join(ROOT, "apps/diy-app/src/main");
 
 const TOKENS =
     /process\.platform|\bwin32\b|\bdarwin\b|\bwmic\b|\btaskkill\b|\btasklist\b|\bpowershell(?:\.exe)?\b|\bpwsh(?:\.exe)?\b|\bosascript\b|system_profiler|Get-CimInstance|\/bin\/bash|bash\.exe/gi;
@@ -53,7 +53,7 @@ export function stripComments(src) {
 
 /** 单文件扫描（导出给自检；只返回代码区的命中）。 */
 export function scanSource(src, rel) {
-    if (rel.startsWith("pkgs.ts/diy-app/src/main/os/")) return [];
+    if (rel.startsWith("apps/diy-app/src/main/os/")) return [];
     const code = stripComments(src);
     const rawLines = src.split(/\r?\n/);
     const codeLines = code.split(/\r?\n/);
@@ -82,7 +82,7 @@ function selfTest() {
     ];
     let bad = 0;
     for (const [name, src, want] of cases) {
-        const rel = name === "os dir exempt" ? "pkgs.ts/diy-app/src/main/os/index.ts" : "pkgs.ts/diy-app/src/main/x.ts";
+        const rel = name === "os dir exempt" ? "apps/diy-app/src/main/os/index.ts" : "apps/diy-app/src/main/x.ts";
         const got = scanSource(src, rel).length;
         if (got !== want) {
             bad += 1;
@@ -103,7 +103,7 @@ const violations = [];
 if (existsSync(SCAN_DIR)) {
     for (const abs of walk(SCAN_DIR)) {
         const rel = relative(ROOT, abs).split(sep).join("/");
-        if (rel.startsWith("pkgs.ts/diy-app/src/main/os/")) continue;
+        if (rel.startsWith("apps/diy-app/src/main/os/")) continue;
         for (const hit of scanSource(readFileSync(abs, "utf8"), rel)) violations.push({ file: rel, ...hit });
     }
 }

@@ -6,7 +6,7 @@
 # 于是 dev / 构建 / 单测全都在静默跑旧代码（症状：「改了源码没反应」、单测测的不是源码）。
 # 类型检查不会因此报错，所以只能在门口拦一道。
 #
-# 范围：pkgs.ts/*/{src,tests,test,scripts} + apps/*/（app 的 profile 摊在目录根，##458；
+# 范围：pkgs.ts/**/{src,tests,test,scripts} + apps/*/（app 的 profile 摊在目录根，##458；
 #       其 build/ lib/ dist/ 是产物目录，排除）。不碰仓库根 scripts/ 与其它产物目录。
 # 处置：删掉产物后重跑 check；类型检查一律用 `tsc --noEmit`（各包 tsconfig 已 noEmit:true）。
 set -euo pipefail
@@ -14,7 +14,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # shellcheck disable=SC2046
-dirs=$(ls -d pkgs.ts/*/src pkgs.ts/*/tests pkgs.ts/*/test pkgs.ts/*/scripts apps/*/ 2>/dev/null || true)
+# 去掉末尾 `/`：否则 find 输出的路径会变成 `apps/diy-app//scripts/...`，下面的 -path 例外就匹配不上
+dirs=$(ls -d pkgs.ts/*/src pkgs.ts/*/tests pkgs.ts/*/test pkgs.ts/*/scripts \
+  pkgs.ts/*/*/src pkgs.ts/*/*/tests pkgs.ts/*/*/test pkgs.ts/*/*/scripts apps/*/ 2>/dev/null | sed 's#/$##' || true)
 if [ -z "$dirs" ]; then
   echo "check-no-emit: 未找到扫描目录（配置漂移？）" >&2
   exit 1
@@ -29,7 +31,7 @@ fi
 
 bad=$(find $dirs -type f \
   \( -name '*.js' -o -name '*.jsx' -o -name '*.mjs' -o -name '*.cjs' -o -name '*.d.ts' \) \
-  ! -path 'pkgs.ts/diy-app/scripts/build-runtime.mjs' \
+  ! -path 'apps/*/scripts/build-runtime.mjs' \
   ! -path 'apps/*/bin/*' \
   ! -path 'apps/*/main.mjs' \
   ! -path 'apps/*/main-memory.mjs' \
@@ -40,7 +42,7 @@ if [ -n "$bad" ]; then
   echo "✗ 发现误 emit 产物（裸 tsc / IDE emit）：" >&2
   echo "$bad" >&2
   echo "" >&2
-  echo "  处置：git clean -f pkgs.ts/*/src pkgs.ts/*/tests pkgs.ts/*/scripts apps/*/" >&2
+  echo "  处置：git clean -f 'pkgs.ts/**/src' 'pkgs.ts/**/tests' 'pkgs.ts/**/scripts' apps/*/" >&2
   echo "  类型检查请用 tsc --noEmit（各包 tsconfig 已 noEmit:true）" >&2
   exit 1
 fi

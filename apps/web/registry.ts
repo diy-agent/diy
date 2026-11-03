@@ -4,7 +4,7 @@
 // local 发现器（`@diy-agent/remote/node` 的 localDiscoverer）永远扫不到 web 实例，
 // 于是 local 发现器的远程导航页列不出它、同格多实例也无从判定（##495 根因一）。
 //
-// 落盘格式与 `pkgs.ts/diy-app/src/main/core/instance-registry.ts` **同一份**（那个文件是读侧）：
+// 落盘格式与 `apps/diy-app/src/main/core/instance-registry.ts` **同一份**（那个文件是读侧）：
 //   pid / app / launch / worktree / port / pingPort / diyHome / variant / env / argv / cwd / startedAt / updatedAt / parents
 // 额外的两个字段是 web 侧的增量：`address`（自报算好的地址）与 `app`（发现器要靠它拼地址）。
 // `launch` / `worktree` 是 ##502 第二轮新增：dev 启动器靠 `(worktree, app, launch)` 把运行时对回

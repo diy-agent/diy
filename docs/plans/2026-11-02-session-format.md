@@ -41,8 +41,8 @@ $DIY_HOME/
 
 来源（已核实）：
 
-- bots / 会话归属 / 桶：`pkgs.ts/diy-agent-bot/src/store-fs.ts:1-13`（头注即目录契约）、
-  `pkgs.ts/diy-agent-session-store-jsonl/src/types.ts:1-12`
+- bots / 会话归属 / 桶：`pkgs.ts/agent/bot/src/store-fs.ts:1-13`（头注即目录契约）、
+  `pkgs.ts/agent/store-jsonl/src/types.ts:1-12`
 - 会话目录名固定在 `sessions/chat`：`apps/chat/sessions.ts:127,129`
 - `chat-ui.json`：`apps/chat/sessions.ts:57-59,196-201`
 
@@ -56,7 +56,7 @@ chat 这个宿主的选择，不是 session 内核的固有行为；换宿主可
 
 ### 2.1 形状
 
-定义：`pkgs.ts/diy-agent-bot/src/types.ts:20-45`。
+定义：`pkgs.ts/agent/bot/src/types.ts:20-45`。
 落盘过滤：`store-fs.ts:174-190`（`persistable` 只写已知字段）。
 
 ```json
@@ -89,7 +89,7 @@ chat 这个宿主的选择，不是 session 内核的固有行为；换宿主可
 ### 2.2 与「人物（persona）」的关系
 
 `PersonaDef = { name, model, reasoningEffort?, maxOutputTokens?, instructions }`
-（`pkgs.ts/diy-agent-bot/src/persona.ts` 的 zod schema）。也就是说 **bot 就是一个人物 + id + 时间 +
+（`pkgs.ts/agent/bot/src/persona.ts` 的 zod schema）。也就是说 **bot 就是一个人物 + id + 时间 +
 会话指针**，字段名刻意一致。将来要加人物级配置，优先加在 `PersonaDef` 上，bot.json 自然跟着长。
 
 ### 2.3 将来可能加的字段（现在都没有）
@@ -134,7 +134,7 @@ chat 这个宿主的选择，不是 session 内核的固有行为；换宿主可
 ### 3.2 `bot.json` — 会话归属（方案 B）
 
 `{ "botId": "bot-1" }`。归属记在**会话自己**的目录里，而不是 bot.json 里存 `sessionIds`——
-删 bot 不该丢会话数据（`pkgs.ts/diy-agent-bot/src/types.ts:55-58` 的设计注释、`store-fs.ts:123-127`）。
+删 bot 不该丢会话数据（`pkgs.ts/agent/bot/src/types.ts:55-58` 的设计注释、`store-fs.ts:123-127`）。
 
 写入：`botStore.assign(sessionId, botId)`（`store-fs.ts:140-152`）；
 读取：`ownerOf()`；扫码：`sessionsOf(botId)` 遍历 `sessions/chat/*/bot.json`。
@@ -145,7 +145,7 @@ chat 这个宿主的选择，不是 session 内核的固有行为；换宿主可
 
 ### 3.3 消息桶（真源）
 
-定义与切分规则：`pkgs.ts/diy-agent-session-store-jsonl/src/types.ts:1-47`、
+定义与切分规则：`pkgs.ts/agent/store-jsonl/src/types.ts:1-47`、
 `src/store.ts:1-24`（头注）、`DEFAULT_MAX_BUCKET_BYTES = 16 MB`（`types.ts:47`）。
 
 - **按大小切**（16 MB），不按天。单条超大允许独占一桶。
@@ -189,7 +189,7 @@ chat 这个宿主的选择，不是 session 内核的固有行为；换宿主可
 
 ### 4.1 落盘 / 内存：`ChatMessage`
 
-定义：`pkgs.ts/diy-agent-session/src/types.ts:42-68`；解析校验：`src/message.ts:parseMessage`。
+定义：`pkgs.ts/agent/session/src/types.ts:42-68`；解析校验：`src/message.ts:parseMessage`。
 
 ```ts
 interface ChatMessage {
@@ -233,7 +233,7 @@ interface ChatMessage {
 
 ### 4.2 线上（主进程 ↔ renderer）：`WireMessage` / `Block`
 
-定义：`pkgs.ts/chat-page/src/shared.ts:7-15, 45-48`；归一化：`pkgs.ts/chat-page/src/blocks.ts`。
+定义：`pkgs.ts/ui/chat-page/src/shared.ts:7-15, 45-48`；归一化：`pkgs.ts/ui/chat-page/src/blocks.ts`。
 
 ```ts
 interface Block {
@@ -249,7 +249,7 @@ interface WireMessage {
 
 内置 kind 三个：`text / think / tool`（`shared.ts:17`），对应 data 形状
 `TextBlockData / ThinkBlockData / ToolBlockData`（`shared.ts:21-43`）。
-渲染器注册表在 `pkgs.ts/chat-page/src/block-renderers.ts`，不认识的 kind 走 fallback（原样 JSON）。
+渲染器注册表在 `pkgs.ts/ui/chat-page/src/block-renderers.ts`，不认识的 kind 走 fallback（原样 JSON）。
 
 **这里要先纠正任务 body：`WireMessage` 早已不是 `{role, text}`。** ##499 已经改成 Block 列表
 （`shared.ts:3-5` 头注、`blocks.ts:1-9`）。body 里那句「现在只有 {role,text}，装不下 tool call」
@@ -261,8 +261,8 @@ interface WireMessage {
 
 1. **think 是死路**：`toBlocks` 有 `reasoning-delta → think` 分支（`blocks.ts:50-61`），
    `BUILTIN_BLOCK_KINDS` 也声明了 `think`、渲染器也注册了，但**没有任何生产路径产 reasoning**：
-   - `SessionDelta` 联合里没有 reasoning 分支（`pkgs.ts/diy-agent-session/src/types.ts:89-104`）；
-   - provider 明确丢弃 reasoning part（`pkgs.ts/diy-llm-provider/src/openai.ts:143-146`）；
+   - `SessionDelta` 联合里没有 reasoning 分支（`pkgs.ts/agent/session/src/types.ts:89-104`）；
+   - provider 明确丢弃 reasoning part（`pkgs.ts/model/provider/src/openai.ts:143-146`）；
    - `wireOf` 的输入 `eventsOfMessage` 只产 `text-delta` / `tool-call`（`blocks.ts:162-172`）。
    结论：思考过程**既不落盘也不上 UI**，think 渲染器目前只被单元测试覆盖。
 2. **tool 参数被压成显示字符串**：`ToolBlockData.args` 是 `argsText()` 的 JSON 串再截 120 字符
@@ -330,7 +330,7 @@ interface WireMessage {
 ### 5.4 用量（tokens / 轮数 / 花费）：不是投影，是丢失
 
 `SessionSnapshot.usage`（`TokenUsage`：`inputTokens / outputTokens / turns / cacheReadTokens?`）
-只在**内存**里（`pkgs.ts/diy-agent-session/src/session.ts:97,212-217`），不写进任何文件；
+只在**内存**里（`pkgs.ts/agent/session/src/session.ts:97,212-217`），不写进任何文件；
 `apps/chat` 的 `lastStep`（底部指标条的「上一步」）也是进程内 `Map`（`sessions.ts:138`）。
 
 后果：**重启后 `metrics.turns` 归零**，尽管消息还在；底部指标条全部为空。
@@ -451,18 +451,18 @@ interface WireMessage {
 ## 十、核实清单（本文所有「实际是」的依据）
 
 ```
-pkgs.ts/diy-agent-bot/src/types.ts:20-45,47-58,60-88    BotConfig / BotSessionRef / BotStore
-pkgs.ts/diy-agent-bot/src/store-fs.ts:1-13,24,100-196  落盘布局 / persistable / 读兼容
-pkgs.ts/diy-agent-bot/src/bot.ts:30-59                 primary() 与指针写回
-pkgs.ts/diy-agent-bot/src/persona.ts                   PersonaDef（bot 的字段来源）
-pkgs.ts/diy-agent-session/src/types.ts:28,42-68,78-104  MessageType / ChatMessage / SessionDelta
-pkgs.ts/diy-agent-session/src/message.ts:49-197        parseMessage / data 槽位 / data.tool
-pkgs.ts/diy-agent-session/src/session.ts:97,143-218    send 里追加什么 / usage 内存
-pkgs.ts/diy-agent-session-store-jsonl/src/types.ts:1-47 分桶契约
-pkgs.ts/diy-agent-session-store-jsonl/src/store.ts:1-24,35,84-160,398-410  切桶 / index / serialize
-pkgs.ts/chat-page/src/shared.ts:7-48,84-121                          Block / WireMessage / BotView / ChatSnapshot
-pkgs.ts/chat-page/src/blocks.ts:33-172                               归一化 / wireOf
-pkgs.ts/chat-page/src/block-renderers.ts:24-33                       渲染器注册
-pkgs.ts/diy-llm-provider/src/openai.ts:120-155                       provider 消费 / 丢弃哪些 part
+pkgs.ts/agent/bot/src/types.ts:20-45,47-58,60-88    BotConfig / BotSessionRef / BotStore
+pkgs.ts/agent/bot/src/store-fs.ts:1-13,24,100-196  落盘布局 / persistable / 读兼容
+pkgs.ts/agent/bot/src/bot.ts:30-59                 primary() 与指针写回
+pkgs.ts/agent/bot/src/persona.ts                   PersonaDef（bot 的字段来源）
+pkgs.ts/agent/session/src/types.ts:28,42-68,78-104  MessageType / ChatMessage / SessionDelta
+pkgs.ts/agent/session/src/message.ts:49-197        parseMessage / data 槽位 / data.tool
+pkgs.ts/agent/session/src/session.ts:97,143-218    send 里追加什么 / usage 内存
+pkgs.ts/agent/store-jsonl/src/types.ts:1-47 分桶契约
+pkgs.ts/agent/store-jsonl/src/store.ts:1-24,35,84-160,398-410  切桶 / index / serialize
+pkgs.ts/ui/chat-page/src/shared.ts:7-48,84-121                          Block / WireMessage / BotView / ChatSnapshot
+pkgs.ts/ui/chat-page/src/blocks.ts:33-172                               归一化 / wireOf
+pkgs.ts/ui/chat-page/src/block-renderers.ts:24-33                       渲染器注册
+pkgs.ts/model/provider/src/openai.ts:120-155                       provider 消费 / 丢弃哪些 part
 apps/chat/sessions.ts:46-59,127-241,431-501,527-550                  SessionMeta / 目录 / 注入 / 计数 / 标题
 ```

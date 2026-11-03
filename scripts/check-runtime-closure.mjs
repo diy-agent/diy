@@ -3,7 +3,7 @@
 //
 // 为什么必须有：`WORKSPACE_TS_DEPS` 那次事故的核心 —— 包能加载但它的依赖不在，
 // 只有运行到那行 import 才炸（且症状离根因很远）。这里是**静态**判据：
-// 扫 `pkgs.ts/diy-app/runtime/node_modules` 里每个包的 `dependencies`，
+// 扫 `apps/diy-app/runtime/node_modules` 里每个包的 `dependencies`，
 // 凡以 `` 开头的，必须也在同一份 runtime 里存在。
 //
 // 判据：
@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const argIdx = process.argv.indexOf("--runtime");
-const RUNTIME_DIR = argIdx >= 0 ? resolve(process.argv[argIdx + 1]) : join(ROOT, "pkgs.ts/diy-app/runtime");
+const RUNTIME_DIR = argIdx >= 0 ? resolve(process.argv[argIdx + 1]) : join(ROOT, "apps/diy-app/runtime");
 const listOnly = process.argv.includes("--list");
 
 /** 内部包的两个 scope（与 check-pkg-visibility 的「内部 = 非白名单」口径一致：只看这两个） */
@@ -53,7 +53,7 @@ function collectRuntimePackages() {
 
 function main() {
     if (!existsSync(join(RUNTIME_DIR, "package.json"))) {
-        console.log(`[runtime-closure] 跳过：${RUNTIME_DIR} 未生成（先跑 node pkgs.ts/diy-app/scripts/build-runtime.mjs）`);
+        console.log(`[runtime-closure] 跳过：${RUNTIME_DIR} 未生成（先跑 node apps/diy-app/scripts/build-runtime.mjs）`);
         return;
     }
 
@@ -85,7 +85,7 @@ function main() {
     if (problems.length > 0) {
         console.error(`[runtime-closure] ✗ 依赖闭包缺失 ${problems.length} 处（runtime = ${RUNTIME_DIR}）：`);
         for (const problem of problems) console.error(`  - ${problem}`);
-        console.error("  处置：确认源包 package.json 的 dependencies 是否需要该包；再跑 node pkgs.ts/diy-app/scripts/build-runtime.mjs");
+        console.error("  处置：确认源包 package.json 的 dependencies 是否需要该包；再跑 node apps/diy-app/scripts/build-runtime.mjs");
         process.exit(1);
     }
 

@@ -2,7 +2,9 @@
   "name": "diy-monorepo",
   "private": true,
   "workspaces": [
-    "pkgs.ts/*",
+    "pkgs.ts/*/*",
+    "pkgs.ts/flow",
+    "pkgs.ts/room",
     "apps/*"
   ],
   "devDependencies": {

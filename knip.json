@@ -5,7 +5,7 @@
       "entry": ["scripts/*.{mjs,mts,ts}", "scripts/**/*.{mjs,mts,ts}", "scripts/ui-smoke/*.mjs"],
       "project": ["scripts/**/*.{mjs,mts,ts}"]
     },
-    "pkgs.ts/diy-app": {
+    "apps/diy-app": {
       "entry": [
         "src/main/index.ts",
         "src/preload/index.ts",
@@ -19,7 +19,7 @@
       ],
       "project": ["src/**/*.{ts,tsx}", "scripts/**/*.mts", "tests/**/*.ts"]
     },
-    "pkgs.ts/diy-ui": {
+    "pkgs.ts/ui/core": {
       "entry": [
         "src/index.ts",
         "src/browser.ts",
@@ -39,15 +39,15 @@
       ],
       "project": ["src/**/*.{ts,tsx}", "web/src/**/*.{ts,tsx}", "examples/**/*.{ts,tsx}", "tools/**/*.ts", "test/**/*.{ts,tsx}"]
     },
-    "pkgs.ts/diy-rpc": {
+    "pkgs.ts/core/rpc": {
       "entry": ["src/index.ts", "src/http.ts", "src/ws.ts", "src/electron.ts", "src/cli/index.ts", "probes/**/*.ts", "test/**/*.ts"],
       "project": ["src/**/*.ts", "probes/**/*.ts", "test/**/*.ts"]
     },
-    "pkgs.ts/workbench-plugin": {
+    "pkgs.ts/ui/workbench-plugin": {
       "entry": ["src/index.ts", "src/manifest.ts", "src/panel.ts", "src/spec.ts"],
       "project": ["src/**/*.{ts,tsx}"]
     },
-    "pkgs.ts/*": {
+    "pkgs.ts/*/*": {
       "entry": ["src/index.ts", "**/*.test.ts", "test/**/*.ts", "src/node/index.ts"],
       "project": ["src/**/*.ts"]
     }
@@ -58,7 +58,7 @@
     "**/lib/**",
     "**/node_modules/**",
     "vendor/**",
-    "pkgs.ts/diy-app/tests/types/**"
+    "apps/diy-app/tests/types/**"
   ],
   "ignoreBinaries": ["diya", "diy", "fd", "rg", "shasum", "ps", "ffmpeg"],
   "ignoreDependencies": ["@types/*"],

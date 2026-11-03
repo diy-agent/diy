@@ -15,7 +15,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-hits=$(grep -rn --include='*.test.ts' -E '\bvi\.mock[<(]' pkgs.ts/diy-app/tests || true)
+hits=$(grep -rn --include='*.test.ts' -E '\bvi\.mock[<(]' apps/diy-app/tests || true)
 if [ -n "$hits" ]; then
   echo "✗ tests/ 下出现了 vi.mock（test-unit 跑 --no-isolate，它会静默失效）："
   echo "$hits"
