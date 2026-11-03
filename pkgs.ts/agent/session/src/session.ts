@@ -29,6 +29,7 @@ import {
     type SessionSnapshot,
     type SessionStore,
     type TokenUsage,
+    type ToolResultInput,
 } from './types.js';
 
 /** createSession 入参 */
@@ -133,96 +134,35 @@ export function createSession(options: CreateSessionOptions): AgentSession {
             if (typeof text !== 'string' || text.trim() === '') {
                 throw new SessionError('session/empty-text', 'send() 的正文不能为空', 'text');
             }
-            if (busy) {
-                throw new SessionError('session/busy', `会话 ${id} 上一轮还没结束（先 await 完，或 cancel()）`, 'busy');
-            }
-            busy = true;
-            controller = new AbortController();
-            const signal = controller.signal;
-            try {
+            yield* runTurn(() => {
                 appendMessage({ role: 'user', text });
-
-                // ② 压缩（可选）：策略只改「这一轮看到的历史」，不替它判断对错
-                let history = messages.slice();
-                if (compact) {
-                    history = parseMessages(await compact(history), 'compacted');
-                    messages.length = 0;
-                    messages.push(...history);
-                    updatedAt = iso(clock.now());
+            });
+        },
+        /**
+         * 拿「刚执行完的工具结果」继续这一轮（##514 第 3 步）。
+         *
+         * **这是给宿主做工具循环用的，不是 send 的替代**：
+         *   · send      —— 一轮对话的开始（追加 user 消息）
+         *   · 本方法    —— 同一轮里的下一步（追加 tool 结果消息，**不再追加 user**）
+         * 为什么不能拿 send 顶：工具结果在协议里必须是 `role:'tool'` 且按 tool_call_id 配对
+         * （OpenAI 兼容协议硬约束），混成 user 正文上游会拒或让模型重复调工具。
+         *
+         * 记账语义与 send 完全一致（压缩 → 调 LLM → usage 累加 → 落盘 → done），
+         * 因为它们共用同一个 `runTurn()`。
+         */
+        async *continueWithToolResults(results: readonly ToolResultInput[]): AsyncGenerator<SessionDelta> {
+            const list = takeToolResults(results);
+            yield* runTurn(() => {
+                const last = messages.at(-1);
+                if (last === undefined || last.type !== 'tool-call') {
+                    throw new SessionError(
+                        'session/nothing-to-continue',
+                        'continueWithToolResults 要求上一条消息是 tool-call（没有待回收的调用）',
+                        'messages',
+                    );
                 }
-
-                // ③ 流式调用
-                let buffer = '';
-                let toolCalls = 0;
-                let stopReason: string | undefined;
-                let inputTokens = 0;
-                let outputTokens = 0;
-                let cacheReadTokens = 0;
-                const flushTrace = (): void => {
-                    if (buffer === '') return;
-                    appendMessage({ role: 'assistant', type: 'agent-trace', text: buffer });
-                    buffer = '';
-                };
-                try {
-                    // sessionId 由会话自动带上（provider 拿它填上游路由 / 缓存 header，调用方不用管）
-                    for await (const raw of llm.chat(history.slice(), { model, signal, sessionId: id })) {
-                        const delta = assertDelta(raw);
-                        if (signal.aborted) break;
-                        if (delta.type === 'text') {
-                            buffer += delta.text;
-                            yield delta;
-                        } else if (delta.type === 'tool-call') {
-                            flushTrace();
-                            toolCalls += 1;
-                            appendMessage({
-                                role: 'assistant',
-                                type: 'tool-call',
-                                // 分支私有载荷进 data（判别键同级只放公共字段）
-                                data: { tool: { name: delta.name, args: toolArgsFromInput(delta.input), id: delta.id } },
-                            });
-                            yield delta;
-                        } else if (delta.type === 'tool-result') {
-                            appendMessage({ role: 'tool', type: 'tool-result', text: delta.content });
-                            yield delta;
-                        } else if (delta.type === 'usage') {
-                            inputTokens += delta.inputTokens;
-                            outputTokens += delta.outputTokens;
-                            cacheReadTokens += delta.cacheReadTokens ?? 0;
-                        } else {
-                            stopReason = delta.stopReason;
-                        }
-                    }
-                } catch (error) {
-                    // 主动取消不算失败：保留已收到的正文，收尾成 done
-                    if (!signal.aborted) throw error;
-                    stopReason = stopReason ?? 'aborted';
-                }
-                const aborted = signal.aborted;
-                if (aborted && stopReason === undefined) stopReason = 'aborted';
-
-                // ④ 收尾：正常结束剩下的是结论；被取消且中间调过工具 ⇒ 只能算 trace
-                if (buffer !== '') {
-                    if (aborted && toolCalls > 0) flushTrace();
-                    else appendMessage({ role: 'assistant', type: 'agent-conclusion', text: buffer });
-                }
-
-                // ⑤ 记账 + 落盘
-                // 缓存读桶：上游一步都没报就**字段缺席**（不补 0 —— 「没报」与「命中 0」不是一回事）
-                const cacheTotal = (usage.cacheReadTokens ?? 0) + cacheReadTokens;
-                usage = {
-                    inputTokens: usage.inputTokens + inputTokens,
-                    outputTokens: usage.outputTokens + outputTokens,
-                    turns: usage.turns + 1,
-                    ...(cacheTotal > 0 ? { cacheReadTokens: cacheTotal } : {}),
-                };
-                updatedAt = iso(clock.now());
-                await flush();
-
-                yield stopReason === undefined ? { type: 'done' } : { type: 'done', stopReason };
-            } finally {
-                busy = false;
-                controller = null;
-            }
+                for (const result of list) appendToolResult(result);
+            });
         },
         cancel() {
             controller?.abort();
@@ -233,8 +173,137 @@ export function createSession(options: CreateSessionOptions): AgentSession {
         flush,
     };
 
+    /**
+     * 一轮 LLM 调用 —— send 与 continueWithToolResults 共用的**唯一**实现（##514 第 3 步）。
+     *
+     * `prepare()` 只负责「这一轮开始前要落的历史」：
+     *   · send                      ⇒ 追加 user 消息
+     *   · continueWithToolResults   ⇒ 追加 tool 结果消息（不追加 user）
+     * 其余（压缩 / 流式 / usage 累加 / 落盘 / done）逐字相同 —— 复制一份必然分叉。
+     */
+    async function* runTurn(prepare: () => void): AsyncGenerator<SessionDelta> {
+        if (busy) {
+            throw new SessionError('session/busy', `会话 ${id} 上一轮还没结束（先 await 完，或 cancel()）`, 'busy');
+        }
+        busy = true;
+        controller = new AbortController();
+        const signal = controller.signal;
+        try {
+            // ① 这一轮开始前要落的历史（send ⇒ user 消息；工具循环 ⇒ tool 结果）
+            prepare();
+
+            // ② 压缩（可选）：策略只改「这一轮看到的历史」，不替它判断对错
+            let history = messages.slice();
+            if (compact) {
+                history = parseMessages(await compact(history), 'compacted');
+                messages.length = 0;
+                messages.push(...history);
+                updatedAt = iso(clock.now());
+            }
+
+            // ③ 流式调用
+            let buffer = '';
+            let toolCalls = 0;
+            /** 本轮落过几条工具结果（判「剩下的是不是结论」：两者都算「这轮在干活」） */
+            let toolResults = 0;
+            let stopReason: string | undefined;
+            let inputTokens = 0;
+            let outputTokens = 0;
+            let cacheReadTokens = 0;
+            const flushTrace = (): void => {
+                if (buffer === '') return;
+                appendMessage({ role: 'assistant', type: 'agent-trace', text: buffer });
+                buffer = '';
+            };
+            try {
+                // sessionId 由会话自动带上（provider 拿它填上游路由 / 缓存 header，调用方不用管）
+                for await (const raw of llm.chat(history.slice(), { model, signal, sessionId: id })) {
+                    const delta = assertDelta(raw);
+                    if (signal.aborted) break;
+                    if (delta.type === 'text') {
+                        buffer += delta.text;
+                        yield delta;
+                    } else if (delta.type === 'tool-call') {
+                        flushTrace();
+                        toolCalls += 1;
+                        appendMessage({
+                            role: 'assistant',
+                            type: 'tool-call',
+                            // 分支私有载荷进 data（判别键同级只放公共字段）
+                            data: { tool: { name: delta.name, args: toolArgsFromInput(delta.input), id: delta.id } },
+                        });
+                        yield delta;
+                    } else if (delta.type === 'tool-result') {
+                        // 宿主/provider 自己回收的结果也按同一形状落（带 tool_call_id，供投递侧配对）
+                        appendMessage({
+                            role: 'tool',
+                            type: 'tool-result',
+                            text: delta.content,
+                            data: { tool: { id: delta.id } },
+                        });
+                        toolResults += 1;
+                        yield delta;
+                    } else if (delta.type === 'usage') {
+                        inputTokens += delta.inputTokens;
+                        outputTokens += delta.outputTokens;
+                        cacheReadTokens += delta.cacheReadTokens ?? 0;
+                    } else {
+                        stopReason = delta.stopReason;
+                    }
+                }
+            } catch (error) {
+                // 主动取消不算失败：保留已收到的正文，收尾成 done
+                if (!signal.aborted) throw error;
+                stopReason = stopReason ?? 'aborted';
+            }
+            const aborted = signal.aborted;
+            if (aborted && stopReason === undefined) stopReason = 'aborted';
+
+            // ④ 收尾：正常结束剩下的是结论；被取消且中间调过工具 ⇒ 只能算 trace
+            //   `toolResults` 也计入「中间干过活」：最后一步是「拿到结果但不说话」时，
+            //   这段正文仍属过程（工具循环一轮 = 多次 runTurn，结论只看最后一个 runTurn）。
+            if (buffer !== '') {
+                if (aborted && (toolCalls > 0 || toolResults > 0)) flushTrace();
+                else appendMessage({ role: 'assistant', type: 'agent-conclusion', text: buffer });
+            }
+
+            // ⑤ 记账 + 落盘
+            // 缓存读桶：上游一步都没报就**字段缺席**（不补 0 —— 「没报」与「命中 0」不是一回事）
+            const cacheTotal = (usage.cacheReadTokens ?? 0) + cacheReadTokens;
+            usage = {
+                inputTokens: usage.inputTokens + inputTokens,
+                outputTokens: usage.outputTokens + outputTokens,
+                turns: usage.turns + 1,
+                ...(cacheTotal > 0 ? { cacheReadTokens: cacheTotal } : {}),
+            };
+            updatedAt = iso(clock.now());
+            await flush();
+
+            yield stopReason === undefined ? { type: 'done' } : { type: 'done', stopReason };
+        } finally {
+            busy = false;
+            controller = null;
+        }
+    }
+
+
     if (options.system !== undefined) {
         session.append({ role: 'system', text: options.system });
+    }
+
+    /**
+     * 工具结果 → 一条 `role:'tool'` 消息（**按 tool_call_id 配对**）。
+     *
+     * 为什么 id 落进 `data.tool.id` 而不是单独字段：消息形状是判别联合，分支私有载荷一律进 `data`
+     * （`tool-call` 已这么放）—— 投递侧（provider）靠它拼 `{ role:'tool', tool_call_id }`。
+     */
+    function appendToolResult(result: ToolResultInput): ChatMessage {
+        return appendMessage({
+            role: 'tool',
+            type: 'tool-result',
+            text: typeof result.content === 'string' ? result.content : jsonTextOf(result.content),
+            data: { tool: { id: result.id, ...(result.name === undefined ? {} : { name: result.name }) } },
+        });
     }
 
     /** store 恒存在（缺省内存实现）：append 一律排队写，flush 统一收口错误。 */
@@ -303,6 +372,47 @@ function takeCompactor(value: Compactor | undefined): Compactor | undefined {
         throw new SessionError('session/invalid-options', 'compact 必须是函数', 'compact');
     }
     return value;
+}
+
+/** 任意值 → JSON 文本（`undefined` / 不可序列化 → `"null"`，不抛） */
+function jsonTextOf(value: unknown): string {
+    if (value === undefined) return 'null';
+    try {
+        const text = JSON.stringify(value);
+        return typeof text === 'string' ? text : 'null';
+    } catch {
+        return 'null';
+    }
+}
+
+/**
+ * 校验 `continueWithToolResults` 的入参（**不静默容错**，同本包其余入口）。
+ * 空数组同样是错：一次都不执行的「继续」等于让模型重复调一次工具（死循环的入口）。
+ */
+function takeToolResults(value: unknown): readonly ToolResultInput[] {
+    if (!Array.isArray(value) || value.length === 0) {
+        throw new SessionError(
+            'session/invalid-tool-results',
+            'continueWithToolResults 需要至少一条工具结果',
+            'results',
+        );
+    }
+    return value.map((item, index) => {
+        const path = `results[${index}]`;
+        if (typeof item !== 'object' || item === null) {
+            throw new SessionError('session/invalid-tool-results', `${path} 必须是对象`, path);
+        }
+        const record = item as Record<string, unknown>;
+        const id = record['id'];
+        if (typeof id !== 'string' || id === '') {
+            throw new SessionError('session/invalid-tool-results', `${path}.id 必须是非空字符串`, `${path}.id`);
+        }
+        const name = record['name'];
+        if (name !== undefined && typeof name !== 'string') {
+            throw new SessionError('session/invalid-tool-results', `${path}.name 必须是字符串`, `${path}.name`);
+        }
+        return name === undefined ? { id, content: record['content'] } : { id, name, content: record['content'] };
+    });
 }
 
 function takeStore(value: unknown): SessionStore {

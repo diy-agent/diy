@@ -29,7 +29,9 @@ import { createSession, type AgentSession, type ChatMessage, type LlmPort, type 
 import { openJsonlSessionStore } from "@diy-agent/session-store-jsonl";
 import { createOpenAiCompatible, resolveProviderConfig } from "@diy-agent/llm-provider";
 import { costOf, loadCatalog, readAccountValue, type ModelCatalogEntry } from "@diy-agent/model-catalog";
+import { toolArgsFromInput } from "@diy-agent/session";
 import { createBot, createFirstBot as createFirstBotIn } from "./bot.js";
+import { runToolCalls, type BotToolSet, type PendingToolCall } from "./tools.js";
 import type { Bot, BotConfig, BotStore } from "./types.js";
 import { createFileBotStore } from "./store-fs.js";
 import {
@@ -94,6 +96,16 @@ export interface BotChatOptions {
     readonly persistMeta?: boolean;
     /** 建 LLM 端口（测试注入假实现；缺省 = 真 provider，key 从 readAccountValue 取） */
     readonly llmFor?: (modelKey: string) => LlmPort;
+    /**
+     * 工具集（##514 第 3 步；**缺省 = 不装工具**，纯对话）。
+     * 装配器传 `buildTools({ cwd, limits, onAudit })`（`@diy-agent/tools`）；bot 只负责执行。
+     */
+    readonly tools?: BotToolSet;
+    /**
+     * 工具循环的**工具步上限**（缺省 20）。计数单位 = 「执行了工具的那几步」，
+     * 不是「LLM 调用次数」（后者 = 步数 + 1：最后一步不再调工具）。
+     */
+    readonly maxToolSteps?: number;
 }
 
 /** 把 `providerId/modelId` 切开（模型 id 自身可含 `/`，按第一个 `/` 切） */
@@ -468,9 +480,13 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                     const { session, meta } = await opened(ref.id);
                     const before = session.messages.length;
                     const usageBefore = session.usage;
-                    for await (const delta of session.send(text)) {
-                        if (delta.type === "text") onDelta(wireOf(session.messages));
-                    }
+                    await runToolLoop({
+                        session,
+                        text,
+                        tools: options.tools,
+                        maxTools: options.maxToolSteps ?? DEFAULT_MAX_TOOL_STEPS,
+                        onDelta,
+                    });
                     const messages = wireOf(session.messages);
                     onDelta(messages);
 
@@ -498,6 +514,71 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
             })();
         },
     };
+}
+
+/** 工具步缺省上限（##514：够一个中等任务，又不至于把一整晚烧进去） */
+export const DEFAULT_MAX_TOOL_STEPS = 20;
+
+/**
+ * 一轮对话的**工具循环**（##514 第 3 步）：调模型 → 模型点工具 → 执行 → 结果喂回去 → 再调，
+ * 直到模型不再调工具或步数上限。
+ *
+ * 为什么不用甲（在 bot 层反复调 `session.send`）：`send` 恒追加 **user** 消息，
+ * 而工具结果在协议上必须是 `role:'tool'` 且按 `tool_call_id` 配对 —— 混成 user 正文
+ * 上游会拒（或有模型行为不可预测）。所以用 session 的 `continueWithToolResults()`：
+ * 落盘 / 压缩 / usage 统计与 `send` 完全同一套（两者共用 `runTurn()`）。
+ *
+ * 超限取舍（用户已确认口径）：**不报错、不静默死循环** ——
+ * 剩余未执行的调用仍各落一条「未执行」结果（历史必须合法：assistant 的 tool-call
+ * 不能没有对应结果），再追加一条 notice 说明截断原因，然后结束这一轮。
+ */
+async function runToolLoop(input: {
+    readonly session: AgentSession;
+    readonly text: string;
+    readonly tools: BotToolSet | undefined;
+    readonly maxTools: number;
+    readonly onDelta: (messages: readonly WireMessage[]) => void;
+}): Promise<void> {
+    const { session, text, tools, maxTools, onDelta } = input;
+    const push = (): void => onDelta(wireOf(session.messages));
+
+    let stream = session.send(text);
+    let usedTools = 0;
+    for (;;) {
+        const calls: PendingToolCall[] = [];
+        for await (const delta of stream) {
+            // 工具调用 / 结果也推 —— 否则「只调工具、不吐正文」的那几步在 UI 上是黑的
+            if (delta.type === "text" || delta.type === "tool-call" || delta.type === "tool-result") push();
+            if (delta.type === "tool-call") {
+                calls.push({ id: delta.id, name: delta.name, input: toolArgsFromInput(delta.input) });
+            }
+        }
+        if (calls.length === 0) return;
+
+        if (tools === undefined || usedTools >= maxTools) {
+            // 不能执行也必须回结果：assistant 的 tool-call 悬空会让下一轮请求不合法
+            const reason =
+                tools === undefined ? "[未执行] 本会话没有装工具" : `[未执行] 已达工具步上限 ${maxTools}`;
+            const skipped = calls.map((call) => ({ id: call.id, name: call.name, content: reason }));
+            for await (const delta of session.continueWithToolResults(skipped)) {
+                if (delta.type === "text" || delta.type === "tool-call" || delta.type === "tool-result") push();
+            }
+            session.append({
+                role: "assistant",
+                type: "agent-notice",
+                text:
+                    tools === undefined
+                        ? "模型要求调工具，但本会话没有装工具；调用未执行。"
+                        : `工具循环已达上限（${maxTools} 步），本轮停止；剩余调用未执行。`,
+            });
+            push();
+            return;
+        }
+
+        usedTools += 1;
+        const results = await runToolCalls(calls, tools);
+        stream = session.continueWithToolResults(results);
+    }
 }
 
 function newSessionId(): string {

@@ -25,8 +25,19 @@ export { createBot, createFirstBot, ensureBot, hasAnyBot, newSessionId, openBot,
 
 // ##505：bot 对话宿主（send / snapshot / 模型解析 / 会话标题 / actor 队列）。
 // 会话只是内部技术：没有会话列表，一个 bot 一条长期会话。
-export { FIRST_BOT_DRAFT, createBotChat, createSerial, nextBotId, splitModelKey } from "./chat.js";
+export {
+    DEFAULT_MAX_TOOL_STEPS,
+    FIRST_BOT_DRAFT,
+    createBotChat,
+    createSerial,
+    nextBotId,
+    splitModelKey,
+} from "./chat.js";
 export type { BotChatOptions, Serial } from "./chat.js";
+
+// ##514 第 3 步：工具**执行**（定义在 @diy-agent/tools，bot 只按名字执行 + 把结果交回 Session）
+export { TOOL_RESULT_MAX_CHARS, runToolCalls } from "./tools.js";
+export type { BotTool, BotToolOptions, BotToolSet, PendingToolCall } from "./tools.js";
 
 // 线上形状（纯数据 + 纯映射）也可从子路径 `@diy-agent/bot/protocol` 单独取
 // —— renderer 用那个，不会把 node:* 带进浏览器包。

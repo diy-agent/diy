@@ -15,6 +15,10 @@ export type SessionErrorCode =
     | 'session/empty-text'
     /** 上一轮还没结束就再次 send（一个会话同一时刻只有一轮） */
     | 'session/busy'
+    /** continueWithToolResults 入参非法（空数组 / 缺 id / id 非非空字符串） */
+    | 'session/invalid-tool-results'
+    /** continueWithToolResults 时没有待回收的 tool-call（上一条消息不是 tool-call） */
+    | 'session/nothing-to-continue'
     /** 缺省内存存储的出入口参非法（maxEntries 非正整数 / seq 非法 / readRange 反向） */
     | 'store/invalid-options'
     /** 内存存储的 seq 不连续（缺号 / 重号）—— 与 jsonl 适配器同一判据，不静默丢数据 */

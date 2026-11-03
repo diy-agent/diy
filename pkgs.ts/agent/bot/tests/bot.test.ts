@@ -189,8 +189,10 @@ describe("边界（判据 4）", () => {
         const files = readdirSync(dir).filter((name) => name.endsWith(".ts"));
         expect(files.length).toBeGreaterThan(0);
         // ##505：对话编排（chat.ts）与线上形状（protocol.ts）**本来就要**用 session 的消息 / 端口；
+        // ##514：工具执行（tools.ts）也要——它产出的就是 session 的 `ToolResultInput`
+        // （工具结果必须按 tool_call_id 交回会话，绕开会话就得自己重写一套配对逻辑）。
         // 身份与存储仍在「不认识会话内核」那一侧。
-        const conversational = new Set(["chat.ts", "protocol.ts"]);
+        const conversational = new Set(["chat.ts", "protocol.ts", "tools.ts"]);
         for (const name of files) {
             const text = readFileSync(join(dir, name), "utf-8");
             expect(text.toLowerCase()).not.toContain("room");

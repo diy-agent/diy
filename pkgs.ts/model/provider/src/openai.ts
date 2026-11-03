@@ -8,8 +8,16 @@
 //   ② 不拼提示词 —— messages 原样映射；系统提示 / 人设由调用方自己塞进 messages
 //   ③ 不重试 —— `maxRetries: 0`；失败按 `LlmProviderError.code` 抛出去，由上层决定退避
 
-import { streamText, type ModelMessage } from 'ai';
+import {
+    streamText,
+    type AssistantContent,
+    type ModelMessage,
+    type ToolResultPart,
+} from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+
+/** `AssistantContent` 是 `string | parts[]` 的联合；要 push 就必须用数组那一半 */
+type AssistantContentParts = Exclude<AssistantContent, string>;
 import type { ChatMessage, ChatOptions, LlmPort, SessionDelta } from '@diy-agent/session';
 import { classifyError } from './errors.js';
 import { SESSION_PLACEHOLDER } from './strategies/opencode.js';
@@ -227,7 +235,16 @@ function toolOutputTextOf(output: unknown): string {
 }
 
 /**
- * `ChatMessage` → ai-sdk 的消息。只搬正文与角色；工具消息本刀不支持（直接跳过）。
+ * `ChatMessage` → ai-sdk 的 `ModelMessage`（##514 第 3 步：工具消息的**入向**映射）。
+ *
+ * 三条判据（漏任一条 → 模型看不到工具结果 → 重复调同一个工具）：
+ *   ① `tool-call` 消息 ⇒ assistant 消息里的 `{ type:'tool-call', toolCallId, toolName, input }`
+ *   ② `tool-result` 消息 ⇒ `{ role:'tool', content:[{ type:'tool-result', toolCallId, toolName, output }] }`
+ *      （`toolCallId` 取自 `data.tool.id` —— 协议按它把结果挂回那次调用）
+ *   ③ **连续的 assistant 消息合并成一条**：Session 把「先说话再调工具」拆成两条
+ *      （agent-trace 正文 + tool-call），而协议要求它们属于**同一个 assistant 消息**——
+ *      不合并就等于模型从没说过那段话。tool 消息同理按段合并。
+ *
  * system 消息单独拆出来（v7 的 messages 不接受它，见 `system` 选项）。
  */
 function toModelMessages(messages: readonly ChatMessage[]): {
@@ -236,18 +253,79 @@ function toModelMessages(messages: readonly ChatMessage[]): {
 } {
     const systems: string[] = [];
     const out: ModelMessage[] = [];
-    for (const message of messages) {
-        if (message.type === 'tool-call' || message.type === 'tool-result') continue;
-        if (message.role === 'tool') continue;
+    let i = 0;
+    while (i < messages.length) {
+        const message = messages[i]!;
         const text = message.text ?? '';
-        if (text.length === 0) continue;
         if (message.role === 'system') {
-            systems.push(text);
+            if (text.length > 0) systems.push(text);
+            i += 1;
             continue;
         }
-        out.push({ role: message.role, content: text } as ModelMessage);
+        if (message.role === 'tool') {
+            const parts: ToolResultPart[] = [];
+            while (i < messages.length && messages[i]!.role === 'tool') {
+                parts.push(toolResultPartOf(messages[i]!));
+                i += 1;
+            }
+            out.push({ role: 'tool', content: parts });
+            continue;
+        }
+        if (message.role === 'assistant') {
+            const parts: AssistantContentParts = [];
+            while (i < messages.length && messages[i]!.role === 'assistant') {
+                parts.push(...assistantPartsOf(messages[i]!));
+                i += 1;
+            }
+            if (parts.length > 0) out.push({ role: 'assistant', content: parts });
+            continue;
+        }
+        if (text.length > 0) out.push({ role: 'user', content: text });
+        i += 1;
     }
     return systems.length === 0 ? { messages: out } : { system: systems.join('\n\n'), messages: out };
+}
+
+/** 一条 assistant 消息 → content parts（正文与 tool-call **都要**，不能二选一） */
+function assistantPartsOf(message: ChatMessage): AssistantContentParts {
+    const tool = toolOf(message.data);
+    if (message.type === 'tool-call' && tool !== null) {
+        return [{ type: 'tool-call', toolCallId: tool.id, toolName: tool.name, input: tool.args }];
+    }
+    const text = message.text ?? '';
+    return text.length === 0 ? [] : [{ type: 'text', text }];
+}
+
+/** 一条 tool 消息 → `ToolResultPart`；缺 tool_call_id 是宿主建消息时的错，当场说清（不猜） */
+function toolResultPartOf(message: ChatMessage): ToolResultPart {
+    const tool = toolOf(message.data);
+    if (tool === null) {
+        throw new TypeError(
+            'tool-result 消息缺 `data.tool.id`（tool_call_id 是协议硬约束：没有它上游无法把结果挂回调用）',
+        );
+    }
+    return {
+        type: 'tool-result',
+        toolCallId: tool.id,
+        toolName: tool.name ?? '',
+        output: { type: 'text', value: message.text ?? '' },
+    };
+}
+
+/** `data.tool` 的宽松读取（Session 只保证「装得下」，不解释 schema） */
+function toolOf(data: unknown): { id: string; name: string; args: unknown } | null {
+    if (data === null || typeof data !== 'object') return null;
+    const tool = (data as { tool?: unknown }).tool;
+    if (tool === null || typeof tool !== 'object') return null;
+    const record = tool as Record<string, unknown>;
+    const id = record['id'];
+    if (typeof id !== 'string' || id === '') return null;
+    const name = record['name'];
+    return {
+        id,
+        name: typeof name === 'string' ? name : '',
+        args: record['args'],
+    };
 }
 
 /** ai-sdk 的 `LanguageModelUsage` → 本包的 `UsageDetail`（拿不到就 undefined，不补 0） */

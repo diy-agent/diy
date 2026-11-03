@@ -153,6 +153,20 @@ export interface SessionSnapshot {
 }
 
 /**
+ * 一条工具执行结果（**宿主**执行完工具后交回 Session）。
+ *
+ * `id` 必须来自对应 tool-call 的 id —— 协议要求按 tool_call_id 配对（OpenAI 兼容协议的硬约束），
+ * 没有它上游无法把结果挂回那次调用。
+ */
+export interface ToolResultInput {
+    readonly id: string;
+    /** 工具名（可选；投递侧的 `tool-result` part 要它，缺了不影响 OpenAI 兼容协议） */
+    readonly name?: string;
+    /** 结果正文（字符串原样；其他值转 JSON 文本 —— 怎么显示是上层的事） */
+    readonly content: unknown;
+}
+
+/**
  * 存储端口（可选）。缺省 = 本包自带的内存实现（`openMemorySessionStore()`，一个字节也不落盘）；
  * 要落盘 / 远程由装配器实例化后传进来 —— 本包不认识任何具体实现（##480）。
  *
@@ -200,6 +214,14 @@ export interface AgentSession extends SessionPeer {
     append(message: ChatMessageInit): ChatMessage;
     /** 跑一轮：追加 user → （压缩）→ 调 LLM → 增量流 → 收尾 */
     send(text: string): AsyncIterable<SessionDelta>;
+    /**
+     * 拿刚执行完的工具结果继续这一轮（##514 工具循环）。
+     *
+     * **给宿主做工具循环用，不是 send 的替代**：send 开头（追加 user 消息），本方法中段
+     * （追加 `role:'tool'` 的结果消息、不追加 user）；其余记账语义与 send 逐字一致。
+     * 失败判据：上一条消息不是 `tool-call` ⇒ 抛 `session/nothing-to-continue`。
+     */
+    continueWithToolResults(results: readonly ToolResultInput[]): AsyncIterable<SessionDelta>;
     /** 取消正在跑的一轮（abort 信号；已收到的正文保留） */
     cancel(): void;
     /** 当前快照（给宿主做展示 / 调试；落盘走 SessionStore.append） */

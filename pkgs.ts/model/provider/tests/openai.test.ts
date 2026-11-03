@@ -34,6 +34,11 @@ function chunk(delta: { content?: string }, extra: Record<string, unknown> = {})
     };
 }
 
+/** 收尾 chunk（finish_reason='stop'）—— 流里没有它，ai-sdk 会报「ended without a finish reason」 */
+function stopChunk(): unknown {
+    return { ...(chunk({}) as object), choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] };
+}
+
 /** 造一个 SSE 响应体（`data: {...}` 逐条 + 结尾 [DONE]） */
 function sseResponse(chunks: readonly unknown[]): Response {
     const body = `${chunks.map((item) => `data: ${JSON.stringify(item)}`).join('\n\n')}\n\ndata: [DONE]\n\n`;
@@ -326,6 +331,51 @@ describe('工具调用转发（##514 第 2 步）', () => {
         expect(call?.data).toEqual({ tool: { name: 'read', args: { path: 'a.txt' }, id: 'call_1' } });
         // 调用前没有正文 ⇒ 不该凭空造一条 agent-trace
         expect(session.messages.some((message) => message.type === 'agent-trace')).toBe(false);
+    });
+
+    it('入向映射：tool-call / tool-result 真的出现在请求体里（第二轮模型才看得到结果）', async () => {
+        const fake = fakeFetch(() => sseResponse([chunk({ content: 'ok' }), stopChunk()]));
+        const history: ChatMessage[] = [
+            { role: 'user', text: '读一下 a.txt' },
+            // Session 存 tool-call 的形状：分支私有载荷进 data.tool
+            { role: 'assistant', type: 'tool-call', data: { tool: { id: 'call_1', name: 'read', args: { path: 'a.txt' } } } },
+            { role: 'tool', type: 'tool-result', text: 'hello-514', data: { tool: { id: 'call_1', name: 'read' } } },
+            { role: 'user', text: '继续' },
+        ];
+        for await (const _delta of provider(fake.fetch).chat(history)) {
+            // 只关心请求体
+        }
+        const body = (await fake.requests[0]!.json()) as { messages: Record<string, unknown>[] };
+
+        // ① assistant 消息带着 tool_calls（toolCallId + 参数）
+        const assistant = body.messages.find((message) => message['role'] === 'assistant');
+        expect(assistant).toMatchObject({
+            role: 'assistant',
+            tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'read', arguments: '{"path":"a.txt"}' } }],
+        });
+        // ② tool 消息按 tool_call_id 挂回去（不带它 = 上游无法配对，模型会重复调工具）
+        const tool = body.messages.find((message) => message['role'] === 'tool');
+        expect(tool).toMatchObject({ role: 'tool', tool_call_id: 'call_1', content: 'hello-514' });
+        // ③ 顺序不变：user → assistant(tool_calls) → tool → user
+        expect(body.messages.map((message) => message['role'])).toEqual(['user', 'assistant', 'tool', 'user']);
+    });
+
+    it('入向映射：连续 assistant 消息（先说话再调工具）合并成一条，正文不丢', async () => {
+        const fake = fakeFetch(() => sseResponse([chunk({ content: 'ok' }), stopChunk()]));
+        const history: ChatMessage[] = [
+            { role: 'user', text: '查一下' },
+            { role: 'assistant', type: 'agent-trace', text: '我先看看文件' },
+            { role: 'assistant', type: 'tool-call', data: { tool: { id: 'call_9', name: 'read', args: { path: 'x' } } } },
+            { role: 'tool', type: 'tool-result', text: '内容', data: { tool: { id: 'call_9', name: 'read' } } },
+        ];
+        for await (const _delta of provider(fake.fetch).chat(history)) {
+            // 只关心请求体
+        }
+        const body = (await fake.requests[0]!.json()) as { messages: Record<string, unknown>[] };
+        const assistants = body.messages.filter((message) => message['role'] === 'assistant');
+        expect(assistants).toHaveLength(1);
+        expect(JSON.stringify(assistants[0])).toContain('我先看看文件');
+        expect(JSON.stringify(assistants[0])).toContain('call_9');
     });
 
     it('tool-result part → delta：文本类取 value，其余转 JSON 文本', () => {
