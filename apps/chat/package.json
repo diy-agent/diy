@@ -31,7 +31,8 @@
         "@opentelemetry/sdk-logs": "^3.0.0",
         "electron": "^43.8.6",
         "@diy-agent/session": "*",
-        "@diy-agent/tools": "file:../../pkgs.ts/agent/tools"
+        "@diy-agent/tools": "file:../../pkgs.ts/agent/tools",
+        "@diy-agent/jobs": "file:../../pkgs.ts/agent/jobs"
     },
     "devDependencies": {
         "@types/node": "^26.1.0",

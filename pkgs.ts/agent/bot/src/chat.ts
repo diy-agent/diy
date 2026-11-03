@@ -138,6 +138,8 @@ export interface BotChatOptions {
      * 不是「LLM 调用次数」（后者 = 步数 + 1：最后一步不再调工具）。
      */
     readonly maxToolSteps?: number;
+    /** 快照超时（毫秒，缺省 2000）：超时返回上一次成功快照，避免一个卡住的会话拖死整个 UI */
+    readonly snapshotTimeoutMs?: number;
 }
 
 /** 把 `providerId/modelId` 切开（模型 id 自身可含 `/`，按第一个 `/` 切） */
@@ -198,6 +200,31 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
     >();
     /** 内存模式下的压缩状态（persistMeta=false 时也只在进程里） */
     const compactMemory = new Map<string, BotCompactionState>();
+    /**
+     * 快照守卫：**读不该被写卡死**。
+     *
+     * 实测（用户 2026-11-04）：某个 bot 的模型调用挂住（无超时）⇒ 它的会话队列一直占着；
+     * 更糟的是快照也要过 `act` 队列，于是「其他 bot 也进不去」——UI 整片失灵。
+     *
+     * 取舍：超时（缺省 2s）就返回**上一次成功快照**，并标明 stale。宁可给人看旧数据，
+     * 也不能让人对着一个永远转圈的界面。下一次刷新若能拿到新数据，自然恢复。
+     */
+    let lastSnapshot: BotChatSnapshot | null = null;
+    const withSnapshotGuard = async (run: () => Promise<BotChatSnapshot>): Promise<BotChatSnapshot> => {
+        const timeoutMs = options.snapshotTimeoutMs ?? 2000;
+        const raced = await Promise.race([
+            run().then((snap) => ({ ok: true as const, snap })),
+            new Promise<{ ok: false }>((resolve) => setTimeout(() => resolve({ ok: false }), timeoutMs)),
+        ]);
+        if (raced.ok) {
+            lastSnapshot = raced.snap;
+            return raced.snap;
+        }
+        if (lastSnapshot !== null) return lastSnapshot;
+        // 一次都没成功过：给一个不撒谎的空壳（UI 会显示「正在读取…」而不是白屏）
+        throw new Error(`快照超时（${timeoutMs}ms）且尚无可用快照`);
+    };
+
     /** 每个会话「上一步」的用量（进程内；重启后指标为空 — 不编数字） */
     const lastStep = new Map<string, StepUsage>();
     /** 状态操作的队列（bot 增删改 / 选中 / meta 落盘）—— 单实例顺序执行 */
@@ -460,7 +487,7 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
 
     return {
         // 读也排队：一次只跑一个，读到的永远是某个操作的**完成态**（不是半路）
-        snapshot: () => act(snapshotNow),
+        snapshot: () => withSnapshotGuard(() => act(snapshotNow)),
 
         /** 首启建 bot（##497：必须有 model；已存在则报错） */
         createFirstBot(input: FirstBotInput): Promise<BotChatSnapshot> {
