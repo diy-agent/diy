@@ -14,6 +14,7 @@
 import type { PageContext, PageView } from "@diy-agent/workbench-ui";
 import type { BotView, ChatMetrics, BotChatSnapshot, ModelChoice, SendResult, WireMessage } from "./shared.js";
 import { textMessage } from "./shared.js";
+import { DEMO_TOOL_COMMAND, demoToolMessage } from "./demo.js";
 import { renderBlocks } from "./block-renderers.js";
 import { ensureChatStyle } from "./style.js";
 
@@ -79,6 +80,8 @@ export const chatPageView: PageView = {
         let selectedModel = "";
         let busy = false;
         let hideTimer: ReturnType<typeof setTimeout> | null = null;
+        /** `/demo-tool` 的收尾定时器（running → ok 用） */
+        let demoTimer: ReturnType<typeof setTimeout> | null = null;
         // 悬停**不再**拉出配置 panel（用户 2026-11-02 裁）：hover 只出概览卡片，
         // panel 只由显式点击打开 —— 点 bot 行只切对话，点「配置」/⚙ 才弹。
 
@@ -478,6 +481,19 @@ export const chatPageView: PageView = {
             event.preventDefault();
             const text = input.value.trim();
             if (busy || text.length === 0) return;
+            if (text === DEMO_TOOL_COMMAND) {
+                // `/demo-tool`：本地假工具块（不发主进程）；先 running，900ms 后原地变 ok
+                input.value = "";
+                paint([...current, textMessage("user", DEMO_TOOL_COMMAND), demoToolMessage("running")]);
+                if (demoTimer !== null) clearTimeout(demoTimer);
+                demoTimer = setTimeout(() => {
+                    demoTimer = null;
+                    const next = current.slice();
+                    next[next.length - 1] = demoToolMessage("ok");
+                    paint(next);
+                }, 900);
+                return;
+            }
             busy = true;
             send.disabled = true;
             input.value = "";

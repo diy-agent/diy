@@ -181,7 +181,10 @@ async function main(): Promise<void> {
         timeout: 30_000,
     });
     await ensureBot(page);
-    ok("至少一个 bot（首启引导按需走）+ bot 条可见");
+    // 每次都用**一个新 bot**（它自带一条空会话）：否则复跑会把上一轮的几百条消息带进来，
+    // 真模型要几十秒甚至超时，判据 2/3/4 就变成「等上游」而不是「验渲染」
+    await createBot(page, `verify-${String(Date.now() % 100000)}`);
+    ok("至少一个 bot（首启引导按需走）+ 新建一个干净的 verify bot");
 
     // ── 判据 0：##498 界面形态（四条硬要求） ──
     if ((await page.locator(".chat-header").count()) !== 0) fail("还有顶部横幅（硬要求 1：消息区顶天）");
@@ -236,8 +239,15 @@ async function main(): Promise<void> {
         timeout: 5_000,
     });
     const wide1 = await sideWidth();
-    const label2 = await page.$eval(".wb-side .wb-nav-label", (node) => getComputedStyle(node).opacity);
-    if (label2 !== "1") fail(`展开后菜单文字应当可见（opacity=${label2}）`);
+    // opacity 是 0.12s 过渡：等它跑完再断言（否则会读到 0.98 这种中间值）
+    await page
+        .waitForFunction(() => getComputedStyle(document.querySelector(".wb-side .wb-nav-label")!).opacity === "1", undefined, {
+            timeout: 5_000,
+        })
+        .catch(async () => {
+            const now = await page.$eval(".wb-side .wb-nav-label", (node) => getComputedStyle(node).opacity);
+            fail(`展开后菜单文字应当可见（opacity=${now}）`);
+        });
     const groups = await page.$$eval(".wb-side .wb-group-head", (items) =>
         items.filter((item) => getComputedStyle(item).display !== "none").map((item) => item.textContent ?? ""),
     );
@@ -260,7 +270,8 @@ async function main(): Promise<void> {
     await page.waitForTimeout(200);
     if ((await page.locator('.chat-viewset[data-show="true"]').count()) !== 0) fail("点 bot 弹出了配置 panel（#2：只该开对话）");
     // hover **不该**弹出配置 panel（用户 2026-11-02 裁：panel 只由显式点击打开）
-    await page.locator('.chat-bot[data-active="false"] .chat-bot-btn').first().hover();
+    // hover 任意一个**真 bot 行**（顶部的「+ 新 bot」也带 .chat-bot-btn，但没有卡片）
+    await page.locator(".chat-bot-btn[data-bot-id]").first().hover();
     await page.waitForTimeout(700);
     if ((await page.locator('.chat-viewset[data-show="true"]').count()) !== 0) {
         fail("hover bot 行弹出了配置 panel（应只在点「配置」/⚙ 时弹）");
@@ -276,6 +287,21 @@ async function main(): Promise<void> {
     await page.click(".chat-viewset-close");
     await page.mouse.move(600, 500);
     ok("判据 0c：新 bot 在顶部 / 点 bot 只开对话 / hover 不弹 panel / 点「配置」才弹 / 悬浮⇄固定可切");
+
+    // ── 判据 0d：/demo-tool 手点复现（tool 块端到端；##514 前置） ──
+    await page.fill(".chat-input", "/demo-tool");
+    await page.press(".chat-input", "Enter");
+    await page.waitForSelector('.chat-block-tool[data-state="running"]', { timeout: 5_000 });
+    const runningOpen = await page.$eval('.chat-block-tool[data-state="running"]', (node) => (node as HTMLDetailsElement).open);
+    if (!runningOpen) fail("running 的 tool 块没有展开（该看得见进度）");
+    const runningDot = await page.$eval(".chat-block-tool .chat-tool-dot", (node) => node.getAttribute("data-state"));
+    if (runningDot !== "running") fail(`running 时圆点 data-state=${String(runningDot)}`);
+    await page.waitForSelector('.chat-block-tool[data-state="ok"]', { timeout: 5_000 });
+    const okOpen = await page.$eval('.chat-block-tool[data-state="ok"]', (node) => (node as HTMLDetailsElement).open);
+    if (okOpen) fail("ok 之后 tool 块没有收起");
+    const okDot = await page.$eval('.chat-block-tool[data-state="ok"] .chat-tool-dot', (node) => node.getAttribute("data-state"));
+    if (okDot !== "ok") fail(`ok 时圆点 data-state=${String(okDot)}`);
+    ok("判据 0d：/demo-tool ⇒ tool 块 running（展开/黄点）→ ok（收起/绿点）");
     // 鼠标挪开，收起卡片（别挡住后面的点击）
     await page.mouse.move(600, 300);
 

@@ -21,6 +21,7 @@ import { GenApp, html, Signal, type Spec } from "@diy-agent/ui/browser";
 import type { PageContext, PageView } from "@diy-agent/workbench-ui";
 import type { BotView, ChatMetrics, BotChatSnapshot, ModelChoice, SendResult, WireMessage } from "./shared.js";
 import { textMessage } from "./shared.js";
+import { DEMO_TOOL_COMMAND, demoToolMessage } from "./demo.js";
 import { renderBlocks } from "./block-renderers.js";
 import { ensureChatStyle } from "./style.js";
 
@@ -92,6 +93,8 @@ export const chatPageView: PageView = {
         let editorEl: HTMLElement | null = null;
         let firstEl: HTMLElement | null = null;
         let cardEl: HTMLElement | null = null;
+        /** `/demo-tool` 的收尾定时器（running → ok 用） */
+        let demoTimer: ReturnType<typeof setTimeout> | null = null;
         let hideTimer: ReturnType<typeof setTimeout> | null = null;
 
         // ── 面板：配置 / 新建 bot / 首启引导 ──────────────────
@@ -701,11 +704,36 @@ export const chatPageView: PageView = {
             }
         }
 
+        /**
+         * `/demo-tool` 演示（##514 前置）：本地插一条假工具块，**不发主进程**。
+         * 先 running（展开、黄点），约 900ms 后原地变 ok（收起、绿点、摘要 + 输出）。
+         * 下一次快照（发消息 / 切 bot）就把它抹掉 —— 真状态只认核心层。
+         */
+        // 用 function 声明（提升）：本文件的结构层在 `return () => {...}` 之前收尾，
+        // 后面的这些「行为」全是提升的函数声明（const 落在 return 之后就成不可达了）。
+        function runDemoTool(): void {
+            store.messages = [...store.messages, textMessage("user", DEMO_TOOL_COMMAND), demoToolMessage("running")];
+            const index = store.messages.length - 1;
+            bump();
+            if (demoTimer !== null) clearTimeout(demoTimer);
+            demoTimer = setTimeout(() => {
+                demoTimer = null;
+                const next = store.messages.slice();
+                next[index] = demoToolMessage("ok");
+                store.messages = next;
+                bump();
+            }, 900);
+        }
+
         async function sendMessage(context: PageContext): Promise<void> {
             if (store.busy || inputEl === null) return;
             const text = inputEl.value.trim();
             if (text.length === 0) return;
             inputEl.value = "";
+            if (text === DEMO_TOOL_COMMAND) {
+                runDemoTool();
+                return;
+            }
             store.busy = true;
             store.messages = [...store.messages, textMessage("user", text)];
             bump();
