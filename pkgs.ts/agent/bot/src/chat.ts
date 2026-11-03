@@ -327,11 +327,28 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
         await writeFile(join(dir, "compaction.json"), `${JSON.stringify(state, null, 4)}\n`, "utf-8");
     };
 
+    /** 正在打开中的会话（同一 id 并发打开只跑一次；打开是**每个会话自己**的事，不进全局 act） */
+    const opening = new Map<string, Promise<{ store: SessionStore; session: AgentSession; meta: SessionMeta; compactor: BotCompactor }>>();
+
     const opened = async (
         id: string,
     ): Promise<{ store: SessionStore; session: AgentSession; meta: SessionMeta; compactor: BotCompactor }> => {
         const hit = open.get(id);
         if (hit !== undefined) return hit;
+        const pending = opening.get(id);
+        if (pending !== undefined) return pending;
+        const task = openSession(id);
+        opening.set(id, task);
+        try {
+            return await task;
+        } finally {
+            opening.delete(id);
+        }
+    };
+
+    const openSession = async (
+        id: string,
+    ): Promise<{ store: SessionStore; session: AgentSession; meta: SessionMeta; compactor: BotCompactor }> => {
         const dir = join(root, id);
         const meta = await readMetaOf(id);
         if (meta === null) throw new Error(`没有会话 ${id}`);
@@ -486,8 +503,18 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
     };
 
     return {
-        // 读也排队：一次只跑一个，读到的永远是某个操作的**完成态**（不是半路）
-        snapshot: () => withSnapshotGuard(() => act(snapshotNow)),
+        /**
+         * 快照**不进写队列**（用户 2026-11-04 裁：「actor 应该是每个 bot 单独的，
+         * 因为对话是可以并行的，存储也是分离的」）。
+         *
+         * 之前读和写共用 `act` ⇒ 一个挂住的会话把队列占死 ⇒ 所有 bot 的界面都读不到数据。
+         * 现在：写操作（建/删/选中 bot、落 meta）仍然串行（那是真共享状态），
+         * 读完全独立 —— 读到的最多是「某条消息刚写了一半」，而不是整个界面失灵。
+         *
+         * 498 当初把读塞进队列是为了修「新建 bot 后 UI 显示旧会话」，那个场景现在由
+         * 「写操作返回前自己取一次新快照」（`createBot` 等内部直接调 `snapshotNow()`）覆盖。
+         */
+        snapshot: () => withSnapshotGuard(snapshotNow),
 
         /** 首启建 bot（##497：必须有 model；已存在则报错） */
         createFirstBot(input: FirstBotInput): Promise<BotChatSnapshot> {
