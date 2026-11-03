@@ -128,6 +128,16 @@ async function* chatStream(
                 }
                 case 'error':
                     throw classifyError(part['error']);
+                case 'tool-call': {
+                    const delta = toolCallDeltaOf(part);
+                    if (delta !== undefined) yield delta;
+                    break;
+                }
+                case 'tool-result': {
+                    const delta = toolResultDeltaOf(part);
+                    if (delta !== undefined) yield delta;
+                    break;
+                }
                 case 'abort':
                     yield { type: 'done', stopReason: 'aborted' };
                     return;
@@ -140,14 +150,80 @@ async function* chatStream(
                     break;
                 }
                 default:
-                    // 其余 part（reasoning / tool / source / start-step / finish-step …）本刀不消费：
-                    // 工具调用与思考块留给下一刀，宁可先丢掉也不猜语义。
+                    // 其余 part（reasoning / source / start-step / finish-step / tool-input-* …）本刀不消费。
+                    //
+                    // ⚠️ 工具调用只在 **`tool-call`（完整调用）** 上产出，**不在 `tool-input-start` /
+                    // `tool-input-delta` 上产出**：那两者是流式参数的分片信号（start 连 input 都还没有），
+                    // 各自 yield 一次等于把同一次调用记成 2~3 条 tool-call 消息（session 会逐条落盘，
+                    // 上层也会逐条执行 —— 重复执行工具）。判据：**一次调用只认一条完整 part**。
+                    // 思考块（reasoning-delta → thinking）留给 ##514 第 4 步。
                     break;
             }
         }
     } catch (cause) {
         throw classifyError(cause);
     }
+}
+
+/**
+ * ai-sdk 的 `tool-call` part → `SessionDelta`（tool-call）。
+ *
+ * 字段换名：ai-sdk 用 `toolCallId` / `toolName`，SessionDelta 用 `id` / `name`。
+ * `input` 归一成 **JSON 字符串**（SessionDelta 的契约就是 string）：
+ *   · 上游给对象（ai-sdk 已解析好的参数）→ `JSON.stringify`
+ *   · 上游给原始字符串（参数不是合法 JSON 时 ai-sdk 原样透传）→ 不动，交给 session 的
+ *     `toolArgsFromInput` 自行 JSON.parse / 退回字符串
+ *   · 缺参数（`undefined`）→ `"null"`（与 `toolArgsFromInput(undefined) === null` 同义，但保持 string）
+ *
+ * 缺 id / name 的 part 直接丢：落盘后的 tool-call 消息无从回填结果，造出来只会是脏数据。
+ */
+export function toolCallDeltaOf(part: Record<string, unknown>): SessionDelta | undefined {
+    const id = part['toolCallId'];
+    const name = part['toolName'];
+    if (typeof id !== 'string' || id === '') return undefined;
+    if (typeof name !== 'string' || name === '') return undefined;
+    return { type: 'tool-call', id, name, input: jsonTextOf(part['input']) };
+}
+
+/**
+ * ai-sdk 的 `tool-result` part → `SessionDelta`（tool-result）。
+ *
+ * 说明：本刀 provider **不执行工具**（`streamText` 没传 `tools`，见 step 3），所以这个分支正常不会
+ * 出现；它存在是为了不把已经能翻译的形状丢掉（宿主注入 `tools` 后就直接生效）。
+ *
+ * `output` 是 ai-sdk 的结果包（`{ type:'text'|'json'|'error-text'|'content', value }`）：
+ * 文本类取 `value`；有 `value` 的其他类型（json / content）转 JSON 文本；其余整个转 JSON。
+ * —— SessionDelta 只要一个字符串（怎么显示由上层决定），所以这里只做「无损转文本」。
+ */
+export function toolResultDeltaOf(part: Record<string, unknown>): SessionDelta | undefined {
+    const id = part['toolCallId'];
+    if (typeof id !== 'string' || id === '') return undefined;
+    return { type: 'tool-result', id, content: toolOutputTextOf(part['output']) };
+}
+
+/** 任意值 → JSON 文本（`undefined` / 不可序列化 → `"null"`，不抛） */
+function jsonTextOf(value: unknown): string {
+    if (typeof value === 'string') return value;
+    if (value === undefined) return 'null';
+    try {
+        const text = JSON.stringify(value);
+        return typeof text === 'string' ? text : 'null';
+    } catch {
+        return 'null';
+    }
+}
+
+/** ai-sdk 的工具结果包 → 文本（文本类直接取，其余转 JSON，见 `toolResultDeltaOf` 头注） */
+function toolOutputTextOf(output: unknown): string {
+    if (typeof output === 'string') return output;
+    if (output !== null && typeof output === 'object' && !Array.isArray(output)) {
+        const record = output as Record<string, unknown>;
+        const value = record['value'];
+        const kind = record['type'];
+        if (typeof value === 'string' && (kind === 'text' || kind === 'error-text')) return value;
+        if (value !== undefined) return jsonTextOf(value);
+    }
+    return jsonTextOf(output);
 }
 
 /**

@@ -17,6 +17,8 @@ import {
     type LlmProvider,
     type UsageDelta,
 } from '../src/index.js';
+import { toolCallDeltaOf, toolResultDeltaOf } from '../src/openai.js';
+import { createSession } from '@diy-agent/session';
 
 const BASE_URL = 'https://example.invalid/v1';
 
@@ -239,5 +241,103 @@ describe('$SESSION 占位符（判据 5：会话 header 逐次填）', () => {
         expect(request.headers.has('x-opencode-session')).toBe(false);
         // 静态 header 不受占位符逻辑牵连
         expect(request.headers.get('x-static')).toBe('on');
+    });
+});
+
+describe('工具调用转发（##514 第 2 步）', () => {
+    /** OpenAI 兼容流的 tool_calls 分片（arguments 分两段，验「只产出一次完整调用」） */
+    function toolCallChunks(): unknown[] {
+        return [
+            {
+                ...(chunk({}) as object),
+                choices: [
+                    {
+                        index: 0,
+                        delta: {
+                            tool_calls: [
+                                {
+                                    index: 0,
+                                    id: 'call_1',
+                                    type: 'function',
+                                    function: { name: 'read', arguments: '{"path":' },
+                                },
+                            ],
+                        },
+                        finish_reason: null,
+                    },
+                ],
+            },
+            {
+                ...(chunk({}) as object),
+                choices: [
+                    {
+                        index: 0,
+                        delta: { tool_calls: [{ index: 0, function: { arguments: '"a.txt"}' } }] },
+                        finish_reason: null,
+                    },
+                ],
+            },
+            { ...(chunk({}) as object), choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] },
+        ];
+    }
+
+    it('上游 tool_calls ⇒ 产出一条 tool-call（id / name / input 是 JSON 字符串）', async () => {
+        const fake = fakeFetch(() => sseResponse(toolCallChunks()));
+        const deltas = await collect(provider(fake.fetch));
+        const calls = deltas.filter((delta) => delta.type === 'tool-call');
+
+        // 分片不重复产出：一次调用 = 一条 delta
+        expect(calls).toHaveLength(1);
+        expect(calls[0]).toEqual({
+            type: 'tool-call',
+            id: 'call_1',
+            name: 'read',
+            input: '{"path":"a.txt"}',
+        });
+        // 调用之后流仍正常收尾
+        expect(deltas.at(-1)).toMatchObject({ type: 'done' });
+    });
+
+    it('tool-call part → delta：input 对象转 JSON 字符串，缺 id/name 丢', () => {
+        expect(toolCallDeltaOf({ toolCallId: 'c1', toolName: 'read', input: { path: 'a.txt' } })).toEqual({
+            type: 'tool-call',
+            id: 'c1',
+            name: 'read',
+            input: '{"path":"a.txt"}',
+        });
+        // 参数不是合法 JSON 时 ai-sdk 给原始字符串 —— 原样透传（session 侧会退回字符串）
+        expect(toolCallDeltaOf({ toolCallId: 'c2', toolName: 'read', input: '{"bad"' })).toMatchObject({
+            input: '{"bad"',
+        });
+        // 无参数 → "null"（与 toolArgsFromInput(undefined) === null 同义）
+        expect(toolCallDeltaOf({ toolCallId: 'c3', toolName: 'read' })).toMatchObject({ input: 'null' });
+        // 缺 id / name → 不产出（落盘后无从回填结果）
+        expect(toolCallDeltaOf({ toolName: 'read', input: null })).toBeUndefined();
+        expect(toolCallDeltaOf({ toolCallId: 'c4', input: null })).toBeUndefined();
+    });
+
+    it('接进 session：tool-call 落成 tool-call 消息，args 已解析回对象', async () => {
+        const fake = fakeFetch(() => sseResponse(toolCallChunks()));
+        const session = createSession({ id: 's1', llm: provider(fake.fetch) });
+        for await (const _delta of session.send('读一下 a.txt')) {
+            // 只关心落盘的消息
+        }
+        const call = session.messages.find((message) => message.type === 'tool-call');
+        expect(call?.data).toEqual({ tool: { name: 'read', args: { path: 'a.txt' }, id: 'call_1' } });
+        // 调用前没有正文 ⇒ 不该凭空造一条 agent-trace
+        expect(session.messages.some((message) => message.type === 'agent-trace')).toBe(false);
+    });
+
+    it('tool-result part → delta：文本类取 value，其余转 JSON 文本', () => {
+        expect(toolResultDeltaOf({ toolCallId: 'c1', output: { type: 'text', value: '内容' } })).toEqual({
+            type: 'tool-result',
+            id: 'c1',
+            content: '内容',
+        });
+        expect(toolResultDeltaOf({ toolCallId: 'c2', output: { type: 'json', value: { ok: true } } })).toMatchObject({
+            content: '{"ok":true}',
+        });
+        expect(toolResultDeltaOf({ toolCallId: 'c3', output: '裸文本' })).toMatchObject({ content: '裸文本' });
+        expect(toolResultDeltaOf({ output: 'x' })).toBeUndefined();
     });
 });
