@@ -19,6 +19,23 @@ export type MembershipId = string;
 /** v1 唯一支持的域 */
 export const DEFAULT_DOMAIN_ID: DomainId = 'default';
 
+/**
+ * 配对协议（##513）：两条**同级别**的信任路径，邀请自己带协议。
+ *
+ *   code        6 位码 + Owner 批准。信任来源 = TLS 证书 + 人工输码 + 人工批准，
+ *               **必须有受信任 CA**（tailscale cert），否则 `tls/requires-trusted-cert`。
+ *   pinned-key  公钥指纹 pin（TOFU，和 SSH 一个思路）。信任来源 = 人眼比对指纹，
+ *               **不需要 CA**，明文 HTTP 也能用（篡改会被指纹比对抓住）。
+ */
+export type PairingProtocol = 'code' | 'pinned-key';
+
+/** 缺省协议：老邀请（没有 `protocol` 字段）一律按码协议解释 */
+export const DEFAULT_PAIRING_PROTOCOL: PairingProtocol = 'code';
+
+export function isPairingProtocol(value: unknown): value is PairingProtocol {
+    return value === 'code' || value === 'pinned-key';
+}
+
 /** 6 位 Base32（Crockford 字母表，去掉 I / L / O / U） */
 export const INVITE_CODE_LENGTH = 6;
 export const INVITE_CODE_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
@@ -55,8 +72,11 @@ export interface Invitation {
     domainId: DomainId;
     /** 建邀请的 Hub 节点（判据 5） */
     hubNodeId: NodeId;
-    /** HMAC-SHA256(serverKey, code)，hex。字段名里刻意不带 "code"：落盘文件不该出现该词 */
+    /** HMAC-SHA256(serverKey, code)，hex。字段名里刻意不带 "code"：落盘文件不该出现该词。
+     *  `pinned-key` 协议不验码，故为空串。 */
     hmac: string;
+    /** 邀请带的配对协议（缺失 = `code`，兼容 ##513 之前落盘的邀请） */
+    protocol?: PairingProtocol;
     createdAt: string;
     expiresAt: string;
     /** 已失败次数（**按邀请全局**） */
@@ -138,6 +158,13 @@ export interface HubLink {
     hubNodeId: NodeId;
     hubPublicKey: string;
     hubEndpoint: string;
+    /**
+     * 协议 B（`pinned-key`）pin 住的主控公钥 —— 之后每次连接都要核对 `/hub/info` 的
+     * `hubPublicKey` 与它一致，不一致 = 主控身份变了，拒连。
+     */
+    pinnedPublicKey?: string;
+    /** pin 的时刻（`localISOString`） */
+    pinnedAt?: string;
 }
 
 /**
@@ -152,6 +179,8 @@ export interface InvitePayload {
     /** Hub 基址（`https://host/hub`） */
     endpoint: string;
     inviteId: string;
+    /** URL 里的 `p` 参数；缺失 = `code`（协议 A 的链接一个字节都不变） */
+    protocol?: PairingProtocol;
 }
 
 /** `POST /hub/pair` 的请求体（这是**唯一**出现 code 的地方，且只在人输入后） */
@@ -159,7 +188,8 @@ export interface PairRequestBody {
     protocolVersion: number;
     inviteId: string;
     domainId: DomainId;
-    code: string;
+    /** 6 位码。`pinned-key` 协议不带码（可省 / 空串） */
+    code?: string;
     nodeId: NodeId;
     displayName: string;
     publicKey: string;

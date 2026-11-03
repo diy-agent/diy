@@ -35,6 +35,7 @@ import {
   type ClientState,
   type HubIdentity,
   type HubLink,
+  fingerprintOf,
   type HubServer,
   type Membership,
   type PairingRequest,
@@ -54,12 +55,17 @@ export interface HubInitResult {
 }
 
 export interface HubInviteResult {
+  /** 协议 A 的 6 位码；协议 B（pinned-key）为空串 */
   code: string;
   /** 屏幕上三样之一：真实地址（人比对） */
   address: string;
   /** 屏幕上三样之三：二维码内容 = 邀请 URL（不含 code） */
   inviteUrl: string;
   expiresAt: string;
+  /** ##513 协议 A（code）/ 协议 B（pinned-key） */
+  protocol: "code" | "pinned-key";
+  /** 协议 B 专用：本机公钥指纹（6 位 hex，人眼比对用） */
+  fingerprint?: string;
 }
 
 export interface HubPendingRow {
@@ -176,7 +182,7 @@ export class HubService {
 
   /** `diy hub invite`：建邀请，返回三样（码 / 地址 / 邀请 URL）。
    *  `autoApprove` = 一键连接：邀请自带授权（60 秒），卫星点了直接连上，不用人批准。 */
-  async invite(opts: { autoApprove?: boolean } = {}): Promise<HubInviteResult> {
+  async invite(opts: { autoApprove?: boolean; protocol?: "code" | "pinned-key" } = {}): Promise<HubInviteResult> {
     const server = await this.ensureServer();
     const identity = await this.requireIdentity();
     if (!identity.endpoint) {
@@ -185,12 +191,23 @@ export class HubService {
         message: "还没有对外地址：先跑 diy hub init --endpoint https://<host>/hub",
       });
     }
-    const invite = await server.invite(opts.autoApprove === true ? { autoApprove: true } : undefined);
+    const protocol = opts.protocol === "pinned-key" ? "pinned-key" : "code";
+    const invite = await server.invite({
+      ...(opts.autoApprove === true ? { autoApprove: true } : {}),
+      ...(protocol === "pinned-key" ? { protocol } : {}),
+    });
     return {
-      code: formatInviteCode(invite.code),
+      code: invite.code === "" ? "" : formatInviteCode(invite.code),
       address: displayAddress(identity.endpoint),
-      inviteUrl: buildInviteUrl({ endpoint: identity.endpoint, inviteId: invite.inviteId }),
+      inviteUrl: buildInviteUrl({
+        endpoint: identity.endpoint,
+        inviteId: invite.inviteId,
+        ...(protocol === "pinned-key" ? { protocol } : {}),
+      }),
       expiresAt: invite.expiresAt,
+      protocol,
+      // 协议 B 的信任根：人比对这 6 位（主控屏幕 ↔ 卫星屏幕）
+      ...(protocol === "pinned-key" ? { fingerprint: fingerprintOf(identity.publicKey) } : {}),
     };
   }
 
@@ -247,9 +264,14 @@ export class HubService {
   }
 
   /** `diy hub join <url> --code 7K9M-Q2`：提交申请并等待批准，拿到 Token 后进钥匙串 */
-  async join(url: string, input: { code?: string; waitMs?: number; autoJoin?: boolean } = {}): Promise<HubJoinResult | HubJoinPreview> {
-    // autoJoin：一键连接（邀请自带授权）—— 不需要人抄码，直接提交
-    if (!input.code && input.autoJoin !== true) return this.joinPreview(url);
+  async join(
+    url: string,
+    input: { code?: string; waitMs?: number; autoJoin?: boolean; protocol?: "code" | "pinned-key" } = {},
+  ): Promise<HubJoinResult | HubJoinPreview> {
+    // ##513 协议 B（pinned-key）：不需要码 —— 凭证是 URL 里的 inv（一次性）+ 人对主控指纹的确认。
+    // autoJoin（一键连接）同理。两者都不填 code 也直接提交。
+    const noCode = input.protocol === "pinned-key" || input.autoJoin === true;
+    if (!input.code && !noCode) return this.joinPreview(url);
 
     const prepared = await preparePairing(url, { allowInsecure: this.allowInsecure() });
     const local = ensureIdentity(this.home, { hostname: hostname(), appName: "diy" });

@@ -26,6 +26,10 @@ interface InviteView {
   address: string;
   inviteUrl: string;
   expiresAt: string;
+  /** ##513 协议：code（6 位码）/ pinned-key（公钥指纹） */
+  protocol?: "code" | "pinned-key";
+  /** 协议 B 专用：本机公钥指纹（6 位 hex） */
+  fingerprint?: string;
 }
 
 interface PendingRow {
@@ -166,8 +170,10 @@ export function HubPage(props: {
     if (r) await refreshStatus();
   }
 
-  async function doInvite(autoApprove = false): Promise<void> {
-    const r = await run("invite", () => diyService.diy.hub.invite({ autoApprove }));
+  async function doInvite(autoApprove = false, protocol?: "code" | "pinned-key"): Promise<void> {
+    const r = await run("invite", () =>
+      diyService.diy.hub.invite({ autoApprove, protocol }),
+    );
     if (!r) return;
     setInvite(r.data);
     setQr(await QRCode.toDataURL(r.data.inviteUrl, { margin: 1, width: 220 }));
@@ -214,7 +220,7 @@ export function HubPage(props: {
   async function doPreview(): Promise<void> {
     const url = urlInput().trim();
     if (!url) return;
-    const r = await run("preview", () => diyService.diy.hub.join({ url, code: undefined, waitMs: undefined, autoJoin: undefined }));
+    const r = await run("preview", () => diyService.diy.hub.join({ url, code: undefined, waitMs: undefined, autoJoin: undefined, protocol: undefined }));
     if (!r || !r.data.preview) return;
     setPreview({
       address: r.data.address,
@@ -225,11 +231,29 @@ export function HubPage(props: {
     setJoinState("idle");
   }
 
+  /** ##513 协议 B：URL 带 p=pinned-key 时不需要输码（凭证是一次性 inv + 人比对指纹） */
+  const isPinnedKey = createMemo(() => {
+    try {
+      return new URL(urlInput().trim()).searchParams.get("p") === "pinned-key";
+    } catch {
+      return false;
+    }
+  });
+
   async function doJoin(): Promise<void> {
     const url = urlInput().trim();
-    if (!url || !code().trim()) return;
+    const pinned = isPinnedKey();
+    if (!url || (!pinned && !code().trim())) return;
     setJoinState("submitting");
-    const r = await run("join", () => diyService.diy.hub.join({ url, code: code().trim(), waitMs: 120_000, autoJoin: undefined }));
+    const r = await run("join", () =>
+      diyService.diy.hub.join({
+        url,
+        code: pinned ? undefined : code().trim(),
+        waitMs: 120_000,
+        autoJoin: undefined,
+        protocol: pinned ? ("pinned-key" as const) : undefined,
+      }),
+    );
     if (!r || r.data.preview) {
       setJoinState("idle");
       return;
@@ -340,6 +364,9 @@ export function HubPage(props: {
                   <div class="flex items-center justify-between">
                     <h2 class="card-title text-base">建邀请</h2>
                     <div class="flex gap-2">
+                      <button class="btn btn-sm" disabled={busy() === "invite"} onClick={() => void doInvite(false, "pinned-key")} data-hub-pinned>
+                        用指纹配对
+                      </button>
                       <button class="btn btn-sm" disabled={busy() === "invite"} onClick={() => void doInvite(true)} data-hub-quick>
                         一键连接
                       </button>
@@ -355,8 +382,21 @@ export function HubPage(props: {
                     {(inv) => (
                       <div class="flex flex-wrap gap-6 items-start">
                         <div class="space-y-1">
-                          <div class="text-xs opacity-60">6 位码（口述给另一台机器）</div>
-                          <div class="text-4xl font-mono font-bold tracking-wider">{inv().code}</div>
+                          <Show
+                            when={inv().protocol === "pinned-key"}
+                            fallback={
+                              <>
+                                <div class="text-xs opacity-60">6 位码（口述给另一台机器）</div>
+                                <div class="text-4xl font-mono font-bold tracking-wider">{inv().code}</div>
+                              </>
+                            }
+                          >
+                            <div class="text-xs opacity-60">本机指纹（卫星上要比对这 6 位）</div>
+                            <div class="text-4xl font-mono font-bold tracking-wider text-primary" data-hub-fingerprint>
+                              {inv().fingerprint ?? "—"}
+                            </div>
+                            <div class="text-xs opacity-60">协议 B：公钥指纹配对（不需要输码）</div>
+                          </Show>
                           <div class="text-xs opacity-60">剩余 {remaining()}</div>
                         </div>
                         <div class="space-y-1 min-w-0">
@@ -575,7 +615,7 @@ export function HubPage(props: {
                     <div class="flex items-end gap-2">
                       <label class="form-control flex-1">
                         <div class="label py-1">
-                          <span class="label-text">输入 6 位码</span>
+                          <span class="label-text">{isPinnedKey() ? "协议 B：不用输码，直接提交" : "输入 6 位码"}</span>
                         </div>
                         <input
                           class="input input-bordered font-mono text-lg tracking-widest"

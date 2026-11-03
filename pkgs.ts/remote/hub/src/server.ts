@@ -58,7 +58,7 @@ export interface HubServer {
     readonly info: HubInfo;
     readonly port: number;
     readonly url: string;
-    invite(opts?: { ttlMs?: number; autoApprove?: boolean }): Promise<{ inviteId: string; code: string; expiresAt: string }>;
+    invite(opts?: { ttlMs?: number; autoApprove?: boolean; protocol?: 'code' | 'pinned-key' }): Promise<{ inviteId: string; code: string; expiresAt: string }>;
     pair(body: PairRequestBody): Promise<PairSuccess>;
     pending(): Promise<PairingRequest[]>;
     approve(requestId: string): Promise<ApprovalResult>;
@@ -201,10 +201,12 @@ export async function createHubServer(opts: HubServerOptions): Promise<HubServer
         async invite(inviteOpts) {
             // ##一键连接：autoApprove 时把有效期压到 60 秒（链接即凭证，越短越安全）
             const auto = inviteOpts?.autoApprove === true;
+            const protocol = inviteOpts?.protocol === 'pinned-key' ? 'pinned-key' : undefined;
             const created = await createInvitation(opts.store, {
                 ...invitationOpts,
                 ttlMs: inviteOpts?.ttlMs ?? (auto ? 60_000 : undefined),
                 ...(auto ? { autoApprove: true } : {}),
+                ...(protocol ? { protocol } : {}),
             });
             return {
                 inviteId: created.invitation.inviteId,

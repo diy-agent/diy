@@ -7,6 +7,7 @@
 
 import { localISOString } from '@diy-agent/time';
 import { newId, hmacSha256Hex, safeEqualHex } from './key.js';
+import type { PairingProtocol } from './types.js';
 import { generateInviteCode, normalizeInviteCode } from './code.js';
 import { HubError, type HubErrorCode } from './errors.js';
 import type { HubStore } from './store.js';
@@ -28,32 +29,38 @@ export interface InvitationOptions {
     randomId?: (prefix: string) => string;
     ttlMs?: number;
     maxAttempts?: number;
+    /** 协议（缺省 `code`）；`pinned-key` 不生成码、不存 HMAC */
+    protocol?: PairingProtocol;
 }
 
 export interface CreatedInvitation {
     invitation: Invitation;
-    /** 明文的 6 位码 —— 只在这一刻返回给建邀请的人，服务端不保存 */
+    /** 明文的 6 位码 —— 只在这一刻返回给建邀请的人，服务端不保存。`pinned-key` 时为空串 */
     code: string;
 }
 
 export async function createInvitation(
     store: HubStore,
-    opts: InvitationOptions & { domainId?: DomainId; hubNodeId: NodeId; autoApprove?: boolean },
+    opts: InvitationOptions & { domainId?: DomainId; hubNodeId: NodeId; autoApprove?: boolean; protocol?: 'code' | 'pinned-key' },
 ): Promise<CreatedInvitation> {
     const now = opts.now?.() ?? new Date();
     const ttl = opts.ttlMs ?? INVITE_TTL_MS;
     const maxAttempts = opts.maxAttempts ?? INVITE_MAX_ATTEMPTS;
-    const code = opts.randomCode ? opts.randomCode() : generateInviteCode();
-    const normalized = normalizeInviteCode(code);
+    const protocol: PairingProtocol = opts.protocol ?? 'code';
+    // 协议 B 没有码：凭证就是 inviteId（一次性）+ 人对指纹的确认；hmac 留空串。
+    const code = protocol === 'pinned-key' ? '' : opts.randomCode ? opts.randomCode() : generateInviteCode();
+    const normalized = code ? normalizeInviteCode(code) : '';
 
     const invitation: Invitation = {
         inviteId: opts.randomId ? opts.randomId('inv') : newId('inv'),
         domainId: opts.domainId ?? DEFAULT_DOMAIN_ID,
         hubNodeId: opts.hubNodeId,
-        hmac: hmacSha256Hex(opts.serverKey, normalized),
+        protocol,
+        hmac: code ? hmacSha256Hex(opts.serverKey, normalized) : '',
         createdAt: localISOString(now),
         expiresAt: localISOString(new Date(now.getTime() + ttl)),
         ...(opts.autoApprove === true ? { autoApprove: true } : {}),
+        ...(opts.protocol === 'pinned-key' ? { protocol: 'pinned-key' as const } : {}),
         attempts: 0,
         maxAttempts,
         status: 'created',
@@ -78,7 +85,7 @@ export type ConsumeResult = { ok: true; invitation: Invitation } | { ok: false; 
  */
 export function consumeInvitationInState(
     state: PeerState,
-    input: { inviteId: string; domainId: DomainId; code: string; requestId: string },
+    input: { inviteId: string; domainId: DomainId; code?: string; requestId: string },
     serverKey: string,
     now: Date,
 ): ConsumeResult {
@@ -107,6 +114,14 @@ export function consumeInvitationInState(
         return { ok: false, code: 'invite/expired', message: '邀请已过期' };
     }
 
+    // ##513 协议 B：`pinned-key` 不验码 —— 凭证是 inviteId（一次性）+ 人对主控公钥指纹的确认。
+    // 原子消费与码协议同路径（同一个 update 内），所以并发时也只有一个能进来。
+    if ((invitation.protocol ?? 'code') === 'pinned-key') {
+        invitation.status = 'consumed';
+        invitation.consumedByRequestId = input.requestId;
+        return { ok: true, invitation };
+    }
+
     // ##一键连接：邀请自带授权（autoApprove）⇒ 不验码 —— inviteId 本身就是凭证（60 秒）。
     // 这条路径下 code 可以是空串，人也不需要从主控屏幕上抄 6 位码。
     if (invitation.autoApprove === true) {
@@ -117,7 +132,7 @@ export function consumeInvitationInState(
 
     let code: string;
     try {
-        code = normalizeInviteCode(input.code);
+        code = normalizeInviteCode(input.code ?? '');
     } catch {
         // 形态都不对也算一次失败（否则可以无限试）
         return recordFailure(invitation, '邀请码形态不对');

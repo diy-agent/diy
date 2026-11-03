@@ -101,8 +101,11 @@ describe('邀请生命周期', () => {
         const raw = readFileSync(file, 'utf-8');
         expect(existsSync(file)).toBe(true);
         expect(raw).not.toContain(created.code);
-        // 字段名也刻意不带 code：`grep -c code invites.json` 应为 0
-        expect(raw.toLowerCase()).not.toContain('code');
+        // 字段名也刻意不带 code：`grep -c '"code"' invites.json` 应为 0。
+        // （##513 起 protocol 字段的值可以是 'code'，所以只查 JSON key 而不是裸字符串。）
+        // 只查 key 形式（带冒号）：protocol 的**值** 'code' 是合法的，
+        // 但落盘里不能出现 "code": <明文码>。
+        expect(raw).not.toContain('"code":');
         expect(JSON.parse(raw).invitations[0].hmac).toMatch(/^[0-9a-f]{64}$/);
     });
 });

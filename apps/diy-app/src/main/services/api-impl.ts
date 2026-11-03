@@ -2123,7 +2123,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     };
   });
   binding.on(app.hub.join, async ({ input }) => {
-    const r = await hubService.join(input.url, { ...(input.code === undefined ? {} : { code: input.code }), ...(input.waitMs === undefined ? {} : { waitMs: input.waitMs }), ...(input.autoJoin === true ? { autoJoin: true } : {}) });
+    const r = await hubService.join(input.url, { ...(input.code === undefined ? {} : { code: input.code }), ...(input.waitMs === undefined ? {} : { waitMs: input.waitMs }), ...(input.autoJoin === true ? { autoJoin: true } : {}), ...(input.protocol === undefined ? {} : { protocol: input.protocol }) });
     return {
       status: "ok",
       data: r.preview

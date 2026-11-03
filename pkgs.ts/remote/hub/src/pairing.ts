@@ -23,7 +23,8 @@ export interface PairingOptions {
 export interface PairRequestInput {
     inviteId: string;
     domainId: DomainId;
-    code: string;
+    /** 协议 A 必填；协议 B（pinned-key）不需要 —— 空串或省略 */
+    code?: string;
     nodeId: NodeId;
     displayName: string;
     publicKey: string;

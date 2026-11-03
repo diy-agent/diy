@@ -28,9 +28,13 @@ export function normalizeHubEndpoint(input: string): string {
 }
 
 /** 邀请 URL（二维码内容就是它，**不含 code**） */
-export function buildInviteUrl(input: { endpoint: string; inviteId: string }): string {
+export function buildInviteUrl(input: { endpoint: string; inviteId: string; protocol?: 'code' | 'pinned-key' }): string {
     const base = normalizeHubEndpoint(input.endpoint);
-    return `${base}/pair?inv=${encodeURIComponent(input.inviteId)}`;
+    // 协议 A（code）的链接一个字节都不变 —— 老二维码 / 老剪贴板还能用。
+    // 只有 pinned-key 才追加 `p`，让卫星知道该走哪条流程。
+    const q = `inv=${encodeURIComponent(input.inviteId)}`;
+    const p = input.protocol === 'pinned-key' ? '&p=pinned-key' : '';
+    return `${base}/pair?${q}${p}`;
 }
 
 /** 解析扫码 / 粘贴进来的地址：只认 `.../hub/pair?inv=...`（也接受带末尾斜杠的变体） */
@@ -49,7 +53,12 @@ export function parseInviteUrl(input: string): InvitePayload {
     if (!path.endsWith('/hub/pair')) {
         throw new HubError('hub/bad-input', '邀请地址应以 /hub/pair 结尾', input);
     }
-    return { endpoint: normalizeHubEndpoint(input), inviteId };
+    const rawP = url.searchParams.get('p');
+    return {
+        endpoint: normalizeHubEndpoint(input),
+        inviteId,
+        ...(rawP === 'pinned-key' ? { protocol: 'pinned-key' as const } : {}),
+    };
 }
 
 export function invitePayload(input: { endpoint: string; inviteId: string }): InvitePayload {
