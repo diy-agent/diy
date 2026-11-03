@@ -124,7 +124,7 @@ describe("运行中转后台", () => {
 
     it("⑥ 通知里能 tail 到**最后一行**（收口先等写链落干净，再发插话）", async () => {
         const notes: string[] = [];
-        reg.setNotifier((_taskUri, text) => notes.push(text));
+        reg.setNotifier((e) => notes.push(e.text));
         const { ctl } = startForeground("echo first; sleep 0.2; echo last-line", { timeoutMs: 20_000 });
         await sleep(100);
         const info = await reg.adopt({ process: ctl, command: "echo first; sleep 0.2; echo last-line", cwd: root, origin });

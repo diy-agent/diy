@@ -1,0 +1,38 @@
+{
+  "name": "@diy-agent/jobs",
+  "version": "0.1.0",
+  "private": true,
+  "description": "后台任务账本内核：run 表（spawn / tail / kill / wait）、结局与呈现判据、job 工具面（不管前台命令）",
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./lib/index.js"
+    },
+    "./*": {
+      "types": "./src/*.ts",
+      "default": "./lib/*.js"
+    }
+  },
+  "files": [
+    "src/"
+  ],
+  "dependencies": {
+    "@diy-agent/context": "^0.1.0",
+    "@diy-agent/time": "*",
+    "@diy-agent/tools": "^0.1.0",
+    "ai": "^7.0.113",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.57.0",
+    "oxlint": "^1.72.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  }
+}

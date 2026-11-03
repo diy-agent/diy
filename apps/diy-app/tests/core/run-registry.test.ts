@@ -114,7 +114,7 @@ describe("结束通知（插话唤醒的数据面）", () => {
         const seen: Array<{ taskUri: string; text: string; notify?: unknown }> = [];
         const local = new RunRegistry({
             rootDir: root,
-            notifier: (taskUri, text, notify) => seen.push({ taskUri, text, notify }),
+            notifier: (e) => seen.push({ taskUri: e.taskUri, text: e.text, notify: e.notify }),
         });
         const p = await local.spawn({ command: "echo shipped", cwd: root, origin });
         await local.wait(p.id, 10_000);
@@ -138,7 +138,7 @@ describe("结束通知（插话唤醒的数据面）", () => {
 
     it("没有 origin 的进程不通知（不知道叫醒谁，就不叫）", async () => {
         const seen: string[] = [];
-        const local = new RunRegistry({ rootDir: root, notifier: (_t, text) => seen.push(text) });
+        const local = new RunRegistry({ rootDir: root, notifier: (e) => seen.push(e.text) });
         const p = await local.spawn({ command: "true", cwd: root });
         await local.wait(p.id, 10_000);
         await new Promise((r) => setTimeout(r, 20));
@@ -232,7 +232,7 @@ describe("只管后台（刀 16）", () => {
 
     it("后台 run 结束必叫醒一次（工具早已返回，结局只能靠通知）", async () => {
         const notes: string[] = [];
-        const r = new RunRegistry({ rootDir: root, notifier: (_t, text) => notes.push(text) });
+        const r = new RunRegistry({ rootDir: root, notifier: (e) => notes.push(e.text) });
         const p = await r.spawn({ command: "exit 0", cwd: root, origin });
         await r.wait(p.id, 10_000);
         await new Promise((res) => setTimeout(res, 120));
@@ -293,7 +293,7 @@ describe("寿命按进程组算（不是根 bash）", () => {
             rootDir: root,
             probeGroup: () => alive,
             reapMs: 20,
-            notifier: (_t, text) => notes.push(text),
+            notifier: (e) => notes.push(e.text),
         });
         const p = await r.spawn({ command: "exit 0", cwd: root, origin });
         await new Promise((res) => setTimeout(res, 120));
@@ -308,7 +308,7 @@ describe("寿命按进程组算（不是根 bash）", () => {
 
     it("我们主动杀的：不发唤醒（通知是「跑完了」，不是「被停了」）", async () => {
         const notes: string[] = [];
-        const r = new RunRegistry({ rootDir: root, notifier: (_t, text) => notes.push(text) });
+        const r = new RunRegistry({ rootDir: root, notifier: (e) => notes.push(e.text) });
         const p = await r.spawn({ command: "sleep 5", cwd: root, origin });
         r.kill(p.id);
         const done = await r.wait(p.id, 10_000);
@@ -392,7 +392,7 @@ describe("review 修正（刀 15）", () => {
 describe("退出即收（shutdown）", () => {
     it("收掉所有在跑的 run —— 含根已退、只剩子孙的那条", async () => {
         const notes: string[] = [];
-        reg.setNotifier((_t, text) => notes.push(text));
+        reg.setNotifier((e) => notes.push(e.text));
         const plain = await reg.spawn({ command: "sleep 30", cwd: root, origin });
         if (process.platform === "win32") {
             // Windows 上 jobAlive 只判根进程（见 main/os/）⇒ 「根已退、只剩子孙」这态认不出来；

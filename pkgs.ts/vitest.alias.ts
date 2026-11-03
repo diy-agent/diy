@@ -28,6 +28,7 @@ const LOCATIONS: Record<string, { dir: string; entry: string }> = {
     "@diy-agent/store-contract": { dir: "pkgs.ts/agent/store-contract", entry: "src/index.ts" },
     "@diy-agent/compaction": { dir: "pkgs.ts/agent/compaction", entry: "src/index.ts" },
     "@diy-agent/tools": { dir: "pkgs.ts/agent/tools", entry: "src/index.ts" },
+    "@diy-agent/jobs": { dir: "pkgs.ts/agent/jobs", entry: "src/index.ts" },
     "@diy-agent/context": { dir: "pkgs.ts/agent/context", entry: "src/index.ts" },
     "@diy-agent/facts": { dir: "pkgs.ts/core/facts", entry: "src/index.ts" },
     "@diy-agent/flow": { dir: "pkgs.ts/flow", entry: "src/index.ts" },

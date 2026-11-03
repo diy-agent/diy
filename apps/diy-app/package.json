@@ -31,6 +31,7 @@
         "@diy-agent/facts": "^0.1.0",
         "@diy-agent/flow": "^0.1.0",
         "@diy-agent/hub": "^0.1.0",
+        "@diy-agent/jobs": "^0.1.0",
         "@diy-agent/llm-provider": "^0.1.0",
         "@diy-agent/persistence": "^0.1.0",
         "@diy-agent/remote": "^0.1.0",

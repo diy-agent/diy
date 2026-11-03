@@ -285,7 +285,8 @@ import { runRegistry, type RunInfo } from "./run-registry";
 import { effectiveBashArgs } from "../../shared/tool-args";
 import { ownedGroups } from "./owned-groups";
 import { foregroundBash } from "./foreground-bash";
-import { exitText, formatDuration, runLine, runsOfTask, stateLabel, type RunOutcome } from "../../shared/run-status";
+import { runsOfTask } from "../../shared/run-status";
+import { makeJobTool } from "@diy-agent/jobs";
 import { localISOString } from "@diy-agent/time";
 
 // 模型查询函数抽到 shared/models.ts（core 不能被 services 反向依赖，否则循环 import）。
@@ -1823,31 +1824,6 @@ export interface TurnToolAnchor {
     stepId(): string;
 }
 
-const EMPTY_TAIL = { text: "", lines: 0, droppedBytes: 0 };
-
-/**
- * `job wait` 的上限（10 分钟）。`timeoutMs = 0` 曾经表示「一直等」，等于给模型一把
- * 自锁的钥匙（永不退出的 daemon + 等待 = 这一轮再也回不去，而唤醒是「结束才叫」）。
- */
-const WAIT_MAX_MS = 600_000;
-
-/** 一条进程的**详情文案**（job status / wait 共用）：状态 + 结局 + 来源 + 输出尾巴。 */
-function detail(info: RunInfo, tail: { text: string; lines: number; droppedBytes: number }, now: number): string {
-    const rows = [
-        `${info.id} · ${stateLabel(info.state)} · ${formatDuration((info.endedAt ?? now) - info.startedAt)}`,
-        `命令：${info.command}`,
-        `目录：${info.cwd}`,
-        `结局：${exitText(info.state, info.exitCode, info.signal)}${info.error ? `（${info.error}）` : ""}`,
-        `输出：${info.logPath}`,
-        ...(info.origin ? [`来源：${info.origin.taskUri}${info.origin.turnId ? ` / ${info.origin.turnId}` : ""}`] : []),
-    ];
-    if (tail.lines === 0) rows.push("（无输出）");
-    else {
-        rows.push(`—— 输出尾部${tail.droppedBytes > 0 ? `（前 ${tail.droppedBytes} 字节已截断）` : ""} ——`, tail.text);
-    }
-    return rows.join("\n");
-}
-
 /**
  * 造 shell 工具（`bash` / `pwsh`）——**依赖注入点**（##515 第 1 步：工具内核已搬进 `@diy-agent/tools`）。
  *
@@ -1981,69 +1957,15 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
     return {
         ...shellTools,
         read: fileTools.read,
-        /**
-         * `job` —— 后台进程的**唯一问询口**（##408 刀 8）。
+                /**
+         * `job` —— 后台进程的**唯一问询口**（##408 刀 8；##515 第 3 步实现搬进 `@diy-agent/jobs`）。
          *
-         * 为什么要有这个工具（而不是让模型每轮 bash 去 `ps`）：用户要的是「llm 心里有数」——
-         * 它得能用一个**稳定、可预期**的动作回答四件事：还有哪些在跑（list）、这条是死是活
-         * （status）、它说了什么（output）、停掉它（kill），以及"我等它"（wait）。
-         * 靠 bash 手搓 `ps -p` / `tail` 会把判据散进命令行，模型每次都要重新想一遍。
-         *
-         * 判据真源在 shared/run-status.ts（纯函数）；本处只做 IO 编排。
+         * 本层只做两件接线：
+         *   · 表就用 diy-app 那一张 `runRegistry`（装配在 services/run-registry.ts）；
+         *   · **可见性 = 本任务**（`origin.taskUri` 相等）—— 同一 app 里多任务并行时，
+         *     A 不许列 B 的命令、kill B 的活，那是越权不是便利。
          */
-        job: tool({
-            description:
-                "管理**本任务**用 bash(background: true) 起的后台进程（别的任务的 run 看不见、停不掉）。action：" +
-                "list（本任务全部，活着的在前）· status（一条的详情 + 输出尾巴）· output（取输出 tail）· " +
-                "kill（按进程组停止）· wait（等它结束，最多 timeoutMs；**0 = 等 10 分钟上限**，不能无限等）。" +
-                "**有完成通知，不需要轮询。**",
-            inputSchema: z.object({
-                action: z.enum(["list", "status", "output", "kill", "wait"]),
-                id: z.string().optional().describe("进程 id（list 不需要；其余必填）"),
-                lines: z.number().optional().describe("output/status 取多少行尾巴（缺省 40 / 10）"),
-                timeoutMs: z
-                    .number()
-                    .optional()
-                    .describe("wait 的等待上限（毫秒，缺省 30000；0 = 用上限 10 分钟，不能无限等）"),
-            }),
-            execute: async ({ action, id, lines, timeoutMs }) => {
-                const now = Date.now();
-                // 只认**本任务**的 run：同一 app 里多个任务/agent 并行时，A 能把 B 的命令全文
-                // 列出来（可能含密钥/路径）、还能把 B 的后台活 kill 掉 —— 那是越权，不是便利。
-                const mine = (r: { origin?: { taskUri?: string } }): boolean => runsOfTask([r], taskUri).length > 0;
-                if (action === "list") {
-                    const all = runsOfTask(runRegistry.list(), taskUri);
-                    if (all.length === 0) return "（本任务没有后台进程）";
-                    const running = all.filter((p) => p.state === "running").length;
-                    return [`共 ${all.length} 条（运行中 ${running}）`, ...all.map((p) => runLine(p, now))].join("\n");
-                }
-                if (!id) return `[缺 id] action=${action} 需要给 id（先用 job list 看有哪些）`;
-                const info = runRegistry.get(id);
-                if (!info || !mine(info)) {
-                    return `[没有这个后台进程] ${id}（只认本任务起的；job list 看现有；app 重启后表会清空）`;
-                }
-
-                if (action === "kill") {
-                    const ok = runRegistry.kill(id);
-                    return ok
-                        ? `已发送停止信号（进程组 ${info.pid}）：${id}。稍后用 job status 确认终态。`
-                        : `未发送：${id} 当前是「${stateLabel(info.state)}」（只有运行中的才可停）。`;
-                }
-                if (action === "wait") {
-                    // 0 曾经等于「永远等」：一个永不退出的 daemon + `wait 0` ⇒ 这一轮再也回不去，
-                    // 而唤醒机制本身是「结束才叫」⇒ 自锁且外部无解。改成**有上限**（10 分钟）。
-                    const asked = timeoutMs === undefined ? 30_000 : Math.max(0, Math.floor(timeoutMs));
-                    const limit = asked === 0 ? WAIT_MAX_MS : Math.min(asked, WAIT_MAX_MS);
-                    const done = await runRegistry.wait(id, limit);
-                    if (done && done.state === "running") {
-                        return `${detail(done, (await runRegistry.tail(id, 5)) ?? EMPTY_TAIL, now)}\n（已等 ${formatDuration(limit)}，仍未结束；别干等长任务 —— 去做别的，结束会通知你）`;
-                    }
-                    return detail(done ?? info, (await runRegistry.tail(id, lines ?? 10)) ?? EMPTY_TAIL, now);
-                }
-                const tail = (await runRegistry.tail(id, lines ?? (action === "output" ? 40 : 10))) ?? EMPTY_TAIL;
-                return detail(info, tail, now);
-            },
-        }),
+        job: makeJobTool({ registry: runRegistry, visible: (r) => runsOfTask([r], taskUri).length > 0 }),
         /**
          * `write` —— 整文件写（##414）。实现与审计语义均在 `@diy-agent/tools`（##514），
          * 本层只把它接进工具集（审计经 fileTools 的 onAudit 补 taskUri 后落盘）。
@@ -6221,8 +6143,8 @@ export function getLocalAgent(): LocalAgentManager {
 // 为什么是 `next-turn` 而不是 `next-step`：进程结束时模型通常已经不在当前步了
 // （它可能正写报告、也可能已结束本轮），"下一步前插一句"会把别人的步边界打乱；
 // 轮是人的/模型的自然停顿点。
-runRegistry.setNotifier((taskUri, text, notify) => {
-    wakeTaskWithSteer(taskUri, text, notify);
+runRegistry.setNotifier((event) => {
+    wakeTaskWithSteer(event.taskUri, event.text, event.notify);
 });
 
 function wakeTaskWithSteer(taskUri: string, text: string, notify?: NotifyItem): void {
