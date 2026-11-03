@@ -9,6 +9,7 @@
 //   ③ 不重试 —— `maxRetries: 0`；失败按 `LlmProviderError.code` 抛出去，由上层决定退避
 
 import {
+    stepCountIs,
     streamText,
     type AssistantContent,
     type ModelMessage,
@@ -101,6 +102,9 @@ function sessionHeaders(
     return Object.keys(out).length === 0 ? undefined : out;
 }
 
+/** 模型把工具调用写成原始标记（而不是结构化 part）时的特征 */
+const LEAKED_TOOL_XML = /<\|DSML\||<\/?(?:function_calls|invoke|parameter)[ >]/;
+
 /** 一次调用的流：text 增量 → usage → done；上游失败抛 `LlmProviderError` */
 async function* chatStream(
     model: ReturnType<ReturnType<typeof createOpenAICompatible>['chatModel']>,
@@ -120,6 +124,10 @@ async function* chatStream(
             maxRetries: 0, // 重试不归 provider（见 errors.ts 头注）
             ...(headers === undefined ? {} : { headers }),
             ...(options?.signal === undefined ? {} : { abortSignal: options.signal }),
+            // 工具循环交给 ai-sdk（##514 教训：自己写 runToolLoop = 重新发明 + 踩同样的坑）。
+            // 与 diy-app 的做法一致：streamText({ tools, stopWhen: stepCountIs(n) })。
+            ...(options?.tools === undefined ? {} : { tools: options.tools as never }),
+            ...(options?.maxSteps === undefined ? {} : { stopWhen: stepCountIs(options.maxSteps) }),
         });
         fullStream = result.fullStream as unknown as AsyncIterable<{ type: string } & Record<string, unknown>>;
     } catch (cause) {
@@ -131,7 +139,19 @@ async function* chatStream(
             switch (part.type) {
                 case 'text-delta': {
                     const text = part['text'];
-                    if (typeof text === 'string' && text.length > 0) yield { type: 'text', text };
+                    if (typeof text === 'string' && text.length > 0) {
+                        // 模型把工具调用吐成原始 XML（实测 deepseek：`<|DSML| invoke name="Bash">`）。
+                        // 原样透传会让用户看到一堆标签，且这轮什么也没执行 —— 换成一句人话。
+                        if (LEAKED_TOOL_XML.test(text)) {
+                            yield {
+                                type: 'text',
+                                text: '\n\n[工具调用格式错误] 模型把工具调用写成了原始标记而不是结构化调用，本轮没有执行任何操作。请重试。',
+                            };
+                            yield { type: 'done', stopReason: 'malformed-tool-call' };
+                            return;
+                        }
+                        yield { type: 'text', text };
+                    }
                     break;
                 }
                 case 'error':
@@ -169,8 +189,37 @@ async function* chatStream(
             }
         }
     } catch (cause) {
+        // 模型调了不存在的工具（实测：deepseek 把 `bash` 写成 `Bash`）。
+        //
+        // ai-sdk 在**解析流时**就抛 `AI_NoSuchToolError`，根本走不到上层的工具查找，
+        // 于是整轮对话变成「发出去了但什么都没回来」——用户看到的就是「没反应」。
+        //
+        // 这里不抛：转成一条**普通文本**再说一句「本轮作废」，让上层能把它显示出来。
+        // 真正的修法是让模型别写错名，但模型错了不该让用户面对一个哑掉的界面。
+        const unknownTool = unknownToolOf(cause);
+        if (unknownTool !== undefined) {
+            yield {
+                type: 'text',
+                text: `\n\n[工具名不存在] 模型调用了 \`${unknownTool}\`，可用的是小写工具名。本轮未执行任何操作，请重试或换个说法。`,
+            };
+            yield { type: 'done', stopReason: 'tool-not-found' };
+            return;
+        }
         throw classifyError(cause);
     }
+}
+
+/**
+ * 从 `AI_NoSuchToolError` 里取出模型写的工具名。
+ *
+ * 判据是 `name === "AI_NoSuchToolError"` 而不是 `instanceof`：ai-sdk 在 CJS/ESM 双包下
+ * 可能出现两份类定义，`instanceof` 会漏。名字是稳定的公开契约。
+ */
+function unknownToolOf(cause: unknown): string | undefined {
+    const node = cause as { name?: unknown; toolName?: unknown } | undefined;
+    if (node === undefined || node === null) return undefined;
+    if (node.name !== 'AI_NoSuchToolError') return undefined;
+    return typeof node.toolName === 'string' ? node.toolName : '(未知名)';
 }
 
 /**

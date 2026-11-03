@@ -102,6 +102,9 @@ function workspaceNote(home: string, botId: string): string {
         "相对路径按它解析，shell 命令默认在这里执行；目录不存在时先建。",
         "这不是权限边界：你仍可以读写任何路径。但新建文件、试验脚本、下载物默认放工作目录里，",
         "不要在主仓或用户的项目目录里留临时产物。",
+        // 实测（2026-11-04）：deepseek 会把 `bash` 写成 `Bash`（学 Claude 的命名），
+        // 于是 ai-sdk 直接抛 NoSuchToolError，整轮变成「没反应」。点明一下成本最低。
+        "调用工具时工具名**一律小写**（`bash` / `read` / `write` / `edit` / `job`），不要写成 `Bash`。",
     ].join("");
 }
 
@@ -633,13 +636,32 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                     const { session, meta, compactor } = await opened(ref.id);
                     const before = session.messages.length;
                     const usageBefore = session.usage;
-                    await runToolLoop({
-                        session,
-                        text,
-                        tools: options.toolsFor?.(ref.id),
-                        maxTools: options.maxToolSteps ?? DEFAULT_MAX_TOOL_STEPS,
-                        onDelta,
-                    });
+                    // 失败必须让人看见（用户 2026-11-04：「对话很多次都没反应，但也没有卡住」——
+                    // 真实原因是模型调了不存在的工具，错误进了日志却没进 UI）。
+                    // 这里兜住一切异常：落一条 agent-notice 到会话里，人能看到「这轮为什么没结果」。
+                    // 工具循环交给 ai-sdk（##514 教训 + 用户 2026-11-04：「diy-agent 已经有很完善的
+                    // agent 对话核心，请参考撰写，不要重新发明」）。diy-app 一直是这么做的：
+                    //   streamText({ tools, stopWhen: stepCountIs(n) })
+                    // 这里只把 tools / maxSteps 透传给 session.send，循环与工具执行由 ai-sdk 负责。
+                    try {
+                        const tools = options.toolsFor?.(ref.id);
+                        for await (const delta of session.send(text, {
+                            ...(tools === undefined ? {} : { tools }),
+                            maxSteps: options.maxToolSteps ?? DEFAULT_MAX_TOOL_STEPS,
+                        })) {
+                            if (delta.type === "text" || delta.type === "tool-call" || delta.type === "tool-result") {
+                                onDelta(wireOf(session.messages));
+                            }
+                        }
+                    } catch (error) {
+                        const message = error instanceof Error ? error.message : String(error);
+                        session.append({
+                            role: "assistant",
+                            type: "agent-notice",
+                            text: `本轮失败：${message}`,
+                        });
+                        onDelta(wireOf(session.messages));
+                    }
                     const messages = wireOf(session.messages);
                     onDelta(messages);
 

@@ -391,3 +391,21 @@ describe('工具调用转发（##514 第 2 步）', () => {
         expect(toolResultDeltaOf({ output: 'x' })).toBeUndefined();
     });
 });
+
+describe('工具透传（##514 教训：循环交给 ai-sdk，不在宿主手写）', () => {
+    it('chat 收到 tools ⇒ 请求体里带 tools 字段', async () => {
+        const fake = fakeFetch(() =>
+            sseResponse([{ ...(chunk({}) as object), choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }]),
+        );
+        const llm = provider(fake.fetch);
+        for await (const _delta of llm.chat(USER, {
+            tools: { bash: { description: '跑命令', parameters: { type: 'object', properties: {} } } },
+            maxSteps: 3,
+        })) {
+            // 只关心请求体，流内容不重要
+        }
+        const body = (await fake.requests[0]!.clone().json()) as Record<string, unknown>;
+        expect(body['tools']).toBeDefined();
+        expect(Array.isArray(body['tools'])).toBe(true);
+    });
+});

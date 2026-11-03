@@ -15,6 +15,7 @@
 
 import { localISOString } from '@diy-agent/time';
 import { SessionError } from './errors.js';
+import type { ChatOptions } from './types.js';
 import { assertDelta, parseMessage, parseMessages, toolArgsFromInput } from './message.js';
 import { openMemorySessionStore } from './store-memory.js';
 import {
@@ -130,13 +131,13 @@ export function createSession(options: CreateSessionOptions): AgentSession {
         append(init: ChatMessageInit) {
             return appendMessage(init);
         },
-        async *send(text: string): AsyncGenerator<SessionDelta> {
+        async *send(text: string, turnOptions?: ChatOptions): AsyncGenerator<SessionDelta> {
             if (typeof text !== 'string' || text.trim() === '') {
                 throw new SessionError('session/empty-text', 'send() 的正文不能为空', 'text');
             }
             yield* runTurn(() => {
                 appendMessage({ role: 'user', text });
-            });
+            }, turnOptions);
         },
         /**
          * 拿「刚执行完的工具结果」继续这一轮（##514 第 3 步）。
@@ -181,7 +182,7 @@ export function createSession(options: CreateSessionOptions): AgentSession {
      *   · continueWithToolResults   ⇒ 追加 tool 结果消息（不追加 user）
      * 其余（压缩 / 流式 / usage 累加 / 落盘 / done）逐字相同 —— 复制一份必然分叉。
      */
-    async function* runTurn(prepare: () => void): AsyncGenerator<SessionDelta> {
+    async function* runTurn(prepare: () => void, turnOptions?: ChatOptions): AsyncGenerator<SessionDelta> {
         if (busy) {
             throw new SessionError('session/busy', `会话 ${id} 上一轮还没结束（先 await 完，或 cancel()）`, 'busy');
         }
@@ -217,7 +218,12 @@ export function createSession(options: CreateSessionOptions): AgentSession {
             };
             try {
                 // sessionId 由会话自动带上（provider 拿它填上游路由 / 缓存 header，调用方不用管）
-                for await (const raw of llm.chat(history.slice(), { model, signal, sessionId: id })) {
+                for await (const raw of llm.chat(history.slice(), {
+                    ...turnOptions,
+                    model,
+                    signal,
+                    sessionId: id,
+                })) {
                     const delta = assertDelta(raw);
                     if (signal.aborted) break;
                     if (delta.type === 'text') {

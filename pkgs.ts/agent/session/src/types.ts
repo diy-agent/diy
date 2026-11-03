@@ -105,6 +105,17 @@ export type SessionDelta =
 export interface ChatOptions {
     readonly model?: string;
     readonly signal?: AbortSignal;
+    /**
+     * 工具集（**原样交给适配器**，本包不解释）。适配器把它传给 ai-sdk 的 `streamText`，
+     * 由 ai-sdk 负责「模型点工具 → 执行 → 结果喂回 → 再调」的整个循环。
+     *
+     * 为什么放这里而不是让宿主自己循环（##514 教训）：diy-app 一直是这么做的
+     * （`streamText({ tools, stopWhen: stepCountIs(n) })`），bot 最初自己写了一遍
+     * `runToolLoop`，等于重新发明 --- 且踩了同样的坑。
+     */
+    readonly tools?: unknown;
+    /** 工具循环的步数上限（适配器翻成 `stopWhen: stepCountIs(n)`；缺省由适配器定） */
+    readonly maxSteps?: number;
     /** 会话标识：由 Session 自动传入，调用方不用管。provider 用它填上游路由 / 缓存 header。 */
     readonly sessionId?: string;
 }
@@ -196,7 +207,7 @@ export interface SessionStore {
 export interface SessionPeer {
     readonly id: string;
     readonly busy: boolean;
-    send(text: string): AsyncIterable<SessionDelta>;
+    send(text: string, turnOptions?: ChatOptions): AsyncIterable<SessionDelta>;
 }
 
 /**
@@ -213,7 +224,7 @@ export interface AgentSession extends SessionPeer {
     /** 追加一条消息（不触发 LLM；at 缺省用 Clock 补） */
     append(message: ChatMessageInit): ChatMessage;
     /** 跑一轮：追加 user → （压缩）→ 调 LLM → 增量流 → 收尾 */
-    send(text: string): AsyncIterable<SessionDelta>;
+    send(text: string, turnOptions?: ChatOptions): AsyncIterable<SessionDelta>;
     /**
      * 拿刚执行完的工具结果继续这一轮（##514 工具循环）。
      *

@@ -77,90 +77,13 @@ function host(home: string, tools = buildTools({ cwd: dir })): BotChatHost {
     return createBotChat({ home, llmFor: () => scriptedLlm("a.txt", seen), toolsFor: () => asToolSet(tools) });
 }
 
-describe("bot 工具循环（##514 第 3 步）", () => {
-    it("两轮往返：模型点工具 → bot 执行 → 第二轮模型看得到结果并据此回答", async () => {
-        writeFileSync(join(dir, "a.txt"), "hello-514\n", "utf-8");
-        const home = makeHome();
-        const chat = host(home);
-        await chat.createFirstBot({ model: "test/echo-1" });
-
-        const snapshot = await chat.send("读一下 a.txt", () => {});
-
-        // ① 模型真被调了两次（一次点工具、一次基于结果回答）
-        expect(seen.calls).toBe(2);
-        // ② 第二轮请求里带着工具结果（入向映射没漏）——这是死循环的判据
-        expect(seen.toolMessages).toHaveLength(1);
-        expect(seen.toolMessages[0]!.text).toContain("hello-514");
-        // ③ 最终答复基于工具结果，而不是重复调工具
-        const texts = textsOf(snapshot.messages);
-        expect(texts.at(-1)).toContain("hello-514");
-        expect(texts.at(-1)).toContain("文件里是");
-        // ④ 消息线里 tool-call 与 tool-result 都在（UI 才有进度可画）
-        expect(texts).toEqual(expect.arrayContaining(["[tool]"]));
-    });
-
-    it("工具不存在 ⇒ 失败结果回给模型（不抛、不死循环）", async () => {
-        const home = makeHome();
-        const calls = { count: 0 };
-        const llm: LlmPort = {
-            async *chat(): AsyncIterable<SessionDelta> {
-                calls.count += 1;
-                if (calls.count === 1) {
-                    yield { type: "tool-call", id: "c1", name: "nope", input: "{}" };
-                    yield { type: "done", stopReason: "tool-calls" };
-                    return;
-                }
-                yield { type: "text", text: "好，没有这个工具" };
-                yield { type: "done", stopReason: "stop" };
-            },
-        };
-        const chat = createBotChat({ home, llmFor: () => llm, toolsFor: () => asToolSet(buildTools({ cwd: dir })) });
-        await chat.createFirstBot({ model: "test/echo-1" });
-        const snapshot = await chat.send("用不存在的工具", () => {});
-        expect(calls.count).toBe(2);
-        expect(textsOf(snapshot.messages).at(-1)).toContain("没有这个工具");
-    });
-
-    it("步数上限：超限不报错，剩余调用标「未执行」并留 notice（历史保持合法）", async () => {
-        const home = makeHome();
-        let calls = 0;
-        // 永远点工具：没有上限时这会死循环
-        const llm: LlmPort = {
-            async *chat(): AsyncIterable<SessionDelta> {
-                calls += 1;
-                yield { type: "tool-call", id: `c${calls}`, name: "read", input: JSON.stringify({ path: "a.txt" }) };
-                yield { type: "done", stopReason: "tool-calls" };
-            },
-        };
-        const chat = createBotChat({ home, llmFor: () => llm, toolsFor: () => asToolSet(buildTools({ cwd: dir })), maxToolSteps: 2 });
-        await chat.createFirstBot({ model: "test/echo-1" });
-        const snapshot = await chat.send("一直调工具", () => {});
-
-        // 2 步工具 ⇒ 4 次模型调用（第 3、4 次都会点工具：第 4 次收到「未执行」后我们不再执行也不再来一轮）
-        // —— 关键是**有界**：上限到了就停，不会跑到天荒地老
-        expect(calls).toBe(4);
-        const texts = textsOf(snapshot.messages);
-        // notice 说清了为什么停
-        expect(texts.join("\n")).toContain(`工具循环已达上限（2 步）`);
-        // 悬空的 tool-call 都有对应结果（否则下一轮请求不合法）
-        const toolResults = snapshot.messages.filter((message) =>
-            message.blocks.some((block) => block.kind === "tool" && block.data["state"] === "ok"),
-        );
-        expect(toolResults.length).toBeGreaterThanOrEqual(3);
-        expect(DEFAULT_MAX_TOOL_STEPS).toBe(20);
-    });
-
-    it("不装工具 ⇒ 模型要求调工具时回「未执行」而不是静默跳过", async () => {
-        const home = makeHome();
-        const llm: LlmPort = {
-            async *chat(): AsyncIterable<SessionDelta> {
-                yield { type: "tool-call", id: "c1", name: "read", input: "{}" };
-                yield { type: "done", stopReason: "tool-calls" };
-            },
-        };
-        const chat = createBotChat({ home, llmFor: () => llm });
-        await chat.createFirstBot({ model: "test/echo-1" });
-        const snapshot = await chat.send("调工具", () => {});
-        expect(textsOf(snapshot.messages).join("\n")).toContain("没有装工具");
+describe("bot 工具循环（已交给 ai-sdk）", () => {
+    // 原来三个用例测的是 bot 自己写的 runToolLoop（两轮往返 / 未知工具 / 步数上限）。
+    // ##514 教训（用户 2026-11-04：「diy-agent 已经有很完善的 agent 对话核心，请参考撰写，
+    // 不要重新发明」）：循环改由 ai-sdk 的 streamText({ tools, stopWhen: stepCountIs(n) }) 负责，
+    // 那套行为在 provider 层测（tests/openai.test.ts 的「工具透传」）。
+    // 留个占位说明位置，不留测不到东西的用例。
+    it("循环在 ai-sdk 里；bot 只负责透传 tools（见 provider 测试）", () => {
+        expect(true).toBe(true);
     });
 });
