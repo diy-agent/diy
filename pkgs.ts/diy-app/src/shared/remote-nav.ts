@@ -77,3 +77,226 @@ export function sourceLabel(row: Pick<DiscoveredRow, "source" | "sources">): str
   if (!pairingAllowed(row)) return "mDNS（局域网）";
   return row.source;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 设备列表合并（##511：蓝牙/WiFi 范式）
+//
+// 用户原话：「连接状态和候选连接的信息需要整合」「同一台机器只出现一行」。
+// 以前是两张表 —— 「其他机器」（发现到的）+「已配对」（hub.status.memberships），
+// 同一台机器会在两处各出现一次，状态还两套说法。这里把它们合成一份：
+//
+//   已连接（connected）── 我的 WSS 在它那儿是通的 / 它连到我这儿有活连接
+//   已配对（paired）   ── 配过对但此刻没连上（离线 / 未连接 / 已撤销）
+//   未配对（available）── 只被发现到，还没配对
+//
+// 同一台机器的判据是**节点身份**（不是地址）：`diy hub init` 的 hubNodeId 与
+// `/ping` 的实例 id 是同一个值（`ensureIdentity().identity.id`），所以发现行带 id 时
+// 就能与 membership / link 对齐；发现行没 id 时退回按 host 对齐。
+
+/** 已配对成员（`hub status` 的一行） */
+export interface HubMemberRow {
+  nodeId: string;
+  displayName: string;
+  status: string;
+  online: number;
+  createdAt: string;
+}
+
+/** 卫星侧 link.json（不含 token） */
+export interface HubLinkRow {
+  hubNodeId: string;
+  hubEndpoint: string;
+}
+
+/** 卫星侧长连状态（`hub connection`） */
+export type HubConnectionState = "idle" | "no-token" | "connecting" | "online" | "offline" | "revoked";
+
+export type DeviceGroup = "connected" | "paired" | "available";
+
+/** 一台机器（合并后的一行） */
+export interface DeviceRow {
+  /** 稳定键（合并用；也做 data 属性） */
+  key: string;
+  name: string;
+  group: DeviceGroup;
+  /** 行上**唯一的值**（第 3 个可见元素）：已连接 / 离线 / 未连接 / 已撤销 / 可配对 */
+  status: string;
+  /** 我是它的卫星（link.json） */
+  link?: HubLinkRow;
+  /** 它已经和我配对（membership） */
+  member?: HubMemberRow;
+  /** 发现得到的可达信息（endpoint / 来源 / meta） */
+  discovered?: DiscoveredRow;
+}
+
+/** 分组顺序与标题（已连接在前，未配对垫底） */
+export const DEVICE_GROUPS: readonly { key: DeviceGroup; label: string }[] = [
+  { key: "connected", label: "已连接" },
+  { key: "paired", label: "已配对" },
+  { key: "available", label: "未配对" },
+] as const;
+
+function urlOf(endpoint: string | null | undefined): URL | null {
+  if (!endpoint) return null;
+  const text = endpoint.trim();
+  if (text === "") return null;
+  try {
+    return new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : `https://${text}`);
+  } catch {
+    return null;
+  }
+}
+
+function hostOf(endpoint: string | null | undefined): string | null {
+  return urlOf(endpoint)?.host || null;
+}
+
+/** 不含端口的 hostname（主控的 `/hub` 与实例的 `:9400` 端口不同，身份却是同一台机器） */
+function hostnameOf(endpoint: string | null | undefined): string | null {
+  return urlOf(endpoint)?.hostname || null;
+}
+
+/** 卫星侧连接状态 → 行上那句话（`no-token` 必须是「未连接」，不是「离线」） */
+function linkStatus(state: HubConnectionState | null | undefined): string {
+  switch (state) {
+    case "online":
+      return "已连接";
+    case "connecting":
+      return "连接中…";
+    case "offline":
+      return "离线";
+    case "revoked":
+      return "已撤销";
+    case "no-token":
+    case "idle":
+    case null:
+    case undefined:
+    default:
+      return "未连接";
+  }
+}
+
+export interface MergeDevicesInput {
+  members?: HubMemberRow[];
+  discovered?: DiscoveredRow[];
+  /** 我作为卫星加入的主控（link.json） */
+  link?: HubLinkRow | null;
+  /** 卫星侧长连状态 */
+  connection?: HubConnectionState | null;
+}
+
+/**
+ * 把「已配对」与「发现到的」合成一份设备清单：**一台机器一行**。
+ *
+ * 合并不是按字符串名字，而是按节点身份：member.nodeId / link.hubNodeId / discovered.id
+ * 三者同源（都是 `$DIY_HOME/instance-id`）。发现行没 id 时按 endpoint 的 host 对齐
+ * （link 同理：它的 endpoint host 就是发现行会给出的 host）。
+ */
+export function mergeDevices(input: MergeDevicesInput = {}): DeviceRow[] {
+  const rows = new Map<string, DeviceRow>();
+  /** host → 已存在行的 key（给「没有 id 的发现行」兜底对齐） */
+  const byHost = new Map<string, string>();
+  /** hostname → key（主控 `/hub` 与实例 `:9400` 只差端口，仍算同一台机器） */
+  const byHostname = new Map<string, string>();
+
+  const indexEndpoint = (endpoint: string | null | undefined, key: string): void => {
+    const host = hostOf(endpoint);
+    const name = hostnameOf(endpoint);
+    if (host) byHost.set(host, key);
+    if (name) byHostname.set(name, key);
+  };
+
+  const upsert = (key: string, seed: Omit<DeviceRow, "key">): DeviceRow => {
+    const existing = rows.get(key);
+    if (existing) return existing;
+    const row: DeviceRow = { key, ...seed };
+    rows.set(key, row);
+    return row;
+  };
+
+  // ① 已配对成员
+  for (const member of input.members ?? []) {
+    upsert(`node:${member.nodeId}`, {
+      name: member.displayName || member.nodeId,
+      group: "paired",
+      status: "离线",
+      member,
+    });
+  }
+
+  // ② 我是它的卫星（link.json）—— 与 membership 同 key 时会合并到同一行
+  const link = input.link ?? null;
+  if (link) {
+    const key = `node:${link.hubNodeId}`;
+    const row = upsert(key, {
+      name: hostOf(link.hubEndpoint) ?? link.hubNodeId,
+      group: "paired",
+      status: linkStatus(input.connection),
+      link,
+    });
+    row.link = link;
+    indexEndpoint(link.hubEndpoint, key);
+  }
+
+  // ③ 发现到的机器
+  for (const found of input.discovered ?? []) {
+    const host = hostOf(found.endpoint);
+    const name = hostnameOf(found.endpoint);
+    const matched = (host ? byHost.get(host) : undefined) ?? (name ? byHostname.get(name) : undefined);
+    const key = found.id
+      ? `node:${found.id}`
+      : matched ?? (host ? `ep:${host}` : `ep:${found.endpoint}`);
+    const row = upsert(key, {
+      name: machineLabel(found),
+      group: "available",
+      status: "可配对",
+      discovered: found,
+    });
+    row.discovered = found;
+    indexEndpoint(found.endpoint, key);
+  }
+
+  // ④ 定组与行上那句话
+  for (const row of rows.values()) {
+    const member = row.member;
+    const linkState = row.link ? input.connection : null;
+    if (member && member.status !== "active") {
+      row.group = "paired";
+      row.status = "已撤销";
+    } else if (member && member.online > 0) {
+      row.group = "connected";
+      row.status = member.online > 1 ? `${member.online} 条连接` : "已连接";
+    } else if (row.link && linkState === "online") {
+      row.group = "connected";
+      row.status = "已连接";
+    } else if (row.link && (member === undefined || member.online === 0)) {
+      // 我是它的卫星但长连没通：这里就是「未连接 / 离线」，**不再伪装成在线**
+      row.group = "paired";
+      row.status = member ? "离线" : linkStatus(linkState);
+    } else if (member) {
+      row.group = "paired";
+      row.status = "离线";
+    } else {
+      row.group = "available";
+      row.status = "可配对";
+    }
+  }
+
+  // ⑤ 分组排序：已连接 → 已配对 → 未配对；组内按名字
+  const order = new Map(DEVICE_GROUPS.map((g, i) => [g.key, i]));
+  return [...rows.values()].sort(
+    (a, b) => (order.get(a.group) ?? 9) - (order.get(b.group) ?? 9) || a.name.localeCompare(b.name, "zh"),
+  );
+}
+
+/** 一台机器能不能给两个方向的配对动作（mDNS 不行；已撤销的成员也不行） */
+export function devicePairingAllowed(row: DeviceRow): boolean {
+  if (!row.discovered) return false;
+  if (row.member && row.member.status !== "active") return false;
+  return pairingAllowed(row.discovered);
+}
+
+/** 详情页要展示的端址：发现行的 endpoint 优先，其次 link 的 hubEndpoint */
+export function deviceEndpoint(row: DeviceRow): string | null {
+  return row.discovered?.endpoint ?? row.link?.hubEndpoint ?? null;
+}

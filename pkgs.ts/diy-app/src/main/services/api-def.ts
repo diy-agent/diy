@@ -2878,6 +2878,20 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
                 .nullable(),
             }),
           }),
+          connection: RpcSchema.unary({
+            desc: `卫星侧长连状态（##511）：idle / no-token / connecting / online / offline / revoked —— 只有 online 才是真连上`,
+            input: {},
+            output: z.object({
+              status: z.string(),
+              data: z.object({
+                state: z.string().describe("idle / no-token / connecting / online / offline / revoked"),
+                hubNodeId: z.string().nullable(),
+                hubEndpoint: z.string().nullable(),
+                attempt: z.number().optional(),
+                reason: z.string().optional(),
+              }),
+            }),
+          }),
         },
       }),
 

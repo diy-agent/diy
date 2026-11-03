@@ -446,6 +446,16 @@ app.whenReady().then(async () => {
     });
   }
 
+  // Hub 连接恢复（##511）：
+  //   ① 卫星侧 —— 有 link.json 就把 WSS 长连建起来（以前 `hub join` 拿完 Token 就没了，
+  //      主控侧 connectionCount 恒 0 ⇒ 假「离线」）；没有 Token 则报 no-token（UI 显示「未连接」）
+  //   ② 主控侧 —— 有身份就预热监听，否则没人邀请时服务端根本没起，「谁在线」永远是 0
+  // 两者都不阻塞启动、都不抛（失败只意味着这台机器暂时连不上/当不了主控）。
+  void hubService
+    .startClient()
+    .catch((e: unknown) => console.error("[hub] 卫星长连未建立:", e instanceof Error ? e.message : e));
+  void hubService.warmupServer();
+
   const ok = await startRpcPort(ipcTransport);
   // 端口已定（含 EADDRINUSE 后的随机端口兜底）→ 重设标题补上 `:<port>`
   applyWindowTitle();

@@ -1,35 +1,41 @@
 /**
- * RemotePage — 远程导航页（##507）：一屏列「我」+「其他机器」，配对走已有 HubPage 弹层。
+ * RemotePage — 远程导航页（##507 起，##511 改成「蓝牙 / WiFi」范式）。
  *
- * 用户原话（##507 body）：
- *   > 一屏列「我」+「其他机器」，每个机器三个动作：
- *     [添加为卫星节点]（我当主控，建邀请）
- *     [申请成为它的卫星]（我当卫星，连它）
- *     [web 远程访问]（open 浏览器到 https://该节点/）
+ * 用户原话（##511）：
+ *   > 现在一堆 ui 堆在一起，信息量过大，很乱，连接状态和候选连接的信息需要整合，
+ *   > 需要隐藏一些信息到二级页面
  *
- * 三条硬约束：
- *   ① **不重写配对**：两个方向的动作都只是打开 HubPage（host / join 两屏），
- *      协议、五屏、审批全在 HubPage —— 判据 4/5 靠这个成立；
- *   ② mDNS 行**不可配对**（与 HubPage 判据 22 同源，见 shared/remote-nav.pairingAllowed），
- *      只留「web 远程访问」；
- *   ③ 数据一律来自结构化 RPC（remote.self / remote.list / hub.status / hub.link），
- *      不解析 CLI 文本；错误必须看得见（红条 + 原文）。
+ * 三条硬约束（判据 3/4/5/6）：
+ *   ① **每行最多 3 个可见元素**：状态点 + 名字 + 一个值（已连接 / 离线 / 未连接 / 可配对），
+ *      所有操作收进 `⋯` 菜单；
+ *   ② **同一台机器只出现一行** —— 「其他机器」（发现到的）与「已配对」（memberships）合并成
+ *      一份按状态分组（合并规则在 `shared/remote-nav.mergeDevices`，纯函数单测锁死）；
+ *   ③ **完整信息进二级页面**：点某行 → 详情（PID / 端点 / 来源 / 加入时间 / 密钥…）；
+ *      我的身份从主区挪到「本机 · 设置」（不在主列表里）。
  *
- * 展示语义（webAccessUrl / pairingAllowed / PAIR_ACTIONS / joinUrlFor）在
- * `shared/remote-nav.ts` 纯函数里，本文件只取数、排版、把动作接到既有出口。
+ * 配对本身仍**不重写**：两个方向的动作都只是打开 HubPage（host / join 两屏），
+ * 协议、五屏、审批全在 HubPage —— 判据 4/5 靠这个成立。
+ *
+ * 数据一律来自结构化 RPC（remote.self / remote.list / hub.status / hub.link / hub.connection），
+ * 不解析 CLI 文本；错误必须看得见（红条 + 原文）。
  */
-import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { diyService } from "../lib/rpc";
 import { notificationStore } from "../store/notificationStore";
 import { HubPage } from "./HubPage";
 import type { DiscoveredRow, RemoteSelf } from "../../shared/remote";
 import {
-    PAIR_ACTIONS,
+    DEVICE_GROUPS,
+    deviceEndpoint,
+    devicePairingAllowed,
     joinUrlFor,
-    machineLabel,
-    pairingAllowed,
+    mergeDevices,
     sourceLabel,
     webAccessUrl,
+    type DeviceRow,
+    type HubConnectionState,
+    type HubLinkRow,
+    type HubMemberRow,
 } from "../../shared/remote-nav";
 
 function msgOf(e: unknown): string {
@@ -49,36 +55,39 @@ interface HubIdentity {
     endpoint?: string;
 }
 
-interface HubMember {
-    nodeId: string;
-    displayName: string;
-    status: string;
-    online: number;
-    createdAt: string;
-}
+/** 状态点颜色：已连接绿、已配对灰、未配对空心 */
+const DOT_CLASS: Record<DeviceRow["group"], string> = {
+    connected: "bg-success",
+    paired: "bg-base-content/40",
+    available: "bg-transparent border border-base-content/40",
+};
 
 export function RemotePage() {
     const [self, setSelf] = createSignal<RemoteSelf | null>(null);
     const [rows, setRows] = createSignal<DiscoveredRow[]>([]);
     const [discoverErrors, setDiscoverErrors] = createSignal<string[]>([]);
     const [identity, setIdentity] = createSignal<HubIdentity | null>(null);
-    const [members, setMembers] = createSignal<HubMember[]>([]);
-    const [link, setLink] = createSignal<{ hubNodeId: string; hubEndpoint: string } | null>(null);
+    const [members, setMembers] = createSignal<HubMemberRow[]>([]);
+    const [link, setLink] = createSignal<HubLinkRow | null>(null);
+    const [connection, setConnection] = createSignal<HubConnectionState | null>(null);
     const [error, setError] = createSignal<string | null>(null);
     const [inFlight, setInFlight] = createSignal(false);
     const [hubLayer, setHubLayer] = createSignal<HubLayer | null>(null);
-    /** web 访问调用结果（判据 3：断言 openUrl 被调；也给用户看一眼） */
+    /** 二级页面：当前展开的那台机器（null = 关着） */
+    const [detailKey, setDetailKey] = createSignal<string | null>(null);
+    /** web 访问调用结果（也给用户看一眼） */
     const [lastWebUrl, setLastWebUrl] = createSignal<string | null>(null);
 
     const refresh = async () => {
         if (inFlight()) return;
         setInFlight(true);
         try {
-            const [s, list, st, lk] = await Promise.all([
+            const [s, list, st, lk, conn] = await Promise.all([
                 diyService.diy.remote.self({}).catch(() => null),
                 diyService.diy.remote.list({ sources: "mdns,tailscale,local", manual: undefined, mdnsTimeoutMs: 800 }),
                 diyService.diy.hub.status({}).catch(() => null),
                 diyService.diy.hub.link({}).catch(() => null),
+                diyService.diy.hub.connection({}).catch(() => null),
             ]);
             setSelf(s);
             setRows(list.rows);
@@ -94,7 +103,10 @@ export function RemotePage() {
                     : null,
             );
             setMembers(st?.data.memberships ?? []);
-            setLink(lk?.data ? { hubNodeId: lk.data.hubNodeId, hubEndpoint: lk.data.hubEndpoint } : null);
+            setLink(
+                lk?.data ? { hubNodeId: lk.data.hubNodeId, hubEndpoint: lk.data.hubEndpoint } : null,
+            );
+            setConnection((conn?.data.state as HubConnectionState | undefined) ?? null);
             setError(null);
         } catch (e) {
             setError(`拉取远程状态失败：${msgOf(e)}`);
@@ -109,8 +121,32 @@ export function RemotePage() {
         onCleanup(() => clearInterval(timer));
     });
 
+    /** 合并后的一份清单（判据 4：同一台机器只出现一行） */
+    const devices = createMemo(() =>
+        mergeDevices({
+            members: members(),
+            discovered: rows(),
+            link: link(),
+            connection: connection(),
+        }),
+    );
+
+    const grouped = createMemo(() => {
+        const all = devices();
+        return DEVICE_GROUPS.map((g) => ({ ...g, rows: all.filter((r) => r.group === g.key) })).filter(
+            (g) => g.rows.length > 0,
+        );
+    });
+
+    const detail = createMemo(() => {
+        const key = detailKey();
+        if (!key) return null;
+        return devices().find((r) => r.key === key) ?? null;
+    });
+
     /** 打开配对弹层 —— 两个方向都只切 HubPage 的屏，不另起协议（判据 4） */
     const openHub = (tab: "host" | "join", url?: string) => {
+        setDetailKey(null);
         setHubLayer({ tab, ...(url ? { url } : {}) });
     };
 
@@ -134,41 +170,27 @@ export function RemotePage() {
             if (r.ok) {
                 notificationStore.addToast("success", `已在浏览器打开 ${url}`, {
                     source: "远程页 · web 访问",
-                    reason: "人点了「web 远程访问」，openUrl 成功",
+                    reason: "人点了「web 访问」，openUrl 成功",
                     detail: "调用 traffic.openUrl → 主进程 shell.openExternal 打开系统默认浏览器。",
                 });
                 setError(null);
             } else {
                 const m = r.message ?? "未知错误";
                 setError(`打开 ${url} 失败：${m}`);
-                notificationStore.addToast("error", `打开失败：${m}`, {
-                    source: "远程页 · web 访问",
-                    reason: "openUrl 返回 ok:false（见页面红条原文）",
-                    detail: "主进程 shell.openExternal 失败；红条里是原始错误，不吞。",
-                });
             }
         } catch (e) {
-            const m = msgOf(e);
-            setError(`打开 ${url} 失败：${m}`);
-            notificationStore.addToast("error", `打开失败：${m}`, {
-                source: "远程页 · web 访问",
-                reason: "openUrl RPC 调用抛错（见页面红条原文）",
-                detail: "RPC 未返回（主进程 import electron 失败等）；红条里是原始错误，不吞。",
-            });
+            setError(`打开 ${url} 失败：${msgOf(e)}`);
         }
     };
 
-    /** 角色：有 link = 卫星；有 identity = 主控；都没有 = 未配对 */
-    const roleText = () => {
-        if (link()) return "卫星";
-        if (identity()) return "主控";
-        return "未配对";
-    };
-
-    const selfLabel = () => {
-        const s = self();
-        if (!s) return "…";
-        return s.displayName || s.host || s.id;
+    const doRevoke = async (nodeId: string) => {
+        try {
+            await diyService.diy.hub.revoke({ nodeId });
+            setDetailKey(null);
+            await refresh();
+        } catch (e) {
+            setError(`撤销 ${nodeId} 失败：${msgOf(e)}`);
+        }
     };
 
     return (
@@ -182,201 +204,285 @@ export function RemotePage() {
                 </div>
             </Show>
 
-            <div class="flex flex-wrap gap-3 items-start">
-                {/* ── 我 ── */}
-                <section class="card bg-base-200/60 min-w-[280px] flex-1" data-remote-self>
-                    <div class="card-body py-3 gap-1">
-                        <h2 class="card-title text-base">我</h2>
-                        <dl class="text-sm grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
-                            <dt class="opacity-60">节点 ID</dt>
-                            <dd class="font-mono break-all" data-remote-self-id>
-                                {self()?.id ?? identity()?.hubNodeId ?? "—"}
-                            </dd>
-                            <dt class="opacity-60">显示名</dt>
-                            <dd data-remote-self-name>{selfLabel()}</dd>
-                            <dt class="opacity-60">所属域</dt>
-                            <dd class="font-mono" data-remote-self-domain>
-                                {identity()?.domainId ?? "—"}
-                            </dd>
-                            <dt class="opacity-60">对外地址</dt>
-                            <dd class="font-mono break-all text-xs">
-                                {identity()?.endpoint ?? self()?.endpoint ?? "—"}
-                            </dd>
-                            <dt class="opacity-60">角色</dt>
-                            <dd data-remote-self-role>{roleText()}</dd>
-                        </dl>
-                        <Show when={link()}>
-                            {(l) => (
-                                <div class="text-xs opacity-70 font-mono break-all" data-remote-self-link>
-                                    已加入 {l().hubNodeId}（{l().hubEndpoint}）
-                                </div>
-                            )}
-                        </Show>
-                        <div class="flex gap-2 mt-1">
-                            <button class="btn btn-xs btn-primary" data-remote-open-host onClick={() => openHub("host")}>
-                                本机作为主控（建邀请）
-                            </button>
-                            <button class="btn btn-xs" data-remote-open-join onClick={() => openHub("join")}>
-                                加入其他主控
-                            </button>
-                        </div>
-                    </div>
-                </section>
-
-                {/* ── 其他机器 ── */}
-                <section class="card bg-base-200/60 flex-[2] min-w-[320px]" data-remote-machines>
-                    <div class="card-body py-3 gap-2">
-                        <div class="flex items-center justify-between">
-                            <h2 class="card-title text-base">其他机器</h2>
-                            <button class="btn btn-xs" disabled={inFlight()} data-remote-refresh onClick={() => void refresh()}>
-                                {inFlight() ? "刷新中…" : "刷新"}
-                            </button>
-                        </div>
-                        <Show
-                            when={rows().length > 0}
-                            fallback={<p class="text-sm opacity-60" data-remote-empty>没发现其他机器（mDNS / tailscale / local）。</p>}
-                        >
-                            <ul class="space-y-2">
-                                <For each={rows()}>
-                                    {(row) => {
-                                        const label = machineLabel(row);
-                                        const canPair = pairingAllowed(row);
-                                        const webUrl = webAccessUrl(row.endpoint);
-                                        return (
-                                            <li
-                                                class="rounded-box bg-base-100/70 px-3 py-2 flex flex-wrap items-center gap-2"
-                                                data-remote-machine={row.endpoint}
-                                                data-remote-machine-label={label}
-                                            >
-                                                <div class="flex-1 min-w-0">
-                                                    <div class="font-semibold truncate" data-remote-machine-name>
-                                                        {label}
-                                                    </div>
-                                                    <div class="text-xs opacity-60 font-mono break-all">
-                                                        {row.endpoint} · {sourceLabel(row)}
-                                                        <Show when={row.sources.length > 1}>
-                                                            {" "}
-                                                            （{row.sources.join(" + ")}）
-                                                        </Show>
-                                                    </div>
-                                                </div>
-                                                <div class="flex flex-wrap gap-1 justify-end">
-                                                    <For each={PAIR_ACTIONS}>
-                                                        {(action) => (
-                                                            <Show when={canPair || action.key === "invite"}>
-                                                                <button
-                                                                    class="btn btn-xs btn-primary"
-                                                                    data-remote-action={action.key}
-                                                                    data-remote-action-for={row.endpoint}
-                                                                    title={
-                                                                        action.key === "invite"
-                                                                            ? "我当主控，给这台机器建邀请"
-                                                                            : "我当卫星，连到这台机器"
-                                                                    }
-                                                                    onClick={() =>
-                                                                        openHub(
-                                                                            action.tab,
-                                                                            action.key === "join" ? joinUrlFor(row.endpoint) : undefined,
-                                                                        )
-                                                                    }
-                                                                >
-                                                                    {action.label}
-                                                                </button>
-                                                            </Show>
-                                                        )}
-                                                    </For>
-                                                    <button
-                                                        class="btn btn-xs"
-                                                        data-remote-web={row.endpoint}
-                                                        disabled={!webUrl}
-                                                        title={webUrl ?? "地址解析失败"}
-                                                        onClick={() => void openWeb(row.endpoint)}
-                                                    >
-                                                        web 远程访问
-                                                    </button>
-                                                </div>
-                                            </li>
-                                        );
-                                    }}
-                                </For>
-                            </ul>
-                        </Show>
-                        <Show when={discoverErrors().length > 0}>
-                            <div class="text-xs text-warning" data-remote-discover-errors>
-                                {discoverErrors().join(" · ")}
-                            </div>
-                        </Show>
-                        <Show when={lastWebUrl()}>
-                            {(u) => (
-                                <div class="text-xs opacity-70 font-mono" data-remote-last-web>
-                                    最近打开：{u()}
-                                </div>
-                            )}
-                        </Show>
-                    </div>
-                </section>
-            </div>
-
-            {/* ── 已配对 ── */}
-            <section class="card bg-base-200/60" data-remote-paired>
+            {/* ── 一台机器一行（已连接 / 已配对 / 未配对 三段） ── */}
+            <section class="card bg-base-200/60" data-remote-machines>
                 <div class="card-body py-3 gap-2">
-                    <h2 class="card-title text-base">已配对</h2>
+                    <div class="flex items-center justify-between">
+                        <h2 class="card-title text-base">设备</h2>
+                        <button class="btn btn-xs" disabled={inFlight()} data-remote-refresh onClick={() => void refresh()}>
+                            {inFlight() ? "刷新中…" : "刷新"}
+                        </button>
+                    </div>
+
                     <Show
-                        when={members().length > 0}
-                        fallback={<p class="text-sm opacity-60" data-remote-paired-empty>还没有已配对的节点。</p>}
+                        when={grouped().length > 0}
+                        fallback={<p class="text-sm opacity-60" data-remote-empty>没发现其他设备（mDNS / tailscale / local）。</p>}
                     >
-                        <table class="table table-sm" data-remote-paired-table>
-                            <thead>
-                                <tr>
-                                    <th>节点</th>
-                                    <th>状态</th>
-                                    <th>加入时间</th>
-                                    <th />
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <For each={members()}>
-                                    {(m) => (
-                                        <tr data-remote-paired-row={m.nodeId}>
-                                            <td>
-                                                <div class="font-semibold">{m.displayName}</div>
-                                                <div class="text-xs opacity-55 font-mono">{m.nodeId}</div>
-                                            </td>
-                                            <td>
-                                                <span
-                                                    classList={{
-                                                        "text-success": m.status === "active",
-                                                        "opacity-50": m.status !== "active",
-                                                    }}
+                        <For each={grouped()}>
+                            {(g) => (
+                                <div class="space-y-1" data-remote-group={g.key}>
+                                    <div class="text-xs opacity-60 px-1">{g.label}</div>
+                                    <ul class="space-y-1">
+                                        {/* 判据 3：一行只有 状态点 + 名字 + 一个值；操作在 ⋯ 里 */}
+                                        <For each={g.rows}>
+                                            {(row) => (
+                                                <li
+                                                    class="group flex items-center gap-2 rounded-box bg-base-100/70 px-3 py-2 cursor-pointer hover:bg-base-100"
+                                                    data-remote-machine={row.key}
+                                                    data-remote-machine-label={row.name}
+                                                    data-remote-row={row.key}
+                                                    data-remote-row-group={row.group}
+                                                    onClick={() => setDetailKey(row.key)}
                                                 >
-                                                    {m.status === "active" ? (m.online > 0 ? "● 在线" : "○ 离线") : "已撤销"}
-                                                </span>
-                                            </td>
-                                            <td class="text-xs opacity-60">{m.createdAt}</td>
-                                            <td class="text-right">
-                                                <Show when={m.status === "active"}>
-                                                    <button
-                                                        class="btn btn-xs btn-ghost"
-                                                        data-remote-paired-detail={m.nodeId}
-                                                        onClick={() => openHub("host")}
+                                                    <span
+                                                        class={`shrink-0 w-2.5 h-2.5 rounded-full ${DOT_CLASS[row.group]}`}
+                                                        data-remote-dot={row.group}
+                                                    />
+                                                    <span class="flex-1 min-w-0 truncate font-semibold" data-remote-machine-name>
+                                                        {row.name}
+                                                    </span>
+                                                    <span class="shrink-0 text-xs opacity-60" data-remote-value>
+                                                        {row.status}
+                                                    </span>
+                                                    <details
+                                                        class="dropdown dropdown-end shrink-0"
+                                                        onClick={(e) => e.stopPropagation()}
                                                     >
-                                                        详情
-                                                    </button>
-                                                </Show>
-                                            </td>
-                                        </tr>
-                                    )}
-                                </For>
-                            </tbody>
-                        </table>
+                                                        <summary
+                                                            class="btn btn-xs btn-ghost px-1"
+                                                            data-remote-more={row.key}
+                                                            aria-label="更多操作"
+                                                        >
+                                                            ⋯
+                                                        </summary>
+                                                        <ul class="dropdown-content menu bg-base-100 rounded-box shadow z-30 w-52 p-1">
+                                                            <li>
+                                                                <button data-remote-action="detail" onClick={() => setDetailKey(row.key)}>
+                                                                    详情
+                                                                </button>
+                                                            </li>
+                                                            <Show when={devicePairingAllowed(row)}>
+                                                                <li>
+                                                                    <button data-remote-action="invite" onClick={() => openHub("host")}>
+                                                                        添加为卫星节点
+                                                                    </button>
+                                                                </li>
+                                                                <li>
+                                                                    <button
+                                                                        data-remote-action="join"
+                                                                        onClick={() => openHub("join", joinUrlFor(row.discovered!.endpoint))}
+                                                                    >
+                                                                        申请成为它的卫星
+                                                                    </button>
+                                                                </li>
+                                                            </Show>
+                                                            <Show when={webAccessUrl(deviceEndpoint(row) ?? "")}>
+                                                                {(url) => (
+                                                                    <li>
+                                                                        <button
+                                                                            data-remote-action="web"
+                                                                            onClick={() => void openWeb(deviceEndpoint(row) ?? "")}
+                                                                            title={url()}
+                                                                        >
+                                                                            web 远程访问
+                                                                        </button>
+                                                                    </li>
+                                                                )}
+                                                            </Show>
+                                                            <Show when={row.member && row.member.status === "active"}>
+                                                                <li>
+                                                                    <button
+                                                                        class="text-error"
+                                                                        data-remote-action="revoke"
+                                                                        onClick={() => void doRevoke(row.member!.nodeId)}
+                                                                    >
+                                                                        移除
+                                                                    </button>
+                                                                </li>
+                                                            </Show>
+                                                        </ul>
+                                                    </details>
+                                                </li>
+                                            )}
+                                        </For>
+                                    </ul>
+                                </div>
+                            )}
+                        </For>
                     </Show>
-                    <div>
-                        <button class="btn btn-sm" data-remote-add-node onClick={() => openHub("join")}>
-                            + 添加其他节点
+
+                    <Show when={discoverErrors().length > 0}>
+                        <div class="text-xs text-warning" data-remote-discover-errors>
+                            {discoverErrors().join(" · ")}
+                        </div>
+                    </Show>
+                    <Show when={lastWebUrl()}>
+                        {(u) => (
+                            <div class="text-xs opacity-70 font-mono" data-remote-last-web>
+                                最近打开：{u()}
+                            </div>
+                        )}
+                    </Show>
+
+                    <div class="flex gap-2 pt-1">
+                        <button class="btn btn-xs" data-remote-add-pair onClick={() => openHub("join")}>
+                            ＋ 配对新设备
                         </button>
                     </div>
                 </div>
             </section>
+
+            {/* ── 本机（判据 6：身份不进主列表；放在「设置」区，要展开才看全） ── */}
+            <details class="card bg-base-200/40" data-remote-self open>
+                <summary class="px-3 py-2 cursor-pointer text-sm opacity-70">本机 · 设置</summary>
+                <div class="card-body py-3 gap-1">
+                    <dl class="text-sm grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
+                        <dt class="opacity-60">节点 ID</dt>
+                        <dd class="font-mono break-all" data-remote-self-id>
+                            {self()?.id ?? identity()?.hubNodeId ?? "—"}
+                        </dd>
+                        <dt class="opacity-60">显示名</dt>
+                        <dd data-remote-self-name>{self()?.displayName || self()?.host || "…"}</dd>
+                        <dt class="opacity-60">所属域</dt>
+                        <dd class="font-mono" data-remote-self-domain>
+                            {identity()?.domainId ?? "—"}
+                        </dd>
+                        <dt class="opacity-60">对外地址</dt>
+                        <dd class="font-mono break-all text-xs">{identity()?.endpoint ?? self()?.endpoint ?? "—"}</dd>
+                        <dt class="opacity-60">角色</dt>
+                        <dd data-remote-self-role>{link() ? "卫星" : identity() ? "主控" : "未配对"}</dd>
+                        <Show when={link()}>
+                            {(l) => (
+                                <>
+                                    <dt class="opacity-60">连到</dt>
+                                    <dd class="font-mono break-all text-xs" data-remote-self-link>
+                                        {l().hubEndpoint}（{l().hubNodeId}）
+                                    </dd>
+                                </>
+                            )}
+                        </Show>
+                    </dl>
+                    <div class="flex gap-2 mt-1">
+                        <button class="btn btn-xs btn-primary" data-remote-open-host onClick={() => openHub("host")}>
+                            本机作为主控（建邀请）
+                        </button>
+                        <button class="btn btn-xs" data-remote-open-join onClick={() => openHub("join")}>
+                            加入其他主控
+                        </button>
+                    </div>
+                </div>
+            </details>
+
+            {/* ── 二级页面：一台机器的完整信息（判据 5） ── */}
+            <Show when={detail()}>
+                {(row) => (
+                    <dialog class="modal modal-open" data-remote-detail open>
+                        <div class="modal-box max-w-xl">
+                            <div class="flex items-center gap-2">
+                                <span class={`w-2.5 h-2.5 rounded-full ${DOT_CLASS[row().group]}`} />
+                                <h3 class="text-lg font-semibold flex-1 truncate" data-remote-detail-name>
+                                    {row().name}
+                                </h3>
+                                <span class="text-xs opacity-60">{row().status}</span>
+                            </div>
+                            <dl class="mt-3 text-sm grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+                                <Show when={row().member}>
+                                    {(m) => (
+                                        <>
+                                            <dt class="opacity-60">节点 ID</dt>
+                                            <dd class="font-mono break-all">{m().nodeId}</dd>
+                                            <dt class="opacity-60">配对状态</dt>
+                                            <dd>{m().status === "active" ? "已配对" : "已撤销"}</dd>
+                                            <dt class="opacity-60">活连接</dt>
+                                            <dd>{m().online}</dd>
+                                            <dt class="opacity-60">加入时间</dt>
+                                            <dd class="text-xs">{m().createdAt}</dd>
+                                        </>
+                                    )}
+                                </Show>
+                                <Show when={row().link}>
+                                    {(l) => (
+                                        <>
+                                            <dt class="opacity-60">我连到</dt>
+                                            <dd class="font-mono break-all text-xs">{l().hubEndpoint}</dd>
+                                            <dt class="opacity-60">长连状态</dt>
+                                            <dd data-remote-detail-connection>{row().status}</dd>
+                                        </>
+                                    )}
+                                </Show>
+                                <Show when={row().discovered}>
+                                    {(d) => (
+                                        <>
+                                            <dt class="opacity-60">端点</dt>
+                                            <dd class="font-mono break-all text-xs">{d().endpoint}</dd>
+                                            <dt class="opacity-60">来源</dt>
+                                            <dd class="text-xs">
+                                                {sourceLabel(d())}
+                                                <Show when={d().sources.length > 1}>（{d().sources.join(" + ")}）</Show>
+                                            </dd>
+                                            <Show when={d().meta?.pid}>
+                                                {(pid) => (
+                                                    <>
+                                                        <dt class="opacity-60">PID</dt>
+                                                        <dd class="font-mono text-xs">{pid()}</dd>
+                                                    </>
+                                                )}
+                                            </Show>
+                                            <Show when={d().meta?.variant}>
+                                                {(v) => (
+                                                    <>
+                                                        <dt class="opacity-60">变体</dt>
+                                                        <dd class="font-mono text-xs">{v()}</dd>
+                                                    </>
+                                                )}
+                                            </Show>
+                                        </>
+                                    )}
+                                </Show>
+                            </dl>
+
+                            <div class="modal-action flex-wrap gap-1">
+                                <Show when={devicePairingAllowed(row())}>
+                                    <button class="btn btn-sm" data-remote-detail-action="invite" onClick={() => openHub("host")}>
+                                        添加为卫星节点
+                                    </button>
+                                    <button
+                                        class="btn btn-sm btn-primary"
+                                        data-remote-detail-action="join"
+                                        onClick={() => openHub("join", joinUrlFor(row().discovered!.endpoint))}
+                                    >
+                                        申请成为它的卫星
+                                    </button>
+                                </Show>
+                                <Show when={webAccessUrl(deviceEndpoint(row()) ?? "")}>
+                                    <button
+                                        class="btn btn-sm"
+                                        data-remote-detail-action="web"
+                                        onClick={() => void openWeb(deviceEndpoint(row()) ?? "")}
+                                    >
+                                        web 远程访问
+                                    </button>
+                                </Show>
+                                <Show when={row().member && row().member!.status === "active"}>
+                                    <button
+                                        class="btn btn-sm btn-ghost text-error"
+                                        data-remote-detail-action="revoke"
+                                        onClick={() => void doRevoke(row().member!.nodeId)}
+                                    >
+                                        移除
+                                    </button>
+                                </Show>
+                                <button class="btn btn-sm" data-remote-detail-close onClick={() => setDetailKey(null)}>
+                                    关闭
+                                </button>
+                            </div>
+                        </div>
+                        <form method="dialog" class="modal-backdrop">
+                            <button onClick={() => setDetailKey(null)}>close</button>
+                        </form>
+                    </dialog>
+                )}
+            </Show>
 
             {/* ── 配对弹层：HubPage 复用（判据 4/5：五屏都在这里） ── */}
             <Show when={hubLayer()}>

@@ -58,9 +58,59 @@ describe("远程导航页（##507）", () => {
       { timeoutMs: 20000, intervalMs: 200, label: "远程页上屏" },
     );
     expect(ok).toBe(true);
-    expect(await ui.query<boolean>(`!!document.querySelector('[data-remote-self]')`)).toBe(true);
     expect(await ui.query<boolean>(`!!document.querySelector('[data-remote-machines]')`)).toBe(true);
-    expect(await ui.query<boolean>(`!!document.querySelector('[data-remote-paired]')`)).toBe(true);
+    // ##511 判据 6：我的身份不在主列表里（挪到「本机 · 设置」，是设备卡的**兄弟**不是子节点）
+    expect(await ui.query<boolean>(`!!document.querySelector('[data-remote-self]')`)).toBe(true);
+    expect(await ui.query<boolean>(`!!document.querySelector('[data-remote-machines] [data-remote-self]')`)).toBe(false);
+    // ##511 判据 4：不再有独立的「已配对」表 —— 合并成一份设备清单
+    expect(await ui.query<boolean>(`!!document.querySelector('[data-remote-paired-table]')`)).toBe(false);
+  });
+
+  it("##511：设备行只有 状态点 + 名字 + 一个值，操作在 ⋯ 里；点行进详情", async () => {
+    // 现场可能没有其它机器（CI 常态）：有行就验形状，没行就验空态文案 —— 两种都不该红。
+    const rows = await ui.query<number>(`document.querySelectorAll('[data-remote-row]').length`);
+    if (rows === 0) {
+      expect(await ui.query<boolean>(`!!document.querySelector('[data-remote-empty]')`)).toBe(true);
+      return;
+    }
+    const shape = await ui.query<{
+      dots: number;
+      names: number;
+      values: number;
+      more: number;
+      looseButtons: number;
+    }>(`(() => {
+      const row = document.querySelector('[data-remote-row]');
+      return {
+        dots: row.querySelectorAll('[data-remote-dot]').length,
+        names: row.querySelectorAll('[data-remote-machine-name]').length,
+        values: row.querySelectorAll('[data-remote-value]').length,
+        more: row.querySelectorAll('[data-remote-more]').length,
+        // 除 ⋯ 触发器外，行上不该再露出任何按钮（动作都收进下拉菜单）
+        looseButtons: [...row.querySelectorAll('button')].filter((b) => !b.closest('.dropdown-content')).length,
+      };
+    })()`);
+    expect(shape.dots).toBe(1);
+    expect(shape.names).toBe(1);
+    expect(shape.values).toBe(1);
+    expect(shape.more).toBe(1);
+    expect(shape.looseButtons).toBe(0);
+    expect(await ui.query<boolean>(`!!document.querySelector('[data-remote-more]')`)).toBe(true);
+
+    await ui.clickSelector("[data-remote-row]");
+    const open = await waitUntil(
+      () => ui.query<boolean>(`!!document.querySelector('[data-remote-detail]')`),
+      (v) => v,
+      { timeoutMs: 10000, intervalMs: 200, label: "设备详情（二级页）出现" },
+    );
+    expect(open).toBe(true);
+    await ui.clickSelector("[data-remote-detail-close]");
+    const stillOpen = await waitUntil(
+      () => ui.query<boolean>(`!!document.querySelector('[data-remote-detail]')`),
+      (v) => !v,
+      { timeoutMs: 10000, intervalMs: 200, label: "详情关闭" },
+    );
+    expect(stillOpen).toBe(false);
   });
 
   it("点「本机作为主控」→ HubPage 弹层出现（配对五屏复用，判据 5）", async () => {
@@ -78,12 +128,13 @@ describe("远程导航页（##507）", () => {
 
   it("点「本机作为主控」弹层的关闭按钮 → 弹层消失（可复用非独占 tab）", async () => {
     await ui.clickSelector("[data-hub-close]");
-    const closed = await waitUntil(
+    // waitUntil 返回的是**最后一次取值**（不是谓词结果）：这里取的就是「弹层还在吗」
+    const stillOpen = await waitUntil(
       () => ui.query<boolean>(`!!document.querySelector('[data-hub-layer]')`),
       (v) => !v,
       { timeoutMs: 10000, intervalMs: 200, label: "HubPage 弹层关闭" },
     );
-    expect(closed).toBe(true);
+    expect(stillOpen).toBe(false);
   });
 
   it("点「加入其他主控」→ HubPage 弹层打开 join 屏（两个方向都走已有流程，判据 4）", async () => {

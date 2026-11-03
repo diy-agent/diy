@@ -93,3 +93,106 @@ describe("machineLabel / sourceLabel", () => {
     expect(sourceLabel({ source: "tailscale", sources: ["tailscale"] })).toBe("tailscale");
   });
 });
+
+// ── ##511：设备列表合并（一台机器一行 / 按状态分组 / 行上只有一个值） ──
+import { DEVICE_GROUPS, mergeDevices, devicePairingAllowed } from "../../src/shared/remote-nav";
+
+const member = (over: Partial<Parameters<typeof mergeDevices>[0]> extends never ? never : any = {}) => ({
+  nodeId: "diy-mac01",
+  displayName: "c-mac",
+  status: "active",
+  online: 0,
+  createdAt: "2026-11-01T00:00:00.000Z",
+  ...over,
+});
+
+const found = (over: any = {}) => ({
+  id: null,
+  displayName: "c-mac",
+  endpoint: "http://10.0.0.9:9400",
+  source: "tailscale",
+  sources: ["tailscale"],
+  ...over,
+});
+
+describe("mergeDevices（判据 4：同一台机器只出现一行）", () => {
+  it("发现行带 id 且等于 member.nodeId → 合并成一行（不是两行）", () => {
+    const rows = mergeDevices({
+      members: [member({ online: 1 })],
+      discovered: [found({ id: "diy-mac01" })],
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.key).toBe("node:diy-mac01");
+    expect(rows[0]!.member).toBeTruthy();
+    expect(rows[0]!.discovered).toBeTruthy();
+    expect(rows[0]!.group).toBe("connected");
+  });
+
+  it("发现行没有 id 时按 link 的 host 对齐（同一个主控只一行）", () => {
+    const rows = mergeDevices({
+      discovered: [found({ endpoint: "http://c-mac.gute-fish.ts.net:9400" })],
+      link: { hubNodeId: "diy-hub01", hubEndpoint: "https://c-mac.gute-fish.ts.net/hub" },
+      connection: "online",
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.key).toBe("node:diy-hub01");
+    expect(rows[0]!.group).toBe("connected");
+    expect(rows[0]!.status).toBe("已连接");
+  });
+
+  it("没 id 也没 host 匹配的发现行各自成行（未配对）", () => {
+    const rows = mergeDevices({
+      members: [member()],
+      discovered: [found({ displayName: "c-win", endpoint: "http://10.0.0.10:9400" })],
+    });
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.group)).toEqual(["paired", "available"]);
+  });
+});
+
+describe("mergeDevices（状态口径：未连接不是离线）", () => {
+  it("link 有但没 Token → 未连接（判据 3）", () => {
+    const rows = mergeDevices({
+      link: { hubNodeId: "diy-hub01", hubEndpoint: "https://hub.example.ts.net/hub" },
+      connection: "no-token",
+    });
+    expect(rows[0]!.group).toBe("paired");
+    expect(rows[0]!.status).toBe("未连接");
+  });
+
+  it("link 在线 / 掉线 / 撤销 三种说法分开", () => {
+    const link = { hubNodeId: "diy-hub01", hubEndpoint: "https://hub.example.ts.net/hub" };
+    expect(mergeDevices({ link, connection: "online" })[0]!.status).toBe("已连接");
+    expect(mergeDevices({ link, connection: "offline" })[0]!.status).toBe("离线");
+    expect(mergeDevices({ link, connection: "revoked" })[0]!.status).toBe("已撤销");
+  });
+
+  it("member 有活连接 → 已连接，条数作为行上那个值", () => {
+    expect(mergeDevices({ members: [member({ online: 2 })] })[0]!.status).toBe("2 条连接");
+    expect(mergeDevices({ members: [member({ online: 1 })] })[0]!.status).toBe("已连接");
+    expect(mergeDevices({ members: [member({ online: 0 })] })[0]!.status).toBe("离线");
+    expect(mergeDevices({ members: [member({ status: "revoked" })] })[0]!.status).toBe("已撤销");
+  });
+
+  it("分组恒定按 已连接 → 已配对 → 未配对 排序", () => {
+    const rows = mergeDevices({
+      members: [member({ nodeId: "a", displayName: "a", online: 1 }), member({ nodeId: "b", displayName: "b" })],
+      discovered: [found({ id: "c", displayName: "c", endpoint: "http://10.0.0.8:9400" })],
+    });
+    expect(rows.map((r) => r.group)).toEqual(["connected", "paired", "available"]);
+    expect(DEVICE_GROUPS.map((g) => g.key)).toEqual(["connected", "paired", "available"]);
+  });
+
+  it("mDNS 发现行不能配对（与 HubPage 判据 22 同源）", () => {
+    const [row] = mergeDevices({ discovered: [found({ id: "x", source: "mdns", sources: ["mdns"] })] });
+    expect(devicePairingAllowed(row!)).toBe(false);
+  });
+
+  it("已撤销的成员不再给配对动作", () => {
+    const [row] = mergeDevices({
+      members: [member({ status: "revoked" })],
+      discovered: [found({ id: "diy-mac01" })],
+    });
+    expect(devicePairingAllowed(row!)).toBe(false);
+  });
+});

@@ -26,15 +26,19 @@ import {
   resolveTlsMaterial,
   writeFileAtomic,
   FileHubStore,
+  HubClient,
   HubError,
   LINK_FILE,
   PEERS_FILE,
   hubDir,
+  tokenAccount,
+  type ClientState,
   type HubIdentity,
   type HubLink,
   type HubServer,
   type Membership,
   type PairingRequest,
+  type SecretStore,
 } from "@diy-agent/hub";
 import { ensureIdentity } from "@diy-agent/remote/node";
 import { readFile } from "node:fs/promises";
@@ -63,6 +67,26 @@ export interface HubPendingRow {
   nodeId: string;
   displayName: string;
   requestedAt: string;
+}
+
+/**
+ * 卫星侧长连状态（`hub connection` 的出口）。
+ *
+ * `idle`      = 本机没加入过任何主控（没有 link.json）
+ * `no-token`  = 有 link.json 但钥匙串里没有 Token —— **未连接**，不是「离线」
+ * `connecting` / `online` / `offline` / `revoked` = HubClient 的状态机（断线指数退避重连）
+ */
+export type HubConnectionState = ClientState | "idle" | "no-token";
+
+export interface HubConnectionRow {
+  state: HubConnectionState;
+  /** 连的是哪个主控（来自 link.json；没有 link 时为 null） */
+  hubNodeId: string | null;
+  hubEndpoint: string | null;
+  /** 第几次重连尝试（仅 offline 时有意义） */
+  attempt?: number;
+  /** 为什么是这个状态（钥匙串不可用 / HTTP 403 …） */
+  reason?: string;
 }
 
 export interface HubStatusRow {
@@ -110,7 +134,15 @@ export class HubServiceError extends Error {
 export class HubService {
   private server: HubServer | null = null;
   private starting: Promise<HubServer> | null = null;
-  private readonly secrets = createSystemSecretStore();
+  private readonly secrets: SecretStore;
+
+  /** `secrets` 可注入（单测用内存实现；生产不传 = 系统钥匙串） */
+  constructor(secrets: SecretStore = createSystemSecretStore()) {
+    this.secrets = secrets;
+  }
+  /** 卫星侧长连（没加入过主控时为 null） */
+  private client: HubClient | null = null;
+  private clientState: Omit<HubConnectionRow, "hubNodeId" | "hubEndpoint"> = { state: "idle" };
 
   private get home(): string {
     return diyHome();
@@ -243,6 +275,8 @@ export class HubService {
         prepared.info,
         result.token,
       );
+      // ##511 判据 1：拿到 Token 立刻把长连建起来（否则主控侧永远看到 0 连接 = 假「离线」）
+      await this.startClient();
     }
     return {
       preview: false,
@@ -259,12 +293,92 @@ export class HubService {
     return readLink(join(hubDir(this.home), LINK_FILE));
   }
 
+  /**
+   * 卫星侧长连状态（##511 判据 1/3）：`online` 与否看**自己的 WSS 在不在**，不看主控怎么想。
+   */
+  async connection(): Promise<HubConnectionRow> {
+    const link = await this.link();
+    return {
+      ...this.clientState,
+      hubNodeId: link?.hubNodeId ?? null,
+      hubEndpoint: link?.hubEndpoint ?? null,
+    };
+  }
+
+  /**
+   * 卫星侧长连：读 link.json → 从钥匙串取 Token → `new HubClient` 建 WSS 并保持（断线指数退避）。
+   *
+   * ##511 的缺口就在这里：`hub join` 拿完 Token 就结束，从来没有客户端把那条长连建起来，
+   * 于是主控侧 `connectionCount` 恒 0、永远显示「离线」。
+   *
+   * **没有 Token 就不连**，状态报 `no-token`（UI 显示「未连接」而不是「离线」）。
+   * 幂等：重复调用会先停旧客户端再起新的（加入新主控 / 撤销后重连）。
+   */
+  async startClient(): Promise<HubConnectionRow> {
+    const link = await this.link();
+    this.stopClient();
+    if (!link) {
+      this.clientState = { state: "idle" };
+      return this.connection();
+    }
+
+    let token: string | null = null;
+    let reason: string | undefined;
+    try {
+      token = await this.secrets.get(tokenAccount(link.hubNodeId));
+    } catch (e) {
+      // 钥匙串不可用（未授权 / 无 security 命令）：如实报，别假装在连
+      reason = `读不到 Token：${e instanceof Error ? e.message : String(e)}`;
+    }
+    if (!token) {
+      this.clientState = { state: "no-token", ...(reason ? { reason } : { reason: "钥匙串里没有 Token" }) };
+      return this.connection();
+    }
+
+    this.clientState = { state: "connecting" };
+    const client = new HubClient({
+      hubEndpoint: link.hubEndpoint,
+      token,
+      onState: (state, detail) => {
+        this.clientState = {
+          state,
+          ...(detail?.attempt === undefined ? {} : { attempt: detail.attempt }),
+          ...(detail?.reason === undefined ? {} : { reason: detail.reason }),
+        };
+      },
+    });
+    this.client = client;
+    client.start();
+    return this.connection();
+  }
+
+  /**
+   * 主控侧预热：有身份就起监听（否则「谁在线」永远是 0 —— 没人邀请时服务端根本没起）。
+   * 失败只记日志不抛（没证书 / 端口占用只意味着本机暂时当不了主控）。
+   */
+  async warmupServer(): Promise<void> {
+    const identity = await this.readIdentity();
+    if (!identity?.endpoint) return;
+    try {
+      await this.ensureServer();
+    } catch (e) {
+      console.error("[hub] 主控监听未启动（不影响其它功能）:", e instanceof Error ? e.message : e);
+    }
+  }
+
   async stop(): Promise<void> {
+    this.stopClient();
     if (this.server) {
       await this.server.close();
       this.server = null;
     }
     this.starting = null;
+  }
+
+  /** 停长连（幂等）；状态回到 `idle` 由调用方决定要不要覆盖 */
+  stopClient(): void {
+    this.client?.stop();
+    this.client = null;
   }
 
   // ── 内部 ──────────────────────────────────────────────

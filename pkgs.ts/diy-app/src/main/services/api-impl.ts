@@ -2139,6 +2139,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
     };
   });
   binding.on(app.hub.link, async () => ({ status: "ok", data: await hubService.link() }));
+  // ##511：卫星侧长连状态（主控侧「在线」看的是它自己的 connectionCount，这里看卫星自己）
+  binding.on(app.hub.connection, async () => ({ status: "ok", data: await hubService.connection() }));
 
   // ── tool ──
   // 文件读取（行窗口 + 续读）：与内置 read 工具共用 core/file-read.ts。
