@@ -91,18 +91,19 @@ const rows = (page: Page): Promise<number> => page.locator(".chat-row").count();
 
 /** 发一条消息并等回复落地（行数 +2）。 */
 async function send(page: Page, text: string): Promise<void> {
-    // 按「助手行数 +1」等，不按总行数：/demo-tool 的演示行会在下一次快照时被抹掉，
-    // 总行数可能先涨后落（只看总数会假死到超时）
-    const before = await page.locator('.chat-row[data-role="assistant"]').count();
-    const input = page.locator(".chat-input");
-    await input.fill(text);
-    await input.press("Enter");
+    // 等「这一轮跑完」：最后一行是助手 + 发送按钮恢复（busy 结束）。
+    // 不数行数 —— /demo-tool 的演示行会被下一次快照抹掉，总行数会先涨后落。
+    await page.locator(".chat-input").fill(text);
+    await page.locator(".chat-input").press("Enter");
     await page
-        .waitForFunction((n) => document.querySelectorAll('.chat-row[data-role="assistant"]').length > n, before, {
-            timeout: 120_000,
-        })
+        .waitForFunction(
+            () =>
+                document.querySelector(".chat-row:last-child")?.getAttribute("data-role") === "assistant" &&
+                (document.querySelector(".chat-send") as HTMLButtonElement | null)?.disabled === false,
+            undefined,
+            { timeout: 120_000 },
+        )
         .catch(async () => {
-            // 超时先看清楚「卡在哪」再判失败（比单纯 Tiemout 有用得多）
             const state = await page.evaluate(() => ({
                 rows: document.querySelectorAll(".chat-row").length,
                 asst: document.querySelectorAll('.chat-row[data-role="assistant"]').length,
@@ -111,7 +112,7 @@ async function send(page: Page, text: string): Promise<void> {
                 sendDisabled: (document.querySelector(".chat-send") as HTMLButtonElement | null)?.disabled,
                 last: document.querySelector(".chat-row:last-child .chat-text")?.textContent?.slice(0, 80),
             }));
-            fail(`发送后等不到回复（before=${String(before)}）：${JSON.stringify(state)}`);
+            fail(`发送后这一轮没有跑完：${JSON.stringify(state)}`);
         });
 }
 
@@ -316,20 +317,6 @@ async function main(): Promise<void> {
     await page.mouse.move(600, 500);
     ok("判据 0c：新 bot 在顶部 / 点 bot 只开对话 / hover 不弹 panel / 点「配置」才弹 / 悬浮⇄固定可切");
 
-    // ── 判据 0d：/demo-tool 手点复现（tool 块端到端；##514 前置） ──
-    await page.fill(".chat-input", "/demo-tool");
-    await page.press(".chat-input", "Enter");
-    await page.waitForSelector('.chat-block-tool[data-state="running"]', { timeout: 5_000 });
-    const runningOpen = await page.$eval('.chat-block-tool[data-state="running"]', (node) => (node as HTMLDetailsElement).open);
-    if (!runningOpen) fail("running 的 tool 块没有展开（该看得见进度）");
-    const runningDot = await page.$eval(".chat-block-tool .chat-tool-dot", (node) => node.getAttribute("data-state"));
-    if (runningDot !== "running") fail(`running 时圆点 data-state=${String(runningDot)}`);
-    await page.waitForSelector('.chat-block-tool[data-state="ok"]', { timeout: 5_000 });
-    const okOpen = await page.$eval('.chat-block-tool[data-state="ok"]', (node) => (node as HTMLDetailsElement).open);
-    if (okOpen) fail("ok 之后 tool 块没有收起");
-    const okDot = await page.$eval('.chat-block-tool[data-state="ok"] .chat-tool-dot', (node) => node.getAttribute("data-state"));
-    if (okDot !== "ok") fail(`ok 时圆点 data-state=${String(okDot)}`);
-    ok("判据 0d：/demo-tool ⇒ tool 块 running（展开/黄点）→ ok（收起/绿点）");
     // 鼠标挪开，收起卡片（别挡住后面的点击）
     await page.mouse.move(600, 300);
 
@@ -442,6 +429,21 @@ async function main(): Promise<void> {
     });
     if (expect === "diui" && !shellKept) fail("切 bot 后 .chat-list 外壳被重建（判据 5）");
     ok("判据 5：切 bot 后消息行整批替换，外壳元素身份不变");
+
+    // ── 判据 0d：/demo-tool 手点复现（tool 块端到端；##514 前置） ──
+    await page.fill(".chat-input", "/demo-tool");
+    await page.press(".chat-input", "Enter");
+    await page.waitForSelector('.chat-block-tool[data-state="running"]', { timeout: 5_000 });
+    const runningOpen = await page.$eval('.chat-block-tool[data-state="running"]', (node) => (node as HTMLDetailsElement).open);
+    if (!runningOpen) fail("running 的 tool 块没有展开（该看得见进度）");
+    const runningDot = await page.$eval(".chat-block-tool .chat-tool-dot", (node) => node.getAttribute("data-state"));
+    if (runningDot !== "running") fail(`running 时圆点 data-state=${String(runningDot)}`);
+    await page.waitForSelector('.chat-block-tool[data-state="ok"]', { timeout: 5_000 });
+    const okOpen = await page.$eval('.chat-block-tool[data-state="ok"]', (node) => (node as HTMLDetailsElement).open);
+    if (okOpen) fail("ok 之后 tool 块没有收起");
+    const okDot = await page.$eval('.chat-block-tool[data-state="ok"] .chat-tool-dot', (node) => node.getAttribute("data-state"));
+    if (okDot !== "ok") fail(`ok 时圆点 data-state=${String(okDot)}`);
+    ok("判据 0d：/demo-tool ⇒ tool 块 running（展开/黄点）→ ok（收起/绿点）");
 
     ok(`判据 6：renderer=${expect}（切 import 重新 build 即另一版）`);
     console.log("\n全部通过（判据 7 由 ./sha.sh check 验）。");
