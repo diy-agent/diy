@@ -31,6 +31,12 @@ import { createOpenAiCompatible, resolveProviderConfig } from "@diy-agent/llm-pr
 import { costOf, loadCatalog, readAccountValue, type ModelCatalogEntry } from "@diy-agent/model-catalog";
 import { toolArgsFromInput } from "@diy-agent/session";
 import { createBot, createFirstBot as createFirstBotIn } from "./bot.js";
+import {
+    applyPriorBoundary,
+    createBotCompactor,
+    type BotCompactionState,
+    type BotCompactor,
+} from "./compaction.js";
 import { buildSystemContext } from "./system-context.js";
 import { runToolCalls, type BotToolSet, type PendingToolCall } from "./tools.js";
 import type { Bot, BotConfig, BotStore } from "./types.js";
@@ -186,7 +192,12 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
     let activeBotId: string | null = null;
 
     /** 打开中的会话（桶 + session 都缓存；同一个 bot 反复点进来必须是同一条消息线） */
-    const open = new Map<string, { store: SessionStore; session: AgentSession; meta: SessionMeta }>();
+    const open = new Map<
+        string,
+        { store: SessionStore; session: AgentSession; meta: SessionMeta; compactor: BotCompactor }
+    >();
+    /** 内存模式下的压缩状态（persistMeta=false 时也只在进程里） */
+    const compactMemory = new Map<string, BotCompactionState>();
     /** 每个会话「上一步」的用量（进程内；重启后指标为空 — 不编数字） */
     const lastStep = new Map<string, StepUsage>();
     /** 状态操作的队列（bot 增删改 / 选中 / meta 落盘）—— 单实例顺序执行 */
@@ -265,9 +276,33 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
             },
         });
 
+    /** 读 / 写会话的压缩状态（`<会话目录>/compaction.json`；内存模式只活在进程里） */
+    const readCompaction = async (sessionId: string): Promise<BotCompactionState | null> => {
+        if (!persistMeta) return compactMemory.get(sessionId) ?? null;
+        try {
+            const raw = await readFile(join(root, sessionId, "compaction.json"), "utf-8");
+            const parsed: unknown = JSON.parse(raw);
+            if (parsed === null || typeof parsed !== "object") return null;
+            return parsed as BotCompactionState;
+        } catch {
+            // 文件不存在 / 坏了 = 从没压过（不猜）
+            return null;
+        }
+    };
+
+    const writeCompaction = async (sessionId: string, state: BotCompactionState): Promise<void> => {
+        if (!persistMeta) {
+            compactMemory.set(sessionId, state);
+            return;
+        }
+        const dir = join(root, sessionId);
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, "compaction.json"), `${JSON.stringify(state, null, 4)}\n`, "utf-8");
+    };
+
     const opened = async (
         id: string,
-    ): Promise<{ store: SessionStore; session: AgentSession; meta: SessionMeta }> => {
+    ): Promise<{ store: SessionStore; session: AgentSession; meta: SessionMeta; compactor: BotCompactor }> => {
         const hit = open.get(id);
         if (hit !== undefined) return hit;
         const dir = join(root, id);
@@ -281,7 +316,12 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
         // ##480：装配器是决定者 —— 传实例而不是策略名：将来换远程 store 只改这一行，
         // 不存在 switch 分派。
         const store = await openSessionStore(id, dir);
-        const initialMessages: readonly ChatMessage[] = await store.readFrom(0);
+        // ##517：**重建时就把已落盘的压缩边界套上** —— 否则重启后的界面会把压缩过的全量历史又画一遍
+        // （阈值判定在下一轮才跑，那时已经晚了：用户先看到的是一整段旧消息）。
+        const initialMessages: readonly ChatMessage[] = applyPriorBoundary(
+            await store.readFrom(0),
+            await readCompaction(id),
+        );
         // ##516：**只在新建会话时**组装一次系统上下文（AGENTS.md 链 + facts 摘要）。
         // 每轮重写会把前缀缓存打碎；老会话也不再追加（历史里已经有一条 system）。
         // 组装失败降级为缺席（`buildSystemContext` 永不抛）。
@@ -293,11 +333,22 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
             .filter((x) => x !== "")
             .join("\n\n");
         const { modelId } = splitModelKey(modelKey);
+        const llm = llmFor(modelKey);
+        // ##517：上下文压缩（窗口未知 ⇒ 不压；判据 / 摘要 prompt 全部来自 @diy-agent/compaction）
+        const entry = catalog().find((item) => keyOf(item) === modelKey) ?? null;
+        const compactor = createBotCompactor({
+            windowTokens: entry?.contextWindow ?? null,
+            llm,
+            ...(modelId === "" ? {} : { model: modelId }),
+            loadState: () => readCompaction(id),
+            saveState: (state) => writeCompaction(id, state),
+        });
         const session = createSession({
             id,
-            llm: llmFor(modelKey),
+            llm,
             store,
             initialMessages,
+            compact: compactor.compact,
             ...(modelId === "" ? {} : { model: modelId }),
             // 行为指令 = system 话术；只在新建会话时写一次（历史里已经有一条，别重复追加）。
             // 系统上下文（规则链 / 知识库索引）与工作目录说明一并写进去：
@@ -306,7 +357,7 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
         });
         const nextMeta: SessionMeta = meta.model === modelKey ? meta : { ...meta, model: modelKey };
         if (nextMeta !== meta) await writeMeta(nextMeta);
-        const value = { store, session, meta: nextMeta };
+        const value = { store, session, meta: nextMeta, compactor };
         open.set(id, value);
         return value;
     };
@@ -496,6 +547,7 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                 for (const ref of refs) {
                     if (persistMeta) await rm(join(root, ref.id), { recursive: true, force: true });
                     else metaMemory.delete(ref.id);
+                    compactMemory.delete(ref.id);
                     open.delete(ref.id);
                     lastStep.delete(ref.id);
                     messageQueues.delete(ref.id);
@@ -524,7 +576,7 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                 if (active === null) throw new Error("还没有 bot —— 先建一个（首启引导）");
                 const ref = await handleOf(active).primary();
                 return queueFor(ref.id)(async () => {
-                    const { session, meta } = await opened(ref.id);
+                    const { session, meta, compactor } = await opened(ref.id);
                     const before = session.messages.length;
                     const usageBefore = session.usage;
                     await runToolLoop({
@@ -546,6 +598,10 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                             ? {}
                             : { cacheReadTokens: usageAfter.cacheReadTokens - (usageBefore.cacheReadTokens ?? 0) }),
                     });
+                    // ##517：下一轮的压缩阈值按「这一步实际撑开的上下文」判（实测优先）
+                    compactor.noteStepTokens(
+                        usageAfter.inputTokens - usageBefore.inputTokens + (usageAfter.outputTokens - usageBefore.outputTokens),
+                    );
 
                     const grown = session.messages.length - before;
                     const next: SessionMeta = {
@@ -555,7 +611,7 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                         messageCount: meta.messageCount + Math.max(grown, 0),
                     };
                     await writeMeta(next);
-                    open.set(ref.id, { store: open.get(ref.id)!.store, session, meta: next });
+                    open.set(ref.id, { store: open.get(ref.id)!.store, session, meta: next, compactor });
                     return { ...(await snapshotNow()), messages };
                 });
             })();

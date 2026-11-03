@@ -31,9 +31,14 @@ export {
     createBotChat,
     createSerial,
     nextBotId,
-    splitModelKey, workspaceOf,
+    splitModelKey,
+    workspaceOf,
 } from "./chat.js";
 export type { BotChatOptions, Serial } from "./chat.js";
+
+// ##517：上下文压缩（阈值 → 摘要 → notice；判据/摘要 prompt 全用 @diy-agent/compaction）
+export { SUMMARY_INPUT_MAX_CHARS, applyPriorBoundary, createBotCompactor } from "./compaction.js";
+export type { BotCompactionEvent, BotCompactionState, BotCompactor, BotCompactorOptions } from "./compaction.js";
 
 // ##516：系统上下文（AGENTS.md 链 + facts 摘要）—— 简化版组装器，只在建会话时跑一次。
 // 导出是为了让装配器 / 测试能单独验（bot 没装上下文时也能调）。

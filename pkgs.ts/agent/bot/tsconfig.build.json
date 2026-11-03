@@ -23,6 +23,7 @@
     "exclude": ["tests/**/*", "test/**/*", "examples/**/*"]
 ,
   "references": [
+    { "path": "../compaction/tsconfig.build.json" },
     { "path": "../../core/facts/tsconfig.build.json" },
     { "path": "../../core/time/tsconfig.build.json" },
     { "path": "../session/tsconfig.build.json" },
