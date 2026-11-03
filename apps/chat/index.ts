@@ -6,12 +6,23 @@ import * as chatPageMain from "@diy-agent/chat-page/main";
 import * as modelConfigPageMain from "@diy-agent/model-config-page";
 import type { PluginEntry } from "@diy-agent/workbench";
 import { asToolSet, createBotChat, createFileBotStore, workspaceOf, type BotStore } from "@diy-agent/bot";
+import { RunRegistry, makeJobTool } from "@diy-agent/jobs";
 import { buildTools, detectShells, makeShellTool, shellToolName } from "@diy-agent/tools";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { TITLE } from "./title.js";
 
 const SHELLS = detectShells(); // 本机 shell 能力（探测一次；shell 路径不会变）
+// 后台 run 表：一个数据根一张（进程内）。**不传 notifier = silent**（只落账不通知）——
+// bot 目前没有「下一轮唤醒」通道，模型靠 `job wait` 同步等（##515 3b 口径）。
+const REGISTRIES = new Map<string, RunRegistry>();
+function registryFor(home: string): RunRegistry {
+    const hit = REGISTRIES.get(home);
+    if (hit) return hit;
+    const reg = new RunRegistry({ rootDir: join(home, "log", "job", "runs"), shells: detectShells });
+    REGISTRIES.set(home, reg);
+    return reg;
+}
 
 export interface Assembly {
     readonly title: string;
@@ -70,8 +81,31 @@ function chatConfig(home: string | undefined, sessions: unknown, botStore: BotSt
 export function botToolsFor(home: string, botId: string): { cwd: string; tools: ReturnType<typeof asToolSet> } {
     const cwd = workspaceOf(home, botId);
     mkdirSync(cwd, { recursive: true });
-    const shell = SHELLS.map((spec) => [shellToolName(spec), makeShellTool(spec, { cwd, limits: { bashTimeoutMs: 0 } })]);
-    return { cwd, tools: asToolSet(buildTools({ cwd, extraTools: Object.fromEntries(shell) })) };
+    const registry = registryFor(home);
+    const shell = SHELLS.map((spec) => [
+        shellToolName(spec),
+        makeShellTool(spec, {
+            cwd,
+            limits: { bashTimeoutMs: 0 },
+            // `background: true` → 立刻返回 id（##515 3b）。缺省不设超时；显式正数才带 deadline。
+            background: async ({ command, timeoutMs, toolCallId }) => {
+                const run = await registry.spawn({
+                    command,
+                    cwd,
+                    ...(toolCallId ? { title: toolCallId } : {}),
+                    ...(timeoutMs > 0 ? { deadlineMs: timeoutMs } : {}),
+                });
+                if (run.state === "failed") throw new Error(`[后台启动失败] ${run.error ?? "未知原因"}（工作目录：${cwd}）`);
+                return [
+                    `[已转后台] ${run.id}（pid ${run.pid}）`,
+                    `输出：${run.logPath}`,
+                    "查状态用 job status，取输出用 job output；长任务别干等，回来用 job wait / job output 取增量。",
+                ].join("\n");
+            },
+        }),
+    ]);
+    const job = makeJobTool({ registry, scopeLabel: "本 bot" });
+    return { cwd, tools: asToolSet({ ...buildTools({ cwd, extraTools: Object.fromEntries(shell) }), job }) };
 }
 
 /** Bot 配置页：注入了 store 就共用（内存入口），否则按数据根建文件实现（落盘入口）。 */

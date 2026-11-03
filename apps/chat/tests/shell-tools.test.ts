@@ -69,14 +69,15 @@ describe("bot 的 shell 工具（##515 判据，真跑）", () => {
         }
     }, 20_000);
 
-    it("装配事实：bot 的 shell 工具**没有 background**（job 账本归 diy-app）", () => {
+    it("装配事实：bot 的 shell 工具**有 background**（##515 3b 接了 jobs），且 job 工具同在表里", () => {
         const home = mkdtempSync(join(tmpdir(), "t515-bot-home-"));
         try {
             const bt = botToolsFor(home, "b1");
-            const tool = bt.tools[name] as unknown as { inputSchema?: { shape?: Record<string, unknown> } };
-            expect(Object.keys(tool.inputSchema?.shape ?? {})).toEqual(["command", "timeout"]);
-            // read / write / edit 与 shell 共存（重名会在 buildTools 里抛，能到这里就是没重）
-            expect(Object.keys(bt.tools)).toEqual(expect.arrayContaining(["read", "write", "edit", name]));
+            const tool = bt.tools[name] as unknown as { inputSchema?: { shape?: Record<string, unknown> }; description: string };
+            expect(Object.keys(tool.inputSchema?.shape ?? {})).toEqual(["command", "timeout", "background"]);
+            expect(tool.description).toContain("不要轮询");
+            // read / write / edit / job 与 shell 共存（重名会在 buildTools 里抛，能到这里就是没重）
+            expect(Object.keys(bt.tools)).toEqual(expect.arrayContaining(["read", "write", "edit", "job", name]));
         } finally {
             rmSync(home, { recursive: true, force: true });
         }
