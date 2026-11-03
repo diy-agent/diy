@@ -31,6 +31,7 @@ import { createOpenAiCompatible, resolveProviderConfig } from "@diy-agent/llm-pr
 import { costOf, loadCatalog, readAccountValue, type ModelCatalogEntry } from "@diy-agent/model-catalog";
 import { toolArgsFromInput } from "@diy-agent/session";
 import { createBot, createFirstBot as createFirstBotIn } from "./bot.js";
+import { buildSystemContext } from "./system-context.js";
 import { runToolCalls, type BotToolSet, type PendingToolCall } from "./tools.js";
 import type { Bot, BotConfig, BotStore } from "./types.js";
 import { createFileBotStore } from "./store-fs.js";
@@ -277,11 +278,20 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
         const owner = ownerId === null ? null : await botStore.load(ownerId);
         const modelKey = owner !== null && owner.model.trim() !== "" ? owner.model : meta.model;
         const instructions = owner?.instructions.trim() ?? "";
-        const systemText = [instructions, workspaceNote(options.home, id)].filter((x) => x !== "").join("\n\n");
         // ##480：装配器是决定者 —— 传实例而不是策略名：将来换远程 store 只改这一行，
         // 不存在 switch 分派。
         const store = await openSessionStore(id, dir);
         const initialMessages: readonly ChatMessage[] = await store.readFrom(0);
+        // ##516：**只在新建会话时**组装一次系统上下文（AGENTS.md 链 + facts 摘要）。
+        // 每轮重写会把前缀缓存打碎；老会话也不再追加（历史里已经有一条 system）。
+        // 组装失败降级为缺席（`buildSystemContext` 永不抛）。
+        const contextText =
+            initialMessages.length === 0
+                ? buildSystemContext({ home: options.home, cwd: workspaceOf(options.home, ownerId ?? id) }).text
+                : "";
+        const systemText = [instructions, contextText, workspaceNote(options.home, ownerId ?? id)]
+            .filter((x) => x !== "")
+            .join("\n\n");
         const { modelId } = splitModelKey(modelKey);
         const session = createSession({
             id,
@@ -290,7 +300,8 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
             initialMessages,
             ...(modelId === "" ? {} : { model: modelId }),
             // 行为指令 = system 话术；只在新建会话时写一次（历史里已经有一条，别重复追加）。
-            // 工作目录说明一并写进去：模型不知道 cwd 就会把临时文件丢得到处都是。
+            // 系统上下文（规则链 / 知识库索引）与工作目录说明一并写进去：
+            // 不知道规则就会返工，不知道 cwd 就会把临时文件丢得到处都是。
             ...(initialMessages.length === 0 && systemText !== "" ? { system: systemText } : {}),
         });
         const nextMeta: SessionMeta = meta.model === modelKey ? meta : { ...meta, model: modelKey };

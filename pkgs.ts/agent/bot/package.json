@@ -27,6 +27,7 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
+    "@diy-agent/facts": "*",
     "@diy-agent/time": "*",
     "zod": "^4.4.3",
     "@diy-agent/session": "*",

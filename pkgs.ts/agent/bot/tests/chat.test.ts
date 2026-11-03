@@ -343,3 +343,76 @@ describe("bot 对话宿主（##505）", () => {
         expect(source).toMatch(/createSession\(\{[\s\S]{0,400}?\n\s+store,/);
     });
 });
+
+describe("系统上下文进 system（##516）", () => {
+    /** 记下每次请求真正收到的 messages（第一条就是 system） */
+    const capturingLlm = (seen: unknown[]): LlmPort => ({
+        async *chat(messages) {
+            seen.push(messages);
+            yield { type: "text", text: "好" };
+            yield { type: "done", stopReason: "stop" };
+        },
+    });
+
+    const systemOf = (seen: unknown[]): string => {
+        const messages = seen.at(-1) as ReadonlyArray<{ role: string; text?: string }>;
+        return messages.find((message) => message.role === "system")?.text ?? "";
+    };
+
+    it("新建会话时写一次：AGENTS.md 链 + facts 摘要都在 system 里", async () => {
+        const home = makeHome();
+        writeFileSync(join(home, "AGENTS.md"), "应用级规则：对话一律中文", "utf-8");
+        mkdirSync(join(home, "knowledge", "facts"), { recursive: true });
+        writeFileSync(join(home, "knowledge", "subjects.yaml"), "subjects:\n  alpha:\n    description: 主题甲\n", "utf-8");
+        writeFileSync(
+            join(home, "knowledge", "facts", "t.yaml"),
+            [
+                "domain: test",
+                "facts:",
+                "  alpha#default:",
+                "    value: v",
+                "    id: test.alpha",
+                "    review: accepted",
+                "    lifecycle: active",
+                "    evidence:",
+                "      source: user",
+                '      at: "~/AGENTS.md:1"',
+                '      verifiedAt: "2026-11-03"',
+                "",
+            ].join("\n"),
+            "utf-8",
+        );
+        const seen: unknown[] = [];
+        const chat = createBotChat({ home, llmFor: () => capturingLlm(seen) });
+        await firstBot(chat);
+        await chat.send("开工", () => {});
+        const system = systemOf(seen);
+        expect(system).toContain("应用级规则：对话一律中文");
+        expect(system).toContain("知识库索引");
+        expect(system).toContain("alpha");
+    });
+
+    it("判据 3：改 AGENTS.md 后新建会话看到新内容，老会话不变", async () => {
+        const home = makeHome();
+        writeFileSync(join(home, "AGENTS.md"), "第一版规则", "utf-8");
+        const seen: unknown[] = [];
+        const chat = createBotChat({ home, llmFor: () => capturingLlm(seen) });
+        await firstBot(chat);
+        await chat.send("一", () => {});
+        expect(systemOf(seen)).toContain("第一版规则");
+        const oldSession = primaryOf(home, "bot-1");
+
+        writeFileSync(join(home, "AGENTS.md"), "第二版规则", "utf-8");
+        // 老会话再发一轮：system 还是旧的（只在建会话时写一次）
+        await chat.send("二", () => {});
+        expect(systemOf(seen)).toContain("第一版规则");
+        expect(systemOf(seen)).not.toContain("第二版规则");
+
+        // 新 bot = 新会话：拿到新规则
+        await chat.createBot({ name: "新助手", model: "test/echo-2" });
+        await chat.send("三", () => {});
+        expect(systemOf(seen)).toContain("第二版规则");
+        expect(primaryOf(home, "bot-1")).toBe(oldSession);
+        expect(primaryOf(home, "bot-2")).not.toBe(oldSession);
+    });
+});
