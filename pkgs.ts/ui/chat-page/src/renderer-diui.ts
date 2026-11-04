@@ -177,14 +177,66 @@ export const chatPageView: PageView = {
             const form = el(doc, "div", "chat-form");
 
             const nameInput = inputOf(doc, "text", bot?.name ?? "");
-            const modelSelect = selectOf(
-                doc,
-                store.models.map((choice) => ({
-                    value: `${choice.account === undefined ? "" : `${choice.account}@`}${choice.providerId}/${choice.modelId}`,
-                    label: `${choice.account === undefined ? "" : `${choice.account}@`}${choice.providerId} · ${choice.name}`,
-                })),
-                bot?.model !== undefined && bot.model !== "" ? bot.model : store.selectedModel,
-            );
+            /**
+             * 模型选择：**搜索框 + 按 provider 分组**（用户 2026-11-04：「列表太长了 flat 了，
+             * 很难选择，还缺乏查询能力」）。
+             *
+             * 为什么不照搬 diy-app 的 ModelPicker（PersonaDrawer.tsx:1129 那套切片表格）：
+             * 那是 Solid JSX 组件，这里是手写 DOM。先把「能搜、能分组」做出来 ——
+             * 完整切片的收益主要在价格对比，而 bot 配置页不需要比价。
+             *
+             * 分组用 `<optgroup>`：原生 select 自带，零 JS 交互成本。
+             */
+            const modelRefOf = (choice: { account?: string; providerId: string; modelId: string }): string =>
+                `${choice.account === undefined ? "" : `${choice.account}@`}${choice.providerId}/${choice.modelId}`;
+            const modelLabelOf = (choice: { account?: string; providerId: string; modelId: string; name: string }): string =>
+                `${choice.account === undefined ? "" : `${choice.account}@`}${choice.providerId} · ${choice.name}`;
+            const currentModel =
+                bot?.model !== undefined && bot.model !== "" ? bot.model : store.selectedModel;
+
+            const modelSearch = inputOf(doc, "text", "");
+            modelSearch.placeholder = "搜索模型（provider / 账号 / 名称）";
+            modelSearch.className = "chat-model-search";
+
+            const modelSelect = doc.createElement("select");
+            /**
+             * `optgroup` 里没有「无 provider」的兜底：`choices()` 每条都带 providerId，
+             * 空串按 `(其他)` 归组，避免 option 直接挂在 select 下（那样分组就断了）。
+             */
+            const rebuildModelOptions = (keyword: string): void => {
+                const q = keyword.trim().toLowerCase();
+                const groups = new Map<string, { value: string; label: string }[]>();
+                for (const choice of store.models) {
+                    const value = modelRefOf(choice);
+                    const label = modelLabelOf(choice);
+                    if (q !== "" && !label.toLowerCase().includes(q) && !value.toLowerCase().includes(q)) continue;
+                    const key = choice.providerId === "" ? "(其他)" : choice.providerId;
+                    const list = groups.get(key);
+                    if (list === undefined) groups.set(key, [{ value, label }]);
+                    else list.push({ value, label });
+                }
+                const keep = modelSelect.value;
+                modelSelect.textContent = "";
+                for (const [provider, options] of groups) {
+                    const group = doc.createElement("optgroup");
+                    group.label = provider;
+                    for (const option of options) {
+                        const item = doc.createElement("option");
+                        item.value = option.value;
+                        item.textContent = option.label;
+                        group.append(item);
+                    }
+                    modelSelect.append(group);
+                }
+                // 选中值优先还原则才切到首项：搜窄了不该把已选模型悄悄改掉
+                const stillThere = [...modelSelect.options].some((o) => o.value === keep);
+                modelSelect.value = stillThere ? keep : (modelSelect.options[0]?.value ?? "");
+            };
+            rebuildModelOptions("");
+            if (currentModel !== "" && [...modelSelect.options].some((o) => o.value === currentModel)) {
+                modelSelect.value = currentModel;
+            }
+            modelSearch.addEventListener("input", () => rebuildModelOptions(modelSearch.value));
             const effortSelect = selectOf(
                 doc,
                 [
@@ -202,6 +254,7 @@ export const chatPageView: PageView = {
                 el(doc, "label", "", "名字"),
                 nameInput,
                 el(doc, "label", "", "模型"),
+                modelSearch,
                 modelSelect,
                 el(doc, "label", "", "推理强度"),
                 effortSelect,
