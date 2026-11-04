@@ -419,6 +419,10 @@ _check_full_body() {
   # OS 边界护栏（2026-10-31）：系统假设（process.platform / wmic / taskkill / powershell /
   # osascript / /bin/bash …）只许出现在 apps/diy-app/src/main/os/**；实现见 scripts/check-os-boundary.mjs
   run node scripts/check-os-boundary.mjs
+  # renderer 图里不许出现 node/electron（2026-11-04 黑屏事故：barrel 带出 node:child_process）；
+  # 实现见 scripts/check-renderer-boundary.mjs。tsc/oxlint/check-os-boundary 都抓不到
+  # 「经由哪个包拉进来的」，只有遍历 import 图才行。
+  run node scripts/check-renderer-boundary.mjs
   # 构建配置漂移护栏（2026-10-31）：各包 tsconfig.build.json 的 composite/references 与
   # tsconfig.build-all.json 都是**生成物**（node scripts/gen-tsconfig-build-all.mjs）——手改就报
   run node scripts/gen-tsconfig-build-all.mjs --check
