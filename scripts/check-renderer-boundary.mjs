@@ -133,21 +133,25 @@ if (arg === "--self-test") {
     // 注入事故链：把一个 renderer 可达的转发层改成 barrel 引用，断言脚本能抓到
     const probe = join(ROOT, "apps/diy-app/src/shared/run-view.ts");
     if (!isFile(probe)) { console.error("self-test 跳过：探针文件不存在"); process.exit(0); }
+    const { writeFileSync } = await import("node:fs");
     const original = readFileSync(probe, "utf-8");
+    const patched = original.replace(/from\s+["']\.\/run-status["']/, 'from "@diy-agent/jobs"');
+    if (patched === original) {
+        console.error("self-test 跳过：探针里没有 ./run-status 引用（事故形态已变，请更新探针）");
+        process.exit(0);
+    }
+    // ⚠️ 恢复必须在 exit **之前**：`process.exit()` 不执行 finally，
+    //    之前用 try/finally 恢复，结果每次 --self-test 都把脏文件留在工作区。
+    let hit = false;
     try {
-        readFileSync(probe, "utf-8");
-        const patched = original.replace(/from\s+["']\.\/run-status["']/, 'from "@diy-agent/jobs"');
-        if (patched === original) { console.error("self-test 跳过：探针里没有 ./run-status 引用（事故形态已变，请更新探针）"); process.exit(0); }
-        const { writeFileSync } = await import("node:fs");
         writeFileSync(probe, patched, "utf-8");
         const { problems } = scan();
-        const hit = problems.some((p) => p.at(-1)?.includes("node:child_process"));
-        console.log(hit ? "✓ self-test 通过（能抓到 barrel 事故）" : "✗ self-test 失败：注入事故后仍无告警");
-        process.exit(hit ? 0 : 1);
+        hit = problems.some((p) => p.at(-1)?.includes("node:child_process"));
     } finally {
-        const { writeFileSync } = await import("node:fs");
         writeFileSync(probe, original, "utf-8");
     }
+    console.log(hit ? "✓ self-test 通过（能抓到 barrel 事故）" : "✗ self-test 失败：注入事故后仍无告警");
+    process.exit(hit ? 0 : 1);
 }
 
 const { problems, visited } = scan();
