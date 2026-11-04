@@ -33,7 +33,7 @@ export interface PosixDeps {
     now(): number;
 }
 
-export function defaultPosixDeps(platform: NodeJS.Platform = process.platform): PosixDeps {
+function defaultPosixDeps(platform: NodeJS.Platform = process.platform): PosixDeps {
     return {
         runSync(cmd, args, timeoutMs = 3000) {
             try {
