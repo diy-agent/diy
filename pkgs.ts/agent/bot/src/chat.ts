@@ -28,7 +28,13 @@ import { localISOString } from "@diy-agent/time";
 import { createSession, type AgentSession, type ChatMessage, type LlmPort, type SessionStore, type TokenUsage } from "@diy-agent/session";
 import { openJsonlSessionStore } from "@diy-agent/session-store-jsonl";
 import { createOpenAiCompatible, resolveProviderConfig } from "@diy-agent/llm-provider";
-import { costOf, loadCatalog, readAccountValue, type ModelCatalogEntry } from "@diy-agent/model-catalog";
+import {
+    costOf,
+    listAccountStates,
+    loadCatalog,
+    readAccountValue,
+    type ModelCatalogEntry,
+} from "@diy-agent/model-catalog";
 import { toolArgsFromInput } from "@diy-agent/session";
 import { createBot, createFirstBot as createFirstBotIn } from "./bot.js";
 import {
@@ -146,10 +152,24 @@ export interface BotChatOptions {
 }
 
 /** 把 `providerId/modelId` 切开（模型 id 自身可含 `/`，按第一个 `/` 切） */
-export function splitModelKey(key: string): { providerId: string; modelId: string } {
-    const at = key.indexOf("/");
-    if (at <= 0 || at === key.length - 1) return { providerId: key, modelId: "" };
-    return { providerId: key.slice(0, at), modelId: key.slice(at + 1) };
+/**
+ * 拆 `account@provider/model` → 三段。
+ *
+ * 照抄 diy-app 的 `splitQualified`（shared/model-config.ts:678）——
+ * **provider 段里最后一个 `@` 切 account**。之前 bot 只切 `/`，
+ * 于是 `aug@opencode-go/deepseek-v4.1-flash` 的 provider 被当成
+ * `aug@opencode-go`，`readAccountValue` 找不到 provider、也永远拿不到正确的 key。
+ *
+ * 无 `@` 时 account 为 undefined（裸 provider 的老写法仍可用）。
+ */
+export function splitModelKey(key: string): { account?: string; providerId: string; modelId: string } {
+    const slash = key.indexOf("/");
+    if (slash <= 0 || slash === key.length - 1) return { providerId: key, modelId: "" };
+    const providerSeg = key.slice(0, slash);
+    const modelId = key.slice(slash + 1);
+    const at = providerSeg.lastIndexOf("@");
+    if (at <= 0) return { providerId: providerSeg, modelId };
+    return { account: providerSeg.slice(0, at), providerId: providerSeg.slice(at + 1), modelId };
 }
 
 /** 新 bot id：`bot-<n>`，n = 现有 `bot-<数字>` 的最大值 + 1（人可读） */
@@ -244,15 +264,47 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
 
     const catalog = (): ModelCatalogEntry[] => (catalogCache ??= loadCatalog(home));
 
-    const choices = (): ModelChoice[] =>
-        catalog().map((entry) => ({
-            providerId: entry.providerId,
-            modelId: entry.modelId,
-            name: entry.name,
-        }));
+    /**
+     * 可选模型 = **provider × account × model** 的展开（diy-app 的三段式）。
+     *
+     * 为什么必须展开 account：`model.yaml` 里一个 provider 可以有多个账号（aug / chen56 …），
+     * key 与配额各不相同。只列 provider/model 时用户无法表达「用 aug 这个账号」，
+     * 取 key 时就只能拿第一个 —— 实测这会表现成「上游不回应 / 超时」。
+     *
+     * 只展开**已配置**的账号（`configured`）；一个都没配的 provider 退回裸 provider/model 一项。
+     */
+    const choices = (): ModelChoice[] => {
+        const accountsByProvider = new Map(
+            listAccountStates(home).map((p) => [
+                p.providerId,
+                p.accounts.filter((a) => a.configured).map((a) => a.name),
+            ]),
+        );
+        const out: ModelChoice[] = [];
+        for (const entry of catalog()) {
+            const base = {
+                providerId: entry.providerId,
+                modelId: entry.modelId,
+                ...(entry.cost === undefined ? {} : { cost: entry.cost }),
+                ...(entry.contextWindow === undefined ? {} : { contextWindow: entry.contextWindow }),
+            };
+            const accounts = accountsByProvider.get(entry.providerId) ?? [];
+            if (accounts.length === 0) {
+                out.push({ ...base, name: entry.name });
+                continue;
+            }
+            for (const account of accounts) {
+                out.push({ ...base, account, name: `${account}@${entry.name}` });
+            }
+        }
+        return out;
+    };
 
-    const keyOf = (entry: ModelCatalogEntry | null): string =>
-        entry === null ? "" : `${entry.providerId}/${entry.modelId}`;
+    /** 模型 key：`account@provider/model`（无 account 时退回 `provider/model`） */
+    const keyOf = (entry: ModelCatalogEntry | null, account?: string): string =>
+        entry === null
+            ? ""
+            : `${account === undefined ? "" : `${account}@`}${entry.providerId}/${entry.modelId}`;
 
     const writeMeta = async (meta: SessionMeta): Promise<void> => {
         if (!persistMeta) {
@@ -269,12 +321,14 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
 
     const llmFor = (modelKey: string): LlmPort => {
         if (options.llmFor !== undefined) return options.llmFor(modelKey);
-        const { providerId, modelId } = splitModelKey(modelKey);
+        const { account, providerId, modelId } = splitModelKey(modelKey);
         const entry = catalog().find((item) => item.providerId === providerId && item.modelId === modelId);
         if (entry === undefined) {
             throw new Error(`模型目录里没有 ${modelKey}（model.yaml / providers.custom.yaml 可能变了）`);
         }
-        const apiKey = readAccountValue(home, providerId);
+        // account 必须传下去：model.yaml 里一个 provider 可以有多个账号（aug / chen56 / …），
+        // 不传就取了第一个 —— key 不对，上游要么 401 要么一直不回应（实测：超时）。
+        const apiKey = readAccountValue(home, providerId, account);
         try {
             // 已知 provider：拿 provider 表的默认 endpoint / 会话 header
             return createOpenAiCompatible(
@@ -456,7 +510,10 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
     const snapshotNow = async (): Promise<BotChatSnapshot> => {
         const configs = await botStore.list();
         const bots = await Promise.all(configs.map(botView));
-        const selectedModel = keyOf(catalog()[0] ?? null) || null;
+        // 缺省选中 = 列表第一项（带 account，和 choices 同一套拼法）
+        const selectedModel = choices()[0] === undefined
+            ? null
+            : `${choices()[0]!.account === undefined ? "" : `${choices()[0]!.account}@`}${choices()[0]!.providerId}/${choices()[0]!.modelId}`;
         const active = configs.length === 0 ? null : ((await activeConfig()) ?? configs[0]!);
         if (active === null) {
             return {
@@ -496,7 +553,9 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
     /** 模型必须是目录里的（##497：没有「跟随宿主缺省」这条路） */
     const checkModel = (model: string): string => {
         if (model.trim() === "") throw new Error("必须先选一个模型（bot 的 model 必填）");
-        const found = catalog().some((entry) => keyOf(entry) === model);
+        // 三段式：account@provider/model —— 按 provider+model 查目录，account 只影响取哪个 key
+        const { providerId, modelId } = splitModelKey(model);
+        const found = catalog().some((entry) => entry.providerId === providerId && entry.modelId === modelId);
         if (!found) throw new Error(`模型目录里没有 ${model}`);
         return model;
     };

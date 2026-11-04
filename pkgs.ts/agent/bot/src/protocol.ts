@@ -74,6 +74,14 @@ export interface SendResult {
 
 /** 模型选择器的一项（来自 model-catalog；不含任何 key） */
 export interface ModelChoice {
+    /**
+     * 账号名（`model.yaml` 里该 provider 下的 accounts[].name）。
+     *
+     * 为什么模型选择要带 account：一个 provider 可以有多个账号（aug / chen56 …），
+     * key 不同、配额不同、稳定性也不同。diy-app 的模型列表一直是 `account@provider/model`
+     * 三段式（shared/model-config.ts 的 splitQualified），bot 之前只有 provider/model 两段。
+     */
+    readonly account?: string;
     readonly providerId: string;
     readonly modelId: string;
     readonly name: string;
