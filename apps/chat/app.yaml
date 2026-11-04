@@ -10,6 +10,8 @@ launches:
   - id: lab
     title: 开发（lab）
     command: ./sha.sh lab
+    # 数据根必须显式声明：启动器按它注入 DIY_HOME，并显示数据根 / 实例 URI（缺了就是配置错误）
+    home: build/lab/home
     entries:
       - kind: app
         title: Electron 窗口

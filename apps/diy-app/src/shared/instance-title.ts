@@ -61,6 +61,20 @@ export interface InstanceIdentity {
   port?: number | null;
   /** 进程 PID */
   pid?: number | null;
+  /** 实例 URI（`diy://<instance-id>/<app>.<launch>`）；拿不到时省略 */
+  uri?: string | null;
+}
+
+/**
+ * 实例 URI：`diy://<instance-id>/<app>.<launch>` —— 与 dev 启动器的「实例 URI」、
+ * 外壳的 `instanceWindowTitle` 同一口径。
+ *
+ * `app.launch` 区分同一 app 的不同启动方式（lab / prod），instance-id 区分不同数据根
+ * （生产 / 各 worktree 的 lab），两者合起来才是「谁是谁」。
+ */
+export function instanceUriOf(nodeId: string | null, app: string, launch: string | null): string {
+  const tail = launch === null || launch === "" ? app : `${app}.${launch}`;
+  return nodeId === null || nodeId === "" ? tail : `diy://${nodeId}/${tail}`;
 }
 
 /**
@@ -70,10 +84,13 @@ export interface InstanceIdentity {
  * 字段缺失时显示 `?`，保持标题结构稳定。
  */
 export function instanceTitle(id: InstanceIdentity): string {
-  return [
+  const parts = [
     id.repoDisplay || "?",
     id.homeDisplay || "?",
     `port:${id.port ?? "?"}`,
     `pid:${id.pid ?? "?"}`,
-  ].join("🔹");
+  ];
+  // 实例 URI 放最后：前四段已足够宽，URI 是「命令打给谁」的精确抓手，可读性差异不明显时省掉更清爽
+  if (id.uri !== undefined && id.uri !== null && id.uri !== "") parts.push(id.uri);
+  return parts.join("🔹");
 }

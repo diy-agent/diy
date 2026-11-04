@@ -42,12 +42,12 @@ import { installCrashReporting } from "./services/crash-reporting";
 import { detectGpu } from "./core/gpu-detect";
 import { os } from "./os";
 import { readRuntimeConfig, resolvePort } from "../runtime";
-import { instanceTitle } from "../shared/instance-title";
-import { cliEntryForRepo, findRepoRoot, homeDisplayOf, repoDisplayOf } from "./core/instance-identity";
+import { instanceTitle, instanceUriOf } from "../shared/instance-title";
+import { cliEntryForRepo, findRepoRoot, homeDisplayOf, readInstanceId, repoDisplayOf } from "./core/instance-identity";
 import { SINGLETON_LOCK, classifyLock, lockAdvice, readLock } from "./core/single-instance";
 // 实例注册表 + 窗口能力注入（##366）：注册表让「本机有哪些实例」可枚举、「谁开的」在启动瞬间落档；
 // window-ops 让 RPC 层能请出本实例窗口而不 import Electron（serve 模式不注入 ⇒ 如实报「无窗口」）。
-import { dropSelfRecord, setSelfPort, writeSelfRecord } from "./services/instances";
+import { dropSelfRecord, selfLaunch, setSelfPort, writeSelfRecord } from "./services/instances";
 import { remoteService } from "./services/remote";
 import { hubService } from "./services/hub";
 import { APP_PACKAGE_NAME, APP_VERSION } from "../shared/app-version";
@@ -252,6 +252,12 @@ function windowTitle(port: number | null): string {
     env: cfg.env,
     port,
     pid: process.pid,
+    // 与 dev 启动器 / 外壳同一口径：`diy://<instance-id>/diy-app.<launch>`
+    uri: instanceUriOf(
+      readInstanceId(appConfig.diyHome),
+      "diy-app",
+      selfLaunch(process.env["DIY_VARIANT"] ?? "prod"),
+    ),
   });
 }
 

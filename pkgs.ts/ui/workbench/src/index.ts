@@ -19,14 +19,14 @@ import { WorkbenchError } from "./errors.js";
 import { loadPages, type PluginEntry } from "./loader.js";
 import type { PageContribution, PageInfo } from "./page.js";
 import { PAGE_INVOKE_CHANNEL, PAGE_LIST_CHANNEL, type PageInvokeRequest } from "./channels.js";
-import { removeSelfRecord, writeSelfRecord } from "./instance-record.js";
+import { instanceWindowTitle, removeSelfRecord, writeSelfRecord } from "./instance-record.js";
 import { sidecarWindowOptions } from "./window.js";
 
 export { WorkbenchError } from "./errors.js";
 export { orderPlugins, loadPages } from "./loader.js";
 export { PAGE_INVOKE_CHANNEL, PAGE_LIST_CHANNEL } from "./channels.js";
 export { sidecarWindowOptions, type DisplayLike, type WorkArea } from "./window.js";
-export { registryDir, writeSelfRecord, removeSelfRecord, repoRootOf } from "./instance-record.js";
+export { registryDir, writeSelfRecord, removeSelfRecord, repoRootOf, instanceUri, instanceWindowTitle } from "./instance-record.js";
 export type { PluginEntry } from "./loader.js";
 export type { PageContribution, PageInfo, PageMethod } from "./page.js";
 export type { PageInvokeRequest, WorkbenchBridge } from "./channels.js";
@@ -126,7 +126,14 @@ export async function createWorkbench(options: CreateWorkbenchOptions): Promise<
     }
 
     const win = new BrowserWindow({
-        title: options.title ?? "Workbench",
+        // 标题栏 = 「我是谁」的唯一出口：所有 app 都是 `标题 — diy://<instance-id>/<app>.<launch>`，
+        // 同机多个窗口并排时靠它分辨谁是谁（数据根 + 启动方式都在里面）
+        title: instanceWindowTitle({
+            title: options.title,
+            app: options.app,
+            launch: options.launch ?? process.env["DIY_LAUNCH"] ?? null,
+            diyHome,
+        }),
         width,
         height,
         show: false,
@@ -138,6 +145,9 @@ export async function createWorkbench(options: CreateWorkbenchOptions): Promise<
             sandbox: true,
         },
     });
+    // 页面自带的 `<title>`（index.html 里写死的「diy 聊天」之类）会盖掉上面的标题：
+    // 窗口标题归外壳管（它才知道 instance-id / launch），页面无权改
+    win.on("page-title-updated", (event) => event.preventDefault());
     win.on("closed", () => {
         removeSelfRecord();
         disposeHandlers();

@@ -8,7 +8,7 @@
 //   2. git 分支只有 main 能查（要跑 git / 读 .git）：判断「跑的是哪个 worktree 的构建」。
 
 import { execFileSync } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir, tmpdir, userInfo } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -97,6 +97,21 @@ export function cliEntryForRepo(repoRoot: string, home: string): string {
  */
 export function findRepoRoot(startDir: string): string | null {
   return findGitRoot(startDir);
+}
+
+/**
+ * 读数据根的 `instance-id`（首次启动生成、永不变），拿不到 / 空 ⇒ null。
+ *
+ * 用途：窗口标题里的实例 URI（`diy://<id>/diy-app.<launch>`）要靠它区分不同数据根。
+ * 与 dev 启动器读 `<home>/instance-id` 同一口径（那边只读不代建，这里也是）。
+ */
+export function readInstanceId(home: string): string | null {
+  try {
+    const text = readFileSync(join(home, "instance-id"), "utf-8").trim();
+    return text === "" ? null : text;
+  } catch {
+    return null;
+  }
 }
 
 function findGitRoot(startDir: string): string | null {

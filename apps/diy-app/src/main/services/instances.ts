@@ -49,6 +49,11 @@ const PROBE_TIMEOUT_MS = 1200;
  */
 const LAUNCH_OF_VARIANT: Record<string, string> = { lab: "lab", prod: "prod" };
 
+/** 本实例的 launch id：启动器注入优先，否则按变体回推（认不出的变体 ⇒ null）。窗口标题 / 注册表共用一份 */
+export function selfLaunch(variant: string): string | null {
+  return process.env["DIY_LAUNCH"] ?? LAUNCH_OF_VARIANT[variant] ?? null;
+}
+
 /** 启动时写自己那一条（父进程链此刻还在 —— 这是唯一的快照时机，见 registry 文件头注） */
 export function writeSelfRecord(opts: { diyHome: string; variant: string; env: string }): void {
   writeRecord(registryDir(), {
@@ -57,7 +62,7 @@ export function writeSelfRecord(opts: { diyHome: string; variant: string; env: s
     // dev 启动器按 (worktree, app, launch) 三元组对回静态清单：缺 launch / worktree 就永远显示「未启动」
     //   launch：启动器拉起的直接取 DIY_LAUNCH；手工跑按变体回推（认不出的变体才 null）
     //   worktree：从 cwd 往上找 .git（worktree 里 .git 是文件，只判存在性）
-    launch: process.env["DIY_LAUNCH"] ?? LAUNCH_OF_VARIANT[opts.variant] ?? null,
+    launch: selfLaunch(opts.variant),
     worktree: findRepoRoot(process.cwd()),
     port: null,
     pingPort: null,
