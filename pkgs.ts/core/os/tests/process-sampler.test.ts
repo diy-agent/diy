@@ -2,8 +2,8 @@
 // 🎯 采集端**组装层**（OS 无关）：把 OS 观测 `probe(pid)` 装成 `ProcessSample`。
 
 import { describe, it, expect } from "vitest";
-import { emptySample, sampleProcess, type SamplerDeps } from "../../src/main/services/process-sampler";
-import type { ProcessProbe } from "../../src/main/os";
+import { emptySample, sampleProcess, type SamplerDeps } from "../src/index.js";
+import type { ProcessProbe } from "../src/index.js";
 
 function deps(probe: Partial<ProcessProbe>, now = 1_000_000): SamplerDeps {
     return {
