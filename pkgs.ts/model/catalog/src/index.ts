@@ -41,4 +41,5 @@ export {
 } from "./write.js";
 export type { AccountState, ProviderAccountStates, ProviderSummary } from "./catalog.js";
 export type { ProviderModelPatch, SaveAccountInput, SaveProviderInput, SavedAccount } from "./write.js";
+export { effectiveMaxOutputTokens } from "./catalog.js";
 export type { CatalogOptions, ModelCatalogCost, ModelCatalogEntry, ProviderAccounts } from "./types.js";

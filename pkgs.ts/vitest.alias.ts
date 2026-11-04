@@ -45,6 +45,7 @@ const LOCATIONS: Record<string, { dir: string; entry: string }> = {
     "@diy-agent/workbench-plugin": { dir: "pkgs.ts/ui/workbench-plugin", entry: "src/index.ts" },
     "@diy-agent/workbench": { dir: "pkgs.ts/ui/workbench", entry: "src/index.ts" },
     "@diy-agent/workbench-ui": { dir: "pkgs.ts/ui/workbench-ui", entry: "src/index.ts" },
+    "@diy-agent/ui-testing": { dir: "pkgs.ts/ui/testing", entry: "src/index.ts" },
     "@diy-agent/chat-page": { dir: "pkgs.ts/ui/chat-page", entry: "src/index.ts" },
     "@diy-agent/model-catalog": { dir: "pkgs.ts/model/catalog", entry: "src/index.ts" },
     "@diy-agent/model-config-page": { dir: "pkgs.ts/ui/model-config", entry: "src/index.ts" },

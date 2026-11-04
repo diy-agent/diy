@@ -12,6 +12,7 @@ import {
     stepCountIs,
     streamText,
     type AssistantContent,
+    type LanguageModel,
     type ModelMessage,
     type ToolResultPart,
 } from 'ai';
@@ -20,6 +21,7 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 /** `AssistantContent` 是 `string | parts[]` 的联合；要 push 就必须用数组那一半 */
 type AssistantContentParts = Exclude<AssistantContent, string>;
 import type { ChatMessage, ChatOptions, LlmPort, SessionDelta } from '@diy-agent/session';
+import { ensureReasoningReplay, isDeepSeekWire, type WireIdentity } from './reasoning-replay.js';
 import { classifyError } from './errors.js';
 import { SESSION_PLACEHOLDER } from './strategies/opencode.js';
 import type { ProviderConfig, UsageDetail } from './types.js';
@@ -66,6 +68,7 @@ export function createOpenAiCompatible(config: ProviderConfig): LlmProvider {
                 messages,
                 options,
                 sessionHeaders(templated, options?.sessionId),
+                { provider: config.name, model: options?.model ?? config.model, baseUrl: config.baseURL },
             );
         },
     };
@@ -111,22 +114,41 @@ function sessionHeaders(
  */
 const LEAKED_TOOL_XML = /<\|DSML\||<\/?(?:function_calls|invoke|parameter)[ >]/;
 
-/** 一次调用的流：text 增量 → usage → done；上游失败抛 `LlmProviderError` */
-async function* chatStream(
-    model: ReturnType<ReturnType<typeof createOpenAICompatible>['chatModel']>,
+/**
+ * 一次调用的流：text 增量 → usage → done；上游失败抛 `LlmProviderError`。
+ *
+ * **导出**是为了让「录制的事件流 → SessionDelta」能作为**黑盒**被测：
+ * 传一个 `replay(fixture).asModel()` 进来，中间所有真实逻辑（DSML 泄漏改写、
+ * 未知工具兜底、abort 分支、usage 归一）都会跑到。
+ *
+ * 为什么参数类型放宽成 `LanguageModel`：生产传的是 `provider.chatModel(...)`，
+ * 测试传的是 `MockLanguageModelV3` —— 两者都满足 `streamText({ model })` 的约束。
+ */
+export async function* chatStream(
+    model: LanguageModel,
     messages: readonly ChatMessage[],
     options: ChatOptions | undefined,
     headers: Record<string, string> | undefined,
+    wire: WireIdentity,
 ): AsyncGenerator<SessionDelta> {
     let fullStream: AsyncIterable<{ type: string } & Record<string, unknown>>;
     const mapped = toModelMessages(messages);
+    // ⚠️ thinking 模式下**每条** assistant 都必须带 reasoning_content（上游逐条校验，
+    // 漏一条整轮 400）。不补就会被 ai-sdk 丢掉这个字段 —— 详见 reasoning-replay.ts。
+    // 判据：reasoningEffort 存在且不是 "none" = thinking；deepseek 系才补（空串是否被接受
+    // 只在这家有证据，别的 reasoning 模型补了可能反过来被判非法）。
+    const effort = (options?.providerOptions as Record<string, Record<string, unknown>> | undefined)?.[
+        'openaiCompatible'
+    ]?.['reasoningEffort'];
+    const thinking = typeof effort === 'string' && effort !== 'none' && effort !== '';
+    const replayable = ensureReasoningReplay(mapped.messages, { thinking, deepseek: isDeepSeekWire(wire) });
     try {
         const result = streamText({
             model,
             // ai-sdk v7 不允许 `role: "system"` 出现在 messages 里：调用方给的 system 消息
             // 原样搬进 `system` 选项（只是换个位置，不增不改 —— 提示词仍归调用方）
             ...(mapped.system === undefined ? {} : { system: mapped.system }),
-            messages: mapped.messages,
+            messages: replayable,
             maxRetries: 0, // 重试不归 provider（见 errors.ts 头注）
             ...(headers === undefined ? {} : { headers }),
             ...(options?.signal === undefined ? {} : { abortSignal: options.signal }),

@@ -22,6 +22,14 @@ export interface ModelCatalogEntry {
     readonly npm?: string;
     /** 上下文窗口（tokens）；未知 = 缺省（不是 0） */
     readonly contextWindow?: number;
+    /**
+     * 单次输出上限（tokens）；未知 = 缺省（**不是 0**）。
+     *
+     * ⚠️ 缺省 ≠ 0：`streamText({ maxOutputTokens: 0 })` 会被 SDK 直接拒
+     * （"maxOutputTokens must be >= 1"，##184 实测）。要发值时一律走
+     * `effectiveMaxOutputTokens(entry, fallback)` —— 它保证结果 >= 1。
+     */
+    readonly maxOutputTokens?: number;
     /** 单价（$ / 1M tokens）；无价目 = 缺省（不算钱） */
     readonly cost?: ModelCatalogCost;
 }
