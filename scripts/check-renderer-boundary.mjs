@@ -128,6 +128,35 @@ function dedupe(problems) {
     return [...byKey.values()].sort((a, b) => a.length - b.length);
 }
 
+/**
+ * `--barrels`：审计**每个包的 barrel 是否危险**（index.ts 能否到达 node/electron）。
+ *
+ * 和主检查不同 —— 主检查看「renderer 实际图里有没有越界」（会阻断）；
+ * 这个是**参考清单**：告诉你哪些包的 `export *` 不能用，防止未来误用。
+ * 结果写进 docs/package-boundaries.md。
+ */
+function auditBarrels() {
+    const risky = [];
+    const safe = [];
+    for (const [name, dir] of [...pkgDirs].sort((a, b) => a[0].localeCompare(b[0]))) {
+        const idx = tryFile(join(dir, "src", "index"));
+        if (idx === null) continue;
+        // 复用同一个 walk：从 index 出发，找第一条到达 builtin 的链
+        const found = [];
+        walk(idx, found, new Set());
+        if (found.length > 0) risky.push([name, found[0]]);
+        else safe.push(name);
+    }
+    console.log(`\n=== barrel 危险（index.ts 可达 node/electron）：${risky.length} 个 ===`);
+    for (const [name, chain] of risky) {
+        // chain 最后一项已经是 `node:xxx  ← 出处文件` 的完整描述
+        console.log(`  ${name.padEnd(32)} → ${chain.at(-1)}`);
+    }
+    console.log(`\n=== barrel 安全：${safe.length} 个 ===`);
+    console.log("  " + safe.join(", "));
+    console.log("\n改包结构后请更新 docs/package-boundaries.md 的清单。");
+}
+
 const arg = process.argv[2];
 if (arg === "--self-test") {
     // 注入事故链：把一个 renderer 可达的转发层改成 barrel 引用，断言脚本能抓到
@@ -155,6 +184,11 @@ if (arg === "--self-test") {
 }
 
 const { problems, visited } = scan();
+if (arg === "--barrels") {
+    auditBarrels();
+    process.exit(0);
+}
+
 if (arg === "--list") {
     console.log(`入口 ${ENTRIES.filter((e) => isFile(join(ROOT, e))).length} 个 · 扫了 ${visited} 个文件`);
     process.exit(0);
