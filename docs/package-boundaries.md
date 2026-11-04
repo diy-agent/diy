@@ -189,3 +189,67 @@ node scripts/check-renderer-boundary.mjs --list   # 看入口与统计
 **反例**：`@diy-agent/jobs` 的 index 导出了 `run-registry`（要 spawn）⇒ 用 barrel 的
 renderer 直接被拖下水。如果当初把「账本」（IO）和「呈现判据」（纯函数）分成两个入口，
 这次事故不会发生。
+
+## 包级组合根：`<Pkg>Module`（2026-11-04 用户定）
+
+### 问题
+
+`Bot` 类被导出到包外的**唯一理由**是「装配 `BotStore` 时需要它」：
+
+```ts
+// ❌ 现在
+export { createBot, ensureBot, openBot } from "./bot.js";
+export type { Bot } from "./types.js";
+```
+
+但 `Bot` 是**包内部逻辑**，外部（页面 / CLI / Web）根本不需要知道它长什么样。
+「装配需要」不是「使用需要」—— 这正是之前 `Bot.newSession()` 被导出但零调用方的根源。
+
+### 命名约定
+
+| 名字 | 职责 | 导出 |
+|---|---|---|
+| **`<Pkg>Module`** | **组合根**：知道所有具体实现，负责实例化 + 连接依赖 | ✅ 导出（唯一入口）|
+| `<Pkg>Service` | 服务接口：外部能用的**能力**清单 | ✅ 导出（留给以后）|
+| 具体类（`Bot` / `BotStore` / `createBot`） | 实现细节 | ❌ 包内私有 |
+
+**为什么不是 `Service` 当组合根**：`xxxService` 这个名字要留给「服务接口」（能力清单），
+两者职责不同 —— Service 回答「能做什么」，Module 回答「怎么装起来」。
+以后每个包可能都有 `xxxModule`（组合根）+ `xxxService`（接口）。
+
+> 不是 Service Locator、不是 DI 容器 —— 只是**一个函数/对象**，把依赖接好返回服务接口。
+> 对应 Seemann 的 **Composition Root**（组合根）：全包唯一、不被外部 import、只做装配。
+
+### 形态
+
+```ts
+// pkgs.ts/agent/bot/src/module.ts（新增）
+import { createBot } from "./bot.js";              // ← 内部，不外露
+import { createFileBotStore } from "./store-fs.js";
+
+/**
+ * Bot 包唯一的组合根。
+ * 外部只拿到 BotService，拿不到 Bot / BotStore / createBot。
+ */
+export function createBotModule(opts: { home: string; store?: BotStore }): BotService {
+    const store = opts.store ?? createFileBotStore({ home });
+    // 内部怎么建 Bot、怎么串 store，全在这里消化
+    return {
+        snapshot: () => ...,
+        create: (input) => ...,
+        // ...
+    };
+}
+```
+
+### 判据（可写进评审清单）
+
+> **一个包对外导出的每个符号，都要能回答「谁会用它」。**
+> 答不上来（或答案是「装配需要」）⇒ 它该是包内私有的，用 Module 藏起来。
+
+### 待办
+
+- [ ] `@diy-agent/bot`：加 `createBotModule`，导出面收窄到 `createBotModule` + `BotService` 类型
+- [ ] `Bot.newSession` / `sessions` 降级为包内函数（产品上 bot 只有一条永久会话）
+- [ ] `nextBotId` 三份实现合并到一处（`bot.ts:170` / `chat.ts:835` / `bot-config-page/actions.ts:272`）
+- [ ] `bot-config-page` 的 `actions.ts`（313 行）瘦身成校验 + 转调（core 逻辑进 `BotService`）
