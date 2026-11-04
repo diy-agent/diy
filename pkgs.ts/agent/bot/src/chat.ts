@@ -146,10 +146,24 @@ export interface BotChatOptions {
 }
 
 /** 把 `providerId/modelId` 切开（模型 id 自身可含 `/`，按第一个 `/` 切） */
-export function splitModelKey(key: string): { providerId: string; modelId: string } {
-    const at = key.indexOf("/");
-    if (at <= 0 || at === key.length - 1) return { providerId: key, modelId: "" };
-    return { providerId: key.slice(0, at), modelId: key.slice(at + 1) };
+/**
+ * 拆 `account@provider/model` → 三段。
+ *
+ * 照抄 diy-app 的 `splitQualified`（shared/model-config.ts:678）——
+ * **provider 段里最后一个 `@` 切 account**。之前 bot 只切 `/`，
+ * 于是 `aug@opencode-go/deepseek-v4.1-flash` 的 provider 被当成
+ * `aug@opencode-go`，`readAccountValue` 找不到 provider、也永远拿不到正确的 key。
+ *
+ * 无 `@` 时 account 为 undefined（裸 provider 的老写法仍可用）。
+ */
+export function splitModelKey(key: string): { account?: string; providerId: string; modelId: string } {
+    const slash = key.indexOf("/");
+    if (slash <= 0 || slash === key.length - 1) return { providerId: key, modelId: "" };
+    const providerSeg = key.slice(0, slash);
+    const modelId = key.slice(slash + 1);
+    const at = providerSeg.lastIndexOf("@");
+    if (at <= 0) return { providerId: providerSeg, modelId };
+    return { account: providerSeg.slice(0, at), providerId: providerSeg.slice(at + 1), modelId };
 }
 
 /** 新 bot id：`bot-<n>`，n = 现有 `bot-<数字>` 的最大值 + 1（人可读） */
@@ -269,12 +283,14 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
 
     const llmFor = (modelKey: string): LlmPort => {
         if (options.llmFor !== undefined) return options.llmFor(modelKey);
-        const { providerId, modelId } = splitModelKey(modelKey);
+        const { account, providerId, modelId } = splitModelKey(modelKey);
         const entry = catalog().find((item) => item.providerId === providerId && item.modelId === modelId);
         if (entry === undefined) {
             throw new Error(`模型目录里没有 ${modelKey}（model.yaml / providers.custom.yaml 可能变了）`);
         }
-        const apiKey = readAccountValue(home, providerId);
+        // account 必须传下去：model.yaml 里一个 provider 可以有多个账号（aug / chen56 / …），
+        // 不传就取了第一个 —— key 不对，上游要么 401 要么一直不回应（实测：超时）。
+        const apiKey = readAccountValue(home, providerId, account);
         try {
             // 已知 provider：拿 provider 表的默认 endpoint / 会话 header
             return createOpenAiCompatible(
