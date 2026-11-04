@@ -152,6 +152,68 @@ grep -c '"status":429' ~/.diy/log/network/*.jsonl
 # 3. 没有 → 不录，等它真的发生（或先写 issue 观察）
 ```
 
+### 复现测试（`*.repro.test.ts`）—— 真实故障兑现为测试
+
+**黄金测试与复现测试不是一回事，别混。**
+
+| | 黄金（golden） | 复现（repro） |
+|---|---|---|
+| 数据来源 | **正常行为**的录制 | **真实故障**（日志、用户报告） |
+| 目的 | 冻结预期行为 | 复现还没理解的坑 |
+| 产生时机 | 功能先有 | **bug 先有** |
+| 生命周期 | 长期保留 | 修好后可归档 |
+
+一句话：**golden = 这个功能应该这样工作；repro = 这个功能曾经这样坏过。**
+
+#### 四段头注释（缺一不予合入）
+
+```ts
+// <名字>.repro.test.ts — <一句话症状>
+//
+// ① 现象：<看到什么>       证据：<哪个日志 / 谁的哪次报告>
+// ② 根因：<真因，不是症状>
+// ③ 修复：<commit hash>
+// ④ 现在守什么：<回归判据>
+```
+
+没有这四段，半年后没人知道这条测试为什么存在。
+
+#### 核心手法：**先红后绿**
+
+复现测试必须能证明「不修就坏」：
+
+```ts
+// 【核心】不修 ⇒ 在 wire 上缺字段；修后 ⇒ 每条都有
+const broken = await captureWire(msgs);            // 对照组：模拟 bug 发生时的状态
+expect(broken.filter((m) => m.reasoning_content === undefined).length).toBeGreaterThan(0);
+
+const fixed = await captureWire(ensureReasoningReplay(msgs, opts));
+for (const m of fixed) expect(m.reasoning_content).toBeDefined();
+```
+
+只断言「修之后对」是不够的 —— 那种测试在逻辑被删掉后**可能仍然绿**（比如字段本来就有）。
+
+#### 生命周期
+
+```
+故障报告 / 日志
+    ↓ ① 提取：fixtures/incident/<name>/trace.txt + README.md（脱敏）
+    ↓ ② 写 *.repro.test.ts          ← 此时必须**红**
+    ↓ ③ 修
+    ↓ ④ 变绿                       ← 「故障兑现为测试」
+    ↓
+    ├─ 协议约束 / 高频 → 长期保留（如 reasoning_content 那条）
+    └─ 一次性（某次上游抽风）→ 3 个月后移到 tests/repro/archive/
+                               （不删逻辑，只从默认 run 里摘出去）
+```
+
+**归档 ≠ 删除**：把 `include` 从默认配置里摘掉即可，代码和历史留着 —— 同类故障再犯时能直接复用。
+
+#### 现有样板
+
+`pkgs.ts/model/provider/tests/reasoning-replay.repro.test.ts`
+（15 次真实 400 · 多步会话第 85 步 · 四段头注释齐全）
+
 ### 三条纪律
 
 1. **脱敏** —— key / 用户内容换成 `$REDACTED`（录制脚本会带出 requestBodyValues）
