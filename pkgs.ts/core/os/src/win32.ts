@@ -67,7 +67,7 @@ const SNAPSHOT_CACHE_MS = 2_000;
 /** R9：同步取数的唯一常量超时（不设预算参数）。超时返回 null，主进程不许等冷启动 PowerShell。 */
 const SYNC_TIMEOUT_MS = 2_000;
 
-export function defaultWin32Deps(env: NodeJS.ProcessEnv = process.env, now: () => number = Date.now): Win32Deps {
+function defaultWin32Deps(env: NodeJS.ProcessEnv = process.env, now: () => number = Date.now): Win32Deps {
     return {
         runSync(cmd, args, timeoutMs = 5000) {
             try {

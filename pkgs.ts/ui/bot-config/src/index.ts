@@ -62,7 +62,7 @@ export function createPage(config?: unknown): PageContribution {
 export default createPage;
 
 export { BotConfigPageError } from './errors.js';
-export { createBotActions, nextBotId, resolveModelKey, wireOf } from './actions.js';
+export { createBotActions, resolveModelKey, wireOf } from './actions.js';
 export type { BotActions, BotActionsOptions } from './actions.js';
 export type {
     BotSnapshot,

@@ -17,6 +17,7 @@ import { loadCatalog, readAccountValue, readDefaultModel, type ModelCatalogEntry
 import { createSession, type AgentSession, type ChatMessage, type LlmPort } from '@diy-agent/session';
 import { openMemorySessionStore } from '@diy-agent/session-store-memory';
 import { localISOString } from '@diy-agent/time';
+import { nextBotId } from '@diy-agent/bot';
 import { BotConfigPageError } from './errors.js';
 import type { BotSnapshot, BotView, ModelOptionView, TestChatView, TestMessageView } from './shared.js';
 
@@ -269,15 +270,6 @@ export function wireOf(messages: readonly ChatMessage[]): TestMessageView[] {
 }
 
 /** 新 bot id：`bot-<n>`，n = 现有 `bot-<数字>` 的最大值 + 1（人可读，与任务号同思路） */
-export function nextBotId(existing: Iterable<BotId>): BotId {
-    let max = 0;
-    for (const id of existing) {
-        const match = /^bot-(\d+)$/.exec(id);
-        if (match !== null) max = Math.max(max, Number(match[1]));
-    }
-    return `bot-${max + 1}`;
-}
-
 // ── 入参校验 ─────────────────────────────────────
 
 function recordOf(args: unknown, method: string): Record<string, unknown> {
