@@ -1,20 +1,20 @@
 // fixtures/llm/index.ts — 场景清单
 //
-// 每份 fixture 都是**源码常量**（.ts），不是数据文件：
-//   协议变了 → 编译报错 → 逼你重录；存储版本变了 → 完全不受影响。
+// 目录约定（2026-11-04 用户定）：
+//   gen/         **自动生成**，文件名一律 *.gen.ts —— 这个组合就是「别手改」的唯一标记
+//   本文件       手写，只负责汇总导出（gen/ 里增减场景时改这里）
 //
-// 重录单个：node --experimental-strip-types tools/record-llm.mts <kebab-name>
-// 看状态：  node --experimental-strip-types tools/record-llm.mts list
+// 为什么 gen/ 也进版本库：fixture 是测试资产，要保证任何机器上回放结果一致。
+// 但它与手写代码分开住 —— review 时看 gen/ 的 diff 就知道「模型行为变了」，
+// 不会和业务改动混在一起。
 
-export { textOnly } from "./text-only.js";
-export { toolOk } from "./tool-ok.js";
-export { abort } from "./abort.js";
-
-// 待录（录完取消注释并加对应 export）：
-//   think            think.ts            带推理的回复
-//   toolError        tool-error.ts       工具失败后怎么收尾
-//   toolMultiStep    tool-multi-step.ts  连续两次工具调用
-//   modelUnavailable model-unavailable.ts 上游 404/401
-//   rateLimit        rate-limit.ts       429 + 重试
-//   contextOverflow  context-overflow.ts 压缩触发
-//   empty            empty.ts            done 但零内容
+export { textOnly } from "./gen/text-only.gen.js";
+export { think } from "./gen/think.gen.js";
+export { toolOk } from "./gen/tool-ok.gen.js";
+export { toolError } from "./gen/tool-error.gen.js";
+export { toolMultiStep } from "./gen/tool-multi-step.gen.js";
+export { abort } from "./gen/abort.gen.js";
+export { modelUnavailable } from "./gen/model-unavailable.gen.js";
+export { rateLimit } from "./gen/rate-limit.gen.js";
+export { contextOverflow } from "./gen/context-overflow.gen.js";
+export { empty } from "./gen/empty.gen.js";

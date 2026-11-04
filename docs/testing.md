@@ -68,16 +68,27 @@ const { model } = testLlm();
 `testLlm()` 会自动给 opencode.ai 加 `x-opencode-session` 头（否则 400 `MissingSessionID`），
 额外头用 `DIY_TEST_LLM_HEADERS='{"k":"v"}'`。
 
-### fixture 是源码，不是数据文件
+### fixture 是源码，且在 gen/ 里
 
 ```
 pkgs.ts/test/llm/tests/fixtures/llm/
-├── index.ts            场景清单
-├── text-only.ts        export const textOnly: LanguageModelV3StreamPart[] = [...]
-├── tool-ok.ts
-├── tool-error.ts
-└── abort.ts
+├── index.ts                       手写 · 只汇总导出
+└── gen/                           **自动生成 · 文件名一律 *.gen.ts**
+    ├── text-only.gen.ts
+    ├── tool-ok.gen.ts
+    ├── tool-error.gen.ts
+    ├── tool-multi-step.gen.ts
+    ├── think.gen.ts
+    ├── abort.gen.ts
+    ├── model-unavailable.gen.ts
+    ├── rate-limit.gen.ts
+    ├── context-overflow.gen.ts
+    └── empty.gen.ts
 ```
+
+**`gen/` + `.gen.ts` 这个组合就是「别手改」的唯一标记** —— 一眼看出哪份是生成物。
+gen/ 进版本库（fixture 是测试资产，要保证任何机器回放一致），但与手写代码分开住：
+review 时看 gen/ 的 diff 就知道「模型行为变了」，不会和业务改动混在一起。
 
 | | 外部 jsonl | **代码内 .ts** |
 |---|---|---|
@@ -111,16 +122,22 @@ node --experimental-strip-types tools/record-llm.mts text-only --dry   # 只看�
 
 | 场景 | 文件 | 覆盖 |
 |---|---|---|
-| 纯文本 | `text-only.ts` | 基础链路 |
-| 思考流 | `think.ts` | reasoning 块收/展 |
-| 工具成功 | `tool-ok.ts` | tool-call 配对、状态点 |
-| 工具失败 | `tool-error.ts` | 错误块、不崩 |
-| 多步工具 | `tool-multi-step.ts` | step 边界 |
-| 用户中断 | `abort.ts` | AbortError 分支 |
-| 模型不可用 | `model-unavailable.ts` | 404 / 401 / `model_coming_soon` |
-| 限流 | `rate-limit.ts` | 429 + 退避 |
-| 上下文溢出 | `context-overflow.ts` | 压缩触发 |
-| 空响应 | `empty.ts` | done 但零内容 |
+| 场景 | 文件 | 来源 | 覆盖 |
+|---|---|---|---|
+| 纯文本 | `text-only.gen.ts` | 真模型 | 基础链路 |
+| 思考流 | `think.gen.ts` | 真模型 | reasoning 块收/展 |
+| 工具成功 | `tool-ok.gen.ts` | 真模型 | tool-call 配对、状态点 |
+| 工具失败 | `tool-error.gen.ts` | 真模型 | 错误块、不崩 |
+| 多步工具 | `tool-multi-step.gen.ts` | 真模型 | step 边界 |
+| 用户中断 | `abort.gen.ts` | 真模型 | AbortError 分支 |
+| 模型不可用 | `model-unavailable.gen.ts` | **合成** | 404 / `model_coming_soon` |
+| 限流 | `rate-limit.gen.ts` | **合成** | 429 + `isRetryable` |
+| 上下文溢出 | `context-overflow.gen.ts` | **合成** | 压缩触发 |
+| 空响应 | `empty.gen.ts` | **合成** | done 但零内容 |
+
+**为什么后四个是合成的**：真跑不出来 —— 限流要运气、模型下架要等、上下文溢出发一次烧几十万 token、
+空回复无法稳定复现。合成物**仍是同一套协议形状**（`LanguageModelV3StreamPart`），
+只是来源不同；生成源码的注释里会写明 `来源：协议形状合成（真跑不出来）`。
 
 ### 三条纪律
 

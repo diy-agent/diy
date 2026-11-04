@@ -7,34 +7,65 @@
 import { describe, expect, it } from "vitest";
 import { streamText } from "ai";
 import { replay } from "../src/replay.js";
-import { textOnly, toolOk, abort } from "./fixtures/llm/index.js";
+import * as fx from "./fixtures/llm/index.js";
 
 describe("fixture 结构", () => {
     it("textOnly：provider 层形状（stream-start / reasoning / text-delta / finish）", () => {
-        const types = textOnly.map((p) => p.type);
+        const types = fx.textOnly.map((p) => p.type);
         expect(types[0]).toBe("stream-start");
         expect(types).toContain("text-delta");
         expect(types).toContain("finish");
     });
 
     it("toolOk：含 tool-call（模型给的参数），**不含 tool-result**（那是我们的代码执行出来的）", () => {
-        const calls = toolOk.filter((p) => p.type === "tool-call");
+        const calls = fx.toolOk.filter((p) => p.type === "tool-call");
         expect(calls.length).toBeGreaterThan(0);
         // 关键分工：provider 层只录模型输出；工具执行属于被测代码，
         // 由测试注入真跑或 stub —— 所以 fixture 里**不该有** tool-result。
-        expect(toolOk.filter((p) => p.type === "tool-result")).toHaveLength(0);
+        expect(fx.toolOk.filter((p) => p.type === "tool-result")).toHaveLength(0);
         for (const c of calls) expect((c as { toolName?: string }).toolName).toBeTruthy();
     });
 
     it("abort：录到中断点就停（不该出现 finish）", () => {
-        expect(abort.length).toBeGreaterThan(0);
-        expect(abort.map((p) => p.type)).not.toContain("finish");
+        expect(fx.abort.length).toBeGreaterThan(0);
+        expect(fx.abort.map((p) => p.type)).not.toContain("finish");
+    });
+
+    it("think：含 reasoning-delta（思考流）", () => {
+        expect(fx.think.map((p) => p.type)).toContain("reasoning-delta");
+    });
+
+    it("toolMultiStep：两次以上 tool-call（step 边界）", () => {
+        expect(fx.toolMultiStep.filter((p) => p.type === "tool-call").length).toBeGreaterThan(1);
+    });
+
+    // ── 合成场景：真跑不出来，用协议形状。断言「下游能识别的关键字段」──
+    it("modelUnavailable：404 + model_coming_soon", () => {
+        const err = fx.modelUnavailable.find((p) => p.type === "error") as { error: { statusCode: number } } | undefined;
+        expect(err?.error.statusCode).toBe(404);
+        expect(JSON.stringify(fx.modelUnavailable)).toContain("model_coming_soon");
+    });
+
+    it("rateLimit：429 + isRetryable（下游据此退避，不当永久失败）", () => {
+        const err = fx.rateLimit.find((p) => p.type === "error") as { error: { statusCode: number; isRetryable: boolean } } | undefined;
+        expect(err?.error.statusCode).toBe(429);
+        expect(err?.error.isRetryable).toBe(true);
+    });
+
+    it("contextOverflow：400 + context_length_exceeded（触发压缩）", () => {
+        expect(JSON.stringify(fx.contextOverflow)).toContain("context_length_exceeded");
+    });
+
+    it("empty：有 finish 但零 text-delta（下游要显示「(空回复)」）", () => {
+        const types = fx.empty.map((p) => p.type);
+        expect(types).toContain("finish");
+        expect(types).not.toContain("text-delta");
     });
 });
 
 describe("回放", () => {
     it("asModel() 能被 streamText 消费，且每次调用都从头发", async () => {
-        const r = replay(textOnly);
+        const r = replay(fx.textOnly);
         const taken = async (): Promise<number> => {
             let n = 0;
             for await (const _ of streamText({ model: r.asModel(), prompt: "x" }).fullStream) n += 1;

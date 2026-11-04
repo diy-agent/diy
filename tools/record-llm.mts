@@ -20,10 +20,11 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { streamText, tool, jsonSchema } from "ai";
 import { z } from "zod";
+import type { LanguageModelV3StreamPart } from "@ai-sdk/provider";
 import { testLlm, testLlmConfig, missingEnvText } from "../pkgs.ts/test/llm/src/env.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const FIXTURE_DIR = join(HERE, "../pkgs.ts/test/llm/tests/fixtures/llm");
+const FIXTURE_DIR = join(HERE, "../pkgs.ts/test/llm/tests/fixtures/llm/gen");
 
 interface Scenario {
     /** 文件里的导出名（camelCase） */
@@ -36,6 +37,9 @@ interface Scenario {
     tools?: boolean;
     /** 录到第 N 个 part 就中断（制造 abort 场景） */
     abortAfter?: number;
+    /** 真跑不出来（限流要运气、溢出要烧几十万 token），用协议形状合成。
+     *  合成物仍是 .gen.ts、仍走同一个文件格式 —— 只是「来源」不同，注释里会写明。 */
+    synthetic?: (parts: LanguageModelV3StreamPart[]) => void;
 }
 
 const SCENARIOS: Scenario[] = [
@@ -45,6 +49,94 @@ const SCENARIOS: Scenario[] = [
     { name: "toolError", about: "工具调用返回错误后模型怎么收尾", prompt: "用 read 工具读一个不存在的文件 /nope/does-not-exist.txt，然后说明失败原因。", tools: true },
     { name: "toolMultiStep", about: "连续两次工具调用（step 边界）", prompt: "先读 README.md 第一行，再读 package.json 的 name 字段，最后汇总。", tools: true },
     { name: "abort", about: "流到一半被中断（下游据此进 aborted 分支）", prompt: "写一段 300 字的说明文，讲讲什么是分子料理。", abortAfter: 3 },
+
+    // ── 下面四个**真跑不出来**，用协议形状合成（见 synthetic 字段）──
+    {
+        name: "modelUnavailable",
+        about: "上游 404 model_coming_soon —— 下游要停工 + 顶出提示条，不换模型硬试",
+        prompt: "",
+        synthetic: (parts) => {
+            parts.push(
+                { type: "stream-start", warnings: [] } as LanguageModelV3StreamPart,
+                {
+                    type: "error",
+                    error: {
+                        name: "AI_APICallError",
+                        url: "https://opencode.ai/inference/go/openai/v1/chat/completions",
+                        requestBodyValues: { model: "<unavailable>", stream: true },
+                        statusCode: 404,
+                        responseBody: JSON.stringify({ error: { type: "model_coming_soon", message: "model_coming_soon" } }),
+                        isRetryable: false,
+                        data: { error: { type: "model_coming_soon", message: "model_coming_soon" } },
+                    },
+                } as unknown as LanguageModelV3StreamPart,
+            );
+        },
+    },
+    {
+        name: "rateLimit",
+        about: "上游 429 限流 —— 下游要退避重试，不是当成永久失败",
+        prompt: "",
+        synthetic: (parts) => {
+            parts.push(
+                { type: "stream-start", warnings: [] } as LanguageModelV3StreamPart,
+                {
+                    type: "error",
+                    error: {
+                        name: "AI_APICallError",
+                        url: "https://opencode.ai/inference/go/openai/v1/chat/completions",
+                        requestBodyValues: { model: "<any>", stream: true },
+                        statusCode: 429,
+                        responseHeaders: { "retry-after": "2" },
+                        responseBody: JSON.stringify({ error: { type: "rate_limit_exceeded", message: "Too many requests" } }),
+                        isRetryable: true,
+                        data: { error: { type: "rate_limit_exceeded", message: "Too many requests" } },
+                    },
+                } as unknown as LanguageModelV3StreamPart,
+            );
+        },
+    },
+    {
+        name: "contextOverflow",
+        about: "上下文溢出 —— 上游报超长，下游触发压缩后再试",
+        prompt: "",
+        synthetic: (parts) => {
+            parts.push(
+                { type: "stream-start", warnings: [] } as LanguageModelV3StreamPart,
+                {
+                    type: "error",
+                    error: {
+                        name: "AI_APICallError",
+                        url: "https://opencode.ai/inference/go/openai/v1/chat/completions",
+                        requestBodyValues: { model: "<any>", stream: true },
+                        statusCode: 400,
+                        responseBody: JSON.stringify({
+                            error: { type: "context_length_exceeded", message: "This model's maximum context length is 1050000 tokens" },
+                        }),
+                        isRetryable: false,
+                        data: {
+                            error: {
+                                type: "context_length_exceeded",
+                                message: "This model's maximum context length is 1050000 tokens",
+                            },
+                        },
+                    },
+                } as unknown as LanguageModelV3StreamPart,
+            );
+        },
+    },
+    {
+        name: "empty",
+        about: "done 但零内容 —— 下游要显示「(空回复)」而不是挂住等",
+        prompt: "",
+        synthetic: (parts) => {
+            parts.push(
+                { type: "stream-start", warnings: [] } as LanguageModelV3StreamPart,
+                { type: "response-metadata", id: "chatcmpl-empty", modelId: "<any>", timestamp: new Date().toISOString() },
+                { type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage: { inputTokens: { total: 1 }, outputTokens: { total: 0 } } },
+            );
+        },
+    },
 ];
 
 /** 场景用的工具集（真跑时会被真实执行，所以我们只提供只读工具） */
@@ -65,9 +157,11 @@ function toolsFor(): Record<string, unknown> {
 /** 把 parts 生成 TS 源码（每个 part 一行，便于 diff） */
 function toSource(scenario: Scenario, parts: unknown[]): string {
     const lines = parts.map((p) => `    ${JSON.stringify(p)},`);
-    return `// ${scenario.name}.ts — ${scenario.about}
-// 自动生成，勿手改。重录：node tools/record-llm.mts ${toKebab(scenario.name)}
-// 录制于 ${new Date().toISOString()} · model=${process.env["DIY_TEST_LLM_MODEL"] ?? "?"}
+    return `// ${toKebab(scenario.name)}.gen.ts — ${scenario.about}
+//
+// ⚠️ **自动生成，勿手改**。文件名带 .gen 且住在 gen/ 目录 = 这个区别的唯一标记。
+// 重录：node --experimental-strip-types tools/record-llm.mts ${toKebab(scenario.name)}
+// 来源：${scenario.synthetic ? "协议形状合成（真跑不出来）" : `真模型 ${process.env["DIY_TEST_LLM_MODEL"] ?? "?"}`} · ${new Date().toISOString()}
 import type { LanguageModelV3StreamPart } from "@ai-sdk/provider";
 
 export const ${scenario.name}: LanguageModelV3StreamPart[] = [
@@ -86,6 +180,20 @@ async function record(scenario: Scenario, dry: boolean): Promise<void> {
     // 后者是 ai-sdk 的抽象层（start / start-step / text-delta …），与 MockLanguageModelV3
     // 期望的 LanguageModelV3StreamPart（stream-start / text-start / text-delta / finish …）不是同一套。
     // 录错层的话回放会抛 "Unhandled chunk type: start"（实测踩到）。
+    // 合成场景：不碰网络，直接产出协议形状
+    if (scenario.synthetic !== undefined) {
+        const parts: LanguageModelV3StreamPart[] = [];
+        scenario.synthetic(parts);
+        console.error(`  合成 ${parts.length} 个 part（真跑不出来，用协议形状）`);
+        const src = toSource(scenario, parts);
+        if (dry) { console.log(src); return; }
+        mkdirSync(FIXTURE_DIR, { recursive: true });
+        const file = join(FIXTURE_DIR, `${toKebab(scenario.name)}.gen.ts`);
+        writeFileSync(file, src, "utf-8");
+        console.error(`  ✓ ${file}`);
+        return;
+    }
+
     const abort = scenario.abortAfter === undefined ? undefined : new AbortController();
     const tools = scenario.tools
         ? Object.fromEntries(
@@ -124,7 +232,7 @@ async function record(scenario: Scenario, dry: boolean): Promise<void> {
         return;
     }
     mkdirSync(FIXTURE_DIR, { recursive: true });
-    const file = join(FIXTURE_DIR, `${toKebab(scenario.name)}.ts`);
+    const file = join(FIXTURE_DIR, `${toKebab(scenario.name)}.gen.ts`);
     writeFileSync(file, src, "utf-8");
     console.error(`  ✓ ${file}`);
 }
@@ -136,7 +244,7 @@ if (rest.length === 0 || rest[0] === "list") {
     const cfg = testLlmConfig();
     console.log(`环境：${cfg ? `✓ ${cfg.model} @ ${cfg.baseURL}` : "✗ 未配置\n" + missingEnvText()}`);
     for (const s of SCENARIOS) {
-        const file = join(FIXTURE_DIR, `${toKebab(s.name)}.ts`);
+        const file = join(FIXTURE_DIR, `${toKebab(s.name)}.gen.ts`);
         console.log(`  ${existsSync(file) ? "✓" : "·"} ${toKebab(s.name).padEnd(18)} ${s.about}`);
     }
     process.exit(0);
