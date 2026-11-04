@@ -147,6 +147,9 @@ import {
     type UsageLike,
 } from "../../shared/usage";
 import { buildDelivery, type Delivery } from "@diy-agent/context/delivery";
+// 纯 JS sha256（`@diy-agent/context/hash`）：tools 字节 hash 用得了 renderer 包的那个实现就够；
+// 不为一个观测字段把 node:crypto 拉进 main 的依赖面（与 144 的"hash 可复现"同一条约定）。
+import { sha256Hex } from "@diy-agent/context/hash";
 import { assemblyHardCapBytes } from "../../shared/context/request-preflight";
 import { estimateRequest, tighterHistoryCapBytes } from "../../shared/context/request-preflight";
 import { chatEnvelope, isEnvelopeText, userEnvelope, withNotify, type NotifyItem } from "@diy-agent/context/envelope";
@@ -5475,7 +5478,25 @@ export class LocalAgentManager {
                     ? { compactAt: this.compactStateOf(taskUri).boundary!.at }
                     : {}),
                 // `summaryText` 不再写：压缩结论现在只在 notify.kind=compact.summary（##442）。
+                // 真发 tools 的字节 hash（##519）：整段前缀失配的两种自因之一（另一种是 system 重建）。
+                toolsHash: sha256Hex(toolsJson),
+                // 网关会话 id（只对 opencode 网关有意义）：把「cacheRead=0」拆成「换会话」与「缓存没了」。
+                ...(sessionIdOf(taskUri) ? { sessionId: sessionIdOf(taskUri) } : {}),
             };
+            // 两种**我们自己造成的**整段失配，各留一行痕 —— 没有它就只能翻 reqlog 逐字节 diff 才查得出
+            // （##519 实测：一个空格改掉整段 300k 前缀，$0.045）。只出声、不阻断：改工具描述是正当开发。
+            if (prevStep?.toolsHash && prevStep.toolsHash !== step.toolsHash) {
+                console.log(
+                    `[local-agent] 工具面变更 ⇒ 本轮首步整段失配（tools 排在 system 之前）：${taskUri} ` +
+                        `${prevStep.toolsHash.slice(0, 8)} → ${step.toolsHash!.slice(0, 8)}`,
+                );
+            }
+            if (prevStep?.sessionId && step.sessionId && prevStep.sessionId !== step.sessionId) {
+                console.warn(
+                    `[local-agent] 网关会话换了一条（跨会话不共享前缀缓存）：${taskUri} ` +
+                        `${prevStep.sessionId} → ${step.sessionId}`,
+                );
+            }
             appendStep(stepsFile(taskUri), step);
             this.compactStateOf(taskUri).lastStep = step;
             // 变更统计（**按项目**累计；只存变化路径 → 体积小、可长期留）。
