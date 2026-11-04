@@ -41,7 +41,7 @@ interface RawCost {
 
 interface RawModelOverride {
     readonly name?: string;
-    readonly limit?: { readonly context?: number };
+    readonly limit?: { readonly context?: number; readonly output?: number };
     readonly cost?: RawCost;
 }
 
@@ -58,7 +58,7 @@ interface RawModelYaml {
 
 interface RawSpecModel {
     readonly name?: string;
-    readonly limit?: { readonly context?: number };
+    readonly limit?: { readonly context?: number; readonly output?: number };
     readonly cost?: RawCost;
 }
 
@@ -285,6 +285,7 @@ function modelsOf(input: ProviderInput, baseURL: string, npm: string | undefined
         const spec = specModels[modelId];
         const override = overrides[modelId];
         const contextWindow = override?.limit?.context ?? spec?.limit?.context;
+        const maxOutput = override?.limit?.output ?? spec?.limit?.output;
         const cost = override?.cost !== undefined ? costOf(override.cost) : costOf(spec?.cost);
         out.push({
             providerId: input.providerId,
@@ -293,10 +294,32 @@ function modelsOf(input: ProviderInput, baseURL: string, npm: string | undefined
             baseURL,
             ...(npm === undefined ? {} : { npm }),
             ...(typeof contextWindow === "number" ? { contextWindow } : {}),
+            ...(typeof maxOutput === "number" ? { maxOutputTokens: maxOutput } : {}),
             ...(cost === undefined ? {} : { cost }),
         });
     }
     return out;
+}
+
+/**
+ * 生效输出上限：模型给了**正值**就用，否则回退 `fallback`。**保证返回 >= 1**。
+ *
+ * 为什么必须有这层：`streamText({ maxOutputTokens })` 传 0 / 负数会被 SDK 直接拒
+ * （"maxOutputTokens must be >= 1"，##184 实测）。而真实数据里"上限未知"是常态 ——
+ * models.dev 有时只给 context_length 不给 limit.output，`providers.custom.yaml` 也可能漏写。
+ * 那时绝不能把 undefined 顺手当 0 发下去（静默 500 或直接拒），必须回退到场景缺省。
+ *
+ * 语义区分（三者不同，别混）：
+ *   undefined  = 模型没声明上限
+ *   0 / 负数   = 上游给了个非法值（当"没声明"处理，回退）
+ *   >= 1       = 正常
+ */
+export function effectiveMaxOutputTokens(
+    entry: Pick<ModelCatalogEntry, "maxOutputTokens"> | undefined,
+    fallback: number,
+): number {
+    const n = entry?.maxOutputTokens;
+    return typeof n === "number" && Number.isFinite(n) && n >= 1 ? Math.floor(n) : Math.floor(Math.max(1, fallback));
 }
 
 function costOf(raw: RawCost | undefined): ModelCatalogCost | undefined {
