@@ -118,26 +118,39 @@ node --experimental-strip-types tools/record-llm.mts text-only --dry   # 只看�
 
 所以测「工具失败」时，fixture 给调用，测试自己让工具抛错 —— 这才是被测行为。
 
-### 10 个必录场景
+### 场景清单（错误场景必须来自真实数据）
 
-| 场景 | 文件 | 覆盖 |
-|---|---|---|
-| 场景 | 文件 | 来源 | 覆盖 |
-|---|---|---|---|
-| 纯文本 | `text-only.gen.ts` | 真模型 | 基础链路 |
-| 思考流 | `think.gen.ts` | 真模型 | reasoning 块收/展 |
-| 工具成功 | `tool-ok.gen.ts` | 真模型 | tool-call 配对、状态点 |
-| 工具失败 | `tool-error.gen.ts` | 真模型 | 错误块、不崩 |
-| 多步工具 | `tool-multi-step.gen.ts` | 真模型 | step 边界 |
-| 用户中断 | `abort.gen.ts` | 真模型 | AbortError 分支 |
-| 模型不可用 | `model-unavailable.gen.ts` | **合成** | 404 / `model_coming_soon` |
-| 限流 | `rate-limit.gen.ts` | **合成** | 429 + `isRetryable` |
-| 上下文溢出 | `context-overflow.gen.ts` | **合成** | 压缩触发 |
-| 空响应 | `empty.gen.ts` | **合成** | done 但零内容 |
+**全量扫描 `~/.diy/log/network/`（16 个文件 / 2.5G / 32478 条 LLM 请求）的结论：
+只有 200 / 400 / 429 三种状态码，没有 5xx、没有 404。**
 
-**为什么后四个是合成的**：真跑不出来 —— 限流要运气、模型下架要等、上下文溢出发一次烧几十万 token、
-空回复无法稳定复现。合成物**仍是同一套协议形状**（`LanguageModelV3StreamPart`），
-只是来源不同；生成源码的注释里会写明 `来源：协议形状合成（真跑不出来）`。
+| 场景 | 文件 | 来源 | 出现次数 | 覆盖 |
+|---|---|---|---|---|
+| 纯文本 | `text-only.gen.ts` | 真模型 | — | 基础链路 |
+| 思考流 | `think.gen.ts` | 真模型 | — | reasoning 块收/展 |
+| 工具成功 | `tool-ok.gen.ts` | 真模型 | — | tool-call 配对、状态点 |
+| 工具失败 | `tool-error.gen.ts` | 真模型 | — | 错误块、不崩 |
+| 多步工具 | `tool-multi-step.gen.ts` | 真模型 | — | step 边界 |
+| 用户中断 | `abort.gen.ts` | 真模型 | — | AbortError 分支 |
+| 上游 endpoint 不可用 | `endpoint-unavailable.gen.ts` | **真实样本** | **21×** | 429 `server_error` · 退避重试 |
+| reasoning 未回传 | `reasoning-not-passed.gen.ts` | **真实样本** | **15×** | 400 `invalid_request_error` · **不可重试** |
+| 上游模型临时不可用 | `rate-limit.gen.ts` | **真实样本** | **3×** | 429 `rate_limit_error` · 短暂退避 |
+
+### ⚠️ 一条硬规矩：错误场景必须来自真实数据
+
+我最初按「常见错误」凭空合成了 `context_length_exceeded` 和 `model_coming_soon`，
+**这两个在 32478 条真实请求里一次都没发生过**，已删除。
+
+> **编造场景比没有场景更坏** —— 它会让下游为不存在的情况写防御代码，
+> 而真正的 bug（`reasoning_content` 必须回传）反而没有 fixture 覆盖。
+
+**新增错误场景的流程**：
+
+```bash
+# 1. 先在真实日志里找
+grep -c '"status":429' ~/.diy/log/network/*.jsonl
+# 2. 有 → 提取 resBody.head 作为样本，注释里写明出现次数
+# 3. 没有 → 不录，等它真的发生（或先写 issue 观察）
+```
 
 ### 三条纪律
 

@@ -50,10 +50,20 @@ const SCENARIOS: Scenario[] = [
     { name: "toolMultiStep", about: "连续两次工具调用（step 边界）", prompt: "先读 README.md 第一行，再读 package.json 的 name 字段，最后汇总。", tools: true },
     { name: "abort", about: "流到一半被中断（下游据此进 aborted 分支）", prompt: "写一段 300 字的说明文，讲讲什么是分子料理。", abortAfter: 3 },
 
-    // ── 下面四个**真跑不出来**，用协议形状合成（见 synthetic 字段）──
+    // ── 错误场景：**从 32478 条历史真实请求里提取**（~/.diy/log/network/，2.5G）──
+    //
+    // 全量扫描结果：只有 200 / 400 / 429 三种状态码，没有 5xx、没有 404。
+    // 真实错误就三类，下面三份按「出现次数」和「业务重要性」选中：
+    //   21× 429 server_error            上游 endpoint 整体不可用
+    //   15× 400 invalid_request_error   thinking 模式的 reasoning_content 必须回传（真 bug）
+    //    3× 429 rate_limit_error        上游临时不可用
+    //
+    // ⚠️ 早先我按「常见错误」凭空合成了 context_length_exceeded / model_coming_soon —— 
+    //    这两个**在真实数据里一次都没发生过**，已删除（编造场景比没有场景更坏：
+    //    它会让下游为不存在的情况写防御代码）。
     {
-        name: "modelUnavailable",
-        about: "上游 404 model_coming_soon —— 下游要停工 + 顶出提示条，不换模型硬试",
+        name: "endpointUnavailable",
+        about: "429 server_error · 上游 endpoint 整体不可用（真实 21 次）—— 下游要退避重试",
         prompt: "",
         synthetic: (parts) => {
             parts.push(
@@ -63,42 +73,21 @@ const SCENARIOS: Scenario[] = [
                     error: {
                         name: "AI_APICallError",
                         url: "https://opencode.ai/inference/go/openai/v1/chat/completions",
-                        requestBodyValues: { model: "<unavailable>", stream: true },
-                        statusCode: 404,
-                        responseBody: JSON.stringify({ error: { type: "model_coming_soon", message: "model_coming_soon" } }),
-                        isRetryable: false,
-                        data: { error: { type: "model_coming_soon", message: "model_coming_soon" } },
-                    },
-                } as unknown as LanguageModelV3StreamPart,
-            );
-        },
-    },
-    {
-        name: "rateLimit",
-        about: "上游 429 限流 —— 下游要退避重试，不是当成永久失败",
-        prompt: "",
-        synthetic: (parts) => {
-            parts.push(
-                { type: "stream-start", warnings: [] } as LanguageModelV3StreamPart,
-                {
-                    type: "error",
-                    error: {
-                        name: "AI_APICallError",
-                        url: "https://opencode.ai/inference/go/openai/v1/chat/completions",
-                        requestBodyValues: { model: "<any>", stream: true },
+                        requestBodyValues: { model: "deepseek-v4.1-flash", stream: true },
                         statusCode: 429,
-                        responseHeaders: { "retry-after": "2" },
-                        responseBody: JSON.stringify({ error: { type: "rate_limit_exceeded", message: "Too many requests" } }),
+                        responseBody: JSON.stringify({
+                            error: { type: "server_error", message: "Upstream request failed: Endpoint is unavailable." },
+                        }),
                         isRetryable: true,
-                        data: { error: { type: "rate_limit_exceeded", message: "Too many requests" } },
+                        data: { error: { type: "server_error", message: "Upstream request failed: Endpoint is unavailable." } },
                     },
                 } as unknown as LanguageModelV3StreamPart,
             );
         },
     },
     {
-        name: "contextOverflow",
-        about: "上下文溢出 —— 上游报超长，下游触发压缩后再试",
+        name: "reasoningNotPassed",
+        about: "400 invalid_request_error · thinking 模式的 reasoning_content 必须回传（真实 15 次，真 bug）",
         prompt: "",
         synthetic: (parts) => {
             parts.push(
@@ -108,16 +97,24 @@ const SCENARIOS: Scenario[] = [
                     error: {
                         name: "AI_APICallError",
                         url: "https://opencode.ai/inference/go/openai/v1/chat/completions",
-                        requestBodyValues: { model: "<any>", stream: true },
+                        requestBodyValues: { model: "deepseek-v4.1-flash", stream: true },
                         statusCode: 400,
                         responseBody: JSON.stringify({
-                            error: { type: "context_length_exceeded", message: "This model's maximum context length is 1050000 tokens" },
+                            error: {
+                                param: null,
+                                type: "invalid_request_error",
+                                code: "invalid_request_error",
+                                message:
+                                    "Upstream request failed: [invalid_request_error] The `reasoning_content` in the thinking mode must be passed back to the API.",
+                            },
                         }),
+                        // 不可重试 —— 重试只会再错一次，要修的是「回传」这个逻辑
                         isRetryable: false,
                         data: {
                             error: {
-                                type: "context_length_exceeded",
-                                message: "This model's maximum context length is 1050000 tokens",
+                                type: "invalid_request_error",
+                                message:
+                                    "Upstream request failed: [invalid_request_error] The `reasoning_content` in the thinking mode must be passed back to the API.",
                             },
                         },
                     },
@@ -126,14 +123,34 @@ const SCENARIOS: Scenario[] = [
         },
     },
     {
-        name: "empty",
-        about: "done 但零内容 —— 下游要显示「(空回复)」而不是挂住等",
+        name: "rateLimit",
+        about: "429 rate_limit_error · 上游模型临时不可用（真实 3 次）—— 短暂退避后可重试",
         prompt: "",
         synthetic: (parts) => {
             parts.push(
                 { type: "stream-start", warnings: [] } as LanguageModelV3StreamPart,
-                { type: "response-metadata", id: "chatcmpl-empty", modelId: "<any>", timestamp: new Date().toISOString() },
-                { type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage: { inputTokens: { total: 1 }, outputTokens: { total: 0 } } },
+                {
+                    type: "error",
+                    error: {
+                        name: "AI_APICallError",
+                        url: "https://opencode.ai/inference/go/openai/v1/chat/completions",
+                        requestBodyValues: { model: "deepseek-v4.1-flash", stream: true },
+                        statusCode: 429,
+                        responseBody: JSON.stringify({
+                            error: {
+                                message: "Upstream model provider is temporarily unavailable. Please try again in a moment.",
+                                type: "rate_limit_error",
+                            },
+                        }),
+                        isRetryable: true,
+                        data: {
+                            error: {
+                                message: "Upstream model provider is temporarily unavailable. Please try again in a moment.",
+                                type: "rate_limit_error",
+                            },
+                        },
+                    },
+                } as unknown as LanguageModelV3StreamPart,
             );
         },
     },
