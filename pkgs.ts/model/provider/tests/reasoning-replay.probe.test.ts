@@ -1,4 +1,4 @@
-// reasoning-replay.repro.test.ts — 多步工具的第 2 步起，assistant 缺 reasoning_content ⇒ 整轮 400
+// reasoning-replay.probe.test.ts — 多步工具的第 2 步起，assistant 缺 reasoning_content ⇒ 整轮 400
 //
 // ═══════════════════════════════════════════════════════════════════════
 // ① 现象
@@ -88,7 +88,7 @@ async function captureWire(messages: ModelMessage[]): Promise<{ role: string; re
     return captured.messages;
 }
 
-describe("repro：多步会话第 N 步 400", () => {
+describe("probe：多步会话第 N 步 400", () => {
     /** 造一段真实形状的多步历史：交替「有 reasoning / 无 reasoning」共 40 步 */
     function history(steps = 40): ModelMessage[] {
         const out: ModelMessage[] = [{ role: "user", content: "把这个仓库的测试跑一遍" }];
