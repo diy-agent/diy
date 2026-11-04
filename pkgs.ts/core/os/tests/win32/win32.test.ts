@@ -12,8 +12,8 @@ import {
     pwshCandidates,
     shellCandidates,
     type Win32Deps,
-} from "../../../src/main/os/win32";
-import { formatEtime } from "../../../src/main/os/duration";
+} from "../../src/win32.js";
+import { formatEtime } from "../../src/duration.js";
 
 const CIM_ONE = JSON.stringify({
     ProcessId: 4200,

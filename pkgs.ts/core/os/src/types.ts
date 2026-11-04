@@ -9,8 +9,8 @@
 // 所以这个文件只放「两边都能满足的形状」；某一边满足不了的用 `caps` 明说
 // （调用方据此降级，而不是猜平台）。
 
-import type { OwnedProc, GroupOwner } from "../../shared/proc-scan";
-import type { ConnectionInfo } from "../../shared/process-health";
+import type { OwnedProc, GroupOwner } from "./proc-scan.js";
+import type { ConnectionInfo } from "./process-health.js";
 
 /**
  * 一次 shell 能力探测的结果（bash / pwsh 是**两种能力**，语法与退出码语义都不同）。

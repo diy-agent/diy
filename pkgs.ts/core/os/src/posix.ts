@@ -4,11 +4,11 @@
 // 这些系统假设的地方（见 os/types.ts 头注）。外部只拿归一化后的数据。
 
 import { execFile, execFileSync } from "node:child_process";
-import type { ConnectionInfo } from "../../shared/process-health";
-import { selectOwnedProcs } from "../../shared/proc-scan";
-import { parseEtime } from "./duration";
-import { aggregateTree } from "./tree";
-import { registeredLive } from "./live";
+import type { ConnectionInfo } from "./process-health.js";
+import { selectOwnedProcs } from "./proc-scan.js";
+import { parseEtime } from "./duration.js";
+import { aggregateTree } from "./tree.js";
+import { registeredLive } from "./live.js";
 import type {
     GpuInfo,
     OsStrategy,
@@ -16,9 +16,9 @@ import type {
     ProcessRow,
     ProcessTree,
     ShellSpec,
-} from "./types";
+} from "./types.js";
 
-export { parseEtime } from "./duration";
+export { parseEtime } from "./duration.js";
 
 /** 注入点：单测喂固定文本夹具，不真跑系统命令。 */
 export interface PosixDeps {

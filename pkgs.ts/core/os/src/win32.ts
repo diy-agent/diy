@@ -14,16 +14,16 @@
 
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { formatEtime } from "./duration";
-import { aggregateTree } from "./tree";
-import { selectOwnedProcs } from "../../shared/proc-scan";
-import { registeredLive } from "./live";
+import { formatEtime } from "./duration.js";
+import { aggregateTree } from "./tree.js";
+import { selectOwnedProcs } from "./proc-scan.js";
+import { registeredLive } from "./live.js";
 import type {
     GpuInfo,
     OsStrategy,
     ProcessRow,
     ShellSpec,
-} from "./types";
+} from "./types.js";
 
 /** 注入点：单测喂固定 JSON 夹具 / 假 shell 探测，不真跑 PowerShell。 */
 export interface Win32Deps {

@@ -3,7 +3,7 @@
 // 非法值必须 warn 后回落平台事实 —— 模块顶层抛错会连报错 UI 都起不来。
 
 import { describe, expect, it } from "vitest";
-import { osKindOf } from "../../src/main/os/index";
+import { osKindOf } from "../src/index.js";
 
 describe("osKindOf", () => {
     it("合法值覆盖平台事实", () => {

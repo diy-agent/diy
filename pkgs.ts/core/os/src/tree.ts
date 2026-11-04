@@ -4,7 +4,7 @@
 // 放在这里的原因：POSIX 与 Windows 的**取数**方式不同，但「从全表算后代/CPU 和」是同一套逻辑；
 // 留在任一策略文件里都会让另一边复制一份。
 
-import type { ProcessTree } from "./types";
+import type { ProcessTree } from "./types.js";
 
 export interface TreeNode {
     pid: number;

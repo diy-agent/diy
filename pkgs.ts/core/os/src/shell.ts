@@ -7,8 +7,8 @@
 // 那是工具语义，任何宿主（bot / diy-app）都该用同一份。本文件只留"看平台/看安装位置"的那一半，
 // 并原样再导出，免得调用方各记一套 import。
 
-import { os } from "./index";
-import type { ShellSpec } from "./types";
+import { os } from "./index.js";
+import type { ShellSpec } from "./types.js";
 
 export { buildInvocation, noShellHint, shellToolName } from "@diy-agent/tools";
 export type { Invocation } from "@diy-agent/tools";

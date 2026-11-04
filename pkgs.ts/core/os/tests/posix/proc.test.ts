@@ -19,7 +19,7 @@ import {
     parseProcessTree,
     parseTopCpu,
     type PosixDeps,
-} from "../../../src/main/os/posix";
+} from "../../src/posix.js";
 
 const TOP_L2 = `Processes: 900 total, 3 running, 897 sleeping, 4500 threads
 2026/10/22 09:12:01

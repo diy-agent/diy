@@ -2,8 +2,8 @@
 // 🎯 shell 命令拼装（R8）：pwsh 必须透传退出码；多行走 -EncodedCommand。
 
 import { describe, expect, it } from "vitest";
-import { buildInvocation } from "../../src/main/os/shell";
-import type { ShellSpec } from "../../src/main/os";
+import { buildInvocation } from "../src/index.js";
+import type { ShellSpec } from "../src/index.js";
 
 const bash: ShellSpec = { kind: "bash", file: "/bin/bash", label: "bash", missing: false, tried: [] };
 const pwsh: ShellSpec = { kind: "pwsh", file: "pwsh.exe", label: "pwsh", missing: false, tried: [] };
