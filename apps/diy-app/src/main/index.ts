@@ -320,15 +320,18 @@ function createWindow(): { binding: ServerBinding; ipcTransport: import("@diy-ag
   // ── 渲染进程 console 捕获 ──
   // renderer 是独立上下文，未捕获异常 / console.error 不会进主进程诊断日志。
   // 挂 console-message 只收 error/warning 级（节流 500ms），转写到 main.log。
+  //
+  // Electron 43 起旧签名 `(event, level, msg, line, sourceId)` 已废弃（启动就打一行 deprecated），
+  // 改成单个事件对象：level 也从数字 0~3 变成字符串 `info|warning|error|debug`。
+  // 判据不变：只留 warning / error（verbose/info/debug 进日志只会淹掉真问题）。
   let _lastRendererLog = 0;
-  mainWindow.webContents.on("console-message", (_ev, level, msg, line, sourceId) => {
-    // level: 0=verbose 1=info 2=warning 3=error
-    if (level < 2) return;
+  mainWindow.webContents.on("console-message", (details) => {
+    if (details.level !== "warning" && details.level !== "error") return;
     const now = Date.now();
     if (now - _lastRendererLog < 500) return; // 节流：避免洪水
     _lastRendererLog = now;
-    const tag = level === 3 ? "ERROR" : "WARN";
-    console.error(`[renderer:${tag}] ${msg} (${sourceId}:${line})`);
+    const tag = details.level === "error" ? "ERROR" : "WARN";
+    console.error(`[renderer:${tag}] ${details.message} (${details.sourceId}:${details.lineNumber})`);
   });
 
   // 渲染进程崩溃/无响应诊断（render-process-gone 已在 crash-reporting 挂了，
