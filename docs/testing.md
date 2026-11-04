@@ -1,178 +1,132 @@
 # 测试分级与命名规范
 
-> 结论先行：**不测真模型**。凡是有 LLM 参与的功能，一律用**录制的真实事件流**回放
-> （黄金测试）。真模型只在「模型本身可用性核对」时出现，见 `docs/model-testing.md`。
-
-## 为什么不能用真模型
-
-| 问题 | 后果 |
-|---|---|
-| 非确定性 | 同一用例今天绿明天红，CI 不可信 |
-| 成本 | 每次 CI 都烧钱 |
-| 速度 | 一次流式响应 5–30s，几百个用例跑不完 |
-| 网络 | 断网 / 限流 / 模型下架 → 与代码无关的红 |
-
-真模型唯一该出现的地方：**核对某个模型能不能用**（发一条、看流式和工具是否都通），
-这是一次性人工动作，写成文档（`docs/model-testing.md`），不是自动化测试。
+> 两条结论先行：
+> 1. **测试是二维的** —— 「层级」（测多大范围）× 「手法」（用什么冻结不确定性）。
+>    DOM 测试 = 单元层 + happy-dom 环境，不是独立层级；黄金测试 = 手法，不是层级。
+> 2. **不测真模型**。有 LLM 参与的功能一律**回放录制的事件流**（黄金 fixture）。
+>    真模型只在「模型可用性核对」时出现，见 `docs/model-testing.md`。
 
 ---
 
-## 五层分工
+## 维度一：层级（测多大范围）
 
-```
-        ▲ 少  慢  贵
-        │
-   ⑤ E2E（CDP 真点击）            ~10 条 / app
-   ④ 意图（CLI 驱动真链路）        ~50 条 / app
-   ③ 黄金（LLM 事件流回放）        ~10 条 / 每个有 LLM 的包
-   ② DOM（happy-dom 渲染）         ~30 条 / UI 包
-   ① 单元（纯逻辑）                 ~200 条 / 包
-        │
-        ▼ 多  快  便宜
-```
+| 层 | 后缀 | 环境 | 测什么 |
+|---|---|---|---|
+| **单元** | `*.test.ts` / `*.dom.test.ts` | node / happy-dom | 一个模块。**DOM 测试只是换了环境的单元测试** |
+| **集成 / 意图** | `cli.intent.<主题>.test.ts` | 真 Electron + 一次性 HOME | 跨模块，一条需求从 CLI 到结果 |
+| **E2E** | `*.e2e.test.ts` | CDP | 真实进程里用户能不能点到 |
 
-### ① 单元 — `*.test.ts`，node 环境
+⚠️ `*.dom.test.ts` 是**环境标记**（happy-dom），不是层级标记 —— 它仍是单元测试。
+首行必须写 `// @vitest-environment happy-dom`。
 
-**测什么**：纯函数、状态机、数据变换、错误分支。
-**不测什么**：DOM、网络、文件系统副作用（要测就 tmpdir）。
-**写在哪**：被测文件同包 `tests/` 下，文件名与被测模块同名。
-**例子**：`pkgs.ts/model/catalog/tests/catalog.test.ts`、`tests/core/llm-cost.test.ts`
+---
 
-### ② DOM — `*.dom.test.ts`，happy-dom 环境
+## 维度二：手法（冻结不确定性的工具）
 
-**测什么**：组件渲染出的结构、class 名、事件回调、状态切换。
-**不测什么**：真实布局（happy-dom 的 `getBoundingClientRect` 恒为 0）、真实点击命中。
-**写在哪**：UI 包的 `tests/`。
-**首行必须有** `// @vitest-environment happy-dom`。
-**例子**：`chat-page/tests/block-renderers.dom.test.ts`
-
-### ③ 黄金 — `*.golden.test.ts`，node 环境
-
-**测什么**：**有 LLM 参与的功能** —— 工具调用链路、思考流、错误恢复、中断、重试。
-**怎么测**：回放录制的 `LanguageModelV3StreamPart[]`，断言**下游行为**
-（UI 收到了什么 block、状态机走到哪个状态、journal 写了什么）。
-**不测什么**：模型本身的质量（那是产品评估，不是测试）。
-**写在哪**：被测能力所在包的 `tests/`，fixture 在 `tests/fixtures/llm/`。
-**例子**：`pkgs.ts/agent/bot/tests/tool-turn.golden.test.ts`
-
-### ④ 意图 — `*.intent.test.ts`，node + Electron
-
-**测什么**：**一条需求从 CLI 到结果的真链路** —— 文件头写「需求定义 = 本文件即契约」，
-逐条编号列出判据；用例按判据编号。
-**不测什么**：内部实现细节（那是单元测试的事）。
-**写在哪**：app 级 `tests/`，命名 `cli.intent.<主题>.test.ts`。
-**例子**：`apps/diy-app/tests/cli.intent.llm-cost.test.ts`
-
-**意图测试与单元测试的分工**（diy-app 已建立的约定，值得沿用）：
-
-| | 单元 | 意图 |
+| 手法 | 冻结什么 | 在哪用 |
 |---|---|---|
-| 文件头 | 说明测什么函数 | **需求定义，逐条判据** |
-| 依赖 | 纯内存 | 一次性 HOME + 真 Electron |
-| 断言 | 输入输出 | 用户可见的结果（文件变了 / CLI 退出码 / UI 出现某元素）|
-| 失败含义 | 实现错了 | **需求没被满足** |
+| stub / fake | 依赖对象 | 任意层 |
+| **clock mock** | 时间 | 任意层 |
+| **golden（录制回放）** | **LLM 事件流、HTTP 响应、协议报文** | 任意层 |
+| snapshot | 渲染结构、提示词 | 单元 / DOM |
 
-### ⑤ E2E — `*.e2e.test.ts`，CDP
+**黄金测试和 clock mock 是同一个位置的东西** —— 都是「把某个非确定来源拍平成可重放的 fixture」。
 
-**测什么**：「装起来能不能真用」—— 按钮点得动、面板打得开、填完能提交。
-**怎么测**：`@diy-agent/ui-testing` 的 `Driver`（`Input.dispatchMouseEvent`，不是 `element.click()`）。
-**不测什么**：样式细节、边界态（那是 DOM 层）。
-**写在哪**：app 级 `tests/e2e/`，默认不跑（`npm run test:e2e`）。
-**例子**：`apps/chat/tests/e2e/bot-create.e2e.test.ts`
+### 矩阵：同一份 fixture 能被四层复用
 
----
-
-## 命名规范
-
-```
-<主题>.test.ts           ① 单元
-<主题>.dom.test.ts       ② DOM
-<主题>.golden.test.ts    ③ 黄金（LLM 回放）
-cli.intent.<主题>.test.ts ④ 意图
-<主题>.e2e.test.ts       ⑤ E2E
-```
-
-**目录**：
-
-```
-pkgs.ts/<域>/<包>/tests/
-├── *.test.ts              ①
-├── *.dom.test.ts          ②
-├── *.golden.test.ts       ③
-└── fixtures/
-    ├── models.ts          模型元数据（不是事件流）
-    └── llm/               ③ 的录制事件流，一场景一个文件
-        ├── text-only.jsonl
-        ├── tool-call.jsonl
-        └── ...
-
-apps/<app>/tests/
-├── *.test.ts              ① 装配 / 架构守卫
-├── cli.intent.<主题>.test.ts  ④
-└── e2e/
-    └── *.e2e.test.ts      ⑤
-```
+| | 真依赖 | stub | **golden 回放** | clock mock |
+|---|---|---|---|---|
+| 单元 | 纯函数直接测 | 注入假 store | `toBlocks(fixture.textOnly)` | 测超时逻辑 |
+| DOM | 测渲染 | 假 gateway | `replay(x).asModel()` → 断言渲染出黄点 | 测「思考中」延时 |
+| 意图 | 真 CLI + 真文件 | — | 回放 abort → 断言 journal 写 `aborted{source}` | 测退避窗口 |
+| E2E | 真点击 | — | 回放后断言界面真的变了 | — |
 
 ---
 
-## 黄金测试：录制与回放
+## 黄金测试：用环境变量装配真模型
 
-### 场景清单（每个都要有一份录制）
+### 唯一入口
 
-| 场景 | 文件 | 覆盖什么 |
-|---|---|---|
-| 纯文本 | `text-only.jsonl` | 最基础链路 |
-| 思考流 | `think.jsonl` | reasoning 块收/展、折叠 |
-| 工具调用成功 | `tool-ok.jsonl` | tool-call → tool-result 配对、状态点变色 |
-| 工具调用失败 | `tool-error.jsonl` | 错误块渲染、不崩 |
-| 多步工具 | `tool-multi-step.jsonl` | 连续 tool-call、step 边界 |
-| 用户中断 | `abort.jsonl` | AbortError 分支、写 `aborted{source}` |
-| 模型不可用 | `model-unavailable.jsonl` | `model_coming_soon` / 404 / 401 |
-| 限流 | `rate-limit.jsonl` | 429 + 重试/退避 |
-| 上下文溢出 | `context-overflow.jsonl` | 压缩触发、摘要回填 |
-| 空响应 | `empty.jsonl` | done 但零内容 |
+```bash
+export DIY_TEST_LLM_BASE_URL="https://opencode.ai/inference/go/openai/v1"
+export DIY_TEST_LLM_KEY="$OPENCODE_API_KEY"
+export DIY_TEST_LLM_MODEL="deepseek-v4.1-flash"
+```
 
-### 录制方式
+**测试代码只认这三个变量，不读数据根、不用 bot 配置。**
 
-**来源一（推荐）：生产流量日志**
-
-`$DIY_HOME/local/<taskUri>/<session>/llm.jsonl` 已经在记每条消息（含 tool-call 块）。
-它比事件流粗一档（消息级），但**保留了真实的 tool-call id / 时序 / 错误文本**。
-
-**来源二：一次性真跑 + 抓流**
-
-需要精确的 `LanguageModelV3StreamPart[]` 时，用包装过的 model 账号跑一次：
+理由：bot 配置是**运行时状态**（会被 UI 改、被 seed 覆盖、随版本迁移），
+拿它当测试输入 ⇒ 测试结果取决于「本机当前怎么配的」。env 是**测试自己的输入**。
 
 ```ts
-// tools/record-llm.mts（待建）
-const parts: LanguageModelV3StreamPart[] = [];
-const recording = new RecordingModel(realModel, (p) => parts.push(p));
-await runScenario(recording, scenario);
-writeFileSync(`fixtures/llm/${scenario}.jsonl`, parts.map((p) => JSON.stringify(p)).join("\n"));
+import { testLlm, testLlmConfig } from "@diy-agent/test-llm";
+
+if (!testLlmConfig()) return it.skip(missingEnvText());  // 缺 env 跳过，不变红
+const { model } = testLlm();
 ```
 
-### 回放方式
+`testLlm()` 会自动给 opencode.ai 加 `x-opencode-session` 头（否则 400 `MissingSessionID`），
+额外头用 `DIY_TEST_LLM_HEADERS='{"k":"v"}'`。
 
-```ts
-// tests/helpers/replay-model.ts（待建）
-import { readFileSync } from "node:fs";
-import { MockLanguageModelV3 } from "ai/test";
+### fixture 是源码，不是数据文件
 
-/** 回放一份录制的流；支持按 index 重放（同一 fixture 多次调用得到相同序列） */
-export function replayModel(scenario: string): LanguageModel {
-    const parts = readFileSync(`tests/fixtures/llm/${scenario}.jsonl`, "utf-8")
-        .split("\n").filter(Boolean).map((l) => JSON.parse(l));
-    return new MockLanguageModelV3({
-        doStream: async () => ({ stream: new ReadableStream({ start: (c) => { for (const p of parts) c.enqueue(p); c.close(); } }) }),
-    });
-}
 ```
+pkgs.ts/test/llm/tests/fixtures/llm/
+├── index.ts            场景清单
+├── text-only.ts        export const textOnly: LanguageModelV3StreamPart[] = [...]
+├── tool-ok.ts
+├── tool-error.ts
+└── abort.ts
+```
+
+| | 外部 jsonl | **代码内 .ts** |
+|---|---|---|
+| 协议变了 | 静默失效 | **编译报错** |
+| 存储版本变了 | 读不出来 | **完全无关**（不读任何数据根） |
+| review | 一大段 JSON diff | 带类型的结构 diff |
+
+### 录制
+
+```bash
+node --experimental-strip-types tools/record-llm.mts list        # 看哪些已录
+node --experimental-strip-types tools/record-llm.mts tool-ok     # 录一个，覆盖写 .ts
+node --experimental-strip-types tools/record-llm.mts text-only --dry   # 只看不写
+```
+
+**录制必须走 provider 层**（`model.doStream()` 的原始 part），不能录 `streamText().fullStream`
+—— 后者是 ai-sdk 抽象层（`start` / `start-step`），与 `MockLanguageModelV3` 期望的
+`LanguageModelV3StreamPart`（`stream-start` / `text-start` / `finish`）**不是同一套**，
+录错层回放会抛 `Unhandled chunk type: start`（实测踩到）。
+
+### 一个关键分工
+
+**provider 层录制只含模型输出，不含工具执行结果。**
+
+- fixture 里：`tool-call`（模型给的 toolCallId + 参数）
+- 没有：`tool-result`（那是**我们的代码**执行出来的）
+
+所以测「工具失败」时，fixture 给调用，测试自己让工具抛错 —— 这才是被测行为。
+
+### 10 个必录场景
+
+| 场景 | 文件 | 覆盖 |
+|---|---|---|
+| 纯文本 | `text-only.ts` | 基础链路 |
+| 思考流 | `think.ts` | reasoning 块收/展 |
+| 工具成功 | `tool-ok.ts` | tool-call 配对、状态点 |
+| 工具失败 | `tool-error.ts` | 错误块、不崩 |
+| 多步工具 | `tool-multi-step.ts` | step 边界 |
+| 用户中断 | `abort.ts` | AbortError 分支 |
+| 模型不可用 | `model-unavailable.ts` | 404 / 401 / `model_coming_soon` |
+| 限流 | `rate-limit.ts` | 429 + 退避 |
+| 上下文溢出 | `context-overflow.ts` | 压缩触发 |
+| 空响应 | `empty.ts` | done 但零内容 |
 
 ### 三条纪律
 
-1. **fixture 里有真实 API key / 用户内容的部分必须脱敏** —— 录制后过一遍，把 key 换成 `$REDACTED`。
-2. **fixture 要跟着协议走** —— `LanguageModelV3StreamPart` 的类型变了就重录，别手改。
-3. **一个 fixture 只演一件事** —— 要测「工具成功后再失败」，录第三份 `tool-ok-then-error.jsonl`，不要在回放器里拼。
+1. **脱敏** —— key / 用户内容换成 `$REDACTED`（录制脚本会带出 requestBodyValues）
+2. **随协议重录** —— `LanguageModelV3StreamPart` 类型变了就重录，**别手改**
+3. **一 fixture 一事** —— 要测「成功后再失败」，录第三份，不要在回放器里拼
 
 ---
 
@@ -180,42 +134,68 @@ export function replayModel(scenario: string): LanguageModel {
 
 ```
 这块代码有 LLM 参与吗？
-├─ 有 ──► ③ 黄金测试（录事件流回放）
+├─ 有 ──► 用 golden 回放 fixture；在哪一层取决于测多大范围
 │          └─ 想验「真发出去长什么样」？→ 不写测试，写 docs/model-testing.md
 └─ 没有
-    ├─ 是纯函数 / 状态机 ────────────► ① 单元
-    ├─ 产出 DOM 结构 ────────────────► ② DOM
-    ├─ 是「一条需求」的完整链路 ──────► ④ 意图
-    └─ 是「用户能不能点到」 ──────────► ⑤ E2E
+    ├─ 纯函数 / 状态机 ──────────────► 单元（.test.ts）
+    ├─ 产出 DOM 结构 ────────────────► 单元 + happy-dom（.dom.test.ts）
+    ├─ 是「一条需求」的完整链路 ──────► 意图（cli.intent.*.test.ts）
+    └─ 是「用户能不能点到」 ──────────► E2E（.e2e.test.ts）
 ```
 
 **别写重复的**：同一件事只在**最能暴露问题的那一层**写一次。
-例：`createBot` 的参数校验 → ①（纯逻辑）；`createBot` 写文件 → ④（真链路）；
-`+新 bot` 按钮点得动 → ⑤（CDP）。**不要三层都写一遍。**
+
+| 例子 | 该在哪层 |
+|---|---|
+| `createBot` 参数校验 | 单元 |
+| `createBot` 写文件 | 意图 |
+| 「+新 bot」按钮点得动 | E2E |
+| 收到 tool-call 后渲染黄点 | 单元 + happy-dom（用 golden fixture） |
+
+---
+
+## 目录与命名
+
+```
+pkgs.ts/<域>/<包>/tests/
+├── <主题>.test.ts              单元
+├── <主题>.dom.test.ts          单元 + happy-dom
+└── fixtures/
+    ├── models.ts               模型元数据（不是事件流）
+    └── llm/                    golden fixture（源码常量）
+
+pkgs.ts/test/llm/               测试用 LLM 能力包
+├── src/env.ts                  按 DIY_TEST_LLM_* 装配真模型
+├── src/replay.ts               把 fixture 包成 LanguageModel
+└── tests/fixtures/llm/         录制产物
+
+apps/<app>/tests/
+├── <主题>.test.ts              单元 / 装配守卫
+├── cli.intent.<主题>.test.ts   意图
+└── e2e/<主题>.e2e.test.ts      E2E（默认不跑）
+```
 
 ---
 
 ## 现状与差距（2026-11-04）
 
-| 层 | 现有 | 差距 |
+| 项 | 现有 | 差距 |
 |---|---|---|
-| ① 单元 | **438 个** `.test.ts` | 够 |
-| ② DOM | **3 个** `.dom.test.ts` | **偏少**，UI 包应各有一份 |
-| ③ 黄金 | **0 个** | **完全缺失** ← 最大空洞 |
-| ④ 意图 | **58 个** `cli.intent.*`（全在 diy-app） | 新 app（chat/web/minimal）**一条没有** |
-| ⑤ E2E | **1 个**（chat，刚加） | web / minimal 没有 |
+| 单元 `.test.ts` | **438** | 够 |
+| 单元 `.dom.test.ts` | **3** | 偏少，UI 包应各有一份 |
+| golden fixture | **3 份**（text-only / tool-ok / abort，刚建） | 还差 7 个场景 |
+| 意图 `cli.intent.*` | **58**（全在 diy-app） | 新 app 一条没有 |
+| E2E `.e2e.test.ts` | **1**（chat） | web / minimal 没有 |
 
 **最近的教训**：「+新 bot 模型列表恒为空」在 48 个绿测试下长期存活 ——
-它是 ③（有 LLM 参与）和 ⑤（真点击）的缺口，① 层再多也抓不到。
+它是「意图」和「E2E」的缺口，单元层再多也抓不到。
 
 ---
 
 ## 跑法
 
 ```bash
-./sha.sh test                    # ① ② ③（快，默认）
-npm run test:e2e                 # ⑤（要起 Electron，app 目录下）
-cd apps/chat && ./sha.sh build && npm run test:e2e   # ⑤ 前置构建
+./sha.sh test                                             # 单元（含 dom）
+cd apps/chat && ./sha.sh build && npm run test:e2e        # E2E
+node --experimental-strip-types tools/record-llm.mts list # 看 golden fixture 状态
 ```
-
-④ 意图测试跟着各自的 app 跑（`apps/diy-app` 的 vitest.config 已含）。

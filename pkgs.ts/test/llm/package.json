@@ -1,0 +1,20 @@
+{
+  "name": "@diy-agent/test-llm",
+  "version": "0.1.0",
+  "private": true,
+  "description": "测试用 LLM：按 DIY_TEST_LLM_* 环境变量装配真模型 + 录制/回放事件流（黄金 fixture 是源码，不是数据文件）",
+  "files": ["src/"],
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": { "types": "./src/index.ts", "default": "./lib/index.js" },
+    "./env": { "types": "./src/env.ts", "default": "./lib/env.js" }
+  },
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "^2.0.0",
+    "@ai-sdk/provider": "^3.0.0",
+    "ai": "^6.0.0"
+  },
+  "scripts": { "build": "tsc -p tsconfig.build.json" }
+}
