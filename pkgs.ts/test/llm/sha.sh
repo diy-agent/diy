@@ -15,7 +15,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 source "../../../sha.common.sh"
 
-clean() { run rm -rf ./build ./dist ./lib; }
+clean() { run rm -rf ./build ./dist ./lib ./node_modules/.cache/tsbuildinfo; }
 check() { typecheck; lint; }
 fix() { fmt-fix; lint-fix; }
 sync() { :; }

@@ -13,14 +13,17 @@ set -o pipefail  # default pipeline status==last command status, If set, status=
 shopt -s globstar
 ## 开启后可用排除语法：_workspaces=(~ ~/git/chen56/!(applab)/ ~/git/botsay/*/ )
 #
-# 只收**真正的 workspace**（有 package.json）：目录残留不该把整套命令拖死。
+# 只收**真正的 workspace**（有 package.json **且有 sha.sh**）：目录残留不该把整套命令拖死。
 # 实测 ##501 把 diy-dev 迁出主仓后，本地留下的 pkgs.ts/diy-dev/ 只剩 node_modules，
 # glob 仍会命中 → `./sha.sh sync` 报 "No such file or directory" → build 直接 exit 127。
+# ##512 另有一类：旧布局的包目录留下 lib/（含 npm-publish 生成的 package.json），
+# 例如 pkgs.ts/diy-rpc/lib/package.json —— 既会被当成 workspace 跑 sha.sh（不存在 → exit 127），
+# 又会被 npm 当成重复 workspace（报 EDUPLICATEWORKSPACE）。sha.sh 是 workspace 目录的标志。
 _pick_workspaces() {
   local w
   # ##512 起 pkgs.ts 分层（pkgs.ts/<组>/<包>），另有单包分组 pkgs.ts/flow、pkgs.ts/room 留在一层
   for w in pkgs.ts/*/ pkgs.ts/*/*/ apps/*/; do
-    [[ -f "$w/package.json" ]] && echo "$w"
+    [[ -f "$w/package.json" && -f "$w/sha.sh" ]] && echo "$w"
   done
 }
 shopt -s extglob
@@ -126,16 +129,18 @@ _sync_uptodate() {
     local stamp="node_modules/.diy-sync.stamp"
     [[ -f "$stamp" ]] || return 1
     local f ws
-    for f in package.json package-lock.json pkgs.ts/*/package.json pkgs.ts/*/*/package.json apps/*/package.json; do
+    for f in package.json package-lock.json; do
         [[ -e "$f" ]] || continue
         # stamp 必须比每个 manifest 都新（`-nt` = 严格更新；同秒也判「不新鲜」，保守）
         [[ "$stamp" -nt "$f" ]] || return 1
     done
+    for ws in "${_workspaces[@]}"; do
+        [[ "$stamp" -nt "$ws/package.json" ]] || return 1
+    done
     # workspace 软链齐全（包改名 / node_modules 被部分清掉时这里会漏，交给全量）
     # 名字用 sed 直接抠（不起 node：13 个包 × node 启动 ~60ms 就吃掉了整个预算）
     local name
-    for ws in pkgs.ts/*/ pkgs.ts/*/*/ apps/*/; do
-        [[ -f "$ws/package.json" ]] || continue
+    for ws in "${_workspaces[@]}"; do
         name=$(sed -n 's/^[[:space:]]*"name":[[:space:]]*"\([^"]*\)".*/\1/p' "$ws/package.json" | head -1)
         [[ -n "$name" ]] || return 1
         [[ -e "node_modules/$name" ]] || return 1

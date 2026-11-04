@@ -92,8 +92,10 @@ for (const p of projects) {
     const refs = deps
         .map((n) => nameToDir.get(n))
         .filter((d) => d && d !== p && existsSync(join(ROOT, d, "tsconfig.build.json")))
-        // references 相对**本配置文件所在目录**：分层后 `../<组>/<包>` 不一定对，一律算相对
-        .map((d) => relative(dirname(file), join(ROOT, d, "tsconfig.build.json")));
+        // references 相对**本配置文件所在目录**：分层后 `../<组>/<包>` 不一定对，一律算相对。
+        // 分隔符统一成 `/`（Windows 上 relative 会给 `..\\core\\x`，与仓库里的生成物不一致 →
+        // 每次 build 都改脏 tsconfig.build.json、check 判漂移）
+        .map((d) => relative(dirname(file), join(ROOT, d, "tsconfig.build.json")).replaceAll("\\", "/"));
 
     const current = changes.find(([f]) => f === file)?.[1] ?? readFileSync(file, "utf8");
     // 去掉旧的 references 块，再把文件尾**归一**成 "}" + 一个换行 ——
