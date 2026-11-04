@@ -29,17 +29,32 @@ export const CHAT_STYLE = `
   --md-sys-color-primary-container: light-dark(#d9e2ff, #00429b);
   --md-sys-color-on-primary-container: light-dark(#00429b, #d9e2ff);
   --md-sys-color-secondary: light-dark(#575e71, #c0c6dc);
+  --md-sys-color-on-secondary: light-dark(#ffffff, #293042);
   --md-sys-color-secondary-container: light-dark(#dce2f9, #404659);
   --md-sys-color-on-secondary-container: light-dark(#404659, #dce2f9);
+  --md-sys-color-tertiary: light-dark(#725572, #e0bbde);
+  --md-sys-color-on-tertiary: light-dark(#ffffff, #412742);
+  --md-sys-color-tertiary-container: light-dark(#fdd7fa, #593d5a);
+  --md-sys-color-on-tertiary-container: light-dark(#593d5a, #fdd7fa);
   --md-sys-color-error: light-dark(#ba1a1a, #ffb4ab);
   --md-sys-color-on-error: light-dark(#ffffff, #690005);
   --md-sys-color-error-container: light-dark(#ffdad6, #93000a);
+  --md-sys-color-on-error-container: light-dark(#93000a, #ffdad6);
+  --md-sys-color-surface: light-dark(#fbf8fd, #121316);
+  --md-sys-color-surface-dim: light-dark(#dbd9dd, #121316);
+  --md-sys-color-surface-bright: light-dark(#fbf8fd, #38393c);
+  --md-sys-color-surface-container-lowest: light-dark(#ffffff, #0d0e11);
+  --md-sys-color-surface-container-low: light-dark(#f5f3f7, #1b1b1f);
+  --md-sys-color-surface-container: light-dark(#efedf1, #1f1f23);
+  --md-sys-color-surface-container-high: light-dark(#e9e7ec, #292a2d);
+  --md-sys-color-surface-container-highest: light-dark(#e3e2e6, #343438);
   --md-sys-color-on-surface: light-dark(#1b1b1f, #e3e2e6);
   --md-sys-color-on-surface-variant: light-dark(#44464f, #c5c6d0);
   --md-sys-color-outline: light-dark(#757780, #8f9099);
   --md-sys-color-outline-variant: light-dark(#c5c6d0, #44464f);
   --md-sys-color-inverse-surface: light-dark(#303034, #e3e2e6);
   --md-sys-color-inverse-on-surface: light-dark(#f2f0f4, #303034);
+  --md-sys-color-inverse-primary: light-dark(#b0c6ff, #1f5abe);
 
   /* chat 自己的语义别名 —— 只指向 M3 角色，不存颜色值 */
   --chat-bg: var(--md-sys-color-surface);
@@ -61,7 +76,7 @@ export const CHAT_STYLE = `
 .chat-bot-btn { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 13px; border: 0; border-left: 3px solid transparent; background: transparent; font: inherit; text-align: left; cursor: pointer; white-space: nowrap; }
 .chat-bot-btn:hover { background: var(--md-sys-color-surface-container-high); }
 .chat-bot[data-active="true"] .chat-bot-btn { background: var(--chat-hi); border-left-color: var(--chat-accent); }
-.chat-bot-avatar { flex: none; width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; color: var(--md-sys-color-surface); font-weight: 600; font-size: 15px; }
+.chat-bot-avatar { flex: none; width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; color: var(--md-sys-color-on-primary); font-weight: 600; font-size: 15px; }
 .chat-bot-text { min-width: 0; opacity: 0; transition: opacity .12s; }
 .chat-bots:hover .chat-bot-text, .chat-bots[data-open="true"] .chat-bot-text { opacity: 1; }
 .chat-bot-name { display: block; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
@@ -78,7 +93,7 @@ export const CHAT_STYLE = `
 .chat-card-row b { font-weight: 500; color: var(--chat-fg); }
 .chat-card-acts { display: flex; gap: 8px; margin-top: 12px; }
 .chat-card-acts button { flex: 1; padding: 6px 0; border: 1px solid var(--md-sys-color-outline); border-radius: 8px; background: var(--md-sys-color-surface); font: inherit; font-size: 12px; cursor: pointer; }
-.chat-card-acts button.chat-primary { background: var(--chat-accent); border-color: var(--chat-accent); color: var(--md-sys-color-surface); }
+.chat-card-acts button.chat-primary { background: var(--chat-accent); border-color: var(--chat-accent); color: var(--md-sys-color-on-primary); }
 
 /* ── 主区：消息流（顶天，没有顶部横幅） ── */
 .chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
@@ -98,7 +113,7 @@ export const CHAT_STYLE = `
 .chat-viewset-body { flex: 1; min-height: 0; overflow: auto; padding: 14px; font-size: 13px; }
 .chat-viewset-actions { display: flex; gap: 8px; margin-top: 16px; }
 .chat-viewset-actions button { padding: 6px 14px; border: 1px solid var(--md-sys-color-outline); border-radius: 8px; background: var(--md-sys-color-surface); font: inherit; font-size: 13px; cursor: pointer; }
-.chat-viewset-actions button.chat-primary { background: var(--chat-accent); border-color: var(--chat-accent); color: var(--md-sys-color-surface); }
+.chat-viewset-actions button.chat-primary { background: var(--chat-accent); border-color: var(--chat-accent); color: var(--md-sys-color-on-primary); }
 .chat-viewset-actions button.chat-danger { color: var(--md-sys-color-error); border-color: var(--md-sys-color-error-container); }
 .chat-viewset-note { margin-top: 12px; font-size: 12px; color: var(--chat-dim); }
 /* panel 里的表单：一列（比覆盖式面板窄） */
@@ -140,9 +155,9 @@ export const CHAT_STYLE = `
 .chat-metrics .chat-sep { color: #ddd; }
 .chat-metrics .chat-warn { color: #d97706; }
 .chat-composer { display: flex; gap: 8px; }
-.chat-input { flex: 1; padding: 9px 12px; border: 1px solid var(--md-sys-color-outline-variant); border-radius: 8px; font: inherit; }
-.chat-input:focus { outline: 2px solid #b9c9e4; outline-offset: 0; }
-.chat-send { appearance: none; border: 0; border-radius: 8px; padding: 9px 18px; background: var(--chat-accent); color: var(--md-sys-color-surface); font: inherit; cursor: pointer; }
+.chat-input { flex: 1; padding: 9px 12px; border: 1px solid var(--md-sys-color-outline); border-radius: 8px; font: inherit; }
+.chat-input:focus { outline: 2px solid var(--md-sys-color-primary); outline-offset: 0; }
+.chat-send { appearance: none; border: 0; border-radius: 8px; padding: 9px 18px; background: var(--chat-accent); color: var(--md-sys-color-on-primary); font: inherit; cursor: pointer; }
 .chat-send:disabled { background: #a9b7cc; cursor: default; }
 
 /* ── 覆盖消息区的面板：配置 / 首启引导 ── */
@@ -155,7 +170,7 @@ export const CHAT_STYLE = `
 .chat-panel-note { margin-top: 16px; font-size: 12px; color: var(--chat-dim); }
 .chat-panel-actions { display: flex; gap: 10px; margin-top: 18px; }
 .chat-panel-actions button { padding: 7px 16px; border: 1px solid var(--md-sys-color-outline); border-radius: 8px; background: var(--md-sys-color-surface); font: inherit; font-size: 13px; cursor: pointer; }
-.chat-panel-actions button.chat-primary { background: var(--chat-accent); border-color: var(--chat-accent); color: var(--md-sys-color-surface); }
+.chat-panel-actions button.chat-primary { background: var(--chat-accent); border-color: var(--chat-accent); color: var(--md-sys-color-on-primary); }
 .chat-panel-actions button.chat-danger { color: var(--md-sys-color-error); border-color: var(--md-sys-color-error-container); }
 .chat-form { display: grid; grid-template-columns: 88px 1fr; gap: 10px 14px; max-width: 640px; align-items: start; }
 .chat-form label { color: var(--md-sys-color-on-surface-variant); padding-top: 6px; font-size: 13px; }
