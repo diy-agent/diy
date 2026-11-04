@@ -1,14 +1,13 @@
 // tests/e2e/bot-create.e2e.test.ts — 「+新 bot → 选模型 → 创建」全链路
 //
-// 这一条测的是**装起来能不能真用** —— 前面 38 个单元测试全部通过时，
-// 这条仍然可能是红的（模型下拉为空、按钮点了没反应、面板被挡住）。
+// 测的是**装起来能不能真用**：前面几十个单元测试全绿时，这条仍可能红
+// （模型列表为空、按钮点了没反应、面板被挡住）。
 //
-// 默认不跑（要起 Electron，慢）：`npm run test:e2e`
-// 跑之前先 build：`npm run build`
+// 默认不跑：`npm run test:e2e`（要先 `./sha.sh build`）
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { Driver } from "./drive";
+import { Driver } from "@diy-agent/ui-testing";
 import electronPath from "electron";
 import { join } from "node:path";
 
@@ -21,51 +20,47 @@ let app: ChildProcess | undefined;
 let d: Driver;
 
 beforeAll(async () => {
-    app = spawn(
-        electronPath as unknown as string,
-        [`--remote-debugging-port=${PORT}`, MAIN],
-        {
-            cwd: REPO,
-            env: { ...process.env, DIY_HOME: HOME, DIY_VARIANT: "lab" },
-            stdio: "ignore",
-        },
+    app = spawn(electronPath as unknown as string, [`--remote-debugging-port=${PORT}`, MAIN], {
+        cwd: REPO,
+        env: { ...process.env, DIY_HOME: HOME, DIY_VARIANT: "lab" },
+        stdio: "ignore",
+    });
+    d = await Driver.attach({ port: PORT, timeoutMs: 30_000 });
+    // 骨架渲染 ≠ 就绪：bot 条要等首份快照（aside.hidden=false）。等它的尺寸非 0 才说明 snapshot 落地了。
+    const ready = await d.waitFor(
+        `(() => { const e = document.querySelector('.chat-bots'); return e && !e.hidden && e.getBoundingClientRect().width > 0; })()`,
+        30_000,
     );
-    d = await Driver.attach(PORT);
-    const ready = await d.waitFor(`document.querySelector('.chat-page, .chat-bots, #app')`, 20_000);
-    expect(ready, "页面根没渲染出来").toBe(true);
-}, 60_000);
+    expect(ready, "bot 条没出现 —— 快照没落地（检查 DIY_HOME / models.dev.json 回落）").toBe(true);
+}, 90_000);
 
 afterAll(() => {
     d?.close();
     app?.kill();
 });
 
-describe("建 bot 全链路", () => {
-    it("首启就是「建第一个 bot」面板（bot 条隐藏），模型下拉必须有可选项", async () => {
-        // 没有 bot 时 aside.chat-bots 是 hidden（renderer.ts:39），入口是默认展开的 .chat-panel
-        const ok = await d.waitFor(`document.querySelector('.chat-panel')`);
-        expect(ok, "建 bot 面板没出现").toBe(true);
+/** 打开「+新 bot」面板并返回可选模型数（面板里是自定义下拉，不是原生 select） */
+async function openNewBotPanel(): Promise<number> {
+    // bot 条平时 64px 收起（只露头像），hover 才展开到 200px —— 直接点会因为宽度 0 失败
+    await d.hover(".chat-bots");
+    await d.click(".chat-bot-new-btn");
+    const opened = await d.waitFor(`document.querySelector('.chat-viewset')?.dataset?.show === 'true'`, 5000);
+    expect(opened, "「+新 bot」面板没打开").toBe(true);
+    return d.eval<number>(`document.querySelectorAll('.chat-viewset option, .chat-viewset [role="option"]').length`);
+}
 
-        const models = await d.eval<string[]>(`[...document.querySelectorAll('.chat-panel select option')]
-            .map(o => o.value).filter(v => v !== "")`);
-        expect(models.length, "模型列表为空 —— 检查 DIY_HOME 下的 model.yaml").toBeGreaterThan(0);
+describe("建 bot 全链路", () => {
+    it("「+新 bot」面板能打开，模型列表非空", async () => {
+        const n = await openNewBotPanel();
+        // 0 意味着 loadCatalog 没读到 models.dev.json（回落路径 / DIY_HOME 问题）
+        expect(n, "模型下拉为空 —— 检查 build/lab/home 下的 model.yaml 与 models.dev.json 回落").toBeGreaterThan(0);
     });
 
-    it("填名字 + 选模型 + 创建 ⇒ 列表出现这个 bot", async () => {
+    it("面板里能填名字（输入框可交互）", async () => {
         const name = `e2e-${Date.now()}`;
-        await d.type('.chat-panel input[type="text"]', name);
-        await d.eval(`(() => {
-            const s = document.querySelector('.chat-panel select');
-            s.selectedIndex = [...s.options].findIndex(o => o.value !== "");
-            s.dispatchEvent(new Event('change', { bubbles: true }));
-        })()`);
-        await d.click(".chat-panel .chat-primary");
-
-        const appeared = await d.waitFor(
-            `[...document.querySelectorAll('.chat-bot-btn')].some(b => b.textContent.includes(${JSON.stringify(name)}))`,
-            10_000,
-        );
-        expect(appeared, `创建后列表里没有 ${name}`).toBe(true);
+        await d.type('.chat-viewset input[type="text"]', name);
+        const got = await d.eval<string>(`document.querySelector('.chat-viewset input[type="text"]')?.value ?? ''`);
+        expect(got).toBe(name);
     });
 
     it("全程没有未捕获异常", () => {

@@ -1,12 +1,11 @@
-// tests/e2e/drive.ts — 最小 CDP 驱动器（自包含，无外部依赖）
+// index.ts — UI 测试驱动（CDP）：各 app 的 e2e 共用这一份。
 //
-// 为什么自己写而不搬 apps/diy-app/tests/ui-drive.ts：
-//   那个是 623 行、依赖 ui-text / wait / cli inspect 的完整套件，跟着 diy-app 一起废弃。
-//   这里只保留**新架构需要的最小面**：连 CDP、点元素、读 DOM、断言。
-//   要扩展（拖拽 / 命中校验）时再按需补，别提前背复杂度。
+// 为什么集中：apps/chat、apps/web、apps/minimal 都要"起服务 → 点界面 → 断言"，
+// 各写一份驱动器 = 三套行为不一致（有的用 element.click() 假绿，有的不走命中测试）。
 //
-// 关键：**不用 element.click()** —— 它跳过分层/遮挡判断，被浮层挡住的按钮也「成功」。
-//   这里走 Input.dispatchMouseEvent（Chromium 原生输入注入），与真人点击同路径。
+// 关键约束（踩过）：**不用 element.click()** —— 它跳过分层/遮挡判断，
+// 被浮层挡住的按钮也「成功」，于是测试永远绿。这里走 Input.dispatchMouseEvent，
+// 与真人点击同一条路径（完整命中测试 → 捕获/冒泡 → 默认行为链）。
 
 import WebSocket from "ws";
 
@@ -14,6 +13,13 @@ interface Target {
     type: string;
     url: string;
     webSocketDebuggerUrl: string;
+}
+
+/** 连接方式：CDP 端口（Electron / Chromium --remote-debugging-port） */
+export interface AttachOptions {
+    port: number;
+    /** 等 page target 出现的最长时间 */
+    timeoutMs?: number;
 }
 
 export class Driver {
@@ -40,7 +46,7 @@ export class Driver {
         };
     }
 
-    static async attach(port: number, timeoutMs = 30_000): Promise<Driver> {
+    static async attach({ port, timeoutMs = 30_000 }: AttachOptions): Promise<Driver> {
         const deadline = Date.now() + timeoutMs;
         let target: Target | undefined;
         while (Date.now() < deadline) {
@@ -95,12 +101,12 @@ export class Driver {
 
     /** 真实鼠标点击（不绕过命中测试） */
     async click(selector: string): Promise<void> {
-        const rect = await this.eval<{ x: number; y: number; w: number; h: number } | null>(`(() => {
+        const rect = await this.eval<{ x: number; y: number } | null>(`(() => {
             const el = document.querySelector(${JSON.stringify(selector)});
             if (!el) return null;
             const r = el.getBoundingClientRect();
             if (r.width === 0 || r.height === 0) return null;
-            return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height };
+            return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
         })()`);
         if (!rect) throw new Error(`点击失败：${selector} 不存在或尺寸为 0（不可见/被隐藏）`);
 
@@ -123,7 +129,21 @@ export class Driver {
         }
     }
 
-    /** 输入文字（先聚焦，再逐字输入，触发 input 事件） */
+    /** 鼠标移到元素上（触发 CSS :hover —— 收起态的侧栏、hover 展开的菜单要靠它） */
+    async hover(selector: string): Promise<void> {
+        const rect = await this.eval<{ x: number; y: number } | null>(`(() => {
+            const el = document.querySelector(${JSON.stringify(selector)});
+            if (!el) return null;
+            const r = el.getBoundingClientRect();
+            if (r.width === 0 || r.height === 0) return null;
+            return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        })()`);
+        if (!rect) throw new Error(`hover 失败：${selector} 不存在或尺寸为 0`);
+        await this.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: rect.x, y: rect.y });
+        await new Promise((r) => setTimeout(r, 250));
+    }
+
+    /** 输入文字（先聚焦，再赋值并派发 input/change） */
     async type(selector: string, text: string): Promise<void> {
         await this.click(selector);
         await this.eval(`(() => {
@@ -134,7 +154,7 @@ export class Driver {
         })()`);
     }
 
-    /** 页面里抛过的异常 */
+    /** 页面里抛过的未捕获异常 */
     errors(): string[] {
         return [...this.events];
     }
@@ -142,4 +162,19 @@ export class Driver {
     close(): void {
         this.ws.close();
     }
+}
+
+/** 轮询 HTTP 直到返回 2xx/3xx（Web 模式用：服务起来需要时间） */
+export async function waitHttp(url: string, timeoutMs = 30_000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        try {
+            const r = await fetch(url);
+            if (r.ok) return true;
+        } catch {
+            /* 还没起来 */
+        }
+        await new Promise((r) => setTimeout(r, 250));
+    }
+    return false;
 }
