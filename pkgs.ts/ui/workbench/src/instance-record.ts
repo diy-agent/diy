@@ -11,7 +11,7 @@
 // 生命周期：启动写 → 退出删。「退出清理不保证执行」（SIGKILL / 崩溃），读侧另有 pid 存活过滤。
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -121,6 +121,36 @@ function writeAtomic(file: string, content: string): void {
 
 export function recordPath(dir: string, pid: number): string {
     return join(dir, `${pid}.json`);
+}
+
+/** 读数据根的 `instance-id`（有问题 / 不存在 ⇒ null；不写盘） */
+function readInstanceId(home: string): string | null {
+    try {
+        const text = readFileSync(join(home, "instance-id"), "utf-8").trim();
+        return text === "" ? null : text;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * 实例 URI：`diy://<instance-id>/<app>.<launch>`（与 dev 启动器的「实例 URI」同一口径）。
+ *
+ * 为什么不只是标题：一个窗口要能回答「我是谁、命令能打给谁」——`app.launch` 区分同一 app 的不同启动
+ * 方式，`instance-id` 区分不同数据根（生产 / 各 worktree 的 lab）。instance-id 读不出来时退化成
+ * `<app>.<launch>`：宁可短一点，也不伪造一个看似合法的 id。
+ */
+export function instanceUri(options: { readonly app: string; readonly launch?: string | null; readonly diyHome?: string }): string {
+    const tail = options.launch === undefined || options.launch === null ? options.app : `${options.app}.${options.launch}`;
+    const nodeId = options.diyHome === undefined ? null : readInstanceId(options.diyHome);
+    return nodeId === null ? tail : `diy://${nodeId}/${tail}`;
+}
+
+/** 窗口标题：`<标题> — <实例 URI>`（无 app 名时原样返回，不让临时宿主也背上 URI） */
+export function instanceWindowTitle(options: { readonly title?: string; readonly app?: string; readonly launch?: string | null; readonly diyHome?: string }): string {
+    const base = options.title ?? "Workbench";
+    if (options.app === undefined) return base;
+    return `${base} — ${instanceUri({ app: options.app, launch: options.launch ?? null, diyHome: options.diyHome })}`;
 }
 
 export interface SelfRecordOptions {

@@ -14,7 +14,7 @@
 // 取进程快照（`os/` 策略）、读注册表、发探测、合并 —— 于是「规则」可单测，「网络」可注入。
 
 import { AppConfig } from "../core/app-config";
-import { homeDisplayOf } from "../core/instance-identity";
+import { findRepoRoot, homeDisplayOf } from "../core/instance-identity";
 import { cmdlineSummary, pickInstanceProcesses, type InstanceProcess } from "../core/instance-scan";
 import {
   readRecords,
@@ -43,14 +43,27 @@ const PROBE_TIMEOUT_MS = 1200;
 
 // ── 注册表生命周期（本进程 = 自己那条记录的主人） ─────────────────
 
+/**
+ * 手工启动（没有启动器注入的 `DIY_LAUNCH`）时按变体回推 launch id。
+ * 只映射 apps/diy-app/app.yaml 里真实存在的两条命令：lab → ./sha.sh lab，prod → ./sha.sh prod。
+ */
+const LAUNCH_OF_VARIANT: Record<string, string> = { lab: "lab", prod: "prod" };
+
+/** 本实例的 launch id：启动器注入优先，否则按变体回推（认不出的变体 ⇒ null）。窗口标题 / 注册表共用一份 */
+export function selfLaunch(variant: string): string | null {
+  return process.env["DIY_LAUNCH"] ?? LAUNCH_OF_VARIANT[variant] ?? null;
+}
+
 /** 启动时写自己那一条（父进程链此刻还在 —— 这是唯一的快照时机，见 registry 文件头注） */
 export function writeSelfRecord(opts: { diyHome: string; variant: string; env: string }): void {
   writeRecord(registryDir(), {
     pid: process.pid,
     app: "diy-app",
-    // 遗留 app（不在 apps/ 下，##502 第二轮起 dev 启动器不管它）—— 这两个字段留 null
-    launch: null,
-    worktree: null,
+    // dev 启动器按 (worktree, app, launch) 三元组对回静态清单：缺 launch / worktree 就永远显示「未启动」
+    //   launch：启动器拉起的直接取 DIY_LAUNCH；手工跑按变体回推（认不出的变体才 null）
+    //   worktree：从 cwd 往上找 .git（worktree 里 .git 是文件，只判存在性）
+    launch: selfLaunch(opts.variant),
+    worktree: findRepoRoot(process.cwd()),
     port: null,
     pingPort: null,
     diyHome: opts.diyHome,

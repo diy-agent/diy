@@ -17,6 +17,10 @@ export interface RunWorkbenchOptions {
     readonly rendererFile?: string;
     /** OTel 日志 source（缺省 main:chat） */
     readonly logSource?: string;
+    /** 实例注册表里的 app 短名（dev 启动器靠它认「这个 app 活着」） */
+    readonly app?: string;
+    /** launch id（app.yaml 里那条启动命令）；缺省读 DIY_LAUNCH，再缺省 lab（手工跑就是 lab） */
+    readonly launch?: string;
 }
 
 /** 起一个 workbench 窗口（生命周期挂在 app 事件上） */
@@ -44,6 +48,9 @@ export function runWorkbench(
     const here = dirname(fileURLToPath(import.meta.url));
     createWorkbench({
         title: assembly.title,
+        // 实例注册表：app 短名 + launch id 缺一不可，否则 dev 启动器里永远显示「未启动」
+        app: options.app ?? "diy-chat",
+        launch: options.launch ?? process.env["DIY_LAUNCH"] ?? "lab",
         plugins: assembly.plugins,
         preloadFile: join(here, "../preload/index.cjs"),
         rendererFile: join(here, "../renderer", options.rendererFile ?? "index.html"),

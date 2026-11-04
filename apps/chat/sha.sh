@@ -89,7 +89,8 @@ lab() {
   _ensure_electron
   build
   local d; d="$(_build_dir)"
-  local home; home="$(_repo_root)/build/$DIY_VARIANT/home"
+  # 数据根：DIY_HOME 已在环境里（dev 启动器按 app.yaml 的 `home` 注入）就用它
+  local home; home="${DIY_HOME:-$(_repo_root)/build/$DIY_VARIANT/home}"
   run mkdir -p "$home"
   echo "${info}数据根：$home${reset}"
   run env DIY_HOME="$home" DIY_VARIANT="$DIY_VARIANT" npx electron "$d/main/index.mjs" "$@"
@@ -101,7 +102,8 @@ lab:memory() {
   _ensure_electron
   build
   local d; d="$(_build_dir)"
-  local home; home="$(_repo_root)/build/$DIY_VARIANT/home"
+  # 数据根：DIY_HOME 已在环境里（dev 启动器按 app.yaml 的 `home` 注入）就用它
+  local home; home="${DIY_HOME:-$(_repo_root)/build/$DIY_VARIANT/home}"
   run mkdir -p "$home"
   echo "${info}数据根：$home（内存模式：bots / sessions 不落盘）${reset}"
   run env DIY_HOME="$home" DIY_VARIANT="$DIY_VARIANT" npx electron "$d/main-memory/index.mjs" "$@"
