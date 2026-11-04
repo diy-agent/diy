@@ -180,8 +180,8 @@ export const chatPageView: PageView = {
             const modelSelect = selectOf(
                 doc,
                 store.models.map((choice) => ({
-                    value: `${choice.providerId}/${choice.modelId}`,
-                    label: `${choice.providerId} · ${choice.name}`,
+                    value: `${choice.account === undefined ? "" : `${choice.account}@`}${choice.providerId}/${choice.modelId}`,
+                    label: `${choice.account === undefined ? "" : `${choice.account}@`}${choice.providerId} · ${choice.name}`,
                 })),
                 bot?.model !== undefined && bot.model !== "" ? bot.model : store.selectedModel,
             );
@@ -309,8 +309,8 @@ export const chatPageView: PageView = {
             const modelSelect = selectOf(
                 doc,
                 store.models.map((choice) => ({
-                    value: `${choice.providerId}/${choice.modelId}`,
-                    label: `${choice.providerId} · ${choice.name}`,
+                    value: `${choice.account === undefined ? "" : `${choice.account}@`}${choice.providerId}/${choice.modelId}`,
+                    label: `${choice.account === undefined ? "" : `${choice.account}@`}${choice.providerId} · ${choice.name}`,
                 })),
                 store.selectedModel,
             );
@@ -849,7 +849,9 @@ function messageOf(cause: unknown): string {
 
 function firstKey(models: readonly ModelChoice[]): string {
     const first = models[0];
-    return first ? `${first.providerId}/${first.modelId}` : "";
+    return first
+        ? `${first.account === undefined ? "" : `${first.account}@`}${first.providerId}/${first.modelId}`
+        : "";
 }
 
 /** 消息行的内容指纹（wire 里没有 seq；同一位置同角色同正文 = 同一行）。 */

@@ -278,8 +278,8 @@ export const chatPageView: PageView = {
             const modelSelect = selectOf(
                 doc,
                 (snapshot?.models ?? []).map((choice) => ({
-                    value: `${choice.providerId}/${choice.modelId}`,
-                    label: `${choice.providerId} · ${choice.name}`,
+                    value: `${choice.account === undefined ? "" : `${choice.account}@`}${choice.providerId}/${choice.modelId}`,
+                    label: `${choice.account === undefined ? "" : `${choice.account}@`}${choice.providerId} · ${choice.name}`,
                 })),
                 bot?.model !== undefined && bot.model !== "" ? bot.model : selectedModel,
             );
@@ -395,8 +395,8 @@ export const chatPageView: PageView = {
             const modelSelect = selectOf(
                 doc,
                 (snapshot?.models ?? []).map((choice) => ({
-                    value: `${choice.providerId}/${choice.modelId}`,
-                    label: `${choice.providerId} · ${choice.name}`,
+                    value: `${choice.account === undefined ? "" : `${choice.account}@`}${choice.providerId}/${choice.modelId}`,
+                    label: `${choice.account === undefined ? "" : `${choice.account}@`}${choice.providerId} · ${choice.name}`,
                 })),
                 selectedModel,
             );
@@ -620,7 +620,9 @@ function messageOf(cause: unknown): string {
 
 function firstKey(models: readonly ModelChoice[]): string {
     const first = models[0];
-    return first ? `${first.providerId}/${first.modelId}` : "";
+    return first
+        ? `${first.account === undefined ? "" : `${first.account}@`}${first.providerId}/${first.modelId}`
+        : "";
 }
 
 function tokenText(value: number | undefined): string {
