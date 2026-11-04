@@ -14,4 +14,10 @@ export {
 } from './provider-defaults.js';
 // ##491：opencode 的会话占位符 / 会话 header 真源在策略层，入口照旧导出（`$SESSION` 机制是通用的）。
 export { SESSION_PLACEHOLDER } from './strategies/opencode.js';
+export {
+    ensureReasoningReplay,
+    isDeepSeekWire,
+    type ReasoningReplayOpts,
+    type WireIdentity,
+} from './reasoning-replay.js';
 export type { ModelCost, ModelInfo, ProviderConfig, UsageDetail } from './types.js';
