@@ -15,3 +15,4 @@
 export * from "./run-status.js";
 export * from "./run-registry.js";
 export * from "./job-tool.js";
+export * from './output-ring.js';

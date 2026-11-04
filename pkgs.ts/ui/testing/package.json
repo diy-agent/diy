@@ -1,0 +1,19 @@
+{
+  "name": "@diy-agent/ui-testing",
+  "version": "0.1.0",
+  "private": true,
+  "description": "UI 测试驱动（CDP）：真实鼠标点击 / 输入 / 断言，供各 app 的 e2e 复用",
+  "files": ["src/"],
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "scripts": { "build": "tsc -p tsconfig.build.json" },
+  "dependencies": { "ws": "^8.18.0" },
+  "devDependencies": { "@types/ws": "^8.5.0" }
+}
