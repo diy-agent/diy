@@ -42,3 +42,5 @@ export * from "./shell.js";
 export * from "./tree.js";
 export * from "./proc-scan.js";
 export * from "./process-health.js";
+export * from "./rm.js";
+export * from "./fs-lock.js";
