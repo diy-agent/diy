@@ -65,7 +65,8 @@ const LOCATIONS: Record<string, { dir: string; entry: string }> = {
 const SUBPATH_SOURCES: Record<string, string> = {
     "@diy-agent/rpc/http": "pkgs.ts/core/rpc/src/transport/http/index.ts",
     "@diy-agent/rpc/ws": "pkgs.ts/core/rpc/src/transport/ws/index.ts",
-    "@diy-agent/rpc/electron": "pkgs.ts/core/rpc/src/transport/electron/index.ts",
+    "@diy-agent/rpc/electron/main": "pkgs.ts/core/rpc/src/transport/electron/main.ts",
+    "@diy-agent/rpc/electron/renderer": "pkgs.ts/core/rpc/src/transport/electron/renderer.ts",
     "@diy-agent/rpc/cli": "pkgs.ts/core/rpc/src/cli/index.ts",
     "@diy-agent/remote/node": "pkgs.ts/remote/link/src/node/index.ts",
 };

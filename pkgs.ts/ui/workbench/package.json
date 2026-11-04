@@ -2,7 +2,7 @@
     "name": "@diy-agent/workbench",
     "version": "0.1.1",
     "private": true,
-    "description": "工作台主进程外壳：窗口 + page:invoke 通道 + 插件 loader（不认识任何具体页面）",
+    "description": "工作台主进程外壳：窗口 + rpc 双向通道 + 插件 loader（不认识任何具体页面）",
     "files": [
         "src/"
     ],
@@ -25,13 +25,22 @@
         "./loader": {
             "types": "./src/loader.ts",
             "default": "./lib/loader.js"
+        },
+        "./protocol": {
+            "types": "./src/protocol.ts",
+            "default": "./lib/protocol.js"
+        },
+        "./preload": {
+            "types": "./src/preload.ts",
+            "default": "./lib/preload.js"
         }
     },
     "scripts": {
         "build": "tsc -p tsconfig.build.json"
     },
     "dependencies": {
-        "@diy-agent/dev-paths": "file:../../core/dev-paths"
+        "@diy-agent/dev-paths": "file:../../core/dev-paths",
+        "@diy-agent/rpc": "0.2.0"
     },
     "devDependencies": {
         "@types/node": "^26.1.0",

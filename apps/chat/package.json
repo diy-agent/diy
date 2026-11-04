@@ -34,7 +34,8 @@
     "electron": "^43.8.6",
     "@diy-agent/session": "*",
     "@diy-agent/tools": "file:../../pkgs.ts/agent/tools",
-    "@diy-agent/jobs": "file:../../pkgs.ts/agent/jobs"
+    "@diy-agent/jobs": "file:../../pkgs.ts/agent/jobs",
+    "@diy-agent/rpc": "0.2.0"
   },
   "devDependencies": {
     "@types/node": "^26.1.0",

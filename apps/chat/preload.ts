@@ -1,22 +1,11 @@
-// preload.ts — 唯一一座桥：把外壳的两个通道包成 window.workbench。
-//
-// contextIsolation + sandbox 打开时 renderer 拿不到 Node，只能走这里。
-// 通道名来自 @diy-agent/workbench/channels（与主进程同一份常量，别手写字符串）。
+// preload.ts — 唯一一座桥。装配逻辑在 @diy-agent/workbench/preload（apps/chat 要薄）。
+// 2026-11-04（B1）手写 IPC → @diy-agent/rpc；2026-11-05（B2）加 main → renderer 的命令通道。
+import { contextBridge } from "electron";
+import { createRendererTransport } from "@diy-agent/rpc/electron/renderer";
+import { RPC_CHANNEL } from "@diy-agent/workbench/channels";
+import { createPreloadBridge } from "@diy-agent/workbench/preload";
 
-import { contextBridge, ipcRenderer } from "electron";
-import {
-    PAGE_INVOKE_CHANNEL,
-    PAGE_LIST_CHANNEL,
-    type PageInvokeRequest,
-    type WorkbenchBridge,
-} from "@diy-agent/workbench/channels";
-
-const bridge: WorkbenchBridge = {
-    listPages: () => ipcRenderer.invoke(PAGE_LIST_CHANNEL),
-    invoke: (pageId, method, args) => {
-        const request: PageInvokeRequest = { pageId, method, args };
-        return ipcRenderer.invoke(PAGE_INVOKE_CHANNEL, request);
-    },
-};
-
-contextBridge.exposeInMainWorld("workbench", bridge);
+const pb = createPreloadBridge(createRendererTransport(RPC_CHANNEL));
+contextBridge.exposeInMainWorld("workbench", pb.bridge);
+// 意图测试钩子：页面把自己的命令处理器挂进来（生产不调 = 零开销）
+contextBridge.exposeInMainWorld("__diyTestHooks", { setHandler: (h: (cmd: unknown) => Promise<unknown>) => pb.installCommandHandler(h) });

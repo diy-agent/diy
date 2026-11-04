@@ -14,7 +14,7 @@ import { join } from "node:path";
 const PORT = 9444;
 const REPO = join(import.meta.dirname, "../../../..");
 const HOME = join(REPO, "build/lab/home");
-const MAIN = join(import.meta.dirname, "../../build/lab/main/index.mjs");
+const MAIN = join(import.meta.dirname, "../../build/app/main/index.mjs");
 
 let app: ChildProcess | undefined;
 let d: Driver;
