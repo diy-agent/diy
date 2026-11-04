@@ -22,6 +22,8 @@ export type {
 
 export { formatEtime, parseEtime } from "./duration.js";
 export * from "./shell.js";
+export * from "./shell-hint.js";
+export * from "./live.js";
 export * from "./tree.js";
 export * from "./proc-scan.js";
 export * from "./process-health.js";

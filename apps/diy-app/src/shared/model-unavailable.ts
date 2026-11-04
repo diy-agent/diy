@@ -14,6 +14,8 @@ export {
     ModelUnavailableKindSchema,
     classifyModelUnavailable,
     probeModelError,
+    ModelUnavailableNoticeSchema,
+    type ModelUnavailableNotice,
     upstreamText,
     type ModelErrorProbe,
     type ModelUnavailableHit,

@@ -5,8 +5,8 @@
 // 录制于 2026-11-04T06:27:04.600Z · model=deepseek-v4.1-flash
 import type { LanguageModelV3StreamPart } from "@ai-sdk/provider";
 
-export const abort: LanguageModelV3StreamPart[] = [
+export const abort = [
     {"type":"stream-start","warnings":[]},
     {"type":"response-metadata","id":"chatcmpl-21398363aba149ca8236ad6a48e29755","modelId":"deepseek-v4.1-flash","timestamp":"2026-11-04T06:27:07.000Z"},
     {"type":"reasoning-start","id":"reasoning-0"},
-];
+] as unknown as LanguageModelV3StreamPart[];

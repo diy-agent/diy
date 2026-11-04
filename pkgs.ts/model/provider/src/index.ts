@@ -17,6 +17,8 @@ export { SESSION_PLACEHOLDER } from './strategies/opencode.js';
 export {
     classifyModelUnavailable,
     probeModelError,
+    ModelUnavailableNoticeSchema,
+    type ModelUnavailableNotice,
     MODEL_UNAVAILABLE_KIND_LABEL,
     MAX_UPSTREAM_CHARS,
     ModelUnavailableKindSchema,

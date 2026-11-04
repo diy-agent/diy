@@ -5,7 +5,7 @@
 // 来源：协议形状合成（真跑不出来） · 2026-11-04T06:41:41.678Z
 import type { LanguageModelV3StreamPart } from "@ai-sdk/provider";
 
-export const endpointUnavailable: LanguageModelV3StreamPart[] = [
+export const endpointUnavailable = [
     {"type":"stream-start","warnings":[]},
     {"type":"error","error":{"name":"AI_APICallError","url":"https://opencode.ai/inference/go/openai/v1/chat/completions","requestBodyValues":{"model":"deepseek-v4.1-flash","stream":true},"statusCode":429,"responseBody":"{\"error\":{\"type\":\"server_error\",\"message\":\"Upstream request failed: Endpoint is unavailable.\"}}","isRetryable":true,"data":{"error":{"type":"server_error","message":"Upstream request failed: Endpoint is unavailable."}}}},
-];
+] as unknown as LanguageModelV3StreamPart[];

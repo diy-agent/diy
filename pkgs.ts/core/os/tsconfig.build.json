@@ -16,4 +16,8 @@
     },
     "include": ["src/**/*"],
     "exclude": ["tests/**/*"]
+,
+  "references": [
+    { "path": "../../agent/tools/tsconfig.build.json" }
+  ]
 }

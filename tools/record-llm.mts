@@ -181,9 +181,14 @@ function toSource(scenario: Scenario, parts: unknown[]): string {
 // 来源：${scenario.synthetic ? "协议形状合成（真跑不出来）" : `真模型 ${process.env["DIY_TEST_LLM_MODEL"] ?? "?"}`} · ${new Date().toISOString()}
 import type { LanguageModelV3StreamPart } from "@ai-sdk/provider";
 
-export const ${scenario.name}: LanguageModelV3StreamPart[] = [
+// 类型用 `as unknown as` 强转：录制的是**真实线上形状** ——
+//   · usage 可能缺 cacheWrite（上游没报就是没有）
+//   · response-metadata.timestamp 是 ISO 字符串（JSON 只能存字符串）
+// 而 SDK 的 LanguageModelV3StreamPart 是**理想形状**（字段必填、Date 对象）。
+// 强行对齐类型等于编造上游没给的数据，所以这里如实保留原始形状。
+export const ${scenario.name} = [
 ${lines.join("\n")}
-];
+] as unknown as LanguageModelV3StreamPart[];
 `;
 }
 

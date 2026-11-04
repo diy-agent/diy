@@ -5,7 +5,7 @@
 // 录制于 2026-11-04T06:27:30.066Z · model=deepseek-v4.1-flash
 import type { LanguageModelV3StreamPart } from "@ai-sdk/provider";
 
-export const toolMultiStep: LanguageModelV3StreamPart[] = [
+export const toolMultiStep = [
     {"type":"stream-start","warnings":[]},
     {"type":"response-metadata","id":"chatcmpl-17a7c299cba44644a4f6e74b93743130","modelId":"deepseek-v4.1-flash","timestamp":"2026-11-04T06:27:31.000Z"},
     {"type":"reasoning-start","id":"reasoning-0"},
@@ -57,4 +57,4 @@ export const toolMultiStep: LanguageModelV3StreamPart[] = [
     {"type":"tool-input-end","id":"call_490f4a5f92c64cabb22d02ec"},
     {"type":"tool-call","toolCallId":"call_490f4a5f92c64cabb22d02ec","toolName":"read","input":"{\"path\":\"package.json\"}"},
     {"type":"finish","finishReason":{"unified":"tool-calls","raw":"tool_calls"},"usage":{"inputTokens":{"total":328,"noCache":200,"cacheRead":128},"outputTokens":{"total":176,"text":67,"reasoning":109},"raw":{"prompt_tokens":328,"completion_tokens":176,"total_tokens":504,"prompt_tokens_details":{"cached_tokens":128},"completion_tokens_details":{"reasoning_tokens":109},"cost":0,"opencode":{"billing_source":"go","list_cost":0.00027197,"allowance":0.00016318,"tokens":{"input":200,"output":176,"reasoning":109,"cache_read":128,"cache_write_5m":0,"cache_write_1h":0}}}},"providerMetadata":{"diy-test-llm":{}}},
-];
+] as unknown as LanguageModelV3StreamPart[];

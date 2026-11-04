@@ -2,7 +2,7 @@
 // 「两种 shell 都没有」时的事实句（不是「去装 Git Bash」的劝告）。
 
 import { describe, expect, it } from "vitest";
-import { noShellHint } from "../../src/main/os/shell-hint";
+import { noShellHint } from "../src/index.js";
 
 describe("noShellHint", () => {
     it("说明 bash / PowerShell 都探测不到，并列出找过的位置", () => {

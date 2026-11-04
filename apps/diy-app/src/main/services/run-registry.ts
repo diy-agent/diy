@@ -14,7 +14,7 @@ import { RunRegistry, defaultHome, type JobOsCaps } from "@diy-agent/jobs";
 import { join } from "node:path";
 import { readRuntimeConfig } from "../../runtime";
 import { os } from "../os";
-import { shellSpecs } from "../os/shell";
+import { shellSpecs } from "../os";
 
 export * from "@diy-agent/jobs";
 

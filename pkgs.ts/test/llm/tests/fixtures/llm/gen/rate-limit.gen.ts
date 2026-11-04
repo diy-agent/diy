@@ -5,7 +5,7 @@
 // 来源：协议形状合成（真跑不出来） · 2026-11-04T06:41:42.833Z
 import type { LanguageModelV3StreamPart } from "@ai-sdk/provider";
 
-export const rateLimit: LanguageModelV3StreamPart[] = [
+export const rateLimit = [
     {"type":"stream-start","warnings":[]},
     {"type":"error","error":{"name":"AI_APICallError","url":"https://opencode.ai/inference/go/openai/v1/chat/completions","requestBodyValues":{"model":"deepseek-v4.1-flash","stream":true},"statusCode":429,"responseBody":"{\"error\":{\"message\":\"Upstream model provider is temporarily unavailable. Please try again in a moment.\",\"type\":\"rate_limit_error\"}}","isRetryable":true,"data":{"error":{"message":"Upstream model provider is temporarily unavailable. Please try again in a moment.","type":"rate_limit_error"}}}},
-];
+] as unknown as LanguageModelV3StreamPart[];

@@ -53,7 +53,7 @@ import { runRegistry } from "./run-registry";
 import { foregroundBash } from "./foreground-bash";
 import { scanOwnedProcs, groupOwnerOf, killOwnedProc } from "./process-scan";
 import { procRowOf, runViewOf } from "../../shared/run-view";
-import { parseEtime } from "../os/duration";
+import { parseEtime } from "../os";
 import { stateLabel } from "../../shared/run-status";
 import { fenceTaskOwner } from "../../shared/job-fence";
 
