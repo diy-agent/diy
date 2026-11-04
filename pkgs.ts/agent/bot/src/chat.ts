@@ -28,7 +28,13 @@ import { localISOString } from "@diy-agent/time";
 import { createSession, type AgentSession, type ChatMessage, type LlmPort, type SessionStore, type TokenUsage } from "@diy-agent/session";
 import { openJsonlSessionStore } from "@diy-agent/session-store-jsonl";
 import { createOpenAiCompatible, resolveProviderConfig } from "@diy-agent/llm-provider";
-import { costOf, loadCatalog, readAccountValue, type ModelCatalogEntry } from "@diy-agent/model-catalog";
+import {
+    costOf,
+    listAccountStates,
+    loadCatalog,
+    readAccountValue,
+    type ModelCatalogEntry,
+} from "@diy-agent/model-catalog";
 import { toolArgsFromInput } from "@diy-agent/session";
 import { createBot, createFirstBot as createFirstBotIn } from "./bot.js";
 import {
@@ -258,15 +264,47 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
 
     const catalog = (): ModelCatalogEntry[] => (catalogCache ??= loadCatalog(home));
 
-    const choices = (): ModelChoice[] =>
-        catalog().map((entry) => ({
-            providerId: entry.providerId,
-            modelId: entry.modelId,
-            name: entry.name,
-        }));
+    /**
+     * 可选模型 = **provider × account × model** 的展开（diy-app 的三段式）。
+     *
+     * 为什么必须展开 account：`model.yaml` 里一个 provider 可以有多个账号（aug / chen56 …），
+     * key 与配额各不相同。只列 provider/model 时用户无法表达「用 aug 这个账号」，
+     * 取 key 时就只能拿第一个 —— 实测这会表现成「上游不回应 / 超时」。
+     *
+     * 只展开**已配置**的账号（`configured`）；一个都没配的 provider 退回裸 provider/model 一项。
+     */
+    const choices = (): ModelChoice[] => {
+        const accountsByProvider = new Map(
+            listAccountStates(home).map((p) => [
+                p.providerId,
+                p.accounts.filter((a) => a.configured).map((a) => a.name),
+            ]),
+        );
+        const out: ModelChoice[] = [];
+        for (const entry of catalog()) {
+            const base = {
+                providerId: entry.providerId,
+                modelId: entry.modelId,
+                ...(entry.cost === undefined ? {} : { cost: entry.cost }),
+                ...(entry.contextWindow === undefined ? {} : { contextWindow: entry.contextWindow }),
+            };
+            const accounts = accountsByProvider.get(entry.providerId) ?? [];
+            if (accounts.length === 0) {
+                out.push({ ...base, name: entry.name });
+                continue;
+            }
+            for (const account of accounts) {
+                out.push({ ...base, account, name: `${account}@${entry.name}` });
+            }
+        }
+        return out;
+    };
 
-    const keyOf = (entry: ModelCatalogEntry | null): string =>
-        entry === null ? "" : `${entry.providerId}/${entry.modelId}`;
+    /** 模型 key：`account@provider/model`（无 account 时退回 `provider/model`） */
+    const keyOf = (entry: ModelCatalogEntry | null, account?: string): string =>
+        entry === null
+            ? ""
+            : `${account === undefined ? "" : `${account}@`}${entry.providerId}/${entry.modelId}`;
 
     const writeMeta = async (meta: SessionMeta): Promise<void> => {
         if (!persistMeta) {
@@ -472,7 +510,10 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
     const snapshotNow = async (): Promise<BotChatSnapshot> => {
         const configs = await botStore.list();
         const bots = await Promise.all(configs.map(botView));
-        const selectedModel = keyOf(catalog()[0] ?? null) || null;
+        // 缺省选中 = 列表第一项（带 account，和 choices 同一套拼法）
+        const selectedModel = choices()[0] === undefined
+            ? null
+            : `${choices()[0]!.account === undefined ? "" : `${choices()[0]!.account}@`}${choices()[0]!.providerId}/${choices()[0]!.modelId}`;
         const active = configs.length === 0 ? null : ((await activeConfig()) ?? configs[0]!);
         if (active === null) {
             return {
@@ -512,7 +553,9 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
     /** 模型必须是目录里的（##497：没有「跟随宿主缺省」这条路） */
     const checkModel = (model: string): string => {
         if (model.trim() === "") throw new Error("必须先选一个模型（bot 的 model 必填）");
-        const found = catalog().some((entry) => keyOf(entry) === model);
+        // 三段式：account@provider/model —— 按 provider+model 查目录，account 只影响取哪个 key
+        const { providerId, modelId } = splitModelKey(model);
+        const found = catalog().some((entry) => entry.providerId === providerId && entry.modelId === modelId);
         if (!found) throw new Error(`模型目录里没有 ${model}`);
         return model;
     };
