@@ -12,6 +12,7 @@ import {
     stepCountIs,
     streamText,
     type AssistantContent,
+    type LanguageModel,
     type ModelMessage,
     type ToolResultPart,
 } from 'ai';
@@ -113,9 +114,18 @@ function sessionHeaders(
  */
 const LEAKED_TOOL_XML = /<\|DSML\||<\/?(?:function_calls|invoke|parameter)[ >]/;
 
-/** 一次调用的流：text 增量 → usage → done；上游失败抛 `LlmProviderError` */
-async function* chatStream(
-    model: ReturnType<ReturnType<typeof createOpenAICompatible>['chatModel']>,
+/**
+ * 一次调用的流：text 增量 → usage → done；上游失败抛 `LlmProviderError`。
+ *
+ * **导出**是为了让「录制的事件流 → SessionDelta」能作为**黑盒**被测：
+ * 传一个 `replay(fixture).asModel()` 进来，中间所有真实逻辑（DSML 泄漏改写、
+ * 未知工具兜底、abort 分支、usage 归一）都会跑到。
+ *
+ * 为什么参数类型放宽成 `LanguageModel`：生产传的是 `provider.chatModel(...)`，
+ * 测试传的是 `MockLanguageModelV3` —— 两者都满足 `streamText({ model })` 的约束。
+ */
+export async function* chatStream(
+    model: LanguageModel,
     messages: readonly ChatMessage[],
     options: ChatOptions | undefined,
     headers: Record<string, string> | undefined,
