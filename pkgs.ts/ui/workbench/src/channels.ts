@@ -18,3 +18,15 @@ export interface WorkbenchBridge {
     listPages(): Promise<PageInfo[]>;
     invoke(pageId: string, method: string, args?: unknown): Promise<unknown>;
 }
+
+/**
+ * RPC 通道名（2026-11-04 B1 起唯一通道）。
+ *
+ * 旧的 `PAGE_LIST_CHANNEL` / `PAGE_INVOKE_CHANNEL` 仍导出（renderer 的
+ * `WorkbenchGateway` 形状不变），但**底层已换成 @diy-agent/rpc**：
+ * 两个 IPC 字符串常量 → 一条 envelope 通道（`rpc`）。
+ *
+ * 通道名单一是有意的：rpc 的 transport 自带「renderer 就绪闸门」与取消/流式，
+ * 每多一条手写通道就多一份要自己维护的时序与生命周期。
+ */
+export const RPC_CHANNEL = "workbench-rpc";

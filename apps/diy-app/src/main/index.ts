@@ -32,7 +32,7 @@ console.log('[net] 已钉死 IPv4 优先（setDefaultResultOrder("ipv4first")）
 import { fileURLToPath } from "node:url";
 import { mkdirSync } from "node:fs";
 import type { ServerBinding } from "@diy-agent/rpc";
-import { createMainTransport } from "@diy-agent/rpc/electron";
+import { createMainTransport } from "@diy-agent/rpc/electron/main";
 import { RpcPortService } from "./services/rpc-port";
 import { AppConfig } from "./core/app-config";
 import { bindApi, bindAppHandlers, setRpcPort } from "./services/api-impl";

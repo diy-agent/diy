@@ -14,17 +14,20 @@
 // 边界：本包**不认识任何具体页面**（不 import 页面插件、不读业务数据）。
 // 页面清单来自 plugins 清单，页面行为来自插件导出的 methods —— 加页面不改本包。
 
-import { app, BrowserWindow, ipcMain, screen } from "electron";
+import { app, BrowserWindow, screen } from "electron";
+import { ChannelServerBinding } from "@diy-agent/rpc";
+import { createMainTransport } from "@diy-agent/rpc/electron/main";
+import { workbenchApi } from "./protocol.js";
 import { WorkbenchError } from "./errors.js";
 import { loadPages, type PluginEntry } from "./loader.js";
 import type { PageContribution, PageInfo } from "./page.js";
-import { PAGE_INVOKE_CHANNEL, PAGE_LIST_CHANNEL, type PageInvokeRequest } from "./channels.js";
+import { PAGE_INVOKE_CHANNEL, PAGE_LIST_CHANNEL, RPC_CHANNEL, type PageInvokeRequest } from "./channels.js";
 import { instanceWindowTitle, removeSelfRecord, writeSelfRecord } from "./instance-record.js";
 import { sidecarWindowOptions } from "./window.js";
 
 export { WorkbenchError } from "./errors.js";
 export { orderPlugins, loadPages } from "./loader.js";
-export { PAGE_INVOKE_CHANNEL, PAGE_LIST_CHANNEL } from "./channels.js";
+export { PAGE_INVOKE_CHANNEL, PAGE_LIST_CHANNEL, RPC_CHANNEL } from "./channels.js";
 export { sidecarWindowOptions, type DisplayLike, type WorkArea } from "./window.js";
 export { registryDir, writeSelfRecord, removeSelfRecord, repoRootOf, instanceUri, instanceWindowTitle } from "./instance-record.js";
 export type { PluginEntry } from "./loader.js";
@@ -90,14 +93,6 @@ export async function createWorkbench(options: CreateWorkbenchOptions): Promise<
         return fn(args);
     };
 
-    ipcMain.handle(PAGE_LIST_CHANNEL, () => listPages());
-    ipcMain.handle(PAGE_INVOKE_CHANNEL, (_event, request: PageInvokeRequest) => {
-        if (!request || typeof request.pageId !== "string" || typeof request.method !== "string") {
-            throw new WorkbenchError("workbench/bad-invoke", "page:invoke 的请求必须是 { pageId, method, args? }");
-        }
-        return invoke(request.pageId, request.method, request.args);
-    });
-
     await app.whenReady();
 
     const width = options.width ?? 1040;
@@ -156,11 +151,22 @@ export async function createWorkbench(options: CreateWorkbenchOptions): Promise<
         if (showInactive) win.showInactive();
         else win.show();
     });
+    // ── RPC 绑定（2026-11-04 B1：手写 IPC → @diy-agent/rpc）──
+    //
+    // 必须在 `loadFile` **之前**：preload 在页面加载时执行并开始发消息，
+    // 晚一步注册就会丢掉最早那批（rpc 的 main→renderer 队列只管反方向）。
+    //
+    // `getWebContents` 用闭包读 `win` —— transport 建好时 webContents 可能还没就绪，
+    // 每次 send 现读才安全（窗口重建时也不用重新注册）。
+    const transport = createMainTransport(() => win.webContents, RPC_CHANNEL);
+    const server = new ChannelServerBinding(transport);
+    server.on(workbenchApi.page.list, async () => listPages());
+    server.on(workbenchApi.page.invoke, async ({ input }) => invoke(input.pageId, input.method, input.args));
+
     await win.loadFile(options.rendererFile);
 
     const disposeHandlers = (): void => {
-        ipcMain.removeHandler(PAGE_LIST_CHANNEL);
-        ipcMain.removeHandler(PAGE_INVOKE_CHANNEL);
+        server.destroy();
     };
 
     return {
