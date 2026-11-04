@@ -83,7 +83,8 @@ for (const [target, importersList] of importers) {
     if (isTest(target)) continue;
     const by = importersList.filter((f) => !isTest(f));
     if (by.length > 0) continue;                       // 有生产引用 ⇒ 正常
-    if (ENTRY_HINTS.some((re) => re.test(target))) continue; // 入口文件，白名单
+    const rel = relative(ROOT, target);
+    if (ENTRY_HINTS.some((re) => re.test(rel))) continue; // 入口文件，白名单（用相对路径匹配）
     if (importersList.length === 0) continue;          // 谁都不引 —— 那是 knip 的活
     orphans.push({ target: relative(ROOT, target), tests: importersList.map((f) => relative(ROOT, f)) });
 }
