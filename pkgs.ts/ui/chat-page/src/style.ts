@@ -18,10 +18,12 @@ export const STYLE_ID = "chat-page-style";
 
 export const CHAT_STYLE = `
 /* ═══ M3 语义角色（seed #3b6fd4 生成，palette 已展开）═══
- * 全部用 light-dark() —— 跟着 color-scheme 自动切换，不写 .dark 类。
+ * light-dark() 的两个值都留着，但 color-scheme **固定为 light** ——
+ * 定成 light dark 会让整个 app 跟随系统深色模式，而 workbench-ui / bot-config
+ * 还没做深色适配，两边一混搭就错乱。等全站都接上 M3 再改成 light dark。
  * 改主题：重跑生成脚本换这一块，下面 53 处硬编码全部跟着变。 */
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   --md-sys-color-primary: light-dark(#1f5abe, #b0c6ff);
   --md-sys-color-on-primary: light-dark(#ffffff, #002d6e);
   --md-sys-color-primary-container: light-dark(#d9e2ff, #00429b);

@@ -1,51 +1,53 @@
 {
-    "name": "@diy-agent/app-chat",
-    "version": "0.1.2",
-    "private": true,
-    "description": "bot 核心对话的实验入口：装配 @diy-agent/bot 的 createBotChat + chat-page 界面",
-    "files": [
-        "bin/",
-        "build/"
-    ],
-    "type": "module",
-    "main": "./lib/index.js",
-    "types": "./index.ts",
-    "exports": {
-        ".": {
-            "types": "./index.ts",
-            "default": "./lib/index.js"
-        }
-    },
-    "scripts": {
-        "build": "tsc -p tsconfig.build.json"
-    },
-    "dependencies": {
-        "@diy-agent/bot": "*",
-        "@diy-agent/bot-config-page": "*",
-        "@diy-agent/chat-page": "*",
-        "@diy-agent/log": "*",
-        "@diy-agent/model-config-page": "*",
-        "@diy-agent/workbench": "*",
-        "@diy-agent/workbench-ui": "*",
-        "@opentelemetry/api-logs": "^0.223.0",
-        "@opentelemetry/sdk-logs": "^3.0.0",
-        "electron": "^43.8.6",
-        "@diy-agent/session": "*",
-        "@diy-agent/tools": "file:../../pkgs.ts/agent/tools",
-        "@diy-agent/jobs": "file:../../pkgs.ts/agent/jobs"
-    },
-    "devDependencies": {
-        "@types/node": "^26.1.0",
-        "esbuild": "^0.28.1",
-        "happy-dom": "^20.0.0",
-        "oxfmt": "^0.57.0",
-        "oxlint": "^1.72.0",
-        "playwright-core": "^1.63.0",
-        "tsx": "^4.23.0",
-        "typescript": "^7.0.2",
-        "vitest": "^4.1.10"
-    },
-    "bin": {
-        "diy-chat": "./bin/diy-chat.mjs"
+  "name": "@diy-agent/app-chat",
+  "version": "0.1.2",
+  "private": true,
+  "description": "bot 核心对话的实验入口：装配 @diy-agent/bot 的 createBotChat + chat-page 界面",
+  "files": [
+    "bin/",
+    "build/"
+  ],
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./index.ts",
+  "exports": {
+    ".": {
+      "types": "./index.ts",
+      "default": "./lib/index.js"
     }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "test:e2e": "DIY_E2E=1 vitest run --testTimeout=60000 --hookTimeout=60000 --no-file-parallelism"
+  },
+  "dependencies": {
+    "@diy-agent/bot": "*",
+    "@diy-agent/bot-config-page": "*",
+    "@diy-agent/chat-page": "*",
+    "@diy-agent/log": "*",
+    "@diy-agent/model-config-page": "*",
+    "@diy-agent/workbench": "*",
+    "@diy-agent/workbench-ui": "*",
+    "@opentelemetry/api-logs": "^0.223.0",
+    "@opentelemetry/sdk-logs": "^3.0.0",
+    "electron": "^43.8.6",
+    "@diy-agent/session": "*",
+    "@diy-agent/tools": "file:../../pkgs.ts/agent/tools",
+    "@diy-agent/jobs": "file:../../pkgs.ts/agent/jobs"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "esbuild": "^0.28.1",
+    "happy-dom": "^20.0.0",
+    "oxfmt": "^0.57.0",
+    "oxlint": "^1.72.0",
+    "playwright-core": "^1.63.0",
+    "tsx": "^4.23.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "bin": {
+    "diy-chat": "./bin/diy-chat.mjs"
+  }
 }

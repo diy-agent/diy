@@ -346,8 +346,11 @@ function loadSnapshot(home: string, options?: CatalogOptions): Record<string, Ra
     const candidates = [
         options?.snapshotPath,
         join(home, "data", "models.dev.json"),
-        // ##512：catalog 在 pkgs.ts/model/、app 在 apps/ ⇒ 三级上跳（src → catalog → model → pkgs.ts）
-        resolve(dirname(fileURLToPath(import.meta.url)), "../../../apps/diy-app/src/main/data/models.dev.json"),
+        // ##512：catalog 在 pkgs.ts/model/catalog/、app 在仓库根的 apps/ ⇒ **四级**上跳。
+        // 别按 src/ 或 lib/ 分别算 —— 两者都在 catalog 下同级，都要跳到仓库根才有 apps/。
+        // 三级会落到 pkgs.ts/apps/（不存在），于是 snapshot 静默为 null、模型目录空，
+        // 而 model.yaml 里配的 provider 全部被 loadCatalog 跳过（没有 spec.api 就发不出请求）。
+        resolve(dirname(fileURLToPath(import.meta.url)), "../../../../apps/diy-app/src/main/data/models.dev.json"),
     ];
     for (const candidate of candidates) {
         if (candidate === undefined || !existsSync(candidate)) continue;
