@@ -15,6 +15,19 @@ export {
 // ##491：opencode 的会话占位符 / 会话 header 真源在策略层，入口照旧导出（`$SESSION` 机制是通用的）。
 export { SESSION_PLACEHOLDER } from './strategies/opencode.js';
 export {
+    classifyModelUnavailable,
+    probeModelError,
+    MODEL_UNAVAILABLE_KIND_LABEL,
+    MAX_UPSTREAM_CHARS,
+    ModelUnavailableKindSchema,
+    upstreamText,
+    type ModelErrorProbe,
+    type ModelUnavailableHit,
+    type ModelUnavailableKind,
+    type ModelUnavailableMiss,
+    type ModelUnavailableVerdict,
+} from './model-unavailable.js';
+export {
     ensureReasoningReplay,
     isDeepSeekWire,
     type ReasoningReplayOpts,
