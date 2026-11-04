@@ -65,7 +65,18 @@ for (const f of all) {
  * 生产入口：由构建配置（esbuild / vite）或 package.json exports 引用，不在 import 图里。
  * 这里用保守白名单 —— 宁可漏报也不误报（误报会让人去删真正有用的文件）。
  */
-const ENTRY_HINTS = [/\/index\.tsx?$/, /\/main\.ts$/, /\/preload\.ts$/, /\/renderer\.ts$/, /\/main-memory\.mjs$/];
+const ENTRY_HINTS = [
+    /\/index\.tsx?$/,
+    /\/main\.ts$/,
+    /\/preload\.ts$/,
+    /\/renderer\.ts$/,
+    /\/main-memory\.mjs$/,
+    // 示例代码：只给文档 / 测试当范例用，生产不会 import 它们（import 了才奇怪）
+    /\/examples\//,
+    // 构建配置里以**字符串**给出的入口（esbuild entryPoints 等）—— 静态 import 图看不见
+    /^apps\/web\/server\.ts$/,        // apps/web/main.mjs:97 entryPoints
+
+];
 
 const orphans = [];
 for (const [target, importersList] of importers) {
