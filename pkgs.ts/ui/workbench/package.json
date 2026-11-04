@@ -29,6 +29,10 @@
     "./protocol": {
       "types": "./src/protocol.ts",
       "default": "./lib/protocol.js"
+    },
+    "./preload": {
+      "types": "./src/preload.ts",
+      "default": "./lib/preload.js"
     }
   },
   "scripts": {

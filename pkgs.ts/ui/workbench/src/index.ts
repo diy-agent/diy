@@ -15,9 +15,9 @@
 // 页面清单来自 plugins 清单，页面行为来自插件导出的 methods —— 加页面不改本包。
 
 import { app, BrowserWindow, screen } from "electron";
-import { ChannelServerBinding } from "@diy-agent/rpc";
+import { ChannelClientBinding, ChannelServerBinding, createTypedClient } from "@diy-agent/rpc";
 import { createMainTransport } from "@diy-agent/rpc/electron/main";
-import { workbenchApi } from "./protocol.js";
+import { rendererApi, workbenchApi } from "./protocol.js";
 import { WorkbenchError } from "./errors.js";
 import { loadPages, type PluginEntry } from "./loader.js";
 import type { PageContribution, PageInfo } from "./page.js";
@@ -64,6 +64,20 @@ export interface CreateWorkbenchOptions {
 export interface Workbench {
     listPages(): PageInfo[];
     invoke(pageId: string, method: string, args?: unknown): Promise<unknown>;
+    /**
+     * 给 renderer 发一条**意图测试命令**（fill / click / waitState / readState）。
+     *
+     * 这是 main → renderer 的方向，B1 换 rpc 之前根本不存在（自研 IPC 只有单向）。
+     * 渲器侧没装钩子（生产）时抛错 —— 别把测试路径混进正常业务。
+     */
+    ui(command: {
+        type: "fill" | "click" | "waitState" | "readState";
+        selector?: string;
+        value?: unknown;
+        path?: string;
+        equals?: unknown;
+        timeoutMs?: number;
+    }): Promise<unknown>;
     window(): BrowserWindow | null;
     dispose(): void;
 }
@@ -163,6 +177,25 @@ export async function createWorkbench(options: CreateWorkbenchOptions): Promise<
     server.on(workbenchApi.page.list, async () => listPages());
     server.on(workbenchApi.page.invoke, async ({ input }) => invoke(input.pageId, input.method, input.args));
 
+    // 反方向（main → renderer）：同一条 transport 上 client + server 各挂一个（rpc 支持双向）
+    const uiClient = createTypedClient(new ChannelClientBinding(transport), rendererApi);
+    const ui = async (command: Parameters<Workbench["ui"]>[0]): Promise<unknown> => {
+        switch (command.type) {
+            case "fill":
+                return uiClient.ui.fill({ selector: command.selector ?? "", value: String(command.value ?? "") });
+            case "click":
+                return uiClient.ui.click({ selector: command.selector ?? "" });
+            case "waitState":
+                return uiClient.ui.waitState({
+                    path: command.path ?? "",
+                    equals: command.equals,
+                    timeoutMs: command.timeoutMs ?? 5000,
+                });
+            case "readState":
+                return uiClient.ui.readState({ path: command.path ?? "" });
+        }
+    };
+
     await win.loadFile(options.rendererFile);
 
     const disposeHandlers = (): void => {
@@ -172,6 +205,7 @@ export async function createWorkbench(options: CreateWorkbenchOptions): Promise<
     return {
         listPages,
         invoke,
+        ui,
         window: () => (win.isDestroyed() ? null : win),
         dispose: () => {
             disposeHandlers();
