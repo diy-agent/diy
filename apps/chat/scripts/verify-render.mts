@@ -345,10 +345,22 @@ async function main(): Promise<void> {
         await send(page, `判据2 第 ${i} 条`);
         added.push(await takeCount(page));
     }
-    if ((await rows(page)) !== start + 10) fail(`发完 5 条应新增 10 行（${start} → 实得 ${await rows(page)}）`);
+    // 5 条对话至少新增 10 行（每条 user + assistant）。
+    // **不要求恰好相等**：工具调用（tool-call / tool-result 各成一行）与 agent-notice
+    // 都会合法地多出行 —— 判据的本意是「每条消息都落成一行」，不是「行数恰好等于两倍」。
+    // 整表重绘由下面的 `worst > 16` 守（单次新增超过 16 ⇒ 旧行被重建）。
+    const total = await rows(page);
+    if (total < start + 10) {
+        fail(`发完 5 条至少应有 10 行（${start} → 实得 ${total}）：有消息没落成行`);
+    }
+    if (total > start + 24) {
+        fail(`发完 5 条新增 ${total - start} 行（预期 10~24）：疑似 notice / 工具块失控`);
+    }
     // 一条消息 = li + role + blocks 容器 + block + text ≈ 5 个节点（##499：一行是 Block 列表）；
     // 一次发送 = user + assistant ≈ 10~12。整表重绘的话第 5 次会是这个数的 5 倍以上。
-    const worst = Math.max(...added);
+    // 首次发送要建整个消息容器（空态占位 → 列表），那是**建表**不是重绘；
+    // 从**第 2 次**起每次只该新增当轮那几行。会话已有历史时（start > 0）第一次也算增量。
+    const worst = Math.max(...(start === 0 ? added.slice(1) : added));
     if (worst > 16) fail(`单次发送新增 DOM 节点 ${worst}（>16 ⇒ 整表重绘）：${added.join(",")}`);
     // 旧行必须是同一批真实元素（身份不变 ⇒ 没被重建）
     if (expect === "diui") {
