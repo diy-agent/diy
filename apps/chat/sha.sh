@@ -19,7 +19,9 @@ cd "$SCRIPT_DIR"
 source "../../sha.common.sh"
 
 export DIY_VARIANT="${DIY_VARIANT:-lab}"
-_build_dir() { echo "build/${DIY_VARIANT}"; }
+# 产物与变体**解耦**：tsc + esbuild 只跟源码有关 ⇒ 一份 `build/app/`；
+# 变体只决定运行空间（数据根 `build/<variant>/home`、DIY_ENV、CDP / 副屏）
+_build_dir() { echo "build/app"; }
 _repo_root() { ( cd "$SCRIPT_DIR/../.." && pwd ); }
 
 clean() { run rm -rf ./build ./dist ./lib; }
