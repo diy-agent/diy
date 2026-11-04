@@ -15,7 +15,7 @@ cd "$SCRIPT_DIR"
 source "../../../sha.common.sh"
 
 clean() {
-  run rm -rf ./build ./dist ./lib
+  run rm -rf ./build ./dist ./lib ./node_modules/.cache/tsbuildinfo
 }
 
 # 本包检查：类型 + lint

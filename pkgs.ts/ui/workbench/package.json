@@ -1,52 +1,53 @@
 {
-  "name": "@diy-agent/workbench",
-  "version": "0.1.1",
-  "private": true,
-  "description": "工作台主进程外壳：窗口 + page:invoke 通道 + 插件 loader（不认识任何具体页面）",
-  "files": [
-    "src/"
-  ],
-  "type": "module",
-  "main": "./lib/index.js",
-  "types": "./src/index.ts",
-  "exports": {
-    ".": {
-      "types": "./src/index.ts",
-      "default": "./lib/index.js"
+    "name": "@diy-agent/workbench",
+    "version": "0.1.1",
+    "private": true,
+    "description": "工作台主进程外壳：窗口 + rpc 双向通道 + 插件 loader（不认识任何具体页面）",
+    "files": [
+        "src/"
+    ],
+    "type": "module",
+    "main": "./lib/index.js",
+    "types": "./src/index.ts",
+    "exports": {
+        ".": {
+            "types": "./src/index.ts",
+            "default": "./lib/index.js"
+        },
+        "./channels": {
+            "types": "./src/channels.ts",
+            "default": "./lib/channels.js"
+        },
+        "./page": {
+            "types": "./src/page.ts",
+            "default": "./lib/page.js"
+        },
+        "./loader": {
+            "types": "./src/loader.ts",
+            "default": "./lib/loader.js"
+        },
+        "./protocol": {
+            "types": "./src/protocol.ts",
+            "default": "./lib/protocol.js"
+        },
+        "./preload": {
+            "types": "./src/preload.ts",
+            "default": "./lib/preload.js"
+        }
     },
-    "./channels": {
-      "types": "./src/channels.ts",
-      "default": "./lib/channels.js"
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json"
     },
-    "./page": {
-      "types": "./src/page.ts",
-      "default": "./lib/page.js"
+    "dependencies": {
+        "@diy-agent/dev-paths": "file:../../core/dev-paths",
+        "@diy-agent/rpc": "0.2.0"
     },
-    "./loader": {
-      "types": "./src/loader.ts",
-      "default": "./lib/loader.js"
-    },
-    "./protocol": {
-      "types": "./src/protocol.ts",
-      "default": "./lib/protocol.js"
-    },
-    "./preload": {
-      "types": "./src/preload.ts",
-      "default": "./lib/preload.js"
+    "devDependencies": {
+        "@types/node": "^26.1.0",
+        "electron": "^43.0.0",
+        "oxfmt": "^0.57.0",
+        "oxlint": "^1.72.0",
+        "typescript": "^7.0.2",
+        "vitest": "^4.1.10"
     }
-  },
-  "scripts": {
-    "build": "tsc -p tsconfig.build.json"
-  },
-  "dependencies": {
-    "@diy-agent/rpc": "0.2.0"
-  },
-  "devDependencies": {
-    "@types/node": "^26.1.0",
-    "electron": "^43.0.0",
-    "oxfmt": "^0.57.0",
-    "oxlint": "^1.72.0",
-    "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
-  }
 }

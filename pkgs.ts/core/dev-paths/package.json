@@ -1,0 +1,14 @@
+{
+    "name": "@diy-agent/dev-paths",
+    "version": "0.1.0",
+    "private": true,
+    "description": "dev 运行目录的唯一真源：实例注册表 / 日志根（跨 app 共享，各 app 不再自己拼路径）",
+    "files": ["src/"],
+    "type": "module",
+    "main": "./lib/index.js",
+    "types": "./src/index.ts",
+    "exports": {
+        ".": { "types": "./src/index.ts", "default": "./lib/index.js" }
+    },
+    "scripts": { "build": "tsc -p tsconfig.build.json" }
+}
