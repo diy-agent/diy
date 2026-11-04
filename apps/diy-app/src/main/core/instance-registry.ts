@@ -18,6 +18,7 @@
 
 import { readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { registryDir as registryDirOf } from "@diy-agent/dev-paths";
 import { writeFileAtomic } from "./atomic-write";
 import { realHomeDir } from "./instance-identity";
 import { os } from "../os";
@@ -68,9 +69,8 @@ export interface InstanceRecord {
 
 /** 注册表目录：`DIY_INSTANCE_REGISTRY` 覆盖（测试隔离），缺省 `<真实家目录>/.diy-instances` */
 export function registryDir(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env["DIY_INSTANCE_REGISTRY"];
-  if (override && override.trim() !== "") return override;
-  return join(realHomeDir(), ".diy-instances");
+  // 位置唯一真源：`@diy-agent/dev-paths`（`~/.diy/dev/apps`）
+  return registryDirOf(env);
 }
 
 export function recordPath(dir: string, pid: number): string {
