@@ -79,16 +79,15 @@ export interface Bot {
      * 这个 bot 的**唯一长期会话**（##498）：第一次调用建出来并把 id 写回 bot.json，
      * 之后幂等返回同一个；会话目录被外部删了会重新建一个。
      *
-     * 这是 chat 的「点进 bot 就进对话」—— 产品上**没有「新建会话」**，所以 UI 不走 `newSession()`。
+     * 这是 chat 的「点进 bot 就进对话」—— 产品上**没有「新建会话」**。
+     *
+     * ##2026-11-05：`sessions()` / `newSession()` 已从接口移除。
+     * 判据「一个包对外导出的每个符号都要能回答『谁会用它』」——
+     * 这两个只有测试在调（生产零调用），答案只是「装配需要」。
+     * 真正需要「列出某 bot 的会话」的调用方（bot-config-page 的 sessionCount）
+     * 用 `store.sessionsOf(botId)`，那是存储层的职责，不是 bot 句柄的。
      */
     primary(): Promise<BotSessionRef>;
-    /** 这个 bot 的所有会话（按更新时间倒序；**不含**别的 bot 的） */
-    sessions(): Promise<readonly BotSessionRef[]>;
-    /**
-     * 新建一个会话（归属这个 bot），返回会话 id。
-     * ##498：`primary()` 的实现会用它；**chat UI 不再暴露**（没有「新建会话」这个概念）。
-     */
-    newSession(): Promise<string>;
 }
 
 /** 建 bot 句柄的选项 */

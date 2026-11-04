@@ -17,8 +17,11 @@ import {
     createFileBotStore,
     type BotConfig,
     type PersonaDef,
-    ensureBot,
 } from "../src/index.js";
+// 包内部实现（A1 后不再从包入口导出）——测试直接引源文件
+import {
+    ensureBot,
+} from "../src/bot.js";
 
 function makeHome(): string {
     return mkdtempSync(join(tmpdir(), "diy-bot-persona-"));

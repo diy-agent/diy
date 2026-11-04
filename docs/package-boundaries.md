@@ -253,3 +253,33 @@ export function createBotModule(opts: { home: string; store?: BotStore }): BotSe
 - [ ] `Bot.newSession` / `sessions` 降级为包内函数（产品上 bot 只有一条永久会话）
 - [ ] `nextBotId` 三份实现合并到一处（`bot.ts:170` / `chat.ts:835` / `bot-config-page/actions.ts:272`）
 - [ ] `bot-config-page` 的 `actions.ts`（313 行）瘦身成校验 + 转调（core 逻辑进 `BotService`）
+
+## 落地记录：`@diy-agent/bot` 的组合根**已经是** `createBotChat`（2026-11-05）
+
+原计划加一个 `BotModule`。实际动手时发现没必要 —— **组合根已经存在**，只是被一堆
+同样导出的实现细节淹没了：
+
+```ts
+// apps/chat/index.ts 实际只用这五个
+import { asToolSet, createBotChat, createFileBotStore, workspaceOf, type BotStore } from "@diy-agent/bot";
+```
+
+`createBotChat({ home, store?, llmFor? })` 做的事就是组合根的定义：
+实例化 store / session / llm，接起来，返回 `BotChatHost`（服务接口）。
+
+所以真正的动作是**收窄导出**，不是新增一层：
+
+```ts
+// 之前：8 个实现细节和组合根平起平坐
+export { createBot, createFirstBot, ensureBot, hasAnyBot, newSessionId, openBot, setBotModel } from "./bot.js";
+
+// 之后：只导出组合根要的 + 装配要的
+export { createFileBotStore } from "./store-fs.js";
+export { createMemoryBotStore } from "./store-memory.js";
+export { createBotChat } from "./chat.js";   // ← 组合根
+```
+
+测试怎么办：包内测试直接从 `../src/bot.js` 引（它们本来就是测实现的）。
+
+**教训**：先看「组合根是不是已经在了」，再决定要不要新增一层。
+命名规范（`<Pkg>Module`）是为**确实需要**时准备的，不是必须凑一个。

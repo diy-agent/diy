@@ -3,7 +3,9 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createFileBotStore, createFirstBot, hasAnyBot, setBotModel } from "../src/index.js";
+import { createFileBotStore } from "../src/index.js";
+// 包内部实现（A1 后不再从包入口导出）
+import { createFirstBot, hasAnyBot, setBotModel } from "../src/bot.js";
 
 function makeHome(): string {
     return mkdtempSync(join(tmpdir(), "diy-bot-first-"));

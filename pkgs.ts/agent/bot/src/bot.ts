@@ -44,10 +44,6 @@ export function createBot(options: CreateBotOptions): Bot {
             return config;
         },
 
-        sessions() {
-            return store.sessionsOf(config.id);
-        },
-
         async primary(): Promise<BotSessionRef> {
             const id = config.primarySessionId;
             // 幂等：写回过的那个还在（归属仍是本 bot）就直接用
@@ -59,9 +55,6 @@ export function createBot(options: CreateBotOptions): Bot {
             return refOf(created);
         },
 
-        async newSession(): Promise<string> {
-            return openSession();
-        },
     };
 }
 
