@@ -132,12 +132,32 @@ node scripts/check-renderer-boundary.mjs --self-test
 > `@diy-agent/rpc` 是安全的 —— 它虽然有 `./http` `./ws` `./electron` 子路径，
 > 但 `index.ts` **不导出它们**。这正是「子路径隔离」的正确示范。
 
-### 待处理
+### ⚠️ 这份清单的正确读法（别被"危险"吓到）
 
-- [ ] `bot-config-page` / `model-catalog`：页面是 renderer 用的，但 barrel 带 `node:fs`
-      ⇒ 应该拆 `./catalog-view`（纯类型 + 格式化）与 `./catalog`（读文件）
-- [ ] 其余 9 个包：确认 renderer 侧确实走了子路径（当前 `check-renderer-boundary` 报 ✓，
-      说明现状安全；清单的作用是**防止未来误用**）
+`--barrels` 判的是**单入口**：`src/index.ts` 能否到达 Node。
+但对**双入口包**（`*-page`）来说，`.` 本来就是给主进程的，带 Node 是**应该的**。
+
+```
+@diy-agent/bot-config-page   .  ← main 侧方法表（读写 bot 存储，要 node:fs）✅
+                             ./renderer  ← 浏览器视图（纯 DOM）✅
+```
+
+**这类包的正确性由主检查（默认模式）保证** —— 它从 renderer 入口出发，
+看到的是 `./renderer` 而不是 `.`，所以报 ✓。
+
+### 真实的待办
+
+- [ ] **命名问题**：`*-page` 后缀让人以为是纯 UI 包，实际是「页面 = 主进程贡献 + renderer 视图」
+      的双入口包。三个都是这个模式：
+      `bot-config-page` / `chat-page` / `model-config-page`
+      ⇒ 建议在各自 `package.json` 的 description 里写清「.` = 主进程，`./renderer` = 浏览器」，
+      或改名成 `*-page-contribution`（代价大，先靠文档）
+- [ ] 其余 9 个包：确认 renderer 侧确实走了子路径（当前主检查 ✓，清单的作用是**防未来误用**）
+
+### `model-catalog` 的情况
+
+只有 `.` 一个入口，且 renderer **没直接引它**（只有 `apps/chat/main.ts` 的注释提到）。
+它带 `node:fs` 是因为要读 `models.dev.json` —— 这是它的本职，不是问题。
 
 ## 如何复现这份审计
 
@@ -145,3 +165,27 @@ node scripts/check-renderer-boundary.mjs --self-test
 node scripts/check-renderer-boundary.mjs          # 只看 renderer 是否越界（会阻断）
 node scripts/check-renderer-boundary.mjs --list   # 看入口与统计
 ```
+
+## 附：`@diy-agent/rpc` 的入口原则（2026-11-04 用户确认）
+
+> **根 `index.ts` 只导出最基本接口，不导出带特殊依赖的具体实现。**
+
+理由：将来要把 electron / http / ws 拆成独立包时，根入口不跟着动。
+
+现状（正确）：
+
+```json
+"exports": {
+  ".":          "./src/index.ts",       // 平台无关核（纯 TS + zod）
+  "./http":     ...,                     // 各自带 Node/浏览器依赖
+  "./ws":       ...,
+  "./electron": ...,                     // 带 electron
+  "./cli":      ...
+}
+```
+
+`index.ts` 不 re-export 任何 transport ⇒ 它在浏览器里安全（审计里它是「✅ 安全」那一类）。
+
+**反例**：`@diy-agent/jobs` 的 index 导出了 `run-registry`（要 spawn）⇒ 用 barrel 的
+renderer 直接被拖下水。如果当初把「账本」（IO）和「呈现判据」（纯函数）分成两个入口，
+这次事故不会发生。
