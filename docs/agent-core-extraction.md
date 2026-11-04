@@ -58,6 +58,19 @@
 | 11 | **提示词注册表** | `prompt-registry.ts` | 695 行 | 模板引擎已在 `@diy-agent/template` |
 | 12 | **API 定义/实现** | `api-def.ts` + `api-impl.ts` | 5848 行 | 可能大部分该拆成各包自己的 API |
 
+### ⛔ 不迁：已停用的实验
+
+| 逻辑 | 位置 | 为什么不迁 |
+|---|---|---|
+| **agent-guard**（bash 自杀护栏） | `services/agent-guard.ts`（246 行） | **2026-10-02 主动停用**：判据是命令文本，分不清「宿主进程」与「agent 自己起的实例」，实测会误拦（连 agent 自己起的 worktree 实例都收不掉）。迁过去等于把已知缺陷搬进新架构。 |
+
+**但它记录的知识仍然值钱** —— 2026-09-12 的事故：agent 执行 `pkill -9 -f electron`
+把宿主的 GPU / NetworkService / Renderer 子进程全杀了 → 窗口白屏，SIGKILL 无法捕获，
+事后无法补救。结论「**只能在执行前拦截 + write-ahead 审计**」是对的，只是判据还没找到。
+
+**重新启用的前提**（原注释里记着）：判据能区分宿主 vs agent 自建实例，或改走沙箱。
+到那时再从 `apps/diy-app` 迁到 `@diy-agent/tools`（它只依赖 `os`，迁移成本很低）。
+
 ### 不迁（app 特有）
 
 `window-ops` · `rpc-port` · `instances` · `process-scan` · `crash-reporting` ·
