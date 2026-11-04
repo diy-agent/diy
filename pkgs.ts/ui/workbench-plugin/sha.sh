@@ -24,7 +24,7 @@ source "../../../sha.common.sh"
 ####################################################################################
 
 clean() {
-  run rm -rf ./dist ./lib
+  run rm -rf ./dist ./lib ./node_modules/.cache/tsbuildinfo
 }
 sync() {
   :
