@@ -23,6 +23,7 @@ import { AppInfo } from "./components/AppInfo";
 import { LogPanel } from "./components/LogPanel";
 import { ThemeSettings } from "./components/ThemeSettings";
 import { ToastContainer } from "./components/ToastContainer";
+import { HubApprovalCenter } from "./components/HubApprovalCenter";
 // 「模型不可用」顶栏 bar（##369 ①）：真发失败时把事实从会话流里提出来摆到最显眼处
 import { ModelUnavailableBar } from "./components/ModelUnavailableBar";
 import type { Remedy } from "../shared/error-remedy";
@@ -1944,6 +1945,8 @@ export default function App() {
                 onPick={(uri) => getRendererActions().openTaskRun?.(uri)}
             />
 
+            {/* 全局审批弹窗（##500 续）：任何页面收到配对请求都弹，不依赖当前路由 */}
+            <HubApprovalCenter />
             <ToastContainer />
         </div>
         {/* 全局侧边栏助手 room（##166 §30 / §31）：**独立于路由** ——
