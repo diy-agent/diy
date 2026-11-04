@@ -13,12 +13,12 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { DiscoveredInstance, Discoverer, PingInfo } from '../types.js';
 import { fetchPing } from './ping-client.js';
+import { registryDir as registryDirOf } from '@diy-agent/dev-paths';
 
 /** 注册表目录（`DIY_INSTANCE_REGISTRY` 覆盖；缺省 `~/.diy-instances`，与 diy-app 同口径） */
 export function defaultRegistryDir(env: NodeJS.ProcessEnv = process.env): string {
-    const override = env['DIY_INSTANCE_REGISTRY'];
-    if (override !== undefined && override.trim() !== '') return override.trim();
-    return join(homedir(), '.diy-instances');
+    // 位置唯一真源：`@diy-agent/dev-paths`（`~/.diy/dev/apps`）
+    return registryDirOf(env);
 }
 
 export interface LocalDiscoverDeps {

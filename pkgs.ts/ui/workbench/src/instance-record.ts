@@ -14,6 +14,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { ensureRegistryDir, migrateLegacyRegistry, registryDir as registryDirOf } from "@diy-agent/dev-paths";
 
 /** 启动瞬间快照的一跳父进程 */
 export interface ParentHop {
@@ -21,11 +22,14 @@ export interface ParentHop {
     readonly command: string;
 }
 
-/** 注册表目录：`DIY_INSTANCE_REGISTRY` 覆盖；缺省真实家目录下 `~/.diy-instances` */
+/**
+ * 注册表目录：**唯一真源在 `@diy-agent/dev-paths`**（`~/.diy/dev/apps`）。
+ *
+ * 这里只是转发 —— 位置改一次要改五处（workbench / diy-app / apps/web / remote / dev 启动器），
+ * 所以统一收敛到那个包，别再在本文件里拼路径。
+ */
 export function registryDir(env: NodeJS.ProcessEnv = process.env): string {
-    const override = env["DIY_INSTANCE_REGISTRY"];
-    if (override !== undefined && override.trim() !== "") return override.trim();
-    return join(realHomeDir(), ".diy-instances");
+    return registryDirOf(env);
 }
 
 /**
@@ -175,7 +179,9 @@ export interface SelfRecordOptions {
  * 「它到底写到哪儿去了」（注册表目录可被环境变量改写，猜不得）。
  */
 export function writeSelfRecord(options: SelfRecordOptions): string {
-    const dir = options.dir ?? registryDir();
+    // 旧位置（`~/.diy-instances`）一次性搬家：写侧顺手触发，读侧才不用兼容两套目录
+    migrateLegacyRegistry();
+    const dir = options.dir ?? ensureRegistryDir();
     const pid = process.pid;
     const now = options.now ?? (() => localISOString());
     const startedAt = localISOString(new Date(Date.now() - process.uptime() * 1000));
