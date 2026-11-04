@@ -19,6 +19,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { writeFileAtomic } from "../core/atomic-write";
 import { clipToolResult, type ToolResultPolicy } from "@diy-agent/compaction/compaction";
+import { capToolOutput as capToolOutputIn } from "@diy-agent/tools";
 import { diyHome } from "../core/state";
 import { localDir, sessionDir } from "../core/local-paths";
 import { READ_MAX_BYTES, READ_MAX_LINES } from "../core/file-read";
@@ -120,17 +121,14 @@ export interface CappedToolOutput {
  * `resume` 的 marker，模型至少知道「被截了、且这次取不回」。
  */
 export function capToolOutput(text: string, toolCallId: string, taskUri: string): CappedToolOutput {
-    const probe = clipToolResult(text, TOOL_OUTPUT_POLICY);
-    if (!probe.clipped) return { text, clipped: false };
-
-    const origPath = toolOutFile(taskUri, toolCallId);
-    let hint: string | undefined;
-    try {
-        writeFileAtomic(origPath, text);
-        hint = origPath;
-    } catch {
-        hint = undefined; // 落盘失败 → 不给路径（不指向一个不存在的文件）
-    }
-    const r = hint ? clipToolResult(text, TOOL_OUTPUT_POLICY, { origPath: hint }) : probe;
-    return hint ? { text: r.text, clipped: true, origPath: hint } : { text: r.text, clipped: true };
+    // 截断逻辑已迁到 `@diy-agent/tools`（pkgs.ts/agent/tools/src/shell/cap-output.ts）——
+    // 那边是纯逻辑 + 注入落盘；这里只补「原文写哪」这个 app 特有的目录约定。
+    return capToolOutputIn(text, {
+        policy: TOOL_OUTPUT_POLICY,
+        writeOriginal: (content) => {
+            const origPath = toolOutFile(taskUri, toolCallId);
+            writeFileAtomic(origPath, content);
+            return origPath;
+        },
+    });
 }

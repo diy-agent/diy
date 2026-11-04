@@ -15,3 +15,5 @@ export * from "./file-read.js";
 export * from "./file-write.js";
 export * from "./file-edit.js";
 export * from "./unified-diff.js";
+
+export * from './shell/cap-output.js';
