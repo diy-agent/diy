@@ -612,7 +612,7 @@ build-pkgs() {
     # 为什么从仓根直接 node、不平进包目录再 `./sha.sh build-artifact`：后者每包多一个
     # bash + sha 引擎（~1s），三个包就是 3s —— 实测占了热构建的一半（2026-10-31）。
     local _p
-    for _p in pkgs.ts/core/rpc pkgs.ts/ui/core pkgs.ts/ui/workbench-plugin; do
+    for _p in pkgs.ts/core/rpc pkgs.ts/ui/core pkgs.ts/ui/workbench-plugin pkgs.ts/core/dev-paths; do
         run node scripts/npm-publish.mjs "$_p" --prepare-only --out=lib
     done
     # profile（apps/*）**不进** build-pkgs：它们是产物入口不是能力包，按需各自 ./sha.sh build
@@ -643,6 +643,7 @@ _npm_publish_pkgs=(
   pkgs.ts/core/rpc pkgs.ts/ui/core pkgs.ts/agent/session pkgs.ts/agent/store-jsonl
   pkgs.ts/ui/workbench pkgs.ts/ui/workbench-ui pkgs.ts/model/catalog pkgs.ts/ui/model-config
   pkgs.ts/model/provider pkgs.ts/agent/bot pkgs.ts/ui/chat-page pkgs.ts/ui/workbench-plugin apps/chat
+  pkgs.ts/core/dev-paths
 )
 
 publish() {

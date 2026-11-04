@@ -220,6 +220,14 @@ facts:
     evidence:
       source: user
       verifiedAt: '2026-10-21'
+  dev#app-variant:
+    value: |-
+      **`lab` 是试验变体，不是生产入口**：`./sha.sh lab` = 构建并起隔离实例（CDP + 副屏、watch 重启会打断轮次，用于自己看效果 / agent 快速验证）。**生产模式 = `./sha.sh build` 后跑 `dev`（`dev app prod`）** —— 跑的是产物，改 src 不重启。判据：要给人用 / 要长会话 ⇒ build + prod；只是自己验一眼 ⇒ lab。⚠️ 现状不一致：`_diy/apps/dev/sha.sh` 的 `DIY_VARIANT` 缺省是 `lab`（`build/lab/`），而 `apps/diy-app` 缺省是 `prod` —— 所以光 `./sha.sh build` 得到的是 lab 产物，要 prod 得显式 `DIY_VARIANT=prod ./sha.sh build`。拉完代码看到的是旧界面 ⇒ 先怀疑 build 产物过期（`build/<变体>/renderer/index.js` 的 mtime），不是代码没合。
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-11-04'
   dev#by-type:
     value: |-
       **先判类型再选打法，不要所有任务一套**：
