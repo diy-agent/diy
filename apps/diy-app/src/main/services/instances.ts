@@ -47,7 +47,11 @@ const PROBE_TIMEOUT_MS = 1200;
  * 手工启动（没有启动器注入的 `DIY_LAUNCH`）时按变体回推 launch id。
  * 只映射 apps/diy-app/app.yaml 里真实存在的两条命令：lab → ./sha.sh lab，prod → ./sha.sh prod。
  */
-const LAUNCH_OF_VARIANT: Record<string, string> = { lab: "lab", prod: "prod" };
+// 只映射「worktree 内声明过的 launch」：lab → app.yaml 的 lab。
+// prod 回推过一次就出过事故（##518）：全局 `diy` 跑的实例 variant=prod、cwd 落在主 worktree，
+// 写 launch:"prod" 后被面板当成某 worktree 的 prod launch（点停止会杀掉真生产）。
+// 生产实例一律 launch=null，由「数据根是不是 ~/.diy」在面板侧认出来。
+const LAUNCH_OF_VARIANT: Record<string, string> = { lab: "lab" };
 
 /** 本实例的 launch id：启动器注入优先，否则按变体回推（认不出的变体 ⇒ null）。窗口标题 / 注册表共用一份 */
 export function selfLaunch(variant: string): string | null {

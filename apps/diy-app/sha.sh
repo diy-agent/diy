@@ -190,6 +190,19 @@ serve-build() {
 }
 build-cli() { run npx vite build --config vite.cli.config.ts; }
 build-renderer() { run npx vite build --config vite.renderer.config.ts; }
+# 预生产（staging）：跑 **prod 产物**，但数据根在 worktree 内（`build/staging/home`）。
+# 与 start 的区别只有数据根与环境：start = 真生产（`~/.diy`），staging = 沙箱验收。
+# 单实例锁是 per-home，所以 staging 与生产可以同时跑，互不干扰。
+staging() {
+  build
+  _ensure_electron
+  local home; home="${DIY_LAUNCH:+${DIY_HOME:-}}"; home="${home:-$(_repo_root)/build/staging/home}"
+  run mkdir -p "$home"
+  echo "${info}产物：$(_build_dir)（prod 构建）${reset}"
+  echo "${info}数据根：$home（staging，不是 ~/.diy）${reset}"
+  run env DIY_HOME="$home" DIY_VARIANT=prod DIY_ENV=production npx electron "$(_build_dir)/main/index.mjs" "$@"
+}
+
 # 运行生产构建（先构建，变体 prod）
 start() {
   build

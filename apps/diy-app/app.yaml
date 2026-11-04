@@ -1,6 +1,9 @@
 # apps/diy-app 的启动清单（dev 启动器 glob apps/*/app.yaml 得到「有什么能启动」）
 #
 # 每条 launch 必须写 `home`（数据根）：启动器按它注入 DIY_HOME + 显示实例 URI。
+# `staging` = 跑 prod 构建产物，但数据根在 worktree 内（**不是** `~/.diy`）；
+# 真正的生产实例（`diy` / `./sha.sh start`，数据根 `~/.diy`）不在这张表里 —— 它由 dev 面板的
+# 「外部实例」区只读展示（##518 用户裁：prod 一词只留给 ~/.diy）。
 # 同一个 app 的多条 launch 写同一个根 = 配置错误（同时启动会抢单实例锁）。
 
 name: diy-app
@@ -17,10 +20,10 @@ launches:
       - kind: app
         title: Electron 窗口
 
-  - id: prod
-    title: 生产（prod）
-    command: ./sha.sh start
-    home: build/prod/home
+  - id: staging
+    title: 预生产（prod 构建 + 隔离数据）
+    command: ./sha.sh staging
+    home: build/staging/home
     entries:
       - kind: app
         title: Electron 窗口
