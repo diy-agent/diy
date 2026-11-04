@@ -1,0 +1,12 @@
+{
+  "name": "@diy-agent/serial-queue",
+  "version": "0.1.0",
+  "private": true,
+  "description": "串行队列（Go 单协程+channel 的 TS 等价物）：按提交顺序串行执行，支持 AbortSignal 取消与按 key 分组",
+  "files": ["src/"],
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./src/index.ts",
+  "exports": { ".": { "types": "./src/index.ts", "default": "./lib/index.js" } },
+  "scripts": { "build": "tsc -p tsconfig.build.json" }
+}

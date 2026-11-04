@@ -1,5 +1,4 @@
-// src/main/core/serial-queue.ts
-// 🎯 串行队列 —— Go「单协程 + channel」顺序执行模式在 TS 的等价物
+// index.ts — 串行队列（Go「单协程 + channel」的 TS 等价物）。
 //
 // Go 的做法：所有操作提交到一个 channel，由单个 goroutine for-range 顺序消费，
 // 状态只被这一个执行体触摸 → 天然无锁、天然按提交顺序。

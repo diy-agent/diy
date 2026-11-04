@@ -2,7 +2,7 @@
 // 🎯 SerialQueue / KeyedSerialQueue —— Go「单协程+channel」顺序模式的验证
 
 import { describe, it, expect } from "vitest";
-import { SerialQueue, KeyedSerialQueue, QueueAbortError } from "../../src/main/core/serial-queue";
+import { SerialQueue, KeyedSerialQueue, QueueAbortError } from "../src/index.js";
 
 const tick = () => new Promise<void>((r) => setTimeout(r, 0));
 
