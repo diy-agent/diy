@@ -102,3 +102,46 @@ node scripts/check-renderer-boundary.mjs --self-test
 ```
 
 第二条**不是可选项** —— 一个从不报警的检查等于没有检查。
+
+## 现状清单（2026-11-04 审计全仓 34 个包）
+
+自动生成方式：从每个包的 `src/index.ts` 出发遍历 import 图，看能否到达 `node:*` / `electron`。
+
+### ⚠️ barrel 危险（index.ts 可达 Node）—— 11 个
+
+| 包 | 经由 | 说明 |
+|---|---|---|
+| `@diy-agent/workbench` | `electron` | 壳本身，只该 main 用 |
+| `@diy-agent/jobs` | `run-registry` → `node:child_process` | **本次事故源头** |
+| `@diy-agent/bot` | `store-fs` → `node:fs/promises` | renderer 该走 `bot/protocol` / `bot/persona` |
+| `@diy-agent/bot-config-page` | `catalog` → `node:fs` | 页面本身是 renderer 用的 ⇒ **该拆子路径** |
+| `@diy-agent/model-catalog` | `catalog` → `node:fs` | 同上 |
+| `@diy-agent/hub` | `keychain` → `node:child_process` | |
+| `@diy-agent/tools` | `file-edit` → `node:fs` | |
+| `@diy-agent/os` | `fs-lock` → `node:fs` | |
+| `@diy-agent/persistence` | `seek` → `node:crypto` | |
+| `@diy-agent/session-store-jsonl` | `store` → `node:fs/promises` | |
+| `@diy-agent/log` | `sanitize` → `node:buffer` | |
+
+### ✅ barrel 安全（纯数据 / 纯函数）—— 23 个
+
+`chat-page` `compaction` `context` `facts` `flow` `llm-provider` `model-config-page`
+`remote` `room` `rpc` `serial-queue` `session` `session-store-memory` `store-contract`
+`talk` `template` `test-llm` `time` `ui` `ui-kit` `ui-testing` `workbench-plugin` `workbench-ui`
+
+> `@diy-agent/rpc` 是安全的 —— 它虽然有 `./http` `./ws` `./electron` 子路径，
+> 但 `index.ts` **不导出它们**。这正是「子路径隔离」的正确示范。
+
+### 待处理
+
+- [ ] `bot-config-page` / `model-catalog`：页面是 renderer 用的，但 barrel 带 `node:fs`
+      ⇒ 应该拆 `./catalog-view`（纯类型 + 格式化）与 `./catalog`（读文件）
+- [ ] 其余 9 个包：确认 renderer 侧确实走了子路径（当前 `check-renderer-boundary` 报 ✓，
+      说明现状安全；清单的作用是**防止未来误用**）
+
+## 如何复现这份审计
+
+```bash
+node scripts/check-renderer-boundary.mjs          # 只看 renderer 是否越界（会阻断）
+node scripts/check-renderer-boundary.mjs --list   # 看入口与统计
+```
