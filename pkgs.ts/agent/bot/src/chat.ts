@@ -645,9 +645,22 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                     // 这里只把 tools / maxSteps 透传给 session.send，循环与工具执行由 ai-sdk 负责。
                     try {
                         const tools = options.toolsFor?.(ref.id);
+                        const effort = active.reasoningEffort;
                         for await (const delta of session.send(text, {
                             ...(tools === undefined ? {} : { tools }),
                             maxSteps: options.maxToolSteps ?? DEFAULT_MAX_TOOL_STEPS,
+                            // 这两样 diy-app 一直传、bot 之前漏了 —— 用户 2026-11-04 指出
+                            // 「老 app 没出现过（DSML），都是同样模型」，差异就出在这里：
+                            // 不传 maxOutputTokens 时上游用默认值，可能小到把工具调用截断；
+                            // 不传 reasoningEffort 时 reasoning 模型的行为也和 diy-app 不一致。
+                            ...(active.maxOutputTokens === undefined
+                                ? {}
+                                : { maxOutputTokens: active.maxOutputTokens }),
+                            ...(effort === undefined || effort === "default"
+                                ? {}
+                                : effort === "none"
+                                  ? { providerOptions: { reasoning: "none" } }
+                                  : { providerOptions: { openaiCompatible: { reasoningEffort: effort } } }),
                         })) {
                             if (delta.type === "text" || delta.type === "tool-call" || delta.type === "tool-result") {
                                 onDelta(wireOf(session.messages));

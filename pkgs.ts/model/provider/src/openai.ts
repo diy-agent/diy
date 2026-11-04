@@ -102,7 +102,13 @@ function sessionHeaders(
     return Object.keys(out).length === 0 ? undefined : out;
 }
 
-/** 模型把工具调用写成原始标记（而不是结构化 part）时的特征 */
+/**
+ * 模型把工具调用写成原始标记（而不是结构化 part）时的特征。
+ *
+ * 用户 2026-11-04 指出：「老 app 没出现过，都是同样模型」—— 说明**根因不在模型**，
+ * 而在我们传的参数不全（maxOutputTokens / reasoningEffort 缺失，见 chatStream 里的调用）。
+ * 这里保留检测只作**防御**：真出现时给一句人话而不是把标签糊到界面上。
+ */
 const LEAKED_TOOL_XML = /<\|DSML\||<\/?(?:function_calls|invoke|parameter)[ >]/;
 
 /** 一次调用的流：text 增量 → usage → done；上游失败抛 `LlmProviderError` */
@@ -128,6 +134,8 @@ async function* chatStream(
             // 与 diy-app 的做法一致：streamText({ tools, stopWhen: stepCountIs(n) })。
             ...(options?.tools === undefined ? {} : { tools: options.tools as never }),
             ...(options?.maxSteps === undefined ? {} : { stopWhen: stepCountIs(options.maxSteps) }),
+            ...(options?.maxOutputTokens === undefined ? {} : { maxOutputTokens: options.maxOutputTokens }),
+            ...(options?.providerOptions === undefined ? {} : { providerOptions: options.providerOptions as never }),
         });
         fullStream = result.fullStream as unknown as AsyncIterable<{ type: string } & Record<string, unknown>>;
     } catch (cause) {

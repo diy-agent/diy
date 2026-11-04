@@ -116,6 +116,10 @@ export interface ChatOptions {
     readonly tools?: unknown;
     /** 工具循环的步数上限（适配器翻成 `stopWhen: stepCountIs(n)`；缺省由适配器定） */
     readonly maxSteps?: number;
+    /** 输出上限（diy-app 按模型硬上限传；**不传时上游用默认**，可能小到把工具调用截断） */
+    readonly maxOutputTokens?: number;
+    /** 原样转给 ai-sdk 的 `providerOptions`（如 `{ openaiCompatible: { reasoningEffort } }`） */
+    readonly providerOptions?: Record<string, unknown>;
     /** 会话标识：由 Session 自动传入，调用方不用管。provider 用它填上游路由 / 缓存 header。 */
     readonly sessionId?: string;
 }
