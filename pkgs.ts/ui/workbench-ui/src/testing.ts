@@ -76,8 +76,14 @@ async function run(cmd: TestCommand): Promise<unknown> {
  * ```
  */
 export function installTestHooks(): void {
+    // ① 走 rpc（main → preload → 这里）：进程内测试 / 将来的 CLI 驱动用
     const hooks = (window as unknown as { __diyTestHooks?: { setHandler(h: (cmd: unknown) => Promise<unknown>): void } })
         .__diyTestHooks;
-    if (hooks === undefined) return; // 没有 preload 桥（如纯浏览器预览）—— 静默跳过
-    hooks.setHandler((cmd) => run(cmd as TestCommand));
+    hooks?.setHandler((cmd) => run(cmd as TestCommand));
+
+    // ② 直接挂 window（CDP `Runtime.evaluate` 调）：
+    //    e2e 是**子进程**起的 app，测试进程拿不到 main 里的 workbench 句柄，
+    //    而 CDP 已经连着页面 —— 直接调这个比再搭一条 main→测试 的反向通道省事。
+    //    两条路都保留：rpc 那条是给「同进程测试 / 将来的 CLI」用的。
+    (window as unknown as { __diyTest?: typeof run }).__diyTest = run;
 }
