@@ -13,14 +13,17 @@ set -o pipefail  # default pipeline status==last command status, If set, status=
 shopt -s globstar
 ## 开启后可用排除语法：_workspaces=(~ ~/git/chen56/!(applab)/ ~/git/botsay/*/ )
 #
-# 只收**真正的 workspace**（有 package.json）：目录残留不该把整套命令拖死。
+# 只收**真正的 workspace**（有 package.json **且有 sha.sh**）：目录残留不该把整套命令拖死。
 # 实测 ##501 把 diy-dev 迁出主仓后，本地留下的 pkgs.ts/diy-dev/ 只剩 node_modules，
 # glob 仍会命中 → `./sha.sh sync` 报 "No such file or directory" → build 直接 exit 127。
+# ##512 另有一类：旧布局的包目录留下 lib/（含 npm-publish 生成的 package.json），
+# 例如 pkgs.ts/diy-rpc/lib/package.json —— 既会被当成 workspace 跑 sha.sh（不存在 → exit 127），
+# 又会被 npm 当成重复 workspace（报 EDUPLICATEWORKSPACE）。sha.sh 是 workspace 目录的标志。
 _pick_workspaces() {
   local w
   # ##512 起 pkgs.ts 分层（pkgs.ts/<组>/<包>），另有单包分组 pkgs.ts/flow、pkgs.ts/room 留在一层
   for w in pkgs.ts/*/ pkgs.ts/*/*/ apps/*/; do
-    [[ -f "$w/package.json" ]] && echo "$w"
+    [[ -f "$w/package.json" && -f "$w/sha.sh" ]] && echo "$w"
   done
 }
 shopt -s extglob
@@ -126,16 +129,18 @@ _sync_uptodate() {
     local stamp="node_modules/.diy-sync.stamp"
     [[ -f "$stamp" ]] || return 1
     local f ws
-    for f in package.json package-lock.json pkgs.ts/*/package.json pkgs.ts/*/*/package.json apps/*/package.json; do
+    for f in package.json package-lock.json; do
         [[ -e "$f" ]] || continue
         # stamp 必须比每个 manifest 都新（`-nt` = 严格更新；同秒也判「不新鲜」，保守）
         [[ "$stamp" -nt "$f" ]] || return 1
     done
+    for ws in "${_workspaces[@]}"; do
+        [[ "$stamp" -nt "$ws/package.json" ]] || return 1
+    done
     # workspace 软链齐全（包改名 / node_modules 被部分清掉时这里会漏，交给全量）
     # 名字用 sed 直接抠（不起 node：13 个包 × node 启动 ~60ms 就吃掉了整个预算）
     local name
-    for ws in pkgs.ts/*/ pkgs.ts/*/*/ apps/*/; do
-        [[ -f "$ws/package.json" ]] || continue
+    for ws in "${_workspaces[@]}"; do
         name=$(sed -n 's/^[[:space:]]*"name":[[:space:]]*"\([^"]*\)".*/\1/p' "$ws/package.json" | head -1)
         [[ -n "$name" ]] || return 1
         [[ -e "node_modules/$name" ]] || return 1
@@ -419,6 +424,10 @@ _check_full_body() {
   # OS 边界护栏（2026-10-31）：系统假设（process.platform / wmic / taskkill / powershell /
   # osascript / /bin/bash …）只许出现在 apps/diy-app/src/main/os/**；实现见 scripts/check-os-boundary.mjs
   run node scripts/check-os-boundary.mjs
+  # renderer 图里不许出现 node/electron（2026-11-04 黑屏事故：barrel 带出 node:child_process）；
+  # 实现见 scripts/check-renderer-boundary.mjs。tsc/oxlint/check-os-boundary 都抓不到
+  # 「经由哪个包拉进来的」，只有遍历 import 图才行。
+  run node scripts/check-renderer-boundary.mjs
   # 构建配置漂移护栏（2026-10-31）：各包 tsconfig.build.json 的 composite/references 与
   # tsconfig.build-all.json 都是**生成物**（node scripts/gen-tsconfig-build-all.mjs）——手改就报
   run node scripts/gen-tsconfig-build-all.mjs --check
@@ -603,7 +612,7 @@ build-pkgs() {
     # 为什么从仓根直接 node、不平进包目录再 `./sha.sh build-artifact`：后者每包多一个
     # bash + sha 引擎（~1s），三个包就是 3s —— 实测占了热构建的一半（2026-10-31）。
     local _p
-    for _p in pkgs.ts/core/rpc pkgs.ts/ui/core pkgs.ts/ui/workbench-plugin; do
+    for _p in pkgs.ts/core/rpc pkgs.ts/ui/core pkgs.ts/ui/workbench-plugin pkgs.ts/core/dev-paths; do
         run node scripts/npm-publish.mjs "$_p" --prepare-only --out=lib
     done
     # profile（apps/*）**不进** build-pkgs：它们是产物入口不是能力包，按需各自 ./sha.sh build
@@ -634,6 +643,7 @@ _npm_publish_pkgs=(
   pkgs.ts/core/rpc pkgs.ts/ui/core pkgs.ts/agent/session pkgs.ts/agent/store-jsonl
   pkgs.ts/ui/workbench pkgs.ts/ui/workbench-ui pkgs.ts/model/catalog pkgs.ts/ui/model-config
   pkgs.ts/model/provider pkgs.ts/agent/bot pkgs.ts/ui/chat-page pkgs.ts/ui/workbench-plugin apps/chat
+  pkgs.ts/core/dev-paths
 )
 
 publish() {
