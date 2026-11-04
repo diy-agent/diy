@@ -2,7 +2,7 @@
   "name": "@diy-agent/bot-config-page",
   "version": "0.1.0",
   "private": true,
-  "description": "Bot 配置页面插件：bot 列表 / 身份编辑（name / instructions / model）/ 新建删除 / 测试对话（内存会话，零落盘）；不装就没有入口",
+  "description": "Bot 配置页面插件：bot 列表 / 身份编辑（name / instructions / model）/ 新建删除 / 测试对话（内存会话，零落盘）；不装就没有入口；入口分工：`.` = 主进程（方法表），`./renderer` = 浏览器（纯 DOM）",
   "files": [
     "src/"
   ],

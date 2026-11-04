@@ -2,7 +2,7 @@
   "name": "@diy-agent/chat-page",
   "version": "0.1.1",
   "private": true,
-  "description": "聊天页面插件：主进程侧用 @diy-agent/session + 假 LlmPort；renderer 两版并存（裸 DOM / diyui）",
+  "description": "聊天页面插件：主进程侧用 @diy-agent/session + 假 LlmPort；renderer 两版并存（裸 DOM / diyui）；入口分工：`.` = 主进程（方法表），`./renderer` = 浏览器（纯 DOM）",
   "files": [
     "src/"
   ],

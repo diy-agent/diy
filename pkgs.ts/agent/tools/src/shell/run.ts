@@ -439,6 +439,17 @@ export function runBash(
             const EXIT_GRACE_MS = 200;
             child.on("exit", (code, exitSignal) => {
                 if (logSink) return; // 已转后台：输出归 logSink，**不截断**
+                // ⚠️ **命令退出 ≠ 命令完成**（2026-11-04 修）：`cmd &` / setsid 起的孙进程继承了
+                // stdout/stderr 写端，bash 自己退出了它们还活着。这时按 code 收尾会把
+                // 「后台作业仍在跑」记成 `outcome: ok` —— 用户看到的是「命令成功了」，
+                // 实际有东西还在后台（后续输出全丢，且永远不会有人报错）。
+                //
+                // 判据：exit 时 stdio 是否**已经**全关。没关 ⇒ 不走宽限，让它落到
+                // 'close'（孙进程放手）或超时（定时器，outcome=timeout）—— 两者都比谎报 ok 诚实。
+                // 已经关了 ⇒ 这就是正常的「命令跑完」，宽限照旧（处理 exit 早于 close 的一瞬）。
+                const stdioStillOpen =
+                    child.stdout?.readableEnded === false || child.stderr?.readableEnded === false;
+                if (stdioStillOpen) return;
                 const grace = setTimeout(() => {
                     if (done || logSink) return;
                     if (code === 0) finish(null, dump("out"), dump("err"));

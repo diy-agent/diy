@@ -72,6 +72,56 @@ import ts from "typescript";
 | 不区分「文件活 / 导出死」 | 20 个导出用 3 个也算活 |
 | 动态 import 黑盒 | `import(someVar)` 完全看不见 |
 
+## 实测：knip 排除 tests 模式（2026-11-04，已跑通）
+
+**结论：可用，成本极低，但需要过滤假阳性。**
+
+做法：临时配置把 `vitest.entry` / 所有 `tests/**` 从入口里去掉 —— 这样「只被测试引用」
+的导出就会变成 "unused exports"。
+
+```bash
+# 1. 复制 knip.json，去掉 tests / vitest / *.test.* / *.probe.* 入口
+node -e "
+const j = require('./knip.json');
+for (const ws of Object.values(j.workspaces||{}))
+  ws.entry = (ws.entry||[]).filter(e => !/test|probes/.test(e));
+delete j.vitest;
+j.ignore = [...(j.ignore||[]), '**/tests/**', '**/*.test.*', '**/*.probe.*', '**/*.gen.ts'];
+require('fs').writeFileSync('/tmp/knip-notests.json', JSON.stringify(j,null,2));
+"
+# 2. 只报 exports 类问题
+npx knip --config /tmp/knip-notests.json --reporter=compact --include exports
+```
+
+全仓实测：**27 处**「只被测试用」的导出。
+
+### 两类假阳性（必须人工过一遍）
+
+| 类型 | 例子 | 判断 |
+|---|---|---|
+| **同文件内部使用** | `os/posix.ts: defaultPosixDeps` —— 被同文件的 `createPosixOs()` 当默认参数用 | knip 只统计**跨文件**引用 ⇒ 真·多余导出，可降级 |
+| **测试注入点** | `os/posix.ts` 的 `PosixDeps` 类型 | 故意导出给测试造桩 ⇒ 保留 |
+
+### 与 `find-orphan-tests.mjs` 的分工
+
+| 工具 | 粒度 | 回答 |
+|---|---|---|
+| `find-orphan-tests.mjs` | **文件** | 「这个文件只被测试 import 吗」 |
+| `knip --include exports`（排除 tests）| **导出符号** | 「这个导出只被测试用吗」 |
+
+**先跑后者**：文件级孤儿的绝大多数，其所有导出都会出现在导出级清单里 ——
+从导出级反查文件更省力（也是一个更细的判据）。
+
+### 已验证的清理（本轮）
+
+- `os/posix.ts: defaultPosixDeps` / `win32.ts: defaultWin32Deps` —— 降级为包内函数
+  （只被同文件的 `createPosixOs()` 当默认参数用）
+
+### 不打算清的
+
+- `apps/diy-app/src/shared/session-*.ts` 的十几个导出 —— diy-app 要废弃，清了也没收益
+- `tests` 里的注入点（`PosixDeps` / `Win32Deps` 等）—— 故意的
+
 ## 建议的下一步（未做）
 
 1. **先试 knip 的「排除 tests」模式** —— 成本最低，先看它能不能直接给出「只被测试用」的导出清单
