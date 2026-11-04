@@ -190,7 +190,7 @@ export function sameDataHome(a: string, b: string): boolean {
 /** 解符号链接；路径不存在（或不可达）时返回 null —— 不猜。 */
 function tryRealpath(p: string): string | null {
   try {
-    return realpathSync(p);
+    return realpathSync(p); // sync-io-ok: 启动早期判一次「是不是同一个实例」，无并发可挡；改异步会把实例判定调用链全变 async（##328 原设计）
   } catch {
     return null;
   }
