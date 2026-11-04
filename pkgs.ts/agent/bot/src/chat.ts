@@ -36,7 +36,7 @@ import {
     type ModelCatalogEntry,
 } from "@diy-agent/model-catalog";
 import { toolArgsFromInput } from "@diy-agent/session";
-import { createBot, createFirstBot as createFirstBotIn } from "./bot.js";
+import { createBot, createFirstBot as createFirstBotIn, newSessionId } from "./bot.js";
 import {
     applyPriorBoundary,
     createBotCompactor,
@@ -832,9 +832,6 @@ async function runToolLoop(input: {
     }
 }
 
-function newSessionId(): string {
-    return `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-}
 
 function titleFrom(text: string): string {
     const oneLine = text.replace(/\s+/g, " ").trim();
