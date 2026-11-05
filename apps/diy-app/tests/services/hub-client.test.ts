@@ -64,7 +64,6 @@ async function pairedHub(): Promise<{ hub: HubServer; endpoint: string; info: Aw
     },
     store: new MemoryHubStore(emptyPeerState("default", "diy-hub01")),
     serverKey: pair.privateKey,
-    allowInsecureHttp: true,
     host: "127.0.0.1",
     port: 0,
   });

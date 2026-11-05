@@ -385,3 +385,51 @@ window.__diyTestState = { bots: store.bots.map(b => b.name), panelOpen: signal()
 另有走 rpc 的那一路（`main → preload → renderer`，见 `@diy-agent/workbench/preload`
 与 `workbench-ui/testing.ts` 的 `installTestHooks`），给「同进程测试 / 将来的 CLI」用 ——
 e2e 是子进程起的 app，拿不到 main 里的 `workbench` 句柄，所以这里用 CDP 直连页面。
+
+## 实测：用户中断的完整链路（2026-11-05，C3）
+
+补了 `pkgs.ts/model/provider/tests/user-abort.test.ts`（4 条），顺带澄清了一件事。
+
+### 两个和预期不同的行为（都不是 bug）
+
+| 场景 | 我以为 | 实测 |
+|---|---|---|
+| 中途 abort | 抛 `AbortError` | **不抛，流优雅结束**（若干 text + 一个 done）|
+| 传入已 abort 的 signal | 抛错 | **立刻返回只有 done 的空流**（快速结束，合理）|
+
+### 关键：provider 层不抛，不代表「用户中断」丢了
+
+因为 **session 层用自己的 signal 判**，不依赖 provider 抛错：
+
+```ts
+// pkgs.ts/agent/session/src/session.ts
+} catch (error) {
+    if (!signal.aborted) throw error;        // 主动取消不算失败
+    stopReason = stopReason ?? 'aborted';
+}
+const aborted = signal.aborted;
+if (aborted && stopReason === undefined) stopReason = 'aborted';
+
+// 被取消且中间调过工具 ⇒ 那段正文只能算 trace（不是结论）
+if (buffer !== '') {
+    if (aborted && (toolCalls > 0 || toolResults > 0)) flushTrace();
+    else appendMessage({ role: 'assistant', type: 'agent-conclusion', text: buffer });
+}
+```
+
+**分层是对的**：
+
+```
+provider  只负责「流怎么结束」（不抛，优雅收）
+session   负责「这次算不算成功、正文算不算结论」（看自己的 signal）
+```
+
+### 写这类测试的教训
+
+**别用录制 fixture 测「我们这边的动作」** —— 录制只能录到「上游给了什么」。
+用户中断、超时、取消这些是**我方发起**的，必须自己造慢速流 + `AbortSignal`。
+
+### 还有一条没测到的
+
+「abort 之后 session 的 `stopReason` 确实是 `aborted`，且 UI 显示成『已停止』而不是『完成』」
+—— 这属于 session/UI 层，本刀没覆盖。要补的话在 `pkgs.ts/agent/session/tests/` 加。
