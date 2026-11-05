@@ -36,12 +36,18 @@ export function toolsSurfaceFile(home: string): string {
     return join(home, "tools-surface.yaml");
 }
 
-/** 读上次的记录；没有 / 坏了 / 版本不认识 ⇒ null（= 首次启动或老数据，不报警） */
+/**
+ * 读上次的记录；没有 / 坏了 / 版本不认识 ⇒ null（= 首次启动或老数据，不报警）。
+ *
+ * // sync-io-ok: 只在**启动路径**调一次（`##519` 的「启动时预报」），
+ * //   一次几十字节的读，改异步等于给启动流程加一个 await 点而收益为零。
+ * //   app 里禁止同步 IO 的判据是「别阻塞主进程的稳态」，启动那一下不在其中。
+ */
 export function readToolsSurfaceRecord(home: string): ToolsSurfaceRecord | null {
     const file = toolsSurfaceFile(home);
-    if (!existsSync(file)) return null;
+    if (!existsSync(file)) return null; // sync-io-ok: 同上（启动一次）
     try {
-        const raw = yaml.load(readFileSync(file, "utf-8")) as Record<string, unknown> | null;
+        const raw = yaml.load(readFileSync(file, "utf-8")) as Record<string, unknown> | null; // sync-io-ok: 启动一次
         if (!raw || typeof raw !== "object") return null;
         if (raw["version"] !== TOOLS_SURFACE_VERSION) return null;
         const hash = raw["hash"];
