@@ -336,3 +336,52 @@ apps/<app>/tests/
 cd apps/chat && ./sha.sh build && npm run test:e2e        # E2E
 node --experimental-strip-types tools/record-llm.mts list # 看 golden fixture 状态
 ```
+
+## 实测：意图测试 vs E2E（2026-11-05，同一个「建 bot」链路）
+
+同一台机器、同一个 app，两份测试断言完全相同（面板打开 / 模型列表非空 / 值填进去 / 无异常）：
+
+| | 条数 | 耗时 | 单条最快 |
+|---|---|---|---|
+| `bot-create.e2e.test.ts`（真鼠标）| 3 | 3277ms | 331ms |
+| `bot-create.intent.test.ts`（`dispatchEvent`）| 4 | 4935ms | — |
+
+### 诚实结论：**这个场景下意图测试并没有更快**
+
+原因：耗时大头是 `beforeAll` 里**启动 Electron**（两者一样，~2.5s），
+而 e2e 的 `hover + click` 只需要 331ms —— 真鼠标没那么贵。
+
+### 那意图测试的价值在哪
+
+1. **稳**：不受遮挡 / 动画 / 元素宽度为 0 影响。e2e 版必须先 `hover('.chat-bots')`
+   把 64px 收回的 bot 条展开到 200px 才能点，意图版直接 `dispatchEvent` 跳过这一步。
+2. **能等状态**：`waitState` 断言的是 `window.__diyTestState` 里的值，
+   而 e2e 只能 `waitFor` 一个 DOM 表达式（「有个 .bot-row 元素」≠「列表里真有了 1 个 bot」）。
+3. **复杂交互才拉开差距**：多层展开、滚动加载、动态列表、拖拽 ——
+   真鼠标要做「滚到可见 → 等动画 → 点击」，意图测试三步都是同步的。
+
+### 判据（怎么选）
+
+```
+这条测试失败时，我关心的是什么？
+├─ 「用户点不到 / 看不到」──► E2E（真鼠标）
+└─ 「逻辑不对」──────────► 意图测试（dispatchEvent + waitState）
+```
+
+**不要因为"意图测试更快"就一律用它** —— 速度快是副产品，不是理由。
+
+### 通道怎么用
+
+```ts
+// 测试侧（CDP 已连着页面，直接调）
+await d.eval(`window.__diyTest({ type: 'fill', selector: '#name', value: 'x' })`);
+await d.eval(`window.__diyTest({ type: 'click', selector: '.submit' })`);
+await d.eval(`window.__diyTest({ type: 'waitState', path: 'bots.length', equals: 1 })`);
+
+// 页面侧：要把状态暴露出来（每帧更新，读时现取）
+window.__diyTestState = { bots: store.bots.map(b => b.name), panelOpen: signal() };
+```
+
+另有走 rpc 的那一路（`main → preload → renderer`，见 `@diy-agent/workbench/preload`
+与 `workbench-ui/testing.ts` 的 `installTestHooks`），给「同进程测试 / 将来的 CLI」用 ——
+e2e 是子进程起的 app，拿不到 main 里的 `workbench` 句柄，所以这里用 CDP 直连页面。
