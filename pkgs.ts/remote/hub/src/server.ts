@@ -25,7 +25,7 @@ import {
     type PairingOptions,
 } from './pairing.js';
 import type { HubStore } from './store.js';
-import { assertTransportSecurity, type TlsMaterial } from './tls.js';
+import { assertTransportSecurity, isTrustedBindHost, type TlsMaterial } from './tls.js';
 import {
     HUB_PROTOCOL_VERSION,
     type HubIdentity,
@@ -36,8 +36,31 @@ import {
     type PairingRequest,
 } from './types.js';
 
+/** 公共 API 的协议标识（与配对协议 HUB_PROTOCOL_VERSION 分开：连接 ≠ 授权） */
+const NODE_PROTOCOL = 'diy-node/1';
+
+/**
+ * URL 路径 → 路由路径。
+ *
+ * `tailscale serve --set-path <x>` 不剥前缀，所以外部是 `/<x>/info`；
+ * 而直连后端是 `/info`。这里统一剥掉我们自己那一层，两种形状落到同一组路由上。
+ * 老的 `/hub` 前缀（endpoint 直接写 `https://host/hub`）**保持向后兼容**：
+ * 没有配 basePath 时它就是普通路径，`/hub/info` 原样命中。
+ */
+function routePathOf(raw: string, basePath: string | undefined): string {
+    // ① 反向代理（tailscale serve --set-path）指定的前缀：剥掉它是我们的事
+    if (basePath !== undefined && basePath !== '') {
+        const prefix = `/${basePath.replace(/^\/+|\/+$/g, '')}`;
+        if (raw === prefix) return '/';
+        if (raw.startsWith(`${prefix}/`)) return raw.slice(prefix.length);
+        return raw;
+    }
+    // ② 没有代理前缀：`hub.url` 自带 `/hub` 挂载点（历史形状，也是本包默认对外路径）
+    return raw.replace(/^\/hub(?=\/)/, '');
+}
+
 const MAX_BODY_BYTES = 64 * 1024;
-const WS_PATH = '/hub/ws';
+const WS_PATH = '/ws';
 
 export interface HubServerOptions {
     identity: HubIdentity;
@@ -45,7 +68,16 @@ export interface HubServerOptions {
     /** HMAC / 签发密钥（Hub 私钥；只在内存） */
     serverKey: string;
     tls?: TlsMaterial | null;
-    /** **只给单测**：显式允许明文 HTTP（判据 8 的守卫不会因此静默） */
+    /**
+     * 反向代理挂载的前缀（`tailscale serve --set-path diy-app-lab` ⇒ `'diy-app-lab'`）。
+     * serve **不剥前缀**（`/hub/info` 实测会被剥，但 `--set-path` 的行为不保证），
+     * 所以由我们自己剥：剥掉之后路由就是规格里那几条，和直连完全一致。
+     */
+    basePath?: string;
+    /**
+     * **只给单测**：显式允许明文。生产不要用这个 —— 它会让「门开在 0.0.0.0」也放行。
+     * 真正的判据是 `host` 是否在可信网络里（见 tls.ts 的 isTrustedBindHost）。
+     */
     allowInsecureHttp?: boolean;
     host?: string;
     port?: number;
@@ -70,7 +102,11 @@ export interface HubServer {
 }
 
 export async function createHubServer(opts: HubServerOptions): Promise<HubServer> {
-    assertTransportSecurity(opts.tls, opts.allowInsecureHttp);
+    assertTransportSecurity(opts.tls, opts.host);
+    if (opts.allowInsecureHttp === true && !isTrustedBindHost(opts.host)) {
+        // 单测逃生口仍然只在不可信地址上「不够用」时才需要显式提醒
+        console.warn('[hub] allowInsecureHttp 在不可信地址上被忽略（判据 8）');
+    }
 
     const now = opts.now ?? (() => new Date());
     const pairingOpts: PairingOptions = {
@@ -94,16 +130,35 @@ export async function createHubServer(opts: HubServerOptions): Promise<HubServer
         hubPublicKey: opts.identity.publicKey,
     };
 
+    /**
+     * `GET /info` 的响应：**只有「我活着、我说这个协议」**。
+     *
+     * 刻意不含 domainId / hubNodeId / publicKey —— 那些是「我是谁」，属于配对域。
+     * 未建立关系的对端只需要知道「能不能通」，不需要知道对面是谁。
+     */
+    const publicInfo = { ok: true, protocol: NODE_PROTOCOL } as const;
+
     const waiters = new Map<string, (result: PairSuccess) => void>();
     const sockets = new Map<string, Set<WebSocket>>();
 
     const requestHandler = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
         try {
             const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-            // ##507 实测：`tailscale serve --set-path /hub` 会把前缀**去掉**再转发（/hub/info → /info）。
-            // 所以两种形状都要认：直连后端是 /hub/info，经 tailscale 是 /info。
-            const path = url.pathname.replace(/^\/hub(?=\/)/, '');
+            const path = routePathOf(url.pathname, opts.basePath);
+
+            // ── 公共 API（未授权也能访问）：只证明「我在」 ──
+            // 判据（2026-11-05 用户裁）：还没建立附属关系时，暴露越少越好 ——
+            // 这就是 ping 的语义：能安全交换消息，不代表我信任你。
+            if (req.method === 'GET' && path === '/ping') {
+                return json(res, 200, { ok: true, protocol: NODE_PROTOCOL });
+            }
             if (req.method === 'GET' && path === '/info') {
+                return json(res, 200, publicInfo);
+            }
+            // ── 配对域（协议信息）：`/protocol` ──
+            // 为什么不叫 `/hub/info`：剥前缀后它会变成 `/info`，和上面那条最小探针撞车
+            // （老形状 base 自带 `/hub`，剥完正好是 `/info`）。换个不重叠的名字最省事。
+            if (req.method === 'GET' && path === '/protocol') {
                 return json(res, 200, info);
             }
             if (req.method === 'POST' && path === '/pair') {
@@ -147,7 +202,7 @@ export async function createHubServer(opts: HubServerOptions): Promise<HubServer
 
     server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
         const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-        if (url.pathname !== WS_PATH) return rejectUpgrade(socket, 404, 'Not Found');
+        if (routePathOf(url.pathname, opts.basePath) !== WS_PATH) return rejectUpgrade(socket, 404, 'Not Found');
 
         const token = bearerToken(req.headers.authorization);
         const header = token ? sha256Hex(token) : '';

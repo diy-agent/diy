@@ -52,7 +52,11 @@ export async function fetchHubInfo(endpoint: string, opts: FetchOptions = {}): P
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 5_000);
     try {
-        const res = await doFetch(`${base}/info`, { signal: controller.signal });
+        // 配对域的协议信息在 /hub/info（/info 是**未授权也能读**的最小存活探针，不含身份）
+        // 老配置的 endpoint 直接写到 `/hub`（历史写法），那就退一级，别拼成 /hub/hub/info
+        // `/protocol` 在剥前缀前后都不与 `/info`（最小探针）重叠，所以两种形状同一个拼法
+        const infoUrl = `${base}/protocol`;
+        const res = await doFetch(infoUrl, { signal: controller.signal });
         if (!res.ok) throw new HubError('hub/bad-input', `/hub/info 返回 ${res.status}`, base);
         const info = (await res.json()) as HubInfo;
         if (info.protocolVersion !== HUB_PROTOCOL_VERSION) {
@@ -271,7 +275,9 @@ export class HubClient {
 function wsUrl(endpoint: string): string {
     const url = new URL(normalizeHubEndpoint(endpoint));
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-    url.pathname = '/hub/ws';
+    // 配对域 WebSocket：`/ws`（服务端剥前缀后匹配 WS_PATH 的末段）
+    const root = url.pathname.replace(/\/+$/, '');
+    url.pathname = `${root}/ws`;
     url.search = '';
     return url.toString();
 }

@@ -444,8 +444,18 @@ export class HubService {
 
   private async start(): Promise<HubServer> {
     const identity = await this.requireIdentity();
-    // 显式允许明文（单测 / lab）时不要求证书；生产一律要求受信任 HTTPS（判据 8）
-    const tls = this.allowInsecure() ? null : resolveTlsMaterial(await this.tlsSources());
+    /**
+     * 判据（2026-11-05 用户裁）：**信任来自「门开在哪」，不是「开了个放行参数」**。
+     *   · 有证书 → 用它（对外走 serve / tailscale 时的正常路径）
+     *   · 没有证书 → 不报错，交给 host 判定（loopback / tailscale 上明文合法，见 tls.ts）
+     *   · host 不可信 + 没证书 → createHubServer 自己抛（判据 8 不静默降级）
+     */
+    let tls: Awaited<ReturnType<typeof resolveTlsMaterial>> | null = null;
+    try {
+      tls = resolveTlsMaterial(await this.tlsSources());
+    } catch {
+      tls = null; // 没配证书是**正常状态**（本机直连用明文），不是错误
+    }
     return createHubServer({
       identity,
       store: new FileHubStore({

@@ -123,3 +123,65 @@ describe('Hub 端到端', () => {
         );
     });
 });
+
+/**
+ * 公共 API（2026-11-05 用户裁）：**严格区分连接与授权**。
+ *
+ *   /ping     能通就行 —— 只证明「我活着、我说这个协议」
+ *   /info     节点级信息，**不含任何身份**（未建立关系时不暴露我是谁）
+ *   /protocol 配对域，回协议版本 + hub 身份（配对前要验的正是这个）
+ */
+describe('公共 API：连接层不泄露身份', () => {
+    async function getJson(url: string): Promise<{ status: number; body: Record<string, unknown> }> {
+        const res = await fetch(url);
+        return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+    }
+
+    it('/ping 只回存活 + 协议标识', async () => {
+        const { endpoint } = await startHub();
+        const { status, body } = await getJson(`${endpoint}/ping`);
+        expect(status).toBe(200);
+        expect(body).toEqual({ ok: true, protocol: 'diy-node/1' });
+    });
+
+    it('/info 不含 hubNodeId / publicKey / domainId', async () => {
+        const { endpoint } = await startHub();
+        const { body } = await getJson(`${endpoint}/info`);
+        expect(body).toEqual({ ok: true, protocol: 'diy-node/1' });
+        for (const k of ['hubNodeId', 'hubPublicKey', 'domainId', 'protocolVersion']) {
+            expect(body, `不该出现 ${k}`).not.toHaveProperty(k);
+        }
+    });
+
+    it('/protocol 回完整协议信息（配对域）', async () => {
+        const { hub, endpoint } = await startHub();
+        const { body } = await getJson(`${endpoint}/protocol`);
+        expect(body['hubNodeId']).toBe(hub.info.hubNodeId);
+        expect(body['hubPublicKey']).toBe(hub.info.hubPublicKey);
+        expect(body['protocolVersion']).toBe(hub.info.protocolVersion);
+        // 秘密绝不出现在这里
+        expect(JSON.stringify(body)).not.toMatch(/privateKey|token/i);
+    });
+
+    it('basePath 前缀被剥（tailscale serve --set-path 的形状）', async () => {
+        const { identity, privateKey } = testIdentity('diy-hub01');
+        const hub = await createHubServer({
+            identity,
+            store: testStore('diy-hub01'),
+            serverKey: privateKey,
+            allowInsecureHttp: true,
+            host: '127.0.0.1',
+            port: 0,
+            basePath: 'diy-app-lab',
+        });
+        servers.push(hub);
+        // serve 场景下对外地址是 `https://host/<basePath>`，**不带** `/hub`（那是后端挂载点）
+        const base = new URL(hub.url).origin;
+        // 外部形状：/<basePath>/ping
+        expect((await getJson(`${base}/diy-app-lab/ping`)).body).toEqual({ ok: true, protocol: 'diy-node/1' });
+        // 未加前缀仍然可用（直连后端）
+        expect((await getJson(`${base}/ping`)).body).toEqual({ ok: true, protocol: 'diy-node/1' });
+        // 别的路径不被误剥
+        expect((await getJson(`${base}/other/ping`)).status).toBe(404);
+    });
+});
