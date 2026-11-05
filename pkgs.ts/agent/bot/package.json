@@ -21,6 +21,10 @@
     "./protocol": {
       "types": "./src/protocol.ts",
       "default": "./lib/protocol.js"
+    },
+    "./admin": {
+      "types": "./src/admin.ts",
+      "default": "./lib/admin.js"
     }
   },
   "scripts": {

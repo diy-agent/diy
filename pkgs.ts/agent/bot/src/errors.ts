@@ -5,7 +5,12 @@ export type BotErrorCode =
     | "bot/invalid-uri"
     | "bot/invalid-config"
     | "bot/not-found"
-    | "bot/exists";
+    | "bot/exists"
+    // 管理域（A3，从 bot-config-page 搬来的业务规则）
+    | "bot/no-model"
+    | "bot/unknown-model"
+    | "bot/name-taken"
+    | "bot/id-taken";
 
 export class BotError extends Error {
     readonly code: BotErrorCode;
