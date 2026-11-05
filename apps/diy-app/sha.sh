@@ -196,7 +196,9 @@ build-renderer() { run npx vite build --config vite.renderer.config.ts; }
 staging() {
   build
   _ensure_electron
-  local home; home="${DIY_LAUNCH:+${DIY_HOME:-}}"; home="${home:-$(_repo_root)/build/staging/home}"
+  # 仓库根：本包没有 _repo_root（那是 _diy/apps/dev 的私有函数），就地算
+  local root; root="$(cd "$SCRIPT_DIR/../.." && pwd)"
+  local home; home="${DIY_LAUNCH:+${DIY_HOME:-}}"; home="${home:-$root/build/staging/home}"
   run mkdir -p "$home"
   echo "${info}产物：$(_build_dir)（prod 构建）${reset}"
   echo "${info}数据根：$home（staging，不是 ~/.diy）${reset}"
