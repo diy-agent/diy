@@ -54,6 +54,9 @@ import { APP_PACKAGE_NAME, APP_VERSION } from "../shared/app-version";
 import { setWindowOps } from "./services/window-ops";
 import { refreshModelsOnStartup, startupRefreshEnabled } from "./services/models-startup-refresh";
 import { runRegistry } from "./services/run-registry";
+import { currentToolsSurfaceHash } from "./services/local-agent";
+import { toolsSurfaceDriftOf, writeToolsSurfaceRecord } from "./services/tools-surface-watch";
+import { noteInbox, toolsSurfaceEntryOf } from "./services/inbox";
 import type { InstanceSelf, RevealResult } from "../shared/instance-row";
 
 // Chromium 开关必须走 app.commandLine（ready 之前），跟在 app 路径后传 argv 无效。
@@ -114,6 +117,11 @@ traffic.init();
 // 原生崩溃采集：Crashpad minidump → <DIY_HOME>/log/crashes + 子进程消亡日志进 main.log
 installCrashReporting(appConfig.diyHome);
 
+// ── 1.4 工具面漂移预报（##519）的定义见 `reportToolsSurfaceDrift`（在单实例锁之后才调）──
+// 为什么不在模块顶层直接跑：第二实例（`app.requestSingleInstanceLock()` 失败）也会把模块
+// 执行一遍 —— 而它可能是个**旧 build**，拿旧 hash 覆写标记并在它自己退出前报一次假漂移。
+// 判定只属于真正占着数据根的那个进程。
+
 // ── 1.5 实例注册表（##366）──
 // **启动瞬间**写自己那一条：「谁开的 / 从哪个 worktree / 什么变体」只有此刻能拿到 ——
 // 实测生产实例事后 `ppid=1`（启动它的 CLI 早退了、被 launchd 接管），父链永久丢失。
@@ -168,12 +176,47 @@ if (!gotLock) {
   console.error(`[diy] ${lockAdvice(classifyLock(readLock(lockPath)), lockPath)}`);
   app.quit();
 } else {
+  // 工具面漂移预报（##519）：只在**拿到锁之后**跑 —— 标记是进程级的，写它的必须是真正的那个实例
+  reportToolsSurfaceDrift();
+
   // 撞到第二个实例 = 用户想看到它（多半是「窗口已关 + 再启动一次」）。activate 与本处
   // 同一个诉求：把窗口请出来。抽成 ensureWindow()，两条路共用（见其定义）。
   app.on("second-instance", () => {
     console.log(`[diy] 收到 second-instance（再启动一次）→ ensureWindow()`);
     ensureWindow();
   });
+}
+
+// ── 工具面漂移预报（##519）──
+
+/**
+ * 启动时比一次工具面 hash（**零花费**）：变了就出声 + 进通知信箱，没变只把标记推到当前值。
+ *
+ * 为什么这件事必须在启动做：`tools` 段在 wire 上排在 **system 之前**，字节一变，整段前缀
+ * 缓存作废 ⇒ 每个任务的**首个请求**按全价重付（实测 300k 上下文 ≈ $0.045）。等到真发那一步
+ * 才留痕，钱已经花了（那条留痕在 `local-agent`，是最后一次确认，不是预报）。
+ *
+ * 不阻断启动：它只是账务预报，buildTools 在此环境下出任何意外都只降级为"没预报"。
+ */
+function reportToolsSurfaceDrift(): void {
+  try {
+    const hash = currentToolsSurfaceHash();
+    const drift = toolsSurfaceDriftOf(appConfig.diyHome, hash);
+    if (drift.changed && drift.previous) {
+      // 不只 log：进通知信箱（`app.notice.inbox`）—— 用户不在终端前也得看得见（顶栏铃铛 / `diy notice inbox`）
+      noteInbox(
+        toolsSurfaceEntryOf({ hash, previousHash: drift.previous.hash, previousAt: drift.previous.at }),
+      );
+      console.warn(
+        `[tools-surface] 工具面已变（${drift.previous.hash.slice(0, 8)} → ${hash.slice(0, 8)}，` +
+          `上次启动 ${drift.previous.at || "未知"}）：每个任务的**首个请求**都会按全价计费` +
+          `（≈ 该任务上下文 × 单价）。要知道差在哪：npx vitest run tests/services/tools-surface-golden.test.ts`,
+      );
+    }
+    writeToolsSurfaceRecord(appConfig.diyHome, hash);
+  } catch (e) {
+    console.warn("[tools-surface] 启动判定跳过（不影响启动）:", e);
+  }
 }
 
 // ── 窗口 ──

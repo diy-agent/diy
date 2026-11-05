@@ -21,8 +21,14 @@ import { INBOX_KIND_LABEL, inboxBadgeOf, type InboxEntry } from "../../shared/in
 import { inboxStore } from "../store/inboxStore";
 import { formatClock } from "../lib/notice";
 
-/** `projects/4/tasks/436` → `#436`（列表一行里只够放这个；全 URI 放 title） */
+/**
+ * `projects/4/tasks/436` → `#436`（列表一行里只够放这个；全 URI 放 title）。
+ *
+ * 空串 = **进程级**条目（如 ##519 的工具面漂移：整个实例的事，不属于任何任务）——
+ * 显示「实例」而不是空白，否则那一列看起来像是数据丢了。
+ */
 function taskLabelOf(uri: string): string {
+    if (uri === "") return "实例";
     const m = /\/tasks\/(\d+)$/.exec(uri);
     return m ? `#${m[1]}` : uri;
 }
@@ -204,23 +210,27 @@ export function InboxBell(props: {
                                         </details>
 
                                         <div class="flex items-center gap-2">
-                                            <button
-                                                class="btn btn-ghost btn-xs min-h-0"
-                                                data-testid="inbox-goto"
-                                                onClick={() => {
-                                                    props.onOpenEntry(e);
-                                                    // 跳走就收面板：留着会盖在刚打开的会话上（焦点交给主区，
-                                                    // 走的是 focusout ⇒ 水位照常推进）
-                                                    setOpen(false);
-                                                    inboxStore.markAllRead();
-                                                    (document.activeElement as HTMLElement | null)?.blur();
-                                                }}
-                                            >
-                                                去来源会话
-                                            </button>
-                                            <span class="truncate text-caption opacity-50" title={e.taskUri}>
-                                                {e.taskUri}
-                                            </span>
+                                            {/* 进程级条目（`taskUri` 空串，如 ##519 工具面漂移）没有"来源会话"可去：
+                                                不给按钮（造一个跳去空任务号的入口 = 假入口） */}
+                                            <Show when={e.taskUri !== ""}>
+                                                <button
+                                                    class="btn btn-ghost btn-xs min-h-0"
+                                                    data-testid="inbox-goto"
+                                                    onClick={() => {
+                                                        props.onOpenEntry(e);
+                                                        // 跳走就收面板：留着会盖在刚打开的会话上（焦点交给主区，
+                                                        // 走的是 focusout ⇒ 水位照常推进）
+                                                        setOpen(false);
+                                                        inboxStore.markAllRead();
+                                                        (document.activeElement as HTMLElement | null)?.blur();
+                                                    }}
+                                                >
+                                                    去来源会话
+                                                </button>
+                                                <span class="truncate text-caption opacity-50" title={e.taskUri}>
+                                                    {e.taskUri}
+                                                </span>
+                                            </Show>
                                         </div>
                                     </div>
                                 </li>

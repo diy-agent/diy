@@ -23,7 +23,7 @@ import {
     runRoot,
     type JobDoneEvent,
     type JobOsCaps,
-} from "../src/index.js";
+} from "../src/node.js";
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 

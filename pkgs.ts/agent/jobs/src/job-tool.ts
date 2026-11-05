@@ -67,9 +67,13 @@ export function makeJobTool(host: JobToolHost) {
     const mine = (all: RunInfo[]): RunInfo[] => all.filter(visible);
 
     return tool({
+        // ⚠️ 文案会进 **wire 的 tools 段**（排在 system 之前）—— 改一个字节就把整段前缀缓存作废（##519）。
+        // 改这里 ⇒ 同步更新 `apps/diy-app/tests/services/tools-surface-golden.test.ts` 的快照，
+        // 那个 diff 就是「本次会冷启一次」的签字。
         description:
-            `管理**${scope}**用 bash(background: true) 起的后台进程（${scope === "本任务" ? "别的任务的" : "别的"}run 看不见、停不掉）。action：` +
-            "list（全部，活着的在前）· status（一条的详情 + 输出尾巴）· output（取输出 tail）· " +
+            // 「别的任务的 run」那个空格是原文案的一部分：抽包时丢了它，一样砸缓存（##519）。
+            `管理**${scope}**用 bash(background: true) 起的后台进程（别的${scope === "本任务" ? "任务的 " : " "}run 看不见、停不掉）。action：` +
+            `list（${scope === "本任务" ? "本任务全部" : "全部"}，活着的在前）· status（一条的详情 + 输出尾巴）· output（取输出 tail）· ` +
             "kill（按进程组停止）· wait（等它结束，最多 timeoutMs；**0 = 等 10 分钟上限**，不能无限等）。" +
             "**有完成通知，不需要轮询。**",
         inputSchema: z.object({
