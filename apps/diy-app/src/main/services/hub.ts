@@ -467,7 +467,6 @@ export class HubService {
       tls,
       host: process.env.DIY_HUB_HOST || "127.0.0.1",
       port: Number(process.env.DIY_HUB_PORT ?? 0),
-      allowInsecureHttp: this.allowInsecure(),
     });
   }
 

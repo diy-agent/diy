@@ -5,7 +5,7 @@
 //   · `/hub/pair` 只在**人已经核对过指纹**之后才被卫星调用（客户端强制，见 client.ts）
 //   · WSS 只认 `Authorization: Bearer <token>`；撤销后现有连接断开、重连 403（判据 17/18）
 //
-// 传输：默认必须 TLS（判据 8），明文只允许显式 `allowInsecureHttp`（单测用）。
+// 传输：默认必须 TLS（判据 8）；明文只允许绑在可信网卡上（loopback / tailscale）。
 
 import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
@@ -25,7 +25,7 @@ import {
     type PairingOptions,
 } from './pairing.js';
 import type { HubStore } from './store.js';
-import { assertTransportSecurity, isTrustedBindHost, type TlsMaterial } from './tls.js';
+import { assertTransportSecurity, type TlsMaterial } from './tls.js';
 import {
     HUB_PROTOCOL_VERSION,
     type HubIdentity,
@@ -74,11 +74,6 @@ export interface HubServerOptions {
      * 所以由我们自己剥：剥掉之后路由就是规格里那几条，和直连完全一致。
      */
     basePath?: string;
-    /**
-     * **只给单测**：显式允许明文。生产不要用这个 —— 它会让「门开在 0.0.0.0」也放行。
-     * 真正的判据是 `host` 是否在可信网络里（见 tls.ts 的 isTrustedBindHost）。
-     */
-    allowInsecureHttp?: boolean;
     host?: string;
     port?: number;
     now?: () => Date;
@@ -102,11 +97,9 @@ export interface HubServer {
 }
 
 export async function createHubServer(opts: HubServerOptions): Promise<HubServer> {
+    // 判据只有一个：绑定地址在不在可信网络里（tls.ts 的 isTrustedBindHost）。
+    // 原来的 `allowInsecureHttp` 布尔开关已删除 —— 它能被误设成 true 而把服务开在 0.0.0.0 上。
     assertTransportSecurity(opts.tls, opts.host);
-    if (opts.allowInsecureHttp === true && !isTrustedBindHost(opts.host)) {
-        // 单测逃生口仍然只在不可信地址上「不够用」时才需要显式提醒
-        console.warn('[hub] allowInsecureHttp 在不可信地址上被忽略（判据 8）');
-    }
 
     const now = opts.now ?? (() => new Date());
     const pairingOpts: PairingOptions = {
@@ -151,9 +144,6 @@ export async function createHubServer(opts: HubServerOptions): Promise<HubServer
             // 这就是 ping 的语义：能安全交换消息，不代表我信任你。
             if (req.method === 'GET' && path === '/ping') {
                 return json(res, 200, { ok: true, protocol: NODE_PROTOCOL });
-            }
-            if (req.method === 'GET' && path === '/info') {
-                return json(res, 200, publicInfo);
             }
             // ── 配对域（协议信息）：`/protocol` ──
             // 为什么不叫 `/hub/info`：剥前缀后它会变成 `/info`，和上面那条最小探针撞车

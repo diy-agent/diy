@@ -30,7 +30,6 @@ async function startHub(
         identity,
         store,
         serverKey: privateKey,
-        allowInsecureHttp: true, // 单测显式放行明文；生产必须 TLS（判据 9）
         host: '127.0.0.1',
         port: 0,
     });
@@ -144,13 +143,12 @@ describe('公共 API：连接层不泄露身份', () => {
         expect(body).toEqual({ ok: true, protocol: 'diy-node/1' });
     });
 
-    it('/info 不含 hubNodeId / publicKey / domainId', async () => {
+    it('/info 已删（与 /ping 完全重复）—— 访问应 404', async () => {
+        // 2026-11-05 review：两个路由返回一模一样的 {ok, protocol}，留一个就够。
+        // /ping 是「ping 得通」的自然名字，/info 让位。
         const { endpoint } = await startHub();
-        const { body } = await getJson(`${endpoint}/info`);
-        expect(body).toEqual({ ok: true, protocol: 'diy-node/1' });
-        for (const k of ['hubNodeId', 'hubPublicKey', 'domainId', 'protocolVersion']) {
-            expect(body, `不该出现 ${k}`).not.toHaveProperty(k);
-        }
+        const res = await fetch(`${endpoint}/info`);
+        expect(res.status).toBe(404);
     });
 
     it('/protocol 回完整协议信息（配对域）', async () => {
@@ -169,7 +167,6 @@ describe('公共 API：连接层不泄露身份', () => {
             identity,
             store: testStore('diy-hub01'),
             serverKey: privateKey,
-            allowInsecureHttp: true,
             host: '127.0.0.1',
             port: 0,
             basePath: 'diy-app-lab',

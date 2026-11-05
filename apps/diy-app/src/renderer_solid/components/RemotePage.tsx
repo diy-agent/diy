@@ -55,7 +55,6 @@ interface HubIdentity {
     endpoint?: string;
 }
 
-/** 状态点颜色：已连接绿、已配对灰、未配对空心 */
 /** 连接列（列 1）：这条行现在能不能通 —— 与授权无关 */
 const CONNECTION_LABEL: Record<DeviceRow["connection"], string> = {
     online: "在线",
@@ -82,12 +81,6 @@ const DOT_CLASS_CONN: Record<DeviceRow["connection"], string> = {
     unknown: "bg-warning",
 };
 
-const DOT_CLASS: Record<DeviceRow["group"], string> = {
-    connected: "bg-success",
-    paired: "bg-base-content/40",
-    available: "bg-transparent border border-base-content/40",
-};
-
 export function RemotePage() {
     const [self, setSelf] = createSignal<RemoteSelf | null>(null);
     const [rows, setRows] = createSignal<DiscoveredRow[]>([]);
@@ -110,7 +103,7 @@ export function RemotePage() {
         try {
             const [s, list, st, lk, conn] = await Promise.all([
                 diyService.diy.remote.self({}).catch(() => null),
-                diyService.diy.remote.list({ sources: "tailscale,local", manual: undefined, mdnsTimeoutMs: 800 }),
+                diyService.diy.remote.list({ sources: "tailscale,local", manual: undefined, mdnsTimeoutMs: undefined }),
                 diyService.diy.hub.status({}).catch(() => null),
                 diyService.diy.hub.link({}).catch(() => null),
                 diyService.diy.hub.connection({}).catch(() => null),
