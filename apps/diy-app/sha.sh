@@ -202,7 +202,8 @@ staging() {
   run mkdir -p "$home"
   echo "${info}产物：$(_build_dir)（prod 构建）${reset}"
   echo "${info}数据根：$home（staging，不是 ~/.diy）${reset}"
-  run env DIY_HOME="$home" DIY_VARIANT=prod DIY_ENV=production npx electron "$(_build_dir)/main/index.mjs" "$@"
+  # DIY_LAUNCH = 这条 launch 的身份（注册表匹配键 + 实例 URI）；缺了面板对不上，会掉进「外部实例」
+  run env DIY_HOME="$home" DIY_VARIANT=prod DIY_ENV=production DIY_LAUNCH=staging npx electron "$(_build_dir)/main/index.mjs" "$@"
 }
 
 # 运行生产构建（先构建，变体 prod）
