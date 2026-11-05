@@ -13,6 +13,7 @@
 | `tool` | 命令（check / test / cli / publish / sync 与各自的坑） | 13 |
 | `rule` | 硬约束（类型检查入口、探针、并发、任务写入契约） | 8 |
 | `model` | 本地 agent 测试用什么模型 | 5 |
+| `sha` | 构建脚本 `sha.sh`：入口链路 / 命令写哪 / `vendor/sha` 同步 | 5 |
 
 **取法**（`diy facts` 任意目录可跑，不必在仓库里）：
 
