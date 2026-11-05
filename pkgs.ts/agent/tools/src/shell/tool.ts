@@ -13,7 +13,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { renderFieldDocs } from "@diy-agent/context/schema/schema-doc";
-import { BASH_RESULT_HEAD_SCHEMA } from "./result.js";
+import { BASH_RESULT_HEAD_SCHEMA, renderBashHead } from "./result.js";
 import { runBash, type BashControl, type ShellLimits, type ShellRuntime } from "./run.js";
 import type { ShellSpec } from "./spec.js";
 
@@ -55,6 +55,18 @@ export interface ShellToolHost {
     readonly runtime?: ShellRuntime;
     /** 执行审计（write-ahead：bash-start 先落盘再执行，保证最后一幕不丢） */
     readonly audit?: (event: ShellAuditEvent) => void;
+    /**
+     * **执行前的拦截钩子**（可选）。宿主决定「这条命令会不会把宿主自己干掉」。
+     *
+     * 为什么在宿主而不是本包：判据依赖「谁是宿主」—— 那只有宿主自己知道
+     * （diy 的判据是 `DIY_HOME`：生产实例是 `~/.diy`，agent 自建的在 build 下的变体 home）。
+     * 本包是公共能力，不认识任何具体的数据根。
+     *
+     * 返回 `{ block: true, reason }` ⇒ **不执行**，把 reason 当工具结果返回。
+     * 为什么是"返回结果"而不是抛异常：模型看到「为什么被拦」才有机会换个做法；
+     * 抛异常在工具层会被记成失败，模型容易理解为「命令执行出错」而不是「这条不许跑」。
+     */
+    readonly beforeRun?: (command: string) => { readonly block: true; readonly reason: string } | undefined;
     /**
      * 「生效参数」补缺省。diy-app 传 `shared/tool-args::effectiveBashArgs`——
      * 聊天里显示「工具实际收到」用的是**同一份**，两处各补一次必然漂成"界面说前台、实际跑后台"。
@@ -174,12 +186,25 @@ export function makeShellTool(spec: ShellSpec, host: ShellToolHost) {
                 ...(execOpts?.toolCallId ? { toolCallId: execOpts.toolCallId } : {}),
             };
             const t0 = Date.now();
-            // 自杀护栏（agent-guard.ts）已停用（2026-10-02）：
-            // 判据是命令文本，无法区分「宿主进程」与「agent 自己起的实例」——
-            // 实测两类误拦（同 pgid、命令行含 main/index.mjs）把本仓库任意
-            // worktree/测试实例都算宿主家人，连 agent 收自己起的实例都被拒。
-            // 恢复方式：还原调用方那处 + import（模块与单测均保留，见 agent-guard.ts）。
-            // 现仅保留 write-ahead 审计：先落盘再执行，保证最后一幕不丢
+            // 自杀护栏（2026-11-05 恢复，判据改由宿主注入）：
+            // 以前写死在这里的判据是「命令文本 + main/index.mjs」，分不清宿主与 agent 自建实例。
+            // 现在只留**钩子位**，判据归宿主（它知道自己的数据根）——
+            // 本包是公共能力，不该认识 `DIY_HOME` 这种东西。
+            const verdict = host.beforeRun?.(command);
+            if (verdict?.block === true) {
+                return renderBashHead({
+                    ok: false,
+                    duration_ms: 0,
+                    timeout_ms: 0,
+                    timed_out: false,
+                    killed: false,
+                    truncated: false,
+                    stdout_bytes: 0,
+                    stderr_bytes: 0,
+                    cwd,
+                }) + `[已拦截] ${verdict.reason}`;
+            }
+            // write-ahead 审计：先落盘再执行，保证最后一幕不丢
             host.audit?.({ phase: "bash-start", cwd, command });
             // **生效参数**：缺省值只在这里补一次（宿主传 effectiveArgs 时与聊天显示同源）。
             const eff = (host.effectiveArgs ?? defaultEffectiveArgs)({
