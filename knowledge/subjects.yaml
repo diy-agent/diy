@@ -211,6 +211,9 @@ subjects:
   rule.task:
     description: |-
       任务作为原子开发单元：拆任务的边界 / owner 不写码 / 引用格式 / 产物落位 / 文件头权威
+  sha:
+    description: |-
+      项目构建脚本 sha.sh 的机制、改法与 vendor/sha 同步
   talk.find:
     description: |-
       diy-talk 包内定位：锚点 / 事件 / 反应 / role / 序列化 / 装配器（@diy-agent/talk 对话容器内核）

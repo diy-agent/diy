@@ -1,0 +1,44 @@
+# knowledge/facts/sha.yaml
+
+# 生成物式的真源：整篇由 `diy facts submit` 写入（字段顺序、条目排序都由程序定）。
+domain: sha
+facts:
+  sha#entry:
+    value: |-
+      `./sha.sh` 的链路只有三跳：`sha.sh` → `source sha.common.sh`（颜色 / 公共 shell 工具）→ 它再 `source vendor/sha/sha.bash`（**函数名即命令的自注册分发器**）→ `sha.sh` 里定义的每个函数就是一个命令（`build` / `test` / `lab`…）→ 末尾 `sha "$@"` 分发。所以「有哪些命令」不必读代码：`./sha.sh --help`（新版库见 `sha#help`）；「某命令怎么实现」直接 grep 同名函数即可 —— 没有注册表、没有插件扫描，函数存在就是命令存在。
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: sha.sh:37
+  sha#help:
+    value: |-
+      自助看命令：`./sha.sh --help`（本仓 vendor 是旧版，只打一层 `Available Commands`）；同步到新版后 `-h` 打本层、`-hh`（叠写计数，同 `ssh -v/-vv`）展开整棵命令树，且帮助**直接来自函数上方紧邻的 `#:` 注释块**：块首行 = 子命令列表里的一句话，`用法:` / `usage:` 行 = usage（不写则由 options/args 自动生成），其余行进 detail。所以写命令时顺手写注释，比事后补 `sha.desc` 划算；普通 `#` 是实现备注、不算帮助。
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: inference
+  sha#new:
+    value: |-
+      加一个命令的最小动作：在 `sha.sh` 里写函数（函数名即命令，`.` 与 `__` 是层级分隔符 —— `build.web()` → `./sha.sh build web`，单个 `_` 永不拆分），函数上方写 `#:` 注释当帮助；需要选项 / 位置参数就 `sha.def "cmd" --opt … --arg … --desc …` 注册（`--desc` 放最后一行，可多行）、函数体里一行 `sha.parse "$@"`（新版库；旧版是 `sha.option` + `sha_opt_parse <数组名> "$@"`）。拿不准层级就跑 `./sha.sh -hh` 看全树。
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: sha.sh:709
+  sha#vendor:
+    value: |-
+      `vendor/sha/**` 是上游 `~/git/diy/sha` 的**整目录拷贝**（diy 内是 237 行的旧版，上游已 412 行：没有 `-hh` 全树、没有 `#:` 注释帮助、没有 `sha.parse`）。**别就地改** —— 下次覆盖同步就丢。要加库能力：回 `~/git/diy/sha` 改，跑它的 `bash test_sha.bash` + `bash test_sha_opt.bash` 全绿，再把 `sha.bash` / `sha_opt.bash` / `README.md` 覆盖进 `vendor/sha/`，最后跑 `./sha.sh check` 收口。
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: sha.common.sh:193
+  sha#where:
+    value: |-
+      改命令逻辑只动 `sha.sh` 的 `app script` 段**以下**（脚本自己写着「此位置以上的全都是 bake 工具脚本，copy 走可以直接用，之下的为项目特定 cmd」）；段以上是工具层 —— `_pick_workspaces` / `_ws_run` / `exec` 这类是全 workspace 公共行为，改它们先想影响面。workspace 内部命令写在各包自己的 `sha.sh`（`pkgs.ts/*/sha.sh`、`apps/*/sha.sh`），它们同样 source 上级 `sha.common.sh`，所以包内 `./sha.sh build` 与根命令同名不同实现是常态。
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: code
+      at: sha.sh:46
