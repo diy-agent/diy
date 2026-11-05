@@ -1,0 +1,22 @@
+[
+  {
+    "name": "bash",
+    "description": "在项目目录执行 bash 命令并返回输出（查文件、跑命令、看系统信息）。\n**缺省不设超时**（命令跑多久工具就等多久）；要限时就显式给 `timeout`（毫秒，到点整组 SIGKILL，并照样返回已收到的输出）。超时 / 取消 / 输出溢出都会杀掉整个进程组，且**照样返回结果**（不抛错）—— 看头里 timed_out / killed 判断怎么结束的。\n命令退出后若有子孙进程还握着输出管道，最多再等 200ms 就返回（拿到已收到的输出），不会因为 `nohup … &` 这类后台孙进程挂死。\n`background: true` 把长任务转到后台并**立即返回**作业 id —— 结束时会插话通知你，**不要轮询**（sleep 再查属于轮询），期间可以放心结束本轮去做别的事。查状态 / 取输出 / 停止用 `job` 工具。\n长任务写法：`nohup <命令> > /tmp/x.log 2>&1 < /dev/null & disown` 立刻返回，然后用**另一条**命令 `tail /tmp/x.log` 取增量；不要在同一条命令里 sleep 等它跑完。\nstdin 已接 /dev/null：`cat`、无参 `grep` / `rg` 立刻拿到 EOF，不会挂住等输入。相对路径一律按 cwd（项目目录）解析。\n结果 = YAML 头 + 正文原文（正文逐字不动）。头的字段：\n#   ok           是否正常结束（退出码 0，且没超时 / 没被杀 / 没因输出溢出被终止）\n#   exit_code    退出码；超时 / 取消 / 命令没跑起来时整行缺席（可选）\n#   duration_ms  墙钟耗时（毫秒）：从 spawn 前到收尾\n#   timeout_ms   本次生效的超时（毫秒）；0 = 不设超时（缺省，##454）\n#   timed_out    是否因超时被终止\n#   killed       是否被我们主动杀掉（超时 / 取消 / 输出溢出）\n#   truncated    投递层是否截断了正文（超 2000 行 / 50KB）；原文可 read 回取\n#   stdout_bytes stdout 原始字节数（截断前）\n#   stderr_bytes stderr 原始字节数（截断前）\n#   cwd          命令的工作目录（相对路径的基准）\n#   signal       子进程收到的信号名（SIGKILL / SIGTERM…），没有则整行缺席（可选）"
+  },
+  {
+    "name": "read",
+    "description": "读取文件的文本内容（带行号；相对路径按项目目录解析）。单次最多 2000 行 / 100KB，超限时输出尾部会给出下一段 offset —— 用 offset 继续读，不要重复读同一段。"
+  },
+  {
+    "name": "job",
+    "description": "管理**本任务**用 bash(background: true) 起的后台进程（别的任务的 run 看不见、停不掉）。action：list（本任务全部，活着的在前）· status（一条的详情 + 输出尾巴）· output（取输出 tail）· kill（按进程组停止）· wait（等它结束，最多 timeoutMs；**0 = 等 10 分钟上限**，不能无限等）。**有完成通知，不需要轮询。**"
+  },
+  {
+    "name": "write",
+    "description": "整文件写入（新建或覆盖；相对路径按项目目录解析）。**父目录不存在会自动创建**（mkdir -p），这不是错误。content 上限 1024KB（报 fs/content-too-large）；目标是目录报 fs/is-directory。UTF-8 原样写：行尾不转换，原文件有 BOM 会保留。返回 `+N/-M 行` 与 unified diff 摘要。改几行不要用本工具重写整个文件。"
+  },
+  {
+    "name": "edit",
+    "description": "对**单个已存在的文件**做局部替换（不要为了改几行就重写整个文件，那是 write 的事）。edits 是**有序**的：后一条基于前一条的结果匹配。每条 oldText 必须逐字来自文件且**唯一命中**（命中多处会报错并给出次数；确实要全改就传 replaceAll: true）。精确匹配失败时会做字符归一（全角/半角、弯直引号、行尾空白）再试，命中后在返回里**明确说明**用了归一；未命中的行逐字保留。返回 unified patch。"
+  }
+]
