@@ -15,3 +15,4 @@ export * from "./detect.js";
 export * from "./result.js";
 export * from "./run.js";
 export * from "./tool.js";
+export * from "./guard.js";
