@@ -71,7 +71,10 @@ describe("提供器机制", () => {
     });
 
     it("缺必填键 ⇒ schema 校验失败（宁可发不出去，也不发一份残缺的 system）", () => {
-        const got = minimalProviders().filter((p) => p.key !== "guard");
+        // 必填只剩「谁都有的那四项」（diy / cwd / chain / skills）；
+        // task / persona / project / identity / rules / guard / reqlog 都已改成可选
+        // —— 没有那个概念的宿主整节省略，而不是造空串冒充。
+        const got = minimalProviders().filter((p) => p.key !== "cwd");
         expect(() => assembleFromProviders(got)).toThrow();
     });
 });
