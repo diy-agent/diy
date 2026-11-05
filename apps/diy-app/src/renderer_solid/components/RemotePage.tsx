@@ -84,7 +84,7 @@ export function RemotePage() {
         try {
             const [s, list, st, lk, conn] = await Promise.all([
                 diyService.diy.remote.self({}).catch(() => null),
-                diyService.diy.remote.list({ sources: "mdns,tailscale,local", manual: undefined, mdnsTimeoutMs: 800 }),
+                diyService.diy.remote.list({ sources: "tailscale,local", manual: undefined, mdnsTimeoutMs: 800 }),
                 diyService.diy.hub.status({}).catch(() => null),
                 diyService.diy.hub.link({}).catch(() => null),
                 diyService.diy.hub.connection({}).catch(() => null),
