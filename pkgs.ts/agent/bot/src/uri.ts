@@ -86,7 +86,7 @@ export function isStableBotUri(ref: ParsedBotUri | null): ref is BotUriRef {
  * 下一个 bot id（`bot-<n>`，n = 现有最大值 + 1）。
  *
  * 2026-11-05（A3）从 `chat.ts` 搬到这里：它只做字符串解析，**不该背 chat.ts 的 fs 依赖**。
- * 搬走的直接收益：`@diy-agent/bot-config-page` 的 barrel 从「可达 node:fs」变成安全的
+ * 搬走的直接收益：`@diy-agent/bot-config-page` 的 barrel 从「可达文件系统」变成安全的
  * （它经 admin.ts 引这个函数，而 admin 不该把整个对话宿主的依赖拖进来）。
  */
 export function nextBotId(existing: Iterable<string>): string {
