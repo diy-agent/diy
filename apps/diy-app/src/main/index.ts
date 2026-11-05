@@ -56,6 +56,7 @@ import { refreshModelsOnStartup, startupRefreshEnabled } from "./services/models
 import { runRegistry } from "./services/run-registry";
 import { currentToolsSurfaceHash } from "./services/local-agent";
 import { toolsSurfaceDriftOf, writeToolsSurfaceRecord } from "./services/tools-surface-watch";
+import { noteInbox, toolsSurfaceEntryOf } from "./services/inbox";
 import type { InstanceSelf, RevealResult } from "../shared/instance-row";
 
 // Chromium 开关必须走 app.commandLine（ready 之前），跟在 app 路径后传 argv 无效。
@@ -125,6 +126,11 @@ try {
   const hash = currentToolsSurfaceHash();
   const drift = toolsSurfaceDriftOf(appConfig.diyHome, hash);
   if (drift.changed && drift.previous) {
+    // 不只 log：进通知信箱（`app.notice.inbox`）—— 这条是**花钱的预报**，
+    // 用户不在终端前也得看得见（顶栏铃铛 / `diy notice inbox`）。
+    noteInbox(
+      toolsSurfaceEntryOf({ hash, previousHash: drift.previous.hash, previousAt: drift.previous.at }),
+    );
     console.warn(
       `[tools-surface] 工具面已变（${drift.previous.hash.slice(0, 8)} → ${hash.slice(0, 8)}，` +
         `上次启动 ${drift.previous.at || "未知"}）：每个任务的**首个请求**都会按全价计费` +
