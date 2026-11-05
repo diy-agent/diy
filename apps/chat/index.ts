@@ -6,7 +6,7 @@ import * as chatPageMain from "@diy-agent/chat-page/main";
 import * as modelConfigPageMain from "@diy-agent/model-config-page";
 import type { PluginEntry } from "@diy-agent/workbench";
 import { asToolSet, createBotChat, createFileBotStore, workspaceOf, type BotStore } from "@diy-agent/bot";
-import { RunRegistry, makeJobTool } from "@diy-agent/jobs";
+import { RunRegistry, makeJobTool } from "@diy-agent/jobs/node";
 import { buildTools, detectShells, makeShellTool, shellToolName } from "@diy-agent/tools";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
