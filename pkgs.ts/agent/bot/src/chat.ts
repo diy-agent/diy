@@ -286,7 +286,9 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                 continue;
             }
             for (const account of accounts) {
-                out.push({ ...base, account, name: `${account}@${entry.name}` });
+                // name 保持**纯模型名**：account 由 UI 拼在 provider 前面（否则显示成
+                // 「chen56@deepseek · chen56@DeepSeek V4.1 Flash」—— account 出现两次）
+                out.push({ ...base, account, name: entry.name });
             }
         }
         return out;
