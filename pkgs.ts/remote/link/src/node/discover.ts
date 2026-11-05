@@ -52,7 +52,19 @@ export interface DiscoverAllResult {
 /** 按 `sources` 组装发现器；manual 没有输入时不给（否则它只会返回空） */
 export function buildDiscoverers(opts: DiscoverAllOptions = {}): Discoverer[] {
     const manual = opts.manual ?? [];
-    const selected = new Set(opts.sources ?? ['local', 'mdns', 'tailscale', ...(manual.length > 0 ? ['manual'] : [])]);
+    /**
+     * 默认只走 local + tailscale（2026-11-05 用户裁：**mDNS 先摘掉**）。
+     *
+     * 为什么摘：连接层只认「可信网络」——loopback（内核隔离）和 tailscale（WireGuard 隧道）。
+     * mDNS 发现的是局域网主机，既没有可信证书锚点，也没有我们认可的传输安全前提；
+     * 局域网 IP 的互信流程（证书交换 / 指纹核对）还没设计，所以先整条不启用。
+     *
+     * 代码保留（discover/mdns.ts 未删）：等「局域网互信」有了结论再决定怎么接回来。
+     * 想临时验证可以显式传 sources: ['mdns']。
+     */
+    const selected = new Set(
+        opts.sources ?? ['local', 'tailscale', ...(manual.length > 0 ? ['manual'] : [])],
+    );
     const out: Discoverer[] = [];
     if (selected.has('local')) out.push(localDiscoverer(opts.local ?? { dir: opts.registryDir }));
     if (selected.has('mdns')) {

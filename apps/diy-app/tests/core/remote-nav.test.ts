@@ -196,3 +196,108 @@ describe("mergeDevices（状态口径：未连接不是离线）", () => {
     expect(devicePairingAllowed(row!)).toBe(false);
   });
 });
+
+/**
+ * 两列分开（2026-11-05 用户裁）：「连接状态和授权状态分开，分开 2 列显示」。
+ *
+ * 这两个维度**独立**：一台机器可以「在线但未配对」（能 ping 通，我管不了它），
+ * 也可以「已配对但离线」（我管它，但它现在不在线）。折叠成一列就丢了这两种情况。
+ */
+describe("连接与授权是两个独立维度", () => {
+    const discovered = (id: string, endpoint: string) => ({
+        id,
+        displayName: "c-mac",
+        endpoint,
+        source: "local",
+        sources: ["local"],
+        meta: {},
+    });
+
+    it("在线但未配对：连接 online / 授权 none（不是被折叠成「可配对」）", () => {
+        const rows = mergeDevices({
+            discovered: [discovered("diy-a", "http://127.0.0.1:9401")],
+        });
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.connection).toBe("online");
+        expect(rows[0]!.trust).toBe("none");
+    });
+
+    it("已配对且在线：online / master", () => {
+        const rows = mergeDevices({
+            members: [{ nodeId: "diy-b", displayName: "b", status: "active", online: 1, createdAt: "x" }],
+        });
+        expect(rows[0]!.connection).toBe("online");
+        expect(rows[0]!.trust).toBe("master");
+    });
+
+    it("已配对但离线：offline / master", () => {
+        const rows = mergeDevices({
+            members: [{ nodeId: "diy-b", displayName: "b", status: "active", online: 0, createdAt: "x" }],
+        });
+        expect(rows[0]!.connection).toBe("offline");
+        expect(rows[0]!.trust).toBe("master");
+    });
+
+    it("已撤销：connection unknown（不再探）/ trust revoked", () => {
+        const rows = mergeDevices({
+            members: [{ nodeId: "diy-b", displayName: "b", status: "revoked", online: 0, createdAt: "x" }],
+        });
+        expect(rows[0]!.connection).toBe("unknown");
+        expect(rows[0]!.trust).toBe("revoked");
+    });
+
+    it("我是它的卫星且长连 online：online / satellite", () => {
+        const rows = mergeDevices({
+            link: { hubNodeId: "diy-hub", hubEndpoint: "https://c-mac.ts.net/hub" },
+            connection: "online",
+        });
+        const row = rows.find((r) => r.link !== undefined);
+        expect(row?.connection).toBe("online");
+        expect(row?.trust).toBe("satellite");
+    });
+
+    it("我是它的卫星但长连断：offline / satellite（不伪装成在线）", () => {
+        const rows = mergeDevices({
+            link: { hubNodeId: "diy-hub", hubEndpoint: "https://c-mac.ts.net/hub" },
+            connection: "offline",
+        });
+        const row = rows.find((r) => r.link !== undefined);
+        expect(row?.connection).toBe("offline");
+        expect(row?.trust).toBe("satellite");
+    });
+});
+
+/** 列表里一眼看完一行（2026-11-05 用户：「显示 ccc@localhost:9401/diy-app/lab，再加一个列 pid」） */
+describe("显示地址与 pid", () => {
+    const local = (over: Record<string, unknown> = {}) => ({
+        id: "diy-x",
+        displayName: "c-mac",
+        endpoint: "http://127.0.0.1:63059",
+        source: "local",
+        sources: ["local"],
+        meta: { pid: "64621", app: "diy", variant: "lab", env: "development" },
+        ...over,
+    });
+
+    it("local 源 + user ⇒ 拼出 user@host:port/app.variant", () => {
+        const rows = mergeDevices({ user: "ccc", discovered: [local()] });
+        expect(rows[0]!.address).toBe("ccc@127.0.0.1:63059/diy/lab");
+        expect(rows[0]!.pid).toBe(64621);
+    });
+
+    it("不给 user ⇒ 不拼地址（UI 退回显示名），pid 仍然有", () => {
+        const rows = mergeDevices({ discovered: [local()] });
+        expect(rows[0]!.address).toBeUndefined();
+        expect(rows[0]!.pid).toBe(64621);
+    });
+
+    it("非 local 源 ⇒ 不拼地址（不知道对方登录名，填本机会误导）", () => {
+        const rows = mergeDevices({ user: "ccc", discovered: [local({ source: "tailscale", sources: ["tailscale"] })] });
+        expect(rows[0]!.address).toBeUndefined();
+    });
+
+    it("meta 缺 pid ⇒ pid 缺省，不写 NaN", () => {
+        const rows = mergeDevices({ discovered: [local({ meta: {} })] });
+        expect(rows[0]!.pid).toBeUndefined();
+    });
+});

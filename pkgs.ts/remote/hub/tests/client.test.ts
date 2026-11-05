@@ -25,7 +25,7 @@ function recordingFetch(): { fetchImpl: FetchLike; calls: Call[] } {
     const calls: Call[] = [];
     const fetchImpl: FetchLike = async (url, init) => {
         calls.push({ url, init });
-        const body = url.endsWith('/info') ? info : { status: 'pending', requestId: 'req_1' };
+        const body = url.endsWith('/protocol') ? info : { status: 'pending', requestId: 'req_1' };
         return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
     };
     return { fetchImpl, calls };
@@ -34,14 +34,15 @@ function recordingFetch(): { fetchImpl: FetchLike; calls: Call[] } {
 describe('卫星配对两步', () => {
     const inviteUrl = 'https://c-mac.gute-fish.ts.net/hub/pair?inv=inv_abc123';
 
-    it('第一步只取 /hub/info，不发任何秘密（判据 6/7）', async () => {
+    it('第一步只取 /protocol，不发任何秘密（判据 6/7）', async () => {
         const { fetchImpl, calls } = recordingFetch();
         const prepared = await preparePairing(inviteUrl, { fetchImpl });
 
         expect(prepared.address).toBe('c-mac.gute-fish.ts.net');
         expect(prepared.inviteId).toBe('inv_abc123');
         expect(calls).toHaveLength(1);
-        expect(calls[0]!.url).toBe('https://c-mac.gute-fish.ts.net/hub/info');
+        // 2026-11-05：完整协议信息挪到 `/protocol`（`/info` 降级为最小存活探针，不含身份）
+        expect(calls[0]!.url).toBe('https://c-mac.gute-fish.ts.net/hub/protocol');
         expect(calls[0]!.init?.method).toBeUndefined(); // GET
         expect(calls[0]!.init?.body).toBeUndefined();
         // 第一步连 inviteId 都不发（它只在第二步的 POST body 里）

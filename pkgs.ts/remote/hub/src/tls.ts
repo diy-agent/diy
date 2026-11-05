@@ -42,15 +42,50 @@ export function resolveTlsMaterial(sources: TlsSources = {}): TlsMaterial {
     return { cert: readFileSync(certPath, 'utf-8'), key: readFileSync(keyPath, 'utf-8') };
 }
 
-/** 服务端启动前的守卫：没有证书又没显式允许明文（只给单测）→ 直接拒绝 */
+/**
+ * 本机 bind 的地址是否**本身就在可信网络里**（不需要应用层 TLS）。
+ *
+ * 判据不是「谁连上来了」（那要看 socket 对端），而是「我把门开在哪个网卡上」——
+ * 门只开在可信网卡上，外面就进不来，这比运行时的开关更难出错。
+ *
+ *   · loopback  → 内核只把本机进程的连接递进来，不存在中间人
+ *   · tailscale → WireGuard 已经端到端加密 + 节点身份由 tailnet 认证，再套 TLS 是重复劳动
+ *
+ * ⚠️ `0.0.0.0` / `::` / 局域网地址一律**不算**：那会把服务暴露给不可信的网络。
+ */
+export function isTrustedBindHost(host: string | undefined): boolean {
+    if (host === undefined || host === '') return false;
+    const h = host.trim().toLowerCase().replace(/^\[|\]$/g, '');
+    if (h === 'localhost' || h === '::1' || h === '127.0.0.1') return true;
+    if (/^127\./.test(h)) return true; // 整个 127.0.0.0/8 都是 loopback
+
+    // tailscale IPv4：100.64.0.0/10（CGNAT 段，tailscale 专用）
+    const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+    if (v4 !== null) {
+        const [a, b] = [Number(v4[1]), Number(v4[2])];
+        return a === 100 && b >= 64 && b <= 127;
+    }
+    // tailscale IPv6 ULA：fd7a:115c:a1e0::/48
+    if (h.startsWith('fd7a:115c:a1e0:')) return true;
+    return false;
+}
+
+/**
+ * 服务端启动前的守卫。
+ *
+ * 判据（2026-11-05 用户裁）：**信任来自「门开在哪」，不是「开了个放行参数」**。
+ * 所以这里看的是 bind host，而不是一个 `ALLOW_INSECURE` 布尔 ——
+ * 后者只要有人手一抖设成 true，就可能把服务开在 0.0.0.0 上还自认为安全。
+ */
 export function assertTransportSecurity(
     tls: TlsMaterial | null | undefined,
-    allowInsecureHttp: boolean | undefined,
+    bindHost: string | undefined,
 ): void {
     if (tls) return;
-    if (allowInsecureHttp) return;
+    if (isTrustedBindHost(bindHost)) return;
     throw new HubError(
         'tls/requires-trusted-cert',
-        '拒绝以明文 HTTP 启动 Hub：需要受信任的 HTTPS（判据 8，不静默降级）',
+        `拒绝在 ${bindHost ?? '(未指定地址)'} 上以明文 HTTP 启动 Hub：` +
+            '需要受信任的 HTTPS 证书，或者只绑 loopback / tailscale 地址（判据 8，不静默降级）',
     );
 }

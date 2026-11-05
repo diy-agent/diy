@@ -200,7 +200,7 @@ export function HubPage(props: {
   async function doDiscover(): Promise<void> {
     setDiscoverNote(null);
     const r = await run("discover", () =>
-      diyService.diy.remote.list({ sources: "mdns,tailscale", manual: undefined, mdnsTimeoutMs: 800 }),
+      diyService.diy.remote.list({ sources: "tailscale,local", manual: undefined, mdnsTimeoutMs: undefined }),
     );
     if (!r) return;
     setDiscoverRows(r.rows);
