@@ -6,6 +6,8 @@ import * as chatPageMain from "@diy-agent/chat-page/main";
 import * as modelConfigPageMain from "@diy-agent/model-config-page";
 import type { PluginEntry } from "@diy-agent/workbench";
 import { asToolSet, createBotChat, createFileBotStore, workspaceOf, type BotStore } from "@diy-agent/bot";
+import { collectSelfInfo, judgeSelfKill } from "@diy-agent/tools";
+import { os } from "@diy-agent/os";
 import { RunRegistry, makeJobTool } from "@diy-agent/jobs/node";
 import { buildTools, detectShells, makeShellTool, shellToolName } from "@diy-agent/tools";
 import { mkdirSync } from "node:fs";
@@ -82,11 +84,26 @@ export function botToolsFor(home: string, botId: string): { cwd: string; tools: 
     const cwd = workspaceOf(home, botId);
     mkdirSync(cwd, { recursive: true });
     const registry = registryFor(home);
+    // 自杀护栏（2026-11-05 恢复）：判据归宿主 —— 只有这里知道「哪个数据根是生产」。
+    // 拦住「这条命令会不会把宿主自己干掉」，具体判据见 @diy-agent/tools/shell/guard。
+    const guardSelf = (command: string) => {
+        const self = collectSelfInfo(home, (pid) => os.hopSync(pid));
+        if (self === null) return undefined; // 采样失败 ⇒ 放行（护栏不能阻断正常开发）
+        // 「谁是我家人」按 **DIY_HOME** 判 —— 只有环境变量能把「生产实例」
+        // 和「agent 自建的 dev/测试实例」分开（路径/命令行都分不开）。
+        const homeOf = (pid: number): string | undefined => {
+            const envs = os.environmentsOf([pid]);
+            return envs?.get(pid)?.["DIY_HOME"];
+        };
+        const verdict = judgeSelfKill(command, self, homeOf);
+        return verdict.blocked ? { block: true as const, reason: verdict.reason } : undefined;
+    };
     const shell = SHELLS.map((spec) => [
         shellToolName(spec),
         makeShellTool(spec, {
             cwd,
             limits: { bashTimeoutMs: 0 },
+            beforeRun: guardSelf,
             // `background: true` → 立刻返回 id（##515 3b）。缺省不设超时；显式正数才带 deadline。
             background: async ({ command, timeoutMs, toolCallId }) => {
                 const run = await registry.spawn({
