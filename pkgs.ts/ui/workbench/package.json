@@ -31,7 +31,7 @@
         "build": "tsc -p tsconfig.build.json"
     },
     "dependencies": {
-        "@diy-agent/dev-paths": "^0.1.0"
+        "@diy-agent/dev-paths": "file:../../core/dev-paths"
     },
     "devDependencies": {
         "@types/node": "^26.1.0",
