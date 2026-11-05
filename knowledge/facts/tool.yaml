@@ -55,6 +55,20 @@ facts:
     evidence:
       source: user
       verifiedAt: '2026-10-21'
+  tool#dev-launcher:
+    value: |-
+      **dev 启动器（_diy/apps/dev）的命令层**：
+      - `./sha.sh build` 只出产物，固定 `build/app/`（与变体无关）
+      - `./sha.sh run <launch> --slot N` 跑某条 launch（lab / staging…）；数据根**由槽位推导**：`<worktree>/build/<launch>/<slot>/home`，app.yaml 不再声明 `home`（显式写才算例外）；注入 `DIY_LAUNCH=<launch>/<slot>`、`DIY_VARIANT=<launch>`、`DIY_DEV_LAUNCH_SLOT=<slot>`
+      - `./sha.sh app list | new --launch lab | stop <slot|pid|all>`：多实例管理，`new` 自动挑最小空闲槽位并后台起（日志 `build/<launch>/<slot>.log`）
+      - `./sha.sh -h` / `./sha.sh run lab -h` 看帮助（帮助由 `#:` 注释自动生成）
+      - 实例注册表**只有一个真源**：`@diy-agent/dev-paths` 的 `registryDir()` = `~/.diy/dev/apps/<pid>.json`（`DIY_INSTANCE_REGISTRY` 可覆盖，测试用）；各 app 不再自己拼路径
+      - 面板认领三元组：`(worktree, app, launch 名允许 /slot 后缀, 数据根族 build/<launch>)`；族外（如真生产 `~/.diy`）归「外部实例」，只读不可停
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-11-05'
   tool#diy-cli-root:
     value: |-
       **能力真源是 `diy --help` / `diy <域> --help`，但先确认你敲的是哪个 `diy`**：PATH 首位常是 worktree 的 `node_modules/.bin/diy`（**未构建 ⇒ 只报错**），生产客户端在 `~/.local/share/mise/installs/node/lts/bin/diy`；跨数据根必须 `env -u DIY_HOME -u DIY_VARIANT`，否则被环境变量拉去连别的实例 —— 症状是「任务 N 不存在」，不是报错。**「有真源 ≠ 有送达」**：不知道某域存在时先跑 `diy --help` 再翻源码。

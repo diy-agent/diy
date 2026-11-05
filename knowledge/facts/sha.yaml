@@ -13,27 +13,28 @@ facts:
       at: sha.sh:37
   sha#help:
     value: |-
-      自助看命令：`./sha.sh --help`（本仓 vendor 是旧版，只打一层 `Available Commands`）；同步到新版后 `-h` 打本层、`-hh`（叠写计数，同 `ssh -v/-vv`）展开整棵命令树，且帮助**直接来自函数上方紧邻的 `#:` 注释块**：块首行 = 子命令列表里的一句话，`用法:` / `usage:` 行 = usage（不写则由 options/args 自动生成），其余行进 detail。所以写命令时顺手写注释，比事后补 `sha.desc` 划算；普通 `#` 是实现备注、不算帮助。
+      **帮助是写出来的（bed317f 起）**：紧贴函数上方的 `#:` 注释块就是帮助 —— 首行进命令列表，`#: 用法: …` 行进 usage，其余进 detail；`_` 开头的函数是内部实现，不进列表。选项/位置参数靠 `sha.def` 注册、`sha.parse` 解析（见 `sha#new`）。判据：改命令说明就改注释，不要另写文档；`./sha.sh -h` 一层、`-hh` 整棵树、`./sha.sh <cmd> -h` 看单条（含 options/arguments，自动生成）。
     review: accepted
     lifecycle: active
     evidence:
-      source: inference
+      source: code
+      verifiedAt: '2026-11-05'
   sha#new:
     value: |-
-      加一个命令的最小动作：在 `sha.sh` 里写函数（函数名即命令，`.` 与 `__` 是层级分隔符 —— `build.web()` → `./sha.sh build web`，单个 `_` 永不拆分），函数上方写 `#:` 注释当帮助；需要选项 / 位置参数就 `sha.def "cmd" --opt … --arg … --desc …` 注册（`--desc` 放最后一行，可多行）、函数体里一行 `sha.parse "$@"`（新版库；旧版是 `sha.option` + `sha_opt_parse <数组名> "$@"`）。拿不准层级就跑 `./sha.sh -hh` 看全树。
+      **加命令/参数的最小动作**：① 写函数（函数名即命令；`.` 是父子分隔符，`run.lab()` → `./sha.sh run lab` 或 `./sha.sh run.lab`）；② 要选项/位置参数就在顶层写一行 `sha.def "run.lab" --opt "--slot:string=1:说明" --arg "TARGET!:说明" --desc "一句话"`（`--opt`/`--arg` 在前，`--desc` 最后；`名字!` = 必填，`名字...` = 变长）；③ 函数体内 `local slot TARGET` + `sha.parse "$@" || return $?` —— 解析结果写回同名 `local`，漏 `local` 会当场报错。`sha.parse`/`sha.def` 在 `vendor/sha/sha_opt.bash`（`sha.common.sh` 只 source 了 `sha.bash`，用到时自己补 source）。
     review: accepted
     lifecycle: active
     evidence:
       source: code
-      at: sha.sh:709
+      verifiedAt: '2026-11-05'
   sha#vendor:
     value: |-
-      `vendor/sha/**` 是上游 `~/git/diy/sha` 的**整目录拷贝**（diy 内是 237 行的旧版，上游已 412 行：没有 `-hh` 全树、没有 `#:` 注释帮助、没有 `sha.parse`）。**别就地改** —— 下次覆盖同步就丢。要加库能力：回 `~/git/diy/sha` 改，跑它的 `bash test_sha.bash` + `bash test_sha_opt.bash` 全绿，再把 `sha.bash` / `sha_opt.bash` / `README.md` 覆盖进 `vendor/sha/`，最后跑 `./sha.sh check` 收口。
+      `vendor/sha/` 是上游 `~/git/sha` 的整目录拷贝（submodule）。**本仓已升到 `bed317f`（412 行版）**：有 `#:` 注释帮助、`sha.def`/`sha.parse`、父子命令、`-hh` 全树、bash 4.3 门禁；`sha_opt.bash` 是新增的独立文件（老版本没有）。同步方式：`git -C vendor/sha fetch && git -C vendor/sha checkout -f <rev>`，再在仓库根 `git add vendor/sha` 提交指针（两处都要；worktree 与主 checkout 各自 checkout 一次）。本机连不上 github 时，可从另一个已更新的 checkout `rsync -a --exclude .git` 过去再强 checkout。
     review: accepted
     lifecycle: active
     evidence:
       source: code
-      at: sha.common.sh:193
+      verifiedAt: '2026-11-05'
   sha#where:
     value: |-
       改命令逻辑只动 `sha.sh` 的 `app script` 段**以下**（脚本自己写着「此位置以上的全都是 bake 工具脚本，copy 走可以直接用，之下的为项目特定 cmd」）；段以上是工具层 —— `_pick_workspaces` / `_ws_run` / `exec` 这类是全 workspace 公共行为，改它们先想影响面。workspace 内部命令写在各包自己的 `sha.sh`（`pkgs.ts/*/sha.sh`、`apps/*/sha.sh`），它们同样 source 上级 `sha.common.sh`，所以包内 `./sha.sh build` 与根命令同名不同实现是常态。
