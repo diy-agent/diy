@@ -14,7 +14,7 @@ launches:
     title: 开发（lab）
     command: ./sha.sh lab
     # 变体各自一个数据根：lab 与 prod 同时跑才不会抢单实例锁
-    home: build/lab/home
+    home: build/lab/1/home
     entries:
       # 只声明 app —— 解析器目前只认 app / web 两种 entry（service 会整条被当成坏文件丢掉）
       - kind: app
@@ -23,7 +23,7 @@ launches:
   - id: staging
     title: 预生产（prod 构建 + 隔离数据）
     command: ./sha.sh staging
-    home: build/staging/home
+    home: build/staging/1/home
     entries:
       - kind: app
         title: Electron 窗口
