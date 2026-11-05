@@ -73,7 +73,7 @@ function makeHome(): string {
 async function setup(kind: "file" | "memory"): Promise<Harness> {
     const home = makeHome();
     const memory = kind === "memory";
-    // 内存入口的装配：一个 store，聊天宿主与配置页共用（main-memory.mjs 就是这么接的）
+    // 内存装配：一个 store，聊天宿主与配置页共用（persist 缺省 false 时就是这么接的）
     const botStore = memory ? createMemoryBotStore() : undefined;
     const chat: BotChatHost = createBotChat({
         home,

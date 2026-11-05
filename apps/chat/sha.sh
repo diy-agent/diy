@@ -50,7 +50,6 @@ build() {
   run npx tsc -p tsconfig.build.json
   build-deps
   build-main
-  build-main-memory
   build-preload
   build-renderer
 }
@@ -60,13 +59,6 @@ build-main() {
   # @diy-agent/* 保持外部：运行时按包名解析（真插件边界，不把插件打成一个巨型 bundle）
   run npx esbuild main.ts --bundle --platform=node --format=esm --target=node22 \
     --external:electron "--external:@diy-agent/*" --outfile="$d/main/index.mjs"
-}
-
-# 内存模式入口（##505-E / 原 ##504）：同一份界面 bundle，只换装配（不落盘）
-build-main-memory() {
-  local d; d="$(_build_dir)"
-  run npx esbuild main-memory.mjs --bundle --platform=node --format=esm --target=node22 \
-    --external:electron "--external:@diy-agent/*" --outfile="$d/main-memory/index.mjs"
 }
 
 build-preload() {
@@ -82,35 +74,32 @@ build-renderer() {
     --outfile="$d/renderer/index.js"
   run mkdir -p "$d/renderer"
   run cp index.html "$d/renderer/index.html"
-  # 内存模式 html（标题 + __DIY_CHAT_MODE__）：与 index.html 共用 index.js
-  run cp memory.html "$d/renderer/memory.html"
 }
 
 # 开发实例：构建后直接起（无 HMR —— 这一刀只验链路）。lab 变体下 main.ts 自带 CDP 9222。
+#
+# **缺省内存**（2026-11-05 用户裁：「除了 model 配置、bot 配置，其他都要内存化」）：
+# 会话历史 / meta / 压缩状态全在进程里，重启即清零；`$DIY_HOME` 只写 bots/。
+# 加 `--persist` 切文件版（会话历史落 jsonl），用于对照验证 / 排障。
 lab() {
   _ensure_electron
   build
   local d; d="$(_build_dir)"
+  local persist=""
+  local args=()
+  for a in "$@"; do
+    if [ "$a" = "--persist" ]; then persist="1"; else args+=("$a"); fi
+  done
   # 数据根：**只有 dev 启动器拉起时**才认注入的 DIY_HOME（它带了 DIY_LAUNCH）；
   # 手工跑时 shell 里残留的 DIY_HOME（如生产 ~/.diy）绝不能把人带进生产数据根
   local home; home="${DIY_LAUNCH:+${DIY_HOME:-}}"; home="${home:-$(_repo_root)/build/$DIY_VARIANT/home}"
   run mkdir -p "$home"
-  echo "${info}数据根：$home${reset}"
-  run env DIY_HOME="$home" DIY_VARIANT="$DIY_VARIANT" npx electron "$d/main/index.mjs" "$@"
-}
-
-# 内存模式实例（##505-E）：同一 UI，bot / 会话全在内存 —— 重启就没了，别拿它当真用。
-# 判据：$DIY_HOME/bots 与 $DIY_HOME/sessions 的 mtime 不变。
-lab:memory() {
-  _ensure_electron
-  build
-  local d; d="$(_build_dir)"
-  # 数据根：**只有 dev 启动器拉起时**才认注入的 DIY_HOME（它带了 DIY_LAUNCH）；
-  # 手工跑时 shell 里残留的 DIY_HOME（如生产 ~/.diy）绝不能把人带进生产数据根
-  local home; home="${DIY_LAUNCH:+${DIY_HOME:-}}"; home="${home:-$(_repo_root)/build/$DIY_VARIANT/home}"
-  run mkdir -p "$home"
-  echo "${info}数据根：$home（内存模式：bots / sessions 不落盘）${reset}"
-  run env DIY_HOME="$home" DIY_VARIANT="$DIY_VARIANT" npx electron "$d/main-memory/index.mjs" "$@"
+  if [ -n "$persist" ]; then
+    echo "${info}数据根：$home（文件版：会话历史落 jsonl）${reset}"
+  else
+    echo "${info}数据根：$home（内存版：bots 以外不落盘）${reset}"
+  fi
+  run env DIY_HOME="$home" DIY_VARIANT="$DIY_VARIANT" ${persist:+DIY_CHAT_PERSIST=1} npx electron "$d/main/index.mjs" ${args[@]+"${args[@]}"}
 }
 
 # ##468 渲染层判据：CDP 实测 1–6（不闪 / 滚动不跳 / 焦点不丢 / 切会话外壳不重建）

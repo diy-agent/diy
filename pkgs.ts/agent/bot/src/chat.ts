@@ -15,7 +15,7 @@
 // 持久化这个界面状态；本次进程内记住，重启回落到第一个 bot）。
 //
 // ##480（store 方向）：会话缺省存储是**内存**，所以装配器必须**显式**注入具体 store ——
-// 缺省用 jsonl（落盘），内存入口（main-memory）注入内存实现。
+// 缺省用内存（2026-11-05：只有 model / bot 配置落盘）；`persist: true` 才换成 jsonl。
 //
 // 并发（docs/plans/2026-11-02-concurrency-actor.md）：单实例 = 单 actor。
 //   · 所有改状态的操作（读—改—写）排进同一条队列（`createSerial`），一次跑一个
@@ -27,6 +27,7 @@ import { join } from "node:path";
 import { localISOString } from "@diy-agent/time";
 import { createSession, type AgentSession, type ChatMessage, type LlmPort, type SessionStore, type TokenUsage } from "@diy-agent/session";
 import { openJsonlSessionStore } from "@diy-agent/session-store-jsonl";
+import { openMemorySessionStore } from "@diy-agent/session";
 import { createOpenAiCompatible, resolveProviderConfig } from "@diy-agent/llm-provider";
 import {
     costOf,
@@ -123,8 +124,18 @@ export interface BotChatOptions {
     /** 会话目录根；缺省 `<home>/sessions/chat` */
     readonly sessionsDir?: string;
     /**
+     * **落盘总开关（缺省 false = 纯内存）**。
+     *
+     * 用户 2026-11-05：「除了 model 配置、bot 配置，其他都要内存化版本，就是为了甩掉包袱」。
+     * 所以缺省只落两样：`model.yaml`（不在本包）与 `bots/<id>.json`（`botStore`）。
+     * 会话历史 / meta / 压缩状态**全在进程里**，重启即清零。
+     *
+     * 要文件版（对照验证 / 排障）显式给 `persist: true` —— 两者可交替使用。
+     */
+    readonly persist?: boolean;
+    /**
      * 会话存储工厂（按会话 id 打开；同一条会话反复进来必须拿到**同一个** store 实例）。
-     * 缺省 = `openJsonlSessionStore({ dir })`（落盘）；内存入口传内存实现（##505-E）。
+     * 缺省跟随 `persist`：false ⇒ 内存 store；true ⇒ `openJsonlSessionStore({ dir })`。
      */
     readonly openSessionStore?: (sessionId: string, dir: string) => Promise<SessionStore> | SessionStore;
     /**
@@ -199,9 +210,14 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
     const root = options.sessionsDir ?? join(home, "sessions", "chat");
     // bot 身份在 `<home>/bots/`；会话归属落在会话自己的目录里（方案 B）
     const botStore = options.botStore ?? createFileBotStore({ home, sessionsDir: root });
-    const openSessionStore = options.openSessionStore ?? ((_id: string, dir: string) => openJsonlSessionStore({ dir }));
+    const persist = options.persist ?? false;
+    const openSessionStore =
+        options.openSessionStore ??
+        (persist
+            ? (_id: string, dir: string) => openJsonlSessionStore({ dir })
+            : () => openMemorySessionStore());
     /** 内存模式：meta 也只活在进程里（不写 `sessions/chat/<id>/meta.json`） */
-    const persistMeta = options.persistMeta ?? true;
+    const persistMeta = options.persistMeta ?? persist;
     const metaMemory = new Map<string, SessionMeta>();
 
     let catalogCache: ModelCatalogEntry[] | null = null;

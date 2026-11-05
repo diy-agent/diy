@@ -1,4 +1,4 @@
-// bootstrap.ts — Electron 主进程的启动样板（main.ts 与 main-memory.mjs 共用，##505）。
+// bootstrap.ts — Electron 主进程的启动样板（##505）。
 // 不含业务：OTel 日志 + workbench 窗口 + 退出 flush。
 //
 // ⚠️ 不要用顶层 await：Electron ESM 入口里它会让模块求值卡在事件循环启动之前（窗口永不出现）。

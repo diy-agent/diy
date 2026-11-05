@@ -1,5 +1,5 @@
 // index.ts — apps/chat 的装配（##505）：只存插件清单，业务全在 @diy-agent/bot。
-// 内存入口（main-memory.mjs）只换注入的宿主与 store：`createAssembly({ home, sessions, botStore })`。
+// 落盘 vs 内存由 `createBotChat({ persist })` 决定（2026-11-05：缺省内存）。
 
 import * as botConfigPageMain from "@diy-agent/bot-config-page";
 import * as chatPageMain from "@diy-agent/chat-page/main";
@@ -70,7 +70,8 @@ function chatConfig(home: string | undefined, sessions: unknown, botStore: BotSt
     if (sessions !== undefined) return { sessions };
     if (home === undefined || home === "") return {};
     return {
-        sessions: createBotChat({ home, botStore, toolsFor: (botId) => botToolsFor(home, botId).tools }),
+        // 缺省内存（只有 model / bot 配置落盘）；DIY_CHAT_PERSIST=1 切文件版对照
+        sessions: createBotChat({ home, botStore, toolsFor: (b) => botToolsFor(home, b).tools, persist: process.env["DIY_CHAT_PERSIST"] === "1" }),
     };
 }
 
