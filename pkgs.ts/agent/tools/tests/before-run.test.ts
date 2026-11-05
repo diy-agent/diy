@@ -44,3 +44,52 @@ describe('beforeRun 钩子', () => {
         expect(seen).toBe('echo "带 引号 的命令"');
     });
 });
+
+// ── 规则 1b：按 DIY_HOME 判「谁是我家人」（2026-11-05 第二刀）──
+import { judgeSelfKill, type SelfProcessInfo } from '../src/shell/guard.js';
+
+const selfWith = (home: string, pids: number[] = [100]): SelfProcessInfo => ({
+    pid: 100,
+    pgid: 100,
+    pids: new Set(pids),
+    cmdlines: ['/path/to/electron apps/chat/build/app/main/index.mjs'],
+    home,
+});
+
+describe('judgeSelfKill · 按 DIY_HOME 判家人', () => {
+    const PROD = '/Users/me/.diy';
+
+    it('杀同 DIY_HOME 的兄弟进程 ⇒ 拦（那是生产实例的 GPU/renderer）', () => {
+        const v = judgeSelfKill('kill -9 999', selfWith(PROD), (pid) => (pid === 999 ? PROD : undefined));
+        expect(v.blocked).toBe(true);
+        expect(v.reason).toContain('同一个 diy 实例');
+    });
+
+    it('杀别的 DIY_HOME（agent 自建实例）⇒ **放行**（这正是以前误拦的那类）', () => {
+        const v = judgeSelfKill('kill -9 999', selfWith(PROD), (pid) =>
+            pid === 999 ? '/Users/me/git/diy/build/lab/home' : undefined,
+        );
+        expect(v.blocked, '不该误拦自建实例').toBe(false);
+    });
+
+    it('pid 查不到环境变量 ⇒ 放行（拿不准时保守放行，不阻断开发）', () => {
+        const v = judgeSelfKill('kill -9 999', selfWith(PROD), () => undefined);
+        expect(v.blocked).toBe(false);
+    });
+
+    it('不传 homeOf ⇒ 退化成只看祖先链（不因缺少能力就阻断）', () => {
+        const v = judgeSelfKill('kill -9 999', selfWith(PROD));
+        expect(v.blocked).toBe(false);
+    });
+
+    it('self.home 为空（没拿到 DIY_HOME）⇒ 规则 1b 不生效', () => {
+        const v = judgeSelfKill('kill -9 999', selfWith(''), () => PROD);
+        expect(v.blocked, '不知道自己的 home 就不该猜').toBe(false);
+    });
+
+    it('杀自己的祖先仍然走规则 1（与 1b 无关）', () => {
+        const v = judgeSelfKill('kill -9 100', selfWith(PROD, [100, 200]), () => '/x');
+        expect(v.blocked).toBe(true);
+        expect(v.reason).toContain('自身进程树');
+    });
+});

@@ -289,6 +289,13 @@ export function createPosixOs(deps: PosixDeps = defaultPosixDeps()): OsStrategy 
             return parseHop(deps.runSync("ps", ["-p", String(pid), "-o", "pid=,ppid=,command="], 2000));
         },
 
+        environmentsOf(pids) {
+            if (pids.length === 0) return new Map();
+            // `ps eww` 的行会很长（整串环境变量），5000ms 够；pid 列表按逗号拼。
+            const text = deps.runSync("ps", ["eww", "-p", pids.join(",")], 5000);
+            return parseEnvironments(text);
+        },
+
         probe(pid) {
             const runMs = parseEtime(deps.runSync("ps", ["-o", "etime=", "-p", String(pid)], 3000));
             const cpuPercent = mac

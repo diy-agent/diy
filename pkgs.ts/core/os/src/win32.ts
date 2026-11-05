@@ -374,6 +374,13 @@ export function createWin32Os(deps: Win32Deps = defaultWin32Deps()): OsStrategy 
             return row ? { pid: row.pid, ppid: row.ppid, command: row.command } : null;
         },
 
+        environmentsOf() {
+            // Windows 没有 `ps eww`。取环境变量要走 WMI / NtQueryInformationProcess，
+            // 成本与收益不成比例（guard 只在 macOS/Linux 的 agent 场景用得上）。
+            // 明确返回 null 而不是空 Map：调用方据此走「保守放行」分支。
+            return null;
+        },
+
         probe(pid) {
             const rows = snapshotSync();
             const row = rows?.find((r) => r.pid === pid);
