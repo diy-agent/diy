@@ -167,6 +167,14 @@ export interface OsStrategy {
     hopSync(pid: number): ProcessHop | null;
     /** 单进程现场（时长 / CPU / 树 / 连接 / 内存）；观测类，供 process-health 用 */
     probe(pid: number): ProcessProbe;
+    /**
+     * 一批 pid 的**环境变量**（`ps eww`）。采不到 = null（能力不支持 / 没权限）。
+     *
+     * 用途：判定「这个进程属于哪个 diy 实例」—— 靠 `DIY_HOME` 区分生产实例与自建实例。
+     * 这是 guard「不误杀兄弟实例」的唯一可靠判据（命令行文本分不出来，路径也分不出来：
+     * 同一个 `build/lab/main/index.mjs` 可以是生产也可以是自建，只有环境变量说得清）。
+     */
+    environmentsOf(pids: readonly number[]): Map<number, Record<string, string>> | null;
 
     // ── 系统能力（非进程意图，但需要平台实现）──
     gpu(): GpuInfo;

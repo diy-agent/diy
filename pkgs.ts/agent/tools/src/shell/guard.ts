@@ -31,6 +31,14 @@ export interface SelfProcessInfo {
   pids: Set<number>;
   /** 上述进程的命令行（已转小写，用于 pattern 命中判定） */
   cmdlines: string[];
+  /**
+   * 宿主自己的数据根（`DIY_HOME`）—— 「谁是我家人」的**唯一可靠判据**。
+   *
+   * 为什么不能靠命令行 / 路径判：同一个 `build/lab/main/index.mjs` 既可能是生产实例
+   * 也可能是 agent 自建的；只有环境变量里的 `DIY_HOME` 说得清。
+   * 空串 = 没拿到（调用方应退化为「只认祖先链」）。
+   */
+  home: string;
 }
 
 export interface KillVerdict {
@@ -137,7 +145,15 @@ export function killSegments(command: string): string[] {
  * 判定命令是否会杀死 diy 自身。
  * 保守优先：拿不准就拦（自杀的代价是白屏 + 无日志，误拦只是让模型换个做法）。
  */
-export function judgeSelfKill(command: string, self: SelfProcessInfo): KillVerdict {
+export function judgeSelfKill(
+  command: string,
+  self: SelfProcessInfo,
+  /**
+   * 查某个 pid 的 `DIY_HOME`（宿主注入 —— 走 `os.environmentsOf`）。
+   * 不传 = 不做「按数据根判家人」（退化成只看祖先链）。
+   */
+  homeOf?: (pid: number) => string | undefined,
+): KillVerdict {
   const segments = killSegments(command);
   if (segments.length === 0) return PASS;
 
@@ -159,6 +175,29 @@ export function judgeSelfKill(command: string, self: SelfProcessInfo): KillVerdi
         blocked: true,
         reason: `命令里的 pid 属于 diy 自身进程树（${[...new Set(hits)].join(", ")}；自身 pid=${self.pid}，pgid=${self.pgid}）`,
       };
+    }
+
+    // 规则 1b：显式 pid **虽然不是自己的祖先**，但它的 DIY_HOME 就是宿主的数据根
+    //   ⇒ 它是「同一个 diy 实例」的兄弟进程（GPU / renderer / 用户另一个窗口）。
+    //   杀它 = 部分白屏，和杀祖先同类后果，所以拦。
+    //   反过来说：DIY_HOME 不同的（agent 自建的 dev/测试实例）**放行** —— 那正是
+    //   以前误拦、导致 agent 收不掉自己现场的那一类。
+    if (self.home !== '' && homeOf !== undefined) {
+      const sameHome: number[] = [];
+      for (const m of seg.matchAll(KILL_SEGMENT)) {
+        const body = m[1] ?? "";
+        for (const t of body.matchAll(/(?<![\w.-])(\d{2,})(?![\w.])/g)) {
+          const n = Number(t[1]);
+          if (self.pids.has(n)) continue; // 规则 1 已经覆盖
+          if (homeOf(n) === self.home) sameHome.push(n);
+        }
+      }
+      if (sameHome.length > 0) {
+        return {
+          blocked: true,
+          reason: `命令里的 pid 属于**同一个 diy 实例**（DIY_HOME=${self.home}）：${[...new Set(sameHome)].join(", ")}。收别的实例请按 DIY_HOME 区分后精确 kill。`,
+        };
+      }
     }
 
     // 规则 2：本段带 diy/Electron 自指特征 → 直接拦（覆盖 pkill -f electron / grep Electron | xargs kill）
@@ -235,7 +274,7 @@ export function judgeSelfKill(command: string, self: SelfProcessInfo): KillVerdi
  * —— 那时它会变成 `ps eww` 读 DIY_HOME 的入参。
  */
 export function collectSelfInfo(
-  _home: string,
+  home: string,
   hopOf: (pid: number) => { pid: number; ppid: number; command: string } | null,
 ): SelfProcessInfo | null {
   try {
@@ -252,7 +291,7 @@ export function collectSelfInfo(
       if (hop.ppid === cur) break;
       cur = hop.ppid;
     }
-    return { pid: process.pid, pgid: process.pid, pids, cmdlines };
+    return { pid: process.pid, pgid: process.pid, pids, cmdlines, home };
   } catch {
     return null;
   }

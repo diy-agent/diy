@@ -15,6 +15,8 @@ function fakeSelf(): SelfProcessInfo {
   return {
     pid: 1000,
     pgid: 1000,
+    // 2026-11-05：新增字段（规则 1b 用）。空串 = 退化成只看祖先链，与旧行为一致。
+    home: '',
     pids: new Set([1000, 1001, 1002, 999]),
     cmdlines: [
       "/x/node_modules/electron/dist/electron.app/contents/macos/electron /x/build/lab/main/index.mjs",

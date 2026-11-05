@@ -89,7 +89,13 @@ export function botToolsFor(home: string, botId: string): { cwd: string; tools: 
     const guardSelf = (command: string) => {
         const self = collectSelfInfo(home, (pid) => os.hopSync(pid));
         if (self === null) return undefined; // 采样失败 ⇒ 放行（护栏不能阻断正常开发）
-        const verdict = judgeSelfKill(command, self);
+        // 「谁是我家人」按 **DIY_HOME** 判 —— 只有环境变量能把「生产实例」
+        // 和「agent 自建的 dev/测试实例」分开（路径/命令行都分不开）。
+        const homeOf = (pid: number): string | undefined => {
+            const envs = os.environmentsOf([pid]);
+            return envs?.get(pid)?.["DIY_HOME"];
+        };
+        const verdict = judgeSelfKill(command, self, homeOf);
         return verdict.blocked ? { block: true as const, reason: verdict.reason } : undefined;
     };
     const shell = SHELLS.map((spec) => [
