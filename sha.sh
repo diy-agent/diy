@@ -627,6 +627,20 @@ vendor.update() {  run git submodule update --init --recursive --remote --merge;
 sha.def "build-pkgs" \
   --desc "只编能力包（pkgs.ts/*）的 lib/ —— 改包后单独跑它最快"
 
+#: 子模块同步：把 vendor/（sha 脚本框架等）对齐到仓库记录的提交
+#: 用法: ./sha.sh submodule update [--remote]
+#: 缺省只对到「当前记录」的提交；--remote 跟到该 submodule 的上游分支最新。
+sha.def "submodule.update" --opt "--remote:bool:跟到上游分支最新" --desc "更新子模块"
+submodule.update() {
+  local remote
+  sha.parse "$@" || return $?
+  case "${remote:-}" in
+    1 | true | yes) run git submodule update --init --recursive --remote ;;
+    *) run git submodule update --init --recursive ;;
+  esac
+  run git submodule status
+}
+
 build-pkgs() {
     run node scripts/gen-tsconfig-build-all.mjs
     run npx tsc -b build/tsconfig.build-all.json

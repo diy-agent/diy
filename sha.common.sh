@@ -191,6 +191,8 @@ if [ ! -d "$__SHA_COMMON_DIR/vendor/sha" ] || [ -z "$(ls -A "$__SHA_COMMON_DIR/v
   run git submodule update --init --recursive
 fi
 source "$__SHA_COMMON_DIR/vendor/sha/sha.bash"
+# 选项/位置参数解析（sha.def / sha.parse）在新版里单独成文件；缺了它 `sha.parse` 就是 command not found
+[ -f "$__SHA_COMMON_DIR/vendor/sha/sha_opt.bash" ] && source "$__SHA_COMMON_DIR/vendor/sha/sha_opt.bash"
 # 新版选项引擎（bed317f 起）：`sha.def` 声明 + `sha.parse` 解析 ——
 # 自动生成 usage、`-h` 单命令帮助、`-hh` 全树。
 # 不 source 它的话 `sha.def` 未定义，各脚本只能退回手写 case 解析（check 就是这么写的）。
