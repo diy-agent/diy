@@ -150,6 +150,10 @@ export function RemotePage() {
     /** 合并后的一份清单（判据 4：同一台机器只出现一行） */
     const devices = createMemo(() =>
         mergeDevices({
+            // local 源与本机同用户：从 self().address 的 `user@host/...` 取出 user 段
+            ...(self()?.address && self()!.address.includes("@")
+                ? { user: self()!.address.slice(0, self()!.address.indexOf("@")) }
+                : {}),
             members: members(),
             discovered: rows(),
             link: link(),
@@ -265,8 +269,17 @@ export function RemotePage() {
                                                         data-remote-dot={row.connection}
                                                         title={CONNECTION_LABEL[row.connection]}
                                                     />
-                                                    <span class="flex-1 min-w-0 truncate font-semibold" data-remote-machine-name>
-                                                        {row.name}
+                                                    {/* 主标识用显示地址（local 源拼得出）：
+                                                        一眼看完 user@host:port/app.variant，比裸名字信息量大 */}
+                                                    <span
+                                                        class="flex-1 min-w-0 truncate font-semibold"
+                                                        title={row.address ?? row.name}
+                                                        data-remote-machine-name
+                                                    >
+                                                        {row.address ?? row.name}
+                                                    </span>
+                                                    <span class="shrink-0 w-16 text-xs opacity-50 font-mono" data-remote-pid>
+                                                        {row.pid === undefined ? "—" : String(row.pid)}
                                                     </span>
                                                     {/* 两列分开（2026-11-05 用户裁）：连接 ≠ 授权 */}
                                                     <span

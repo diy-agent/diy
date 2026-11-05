@@ -140,6 +140,17 @@ export interface DeviceRow {
   group: DeviceGroup;
   /** 行上的补充说明（人与机器都读；不是判据，判据看 connection / trust） */
   status: string;
+  /**
+   * 显示地址：`ccc@localhost:63059/diy/lab`（user@host:port/app.variant）。
+   *
+   * 与 ##484 的 `formatAddress`（`ccc@localhost/diy.lab:63059`）**段序不同** ——
+   * 用户 2026-11-05 明确要「host 后面跟端口」这种更好读的样子（端口是连接的直接信息）。
+   * 两套并存：`formatAddress` 仍是协议/日志里的规范形，这里是**列表里的给人看的形**。
+   * 拼不出（跨机发现没有 variant/app 元数据）⇒ 缺省，UI 退回显示名。
+   */
+  address?: string;
+  /** 进程号：同机多实例时人靠它区分（跨机发现没有 ⇒ 缺省） */
+  pid?: number;
   /** 连接状态（列 1） */
   connection: ConnectionState;
   /** 授权状态（列 2） */
@@ -200,6 +211,8 @@ function linkStatus(state: HubConnectionState | null | undefined): string {
 }
 
 export interface MergeDevicesInput {
+  /** 本机登录名（拼显示地址用；不传则不拼 address）。local 源的实例与本机同用户。 */
+  user?: string;
   members?: HubMemberRow[];
   discovered?: DiscoveredRow[];
   /** 我作为卫星加入的主控（link.json） */
@@ -277,6 +290,18 @@ export function mergeDevices(input: MergeDevicesInput = {}): DeviceRow[] {
     const key = found.id
       ? `node:${found.id}`
       : matched ?? (host ? `ep:${host}` : `ep:${found.endpoint}`);
+    const meta = (found.meta ?? {}) as Record<string, unknown>;
+    const metaPid = typeof meta["pid"] === "string" ? Number(meta["pid"]) : undefined;
+    const metaApp = typeof meta["app"] === "string" ? meta["app"] : undefined;
+    const metaVariant = typeof meta["variant"] === "string" ? meta["variant"] : undefined;
+    const port = (() => {
+      try {
+        return Number(new URL(found.endpoint).port) || undefined;
+      } catch {
+        return undefined;
+      }
+    })();
+    const addrHost = hostnameOf(found.endpoint);
     const row = upsert(key, {
       name: machineLabel(found),
       group: "available",
@@ -284,6 +309,14 @@ export function mergeDevices(input: MergeDevicesInput = {}): DeviceRow[] {
       // 能被发现 = 这一轮探测通过 ⇒ 连接是通的；授权：还没配对
       trust: "none",
       connection: "online",
+      ...(input.user === undefined || addrHost === null || found.source !== "local"
+        ? {}
+        : {
+            address: `${input.user}@${addrHost}${port === undefined ? "" : `:${String(port)}`}/${
+              metaApp ?? "?"
+            }/${metaVariant ?? "?"}`,
+          }),
+      ...(metaPid === undefined || Number.isNaN(metaPid) ? {} : { pid: metaPid }),
       discovered: found,
     });
     row.discovered = found;

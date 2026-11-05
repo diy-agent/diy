@@ -266,3 +266,38 @@ describe("连接与授权是两个独立维度", () => {
         expect(row?.trust).toBe("satellite");
     });
 });
+
+/** 列表里一眼看完一行（2026-11-05 用户：「显示 ccc@localhost:9401/diy-app/lab，再加一个列 pid」） */
+describe("显示地址与 pid", () => {
+    const local = (over: Record<string, unknown> = {}) => ({
+        id: "diy-x",
+        displayName: "c-mac",
+        endpoint: "http://127.0.0.1:63059",
+        source: "local",
+        sources: ["local"],
+        meta: { pid: "64621", app: "diy", variant: "lab", env: "development" },
+        ...over,
+    });
+
+    it("local 源 + user ⇒ 拼出 user@host:port/app.variant", () => {
+        const rows = mergeDevices({ user: "ccc", discovered: [local()] });
+        expect(rows[0]!.address).toBe("ccc@127.0.0.1:63059/diy/lab");
+        expect(rows[0]!.pid).toBe(64621);
+    });
+
+    it("不给 user ⇒ 不拼地址（UI 退回显示名），pid 仍然有", () => {
+        const rows = mergeDevices({ discovered: [local()] });
+        expect(rows[0]!.address).toBeUndefined();
+        expect(rows[0]!.pid).toBe(64621);
+    });
+
+    it("非 local 源 ⇒ 不拼地址（不知道对方登录名，填本机会误导）", () => {
+        const rows = mergeDevices({ user: "ccc", discovered: [local({ source: "tailscale", sources: ["tailscale"] })] });
+        expect(rows[0]!.address).toBeUndefined();
+    });
+
+    it("meta 缺 pid ⇒ pid 缺省，不写 NaN", () => {
+        const rows = mergeDevices({ discovered: [local({ meta: {} })] });
+        expect(rows[0]!.pid).toBeUndefined();
+    });
+});
