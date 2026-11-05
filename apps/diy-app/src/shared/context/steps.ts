@@ -50,6 +50,22 @@ export interface DeliveryStepRecord {
     historyText?: string;
     /** 尾部信封里 `summary:` 那一段（历史摘要；空/缺 = 没启用摘要 / 老快照没记） */
     summaryText?: string;
+    /**
+     * 真发 tools 定义的 hash（`sha256Hex(JSON.stringify(tools))`；老快照缺字段 = 没记）。
+     *
+     * 为什么要记（##519）：tools 在 wire 上排在 system **之前**，改一个字节（哪怕只是描述里的
+     * 一个空格）就把整段前缀缓存作废 —— 而 `toolsBytes` 撞巧相等时（实测：改前后都是 952 B）
+     * 从字节数根本看不出来，只能翻 reqlog 逐字节 diff。
+     * 与上一条不同 ⇒ 这一步的整段失配是**我们自己改的**，不是网关的问题。
+     */
+    toolsHash?: string;
+    /**
+     * 真发时的网关会话 id（`sessionIdOf(taskUri)`；拿不到 / 非网关端点则缺）。
+     *
+     * 记它是为了把「整段 cacheRead=0」拆成两种：(a) 会话换了；(b) 会话没换、缓存就是没了。
+     * 后者是网关侧（分片 / 逐出 / 落到别的上游节点），我们不可控 —— 不记这一位就只能靠猜（##519）。
+     */
+    sessionId?: string;
 }
 
 /** 快照 + 序号（读取时按行序赋；1 基） */

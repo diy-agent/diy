@@ -147,6 +147,9 @@ import {
     type UsageLike,
 } from "../../shared/usage";
 import { buildDelivery, type Delivery } from "@diy-agent/context/delivery";
+// 纯 JS sha256（`@diy-agent/context/hash`）：tools 字节 hash 用得了 renderer 包的那个实现就够；
+// 不为一个观测字段把 node:crypto 拉进 main 的依赖面（与 144 的"hash 可复现"同一条约定）。
+import { sha256Hex } from "@diy-agent/context/hash";
 import { assemblyHardCapBytes } from "../../shared/context/request-preflight";
 import { estimateRequest, tighterHistoryCapBytes } from "../../shared/context/request-preflight";
 import { chatEnvelope, isEnvelopeText, userEnvelope, withNotify, type NotifyItem } from "@diy-agent/context/envelope";
@@ -1977,6 +1980,22 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
          */
         edit: fileTools.edit,
     };
+}
+
+/**
+ * 当前 build 的**工具面 hash**（##519）。
+ *
+ * 口径与真发快照（`step.toolsHash`）**逐字相同**：`sha256Hex(JSON.stringify(buildTools(...)))`。
+ * 启动时的漂移预报（`services/tools-surface-watch.ts`）拿它与上次启动比 —— 两个口径分叉就会有
+ * 「启动说没变、真发却说变了」的假警报，故这里就写一处、两边都调它。
+ *
+ * cwd / taskUri 传什么不影响结果（工具面不许依赖它们，`tools-surface-golden` 钉着）；
+ * 这里给空串是故意的：**能传空就说明它真不依赖**，将来谁加了 cwd 进去，golden 测试立刻红。
+ * `limits` 同理用 `DEFAULT_LIMITS`：现在没有任何描述文案插值运行限制（`readMaxBytes` 只进
+ * 执行路径，描述里的「2000 行 / 100KB」是字面量）；若将来真插了，golden 与这条口径都得重算。
+ */
+export function currentToolsSurfaceHash(cwd = ""): string {
+    return sha256Hex(JSON.stringify(buildTools(cwd, DEFAULT_LIMITS, "")));
 }
 
 // ─── fullStream 取值兜底（v7 字段命名跨 part 不一致）──
@@ -5461,6 +5480,8 @@ export class LocalAgentManager {
             // 投递快照（每轮真发一条）：投递事实，供 UI 的 step/diff 用（与 raw 那种旁路观测不同）。
             // 落盘失败不阻断发送（它只是观测），但必须出声。
             const prevStep = this.compactStateOf(taskUri).lastStep; // 本任务的上一轮（用于算变化）
+            // 会话 id 算一次就够（`sessionIdOf` 纯拼串，但快照与 header 必须逐字同一份，别各算一遍）
+            const sid = sessionIdOf(taskUri);
             const step: DeliveryStepRecord = {
                 ts: localISOString(),
                 turnId,
@@ -5475,7 +5496,27 @@ export class LocalAgentManager {
                     ? { compactAt: this.compactStateOf(taskUri).boundary!.at }
                     : {}),
                 // `summaryText` 不再写：压缩结论现在只在 notify.kind=compact.summary（##442）。
+                // 真发 tools 的字节 hash（##519）：整段前缀失配的两种自因之一（另一种是 system 重建）。
+                toolsHash: sha256Hex(toolsJson),
+                // 网关会话 id（只对 opencode 网关有意义）：把「cacheRead=0」拆成「换会话」与「缓存没了」。
+                ...(sid ? { sessionId: sid } : {}),
             };
+            // 两种**我们自己造成的**整段失配，各留一行痕 —— 没有它就只能翻 reqlog 逐字节 diff 才查得出
+            // （##519 实测：一个空格改掉整段 300k 前缀，$0.045）。只出声、不阻断：改工具描述是正当开发。
+            if (prevStep?.toolsHash && prevStep.toolsHash !== step.toolsHash) {
+                console.log(
+                    `[local-agent] 工具面变更 ⇒ 本轮首步整段失配（tools 排在 system 之前）：${taskUri} ` +
+                        `${prevStep.toolsHash.slice(0, 8)} → ${step.toolsHash!.slice(0, 8)}`,
+                );
+            }
+            // ⚠️ 正常情况下永不触发（`sessionIdOf` 由任务 uri 决定、压缩也不换，见 ##230）——
+            // 留着是因为它一旦变了，失配原因就和工具面/压缩完全不同（换会话 ⇒ 跨会话不共享前缀）。
+            if (prevStep?.sessionId && step.sessionId && prevStep.sessionId !== step.sessionId) {
+                console.warn(
+                    `[local-agent] 网关会话换了一条（跨会话不共享前缀缓存）：${taskUri} ` +
+                        `${prevStep.sessionId} → ${step.sessionId}`,
+                );
+            }
             appendStep(stepsFile(taskUri), step);
             this.compactStateOf(taskUri).lastStep = step;
             // 变更统计（**按项目**累计；只存变化路径 → 体积小、可长期留）。

@@ -34,7 +34,14 @@ import { z } from "zod";
  * 留言就又能被取走 —— 所以条目文案是「已结案 ⇒ 现在不会被取出；改回 active 就能生效」，
  * 不是「已丢弃」（##416：不隐藏信息，说清为什么没被消费 + 怎么救）。
  */
-export const INBOX_KINDS = ["max-tokens", "cost-step", "cost-turn", "message", "lost"] as const;
+export const INBOX_KINDS = [
+    "max-tokens",
+    "cost-step",
+    "cost-turn",
+    "message",
+    "lost",
+    "tools-surface",
+] as const;
 
 /** kind → 中文短名（列表一行用；文案真源在这一处，别在组件里各写一份） */
 export const INBOX_KIND_LABEL: Readonly<Record<InboxKind, string>> = {
@@ -43,6 +50,7 @@ export const INBOX_KIND_LABEL: Readonly<Record<InboxKind, string>> = {
     "cost-turn": "单轮超支",
     message: "新留言",
     lost: "滞留留言",
+    "tools-surface": "工具面漂移",
 };
 export const InboxKindSchema = z.enum(INBOX_KINDS);
 export type InboxKind = (typeof INBOX_KINDS)[number];

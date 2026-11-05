@@ -238,3 +238,42 @@ export function stuckSteerEntryOf(input: {
         },
     };
 }
+
+/**
+ * 一条**工具面漂移**的条目（##519）：换了 build 而工具描述改了字节。
+ *
+ * 为什么它必须进信箱而不是只 log：这是**花钱的预报** —— `tools` 段在 wire 上排在 system 之前，
+ * 字节一变，每个任务的**首个请求**都按全价重付（实测 300k 上下文 ≈ $0.045/任务）。
+ * 要拦的是"换了个 build，用户完全不知道，下一轮账单莫名高"，而不是"此刻有 N 个任务受影响"。
+ *
+ * 为什么 `taskUri` 是空串：这是**进程级**事实（整个实例的工具面），不属于任何任务。
+ * 信箱的 `taskUri` 是"回看时对账用的定位"，给一个不存在的任务号只会误导（宁可空着）。
+ */
+export function toolsSurfaceEntryOf(input: {
+    hash: string;
+    previousHash: string;
+    previousAt: string;
+}): Omit<InboxEntry, "id" | "ts"> {
+    const short = (h: string) => h.slice(0, 8);
+    return {
+        level: "N1",
+        kind: "tools-surface",
+        taskUri: "",
+        text: `工具面变了（${short(input.previousHash)} → ${short(input.hash)}）：每个任务的首个请求都会按全价计费`,
+        source: `工具面 · 启动时判定（$DIY_HOME/tools-surface.yaml）· 上次启动 ${input.previousAt || "未知"}`,
+        reason:
+            "tools 定义在 wire 上排在 system **之前**：改一个字节（哪怕描述里少一个空格）就把整段前缀缓存作废，" +
+            "那一步按全价计费（实测 300k 上下文 ≈ $0.045）",
+        detail: [
+            "机制：provider 的前缀缓存按逐字节匹配；请求最前面是函数定义，它的字节一变，后面的 system 与整段历史都不再命中。",
+            "为什么是事先：判定发生在**启动**（此刻零花费），不是等真发那一步 —— 那时钱已经花了。",
+            "怎么查差在哪：`npx vitest run tests/services/tools-surface-golden.test.ts` 会打印快照 diff（工具描述已钉成 golden）；确认是有意改动就 `UPDATE_TOOLS_SURFACE=1` 重生成快照并提交。",
+            "怎么避免：工具描述视同接口，改它就要在提交里写明「本次会冷启一次」。",
+        ].join("\n"),
+        data: {
+            hash: input.hash,
+            previousHash: input.previousHash,
+            previousAt: input.previousAt || null,
+        },
+    };
+}

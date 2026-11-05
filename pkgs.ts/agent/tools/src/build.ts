@@ -118,9 +118,11 @@ export function buildTools(ctx: ToolsContext): ToolSet {
          * `core/unified-diff.ts`，##266 review2 去重）；本文件只做 I/O 与审计。
          */
         edit: tool({
+            // ⚠️ 文案进 wire 的 tools 段（排在 system 之前）—— 改一个字节 = 整段前缀缓存作废（##519）。
+            // 改这里 ⇒ 同步更新 tools-surface-golden 快照（那个 diff 就是「本次冷启一次」的签字）。
             description:
                 "对**单个已存在的文件**做局部替换（不要为了改几行就重写整个文件，那是 write 的事）。" +
-                "edits 是**有序的**：后一条基于前一条的结果匹配。每条 oldText 必须逐字来自文件且**唯一命中**" +
+                "edits 是**有序**的：后一条基于前一条的结果匹配。每条 oldText 必须逐字来自文件且**唯一命中**" +
                 "（命中多处会报错并给出次数；确实要全改就传 replaceAll: true）。" +
                 "精确匹配失败时会做字符归一（全角/半角、弯直引号、行尾空白）再试，命中后在返回里**明确说明**用了归一；" +
                 "未命中的行逐字保留。返回 unified patch。",

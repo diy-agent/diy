@@ -280,3 +280,34 @@ snapshot（尾部 user，每轮可变）
 - 试验场的 trace / `analyze` 区间能力可直接复用给「快照来源」的高亮。
 
 **本轮不动实现**，等下一轮按 §8 的需求落成意图测试后再改代码。
+
+---
+
+## 13. 追加（2026-11-05，##519）：`tools` 段也在前缀里
+
+上面整篇讨论的是 system / 快照 / user 三通道，**漏了一件事**：wire 上排在 system **之前**的
+还有函数定义（`tools`）。它的字节一变，同样整段前缀作废 —— 而且这条比 system 更脆，因为
+工具描述是「散文」，重构时最容易被顺手改（实测两次抽包重构的提交说明都写着「文案逐字照搬」）。
+
+实测（`projects/4/tasks/518`，opencode-go / deepseek-v4.1-flash，307k 上下文）：
+
+| 事件 | cacheRead | 命中率 | 该步代价 |
+|---|---|---|---|
+| 前一 turn 末步 | 316,544 / 316,879 | 99.9% | 几乎全走缓存 |
+| 换 build 后首步（工具描述差 10 字节） | 8,192 / 307,134 | 2.7% | ≈ $0.045 |
+
+- 同一次请求里 `prompt_cache_retention=24h` 在、`x-opencode-session` 不变、system 的 head
+  哈希跨轮逐字节相同 ⇒ 失配点确实落在 tools。
+- 全量核对 4 天 30 个任务 6,719 步：低命中 98 步（1.5%），其中「只命中 system 那一段」的
+  46 步基本都能归到 tools 变化或压缩换段；剩下的「整段 0 命中且间隔仅 1.3 分钟」属于
+  网关侧（会话未变、缓存没了），我们不可控。
+
+据此落的三件东西（都在 `apps/diy-app`）：
+
+1. `steps.jsonl` 每步记 `toolsHash` / `sessionId`（`shared/context/steps.ts`），轮首变了打一行
+   留痕 —— 不记 hash 时 `toolsBytes` 会撞巧相等（实测改前后都是 952 B），根本看不出来。
+2. 工具面 golden（`tests/services/tools-surface-golden.test.ts` + fixtures）：真发形状逐字节
+   钉快照，改文案就红；重生成 = 在提交里签字「本次会冷启一次」。
+3. **启动时**预报（`services/tools-surface-watch.ts` + `index.ts`）：`$DIY_HOME/tools-surface.yaml`
+   记上次启动的 hash，换了 build 立刻出声 + 进通知信箱（`kind: tools-surface`）——
+   等到真发那一步才留痕就已经花过钱了。

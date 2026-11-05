@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { RunRegistry, WAIT_MAX_MS, makeJobTool, runDetail } from "../src/index.js";
+import { RunRegistry, WAIT_MAX_MS, makeJobTool, runDetail } from "../src/node.js";
 
 type Executable = {
     execute: (input: Record<string, unknown>) => Promise<unknown>;
