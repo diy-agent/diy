@@ -21,7 +21,16 @@
 export { BotError } from "./errors.js";
 export type { BotErrorCode } from "./errors.js";
 
-export { createBot, createFirstBot, ensureBot, hasAnyBot, newSessionId, openBot, setBotModel } from "./bot.js";
+// ── 包内私有（2026-11-05 A1）──
+// 这些是**实现细节**，不是包能力：
+//   createBot / ensureBot / openBot   —— 建/开 bot 句柄（只有 chat.ts 和测试用）
+//   createFirstBot / hasAnyBot        —— 首启建 bot（同样只有 chat.ts 用）
+//   newSessionId / setBotModel        —— 内部工具
+// 对外唯一的入口是 `createBotChat`（对话宿主 = 本包的组合根）+
+// `createFileBotStore` / `createMemoryBotStore`（装配器要传的存储）。
+// 判据：「一个包对外导出的每个符号都要能回答『谁会用它』」——
+// 上面的答案都是「装配需要」，不是「使用需要」。
+
 
 // ##505：bot 对话宿主（send / snapshot / 模型解析 / 会话标题 / actor 队列）。
 // 会话只是内部技术：没有会话列表，一个 bot 一条长期会话。
@@ -30,7 +39,6 @@ export {
     FIRST_BOT_DRAFT,
     createBotChat,
     createSerial,
-    nextBotId,
     splitModelKey,
     workspaceOf,
 } from "./chat.js";
@@ -62,9 +70,14 @@ export { createMemoryBotStore } from "./store-memory.js";
 export type { Bot, BotConfig, BotDraft, BotId, BotSessionRef, BotStore, CreateBotOptions } from "./types.js";
 
 // ##497：bot 的全局标识（稳定标识 / 显示地址）。纯函数，renderer 也能引。
-export { BOT_ID_PATTERN, NODE_ID_PATTERN, botUri, isStableBotUri, parseBotUri } from "./uri.js";
+export { BOT_ID_PATTERN, NODE_ID_PATTERN, botUri, isStableBotUri, nextBotId, parseBotUri } from "./uri.js";
 export type { BotUriDisplayRef, BotUriParts, BotUriRef, ParsedBotUri } from "./uri.js";
 
 // 人物 schema / 类型 / 内置缺省（##470：bot = 人设）。
 // 也可从子路径 `@diy-agent/bot/persona` 单独取（纯 zod，renderer 用那个）。
 export * from "./persona.js";
+
+// ##A3：bot 管理域（业务规则：重名 / id 生成 / 模型必填）。
+// 从 bot-config-page 的 actions.ts 搬来 —— 那些规则换个宿主（Web/CLI）还要用同一份。
+export { createBotAdmin } from "./admin.js";
+export type { BotAdmin, BotAdminOptions, BotAdminRow, BotAdminDraft } from "./admin.js";

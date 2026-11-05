@@ -17,7 +17,7 @@ import { loadCatalog, readAccountValue, readDefaultModel, type ModelCatalogEntry
 import { createSession, type AgentSession, type ChatMessage, type LlmPort } from '@diy-agent/session';
 import { openMemorySessionStore } from '@diy-agent/session-store-memory';
 import { localISOString } from '@diy-agent/time';
-import { nextBotId } from '@diy-agent/bot';
+import { createBotAdmin } from '@diy-agent/bot/admin';
 import { BotConfigPageError } from './errors.js';
 import type { BotSnapshot, BotView, ModelOptionView, TestChatView, TestMessageView } from './shared.js';
 
@@ -50,6 +50,8 @@ export function createBotActions(options: BotActionsOptions): BotActions {
     const home = options.home;
     const now = options.clock ?? (() => new Date());
     const store: BotStore = options.store ?? createFileBotStore({ home, sessionsDir: sessionsDirOf(home) });
+    // 业务规则（重名 / id 生成 / 模型必填）住在 @diy-agent/bot —— 换宿主也不用重写
+    const admin = createBotAdmin({ home, store, ...(options.clock === undefined ? {} : { clock: options.clock }) });
 
     let catalogCache: ModelCatalogEntry[] | null = null;
     const catalog = (): ModelCatalogEntry[] => (catalogCache ??= loadCatalog(home));
@@ -77,59 +79,29 @@ export function createBotActions(options: BotActionsOptions): BotActions {
         defaultModel: readDefaultModel(home),
     });
 
-    /** 新建一个 bot（id 缺省 = `bot-<n>`，n 取现有最大 + 1） */
+    /** 新建一个 bot：**校验形状**，规则交给 admin（重名 / id 生成 / 模型必填） */
     const create = async (args: unknown): Promise<BotSnapshot> => {
         const input = recordOf(args, 'create');
-        const name = requiredString(input['name'], 'name');
-        const instructions = optionalString(input['instructions'], 'instructions') ?? '';
-        const model = modelOf(input['model']);
-        const existing = await store.list();
-        if (existing.some((config) => config.name === name)) {
-            // 名字只是标签，允许重名会让人分不清谁是谁；这里挡一下（id 才是引用键）
-            throw new BotConfigPageError('bot-config/id-taken', `已经有同名 bot「${name}」`);
-        }
-        const id = optionalString(input['id'], 'id') ?? nextBotId(existing.map((config) => config.id));
-        if (existing.some((config) => config.id === id)) {
-            throw new BotConfigPageError('bot-config/id-taken', `bot id 已存在：${id}`);
-        }
-        const checked = checkModel(model);
-        const at = localISOString(now());
-        await store.save({
-            id,
-            name,
-            instructions,
-            model: checked,
-            createdAt: at,
-            updatedAt: at,
+        await admin.create({
+            name: requiredString(input['name'], 'name'),
+            instructions: optionalString(input['instructions'], 'instructions') ?? '',
+            model: modelOf(input['model']),
+            ...(optionalString(input['id'], 'id') === undefined ? {} : { id: input['id'] as string }),
         });
         return snapshot();
     };
 
-    /** 改身份（name / instructions / model）；换配置后旧的测试会话丢弃（下一轮按新配置开） */
+    /** 改身份：**校验形状**，规则交给 admin；换配置后旧的测试会话丢弃 */
     const save = async (args: unknown): Promise<BotSnapshot> => {
         const input = recordOf(args, 'save');
         const id = requiredString(input['id'], 'id');
-        const current = await store.load(id);
-        if (current === null) throw new BotConfigPageError('bot-config/not-found', `没有 bot ${id}`);
-        const name = requiredString(input['name'], 'name');
-        const instructions = optionalString(input['instructions'], 'instructions') ?? current.instructions;
-        const model = input['model'] === undefined ? (current.model ?? null) : modelOf(input['model']);
-        const checked = checkModel(model);
-        const next: BotConfig = {
-            id: current.id,
-            name,
-            instructions,
-            model: checked,
-            // ##498：长期会话 id 也是身份的一部分 —— 改配置不能把它弄丢（否则聊天气泡换一个）
-            ...(current.primarySessionId === undefined ? {} : { primarySessionId: current.primarySessionId }),
-            ...(current.reasoningEffort === undefined ? {} : { reasoningEffort: current.reasoningEffort }),
-            ...(current.maxOutputTokens === undefined ? {} : { maxOutputTokens: current.maxOutputTokens }),
-            createdAt: current.createdAt,
-            updatedAt: localISOString(now()),
-            // 空模型 = 跟随缺省：**不写这个键**（与任务的 persona 同一套「缺省不写」约定）
-            ...(model === null ? {} : { model }),
-        };
-        await store.save(next);
+        await admin.save(id, {
+            name: requiredString(input['name'], 'name'),
+            ...(optionalString(input['instructions'], 'instructions') === undefined
+                ? {}
+                : { instructions: optionalString(input['instructions'], 'instructions') }),
+            ...(input['model'] === undefined ? {} : { model: modelOf(input['model']) }),
+        });
         testSessions.delete(id);
         return snapshot();
     };
@@ -139,7 +111,7 @@ export function createBotActions(options: BotActionsOptions): BotActions {
         const input = recordOf(args, 'remove');
         const id = requiredString(input['id'], 'id');
         testSessions.delete(id);
-        await store.remove(id);
+        await admin.remove(id);
         return snapshot();
     };
 
@@ -148,7 +120,7 @@ export function createBotActions(options: BotActionsOptions): BotActions {
         const input = recordOf(args, 'testSend');
         const id = requiredString(input['id'], 'id');
         const text = requiredString(input['text'], 'text');
-        const config = await store.load(id);
+        const config = await admin.load(id);
         if (config === null) throw new BotConfigPageError('bot-config/not-found', `没有 bot ${id}`);
         const session = await testSessionOf(config);
         if (session.busy) throw new BotConfigPageError('bot-config/busy', '上一句还没答完');
@@ -182,18 +154,6 @@ export function createBotActions(options: BotActionsOptions): BotActions {
         });
         testSessions.set(config.id, session);
         return session;
-    };
-
-    /** ##497：model 必填（没有「跟随宿主缺省」这条路） */
-    const checkModel = (model: string | null): string => {
-        if (model === null || model.trim() === '') {
-            throw new BotConfigPageError('bot-config/no-model', '必须先选一个模型');
-        }
-        const found = catalog().some((entry) => `${entry.providerId}/${entry.modelId}` === model);
-        if (!found) {
-            throw new BotConfigPageError('bot-config/unknown-model', `模型目录里没有 ${model}`);
-        }
-        return model;
     };
 
     return { snapshot, create, save, remove, testSend, testReset };

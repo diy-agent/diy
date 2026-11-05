@@ -499,25 +499,7 @@ export function HubPage(props: {
         </Show>
       </div>
 
-      {/* 收到请求时的浮层（判据 23：与列表同源，任一处理另一处同步） */}
-      <Show when={tab() === "host" && identity() && pending().length > 0}>
-        <div class="toast toast-end toast-top z-50">
-          <div class="alert alert-warning shadow-lg">
-            <div>
-              <div class="font-semibold">{pending()[0]!.displayName} 请求连接</div>
-              <div class="text-xs opacity-70 font-mono">{pending()[0]!.nodeId}</div>
-            </div>
-            <div class="flex gap-1">
-              <button class="btn btn-xs" onClick={() => void doReject(pending()[0]!.requestId)}>
-                拒绝
-              </button>
-              <button class="btn btn-xs btn-success" onClick={() => void doApprove(pending()[0]!.requestId)}>
-                同意
-              </button>
-            </div>
-          </div>
-        </div>
-      </Show>
+      {/* 审批浮层已上移为**全局**（HubApprovalCenter）：跨页面唯一出口，这里不再重复弹。 */}
 
     </div>
   );

@@ -97,7 +97,7 @@ describe("bot 的后台任务（##515 3b，真跑）", () => {
     }, 30_000);
 
     it("④ bot 的 notifier 是 silent（没有下一轮唤醒通道）", async () => {
-        const { RunRegistry } = await import("@diy-agent/jobs");
+        const { RunRegistry } = await import("@diy-agent/jobs/node");
         const reg = new RunRegistry({ rootDir: join(tmpdir(), "t515-silent-probe") });
         expect(reg.notifyMode).toBe("silent");
         reg.clear();

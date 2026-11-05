@@ -12,3 +12,5 @@ export { createSplitPane, clampPaneWidth } from "./split.js";
 export type { SplitPane, SplitPaneOptions } from "./split.js";
 export { WorkbenchUiError } from "./errors.js";
 export type { PageContext, PageInfo, PageView, WorkbenchFrame, WorkbenchGateway } from "./contract.js";
+// B2：意图测试钩子（renderer 侧执行端）。生产不调 = 零开销。
+export { installTestHooks } from "./testing.js";
