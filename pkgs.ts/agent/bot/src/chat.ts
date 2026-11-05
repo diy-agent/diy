@@ -37,6 +37,7 @@ import {
 } from "@diy-agent/model-catalog";
 import { toolArgsFromInput } from "@diy-agent/session";
 import { createBot, createFirstBot as createFirstBotIn, newSessionId } from "./bot.js";
+import { nextBotId } from "./uri.js";
 import {
     applyPriorBoundary,
     createBotCompactor,
@@ -173,15 +174,6 @@ export function splitModelKey(key: string): { account?: string; providerId: stri
 }
 
 /** 新 bot id：`bot-<n>`，n = 现有 `bot-<数字>` 的最大值 + 1（人可读） */
-export function nextBotId(existing: Iterable<string>): string {
-    let max = 0;
-    for (const id of existing) {
-        const match = /^bot-(\d+)$/.exec(id);
-        if (match !== null) max = Math.max(max, Number(match[1]));
-    }
-    return `bot-${String(max + 1)}`;
-}
-
 /**
  * 单实例 = 单 actor（docs/plans/2026-11-02-concurrency-actor.md）。
  *
