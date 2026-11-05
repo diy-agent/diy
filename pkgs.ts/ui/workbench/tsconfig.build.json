@@ -21,6 +21,7 @@
     "exclude": ["tests/**/*"]
 ,
   "references": [
-    { "path": "../../core/dev-paths/tsconfig.build.json" }
+    { "path": "../../core/dev-paths/tsconfig.build.json" },
+    { "path": "../../core/rpc/tsconfig.build.json" }
   ]
 }
