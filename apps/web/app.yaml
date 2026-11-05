@@ -11,7 +11,6 @@ launches:
     title: web（:8123）
     command: ./sha.sh lab
     # 一个 launch 一个数据根：同根两份会互相覆盖 state（这个 app 不起 Electron，不抢单实例锁，但数据会串）
-    home: build/lab/home-8123
     env:
       PORT: "8123"
     entries:
@@ -22,7 +21,6 @@ launches:
   - id: web-8124
     title: web（:8124）
     command: ./sha.sh lab
-    home: build/lab/home-8124
     env:
       PORT: "8124"
     entries:
