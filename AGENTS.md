@@ -10,7 +10,8 @@
 |---|---|---|
 | `find` | 去哪找（各包的职责与路径） | 12 |
 | `entry` | 实例三态 / 端口身份 / 数据根风险 | 5 |
-| `tool` | 命令（check / test / cli / publish / sync 与各自的坑） | 13 |
+| `tool` | 命令（check / test / cli / publish / sync / dev 启动器 `run`·`app` 与各自的坑） | 30 |
+| `sha` | sha.sh 机制：入口链路 / `#:` 注释即帮助 / `sha.def`·`sha.parse` 声明参数 / 父子命令 / `vendor/sha` 同步 | 5 |
 | `rule` | 硬约束（类型检查入口、探针、并发、任务写入契约） | 8 |
 | `model` | 本地 agent 测试用什么模型 | 5 |
 
