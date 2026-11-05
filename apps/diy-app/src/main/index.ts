@@ -54,6 +54,8 @@ import { APP_PACKAGE_NAME, APP_VERSION } from "../shared/app-version";
 import { setWindowOps } from "./services/window-ops";
 import { refreshModelsOnStartup, startupRefreshEnabled } from "./services/models-startup-refresh";
 import { runRegistry } from "./services/run-registry";
+import { currentToolsSurfaceHash } from "./services/local-agent";
+import { toolsSurfaceDriftOf, writeToolsSurfaceRecord } from "./services/tools-surface-watch";
 import type { InstanceSelf, RevealResult } from "../shared/instance-row";
 
 // Chromium 开关必须走 app.commandLine（ready 之前），跟在 app 路径后传 argv 无效。
@@ -113,6 +115,26 @@ installDiagnostics(appConfig.diyHome);
 traffic.init();
 // 原生崩溃采集：Crashpad minidump → <DIY_HOME>/log/crashes + 子进程消亡日志进 main.log
 installCrashReporting(appConfig.diyHome);
+
+// ── 1.4 工具面漂移预报（##519）──
+// `tools` 段在 wire 上排在 **system 之前**：换了 build 而工具描述改了字节 ⇒ 每个任务的
+// **首个请求**都要按全价重付一次（实测 300k 上下文 ≈ $0.045）。错就错在"等到真发那一步才 log" ——
+// 钱已经花了。这里启动就先算一次（此刻零花费），变了立刻出声；没变只把标记推到当前值。
+// 不阻断启动：它只是账务预报（万一 buildTools 在此环境下有意外，也不该起不来）。
+try {
+  const hash = currentToolsSurfaceHash();
+  const drift = toolsSurfaceDriftOf(appConfig.diyHome, hash);
+  if (drift.changed && drift.previous) {
+    console.warn(
+      `[tools-surface] 工具面已变（${drift.previous.hash.slice(0, 8)} → ${hash.slice(0, 8)}，` +
+        `上次启动 ${drift.previous.at || "未知"}）：每个任务的**首个请求**都会按全价计费` +
+        `（≈ 该任务上下文 × 单价）。要知道差在哪：npx vitest run tests/services/tools-surface-golden.test.ts`,
+    );
+  }
+  writeToolsSurfaceRecord(appConfig.diyHome, hash);
+} catch (e) {
+  console.warn("[tools-surface] 启动判定跳过（不影响启动）:", e);
+}
 
 // ── 1.5 实例注册表（##366）──
 // **启动瞬间**写自己那一条：「谁开的 / 从哪个 worktree / 什么变体」只有此刻能拿到 ——

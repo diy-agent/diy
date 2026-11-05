@@ -1982,6 +1982,20 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
     };
 }
 
+/**
+ * 当前 build 的**工具面 hash**（##519）。
+ *
+ * 口径与真发快照（`step.toolsHash`）**逐字相同**：`sha256Hex(JSON.stringify(buildTools(...)))`。
+ * 启动时的漂移预报（`services/tools-surface-watch.ts`）拿它与上次启动比 —— 两个口径分叉就会有
+ * 「启动说没变、真发却说变了」的假警报，故这里就写一处、两边都调它。
+ *
+ * cwd / taskUri 传什么不影响结果（工具面不许依赖它们，`tools-surface-golden` 钉着）；
+ * 这里给空串是故意的：**能传空就说明它真不依赖**，将来谁加了 cwd 进去，golden 测试立刻红。
+ */
+export function currentToolsSurfaceHash(cwd = ""): string {
+    return sha256Hex(JSON.stringify(buildTools(cwd, DEFAULT_LIMITS, "")));
+}
+
 // ─── fullStream 取值兜底（v7 字段命名跨 part 不一致）──
 
 function pick(part: unknown, ...keys: string[]): string {
