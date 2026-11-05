@@ -10,13 +10,13 @@
 //   · `rootDir` ← `readRuntimeConfig().home`（数据根由宿主配置决定）。
 // `notifier` 不在这里注入：它接的是 agent 的插话唤醒（见 local-agent 末尾的 `setNotifier`）。
 
-import { RunRegistry, defaultHome, type JobOsCaps } from "@diy-agent/jobs";
+import { RunRegistry, defaultHome, type JobOsCaps } from "@diy-agent/jobs/node";
 import { join } from "node:path";
 import { readRuntimeConfig } from "../../runtime";
 import { os } from "../os";
 import { shellSpecs } from "../os";
 
-export * from "@diy-agent/jobs";
+export * from "@diy-agent/jobs/node";
 
 /** diy-app 的平台能力位（语义见 `JobOsCaps`；Windows 的边界由 `os` 策略自己声明）。 */
 const caps: JobOsCaps = {

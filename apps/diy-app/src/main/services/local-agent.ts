@@ -286,7 +286,7 @@ import { effectiveBashArgs } from "../../shared/tool-args";
 import { ownedGroups } from "./owned-groups";
 import { foregroundBash } from "./foreground-bash";
 import { runsOfTask } from "../../shared/run-status";
-import { makeJobTool } from "@diy-agent/jobs";
+import { makeJobTool } from "@diy-agent/jobs/node";
 import { localISOString } from "@diy-agent/time";
 
 // 模型查询函数抽到 shared/models.ts（core 不能被 services 反向依赖，否则循环 import）。

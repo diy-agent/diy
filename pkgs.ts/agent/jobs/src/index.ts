@@ -8,11 +8,17 @@
 //              shell 探测与拼装（`@diy-agent/tools`）· 谁该被叫醒（`notifier`，不传 = silent）·
 //              任务身份（`origin.taskUri` 只作为数据流过，不解释）· 前台→后台转交（diy-app 的 UI 能力）
 //
+// ⚠️ **入口按依赖性质分，不按业务领域**（2026-11-05 A5）：
+//
+//   `@diy-agent/jobs`       纯判据：run-status / output-ring。零 IO，renderer 也能引
+//   `@diy-agent/jobs/node`  账本：RunRegistry / makeJobTool。要 spawn / fs，只有 Node 侧
+//
+// 之前所有东西都从 `.` 出去，renderer 想用一个 `stateLabel()` 就得把 node:child_process
+// 一起拖进浏览器 —— 2026-11-04 真炸过一次（窗口纯黑）。
+//
 // 用法：
-//   const registry = new RunRegistry({ rootDir, caps, shells, notifier });
-//   const job = makeJobTool({ registry, visible: (r) => r.origin?.taskUri === taskUri });
+//   Node 侧：import { RunRegistry, makeJobTool } from "@diy-agent/jobs/node";
+//   任何侧：import { stateLabel, formatDuration } from "@diy-agent/jobs";
 
 export * from "./run-status.js";
-export * from "./run-registry.js";
-export * from "./job-tool.js";
-export * from './output-ring.js';
+export * from "./output-ring.js";
