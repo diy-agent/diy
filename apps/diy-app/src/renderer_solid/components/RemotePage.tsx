@@ -56,6 +56,32 @@ interface HubIdentity {
 }
 
 /** 状态点颜色：已连接绿、已配对灰、未配对空心 */
+/** 连接列（列 1）：这条行现在能不能通 —— 与授权无关 */
+const CONNECTION_LABEL: Record<DeviceRow["connection"], string> = {
+    online: "在线",
+    offline: "离线",
+    unknown: "未知",
+};
+/** 授权列（列 2）：我和它是什么管理关系 —— 与连接无关 */
+const TRUST_LABEL: Record<DeviceRow["trust"], string> = {
+    master: "管理节点",
+    satellite: "成员节点",
+    none: "未配对",
+    revoked: "已撤销",
+};
+const TRUST_CLASS: Record<DeviceRow["trust"], string> = {
+    master: "badge badge-primary badge-sm",
+    satellite: "badge badge-secondary badge-sm",
+    none: "badge badge-ghost badge-sm",
+    revoked: "badge badge-error badge-sm",
+};
+/** 连接点的颜色由**连接状态**决定（不是分组）——「在线但未配对」应该显示绿点 */
+const DOT_CLASS_CONN: Record<DeviceRow["connection"], string> = {
+    online: "bg-success",
+    offline: "bg-base-300",
+    unknown: "bg-warning",
+};
+
 const DOT_CLASS: Record<DeviceRow["group"], string> = {
     connected: "bg-success",
     paired: "bg-base-content/40",
@@ -235,14 +261,22 @@ export function RemotePage() {
                                                     onClick={() => setDetailKey(row.key)}
                                                 >
                                                     <span
-                                                        class={`shrink-0 w-2.5 h-2.5 rounded-full ${DOT_CLASS[row.group]}`}
-                                                        data-remote-dot={row.group}
+                                                        class={`shrink-0 w-2.5 h-2.5 rounded-full ${DOT_CLASS_CONN[row.connection]}`}
+                                                        data-remote-dot={row.connection}
+                                                        title={CONNECTION_LABEL[row.connection]}
                                                     />
                                                     <span class="flex-1 min-w-0 truncate font-semibold" data-remote-machine-name>
                                                         {row.name}
                                                     </span>
-                                                    <span class="shrink-0 text-xs opacity-60" data-remote-value>
-                                                        {row.status}
+                                                    {/* 两列分开（2026-11-05 用户裁）：连接 ≠ 授权 */}
+                                                    <span
+                                                        class="shrink-0 w-14 text-xs opacity-70"
+                                                        data-remote-connection={row.connection}
+                                                    >
+                                                        {CONNECTION_LABEL[row.connection]}
+                                                    </span>
+                                                    <span class="shrink-0 w-20" data-remote-trust={row.trust}>
+                                                        <span class={TRUST_CLASS[row.trust]}>{TRUST_LABEL[row.trust]}</span>
                                                     </span>
                                                     <details
                                                         class="dropdown dropdown-end shrink-0"
@@ -379,7 +413,7 @@ export function RemotePage() {
                     <dialog class="modal modal-open" data-remote-detail open>
                         <div class="modal-box max-w-xl">
                             <div class="flex items-center gap-2">
-                                <span class={`w-2.5 h-2.5 rounded-full ${DOT_CLASS[row().group]}`} />
+                                <span class={`w-2.5 h-2.5 rounded-full ${DOT_CLASS_CONN[row().connection]}`} />
                                 <h3 class="text-lg font-semibold flex-1 truncate" data-remote-detail-name>
                                     {row().name}
                                 </h3>

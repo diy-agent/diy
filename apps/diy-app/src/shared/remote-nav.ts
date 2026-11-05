@@ -113,14 +113,37 @@ export type HubConnectionState = "idle" | "no-token" | "connecting" | "online" |
 
 export type DeviceGroup = "connected" | "paired" | "available";
 
+/**
+ * **连接状态**：这一行现在能不能通。
+ *
+ * 与授权严格分离（2026-11-05 用户裁：「连接状态和授权状态分开，分开 2 列显示」）——
+ * 一台机器可以「在线但未配对」（能 ping 通，我管不了它），
+ * 也可以「已配对但离线」（我管它，但它现在不在线）。混成一列就丢了这两种情况。
+ */
+export type ConnectionState = "online" | "offline" | "unknown";
+
+/**
+ * **授权状态**：我和它是什么管理关系。
+ *
+ *   master    我是管理节点（它是我管的成员节点）
+ *   satellite 我是成员节点（它管我）
+ *   none      未配对
+ *   revoked   配对关系已撤销（保留展示，便于重配）
+ */
+export type TrustRole = "master" | "satellite" | "none" | "revoked";
+
 /** 一台机器（合并后的一行） */
 export interface DeviceRow {
   /** 稳定键（合并用；也做 data 属性） */
   key: string;
   name: string;
   group: DeviceGroup;
-  /** 行上**唯一的值**（第 3 个可见元素）：已连接 / 离线 / 未连接 / 已撤销 / 可配对 */
+  /** 行上的补充说明（人与机器都读；不是判据，判据看 connection / trust） */
   status: string;
+  /** 连接状态（列 1） */
+  connection: ConnectionState;
+  /** 授权状态（列 2） */
+  trust: TrustRole;
   /** 我是它的卫星（link.json） */
   link?: HubLinkRow;
   /** 它已经和我配对（membership） */
@@ -216,10 +239,14 @@ export function mergeDevices(input: MergeDevicesInput = {}): DeviceRow[] {
 
   // ① 已配对成员
   for (const member of input.members ?? []) {
+    const revoked = member.status !== "active";
     upsert(`node:${member.nodeId}`, {
       name: member.displayName || member.nodeId,
       group: "paired",
-      status: "离线",
+      status: revoked ? "已撤销" : member.online > 0 ? "在线" : "离线",
+      // memberships 是「我管的成员」，所以授权角色 = 我是管理节点（除非已撤销）
+      trust: revoked ? "revoked" : "master",
+      connection: revoked ? "unknown" : member.online > 0 ? "online" : "offline",
       member,
     });
   }
@@ -228,10 +255,14 @@ export function mergeDevices(input: MergeDevicesInput = {}): DeviceRow[] {
   const link = input.link ?? null;
   if (link) {
     const key = `node:${link.hubNodeId}`;
+    const state = input.connection ?? null;
     const row = upsert(key, {
       name: hostOf(link.hubEndpoint) ?? link.hubNodeId,
       group: "paired",
-      status: linkStatus(input.connection),
+      status: linkStatus(state),
+      // link.json 存在 = 我是它的卫星 ⇒ 授权角色是「成员节点」
+      trust: state === "revoked" ? "revoked" : "satellite",
+      connection: state === "online" ? "online" : state === "revoked" ? "unknown" : "offline",
       link,
     });
     row.link = link;
@@ -250,16 +281,43 @@ export function mergeDevices(input: MergeDevicesInput = {}): DeviceRow[] {
       name: machineLabel(found),
       group: "available",
       status: "可配对",
+      // 能被发现 = 这一轮探测通过 ⇒ 连接是通的；授权：还没配对
+      trust: "none",
+      connection: "online",
       discovered: found,
     });
     row.discovered = found;
     indexEndpoint(found.endpoint, key);
   }
 
-  // ④ 定组与行上那句话
+  // ④ 定组 + 行上那句话 + **两个独立维度**（连接 / 授权）
   for (const row of rows.values()) {
     const member = row.member;
     const linkState = row.link ? input.connection : null;
+
+    // ── 授权：我和它是什么管理关系 ──
+    //   有 membership ⇒ 我是主控（它是我管的节点）；有 link ⇒ 我是卫星（它管我）
+    row.trust = member
+      ? member.status !== "active"
+        ? "revoked"
+        : "master"
+      : row.link
+        ? linkState === "revoked"
+          ? "revoked"
+          : "satellite"
+        : "none";
+
+    // ── 连接：这条行现在能不能通（**与授权无关**）──
+    //   一个「在线但未配对」的机器应该两列分别显示 online + none，而不是被折叠成「可配对」
+    if (member) {
+      row.connection = member.status !== "active" ? "unknown" : member.online > 0 ? "online" : "offline";
+    } else if (row.link) {
+      row.connection = linkState === "online" ? "online" : linkState === "revoked" ? "unknown" : "offline";
+    } else {
+      // 只有被发现的机器才会进 rows；能发现说明探测通了
+      row.connection = row.discovered === undefined ? "unknown" : "online";
+    }
+
     if (member && member.status !== "active") {
       row.group = "paired";
       row.status = "已撤销";
