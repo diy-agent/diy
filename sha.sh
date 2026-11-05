@@ -61,6 +61,9 @@ exec()  {  _ws_run command "$@"; }
 # build() {  _ws_run command ./sha.sh build; }
 # mono所有workspaced的clean,包括删除build/dist等
 #（各包 build/ 产物由自家 ./sha.sh clean 负责，见 pkgs.ts/*/sha.sh）
+sha.def "clean" \
+  --desc "清空 build / dist / .venv / node_modules（含各 workspace 的）"
+
 clean() {
     run rm -rf ./build
     run rm -rf ./dist
@@ -106,6 +109,9 @@ sync-deps() {
 # 判据故意**只用 mtime 与 exists**（不重算哈希）：宁可误判「不新鲜」走全量，
 # 也不许误判「新鲜」跳过真正的变更 —— 内容哈希那份权威判断在 check-sync.mjs 里，
 # 全量路径仍会跑它；`--force` 强制无条件全量。
+sha.def "sync" \
+  --desc "依赖同步：npm i + workspace 链接 + 配置同步到 lab 数据根"
+
 sync()  {
     case "${1:-}" in
         --force|-f) ;;
@@ -291,14 +297,24 @@ unlink() {    _ws_run command npm unlink -g ; }
 #   ./sha.sh check                      # 全量（CI / 提交前 / 拿不准）—— **行为与以前完全一致**
 #   ./sha.sh check --changed            # 按 git 改动裁剪（基线缺省 origin/main → main → HEAD~1）
 #   ./sha.sh check --changed --base m   # 换基线
-# 为什么这里需要 `exit`：vendor/sha 会把命令后面的参数当作**下一级子命令**继续注册/解析，
-# `check --changed` 跑完后它会把 `--changed` 当命令名而报 unknown command（详见 ##452）。
+# 2026-11-05：改用 `sha.def` + `sha.parse`（vendor/sha bed317f 起）。
+# 以前是手写 case，且**必须 `exit`** —— 否则 vendor 会把 `--changed` 当成下一级子命令，
+# 报 unknown command（##452 记的坑）。新引擎在 `sha.parse` 里一次解析完，
+# 不会再往下层注册，那个 exit 也不需要了。
+# 顺带白拿：`./sha.sh check -h` 有完整帮助（选项说明 + 自动 usage）。
+sha.def "check" \
+  --opt "--changed:bool:只跑受 git 改动影响的部分（判据在 scripts/changed-plan.mjs）" \
+  --opt "--base:string:--changed 的基线引用（缺省依次取 origin/main → main → HEAD~1）" \
+  --desc "类型检查 + lint + 各处护栏（全量，或按改动裁剪）"
+
 check() {
-  case "${1:-}" in
-    "")        _check_full ;;
-    --changed) shift; _check_changed "$@"; exit $? ;;
-    *)         echo "${error}用法：./sha.sh check [--changed [--base <ref>]]${reset}" >&2; exit 2 ;;
-  esac
+  local changed base
+  sha.parse "$@" || return $?
+  if [[ "$changed" == "1" ]]; then
+    if [[ -n "$base" ]]; then _check_changed --base "$base"; else _check_changed; fi
+  else
+    _check_full
+  fi
 }
 
 # 读 scripts/changed-plan.mjs 的 shell 片段（plan_* 变量）
@@ -439,6 +455,9 @@ _check_full_body() {
   run npx tsx scripts/facts-index.mts
 }
 # 全仓唯一自动修复入口：格式化 + lint 可修项，能修的全修
+sha.def "fix" \
+  --desc "格式化 + lint 自动修（oxfmt / oxlint --fix）"
+
 fix() {
   run npx oxfmt --write pkgs.ts/ apps/
   run npx oxlint --fix pkgs.ts/ apps/
@@ -501,32 +520,33 @@ _ws_vitest() {
     return 0
 }
 
+# 2026-11-05：手写 for 循环 → sha.def + sha.parse（同 check 的改动）。
+# `--related` 后面跟的是**文件路径**（可以有多个），所以声明成变长位置参数。
+sha.def "test" \
+  --opt "--fail-fast:bool:第一个包失败就停（不再跑后面的）" \
+  --opt "--related:bool:只跑与改动相关的测试（后面跟文件路径）" \
+  --arg "FILES...:配合 --related：改动过的文件（缺省 = 按 git 改动推）" \
+  --desc "跑测试：缺省 = 全仓（pkgs.ts + apps，最后跑 diy-app 的意图测试）"
+
 test() {
-  local fail_fast=0
-  # 参数解析：--fail-fast 可与 --related 共存（后者不跑 workspace 循环，故 fail_fast 对它无意义）
-  local args=()
-  local a
-  for a in "$@"; do
-    case "$a" in
-      --fail-fast) fail_fast=1 ;;
-      *)           args+=("$a") ;;
-    esac
-  done
-  set -- "${args[@]:-}"
-  case "${1:-}" in
-    "")        ensure-sync
-              local rc=0
-              _ws_vitest "$fail_fast" || rc=1
-              # diy-app 最后跑（含意图测试，起隔离 Electron，最慢）——它自己的 `test` = unit + os + intent
-              if ( cd apps/diy-app && ./sha.sh test ); then :; else
-                  rc=1
-                  echo "${error}✗ apps/diy-app 有失败${reset}" >&2
-                  [[ "$fail_fast" == "1" ]] && return 1
-              fi
-              return "$rc" ;;
-    --related) shift; _test_related "$@"; exit $? ;;
-    *)         echo "${error}用法：./sha.sh test [--fail-fast] [--related [<文件…>]]${reset}" >&2; exit 2 ;;
-  esac
+  local fail_fast related
+  local -a FILES=()
+  sha.parse "$@" || return $?
+  if [[ "$related" == "1" ]]; then
+    _test_related "${FILES[@]:-}"
+    return $?
+  fi
+  ensure-sync
+  local rc=0
+  local ff=0; [[ "$fail_fast" == "1" ]] && ff=1
+  _ws_vitest "$ff" || rc=1
+  # diy-app 最后跑（含意图测试，起隔离 Electron，最慢）——它自己的 `test` = unit + os + intent
+  if ( cd apps/diy-app && ./sha.sh test ); then :; else
+      rc=1
+      echo "${error}✗ apps/diy-app 有失败${reset}" >&2
+      [[ "$ff" == "1" ]] && return 1
+  fi
+  return "$rc"
 }
 
 _test_related() {
@@ -604,6 +624,9 @@ vendor.update() {  run git submodule update --init --recursive --remote --merge;
 # 每包光进程启动就 ~1.9s（bash + sha 引擎 1.0s、node + npx + tsc 0.9s），25 个包 ≈ 60s，
 # 真正在编译的不到三分之一。改成单进程后：冷 ~4s / 热 ~0.4s，改一个包只重编它与**依赖它的**。
 # 顺序与 references 由 `scripts/gen-tsconfig-build-all.mjs` 生成（幂等；手改漂移由 check 拦）。
+sha.def "build-pkgs" \
+  --desc "只编能力包（pkgs.ts/*）的 lib/ —— 改包后单独跑它最快"
+
 build-pkgs() {
     run node scripts/gen-tsconfig-build-all.mjs
     run npx tsc -b build/tsconfig.build-all.json
@@ -617,6 +640,9 @@ build-pkgs() {
     done
     # profile（apps/*）**不进** build-pkgs：它们是产物入口不是能力包，按需各自 ./sha.sh build
 }
+
+sha.def "build" \
+  --desc "全量构建：能力包 lib/ → apps"
 
 build() {
     ensure-sync

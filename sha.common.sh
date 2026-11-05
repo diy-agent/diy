@@ -191,6 +191,11 @@ if [ ! -d "$__SHA_COMMON_DIR/vendor/sha" ] || [ -z "$(ls -A "$__SHA_COMMON_DIR/v
   run git submodule update --init --recursive
 fi
 source "$__SHA_COMMON_DIR/vendor/sha/sha.bash"
+# 新版选项引擎（bed317f 起）：`sha.def` 声明 + `sha.parse` 解析 ——
+# 自动生成 usage、`-h` 单命令帮助、`-hh` 全树。
+# 不 source 它的话 `sha.def` 未定义，各脚本只能退回手写 case 解析（check 就是这么写的）。
+# shellcheck source=../vendor/sha_opt.bash
+source "$__SHA_COMMON_DIR/vendor/sha/sha_opt.bash"
 # 新 sha 引擎把所有函数名当命令：run 是跨脚本共用的 helper，必须排除注册
 # （_sha_cmd_exclude 在每次 sha 调用时读取，集中改一处，16 个 sha.sh 零改动）。
 # 约定：各脚本私有的 helper 一律 _ 前缀；需要对外暴露的才注册为命令。
