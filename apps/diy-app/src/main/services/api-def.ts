@@ -1418,6 +1418,33 @@ export const apiDef = RpcSchema.bindNames(RpcSchema.group({ children: {
                   },
                   output: z.any(),
                 }),
+                /**
+                 * 手动压缩条的轴（##519，只读）：**一步一行**，每行带这一步实测新增的 token。
+                 *
+                 * 为什么要它：人能一眼看到「保留最近 N 步 ≈ 多少 token」，从而把压缩位置拖到
+                 * 他要的地方（默认 = 窗口 × 0.16 落在第几步）。数字来自 `usage.jsonl` 的实测总量差分
+                 * —— 不是估算（每步 370~114k 都能差出量级）。
+                 */
+                ledger: RpcSchema.unary({
+                  desc: `手动压缩条的轴（只读）：每步实测新增 token + 当前边界 + 16% 默认落点`,
+                  input: { taskUri: z.string().cliArg({ desc: "任务 URI" }) },
+                  output: z.any(),
+                }),
+                /**
+                 * 把压缩位置拖到「保留最近 N 步」（##519）。
+                 *
+                 * 换算在 main 侧做（`keptStepsView` 的实测增量 → token 预算），落盘仍走既有边界机制：
+                 * 切点照旧吸附到 user + 轮首（`resolveOpsReplay` 的 seek 依赖轮首锚点），
+                 * 所以**不影响 UI 重放**，只改「这一轮发多少历史」。
+                 */
+                setKept: RpcSchema.unary({
+                  desc: `把压缩位置拖到「保留最近 N 步」（体内换算成 token 预算；切点仍落 user+轮首）`,
+                  input: {
+                    taskUri: z.string().cliArg({ desc: "任务 URI" }),
+                    keepSteps: z.number().cliOption({ desc: "保留最近多少步（0 = 全清；缺省按实测中位数换算）" }),
+                  },
+                  output: z.any(),
+                }),
                 // 装配管道（plan）的 get/set/check/reset/versions/version/restore 已于 ##432 整体删除：
                 // 用户 2026-10-25 拍板「该清理的清理掉」—— 不让人/agent 去编排装配计划，
                 // 配置面只剩 `history.limit.limitTokens`（+ `summary.enabled`）。
