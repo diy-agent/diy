@@ -1,0 +1,29 @@
+{
+    "name": "@diy-agent/agents-chain",
+    "version": "0.1.0",
+    "private": true,
+    "description": "AGENTS.md 链：从工作目录逐层向上收集规则文件，外层在前、最深处在后（纯 IO，无业务概念）",
+    "license": "MIT",
+    "files": [
+        "src/"
+    ],
+    "type": "module",
+    "main": "./lib/index.js",
+    "types": "./src/index.ts",
+    "exports": {
+        ".": {
+            "types": "./src/index.ts",
+            "default": "./lib/index.js"
+        }
+    },
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json"
+    },
+    "dependencies": {},
+    "devDependencies": {
+        "oxfmt": "^0.57.0",
+        "oxlint": "^1.72.0",
+        "typescript": "^7.0.2",
+        "vitest": "^4.1.10"
+    }
+}

@@ -20,6 +20,7 @@ import { analyze, renderWithTrace, type IncludeResolver, type TraceNode, type Va
 import { writeFileAtomic } from "../core/atomic-write";
 import { TASK_HEAD_FIELDS } from "@diy-agent/context/schema/task-head";
 import { AssembleGlobalsSchema, type AssembleGlobals } from "@diy-agent/context/schema/prompt-schema";
+import { agentsChain } from "@diy-agent/agents-chain";
 import { assembleFromProviders } from "@diy-agent/context";
 import { standardProviders } from "./context-providers";
 
@@ -315,33 +316,18 @@ export function taskOf(home: string, taskUri: string): Record<string, string> | 
  * 内容 trim（这是**数据准备**：链内容是变量值，不是模版源）
  */
 export function chainOf(home: string, cwd: string, taskUri: string, isAppDir = false): AssembleGlobals["chain"] {
-  const homeDir = homedir();
-  const start = resolve(cwd);
-  if (isAppDir) {
-    // 只保留应用级规范（$DIY_HOME/AGENTS.md），不爬 process.cwd() 的链
-    const only = join(home, "AGENTS.md");
-    return existsSync(only)
-      ? [{ path: only, scope: dirname(only), content: readFileSync(only, "utf-8").trim() }]
-      : [];
-  }
-  const underHome = start === homeDir || start.startsWith(homeDir + sep);
-  const stop = underHome ? homeDir : start;
+  // 实现在 @diy-agent/agents-chain（2026-11-05 抽包）：那条链的判据全是实测踩出来的，
+  // 和任务/上下文树都无关 —— bot 也需要同一套。这里只做 diy-app 特有的两件参数化：
+  //   · skipFiles：任务本体的 AGENTS.md 是**正文**不是规则，不能进链
+  //   · appOnly：项目/任务目录都不存在时，cwd 是 process.cwd()（启动 shell 的偶然位置），
+  //     不该爬它的链（见 agents-chain 的 appOnly 注释）
   const ownTaskFile = taskFileAt(home, taskUri);
-  const skip = ownTaskFile ? resolve(ownTaskFile) : "";
-  const seen = new Set<string>();
-  const files: string[] = [];
-  for (let dir = start; ; dir = dirname(dir)) {
-    const fp = join(dir, "AGENTS.md");
-    if (fp !== skip && !seen.has(fp) && existsSync(fp)) {
-      seen.add(fp);
-      files.push(fp);
-    }
-    if (dir === stop || dir === dirname(dir)) break;
-  }
-  files.reverse();
-  const appLevel = join(home, "AGENTS.md");
-  if (!seen.has(appLevel) && existsSync(appLevel)) files.unshift(appLevel);
-  return files.map((fp) => ({ path: fp, scope: dirname(fp), content: readFileSync(fp, "utf-8").trim() }));
+  return agentsChain({
+    appHome: home,
+    cwd,
+    skipFiles: ownTaskFile ? [ownTaskFile] : [],
+    appOnly: isAppDir,
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════

@@ -13,6 +13,7 @@ export default defineConfig({
         'pkgs.ts/remote/link',
         'pkgs.ts/core/template',
         'pkgs.ts/agent/talk',
+        'pkgs.ts/agent/agents-chain',
         'pkgs.ts/flow',
         'pkgs.ts/agent/session',
         'pkgs.ts/agent/tools',
