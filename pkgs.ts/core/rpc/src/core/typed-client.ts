@@ -62,12 +62,27 @@ function resolveChunks<T>(chunks: AsyncIterable<T> | (() => AsyncIterable<T>)): 
  *
  * 每次调用先做 zod input 校验，再发到 transport。
  */
-export function createTypedClient<const T>(client: ClientBinding, meta: T): TypedClient<T> {
+export function createTypedClient<const T>(
+  client: ClientBinding,
+  meta: T,
+  /**
+   * `prefix` —— 把整棵 api 挂到某个**命名空间**下（模块化，2026-11-05）。
+   *
+   * 为什么需要：之前所有 procedure 共用一棵全局扁平命名空间（`page.list` / `task.get`），
+   * 两个模块都有 `list` 就冲突。有了 `defineService('diy.ui.workbench', api)`，
+   * 服务端注册成 `diy.ui.workbench.page.list`、客户端这里也按同一前缀取 —— 两端同一个值。
+   *
+   * 传空 / 不传 = 老行为（不加前缀），向后兼容。
+   */
+  options?: { readonly prefix?: string },
+): TypedClient<T> {
   const binding = client;
+  const prefix = options?.prefix ?? '';
   const flat = _flattenRouter(meta as Parameters<typeof _flattenRouter>[0]);
   const modes: Record<string, string> = {};
   const schemas: Record<string, { input?: z.ZodType }> = {};
-  for (const [name, def] of Object.entries(flat)) {
+  for (const [rawName, def] of Object.entries(flat)) {
+    const name = prefix === '' ? rawName : `${prefix}.${rawName}`;
     modes[name] = def._streamMode || 'unary';
     schemas[name] = { input: def.inputSchema };
   }
@@ -98,5 +113,5 @@ export function createTypedClient<const T>(client: ClientBinding, meta: T): Type
     },
   });
 
-  return buildProxy('') as TypedClient<T>;
+  return buildProxy(prefix) as TypedClient<T>;
 }
