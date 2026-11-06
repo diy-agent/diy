@@ -60,10 +60,17 @@ export function _buildRouteTree(
     } else if (_isProcedure(val)) {
       // 叶子命令（unary/serverStream/...）
       children.push({ kind: 'proc', name: key, path: childPath, def: val, parent: null as any });
-    } else {
+    } else if (val !== null && typeof val === 'object') {
       // 纯 router 节点（无 meta）：递归
       children.push(_buildRouteTree(val as _Router, null as any, childPath));
     }
+    // 其余（string / number / undefined）= **元字段**，不是子节点，跳过。
+    //
+    // 为什么需要这个判断（2026-11-06）：`RpcSchema.group` 现在会把 children 摊平到 meta 自身，
+    // 于是 meta 上同时有 `desc: '数学'`、`title: '数学'`、`inputSchema: undefined` 和真正的子节点。
+    // 以前 group 只能被 `router()` 包过，而 router 传进来的是**纯对象**（没有元字段）；
+    // 现在 group 可以当根，元字段就混进来了 —— 不跳过的话字符串会被当成 router 递归，
+    // `Object.entries('r')` → `[['0','r']]` → 同一个字符串无限递归（实测栈溢出）。
   }
 
   const node: _RouterNode = { kind: 'router', name, path, desc, title: (desc ?? '').split('\n')[0]?.trim() ?? '', children, parent };
@@ -108,9 +115,15 @@ export function _routeWalk(
 
 /** 拍平嵌套 router 为 method→_AnyProcedureMeta 映射 */
 /** @internal */
-export function _flattenRouter(r: _Router): Record<string, _AnyProcedureMeta> {
+export function _flattenRouter(r: _Router | _AnyProcedureMeta): Record<string, _AnyProcedureMeta> {
+  // group meta 当根时（2026-11-06 起允许）：它自己的键混着元字段（desc / title / ...）
+  // 和摊平的子节点，直接从它遍历会把 `children` 也当成一层命名空间（路径变成 `children.math.add`）。
+  // 所以取它的 `children` —— 那才是纯 router。
+  const root = _isProcedure(r) && (r as _AnyProcedureMeta)._streamMode === 'group'
+    ? ((r as unknown as { children: _Router }).children)
+    : (r as _Router);
   const result: Record<string, _AnyProcedureMeta> = {};
-  for (const { path, def } of _routeLeaves(_buildRouteTree(r))) {
+  for (const { path, def } of _routeLeaves(_buildRouteTree(root))) {
     result[path] = def;
   }
   return result;

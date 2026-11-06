@@ -43,11 +43,38 @@ import { createTypedClient } from './typed-client.js';
  * （`bind` 的第二个参数缺 key 就报错），而不是启动时才发现某个 rpc 没人接。
  */
 export type HandlersOf<R> = {
-  [K in keyof R]: R[K] extends _Router ? HandlersOf<R[K]> : R[K] extends _AnyProcedureMeta ? _HandlerForProc<R[K]> : never;
+  // 跳过**元字段**：group 摊平后 `desc` / `title` / `inputSchema` / `children` 都在 meta 上，
+  // 不跳的话它们会被要求提供 handler（`desc: string` ⇒ `never`，bind 直接类型报错）。
+  [K in keyof R as K extends MetaField ? never : K]: IsGroup<R[K]> extends true
+    ? HandlersOf<R[K]>                      // ← group：继续下钻，**不要求 handler**
+    : R[K] extends _Router
+      ? HandlersOf<R[K]>
+      : R[K] extends _AnyProcedureMeta
+        ? _HandlerForProc<R[K]>
+        : never;
 };
 
+/** `ProcedureMeta` / `group` 上的非子节点字段名（不该出现在 handlers 形状里） */
+type MetaField =
+  | '_type' | '_input' | '_output' | '_chunkIn' | '_chunkOut' | '_streamMode'
+  | 'inputSchema' | 'outputSchema' | 'chunkInSchema' | 'chunkOutSchema'
+  | 'desc' | 'title' | 'children';
+
+/**
+ * 是不是 `RpcSchema.group` 的返回值。
+ *
+ * 为什么需要单独判：group 的类型是 `ProcedureMeta<..., 'group'> & TChildren`（交叉类型），
+ * 它**既是 meta 又是容器**：
+ *   · 不匹配 `_Router`（带 `desc: string` / `_streamMode` 这些非 meta 字段）
+ *   · 但匹配 `_AnyProcedureMeta` ⇒ 会被推成 `_HandlerForProc<group meta>`
+ *   · 而 `'group'` 模式在 `HandlerFor` 里没有分支 ⇒ **`never`**
+ *
+ * 实测后果（##518 重构）：dev-fs 用 group 做命令组时 `bind()` 直接类型报错。
+ */
+type IsGroup<T> = T extends { _streamMode: 'group' } ? true : false;
+
 /** `defineService` 的入参 */
-export interface ServiceDef<TRoutes extends _Router> {
+export interface ServiceDef<TRoutes extends _Router | _AnyProcedureMeta> {
   /**
    * 模块名 —— **跨进程的协议标识**，不是包名。
    *
@@ -60,7 +87,7 @@ export interface ServiceDef<TRoutes extends _Router> {
 }
 
 /** `defineService` 的返回：两端入口 + 原样的 name / api */
-export interface Service<TRoutes extends _Router> {
+export interface Service<TRoutes extends _Router | _AnyProcedureMeta> {
   readonly name: string;
   readonly api: TRoutes;
   /** 服务端：把 handlers 挂到 `name.*` 前缀下 */
@@ -83,7 +110,9 @@ function pickHandler(handlers: unknown, path: string): unknown {
   return cur;
 }
 
-export function defineService<const TRoutes extends _Router>(def: ServiceDef<TRoutes>): Service<TRoutes> {
+export function defineService<const TRoutes extends _Router | _AnyProcedureMeta>(
+  def: ServiceDef<TRoutes>,
+): Service<TRoutes> {
   const { name, api } = def;
   if (name === '') {
     // 空名字会让所有路径变成 `.page.list`，比报错更难查 —— 定义时就拒
