@@ -76,3 +76,33 @@ describe("token 粗估：中文不按 /4 低估", () => {
         expect(estimateTokensOf("压缩abcd")).toBe(3);
     });
 });
+
+// ─── ##519：保留量覆盖（手动拖压缩位置用） ─────────────────────────
+describe("retainTokens 覆盖：人给的预算说了算", () => {
+    it("同一份历史：给更大预算 ⇒ 丢得更少（切点更靠前）", () => {
+        const all = seq(20, 500); // 10 轮、约 10k
+        // 两者都必须 < 触发线（20k 窗口的触发线 = 20k − 16k = 4k），否则会命中「压完仍超 ⇒ 不压」
+        const tight = selectCompactableRange(all, { windowTokens: 20_000, retainTokens: 800 });
+        const loose = selectCompactableRange(all, { windowTokens: 20_000, retainTokens: 2_400 });
+        expect(tight).not.toBeNull();
+        expect(loose).not.toBeNull();
+        // 预算越大，保留越多 ⇒ cut 越小
+        expect(loose!.cut).toBeLessThan(tight!.cut);
+    });
+
+    it("覆盖值不被窗口 × 0.16 盖回去（1M 窗口给 2000 预算也照办）", () => {
+        const all = seq(20, 500);
+        const r = selectCompactableRange(all, { windowTokens: 1_000_000, retainTokens: 2_000 });
+        // 缺省 16% = 160k 会让它「一条都不丢」；覆盖后确实丢了
+        expect(r).not.toBeNull();
+        expect(r!.cut).toBeGreaterThan(0);
+    });
+
+    it("force + 覆盖：仍落在 user 上，且不为 0（至少丢一条）", () => {
+        const all = seq(10, 500);
+        const r = selectCompactableRange(all, { windowTokens: 1_000_000, retainTokens: 100_000, force: true });
+        expect(r).not.toBeNull();
+        expect(r!.cut).toBeGreaterThan(0);
+        expect(all[r!.cut]!.role).toBe("user");
+    });
+});

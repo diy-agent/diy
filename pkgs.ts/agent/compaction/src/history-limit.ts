@@ -119,6 +119,13 @@ export interface SelectRangeOpts {
     minCut?: number;
     /** 每条消息的 token 成本（缺省 = 内容 JSON 的 CJK 感知粗估） */
     costOf?: (m: CompactableMessage, index: number) => number;
+    /**
+     * 保留量**覆盖**（token）：缺省 = 窗口 × 0.16。
+     *
+     * 给「手动拖压缩位置」用（##519）：人可以从尾部的实测增量里推出「保留最近 N 步 ≈ 多少 token」，
+     * 那条预算他们说了算，不该再被 0.16 盖回去。只改「留多少」，「切在哪」的判据（user + 轮首）不变。
+     */
+    retainTokens?: number;
 }
 
 /** 从 `floor` 之后找第一条 user 消息（切点必须落在 user 上） */
@@ -153,7 +160,7 @@ export function selectCompactableRange(
     opts: SelectRangeOpts,
 ): CompactableRange | null {
     const { windowTokens, force = false, minCut = 0 } = opts;
-    const retainTokens = retainTokensOf(windowTokens);
+    const retainTokens = opts.retainTokens ?? retainTokensOf(windowTokens);
     if (all.length === 0 || !(retainTokens > 0)) return null;
     const cost = opts.costOf ?? ((m: CompactableMessage) => estimateTokensOf(JSON.stringify(m.content ?? "")));
     const msgs: BoundaryMessage[] = all.map((m, i) => ({
