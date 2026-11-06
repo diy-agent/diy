@@ -28,6 +28,8 @@ import { localISOString } from "@diy-agent/time";
 import { createSession, type AgentSession, type ChatMessage, type LlmPort, type SessionStore, type TokenUsage } from "@diy-agent/session";
 import { openJsonlSessionStore } from "@diy-agent/session-store-jsonl";
 import { openMemorySessionStore } from "@diy-agent/session";
+import { skillsOf } from "@diy-agent/skills";
+import { homedir } from "node:os";
 import { createBotAgent, type BotAgent } from "./agent.js";
 import { createOpenAiCompatible, resolveProviderConfig } from "@diy-agent/llm-provider";
 import {
@@ -206,6 +208,17 @@ export function createSerial(): Serial {
 }
 
 /** 建一个 bot 对话宿主（懒打开：第一次调用才读目录 / 建目录） */
+/** 技能节点的结构说明（与 `@diy-agent/skills` 的 provider 同一份） */
+const SKILLS_HELP = {
+    type: "array",
+    desc: "技能清单（空则整节跳过）",
+    items: {
+        name: { type: "string", desc: "技能名" },
+        desc: { type: "string", desc: "说明（含触发词）" },
+        path: { type: "string", desc: "SKILL.md 路径（要看全文就 read 它）" },
+    },
+};
+
 export function createBotChat(options: BotChatOptions): BotChatHost {
     const home = options.home;
     const root = options.sessionsDir ?? join(home, "sessions", "chat");
@@ -479,7 +492,8 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                     }),
                 },
                 { key: "chain", provide: () => [] },
-                { key: "skills", provide: () => [] },
+                // 2026-11-07：不再返回空数组 —— 从 `.agents/skills` 真扫（本机 22 个，约 9KB）
+                { key: "skills", help: SKILLS_HELP, provide: () => skillsOf({ cwd: workspace, globalRoot: join(homedir(), ".agents") }) },
             ],
             initialMessages,
             initialSnapshot: null,
