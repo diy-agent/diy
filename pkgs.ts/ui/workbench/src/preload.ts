@@ -8,7 +8,7 @@
 //   ChannelServerBinding  → 主进程调页面（意图测试命令 fill / click / waitState / readState）
 import { ChannelClientBinding, ChannelServerBinding, createTypedClient } from "@diy-agent/rpc";
 import type { EnvelopeTransport } from "@diy-agent/rpc";
-import { rendererApi, workbenchApi } from "./protocol.js";
+import { rendererApi, workbenchService } from "./protocol.js";
 import type { WorkbenchBridge } from "./channels.js";
 
 export interface PreloadBridge {
@@ -22,7 +22,8 @@ export interface PreloadBridge {
 
 /** 由 preload 用 `createRendererTransport(RPC_CHANNEL)` 造出的 transport 调进来 */
 export function createPreloadBridge(transport: EnvelopeTransport): PreloadBridge {
-    const cli = createTypedClient(new ChannelClientBinding(transport), workbenchApi);
+    // 只取 workbench 这一个模块（前缀与主进程的 bind 同源，都来自 workbenchService）
+    const cli = workbenchService.use(new ChannelClientBinding(transport));
     let handle: ((cmd: unknown) => Promise<unknown>) | undefined;
 
     const forward = async (cmd: unknown): Promise<void> => {

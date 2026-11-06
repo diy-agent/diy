@@ -17,7 +17,7 @@
 import { app, BrowserWindow, screen } from "electron";
 import { ChannelClientBinding, ChannelServerBinding, createTypedClient } from "@diy-agent/rpc";
 import { createMainTransport } from "@diy-agent/rpc/electron/main";
-import { rendererApi, workbenchApi } from "./protocol.js";
+import { rendererApi, workbenchService } from "./protocol.js";
 import { WorkbenchError } from "./errors.js";
 import { loadPages, type PluginEntry } from "./loader.js";
 import type { PageContribution, PageInfo } from "./page.js";
@@ -174,8 +174,13 @@ export async function createWorkbench(options: CreateWorkbenchOptions): Promise<
     // 每次 send 现读才安全（窗口重建时也不用重新注册）。
     const transport = createMainTransport(() => win.webContents, RPC_CHANNEL);
     const server = new ChannelServerBinding(transport);
-    server.on(workbenchApi.page.list, async () => listPages());
-    server.on(workbenchApi.page.invoke, async ({ input }) => invoke(input.pageId, input.method, input.args));
+    // 一次注册整个模块（路径自动带 `diy.ui.workbench.` 前缀，与 preload 侧的 use() 同源）
+    workbenchService.bind(server, {
+        page: {
+            list: async () => listPages(),
+            invoke: async ({ input }) => invoke(input.pageId, input.method, input.args),
+        },
+    });
 
     // 反方向（main → renderer）：同一条 transport 上 client + server 各挂一个（rpc 支持双向）
     const uiClient = createTypedClient(new ChannelClientBinding(transport), rendererApi);
