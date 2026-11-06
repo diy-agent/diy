@@ -172,27 +172,11 @@ export function stepDelta(before: ContextTreeState, after: ContextTreeState): Co
     return { changed, counts };
 }
 
-// ─── placement 迁移 ────────────────────────────────────
+// ─── places 配置 ───────────────────────────────────────
 
-/**
- * 改一个 place 的容器归属：**递增 placementEpoch**（144 用例 17）。
- * 迁移后 runtime 必须重发 baseline —— 否则模型历史里的旧 patch 会指向已经不存在的 place。
- */
-export function setPlacement(
-    state: ContextTreeState,
-    place: ContextPath,
-    container: ContextTreeState["placement"][string],
-): ContextTreeState {
-    return {
-        ...state,
-        placement: { ...state.placement, [place]: container },
-        placementEpoch: state.placementEpoch + 1,
-    };
-}
-
-/** 整体替换 places 配置（同样递增 epoch；校验不过则原样返回） */
+/** 整体替换 places 配置（校验不过则原样返回） */
 export function setPlaces(state: ContextTreeState, places: readonly ContextPath[]): ContextTreeState {
     const check = validatePlaces(places);
     if (!check.ok) return state;
-    return { ...state, places: check.places, placementEpoch: state.placementEpoch + 1 };
+    return { ...state, places: check.places };
 }

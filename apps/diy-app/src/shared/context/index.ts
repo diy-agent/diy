@@ -20,7 +20,6 @@ export * from "./request";
 export * from "@diy-agent/context/delivery";
 export * from "./steps";
 export * from "./match";
-export * from "./config";
 export * from "./stats";
 export * from "@diy-agent/context/envelope";
 export * from "@diy-agent/context/schema/reqlog";

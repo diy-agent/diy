@@ -8,7 +8,7 @@
 // 所以本文件**不知道任何业务**：
 //   · 没有 task / project / persona / facts 的概念
 //   · 不管依赖怎么来（那是 provider 工厂闭包的事：`taskProvider(home, taskUri)`）
-//   · 不管 diff（那是 projection 层的事，`renderedHash` / `RuntimeCursor`）
+//   · 不管 diff（那是 projection 层的事，`renderedHash` / `DeliveryCursor`）
 //   · 不管缓存与时间（需要就由 provider 工厂自己闭包一份，机制层不介入）
 //
 // 它只做三件事：
@@ -23,7 +23,7 @@ import type { SchemaDoc } from './schema/schema-doc.js';
  * 一个上下文提供器。
  *
  * **无状态**是硬要求：每次 `provide()` 都必须给**当前全量值**，不许记「上次给了什么」——
- * 增量由 `projection` 用 `renderedHash` 算（`types.ts` 的 `RuntimeCursor`）。
+ * 增量由 `projection` 用 `renderedHash` 算（`types.ts` 的 `DeliveryCursor`）。
  * provider 自己攒 diff 会和机制层打架（两处各算一份，必然分叉）。
  */
 export interface ContextProvider {

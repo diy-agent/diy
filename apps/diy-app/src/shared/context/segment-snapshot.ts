@@ -3,10 +3,8 @@
 //
 // ── 铁律（用户 2026-10-31 口径，原文）──
 //   「一旦发出 role:system 消息后，**啥变都不要更新 history**，除非压缩才会真重建 history。」
-//   即：system 与历史消息是**段内不可变的**；变量树再怎么变，都只以 user 侧的控制增量补丁发出
-//   （`step-delta.ts`）—— 所以 `~/.diy/context.yaml` 把哪些单元划进 system，**不影响**缓存命中：
-//   那些单元后来变了，也只是补在 `role:user` 的 `system:` 段里，不会重写已发出的 system。
-//   （旧判据"放易变项进 system ⇒ 每轮砸缓存"是 ##426 时期的事实，那时还没有本模块。）
+//   即：system 与历史消息是**段内不可变的**；变量树再怎么变，都只以 user 侧的变量增量补丁发出
+//   （`step-delta.ts`）。
 //
 // ── 为什么必须复用（##442 / ##486）──
 //   前缀缓存按**逐字节**匹配。system 是请求的第一块，它的字节只要变一个字符，它之后的
@@ -19,24 +17,23 @@
 //   · `first`           还没有快照（首轮 / 会话清零）
 //   · `segment-changed` 压缩换了段（`boundary.at` ≠ 上一步快照的 `compactAt`）—— 段首已经描述
 //                       的是被压掉的那段世界，留着它模型会按旧状态干活
-//   · `legacy-format`   老格式快照（##442 之前的 system 里没有顶格 `runtime:`）—— 那种形状里
-//                       变量树只有 system 一份，不能拿来当"两棵树都在 system"的新段首
+//   · `legacy-format`   老格式快照（##520 之前的信封没有顶格 `vars:`）—— 那种形状里变量树的
+//                       分段口径已经变了，不能拿来当新段首
 //   · `reuse`           （不是重建）逐字复用
 //
 // 约定：本文件只放纯函数，禁止 import node:*（renderer 会打进包）。
 
 /**
- * 这段文本的**顶层**（顶格）键里有 `runtime:` 吗。
+ * 这段文本的**顶层**（顶格）键里有 `vars:` 吗。
  *
- * ⚠️ 判据是 `/^runtime:/m`（允许 `runtime: {}`），**不是** `line === "runtime:"`：
- * 用户把全部原子单元都划进 system 时，易变树为空，信封信封里落的是 `runtime: {}` ——
- * 旧的逐行相等判据会把它当成"老格式"，于是**每一轮都重建 system**（缓存全废）。
- * 实测：`buildDelivery(globals, 全部候选)` 的 system.text 顶格行就是 `runtime: {}`。
+ * ⚠️ 判据是 `/^vars:/m`（允许 `vars: {}`），**不是** `line === "vars:"`：
+ * 变量树为空时信封信里落的是 `vars: {}` —— 逐行相等判据会把它当成"老格式"，
+ * 于是**每一轮都重建 system**（缓存全废）。
  *
- * help 段里也有一行 `runtime:`，但那是**缩进**的（`  runtime:`），`^` 不会命中。
+ * help 段里的同名说明是**缩进**的，`^` 不会命中。
  */
-export function hasTopLevelRuntime(text: string): boolean {
-    return /^runtime:/m.test(text);
+export function hasTopLevelVars(text: string): boolean {
+    return /^vars:/m.test(text);
 }
 
 /** 为什么用了这一份（复用 / 三种重建原因）—— 调用点据此留痕，别让重建悄悄发生 */
@@ -62,8 +59,8 @@ export function segmentSystemSnapshotOf(input: SegmentSnapshotInput): { text: st
     if (!lastText) return { text: liveText, reason: "first" };
     // 压缩边界 = 新段：段首必须换成现状（旧段首描述的是已被压缩掉的那段世界）
     if (lastCompactAt !== boundaryAt) return { text: liveText, reason: "segment-changed" };
-    // 老格式（##442 之前）：变量树只有 system 一份，不能当新段首用
-    if (!hasTopLevelRuntime(lastText)) return { text: liveText, reason: "legacy-format" };
+    // 老格式（##520 之前）：变量树的分段不是现在这一份，不能当新段首用
+    if (!hasTopLevelVars(lastText)) return { text: liveText, reason: "legacy-format" };
     return { text: lastText, reason: "reuse" };
 }
 

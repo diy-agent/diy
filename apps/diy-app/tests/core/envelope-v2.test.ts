@@ -2,16 +2,16 @@
 // 🎯 新信封（##442 用户 2026-10-27「dsh 方式 B」）的**字节级** golden 用例。
 //
 // 规格（先对过再写代码，见任务 442 body「字段规格」）：
-//   role:system  content = help / system / runtime（全量）
-//   role:user    content = system / runtime（增量）/ notify / chat（固定键序）
-//   system/runtime 增量：只列变化原子单元；数组 / map 整单元替换；`path: null` = 删除
+//   role:system  content = help / vars（全量）
+//   role:user    content = vars（增量）/ notify / chat（固定键序）
+//   vars 增量：只列变化原子单元；数组 / map 整单元替换；`path: null` = 删除
 //   chat:   [{ from, text }]
 //   notify: [{ kind, text, ...按 kind 的字段 }]
 //
 // 这里只钉**产出字节**，不碰 UI / 压缩。
 
 import { describe, expect, it } from "vitest";
-import { buildDelivery, controlDeltaDelivery, defaultSystemPlaces } from "@diy-agent/context/delivery";
+import { buildDelivery, controlDeltaDelivery } from "@diy-agent/context/delivery";
 import { chatEnvelope, isEnvelopeText, userEnvelope, withNotify, type NotifyItem } from "@diy-agent/context/envelope";
 
 const globals = {
@@ -39,49 +39,48 @@ const globals = {
     reqlog: { file: "/home/u/.diy/log/network/2026-10-27.jsonl" },
 };
 
-const deliveryOf = (patch: Record<string, unknown> = {}) =>
-    buildDelivery({ ...globals, ...patch }, defaultSystemPlaces());
+const deliveryOf = (patch: Record<string, unknown> = {}) => buildDelivery({ ...globals, ...patch });
 
-describe("role:system：help + system + runtime 全量", () => {
-    it("三个顶层键按序出现，且 runtime 在 system 消息里", () => {
+describe("role:system：help + vars 全量", () => {
+    it("两个顶层键按序出现，变量树只有一份", () => {
         const d = deliveryOf();
-        expect(d.system.text).toMatch(/^help:\n/);
-        expect(d.system.text).toContain("\nsystem:\n");
-        expect(d.system.text).toContain("\nruntime:\n");
-        expect(d.system.text.indexOf("help:")).toBeLessThan(d.system.text.indexOf("\nsystem:"));
-        expect(d.system.text.indexOf("\nsystem:")).toBeLessThan(d.system.text.indexOf("\nruntime:"));
-        // 易变项（body / reqlog）确实在 system 里
-        expect(d.system.text).toContain("正文");
-        expect(d.system.text).toContain("reqlog:");
+        expect(d.text.text).toMatch(/^help:\n/);
+        expect(d.text.text).toContain("\nvars:\n");
+        expect(d.text.text).not.toContain("\nsystem:\n");
+        expect(d.text.text).not.toContain("\nruntime:\n");
+        expect(d.text.text.indexOf("help:")).toBeLessThan(d.text.text.indexOf("\nvars:"));
+        // 全部变量（含 body / reqlog）确实在同一份里
+        expect(d.text.text).toContain("正文");
+        expect(d.text.text).toContain("reqlog:");
     });
 
-    it("systemData 仍是稳定树的纯数据（不带 help / runtime）", () => {
+    it("data 是纯数据（不带 help），含全部单元", () => {
         const d = deliveryOf();
-        expect(d.systemData.text.startsWith("chain:")).toBe(true);
-        expect(d.systemData.text).not.toContain("help:");
-        expect(d.systemData.text).not.toContain("正文");
+        expect(d.data.text.startsWith("chain:")).toBe(true);
+        expect(d.data.text).not.toContain("help:");
+        expect(d.data.text).toContain("正文");
     });
 });
 
 describe("role:user：控制增量", () => {
-    it("变了才列；system / runtime 分段；数组整单元替换", () => {
+    it("变了才列；数组整单元替换", () => {
         const d = deliveryOf({ skills: ["a"] });
-        const delta = controlDeltaDelivery(d.tree, ["task.state"], ["skills"]);
+        const delta = controlDeltaDelivery(d.tree, ["task.state", "skills"]);
         expect(delta.text).toBe(
-            ["system:", "  task:", "    state: pending", "runtime:", "  skills:", "    - a"].join("\n"),
+            ["vars:", "  skills:", "    - a", "  task:", "    state: pending"].join("\n"),
         );
     });
 
     it("单元消失 ⇒ path: null（不是静默不出现）", () => {
         const d = deliveryOf();
-        expect(controlDeltaDelivery(d.tree, [], ["room.recent"]).text).toBe(
-            ["runtime:", "  room:", "    recent: null"].join("\n"),
+        expect(controlDeltaDelivery(d.tree, ["room.recent"]).text).toBe(
+            ["vars:", "  room:", "    recent: null"].join("\n"),
         );
     });
 
     it("两段都空 ⇒ 空串（调用方不注入）", () => {
         const d = deliveryOf();
-        expect(controlDeltaDelivery(d.tree, [], []).text).toBe("");
+        expect(controlDeltaDelivery(d.tree, []).text).toBe("");
     });
 });
 
@@ -138,34 +137,32 @@ describe("role:user：chat / notify 与键序", () => {
         expect(out).toContain("    durationMs: 83000");
     });
 
-    it("withNotify：把 notify 并进已有 user 信封，不新增消息，键序 runtime → notify → chat", () => {
+    it("withNotify：把 notify 并进已有 user 信封，不新增消息，键序 vars → notify → chat", () => {
         const item: NotifyItem = { kind: "compact", source: "/l/llm.jsonl", summary: "预检超限" };
         const plain = withNotify('chat:\n  - from: human:chen56\n    text: "说"', item);
         expect(plain.startsWith("notify:\n")).toBe(true);
         expect(plain.indexOf("notify:")).toBeLessThan(plain.indexOf("chat:"));
-        const mixed = withNotify("runtime:\n  self: { steps: 1 }\nchat:\n  - from: human:chen56\n    text: \"说\"", item);
-        expect(mixed.indexOf("runtime:")).toBeLessThan(mixed.indexOf("notify:"));
+        const mixed = withNotify("vars:\n  self: { steps: 1 }\nchat:\n  - from: human:chen56\n    text: \"说\"", item);
+        expect(mixed.indexOf("vars:")).toBeLessThan(mixed.indexOf("notify:"));
         expect(mixed.indexOf("notify:")).toBeLessThan(mixed.indexOf("chat:"));
         expect(mixed).toContain("kind: compact");
     });
 
-    it("键序固定：system → runtime → notify → chat", () => {
+    it("键序固定：vars → notify → chat", () => {
         const out = userEnvelope({
-            system: { task: { state: "done" } },
-            runtime: { self: { steps: 1 } },
+            vars: { self: { steps: 1 } },
             notify: [{ kind: "job-done", text: "t", run: "r-1" }],
             chat: [{ from: "human:chen56", text: "说2" }],
         });
         const at = (k: string): number => out.indexOf(`\n${k}:`) + 1;
-        expect(out.startsWith("system:\n")).toBe(true);
-        expect(at("system")).toBeLessThan(at("runtime"));
-        expect(at("runtime")).toBeLessThan(at("notify"));
+        expect(out.startsWith("vars:\n")).toBe(true);
+        expect(at("vars")).toBeLessThan(at("notify"));
         expect(at("notify")).toBeLessThan(at("chat"));
     });
 
     it("纯控制增量没有 chat（UI 不显示）", () => {
-        const out = userEnvelope({ runtime: { self: { steps: 1 } } });
-        expect(out).toBe(["runtime:", "  self:", "    steps: 1"].join("\n"));
+        const out = userEnvelope({ vars: { self: { steps: 1 } } });
+        expect(out).toBe(["vars:", "  self:", "    steps: 1"].join("\n"));
         expect(out).not.toContain("chat:");
     });
 });
@@ -174,7 +171,7 @@ describe("信封判据", () => {
     it("chat / notify / 控制增量都被认成信封（不会被相邻 user 合并）", () => {
         expect(isEnvelopeText(chatEnvelope([{ from: "human:chen56", text: "x" }]))).toBe(true);
         expect(isEnvelopeText(userEnvelope({ notify: [{ kind: "job-done", text: "x" }] }))).toBe(true);
-        expect(isEnvelopeText(userEnvelope({ runtime: { self: { steps: 1 } } }))).toBe(true);
+        expect(isEnvelopeText(userEnvelope({ vars: { self: { steps: 1 } } }))).toBe(true);
     });
 
     it("普通正文 / 缩进的 YAML 不算信封", () => {

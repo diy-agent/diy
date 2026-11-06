@@ -171,7 +171,6 @@ import {
     readAutoCompactText,
 } from "../core/auto-compact-config";
 
-import { loadSystemPlaces } from "../core/context-config";
 import { appendContextStat } from "../core/context-stats";
 import { traffic } from "../core/traffic";
 import { appendCtxLog, hasV2CtxLog, lastCtxLogSeq, readCtxLogEntries } from "../core/context-changelog";
@@ -768,21 +767,16 @@ function markShape(s: StepStreamShape, ch: "r" | "t" | "x"): void {
 }
 
 /**
- * runtime 容器作为**尾部 user 消息**插在本轮输入之前（144 的投递设计）。
- * 易变项（任务正文、技能清单等）放这里，稳定项在 system 参数里；两者合起来才是完整上下文。
- * runtime 为空 → 原样返回（不硬塞空消息：白耗 token 且让模型困惑）。
- */
-/**
  * 合并**相邻的 user 消息**为一条。
  *
  * ⚠️ 依据已实测订正（2026-10-16，##310）：**本仓在用的两家 provider 都不拒连续同角色**
  * —— `goat`（`api.commandcode.ai`）与 `opencode-go`（`opencode.ai/inference/go`）对
  * `[{user: A},{user: B}]` 以及 content 数组形式的连续 user 均返回 200。所以这条合并
  * **不是**"provider 要求"，而是**收敛语义**：投递**天然会造出连续 user**
- * （runtime / summary 作为尾部 user 插在本轮输入之前），合并成一条能让"给模型的这份信封"
+ * （变量增量 / summary 作为尾部 user 插在本轮输入之前），合并成一条能让"给模型的这份信封"
  * 只有一处 user，减少歧义、少一条消息。**若将来遇到真拒连续同角色的 provider，这里就是唯一改动点。**
  *
- * 合并只动相邻 user、位置与总文本不变（前缀缓存不受影响：摘要/runtime 本就在变化段），
+ * 合并只动相邻 user、位置与总文本不变（前缀缓存不受影响：摘要/增量本就在变化段），
  * tool-call/tool-result 配对铁律也不涉及（只合并 user）。
  *
  * 依据实测记录：`bash /tmp/t310-role3.sh`（两家 × 纯文本/parts 各一条，全 200）。
@@ -822,19 +816,15 @@ function isEnvelope(m: ModelMessage): boolean {
  * **段首 system 快照**（##442 用户 2026-10-27；铁律见 2026-10-31 口径）。
  *
  * 读**上一次真发**那一步的 `systemText`（`steps.jsonl` 末条）作为本条会话的基线：
- *   · 没有历史 / 老格式（system 里没有顶格 `runtime:`）⇒ 用本轮现算的（重建一次）；
+ *   · 没有历史 / 老格式（信封里没有顶格 `vars:`）⇒ 用本轮现算的（重建一次）；
  *   · 否则逐字复用 —— 这是前缀缓存能命中的前提。
  *
- * ⚠️ **不按 places 相等判**：可选单元（如 `self`）第一次出现时，live 的 runtimePlaces 会比
- * 快照多一个 —— 那是「新变量」，应该走 user 增量，不该把整条 system 重建（否则每出现一个新单元
+ * ⚠️ **不按 places 相等判**：可选单元（如 `self`）第一次出现时，live 的单元会比快照多一个
+ * —— 那是「新变量」，应该走 user 增量，不该把整条 system 重建（否则每出现一个新单元
  * 就砸一次前缀缓存，正是这条要防的）。
  *
- * ⚠️ 配置换了（`context.yaml` 的 system 名单）时本函数仍会复用旧快照：那是**用户主动改投递划分**，
- * 不是变量变化 —— 而且按 2026-10-31 口径它本来就**不该**重建（名单内单元后来变了，补在 user
- * 的 `system:` 段里就够，见 `step-delta.ts`）。要让它立刻进段首，等下一次压缩。
- *
- * 判据本体在 `shared/context/segment-snapshot.ts`（纯函数、可单测）：`runtime: {}` 也算新格式，
- * 老实现按 `line === "runtime:"` 判会把「全部单元划进 system」的配置误判成老格式 ⇒ 每轮砸缓存。
+ * 判据本体在 `shared/context/segment-snapshot.ts`（纯函数、可单测）：`vars: {}` 也算新格式，
+ * 逐行相等判据会把它误判成老格式 ⇒ 每轮砸缓存。
  */
 function frozenSystemSnapshotOf(
     live: Delivery,
@@ -842,7 +832,7 @@ function frozenSystemSnapshotOf(
     boundaryAt: string | null,
 ): { text: string; reason: SnapshotReason } {
     return segmentSystemSnapshotOf({
-        liveText: live.system.text,
+        liveText: live.text.text,
         lastText: lastStep?.systemText ?? null,
         lastCompactAt: lastStep?.compactAt ?? null,
         boundaryAt,
@@ -852,7 +842,7 @@ function frozenSystemSnapshotOf(
 /** 只要文本（预览路径用；真发要顺带留痕，用 `frozenSystemSnapshotOf`） */
 function frozenSystemTextOf(live: Delivery, lastStep: DeliveryStepRecord | null, boundaryAt: string | null): string {
     return segmentSystemTextOf({
-        liveText: live.system.text,
+        liveText: live.text.text,
         lastText: lastStep?.systemText ?? null,
         lastCompactAt: lastStep?.compactAt ?? null,
         boundaryAt,
@@ -938,12 +928,10 @@ export interface HistoryDelivery {
 
 /** 读某任务的投递快照（时间正序；文件不存在 = 还没真发过） */
 export function readDeliverySteps(taskUri: string): DeliveryStepRecord[] {
-    // 读侧兜底（review RV-12）：`systemPlaces` 首版即写，正常不会缺；但 renderer 已当它必填
-    // （`sysCauses(changed, undefined)` 会 `for..of undefined` 打断渲染），坏行/手写快照给个 [] 更稳。
+    // 读侧兜底：`places` 新记录必写，但老快照/手写行可能缺 → 给个 [] 更稳（renderer 按它算归属）。
     return readJsonl<DeliveryStepRecord>(stepsFile(taskUri)).map((r) => ({
         ...r,
-        systemPlaces: r.systemPlaces ?? [],
-        runtimePlaces: r.runtimePlaces ?? [],
+        places: r.places ?? [],
     }));
 }
 
@@ -2917,7 +2905,7 @@ export class LocalAgentManager {
             force?: boolean;
             triggered?: boolean;
             usedTokens?: number | null;
-            /** 固定开支（system + runtime + tools）估算；只用于「压完能不能降下来」 */
+            /** 固定开支（信封 system + tools）估算；只用于「压完能不能降下来」 */
             fixedTokens?: number;
             /** 本次事件的触发线（预检用 0.8W；缺省 = 正常 trigger） */
             triggerAt?: number;
@@ -3759,16 +3747,16 @@ export class LocalAgentManager {
             taskUri,
             room: roomCtx,
         }) as unknown as Record<string, unknown>;
-        const liveDelivery = buildDelivery(globals, loadSystemPlaces(home));
+        const liveDelivery = buildDelivery(globals);
         // 与真发同一条 system 快照（段首冻结；见 `frozenSystemTextOf`）
         const state = this.compactStateOf(taskUri);
         const frozenText = frozenSystemTextOf(liveDelivery, state.lastStep, state.boundary?.at ?? null);
         const delivery: Delivery =
-            frozenText === liveDelivery.system.text
+            frozenText === liveDelivery.text.text
                 ? liveDelivery
                 : {
                       ...liveDelivery,
-                      system: { ...liveDelivery.system, text: frozenText, bytes: utf8Bytes(frozenText) },
+                      text: { ...liveDelivery.text, text: frozenText, bytes: utf8Bytes(frozenText) },
                   };
         const { cwd } = resolveCwdWithNote(home, taskUri);
         const L = this.getLimits();
@@ -3785,7 +3773,7 @@ export class LocalAgentManager {
         const messages = normalizeUserRuns(withHeadNotice(histView.messages, notice));
         return {
             model: personaForTask(home, taskUri).model,
-            system: delivery.system.text,
+            system: delivery.text.text,
             tools: Object.entries(tools).map(([name, t]) => ({
                 name,
                 description: String((t as { description?: unknown }).description ?? ""),
@@ -3901,17 +3889,17 @@ export class LocalAgentManager {
         };
     }
 
-    /** 固定开支：system 全文（已含 help+system+runtime）+ 工具定义。压缩事件低频，现算即可。 */
+    /** 固定开支：system 全文（信封 help + vars）+ 工具定义。压缩事件低频，现算即可。 */
     private fixedTokensOf(taskUri: string): number {
         try {
             const globals = assembleGlobals(diyHome(), projectFromUri(taskUri), {
                 taskUri,
                 room: null,
             }) as unknown as Record<string, unknown>;
-            const delivery = buildDelivery(globals, loadSystemPlaces(diyHome()));
+            const delivery = buildDelivery(globals);
             const { cwd } = resolveCwdWithNote(diyHome(), taskUri);
             const tools = buildTools(cwd, this.getLimits(), taskUri);
-            return estimateTokensOf(delivery.system.text) + estimateTokensOf(JSON.stringify(tools));
+            return estimateTokensOf(delivery.text.text) + estimateTokensOf(JSON.stringify(tools));
         } catch {
             return 0;
         }
@@ -5219,9 +5207,8 @@ export class LocalAgentManager {
             room: identity.room ?? null,
             self: selfValue(),
         }) as unknown as Record<string, unknown>;
-        // 划分规则读**真源**（$DIY_HOME/context.yaml；缺失/损坏则推荐名单 + 出声）——
-        // 与上下文树页读的是同一份，所以页面上看到的 system/runtime 划分就是这里会用的划分。
-        const liveDelivery = buildDelivery(globals, loadSystemPlaces(diyHome()));
+        // 变量树 = 一份全量（信封 help + vars，##520）；与上下文树页同一条构造链。
+        const liveDelivery = buildDelivery(globals);
         // 段首 system 快照（##442 用户 2026-10-27）：变量树全在 system，压缩点前不重建。
         // 跨轮变化走 user 控制增量（`sentOf` 里按上一次真发的树算），不砸这条 system 的前缀缓存。
         const frozenState = this.compactStateOf(taskUri);
@@ -5239,19 +5226,19 @@ export class LocalAgentManager {
             console.warn(`[local-agent] 段首 system 快照是老格式（升级前落的），本轮重建一次：${taskUri}`);
         }
         const delivery: Delivery =
-            frozenSystemText === liveDelivery.system.text
+            frozenSystemText === liveDelivery.text.text
                 ? liveDelivery
                 : {
                       ...liveDelivery,
-                      system: { ...liveDelivery.system, text: frozenSystemText, bytes: utf8Bytes(frozenSystemText) },
+                      text: { ...liveDelivery.text, text: frozenSystemText, bytes: utf8Bytes(frozenSystemText) },
                   };
         /** true = 本轮 system 是现算的（首轮 / 重建）；false = 用的是段首快照，跨轮变化要补 user 增量 */
-        const systemIsFresh = delivery.system.text === liveDelivery.system.text;
+        const systemIsFresh = delivery.text.text === liveDelivery.text.text;
 
         // ── 每步重算上下文（##310）──────────────────────────────────
         // 轮首这份 delivery 原本整轮复用 → 长轮次里变量变了模型仍按旧值干活（几小时的 tool 循环
         // 全建在过期数据上）。prepareStep 每步重算一次，**变了才注入**（没变不动 ⇒ 前缀缓存只在
-        // 真变那步失效）。system 与 runtime 各走各的通道（见 prepareStep）。
+        // 真变那步失效）。变化只走 user 增量（见 prepareStep）。
         const rebuildDelivery = (): Delivery => {
             const g = assembleGlobals(diyHome(), projectFromUri(taskUri), {
                 taskUri,
@@ -5259,7 +5246,7 @@ export class LocalAgentManager {
                 // 每步重算 ⇒ 这里是「上一步的账 + 本轮累计」的最新值（`self` 是最高频单元，见 delivery.ts）
                 self: selfValue(),
             }) as unknown as Record<string, unknown>;
-            return buildDelivery(g, loadSystemPlaces(diyHome()));
+            return buildDelivery(g);
         };
 
         // 变更历史（##310 二版）：每步**有变才写**；一段会话的起点 = 一条 baseline（整棵树）。
@@ -5289,7 +5276,7 @@ export class LocalAgentManager {
         // 预算判据与模版线**共用同一个函数**（services/prompt-registry 的 systemOverBudget）：
         // 曾经这里是内联的 `bytes > budget`，逻辑等价但两处各写一遍 —— 日后任何一侧改口径
         // （比如"等于预算算不算超"）都会悄悄分叉，而单测只覆盖得到被调用的那一侧（209 第 3 轮 R-1）。
-        const over = systemOverBudget(delivery.system.bytes, contextLimitOf(model));
+        const over = systemOverBudget(delivery.text.bytes, contextLimitOf(model));
         if (over) {
             const kb = (n: number) => (n / 1024).toFixed(1);
             const budgetMsg =
@@ -5381,7 +5368,7 @@ export class LocalAgentManager {
         try {
             // 从块树重建 messages：本轮的 user 块 + 中途落下的插话块都在里面，
             // 「wire = store = UI = LLM」这条链对每一步都成立（prepareStep 注入的就是它）。
-            // runtime 容器作为**尾部 user 消息**插在本轮输入之前：它不进块树（llm.jsonl 是块树的转储），
+            // 变量增量作为**尾部 user 消息**插在本轮输入之前：它不进块树（llm.jsonl 是块树的转储），
             // 所以下一轮重建历史时不会带上它 —— 每轮只发当前这一份，不会累积。
             // 真发 tools 只构建一次（raw dump / 构成字节 / streamText 共用）；
             // 构成字节 = 环形构成卡与构成报表的数据源（system 容器精确字节 + tools JSON 字节，
@@ -5400,7 +5387,7 @@ export class LocalAgentManager {
             // 归一判据算**一次**：首步与 prepareStep 的每步都用同一份（两处判据分叉必出「首步补了、
             // 后续步没补」的假修复 —— 正是 ##405 第 85 步 400 的形态）。
             const replayOpts = reasoningReplayOptsOf(rm, reasoningEffort);
-            // 一份 `hist` → 最终 wire 形状（历史前注记 + 尾部 runtime 信封 + 摘要 + 推理回放归一）。
+            // 一份 `hist` → 最终 wire 形状（历史前注记 + 尾部变量增量 + 摘要 + 推理回放归一）。
             // 抽成闭包：预检「再压一次」要按同一套拼装重算一遍 —— 两处各抄一遍必分叉（##227 老教训）。
             // 摘要段**算一次**：它既进 `sent`，也要原样进投递快照（##5 第 16 轮）。
             // 两处各调一次 `effectiveSummary` 是纯读、值相同，但"恰好相同"不该是快照正确的依据。
@@ -5439,7 +5426,7 @@ export class LocalAgentManager {
             let sent: ModelMessage[] = sentOf(hist);
             // 构成字节（##9 追加的历史段）：system / tools / **历史** 三段，才答得了
             // 「历史占了窗口多少、该不该压」。`historyBytes` 量的是**真发消息段**
-            // （含尾部 runtime 信封 + 摘要 + 注记，即 wire 上的 messages 全量），不是块树字节 ——
+            // （含尾部变量增量 + 摘要 + 注记，即 wire 上的 messages 全量），不是块树字节 ——
             // 后者少三条注入（差异见 `sentOf`）。选在 `sent` 之后算，就是为了量"真发"。
             //
             // ⚠️ 三段字节一律走 `utf8Bytes`，**不用 `JSON.stringify(x).length`**：后者是 UTF-16 码元数，
@@ -5450,7 +5437,7 @@ export class LocalAgentManager {
             const sentJson = JSON.stringify(sent);
             const sentBytes = utf8Bytes(sentJson);
             const ctxParts = {
-                systemBytes: delivery.system.bytes,
+                systemBytes: delivery.text.bytes,
                 toolsBytes,
                 historyBytes: sentBytes,
             };
@@ -5465,14 +5452,14 @@ export class LocalAgentManager {
             let historyCapOverride: number | undefined;
             let preflightNotice: string | undefined;
             {
-                const systemTokens = estimateTokensOf(delivery.system.text);
+                const systemTokens = estimateTokensOf(delivery.text.text);
                 const toolsTokens = estimateTokensOf(toolsJson);
                 const messagesTokens = estimateTokensOf(sentJson);
-                const totalBytes = delivery.system.bytes + toolsBytes + sentBytes;
+                const totalBytes = delivery.text.bytes + toolsBytes + sentBytes;
                 const totalTokens = systemTokens + toolsTokens + messagesTokens;
                 const bytesPerToken = totalTokens > 0 ? totalBytes / totalTokens : 4;
                 const est0 = estimateRequest({
-                    systemBytes: delivery.system.bytes,
+                    systemBytes: delivery.text.bytes,
                     toolsBytes,
                     messagesBytes: sentBytes,
                     systemTokens,
@@ -5498,7 +5485,7 @@ export class LocalAgentManager {
                         1,
                         tighterHistoryCapBytes({
                             contextLimitTokens: ctxLimitTokens,
-                            systemBytes: delivery.system.bytes,
+                            systemBytes: delivery.text.bytes,
                             toolsBytes,
                             bytesPerToken,
                         }),
@@ -5512,7 +5499,7 @@ export class LocalAgentManager {
                     const sent2 = addCapNotify(sentOf(hist2), taskUri, capDropped);
                     const sent2Json = JSON.stringify(sent2);
                     const est2 = estimateRequest({
-                        systemBytes: delivery.system.bytes,
+                        systemBytes: delivery.text.bytes,
                         toolsBytes,
                         messagesBytes: utf8Bytes(sent2Json),
                         systemTokens,
@@ -5592,7 +5579,7 @@ export class LocalAgentManager {
                 kind: "request",
                 ts: localISOString(),
                 model: model,
-                system: delivery.system.text,
+                system: delivery.text.text,
                 tools: Object.keys(tools),
                 settings: {
                     maxSteps: L.maxSteps,
@@ -5619,11 +5606,9 @@ export class LocalAgentManager {
                 turnId,
                 model,
                 wireVersion: delivery.wireVersion,
-                systemPlaces: delivery.system.places,
-                runtimePlaces: delivery.runtime.places,
+                places: delivery.text.places,
                 valueHashes: delivery.valueHashes,
-                systemText: delivery.system.text,
-                runtimeText: delivery.runtime.text,
+                systemText: delivery.text.text,
                 ...(this.compactStateOf(taskUri).boundary?.at
                     ? { compactAt: this.compactStateOf(taskUri).boundary!.at }
                     : {}),
@@ -5660,7 +5645,7 @@ export class LocalAgentManager {
             this.noteTraffic(taskUri, turnId, rm, 2);
             const result = streamText({
                 model: this.modelFor(rm, key),
-                system: delivery.system.text,
+                system: delivery.text.text,
                 messages: sent,
                 tools,
                 stopWhen: stepCountIs(L.maxSteps),
@@ -5740,8 +5725,8 @@ export class LocalAgentManager {
                     let nextMessages: ModelMessage[] | undefined;
                     // ── 上下文及时刷新（##310）──
                     // 每步重算；**变了才注入**（没变什么都不返回 ⇒ 不砸前缀缓存）。
-                    // 新形态（##442 用户 2026-10-27）：system / runtime 任何变化都只追加**一条**
-                    // `role:user` 控制增量（`system:` / `runtime:` 两段，见 `controlDeltaDelivery`）；
+                    // 新形态（##442 / ##520）：变量树的任何变化都只追加**一条** `role:user` 增量
+                    // （`vars:` 一段，见 `controlDeltaDelivery`）；
                     // 不再用 SDK 的 `instructions` 覆盖 system（那会把段首快照撕掉）。
                     try {
                         const fresh = rebuildDelivery();
@@ -5780,7 +5765,7 @@ export class LocalAgentManager {
                                 });
                             }
                         }
-                        // 变了才追加一条控制增量：只列变化的原子单元（system / runtime 分段）。
+                        // 变了才追加一条变量增量：只列变化的原子单元。
                         // 数组 / map 按整单元替换；整个单元消失 ⇒ `path: null`（`subsetOfDelta`）。
                         //
                         // ⚠️ 第 1 步（`stepNumber === 0`）**不注入**：跨轮变化已经由 `sentOf` 并进

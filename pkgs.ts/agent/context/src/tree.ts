@@ -9,16 +9,11 @@
 
 import { hashValue } from "./hash.js";
 import { isAncestor, isValidPath, parsePath } from "./path.js";
-import type {
-    ContextContainer,
-    ContextPath,
-    ContextRendererSpec,
-    ContextTreeState,
-} from "./types.js";
+import type { ContextPath, ContextRendererSpec, ContextTreeState } from "./types.js";
 
 /** 初始空树（wireVersion 由 wire.ts 提供，避免此处 import 循环） */
 export function emptyState(wireVersion: string): ContextTreeState {
-    return { values: {}, renderers: {}, places: [], placement: {}, wireVersion, placementEpoch: 0 };
+    return { values: {}, renderers: {}, places: [], wireVersion };
 }
 
 // ─── 值树读写 ───────────────────────────────────────────
@@ -91,11 +86,7 @@ export function removePath(state: ContextTreeState, path: ContextPath): ContextT
         if (k !== path && !isAncestor(path, k)) renderers[k] = v;
     }
     const places = state.places.filter((p) => p !== path && !isAncestor(path, p));
-    const placement: Record<ContextPath, ContextContainer> = {};
-    for (const [k, v] of Object.entries(state.placement)) {
-        if (k !== path && !isAncestor(path, k)) placement[k] = v;
-    }
-    return { ...state, values, renderers, places, placement };
+    return { ...state, values, renderers, places };
 }
 
 /**
@@ -185,11 +176,6 @@ export function placeOf(state: ContextTreeState, path: ContextPath): ContextPath
         }
     }
     return best;
-}
-
-/** 某容器下的 place 列表（字典序，保证 golden 稳定） */
-export function placesIn(state: ContextTreeState, container: ContextContainer): ContextPath[] {
-    return state.places.filter((p) => (state.placement[p] ?? "runtime") === container).sort();
 }
 
 /** 值树里 path 处是否是普通对象（值树合并/渲染的分支判据） */

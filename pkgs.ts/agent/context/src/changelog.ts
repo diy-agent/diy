@@ -60,7 +60,7 @@ export interface CtxLogEntry {
     data: { tree: ContextTreeState } | { changes: CtxChangeItem[] };
 }
 
-/** 变更单位（原子单元）集：静态，**不随 systemPlaces 变**（名单是投递偏好，不是变更口径） */
+/** 变更单位（原子单元）集：静态（投递与变更历史共用同一份单元口径） */
 export function atomicUnitPaths(): ContextPath[] {
     return PLACE_CANDIDATES.map((c) => c.path);
 }

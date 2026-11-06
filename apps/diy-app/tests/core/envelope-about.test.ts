@@ -12,9 +12,9 @@ describe("ENVELOPE_ABOUT", () => {
     });
 
     test("保留不可替代的指令（删掉就会误用信封）", () => {
-        // 两条树都在 system；user 里只发增量，后出现者为准，null = 删除
-        expect(ENVELOPE_ABOUT).toContain("system");
-        expect(ENVELOPE_ABOUT).toContain("runtime");
+        // 一份变量树全量在 system；user 里只发增量，后出现者为准，null = 删除
+        expect(ENVELOPE_ABOUT).toContain("vars");
+        expect(ENVELOPE_ABOUT).not.toContain("runtime");
         expect(ENVELOPE_ABOUT).toContain("后出现");
         expect(ENVELOPE_ABOUT).toContain("null");
         // 可见内容分两类：机器事件 / 发言

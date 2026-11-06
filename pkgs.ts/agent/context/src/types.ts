@@ -1,14 +1,14 @@
 // src/shared/context/types.ts
 // 🎯 Context Tree 的**领域类型**（纯类型 + 少量常量，零运行时依赖）。
 //
-// 设计来源：任务 144「system context 注入机制（第二版）」的收敛结论。本文件是 144/148
-// 之间的**冻结契约** —— 108 重构事件流时只替换 adapter（Op→ContextFact 换成
-// EventRecord→ContextFact），下面这些类型不动。
+// 设计来源：任务 144「system context 注入机制（第二版）」的收敛结论；##520 把
+// 「system / runtime 两个投递容器」整段删掉 —— 信封里只有**一棵变量树、一段全量**，
+// 变化走 user 增量。所以这里不再有容器（container / placement）概念。
 //
 // 三层不可混淆（144 的核心结论）：
 //   ContextFact   事实       —— 事件的领域投影（snapshot/replace/patch/remove）
-//   ContextTree   唯一状态   —— 值树 + 渲染声明 + places + placement + wireVersion
-//   projection    模型 wire  —— system 全量文本 / runtime 增量 patch
+//   ContextTree   唯一状态   —— 值树 + 渲染声明 + places + wireVersion
+//   projection    模型 wire  —— 信封全文 + 单元级增量
 //
 // 两个 hash 分离（144 结论，别混用）：
 //   valueHash     —— 值树里的**原始值**（patch 后变了就是变了）
@@ -22,9 +22,6 @@
  * 段字符集见 path.ts；108 之前不引入新的路径编码方案。
  */
 export type ContextPath = string;
-
-/** 投递容器：system 每次请求全量重建（不进历史）；runtime 增量 patch（进历史） */
-export type ContextContainer = "system" | "runtime";
 
 /**
  * 渲染方式声明（挂在 path 上；**值本身在值树里**，两者分开才让「值变而渲染不变」可判）。
@@ -94,14 +91,10 @@ export interface ContextTreeState {
     values: Record<string, unknown>;
     /** 渲染方式声明：path → spec（缺省 yaml） */
     renderers: Record<ContextPath, ContextRendererSpec>;
-    /** 割点集合（placement 边界）：两两不可互为祖先/后代 */
+    /** 割点集合（**原子单元**的边界）：两两不可互为祖先/后代；决定增量与变更历史的粒度 */
     places: ContextPath[];
-    /** place → 容器归属；未声明视为 runtime */
-    placement: Record<ContextPath, ContextContainer>;
     /** 模型 wire 编码版本（由 WIRE_ENCODING 派生，见 wire.ts） */
     wireVersion: string;
-    /** placement 纪元：每次迁移 +1（迁移后必须重发 runtime baseline） */
-    placementEpoch: number;
 }
 
 /** 事实被拒绝的原因（一律不静默合并） */
@@ -117,54 +110,53 @@ export interface ContextApplyResult {
     state: ContextTreeState;
     /** 有值 = 该事实未生效（树保持原样） */
     rejected?: ContextRejectReason;
-    /** 是否要求重发 runtime baseline（快照恢复 / 拒绝合并 / 版本变化） */
+    /** 是否要求重发全量（快照恢复 / 拒绝合并 / 版本变化） */
     needRebaseline: boolean;
 }
 
 // ─── 投影（模型 wire）─────────────────────────────────
 
-/** runtime 增量动作 */
-export type RuntimePatchOp =
+/** 单元级增量动作 */
+export type DeltaOp =
     | { op: "set"; path: ContextPath; content: string }
     | { op: "remove"; path: ContextPath };
 
 /**
- * runtime 本次投递。
+ * 自上次投递以来的增量。
  *   none     —— 内容未变，不发（144 用例 4）
  *   patch    —— 增量（用例 3）
- *   snapshot —— 全量 baseline，声明 supersedes=all（迁移/版本变化/恢复）
- *   clear    —— place 全部消失，必须**显式**清空（用例 5），不能只是「什么都不发」
+ *   snapshot —— 全量 baseline，声明 supersedes=all（版本变化 / 恢复）
+ *   clear    —— 单元全部消失，必须**显式**清空（用例 5），不能只是「什么都不发」
  */
-export type RuntimeDelivery =
+export type DeltaDelivery =
     | { kind: "none" }
-    | { kind: "patch"; ops: RuntimePatchOp[] }
+    | { kind: "patch"; ops: DeltaOp[] }
     | { kind: "snapshot"; text: string; supersedes: "all" }
     | { kind: "clear" };
 
-/** 上一轮投递的水位（增量判据；第一版放内存，108 后由事件回放重建） */
-export interface RuntimeCursor {
-    /** place → 上轮投递的 renderedHash */
+/** 上一次投递的水位（增量判据；第一版放内存，108 后由事件回放重建） */
+export interface DeliveryCursor {
+    /** place → 上次投递的 renderedHash */
     delivered: Record<ContextPath, string>;
     wireVersion: string;
-    placementEpoch: number;
 }
 
 /** 一次投影的产物 */
 export interface ContextProjection {
-    /** system 容器：全量文本（每次请求重建，故天然无 patch） */
-    system: string;
-    /** runtime 容器：本次投递动作 */
-    runtime: RuntimeDelivery;
-    /** runtime 全量文本（snapshot 内容 / 调试对照） */
-    runtimeText: string;
-    /** 本次是否要求 rebaseline */
+    /** 信封全文（`help:` + `vars:`；每次请求全量重建，故天然无 patch） */
+    text: string;
+    /** 纯数据段（不带 help；golden 比对 / 调试用） */
+    data: string;
+    /** 自上次以来的单元级增量（无变化 = `kind: "none"`） */
+    delta: DeltaDelivery;
+    /** 本次是否要求重发全量 */
     needRebaseline: boolean;
 }
 
 export interface ProjectionResult {
     projection: ContextProjection;
-    /** 下一轮的水位 */
-    cursor: RuntimeCursor;
+    /** 下一次的水位 */
+    cursor: DeliveryCursor;
 }
 
 // ─── step 统计 ─────────────────────────────────────────

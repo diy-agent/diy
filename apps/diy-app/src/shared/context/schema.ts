@@ -6,8 +6,6 @@ import type { ContextLab, PlaceCandidate } from "./preview";
 import type { StepSummary } from "./steps";
 import type { CtxChangeRow, CtxLogRef } from "./changelog";
 
-const Container = z.enum(["system", "runtime"]);
-
 /** 一份投递：文本 + 每个 path 的行号区间（选中联动高亮用） */
 const delivery = z.object({
     places: z.array(z.string()),
@@ -16,11 +14,10 @@ const delivery = z.object({
     lines: z.record(z.string(), z.object({ from: z.number(), to: z.number() })),
 });
 
-/** 候选投递单元（规则表里可选的行） */
+/** 候选投递单元（结构树表用） */
 export const ContextPlaceCandidateSchema: z.ZodType<PlaceCandidate[]> = z.array(
     z.object({
         path: z.string(),
-        system: z.boolean(),
         reason: z.string(),
     }),
 );
@@ -38,20 +35,18 @@ export const ContextLabSchema: z.ZodType<ContextLab> = z.object({
             preview: z.string(),
             valueHash: z.string(),
             place: z.string().nullable(),
-            container: Container.nullable(),
             hasValue: z.boolean(),
         }),
     ),
     rules: z.array(
         z.object({
             place: z.string(),
-            container: Container,
             renders: z.array(z.string()),
             reason: z.string(),
         }),
     ),
-    system: delivery,
-    runtime: delivery,
+    text: delivery,
+    data: delivery,
     request: z.object({
         body: z.record(z.string(), z.unknown()).nullable(),
         note: z.string(),
@@ -69,25 +64,22 @@ export const StepSummarySchema: z.ZodType<StepSummary> = z.object({
     turnId: z.string(),
     model: z.string(),
     wireVersion: z.string(),
-    bytes: z.object({ system: z.number(), runtime: z.number() }),
-    systemPlaces: z.array(z.string()),
-    runtimePlaces: z.array(z.string()),
+    bytes: z.object({ system: z.number() }),
+    places: z.array(z.string()),
     sincePrev: z
         .object({
             changed: z.array(z.string()),
             systemDiffers: z.boolean(),
-            runtimeDiffers: z.boolean(),
             /** `history:` 注记段是否变（老快照缺字段 = false，不下结论） */
             historyDiffers: z.boolean(),
             summaryDiffers: z.boolean(),
             incomparable: z.boolean(),
             systemSize: z.object({ add: z.number(), del: z.number() }),
-            runtimeSize: z.object({ add: z.number(), del: z.number() }),
             historySize: z.object({ add: z.number(), del: z.number() }),
         })
         .nullable(),
     diff: z
-        .object({ system: z.array(diffLine), runtime: z.array(diffLine), history: z.array(diffLine) })
+        .object({ system: z.array(diffLine), history: z.array(diffLine) })
         .nullable()
         .optional(),
 });
@@ -109,22 +101,18 @@ export const ContextDiffSchema = z.object({
     incomparable: z.boolean(),
     changed: z.array(z.string()),
     systemDiffers: z.boolean(),
-    runtimeDiffers: z.boolean(),
     /** `history:` 注记段（压缩索引）是否变 —— 它不是变量树单元，故与 `changed` 无关 */
     historyDiffers: z.boolean(),
     systemDiff: z.array(diffLine),
-    runtimeDiff: z.array(diffLine),
     historyDiff: z.array(diffLine),
-    /** target 侧的**全文**（system 信封 / runtime 信封）—— `<>` 原始数据视图用。
+    /** target 侧的**全文**（system 信封）—— `<>` 原始数据视图用。
      *  为什么随 diff 一起给：那两个 view 的"原始数据"就是这份文本本身，另开一个 RPC
      *  只会多一次 round-trip 且两份可能不同源（diff 是同一份 steps 记录算的）。 */
     systemText: z.string(),
-    runtimeText: z.string(),
     /** 同上，`history:` 段全文（空串 = 该轮没有这一段） */
     historyText: z.string(),
     /** base 侧全文（没有上一步 = null）—— 供"两侧对照"看原始数据 */
     baseSystemText: z.string().nullable(),
-    baseRuntimeText: z.string().nullable(),
     baseHistoryText: z.string().nullable(),
 });
 export type ContextDiff = z.infer<typeof ContextDiffSchema>;
@@ -151,7 +139,7 @@ export type Stats = z.infer<typeof StatsSchema>;
 /**
  * 变更历史的一条**记录视图**（##310 二版）：每步一条（有变才写；首条 = baseline）。
  * 附带的徽章两段来源不同、都可能不可得（→ null，UI 不画徽章，不谎报）：
- *   · 划分与两份容器是否变 ← 真发投递快照（按 turnId join；快照已被清理就没有）
+ *   · 信封全文是否变 ← 真发投递快照（按 turnId join；快照已被清理就没有）
  *   · 缓存率与金额 ← 用量账本（会话目录下的 `usage.jsonl`；##379 前是平铺 `local/<key>.usage.jsonl`，读侧双认），按 turnId join
  */
 export interface HistoryEntryView {
@@ -164,9 +152,7 @@ export interface HistoryEntryView {
     /** 该条所属轮在**投递快照**里的 1 基序号（点行驱动中栏 diff 用；快照不可得 = null） */
     turnIndex: number | null;
     changes: CtxChangeRow[];
-    systemPlaces: string[];
     systemDiffers: boolean | null;
-    runtimeDiffers: boolean | null;
     /** `history:` 注记段是否变（快照缺字段 = null，UI 不画徽章） */
     historyDiffers: boolean | null;
     incomparable: boolean | null;
@@ -192,9 +178,7 @@ const historyEntrySchema: z.ZodType<HistoryEntryView> = z.object({
     ref: z.object({ turnId: z.string(), stepId: z.string(), step: z.number() }),
     turnIndex: z.number().nullable(),
     changes: z.array(changeRowSchema),
-    systemPlaces: z.array(z.string()),
     systemDiffers: z.boolean().nullable(),
-    runtimeDiffers: z.boolean().nullable(),
     historyDiffers: z.boolean().nullable(),
     incomparable: z.boolean().nullable(),
     cacheHitRate: z.number().nullable(),

@@ -34,9 +34,7 @@ const stateOf = (values: Record<string, unknown>): ContextTreeState => ({
     values,
     renderers: {},
     places: [],
-    placement: {},
     wireVersion: "w1",
-    placementEpoch: 0,
 });
 const snap = (values: Record<string, unknown>, hashes: Record<string, string>): CtxSnapshot => ({
     tree: stateOf(values),

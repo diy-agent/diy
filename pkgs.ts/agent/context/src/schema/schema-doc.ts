@@ -64,7 +64,7 @@ export function fieldNames(schema: ZodObject): string[] {
 // 与上面 `fieldDocs` 的分工：`fieldDocs` 只到**一级**（紧凑表），本函数**递归**
 // （对象 → 子字段、数组 → 元素结构），供信封的 `help:` 块使用（##310 六轮拍板：
 // 「help 只能由 zod 派生」—— 手写的结构说明必然腐坏，实测 `CONTEXT_GUIDE` 宣称
-// identity/rules/guard 进 system，而真源 `context.yaml` 里 identity 其实在 runtime）。
+// 以前按「投递名单」裁剪时 identity 可能被划到另一侧，help 就会说错话）。
 //
 // 产出形状（刻意**扁平可读**，子字段与 `desc`/`type` 同级，不套 `fields:`）：
 //

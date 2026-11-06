@@ -219,7 +219,7 @@ sync-dev-home() {
 
     mkdir -p "$dst"
     local f missing=()
-    for f in model.yaml context.yaml personas.yaml providers.custom.yaml; do
+    for f in model.yaml input-limit.yaml personas.yaml providers.custom.yaml; do
         if [[ -f "$src/$f" ]]; then
             run cp -p "$src/$f" "$dst/$f"
         else

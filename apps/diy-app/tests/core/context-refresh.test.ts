@@ -20,8 +20,7 @@ import { readCtxLog } from "../../src/main/core/context-changelog";
 import { isV2Entry, entryToRows } from "../../src/shared/context/changelog";
 import * as yaml from "js-yaml";
 import { appendUserKey, renderSummaryPart, tailEnvelope } from "@diy-agent/context/envelope";
-import { buildDelivery, defaultSystemPlaces, runtimeDiffDelivery } from "@diy-agent/context/delivery";
-import { saveSystemPlaces } from "../../src/main/core/context-config";
+import { buildDelivery, controlDeltaDelivery } from "@diy-agent/context/delivery";
 
 let PROJECT = "";
 beforeAll(() => {
@@ -106,17 +105,17 @@ function promptText(model: MockLanguageModelV3, callIndex: number): string {
 }
 
 describe("信封：尾部各段各占一个顶层键（tailEnvelope / appendUserKey）", () => {
-    it("summary 段与 runtime 并列、user 在最后 —— 自动生成的段不混进 user.message", () => {
-        const out = tailEnvelope(["summary: 上一次压缩的结论", "runtime:\n  task:\n    body: x"], "回复 1");
-        expect(out).toBe('summary: 上一次压缩的结论\nruntime:\n  task:\n    body: x\nuser:\n  message: "回复 1"');
+    it("summary 段与 vars 并列、user 在最后 —— 自动生成的段不混进 user.message", () => {
+        const out = tailEnvelope(["summary: 上一次压缩的结论", "vars:\n  task:\n    body: x"], "回复 1");
+        expect(out).toBe('summary: 上一次压缩的结论\nvars:\n  task:\n    body: x\nuser:\n  message: "回复 1"');
         // 关键：`user.message` 只剩用户真话（曾经注记被并进这里，模型把它当任务去查 —— tasks/5 实测）
         expect(out.slice(out.indexOf("\nuser:"))).not.toContain("summary");
         // 自动段在前、user 在最后
-        expect(out.indexOf("summary:")).toBeLessThan(out.indexOf("runtime:"));
-        expect(out.indexOf("\nuser:")).toBeGreaterThan(out.indexOf("runtime:"));
+        expect(out.indexOf("summary:")).toBeLessThan(out.indexOf("vars:"));
+        expect(out.indexOf("\nuser:")).toBeGreaterThan(out.indexOf("vars:"));
     });
     it("没有自动段时逐字等于旧形（appendUserKey）", () => {
-        expect(tailEnvelope(["runtime:\n  a: 1"], "你好")).toBe(appendUserKey("runtime:\n  a: 1", "你好"));
+        expect(tailEnvelope(["vars:\n  a: 1"], "你好")).toBe(appendUserKey("vars:\n  a: 1", "你好"));
     });
     it("一个片段都没有 → 原样（不编 user 段）", () => {
         expect(tailEnvelope([], undefined)).toBe("");
@@ -125,54 +124,54 @@ describe("信封：尾部各段各占一个顶层键（tailEnvelope / appendUser
     it("摘要也是**自动生成的段** → 顶层键 `summary:`，不混进 user.message（withSummary 的坑）", () => {
         // 用户 2026-10-15：「user.message 消息里不能加其他任何消息」——摘要是自动生成的段，
         // 与注记同法各占一个顶层键（此前它作为普通 user 消息前置 → 被 normalizeUserRuns 并进正文）
-        const out = tailEnvelope([renderSummaryPart("上一段的结论"), "runtime:\n  task:\n    body: x"], "新一句");
+        const out = tailEnvelope([renderSummaryPart("上一段的结论"), "vars:\n  task:\n    body: x"], "新一句");
         const loaded = yaml.load(out, { schema: yaml.JSON_SCHEMA }) as any;
         expect(loaded.summary).toBe("上一段的结论");
-        expect(loaded.runtime.task.body).toBe("x");
+        expect(loaded.vars.task.body).toBe("x");
         expect(loaded.user.message).toBe("新一句");
         // 关键：user.message 只剩用户真话（不含摘要/变量树）
         expect(loaded.user.message).not.toContain("上一段的结论");
         expect(loaded.user.message).not.toContain("body");
         // 顺序：summary 在前，user 在最后
-        expect(out.indexOf("summary:")).toBeLessThan(out.indexOf("runtime:"));
-        expect(out.indexOf("\nuser:")).toBeGreaterThan(out.indexOf("runtime:"));
+        expect(out.indexOf("summary:")).toBeLessThan(out.indexOf("vars:"));
+        expect(out.indexOf("\nuser:")).toBeGreaterThan(out.indexOf("vars:"));
     });
     it("空摘要 → 空串（不投递，不编空段）", () => {
         expect(renderSummaryPart("   ")).toBe("");
     });
 
-    it("runtime 之前、user 之后，一份合法 YAML（不是两条相邻 user 被合并出的怪东西）", () => {
-        const out = appendUserKey("runtime:\n  task:\n    body: x", "你好");
-        expect(out).toBe('runtime:\n  task:\n    body: x\nuser:\n  message: "你好"');
+    it("vars 之前、user 之后，一份合法 YAML（不是两条相邻 user 被合并出的怪东西）", () => {
+        const out = appendUserKey("vars:\n  task:\n    body: x", "你好");
+        expect(out).toBe('vars:\n  task:\n    body: x\nuser:\n  message: "你好"');
     });
     it("多行输入用块标量（仍是合法 YAML，内容逐字保真）", () => {
-        const out = appendUserKey("runtime:\n  a: 1", "第一行\n第二行");
+        const out = appendUserKey("vars:\n  a: 1", "第一行\n第二行");
         expect(out).toContain("message: |");
         expect(out).toContain("    第一行\n    第二行");
     });
 });
 
-describe("runtimeDiff：只写**变化**的原子单元 → 变更后的当前值", () => {
+describe("变量增量：只写**变化**的原子单元 → 变更后的当前值", () => {
     const globals = (body: string): Record<string, unknown> => ({
         diy: { cli: "/d", home: "/h" },
         task: { uri: "projects/1/tasks/1", title: "T", state: "active", dir: "/h/t", body },
         skills: [],
     });
     it("变了的单元出现（值 = 新值全量），没变的单元不出现", () => {
-        const next = buildDelivery(globals("新值"), ["diy"]);
-        const diff = runtimeDiffDelivery(next.tree, ["task.body"]);
-        expect(diff.text).toBe('runtimeDiff:\n  task:\n    body: "新值"');
+        const next = buildDelivery(globals("新值"));
+        const diff = controlDeltaDelivery(next.tree, ["task.body"]);
+        expect(diff.text).toBe('vars:\n  task:\n    body: "新值"');
         expect(diff.text).not.toContain("title");
     });
     it("无变化 → 空串（调用方据此**不注入**，不砸前缀缓存）", () => {
-        const next = buildDelivery(globals("x"), ["diy"]);
-        expect(runtimeDiffDelivery(next.tree, []).text).toBe("");
-        expect(runtimeDiffDelivery(next.tree, []).bytes).toBe(0);
+        const next = buildDelivery(globals("x"));
+        expect(controlDeltaDelivery(next.tree, []).text).toBe("");
+        expect(controlDeltaDelivery(next.tree, []).bytes).toBe(0);
     });
 });
 
 describe("轮内重算：变量变了 → 下一步请求即用新值", () => {
-    it("轮内改任务正文（runtime）→ 第二步请求已含新正文", async () => {
+    it("轮内改任务正文 → 第二步请求已含新正文", async () => {
         const uri = newUri("轮内改正文", "正文旧值-AAAAAAAAAA");
         let call = 0;
         const model = new MockLanguageModelV3({
@@ -193,14 +192,14 @@ describe("轮内重算：变量变了 → 下一步请求即用新值", () => {
         // 第一步：旧值
         expect(promptText(model, 0)).toContain("正文旧值-AAAAAAAAAA");
         expect(promptText(model, 0)).not.toContain("正文新值-BBBBBBBBBB");
-        // 第二步：新值（不必等下一轮）—— 形态是**追加的 runtime: 控制增量**（让模型知道"哪几个单元变了"）
+        // 第二步：新值（不必等下一轮）—— 形态是**追加的 vars: 变量增量**（让模型知道"哪几个单元变了"）
         const p1 = promptText(model, 1);
         expect(p1).toContain("正文新值-BBBBBBBBBB");
-        expect(p1).toContain("\nruntime:\n");
+        expect(p1).toContain("\nvars:\n");
         expect(p1).toContain('    body: "正文新值-BBBBBBBBBB"');
     });
 
-    it("轮内改任务标题（system）→ 第二步请求追加 system 增量（system 快照本身不动）", async () => {
+    it("轮内改任务标题 → 第二步请求追加变量增量（system 快照本身不动）", async () => {
         const uri = newUri("标题旧值-AAAAAAAAAA");
         let call = 0;
         const model = new MockLanguageModelV3({
@@ -223,7 +222,7 @@ describe("轮内重算：变量变了 → 下一步请求即用新值", () => {
         // 变化只能落在 user 增量里的 `system:` 段。旧断言只验了"第二步能看到新值" ——
         // 那种断言对"把整条 system 重建一遍"同样是绿的，而那正是最贵的 bug（##486）。
         expect(systemTextOf(model, 1)).toBe(systemTextOf(model, 0));
-        expect(promptText(model, 1)).toContain("\nsystem:\n");
+        expect(promptText(model, 1)).toContain("\nvars:\n");
     });
 
     it("★ 跨轮：system 逐字复用段首快照，历史消息逐条不变（前缀缓存从 system 一直覆盖到历史末尾）", async () => {
@@ -242,11 +241,11 @@ describe("轮内重算：变量变了 → 下一步请求即用新值", () => {
         // ① 第一条永远是 system（变量树全在它里面）
         expect(p0[0]?.role).toBe("system");
         expect(p1[0]?.role).toBe("system");
-        // 首轮那条 system 里两类变量都在：help（结构说明）+ system（稳定树）+ runtime（易变树）
+        // 首轮那条 system 里：help（结构说明）+ vars（变量树，一份全量）
         const sys0 = systemTextOf(model, 0);
         expect(sys0.startsWith("help:\n")).toBe(true);
-        expect(sys0).toContain("\nsystem:\n");
-        expect(sys0).toContain("\nruntime:\n");
+        expect(sys0).toContain("\nvars:\n");
+        expect(sys0).not.toContain("\nruntime:\n");
         // 并且整个 prompt 只有一条 system
         expect(p0.filter((m) => m.role === "system")).toHaveLength(1);
         // ② system 逐字节相同 —— 跨轮不重建（重建 = 整段历史按 cache miss 计费）
@@ -257,7 +256,7 @@ describe("轮内重算：变量变了 → 下一步请求即用新值", () => {
         expect(p1.length).toBeGreaterThan(p0.length);
     }, 60_000);
 
-    it("没变就不注入：第二步请求里不出现重复的 runtime 段", async () => {
+    it("没变就不注入：第二步请求里不出现重复的变量段", async () => {
         const uri = newUri("不变量", "正文固定值-CCCCCCCCCC");
         let call = 0;
         const model = new MockLanguageModelV3({
@@ -273,7 +272,7 @@ describe("轮内重算：变量变了 → 下一步请求即用新值", () => {
         for await (const _op of mgr.chat(uri, "开始")) void _op;
 
         const count = (s: string, sub: string): number => s.split(sub).length - 1;
-        // runtime 只出现一次（若每步都追加而非"变了才注入"，这里会 > 1）
+        // 变量值只出现一次（若每步都追加而非"变了才注入"，这里会 > 1）
         expect(count(promptText(model, 1), "正文固定值-CCCCCCCCCC")).toBe(1);
     });
 });
@@ -324,9 +323,9 @@ describe("压缩注记的位置：自占一条 user 消息，挂在历史第一�
         // ② 不变量：两轮之间 **system 逐字节相等**（头部出现任何每轮变的量，整段历史前缀缓存全废）
         expect(textOf(prompt[0]?.content)).toBe(textOf(prompt0[0]?.content));
 
-        // 尾部信封 = 控制增量（runtime）+ 当轮 chat（新形态不再有顶层 user:）
+        // 尾部信封 = 变量增量 + 当轮 chat（新形态不再有顶层 user:）
         const tail = textOf(prompt[prompt.length - 1]?.content);
-        expect(tail).toContain("runtime:");
+        expect(tail).toContain("vars:");
         expect(hasHistoryKey(tail)).toBe(false);
         expect(tail).toContain("chat:");
         expect(tail).toContain('text: "第二轮');
@@ -416,14 +415,12 @@ describe("段首冻结（用户 2026-10-31 铁律）：非压缩时 system 与�
     /**
      * 口径原话：「一旦发出 role:system 消息后，啥变都不要更新 history，除非压缩才会真重建 history」。
      *
-     * 这条用例故意把 **task.state 划进 system 名单** —— 那正是最容易被误判成「必须重建 system」的
-     * 场景（旧注释就写着「放进 system 会砸缓存」）。实际应该：state 变了只在**末条 user** 里补一条
-     * `system:` 增量，system 本身逐字不动。
+     * 判据与「哪个单元」无关：任何变量变了都只在**末条 user** 里补一条 `vars:` 增量，
+     * system（段首快照）本身逐字不动。
      */
-    it("★ 三轮 + 跨轮改变量（名单里的 state 也变了）→ system 逐字相同，变化只补在末条 user", async () => {
+    it("★ 三轮 + 跨轮改变量（state 也变了）→ system 逐字相同，变化只补在末条 user", async () => {
         const uri = newUri("冻结三段", "正文固定-EEEEEEEEEE");
-        saveSystemPlaces(diyHome(), [...defaultSystemPlaces(), "task.state"]);
-        try {
+        {
             const model = new MockLanguageModelV3({
                 provider: "stub",
                 modelId: "stub-model",
@@ -431,7 +428,7 @@ describe("段首冻结（用户 2026-10-31 铁律）：非压缩时 system 与�
             });
             const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
             for await (const _op of mgr.chat(uri, "第一轮")) void _op;
-            // 跨轮变更：一个在 system 名单（state）、一个在 runtime（body）
+            // 跨轮变更：state 与 body 各是一个单元
             updateTask(uri, { state: "active", body: "正文固定-FFFFFFFFFF" });
             for await (const _op of mgr.chat(uri, "第二轮")) void _op;
             updateTask(uri, { state: "done" });
@@ -448,16 +445,14 @@ describe("段首冻结（用户 2026-10-31 铁律）：非压缩时 system 与�
             for (const later of [prompts[1]!, prompts[2]!]) {
                 for (let i = 0; i < p0.length; i += 1) expect(later[i]).toEqual(p0[i]);
             }
-            // ③ 变化补在**末条 user**：state 走 `system:` 段（它在名单里），body 走 `runtime:` 段
+            // ③ 变化补在**末条 user**：state 与 body 都在同一段 `vars:` 里
             const last1 = lastUserTextOf(prompts[1]!);
-            expect(last1).toMatch(/system:\n\s+task:\n\s+state: active/);
+            expect(last1).toMatch(/state: active/);
             expect(last1).toContain("正文固定-FFFFFFFFFF");
             // ④ 第三轮只补 state，不重发 body（未变就不发）
             const last2 = lastUserTextOf(prompts[2]!);
-            expect(last2).toMatch(/system:\n\s+task:\n\s+state: done/);
+            expect(last2).toMatch(/state: done/);
             expect(last2).not.toContain("正文固定-FFFFFFFFFF");
-        } finally {
-            saveSystemPlaces(diyHome(), defaultSystemPlaces());
         }
     }, 90_000);
 });

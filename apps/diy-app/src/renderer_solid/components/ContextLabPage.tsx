@@ -1,22 +1,19 @@
 /**
  * ContextLabPage — 上下文树页（**独立子页面**，任务 148 / ##310）。
  *
- * 一句话：模型 wire = **一个 YAML 信封**（`help` 结构说明 + `system` / `runtime` / `runtimeDiff` / `user`
- * 值段，见 shared/context/envelope.ts），本页把「它到底长什么样、哪一步变了」摆出来。
+ * 一句话：模型 wire = **一个 YAML 信封**（`help` 结构说明 + `vars` 变量树，见
+ * shared/context/envelope.ts），本页把「它到底长什么样、哪一步变了」摆出来。
  *
  * 两列（左=输入，中=产出）；每块右上角都有 `<>`：**就地切成该块背后的原始数据**（原样，
  * 不经任何加工）—— 视图一旦和真实数据对不上，人只能靠猜；原文摆出来就无从撒谎。
  *
- *   · 左「结构树」 变量契约（zod），含类型/描述与无值变量。
- *                  **划分操作就在这做**：点节点上的 ⇄ 换容器（system ⇄ runtime），
- *                  改动写进 `$DIY_HOME/context.yaml`（**真源**，真发读同一份）。
+ *   · 左「结构树」 变量契约（zod），含类型/描述与无值变量；单元列 = 增量/变更历史的粒度。
  *   · 左「变更历史」= **表格**：`轮次 | 步 | 实际请求`（只到"步"这一层，不列变了哪些字段）。
  *                  「实际请求」是超链接 → 弹**流量抽屉**（与对话页报错后那个「查看实际请求」同一个）。
  *                  点一行 = 选中该步（驱动中栏两块）。数据读会话目录下的 `changelog.jsonl`（##379；不轮询）。
- *   · 左「变更统计」= 按项目累计的长期视角（"这个节点变了几次"）—— 判断该不该待在 system 的判据。
+ *   · 左「变更统计」= 按项目累计的长期视角（"这个节点变了几次"）—— 判断该不该单列成一个单元的判据。
  *   · 中「变量树变更」整棵变量树 + 把**生效那条记录**的变更标在命中节点上（步级 · 变量级）。
- *   · 中「system / runtime diff」两份全文各自一块（轮级 · 文本级，行号 + hunk 折叠）。
- *                  runtime 那块 `<>` 给的是**该步实际发出去的末条 user 消息**（runtime 变更告知原文）。
+ *   · 中「system diff」真发全文逐行比（轮级 · 文本级，行号 + hunk 折叠）。
  *   · 中「该步实际请求」这一步真发出去的那条 HTTP 请求（流量日志 = 地面真相）+ 一键跳流量页定位。
  *
  * 已删（##310 六轮）：**「请求预览（实际发送格式）」**（那是*仿真*请求体，真发形态看上面那块）
@@ -35,10 +32,10 @@ import { projectFromUri } from "../../shared/task-uri";
 import { buildVarTree, type VarNode } from "../../shared/var-tree";
 import { AssembleGlobalsSchema } from "@diy-agent/context/schema/prompt-schema";
 import { notificationStore } from "../store/notificationStore";
-import type { ContextLab, PlaceCandidate } from "../../shared/context/preview";
+import type { ContextLab } from "../../shared/context/preview";
 import { diffSize } from "../../shared/context/steps";
 import { foldCounts, foldDiff, numberDiff, type DiffRow } from "../../shared/context/diff-view";
-import { attributionOf, foldStatRows, sysCauses, unitsFromRules, type Attribution } from "../../shared/context/attribution";
+import { attributionOf, allUnits, foldStatRows, unitsFromRules, type Attribution } from "../../shared/context/attribution";
 import { fmtAgo, fmtShortTime } from "../../shared/date-format";
 import type { ContextDiff, CtxLog, HistoryEntryView, Stats } from "../../shared/context/schema";
 import type { DiffLine } from "../../shared/line-diff";
@@ -114,56 +111,50 @@ function Fold(props: { k: string; label: string; extra?: string; right?: JSX.Ele
     );
 }
 
-/** 可点击的容器开关（结构树用）：显示当前归属，点一下在 system ⇄ runtime 间切 */
-function ContainerToggle(props: { c: "system" | "runtime" | null; onToggle: () => void }) {
-    const eff = (): "system" | "runtime" => props.c ?? "runtime";
-    return (
-        <button
-            class="btn btn-xs"
-            classList={{
-                "btn-primary": eff() === "system",
-                "btn-ghost opacity-60": eff() === "runtime",
-            }}
-            title={
-                (eff() === "system"
-                    ? "当前：system（稳定份，进提示词开头）。点击改为 runtime"
-                    : "当前：runtime（易变份，进 user 消息）。点击改为 system") +
-                " —— 改动写入 context.yaml，**下一轮真发**生效"
-            }
-            onClick={(e) => {
-                e.stopPropagation();
-                props.onToggle();
-            }}
-        >
-            {eff()}
-        </button>
-    );
-}
-
 /** 变化率（0~1）→ 百分比文本 */
 const fmtRate = (rate: number): string => `${Math.round(rate * 100)}%`;
+
+/** 投递归属徽章（三态：单元 / 跨单元容器 / 未投递） */
+function UnitBadge(props: { a: Attribution }) {
+    if (props.a.kind === "unit") {
+        return (
+            <span class="badge badge-xs font-mono" title={`投递单元 ${props.a.place}`}>
+                {props.a.place}
+            </span>
+        );
+    }
+    if (props.a.kind === "container") {
+        return (
+            <span class="badge badge-xs badge-neutral" title={`容器行：子字段分属 ${props.a.units.length} 个投递单元 —— ${props.a.units.join(", ")}`}>
+                {`跨 ${props.a.units.length} 单元`}
+            </span>
+        );
+    }
+    return (
+        <span class="badge badge-xs badge-ghost opacity-60" title="未投递（不在 PLACE_CANDIDATES，也不是某个单元的祖先）">
+            未投递
+        </span>
+    );
+}
 
 /** 结构树一行的高亮态（选中 + 容器色条） */
 const rowCls = (selected: boolean): string =>
     selected ? "bg-primary/20 ring-1 ring-primary/60" : "";
 
-/** 结构树节点：契约（类型/描述）+ 容器标记 + 换容器的 ⇄ */
+/** 结构树节点：契约（类型/描述）+ 单元标记 */
 function StructureRows(props: {
     nodes: VarNode[];
     depth?: number;
     prefix: string;
-    containerOf: (path: string) => "system" | "runtime" | null;
-    /** 该节点当前是否可切换容器（规则见 showSwap 的注释） */
-    canSwap: (path: string) => boolean;
+    /** 该 path 的投递归属（单元名 / 跨单元 / 未投递） */
+    attributionOf: (path: string) => Attribution;
     selected: string | null;
     onPick: (path: string) => void;
-    onSwap: (path: string) => void;
 }) {
     return (
         <For each={props.nodes}>
             {(n) => {
                 const path = () => (props.prefix ? `${props.prefix}.${n.name}` : n.name);
-                const c = () => props.containerOf(path());
                 return (
                     <>
                         <tr
@@ -180,13 +171,7 @@ function StructureRows(props: {
                             </td>
                             <td class="opacity-60">{n.desc ?? ""}</td>
                             <td class="whitespace-nowrap text-right">
-                                {/* 容器开关：显示当前归属，**点一下切换**（system ⇄ runtime）。
-                                    未成为单元时显示默认的 runtime —— 点它就划进 system，
-                                    因为"没声明"与"声明为 runtime"在投递上等价，不必区分。
-                                    只在"能成为单元"的节点上出现（见 canSwap），否则满树按钮没法看。 */}
-                                <Show when={props.canSwap(path())}>
-                                    <ContainerToggle c={c()} onToggle={() => props.onSwap(path())} />
-                                </Show>
+                                <UnitBadge a={props.attributionOf(path())} />
                             </td>
                         </tr>
                         <Show when={n.children && n.children.length > 0}>
@@ -194,11 +179,9 @@ function StructureRows(props: {
                                 nodes={n.children!}
                                 depth={(props.depth ?? 0) + 1}
                                 prefix={path()}
-                                containerOf={props.containerOf}
-                                canSwap={props.canSwap}
+                                attributionOf={props.attributionOf}
                                 selected={props.selected}
                                 onPick={props.onPick}
-                                onSwap={props.onSwap}
                             />
                         </Show>
                     </>
@@ -215,12 +198,6 @@ export function ContextLabPage(props: { uri: string }) {
 
     /** 选中的 path（结构树那一列的选中行；请求预览据此滚动高亮） */
     const [selected, setSelected] = createSignal<string | null>(null);
-    /**
-     * 划分规则（哪些变量进 system）：**读 main 的真源**（$DIY_HOME/context.yaml），
-     * 不存 localStorage —— 存本地的话页面改完预览变了、真发却不理（界面说谎）。
-     * 改动经 RPC 写回真源，**下一轮真发生效**（本轮已发的请求不会回溯）。
-     */
-    const [systemPlaces, setSystemPlaces] = createSignal<string[] | null>(null);
 
     /**
      * 选中的 step（null = 看"当前 vs 最后一步"）。
@@ -228,30 +205,10 @@ export function ContextLabPage(props: { uri: string }) {
      */
     const [pickedStep, setPickedStep] = createSignal<number | null>(null);
 
-    const [meta] = createResource(async () => {
-        return (await diyService.diy.context.candidates({})) as {
-            candidates: PlaceCandidate[];
-            defaultSystem: string[];
-        };
-    });
-
-    /** 划分规则真源（$DIY_HOME/context.yaml）+ 推荐名单；未加载完时先用推荐名单，避免空白 */
-    const [config, { refetch: refetchConfig }] = createResource(async () => {
-        return (await diyService.diy.context.config({})) as {
-            systemPlaces: string[];
-            defaults: string[];
-            fromFile: boolean;
-        };
-    });
-    /** 页面即时值：用户点过 ⇄ 就先用本地这份（不等 RPC 往返），否则用真源 */
-    const effectiveSystem = (): string[] =>
-        systemPlaces() ?? config()?.systemPlaces ?? meta()?.defaultSystem ?? [];
-
-    const [lab, { refetch }] = createResource(effectiveSystem, async (sys) => {
+    const [lab, { refetch }] = createResource(async () => {
         return (await diyService.diy.context.lab({
             project: projectFromUri(props.uri),
             taskUri: props.uri,
-            systemPlaces: sys,
             model: undefined,
         })) as ContextLab;
     });
@@ -343,7 +300,7 @@ export function ContextLabPage(props: { uri: string }) {
 
     /**
      * 变更统计（**按项目累计**，跨任务）：回答"这个节点用了几天变了几次 / 变化率"。
-     * 为什么不按任务：单任务样本太小；长期累计才有"该不该待在 system"的判据价值
+     * 为什么不按任务：单任务样本太小；长期累计才有"该不该单列成单元"的判据价值
      * （逐轮明细已由上面的「变更历史（真发轮次）」给出；见 shared/context/stats.ts 头注）。
      */
     const [stats, { refetch: refetchStats }] = createResource(
@@ -363,84 +320,35 @@ export function ContextLabPage(props: { uri: string }) {
      * ⚠️ source 用**字符串**：createResource 对非函数 source 按 `===` 比较，传对象字面量的话
      * 每次渲染都是新引用 → 无谓重拉（甚至把它变成一台 RPC 打桩机）。
      */
-    const diffKey = (): string =>
-        `${props.uri}\u0000${pickedStep() ?? "live"}\u0000${effectiveSystem().join(",")}`;
+    const diffKey = (): string => `${props.uri}\u0000${pickedStep() ?? "live"}`;
     const [diff, { refetch: refetchDiff }] = createResource(diffKey, async (k) => {
-        const [uri, step, sys] = k.split("\u0000");
+        const [uri, step] = k.split("\u0000");
         if (!uri) return null;
         return (await diyService.diy.context.diff({
             project: projectFromUri(uri),
             taskUri: uri,
             step: step === "live" ? undefined : Number(step),
-            systemPlaces: sys ? sys.split(",") : undefined,
         })) as ContextDiff | null;
     });
 
-    /** 顶栏刷新：重拉六处（当前上下文 / 变更历史 / 变更详情 / 划分规则真源 / 变更统计）——
-     *  没有实时推送，只有显式刷新（外部改了 context.yaml 也靠它捡回来） */
+    /** 顶栏刷新：重拉五处（当前上下文 / 变更历史 / 变更详情 / 变更统计 / 该步请求）——
+     *  没有实时推送，只有显式刷新。 */
     const refresh = (): void => {
         void refetch();
         void refetchHistory();
         void refetchDiff();
-        void refetchConfig();
         void refetchStats();
         void refetchStepTraffic();
     };
 
-    /**
-     * 切换容器（点一下开关）。
-     * 只维护 system 名单：在名单里 → 移出（回默认 runtime）；不在 → 加入。
-     * 新项与已有项互为祖先/后代时，先把重叠的摘掉（places 不许重叠）。
-     */
-    const toggleUnit = (path: string): void => {
-        const cur = effectiveSystem();
-        const next = cur.includes(path)
-            ? cur.filter((p) => p !== path)
-            : [...cur, path].filter((x) => !(path.startsWith(`${x}.`) || x.startsWith(`${path}.`)));
-        // 即时反馈（不等 RPC）→ 写回真源；失败则回滚成真源的值并 toast
-        setSystemPlaces(next);
-        void (async () => {
-            try {
-                // inputLimitChars 键必须出现（本仓契约：optional 字段也是必填键），undefined = 只改划分
-                const r = await diyService.diy.context.setConfig({ systemPlaces: next, inputLimitChars: undefined });
-                setSystemPlaces(r.systemPlaces); // 服务端净化过的结果（可能与请求不同）
-                void refetchConfig();
-            } catch (e) {
-                setSystemPlaces(null);
-                notificationStore.addToastLegacy(
-                    "error",
-                    `划分规则写入失败：${e instanceof Error ? e.message : String(e)}`,
-                );
-            }
-        })();
-    };
+    /** 当前投递单元（真发同一份名单）。纯函数在 shared/context/attribution.ts（RV-10）。 */
+    const unitMap = (): Set<string> => unitsFromRules(lab()?.rules ?? []);
 
-    /** 当前投递单元（path → 容器）。纯函数在 shared/context/attribution.ts（RV-10）。 */
-    const unitMap = (): Map<string, "system" | "runtime"> => unitsFromRules(lab()?.rules ?? []);
-    const containerOf = (path: string): "system" | "runtime" | null => unitMap().get(path) ?? null;
-
-    /** 该节点能否切换容器（开关按钮的显示规则）：
-     *  已是单元 → 能；否则祖先与后代都不能是单元 → 能（任意粒度）。
-     *  已有单元覆盖的子孙不显示 —— 要么跟着父走，要么先撤父。 */
-    const canSwap = (path: string): boolean => {
-        const units = unitMap();
-        if (units.has(path)) return true;
-        for (const u of units.keys()) {
-            if (path.startsWith(`${u}.`)) return false;
-            if (u.startsWith(`${path}.`)) return false;
-        }
-        return true;
-    };
-
-    /**
-     * 归属（三态）与归因（system 重建原因）的**纯函数已提到 `shared/context/attribution.ts`**
-     * （review RV-10：一份实现 + 可单测）。这里只负责把**页面当前划分**（`unitMap()`）喂进去。
-     * ⚠️ 注意两处口径**有意不同**（review RV-09）：
-     *   · 本页「变更统计」表的归属列与中间容器折叠、结构树的 ⇄ 开关 = **当前**划分（用户眼前这把刀，改划分即重算）；
-     *   · 「变更历史（真发轮次）」的 sys 徽章 = **该轮快照**的划分（`sysCauses(changed, st.systemPlaces)`，
-     *     历史不该被当前划分改写 —— RV-02）。
-     */
+    /** 归属（三态）的**纯函数已提到 `shared/context/attribution.ts`**（review RV-10）。 */
     const attrOf = (path: string): Attribution => attributionOf(unitMap(), path);
+
+    /** 契约树的归属：按**全量候选单元**算（契约里可能有本轮不存在的变量，也要说出它属于哪个单元） */
+    const contractUnits = (): Set<string> => allUnits();
 
     const structure = () => buildVarTree(AssembleGlobalsSchema);
 
@@ -454,7 +362,7 @@ export function ContextLabPage(props: { uri: string }) {
      *
      * 为什么值得有：这一页的每个块都是**加工过的视图**（表格/折行/配色/摘要）。一旦视图和
      * 真实数据对不上，人只能靠猜。原文摆出来就无从撒谎 —— 而且它同时也是"发出去的到底是什么"
-     * 的证据链（system / runtime 两份全文、流量日志那条请求）。
+     * 的证据链（信封全文、流量日志那条请求）。
      */
     const [rawOf, setRawOf] = createSignal<string | null>(null);
     const rawBtn = (k: string, label: string): JSX.Element => (
@@ -606,10 +514,6 @@ export function ContextLabPage(props: { uri: string }) {
                         <tbody>
                             <For each={[...(h?.entries ?? [])].reverse()}>
                                 {(t) => {
-                                    // system 全量重建的原因：把该步变化的变量收拢到**该步快照的** system 单元
-                                    // （⚠️ 用 `t.systemPlaces` 当轮快照，不用页面当前划分 —— 改划分不该改写历史，RV-02）
-                                    const causes = (): string[] =>
-                                        t.incomparable === true ? [] : sysCauses(t.changes.map((c) => c.path), t.systemPlaces);
                                     const tip = (): string => {
                                         const bits = [`${t.ts}`, `${t.ref.turnId} · 第 ${t.ref.step} 步`];
                                         bits.push(
@@ -623,9 +527,7 @@ export function ContextLabPage(props: { uri: string }) {
                                             bits.push(
                                                 t.incomparable
                                                     ? "system 重建（编码版本变化，不可比）"
-                                                    : causes().length > 0
-                                                      ? `system 重建，由 ${causes().join(", ")} 引起`
-                                                      : "system 重建（非值变化引起）",
+                                                    : "system 重建（段首快照换了一份）",
                                             );
                                         }
                                         if (t.cacheHitRate !== null) bits.push(`缓存命中 ${Math.round(t.cacheHitRate * 100)}%`);
@@ -648,18 +550,10 @@ export function ContextLabPage(props: { uri: string }) {
                                         >
                                             <td class="whitespace-nowrap font-mono">
                                                 {t.turnIndex !== null ? `#${t.turnIndex}` : "—"}
-                                                {/* 轮内元信息（步骤级）：system 是否全量重建 + 由谁引起、runtime 是否变。
+                                                {/* 轮内元信息（步骤级）：system 全文是否重建。
                                                     放这一格而不另开列 —— 表格只到"步"这一层，细节在行的 title 里。 */}
                                                 <Show when={t.systemDiffers}>
-                                                    <span class="badge badge-primary badge-xs ml-1 font-mono">
-                                                        {(() => {
-                                                            const c = causes();
-                                                            return c.length === 0 ? "sys" : `sys ${c.slice(0, 2).join(",")}${c.length > 2 ? ` +${c.length - 2}` : ""}`;
-                                                        })()}
-                                                    </span>
-                                                </Show>
-                                                <Show when={t.runtimeDiffers}>
-                                                    <span class="badge badge-warning badge-xs ml-1">run</span>
+                                                    <span class="badge badge-primary badge-xs ml-1 font-mono">sys</span>
                                                 </Show>
                                                 {/* history 段（压缩索引注记）变没变：它**不是变量树单元**，
                                                     所以只看左上那些行永远看不出它变了 —— 用户 2026-10-23 实测踩到 */}
@@ -713,7 +607,7 @@ export function ContextLabPage(props: { uri: string }) {
      * 与「变更详情」的分工（两把不同的尺，都要）：
      *   · 本块 = **步级 · 变量级**：读 changelog 的原子单元（`chain` 整体一条），点哪条记录标哪条
      *     → 不会与左栏错位（左栏点击直接喂这一块，没有"轮序→步序"的间接映射）；
-     *   · 「变更详情」= **轮级 · 文本级**：system/runtime 两份全文逐行比，看"发出去的字节差在哪"。
+     *   · 「变更详情」= **轮级 · 文本级**：信封全文逐行比，看"发出去的字节差在哪"。
      *
      * 树用 `lab().tree`（与真发同一条 assembleGlobals 链的**当前值树**）；标注用变更记录的
      * before/after 摘要 —— 所以"当前值"列永远是此刻的真值，"变更"列是本步的旧→新（可能截断）。
@@ -818,26 +712,22 @@ export function ContextLabPage(props: { uri: string }) {
     };
 
     /**
-     * 文本 diff（逐行 · 真发全文），**system / runtime 各一个 view**（用户 2026-10-15：
-     * 「diff view 的系统和 runtime 拆成 2 个 view」——两份全文各自有正文、混在一个块里
-     * 只会互相挤，展开态也没法各记各的）。
+     * 文本 diff（逐行 · 真发全文）—— 信封只有一份（##520），一块就够。
      *
      * 与前两块的**分工**（三把尺，各回答一个问题）：
      *   · 变量树变更 = **变量级**（哪几个变量变了，值旧→新，**压缩摘要**）；
      *   · 本块       = **文本级**（发出去的字节逐行差在哪，改动的整段上下文都在）—— vscode 观感；
      *   · 该步实际请求 = **地面真相**（磁盘上那条请求原文，证明确实发了这个）。
      *
-     * 数据源 = `steps.jsonl` 的 `systemText` / `runtimeText`（每轮**真发全文**，落盘事实）→
+     * 数据源 = `steps.jsonl` 的 `systemText`（每轮**真发全文**，落盘事实）→
      * 所以本块是**轮级**（该轮 vs 上一轮），不是步级：changelog 那份是压缩摘要，做不了行级 diff。
      *
-     * `<>` 给出这一侧的**全文本身**：
-     *   · system  → 该步的 system 上下文本体（= 变量树 + `help` 段，真发参数原样）
-     *   · runtime → 该步**实际发出去的末条 user 消息**（流量日志里那条；找不到才退回组装产物）
+     * `<>` 给出这份全文本身：该步的 system 上下文本体（= 变量树 + `help` 段，真发参数原样）。
      */
-    const diffPane = (which: "system" | "runtime") => {
+    const diffPane = () => {
         const d = () => diff();
-        const raw = (): DiffLine[] => (which === "system" ? (d()?.systemDiff ?? []) : (d()?.runtimeDiff ?? []));
-        const differs = (): boolean => (which === "system" ? (d()?.systemDiffers ?? false) : (d()?.runtimeDiffers ?? false));
+        const raw = (): DiffLine[] => d()?.systemDiff ?? [];
+        const differs = (): boolean => d()?.systemDiffers ?? false;
         const rows = (): DiffRow[] => {
             const all = raw();
             const folded = foldDiff(all, { context: 3, maxLines: DIFF_MAX_LINES });
@@ -906,7 +796,7 @@ export function ContextLabPage(props: { uri: string }) {
                             when={differs()}
                             fallback={
                                 <div class="rounded border border-base-300 bg-base-100 p-1 font-mono text-caption opacity-50">
-                                    （本份未变 —— system 每轮全量重发；runtime 只在易变项变了才不同）
+                                    （本份未变 —— system 是段首快照，压缩前不重建）
                                 </div>
                             }
                         >
@@ -960,44 +850,14 @@ export function ContextLabPage(props: { uri: string }) {
         );
     };
 
-    /** system 侧的原始数据 = 该步真发的 system 全文（steps.jsonl 的 systemText）——正文只放真发字节 */
+    /** 原始数据 = 该步真发的 system 全文（steps.jsonl 的 systemText）——正文只放真发字节 */
     const rawSystem = (): string => diff()?.systemText ?? "（没有真发记录）";
     /** 上面那份 raw 的说明（贴 view 顶的 info block；不掺进正文，免得被当成"发出去的内容"） */
     const rawSystemInfo = (): string => {
         const d = diff();
         if (!d) return "没有真发记录 —— 下面无内容。";
         const side = d.mode === "live" ? "当前组装" : `第 ${d.target?.index ?? "?"} 轮 ${d.target?.turnId ?? ""}`;
-        return `该步真发的 system 参数全文（steps.jsonl 的 systemText，逐字）。侧：${side}。结构：help 段（zod 派生的结构说明）+ system 段（变量树）。`;
-    };
-
-    /**
-     * runtime 侧的原始数据 = **该步真发出去的末条 user 消息**（用户原话：「里面切换为实际组装成
-     * user message 的实际内容，即当前步骤真的发出去的那个通知 llm runtime 变量变了的内容」）。
-     * 流量日志是地面真相；查不到（没真发过 / 日志被清 / 正文被截断）才退回 steps.jsonl 的
-     * **组装产物**，并如实标注是退回的那份。
-     */
-    const rawRuntime = (): string => {
-        const t = stepTraffic();
-        if (t) {
-            const parsed = parseStepRequest(t.record.reqBody);
-            const users = (parsed.messages ?? []).filter((m) => m.role === "user");
-            const last = users[users.length - 1];
-            if (last) return last.text;
-        }
-        return diff()?.runtimeText ?? "（没有真发记录）";
-    };
-    /** 上面那份 raw 的说明（贴 view 顶的 info block；不掺进正文） */
-    const rawRuntimeInfo = (): string => {
-        const t = stepTraffic();
-        if (t) {
-            const parsed = parseStepRequest(t.record.reqBody);
-            const users = (parsed.messages ?? []).filter((m) => m.role === "user");
-            if (users[users.length - 1]) {
-                const loc = `${t.record.log?.abs ?? "?"}:${t.record.log?.line ?? "?"}`;
-                return `该步**实际发出去**的末条 user 消息（流量日志 ${loc}）—— 就是**模型真正看到的那段**（runtime / runtimeDiff 信封 + 本轮用户输入）。${parsed.note ? `⚠️ ${parsed.note}` : ""}`;
-            }
-        }
-        return "流量日志里找不到该步的请求 → 下面是 steps.jsonl 的**组装产物**（runtimeText）：它是「我们组装了什么」，不是「线上真发了什么」（后者见「该步实际请求」view）。";
+        return `该步真发的 system 参数全文（steps.jsonl 的 systemText，逐字）。侧：${side}。结构：help 段（zod 派生的结构说明）+ vars 段（变量树）。`;
     };
 
     /**
@@ -1142,59 +1002,20 @@ export function ContextLabPage(props: { uri: string }) {
         );
     };
 
-    /** 归属徽章：按 attributionOf 的三态分别渲染（单元 / 跨单元容器 / 未投递） */
+    /** 归属徽章（统计表用）：单元名单还没加载完时先给中间态，别用空名单谎报「未投递」 */
     const attrBadge = (path: string): JSX.Element => {
-        // 划分还没加载完（`lab()` 未就绪）→ 既不能折行也不能算归属，先给个中间态，
-        // 别用"空划分"算出的 `none` 谎报"未投递"（review RV-13 的同类闪烁）。
         if (unitMap().size === 0) {
             return (
-                <span class="badge badge-xs badge-ghost opacity-40" title="划分加载中…">
+                <span class="badge badge-xs badge-ghost opacity-40" title="单元名单加载中…">
                     …
                 </span>
             );
         }
-        const a = attrOf(path);
-        if (a.kind === "unit") {
-            return (
-                <span
-                    class="badge badge-xs font-mono"
-                    classList={{
-                        "badge-primary": a.container === "system",
-                        "badge-ghost": a.container !== "system",
-                    }}
-                    title={`投递单元 ${a.place}（${a.container}）`}
-                >
-                    {a.place}
-                </span>
-            );
-        }
-        if (a.kind === "container") {
-            // ⚠️ 统计表里此分支当前**不可达**：`foldStatRows` 已把"有后代上榜且自身非投递单元"的
-            // 容器行折掉，而凡上榜的容器必有后代上榜（父 hash = 子树 hash）→ 走不到这里。
-            // 保留作语义守卫：折叠规则一旦放宽（如允许保留高变化容器）它立即生效。
-            return (
-                <span
-                    class="badge badge-xs badge-neutral"
-                    title={`容器行：子字段分属 ${a.units.length} 个投递单元 —— ${a.units
-                        .map((u) => `${u.place}(${u.container})`)
-                        .join(", ")}`}
-                >
-                    {`跨 ${a.units.length} 单元`}
-                </span>
-            );
-        }
-        return (
-            <span
-                class="badge badge-xs badge-ghost opacity-60"
-                title="未投递（不在 PLACE_CANDIDATES，也不是某个单元的祖先）"
-            >
-                未投递
-            </span>
-        );
+        return <UnitBadge a={attrOf(path)} />;
     };
 
     /**
-     * 变更统计（按项目累计）：每个节点变了几次 / 变化率 —— 判"该不该待在 system"的长期判据。
+     * 变更统计（按项目累计）：每个节点变了几次 / 变化率 —— 判"该不该单列成一个单元"的长期判据。
      * 点一行 → 选中该路径（与结构树选中同一套联动：请求预览滚到并高亮）。
      */
     const statsPane = () => {
@@ -1204,7 +1025,7 @@ export function ContextLabPage(props: { uri: string }) {
         const s = stats();
         if (!s) return <div class="p-2 opacity-60">统计加载中…</div>;
         // 行粒度（RV-03）：中间容器（有后代同时上榜）且自身**不是投递单元** → 折叠。
-        // 容器的变化恒由后代解释（父 hash = 子树 hash），单列只会稀释"该不该待在 system"的判据。
+        // 容器的变化恒由后代解释（父 hash = 子树 hash），单列只会稀释"这个单元变得多不多"的判据。
         // 纯函数在 shared/context/attribution.ts（可与 UI 分开单测）。
         const { rows: keptPaths, collapsed } = foldStatRows(s.paths.map((x) => x.path), unitMap());
         const kept = new Set(keptPaths);
@@ -1287,7 +1108,7 @@ export function ContextLabPage(props: { uri: string }) {
                 >
                     {historyPane()}
                 </View>
-                {/* 变更统计：按项目累计的长期视角（"用了几天变了几次"），是判断该不该待在 system 的判据 */}
+                {/* 变更统计：按项目累计的长期视角（"用了几天变了几次"），是判断该不该单列成单元的判据 */}
                 <View
                     k="stats"
                     label="变更统计（项目累计）"
@@ -1314,11 +1135,9 @@ export function ContextLabPage(props: { uri: string }) {
                             <StructureRows
                                 nodes={structure()}
                                 prefix=""
-                                containerOf={containerOf}
-                                canSwap={canSwap}
+                                attributionOf={(p) => attributionOf(contractUnits(), p)}
                                 selected={selected()}
                                 onPick={setSelected}
-                                onSwap={toggleUnit}
                             />
                         </tbody>
                     </table>
@@ -1360,22 +1179,7 @@ export function ContextLabPage(props: { uri: string }) {
                     raw={rawSystem}
                     rawInfo={rawSystemInfo()}
                 >
-                    {diffPane("system")}
-                </View>
-                {/* runtime 全文 diff —— `<>` = 该步**实际发出去的末条 user 消息**（runtime 变更告知原文） */}
-                <View
-                    k="rtdiff"
-                    label="runtime diff（逐行 · 真发全文）"
-                    extra={(() => {
-                        const d = diff();
-                        if (!d) return "无真发记录";
-                        const n = diffSize(d.runtimeDiff);
-                        return n.add + n.del === 0 ? "无差异" : `+${n.add} / -${n.del} 行`;
-                    })()}
-                    raw={rawRuntime}
-                    rawInfo={rawRuntimeInfo()}
-                >
-                    {diffPane("runtime")}
+                    {diffPane()}
                 </View>
                 {/* 该步实际请求：真发的那条 HTTP 请求（流量日志 = 地面真相）+ 一键跳流量页定位 */}
                 <View

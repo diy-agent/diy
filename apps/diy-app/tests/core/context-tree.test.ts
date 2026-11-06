@@ -23,17 +23,15 @@ import {
     emptyCursor,
     getValue,
     hashValue,
+    dataOf,
+    envelopeText,
     placeOf,
-    placesIn,
     project,
     renderPathsTraced,
     renderPlace,
-    setPlacement,
     setPlaces,
     sha256Hex,
     stepDelta,
-    systemData,
-    systemText,
     validatePlaces,
     valueHashes,
     WIRE_VERSION,
@@ -46,7 +44,7 @@ function build(base: ContextTreeState, facts: ContextFact[]): ContextTreeState {
     return applyFacts(base, facts).state;
 }
 
-/** 建一棵「system: diy / runtime: instructions, tasks」的基准树 */
+/** 建一棵 `diy / task / instructions / tasks` 四个单元的基准树 */
 function baseTree(): ContextTreeState {
     let t = createTree();
     t = build(t, [
@@ -55,10 +53,6 @@ function baseTree(): ContextTreeState {
         { type: "patch", path: "task.body", op: "set", value: "正文" },
     ]);
     t = setPlaces(t, ["diy", "task", "instructions", "tasks"]);
-    t = setPlacement(t, "diy", "system");
-    t = setPlacement(t, "task", "system");
-    t = setPlacement(t, "instructions", "runtime");
-    t = setPlacement(t, "tasks", "runtime");
     return t;
 }
 
@@ -105,32 +99,35 @@ describe("places 校验（用例 6）", () => {
 });
 
 describe("基础投递（用例 1~5）", () => {
-    it("用例 1：初始树生成 system/runtime baseline（runtime=snapshot，supersedes=all）", () => {
+    it("用例 1：初始树生成全量 baseline（delta=snapshot，supersedes=all）", () => {
         const t = baseTree();
         const { projection } = project(t, null);
-        expect(projection.system).toContain("diy:");
-        expect(projection.runtime.kind).toBe("snapshot");
-        if (projection.runtime.kind === "snapshot") expect(projection.runtime.supersedes).toBe("all");
+        expect(projection.text).toContain("diy:");
+        expect(projection.delta.kind).toBe("snapshot");
+        if (projection.delta.kind === "snapshot") expect(projection.delta.supersedes).toBe("all");
     });
 
-    it("用例 2：system 节点变化 → 重建 system，runtime 不发", () => {
+    it("用例 2：单元值变化 → 增量只报该单元（全量文本也跟着变）", () => {
         const t = baseTree();
         const first = project(t, null);
         const t2 = build(t, [{ type: "patch", path: "diy.cli", op: "set", value: "/other/diy.sh" }]);
         const second = project(t2, first.cursor);
-        expect(second.projection.system).toContain("/other/diy.sh");
-        expect(second.projection.system).not.toBe(first.projection.system);
-        expect(second.projection.runtime.kind).toBe("none");
+        expect(second.projection.text).toContain("/other/diy.sh");
+        expect(second.projection.text).not.toBe(first.projection.text);
+        expect(second.projection.delta.kind).toBe("patch");
+        if (second.projection.delta.kind === "patch") {
+            expect(second.projection.delta.ops.map((o) => o.path)).toEqual(["diy"]);
+        }
     });
 
-    it("用例 3：runtime 节点变化 → 发送 runtime patch", () => {
+    it("用例 3：单元变化 → 发送该单元的 patch", () => {
         const t = baseTree();
         const first = project(t, null);
         const t2 = build(t, [{ type: "patch", path: "tasks.140.status", op: "set", value: "done" }]);
         const second = project(t2, first.cursor);
-        expect(second.projection.runtime.kind).toBe("patch");
-        if (second.projection.runtime.kind === "patch") {
-            expect(second.projection.runtime.ops).toEqual([
+        expect(second.projection.delta.kind).toBe("patch");
+        if (second.projection.delta.kind === "patch") {
+            expect(second.projection.delta.ops).toEqual([
                 { op: "set", path: "tasks", content: expect.stringContaining("done") },
             ]);
         }
@@ -139,22 +136,21 @@ describe("基础投递（用例 1~5）", () => {
     it("用例 4：内容未变化 → 不发送（none）", () => {
         const t = baseTree();
         const first = project(t, null);
-        expect(project(t, first.cursor).projection.runtime.kind).toBe("none");
+        expect(project(t, first.cursor).projection.delta.kind).toBe("none");
         // 再投影一次仍然 none（水位不因「投影」本身变化）
         const second = project(t, first.cursor);
-        expect(project(t, second.cursor).projection.runtime.kind).toBe("none");
+        expect(project(t, second.cursor).projection.delta.kind).toBe("none");
     });
 
-    it("用例 5：runtime 全部消失 → 显式清空（clear），不是「什么都不发」", () => {
+    it("用例 5：单元全部消失 → 显式清空（clear），不是「什么都不发」", () => {
         let t = createTree();
         t = build(t, [{ type: "patch", path: "notes", op: "set", value: "临时" }]);
         t = setPlaces(t, ["notes"]);
-        t = setPlacement(t, "notes", "runtime");
         const first = project(t, null);
 
         const t2 = build(t, [{ type: "remove", path: "notes" }]);
         const second = project(t2, first.cursor);
-        expect(second.projection.runtime).toEqual({ kind: "clear" });
+        expect(second.projection.delta).toEqual({ kind: "clear" });
     });
 });
 
@@ -207,7 +203,7 @@ describe("树与路径（用例 7~10）", () => {
         ]);
         t = setPlaces(t, ["instructions"]);
         // include 的片段没有自己的 path，因此不会冒出第二个 place
-        expect(placesIn(t, "runtime")).toEqual(["instructions"]);
+        expect(t.places).toEqual(["instructions"]);
         expect(placeOf(t, "instructions.project")).toBe("instructions");
     });
 });
@@ -245,7 +241,7 @@ describe("step / hash（用例 11~15）", () => {
         expect(d.counts["tasks.140.b"]).toBe(1);
     });
 
-    it("用例 14：valueHash 变了但 renderedHash 不变 → 不投递", () => {
+    it("用例 14：值变了但单元渲染不变 → 该单元不投递", () => {
         let t = baseTree();
         t = build(t, [
             {
@@ -257,11 +253,15 @@ describe("step / hash（用例 11~15）", () => {
         ]);
         const first = project(t, null);
 
-        // task.body 变了：它在 system 容器里，模板没引用它
+        // task.body 变了：instructions 模板引用的是 task.title（没变）⇒ 它不投递
         const t2 = build(t, [{ type: "patch", path: "task.body", op: "set", value: "新正文" }]);
         expect(valueHashes(t2)["task.body"]).not.toBe(valueHashes(t)["task.body"]);
         const second = project(t2, first.cursor);
-        expect(second.projection.runtime.kind).toBe("none");
+        // task 单元本身变了（它有 task.body） ⇒ 报 task；instructions 的渲染没变 ⇒ 不报它
+        expect(second.projection.delta.kind).toBe("patch");
+        if (second.projection.delta.kind === "patch") {
+            expect(second.projection.delta.ops.map((o) => o.path)).toEqual(["task"]);
+        }
     });
 
     it("用例 15：模板 render 结果变化才投递", () => {
@@ -278,11 +278,11 @@ describe("step / hash（用例 11~15）", () => {
 
         const t2 = build(t, [{ type: "patch", path: "task.title", op: "set", value: "改标题" }]);
         const second = project(t2, first.cursor);
-        expect(second.projection.runtime.kind).toBe("patch");
-        if (second.projection.runtime.kind === "patch") {
-            const op = second.projection.runtime.ops[0];
-            expect(op.op).toBe("set");
-            if (op.op === "set") expect(op.content).toContain("改标题");
+        expect(second.projection.delta.kind).toBe("patch");
+        if (second.projection.delta.kind === "patch") {
+            const op = second.projection.delta.ops.find((o) => o.path === "instructions");
+            expect(op?.op).toBe("set");
+            if (op?.op === "set") expect(op.content).toContain("改标题");
         }
     });
 });
@@ -294,20 +294,21 @@ describe("恢复与边界（用例 16~20）", () => {
         expect(restored.needRebaseline).toBe(true);
         expect(restored.state.values).toEqual(t.values);
         expect(restored.state.places).toEqual(t.places);
-        expect(project(restored.state, null).projection.system).toBe(systemText(t));
+        expect(project(restored.state, null).projection.text).toBe(envelopeText(t));
     });
 
-    it("用例 17：placement 迁移后发送新的 runtime baseline", () => {
+    it("用例 17：新增一个单元 → 增量只报新单元（不是整棵树重发）", () => {
         let t = baseTree();
-        t = build(t, [{ type: "patch", path: "tasks.140.status", op: "set", value: "done" }]);
         const first = project(t, null);
-        // tasks 从 runtime 迁到 system
-        const t2 = setPlacement(t, "tasks", "system");
-        expect(t2.placementEpoch).toBe(t.placementEpoch + 1);
+        // 把 `tasks` 再拆出一个更细的单元（模拟新增割点）：旧水位里没有它 ⇒ 报 set
+        t = build(t, [{ type: "patch", path: "tasks.140.status", op: "set", value: "done" }]);
+        const t2 = setPlaces(t, ["diy", "task", "instructions", "tasks.140"]);
         const second = project(t2, first.cursor);
-        expect(second.projection.needRebaseline).toBe(true);
-        expect(second.projection.runtime.kind).toBe("snapshot");
-        expect(second.projection.system).toContain("tasks");
+        expect(second.projection.needRebaseline).toBe(false);
+        expect(second.projection.delta.kind).toBe("patch");
+        if (second.projection.delta.kind === "patch") {
+            expect(second.projection.delta.ops.map((o) => o.path).sort()).toEqual(["tasks", "tasks.140"]);
+        }
     });
 
     it("用例 18：wire 版本变化触发 rebaseline", () => {
@@ -316,7 +317,7 @@ describe("恢复与边界（用例 16~20）", () => {
         const stale = { ...first.cursor, wireVersion: "deadbeef" };
         const second = project(t, stale);
         expect(second.projection.needRebaseline).toBe(true);
-        expect(second.projection.runtime.kind).toBe("snapshot");
+        expect(second.projection.delta.kind).toBe("snapshot");
     });
 
     it("用例 19：中断的 context 更新不进入有效树（未定稿的块不产出事实）", () => {
@@ -326,10 +327,10 @@ describe("恢复与边界（用例 16~20）", () => {
         const { projection } = project(t, null);
         // 空树：信封的 help 段仍在位（它说明"这是什么"），但**没有任何变量数据** ——
         // 中断的更新不会让投影假装有内容
-        expect(projection.system.startsWith("help:")).toBe(true);
-        expect(systemData(t)).toBe("");
-        expect(projection.runtime.kind).toBe("snapshot");
-        if (projection.runtime.kind === "snapshot") expect(projection.runtime.text).toBe("");
+        expect(projection.text.startsWith("help:")).toBe(true);
+        expect(dataOf(t)).toBe("");
+        expect(projection.delta.kind).toBe("snapshot");
+        if (projection.delta.kind === "snapshot") expect(projection.delta.text).toBe(projection.text);
     });
 
     it("用例 20：patch baseHash 不匹配 → 拒绝静默合并并标记 rebaseline", () => {
@@ -361,7 +362,7 @@ describe("恢复与边界（用例 16~20）", () => {
 });
 
 describe("golden：同一组事实的投影稳定（108 换 adapter 后必须一致）", () => {
-    it("固定事实序列 → 固定 system/runtime 文本", () => {
+    it("固定事实序列 → 固定信封文本", () => {
         let t = createTree();
         t = build(t, [
             { type: "patch", path: "diy.cli", op: "set", value: "/repo/diy.sh" },
@@ -376,34 +377,29 @@ describe("golden：同一组事实的投影稳定（108 换 adapter 后必须一
             },
         ]);
         t = setPlaces(t, ["diy", "env.os", "instructions", "tasks"]);
-        t = setPlacement(t, "diy", "system");
-        t = setPlacement(t, "env.os", "runtime");
-        t = setPlacement(t, "instructions", "runtime");
-        t = setPlacement(t, "tasks", "runtime");
 
         // 纯 YAML：不再套 <context path="…"> 外壳（树形结构已表达 path 归属）。
-        // systemData 是纯数据；systemText = 信封（`help:` + `system:`，见 envelope.ts）
-        expect(systemData(t)).toBe("diy:\n  cli: /repo/diy.sh");
-        expect(systemText(t).startsWith("help:")).toBe(true);
-        expect(systemText(t)).toContain("\nsystem:\n  diy:\n    cli: /repo/diy.sh");
-        // runtime 也是信封（只有 runtime 一段）
-        expect(project(t, emptyCursor()).projection.runtimeText).toBe(
+        // dataOf 是纯数据；envelopeText = 信封（`help:` + `vars:`，见 envelope.ts）
+        expect(dataOf(t)).toBe(
             [
-                "runtime:",
-                "  env:",
-                "    os:",
-                "      soft:",
-                "        - playwright-cli",
-                "        - rg",
-                "  instructions:",
-                '    project: "<p>/repo/diy.sh</p>"',
-                "  tasks:",
-                "    140:",
-                "      status: done",
-                "    141:",
-                "      status: doing",
+                "diy:",
+                "  cli: /repo/diy.sh",
+                "env:",
+                "  os:",
+                "    soft:",
+                "      - playwright-cli",
+                "      - rg",
+                "instructions:",
+                '  project: "<p>/repo/diy.sh</p>"',
+                "tasks:",
+                "  140:",
+                "    status: done",
+                "  141:",
+                "    status: doing",
             ].join("\n"),
         );
+        expect(envelopeText(t).startsWith("help:")).toBe(true);
+        expect(envelopeText(t)).toContain("\nvars:\n  diy:\n    cli: /repo/diy.sh");
     });
 
     it("WIRE_VERSION 是稳定常量（由编码语义派生，不手工维护）", () => {
