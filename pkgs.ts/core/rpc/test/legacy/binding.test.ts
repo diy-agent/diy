@@ -8,9 +8,9 @@
  */
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
-import { RpcSchema, RpcError, createTypedClient } from '../src/index';
-import type { ServerBinding } from '../src/core';
-import { channelHarness, httpHarness, wsHarness, type TransportHarness } from './harness';
+import { RpcSchema, RpcError, createTypedClient } from '../../src/index';
+import type { ServerBinding } from '../../src/core';
+import { channelHarness, httpHarness, wsHarness, type TransportHarness } from '../harness';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

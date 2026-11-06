@@ -8,9 +8,9 @@
  */
 import { describe, it, expect, vi } from "vitest";
 import { z } from "zod";
-import { RpcSchema } from "../src/core/rpc";
-import type { ClientBinding } from "../src/core/server-binding";
-import { CliApp } from "../src/cli/index";
+import { RpcSchema } from "../../src/core/rpc";
+import type { ClientBinding } from "../../src/core/server-binding";
+import { CliApp } from "../../src/cli/index";
 
 // mock transport：showHelp/showNodeHelp 不调用它，传个桩即可
 const stubTransport = {

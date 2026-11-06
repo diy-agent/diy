@@ -12,9 +12,9 @@
 import { describe, it, expect } from 'vitest';
 import * as http2 from 'node:http2';
 import { z } from 'zod';
-import { httpHarness } from './harness';
-import { RpcSchema } from '../src/core/rpc';
-import { createTypedClient } from '../src/core/typed-client';
+import { httpHarness } from '../harness';
+import { RpcSchema } from '../../src/core/rpc';
+import { createTypedClient } from '../../src/core/typed-client';
 
 const api = RpcSchema.router({
   collect: RpcSchema.clientStream({

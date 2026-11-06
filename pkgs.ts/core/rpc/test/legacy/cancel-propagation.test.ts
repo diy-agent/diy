@@ -26,11 +26,11 @@
 import { describe, it, expect } from 'vitest';
 import { getEventListeners } from 'node:events';
 import { z } from 'zod';
-import { RpcSchema, RpcError } from '../src/index';
-import { channelHarness, httpHarness, wsHarness, type TransportHarness } from './harness';
-import { createMemTransportPair } from './helpers';
-import { ChannelClientBinding, ChannelServerBinding } from '../src/core';
-import type { EnvelopeTransport, _Envelope } from '../src/core/types';
+import { RpcSchema, RpcError } from '../../src/index';
+import { channelHarness, httpHarness, wsHarness, type TransportHarness } from '../harness';
+import { createMemTransportPair } from '../helpers';
+import { ChannelClientBinding, ChannelServerBinding } from '../../src/core';
+import type { EnvelopeTransport, _Envelope } from '../../src/core/types';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

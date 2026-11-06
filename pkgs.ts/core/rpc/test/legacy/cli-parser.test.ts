@@ -9,8 +9,8 @@ import { z } from "zod";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { RpcSchema } from "../src/core/rpc";
-import { parseArgv, generateHelp, pathLikeValue } from "../src/cli/_parser";
+import { RpcSchema } from "../../src/core/rpc";
+import { parseArgv, generateHelp, pathLikeValue } from "../../src/cli/_parser";
 
 // 一个典型的 unary 命令：位置参数 title + 命名选项 --parent/-p --detail
 // description 可含多行（首行作命令列表简介，完整显示在单命令 help）

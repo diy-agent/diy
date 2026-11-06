@@ -8,8 +8,8 @@
 import { describe, it, expect } from 'vitest';
 import { WebSocketServer, WebSocket } from 'ws';
 import { z } from 'zod';
-import { RpcSchema, createTypedClient, ChannelClientBinding, ChannelServerBinding } from '../src/index';
-import { WsTransport } from '../src/transport/ws';
+import { RpcSchema, createTypedClient, ChannelClientBinding, ChannelServerBinding } from '../../src/index';
+import { WsTransport } from '../../src/transport/ws';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
