@@ -36,6 +36,7 @@
     "@diy-agent/time": "*",
     "zod": "^4.4.3",
     "@diy-agent/session": "*",
+    "@diy-agent/context": "*",
     "@diy-agent/session-store-jsonl": "*",
     "@diy-agent/llm-provider": "*",
     "@diy-agent/model-catalog": "*"

@@ -20,6 +20,9 @@ import { analyze, renderWithTrace, type IncludeResolver, type TraceNode, type Va
 import { writeFileAtomic } from "../core/atomic-write";
 import { TASK_HEAD_FIELDS } from "@diy-agent/context/schema/task-head";
 import { AssembleGlobalsSchema, type AssembleGlobals } from "@diy-agent/context/schema/prompt-schema";
+import { agentsChain } from "@diy-agent/agents-chain";
+import { assembleFromProviders } from "@diy-agent/context";
+import { standardProviders } from "./context-providers";
 
 // 契约类型从 schema 推导（单一真源）；装配方按它注入，漂移由 safeParse 兜住
 export type { AssembleGlobals };
@@ -286,7 +289,7 @@ function taskFileAt(home: string, taskUri: string): string {
  * 缺键一律回空串（不是 undefined）：变量契约里它们是 string，且"空串 = 文件头里没这个键"比
  * "键不存在"更能表达"未设置"。
  */
-function taskOf(home: string, taskUri: string): Record<string, string> | null {
+export function taskOf(home: string, taskUri: string): Record<string, string> | null {
   const fp = taskFileAt(home, taskUri);
   if (!fp || !existsSync(fp)) return null;
   const meta = parseTaskFile(readFileSync(fp, "utf-8"));
@@ -312,34 +315,19 @@ function taskOf(home: string, taskUri: string): Record<string, string> | null {
  *   项目/任务目录任一存在时行为不变。
  * 内容 trim（这是**数据准备**：链内容是变量值，不是模版源）
  */
-function chainOf(home: string, cwd: string, taskUri: string, isAppDir = false): AssembleGlobals["chain"] {
-  const homeDir = homedir();
-  const start = resolve(cwd);
-  if (isAppDir) {
-    // 只保留应用级规范（$DIY_HOME/AGENTS.md），不爬 process.cwd() 的链
-    const only = join(home, "AGENTS.md");
-    return existsSync(only)
-      ? [{ path: only, scope: dirname(only), content: readFileSync(only, "utf-8").trim() }]
-      : [];
-  }
-  const underHome = start === homeDir || start.startsWith(homeDir + sep);
-  const stop = underHome ? homeDir : start;
+export function chainOf(home: string, cwd: string, taskUri: string, isAppDir = false): AssembleGlobals["chain"] {
+  // 实现在 @diy-agent/agents-chain（2026-11-05 抽包）：那条链的判据全是实测踩出来的，
+  // 和任务/上下文树都无关 —— bot 也需要同一套。这里只做 diy-app 特有的两件参数化：
+  //   · skipFiles：任务本体的 AGENTS.md 是**正文**不是规则，不能进链
+  //   · appOnly：项目/任务目录都不存在时，cwd 是 process.cwd()（启动 shell 的偶然位置），
+  //     不该爬它的链（见 agents-chain 的 appOnly 注释）
   const ownTaskFile = taskFileAt(home, taskUri);
-  const skip = ownTaskFile ? resolve(ownTaskFile) : "";
-  const seen = new Set<string>();
-  const files: string[] = [];
-  for (let dir = start; ; dir = dirname(dir)) {
-    const fp = join(dir, "AGENTS.md");
-    if (fp !== skip && !seen.has(fp) && existsSync(fp)) {
-      seen.add(fp);
-      files.push(fp);
-    }
-    if (dir === stop || dir === dirname(dir)) break;
-  }
-  files.reverse();
-  const appLevel = join(home, "AGENTS.md");
-  if (!seen.has(appLevel) && existsSync(appLevel)) files.unshift(appLevel);
-  return files.map((fp) => ({ path: fp, scope: dirname(fp), content: readFileSync(fp, "utf-8").trim() }));
+  return agentsChain({
+    appHome: home,
+    cwd,
+    skipFiles: ownTaskFile ? [ownTaskFile] : [],
+    appOnly: isAppDir,
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -603,93 +591,6 @@ export function assembleGlobals(
     self?: SelfValue | null;
   } = {},
 ): AssembleGlobals {
-  const taskUri = opts.taskUri ?? "";
-  const task = taskOf(home, taskUri);
-  const cwdRes = resolveCwd(home, taskUri);
-  const diyCli = opts.diyCli ?? readRuntimeConfig().cli ?? "";
-  // 当前人物（模型/参数/行为指令的真源是 personas.yaml；任务只持有引用）——预览与真发同一入口，
-  // 故试验场看到的身份节与实际请求一致，不会出现"预览里有行为指令、真发没有"的漂移
-  const persona = personaForTask(home, taskUri);
-  const core = {
-    persona: { name: persona.name, instructions: persona.instructions },
-    diy: { cli: diyCli || "diy（未注入 DIY_CLI，勿照抄）", home },
-    project: { path: getProjectPath(projectId) ?? "" },
-    task: {
-      uri: taskUri,
-      title: task?.title ?? "",
-      state: task?.state ?? "",
-      // 头字段（title/state 也在其中）：任务文件 frontmatter 的同一份，读侧不必落盘求证
-      parent: task?.parent ?? "",
-      created: task?.created ?? "",
-      updated: task?.updated ?? "",
-      change_type: task?.change_type ?? "",
-      module: task?.module ?? "",
-      priority: task?.priority ?? "",
-      persona: task?.persona ?? "",
-      body: task?.body ?? "",
-      dir: taskUri ? join(home, taskUri) : "",
-    },
-    cwd: {
-      path: cwdRes.cwd,
-      note: cwdRes.note,
-      isFallback: cwdRes.isFallback,
-      isTaskDir: cwdRes.isTaskDir,
-      isAppDir: cwdRes.isAppDir,
-    },
-    chain: chainOf(home, cwdRes.cwd, taskUri, cwdRes.isAppDir),
-    skills: opts.skills ?? [],
-  };
-  // ── 模版节 → 投递节点（144「模版即节点」方向的第一步）──
-  // 真发要的不只是 `persona` 的**值**，而是模版渲染出来的**整节**：identity.md 是
-  // 「你是 … 人物是「X」」+ 人物行为指令，rules.md 是行为规范，_guard.md 是保命契约。
-  // 不在这里渲染，真发就一样不投（209 review P0-1 实测：真发 system 里 persona/身份/
-  // <rules>/<guard> 全 false → 合并后模型收不到人物指令，保命契约也没了）。
-  //
-  // 用 `core`（不含本节）当渲染变量：identity.md 只引用 persona，不引用自己。
-  const resolve = projectIncludeResolver(home, projectId, opts.drafts);
-  // 渲染时**必须走 resolver 取本节正文**（草稿 > 项目覆盖 > 内置），不能直接用 PROMPT_DEFAULTS：
-  // renderSystemDsl 的 entry 本体是 `templates[entry]`，把内置当默认值传进去就等于
-  // "项目里改过的 identity/rules 不进真发"（正是划分规则当年踩过的"页面改了真发不理"）。
-  const section = (relpath: string): string => {
-    const hit = resolve(`./${relpath}`);
-    if (!hit) throw new Error(`缺少模版节：${relpath}`);
-    return renderSystemDsl({ globals: core, templates: { [relpath]: hit.source }, entry: relpath, resolve });
-  };
-  // 事实投影（##404 待办 4）：带上 cwd 的**仓库相对路径**，让 `scope.paths` 型事实自动筛掉
-  // 与当前位置无关的那些（不传 = 不筛 = 65 条全进上下文，实测吃满 5.6 KB 预算）。
-  // 相对化在这里做而不是在 facts-context 里：`root` 的语义（证据/paths 按仓库根解析）
-  // 归内核，装配层只负责"我现在在哪"。
-  const repoRoot = getProjectPath(projectId);
-  const relCwd = repoRoot === undefined || !cwdRes.cwd.startsWith(`${repoRoot}/`) ? undefined : cwdRes.cwd.slice(repoRoot.length + 1);
-  const factsValue = buildFactsContext({ home, taskUri, ...(relCwd === undefined ? {} : { paths: [relCwd] }) });
-  // 知识库索引（##404 待办 1）：AGENTS.md 链里「按需」的条目迁进 facts 后，agent 靠这个索引
-  // 知道**库里有什么、怎么取**。与 facts 同一纪律：读不到库 = 整节缺席（不渲染空节）。
-  const kbValue = buildKbIndex();
-  // 仓库文档索引（##5 第 11 轮 B）：真源是**仓库文件树**（`docs/plans`），故要仓库根；
-  // 没有项目路径（任务不在仓库里）⇒ 整节缺席，与未接入前逐字不变。
-  // 变量树里只放**摘要**（根 / 篇数 / 最新改动日）；逐篇条目归 `diy docs index`（按需取）——
-  // 逐篇 18 行 ≈ 2 KB/轮 vs "一次性好奇"，账见 shared/docs.ts 头注。
-  const docsValue = repoRoot === undefined ? null : summarizeDocsIndex(buildDocsIndex({ root: repoRoot }));
-  return {
-    ...core,
-    // 房间上下文（##377 第 26 刀）：**只在有房间时出现**（缺这个键 = 单人任务逐字不变）。
-    // 两个原子单元由 PLACE_CANDIDATES 的 `room.members` / `room.recent` 各自成一条 runtime 单元。
-    ...(opts.room ? { room: opts.room } : {}),
-    // 事实库投影（##404 待办 4）：与 room 同一纪律 —— **没有库就整节缺席**
-    // （`{}` 会被渲染成 `facts: {}`，看着像"库在但没有事实"，与"没接库"不是一回事）。
-    // 读失败降级为缺席而不是抛：上下文构造失败 = 人连消息都发不出去（见 facts-context 头注纪律 ②）。
-    ...(factsValue ? { facts: factsValue } : {}),
-    ...(kbValue ? { kb: kbValue } : {}),
-    ...(docsValue ? { docs: docsValue } : {}),
-    // 自量（##404 / ##9 提案）：**一条数都给不出时整节缺席**（不是 `self: {}`）
-    ...(opts.self ? { self: opts.self } : {}),
-    identity: section(DELIVERED_SECTIONS.identity),
-    rules: section(DELIVERED_SECTIONS.rules),
-    guard: section(DELIVERED_SECTIONS.guard),
-    // 压缩历史索引的**格式说明**（稳定项 → 进 system；易变的注记数据留在 messages）。
-    // 真发请求的流量日志位置（稳定信息进变量树，模型才能自查"我上一步到底发出去了什么"）。
-    // 文件名用**当天**那份（`dayFile()`，与写入侧同一个算法）；解释（路径规则/定位命令/
-    // 字段表）全在 `ReqlogSchema` 的 `.describe()` → 信封的 `help.reqlog`（值节点只放数据）。
-    reqlog: reqlogValue({ home, dirRel: LOG_DIR_REL, fileName: dayFile() }),
-  };
+  // 业务全在 context-providers.ts；这里只做「建 providers → 拼树 → 校验」
+  return assembleFromProviders(standardProviders({ home, projectId }, opts));
 }

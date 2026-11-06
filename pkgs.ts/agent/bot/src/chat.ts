@@ -28,6 +28,7 @@ import { localISOString } from "@diy-agent/time";
 import { createSession, type AgentSession, type ChatMessage, type LlmPort, type SessionStore, type TokenUsage } from "@diy-agent/session";
 import { openJsonlSessionStore } from "@diy-agent/session-store-jsonl";
 import { openMemorySessionStore } from "@diy-agent/session";
+import { createBotAgent, type BotAgent } from "./agent.js";
 import { createOpenAiCompatible, resolveProviderConfig } from "@diy-agent/llm-provider";
 import {
     costOf,
@@ -227,7 +228,7 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
     /** 打开中的会话（桶 + session 都缓存；同一个 bot 反复点进来必须是同一条消息线） */
     const open = new Map<
         string,
-        { store: SessionStore; session: AgentSession; meta: SessionMeta; compactor: BotCompactor }
+        { store: SessionStore; session: AgentSession; agent: BotAgent; meta: SessionMeta; compactor: BotCompactor }
     >();
     /** 内存模式下的压缩状态（persistMeta=false 时也只在进程里） */
     const compactMemory = new Map<string, BotCompactionState>();
@@ -395,11 +396,11 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
     };
 
     /** 正在打开中的会话（同一 id 并发打开只跑一次；打开是**每个会话自己**的事，不进全局 act） */
-    const opening = new Map<string, Promise<{ store: SessionStore; session: AgentSession; meta: SessionMeta; compactor: BotCompactor }>>();
+    const opening = new Map<string, Promise<{ store: SessionStore; session: AgentSession; agent: BotAgent; meta: SessionMeta; compactor: BotCompactor }>>();
 
     const opened = async (
         id: string,
-    ): Promise<{ store: SessionStore; session: AgentSession; meta: SessionMeta; compactor: BotCompactor }> => {
+    ): Promise<{ store: SessionStore; session: AgentSession; agent: BotAgent; meta: SessionMeta; compactor: BotCompactor }> => {
         const hit = open.get(id);
         if (hit !== undefined) return hit;
         const pending = opening.get(id);
@@ -415,7 +416,7 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
 
     const openSession = async (
         id: string,
-    ): Promise<{ store: SessionStore; session: AgentSession; meta: SessionMeta; compactor: BotCompactor }> => {
+    ): Promise<{ store: SessionStore; session: AgentSession; agent: BotAgent; meta: SessionMeta; compactor: BotCompactor }> => {
         const dir = join(root, id);
         const meta = await readMetaOf(id);
         if (meta === null) throw new Error(`没有会话 ${id}`);
@@ -454,21 +455,43 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
             loadState: () => readCompaction(id),
             saveState: (state) => writeCompaction(id, state),
         });
-        const session = createSession({
+        // 2026-11-05：改由 createBotAgent 建（它算 system、记 lastRequest、管跨轮增量）。
+        // 这里给 providers 的是**最小集**（diy / cwd / chain / skills），而 systemText 里
+        // 已经包含了 AGENTS 链与 facts 摘要 —— 所以 systemPlaces 传空数组：树不进 system，
+        // 只用于算「哪些变量变了」的增量（cwd 变化会出现在 user 前缀里）。
+        // ⚠ facts / 链的「进 system」暂时仍走 systemText（保持行为不变）；下一步再把它们
+        // 拆成 provider，让链的变化也能触发增量。
+        const workspace = workspaceOf(options.home, ownerId ?? id);
+        const agent = createBotAgent({
             id,
             llm,
             store,
+            model: modelId,
+            instructions: systemText,
+            providers: [
+                { key: "diy", provide: () => ({ cli: "", home: options.home }) },
+                {
+                    key: "cwd",
+                    provide: () => ({
+                        path: workspace,
+                        note: "",
+                        isFallback: false,
+                        isTaskDir: false,
+                        isAppDir: false,
+                    }),
+                },
+                { key: "chain", provide: () => [] },
+                { key: "skills", provide: () => [] },
+            ],
+            systemPlaces: [],
             initialMessages,
+            initialSnapshot: null,
             compact: compactor.compact,
-            ...(modelId === "" ? {} : { model: modelId }),
-            // 行为指令 = system 话术；只在新建会话时写一次（历史里已经有一条，别重复追加）。
-            // 系统上下文（规则链 / 知识库索引）与工作目录说明一并写进去：
-            // 不知道规则就会返工，不知道 cwd 就会把临时文件丢得到处都是。
-            ...(initialMessages.length === 0 && systemText !== "" ? { system: systemText } : {}),
         });
+        const session = agent.session;
         const nextMeta: SessionMeta = meta.model === modelKey ? meta : { ...meta, model: modelKey };
         if (nextMeta !== meta) await writeMeta(nextMeta);
-        const value = { store, session, meta: nextMeta, compactor };
+        const value = { store, session, agent, meta: nextMeta, compactor };
         open.set(id, value);
         return value;
     };
@@ -702,7 +725,7 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                 if (active === null) throw new Error("还没有 bot —— 先建一个（首启引导）");
                 const ref = await handleOf(active).primary();
                 return queueFor(ref.id)(async () => {
-                    const { session, meta, compactor } = await opened(ref.id);
+                    const { session, agent, meta, compactor } = await opened(ref.id);
                     const before = session.messages.length;
                     const usageBefore = session.usage;
                     // 失败必须让人看见（用户 2026-11-04：「对话很多次都没反应，但也没有卡住」——
@@ -715,7 +738,7 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                     try {
                         const tools = options.toolsFor?.(ref.id);
                         const effort = active.reasoningEffort;
-                        for await (const delta of session.send(text, {
+                        for await (const delta of agent.stream(text, {
                             ...(tools === undefined ? {} : { tools }),
                             maxSteps: options.maxToolSteps ?? DEFAULT_MAX_TOOL_STEPS,
                             // 这两样 diy-app 一直传、bot 之前漏了 —— 用户 2026-11-04 指出
@@ -769,7 +792,7 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                         messageCount: meta.messageCount + Math.max(grown, 0),
                     };
                     await writeMeta(next);
-                    open.set(ref.id, { store: open.get(ref.id)!.store, session, meta: next, compactor });
+                    open.set(ref.id, { store: open.get(ref.id)!.store, session, agent, meta: next, compactor });
                     return { ...(await snapshotNow()), messages };
                 });
             })();

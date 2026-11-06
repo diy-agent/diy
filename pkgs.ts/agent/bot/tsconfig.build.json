@@ -29,6 +29,7 @@
     { "path": "../session/tsconfig.build.json" },
     { "path": "../store-jsonl/tsconfig.build.json" },
     { "path": "../../model/provider/tsconfig.build.json" },
-    { "path": "../../model/catalog/tsconfig.build.json" }
+    { "path": "../../model/catalog/tsconfig.build.json" },
+    { "path": "../context/tsconfig.build.json" }
   ]
 }

@@ -88,7 +88,8 @@ export const AssembleGlobalsSchema = z.object({
       name: z.string().describe("当前人物名"),
       instructions: z.string().describe("人物行为指令（空则不注入）"),
     })
-    .describe("agent 人物"),
+    .optional()
+    .describe("agent 人物（可选：没有人物概念的宿主整节省略）"),
   diy: z
     .object({
       cli: z.string().describe("CLI 入口"),
@@ -97,7 +98,8 @@ export const AssembleGlobalsSchema = z.object({
     .describe("diy 本体"),
   project: z
     .object({ path: z.string().describe("项目工作目录") })
-    .describe("项目"),
+    .optional()
+    .describe("项目（可选：任务/项目都不在仓库里时整节省略）"),
   task: z
     .object({
       uri: z.string().describe("任务 URI"),
@@ -108,7 +110,8 @@ export const AssembleGlobalsSchema = z.object({
       body: z.string().describe("正文（文件里 frontmatter 之后的部分，首尾空白已去）"),
       dir: z.string().describe("任务目录"),
     })
-    .describe("当前任务"),
+    .optional()
+    .describe("当前任务（**可选**：没有任务概念的宿主 —— 比如 bot —— 整节省略，不要造一堆空串冒充）"),
   cwd: z
     .object({
       path: z.string().describe("工具执行目录"),
@@ -130,9 +133,9 @@ export const AssembleGlobalsSchema = z.object({
    * 渲染结果进 globals 而不是在投递处另拼一段：投递构造保持**单一入口**（buildDelivery），
    * 页面结构树/规则表也能看见这三个节点（否则页面上会多出一段"无来源"的文本）。
    */
-  identity: z.string().describe("身份节（identity.md 渲染结果：身份行 + 人物行为指令）"),
-  rules: z.string().describe("规范节（rules.md 渲染结果）"),
-  guard: z.string().describe("保命契约（_guard.md 渲染结果，模版锁定）"),
+  identity: z.string().optional().describe("身份节（identity.md 渲染结果；没有模版节的宿主整节省略）"),
+  rules: z.string().optional().describe("规范节（rules.md 渲染结果；同上）"),
+  guard: z.string().optional().describe("保命契约（_guard.md 渲染结果；同上）"),
   /**
    * 真发请求的**流量日志**（用户 2026-10-15）。
    *
@@ -142,7 +145,7 @@ export const AssembleGlobalsSchema = z.object({
    * 派生进信封的 `help.reqlog`（值节点里禁出现解释性字段：一条信息只在一处，见 envelope.ts）。
    * 行号给不出来：那条记录是请求发出**之后**才落盘的（UI 侧由流量日志反查）。
    */
-  reqlog: ReqlogSchema,
+  reqlog: ReqlogSchema.optional().describe("流量日志位置（可选：没有该机制的宿主整节省略）"),
   /**
    * **房间上下文**（##377 第 26 刀）：这一轮该看到的房间成员 + 近期别人的发言。
    *

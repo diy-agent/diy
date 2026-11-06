@@ -15,7 +15,7 @@
 
 import { localISOString } from '@diy-agent/time';
 import { SessionError } from './errors.js';
-import type { ChatOptions } from './types.js';
+import type { ChatOptions, SessionRequest } from './types.js';
 import { assertDelta, parseMessage, parseMessages, toolArgsFromInput } from './message.js';
 import { openMemorySessionStore } from './store-memory.js';
 import {
@@ -99,6 +99,8 @@ export function createSession(options: CreateSessionOptions): AgentSession {
     let usage = ZERO_USAGE;
     let busy = false;
     let controller: AbortController | null = null;
+    /** 上一次真发的请求快照（见 types.ts 的 `AgentSession.lastRequest`） */
+    let lastRequestSnapshot: SessionRequest | null = null;
     const createdAt = iso(clock.now());
     let updatedAt = createdAt;
     /** store 的写链：append 排队、串行落盘（宿主不需要自己排序） */
@@ -112,6 +114,9 @@ export function createSession(options: CreateSessionOptions): AgentSession {
         id,
         get messages() {
             return messages.slice();
+        },
+        get lastRequest() {
+            return lastRequestSnapshot;
         },
         get lastSeq() {
             return lastSeq;
@@ -135,8 +140,13 @@ export function createSession(options: CreateSessionOptions): AgentSession {
             if (typeof text !== 'string' || text.trim() === '') {
                 throw new SessionError('session/empty-text', 'send() 的正文不能为空', 'text');
             }
+            // 跨轮上下文补丁合进本轮 user 正文（不单独发一条，见 ChatOptions.userPrefix）
+            const body =
+                turnOptions?.userPrefix === undefined || turnOptions.userPrefix === ''
+                    ? text
+                    : `${turnOptions.userPrefix}\n${text}`;
             yield* runTurn(() => {
-                appendMessage({ role: 'user', text });
+                appendMessage({ role: 'user', text: body });
             }, turnOptions);
         },
         /**
@@ -218,6 +228,8 @@ export function createSession(options: CreateSessionOptions): AgentSession {
             };
             try {
                 // sessionId 由会话自动带上（provider 拿它填上游路由 / 缓存 header，调用方不用管）
+                // 记下**这一轮真发的**快照（压缩 / 增量注入之后、发送之前）—— 见 types.ts 的说明
+                lastRequestSnapshot = { messages: history.slice() };
                 for await (const raw of llm.chat(history.slice(), {
                     ...turnOptions,
                     model,
