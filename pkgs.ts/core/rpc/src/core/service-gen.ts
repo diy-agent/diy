@@ -126,6 +126,23 @@ function isOptional(schema: z.ZodType): boolean {
 export interface RenderOptions {
     /** 方法描述首行是否搬进 JSDoc（默认 true） */
     readonly includeDesc?: boolean;
+    /**
+     * **命名策略**（2026-11-06 用户定：先简单后复杂，默认全内联）。
+     *
+     * · `none`（默认）—— 不生成任何具名 IO 类型、不生成子接口，聚合接口内联全部方法。
+     *   好处：文件最短、读代码一屏看全、不用跳转。
+     *   代价：类型不匹配时报错会把整坨对象铺在屏幕上（字段多时难读）。
+     *
+     * · `all` —— IO 类型 + 子接口全具名（2026-11-05 的第一版）。
+     *   好处：报错只说 `PageInvokeInput`；`PageClient` 可单独 import。
+     *   代价：生成物多十几个 export，标量也具名（`SysPingOutput = string` 是纯噪音）。
+     *
+     * · `auto` —— 标量内联、对象具名（按主流做法：协议层 input 具名，一次性结果内联）。
+     *
+     * 为什么做成选项而不是写死：三种都能工作，选哪个是**口味**不是**能力**。
+     * 默认取最简的一档，需要时一行配置切回来。
+     */
+    readonly naming?: 'none' | 'all' | 'auto';
 }
 
 /** 把扁平路径分组：`page.list` / `page.invoke` → 命名空间 `page` 下的两个叶子 */
@@ -183,23 +200,16 @@ function renderMethodSignature(
 }
 
 /**
- * 生成一个模块的 .d.ts（**具名子接口** + client / server 两组）。
+ * 生成一个模块的 .d.ts（client / server 两组）。
  *
- * 为什么出子接口而不是内联（2026-11-05，参照「层级接口讨论总结」）：
- *   · 内联的 `input: { pageId: string; method: string; args?: unknown }` 一旦类型不匹配，
- *     报错会把整坨铺在屏幕上；具名后只显示 `InvokeInput`。
- *   · `PageClient` 能被单独 import —— 只用 page 的消费方不必拖进 view 的类型。
- *   · 生成物里每个子接口也有 JSDoc，IDE 里点过去是一整个类型。
- *
- * 命名约定：
- *   `page.list` → 接口 `PageClient` / `PageServer`，入参 `PageListInput`，出参 `PageListOutput`
- *   顶层方法（无命名空间）→ 直接挂在 `XxxClient` / `XxxServer` 上，入参 `XxxListInput`
+ * `naming` 决定具名程度（默认 `none` = 全内联，见 RenderOptions）。
  */
 export function renderServiceTypes(
     typeName: string,
     api: _Router,
     options: RenderOptions = {},
 ): string {
+    const naming = options.naming ?? 'none';
     const flatten = _flattenRouter(api);
     const flat: FlatMethod[] = Object.entries(flatten).map(([path, meta]) => ({
         path,
@@ -224,75 +234,109 @@ export function renderServiceTypes(
     }
 
     const topLevel = groups.get('') ?? [];
+
+    /** 某个方法要不要具名（按 naming 策略 + 形状） */
+    const shouldNameInput = (m: FlatMethod): boolean => {
+        if (naming === 'none') return false;
+        if (naming === 'all') return !isVacuousInput(m.inputSchema);
+        // auto：对象形状才具名（协议层的 request message）
+        return zodTypeOf(m.inputSchema) === 'object' && !isVacuousInput(m.inputSchema);
+    };
+    const shouldNameOutput = (m: FlatMethod): boolean => {
+        if (naming === 'none') return false;
+        if (naming === 'all') return true;
+        // auto：对象 / 对象数组 / 复杂联合才具名；标量与简单数组内联
+        const t = zodTypeOf(m.outputSchema);
+        if (t === 'object') return true;
+        if (t === 'array') return zodTypeOf(zodElementOf(m.outputSchema)) === 'object';
+        if (t === 'union') return true;
+        return false;
+    };
+
+    /** 某个方法的入参 / 出参在签名里怎么写 */
+    const inputRefOf = (m: FlatMethod, nameOf: (leaf: string) => string): string => {
+        if (isVacuousInput(m.inputSchema)) return 'Record<string, never>';
+        return shouldNameInput(m) ? nameOf(m.path) : zodToTs(m.inputSchema);
+    };
+    const outputRefOf = (m: FlatMethod, nameOf: (leaf: string) => string): string => {
+        if (!shouldNameOutput(m)) return zodToTs(m.outputSchema);
+        return nameOf(m.path).replace(/Input$/, 'Output');
+    };
+
     const out: string[] = [];
     out.push('// ⚠️ 自动生成 —— 别手改（scripts/gen-service-types.ts）');
     out.push(`// 源：${typeName}Api`);
-    out.push("import type { RpcCallOptions } from '@diy-agent/rpc';");
+    if (naming !== 'none') out.push("import type { RpcCallOptions } from '@diy-agent/rpc';");
+    else out.push("import type { RpcCallOptions } from '@diy-agent/rpc';");
+    out.push('');
+    out.push('// ⚠️ 模块名 / 方法路径是**跨进程契约**：改名 = 老客户端全挂（同 protobuf 的字段号）。');
     out.push('');
 
-    // ── ① 入参 / 出参具名类型（所有命名空间 + 顶层） ──
-    const inputTypes: string[] = [];
-    const outputTypes: string[] = [];
-    const emitIoTypes = (methods: FlatMethod[], nameOf: (leaf: string) => string): void => {
-        for (const m of methods) {
-            const inputName = nameOf(m.path);
-            // 空 input 不生成类型（用 `Record<string, never>` 更直白，也免得生成一堆空接口）
-            if (!isVacuousInput(m.inputSchema)) {
-                inputTypes.push(`/** \`${m.path}\` 的入参 */\nexport interface ${inputName} ${zodToTs(m.inputSchema)}`);
+    // ── ① IO 具名类型（仅 naming !== 'none'）──
+    if (naming !== 'none') {
+        const inputTypes: string[] = [];
+        const outputTypes: string[] = [];
+        const emitIo = (methods: FlatMethod[], nameOf: (leaf: string) => string): void => {
+            for (const m of methods) {
+                if (shouldNameInput(m)) {
+                    inputTypes.push(`/** \`${m.path}\` 的入参 */\nexport interface ${nameOf(m.path)} ${zodToTs(m.inputSchema)}`);
+                }
+                if (shouldNameOutput(m)) {
+                    const outName = nameOf(m.path).replace(/Input$/, 'Output');
+                    outputTypes.push(`/** \`${m.path}\` 的出参 */\nexport type ${outName} = ${zodToTs(m.outputSchema)};`);
+                }
             }
-            const outputName = inputName.replace(/Input$/, 'Output');
-            outputTypes.push(`/** \`${m.path}\` 的出参 */\nexport type ${outputName} = ${zodToTs(m.outputSchema)};`);
+        };
+        for (const n of namespaces) emitIo(n.methods, n.inputName);
+        if (topLevel.length > 0) emitIo(topLevel, (leaf) => `${typeName}${pascal(leaf)}Input`);
+        if (inputTypes.length > 0) {
+            out.push(inputTypes.join('\n\n'));
+            out.push('');
         }
-    };
-    for (const n of namespaces) emitIoTypes(n.methods, n.inputName);
-    if (topLevel.length > 0) emitIoTypes(topLevel, (leaf) => `${typeName}${pascal(leaf)}Input`);
-
-    if (inputTypes.length > 0) {
-        out.push(inputTypes.join('\n\n'));
-        out.push('');
-    }
-    if (outputTypes.length > 0) {
-        out.push(outputTypes.join('\n'));
-        out.push('');
+        if (outputTypes.length > 0) {
+            out.push(outputTypes.join('\n'));
+            out.push('');
+        }
     }
 
-    // ── ② 子接口（每个命名空间一组 client / server） ──
-    const renderSubInterface = (n: NamespaceTypes, side: 'client' | 'server'): string => {
-        const ifaceName = side === 'client' ? n.clientName : n.serverName;
-        const body = n.methods
-            .map((m) => {
-                const inputRef = isVacuousInput(m.inputSchema) ? 'Record<string, never>' : n.inputName(m.path);
-                return renderMethodSignature(m, side, inputRef, n.inputName(m.path).replace(/Input$/, 'Output'));
-            })
-            .join('\n');
-        return `/** \`${n.ns}\` 的${side === 'client' ? '客户端' : '服务端'}形状 */\nexport interface ${ifaceName} {\n${body}\n}`;
-    };
-    for (const n of namespaces) {
-        out.push(renderSubInterface(n, 'client'));
-        out.push('');
-        out.push(renderSubInterface(n, 'server'));
-        out.push('');
+    // ── ② 子接口（仅 naming === 'all' 出；否则所有权方法直接进聚合接口）──
+    if (naming === 'all') {
+        for (const n of namespaces) {
+            for (const side of ['client', 'server'] as const) {
+                const ifaceName = side === 'client' ? n.clientName : n.serverName;
+                const body = n.methods
+                    .map((m) => renderMethodSignature(m, side, inputRefOf(m, n.inputName), outputRefOf(m, n.inputName)))
+                    .join('\n');
+                out.push(`/** \`${n.ns}\` 的${side === 'client' ? '客户端' : '服务端'}形状 */\nexport interface ${ifaceName} {\n${body}\n}`);
+                out.push('');
+            }
+        }
     }
 
-    // ── ③ 聚合接口（只是引用子接口，不再内联） ──
+    // ── ③ 聚合接口 ──
     const renderAggregate = (side: 'client' | 'server'): string => {
         const ifaceName = `${typeName}${side === 'client' ? 'Client' : 'Server'}`;
         const members: string[] = [];
+        const topNameOf = (leaf: string): string => `${typeName}${pascal(leaf)}Input`;
         if (topLevel.length > 0) {
             members.push(
                 topLevel
-                    .map((m) => {
-                        const base = `${typeName}${pascal(m.path)}`;
-                        const inputRef = isVacuousInput(m.inputSchema) ? 'Record<string, never>' : `${base}Input`;
-                        return renderMethodSignature(m, side, inputRef, `${base}Output`);
-                    })
+                    .map((m) => renderMethodSignature(m, side, inputRefOf(m, topNameOf), outputRefOf(m, topNameOf)))
                     .join('\n'),
             );
         }
         for (const n of namespaces) {
-            members.push(`    ${methodKey(n.ns)}: ${side === 'client' ? n.clientName : n.serverName};`);
+            if (naming === 'all') {
+                members.push(`    ${methodKey(n.ns)}: ${side === 'client' ? n.clientName : n.serverName};`);
+            } else {
+                // none / auto：直接内联这个命名空间的方法
+                const body = n.methods
+                    .map((m) => renderMethodSignature(m, side, inputRefOf(m, n.inputName), outputRefOf(m, n.inputName)).replace(/^ {4}/gm, '        '))
+                    .join('\n');
+                members.push(`    ${methodKey(n.ns)}: {\n${body}\n    };`);
+            }
         }
-        return `/** ${typeName} 的**${side === 'client' ? '客户端' : '服务端'}**形状（聚合） */\nexport interface ${ifaceName} {\n${members.join('\n\n')}\n}`;
+        return `/** ${typeName} 的**${side === 'client' ? '客户端' : '服务端'}**形状 */\nexport interface ${ifaceName} {\n${members.join('\n\n')}\n}`;
     };
     out.push(renderAggregate('client'));
     out.push('');
@@ -302,13 +346,29 @@ export function renderServiceTypes(
     return out.join('\n');
 }
 
+/** 取一个 zod schema 的「类型名」（供判据用；认不出返回 undefined） */
+function zodTypeOf(schema: z.ZodType | undefined): string | undefined {
+    if (schema === undefined) return undefined;
+    const anySchema = schema as unknown as { _zod?: { def?: Record<string, unknown> }; def?: Record<string, unknown> };
+    const d = (anySchema._zod?.def ?? anySchema.def ?? {}) as Record<string, unknown>;
+    const t = d['type'];
+    return typeof t === 'string' ? t : undefined;
+}
+
+/** 数组元素的 schema（非数组返回 undefined） */
+function zodElementOf(schema: z.ZodType | undefined): z.ZodType | undefined {
+    if (schema === undefined) return undefined;
+    const anySchema = schema as unknown as { _zod?: { def?: Record<string, unknown> }; def?: Record<string, unknown> };
+    const d = (anySchema._zod?.def ?? anySchema.def ?? {}) as Record<string, unknown>;
+    return d['element'] as z.ZodType | undefined;
+}
+
 /** `input: {}` / 缺省 input 视为「没有入参」—— 用 `Record<string, never>` 表达 */
 function isVacuousInput(schema: z.ZodType | undefined): boolean {
     if (schema === undefined) return true;
+    if (zodTypeOf(schema) !== 'object') return false;
     const anySchema = schema as unknown as { _zod?: { def?: Record<string, unknown> }; def?: Record<string, unknown> };
     const d = (anySchema._zod?.def ?? anySchema.def ?? {}) as Record<string, unknown>;
-    const type = d['type'];
-    if (type !== 'object') return false;
     const shape = d['shape'] as Record<string, unknown> | undefined;
     return shape !== undefined && Object.keys(shape).length === 0;
 }
