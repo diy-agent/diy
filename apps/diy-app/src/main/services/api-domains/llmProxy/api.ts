@@ -4,9 +4,8 @@
  * import 待手工补（各域依赖不同）。
  */
 import { z } from "zod";
+import { StatusOk } from "../../../../shared/status";
 import { RpcSchema, defineService } from "@diy-agent/rpc";
-/** 与 api-def.ts 的同名局部常量同形（那边没导出） */
-const StatusOk = z.object({ status: z.string() });
 
 export const llmProxyRoutes = RpcSchema.group({desc: `LLM 代理`,
         children: {

@@ -4,9 +4,8 @@
  * import 待手工补（各域依赖不同）。
  */
 import { z } from "zod";
+import { StatusOk } from "../../../../shared/status";
 import { RpcSchema, defineService } from "@diy-agent/rpc";
-/** 与 api-def.ts 的同名局部常量同形（那边没导出） */
-const StatusOk = z.object({ status: z.string() });
 import { CacheChannelViewSchema, CacheHintEventSchema, CacheHintSchema } from "../../../../shared/cache-hint";
 
 export const cacheHintRoutes = RpcSchema.group({desc: `冷缓存提示（safePoint / failPoint 自适应边界；顶栏一行 + 用量面板缓存时效柱）`,
