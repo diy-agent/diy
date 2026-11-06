@@ -11,6 +11,8 @@ export * from "./reducer.js";
 export * from "./projection.js";
 export * from "./delivery.js";
 export * from "./provider.js";
+export * from "./changelog.js";
+export * from "./step-delta.js";
 export * from "./envelope.js";
 export * from "./schema/task-head.js";
 export * from "./schema/schema-doc.js";

@@ -23,8 +23,12 @@ import {
     assembleFromProviders,
     buildDelivery,
     helpsOf,
+    stepDeltaOf,
+    treeOfGlobals,
+    valueHashes,
     type ContextPath,
     type ContextProvider,
+    type DeltaSnapshot,
 } from '@diy-agent/context';
 import { createSession, type AgentSession, type ChatMessage, type LlmPort, type SessionDelta, type SessionRequest, type SessionStore } from '@diy-agent/session';
 
@@ -85,8 +89,26 @@ export function createBotAgent(opts: BotAgentOptions): BotAgent {
         model: opts.model,
     });
 
+    /**
+     * 上一次给模型看过的树（跨轮增量的基准）。
+     *
+     * 为什么放内存而不是落盘：bot 允许重启后"第一轮多发一次全量增量"——
+     * 代价是多几十字节，收益是不引入一套游标持久化（diy-app 那边才需要落盘重建）。
+     */
+    let prevSnap: DeltaSnapshot | null = null;
+
     async function* run(text: string): AsyncGenerator<SessionDelta> {
-        yield* session.send(text);
+        // 每轮算全量树（值便宜），然后只把**变化的部分**作为 user 前缀发出去 ——
+        // 已发出的历史一条不动，这是 `agent-prefix` 测试守的判据。
+        const globals = assembleFromProviders(opts.providers);
+        const tree = treeOfGlobals(globals);
+        const snap: DeltaSnapshot = { tree, valueHashes: valueHashes(tree) };
+        const delta = prevSnap === null ? null : stepDeltaOf(prevSnap, snap);
+        const userPrefix = delta === null || delta.text === '' ? undefined : delta.text;
+        yield* session.send(text, userPrefix === undefined ? {} : { userPrefix });
+        // 游标前移**在发完之后**：发送失败也要前移吗？—— 是。失败的这一轮已经落进 store
+        // （user 消息已 append），下一次看到的树就是这一次的树。
+        prevSnap = snap;
     }
 
     return {

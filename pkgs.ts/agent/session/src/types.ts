@@ -106,6 +106,13 @@ export interface ChatOptions {
     readonly model?: string;
     readonly signal?: AbortSignal;
     /**
+     * 本轮 user 消息的**前缀**（跨轮上下文变化的补丁）。
+     *
+     * 为什么不单独发一条 user 消息：前缀缓存按逐字节匹配，多一条消息就多一段前缀变化；
+     * 合进本轮 user 正文里，已发出的历史一条不动（`agent-prefix` 测试守的就是这条）。
+     */
+    readonly userPrefix?: string;
+    /**
      * 工具集（**原样交给适配器**，本包不解释）。适配器把它传给 ai-sdk 的 `streamText`，
      * 由 ai-sdk 负责「模型点工具 → 执行 → 结果喂回 → 再调」的整个循环。
      *

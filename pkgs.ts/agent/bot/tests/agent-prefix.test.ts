@@ -123,3 +123,41 @@ describe("BotAgent：请求的前缀不变（总体验证点）", () => {
         expect(snapshot1.some((m) => m.role === "user" && m.text === "b")).toBe(false);
     });
 });
+
+describe("BotAgent：跨轮增量（接在 user 前缀上，不另起一条消息）", () => {
+    it("变量变化 ⇒ 增量合进本轮 user 正文，历史仍只追加", async () => {
+        const cwdNode = mutableProvider("cwd", {
+            path: "/tmp/a",
+            note: "",
+            isFallback: false,
+            isTaskDir: false,
+            isAppDir: false,
+        });
+        const providers = [
+            { key: "diy", provide: () => ({ cli: "diy", home: "/tmp/x" }) },
+            cwdNode.provider,
+            { key: "chain", provide: () => [] },
+            { key: "skills", provide: () => [] },
+        ];
+        const agent = createBotAgent({
+            id: "s-delta",
+            llm: echoLlm(),
+            store: openMemorySessionStore(),
+            model: "test/model",
+            providers,
+        });
+
+        const r1 = await agent.send("第一句");
+        const n1 = r1.request!.messages.length;
+        expect(r1.request!.messages[n1 - 1]!.text).toBe("第一句"); // 首轮无增量
+
+        cwdNode.set({ path: "/tmp/CHANGED", note: "", isFallback: false, isTaskDir: false, isAppDir: false });
+        const r2 = await agent.send("第二句");
+        const last = r2.request!.messages[r2.request!.messages.length - 1]!;
+        // ① 本轮 user 正文里带上了增量（新值）
+        expect(String(last.text)).toContain("/tmp/CHANGED");
+        expect(String(last.text)).toContain("第二句");
+        // ② 增量**没有**变成独立的一条消息（历史只追加 2 条：user + assistant）
+        expect(r2.request!.messages.length).toBe(n1 + 2);
+    });
+});

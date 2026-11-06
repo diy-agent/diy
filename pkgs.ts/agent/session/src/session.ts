@@ -140,8 +140,13 @@ export function createSession(options: CreateSessionOptions): AgentSession {
             if (typeof text !== 'string' || text.trim() === '') {
                 throw new SessionError('session/empty-text', 'send() 的正文不能为空', 'text');
             }
+            // 跨轮上下文补丁合进本轮 user 正文（不单独发一条，见 ChatOptions.userPrefix）
+            const body =
+                turnOptions?.userPrefix === undefined || turnOptions.userPrefix === ''
+                    ? text
+                    : `${turnOptions.userPrefix}\n${text}`;
             yield* runTurn(() => {
-                appendMessage({ role: 'user', text });
+                appendMessage({ role: 'user', text: body });
             }, turnOptions);
         },
         /**
