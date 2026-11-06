@@ -10,8 +10,8 @@ import { z } from 'zod';
 import { RpcSchema } from '../../src/core/index';
 import { renderServiceTypes, zodToTs } from '../../src/core/service-gen';
 
-const api = RpcSchema.router({
-    math: RpcSchema.router({
+const api = RpcSchema.bindNames(RpcSchema.group({ children: {
+    math: RpcSchema.group({ children: {
         add: RpcSchema.unary({
             input: { a: z.number(), b: z.number() },
             output: z.number(),
@@ -21,15 +21,15 @@ const api = RpcSchema.router({
             input: { a: z.number(), b: z.number().int() },
             output: z.object({ q: z.number(), r: z.number() }),
         }),
-    }),
-    sys: RpcSchema.router({
+    } }),
+    sys: RpcSchema.group({ children: {
         ping: RpcSchema.unary({ input: {}, output: z.string() }),
         list: RpcSchema.unary({
             input: { tags: z.array(z.string()), limit: z.number().optional() },
             output: z.array(z.object({ id: z.string(), ok: z.boolean() })),
         }),
-    }),
-});
+    } }),
+} }));
 
 describe('zodToTs', () => {
     it('基础标量 / 对象 / 数组 / 可选', () => {

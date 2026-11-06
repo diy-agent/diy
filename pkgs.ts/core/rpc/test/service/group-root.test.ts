@@ -1,6 +1,6 @@
 // group-root.test.ts — `RpcSchema.group` 直接当根（2026-11-06）
 //
-// 之前 group 只能当**中间节点** —— 它自己不摊平 children，得靠 `RpcSchema.router()` 包一层
+// 之前 group 只能当**中间节点** —— 它自己不摊平 children，得靠 `RpcSchema.group({ children:  })` 包一层
 // 才能写 `apiDef.a.b.c`。dev-fs（##518）遇到的两个问题都是这个不对称造成的：
 //   ① `HandlersOf` 把 group 推成 `never` → `bind()` 类型报错
 //   ② 根必须用 router，但 router 带 `isTopGroup` 兼容分支 → group / router 概念重合
@@ -77,12 +77,12 @@ describe('RpcSchema.group 当根', () => {
 
 describe('对比：router 仍可作为根（老路径不破）', () => {
     it('router({ x: group({...}) }) 照旧可用', async () => {
-        const api = RpcSchema.router({
+        const api = RpcSchema.bindNames(RpcSchema.group({ children: {
             math: RpcSchema.group({
                 desc: '数学',
                 children: { add: RpcSchema.unary({ input: { a: z.number() }, output: z.number(), desc: '加' }) },
             }),
-        });
+        } }));
         const svc = defineService({ name: 'demo2', api });
         const { binding, client, dispose } = await channelHarness.start();
         svc.bind(binding, { math: { add: ({ input }) => input.a } });

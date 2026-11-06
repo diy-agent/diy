@@ -11,7 +11,7 @@
  * // 模块内（pkgs.ts/ui/workbench/src/api.ts）
  * export const workbenchService = defineService({
  *     name: 'diy.ui.workbench',
- *     api: RpcSchema.router({ page: RpcSchema.router({ list, invoke }) }),
+ *     api: RpcSchema.group({ children: { page: RpcSchema.group({ children: { list, invoke } }) } }),
  * });
  *
  * // 服务端
@@ -82,7 +82,7 @@ export interface ServiceDef<TRoutes extends _Router | _AnyProcedureMeta> {
    * （老客户端会立刻全挂）。名字一旦写进 service 就是契约的一部分。
    */
   readonly name: string;
-  /** 路由树（`RpcSchema.router(...)` 的返回值，形状不变） */
+  /** 路由树（`RpcSchema.group({ children: ... })` 的返回值，形状不变） */
   readonly api: TRoutes;
 }
 

@@ -4,15 +4,15 @@
  * 类型层只有编译期；**运行时**要怎么挡？答：schema.parse 在 invoke 前跑。
  */
 import { z } from "zod";
-import { RpcSchema, defineService, ChannelServerBinding, ChannelClientBinding } from "../src/index";
-import { createMemTransportPair } from "../test/helpers";
+import { RpcSchema, defineService, ChannelServerBinding, ChannelClientBinding } from "../../src/index";
+import { createMemTransportPair } from "../../test/helpers";
 
-const routes = RpcSchema.router({
+const routes = RpcSchema.bindNames(RpcSchema.group({ children: {
     echo: RpcSchema.unary({
         input: { name: z.string().min(1), age: z.number().int().positive() },
         output: z.string(),
     }),
-});
+} }));
 const service = defineService({ name: "demo.echo", api: routes });
 
 async function main(): Promise<void> {

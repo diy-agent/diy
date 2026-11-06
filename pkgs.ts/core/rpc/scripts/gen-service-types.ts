@@ -17,7 +17,7 @@
  * 文件：`pkgs.ts/**` + `apps/**` 下的 `<dir>/src/api.ts`
  * 导出：**按形状识别**，不按名字（2026-11-06 修）——
  *   · `defineService(...)` 的返回值（有 `name` + `api` + `bind` + `use`）⇒ 用它自带的 name
- *   · 裸 `RpcSchema.router(...)` 的返回值（有 `_type` 或子节点）⇒ 用导出名推 typeName
+ *   · 裸 `RpcSchema.group({ children: ... })` 的返回值（有 `_type` 或子节点）⇒ 用导出名推 typeName
  *   为什么不再按 `xxxApi` 后缀：workbench 导出的是 `workbenchRoutes` / `workbenchService`，
  *   按名字筛会静默跳过整个文件（比报错更难查）。
  * 产物：`<dir>/src/gen/<name>.generated.d.ts`（2026-11-06 用户定：生成物集中放 gen/，

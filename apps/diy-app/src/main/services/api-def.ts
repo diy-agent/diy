@@ -382,7 +382,7 @@ const FlowThreadsSchema = z.object({
  */
 const kvList = () => z.union([z.string(), z.array(z.string())]);
 
-export const apiDef = RpcSchema.router({
+export const apiDef = RpcSchema.bindNames(RpcSchema.group({ children: {
   diy: RpcSchema.group({
     desc: `
     diy 管控台 CLI
@@ -3656,4 +3656,4 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
       }),
     },
   }),
-});
+} }));

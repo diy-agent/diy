@@ -2,7 +2,7 @@
  * 04-group-root —— **用 `RpcSchema.group` 当根**（2026-11-06 起支持）
  *
  * 与 01-basic 的差别只在根节点：
- *   · 01-basic：`RpcSchema.router({ math: RpcSchema.router({...}) })` —— 两层都没有 desc
+ *   · 01-basic：`RpcSchema.group({ children: { math: RpcSchema.group({ children: {...} }) } })` —— 两层都没有 desc
  *   · 这里：    `RpcSchema.group({ desc, children: { math: group({ desc, children }) } })`
  *
  * **为什么推荐后者**：CLI help 是分层的，每层都需要一句说明：
@@ -14,7 +14,7 @@
 import { z } from 'zod';
 import { RpcSchema, defineService } from '../../../../src/index';
 
-export const calcRoutes = RpcSchema.group({
+export const calcRoutes = RpcSchema.bindNames(RpcSchema.group({
     desc: '计算器示例',
     children: {
         math: RpcSchema.group({
@@ -30,6 +30,6 @@ export const calcRoutes = RpcSchema.group({
             },
         }),
     },
-});
+}));
 
 export const calcService = defineService({ name: 'demo', api: calcRoutes });

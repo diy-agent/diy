@@ -9,9 +9,9 @@ import { createMemTransportPair } from '../test/helpers';
  * 2. 未知信封 type：是否崩溃（应忽略）
  * 3. 重复 end / data-after-end：是否崩溃
  */
-const api = RpcSchema.router({
+const api = RpcSchema.bindNames(RpcSchema.group({ children: {
   ping: RpcSchema.unary({ input: {}, output: z.string() }),
-});
+} }));
 void api;
 
 async function main() {
