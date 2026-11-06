@@ -17,7 +17,7 @@
 import { app, BrowserWindow, screen } from "electron";
 import { ChannelClientBinding, ChannelServerBinding, createTypedClient } from "@diy-agent/rpc";
 import { createMainTransport } from "@diy-agent/rpc/electron/main";
-import { rendererApi, workbenchService } from "./protocol.js";
+import { rendererService, workbenchService } from "./protocol.js";
 import { WorkbenchError } from "./errors.js";
 import { loadPages, type PluginEntry } from "./loader.js";
 import type { PageContribution, PageInfo } from "./page.js";
@@ -183,7 +183,7 @@ export async function createWorkbench(options: CreateWorkbenchOptions): Promise<
     });
 
     // 反方向（main → renderer）：同一条 transport 上 client + server 各挂一个（rpc 支持双向）
-    const uiClient = createTypedClient(new ChannelClientBinding(transport), rendererApi);
+    const uiClient = rendererService.use(new ChannelClientBinding(transport));
     const ui = async (command: Parameters<Workbench["ui"]>[0]): Promise<unknown> => {
         switch (command.type) {
             case "fill":

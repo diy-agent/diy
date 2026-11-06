@@ -55,3 +55,61 @@ export const workbenchService = defineService({
     name: "diy.ui.workbench",
     api: workbenchRoutes,
 });
+
+// ═══════════════════════════════════════════════════
+//  renderer 方向（意图测试）
+// ═══════════════════════════════════════════════════
+
+/**
+ * **renderer 侧**的契约（main → renderer）。与 `workbenchRoutes` 方向相反：
+ * 上面的由主进程实现、页面调用；这里由页面实现、主进程调用。
+ *
+ * 用途是**意图测试** —— 测试从外面发指令直接驱动 UI 内部状态，不走真实鼠标：
+ *
+ * ```ts
+ * await ui.fill('.chat-panel input', 'name');   // 直接设值
+ * await ui.click('.chat-primary');               // 派发事件（不经命中测试）
+ * await ui.waitState('bots.length', 1);          // 等信号填充
+ * ```
+ *
+ * 与 E2E 的分工：E2E 验「显示对不对」（拖拉 / 遮挡 / 大小），走真鼠标、慢、少；
+ * 意图测试验「逻辑对不对」，走这条通道、快、多。见 `docs/testing.md`。
+ */
+export const rendererRoutes = RpcSchema.router({
+    ui: RpcSchema.router({
+        /** 给一个输入框设值并派发 input/change（模拟用户输入） */
+        fill: RpcSchema.unary({
+            input: { selector: z.string(), value: z.string() },
+            output: z.void(),
+        }),
+        /** 点击一个元素（直接 dispatchEvent，不经过命中测试） */
+        click: RpcSchema.unary({
+            input: { selector: z.string() },
+            output: z.void(),
+        }),
+        /**
+         * 等某个状态成立（轮询页面里的 `window.__diyTestState`）。
+         *
+         * 为什么不用「等 DOM 出现」：DOM 出现 ≠ 数据到位。状态断言才是意图级的，
+         * 且不受动画 / 渲染批次影响。
+         */
+        waitState: RpcSchema.unary({
+            input: { path: z.string(), equals: z.unknown(), timeoutMs: z.number().default(5000) },
+            output: z.void(),
+        }),
+        /** 读当前状态快照（测试断言用；不是给 UI 自己用的） */
+        readState: RpcSchema.unary({ input: { path: z.string() }, output: z.unknown() }),
+    }),
+});
+
+export type RendererApi = typeof rendererRoutes;
+
+/**
+ * renderer 侧的 service。
+ *
+ * 换写法的收益与 workbench 同：两端用**同一个值**，前缀 `diy.ui.renderer.` 不可能漂移。
+ */
+export const rendererService = defineService({
+    name: "diy.ui.renderer",
+    api: rendererRoutes,
+});

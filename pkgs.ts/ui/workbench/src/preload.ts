@@ -8,7 +8,7 @@
 //   ChannelServerBinding  → 主进程调页面（意图测试命令 fill / click / waitState / readState）
 import { ChannelClientBinding, ChannelServerBinding, createTypedClient } from "@diy-agent/rpc";
 import type { EnvelopeTransport } from "@diy-agent/rpc";
-import { rendererApi, workbenchService } from "./protocol.js";
+import { rendererService, workbenchService } from "./protocol.js";
 import type { WorkbenchBridge } from "./channels.js";
 
 export interface PreloadBridge {
@@ -32,10 +32,15 @@ export function createPreloadBridge(transport: EnvelopeTransport): PreloadBridge
     };
 
     const server = new ChannelServerBinding(transport);
-    server.on(rendererApi.ui.fill, ({ input }) => forward({ type: "fill", ...input }));
-    server.on(rendererApi.ui.click, ({ input }) => forward({ type: "click", ...input }));
-    server.on(rendererApi.ui.waitState, ({ input }) => forward({ type: "waitState", ...input }));
-    server.on(rendererApi.ui.readState, ({ input }) => forward({ type: "readState", ...input }));
+    // 一次注册整个模块（路径自动带 `diy.ui.renderer.` 前缀，与主进程的 use() 同源）
+    rendererService.bind(server, {
+        ui: {
+            fill: ({ input }) => forward({ type: "fill", ...input }),
+            click: ({ input }) => forward({ type: "click", ...input }),
+            waitState: ({ input }) => forward({ type: "waitState", ...input }),
+            readState: ({ input }) => forward({ type: "readState", ...input }),
+        },
+    });
 
     return {
         bridge: {
