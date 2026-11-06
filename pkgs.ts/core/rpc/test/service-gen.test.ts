@@ -102,7 +102,8 @@ describe('naming = all（全具名）', () => {
     it('IO 类型和子接口都具名', () => {
         expect(dts).toContain('export interface MathAddInput');
         expect(dts).toContain('export type MathAddOutput');
-        expect(dts).toContain('export interface MathClient' && 'export interface SysClient');
+        expect(dts).toContain('export interface MathClient');
+        expect(dts).toContain('export interface SysClient');
         expect(dts).toMatch(/math: MathClient;/);
     });
 
