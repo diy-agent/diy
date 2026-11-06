@@ -544,7 +544,8 @@ test() {
   local rc=0
   local ff=0; [[ "$fail_fast" == "1" ]] && ff=1
   _ws_vitest "$ff" || rc=1
-  # diy-app 最后跑（含意图测试，起隔离 Electron，最慢）——它自己的 `test` = unit + os + intent
+  # diy-app 最后跑 —— 它自己的 `test` = unit + os（**UI 意图测试 2026-11-06 起停跑**，见 apps/diy-app/sha.sh；
+  # 要跑须显式 `DIY_INTENT_ENABLE=1 ./sha.sh test-intent`）
   if ( cd apps/diy-app && ./sha.sh test ); then :; else
       rc=1
       echo "${error}✗ apps/diy-app 有失败${reset}" >&2
