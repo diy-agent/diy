@@ -4,17 +4,9 @@
  * import 待手工补（各域依赖不同）。
  */
 import { z } from "zod";
+import { StatusOk } from "../../../../shared/status";
+import { TrafficSnapshotSchema } from "../../../../shared/traffic-snapshot";
 import { RpcSchema, defineService } from "@diy-agent/rpc";
-/** 与 api-def.ts 的同名局部常量同形（那边没导出） */
-const TrafficSnapshotSchema = z.object({
-  fullCapture: z.boolean().describe("是否记录完整请求内容（正文不截断）"),
-  cap: z.number().describe("内存里最多留多少条"),
-  total: z.number(),
-  logDir: z.string().describe("日志目录（相对 DIY_HOME）"),
-  records: z.array(TrafficRecordSchema),
-});
-/** 与 api-def.ts 的同名局部常量同形（那边没导出） */
-const StatusOk = z.object({ status: z.string() });
 import { TrafficRecordSchema } from "../../../../shared/traffic-record";
 
 export const trafficRoutes = RpcSchema.group({desc: `流量（应用发出去的 HTTP 请求 / 收到的响应；内存留最近若干条 + 逐条追加到 log/network/ 磁盘日志）`,

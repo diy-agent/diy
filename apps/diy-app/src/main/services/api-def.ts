@@ -17,6 +17,7 @@
  */
 
 import { RpcSchema } from "@diy-agent/rpc";
+import { StatusOk, StatusDataId } from "../../shared/status";
 import { envRoutes } from "./api-domains/env/api";
 import { cacheHintRoutes } from "./api-domains/cacheHint/api";
 import { projectRoutes } from "./api-domains/project/api";
@@ -140,16 +141,7 @@ const StatusDataTaskWrite = z.object({
     appended_chars: z.number().optional(),
   }),
 });
-const StatusDataId = z.object({ status: z.string(), data: z.object({ id: z.string() }) });
-const StatusOk = z.object({ status: z.string() });
 
-const TrafficSnapshotSchema = z.object({
-  fullCapture: z.boolean().describe("是否记录完整请求内容（正文不截断）"),
-  cap: z.number().describe("内存里最多留多少条"),
-  total: z.number(),
-  logDir: z.string().describe("日志目录（相对 DIY_HOME）"),
-  records: z.array(TrafficRecordSchema),
-});
 
 /** 任务树节点 schema（递归，供 ui.tree 输出强类型） */
 /** UI 快照数据（ui.state 单读 / ui.watch.uiState 流 共用同一形状） */
