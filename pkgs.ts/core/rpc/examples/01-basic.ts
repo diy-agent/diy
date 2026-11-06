@@ -1,0 +1,43 @@
+/**
+ * 01-basic — 最小可用：定义 → 绑定 → 调用
+ *
+ * 跑：`npx tsx pkgs.ts/core/rpc/examples/01-basic.ts`
+ */
+import { z } from "zod";
+import { RpcSchema, defineService, ChannelServerBinding, ChannelClientBinding } from "../src/index";
+import { createMemTransportPair } from "../test/helpers";
+
+// ① 定义：纯 schema，没有 handler
+const mathRoutes = RpcSchema.router({
+    math: RpcSchema.router({
+        add: RpcSchema.unary({
+            input: { a: z.number(), b: z.number() },
+            output: z.number(),
+            desc: "a + b",
+        }),
+    }),
+});
+
+const mathService = defineService({ name: "demo.math", api: mathRoutes });
+
+async function main(): Promise<void> {
+    // ② 建传输（示例用内存对；真实场景换成 http / ws / electron）
+    const [txServer, txClient] = createMemTransportPair();
+    const server = new ChannelServerBinding(txServer);
+    const client = new ChannelClientBinding(txClient);
+
+    // ③ 服务端：一次注册整个模块
+    //    handler 收到 `{ input, signal }`，返回 T 或 Promise<T>
+    mathService.bind(server, {
+        math: {
+            add: ({ input }) => input.a + input.b,
+        },
+    });
+
+    // ④ 客户端：只拿这个模块
+    const math = mathService.use(client);
+    console.log("2 + 3 =", await math.math.add({ a: 2, b: 3 }));
+    //                       ^^^^^^^^^^^^^^^ 注意：`{ a, b }` 是对象，不摊平
+}
+
+void main();

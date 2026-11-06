@@ -42,8 +42,8 @@ import {
   RpcError,
   createTypedClient,
   type CallOptions,
-} from '../src/index';
-import { channelHarness, httpHarness, wsHarness, type TransportHarness } from './harness';
+} from '../../src/index';
+import { channelHarness, httpHarness, wsHarness, type TransportHarness } from '../harness';
 
 // ═══════════════════════════════════════════════════
 //  需求域 API（应用作者视角）

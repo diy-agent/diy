@@ -8,14 +8,14 @@
  * 验证：本地/转发各归其位、方法名冲突（scope 冲突实质）由 binding 层显式报错。
  */
 
-import type { EnvelopeTransport } from '../src/core/types';
+import type { EnvelopeTransport } from '../../src/core/types';
 import { it } from 'vitest';
 import { z } from 'zod';
 import {
   RpcSchema, createTypedClient,
-} from '../src/index';
-import { ChannelServerBinding } from '../src/core/channel-server-binding';
-import { ChannelClientBinding } from '../src/core/channel-client-binding';
+} from '../../src/index';
+import { ChannelServerBinding } from '../../src/core/channel-server-binding';
+import { ChannelClientBinding } from '../../src/core/channel-client-binding';
 
 // ═══════════════════════════════════════════════════
 //  def（模拟 app 层：diy.app 本地 + diy.ui 远端，router() 回写全名）

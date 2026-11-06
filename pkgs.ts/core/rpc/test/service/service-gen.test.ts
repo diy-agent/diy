@@ -7,8 +7,8 @@
 
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { RpcSchema } from '../src/core/index';
-import { renderServiceTypes, zodToTs } from '../src/core/service-gen';
+import { RpcSchema } from '../../src/core/index';
+import { renderServiceTypes, zodToTs } from '../../src/core/service-gen';
 
 const api = RpcSchema.router({
     math: RpcSchema.router({

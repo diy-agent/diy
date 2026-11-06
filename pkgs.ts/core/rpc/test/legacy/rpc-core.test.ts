@@ -11,10 +11,10 @@ import { z } from 'zod';
 import {
   RpcSchema, createTypedClient,
   ChannelClientBinding, ChannelServerBinding,
-} from '../src/index';
-import type { EnvelopeTransport } from '../src/core/types';
-import type { ServerBinding } from '../src/core/server-binding';
-import { createMemTransportPair } from './helpers';
+} from '../../src/index';
+import type { EnvelopeTransport } from '../../src/core/types';
+import type { ServerBinding } from '../../src/core/server-binding';
+import { createMemTransportPair } from '../helpers';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

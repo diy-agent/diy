@@ -11,9 +11,9 @@ import * as http2 from 'node:http2';
 import { exec as execCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import { z } from 'zod';
-import { RpcSchema, RpcError } from '../src/index';
-import { HttpServerBinding } from '../src/transport/http/http-server-binding';
-import { HttpClientBinding } from '../src/transport/http/http-client-binding';
+import { RpcSchema, RpcError } from '../../src/index';
+import { HttpServerBinding } from '../../src/transport/http/http-server-binding';
+import { HttpClientBinding } from '../../src/transport/http/http-client-binding';
 
 const exec = promisify(execCb);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

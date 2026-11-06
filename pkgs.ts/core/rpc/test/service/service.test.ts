@@ -7,8 +7,8 @@
 
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { RpcSchema, defineService } from '../src/core/index';
-import { channelHarness } from './harness';
+import { RpcSchema, defineService } from '../../src/core/index';
+import { channelHarness } from '../harness';
 
 /** 两个模块，各有一个 `page.list` —— 没前缀就撞车 */
 function twoServices() {

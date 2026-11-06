@@ -2,9 +2,9 @@
  * 协议信封层测试：验证调用 API 时实际收发的原始 _Envelope 序列
  */
 
-import type { EnvelopeTransport } from '../src/core/types';
-import { ChannelServerBinding, ChannelClientBinding } from '../src/core';
-import { RpcSchema, createTypedClient } from '../src/core';
+import type { EnvelopeTransport } from '../../src/core/types';
+import { ChannelServerBinding, ChannelClientBinding } from '../../src/core';
+import { RpcSchema, createTypedClient } from '../../src/core';
 import { it } from 'vitest';
 import { z } from 'zod';
 

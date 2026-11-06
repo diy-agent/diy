@@ -10,8 +10,8 @@
  */
 
 import { it, expect } from 'vitest';
-import { ChannelServerBinding, ChannelClientBinding, RpcSchema } from '../src/core';
-import type { EnvelopeTransport, _Envelope } from '../src/core/types';
+import { ChannelServerBinding, ChannelClientBinding, RpcSchema } from '../../src/core';
+import type { EnvelopeTransport, _Envelope } from '../../src/core/types';
 import { z } from 'zod';
 
 const api = RpcSchema.router({
