@@ -7,7 +7,9 @@
 // 为什么每个 provider 是工厂而不是对象：同一个 provider 在不同装配里带不同的 home / taskUri，
 // 工厂让依赖显式出现在签名上（而不是从全局变量里偷），也便于单测直接喂假数据。
 
+import { homedir } from "node:os";
 import { join } from "node:path";
+import { skillsOf } from "@diy-agent/skills";
 import type { ContextProvider } from "@diy-agent/context";
 import { describeSchema, type SchemaDoc } from "@diy-agent/context/schema/schema-doc";
 import { AssembleGlobalsSchema } from "@diy-agent/context/schema/prompt-schema";
@@ -161,9 +163,31 @@ export function chainProvider(home: string, shared: Shared): ContextProvider {
 }
 
 /** `skills` 节：技能清单（调用方给的，缺省空数组） */
-export function skillsProvider(opts: AssembleOptions): ContextProvider {
-    return { key: "skills", provide: () => opts.skills ?? [] };
+/**
+ * 技能清单 —— 从 `.agents/skills`（业界共享规范）现扫。
+ *
+ * 为什么不再吃 `opts.skills`（2026-11-07）：那个参数**从来没人传过**（`rg 'skills' api-impl.ts` 无结果），
+ * 于是 `?? []` 永远得到空数组 —— 本机 22 个技能一个都没进过 system。
+ * 改成真扫之后，`skills` 节点才第一次有内容。
+ */
+export function skillsProvider(shared: Shared): ContextProvider {
+    return {
+        key: "skills",
+        help: SKILLS_HELP,
+        provide: () => skillsOf({ cwd: shared.cwd().cwd, globalRoot: join(homedir(), ".agents") }),
+    };
 }
+
+/** 结构说明（与 `@diy-agent/skills` 的 provider 同一份；这里手抄是为了不传 `cwd` 也能建 provider） */
+const SKILLS_HELP: SchemaDoc = {
+    type: "array",
+    desc: "技能清单（空则整节跳过）",
+    items: {
+        name: { type: "string", desc: "技能名" },
+        desc: { type: "string", desc: "说明（含触发词）" },
+        path: { type: "string", desc: "SKILL.md 路径（要看全文就 read 它）" },
+    },
+};
 
 /**
  * 模版节（`identity` / `rules` / `guard`）：**渲染出来的整节文本**，不是值。
@@ -283,7 +307,7 @@ export function standardProviders(deps: ProviderDeps, opts: AssembleOptions = {}
         taskProvider(deps.home, shared),
         cwdProvider(shared),
         chainProvider(deps.home, shared),
-        skillsProvider(opts),
+        skillsProvider(shared),
         sectionProvider("identity", core, shared),
         sectionProvider("rules", core, shared),
         sectionProvider("guard", core, shared),
