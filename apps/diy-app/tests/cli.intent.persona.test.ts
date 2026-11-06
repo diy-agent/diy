@@ -14,7 +14,8 @@
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
 import { dirname, join } from "node:path";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import { ShellTest } from "./shell-test";
 import { keyOf, sessionFileForWrite, sessionFileRel } from "../src/main/core/local-paths";
 import { startElectronTest, type ElectronTest } from "./electron-test";
@@ -105,6 +106,38 @@ async function setupTask(title: string): Promise<string> {
  * 用例里一律用 id 引用（`--persona <id>`）：名字是标签、id 才是引用键 ——
  * 这条契约由本文件的「改名不影响绑定」用例锁住，其他用例按真实用法写。
  */
+/**
+ * 批量造人物：**直接写 personas.yaml**（一次 IO），不再起 N 个 CLI 子进程。
+ *
+ * 为什么（实测）：单次 `./diy.sh agent persona set` 0.4s（冷启 2.7s），24 次就是 10–20s，
+ * 而用例要的只是"列表比一屏长 + 缺省在中间"这个**前置条件**，与"通过 CLI 建人物"无关
+ * —— 后者已由「新建人物」那条用例覆盖。写文件走的仍是 `loadPersonas` 同一份解析，语义等价。
+ *
+ * 返回 `restore()`：把文件恢复原样（本文件共用同一实例，别把 24 个占位人物留给后面的用例去撞）。
+ */
+function seedPersonas(count: number): { ids: string[]; restore: () => void } {
+    const file = join(fx.HOME, "personas.yaml");
+    const before = existsSync(file) ? readFileSync(file, "utf-8") : null;
+    const cur = (before === null ? null : (yamlParse(before) as any)) ?? { default: "persona/1", personas: {} };
+    cur.personas ??= {};
+    const tmpl = Object.values(cur.personas)[0] as any;
+    const base = tmpl ?? { name: "x", model: "mimo-v2.6-flash", reasoningEffort: "medium" };
+    const ids: string[] = [];
+    for (let i = 0; i < count; i++) {
+        const id = `persona/${String(900 + i)}`;
+        cur.personas[id] = { ...base, name: `跳转占位${String(i)}` };
+        ids.push(id);
+    }
+    writeFileSync(file, yamlStringify(cur, { indent: 2 }));
+    return {
+        ids,
+        restore: () => {
+            if (before === null) rmSync(file, { force: true });
+            else writeFileSync(file, before);
+        },
+    };
+}
+
 async function addPersona(name: string, model: string, extra = ""): Promise<string> {
     const r = await fx.sh.getJson(
         `./diy.sh agent persona set --name ${name} --model ${model}${extra ? ` ${extra}` : ""}`,
@@ -959,9 +992,9 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         //     物理上做不到（scrollTop 不能为负，只能顶到容器上边）。验 `block:"center"`
         //     就必须让它有上下余量，故先把缺省挪到中间（用后恢复，不污染同文件其余用例）。
         const 原缺省 = ((await fx.sh.getJson(`./diy.sh agent persona list`)).data as { default: string }).default;
-        const 占位: string[] = [];
-        for (let i = 0; i < 24; i++) 占位.push(await addPersona(uniq(`跳转占位${i}`), "mimo-v2.6-flash"));
-        const 中位 = 占位[11];
+        // 24 个占位人物：一次写文件（原先 24 次 CLI ≈ 10–20s，见 seedPersonas 注释）
+        const seed = seedPersonas(24);
+        const 中位 = seed.ids[11]!;
         await fx.sh.run(`./diy.sh agent persona setDefault ${中位}`);
         await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
         await openPanel(uri);
@@ -1051,7 +1084,8 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         );
         expect(flashed).toBe(true);
 
-        // 原缺省还回去（本文件共用同一个实例，别把"缺省是谁"留给后面的用例去撞）
+        // 还原：先撤掉 24 个占位人物（写回原文件），再把缺省还回去
+        seed.restore();
         await fx.sh.run(`./diy.sh agent persona setDefault ${原缺省}`);
     });
 
