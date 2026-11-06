@@ -28,6 +28,10 @@ fi
 #      apps/*/main.mjs 同理 —— apps/web 的手写启动器（##485：一条 node 命令起无 Electron 宿主），
 #      它自己按需把 TS 编到 build/<variant>/web/，本身不是 emit 产物。
 #      apps/*/main-memory.mjs 是 apps/chat 的内存模式入口（##505-E），由 esbuild 打包，同属手写源码。
+#
+#   `*/src/gen/*` 是**有意的生成物**（2026-11-06）：`gen-service-types` 从 api.ts 派生的
+#   `.d.ts` 放这里，与手写代码分居两处。它们本来就该在 src 下（编辑器要看得见），
+#   但来源是派生的 —— 所以护栏放行这个目录，而不是让生成物搬到 src 外面去。
 
 bad=$(find $dirs -type f \
   \( -name '*.js' -o -name '*.jsx' -o -name '*.mjs' -o -name '*.cjs' -o -name '*.d.ts' \) \
@@ -36,6 +40,7 @@ bad=$(find $dirs -type f \
   ! -path 'apps/*/main.mjs' \
   ! -path 'apps/*/main-memory.mjs' \
   ! -path '*/build/*' ! -path '*/lib/*' ! -path '*/dist/*' ! -path '*/node_modules/*' \
+  ! -path '*/src/gen/*' \
   2>/dev/null | sort || true)
 
 if [ -n "$bad" ]; then
