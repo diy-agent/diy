@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js";
-import type { TaskNodeShape } from "../../main/services/api-def";
+import type { TaskNodeShape } from "../../shared/task-node";
 import { diyService } from "../lib/rpc";
 import type { TaskDetail as ContractTaskDetail } from "../../shared/task-detail";
 import { editTask } from "../lib/task-edit";
