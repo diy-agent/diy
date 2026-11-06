@@ -17,6 +17,8 @@
  */
 
 import { RpcSchema } from "@diy-agent/rpc";
+import { flowRoutes } from "./api-domains/flow/api";
+import { FlowNodeSchema, FlowRendererSchema, FlowEdgeSchema, FlowArtSchema, FlowPayloadViewSchema, FlowVisitSchema, FlowViewSchema, FlowArtifactViewSchema, FlowAnchorSchema, FlowPostSchema, FlowThreadSchema, FlowThreadsSchema, kvList } from "../../shared/flow";
 import { taskRoutes } from "./api-domains/task/api";
 import { StatusOk, StatusDataId } from "../../shared/status";
 import { envRoutes } from "./api-domains/env/api";
@@ -239,113 +241,17 @@ export const SteerItemSchema = z.object({
  * 形状与 core/flow.ts 的视图一一对应。注意：**outputSchema 运行期不校验**（只用于类型推导，
  * 见 pit.rpc-output-schema），故这里写的是契约、不是闸门 —— 改 handler 出参时两边一起改。 */
 /** 当前节点（hint 已经内核 `renderHint` 插值 —— 宿主不再自己拼字符串） */
-const FlowNodeSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  actor: z.string(),
-  hint: z.string(),
-});
 /** 引擎通用渲染器 id —— **真源是内核 `define.ts` 的 `RENDERERS`**（schema 只是引用它，不复制清单） */
-const FlowRendererSchema = z.enum(RENDERERS);
 /** 一条出边：「卡在哪条边」的数据源 */
-const FlowEdgeSchema = z.object({
-  to: z.string(),
-  toName: z.string(),
-  kind: z.enum(["next", "bounce"]),
-  when: z.string().nullable(),
-});
 /**
  * 节点产物的**展示链**（内核 `NodeDef.art`，##337）—— 声明「这一步的产物长什么样、翻给哪个渲染器」：
  * `raw` 是行业知道的产物形状（说明文本），`renderer` 是引擎九种通用渲染器之一（合法值真源 = 内核
  * `RENDERERS`），`plugin` 是宿主注册的 render 插件名（**给 null / 不给 = 直吃 raw**）。
  */
-const FlowArtSchema = z.object({
-  raw: z.string().describe("该节点产物的形状说明（raw 长什么样；行业自己知道）"),
-  renderer: FlowRendererSchema,
-  plugin: z.string().nullable().optional().describe("宿主 render 插件名（`diy flow view` 用的就是它）；空 = 直吃 raw（只在 raw 本身已是该 renderer 的 data 时才合法）"),
-  note: z.string().optional(),
-});
-
 /** 一份**译好**的产物视图（内核 `View`）：renderer + 给它的 payload（宿主**原样透传**，不校验形状） */
-const FlowPayloadViewSchema = z.object({
-  renderer: FlowRendererSchema,
-  payload: z.any().describe("给该渲染器的数据（形状由 renderer 约定；宿主原样透传 —— 收窄归 UI）"),
-  note: z.string().optional(),
-});
-
 /** 折线上一次驻留（领域事实：node/seq/kind/at + 宿主关联 ref） */
-const FlowVisitSchema = z.object({
-  node: z.string(),
-  seq: z.number(),
-  kind: z.enum(["next", "bounce"]),
-  at: z.string(),
-  ref: z.record(z.string(), z.string()).optional(),
-});
 /** 实例视图（show / start / advance / bounce / params.set 同一份回执形状） */
-const FlowViewSchema = z.object({
-  uri: z.string(),
-  workflowId: z.string(),
-  workflowName: z.string(),
-  entry: z.string(),
-  entered: z.boolean(),
-  position: z.string().nullable(),
-  node: FlowNodeSchema.nullable(),
-  done: z.boolean().describe(
-    "工作流是否已跑完（领域事实 FlowState.done）：本版唯一来源是 `diy flow finish`（宣布收尾）—— 节点 guard 全是 prompt:，内核 step 的终态分支走不到",
-  ),
-  bounces: z.number(),
-  next: z.object({
-    mode: z
-      .enum(["entry", "system", "actor"])
-      .describe("下一手是谁：entry=尚未进入，actor=等人宣布。system（系统自动推）本版不会出现 —— 它要有 pred:/action: 插件，本版 guard 全是 prompt:"),
-    pending: z.array(z.string()).describe("不可观测（prompt:）的 guard —— 等人宣布，系统判不了"),
-    edges: z.array(FlowEdgeSchema),
-    terminal: z
-      .boolean()
-      .describe("结构事实：已进入且当前位置没有 next 出边 ⇒ 往前无路可走（bounce 边不算下一步）。与内核 execute.ts 的 done 判据同一条结构事实"),
-  }),
-  art: FlowArtSchema.nullable().describe("当前节点声明的产物展示链（未进入 / 没声明 ⇒ null）"),
-  view: FlowPayloadViewSchema.nullable().describe(
-    "当前节点**当前驻留**的产物经 render 插件翻译后的结果（该驻留没放产物 ⇒ null —— 产物不是领域态，缺项是正常态）",
-  ),
-  viewError: z
-    .string()
-    .nullable()
-    .describe(
-      "产物路的错误位（null = 没出错）：袋不是合法 JSON / 不是数组 / 声明与翻译不一致时**不阻断本命令**（view 仍为 null，位置与折线照常）—— 产物是派生数据，不许拖垮领域读；要亮错用 `diy flow view`",
-    ),
-  trajectory: z.array(FlowVisitSchema),
-  params: z.record(z.string(), z.any()).describe("L2 参数值（权威 = 任务目录 flow/state.json）"),
-  paramsSchema: z.array(z.any()).describe("参数声明（内核 paramsOf 的 schema，供表单/文档渲染）"),
-  files: z.object({
-    dir: z.string(),
-    instance: z.string(),
-    state: z.string(),
-    path: z.string(),
-    events: z.string(),
-    threads: z.string().describe("讨论流（##342）：旁注，可清可丢（删了不影响推进，只是线程里的发言没了）"),
-  }),
-  auditSkipped: z.number().describe("审计流里跳过（解析失败）的行数 —— 审计坏了只报数，不阻断运行"),
-  threadError: z
-    .string()
-    .nullable()
-    .describe(
-      "讨论流的错误位（null = 旁注没出错）：坏行 / 读不出时**不阻断本命令**（位置 / 折线 / 参数照常）—— 讨论是旁注，不许拖垮领域读；要看讨论流本身用 `flow thread list`",
-    ),
-});
-
 /** 一份产物视图（`diy flow view` / `flow artifact put` 的回执；形状与 core/flow.ts 的 `FlowArtifactView` 一致） */
-const FlowArtifactViewSchema = z.object({
-  uri: z.string(),
-  node: z.string(),
-  nodeName: z.string(),
-  seq: z.number().describe("目标驻留序号（1-based = 折线上该节点第几次驻留）"),
-  art: FlowArtSchema.nullable().describe("该节点声明的展示链（没声明 ⇒ null）"),
-  plugin: z.string().nullable().describe("实际用到的 render 插件名（null = 直吃 raw / 没声明 art）"),
-  view: FlowPayloadViewSchema.nullable().describe("翻译结果；该驻留没有产物 ⇒ null"),
-  bag: z.string().describe("产物袋文件（不存在也是正常态：产物不是领域态）"),
-});
-
 /**
  * 讨论线程（##342）：一条发言 + 一条线程（锚点 = 一次**真打回边**的穿越）。
  *
@@ -353,49 +259,13 @@ const FlowArtifactViewSchema = z.object({
  * 锚点 `{from,to,seq}`：`from` = 打回前位置、`to` = 落点节点、`seq` = **落点那次驻留**的序号
  * （一次 bounce 恰创生一次驻留 ⇒ 三元组唯一；同节点二次打回各是各的）。
  */
-const FlowAnchorSchema = z.object({
-  from: z.string().describe("打回前所在节点"),
-  to: z.string().describe("打回落点节点"),
-  seq: z.number().describe("落点那次驻留的序号（Visit.seq）—— 同一节点二次打回靠它区分，不串台"),
-});
-const FlowPostSchema = z.object({
-  id: z.string(),
-  at: z.string(),
-  author: z.string().describe("谁说的：cli（人敲） / agent 标识（驱动环起的轮次） / human"),
-  type: z.enum(["note", "resolved", "escalate"]).describe("note=发言（含自动打回的意见正文）/ resolved=宣布线程已解决 / escalate=升级人裁决"),
-  anchor: FlowAnchorSchema,
-  text: z.string(),
-});
-const FlowThreadSchema = z.object({
-  id: z.string().describe("线程 id，文本形 `<打回源节点>-><落点节点>#<落点驻留序号>`（`--thread` 参数就是它）"),
-  anchor: FlowAnchorSchema,
-  fromName: z.string(),
-  toName: z.string(),
-  fromSeq: z.number().nullable().describe("打回源那次驻留的序号（从折线推；假锚点 ⇒ null）"),
-  real: z
-    .boolean()
-    .describe("折线上**确有**这条打回边（false = 讨论流里有、折线上查无 ⇒ 假数据，亮出来而不是藏起来）"),
-  at: z.number().describe("折线上的次序（第几次位置变更；假锚点 ⇒ -1）"),
-  status: z.enum(["open", "resolved", "escalated"]).describe("由最后一条状态发言推；没有状态发言 ⇒ open"),
-  posts: z.array(FlowPostSchema),
-});
 /** `flow thread list` / `flow thread post` 的载荷（同一份形状：post 回执顺手把新表带回来，UI 不必再调一次） */
-const FlowThreadsSchema = z.object({
-  uri: z.string(),
-  threads: z.array(FlowThreadSchema),
-  skipped: z.number().describe("讨论流里跳过（读不出 / 形状不符）的行数 —— 旁注可坏，坏了只报数"),
-  error: z.string().nullable().describe("讨论流的错误位（null = 没出错）：读不出 / 有坏行时也不外抛"),
-  file: z.string().describe("讨论流文件（不存在也是正常态：还没人发过言）"),
-});
-
 /**
  * 「多个 `k=v`」型 CLI 入参：JSON 数组（与既有 array 选项同形，parser 会 JSON.parse）或单个裸值。
  *
  * ⚠️ 必须是**工厂**不是共享常量：`cliOption` 的元数据注册在 `_unwrap()`（剥掉 optional 后的那层）上，
  * 共用一个 schema 对象会让后注册的 desc 覆盖前面每个使用点（help 文案串台）。
  */
-const kvList = () => z.union([z.string(), z.array(z.string())]);
-
 export const apiDef = RpcSchema.bindNames(RpcSchema.group({ children: {
   diy: RpcSchema.group({
     desc: `
@@ -1311,232 +1181,7 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
 
       journal: journalRoutes,
 
-      flow: RpcSchema.group({
-        desc: `工作流实例（与任务绑定；状态真源 = 任务目录 flow/state.json，见 ##319）`,
-        children: {
-          list: RpcSchema.unary({
-            desc: `列出可用工作流定义（--instances 改为扫盘列出已绑定的实例）`,
-            input: {
-              instances: z.boolean().optional().cliOption({ desc: "改为列出各任务上的实例（含位置）" }),
-            },
-            output: z.object({
-              workflows: z.array(
-                z.object({
-                  id: z.string(),
-                  name: z.string(),
-                  entry: z.string(),
-                  nodes: z.number(),
-                  edges: z.number(),
-                }),
-              ),
-              instances: z
-                .array(
-                  z.object({
-                    uri: z.string(),
-                    workflowId: z.string(),
-                    position: z.string().nullable(),
-                    error: z.string().optional(),
-                  }),
-                )
-                .optional(),
-            }),
-          }),
-
-          show: RpcSchema.unary({
-            desc: `看实例：当前节点 + 折线 + 出边 + 参数值（含 state.json 与 path.jsonl 的对账，不一致即报）`,
-            input: {
-              uri: z.string().cliArg({ desc: "任务 URI（projects/<pid>/tasks/<tid>）" }),
-            },
-            output: FlowViewSchema,
-          }),
-
-          view: RpcSchema.unary({
-            desc: `取某个节点、某次驻留的产物视图（袋里的 raw → render 插件 → { renderer, payload }）。缺省 = 当前节点的最后一次驻留 —— UI 点折线上任意一步看图靠它`,
-            input: {
-              uri: z.string().cliArg({ desc: "任务 URI（projects/<pid>/tasks/<tid>）" }),
-              node: z.string().optional().cliOption({ desc: "节点 id（缺省 = 当前节点）" }),
-              seq: z.number().optional().cliOption({ desc: "第几次驻留（1-based；缺省 = 该节点最后一次）" }),
-            },
-            output: FlowArtifactViewSchema,
-          }),
-
-          artifact: RpcSchema.group({
-            desc: `节点产物的**写入**（袋 = 任务目录 flow/artifacts/<节点 id>.json，下标 = 驻留 seq − 1；读走 \`flow view\`）`,
-            children: {
-              put: RpcSchema.unary({
-                desc: `放一份产物 raw 进袋（写前**先试译一次**：译不出来一个字节都不写）。内容能当 JSON 解析就是那个值，否则原样当字符串`,
-                input: {
-                  uri: z.string().cliArg({ desc: "任务 URI（projects/<pid>/tasks/<tid>）" }),
-                  node: z.string().cliOption({ desc: "节点 id（产物属于哪个节点）" }),
-                  seq: z.number().optional().cliOption({ desc: "第几次驻留（1-based；缺省 = 该节点最后一次）" }),
-                  file: z
-                    .string()
-                    .cliOption({
-                      placeholder: "<file|->",
-                      readFile: true,
-                      desc: "产物内容：文件路径（相对路径按当前目录解析），`-` 读 stdin。JSON 能解析就用那个值，否则当字符串",
-                    }),
-                },
-                output: FlowArtifactViewSchema,
-              }),
-            },
-          }),
-
-          thread: RpcSchema.group({
-            desc: `打回**讨论线程**（##342）：锚点 = 折线上**真发生过的一次打回边**（不造数据）—— 旁注 / 留痕，不参与驱动判据（删了不影响推进）`,
-            children: {
-              list: RpcSchema.unary({
-                desc: `列讨论线程（真打回边 ∪ 讨论流锚点）：每条线程 = 一个锚点 + 它的发言（append-only）。\`--thread\` 只看那一条`,
-                input: {
-                  uri: z.string().cliArg({ desc: "任务 URI（projects/<pid>/tasks/<tid>）" }),
-                  thread: z.string().optional().cliOption({ desc: "只看这条线程（形如 review->implement#2）；缺省列全部" }),
-                },
-                output: FlowThreadsSchema,
-              }),
-              post: RpcSchema.unary({
-                desc: `往线程里发一条言（三出口里的 resolved / escalate 都走它）。**锚点必须在折线上確有那次打回**（假锚点拒）；正文空 ⇒ 拒`,
-                input: {
-                  uri: z.string().cliArg({ desc: "任务 URI（projects/<pid>/tasks/<tid>）" }),
-                  thread: z.string().cliOption({ desc: "线程 id（形如 review->implement#2，见 \`flow thread list\`）" }),
-                  text: z
-                    .string()
-                    .cliOption({
-                      placeholder: "<file|->",
-                      readFile: true,
-                      desc: "发言正文：文件路径（相对路径按当前目录解析）或 `-` 读 stdin",
-                    }),
-                  type: z
-                    .enum(["note", "resolved", "escalate"])
-                    .default("note")
-                    .optional()
-                    .cliOption({ desc: "note=普通发言（缺省）/ resolved=宣布线程已解决（位置不动）/ escalate=升级人裁决" }),
-                  author: z.string().optional().cliOption({ desc: "发言作者（缺省 cli；升级人裁决常写 human）" }),
-                },
-                output: FlowThreadsSchema,
-              }),
-            },
-          }),
-
-          start: RpcSchema.unary({
-            desc: `建实例：绑定工作流 + 参数值过内核闸门（**不自动进入**入口，首次 advance 才进入；已有**未进入**实例会被重写，已进入则拒 —— 换工作流/换配置 = 另起一次运行）`,
-            input: {
-              uri: z.string().cliArg({ desc: "任务 URI" }),
-              workflow: z.string().optional().cliOption({ desc: "工作流 id（见 `diy flow list`）" }),
-              param: kvList().optional().cliOption({ desc: "参数值 `节点 id.局部名=值`（缺省用声明里的 default）" }),
-            },
-            output: FlowViewSchema,
-          }),
-
-          finish: RpcSchema.unary({
-            desc: `收尾：宣布实例已走完（置 done）。**只允许在结构终端节点上**（没有 next 出边）；guard 那一半由宣布者担责（prompt: 不可观测）`,
-            input: {
-              uri: z.string().cliArg({ desc: "任务 URI" }),
-              note: z.string().optional().cliOption({ desc: "审计正文的后缀备注（不参与领域态）" }),
-            },
-            output: FlowViewSchema,
-          }),
-
-          advance: RpcSchema.unary({
-            desc: `推进：走 next 边（首次 = 进入入口节点；不许跳步）`,
-            input: {
-              uri: z.string().cliArg({ desc: "任务 URI" }),
-              to: z.string().optional().cliOption({ desc: "目标节点 id" }),
-              ref: kvList().optional().cliOption({ desc: "宿主关联（写进 Visit.ref）" }),
-              note: z.string().optional().cliOption({ desc: "审计正文的后缀备注（不参与领域态）" }),
-            },
-            output: FlowViewSchema,
-          }),
-
-          bounce: RpcSchema.unary({
-            desc: `打回：走 bounce 边（目标节点再驻留一次，不新建节点）。带 \`--opinion\` 时把**意见正文**一等落进讨论流（挂这次打回的锚点）`,
-            input: {
-              uri: z.string().cliArg({ desc: "任务 URI" }),
-              to: z.string().optional().cliOption({ desc: "目标节点 id" }),
-              ref: kvList().optional().cliOption({ desc: "宿主关联（写进 Visit.ref）" }),
-              note: z.string().optional().cliOption({ desc: "审计正文的后缀备注（不参与领域态）" }),
-              opinion: z
-                .string()
-                .optional()
-                .cliOption({
-                  placeholder: "<file|->",
-                  readFile: true,
-                  desc: "意见正文（##342）：落进讨论流并挂在这次打回的锚点上；文件路径或 `-` 读 stdin。缺省只落审计后缀（--note）",
-                }),
-              author: z.string().optional().cliOption({ desc: "发言作者（缺省 cli；驱动环起的轮次用 agent 标识）" }),
-            },
-            output: FlowViewSchema,
-          }),
-
-          params: RpcSchema.group({
-            desc: `实例参数值（权威 = flow/state.json）`,
-            children: {
-              get: RpcSchema.unary({
-                desc: `看参数值 + 参数声明（供表单 / 文档渲染）`,
-                input: { uri: z.string().cliArg({ desc: "任务 URI" }) },
-                output: z.object({
-                  uri: z.string(),
-                  workflowId: z.string(),
-                  workflowName: z.string(),
-                  authority: z.string().describe("权威文件（state.json 的绝对路径）"),
-                  entered: z.boolean(),
-                  values: z.record(z.string(), z.any()),
-                  schema: z.array(z.any()),
-                  defaults: z.record(z.string(), z.any()),
-                }),
-              }),
-              set: RpcSchema.unary({
-                desc: `改参数值（**只在尚未进入时**允许：换配置 = 另起一次运行）`,
-                input: {
-                  uri: z.string().cliArg({ desc: "任务 URI" }),
-                  param: kvList().optional().cliOption({ desc: "新的参数值（未给的项回落声明里的 default）" }),
-                },
-                output: FlowViewSchema,
-              }),
-            },
-          }),
-
-          prompt: RpcSchema.unary({
-            desc: `按当前节点装配提示词（hint 内核插值 + 既有 prompt-registry 渲染；只读）`,
-            input: { uri: z.string().cliArg({ desc: "任务 URI" }) },
-            output: z.object({
-              uri: z.string(),
-              workflowId: z.string(),
-              nodeId: z.string(),
-              nodeName: z.string(),
-              hint: z.string().describe("插值后的节点提示（内核 renderHint）"),
-              prompt: z.string().describe("装配结果（prompt-registry 渲染的节）"),
-              bytes: z.number(),
-            }),
-          }),
-          /**
-           * ##341 起 flow 域多两条**驱动**命令（一个系统推、一个自动轮转）。
-           * 与既有命令的分别：`advance` / `bounce` 是**宣布**（不评价 guard），它们走内核的**求值**那条路。
-           */
-          step: RpcSchema.unary({
-            desc: `系统推一步：当前节点 guard 全可观测 ⇒ 真求值（pred:/action:）并自动推进；尚未进入 ⇒ 进入入口。含 prompt: 的节点一步都不推（返回 awaiting-actor）`,
-            input: {
-              uri: z.string().cliArg({ desc: "任务 URI" }),
-              cwd: z.string().optional().cliOption({ desc: "命令类插件（pred:/action:）的工作目录；缺省 = 应用进程 cwd" }),
-            },
-            output: z.object({
-              status: z.enum(["moved", "done", "stuck", "awaiting-actor"]).describe("moved=推成了 / done=走完 / stuck=停在边上 / awaiting-actor=这一步要 actor 宣布"),
-              to: z.string().nullable(),
-              kind: z.enum(["entry", "next", "bounce"]).nullable(),
-              reason: z.string().describe("stuck / awaiting-actor 的原因（其余为空串）"),
-              view: FlowViewSchema,
-            }),
-          }),
-          run: RpcSchema.serverStream({
-            desc: `驱动环（##341）：按 next.mode 三分流自动轮转 —— system 真求值自动推（绿线）· actor+agent 起一轮 agent 收结论后推进/打回 · actor+human 停下等人。**客户端断开即中断**（可停）；判据一律读 flow show（幂等，重复 run 接着走）`,
-            input: {
-              uri: z.string().cliArg({ desc: "任务 URI" }),
-              maxSteps: z.number().optional().cliOption({ desc: "步数护栏（缺省 32）" }),
-              cwd: z.string().optional().cliOption({ desc: "命令类插件的工作目录；缺省 = 应用进程 cwd" }),
-            },
-            output: z.string().describe("逐行 JSON 帧：{kind:'step'|'turn'|'stop', …}（给人看的输出，不是真源）"),
-          }),
-        },
-      }),
+      flow: flowRoutes,
 
       /**
        * 后台 job（##408 v1：只有 spawned 型 —— 会话里跑出来的长时命令）：
