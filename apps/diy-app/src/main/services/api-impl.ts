@@ -19,6 +19,7 @@ import { AppConfig } from "../core/app-config";
 import { refreshModelRuntime } from "../core/model-runtime";
 import { hasConversation } from "../core/local-paths";
 import { autoSeedEnabled, seedHome } from "../core/seed";
+import { bindSeed } from "./api-domains/seed/impl";
 import { platform, arch, release, totalmem, freemem } from "node:os";
 import { currentGitBranch, findRepoRoot, homeDisplayOf, repoDisplayOf } from "../core/instance-identity";
 import { readRuntimeConfig } from "../../runtime";
@@ -1765,13 +1766,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
     journalStore.importEntries(input.task, journalStore.parseImportPayload(input.file), input.dryRun === true),
   );
 
-  // ── seed ──
-  binding.on(app.seed.run, async () => {
-    const r = seedHome(state.diyHome());
-    // 种子可能新写了 model.yaml → 重装目录，让 UI 立刻看到模型
-    refreshModelRuntime(state.diyHome());
-    return r;
-  });
+  // ── seed ──（已拆到 api-domains/seed/，整域自带契约 + 实现）
+  bindSeed(binding);
 
   // ── log ──
   binding.on(app.log.read, async ({ input }) => {

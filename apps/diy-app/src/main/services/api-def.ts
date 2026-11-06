@@ -17,6 +17,7 @@
  */
 
 import { RpcSchema } from "@diy-agent/rpc";
+import { seedRoutes } from "./api-domains/seed/api";
 import { z } from "zod";
 // 引擎通用渲染器 id 的真源（别处不复制这份清单；内核加渲染器时这里的 schema 自动跟上）
 import { RENDERERS } from "@diy-agent/flow";
@@ -2142,16 +2143,9 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
         },
       }),
 
-      seed: RpcSchema.group({
-        desc: `初始数据种入（lab 空数据根；幂等，已存在不动）—— 只种**示例/测试数据**，真配置由 ./sha.sh sync 同步`,
-        children: {
-          run: RpcSchema.unary({
-            desc: `种入最小可用数据：opencode-go 模型配置（$VAR 占位）+ 缺省人物（缺省模型：free 优先 → 退 ${FALLBACK_MODEL}）+ 示例项目与任务`,
-            input: {},
-            output: SeedReportSchema,
-          }),
-        },
-      }),
+      // seed 域已拆到 `api-domains/seed/`（2026-11-06，模块化试水）。
+      // 这里仍挂进大树 —— CLI 的 `diy seed run` 不变；拆出去是为了将来整域搬进 pkg。
+      seed: seedRoutes,
 
       facts: RpcSchema.group({
         desc:
