@@ -1,39 +1,52 @@
 /**
- * 06-generated-types — 生成物怎么用（`src/gen/api.generated.d.ts`）
+ * 06-generated-types — 生成物怎么用（`<dir>/src/gen/api.generated.d.ts`）
  *
- * 生成器把 Proxy 下钻的类型摊平成接口，读代码 / 看报错都直接。
+ * 前提：本目录的 `demo/src/api.ts` 就是**真·api 定义**（和 `pkgs.ts/ui/workbench/src/api.ts`
+ * 同一种形状），跑一次生成器就有类型：
+ *
+ *   npx tsx pkgs.ts/core/rpc/scripts/gen-service-types.ts
+ *
  * 生成物是**派生**的，不进手写目录：
+ *   examples/demo/src/api.ts                 ← 手写，唯一真源
+ *   examples/demo/src/gen/api.generated.d.ts ← 生成（别手改）
  *
- *   <pkg>/src/api.ts                 ← 手写，唯一真源
- *   <pkg>/src/gen/api.generated.d.ts ← 生成（别手改）
- *
- * 跑生成：`npx tsx pkgs.ts/core/rpc/scripts/gen-service-types.ts`
- * 校验：  `npx tsx ... --check`（已接进 `./sha.sh check`）
+ * ⚠️ 为什么示例不用别的包的生成物：`@diy-agent/rpc` 是**核心包**，不能依赖
+ * `@diy-agent/workbench` 这类上层包 —— 连 `import type` 都不行（依赖方向反了）。
+ * 示例自己定义、自己生成，才是能照抄的示范。
  */
-import type { WorkbenchClient, WorkbenchServer } from "../../../ui/workbench/src/gen/api.generated";
+import type { TaskClient, TaskServer } from "./demo/src/gen/api.generated";
+import { taskService } from "./demo/src/api";
+import type { ChannelClientBinding } from "../src/core/channel-client-binding";
 
 // ── 客户端侧 ──
-declare const wb: WorkbenchClient;
+declare const client: ChannelClientBinding;
 async function useClient(): Promise<void> {
-    // 方法签名里是**完整的内联类型**（默认 naming=none）：
-    //   list(input: Record<string, never>, options?: RpcCallOptions) => Promise<{ id, title, description? }[]>
-    const pages = await wb.page.list({});
-    console.log(pages.map((p) => p.title).join(", "));
+    const task: TaskClient = taskService.use(client);
 
-    // invoke 的 args 故意是 unknown（每个插件方法自己定义形状）
-    await wb.page.invoke({ pageId: "home", method: "greet", args: { name: "amy" } });
+    // 方法签名里是**完整的内联类型**（默认 naming=none）：
+    //   list(input: { status?: "pending" | "done"; limit?: number }, options?) => Promise<{ uri; title; done }[]>
+    const pending = await task.task.list({ status: "pending", limit: 10 });
+    console.log(pending.map((t) => `${t.title}${t.done ? " ✓" : ""}`).join("\n"));
+
+    const one = await task.task.get({ uri: "projects/4/tasks/87" });
+    console.log(one.title);
 }
 
 // ── 服务端侧 ──
-declare const serverImpl: WorkbenchServer;
-async function useServer(): Promise<void> {
-    // handler 多一个 signal，且允许同步返回（不必包 async）
-    const pages = serverImpl.page.list({ input: {}, signal: new AbortController().signal });
-    console.log(pages);
+declare const server: Parameters<typeof taskService.bind>[0];
+function useServer(): void {
+    // handler 的 opts 多一个 signal，且允许同步返回（不必包 async）
+    taskService.bind(server, {
+        task: {
+            list: ({ input }) => loadTasks(input.status, input.limit),
+            get: ({ input }) => loadOne(input.uri),
+        },
+    } satisfies TaskServer);
 }
 
-// 生成物的价值：类型不匹配时，报错指向**具体的类型名**而不是一坨 Proxy 条件类型。
-// 若想要「报错只显示 `PageInvokeInput`」，把命名策略换成 `naming: "all"`。
+declare function loadTasks(status?: string, limit?: number): { uri: string; title: string; done: boolean }[];
+declare function loadOne(uri: string): { uri: string; title: string; done: boolean };
 
+// 生成物的价值：类型不匹配时，报错指向**具体的方法签名**而不是一坨 Proxy 条件类型。
 void useClient;
 void useServer;
