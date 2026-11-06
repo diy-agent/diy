@@ -17,6 +17,7 @@
 //   ③ 用 `AssembleGlobalsSchema` 校验形状（漂移栽在这，不在各 provider）
 
 import { AssembleGlobalsSchema, type AssembleGlobals } from './schema/prompt-schema.js';
+import type { SchemaDoc } from './schema/schema-doc.js';
 
 /**
  * 一个上下文提供器。
@@ -28,6 +29,15 @@ import { AssembleGlobalsSchema, type AssembleGlobals } from './schema/prompt-sch
 export interface ContextProvider {
     /** 树里的根键（与 `AssembleGlobalsSchema` 的顶层键一一对应） */
     readonly key: string;
+    /**
+     * 本节的**结构说明**（进信封的 `help:` 段，给模型看的「这节里有什么」）。
+     *
+     * 形状就是 `SchemaDoc`（`{ desc, type, 子字段… }`）—— **中性结构**，
+     * 谁生成都行：zod 派生 / 手写 / 从样例推。机制层不关心它从哪来。
+     *
+     * 缺省 = 这节不进 help（模型看不到它的结构，等于黑盒变量）。
+     */
+    readonly help?: SchemaDoc;
     /** 交当前值；`undefined` / `null` 都表示「本节缺席」（信封渲染时整段不出现） */
     provide(): unknown;
 }
@@ -65,4 +75,20 @@ export function assembleFromProviders(providers: readonly ContextProvider[]): As
         tree[provider.key] = value;
     }
     return AssembleGlobalsSchema.parse(tree);
+}
+
+
+/**
+ * 收集各 provider 的结构说明（拼成一棵 `SchemaDoc`，与 `AssembleGlobalsSchema` 派生的形状一致）。
+ *
+ * 为什么单独一个函数、而不是让 `assembleFromProviders` 一起返回：
+ * 值树（每轮变）与 help（几乎不变）的生命周期不同 —— 前者每轮重算，后者进 system 段首快照。
+ * 分开取，调用方才能按需缓存 help。
+ */
+export function helpsOf(providers: readonly ContextProvider[]): Record<string, SchemaDoc> {
+    const helps: Record<string, SchemaDoc> = {};
+    for (const provider of providers) {
+        if (provider.help !== undefined) helps[provider.key] = provider.help;
+    }
+    return helps;
 }

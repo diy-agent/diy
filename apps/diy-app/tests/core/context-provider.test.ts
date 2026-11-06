@@ -63,7 +63,7 @@ describe("提供器机制", () => {
             provider("persona", { name: "first", instructions: "" }),
             provider("persona", { name: "second", instructions: "" }),
         ]);
-        expect(tree.persona.name).toBe("second");
+        expect(tree.persona?.name).toBe("second");
     });
 
     it("契约外的 key ⇒ 直接抛（provider 与 schema 漂移必须暴露，不能静默吃）", () => {

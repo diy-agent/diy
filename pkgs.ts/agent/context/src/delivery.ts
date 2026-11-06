@@ -14,6 +14,7 @@
 import { project as projectTree } from "./projection.js";
 import { applyFacts, createTree, setPlacement, setPlaces } from "./reducer.js";
 import { controlDeltaEnvelope, runtimeDiffEnvelope, systemDataText, systemEnvelope, runtimeEnvelope } from "./envelope.js";
+import type { SchemaDoc } from "./schema/schema-doc.js";
 import { hashValue } from "./hash.js";
 import { WIRE_VERSION } from "./wire.js";
 import { isPlainObject } from "./tree.js";
@@ -270,6 +271,8 @@ export function unitPathsOf(systemPlaces: readonly ContextPath[]): ContextPath[]
 export function buildDelivery(
     globals: Record<string, unknown>,
     systemPlaces: readonly ContextPath[] = defaultSystemPlaces(),
+    /** 各 provider 的结构说明（`helpsOf(providers)`）；缺省 = 从 zod 派生 */
+    helps?: Record<string, SchemaDoc>,
 ): Delivery {
     // places 取「候选里存在的」+ system 名单（后者可能含候选外的手填 path）
     //
@@ -301,7 +304,7 @@ export function buildDelivery(
     // system 信封：`help:`（**唯一的结构说明源**，由 zod 递归派生）+ `system:`（变量树）。
     // 一次产出同时给出文本与行号映射（emitValue 边写边记）—— 高亮/滚动才不会指错行；
     // 行号键剥掉 `system.` 前缀，与变量树 path 口径一致。
-    const sys = systemEnvelope(tree, sysPlaces, runPlaces, helpRunPlaces);
+    const sys = systemEnvelope(tree, sysPlaces, runPlaces, helpRunPlaces, helps);
     const run = runtimeEnvelope(tree, runPlaces);
 
     const part = (p: ContextPath[], t: { text: string; lines: DeliveryPart["lines"] }): DeliveryPart => ({

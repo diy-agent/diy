@@ -172,8 +172,19 @@ export function buildHelpDoc(opts: {
      * 描述的读者是模型（`缺席 ≠ 0`），写全反而更有用；代价只是一次性多几百字节常量。
      */
     runtimePlaces: readonly ContextPath[];
+    /**
+     * 各 provider 交上来的**结构说明**（`helpsOf(providers)` 的产物）。
+     *
+     * 给了就用它 —— 此时 `@diy-agent/context` 不需要知道 zod 的存在，也不需要
+     * `AssembleGlobalsSchema`。缺省退回 zod 派生（向后兼容，老调用方不用改）。
+     *
+     * 2026-11-05 用户裁：「对 context 来讲，zod 还是啥并不重要」——
+     * 关键是有一个**中性的结构化描述**，谁生成都行。
+     */
+    helps?: Record<string, SchemaDoc>;
 }): HelpDoc {
-    const globalsDoc = describeSchema(AssembleGlobalsSchema);
+    // `SchemaDoc` 是 `Record<string, unknown>` —— helps 拼起来与产物形状一致，`pruneSchemaDoc` 可直接用
+    const globalsDoc: SchemaDoc = opts.helps ?? describeSchema(AssembleGlobalsSchema);
     const key = (k: keyof typeof EnvelopeSchema.shape): string =>
         (EnvelopeSchema.shape[k].description as string | undefined) ?? "";
     return {
@@ -382,8 +393,14 @@ export function systemEnvelope(
     runtimePlaces: readonly ContextPath[],
     /** help 用名单（候选全集，常量）—— 缺省 = `runtimePlaces`（单侧调用兼容） */
     helpRuntimePlaces: readonly ContextPath[] = runtimePlaces,
+    /** 各 provider 交上来的结构说明；缺省 = 从 zod 派生（向后兼容） */
+    helps?: Record<string, SchemaDoc>,
 ): EnvelopeRendering {
-    const help = buildHelpDoc({ systemPlaces, runtimePlaces: helpRuntimePlaces });
+    const help = buildHelpDoc({
+        systemPlaces,
+        runtimePlaces: helpRuntimePlaces,
+        ...(helps === undefined ? {} : { helps }),
+    });
     const r = emitYamlTraced({
         help,
         system: subsetOf(tree, systemPlaces),

@@ -9,6 +9,8 @@
 
 import { join } from "node:path";
 import type { ContextProvider } from "@diy-agent/context";
+import { describeSchema, type SchemaDoc } from "@diy-agent/context/schema/schema-doc";
+import { AssembleGlobalsSchema } from "@diy-agent/context/schema/prompt-schema";
 import { reqlogValue } from "@diy-agent/context/schema/reqlog";
 import type { AssembleGlobals } from "@diy-agent/context/schema/prompt-schema";
 
@@ -21,6 +23,21 @@ import { buildFactsContext } from "./facts-context";
 import { buildKbIndex } from "./facts-context";
 import { buildDocsIndex, summarizeDocsIndex } from "./docs-index";
 import { DELIVERED_SECTIONS, chainOf, projectIncludeResolver, renderSystemDsl, taskOf } from "./prompt-registry";
+
+/**
+ * 整棵树的**结构说明**（zod 派生，一次算好）。
+ *
+ * 为什么在 diy-app 侧而不是 `@diy-agent/context` 里：机制层不该知道 zod
+ * （2026-11-05 用户裁：「对 context 来讲，zod 还是啥并不重要」）。
+ * zod 仍是**这里的**真源（schema 改了 help 跟着变），只是由我们把派生结果交给机制层。
+ */
+const GLOBALS_DOC: SchemaDoc = describeSchema(AssembleGlobalsSchema);
+
+/** 给一个 provider 挂上它的结构说明（从整棵树的 doc 里取自己那一节） */
+function withHelp(provider: ContextProvider): ContextProvider {
+    const help = GLOBALS_DOC[provider.key] as SchemaDoc | undefined;
+    return help === undefined ? provider : { ...provider, help };
+}
 
 /** 装配输入：所有 provider 工厂的公共依赖（非 provider 的东西都在这） */
 export interface ProviderDeps {
@@ -276,5 +293,5 @@ export function standardProviders(deps: ProviderDeps, opts: AssembleOptions = {}
         roomProvider(opts),
         selfProvider(opts),
         reqlogProvider(deps.home),
-    ];
+    ].map(withHelp);
 }
