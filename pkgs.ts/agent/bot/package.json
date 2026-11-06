@@ -1,51 +1,52 @@
 {
-  "name": "@diy-agent/bot",
-  "version": "0.1.1",
-  "private": true,
-  "description": "diy 的 bot 实体：身份配置 + 文件/内存存储 + 会话归属 + bot 对话宿主（createBotChat）",
-  "files": [
-    "src/"
-  ],
-  "type": "module",
-  "main": "./lib/index.js",
-  "types": "./src/index.ts",
-  "exports": {
-    ".": {
-      "types": "./src/index.ts",
-      "default": "./lib/index.js"
+    "name": "@diy-agent/bot",
+    "version": "0.1.1",
+    "private": true,
+    "description": "diy 的 bot 实体：身份配置 + 文件/内存存储 + 会话归属 + bot 对话宿主（createBotChat）",
+    "files": [
+        "src/"
+    ],
+    "type": "module",
+    "main": "./lib/index.js",
+    "types": "./src/index.ts",
+    "exports": {
+        ".": {
+            "types": "./src/index.ts",
+            "default": "./lib/index.js"
+        },
+        "./persona": {
+            "types": "./src/persona.ts",
+            "default": "./lib/persona.js"
+        },
+        "./protocol": {
+            "types": "./src/protocol.ts",
+            "default": "./lib/protocol.js"
+        },
+        "./admin": {
+            "types": "./src/admin.ts",
+            "default": "./lib/admin.js"
+        }
     },
-    "./persona": {
-      "types": "./src/persona.ts",
-      "default": "./lib/persona.js"
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json"
     },
-    "./protocol": {
-      "types": "./src/protocol.ts",
-      "default": "./lib/protocol.js"
+    "dependencies": {
+        "@diy-agent/compaction": "*",
+        "@diy-agent/facts": "*",
+        "@diy-agent/time": "*",
+        "zod": "^4.4.3",
+        "@diy-agent/session": "*",
+        "@diy-agent/session-store-jsonl": "*",
+        "@diy-agent/llm-provider": "*",
+        "@diy-agent/model-catalog": "*",
+        "@diy-agent/context": "*"
     },
-    "./admin": {
-      "types": "./src/admin.ts",
-      "default": "./lib/admin.js"
+    "devDependencies": {
+        "@diy-agent/store-contract": "*",
+        "@diy-agent/tools": "*",
+        "oxfmt": "^0.57.0",
+        "oxlint": "^1.72.0",
+        "typescript": "^7.0.2",
+        "vitest": "^4.1.10"
     }
-  },
-  "scripts": {
-    "build": "tsc -p tsconfig.build.json"
-  },
-  "dependencies": {
-    "@diy-agent/compaction": "*",
-    "@diy-agent/facts": "*",
-    "@diy-agent/time": "*",
-    "zod": "^4.4.3",
-    "@diy-agent/session": "*",
-    "@diy-agent/session-store-jsonl": "*",
-    "@diy-agent/llm-provider": "*",
-    "@diy-agent/model-catalog": "*"
-  },
-  "devDependencies": {
-    "@diy-agent/store-contract": "*",
-    "@diy-agent/tools": "*",
-    "oxfmt": "^0.57.0",
-    "oxlint": "^1.72.0",
-    "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
-  }
 }

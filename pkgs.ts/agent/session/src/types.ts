@@ -218,6 +218,12 @@ export interface SessionPeer {
  * 会话活视图（由 `createSession()` 产出）。
  * `messages` / `usage` 每次读都是最新；数组是副本 —— 外部改不动历史。
  */
+/** 一次真发的请求快照（见 `AgentSession.lastRequest`） */
+export interface SessionRequest {
+    readonly system?: string;
+    readonly messages: readonly ChatMessage[];
+}
+
 export interface AgentSession extends SessionPeer {
     readonly messages: readonly ChatMessage[];
     /** 已分配的最大 seq（没消息 = 0） */
@@ -225,6 +231,18 @@ export interface AgentSession extends SessionPeer {
     readonly usage: TokenUsage;
     readonly createdAt: string;
     readonly updatedAt: string;
+    /**
+     * **上一次真发的请求**（`undefined` = 还没发过）。
+     *
+     * 为什么要它（2026-11-05 用户裁）：上下文树 / 压缩这类算法各自都有测试，但
+     * 「组合起来有没有破坏前缀缓存」没有任何地方能验 —— 只能在**实际发出去的字节**上断言。
+     * 原话：「设计上缺少一个总体的验证点，都是零散的算法」。
+     *
+     * 内含 `system`（若提供）与**这一轮真正交给 LLM 的 messages 快照**
+     * （压缩 / 增量注入之后、发送之前那一刻）。断言方式：
+     *   expect(r2.lastRequest.messages.slice(0, n)).toEqual(r1.lastRequest.messages)
+     */
+    readonly lastRequest: SessionRequest | null;
     /** 追加一条消息（不触发 LLM；at 缺省用 Clock 补） */
     append(message: ChatMessageInit): ChatMessage;
     /** 跑一轮：追加 user → （压缩）→ 调 LLM → 增量流 → 收尾 */

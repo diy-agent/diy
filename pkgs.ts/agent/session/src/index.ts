@@ -42,6 +42,7 @@ export {
 
 export { systemClock } from './types.js';
 export type {
+    SessionRequest,
     AgentSession,
     ChatMessage,
     ChatMessageInit,

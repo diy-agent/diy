@@ -81,3 +81,5 @@ export * from "./persona.js";
 // 从 bot-config-page 的 actions.ts 搬来 —— 那些规则换个宿主（Web/CLI）还要用同一份。
 export { createBotAdmin } from "./admin.js";
 export type { BotAdmin, BotAdminOptions, BotAdminRow, BotAdminDraft } from "./admin.js";
+
+export * from "./agent.js";

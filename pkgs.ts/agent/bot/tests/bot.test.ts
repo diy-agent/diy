@@ -198,7 +198,9 @@ describe("边界（判据 4）", () => {
         // （工具结果必须按 tool_call_id 交回会话，绕开会话就得自己重写一套配对逻辑）。
         // 身份与存储仍在「不认识会话内核」那一侧。
         // ##517：上下文压缩（compaction.ts）也是同一侧 —— 它算的就是会话消息线与摘要调用。
-        const conversational = new Set(["chat.ts", "protocol.ts", "tools.ts", "compaction.ts"]);
+        // agent.ts：把「上下文树 → system → 一轮 LLM 调用」收成一个对象（2026-11-05），
+        // 它天生就要用 session 的 send / lastRequest —— 与 chat.ts 同属「对话编排」这一侧。
+        const conversational = new Set(["chat.ts", "protocol.ts", "tools.ts", "compaction.ts", "agent.ts"]);
         for (const name of files) {
             const text = readFileSync(join(dir, name), "utf-8");
             expect(text.toLowerCase()).not.toContain("room");
