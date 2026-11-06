@@ -8,7 +8,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, expect } from "vitest";
-import { buildDelivery, PLACE_CANDIDATES, unitPaths } from "@diy-agent/context/delivery";
+import { buildDelivery, controlDeltaDelivery, PLACE_CANDIDATES, unitPaths } from "@diy-agent/context/delivery";
 import { buildLab } from "../../src/shared/context/preview";
 import { project } from "@diy-agent/context/projection";
 
@@ -125,11 +125,14 @@ describe("投递构造：一份全量", () => {
         const d2 = buildDelivery(partial);
         expect(d2.text.places).toContain("room.members");
         expect(d2.text.places).not.toContain("room.recent");
-        // ② 增量里**不存在**这个单元 —— 不是 `set room.recent: ''`
+        // ② 增量里是**显式 remove**（不是空串 set，也不是静默不出现）：
+        //    模型必须被告知"这个单元没了"，否则它会继续按上一轮的旧值干活；
+        //    wire 上落成 `room.recent: null`（见 `subsetOfDelta`），不重写 system 段、不砸缓存。
         const delta = project(d2.tree, cursor).projection.delta;
-        const touched = delta.kind === "patch" ? delta.ops.filter((o) => o.path === "room.recent") : [];
-        expect(touched).toEqual([]);
-        expect(delta.kind === "snapshot" ? delta.text : "").not.toContain("recent:");
+        const ops = delta.kind === "patch" ? delta.ops : [];
+        expect(ops).toEqual([{ op: "remove", path: "room.recent" }]);
+        // wire 上落成 `room.recent: null`（`subsetOfDelta` 对缺失 path 写 null）
+        expect(controlDeltaDelivery(d2.tree, ["room.recent"]).text).toContain("recent: null");
     });
 
     it("list 里只有候选（没有人手填的怪路径），且每个候选都有非空理由", () => {
