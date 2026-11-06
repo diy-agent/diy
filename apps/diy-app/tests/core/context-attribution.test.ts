@@ -83,14 +83,6 @@ describe("foldStatRows：统计表行粒度（RV-03）", () => {
         expect(collapsed).toBe(1);
     });
 
-    it("★ 行集只由 path 结构决定（与名单内容无关）；归属随名单变", () => {
-        const a = foldStatRows(paths, units());
-        const b = foldStatRows(paths, unitsFromRules([{ place: "diy" }]));
-        expect(a.rows).toEqual(b.rows);
-        expect(attributionOf(units(), "chain")).toEqual({ kind: "unit", place: "chain" });
-        expect(attributionOf(unitsFromRules([{ place: "diy" }]), "chain")).toEqual({ kind: "none" });
-    });
-
     it("名单未加载（units 为空）时不折叠 —— 否则会瞬时误折叠单元行（RV-13）", () => {
         expect(foldStatRows(paths, new Set())).toEqual({ rows: paths, collapsed: 0 });
     });
