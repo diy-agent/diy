@@ -50,23 +50,33 @@ describe('zodToTs', () => {
 describe('renderServiceTypes', () => {
     const dts = renderServiceTypes('Math', api);
 
-    it('生成 client / server 两组接口', () => {
+    it('生成 client / server 两组聚合接口', () => {
         expect(dts).toContain('export interface MathClient');
         expect(dts).toContain('export interface MathServer');
     });
 
-    it('命名空间 + 方法都出来了', () => {
-        expect(dts).toMatch(/math:\s*\{/);
-        expect(dts).toMatch(/sys:\s*\{/);
-        expect(dts).toMatch(/add\(input: \{ a: number; b: number \}/);
+    it('**具名子接口**（参照「层级接口讨论总结」：可单独 import / 报错定位准）', () => {
+        expect(dts).toContain('export interface MathClient');
+        expect(dts).toContain('export interface MathServer');
+        expect(dts).toMatch(/math: MathClient;/);
+        expect(dts).toMatch(/sys: SysClient;/);
+    });
+
+    it('入参 / 出参也具名（`{ pageId, method, args }` 不再铺在签名里）', () => {
+        expect(dts).toContain('export interface MathAddInput');
+        expect(dts).toContain('export type MathAddOutput');
+        // 签名里引用的是名字，不是内联
+        expect(dts).toMatch(/add\(input: MathAddInput, options\?: RpcCallOptions\): Promise<MathAddOutput>/);
+    });
+
+    it('空 input 不生成具名类型，用 Record<string, never>', () => {
+        expect(dts).not.toContain('SysPingInput');
         expect(dts).toMatch(/ping\(input: Record<string, never>/);
     });
 
     it('客户端一定 Promise，服务端允许同步', () => {
-        // client 行
-        expect(dts).toMatch(/add\(input: [^)]*\): Promise<number>/);
-        // server 行
-        expect(dts).toMatch(/add\(opts: \{ input: [^}]*\}[^)]*\): number \| Promise<number>/);
+        expect(dts).toMatch(/add\(input: [^)]*\): Promise<MathAddOutput>/);
+        expect(dts).toMatch(/add\(opts: \{ input: [^}]*\}[^)]*\): MathAddOutput \| Promise<MathAddOutput>/);
     });
 
     it('desc 搬进 JSDoc', () => {
@@ -80,7 +90,7 @@ describe('renderServiceTypes', () => {
         expect(dts).toContain('{ id: string; ok: boolean }[]');
     });
 
-    it('生成物是合法 TS（能被 tsc 接受）—— 这里只做形状自检', () => {
+    it('生成物是合法 TS 形状（自检）', () => {
         expect(dts.startsWith('// ⚠️ 自动生成')).toBe(true);
         expect(dts).toContain("import type { RpcCallOptions } from '@diy-agent/rpc';");
     });
