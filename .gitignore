@@ -38,6 +38,10 @@ pkgs.ts/**/*.mjs
 !apps/diy-app/scripts/build-runtime.mjs
 pkgs.ts/**/*.cjs
 pkgs.ts/**/*.d.ts
+# 例外：`src/gen/` 是**有意的派生**（gen-service-types 从 api.ts 生成），
+# 必须进 git —— 不进的话消费方 clone 后没有类型，且 `--check` 会永远误报过期。
+!pkgs.ts/**/src/gen/
+!pkgs.ts/**/src/gen/*.d.ts
 
 # Env / OS
 .env
