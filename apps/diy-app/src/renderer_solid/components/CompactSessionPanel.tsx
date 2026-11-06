@@ -64,6 +64,7 @@ import {
 } from "@diy-agent/compaction/compact-when";
 import { EXAMPLE_MESSAGES, buildCompactExample, bytesToTokens, type ExampleRow } from "@diy-agent/compaction/compact-example";
 import { normalizeHistoryLimit } from "@diy-agent/compaction/history-limit";
+import { KeptStepsBar } from "./KeptStepsBar";
 
 const INDENT = "  ";
 
@@ -238,6 +239,8 @@ export interface CompactPanelCtl {
     // ─── ##370：读配置的出声（键缺/非法 ⇒ 已逐键回落缺省）───
     /** 出声条目（空 = 干净读入）。UI 必须显示「为什么」——否则用户只看到"我的配置没生效" */
     warnings: () => AutoCompactIssue[];
+    /** 重取配置/事实（##519：手动拖压缩位置落盘后，下面的「什么时候会压」要跟着变） */
+    refresh: () => Promise<unknown>;
 }
 
 /**
@@ -366,6 +369,7 @@ export function useCompactPanel(uri: () => string, visible: () => boolean = () =
         pv, pvLoading, busy, err, apply,
         render, setRender, renderData: headtailData, setRenderData, summaryEnabled, setSummary, rawText, rawPath,
         warnings,
+        refresh: async () => await refetchAuto(),
     };
 }
 
@@ -823,6 +827,9 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                         </Show>
                     </div>
 
+                    {/* ##519：手动压缩位置（拖动即落盘；与下面的「什么时候会压」是两回事 ——
+                        那条说的是自动，这里是「我现在就想留这么多」） */}
+                    <KeptStepsBar uri={ctl.uri} onApplied={() => void ctl.refresh()} />
                     {/* ##423 块 2：什么时候会压（判据 + 当前值）；块 3：压缩后长什么样（范例预览） */}
                     <WhenCompactBlock ctl={ctl} windowLimit={windowLimit()} />
                     {/* 纯展示：保留量取真实窗口 × 0.16，但不超过样例总量的一半（否则总是「一条不丢」） */}

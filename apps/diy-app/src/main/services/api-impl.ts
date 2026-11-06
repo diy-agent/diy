@@ -855,6 +855,23 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const txt = (input as { summaryText?: string }).summaryText;
     return await getLocalAgent().compactPreview(input.taskUri, policyOf(input), txt);
   });
+  binding.on(app.agent.local.compact.ledger, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.compact.ledger", input.taskUri);
+    const { keptStepsView } = await import("./local-agent");
+    return keptStepsView(input.taskUri);
+  });
+  binding.on(app.agent.local.compact.setKept, async ({ input }) => {
+    noteRendererTouch("diy.agent.local.compact.setKept", input.taskUri);
+    const { getLocalAgent, keptStepsView } = await import("./local-agent");
+    const view = keptStepsView(input.taskUri);
+    // 步 → token 预算：取「保留这 N 步」的实测累加（窗口外/无样本 ⇒ 用中位数兜底，仍是人给的步数说了算）
+    const row = view.rows.find((r) => r.fromTail === Math.max(1, Math.round(input.keepSteps)));
+    const budget = row
+      ? row.cumFromTail
+      : Math.max(1, Math.round(input.keepSteps) * (view.medianTokens ?? 800));
+    const applied = getLocalAgent().compactToRetainTokens(input.taskUri, budget);
+    return { budget, applied, view: keptStepsView(input.taskUri) };
+  });
   binding.on(app.agent.local.compact.events, async ({ input }) => {
     noteRendererTouch("diy.agent.local.compact.events", input.taskUri);
     const { getLocalAgent } = await import("./local-agent");

@@ -619,6 +619,90 @@ export function readStepUsages(taskUri: string): StepUsageRecord[] {
     return readJsonl<StepUsageRecord>(usageFile(taskUri));
 }
 
+/**
+ * 手动压缩条的**一步一行**（##519）：把 usage.jsonl 的**实测**总量差分成「这一步新增多少 token」。
+ *
+ * 为什么不走估算：每步增量从 370 到 114k 都有（实测本仓 338 步），估出来只能对个位数；
+ * 而 usage.jsonl 每条都记了**真发时的总 token**，相邻相减就是这一步真实吃掉的量。
+ */
+export interface KeptStepRow {
+    /** 从最新往前数第几步（1 = 最近一步） */
+    fromTail: number;
+    turnId: string;
+    /** 轮内步号（1-based） */
+    step: number;
+    ts: string;
+    /** 这一步新增的 token（实测差分；跨轮那一步按总量差，含上一轮尾巴） */
+    tokens: number;
+    /** 保留「这步及之后全部」≈ 多少 token */
+    cumFromTail: number;
+}
+
+export interface KeptStepsView {
+    /** 从新到旧 */
+    rows: KeptStepRow[];
+    /** 账本里有多少步（可能多于 rows：只读尾部窗口） */
+    totalSteps: number;
+    /** 早期步未加载（尾部窗口外）—— 界面必须标出来 */
+    truncated: boolean;
+    windowTokens: number | null;
+    /** 当前生效边界保留的 token（无边界 = null ⇒ 手柄放最右） */
+    retainedTokens: number | null;
+    /** 默认落点：窗口 × 0.16 对应第几步（无窗口 = null） */
+    defaultSteps: number | null;
+    /** 每步增量的中位数（换算「N 步 → token」的兜底用；样本不足 = null） */
+    medianTokens: number | null;
+}
+
+/** 读「保留 N 步」的轴（只读；不建目录、不写任何东西） */
+export function keptStepsView(taskUri: string): KeptStepsView {
+    const usages = readStepUsagesTail(taskUri, 800);
+    const rows: KeptStepRow[] = [];
+    const deltas: number[] = [];
+    for (let i = usages.length - 1; i >= 0; i--) {
+        const cur = usages[i]!;
+        const total = bucketsOf(cur.usage as UsageLike).total;
+        const prev = i > 0 ? bucketsOf(usages[i - 1]!.usage as UsageLike).total : 0;
+        // 同轮相邻两步：总量差 = 这一步新增。跨轮那一步也按总量差（system 恒定 ⇒ 差仍≈新内容）
+        const tokens = Math.max(0, total - prev);
+        if (i > 0) deltas.push(tokens);
+        rows.push({
+            fromTail: usages.length - i,
+            turnId: cur.turnId,
+            step: cur.step,
+            ts: cur.ts,
+            tokens,
+            cumFromTail: 0,
+        });
+    }
+    let acc = 0;
+    for (const r of rows) {
+        acc += r.tokens;
+        r.cumFromTail = acc;
+    }
+    const sorted = [...deltas].sort((a, b) => a - b);
+    const medianTokens = sorted.length > 0 ? sorted[Math.floor(sorted.length / 2)]! : null;
+    const cfgLimit = normalizeHistoryLimit(loadAutoCompact(diyHome()).history?.limit);
+    const windowTokens = cfgLimit.windowTokens ?? contextLimitOf(personaForTask(diyHome(), taskUri).model) ?? null;
+    const target = windowTokens && windowTokens > 0 ? retainTokensOf(windowTokens) : null;
+    let defaultSteps: number | null = null;
+    if (target !== null) {
+        const hit = rows.find((r) => r.cumFromTail >= target);
+        // 尾部窗口装不下这么多步 ⇒ 说「全部都不够」（手柄放最左），不猜
+        defaultSteps = hit ? hit.fromTail : rows.length > 0 ? rows.length : null;
+    }
+    const boundary = latestBoundary(taskUri);
+    return {
+        rows,
+        totalSteps: usages.length,
+        truncated: usages.length >= 800,
+        windowTokens,
+        retainedTokens: boundary ? (boundary as unknown as { retainTokens?: number }).retainTokens ?? null : null,
+        defaultSteps,
+        medianTokens,
+    };
+}
+
 /** 尾部用量（面板成本表用；不整读 4.6 MB） */
 function readStepUsagesTail(taskUri: string, maxLines = 500): StepUsageRecord[] {
     const tail = readJsonlTail(usageFile(taskUri), { maxBytes: 512 * 1024, maxLines });
@@ -2837,14 +2921,24 @@ export class LocalAgentManager {
             fixedTokens?: number;
             /** 本次事件的触发线（预检用 0.8W；缺省 = 正常 trigger） */
             triggerAt?: number;
+            /**
+             * 保留量覆盖（token）：缺省 = 窗口 × 0.16（`retainTokensOf`）。
+             *
+             * 只给「手动拖压缩位置」（##519）用 —— 用户从尾部实测增量推出「留最近 N 步 ≈ 多少 token」，
+             * 那条预算由他定。**只改留多少**：切在哪仍走同一条判据（user 消息 + 轮首），
+             * 因为 `resolveOpsReplay` 的 seek 依赖轮首锚点（改它会连带 UI 重放退化）。
+             */
+            retainTokensOverride?: number;
         } = {},
     ): { cut: number; headEnd: number; wrote: boolean } | null {
         const cfgLimit = normalizeHistoryLimit(loadAutoCompact(diyHome()).history?.limit);
         const windowTokens = cfgLimit.windowTokens ?? contextLimitOf(personaForTask(diyHome(), taskUri).model);
         if (!windowTokens || windowTokens <= 0) return null;
-        const retainTokens = retainTokensOf(windowTokens);
+        const retainTokens = opts.retainTokensOverride ?? retainTokensOf(windowTokens);
         const triggerTokens = triggerTokensOf(windowTokens);
-        if (!(retainTokens > 0) || !(triggerTokens > retainTokens)) return null;
+        // 手动给预算时不受「预算须小于触发线」约束（人可能故意留很多）；只要预算为正
+        if (!(retainTokens > 0)) return null;
+        if (opts.retainTokensOverride === undefined && !(triggerTokens > retainTokens)) return null;
 
         const tokOf = (m: LocalModelMessage): number => estimateTokensOf(JSON.stringify(m.content ?? ""));
         const entry = taskUri ? this.compactStateOf(taskUri).boundary : null;
@@ -2887,6 +2981,7 @@ export class LocalAgentManager {
             force: opts.force === true,
             // 已有边界不能把历史放回来；force 时至少前进一个 user。
             minCut: cut,
+            ...(opts.retainTokensOverride !== undefined ? { retainTokens: opts.retainTokensOverride } : {}),
         });
         if (!r || r.cut <= cut) return cut > 0 ? { cut, headEnd: 0, wrote: false } : null;
 
@@ -3820,6 +3915,43 @@ export class LocalAgentManager {
         } catch {
             return 0;
         }
+    }
+
+    /**
+     * 手动把压缩位置拖到「保留最近 ≈ 这么多 token」（##519，UI 的手动压缩条）。
+     *
+     * 与 `compact()` 的关系：那条是「按配置的管道压一次」，这条只干一件事 —— **按人给的预算重划边界**。
+     * 为什么预算而不是「步数」：步数不是等价的 token（实测一部会话 p10=370 / p99=5,878），
+     * 保留 N 步在界面上只是**显示**，落到边界一律换算成 token（换算在 `compact-manual.ts`，用实测增量）。
+     *
+     * 为什么切点仍走 user + 轮首：`resolveOpsReplay` 的 seek 锚点是轮首（`keptFromOpsOffset`
+     * 取那条轮记录的 ref.ops）。按步切会连带 UI 重放退化 —— 那是另一件事，不与这条 UI 绑在一起。
+     */
+    compactToRetainTokens(
+        taskUri: string,
+        retainTokens: number,
+    ): { cut: number; retainedTokens: number; dropped: number; keptMessages: number; totalMessages: number } | null {
+        const replay = resolveOpsReplay(taskUri);
+        const store = replayOpsInto(new BlockStore(), streamPath(taskUri), replay.from);
+        const all = projectAll(store);
+        const r = this.appliedHistoryRange(taskUri, all, replay.lineBase, {
+            write: true,
+            force: true, // 手动：不受触发线约束，人说了算
+            triggered: false,
+            retainTokensOverride: retainTokens,
+        });
+        if (!r) return null;
+        let retained = 0;
+        for (let i = r.cut; i < all.length; i++) {
+            retained += estimateTokensOf(JSON.stringify(all[i]?.content ?? ""));
+        }
+        return {
+            cut: r.cut,
+            retainedTokens: retained,
+            dropped: r.cut,
+            keptMessages: all.length - r.cut,
+            totalMessages: all.length,
+        };
     }
 
     /**
