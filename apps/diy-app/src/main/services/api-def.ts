@@ -17,6 +17,11 @@
  */
 
 import { RpcSchema } from "@diy-agent/rpc";
+import { journalRoutes } from "./api-domains/journal/api";
+import { jobRoutes } from "./api-domains/job/api";
+import { remoteRoutes } from "./api-domains/remote/api";
+import { instancesRoutes } from "./api-domains/instances/api";
+import { noticeRoutes } from "./api-domains/notice/api";
 import { templateRoutes } from "./api-domains/template/api";
 import { contextRoutes } from "./api-domains/context/api";
 import { trafficRoutes } from "./api-domains/traffic/api";
@@ -1787,88 +1792,7 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
 
       docs: docsRoutes,
 
-      journal: RpcSchema.group({
-        desc: `任务日志（##404）：**append-only 事件流**（decision / pitfall / review / progress / learn）。三分法：能改写成「现在是什么」→ \`diy facts\`；「接下来做什么」→ 任务 body；「发生过什么」→ 这里。日志不参与每轮上下文，所以 body 可以瘦`,
-        children: {
-          add: RpcSchema.unary({
-            desc: `追加一条日志（只追加、不改不删；title 一行必填 —— 标题写不出多半是该拆）`,
-            input: {
-              task: z.string().cliArg({ placeholder: "<projects/N/tasks/M>", desc: "任务 URI（**必填，不做「当前任务」推导**）" }),
-              kind: z.enum(["decision", "pitfall", "review", "progress", "learn"]).cliOption({ desc: "kind：decision 决策 / pitfall 踩坑 / review 结论 / progress 里程碑 / learn 发现（**传英文值**，中文只是说明）" }),
-              title: z.string().cliOption({ placeholder: "<text>", desc: "一行标题（标题写不出 = 这条该拆）" }),
-              body: z
-                .string()
-                .optional()
-                .cliOption({
-                  placeholder: "<text>",
-                  inlineText: { fileOpt: "--body-file", textOpt: "--body-text" },
-                  desc: "可选正文（**内联**，不是文件路径：值形如单行路径会被拒）",
-                }),
-              bodyText: z
-                .string()
-                .optional()
-                .cliOption({ placeholder: "<text>", desc: "可选正文（显式内联，与 --body 同义但不做路径护栏）" }),
-              bodyFile: z
-                .string()
-                .optional()
-                .cliOption({ readFile: true, placeholder: "<file|->", desc: "可选正文来自文件（- = stdin）" }),
-              refs: z.string().optional().cliOption({ placeholder: "<a,b>", desc: "引用：commit / 任务 uri / 事实 gid / 路径:行（逗号分隔）" }),
-              round: z.string().optional().cliOption({ desc: "会话轮次 id（可选）" }),
-              author: z
-                .string()
-                .optional()
-                .cliOption({
-                  placeholder: "<role[:name]>",
-                  desc: "谁写的：system（客观判定）/ agent:<名>（模型叙述）/ human:<名>（用户原话，**必须配 --anchor**）",
-                }),
-              anchor: z
-                .string()
-                .optional()
-                .cliOption({
-                  placeholder: "<type:...>",
-                  desc: "指向哪：node:<id> / message:<id> / task-field:<field> / doc-range:<rev>:<offset>:<quote>",
-                }),
-            },
-            output: JournalAddSchema,
-          }),
-          raw: RpcSchema.unary({
-            desc: `日志文件**原文**（UI「原 JSONL」视图用）：只读字节、只数行 —— 坏行也照原样给出来`,
-            input: {
-              task: z.string().cliArg({ placeholder: "<projects/N/tasks/M>", desc: "任务 URI" }),
-            },
-            output: JournalRawSchema,
-          }),
-          find: RpcSchema.unary({
-            desc: `查日志（缺省最近优先、全 kind）。\`--grep\` 搜 title/body/refs；输出是渲染好的 markdown`,
-            input: {
-              task: z.string().cliArg({ placeholder: "<projects/N/tasks/M>", desc: "任务 URI" }),
-              kind: z.string().optional().cliOption({ placeholder: "<k1,k2>", desc: "筛选 kind（逗号分隔）" }),
-              since: z.string().optional().cliOption({ placeholder: "<date>", desc: "起始时间（含）" }),
-              until: z.string().optional().cliOption({ placeholder: "<date>", desc: "截止时间（含）" }),
-              grep: z.string().optional().cliOption({ placeholder: "<text>", desc: "子串过滤（title/body/refs）" }),
-              limit: z.number().optional().cliOption({ desc: "最多几条（缺省 20，-1 = 全部）" }),
-              order: z.enum(["asc", "desc"]).optional().cliOption({ desc: "排序（缺省 desc = 最近优先）" }),
-            },
-            output: JournalFindSchema,
-          }),
-          stats: RpcSchema.unary({
-            desc: `日志体检：总条数 / 字节 / 按 kind 计数 / 首尾时间（body 瘦身前后用它对账）`,
-            input: {
-              task: z.string().cliArg({ placeholder: "<projects/N/tasks/M>", desc: "任务 URI" }),
-            },
-            output: JournalStatsSchema,
-          }),
-          import: RpcSchema.unary({
-            desc: `批量导入（回灌历史）。载荷 = JSON 数组 \`[{kind,title,body?,refs?,ts?}]\`；**整批校验通过才写**，--dry-run 只算`,
-            input: {
-              task: z.string().cliArg({ placeholder: "<projects/N/tasks/M>", desc: "任务 URI" }),
-              file: z.string().cliOption({ readFile: true, placeholder: "<file|->", desc: "载荷 JSON（- = stdin）" }),
-              dryRun: z.boolean().optional().cliOption({ desc: "只算不写" }),
-            },
-            output: JournalImportSchema,
-          }),
-        },
-      }),
+      journal: journalRoutes,
 
       flow: RpcSchema.group({
         desc: `工作流实例（与任务绑定；状态真源 = 任务目录 flow/state.json，见 ##319）`,
@@ -2103,114 +2027,7 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
        *
        * **只读**：本刀不做「运行 / 停用 / 取消」（刀 6 起接），故没有 run/cancel 子命令。
        */
-      job: RpcSchema.group({
-        desc: `后台 run 的管理（**\`job\` = 后台活的总称，本域装的唯一实体是 run**；只管 \`background\` 起的长活，前台命令不登记 —— 见 ##408 刀 16）`,
-        children: {
-          ps: RpcSchema.unary({
-            desc: `
-            **在跑什么**（活体表，刀 8 起）：后台 run 的当前快照 —— 不是历史账。
-
-            返回 runs（运行中的在前，同状态按启动时间倒序）· running（在跑几条）· total。
-            每行含：state/stateLabel · pid（null = 没起来或非进程型）· title · **command（原始命令行全文）** ·
-            cwd · startedAt/endedAt · durationText · exitCode/signal/exitText · outputBytes/outputText ·
-            origin/originText（哪个任务/轮/步/工具调用起的）· logPath · dir。
-            `,
-            input: {
-              all: z
-                .boolean()
-                .optional()
-                .cliOption({ desc: "也列出已结束的（缺省只列运行中；app 退出后表即空 —— 这是刻意的，不做恢复）" }),
-              noScan: z
-                .boolean()
-                .optional()
-                .cliOption({ desc: "不扫 ps（跳过「未登记」进程那一列；缺省扫）" }),
-            },
-            output: z.object({ status: z.string(), data: z.any() }),
-          }),
-          detachables: RpcSchema.unary({
-            desc: `
-            **现在能转后台的前台调用**（##408 刀 21）：哪条工具调用还跑着、已经跑了多久。
-
-            只列**本任务**、**还在跑**、**拿得到 toolCallId** 的前台 bash —— 三项缺一就不列
-            （转不了的按钮不如没有）。转完就从这里消失，去 \`job.ps\` 里看它。
-            `,
-            input: {
-              taskUri: z.string().cliArg({ desc: "任务 URI（只看这个任务的）" }),
-            },
-            output: z.object({ status: z.string(), data: z.any() }),
-          }),
-          detach: RpcSchema.unary({
-            desc: `
-            把一条**还在跑的前台命令**转成后台 run（对应 opencode 的 \`ctrl+b\`）。
-
-            语义：**不重启进程、不丢前半段输出** —— 只换"谁在等"和"输出写到哪"。
-            转成功后工具调用立刻返回 \`[已转后台] <runId>\`，模型据此去 \`job status\`；
-            结束时会照常插话唤醒。拒绝是**正常时序**不是缺陷：命令恰好结束了（\`agent/job-already-ended\`）、
-            已经转过了（\`agent/job-not-found\`）、不属于这个任务（\`agent/job-foreign\`）。
-            `,
-            input: {
-              toolCallId: z.string().cliArg({ desc: "工具调用 id（`job.detachables` 里给的）" }),
-              taskUri: z.string().cliArg({ desc: "任务 URI（**必填**：属主对不上就拒，见 `job-fence`）" }),
-            },
-            output: z.object({ status: z.string(), data: z.any() }).or(z.object({ status: z.string(), msg: z.string() })),
-          }),
-          procs: RpcSchema.unary({
-            desc: `
-            **这台 app 起过、现在还在的全部进程**（ps 现扫，不只我们登记过的）。
-
-            为什么要它：模型可以在命令里写 \`nohup xxx & \` —— 那种进程从没经过活体表，
-            但归我们管（按**进程组**认领，见 \`shared/proc-scan.ts\`）。这里把它一并列出来，
-            回答「我起的那些东西现在到底有哪些在跑」。
-            `,
-            input: {
-              scan: z.boolean().optional().cliOption({ desc: "预留：是否重扫（当前恒重扫，ps 一次约几十毫秒）" }),
-            },
-            output: z.object({ status: z.string(), data: z.any() }),
-          }),
-          killproc: RpcSchema.unary({
-            desc: `
-            结束一条**未登记**的进程（按 pid；同组且组不是 app 自己时按组杀）。
-
-            两道闸都过才动手：① 调用时**重新扫一遍** ps，pid 不在"归我们管"的名单里就拒绝；
-            ② 归属校验（\`shared/job-fence.ts\`）—— 你声明的 \`taskUri\` 必须与组名册 / run origin
-            记下的归属一致，否则拒绝（跨任务不代杀；归属不明的也不动，请用 ps / kill 手工来）。
-            `,
-            input: {
-              pid: z.number().cliArg({ desc: "进程 pid（`diy job procs` 里看到的）" }),
-              taskUri: z.string().cliArg({ desc: "任务 URI（**必填**：这个 pid 归哪个任务）" }),
-            },
-            output: z.object({ status: z.string(), data: z.any() }).or(z.object({ status: z.string(), msg: z.string() })),
-          }),
-          kill: RpcSchema.unary({
-            desc: `
-            停止一条 run（进程型按**进程组** SIGTERM → 2s → SIGKILL）。返回是否真的发出了停止。
-
-            \`taskUri\` **必填**：这条 run 的 \`origin.taskUri\` 必须与它一致（\`shared/job-fence.ts\`）。
-            跨任务不代杀 —— kill 是按组发的，认错一次带走的是整组无关进程。
-            `,
-            input: {
-              id: z.string().cliArg({ desc: "run id（形如 r-mvlmxmuf-qxmr：r-<base36 毫秒>-<4 位随机>，用 diy job ps 查）" }),
-              taskUri: z.string().cliArg({ desc: "这条 run 属于哪个任务（`job.ps` 每行的 `taskUri`）" }),
-            },
-            output: z.object({ status: z.string(), data: z.any() }).or(z.object({ status: z.string(), msg: z.string() })),
-          }),
-          tail: RpcSchema.unary({
-            desc: `读一条 run 的输出尾部（从它自己的 out.log 读；给了 lines 就按行切，同时受 16KB 字节上限）。`,
-            input: {
-              id: z.string().cliArg({ desc: "run id" }),
-              lines: z.number().optional().cliOption({ desc: "要最后几行（缺省 40）" }),
-            },
-            output: z.object({ status: z.string(), data: z.any() }).or(z.object({ status: z.string(), msg: z.string() })),
-          }),
-          meta: RpcSchema.unary({
-            desc: `看一条 run **实际落盘的东西**：meta.json 原文 + out.log 路径/字节数 + 目录（面板「存储数据」tab 用）。`,
-            input: {
-              id: z.string().cliArg({ desc: "run id" }),
-            },
-            output: z.object({ status: z.string(), data: z.any() }).or(z.object({ status: z.string(), msg: z.string() })),
-          }),
-        },
-      }),
+      job: jobRoutes,
 
       log: logRoutes,
 
@@ -2388,54 +2205,7 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
        *
        * 判据 4：发现结果**合并去重后列出来选**，本域没有任何「自动连接 / 自动配对」入口。
        */
-      remote: RpcSchema.group({
-        desc: `远程实例（本机 /ping 身份 + local·mdns·tailscale·manual 四路发现；无鉴权，仅限内网）`,
-        children: {
-          self: RpcSchema.unary({
-            desc: `本实例的远程身份与 /ping 端点（id 永不变；displayName 可改）`,
-            input: {},
-            output: RemoteSelfSchema,
-          }),
-          rename: RpcSchema.unary({
-            desc: `改本实例显示名（id 不变；空串 = 回落 hostname）`,
-            input: { name: z.string().cliArg({ desc: "新显示名（空串 = 回落 hostname）" }) },
-            output: RemoteSelfSchema,
-          }),
-          ping: RpcSchema.unary({
-            desc: `ping 一台 diy 实例的 /ping（拿身份 / 判存活；失败返回 ok:false 而不是报错）`,
-            input: {
-              endpoint: z.string().cliArg({ desc: "目标基址，如 http://192.168.1.5:9400（缺端口时嘟 9400）" }),
-              timeoutMs: z.number().optional().cliOption({ desc: "超时毫秒（缺省 1500）" }),
-            },
-            output: RemotePingResultSchema,
-          }),
-          discover: RpcSchema.unary({
-            desc: `发现可用 diy 实例（人读列表；合并去重后列出来选，不自动连接）`,
-            input: {
-              sources: z.union([z.string(), z.array(z.string())]).optional().cliOption({
-                desc: "只跑这几路（逗号分隔或 JSON 数组；缺省 local,mdns,tailscale，给了 manual 时再加 manual）",
-              }),
-              manual: z.union([z.string(), z.array(z.string())]).optional().cliOption({
-                desc: "手动输入的地址（逗号分隔或 JSON 数组；缺端口时嘟 9400）",
-              }),
-              mdnsTimeoutMs: z.number().optional().cliOption({ desc: "mDNS 收集时长毫秒（缺省 1500）" }),
-            },
-            output: z.string().describe("人读列表（无结果时给一句提示）"),
-          }),
-          list: RpcSchema.unary({
-            desc: `发现可用 diy 实例（结构化行，供 UI / 程序消费）`,
-            input: {
-              sources: z.union([z.string(), z.array(z.string())]).optional().cliOption({ desc: "只跑这几路（同上）" }),
-              manual: z.union([z.string(), z.array(z.string())]).optional().cliOption({ desc: "手动输入的地址（同上）" }),
-              mdnsTimeoutMs: z.number().optional().cliOption({ desc: "mDNS 收集时长毫秒" }),
-            },
-            output: z.object({
-              rows: RemoteDiscoverResultSchema.shape.rows,
-              errors: z.array(DiscoverFailureSchema),
-            }),
-          }),
-        },
-      }),
+      remote: remoteRoutes,
 
       /**
        * 实例大盘（Main 域）——「本机现在有哪些 diy 实例在跑、各自是谁、在干什么」。
@@ -2444,50 +2214,7 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
        * 「谁开的」靠启动时写进注册表（`~/.diy-instances/<pid>.json`，事后再追父链追不出来），
        * 数据根/端口靠**活体自报**（环境变量是继承来的，不等于真根）。
        */
-      instances: RpcSchema.group({
-        desc: `实例大盘（扫描本机 diy 实例 + 唤起指定实例）`,
-        children: {
-          ls: RpcSchema.unary({
-            desc: `列出本机所有 diy 实例（对齐表格文本，供人读；程序读请用 instances.list）`,
-            input: {},
-            output: z.string().describe("表格文本（含表头与汇总行）"),
-          }),
-          list: RpcSchema.unary({
-            desc: `列出本机所有 diy 实例（结构化行，供 UI / 程序消费）`,
-            input: {},
-            output: z.object({ rows: z.array(InstanceRowSchema) }),
-          }),
-          self: RpcSchema.unary({
-            desc: `本实例自报身份 + 活跃会话 + 窗口状态（别的实例扫描时调用；无窗口实例 window=null）`,
-            input: {},
-            output: InstanceSelfSchema,
-          }),
-          reveal: RpcSchema.unary({
-            desc: `唤起**本**实例窗口（重建 + 前置 + 全屏；由别的实例的 instances.focus 调用）`,
-            input: {},
-            output: RevealResultSchema,
-          }),
-          focus: RpcSchema.unary({
-            desc: `
-            唤起指定实例（窗口前置 + 全屏）
-
-            主路 = 让目标实例**自己** show+focus+setFullScreen（RPC，确定且无需系统权限）；
-            RPC 不可用（无端口 / 无响应）时降级到**系统级唤起**（平台支持时才可用；macOS 上需 Automation 权限，可能弹窗）。
-            两路都失败即报错 —— 不静默吞。
-            `,
-            input: {
-              pid: z.number().optional().cliOption({ desc: "目标实例 pid（与 --port 二选一）" }),
-              port: z.number().optional().cliOption({ desc: "目标实例 RPC 端口（与 --pid 二选一）" }),
-            },
-            output: z.object({
-              pid: z.number().nullable(),
-              port: z.number().nullable(),
-              via: z.string().describe("rpc（目标实例自己唤起）| system（系统级降级）"),
-              reason: z.string(),
-            }),
-          }),
-        },
-      }),
+      instances: instancesRoutes,
 
       /**
        * 文件系统变更推送（Main 域）。
@@ -2506,73 +2233,7 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
        * 数据定性 = cache（进程内存 ring，重启即空）：它描述"此刻有什么坏了"，不是历史账；
        * 追溯去看会话流与 ~/.diy/log/network/*.jsonl。
        */
-      notice: RpcSchema.group({
-        desc: `模型不可用通知（真发失败时产生；含人物 + 模型 + 上游原文）`,
-        children: {
-          /** 未关闭的通知，时间升序（CLI `diy notice list` 直接读它） */
-          list: RpcSchema.unary({
-            desc: `列出当前未关闭的「模型不可用」通知`,
-            input: {},
-            output: z.array(ModelUnavailableNoticeSchema),
-          }),
-          /**
-           * 关闭 = "我知道了"：从 ring 移除，此后重连不再回放。
-           * 为什么必须落 main 侧：只关界面的话，下一次重连的回放会把同一条又推回来 ——
-           * 用户点了 ✕ 却关不掉的提示等于没关（bar 上"可关闭"是硬要求）。
-           * 不给 id = **全关**（bar 一次只展示最新一条，点 ✕ 的语义就是"这波我都知道了"）。
-           */
-          dismiss: RpcSchema.unary({
-            desc: `关闭通知（给 id 关一条；不给 = 全部关闭）`,
-            input: { id: z.string().optional().cliArg({ desc: "通知 id（缺省 = 全部关闭）" }) },
-            output: StatusOk,
-          }),
-          /**
-           * 通知流：**订阅即回放**当前未关闭的通知，之后是增量。
-           * 回放是刻意的：页面重载 / 断线重连后 bar 要能自己回来（用户重开窗口正是最容易
-           * 错过提示的时刻），所以"当前事实"必须随订阅给全，而不是只推增量。
-           */
-          watch: RpcSchema.serverStream({
-            desc: `通知流（订阅回放现存 + 增量推送；顶栏 bar 的数据源）`,
-            input: {},
-            output: ModelUnavailableNoticeSchema,
-          }),
-          /**
-           * 通知信箱（##429 要求 ④/⑤ + ##436 的界面）：`level#inbox` 的「N1/N2 一律落信箱」。
-           *
-           * 条目种类（`shared/inbox.INBOX_KINDS`）：`max-tokens` / `cost-step` / `cost-turn`
-           * （损失型，##429）· `message`（有留言投给某会话，##436：人署名 N2 / 机器 N1）·
-           * `lost`（**任务已结案而插话队列里还压着留言** ⇒ 不会有下一次轮次来取走它；
-           * 启动扫尾写入，不许静默。文案必须写明「改回 active 就会生效」——它是可逆的）·
-           * `tools-surface`（##519：**换了 build 而工具描述改了字节** ⇒ 每个任务首个请求全价。
-           * 启动时判定，`taskUri` 为空串 —— 它是**进程级**事实，不属于任何任务）。
-           *
-           * 与上面 `list/dismiss/watch`、下面 `env.*` 的关键差别是**数据定性**：那些是 cache
-           * （进程内存 ring，重启即空 —— 描述“此刻怎么了”）；这里是 **append-only 落盘**
-           * （`$DIY_HOME/local/inbox.jsonl`）—— 它描述“发生过什么”，重启后回看正是它的主要用途。
-           *
-           * 订阅语义刻意不同：`watch` **只推增量、不回放**。回放的历史条目会在 renderer 里
-           * 被当成“刚发生”再弹一轮 toast（每次窗口重载糊一脸）；要回看走 `list`。
-           */
-          inbox: RpcSchema.group({
-            desc: `通知信箱（落盘流水：撞输出上限 / 成本过阈 / 新留言 / 结案任务的滞留留言 / 工具面漂移；可回看）`,
-            children: {
-              list: RpcSchema.unary({
-                desc: `列出信箱条目（时间升序；按任务可筛。人读用 diy notice inbox list）`,
-                input: {
-                  taskUri: z.string().optional().cliOption({ desc: "只看该任务的条目" }),
-                  limit: z.number().optional().cliOption({ desc: "只要最近 N 条（缺省全部，上限 200）" }),
-                },
-                output: z.array(InboxEntrySchema),
-              }),
-              watch: RpcSchema.serverStream({
-                desc: `信箱增量流（**不回放历史**：订阅后新落的才推；renderer 据此弹 N1 toast）`,
-                input: {},
-                output: InboxEntrySchema,
-              }),
-            },
-          }),
-        },
-      }),
+      notice: noticeRoutes,
 
       /**
        * 「环境感知」通知（##384）—— 机器环境坏了（磁盘满 / 网断）时推一条，renderer 订阅
