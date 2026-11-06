@@ -55,7 +55,9 @@ describe("writeSelfRecord", () => {
 describe("registryDir", () => {
     it("DIY_INSTANCE_REGISTRY 覆盖；空串 = 缺省", () => {
         expect(registryDir({ DIY_INSTANCE_REGISTRY: "/tmp/reg" })).toBe("/tmp/reg");
-        expect(registryDir({ DIY_INSTANCE_REGISTRY: "  " })).toMatch(/\.diy-instances$/);
+        // 2026-11-06：默认位置已从 `~/.diy-instances`（旧）迁到 `<devRoot>/apps`（新）。
+        // 旧位置现在由 `legacyRegistryDir()` 提供，只作一次性搬迁的来源。
+        expect(registryDir({ DIY_INSTANCE_REGISTRY: "  " })).toMatch(/apps$/);
     });
 });
 

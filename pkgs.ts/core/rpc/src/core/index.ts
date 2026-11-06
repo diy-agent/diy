@@ -37,3 +37,9 @@ export {
   createTypedClient,
 } from './rpc.js';
 export type { TypedClient } from './rpc.js';
+
+// 模块化的 API 单元（defineService / HandlersOf）
+export * from './service.js';
+
+// 生成器（构建期用，运行时零成本）
+export * from './service-gen.js';
