@@ -19,7 +19,7 @@
 
 import { z } from 'zod';
 import { _flattenRouter } from './_tree.js';
-import type { _Router } from './meta.js';
+import type { _AnyProcedureMeta, _Router } from './meta.js';
 
 /** 一个生成出来方法的元信息（从 ProcedureMeta 里摘出来） */
 interface FlatMethod {
@@ -206,7 +206,7 @@ function renderMethodSignature(
  */
 export function renderServiceTypes(
     typeName: string,
-    api: _Router,
+    api: _Router | _AnyProcedureMeta,
     options: RenderOptions = {},
 ): string {
     const naming = options.naming ?? 'none';

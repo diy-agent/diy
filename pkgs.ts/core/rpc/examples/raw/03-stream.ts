@@ -4,18 +4,18 @@
  * 为什么用它：长任务的**增量**（进度 / 逐块结果），而不是等整轮跑完拿快照。
  */
 import { z } from "zod";
-import { RpcSchema, defineService, ChannelServerBinding, ChannelClientBinding } from "../src/index";
-import { createMemTransportPair } from "../test/helpers";
+import { RpcSchema, defineService, ChannelServerBinding, ChannelClientBinding } from "../../src/index";
+import { createMemTransportPair } from "../../test/helpers";
 
-const routes = RpcSchema.router({
-    job: RpcSchema.router({
+const routes = RpcSchema.bindNames(RpcSchema.group({ children: {
+    job: RpcSchema.group({ children: {
         /** 逐行吐进度；output 是**每一块**的类型（不是最终结果） */
         progress: RpcSchema.serverStream({
             input: { total: z.number() },
             output: z.object({ done: z.number(), text: z.string() }),
         }),
-    }),
-});
+    } }),
+} }));
 const service = defineService({ name: "demo.job", api: routes });
 
 async function main(): Promise<void> {

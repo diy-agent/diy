@@ -49,7 +49,7 @@ import { channelHarness, httpHarness, wsHarness, type TransportHarness } from '.
 //  需求域 API（应用作者视角）
 // ═══════════════════════════════════════════════════
 
-const api = RpcSchema.router({
+const api = RpcSchema.bindNames(RpcSchema.group({ children: {
   echo: RpcSchema.unary({ input: { v: z.number() }, output: z.number() }),
   slowEcho: RpcSchema.unary({ input: { delay: z.number(), v: z.number() }, output: z.number() }),
   boom: RpcSchema.unary({ input: { v: z.number() }, output: z.number() }),
@@ -60,7 +60,7 @@ const api = RpcSchema.router({
     output: z.object({ tag: z.string(), sum: z.number() }),
   }),
   chat: RpcSchema.bidiStream({ input: { room: z.string() }, chunkIn: z.string(), chunkOut: z.string() }),
-});
+} }));
 
 const transports = [
   ['channel(in-memory)', channelHarness],

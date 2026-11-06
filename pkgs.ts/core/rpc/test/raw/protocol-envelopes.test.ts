@@ -8,7 +8,7 @@ import { RpcSchema, createTypedClient } from '../../src/core';
 import { it } from 'vitest';
 import { z } from 'zod';
 
-const api = RpcSchema.router({
+const api = RpcSchema.bindNames(RpcSchema.group({ children: {
   greet: RpcSchema.unary({ input: { name: z.string() }, output: z.string() }),
   count: RpcSchema.serverStream({ input: { to: z.number() }, output: z.object({ val: z.number() }) }),
   upload: RpcSchema.clientStream({
@@ -16,7 +16,7 @@ const api = RpcSchema.router({
     output: z.object({ tag: z.string(), items: z.array(z.string()) }),
   }),
   echo: RpcSchema.bidiStream({ input: { prefix: z.string() }, chunkIn: z.string(), chunkOut: z.string() }),
-} as const);
+} as const }));
 
 // ═══════════════════════════════════════════════════
 //  传输层录制器
@@ -117,7 +117,7 @@ async function testUnaryEnvelopes() {
   const server = new ChannelServerBinding(serverTx);
   const client = new ChannelClientBinding(clientTx);
 
-  server.on(api.greet, ({ input }) => `Hello ${input.name}!`);
+  server.on({ ...api.greet, name: 'greet' }, ({ input }) => `Hello ${input.name}!`);
 
   const res = await client.invoke<{ input: { name: string }; meta: unknown }, string>('greet', { input: { name: 'World' }, meta: {} });
   assert(res === 'Hello World!', `result = ${res}`);
@@ -134,7 +134,7 @@ async function testServerStreamEnvelopes() {
   const server = new ChannelServerBinding(serverTx);
   const client = new ChannelClientBinding(clientTx);
 
-  server.on(api.count, async function* ({ input }) {
+  server.on({ ...api.count, name: 'count' }, async function* ({ input }) {
     for (let i = 0; i < input.to; i++) {
       await new Promise(r => setImmediate(r));
       yield { val: i };
@@ -163,7 +163,7 @@ async function testCancelEnvelopes() {
   const client = new ChannelClientBinding(clientTx);
 
   let finallyRan = false;
-  server.on(api.count, async function* ({ input }) {
+  server.on({ ...api.count, name: 'count' }, async function* ({ input }) {
     try {
       for (let i = 0; i < input.to; i++) {
         await sleep(30);
@@ -205,7 +205,7 @@ async function testClientStreamEnvelopes() {
   const server = new ChannelServerBinding(serverTx);
   const client = new ChannelClientBinding(clientTx);
 
-  server.on(api.upload, async ({ input, stream }) => {
+  server.on({ ...api.upload, name: 'upload' }, async ({ input, stream }) => {
     const items: string[] = [];
     for await (const c of stream) items.push(c);
     return { tag: input.tag, items };
@@ -234,7 +234,7 @@ async function testBidiStreamEnvelopes() {
   const server = new ChannelServerBinding(serverTx);
   const client = new ChannelClientBinding(clientTx);
 
-  server.on(api.echo, async function* ({ input, stream }) {
+  server.on({ ...api.echo, name: 'echo' }, async function* ({ input, stream }) {
     for await (const m of stream) {
       await sleep(1);
       yield `${input.prefix}: ${m}`;
@@ -264,7 +264,7 @@ async function testRpcLayerEnvelopes() {
   console.log('\n── RPC 层信封序列 ──');
   const { serverTx, clientTx, logs } = createLoggedMemTransportPair();
 
-  const app = RpcSchema.router({
+  const app = RpcSchema.bindNames(RpcSchema.group({ children: {
     ping: RpcSchema.unary({
       input: { msg: z.string() },
       output: z.string(),
@@ -275,12 +275,15 @@ async function testRpcLayerEnvelopes() {
       chunkIn: z.number(),
       output: z.object({ tag: z.string(), sum: z.number() }),
     }),
-  });
+  } }));
 
   // 本测试只验证线格式：binding.on 注册 handler
+  //
+  // ⚠️ 2026-11-06 起 `RpcSchema.group` **不再回写 meta.name**（router 退休），
+  // 所以直接 `binding.on` 时要自己给 name —— 走 `defineService.bind` 则不用（它内部拼）。
   const binding = new ChannelServerBinding(serverTx);
-  binding.on(app.ping, async ({ input }) => `pong: ${input.msg}`);
-  binding.on(app.upload, async ({ input, stream }) => {
+  binding.on({ ...app.ping, name: 'ping' }, async ({ input }) => `pong: ${input.msg}`);
+  binding.on({ ...app.upload, name: 'upload' }, async ({ input, stream }) => {
     let sum = 0;
     for await (const v of stream) sum += v;
     return { tag: input.tag, sum };

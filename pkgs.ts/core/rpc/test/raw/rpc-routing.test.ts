@@ -21,7 +21,7 @@ import { ChannelClientBinding } from '../../src/core/channel-client-binding';
 //  def（模拟 app 层：diy.app 本地 + diy.ui 远端，router() 回写全名）
 // ═══════════════════════════════════════════════════
 
-const appApiDef = RpcSchema.router({
+const appApiDef = RpcSchema.bindNames(RpcSchema.group({ children: {
   diy: RpcSchema.group({
     desc: "diy 命名空间",
     children: {
@@ -47,7 +47,7 @@ const appApiDef = RpcSchema.router({
       }),
     },
   }),
-});
+} }));
 
 function createMemTransportPair(): [EnvelopeTransport, EnvelopeTransport] {
   const qSrv: unknown[] = [];

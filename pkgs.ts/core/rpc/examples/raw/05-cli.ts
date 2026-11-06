@@ -8,17 +8,17 @@
  * 摊成位置参数就丢掉名字，CLI 只能生成 `--arg0 --arg1`。
  */
 import { z } from "zod";
-import { RpcSchema, defineService } from "../src/index";
+import { RpcSchema, defineService } from "../../src/index";
 
-const routes = RpcSchema.router({
-    math: RpcSchema.router({
+const routes = RpcSchema.bindNames(RpcSchema.group({ children: {
+    math: RpcSchema.group({ children: {
         add: RpcSchema.unary({
             input: { a: z.number(), b: z.number() },
             output: z.number(),
             desc: "两数相加",
         }),
-    }),
-    task: RpcSchema.router({
+    } }),
+    task: RpcSchema.group({ children: {
         list: RpcSchema.unary({
             input: {
                 status: z.enum(["pending", "done"]).optional(),
@@ -27,8 +27,8 @@ const routes = RpcSchema.router({
             output: z.array(z.object({ uri: z.string(), title: z.string() })),
             desc: "列任务（可按状态过滤）",
         }),
-    }),
-});
+    } }),
+} }));
 
 export const demoService = defineService({ name: "demo", api: routes });
 

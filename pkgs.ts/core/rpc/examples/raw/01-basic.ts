@@ -4,19 +4,19 @@
  * 跑：`npx tsx pkgs.ts/core/rpc/examples/01-basic.ts`
  */
 import { z } from "zod";
-import { RpcSchema, defineService, ChannelServerBinding, ChannelClientBinding } from "../src/index";
-import { createMemTransportPair } from "../test/helpers";
+import { RpcSchema, defineService, ChannelServerBinding, ChannelClientBinding } from "../../src/index";
+import { createMemTransportPair } from "../../test/helpers";
 
 // ① 定义：纯 schema，没有 handler
-const mathRoutes = RpcSchema.router({
-    math: RpcSchema.router({
+const mathRoutes = RpcSchema.bindNames(RpcSchema.group({ children: {
+    math: RpcSchema.group({ children: {
         add: RpcSchema.unary({
             input: { a: z.number(), b: z.number() },
             output: z.number(),
             desc: "a + b",
         }),
-    }),
-});
+    } }),
+} }));
 
 const mathService = defineService({ name: "demo.math", api: mathRoutes });
 

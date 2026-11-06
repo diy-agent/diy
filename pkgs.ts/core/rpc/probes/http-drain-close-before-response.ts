@@ -4,9 +4,9 @@ import { RpcSchema } from '../src/index';
 import { HttpServerBinding } from '../src/transport/http/http-server-binding';
 import { HttpClientBinding } from '../src/transport/http/http-client-binding';
 
-const api = RpcSchema.router({
+const api = RpcSchema.bindNames(RpcSchema.group({ children: {
   collect: RpcSchema.clientStream({ input: {}, chunkIn: z.string(), output: z.boolean() }),
-});
+} }));
 
 async function main() {
   const binding = new HttpServerBinding();

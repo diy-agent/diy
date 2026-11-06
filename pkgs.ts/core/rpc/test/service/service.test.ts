@@ -14,22 +14,22 @@ import { channelHarness } from '../harness';
 function twoServices() {
     const wb = defineService({
         name: 'diy.ui.workbench',
-        api: RpcSchema.router({
-            page: RpcSchema.router({
+        api: RpcSchema.group({ children: {
+            page: RpcSchema.group({ children: {
                 list: RpcSchema.unary({ input: {}, output: z.string() }),
-            }),
-            view: RpcSchema.router({
+            } }),
+            view: RpcSchema.group({ children: {
                 render: RpcSchema.unary({ input: { id: z.string() }, output: z.string() }),
-            }),
-        }),
+            } }),
+        } }),
     });
     const other = defineService({
         name: 'diy.other',
-        api: RpcSchema.router({
-            page: RpcSchema.router({
+        api: RpcSchema.group({ children: {
+            page: RpcSchema.group({ children: {
                 list: RpcSchema.unary({ input: {}, output: z.string() }),
-            }),
-        }),
+            } }),
+        } }),
     });
     return { wb, other };
 }
@@ -75,13 +75,13 @@ describe('defineService', () => {
     });
 
     it('name 为空 ⇒ 定义时就拒', () => {
-        expect(() => defineService({ name: '', api: RpcSchema.router({}) })).toThrow(/name 不能为空/);
+        expect(() => defineService({ name: '', api: RpcSchema.group({ children: {} }) })).toThrow(/name 不能为空/);
     });
 
     it('同一个 api 挂两个 service 不互相污染（meta.name 不被原地改）', async () => {
-        const api = RpcSchema.router({
+        const api = RpcSchema.bindNames(RpcSchema.group({ children: {
             ping: RpcSchema.unary({ input: {}, output: z.string() }),
-        });
+        } }));
         const a = defineService({ name: 'a.svc', api });
         const b = defineService({ name: 'b.svc', api });
         const { binding, client, dispose } = await channelHarness.start();

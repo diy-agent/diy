@@ -16,14 +16,14 @@ import { httpHarness } from '../harness';
 import { RpcSchema } from '../../src/core/rpc';
 import { createTypedClient } from '../../src/core/typed-client';
 
-const api = RpcSchema.router({
+const api = RpcSchema.bindNames(RpcSchema.group({ children: {
   collect: RpcSchema.clientStream({
     input: { tag: z.string() },
     chunkIn: z.number(),
     output: z.object({ tag: z.string(), sum: z.number() }),
   }),
   chat: RpcSchema.bidiStream({ input: { room: z.string() }, chunkIn: z.string(), chunkOut: z.string() }),
-});
+} }));
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

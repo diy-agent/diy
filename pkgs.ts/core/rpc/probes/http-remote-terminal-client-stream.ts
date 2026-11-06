@@ -5,9 +5,9 @@ import { HttpServerBinding } from '../src/transport/http/http-server-binding';
 import { HttpClientBinding } from '../src/transport/http/http-client-binding';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-const api = RpcSchema.router({
+const api = RpcSchema.bindNames(RpcSchema.group({ children: {
   collect: RpcSchema.clientStream({ input: {}, chunkIn: z.number(), output: z.boolean() }),
-});
+} }));
 
 type Snapshot = {
   activeStreams: number;

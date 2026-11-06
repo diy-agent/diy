@@ -114,31 +114,27 @@ export class RpcSchema {
   }
 
   /**
-   * **回写方法全名**到每个 meta.name（相对路径），供 `binding.on(meta, handler)` 用。
+   * **把方法全名写回每个 meta.name**（相对路径），供 `binding.on(meta, handler)` 用。
    *
-   * 2026-11-06 起 `group()` 自己会摊平 children，所以这个函数只剩「写 name」一件事；
-   * 而 `defineService.bind` 内部也是自己拼 name（且不改原对象）——
-   * **新代码用 `defineService`，不需要它**。这里保留给直接 `binding.on` 的老路径。
+   * 这是原 `router()` 剩下的唯一职责 —— 摊平已移进 `group()`（2026-11-06）。
    *
-   * @deprecated 用 `defineService({ name, api })` —— 它同时给出模块名与路径前缀，
-   *   且不会原地改写 meta（同一棵树可挂多个 service）。
+   * ⚠️ 为什么还不能删：`binding.on` 拿 **meta 对象本身**当查找键，所以 meta 必须预先知道
+   * 自己的路径。`defineService.bind` 内部会拼（且不改原对象），但**直接 `binding.on` 的
+   * 调用点还有 279 处**（`api-impl.ts` 2191 行 + probes + test/raw）。
+   * 等它们都迁到 `defineService` 之后，这个函数才能退休。
+   *
+   * @param root 根 group 或纯对象。**根 group 会先取它的 children** ——
+   *   group 的键混着 `desc` / `title` 等元字段，直接遍历会把它们当子节点。
    */
-  static router<T extends _Router | _AnyProcedureMeta>(def: T): T {
-    // 兼容最外层传入 RpcSchema.group（历史形态：把 children 摊平到 group meta 自身，
-    // 保留 apiDef.diy 访问路径，并取其 children 作为根树）。根定义推荐直接用纯 router 对象。
-    const isTopGroup = (def as any)?._streamMode === 'group';
-    if (isTopGroup) {
-      for (const [k, v] of Object.entries((def as any).children)) {
-        (def as any)[k] = v;
-      }
-    }
-    const root: _Router = isTopGroup ? (def as any).children : (def as _Router);
-    // 遍历整树：① 把父 meta 的 children 摊平到父 meta 自身（保留 app.task.create 访问路径，免 .children. 层）
-    // ② 回写方法全名到每个 meta.name（父命令 group 与叶子统一），供 ServerBinding onXxx(meta, handler) 使用。
-    _flattenChildren(root);
-    _assignNames(root, '');
-    return def;
+  static bindNames<T extends _Router | _AnyProcedureMeta>(root: T): T {
+    // 根是 group ⇒ 取它的 children（group 的键混着 desc/title 等元字段，不能直接遍历）
+    const tree = (root as { _streamMode?: string })._streamMode === 'group'
+      ? ((root as unknown as { children: _Router }).children)
+      : (root as _Router);
+    _assignNames(tree, '');
+    return root;
   }
+
 }
 
 
@@ -210,25 +206,37 @@ function _flattenChildren(node: _Router): void {
 
 /** 递归给整棵 router 树（含父命令 group）的每个 meta 回写方法全名（相对路径）到 name。
  *  父命令与叶子统一具备 name，供 ServerBinding onXxx(meta, handler) 与 CLI 命令树使用。 */
-function _assignNames(node: _Router, prefix: string): void {
-  for (const [key, val] of Object.entries(node)) {
-    const path = prefix ? `${prefix}.${key}` : key;
-    const meta = val as _AnyProcedureMeta;
-    if (meta && typeof meta === 'object' && (meta as any)._type === 'procedure') {
-      (meta as { name?: string }).name = path;
-      if (meta._streamMode === 'group' && meta.children) {
-        _assignNames(meta.children, path);
-      }
-    } else if (meta && typeof meta === 'object') {
-      // 裸 _Router 容器（无 meta 头）：继续下钻
-      _assignNames(meta as unknown as _Router, path);
-    }
-  }
-}
-
 // ═══════════════════════════════════════════════════
 //  Client 工厂（typed）与转发
 // ═══════════════════════════════════════════════════
 
 export { createTypedClient } from './typed-client.js';
 export type { TypedClient } from './typed-client.js';
+
+/**
+ * 递归把路径写回 meta.name（`bindNames` 的实现）。
+ *
+ * 为什么要「相对路径」而不是模块全名：`binding.on` 的查找键是**这一棵树内**的路径，
+ * 模块名由 `defineService` 在注册时拼（`${name}.${path}`）。两件事分开，同一棵树才能
+ * 挂到不同模块名下。
+ */
+function _assignNames(node: _Router, prefix: string): void {
+  for (const [key, val] of Object.entries(node)) {
+    // 元字段（group 摊平后 `desc` / `title` 等混在键里）—— `typeof string` 直接跳过
+    if (val === null || typeof val !== 'object') continue;
+    const meta = val as _AnyProcedureMeta;
+    const path = prefix ? `${prefix}.${key}` : key;
+
+    if (meta._type === 'procedure') {
+      (meta as { name?: string }).name = path;
+      // group 有 children（嵌套结构）；叶子没有
+      if (meta.children && typeof meta.children === 'object') {
+        _assignNames(meta.children as _Router, path);
+      }
+    } else {
+      // **裸对象层**（既不是 procedure 也不是 group）：它只是个容器，
+      // 自己不需要 name，直接递归下去。`{ math: { add: unary } }` 里的 math 就是这种。
+      _assignNames(val as _Router, path);
+    }
+  }
+}
