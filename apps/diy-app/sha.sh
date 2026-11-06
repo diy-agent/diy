@@ -92,10 +92,15 @@ build-runtime() { run node scripts/build-runtime.mjs; }
 
 # 本包测试：OS 无关单测 → OS 策略单测
 #
-# ⚠️ UI 意图测试（tests/cli.intent.*）**暂时整体停跑**（用户裁，2026-11-06）：
-#   它们要起真 Electron + 每条断言一个 CLI 子进程，单文件 80~140s、全量 1 小时以上，
-#   算法/执行通道还没定（见「测试提速」的调查）—— 先不跑，想好办法再接回来。
-#   需要单独跑时用 `./sha.sh test-intent <文件片段>`（显式调用，不在 test 的调用链上）。
+# ⚠️ **UI 意图测试（tests/cli.intent.*）不在调用链上**（用户裁，2026-11-06）—— 见 `test-intent` 头部的
+# 长注释（为什么停、代价多大、怎么临时跑）。一句话：它们慢到把「跑一遍测试」变成「排一小时队」，
+# 而慢的原因是**执行通道**（每条断言新起一个 `./diy.sh` 进程），不是用例本身该测的东西。
+#
+# 因此**新增用例的落点**：
+#   · 只验数据 / 规则的（造 N 个实体、引用不断、坏文件降级 ……）→ `tests/fast.*.test.ts`（纯函数，毫秒级，
+#     不需要 Electron、也不需要 build）。`tests/fast.persona-core.test.ts` 是范本。
+#   · 真的要验「界面点得动」→ 仍写 `tests/cli.intent.*`，但先确认它值得那 3~8 秒/用例，
+#     并尽量把断言合并成一次交互（每多一次 `./diy.sh` 就是 +0.68s）。
 test() {
   test-unit
   test-os
@@ -221,12 +226,28 @@ start() {
 link() { run npm link; }
 
 test-watch() { run npx vitest "$@"; }
-# 意图测试：先构建（起隔离 Electron，最慢放最后）
-# CLI 默认走 server /cli http 端点（单条 ~41ms vs 编译产物 ~300ms vs tsx ~600ms，intent 全量 ~140s vs ~300s）。
-# 无 app.port / curl 不支持 h2 时自动回退直连 CLI，不会失败。排查需要可覆盖：DIY_CLI_MODE=compiled|tsx ./sha.sh test-intent
+# 意图测试：真起隔离 Electron + 走 CDP 驱动**真实界面**（点得动 / 拖得动 / 输入框收字）。
+#
+# ── 为什么它默认是「关」的（##518，2026-11-06 用户裁）────────────────────────────
+# 实测代价（本机，load 12~18）：
+#   `cli.intent.persona` 34 用例 137.7s ≈ 4.2s/用例；`flow` 114s；`ui-context` 80s；
+#   59 个文件全量 1 小时以上（而同样规模的 unit 是 219s / 231 文件）。
+# 差距不在「测得多深」，在**每条断言都新起进程**：
+#   · `./diy.sh` 每次 = 一个 node 冷启动，实测 **0.68s**；persona 文件 34 用例共 63 次（1.9 次/用例）；
+#   · UI 轮询（`waitUntil` 回调里的 `./diy.sh ui inspect`）同样是每次一条 CLI —— 循环本身只是 100ms sleep，
+#     所以「点击很快、等待很慢」的观感都是这一件事。
+# 已验证的解法（尚未全面落地）：`DIY_CLI_MODE=http` 让 CLI 走实例的 /cli 端点（curl，~60ms），
+#   同一文件实测 **137.7s → 46.98s**，34 条用例全绿。方案没定之前先不跑，免得 CI / `./sha.sh test`
+#   被拖成一小时，也免得为了跑绿而堆 retry/放宽超时（那会把真问题一起盖掉）。
+#
+# 要跑（显式开关，避免手滑）：
+#   DIY_INTENT_ENABLE=1 ./sha.sh test-intent persona      # 单文件（片段/相对路径都可以）
+#   DIY_INTENT_ENABLE=1 ./sha.sh test-intent              # 全量（一小时起步，慎）
+# CLI 走哪条通道：默认 http（有 app.port 时）→ 编译产物 → tsx；可用 `DIY_CLI_MODE=compiled|tsx` 覆盖，
+# 传输失败会自动回退直连，不会因此变红。
 test-intent() {
-  # ##518 用户裁：UI 意图测试暂时整体停跑（慢 + 方案未定）。要跑必须显式给开关，
-  # 免得 CI / `./sha.sh test` / 顺手敲命令时又掉进一小时的黑洞。
+  # 开关存在的理由：这是**唯一**会拉起真 Electron / 真界面的入口，误触发一次就是一小时。
+  # 放在函数体第一行而不是 `test()` 里判断：直接敲命令的人也应该撞见这句提示。
   if [[ "${DIY_INTENT_ENABLE:-0}" != "1" ]]; then
     echo "${warning}UI 意图测试（tests/cli.intent.*）已停用${reset}"
     echo "  要跑：DIY_INTENT_ENABLE=1 ./sha.sh test-intent <文件片段>"

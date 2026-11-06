@@ -43,6 +43,12 @@ export default defineConfig({
     // 首个失败即停（含跨文件）：intent 测试是串行起真实 Electron，第一个红就是信号，
     // 继续跑只会让「到底是哪一处坏」更难看清。CI 与本地同此行为。
     bail: 1,
+    // ⚠️ `tests/cli.intent.*`（UI 意图测试）**默认不跑**（##518，2026-11-06 用户裁）：
+    //   入口只剩 `DIY_INTENT_ENABLE=1 ./sha.sh test-intent`，`./sha.sh test` 不再收它们。
+    //   原因与本文件这几项设置直接相关 —— 下面的 fileParallelism:false / 60s 超时都是为它们写的，
+    //   而真正的慢因是「每条断言一个新 `./diy.sh` 进程（0.68s）」，改走 /cli http 通道后 137.7s → 47s。
+    //   要重开时：先落 http 通道（tests/setup.ts 的 DIY_CLI_MODE），再谈并发与超时。
+    //
     // 顺序执行（不并发）：intent 测试会各自拉起真实 Electron 实例并跑 CLI，
     // 并发时多实例抢 CPU 会让 probePort（1500ms）与用例断言双双超时；
     // 且各文件虽用独立临时 HOME，并发下仍会同时占用大量内存/端口，稳定性差。

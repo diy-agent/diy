@@ -544,8 +544,11 @@ test() {
   local rc=0
   local ff=0; [[ "$fail_fast" == "1" ]] && ff=1
   _ws_vitest "$ff" || rc=1
-  # diy-app 最后跑 —— 它自己的 `test` = unit + os（**UI 意图测试 2026-11-06 起停跑**，见 apps/diy-app/sha.sh；
-  # 要跑须显式 `DIY_INTENT_ENABLE=1 ./sha.sh test-intent`）
+  # diy-app 最后跑 —— 它自己的 `test` = unit + os。
+  # **UI 意图测试（tests/cli.intent.*）2026-11-06 起默认停跑**（##518）：单文件 80~140s、全量 1h+，
+  # 慢因是每条断言新起一个 `./diy.sh`（0.68s）而不是用例深度。要跑须显式：
+  #   DIY_INTENT_ENABLE=1 ./sha.sh test-intent <片段>
+  # 所以这行只花 unit + os 的时间（实测 ~30s + ~10s），不会把整串拖成一小时。
   if ( cd apps/diy-app && ./sha.sh test ); then :; else
       rc=1
       echo "${error}✗ apps/diy-app 有失败${reset}" >&2

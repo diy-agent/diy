@@ -133,6 +133,18 @@ facts:
     evidence:
       source: user
       verifiedAt: '2026-10-22'
+  tool#intent-tests-off:
+    value: |-
+      **UI 意图测试（`apps/diy-app/tests/cli.intent.*`）自 2026-11-06 起整体停跑**（用户裁，##518）。`apps/diy-app/sha.sh` 的 `test()` 只剩 `test-unit` + `test-os`；`test-intent` 保留为显式入口，默认只打印停用提示并 exit 0，要跑必须 `DIY_INTENT_ENABLE=1 ./sha.sh test-intent <文件片段>`。
+
+      停跑原因：每个断言一个 `./diy.sh` 子进程（实测 0.68s/次、每用例 1.9 次）+ 起真 Electron，单文件 80~140s、全量 1 小时以上；慢因是**执行通道**而非用例深度 —— 同一文件在 `DIY_CLI_MODE=http`（curl 到实例 `/cli`，~60ms）下实测 137.7s → 46.98s。
+
+      要写规则类用例：放 `tests/fast.*.test.ts`（纯函数级，不起 Electron、不需 build，毫秒级）。
+    review: accepted
+    lifecycle: active
+    evidence:
+      source: user
+      verifiedAt: '2026-11-06'
   tool#model-import:
     value: |-
       环境变量 → provider 导入候选（只列不写）→ `apps/diy-app/src/main/core/model-import.ts`
