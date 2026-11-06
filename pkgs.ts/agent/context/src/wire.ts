@@ -10,11 +10,11 @@ import { canonical, sha256Hex } from "./hash.js";
 /** wire 编码语义（**改这里就等于换 wire 版本**，投影侧会自动要求 rebaseline） */
 export const WIRE_ENCODING = {
     /** 语义版本：结构性变更时手工 +1（与 hash 双保险，便于人读日志） */
-    rev: 1,
-    /** system 容器：每次请求全量文本 */
-    system: "full-text",
-    /** runtime 容器：路径级增量 patch + 必要时全量 snapshot */
-    runtime: "path-patch",
+    rev: 2,
+    /** 变量树：**只有一份全量**（role:system 消息里的 `help:` + `vars:`） */
+    envelope: "help+vars",
+    /** 变化：单元级增量（role:user 的 `vars:` 段 + 必要时全量 snapshot） */
+    delta: "path-patch",
     /** 渲染格式：整份 YAML（不再套自创 XML 外壳；树形结构天然表达 path 归属） */
     format: "yaml",
     /** 多行文本（模版产出）用 YAML 块标量 */

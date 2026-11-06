@@ -14,34 +14,30 @@ const rec = (over: Partial<DeliveryStepRecord> = {}): DeliveryStepRecord => ({
     turnId: "t1",
     model: "m",
     wireVersion: "aaaa1111",
-    systemPlaces: ["diy"],
-    runtimePlaces: ["task.body"],
+    places: ["diy", "task.body"],
     valueHashes: { diy: "h1", "task.body": "b1" },
-    systemText: "diy:\n  cli: /repo",
-    runtimeText: 'task:\n  body: "一"',
+    systemText: 'help:\n  about: x\nvars:\n  diy:\n    cli: /repo\n  task:\n    body: "一"',
     ...over,
 });
 
 describe("step diff", () => {
-    it("只有 runtime 变（任务正文编辑）：changed 命中该 path，system 不算变", () => {
+    it("任务正文编辑：changed 命中该 path，全文 diff 里看到新值", () => {
         const a = rec();
         const b = rec({
             valueHashes: { diy: "h1", "task.body": "b2" },
-            runtimeText: 'task:\n  body: "二"',
+            systemText: 'help:\n  about: x\nvars:\n  diy:\n    cli: /repo\n  task:\n    body: "二"',
         });
         const d = diffSteps(a, b);
         expect(d.changed).toEqual(["task.body"]);
-        expect(d.systemDiffers).toBe(false);
-        expect(d.runtimeDiffers).toBe(true);
-        expect(d.runtimeDiff.some((l) => l.t === "+" && l.s.includes("二"))).toBe(true);
+        expect(d.systemDiffers).toBe(true);
+        expect(d.systemDiff.some((l) => l.t === "+" && l.s.includes("二"))).toBe(true);
         expect(d.incomparable).toBe(false);
     });
 
-    it("内容完全一致 → 两份都不算变（144：内容未变不发）", () => {
+    it("内容完全一致 → 不算变（144：内容未变不发）", () => {
         const d = diffSteps(rec(), rec());
         expect(d.changed).toEqual([]);
         expect(d.systemDiffers).toBe(false);
-        expect(d.runtimeDiffers).toBe(false);
         expect(d.systemDiff).toEqual([]);
     });
 
@@ -51,7 +47,7 @@ describe("step diff", () => {
     });
 
     it("值 hash 有增删（path 出现/消失）也算变化", () => {
-        const d = diffSteps(rec(), rec({ valueHashes: { diy: "h1" }, runtimeText: "" }));
+        const d = diffSteps(rec(), rec({ valueHashes: { diy: "h1" }, systemText: 'help:\n  about: x\nvars:\n  diy:\n    cli: /repo' }));
         expect(d.changed).toEqual(["task.body"]);
     });
 
@@ -59,14 +55,11 @@ describe("step diff", () => {
     // 它不是变量树单元：不参与 valueHashes，也不进 runtimeDiff。若不专门比，它变了永远是"无变化"。
     it("history 注记段变了 → historyDiffers 命中，且不进 changed（它不是变量树单元）", () => {
         const a = rec({ historyText: "history:\n  budgetBytes: 20480\n  kept:\n    - [1, 8]\n" });
-        const b = rec({
-            historyText: "history:\n  budgetBytes: 20480\n  kept:\n    - [5, 8]\n",
-            runtimeText: 'task:\n  body: "一"',
-        });
+        const b = rec({ historyText: "history:\n  budgetBytes: 20480\n  kept:\n    - [5, 8]\n" });
         const d = diffSteps(a, b);
         expect(d.historyDiffers).toBe(true);
         expect(d.changed).toEqual([]);
-        expect(d.runtimeDiffers).toBe(false);
+        expect(d.systemDiffers).toBe(false);
         expect(d.historyDiff.some((l) => l.t === "-" && l.s.includes("[1, 8]"))).toBe(true);
         expect(d.historyDiff.some((l) => l.t === "+" && l.s.includes("[5, 8]"))).toBe(true);
     });
@@ -102,30 +95,31 @@ describe("step 摘要列表", () => {
         expect(second!.sincePrev?.historySize.add).toBeGreaterThan(0);
     });
 
-    const steps = [rec({ ts: "T1" }), rec({ ts: "T2", runtimeText: 'task:\n  body: "二"' }), rec({ ts: "T3", runtimeText: 'task:\n  body: "二"' })];
+    const T2 = { systemText: 'help:\n  about: x\nvars:\n  diy:\n    cli: /repo\n  task:\n    body: "二"' };
+    const steps = [rec({ ts: "T1" }), rec({ ts: "T2", ...T2 }), rec({ ts: "T3", ...T2 })];
 
     it("首步 sincePrev = null（它是 baseline，没有上一步）", () => {
         const s = summarizeSteps(steps);
         expect(s[0]!.sincePrev).toBeNull();
-        expect(s[1]!.sincePrev!.runtimeDiffers).toBe(true);
-        expect(s[2]!.sincePrev!.runtimeDiffers).toBe(false);
+        expect(s[1]!.sincePrev!.systemDiffers).toBe(true);
+        expect(s[2]!.sincePrev!.systemDiffers).toBe(false);
     });
 
     it("limit 截尾但 index 仍对齐真实轮次（第 3 步就叫 3）", () => {
         const s = summarizeSteps(steps, { limit: 2 });
         expect(s.map((x) => x.index)).toEqual([2, 3]);
         // 第 2 步的 sincePrev 用真实的上一步（第 1 步）算，不受 limit 影响
-        expect(s[0]!.sincePrev!.runtimeDiffers).toBe(true);
+        expect(s[0]!.sincePrev!.systemDiffers).toBe(true);
     });
 
     it("默认不下发行内容，只给统计；withDiff 才带行内容", () => {
         const plain = summarizeSteps(steps);
         expect(plain[1]!.diff).toBeUndefined();
-        expect(plain[1]!.sincePrev!.runtimeSize.add).toBeGreaterThan(0);
+        expect(plain[1]!.sincePrev!.systemSize.add).toBeGreaterThan(0);
         // sincePrev 里**没有**行内容（列表一条都别带几十 KB 的 diff）
-        expect(Object.keys(plain[1]!.sincePrev!)).not.toContain("runtimeDiff");
+        expect(Object.keys(plain[1]!.sincePrev!)).not.toContain("systemDiff");
         const full = summarizeSteps(steps, { withDiff: true });
-        expect(full[1]!.diff!.runtime.length).toBeGreaterThan(0);
+        expect(full[1]!.diff!.system.length).toBeGreaterThan(0);
         expect(full[0]!.diff).toBeNull(); // 首步没有可比的
     });
 
@@ -142,7 +136,7 @@ describe("withIndex", () => {
 });
 
 describe("读侧兜底：缺字段的快照不打断渲染（review RV-12）", () => {
-    it("steps.jsonl 缺 systemPlaces/runtimePlaces → 读出来是 []（不是 undefined）", () => {
+    it("steps.jsonl 缺 places → 读出来是 []（不是 undefined）；老快照的 runtimeText 被容忍", () => {
         // 路径用 main 侧导出的 stepsFile（review RV-17：别靠后缀反推 —— 改后缀会静默写错文件、用例变假绿）
         const uri = "projects/99/tasks/1";
         const fp = stepsFile(uri);
@@ -161,7 +155,7 @@ describe("读侧兜底：缺字段的快照不打断渲染（review RV-12）", (
         );
         const got = readDeliverySteps(uri);
         expect(got).toHaveLength(1);
-        expect(got[0]!.systemPlaces).toEqual([]);
-        expect(got[0]!.runtimePlaces).toEqual([]);
+        expect(got[0]!.places).toEqual([]);
+        expect(got[0]!.runtimeText).toBe("");
     });
 });

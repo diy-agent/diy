@@ -16,10 +16,8 @@ import * as yaml from "js-yaml";
 import {
     applyFacts,
     createTree,
-    runtimeText,
-    setPlacement,
+    envelopeText,
     setPlaces,
-    systemText,
     type ContextTreeState,
 } from "../../src/shared/context/index";
 import { requestYaml } from "../../src/shared/context/request";
@@ -39,31 +37,29 @@ function fixture(): ContextTreeState {
         { type: "patch", path: "task.body", op: "set", value: "正文第一行\n正文第二行" },
     ]).state;
     t = setPlaces(t, ["diy", "chain", "task"]);
-    t = setPlacement(t, "diy", "system");
-    t = setPlacement(t, "chain", "system");
-    t = setPlacement(t, "task", "runtime");
     return t;
 }
 
 const t = fixture();
-const sys = systemText(t);
-const run = runtimeText(t);
+const sys = envelopeText(t);
+/** 末尾 user = 一份变量增量（真发同形） */
+const delta = 'vars:\n  task:\n    title: "任务 148 改了"';
 
-/** chat 面请求体（与真发同形：messages[0]=system、末条 user=runtime、中间是历史） */
+/** chat 面请求体（与真发同形：messages[0]=system、末条 user=增量、中间是历史） */
 const chatBody = {
     model: "mimo-v2.5",
     max_tokens: 128000,
     messages: [
         { role: "system", content: sys },
         { role: "user", content: "上一轮用户消息\n第二行" },
-        { role: "user", content: run },
+        { role: "user", content: delta },
     ],
     tools: [{ type: "function", function: { name: "bash", description: "跑命令" } }],
     tool_choice: "auto",
     stream: true,
 };
 
-const view = requestYaml(chatBody, [sys, run]);
+const view = requestYaml(chatBody, [sys, delta]);
 const L = view.text.split("\n");
 const at = (p: string): string => {
     const s = view.lines[p];
@@ -75,13 +71,12 @@ describe("请求预览：内嵌文本就地解析展开", () => {
     it("整份预览是合法 YAML —— 内嵌块成了子节点（不是转义字符串）", () => {
         const loaded = yaml.load(view.text, { schema: yaml.JSON_SCHEMA }) as any;
         expect(loaded.model).toBe("mimo-v2.5");
-        // system 份：信封两个顶层键都展开（help 段 = 结构说明；system 段 = 变量树）
+        // system 份：信封两个顶层键都展开（help 段 = 结构说明；vars 段 = 变量树）
         expect(loaded.messages[0].content.help.about).toContain("信封");
-        expect(loaded.messages[0].content.system.diy.cli).toBe("/repo/diy.sh");
-        expect(loaded.messages[0].content.system.chain[0].path).toBe("/home/AGENTS.md");
-        // runtime 份：末条 user 同样展开（信封只有 runtime 一段）
-        expect(loaded.messages[2].content.runtime.task.title).toBe("任务 148");
-        expect(loaded.messages[2].content.runtime.task.body).toContain("正文第二行");
+        expect(loaded.messages[0].content.vars.diy.cli).toBe("/repo/diy.sh");
+        expect(loaded.messages[0].content.vars.chain[0].path).toBe("/home/AGENTS.md");
+        // 末条 user 的增量同样展开（只有 vars 一段）
+        expect(loaded.messages[2].content.vars.task.title).toBe("任务 148 改了");
         // 普通历史消息保持字符串（只有内嵌文本被解析，别的文本不动）
         expect(loaded.messages[1].content).toContain("上一轮用户消息");
     });
@@ -89,35 +84,33 @@ describe("请求预览：内嵌文本就地解析展开", () => {
     it("系统上下文本身就是合法 YAML（说明头已换成 help 段，不再需要「按注释拆」）", () => {
         expect(() => yaml.load(sys, { schema: yaml.JSON_SCHEMA })).not.toThrow();
         const loaded = yaml.load(sys, { schema: yaml.JSON_SCHEMA }) as any;
-        expect(Object.keys(loaded)).toEqual(["help", "system", "runtime"]);
-        expect(loaded.help.system.desc).toContain("系统上下文变量树");
+        expect(Object.keys(loaded)).toEqual(["help", "vars"]);
+        expect(loaded.help.vars.desc).toContain("上下文变量树");
     });
 
     it("行号映射与文本同源：每个 path 的区间**只含该 path 的内容**", () => {
-        expect(at("system.diy.cli").trim()).toBe("cli: /repo/diy.sh");
-        expect(at("system.chain.0.path").trim()).toBe("- path: /home/AGENTS.md");
-        expect(at("system.chain.0.content")).toContain("家目录规范");
-        expect(at("system.chain.0.content")).toContain("第二行");
-        expect(at("runtime.task.body")).toContain("正文第二行");
+        expect(at("vars.diy.cli").trim()).toBe("cli: /repo/diy.sh");
+        expect(at("vars.chain.0.path").trim()).toBe("- path: /home/AGENTS.md");
+        expect(at("vars.chain.0.content")).toContain("家目录规范");
+        expect(at("vars.chain.0.content")).toContain("第二行");
     });
 
-    it("responses 面同形：input[0]=developer 文本、runtime 在嵌套 content[].text 里", () => {
+    it("responses 面同形：input[0]=developer 文本、增量在嵌套 content[].text 里", () => {
         const respBody = {
             model: "gpt-5.6-luna",
             input: [
                 { role: "developer", content: sys },
-                { role: "user", content: [{ type: "input_text", text: run }] },
+                { role: "user", content: [{ type: "input_text", text: delta }] },
             ],
             max_output_tokens: 128000,
             tools: [],
             tool_choice: "auto",
             stream: true,
         };
-        const v2 = requestYaml(respBody, [sys, run]);
+        const v2 = requestYaml(respBody, [sys, delta]);
         const loaded = yaml.load(v2.text, { schema: yaml.JSON_SCHEMA }) as any;
-        expect(loaded.input[0].content.system.chain[0].path).toBe("/home/AGENTS.md");
-        expect(loaded.input[1].content[0].text.runtime.task.title).toBe("任务 148");
-        expect(v2.lines["runtime.task.title"]).toBeTruthy();
+        expect(loaded.input[0].content.vars.chain[0].path).toBe("/home/AGENTS.md");
+        expect(loaded.input[1].content[0].text.vars.task.title).toBe("任务 148 改了");
     });
 
     it("解析不了的内嵌文本不强行展开：按原文输出（原文不丢）", () => {
@@ -139,10 +132,10 @@ describe("请求预览：内嵌文本就地解析展开", () => {
         const body = { model: "x", input: [sys, "普通字符串"] };
         const v = requestYaml(body, [sys]);
         const loaded = yaml.load(v.text, { schema: yaml.JSON_SCHEMA }) as any;
-        expect(loaded.input[0].system.diy.cli).toBe("/repo/diy.sh");
+        expect(loaded.input[0].vars.diy.cli).toBe("/repo/diy.sh");
         expect(loaded.input[1]).toBe("普通字符串");
         expect(v.lines["input.0"]).toBeTruthy();
-        expect(v.lines["system.diy.cli"]).toBeTruthy();
+        expect(v.lines["vars.diy.cli"]).toBeTruthy();
     });
 
     it("空文本/无内嵌时不启用展开，照常输出", () => {

@@ -110,11 +110,9 @@ describe("statFromStep：从投递快照造统计", () => {
         turnId: "t1",
         model: "mimo-v2.6-flash",
         wireVersion: "aaaa1111",
-        systemPlaces: ["diy"],
-        runtimePlaces: ["task.body"],
+        places: ["diy", "task.body"],
         valueHashes: hashes,
         systemText: "…",
-        runtimeText: "…",
     });
 
     it("带 taskUri 与变化路径", () => {

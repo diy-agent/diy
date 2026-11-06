@@ -164,10 +164,10 @@ describe("##442 新形态：投影 chat / 剥控制段", () => {
         expect(String(first?.content)).not.toContain("chat:");
     });
 
-    it("块里存着带 runtime 的新信封 ⇒ 投影无 runtime、chat 保留", () => {
-        const stored = userEnvelope({ runtime: { self: { steps: 3 } }, chat: [{ from: "agent:main", text: "原话" }] });
+    it("块里存着带 vars 的新信封 ⇒ 投影无变量段、chat 保留", () => {
+        const stored = userEnvelope({ vars: { self: { steps: 3 } }, chat: [{ from: "agent:main", text: "原话" }] });
         const text = build(stored, { id: "agent:main" });
-        expect(text).not.toContain("runtime");
+        expect(text).not.toContain("vars");
         expect(topKeys(text)).toEqual(["chat"]);
         expect(text).toContain("  - from: agent:main");
         expect(text).toContain('text: "原话"');

@@ -59,7 +59,7 @@ const LEGACY_THROW_BASELINE = new Map(Object.entries({
   "apps/diy-app/src/main/services/local-agent.ts": 3,
   // ##514：file-read 已迁进 @diy-agent/tools（新包不在本基线内，裸 throw 归零）
   "apps/diy-app/src/main/core/traffic-log.ts": 7,
-  "apps/diy-app/src/main/services/prompt-registry.ts": 5,
+  "apps/diy-app/src/main/services/prompt-registry.ts": 4,
   "apps/diy-app/src/cli/index.ts": 4,
   "apps/diy-app/src/main/core/flow-thread.ts": 4,
   "apps/diy-app/src/main/workflows/plugins.ts": 4,
@@ -71,7 +71,6 @@ const LEGACY_THROW_BASELINE = new Map(Object.entries({
   "apps/diy-app/src/main/core/persona.ts": 2,
   "apps/diy-app/src/main/services/instances.ts": 2,
   "apps/diy-app/src/main/core/app-root.ts": 1,
-  "apps/diy-app/src/main/core/context-config.ts": 1,
   "apps/diy-app/src/main/core/data-file.ts": 1,
   "apps/diy-app/src/main/services/flow-prompt.ts": 1,
   "apps/diy-app/src/main/services/flow-runner.ts": 1,

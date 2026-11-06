@@ -2,12 +2,12 @@
 // 🎯 房间上下文**真的进了发出去的那份请求**（##377 第 25/26 刀）—— 桩模型离线验证
 //
 // 单测 `room-self-context.test.ts` 验「算得对不对」；这里验的是**接线**，且判据取在
-// **模型实际收到的 prompt** 上（不是我们自己的中间值）：runtime 段里有没有 `room.recent`。
+// **模型实际收到的 prompt** 上（不是我们自己的中间值）：变量段里有没有 `room.recent`。
 //
-//   · 自起一轮 ⇒ 尾部 runtime 信封里有房间近期发言（含别人的话，不含自己的）
+//   · 自起一轮 ⇒ 信封的 `vars:` 里有房间近期发言（含别人的话，不含自己的）
 //   · 下一轮（水位已前移）⇒ 那段不再出现（不重复）
 //   · 投递来的（origin.room 指向**来源房间**）⇒ 看的是来源房间，正文仍是原话
-//   · 没开过房间的任务 ⇒ runtime 里**没有 room 键**（单人任务运行时逐字不变）
+//   · 没开过房间的任务 ⇒ 变量树里**没有 room 键**（单人任务运行时逐字不变）
 //
 // 反证的形状（第 26 刀的关键）：正文里**不许**再出现 `[本房间近期发言]` —— 那是被搬走的那条通道。
 
@@ -87,7 +87,7 @@ function flatten(prompt: unknown): string {
     .join("\n");
 }
 
-/** 本轮**自己的那句原话**所在的消息（不是尾部 runtime 信封） */
+/** 本轮**自己的那句原话**所在的消息（不是变量信封） */
 function userBlock(prompt: unknown, text: string): string {
   const msgs = Array.isArray(prompt) ? prompt : [];
   for (let i = msgs.length - 1; i >= 0; i--) {
@@ -135,13 +135,13 @@ async function seedRoom(roomId: string, taskUri: string): Promise<void> {
   await appendEvent(roomId, mkSay("agent:main", "这句是我自己说的", 2));
 }
 
-describe("房间上下文真的进了请求（runtime 单元）", () => {
-  it("① 自起一轮 ⇒ runtime 里有 room.recent（别人的话），正文仍是原话", async () => {
+describe("房间上下文真的进了请求（原子单元）", () => {
+  it("① 自起一轮 ⇒ 变量树里有 room.recent（别人的话），正文仍是原话", async () => {
     const uri = newUri();
     await seedRoom(uri, uri);
     const prompts = { prompts: [] as unknown[] };
     const { prompt, ops } = await run(uri, new LocalAgentManager(() => stubModel(prompts)), undefined, prompts);
-    expect(prompt).toContain("runtime:");
+    expect(prompt).toContain("vars:");
     expect(prompt).toContain("room:");
     expect(prompt).toContain("先跑一下测试");
     // 不看自己：主人格自己说的那句不进 recent
@@ -192,7 +192,7 @@ describe("房间上下文真的进了请求（runtime 单元）", () => {
 
   it("④ 投递给**主人格**（落盘那一份整条不落）⇒ 仍看**来源房间**（`sourceRoomId`，review1 R1）", async () => {
     // 第 25 刀的回归（正文里两个 `[本房间近期发言]`）在新形状下不可能再发生：
-    // 注入点只有一个（runtime），正文不再参与。这里钉住两件事：
+    // 注入点只有一个（变量树），正文不再参与。这里钉住两件事：
     //   ① 投给主人格时 `meta.author` / `meta.room` 仍不落（§44.2 A，不破"与今天等价"）；
     //   ② 但"看哪间房"**不再跟着落盘判据走** —— 否则这一轮会退回本任务自己的房间，看不到
     //      来源房间里刚发生的事（第 26 刀 review1 R1 的病灶，`sourceRoomId` 专治这一条）。
@@ -251,14 +251,14 @@ describe("房间上下文真的进了请求（runtime 单元）", () => {
     expect(readRoom(src)?.lastSeen ?? {}).toEqual(before);
   });
 
-  it("⑤ 没开过房间的任务 ⇒ runtime 里没有 room 键（单人任务运行时逐字不变）", async () => {
+  it("⑤ 没开过房间的任务 ⇒ 变量树里没有 room 键（单人任务运行时逐字不变）", async () => {
     const uri = newUri();
     const prompts = { prompts: [] as unknown[] };
     const { prompt, ops } = await run(uri, new LocalAgentManager(() => stubModel(prompts)), undefined, prompts);
     // help 里永远有 room 的**结构说明**（那是 schema，不是值）—— 判据看真发快照的 places
     const step = readDeliverySteps(uri).at(-1);
-    expect(step?.runtimePlaces ?? []).not.toContain("room.members");
-    expect(step?.runtimePlaces ?? []).not.toContain("room.recent");
+    expect(step?.places ?? []).not.toContain("room.members");
+    expect(step?.places ?? []).not.toContain("room.recent");
     const turnId = ops.find((o) => o.op === "start" && o.kind === "turn")?.id ?? "";
     const mine = ops
       .filter((o) => o.op === "delta" && o.id === `${turnId}_u`)

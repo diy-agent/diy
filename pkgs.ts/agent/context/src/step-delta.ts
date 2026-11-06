@@ -1,11 +1,10 @@
 // src/shared/context/step-delta.ts
-// 🎯 一步的**控制增量**（user 消息里的 `system:` / `runtime:` 两段）—— 真发与单测的唯一口径。
+// 🎯 一步的**变量增量**（user 消息里的 `vars:` 一段）—— 真发与单测的唯一口径。
 //
-// ── 契约（##442 用户 2026-10-27）──
+// ── 契约（##442 用户 2026-10-27；##520 合为一段）──
 //   · 变量没变 ⇒ 空串（调用方据此**不注入**：不发消息、不加字节 ⇒ 前缀缓存不动）
 //   · 变了 ⇒ 只列**变化的原子单元**，值是变更后的新值；"变几个字段就发几个字段"
 //   · 单元整体消失 ⇒ 该 path 落 `null`（不是静默不发 —— 否则模型一直按旧值干活）
-//   · 按**该步的划分**分流：划进 system 名单的走 `system:` 段，其余走 `runtime:` 段
 //   · 段内顺序 = path 字典序（同一份变化两次渲染逐字节相同）
 //
 // ── 为什么只有这一条路（不要把增量塞回 system）──
@@ -14,7 +13,7 @@
 //
 // 约定：本文件只放纯函数，禁止 import node:*（renderer 会打进包）。
 
-import { controlDeltaDelivery, isRuntimePlace, type DeliveryPart } from "./delivery.js";
+import { controlDeltaDelivery, type DeliveryPart } from "./delivery.js";
 import type { ContextPath } from "./types.js";
 import { atomicUnitPaths, changesOf, type CtxSnapshot } from "./changelog.js";
 
@@ -24,10 +23,6 @@ export interface StepDelta {
     text: string;
     /** 变化的原子单元（字典序） */
     paths: ContextPath[];
-    /** 其中按本步划分归 system 的（增量里出现在 `system:` 段） */
-    systemPaths: ContextPath[];
-    /** 其中归 runtime 的（增量里出现在 `runtime:` 段） */
-    runtimePaths: ContextPath[];
     /** 完整投递段（bytes / 行号映射） */
     part: DeliveryPart;
 }
@@ -48,8 +43,6 @@ export function stepDeltaOf(
 ): StepDelta {
     const changed = changesOf(prev, next, units);
     const paths = changed.map((c) => c.path);
-    const systemPaths = paths.filter((p) => !isRuntimePlace(next.tree, p));
-    const runtimePaths = paths.filter((p) => isRuntimePlace(next.tree, p));
-    const part = controlDeltaDelivery(next.tree, systemPaths, runtimePaths);
-    return { text: part.text, paths, systemPaths, runtimePaths, part };
+    const part = controlDeltaDelivery(next.tree, paths);
+    return { text: part.text, paths, part };
 }

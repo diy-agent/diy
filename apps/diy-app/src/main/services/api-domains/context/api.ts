@@ -9,44 +9,18 @@ import { ContextDiffSchema, ContextLabSchema, ContextPlaceCandidateSchema, CtxLo
 
 export const contextRoutes = RpcSchema.group({desc: `上下文树（当前任务的真实系统上下文；只组装不发送）`,
         children: {
-          config: RpcSchema.unary({
-            desc: `读划分规则（$DIY_HOME/context.yaml；真发与页面共用这一份）`,
-            input: {},
-            output: z.object({
-              systemPlaces: z.array(z.string()).describe("当前生效的 system 单元（其余自动 runtime）"),
-              defaults: z.array(z.string()).describe("推荐名单（文件缺失/清空时用它）"),
-              fromFile: z.boolean().describe("是否来自 context.yaml（false = 用推荐名单）"),
-              inputLimitChars: z.number().describe("用户单条消息的字符上限（##426 B）"),
-            }),
-          }),
-          setConfig: RpcSchema.unary({
-            desc: `写划分规则（非法路径或互为祖先/后代一律拒绝；下一轮真发生效）`,
-            input: {
-              systemPlaces: z.array(z.string()).cliOption({ desc: "进 system 的单元（JSON 数组）" }),
-              inputLimitChars: z.number().optional().cliOption({ desc: "用户单条消息的字符上限（##426 B）" }),
-            },
-            output: z.object({
-              systemPlaces: z.array(z.string()),
-              inputLimitChars: z.number().nullable().describe("当前输入上限（本次没改 = 原值）"),
-            }),
-          }),
-          candidates: RpcSchema.unary({
-            desc: `列出候选投递单元与默认 system 名单`,
+candidates: RpcSchema.unary({
+            desc: `列出候选投递单元`,
             input: {},
             output: z.object({
               candidates: ContextPlaceCandidateSchema,
-              defaultSystem: z.array(z.string()),
             }),
           }),
           lab: RpcSchema.unary({
-            desc: `上下文树数据：变量树 + 划分规则 + system/runtime 两份 + 合成消息`,
+            desc: `上下文树数据：变量树 + 信封全文（help + vars）+ 合成消息`,
             input: {
               project: z.string().cliArg({ desc: "project id" }),
               taskUri: z.string().optional().cliOption({ desc: "任务 URI（缺省则只有项目级上下文）" }),
-              systemPlaces: z
-                .array(z.string())
-                .optional()
-                .cliOption({ desc: "划入 system 的投递单元（JSON 数组；缺省用推荐名单，其余自动 runtime）" }),
               model: z.string().optional().cliOption({ desc: "模型 id（请求体预览用；缺省取默认模型）" }),
             },
             output: ContextLabSchema,
@@ -96,10 +70,6 @@ export const contextRoutes = RpcSchema.group({desc: `上下文树（当前任务
               project: z.string().cliArg({ desc: "project id" }),
               taskUri: z.string().cliArg({ desc: "任务 URI" }),
               step: z.number().optional().cliOption({ desc: "第几步（1 基）；缺省 = 当前 vs 最后一步" }),
-              systemPlaces: z
-                .array(z.string())
-                .optional()
-                .cliOption({ desc: "当前投递的 system 名单（缺省用推荐名单）" }),
             },
             output: ContextDiffSchema.nullable(),
           }),

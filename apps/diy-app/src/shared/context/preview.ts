@@ -1,28 +1,22 @@
 // src/shared/context/preview.ts
-// 🎯 上下文树页的**视图数据**（纯函数）：把真实 globals 变成「树 + 规则 + 两份投递」。
+// 🎯 上下文树页的**视图数据**（纯函数）：把真实 globals 变成「树 + 单元 + 一份投递」。
 //
 // 数据是**当前任务的真实上下文**（`assembleGlobals` 的产物），不是编造的示范数据：
 //   diy / project / task / cwd / chain(AGENTS.md 链) / skills
 // 「真实」是刻意的选择 —— 编造的值（/repo/diy.sh 之类）会让人把界面上的内容
-// 误当成当前任务的上下文，也看不出划分规则到底解决了什么问题。
+// 误当成当前任务的上下文。
 //
-// 规则表只声明 **system 名单**：没进名单的自动归 runtime（不是两套表，避免两边打架）。
+// ##520 起只有**一份全量**（信封 `help:` + `vars:`），没有 system / runtime 两容器。
 
 import { previewOf } from "@diy-agent/context/wire-render";
 import { getValue, isPlainObject, placeOf, rendererOf } from "@diy-agent/context/tree";
 import { hashValue } from "@diy-agent/context/hash";
-import { emptyCursor, project as projectTree } from "@diy-agent/context/projection";
-import {
-    buildDelivery,
-    PLACE_CANDIDATES,
-    type Delivery,
-    type DeliveryPart,
-} from "@diy-agent/context/delivery";
-import type { ContextContainer, ContextPath, ContextTreeState } from "@diy-agent/context/types";
+import { buildDelivery, PLACE_CANDIDATES, unitPaths, type Delivery, type DeliveryPart } from "@diy-agent/context/delivery";
+import type { ContextPath, ContextTreeState } from "@diy-agent/context/types";
 
-// 划分策略与投递构造住在 delivery.ts（真发与预览共用那一条链），这里只做转出，
+// 单元名单与投递构造住在 delivery.ts（真发与预览共用那一条链），这里只做转出，
 // 让"页面数据"与"投递内容"两个概念在 import 处也分得清。
-export { PLACE_CANDIDATES, defaultSystemPlaces } from "@diy-agent/context/delivery";
+export { PLACE_CANDIDATES, unitPaths };
 export type { PlaceCandidate } from "@diy-agent/context/delivery";
 
 /** 树节点（扁平列表；path 点分段自带层级，UI 按前缀缩进） */
@@ -38,19 +32,16 @@ export interface LabTreeNode {
     valueHash: string;
     /** 它属于哪个投递单元（无归属 = 不参与投递） */
     place: ContextPath | null;
-    /** 所属单元落在哪个容器 */
-    container: ContextContainer | null;
     /** 是不是有值（无值的节点只作为结构出现，值是空的） */
     hasValue: boolean;
 }
 
-/** 划分规则表的一行 = 一个投递单元 */
+/** 一个投递单元（增量与变更历史的粒度） */
 export interface LabRule {
     place: ContextPath;
-    container: ContextContainer;
     /** 这个单元里有哪些渲染单元（会实际变成文本的 path） */
     renders: ContextPath[];
-    /** 为什么归这边（人话） */
+    /** 为什么单列（人话） */
     reason: string;
 }
 
@@ -62,8 +53,10 @@ export interface ContextLab {
     wireVersion: string;
     tree: LabTreeNode[];
     rules: LabRule[];
-    system: DeliveryPart;
-    runtime: DeliveryPart;
+    /** 信封全文（`help:` + `vars:`）= 真发进 streamText 的 system 参数 */
+    text: DeliveryPart;
+    /** 变量树的纯数据段（不含 help） */
+    data: DeliveryPart;
     /**
      * 实际会发出去的请求体（JSON）—— 与真发同一条构造链，只把 messages 换成
      * 「system 份 + runtime 份」，这样看到的就是"这棵树最后变成什么请求"。
@@ -71,11 +64,9 @@ export interface ContextLab {
     request: { body: Record<string, unknown> | null; note: string; model: string };
 }
 
-/** 该 place 为什么归这边（人话；未登记的给默认说明） */
+/** 该 place 为什么单列（人话；未登记的给默认说明） */
 function reasonFor(path: ContextPath): string {
-    const hit = PLACE_CANDIDATES.find((c) => c.path === path);
-    if (hit) return hit.reason;
-    return "未登记的单元：默认归 runtime";
+    return PLACE_CANDIDATES.find((c) => c.path === path)?.reason ?? "未登记的单元（手填 path）";
 }
 
 /** 树上的每一行（含中间容器；容器不显示值 —— 子树在下面几行里） */
@@ -100,7 +91,6 @@ function nodesOf(state: ContextTreeState): LabTreeNode[] {
                 preview: isContainer ? "" : previewOf(state, base),
                 valueHash: hashValue(node).slice(0, 12),
                 place,
-                container: place ? (state.placement[place] ?? "runtime") : null,
                 hasValue: present,
             });
         }
@@ -119,15 +109,14 @@ function nodesOf(state: ContextTreeState): LabTreeNode[] {
     return out.sort((a, b) => a.path.localeCompare(b.path));
 }
 
-/** 组装视图数据（真实 globals + system 名单；投递部分走 delivery.ts 的同一条链） */
+/** 组装视图数据（真实 globals；投递部分走 delivery.ts 的同一条链） */
 export function buildLab(
     globals: Record<string, unknown>,
-    systemPlaces: readonly ContextPath[],
     taskUri: string,
-    /** 请求体（由 main 侧用真实 SDK 链 + 我们这两份内容构造；纯函数层不碰 SDK） */
+    /** 请求体（由 main 侧用真实 SDK 链 + 我们这份内容构造；纯函数层不碰 SDK） */
     request: ContextLab["request"] = { body: null, note: "未构造请求体", model: "" },
 ): ContextLab {
-    const d: Delivery = buildDelivery(globals, systemPlaces);
+    const d: Delivery = buildDelivery(globals);
     const treeNodes = nodesOf(d.tree);
     return {
         taskUri,
@@ -136,12 +125,11 @@ export function buildLab(
         tree: treeNodes,
         rules: d.tree.places.slice().sort().map((place) => ({
             place,
-            container: d.tree.placement[place] ?? "runtime",
             renders: renderUnits(d.tree, place),
             reason: reasonFor(place),
         })),
-        system: d.system,
-        runtime: d.runtime,
+        text: d.text,
+        data: d.data,
         request,
     };
 }

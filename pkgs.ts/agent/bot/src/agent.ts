@@ -26,7 +26,6 @@ import {
     stepDeltaOf,
     treeOfGlobals,
     valueHashes,
-    type ContextPath,
     type ContextProvider,
     type DeltaSnapshot,
 } from '@diy-agent/context';
@@ -65,8 +64,6 @@ export interface BotAgentOptions {
     readonly model: string;
     /** 上下文树的提供器（bot 用 diy / cwd / chain / skills 四个就够） */
     readonly providers: readonly ContextProvider[];
-    /** system 名单（哪些 path 进 system、哪些进 runtime）—— **必填**，不让调用方猜缺省是哪套 */
-    readonly systemPlaces: readonly ContextPath[];
     /**
      * bot 的**行为指令**（人写的，不是从变量树算的）。拼在 system 最前面。
      *
@@ -122,11 +119,11 @@ export interface BotAgent {
  * 单独抽出来是为了让「system 长什么样」可以在不建 session 的情况下断言
  * （测试里经常只需要验这一段，不想为此跑一轮 LLM）。
  */
-export function systemOf(opts: Pick<BotAgentOptions, 'providers' | 'systemPlaces' | 'instructions'>): string {
+export function systemOf(opts: Pick<BotAgentOptions, 'providers' | 'instructions'>): string {
     const globals = assembleFromProviders(opts.providers);
     const helps = helpsOf(opts.providers);
-    const delivery = buildDelivery(globals, opts.systemPlaces, helps);
-    return [opts.instructions.trim(), delivery.system.text].filter((s) => s !== '').join('\n\n');
+    const delivery = buildDelivery(globals, helps);
+    return [opts.instructions.trim(), delivery.text.text].filter((s) => s !== '').join('\n\n');
 }
 
 export function createBotAgent(opts: BotAgentOptions): BotAgent {

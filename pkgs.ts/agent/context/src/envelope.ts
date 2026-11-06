@@ -8,17 +8,15 @@
 // 于是两个投递位置各是一个信封：
 //
 //   system 参数（进 `streamText({system})`；段首全量，压缩点前不重建）
-//     help:    ← **唯一的结构说明源**：zod 递归派生（`describeSchema`），禁手写
-//     system:  ← 系统变量树（稳定项，全量）
-//     runtime: ← 易变变量树（全量；与 system 同一条消息，见 ##442 用户 2026-10-27 口径）
+//     help:  ← **唯一的结构说明源**：zod 递归派生（`describeSchema`），禁手写
+//     vars:  ← 上下文变量树（**只有这一份**，全量；##520 删掉了 system/runtime 两容器）
 //
 //   **所有** user 消息（历史 / 本轮 / 轮内增量都用同一形，UI 显示 chat / notify）
-//     system:   ← 控制变量增量（隐藏）：只列变化原子单元的新值；`path: null` = 单元已消失
-//     runtime:  ← 同上（易变树）
-//     notify:   ← 机器事件（可见）：compact / job-done
-//     chat:     ← 人 / agent 发言（可见）：{ from, text }
+//     vars:    ← 变量增量（隐藏）：只列变化原子单元的新值；`path: null` = 单元已消失
+//     notify:  ← 机器事件（可见）：compact / job-done
+//     chat:    ← 人 / agent 发言（可见）：{ from, text }
 //
-//   顺序固定（模型按 YAML 顺序读）：system → runtime → notify → chat。
+//   顺序固定（模型按 YAML 顺序读）：vars → notify → chat。
 //   一条消息可以只有其中一段：纯控制增量没有 notify/chat（UI 不显示）。
 //
 //   ⚠️ 头部（system 之后、历史第一条之前）**只放逐字节常量**：前缀缓存按逐字节命中，那里一有
@@ -30,8 +28,7 @@
 //   2. **值节点里禁出现解释性字段**（`about` / `source` / `retrieve` / `legend` /
 //      `note` / `locate` / `body` 一律取消）→ 解释上移 `help`，值只留**数据**。
 //      历史遗留的反例：`historyIndex` 节点整个是解释 → 已删，内容进 `help.history`。
-//   3. `system` / `runtime` 只是信封里的两个键，**不是两种格式**；顶层键增删 → help
-//      自动跟着变（同一份 zod）。
+//   3. `vars` 只是信封里的一个键，**不是一种格式**；顶层键增删 → help 自动跟着变（同一份 zod）。
 //
 // 约定：本文件只放纯函数/常量，禁止 import node:*（renderer 会打进包）。
 
@@ -48,28 +45,23 @@ import type { ContextPath, ContextTreeState } from "./types.js";
  * （那只由 `wire.ts::WIRE_ENCODING` 的结构语义决定）。
  *
  * 【已决 · 用户 2026-10-15】信封**顶层键集不进 `WIRE_ENCODING`**：加键（`summary` / `from`）
- * 只改「给人/模型看的编排」，**不影响业务**（原子单元 hash 与投递到各容器的值都没变）——
+ * 只改「给人/模型看的编排」，**不影响业务**（原子单元 hash 与投递值都没变）——
  * 故 `WIRE_VERSION` 保持不变，免得存量 step 记录集体判「不可比」（UI 全标 incomparable）。
- * 真正该动版本的只有 `WIRE_ENCODING` 里那些**语义**（system/runtime 投递形态、hash 口径、渲染格式）。
+ * 真正该动版本的只有 `WIRE_ENCODING` 里那些**语义**（信封形态、hash 口径、渲染格式）。
  */
 export const ENVELOPE_ABOUT = [
-    "YAML 信封：role:system 放 help / system / runtime（全量）；role:user 放 system / runtime（增量）/ notify / chat。",
-    "· system / runtime = 控制变量（UI 不显示）：全量在 system 消息里；user 里只列变化 path 的新值，",
+    "YAML 信封：role:system 放 help / vars（全量）；role:user 放 vars（增量）/ notify / chat。",
+    "· vars = 上下文变量树（UI 不显示）：全量在 system 消息里；user 里只列变化 path 的新值，",
     "  后出现者覆盖，`path: null` = 该单元已消失。数组 / map 按整单元替换，不按下标 / key 打补丁。",
     "· notify = 机器事件（UI 显示）：每项必有 kind；text / source / summary 等按 kind 带（compact 只有 source + summary）。",
     "· chat = 人 / agent 发言（UI 显示）：每项 {from, text}，from = human:<名> / agent:<名>。",
-    "· 键序固定：system → runtime → notify → chat。`[]` / `{}` = 存在但为空（与「没有这个变量」不是一回事）。",
+    "· 键序固定：vars → notify → chat。`[]` / `{}` = 存在但为空（与「没有这个变量」不是一回事）。",
 ].join("\n");
 
-/** 易变变量树（`system` 消息里是全量；`user` 消息里是增量） */
-export const RuntimeSchema = z
+/** 上下文变量树（`system` 消息里是全量；`user` 消息里是增量） */
+export const VarsSchema = z
     .record(z.string(), z.unknown())
-    .describe("易变上下文变量树（全量在 system 消息；user 里只列变化 path 的新值；键 = 原子单元路径）");
-
-/** 本步的变化（作为信封的 `runtimeDiff` 键；只列**变化**的原子单元） */
-export const RuntimeDiffSchema = z
-    .record(z.string(), z.unknown())
-    .describe("本步发生变化的原子单元 → 该单元**变更后的当前值**（全量；没变的单元不列）");
+    .describe("上下文变量树（全量在 system 消息；user 里只列变化 path 的新值；键 = 原子单元路径）");
 
 /**
  * 历史摘要（作为信封的 `summary` 键；被压缩掉那段的结论）。
@@ -82,7 +74,7 @@ export const SummarySchema = z
     .string()
     .describe(
         "被压缩掉的那段对话的**摘要**（上一段会话的结论，由摘要模型生成；仅在摘要功能启用时出现）。" +
-            "它只做**背景**：变量树的**当前值**一律看 system / runtime 段（每次全量），**不要**为取某个变量的值去翻历史。",
+            "它只做**背景**：变量树的**当前值**一律看 system 消息的 `vars` 段（每次全量），**不要**为取某个变量的值去翻历史。",
     );
 
 /** 发言者（`from:` 段；只出现在**历史** user 消息上，见 ##422） */
@@ -141,8 +133,7 @@ export const NotifyItemSchema = z
 /** 信封顶层键的 zod（唯一真源；`help` 由它 + 各值段 schema 派生，见 `buildHelpDoc`） */
 export const EnvelopeSchema = z
     .object({
-        system: z.record(z.string(), z.unknown()).describe("控制变量增量（稳定树）：path → 新值；`path: null` = 删除"),
-        runtime: RuntimeSchema,
+        vars: VarsSchema,
         notify: z.array(NotifyItemSchema).describe("机器事件列表（UI 可见）"),
         chat: z.array(ChatItemSchema).describe("人 / agent 发言列表（UI 可见，按时间顺序）"),
     })
@@ -161,17 +152,15 @@ export interface HelpDoc {
  * 对另一侧就是噪音，而且会说谎（"system 里有 skills"）。
  */
 export function buildHelpDoc(opts: {
-    /** 该容器实际投递的 path（裁剪结构用；来自投递构造，不是用户偏好） */
-    systemPlaces: readonly ContextPath[];
     /**
-     * `help.runtime` 要描述哪些单元 —— **必须是常量名单**（候选全集），不能是「本轮真出现的那些」。
+     * `help.vars` 要描述哪些单元 —— **必须是常量名单**（候选全集），不能是「本轮真出现的那些」。
      *
      * 为何（##442 刀 2 连带修）：help 在 system 段里，而 system 是前缀缓存的第一块。若 help 跟着
      * 「本轮存在哪些 runtime 单元」变，则 a) 可选单元首次出现/消失（`self` 首步还没有、`room.recent`
      * 没人说话就缺席）就扭一次 system；b) 实测 ##266 第一轮 system 比第二轮少一整块 `self:` 描述。
      * 描述的读者是模型（`缺席 ≠ 0`），写全反而更有用；代价只是一次性多几百字节常量。
      */
-    runtimePlaces: readonly ContextPath[];
+    places: readonly ContextPath[];
     /**
      * 各 provider 交上来的**结构说明**（`helpsOf(providers)` 的产物）。
      *
@@ -189,15 +178,11 @@ export function buildHelpDoc(opts: {
         (EnvelopeSchema.shape[k].description as string | undefined) ?? "";
     return {
         about: ENVELOPE_ABOUT,
-        // 这里是 **role:system 消息** 里的两棵树（全量）；role:user 里的同名键才是增量，
-        // 那层语义写在 `about` 里（`EnvelopeSchema.system` 的 desc 是给增量用的）。
-        system: {
-            desc: "系统上下文变量树（稳定项，**全量**；在 role:system 消息里）",
-            ...pruneSchemaDoc(globalsDoc, opts.systemPlaces),
-        },
-        runtime: {
-            desc: "易变上下文变量树（**全量**；在 role:system 消息里）。role:user 里的同名键只带增量",
-            ...pruneSchemaDoc(globalsDoc, opts.runtimePlaces),
+        // 这里是 **role:system 消息** 里的变量树（全量）；role:user 里的同名键才是增量，
+        // 那层语义写在 `about` 里（`VarsSchema` 的 desc 是给增量用的）。
+        vars: {
+            desc: "上下文变量树（**全量**；在 role:system 消息里）。role:user 里的同名键只带增量",
+            ...pruneSchemaDoc(globalsDoc, opts.places),
         },
         notify: describeSchema(
             z
@@ -216,6 +201,7 @@ export function buildHelpDoc(opts: {
  */
 export const ENVELOPE_TOP_KEYS = new Set([
     "help",
+    "vars",
     "system",
     "runtime",
     "runtimeDiff",
@@ -250,7 +236,7 @@ export function isEnvelopeText(text: string): boolean {
 /**
  * 把若干**顶层键片段**（各自是 `k:` + 缩进正文的一段 YAML）与可选的 `user:` 段拼成**一份**合法 YAML。
  *
- * 硬规则（##310）：消息里一切**自动生成**的段（`summary:` 摘要、`runtime:` 变量树）
+ * 硬规则（##310）：消息里一切**自动生成**的段（`summary:` 摘要、`vars:` 变量树）
  * 都必须有**自己的顶层键名**，与用户真话（`user.message`）泾渭分明 —— 混进 `user.message`
  * 会被模型当成"用户的任务内容"去处理（tasks/5 实测：模型为此多烧 3 次 bash、5.6 万 prompt token）。
  *
@@ -291,20 +277,16 @@ export function renderFromPart(speaker: Speaker): string {
 }
 
 /**
- * 重放历史时要**剥掉**的顶层段：易变变量树（`runtime:` / `runtimeDiff:`）。
+ * 重放历史时要剥掉的**控制段**：变量树（`vars:`；legacy `system:` / `runtime:` / `runtimeDiff:` 一并剥）。
  *
- * 为什么只剥这两段（##422 用户口径）：「信封是只清理 runtime 消息，不是把所有线索性消息
+ * 为什么只剥这些（##422 用户口径）：「信封是只清理 runtime 消息，不是把所有线索性消息
  * 都丢弃，因为不是所有信封字段都是 runtime 变量」—— `from:`（谁说的）/ `summary:`
- * 哪些行）都是**线索**，重放必须留着；`runtime:` 是**每步全量的当前值**，重放只会浪费字节
+ * 哪些行）都是**线索**，重放必须留着；变量段是**每步全量的当前值**，重放只会浪费字节
  * 并把旧值伪装成现状（与 `ENVELOPE_ABOUT` 那条「历史压缩不影响变量树」同一条道理）。
+ *
+ * legacy 键仍然剥：存量块里还存着老格式的信封（升级前的 `system:` / `runtime:`）。
  */
-export const RUNTIME_TOP_KEYS: ReadonlySet<string> = new Set(["runtime", "runtimeDiff"]);
-
-/**
- * 重放历史时要剥掉的**控制段**（新形态：`system` / `runtime` 都是控制变量；
- * legacy `runtimeDiff` 一并剥）。`notify` / `chat` / `summary` 是线索，逐字保留。
- */
-export const CONTROL_TOP_KEYS: ReadonlySet<string> = new Set(["system", "runtime", "runtimeDiff"]);
+export const CONTROL_TOP_KEYS: ReadonlySet<string> = new Set(["vars", "system", "runtime", "runtimeDiff"]);
 
 /** 顶格 `key:` 行（信封顶层键的形态；与 `isEnvelopeText` 同一把尺） */
 const TOP_KEY_RE = /^([A-Za-z][A-Za-z0-9_]*):(\s|$)/;
@@ -320,7 +302,7 @@ export function hasTopLevelKey(text: string, key: string): boolean {
 }
 
 /**
- * 从一条**历史消息**里剥掉易变段（`runtime:` / `runtimeDiff:`），其余**逐字保留**。
+ * 从一条**历史消息**里剥掉控制段（`vars:`；legacy `system:` / `runtime:` / `runtimeDiff:`），其余**逐字保留**。
  *
  * 判据（单测钉住）：
  *   · 是信封（首个非空行是顶格的信封顶层键）**且**带顶格 `user:` 段 ⇒ 才是「我们的消息形态」，
@@ -371,7 +353,7 @@ export interface EnvelopeRendering {
     lines: Record<ContextPath, { from: number; to: number }>;
 }
 
-/** 剥掉顶层键前缀（`system.diy` → `diy`），与变量树 path 口径对齐 */
+/** 剥掉顶层键前缀（`vars.diy` → `diy`），与变量树 path 口径对齐 */
 function strip(lines: Record<ContextPath, { from: number; to: number }>, top: string): EnvelopeRendering["lines"] {
     const out: EnvelopeRendering["lines"] = {};
     for (const [p, sp] of Object.entries(lines)) {
@@ -381,47 +363,26 @@ function strip(lines: Record<ContextPath, { from: number; to: number }>, top: st
 }
 
 /**
- * **system 信封**：`help:`（zod 递归派生的结构说明）+ `system:`（稳定树全量）+ `runtime:`（易变树全量）。
+ * **system 信封**：`help:`（zod 递归派生的结构说明）+ `vars:`（变量树全量）。
  *
- * 为什么 runtime 也在这里（用户 2026-10-27 口径，dsh 方式 B）：变量树只留一份全量，
- * 放在 system；之后 `system` / `runtime` 任何变化都只追加 user 增量（`controlDeltaEnvelope`）。
- * 于是 system 是**段首快照**，压缩点之前不重建 —— 前缀缓存命中靠它。
+ * 变量树只留**一份全量**（##520：system / runtime 两容器已删）；之后任何变化都只追加
+ * user 增量（`controlDeltaEnvelope`）。于是 system 是**段首快照**，压缩点之前不重建 ——
+ * 前缀缓存命中靠它。
  */
-export function systemEnvelope(
+export function varsEnvelope(
     tree: ContextTreeState,
-    systemPlaces: readonly ContextPath[],
-    runtimePlaces: readonly ContextPath[],
-    /** help 用名单（候选全集，常量）—— 缺省 = `runtimePlaces`（单侧调用兼容） */
-    helpRuntimePlaces: readonly ContextPath[] = runtimePlaces,
+    places: readonly ContextPath[],
+    /** help 用名单（候选全集，常量）—— 缺省 = `places`（单侧调用兼容） */
+    helpPlaces: readonly ContextPath[] = places,
     /** 各 provider 交上来的结构说明；缺省 = 从 zod 派生（向后兼容） */
     helps?: Record<string, SchemaDoc>,
 ): EnvelopeRendering {
     const help = buildHelpDoc({
-        systemPlaces,
-        runtimePlaces: helpRuntimePlaces,
+        places: helpPlaces,
         ...(helps === undefined ? {} : { helps }),
     });
-    const r = emitYamlTraced({
-        help,
-        system: subsetOf(tree, systemPlaces),
-        runtime: subsetOf(tree, runtimePlaces),
-    });
-    return { text: r.text, lines: { ...strip(r.lines as never, "system"), ...strip(r.lines as never, "runtime") } };
-}
-
-/** **runtime 信封**：只有 `runtime:` 一段。一个 place 都没有 → 空串（调用方据此跳过那条消息） */
-export function runtimeEnvelope(tree: ContextTreeState, runtimePlaces: readonly ContextPath[]): EnvelopeRendering {
-    if (runtimePlaces.length === 0) return { text: "", lines: {} };
-    const r = emitYamlTraced({ runtime: subsetOf(tree, runtimePlaces) });
-    return { text: r.text, lines: strip(r.lines as never, "runtime") };
-}
-
-/** 旧形（`runtimeDiff:`）—— 只为读老数据 / 兼容旧调用点，新写入用 `controlDeltaEnvelope`。 */
-export function runtimeDiffEnvelope(tree: ContextTreeState, paths: readonly ContextPath[]): EnvelopeRendering {
-    const sorted = [...paths].sort();
-    if (sorted.length === 0) return { text: "", lines: {} };
-    const r = emitYamlTraced({ runtimeDiff: subsetOf(tree, sorted) });
-    return { text: r.text, lines: strip(r.lines as never, "runtimeDiff") };
+    const r = emitYamlTraced({ help, vars: subsetOf(tree, places) });
+    return { text: r.text, lines: strip(r.lines as never, "vars") };
 }
 
 /** `chat` 数组的元素（人 / agent 发言） */
@@ -430,48 +391,36 @@ export type ChatItem = z.infer<typeof ChatItemSchema>;
 export type NotifyItem = z.infer<typeof NotifyItemSchema>;
 
 /**
- * **控制变量增量**（user 消息里的 `system:` / `runtime:` 两段）。
+ * **变量增量**（user 消息里的 `vars:` 一段）。
  *
  * 只列**变化的原子单元**，值是变更后的新值；单元整体消失 ⇒ `path: null`（见 `subsetOfDelta`）。
  * 数组 / map 按整单元替换 —— 与 `changelog.ts` 的「原子单元、数组不下钻」同一口径。
  *
- * 顺序固定：system 在前、runtime 在后。两段都空 → 空串（调用方不注入）。
+ * 空 paths → 空串（调用方不注入）。
  */
 export function controlDeltaEnvelope(
     tree: ContextTreeState,
-    systemPaths: readonly ContextPath[],
-    runtimePaths: readonly ContextPath[],
+    paths: readonly ContextPath[],
 ): EnvelopeRendering {
-    const blocks: string[] = [];
-    const lines: EnvelopeRendering["lines"] = {};
-    if (systemPaths.length > 0) {
-        const r = emitYamlTraced({ system: subsetOfDelta(tree, systemPaths) });
-        blocks.push(r.text);
-        Object.assign(lines, strip(r.lines as never, "system"));
-    }
-    if (runtimePaths.length > 0) {
-        const r = emitYamlTraced({ runtime: subsetOfDelta(tree, runtimePaths) });
-        blocks.push(r.text);
-        Object.assign(lines, strip(r.lines as never, "runtime"));
-    }
-    return { text: blocks.join("\n"), lines };
+    const sorted = [...paths].sort();
+    if (sorted.length === 0) return { text: "", lines: {} };
+    const r = emitYamlTraced({ vars: subsetOfDelta(tree, sorted) });
+    return { text: r.text, lines: strip(r.lines as never, "vars") };
 }
 
 /**
- * 一份 **user 信封**：控制增量 + notify + chat，按固定键序拼成一份合法 YAML。
+ * 一份 **user 信封**：变量增量 + notify + chat，按固定键序拼成一份合法 YAML。
  *
- * 为什么自己拼而不交给 `normalizeUserRuns` 合并：它有顺序语义（system → runtime → notify → chat），
+ * 为什么自己拼而不交给 `normalizeUserRuns` 合并：它有顺序语义（vars → notify → chat），
  * 而 `normalizeUserRuns` 只会把相邻 user 文本粘起来（粘出来既不是合法 YAML、顺序也丢）。
  */
 export function userEnvelope(parts: {
-    system?: Record<string, unknown>;
-    runtime?: Record<string, unknown>;
+    vars?: Record<string, unknown>;
     notify?: readonly NotifyItem[];
     chat?: readonly ChatItem[];
 }): string {
     const blocks: string[] = [];
-    if (parts.system && Object.keys(parts.system).length > 0) blocks.push(toYaml({ system: parts.system }));
-    if (parts.runtime && Object.keys(parts.runtime).length > 0) blocks.push(toYaml({ runtime: parts.runtime }));
+    if (parts.vars && Object.keys(parts.vars).length > 0) blocks.push(toYaml({ vars: parts.vars }));
     if (parts.notify && parts.notify.length > 0) blocks.push(toYaml({ notify: parts.notify }));
     if (parts.chat && parts.chat.length > 0) blocks.push(toYaml({ chat: parts.chat }));
     return blocks.join("\n");
@@ -486,7 +435,7 @@ export function chatEnvelope(items: readonly ChatItem[]): string {
  * 把一条 `notify` 并进已有 user 信封的末尾（不新增消息）。
  *
  * 用途：预检 `tightCap` 又丢了历史时，模型必须知道；但单独 push 一条 user 会多一条消息、
- * 改前缀。并进末条 user 的 `notify` 段，键序仍是 runtime → notify → chat。
+ * 改前缀。并进末条 user 的 `notify` 段，键序仍是 vars → notify → chat。
  */
 export function withNotify(text: string, item: NotifyItem): string {
     if (!text.trim()) return userEnvelope({ notify: [item] });
@@ -497,7 +446,7 @@ export function withNotify(text: string, item: NotifyItem): string {
     return `${text.trimEnd()}\n${block}`;
 }
 
-/** system 的**纯数据**部分（不带 help 段）—— golden 比对 / 调试用 */
-export function systemDataText(tree: ContextTreeState, systemPlaces: readonly ContextPath[]): string {
-    return renderPaths(tree, systemPlaces);
+/** 变量树的**纯数据**部分（不带 help 段）—— golden 比对 / 调试用 */
+export function dataText(tree: ContextTreeState, places: readonly ContextPath[]): string {
+    return renderPaths(tree, places);
 }

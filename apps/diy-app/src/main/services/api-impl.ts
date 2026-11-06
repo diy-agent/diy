@@ -751,7 +751,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
   binding.on(app.agent.local.inputGate, async ({ input }) => {
     noteRendererTouch("diy.agent.local.inputGate", input.taskUri);
     const { inputGate } = await import("../../shared/context/input-limit");
-    const { loadInputLimitChars } = await import("../core/context-config");
+    const { loadInputLimitChars } = await import("../core/input-limit-config");
     const { diyHome } = await import("../core/state");
     const { personaForTask } = await import("../core/persona");
     const { contextLimitOf, costOf } = await import("../../shared/models");
@@ -942,48 +942,20 @@ export function bindAppHandlers(binding: ServerBinding): void {
   });
 
   // ── context（上下文树页：**当前任务的真实上下文**，不落盘、不发 LLM）──
-  binding.on(app.context.config, async () => {
-    const { loadSystemPlaces, contextConfigFile } = await import("../core/context-config");
-    const { defaultSystemPlaces } = await import("@diy-agent/context/delivery");
-    const { existsSync } = await import("node:fs");
-    const { diyHome } = await import("../core/state");
-    const { loadInputLimitChars } = await import("../core/context-config");
-    return {
-      systemPlaces: loadSystemPlaces(diyHome()),
-      defaults: defaultSystemPlaces(),
-      fromFile: existsSync(contextConfigFile(diyHome())),
-      inputLimitChars: loadInputLimitChars(diyHome()),
-    };
-  });
-  binding.on(app.context.setConfig, async ({ input }) => {
-    const { saveInputLimitChars, saveSystemPlaces } = await import("../core/context-config");
-    const { diyHome } = await import("../core/state");
-    const home = diyHome();
-    const systemPlaces = saveSystemPlaces(home, input.systemPlaces);
-    // inputLimitChars 缺省不改（undefined = 只改划分）；给了才写
-    const inputLimitChars =
-      input.inputLimitChars === undefined ? undefined : saveInputLimitChars(home, input.inputLimitChars);
-    return { systemPlaces, inputLimitChars: inputLimitChars ?? null };
-  });
   binding.on(app.context.candidates, async () => {
-    const { PLACE_CANDIDATES, defaultSystemPlaces } = await import("../../shared/context/preview");
-    return { candidates: PLACE_CANDIDATES, defaultSystem: defaultSystemPlaces() };
+    const { PLACE_CANDIDATES } = await import("../../shared/context/preview");
+    return { candidates: PLACE_CANDIDATES };
   });
   binding.on(app.context.lab, async ({ input }) => {
     const { assembleGlobals } = await import("./prompt-registry");
     const { diyHome, projectFromUri } = await import("../core/state");
-    const { loadSystemPlaces } = await import("../core/context-config");
     const { buildLab } = await import("../../shared/context/preview");
     const taskUri = input.taskUri ?? "";
     const project = projectFromUri(taskUri) || input.project;
     // 真实数据：与真发同一条组装链（同样的 AGENTS.md 链、同样的 cwd 推导）
     const globals = assembleGlobals(diyHome(), project, { taskUri }) as unknown as Record<string, unknown>;
-    // 空数组 = 调用方还没决定（UI 首帧）→ 读**真源**（与真发同一份）；
-    // 只有明确给了名单才尊重它（页面把开关状态传进来做即时预览）
-    const systemPlaces = input.systemPlaces?.length ? input.systemPlaces : loadSystemPlaces(diyHome());
-    // 先按纯函数算出两份投递，再用**真发的构造链**把请求体拼出来：
-    // system = system 份；末条 user = runtime 份（144 的设计：runtime 作为尾部 user 消息）
-    const lab = buildLab(globals, systemPlaces, taskUri);
+    // 先用纯函数算出信封，再用**真发的构造链**把请求体拼出来
+    const lab = buildLab(globals, taskUri);
     let request: { body: Record<string, unknown> | null; note: string; model: string } = {
       body: null,
       note: "无任务场景：仅组装上下文，未构造请求体",
@@ -996,9 +968,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
       const model = input.model || getModelCatalog()[0]?.ref || "";
       const sim = await previewSimulatedRequest({
         taskUri,
-        // system 里已含 help / system / runtime 三份全量（##442 用户 2026-10-27 口径），
-        // runtime 不再单独进尾部 user 消息。
-        system: lab.system.text,
+        // system 里已含 help / vars 两份全量（##520：只有一份变量树）
+        system: lab.text.text,
         model,
       });
       request = { body: sim.body, note: sim.note, model };
@@ -1048,9 +1019,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
       const buckets = usage.get(turnId)?.buckets;
       return {
         turnIndex: i === undefined ? null : i + 1,
-        systemPlaces: cur?.systemPlaces ?? [],
         systemDiffers: cur && prev ? cur.systemText !== prev.systemText : null,
-        runtimeDiffers: cur && prev ? cur.runtimeText !== prev.runtimeText : null,
         // 注记段缺字段（老快照）= 不知道 ⇒ null（UI 不画徽章），别拿 undefined 跟字符串比得「变了」
         historyDiffers: cur?.historyText === undefined || prev?.historyText === undefined ? null : cur.historyText !== prev.historyText,
         incomparable: cur && prev ? cur.wireVersion !== prev.wireVersion : null,
@@ -1148,16 +1117,12 @@ export function bindAppHandlers(binding: ServerBinding): void {
         incomparable: d?.incomparable ?? false,
         changed: d?.changed ?? Object.keys(cur.valueHashes).sort(),
         systemDiffers: d?.systemDiffers ?? true,
-        runtimeDiffers: d?.runtimeDiffers ?? true,
         historyDiffers: d?.historyDiffers ?? false,
         systemDiff: d?.systemDiff ?? [],
-        runtimeDiff: d?.runtimeDiff ?? [],
         historyDiff: d?.historyDiff ?? [],
         systemText: cur.systemText,
-        runtimeText: cur.runtimeText,
         historyText: cur.historyText ?? "",
         baseSystemText: prev?.systemText ?? null,
-        baseRuntimeText: prev?.runtimeText ?? null,
         baseHistoryText: prev?.historyText ?? null,
       };
     }
@@ -1165,7 +1130,6 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { assembleGlobals } = await import("./prompt-registry");
     const { diyHome, projectFromUri } = await import("../core/state");
     const { buildDelivery } = await import("@diy-agent/context/delivery");
-    const { loadSystemPlaces } = await import("../core/context-config");
     const project = projectFromUri(input.taskUri) || input.project;
     // 房间上下文（##377 第 26 刀）：预览与真发同一份装配（取**本任务自己的房间**）
     const { roomRuntimeFact } = await import("./room-context");
@@ -1174,14 +1138,13 @@ export function bindAppHandlers(binding: ServerBinding): void {
       taskUri: input.taskUri,
       room: roomCtx,
     }) as unknown as Record<string, unknown>;
-    const now = buildDelivery(globals, input.systemPlaces?.length ? input.systemPlaces : loadSystemPlaces(diyHome()));
+    const now = buildDelivery(globals);
     const last = records[records.length - 1]!;
     const d = diffSteps(last, {
       ...last,
       wireVersion: now.wireVersion,
       valueHashes: now.valueHashes,
-      systemText: now.system.text,
-      runtimeText: now.runtime.text,
+      systemText: now.text.text,
     });
     return {
       mode: "live" as const,
@@ -1190,18 +1153,14 @@ export function bindAppHandlers(binding: ServerBinding): void {
       incomparable: d.incomparable,
       changed: d.changed,
       systemDiffers: d.systemDiffers,
-      runtimeDiffers: d.runtimeDiffers,
       // live 模式比的是「当前变量树 vs 最后一步」：注记段**不属于变量树**（它由压缩选择算），
       // 当前没有"待发的注记"⇒ 不存在可比对象，恒 false；历史行对照仍给 baseHistoryText。
       historyDiffers: false,
       systemDiff: d.systemDiff,
-      runtimeDiff: d.runtimeDiff,
       historyDiff: d.historyDiff,
-      systemText: now.system.text,
-      runtimeText: now.runtime.text,
+      systemText: now.text.text,
       historyText: "",
       baseSystemText: last.systemText,
-      baseRuntimeText: last.runtimeText,
       baseHistoryText: last.historyText ?? null,
     };
   });

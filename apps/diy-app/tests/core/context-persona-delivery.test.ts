@@ -16,7 +16,6 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { assembleGlobals, assembleSystem, DELIVERED_SECTIONS } from "../../src/main/services/prompt-registry";
 import { buildDelivery } from "@diy-agent/context/delivery";
-import { loadSystemPlaces } from "../../src/main/core/context-config";
 
 const PID = "1";
 const TASK = `projects/${PID}/tasks/1`;
@@ -48,7 +47,7 @@ const deliveryOf = (h: string) => {
         string,
         unknown
     >;
-    return { globals, d: buildDelivery(globals, loadSystemPlaces(h)) };
+    return { globals, d: buildDelivery(globals) };
 };
 
 beforeEach(() => {
@@ -60,43 +59,40 @@ afterEach(() => {
 });
 
 describe("P0-1：真发 system 必须带行为契约", () => {
-    it("三节都是投递单元并归 system（不在名单 = 两个容器都不投，那正是 P0-1）", () => {
+    it("三节都是投递单元并出现在全量信封里（不在候选 = 根本不投，那正是 P0-1）", () => {
         const { d } = deliveryOf(home);
         for (const name of Object.keys(DELIVERED_SECTIONS)) {
             expect(d.tree.places, name).toContain(name);
-            expect(d.tree.placement[name], name).toBe("system");
-            expect(d.system.places, name).toContain(name);
+            expect(d.text.places, name).toContain(name);
         }
     });
 
     it("★ 真发 system 含人物行为指令与身份行（209 实测的两项 false 必须变 true）", () => {
         const { d } = deliveryOf(home);
-        expect(d.system.text).toContain(PERSONA_INSTRUCTION);
-        expect(d.system.text).toContain("你现在的人物是「二副」");
+        expect(d.text.text).toContain(PERSONA_INSTRUCTION);
+        expect(d.text.text).toContain("你现在的人物是「二副」");
         // 模板线（模版渲染）与真发线同源：两边都必须在（209 的口径是"两边对比全 true"）
         const tpl = assembleSystem(home, PID, { taskUri: TASK, diyCli: "/repo/diy.sh" }).system;
         for (const needle of [PERSONA_INSTRUCTION, "你现在的人物是「二副」"]) {
             expect(tpl.includes(needle), `模板线缺 ${needle}`).toBe(true);
-            expect(d.system.text.includes(needle), `真发缺 ${needle}`).toBe(true);
-            expect(d.runtime.text.includes(needle), `真发把行为契约错放 runtime：${needle}`).toBe(false);
+            expect(d.text.text.includes(needle), `真发缺 ${needle}`).toBe(true);
         }
     });
 
     it("★ 真发 system 含 <rules> 与 <guard>（保命契约不许丢）", () => {
         const { d } = deliveryOf(home);
-        expect(d.system.text).toContain("<rules>");
-        expect(d.system.text).toContain("<guard>");
-        expect(d.system.text).toContain("生产实例");
-        expect(d.system.text).toContain("绝不可杀");
-        expect(d.runtime.text).not.toContain("<guard>");
+        expect(d.text.text).toContain("<rules>");
+        expect(d.text.text).toContain("<guard>");
+        expect(d.text.text).toContain("生产实例");
+        expect(d.text.text).toContain("绝不可杀");
     });
 
     it("行为指令为空时不注入该段（不写空行凑数），身份行仍在", () => {
         const h2 = makeHome("");
         try {
             const { d } = deliveryOf(h2);
-            expect(d.system.text).toContain("你现在的人物是「二副」");
-            expect(d.system.text).not.toContain(PERSONA_INSTRUCTION);
+            expect(d.text.text).toContain("你现在的人物是「二副」");
+            expect(d.text.text).not.toContain(PERSONA_INSTRUCTION);
         } finally {
             rmSync(h2, { recursive: true, force: true });
         }
@@ -107,8 +103,8 @@ describe("P0-1：真发 system 必须带行为契约", () => {
         const h2 = makeHome("先说结论，再给依据。");
         try {
             const { d: d2 } = deliveryOf(h2);
-            expect(d.system.text).not.toBe(d2.system.text);
-            expect(d2.system.text).toContain("先说结论，再给依据。");
+            expect(d.text.text).not.toBe(d2.text.text);
+            expect(d2.text.text).toContain("先说结论，再给依据。");
         } finally {
             rmSync(h2, { recursive: true, force: true });
         }
@@ -116,7 +112,7 @@ describe("P0-1：真发 system 必须带行为契约", () => {
 });
 
 describe("P0-1 修复不得打回 148 的治疗目标", () => {
-    it("★ 改任务正文：system 逐字节不变，只有 runtime 变（前缀缓存不被打断）", () => {
+    it("★ 改任务正文：行为契约字节不动，正文在下一份全量里（段首冻结由运行层负责）", () => {
         const before = deliveryOf(home);
         writeFileSync(
             join(home, TASK, "AGENTS.md"),
@@ -124,31 +120,30 @@ describe("P0-1 修复不得打回 148 的治疗目标", () => {
             "utf-8",
         );
         const after = deliveryOf(home);
-        // 新口径（##442 2026-10-27）：runtime 也进 system 消息，所以纯函数产物会变；
-        // 前缀缓存由运行层的**段首快照**保证。这里钉稳定树段（行为契约）逐字不变。
-        expect(after.d.systemData.text).toBe(before.d.systemData.text);
-        expect(after.d.runtime.text).not.toBe(before.d.runtime.text);
-        expect(after.d.runtime.text).toContain("第二版正文，改过一遍");
-        // 行为契约属稳定侧：正文编辑不该让它们换位置/换字节
-        expect(after.d.system.places).toEqual(before.d.system.places);
+        // 纯函数产物会随正文变；前缀缓存由运行层的**段首快照**保证。
+        // 这里钉：新正文进了全量；行为契约仍在；单元集合不变（增量只报 task.body）。
+        expect(after.d.text.text).not.toBe(before.d.text.text);
+        expect(after.d.text.text).toContain("第二版正文，改过一遍");
+        for (const needle of [PERSONA_INSTRUCTION, "<rules>", "<guard>"]) {
+            expect(after.d.text.text).toContain(needle);
+        }
+        expect(after.d.text.places).toEqual(before.d.text.places);
     });
 
     it("行为契约进 system 后仍在 system 预算内（不会把预算撑爆反而拒发）", () => {
         const { d } = deliveryOf(home);
         // 内置三节合计只有几百字节；给一个宽松上限，防将来把整份 AGENTS.md 塞进契约节点
         // （判据只看**稳定树段**：runtime 现在也在 system 消息里，但那不是行为契约的预算）
-        expect(d.systemData.bytes).toBeLessThan(16 * 1024);
+        expect(d.data.bytes).toBeLessThan(16 * 1024);
     });
 
-    it("system 名单可被 context.yaml 覆盖：把 guard 划走 → 它就不再进稳定树（落 runtime 段）", () => {
-        writeFileSync(
-            join(home, "context.yaml"),
-            `systemPlaces:\n  - diy\n  - project\n  - cwd\n  - chain\n  - task.title\n  - task.uri\n  - task.state\n  - task.dir\n  - identity\n  - rules\n`,
-            "utf-8",
-        );
-        const { d } = deliveryOf(home);
-        expect(d.systemData.text).toContain("<rules>");
-        expect(d.systemData.text).not.toContain("<guard>");
-        expect(d.runtime.text).toContain("<guard>");
+    it("guard 的值不存在时整个单元缺席（不再有「划走」的名单，只看值在不在）", () => {
+        const { globals, d } = deliveryOf(home);
+        const without = { ...globals } as Record<string, unknown>;
+        delete without.guard;
+        const d2 = buildDelivery(without);
+        expect(d.text.text).toContain("<guard>");
+        expect(d2.text.places).not.toContain("guard");
+        expect(d2.text.text).not.toContain("<guard>");
     });
 });

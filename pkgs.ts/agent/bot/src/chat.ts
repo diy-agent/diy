@@ -456,11 +456,9 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
             saveState: (state) => writeCompaction(id, state),
         });
         // 2026-11-05：改由 createBotAgent 建（它算 system、记 lastRequest、管跨轮增量）。
-        // 这里给 providers 的是**最小集**（diy / cwd / chain / skills），而 systemText 里
-        // 已经包含了 AGENTS 链与 facts 摘要 —— 所以 systemPlaces 传空数组：树不进 system，
-        // 只用于算「哪些变量变了」的增量（cwd 变化会出现在 user 前缀里）。
-        // ⚠ facts / 链的「进 system」暂时仍走 systemText（保持行为不变）；下一步再把它们
-        // 拆成 provider，让链的变化也能触发增量。
+        // 这里给 providers 的是**最小集**（diy / cwd / chain / skills）—— 它们进信封的
+        // `vars:` 段（**一份全量**，##520），也是「哪些变量变了」的增量来源。
+        // ⚠ facts / 链的内容暂时仍走 systemText（与 provider 值并存不影响正确性）。
         const workspace = workspaceOf(options.home, ownerId ?? id);
         const agent = createBotAgent({
             id,
@@ -483,7 +481,6 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                 { key: "chain", provide: () => [] },
                 { key: "skills", provide: () => [] },
             ],
-            systemPlaces: [],
             initialMessages,
             initialSnapshot: null,
             compact: compactor.compact,

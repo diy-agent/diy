@@ -9,7 +9,7 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { buildSelfValue } from "../../src/shared/context/self";
-import { buildDelivery, defaultSystemPlaces, PLACE_CANDIDATES } from "@diy-agent/context/delivery";
+import { buildDelivery, PLACE_CANDIDATES } from "@diy-agent/context/delivery";
 import { atomicUnitPaths, changelogUnitPaths } from "../../src/shared/context/changelog";
 import { noteSelfStep, resetSelfUsage, selfOf } from "../../src/main/services/self-usage";
 
@@ -102,31 +102,27 @@ describe("selfOf · 内存账", () => {
 });
 
 describe("投递位置", () => {
-    it("self 在候选表里且 system: false（每步都变，进 system = 砸缓存）", () => {
+    it("self 在候选表里，且不进变更历史（每步都变 = 噪声）", () => {
         const c = PLACE_CANDIDATES.find((x) => x.path === "self")!;
         expect(c).toBeTruthy();
-        expect(c.system).toBe(false);
-        expect(defaultSystemPlaces()).not.toContain("self");
+        expect(c.changelog).toBe(false);
     });
 
-    it("真发时落在 runtime 段、system 段没有它", () => {
+    it("真发时它是自己的单元（不在别的单元里重发）", () => {
         const globals = {
             task: { uri: "projects/1/tasks/1", title: "t", state: "pending", dir: "/h/p/1/tasks/1", body: "b" },
             self: { window: { used: 39_378, limit: 1_000_000, ratio: 3.9 }, turn: { steps: 2, cost: 0.001 } },
         };
-        const d = buildDelivery(globals, defaultSystemPlaces());
-        expect(d.runtime.text).toContain("self:");
-        expect(d.runtime.text).toContain("ratio: 3.9");
-        // 比 `system.text`（含 help 段，那里本来就有结构说明）用 **systemData**：纯变量树
-        expect(d.systemData.text).not.toContain("ratio:");
-        expect(d.systemData.text).not.toContain("self");
-        expect(d.runtime.places).toContain("self");
+        const d = buildDelivery(globals);
+        expect(d.data.text).toContain("self:");
+        expect(d.data.text).toContain("ratio: 3.9");
+        expect(d.text.places).toContain("self");
     });
 });
 
 describe("投递 vs 变更历史（两个消费者口径不同，别合并）", () => {
-    it("self 进 runtimeDiff（模型要看最新数），但不进变更历史（每步必变 = 噪声）", () => {
-        // 投递侧：`self` 在原子单元里（runtime diff 靠它算出 changedRun）
+    it("self 进增量（模型要看最新数），但不进变更历史（每步必变 = 噪声）", () => {
+        // 投递侧：`self` 在原子单元里（增量靠它算出 changed）
         expect(atomicUnitPaths()).toContain("self");
         // 变更历史侧：被 `changelog: false` 排除
         expect(changelogUnitPaths()).not.toContain("self");

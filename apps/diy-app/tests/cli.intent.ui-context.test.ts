@@ -92,7 +92,7 @@ async function fold(key: string, open: boolean): Promise<void> {
 }
 
 describe("上下文树：RPC 契约（真实数据）", () => {
-  it("candidates 给出候选单元与推荐名单；lab 返回真实 globals 与两份投递", async () => {
+  it("candidates 给出候选单元；lab 返回真实 globals 与信封全文", async () => {
     const cand = await fx.sh.getJson("./diy.sh context candidates");
     const c = cand.data as unknown as any;
     const paths = c.candidates.map((x: any) => x.path);
@@ -100,11 +100,8 @@ describe("上下文树：RPC 契约（真实数据）", () => {
     expect(paths).toContain("task.body");
     // task 的稳定字段与易变字段被拆成不同单元（否则"按第一层划分"的毛病就回来了）
     expect(paths).toContain("task.title");
-    // ##426：默认最小 system 名单 —— 只有存续期内不变的才进 system
-    expect(c.defaultSystem).toContain("task.created");
-    expect(c.defaultSystem).not.toContain("task.title"); // 改一次任务就变
-    expect(c.defaultSystem).not.toContain("task.state"); // 头号缓存杀手
-    expect(c.defaultSystem).not.toContain("task.body");
+    // ##520：不再有「默认 system 名单」这层 —— 单元只由常量候选决定
+    expect(c.defaultSystem).toBeUndefined();
 
     // 造一个真实的项目目录 + AGENTS.md 链，让 chain 有内容
     const repo = `${fx.HOME}/ctxlab`;
@@ -123,18 +120,18 @@ describe("上下文树：RPC 契约（真实数据）", () => {
     expect(d.taskUri).toBe(uri);
     expect(d.source).toContain("真实上下文");
 
-    // 真实 AGENTS.md 链进了 system 份，内容以 YAML 块标量落盘
-    expect(d.system.text).toContain("chain:");
-    expect(d.system.text).toContain("家目录规范");
-    expect(d.system.text).toContain("项目规范");
-    expect(d.system.text).toContain("content: |"); // 多行文本用块标量
+    // 真实 AGENTS.md 链进了信封，内容以 YAML 块标量落盘
+    expect(d.text.text).toContain("chain:");
+    expect(d.text.text).toContain("家目录规范");
+    expect(d.text.text).toContain("项目规范");
+    expect(d.text.text).toContain("content: |"); // 多行文本用块标量
     // 纯 YAML：不再有自创的 XML 外壳
-    expect(d.system.text).not.toContain("<context path=");
+    expect(d.text.text).not.toContain("<context path=");
 
-    // 任务正文 + 易变头字段（title/state/updated）归 runtime；任务身份（uri/dir/created/parent）归 system
-    expect(d.runtime.text).toContain("body:");
-    expect(d.runtime.text).toContain('title: "上下文树任务"');
-    expect(d.system.text).toContain("uri: ");
+    // 只有一份全量：任务身份（uri/dir/created/parent）与正文/易变头字段都在同一段
+    expect(d.data.text).toContain("body:");
+    expect(d.data.text).toContain('title: "上下文树任务"');
+    expect(d.data.text).toContain("uri: ");
 
     // 请求体：与真发同一条构造链。形态 = [system 段, ...历史, user(runtime), user(占位输入)]
     // （真发同理：runtime 作为独立 user 消息插在**本轮输入之前**，见 runTurn 的 withRuntime）
@@ -158,20 +155,19 @@ describe("上下文树：RPC 契约（真实数据）", () => {
     // responses 面里 user 的 content 是 [{type:"input_text",text}]，取文本要比出两种形状
     const textOf = (m: any): string =>
       typeof m.content === "string" ? m.content : (m.content ?? []).map((p: any) => p.text ?? "").join("");
-    // ⚠️ 口径已变（##442 用户 2026-10-27）：**system 里含 help / system / runtime 三份全量**，
-    // runtime 不再单独进尾部 user 消息 ⇒ 末条 user 只有 `chat:`（占位输入）。
-    // 之前这里断言末条 user 还应带 `body:`，是旧形态；它同时也把「runtime 全量到底在哪」搅混了。
+    // ##520：**信封里只有 help + vars 一份全量**，变量不再单独进尾部 user 消息
+    // ⇒ 末条 user 只有 `chat:`（占位输入）。
     expect(textOf(lastUser)).toContain("chat:");
     expect(textOf(lastUser)).toContain("仿真占位");
-    expect(textOf(lastUser)).not.toContain("runtime:"); // 防有人把全量 runtime 又塞回尾部（砸缓存）
-    // 三份全量都在 system 里，且 task.body（归 runtime 划分）确实在内
-    expect(d.system.text).toContain("runtime:");
-    expect(d.system.text).toContain("body:");
+    expect(textOf(lastUser)).not.toContain("vars:"); // 防有人把全量变量又塞回尾部（砸缓存）
+    // 变量树全量在 system 里，task.body 确实在内
+    expect(d.text.text).toContain("vars:");
+    expect(d.text.text).toContain("body:");
     expect(d.request.model).toBeTruthy();
 
     // 行号映射与文本同源（选中联动高亮靠它）
-    expect(d.system.lines["chain"]).toBeTruthy();
-    expect(d.runtime.lines["task.body"]).toBeTruthy();
+    expect(d.text.lines["chain"]).toBeTruthy();
+    expect(d.text.lines["task.body"]).toBeTruthy();
 
     // 变量树：父层级不显示值（值在下面几行里），容器标 hasValue
     const root = d.tree.find((n: any) => n.path === "task");
@@ -180,7 +176,7 @@ describe("上下文树：RPC 契约（真实数据）", () => {
     await fx.sh.run(`./diy.sh project remove ${pid}`);
   }, 90_000);
 
-  it("改 system 名单 → 归属随之变化（task.body 从 runtime 移到 system）", async () => {
+  it("候选单元来自常量名单；不再有 system 名单入口（##520）", async () => {
     const repo = `${fx.HOME}/ctxlab2`;
     mkdirSync(repo, { recursive: true });
     const p = await fx.sh.getJson(`./diy.sh project create "${repo}" --label 划分`);
@@ -189,28 +185,26 @@ describe("上下文树：RPC 契约（真实数据）", () => {
     const uri = String((t.data as any)?.data?.uri);
     clearLocal(uri); // 撞名残留会混进断言（见 clearLocal 头注）
 
-    const base = (await fx.sh.getJson(`./diy.sh context lab ${pid} --taskUri ${uri}`)).data as any;
-    expect(base.runtime.places).toContain("task.body");
-    expect(base.system.places).not.toContain("task.body");
+    const cand = (await fx.sh.getJson(`./diy.sh context candidates`)).data as any;
+    expect(cand.candidates.length).toBeGreaterThan(0);
+    expect(cand.candidates.every((c: any) => c.path && c.reason)).toBe(true);
+    // 旧字段（默认 system 名单）已删
+    expect(cand.defaultSystem).toBeUndefined();
 
-    // 把 task.body 划进 system（其余用推荐名单）
-    const sys = JSON.stringify([...base.system.places, "task.body"]);
-    const moved = (
-      await fx.sh.getJson(`./diy.sh context lab ${pid} --taskUri ${uri} --systemPlaces '${sys}'`)
-    ).data as any;
-    expect(moved.system.places).toContain("task.body");
-    expect(moved.runtime.places).not.toContain("task.body");
-    expect(moved.system.text).toContain("body:");
-    // 变量树上的归属标记跟着变
-    const row = moved.tree.find((n: any) => n.path === "task.body");
-    expect(row.container).toBe("system");
+    // lab 的单元集合只由值决定：task.body 是单元（它在正文里）
+    const base = (await fx.sh.getJson(`./diy.sh context lab ${pid} --taskUri ${uri}`)).data as any;
+    expect(base.text.places).toContain("task.body");
+
+    // 旧 RPC（改名单）已删干净：CLI 应明确报未知命令，而不是静默忽略
+    const old = await fx.sh.run(`./diy.sh context setConfig --inputLimitChars 5000`);
+    expect(old.code).not.toBe(0);
 
     await fx.sh.run(`./diy.sh project remove ${pid}`);
   }, 90_000);
 });
 
-describe("上下文树：划分规则（真源）", () => {
-  it("默认读推荐名单；setConfig 落盘成 context.yaml；lab 不传名单时读的也是它", async () => {
+describe("上下文树：投递划分已删（##520）", () => {
+  it("context.yaml 不再被读：页面/真发都不再有「名单」这一层", async () => {
     const repo = `${fx.HOME}/ctxlab-config`;
     mkdirSync(repo, { recursive: true });
     const p = await fx.sh.getJson(`./diy.sh project create "${repo}" --label 划分真源`);
@@ -219,46 +213,24 @@ describe("上下文树：划分规则（真源）", () => {
     const uri = String((t.data as any)?.data?.uri);
     clearLocal(uri); // 撞名残留会混进断言（见 clearLocal 头注）
     // 正文有 10 字下限（`task edit` 会拒绝过短输入）
-    await fx.sh.run(`./diy.sh task edit ${uri} --body $'划分验证正文\\n第二行也在这里'`);
+    await fx.sh.run(`./diy.sh task edit ${uri} --body $'划分验证正文\n第二行也在这里'`);
 
-    // ① 没有 context.yaml → 推荐名单（fromFile=false），且 task.body 不在 system
-    const base = (await fx.sh.getJson(`./diy.sh context config`)).data as any;
-    expect(base.fromFile).toBe(false);
-    expect(base.systemPlaces).toEqual(base.defaults);
-    expect(base.systemPlaces).not.toContain("task.body");
-
-    // ② lab **不传** systemPlaces → 读真源（与真发同一份）；task.body 在 runtime
-    const labBase = (await fx.sh.getJson(`./diy.sh context lab ${pid} --taskUri ${uri}`)).data as any;
-    expect(labBase.runtime.places).toContain("task.body");
-    expect(labBase.system.places).not.toContain("task.body");
-
-    // ③ 把它划进 system（页面 ⇄ 走的就是这条 RPC）
-    const next = [...base.systemPlaces, "task.body"];
-    const set = await fx.sh.getJson(
-      `./diy.sh context setConfig --systemPlaces '${JSON.stringify(next)}'`,
+    // ① 旧文件存在也不影响任何东西（不再有读它的入口）
+    writeFileSync(
+      join(fx.HOME, "context.yaml"),
+      "inputLimitChars: 5000\n",
+      "utf-8",
     );
-    expect((set.data as any).systemPlaces).toContain("task.body");
-    // 落盘了（真源在文件里，不是页面内存）
-    const raw = readFileSync(join(fx.HOME, "context.yaml"), "utf-8");
-    expect(raw).toContain("task.body");
-    expect((await fx.sh.getJson(`./diy.sh context config`)).data as any).toMatchObject({ fromFile: true });
+    const lab = (await fx.sh.getJson(`./diy.sh context lab ${pid} --taskUri ${uri}`)).data as any;
+    expect(lab.text.places).toContain("task.body");
+    expect(lab.text.places).toContain("diy");
+    expect(lab.data.text).toContain("划分验证正文");
 
-    // ④ ★ 关键：lab 不传名单时**读真源** → 划分跟着变（真发走的是同一个 loadSystemPlaces）
-    const labMoved = (await fx.sh.getJson(`./diy.sh context lab ${pid} --taskUri ${uri}`)).data as any;
-    expect(labMoved.system.places).toContain("task.body");
-    expect(labMoved.runtime.places).not.toContain("task.body");
-    expect(labMoved.system.text).toContain("划分验证正文");
-
-    // ⑤ 非法输入被拒（写侧不允许存下坏数据）
-    const bad = await fx.sh.run(
-      `./diy.sh context setConfig --systemPlaces '["task","task.body"]'`,
-    );
-    expect(bad.code).not.toBe(0);
-    expect(bad.stderr + bad.stdout).toContain("非法投递单元");
+    // ② 旧 RPC 已删（读也不再有）
+    const cfg = await fx.sh.run(`./diy.sh context config`);
+    expect(cfg.code).not.toBe(0);
 
     await fx.sh.run(`./diy.sh project remove ${pid}`);
-    // ★ 清场：context.yaml 是**全局真源**（不属于某个项目/任务），留在共享 HOME 里会改掉
-    //   后续用例的默认划分 —— 实测让 steps 与 UI 两个用例失败（它们假定推荐名单）。
     rmSync(join(fx.HOME, "context.yaml"), { force: true });
   }, 120_000);
 });
@@ -283,11 +255,9 @@ describe("上下文树：投递快照（steps）", () => {
       turnId: "t1",
       model: "mimo-v2.5",
       wireVersion: "aaaa1111",
-      systemPlaces: ["diy"],
-      runtimePlaces: ["task.body"],
+      places: ["diy", "task.body"],
       valueHashes: { diy: "h1", "task.body": "b1" },
-      systemText: "diy:\n  cli: /repo",
-      runtimeText: 'task:\n  body: "一"',
+      systemText: 'help:\n  about: x\nvars:\n  diy:\n    cli: /repo\n  task:\n    body: "一"',
       ...over,
     });
     const stepsFile = homeFile(uri, "steps");
@@ -296,7 +266,7 @@ describe("上下文树：投递快照（steps）", () => {
       stepsFile,
       [
         rec({}),
-        rec({ turnId: "t2", valueHashes: { diy: "h1", "task.body": "b2" }, runtimeText: 'task:\n  body: "二"' }),
+        rec({ turnId: "t2", valueHashes: { diy: "h1", "task.body": "b2" }, systemText: 'help:\n  about: x\nvars:\n  diy:\n    cli: /repo\n  task:\n    body: "二"' }),
       ]
         .map((r) => JSON.stringify(r))
         .join("\n") + "\n",
@@ -308,19 +278,18 @@ describe("上下文树：投递快照（steps）", () => {
     expect(d.steps.map((s: any) => s.index)).toEqual([1, 2]);
     // 首步是 baseline：没有"上一步"
     expect(d.steps[0].sincePrev).toBeNull();
-    // 第 2 步：只有 runtime 变（system 一份未变 → 可缓存）
+    // 第 2 步：正文变 → changed 命中，全文 diff 里看到新值
     expect(d.steps[1].sincePrev.changed).toEqual(["task.body"]);
-    expect(d.steps[1].sincePrev.systemDiffers).toBe(false);
-    expect(d.steps[1].sincePrev.runtimeDiffers).toBe(true);
+    expect(d.steps[1].sincePrev.systemDiffers).toBe(true);
     expect(d.steps[1].sincePrev.incomparable).toBe(false);
     // --diff 才带行内容；且原文（中文）能正确回传
-    expect(d.steps[1].diff.runtime.some((l: any) => l.t === "+" && l.s.includes("二"))).toBe(true);
+    expect(d.steps[1].diff.system.some((l: any) => l.t === "+" && l.s.includes("二"))).toBe(true);
 
     // 默认不带行内容（避免下发整份文本；也不会塞进 sincePrev）
     const plain = await fx.sh.getJson(`./diy.sh context steps ${uri}`);
     expect((plain.data as any).steps[1].diff).toBeUndefined();
-    expect((plain.data as any).steps[1].sincePrev.runtimeSize.add).toBeGreaterThan(0);
-    expect(Object.keys((plain.data as any).steps[1].sincePrev)).not.toContain("runtimeDiff");
+    expect((plain.data as any).steps[1].sincePrev.systemSize.add).toBeGreaterThan(0);
+    expect(Object.keys((plain.data as any).steps[1].sincePrev)).not.toContain("systemDiff");
 
     // ── diff：两种模式（都在 main 侧算完） ──
     // ① 选中某步 → 与上一步比
@@ -330,9 +299,8 @@ describe("上下文树：投递快照（steps）", () => {
     expect(sd.base.index).toBe(1);
     expect(sd.target.index).toBe(2);
     expect(sd.changed).toEqual(["task.body"]);
-    expect(sd.systemDiffers).toBe(false); // 稳定项没变 → 可缓存
-    expect(sd.runtimeDiffers).toBe(true);
-    expect(sd.runtimeDiff.some((l: any) => l.t === "+" && l.s.includes("二"))).toBe(true);
+    expect(sd.systemDiffers).toBe(true); // 全文里能看到正文变
+    expect(sd.systemDiff.some((l: any) => l.t === "+" && l.s.includes("二"))).toBe(true);
 
     // ② 不给 --step → **当前变量树** vs 最后一步（"我现在改的会不会变"）
     // （正文有 10 字下限：`task edit` 会拒绝过短输入，这里给足）
@@ -343,7 +311,7 @@ describe("上下文树：投递快照（steps）", () => {
     expect(ld.base.index).toBe(2);
     expect(ld.target).toBeNull();
     expect(ld.changed).toContain("task.body");
-    expect(ld.runtimeDiff.some((l: any) => l.t === "+" && l.s.includes("第三行也在这里"))).toBe(true);
+    expect(ld.systemDiff.some((l: any) => l.t === "+" && l.s.includes("第三行也在这里"))).toBe(true);
 
     // 没有真发记录时 → null（界面显示"还没有真发记录"）
     const other = await fx.sh.getJson(`./diy.sh task create 空任务 ${pid}`);
@@ -439,11 +407,9 @@ describe("上下文树：变更历史（事件粒度）", () => {
       turnId: "t1",
       model: "mimo-v2.5",
       wireVersion: "aaaa1111",
-      systemPlaces: ["diy"],
-      runtimePlaces: ["task.body"],
+      places: ["diy", "task.body"],
       valueHashes: { diy: "h1", "task.body": "b1" },
-      systemText: "diy:\n  cli: /repo",
-      runtimeText: 'task:\n  body: "一"',
+      systemText: 'help:\n  about: x\nvars:\n  diy:\n    cli: /repo\n  task:\n    body: "一"',
       ...over,
     });
     const stepsFile = homeFile(uri, "steps");
@@ -452,7 +418,7 @@ describe("上下文树：变更历史（事件粒度）", () => {
       stepsFile,
       [
         rec({}),
-        rec({ turnId: "t2", valueHashes: { diy: "h1", "task.body": "b2" }, runtimeText: 'task:\n  body: "二"' }),
+        rec({ turnId: "t2", valueHashes: { diy: "h1", "task.body": "b2" }, systemText: 'help:\n  about: x\nvars:\n  diy:\n    cli: /repo\n  task:\n    body: "二"' }),
       ]
         .map((r) => JSON.stringify(r))
         .join("\n") + "\n",
@@ -468,9 +434,7 @@ describe("上下文树：变更历史（事件粒度）", () => {
       { kind: "update", path: "task.body", before: null, after: null },
     ]);
     // ref 从投递快照按 turnId join：第 2 轮的划分 + 两份容器是否变
-    expect(dv.entries[1].systemPlaces).toEqual(["diy"]);
-    expect(dv.entries[1].systemDiffers).toBe(false);
-    expect(dv.entries[1].runtimeDiffers).toBe(true);
+    expect(dv.entries[1].systemDiffers).toBe(true);
     expect(dv.entries[1].incomparable).toBe(false);
     expect(dv.entries[1].cost).toBeNull(); // 没有用量账本 → 不编数
 
@@ -609,7 +573,7 @@ describe("上下文树：UI 上屏（两列 + 信封原始数据 `<>`）", () =>
     await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
     await fx.sh.getJson(`./diy.sh ui tab open ctxlab:${uri}`);
 
-    // 两列：结构树（左）/ 中栏（变量树变更 · system/runtime diff · 该步实际请求）
+    // 两列：结构树（左）/ 中栏（变量树变更 · system diff · 该步实际请求）
     const base = await waitUntil(
       a11yText,
       (s) => s.includes("变量（契约）") && s.includes("变量树变更（整棵树 + 标注）"),
@@ -620,9 +584,9 @@ describe("上下文树：UI 上屏（两列 + 信封原始数据 `<>`）", () =>
     for (const g of ["请求预览（实际发送格式）", "变更详情", "system 份（稳定", "runtime 份（易变", "投递单元"]) {
       expect(base, `已删的视图不该再上屏：${g}`).not.toContain(g);
     }
-    // 中栏四块标题常驻
+    // 中栏三块标题常驻（##520：信封只有一份，不再有 runtime diff 那一块）
     expect(base).toContain("system diff（逐行 · 真发全文）");
-    expect(base).toContain("runtime diff（逐行 · 真发全文）");
+    expect(base).not.toContain("runtime diff");
     expect(base).toContain("该步实际请求（真发 · 流量）");
 
     // 真实 AGENTS.md 内容上屏（等 RPC；首帧 system 名单还没加载完）
@@ -666,11 +630,9 @@ describe("上下文树：UI 上屏（两列 + 信封原始数据 `<>`）", () =>
       turnId: "t-intent",
       model: "mimo-v2.5",
       wireVersion: "aaaa1111",
-      systemPlaces: ["diy"],
-      runtimePlaces: ["task.body"],
+      places: ["diy", "task.body"],
       valueHashes: { diy: "h1", "task.body": "b1" },
       systemText: "help:\n  about: x\nsystem:\n  diy:\n    cli: /repo",
-      runtimeText: 'runtime:\n  task:\n    body: "一"',
       ...over,
     });
     writeFileSync(
@@ -681,7 +643,6 @@ describe("上下文树：UI 上屏（两列 + 信封原始数据 `<>`）", () =>
           turnId: "t-intent-2",
           valueHashes: { diy: "h1", "task.body": "b2" },
           systemText: "help:\n  about: x\nsystem:\n  diy:\n    cli: /repo/v2",
-          runtimeText: 'runtime:\n  task:\n    body: "二（意图测试）"',
         }),
       ]
         .map((r) => JSON.stringify(r))
@@ -719,7 +680,6 @@ describe("上下文树：UI 上屏（两列 + 信封原始数据 `<>`）", () =>
     //    这里点页面自己的「⟳ 刷新」—— 也正是"没有实时推送"这条契约的正当用法。
     await fold("history", true);
     await fold("sysdiff", true);
-    await fold("rtdiff", true);
     await fold("vardiff", true);
     const uiRefresh = await makeUiDriver(fx.electron.cdpUrl, async () => {
       const r = await fx.sh.getJson("./diy.sh ui inspect");
@@ -751,7 +711,7 @@ describe("上下文树：UI 上屏（两列 + 信封原始数据 `<>`）", () =>
       label: "两侧 diff（轮 vs 轮）上屏",
     });
     expect(detail).toContain("/repo/v2");
-    expect(detail).toContain('body: "二（意图测试）"');
+    expect(detail).toContain("二（意图测试）");
     expect(detail).toContain("绿 = 新增行，红 = 删除行");
 
     // ★ `<>` 的说明走 view 顶的 **info bar**，**不掺进原始数据正文**（用户 2026-10-15：
@@ -762,22 +722,22 @@ describe("上下文树：UI 上屏（两列 + 信封原始数据 `<>`）", () =>
       return (r.data as any)?.data?.tree as A11yNode | undefined;
     });
     try {
-      await ui3.clickSelector('button[title*="runtime diff"]');
+      await ui3.clickSelector('button[title*="system diff"]');
     } finally {
       ui3.close();
     }
-    const rawRt = await waitUntil(a11yText, (s) => s.includes("流量日志里找不到该步的请求"), {
-      label: "runtime `<>` 原始数据 + info bar 上屏",
+    const rawSys = await waitUntil(a11yText, (s) => s.includes("该步真发的 system 参数全文"), {
+      label: "system `<>` 原始数据 + info bar 上屏",
     });
-    expect(rawRt).not.toContain("# 流量日志里找不到该步的请求"); // 注释不再进正文
-    expect(rawRt).toContain('body: "二（意图测试）"'); // 正文 = 真发的组装产物
+    expect(rawSys).not.toContain("# 该步真发的 system 参数全文"); // 注释不再进正文
+    expect(rawSys).toContain("二（意图测试）"); // 正文 = 真发的组装字节
 
     await fx.sh.run(`./diy.sh project remove ${pid}`);
   }, 180_000);
 });
 
 describe("上下文树：可见性增强（统计接页 / 变更原因 / tab 标题）", () => {
-  it("统计块上屏（行单元格）；sys 徽章显示变更原因；nav tab 标题为「上下文树」", async () => {
+  it("统计块上屏（行单元格）；sys 徽章标出段首重建；nav tab 标题为「上下文树」", async () => {
     const repo = `${fx.HOME}/ctxlab-vis`;
     mkdirSync(repo, { recursive: true });
     const p = await fx.sh.getJson(`./diy.sh project create "${repo}" --label 可见性`);
@@ -786,18 +746,15 @@ describe("上下文树：可见性增强（统计接页 / 变更原因 / tab 标
     const uri = String((t.data as any)?.data?.uri);
     clearLocal(uri); // 撞名残留会混进断言（见 clearLocal 头注）
 
-    // 手写两条快照：第二条 `chain.0` 值变 → system 全量重建；原因应收拢到投递单元 `chain`
-    // （叶子 chain.0 → 单元 chain，见 ContextLabPage 的 sysCauses / attributionOf）。
+    // 手写两条快照：第二条 `chain.0` 值变 → 全文 diff 非空 ⇒ 标一个 sys 徽章。
     const rec = (over: Record<string, unknown>) => ({
       ts: "2026-09-27T00:00:00.000Z",
       turnId: "v1",
       model: "mimo-v2.5",
       wireVersion: "aaaa1111",
-      systemPlaces: ["chain"],
-      runtimePlaces: ["task.body"],
+      places: ["chain", "task.body"],
       valueHashes: { "chain.0": "c1", "task.body": "b1" },
       systemText: "chain:\n  - path: /a",
-      runtimeText: 'task:\n  body: "一"',
       ...over,
     });
     const stepsFile = homeFile(uri, "steps");
@@ -858,12 +815,12 @@ describe("上下文树：可见性增强（统计接页 / 变更原因 / tab 标
       // chain.0：变了 2 次 / 4 轮 = 50%；归属收拢到投递单元 chain
       expect(rowCells(st, "chain.0", "变更统计（项目累计）").slice(0, 3)).toEqual(["2", "50%", "chain"]);
 
-      // R2: 展开「变更历史」→ sys 徽章旁显示原因（chain），且是**当轮快照**的划分
+      // R2: 展开「变更历史」→ 全文变了的轮次带 sys 徽章（##520 起不再编「由谁引起」）
       await fold("history", true);
-      const sp = await waitUntil(a11yText, (s) => /^sys\s*chain$/m.test(s), {
-        label: "sys 徽章显示变更原因",
+      const sp = await waitUntil(a11yText, (s) => /^sys$/m.test(s), {
+        label: "sys 徽章标出段首重建",
       });
-      expect(sp).toMatch(/^sys\s*chain$/m);
+      expect(sp).toMatch(/^sys$/m);
     } finally {
       ui.close();
     }
@@ -919,8 +876,8 @@ describe("上下文树：归属三态与中间容器折叠（review RV-01 / RV-0
   }, 120_000);
 });
 
-describe("上下文树：sys 归因基于当轮快照（review RV-02）", () => {
-  it("改划分后，同一历史轮次的 sys 原因不变（不随页面当前划分漂移）", async () => {
+describe("上下文树：sys 徽章只看快照自身（##520）", () => {
+  it("同一历史轮次反复重开页面，徽章与全文 diff 结论不变（不依赖当前状态）", async () => {
     const repo = `${fx.HOME}/ctxlab-cause`;
     mkdirSync(repo, { recursive: true });
     const p = await fx.sh.getJson(`./diy.sh project create "${repo}" --label 归因`);
@@ -934,11 +891,9 @@ describe("上下文树：sys 归因基于当轮快照（review RV-02）", () => 
       turnId: "v1",
       model: "mimo-v2.5",
       wireVersion: "aaaa1111",
-      systemPlaces: ["chain", "diy"],
-      runtimePlaces: ["task.body"],
+      places: ["chain", "task.body"],
       valueHashes: { "chain.0": "c1", "task.body": "b1" },
       systemText: "chain:\n  - path: /a",
-      runtimeText: 'task:\n  body: "一"',
       ...over,
     });
     const stepsFile = homeFile(uri, "steps");
@@ -964,22 +919,16 @@ describe("上下文树：sys 归因基于当轮快照（review RV-02）", () => 
 
     try {
       await open();
-      const before = await waitUntil(a11yText, (s) => /^sys\s*chain$/m.test(s), {
-        label: "划分=默认：原因 chain",
-      });
-      expect(sysBadge(before)).toBe("sys chain");
-
-      // 把 chain 移出 system（改真源 context.yaml → 页面 lab().rules 随之变）
-      await fx.sh.getJson(`./diy.sh context setConfig --systemPlaces '["diy"]'`);
+      const before = await waitUntil(a11yText, (s) => /^sys$/m.test(s), { label: "徽章上屏" });
+      expect(sysBadge(before)).toBe("sys");
       await open(); // 重挂页面 = 重拉资源
       const after = await waitUntil(a11yText, (s) => s.includes("变更历史（真发轮次）"), {
-        label: "重开页面（划分=只留 diy）",
+        label: "重开页面",
       });
-      // ★ 关键：归因基于**当轮快照的 systemPlaces**，不随当前划分漂移 —— 仍是 chain
-      expect(sysBadge(after)).toBe("sys chain");
+      // 结论只由快照字节决定，与页面当前统计/列表状态无关
+      expect(sysBadge(after)).toBe("sys");
     } finally {
       await fx.sh.run(`./diy.sh project remove ${pid}`);
-      rmSync(join(fx.HOME, "context.yaml"), { force: true }); // 清全局真源（否则污染后续用例）
     }
   }, 120_000);
 });
@@ -1017,11 +966,9 @@ describe("上下文树：统计与归因的边界（review RV-07 / RV-08）", ()
       turnId: "n1",
       model: "mimo-v2.5",
       wireVersion: "aaaa1111",
-      systemPlaces: ["chain"],
-      runtimePlaces: ["task.body"],
+      places: ["chain", "task.body"],
       valueHashes: { "chain.0": "c1", "task.body": "b1" },
       systemText: "chain:\n  - path: /a",
-      runtimeText: 'task:\n  body: "一"',
       ...over,
     });
     const stepsFileB = homeFile(uriB, "steps");

@@ -2,15 +2,17 @@
 // 🎯 「每轮真发」的投递快照（Step）与其 diff —— 纯函数 + 类型，落盘形状与传输形状同一份。
 //
 // 为什么需要它：投递太复杂，看不出"提示词这一层每一步到底发生了什么"。有了每轮快照，
-// 两种变更都能回答（144 的设计原话：system 全量重建、runtime 增量 patch）：
+// 两种变更都能回答：
 //   · 选中第 N 步 → 第 N 步 vs 第 N-1 步
 //   · 取消选中   → 当前变量树 vs 最后一步
 //
-// 为什么不用"页面轮询重算"：那种观察列表没有因果、关页面就丢、不对齐真实轮次，
-// 且实现（`history.ts`）已随本方案删除（`d9917c9`）；本文件是**真发落盘**的事实记录（对齐轮次、可回放）。
+// 为什么不用"页面轮询重算"：那种观察列表没有因果、关页面就丢、不对齐真实轮次。
+// 本文件是**真发落盘**的事实记录（对齐轮次、可回放）。
 //
 // 落盘：会话目录 `$DIY_HOME/local/<uri 路径>/<key>/steps.jsonl`（##379 分层；旧平铺 `<key>.steps.jsonl` 读侧兜底），一行一条（append-only）。
 // **不塞进 raw.jsonl**：那是旁路观测（明确不参与 UI/状态恢复），而这份是投递事实。
+//
+// ##520：没有 system / runtime 两容器了 —— 快照只记**一份** system 文本（信封 `help:` + `vars:`）。
 //
 // 约定：本文件只放纯函数，禁止 import node:*（renderer 会打进包）。
 
@@ -25,26 +27,29 @@ export interface DeliveryStepRecord {
     model: string;
     /** 投递编码版本（变了就说明"同形不可比"，diff 要标注） */
     wireVersion: string;
-    systemPlaces: string[];
-    runtimePlaces: string[];
+    /** 原子单元名单（增量与变更历史的粒度；##520 起没有 system/runtime 划分） */
+    places: string[];
     /** path → 子树值 hash（"哪些变量变了"） */
     valueHashes: Record<string, string>;
-    /** system 容器全文（含说明头）—— 每轮全量，故 diff 需要两份全文 */
+    /** 真发的 system 参数全文（`help:` + `vars:` 信封）—— 每轮全量，故 diff 需要两份全文 */
     systemText: string;
     /**
      * 该步 system 快照所属的压缩段（生效边界的 `at`；缺省 = 从未压缩 / 旧快照）。
      * 边界变了 ⇒ 新段必须用现状重建 system（`frozenSystemTextOf` 的判据）。
      */
     compactAt?: string;
-    /** runtime 容器全文 */
-    runtimeText: string;
+    /**
+     * **老快照遗留**：##520 之前的 `runtime:` 段副本。新记录不再写，读侧容忍缺字段。
+     * 保留它只为读存量步骤记录（不再参与新快照的 diff 结论）。
+     */
+    runtimeText?: string;
     /**
      * 尾部信封里 `history:` 那一段（压缩索引注记；空/缺 = 本轮没压缩 / 老快照没记）。
      *
      * 为什么要记（##5 第 16 轮，用户实测：「runtimeDiff 里并没有体现出 history 的变化」）：
      * `history:` **不是变量树的单元** —— 它是 `deliveryHistory()` 在轮首算出来、由 `withRuntime`
      * 拼进信封的一段，真源是压缩选择（`selectHistoryByBudget`），与 `assembleGlobals` 无关。
-     * 于是它既不会出现在 `runtimeDiff` 里，也不进 `valueHashes` ⇒ **变化了也没有任何地方能看到**。
+     * 于是它既不会出现在增量里，也不进 `valueHashes` ⇒ **变化了也没有任何地方能看到**。
      * 记进快照后，步骤列表/差异视图才能回答「这一轮 history 段跟上一轮一样吗」。
      */
     historyText?: string;
@@ -77,12 +82,10 @@ export interface DeliveryStep extends DeliveryStepRecord {
 export interface StepDiff {
     /** 值 hash 不同的 path（含中间容器；字典序，稳定可比对） */
     changed: string[];
-    /** system 份是否整体变化（渲染结果变了才算） */
+    /** 信封全文是否整体变化（渲染结果变了才算） */
     systemDiffers: boolean;
-    runtimeDiffers: boolean;
     /** 行级 diff（点开看内容用）；未变则空数组 */
     systemDiff: DiffLine[];
-    runtimeDiff: DiffLine[];
     /** `history:` 注记段是否变（老快照缺字段 ⇒ false = 不下结论，不谎报"变了"） */
     historyDiffers: boolean;
     summaryDiffers: boolean;
@@ -99,7 +102,6 @@ export function diffSteps(prev: DeliveryStepRecord, next: DeliveryStepRecord): S
     const keys = new Set([...Object.keys(prev.valueHashes), ...Object.keys(next.valueHashes)]);
     const changed = [...keys].filter((k) => prev.valueHashes[k] !== next.valueHashes[k]).sort();
     const systemDiffers = prev.systemText !== next.systemText;
-    const runtimeDiffers = prev.runtimeText !== next.runtimeText;
     // 注记段：**缺字段**（老快照）与「空串」是两码事 —— 老快照永远 `undefined`，
     // 拿它跟新快照的 `history:\n…` 比会报一次假「变了」（同一形状的坑：`expose` 曾把
     // "合并后集合非空"当成"这个库声明了"，于是默认档静默失效）。缺 = 不知道 ⇒ 不下结论。
@@ -113,11 +115,9 @@ export function diffSteps(prev: DeliveryStepRecord, next: DeliveryStepRecord): S
     return {
         changed,
         systemDiffers,
-        runtimeDiffers,
         historyDiffers,
         summaryDiffers,
         systemDiff: systemDiffers ? lineDiff(prev.systemText, next.systemText) : [],
-        runtimeDiff: runtimeDiffers ? lineDiff(prev.runtimeText, next.runtimeText) : [],
         historyDiff,
         summaryDiff,
         incomparable: prev.wireVersion !== next.wireVersion,
@@ -147,10 +147,9 @@ export interface StepSummary {
     turnId: string;
     model: string;
     wireVersion: string;
-    /** 两个容器的字节数（列表里一眼看体量） */
-    bytes: { system: number; runtime: number };
-    systemPlaces: string[];
-    runtimePlaces: string[];
+    /** 信封全文的字节数（列表里一眼看体量） */
+    bytes: { system: number };
+    places: string[];
     /**
      * 与**上一步**的比较；首步为 null（它是 baseline，没有"上一步"）。
      * 只放**统计**+ 判定，不放行内容 —— 列表一条都别带几十 KB 的 diff
@@ -159,17 +158,15 @@ export interface StepSummary {
     sincePrev: {
         changed: string[];
         systemDiffers: boolean;
-        runtimeDiffers: boolean;
         /** `history:` 注记段是否变（老快照缺字段时为 false = 不下结论） */
         historyDiffers: boolean;
         summaryDiffers: boolean;
         incomparable: boolean;
         systemSize: { add: number; del: number };
-        runtimeSize: { add: number; del: number };
         historySize: { add: number; del: number };
     } | null;
     /** 行级 diff 内容（`withDiff` 时才带；默认只给统计，避免下发整份文本） */
-    diff?: { system: DiffLine[]; runtime: DiffLine[]; history: DiffLine[] } | null;
+    diff?: { system: DiffLine[]; history: DiffLine[] } | null;
 }
 
 /**
@@ -188,26 +185,23 @@ export function summarizeSteps(
         const idx = base + i;
         const prev = idx > 0 ? records[idx - 1]! : null;
         const d = prev ? diffSteps(prev, r) : null;
-        const raw = opts.withDiff && d ? { system: d.systemDiff, runtime: d.runtimeDiff, history: d.historyDiff } : undefined;
+        const raw = opts.withDiff && d ? { system: d.systemDiff, history: d.historyDiff } : undefined;
         return {
             index: idx + 1,
             ts: r.ts,
             turnId: r.turnId,
             model: r.model,
             wireVersion: r.wireVersion,
-            bytes: { system: byteLen(r.systemText), runtime: byteLen(r.runtimeText) },
-            systemPlaces: r.systemPlaces,
-            runtimePlaces: r.runtimePlaces,
+            bytes: { system: byteLen(r.systemText) },
+            places: r.places ?? [],
             sincePrev: d
                 ? {
                       changed: d.changed,
                       systemDiffers: d.systemDiffers,
-                      runtimeDiffers: d.runtimeDiffers,
                       historyDiffers: d.historyDiffers,
                       summaryDiffers: d.summaryDiffers,
                       incomparable: d.incomparable,
                       systemSize: diffSize(d.systemDiff),
-                      runtimeSize: diffSize(d.runtimeDiff),
                       historySize: diffSize(d.historyDiff),
                   }
                 : null,

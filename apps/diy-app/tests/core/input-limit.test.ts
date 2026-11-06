@@ -15,7 +15,7 @@ import {
     PASTE_HEAD_LINES,
     pasteFileMessage,
 } from "../../src/shared/context/input-limit";
-import { sanitizeInputLimitChars } from "../../src/shared/context/config";
+import { sanitizeInputLimitChars } from "../../src/shared/context/input-limit";
 
 describe("inputGate：本条消息的判据", () => {
     it("未超限 → over=false（UI 必须零变化）", () => {

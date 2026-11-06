@@ -9,7 +9,6 @@
 import { describe, expect, it } from "vitest";
 import {
     assembleFromProviders,
-    defaultSystemPlaces,
     treeOfGlobals,
     valueHashes,
     type ContextProvider,
@@ -58,7 +57,6 @@ describe("BotAgent：请求的前缀不变（总体验证点）", () => {
             model: "test/model",
             providers,
             instructions: "",
-            systemPlaces: defaultSystemPlaces(),
             initialSnapshot: null,
         });
     }
@@ -156,7 +154,6 @@ describe("BotAgent：跨轮增量（接在 user 前缀上，不另起一条消�
             model: "test/model",
             providers,
             instructions: "",
-            systemPlaces: defaultSystemPlaces(),
             initialSnapshot: null,
         });
 
@@ -201,7 +198,6 @@ describe("BotAgent：initialSnapshot 由调用方给（Agent 不决定快照怎�
                 { key: "skills", provide: () => [] },
             ],
             instructions: "",
-            systemPlaces: defaultSystemPlaces(),
             initialSnapshot,
         });
 

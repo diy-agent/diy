@@ -18,6 +18,15 @@ import { estimateTokens } from "@diy-agent/compaction/compaction";
 /** 缺省阈值：10 万字符（≈ 25k token；一般上下文窗口下这是「明显异常」的起点） */
 export const DEFAULT_INPUT_LIMIT_CHARS = 100_000;
 
+/**
+ * 净化输入上限（读侧一律走它）：只认**正数**，其余一律回落缺省。
+ * 为什么不设上限：阈值是给「明显异常」用的门槛，用户想调多严是自己的事（判据只是"这条消息多长"）。
+ */
+export function sanitizeInputLimitChars(raw: unknown): number {
+    if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 1) return DEFAULT_INPUT_LIMIT_CHARS;
+    return Math.floor(raw);
+}
+
 /** 转文件时消息体里给多少行开头（够模型判断"这是什么"，又不必重付全文） */
 export const PASTE_HEAD_LINES = 20;
 
@@ -36,7 +45,7 @@ export function byteLenOf(text: string): number {
 export interface InputGateInput {
     /** 用户本条消息原文 */
     text: string;
-    /** 阈值（字符数）；`context.yaml` 的 `inputLimitChars` */
+    /** 阈值（字符数）；`input-limit.yaml` 的 `inputLimitChars` */
     limitChars: number;
     /** 当前模型上下文窗口（token）；未知 → null（窗口占用率给不出，不编） */
     contextLimitTokens?: number | null;

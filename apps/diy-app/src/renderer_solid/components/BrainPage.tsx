@@ -2,7 +2,7 @@
  * BrainPage — 大脑页（**独立子页面**，用户 2026-10-23 拍板：与上下文树平行）。
  *
  * 一句话：把「agent 每步思考时脑子里到底放了什么、花了多少钱」摊开。
- * 上下文窗口 = 脑容量；system / runtime 投影 + 消息历史 = 每次思考的材料。
+ * 上下文窗口 = 脑容量；变量树投影 + 消息历史 = 每次思考的材料。
  *
  * 与既有页面的分工（刻意不重叠）：
  *   · 上下文树（ctxlab）：**变量变了什么**（树形、划分规则、diff）；
@@ -12,7 +12,7 @@
  *     结果与原因必须同屏：只给分不给出处，人只能猜它是怎么来的）。
  *
  * 段的分组口径（`shared/context/request-budget.ts` 的真源）：**谁生成的、能不能减** ——
- * 不是「在哪个容器里」。所以是 `chain · ~/AGENTS.md` / `help` / `runtime.facts` /
+ * 不是「在哪个容器里」。所以是 `chain · ~/AGENTS.md` / `help` / `vars.facts` /
  * `历史 · tool` 这个粒度，而不是 `system / runtime` 两个大桶（大桶永远看不出该砍谁）。
  *
  * 数据源：**内存里的流量记录**（`traffic.snapshot`，用户口径「先不存、用内存内的历史即可」）。
@@ -101,7 +101,7 @@ interface BrainStep {
 const GROUP_META: Record<MindGroup, { label: string; cls: string }> = {
     history: { label: "历史重发", cls: "bg-error" },
     system: { label: "system 链", cls: "bg-warning" },
-    runtime: { label: "runtime 投影", cls: "bg-info" },
+    runtime: { label: "变量树", cls: "bg-info" },
     help: { label: "help（结构说明）", cls: "bg-success" },
     input: { label: "本轮输入", cls: "bg-primary" },
     tools: { label: "工具定义", cls: "bg-neutral" },
@@ -221,7 +221,7 @@ export function BrainPage(props: { uri: string }): JSX.Element {
 
     /**
      * 「上一份同容器」的段：用来判「这次到底变了没有」。
-     * 取**上一步**（不是上一个同轮首步）：轮中只发 `runtimeDiff` 时，上一份全量就是本轮首步那份，
+     * 取**上一步**（不是上一个同轮首步）：轮中只发变量增量时，上一份全量就是本轮首步那份，
      * 于是"和上一步比"自然对上了；跨轮时上一步是上一轮最后一步，也能看出全量重发了几段。
      */
     const prevSegs = (s: BrainStep): MindSegment[] | undefined => {
@@ -230,7 +230,7 @@ export function BrainPage(props: { uri: string }): JSX.Element {
         return i > 0 ? list[i - 1]?.segments : undefined;
     };
 
-    /** 本步「没变化却仍在 byte 账里」的 runtime 段（纯重发；设计后果，但必须看得见） */
+    /** 本步「没变化却仍在 byte 账里」的变量段（纯重发；设计后果，但必须看得见） */
     const resentRuntime = (s: BrainStep): MindSegment[] =>
         unchangedSegments(
             s.segments.filter((x) => x.group === "runtime"),
@@ -377,7 +377,7 @@ export function BrainPage(props: { uri: string }): JSX.Element {
                 <Show when={s.note}>
                     <div class="rounded border border-warning/40 bg-warning/10 px-2 py-1 text-caption">{s.note}</div>
                 </Show>
-                {/* 重发账：本步 runtime 段里「与上一步逐字相同」的那部分 —— 不是 bug，是
+                {/* 重发账：本步变量段里「与上一步逐字相同」的那部分 —— 不是 bug，是
                     "上一轮那份不在历史里，每轮首步必须重建"的代价。把代价标出来，才谈得上要不要改。 */}
                 <Show when={resentRuntime(s).length > 0}>
                     <div class="rounded border border-info/40 bg-info/10 px-2 py-1 text-caption">
@@ -385,8 +385,8 @@ export function BrainPage(props: { uri: string }): JSX.Element {
                             const same = resentRuntime(s);
                             const bytes = same.reduce((n, x) => n + x.bytes, 0);
                             const all = s.segments.filter((x) => x.group === "runtime");
-                            return `runtime 重发 ${fmtBytes(bytes)}（${same.length}/${all.length} 段与上一步逐字相同：${same
-                                .map((x) => x.key.replace(/^runtime\./, ""))
+                            return `变量重发 ${fmtBytes(bytes)}（${same.length}/${all.length} 段与上一步逐字相同：${same
+                                .map((x) => x.key.replace(/^(?:runtime|varsDiff|vars)\./, ""))
                                 .join(" · ")}）—— 每轮首步都发全量，因为上一轮那份不进历史`;
                         })()}
                     </div>

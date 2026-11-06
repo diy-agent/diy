@@ -1,109 +1,94 @@
 // src/shared/context/projection.ts
 // 🎯 Context Tree → 模型 wire 的投影（纯函数）。
 //
-// 两个容器行为不同（144 结论）：
-//   system   —— 每次请求**全量重建**，不进历史，因此天然没有补丁
-//   runtime  —— **增量 patch**，只在必要时发全量 snapshot（声明 supersedes=all）
+// 只有一个投递形态（##520：system / runtime 两容器已删）：
+//   · 全量 = 信封（`help:` + `vars:`），每次请求重建，放 system 参数
+//   · 增量 = 按**原子单元**逐条比 `renderedHash`；变了的单元才发
 //
 // 增量判据只有一个：place 的 **renderedHash**（渲染出来的文本 hash）。
 // 值变了但模板没引用到 → renderedHash 不变 → 不投递（144 用例 14）。
 // 所有 place 消失 → 必须发**显式清空**，不能只是「什么都不发」（用例 5）。
 
 import { hashText } from "./hash.js";
-import { placeText, renderPlaces } from "./wire-render.js";
-import { runtimeEnvelope, systemEnvelope } from "./envelope.js";
-import { placesIn } from "./tree.js";
+import { placeText } from "./wire-render.js";
+import { dataText, varsEnvelope } from "./envelope.js";
 import { WIRE_VERSION } from "./wire.js";
 import type {
     ContextPath,
     ContextProjection,
     ContextTreeState,
+    DeliveryCursor,
+    DeltaDelivery,
+    DeltaOp,
     ProjectionResult,
-    RuntimeCursor,
-    RuntimeDelivery,
-    RuntimePatchOp,
 } from "./types.js";
 
 /** 空水位（还没有任何一次投递） */
-export function emptyCursor(): RuntimeCursor {
-    return { delivered: {}, wireVersion: WIRE_VERSION, placementEpoch: 0 };
+export function emptyCursor(): DeliveryCursor {
+    return { delivered: {}, wireVersion: WIRE_VERSION };
 }
 
-/** 当前 runtime 各 place 的 renderedHash（增量比较的真源） */
+/** 当前各原子单元的 renderedHash（增量比较的真源） */
 export function renderedHashes(state: ContextTreeState): Record<ContextPath, string> {
     const out: Record<ContextPath, string> = {};
-    for (const p of placesIn(state, "runtime")) out[p] = hashText(placeText(state, p));
+    for (const p of [...state.places].sort()) out[p] = hashText(placeText(state, p));
     return out;
 }
 
 /**
- * system 容器全量文本（每次请求重建，无状态）= **信封**：`help:`（zod 派生的结构说明）
- * + `system:`（变量树）。与真发**同一处产出**（`envelope.ts` 的 `systemEnvelope`）——
- * 两处各造一份必然漂移。
+ * 信封全文（`help:` + `vars:`；每次请求重建，无状态）。
+ * 与真发**同一处产出**（`envelope.ts` 的 `varsEnvelope`）—— 两处各造一份必然漂移。
  */
-export function systemText(state: ContextTreeState): string {
-    return systemEnvelope(state, placesIn(state, "system"), placesIn(state, "runtime")).text;
+export function envelopeText(state: ContextTreeState): string {
+    return varsEnvelope(state, state.places, state.places).text;
 }
 
 /**
- * system 的**纯数据部分**（不带 help 段）。
+ * 变量树的**纯数据部分**（不带 help 段）。
  * 存在的理由：help 是固定长文，golden 比对/调试时只想看数据本身。
  */
-export function systemData(state: ContextTreeState): string {
-    return renderPlaces(state, placesIn(state, "system"));
-}
-
-/**
- * runtime 容器全量文本（snapshot 内容 / 调试对照）= **信封**：`runtime:` 一段。
- * 与真发同一处产出（`envelope.ts` 的 `runtimeEnvelope`）。
- */
-export function runtimeText(state: ContextTreeState): string {
-    return runtimeEnvelope(state, placesIn(state, "runtime")).text;
+export function dataOf(state: ContextTreeState): string {
+    return dataText(state, [...state.places].sort());
 }
 
 /**
  * 投影一次。
- * `prev` 为 null = 首次（发 snapshot 建立 baseline，不算 rebaseline）。
- * wire 版本变化 / placement 迁移 → 强制 snapshot + needRebaseline。
+ * `prev` 为 null = 首次（发全量建立 baseline，不算 rebaseline）。
+ * wire 版本变化 → 强制全量 + needRebaseline。
  */
-export function project(state: ContextTreeState, prev: RuntimeCursor | null = null): ProjectionResult {
-    const system = systemText(state);
+export function project(state: ContextTreeState, prev: DeliveryCursor | null = null): ProjectionResult {
+    const text = envelopeText(state);
+    const data = dataOf(state);
     const next = renderedHashes(state);
     const versionChanged = prev !== null && prev.wireVersion !== state.wireVersion;
-    const placementChanged = prev !== null && prev.placementEpoch !== state.placementEpoch;
 
-    let runtime: RuntimeDelivery;
+    let delta: DeltaDelivery;
     let needRebaseline = false;
 
     if (prev === null) {
-        runtime = { kind: "snapshot", text: runtimeText(state), supersedes: "all" };
+        delta = { kind: "snapshot", text: text, supersedes: "all" };
         needRebaseline = true;
-    } else if (versionChanged || placementChanged) {
-        runtime = { kind: "snapshot", text: runtimeText(state), supersedes: "all" };
+    } else if (versionChanged) {
+        delta = { kind: "snapshot", text: text, supersedes: "all" };
         needRebaseline = true;
     } else {
-        runtime = diffRuntime(state, prev.delivered, next);
+        delta = diffUnits(state, prev.delivered, next);
     }
 
-    const projection: ContextProjection = {
-        system,
-        runtime,
-        runtimeText: runtimeText(state),
-        needRebaseline,
-    };
+    const projection: ContextProjection = { text, data, delta, needRebaseline };
     return {
         projection,
-        cursor: { delivered: next, wireVersion: state.wireVersion, placementEpoch: state.placementEpoch },
+        cursor: { delivered: next, wireVersion: state.wireVersion },
     };
 }
 
 /** 增量：新有旧无/内容变 → set；旧有新无 → remove；全空且有旧 → clear */
-function diffRuntime(
+function diffUnits(
     state: ContextTreeState,
     prev: Record<ContextPath, string>,
     next: Record<ContextPath, string>,
-): RuntimeDelivery {
-    const ops: RuntimePatchOp[] = [];
+): DeltaDelivery {
+    const ops: DeltaOp[] = [];
     for (const [p, h] of Object.entries(next)) {
         if (prev[p] !== h) ops.push({ op: "set", path: p, content: placeText(state, p) });
     }
