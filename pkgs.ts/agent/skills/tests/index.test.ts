@@ -56,8 +56,9 @@ describe("fixture：各级合并与 frontmatter", () => {
         skill(join(repo, ".agents"), "zzz", "项目的");
         const out = skillsOf({ cwd: repo, globalRoot, stopAt: root });
         expect(out.map((s) => s.name)).toEqual(["aaa", "zzz"]);
-        expect(out[0]!.scope).toContain("global");
-        expect(out[1]!.scope).toContain("repo");
+        // scope 已删（用户 2026-11-07：只留 path 先试效果）—— 改断言 path 落在哪一层
+        expect(out[0]!.path).toContain("global");
+        expect(out[1]!.path).toContain("repo");
     });
 
     it("同名时**更近的目录**覆盖（项目能覆盖全局）", () => {

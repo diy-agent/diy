@@ -28,8 +28,6 @@ export interface SkillItem {
     readonly desc: string;
     /** SKILL.md 绝对路径（模型要用 `read` 打开它） */
     readonly path: string;
-    /** 这个 skill 属于哪一层（`~/.agents/skills` 或某个仓库的 `.agents/skills`） */
-    readonly scope: string;
 }
 
 export interface SkillsOptions {
@@ -63,7 +61,6 @@ function skillsIn(dir: string): SkillItem[] {
             name: meta['name'] !== undefined && meta['name'] !== '' ? meta['name'] : entry.name,
             desc: meta['description'] ?? '',
             path: file,
-            scope: dir,
         });
     }
     return out;

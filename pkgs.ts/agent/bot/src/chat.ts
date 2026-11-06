@@ -216,7 +216,6 @@ const SKILLS_HELP = {
         name: { type: "string", desc: "技能名" },
         desc: { type: "string", desc: "说明（含触发词）" },
         path: { type: "string", desc: "SKILL.md 路径（要看全文就 read 它）" },
-        scope: { type: "string", desc: "属于哪一层（全局 / 某仓库）" },
     },
 };
 
