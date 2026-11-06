@@ -90,12 +90,15 @@ build() {
 # 生成 runtime/：打包后主进程用 createRequire 按名字解析 @diy-agent/*（##455）
 build-runtime() { run node scripts/build-runtime.mjs; }
 
-# 本包全部测试：OS 无关单测 → OS 策略单测 → 构建 → 意图测试（起隔离 Electron，慢）
+# 本包测试：OS 无关单测 → OS 策略单测
+#
+# ⚠️ UI 意图测试（tests/cli.intent.*）**暂时整体停跑**（用户裁，2026-11-06）：
+#   它们要起真 Electron + 每条断言一个 CLI 子进程，单文件 80~140s、全量 1 小时以上，
+#   算法/执行通道还没定（见「测试提速」的调查）—— 先不跑，想好办法再接回来。
+#   需要单独跑时用 `./sha.sh test-intent <文件片段>`（显式调用，不在 test 的调用链上）。
 test() {
   test-unit
   test-os
-  # 按前缀全收 tests/cli.intent.*：不点名文件，新增用例自动纳入
-  test-intent
 }
 # 编程中快速验证：不构建，跳过意图测试
 # 并行策略**与 intent 分开**（##266 测试提速）：
@@ -222,6 +225,14 @@ test-watch() { run npx vitest "$@"; }
 # CLI 默认走 server /cli http 端点（单条 ~41ms vs 编译产物 ~300ms vs tsx ~600ms，intent 全量 ~140s vs ~300s）。
 # 无 app.port / curl 不支持 h2 时自动回退直连 CLI，不会失败。排查需要可覆盖：DIY_CLI_MODE=compiled|tsx ./sha.sh test-intent
 test-intent() {
+  # ##518 用户裁：UI 意图测试暂时整体停跑（慢 + 方案未定）。要跑必须显式给开关，
+  # 免得 CI / `./sha.sh test` / 顺手敲命令时又掉进一小时的黑洞。
+  if [[ "${DIY_INTENT_ENABLE:-0}" != "1" ]]; then
+    echo "${warning}UI 意图测试（tests/cli.intent.*）已停用${reset}"
+    echo "  要跑：DIY_INTENT_ENABLE=1 ./sha.sh test-intent <文件片段>"
+    echo "  例：  DIY_INTENT_ENABLE=1 ./sha.sh test-intent persona"
+    return 0
+  fi
   # 测试实例独占 build/test/**：与 lab 的 watch 产物不撞（##184 实例分根）
   export DIY_VARIANT=test
   _ensure_electron
