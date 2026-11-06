@@ -115,7 +115,7 @@ describe("遗留清单：addToastLegacy 的条数按文件钉死（只许减少�
         "components/TaskTree.tsx": 8,
         "components/RoomsPage.tsx": 7,
         "components/PersonaDrawer.tsx": 4,
-        "components/ContextLabPage.tsx": 3,
+        "components/ContextLabPage.tsx": 2,
         "components/SessionOverviewPage.tsx": 5,
         "components/LlmPage.tsx": 3,
         "components/CompactSessionPanel.tsx": 2,
@@ -150,13 +150,13 @@ describe("遗留清单：addToastLegacy 的条数按文件钉死（只许减少�
         expect(scan(SRC)).toEqual(LEGACY_BASELINE);
     });
 
-    it("总数 = 94（##391 v1 之后剩下的；##435 减一），且每条详情面板都如实说「未登记」", () => {
+    it("总数 = 93（##391 v1 之后剩下的；##435 减一，##520 再减一），且每条详情面板都如实说「未登记」", () => {
         notificationStore.addToastLegacy("error", "一条历史提示");
         const t = notificationStore.toasts[0] as Toast;
         expect(t.legacy).toBe(true);
         expect(t.source).toContain("未登记");
         expect(t.detail).toContain("##391");
-        expect(Object.values(LEGACY_BASELINE).reduce((a, b) => a + b, 0)).toBe(94);
+        expect(Object.values(LEGACY_BASELINE).reduce((a, b) => a + b, 0)).toBe(93);
     });
 });
 
