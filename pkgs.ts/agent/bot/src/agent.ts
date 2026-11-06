@@ -153,13 +153,17 @@ export function createBotAgent(opts: BotAgentOptions): BotAgent {
         const snap: DeltaSnapshot = { tree, valueHashes: valueHashes(tree) };
         const delta = prevSnap === null ? null : stepDeltaOf(prevSnap, snap);
         const userPrefix = delta === null || delta.text === '' ? undefined : delta.text;
-        yield* session.send(text, {
-            ...turnOptions,
-            ...(userPrefix === undefined ? {} : { userPrefix }),
-        });
-        // 游标前移**在发完之后**：发送失败也要前移吗？—— 是。失败的这一轮已经落进 store
-        // （user 消息已 append），下一次看到的树就是这一次的树。
-        prevSnap = snap;
+        try {
+            yield* session.send(text, {
+                ...turnOptions,
+                ...(userPrefix === undefined ? {} : { userPrefix }),
+            });
+        } finally {
+            // `prevSnap` **无论成败都前移**：失败的这一轮已经把 user 消息 append 进 store 了，
+            // 下一次看到的树就是这一次的树。不前移 ⇒ 下一轮会把同一段增量再发一遍。
+            // （必须是 finally —— `session.send` 抛错会直接跳出，放在 yield* 之后根本执行不到。）
+            prevSnap = snap;
+        }
     }
 
     return {
