@@ -98,12 +98,30 @@ export class RpcSchema {
   static group<const TChildren extends _Router>(
     config: _RpcSchemaGroupConfig & { children: TChildren },
   ): ProcedureMeta<unknown, unknown, never, never, 'group'> & TChildren {
-    return _makeMeta(config, 'group');
+    const meta = _makeMeta(config, 'group');
+    // **自己摊平**（2026-11-06）：以前靠 `router()` 末尾调 `_flattenChildren`，
+    // 于是 group 单独存在时 `g.add` 是 undefined —— 只有被 router 包过才能写 `apiDef.a.b.c`。
+    //
+    // ⚠️ `_flattenChildren(node)` 摊平的是 **node 的子节点**，不含 node 自己 ——
+    // 所以这里要先亲手摊平自己的 children，再递归处理子节点。
+    if (config.children !== undefined) {
+      for (const [k, v] of Object.entries(config.children)) {
+        (meta as any)[k] = v;
+      }
+    }
+    _flattenChildren(meta as unknown as _Router);
+    return meta as ProcedureMeta<unknown, unknown, never, never, 'group'> & TChildren;
   }
 
   /**
-   * 组合整棵 router 树并回写方法全名（相对路径）到每个 meta.name，供 ServerBinding onXxx(meta, handler) 使用。
-   * 根为纯 router 容器（父命令用 RpcSchema.group 承载 desc），根描述由 CliConfig.desc 承载。
+   * **回写方法全名**到每个 meta.name（相对路径），供 `binding.on(meta, handler)` 用。
+   *
+   * 2026-11-06 起 `group()` 自己会摊平 children，所以这个函数只剩「写 name」一件事；
+   * 而 `defineService.bind` 内部也是自己拼 name（且不改原对象）——
+   * **新代码用 `defineService`，不需要它**。这里保留给直接 `binding.on` 的老路径。
+   *
+   * @deprecated 用 `defineService({ name, api })` —— 它同时给出模块名与路径前缀，
+   *   且不会原地改写 meta（同一棵树可挂多个 service）。
    */
   static router<T extends _Router | _AnyProcedureMeta>(def: T): T {
     // 兼容最外层传入 RpcSchema.group（历史形态：把 children 摊平到 group meta 自身，
