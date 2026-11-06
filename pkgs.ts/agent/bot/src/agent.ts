@@ -40,6 +40,12 @@ export interface BotAgentResult {
     readonly request: SessionRequest | null;
     /** 逐条 delta（调试 / 断言工具调用用） */
     readonly deltas: readonly SessionDelta[];
+    /**
+     * 这一轮发完之后的新快照 —— 交给调用方保存（存哪、存不存，Agent 不决定）。
+     *
+     * 下一轮把它作为 `initialSnapshot` 传回来即可接着算增量；传 `null` = 下一轮多发一次全量。
+     */
+    readonly snapshot: DeltaSnapshot | null;
 }
 
 export interface BotAgentOptions {
@@ -49,8 +55,21 @@ export interface BotAgentOptions {
     readonly model: string;
     /** 上下文树的提供器（bot 用 diy / cwd / chain / skills 四个就够） */
     readonly providers: readonly ContextProvider[];
-    /** system 名单（哪些 path 进 system、哪些进 runtime）；缺省用 context 包的推荐名单 */
-    readonly systemPlaces?: readonly ContextPath[];
+    /** system 名单（哪些 path 进 system、哪些进 runtime）—— **必填**，不让调用方猜缺省是哪套 */
+    readonly systemPlaces: readonly ContextPath[];
+    /**
+     * 起始快照：**第一轮之前**模型已经"看过"的那棵树（`null` = 没有历史）。
+     *
+     * 为什么是初值而不是 `load()`/`save()` 一对（2026-11-05 用户裁）：
+     *   「发送的消息会有 session store 保存 …… 外部是进行重放形成 DeltaSnapshot 给 load 用，
+     *     还是单独存一个特殊的临时值，**不应该由 save 决定**」。
+     *
+     * 所以 Agent **不拥有**这份状态：
+     *   · 怎么存（内存变量 / turns.jsonl 重放 / 别的形式）是外部的事
+     *   · Agent 只在**一轮之内**推进它，结束时通过 `BotAgentResult.snapshot` 交回
+     *   · 下一轮（或重启后）由外部把它作为 `initialSnapshot` 再传进来
+     */
+    readonly initialSnapshot: DeltaSnapshot | null;
     /** 已有的历史（首轮为空）；给了就作为会话起点 */
     readonly initialMessages?: readonly ChatMessage[];
     /** 每轮跑之前用（压缩）；缺省不压 */
@@ -89,13 +108,8 @@ export function createBotAgent(opts: BotAgentOptions): BotAgent {
         model: opts.model,
     });
 
-    /**
-     * 上一次给模型看过的树（跨轮增量的基准）。
-     *
-     * 为什么放内存而不是落盘：bot 允许重启后"第一轮多发一次全量增量"——
-     * 代价是多几十字节，收益是不引入一套游标持久化（diy-app 那边才需要落盘重建）。
-     */
-    let prevSnap: DeltaSnapshot | null = null;
+    /** 上一次给模型看过的树（跨轮增量的基准）；**初值由调用方给**，Agent 只在一轮之内推进 */
+    let prevSnap: DeltaSnapshot | null = opts.initialSnapshot;
 
     async function* run(text: string): AsyncGenerator<SessionDelta> {
         // 每轮算全量树（值便宜），然后只把**变化的部分**作为 user 前缀发出去 ——
@@ -120,7 +134,7 @@ export function createBotAgent(opts: BotAgentOptions): BotAgent {
                 .filter((d): d is { type: 'text'; text: string } => d.type === 'text')
                 .map((d) => d.text)
                 .join('');
-            return { text: combined, request: session.lastRequest, deltas };
+            return { text: combined, request: session.lastRequest, deltas, snapshot: prevSnap };
         },
     };
 }

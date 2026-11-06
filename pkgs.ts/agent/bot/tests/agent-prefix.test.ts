@@ -7,7 +7,14 @@
 //   ① 第二轮请求的前 n 条，必须与第一轮逐字相同（只允许在尾部追加）
 //   ② system 必须在段内逐字不变（变量树怎么变都不重写）
 import { describe, expect, it } from "vitest";
-import type { ContextProvider, SchemaDoc } from "@diy-agent/context";
+import {
+    assembleFromProviders,
+    defaultSystemPlaces,
+    treeOfGlobals,
+    valueHashes,
+    type ContextProvider,
+    type SchemaDoc,
+} from "@diy-agent/context";
 import { createBotAgent } from "../src/agent.js";
 import type { LlmPort, SessionDelta } from "@diy-agent/session";
 
@@ -50,6 +57,8 @@ describe("BotAgent：请求的前缀不变（总体验证点）", () => {
             store: openMemorySessionStore(),
             model: "test/model",
             providers,
+            systemPlaces: defaultSystemPlaces(),
+            initialSnapshot: null,
         });
     }
 
@@ -145,6 +154,8 @@ describe("BotAgent：跨轮增量（接在 user 前缀上，不另起一条消�
             store: openMemorySessionStore(),
             model: "test/model",
             providers,
+            systemPlaces: defaultSystemPlaces(),
+            initialSnapshot: null,
         });
 
         const r1 = await agent.send("第一句");
@@ -159,5 +170,42 @@ describe("BotAgent：跨轮增量（接在 user 前缀上，不另起一条消�
         expect(String(last.text)).toContain("第二句");
         // ② 增量**没有**变成独立的一条消息（历史只追加 2 条：user + assistant）
         expect(r2.request!.messages.length).toBe(n1 + 2);
+    });
+});
+
+describe("BotAgent：initialSnapshot 由调用方给（Agent 不决定快照怎么存）", () => {
+    it("给了起始快照 ⇒ **第一轮就带增量**（重启后接着上次算，不重发全量）", async () => {
+        // 模拟「上一轮的世界」：cwd=/tmp/a —— 快照从它算出来
+        const before = treeOfGlobals(
+            assembleFromProviders([
+                { key: "diy", provide: () => ({ cli: "diy", home: "/tmp/x" }) },
+                { key: "cwd", provide: () => ({ path: "/tmp/a", note: "", isFallback: false, isTaskDir: false, isAppDir: false }) },
+                { key: "chain", provide: () => [] },
+                { key: "skills", provide: () => [] },
+            ]),
+        );
+        const initialSnapshot = { tree: before, valueHashes: valueHashes(before) };
+
+        // 现在世界变成 cwd=/tmp/b
+        const agent = createBotAgent({
+            id: "s-restart",
+            llm: echoLlm(),
+            store: openMemorySessionStore(),
+            model: "test/model",
+            providers: [
+                { key: "diy", provide: () => ({ cli: "diy", home: "/tmp/x" }) },
+                { key: "cwd", provide: () => ({ path: "/tmp/b", note: "", isFallback: false, isTaskDir: false, isAppDir: false }) },
+                { key: "chain", provide: () => [] },
+                { key: "skills", provide: () => [] },
+            ],
+            systemPlaces: defaultSystemPlaces(),
+            initialSnapshot,
+        });
+
+        const r1 = await agent.send("重启后第一句");
+        const last = r1.request!.messages[r1.request!.messages.length - 1]!;
+        expect(String(last.text)).toContain("/tmp/b");      // 第一轮就有增量
+        // 交回的新快照不是 null（调用方据此保存）
+        expect(r1.snapshot).not.toBeNull();
     });
 });
