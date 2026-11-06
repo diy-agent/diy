@@ -14,7 +14,7 @@
 //   将来如果要做「按方法粒度鉴权/审计」，再升级成 ①（那时才需要静态路径）。
 
 import { z } from "zod";
-import { RpcSchema } from "@diy-agent/rpc";
+import { RpcSchema, defineService } from "@diy-agent/rpc";
 
 /** 页面描述（与 `./page.ts` 的 PageInfo 同形；这里给 renderer 侧的 zod 校验用） */
 const pageInfoSchema = z.object({
@@ -23,7 +23,7 @@ const pageInfoSchema = z.object({
     description: z.string().optional(),
 });
 
-export const workbenchApi = RpcSchema.router({
+const workbenchRoutes = RpcSchema.router({
     page: RpcSchema.router({
         /** 有哪些页面（侧栏用它渲染入口） */
         list: RpcSchema.unary({ input: {}, output: z.array(pageInfoSchema) }),
@@ -44,7 +44,23 @@ export const workbenchApi = RpcSchema.router({
     }),
 });
 
-export type WorkbenchApi = typeof workbenchApi;
+export type WorkbenchApi = typeof workbenchRoutes;
+
+/**
+ * **模块化的 API 单元**（2026-11-06，@diy-agent/rpc 的 defineService）。
+ *
+ * 为什么不再直接导出 `workbenchApi`：
+ *   · 以前所有 procedure 共用全局扁平命名空间（`page.list` / `task.get`），
+ *     两个模块都有 `list` 就撞车
+ *   · 客户端必须 `createTypedClient(client, 整棵树)`，想用 workbench 三个方法
+ *     得先持有全仓 api 定义
+ *
+ * 现在：两端都用**这一个值** —— 模块名与路由不可能漂移。
+ */
+export const workbenchService = defineService({
+    name: "diy.ui.workbench",
+    api: workbenchRoutes,
+});
 
 /**
  * **renderer 侧**方法的契约（main → renderer，B2）。
