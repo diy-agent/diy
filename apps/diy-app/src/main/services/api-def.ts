@@ -17,6 +17,11 @@
  */
 
 import { RpcSchema } from "@diy-agent/rpc";
+import { docsRoutes } from "./api-domains/docs/api";
+import { llmProxyRoutes } from "./api-domains/llmProxy/api";
+import { watchRoutes } from "./api-domains/watch/api";
+import { toolRoutes } from "./api-domains/tool/api";
+import { logRoutes } from "./api-domains/log/api";
 import { seedRoutes } from "./api-domains/seed/api";
 import { z } from "zod";
 // 引擎通用渲染器 id 的真源（别处不复制这份清单；内核加渲染器时这里的 schema 自动跟上）
@@ -1729,30 +1734,7 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
        * CLI 侧需要一份等价能力 —— agent 可经 bash 调它（绕开工具输出的截断），人也能直接看。
        * 两侧共用 core/file-read.ts 的同一实现（窗口语义只有一份，见该文件头注释）。
        */
-      tool: RpcSchema.group({
-        desc: `工具（文件读取：行窗口 + 续读）`,
-        children: {
-          read: RpcSchema.unary({
-            desc: `
-            读取文本文件（行窗口，可续读）
-
-            与整文件截断的关键差别：超出上限时尾部给出 --offset 续读入口，
-            可精确跳到没读过的部分，不会像「取头尾、丢中间」那样永久丢失中段。
-            行/字节双限（缺省 2000 行 / 50KB，谁先到算谁）。
-            不设单行字符数上限 —— 单行只受同一份字节预算约束（jsonl 这类「一行一条记录」
-            的文件不会被砍半行）。
-            `,
-            input: {
-              // resolvePath：相对路径按**敲命令的 shell 的 cwd** 解析成绝对路径（见 rpc cli/_parser.ts）。
-              // 不能靠 handler 侧的 process.cwd() —— 那是 app 进程的应用目录，不是用户的目录。
-              path: z.string().cliArg({ desc: "文件路径（相对路径按当前目录解析）", resolvePath: true }),
-              offset: z.number().optional().cliOption({ desc: "起始行，1-based（缺省 1）" }),
-              limit: z.number().optional().cliOption({ desc: "最大行数（缺省 2000）" }),
-            },
-            output: z.string(),
-          }),
-        },
-      }),
+      tool: toolRoutes,
 
       // —— 提示词模版试验场（spike）：内置只读 + 项目级同路径覆盖 + dry-run 预览 ——
       template: RpcSchema.group({
@@ -1904,26 +1886,7 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
         },
       }),
 
-      llmProxy: RpcSchema.group({
-        desc: `LLM 代理`,
-        children: {
-          status: RpcSchema.unary({
-            desc: `查询 LLM 代理状态`,
-            input: {},
-            output: z.object({ running: z.boolean(), port: z.number() }),
-          }),
-          start: RpcSchema.unary({
-            desc: `启动 LLM 代理`,
-            input: {},
-            output: StatusOk,
-          }),
-          stop: RpcSchema.unary({
-            desc: `停止 LLM 代理`,
-            input: {},
-            output: StatusOk,
-          }),
-        },
-      }),
+      llmProxy: llmProxyRoutes,
 
       traffic: RpcSchema.group({
         desc: `流量（应用发出去的 HTTP 请求 / 收到的响应；内存留最近若干条 + 逐条追加到 log/network/ 磁盘日志）`,
@@ -2273,20 +2236,7 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
         },
       }),
 
-      docs: RpcSchema.group({
-        desc: `仓库文档索引（##404）：\`docs/\` 不在任何 AGENTS.md 链上，agent 不知道有哪些设计稿。上下文变量树里只有**摘要**（根 / 篇数 / 最新改动日），逐篇索引**按需**在这里取`,
-        children: {
-          index: RpcSchema.unary({
-            desc: `列出文档索引（一行一篇：路径 / 标题 / 字节 / 状态词 / 两个日期）。缺省只扫 \`docs/plans\`。\n\n**两个日期都给**：docDate 是文档**自述**（文件名 / 标题），touched 是 git 最后改动日 —— 实测一批计划的 git 日期全被一次全局重排刷成同一天，与自述不符。**不一致本身就是信号**（"文档说 7-10，实际 7-19 改过"），只信 git 会得出假结论。\n\nstatus 是**启发式**：只认开篇引用块里「状态 / 结论 / 实现状态：…」那句，抽不到就不给 —— 编出来的状态比没有更坏。读正文用 \`diy tool read <path>\``,
-            input: {
-              dir: z.string().optional().cliOption({ desc: "仓库根（缺省 = 当前目录；相对路径按当前目录解析）", resolvePath: true }),
-              roots: z.string().optional().cliOption({ desc: "扫描根（仓库相对，逗号分隔；缺省 docs/plans，可给 docs 扩到全量）" }),
-              max: z.number().optional().cliOption({ desc: "最多返回几篇（缺省 60，按路径序截断）" }),
-            },
-            output: DocsIndexSchema,
-          }),
-        },
-      }),
+      docs: docsRoutes,
 
       journal: RpcSchema.group({
         desc: `任务日志（##404）：**append-only 事件流**（decision / pitfall / review / progress / learn）。三分法：能改写成「现在是什么」→ \`diy facts\`；「接下来做什么」→ 任务 body；「发生过什么」→ 这里。日志不参与每轮上下文，所以 body 可以瘦`,
@@ -2713,23 +2663,7 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
         },
       }),
 
-      log: RpcSchema.group({
-        desc: `日志`,
-        children: {
-          read: RpcSchema.unary({
-            desc: `读取日志`,
-            input: {
-              limit: z.number().optional().cliOption({ desc: "返回条目数" }),
-            },
-            output: z.array(z.object({
-              timestamp: z.string().optional(),
-              level: z.string().optional(),
-              message: z.string().optional(),
-              raw: z.string().optional(),
-            })),
-          }),
-        },
-      }),
+      log: logRoutes,
 
       /**
        * Hub 配对（##500）：地址即身份 —— 人比对真实 URL，6 位码只管「谁被允许进来」。
@@ -3014,19 +2948,7 @@ truncated=true 表示更早的记录未加载（界面必须显式标出来，�
        * 被注册两次（本地 + 转发），ServerBinding 直接抛「已注册」使 RPC 服务器起不来。
        * 判据：diy.* = Main 本地处理，diy.ui.* = 转发 Renderer（见本文件头注释）。
        */
-      watch: RpcSchema.group({
-        desc: `文件系统监控（projects/ 增删改 → 实时推送）`,
-        children: {
-          fileChange: RpcSchema.serverStream({
-            desc: `文件变更事件流 — 持续订阅，FileWatcher 检测到 projects/ 下文件变更后 yield`,
-            input: {},
-            output: z.object({
-              event: z.string().describe("变更类型：task-change（projects/ 下任务树相关变更）"),
-              ts: z.number().describe("变更发生时间戳（ms）"),
-            }),
-          }),
-        },
-      }),
+      watch: watchRoutes,
 
       /**
        * 「模型不可用」通知（##369 ①）。Main 本地域（判据在 main 侧：只有真发失败的那一刻
