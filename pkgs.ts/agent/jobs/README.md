@@ -40,6 +40,32 @@ const job = makeJobTool({
   投一次 `JobDoneEvent { taskUri, text, notify, run }`；`notified` 置 `true` 保证只投一次。
 - 没有 `origin.taskUri` 的 run 一律不通知 —— 不知道该叫醒谁。
 
+## 为什么长任务**必须**走 job，不能裸 `&`
+
+实测（2026-11-05）：agent 用 `nohup env FOO=bar node -e '...' > /dev/null 2>&1 &` 起一个
+10 分钟的后台进程，**几秒后就没了**。
+
+原因不是 `nohup` 不灵，是**执行层收进程组**：bash 工具的命令挂在工具自己的进程组下，
+命令"结束"（外壳退出）时它要把整组收干净，否则挂死的子孙进程会把工具调用卡住
+（`runBash` 的收尾就是 SIGKILL 整组）。`nohup` 只屏蔽 SIGHUP，挡不住 SIGKILL。
+
+**所以**：
+
+```bash
+# ❌ 表面"后台"、实际活不过这一轮
+nohup ./long-task > /tmp/x.log 2>&1 &
+
+# ✅ 进账本：我们自己的子进程 + 自己的 pid + 自己的 out.log
+#    （bash 工具传 background: true，或 diy job 系列的 CLI）
+```
+
+差别不只是"能不能活"：
+- 裸 `&`：谁起的、还活着没、说了什么、怎么停 —— **全都没有**
+- job：`list` / `status` / `output` / `kill` / `wait` 都有，收口还会通知
+
+反过来说，**前台命令不该登记**（用户 2026-10-24 口径）：`bash` 不加 `background`
+就不进来 —— 不然每条 `ls` 都往账本里塞一行。
+
 ## 刻意不做的（别在文档里说成已实现）
 
 - **不恢复**：真源是内存 Map，app 退出即空（重启不 reconcile、不接管）；
