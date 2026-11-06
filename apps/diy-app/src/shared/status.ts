@@ -15,3 +15,6 @@ export const StatusOk = z.object({ status: z.string() });
 
 /** 状态 + 新建对象的 id：`{ status, data: { id } }` —— 创建类操作的统一返回 */
 export const StatusDataId = z.object({ status: z.string(), data: z.object({ id: z.string() }) });
+
+/** 状态 + uri：`{ status, data: { uri } }` —— 更新类操作的统一返回 */
+export const StatusDataUri = z.object({ status: z.string(), data: z.object({ uri: z.string() }) });

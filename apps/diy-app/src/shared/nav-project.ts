@@ -13,7 +13,7 @@
 //   祖先链必在同一项目内（task.move 强制同项目），子页面与父共享 ctx → 分组不会拆开
 //   「父子族」，缩进不会指向组外。
 
-import type { TaskNodeShape } from "../main/services/api-def";
+import type { TaskNodeShape } from "./task-node";
 import { projectFromUri } from "./task-uri";
 import { partitionByPin } from "./nav-pin";
 

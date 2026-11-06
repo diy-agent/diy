@@ -15,7 +15,7 @@ import {
   projectIndexOf,
   projectOfCtx,
 } from "../../src/shared/nav-project";
-import type { TaskNodeShape } from "../../src/main/services/api-def";
+import type { TaskNodeShape } from "../../src/shared/task-node";
 
 const tab = (ctx: string | null) => ({ key: `task-run:${ctx ?? ""}`, pageId: "task-run", ctx });
 const uri = (pid: string, n: string) => `projects/${pid}/tasks/${n}`;
