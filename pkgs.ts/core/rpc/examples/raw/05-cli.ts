@@ -1,7 +1,7 @@
 /**
  * 05-cli — 同一份 schema 变成命令行
  *
- * `RpcSchema.router` 的树天然是命令树：
+ * `RpcSchema.group` 的树天然是命令树：
  *   `demo.math.add --a 2 --b 3`  →  `math.add({ a: 2, b: 3 })`
  *
  * 生成 CLI 参数名靠 schema 的**字段名** —— 这也是 `input` 永不摊平的原因之一：
