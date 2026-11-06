@@ -1,19 +1,63 @@
 # rpc 用法示例
 
-每个文件都能直接跑：
+**`service/` 是推荐写法**（`defineService` + 生成器）。`raw/` 是底层直用，
+留作「为什么 `defineService` 存在」的对照。
 
-```bash
-npx tsx pkgs.ts/core/rpc/examples/01-basic.ts
+```
+examples/
+├── service/    ← 推荐：一个例子一个目录，自带 api.ts + 生成的类型 + 可跑脚本
+│   ├── 01-basic/     { src/api.ts, src/gen/*.d.ts, run.ts }
+│   ├── 02-stream/    同构
+│   └── 03-cancel/    同构
+└── raw/        ← 底层：binding.on(meta, handler) + createTypedClient 直用
+    ├── 01-basic.ts
+    ├── 02-runtime-validation.ts
+    ├── 03-stream.ts
+    ├── 04-cancel.ts
+    └── 05-cli.ts
 ```
 
-| 文件 | 演示什么 | 跑出来的样子 |
+## 推荐写法（`service/`）—— 一个目录一个例子
+
+每个目录都是**自给自足**的：
+
+```
+service/01-basic/
+├── src/api.ts                  ← 手写，唯一真源（生成器的扫描约定）
+├── src/gen/api.generated.d.ts  ← 生成（别手改）
+└── run.ts                      ← 可执行
+```
+
+跑：
+
+```bash
+npx tsx pkgs.ts/core/rpc/examples/service/01-basic/run.ts
+# 2 + 3 = 5
+# version = 1.0.0
+```
+
+| 目录 | 演示 | 实测输出 |
 |---|---|---|
-| `01-basic.ts` | 最小可用：定义 → bind → use | `2 + 3 = 5` |
-| `02-runtime-validation.ts` | zod 在**运行时**把守 wire 形状 | 三种非法输入全被拦下 |
-| `03-stream.ts` | 服务端流（`serverStream`）| 逐块收到的进度 |
-| `04-cancel.ts` | 取消传到服务端（`signal.aborted`）| 客户端取消，服务端观察到 |
-| `05-cli.ts` | 同一份 schema 变命令行 | schema 就绪说明（CLI 用法在注释里）|
-| `06-generated-types.ts` | 生成物（`src/gen/*.d.ts`）怎么用 | 类型层面的示例（不运行）|
+| `01-basic` | 定义 → bind → use | `2 + 3 = 5` / `version = 1.0.0` |
+| `02-stream` | 服务端流（`serverStream`）| 3 块逐条到达 |
+| `03-cancel` | 取消传到服务端 | `服务端观察到 abort: true` |
+
+**目录结构和真实包同构**（`<pkg>/src/api.ts`）—— 照着建包，生成器直接能扫到。
+
+## 底层写法（`raw/`）
+
+直接用 `binding.on(meta, handler)` + `createTypedClient`，不经 `defineService`。
+
+```bash
+npx tsx pkgs.ts/core/rpc/examples/raw/01-basic.ts
+```
+
+**什么时候看它**：
+- 想知道 `defineService.bind` 内部做了什么
+- 测传输 / 协议层行为（`test/raw/` 也在这个抽象层）
+- 排查「是不是 `defineService` 这层的问题」
+
+**日常开发不看它** —— 动态泛型可理解性差，这也是 `defineService` 存在的理由。
 
 ## 五个最容易踩的点
 
@@ -30,8 +74,8 @@ tRPC / gRPC / JSON-RPC / AWS SDK 全都这样。理由：加字段不破坏老�
 **② 空 input 也要传 `{}`**
 
 ```ts
-list: RpcSchema.unary({ input: {}, output: ... })
-await c.list({});    // 不能写 list()，zod 会拒 undefined
+version: RpcSchema.unary({ input: {}, output: z.string() })
+await c.math.version({});    // 不能写 version()，zod 会拒 undefined
 ```
 
 **③ `serverStream` 是 async 方法**
@@ -46,7 +90,7 @@ for await (const x of stream) { ... }
 **④ handler 收到的是 `{ input, signal }`**
 
 ```ts
-service.bind(server, {
+mathService.bind(server, {
     math: { add: ({ input }) => input.a + input.b },
     //     ^^^^^^^^^^^^^^^^^^^^^^^ 不是 (a, b)
 });
@@ -54,16 +98,7 @@ service.bind(server, {
 
 **⑤ 服务端要自己检查 `signal`**
 
-框架**不会**强杀你的 `await`：
-
-```ts
-slow: async ({ input, signal }) => {
-    await new Promise((resolve) => {
-        const t = setTimeout(resolve, input.ms);
-        signal.addEventListener("abort", () => { clearTimeout(t); resolve(); }, { once: true });
-    });
-}
-```
+框架**不会**强杀你的 `await`。见 `service/03-cancel/src/api.ts`。
 
 ## 客户端 vs 服务端签名
 

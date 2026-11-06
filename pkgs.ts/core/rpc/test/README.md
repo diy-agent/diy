@@ -4,7 +4,7 @@
 
 ```
 test/
-├── legacy/    ← 底层机制：RpcSchema + binding.on(meta, handler) + createTypedClient
+├── raw/       ← 底层机制：RpcSchema + binding.on(meta, handler) + createTypedClient
 ├── service/   ← 模块化写法：defineService + bind/use
 ├── harness.ts  ← 传输 harness（channel / http / ws / ipc 参数化）
 └── helpers.ts
@@ -15,7 +15,9 @@ test/
 2026-11-06 起 **`defineService` 是主要开发手段**，`binding.on(meta, handler)` 这种
 「动态类型泛型」退到库的内部机制（可理解性太差，是否保留待观察）。
 
-测试照这个分层放 —— 读 `legacy/` 的人知道自己在看底层，读 `service/` 的人看的是日常用法。
+`raw` 这个名字比 `legacy` 准：它不代表「过时废弃」，而是「**不加封装的原始写法**」——
+`defineService.bind` 内部用的就是它。读 `raw/` 的人知道自己在看底层，
+读 `service/` 的人看的是日常用法。
 
 ## `service/` —— 新写法（日常开发看这里）
 
@@ -24,7 +26,7 @@ test/
 | `service.test.ts` | `bind` / `use` / 前缀 / 越界 / 缺 handler / 同一 api 挂两个 service |
 | `service-gen.test.ts` | `zodToTs` 各构造 / 三种命名策略（none / all / auto）|
 
-## `legacy/` —— 底层机制（**大部分不该改**）
+## `raw/` —— 底层机制（**大部分不该改**）
 
 | 文件 | 测什么 | 该改成新写法吗 |
 |---|---|---|
@@ -43,9 +45,9 @@ test/
 **问自己：这个测试能不能只用 `defineService` 表达？**
 
 - 能（测「注册 + 调用」的业务语义）⇒ 该用新写法
-- 不能（测传输 / 协议 / 取消 / 路由）⇒ 留在 `legacy/`
+- 不能（测传输 / 协议 / 取消 / 路由）⇒ 留在 `raw/`
 
-**目前全部 `legacy/` 都属于后者** —— 它们测的东西在 `defineService` 之上或之下，
+**目前全部 `raw/` 都属于后者** —— 它们测的东西在 `defineService` 之上或之下，
 换写法只会把「底层契约」的测试变成「用它的人写得好不好」。
 
 ## 补一个测试时怎么写
@@ -70,7 +72,7 @@ it("...", async () => {
 });
 ```
 
-**新增协议 / 传输行为** → `legacy/`，用 `harness.ts` 的参数化 harness。
+**新增协议 / 传输行为** → `raw/`，用 `harness.ts` 的参数化 harness。
 
 ## 一个从 example 里学到的坑
 
