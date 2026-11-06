@@ -94,14 +94,24 @@ export function utf8Bytes(s: string): number {
     return new TextEncoder().encode(s).length;
 }
 
-/** 信封顶层键 → 分组（不在表里 = 没有信封结构，按角色归组） */
+/**
+ * 信封顶层键 → 分组（不在表里 = 没有信封结构，按角色归组）。
+ *
+ * `vars` = ##520 之后的**唯一变量段**（system 消息里全量、user 消息里增量）；
+ * `system` / `runtime` / `runtimeDiff` 只留给存量历史块（升级前落盘的信封）。
+ * `notify` / `chat` 是本轮可见内容，与 `user.message` 同组（不给映射会落进不存在的
+ * "other" 组 → 字节记账变 NaN）。
+ */
 const ENVELOPE_GROUP: Record<string, MindGroup> = {
     help: "help",
+    vars: "runtime",
     system: "system",
     runtime: "runtime",
     runtimeDiff: "runtime",
     summary: "history",
     history: "history",
+    notify: "input",
+    chat: "input",
     user: "input",
 };
 
@@ -143,7 +153,7 @@ export function analyzeMind(messages: readonly StepMessage[]): {
             continue;
         }
         for (const b of splitYamlBlocks(m.text, 0)) {
-            const g = ENVELOPE_GROUP[b.key] ?? "other" as MindGroup;
+            const g = ENVELOPE_GROUP[b.key] ?? "history";
             if (b.key === "system") {
                 // system 段：chain 拆到每个文件，其余顶层键各一段
                 for (const sub of splitYamlBlocks(b.text, 2)) {
@@ -155,8 +165,23 @@ export function analyzeMind(messages: readonly StepMessage[]): {
                         push(`system.${sub.key}`, "system", sub.text);
                     }
                 }
+            } else if (b.key === "vars") {
+                // 二级键各一段（facts / kb / identity / task / room …）。
+                // system 消息里是全量、user 消息里是增量 —— 用不同的 key 前缀让账本能分开
+                // （`explainSegment` 据此报「首步全量」还是「轮中变化」）。
+                const prefix = m.role === "system" ? "vars" : "varsDiff";
+                for (const sub of splitYamlBlocks(b.text, 2)) {
+                    if (sub.key === "chain") {
+                        // 与存量 system 段同一粒度：每个 AGENTS.md 一份（删不删是独立决定）
+                        const files = splitYamlBlocks(sub.text, 4);
+                        if (files.length === 0) push(`${prefix}.chain`, "runtime", sub.text);
+                        for (const f of files) push(`chain · ${shortPath(f.key)}`, "system", f.text);
+                    } else {
+                        push(`${prefix}.${sub.key}`, "runtime", sub.text);
+                    }
+                }
             } else if (b.key === "runtime" || b.key === "runtimeDiff") {
-                // 二级键各一段（facts / kb / identity / task / room …）
+                // 存量老信封：二级键各一段
                 for (const sub of splitYamlBlocks(b.text, 2)) push(`${b.key}.${sub.key}`, "runtime", sub.text);
             } else {
                 push(b.key, g, b.text);
@@ -196,6 +221,8 @@ export function explainSegment(key: string, reasons: Record<string, string> = {}
     }
     if (key.startsWith("chain · ")) return { place: "system", kind: "全量重建", reason: pick("chain") };
     if (key.startsWith("system.")) return { place: "system", kind: "全量重建", reason: pick(key.slice(7)) };
+    if (key.startsWith("varsDiff.")) return { place: "runtime", kind: "轮中变化", reason: pick(key.slice(9)) };
+    if (key.startsWith("vars.")) return { place: "runtime", kind: "首步全量", reason: pick(key.slice(5)) };
     if (key.startsWith("runtimeDiff.")) return { place: "runtime", kind: "轮中变化", reason: pick(key.slice(12)) };
     if (key.startsWith("runtime.")) return { place: "runtime", kind: "首步全量", reason: pick(key.slice(8)) };
     if (key.startsWith("输入 · ")) {

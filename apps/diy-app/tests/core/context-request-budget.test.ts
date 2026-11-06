@@ -48,7 +48,7 @@ describe("analyzeMind", () => {
         [
             "help: |",
             "  about: 信封说明",
-            "system:",
+            "vars:",
             "  chain:",
             "    - path: /Users/ccc/AGENTS.md",
             "      content: |",
@@ -60,23 +60,62 @@ describe("analyzeMind", () => {
     const lastUser = msg(
         "user",
         [
-            "runtime:",
+            "vars:",
             "  facts:",
             "    task:",
             "      a: 1",
             "  kb:",
             "    claims: 489",
-            "user:",
-            "  message: |",
-            "    继续",
+            "chat:",
+            "  - from: human:chen56",
+            "    text: 继续",
         ].join("\n"),
     );
 
-    it("段粒度：chain 拆到每个文件、runtime 拆到二级键、user.message 单列 input", () => {
+    it("段粒度：chain 拆到每个文件、vars 拆到二级键、chat 单列 input", () => {
         const { segments } = analyzeMind([systemMsg, msg("assistant", "好的"), msg("tool", "输出"), lastUser]);
         expect(segments.map((s) => s.key)).toEqual(
-            expect.arrayContaining(["help", "chain · /Users/ccc/AGENTS.md", "system.rules", "历史 · assistant（含工具调用参数）", "历史 · tool", "runtime.facts", "runtime.kb", "user"]),
+            expect.arrayContaining([
+                "help",
+                "chain · /Users/ccc/AGENTS.md",
+                "vars.rules",
+                "历史 · assistant（含工具调用参数）",
+                "历史 · tool",
+                "varsDiff.facts",
+                "varsDiff.kb",
+                "chat",
+            ]),
         );
+        // 全量与增量用不同前缀（账本要区分「整份重建」与「只发变化」）
+        expect(segments.find((x) => x.key === "vars.rules")?.group).toBe("runtime");
+        expect(segments.find((x) => x.key === "varsDiff.facts")?.group).toBe("runtime");
+        expect(segments.find((x) => x.key === "chat")?.group).toBe("input");
+    });
+
+    it("存量老信封（system / runtime / runtimeDiff）仍能解析 —— 历史块不会被算成未知组", () => {
+        const old = msg(
+            "user",
+            [
+                "system:",
+                "  task:",
+                "    state: done",
+                "runtime:",
+                "  facts:",
+                "    a: 1",
+                "runtimeDiff:",
+                "  self:",
+                "    steps: 1",
+                "chat:",
+                "  - from: human:chen56",
+                "    text: 继续",
+            ].join("\n"),
+        );
+        const { segments, byGroup } = analyzeMind([old]);
+        expect(segments.map((s) => s.key)).toEqual(
+            expect.arrayContaining(["system.task", "runtime.facts", "runtimeDiff.self", "chat"]),
+        );
+        // 不再有 NaN（未知顶层键曾落进不存在的 "other" 组）
+        for (const v of Object.values(byGroup)) expect(Number.isNaN(v)).toBe(false);
     });
 
     it("非信封的 user 消息在 input 组下不叫「历史」（标签与分组不许互相矛盾）", () => {
@@ -127,15 +166,18 @@ describe("explainSegment / unchangedSegments（「为什么发」的归因）", 
     it("按段 key 判容器 + 来法，并把 reason 取到单元（含二级路径回落顶层）", () => {
         expect(explainSegment("help")).toMatchObject({ place: "help", kind: "结构说明" });
         expect(explainSegment("chain · /Users/ccc/AGENTS.md", reasons)).toMatchObject({ place: "system", kind: "全量重建" });
-        expect(explainSegment("runtime.facts", reasons)).toMatchObject({
+        expect(explainSegment("vars.facts", reasons)).toMatchObject({
             place: "runtime",
             kind: "首步全量",
             reason: reasons.facts,
         });
         // 轮中变化与首步全量必须分开：一个是"只发变化的单元"，一个是"整份重建"
-        expect(explainSegment("runtimeDiff.facts", reasons)).toMatchObject({ place: "runtime", kind: "轮中变化" });
+        expect(explainSegment("varsDiff.facts", reasons)).toMatchObject({ place: "runtime", kind: "轮中变化" });
         // 二级路径（task.body）没有独立 reason 时回落到顶层 `task`
-        expect(explainSegment("runtime.task.body", { task: "任务" }).reason).toBe("任务");
+        expect(explainSegment("vars.task.body", { task: "任务" }).reason).toBe("任务");
+        // 存量老 key 仍可解释
+        expect(explainSegment("runtime.facts", reasons)).toMatchObject({ place: "runtime", kind: "首步全量" });
+        expect(explainSegment("runtimeDiff.facts", reasons)).toMatchObject({ place: "runtime", kind: "轮中变化" });
         expect(explainSegment("输入 · user")).toMatchObject({ place: "input", kind: "用户原话" });
         expect(explainSegment("历史 · tool")).toMatchObject({ place: "history", kind: "历史回放" });
     });
