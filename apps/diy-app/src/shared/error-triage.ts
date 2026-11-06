@@ -30,7 +30,7 @@ import { NETWORK_ERROR_CODES, type NetworkErrorCode, probeNetworkError } from ".
 // invariant 判据链（CODE_RE / isErrorCode / InvariantError / invariant）归 `@diy-agent/context`（##447）：
 // cut-marker 两个新包都要用，而本文件牵 main 侧错误分流搬不动 —— 故搬出后在原处 re-export，
 // 老导入点（`from "../shared/error-triage"`）一字不用改。
-import { InvariantError, isInvariantError } from "@diy-agent/context/format/invariant";
+import { isInvariantError } from "@diy-agent/context/format/invariant";
 export { InvariantError, invariant, isErrorCode, isInvariantError } from "@diy-agent/context/format/invariant";
 
 // ═══════════════════════════════════════════════

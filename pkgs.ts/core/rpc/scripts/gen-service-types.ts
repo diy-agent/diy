@@ -35,7 +35,9 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const SCAN_DIRS = ['pkgs.ts', 'apps'];
 
 interface Target {
+    /** api.ts 的绝对路径 */
     file: string;
+    /** 产物**目录**（`src/gen/`）；文件名按 `typeName` 一个 api 一个 */
     out: string;
 }
 
@@ -54,7 +56,7 @@ function findApiFiles(dir: string, acc: Target[] = []): Target[] {
             if (e.name === 'node_modules' || e.name === 'lib' || e.name === '.git' || e.name === 'dist') continue;
             const full = join(cur, e.name);
             if (e.name === 'src' && existsSync(join(full, 'api.ts'))) {
-                acc.push({ file: join(full, 'api.ts'), out: join(full, 'gen', 'api.generated.d.ts') });
+                acc.push({ file: join(full, 'api.ts'), out: join(full, 'gen') });
             }
             stack.push(full);
         }
@@ -112,19 +114,27 @@ async function main(): Promise<void> {
         }
         if (found.length === 0) continue;
 
-        const generated = found.map((f) => renderServiceTypes(typeNameOf(f.key), f.routes as never)).join('\n');
+        // **一个 api 一个文件**（2026-11-06）：同一文件放多个 api 会重复 `import type`，
+        // oxlint 直接报 `Identifier 'RpcCallOptions' has already been declared`。
+        // 文件名带 typeName 也更好定位（`gen/Workbench.generated.d.ts`）。
+        mkdirSync(t.out, { recursive: true });
+        for (const f of found) {
+            const typeName = typeNameOf(f.key);
+            const file = join(t.out, `${typeName}.generated.d.ts`);
+            const generated = renderServiceTypes(typeName, f.routes as never);
+            const rel = file.replace(ROOT + '/', '');
 
-        if (checkOnly) {
-            const existing = existsSync(t.out) ? readFileSync(t.out, 'utf-8') : '';
-            if (existing !== generated) {
-                console.error(`✗ 生成物过期：${t.out.replace(ROOT + '/', '')}`);
-                stale++;
+            if (checkOnly) {
+                const existing = existsSync(file) ? readFileSync(file, 'utf-8') : '';
+                if (existing !== generated) {
+                    console.error(`✗ 生成物过期：${rel}`);
+                    stale++;
+                }
+                continue;
             }
-            continue;
+            writeFileSync(file, generated, 'utf-8');
+            console.log(`✓ ${rel}`);
         }
-        mkdirSync(dirname(t.out), { recursive: true });
-        writeFileSync(t.out, generated, 'utf-8');
-        console.log(`✓ ${t.out.replace(ROOT + '/', '')}`);
     }
 
     if (checkOnly) {
