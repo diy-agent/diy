@@ -14,6 +14,7 @@ export default defineConfig({
         'pkgs.ts/core/template',
         'pkgs.ts/agent/talk',
         'pkgs.ts/agent/agents-chain',
+        'pkgs.ts/agent/skills',
         'pkgs.ts/flow',
         'pkgs.ts/agent/session',
         'pkgs.ts/agent/tools',

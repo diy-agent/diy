@@ -1,0 +1,29 @@
+{
+    "name": "@diy-agent/skills",
+    "version": "0.1.0",
+    "private": true,
+    "description": "skills：从各级 .agents/skills 收集技能清单（纯 IO，只取名字+描述）",
+    "license": "MIT",
+    "files": [
+        "src/"
+    ],
+    "type": "module",
+    "main": "./lib/index.js",
+    "types": "./src/index.ts",
+    "exports": {
+        ".": {
+            "types": "./src/index.ts",
+            "default": "./lib/index.js"
+        }
+    },
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json"
+    },
+    "dependencies": {},
+    "devDependencies": {
+        "oxfmt": "^0.57.0",
+        "oxlint": "^1.72.0",
+        "typescript": "^7.0.2",
+        "vitest": "^4.1.10"
+    }
+}
