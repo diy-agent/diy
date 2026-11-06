@@ -6,7 +6,7 @@
     "tsBuildInfoFile": "node_modules/.cache/tsbuildinfo/tsconfig.build.tsbuildinfo",
         "noEmit": false,
         "rootDir": "src",
-        "outDir": "lib",
+        "outDir": "dist",
         "declaration": true,
         "sourceMap": true
     },

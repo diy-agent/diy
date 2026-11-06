@@ -12,7 +12,7 @@
         "lib": ["ES2022", "DOM"],
         "types": [],
         "rootDir": "src",
-        "outDir": "lib",
+        "outDir": "dist",
         "noEmit": false,
         "declaration": true,
         "sourceMap": true

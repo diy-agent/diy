@@ -17,32 +17,32 @@
     "electron"
   ],
   "type": "module",
-  "main": "./lib/index.js",
+  "main": "./dist/index.js",
   "types": "./src/index.ts",
   "exports": {
     ".": {
       "types": "./src/index.ts",
-      "default": "./lib/index.js"
+      "default": "./dist/index.js"
     },
     "./http": {
       "types": "./src/transport/http/index.ts",
-      "default": "./lib/transport/http/index.js"
+      "default": "./dist/transport/http/index.js"
     },
     "./ws": {
       "types": "./src/transport/ws/index.ts",
-      "default": "./lib/transport/ws/index.js"
+      "default": "./dist/transport/ws/index.js"
     },
     "./cli": {
       "types": "./src/cli/index.ts",
-      "default": "./lib/cli/index.js"
+      "default": "./dist/cli/index.js"
     },
     "./electron/main": {
       "types": "./src/transport/electron/main.ts",
-      "default": "./lib/transport/electron/main.js"
+      "default": "./dist/transport/electron/main.js"
     },
     "./electron/renderer": {
       "types": "./src/transport/electron/renderer.ts",
-      "default": "./lib/transport/electron/renderer.js"
+      "default": "./dist/transport/electron/renderer.js"
     }
   },
   "files": [

@@ -7,24 +7,24 @@
     "src/"
   ],
   "type": "module",
-  "main": "./lib/index.js",
+  "main": "./dist/index.js",
   "types": "./src/index.ts",
   "exports": {
     ".": {
       "types": "./src/index.ts",
-      "default": "./lib/index.js"
+      "default": "./dist/index.js"
     },
     "./persona": {
       "types": "./src/persona.ts",
-      "default": "./lib/persona.js"
+      "default": "./dist/persona.js"
     },
     "./protocol": {
       "types": "./src/protocol.ts",
-      "default": "./lib/protocol.js"
+      "default": "./dist/protocol.js"
     },
     "./admin": {
       "types": "./src/admin.ts",
-      "default": "./lib/admin.js"
+      "default": "./dist/admin.js"
     }
   },
   "scripts": {

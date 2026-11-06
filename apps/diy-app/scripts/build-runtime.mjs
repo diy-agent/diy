@@ -69,25 +69,27 @@ function packageDirs() {
     return out;
 }
 
-/** 收集要纳入 runtime 的包（main 指 ./lib/ 的才算） */
+/** 收集要纳入 runtime 的包（main 指 ./dist/ 的才算；老包 ./lib/ 也认） */
 function collectPackages() {
     const picked = [];
     for (const dir of packageDirs()) {
         const pkgPath = join(pkgsDir, dir, "package.json");
         const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
-        if (typeof pkg.main !== "string" || !pkg.main.startsWith("./lib/")) continue;
-        const libDir = join(pkgsDir, dir, "lib");
-        if (!existsSync(join(libDir, "index.js"))) {
-            throw new Error(`${pkg.name}: main 指 ${pkg.main}，但 ${libDir}/index.js 不存在 —— 先跑根 ./sha.sh build（build-pkgs）`);
+        const m = typeof pkg.main === "string" ? pkg.main.match(/^\.\/(dist|lib)\//) : null;
+        if (m === null) continue;
+        const outName = m[1];
+        const outDirOfPkg = join(pkgsDir, dir, outName);
+        if (!existsSync(join(outDirOfPkg, "index.js"))) {
+            throw new Error(`${pkg.name}: main 指 ${pkg.main}，但 ${outDirOfPkg}/index.js 不存在 —— 先跑根 ./sha.sh build（build-pkgs）`);
         }
-        picked.push({ pkg, libDir });
+        picked.push({ pkg, libDir: outDirOfPkg });
     }
     return picked.sort((a, b) => a.pkg.name.localeCompare(b.pkg.name));
 }
 
 function main() {
     const packages = collectPackages();
-    if (packages.length === 0) throw new Error(`在 ${pkgsDir} 没找到 main 指 ./lib/ 的包 —— 构建前置是否缺失？`);
+    if (packages.length === 0) throw new Error(`在 ${pkgsDir} 没找到 main 指 ./dist/ 的包 —— 构建前置是否缺失？`);
 
     rmSync(outDir, { recursive: true, force: true });
     mkdirSync(join(outDir, "node_modules", "@diy-agent"), { recursive: true });

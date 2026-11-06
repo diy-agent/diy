@@ -7,32 +7,32 @@
         "src/"
     ],
     "type": "module",
-    "main": "./lib/index.js",
+    "main": "./dist/index.js",
     "types": "./src/index.ts",
     "exports": {
         ".": {
             "types": "./src/index.ts",
-            "default": "./lib/index.js"
+            "default": "./dist/index.js"
         },
         "./channels": {
             "types": "./src/channels.ts",
-            "default": "./lib/channels.js"
+            "default": "./dist/channels.js"
         },
         "./page": {
             "types": "./src/page.ts",
-            "default": "./lib/page.js"
+            "default": "./dist/page.js"
         },
         "./loader": {
             "types": "./src/loader.ts",
-            "default": "./lib/loader.js"
+            "default": "./dist/loader.js"
         },
         "./protocol": {
             "types": "./src/protocol.ts",
-            "default": "./lib/protocol.js"
+            "default": "./dist/protocol.js"
         },
         "./preload": {
             "types": "./src/preload.ts",
-            "default": "./lib/preload.js"
+            "default": "./dist/preload.js"
         }
     },
     "scripts": {

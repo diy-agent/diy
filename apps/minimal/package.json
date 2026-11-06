@@ -8,12 +8,12 @@
     "*.html"
   ],
   "type": "module",
-  "main": "./lib/index.js",
+  "main": "./dist/index.js",
   "types": "./index.ts",
   "exports": {
     ".": {
       "types": "./index.ts",
-      "default": "./lib/index.js"
+      "default": "./dist/index.js"
     }
   },
   "scripts": {

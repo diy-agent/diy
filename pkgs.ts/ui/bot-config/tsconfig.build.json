@@ -10,7 +10,7 @@
         "lib": ["ES2022", "DOM", "DOM.Iterable"],
         "types": ["node"],
         "rootDir": "src",
-        "outDir": "lib",
+        "outDir": "dist",
         "noEmit": false,
 
 

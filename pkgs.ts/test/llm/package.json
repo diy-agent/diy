@@ -7,16 +7,16 @@
     "src/"
   ],
   "type": "module",
-  "main": "./lib/index.js",
+  "main": "./dist/index.js",
   "types": "./src/index.ts",
   "exports": {
     ".": {
       "types": "./src/index.ts",
-      "default": "./lib/index.js"
+      "default": "./dist/index.js"
     },
     "./env": {
       "types": "./src/env.ts",
-      "default": "./lib/env.js"
+      "default": "./dist/env.js"
     },
     "./fixtures": {
       "types": "./tests/fixtures/llm/index.ts",
