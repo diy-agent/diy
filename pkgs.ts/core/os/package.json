@@ -5,9 +5,9 @@
   "description": "OS 平台差异的唯一真源：posix / win32 策略、shell 探测、进程树、进程采样（进程扫描 + 健康现场）",
   "files": ["src/"],
   "type": "module",
-  "main": "./lib/index.js",
+  "main": "./dist/index.js",
   "types": "./src/index.ts",
-  "exports": { ".": { "types": "./src/index.ts", "default": "./lib/index.js" } },
+  "exports": { ".": { "types": "./src/index.ts", "default": "./dist/index.js" } },
   "dependencies": { "@diy-agent/tools": "0.1.0" },
   "scripts": { "build": "tsc -p tsconfig.build.json" }
 }

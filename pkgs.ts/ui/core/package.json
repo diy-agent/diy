@@ -18,36 +18,36 @@
     "signals"
   ],
   "type": "module",
-  "main": "./lib/index.js",
+  "main": "./dist/index.js",
   "types": "./src/index.ts",
   "exports": {
     ".": {
       "types": "./src/index.ts",
-      "default": "./lib/index.js"
+      "default": "./dist/index.js"
     },
     "./browser": {
       "types": "./src/browser.ts",
-      "default": "./lib/browser.js"
+      "default": "./dist/browser.js"
     },
     "./signal": {
       "types": "./src/signal.ts",
-      "default": "./lib/signal.js"
+      "default": "./dist/signal.js"
     },
     "./host": {
       "types": "./src/host.ts",
-      "default": "./lib/host.js"
+      "default": "./dist/host.js"
     },
     "./dom": {
       "types": "./src/providers/dom.ts",
-      "default": "./lib/providers/dom.js"
+      "default": "./dist/providers/dom.js"
     },
     "./dom-dsl": {
       "types": "./src/providers/dom-dsl.ts",
-      "default": "./lib/providers/dom-dsl.js"
+      "default": "./dist/providers/dom-dsl.js"
     },
     "./dom-gen": {
       "types": "./src/providers/dom-gen.ts",
-      "default": "./lib/providers/dom-gen.js"
+      "default": "./dist/providers/dom-gen.js"
     }
   },
   "files": [

@@ -9,7 +9,7 @@
         "target": "ES2022",
         "lib": ["ES2022", "DOM", "DOM.Iterable"],
         "rootDir": "src",
-        "outDir": "lib",
+        "outDir": "dist",
         "noEmit": false,
 
 

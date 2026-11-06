@@ -4,20 +4,20 @@
   "private": true,
   "description": "后台任务账本内核：run 表（spawn / tail / kill / wait）、结局与呈现判据、job 工具面（不管前台命令）",
   "type": "module",
-  "main": "./lib/index.js",
+  "main": "./dist/index.js",
   "types": "./src/index.ts",
   "exports": {
     ".": {
       "types": "./src/index.ts",
-      "default": "./lib/index.js"
+      "default": "./dist/index.js"
     },
     "./*": {
       "types": "./src/*.ts",
-      "default": "./lib/*.js"
+      "default": "./dist/*.js"
     },
     "./node": {
       "types": "./src/node.ts",
-      "default": "./lib/node.js"
+      "default": "./dist/node.js"
     }
   },
   "files": [

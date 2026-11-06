@@ -7,16 +7,16 @@
     "src/"
   ],
   "type": "module",
-  "main": "./lib/index.js",
+  "main": "./dist/index.js",
   "types": "./src/index.ts",
   "exports": {
     ".": {
       "types": "./src/index.ts",
-      "default": "./lib/index.js"
+      "default": "./dist/index.js"
     },
     "./strategies": {
       "types": "./src/strategies/index.ts",
-      "default": "./lib/strategies/index.js"
+      "default": "./dist/strategies/index.js"
     }
   },
   "scripts": {

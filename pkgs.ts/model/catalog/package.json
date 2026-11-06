@@ -7,12 +7,12 @@
     "src/"
   ],
   "type": "module",
-  "main": "./lib/index.js",
+  "main": "./dist/index.js",
   "types": "./src/index.ts",
   "exports": {
     ".": {
       "types": "./src/index.ts",
-      "default": "./lib/index.js"
+      "default": "./dist/index.js"
     }
   },
   "scripts": {

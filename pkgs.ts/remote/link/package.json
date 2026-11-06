@@ -8,16 +8,16 @@
         "src/"
     ],
     "type": "module",
-    "main": "./lib/index.js",
+    "main": "./dist/index.js",
     "types": "./src/index.ts",
     "exports": {
         ".": {
             "types": "./src/index.ts",
-            "default": "./lib/index.js"
+            "default": "./dist/index.js"
         },
         "./node": {
             "types": "./src/node/index.ts",
-            "default": "./lib/node/index.js"
+            "default": "./dist/node/index.js"
         }
     },
     "scripts": {

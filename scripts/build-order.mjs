@@ -9,7 +9,7 @@
 // 人是被提示引去重跑同一个东西。所以改成机器发现，不再有「登记」这道手工程序。
 //
 // 判据：
-//   · 入选 = pkgs.ts/<dir>/package.json 且 `main` 以 `./lib/` 开头（= 需要编 lib/ 的能力包）。
+//   · 入选 = pkgs.ts/<dir>/package.json 且 `main` 以 `./dist/` 开头（= 需要编 dist/ 的能力包；老包 ./lib/ 也认）。
 //     这不是新口径，正是 diy-app/scripts/build-runtime.mjs 收集 runtime 的那条判据。
 //   · 顺序 = 内部依赖（@diy/* · @diy-agent/*）拓扑序，被依赖方在前。
 //     为什么必须有顺序：各包 tsc 靠被依赖包的 lib/*.d.ts 做类型解析，故不能乱序、也不能并行。
@@ -42,7 +42,7 @@ function collectPackages() {
         const pkgPath = join(ROOT, dir, "package.json");
         if (!existsSync(pkgPath)) continue;
         const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
-        if (typeof pkg.main !== "string" || !pkg.main.startsWith("./lib/")) continue;
+        if (typeof pkg.main !== "string" || !/^\.\/(dist|lib)\//.test(pkg.main)) continue;
         const deps = new Set(
             [
                 ...Object.keys(pkg.dependencies ?? {}),
@@ -89,7 +89,7 @@ function topoSort(packages) {
 
 const order = topoSort(collectPackages());
 if (order.length === 0) {
-    console.error("pkgs.ts/ 下没找到 main 指 ./lib/ 的包 —— build-pkgs 无从下手");
+    console.error("pkgs.ts/ 下没找到 main 指 ./dist/ 的包 —— build-pkgs 无从下手");
     process.exit(1);
 }
 if (asJson) {

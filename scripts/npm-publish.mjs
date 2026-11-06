@@ -41,12 +41,12 @@ if (!existsSync(distDir)) {
     process.exit(1);
 }
 
-/** `./src/index.ts`（或 `./lib/index.js`）→ `./index.js`；目录型条目同样成立 */
+/** `./src/index.ts`（或 `./dist/index.js`、老包的 `./lib/index.js`）→ `./index.js`；目录型条目同样成立 */
 const toDistPath = (spec, ext) => {
     const rel = spec.replace(/^\.\//, '');
-    const m = rel.match(/^(?:src|lib)\/(.+)$/);
+    const m = rel.match(/^(?:src|dist|lib)\/(.+)$/);
     if (!m) {
-        throw new Error(`exports 条目不在 src/ 或 lib/ 下，无法推导产物路径：${spec}`);
+        throw new Error(`exports 条目不在 src/、dist/ 或 lib/ 下，无法推导产物路径：${spec}`);
     }
     return `./${m[1].replace(/\.(ts|js)$/, ext)}`;
 };

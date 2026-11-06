@@ -7,20 +7,20 @@
         "src/"
     ],
     "type": "module",
-    "main": "./lib/index.js",
+    "main": "./dist/index.js",
     "types": "./src/index.ts",
     "exports": {
         ".": {
             "types": "./src/index.ts",
-            "default": "./lib/index.js"
+            "default": "./dist/index.js"
         },
         "./session": {
             "types": "./src/session.ts",
-            "default": "./lib/session.js"
+            "default": "./dist/session.js"
         },
         "./bot": {
             "types": "./src/bot.ts",
-            "default": "./lib/bot.js"
+            "default": "./dist/bot.js"
         }
     },
     "scripts": {

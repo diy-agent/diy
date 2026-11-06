@@ -650,7 +650,7 @@ build-pkgs() {
     # bash + sha 引擎（~1s），三个包就是 3s —— 实测占了热构建的一半（2026-10-31）。
     local _p
     for _p in pkgs.ts/core/rpc pkgs.ts/ui/core pkgs.ts/ui/workbench-plugin pkgs.ts/core/dev-paths; do
-        run node scripts/npm-publish.mjs "$_p" --prepare-only --out=lib
+        run node scripts/npm-publish.mjs "$_p" --prepare-only --out=dist
     done
     # profile（apps/*）**不进** build-pkgs：它们是产物入口不是能力包，按需各自 ./sha.sh build
 }
