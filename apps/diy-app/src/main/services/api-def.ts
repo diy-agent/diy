@@ -41,6 +41,7 @@ import { contextRoutes } from "./api-domains/context/api";
 import { trafficRoutes } from "./api-domains/traffic/api";
 import { llmConfigRoutes } from "./api-domains/llmConfig/api";
 import { factsRoutes } from "./api-domains/facts/api";
+import { kbRoutes } from "./api-domains/kb/api";
 import { docsRoutes } from "./api-domains/docs/api";
 import { llmProxyRoutes } from "./api-domains/llmProxy/api";
 import { watchRoutes } from "./api-domains/watch/api";
@@ -346,6 +347,7 @@ export const apiDef = RpcSchema.bindNames(RpcSchema.group({ children: {
       seed: seedRoutes,
 
       facts: factsRoutes,
+      kb: kbRoutes,
 
       docs: docsRoutes,
 
@@ -445,3 +447,7 @@ export const apiDef = RpcSchema.bindNames(RpcSchema.group({ children: {
     },
   }),
 } }));
+
+/** `apiDef.diy` —— 各域 impl 取值起点（拆 impl 后各域都要它） */
+export const app = apiDef.diy;
+

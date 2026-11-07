@@ -14,7 +14,7 @@
 import { z } from 'zod';
 import { RpcSchema, defineService } from '../../../../src/index';
 
-export const calcRoutes = RpcSchema.bindNames(RpcSchema.group({
+export const calcRoutes = RpcSchema.group({
     desc: '计算器示例',
     children: {
         math: RpcSchema.group({
@@ -30,6 +30,6 @@ export const calcRoutes = RpcSchema.bindNames(RpcSchema.group({
             },
         }),
     },
-}));
+});
 
 export const calcService = defineService({ name: 'demo', api: calcRoutes });

@@ -6,7 +6,7 @@
 import { z } from "zod";
 import { RpcSchema, defineService } from "../../../../src/index";
 
-export const mathRoutes = RpcSchema.bindNames(RpcSchema.group({ children: {
+export const mathRoutes = RpcSchema.group({ children: {
     math: RpcSchema.group({ children: {
         add: RpcSchema.unary({
             input: { a: z.number(), b: z.number() },
@@ -16,6 +16,6 @@ export const mathRoutes = RpcSchema.bindNames(RpcSchema.group({ children: {
         /** 空 input 也要声明成 `{}`（调用时传 `{}`） */
         version: RpcSchema.unary({ input: {}, output: z.string() }),
     } }),
-} }));
+} });
 
 export const mathService = defineService({ name: "demo.math", api: mathRoutes });

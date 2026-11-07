@@ -66,8 +66,18 @@ export abstract class ServerBindingCore {
   }
 
   /** 注册一个方法：按 meta._streamMode 存到对应表；重复注册（多后端 scope 冲突的实质）显式报错 */
-  on<M extends _AnyProcedureMeta>(meta: M, handler: _HandlerForProc<M>): void {
-    const name = this._nameOf(meta);
+  on<M extends _AnyProcedureMeta>(path: string, meta: M, handler: _HandlerForProc<M>): void;
+  on<M extends _AnyProcedureMeta>(meta: M, handler: _HandlerForProc<M>): void;
+  on<M extends _AnyProcedureMeta>(
+    pathOrMeta: string | M,
+    metaOrHandler: M | _HandlerForProc<M>,
+    maybeHandler?: _HandlerForProc<M>,
+  ): void {
+    // 三参 = (path, meta, handler)；两参 = (meta, handler)
+    const name = typeof pathOrMeta === 'string' ? pathOrMeta : this._nameOf(pathOrMeta);
+    const meta = typeof pathOrMeta === 'string' ? (metaOrHandler as M) : pathOrMeta;
+    const handler = (typeof pathOrMeta === 'string' ? maybeHandler : metaOrHandler) as _HandlerForProc<M>;
+    if (!name) throw new Error('[ServerBinding] on: path 不能为空');
     this._assertNotRegistered(name);
     const mode = meta._streamMode;
     if (mode === 'unary') {

@@ -37,6 +37,21 @@ export interface CallOptions {
 
 export interface ServerBinding {
   /** 注册一个方法；handler 签名随 meta._streamMode 推导 */
+  /**
+   * 注册一个方法 —— **显式路径**形式。
+   *
+   * 与下面的两参重载的区别：**不读 `meta.name`**，所以调用方不必先
+   * `RpcSchema.bindNames(整棵树)`。路径就在这一行，grep 得到。
+   *
+   * ```ts
+   * binding.on("diy.task.create", api.task.create, handler);
+   * ```
+   *
+   * 为什么还要传 meta：handler 的参数类型从它推（`{ input, signal }` 的形状），
+   * 运行时还要用它做 zod 校验（`inputSchema`）。
+   */
+  on<M extends _AnyProcedureMeta>(path: string, meta: M, handler: _HandlerForProc<M>): void;
+  /** 注册一个方法 —— 两参形式：路径从 `meta.name` 读（需要先 `bindNames`）。 */
   on<M extends _AnyProcedureMeta>(meta: M, handler: _HandlerForProc<M>): void;
 
   destroy(): void;
