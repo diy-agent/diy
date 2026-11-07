@@ -60,6 +60,7 @@ import { FindBar } from "./components/FindBar";
 import { findStore } from "./store/findStore";
 import { chatFindStore } from "./store/chatFindStore";
 import { setRendererActions, resetRendererActions, getRendererActions } from "./lib/renderer-actions";
+import { personaDrawerStore } from "./store/personaDrawerStore";
 import { DragDropProvider, DragOverlay, useDraggable, useDroppable, PointerSensor } from "@dnd-kit/solid";
 import type { DragDropProviderProps } from "@dnd-kit/solid";
 import { findTaskProject } from "./components/TaskTree";
@@ -943,6 +944,7 @@ export default function App() {
                 setRoute({ kind: "section", section: page as Section });
             },
             focus: (uri) => taskStore.selectTask(uri),
+            openPersona: (personaId) => personaDrawerStore.open(personaId),
             // 折叠块展开态按前缀分派：`ctx.*` 归上下文树试验场，其余归提示词页
             setView: (key, open) =>
                 key.startsWith("ctx.") ? setCtxLabFold(key, open) : setLabView(key, open),

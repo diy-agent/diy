@@ -29,6 +29,8 @@ export interface RendererActions {
     setView?: (key: string, open: boolean) => void;
     /** 打开（或聚焦）任务执行 tab —— 等同点任务详情里的大 FAB */
     openTaskRun?: (uri: string) => void;
+    /** 打开人物编辑抽屉（可指定人物 id；不传 = 保持当前选中） */
+    openPersona?: (personaId?: string) => void;
     /** 切到已打开的 tab（参数是 tab key：`task-run:<uri>` / `lab:<uri>`） */
     activateTab?: (key: string) => void;
     /** 关闭 tab（= 暂时不理会，与任务状态无关；关父连带关子） */

@@ -13,6 +13,12 @@ import { SETUP_HOME_PREFIX, removeIsolatedHome, sweepStaleTestHomes } from "./te
 // 只装补丁、不改任何行为（`_cli-meta` 纯 side-effect）。
 import "@diy-agent/rpc";
 
+// ── CLI 走 app server 的 /cli 端点（##518 测试提速）──
+// 为什么：intent 测试的每个断言都调 `./diy.sh`，每条都是一个**新 node 进程**（实测 0.68s）。
+// 依赖注入式地让它走 HTTP：curl 到实例的 /cli（~60ms）。实测 persona 文件 137.7s → 45.8s，
+// 34 条用例全绿。传输失败仍会回退直连（diy.sh 自己实现），所以不改变语义，只改执行通道。
+process.env["DIY_CLI_MODE"] ??= "http";
+
 // ═══════════════════════════════════════════════
 // 🛡️ 安全：每个测试文件分配一次性临时目录
 //    测试代码读 process.env.DIY_HOME 时指向此处

@@ -159,6 +159,34 @@ export const uiRoutes = RpcSchema.group({desc: `Renderer 进程域`,
            * 任务执行页的 tab（打开的任务）。等同浏览器/编辑器开 tab：
            * 打开 = 我现在要做它；关闭 = 暂时不理会（**与任务状态无关**）。
            */
+          /**
+           * 人物编辑抽屉（SidebarRoom 里点名片的半截页）。
+           *
+           * 为什么做成 rpc（##518）：它原先只是 renderer 的 local signal ⇒ `diy.ui.*` 这套
+           * 「rpc 操纵 UI 状态」的能力够不到它，意图测试只能起真窗口用 CDP 点鼠标。
+           * 现在开关与选中项都落到 `personaDrawerStore`，main 只转发。
+           */
+          persona: RpcSchema.group({
+            desc: `人物编辑抽屉`,
+            children: {
+              open: RpcSchema.unary({
+                desc: `打开人物编辑抽屉（可指定人物 id）`,
+                input: { id: z.string().optional().cliOption({ desc: "人物 id（缺省 = 保持当前选中）" }) },
+                output: z.object({ status: z.string() }),
+              }),
+              close: RpcSchema.unary({
+                desc: `关闭人物编辑抽屉`,
+                input: {},
+                output: z.object({ status: z.string() }),
+              }),
+              state: RpcSchema.unary({
+                desc: `读抽屉状态（open / 选中的人物 id）—— 意图测试断言 UI 状态用，不必翻 a11y 树`,
+                input: {},
+                output: z.object({ status: z.string(), data: z.object({ open: z.boolean(), id: z.string().nullable() }) }),
+              }),
+            },
+          }),
+
           tab: RpcSchema.group({
             desc: `任务 tab`,
             children: {

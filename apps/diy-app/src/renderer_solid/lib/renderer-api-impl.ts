@@ -3,6 +3,7 @@ import { ChannelServerBinding } from "@diy-agent/rpc";
 import { taskStateNotice } from "./notice-entity";
 import { getRendererActions, type LayoutChanges } from "./renderer-actions";
 import type { ToastType } from "../store/notificationStore";
+import { personaDrawerStore } from "../store/personaDrawerStore";
 import { apiDef } from "../../main/services/api-def";
 import { diyService } from "./rpc";
 import { editTask } from "./task-edit";
@@ -77,6 +78,19 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
   binding.on(ui.view.expand, async ({ input }) => {
     getRendererActions().setView?.(input.key, input.open !== "closed");
     return { status: "ok" };
+  });
+
+  // 人物编辑抽屉（##518）：状态在 personaDrawerStore，rpc 只转发
+  binding.on(ui.persona.open, async ({ input }) => {
+    personaDrawerStore.open(input.id);
+    return { status: "ok" };
+  });
+  binding.on(ui.persona.close, async () => {
+    personaDrawerStore.close();
+    return { status: "ok" };
+  });
+  binding.on(ui.persona.state, async () => {
+    return { status: "ok", data: { open: personaDrawerStore.isOpen(), id: personaDrawerStore.target() } };
   });
 
   // 布局读 / 写 / 复位（CLI 操纵 UI 状态的第一种测试能力）

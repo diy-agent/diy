@@ -1,0 +1,1228 @@
+/**
+ * persona-panel.e2e.test.ts — 人物面板的**端到端**用例（真窗口 + CDP 真实输入）。
+ *
+ * 为什么是 e2e 而不是意图测试（用户口径，2026-11-06）：
+ *   这里断言的东西只有真渲染才存在 —— viewport fixed 浮层不被 overflow 裁、面板几何（2/3 视口、
+ *   左列 1/3）、模型按钮按价格排序、搜索高亮、↗ 跳转把条目滚进视野/滚到正中、hover 显形、
+ *   双击换绑并关窗。它们是**像素/命中测试**层面的契约，用 rpc 表达不了（能表达的是"状态变了没"，
+ *   那部分已迁到 `tests/fast.persona-*.test.ts`）。
+ *
+ * 与 intent 的区别（测试规范）：
+ *   · intent：验**能力与规则**（状态机、契约、数据流）——应尽量代码穿透（rpc，不进窗口）；
+ *   · e2e   ：验**界面对人有效**（点得动、看得见、不重叠）——必须真窗口，天然慢，按需跑。
+ *
+ * 跑法：需要 `DIY_VARIANT=test ./sha.sh build` 与真 Electron；不随 `./sha.sh test` 跑。
+ */
+// tests/e2e/persona-panel.e2e.test.ts
+// ═══════════════════════════════════════════════════════════════
+// 🎯 agent 人物（persona）意图验证 —— 需求定义者
+//
+// 本文件锁的是这条需求（用户原话的两难）：
+//   "不同会话要用不同模型，但又要能统一改；改一个会话不能把另一个也改了。"
+// 落法（本层不实现多人对话，只实现"配置挂人物、会话持引用"）：
+//   1. 人物是**全局配置实体**：模型/参数/行为指令挂它，改它对所有引用者**下一轮**生效
+//   2. 任务 frontmatter 的 persona 是**引用**：换人物只影响本任务，续聊（上下文不动）
+//   3. 新建任务物化缺省人物名（not null：读到的任务一定有值）
+//   4. 人物的模型必须合法（未知模型 / 档位不支持 → 写入前拒绝）
+//   5. 被引用的人物不可删（否则任务会静默换模型）
+// ═══════════════════════════════════════════════════════════════
+
+import { describe, it, beforeAll, afterAll, expect } from "vitest";
+import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { parse as yamlParse, stringify as yamlStringify } from "yaml";
+import { ShellTest } from "../shell-test";
+import { keyOf, sessionFileForWrite, sessionFileRel } from "../../src/main/core/local-paths";
+import { startElectronTest, type ElectronTest } from "../electron-test";
+import { makeUiDriver, type UiDriver } from "../ui-drive";
+import { waitUntil } from "../wait";
+
+interface ElectronFixture {
+    sh: ShellTest;
+    HOME: string;
+    electron: ElectronTest;
+}
+
+let fx: ElectronFixture;
+/** 真实 UI 驱动（CDP 原生事件）：面板用例要"真的点得动"，不只是数据对 */
+let ui: UiDriver | undefined;
+
+/** a11y 树（renderer 可见元素的真实快照；`ui tree` 是任务树，别混） */
+async function a11yTree(): Promise<any> {
+    const r = await fx.sh.getJson(`./diy.sh ui inspect`);
+    return (r.data as any)?.data?.tree;
+}
+
+/** a11y 树里的全部可见文本（`ui inspect` 的 tree 是单个根节点） */
+function a11yTextOf(nodes: any, acc: string[] = []): string[] {
+    const list = Array.isArray(nodes) ? nodes : nodes ? [nodes] : [];
+    for (const n of list) {
+        if (n?.text) acc.push(String(n.text));
+        a11yTextOf(n?.children, acc);
+    }
+    return acc;
+}
+
+async function a11yText(): Promise<string> {
+    return a11yTextOf(await a11yTree()).join("\n");
+}
+
+beforeAll(async () => {
+    const electron = await startElectronTest();
+    const HOME = electron.home;
+    fx = {
+        electron,
+        HOME,
+        sh: new ShellTest({
+            cwd: join(__dirname, "..", "..", ".."),
+            env: { HOME, DIY_HOME: HOME },
+        }),
+    };
+    // 真实 UI 驱动（CDP 原生事件）：面板用例要"真的点得动"，不只是数据对
+    ui = await makeUiDriver(electron.cdpUrl, a11yTree);
+});
+
+afterAll(async () => {
+    ui?.close();
+    await fx?.electron?.stop();
+});
+
+/** 读任务 frontmatter 里的 persona（**人物 id**；直接读文件：锁的是"落盘事实"而非接口回显） */
+function personaOf(uri: string): string | undefined {
+    const fp = join(fx.HOME, uri, "AGENTS.md");
+    if (!existsSync(fp)) throw new Error(`任务文件不存在: ${fp}`);
+    const m = readFileSync(fp, "utf-8").match(/^persona:\s*(.+)$/m);
+    return m?.[1]?.trim().replace(/^['"]|['"]$/g, "");
+}
+
+/** 按名字查人物 id（重试安全的寻址方式；找不到抛错，不静默） */
+async function personaIdByName(name: string): Promise<string> {
+    const hit = (await personaList()).personas.find((p) => p.name === name);
+    if (!hit) throw new Error(`人物「${name}」不存在`);
+    return hit.id;
+}
+
+/** 建一个项目 + 一个任务，返回任务 URI（每次新项目：任务号从 1 起，避免猜 id） */
+async function setupTask(title: string): Promise<string> {
+    const repo = `${fx.HOME}/persona-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`;
+    const r = await fx.sh.getJson(`./diy.sh project create "${repo}" --label 人物实验`);
+    const pid = String(
+        ((r.data as Record<string, unknown>)?.data as Record<string, unknown>)?.id ?? "",
+    );
+    const created = await fx.sh.getJson(`./diy.sh task create ${title} ${pid}`);
+    return String(
+        ((created.data as Record<string, unknown>)?.data as Record<string, unknown>)?.uri ?? "",
+    );
+}
+
+/**
+ * 建/改人物，返回 **id**。
+ *
+ * 用例里一律用 id 引用（`--persona <id>`）：名字是标签、id 才是引用键 ——
+ * 这条契约由本文件的「改名不影响绑定」用例锁住，其他用例按真实用法写。
+ */
+/**
+ * 批量造人物：**直接写 personas.yaml**（一次 IO），不再起 N 个 CLI 子进程。
+ *
+ * 为什么（实测）：单次 `./diy.sh agent persona set` 0.4s（冷启 2.7s），24 次就是 10–20s，
+ * 而用例要的只是"列表比一屏长 + 缺省在中间"这个**前置条件**，与"通过 CLI 建人物"无关
+ * —— 后者已由「新建人物」那条用例覆盖。写文件走的仍是 `loadPersonas` 同一份解析，语义等价。
+ *
+ * 返回 `restore()`：把文件恢复原样（本文件共用同一实例，别把 24 个占位人物留给后面的用例去撞）。
+ */
+function seedPersonas(count: number): { ids: string[]; restore: () => void } {
+    const file = join(fx.HOME, "personas.yaml");
+    const before = existsSync(file) ? readFileSync(file, "utf-8") : null;
+    const cur = (before === null ? null : (yamlParse(before) as any)) ?? { default: "persona/1", personas: {} };
+    cur.personas ??= {};
+    const tmpl = Object.values(cur.personas)[0] as any;
+    const base = tmpl ?? { name: "x", model: "mimo-v2.6-flash", reasoningEffort: "medium" };
+    const ids: string[] = [];
+    for (let i = 0; i < count; i++) {
+        const id = `persona/${String(900 + i)}`;
+        cur.personas[id] = { ...base, name: `跳转占位${String(i)}` };
+        ids.push(id);
+    }
+    writeFileSync(file, yamlStringify(cur, { indent: 2 }));
+    return {
+        ids,
+        restore: () => {
+            if (before === null) rmSync(file, { force: true });
+            else writeFileSync(file, before);
+        },
+    };
+}
+
+async function addPersona(name: string, model: string, extra = ""): Promise<string> {
+    const r = await fx.sh.getJson(
+        `./diy.sh agent persona set --name ${name} --model ${model}${extra ? ` ${extra}` : ""}`,
+    );
+    const id = (r.data as { id?: string } | undefined)?.id;
+    if (!id) throw new Error(`建人物失败（未返回 id）: ${name}`);
+    return id;
+}
+
+/**
+ * 每次调用都不同的名字：**重试安全**。
+ *
+ * vitest 配置了 `retry: 1`（E2E 防时序噪声）。重试会重跑用例，于是"同名人物"会被建两次，
+ * 而任务还指着上一轮那个 id —— 断言拿新 id 去比，就报 `expected 'p4' to be 'p15'`
+ * 这种看着像产品 bug、其实是测试自伤的错。名字唯一后，按名字查到的必然是**本轮**那个。
+ */
+let nameSeq = 0;
+function uniq(prefix: string): string {
+    return `${prefix}${Date.now().toString(36)}${nameSeq++}`;
+}
+
+/** 人物清单（用例内部断言用） */
+async function personaList(): Promise<{
+    default: string;
+    personas: Array<{
+        id: string;
+        name: string;
+        model: string;
+        reasoningEffort: string;
+        instructions: string;
+        taskCount: number;
+    }>;
+}> {
+    const r = await fx.sh.getJson(`./diy.sh agent persona list`);
+    return r.data as never;
+}
+
+describe("UI：会话页看得见当前人物", () => {
+    it("执行页显示当前人物名与其模型（不是只存在数据里）", async () => {
+        const 名 = uniq("演示人物");
+        const id = await addPersona(名, "mimo-v2.6-flash");
+        const uri = await setupTask("UI人物测试");
+        await fx.sh.run(`./diy.sh task edit ${uri} --persona ${id}`);
+        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+
+        const text = await a11yText();
+        // 会话页的人物按钮：**当前绑定的人物名**（若 renderer 拿不到 persona 字段，
+        // 这里会退回显示缺省人物 —— 那正是"界面说的模型和实际用的不是一回事"）
+        expect(text).toContain(名);
+        // 人读模型名（不是 id）：人物决定模型，界面上要看得见是哪个
+        // 显示的是**模型 id**（发给上游的那个值），不是上游的显示名 —— 两者经常对不上
+        expect(text).toContain("mimo-v2.6-flash");
+    });
+});
+
+describe("UI：人物面板（主从视图）—— 选、改、换绑都在这里", () => {
+    /**
+     * 打开面板：点会话页的人物按钮。
+     *
+     * **必须按任务 URI 限定选择器**（sel = 本任务那个面板）：每个 tab 各挂一个 LocalChatPage，
+     * 同时挂载时面板内部控件（如人物项）会有多份 —— 全局 querySelector 命中的是**别人那个面板**，
+     * 于是"点了我这儿"实际动的是另一个任务的绑定（实测：断言里 persona 一直是另一个 id）。
+     * 就绪判据也用面板独有元素，不拿"agent 人物"这类文字（会话页按钮的 aria-label 里就有）。
+     */
+    /**
+     * 真实点击**并把目标滚入视野**。
+     *
+     * clickSelector 只在"元素中心"派发原生事件，不做命中检查 —— 目标在滚动区外时，
+     * 坐标落到别人身上，表现为"点了没反应"（实测：人物列表随用例累积变长后，最后一项在视口外）。
+     */
+    async function clickIn(selector: string): Promise<void> {
+        await ui!.eval<boolean>(`(() => {
+            const el = document.querySelector(${JSON.stringify(selector)});
+            if (!el) return false;
+            el.scrollIntoView({ block: "center" });
+            return true;
+        })()`);
+        await ui!.clickSelector(selector);
+    }
+
+    function sel(root: string): string {
+        return `[data-testid="persona-drawer"][data-uri="${root}"]`;
+    }
+    async function openPanel(root: string): Promise<void> {
+        // 面板可能还开着（上个用例留下的）：先**全部**关掉。
+        // 必须关干净：面板只在 open 的 false→true 跳变时刷新清单，若它还开着，
+        // 本用例刚建的人物不会出现在左列 → 后面的点击找不到目标（实测就是这个坑）。
+        // 关的时候不能按 sel(root) 限定：那时 selectedUri 还停在上一个用例的任务上。
+        await ui!.eval<boolean>(`(() => {
+            document.querySelectorAll('[data-testid="persona-drawer"] [aria-label="关闭人物面板"]').forEach(b => b.click());
+            return true;
+        })()`);
+        await waitUntil(
+            async () =>
+                ui!.eval<number>(
+                    `document.querySelectorAll('[data-testid="persona-drawer"]').length`,
+                ),
+            (n) => n === 0,
+            { label: "旧面板已关" },
+        );
+        await ui!.clickSelector(`[aria-label="打开 agent 人物面板"]`);
+        await waitUntil(
+            async () => ui!.eval<boolean>(`!!document.querySelector('${sel(root)}')`),
+            (v) => v === true,
+            { label: "面板已打开" },
+        );
+        // 就绪 = 右侧**已经定下来**：要么是属性编辑器（模型按钮可用），要么是跟随缺省说明态。
+        // 不能只等模型按钮 —— 本任务跟随缺省时右侧根本没有编辑器，等它必然超时（实测）。
+        await waitUntil(
+            async () =>
+                ui!.eval<boolean>(`(() => {
+                    const d = document.querySelector('${sel(root)}');
+                    if (!d) return false;
+                    if (d.querySelector('[data-testid="persona-follow-pane"]')) return true;
+                    const b = d.querySelector('button[aria-pressed]');
+                    return !!b && !b.disabled;
+                })()`),
+            (v) => v === true,
+            { label: "右侧已定下来（编辑器或跟随缺省说明态）" },
+        );
+    }
+
+    /**
+     * 展开模型选择表。
+     *
+     * 模型字段**默认收起**（只显示当前选中项 —— 常驻大表反而看不清当前选的是哪个）；
+     * 点触发按钮才展开。已展开则跳过（新建态会自动展开）。
+     */
+    async function openModelPicker(root: string): Promise<void> {
+        const picker = `${sel(root)} [data-testid="persona-model-picker"]`;
+        const already = await ui!.eval<boolean>(
+            `!!document.querySelector(${JSON.stringify(picker)})`,
+        );
+        if (!already) await clickIn(`${sel(root)} [data-testid="persona-model-trigger"]`);
+        await waitUntil(
+            async () => ui!.eval<boolean>(`!!document.querySelector(${JSON.stringify(picker)})`),
+            (v) => v === true,
+            { label: "模型选择表已展开" },
+        );
+    }
+
+    it("主从视图：模型默认收起（仅显示当前项），点击才展开选择表；级别是平铺按钮", async () => {
+        const 名 = uniq("面板人物");
+        const id = await addPersona(名, "mimo-v2.6-flash");
+        const uri = await setupTask("面板测试任务");
+        await fx.sh.run(`./diy.sh task edit ${uri} --persona ${id}`);
+        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+
+        await openPanel(uri);
+        const text = await a11yText();
+        expect(text).toContain(名);
+        // 人物列表不再混入任务信息（本任务/引用数移到 info 条与绑定模式语义中）
+        expect(text).toContain("缺省");
+        // 属性直接可改；模型字段默认只显示当前值（不是常驻大表），展开后是可选表格
+        expect(text).toContain("模型");
+        expect(text).toContain("思考级别");
+        expect(text).toContain("行为指令");
+        // 右侧默认编辑的是**本任务绑定的人物**（否则用户会在别人身上改全局配置）
+        const st = await ui!.eval<{
+            editing: string | null;
+            bound: string | null;
+            selects: number;
+        }>(`(() => {
+            const d = document.querySelector('${sel(uri)}');
+            return {
+                editing: d?.getAttribute('data-editing') ?? null,
+                bound: d?.getAttribute('data-bound') ?? null,
+                selects: d?.querySelectorAll('select').length ?? -1,
+            };
+        })()`);
+        expect(st.editing).toBe(id);
+        expect(st.bound).toBe(id);
+        // 面板内不应再有 <select>（模型是触发展开，档位是平铺按钮；名字/行为指令是输入框）
+        expect(st.selects).toBe(0);
+        // 模型字段默认收起：选择表**不在** DOM 里，但触发按钮上看得见当前模型 id
+        const collapsed = await ui!.eval<{ picker: boolean; trigger: string }>(`(() => {
+            const d = document.querySelector('${sel(uri)}');
+            const t = d?.querySelector('[data-testid="persona-model-trigger"]');
+            return {
+                picker: !!d?.querySelector('[data-testid="persona-model-picker"]'),
+                trigger: t?.textContent ?? '',
+            };
+        })()`);
+        expect(collapsed.picker).toBe(false);
+        expect(collapsed.trigger).toContain("mimo-v2.6-flash");
+        // 展开后当前模型的按钮是选中态（显示与实际一致：选中 mimo 就得亮 mimo）
+        await openModelPicker(uri);
+        const pressed = await ui!.eval<string[]>(
+            `Array.from(document.querySelectorAll('${sel(uri)} button[aria-pressed="true"]')).map(b => b.getAttribute('aria-label'))`,
+        );
+        expect(pressed).toContain("mimo-v2.6-flash");
+    });
+
+    it("点平铺按钮改模型 → 落盘 personas.yaml（改完即存）", async () => {
+        const id = await addPersona(uniq("改模型人物"), "mimo-v2.6-flash");
+        const uri = await setupTask("改模型任务");
+        await fx.sh.run(`./diy.sh task edit ${uri} --persona ${id}`);
+        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+        await openPanel(uri);
+        await openModelPicker(uri);
+
+        // 真实点击模型按钮（表格首列的按钮显示 id；不是派发合成 change —— 这里就是按钮，点得动）
+        await clickIn(`${sel(uri)} button[aria-label="deepseek-v4.1-flash"]`);
+        const changed = await waitUntil(
+            async () => (await personaList()).personas.find((p) => p.id === id)?.model,
+            (m) => !!m && m.endsWith("deepseek-v4.1-flash"),
+            { label: "personas.yaml 里的模型已改" },
+        );
+        expect(changed!.endsWith("deepseek-v4.1-flash")).toBe(true);
+    });
+
+    it("改模型后，档位按钮换成该模型的候选集（各模型词表不同）", async () => {
+        // deepseek-v4.1-flash 有 max（models.dev 声明 low/high/max）；mimo-v2.6-flash 的兜底集只到 high。
+        // 切模型后按钮集必须跟着换，否则用户点一个上游必拒的档位（400 Invalid request parameters）。
+        const id = await addPersona(uniq("档位随模型"), "mimo-v2.6-flash");
+        const uri = await setupTask("档位测试任务");
+        await fx.sh.run(`./diy.sh task edit ${uri} --persona ${id}`);
+        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+        await openPanel(uri);
+        await openModelPicker(uri);
+
+        const levelsOf = () =>
+            ui!.eval<string[]>(
+                `Array.from(document.querySelectorAll('${sel(uri)} button[aria-pressed]')).map(b => b.getAttribute('aria-label'))`,
+            );
+        // models.dev 的 reasoning_options 现在提供精确 effort 词表（见 shared/model-config.reasoningFromSpec）；
+        // 未声明的模型退回兜底集（只到 high）。
+        await clickIn(`${sel(uri)} button[aria-label="deepseek-v4.1-flash"]`);
+        await waitUntil(
+            async () => (await levelsOf()).includes("最大"),
+            (v) => v === true,
+            { label: "档位集跟着换" },
+        );
+    });
+
+    it("改名输入框：改完即存，id 不变", async () => {
+        const 前 = uniq("面板改名前");
+        const 后 = uniq("面板改名后");
+        const id = await addPersona(前, "mimo-v2.6-flash");
+        const uri = await setupTask("面板改名任务");
+        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+        await openPanel(uri);
+        // 左列点中它，再改名字输入框
+        await clickIn(`${sel(uri)} [aria-label="人物 ${前}"]`);
+        await clickIn(`${sel(uri)} input[aria-label="人物名字"]`);
+        await ui!.press("Meta+A");
+        await ui!.type(后);
+        await ui!.press("Enter");
+        await waitUntil(
+            async () => (await personaList()).personas.find((p) => p.id === id)?.name,
+            (n) => n === 后,
+            { label: "名字已存" },
+        );
+    });
+
+    it("新建人物：模型/档位/行为指令都能填（不是只能填名字）", async () => {
+        // 曾经的形态：新建态只放开了名字，模型/档位/行为指令一律 disabled —— 于是"建人物"只能填名字，
+        // 而 model 在 main 侧是必填（没有模型的人物等于把模型交回硬编码回落），创建实际会失败。
+        // 这条锁的是：三块属性在**新建态就可交互**，且填的值随创建一并落盘。
+        const 名 = uniq("新建人物");
+        const uri = await setupTask("新建人物任务");
+        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+        await openPanel(uri);
+
+        await clickIn(`${sel(uri)} [aria-label="新建人物"]`);
+        await openModelPicker(uri);
+
+        // 1) 新建态三块属性都必须可交互（模型/档位 = button[aria-pressed]，行为指令 = textarea）
+        const st = await waitUntil(
+            async () =>
+                ui!.eval<{
+                    count: number;
+                    disabled: number;
+                    instructionsDisabled: boolean;
+                }>(`(() => {
+                    const d = document.querySelector('${sel(uri)}');
+                    const btns = Array.from(d.querySelectorAll('button[aria-pressed]'));
+                    const ta = d.querySelector('textarea[aria-label="人物行为指令"]');
+                    return { count: btns.length, disabled: btns.filter(b => b.disabled).length, instructionsDisabled: ta ? ta.disabled : true };
+                })()`),
+            (v) => v.count > 0,
+            { label: "新建态的模型/档位按钮已就绪" },
+        );
+        expect(st.disabled).toBe(0);
+        expect(st.instructionsDisabled).toBe(false);
+
+        // 2) 真填一遍：名字 + 换模型 + 换档位 + 行为指令
+        await clickIn(`${sel(uri)} input[aria-label="新人物名字"]`);
+        await ui!.type(名);
+        await clickIn(`${sel(uri)} button[aria-label="mimo-v2.6-flash"]`);
+        await clickIn(`${sel(uri)} button[aria-label="低"]`); // 非默认档（默认是中），证明选的是它
+        await clickIn(`${sel(uri)} textarea[aria-label="人物行为指令"]`);
+        await ui!.type("每次汇报前先喊「报告」。");
+        await clickIn(`${sel(uri)} [aria-label="创建人物"]`);
+
+        // 3) 落盘事实：创建时填的三块属性都写进了 personas.yaml
+        const pl = await waitUntil(
+            async () => (await personaList()).personas.find((x) => x.name === 名),
+            (v) => !!v,
+            { label: "新人物已落盘" },
+        );
+        expect(pl!.model.endsWith("mimo-v2.6-flash")).toBe(true);
+        expect(pl!.reasoningEffort).toBe("low");
+        expect(pl!.instructions).toBe("每次汇报前先喊「报告」。");
+        // 4) 建完停在**刚建好的人物**上（否则"跟随本任务绑定"的校准会立刻切回别人，看着像没建成）
+        expect(
+            await ui!.eval<string | null>(
+                `document.querySelector('${sel(uri)}')?.getAttribute('data-editing') ?? null`,
+            ),
+        ).toBe(pl!.id);
+        // 5) 新建**不自动换绑**本任务（换绑是双击左列的事，两件事不混）
+        expect(
+            await ui!.eval<string | null>(
+                `document.querySelector('${sel(uri)}')?.getAttribute('data-bound') ?? null`,
+            ),
+        ).not.toBe(pl!.id);
+    });
+
+    it("任务里存的是**旧名字**时，界面显示 main 实际会用的人物（而不是「选择人物」）", async () => {
+        // 半迁移状态：personas.yaml 已是新结构（p1），而任务还存着名字「大副」。
+        // main 侧按 id 找不到 → 回落缺省（能正常回答），所以界面必须显示**那个回落结果**；
+        // 若显示"选择人物/Agent"，就把"配置在、功能好"伪装成"配置丢了" —— 实测就是这个坑。
+        const uri = await setupTask("旧名字引用任务");
+        // 直接改文件模拟旧数据（RPC 侧只接受有效 id，写不进去）
+        const fp = join(fx.HOME, uri, "AGENTS.md");
+        // 任务现在默认**跟随缺省**（没有 persona 行），故这里是"插入"而不是"替换"：
+        // 模拟的是"任务里存着一个按名字写的旧引用"
+        const before = readFileSync(fp, "utf-8");
+        expect(before).not.toMatch(/^persona:/m); // 前提：确实没有该键（否则下面的插入没意义）
+        writeFileSync(fp, before.replace(/^---\n/m, "---\npersona: 大副\n"), "utf-8");
+
+        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+        const text = await waitUntil(
+            async () =>
+                ui!.eval<string | null>(
+                    `document.querySelector('[aria-label="打开 agent 人物面板"]')?.textContent ?? null`,
+                ),
+            (t) => !!t && !t.includes("选择人物") && !t.includes("加载中"),
+            { label: "人物按钮显示回落结果" },
+        );
+        // 按钮显示的是**按名字认出的那个人物**（比回落缺省更准），且模型用它的真实 id
+        // （不写死具体值：隔离数据根用的是内置人物，模型随内置默认走）
+        const pl = await personaList();
+        const byName = pl.personas.find((p) => p.name === "大副")!;
+        expect(text).toContain(byName.name);
+        // 模型按 id 显示；provider 只有唯一账号时 UI 省掉 `account@` 前缀（displayModel），
+        // 而 personas.yaml 存的是全限定名 —— 断言要按**显示态**比（##275 R1-1#2）。
+        expect(byName.model).toMatch(/^\d+@/); // 存量确实是全限定名
+        expect(text).toContain(byName.model.replace(/^[^@]+@/, ""));
+    });
+
+    it("每轮上方显示人物头像与名字（回复人可见）", async () => {
+        const 名 = uniq("发言人");
+        const id = await addPersona(名, "mimo-v2.6-flash");
+        const uri = await setupTask("回复人展示任务");
+        await fx.sh.run(`./diy.sh task edit ${uri} --persona ${id}`);
+        // 造一段"已定稿"的会话（不依赖真实 LLM）：turn + assistant 文本块
+        const ops = join(fx.HOME, sessionFileRel(uri, "ops"));
+        mkdirSync(dirname(ops), { recursive: true });
+        const lines = [
+            { op: "start", id: "t1", kind: "turn", meta: { model: "mimo-v2.6-flash" } },
+            { op: "start", id: "t1_u", kind: "text", parent: "t1", meta: { role: "user" } },
+            { op: "delta", id: "t1_u", fields: { content: "你好" } },
+            { op: "stop", id: "t1_u" },
+            { op: "start", id: "t1_a", kind: "text", parent: "t1", meta: { role: "assistant" } },
+            { op: "delta", id: "t1_a", fields: { content: "收到，sir。" } },
+            { op: "stop", id: "t1_a" },
+            { op: "stop", id: "t1" },
+        ];
+        writeFileSync(ops, lines.map((l) => JSON.stringify(l)).join("\n") + "\n", "utf-8");
+
+        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+        // 回复人 = 本任务绑定的人物（头像 + 名字 + 该轮模型），显示在**该轮内容上方**。
+        // ##253「身份上移」：不再是"每条 assistant 消息一条署名行"，改成轮首一处
+        // （`turn-header`，任何折叠级别都显示）—— 事实口径不变，只是位置跟着契约挪。
+        const byline = await waitUntil(
+            async () =>
+                ui!.eval<string | null>(`(() => {
+                const el = document.querySelector('[data-testid="turn-header"]');
+                return el ? el.textContent : null;
+            })()`),
+            (t) => !!t && t.includes("发言人"),
+            { label: "出现回复人署名" },
+        );
+        expect(byline).toContain("🤖"); // 头像
+        expect(byline).toContain(名);
+        expect(byline).toContain("mimo-v2.6-flash");
+    });
+
+    it("署名以**该轮会话记录**为准，不是当前人物配置的投影（改绑定/改缺省不改写历史）", async () => {
+        // 任务 196：原先署名读"当前绑定人物/缺省"，于是改一次 personas.yaml 的 default，
+        // 全部历史回复的署名一起被改写 —— ops 里明明是 mimo，界面却署名大副。
+        // 本用例锁：每轮署名各自显示**该轮** turn.meta.model；无记录的旧轮次标注为推断。
+        const 名 = uniq("署名人");
+        const id = await addPersona(名, "mimo-v2.6-flash");
+        const uri = await setupTask("署名事实任务");
+        await fx.sh.run(`./diy.sh task edit ${uri} --persona ${id}`);
+        const ops = join(fx.HOME, sessionFileRel(uri, "ops"));
+        mkdirSync(dirname(ops), { recursive: true });
+        const turn = (tid: string, model: string | undefined, say: string) => [
+            {
+                op: "start",
+                id: tid,
+                kind: "turn",
+                ...(model === undefined ? {} : { meta: { model } }),
+            },
+            { op: "start", id: `${tid}_u`, kind: "text", parent: tid, meta: { role: "user" } },
+            { op: "delta", id: `${tid}_u`, fields: { content: "你好" } },
+            { op: "stop", id: `${tid}_u` },
+            { op: "start", id: `${tid}_a`, kind: "text", parent: tid, meta: { role: "assistant" } },
+            { op: "delta", id: `${tid}_a`, fields: { content: say } },
+            { op: "stop", id: `${tid}_a` },
+            { op: "stop", id: tid },
+        ];
+        const lines = [
+            ...turn("t1", "mimo-v2.6-flash", "第一轮。"), // 与本任务绑定人物一致
+            ...turn("t2", "deepseek-v4.1-flash", "第二轮。"), // 换绑/改缺省之前的历史轮
+            ...turn("t3", undefined, "第三轮。"), // 旧格式：没有 model 记录
+        ];
+        writeFileSync(ops, lines.map((l) => JSON.stringify(l)).join("\n") + "\n", "utf-8");
+
+        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+        // 署名落在**轮首**（##253 身份上移：一轮一处），不是每条 assistant 消息一处
+        const bylines = async () =>
+            ui!.eval<string[]>(`(() => {
+                return [...document.querySelectorAll('[data-testid="turn-header"]')]
+                    .map((el) => (el.textContent ?? "") + "|" + (el.getAttribute("data-inferred") ?? ""));
+            })()`);
+        const got = await waitUntil(bylines, (v) => v.length === 3, {
+            label: "三轮署名都渲染出来",
+        });
+
+        // ① 该轮 model 与当前人物一致 → 名字 + 该轮模型，且不是推断
+        expect(got[0]).toContain(名);
+        expect(got[0]).toContain("mimo-v2.6-flash");
+        expect(got[0]).not.toContain("|1"); // 无 data-inferred
+        // ② 该轮记录的是**另一个**模型 → 显示该轮模型；绝不显示当前人物的名字去顶替
+        expect(got[1]).toContain("deepseek-v4.1-flash");
+        expect(got[1]).not.toContain("mimo-v2.6-flash");
+        expect(got[1]).not.toContain(名);
+        // ③ 旧轮次无记录 → 回落当前人物，但**明确标注为推断**（不假装确定）
+        expect(got[2]).toContain(名);
+        expect(got[2]).toContain("当时人物未知");
+        expect(got[2]).toContain("|1");
+
+        // 反向护栏：任务绑定（换绑）不该改写**已发生**轮次的署名 —— 换到另一个模型的人物后重开
+        const 别 = await addPersona(uniq("别人"), "mimo-v2.6-flash");
+        await fx.sh.run(`./diy.sh task edit ${uri} --persona ${别}`);
+        await fx.sh.getJson(`./diy.sh ui tab close active`);
+        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+        const after = await waitUntil(
+            bylines,
+            (v) => v.length === 3 && v[1]!.includes("deepseek-v4.1-flash"),
+            { label: "换绑后署名仍是各轮事实" },
+        );
+        expect(after[0]).toContain("mimo-v2.6-flash"); // t1 事实不变
+        expect(after[1]).toContain("deepseek-v4.1-flash"); // t2 事实不变
+        expect(after[1]).not.toContain("mimo-v2.6-flash"); // 新绑定（mimo）不得污染历史
+    });
+
+    it("人物搜索：按字段过滤并高亮；Esc/清除恢复列表；无结果有提示", async () => {
+        const 名 = uniq("搜索人物");
+        await addPersona(
+            名,
+            "mimo-v2.6-flash",
+            "--reasoningEffort none --instructions '只回要点。'",
+        );
+        const uri = await setupTask("搜索人物任务");
+        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+        await openPanel(uri);
+        const root = sel(uri);
+        const search = `${root} input[aria-label="搜索人物"]`;
+        await waitUntil(
+            async () => ui!.eval<boolean>(`!!document.querySelector('${search}')`),
+            (v) => v === true,
+            { label: "人物搜索框上屏" },
+        );
+        const personCount = () =>
+            ui!.eval<number>(
+                `document.querySelectorAll('${root} button[aria-label^="人物 "]').length`,
+            );
+        await waitUntil(
+            async () =>
+                ui!.eval<boolean>(`!!document.querySelector('${root} [aria-label="人物 ${名}"]')`),
+            (visible) => visible,
+            { label: "新建人物已出现在列表" },
+        );
+        const typeQuery = async (query: string) => {
+            const value = await ui!.eval<string>(
+                `document.querySelector('${search}')?.value ?? ''`,
+            );
+            if (value) await ui!.clickSelector(`${root} [aria-label="清除人物搜索"]`);
+            await ui!.clickSelector(search);
+            await ui!.type(query);
+            await waitUntil(
+                async () => ui!.eval<string>(`document.querySelector('${search}')?.value ?? ''`),
+                (current) => current === query,
+                { label: `搜索框输入「${query}」` },
+            );
+        };
+
+        await typeQuery("只回要点");
+        await waitUntil(
+            async () => personCount(),
+            (count) => count === 1,
+            { label: "行为指令过滤人物" },
+        );
+        const marks = await waitUntil(
+            async () =>
+                ui!.eval<string[]>(
+                    `Array.from(document.querySelectorAll('${root} mark')).map(x => x.textContent ?? '')`,
+                ),
+            (current) => current.includes("只回要点"),
+            { label: "行为指令命中高亮" },
+        );
+        expect(marks).toContain("只回要点");
+
+        await ui!.clickSelector(`${root} [aria-label="清除人物搜索"]`);
+        await waitUntil(
+            async () => ui!.eval<string>(`document.querySelector('${search}')?.value ?? ''`),
+            (value) => value === "",
+            { label: "清除按钮清空搜索" },
+        );
+        expect(await personCount()).toBeGreaterThan(1);
+
+        await typeQuery("绝不存在的人物搜索词");
+        await waitUntil(
+            async () => ui!.eval<string>(`document.querySelector('${root}')?.innerText ?? ''`),
+            (text) => text.includes("没有匹配") && text.includes("绝不存在的人物搜索词"),
+            { label: "无匹配提示上屏" },
+        );
+        expect(await personCount()).toBe(0);
+        await ui!.clickSelector(`${root} [aria-label="清除人物搜索"]`);
+        await waitUntil(
+            async () => ui!.eval<string>(`document.querySelector('${search}')?.value ?? ''`),
+            (value) => value === "",
+            { label: "清除无匹配搜索" },
+        );
+        expect(await personCount()).toBeGreaterThan(1);
+    });
+
+    it("面板几何：高约 2/3 视口、左列占 1/3；模型按钮按**价格从低到高**排列", async () => {
+        // 需求原文：「整个 drawer 再大一些，2/3 屏高度，左侧的人物列表再宽一些，占 1/3 吧」
+        //         +「默认的模型列表改一下，mimo、deepseek、gtp5.6、gpt6，便宜的放前面」。
+        // 几何是"看得见的需求"，不给断言就会在后续调样式时悄悄退化（这条量的是真实 rect）。
+        const uri = await setupTask("面板几何任务");
+        // 固定绑定到一个真实人物：跟随缺省时右侧是说明态，没有模型按钮可量
+        const id = await addPersona(uniq("几何人物"), "mimo-v2.6-flash");
+        await fx.sh.run(`./diy.sh task edit ${uri} --persona ${id}`);
+        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+        await openPanel(uri);
+        await openModelPicker(uri);
+
+        const geo = await waitUntil(
+            async () =>
+                ui!.eval<{ hRatio: number; leftRatio: number; leftW: number; rows: number; models: string[] } | null>(`(() => {
+                    const d = document.querySelector('${sel(uri)}');
+                    if (!d) return null;
+                    const dr = d.getBoundingClientRect();
+                    const list = d.querySelector('[data-testid="persona-left-list"]');   // 左列滚动容器（见 PersonaDrawer）
+                    const lr = list?.getBoundingClientRect();
+                    const models = [...d.querySelectorAll('button[aria-pressed]')]
+                        .map(b => b.getAttribute('aria-label'))
+                        .filter(l => l && l.includes('-'));
+                    return {
+                        hRatio: dr.height / window.innerHeight,
+                        leftRatio: lr ? lr.width / dr.width : -1,
+                        leftW: lr ? Math.round(lr.width) : 0,
+                        rows: list ? list.querySelectorAll('[data-persona-id]').length : -1,
+                        models,
+                    };
+                })()`),
+            (v) => !!v && v.models.length > 0,
+            { label: "量出面板几何与模型顺序" },
+        );
+        // 66.666vh（小屏被 42rem 上限兜住，那时比例会偏小 —— 只断言"明显比原来大"）
+        expect(geo!.hRatio).toBeGreaterThan(0.5);
+        // ##285：先锁"量到的确实是左列"，再看比例。否则取错元素时会伪装成"几何退化"——
+        // 面板头部「最大化」按钮也带 `data-tip`，拿首个 `[data-tip]` 的父当左列会量到 64px 的
+        // 按钮组（ratio 0.0629，与 ##272 N8 的实测值逐位相同），把排查引去视口/布局那条错路。
+        expect(geo!.rows).toBeGreaterThan(0); // 左列里装着人物条目（量到的是列表，不是别的 div）
+        expect(geo!.leftRatio).toBeGreaterThan(0.3);
+        expect(geo!.leftRatio).toBeLessThan(0.36);
+        // 模型清单来自 snapshot（opencode-go 全量）→ 数量不再固定 4；
+        // 排序仍按价格升序（见 model-registry.modelViews），但具体集合随 models.dev 变，故只断言非空。
+        expect(geo!.models.length).toBeGreaterThan(0);
+    });
+
+    it("「跟随缺省」是左列第一行：单击显示说明态（不给编辑器），双击 = 本任务改为跟随并关窗", async () => {
+        // 需求原文：「如何选择缺省 agent 这个选项呢？」—— 落法：它是**绑定模式**而不是人物，
+        // 所以放在列表**之上**、用分隔线隔开，并且右侧不给属性编辑器（跟随态下改模型改的是
+        // 缺省人物的全局定义，会影响所有跟随者，那种动作必须回"选中那个人物再改"）。
+        const id = await addPersona(uniq("固定绑定"), "mimo-v2.6-flash");
+        const uri = await setupTask("跟随缺省行任务");
+        await fx.sh.run(`./diy.sh task edit ${uri} --persona ${id}`);
+        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+        await openPanel(uri);
+
+        // ① 打开时右侧编辑的是**本任务固定的那个人物**（不是跟随行）
+        expect(
+            await ui!.eval<string | null>(
+                `document.querySelector('${sel(uri)}')?.getAttribute('data-editing') ?? null`,
+            ),
+        ).toBe(id);
+
+        // ② 单击「跟随缺省」→ 右侧切成说明态，且**不出现**模型/档位按钮（没有编辑器）
+        await clickIn(`${sel(uri)} [aria-label="跟随缺省人物"]`);
+        const pane = await waitUntil(
+            async () =>
+                ui!.eval<{ text: string; hasEditor: boolean } | null>(`(() => {
+                    const d = document.querySelector('${sel(uri)}');
+                    const p = d?.querySelector('[data-testid="persona-follow-pane"]');
+                    if (!p) return null;
+                    return { text: p.innerText, hasEditor: d.querySelectorAll('button[aria-pressed]').length > 0 };
+                })()`),
+            (v) => !!v,
+            { label: "跟随缺省说明态上屏" },
+        );
+        expect(pane!.text).toContain("跟随缺省人物");
+        expect(pane!.text).toContain("下一轮起跟着变");
+        expect(pane!.hasEditor).toBe(false); // 跟随态不给编辑器（改的是全局定义，会误伤）
+
+        // ③ 双击同一行 → 本任务改为跟随（删掉 persona 键）+ 关面板
+        await ui!.dblclickSelector(`${sel(uri)} [aria-label="跟随缺省人物"]`);
+        await waitUntil(
+            async () => personaOf(uri),
+            (v) => v === undefined,
+            { label: "任务已改为跟随缺省" },
+        );
+        await waitUntil(
+            async () => ui!.eval<number>(`document.querySelectorAll('${sel(uri)}').length`),
+            (n) => n === 0,
+            {
+                label: "面板已关闭",
+            },
+        );
+
+        // ④ 再打开：右侧停在「跟随缺省」行（而不是解析出来的那个人物 —— 那会读成"我固定绑了它"）
+        await openPanel(uri);
+        expect(
+            await ui!.eval<string | null>(
+                `document.querySelector('${sel(uri)}')?.getAttribute('data-editing') ?? null`,
+            ),
+        ).toBe("");
+        // 人物列表不再混入任务信息；选中态用特殊背景表达即可
+        expect(
+            await ui!.eval<boolean>(
+                `document.querySelector('${sel(uri)} [aria-label="跟随缺省人物"]')?.className.includes('bg-primary/15') ?? false`,
+            ),
+        ).toBe(true);
+    });
+
+    it("↗ 跳转缺省人物：滚到底后点它，缺省人物的条目被滚回视野（##350 ③）", async () => {
+        // 需求原文：「缺省人物条目点击无有效跳转」→「点击后滚动/跳转到它实际指向的人物」。
+        // 修前只 setEditing：右栏换了，左列（`overflow-y-auto`）纹丝不动 —— 人物一多，
+        // 用户看见右边变了却不知道"跳哪去了"，观感就是"没反应"。
+        const uri = await setupTask("缺省跳转任务");
+        // 两件事都得先备好，否则这条用例测不到它想测的东西：
+        //  ① 人物要多于一屏 —— 否则列表根本不可滚，"跳转"退化成"本来就看得见"。
+        //  ② 缺省人物得在列表**中部** —— seed 的 persona/1 在首位，而"摆到正中"对首项
+        //     物理上做不到（scrollTop 不能为负，只能顶到容器上边）。验 `block:"center"`
+        //     就必须让它有上下余量，故先把缺省挪到中间（用后恢复，不污染同文件其余用例）。
+        const 原缺省 = ((await fx.sh.getJson(`./diy.sh agent persona list`)).data as { default: string }).default;
+        // 24 个占位人物：一次写文件（原先 24 次 CLI ≈ 10–20s，见 seedPersonas 注释）
+        const seed = seedPersonas(24);
+        const 中位 = seed.ids[11]!;
+        await fx.sh.run(`./diy.sh agent persona setDefault ${中位}`);
+        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+        await openPanel(uri);
+
+        /** 缺省人物条目相对左列滚动容器的位置（inView = 完整可见） */
+        const probe = `(() => {
+            const d = document.querySelector('${sel(uri)}');
+            const list = d?.querySelector('[data-testid="persona-left-list"]');
+            const def = d?.getAttribute('data-default') ?? '';
+            const row = list?.querySelector('[data-persona-id="' + def + '"]');
+            if (!list || !row) return null;
+            const lr = list.getBoundingClientRect(), rr = row.getBoundingClientRect();
+            return {
+                def,
+                editing: d?.getAttribute('data-editing') ?? null,
+                rowTop: Math.round(rr.top - lr.top),
+                inView: rr.top >= lr.top - 1 && rr.bottom <= lr.bottom + 1,
+            };
+        })()`;
+        const scrolled = await ui!.eval<number>(
+            `(() => {
+                const list = document.querySelector('${sel(uri)} [data-testid="persona-left-list"]');
+                if (!list) return -1;
+                list.scrollTop = list.scrollHeight;
+                return Math.round(list.scrollTop);
+            })()`,
+        );
+        expect(scrolled).toBeGreaterThan(0); // 列表确实能滚（否则这条用例测不到东西）
+        const before = await ui!.eval<{ inView: boolean } | null>(probe);
+        expect(before).toBeTruthy();
+        expect(before!.inView).toBe(false); // 前提：缺省人物条目此刻在视野之外
+
+        // 用 DOM click 而不是 clickIn：clickIn 会先 `scrollIntoView(block:"center")`，
+        // 那会把列表滚回顶部、把上面这个前提毁掉（跳转按钮就在列表首行）
+        await ui!.eval<boolean>(
+            `(() => {
+                const b = document.querySelector('${sel(uri)} [data-testid="persona-jump-default"]');
+                if (!b) return false;
+                b.click();
+                return true;
+            })()`,
+        );
+
+        const after = await waitUntil(
+            async () => ui!.eval<{ def: string; editing: string | null; inView: boolean } | null>(probe),
+            (v) => !!v && v.inView,
+            { label: "缺省人物条目被滚进视野" },
+        );
+        // 右侧编辑的也是那个人物本体（"跳转到它实际指向的人物"，不是一个特殊设置页）
+        expect(after!.editing).toBe(after!.def);
+        expect(after!.def).toBe(中位); // 且跳的确实是**刚设的中位缺省**（防"跳了个别的"误判成通过）
+
+        // R2-①：滚到**视野正中**（`block:"center"`），不是"勉强露个边"（nearest）
+        const centered = await ui!.eval<{ inView: boolean; centerGap: number } | null>(
+            `(() => {
+                const d = document.querySelector('${sel(uri)}');
+                const list = d?.querySelector('[data-testid="persona-left-list"]');
+                const def = d?.getAttribute('data-default') ?? '';
+                const row = list?.querySelector('[data-persona-id="' + def + '"]');
+                if (!list || !row) return null;
+                const lr = list.getBoundingClientRect(), rr = row.getBoundingClientRect();
+                return {
+                    inView: rr.top >= lr.top - 1 && rr.bottom <= lr.bottom + 1,
+                    // 条目中线与容器中线的距离（center 命中时远小于容器高的一半）
+                    centerGap: Math.round(Math.abs((rr.top + rr.bottom) / 2 - (lr.top + lr.bottom) / 2)),
+                };
+            })()`,
+        );
+        expect(centered!.inView).toBe(true);
+        // 摆到**正中**：中点偏差远小于容器高的一半（nearest 在这个位置只把它推到"刚露头"，
+        // 偏差会是容器高量级 —— 实测 102px，对着 ~400px 的容器就是"压根没滚"）
+        const listH = await ui!.eval<number>(
+            `Math.round(document.querySelector('${sel(uri)} [data-testid="persona-left-list"]')?.getBoundingClientRect().height ?? 0)`,
+        );
+        expect(centered!.centerGap).toBeLessThan(listH / 4);
+
+        // R2-②：目标条目**短暂高亮**（缺省人物本身无特殊设置 → 高亮是"跳到了谁"的唯一反馈）
+        const flashed = await ui!.eval<boolean>(
+            `(() => {
+                const d = document.querySelector('${sel(uri)}');
+                const def = d?.getAttribute('data-default') ?? '';
+                const row = d?.querySelector('[data-testid="persona-left-list"] [data-persona-id="' + def + '"]');
+                if (!row) return false;
+                return row.getAttribute('data-jump-flash') === "1"
+                    && (row.className || "").includes("ring-2");
+            })()`,
+        );
+        expect(flashed).toBe(true);
+
+        // 还原：先撤掉 24 个占位人物（写回原文件），再把缺省还回去
+        seed.restore();
+        await fx.sh.run(`./diy.sh agent persona setDefault ${原缺省}`);
+    });
+
+    it("↗ 跳转缺省人物：搜索词把它滤掉时先清搜索，仍能带到（##350 ③ · R2）", async () => {
+        // 上一版遗留的分支：缺省人物被搜索词滤掉时，左列**根本没有它的条目** ——
+        // 不清搜索，"跳转"就无从谈起（滚动无从下手）。故这跳的第一件事是把搜索清掉。
+        const uri = await setupTask("缺省跳转被滤任务");
+        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+        await openPanel(uri);
+        // 缺省人物 id 从**已挂载的面板**上读（顺序反了会拿到空串 → 后面永远查不到条目）
+        const 缺省 = await ui!.eval<string>(
+            `document.querySelector('${sel(uri)}')?.getAttribute('data-default') ?? ''`,
+        );
+        expect(缺省).not.toBe("");
+
+        // 快照：永不返回 null（返回 null 会让失败现场只剩一句"读不到属性"，白跑一轮）
+        const 快照 = `(() => {
+            const d = document.querySelector('${sel(uri)}');
+            const list = d?.querySelector('[data-testid="persona-left-list"]');
+            const row = list?.querySelector('[data-persona-id="${缺省}"]');
+            const input = d?.querySelector('[aria-label="搜索人物"]');
+            const lr = list?.getBoundingClientRect(), rr = row?.getBoundingClientRect();
+            return {
+                hasRow: !!row,
+                search: input ? input.value : "(无输入框)",
+                rows: list ? list.querySelectorAll('[data-persona-id]').length : -1,
+                editing: d?.getAttribute('data-editing') ?? null,
+                rowTopRel: lr && rr ? Math.round(rr.top - lr.top) : null,
+                rowBotRel: lr && rr ? Math.round(rr.bottom - lr.top) : null,
+                listH: lr ? Math.round(lr.height) : -1,
+                inView: !!(lr && rr && rr.top >= lr.top - 1 && rr.bottom <= lr.bottom + 1),
+            };
+        })()`;
+
+        // 搜索词选「跟随缺省」不是随手的：↗ 按钮本身就在 `<Show when={followMatchesSearch()}>` 里，
+        // 而两者用的是**同一组字段**（名字/模型/档位/行为指令）—— 所以"缺省人物被滤掉"与
+        // "按钮还在"通常互斥：随便填个滤不中的词，按钮连 DOM 都没有，点击是**静默空操作**
+        // （本用例第一版就是这么假通过的）。唯一同时成立的输入，是那个只命中"跟随缺省"
+        // 这行、不命中任何人物字段的字面词 —— 用它才真的走到"先清搜索"那条分支。
+        await ui!.eval<boolean>(
+            `(() => {
+                const i = document.querySelector('${sel(uri)} [aria-label="搜索人物"]');
+                if (!i) return false;
+                const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                set.call(i, '跟随缺省');
+                i.dispatchEvent(new Event('input', { bubbles: true }));
+                return true;
+            })()`,
+        );
+        await waitUntil(
+            async () => ui!.eval<{ hasRow: boolean; rows: number }>(快照),
+            (v) => v.hasRow === false && v.rows === 0,
+            { label: "缺省人物条目被搜索词滤掉（一个都不剩）" },
+        );
+
+        // 断言"点到了"：按钮此时**只能在**（上面那条 Show 的判据），拿不到就是用例的前提崩了，
+        // 不能让它退化成"什么都没点、然后等着断言去报一个看不懂的错"
+        const 点到 = await ui!.eval<boolean>(
+            `(() => {
+                const b = document.querySelector('${sel(uri)} [data-testid="persona-jump-default"]');
+                if (!b) return false;
+                b.click();
+                return true;
+            })()`,
+        );
+        expect(点到, "↗ 按钮应当就在（搜索词只命中「跟随缺省」这一行）").toBe(true);
+
+        const back = await waitUntil(
+            async () => ui!.eval<{ hasRow: boolean; inView: boolean; search: string }>(快照),
+            (v) => v.hasRow && v.inView,
+            { label: "清搜索后缺省人物条目回到视野" },
+        );
+        expect(back.hasRow, JSON.stringify(back)).toBe(true);
+        expect(back.search, JSON.stringify(back)).toBe(""); // 搜索词被清掉（否则条目根本不存在）
+        expect(back.inView, JSON.stringify(back)).toBe(true);
+    });
+
+    it("**双击**左列人物 = 换绑本任务 + 关面板（只改引用，不改任何人物配置）", async () => {
+        // 需求原文：「不需要用于本任务的按钮，双击就是改了人物并关掉窗口」。
+        // 这条同时锁三件事：① 双击真的触发换绑（不是"两次单击"——那不会产生 dblclick）
+        // ② 换绑只动本任务的引用 ③ 面板自动关闭（动作闭环，不用再手动关）
+        const 候选名 = uniq("候选人");
+        const 候选人 = await addPersona(候选名, "mimo-v2.6-flash");
+        const uri = await setupTask("换绑任务");
+        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+        await openPanel(uri);
+
+        await waitUntil(
+            async () =>
+                ui!.eval<boolean>(
+                    `!!document.querySelector('${sel(uri)} [aria-label="人物 ${候选名}"]')`,
+                ),
+            (v) => v === true,
+            { label: "左列出现候选人" },
+        );
+        // 提示语必须在，且走 **data-tip**（由 App 的全局面板级 tooltip 渲染 —— 2026-10-03
+        // 统一替换掉会被 overflow 容器裁剪的 daisyUI `.tooltip`/`tooltip-content`）
+        const tip = await ui!.eval<{ text: string | null; hasTooltipClass: boolean }>(`(() => {
+            const el = document.querySelector('${sel(uri)} [aria-label="人物 ${候选名}"]');
+            const wrap = el.closest('[data-tip]');
+            return {
+                text: wrap?.getAttribute('data-tip') ?? null,
+                hasTooltipClass: wrap?.classList.contains('tooltip-bottom') ?? false,
+            };
+        })()`);
+        expect(tip.text).toBe("双击选择此人物");
+        expect(tip.hasTooltipClass).toBe(false);
+
+        // 滚入视野再真实双击（与 clickIn 同理：滚动区外的元素点不到）
+        await ui!.eval<boolean>(`(() => {
+            const el = document.querySelector('${sel(uri)} [aria-label="人物 ${候选名}"]');
+            if (!el) return false;
+            el.scrollIntoView({ block: "center" });
+            return true;
+        })()`);
+        await ui!.dblclickSelector(`${sel(uri)} [aria-label="人物 ${候选名}"]`);
+
+        // 落盘事实：任务 frontmatter 的 persona 改了；且候选人的配置一点没动
+        await waitUntil(
+            async () => personaOf(uri),
+            (v) => v === 候选人,
+            { label: "任务已换绑" },
+        );
+        expect(personaOf(uri)).toBe(候选人);
+        expect((await personaList()).personas.find((p) => p.id === 候选人)?.model).toBe(
+            "mimo-v2.6-flash",
+        );
+        // 面板已关闭
+        await waitUntil(
+            async () => ui!.eval<number>(`document.querySelectorAll('${sel(uri)}').length`),
+            (n) => n === 0,
+            {
+                label: "换绑后面板自动关闭",
+            },
+        );
+    });
+
+    it("人物条目的提示是 viewport fixed 浮层，不被列表的 overflow 裁掉（滚到底的最后一项也完整）", async () => {
+        // 2026-10-03 统一：提示改由 App 的全局 tooltip 委托渲染成 **fixed 浮层**（读 data-tip），
+        // 不再用 daisyUI 的 `.tooltip`/`.tooltip-content`（那种绝对定位元素贴着 overflow 容器底边会被裁）。
+        // 这里把列表滚到底、对最后一项派发 mouseover，量浮层是否完整落在视口内。
+        //
+        // ##285 加固（原 ##272 N8 三条里最脆的一条）：「滚到底」成立的前提有两件，缺哪件都测不到东西 ——
+        //   ① **列表真的撑满一屏**：人物只有两三个时列表不可滚，「最后一项」本来就在视口里，这条用例
+        //      退化成"什么都没测"（却仍然绿）。旧写法把前置交给「前序用例建了多少人物」= **顺序依赖**：
+        //      单跑绿、全量跑红。故这里自建足够占位人物（同「↗ 跳转缺省人物」用例的做法）。
+        //   ② **滚动容器是左列自己**（`[data-testid="persona-left-list"]`）：旧写法取『首个 `[data-tip]`
+        //      的父』，而面板头部「最大化」按钮也带 `data-tip` → 取到 64px 的头部按钮组（实测 ratio
+        //      0.0629，与 ##272 的失败值逐位相同）。`scrollTop = scrollHeight` 落在不可滚的 div 上，
+        //      列表纹丝不动、最后一项还在视口外一两千像素 → 浮层量到 visible=-1093/full=26 而判红。
+        //      **与 headless 视口无关**，是查询选错元素。
+        const uri = await setupTask("tooltip裁剪任务");
+        for (let i = 0; i < 24; i++) await addPersona(uniq(`浮层占位${i}`), "mimo-v2.6-flash");
+        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+        await openPanel(uri);
+
+        const r = await waitUntil(
+            async () =>
+                ui!.eval<{ visible: number; full: number; text: string; inView: boolean; scrolled: number } | null>(`(() => {
+                    const d = document.querySelector('${sel(uri)}');
+                    if (!d) return null;
+                    const list = d.querySelector('[data-testid="persona-left-list"]');  // 左列滚动容器（必须是它自己）
+                    if (!list || list.scrollHeight <= list.clientHeight) return null;  // 没撑满一屏 → 撑满了才有"滚到底"
+                    list.scrollTop = list.scrollHeight;           // 滚到底：最后一项最贴近容器下沿
+                    const wraps = [...list.querySelectorAll('[data-tip]')];            // 查询收进左列，头部按钮不再混进来
+                    const last = wraps[wraps.length - 1];
+                    last.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+                    const tip = [...document.querySelectorAll('div')].find((x) =>
+                        (x.className || '').includes('z-[200]'),
+                    );
+                    if (!tip) return { visible: 0, full: 0, text: '', inView: false, scrolled: list.scrollTop };
+                    const tr = tip.getBoundingClientRect();
+                    const visible = Math.round(Math.min(tr.bottom, window.innerHeight) - Math.max(tr.top, 0));
+                    return {
+                        visible,
+                        full: Math.round(tr.height),
+                        text: tip.textContent ?? '',
+                        inView: tr.top >= 0 && tr.bottom <= window.innerHeight,
+                        scrolled: Math.round(list.scrollTop),
+                    };
+                })()`),
+            (v) => !!v && v.full > 0,
+            { label: "量出全局 tooltip 浮层" },
+        );
+        expect(r!.scrolled).toBeGreaterThan(0); // 前提：列表**确实滚动了**（否则上面那句"滚到底"是假的）
+        expect(r!.text).toBe("双击选择此人物");
+        expect(r!.full).toBeGreaterThan(0);
+        expect(r!.visible).toBe(r!.full); // 完整可见（fixed 浮层不受列表 overflow 裁剪）
+        expect(r!.inView).toBe(true);
+    });
+
+    it("双击**已在本任务在用**的人物：绑定原样，也照常关面板", async () => {
+        const 名 = uniq("已在用");
+        const id = await addPersona(名, "mimo-v2.6-flash");
+        const uri = await setupTask("重复双击任务");
+        await fx.sh.run(`./diy.sh task edit ${uri} --persona ${id}`);
+        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+        await openPanel(uri);
+
+        expect(
+            await ui!.eval<string | null>(
+                `document.querySelector('${sel(uri)}')?.getAttribute('data-bound') ?? null`,
+            ),
+        ).toBe(id);
+        await ui!.dblclickSelector(`${sel(uri)} [aria-label="人物 ${名}"]`);
+        await waitUntil(
+            async () => ui!.eval<number>(`document.querySelectorAll('${sel(uri)}').length`),
+            (n) => n === 0,
+            {
+                label: "双击在用人物也关面板",
+            },
+        );
+        expect(personaOf(uri)).toBe(id); // 绑定没被动
+    });
+
+    it("影响面是**面板内的 info 提示条**（在 view bar 下方），不在按钮旁边", async () => {
+        // 需求原文：「'改上面的属性'应该作为 info 提示 bar 存在于视图 bar 的下面……而不是把提示词显示到
+        // '设为缺省人物'旁，歧义」。这句话描述的是**整个右侧区域**的后果，挨着动作按钮会被读成
+        // "这个按钮会影响 N 个任务" —— 所以位置本身就是契约：必须在头部之下、主从区之上。
+        const id = await addPersona(uniq("影响面条"), "mimo-v2.6-flash");
+        const uri = await setupTask("影响面任务");
+        await fx.sh.run(`./diy.sh task edit ${uri} --persona ${id}`);
+        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+        await openPanel(uri);
+
+        const bar = await waitUntil(
+            async () =>
+                ui!.eval<{ text: string; aboveList: boolean } | null>(`(() => {
+                    const d = document.querySelector('${sel(uri)}');
+                    const bar = d?.querySelector('[data-testid="persona-impact-bar"]');
+                    if (!bar) return null;
+                    // 左列只能按 testid 取：拿 [data-tip] 的父会把面板头部的按钮组（64px、且不在
+                    // bar 之下）当左列 → aboveList 假红（##272 N8 三条里的第三条）。
+                    const list = d.querySelector('[data-testid="persona-left-list"]');
+                    return {
+                        text: bar.innerText,
+                        // 在列表**之上**（否则就是"贴着底栏按钮"那个歧义形态）
+                        aboveList: !!list && bar.getBoundingClientRect().bottom <= list.getBoundingClientRect().top + 1,
+                    };
+                })()`),
+            (v) => !!v,
+            { label: "info 提示条上屏" },
+        );
+        expect(bar!.text).toContain("改右侧属性 = 影响 1 个任务（下一轮生效）");
+        expect(bar!.aboveList).toBe(true);
+
+        // 新建态不显示（那时还没有"会影响谁"可言，显示了像在说别人的事）
+        await clickIn(`${sel(uri)} [aria-label="新建人物"]`);
+        await openModelPicker(uri);
+        await waitUntil(
+            async () =>
+                ui!.eval<boolean>(
+                    `!document.querySelector('${sel(uri)} [data-testid="persona-impact-bar"]')`,
+                ),
+            (v) => v === true,
+            { label: "新建态不显示影响面条" },
+        );
+    });
+
+    it("「缺省」按钮挂在**每个条目右侧**（hover 显形），与「缺省」标签同色系", async () => {
+        // 需求原文：「设为缺省人物按钮直接放到每个选项人物的右侧对齐……hover 时出现」
+        //         +「缺省的 tag 颜色和按钮颜色要一致或一个系列，更浅些」。
+        // 三件事一起锁：① 挂在条目内（不是页脚那个"作用于当前编辑人物"的位置）
+        // ② 默认隐藏、hover 条目才显形 ③ 按钮 btn-secondary、标签 badge-secondary badge-soft（同色系更浅）
+        const 名 = uniq("缺省按钮");
+        const id = await addPersona(名, "mimo-v2.6-flash");
+        const uri = await setupTask("缺省按钮任务");
+        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+        await openPanel(uri);
+
+        const st = await waitUntil(
+            async () =>
+                ui!.eval<{
+                    inRow: boolean;
+                    btnCls: string | null;
+                    hidden: string;
+                    badgeCls: string | null;
+                    footerGone: boolean;
+                } | null>(`(() => {
+                    const d = document.querySelector('${sel(uri)}');
+                    const item = d?.querySelector('[aria-label="人物 ${名}"]');
+                    const btn = item?.parentElement?.querySelector('[aria-label="设人物 ${名} 为缺省"]');
+                    if (!item || !btn) return null;
+                    const badge = [...d.querySelectorAll('.badge')].find(b => b.textContent.trim() === '缺省');
+                    return {
+                        inRow: !!item.parentElement.contains(btn),
+                        btnCls: btn.className,
+                        hidden: getComputedStyle(btn).opacity,
+                        badgeCls: badge?.className ?? null,
+                        footerGone: !d.querySelector('[aria-label="设为缺省人物"]'),
+                    };
+                })()`),
+            (v) => !!v,
+            { label: "条目右侧的缺省按钮已渲染" },
+        );
+        expect(st!.inRow).toBe(true);
+        expect(st!.btnCls).toContain("btn-secondary");
+        expect(st!.btnCls).not.toContain("btn-ghost");
+        expect(st!.hidden).toBe("0"); // 默认不显示，hover 才显形
+        expect(st!.footerGone).toBe(true); // 页脚那个已撤掉（不留两个入口）
+        // 标签与按钮同一色系（secondary），标签取 soft 变体更浅
+        expect(st!.badgeCls).toContain("badge-secondary");
+        expect(st!.badgeCls).toContain("badge-soft");
+    });
+
+    it("面板里不再有「用于本任务」按钮（换绑只有双击这一条路）", async () => {
+        const uri = await setupTask("无按钮任务");
+        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+        await openPanel(uri);
+        const labels = await ui!.eval<string[]>(`(() => {
+            const d = document.querySelector('${sel(uri)}');
+            return Array.from(d.querySelectorAll('button')).map(b => b.getAttribute('aria-label') ?? '');
+        })()`);
+        expect(labels.filter((l) => l.includes("用于本任务"))).toEqual([]);
+    });
+});

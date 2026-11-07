@@ -90,20 +90,18 @@ build() {
 # 生成 runtime/：打包后主进程用 createRequire 按名字解析 @diy-agent/*（##455）
 build-runtime() { run node scripts/build-runtime.mjs; }
 
-# 本包测试：OS 无关单测 → OS 策略单测
+# 默认测试：**只跑不开窗口的那部分** —— 单元 + OS 策略 + core 意图。
 #
-# ⚠️ **UI 意图测试（tests/cli.intent.*）不在调用链上**（用户裁，2026-11-06）—— 见 `test-intent` 头部的
-# 长注释（为什么停、代价多大、怎么临时跑）。一句话：它们慢到把「跑一遍测试」变成「排一小时队」，
-# 而慢的原因是**执行通道**（每条断言新起一个 `./diy.sh` 进程），不是用例本身该测的东西。
-#
-# 因此**新增用例的落点**：
-#   · 只验数据 / 规则的（造 N 个实体、引用不断、坏文件降级 ……）→ `tests/fast.*.test.ts`（纯函数，毫秒级，
-#     不需要 Electron、也不需要 build）。`tests/fast.persona-core.test.ts` 是范本。
-#   · 真的要验「界面点得动」→ 仍写 `tests/cli.intent.*`，但先确认它值得那 3~8 秒/用例，
-#     并尽量把断言合并成一次交互（每多一次 `./diy.sh` 就是 +0.68s）。
+# 为什么不把 UI 意图 / E2E 放进来（##518 用户口径）：
+#   它们每个文件都要起一次真 Electron，一次「跑测试」就变成十几分钟 —— 人就不跑了，
+#   而测试没人跑等于没有测试。所以分成三个入口，按改动面挑：
+#     ./sha.sh test       单元 + OS + core 意图（秒级，改任何东西都该跑）
+#     ./sha.sh test-ui    界面意图（改到 renderer / diy.ui.* 时；发布前全跑）
+#     ./sha.sh test-e2e   像素与命中（发布前/改布局浮层时）
 test() {
   test-unit
   test-os
+  test-core-intent
 }
 # 编程中快速验证：不构建，跳过意图测试
 # 并行策略**与 intent 分开**（##266 测试提速）：
@@ -130,7 +128,24 @@ test() {
 #   · tests/os/**               = **OS 相关**：按 posix / win32 策略分目录，命令执行可注入，
 #                                  所以任意平台都能跑（真集成才按平台 skipIf）。
 test-unit() {
-  run npx vitest run --exclude '**/cli.intent*' --exclude '**/tests/os/**' --fileParallelism --maxWorkers=4
+  # 测试分层（见 docs/testing.md「层级」）：
+  #   *.intent.test.ts     = 意图（界面 / core）—— **默认跑**，走进程内 rpc 或 `diy.ui.*`，秒级
+  #   *.test.ts            = 单元（含 happy-dom 组件）—— 默认跑
+  #   tests/core-intent/** = core 意图（不开窗口）—— 由 test-core-intent 跑
+  #   tests/ui-intent/**   = 界面意图（真 Electron）—— 由 test-ui 跑，**不进默认链路**
+  #   tests/e2e/**         = E2E（像素/命中）—— 由 test-e2e 跑，**不进默认链路**
+  #   tests/cli.intent*    = 旧意图测试（每条断言一个 CLI 子进程）—— 已迁走/停用
+  run npx vitest run --exclude '**/cli.intent*' --exclude '**/tests/os/**' --exclude '**/tests/e2e/**' --exclude '**/tests/ui-intent/**' --exclude '**/tests/core-intent/**' --fileParallelism --maxWorkers=4
+}
+
+#: 端到端用例（tests/e2e/）：真窗口 + CDP 真实输入，验像素与命中
+#: 用法: ./sha.sh test-e2e [文件片段]
+#: ⚠️ 只在发布前或改到布局/浮层时才跑 —— 它慢且脆，不进默认链路。
+test-e2e() {
+  export DIY_VARIANT=test
+  _ensure_electron
+  build
+  run npx vitest run --no-file-parallelism tests/e2e "$@"
 }
 test-os() { run npx vitest run tests/os --no-file-parallelism --no-isolate; }
 
@@ -226,25 +241,27 @@ start() {
 link() { run npm link; }
 
 test-watch() { run npx vitest "$@"; }
-# 意图测试：真起隔离 Electron + 走 CDP 驱动**真实界面**（点得动 / 拖得动 / 输入框收字）。
-#
-# ── 为什么它默认是「关」的（##518，2026-11-06 用户裁）────────────────────────────
-# 实测代价（本机，load 12~18）：
-#   `cli.intent.persona` 34 用例 137.7s ≈ 4.2s/用例；`flow` 114s；`ui-context` 80s；
-#   59 个文件全量 1 小时以上（而同样规模的 unit 是 219s / 231 文件）。
-# 差距不在「测得多深」，在**每条断言都新起进程**：
-#   · `./diy.sh` 每次 = 一个 node 冷启动，实测 **0.68s**；persona 文件 34 用例共 63 次（1.9 次/用例）；
-#   · UI 轮询（`waitUntil` 回调里的 `./diy.sh ui inspect`）同样是每次一条 CLI —— 循环本身只是 100ms sleep，
-#     所以「点击很快、等待很慢」的观感都是这一件事。
-# 已验证的解法（尚未全面落地）：`DIY_CLI_MODE=http` 让 CLI 走实例的 /cli 端点（curl，~60ms），
-#   同一文件实测 **137.7s → 46.98s**，34 条用例全绿。方案没定之前先不跑，免得 CI / `./sha.sh test`
-#   被拖成一小时，也免得为了跑绿而堆 retry/放宽超时（那会把真问题一起盖掉）。
-#
-# 要跑（显式开关，避免手滑）：
-#   DIY_INTENT_ENABLE=1 ./sha.sh test-intent persona      # 单文件（片段/相对路径都可以）
-#   DIY_INTENT_ENABLE=1 ./sha.sh test-intent              # 全量（一小时起步，慎）
-# CLI 走哪条通道：默认 http（有 app.port 时）→ 编译产物 → tsx；可用 `DIY_CLI_MODE=compiled|tsx` 覆盖，
-# 传输失败会自动回退直连，不会因此变红。
+#: core 层意图（tests/core-intent/）：**不开窗口**，进程内 rpc / 直接调规则 —— 秒级，随 test 跑
+#: 用法: ./sha.sh test-core-intent [文件片段]
+test-core-intent() {
+  run npx vitest run tests/core-intent "$@"
+}
+
+#: UI 层意图（tests/ui-intent/）：真起 Electron，走 diy.ui.* 驱动界面状态
+#: 用法: ./sha.sh test-ui [文件片段]
+#: ⚠️ 不在 test 里跑：每个文件一个 app，慢。改到 renderer / diy.ui.* 时才跑，发布前全跑。
+test-ui() {
+  export DIY_VARIANT=test
+  _ensure_electron
+  build
+  export DIY_CLI_MODE="${DIY_CLI_MODE:-http}"
+  # 文件之间并行（各自独立 HOME + CDP port 0，不抢端口）；实测 6 文件串行 177s → 4 worker 63s
+  run npx vitest run --fileParallelism --maxWorkers=4 tests/ui-intent "$@"
+}
+
+# 意图测试：先构建（起隔离 Electron，最慢放最后）
+# CLI 默认走 server /cli http 端点（单条 ~41ms vs 编译产物 ~300ms vs tsx ~600ms，intent 全量 ~140s vs ~300s）。
+# 无 app.port / curl 不支持 h2 时自动回退直连 CLI，不会失败。排查需要可覆盖：DIY_CLI_MODE=compiled|tsx ./sha.sh test-intent
 test-intent() {
   # 开关存在的理由：这是**唯一**会拉起真 Electron / 真界面的入口，误触发一次就是一小时。
   # 放在函数体第一行而不是 `test()` 里判断：直接敲命令的人也应该撞见这句提示。
