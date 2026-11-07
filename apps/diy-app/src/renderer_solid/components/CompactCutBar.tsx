@@ -29,6 +29,8 @@ interface RoundRow {
 interface RoundsView {
     rounds: RoundRow[];
     total: number;
+    /** 已经压掉、选不回来的轮数（边界之前的） */
+    droppedCount: number;
     keptCount: number;
     truncated: boolean;
     windowTokens: number | null;
@@ -145,7 +147,10 @@ export function CompactCutBar(props: {
                 </span>
                 <span class="ml-auto text-caption tabular-nums opacity-80" data-cut-readout>
                     <Show when={view()} fallback={<span class="opacity-50">读取中…</span>}>
-                        保留最近 <b class="text-success">{keptCount()}</b> 轮 / 共 {total()} 轮
+                        保留最近 <b class="text-success">{keptCount()}</b> 轮 / 可保留 {total()} 轮
+                        <Show when={(view()?.droppedCount ?? 0) > 0}>
+                            <span class="opacity-60">（已压掉 {view()!.droppedCount} 轮）</span>
+                        </Show>
                     </Show>
                 </span>
             </div>
@@ -168,7 +173,7 @@ export function CompactCutBar(props: {
                 />
                 <div class="flex justify-between text-caption opacity-45">
                     <span>只留当前这一轮（压缩到头）</span>
-                    <span>保留全部（不压缩）</span>
+                    <span>保留全部可保留的</span>
                 </div>
 
                 {/* 轮次表（card 版不显示：那张卡只有 288px 宽） */}
@@ -214,7 +219,12 @@ export function CompactCutBar(props: {
                         </Show>
                     </div>
 
-                    <Show when={view()!.truncated}>
+                    <Show when={(view()?.droppedCount ?? 0) > 0}>
+                    <div class="text-caption opacity-50">
+                        更早的 {view()!.droppedCount} 轮已经压掉：不发送、也选不回来（原文仍在盘上，可查）。
+                    </div>
+                </Show>
+                <Show when={view()!.truncated}>
                         <div class="text-caption opacity-50">只加载了最近 {total()} 轮（更早的仍在盘上）</div>
                     </Show>
                 </Show>

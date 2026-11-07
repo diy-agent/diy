@@ -643,8 +643,10 @@ export interface KeptRoundRow {
 export interface KeptRoundsView {
     /** 旧 → 新（最后一轮 = 最新） */
     rounds: KeptRoundRow[];
-    /** 总轮数（尾部窗口里能看到的） */
+    /** 总轮数（尾部窗口里能看到的，含**已压掉**的） */
     total: number;
+    /** 已经压掉、不可再选回来的轮数（边界之前的） */
+    droppedCount: number;
     /** 当前边界保留几轮 */
     keptCount: number;
     /** 更早的轮未加载（尾部窗口外）—— 界面必须标出来 */
@@ -719,14 +721,16 @@ export function keptRoundsView(taskUri: string): KeptRoundsView {
     const rawSum = order.reduce((n, id) => n + Math.max(0, perTurn.get(id) ?? 0), 0);
     const targetHist = Math.max(0, lastTotal - fixed0);
     const scale = rawSum > 0 && targetHist > 0 && rawSum > targetHist ? targetHist / rawSum : 1;
-    const rounds: KeptRoundRow[] = order.map((turnId, i) => ({
+    // **只列还能保留的轮**（边界之后）。边界之前的已经压掉，选不回来 ——
+    // 列出来还让滑块拖回去，就是「压完还能恢复」的假象（用户实测问过这一点）。
+    const rounds: KeptRoundRow[] = order.slice(keptFrom).map((turnId, j) => ({
         turnId,
-        label: `轮${i + 1}`,
+        label: `轮${keptFrom + j + 1}`,
         title: titles.get(turnId) ?? "",
         tokens: Math.round(Math.max(0, perTurn.get(turnId) ?? 0) * scale),
-        kept: i >= keptFrom,
+        kept: true,
     }));
-    const keptCount = keptFrom === 0 ? rounds.length : rounds.length - keptFrom;
+    const keptCount = rounds.length;
     // ④ 窗口与价格（价目取上一步；`rates` 是每百万 token 的美元价）
     const cfgLimit = cfgLimit0;
     const windowTokens = winTokens0;
@@ -750,6 +754,7 @@ export function keptRoundsView(taskUri: string): KeptRoundsView {
     return {
         rounds,
         total: rounds.length,
+        droppedCount: keptFrom,
         keptCount,
         truncated: usages.length >= 800,
         windowTokens,
