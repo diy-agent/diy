@@ -122,7 +122,20 @@ test() {
 #   · tests/os/**               = **OS 相关**：按 posix / win32 策略分目录，命令执行可注入，
 #                                  所以任意平台都能跑（真集成才按平台 skipIf）。
 test-unit() {
-  run npx vitest run --exclude '**/cli.intent*' --exclude '**/tests/os/**' --fileParallelism --maxWorkers=4
+  # 测试分层（见 docs/testing.md「层级」）：
+  #   *.intent.test.ts     = 意图（界面 / core）—— **默认跑**，走进程内 rpc 或 `diy.ui.*`，秒级
+  #   *.test.ts            = 单元（含 happy-dom 组件）—— 默认跑
+  #   tests/e2e/**         = E2E（真窗口 + 真实输入：拖动/遮挡/几何/浮层）—— **默认不跑**（慢、需构建）
+  #   tests/cli.intent*    = 旧意图测试（每条断言一个 CLI 子进程，0.68s/次）—— 暂停用，见 test-intent 头部
+  run npx vitest run --exclude '**/cli.intent*' --exclude '**/tests/os/**' --exclude '**/tests/e2e/**' --fileParallelism --maxWorkers=4
+}
+
+#: 端到端用例（真窗口 + CDP 真实输入；慢，需先构建）：./sha.sh test-e2e [文件片段]
+test-e2e() {
+  export DIY_VARIANT=test
+  _ensure_electron
+  build
+  run npx vitest run --no-file-parallelism tests/e2e "$@"
 }
 test-os() { run npx vitest run tests/os --no-file-parallelism --no-isolate; }
 

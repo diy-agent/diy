@@ -63,6 +63,7 @@ import { memberCompletion, taskCompletion } from "../lib/completions";
 import { onStreamScroll, pinnedTo, streamFollowInit, type StreamFollowState } from "../lib/chat-scroll";
 import { RoomRoster, type RosterMemberL1 } from "./RoomRoster";
 import { PersonaDrawer } from "./PersonaDrawer";
+import { personaDrawerStore } from "../store/personaDrawerStore";
 import type { BlockNode } from "../../main/services/local-blocks";
 
 function msgOf(e: unknown): string {
@@ -306,6 +307,13 @@ export function SidebarRoom() {
 
     // Esc 回球态（⚠️ 口径歧义处置，见文件头注：用户只说了"最大化和恢复的单个切换按钮"）
     onMount(() => {
+        // rpc 侧（diy.ui.persona.open）驱动同一个抽屉状态：store 变了就同步本地 signal
+        const unsub = personaDrawerStore.subscribe(() => {
+            const t = personaDrawerStore.target();
+            if (t !== null) setPersonaTarget(t);
+            setPersonaOpen(personaDrawerStore.isOpen());
+        });
+        onCleanup(unsub);
         const onKey = (e: KeyboardEvent): void => {
             if (e.key !== "Escape") return;
             // 逐层收：人物抽屉 → 成员抽屉 → 面板
@@ -996,6 +1004,7 @@ export function SidebarRoom() {
                 open={personaOpen()}
                 initialPersona={personaTarget()}
                 onClose={() => {
+                    personaDrawerStore.close();
                     setPersonaOpen(false);
                     const id = roomId();
                     if (id) void loadRoom(id, { soft: true });

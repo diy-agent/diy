@@ -1,4 +1,19 @@
-// tests/cli.intent.persona.test.ts
+/**
+ * persona-panel.e2e.test.ts — 人物面板的**端到端**用例（真窗口 + CDP 真实输入）。
+ *
+ * 为什么是 e2e 而不是意图测试（用户口径，2026-11-06）：
+ *   这里断言的东西只有真渲染才存在 —— viewport fixed 浮层不被 overflow 裁、面板几何（2/3 视口、
+ *   左列 1/3）、模型按钮按价格排序、搜索高亮、↗ 跳转把条目滚进视野/滚到正中、hover 显形、
+ *   双击换绑并关窗。它们是**像素/命中测试**层面的契约，用 rpc 表达不了（能表达的是"状态变了没"，
+ *   那部分已迁到 `tests/fast.persona-*.test.ts`）。
+ *
+ * 与 intent 的区别（测试规范）：
+ *   · intent：验**能力与规则**（状态机、契约、数据流）——应尽量代码穿透（rpc，不进窗口）；
+ *   · e2e   ：验**界面对人有效**（点得动、看得见、不重叠）——必须真窗口，天然慢，按需跑。
+ *
+ * 跑法：需要 `DIY_VARIANT=test ./sha.sh build` 与真 Electron；不随 `./sha.sh test` 跑。
+ */
+// tests/e2e/persona-panel.e2e.test.ts
 // ═══════════════════════════════════════════════════════════════
 // 🎯 agent 人物（persona）意图验证 —— 需求定义者
 //
@@ -16,11 +31,11 @@ import { describe, it, beforeAll, afterAll, expect } from "vitest";
 import { dirname, join } from "node:path";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
-import { ShellTest } from "./shell-test";
-import { keyOf, sessionFileForWrite, sessionFileRel } from "../src/main/core/local-paths";
-import { startElectronTest, type ElectronTest } from "./electron-test";
-import { makeUiDriver, type UiDriver } from "./ui-drive";
-import { waitUntil } from "./wait";
+import { ShellTest } from "../shell-test";
+import { keyOf, sessionFileForWrite, sessionFileRel } from "../../src/main/core/local-paths";
+import { startElectronTest, type ElectronTest } from "../electron-test";
+import { makeUiDriver, type UiDriver } from "../ui-drive";
+import { waitUntil } from "../wait";
 
 interface ElectronFixture {
     sh: ShellTest;
@@ -174,197 +189,6 @@ async function personaList(): Promise<{
     const r = await fx.sh.getJson(`./diy.sh agent persona list`);
     return r.data as never;
 }
-
-describe("agent.persona — 人物是配置实体", () => {
-    it("开箱即用：一个人物（内置缺省），default 是它的 id", async () => {
-        const d = await personaList();
-        expect(d.personas.length).toBeGreaterThanOrEqual(1);
-        expect(d.default).toBeTruthy();
-        expect(d.personas.map((p) => p.id)).toContain(d.default); // default 是 **id**
-        // 缺省人物必须有模型（模型是必填 —— 否则"缺省"就退化成代码里的硬编码回落）
-        expect(d.personas.find((p) => p.id === d.default)?.model).toBeTruthy();
-    });
-
-    it("新建人物（返回 id）+ 按 id 改模型（统一修改的落点）", async () => {
-        const 名 = uniq("密探");
-        const id = await addPersona(名, "mimo-v2.6-flash", "--instructions '只回要点。'");
-        expect(id).toMatch(/^persona\/\d+$/);
-
-        const p = (await personaList()).personas.find((x) => x.id === id)!;
-        expect(p.model).toBe("mimo-v2.6-flash");
-        expect(p.instructions).toBe("只回要点。");
-
-        // 改模型：按 id 定位，只给 --model，其他字段保持（"未给 = 保持"语义）
-        await fx.sh.run(`./diy.sh agent persona set ${id} --model deepseek-v4.1-flash`);
-        const p2 = (await personaList()).personas.find((x) => x.id === id)!;
-        expect(p2.model).toBe("deepseek-v4.1-flash");
-        expect(p2.instructions).toBe("只回要点。");
-        expect(p2.name).toBe(名); // 名字没被动
-    });
-
-    it("改名：只改显示名，id 不变（引用键稳定）", async () => {
-        const 原 = uniq("待改名");
-        const 新 = uniq("改名后");
-        const id = await addPersona(原, "mimo-v2.6-flash");
-        await fx.sh.run(`./diy.sh agent persona set ${id} --name ${新}`);
-        const p = (await personaList()).personas.find((x) => x.id === id)!;
-        expect(p.name).toBe(新);
-        expect(p.id).toBe(id);
-    });
-
-    it("非法配置写入前被拒：未知模型 / 档位不在该模型支持集内", async () => {
-        const bad = await fx.sh.run(
-            `./diy.sh agent persona set --name 报错人物 --model 不存在的模型`,
-        );
-        expect(bad.stderr + bad.stdout).toMatch(/未知模型/);
-
-        // 档位不在该模型支持集内（models.dev snapshot 只给布尔 reasoning，词表为通用集，
-        // `ultra` 不在通用集 → 应被拒）
-        const bad2 = await fx.sh.run(
-            `./diy.sh agent persona set --name 报错人物 --model mimo-v2.6-flash --reasoningEffort ultra`,
-        );
-        expect(bad2.stderr + bad2.stdout).toMatch(/不支持推理强度/);
-
-        // 两次都失败 → 人物不该被建出来（写入侧拦住，不留半成品）
-        expect((await personaList()).personas.map((p) => p.name)).not.toContain("报错人物");
-    });
-
-    it("setDefault：**跟随缺省**的任务跟着变；**固定绑定**的任务不动", async () => {
-        // 需求原文（167 的"统一修改 vs 互不影响"两难）在这里第一次真正落地：
-        //   跟随 = 引用（改缺省，跟随者一起变）
-        //   固定 = 钉死（改缺省与我无关）
-        // 两种状态在落盘上就分得清（有没有 persona 键），不靠任何"是不是自动生成的"猜测。
-        const 炮手 = await addPersona(uniq("炮手"), "deepseek-v4.1-flash");
-
-        const 跟随的 = await setupTask("跟随缺省的任务");
-        expect(personaOf(跟随的)).toBeUndefined(); // 新建默认：不写键
-
-        const 固定的 = await setupTask("固定绑定的任务");
-        await fx.sh.run(`./diy.sh task edit ${固定的} --persona ${炮手}`);
-
-        await fx.sh.run(`./diy.sh agent persona setDefault ${炮手}`);
-        expect(personaOf(跟随的)).toBeUndefined(); // 键仍不存在（跟随是"不写键"，不是写死当下这个 id）
-        expect(personaOf(固定的)).toBe(炮手); // 固定绑定不受影响
-
-        // 解析侧：两者现在**都**解析成炮手，但原因不同（一个跟随、一个钉死）
-        const r1 = await fx.sh.getJson(`./diy.sh task show ${跟随的}`);
-        const r2 = await fx.sh.getJson(`./diy.sh task show ${固定的}`);
-        expect((r1.data as { data: { persona?: string } }).data.persona).toBeUndefined();
-        expect((r2.data as { data: { persona?: string } }).data.persona).toBe(炮手);
-    });
-});
-
-describe("任务 ↔ 人物绑定（引用存 id）", () => {
-    it("新建任务**默认跟随缺省**（不写 persona 键），不是物化当时的缺省 id", async () => {
-        // 需求原文：「新建任务默认为跟随缺省」。
-        // 落盘判据必须看**文件**（键在不在），不能看接口回显 —— 读侧解析一定会给出一个人物，
-        // 那样两种状态看起来一样，而它们的行为（改缺省跟不跟）完全不同。
-        const uri = await setupTask("跟随缺省绑定测试");
-        expect(personaOf(uri)).toBeUndefined();
-        // 且文件里真的没有那一行（不是"值为空串"这种半吊子写法）
-        const text = readFileSync(join(fx.HOME, uri, "AGENTS.md"), "utf-8");
-        expect(text).not.toMatch(/^persona:/m);
-    });
-
-    it("换人物 = 只改本任务（不影响别的任务）—— 续聊，不重置会话", async () => {
-        const 工兵 = await addPersona(uniq("工兵"), "mimo-v2.6-flash");
-        const a = await setupTask("任务A");
-        const b = await setupTask("任务B");
-        const before = personaOf(b);
-
-        // 预置一份"已有会话"的 ops 日志（键 = local-agent 的 keyOf 规则：可读前缀 + sha256 前 12 位）
-        const ops = join(fx.HOME, sessionFileRel(a, "ops"));
-        mkdirSync(dirname(ops), { recursive: true });
-        writeFileSync(ops, `${JSON.stringify({ op: "start", id: "t1", kind: "turn" })}\n`, "utf-8");
-
-        await fx.sh.run(`./diy.sh task edit ${a} --persona ${工兵}`);
-        expect(personaOf(a)).toBe(工兵);
-        expect(personaOf(b)).toBe(before); // 另一个任务一点没变 —— 这就是"不互相影响"
-        // 续聊：换人物不碰会话日志（不是"清空上下文重开"）
-        expect(existsSync(ops)).toBe(true);
-    });
-
-    it("**人物改名后，任务的绑定不断**（引用存 id 的理由）", async () => {
-        // 若拿名字当引用键，改名就等于把所有引用打断 → 引用者静默回落缺省人物（换模型不打招呼）
-        const 原名 = uniq("原名");
-        const 新名 = uniq("新名");
-        const id = await addPersona(原名, "mimo-v2.6-flash");
-        const uri = await setupTask("改名不影响绑定的任务");
-        await fx.sh.run(`./diy.sh task edit ${uri} --persona ${id}`);
-
-        await fx.sh.run(`./diy.sh agent persona set ${id} --name ${新名}`);
-        expect(personaOf(uri)).toBe(id); // 绑定原样
-        // 且读侧解析到的是改名后的人物（不是回落缺省）
-        expect((await personaList()).personas.find((x) => x.id === id)?.name).toBe(新名);
-    });
-
-    it("固定绑定后 task show 回显 persona id（新格式 persona/<n>）", async () => {
-        const id = await addPersona(uniq("回显人物"), "mimo-v2.6-flash");
-        const uri = await setupTask("回显测试");
-        await fx.sh.run(`./diy.sh task edit ${uri} --persona ${id}`);
-        const r = await fx.sh.getJson(`./diy.sh task show ${uri}`);
-        expect((r.data as { data: { persona?: string } }).data.persona).toBe(id);
-        expect(id).toMatch(/^persona\/\d+$/);
-    });
-
-    it("换到不存在的人物被拒（不许写出悬空引用）", async () => {
-        const uri = await setupTask("悬空引用测试");
-        const r = await fx.sh.run(`./diy.sh task edit ${uri} --persona persona/9999`);
-        expect(r.stderr + r.stdout).toMatch(/不存在/);
-        expect(personaOf(uri)).not.toBe("persona/9999");
-    });
-
-    it("清空人物 = 改为**跟随缺省**（合法动作，不再是「不能为空」的错误）", async () => {
-        // 语义变更：从"任务必须有人物"改成"人物永远是解析得出来的，但绑定可以不固定"。
-        // `default` 与空串两种写法等价（省得调用方记两套）。
-        const id = await addPersona(uniq("被清空的"), "mimo-v2.6-flash");
-        const a = await setupTask("清空人物测试A");
-        await fx.sh.run(`./diy.sh task edit ${a} --persona ${id}`);
-        expect(personaOf(a)).toBe(id);
-
-        await fx.sh.run(`./diy.sh task edit ${a} --persona default`);
-        expect(personaOf(a)).toBeUndefined(); // 键被删掉 = 跟随
-
-        const b = await setupTask("清空人物测试B");
-        await fx.sh.run(`./diy.sh task edit ${b} --persona ${id}`);
-        await fx.sh.run(`./diy.sh task edit ${b} --persona ''`);
-        expect(personaOf(b)).toBeUndefined(); // 空串等价
-    });
-
-    it("创建任务时可显式指定人物（按 id）", async () => {
-        const id = await addPersona(uniq("被指定的"), "mimo-v2.6-flash");
-        const repo = `${fx.HOME}/persona-create-${Date.now()}`;
-        const r = await fx.sh.getJson(`./diy.sh project create "${repo}" --label 指定人物`);
-        const pid = String(
-            ((r.data as Record<string, unknown>)?.data as Record<string, unknown>)?.id ?? "",
-        );
-        await fx.sh.run(`./diy.sh task create 指定人物的任务 ${pid} --persona ${id}`);
-        expect(personaOf(`projects/${pid}/tasks/1`)).toBe(id);
-    });
-});
-
-describe("References — 引用计数（改人物前先看见影响面）", () => {
-    it("list 回传每人物的 taskCount", async () => {
-        const id = await addPersona(uniq("统计人物167"), "mimo-v2.6-flash");
-        const uri = await setupTask("被统计的任务");
-        await fx.sh.run(`./diy.sh task edit ${uri} --persona ${id}`);
-
-        const d = await personaList();
-        expect(d.personas.find((p) => p.id === id)?.taskCount).toBe(1);
-        // 没人在用的人物计数为 0（而不是缺失）
-        expect(typeof d.personas.find((p) => p.id === d.default)?.taskCount).toBe("number");
-    });
-});
-
-describe("人物暂不提供删除（有意的能力缺位）", () => {
-    it("没有 remove 子命令 —— 改人物而非删人物", async () => {
-        // 删掉一个人物会让所有引用它的任务**静默回落**到缺省人物（换模型不打招呼）。
-        // 要下线一个人物就改它的模型/行为指令（引用者原地跟随）；真需要删除时，
-        // 得先设计"引用迁移"（把这 N 个任务改绑到别处）一起做。
-        const r = await fx.sh.run(`./diy.sh agent persona remove p1`);
-        expect(r.code).not.toBe(0);
-    });
-});
 
 describe("UI：会话页看得见当前人物", () => {
     it("执行页显示当前人物名与其模型（不是只存在数据里）", async () => {

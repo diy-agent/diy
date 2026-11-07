@@ -1,5 +1,7 @@
 /**
- * fast.persona-core.test.ts — persona 核心逻辑的**函数级**测试（不起 Electron、不起 CLI、不需 build）
+ * persona.test.ts — 【单元测试】persona 的存储层（文件读写与降级），不是需求说明书。
+ *
+ * 谁看：改这块实现的人。用户需求在 `persona.intent.test.ts` / `persona-ui.intent.test.ts` 里读。（不起 Electron、不起 CLI、不需 build）
  *
  * 为什么另起一个文件（##518 测试提速调查）：
  *   `tests/cli.intent.persona.test.ts` 里同一条规则的验证要付三次「进程税」：
