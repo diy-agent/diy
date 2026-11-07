@@ -10,7 +10,7 @@ import { z } from 'zod';
 import { RpcSchema } from '../../src/core/index';
 import { renderServiceTypes, zodToTs } from '../../src/core/service-gen';
 
-const api = RpcSchema.bindNames(RpcSchema.group({ children: {
+const api = RpcSchema.group({ children: {
     math: RpcSchema.group({ children: {
         add: RpcSchema.unary({
             input: { a: z.number(), b: z.number() },
@@ -29,7 +29,7 @@ const api = RpcSchema.bindNames(RpcSchema.group({ children: {
             output: z.array(z.object({ id: z.string(), ok: z.boolean() })),
         }),
     } }),
-} }));
+} });
 
 describe('zodToTs', () => {
     it('基础标量 / 对象 / 数组 / 可选', () => {
