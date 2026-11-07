@@ -17,6 +17,7 @@
  */
 
 import { RpcSchema } from "@diy-agent/rpc";
+import { SteerItemSchema } from "../../shared/steer-item";
 import { agentRoutes } from "./api-domains/agent/api";
 import { TaskNodeSchema } from "../../shared/task-node";
 import { UiSnapshotData } from "../../shared/ui-snapshot";
@@ -159,13 +160,6 @@ export { DraftFieldSchema, DraftFieldsSchema, DraftsData, TaskDetailSchema };
  * 但语义是**队列**：FIFO，提交后等模型取走。两种模式**都是整批取走**（多条合并成同一批），
  * 差别只在投递点：next-step = 下一个模型步边界之前（本轮内生效）；next-turn = 本轮收尾后的下一轮开场。
  */
-export const SteerItemSchema = z.object({
-  id: z.string(),
-  mode: z.enum(["next-step", "next-turn"]),
-  text: z.string(),
-  created: z.string(),
-});
-
 /** ── 工作流（##319）──────────────────────────────────────────────
  * 形状与 core/flow.ts 的视图一一对应。注意：**outputSchema 运行期不校验**（只用于类型推导，
  * 见 pit.rpc-output-schema），故这里写的是契约、不是闸门 —— 改 handler 出参时两边一起改。 */

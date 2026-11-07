@@ -3,13 +3,11 @@
  */
 import { z } from "zod";
 import { RpcSchema, defineService } from "@diy-agent/rpc";
-import { StatusOk } from "../../../../shared/status";
+import { StatusOk, StatusDataUri } from "../../../../shared/status";
 import { ChangeTypeSchema, PrioritySchema } from "../../../core/task-fields";
 import { DraftFieldSchema, DraftsData } from "../../../../shared/task-detail";
 import { TaskStateSchema } from "../../../core/task-state";
 
-/** 从 api-def.ts 复制（那边是局部常量，没导出） */
-const StatusDataUri = z.object({ status: z.string(), data: z.object({ uri: z.string() }) });
 /** 从 api-def.ts 复制（那边是局部常量，没导出） */
 const CreateResult = z.object({
   status: z.string(),
