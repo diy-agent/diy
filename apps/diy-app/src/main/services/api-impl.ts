@@ -20,6 +20,9 @@ import { refreshModelRuntime } from "../core/model-runtime";
 import { hasConversation } from "../core/local-paths";
 import { autoSeedEnabled, seedHome } from "../core/seed";
 import { bindSeed } from "./api-domains/seed/impl";
+import { bindNotice } from "./api-domains/notice/impl";
+import { bindDocs } from "./api-domains/docs/impl";
+import { bindJournal } from "./api-domains/journal/impl";
 import { bindKb } from "./api-domains/kb/impl";
 import { bindLlmProxy } from "./api-domains/llmProxy/impl";
 import { platform, arch, release, totalmem, freemem } from "node:os";
@@ -1326,23 +1329,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
     for await (const ev of traffic.events()) yield ev;
   });
 
-  // ── notice（「模型不可用」通知；##369 ①）──
-  // 数据源是 main 侧通知中心（真发失败的 catch 里 push）：renderer 只订阅/关闭，不产生。
-  binding.on(app.notice.list, async () => modelNoticeHub.list());
-  binding.on(app.notice.dismiss, async ({ input }) => {
-    modelNoticeHub.dismiss(input.id);
-    return { status: "ok" };
-  });
-  binding.on(app.notice.watch, async function* ({ signal }) {
-    for await (const n of modelNoticeHub.subscribe(signal)) yield n;
-  });
-
-  // ── inbox（N1 提示的落盘流水；##429 要求 ④/⑤）──
-  // 与 notice / env 两个内存 ring 不同：这里是 append-only 落盘（重启后仍可回看）。
-  binding.on(app.notice.inbox.list, async ({ input }) => inboxHub.list({ taskUri: input.taskUri, limit: input.limit }));
-  binding.on(app.notice.inbox.watch, async function* ({ signal }) {
-    for await (const e of inboxHub.subscribe(signal)) yield e;
-  });
+  // ── notice ──（已拆到 api-domains/notice/）
+  bindNotice(binding);
 
   // ── env（「环境感知」通知；##384）──
   // 数据源 = main 侧环境通知中心（主动轮询磁盘水位 + 被动写失败/网络错误码）。
@@ -1626,23 +1614,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
     for await (const frame of queue) yield JSON.stringify(frame);
   });
 
-  // ── docs（##404 #3：仓库文档索引；变量树只放摘要，逐篇按需在这里取）──
-  binding.on(app.docs.index, async ({ input }) => {
-    const roots = input.roots === undefined
-      ? undefined
-      : input.roots.split(",").map((s) => s.trim()).filter((s) => s !== "");
-    // 缺省根 = **app 进程 cwd 向上找到的仓库根**（不是 process.cwd() 本身）：
-    // app 进程的 cwd 是包目录（`apps/diy-app`），直接拿它扫 `docs/plans` 永远是空。
-    // 这也解释了为什么必须显式传 `--dir` 或依赖上溯 —— CLI 敲命令的 cwd 到不了这里。
-    const idx = buildDocsIndex({
-      root: input.dir ?? findRepoRoot(process.cwd()) ?? process.cwd(),
-      ...(roots === undefined ? {} : { roots }),
-      ...(input.max === undefined ? {} : { maxEntries: input.max }),
-    });
-    // 没有文档 = 空索引（不是 null）：CLI 的返回形状要稳定，空 = "这个根下没扫到"，
-    // 与"变量树里整节缺席"是两件事（后者是上下文层的纪律）。
-    return idx ?? { roots: roots ?? [...DEFAULT_DOCS_ROOTS], entries: [] };
-  });
+  // ── docs ──（已拆到 api-domains/docs/）
+  bindDocs(binding);
 
   // ── facts（##404：项目级事实库；agent 只经 RPC 读写，不碰 YAML）──
   binding.on(app.facts.status, async ({ input }) => factsStore.status({ ...(input.dir === undefined ? {} : { dir: input.dir }), ...(input.in === undefined ? {} : { in: input.in }) }));
@@ -1700,36 +1673,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
       ...(input.in === undefined ? {} : { in: input.in }),
     }));
 
-  // ── journal（##404：任务日志 = append-only 事件流；把"发生过什么"从任务 body 里摘出来）──
-  binding.on(app.journal.add, async ({ input }) => {
-    const body = journalStore.resolveBody(input.body, input.bodyText, input.bodyFile);
-    return journalStore.addEntries(input.task, [
-      {
-        kind: input.kind,
-        title: input.title,
-        ...(body === undefined ? {} : { body }),
-        ...(input.refs === undefined ? {} : { refs: journalStore.splitRefs(input.refs) }),
-        ...(input.round === undefined ? {} : { round: input.round }),
-        ...(input.author === undefined ? {} : { author: journalStore.parseAuthorSpec(input.author) }),
-        ...(input.anchor === undefined ? {} : { anchor: journalStore.parseAnchorSpec(input.anchor) }),
-      },
-    ]);
-  });
-  binding.on(app.journal.raw, async ({ input }) => journalStore.rawJournal(input.task));
-  binding.on(app.journal.find, async ({ input }) =>
-    journalStore.findJournal(input.task, {
-      ...(input.kind === undefined ? {} : { kind: journalStore.splitKinds(input.kind) }),
-      ...(input.since === undefined ? {} : { since: input.since }),
-      ...(input.until === undefined ? {} : { until: input.until }),
-      ...(input.grep === undefined ? {} : { grep: input.grep }),
-      ...(input.limit === undefined ? {} : { limit: input.limit }),
-      ...(input.order === undefined ? {} : { order: input.order }),
-    }),
-  );
-  binding.on(app.journal.stats, async ({ input }) => journalStore.journalStats(input.task));
-  binding.on(app.journal.import, async ({ input }) =>
-    journalStore.importEntries(input.task, journalStore.parseImportPayload(input.file), input.dryRun === true),
-  );
+  // ── journal ──（已拆到 api-domains/journal/）
+  bindJournal(binding);
 
   // ── seed ──（已拆到 api-domains/seed/，整域自带契约 + 实现）
   bindSeed(binding);
