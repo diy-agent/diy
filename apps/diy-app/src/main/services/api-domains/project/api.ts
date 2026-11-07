@@ -5,9 +5,7 @@
  */
 import { z } from "zod";
 import { RpcSchema, defineService } from "@diy-agent/rpc";
-/** 与 api-def.ts 的同名局部常量同形（那边没导出） */
-const StatusDataId = z.object({ status: z.string(), data: z.object({ id: z.string() }) });
-
+import { StatusDataId } from "../../../../shared/status";
 export const projectRoutes = RpcSchema.group({desc: `项目管理`,
         children: {
           create: RpcSchema.unary({
