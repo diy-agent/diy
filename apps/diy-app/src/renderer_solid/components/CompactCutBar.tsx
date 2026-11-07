@@ -69,7 +69,7 @@ export function CompactCutBar(props: {
 
     const total = (): number => view()?.total ?? 0;
     const appliedKept = (): number => view()?.keptCount ?? 0;
-    const keptCount = (): number => Math.min(total(), Math.max(0, Math.round(keep() ?? appliedKept())));
+    const keptCount = (): number => Math.min(total(), Math.max(total() === 0 ? 0 : 1, Math.round(keep() ?? appliedKept())));
     const lo = (): number => total() - keptCount();                    // 保留起点（第几轮开始留）
     const dirty = (): boolean => keptCount() !== appliedKept();
 
@@ -108,6 +108,7 @@ export function CompactCutBar(props: {
             };
             if (r?.applied === null) setNote("没有可压的（历史本来就不多 / 已到最早一轮）");
             else if (r?.applied) setNote(`已压：丢 ${r.applied.dropped} 条，留 ${r.applied.keptMessages} 条`);
+            setKeep(null);            // 吸回已生效值：读数与数据必须同一个来源
             await refetch();
             props.onApplied?.();
         } catch (e) {
@@ -153,7 +154,7 @@ export function CompactCutBar(props: {
                 <input
                     type="range"
                     class="range range-primary range-xs w-full"
-                    min="0"
+                    min="1"
                     max={String(Math.max(1, total()))}
                     step="1"
                     value={String(keptCount())}
@@ -166,7 +167,7 @@ export function CompactCutBar(props: {
                     }}
                 />
                 <div class="flex justify-between text-caption opacity-45">
-                    <span>保留 0 轮（压缩到头）</span>
+                    <span>只留当前这一轮（压缩到头）</span>
                     <span>保留全部（不压缩）</span>
                 </div>
 
@@ -250,9 +251,9 @@ export function CompactCutBar(props: {
                     </button>
                 </div>
 
-                <Show when={keptCount() === 0}>
+                <Show when={keptCount() <= 1}>
                     <div class="text-caption text-warning">
-                        0 轮 = 压缩到头：历史全丢，只留当前这一轮（它本来就要发）。
+                        压缩到头：历史全丢，只留当前这一轮（它本来就要发，砍不掉）。
                     </div>
                 </Show>
                 <Show when={note()}>

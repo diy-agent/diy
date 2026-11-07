@@ -1471,7 +1471,28 @@ function ensureCompactState(taskUri: string): CompactState | null {
  */
 function latestBoundary(taskUri: string): EffectiveBoundary | null {
     const state = ensureCompactState(taskUri);
-    return state?.boundary ? boundaryOfPoint(state.boundary) : null;
+    const fromState = state?.boundary ? boundaryOfPoint(state.boundary) : null;
+    if (fromState) return fromState;
+    // 回落 turns.jsonl：`appliedHistoryRange` 写边界时只落 turns 账 + 内存态，
+    // **没有**写压缩账本 / compact-state.json —— 于是 `ensureCompactState` 扫不到、读回 null，
+    // 界面就说「压完还是 N 轮」（用户实测的那个 bug）。这里补一条只读回落，
+    // 让「手压边界」在任何进程里都看得见（写侧不动，避免双写两份真源）。
+    try {
+        const b = readBoundary(taskUri);
+        if (!b) return null;
+        return {
+            compactId: b.at,
+            keptFromTurnId: b.cut.turnId,
+            keepFromOpIndex: 0,
+            ...(b.ref ? { keptFromOpsOffset: b.ref.ops.offset } : {}),
+            keptFromLlmLine: b.cut.llmLine,
+            schema: OPS_SCHEMA_CURRENT,
+            policy: { mode: "budget", modeData: { budgetBytes: b.retainTokens ?? 0, toolResult: { render: "asis" } }, summary: false } as never,
+            ts: b.at,
+        };
+    } catch {
+        return null;
+    }
 }
 
 /** `resolveOpsReplay` 的缓存（键 = ops 大小 + 账本大小/mtime；三者任一变了才重算）。 */

@@ -1,0 +1,30 @@
+const wsUrl = process.argv[2]!;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const ws = new WebSocket(wsUrl);
+await new Promise<void>((r, j) => { ws.onopen = () => r(); ws.onerror = () => j(new Error("ws")); });
+let seq = 0; const pend = new Map<number, (v: any) => void>();
+ws.onmessage = (e: MessageEvent) => { const m = JSON.parse(String(e.data)); if (m.id) pend.get(m.id)?.(m); };
+const send = (method: string, params: any = {}, sid?: string) => new Promise<any>((r) => { const id = ++seq; pend.set(id, r); ws.send(JSON.stringify({ id, method, params, ...(sid ? { sessionId: sid } : {}) })); });
+const t = await send("Target.getTargets");
+const page = (t.result.targetInfos as any[]).find((x) => x.type === "page");
+const sid = (await send("Target.attachToTarget", { targetId: page.targetId, flatten: true })).result.sessionId;
+const ev = async (x: string) => (await send("Runtime.evaluate", { expression: x, awaitPromise: true, returnByValue: true }, sid)).result?.result?.value;
+const card = () => ev(`(() => { const el=document.querySelector('[data-compact-cut-bar]');
+  return el ? { txt:(el.textContent||'').replace(/\\s+/g,' ').trim(), btn:(el.querySelector('[data-cut-apply]')?.textContent||'').trim(), dis:el.querySelector('[data-cut-apply]')?.disabled } : 'absent'; })()`);
+const hover = async () => { await ev(`(() => { const b=[...document.querySelectorAll('button')].find(x=>(x.getAttribute('aria-label')||'').startsWith('窗口占用')); if(!b) return 'no'; b.dispatchEvent(new Event('pointerenter',{bubbles:true})); return 'ok'; })()`); await sleep(1200); };
+await hover();
+console.log("before:", JSON.stringify(await card()));
+// 拖到 0（压缩到头）再点压缩
+console.log("set 0:", await ev(`(() => { const el=document.querySelector('[data-compact-cut-bar]'); const s=el.querySelector('[data-cut-slider]');
+  s.value='0'; s.dispatchEvent(new Event('input',{bubbles:true})); return s.value; })()`));
+await sleep(600);
+await hover();
+console.log("after drag:", JSON.stringify(await card()));
+await hover();
+await ev(`document.querySelector('[data-compact-cut-bar] [data-cut-apply]')?.click()`);
+await sleep(3000);
+await hover();
+console.log("after apply:", JSON.stringify(await card()));
+// 再看数据层
+console.log("note:", await ev(`(document.querySelector('[data-cut-note]')?.textContent||'(无)').trim()`));
+ws.close();
