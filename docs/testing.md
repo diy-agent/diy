@@ -87,14 +87,26 @@ golden = 这个功能**应该**这样工作；probe = 这个功能**曾经**这�
 pkgs.ts/<域>/<包>/tests/
 ├── <主题>.test.ts              单元
 ├── <主题>.dom.test.ts          单元 + happy-dom（首行 // @vitest-environment happy-dom）
-├── <主题>.intent.test.ts       意图（无 UI 层 / 契约）
+├── <主题>.intent.test.ts       意图（core 层 / 契约）
 ├── <主题>.probe.test.ts        探针
 └── fixtures/llm/gen/*.gen.ts   黄金录制品
 apps/<app>/tests/
-├── <主题>.intent.test.ts       意图（界面层，走 diy.ui.*）
 ├── <主题>.test.ts              单元 / 装配守卫
-└── e2e/<主题>.e2e.test.ts      E2E（默认不跑）
+├── core-intent/<主题>.intent.test.ts   意图 · core（不开窗口）
+├── ui-intent/<主题>.intent.test.ts     意图 · 界面（真 Electron）
+└── e2e/<主题>.e2e.test.ts              E2E（像素 / 命中）
 ```
+
+**三个入口分开，别互相拖累**（app 内的测试）：
+
+| 命令 | 跑什么 | 什么时候跑 |
+|---|---|---|
+| `./sha.sh test` | 单元 + OS 策略 + **core 意图**（不开窗口） | 改任何东西后，秒级 |
+| `./sha.sh test-ui` | **界面意图**（起真 Electron，走 `diy.ui.*`） | 改到 renderer / `diy.ui.*`；发布前全跑 |
+| `./sha.sh test-e2e` | **E2E**（真鼠标，像素/命中/浮层） | 发布前；改布局/浮层时 |
+
+**默认不要 `all test`**：`./sha.sh test` 必须保持秒级到十几秒，否则没人跑。
+**单文件调试优先**：`npx vitest run tests/ui-intent/<文件> -t "<用例名片段>"`，只跑当前在改的场景。
 
 ## 跑法
 

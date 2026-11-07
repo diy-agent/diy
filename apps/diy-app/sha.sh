@@ -90,12 +90,18 @@ build() {
 # 生成 runtime/：打包后主进程用 createRequire 按名字解析 @diy-agent/*（##455）
 build-runtime() { run node scripts/build-runtime.mjs; }
 
-# 本包全部测试：OS 无关单测 → OS 策略单测 → 构建 → 意图测试（起隔离 Electron，慢）
+# 默认测试：**只跑不开窗口的那部分** —— 单元 + OS 策略 + core 意图。
+#
+# 为什么不把 UI 意图 / E2E 放进来（##518 用户口径）：
+#   它们每个文件都要起一次真 Electron，一次「跑测试」就变成十几分钟 —— 人就不跑了，
+#   而测试没人跑等于没有测试。所以分成三个入口，按改动面挑：
+#     ./sha.sh test       单元 + OS + core 意图（秒级，改任何东西都该跑）
+#     ./sha.sh test-ui    界面意图（改到 renderer / diy.ui.* 时；发布前全跑）
+#     ./sha.sh test-e2e   像素与命中（发布前/改布局浮层时）
 test() {
   test-unit
   test-os
-  # 按前缀全收 tests/cli.intent.*：不点名文件，新增用例自动纳入
-  test-intent
+  test-core-intent
 }
 # 编程中快速验证：不构建，跳过意图测试
 # 并行策略**与 intent 分开**（##266 测试提速）：
@@ -125,12 +131,16 @@ test-unit() {
   # 测试分层（见 docs/testing.md「层级」）：
   #   *.intent.test.ts     = 意图（界面 / core）—— **默认跑**，走进程内 rpc 或 `diy.ui.*`，秒级
   #   *.test.ts            = 单元（含 happy-dom 组件）—— 默认跑
-  #   tests/e2e/**         = E2E（真窗口 + 真实输入：拖动/遮挡/几何/浮层）—— **默认不跑**（慢、需构建）
-  #   tests/cli.intent*    = 旧意图测试（每条断言一个 CLI 子进程，0.68s/次）—— 暂停用，见 test-intent 头部
-  run npx vitest run --exclude '**/cli.intent*' --exclude '**/tests/os/**' --exclude '**/tests/e2e/**' --fileParallelism --maxWorkers=4
+  #   tests/core-intent/** = core 意图（不开窗口）—— 由 test-core-intent 跑
+  #   tests/ui-intent/**   = 界面意图（真 Electron）—— 由 test-ui 跑，**不进默认链路**
+  #   tests/e2e/**         = E2E（像素/命中）—— 由 test-e2e 跑，**不进默认链路**
+  #   tests/cli.intent*    = 旧意图测试（每条断言一个 CLI 子进程）—— 已迁走/停用
+  run npx vitest run --exclude '**/cli.intent*' --exclude '**/tests/os/**' --exclude '**/tests/e2e/**' --exclude '**/tests/ui-intent/**' --exclude '**/tests/core-intent/**' --fileParallelism --maxWorkers=4
 }
 
-#: 端到端用例（真窗口 + CDP 真实输入；慢，需先构建）：./sha.sh test-e2e [文件片段]
+#: 端到端用例（tests/e2e/）：真窗口 + CDP 真实输入，验像素与命中
+#: 用法: ./sha.sh test-e2e [文件片段]
+#: ⚠️ 只在发布前或改到布局/浮层时才跑 —— 它慢且脆，不进默认链路。
 test-e2e() {
   export DIY_VARIANT=test
   _ensure_electron
@@ -231,6 +241,24 @@ start() {
 link() { run npm link; }
 
 test-watch() { run npx vitest "$@"; }
+#: core 层意图（tests/core-intent/）：**不开窗口**，进程内 rpc / 直接调规则 —— 秒级，随 test 跑
+#: 用法: ./sha.sh test-core-intent [文件片段]
+test-core-intent() {
+  run npx vitest run tests/core-intent "$@"
+}
+
+#: UI 层意图（tests/ui-intent/）：真起 Electron，走 diy.ui.* 驱动界面状态
+#: 用法: ./sha.sh test-ui [文件片段]
+#: ⚠️ 不在 test 里跑：每个文件一个 app，慢。改到 renderer / diy.ui.* 时才跑，发布前全跑。
+test-ui() {
+  export DIY_VARIANT=test
+  _ensure_electron
+  build
+  export DIY_CLI_MODE="${DIY_CLI_MODE:-http}"
+  # 文件之间并行（各自独立 HOME + CDP port 0，不抢端口）；实测 6 文件串行 177s → 4 worker 63s
+  run npx vitest run --fileParallelism --maxWorkers=4 tests/ui-intent "$@"
+}
+
 # 意图测试：先构建（起隔离 Electron，最慢放最后）
 # CLI 默认走 server /cli http 端点（单条 ~41ms vs 编译产物 ~300ms vs tsx ~600ms，intent 全量 ~140s vs ~300s）。
 # 无 app.port / curl 不支持 h2 时自动回退直连 CLI，不会失败。排查需要可覆盖：DIY_CLI_MODE=compiled|tsx ./sha.sh test-intent
