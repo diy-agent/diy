@@ -445,3 +445,7 @@ export const apiDef = RpcSchema.bindNames(RpcSchema.group({ children: {
     },
   }),
 } }));
+
+/** `apiDef.diy` —— 各域 impl 取值起点（拆 impl 后各域都要它） */
+export const app = apiDef.diy;
+
