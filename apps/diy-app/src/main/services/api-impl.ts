@@ -10,8 +10,7 @@ import { openUrlWith } from "../core/open-url";
 import type { ServerBinding } from "@diy-agent/rpc";
 import { ChannelServerBinding } from "@diy-agent/rpc";
 import type { EnvelopeTransport } from "@diy-agent/rpc";
-import * as task from "../core/task";
-import { DRAFT_FIELDS, clearDrafts, readDrafts, writeDrafts, type DraftField } from "../core/drafts";
+import { readDrafts } from "../core/drafts";
 import * as project from "../core/project";
 import * as state from "../core/state";
 import * as taskTree from "../core/task-tree";
@@ -56,7 +55,6 @@ import { noteRendererTouch } from "./runtime-context";
 import type { ToolResultMode } from "@diy-agent/compaction/compaction";
 import type { HistoryEntryView } from "../../shared/context/schema";
 import { readFileWindow, formatReadOutput, ReadWindowError } from "../core/file-read";
-import { resolve as resolvePath, relative as relativePath, isAbsolute as isAbsolutePath } from "node:path";
 import * as flow from "../core/flow";
 import { requirePostText } from "../core/flow-store";
 import * as flowThread from "../core/flow-thread";
@@ -145,12 +143,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     console.warn("[model-runtime] 装配失败，目录保持原状（或空）:", e);
   }
 
-  // ── task ──
-
-
-  bindTask(binding);
-
-  // ── 未提交草稿（半编辑数据：丢不起，故落盘且写失败必须冒泡）──
+  // ── task（含 drafts 子组：未提交草稿半编辑数据，落盘且写失败必须冒泡）──
   bindTask(binding);
 
   // ── project ──
@@ -739,16 +732,6 @@ export function bindAppHandlers(binding: ServerBinding): void {
   bindTemplate(binding);
 
   // ── context（上下文树页：**当前任务的真实上下文**，不落盘、不发 LLM）──
-  bindContext(binding);
-
-  bindContext(binding);
-
-  bindContext(binding);
-
-  bindContext(binding);
-
-  bindContext(binding);
-
   bindContext(binding);
 
   // ── llmProxy ──（已拆到 api-domains/llmProxy/）
