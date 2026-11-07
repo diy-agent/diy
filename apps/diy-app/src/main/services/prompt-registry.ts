@@ -44,7 +44,6 @@ import { reqlogValue } from "@diy-agent/context/schema/reqlog";
 import { LOG_DIR_REL, dayFile } from "../core/traffic-log";
 // 契约类型唯一源（shared/prompt-schema.ts，纯 zod）——renderer 也用它，避免手抄第二份
 import type { AssembledSystem, PromptEntry } from "@diy-agent/context/schema/prompt-schema";
-import { buildFactsContext, buildKbIndex } from "./facts-context";
 import { buildDocsIndex, summarizeDocsIndex } from "./docs-index";
 
 export type { AssembledSystem, PromptEntry };
