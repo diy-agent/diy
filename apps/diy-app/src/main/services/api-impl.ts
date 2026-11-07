@@ -20,6 +20,7 @@ import { refreshModelRuntime } from "../core/model-runtime";
 import { hasConversation } from "../core/local-paths";
 import { autoSeedEnabled, seedHome } from "../core/seed";
 import { bindSeed } from "./api-domains/seed/impl";
+import { bindKb } from "./api-domains/kb/impl";
 import { bindLlmProxy } from "./api-domains/llmProxy/impl";
 import { platform, arch, release, totalmem, freemem } from "node:os";
 import { currentGitBranch, findRepoRoot, homeDisplayOf, repoDisplayOf } from "../core/instance-identity";
@@ -1732,6 +1733,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
 
   // ── seed ──（已拆到 api-domains/seed/，整域自带契约 + 实现）
   bindSeed(binding);
+  bindKb(binding);
 
   // ── log ──
   binding.on(app.log.read, async ({ input }) => {
