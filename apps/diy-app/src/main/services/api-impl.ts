@@ -20,6 +20,7 @@ import { refreshModelRuntime } from "../core/model-runtime";
 import { hasConversation } from "../core/local-paths";
 import { autoSeedEnabled, seedHome } from "../core/seed";
 import { bindSeed } from "./api-domains/seed/impl";
+import { bindNotice } from "./api-domains/notice/impl";
 import { bindKb } from "./api-domains/kb/impl";
 import { bindLlmProxy } from "./api-domains/llmProxy/impl";
 import { platform, arch, release, totalmem, freemem } from "node:os";
@@ -1326,23 +1327,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
     for await (const ev of traffic.events()) yield ev;
   });
 
-  // ── notice（「模型不可用」通知；##369 ①）──
-  // 数据源是 main 侧通知中心（真发失败的 catch 里 push）：renderer 只订阅/关闭，不产生。
-  binding.on(app.notice.list, async () => modelNoticeHub.list());
-  binding.on(app.notice.dismiss, async ({ input }) => {
-    modelNoticeHub.dismiss(input.id);
-    return { status: "ok" };
-  });
-  binding.on(app.notice.watch, async function* ({ signal }) {
-    for await (const n of modelNoticeHub.subscribe(signal)) yield n;
-  });
-
-  // ── inbox（N1 提示的落盘流水；##429 要求 ④/⑤）──
-  // 与 notice / env 两个内存 ring 不同：这里是 append-only 落盘（重启后仍可回看）。
-  binding.on(app.notice.inbox.list, async ({ input }) => inboxHub.list({ taskUri: input.taskUri, limit: input.limit }));
-  binding.on(app.notice.inbox.watch, async function* ({ signal }) {
-    for await (const e of inboxHub.subscribe(signal)) yield e;
-  });
+  // ── notice ──（已拆到 api-domains/notice/）
+  bindNotice(binding);
 
   // ── env（「环境感知」通知；##384）──
   // 数据源 = main 侧环境通知中心（主动轮询磁盘水位 + 被动写失败/网络错误码）。
