@@ -6,8 +6,8 @@
 import { z } from "zod";
 import { RpcSchema, defineService } from "../../../../src/index";
 
-export const slowRoutes = RpcSchema.bindNames(RpcSchema.group({ children: {
+export const slowRoutes = RpcSchema.group({ children: {
     slow: RpcSchema.unary({ input: { ms: z.number() }, output: z.string() }),
-} }));
+} });
 
 export const slowService = defineService({ name: "demo.slow", api: slowRoutes });

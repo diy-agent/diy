@@ -79,9 +79,9 @@ describe('defineService', () => {
     });
 
     it('同一个 api 挂两个 service 不互相污染（meta.name 不被原地改）', async () => {
-        const api = RpcSchema.bindNames(RpcSchema.group({ children: {
+        const api = RpcSchema.group({ children: {
             ping: RpcSchema.unary({ input: {}, output: z.string() }),
-        } }));
+        } });
         const a = defineService({ name: 'a.svc', api });
         const b = defineService({ name: 'b.svc', api });
         const { binding, client, dispose } = await channelHarness.start();

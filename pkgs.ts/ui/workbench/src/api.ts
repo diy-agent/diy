@@ -21,7 +21,7 @@ const pageInfoSchema = z.object({
     description: z.string().optional(),
 });
 
-export const workbenchRoutes = RpcSchema.bindNames(RpcSchema.group({ children: {
+export const workbenchRoutes = RpcSchema.group({ children: {
     page: RpcSchema.group({ children: {
         /** 有哪些页面（侧栏用它渲染入口） */
         list: RpcSchema.unary({ input: {}, output: z.array(pageInfoSchema) }),
@@ -40,7 +40,7 @@ export const workbenchRoutes = RpcSchema.bindNames(RpcSchema.group({ children: {
             output: z.unknown(),
         }),
     } }),
-} }));
+} });
 
 export type WorkbenchApi = typeof workbenchRoutes;
 
@@ -75,7 +75,7 @@ export const workbenchService = defineService({
  * 与 E2E 的分工：E2E 验「显示对不对」（拖拉 / 遮挡 / 大小），走真鼠标、慢、少；
  * 意图测试验「逻辑对不对」，走这条通道、快、多。见 `docs/testing.md`。
  */
-export const rendererRoutes = RpcSchema.bindNames(RpcSchema.group({ children: {
+export const rendererRoutes = RpcSchema.group({ children: {
     ui: RpcSchema.group({ children: {
         /** 给一个输入框设值并派发 input/change（模拟用户输入） */
         fill: RpcSchema.unary({
@@ -100,7 +100,7 @@ export const rendererRoutes = RpcSchema.bindNames(RpcSchema.group({ children: {
         /** 读当前状态快照（测试断言用；不是给 UI 自己用的） */
         readState: RpcSchema.unary({ input: { path: z.string() }, output: z.unknown() }),
     } }),
-} }));
+} });
 
 export type RendererApi = typeof rendererRoutes;
 

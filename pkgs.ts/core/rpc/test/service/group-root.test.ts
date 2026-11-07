@@ -77,12 +77,12 @@ describe('RpcSchema.group 当根', () => {
 
 describe('对比：router 仍可作为根（老路径不破）', () => {
     it('router({ x: group({...}) }) 照旧可用', async () => {
-        const api = RpcSchema.bindNames(RpcSchema.group({ children: {
+        const api = RpcSchema.group({ children: {
             math: RpcSchema.group({
                 desc: '数学',
                 children: { add: RpcSchema.unary({ input: { a: z.number() }, output: z.number(), desc: '加' }) },
             }),
-        } }));
+        } });
         const svc = defineService({ name: 'demo2', api });
         const { binding, client, dispose } = await channelHarness.start();
         svc.bind(binding, { math: { add: ({ input }) => input.a } });
