@@ -25,11 +25,11 @@ cd apps/chat && ./sha.sh lab:memory   # 内存模式（bot / 会话不落盘，�
 
 ```bash
 npm i -g @diy-agent/app-chat     # 或 npx @diy-agent/app-chat
-diy-chat                         # 启动
-diy-chat electron [--check]      # 只准备 / 只检查 Electron 二进制（并发探测镜像 + 进度）
-diy-chat --version | --help
+diy2                         # 启动
+diy2 electron [--check]      # 只准备 / 只检查 Electron 二进制（并发探测镜像 + 进度）
+diy2 --version | --help
 ```
 
-- **只有一个 bin**（`diy-chat`）：npx 对唯一 bin 会自动选中，功能用子命令分裂，不再加第二个入口（用户 2026-10-30 拍板）。
+- **只有一个 bin**（`diy2`）：npx 对唯一 bin 会自动选中，功能用子命令分裂，不再加第二个入口（用户 2026-10-30 拍板）。
 - `--mirror=<url>` / `--zip=<file>` 等价于 `ELECTRON_MIRROR` / `DIY_ELECTRON_ZIP`；二进制落全机共享 store（`<cache>/diy/electron`），重装不重下。
 - 发布：`./sha.sh publish`（组装 `dist/` + 发布；源码在 `bin/` 与 `build/<variant>/`，见 `scripts/npm-publish-app.mjs`）。

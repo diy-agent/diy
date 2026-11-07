@@ -245,7 +245,7 @@ async function extractZip(zip, targetDir, electronDir, log = () => {}) {
  */
 /**
  * **只查不下载**：现成可用的可执行文件（store → 本包自己的 dist），没有则 null。
- * `diy-chat electron --check` 用它（判据：只报告状态，绝不触发网络）。
+ * `diy2 electron --check` 用它（判据：只报告状态，绝不触发网络）。
  */
 export function locateElectronBinary({ version, electronDir, platform = process.platform, arch = process.arch }) {
     const exeRel = platformExe(platform);
@@ -311,8 +311,8 @@ export async function ensureElectronBinary({
                 ...results.map((r) => `  ✗ ${r.label} ${r.url}：${r.error}`),
                 "手动下载后用本地 zip 离线安装：",
                 `  curl -L -o /tmp/${zip} ${mirrorUrl(DEFAULT_MIRRORS[0], { version, zip })}`,
-                `  DIY_ELECTRON_ZIP=/tmp/${zip} diy-chat`,
-                "或指定镜像：ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ diy-chat",
+                `  DIY_ELECTRON_ZIP=/tmp/${zip} diy2`,
+                "或指定镜像：ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ diy2",
             ].join("\n"),
         );
     }

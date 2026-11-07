@@ -49,7 +49,7 @@ export function runWorkbench(
     createWorkbench({
         title: assembly.title,
         // 实例注册表：app 短名 + launch id 缺一不可，否则 dev 启动器里永远显示「未启动」
-        app: options.app ?? "diy-chat",
+        app: options.app ?? "diy2",
         launch: options.launch ?? process.env["DIY_LAUNCH"] ?? "lab",
         plugins: assembly.plugins,
         preloadFile: join(here, "../preload/index.cjs"),
