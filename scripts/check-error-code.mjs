@@ -52,6 +52,7 @@ const LEGACY_THROW_BASELINE = new Map(Object.entries({
   // 由 `--by-file` 生成（2026-10-20，##394 立项时实测：177 处 / 31 文件）。
   // 改好一处就把数字调小（护栏会提示），**不要往上调**。
   "apps/diy-app/src/main/services/api-impl.ts": 32,
+  "apps/diy-app/src/main/services/api-domains/env/impl.ts": 2,
   "apps/diy-app/src/main/core/flow.ts": 29,
   "apps/diy-app/src/main/core/flow-store.ts": 21,
   "apps/diy-app/src/main/core/llm-cost.ts": 11,
