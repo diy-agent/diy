@@ -1,16 +1,16 @@
 #!/usr/bin/env node
-// bin/diy-chat — `npx @diy-agent/app-chat` / `diy-chat` 的**唯一**入口（##478 补充决策）。
+// bin/diy2 — `npx @diy-agent/app-chat` / `diy2` 的**唯一**入口（##478 补充决策）。
 //
 // 为什么单 bin + 子命令（用户 2026-10-30 拍板）：
 //   npx 对一个包只有一个 bin 时会自动选中，`npx @diy-agent/app-chat` 天然成立；
 //   再加 `install-electron` 之类的第二个 bin，用户就得多记一个名字，而它本来只是同一件事的入口。
 //   功能用子命令分裂，入口名永远只有一个。
 //
-//   diy-chat                    启动应用（缺二进制则先并发探测镜像 + 带进度下载）
-//   diy-chat electron           只准备/修复 Electron 二进制
-//   diy-chat electron --check   只检查是否就绪，不下载（未就绪 exit 1）
-//   diy-chat --version          版本（含 electron 版本）
-//   diy-chat --help             帮助
+//   diy2                    启动应用（缺二进制则先并发探测镜像 + 带进度下载）
+//   diy2 electron           只准备/修复 Electron 二进制
+//   diy2 electron --check   只检查是否就绪，不下载（未就绪 exit 1）
+//   diy2 --version          版本（含 electron 版本）
+//   diy2 --help             帮助
 //
 // 环境变量：ELECTRON_MIRROR / DIY_ELECTRON_ZIP / DIY_ELECTRON_STORE / DIY_VARIANT=lab 开 CDP
 // 二进制逻辑全在 ./electron-bootstrap.mjs（与仓内 scripts/ensure-electron.mjs 共用一份）。
@@ -23,7 +23,13 @@ import { ensureElectronBinary, locateElectronBinary } from "./electron-bootstrap
 
 const here = dirname(fileURLToPath(import.meta.url)); // <pkg>/bin
 const pkgRoot = join(here, "..");
-const mainFile = join(pkgRoot, "build", "main", "index.mjs");
+// 两处产物形态（2026-11-07 修）：
+//   build/main/index.mjs      ← 发布形态（`sha.sh publish` 组装的 dist/，`build/` = `build/app/` 的拷贝）
+//   build/app/main/index.mjs  ← 开发形态（本地 `sha.sh build` 的产物，`_build_dir()` 就是 build/app）
+// 只认前者的话，本地直接跑 bin 必然「找不到 main」—— Electron 起了但窗口是死的。
+const mainFile = [join(pkgRoot, "build", "main", "index.mjs"), join(pkgRoot, "build", "app", "main", "index.mjs")].find(
+    (f) => existsSync(f),
+) ?? join(pkgRoot, "build", "main", "index.mjs");
 
 const readVersion = () => {
     try {
@@ -33,14 +39,14 @@ const readVersion = () => {
     }
 };
 
-const HELP = `diy-chat — @diy-agent/app-chat 的入口
+const HELP = `diy2 — @diy-agent/app-chat 的入口
 
 用法：
-  diy-chat                      启动应用
-  diy-chat electron             准备 / 修复 Electron 二进制（并发探测镜像 + 下载进度）
-  diy-chat electron --check     只检查二进制是否就绪，不下载（未就绪 exit 1）
-  diy-chat --version            版本（含 electron 版本）
-  diy-chat --help               这份帮助
+  diy2                      启动应用
+  diy2 electron             准备 / 修复 Electron 二进制（并发探测镜像 + 下载进度）
+  diy2 electron --check     只检查二进制是否就绪，不下载（未就绪 exit 1）
+  diy2 --version            版本（含 electron 版本）
+  diy2 --help               这份帮助
 
 环境变量：
   ELECTRON_MIRROR=<url>         指定下载镜像（优先，但仍会实测耗时并打印）
@@ -74,7 +80,7 @@ export function parseArgs(argv) {
     return out;
 }
 
-const log = (msg) => console.log(`[diy-chat] ${msg}`);
+const log = (msg) => console.log(`[diy2] ${msg}`);
 
 /** 解析 electron 包位置与版本（找不到就报清楚怎么修） */
 function resolveElectron() {
@@ -121,7 +127,7 @@ export async function main(argv = process.argv.slice(2)) {
                 return 0;
             }
             log(`✗ Electron v${electron.version} 未就绪（store 与 node_modules/electron/dist 都没有）`);
-            log("  需要下载就跑：diy-chat electron");
+            log("  需要下载就跑：diy2 electron");
             return 1;
         }
         const ready = await ensureElectronBinary({ version: electron.version, electronDir: electron.dir, log }).catch((cause) => {
@@ -149,7 +155,7 @@ export async function main(argv = process.argv.slice(2)) {
         const child = spawn(ready.exe, [mainFile, ...args.passthrough], {
             stdio: "inherit",
             // DIY_CLI 自证：入口报的必须是「跑的是谁」（与 apps/diy-app/bin/diy 同口径）
-            env: { ...process.env, DIY_CLI: process.argv[1] ?? "diy-chat" },
+            env: { ...process.env, DIY_CLI: process.argv[1] ?? "diy2" },
         });
         child.on("error", (cause) => {
             console.error(`✗ 启动 Electron 失败（${ready.exe}）：${cause.message}`);
@@ -164,8 +170,8 @@ export async function main(argv = process.argv.slice(2)) {
 
 /**
  * 是否「被当作脚本直接执行」。
- * 必须比 realpath：npm 装出来的 bin 是**软链**（<prefix>/bin/diy-chat → …/bin/diy-chat.mjs），
- * 直接比 `pathToFileURL(process.argv[1])` 会不相等 —— 症状是「装完运行 diy-chat 什么都不发生」（##478 实测）。
+ * 必须比 realpath：npm 装出来的 bin 是**软链**（<prefix>/bin/diy2 → …/bin/diy2.mjs），
+ * 直接比 `pathToFileURL(process.argv[1])` 会不相等 —— 症状是「装完运行 diy2 什么都不发生」（##478 实测）。
  */
 function isEntryPoint() {
     const arg = process.argv[1];
