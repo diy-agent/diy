@@ -1767,14 +1767,14 @@ async function compactPreview(taskUri: string, policy: FlatCompactPolicy, summar
     return diyService.diy.agent.local.compact.preview({ taskUri, ...policyFlat(policy), summaryText });
 }
 
-/** 手动压缩条的轴（##519，只读）：每步实测新增 token + 当前边界 + 16% 默认落点 */
+/** 手动压缩条的轴（##519，只读）：一轮一行（实测 token + 首句）+ 当前边界 + 下一轮价格估算 */
 async function compactLedger(taskUri: string) {
     return diyService.diy.agent.local.compact.ledger({ taskUri });
 }
 
-/** 把压缩位置拖到「保留最近 N 步」（main 侧换算成 token 预算并落盘边界） */
-async function compactSetKept(taskUri: string, keepSteps: number) {
-    return diyService.diy.agent.local.compact.setKept({ taskUri, keepSteps });
+/** 把压缩位置拖到「保留最近 N 轮」（main 侧换算成 token 预算并落盘边界） */
+async function compactSetKept(taskUri: string, keepRounds: number) {
+    return diyService.diy.agent.local.compact.setKept({ taskUri, keepRounds });
 }
 
 /** 自动压缩检测（只读）：事实 / 触发理由 / 生效 TTL / 当前配置 */

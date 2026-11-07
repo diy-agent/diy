@@ -619,86 +619,128 @@ export function readStepUsages(taskUri: string): StepUsageRecord[] {
 }
 
 /**
- * 手动压缩条的**一步一行**（##519）：把 usage.jsonl 的**实测**总量差分成「这一步新增多少 token」。
+ * 手动压缩条的**一轮一行**（##519，用户 2026-11-05 定稿的形态：横向滑杆 + 轮次表）。
  *
- * 为什么不走估算：每步增量从 370 到 114k 都有（实测本仓 338 步），估出来只能对个位数；
- * 而 usage.jsonl 每条都记了**真发时的总 token**，相邻相减就是这一步真实吃掉的量。
+ * 口径：每轮吃掉多少 token 用 `usage.jsonl` 的**实测总量差分**（相邻步相减），不估算 ——
+ * 实测这个仓里每步增量 370~114k，估算只能对个位数。轮 = 一行；标题取 turns.jsonl 的 user 首行。
+ *
+ * 价格也在这里算（用户 2026-11-05：「把下一轮压缩后预计的价格也找个地方标清晰」）：
+ * 用**上一步**的价目（`rates`）乘「压后的输入 token」+「上一步的输出 token」，
+ * 明确标注**未计缓存折扣**（真发时缓存读占大头，实际会明显更低）。
  */
-export interface KeptStepRow {
-    /** 从最新往前数第几步（1 = 最近一步） */
-    fromTail: number;
+export interface KeptRoundRow {
     turnId: string;
-    /** 轮内步号（1-based） */
-    step: number;
-    ts: string;
-    /** 这一步新增的 token（实测差分；跨轮那一步按总量差，含上一轮尾巴） */
+    /** 轮次标签（轮1…轮N，按账本顺序） */
+    label: string;
+    /** 首句（turns.jsonl 的 user 取首行；没有则空） */
+    title: string;
+    /** 这一轮吃掉多少 token（实测增量之和） */
     tokens: number;
-    /** 保留「这步及之后全部」≈ 多少 token */
-    cumFromTail: number;
+    /** 当前生效边界是否保留它（无边界 ⇒ 全保留） */
+    kept: boolean;
 }
 
-export interface KeptStepsView {
-    /** 从新到旧 */
-    rows: KeptStepRow[];
-    /** 账本里有多少步（可能多于 rows：只读尾部窗口） */
-    totalSteps: number;
-    /** 早期步未加载（尾部窗口外）—— 界面必须标出来 */
+export interface KeptRoundsView {
+    /** 旧 → 新（最后一轮 = 最新） */
+    rounds: KeptRoundRow[];
+    /** 总轮数（尾部窗口里能看到的） */
+    total: number;
+    /** 当前边界保留几轮 */
+    keptCount: number;
+    /** 更早的轮未加载（尾部窗口外）—— 界面必须标出来 */
     truncated: boolean;
     windowTokens: number | null;
-    /** 当前生效边界保留的 token（无边界 = null ⇒ 手柄放最右） */
+    /** 上一步实测总 token（窗口占用，与环同源） */
+    usedTokens: number | null;
+    /** 当前边界保留的历史 ≈ token（无边界 = null） */
     retainedTokens: number | null;
-    /** 默认落点：窗口 × 0.16 对应第几步（无窗口 = null） */
-    defaultSteps: number | null;
-    /** 每步增量的中位数（换算「N 步 → token」的兜底用；样本不足 = null） */
-    medianTokens: number | null;
+    /**
+     * 下一轮的价格估算（USD）。`null` = 该会话还没有价目（新会话 / 无价模型）。
+     * **不含缓存折扣**：真发时 cacheRead 通常占 95%+，所以这个数是上限，别当账单。
+     */
+    price: {
+        nowUsd: number;
+        afterUsd: number;
+        perMInput: number;
+        perMOutput: number;
+        basis: string;
+    } | null;
 }
 
-/** 读「保留 N 步」的轴（只读；不建目录、不写任何东西） */
-export function keptStepsView(taskUri: string): KeptStepsView {
+/** 首行摘要（标题用；过长截断，换行折成空格） */
+function firstLineOf(text: string): string {
+    const one = text.replace(/\s+/g, " ").trim();
+    return one.length > 40 ? `${one.slice(0, 40)}…` : one;
+}
+
+/** 读「保留最近 N 轮」的轴（只读；不建目录、不写任何东西） */
+export function keptRoundsView(taskUri: string): KeptRoundsView {
     const usages = readStepUsagesTail(taskUri, 800);
-    const rows: KeptStepRow[] = [];
-    const deltas: number[] = [];
-    for (let i = usages.length - 1; i >= 0; i--) {
-        const cur = usages[i]!;
-        const total = bucketsOf(cur.usage as UsageLike).total;
-        const prev = i > 0 ? bucketsOf(usages[i - 1]!.usage as UsageLike).total : 0;
-        // 同轮相邻两步：总量差 = 这一步新增。跨轮那一步也按总量差（system 恒定 ⇒ 差仍≈新内容）
-        const tokens = Math.max(0, total - prev);
-        if (i > 0) deltas.push(tokens);
-        rows.push({
-            fromTail: usages.length - i,
-            turnId: cur.turnId,
-            step: cur.step,
-            ts: cur.ts,
-            tokens,
-            cumFromTail: 0,
-        });
+    // ① 逐步差分 → 按轮聚合（顺序 = 账本顺序，即旧 → 新）
+    const order: string[] = [];
+    const perTurn = new Map<string, number>();
+    let prevTotal = 0;
+    for (const u of usages) {
+        const total = bucketsOf(u.usage as UsageLike).total;
+        const delta = Math.max(0, total - prevTotal);
+        prevTotal = total;
+        if (!perTurn.has(u.turnId)) {
+            perTurn.set(u.turnId, 0);
+            order.push(u.turnId);
+        }
+        perTurn.set(u.turnId, (perTurn.get(u.turnId) ?? 0) + delta);
     }
-    let acc = 0;
-    for (const r of rows) {
-        acc += r.tokens;
-        r.cumFromTail = acc;
+    // ② 首句（turns.jsonl；读失败不影响压缩位置）
+    const titles = new Map<string, string>();
+    try {
+        for (const rec of readTurnRecords(taskUri)) {
+            if (rec.user !== "") titles.set(rec.turnId, firstLineOf(rec.user));
+        }
+    } catch {
+        /* 轮记录缺失：标题留空，位置照常算 */
     }
-    const sorted = [...deltas].sort((a, b) => a - b);
-    const medianTokens = sorted.length > 0 ? sorted[Math.floor(sorted.length / 2)]! : null;
+    // ③ 当前生效边界（无边界 = 一轮都没压）
+    const boundary = latestBoundary(taskUri);
+    const boundaryTurnId = (boundary as unknown as { keptFromTurnId?: string | null } | null)?.keptFromTurnId ?? null;
+    const cutIdx = boundaryTurnId === null ? 0 : order.indexOf(boundaryTurnId);
+    const keptFrom = boundaryTurnId === null || cutIdx < 0 ? 0 : cutIdx;   // 边界不在窗口内 ⇒ 当作全保留
+    const rounds: KeptRoundRow[] = order.map((turnId, i) => ({
+        turnId,
+        label: `轮${i + 1}`,
+        title: titles.get(turnId) ?? "",
+        tokens: perTurn.get(turnId) ?? 0,
+        kept: i >= keptFrom,
+    }));
+    const keptCount = keptFrom === 0 ? rounds.length : rounds.length - keptFrom;
+    // ④ 窗口与价格（价目取上一步；`rates` 是每百万 token 的美元价）
     const cfgLimit = normalizeHistoryLimit(loadAutoCompact(diyHome()).history?.limit);
     const windowTokens = cfgLimit.windowTokens ?? contextLimitOf(personaForTask(diyHome(), taskUri).model) ?? null;
-    const target = windowTokens && windowTokens > 0 ? retainTokensOf(windowTokens) : null;
-    let defaultSteps: number | null = null;
-    if (target !== null) {
-        const hit = rows.find((r) => r.cumFromTail >= target);
-        // 尾部窗口装不下这么多步 ⇒ 说「全部都不够」（手柄放最左），不猜
-        defaultSteps = hit ? hit.fromTail : rows.length > 0 ? rows.length : null;
-    }
-    const boundary = latestBoundary(taskUri);
+    const last = usages[usages.length - 1];
+    const usedTokens = last ? bucketsOf(last.usage as UsageLike).total : null;
+    const rates = (last?.rates ?? null) as { input?: number; output?: number } | null;
+    const fixed = getLocalAgent().fixedTokensOf(taskUri);
+    const retained = rounds.filter((r) => r.kept).reduce((n, r) => n + r.tokens, 0);
+    const lastBuckets = last ? bucketsOf(last.usage as UsageLike) : null;
+    const outTokens = lastBuckets ? lastBuckets.text + lastBuckets.reasoning : 0;
+    const price =
+        rates && typeof rates.input === "number" && typeof rates.output === "number"
+            ? {
+                  nowUsd: ((usedTokens ?? 0) / 1e6) * rates.input + (outTokens / 1e6) * rates.output,
+                  afterUsd: ((fixed + retained) / 1e6) * rates.input + (outTokens / 1e6) * rates.output,
+                  perMInput: rates.input,
+                  perMOutput: rates.output,
+                  basis: last?.priceRef ?? last?.responseModel ?? last?.model ?? "上一步价目",
+              }
+            : null;
     return {
-        rows,
-        totalSteps: usages.length,
+        rounds,
+        total: rounds.length,
+        keptCount,
         truncated: usages.length >= 800,
         windowTokens,
+        usedTokens,
         retainedTokens: boundary ? (boundary as unknown as { retainTokens?: number }).retainTokens ?? null : null,
-        defaultSteps,
-        medianTokens,
+        price,
     };
 }
 
@@ -3890,7 +3932,7 @@ export class LocalAgentManager {
     }
 
     /** 固定开支：system 全文（信封 help + vars）+ 工具定义。压缩事件低频，现算即可。 */
-    private fixedTokensOf(taskUri: string): number {
+    fixedTokensOf(taskUri: string): number {
         try {
             const globals = assembleGlobals(diyHome(), projectFromUri(taskUri), {
                 taskUri,

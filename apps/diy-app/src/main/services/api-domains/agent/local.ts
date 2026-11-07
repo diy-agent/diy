@@ -591,7 +591,7 @@ export const localRoutes = RpcSchema.group({desc: `本地自定义 agent（ai-sd
                  * —— 不是估算（每步 370~114k 都能差出量级）。
                  */
                 ledger: RpcSchema.unary({
-                  desc: `手动压缩条的轴（只读）：每步实测新增 token + 当前边界 + 16% 默认落点`,
+                  desc: `手动压缩条的轴（只读）：**一轮一行**（实测 token + 首句）+ 当前边界 + 下一轮价格估算`,
                   input: { taskUri: z.string().cliArg({ desc: "任务 URI" }) },
                   output: z.any(),
                 }),
@@ -603,10 +603,10 @@ export const localRoutes = RpcSchema.group({desc: `本地自定义 agent（ai-sd
                  * 所以**不影响 UI 重放**，只改「这一轮发多少历史」。
                  */
                 setKept: RpcSchema.unary({
-                  desc: `把压缩位置拖到「保留最近 N 步」（体内换算成 token 预算；切点仍落 user+轮首）`,
+                  desc: `把压缩位置拖到「保留最近 N 轮」（体内换算成 token 预算；切点仍落 user+轮首）`,
                   input: {
                     taskUri: z.string().cliArg({ desc: "任务 URI" }),
-                    keepSteps: z.number().cliOption({ desc: "保留最近多少步（0 = 全清；缺省按实测中位数换算）" }),
+                    keepRounds: z.number().cliOption({ desc: "保留最近多少轮（0 = 全清，不支持）" }),
                   },
                   output: z.any(),
                 }),

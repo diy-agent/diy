@@ -64,7 +64,7 @@ import {
 } from "@diy-agent/compaction/compact-when";
 import { EXAMPLE_MESSAGES, buildCompactExample, bytesToTokens, type ExampleRow } from "@diy-agent/compaction/compact-example";
 import { normalizeHistoryLimit } from "@diy-agent/compaction/history-limit";
-import { KeptStepsBar } from "./KeptStepsBar";
+import { CompactCutBar } from "./CompactCutBar";
 
 const INDENT = "  ";
 
@@ -827,9 +827,9 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                         </Show>
                     </div>
 
-                    {/* ##519：手动压缩位置（拖动即落盘；与下面的「什么时候会压」是两回事 ——
+                    {/* ##519：压缩点（横向滑杆 + 轮次表 + 下一轮价格；与下面的「什么时候会压」是两回事 ——
                         那条说的是自动，这里是「我现在就想留这么多」） */}
-                    <KeptStepsBar uri={ctl.uri} onApplied={() => void ctl.refresh()} />
+                    <CompactCutBar uri={ctl.uri} onApplied={() => void ctl.refresh()} />
                     {/* ##423 块 2：什么时候会压（判据 + 当前值）；块 3：压缩后长什么样（范例预览） */}
                     <WhenCompactBlock ctl={ctl} windowLimit={windowLimit()} />
                     {/* 纯展示：保留量取真实窗口 × 0.16，但不超过样例总量的一半（否则总是「一条不丢」） */}
