@@ -35,6 +35,9 @@ import { bindLlmProxy } from "./api-domains/llmProxy/impl";
 import { bindTraffic } from "./api-domains/traffic/impl";
 import { bindFacts } from "./api-domains/facts/impl";
 import { bindJob } from "./api-domains/job/impl";
+import { bindProject } from "./api-domains/project/impl";
+import { bindWatch } from "./api-domains/watch/impl";
+import { bindHub } from "./api-domains/hub/impl";
 import { splitListOption } from "./remote-discover-options";
 import { bindInstances } from "./api-domains/instances/impl";
 import { bindRemote } from "./api-domains/remote/impl";
@@ -279,23 +282,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
   });
 
   // ── project ──
-  binding.on(app.project.create, async ({ input }) => {
-    const id = project.createProject(input.path, {
-      label: input.label,
-      desc: input.desc,
-      state: input.state,
-    });
-    return { status: "ok", data: { id } };
-  });
-  binding.on(app.project.list, async () => {
-    return { status: "ok", data: { projects: project.listProjects() } };
-  });
-  binding.on(app.project.remove, async ({ input }) => {
-    // 同上：Windows 上不暂停监听就删不掉（EPERM scandir …\projects\<id>\tasks）
-    const { fileWatcher } = await import("./file-watcher");
-    await fileWatcher.pauseDuring(() => project.removeProject(input.id));
-    return { status: "ok", data: { id: input.id } };
-  });
+  bindProject(binding);
 
   // ── getAppStatus（供 renderer diy.ui.status 反向调用）──
   binding.on(app.getAppStatus, () => ({
@@ -446,12 +433,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
   // —— watch —— 文件系统变更推送（serverStream：FileWatcher → RPC → renderer）
   // 在 diy.watch.*（Main 域）：diy.ui.* 会被 rpc-port 全量转发给 renderer，
   // 挂那里会与本地注册冲突（ServerBinding 抛「已注册」→ RPC 起不来）。
-  binding.on(app.watch.fileChange, async function* ({ signal }) {
-    const { fileWatcher } = await import("./file-watcher");
-    for await (const change of fileWatcher.subscribe(signal)) {
-      yield change;
-    }
-  });
+  bindWatch(binding);
 
   // —— agent.persona —— 人物配置（模型/参数/行为指令的唯一真源；任务只持有**引用（id）**）——
   binding.on(app.agent.persona.list, async () => {
@@ -1566,58 +1548,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
   // ── hub（配对：邀请码 + Owner 审批 + Token 长连；##500）──
   // 协议真源 docs/plans/2026-11-01-hub-pairing.md：地址即身份（人比对真实 URL），码只管「谁被允许进来」。
   // ⚠️ 卫星侧 `join` 分两步：不带 code 只显示地址；带 code 才发秘密（判据 6/7）。
-  binding.on(app.hub.init, async ({ input }) => ({ status: "ok", data: await hubService.init(input) }));
-  binding.on(app.hub.invite, async ({ input }) => ({ status: "ok", data: await hubService.invite(input ?? {}) }));
-  binding.on(app.hub.pending, async () => ({ status: "ok", data: { requests: await hubService.pending() } }));
-  binding.on(app.hub.approve, async ({ input }) => {
-    const r = await hubService.approve(input.requestId);
-    return { status: "ok", data: { nodeId: r.nodeId, displayName: r.displayName, requestStatus: r.status } };
-  });
-  binding.on(app.hub.reject, async ({ input }) => {
-    const r = await hubService.reject(input.requestId);
-    return { status: "ok", data: { requestStatus: r.status } };
-  });
-  binding.on(app.hub.revoke, async ({ input }) => {
-    const r = await hubService.revoke(input.nodeId);
-    return { status: "ok", data: { nodeId: r.nodeId, membershipStatus: r.status } };
-  });
-  binding.on(app.hub.status, async () => {
-    const r = await hubService.status();
-    return {
-      status: "ok",
-      data: {
-        identity: r.identity
-          ? {
-              hubNodeId: r.identity.hubNodeId,
-              domainId: r.identity.domainId,
-              publicKey: r.identity.publicKey,
-              ...(r.identity.endpoint ? { endpoint: r.identity.endpoint } : {}),
-              createdAt: r.identity.createdAt,
-            }
-          : null,
-        memberships: r.memberships,
-      },
-    };
-  });
-  binding.on(app.hub.join, async ({ input }) => {
-    const r = await hubService.join(input.url, { ...(input.code === undefined ? {} : { code: input.code }), ...(input.waitMs === undefined ? {} : { waitMs: input.waitMs }), ...(input.autoJoin === true ? { autoJoin: true } : {}), ...(input.protocol === undefined ? {} : { protocol: input.protocol }) });
-    return {
-      status: "ok",
-      data: r.preview
-        ? { preview: true, address: r.address, hubNodeId: r.hubNodeId, endpoint: r.endpoint }
-        : {
-            preview: false,
-            address: r.address,
-            hubNodeId: r.hubNodeId,
-            domainId: r.domainId,
-            joinStatus: r.status,
-            ...(r.membershipId ? { membershipId: r.membershipId } : {}),
-          },
-    };
-  });
-  binding.on(app.hub.link, async () => ({ status: "ok", data: await hubService.link() }));
-  // ##511：卫星侧长连状态（主控侧「在线」看的是它自己的 connectionCount，这里看卫星自己）
-  binding.on(app.hub.connection, async () => ({ status: "ok", data: await hubService.connection() }));
+  bindHub(binding);
 
   // ── tool ──（已拆到 api-domains/tool/）
   bindTool(binding);
