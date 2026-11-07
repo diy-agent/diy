@@ -831,20 +831,21 @@ export function bindAppHandlers(binding: ServerBinding): void {
   });
   binding.on(app.agent.local.compact.ledger, async ({ input }) => {
     noteRendererTouch("diy.agent.local.compact.ledger", input.taskUri);
-    const { keptStepsView } = await import("./local-agent");
-    return keptStepsView(input.taskUri);
+    const { keptRoundsView } = await import("./local-agent");
+    return keptRoundsView(input.taskUri);
   });
   binding.on(app.agent.local.compact.setKept, async ({ input }) => {
     noteRendererTouch("diy.agent.local.compact.setKept", input.taskUri);
-    const { getLocalAgent, keptStepsView } = await import("./local-agent");
-    const view = keptStepsView(input.taskUri);
-    // 步 → token 预算：取「保留这 N 步」的实测累加（窗口外/无样本 ⇒ 用中位数兜底，仍是人给的步数说了算）
-    const row = view.rows.find((r) => r.fromTail === Math.max(1, Math.round(input.keepSteps)));
-    const budget = row
-      ? row.cumFromTail
-      : Math.max(1, Math.round(input.keepSteps) * (view.medianTokens ?? 800));
+    const { getLocalAgent, keptRoundsView } = await import("./local-agent");
+    const view = keptRoundsView(input.taskUri);
+    const n = Math.max(0, Math.min(view.total, Math.round(input.keepRounds ?? view.total)));
+    // 0 轮 = 全清：刻意**不支持**（那等于换一个会话，不是压缩）。界面把它做成禁用位置。
+    if (n <= 0) return { budget: 0, applied: null, view };
+    // 轮 → token 预算：把要留的那几轮的实测增量加起来（边界落到轮首，与既有判据一致）
+    const kept = view.rounds.slice(view.total - n);
+    const budget = Math.max(1, kept.reduce((sum, r) => sum + r.tokens, 0));
     const applied = getLocalAgent().compactToRetainTokens(input.taskUri, budget);
-    return { budget, applied, view: keptStepsView(input.taskUri) };
+    return { budget, applied, view: keptRoundsView(input.taskUri) };
   });
   binding.on(app.agent.local.compact.events, async ({ input }) => {
     noteRendererTouch("diy.agent.local.compact.events", input.taskUri);

@@ -53,6 +53,7 @@ import { notificationStore } from "../store/notificationStore";
 import { copyFailMeta, copyOkMeta } from "../lib/notice-copy";
 import { compactNotice } from "../lib/notice-compact";
 import { useCompactPanel, CompactPanelContent } from "./CompactSessionPanel";
+import { CompactCutBar } from "./CompactCutBar";
 import { UsageTable, usageTableMd, type UsageView } from "./UsageTable";
 import type { CompactEventRecord } from "@diy-agent/compaction/compaction";
 import { type DeliveryBoundary } from "../../shared/context/delivery-badge";
@@ -868,53 +869,12 @@ export function WindowRing(props: { uri: string | null }) {
                             })()}
                         </dl>
 
-                        {/* ── 压缩：卡上只给「压缩」按钮 + 可降低窗口的比较条（参数调整在窗口构成页）── */}
+                        {/* ── 压缩点（##519）：横向滑杆（左 0 轮 → 右 N 轮）+ 下一轮价格估算。
+                            旧的两条比较条（当前 / 压缩后）与「压缩」按钮已删 —— 滑杆本身就是位置，
+                            压不压由抽屉里那颗主按钮落盘（这里只预览位置与价格）。 */}
                         <div class="border-t border-base-300 px-3 py-2">
-                                <div class="mb-1.5 text-caption opacity-60">压缩（降低历史占用，历史不删）</div>
-                                {(() => {
-                                    const cur = win().total;
-                                    const aft = afterTokens();
-                                    const max = Math.max(1, cur, aft ?? 0);
-                                    const w1 = `${Math.min(100, (cur / max) * 100).toFixed(1)}%`;
-                                    const w2 = aft == null ? "0%" : `${Math.min(100, (aft / max) * 100).toFixed(1)}%`;
-                                    const saved = aft == null ? null : Math.max(0, cur - aft);
-                                    return (
-                                        <div class="mb-2 space-y-1 text-caption">
-                                            <div>
-                                                <div class="flex justify-between"><span>当前</span><span class="tabular-nums opacity-70">{fmtTokens(cur)}</span></div>
-                                                <div class="mt-0.5 h-2.5 rounded bg-base-200 overflow-hidden">
-                                                    <div data-cost-bar class="h-full bg-base-content/35" style={{ width: w1 }} />
-                                                </div>
-                                            </div>
-                                            <div>
-                                                <div class="flex justify-between"><span>压缩后</span><span class="tabular-nums opacity-70">{aft == null ? "–" : fmtTokens(aft)}</span></div>
-                                                <div class="mt-0.5 h-2.5 rounded bg-base-200 overflow-hidden">
-                                                    <div data-cost-bar class="h-full bg-primary" style={{ width: w2 }} />
-                                                </div>
-                                            </div>
-                                            <div class="pt-0.5">
-                                                {saved == null ? (
-                                                    <span class="opacity-50">–</span>
-                                                ) : saved > 0 ? (
-                                                    <span class="text-success" data-cost-saved>可降 {fmtTokens(saved)}</span>
-                                                ) : (
-                                                    <span class="opacity-50" data-cost-saved>无可降（预算未生效）</span>
-                                                )}
-                                            </div>
-                                        </div>
-                                    );
-                                })()}
-                                <button
-                                    type="button"
-                                    class="btn btn-primary btn-xs w-full"
-                                    aria-label="压缩会话上下文"
-                                    disabled={busy()}
-                                    title="压缩会话上下文（历史保留、可撤销）；参数调整在窗口构成页"
-                                    onClick={() => void apply()}
-                                >
-                                    {busy() ? "压缩中…" : "压缩"}
-                                </button>
-                            </div>
+                            <CompactCutBar uri={() => props.uri ?? ""} variant="card" />
+                        </div>
 
                         <div class="border-t border-base-300 px-3 py-1 text-caption opacity-50">
                             ~ = 字节 ÷ 4 估算；占比 = 该段 ÷ prompt；– = 该轮未落盘构成（本版前的记录）
