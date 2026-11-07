@@ -43,3 +43,6 @@ export * from './service.js';
 
 // 生成器（构建期用，运行时零成本）
 export * from './service-gen.js';
+
+// 显式路径注册（不依赖 meta.name）
+export { RawBindings } from './raw-bindings.js';

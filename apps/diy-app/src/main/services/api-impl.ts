@@ -20,6 +20,7 @@ import { refreshModelRuntime } from "../core/model-runtime";
 import { hasConversation } from "../core/local-paths";
 import { autoSeedEnabled, seedHome } from "../core/seed";
 import { bindSeed } from "./api-domains/seed/impl";
+import { bindLlmProxy } from "./api-domains/llmProxy/impl";
 import { platform, arch, release, totalmem, freemem } from "node:os";
 import { currentGitBranch, findRepoRoot, homeDisplayOf, repoDisplayOf } from "../core/instance-identity";
 import { readRuntimeConfig } from "../../runtime";
@@ -1165,21 +1166,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
     };
   });
 
-  // ── llmProxy ──
-  binding.on(app.llmProxy.status, async () => {
-    const proxy = await getLlmProxy();
-    return { running: proxy.isRunning, port: 8000 };
-  });
-  binding.on(app.llmProxy.start, async () => {
-    const proxy = await getLlmProxy();
-    proxy.start();
-    return { status: "ok" };
-  });
-  binding.on(app.llmProxy.stop, async () => {
-    const proxy = await getLlmProxy();
-    proxy.stop();
-    return { status: "ok" };
-  });
+  // ── llmProxy ──（已拆到 api-domains/llmProxy/，路径显式）
+  bindLlmProxy(binding);
 
   // ── traffic（流量观测；见 core/traffic.ts）──
   // ── job 活体表（刀 8/9：run = 进程型或进程内任务；不做恢复、不做历史账）──
