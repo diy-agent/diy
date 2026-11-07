@@ -700,13 +700,9 @@ export function bindAppHandlers(binding: ServerBinding): void {
     const { getLocalAgent, keptRoundsView } = await import("./local-agent");
     const view = keptRoundsView(input.taskUri);
     const n = Math.max(0, Math.min(view.total, Math.round(input.keepRounds ?? view.total)));
-    // 0 轮 = 全清：刻意**不支持**（那等于换一个会话，不是压缩）。界面把它做成禁用位置。
-    if (n <= 0) return { budget: 0, applied: null, view };
-    // 轮 → token 预算：把要留的那几轮的实测增量加起来（边界落到轮首，与既有判据一致）
-    const kept = view.rounds.slice(view.total - n);
-    const budget = Math.max(1, kept.reduce((sum, r) => sum + r.tokens, 0));
-    const applied = getLocalAgent().compactToRetainTokens(input.taskUri, budget);
-    return { budget, applied, view: keptRoundsView(input.taskUri) };
+    // 直接按轮定位边界（不再用 token 预算倒推 —— 那条链会因估算差落空，看图）
+    const applied = getLocalAgent().compactToKeepRounds(input.taskUri, n);
+    return { applied, view: keptRoundsView(input.taskUri) };
   });
   binding.on(app.agent.local.compact.events, async ({ input }) => {
     noteRendererTouch("diy.agent.local.compact.events", input.taskUri);

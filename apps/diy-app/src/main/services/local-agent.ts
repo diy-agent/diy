@@ -3972,6 +3972,60 @@ export class LocalAgentManager {
      * 为什么切点仍走 user + 轮首：`resolveOpsReplay` 的 seek 锚点是轮首（`keptFromOpsOffset`
      * 取那条轮记录的 ref.ops）。按步切会连带 UI 重放退化 —— 那是另一件事，不与这条 UI 绑在一起。
      */
+    /**
+     * 按「保留最近 N 轮」直接写边界（##519）。
+     *
+     * 为什么不再用 token 预算倒推：预算 → 消息级估算 → 切点这条链上两套估算口径会差出数量级，
+     * 结果常常是 `r.cut <= 已有 cut` ⇒ **什么都不写**，而界面照样报「已压」。用户实测的现象
+     * 就是这个：压前 35 轮，压后重开面板还是 35 轮。这里改成先按 turnId 定位投递里的第一条
+     * 消息，再用**同一套估算**把保留量算出来交给同一条判据，切点必然落在那一轮的开头。
+     *
+     * `keepRounds = 0` 合法 = **压缩到头**：历史全丢，只留当前这一轮（它本来就要发）。
+     */
+    compactToKeepRounds(
+        taskUri: string,
+        keepRounds: number,
+    ): { cut: number; dropped: number; keptMessages: number; totalMessages: number; keptRounds: number } | null {
+        const replay = resolveOpsReplay(taskUri);
+        const store = replayOpsInto(new BlockStore(), streamPath(taskUri), replay.from);
+        const all = projectAll(store);
+        if (all.length === 0) return null;
+        const turnIds: string[] = [];
+        for (const m of all) {
+            const t = (m as { turn?: string }).turn;
+            if (t !== undefined && t !== "" && !turnIds.includes(t)) turnIds.push(t);
+        }
+        const rounds = turnIds.length;
+        const keep = Math.max(0, Math.min(rounds, Math.round(keepRounds)));
+        // 保留起点：keep=0 ⇒ 最后一轮（只留当前轮）；否则倒数第 keep 轮
+        const idx = rounds === 0 ? -1 : Math.max(0, Math.min(rounds - 1, rounds - keep));
+        const cutTurn = idx < 0 ? undefined : turnIds[idx];
+        // 保留量 = 从那条消息起到末尾的**估算** token（与判据内部同一个估算器）
+        let retain = 0;
+        let from = 0;
+        if (cutTurn !== undefined) {
+            from = all.findIndex((m) => (m as { turn?: string }).turn === cutTurn);
+            if (from < 0) from = 0;
+            for (let i = from; i < all.length; i++) retain += estimateTokensOf(JSON.stringify(all[i]?.content ?? ""));
+        } else {
+            retain = all.reduce((n, m) => n + estimateTokensOf(JSON.stringify(m.content ?? "")), 0);
+        }
+        const r = this.appliedHistoryRange(taskUri, all, replay.lineBase, {
+            write: true,
+            force: true, // 手动：人说了算，不看触发线
+            triggered: false,
+            retainTokensOverride: Math.max(1, retain),
+        });
+        if (!r) return null;
+        return {
+            cut: r.cut,
+            dropped: r.cut,
+            keptMessages: all.length - r.cut,
+            totalMessages: all.length,
+            keptRounds: rounds - Math.max(0, idx),
+        };
+    }
+
     compactToRetainTokens(
         taskUri: string,
         retainTokens: number,

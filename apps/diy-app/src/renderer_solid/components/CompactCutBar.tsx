@@ -166,7 +166,7 @@ export function CompactCutBar(props: {
                     }}
                 />
                 <div class="flex justify-between text-caption opacity-45">
-                    <span>保留 0 轮</span>
+                    <span>保留 0 轮（压缩到头）</span>
                     <span>保留全部（不压缩）</span>
                 </div>
 
@@ -242,7 +242,7 @@ export function CompactCutBar(props: {
                     <button
                         type="button"
                         class="btn btn-primary btn-xs ml-auto"
-                        disabled={busy() || !dirty() || total() === 0 || keptCount() === 0}
+                        disabled={busy() || !dirty() || total() === 0}
                         onClick={() => void apply()}
                         data-cut-apply
                     >
@@ -252,7 +252,7 @@ export function CompactCutBar(props: {
 
                 <Show when={keptCount() === 0}>
                     <div class="text-caption text-warning">
-                        ⚠ 0 轮 = 历史全清（那等于换一个新会话，不是压缩），所以这个位置不能落盘 —— 往右挪一轮再压。
+                        0 轮 = 压缩到头：历史全丢，只留当前这一轮（它本来就要发）。
                     </div>
                 </Show>
                 <Show when={note()}>
