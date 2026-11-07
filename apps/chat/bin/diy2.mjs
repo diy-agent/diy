@@ -17,6 +17,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureElectronBinary, locateElectronBinary } from "./electron-bootstrap.mjs";
@@ -155,7 +156,16 @@ export async function main(argv = process.argv.slice(2)) {
         const child = spawn(ready.exe, [mainFile, ...args.passthrough], {
             stdio: "inherit",
             // DIY_CLI 自证：入口报的必须是「跑的是谁」（与 apps/diy-app/bin/diy 同口径）
-            env: { ...process.env, DIY_CLI: process.argv[1] ?? "diy2" },
+            //
+            // DIY_HOME **必须给缺省**（2026-11-07）：装配层（`apps/chat/index.ts:44`）是
+            // `options.home ?? process.env["DIY_HOME"]`，两个都没有 ⇒ home = undefined ⇒
+            // Bot 配置页直接报「没有数据根」、会话走纯内存（关掉就没了）。
+            // `sha.sh lab` 不用这条，它自己注入 `build/<variant>/home`；这条只管发布形态的 bin。
+            env: {
+                ...process.env,
+                DIY_CLI: process.argv[1] ?? "diy2",
+                DIY_HOME: process.env["DIY_HOME"] ?? join(homedir(), ".diy"),
+            },
         });
         child.on("error", (cause) => {
             console.error(`✗ 启动 Electron 失败（${ready.exe}）：${cause.message}`);
