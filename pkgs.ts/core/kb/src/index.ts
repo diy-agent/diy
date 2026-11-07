@@ -293,11 +293,33 @@ export function writeEntry(root: string, relPath: string, content: string): { pa
  */
 export function writeIndex(root: string, rootLabel = ''): { entries: number; problems: readonly KbProblem[]; path: string } {
     const scan = scanKb(root);
-    const text = renderIndex(scan.entries, rootLabel);
     const abs = join(resolve(root), INDEX_NAME);
+    // label 为空的调用（`write` / `move` 写完自动刷索引）不能把原有的抬头冲掉 ——
+    // 抬头是**人写的**（`diy kb index --label "项目 diy"`），自动刷新只该改条目部分。
+    const label = rootLabel !== '' ? rootLabel : existingLabelOf(abs);
+    const text = renderIndex(scan.entries, label);
     mkdirSync(dirname(abs), { recursive: true });
     writeFileSync(abs, `${text}\n`, 'utf-8');
     return { entries: scan.entries.length, problems: scan.problems, path: abs };
+}
+
+/** 读旧 INDEX 里 `> ` 那一行（自动刷新时沿用，不覆盖人写的抬头） */
+function existingLabelOf(abs: string): string {
+    if (!existsSync(abs)) return '';
+    try {
+        const lines = readFileSync(abs, 'utf-8').split('\n');
+        // 抬头在第 5~7 行（`# 知识索引` / 空 / `> 自动生成…` / `>` / `> <label>`）
+        for (const line of lines.slice(0, 12)) {
+            const m = /^>\s+(?!自动生成)(.+)$/.exec(line);
+            if (m !== null) {
+                const v = m[1]!.trim();
+                if (v !== '' && v !== '>') return v;
+            }
+        }
+    } catch {
+        /* 读不到 = 没有抬头 */
+    }
+    return '';
 }
 
 /** 移动 / 改名（`to` 同样走写路径校验）。 */
