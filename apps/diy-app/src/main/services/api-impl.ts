@@ -23,6 +23,10 @@ import { bindSeed } from "./api-domains/seed/impl";
 import { bindNotice } from "./api-domains/notice/impl";
 import { bindDocs } from "./api-domains/docs/impl";
 import { bindJournal } from "./api-domains/journal/impl";
+import { renderEnvList } from "./env-list";
+import { bindLlmConfig } from "./api-domains/llmConfig/impl";
+import { bindCacheHint } from "./api-domains/cacheHint/impl";
+import { bindEnv } from "./api-domains/env/impl";
 import { bindKb } from "./api-domains/kb/impl";
 import { bindLlmProxy } from "./api-domains/llmProxy/impl";
 import { platform, arch, release, totalmem, freemem } from "node:os";
@@ -91,34 +95,7 @@ const app = apiDef.diy;
  * apiDef 已 router() 包裹（全名回写），binding 可以是 HttpServerBinding（生产）
  * 或 ChannelServerBinding（测试）。转发 diy.ui.* 由调用方在 binding 上 onForward。
  */
-/**
- * `diy env ls` 的人读表格（对齐 instances.ls 的口径：给人看，不是给程序解析）。
- *
- * 数字**一律给**（`rule`：更明确的识别 = 给数字，不是给形容词）：只写"磁盘可能满了"
- * 对排查没有价值。
- */
-function renderEnvList(rows: EnvNotice[]): string {
-  if (rows.length === 0) return "环境正常：磁盘水位充足、网络无连续失败。";
-  const lines = rows.map((n) => {
-    switch (n.type) {
-      case "disk-full":
-      case "disk-low": {
-        const d = n.data;
-        const size =
-          d.availBytes < 0 || d.totalBytes < 0
-            ? "可用空间读不到"
-            : `可用 ${fmtDiskBytes(d.availBytes)} / 共 ${fmtDiskBytes(d.totalBytes)}`;
-        const from = d.source === "write-error" ? "（写失败被动升级）" : "（轮询）";
-        return `[${n.level}] ${n.type}  ${d.mount || "?"}  ${size}${from}  ${d.reason}  (id=${n.id})`;
-      }
-      case "network-down": {
-        const d = n.data;
-        return `[${n.level}] ${n.type}  连续 ${d.streak} 次${d.code ? ` ${d.code}` : ""}  ${d.message}  ${d.reason}  (id=${n.id})`;
-      }
-    }
-  });
-  return lines.join("\n");
-}
+
 
 export function bindAppHandlers(binding: ServerBinding): void {
   // 写失败 → 环境通知（##384）：ENOSPC 立刻升级成 disk-full，不等下一轮轮询（30s）。
@@ -1406,126 +1383,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
     for await (const ev of cacheHint.subscribe(signal)) yield ev;
   });
 
-  // ── llmConfig（模型 provider 配置）──
-  binding.on(app.llmConfig.read, async () => {
-    const { registryView } = await import("../core/model-registry");
-    try {
-      return registryView(state.diyHome());
-    } catch (e) {
-      // 配置坏文件（结构非法）不该让 UI 锁死：返回空视图 + error，页面仍能打开提示（##275 R1-6）
-      return {
-        modelFile: { stdProviders: {}, customProviders: {} },
-        customSpecs: {},
-        catalog: [],
-        providers: [],
-        calendars: [],
-        windows: [],
-        error: e instanceof Error ? e.message : String(e),
-      };
-    }
-  });
-  binding.on(app.llmConfig.write, async ({ input }) => {
-    const { saveModelConfig } = await import("../core/model-config");
-    saveModelConfig(state.diyHome(), input.modelFile);
-    refreshModelRuntime(state.diyHome());
-    return { status: "ok" };
-  });
-  binding.on(app.llmConfig.writeSpec, async ({ input }) => {
-    const { loadCustomSpecs, saveCustomSpecs } = await import("../core/model-config");
-    const specs = loadCustomSpecs(state.diyHome());
-    if (input.spec === null) delete specs[input.id];
-    else specs[input.id] = input.spec;
-    saveCustomSpecs(state.diyHome(), specs);
-    refreshModelRuntime(state.diyHome());
-    return { status: "ok" };
-  });
-
-  /**
-   * 模型目录刷新（##385）：手工按钮（模型页 / 模型不可用 bar）入口。
-   * 与定时任务共用 `refreshAndApply` —— 写盘 + 让进程内快照缓存失效 + 重装运行时目录。
-   * **不抛**：失败进返回值（ok=false + error），UI 直接渲染三态。
-   */
-  binding.on(app.llmConfig.syncModels, async () => {
-    const { refreshAndApply } = await import("../core/models-sync");
-    return refreshAndApply({ home: state.diyHome() });
-  });
-
-  binding.on(app.llmConfig.costs, async ({ input }) => {
-    const { providerCosts } = await import("../core/llm-cost");
-    return providerCosts(state.diyHome(), input.provider);
-  });
-  // 价目写入后立刻重装运行时目录（与 write / writeSpec 同一处收敛）：改价即生效，
-  // 不必等下次 provider 配置改动才被读到。
-  binding.on(app.llmConfig.setCost, async ({ input }) => {
-    const { setModelCost } = await import("../core/llm-cost");
-    const result = setModelCost(state.diyHome(), input);
-    refreshModelRuntime(state.diyHome());
-    return result;
-  });
-  binding.on(app.llmConfig.setTiers, async ({ input }) => {
-    const { setModelTiers } = await import("../core/llm-cost");
-    const result = setModelTiers(state.diyHome(), input);
-    refreshModelRuntime(state.diyHome());
-    return result;
-  });
-  binding.on(app.llmConfig.scanEnv, async () => {
-    const { scanEnv } = await import("../core/model-import");
-    // 连同扫描面（provider 数 / 变量名）一起回报：零命中时 UI 要能说清「查过什么」
-    return scanEnv(state.diyHome());
-  });
-  binding.on(app.llmConfig.importEnv, async ({ input }) => {
-    const { importEnvProviders } = await import("../core/model-import");
-    const r = importEnvProviders(state.diyHome(), input.providers);
-    // 落盘后立即重装运行时目录（与 write/writeSpec 同一约定：改配置即刻生效）
-    if (r.imported.length > 0) refreshModelRuntime(state.diyHome());
-    return r;
-  });
-
-  binding.on(app.llmConfig.probe, async ({ input }) => {
-    // 拉 `${baseUrl}/models`：既是连通性测试，也是 custom provider 的模型清单来源。
-    // 不强求成功：上游若不支持 /models（如 commandcode），ok=false 且 error 说明原因。
-    const { expandEnvValue } = await import("../core/model-registry");
-    if (input.apiKey.trim() === "") return { ok: false, status: null, models: [], error: "账号密钥为空" };
-    const expanded = expandEnvValue(input.apiKey);
-    if (expanded.error || expanded.value === null) {
-      return { ok: false, status: null, models: [], error: expanded.error ?? "密钥为空" };
-    }
-    const base = input.baseUrl.replace(/\/+$/, "");
-    traffic.noteProbe(base); // 让流量页能标注「模型配置探测」来源
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 12_000);
-    try {
-      const res = await fetch(`${base}/models`, {
-        headers: expanded.value ? { authorization: `Bearer ${expanded.value}` } : {},
-        signal: ctrl.signal,
-      });
-      const text = await res.text();
-      if (!res.ok) {
-        return { ok: false, status: res.status, models: [], error: `HTTP ${res.status}: ${text.slice(0, 200)}` };
-      }
-      let models: { id: string; name: string | null; context: number | null; endpoints: string[] }[] = [];
-      try {
-        const json = JSON.parse(text) as {
-          data?: Array<{ id?: string; name?: string; context_length?: number; supported_endpoints?: string[] }>;
-        };
-        models = (json.data ?? [])
-          .filter((m) => typeof m?.id === "string")
-          .map((m) => ({
-            id: m.id as string,
-            name: m.name ?? null,
-            context: typeof m.context_length === "number" ? m.context_length : null,
-            endpoints: Array.isArray(m.supported_endpoints) ? m.supported_endpoints.filter((e) => typeof e === "string") : [],
-          }));
-      } catch {
-        return { ok: false, status: res.status, models: [], error: "响应不是 JSON（/models 不可解析）" };
-      }
-      return { ok: true, status: res.status, models, error: null };
-    } catch (e) {
-      return { ok: false, status: null, models: [], error: e instanceof Error ? e.message : String(e) };
-    } finally {
-      clearTimeout(timer);
-    }
-  });
+  // ── llmConfig ──（已拆到 api-domains/llmConfig/）
+  bindLlmConfig(binding);
 
   // ── flow（##319：工作流实例与任务绑定；状态真源 = 任务目录 flow/state.json）──
   // 「多个 k=v」型入参在 schema 里是「JSON 数组或单个裸值」（见 api-def 的 kvList 工厂）：
