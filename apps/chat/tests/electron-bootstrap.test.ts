@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { parseArgs } from "../bin/diy-chat.mjs";
+import { parseArgs } from "../bin/diy2.mjs";
 import {
     DEFAULT_MIRRORS,
     chooseMirror,

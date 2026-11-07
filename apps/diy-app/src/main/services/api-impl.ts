@@ -24,6 +24,9 @@ import { bindNotice } from "./api-domains/notice/impl";
 import { bindDocs } from "./api-domains/docs/impl";
 import { bindJournal } from "./api-domains/journal/impl";
 import { renderEnvList } from "./env-list";
+import { bindTemplate } from "./api-domains/template/impl";
+import { bindLog } from "./api-domains/log/impl";
+import { bindTool } from "./api-domains/tool/impl";
 import { bindLlmConfig } from "./api-domains/llmConfig/impl";
 import { bindCacheHint } from "./api-domains/cacheHint/impl";
 import { bindEnv } from "./api-domains/env/impl";
@@ -871,57 +874,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
       : renderUsageSteps(steps, { last: input.last, cost: input.cost });
   });
 
-  // ── template（提示词模版试验场 spike）──
-  binding.on(app.template.list, async ({ input }) => {
-    const { listPrompts } = await import("./prompt-registry");
-    const { diyHome } = await import("../core/state");
-    return listPrompts(diyHome(), input.project);
-  });
-  binding.on(app.template.get, async ({ input }) => {
-    const { getPrompt } = await import("./prompt-registry");
-    const { diyHome } = await import("../core/state");
-    return getPrompt(diyHome(), input.project, input.relpath);
-  });
-  binding.on(app.template.save, async ({ input }) => {
-    const { savePrompt } = await import("./prompt-registry");
-    const { diyHome } = await import("../core/state");
-    return savePrompt(diyHome(), input.project, input.relpath, input.content);
-  });
-  binding.on(app.template.restore, async ({ input }) => {
-    const { restorePrompt } = await import("./prompt-registry");
-    const { diyHome } = await import("../core/state");
-    return restorePrompt(diyHome(), input.project, input.relpath);
-  });
-  binding.on(app.template.preview, async ({ input }) => {
-    const { assembleSystem } = await import("./prompt-registry");
-    const { diyHome, projectFromUri } = await import("../core/state");
-    const { contextLimitOf } = await import("./local-agent");
-    const { personaForTask } = await import("../core/persona");
-    // project 以 taskUri 为准：两者指向不同项目时（只有 CLI 能造成）system 与 tools/cwd 会错配
-    const project = input.taskUri ? projectFromUri(input.taskUri) || input.project : input.project;
-    const base = assembleSystem(diyHome(), project, {
-      taskUri: input.taskUri,
-      drafts: input.drafts,
-      // 预算随预览模型变（与真发同一套推导）：显式模型优先，否则按任务当前人物
-      contextLimitTokens: contextLimitOf(input.model ?? personaForTask(diyHome(), input.taskUri ?? "").model),
-      // 试验场「模版结构树」要 trace；真发（local-agent）不传
-      trace: true,
-    });
-    // 无任务场景：只渲染文本
-    if (!input.taskUri) {
-      return { ...base, requestBody: null, requestNote: "无任务场景：仅渲染 system 文本" };
-    }
-    const { previewSimulatedRequest } = await import("./local-agent");
-    const sim = await previewSimulatedRequest({ taskUri: input.taskUri, system: base.system, model: input.model });
-    // ⚠️ 这条链是**模版线**（assembleSystem 渲染 _system.md + AGENTS.md 链），
-    // 而真发已切到 Context Tree 投递（见 /diy.sh context lab 与 runTurn 的 buildDelivery）。
-    // 所以这里造出来的 body 只是"模版渲染出来的样子"，不是真发形态 —— note 必须说清，否则误导。
-    return {
-      ...base,
-      requestBody: sim.body,
-      requestNote: `${sim.note}（注：这是**模版链**的仿真；真发已切 Context Tree 投递，见上下文树页的请求预览）`,
-    };
-  });
+  // ── template ──（已拆到 api-domains/template/）
+  bindTemplate(binding);
 
   // ── context（上下文树页：**当前任务的真实上下文**，不落盘、不发 LLM）──
   binding.on(app.context.candidates, async () => {
@@ -1539,26 +1493,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
   bindSeed(binding);
   bindKb(binding);
 
-  // ── log ──
-  binding.on(app.log.read, async ({ input }) => {
-    const { existsSync, readFileSync } = await import("node:fs");
-    const { join } = await import("node:path");
-    const logPath = join(state.diyHome(), "app.log");
-    if (!existsSync(logPath)) return [];
-    const raw = readFileSync(logPath, "utf-8");
-    return raw
-      .split("\n")
-      .filter(Boolean)
-      .reverse()
-      .slice(0, input.limit ?? 200)
-      .map((line: string) => {
-        try {
-          return JSON.parse(line) as Record<string, unknown>;
-        } catch {
-          return { raw: line };
-        }
-      });
-  });
+  // ── log ──（已拆到 api-domains/log/）
+  bindLog(binding);
 
   // ── room（多人房间；开发日志 ##377，设计真源 ##166 §28）──
   // room = **投递 + 汇总层**：成员各自独立会话，这里只负责"收一句话 → 投给谁 → 把回复带署名汇总回来"。
@@ -1908,31 +1844,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
   // ##511：卫星侧长连状态（主控侧「在线」看的是它自己的 connectionCount，这里看卫星自己）
   binding.on(app.hub.connection, async () => ({ status: "ok", data: await hubService.connection() }));
 
-  // ── tool ──
-  // 文件读取（行窗口 + 续读）：与内置 read 工具共用 core/file-read.ts。
-  // 相对路径由 CLI 侧 parser 按调用方 cwd 解析成绝对路径（见 api-def 的 resolvePath 注解）；
-  // 这里再 resolve 一次是给 renderer 等不走 parser 的调用方兜底（绝对路径 resolve 是恒等）。
-  binding.on(app.tool.read, async ({ input }) => {
-    const raw = (input.path ?? "").trim();
-    if (!raw) throw new Error("path 不能为空");
-    if (input.offset !== undefined && (!Number.isInteger(input.offset) || input.offset < 1)) {
-      throw new Error(`offset 必须是 >= 1 的整数（收到 ${input.offset}）`);
-    }
-    if (input.limit !== undefined && (!Number.isInteger(input.limit) || input.limit < 1)) {
-      throw new Error(`limit 必须是 >= 1 的整数（收到 ${input.limit}）`);
-    }
-    const abs = resolvePath(raw);
-    try {
-      const window = await readFileWindow(abs, abs, { offset: input.offset, limit: input.limit });
-      return formatReadOutput(window);
-    } catch (e) {
-      if (e instanceof ReadWindowError) throw new Error(e.message);
-      const code = (e as NodeJS.ErrnoException)?.code;
-      if (code === "ENOENT") throw new Error(`文件不存在：${abs}`);
-      if (code === "EISDIR") throw new Error(`${abs} 是目录（本命令只读文本文件；列目录请用 ls）`);
-      throw e;
-    }
-  });
+  // ── tool ──（已拆到 api-domains/tool/）
+  bindTool(binding);
 
 }
 
