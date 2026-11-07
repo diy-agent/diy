@@ -35,8 +35,8 @@ interface RoundsView {
     usedTokens: number | null;
     retainedTokens: number | null;
     price: {
-        nowUsd: number;
-        afterUsd: number;
+        fixedTokens: number;
+        outTokens: number;
         perMInput: number;
         perMOutput: number;
         basis: string;
@@ -83,6 +83,21 @@ export function CompactCutBar(props: {
         if (!v) return 0;
         return v.rounds.slice(0, lo()).reduce((n, r) => n + r.tokens, 0);
     });
+
+    /**
+     * 价格：**按当前滑杆位置**算（用户实测的 bug —— 上一版在 main 侧就乘好了 afterUsd，
+     * 于是拖动滑杆价格纹丝不动）。现在 main 只给原料（固定开支 / 输出 / 两份单价），
+     * 这里用 `keptTokens()` 现算：压后输入 = 固定开支 + 保留段。
+     */
+    const priceNow = (): { now: number; after: number } | null => {
+        const p = view()?.price;
+        const v = view();
+        if (!p || !v) return null;
+        const out = (p.outTokens / 1e6) * p.perMOutput;
+        const now = ((v.usedTokens ?? 0) / 1e6) * p.perMInput + out;
+        const after = ((p.fixedTokens + keptTokens()) / 1e6) * p.perMInput + out;
+        return { now, after };
+    };
 
     async function apply(): Promise<void> {
         setBusy(true);
@@ -209,9 +224,9 @@ export function CompactCutBar(props: {
                         <div class="flex flex-wrap items-baseline gap-x-2 text-caption" data-cut-price>
                             <span class="opacity-60">下一轮预计</span>
                             <span class="font-mono text-success" data-cut-price-after>
-                                {usd(p().afterUsd)}
+                                {usd(priceNow()?.after ?? 0)}
                             </span>
-                            <span class="opacity-60">（现在 {usd(p().nowUsd)}）</span>
+                            <span class="opacity-60">（现在 {usd(priceNow()?.now ?? 0)}）</span>
                             <span class="ml-auto opacity-45" title={`按 ${p().basis} 的价目：输入 $${p().perMInput}/M、输出 $${p().perMOutput}/M`}>
                                 未计缓存折扣 · {p().basis}
                             </span>
@@ -223,17 +238,16 @@ export function CompactCutBar(props: {
                     <span class="text-caption opacity-70" data-cut-summary>
                         丢 {lo()} 轮（{fmtTokens(droppedTokens())}）· 留 {keptCount()} 轮（{fmtTokens(keptTokens())}）
                     </span>
-                    <Show when={!card()}>
-                        <button
-                            type="button"
-                            class="btn btn-primary btn-xs ml-auto"
-                            disabled={busy() || !dirty() || total() === 0}
-                            onClick={() => void apply()}
-                            data-cut-apply
-                        >
-                            {busy() ? "压缩中…" : dirty() ? "压缩" : "已生效"}
-                        </button>
-                    </Show>
+                    {/* 落盘按钮：卡里和抽屉里都要有 —— 上一版只在抽屉里给，用户在悬停卡里找不到按钮 */}
+                    <button
+                        type="button"
+                        class="btn btn-primary btn-xs ml-auto"
+                        disabled={busy() || !dirty() || total() === 0 || keptCount() === 0}
+                        onClick={() => void apply()}
+                        data-cut-apply
+                    >
+                        {busy() ? "压缩中…" : dirty() ? "压缩" : "已生效"}
+                    </button>
                 </div>
 
                 <Show when={keptCount() === 0}>

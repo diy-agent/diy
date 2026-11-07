@@ -659,10 +659,14 @@ export interface KeptRoundsView {
      * **不含缓存折扣**：真发时 cacheRead 通常占 95%+，所以这个数是上限，别当账单。
      */
     price: {
-        nowUsd: number;
-        afterUsd: number;
+        /** 固定开支（system + tools）≈ token —— 压不掉的那部分 */
+        fixedTokens: number;
+        /** 上一步的输出 token（下一轮按同样输出估） */
+        outTokens: number;
+        /** 每百万 token 的美元价（上一步的价目） */
         perMInput: number;
         perMOutput: number;
+        /** 价目依据（模型标识）—— 界面要显示，别让人以为是无源数字 */
         basis: string;
     } | null;
 }
@@ -682,7 +686,9 @@ export function keptRoundsView(taskUri: string): KeptRoundsView {
     let prevTotal = 0;
     for (const u of usages) {
         const total = bucketsOf(u.usage as UsageLike).total;
-        const delta = Math.max(0, total - prevTotal);
+        // **不 clamp 负增量**：压缩后总量会掉，clamp 会把"掉下去的那段"重复计入（实测会算出
+        // 逐轮之和 > 历史消息本身，用户一眼看出来不对）。这里保留带符号增量，后面再对齐一次。
+        const delta = total - prevTotal;
         prevTotal = total;
         if (!perTurn.has(u.turnId)) {
             perTurn.set(u.turnId, 0);
@@ -704,29 +710,38 @@ export function keptRoundsView(taskUri: string): KeptRoundsView {
     const boundaryTurnId = (boundary as unknown as { keptFromTurnId?: string | null } | null)?.keptFromTurnId ?? null;
     const cutIdx = boundaryTurnId === null ? 0 : order.indexOf(boundaryTurnId);
     const keptFrom = boundaryTurnId === null || cutIdx < 0 ? 0 : cutIdx;   // 边界不在窗口内 ⇒ 当作全保留
+    // 对齐：逐轮之和应等于「实测占用 − 固定开支」（同一份账上的两个数必须自洽，
+    // 否则界面会出现「留 36 轮 = 375k」而上面写「历史 278.8k」的矛盾）。
+    const cfgLimit0 = normalizeHistoryLimit(loadAutoCompact(diyHome()).history?.limit);
+    const winTokens0 = cfgLimit0.windowTokens ?? contextLimitOf(personaForTask(diyHome(), taskUri).model) ?? null;
+    const fixed0 = getLocalAgent().fixedTokensOf(taskUri);
+    const lastTotal = usages.length > 0 ? bucketsOf(usages[usages.length - 1]!.usage as UsageLike).total : 0;
+    const rawSum = order.reduce((n, id) => n + Math.max(0, perTurn.get(id) ?? 0), 0);
+    const targetHist = Math.max(0, lastTotal - fixed0);
+    const scale = rawSum > 0 && targetHist > 0 && rawSum > targetHist ? targetHist / rawSum : 1;
     const rounds: KeptRoundRow[] = order.map((turnId, i) => ({
         turnId,
         label: `轮${i + 1}`,
         title: titles.get(turnId) ?? "",
-        tokens: perTurn.get(turnId) ?? 0,
+        tokens: Math.round(Math.max(0, perTurn.get(turnId) ?? 0) * scale),
         kept: i >= keptFrom,
     }));
     const keptCount = keptFrom === 0 ? rounds.length : rounds.length - keptFrom;
     // ④ 窗口与价格（价目取上一步；`rates` 是每百万 token 的美元价）
-    const cfgLimit = normalizeHistoryLimit(loadAutoCompact(diyHome()).history?.limit);
-    const windowTokens = cfgLimit.windowTokens ?? contextLimitOf(personaForTask(diyHome(), taskUri).model) ?? null;
+    const cfgLimit = cfgLimit0;
+    const windowTokens = winTokens0;
     const last = usages[usages.length - 1];
     const usedTokens = last ? bucketsOf(last.usage as UsageLike).total : null;
     const rates = (last?.rates ?? null) as { input?: number; output?: number } | null;
-    const fixed = getLocalAgent().fixedTokensOf(taskUri);
-    const retained = rounds.filter((r) => r.kept).reduce((n, r) => n + r.tokens, 0);
     const lastBuckets = last ? bucketsOf(last.usage as UsageLike) : null;
     const outTokens = lastBuckets ? lastBuckets.text + lastBuckets.reasoning : 0;
+    // 只给**原料**：压后价必须随滑杆变，所以乘哪份 token 由界面按当前选择算（上一版在这里
+    // 直接算出 afterUsd，于是拖动滑杆价格纹丝不动 —— 用户实测发现的那个 bug）。
     const price =
         rates && typeof rates.input === "number" && typeof rates.output === "number"
             ? {
-                  nowUsd: ((usedTokens ?? 0) / 1e6) * rates.input + (outTokens / 1e6) * rates.output,
-                  afterUsd: ((fixed + retained) / 1e6) * rates.input + (outTokens / 1e6) * rates.output,
+                  fixedTokens: fixed0,
+                  outTokens,
                   perMInput: rates.input,
                   perMOutput: rates.output,
                   basis: last?.priceRef ?? last?.responseModel ?? last?.model ?? "上一步价目",
