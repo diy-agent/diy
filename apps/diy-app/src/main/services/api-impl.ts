@@ -10,8 +10,7 @@ import { openUrlWith } from "../core/open-url";
 import type { ServerBinding } from "@diy-agent/rpc";
 import { ChannelServerBinding } from "@diy-agent/rpc";
 import type { EnvelopeTransport } from "@diy-agent/rpc";
-import * as task from "../core/task";
-import { DRAFT_FIELDS, clearDrafts, readDrafts, writeDrafts, type DraftField } from "../core/drafts";
+import { readDrafts } from "../core/drafts";
 import * as project from "../core/project";
 import * as state from "../core/state";
 import * as taskTree from "../core/task-tree";
@@ -23,7 +22,6 @@ import { bindSeed } from "./api-domains/seed/impl";
 import { bindNotice } from "./api-domains/notice/impl";
 import { bindDocs } from "./api-domains/docs/impl";
 import { bindJournal } from "./api-domains/journal/impl";
-import { renderEnvList } from "./env-list";
 import { bindTemplate } from "./api-domains/template/impl";
 import { bindLog } from "./api-domains/log/impl";
 import { bindTool } from "./api-domains/tool/impl";
@@ -56,17 +54,14 @@ import { noteRendererTouch } from "./runtime-context";
 import type { ToolResultMode } from "@diy-agent/compaction/compaction";
 import type { HistoryEntryView } from "../../shared/context/schema";
 import { readFileWindow, formatReadOutput, ReadWindowError } from "../core/file-read";
-import { resolve as resolvePath, relative as relativePath, isAbsolute as isAbsolutePath } from "node:path";
 import * as flow from "../core/flow";
 import { requirePostText } from "../core/flow-store";
 import * as flowThread from "../core/flow-thread";
 import { flowPrompt } from "./flow-prompt";
 import { AsyncQueue } from "./async-queue";
 import { modelNoticeHub } from "./model-notice";
-import { cacheHint } from "./cache-hint";
 import { inboxHub } from "./inbox";
-import { envWatchHub, ensureDiskPoller, noteWriteError, realStatfs, simulateEnvFact } from "./env-watch";
-import { envNoticeFromDisk, fmtDiskBytes, type EnvNotice } from "../../shared/env-watch";
+import { noteWriteError } from "./env-watch";
 import { setWriteErrorHook } from "../core/atomic-write";
 import { collectInstances, focusInstance, renderInstanceList, selfReport } from "./instances";
 import { remoteService } from "./remote";
@@ -145,12 +140,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     console.warn("[model-runtime] 装配失败，目录保持原状（或空）:", e);
   }
 
-  // ── task ──
-
-
-  bindTask(binding);
-
-  // ── 未提交草稿（半编辑数据：丢不起，故落盘且写失败必须冒泡）──
+  // ── task（含 drafts 子组：未提交草稿半编辑数据，落盘且写失败必须冒泡）──
   bindTask(binding);
 
   // ── project ──
@@ -741,16 +731,6 @@ export function bindAppHandlers(binding: ServerBinding): void {
   // ── context（上下文树页：**当前任务的真实上下文**，不落盘、不发 LLM）──
   bindContext(binding);
 
-  bindContext(binding);
-
-  bindContext(binding);
-
-  bindContext(binding);
-
-  bindContext(binding);
-
-  bindContext(binding);
-
   // ── llmProxy ──（已拆到 api-domains/llmProxy/）
   bindLlmProxy(binding);
 
@@ -765,79 +745,11 @@ export function bindAppHandlers(binding: ServerBinding): void {
   // ── notice ──（已拆到 api-domains/notice/）
   bindNotice(binding);
 
-  // ── env（「环境感知」通知；##384）──
-  // 数据源 = main 侧环境通知中心（主动轮询磁盘水位 + 被动写失败/网络错误码）。
-  // 首次访问顺手起轮询器（懒加载：Electron / serve / 测试三条入口都走 api-impl，不漏一处）。
-  binding.on(app.env.list, async () => {
-    ensureDiskPoller();
-    return envWatchHub.list();
-  });
-  binding.on(app.env.ls, async () => {
-    ensureDiskPoller();
-    return renderEnvList(envWatchHub.list());
-  });
-  binding.on(app.env.dismiss, async ({ input }) => {
-    envWatchHub.dismiss(input.id);
-    return { status: "ok" };
-  });
-  binding.on(app.env.watch, async function* ({ signal }) {
-    ensureDiskPoller();
-    for await (const ev of envWatchHub.subscribe(signal)) yield ev;
-  });
-  binding.on(app.env.simulate, async ({ input }) => {
-    if (readRuntimeConfig().env === "production") {
-      throw new Error("env simulate 是探针命令，生产环境一律拒绝（DIY_ENV=production）");
-    }
-    if (input.diskAvail !== undefined) {
-      const notice = await simulateEnvFact({
-        kind: "disk",
-        availBytes: input.diskAvail,
-        totalBytes: input.diskTotal ?? 500 * 1024 ** 3,
-        mount: input.diskMount,
-      });
-      return { notice };
-    }
-    if (input.netCode !== undefined) {
-      const notice = await simulateEnvFact({
-        kind: "network",
-        code: input.netCode,
-        streak: input.netStreak,
-        message: input.netMessage,
-      });
-      return { notice };
-    }
-    throw new Error("至少给一个事实：--disk-avail <bytes> 或 --net-code <code>");
-  });
-  binding.on(app.env.probe, async ({ input }) => {
-    const target = input.path ?? process.env["DIY_ENV_WATCH_TARGET"] ?? "/";
-    const sample = await realStatfs(target);
-    const notice = envNoticeFromDisk(sample, "poll");
-    if (notice) envWatchHub.push(notice);
-    else envWatchHub.resolveDisk(sample);
-    return { sample, notice };
-  });
+  // ── env（已拆到 api-domains/env/）──
+  bindEnv(binding);
 
-  // ── cacheHint（冷缓存提示；##477）──
-  // 数据源 = main 侧装配层（首步请求前算 gap、首步 usage 到手后回填成败）：renderer 只订阅/关闭。
-  // 用量面板的「缓存时效柱」走 stats（按模型解析出渠道，返回两个边界 + **本会话**上次请求时刻）。
-  // 两个维度分开：边界按渠道、时刻按会话（##492；曾经共用一个渠道键 ⇒ 任意任务都能刷热别的任务）。
-  binding.on(app.cacheHint.current, async () => cacheHint.currentOf());
-  binding.on(app.cacheHint.stats, async ({ input }) => cacheHint.viewOf(input.model, input.session ?? null));
-  binding.on(app.cacheHint.simulate, async ({ input }) => {
-    // 与 env simulate 同一条线：探针只改"事实来源"，不放宽任何开关
-    if (readRuntimeConfig().env === "production") {
-      // error-code-ok: 探针拒绝（用户主动触发、非缺陷链，没有可比判据）
-      throw new Error("cacheHint simulate 是探针命令，生产环境一律拒绝（DIY_ENV=production）");
-    }
-    return cacheHint.simulate(input);
-  });
-  binding.on(app.cacheHint.dismiss, async ({ input }) => {
-    cacheHint.dismiss(input.id);
-    return { status: "ok" };
-  });
-  binding.on(app.cacheHint.watch, async function* ({ signal }) {
-    for await (const ev of cacheHint.subscribe(signal)) yield ev;
-  });
+  // ── cacheHint（已拆到 api-domains/cacheHint/）──
+  bindCacheHint(binding);
 
   // ── llmConfig ──（已拆到 api-domains/llmConfig/）
   bindLlmConfig(binding);
