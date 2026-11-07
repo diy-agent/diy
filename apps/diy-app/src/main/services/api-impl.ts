@@ -32,6 +32,9 @@ import { bindCacheHint } from "./api-domains/cacheHint/impl";
 import { bindEnv } from "./api-domains/env/impl";
 import { bindKb } from "./api-domains/kb/impl";
 import { bindLlmProxy } from "./api-domains/llmProxy/impl";
+import { splitListOption } from "./remote-discover-options";
+import { bindInstances } from "./api-domains/instances/impl";
+import { bindRemote } from "./api-domains/remote/impl";
 import { platform, arch, release, totalmem, freemem } from "node:os";
 import { currentGitBranch, findRepoRoot, homeDisplayOf, repoDisplayOf } from "../core/instance-identity";
 import { readRuntimeConfig } from "../../runtime";
@@ -1101,7 +1104,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
     };
   });
 
-  // ── llmProxy ──（已拆到 api-domains/llmProxy/，路径显式）
+  // ── llmProxy ──（已拆到 api-domains/llmProxy/）
   bindLlmProxy(binding);
 
   // ── traffic（流量观测；见 core/traffic.ts）──
@@ -1750,43 +1753,11 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return { room: room.id, now: Date.now(), members };
   });
 
-  // ── instances（实例大盘；##366）──
-  // 发现/聚合/唤起的实现在 services/instances.ts（纯规则在 core/instance-*），这里只做绑定。
-  // `ls` 与 `list` 是**同一份数据两种出口**：前者给人看（表格文本），后者给 UI/程序（结构化行）。
-  binding.on(app.instances.ls, async () => renderInstanceList());
-  binding.on(app.instances.list, async () => ({ rows: await collectInstances() }));
-  binding.on(app.instances.self, async () =>
-    selfReport({ window: windowState(), branch: currentGitBranch() ?? "", repoDisplay: repoDisplayOf() }),
-  );
-  binding.on(app.instances.reveal, async () => revealSelf());
-  binding.on(app.instances.focus, async ({ input }) => {
-    if (input.pid === undefined && input.port === undefined) {
-      throw new Error("必须给 --pid 或 --port（目标实例；先跑 diy instances ls 看当前有哪些）");
-    }
-    const r = await focusInstance({ pid: input.pid, port: input.port });
-    return { pid: r.pid, port: r.port, via: r.via, reason: r.reason };
-  });
+  // ── instances ──（已拆到 api-domains/instances/）
+  bindInstances(binding);
 
-  // ── remote（远程实例：身份 + 四路发现 + /ping；##479）──
-  // ⚠️ 无鉴权（本轮不做）：`/ping` 缺省只绑回环，跨机须 DIY_PING_HOST=内网地址，绝不要暴露公网。
-  // 发现结果**只列出来**，连哪台由用户决定（判据 4）。
-  const discoverInput = (input: {
-    sources?: string | string[];
-    manual?: string | string[];
-    mdnsTimeoutMs?: number;
-  }) => ({
-    sources: splitListOption(input.sources),
-    manual: splitListOption(input.manual),
-    mdnsTimeoutMs: input.mdnsTimeoutMs,
-  });
-  binding.on(app.remote.self, async () => remoteService.self());
-  binding.on(app.remote.rename, async ({ input }) => remoteService.rename(input.name));
-  binding.on(app.remote.ping, async ({ input }) => remoteService.ping(input.endpoint, input.timeoutMs));
-  binding.on(app.remote.discover, async ({ input }) => (await remoteService.discover(discoverInput(input))).text);
-  binding.on(app.remote.list, async ({ input }) => {
-    const r = await remoteService.discover(discoverInput(input));
-    return { rows: r.rows, errors: r.errors };
-  });
+  // ── remote ──（已拆到 api-domains/remote/）
+  bindRemote(binding);
 
   // ── hub（配对：邀请码 + Owner 审批 + Token 长连；##500）──
   // 协议真源 docs/plans/2026-11-01-hub-pairing.md：地址即身份（人比对真实 URL），码只管「谁被允许进来」。
@@ -1860,11 +1831,4 @@ export function bindApi(transport: EnvelopeTransport): ServerBinding {
  * CLI 的「一串值」选项：`--sources local,mdns` 与 `--sources '["local","mdns"]'` 都收。
  * 空值 / 空串 → undefined（= 用缺省），别把 [] 当成「一路都不跑」。
  */
-function splitListOption(value: string | string[] | undefined): string[] | undefined {
-  if (value === undefined) return undefined;
-  const parts = Array.isArray(value) ? value : value.split(",");
-  const out = parts
-    .map((v) => v.trim().replace(/^\[|\]$/g, "").replace(/^"|"$/g, ""))
-    .filter((v) => v !== "");
-  return out.length > 0 ? out : undefined;
-}
+

@@ -51,7 +51,8 @@ const LITERAL_RE = /^["'`]([^"'`$]*)["'`]$/;
 const LEGACY_THROW_BASELINE = new Map(Object.entries({
   // 由 `--by-file` 生成（2026-10-20，##394 立项时实测：177 处 / 31 文件）。
   // 改好一处就把数字调小（护栏会提示），**不要往上调**。
-  "apps/diy-app/src/main/services/api-impl.ts": 26,
+  "apps/diy-app/src/main/services/api-impl.ts": 25,
+  "apps/diy-app/src/main/services/api-domains/instances/impl.ts": 1,
   "apps/diy-app/src/main/services/api-domains/tool/impl.ts": 6,
   "apps/diy-app/src/main/services/api-domains/env/impl.ts": 2,
   "apps/diy-app/src/main/core/flow.ts": 29,
