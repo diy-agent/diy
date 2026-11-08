@@ -85,3 +85,4 @@ export type { BotAdmin, BotAdminOptions, BotAdminRow, BotAdminDraft } from "./ad
 export * from "./agent.js";
 
 export * from "./aggregate.js";
+export * from "./persist.js";
