@@ -1,5 +1,8 @@
 // index.ts — apps/chat 的装配（##505）：只存插件清单，业务全在 @diy-agent/bot。
-// 落盘 vs 内存由 `createBotChat({ persist })` 决定（2026-11-05：缺省内存）。
+// 落盘 vs 内存由 `createBotChat({ persist })` 决定。
+// 2026-11-07 改：**缺省落盘**（原先缺省内存）—— S1 的验收标准是「重启后历史还在」，
+// 而内存缺省下关掉窗口就丢历史，等于每个会话只能活一次。
+// 需要纯内存（测试/演示）就显式 `DIY_CHAT_PERSIST=0`。
 
 import * as botConfigPageMain from "@diy-agent/bot-config-page";
 import * as chatPageMain from "@diy-agent/chat-page/main";
@@ -71,7 +74,7 @@ function chatConfig(home: string | undefined, sessions: unknown, botStore: BotSt
     if (home === undefined || home === "") return {};
     return {
         // 缺省内存（只有 model / bot 配置落盘）；DIY_CHAT_PERSIST=1 切文件版对照
-        sessions: createBotChat({ home, botStore, toolsFor: (b) => botToolsFor(home, b).tools, persist: process.env["DIY_CHAT_PERSIST"] === "1" }),
+        sessions: createBotChat({ home, botStore, toolsFor: (b) => botToolsFor(home, b).tools, persist: process.env["DIY_CHAT_PERSIST"] !== "0" }),
     };
 }
 
