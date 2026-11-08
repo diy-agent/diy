@@ -358,7 +358,7 @@ export function createAgent(opts: CreateAgentOptions): Agent {
         running,
         runId,
         turns,
-        historyLength: entries.length,
+        historyLength: delivered().length,
         jobs: { ...jobs },
       }
     },

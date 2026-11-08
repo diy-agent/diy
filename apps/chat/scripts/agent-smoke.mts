@@ -1,14 +1,14 @@
 // apps/chat/scripts/agent-smoke.mts
-// 🎯 S2 的可演示切片：**用真 Agent 跑两轮，打印它的状态**（不是测试，是给人看的）。
+// 🎯 S2 的可演示切片：**一个 bot 的完整状态板**（不是测试，是给人看的）。
 //
-//   npx tsx apps/chat/scripts/agent-smoke.mts              # 假 LLM（确定性，不花钱）
-//   npx tsx apps/chat/scripts/agent-smoke.mts --restart     # 再跑一次，读上一轮的快照
-//   AGENT_SMOKE_REAL=1 npx tsx ...                          # 真模型（走 DIY_HOME 里的 model.yaml）
+//   DIY_HOME=/tmp/agent-demo npx tsx apps/chat/scripts/agent-smoke.mts           # 造一轮完整经历
+//   DIY_HOME=/tmp/agent-demo npx tsx apps/chat/scripts/agent-smoke.mts --restart  # 重启后看同一份状态
 //
-// 演示三件事：
-//   ① 状态是**内存对象**（seq / turns / history），不是从 ops 回放推出来的；
-//   ② 关掉进程再起，历史与 seq 原样回来（快照恢复，不是回放）；
-//   ③ 审计日志 `audit.jsonl` 只追加、不参与逻辑。
+// 演示四件事：
+//   ① 状态是**内存对象**（seq / turns / 历史 / job 表），不是从 ops 回放推出来的；
+//   ② 命令有回执：accepted / seq / 拒绝原因；
+//   ③ 压缩把历史折成 checkpoint（模型看到的第一条就是它），旧的原文只在 raw 视图里；
+//   ④ 关掉进程再起，全部原样回来（快照恢复，不涉及回放）。
 
 import { mkdirSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -17,10 +17,9 @@ import { createAgent, filePersist, type AgentPorts } from "@diy-agent/bot";
 const home = process.env["DIY_HOME"] ?? join(process.cwd(), ".agent-demo");
 const dir = join(home, "agent", "demo");
 mkdirSync(dir, { recursive: true });
-
 const restart = process.argv.includes("--restart");
 
-/** 假 port：回一句固定文本，按轮次编号，便于肉眼对照 */
+/** 假 port：确定性回答，带轮次编号，便于肉眼对照 */
 function fakePorts(): AgentPorts & { calls: string[][] } {
   const calls: string[][] = [];
   let n = 0;
@@ -28,48 +27,71 @@ function fakePorts(): AgentPorts & { calls: string[][] } {
     calls,
     async *complete(messages) {
       calls.push(messages.map((m) => `${m.role}:${m.content}`));
-      yield `（第 ${++n} 次回答）收到 ${messages.filter((m) => m.role === "user").length} 条用户消息`;
+      yield `（第 ${++n} 次回答）我看到 ${messages.filter((m) => m.role === "user").length} 条用户消息`;
     },
   };
 }
 
 const ports = fakePorts();
 const agent = createAgent({ id: "bot_demo", ports, persist: filePersist(dir) });
-
-console.log("=== 启动时的状态 ===");
-console.log(JSON.stringify(agent.snapshot(), null, 2));
-console.log("历史条数（投递视图）：", agent.history().length);
-
 const waitIdle = async (): Promise<void> => {
   const t0 = Date.now();
   while (agent.snapshot().running && Date.now() - t0 < 2000) await new Promise((r) => setTimeout(r, 5));
 };
 
+async function board(title: string): Promise<void> {
+  const s = agent.snapshot();
+  console.log(`\n──────── ${title} ────────`);
+  console.log(`seq=${s.seq}  turns=${s.turns}  运行中=${s.running}  历史(投递视图)=${s.historyLength}`);
+  console.log(`job: ${Object.keys(s.jobs).length === 0 ? "（无）" : JSON.stringify(s.jobs)}`);
+  const rows = agent.history();
+  console.log("投递视图（模型看到的就是这些）：");
+  for (const e of rows) {
+    console.log(`  [${String(e.seq).padStart(2)}] ${e.kind}${e.role ? `/${e.role}` : ""}  ${(e.content ?? "").replace(/\n/g, " ").slice(0, 64)}`);
+  }
+  const raw = agent.history({ raw: true });
+  if (raw.length !== rows.length) {
+    console.log(`原始日志（含被压缩掉的，共 ${raw.length} 条）：`);
+    for (const e of raw) console.log(`  [${String(e.seq).padStart(2)}] ${e.kind}${e.role ? `/${e.role}` : ""}  ${(e.content ?? "").slice(0, 48)}`);
+  }
+}
+
+await board(restart ? "启动时（从快照恢复）" : "启动时（全新）");
+
 if (!restart) {
-  console.log("\n=== 发两条消息 ===");
-  const r1 = await agent.send({ content: "你好，介绍一下你自己" });
-  console.log("命令回执 1：", JSON.stringify(r1));
-  await waitIdle();
-  const r2 = await agent.send({ content: "刚才我问了什么？" });
-  console.log("命令回执 2：", JSON.stringify(r2));
-  await waitIdle();
+  console.log("\n=== ① 两轮对话 ===");
+  for (const q of ["你好，介绍一下你自己", "刚才我问了什么？"]) {
+    const r = await agent.send({ content: q });
+    console.log(`  send(${q}) → 回执 ${JSON.stringify(r)}`);
+    await waitIdle();
+  }
+
+  console.log("\n=== ② 外部事件：后台 job 完成（不打断对话、不进模型） ===");
+  const before = agent.snapshot().running;
+  const rj = await agent.post({ type: "job.completed", jobId: "r-demo", result: "build ok" });
+  console.log(`  post(job.completed) → 回执 ${JSON.stringify(rj)}；当时 running=${before}`);
+  console.log(`  job 表：${JSON.stringify(agent.snapshot().jobs)}`);
+
+  console.log("\n=== ③ 压缩：只保留最近 1 轮 ===");
+  const rc = await agent.compact({ kind: "keepTurns", turns: 1 });
+  console.log(`  compact(keepTurns:1) → 回执 ${JSON.stringify(rc)}`);
+
+  console.log("\n=== ④ 拒绝也要看得见 ===");
+  const rr = await agent.compact({ kind: "keepTurns", turns: 99 });
+  console.log(`  compact(keepTurns:99) → 回执 ${JSON.stringify(rr)}`);
 } else {
-  console.log("\n=== --restart：接着上次的状态再发一条 ===");
+  console.log("\n=== 重启后继续用：发一条，证明 seq / 历史都接得上 ===");
   const r = await agent.send({ content: "重启后你还记得我吗" });
-  console.log("命令回执：", JSON.stringify(r));
+  console.log(`  send(...) → 回执 ${JSON.stringify(r)}`);
   await waitIdle();
 }
 
-console.log("\n=== 结束时的状态 ===");
-console.log(JSON.stringify(agent.snapshot(), null, 2));
-console.log("\n历史（投递视图，模型看到的就是这些）：");
-for (const e of agent.history()) {
-  console.log(`  [${e.seq}] ${e.kind}${e.role ? `/${e.role}` : ""}: ${(e.content ?? "").slice(0, 60)}`);
-}
+await board(restart ? "结束（重启后）" : "结束（本轮走完）");
 
-// 等异步快照落盘（生产里是 fire-and-forget，这里只为演示时能看到文件）
-await new Promise((r) => setTimeout(r, 50));
+await new Promise((r) => setTimeout(r, 60)); // 等 fire-and-forget 的快照落盘
 const auditPath = join(dir, "audit.jsonl");
-console.log("\n审计日志：", auditPath, existsSync(auditPath) ? `（${readFileSync(auditPath, "utf-8").trim().split("\n").length} 行）` : "（空）");
-console.log("快照文件：", join(dir, "state.json"), existsSync(join(dir, "state.json")) ? "（已写）" : "（未写）");
-console.log("\n提示：加 --restart 再跑一次，上面的 seq / 历史应当接着上次，而不是从 0 开始。");
+const lines = existsSync(auditPath) ? readFileSync(auditPath, "utf-8").trim().split("\n") : [];
+console.log(`\n数据根：${dir}`);
+console.log(`  快照 state.json  ${existsSync(join(dir, "state.json")) ? "已写" : "未写"}`);
+console.log(`  审计 audit.jsonl ${lines.length} 行（只追加，不参与逻辑）`);
+console.log(`\n再加 --restart 跑一次：上面的 seq / turns / 历史应当接着上次，而不是从 0 开始。`);
