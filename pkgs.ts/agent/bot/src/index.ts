@@ -83,3 +83,5 @@ export { createBotAdmin } from "./admin.js";
 export type { BotAdmin, BotAdminOptions, BotAdminRow, BotAdminDraft } from "./admin.js";
 
 export * from "./agent.js";
+
+export * from "./aggregate.js";
