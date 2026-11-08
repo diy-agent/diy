@@ -7,6 +7,9 @@ import { join } from 'node:path'
 import { createAgent, type AgentPorts } from '../src/aggregate.js'
 import { filePersist } from '../src/persist.js'
 import { llmPorts } from '../src/model-ports.js'
+import { createAgentHost } from '../src/agent-host.js'
+import type { BotConfig, BotStore } from '../src/types.js'
+import type { WireMessage } from '../src/protocol.js'
 
 /** 假 LLM：按顺序回话；可配置延迟，用来观察「运行中」的行为 */
 function fakePorts(opts: { replies?: string[]; delayMs?: number } = {}): AgentPorts & { calls: string[][] } {
@@ -204,5 +207,56 @@ describe('model-ports：把 LlmPort 接成 Agent 的端口', () => {
     expect(msgs.map((m) => m.content)).toEqual(['你是谁', '你好，我是 bot。'])
     // 送进 provider 的那份也带上了用户原话
     expect(seen[0]).toContainEqual({ role: 'user', text: '你是谁' })
+  })
+})
+
+describe('agent-host：把 Agent 接到 BotChatHost 契约上', () => {
+  /** 内存版 BotStore（只实现适配器用到的几个方法） */
+  function memStore() {
+    const bots = new Map<string, BotConfig>()
+    return {
+      load: async (id: string) => bots.get(id) ?? null,
+      save: async (c: BotConfig) => void bots.set(c.id, c),
+      list: async () => [...bots.values()],
+      remove: async (id: string) => void bots.delete(id),
+      ownerOf: async () => null,
+      assign: async () => undefined,
+      sessionsOf: async () => [],
+    } as BotStore
+  }
+
+  it('建 bot → 发一条 → snapshot 的消息线与指标来自 Agent（不是回放）', async () => {
+    const host = createAgentHost({
+      home: '/tmp/agent-host-test',
+      botStore: memStore(),
+      models: () => [],
+      portsFor: () => fakePorts({ replies: ['我收到啦'] }),
+      dirFor: () => `/tmp/agent-host-test/${Math.random().toString(36).slice(2)}`,
+    })
+
+    await host.createFirstBot({ model: 'test/model', name: '测试 bot' })
+    let pushed: WireMessage[] = []
+    const snap = await host.send('你好', (msgs) => {
+      pushed = [...msgs]
+    })
+
+    expect(snap.bot?.name).toBe('测试 bot')
+    expect(snap.messages.map((m) => m.role)).toEqual(['user', 'assistant'])
+    expect((snap.messages[1]!.blocks[0]!.data as { text: string }).text).toBe('我收到啦')
+    expect(snap.metrics?.turns).toBe(1)
+    expect(pushed.length).toBeGreaterThan(0) // onDelta 推过中间态
+  })
+
+  it('没有 bot 时 snapshot 是空壳（UI 走引导页）', async () => {
+    const host = createAgentHost({
+      home: '/tmp/agent-host-test',
+      botStore: memStore(),
+      models: () => [],
+      portsFor: () => fakePorts(),
+      dirFor: () => `/tmp/agent-host-test/${Math.random().toString(36).slice(2)}`,
+    })
+    const snap = await host.snapshot()
+    expect(snap.bot).toBeNull()
+    expect(snap.messages).toEqual([])
   })
 })

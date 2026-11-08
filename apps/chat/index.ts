@@ -8,7 +8,7 @@ import * as botConfigPageMain from "@diy-agent/bot-config-page";
 import * as chatPageMain from "@diy-agent/chat-page/main";
 import * as modelConfigPageMain from "@diy-agent/model-config-page";
 import type { PluginEntry } from "@diy-agent/workbench";
-import { asToolSet, createBotChat, createFileBotStore, workspaceOf, type BotStore } from "@diy-agent/bot";
+import { asToolSet, createAgentHost, createBotChat, createFileBotStore, workspaceOf, type BotStore } from "@diy-agent/bot";
 import { collectSelfInfo, judgeSelfKill } from "@diy-agent/tools";
 import { os } from "@diy-agent/os";
 import { RunRegistry, makeJobTool } from "@diy-agent/jobs/node";
@@ -74,7 +74,17 @@ function chatConfig(home: string | undefined, sessions: unknown, botStore: BotSt
     if (home === undefined || home === "") return {};
     return {
         // 缺省内存（只有 model / bot 配置落盘）；DIY_CHAT_PERSIST=1 切文件版对照
-        sessions: createBotChat({ home, botStore, toolsFor: (b) => botToolsFor(home, b).tools, persist: process.env["DIY_CHAT_PERSIST"] !== "0" }),
+        // ##519 S2：`DIY_CHAT_AGENT=1` 切到新 Agent 聚合（内存态 + 快照），否则仍走 BotChatHost 旧实现。
+        // 两套并存便于对照；页面（chat-page）一行不用改 —— 它只认 BotChatHost 契约。
+        sessions:
+            process.env["DIY_CHAT_AGENT"] === "1"
+                ? createAgentHost({
+                      home,
+                      botStore: botStore ?? createFileBotStore({ home, sessionsDir: join(home, "sessions", "chat") }),
+                      // 模型选择器暂留空：聚合宿主只要 model 字符串就能跑；选择器接目录是下一步
+                      models: () => [],
+                  })
+                : createBotChat({ home, botStore, toolsFor: (b) => botToolsFor(home, b).tools, persist: process.env["DIY_CHAT_PERSIST"] !== "0" }),
     };
 }
 
