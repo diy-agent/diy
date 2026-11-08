@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createAgent, type AgentPorts } from '../src/aggregate.js'
 import { filePersist } from '../src/persist.js'
+import { llmPorts } from '../src/model-ports.js'
 
 /** 假 LLM：按顺序回话；可配置延迟，用来观察「运行中」的行为 */
 function fakePorts(opts: { replies?: string[]; delayMs?: number } = {}): AgentPorts & { calls: string[][] } {
@@ -181,5 +182,27 @@ describe('Agent 聚合：内存优先的持久化（快照 + 审计）', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('model-ports：把 LlmPort 接成 Agent 的端口', () => {
+  it('SessionDelta 的文本增量变成 Agent 的回答（不依赖 ai-sdk streamText）', async () => {
+    const seen: { role: string; text: string }[][] = []
+    const fake = {
+      async *chat(messages: readonly { role: string; text: string }[]) {
+        seen.push(messages.map((m) => ({ role: m.role, text: m.text })))
+        yield { type: 'text', text: '你好，' } as never
+        yield { type: 'text', text: '我是 bot。' } as never
+        yield { type: 'done', stopReason: 'stop' } as never
+      },
+    }
+    const agent = createAgent({ ports: llmPorts(fake as never) })
+    await agent.send({ content: '你是谁' })
+    await waitIdle(agent)
+
+    const msgs = agent.history().filter((e) => e.kind === 'message')
+    expect(msgs.map((m) => m.content)).toEqual(['你是谁', '你好，我是 bot。'])
+    // 送进 provider 的那份也带上了用户原话
+    expect(seen[0]).toContainEqual({ role: 'user', text: '你是谁' })
   })
 })

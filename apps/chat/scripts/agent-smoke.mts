@@ -1,7 +1,8 @@
 // apps/chat/scripts/agent-smoke.mts
 // 🎯 S2 的可演示切片：**一个 bot 的完整状态板**（不是测试，是给人看的）。
 //
-//   DIY_HOME=/tmp/agent-demo npx tsx apps/chat/scripts/agent-smoke.mts           # 造一轮完整经历
+//   DIY_HOME=/tmp/agent-demo npx tsx apps/chat/scripts/agent-smoke.mts           # 造一轮完整经历（假模型）
+//   AGENT_MODEL=aug@opencode-go/deepseek-v4.1-flash npx tsx ... --real          # 真模型（花钱）
 //   DIY_HOME=/tmp/agent-demo npx tsx apps/chat/scripts/agent-smoke.mts --restart  # 重启后看同一份状态
 //
 // 演示四件事：
@@ -12,12 +13,14 @@
 
 import { mkdirSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { createAgent, filePersist, type AgentPorts } from "@diy-agent/bot";
+import { createAgent, filePersist, llmPorts, resolveProvider, type AgentPorts } from "@diy-agent/bot";
 
 const home = process.env["DIY_HOME"] ?? join(process.cwd(), ".agent-demo");
 const dir = join(home, "agent", "demo");
 mkdirSync(dir, { recursive: true });
 const restart = process.argv.includes("--restart");
+/** `--real` = 用真模型（需 AGENT_MODEL=account@provider/model）；缺省假 port，确定性、不花钱 */
+const real = process.argv.includes("--real");
 
 /** 假 port：确定性回答，带轮次编号，便于肉眼对照 */
 function fakePorts(): AgentPorts & { calls: string[][] } {
@@ -32,7 +35,16 @@ function fakePorts(): AgentPorts & { calls: string[][] } {
   };
 }
 
-const ports = fakePorts();
+const ports: AgentPorts = real
+  ? llmPorts(
+      resolveProvider(
+        home,
+        process.env["AGENT_MODEL"] ?? (() => {
+          throw new Error("--real 需要 AGENT_MODEL=account@provider/model（例如 aug@opencode-go/deepseek-v4.1-flash）");
+        })(),
+      ),
+    )
+  : fakePorts();
 const agent = createAgent({ id: "bot_demo", ports, persist: filePersist(dir) });
 const waitIdle = async (): Promise<void> => {
   const t0 = Date.now();
