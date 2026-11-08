@@ -39,6 +39,7 @@ import { bindHub } from "./api-domains/hub/impl";
 import { bindContext } from "./api-domains/context/impl";
 import { bindTask } from "./api-domains/task/impl";
 import { bindRoom } from "./api-domains/room/impl";
+import { bindFlow } from "./api-domains/flow/impl";
 import { splitListOption } from "./remote-discover-options";
 import { bindInstances } from "./api-domains/instances/impl";
 import { bindRemote } from "./api-domains/remote/impl";
@@ -770,75 +771,20 @@ export function bindAppHandlers(binding: ServerBinding): void {
     return [raw];
   };
 
-  binding.on(app.flow.list, async ({ input }) => ({
-    workflows: flow.listFlowDefinitions(),
-    ...(input.instances ? { instances: flow.listFlowInstances() } : {}),
-  }));
-  binding.on(app.flow.show, async ({ input }) => flow.showFlow(input.uri));
-  binding.on(app.flow.view, async ({ input }) => flow.viewArtifact(input.uri, input.node, input.seq));
+  // ── flow（15 个 handler 已拆到 api-domains/flow/）──
+  bindFlow(binding);
   // `--file` 的内容由**调用方进程**的 CLI parser 读好送进来（stdin / 相对路径都归它，见 _cli-meta.readFile）
-  binding.on(app.flow.artifact.put, async ({ input }) => flow.putArtifact(input.uri, input.node, input.file, input.seq));
-  binding.on(app.flow.start, async ({ input }) => {
-    if (!input.workflow) {
-      throw new Error(`缺 --workflow <id>（可用：${flow.listFlowDefinitions().map((w) => w.id).join(" / ")}）`);
-    }
-    return flow.startFlow(input.uri, input.workflow, kvList(input.param));
-  });
-  binding.on(app.flow.advance, async ({ input }) => {
-    if (!input.to) throw new Error("缺 --to <节点 id>");
-    return flow.advanceFlow(input.uri, input.to, kvList(input.ref), input.note);
-  });
+  // ── flow（15 个 handler 已拆到 api-domains/flow/）──
   // ##342：`--opinion` = 意见正文一等落盘（落进讨论流、挂这次打回的锚点）。
   // 锚点不用调用方传：`bounceFlow` 的回执折线末条就是这次的落点驻留（唯一标识这条打回边的穿越）。
-  binding.on(app.flow.bounce, async ({ input }) => {
-    if (!input.to) throw new Error("缺 --to <节点 id>");
-    const author = input.author ?? "cli";
-    // 空意见在**领域态变更前**就拒（否则打回落了盘、命令却报错 = 半截成功）。
-    // 闸门与 discussion 写入共用一处真源（##342 review1 P2-1）。
-    if (input.opinion !== undefined) requirePostText(input.opinion);
-    const view = flow.bounceFlow(input.uri, input.to, kvList(input.ref), input.note, author);
-    if (input.opinion !== undefined) {
-      try {
-        flow.appendBounceOpinion(input.uri, view, input.opinion, author);
-      } catch (e) {
-        // 打回（领域态）已经落盘了 —— 不假装整体失败，也不静默：说清「哪一半成了、怎么补」
-        throw new Error(
-          `打回已落盘（位置 ${view.position}），但意见没写进讨论流：${e instanceof Error ? e.message : String(e)}` +
-            ` —— 可用 \`diy flow thread post\` 补发；删掉 ${view.files.threads} 不影响推进（讨论是旁注）`,
-        );
-      }
-    }
-    return view;
-  });
+  // ── flow（15 个 handler 已拆到 api-domains/flow/）──
   // ##342：讨论线程（只读 + 发言）。旁注坏了不外抛（`listThreads` 报 `skipped` / `error`），
   // 写侧的唯一闸门「锚点必须是真打回」在 `core/flow-thread.ts::requireRealBounce`。
-  binding.on(app.flow.thread.list, async ({ input }) => flowThread.listThreads(input.uri, input.thread));
-  binding.on(app.flow.thread.post, async ({ input }) =>
-    flowThread.postThread(input.uri, input.thread, input.text, input.type ?? "note", input.author ?? "cli"),
-  );
-  binding.on(app.flow.finish, async ({ input }) => flow.finishFlow(input.uri, input.note));
-  binding.on(app.flow.params.get, async ({ input }) => flow.paramsGet(input.uri));
-  binding.on(app.flow.params.set, async ({ input }) => flow.paramsSet(input.uri, kvList(input.param)));
-  binding.on(app.flow.prompt, async ({ input }) => flowPrompt(input.uri));
+  // ── flow（15 个 handler 已拆到 api-domains/flow/）──
   // ##341：系统推一步（真求值 pred:/action:）—— 与上面两条「宣布」命令走的是不同那条路
-  binding.on(app.flow.step, async ({ input }) => {
-    const { status, to, kind, reason, view } = await flow.stepFlow(input.uri, input.cwd === undefined ? {} : { cwd: input.cwd });
-    return { status, to, kind, reason, view };
-  });
+  // ── flow（15 个 handler 已拆到 api-domains/flow/）──
   // ##341 驱动环：流式（逐帧）+ **客户端断开即中断**（signal 一路传到在跑的 agent 轮次）
-  binding.on(app.flow.run, async function* ({ input, signal }) {
-    const { runFlow } = await import("./flow-runner");
-    const queue = new AsyncQueue<unknown>();
-    void runFlow(input.uri, {
-      ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
-      ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
-      signal,
-      onFrame: (frame) => queue.push(frame),
-    })
-      .catch((e: unknown) => queue.push({ kind: "stop", reason: "turn-error", message: e instanceof Error ? e.message : String(e) }))
-      .finally(() => queue.close());
-    for await (const frame of queue) yield JSON.stringify(frame);
-  });
+  // ── flow（15 个 handler 已拆到 api-domains/flow/）──
 
   // ── docs ──（已拆到 api-domains/docs/）
   bindDocs(binding);
