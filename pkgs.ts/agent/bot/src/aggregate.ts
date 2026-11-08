@@ -196,12 +196,12 @@ export function createAgent(opts: CreateAgentOptions): Agent {
   }
 
   const ok = (commandId: CommandId): Receipt => ({ commandId, accepted: true, seq })
-  const reject = (commandId: CommandId, code: string, message: string): Receipt => ({
-    commandId,
-    accepted: false,
-    seq,
-    error: { code, message },
-  })
+  const reject = (commandId: CommandId, code: string, message: string): Receipt => {
+    // 被拒也留审计行：重启后要能回答「这条命令当时为什么没生效」。
+    // **不写快照**（状态没变），所以重启后只会看到审计里的记录，不会凭空多出状态。
+    opts.persist?.audit({ at: new Date().toISOString(), seq, kind: "reject", commandId, code, message })
+    return { commandId, accepted: false, seq, error: { code, message } }
+  }
 
   /**
    * 当前投递视图 = **checkpoint 取代被它折掉的那一段**。
