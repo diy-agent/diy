@@ -10,6 +10,11 @@ function row(over: Partial<InstanceRow> = {}): InstanceRow {
   return {
     pid: 100,
     kind: "electron",
+    mode: "source",
+    worktree: "/x",
+    worktreeDisplay: "x",
+    name: "",
+    displayName: "diy-app#100",
     variant: "prod",
     diyHome: "/Users/ccc/.diy",
     diyHomeDisplay: "~/.diy",
@@ -33,18 +38,18 @@ function row(over: Partial<InstanceRow> = {}): InstanceRow {
   };
 }
 
-describe("排序：按数据根聚类，未知排最后", () => {
-  it("同根相邻 + 组内 pid 升序", () => {
+describe("排序：按 worktree 聚类，未知排最后", () => {
+  it("同 worktree 相邻 + 组内 pid 升序", () => {
     const rows = [
-      row({ pid: 30, diyHome: "/b" }),
-      row({ pid: 10, diyHome: "/a" }),
-      row({ pid: 20, diyHome: "/a" }),
+      row({ pid: 30, worktree: "/b" }),
+      row({ pid: 10, worktree: "/a" }),
+      row({ pid: 20, worktree: "/a" }),
     ];
     expect(sortInstanceRows(rows).map((r) => r.pid)).toEqual([10, 20, 30]);
   });
 
-  it("数据根未知（空串）的行排在已知根之后", () => {
-    const rows = [row({ pid: 1, diyHome: "" }), row({ pid: 2, diyHome: "/a" })];
+  it("worktree 未知（打包态 / 外部实例）的行排在后面", () => {
+    const rows = [row({ pid: 1, worktree: "", mode: "packaged" }), row({ pid: 2, worktree: "/a" })];
     expect(sortInstanceRows(rows).map((r) => r.pid)).toEqual([2, 1]);
   });
 

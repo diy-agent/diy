@@ -9,12 +9,13 @@
 
 import type { InstanceRow } from "../../shared/instance-row";
 
-/** 排序：**按数据根聚类**（同一根的实例相邻，便于一眼看出「哪个根上有几个」），组内按 pid 升序；
- *  数据根未知的行排最后（它们是信息最少的一档，不该插在已知根中间）。 */
+/** 排序：**按 worktree 聚类**（同一工作区的实例相邻 —— 这是 ##518 定下的归属维度：
+ *  静态 `app.yaml` 按 worktree 成表，动态实例挂到对应 worktree 下），组内按 pid 升序；
+ *  worktree 未知的行（打包态 / 外部实例）排最后，它们是信息最少的一档。 */
 export function sortInstanceRows(rows: InstanceRow[]): InstanceRow[] {
   return [...rows].sort((a, b) => {
-    const ah = a.diyHome || "\uffff";
-    const bh = b.diyHome || "\uffff";
+    const ah = a.worktree || "\uffff";
+    const bh = b.worktree || "\uffff";
     if (ah !== bh) return ah < bh ? -1 : 1;
     return a.pid - b.pid;
   });
@@ -92,7 +93,10 @@ interface Col {
 
 /** 列序 = 人读顺序：**谁(pid) → 哪来的(来源) → 谁的数据(数据根/变体/环境/分支) → 怎么连(端口/状态) → 在干什么(会话)** */
 const COLS: Col[] = [
+  { key: "name", title: "实例", width: 18, value: (r) => r.displayName },
   { key: "pid", title: "PID", width: 6, value: (r) => String(r.pid) },
+  { key: "mode", title: "类型", width: 4, value: (r) => (r.mode === "packaged" ? "打包" : "源码") },
+  { key: "worktree", title: "工作区", width: 24, value: (r) => r.worktreeDisplay || "-" },
   { key: "diyHome", title: "数据根", width: 26, value: (r) => r.diyHomeDisplay || "?" },
   { key: "variant", title: "变体", width: 7, value: (r) => r.variant || "-" },
   { key: "env", title: "环境", width: 12, value: (r) => r.env || "-" },

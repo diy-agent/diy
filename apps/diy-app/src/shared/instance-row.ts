@@ -5,8 +5,8 @@
 // 否则打包时被拖进共享 chunk、schema 在 `_cli-meta` 补丁之前创建）。
 //
 // 一行 = **一个 diy 实例**（不是「一个进程」）：一个实例有 Electron 主 + GPU + renderer + helper
-// 多个进程，只有主进程（`build/<variant>/main/index.mjs`）算一行 —— 去重规则见
-// main/core/instance-scan.ts::pickInstanceProcesses。
+// 多个进程，但**只由实例自报一条记录**（`core/instance-registry.ts`，pid = 主进程），
+// 进程扫描已退役（##518）—— 自报是唯一事实来源。
 import { z } from "zod";
 
 /** 本实例正在跑的一轮（来自 session-registry，跨实例由 `instances.self` 自报） */
@@ -36,6 +36,18 @@ export const InstanceWindowSchema = z.object({
 export const InstanceRowSchema = z.object({
   pid: z.number().describe("实例主进程 pid"),
   kind: z.string().describe("electron | serve"),
+  /**
+   * **身份第一刀**（##518）：`source` = 从工作区代码起的（dev 能读写 / 能操作）；
+   * `packaged` = 安装包起的（无 source，只能观测）。身份判据只认这个 + worktree + 数据根。
+   */
+  mode: z.string().describe("source（有源码，dev 可操作）| packaged（安装包，无源码）"),
+  /** 启动它的 git worktree 根（源码态才有意义；打包态 / 老记录为空串）。**UI 归组只按它** */
+  worktree: z.string().describe("worktree 根（绝对路径；空串 = 无 source 或不知道）"),
+  worktreeDisplay: z.string().describe("worktree 的展示路径（相对真实家目录缩 ~）"),
+  /** 实例自报名字；没写为空串（展示走 displayName） */
+  name: z.string().describe("实例自报名字（没写为空串）"),
+  /** 展示名：name 优先，否则 `<app>#<pid>`，再不行 `diy#<pid>` —— 任何活着的实例都有人认得出的名字 */
+  displayName: z.string().describe("展示名（name / app#pid / diy#pid）"),
   variant: z.string().describe("产物变体（从入口路径推：prod|test|lab）"),
   diyHome: z.string().describe("数据根（自报优先；拿不到时是线索值或空串）"),
   diyHomeDisplay: z.string().describe("数据根的展示形式（相对真实家目录缩 ~）"),
@@ -89,3 +101,19 @@ export const RevealResultSchema = z.object({
   fullScreen: z.boolean().describe("唤起后是否处于全屏"),
 });
 export type RevealResult = z.infer<typeof RevealResultSchema>;
+
+/**
+ * 展示名的唯一算法（##518 用户裁：**实例自己起名字**，没名字就「其它信息 + pid」）。
+ *
+ * 为什么要这个函数：`launch` / `slot` 是**启动配置模版**（lab1 / lab2 不代表任何东西），
+ * 拿它当身份/名字会让人以为实例有语义编号。展示名只回答「这是哪一个」：
+ *   1. 实例自报的 `name`（`DIY_INSTANCE_NAME` / app.yaml `name:`）—— 人起的名字最可信；
+ *   2. 否则 `<app>#<pid>`（如 `diy-app#51234`）—— 一定唯一，且能直接拿去 kill / 查；
+ *   3. 连 app 都不知道（老记录）→ `diy#<pid>`。
+ */
+export function displayNameOf(row: { pid: number; name?: string; app?: string }): string {
+  const name = (row.name ?? "").trim();
+  if (name) return name;
+  const app = (row.app ?? "").trim() || "diy";
+  return `${app}#${row.pid}`;
+}
