@@ -28,6 +28,8 @@ import { localISOString } from "@diy-agent/time";
 import { createSession, type AgentSession, type ChatMessage, type LlmPort, type SessionStore, type TokenUsage } from "@diy-agent/session";
 import { openJsonlSessionStore } from "@diy-agent/session-store-jsonl";
 import { openMemorySessionStore } from "@diy-agent/session";
+import { agentsChain } from "@diy-agent/agents-chain";
+import { kbRootOf, scanKb } from "@diy-agent/kb";
 import { skillsOf } from "@diy-agent/skills";
 import { homedir } from "node:os";
 import { createBotAgent, type BotAgent } from "./agent.js";
@@ -219,6 +221,55 @@ const SKILLS_HELP = {
         path: { type: "string", desc: "SKILL.md 路径（要看全文就 read 它）" },
     },
 };
+
+/** AGENTS.md 链的节点说明 */
+const CHAIN_HELP = {
+    type: "array",
+    desc: "AGENTS.md 链（逐层，从最外层到最深处）",
+    items: {
+        path: { type: "string", desc: "AGENTS.md 路径" },
+        scope: { type: "string", desc: "生效目录" },
+        content: { type: "string", desc: "正文" },
+    },
+};
+
+/** 知识库节点的说明 */
+const KB_HELP = {
+    type: "object",
+    desc: "知识库索引（md 文件；要内容直接读那个文件）。项目库优先、全局库兜底",
+    entries: {
+        type: "array",
+        desc: "每个 md 一条（按路径排序）；空则整节跳过",
+        items: {
+            path: { type: "string", desc: "相对知识库根的路径" },
+            desc: { type: "string", desc: "这个文件讲什么" },
+            sections: { type: "number", desc: "多少个 ## 小节" },
+            scope: { type: "string", desc: "project / global" },
+        },
+    },
+};
+
+/**
+ * 知识库两层合并（与 diy-app 的 `kbProvider` 同判据）。
+ *
+ * 为什么不在 `@diy-agent/kb` 里给一个 `mergedKbOf`：那边是纯数据，宿主才知道
+ * 「项目库在哪、全局库在哪」；两处各写一遍的是**同一个规则**（项目覆盖全局），
+ * 判据相同、实现 10 行，比多一个跨包抽象便宜。
+ */
+function botKb(cwd: string, home: string): unknown {
+    const roots = [
+        { dir: kbRootOf(cwd), scope: "project" },
+        { dir: join(home, "knowledge"), scope: "global" },
+    ];
+    const byPath = new Map<string, { path: string; desc: string; sections: number; scope: string }>();
+    for (const { dir, scope } of [...roots].reverse()) {
+        for (const e of scanKb(dir).entries) {
+            byPath.set(e.path, { path: e.path, desc: e.desc, sections: e.sections, scope });
+        }
+    }
+    if (byPath.size === 0) return undefined;
+    return { entries: [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path)) };
+}
 
 export function createBotChat(options: BotChatOptions): BotChatHost {
     const home = options.home;
@@ -492,8 +543,18 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                         isAppDir: false,
                     }),
                 },
-                { key: "chain", provide: () => [] },
-                // 2026-11-07：不再返回空数组 —— 从 `.agents/skills` 真扫（本机 22 个，约 9KB）
+                // 2026-11-07：不再返回空数组 —— AGENTS.md 链真扫（与 diy-app 同一套判据：
+                // 外层在前、上界 homedir）。之前一直是 `[]`，所以 `~/AGENTS.md` → `~/git/AGENTS.md`
+                // → 仓库 AGENTS.md 里的全局规则一条都进不来（比缺 kb 严重）。
+                // `appHome` 传一个不存在的路径：bot 没有「应用级规范」这个概念。
+                {
+                    key: "chain",
+                    help: CHAIN_HELP,
+                    provide: () => agentsChain({ appHome: join(options.home, "__no_app__"), cwd: workspace }),
+                },
+                // 知识库：两层（项目 `<cwd>/.diy/knowledge` 优先、全局 `$DIY_HOME/knowledge` 兜底），
+                // 与 diy-app 的 kbProvider 同判据（PR #445）。只投目录不投正文 —— 要看就 read 那个文件。
+                { key: "kb", help: KB_HELP, provide: () => botKb(workspace, options.home) },
                 { key: "skills", help: SKILLS_HELP, provide: () => skillsOf({ cwd: workspace, globalRoot: join(homedir(), ".agents") }) },
             ],
             initialMessages,

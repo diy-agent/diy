@@ -164,7 +164,7 @@ export async function main(argv = process.argv.slice(2)) {
             env: {
                 ...process.env,
                 DIY_CLI: process.argv[1] ?? "diy2",
-                DIY_HOME: process.env["DIY_HOME"] ?? join(homedir(), ".diy"),
+                DIY_HOME: process.env["DIY_HOME"] ?? join(homedir(), ".diy2"),
             },
         });
         child.on("error", (cause) => {
