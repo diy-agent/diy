@@ -222,18 +222,16 @@ export function CompactCutBar(props: {
                 <div class="flex items-center gap-2">
                     <span class="text-caption opacity-70" data-cut-summary>
                         丢 {lo()} 轮（{fmtTokens(droppedTokens())}）· 留 {keptCount()} 轮（{fmtTokens(keptTokens())}）
-                    </span>
-                    <Show when={!card()}>
-                        <button
-                            type="button"
-                            class="btn btn-primary btn-xs ml-auto"
-                            disabled={busy() || !dirty() || total() === 0}
-                            onClick={() => void apply()}
-                            data-cut-apply
-                        >
-                            {busy() ? "压缩中…" : dirty() ? "压缩" : "已生效"}
-                        </button>
-                    </Show>
+                    </span>                    <button
+                        type="button"
+                        class="btn btn-primary btn-xs ml-auto"
+                        disabled={busy() || !dirty() || total() === 0}
+                        onClick={() => void apply()}
+                        data-cut-apply
+                    >
+                        {busy() ? "压缩中…" : dirty() ? "压缩" : "已生效"}
+                    </button>
+                
                 </div>
 
                 <Show when={keptCount() === 0}>
