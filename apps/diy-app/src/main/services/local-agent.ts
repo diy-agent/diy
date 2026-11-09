@@ -711,14 +711,29 @@ export function keptRoundsView(taskUri: string): KeptRoundsView {
      *     于是压到 0 之后面板仍显示原有轮数，看起来像"没压干净"）。
      */
     const cutIdx = boundaryTurnId === null ? -1 : order.indexOf(boundaryTurnId);
-    const keptFrom =
-        boundary === null
-            ? 0
-            : boundaryTurnId === null
-              ? order.length          // 全清
-              : cutIdx < 0
-                ? 0                   // 边界轮已不在尾部窗口内 ⇒ 当作全保留
-                : cutIdx;
+    /**
+     * 全清/无轮首锚点时，光看 `turnId` 会把**压缩后新产生的轮**也当成"已丢" ——
+     * 于是压到 0 之后继续对话，面板永远显示 0（用户实测「保持 0 不变了，彻底不变了」）。
+     * 真正的判据是**字节锚点**：轮的 ops 起点 < 边界的 ops 起点 ⇒ 已压掉；≥ ⇒ 保留
+     * （投递侧 `resolveOpsReplay` 用的就是同一个 offset，两边必须同口径）。
+     */
+    const boundaryOffset = (boundary as unknown as { keptFromOpsOffset?: number } | null)?.keptFromOpsOffset;
+    const turnOffset = new Map<string, number>();
+    if (boundaryOffset !== undefined) {
+        try {
+            for (const rec of readTurnRecords(taskUri)) turnOffset.set(rec.turnId, rec.ref.ops.offset);
+        } catch {
+            /* 轮记录坏了就退回 turnId 判据 */
+        }
+    }
+    const keptFrom = ((): number => {
+        if (boundary === null) return 0;                    // 从没压过 ⇒ 全保留
+        if (boundaryOffset !== undefined && turnOffset.size > 0) {
+            const first = order.findIndex((t) => (turnOffset.get(t) ?? 0) >= boundaryOffset);
+            return first < 0 ? order.length : first;         // 一个都没有 ⇒ 全清
+        }
+        return boundaryTurnId === null ? order.length : cutIdx < 0 ? 0 : cutIdx;
+    })();
     // **只列还能保留的轮**（已压掉的选不回来）。之前全列出来只打 kept 标记，于是压完后
     // 面板仍显示「共 4 轮」，看着像没压干净（用户实测）。
     const rounds: KeptRoundRow[] = order
