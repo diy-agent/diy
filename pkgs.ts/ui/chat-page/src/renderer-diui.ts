@@ -692,10 +692,15 @@ export const chatPageView: PageView = {
                         metrics.contextWindow > 0
                             ? (metrics.inputTokens / metrics.contextWindow) * 100
                             : undefined;
-                    yield metric(
-                        "窗口",
-                        ratio === undefined ? "—" : `${ratio.toFixed(1)}%`,
-                        ratio !== undefined && ratio > 60,
+                    // ##519：**悬停「窗口」这个 token 数**就展开压缩点（与 diy-app 的环同一交互），
+                    // 不是另外挂一个按钮 —— 用户 2026-11-07 明确要求这个手感。
+                    yield cutWrap(
+                        context,
+                        metric(
+                            "窗口",
+                            ratio === undefined ? "—" : `${ratio.toFixed(1)}%`,
+                            ratio !== undefined && ratio > 60,
+                        ),
                     );
                     const cache =
                         metrics?.cacheReadTokens !== undefined &&
@@ -706,8 +711,6 @@ export const chatPageView: PageView = {
                     yield metric("缓存", cache === undefined ? "—" : `${cache.toFixed(1)}%`);
                     yield metric("本轮", metrics?.cost === undefined ? "—" : money(metrics.cost));
                     yield metric("上下文", `${String(metrics?.turns ?? 0)} step`);
-                    if (!store.multi) return;
-                    yield cutChip(context);
                 });
                 yield composer(context);
             });
@@ -719,7 +722,7 @@ export const chatPageView: PageView = {
          * 为什么要「显式两步」（先 `compactInfo` 读轴、再 `compact(keepRounds)` 落盘）：
          * 一步做完的话，用户拖到哪里、会不会压过头，在按下之前完全看不见。
          */
-        function cutChip(context: PageContext): Spec {
+        function cutWrap(context: PageContext, inner: Spec): Spec {
             // ⚠️ 这里**刻意不用 `rev.value++`**：那会让整个页脚重建 ⇒ 节点被换掉 ⇒
             // pointerenter 重新触发 ⇒ 又重建 …… 面板就再也关不上（用户实测「一直是弹出状态」）。
             // 正确做法：面板只建一次，内容与显隐都用**命令式**更新。
@@ -808,7 +811,7 @@ ${rows}
                     },
                 },
                 function* () {
-                    yield html.button({ class: "chat-cut-chip", type: "button", text: "✂ 压缩点" })
+                    yield inner
                     yield html.div({
                         class: "chat-cut-panel",
                         hidden: true,
