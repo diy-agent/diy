@@ -35,12 +35,12 @@ describe("compaction：keepRounds = 0 是全清", () => {
         // 没有它 resolveOpsReplay 只能老实全读（= 旧历史照旧投递，##266 的现象）。
         appendTurnRecord(task, {
             turnId: "t1001", at: new Date().toISOString(), state: "ok", user: "第1轮的问题",
-            texts: [{ seq: 0, text: "第1轮的回答" }], refFirstOp: { offset: 0, seq: 0 },
+            texts: [{ seq: 0, text: "第1轮的回答" }], refFirstOp: { offset: 0, seq: 0, len: 0 },
         });
         appendFileSync(fp, turnLines(2).join("\n") + "\n");
         appendTurnRecord(task, {
             turnId: "t1002", at: new Date().toISOString(), state: "ok", user: "第2轮的问题",
-            texts: [{ seq: 0, text: "第2轮的回答" }], refFirstOp: { offset: statSync(fp).size, seq: 8 },
+            texts: [{ seq: 0, text: "第2轮的回答" }], refFirstOp: { offset: statSync(fp).size, seq: 8, len: 0 },
         });
         const sizeBefore = statSync(fp).size;
 
@@ -73,12 +73,12 @@ describe("compaction：keepRounds = 0 是全清", () => {
         writeFileSync(fp, turnLines(1).join("\n") + "\n");
         appendTurnRecord(task, {
             turnId: "t1001", at: new Date().toISOString(), state: "ok", user: "第1轮的问题",
-            texts: [{ seq: 0, text: "第1轮的回答" }], refFirstOp: { offset: 0, seq: 0 },
+            texts: [{ seq: 0, text: "第1轮的回答" }], refFirstOp: { offset: 0, seq: 0, len: 0 },
         });
         appendFileSync(fp, turnLines(2).join("\n") + "\n");
         appendTurnRecord(task, {
             turnId: "t1002", at: new Date().toISOString(), state: "ok", user: "第2轮的问题",
-            texts: [{ seq: 0, text: "第2轮的回答" }], refFirstOp: { offset: 0, seq: 8 },
+            texts: [{ seq: 0, text: "第2轮的回答" }], refFirstOp: { offset: 0, seq: 8, len: 0 },
         });
 
         const manager = new LocalAgentManager();

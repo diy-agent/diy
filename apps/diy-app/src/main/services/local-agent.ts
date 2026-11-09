@@ -643,6 +643,8 @@ export interface KeptRoundRow {
 export interface KeptRoundsView {
     /** 旧 → 新（最后一轮 = 最新） */
     rounds: KeptRoundRow[];
+    /** 已经压掉、选不回来的轮数（与 chat app 的 CompactInfo 同口径） */
+    droppedCount: number;
     /** 总轮数（尾部窗口里能看到的） */
     total: number;
     /** 当前边界保留几轮 */
@@ -717,14 +719,20 @@ export function keptRoundsView(taskUri: string): KeptRoundsView {
               : cutIdx < 0
                 ? 0                   // 边界轮已不在尾部窗口内 ⇒ 当作全保留
                 : cutIdx;
-    const rounds: KeptRoundRow[] = order.map((turnId, i) => ({
-        turnId,
-        label: `轮${i + 1}`,
-        title: titles.get(turnId) ?? "",
-        tokens: perTurn.get(turnId) ?? 0,
-        kept: i >= keptFrom,
-    }));
-    const keptCount = keptFrom === 0 ? rounds.length : rounds.length - keptFrom;
+    // **只列还能保留的轮**（已压掉的选不回来）。之前全列出来只打 kept 标记，于是压完后
+    // 面板仍显示「共 4 轮」，看着像没压干净（用户实测）。
+    const rounds: KeptRoundRow[] = order
+        .map((turnId, i) => ({ turnId, i }))
+        .filter(({ i }) => i >= keptFrom)
+        .map(({ turnId, i }) => ({
+            turnId,
+            label: `轮${i + 1}`,
+            title: titles.get(turnId) ?? "",
+            tokens: perTurn.get(turnId) ?? 0,
+            kept: true,
+        }));
+    const keptCount = rounds.length;
+    const droppedCount = order.length - rounds.length;
     // ④ 窗口与价格（价目取上一步；`rates` 是每百万 token 的美元价）
     const cfgLimit = normalizeHistoryLimit(loadAutoCompact(diyHome()).history?.limit);
     const windowTokens = cfgLimit.windowTokens ?? contextLimitOf(personaForTask(diyHome(), taskUri).model) ?? null;
@@ -748,6 +756,7 @@ export function keptRoundsView(taskUri: string): KeptRoundsView {
     return {
         rounds,
         total: rounds.length,
+        droppedCount,
         keptCount,
         truncated: usages.length >= 800,
         windowTokens,

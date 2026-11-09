@@ -225,7 +225,7 @@ export function CompactCutBar(props: {
                     </span>                    <button
                         type="button"
                         class="btn btn-primary btn-xs ml-auto"
-                        disabled={busy() || !dirty() || total() === 0}
+                        disabled={busy() || !dirty()}
                         onClick={() => void apply()}
                         data-cut-apply
                     >
@@ -236,7 +236,7 @@ export function CompactCutBar(props: {
 
                 <Show when={keptCount() === 0}>
                     <div class="text-caption text-warning">
-                        ⚠ 0 轮 = 历史全清（那等于换一个新会话，不是压缩），所以这个位置不能落盘 —— 往右挪一轮再压。
+                        0 轮 = 全部丢弃：历史只剩压缩摘要那一句（任务正文/规则/工具仍在）。
                     </div>
                 </Show>
                 <Show when={note()}>
