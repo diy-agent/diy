@@ -21,6 +21,7 @@ import type {
     BotUpdateInput,
     BotChatHost,
     BotChatSnapshot,
+    CompactInfo,
     FirstBotInput,
     SendArgs,
     SendResult,
@@ -65,6 +66,9 @@ export function createPage(config?: unknown): PageContribution {
                         // 当前通道只有「最终消息线」；增量消费留给将来加事件通道
                     });
                 },
+                // ##519：压缩点（显式两步：先读轴，再按轮压）
+                compactInfo: (): Promise<CompactInfo> => host.compactInfo(),
+                compact: (args: unknown): Promise<BotChatSnapshot> => host.compact(keepRoundsOf(args)),
             },
         };
     }
@@ -145,10 +149,18 @@ function hostFrom(config: unknown): BotChatHost | undefined {
     if (!candidate || typeof candidate !== "object") return undefined;
     const port = candidate as Record<string, unknown>;
     // ##498：方法表就是「宿主能力」的判据 —— 缺 createBot / selectBot 的旧宿主不算多 bot 宿主
-    const ok = ["snapshot", "createBot", "updateBot", "removeBot", "selectBot", "send"].every(
+    const ok = ["snapshot", "createBot", "updateBot", "removeBot", "selectBot", "send", "compactInfo", "compact"].every(
         (key) => typeof port[key] === "function",
     );
     return ok ? (candidate as BotChatHost) : undefined;
+}
+
+/** 取保留轮数（`{ keepRounds }` 或裸数字；负数/非数一律拒） */
+function keepRoundsOf(args: unknown): number {
+    const raw = args !== null && typeof args === "object" ? (args as { keepRounds?: unknown }).keepRounds : args;
+    const n = typeof raw === "number" ? raw : Number(raw);
+    if (!Number.isFinite(n) || n < 0) throw new ChatPageError("chat/bad-keep-rounds", "保留轮数不合法");
+    return Math.floor(n);
 }
 
 /** 取 `{ id }`（切 bot / 删 bot 共用；也认裸字符串，CLI / 脚本用着方便） */
