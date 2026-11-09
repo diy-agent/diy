@@ -5,8 +5,9 @@ import { z } from "zod";
 import { RpcSchema, defineService } from "@diy-agent/rpc";
 import { StatusOk, StatusDataUri } from "../../../../shared/status";
 import { ChangeTypeSchema, PrioritySchema } from "../../../core/task-fields";
-import { DraftFieldSchema, DraftsData } from "../../../../shared/task-detail";
+import { DraftFieldSchema, DraftsData, TaskDetailSchema } from "../../../../shared/task-detail";
 import { TaskStateSchema } from "../../../core/task-state";
+import { TaskNodeSchema } from "../../../../shared/task-node";
 
 /** 从 api-def.ts 复制（那边是局部常量，没导出） */
 const CreateResult = z.object({
@@ -115,12 +116,35 @@ export const taskRoutes = RpcSchema.group({desc: `任务管理`,
               }),
             }),
           }),
+          /** 加载整棵任务树（renderer 侧栏用；2026-11 从 api-def 顶层 unary 归到 task 域） */
+          tree: RpcSchema.unary({
+            desc: `加载任务树（供 renderer 反向调用）`,
+            input: {},
+            output: z.object({ status: z.string(), data: z.array(TaskNodeSchema) }),
+          }),
           show: RpcSchema.unary({
             desc: `查看任务详情（含未提交草稿 ui_drafts）`,
             input: {
               uri: z.string().cliArg({ desc: "任务 URI" }),
             },
             output: z.object({ status: z.string(), data: z.any() }).or(z.object({ status: z.string(), msg: z.string() })),
+          }),
+
+          /**
+           * 任务详情（**renderer 专用**）—— 与 `show` 同一份数据 + `has_session` / `has_draft`。
+           *
+           * 2026-11 从 api-def 的顶层 `getTask` 归到这里。字段清单不在此手抄：
+           * 契约是 `shared/task-detail.ts` 的 `TaskDetailSchema`（单一真源，renderer 的
+           * `TaskDetail` 类型也从它推导）。历史教训：handler 与 output 各抄一份，漏一处就
+           * 静默丢字段（zod 默认 strip 未声明键）。
+           */
+          detail: RpcSchema.unary({
+            desc: `按 URI 获取任务详情（供 renderer 反向调用；未找到时 data 为 null）`,
+            input: { uri: z.string().cliArg({ desc: "任务 URI" }) },
+            output: z.object({
+              status: z.string(),
+              data: TaskDetailSchema.nullable(),
+            }),
           }),
 
           /** 半编辑草稿：用户未提交的输入（agent 输入框 / 任务编辑框），落任务目录 .diy/drafts.yaml */

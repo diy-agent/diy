@@ -37,7 +37,7 @@ export function AppInfo() {
         // serve 下方法不存在 → TypeError 打掉 React 整棵树 → 全页白屏。
         // Solid 版加了 ?. 可选调用更糟：连 TypeError 都不抛，永久卡在「加载中…」。
         diyService.diy
-            .getAppInfo({})
+            .app.info({})
             .then(setInfo)
             .catch((e: unknown) => setFailed(e instanceof Error ? e.message : String(e)));
     });

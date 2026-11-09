@@ -25,6 +25,7 @@ import { uiRoutes } from "./api-domains/ui/api";
 import { flowRoutes } from "./api-domains/flow/api";
 import { FlowNodeSchema, FlowRendererSchema, FlowEdgeSchema, FlowArtSchema, FlowPayloadViewSchema, FlowVisitSchema, FlowViewSchema, FlowArtifactViewSchema, FlowAnchorSchema, FlowPostSchema, FlowThreadSchema, FlowThreadsSchema, kvList } from "../../shared/flow";
 import { taskRoutes } from "./api-domains/task/api";
+import { appRoutes } from "./api-domains/app/api";
 import { StatusOk, StatusDataId, StatusDataUri } from "../../shared/status";
 import { envRoutes } from "./api-domains/env/api";
 import { cacheHintRoutes } from "./api-domains/cacheHint/api";
@@ -197,61 +198,16 @@ export const apiDef = RpcSchema.bindNames(RpcSchema.group({ children: {
     管控台命令行工具，提供任务管理、主题管理、Agent 对话、LLM 代理、日志查看等功能。
     `,
     children: {
+      app: appRoutes,
       task: taskRoutes,
 
       project: projectRoutes,
 
-      /** Main 进程运行状态（供 renderer diy.ui.status 反向调用） */
-      getAppStatus: RpcSchema.unary({
-        desc: `主进程运行状态（pid/uptime/memory）`,
-        input: {},
-        output: z.object({
-          status: z.string(),
-          data: z.object({
-            pid: z.number(),
-            uptime: z.number(),
-            memory: z.number(),
-          }),
-        }),
-      }),
 
       // 运行环境详情：设置页「状态」标签用，同时天然可被 CLI 调用。
       // 历史上它只是一条 ipcMain.handle("getAppInfo")，preload 没桥接、api-def 也没登记，
       // 于是 Electron 里 window.diy 为 undefined（可选链短路，永远卡在「加载中…」）、
       // serve 里方法不存在。走 RPC 后三种入口共用同一实现。
-      getAppInfo: RpcSchema.unary({
-        desc: `查询运行环境详情（端口/目录/版本/系统/CDP 连接地址）`,
-        input: {},
-        output: z.object({
-          port: z.number(),
-          diyHome: z.string(),
-          /** 数据根的展示形式（相对**真实家目录**缩 `~`；隔离/临时根保持绝对路径）。
-           *  窗口标题与界面展示用 —— renderer 拿不到真实家目录，缩写规则只能由 main 侧算
-           *  （见 shared/instance-title 的 abbrevHome + main/core/instance-identity.ts）。 */
-          diyHomeDisplay: z.string(),
-          /** 当前代码仓库/ worktree 的展示路径（窗口标题用） */
-          repoDisplay: z.string(),
-          /** 运行环境（production/development/test）。dev/test 的界面与生产几乎一样，
-           *  必须能看出来，否则容易误改生产数据。 */
-          env: z.string(),
-          /** 当前运行代码所在 git 分支（打包/非仓库为空串）。窗口标题用它区分
-           *  「哪个 worktree 的构建」—— 数据根是 /tmp 或 build/<v>/home 时这是唯一来源线索。 */
-          branch: z.string(),
-          cache: z.string(),
-          userData: z.string(),
-          /** CDP 连接地址（`ws://127.0.0.1:<port>/devtools/browser/...`）—— 供
-           *  `playwright-cli attach --cdp=<它>` 驱动真实窗口（设置页「复制调试信息」用）。
-           *  Electron 以 `--remote-debugging-port=0` 启动时端口写在 userData/DevToolsActivePort；
-           *  未启用 CDP / 文件不在（serve 模式）时为空串，不编造。 */
-          cdp: z.string(),
-          electron: z.string(),
-          node: z.string(),
-          chrome: z.string(),
-          platform: z.string(),
-          pid: z.number(),
-          memory: z.string(),
-        }),
-      }),
 
       doctor: RpcSchema.unary({
         desc: `系统健康自检`,
@@ -274,41 +230,8 @@ export const apiDef = RpcSchema.bindNames(RpcSchema.group({ children: {
         }),
       }),
 
-      loadTaskTree: RpcSchema.unary({
-        desc: `加载任务树（供 renderer 反向调用）`,
-        input: {},
-        output: z.object({ status: z.string(), data: z.array(TaskNodeSchema) }),
-      }),
 
-      getTask: RpcSchema.unary({
-        desc: `按 URI 获取任务（供 renderer 反向调用；未找到时 data 为 null）`,
-        // cliArg：不给它的话 `diy getTask <uri>` 完全没法从命令行调（"Unknown option"），
-        // 于是这条 RPC 的载荷**只能靠跑 Electron 才能验证** —— 契约漏字段的 bug 就更容易溜过。
-        input: { uri: z.string().cliArg({ desc: "任务 URI" }) },
-        // 字段清单**不在此处手抄**：契约是 shared/task-detail.ts 的 TaskDetailSchema（单一真源，
-        // renderer 的 TaskDetail 类型也从它推导）—— 加字段只改那一处。
-        // 背景（此前的真实缺陷）：这里与 api-impl 的 handler **两处各抄一份**，漏一处就静默丢字段
-        // （zod .object() 默认 strip 未声明键，实测漏过 change_type / module / priority / persona：
-        //  renderer 拿到 undefined、详情面板显示"未设置"，而数据其实好好的）。那份手抄已被 167 取代。
-        output: z.object({
-          status: z.string(),
-          // 未找到 → data: null，renderer 侧 `if (r.data)` 守卫才能生效
-          data: TaskDetailSchema.nullable(),
-        }),
-      }),
 
-      /** 弹出原生目录选择器（供 renderer「选择目录」按钮反向调用；Web/serve 模式无 Electron dialog 时返回 canceled） */
-      pickProjectDirectory: RpcSchema.unary({
-        desc: `弹出原生目录选择器，返回所选路径`,
-        input: {},
-        output: z.object({
-          status: z.string(),
-          data: z.object({
-            canceled: z.boolean(),
-            path: z.string().optional(),
-          }),
-        }),
-      }),
 
       // agent 域已拆到 `api-domains/agent/`（内部再分 persona / local / usage）
       agent: agentRoutes,

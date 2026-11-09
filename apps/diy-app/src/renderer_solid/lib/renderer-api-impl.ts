@@ -194,13 +194,14 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
 
   // diy.ui.tree — 反向调 main 的 diy.loadTaskTree 取结构化数据
   binding.on(ui.tree, async ({ input }) => {
-    return diyService.diy.loadTaskTree({ allTasks: input.all ?? false });
+    return diyService.diy.task.tree({ allTasks: input.all ?? false });
   });
 
-  // diy.ui.status — 进程数据反向调 main 的 diy.getAppStatus
+  // diy.ui.status — 进程数据反向调 main 的 diy.app.info（旧 getAppStatus 已并入）
+  // 字段名保持 ui.status 的老口径（memory 是字节），不与 app.info 的 heapUsed 混
   binding.on(ui.status, async () => {
-    const s = await diyService.diy.getAppStatus({});
-    return { status: s.status, data: s.data };
+    const s = await diyService.diy.app.info({});
+    return { status: 'ok', data: { pid: s.pid, uptime: s.uptime, memory: s.heapUsed } };
   });
 
   // diy.ui.project.create — 与 UI「创建项目」按钮共用同一入口

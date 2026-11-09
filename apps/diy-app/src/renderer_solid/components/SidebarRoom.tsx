@@ -282,7 +282,7 @@ export function SidebarRoom() {
     onMount(() => {
         void (async () => {
             try {
-                const info = await diyService.diy.getAppInfo({});
+                const info = await diyService.diy.app.info({});
                 const id = sidebarRoomId(info.env, info.diyHome);
                 setRoomId(id);
                 await diyService.diy.room.create({ id, title: "侧边栏助手", human: undefined });

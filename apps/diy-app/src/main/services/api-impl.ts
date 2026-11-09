@@ -148,56 +148,6 @@ export function bindAppHandlers(binding: ServerBinding): void {
   // ── project ──
   bindProject(binding);
 
-  // ── getAppStatus（供 renderer diy.ui.status 反向调用）──
-  binding.on(app.getAppStatus, () => ({
-    status: "ok",
-    data: { pid: process.pid, uptime: process.uptime(), memory: process.memoryUsage().heapUsed },
-  }));
-
-  // ── getAppInfo（Electron / serve / CLI 三处共用，版本字段对非 Electron 环境降级）──
-  binding.on(app.getAppInfo, async () => {
-    const ac = new AppConfig(state.diyHome());
-    const gb = (n: number) => (n / 1024 / 1024 / 1024).toFixed(1);
-    // CDP 连接地址：Electron 以 `--remote-debugging-port=0` 启动，实际端口写进
-    // `userData/DevToolsActivePort`（首行端口、次行 path）—— renderer 读不到文件系统，
-    // 只能由 main 侧读出来回给「复制调试信息」（口径与 CLI 的 printCdpHint 同源，见 cli/index.ts）。
-    const cdp = await (async () => {
-      const { readFileSync } = await import("node:fs");
-      const { join } = await import("node:path");
-      try {
-        const [port, path] = readFileSync(join(ac.electronUserData, "DevToolsActivePort"), "utf-8")
-          .split("\n")
-          .map((x) => x.trim());
-        return port && path ? `ws://127.0.0.1:${port}${path}` : "";
-      } catch {
-        return ""; // CDP 未启用 / serve 模式无此文件
-      }
-    })();
-    return {
-      port: _rpcPort,
-      diyHome: ac.diyHome,
-      // 展示形式与运行环境：窗口标题（main 与 renderer 两侧同源）与设置页状态用。
-      // 缩写基准是**真实家目录**（不是 $HOME）：隔离/测试实例的 DIY_HOME === $HOME，
-      // 用 $HOME 缩会得到 `~`，把 /tmp 临时根伪装成用户家目录（见 core/instance-identity.ts）。
-      diyHomeDisplay: homeDisplayOf(ac.diyHome),
-      repoDisplay: repoDisplayOf(),
-      env: readRuntimeConfig().env,
-      // 当前运行代码所在 git 分支：标题据此判断「哪个 worktree 的构建」，拿不到时空串
-      branch: currentGitBranch() ?? "",
-      cache: ac.cache,
-      userData: ac.electronUserData,
-      cdp,
-      // serve 模式是纯 Node，这两个版本字段不存在 —— 必须给可读的占位而不是 undefined，
-      // 否则 zod output 校验直接失败，界面又变成一片空白
-      electron: process.versions.electron ?? "—（非 Electron）",
-      node: process.versions.node,
-      chrome: process.versions.chrome ?? "—（非 Electron）",
-      platform: `${platform()} ${arch()} (${release()})`,
-      pid: process.pid,
-      memory: `${gb(totalmem())} GB total, ${gb(freemem())} GB free`,
-    };
-  });
-
   // ── doctor ──
   binding.on(app.doctor, async () => {
     const issues = health.runHealthCheck();
@@ -237,61 +187,6 @@ export function bindAppHandlers(binding: ServerBinding): void {
         models,
       },
     };
-  });
-
-  // ── loadTaskTree / getTask ──
-  binding.on(app.loadTaskTree, async () => {
-    return { status: "ok", data: taskTree.loadTaskTree() };
-  });
-  binding.on(app.getTask, async ({ input }) => {
-    const t = state.getTask(input.uri);
-    // 未找到 → data: null（truthy 的壳对象会让 renderer 守卫失效）
-    if (!t) return { status: "error", data: null };
-    // project 只存 id（路径即分组）；同时回填 path/label，CLI/GUI 才看得到原 subject 路径
-    const pinfo = project.getProjectInfo(t.project ?? "");
-    // 草稿随任务返回（与 diy.task.show 同一契约）：renderer 只调这一个接口拿任务，
-    // 少一次往返就少一处「忘记带草稿」的机会 —— 两个 handler 必须给同样的字段。
-    const d = readDrafts(input.uri);
-    // **整份展开交给契约 schema**：既不是手写键清单，也不只是 `...t` 展开 ——
-    // 载荷形状由 shared/task-detail.ts 的 TaskDetailSchema（单一真源）决定，多余键自动剥掉。
-    //
-    // 历史教训（真实缺陷，两处手抄导致）：handler 里手抄一份键清单、api-def 的 output 白名单再抄一份，
-    // 漏一处就静默丢字段（zod .object() 会 strip 未声明键）。实测漏过 change_type / module /
-    // priority / persona —— 详情面板恒显示"未设置"、写入其实成功（数据在文件里），
-    // 用户视角是"填了看不见、改完像没生效"。结论：只要人还写第二遍就一定会漏，故收敛成单一真源。
-    return {
-      status: "ok",
-      data: TaskDetailSchema.parse({
-        ...t,
-        project_path: pinfo?.path,
-        project_label: pinfo?.label,
-        ui_drafts: d ? { base_updated: d.base_updated, saved: d.saved, fields: d.fields } : null,
-        // agent 面状态（##355）：与任务树节点同一判据、同一真源（见 shared/task-detail.ts 注释）。
-        // 草稿直接由上面读到的 `d`（readDrafts 的返回值）派生，不再二次读盘。
-        has_session: hasConversation(input.uri),
-        has_draft: d?.fields?.agent_input !== undefined,
-      }),
-    };
-  });
-
-  // ── pickProjectDirectory（renderer「选择目录」按钮反向调用）──
-  binding.on(app.pickProjectDirectory, async () => {
-    // dialog 是 Electron main 专属；serve(Web) 模式无 dialog，返回 canceled
-    try {
-      const { dialog } = await import("electron");
-      const r = await dialog.showOpenDialog({
-        title: "选择项目目录",
-        properties: ["openDirectory", "createDirectory"],
-      });
-      const path = r.filePaths?.[0];
-      if (r.canceled || !path) {
-        return { status: "ok", data: { canceled: true } };
-      }
-      return { status: "ok", data: { canceled: false, path } };
-    } catch (err) {
-      console.error(`[pickProjectDirectory] 打开目录选择器失败: ${err}`);
-      return { status: "ok", data: { canceled: true } };
-    }
   });
 
   // —— watch —— 文件系统变更推送（serverStream：FileWatcher → RPC → renderer）
