@@ -19,7 +19,7 @@
 
 import { GenApp, html, Signal, type Spec } from "@diy-agent/ui/browser";
 import type { PageContext, PageView } from "@diy-agent/workbench-ui";
-import type { BotView, ChatMetrics, BotChatSnapshot, ModelChoice, SendResult, WireMessage } from "./shared.js";
+import type { BotView, ChatMetrics, BotChatSnapshot, CompactInfo, ModelChoice, SendResult, WireMessage } from "./shared.js";
 import { textMessage } from "./shared.js";
 import { DEMO_TOOL_COMMAND, demoToolMessage } from "./demo.js";
 import { renderBlocks } from "./block-renderers.js";
@@ -55,11 +55,40 @@ const store: Store = {
     emptyText: "还没有消息，说一句话开始。",
 };
 
+/**
+ * 「等待回复」的秒表：每 0.5s 更新一次提示位。
+ *
+ * 为什么要有它：发出去之后如果上游慢/挂住，界面此前**完全没有反馈**（用户 2026-11-07：
+ * 「就算几秒超时或错误，UI 也没任何提示」）。错误会有 `appendError`，但「还没有结果」这段
+ * 空窗必须自己说。超过 20s 标黄，超过 60s 提示可以去压上下文/换模型。
+ */
+window.setInterval(() => {
+    if (busyEl === null) return;
+    if (!store.busy || busySince === 0) {
+        busyEl.textContent = "";
+        busyEl.removeAttribute("data-slow");
+        return;
+    }
+    const ms = Date.now() - busySince;
+    const sec = Math.round(ms / 1000);
+    busyEl.textContent = ms < 1200 ? "已发送…" : sec < 60 ? `等待回复… ${String(sec)}s` : `等待回复… ${String(sec)}s（超过 1 分钟，可能上游慢或网络不通）`;
+    if (sec >= 20) busyEl.setAttribute("data-slow", "1");
+    else busyEl.removeAttribute("data-slow");
+}, 500);
+
 /** 右侧 panel 的模式（固定 / 悬浮）：换 bot 也保持上次选择 */
 let viewsetPinned = false;
 
 /** 唯一的变更信号：状态改了 → bump() → 只有动态块重跑。 */
 const rev = new Signal(0);
+/** ##519 压缩点：面板开合 / 数据 / 待应用轮数 */
+const cutOpen = new Signal(false);
+const cutInfo = new Signal<CompactInfo | null>(null);
+const cutKeep = new Signal(0);
+const cutError = new Signal("");
+/** 「等待回复」提示（命令式更新，避免整页重绘）：元素 + 起点时刻 */
+let busyEl: HTMLElement | null = null;
+let busySince = 0;
 
 function bump(): void {
     rev.value++;
@@ -687,10 +716,15 @@ export const chatPageView: PageView = {
                         metrics.contextWindow > 0
                             ? (metrics.inputTokens / metrics.contextWindow) * 100
                             : undefined;
-                    yield metric(
-                        "窗口",
-                        ratio === undefined ? "—" : `${ratio.toFixed(1)}%`,
-                        ratio !== undefined && ratio > 60,
+                    // ##519：**悬停「窗口」这个 token 数**就展开压缩点（与 diy-app 的环同一交互），
+                    // 不是另外挂一个按钮 —— 用户 2026-11-07 明确要求这个手感。
+                    yield cutWrap(
+                        context,
+                        metric(
+                            "窗口",
+                            ratio === undefined ? "—" : `${ratio.toFixed(1)}%`,
+                            ratio !== undefined && ratio > 60,
+                        ),
                     );
                     const cache =
                         metrics?.cacheReadTokens !== undefined &&
@@ -704,6 +738,133 @@ export const chatPageView: PageView = {
                 });
                 yield composer(context);
             });
+        }
+
+        /**
+         * ##519 压缩点（二级悬停面板）：一行读数 + 一轮一行的表 + 滑杆 + 压缩按钮。
+         *
+         * 为什么要「显式两步」（先 `compactInfo` 读轴、再 `compact(keepRounds)` 落盘）：
+         * 一步做完的话，用户拖到哪里、会不会压过头，在按下之前完全看不见。
+         */
+        function cutWrap(context: PageContext, inner: Spec): Spec {
+            // ⚠️ 这里**刻意不用 `rev.value++`**：那会让整个页脚重建 ⇒ 节点被换掉 ⇒
+            // pointerenter 重新触发 ⇒ 又重建 …… 面板就再也关不上（用户实测「一直是弹出状态」）。
+            // 正确做法：面板只建一次，内容与显隐都用**命令式**更新。
+            let panel: HTMLElement | null = null
+            let closing: number | undefined
+
+            const paint = (): void => {
+                const el = panel
+                if (el === null) return
+                const info = cutInfo.value
+                el.hidden = !cutOpen.value
+                if (!cutOpen.value) return
+                if (info === null) {
+                    el.innerHTML = '<span class="chat-cut-row">读取中…</span>'
+                    return
+                }
+                const total = info.rounds.length
+                // 0 是合法位置：**全部丢弃**（历史只剩 checkpoint 那一句）
+                const keep = Math.max(0, Math.min(total, cutKeep.value))
+                const rows = info.rounds
+                    .map((round, index) => {
+                        const cut =
+                            index === total - keep
+                                ? '<div class="chat-cut-line"><span>✂ 压缩点</span></div>'
+                                : ""
+                        const cls = round.kept ? "chat-cut-row" : "chat-cut-row chat-cut-row-drop"
+                        // 标题来自用户消息正文 ⇒ 必须转义（innerHTML 拼串不转义就是 XSS 面）
+                        return `${cut}<div class="${cls}"><span class="chat-cut-lab">${esc(round.label)}</span><span class="chat-cut-title">${esc(round.title)}</span></div>`
+                    })
+                    .join("")
+                el.innerHTML = `
+<div class="chat-cut-head"><span>保留最近 ${keep} / ${total} 轮${keep === 0 ? "（全部丢弃）" : ""}</span>${
+                    info.droppedCount > 0 ? `<span class="chat-cut-dim">（已压掉 ${info.droppedCount} 轮）</span>` : ""
+                }</div>
+${rows}
+<input class="chat-cut-range" type="range" min="0" max="${Math.max(0, total)}" value="${keep}">
+<div class="chat-cut-actions"><button class="chat-cut-apply" type="button">压缩</button>${
+                    cutError.value === "" ? "" : `<span class="chat-cut-err">${esc(cutError.value)}</span>`
+                }</div>`
+                el.querySelector<HTMLInputElement>(".chat-cut-range")?.addEventListener("input", (event) => {
+                    cutKeep.value = Number((event.target as HTMLInputElement).value)
+                    paint()
+                })
+                el.querySelector<HTMLButtonElement>(".chat-cut-apply")?.addEventListener("click", () => {
+                    void apply()
+                })
+            }
+
+            let loading = false
+            const open = async (): Promise<void> => {
+                if (closing !== undefined) window.clearTimeout(closing)
+                // 重入保护：paint() 会重写 innerHTML，指针下的子节点被换掉会再次触发
+                // pointerenter ⇒ 再 invoke ⇒ 再 paint …… 实测把渲染进程顶死。
+                if (cutOpen.value && (cutInfo.value !== null || loading)) return
+                cutOpen.value = true
+                loading = true
+                paint()
+                try {
+                    const info = await context.invoke<CompactInfo>("compactInfo")
+                    cutInfo.value = info
+                    cutKeep.value = info.rounds.length
+                    cutError.value = ""
+                } catch (cause: unknown) {
+                    cutInfo.value = null
+                    cutError.value = messageOf(cause)
+                }
+                loading = false
+                paint()
+            }
+
+            const apply = async (): Promise<void> => {
+                try {
+                    const next = await context.invoke<BotChatSnapshot>("compact", { keepRounds: cutKeep.value })
+                    applySnapshot(next)
+                    cutError.value = ""
+                    const info = await context.invoke<CompactInfo>("compactInfo")
+                    cutInfo.value = info
+                    cutKeep.value = info.rounds.length
+                } catch (cause: unknown) {
+                    cutError.value = messageOf(cause)
+                }
+                paint()
+            }
+
+            return html.div(
+                {
+                    class: "chat-cut-wrap",
+                    // 悬停事件用**原生监听**绑在节点上，不走 DSL 的 onPointerXxx：
+                    // 实测 DSL 那条路 pointerleave 没生效（面板打开就关不上），而原生一定可靠。
+                    ref: (node: HTMLElement) => {
+                        node.addEventListener("pointerenter", () => {
+                            void open()
+                        })
+                        node.addEventListener("pointerleave", () => {
+                            closing = window.setTimeout(() => {
+                                cutOpen.value = false
+                                cutInfo.value = null
+                                paint()
+                            }, 220)
+                        })
+                    },
+                },
+                function* () {
+                    yield inner
+                    yield html.div({
+                        class: "chat-cut-panel",
+                        hidden: true,
+                        ref: (node: HTMLElement) => {
+                            panel = node
+                            // 初始必须收起：`.chat-cut-panel{display:flex}` 会盖掉 UA 的 `[hidden]{display:none}`
+                            node.hidden = !cutOpen.value
+                            // 整页重绘（如压缩后 applySnapshot）会换掉这个节点 —— 若当时面板是开着的，
+                            // 新节点必须自己补一次内容，否则用户看到的是「点完压缩面板空了」。
+                            if (cutOpen.value) paint()
+                        },
+                    })
+                },
+            )
         }
 
         // ── 输入框（结构层：整个运行期只建一次 ⇒ 焦点与草稿不丢） ──
@@ -733,6 +894,13 @@ export const chatPageView: PageView = {
                         type: "submit",
                         text: "发送",
                         disabled: B(() => store.busy || (store.multi && store.bot === null)),
+                    });
+                    // 发出去之后**必须**有反馈：否则上游慢/挂住时，界面看起来像「什么都没发生」
+                    yield html.span({
+                        class: "chat-busy",
+                        ref: (node: HTMLElement) => {
+                            busyEl = node
+                        },
                     });
                 },
             );
@@ -796,6 +964,7 @@ export const chatPageView: PageView = {
                 return;
             }
             store.busy = true;
+            busySince = Date.now();
             store.messages = [...store.messages, textMessage("user", text)];
             bump();
             const multi = store.multi && store.bot !== null;
@@ -813,6 +982,8 @@ export const chatPageView: PageView = {
                 appendError(`出错了：${messageOf(cause)}`);
             } finally {
                 store.busy = false;
+                busySince = 0;
+                if (busyEl !== null) busyEl.textContent = "";
                 bump();
                 inputEl?.focus();
             }
@@ -893,6 +1064,21 @@ function metric(label: string, value: string, warn = false): Spec {
         yield html.span({ text: `${label} ` });
         yield html.tag("b", { class: warn ? "chat-warn" : "", text: value });
     });
+}
+
+/**
+ * HTML 转义（压缩面板是唯一用 `innerHTML` 的地方）。
+ *
+ * 为什么必须转义：轮次标题来自**用户消息正文**，直接拼进 innerHTML 就是 XSS 面
+ * （用户自己发一句 `<img onerror=…>` 就能在渲染进程执行）。
+ */
+function esc(text: string): string {
+    return text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;")
 }
 
 function messageOf(cause: unknown): string {
