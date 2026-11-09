@@ -70,7 +70,7 @@ fmt-fix() { run npx oxfmt --write src/ tests/; }
 # publish：build 后发布到 npm（加 --dry-run 只演练：打包 + 校验，不上传）
 publish() {
   build
-  run node ../../../scripts/npm-publish.mjs . --out=lib "$@"
+  run node ../../../scripts/npm-publish.mjs . --out=dist "$@"
 }
 
 sha "$@"

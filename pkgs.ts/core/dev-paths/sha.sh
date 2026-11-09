@@ -12,7 +12,7 @@ sync() { :; }
 build() {
   run npx tsc -p tsconfig.build.json
   # 发行形态 package.json（exports 指 lib/*.js、去 private）—— build-pkgs 也会做一遍，幂等
-  run node ../../../scripts/npm-publish.mjs . --prepare-only --out=lib
+  run node ../../../scripts/npm-publish.mjs . --prepare-only --out=dist
 }
 typecheck() { run npx tsc -p tsconfig.json; }
 lint() { run npx oxlint src/ tests/; }
@@ -21,6 +21,6 @@ test() { run npx vitest run "$@"; }
 test-unit() { test "$@"; }
 check() { typecheck; lint; }
 fix() { lint-fix; }
-publish() { run node ../../../scripts/npm-publish.mjs . --out=lib "$@"; }
+publish() { run node ../../../scripts/npm-publish.mjs . --out=dist "$@"; }
 
 sha "$@"

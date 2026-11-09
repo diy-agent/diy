@@ -51,11 +51,11 @@ build() {
 }
 # 发行形态（lib/package.json 等）：tsc 之后的额外步骤，单独成命令 ——
 # 这样仓根批编时只需再跑这一步，不必重跑本包的 tsc（2026-10-31）
-build-artifact() { run node ../../../scripts/npm-publish.mjs . --prepare-only --out=lib; }
+build-artifact() { run node ../../../scripts/npm-publish.mjs . --prepare-only --out=dist; }
 # publish：build 后发布到 npm（加 --dry-run 只演练：打包 + 校验，不上传）
 publish() {
   build
-  run node ../../../scripts/npm-publish.mjs . --out=lib "$@"
+  run node ../../../scripts/npm-publish.mjs . --out=dist "$@"
 }
 
 # test：运行 vitest 单元测试
