@@ -720,94 +720,104 @@ export const chatPageView: PageView = {
          * 一步做完的话，用户拖到哪里、会不会压过头，在按下之前完全看不见。
          */
         function cutChip(context: PageContext): Spec {
-            const open = async (): Promise<void> => {
-                cutOpen.value = true;
-                try {
-                    const info = await context.invoke<CompactInfo>("compactInfo");
-                    cutInfo.value = info;
-                    cutKeep.value = Math.min(info.rounds.length, Math.max(1, info.rounds.length));
-                } catch {
-                    cutInfo.value = null;
+            // ⚠️ 这里**刻意不用 `rev.value++`**：那会让整个页脚重建 ⇒ 节点被换掉 ⇒
+            // pointerenter 重新触发 ⇒ 又重建 …… 面板就再也关不上（用户实测「一直是弹出状态」）。
+            // 正确做法：面板只建一次，内容与显隐都用**命令式**更新。
+            let panel: HTMLElement | null = null
+            let closing: number | undefined
+
+            const paint = (): void => {
+                const el = panel
+                if (el === null) return
+                const info = cutInfo.value
+                el.hidden = !cutOpen.value
+                if (!cutOpen.value) return
+                if (info === null) {
+                    el.innerHTML = '<span class="chat-cut-row">读取中…</span>'
+                    return
                 }
-                rev.value = rev.value + 1;
-            };
+                const total = info.rounds.length
+                const keep = Math.max(1, Math.min(total === 0 ? 1 : total, cutKeep.value))
+                const rows = info.rounds
+                    .map((round, index) => {
+                        const cut =
+                            index === total - keep
+                                ? '<div class="chat-cut-line"><span>✂ 压缩点</span></div>'
+                                : ""
+                        const cls = round.kept ? "chat-cut-row" : "chat-cut-row chat-cut-row-drop"
+                        return `${cut}<div class="${cls}"><span class="chat-cut-lab">${round.label}</span><span class="chat-cut-title">${round.title}</span></div>`
+                    })
+                    .join("")
+                el.innerHTML = `
+<div class="chat-cut-head"><span>保留最近 ${keep} / ${total} 轮</span>${
+                    info.droppedCount > 0 ? `<span class="chat-cut-dim">（已压掉 ${info.droppedCount} 轮）</span>` : ""
+                }</div>
+${rows}
+<input class="chat-cut-range" type="range" min="1" max="${Math.max(1, total)}" value="${keep}">
+<div class="chat-cut-actions"><button class="chat-cut-apply" type="button">压缩</button>${
+                    cutError.value === "" ? "" : `<span class="chat-cut-err">${cutError.value}</span>`
+                }</div>`
+                el.querySelector<HTMLInputElement>(".chat-cut-range")?.addEventListener("input", (event) => {
+                    cutKeep.value = Number((event.target as HTMLInputElement).value)
+                    paint()
+                })
+                el.querySelector<HTMLButtonElement>(".chat-cut-apply")?.addEventListener("click", () => {
+                    void apply()
+                })
+            }
+
+            const open = async (): Promise<void> => {
+                if (closing !== undefined) window.clearTimeout(closing)
+                cutOpen.value = true
+                paint()
+                try {
+                    const info = await context.invoke<CompactInfo>("compactInfo")
+                    cutInfo.value = info
+                    cutKeep.value = Math.max(1, info.rounds.length)
+                    cutError.value = ""
+                } catch (cause: unknown) {
+                    cutInfo.value = null
+                    cutError.value = messageOf(cause)
+                }
+                paint()
+            }
+
             const apply = async (): Promise<void> => {
                 try {
-                    const next = await context.invoke<BotChatSnapshot>("compact", { keepRounds: cutKeep.value });
-                    applySnapshot(next);
-                    await open();
+                    const next = await context.invoke<BotChatSnapshot>("compact", { keepRounds: cutKeep.value })
+                    applySnapshot(next)
+                    cutError.value = ""
+                    const info = await context.invoke<CompactInfo>("compactInfo")
+                    cutInfo.value = info
+                    cutKeep.value = Math.max(1, info.rounds.length)
                 } catch (cause: unknown) {
-                    // 失败要把原因摆到面板上：静默失败正是 ##519 抱怨过的形态
-                    cutInfo.value = { rounds: [], droppedCount: 0 };
-                    cutError.value = messageOf(cause);
+                    cutError.value = messageOf(cause)
                 }
-                rev.value = rev.value + 1;
-            };
+                paint()
+            }
+
             return html.div(
                 {
                     class: "chat-cut-wrap",
                     onPointerEnter: () => void open(),
                     onPointerLeave: () => {
-                        window.setTimeout(() => {
-                            cutOpen.value = false;
-                            rev.value = rev.value + 1;
-                        }, 180);
+                        closing = window.setTimeout(() => {
+                            cutOpen.value = false
+                            paint()
+                        }, 220)
                     },
                 },
                 function* () {
-                    yield html.button({ class: "chat-cut-chip", type: "button", text: "✂ 压缩点" });
-                    yield html.div({ class: "chat-cut-panel", hidden: B(() => !cutOpen.value) }, function* () {
-                        const info = cutInfo.value;
-                        if (info === null) {
-                            yield html.span({ class: "chat-cut-row", text: "读取中…" });
-                            return;
-                        }
-                        const total = info.rounds.length;
-                        yield html.div({ class: "chat-cut-head" }, function* () {
-                            yield html.span({ text: `保留最近 ${String(cutKeep.value)} / ${String(total)} 轮` });
-                            if (info.droppedCount > 0) {
-                                yield html.span({ class: "chat-cut-dim", text: `（已压掉 ${String(info.droppedCount)} 轮）` });
-                            }
-                        });
-                        for (const [index, round] of info.rounds.entries()) {
-                            if (index === total - cutKeep.value) {
-                                yield html.div({ class: "chat-cut-line" }, function* () {
-                                    yield html.span({ text: "✂ 压缩点" });
-                                });
-                            }
-                            yield html.div(
-                                { class: round.kept ? "chat-cut-row" : "chat-cut-row chat-cut-row-drop" },
-                                function* () {
-                                    yield html.span({ class: "chat-cut-lab", text: round.label });
-                                    yield html.span({ class: "chat-cut-title", text: round.title });
-                                },
-                            );
-                        }
-                        yield html.input({
-                            class: "chat-cut-range",
-                            type: "range",
-                            min: "1",
-                            max: String(Math.max(1, total)),
-                            value: String(cutKeep.value),
-                            onInput: (event: Event) => {
-                                cutKeep.value = Number((event.target as HTMLInputElement).value);
-                                rev.value = rev.value + 1;
-                            },
-                        });
-                        yield html.div({ class: "chat-cut-actions" }, function* () {
-                            yield html.button({
-                                class: "chat-cut-apply",
-                                type: "button",
-                                text: "压缩",
-                                onClick: () => void apply(),
-                            });
-                            if (cutError.value !== "") {
-                                yield html.span({ class: "chat-cut-err", text: cutError.value });
-                            }
-                        });
-                    });
+                    yield html.button({ class: "chat-cut-chip", type: "button", text: "✂ 压缩点" })
+                    yield html.div({
+                        class: "chat-cut-panel",
+                        hidden: true,
+                        ref: (node: HTMLElement) => {
+                            panel = node
+                        },
+                    })
                 },
-            );
+            )
         }
 
         // ── 输入框（结构层：整个运行期只建一次 ⇒ 焦点与草稿不丢） ──
