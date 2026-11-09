@@ -7,7 +7,7 @@
  */
 
 import type { ServerBinding } from "@diy-agent/rpc";
-import { ChannelServerBinding } from "@diy-agent/rpc";
+import { ChannelServerBinding, assertFullyBound } from "@diy-agent/rpc";
 import type { EnvelopeTransport } from "@diy-agent/rpc";
 
 import * as state from "../core/state";
@@ -275,6 +275,13 @@ export function bindAppHandlers(binding: ServerBinding): void {
   // ── tool ──（已拆到 api-domains/tool/）
   bindTool(binding);
 
+
+  // 装配完整性对账：apiDef 声明的每个方法都必须有人 bind（反之亦然）。
+  // 2026-11-09 就是漏了 `bindApp` —— meta 在、handler 不在，CLI 探活因此失败、
+  // 报「启动超时」还把自己杀掉。这里在**启动时**就炸，不留到第一条请求。
+  // `diy.ui.*` 是 **renderer 侧**绑的（见 renderer-api-impl.ts）—— main 的 binding 上
+  // 本来就不该有它们，排除掉
+  assertFullyBound(binding, apiDef.diy, "diy-app", ["diy.ui."]);
 }
 
 /** 兼容旧用法：把 Main 侧 handlers 绑到某 transport 的 ChannelServerBinding（如 IPC） */

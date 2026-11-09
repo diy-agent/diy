@@ -42,6 +42,16 @@ export abstract class ServerBindingCore {
   protected _clientStreams = new Map<string, ClientStreamHandler>();
   protected _bidiStreams = new Map<string, BidiStreamHandler>();
 
+  /** 已注册的全部方法名（四个 streamMode 的并集）。见 `ServerBinding.listRegistered`。 */
+  listRegistered(): string[] {
+    return [
+      ...this._unaries.keys(),
+      ...this._serverStreams.keys(),
+      ...this._clientStreams.keys(),
+      ...this._bidiStreams.keys(),
+    ];
+  }
+
   /** 从 meta 取方法全名；未经 router() 回写（无 name）则明确报错 */
   protected _nameOf(meta: _AnyProcedureMeta): string {
     const name = meta.name;

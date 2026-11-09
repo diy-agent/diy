@@ -33,6 +33,9 @@ afterEach(() => {
 function record(over: Partial<InstanceRecord> = {}): InstanceRecord {
   return {
     pid: process.pid,
+    // ##518：InstanceRecord 新增两个必填字段（注册表自报的身份）
+    name: null,
+    mode: "source",
     app: null,
     launch: null,
     worktree: null,
