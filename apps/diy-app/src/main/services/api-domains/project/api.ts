@@ -38,6 +38,23 @@ export const projectRoutes = RpcSchema.group({desc: `项目管理`,
               }),
             }),
           }),
+          /**
+           * 弹出原生目录选择器（renderer「选择目录」按钮反向调用）。
+           *
+           * 2026-11 从 api-def 顶层 `pickProjectDirectory` 归到 project 域 —— 选的是**项目目录**。
+           * Web/serve 模式没有 Electron dialog，返回 `canceled: true`。
+           */
+          pick: RpcSchema.unary({
+            desc: `弹出原生目录选择器，返回所选路径`,
+            input: {},
+            output: z.object({
+              status: z.string(),
+              data: z.object({
+                canceled: z.boolean(),
+                path: z.string().optional(),
+              }),
+            }),
+          }),
           remove: RpcSchema.unary({
             desc: `删除项目`,
             input: {

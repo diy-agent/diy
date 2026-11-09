@@ -49,7 +49,7 @@ describe("doctor：系统要如实报告自己的数据目录状态", () => {
 
 describe("设置里的「状态」页：能看到自己跑在哪、什么版本", () => {
     it("端口、数据目录、缓存目录都落在当前环境，且能看出 Node/Electron/系统", async () => {
-        const r = (await rpc.diy.getAppInfo({})) as unknown as Record<string, unknown>;
+        const r = (await rpc.diy.app.info({})) as unknown as Record<string, unknown>;
         expect(r["diyHome"]).toBe(home);
         expect(r["cache"]).toBe(join(home, "cache"));
         expect(r["userData"]).toBe(join(home, "electron_user_data"));
@@ -59,7 +59,7 @@ describe("设置里的「状态」页：能看到自己跑在哪、什么版本"
     });
 
     it("报的端口是真的在监听的那个（不是 0、不是占位）", async () => {
-        const r = (await rpc.diy.getAppInfo({})) as unknown as { port: number };
+        const r = (await rpc.diy.app.info({})) as unknown as { port: number };
         expect(r.port).toBe(electron.port);
         expect(r.port).toBeGreaterThan(0);
     });

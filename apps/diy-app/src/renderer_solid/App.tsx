@@ -1012,7 +1012,7 @@ export default function App() {
         // main 侧拦了「页面标题 → 窗口标题」这条通路，故这里不是为了让窗口标题生效，
         // 而是让 renderer 自己也持有一份：serve 模式的浏览器标签页标题、以及测试断言读它。
         // 数据根展示形式/分支都在 renderer 里拿不到（要真实家目录与 git），故整份事实由 main 下发。
-        void diyService.diy.getAppInfo({}).then((r) => {
+        void diyService.diy.app.info({}).then((r) => {
             document.title = instanceTitle({
                 repoDisplay: r.repoDisplay,
                 homeDisplay: r.diyHomeDisplay,

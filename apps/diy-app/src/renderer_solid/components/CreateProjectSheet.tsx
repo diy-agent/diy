@@ -18,7 +18,7 @@ export function CreateProjectSheet() {
 
     const pickDir = async () => {
         try {
-            const r = await diyService.diy.pickProjectDirectory({});
+            const r = await diyService.diy.project.pick({});
             if (r.data.canceled || !r.data.path) return;
             setPath(r.data.path);
             if (!label().trim()) setLabel(basename(r.data.path));
