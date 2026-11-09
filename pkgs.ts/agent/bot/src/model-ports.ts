@@ -42,6 +42,13 @@ export function llmPorts(provider: LlmPort, opts: { sessionId?: string } = {}): 
                 if (delta.type === "text") yield delta.text;
                 else if (delta.type === "tool-call") yield { type: "tool-call", id: delta.id, name: delta.name, input: delta.input };
                 else if (delta.type === "tool-result") yield { type: "tool-result", id: delta.id, content: delta.content };
+                else if (delta.type === "usage")
+                    yield {
+                        type: "usage",
+                        inputTokens: delta.inputTokens,
+                        outputTokens: delta.outputTokens,
+                        ...(delta.cacheReadTokens === undefined ? {} : { cacheReadTokens: delta.cacheReadTokens }),
+                    };
             }
         },
     };

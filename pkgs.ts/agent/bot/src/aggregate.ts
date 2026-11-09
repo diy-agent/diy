@@ -79,12 +79,18 @@ export interface AgentSnapshot {
   /** 已完成的轮数（用户消息 + 一次完整回答 = 一轮） */
   turns: number
   historyLength: number
+  /**
+   * 上一轮的**实测用量**（上游报的才在；缺省 = 没报）。这是测量值不是状态机状态，
+   * 所以留在快照里（与 `error` 不同 —— 那个是事件，用 `takeFailure()` 取走）。
+   */
+  usage?: { inputTokens: number; outputTokens: number; cacheReadTokens?: number }
   jobs: Record<string, { state: 'running' | 'exited' | 'failed'; result?: unknown; error?: string }>
 }
 
 /** 端口产出的一段：文本 / 工具调用 / 工具结果（工具由 port 那侧执行，聚合只负责记账） */
 export type AgentChunk =
   | { type: 'text'; text: string }
+  | { type: 'usage'; inputTokens: number; outputTokens: number; cacheReadTokens?: number }
   | { type: 'tool-call'; id: string; name: string; input?: string }
   | { type: 'tool-result'; id: string; content: string }
 
@@ -194,6 +200,7 @@ export function createAgent(opts: CreateAgentOptions): Agent {
   let runId: RunId | null = null
   let turns = 0
   let lastError: string | undefined
+  let lastUsage: AgentSnapshot['usage']
   const jobs: AgentSnapshot['jobs'] = {}
   const entries: HistoryEntry[] = []
   const events: AgentEventEnvelope[] = []
@@ -307,6 +314,17 @@ export function createAgent(opts: CreateAgentOptions): Agent {
         }
         if (chunk.type === 'text') {
           text += chunk.text
+          continue
+        }
+        if (chunk.type === 'usage') {
+          // 一步一条：后到的覆盖（同一步里 ai-sdk 可能只在结尾报一次）
+          await exec.enqueue(async () => {
+            lastUsage = {
+              inputTokens: chunk.inputTokens,
+              outputTokens: chunk.outputTokens,
+              ...(chunk.cacheReadTokens === undefined ? {} : { cacheReadTokens: chunk.cacheReadTokens }),
+            }
+          })
           continue
         }
         // 工具进出都记进历史：UI 要显示，压缩要按轮算，审计要能回溯
@@ -470,6 +488,7 @@ export function createAgent(opts: CreateAgentOptions): Agent {
         runId,
         turns,
         historyLength: delivered().length,
+        ...(lastUsage === undefined ? {} : { usage: lastUsage }),
         jobs: { ...jobs },
       }
     },

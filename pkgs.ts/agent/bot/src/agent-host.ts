@@ -89,6 +89,15 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
                 sessionId: bot.primarySessionId ?? `bot:${bot.id}`,
             }))
 
+    /** 该 bot 对应的模型目录项（找不到 = undefined） */
+    const choiceOf = (bot: BotConfig) => {
+        for (const c of opts.models()) {
+            const key = `${c.account === undefined ? "" : `${c.account}@`}${c.providerId}/${c.modelId}`
+            if (key === bot.model) return c
+        }
+        return undefined
+    }
+
     /** 该 bot 模型的窗口上限（模型目录里有 contextWindow 才算；没有 ⇒ null = 永不自动压） */
     const windowOf = (bot: BotConfig): number | null => {
         for (const c of opts.models()) {
@@ -144,7 +153,26 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
         const agent = agentOf(bot)
         const messages = agent.history().map(wireMessageOf)
         const st = agent.snapshot()
-        const metrics: ChatMetrics = { turns: st.turns }
+        const w = windowOf(bot)
+        // 本轮花费（USD）：按模型目录的价目算；目录没价目 ⇒ 缺席（**不写 0**，那会被当成"免费"）。
+        // 口径与 diy-app 一致：input 含缓存读（模型只有 input/output 两档价目时就这么算，偏保守）。
+        const rates = choiceOf(bot)?.cost
+        const cost =
+            rates === undefined || st.usage === undefined
+                ? undefined
+                : (st.usage.inputTokens / 1e6) * rates.input + (st.usage.outputTokens / 1e6) * rates.output
+        const metrics: ChatMetrics = {
+            turns: st.turns,
+            ...(st.usage === undefined
+                ? {}
+                : {
+                      inputTokens: st.usage.inputTokens,
+                      outputTokens: st.usage.outputTokens,
+                      ...(st.usage.cacheReadTokens === undefined ? {} : { cacheReadTokens: st.usage.cacheReadTokens }),
+                  }),
+            ...(w === null ? {} : { contextWindow: w }),
+            ...(cost === undefined ? {} : { cost }),
+        }
         return {
             bots,
             bot: await viewOf(bot),
