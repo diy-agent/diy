@@ -363,13 +363,10 @@ export function bindAgent(server: ServerBinding): void {
         const { getLocalAgent, keptRoundsView } = await import("../../local-agent");
         const view = keptRoundsView(input.taskUri);
         const n = Math.max(0, Math.min(view.total, Math.round(input.keepRounds ?? view.total)));
-        // 0 轮 = 全清：刻意**不支持**（那等于换一个会话，不是压缩）。界面把它做成禁用位置。
-        if (n <= 0) return { budget: 0, applied: null, view };
-        // 轮 → token 预算：把要留的那几轮的实测增量加起来（边界落到轮首，与既有判据一致）
-        const kept = view.rounds.slice(view.total - n);
-        const budget = Math.max(1, kept.reduce((sum, r) => sum + r.tokens, 0));
-        const applied = getLocalAgent().compactToRetainTokens(input.taskUri, budget);
-        return { budget, applied, view: keptRoundsView(input.taskUri) };
+        // ##266：0 轮**必须支持** —— 之前「不支持 0」直接 return，于是压到 0 时一条边界都没写，
+        // 旧历史照旧投递，模型表现为「压了还是疯癫」。按轮定位写边界（见 compactToKeepRounds）。
+        const applied = getLocalAgent().compactToKeepRounds(input.taskUri, n);
+        return { applied, view: keptRoundsView(input.taskUri) };
       },
                 events: async ({ input }) => {
         noteRendererTouch("diy.agent.local.compact.events", input.taskUri);

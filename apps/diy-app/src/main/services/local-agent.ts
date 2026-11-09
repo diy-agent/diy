@@ -643,6 +643,8 @@ export interface KeptRoundRow {
 export interface KeptRoundsView {
     /** 旧 → 新（最后一轮 = 最新） */
     rounds: KeptRoundRow[];
+    /** 已经压掉、选不回来的轮数（与 chat app 的 CompactInfo 同口径） */
+    droppedCount: number;
     /** 总轮数（尾部窗口里能看到的） */
     total: number;
     /** 当前边界保留几轮 */
@@ -702,16 +704,50 @@ export function keptRoundsView(taskUri: string): KeptRoundsView {
     // ③ 当前生效边界（无边界 = 一轮都没压）
     const boundary = latestBoundary(taskUri);
     const boundaryTurnId = (boundary as unknown as { keptFromTurnId?: string | null } | null)?.keptFromTurnId ?? null;
-    const cutIdx = boundaryTurnId === null ? 0 : order.indexOf(boundaryTurnId);
-    const keptFrom = boundaryTurnId === null || cutIdx < 0 ? 0 : cutIdx;   // 边界不在窗口内 ⇒ 当作全保留
-    const rounds: KeptRoundRow[] = order.map((turnId, i) => ({
-        turnId,
-        label: `轮${i + 1}`,
-        title: titles.get(turnId) ?? "",
-        tokens: perTurn.get(turnId) ?? 0,
-        kept: i >= keptFrom,
-    }));
-    const keptCount = keptFrom === 0 ? rounds.length : rounds.length - keptFrom;
+    /**
+     * 「没有边界」与「全清边界」是两回事（##266）：
+     *   · 没有边界（`boundary === null`）⇒ 一轮都没压，全部保留；
+     *   · 有边界但 `turnId === null` ⇒ **全清**，一轮都不保留（之前的写法把这两种当成一样，
+     *     于是压到 0 之后面板仍显示原有轮数，看起来像"没压干净"）。
+     */
+    const cutIdx = boundaryTurnId === null ? -1 : order.indexOf(boundaryTurnId);
+    /**
+     * 全清/无轮首锚点时，光看 `turnId` 会把**压缩后新产生的轮**也当成"已丢" ——
+     * 于是压到 0 之后继续对话，面板永远显示 0（用户实测「保持 0 不变了，彻底不变了」）。
+     * 真正的判据是**字节锚点**：轮的 ops 起点 < 边界的 ops 起点 ⇒ 已压掉；≥ ⇒ 保留
+     * （投递侧 `resolveOpsReplay` 用的就是同一个 offset，两边必须同口径）。
+     */
+    const boundaryOffset = (boundary as unknown as { keptFromOpsOffset?: number } | null)?.keptFromOpsOffset;
+    const turnOffset = new Map<string, number>();
+    if (boundaryOffset !== undefined) {
+        try {
+            for (const rec of readTurnRecords(taskUri)) turnOffset.set(rec.turnId, rec.ref.ops.offset);
+        } catch {
+            /* 轮记录坏了就退回 turnId 判据 */
+        }
+    }
+    const keptFrom = ((): number => {
+        if (boundary === null) return 0;                    // 从没压过 ⇒ 全保留
+        if (boundaryOffset !== undefined && turnOffset.size > 0) {
+            const first = order.findIndex((t) => (turnOffset.get(t) ?? 0) >= boundaryOffset);
+            return first < 0 ? order.length : first;         // 一个都没有 ⇒ 全清
+        }
+        return boundaryTurnId === null ? order.length : cutIdx < 0 ? 0 : cutIdx;
+    })();
+    // **只列还能保留的轮**（已压掉的选不回来）。之前全列出来只打 kept 标记，于是压完后
+    // 面板仍显示「共 4 轮」，看着像没压干净（用户实测）。
+    const rounds: KeptRoundRow[] = order
+        .map((turnId, i) => ({ turnId, i }))
+        .filter(({ i }) => i >= keptFrom)
+        .map(({ turnId, i }) => ({
+            turnId,
+            label: `轮${i + 1}`,
+            title: titles.get(turnId) ?? "",
+            tokens: perTurn.get(turnId) ?? 0,
+            kept: true,
+        }));
+    const keptCount = rounds.length;
+    const droppedCount = order.length - rounds.length;
     // ④ 窗口与价格（价目取上一步；`rates` 是每百万 token 的美元价）
     const cfgLimit = normalizeHistoryLimit(loadAutoCompact(diyHome()).history?.limit);
     const windowTokens = cfgLimit.windowTokens ?? contextLimitOf(personaForTask(diyHome(), taskUri).model) ?? null;
@@ -735,6 +771,7 @@ export function keptRoundsView(taskUri: string): KeptRoundsView {
     return {
         rounds,
         total: rounds.length,
+        droppedCount,
         keptCount,
         truncated: usages.length >= 800,
         windowTokens,
@@ -1456,7 +1493,29 @@ function ensureCompactState(taskUri: string): CompactState | null {
  */
 function latestBoundary(taskUri: string): EffectiveBoundary | null {
     const state = ensureCompactState(taskUri);
-    return state?.boundary ? boundaryOfPoint(state.boundary) : null;
+    const fromState = state?.boundary ? boundaryOfPoint(state.boundary) : null;
+    // `state !== null` 就说明这个任务**有过压缩历史**（哪怕是 undo 之后 boundary=null）——
+    // 此时必须信状态，不能回落 turns 账：否则撤销压缩后，旧 turns 边界会被"复活"。
+    if (state !== null) return fromState;
+    // 回落 turns 账（##266）：手压边界（compactToKeepRounds / 全清）**只写 turns.jsonl**，
+    // 不写压缩账本也不写 compact-state.json。缺这条回落 ⇒ 新进程读回 null ⇒
+    // resolveOpsReplay 从 0 开始 ⇒ 「压了等于没压」。写侧不动（不引第三份真源）。
+    try {
+        const b = readBoundary(taskUri);
+        if (!b) return null;
+        return {
+            compactId: b.at,
+            keptFromTurnId: b.cut.turnId,
+            keepFromOpIndex: 0,
+            ...(b.ref ? { keptFromOpsOffset: b.ref.ops.offset } : {}),
+            keptFromLlmLine: b.cut.llmLine,
+            schema: OPS_SCHEMA_CURRENT,
+            policy: { mode: "budget", modeData: { budgetBytes: b.retainTokens ?? 0, toolResult: { render: "asis" } }, summary: false } as never,
+            ts: b.at,
+        } as EffectiveBoundary;
+    } catch {
+        return null;
+    }
 }
 
 /** `resolveOpsReplay` 的缓存（键 = ops 大小 + 账本大小/mtime；三者任一变了才重算）。 */
@@ -3032,6 +3091,7 @@ export class LocalAgentManager {
                 dropped: r.dropped,
                 headLine: 0,
             });
+            replayCache.delete(taskUri); // 同上：写 turns 账不会让 size/mtime 键失效
             // 内存态同步：新边界 + 次数；lastStep 保留（下轮 frozenSystemTextOf 会因 compactAt 不同而重建）
             const state = this.compactStateOf(taskUri);
             state.boundary = {
@@ -3957,6 +4017,93 @@ export class LocalAgentManager {
      * 为什么切点仍走 user + 轮首：`resolveOpsReplay` 的 seek 锚点是轮首（`keptFromOpsOffset`
      * 取那条轮记录的 ref.ops）。按步切会连带 UI 重放退化 —— 那是另一件事，不与这条 UI 绑在一起。
      */
+    /**
+     * 按「保留最近 N 轮」直接写边界（##266：压到 0 后模型仍带着旧历史）。
+     *
+     * 为什么不用 token 预算倒推：预算 → 消息级估算 → 切点这条链上两套估算口径会差出数量级，
+     * 结果常常是 `cut <= 已有 cut` ⇒ **什么都没写**，而界面照样报「已压」。这里先按 turnId 定位，
+     * 再用**判据内部同一个估算器**把保留量算出来，切点必然落在那一轮开头。
+     *
+     * `keepRounds = 0` 合法 = **压缩到头**：历史全丢（只剩 checkpoint 文本）。
+     */
+    compactToKeepRounds(
+        taskUri: string,
+        keepRounds: number,
+    ): { cut: number; dropped: number; keptMessages: number; totalMessages: number; keptRounds: number } | null {
+        const replay = resolveOpsReplay(taskUri);
+        const store = replayOpsInto(new BlockStore(), streamPath(taskUri), replay.from);
+        const all = projectAll(store);
+        if (all.length === 0) return null;
+        const turnIds: string[] = [];
+        for (const m of all) {
+            const t = (m as { turn?: string }).turn;
+            if (t !== undefined && t !== "" && !turnIds.includes(t)) turnIds.push(t);
+        }
+        const rounds = turnIds.length;
+        const keep = Math.max(0, Math.min(rounds, Math.round(keepRounds)));
+
+        // ── keep === 0：**全清**（##266 的「压到 0 之后模型仍带旧历史」） ──
+        //
+        // 为什么不能走 token 预算那条路：`selectKeptBoundary` 永远至少留一条 user 消息（切点必须落在
+        // user 上），所以 retain=1 也只会压到「最后一轮」而不是全清。全清必须是**另一种边界**：
+        // `turnId: null` + 行号越界 + ops 起点 = EOF —— 投递从文件尾开始读，历史为空。
+        if (keep === 0) {
+            const at = localISOString();
+            const llmLine = countFileLines(llmFile(taskUri)) + 1;
+            const size = ((): number => {
+                try {
+                    return statSync(streamPath(taskUri)).size; // sync-io-ok: 一次 stat 拿 EOF 作全清锚点
+                } catch {
+                    return 0;
+                }
+            })();
+            const lastTurn = readTurnRecords(taskUri).at(-1);
+            const ref = lastTurn ? { ops: { offset: size, seq: lastTurn.ref.ops.seq } } : undefined;
+            const windowTokens = contextLimitOf(personaForTask(diyHome(), taskUri).model) ?? 0;
+            const entry = {
+                at,
+                retainTokens: 0,
+                windowTokens,
+                cut: { llmLine, turnId: null },
+                ...(ref ? { ref } : {}),
+                limitTokens: 0,
+                dropped: all.length,
+                headLine: 0,
+            };
+            appendCompactionEntry(taskUri, entry);
+            // 边界写进 turns.jsonl 不改变 ops/账本的 size+mtime ⇒ 重放缓存不会自发失效，
+            // 必须显式丢掉，否则调用方还拿到「从 0 开始」的旧判定（实测：压完 from 仍是 0）。
+            replayCache.delete(taskUri);
+            const state = this.compactStateOf(taskUri);
+            state.boundary = { v: 3, kind: "compaction", ...entry };
+            state.compactionCount += 1;
+            console.log(`[local-agent] 全清压缩 ${taskUri}：丢 ${all.length} 条（llmLine=${llmLine}）`);
+            return { cut: all.length, dropped: all.length, keptMessages: 0, totalMessages: all.length, keptRounds: 0 };
+        }
+
+        const idx = rounds === 0 ? -1 : Math.max(0, Math.min(rounds - 1, rounds - keep));
+        const cutTurn = idx < 0 ? undefined : turnIds[idx];
+        let retain = 0;
+        if (cutTurn !== undefined) {
+            const from = Math.max(0, all.findIndex((m) => (m as { turn?: string }).turn === cutTurn));
+            for (let i = from; i < all.length; i++) retain += estimateTokensOf(JSON.stringify(all[i]?.content ?? ""));
+        }
+        const r = this.appliedHistoryRange(taskUri, all, replay.lineBase, {
+            write: true,
+            force: true, // 手动：人说了算，不看触发线
+            triggered: false,
+            retainTokensOverride: Math.max(1, retain),
+        });
+        if (!r) return null;
+        return {
+            cut: r.cut,
+            dropped: r.cut,
+            keptMessages: all.length - r.cut,
+            totalMessages: all.length,
+            keptRounds: rounds - Math.max(0, idx),
+        };
+    }
+
     compactToRetainTokens(
         taskUri: string,
         retainTokens: number,

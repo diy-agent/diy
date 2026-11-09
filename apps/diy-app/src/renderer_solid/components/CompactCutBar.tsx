@@ -222,23 +222,21 @@ export function CompactCutBar(props: {
                 <div class="flex items-center gap-2">
                     <span class="text-caption opacity-70" data-cut-summary>
                         丢 {lo()} 轮（{fmtTokens(droppedTokens())}）· 留 {keptCount()} 轮（{fmtTokens(keptTokens())}）
-                    </span>
-                    <Show when={!card()}>
-                        <button
-                            type="button"
-                            class="btn btn-primary btn-xs ml-auto"
-                            disabled={busy() || !dirty() || total() === 0}
-                            onClick={() => void apply()}
-                            data-cut-apply
-                        >
-                            {busy() ? "压缩中…" : dirty() ? "压缩" : "已生效"}
-                        </button>
-                    </Show>
+                    </span>                    <button
+                        type="button"
+                        class="btn btn-primary btn-xs ml-auto"
+                        disabled={busy() || !dirty()}
+                        onClick={() => void apply()}
+                        data-cut-apply
+                    >
+                        {busy() ? "压缩中…" : dirty() ? "压缩" : "已生效"}
+                    </button>
+                
                 </div>
 
                 <Show when={keptCount() === 0}>
                     <div class="text-caption text-warning">
-                        ⚠ 0 轮 = 历史全清（那等于换一个新会话，不是压缩），所以这个位置不能落盘 —— 往右挪一轮再压。
+                        0 轮 = 全部丢弃：历史只剩压缩摘要那一句（任务正文/规则/工具仍在）。
                     </div>
                 </Show>
                 <Show when={note()}>
