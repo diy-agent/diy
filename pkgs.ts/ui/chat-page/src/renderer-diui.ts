@@ -764,7 +764,8 @@ export const chatPageView: PageView = {
                     return
                 }
                 const total = info.rounds.length
-                const keep = Math.max(1, Math.min(total === 0 ? 1 : total, cutKeep.value))
+                // 0 是合法位置：**全部丢弃**（历史只剩 checkpoint 那一句）
+                const keep = Math.max(0, Math.min(total, cutKeep.value))
                 const rows = info.rounds
                     .map((round, index) => {
                         const cut =
@@ -776,11 +777,11 @@ export const chatPageView: PageView = {
                     })
                     .join("")
                 el.innerHTML = `
-<div class="chat-cut-head"><span>保留最近 ${keep} / ${total} 轮</span>${
+<div class="chat-cut-head"><span>保留最近 ${keep} / ${total} 轮${keep === 0 ? "（全部丢弃）" : ""}</span>${
                     info.droppedCount > 0 ? `<span class="chat-cut-dim">（已压掉 ${info.droppedCount} 轮）</span>` : ""
                 }</div>
 ${rows}
-<input class="chat-cut-range" type="range" min="1" max="${Math.max(1, total)}" value="${keep}">
+<input class="chat-cut-range" type="range" min="0" max="${Math.max(0, total)}" value="${keep}">
 <div class="chat-cut-actions"><button class="chat-cut-apply" type="button">压缩</button>${
                     cutError.value === "" ? "" : `<span class="chat-cut-err">${cutError.value}</span>`
                 }</div>`
@@ -805,7 +806,7 @@ ${rows}
                 try {
                     const info = await context.invoke<CompactInfo>("compactInfo")
                     cutInfo.value = info
-                    cutKeep.value = Math.max(1, info.rounds.length)
+                    cutKeep.value = info.rounds.length
                     cutError.value = ""
                 } catch (cause: unknown) {
                     cutInfo.value = null
@@ -822,7 +823,7 @@ ${rows}
                     cutError.value = ""
                     const info = await context.invoke<CompactInfo>("compactInfo")
                     cutInfo.value = info
-                    cutKeep.value = Math.max(1, info.rounds.length)
+                    cutKeep.value = info.rounds.length
                 } catch (cause: unknown) {
                     cutError.value = messageOf(cause)
                 }

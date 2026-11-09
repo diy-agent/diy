@@ -135,8 +135,33 @@ if (apply) {
         }
         // 调试：把面板读回来（失败时最需要知道它到底显示了什么）
         console.log("  面板读数：", (await panel.innerText()).replace(/\s+/g, " ").slice(0, 160));
-        const struck = await panel.locator(".chat-cut-row-drop").count();
-        step(struck > 0, `压缩后：出现 ${struck} 行删除线（已压掉）`);
+        // 面板只列**还能保留的轮**（已压掉的只给计数），所以判据是「可保留轮数下降 + 已压掉数上升」
+        const headAfter = await page.evaluate(() => {
+            const el = document.querySelector(".chat-cut-head");
+            return el === null ? "" : (el.textContent ?? "").replace(/\s+/g, " ").trim();
+        });
+        const keptAfter = Number(/保留最近 (\d+)/.exec(headAfter)?.[1] ?? -1);
+        const droppedAfter = Number(/已压掉 (\d+) 轮/.exec(headAfter)?.[1] ?? -1);
+        step(keptAfter === 1 && droppedAfter > dropped, `压缩后：可保留降到 1 轮、已压掉 ${String(droppedAfter)} 轮`);
+
+        // ⑤ 再拖到 0 = 全部丢弃（用户 2026-11-07：历史只剩 checkpoint 那一句）
+        await page.locator(".chat-cut-wrap").hover();
+        await panel.waitFor({ state: "visible", timeout: 8000 });
+        const r2 = panel.locator(".chat-cut-range");
+        await r2.fill("0");
+        await r2.dispatchEvent("input");
+        await panel.locator(".chat-cut-apply").click();
+        await page.waitForTimeout(2000);
+        const head2 = await page.evaluate(() => {
+            const el = document.querySelector(".chat-cut-head");
+            return el === null ? "" : (el.textContent ?? "").replace(/\s+/g, " ").trim();
+        });
+        step(/保留最近 0 \/ 0 轮/.test(head2), `压到 0：读数「${head2}」`);
+        const firstRow = await page.evaluate(() => {
+            const row = document.querySelector(".chat-row");
+            return row === null ? "" : (row.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 40);
+        });
+        step(firstRow.includes("已压缩") || firstRow.includes("压缩"), `压到 0：消息线首行是 checkpoint（${firstRow}）`);
     }
 }
 
