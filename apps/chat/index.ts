@@ -8,7 +8,7 @@ import * as botConfigPageMain from "@diy-agent/bot-config-page";
 import * as chatPageMain from "@diy-agent/chat-page/main";
 import * as modelConfigPageMain from "@diy-agent/model-config-page";
 import type { PluginEntry } from "@diy-agent/workbench";
-import { asToolSet, createAgentHost, createBotChat, createFileBotStore, modelChoices, workspaceOf, type BotStore } from "@diy-agent/bot";
+import { asToolSet, createAgentHost, createFileBotStore, modelChoices, workspaceOf, type BotStore } from "@diy-agent/bot";
 import { collectSelfInfo, judgeSelfKill } from "@diy-agent/tools";
 import { os } from "@diy-agent/os";
 import { RunRegistry, makeJobTool } from "@diy-agent/jobs/node";
@@ -73,20 +73,16 @@ function chatConfig(home: string | undefined, sessions: unknown, botStore: BotSt
     if (sessions !== undefined) return { sessions };
     if (home === undefined || home === "") return {};
     return {
-        // 缺省内存（只有 model / bot 配置落盘）；DIY_CHAT_PERSIST=1 切文件版对照
-        // ##519 S2：`DIY_CHAT_AGENT=1` 切到新 Agent 聚合（内存态 + 快照），否则仍走 BotChatHost 旧实现。
-        // 两套并存便于对照；页面（chat-page）一行不用改 —— 它只认 BotChatHost 契约。
-        sessions:
-            process.env["DIY_CHAT_AGENT"] === "1"
-                ? createAgentHost({
-                      home,
-                      botStore: botStore ?? createFileBotStore({ home, sessionsDir: join(home, "sessions", "chat") }),
-                      // 与 createBotChat 同一口径（展开已配置账号的三段式）
-                      models: () => modelChoices(home),
-                      // ##519：工具能力从旧宿主移植过来 —— 同一份 buildTools（cwd = bot 工作目录、自杀护栏同源）
-                      toolsFor: (bot) => botToolsFor(home, bot.id).tools,
-                  })
-                : createBotChat({ home, botStore, toolsFor: (b) => botToolsFor(home, b).tools, persist: process.env["DIY_CHAT_PERSIST"] !== "0" }),
+        // ##519：宿主**只剩一个**（Agent 聚合，内存态 + 快照）；旧的 createBotChat 分支已删。
+        // 页面（chat-page）不用改 —— 它只认 BotChatHost 契约，新宿主是适配器。
+        sessions: createAgentHost({
+            home,
+            botStore: botStore ?? createFileBotStore({ home, sessionsDir: join(home, "sessions", "chat") }),
+            // 与旧宿主同一口径（展开已配置账号的三段式）
+            models: () => modelChoices(home),
+            // 工具能力：与旧宿主同一份 buildTools（cwd = bot 工作目录、自杀护栏同源）
+            toolsFor: (bot) => botToolsFor(home, bot.id).tools,
+        }),
     };
 }
 
