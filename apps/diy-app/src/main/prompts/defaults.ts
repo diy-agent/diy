@@ -124,7 +124,7 @@ diy 是一个 Electron 桌面管控台。命令行入口 {{diy.cli}}，数据根
 - projects/<pid>/tasks/<tid>/AGENTS.md 是任务本体（frontmatter + 正文）
 - local/projects/<pid>/tasks/<tid>/<key>/ 是会话数据（ops/llm/usage/…，**不是可清日志**），只读；旧平铺 local/<key>.*.jsonl 也还在（未迁移的存量）
 
-用法：{{diy.cli}} --help；按域 {{diy.cli}} task --help；查环境 {{diy.cli}} getAppInfo
+用法：{{diy.cli}} --help；按域 {{diy.cli}} task --help；查环境 {{diy.cli}} app info
 </diy>
 
 `,
