@@ -233,12 +233,25 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
             const bot = await currentBot()
             if (bot === null) throw new Error("还没有 bot，无法发送")
             const agent = agentOf(bot)
+            const turnsBefore = agent.snapshot().turns
             const receipt = await agent.send({ content: text })
             if (!receipt.accepted) throw new Error(receipt.error?.message ?? "命令被拒绝")
-            // 推中间态：轮询内存状态（聚合是同步可读的，比订阅更省一条通道）
+            /**
+             * 等这一轮**真的跑完**再返回。
+             *
+             * 不能只看 `running`：`send` 只是把轮次排进串行队列，`running` 要等队列轮到它才置真；
+             * 之前直接在循环第一拍读 `running`（false）就退出了 ⇒ 界面只看到用户消息、永远等不到回答
+             * （用户实测「发了消息都没回复」）。改为「见过 running 再等它落」或「turns 增加」两条判据。
+             */
+            let sawRunning = false
+            const deadline = Date.now() + 180_000
             for (;;) {
+                const st = agent.snapshot()
+                if (st.running) sawRunning = true
                 onDelta(agent.history().map(wireMessageOf))
-                if (!agent.snapshot().running) break
+                if (sawRunning && !st.running) break
+                if (!sawRunning && st.turns > turnsBefore) break
+                if (Date.now() > deadline) throw new Error("发送超时：这一轮 180s 内没有结束")
                 await new Promise((r) => setTimeout(r, 30))
             }
             onDelta(agent.history().map(wireMessageOf))
