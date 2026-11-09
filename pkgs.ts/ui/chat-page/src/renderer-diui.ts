@@ -769,9 +769,14 @@ ${rows}
                 })
             }
 
+            let loading = false
             const open = async (): Promise<void> => {
                 if (closing !== undefined) window.clearTimeout(closing)
+                // 重入保护：paint() 会重写 innerHTML，指针下的子节点被换掉会再次触发
+                // pointerenter ⇒ 再 invoke ⇒ 再 paint …… 实测把渲染进程顶死。
+                if (cutOpen.value && (cutInfo.value !== null || loading)) return
                 cutOpen.value = true
+                loading = true
                 paint()
                 try {
                     const info = await context.invoke<CompactInfo>("compactInfo")
@@ -782,6 +787,7 @@ ${rows}
                     cutInfo.value = null
                     cutError.value = messageOf(cause)
                 }
+                loading = false
                 paint()
             }
 
@@ -802,12 +808,19 @@ ${rows}
             return html.div(
                 {
                     class: "chat-cut-wrap",
-                    onPointerEnter: () => void open(),
-                    onPointerLeave: () => {
-                        closing = window.setTimeout(() => {
-                            cutOpen.value = false
-                            paint()
-                        }, 220)
+                    // 悬停事件用**原生监听**绑在节点上，不走 DSL 的 onPointerXxx：
+                    // 实测 DSL 那条路 pointerleave 没生效（面板打开就关不上），而原生一定可靠。
+                    ref: (node: HTMLElement) => {
+                        node.addEventListener("pointerenter", () => {
+                            void open()
+                        })
+                        node.addEventListener("pointerleave", () => {
+                            closing = window.setTimeout(() => {
+                                cutOpen.value = false
+                                cutInfo.value = null
+                                paint()
+                            }, 220)
+                        })
                     },
                 },
                 function* () {
@@ -817,6 +830,8 @@ ${rows}
                         hidden: true,
                         ref: (node: HTMLElement) => {
                             panel = node
+                            // 初始必须收起：`.chat-cut-panel{display:flex}` 会盖掉 UA 的 `[hidden]{display:none}`
+                            node.hidden = !cutOpen.value
                         },
                     })
                 },

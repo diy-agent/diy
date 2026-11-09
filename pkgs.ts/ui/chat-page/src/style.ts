@@ -182,6 +182,7 @@ export const CHAT_STYLE = `
 .chat-cut-chip { font: inherit; font-size: 11px; padding: 1px 6px; border-radius: 999px;
   border: 1px solid rgba(255,255,255,.18); background: transparent; color: inherit; cursor: pointer; opacity: .75; }
 .chat-cut-chip:hover { opacity: 1; }
+.chat-cut-panel[hidden] { display: none; }
 .chat-cut-panel { position: absolute; bottom: calc(100% + 8px); right: 0; width: 300px; z-index: 40;
   background: #161a22; border: 1px solid #2a3140; border-radius: 8px; padding: 8px 10px;
   box-shadow: 0 8px 24px rgba(0,0,0,.45); display: flex; flex-direction: column; gap: 4px; }

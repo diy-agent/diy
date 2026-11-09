@@ -201,20 +201,16 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
             const all = agent.history({ raw: true }).filter((e) => e.kind === "message" || e.kind === "checkpoint")
             const delivered = new Set(agent.history().map((e) => e.seq))
             // 轮 = 一条 user +（可选）其后的 assistant；checkpoint 不算轮
-            let n = 0
+            // 一轮 = 一条 user 消息（assistant 跟着它）——**只按 user 计轮**。
+            // 之前用「隔一条取一条」，一旦有 checkpoint/通知就错位（实测出现 轮3→轮5→轮7）。
             const rounds = all
-                .filter((e) => e.kind === "message")
-                .map((e) => {
-                    const isUser = e.role === "user" || e.role === undefined
-                    if (isUser) n += 1
-                    return {
-                        label: `轮${n}`,
-                        title: (e.content ?? "").replace(/\s+/g, " ").slice(0, 40),
-                        tokens: 0,
-                        kept: delivered.has(e.seq),
-                    }
-                })
-                .filter((_, i) => i % 2 === 0) // 每轮取首条（user）
+                .filter((e) => e.kind === "message" && (e.role === "user" || e.role === undefined))
+                .map((e, i) => ({
+                    label: `轮${i + 1}`,
+                    title: (e.content ?? "").replace(/\s+/g, " ").slice(0, 40),
+                    tokens: 0,
+                    kept: delivered.has(e.seq),
+                }))
             const w = windowOf(bot)
             return {
                 rounds,
