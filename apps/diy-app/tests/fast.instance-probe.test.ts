@@ -20,8 +20,8 @@ const paths: string[] = [];
 
 beforeAll(async () => {
     server = createServer();
-    server.on("stream", (stream: ServerHttp2Stream) => {
-        paths.push(String(stream.headers[":path"] ?? ""));
+    server.on("stream", (stream: ServerHttp2Stream, headers) => {
+        paths.push(String(headers[":path"] ?? ""));
         stream.respond({ ":status": 200, "content-type": "application/json" });
         stream.end(JSON.stringify({ result: { diyHome: "/tmp/probe-home", pid: 4242, env: "test" } }));
     });
