@@ -1,21 +1,25 @@
 // src/main/services/instances.ts
-// 🎯 实例大盘的**聚合层**：发现（扫进程 + 注册表）→ 活体探测 → 一行行实例。
+// 🎯 实例大盘的聚合层 = **动态发现协议**（##518 定稿）。
 //
-// 三个关键设计点（任务 body，均已实测）：
-//   1. **发现靠扫进程**：没有「有哪些数据根」的索引（`app.port` 是「一个数据根一份」），
-//      唯一能枚举本机实例的办法是扫进程。
-//   2. **「谁开的」靠启动时自报**：实测生产实例 `ppid=1`（父已退、被 launchd 接管）——
-//      事后追父链追不出来，故注册表（`core/instance-registry.ts`）在启动瞬间快照。
-//   3. **真数据根靠自报**：环境变量里的 `DIY_HOME` 是**继承**来的，不等于实例真根
-//      （实测 `pid=11419 DIY_HOME=~/.diy` 而它的子进程真根在 worktree 的 `build/<v>/home`）。
-//      故 hint 只作线索，`homeSource=self` 的行才是真根。
+// 整个「有哪些 diy」由两个协议回答，各管一半：
+//   静态（`app.yaml`，见 _diy 的 dev-core）：**能起什么** —— 有哪些工作区、各自几条启动命令。
+//     启动前就能读；不需要任何实例存在。
+//   动态（本文件）：**此刻跑着什么** —— 实例启动时自报一条记录（`core/instance-registry.ts`），
+//     读侧按 pid 存活过滤 + 逐个 /ping 验活。没跑就查不到，跑起来自己登记。
 //
-// 纯逻辑（分类 / 去重 / 排序 / 排版）都在 core，这里只做 I/O 与编排：
-// 取进程快照（`os/` 策略）、读注册表、发探测、合并 —— 于是「规则」可单测，「网络」可注入。
+// 三条硬规矩（都踩过坑）：
+//   1. **不再扫进程**（2026-11-07 用户裁）：进程表只能看出「有个 electron 在跑」，
+//      身份（数据根 / worktree / 有没有 source）全靠猜。自报记录才是事实；
+//      扫进程那套（`core/instance-scan.ts`）随之退役 —— 少一层 OS 策略依赖，也少一种假象。
+//   2. **身份只认三样**：有没有 source（`mode`）× worktree × 数据根。
+//      `launch` / `slot` 是**启动配置模版**（lab1 / lab2 不代表任何东西），不进身份。
+//   3. **名字由实例自理**：自报 `name` 优先，没有就 `<app>#<pid>`（`shared/instance-row.ts::displayNameOf`）。
+//      任何活着的实例因此都有一个能拿去 kill / 查的名字，不需要预先登记、也不需要槽位。
+//
+// 纯逻辑（分类 / 排序 / 排版）在 core，这里只做 I/O 与编排；网络与目录都可注入。
 
 import { AppConfig } from "../core/app-config";
 import { findRepoRoot, homeDisplayOf } from "../core/instance-identity";
-import { cmdlineSummary, pickInstanceProcesses, type InstanceProcess } from "../core/instance-scan";
 import {
   readRecords,
   registryDir,
@@ -30,8 +34,15 @@ import { fetchAppInfo, fetchInstanceSelf, revealInstance, type AppInfoLite, type
 import { sessionRegistry } from "./session-registry";
 import * as state from "../core/state";
 import { os } from "../os";
-import type { InstanceRow, InstanceTurn } from "../../shared/instance-row";
+import { displayNameOf, type InstanceRow, type InstanceTurn } from "../../shared/instance-row";
 import { localISOString } from "@diy-agent/time";
+
+/** 命令行摘要（截断到 maxLen）：注册表里存的是完整 argv，表格/UI 只放得下一行 */
+export function cmdlineSummary(command: string, maxLen = 72): string {
+  const joined = command.trim();
+  if (joined.length <= maxLen) return joined;
+  return `${joined.slice(0, maxLen - 1)}…`;
+}
 
 /** 本进程的启动时刻（`process.uptime()` 反推 —— 不依赖模块加载时机） */
 export function selfStartedAt(): string {
@@ -53,7 +64,21 @@ const PROBE_TIMEOUT_MS = 1200;
 // 生产实例一律 launch=null，由「数据根是不是 ~/.diy」在面板侧认出来。
 const LAUNCH_OF_VARIANT: Record<string, string> = { lab: "lab" };
 
-/** 本实例的 launch id：启动器注入优先，否则按变体回推（认不出的变体 ⇒ null）。窗口标题 / 注册表共用一份 */
+/**
+ * 本实例的自报名字（##518）：`DIY_INSTANCE_NAME` 优先；没有就 null ——
+ * 展示侧退化成 `<app>#<pid>`，**不要**拿 launch / slot 当名字（那是配置模版，不是身份）。
+ */
+export function selfName(): string | null {
+  const n = (process.env["DIY_INSTANCE_NAME"] ?? "").trim();
+  return n || null;
+}
+
+/**
+ * 本实例的 launch id：启动器注入优先，否则按变体回推（认不出的变体 ⇒ null）。
+ *
+ * ⚠️ 它现在**只是元数据**（这人从哪个 app.yaml 条目起的，便于展示），不参与身份判定，
+ * 也不参与 UI 归组（##518：归组只按 worktree）。窗口标题仍用它，因为标题是给人看的。
+ */
 export function selfLaunch(variant: string): string | null {
   return process.env["DIY_LAUNCH"] ?? LAUNCH_OF_VARIANT[variant] ?? null;
 }
@@ -67,6 +92,9 @@ export function writeSelfRecord(opts: { diyHome: string; variant: string; env: s
     //   launch：启动器拉起的直接取 DIY_LAUNCH；手工跑按变体回推（认不出的变体才 null）
     //   worktree：从 cwd 往上找 .git（worktree 里 .git 是文件，只判存在性）
     launch: selfLaunch(opts.variant),
+    name: selfName(),
+    // 有没有 source 是身份第一刀：打包态（asar）dev 只能观测，源码态可读写
+    mode: isPackagedRuntime() ? "packaged" : "source",
     worktree: findRepoRoot(process.cwd()),
     port: null,
     pingPort: null,
@@ -79,6 +107,20 @@ export function writeSelfRecord(opts: { diyHome: string; variant: string; env: s
     updatedAt: localISOString(),
     parents: snapshotParents(),
   });
+}
+
+/**
+ * 本进程是不是打包态（asar 内跑）。懒取 electron 的 `app.isPackaged`：
+ * 这个模块在单测 / CLI 场景也会被 import，那时没有 electron 可问，按源码态算。
+ */
+function isPackagedRuntime(): boolean {
+  try {
+    // 动态 require：只在真 electron 主进程里存在；打包态下 asar 也在
+    const { app } = require("electron") as { app?: { isPackaged?: boolean } };
+    return app?.isPackaged === true;
+  } catch {
+    return false;
+  }
 }
 
 /** 就绪后回填端口（CLI / 别的实例据此找到我） */
@@ -131,10 +173,6 @@ export function selfReport(opts: {
 // ── 扫描 + 聚合 ───────────────────────────────────────────────
 
 export interface CollectDeps {
-  /** 进程快照（缺省 `os.snapshot()`，异步；注入只为单测能摆桩） */
-  rows?: () => readonly { pid: number; ppid: number; command: string }[] | null | Promise<readonly { pid: number; ppid: number; command: string }[] | null>;
-  /** 老实例（无注册表）的环境变量批量取法 —— 只作线索，绝不当作真根 */
-  envOf?: (pids: number[]) => Map<number, Record<string, string>>;
   dir?: string;
   /** 存活判定（缺省 = 真查进程表）；注入只为单测能摆桩 */
   alive?: (pid: number) => boolean;
@@ -150,58 +188,39 @@ export function sourceSummary(rec: InstanceRecord | undefined): string {
   return cmdlineSummary(rec.parents[0]!.command, 56);
 }
 
-/** argv 摘要：注册表里有启动时快照就用它（最准），否则退回 ps 的 command */
-function argvOf(rec: InstanceRecord | undefined, p: InstanceProcess): string[] {
-  return rec && rec.argv.length > 0 ? rec.argv : [p.command];
+/**
+ * 一条记录是「有 source」还是「安装包」——**身份第一刀**（##518）。
+ *
+ * 优先用自报的 `mode`（启动时由 `app.isPackaged` 判定，最准）；老记录没有这个字段时按 argv 猜：
+ * 路径里出现 `app.asar` / `Resources/app` ⇒ 打包态；否则按源码态算（错判的代价只是多给个停止按钮，
+ * 而真生产是「数据根 = ~/.diy」的另一道闸，见面板的族外实例判定）。
+ */
+function modeOf(rec: InstanceRecord): "source" | "packaged" {
+  if (rec.mode) return rec.mode;
+  const joined = rec.argv.join(" ");
+  if (joined.includes("app.asar") || joined.includes("/Resources/app")) return "packaged";
+  return "source";
 }
 
-/** 一行实例的**本地事实**部分（不含网络）：注册表 > 进程 > 环境线索 */
-function baseRow(
-  p: InstanceProcess,
-  rec: InstanceRecord | undefined,
-  hint: Record<string, string> | undefined,
-  readPortFile: (home: string) => number | null,
-): InstanceRow {
-  const hintHome = hint?.["DIY_HOME"] ?? "";
-  const port = rec?.port ?? (hintHome ? readPortFile(hintHome) : null);
-  const diyHome = rec?.diyHome ?? "";
-  return {
-    pid: p.pid,
-    kind: p.kind,
-    variant: p.variant ?? rec?.variant ?? "",
-    diyHome,
-    diyHomeDisplay: diyHome ? homeDisplayOf(diyHome) : hintHome ? `${homeDisplayOf(hintHome)}?` : "",
-    homeSource: rec ? "registry" : hintHome ? "hint" : "unknown",
-    env: rec?.env ?? hint?.["DIY_ENV"] ?? "",
-    branch: "",
-    repoDisplay: "",
-    port,
-    source: sourceSummary(rec),
-    sourceKind: rec ? "registry" : "unknown",
-    cmdline: cmdlineSummary(argvOf(rec, p).join(" ")),
-    cwd: rec?.cwd ?? "",
-    startedAt: rec?.startedAt ?? null,
-    status: port === null ? "no-port" : "unreachable",
-    note: rec ? "" : "未注册（本功能上线前启动的实例）：数据根与来源只能靠继承的环境变量猜",
-    sessions: 0,
-    running: 0,
-    activeTurns: [],
-    window: null,
-  };
-}
-
-/** 注册表里有、进程扫描没命中（如 serve 跑源码 `tsx src/serve/index.ts`）→ 用注册表事实成行 */
-function recordOnlyRow(rec: InstanceRecord): InstanceRow {
+/** 一条记录 → 一行实例的**本地事实**（不含网络）。发现侧唯一的构造入口。 */
+function rowFromRecord(rec: InstanceRecord): InstanceRow {
+  const mode = modeOf(rec);
+  const worktree = mode === "source" ? (rec.worktree ?? "") : "";
   return {
     pid: rec.pid,
     kind: rec.argv.some((a) => a.includes("/serve/")) ? "serve" : "electron",
+    mode,
+    worktree,
+    worktreeDisplay: worktree ? homeDisplayOf(worktree) : "",
+    name: rec.name ?? "",
+    displayName: displayNameOf({ pid: rec.pid, name: rec.name ?? "", app: rec.app ?? "" }),
     variant: rec.variant,
     diyHome: rec.diyHome,
     diyHomeDisplay: homeDisplayOf(rec.diyHome),
     homeSource: "registry",
     env: rec.env,
     branch: "",
-    repoDisplay: "",
+    repoDisplay: worktree ? homeDisplayOf(worktree) : "",
     port: rec.port,
     source: sourceSummary(rec),
     sourceKind: "registry",
@@ -209,7 +228,7 @@ function recordOnlyRow(rec: InstanceRecord): InstanceRow {
     cwd: rec.cwd,
     startedAt: rec.startedAt,
     status: rec.port === null ? "no-port" : "unreachable",
-    note: "进程扫描未命中（入口形态非常规），信息来自注册表",
+    note: "",
     sessions: 0,
     running: 0,
     activeTurns: [],
@@ -218,30 +237,25 @@ function recordOnlyRow(rec: InstanceRecord): InstanceRow {
 }
 
 /**
- * 收全机实例（含**没有注册表的老实例**：看得见就列出来，如实标「来源未知」）。
+ * 收全机实例：**只读动态注册表**（不再扫进程，见文件头第 1 条）。
  *
- * 探测并发 + 单行超时 + 失败降级：`instances.self`（新实例，带会话与窗口）→ `getAppInfo`
- * （老实例，只有身份）→ 都没有则 `unreachable`（**明确区别于 no-port**：那说明端口上有人占着却不答话）。
+ * 每条都发一次自报探测：`instances.self`（新实例，带会话与窗口）→ `getAppInfo`（老实例，只有身份）
+ * → 都失败则 `unreachable`（**明确区别于 no-port**：那说明端口上有人占着却不答话）。
+ *
+ * 注册表里被 SIGKILL 留下的死记录由 pid 存活过滤挡掉（读侧的兜底，写侧的清理不保证执行）。
  */
 export async function collectInstances(deps: CollectDeps = {}): Promise<InstanceRow[]> {
   const dir = deps.dir ?? registryDir();
-  const procRows = await (deps.rows ?? (() => os.snapshot()))();
-  if (!procRows) throw Object.assign(new Error("进程快照失败（os 策略未返回任何行）"), { code: "os/snapshot-unavailable" });
   const probeSelf = deps.probeSelf ?? ((port: number) => fetchInstanceSelf(port, PROBE_TIMEOUT_MS));
   const probeAppInfo = deps.probeAppInfo ?? ((port: number) => fetchAppInfo(port, PROBE_TIMEOUT_MS));
   const readPortFile = deps.readPortFile ?? ((home: string) => new AppConfig(home).readPort());
 
-  const procs = pickInstanceProcesses(procRows.map((r) => ({ pid: r.pid, ppid: r.ppid, command: r.command })));
-  const records = new Map(readRecords(dir, deps.alive).map((r) => [r.pid, r] as const));
-  const needEnv = procs.filter((p) => !records.has(p.pid)).map((p) => p.pid);
-  // R2：L2 不再暴露「读别人环境变量」这种机制；老实例的 hint 只作线索，默认没有。
-  const envs = (deps.envOf ?? (() => new Map<number, Record<string, string>>()))(needEnv);
-
-  const rows = procs.map((p) => baseRow(p, records.get(p.pid), envs.get(p.pid), readPortFile));
-  for (const rec of records.values()) {
-    if (rows.some((r) => r.pid === rec.pid)) continue;
-    rows.push(recordOnlyRow(rec));
-  }
+  const rows = readRecords(dir, deps.alive).map((rec) => {
+    const row = rowFromRecord(rec);
+    // 记录写了 port，但端口可能还没就绪（启动早期那份）→ 退回数据根的 app.port 文件
+    if (row.port === null) row.port = readPortFile(rec.diyHome);
+    return row;
+  });
 
   await Promise.all(rows.map((row) => probeRow(row, { probeSelf, probeAppInfo })));
   return rows;

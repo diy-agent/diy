@@ -45,6 +45,21 @@ export interface InstanceRecord {
   launch: string | null;
   /** 启动它的 git worktree 根（绝对路径）；老记录 ⇒ null */
   worktree: string | null;
+  /**
+   * 实例**自报的名字**（`DIY_INSTANCE_NAME` / app.yaml 的 `name:`）。用户命名优先，
+   * 没写 ⇒ null（展示侧退化为 `<app>#<pid>`，见 shared/instance-row.ts::displayNameOf）。
+   *
+   * 为什么要有它（##518）：`launch` / `slot` 只是**启动配置模版**，同一模版起两份时
+   * 靠编号区分是反人类的；实例自己起个名字才是人认得出的身份。
+   */
+  name: string | null;
+  /**
+   * 有没有 source —— **实例分类的第一刀**（##518 用户裁）：
+   *   `source`   = 从工作区代码起的（`sha.sh` 手工 / app.yaml / 测试代码），dev 能读写、能操作；
+   *   `packaged` = 安装包起的（asar 内无源码），dev 只能观测。
+   * 老记录 ⇒ null（读侧按 diyHome 与 argv 猜，不硬编）。
+   */
+  mode: "source" | "packaged" | null;
   /** RPC 端口；未就绪为 null（启动早期写的那一份） */
   port: number | null;
   /**
@@ -107,6 +122,8 @@ export function parseRecord(raw: unknown): InstanceRecord | null {
     // 同理：老记录没有这两个字段 → null（##502 第二轮新增）
     launch: str(o["launch"]) ? (o["launch"] as string) : null,
     worktree: str(o["worktree"]) ? (o["worktree"] as string) : null,
+    name: str(o["name"]) ? (o["name"] as string) : null,
+    mode: o["mode"] === "source" || o["mode"] === "packaged" ? o["mode"] : null,
     pingPort: num(o["pingPort"]) ? (o["pingPort"] as number) : null,
     diyHome: o["diyHome"],
     variant: typeof o["variant"] === "string" ? o["variant"] : "",
