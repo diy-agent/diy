@@ -318,7 +318,7 @@ describe("task drafts（未提交草稿）", () => {
     const personaId = String((pr.data as any)?.id);
     await fx.sh.run(`./diy.sh task edit ${uri} --persona ${personaId}`);
 
-    const r = await fx.sh.getJson(`./diy.sh getTask ${uri}`);
+    const r = await fx.sh.getJson(`./diy.sh task detail ${uri}`);
     const d = (r.data as any)?.data;
     // 契约里的每个字段都要真的回传（而不是被 RPC schema 静默 strip）
     expect(d.uri).toBe(uri);
@@ -330,7 +330,7 @@ describe("task drafts（未提交草稿）", () => {
   });
 
   it("getTask — 未找到时 data 为 null（renderer 的守卫靠它）", async () => {
-    const r = await fx.sh.getJson(`./diy.sh getTask projects/999999/tasks/1`);
+    const r = await fx.sh.getJson(`./diy.sh task detail projects/999999/tasks/1`);
     expect((r.data as any)?.data).toBeNull();
   });
 

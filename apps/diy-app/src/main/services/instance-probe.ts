@@ -20,7 +20,7 @@ import type { InstanceSelf, RevealResult } from "../../shared/instance-row";
 // 这里 re-export，调用方（services/instances.ts 等）不必知道契约文件在哪。
 export type { InstanceSelf, RevealResult };
 
-/** `diy.getAppInfo` 里本模块要用的字段（只取所需，避免依赖整份 schema） */
+/** `diy.app.info` 里本模块要用的字段（只取所需，避免依赖整份 schema） */
 export interface AppInfoLite {
   diyHome: string;
   pid: number;
@@ -47,14 +47,18 @@ async function withBudget<T>(timeoutMs: number, fn: (client: HttpClientBinding) 
 }
 
 /**
- * 读某端口上的实例身份（`diy.getAppInfo`）。**失败即抛**（超时 / 连不上 / 契约不符）——
+ * 读某端口上的实例身份（`diy.app.info`）。**失败即抛**（超时 / 连不上 / 契约不符）——
  * 调用方决定「吞成无响应」还是「当作别人的实例」，判据不在这一层。
+ *
+ * ⚠️ 方法名跟着 apiDef 走：2026-11 顶层 `getAppInfo` 并入 `app.info`（4194c0be）。
+ * 这里写的是**线上字符串**，tsc 查不到 —— 改名时漏改 = CLI 永远认不出自己的实例
+ * （症状是「启动超时 + 锁被占用」，与真正的锁问题无法区分）。
  */
 export async function fetchAppInfo(port: number, timeoutMs = 1500): Promise<AppInfoLite> {
   return withBudget(
     timeoutMs,
     (client) =>
-      client.invoke<{ input: Record<string, never>; meta: Record<string, never> }, AppInfoLite>("diy.getAppInfo", {
+      client.invoke<{ input: Record<string, never>; meta: Record<string, never> }, AppInfoLite>("diy.app.info", {
         input: {},
         meta: {},
       }),

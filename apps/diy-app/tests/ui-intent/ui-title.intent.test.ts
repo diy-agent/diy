@@ -61,7 +61,7 @@ interface AppInfo {
 
 /** getAppInfo 的 data */
 async function appInfo(): Promise<AppInfo> {
-  const r = await fx.sh.getJson("./diy.sh getAppInfo");
+  const r = await fx.sh.getJson("./diy.sh app info");
   return (r as any).data; // 壳是 { ok, data }（单层）
 }
 

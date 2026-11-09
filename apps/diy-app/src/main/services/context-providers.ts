@@ -8,7 +8,7 @@
 // 工厂让依赖显式出现在签名上（而不是从全局变量里偷），也便于单测直接喂假数据。
 
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { skillsOf } from "@diy-agent/skills";
 import type { ContextProvider } from "@diy-agent/context";
 import { describeSchema, type SchemaDoc } from "@diy-agent/context/schema/schema-doc";
@@ -21,7 +21,7 @@ import { personaForTask } from "../core/persona";
 import { getProjectPath } from "../core/project";
 import { readRuntimeConfig } from "../../runtime";
 import { LOG_DIR_REL, dayFile } from "../core/traffic-log";
-import { scanKb } from "@diy-agent/kb";
+import { kbRootOf, scanKb } from "@diy-agent/kb";
 import { buildDocsIndex, summarizeDocsIndex } from "./docs-index";
 import { DELIVERED_SECTIONS, chainOf, projectIncludeResolver, renderSystemDsl, taskOf } from "./prompt-registry";
 
@@ -226,32 +226,45 @@ export function sectionProvider(key: "identity" | "rules" | "guard", core: () =>
  * **不缓存**：`scanKb` 是 readdir + 读 67 个小文件头，实测 ~5ms；
  * 而 `buildKbIndex` 那套指纹缓存是为了避免解析 22 篇大 YAML，前提已经不存在了。
  */
-export function kbProvider(home: string): ContextProvider {
+export function kbProvider(home: string, shared: Shared): ContextProvider {
     return {
         key: "kb",
         help: {
             type: "object",
-            desc: "知识库索引（`.diy/knowledge/` 下的 md 文件；要内容直接读那个文件）",
+            desc:
+                "知识库索引（md 文件；要内容直接读那个文件）。两层合并：项目库 `<repo>/.diy/knowledge/` " +
+                "优先，全局库 `$DIY_HOME/knowledge/` 兜底 —— 同名取项目那份",
             entries: {
                 type: "array",
                 desc: "每个 md 一条（按路径排序）；空则整节跳过",
                 items: {
-                    path: { type: "string", desc: "相对 `.diy/knowledge/` 的路径" },
+                    path: { type: "string", desc: "相对知识库根的路径" },
                     desc: { type: "string", desc: "这个文件讲什么" },
                     sections: { type: "number", desc: "多少个 `##` 小节" },
+                    scope: { type: "string", desc: "`project` / `global`（同名时只出 project 那条）" },
                 },
             },
         },
         provide: () => {
-            const root = join(home, "knowledge");
-            const scan = scanKb(root);
-            if (scan.entries.length === 0) return undefined;
-            return {
-                entries: scan.entries.map((e) => ({ path: e.path, desc: e.desc, sections: e.sections })),
-            };
+            // 两层（2026-11-07 修）：知识主体在**项目库**（534 条迁进 `<repo>/.diy/knowledge/`），
+            // 只读 `home/knowledge` 会扫出空 —— 第一版就是只读了全局，信封里 kb 一直是 null。
+            const roots: { dir: string; scope: "project" | "global" }[] = [
+                { dir: kbRootOf(shared.cwd().cwd), scope: "project" },
+                { dir: join(home, "knowledge"), scope: "global" },
+            ];
+            const byPath = new Map<string, { path: string; desc: string; sections: number; scope: string }>();
+            // 先 global 后 project：**后写的覆盖**，于是同 path 时项目那份胜出
+            for (const { dir, scope } of [...roots].reverse()) {
+                for (const e of scanKb(dir).entries) {
+                    byPath.set(e.path, { path: e.path, desc: e.desc, sections: e.sections, scope });
+                }
+            }
+            if (byPath.size === 0) return undefined;
+            return { entries: [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path)) };
         },
     };
 }
+
 
 /** `docs` 节：仓库文档索引摘要（真源是仓库文件树；任务不在仓库里 ⇒ 整节缺席） */
 export function docsProvider(projectId: string): ContextProvider {
@@ -328,7 +341,7 @@ export function standardProviders(deps: ProviderDeps, opts: AssembleOptions = {}
         sectionProvider("identity", core, shared),
         sectionProvider("rules", core, shared),
         sectionProvider("guard", core, shared),
-        kbProvider(deps.home),
+        kbProvider(deps.home, shared),
         docsProvider(deps.projectId),
         roomProvider(opts),
         selfProvider(opts),

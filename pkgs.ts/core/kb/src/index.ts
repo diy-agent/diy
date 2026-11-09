@@ -341,3 +341,21 @@ export function moveEntry(root: string, from: string, to: string): { from: strin
     rmSync(absFrom);
     return { from: absFrom, to: written.path };
 }
+
+/**
+ * 从某目录向上找最近的 `.diy/knowledge`（找不到则给该目录下的——可能不存在，调用方自己 scanKb 判空）。
+ *
+ * 为什么放在本包：`existsSync` 这种同步探测在 **app 里是禁新增的**（`check-sync-io` 护栏），
+ * 而这里是纯 IO 包、本来就是同步的。宿主只拿结果，不自己去做探测。
+ */
+export function kbRootOf(from: string): string {
+    let at = resolve(from);
+    for (;;) {
+        const candidate = join(at, '.diy', 'knowledge');
+        if (existsSync(candidate)) return candidate;
+        const parent = resolve(at, '..');
+        if (parent === at) break;
+        at = parent;
+    }
+    return join(resolve(from), '.diy', 'knowledge');
+}

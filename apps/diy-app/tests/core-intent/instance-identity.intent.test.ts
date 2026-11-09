@@ -46,7 +46,7 @@ function scratchHome(): string {
 
 /** 跑一条 CLI 并取 JSON 输出的 data 段（失败时把 stderr 一起带出来，便于定位） */
 async function getAppInfo(sh: ShellTest): Promise<{ diyHome: string; pid: number; port: number }> {
-  const r = await sh.run("./diy.sh getAppInfo --json", 20000);
+  const r = await sh.run("./diy.sh app info --json", 20000);
   if (r.code !== 0) throw new Error(`getAppInfo 失败 exit=${r.code}\nstderr: ${r.stderr}`);
   return (JSON.parse(r.stdout) as { data: { diyHome: string; pid: number; port: number } }).data;
 }
@@ -125,7 +125,7 @@ describe("实例身份校验（##328）", () => {
     writeFileSync(join(home, "app.port"), String(instA.port), "utf-8");
 
     const sh = shellFor(home);
-    const r = await sh.run("./diy.sh getAppInfo --json", 20000);
+    const r = await sh.run("./diy.sh app info --json", 20000);
 
     // 测试环境 DIY_NO_LAUNCH=1：拒绝复用后不许悄悄拉起新实例，而是报「未就绪」
     expect(r.code).not.toBe(0);
@@ -142,7 +142,7 @@ describe("实例身份校验（##328）", () => {
 
   it("/cli 带别的数据根的 home → 409 home-mismatch（快路径不串台的唯一闸门）", async () => {
     const r = await postCli(instA.port, {
-      argv: ["getAppInfo", "--json"],
+      argv: ["app", "info", "--json"],
       cwd: process.cwd(),
       home: instB.home,
     });
@@ -158,7 +158,7 @@ describe("实例身份校验（##328）", () => {
 
   it("兼容分支：/cli 不带 home 的旧调用照常执行（别让兼容路径失守）", async () => {
     const r = await postCli(instA.port, {
-      argv: ["getAppInfo", "--json"],
+      argv: ["app", "info", "--json"],
       cwd: process.cwd(),
     });
     expect(r.status).toBe(200);

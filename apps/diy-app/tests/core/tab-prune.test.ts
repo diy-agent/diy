@@ -68,7 +68,7 @@ describe("staleTaskTabCtxs —— 判据本身", () => {
 describe("剪枝挂在**最新**那份树上（过期快照不剪）", () => {
   it("旧响应后到被丢弃：alive 仍含 A → 不剪 A", async () => {
     vi.resetModules();
-    await installRpc({ diy: { loadTaskTree: h.loadTaskTree } });
+    await installRpc({ diy: { task: { tree: h.loadTaskTree } } });
     const { taskStore } = await import("../../src/renderer_solid/store/taskStore");
     let resolveOld!: (v: unknown) => void;
     let resolveNew!: (v: unknown) => void;

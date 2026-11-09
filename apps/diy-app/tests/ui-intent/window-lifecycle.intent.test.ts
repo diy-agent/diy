@@ -70,7 +70,7 @@ async function windowGone(): Promise<boolean> {
 
 async function appInfo(timeoutMs = 10000): Promise<AppInfo> {
   // 显式给短超时：这条命令若挂在「启动超时 30s」路径上，用默认 20s 只会让用例更难读
-  const r = await fx.sh.run("./diy.sh getAppInfo --json", timeoutMs);
+  const r = await fx.sh.run("./diy.sh app info --json", timeoutMs);
   if (r.code !== 0) throw new Error(`getAppInfo 失败 exit=${r.code}\nstderr: ${r.stderr}`);
   return (JSON.parse(r.stdout) as { data: AppInfo }).data;
 }

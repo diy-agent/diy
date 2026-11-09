@@ -269,7 +269,7 @@ describe("getTask 载荷必须带全结构化字段（曾经的实测 bug）", (
     // 为什么它当初能溜过全绿：我的 UI 用例只验了「在面板里改值 → 落盘 + 表格列变」，
     // **没验「面板回显已有值」**。所以补两条：一条锁 RPC 载荷（本用例），
     // 一条锁界面回显（下一条）。
-    const r = await fx.sh.getJson(`./diy.sh getTask projects/${PID}/tasks/1`);
+    const r = await fx.sh.getJson(`./diy.sh task detail projects/${PID}/tasks/1`);
     const d = (r.data as any)?.data;
     expect(d.change_type, "change_type 必须在载荷里（被 strip 就是这里红）").toBe("feat");
     expect(d.module).toBe("agent/ui");
@@ -277,7 +277,7 @@ describe("getTask 载荷必须带全结构化字段（曾经的实测 bug）", (
   });
 
   it("字段未被设置时载荷给 undefined（不是被 strip 掉的空壳）", async () => {
-    const r = await fx.sh.getJson(`./diy.sh getTask projects/${PID}/tasks/3`);
+    const r = await fx.sh.getJson(`./diy.sh task detail projects/${PID}/tasks/3`);
     const d = (r.data as any)?.data;
     expect(d.title).toBeTruthy(); // 任务本身读到了，说明不是"空对象"这种假绿
     expect(d.change_type).toBeUndefined();

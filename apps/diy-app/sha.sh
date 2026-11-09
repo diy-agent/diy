@@ -197,7 +197,7 @@ preview() {
   echo "   数据根：$home"
   # 起/连都交给 CLI 的 ensureAppPort（探活 → 验身份 → 复用或拉起，##328）：
   # 不要在这里自己 spawn —— 否则锁冲突诊断 / CDP 提示 / 身份校验会两处分叉。
-  run env DIY_VARIANT=preview DIY_ENV=development DIY_HOME="$home" node ./build/preview/cli/index.js getAppInfo
+  run env DIY_VARIANT=preview DIY_ENV=development DIY_HOME="$home" node ./build/preview/cli/index.js app info
   echo "   与它对话：DIY_VARIANT=preview DIY_HOME=$home ../../diy.sh agent local chat <taskUri>"
 }
 # 开发期跑 CLI 源码：./sha.sh cli task list

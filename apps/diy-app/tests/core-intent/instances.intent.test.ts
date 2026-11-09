@@ -51,7 +51,7 @@ async function rowsOf(sh: ShellTest): Promise<Row[]> {
 
 /** 本实例自报的 pid（`ElectronTest` 只暴露 home/port，pid 问实例自己最可靠） */
 async function pidOf(sh: ShellTest): Promise<number> {
-  const r = await sh.run("./diy.sh getAppInfo --json", 30000);
+  const r = await sh.run("./diy.sh app info --json", 30000);
   if (r.code !== 0) throw new Error(`getAppInfo 失败 exit=${r.code}\nstderr: ${r.stderr}`);
   return (JSON.parse(r.stdout) as { data: { pid: number } }).data.pid;
 }
