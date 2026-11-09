@@ -6,17 +6,14 @@
  * 命名体系：diy.*（Main 进程域，本地处理）。diy.ui.* 由调用方 onForward 转发。
  */
 
-import { openUrlWith } from "../core/open-url";
 import type { ServerBinding } from "@diy-agent/rpc";
 import { ChannelServerBinding } from "@diy-agent/rpc";
 import type { EnvelopeTransport } from "@diy-agent/rpc";
-import { readDrafts } from "../core/drafts";
-import * as project from "../core/project";
+
 import * as state from "../core/state";
-import * as taskTree from "../core/task-tree";
-import { AppConfig } from "../core/app-config";
+
 import { refreshModelRuntime } from "../core/model-runtime";
-import { hasConversation } from "../core/local-paths";
+
 import { autoSeedEnabled, seedHome } from "../core/seed";
 import { bindSeed } from "./api-domains/seed/impl";
 import { bindNotice } from "./api-domains/notice/impl";
@@ -41,63 +38,24 @@ import { bindTask } from "./api-domains/task/impl";
 import { bindRoom } from "./api-domains/room/impl";
 import { bindFlow } from "./api-domains/flow/impl";
 import { bindAgent } from "./api-domains/agent/impl";
-import { splitListOption } from "./remote-discover-options";
+
 import { bindInstances } from "./api-domains/instances/impl";
 import { bindRemote } from "./api-domains/remote/impl";
-import { platform, arch, release, totalmem, freemem } from "node:os";
-import { currentGitBranch, findRepoRoot, homeDisplayOf, repoDisplayOf } from "../core/instance-identity";
-import { readRuntimeConfig } from "../../runtime";
+
 import * as health from "./health";
 import { apiDef } from "./api-def";
-import * as factsStore from "./facts-store";
-import * as journalStore from "./journal-store";
-import { buildDocsIndex, DEFAULT_DOCS_ROOTS } from "./docs-index";
-import { TaskDetailSchema } from "../../shared/task-detail";
-import { noteRendererTouch } from "./runtime-context";
-import type { ToolResultMode } from "@diy-agent/compaction/compaction";
-import type { HistoryEntryView } from "../../shared/context/schema";
-import { readFileWindow, formatReadOutput, ReadWindowError } from "../core/file-read";
-import * as flow from "../core/flow";
-import { requirePostText } from "../core/flow-store";
-import * as flowThread from "../core/flow-thread";
-import { flowPrompt } from "./flow-prompt";
-import { AsyncQueue } from "./async-queue";
-import { modelNoticeHub } from "./model-notice";
-import { inboxHub } from "./inbox";
+
 import { noteWriteError } from "./env-watch";
 import { setWriteErrorHook } from "../core/atomic-write";
-import { collectInstances, focusInstance, renderInstanceList, selfReport } from "./instances";
-import { remoteService } from "./remote";
-import { hubService } from "./hub";
-import { revealSelf, windowState } from "./window-ops";
-import { HUMAN_MEMBER_ID, shortName } from "../../shared/room";
-import { runRegistry } from "./run-registry";
-import { foregroundBash } from "./foreground-bash";
-import { scanOwnedProcs, groupOwnerOf, killOwnedProc } from "./process-scan";
-import { procRowOf, runViewOf } from "../../shared/run-view";
-import { parseEtime } from "../os";
-import { stateLabel } from "../../shared/run-status";
-import { fenceTaskOwner } from "../../shared/job-fence";
 
 /**
  * 实际 RPC 监听端口，由入口在绑定完成后回填。
  * 不能靠 app.port 文件推：serve 模式不写该文件，读到的会是 Electron 留下的陈旧值。
+ *
+ * 2026-11 起真正的存放点是 `api-domains/app/impl.ts` 的 `rpcPort` —— 这里只做 re-export，
+ * 保持 `main/index.ts` / `serve/index.ts` 的老 import 路径不变。
  */
-let _rpcPort = 0;
-export function setRpcPort(port: number): void {
-  _rpcPort = port;
-}
-let _llmProxyInstance: any = null;
-async function getLlmProxy() {
-  if (!_llmProxyInstance) {
-    const { LlmProxy } = await import("./llm-proxy");
-    _llmProxyInstance = new LlmProxy();
-  }
-  return _llmProxyInstance;
-}
-
-import { traffic } from "../core/traffic";
-import { localISOString } from "@diy-agent/time";
+export { setRpcPort } from "./api-domains/app/impl";
 
 const app = apiDef.diy;
 
@@ -225,21 +183,6 @@ export function bindAppHandlers(binding: ServerBinding): void {
   bindLlmConfig(binding);
 
   // ── flow（##319：工作流实例与任务绑定；状态真源 = 任务目录 flow/state.json）──
-  // 「多个 k=v」型入参在 schema 里是「JSON 数组或单个裸值」（见 api-def 的 kvList 工厂）：
-  // parser 只对 `z.array` 自动 JSON.parse，联合类型到这就还是字符串 → 在这里归一（唯一一处）。
-  const kvList = (v: string | string[] | undefined): string[] => {
-    if (v === undefined) return [];
-    if (Array.isArray(v)) return v;
-    const raw = v.trim();
-    if (raw.startsWith("[")) {
-      const parsed: unknown = JSON.parse(raw);
-      if (!Array.isArray(parsed) || parsed.some((x) => typeof x !== "string")) {
-        throw new Error(`应为字符串数组或单个 "k=v"，实得 ${JSON.stringify(v)}`);
-      }
-      return parsed as string[];
-    }
-    return [raw];
-  };
 
   // ── flow（15 个 handler 已拆到 api-domains/flow/）──
   bindFlow(binding);
