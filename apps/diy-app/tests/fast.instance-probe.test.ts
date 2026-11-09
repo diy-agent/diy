@@ -9,7 +9,7 @@
  * 这里用一个只认 `/diy.app.info` 的桩服务端：客户端要是换了方法名（或拼错），
  * 断言直接红，而不是等到用户启动不了。
  */
-import { createServer, type Http2Server } from "node:http2";
+import { createServer, type Http2Server, type ServerHttp2Stream } from "node:http2";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { fetchAppInfo } from "../src/main/services/instance-probe";
@@ -20,7 +20,7 @@ const paths: string[] = [];
 
 beforeAll(async () => {
     server = createServer();
-    server.on("stream", (stream) => {
+    server.on("stream", (stream: ServerHttp2Stream) => {
         paths.push(String(stream.headers[":path"] ?? ""));
         stream.respond({ ":status": 200, "content-type": "application/json" });
         stream.end(JSON.stringify({ result: { diyHome: "/tmp/probe-home", pid: 4242, env: "test" } }));
