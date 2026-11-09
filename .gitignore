@@ -22,6 +22,9 @@ dist/
 build/
 # 能力包编译产物（##453：main/exports 指 lib/*.js，Node/Electron 直接加载；产物不入库）
 lib/
+# 例外：renderer 的 lib/ 是**源码目录**（同名巧合）。没有这条，新加的文件会被静默忽略，
+# git add 不报错也不收录 —— ##522 新增 frame-batch.ts 时踩过（靠 add -f 才发现）
+!apps/diy-app/src/renderer_solid/lib/
 # 能力包运行时目录（##455：scripts/build-runtime.mjs 生成，electron-builder 的 extraResources 源）
 apps/diy-app/runtime/
 
