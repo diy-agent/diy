@@ -37,6 +37,7 @@ import { RpcPortService } from "./services/rpc-port";
 import { AppConfig } from "./core/app-config";
 import { bindApi, bindAppHandlers, setRpcPort } from "./services/api-impl";
 import { installDiagnostics } from "./services/diagnostics";
+import { classifyRendererNoise, createNoiseMeter } from "./services/log-noise";
 import { traffic } from "./core/traffic";
 import { installCrashReporting } from "./services/crash-reporting";
 import { detectGpu } from "./core/gpu-detect";
@@ -368,19 +369,16 @@ function createWindow(): { binding: ServerBinding; ipcTransport: import("@diy-ag
   // 改成单个事件对象：level 也从数字 0~3 变成字符串 `info|warning|error|debug`。
   // 判据不变：只留 warning / error（verbose/info/debug 进日志只会淹掉真问题）。
   //
-  // 已知良性噪音（性质：Chromium 自产的循环告警，不是页面代码的 bug）：
-  // ResizeObserver 在某次布局里没能把通知消化完就再触发，Chromium 会以 error 级抛一条
-  // `ResizeObserver loop completed with undelivered notifications`。它对功能无影响
-  // （观察者下一次布局照常回调），但一次抖动可以连发几十条，把 main.log 与终端刷满。
-  // 按消息前缀静音：真需要查布局时用 devtools / playwright attach，不靠日志里的这几行。
-  const RENDERER_NOISE = [
-    "ResizeObserver loop completed with undelivered notifications",
-    "ResizeObserver loop limit exceeded",
-  ];
+  // 已知良性噪音**不静默丢弃**（##522）：登记表在 services/log-noise.ts，首次带原文 + 解释，
+  // 其后只计数、按窗口汇总成一行，退出前 flush —— 既不刷屏，也留得下「出现过多少次」的证据。
   let _lastRendererLog = 0;
   mainWindow.webContents.on("console-message", (details) => {
     if (details.level !== "warning" && details.level !== "error") return;
-    if (RENDERER_NOISE.some((n) => details.message.includes(n))) return;
+    const noise = classifyRendererNoise(details.message);
+    if (noise) {
+      rendererNoise.note(noise, details.message);
+      return;
+    }
     const now = Date.now();
     if (now - _lastRendererLog < 500) return; // 节流：避免洪水
     _lastRendererLog = now;
@@ -402,6 +400,9 @@ function createWindow(): { binding: ServerBinding; ipcTransport: import("@diy-ag
 
   return { binding, ipcTransport };
 }
+
+/** 渲染进程已知噪音的计量器：首次带解释，其后计数汇总（见 services/log-noise.ts） */
+const rendererNoise = createNoiseMeter();
 
 // ── 渲染进程自愈 ──
 // renderer 被外部杀掉（例如 agent 的 bash 工具误杀宿主子进程，见 agent-guard.ts）
@@ -572,6 +573,8 @@ const SHUTDOWN_BUDGET_MS = 2_500;
 let quitting = false;
 
 app.on("before-quit", (event) => {
+  // 噪音计数的最后一行：窗口内还没打出来的条数在这里补齐（不丢信息）
+  rendererNoise.flush();
   cancelModelsStartupRefresh?.();
   cancelModelsStartupRefresh = null;
   rpcPort?.stop();
