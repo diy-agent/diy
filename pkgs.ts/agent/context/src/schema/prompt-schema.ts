@@ -219,26 +219,29 @@ export const AssembleGlobalsSchema = z.object({
    * 把那些迁进知识库、链上只留指针后，agent 仍要知道**有库、库里有什么**才谈得上"按需查"
    * —— 这一段就是那个索引，也是迁移的**前提**（先给索引、再删正文，否则能力直接丢失）。
    *
-   * 为什么只给 subject + description：字节量与**条目数无关**，只随主题数增长（26 主题 ≈ 1.5 KB），
-   * 拿它换掉 25 KB 常驻正文是唯一划算的量级。条目全文归 `facts` 投影（runtime，有 4 KB 硬预算）。
+   * 真源是 `.diy/knowledge/` 下的 md **文件树**（2026-11-07 `63a5a0dc` 换的：
+   * 861 次写入 / 20 次读取 ⇒ 放弃 yaml 事实库，改为模型本来就会用的 md 文件）。
+   * 所以形状跟 `scanKb` 的 `KbEntry` 对齐：路径 + 摘要 + 小节数 + 层级，**没有 claims**。
+   * 字节量只随文件数增长（≈ 1.5 KB），要内容就按路径 `read` / `rg`，不进上下文。
+   *
+   * ⚠ 形状必须与 `context-providers.ts` 的 `kbProvider` 一致（##519 事故：那边换成 md 真源后，
+   * 这里仍是 `{claims, entries:[{subject,claims,ns}]}`，项目库一有数据 `assembleFromProviders`
+   * 的 `parse` 就炸，整轮 LLM 请求起不来 —— 回归用例 `tests/core/kb-provider-schema.test.ts`）。
    */
   kb: z
     .object({
-      claims: z
-        .number()
-        .describe("全库 claim 总数（subject#aspect；跨库同名只算一条）"),
       entries: z
         .array(
           z.object({
-            subject: z.string().describe("主题（`diy facts get <主题>#<方面>` 的前半）"),
-            desc: z.string().describe("这个主题是什么"),
-            claims: z.number().describe("该主题的条目数"),
-            ns: z
-              .array(z.string())
-              .describe("在哪几个库：project（仓库 knowledge/）/ global（设备级）"),
+            path: z.string().describe("相对知识库根的路径（要内容就 read / rg 这个文件）"),
+            desc: z.string().describe("这个文件讲什么"),
+            sections: z.number().describe("正文里 `##` 小节数"),
+            scope: z
+              .enum(["project", "global"])
+              .describe("在哪一层库：project（仓库 `.diy/knowledge/`）/ global（`$DIY_HOME/knowledge/`）"),
           }),
         )
-        .describe("可查主题索引（按主题名排序）"),
+        .describe("可查文件索引（按路径排序）"),
     })
     .optional()
     .describe("知识库索引（没有库时缺席）"),
