@@ -55,6 +55,27 @@ const store: Store = {
     emptyText: "还没有消息，说一句话开始。",
 };
 
+/**
+ * 「等待回复」的秒表：每 0.5s 更新一次提示位。
+ *
+ * 为什么要有它：发出去之后如果上游慢/挂住，界面此前**完全没有反馈**（用户 2026-11-07：
+ * 「就算几秒超时或错误，UI 也没任何提示」）。错误会有 `appendError`，但「还没有结果」这段
+ * 空窗必须自己说。超过 20s 标黄，超过 60s 提示可以去压上下文/换模型。
+ */
+window.setInterval(() => {
+    if (busyEl === null) return;
+    if (!store.busy || busySince === 0) {
+        busyEl.textContent = "";
+        busyEl.removeAttribute("data-slow");
+        return;
+    }
+    const ms = Date.now() - busySince;
+    const sec = Math.round(ms / 1000);
+    busyEl.textContent = ms < 1200 ? "已发送…" : sec < 60 ? `等待回复… ${String(sec)}s` : `等待回复… ${String(sec)}s（超过 1 分钟，可能上游慢或网络不通）`;
+    if (sec >= 20) busyEl.setAttribute("data-slow", "1");
+    else busyEl.removeAttribute("data-slow");
+}, 500);
+
 /** 右侧 panel 的模式（固定 / 悬浮）：换 bot 也保持上次选择 */
 let viewsetPinned = false;
 
@@ -65,6 +86,9 @@ const cutOpen = new Signal(false);
 const cutInfo = new Signal<CompactInfo | null>(null);
 const cutKeep = new Signal(0);
 const cutError = new Signal("");
+/** 「等待回复」提示（命令式更新，避免整页重绘）：元素 + 起点时刻 */
+let busyEl: HTMLElement | null = null;
+let busySince = 0;
 
 function bump(): void {
     rev.value++;
@@ -869,6 +893,13 @@ ${rows}
                         text: "发送",
                         disabled: B(() => store.busy || (store.multi && store.bot === null)),
                     });
+                    // 发出去之后**必须**有反馈：否则上游慢/挂住时，界面看起来像「什么都没发生」
+                    yield html.span({
+                        class: "chat-busy",
+                        ref: (node: HTMLElement) => {
+                            busyEl = node
+                        },
+                    });
                 },
             );
         }
@@ -931,6 +962,7 @@ ${rows}
                 return;
             }
             store.busy = true;
+            busySince = Date.now();
             store.messages = [...store.messages, textMessage("user", text)];
             bump();
             const multi = store.multi && store.bot !== null;
@@ -948,6 +980,8 @@ ${rows}
                 appendError(`出错了：${messageOf(cause)}`);
             } finally {
                 store.busy = false;
+                busySince = 0;
+                if (busyEl !== null) busyEl.textContent = "";
                 bump();
                 inputEl?.focus();
             }

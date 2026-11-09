@@ -200,6 +200,9 @@ export const CHAT_STYLE = `
   border: 1px solid #4f93e8; background: #3b82f6; color: #fff; }
 .chat-cut-err { font-size: 11px; color: #f09b9b; }
 
+.chat-busy { font-size: 11px; opacity: .6; margin-left: 8px; white-space: nowrap; }
+.chat-busy[data-slow="1"] { color: #fbbf24; opacity: .9; }
+
 `;
 
 /** 注入样式表（幂等）。 */
