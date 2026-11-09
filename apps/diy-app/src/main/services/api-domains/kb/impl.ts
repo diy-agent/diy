@@ -87,6 +87,9 @@ export function bindKb(server: ServerBinding): void {
         const body = await readBody(input.bodyFile, input.cwd ?? process.cwd());
         const content = ensureFrontmatter(body, input.desc, new Date().toISOString().slice(0, 10));
         const r = writeEntry(root, input.path, content);
+        // INDEX 跟着写 —— 用户 2026-11-07：「index 是自动生成的吧？每次写入更新？」
+        // 让每条写操作都带着索引一起落地，就不存在「写了但索引里没有」的中间态
+        await writeIndex(root, "");
         return { path: r.path, bytes: r.bytes };
     });
 
@@ -105,6 +108,7 @@ export function bindKb(server: ServerBinding): void {
     server.on(kbService.api.move, async ({ input }) => {
         const root = await resolveRoot(input.dir, input.cwd ?? process.cwd());
         const r = moveEntry(root, input.from, input.to);
+        await writeIndex(root, "");
         return { from: r.from, to: r.to };
     });
 }

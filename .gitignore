@@ -78,3 +78,6 @@ diy.worktrees/
 !apps/diy-app/src/main/data/models*.json
 # 事实库生成物（--write 可重建，勿手改）
 knowledge/index.json
+
+# 知识库里的 data/ 是正经内容（2026-11-07：被上面那条 data/ 误伤）
+!.diy/knowledge/data/

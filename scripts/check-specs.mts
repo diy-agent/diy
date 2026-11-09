@@ -215,12 +215,24 @@ for (const e of entries) {
   const fact = PTR_FACT.exec(e.pointer);
   if (fact) {
     const claim = fact[1];
+    // 2026-11-07 起真源是 **.diy/knowledge 下的 md**（facts 库已退役，534 条迁到 67 个文件）：
+    // `rule.doc#specs` ⇒ `.diy/knowledge/rule/doc.md` 里的 `## specs` 小节。
+    // 仍然兼容老 yaml 的写法（万一有仓库还没迁完）。
+    const [subj, aspect] = claim.split('#');
+    const segs = (subj ?? '').split('.');
+    const mdRel = segs.length > 1 ? [...segs.slice(0, -1), `${segs.at(-1)}.md`].join('/') : `${subj}/${subj}.md`;
+    const mdAbs = path.join(ROOT, '.diy', 'knowledge', mdRel);
+    const inKb = existsSync(mdAbs) && new RegExp(`^##\\s+${(aspect ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'm').test(read(mdAbs));
+
     const dir = path.join(ROOT, 'knowledge', 'facts');
     const files = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.yaml')) : [];
     // claim 里 `.` `#` 是字面量；行首缩进 + 结尾冒号 = yaml 的顶层键
     const re = new RegExp(`^\\s+${claim.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:`, 'm');
-    if (!files.some((f) => re.test(read(path.join(dir, f))))) {
-      errors.push({ kind: 'G2', msg: `第 ${e.line} 行 \`${e.key}\`：知识库里没有 claim \`${claim}\`` });
+    if (!inKb && !files.some((f) => re.test(read(path.join(dir, f))))) {
+      errors.push({
+        kind: 'G2',
+        msg: `第 ${e.line} 行 \`${e.key}\`：知识库里没有 \`${claim}\`（找过 .diy/knowledge/${mdRel} 与 knowledge/facts/*.yaml）`,
+      });
     }
     continue;
   }
