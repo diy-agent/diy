@@ -63,6 +63,7 @@ import {
     type FirstBotInput,
     type ModelChoice,
     type WireMessage,
+    type CompactInfo,
 } from "./protocol.js";
 
 /** `meta.json` 的形状（会话自己的身份；消息正文在桶里） */
@@ -726,6 +727,25 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                 focus(id);
                 return snapshotNow();
             });
+        },
+
+        /** 压缩点（旧宿主：从当前消息线推导，只供面板展示；旧宿主的压缩是自动的） */
+        async compactInfo(): Promise<CompactInfo> {
+            const snap = await snapshotNow()
+            const rounds = snap.messages
+                .filter((m) => m.role === "user")
+                .map((m, i) => ({
+                    label: `轮${i + 1}`,
+                    title: ((m.blocks[0]?.data as { text?: string } | undefined)?.text ?? "").slice(0, 40),
+                    tokens: 0,
+                    kept: true,
+                }))
+            return { rounds, droppedCount: 0 }
+        },
+
+        /** 显式压缩：**旧宿主不支持**（它的压缩由窗口判据自动触发）—— 明确报错，不假装成功 */
+        async compact(): Promise<BotChatSnapshot> {
+            throw new Error("当前宿主不支持显式压缩：用 DIY_CHAT_AGENT=1 启动（Agent 宿主支持按轮压缩）")
         },
 
         send(text, onDelta): Promise<BotChatSnapshot> {

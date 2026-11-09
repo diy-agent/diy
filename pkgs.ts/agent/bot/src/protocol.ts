@@ -200,6 +200,28 @@ export interface BotChatHost {
     selectBot(id: string): Promise<BotChatSnapshot>;
     /** 发送并等流结束；`onDelta` 用于把中间态推给 renderer */
     send(text: string, onDelta: (messages: readonly WireMessage[]) => void): Promise<BotChatSnapshot>;
+    /**
+     * 压缩点（只读，供二级面板渲染）：一轮一行 + 当前边界 + 窗口 + 价格原料。
+     * 语义与 diy-app 的 `compact.ledger` 一致，只是数据来自 **Agent 内存态**而不是回放。
+     */
+    compactInfo(): Promise<CompactInfo>;
+    /**
+     * 显式压缩：保留最近 `keepRounds` 轮（0 = 压缩到头）。
+     * 返回新快照 —— 与其它变更方法同一口径（UI 整页重绘，不做增量合并）。
+     */
+    compact(keepRounds: number): Promise<BotChatSnapshot>;
+}
+
+/** 压缩点面板要的只读数据 */
+export interface CompactInfo {
+    /** 当前会话的轮次（旧 → 新）；`kept=false` 表示已被压掉（仍列出但不可选回来） */
+    readonly rounds: readonly { readonly label: string; readonly title: string; readonly tokens: number; readonly kept: boolean }[];
+    /** 已压掉、选不回来的轮数 */
+    readonly droppedCount: number;
+    /** 模型窗口（未知 ⇒ undefined，不编数字） */
+    readonly windowTokens?: number;
+    /** 上一步实测占用（拿不到 ⇒ undefined） */
+    readonly usedTokens?: number;
 }
 
 // ── core 事件 → Block 的归一化（主进程侧） ──

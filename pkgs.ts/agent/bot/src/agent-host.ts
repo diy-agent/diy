@@ -17,6 +17,7 @@ import { llmPorts, resolveProvider } from "./model-ports.js";
 import { filePersist } from "./persist.js";
 import type {
     Block,
+    CompactInfo,
     BotChatHost,
     BotChatSnapshot,
     BotDraftInput,
@@ -190,6 +191,45 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
 
         async selectBot(id: string): Promise<BotChatSnapshot> {
             active = id
+            return snapshot()
+        },
+
+        async compactInfo(): Promise<CompactInfo> {
+            const bot = await currentBot()
+            if (bot === null) return { rounds: [], droppedCount: 0 }
+            const agent = agentOf(bot)
+            const all = agent.history({ raw: true }).filter((e) => e.kind === "message" || e.kind === "checkpoint")
+            const delivered = new Set(agent.history().map((e) => e.seq))
+            // 轮 = 一条 user +（可选）其后的 assistant；checkpoint 不算轮
+            let n = 0
+            const rounds = all
+                .filter((e) => e.kind === "message")
+                .map((e) => {
+                    const isUser = e.role === "user" || e.role === undefined
+                    if (isUser) n += 1
+                    return {
+                        label: `轮${n}`,
+                        title: (e.content ?? "").replace(/\s+/g, " ").slice(0, 40),
+                        tokens: 0,
+                        kept: delivered.has(e.seq),
+                    }
+                })
+                .filter((_, i) => i % 2 === 0) // 每轮取首条（user）
+            const w = windowOf(bot)
+            return {
+                rounds,
+                droppedCount: rounds.filter((r) => !r.kept).length,
+                ...(w === null ? {} : { windowTokens: w }),
+                usedTokens: undefined,
+            }
+        },
+
+        async compact(keepRounds: number): Promise<BotChatSnapshot> {
+            const bot = await currentBot()
+            if (bot === null) throw new Error("还没有 bot，无法压缩")
+            const agent = agentOf(bot)
+            const r = await agent.compact({ kind: "keepTurns", turns: Math.max(0, keepRounds) })
+            if (!r.accepted) throw new Error(r.error?.message ?? "压缩被拒绝")
             return snapshot()
         },
 
