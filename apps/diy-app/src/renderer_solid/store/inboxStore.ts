@@ -105,7 +105,7 @@ function start(): void {
     if (started) return;
     started = true;
     void diyService.diy
-        .getAppInfo({})
+        .app.info({})
         .then((info) => setDataRoot(info.diyHome ?? ""))
         .catch(() => {
             /* 拿不到数据根 ⇒ 水位判不出归属 ⇒ 全部算未读（多报一次，总比谎报已读过好） */

@@ -52,7 +52,7 @@ async function loadTree() {
   const seq = ++loadSeq;
   setLoading(true);
   try {
-    const r = await diyService.diy.loadTaskTree({});
+    const r = await diyService.diy.task.tree({});
     // 过期响应丢弃：watch 的 task-change 可能连发触发并发 loadTree，旧请求后到会
     // 把树覆盖回旧快照 —— 树「短暂回退」会让下游的 diff（如 tab 清理）误判任务消失
     if (seq !== loadSeq) return;
@@ -68,7 +68,7 @@ async function selectTask(uri: string | null) {
   setSelectedTask(null);
   setSelectedMissing(false);
   if (!uri) return;
-  const r = await diyService.diy.getTask({ uri });
+  const r = await diyService.diy.task.detail({ uri });
   // 期间用户切了别的任务 → 丢弃（否则 A 的响应会写到 B 的选中态上）
   if (selectedUri() !== uri) return;
   // 明确终态：任务不存在（判据在 shared/task-load，与契约同源）。**不静默 return** ——
@@ -92,7 +92,7 @@ async function selectTask(uri: string | null) {
 async function refreshSelected(): Promise<void> {
   const u = selectedUri();
   if (!u) return;
-  const r = await diyService.diy.getTask({ uri: u });
+  const r = await diyService.diy.task.detail({ uri: u });
   if (selectedUri() !== u) return;
   // 刷新时任务已没了 → 同一个「不存在」终态（别把旧详情留在屏上假装还在）
   if (getTaskVerdict(r) !== "ok" || !r.data) {

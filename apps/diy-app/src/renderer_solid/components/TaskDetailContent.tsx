@@ -786,7 +786,7 @@ export function TaskDetailContent(props: {
     });
 
     const load = async (uri: string) => {
-        const r = await diyService.diy.getTask({ uri });
+        const r = await diyService.diy.task.detail({ uri });
         // 卸载 / uri 已变（切得快）则丢弃：读的是快照，不是 accessor（见 latestUri 注释）
         if (disposed || latestUri !== uri) return;
         // 判据收在 shared/task-load（与 main 的契约同源），不再各处写 `if (r.data)`

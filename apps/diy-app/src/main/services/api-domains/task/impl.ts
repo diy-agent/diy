@@ -7,6 +7,9 @@ import type { ServerBinding } from "@diy-agent/rpc";
 import { resolve as resolvePath, relative as relativePath, isAbsolute as isAbsolutePath } from "node:path";
 import * as project from "../../../core/project";
 import type { DraftField } from "../../../core/drafts";
+import { TaskDetailSchema } from "../../../../shared/task-detail";
+import * as taskTree from "../../../core/task-tree";
+import { hasConversation } from "../../../core/local-paths";
 import { taskService } from "./api";
 import { writeDrafts, readDrafts, clearDrafts, DRAFT_FIELDS } from "../../../core/drafts";
 import * as state from "../../../core/state";
@@ -101,6 +104,27 @@ export function bindTask(server: ServerBinding): void {
             ui_drafts: d ? { base_updated: d.base_updated, saved: d.saved, fields: d.fields } : null,
           },
         };
+        },
+        tree: async () => ({ status: "ok", data: taskTree.loadTaskTree() }),
+        detail: async ({ input }) => {
+            const t = state.getTask(input.uri);
+            // 未找到 → data: null（truthy 的壳对象会让 renderer 守卫失效）
+            if (!t) return { status: "error", data: null };
+            const pinfo = project.getProjectInfo(t.project ?? "");
+            const d = readDrafts(input.uri);
+            // **整份交给契约 schema**：形状由 shared/task-detail.ts 的 TaskDetailSchema（单一真源）决定，
+            // 多余键自动剥掉。历史教训：handler 与 output 各抄一份键清单，漏一处就静默丢字段。
+            return {
+                status: "ok",
+                data: TaskDetailSchema.parse({
+                    ...t,
+                    project_path: pinfo?.path,
+                    project_label: pinfo?.label,
+                    ui_drafts: d ? { base_updated: d.base_updated, saved: d.saved, fields: d.fields } : null,
+                    has_session: hasConversation(input.uri),
+                    has_draft: d?.fields?.agent_input !== undefined,
+                }),
+            };
         },
         edit: async ({ input }) => {
         // 正文输入的显式三态（##338）：`body|bodyText|bodyFile`、`appendBody|appendBodyFile|appendBodyText`
