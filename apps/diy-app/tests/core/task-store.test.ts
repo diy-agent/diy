@@ -22,7 +22,7 @@ const h = vi.hoisted(() => ({ loadTaskTree: vi.fn(), getTask: vi.fn() }));
 /** 每个用例一份全新 store 单例；RPC 走显式注入（先 resetModules 再注入，见 helpers）。 */
 async function freshStore() {
     vi.resetModules();
-    await installRpc({ diy: { loadTaskTree: h.loadTaskTree, getTask: h.getTask } });
+    await installRpc({ diy: { task: { tree: h.loadTaskTree, detail: h.getTask } } });
     return (await import("../../src/renderer_solid/store/taskStore")).taskStore;
 }
 
