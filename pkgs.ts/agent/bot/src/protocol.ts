@@ -215,7 +215,7 @@ export interface BotChatHost {
 /** 压缩点面板要的只读数据 */
 export interface CompactInfo {
     /** 当前会话的轮次（旧 → 新）；`kept=false` 表示已被压掉（仍列出但不可选回来） */
-    readonly rounds: readonly { readonly label: string; readonly title: string; readonly tokens: number; readonly kept: boolean }[];
+    readonly rounds: readonly { readonly label: string; readonly title: string; readonly kept: boolean }[];
     /** 已压掉、选不回来的轮数 */
     readonly droppedCount: number;
     /** 模型窗口（未知 ⇒ undefined，不编数字） */

@@ -40,10 +40,36 @@ export interface AgentHostOptions {
     readonly portsFor?: (bot: BotConfig) => AgentPorts
     /** 每个 bot 的快照目录；缺省 `<home>/agents/<botId>` */
     readonly dirFor?: (botId: BotId) => string
+    /**
+     * 每个 bot 的工具集（ai-sdk ToolSet）；缺省不给 = 纯对话。
+     * 工具执行归 provider/ai-sdk，聚合只记账（见 `AgentPorts.complete` 的注释）。
+     */
+    readonly toolsFor?: (bot: BotConfig) => unknown
 }
 
 /** 历史条目 → 一条展示消息（checkpoint 用自造 kind，走 UI 的 fallback 渲染器） */
 export function wireMessageOf(e: HistoryEntry): WireMessage {
+    // 工具类条目映射到 UI 的**内置** `tool` 块（chat-page 的 block-renderers 认识它），
+    // 这样工具调用/结果能直接显示成折叠块，而不是一坨 JSON。
+    if (e.kind === "tool-call" || e.kind === "tool-result") {
+        const isCall = e.kind === "tool-call"
+        return {
+            role: e.role === "tool" ? "user" : "assistant",
+            blocks: [
+                {
+                    kind: "tool",
+                    id: `seq-${e.seq}`,
+                    data: {
+                        name: isCall ? (e.tool?.name ?? e.content ?? "") : "tool result",
+                        args: isCall ? (e.tool?.input ?? "") : "",
+                        state: isCall ? "running" : "ok",
+                        summary: isCall ? (e.tool?.name ?? "") : (e.content ?? "").slice(0, 80),
+                        output: isCall ? "" : (e.content ?? ""),
+                    },
+                },
+            ],
+        }
+    }
     const role: WireMessage["role"] = e.role === "assistant" ? "assistant" : "user"
     const kind = e.kind === "checkpoint" ? "checkpoint" : "text"
     const blocks: Block[] = [{ kind, id: `seq-${e.seq}`, data: { text: e.content ?? "" } }]
@@ -80,6 +106,7 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
             ports: portsFor(bot),
             persist: filePersist(dirFor(bot.id)),
             autoCompact: { windowTokens: windowOf(bot) },
+            ...(opts.toolsFor === undefined ? {} : { tools: opts.toolsFor(bot) }),
         })
         agents.set(bot.id, created)
         return created
@@ -214,7 +241,6 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
                 .map((e, i) => ({
                     label: `轮${i + 1}`,
                     title: (e.content ?? "").replace(/\s+/g, " ").slice(0, 40),
-                    tokens: 0,
                     kept: delivered.has(e.seq),
                 }))
             const w = windowOf(bot)
@@ -261,7 +287,7 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
                 await new Promise((r) => setTimeout(r, 30))
             }
             onDelta(agent.history().map(wireMessageOf))
-            const failed = agent.snapshot().error
+            const failed = agent.takeFailure()
             if (failed !== undefined) throw new Error(failed)
             return snapshot()
         },

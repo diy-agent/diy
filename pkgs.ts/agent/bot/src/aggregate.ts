@@ -34,7 +34,7 @@ export type CompactStrategy =
   | { kind: 'keepTokens'; tokens: number }
   | { kind: 'keepSince'; marker: string }
 
-export type HistoryKind = 'message' | 'checkpoint' | 'notice' | 'runtime'
+export type HistoryKind = 'message' | 'checkpoint' | 'notice' | 'runtime' | 'tool-call' | 'tool-result'
 
 export interface HistoryEntry {
   seq: number
@@ -43,6 +43,8 @@ export interface HistoryEntry {
   content?: string
   /** 仅 checkpoint：它折掉了哪些 seq（含两端） */
   shadowed?: { fromSeq: number; toSeq: number }
+  /** 仅工具类：调用 id / 名字 / 参数（结果条目只有 id 与正文） */
+  tool?: { id: string; name: string; input: string }
 }
 
 /** Agent 的输入：用户消息 / 外部事件 */
@@ -61,6 +63,8 @@ export interface AgentEventEnvelope {
     | 'message.completed'
     | 'run.completed'
     | 'job.updated'
+    | 'tool.started'
+    | 'tool.completed'
     | 'compact.committed'
     | 'compact.rejected'
   payload: Record<string, unknown>
@@ -75,15 +79,28 @@ export interface AgentSnapshot {
   /** 已完成的轮数（用户消息 + 一次完整回答 = 一轮） */
   turns: number
   historyLength: number
-  /** 上一轮失败的原因（成功一轮后清空）；界面据此报错，而不是永远转圈 */
-  error?: string
   jobs: Record<string, { state: 'running' | 'exited' | 'failed'; result?: unknown; error?: string }>
 }
 
+/** 端口产出的一段：文本 / 工具调用 / 工具结果（工具由 port 那侧执行，聚合只负责记账） */
+export type AgentChunk =
+  | { type: 'text'; text: string }
+  | { type: 'tool-call'; id: string; name: string; input?: string }
+  | { type: 'tool-result'; id: string; content: string }
+
 /** 注入的外部能力（聚合内不 import 任何具体实现） */
 export interface AgentPorts {
-  /** 一次「回答」：给定消息历史，产出文本片段 */
-  complete(messages: readonly { role: string; content: string }[]): AsyncIterable<string>
+  /**
+   * 一次「回答」：给定消息历史，产出 chunk 流。
+   *
+   * `tools` 原样透传给 port（实现方决定怎么执行：diy 里交给 ai-sdk 的 streamText 跑循环）。
+   * 聚合**不解释**工具语义，只把 tool-call / tool-result 记进历史 —— 这样 UI 能显示、
+   * 压缩能按轮算，而聚合本身仍然零依赖。
+   */
+  complete(
+    messages: readonly { role: string; content: string }[],
+    opts?: { tools?: unknown; maxSteps?: number },
+  ): AsyncIterable<AgentChunk | string>
 }
 
 export interface CreateAgentOptions {
@@ -100,6 +117,12 @@ export interface CreateAgentOptions {
    * `windowTokens: null` = 窗口未知 ⇒ **永不自动压**（不猜数）。
    */
   autoCompact?: { windowTokens: number | null }
+  /**
+   * 工具：原样交给 `ports.complete(messages, { tools, maxSteps })`。
+   * 聚合不知道工具是什么（零依赖），只把调用/结果记进历史。
+   */
+  tools?: unknown
+  maxSteps?: number
 }
 
 export interface Agent {
@@ -118,6 +141,13 @@ export interface Agent {
    * 这两个视图的区别是聚合的核心语义之一：**日志只追加、视图按 checkpoint 折叠**。
    */
   history(opts?: { sinceSeq?: number; raw?: boolean }): readonly HistoryEntry[]
+  /**
+   * 取走「上一轮失败的原因」（消费一次即清空）。
+   *
+   * 为什么不是 `snapshot().error`：失败是**事件**不是状态 —— 放进快照会让它变成一个
+   * 永远挂在那儿的字段（UI 可能把旧错误当新错误显示）。真正的状态表达留给事件流。
+   */
+  takeFailure(): string | undefined
   subscribe(opts?: { afterSeq?: number }): AsyncIterable<AgentEventEnvelope>
 }
 
@@ -267,7 +297,39 @@ export function createAgent(opts: CreateAgentOptions): Agent {
     // 异常必须在这里收口：`runTurn` 是 `void` 起的，抛出去就是 unhandled rejection，
     // 而 `running` 会永远停在 true ⇒ 界面永远转圈（实测：上游超时后按钮一直禁用）。
     try {
-      for await (const chunk of opts.ports.complete(visible)) text += chunk
+      for await (const chunk of opts.ports.complete(visible, {
+        ...(opts.tools === undefined ? {} : { tools: opts.tools }),
+        ...(opts.maxSteps === undefined ? {} : { maxSteps: opts.maxSteps }),
+      })) {
+        if (typeof chunk === 'string') {
+          text += chunk
+          continue
+        }
+        if (chunk.type === 'text') {
+          text += chunk.text
+          continue
+        }
+        // 工具进出都记进历史：UI 要显示，压缩要按轮算，审计要能回溯
+        await exec.enqueue(async () => {
+          if (chunk.type === 'tool-call') {
+            pushEntry({
+              kind: 'tool-call',
+              role: 'assistant',
+              content: chunk.name,
+              tool: { id: chunk.id, name: chunk.name, input: chunk.input ?? '' },
+            })
+            emit('tool.started', { id: chunk.id, name: chunk.name })
+          } else {
+            pushEntry({
+              kind: 'tool-result',
+              role: 'tool',
+              content: chunk.content,
+              tool: { id: chunk.id, name: '', input: '' },
+            })
+            emit('tool.completed', { id: chunk.id })
+          }
+        })
+      }
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause)
       await exec.enqueue(async () => {
@@ -394,6 +456,12 @@ export function createAgent(opts: CreateAgentOptions): Agent {
       return ok(cid)
     },
 
+    takeFailure(): string | undefined {
+      const failure = lastError
+      lastError = undefined
+      return failure
+    },
+
     snapshot(): AgentSnapshot {
       return {
         id,
@@ -402,7 +470,6 @@ export function createAgent(opts: CreateAgentOptions): Agent {
         runId,
         turns,
         historyLength: delivered().length,
-        ...(lastError === undefined ? {} : { error: lastError }),
         jobs: { ...jobs },
       }
     },

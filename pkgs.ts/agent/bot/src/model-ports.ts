@@ -20,7 +20,7 @@ import type { ModelChoice } from "./protocol.js";
  */
 export function llmPorts(provider: LlmPort, opts: { sessionId?: string } = {}): AgentPorts {
     return {
-        async *complete(messages) {
+        async *complete(messages, completeOpts) {
             const wire = messages.map((m) => ({
                 role: (m.role === "assistant" ? "assistant" : m.role === "system" ? "system" : "user") as
                     | "user"
@@ -30,8 +30,18 @@ export function llmPorts(provider: LlmPort, opts: { sessionId?: string } = {}): 
             }));
             // ⚠️ 必须带 sessionId：provider 的 `$SESSION` 模板 header（如 opencode-go 的会话亲和键）
             // 只有拿到它才会补；缺了以后上游可能不回应（实测表现就是「请求超时」）。
-            for await (const delta of provider.chat(wire, opts.sessionId === undefined ? undefined : { sessionId: opts.sessionId })) {
+            // 工具：provider 把 `tools` 交给 ai-sdk 的 streamText，由 `stopWhen: stepCountIs(maxSteps)`
+            // 跑完整个工具循环 —— 这里只透传，不自己写循环（##514 的教训：自己写 = 重新踩坑）。
+            const chatOpts = {
+                ...(opts.sessionId === undefined ? {} : { sessionId: opts.sessionId }),
+                ...(completeOpts?.tools === undefined
+                    ? {}
+                    : { tools: completeOpts.tools, maxSteps: completeOpts.maxSteps ?? 8 }),
+            };
+            for await (const delta of provider.chat(wire, Object.keys(chatOpts).length === 0 ? undefined : chatOpts)) {
                 if (delta.type === "text") yield delta.text;
+                else if (delta.type === "tool-call") yield { type: "tool-call", id: delta.id, name: delta.name, input: delta.input };
+                else if (delta.type === "tool-result") yield { type: "tool-result", id: delta.id, content: delta.content };
             }
         },
     };

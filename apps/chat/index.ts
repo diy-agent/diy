@@ -83,6 +83,8 @@ function chatConfig(home: string | undefined, sessions: unknown, botStore: BotSt
                       botStore: botStore ?? createFileBotStore({ home, sessionsDir: join(home, "sessions", "chat") }),
                       // 与 createBotChat 同一口径（展开已配置账号的三段式）
                       models: () => modelChoices(home),
+                      // ##519：工具能力从旧宿主移植过来 —— 同一份 buildTools（cwd = bot 工作目录、自杀护栏同源）
+                      toolsFor: (bot) => botToolsFor(home, bot.id).tools,
                   })
                 : createBotChat({ home, botStore, toolsFor: (b) => botToolsFor(home, b).tools, persist: process.env["DIY_CHAT_PERSIST"] !== "0" }),
     };
