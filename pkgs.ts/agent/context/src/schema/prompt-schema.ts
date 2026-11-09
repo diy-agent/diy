@@ -219,29 +219,29 @@ export const AssembleGlobalsSchema = z.object({
    * 把那些迁进知识库、链上只留指针后，agent 仍要知道**有库、库里有什么**才谈得上"按需查"
    * —— 这一段就是那个索引，也是迁移的**前提**（先给索引、再删正文，否则能力直接丢失）。
    *
-   * 为什么只给 subject + description：字节量与**条目数无关**，只随主题数增长（26 主题 ≈ 1.5 KB），
+   * 为什么只给「路径 + 一句话 + 小节数」：字节量与**主题数**无关、只随 md 文件数增长（~26 个文件 ≈ 1.5 KB），
    * 拿它换掉 25 KB 常驻正文是唯一划算的量级。条目全文归 `facts` 投影（runtime，有 4 KB 硬预算）。
+   *
+   * ⚠ 形状必须与 `context-providers.ts` 的 `kbProvider` 一致（##519 事故：provider 换成 md 真源后
+   * 本处仍是旧的 `{claims, entries:[{subject,claims,ns}]}`，项目库一有数据 `safeParse` 就炸，整轮起不来）。
    */
   kb: z
     .object({
-      claims: z
-        .number()
-        .describe("全库 claim 总数（subject#aspect；跨库同名只算一条）"),
       entries: z
         .array(
           z.object({
-            subject: z.string().describe("主题（`diy facts get <主题>#<方面>` 的前半）"),
-            desc: z.string().describe("这个主题是什么"),
-            claims: z.number().describe("该主题的条目数"),
-            ns: z
-              .array(z.string())
-              .describe("在哪几个库：project（仓库 knowledge/）/ global（设备级）"),
+            path: z.string().describe("相对知识库根的路径"),
+            desc: z.string().describe("这个文件讲什么"),
+            sections: z.number().describe("多少个 `##` 小节"),
+            scope: z
+              .string()
+              .describe("`project`（仓库 `.diy/knowledge/`）/ `global`（`$DIY_HOME/knowledge/`）；同名时只出 project 那条"),
           }),
         )
-        .describe("可查主题索引（按主题名排序）"),
+        .describe("每个 md 一条（按路径排序）；空则整节跳过"),
     })
     .optional()
-    .describe("知识库索引（没有库时缺席）"),
+    .describe("知识库索引（md 文件；要内容直接读那个文件）"),
   /**
    * **仓库文档索引（摘要）**（##404 / ##5 第 11 轮 B）：`docs/` 是设计的活真源，但它不在任何
    * AGENTS.md 链上 —— 只给一句"有这些、怎么查"，agent 才知道去 `diy docs index` 看全表。
