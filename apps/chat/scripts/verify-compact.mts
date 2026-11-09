@@ -97,11 +97,18 @@ const head = (await panel.locator(".chat-cut-head").innerText()).replace(/\s+/g,
 step(/保留最近 \d+ \/ \d+ 轮/.test(head), `悬停：展开且读数为「${head}」`);
 const rows = await panel.locator(".chat-cut-row").count();
 step(rows > 0, `悬停：列出 ${rows} 行轮次`);
+const dropped = (() => {
+    const m = /已压掉 (\d+) 轮/.exec(head);
+    return m ? Number(m[1]) : 0;
+})();
 const cut = await panel.locator(".chat-cut-line").count();
 step(cut === 1, "悬停：有一条压缩点虚线");
 const nums = await panel.locator(".chat-cut-lab").allInnerTexts();
-const seqOk = nums.every((t, i) => t === `轮${i + 1}`);
-step(seqOk, `悬停：轮号连续（${nums.join(",")}）`);
+// 轮号是**绝对**的（只列还能保留的轮，已压掉的选不回来），所以判据是「严格递增 + 末号 = 总轮数」
+const parsed = nums.map((t) => Number(/^轮(\d+)$/.exec(t)?.[1] ?? NaN));
+const asc = parsed.every((n, i) => Number.isFinite(n) && (i === 0 || n === parsed[i - 1]! + 1));
+const lastNo = parsed[parsed.length - 1] ?? 0;
+step(asc && lastNo === nums.length + dropped, `悬停：轮号递增且末号对得上（${nums.join(",")}）`);
 
 // ③ 移开收起
 await page.locator(".chat-bot-label").hover();

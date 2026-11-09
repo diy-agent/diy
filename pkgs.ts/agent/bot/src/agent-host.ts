@@ -264,17 +264,21 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
             // 轮 = 一条 user +（可选）其后的 assistant；checkpoint 不算轮
             // 一轮 = 一条 user 消息（assistant 跟着它）——**只按 user 计轮**。
             // 之前用「隔一条取一条」，一旦有 checkpoint/通知就错位（实测出现 轮3→轮5→轮7）。
-            const rounds = all
-                .filter((e) => e.kind === "message" && (e.role === "user" || e.role === undefined))
-                .map((e, i) => ({
+            // **只列还能保留的轮**（已压掉的选不回来，列出来会让读数自相矛盾 ——
+            // 实测出现「保留最近 29 / 29 轮（已压掉 27 轮）」）。标签用绝对轮号，方便对上原文。
+            const allUser = all.filter((e) => e.kind === "message" && (e.role === "user" || e.role === undefined))
+            const keptRows = allUser
+                .map((e, i) => ({ e, i }))
+                .filter(({ e }) => delivered.has(e.seq))
+                .map(({ e, i }) => ({
                     label: `轮${i + 1}`,
                     title: (e.content ?? "").replace(/\s+/g, " ").slice(0, 40),
-                    kept: delivered.has(e.seq),
+                    kept: true,
                 }))
             const w = windowOf(bot)
             return {
-                rounds,
-                droppedCount: rounds.filter((r) => !r.kept).length,
+                rounds: keptRows,
+                droppedCount: allUser.length - keptRows.length,
                 ...(w === null ? {} : { windowTokens: w }),
                 usedTokens: undefined,
             }
