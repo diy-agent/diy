@@ -702,8 +702,21 @@ export function keptRoundsView(taskUri: string): KeptRoundsView {
     // ③ 当前生效边界（无边界 = 一轮都没压）
     const boundary = latestBoundary(taskUri);
     const boundaryTurnId = (boundary as unknown as { keptFromTurnId?: string | null } | null)?.keptFromTurnId ?? null;
-    const cutIdx = boundaryTurnId === null ? 0 : order.indexOf(boundaryTurnId);
-    const keptFrom = boundaryTurnId === null || cutIdx < 0 ? 0 : cutIdx;   // 边界不在窗口内 ⇒ 当作全保留
+    /**
+     * 「没有边界」与「全清边界」是两回事（##266）：
+     *   · 没有边界（`boundary === null`）⇒ 一轮都没压，全部保留；
+     *   · 有边界但 `turnId === null` ⇒ **全清**，一轮都不保留（之前的写法把这两种当成一样，
+     *     于是压到 0 之后面板仍显示原有轮数，看起来像"没压干净"）。
+     */
+    const cutIdx = boundaryTurnId === null ? -1 : order.indexOf(boundaryTurnId);
+    const keptFrom =
+        boundary === null
+            ? 0
+            : boundaryTurnId === null
+              ? order.length          // 全清
+              : cutIdx < 0
+                ? 0                   // 边界轮已不在尾部窗口内 ⇒ 当作全保留
+                : cutIdx;
     const rounds: KeptRoundRow[] = order.map((turnId, i) => ({
         turnId,
         label: `轮${i + 1}`,

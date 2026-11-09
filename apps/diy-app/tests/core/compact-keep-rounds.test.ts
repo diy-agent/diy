@@ -7,7 +7,7 @@ import { appendFileSync, existsSync, statSync, writeFileSync } from "node:fs";
 import { diyHome } from "../../src/main/core/state";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
-import { LocalAgentManager, resolveOpsReplay } from "../../src/main/services/local-agent";
+import { LocalAgentManager, keptRoundsView, resolveOpsReplay } from "../../src/main/services/local-agent";
 import { opsFile } from "../../src/main/core/local-paths";
 import { appendTurnRecord, readBoundary } from "../../src/main/services/local-turns";
 
@@ -57,6 +57,12 @@ describe("compaction：keepRounds = 0 是全清", () => {
         // 投递起点必须是文件尾 —— 这才叫「不带旧历史上去」
         const replay = resolveOpsReplay(task);
         expect(replay.from).toBe(sizeBefore);
+
+        // 面板读数也必须是 0：`boundary.turnId === null`（全清）曾被当成「没有边界 ⇒ 全保留」，
+        // 于是压到 0 之后重新打开面板仍显示原来的轮数（用户实测「看起来没压干净」）。
+        const view = keptRoundsView(task);
+        expect(view.keptCount).toBe(0);
+        expect(view.rounds.length).toBe(0);
         expect(existsSync(opsFile(task))).toBe(true);  // ops 原文保留（压缩不删历史）
     });
 
