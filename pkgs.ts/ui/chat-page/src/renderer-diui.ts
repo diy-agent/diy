@@ -773,7 +773,8 @@ export const chatPageView: PageView = {
                                 ? '<div class="chat-cut-line"><span>✂ 压缩点</span></div>'
                                 : ""
                         const cls = round.kept ? "chat-cut-row" : "chat-cut-row chat-cut-row-drop"
-                        return `${cut}<div class="${cls}"><span class="chat-cut-lab">${round.label}</span><span class="chat-cut-title">${round.title}</span></div>`
+                        // 标题来自用户消息正文 ⇒ 必须转义（innerHTML 拼串不转义就是 XSS 面）
+                        return `${cut}<div class="${cls}"><span class="chat-cut-lab">${esc(round.label)}</span><span class="chat-cut-title">${esc(round.title)}</span></div>`
                     })
                     .join("")
                 el.innerHTML = `
@@ -783,7 +784,7 @@ export const chatPageView: PageView = {
 ${rows}
 <input class="chat-cut-range" type="range" min="0" max="${Math.max(0, total)}" value="${keep}">
 <div class="chat-cut-actions"><button class="chat-cut-apply" type="button">压缩</button>${
-                    cutError.value === "" ? "" : `<span class="chat-cut-err">${cutError.value}</span>`
+                    cutError.value === "" ? "" : `<span class="chat-cut-err">${esc(cutError.value)}</span>`
                 }</div>`
                 el.querySelector<HTMLInputElement>(".chat-cut-range")?.addEventListener("input", (event) => {
                     cutKeep.value = Number((event.target as HTMLInputElement).value)
@@ -1063,6 +1064,21 @@ function metric(label: string, value: string, warn = false): Spec {
         yield html.span({ text: `${label} ` });
         yield html.tag("b", { class: warn ? "chat-warn" : "", text: value });
     });
+}
+
+/**
+ * HTML 转义（压缩面板是唯一用 `innerHTML` 的地方）。
+ *
+ * 为什么必须转义：轮次标题来自**用户消息正文**，直接拼进 innerHTML 就是 XSS 面
+ * （用户自己发一句 `<img onerror=…>` 就能在渲染进程执行）。
+ */
+function esc(text: string): string {
+    return text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;")
 }
 
 function messageOf(cause: unknown): string {
