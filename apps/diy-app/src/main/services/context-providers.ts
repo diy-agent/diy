@@ -21,8 +21,7 @@ import { personaForTask } from "../core/persona";
 import { getProjectPath } from "../core/project";
 import { readRuntimeConfig } from "../../runtime";
 import { LOG_DIR_REL, dayFile } from "../core/traffic-log";
-import { buildFactsContext } from "./facts-context";
-import { buildKbIndex } from "./facts-context";
+import { scanKb } from "@diy-agent/kb";
 import { buildDocsIndex, summarizeDocsIndex } from "./docs-index";
 import { DELIVERED_SECTIONS, chainOf, projectIncludeResolver, renderSystemDsl, taskOf } from "./prompt-registry";
 
@@ -215,25 +214,43 @@ export function sectionProvider(key: "identity" | "rules" | "guard", core: () =>
     };
 }
 
-/** `facts` 节：事实库投影（**没有库就整节缺席**；读失败降级为缺席而不是抛） */
-export function factsProvider(home: string, projectId: string, shared: Shared): ContextProvider {
-    return {
-        key: "facts",
-        provide: () => {
-            const c = shared.cwd();
-            const repoRoot = getProjectPath(projectId);
-            // 相对化在这里做而不是在 facts-context 里：`root` 的语义（证据/paths 按仓库根解析）
-            // 归内核；装配层只负责「我现在在哪」。
-            const relCwd =
-                repoRoot === undefined || !c.cwd.startsWith(`${repoRoot}/`) ? undefined : c.cwd.slice(repoRoot.length + 1);
-            return buildFactsContext({ home, taskUri: shared.taskUri, ...(relCwd === undefined ? {} : { paths: [relCwd] }) }) ?? undefined;
-        },
-    };
-}
 
 /** `kb` 节：知识库索引（AGENTS.md 里「按需」的条目迁进 facts 后，agent 靠它知道库里有什么） */
-export function kbProvider(): ContextProvider {
-    return { key: "kb", provide: () => buildKbIndex() ?? undefined };
+/**
+ * kb 节：`.diy/knowledge/` 的目录索引（**文件名即条目**）。
+ *
+ * 2026-11-07 换真源：原来是 `knowledge/facts/*.yaml` 的投影（`buildKbIndex`），
+ * 但那套的实测结果是写入 861 条 / 读取 20 次 —— 所以知识退化成 md 文件，
+ * 这里只给「有什么」，要值就 `rg` / `cat`（不再有 get/brief/find）。
+ *
+ * **不缓存**：`scanKb` 是 readdir + 读 67 个小文件头，实测 ~5ms；
+ * 而 `buildKbIndex` 那套指纹缓存是为了避免解析 22 篇大 YAML，前提已经不存在了。
+ */
+export function kbProvider(home: string): ContextProvider {
+    return {
+        key: "kb",
+        help: {
+            type: "object",
+            desc: "知识库索引（`.diy/knowledge/` 下的 md 文件；要内容直接读那个文件）",
+            entries: {
+                type: "array",
+                desc: "每个 md 一条（按路径排序）；空则整节跳过",
+                items: {
+                    path: { type: "string", desc: "相对 `.diy/knowledge/` 的路径" },
+                    desc: { type: "string", desc: "这个文件讲什么" },
+                    sections: { type: "number", desc: "多少个 `##` 小节" },
+                },
+            },
+        },
+        provide: () => {
+            const root = join(home, "knowledge");
+            const scan = scanKb(root);
+            if (scan.entries.length === 0) return undefined;
+            return {
+                entries: scan.entries.map((e) => ({ path: e.path, desc: e.desc, sections: e.sections })),
+            };
+        },
+    };
 }
 
 /** `docs` 节：仓库文档索引摘要（真源是仓库文件树；任务不在仓库里 ⇒ 整节缺席） */
@@ -311,8 +328,7 @@ export function standardProviders(deps: ProviderDeps, opts: AssembleOptions = {}
         sectionProvider("identity", core, shared),
         sectionProvider("rules", core, shared),
         sectionProvider("guard", core, shared),
-        factsProvider(deps.home, deps.projectId, shared),
-        kbProvider(),
+        kbProvider(deps.home),
         docsProvider(deps.projectId),
         roomProvider(opts),
         selfProvider(opts),
