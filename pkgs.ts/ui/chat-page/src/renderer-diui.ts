@@ -19,7 +19,7 @@
 
 import { GenApp, html, Signal, type Spec } from "@diy-agent/ui/browser";
 import type { PageContext, PageView } from "@diy-agent/workbench-ui";
-import type { BotView, ChatMetrics, BotChatSnapshot, ModelChoice, SendResult, WireMessage } from "./shared.js";
+import type { BotView, ChatMetrics, BotChatSnapshot, CompactInfo, ModelChoice, SendResult, WireMessage } from "./shared.js";
 import { textMessage } from "./shared.js";
 import { DEMO_TOOL_COMMAND, demoToolMessage } from "./demo.js";
 import { renderBlocks } from "./block-renderers.js";
@@ -60,6 +60,11 @@ let viewsetPinned = false;
 
 /** 唯一的变更信号：状态改了 → bump() → 只有动态块重跑。 */
 const rev = new Signal(0);
+/** ##519 压缩点：面板开合 / 数据 / 待应用轮数 */
+const cutOpen = new Signal(false);
+const cutInfo = new Signal<CompactInfo | null>(null);
+const cutKeep = new Signal(0);
+const cutError = new Signal("");
 
 function bump(): void {
     rev.value++;
@@ -701,9 +706,108 @@ export const chatPageView: PageView = {
                     yield metric("缓存", cache === undefined ? "—" : `${cache.toFixed(1)}%`);
                     yield metric("本轮", metrics?.cost === undefined ? "—" : money(metrics.cost));
                     yield metric("上下文", `${String(metrics?.turns ?? 0)} step`);
+                    if (!store.multi) return;
+                    yield cutChip(context);
                 });
                 yield composer(context);
             });
+        }
+
+        /**
+         * ##519 压缩点（二级悬停面板）：一行读数 + 一轮一行的表 + 滑杆 + 压缩按钮。
+         *
+         * 为什么要「显式两步」（先 `compactInfo` 读轴、再 `compact(keepRounds)` 落盘）：
+         * 一步做完的话，用户拖到哪里、会不会压过头，在按下之前完全看不见。
+         */
+        function cutChip(context: PageContext): Spec {
+            const open = async (): Promise<void> => {
+                cutOpen.value = true;
+                try {
+                    const info = await context.invoke<CompactInfo>("compactInfo");
+                    cutInfo.value = info;
+                    cutKeep.value = Math.min(info.rounds.length, Math.max(1, info.rounds.length));
+                } catch {
+                    cutInfo.value = null;
+                }
+                rev.value = rev.value + 1;
+            };
+            const apply = async (): Promise<void> => {
+                try {
+                    const next = await context.invoke<BotChatSnapshot>("compact", { keepRounds: cutKeep.value });
+                    applySnapshot(next);
+                    await open();
+                } catch (cause: unknown) {
+                    // 失败要把原因摆到面板上：静默失败正是 ##519 抱怨过的形态
+                    cutInfo.value = { rounds: [], droppedCount: 0 };
+                    cutError.value = messageOf(cause);
+                }
+                rev.value = rev.value + 1;
+            };
+            return html.div(
+                {
+                    class: "chat-cut-wrap",
+                    onPointerEnter: () => void open(),
+                    onPointerLeave: () => {
+                        window.setTimeout(() => {
+                            cutOpen.value = false;
+                            rev.value = rev.value + 1;
+                        }, 180);
+                    },
+                },
+                function* () {
+                    yield html.button({ class: "chat-cut-chip", type: "button", text: "✂ 压缩点" });
+                    yield html.div({ class: "chat-cut-panel", hidden: B(() => !cutOpen.value) }, function* () {
+                        const info = cutInfo.value;
+                        if (info === null) {
+                            yield html.span({ class: "chat-cut-row", text: "读取中…" });
+                            return;
+                        }
+                        const total = info.rounds.length;
+                        yield html.div({ class: "chat-cut-head" }, function* () {
+                            yield html.span({ text: `保留最近 ${String(cutKeep.value)} / ${String(total)} 轮` });
+                            if (info.droppedCount > 0) {
+                                yield html.span({ class: "chat-cut-dim", text: `（已压掉 ${String(info.droppedCount)} 轮）` });
+                            }
+                        });
+                        for (const [index, round] of info.rounds.entries()) {
+                            if (index === total - cutKeep.value) {
+                                yield html.div({ class: "chat-cut-line" }, function* () {
+                                    yield html.span({ text: "✂ 压缩点" });
+                                });
+                            }
+                            yield html.div(
+                                { class: round.kept ? "chat-cut-row" : "chat-cut-row chat-cut-row-drop" },
+                                function* () {
+                                    yield html.span({ class: "chat-cut-lab", text: round.label });
+                                    yield html.span({ class: "chat-cut-title", text: round.title });
+                                },
+                            );
+                        }
+                        yield html.input({
+                            class: "chat-cut-range",
+                            type: "range",
+                            min: "1",
+                            max: String(Math.max(1, total)),
+                            value: String(cutKeep.value),
+                            onInput: (event: Event) => {
+                                cutKeep.value = Number((event.target as HTMLInputElement).value);
+                                rev.value = rev.value + 1;
+                            },
+                        });
+                        yield html.div({ class: "chat-cut-actions" }, function* () {
+                            yield html.button({
+                                class: "chat-cut-apply",
+                                type: "button",
+                                text: "压缩",
+                                onClick: () => void apply(),
+                            });
+                            if (cutError.value !== "") {
+                                yield html.span({ class: "chat-cut-err", text: cutError.value });
+                            }
+                        });
+                    });
+                },
+            );
         }
 
         // ── 输入框（结构层：整个运行期只建一次 ⇒ 焦点与草稿不丢） ──

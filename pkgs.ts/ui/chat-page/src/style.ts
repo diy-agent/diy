@@ -177,6 +177,28 @@ export const CHAT_STYLE = `
 .chat-form input, .chat-form select, .chat-form textarea { padding: 5px 9px; border: 1px solid var(--md-sys-color-outline-variant); border-radius: 6px; font: inherit; font-size: 13px; width: 100%; box-sizing: border-box; background: var(--md-sys-color-surface); }
 .chat-form textarea { min-height: 84px; resize: vertical; }
 .chat-panel-error { margin-top: 12px; font-size: 12px; color: var(--md-sys-color-error); }
+/* ── ##519 压缩点（二级悬停面板） ────────────────────────── */
+.chat-cut-wrap { position: relative; display: inline-block; }
+.chat-cut-chip { font: inherit; font-size: 11px; padding: 1px 6px; border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.18); background: transparent; color: inherit; cursor: pointer; opacity: .75; }
+.chat-cut-chip:hover { opacity: 1; }
+.chat-cut-panel { position: absolute; bottom: calc(100% + 8px); right: 0; width: 300px; z-index: 40;
+  background: #161a22; border: 1px solid #2a3140; border-radius: 8px; padding: 8px 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.45); display: flex; flex-direction: column; gap: 4px; }
+.chat-cut-head { display: flex; gap: 6px; align-items: baseline; font-size: 12px; }
+.chat-cut-dim { opacity: .6; font-size: 11px; }
+.chat-cut-row { display: flex; gap: 8px; align-items: baseline; font-size: 12px; padding: 1px 0; }
+.chat-cut-lab { font-family: ui-monospace, monospace; font-size: 11px; opacity: .7; flex: none; }
+.chat-cut-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-cut-row-drop .chat-cut-title,
+.chat-cut-row-drop .chat-cut-lab { text-decoration: line-through; opacity: .5; }
+.chat-cut-line { border-top: 2px dashed #f87171; font-size: 10px; color: #f87171; margin: 2px 0; }
+.chat-cut-range { width: 100%; accent-color: #60a5fa; }
+.chat-cut-actions { display: flex; gap: 8px; align-items: center; }
+.chat-cut-apply { font: inherit; font-size: 12px; padding: 3px 12px; border-radius: 6px; cursor: pointer;
+  border: 1px solid #4f93e8; background: #3b82f6; color: #fff; }
+.chat-cut-err { font-size: 11px; color: #f09b9b; }
+
 `;
 
 /** 注入样式表（幂等）。 */
