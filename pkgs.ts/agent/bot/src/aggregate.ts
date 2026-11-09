@@ -75,6 +75,8 @@ export interface AgentSnapshot {
   /** 已完成的轮数（用户消息 + 一次完整回答 = 一轮） */
   turns: number
   historyLength: number
+  /** 上一轮失败的原因（成功一轮后清空）；界面据此报错，而不是永远转圈 */
+  error?: string
   jobs: Record<string, { state: 'running' | 'exited' | 'failed'; result?: unknown; error?: string }>
 }
 
@@ -161,6 +163,7 @@ export function createAgent(opts: CreateAgentOptions): Agent {
   let running = false
   let runId: RunId | null = null
   let turns = 0
+  let lastError: string | undefined
   const jobs: AgentSnapshot['jobs'] = {}
   const entries: HistoryEntry[] = []
   const events: AgentEventEnvelope[] = []
@@ -260,7 +263,25 @@ export function createAgent(opts: CreateAgentOptions): Agent {
 
     let text = ''
     // ⚠️ LLM 执行**不占**状态队列：这期间 post() 仍能立即更新状态
-    for await (const chunk of opts.ports.complete(visible)) text += chunk
+    //
+    // 异常必须在这里收口：`runTurn` 是 `void` 起的，抛出去就是 unhandled rejection，
+    // 而 `running` 会永远停在 true ⇒ 界面永远转圈（实测：上游超时后按钮一直禁用）。
+    try {
+      for await (const chunk of opts.ports.complete(visible)) text += chunk
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause)
+      await exec.enqueue(async () => {
+        running = false
+        runId = null
+        lastError = message
+        emit('run.completed', { failed: true, error: message })
+        afterChange('turn.failed', { error: message })
+        const next = pending.shift()
+        if (next !== undefined) void runTurn(next.content)
+      })
+      return
+    }
+    lastError = undefined
 
     await exec.enqueue(async () => {
       pushEntry({ kind: 'message', role: 'assistant', content: text })
@@ -381,6 +402,7 @@ export function createAgent(opts: CreateAgentOptions): Agent {
         runId,
         turns,
         historyLength: delivered().length,
+        ...(lastError === undefined ? {} : { error: lastError }),
         jobs: { ...jobs },
       }
     },

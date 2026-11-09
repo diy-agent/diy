@@ -255,6 +255,8 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
                 await new Promise((r) => setTimeout(r, 30))
             }
             onDelta(agent.history().map(wireMessageOf))
+            const failed = agent.snapshot().error
+            if (failed !== undefined) throw new Error(failed)
             return snapshot()
         },
     }
