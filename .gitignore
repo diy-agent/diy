@@ -84,3 +84,6 @@ knowledge/index.json
 
 # 知识库里的 data/ 是正经内容（2026-11-07：被上面那条 data/ 误伤）
 !.diy/knowledge/data/
+
+# design 生成脚本的中间产物（esbuild 打的 gen.mjs）
+pkgs.ts/ui/design/.gen/

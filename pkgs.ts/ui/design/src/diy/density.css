@@ -1,0 +1,15 @@
+/* diy/density.css —— 我们自己的**覆盖**（不是 Google 的产物，改这里天经地义）
+ *
+ * 信息密集界面：M3 缺省 48px 触控 / 12–28px 圆角，对开发工具太松。
+ * 这里把密度与圆角收窄，并把正文/角标字号定成 diy 的两档（见 apps/diy-app 的语义排版档）。
+ */
+:root {
+  --diy-row-h: 22px;
+  --diy-font-body: 11px;
+  --diy-font-caption: 10px;
+
+  --md-sys-shape-corner-xs: 2px;
+  --md-sys-shape-corner-sm: 4px;
+  --md-sys-shape-corner-md: 6px;
+  --md-sys-shape-corner-lg: 8px;
+}

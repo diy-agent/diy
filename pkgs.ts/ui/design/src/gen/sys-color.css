@@ -1,0 +1,55 @@
+@layer md.sys.color {
+:root {
+  color-scheme: light dark;
+  /* seed: #3b6fd4 —— 由 scripts/gen.mts 生成，勿手改 */
+  --md-sys-color-background: light-dark(#faf8ff, #121318);
+  --md-sys-color-error: light-dark(#ba1a1a, #ffb4ab);
+  --md-sys-color-error-container: light-dark(#ffdad6, #93000a);
+  --md-sys-color-inverse-on-surface: light-dark(#f1f0f7, #2f3036);
+  --md-sys-color-inverse-primary: light-dark(#b0c6ff, #465d91);
+  --md-sys-color-inverse-surface: light-dark(#2f3036, #e2e2e9);
+  --md-sys-color-on-background: light-dark(#1a1b20, #e2e2e9);
+  --md-sys-color-on-error: light-dark(#ffffff, #690005);
+  --md-sys-color-on-error-container: light-dark(#93000a, #ffdad6);
+  --md-sys-color-on-primary: light-dark(#ffffff, #142e60);
+  --md-sys-color-on-primary-container: light-dark(#2e4578, #d9e2ff);
+  --md-sys-color-on-primary-fixed: light-dark(#001944, #001944);
+  --md-sys-color-on-primary-fixed-variant: light-dark(#2e4578, #2e4578);
+  --md-sys-color-on-secondary: light-dark(#ffffff, #293042);
+  --md-sys-color-on-secondary-container: light-dark(#404659, #dce2f9);
+  --md-sys-color-on-secondary-fixed: light-dark(#141b2c, #141b2c);
+  --md-sys-color-on-secondary-fixed-variant: light-dark(#404659, #404659);
+  --md-sys-color-on-surface: light-dark(#1a1b20, #e2e2e9);
+  --md-sys-color-on-surface-variant: light-dark(#44464f, #c5c6d0);
+  --md-sys-color-on-tertiary: light-dark(#ffffff, #412742);
+  --md-sys-color-on-tertiary-container: light-dark(#593d5a, #fdd7fa);
+  --md-sys-color-on-tertiary-fixed: light-dark(#2a132c, #2a132c);
+  --md-sys-color-on-tertiary-fixed-variant: light-dark(#593d5a, #593d5a);
+  --md-sys-color-outline: light-dark(#757780, #8f9099);
+  --md-sys-color-outline-variant: light-dark(#c5c6d0, #44464f);
+  --md-sys-color-primary: light-dark(#465d91, #b0c6ff);
+  --md-sys-color-primary-container: light-dark(#d9e2ff, #2e4578);
+  --md-sys-color-primary-fixed: light-dark(#d9e2ff, #d9e2ff);
+  --md-sys-color-primary-fixed-dim: light-dark(#b0c6ff, #b0c6ff);
+  --md-sys-color-scrim: light-dark(#000000, #000000);
+  --md-sys-color-secondary: light-dark(#575e71, #c0c6dc);
+  --md-sys-color-secondary-container: light-dark(#dce2f9, #404659);
+  --md-sys-color-secondary-fixed: light-dark(#dce2f9, #dce2f9);
+  --md-sys-color-secondary-fixed-dim: light-dark(#c0c6dc, #c0c6dc);
+  --md-sys-color-shadow: light-dark(#000000, #000000);
+  --md-sys-color-surface: light-dark(#faf8ff, #121318);
+  --md-sys-color-surface-bright: light-dark(#faf8ff, #38393f);
+  --md-sys-color-surface-container: light-dark(#eeedf4, #1e1f25);
+  --md-sys-color-surface-container-high: light-dark(#e8e7ef, #282a2f);
+  --md-sys-color-surface-container-highest: light-dark(#e2e2e9, #33353a);
+  --md-sys-color-surface-container-low: light-dark(#f4f3fa, #1a1b20);
+  --md-sys-color-surface-container-lowest: light-dark(#ffffff, #0c0e13);
+  --md-sys-color-surface-dim: light-dark(#dad9e0, #121318);
+  --md-sys-color-surface-tint: light-dark(#465d91, #b0c6ff);
+  --md-sys-color-surface-variant: light-dark(#e1e2ec, #44464f);
+  --md-sys-color-tertiary: light-dark(#725572, #e0bbde);
+  --md-sys-color-tertiary-container: light-dark(#fdd7fa, #593d5a);
+  --md-sys-color-tertiary-fixed: light-dark(#fdd7fa, #fdd7fa);
+  --md-sys-color-tertiary-fixed-dim: light-dark(#e0bbde, #e0bbde);
+}
+}

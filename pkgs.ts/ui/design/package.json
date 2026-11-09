@@ -1,0 +1,20 @@
+{
+    "name": "@diy-agent/ui-design",
+    "version": "0.1.0",
+    "description": "diy 设计系统 —— M3 令牌（seed → CSS 由 scripts/gen.mts 生成）+ tailwind 映射；供 @material/web 与手写样式共用",
+    "license": "MIT",
+    "type": "module",
+    "files": [
+        "src"
+    ],
+    "exports": {
+        ".": "./src/index.css",
+        "./design.css": "./src/index.css",
+        "./tokens.css": "./src/gen/tokens.css",
+        "./tailwind.css": "./src/diy/tailwind.css"
+    },
+    "scripts": {
+        "gen": "./sha.sh gen",
+        "check": "./sha.sh check"
+    }
+}

@@ -1,53 +1,33 @@
 /* ═══════════════════════════════════════════════════════════
- * diy 设计系统入口 —— 唯一真源
+ * diy 设计系统入口（M3 令牌）—— 只放**令牌**，不含 tailwind 工具层
  *
- * 层级（自下而上）：
- *   ref-palette   参考色板（seed 的 13 档色阶，light-dark 的两端）
- *   sys-color     语义角色（primary / surface / outline …，light-dark() 自动切换）
- *   sys-shape     圆角   sys-motion 动效   sys-typography 字阶   sys-elevation 阴影
- *   tailwind      @theme 映射（--color-* / --radius-* → 工具类）
+ * 分层（自下而上）：
+ *   gen/      **生成物**：ref-palette / sys-color —— 由 `./sha.sh gen` 从 seed 重算，勿手改
+ *   base/     **M3 规范常量**（与 seed 无关）：shape / motion / elevation / typography
+ *   diy/      **我们自己的覆盖**：density（密度 + 圆角收窄）、tailwind 映射
  *
- * 换 seed 只改 ref-palette，上面各层自动跟随。
+ * 用法：
+ *   · 用 @material/web 的应用：`@import "@diy-agent/ui-design"` 即可（组件只读 --md-sys-*）；
+ *   · 用 tailwind 的应用：再加 `@import "@diy-agent/ui-design/tailwind.css"`（@theme 映射）。
  *
- * ⚠️ CSS 规范：@import 必须出现在所有其它规则之前（@charset / @layer 语句除外）。
- *    把 @source 或自定义 CSS 插在中间，会让它**后面**的 @import 整条失效（静默失败）。
+ * ⚠️ CSS 规范：@import 必须在其它规则之前（@charset / @layer 语句除外）；
+ *    `@source` 由**使用方**声明（写在库里会按本文件位置解析，扫不到使用方代码）。
  * ═══════════════════════════════════════════════════════════ */
 
 @layer theme, base, md, components, utilities;
 
-@import "tailwindcss/theme.css" layer(theme);
-@import "tailwindcss/utilities.css" layer(utilities);
+/* 生成物（seed=$DIY_SEED，见 scripts/gen.mts） */
+@import "./gen/ref-palette.css";
+@import "./gen/sys-color.css";
 
-@import "./m3-palette.css"    layer(md);   /* seed 生成的参考色板 —— 换主题只改这一行 */
-@import "./m3-color-full.css" layer(md);   /* 语义角色（light-dark 从 palette 里挑两端） */
-@import "./m3-shape.css"      layer(md);
-@import "./m3-motion.css"     layer(md);
-@import "./m3-typography.css" layer(md);
-@import "./m3-elevation.css"  layer(md);
-/* ⚠️ 不能写成 layer(md)：这个文件里有 @utility，Tailwind 的 @utility 不允许嵌套在 @layer 里，
-   否则整个 CSS 构建失败（浏览器里只看到 500/空样式，且不会报在控制台）。 */
-@import "./m3-tailwind.css";
+/* M3 规范常量 */
+@import "./base/shape.css"      layer(md.sys);
+@import "./base/motion.css"     layer(md.sys);
+@import "./base/typography.css" layer(md.sys);
+@import "./base/elevation.css"  layer(md.sys);
 
-/* Tailwind v4 内容扫描（必须在 @import 之后） */
-@source "../../systems";
-@source "../../*.html";
-
-/* ── diy 定制覆盖 ── */
-@layer md {
-  :root {
-    /* 密度：M3 默认 48px 触控 → 我们的 22px 行高 */
-    --md-sys-space-unit: 8px;
-    --diy-row-h: 22px;
-    --diy-font-body: 11px;
-    --diy-font-caption: 10px;
-
-    /* 圆角：M3 默认 12/16/28 → 我们的 2/4/6/8（信息密集界面） */
-    --md-sys-shape-corner-xs: 2px;
-    --md-sys-shape-corner-sm: 4px;
-    --md-sys-shape-corner-md: 6px;
-    --md-sys-shape-corner-lg: 8px;
-  }
-}
+/* diy 自己的覆盖（密度 / 圆角 / 字号） */
+@import "./diy/density.css"     layer(md.sys);
 
 *::-webkit-scrollbar { width: 10px; height: 10px; }
 *::-webkit-scrollbar-thumb { background: #8a8d96; border-radius: 5px; border: 2px solid transparent; background-clip: content-box; }
