@@ -40,7 +40,9 @@
         "@diy-agent/session-store-jsonl": "*",
         "@diy-agent/llm-provider": "*",
         "@diy-agent/model-catalog": "*",
-        "@diy-agent/skills": "*"
+        "@diy-agent/skills": "*",
+        "@diy-agent/agents-chain": "*",
+        "@diy-agent/kb": "*"
     },
     "devDependencies": {
         "@diy-agent/store-contract": "*",
