@@ -8,7 +8,7 @@ import * as botConfigPageMain from "@diy-agent/bot-config-page";
 import * as chatPageMain from "@diy-agent/chat-page/main";
 import * as modelConfigPageMain from "@diy-agent/model-config-page";
 import type { PluginEntry } from "@diy-agent/workbench";
-import { asToolSet, createAgentHost, createBotChat, createFileBotStore, workspaceOf, type BotStore } from "@diy-agent/bot";
+import { asToolSet, createAgentHost, createBotChat, createFileBotStore, modelChoices, workspaceOf, type BotStore } from "@diy-agent/bot";
 import { collectSelfInfo, judgeSelfKill } from "@diy-agent/tools";
 import { os } from "@diy-agent/os";
 import { RunRegistry, makeJobTool } from "@diy-agent/jobs/node";
@@ -81,8 +81,8 @@ function chatConfig(home: string | undefined, sessions: unknown, botStore: BotSt
                 ? createAgentHost({
                       home,
                       botStore: botStore ?? createFileBotStore({ home, sessionsDir: join(home, "sessions", "chat") }),
-                      // 模型选择器暂留空：聚合宿主只要 model 字符串就能跑；选择器接目录是下一步
-                      models: () => [],
+                      // 与 createBotChat 同一口径（展开已配置账号的三段式）
+                      models: () => modelChoices(home),
                   })
                 : createBotChat({ home, botStore, toolsFor: (b) => botToolsFor(home, b).tools, persist: process.env["DIY_CHAT_PERSIST"] !== "0" }),
     };

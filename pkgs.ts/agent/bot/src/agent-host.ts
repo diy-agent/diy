@@ -56,10 +56,24 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
     const dirFor = opts.dirFor ?? ((id: BotId) => join(opts.home, "agents", id))
     const portsFor = opts.portsFor ?? ((bot: BotConfig) => llmPorts(resolveProvider(opts.home, bot.model)))
 
+    /** 该 bot 模型的窗口上限（模型目录里有 contextWindow 才算；没有 ⇒ null = 永不自动压） */
+    const windowOf = (bot: BotConfig): number | null => {
+        for (const c of opts.models()) {
+            const key = `${c.account === undefined ? "" : `${c.account}@`}${c.providerId}/${c.modelId}`
+            if (key === bot.model) return c.contextWindow ?? null
+        }
+        return null
+    }
+
     const agentOf = (bot: BotConfig): Agent => {
         const hit = agents.get(bot.id)
         if (hit) return hit
-        const created = createAgent({ id: bot.id, ports: portsFor(bot), persist: filePersist(dirFor(bot.id)) })
+        const created = createAgent({
+            id: bot.id,
+            ports: portsFor(bot),
+            persist: filePersist(dirFor(bot.id)),
+            autoCompact: { windowTokens: windowOf(bot) },
+        })
         agents.set(bot.id, created)
         return created
     }

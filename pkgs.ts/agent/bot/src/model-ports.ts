@@ -8,9 +8,10 @@
 
 import type { LlmPort } from "@diy-agent/session";
 import { createOpenAiCompatible, resolveProviderConfig } from "@diy-agent/llm-provider";
-import { loadCatalog, readAccountValue } from "@diy-agent/model-catalog";
+import { listAccountStates, loadCatalog, readAccountValue } from "@diy-agent/model-catalog";
 import { splitModelKey } from "./chat.js";
 import type { AgentPorts } from "./aggregate.js";
+import type { ModelChoice } from "./protocol.js";
 
 /**
  * 把 LlmPort 包成 Agent 的 port：只取文本增量。
@@ -58,4 +59,33 @@ export function resolveProvider(home: string, modelKey: string): LlmPort {
         }
         return createOpenAiCompatible({ name: providerId, baseURL: entry.baseURL, apiKey, model: modelId });
     }
+}
+
+/**
+ * 模型选择器数据（与 `createBotChat` 的 `choices()` 同一口径）：
+ * 展开**已配置**的账号（`account@provider/model` 三段式），一个都没配的 provider 退回两段式。
+ *
+ * 为什么在 bot 包里而不是让宿主自己拼：`account` 决定取哪把 key —— 只列 provider/model 时
+ * 用户无法表达「用 aug 这个账号」，取 key 就只能拿第一个（实测表现成上游超时）。
+ */
+export function modelChoices(home: string): ModelChoice[] {
+    const accountsByProvider = new Map(
+        listAccountStates(home).map((p) => [p.providerId, p.accounts.filter((a) => a.configured).map((a) => a.name)]),
+    )
+    const out: ModelChoice[] = []
+    for (const entry of loadCatalog(home)) {
+        const base = {
+            providerId: entry.providerId,
+            modelId: entry.modelId,
+            ...(entry.cost === undefined ? {} : { cost: entry.cost }),
+            ...(entry.contextWindow === undefined ? {} : { contextWindow: entry.contextWindow }),
+        }
+        const accounts = accountsByProvider.get(entry.providerId) ?? []
+        if (accounts.length === 0) {
+            out.push({ ...base, name: entry.name })
+            continue
+        }
+        for (const account of accounts) out.push({ ...base, account, name: entry.name })
+    }
+    return out
 }

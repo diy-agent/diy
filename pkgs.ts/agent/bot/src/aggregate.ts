@@ -12,6 +12,8 @@
 //   3. 命令必须有回执：`accepted=false` 时带原因，绝不静默成功。
 
 import type { PersistPorts, PersistState } from "./persist.js";
+import { estimateTokensOf } from "@diy-agent/compaction/history-limit";
+import { retainTokensOf, triggerTokensOf } from "@diy-agent/compaction/select-kept-boundary";
 
 /** 会话标识（diy 里 = taskUri，这里只当不透明字符串） */
 export type AgentId = string
@@ -90,6 +92,12 @@ export interface CreateAgentOptions {
    * 缺省 = 纯内存（测试默认）。
    */
   persist?: PersistPorts
+  /**
+   * 自动压缩（##517 口径，判据来自 `@diy-agent/compaction`）：
+   * 触发线 = `W − max(10%W, 16000)`；保留量 = `W × 0.16`。
+   * `windowTokens: null` = 窗口未知 ⇒ **永不自动压**（不猜数）。
+   */
+  autoCompact?: { windowTokens: number | null }
 }
 
 export interface Agent {
@@ -232,6 +240,17 @@ export function createAgent(opts: CreateAgentOptions): Agent {
     })
 
     // checkpoint 也要进投递（它就是模型看到的第一条上下文）
+    // 自动压缩：判据与 diy-app 同源（触发线 / 保留量都来自 @diy-agent/compaction）
+    const win = opts.autoCompact?.windowTokens ?? null
+    if (win !== null && win > 0) {
+      const msgs = agent.history().filter((e) => e.kind === 'message' || e.kind === 'checkpoint')
+      const used = msgs.reduce((n, e) => n + estimateTokensOf(JSON.stringify(e.content ?? '')), 0)
+      if (used >= triggerTokensOf(win)) {
+        // 只在「真的能腾出空间」时压：keepTokens 走的是同一条 compact 命令（写 checkpoint）
+        void agent.compact({ kind: 'keepTokens', tokens: retainTokensOf(win) })
+      }
+    }
+
     const visible = delivered()
       .filter((e) => e.kind === 'message' || e.kind === 'checkpoint')
       .map((e) => ({
@@ -320,12 +339,15 @@ export function createAgent(opts: CreateAgentOptions): Agent {
           return Math.max(0, msgs.length - keepMsgs)
         }
         if (strategy.kind === 'keepTokens') {
+          // 与判据同一个估算器（CJK 感知），不再是字符数 —— 否则同一条策略两处口径不一致
           let keep = 0
+          let dropped = 0
           for (let i = msgs.length - 1; i >= 0; i--) {
-            keep += (msgs[i]!.content ?? '').length
+            keep += estimateTokensOf(JSON.stringify(msgs[i]!.content ?? ''))
             if (keep >= strategy.tokens) return msgs.length - (msgs.length - i)
+            dropped += 1
           }
-          return 0
+          return Math.max(0, dropped === msgs.length ? msgs.length - 1 : msgs.length - (msgs.length - dropped))
         }
         return 0 // keepSince：本内存版不实现
       })()

@@ -260,3 +260,34 @@ describe('agent-host：把 Agent 接到 BotChatHost 契约上', () => {
     expect(snap.messages).toEqual([])
   })
 })
+
+describe('自动压缩（判据来自 @diy-agent/compaction）', () => {
+  it('窗口给小 + 内容够大 ⇒ 下一轮开跑前自动压，历史里出现 checkpoint', async () => {
+    // 每轮都塞 ~2k token 的内容；窗口 20k ⇒ 触发线 4000，两轮就超
+    const long = '这是一段比较长的历史内容，用来把窗口顶过触发线。'.repeat(400)  // ≈ 8000+ token/轮，远超 4000 触发线
+    const ports = fakePorts({ replies: ['答1', '答2', '答3'] })
+    const a = createAgent({ ports, autoCompact: { windowTokens: 20_000 } })
+
+    await a.send({ content: long })
+    await waitIdle(a)
+    await a.send({ content: long })
+    await waitIdle(a)
+    await a.send({ content: '第三问' })   // 这一轮开跑前应当触发自动压缩
+    await waitIdle(a)
+    await new Promise((r) => setTimeout(r, 30)) // 让排队的 compact 命令跑完
+
+    const kinds = a.history().map((e) => e.kind)
+    expect(kinds).toContain('checkpoint')
+    // 投递视图里 checkpoint 之后仍有内容（不是把历史清空）
+    const cpIdx = kinds.indexOf('checkpoint')
+    expect(a.history().length).toBeGreaterThan(cpIdx + 1)
+  })
+
+  it('窗口未知（null）⇒ 永不自动压（不猜数）', async () => {
+    const long = '把窗口顶爆的内容。'.repeat(200)
+    const a = createAgent({ ports: fakePorts({ replies: ['答'] }), autoCompact: { windowTokens: null } })
+    await a.send({ content: long })
+    await waitIdle(a)
+    expect(a.history().some((e) => e.kind === 'checkpoint')).toBe(false)
+  })
+})
