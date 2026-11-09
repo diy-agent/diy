@@ -1494,7 +1494,9 @@ function ensureCompactState(taskUri: string): CompactState | null {
 function latestBoundary(taskUri: string): EffectiveBoundary | null {
     const state = ensureCompactState(taskUri);
     const fromState = state?.boundary ? boundaryOfPoint(state.boundary) : null;
-    if (fromState) return fromState;
+    // `state !== null` 就说明这个任务**有过压缩历史**（哪怕是 undo 之后 boundary=null）——
+    // 此时必须信状态，不能回落 turns 账：否则撤销压缩后，旧 turns 边界会被"复活"。
+    if (state !== null) return fromState;
     // 回落 turns 账（##266）：手压边界（compactToKeepRounds / 全清）**只写 turns.jsonl**，
     // 不写压缩账本也不写 compact-state.json。缺这条回落 ⇒ 新进程读回 null ⇒
     // resolveOpsReplay 从 0 开始 ⇒ 「压了等于没压」。写侧不动（不引第三份真源）。
