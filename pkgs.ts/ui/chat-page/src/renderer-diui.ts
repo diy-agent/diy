@@ -832,6 +832,9 @@ ${rows}
                             panel = node
                             // 初始必须收起：`.chat-cut-panel{display:flex}` 会盖掉 UA 的 `[hidden]{display:none}`
                             node.hidden = !cutOpen.value
+                            // 整页重绘（如压缩后 applySnapshot）会换掉这个节点 —— 若当时面板是开着的，
+                            // 新节点必须自己补一次内容，否则用户看到的是「点完压缩面板空了」。
+                            if (cutOpen.value) paint()
                         },
                     })
                 },
