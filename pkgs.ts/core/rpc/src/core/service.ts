@@ -141,3 +141,65 @@ export function defineService<const TRoutes extends _Router | _AnyProcedureMeta>
     },
   };
 }
+
+/**
+ * 装配完整性对账 —— **双向**：
+ *
+ * · apiDef 里声明了、binding 上没绑 ⇒ 运行期才回 `Unknown method: diy.xxx`
+ *   （2026-11-09 就栽过：`app.info` 的 meta 在、handler 漏了，CLI 探活因此失败、
+ *   报「启动超时」还杀掉自己）
+ * · binding 上绑了、apiDef 里没有 ⇒ 客户端永远调不到，属死代码（多半是改名漏改）
+ *
+ * **必须在启动时跑**，不能等第一条请求 —— 那时已经分不清是「没实现」还是
+ * 「实现里抛了」。
+ *
+ * @param binding 已装配的 ServerBinding
+ * @param root    期望被绑的总树（通常是 `apiDef.diy`）；路径前缀从它的 key 开始算
+ * @param label   报错时的场签名（如 `diy-app`）
+ * @throws 任一方向不一致时报错，列出全部分歧（不是只报第一条 —— 一次修完）
+ */
+export function assertFullyBound(
+  binding: { listRegistered(): string[] },
+  root: object,
+  label: string,
+  excludePrefixes: readonly string[] = [],
+): void {
+  const expected = new Set<string>();
+  (function walk(node: unknown, prefix: string): void {
+    if (!node || typeof node !== 'object') return;
+    const meta = node as { _streamMode?: string };
+    if (meta._streamMode && meta._streamMode !== 'group') {
+      expected.add(prefix);
+      return;
+    }
+    for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+      // `children` 是 **group 的内部字段**（内容已摊平到 meta 本身）——
+      // 再走一遍会把同一批 procedure 用 `xxx.children.yyy` 的假路径重复登记
+      if (k.startsWith('_') || k === 'children') continue;
+      walk(v, prefix ? `${prefix}.${k}` : k);
+    }
+  })(root as unknown as Record<string, unknown>, 'diy');
+
+  for (const p of excludePrefixes) {
+    for (const k of [...expected]) if (k.startsWith(p)) expected.delete(k);
+  }
+  for (const p of excludePrefixes) {
+    for (const k of [...expected]) if (k.startsWith(p)) expected.delete(k);
+  }
+  const registered = new Set(binding.listRegistered());
+  const missing = [...expected].filter((p) => !registered.has(p)).sort();
+  const extra = [...registered].filter((p) => !expected.has(p)).sort();
+  if (missing.length === 0 && extra.length === 0) return;
+
+  const lines: string[] = [`[${label}] 装配不完整（apidef vs binding）：`];
+  if (missing.length > 0) {
+    lines.push(`  声明了但没 bind（${String(missing.length)} 个）：`);
+    for (const p of missing) lines.push(`    · ${p}`);
+  }
+  if (extra.length > 0) {
+    lines.push(`  绑了但 apiDef 里没有（${String(extra.length)} 个）：`);
+    for (const p of extra) lines.push(`    · ${p}`);
+  }
+  lines.push('  修法：前者补 `bindXxx(binding)`；后者多半是改名漏改（api-def 与 handler 不一致）。');
+  throw new Error(lines.join('\n'));
+}

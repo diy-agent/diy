@@ -27,6 +27,12 @@ import type { InstanceRow } from "../../src/shared/instance-row";
 function row(over: Partial<InstanceRow> = {}): InstanceRow {
   return {
     pid: 100,
+    // ##518：InstanceRow 新增两个必填字段
+    name: "",
+    mode: "source",
+    worktree: "",
+    worktreeDisplay: "",
+    displayName: "diy#100",
     kind: "electron",
     variant: "prod",
     diyHome: "/Users/ccc/.diy",

@@ -51,6 +51,15 @@ export interface ServerBinding {
    * 运行时还要用它做 zod 校验（`inputSchema`）。
    */
   on<M extends _AnyProcedureMeta>(path: string, meta: M, handler: _HandlerForProc<M>): void;
+  /**
+   * 列出**已注册**的全部方法名。
+   *
+   * 用途：装配完成后做一次「登记 vs 实现」的对账 —— apiDef 里声明的每个方法都必须
+   * 有人 bind，否则运行期才回 `Unknown method`（比启动就炸难查一个数量级）。
+   * 见 `assertFullyBound()`。
+   */
+  listRegistered(): string[];
+
   /** 注册一个方法 —— 两参形式：路径从 `meta.name` 读（需要先 `bindNames`）。 */
   on<M extends _AnyProcedureMeta>(meta: M, handler: _HandlerForProc<M>): void;
 
