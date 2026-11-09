@@ -28,6 +28,12 @@ function row(over: Partial<InstanceRow> = {}): InstanceRow {
   return {
     pid: 100,
     kind: "electron",
+    // ##518 身份三样：mode / worktree / name（这里取「有源码、没起名」的常见态）
+    mode: "source",
+    worktree: "/Users/ccc/git/diy/diy",
+    worktreeDisplay: "~/git/diy/diy",
+    name: "",
+    displayName: "diy-app#100",
     variant: "prod",
     diyHome: "/Users/ccc/.diy",
     diyHomeDisplay: "~/.diy",

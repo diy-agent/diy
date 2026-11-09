@@ -36,6 +36,9 @@ function record(over: Partial<InstanceRecord> = {}): InstanceRecord {
     app: null,
     launch: null,
     worktree: null,
+    // ##518 新增的两个身份字段：老记录读侧宽松为 null，测试按「最老的那份」构造
+    name: null,
+    mode: null,
     port: null,
     pingPort: null,
     diyHome: "/tmp/home",

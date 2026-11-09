@@ -17,7 +17,7 @@
     },
     "scripts": {
         "build": "tsc -p tsconfig.build.json",
-        "publish": "node ../../../scripts/npm-publish.mjs . --out=lib"
+        "publish": "node ../../../scripts/npm-publish.mjs . --out=dist"
     },
     "license": "MIT",
     "author": "ccc <ccc@users.noreply.github.com>",

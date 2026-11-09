@@ -26,6 +26,7 @@ import { findPage, groupViewsByArea, planPageViews, type Binding } from "../../s
 import { IconCollapse, IconCompress, IconExpand, ViewBoundary } from "@diy-agent/ui-kit";
 import { layoutStore } from "../store/layoutStore";
 import { AREA_CHROME_W, VIEW_BAR_H } from "../lib/layout-metrics";
+import { createFrameBatcher } from "../lib/frame-batch";
 
 /** 拖线时两侧 track 的最小 px（防止把某块拖没，用户就再也抓不到线了） */
 const MIN_TRACK = 48;
@@ -208,12 +209,19 @@ export function ViewGrid(props: {
                 ref={(el) => {
                     gridRef = el;
                     // 量容器：尺寸变化时重算（fitTracks 把 px 差额还给最大的 track）
-                    const ro = new ResizeObserver(() => {
+                    // ##522：测量可以留在回调里，但 setBox → layout() → grid 轨道重写是**写布局**，
+                    // 同步做会与本回调形成同一帧内的循环（Chromium 报 ResizeObserver 告警）。
+                    // 下次布局再读一次不丢信息，延一帧是安全的。
+                    const batch = createFrameBatcher(() => {
                         const r = el.getBoundingClientRect();
                         setBox({ w: r.width, h: r.height });
                     });
+                    const ro = new ResizeObserver(() => batch.schedule());
                     ro.observe(el);
-                    onCleanup(() => ro.disconnect());
+                    onCleanup(() => {
+                        ro.disconnect();
+                        batch.cancel();
+                    });
                 }}
                 class="grid h-full w-full overflow-hidden relative"
                 style={{

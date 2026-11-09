@@ -88,6 +88,8 @@ describe("RemoteService", () => {
             app: null,
             launch: null,
             worktree: null,
+            name: null,
+            mode: null,
             port: null,
             pingPort: null,
             diyHome: home,

@@ -10,12 +10,13 @@
 //   --prepare-only  在 <pkg>/lib/ 生成发行版 package.json（不含 private）
 //   默认            先生成，再 `npm publish <pkg>/lib`
 //
-// 用法：node scripts/npm-publish.mjs <pkgDir> [--prepare-only] [--dry-run] [--out=lib]
+// 用法：node scripts/npm-publish.mjs <pkgDir> [--prepare-only] [--dry-run] [--out=dist]
 //
 // 约定（脚本假设，见各包 tsconfig.build.json）：
-//   * `tsc -p tsconfig.build.json` 的 rootDir = src、outDir = lib（缺省；老包曾是 dist）
-//     ⇒ 产物目录与 src/ 同构，`./src/a/b.ts` 对应 `./a/b.js`。
-//   * 产物目录用 `--out=<dir>` 指定（缺省 dist，与历史行为一致；内部包统一 lib）。
+//   * `tsc -p tsconfig.build.json` 的 rootDir = src、outDir = dist（2026-11-06 统一，见 fcf81e24
+//     「各包产物 lib/ → dist/」；更早是 lib）⇒ 产物目录与 src/ 同构，`./src/a/b.ts` 对应 `./a/b.js`。
+//   * 产物目录用 `--out=<dir>` 指定（缺省 dist）。⚠️ 各包 sha.sh 的 `--out=` 必须与
+//     tsconfig.build.json 的 outDir 一致 —— 一端 lib 一端 dist 就是「✗ lib 不存在」的假错（##522）。
 //
 // 认证 / registry / 内部依赖版本都在 ./npm-publish-common.mjs（与 app 发布共用一份）。
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
