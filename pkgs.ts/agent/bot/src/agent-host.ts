@@ -55,7 +55,13 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
     let active: BotId | null = null
 
     const dirFor = opts.dirFor ?? ((id: BotId) => join(opts.home, "agents", id))
-    const portsFor = opts.portsFor ?? ((bot: BotConfig) => llmPorts(resolveProvider(opts.home, bot.model)))
+    const portsFor =
+        opts.portsFor ??
+        ((bot: BotConfig) =>
+            llmPorts(resolveProvider(opts.home, bot.model), {
+                // 会话亲和键：优先用 bot 的长期会话 id（与 chat.ts 同口径），退回 bot id
+                sessionId: bot.primarySessionId ?? `bot:${bot.id}`,
+            }))
 
     /** 该 bot 模型的窗口上限（模型目录里有 contextWindow 才算；没有 ⇒ null = 永不自动压） */
     const windowOf = (bot: BotConfig): number | null => {

@@ -18,7 +18,7 @@ import type { ModelChoice } from "./protocol.js";
  * 思考增量（reasoning）**不丢**，用 `thinking` 段落的形式带出去 —— 聚合层可以决定要不要显示，
  * 但不该在传输层就把它扔掉（丢掉之后再也拿不回来）。
  */
-export function llmPorts(provider: LlmPort): AgentPorts {
+export function llmPorts(provider: LlmPort, opts: { sessionId?: string } = {}): AgentPorts {
     return {
         async *complete(messages) {
             const wire = messages.map((m) => ({
@@ -28,7 +28,9 @@ export function llmPorts(provider: LlmPort): AgentPorts {
                     | "system",
                 text: m.content,
             }));
-            for await (const delta of provider.chat(wire)) {
+            // ⚠️ 必须带 sessionId：provider 的 `$SESSION` 模板 header（如 opencode-go 的会话亲和键）
+            // 只有拿到它才会补；缺了以后上游可能不回应（实测表现就是「请求超时」）。
+            for await (const delta of provider.chat(wire, opts.sessionId === undefined ? undefined : { sessionId: opts.sessionId })) {
                 if (delta.type === "text") yield delta.text;
             }
         },
@@ -48,15 +50,16 @@ export function resolveProvider(home: string, modelKey: string): LlmPort {
     }
     const apiKey = readAccountValue(home, providerId, account);
     if (!apiKey) throw new Error(`找不到 ${providerId} 的 API key（数据根 ${home}）`);
-    const entry = loadCatalog(home).find((e) => e.modelId === modelId);
+    // ⚠️ 必须**同时**匹配 providerId + modelId：同一个 modelId 可能挂在多个 provider 下
+    // （deepseek / opencode-go …），只按 modelId 找会拿到别人的 baseURL ⇒ 请求发到错的端点、
+    // 上游不回应（实测表现就是「请求超时」）。
+    const entry = loadCatalog(home).find((e) => e.providerId === providerId && e.modelId === modelId);
+    if (entry === undefined) throw new Error(`模型目录里没有 ${providerId}/${modelId}（model.yaml 可能变了）`);
     try {
         return createOpenAiCompatible(
-            resolveProviderConfig({ provider: providerId, apiKey, model: modelId, baseURL: entry?.baseURL }),
+            resolveProviderConfig({ provider: providerId, apiKey, model: modelId, baseURL: entry.baseURL }),
         );
     } catch {
-        if (entry?.baseURL === undefined) {
-            throw new Error(`provider ${providerId} 不在 provider 表里，且模型目录里没有它的 baseURL`);
-        }
         return createOpenAiCompatible({ name: providerId, baseURL: entry.baseURL, apiKey, model: modelId });
     }
 }
