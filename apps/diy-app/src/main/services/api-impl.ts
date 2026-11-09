@@ -41,6 +41,9 @@ import { bindAgent } from "./api-domains/agent/impl";
 
 import { bindInstances } from "./api-domains/instances/impl";
 import { bindRemote } from "./api-domains/remote/impl";
+// app 域只在 api-def 里登记 meta 还不够 —— 不 bind 就没有 handler，
+// 客户端会收到 `Unknown method: diy.app.info`（见下方调用点注释）。
+import { bindApp } from "./api-domains/app/impl";
 
 import * as health from "./health";
 import { apiDef } from "./api-def";
@@ -105,6 +108,13 @@ export function bindAppHandlers(binding: ServerBinding): void {
 
   // ── project ──
   bindProject(binding);
+
+  // ── app（进程/环境自述）──
+  // ⚠️ 必须绑：`diy.app.info` 不只给设置页看，**CLI 的实例探活也靠它**
+  // （cli/probe-instance.ts → fetchAppInfo）。漏绑时 app 明明起来了，CLI 却认不出
+  // 「这个端口是我的实例」→ 空转 30s 后报「启动超时」，并顺带把刚起的实例杀掉。
+  // 同理 renderer 首屏（App.tsx / SidebarRoom）会报 Unknown method。
+  bindApp(binding);
 
   // ── doctor ──
   binding.on(app.doctor, async () => {

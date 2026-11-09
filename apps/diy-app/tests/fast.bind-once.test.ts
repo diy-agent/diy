@@ -18,8 +18,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ChannelServerBinding, createMemTransportPair } from "@diy-agent/rpc";
+import { ChannelClientBinding, ChannelServerBinding, createMemTransportPair, createTypedClient } from "@diy-agent/rpc";
 import { bindAppHandlers } from "../src/main/services/api-impl";
+import { apiDef } from "../src/main/services/api-def";
 
 let home: string;
 beforeEach(() => {
@@ -41,5 +42,29 @@ describe("bindAppHandlers 装配", () => {
         const b = createMemTransportPair().serverTx;
         expect(() => bindAppHandlers(new ChannelServerBinding(a))).not.toThrow();
         expect(() => bindAppHandlers(new ChannelServerBinding(b))).not.toThrow();
+    });
+
+    /**
+     * `api-def` 里登记了 meta ≠ 有人 bind handler。2026-11-09 把 getAppInfo 拆进
+     * `api-domains/app/` 时就漏了 `bindApp(binding)`：apiDef 有 `app.info`（类型 / CLI help
+     * 都正常），运行时却回 `Unknown method: diy.app.info`。
+     *
+     * 代价比「设置页少个字段」大得多：CLI 的实例探活走的就是这条（fetchAppInfo）——
+     * 认不出自己的实例 → 30s 启动超时 → 把刚起来的 app 杀掉。所以这里真调一次。
+     */
+    it("diy.app.info 真的绑上了（CLI 探活与 renderer 首屏依赖它）", async () => {
+        const { serverTx, clientTx } = createMemTransportPair();
+        bindAppHandlers(new ChannelServerBinding(serverTx));
+        const client = new ChannelClientBinding(clientTx);
+        try {
+            const rpc = createTypedClient<typeof apiDef>(client, apiDef);
+            const r = await rpc.diy.app.info({});
+            expect(typeof r.pid).toBe("number");
+            expect(r.pid).toBe(process.pid);
+            expect(typeof r.port).toBe("number");
+            expect(typeof r.env).toBe("string");
+        } finally {
+            client.dispose();
+        }
     });
 });
