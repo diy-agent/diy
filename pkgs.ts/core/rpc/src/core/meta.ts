@@ -50,6 +50,14 @@ export interface ProcedureMeta<
   chunkOutSchema?: z.ZodType<TChOut>;
   /** 命令描述（父命令与叶子命令统一） */
   desc?: string;
+  /**
+   * 命令**别名**（用户敲的另一种写法，替换本段名字）：`alias: 'ls'` ⇒ `task list` 也可敲 `task ls`。
+   * 数组 = 多个别名。声明在命令自己身上（##518），不集中到 CLI 配置表里 ——
+   * 改名与命令放一起，才不会「表里有一条、代码里找不到」。
+   */
+  alias?: string | readonly string[];
+  /** **弃用**：用别名时可提示「已改名，请用 <deprecated>」（值是新的命令段，空格分隔） */
+  deprecated?: string;
   /** 单行简介 = desc 首行（命令列表/父命令列表里展示）。_makeMeta 创建时从 desc 提取。 */
   title?: string;
   /**

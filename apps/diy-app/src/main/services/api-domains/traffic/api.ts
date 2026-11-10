@@ -57,6 +57,8 @@ export const trafficRoutes = RpcSchema.group({desc: `流量（应用发出去的
             }),
           }),
           query: RpcSchema.unary({
+            // ##518 命令面：用户敲 `diy traffic ls`（列表类统一 ls）；协议名保持 query 不动
+            alias: "ls",
             desc: `按条件查磁盘日志（流量页数据源）：全文关键词 / 状态 / 方法 / 日期（不传或 all = 全部日期）`,
             input: {
               text: z.string().optional().cliArg({ desc: "全文关键词（匹配地址、方法、状态、模型、正文等）" }),

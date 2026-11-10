@@ -1,6 +1,7 @@
 import type { _Router, _AnyProcedureMeta } from "../core/meta.js";
 import {
   _buildRouteTree,
+  _flattenRouter,
   _routeResolve,
   type _RouteNode,
   type _RouterNode,
@@ -183,19 +184,8 @@ export interface CliConfig<TRouter extends _Router | _AnyProcedureMeta> {
    * 默认空 = 全树匹配（命令 `diy app task show`）。
    */
   cliRootPath?: string | string[];
-  /**
-   * 命令**别名**：`{ "traffic.query": "traffic.ls" }` —— 两种写法都可用，help 只显示目标名。
-   *
-   * 为什么要有（##518 命令面整理）：域内方法名（query/snapshot/recent）直接暴露成命令后，
-   * 同一动作在不同域叫法不一。有了别名就能在**不改 rpc 方法名**的前提下统一用户可见动词
-   * （列表一律 `ls`）。键与值都是**命令段**（空格分隔），不是 rpc 全名。
-   */
-  aliases?: Record<string, string>;
-  /**
-   * **弃用**的命令：与 aliases 同形，但用旧名时会打印一次改名提示（走 stderr，不污染 --json）。
-   * 保留一个版本周期后从表里删掉即可真正移除。
-   */
-  deprecated?: Record<string, string>;
+  // 别名 / 弃用**不在这里配**：声明在命令自己身上（`RpcSchema.unary({ alias: 'ls' })`），
+  // 由 resolveCliTree 遍历时收集（##518 用户裁：全局表与定义分离，迟早对不上）。
   /**
    * RPC 方法名的**根前缀**（如 `"diy."`）。
    *
@@ -239,6 +229,35 @@ export interface CliConfig<TRouter extends _Router | _AnyProcedureMeta> {
 }
 
 /** @internal */
+/**
+ * 从命令树收集别名表（##518）。
+ *
+ * 表来源 = **命令自己的声明**（`RpcSchema.unary({ alias: 'ls' })` / `{ deprecated: 'release publish' }`），
+ * 而不是 CLI 的全局配置 —— 全局表与定义分开写，迟早会出现「表里有、代码里没有」。
+ *
+ * 返回 `键（用户敲的命令段）→ { to（目标命令段）, isDeprecated }`。
+ */
+function collectAliases(
+  router: _Router | _AnyProcedureMeta,
+  out = new Map<string, { to: string; isDeprecated: boolean }>(),
+): Map<string, { to: string; isDeprecated: boolean }> {
+  // 用 `_flattenRouter` 拿「路径 → 命令元信息」：它给出的 path 就是命令段（`traffic.query`），
+  // 与用户敲的一致；而 `_RouteNode` 那棵树经过 cliRootPath 裁剪/摊平，拿不到 def。
+  for (const [path, meta] of Object.entries(_flattenRouter(router as _Router))) {
+    const m = meta as { alias?: string | readonly string[]; deprecated?: string };
+    if (m.alias === undefined) continue;
+    const segs = path.split(".");
+    const aliases = Array.isArray(m.alias) ? m.alias : [m.alias as string];
+    for (const alias of aliases) {
+      out.set([...segs.slice(0, -1), alias].join(" "), {
+        to: segs.join(" "),
+        isDeprecated: m.deprecated !== undefined,
+      });
+    }
+  }
+  return out;
+}
+
 export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
 
   // ── 输出/退出注入（server 内嵌 /cli 端点用；缺省 = 原行为，直连 CLI 不变）──
@@ -298,21 +317,13 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
     const argv = rawArgv.filter((a) => a !== "--json");
 
     // ── 别名 / 弃用改写（##518）──
-    // 只改**命令段**（argv 开头那几个词），不碰参数；改写后按新名继续解析，
-    // 于是 help / --json / 参数解析全都走同一条路。
-    for (const table of [this.config.aliases ?? {}, this.config.deprecated ?? {}]) {
-      for (const [from, to] of Object.entries(table)) {
-        const fromSegs = from.split(" ").filter(Boolean);
-        const toSegs = to.split(" ").filter(Boolean);
-        if (fromSegs.length === 0) continue;
-        if (!fromSegs.every((seg, i) => argv[i] === seg)) continue;
-        argv.splice(0, fromSegs.length, ...toSegs);
-        // deprecated 与 aliases 区分：只在前者提示（同一句话只提示一次，避免管道里刷屏）
-        if (table === this.config.deprecated) {
-          this._printErr(`⚠ 命令已改名：${from.replace(/ /g, " ")} → ${to}（旧名下个版本移除）`);
-        }
-        break;
-      }
+    // 表的来源是**命令自己的声明**（meta.alias / meta.deprecated），不是外部配置。
+    for (const [from, { to, isDeprecated }] of collectAliases(this.config.router)) {
+      const fromSegs = from.split(" ").filter(Boolean);
+      if (!fromSegs.every((seg, i) => argv[i] === seg)) continue;
+      argv.splice(0, fromSegs.length, ...to.split(" "));
+      if (isDeprecated) this._printErr(`⚠ 命令已改名：${from} → ${to}（旧名下个版本移除）`);
+      break;
     }
 
     // 剥离末尾 --help/-h：`diy <命令> --help` 显示该命令自身帮助（父命令或叶子），非根帮助

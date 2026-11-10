@@ -21,6 +21,10 @@ import { type ProcedureMeta, type _Router, type _AnyProcedureMeta } from './meta
 /** @internal */
 export interface _RpcSchemaUnaryConfig<TSchema extends Record<string, z.ZodTypeAny>, TOutput> {
   desc?: string;
+  /** 命令别名（##518）：声明在命令自己身上，如 `alias: "ls"` ⇒ 用户也可敲 `traffic ls` */
+  alias?: string | readonly string[];
+  /** 弃用提示：值是新的命令段（空格分隔） */
+  deprecated?: string;
   input: TSchema;
   output: z.ZodType<TOutput>;
   /** 父命令的子命令容器（可选）。有 children = 父命令 */
@@ -56,6 +60,10 @@ export interface _RpcSchemaBidiStreamConfig<TSchema extends Record<string, z.Zod
 export interface _RpcSchemaGroupConfig {
   /** 父命令描述 */
   desc?: string;
+  /** 命令别名（##518）：如 `traffic` 也可敲 `tr` */
+  alias?: string | readonly string[];
+  /** 弃用提示：值是新的命令段（空格分隔） */
+  deprecated?: string;
   /** 子命令容器 */
   children: _Router;
 }
@@ -122,7 +130,7 @@ export class RpcSchema {
 // ═══════════════════════════════════════════════════
 
 function _makeMeta(
-  config: { desc?: string; children?: _Router },
+  config: { desc?: string; children?: _Router; alias?: string | readonly string[]; deprecated?: string },
   streamMode: string,
   inputSchema?: z.ZodTypeAny,
   outputSchema?: z.ZodTypeAny,
@@ -132,6 +140,9 @@ function _makeMeta(
   const desc = config.desc ? dedent(config.desc) : undefined;
   const meta: any = {
     _type: 'procedure',
+    // 命令面（##518）：别名 / 弃用声明在**具体命令**上，而不是 CLI 的全局表
+    ...(config.alias === undefined ? {} : { alias: config.alias }),
+    ...(config.deprecated === undefined ? {} : { deprecated: config.deprecated }),
     _input: undefined,
     _output: undefined,
     _chunkIn: undefined,
