@@ -66,7 +66,8 @@
     "vitest": "^4.1.9",
     "ws": "^8.21.0",
     "zod": "^4.4.3",
-    "@diy-agent/skills": "*"
+    "@diy-agent/skills": "*",
+    "@diy-agent/traffic": "*"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.2",

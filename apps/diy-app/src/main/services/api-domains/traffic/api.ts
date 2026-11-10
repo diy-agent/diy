@@ -21,6 +21,23 @@ export const trafficRoutes = RpcSchema.group({desc: `流量（应用发出去的
             },
             output: TrafficSnapshotSchema,
           }),
+          recent: RpcSchema.unary({
+            desc:
+              `内存窗口里最近的一批（µs 级，不读文件）。agent 查「我刚发那步发了什么」用它 —— ` +
+              `比 readLog 快三个数量级，也不受「按天切文件」影响。窗口缺省 500 条 / 8MB`,
+            input: {
+              n: z.number().optional().cliOption({ desc: "取最近多少条（缺省全窗口）" }),
+              kind: z.string().optional().cliOption({ desc: "只看这个 kind（llm / http / probe）" }),
+              taskUri: z.string().optional().cliOption({ desc: "只看这个任务的" }),
+              since: z.number().optional().cliOption({ desc: "只看到这个毫秒时间戳之后的" }),
+            },
+            output: z.object({
+              entries: z.array(z.record(z.string(), z.unknown())).describe("按时间正序，最后一条最新"),
+              count: z.number().describe("当前窗口总条数"),
+              bytes: z.number().describe("窗口占用字节"),
+              dropped: z.number().describe("因窗口上限被挤掉的累计条数"),
+            }),
+          }),
           clear: RpcSchema.unary({
             desc: `清空流量记录（仅内存里的即时列表；磁盘日志不动）`,
             input: {},
