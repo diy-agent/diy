@@ -57,7 +57,7 @@ export function createOpenAiCompatible(config: ProviderConfig): LlmProvider {
  *
  * 三条边界：
  *   · **不改请求**：`Request.clone()` 读 body，原 stream 原样放行；
- *   · **不改响应**：`Response.clone()` 同理；读 resBody 只为排查，默认截断 8KB；
+ *   · **不读响应体**：只记拿到响应头的时刻（TTFB）—— 在流式响应上读 clone 会拖慢首字节；
  *   · **永不抛**：`traffic.push` 在 HTTP 热路径上，记日志失败不该让请求失败。
  *
  * 为什么在 fetch 这一层而不是更上层：ai-sdk 的 `streamText` 把请求体（含 system /
@@ -78,15 +78,12 @@ function wrapFetchWithTraffic(fetchImpl: typeof globalThis.fetch, port: TrafficP
         }
 
         const res = await fetchImpl(input, init);
-        let resBody: unknown = null;
-        let resBytes = 0;
-        try {
-            const text = await res.clone().text();
-            resBytes = Buffer.byteLength(text, 'utf8');
-            resBody = text.length > 8192 ? { truncated: true, head: text.slice(0, 8192) } : JSON.parse(text);
-        } catch {
-            /* 同上 */
-        }
+        // ⚠ **绝不能 `await res.clone().text()`**（2026-11-10 实测踩到）：
+        // 流式响应上这句会把整条流读完才返回，ai-sdk 拿到 res 时首字节已经被推迟了
+        // 一整个响应周期 —— 实测 diy2 单轮 9.7s，而 curl 直连同一端点 ttfb 只有 1.17s。
+        // 所以这里只记**拿到响应头**那一刻（TTFB），响应体不读（要看它请开 traffic 的全文抓取，
+        // 那是另一个口子，不该压在这条热路径上）。
+        const ttfbMs = Date.now() - started;
 
         try {
             port.push({
@@ -96,11 +93,10 @@ function wrapFetchWithTraffic(fetchImpl: typeof globalThis.fetch, port: TrafficP
                 method: req.method,
                 host: safeHostOf(req.url, baseURL),
                 reqBytes,
-                resBytes,
                 reqBody,
-                resBody,
                 status: res.status,
-                ms: Date.now() - started,
+                ttfbMs,
+                ms: ttfbMs,
             });
         } catch {
             /* 见函数头：永不抛 */
