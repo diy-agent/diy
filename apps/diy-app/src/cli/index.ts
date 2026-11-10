@@ -17,6 +17,7 @@ import electronPath from "electron";
 import { HttpClientBinding } from "@diy-agent/rpc/http";
 import { probeInstance } from "./probe-instance";
 import { CliApp } from "@diy-agent/rpc/cli";
+import { CLI_ALIASES, CLI_DEPRECATED } from "./commands.js";
 import { apiDef } from "../main/services/api-def";
 import { readRuntimeConfig, type RuntimeConfig } from "../runtime";
 import { resolveAppRoot } from "../main/core/app-root";
@@ -236,6 +237,9 @@ async function main() {
       version: APP_VERSION,
       router: apiDef.diy,
       rpcPrefix: "diy.",
+      // 命令面声明（别名 / 弃用）都在 cli/commands.ts —— 用户敲什么 与 协议叫什么 分开放
+      aliases: CLI_ALIASES,
+      deprecated: CLI_DEPRECATED,
       transport,
       // 路径参数（如 tool read 的 path）按**调用者**目录解析：入口脚本已 cd 到应用目录，
       // 进程 cwd 不再可信，故由 DIY_CALLER_CWD 显式带过来（见 diy.sh / bin/diy）。

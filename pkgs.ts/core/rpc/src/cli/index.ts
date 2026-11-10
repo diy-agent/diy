@@ -184,6 +184,19 @@ export interface CliConfig<TRouter extends _Router | _AnyProcedureMeta> {
    */
   cliRootPath?: string | string[];
   /**
+   * 命令**别名**：`{ "traffic.query": "traffic.ls" }` —— 两种写法都可用，help 只显示目标名。
+   *
+   * 为什么要有（##518 命令面整理）：域内方法名（query/snapshot/recent）直接暴露成命令后，
+   * 同一动作在不同域叫法不一。有了别名就能在**不改 rpc 方法名**的前提下统一用户可见动词
+   * （列表一律 `ls`）。键与值都是**命令段**（空格分隔），不是 rpc 全名。
+   */
+  aliases?: Record<string, string>;
+  /**
+   * **弃用**的命令：与 aliases 同形，但用旧名时会打印一次改名提示（走 stderr，不污染 --json）。
+   * 保留一个版本周期后从表里删掉即可真正移除。
+   */
+  deprecated?: Record<string, string>;
+  /**
    * RPC 方法名的**根前缀**（如 `"diy."`）。
    *
    * 为什么需要：`router` 一般由 `apiDef.diy` 这棵**子树**传入，`proc.path` 因此是相对路径
@@ -283,6 +296,24 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
     // 全局 --json flag：任意位置识别，剥离后进入命令解析；输出 JSON
     this._jsonFlag = rawArgv.includes("--json");
     const argv = rawArgv.filter((a) => a !== "--json");
+
+    // ── 别名 / 弃用改写（##518）──
+    // 只改**命令段**（argv 开头那几个词），不碰参数；改写后按新名继续解析，
+    // 于是 help / --json / 参数解析全都走同一条路。
+    for (const table of [this.config.aliases ?? {}, this.config.deprecated ?? {}]) {
+      for (const [from, to] of Object.entries(table)) {
+        const fromSegs = from.split(" ").filter(Boolean);
+        const toSegs = to.split(" ").filter(Boolean);
+        if (fromSegs.length === 0) continue;
+        if (!fromSegs.every((seg, i) => argv[i] === seg)) continue;
+        argv.splice(0, fromSegs.length, ...toSegs);
+        // deprecated 与 aliases 区分：只在前者提示（同一句话只提示一次，避免管道里刷屏）
+        if (table === this.config.deprecated) {
+          this._printErr(`⚠ 命令已改名：${from.replace(/ /g, " ")} → ${to}（旧名下个版本移除）`);
+        }
+        break;
+      }
+    }
 
     // 剥离末尾 --help/-h：`diy <命令> --help` 显示该命令自身帮助（父命令或叶子），非根帮助
     let helpRequested = false;
