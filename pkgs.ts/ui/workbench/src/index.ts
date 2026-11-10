@@ -31,6 +31,7 @@ export { PAGE_INVOKE_CHANNEL, PAGE_LIST_CHANNEL, RPC_CHANNEL } from "./channels.
 export { sidecarWindowOptions, type DisplayLike, type WorkArea } from "./window.js";
 export { registryDir, writeSelfRecord, removeSelfRecord, repoRootOf, instanceUri, instanceWindowTitle } from "./instance-record.js";
 export { cdpSwitchValue, readDevToolsUrl, readDevToolsPort, waitDevToolsPort } from "./cdp.js";
+export { acquireSingleInstance, configureUserData, userDataDirOf } from "./instance-home.js";
 export type { PluginEntry } from "./loader.js";
 export type { PageContribution, PageInfo, PageMethod } from "./page.js";
 export type { PageInvokeRequest, WorkbenchBridge } from "./channels.js";
