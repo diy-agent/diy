@@ -10,28 +10,44 @@
  * **写（setState、写 scrollTop、改 grid 轨道）挪到下一帧**。帧边界就是 Chromium 的
  * "一次投递循环"边界 —— 写落在新帧，就不会被算进上一帧的循环。
  *
- * ⚠️ 已知取舍：窗口被遮挡 / 最小化时 rAF 会被节流甚至暂停（同 TaskTree 那条注释），
- * 所以 run 里的写会顺延到窗口可见后那一帧。对「测量 → 改账 / 改尺寸」这类幂等写是安全的：
- * 下一次 RO 回调会重新测一遍，最终值不丢。
+ * ⚠️ 只靠 rAF 不够（回归过，用户体感「发送消息后卡住、圈一直转、过很久才好」）：
+ * 窗口被遮挡 / 最小化 / GPU 进程崩溃重建期间 rAF 会被节流甚至暂停（同 TaskTree 那条注释），
+ * 于是「该刷的视口高度」迟迟不刷，虚拟窗口不重算 ⇒ 新消息不渲染，只能等下一次事件来救。
+ * 所以**定时器兜底**：fallbackMs 到点也执行一次（正常情况 rAF 先跑、定时器被清掉）。
  */
-export function createFrameBatcher(run: () => void): {
+export function createFrameBatcher(
+  run: () => void,
+  opts: { fallbackMs?: number } = {},
+): {
   /** 请求在下一帧执行 run（本帧已排过就合并） */
   schedule: () => void;
   /** 取消未执行的调度（组件卸载时用，避免 run 打到已卸载的 ref 上） */
   cancel: () => void;
 } {
-  let id: number | null = null;
+  // 兜底：rAF 在窗口被遮挡 / 最小化 / GPU 进程崩溃重建期间会被节流甚至暂停，
+  // 只靠它就会「该刷的尺寸迟迟不刷」——用户看到的是界面卡住、过很久才恢复（##522 回归）。
+  // 定时器到点也执行一次，正常情况 rAF 先跑、定时器被清掉。
+  const fallbackMs = opts.fallbackMs ?? 120;
+  let rafId: number | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const fire = () => {
+    if (rafId !== null) cancelAnimationFrame(rafId);
+    if (timer !== null) clearTimeout(timer);
+    rafId = null;
+    timer = null;
+    run();
+  };
   return {
     schedule() {
-      if (id !== null) return;
-      id = requestAnimationFrame(() => {
-        id = null;
-        run();
-      });
+      if (rafId !== null || timer !== null) return;
+      rafId = requestAnimationFrame(fire);
+      timer = setTimeout(fire, fallbackMs);
     },
     cancel() {
-      if (id !== null) cancelAnimationFrame(id);
-      id = null;
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      if (timer !== null) clearTimeout(timer);
+      rafId = null;
+      timer = null;
     },
   };
 }

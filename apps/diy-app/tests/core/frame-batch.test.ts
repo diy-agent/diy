@@ -2,19 +2,30 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFrameBatcher } from "../../src/renderer_solid/lib/frame-batch";
 
-/** 手动驱动的 rAF：测试里显式 flush 一帧，不依赖真实渲染循环 */
-let queue: FrameRequestCallback[] = [];
+/** 手动驱动的 rAF / setTimeout：测试里显式「过一帧」或「过兜底时间」，不依赖真实调度 */
+let raf = new Map<number, FrameRequestCallback>();
+let timers = new Map<number, () => void>();
 let nextId = 1;
 
 beforeEach(() => {
-  queue = [];
+  raf = new Map();
+  timers = new Map();
   nextId = 1;
   vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
-    queue.push(cb);
-    return nextId++;
+    const id = nextId++;
+    raf.set(id, cb);
+    return id;
   });
   vi.stubGlobal("cancelAnimationFrame", (id: number) => {
-    queue = queue.filter((_, i) => i + 1 !== id);
+    raf.delete(id);
+  });
+  vi.stubGlobal("setTimeout", (cb: () => void) => {
+    const id = nextId++;
+    timers.set(id, cb);
+    return id;
+  });
+  vi.stubGlobal("clearTimeout", (id: number) => {
+    timers.delete(id);
   });
 });
 
@@ -22,10 +33,18 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const flush = () => {
-  const q = queue;
-  queue = [];
+/** 过一帧：执行当前排队的 rAF 回调 */
+const flushFrame = () => {
+  const q = [...raf.values()];
+  raf.clear();
   for (const cb of q) cb(0);
+};
+
+/** 过兜底时间：执行当前排队的定时器 */
+const flushTimer = () => {
+  const q = [...timers.values()];
+  timers.clear();
+  for (const cb of q) cb();
 };
 
 describe("createFrameBatcher", () => {
@@ -36,7 +55,9 @@ describe("createFrameBatcher", () => {
     b.schedule();
     b.schedule();
     expect(run).not.toHaveBeenCalled(); // 本帧不跑：跑在回调里就是循环本身
-    flush();
+    flushFrame();
+    expect(run).toHaveBeenCalledTimes(1);
+    flushTimer(); // 已经被 rAF 执行过：兜底定时器要清掉，不能重复跑
     expect(run).toHaveBeenCalledTimes(1);
   });
 
@@ -44,9 +65,9 @@ describe("createFrameBatcher", () => {
     const run = vi.fn();
     const b = createFrameBatcher(run);
     b.schedule();
-    flush();
+    flushFrame();
     b.schedule();
-    flush();
+    flushFrame();
     expect(run).toHaveBeenCalledTimes(2);
   });
 
@@ -55,10 +76,22 @@ describe("createFrameBatcher", () => {
     const b = createFrameBatcher(run);
     b.schedule();
     b.cancel();
-    flush();
+    flushFrame();
+    flushTimer();
     expect(run).not.toHaveBeenCalled();
     b.schedule(); // cancel 之后仍可再用
-    flush();
+    flushFrame();
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("rAF 被节流/暂停时，兜底定时器到点照样执行（回归：卡住很久才恢复）", () => {
+    const run = vi.fn();
+    const b = createFrameBatcher(run, { fallbackMs: 120 });
+    b.schedule();
+    expect(run).not.toHaveBeenCalled();
+    flushTimer(); // 模拟 rAF 一直没来
+    expect(run).toHaveBeenCalledTimes(1);
+    flushFrame(); // 兜底执行过之后，rAF 再来一次不该重复跑
     expect(run).toHaveBeenCalledTimes(1);
   });
 });
