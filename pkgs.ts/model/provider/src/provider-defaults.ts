@@ -12,7 +12,7 @@
 
 // ##491：opencode 的会话 header（含 `$SESSION` 占位符）真源在策略文件里，这里只引用、不重抄字面量。
 import { OPENCODE_HEADERS } from './strategies/opencode.js';
-import type { ProviderConfig } from './types.js';
+import type { ProviderConfig, TrafficPort } from './types.js';
 
 /** 一个 provider 的默认值：用哪个 ai-sdk 包（决定协议面）、默认 endpoint、附带 header */
 export interface ProviderDefaults {
@@ -81,6 +81,8 @@ export interface ResolveProviderOptions {
     readonly baseURL?: string;
     /** 追加 / 覆盖表里的 header（`$SESSION` 占位符照旧生效） */
     readonly headers?: Readonly<Record<string, string>>;
+    /** 流量端口（##534）：透传给 `ProviderConfig.traffic` */
+    readonly traffic?: TrafficPort;
     /** 注入的 fetch（测试用假 HTTP；缺省 = 全局 fetch） */
     readonly fetch?: typeof globalThis.fetch;
 }
@@ -115,5 +117,8 @@ export function resolveProviderConfig(options: ResolveProviderOptions): Provider
         name: options.provider,
         ...(Object.keys(headers).length === 0 ? {} : { headers }),
         ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+        // ##536：漏这行，`resolveProvider(..., traffic)` 传进来的端口会被静默丢弃 ——
+        // 展开写法（`...(cond ? {} : { traffic })`）绕过了 tsc 的多余属性检查，所以不报错。
+        ...(options.traffic === undefined ? {} : { traffic: options.traffic }),
     };
 }
