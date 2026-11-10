@@ -139,7 +139,7 @@ export class RpcPortService {
     if (rendererTransport) {
       // diy.ui.* → Renderer 转发。经可替换壳注册：窗口重建后由 setRendererTransport() 换目标
       this._forwarder = new RendererForwarder(rendererTransport);
-      this._httpRaw.onForward(apiDef.diy.ui, this._forwarder);
+      this._httpRaw.onForward(apiDef.diy.ui, this._forwarder, "diy.ui.");
     }
 
     // /cli 嵌入式端点的进程内通道：与 _httpRaw **同一套 handler 再挂一份**到
@@ -148,7 +148,7 @@ export class RpcPortService {
     const { serverTx, clientTx } = createMemTransportPair();
     const cliServer = new ChannelServerBinding(serverTx);
     bindApp(cliServer);
-    if (this._forwarder) cliServer.onForward(apiDef.diy.ui, this._forwarder);
+    if (this._forwarder) cliServer.onForward(apiDef.diy.ui, this._forwarder, "diy.ui.");
     this._cliClient = new ChannelClientBinding(clientTx);
 
     return new Promise<void>((resolve, reject) => {
@@ -286,7 +286,7 @@ export class RpcPortService {
       // 极端情况：窗口先于 RPC 服务起来（当前不会，但别静默丢转发）
       if (!this._httpRaw) throw new Error('[rpc] RPC 服务未启动，无法绑定渲染进程通道');
       this._forwarder = new RendererForwarder(transport);
-      this._httpRaw.onForward(apiDef.diy.ui, this._forwarder);
+      this._httpRaw.onForward(apiDef.diy.ui, this._forwarder, "diy.ui.");
       return;
     }
     this._forwarder.setTransport(transport);

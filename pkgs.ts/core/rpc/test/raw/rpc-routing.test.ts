@@ -82,7 +82,7 @@ async function main() {
   // Main 侧：共享来源 binding，本地 + 转发两个后端都注册进它
   const gwBinding = new ChannelServerBinding(gwTx);
   gwBinding._on((appApiDef.diy.app.ping).name!, appApiDef.diy.app.ping, async ({ input }) => `pong:${input.msg}`); // diy.app.* → 本地
-  gwBinding.onForward(appApiDef.diy.ui, new ChannelClientBinding(main2renderer));       // diy.ui.* → 转发
+  gwBinding.onForward(appApiDef.diy.ui, new ChannelClientBinding(main2renderer), "diy.ui.");       // diy.ui.* → 转发
 
   // Renderer 侧：本地 ui binding（diy.ui.* 直接处理）
   const rendererBinding = new ChannelServerBinding(renderer2main);
@@ -137,7 +137,7 @@ async function main() {
   const clashBinding = new ChannelServerBinding(gwTx);
   clashBinding._on((appApiDef.diy.app.ping).name!, appApiDef.diy.app.ping, async ({ input }) => `pong:${input.msg}`);
   try {
-    clashBinding.onForward(appApiDef.diy.app, new ChannelClientBinding(main2renderer));
+    clashBinding.onForward(appApiDef.diy.app, new ChannelClientBinding(main2renderer), "diy.app.");
   } catch (e) {
     threw = e instanceof Error && e.message.includes('已注册');
   }
