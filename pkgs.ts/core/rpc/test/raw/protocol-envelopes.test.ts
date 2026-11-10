@@ -117,7 +117,7 @@ async function testUnaryEnvelopes() {
   const server = new ChannelServerBinding(serverTx);
   const client = new ChannelClientBinding(clientTx);
 
-  server.on({ ...api.greet, name: 'greet' }, ({ input }) => `Hello ${input.name}!`);
+  server.on("greet", { ...api.greet, name: 'greet' }, ({ input }) => `Hello ${input.name}!`);
 
   const res = await client.invoke<{ input: { name: string }; meta: unknown }, string>('greet', { input: { name: 'World' }, meta: {} });
   assert(res === 'Hello World!', `result = ${res}`);
@@ -134,7 +134,7 @@ async function testServerStreamEnvelopes() {
   const server = new ChannelServerBinding(serverTx);
   const client = new ChannelClientBinding(clientTx);
 
-  server.on({ ...api.count, name: 'count' }, async function* ({ input }) {
+  server.on("count", { ...api.count, name: 'count' }, async function* ({ input }) {
     for (let i = 0; i < input.to; i++) {
       await new Promise(r => setImmediate(r));
       yield { val: i };
@@ -163,7 +163,7 @@ async function testCancelEnvelopes() {
   const client = new ChannelClientBinding(clientTx);
 
   let finallyRan = false;
-  server.on({ ...api.count, name: 'count' }, async function* ({ input }) {
+  server.on("count", { ...api.count, name: 'count' }, async function* ({ input }) {
     try {
       for (let i = 0; i < input.to; i++) {
         await sleep(30);
@@ -205,7 +205,7 @@ async function testClientStreamEnvelopes() {
   const server = new ChannelServerBinding(serverTx);
   const client = new ChannelClientBinding(clientTx);
 
-  server.on({ ...api.upload, name: 'upload' }, async ({ input, stream }) => {
+  server.on("upload", { ...api.upload, name: 'upload' }, async ({ input, stream }) => {
     const items: string[] = [];
     for await (const c of stream) items.push(c);
     return { tag: input.tag, items };
@@ -234,7 +234,7 @@ async function testBidiStreamEnvelopes() {
   const server = new ChannelServerBinding(serverTx);
   const client = new ChannelClientBinding(clientTx);
 
-  server.on({ ...api.echo, name: 'echo' }, async function* ({ input, stream }) {
+  server.on("echo", { ...api.echo, name: 'echo' }, async function* ({ input, stream }) {
     for await (const m of stream) {
       await sleep(1);
       yield `${input.prefix}: ${m}`;
@@ -282,8 +282,8 @@ async function testRpcLayerEnvelopes() {
   // ⚠️ 2026-11-06 起 `RpcSchema.group` **不再回写 meta.name**（router 退休），
   // 所以直接 `binding.on` 时要自己给 name —— 走 `defineService.bind` 则不用（它内部拼）。
   const binding = new ChannelServerBinding(serverTx);
-  binding.on({ ...app.ping, name: 'ping' }, async ({ input }) => `pong: ${input.msg}`);
-  binding.on({ ...app.upload, name: 'upload' }, async ({ input, stream }) => {
+  binding.on("ping", { ...app.ping }, async ({ input }) => `pong: ${input.msg}`);
+  binding.on("upload", { ...app.upload }, async ({ input, stream }) => {
     let sum = 0;
     for await (const v of stream) sum += v;
     return { tag: input.tag, sum };

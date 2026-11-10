@@ -24,7 +24,7 @@ async function main() {
   const client = new ChannelClientBinding(clientTx);
   const state = { started: false, finallyRan: false, aborted: false, yields: 0 };
 
-  server.on(api.tick, async function* ({ signal }) {
+  server.on("tick", api.tick, async function* ({ signal }) {
     state.started = true;
     signal.addEventListener('abort', () => { state.aborted = true; }, { once: true });
     try {

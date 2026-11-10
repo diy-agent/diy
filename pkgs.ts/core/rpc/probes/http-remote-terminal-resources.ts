@@ -45,8 +45,8 @@ function delayedChunks() {
 
 async function startServer() {
   const binding = new HttpServerBinding();
-  binding.on(api.collect, async () => true);
-  binding.on(api.bidi, async function* () {});
+  binding.on("collect", api.collect, async () => true);
+  binding.on("bidi", api.bidi, async function* () {});
 
   const server = http2.createServer();
   server.on('stream', (stream, headers) => {

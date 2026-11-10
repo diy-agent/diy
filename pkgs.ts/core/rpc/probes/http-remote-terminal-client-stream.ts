@@ -30,7 +30,7 @@ function readSnapshot(client: HttpClientBinding, stream?: http2.ClientHttp2Strea
 
 async function main() {
   const binding = new HttpServerBinding();
-  binding.on(api.collect, async () => true); // 远端不消费输入，立即返回 result
+  binding.on("collect", api.collect, async () => true); // 远端不消费输入，立即返回 result
 
   const server = http2.createServer();
   server.on('stream', (stream, headers) => {

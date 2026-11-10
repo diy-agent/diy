@@ -49,7 +49,7 @@ describe('binding.on(path, meta, handler)', () => {
         const { binding, client, dispose } = await channelHarness.start();
         const named = RpcSchema.bindNames(routes);
         const math = (named as unknown as { math: { add: typeof addMeta } }).math;
-        binding.on(math.add, ({ input }: { input: { a: number; b: number } }) => input.a * input.b);
+        binding.on((math.add).name!, math.add, ({ input }: { input: { a: number; b: number } }) => input.a * input.b);
         const { createTypedClient } = await import('../../src/core/index');
         expect(await createTypedClient(client, named).math.add({ a: 3, b: 4 })).toBe(12);
         await dispose();

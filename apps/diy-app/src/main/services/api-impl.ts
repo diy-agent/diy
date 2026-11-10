@@ -117,7 +117,7 @@ export function bindAppHandlers(binding: ServerBinding): void {
   bindApp(binding);
 
   // ── doctor ──
-  binding.on(app.doctor, async () => {
+  binding.on("diy.doctor", app.doctor, async () => {
     const issues = health.runHealthCheck();
     const home = state.diyHome();
     const { existsSync } = await import("node:fs");

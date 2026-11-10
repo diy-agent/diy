@@ -21,7 +21,7 @@ async function* brokenChunks() {
 async function run(name: string, harness: typeof httpHarness | typeof channelHarness) {
   const { binding, client, dispose } = await harness.start();
   const cli = createTypedClient(client, api);
-  binding.on(api.echo, async function* ({ stream }) {
+  binding.on("echo", api.echo, async function* ({ stream }) {
     for await (const v of stream) yield v as number;
   });
   try {

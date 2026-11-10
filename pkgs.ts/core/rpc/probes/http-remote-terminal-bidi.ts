@@ -22,7 +22,7 @@ function snapshot(client: HttpClientBinding, stream?: http2.ClientHttp2Stream) {
 
 async function main() {
   const binding = new HttpServerBinding();
-  binding.on(api.bidi, async function* () {}); // 远端立即结束下行
+  binding.on("bidi", api.bidi, async function* () {}); // 远端立即结束下行
 
   const server = http2.createServer();
   server.on('stream', (stream, headers) => {

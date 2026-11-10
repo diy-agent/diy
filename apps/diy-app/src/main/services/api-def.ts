@@ -191,7 +191,7 @@ export { DraftFieldSchema, DraftFieldsSchema, DraftsData, TaskDetailSchema };
  * ⚠️ 必须是**工厂**不是共享常量：`cliOption` 的元数据注册在 `_unwrap()`（剥掉 optional 后的那层）上，
  * 共用一个 schema 对象会让后注册的 desc 覆盖前面每个使用点（help 文案串台）。
  */
-export const apiDef = RpcSchema.bindNames(RpcSchema.group({ children: {
+export const apiDef = RpcSchema.group({ children: {
   diy: RpcSchema.group({
     desc: `
     diy 管控台 CLI
@@ -369,7 +369,7 @@ export const apiDef = RpcSchema.bindNames(RpcSchema.group({ children: {
       ui: uiRoutes,
     },
   }),
-} }));
+} });
 
 /** `apiDef.diy` —— 各域 impl 取值起点（拆 impl 后各域都要它） */
 export const app = apiDef.diy;

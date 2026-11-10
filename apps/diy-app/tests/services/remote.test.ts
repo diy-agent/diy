@@ -85,8 +85,6 @@ describe("RemoteService", () => {
         // setSelfPingPort 是「读-改-写」，没有记录就什么都不做（不凭空造条目）
         writeRecord(registryDir(), {
             pid: process.pid,
-            name: null,
-            mode: "source",
             app: null,
             launch: null,
             worktree: null,
