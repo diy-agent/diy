@@ -10,6 +10,8 @@
   "devDependencies": {
     "@material/material-color-utilities": "^0.4.0",
     "@tailwindcss/cli": "^4.3.5",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/user-event": "^14.6.9",
     "js-yaml": "^5.5.0",
     "knip": "^6.43.0",
     "oxfmt": "^0.57.0",
