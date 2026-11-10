@@ -15,7 +15,7 @@ import { channelHarness, httpHarness, wsHarness, type TransportHarness } from '.
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** 四流模式共享 api 定义（纯 meta，router() 回写全名） */
-const api = RpcSchema.bindNames(RpcSchema.group({ children: {
+const api = RpcSchema.group({ children: {
   greet: RpcSchema.unary({ input: { name: z.string() }, output: z.string() }),
   fail: RpcSchema.unary({ input: {}, output: z.unknown() }),
   count: RpcSchema.serverStream({ input: { to: z.number() }, output: z.number() }),
@@ -24,7 +24,7 @@ const api = RpcSchema.bindNames(RpcSchema.group({ children: {
     output: z.object({ tag: z.string(), received: z.array(z.string()) }),
   }),
   echo: RpcSchema.bidiStream({ input: {}, chunkIn: z.string(), chunkOut: z.string() }),
-} }));
+} });
 
 function wireBinding(binding: ServerBinding) {
   binding._on("greet", api.greet, async ({ input }) => `Hello, ${input.name}!`);

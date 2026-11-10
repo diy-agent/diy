@@ -2,9 +2,9 @@ import { z } from 'zod';
 import { RpcSchema, createTypedClient } from '../src/index';
 import { httpHarness } from '../test/harness';
 
-const api = RpcSchema.bindNames(RpcSchema.group({ children: {
+const api = RpcSchema.group({ children: {
   collect: RpcSchema.clientStream({ input: {}, chunkIn: z.number(), output: z.number() }),
-} }));
+} });
 
 async function* brokenChunks() {
   yield 1;

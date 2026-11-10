@@ -11,9 +11,9 @@ import { HttpServerBinding } from '../src/transport/http/http-server-binding';
  *   B. 终态显式清理：stream 收到 end 后，createBodyReader 注册的 listener 是否被移除
  *      （不移除 => 依赖 GC/stream 销毁，属 P3 记录项）。
  */
-const api = RpcSchema.bindNames(RpcSchema.group({ children: {
+const api = RpcSchema.group({ children: {
   collect: RpcSchema.clientStream({ input: {}, chunkIn: z.number(), output: z.number() }),
-} }));
+} });
 
 class FakeStream extends EventEmitter {
   closed = false;

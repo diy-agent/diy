@@ -8,7 +8,7 @@ import { RpcSchema, defineService, ChannelServerBinding, ChannelClientBinding } 
 import { createMemTransportPair } from "../../test/helpers";
 
 // ① 定义：纯 schema，没有 handler
-const mathRoutes = RpcSchema.bindNames(RpcSchema.group({ children: {
+const mathRoutes = RpcSchema.group({ children: {
     math: RpcSchema.group({ children: {
         add: RpcSchema.unary({
             input: { a: z.number(), b: z.number() },
@@ -16,7 +16,7 @@ const mathRoutes = RpcSchema.bindNames(RpcSchema.group({ children: {
             desc: "a + b",
         }),
     } }),
-} }));
+} });
 
 const mathService = defineService({ name: "demo.math", api: mathRoutes });
 

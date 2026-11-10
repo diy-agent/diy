@@ -47,7 +47,7 @@ describe('binding._on(path, meta, handler)', () => {
 
     it('两参形式仍可用（老路径不破）', async () => {
         const { binding, client, dispose } = await channelHarness.start();
-        const named = RpcSchema.bindNames(routes);
+        const named = routes;
         const math = (named as unknown as { math: { add: typeof addMeta } }).math;
         binding._on((math.add).name!, math.add, ({ input }: { input: { a: number; b: number } }) => input.a * input.b);
         const { createTypedClient } = await import('../../src/core/index');

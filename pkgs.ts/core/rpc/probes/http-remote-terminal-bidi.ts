@@ -5,9 +5,9 @@ import { HttpServerBinding } from '../src/transport/http/http-server-binding';
 import { HttpClientBinding } from '../src/transport/http/http-client-binding';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-const api = RpcSchema.bindNames(RpcSchema.group({ children: {
+const api = RpcSchema.group({ children: {
   bidi: RpcSchema.bidiStream({ input: {}, chunkIn: z.number(), chunkOut: z.number() }),
-} }));
+} });
 
 function snapshot(client: HttpClientBinding, stream?: http2.ClientHttp2Stream) {
   const activeStreams = (client as unknown as { activeStreams: Set<unknown> }).activeStreams;

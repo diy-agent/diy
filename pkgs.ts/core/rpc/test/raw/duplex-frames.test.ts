@@ -14,10 +14,10 @@ import { ChannelServerBinding, ChannelClientBinding, RpcSchema } from '../../src
 import type { EnvelopeTransport, _Envelope } from '../../src/core/types';
 import { z } from 'zod';
 
-const api = RpcSchema.bindNames(RpcSchema.group({ children: {
+const api = RpcSchema.group({ children: {
   a: RpcSchema.unary({ input: {}, output: z.object({ from: z.string() }) }),
   b: RpcSchema.unary({ input: {}, output: z.object({ from: z.string() }) }),
-} as const }));
+} as const });
 
 /** 模拟 IPC：send 投递给对端所有监听者（两端各自 server+client 都订阅） */
 function duplexPair(): [EnvelopeTransport, EnvelopeTransport] {

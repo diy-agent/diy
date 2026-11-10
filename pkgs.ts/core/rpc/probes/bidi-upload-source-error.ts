@@ -9,9 +9,9 @@ import { httpHarness, channelHarness } from '../test/harness';
  * `/* ignore * /`。channel 侧 bidi 已发 `end{error: STREAM_ERROR}`。
  * 判据：上游迭代抛错后，输出流必须以错误落定，不得静默完成。
  */
-const api = RpcSchema.bindNames(RpcSchema.group({ children: {
+const api = RpcSchema.group({ children: {
   echo: RpcSchema.bidiStream({ input: {}, chunkIn: z.number(), chunkOut: z.number() }),
-} }));
+} });
 
 async function* brokenChunks() {
   yield 1;

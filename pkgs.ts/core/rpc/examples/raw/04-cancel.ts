@@ -8,12 +8,12 @@ import { z } from "zod";
 import { RpcSchema, defineService, ChannelServerBinding, ChannelClientBinding } from "../../src/index";
 import { createMemTransportPair } from "../../test/helpers";
 
-const routes = RpcSchema.bindNames(RpcSchema.group({ children: {
+const routes = RpcSchema.group({ children: {
     slow: RpcSchema.unary({
         input: { ms: z.number() },
         output: z.string(),
     }),
-} }));
+} });
 const service = defineService({ name: "demo.slow", api: routes });
 
 async function main(): Promise<void> {

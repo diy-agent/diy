@@ -4,9 +4,9 @@ import type { EnvelopeTransport, _Envelope } from '../src/core/types';
 import { createMemTransportPair } from '../test/helpers';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-const api = RpcSchema.bindNames(RpcSchema.group({ children: {
+const api = RpcSchema.group({ children: {
   tick: RpcSchema.serverStream({ input: {}, output: z.number() }),
-} }));
+} });
 
 function delayServerToClient(tx: EnvelopeTransport, delay: number): EnvelopeTransport {
   return {

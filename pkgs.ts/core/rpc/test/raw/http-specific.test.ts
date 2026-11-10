@@ -18,7 +18,7 @@ import { HttpClientBinding } from '../../src/transport/http/http-client-binding'
 const exec = promisify(execCb);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-const api = RpcSchema.bindNames(RpcSchema.group({ children: {
+const api = RpcSchema.group({ children: {
   diy: RpcSchema.group({
     desc: "diy 命名空间",
     children: {
@@ -35,7 +35,7 @@ const api = RpcSchema.bindNames(RpcSchema.group({ children: {
       }),
     },
   }),
-} }));
+} });
 
 describe('http-server-binding 协议特有', () => {
   it('curl unary + server-stream（NDJSON）+ 错误映射 + 取消', async () => {
@@ -145,13 +145,13 @@ describe('http-server-binding 协议特有', () => {
 
   it('非法 wire 输入拒绝：bad body / bad params / 非法 NDJSON chunk → 报错（R19 P1-3）', async () => {
     const httpRaw = new HttpServerBinding();
-    const rapi = RpcSchema.bindNames(RpcSchema.group({ children: {
+    const rapi = RpcSchema.group({ children: {
       uni: RpcSchema.unary({ input: {}, output: z.unknown() }),
       strict: RpcSchema.clientStream({ input: {}, chunkIn: z.unknown(), output: z.number() }),
-    } }));
-    httpRaw._on((rapi.uni).name!, rapi.uni, async ({ input }) => input);
+    } });
+    httpRaw._on("uni", rapi.uni, async ({ input }) => input);
     // 不吞输入错误的 consumer：非法 chunk 必须让 handler 以错误落定（伪成功防线）
-    httpRaw._on((rapi.strict).name!, rapi.strict, async ({ stream }) => {
+    httpRaw._on("strict", rapi.strict, async ({ stream }) => {
       let n = 0;
       for await (const _ of stream) n++;
       return n;
