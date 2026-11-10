@@ -136,3 +136,85 @@ it("运行中 → 详情里能看到 PID / 端口（来自快照，不是硬编�
 **意图测试的对象是「界面行为」而不是「真窗口」**。只要 UI 保持纯投影 + client 是接口，
 UI 级意图就能在进程内以毫秒级跑起来；真窗口只留个位数用例兜底。这不是妥协，
 而是把「慢在哪」修对了 —— 慢的是跨进程，不是 UI。
+
+---
+
+## 10. 采用口径：能真就真，只在两处让路（2026-11-10 用户定）
+
+> 意图测试尽量走**端到端全套**：真 UI + 真 rpc + 真 core 服务；只有「难以频繁运行」或
+> 「不可预测」的活动才用 mock / stub / 黄金数据。上一版的 L1「假快照 + 假 client」降级为**快测层**，
+> 主力改为**进程内全栈（in-process full stack）**。
+
+### 10.1 为什么本仓做得到（已核实）
+
+| 组件 | 对 Electron 的依赖 | 结论 |
+|---|---|---|
+| `dev-core`（快照 / worktreeInstances / 外部实例） | **0**（只 import node 内置） | 可直接在测试进程里跑 |
+| `dev-page`（页面方法表） | **0** | 同上（`runner` 的 `spawnFn` 可注入） |
+| `dev-fs`（list/read/write + jail） | **0** | 同上 |
+| `dev-ui`（React 组件） | 只依赖 `window.transport` / `window.workbench` | 注入内存 transport 即可 |
+
+也就是说：**去掉 Electron 之后，业务链路一条不少**。差的只是三样东西的实现：
+进程真的被 spawn、窗口真的存在、IPC 真的是 IPC。
+
+### 10.2 真实度分级（这张表就是判据）
+
+| 环节 | 意图测试里 | 理由 |
+|---|---|---|
+| React 组件 / 交互 | **真**（happy-dom 或 Chromium 挂真组件） | 被测对象本身 |
+| rpc 传输 | **真**（`createMemTransportPair` + Channel 两端） | 序列化 / 校验 / 错误映射都是 bug 高发区 |
+| core 服务（快照、fs jail、ref 读 diy.yaml） | **真**（临时目录 + 临时 git 仓） | 数据形状错最贵 |
+| 存储（快照 store / 命令输出） | **内存型真 store**（`SnapshotStore`） | 快、可断言「通知了几次」 |
+| **LLM 请求** | **黄金/回放**（fixture 逐帧重放） | 花钱 + 不确定 |
+| **拉起 app 实例**（`spawn` Electron） | **stub**：写一条注册记录 + 写日志文件 + 返回 pid | 一个真实例 ≈ 2–4 s，且抢端口/抢锁 |
+| 窗口 / 全屏 / CDP / 拖拽指针 | 不进意图测试（留给 e2e，≤8 条） | 只有真窗口才有 |
+
+一句话：**「不花时间、不随机、可复现」的都真的跑；剩下的才让路。**
+
+### 10.3 进程内全栈长什么样
+
+```ts
+// dev-ui/src/testing/harness.ts —— 一次装配，三处真实、两处让路
+const fx = await createDevFixture();              // 临时 DIY_HOME + 临时 git 仓 + 注册表记录
+
+const server = new ChannelServerBinding(fx.serverTx);   // ① 真 rpc（服务端）
+bindFsHandlers(server);                                  // 真 dev-fs（jail 在临时目录里）
+bindDevPage(server, {                                    // 真页面方法表，只换 spawnFn
+  spawnFn: fx.fakeSpawn,                                 // ② 让路：不真起 Electron
+});
+const client = createDevClient(fx.pageBridge);           // 真 client（走同一套 transport）
+
+renderUi(<App ctx={ctx} />);                             // ③ 真 React 组件
+await ui.click("启动");                                   // 真点击
+expect(fx.registry.records()).toHaveLength(1);            // 真注册表被写了
+expect(ui.text()).toContain("运行中");                    // 真 UI 反映真快照
+```
+
+要点：
+
+- **不用假 client**：`createDevClient` 照原样用，它面对的 transport 是内存管道；
+  `client.ts` 里那层领域封装因此**被测到**（过去它是唯一没测的地方，也是 `Unknown method` 差点漏过的地方）。
+- **不用假快照**：`snapshot()` 由真 `buildSnapshot()` 从真注册表 + 真 worktree 算出来；
+  造场景的方式是**造盘上的事实**（写 `<pid>.json`、写 `diy.yaml`、建目录），不是拼对象。
+- **fake spawn** 只做三件事：立刻给一个 pid、把 `diyHome/argv` 写进注册表、把启动日志写进日志文件。
+  它让 `watchLog` 的 tail 逻辑也能被真测到。
+- LLM：`fixtures/llm/gen/*.gen.ts` 走既有黄金录制品；断言「发了哪几个请求 + 界面怎么变」，
+  不比对模型自由文本。
+
+### 10.4 三层归属（修订）
+
+| 层 | 真实度 | 何时跑 |
+|---|---|---|
+| **L1 意图（进程内全栈）** | 真 UI + 真 rpc + 真 core，spawn 与 LLM 让路 | **每次改动**（目标 < 300 ms/条、全量 < 30 s） |
+| **L2 浏览器**（Vitest Browser Mode） | 同上，但真 Chromium | 改布局 / CSS / 拖拽时 |
+| **L3 e2e** | 全真（真 Electron + CDP） | 发布前，≤8 条 |
+
+> 上一版把「假 client + 假快照」当主力 —— 那是快，但测不到协议与数据形状；
+> 现在把它降级为「组件级微测」（只验渲染分支），主力换成进程内全栈。
+
+### 10.5 验收
+
+- 单条 < 300 ms（含真 fs/真 rpc），单文件 < 2 s，全量 L1 < 30 s；
+- 覆盖：启停（含 fake spawn + 注册表断言）、多实例、外部实例只读、文件读写（真临时文件）、
+  ref 列表（真临时 git 仓）、交叉表折叠/过滤（真 localStorage 替身）；
+- **禁止**：在 L1 里 `spawn` 真 Electron、读真实 `~/.diy`、发真 LLM 请求。
