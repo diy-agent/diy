@@ -16,7 +16,7 @@
 //   · `web.page.*`     —— 真正的业务调用（页面清单 / 页面方法），**必须带有效凭据**
 //                         （旧式 token 或 Passkey 会话，两条路并存）。
 
-import { RpcSchema } from '@diy-agent/rpc';
+import { RpcSchema, defineService } from '@diy-agent/rpc';
 import { z } from 'zod';
 
 /** 缺省 Subject（主方自报的身份地址；格式见 ##484） */
@@ -267,3 +267,14 @@ export const webApi = RpcSchema.group({ children: {
         },
     }),
 } });
+
+/**
+ * `web.*` 的 service —— **不改 `webApi` 的结构**，只是把它的 `web` 子树包成 service。
+ *
+ * 这样 handler 侧能 `webService.bind(binding, handlers)`（整棵树的静态约束：
+ * 少一个方法 / 签名不对都是编译错误），而不是逐个 `binding._on(path, meta, handler)`
+ * （只有单个 meta 的约束）。
+ *
+ * `name: "web"` + 子树内的相对路径 = `web.auth.request` 等，与原来的 `_on` 路径一致。
+ */
+export const webService = defineService({ name: 'web', api: webApi.web });

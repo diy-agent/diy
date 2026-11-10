@@ -15,7 +15,7 @@
 
 import { RpcError, type ServerBinding } from '@diy-agent/rpc';
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
-import { webApi } from './api.js';
+import { webApi, webService } from './api.js';
 import type { AuthCore } from './auth.js';
 import type { PagesHost } from './pages.js';
 import {
@@ -116,170 +116,166 @@ export function registerWebApi(binding: ServerBinding, peer: WebPeer, deps: WebR
         });
     };
 
-    // ── 授权：建立关系（对任何来源开放）────────────────────────────
-
-    binding._on("web.auth.request", webApi.web.auth.request, async ({ input }) => {
-        const created = auth.request({ subject: input.subject });
-        await auth.flush();
-        console.info(`[web] 收到连接请求：${input.subject}（${created.requestId}）来自 ${peer.address}`);
-        return { requestId: created.requestId, status: created.status, address: deps.address };
-    });
-
-    binding._on("web.auth.status", webApi.web.auth.status, ({ input }) => {
-        const view = auth.status(input.requestId);
-        return { status: view.status, token: view.token, expiresAt: view.expiresAt };
-    });
-
-    binding._on("web.auth.login", webApi.web.auth.login, ({ input }) => {
-        const record = auth.verify(input.token);
-        if (record === null) {
-            throw new RpcError('UNAUTHENTICATED', '这个 token 无效 / 已撤销 / 已过期：请让副方重新授权');
-        }
-        connection.token = record.token;
-        console.info(`[web] 主方已登录：${record.subject}（来自 ${peer.address}）`);
-        return { subject: record.subject, expiresAt: record.expiresAt };
-    });
-
-    binding._on("web.auth.logout", webApi.web.auth.logout, () => {
-        connection.token = null;
-        return { ok: true };
-    });
-
-    binding._on("web.auth.state", webApi.web.auth.state, () => {
-        const record = connection.token === null ? null : auth.verify(connection.token);
-        if (record === null) {
-            // logout / revoke / 过期之后主动清掉，避免「以为还连着」
-            connection.token = null;
-            return { connected: false, subject: null, expiresAt: null };
-        }
-        return { connected: true, subject: record.subject, expiresAt: record.expiresAt };
-    });
-
-    // ── Passkey（##496）：对任何来源开放，能否注册由「有没有主用户」定 ──
-
-    binding._on("web.webauthn.register.options", webApi.web.webauthn.register.options, async ({ input }) => {
-        const created = await webauthn.registrationOptions({
-            context: requireContext(),
-            ...(input.username === undefined ? {} : { username: input.username }),
-            ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
-        });
-        return { options: created.options as unknown as Record<string, unknown> };
-    });
-
-    binding._on("web.webauthn.register.verify", webApi.web.webauthn.register.verify, async ({ input }) => {
-        const response = asWebAuthnResponse<RegistrationResponseJSON>(input.response, 'response');
-        const created = await webauthn.verifyRegistration({
-            context: requireContext(),
-            response,
-            ...(input.credentialName === undefined ? {} : { credentialName: input.credentialName }),
-        });
-        // 判据 7：交出去之前必须已落盘（公钥存进 users.json，私钥始终在钥匙串）
-        await webauthn.flush();
-        console.info(`[web] 已创建主用户 ${created.user.id}（凭据 ${created.credential.id}）`);
-        return created;
-    });
-
-    binding._on("web.webauthn.login.options", webApi.web.webauthn.login.options, async () => {
-        const created = await webauthn.authenticationOptions({ context: requireContext() });
-        return { options: created.options as unknown as Record<string, unknown> };
-    });
-
-    binding._on("web.webauthn.login.verify", webApi.web.webauthn.login.verify, async ({ input }) => {
-        const response = asWebAuthnResponse<AuthenticationResponseJSON>(input.response, 'response');
-        const result = await webauthn.verifyAuthentication({ context: requireContext(), response });
-        await webauthn.flush();
-        connection.sessionId = result.sessionId;
-        console.info(`[web] Passkey 登录成功：${result.user.id}（来自 ${peer.address}）`);
-        return result;
-    });
-
-    binding._on("web.webauthn.me", webApi.web.webauthn.me, () => {
-        const user = sessionUser();
-        return {
-            hasUser: webauthn.hasUser(),
-            user,
-            // 还没有主用户时才给建议值（= 系统用户名）；已有用户时它没有意义
-            suggestedUsername: webauthn.hasUser() ? null : defaultUsername(),
-        };
-    });
-
-    binding._on("web.webauthn.logout", webApi.web.webauthn.logout, () => {
-        webauthn.logout(connection.sessionId);
-        connection.sessionId = null;
-        return { ok: true };
-    });
-
-    // ── 授权：副方管理面（仅回环）──────────────────────────────────
-
-    binding._on("web.auth.pending", webApi.web.auth.pending, () => {
-        requireOperator();
-        return {
-            requests: auth.pending().map(({ id, subject, note, requestedAt }) => ({
-                id,
-                subject,
-                note,
-                requestedAt,
-            })),
-        };
-    });
-
-    binding._on("web.auth.tokens", webApi.web.auth.tokens, () => {
-        requireOperator();
-        return { tokens: auth.tokens() };
-    });
-
-    binding._on("web.auth.approve", webApi.web.auth.approve, async ({ input }) => {
-        requireOperator();
-        // 有效期用内核缺省（8h）；「允许一次」这类变体留给下一刀（本轮没有 use-count）
-        const approved = auth.approve(input.requestId);
-        // 签发完先落盘再回给主方：交出去的东西必须跨重启有效（判据 7）
-        await auth.flush();
-        console.info(`[web] 副方已确认 ${input.requestId}，token 有效期至 ${approved.expiresAt}`);
-        return approved;
-    });
-
-    binding._on("web.auth.deny", webApi.web.auth.deny, async ({ input }) => {
-        requireOperator();
-        const denied = auth.deny(input.requestId);
-        await auth.flush();
-        console.info(`[web] 副方已拒绝 ${input.requestId}`);
-        return denied;
-    });
 
     /** 撤销之后的收尾：撤销对本连接立即生效（拿着被撤 token 的下一次调用就 401） */
     const dropIfRevoked = (): void => {
         if (connection.token !== null && auth.verify(connection.token) === null) connection.token = null;
     };
 
-    binding._on("web.auth.revoke", webApi.web.auth.revoke, async ({ input }) => {
-        requireOperator();
-        const result = auth.revoke({ token: input.token });
-        dropIfRevoked();
-        await auth.flush();
-        console.info(`[web] 副方撤销了 ${result.revoked} 个 token`);
-        return result;
-    });
+    // 全部 handler 一次性交给 `webService.bind` —— 形状与 `webApi.web` 子树同构，
+    // **少一个方法 / 签名不对都是编译错误**（`HandlersOf<webApi.web>`）。
+    webService.bind(binding, {
+        auth: {
+            // ── 建立关系（对任何来源开放）──
+            request: async ({ input }) => {
+                const created = auth.request({ subject: input.subject });
+                await auth.flush();
+                console.info(`[web] 收到连接请求：${input.subject}（${created.requestId}）来自 ${peer.address}`);
+                return { requestId: created.requestId, status: created.status, address: deps.address };
+            },
+            status: ({ input }) => {
+                const view = auth.status(input.requestId);
+                return { status: view.status, token: view.token, expiresAt: view.expiresAt };
+            },
+            login: ({ input }) => {
+                const record = auth.verify(input.token);
+                if (record === null) {
+                    throw new RpcError('UNAUTHENTICATED', '这个 token 无效 / 已撤销 / 已过期：请让副方重新授权');
+                }
+                connection.token = record.token;
+                console.info(`[web] 主方已登录：${record.subject}（来自 ${peer.address}）`);
+                return { subject: record.subject, expiresAt: record.expiresAt };
+            },
+            logout: () => {
+                connection.token = null;
+                return { ok: true };
+            },
+            state: () => {
+                const record = connection.token === null ? null : auth.verify(connection.token);
+                if (record === null) {
+                    // logout / revoke / 过期之后主动清掉，避免「以为还连着」
+                    connection.token = null;
+                    return { connected: false, subject: null, expiresAt: null };
+                }
+                return { connected: true, subject: record.subject, expiresAt: record.expiresAt };
+            },
 
-    binding._on("web.auth.revokeAll", webApi.web.auth.revokeAll, async () => {
-        requireOperator();
-        const result = auth.revoke({ all: true });
-        dropIfRevoked();
-        await auth.flush();
-        console.info(`[web] 副方撤销了全部 ${result.revoked} 个 token`);
-        return result;
-    });
+            // ── 副方管理面（仅回环）──
+            pending: () => {
+                requireOperator();
+                return {
+                    requests: auth.pending().map(({ id, subject, note, requestedAt }) => ({
+                        id,
+                        subject,
+                        note,
+                        requestedAt,
+                    })),
+                };
+            },
+            tokens: () => {
+                requireOperator();
+                return { tokens: auth.tokens() };
+            },
+            approve: async ({ input }) => {
+                requireOperator();
+                // 有效期用内核缺省（8h）；「允许一次」这类变体留给下一刀（本轮没有 use-count）
+                const approved = auth.approve(input.requestId);
+                // 签发完先落盘再回给主方：交出去的东西必须跨重启有效（判据 7）
+                await auth.flush();
+                console.info(`[web] 副方已确认 ${input.requestId}，token 有效期至 ${approved.expiresAt}`);
+                return approved;
+            },
+            deny: async ({ input }) => {
+                requireOperator();
+                const denied = auth.deny(input.requestId);
+                await auth.flush();
+                console.info(`[web] 副方已拒绝 ${input.requestId}`);
+                return denied;
+            },
+            revoke: async ({ input }) => {
+                requireOperator();
+                const result = auth.revoke({ token: input.token });
+                dropIfRevoked();
+                await auth.flush();
+                console.info(`[web] 副方撤销了 ${result.revoked} 个 token`);
+                return result;
+            },
+            revokeAll: async () => {
+                requireOperator();
+                const result = auth.revoke({ all: true });
+                dropIfRevoked();
+                await auth.flush();
+                console.info(`[web] 副方撤销了全部 ${result.revoked} 个 token`);
+                return result;
+            },
+        },
 
-    // ── 业务面：页面调用（需要 token 或 Passkey 会话）──────────────
+        // ── Passkey（##496）：对任何来源开放，能否注册由「有没有主用户」定 ──
+        webauthn: {
+            register: {
+                options: async ({ input }) => {
+                    const created = await webauthn.registrationOptions({
+                        context: requireContext(),
+                        ...(input.username === undefined ? {} : { username: input.username }),
+                        ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
+                    });
+                    return { options: created.options as unknown as Record<string, unknown> };
+                },
+                verify: async ({ input }) => {
+                    const response = asWebAuthnResponse<RegistrationResponseJSON>(input.response, 'response');
+                    const created = await webauthn.verifyRegistration({
+                        context: requireContext(),
+                        response,
+                        ...(input.credentialName === undefined ? {} : { credentialName: input.credentialName }),
+                    });
+                    // 判据 7：交出去之前必须已落盘（公钥存进 users.json，私钥始终在钥匙串）
+                    await webauthn.flush();
+                    console.info(`[web] 已创建主用户 ${created.user.id}（凭据 ${created.credential.id}）`);
+                    return created;
+                },
+            },
+            login: {
+                options: async () => {
+                    const created = await webauthn.authenticationOptions({ context: requireContext() });
+                    return { options: created.options as unknown as Record<string, unknown> };
+                },
+                verify: async ({ input }) => {
+                    const response = asWebAuthnResponse<AuthenticationResponseJSON>(input.response, 'response');
+                    const result = await webauthn.verifyAuthentication({ context: requireContext(), response });
+                    await webauthn.flush();
+                    connection.sessionId = result.sessionId;
+                    console.info(`[web] Passkey 登录成功：${result.user.id}（来自 ${peer.address}）`);
+                    return result;
+                },
+            },
+            me: () => {
+                const user = sessionUser();
+                return {
+                    hasUser: webauthn.hasUser(),
+                    user,
+                    // 还没有主用户时才给建议值（= 系统用户名）；已有用户时它没有意义
+                    suggestedUsername: webauthn.hasUser() ? null : defaultUsername(),
+                };
+            },
+            logout: () => {
+                webauthn.logout(connection.sessionId);
+                connection.sessionId = null;
+                return { ok: true };
+            },
+        },
 
-    binding._on("web.page.list", webApi.web.page.list, () => {
-        requireClient();
-        return pages.list();
-    });
-
-    binding._on("web.page.invoke", webApi.web.page.invoke, async ({ input, signal }) => {
-        requireClient();
-        stats.pageInvokes += 1;
-        return pages.invoke(input.pageId, input.method, input.args, signal);
+        // ── 业务面：页面调用（需要 token 或 Passkey 会话）──
+        page: {
+            list: () => {
+                requireClient();
+                return pages.list();
+            },
+            invoke: async ({ input, signal }) => {
+                requireClient();
+                stats.pageInvokes += 1;
+                return pages.invoke(input.pageId, input.method, input.args, signal);
+            },
+        },
     });
 
     return connection;
