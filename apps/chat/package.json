@@ -38,7 +38,8 @@
         "@diy-agent/rpc": "0.2.0",
         "@diy-agent/agents-chain": "*",
         "@diy-agent/kb": "*",
-        "@diy-agent/skills": "*"
+        "@diy-agent/skills": "*",
+        "@diy-agent/traffic": "*"
     },
     "devDependencies": {
         "@types/node": "^26.1.0",

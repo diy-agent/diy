@@ -17,6 +17,7 @@ import {
     type ToolResultPart,
 } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import type { TrafficPort } from './types.js';
 
 /** `AssistantContent` 是 `string | parts[]` 的联合；要 push 就必须用数组那一半 */
 type AssistantContentParts = Exclude<AssistantContent, string>;
@@ -51,13 +52,85 @@ export function createOpenAiCompatible(config: ProviderConfig): LlmProvider {
     requireConfig(config);
     // 静态 header 在建 provider 时固定；带 `$SESSION` 的要等每次调用的 sessionId 才知道值，单独拿出来
     const { fixed, templated } = splitHeaders(config.headers);
-    const provider = createOpenAICompatible({
+    /**
+ * 给 fetch 包一层：每次真发之后记一条流量。
+ *
+ * 三条边界：
+ *   · **不改请求**：`Request.clone()` 读 body，原 stream 原样放行；
+ *   · **不改响应**：`Response.clone()` 同理；读 resBody 只为排查，默认截断 8KB；
+ *   · **永不抛**：`traffic.push` 在 HTTP 热路径上，记日志失败不该让请求失败。
+ *
+ * 为什么在 fetch 这一层而不是更上层：ai-sdk 的 `streamText` 把请求体（含 system /
+ * tools / messages）全在 `Request.body` 里，这是**唯一**能看到「真发了什么」的位置。
+ */
+function wrapFetchWithTraffic(fetchImpl: typeof globalThis.fetch, port: TrafficPort, baseURL: string): typeof globalThis.fetch {
+    return async (input, init) => {
+        const started = Date.now();
+        const req = input instanceof Request ? input : new Request(input, init);
+        let reqBody: unknown = null;
+        let reqBytes = 0;
+        try {
+            const text = await req.clone().text();
+            reqBytes = Buffer.byteLength(text, 'utf8');
+            reqBody = text === '' ? null : (JSON.parse(text) as unknown);
+        } catch {
+            /* 读不出来不阻断：body 可能是 stream / 非 JSON */
+        }
+
+        const res = await fetchImpl(input, init);
+        let resBody: unknown = null;
+        let resBytes = 0;
+        try {
+            const text = await res.clone().text();
+            resBytes = Buffer.byteLength(text, 'utf8');
+            resBody = text.length > 8192 ? { truncated: true, head: text.slice(0, 8192) } : JSON.parse(text);
+        } catch {
+            /* 同上 */
+        }
+
+        try {
+            port.push({
+                kind: 'http',
+                at: started,
+                url: req.url,
+                method: req.method,
+                host: safeHostOf(req.url, baseURL),
+                reqBytes,
+                resBytes,
+                reqBody,
+                resBody,
+                status: res.status,
+                ms: Date.now() - started,
+            });
+        } catch {
+            /* 见函数头：永不抛 */
+        }
+        return res;
+    };
+}
+
+/** 从 URL 里取 host（`URL` 解析失败就退回配置的 baseURL，再失败给空串） */
+function safeHostOf(url: string, baseURL: string): string {
+    for (const candidate of [url, baseURL]) {
+        try {
+            return new URL(candidate).host;
+        } catch {
+            /* 换下一个 */
+        }
+    }
+    return '';
+}
+
+const provider = createOpenAICompatible({
         name: config.name ?? 'diy-llm-provider',
         baseURL: config.baseURL,
         apiKey: config.apiKey,
         includeUsage: true, // 流里带上 usage（不写这行，多数兼容上游不给流式用量）
         ...(Object.keys(fixed).length === 0 ? {} : { headers: fixed }),
-        ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
+        fetch:
+            config.traffic === undefined
+                ? (config.fetch ?? globalThis.fetch)
+                : wrapFetchWithTraffic(config.fetch ?? globalThis.fetch, config.traffic, config.baseURL),
     });
 
     return {

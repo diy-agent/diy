@@ -7,7 +7,7 @@
 // 少一个依赖、少一层错误面。
 
 import type { LlmPort } from "@diy-agent/session";
-import { createOpenAiCompatible, resolveProviderConfig } from "@diy-agent/llm-provider";
+import { createOpenAiCompatible, resolveProviderConfig, type TrafficPort } from "@diy-agent/llm-provider";
 import { listAccountStates, loadCatalog, readAccountValue } from "@diy-agent/model-catalog";
 import { splitModelKey } from "./chat.js";
 import type { AgentPorts } from "./aggregate.js";
@@ -67,7 +67,7 @@ export function llmPorts(provider: LlmPort, opts: { sessionId?: string } = {}): 
  * 与 `chat.ts` 同一套解析链（splitModelKey → readAccountValue → catalog.baseURL），
  * 但**解析失败就抛**，不静默退回假模型 —— 否则界面显示"能聊"却永远没有回答。
  */
-export function resolveProvider(home: string, modelKey: string): LlmPort {
+export function resolveProvider(home: string, modelKey: string, traffic?: TrafficPort): LlmPort {
     const { account, providerId, modelId } = splitModelKey(modelKey);
     if (providerId === "" || modelId === "") {
         throw new Error(`模型标识不合法：${modelKey}（应形如 account@provider/model）`);
@@ -81,10 +81,22 @@ export function resolveProvider(home: string, modelKey: string): LlmPort {
     if (entry === undefined) throw new Error(`模型目录里没有 ${providerId}/${modelId}（model.yaml 可能变了）`);
     try {
         return createOpenAiCompatible(
-            resolveProviderConfig({ provider: providerId, apiKey, model: modelId, baseURL: entry.baseURL }),
+            resolveProviderConfig({
+                provider: providerId,
+                apiKey,
+                model: modelId,
+                baseURL: entry.baseURL,
+                ...(traffic === undefined ? {} : { traffic }),
+            }),
         );
     } catch {
-        return createOpenAiCompatible({ name: providerId, baseURL: entry.baseURL, apiKey, model: modelId });
+        return createOpenAiCompatible({
+            name: providerId,
+            baseURL: entry.baseURL,
+            apiKey,
+            model: modelId,
+            ...(traffic === undefined ? {} : { traffic }),
+        });
     }
 }
 

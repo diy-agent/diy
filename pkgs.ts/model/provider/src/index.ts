@@ -35,4 +35,4 @@ export {
     type ReasoningReplayOpts,
     type WireIdentity,
 } from './reasoning-replay.js';
-export type { ModelCost, ModelInfo, ProviderConfig, UsageDetail } from './types.js';
+export type { ModelCost, ModelInfo, ProviderConfig, TrafficPort, UsageDetail } from './types.js';

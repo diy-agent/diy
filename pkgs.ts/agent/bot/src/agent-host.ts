@@ -11,6 +11,7 @@
 //   · 压缩是 agent 的命令（`compact(strategy)`），不是外部算的边界。
 
 import { join } from "node:path";
+import type { TrafficPort } from "@diy-agent/llm-provider";
 import type { Agent, AgentPorts, HistoryEntry } from "./aggregate.js";
 import { createAgent } from "./aggregate.js";
 import { llmPorts, resolveProvider } from "./model-ports.js";
@@ -46,6 +47,11 @@ export interface AgentHostOptions {
      * 老会话永远补不上（`initialMessages` 判据那个坑，见 `agent.ts` 的注释）。
      */
     readonly systemFor?: (bot: BotConfig) => string
+    /**
+     * 流量端口（##534）：交给 `llm-provider` 的 fetch 包装，每次真发记一条。
+     * 不传 = 不记（测试 / 无观测场景）。传了必须永不抛。
+     */
+    readonly traffic?: TrafficPort
     /** 每个 bot 的快照目录；缺省 `<home>/agents/<botId>` */
     readonly dirFor?: (botId: BotId) => string
     /**
@@ -92,7 +98,7 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
     const portsFor =
         opts.portsFor ??
         ((bot: BotConfig) =>
-            llmPorts(resolveProvider(opts.home, bot.model), {
+            llmPorts(resolveProvider(opts.home, bot.model, opts.traffic), {
                 // 会话亲和键：优先用 bot 的长期会话 id（与 chat.ts 同口径），退回 bot id
                 sessionId: bot.primarySessionId ?? `bot:${bot.id}`,
             }))
