@@ -12,6 +12,7 @@ import { asToolSet, createAgentHost, createFileBotStore, modelChoices, systemOf,
 import { agentsChain } from "@diy-agent/agents-chain";
 import { kbRootOf, scanKb } from "@diy-agent/kb";
 import { skillsOf } from "@diy-agent/skills";
+import { TrafficStore } from "@diy-agent/traffic";
 import { homedir } from "node:os";
 import { collectSelfInfo, judgeSelfKill } from "@diy-agent/tools";
 import { os } from "@diy-agent/os";
@@ -81,6 +82,9 @@ function chatConfig(home: string | undefined, sessions: unknown, botStore: BotSt
         // 页面（chat-page）不用改 —— 它只认 BotChatHost 契约，新宿主是适配器。
         sessions: createAgentHost({
             home,
+            // 流量（##534）：diy2 之前是黑箱 —— `~/.diy2/log/network/` 只有 models.dev 一条，
+            // LLM 请求一条没记。落盘 +wi 内存窗口都开，才能既查历史又给未来的 `tail -f` 用。
+            traffic: trafficFor(home),
             botStore: botStore ?? createFileBotStore({ home, sessionsDir: join(home, "sessions", "chat") }),
             // 与旧宿主同一口径（展开已配置账号的三段式）
             models: () => modelChoices(home),
@@ -90,6 +94,17 @@ function chatConfig(home: string | undefined, sessions: unknown, botStore: BotSt
             systemFor: (bot) => systemForBot(home, bot.id, bot.instructions ?? ""),
         }),
     };
+}
+
+const TRAFFIC = new Map<string, TrafficStore>();
+
+/** 每个数据根一个 TrafficStore（同 `home` 重复进来必须拿到同一个实例，否则订阅与窗口各持一份） */
+function trafficFor(home: string): TrafficStore {
+    const hit = TRAFFIC.get(home);
+    if (hit !== undefined) return hit;
+    const store = new TrafficStore({ persist: true, dir: join(home, "log", "network") });
+    TRAFFIC.set(home, store);
+    return store;
 }
 
 /**

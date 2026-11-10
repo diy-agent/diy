@@ -41,6 +41,19 @@ export interface ProviderConfig {
     readonly headers?: Readonly<Record<string, string>>;
     /** 注入的 fetch（测试用假 HTTP；缺省 = 全局 fetch） */
     readonly fetch?: typeof globalThis.fetch;
+    /**
+     * 流量端口（##534）：每次真发之后记一条。**结构类型**，不 import 具体实现 ——
+     * 本包是纯库，不该知道 `@diy-agent/traffic` 的窗口语义，更不该依赖宿主的数据根。
+     *
+     * 不传 = 不记（测试 / 无观测场景）。传了就必须**永不抛**（实现自己兜住），
+     * 因为它在 HTTP 热路径上。
+     */
+    readonly traffic?: TrafficPort;
+}
+
+/** 一条流量记录（本包只要求 `kind`；其余字段原样交给下游） */
+export interface TrafficPort {
+    push(entry: { kind: string; at: number; [key: string]: unknown }): void;
 }
 
 /**
