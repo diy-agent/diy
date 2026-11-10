@@ -26,14 +26,6 @@
       "types": "./src/block-renderers.ts",
       "default": "./dist/block-renderers.js"
     },
-    "./renderer": {
-      "types": "./src/renderer.ts",
-      "default": "./dist/renderer.js"
-    },
-    "./renderer-diui": {
-      "types": "./src/renderer-diui.ts",
-      "default": "./dist/renderer-diui.js"
-    },
     "./renderer-react": {
       "types": "./src/renderer-react.tsx",
       "default": "./dist/renderer-react.js"
@@ -46,7 +38,6 @@
   "dependencies": {
     "@diy-agent/bot": "*",
     "@diy-agent/session": "*",
-    "@diy-agent/ui": "*",
     "@diy-agent/workbench": "*",
     "@diy-agent/workbench-ui": "*"
   },

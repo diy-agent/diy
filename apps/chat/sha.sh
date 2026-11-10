@@ -37,10 +37,9 @@ _ensure_electron() { run node ../../scripts/ensure-electron.mjs --quiet; }
 # 依赖包先编 lib：主进程按包名 import、renderer 打包读 exports，都指向 lib/*.js
 build-deps() {
   local pkg
-  # diy-ui 不能省：chat-page 的 renderer-diui 入口依赖 `@diy-agent/ui/browser`（##468）
   # 顺序 = 依赖顺序：tsc 的 project references 要求被引包 lib/ 已存在（TS6305）。
   # ##512 起 pkgs.ts 分层：下面全是**仓相对目录**（不再是 pkgs.ts/<dirname>）
-  for pkg in core/log core/time agent/session agent/store-jsonl agent/store-memory model/provider model/catalog agent/tools agent/jobs agent/compaction agent/bot ui/workbench ui/workbench-ui ui/core ui/chat-page ui/model-config ui/bot-config; do
+  for pkg in core/log core/time agent/session agent/store-jsonl agent/store-memory model/provider model/catalog agent/tools agent/jobs agent/compaction agent/bot ui/workbench ui/workbench-ui ui/chat-page ui/model-config ui/bot-config; do
     ( cd "$SCRIPT_DIR/../../pkgs.ts/$pkg" && ./sha.sh build )
   done
 }
@@ -76,7 +75,7 @@ build-renderer() {
   run mkdir -p "$d/renderer"
   # ##526：React 版的样式（tailwind v4 工具类 + M3 令牌桥）。源在 chat-page 包里，
   # 产物跟 esbuild 的输出放一起；页面用 <link> 引它（style.ts 的 .chat-* 规则另走运行时注入）。
-  run npx @tailwindcss/cli -i ../../pkgs.ts/ui/chat-page/src/react.css -o "$d/renderer/renderer.css" --minify
+  run node ../../scripts/build-react-css.mjs "$d/renderer/renderer.css"
   run cp index.html "$d/renderer/index.html"
 }
 

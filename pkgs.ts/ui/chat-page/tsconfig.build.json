@@ -23,7 +23,6 @@
   "references": [
     { "path": "../../agent/bot/tsconfig.build.json" },
     { "path": "../../agent/session/tsconfig.build.json" },
-    { "path": "../core/tsconfig.build.json" },
     { "path": "../workbench/tsconfig.build.json" },
     { "path": "../workbench-ui/tsconfig.build.json" }
   ]

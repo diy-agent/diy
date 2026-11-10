@@ -16,6 +16,7 @@
 // 底部一行「bot 名 ⚙ | 输入 窗口 缓存 本轮 上下文」+ 输入框 / 配置面panel 悬浮或停靠。
 
 import * as React from 'react';
+import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import type { PageContext, PageView } from '@diy-agent/workbench-ui';
 import type { BotView, BotChatSnapshot, CompactInfo, ModelChoice, WireMessage } from './shared.js';
@@ -43,7 +44,12 @@ export const chatPageView: PageView = {
         const store = createChatStore();
         const client = createChatClient(ctx);
         const reactRoot = createRoot(root);
-        reactRoot.render(<ChatApp store={store} client={client} />);
+        // 首帧**同步**落地：workbench 的 PageView 契约是「render 返回时画好了」
+        // （切页时紧接着就可能量位置 / 找元素；异步首帧会让这些读到空树，happy-dom 里的
+        //  单测也拿不到 .chat-input）。
+        flushSync(() => {
+            reactRoot.render(<ChatApp store={store} client={client} />);
+        });
         return () => {
             reactRoot.unmount();
         };

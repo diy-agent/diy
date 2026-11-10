@@ -124,10 +124,11 @@
 | `dev` 的 `/ping` + 注册表回填 + CDP 端口 0 + 数据根级单实例 | ✅ 已落地 |
 | `dev` 的 h2c RPC 端口（`port` 字段） | ⏳ 未做；`page:invoke` 仍只走 Electron IPC，`diy remote` 还不能把 dev 当远端操作 |
 | `diy-app`（44k 行 SolidJS） | 🔒 **冻结**，不重写；等自然大改时再谈 |
-| `diy2`（`apps/chat`） | ✅ ##526 已换 React 19 + shadcn 组件（`chat-page/src/renderer-react.tsx`，CDP 判据 1–6 全过）；裸 DOM / diyui 两版暂时并存作对照，验证期后删 |
-| diy2 的 renderer 版本冗余（3 版并存） | ⏳ 待删 `renderer.ts` / `renderer-diui.ts` 与 `@diy-agent/ui` 依赖 |
+| `diy2`（`apps/chat`） | ✅ ##526 已换 React 19 + shadcn 组件（`chat-page/src/renderer-react.tsx`，CDP 判据 1–6 全过） |
+| diy2 的 renderer 版本冗余 | ✅ 已删裸 DOM / diyui 两版；`@diy-agent/ui` 依赖一并去掉，三个宿主（chat / minimal / web）都指向 `renderer-react` |
 | diy2 的 tailwind 构建 | ✅ `apps/chat/sha.sh build-renderer` 里跑 `@tailwindcss/cli`（入口 `chat-page/src/react.css`） |
 | `@material/web` / Web Awesome 在 `dev` 的残留依赖 | ⏳ 组件替换后清理 |
+| `@diy-agent/ui`（diy-ui 运行时：Signal / GenApp / DOM DSL） | ⏳ **已无使用方**（##526 删掉 diyui 版后）。要么明确留作插件/终端渲染的公开包并写清用途，要么冻结下架 —— 别让它半活 |
 | dockview 分屏 POC | ⏳ 未做 |
 
 ## 7. 新 app 的落地清单

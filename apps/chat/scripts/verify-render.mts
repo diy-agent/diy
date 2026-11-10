@@ -6,12 +6,10 @@
 //   3 滚动不跳：滚到中间后新来一条消息，scrollTop 不动
 //   4 输入框不丢焦点：等待回复期间打的草稿，回复到达后还在、焦点还在
 //   5 切 bot：.chat-list 外壳元素不重建（身份不变），只有行整批换
-//   6 两版可切：data-renderer 标记与 --expect 一致（切 import 重新 build 后跑本脚本）
+//   6 版本标记：data-renderer 必须是 react（##526 起页面只有 React 一版）
 //   7 静态检查：./sha.sh check 由外层跑（这里只负责 1–6）
 //
-// 用法：./sha.sh verify-render            # 期望 react（##526 起缺省）
-//       RENDERER=diui ./sha.sh verify-render # 期望 diyui（切回 import 后验对照组）
-//       RENDERER=dom  ./sha.sh verify-render # 期望裸 DOM（同上）
+// 用法：./sha.sh verify-render
 //
 // 前置：./sha.sh build（产物在 build/<variant>）+ 仓库根 ./sha.sh sync（真 model.yaml）。
 
@@ -25,7 +23,6 @@ import { chromium, type Browser, type Page } from "playwright-core";
 const pkgDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repo = resolve(pkgDir, "..", "..");
 const variant = process.env["DIY_VARIANT"] ?? "lab";
-const expect = (process.env["RENDERER"] ?? "react") as "react" | "diui" | "dom";
 // 产物与变体**解耦**：tsc + esbuild 只跟源码有关 ⇒ 一份 build/app/（变体只决定数据根）
 const entry = join(pkgDir, "build", "app", "main", "index.mjs");
 const home = join(repo, "build", variant, "home");
@@ -192,13 +189,13 @@ async function main(): Promise<void> {
 
     // ── 判据 1：界面等价 ──
     const marker = await page.locator(".chat-page").getAttribute("data-renderer");
-    if (marker !== expect) fail(`data-renderer=${String(marker)}，期望 ${expect}（判据 6：切 import 需重新 build）`);
+    if (marker !== "react") fail(`data-renderer=${String(marker)}，期望 react（页面只有 React 一版）`);
     for (const sel of [".chat-bots", ".chat-bot-list", ".chat-list", ".chat-input", ".chat-send", ".chat-metrics"]) {
         if ((await page.locator(sel).count()) === 0) fail(`缺元素 ${sel}`);
     }
     // ##498 判据 5：没有「新建会话」按钮（左侧是 bot 不是会话）
     if ((await page.locator(".chat-new").count()) !== 0) fail("还有「新建会话」按钮（##498 判据 5）");
-    ok(`判据 1：bot 条 / 消息流 / 输入框 / 底部指标齐全（renderer=${expect}）`);
+    ok("判据 1：bot 条 / 消息流 / 输入框 / 底部指标齐全（renderer=react）");
 
     // 先等 snapshot 落地（多 bot 能力 = 左栏不再 hidden）+ 至少有一个 bot（首启则走引导）
     await page.waitForFunction(() => !document.querySelector(".chat-bots")?.hasAttribute("hidden"), undefined, {
@@ -322,21 +319,6 @@ async function main(): Promise<void> {
     // 鼠标挪开，收起卡片（别挡住后面的点击）
     await page.mouse.move(600, 300);
 
-    // 对照组（裸 DOM 版）：判据 2/3/4 本来就不过 —— 只记录它的量，不判失败
-    if (expect === "dom") {
-        const added: number[] = [];
-        for (let i = 1; i <= 5; i++) {
-            await startCount(page);
-            await send(page, `对照组 第 ${i} 条`);
-            added.push(await takeCount(page));
-        }
-        console.log(`· 对照组（裸 DOM）：5 次发送新增节点 = ${added.join(",")}（整表重绘 ⇒ 逐次变多）`);
-        ok("判据 6：renderer=dom（同一脚本、同一份 wire，对照组行为不同是预期）");
-        child?.kill("SIGKILL");
-        await browser?.close();
-        process.exit(0);
-    }
-
     // ── 判据 2：连发 5 条，DOM 新增节点只有新消息那点量 ──
     // 基线：数据根是跨 run 复用的（同一个 bot 的同一条长期会话），所以按增量判
     const start = await rows(page);
@@ -373,16 +355,14 @@ async function main(): Promise<void> {
         fail(`新增节点随历史增长（首次 ${String(first)} → 最大 ${String(worst)}）⇒ 整表重绘：${added.join(",")}`);
     }
     // 旧行必须是同一批真实元素（身份不变 ⇒ 没被重建）
-    if (expect !== "dom") {
-        const same = await page.evaluate(
-            (el) => {
-                const first = document.querySelector(".chat-row");
-                return first === el;
-            },
-            await firstRow.elementHandle(),
-        );
-        if (!same) fail("发消息后第一行 DOM 元素被替换（说明整表重绘了）");
-    }
+    const same = await page.evaluate(
+        (el) => {
+            const first = document.querySelector(".chat-row");
+            return first === el;
+        },
+        await firstRow.elementHandle(),
+    );
+    if (!same) fail("发消息后第一行 DOM 元素被替换（说明整表重绘了）");
     ok(`判据 2：5 次发送新增节点 = ${added.join(",")}（量级恒定，旧行复用）`);
 
     // ── 判据 3：滚动不跳 ──
@@ -449,7 +429,7 @@ async function main(): Promise<void> {
         const win = window as unknown as { __list?: Element };
         return win.__list === document.querySelector(".chat-list");
     });
-    if (expect !== "dom" && !shellKept) fail("切 bot 后 .chat-list 外壳被重建（判据 5）");
+    if (!shellKept) fail("切 bot 后 .chat-list 外壳被重建（判据 5）");
     ok("判据 5：切 bot 后消息行整批替换，外壳元素身份不变");
 
     // ── 判据 0d：/demo-tool 手点复现（tool 块端到端；##514 前置） ──
@@ -467,7 +447,7 @@ async function main(): Promise<void> {
     if (okDot !== "ok") fail(`ok 时圆点 data-state=${String(okDot)}`);
     ok("判据 0d：/demo-tool ⇒ tool 块 running（展开/黄点）→ ok（收起/绿点）");
 
-    ok(`判据 6：renderer=${expect}（切 import 重新 build 即另一版）`);
+    ok("判据 6：data-renderer=react");
     console.log("\n全部通过（判据 7 由 ./sha.sh check 验）。");
     child?.kill("SIGKILL");
     await browser?.close();

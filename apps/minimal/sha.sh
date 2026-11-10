@@ -69,8 +69,11 @@ build-preload() {
 build-renderer() {
   local d; d="$(_build_dir)"
   run npx esbuild renderer.ts --bundle --platform=browser --format=iife --target=es2022 \
+    --jsx=automatic \
     --outfile="$d/renderer/index.js"
   run mkdir -p "$d/renderer"
+  # ##526：React 渲染层的样式（tailwind 工具类 + M3 令牌桥），与 apps/chat 同一份实现
+  run node ../../scripts/build-react-css.mjs "$d/renderer/renderer.css"
   run cp index.html "$d/renderer/index.html"
 }
 

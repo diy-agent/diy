@@ -3,7 +3,9 @@
     "compilerOptions": {
         "composite": true,
         "noEmit": true,
-        "lib": ["ES2022", "DOM", "DOM.Iterable"]
+        "lib": ["ES2022", "DOM", "DOM.Iterable"],
+        // ##526：renderer 侧 import 的是 chat-page 的 .tsx
+        "jsx": "react-jsx"
     },
     "include": ["*.ts", "tests/**/*"],
     "exclude": ["vitest.config.ts"]
