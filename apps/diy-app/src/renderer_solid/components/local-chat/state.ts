@@ -40,7 +40,6 @@ import { InputLimitDialog } from "../InputLimitDialog";
 import type { InputGate } from "../../../shared/context/input-limit";
 import { OpsDownBar } from "../OpsDownBar";
 import { chatNotice, DETAIL_CHAT_FIND } from "../../lib/notice-chat";
-import { createFrameBatcher } from "../../lib/frame-batch";
 import { draftStore } from "../../store/draftStore";
 import { trafficStore } from "../../store/trafficStore";
 import { notificationStore } from "../../store/notificationStore";
@@ -275,22 +274,13 @@ export function useLocalChatPage(props: LocalChatPageProps) {
     };
 
     /** 行尺寸观察（一个 RO 观察窗口内所有行；卸载的行由 VirtRow 的 onCleanup 反注册） */
-    //
-    // ##522：**测量留在回调里、写账挪到下一帧**（见 lib/frame-batch）。原实现直接在回调里
-    // applyHeights（改账 → setSignal → 行顶重排），与视口的那个 RO 互相触发，Chromium 就报
-    // ResizeObserver 循环告警。现在先攒一批测量值，下一帧一次落地（同帧只落一次）。
-    let pendingHeights: Array<[string, number]> = [];
-    const heightsBatch = createFrameBatcher(() => {
-        const list = pendingHeights;
-        pendingHeights = [];
-        if (list.length > 0) applyHeights(list);
-    });
     const rowRO = new ResizeObserver((entries) => {
+        const list: Array<[string, number]> = [];
         for (const e of entries) {
             const k = rowKeyOf.get(e.target);
-            if (k) pendingHeights.push([k, (e.target as HTMLElement).offsetHeight]);
+            if (k) list.push([k, (e.target as HTMLElement).offsetHeight]);
         }
-        if (pendingHeights.length > 0) heightsBatch.schedule();
+        if (list.length > 0) applyHeights(list);
     });
 
     /**
@@ -539,34 +529,19 @@ export function useLocalChatPage(props: LocalChatPageProps) {
         document.addEventListener("keydown", onKey, true);
         // 数据层检索（##389）：面板只负责"找"，"跳"必须由会话页做（滚动容器/块树/虚拟窗口都在这）。
         // view 高度跟随窗口/布局变化（输入区封顶 = view 1/3，R5）
-        // ##522：两个 RO 的写各自延到下一帧（回调里同步写布局会与本回调形成同帧循环）。
-        // ⚠️ **两个批不能合成一个**（回归过：发送消息后卡住、圈一直转、过一会儿才恢复）：
-        // ro 观察的是页面根、cro 观察的是滚动容器；合批后「ro 触发」会顺手去读 `scrollRef`，
-        // 而那一刻滚动容器可能还没挂上（首帧 / 重建中）⇒ chatVpH 被写成 0 ⇒ 虚拟窗口为空
-        // ⇒ 消息根本不渲染，只能等下一次尺寸/滚动事件来救。
-        // 规矩：**谁观察谁读**，且 ref 不在就别写（保留旧值，别拿 0 覆盖）。
-        const viewHeightBatch = createFrameBatcher(() => {
-            if (!rootRef) return;
-            setViewH(rootRef.clientHeight);
-        });
-        const chatViewportBatch = createFrameBatcher(() => {
-            if (!scrollRef) return;
-            setChatVpH(scrollRef.clientHeight);
-            setScrollTop(scrollRef.scrollTop);
-        });
-        const ro = new ResizeObserver(() => viewHeightBatch.schedule());
+        const ro = new ResizeObserver(() => setViewH(rootRef?.clientHeight ?? 0));
         if (rootRef) ro.observe(rootRef);
         setViewH(rootRef?.clientHeight ?? 0);
         // ##301：滚动容器高度 = 虚拟化的视口高度；容器尺寸变（窗口缩放 / 面板开合）要重算窗口
-        const cro = new ResizeObserver(() => chatViewportBatch.schedule());
+        const cro = new ResizeObserver(() => {
+            setChatVpH(scrollRef?.clientHeight ?? 0);
+            setScrollTop(scrollRef?.scrollTop ?? 0);
+        });
         if (scrollRef) cro.observe(scrollRef);
         setChatVpH(scrollRef?.clientHeight ?? 0);
         onCleanup(() => {
             ro.disconnect();
             cro.disconnect();
-            viewHeightBatch.cancel();
-            chatViewportBatch.cancel();
-            heightsBatch.cancel();
             rowRO.disconnect(); // 组件卸载：RO 不 disconnect 会攥着整个窗口的行元素
             document.removeEventListener("click", closePopovers);
             chatFindStore.release(ownerUri);
