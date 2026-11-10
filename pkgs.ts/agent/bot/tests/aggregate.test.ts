@@ -291,3 +291,24 @@ describe('自动压缩（判据来自 @diy-agent/compaction）', () => {
     expect(a.history().some((e) => e.kind === 'checkpoint')).toBe(false)
   })
 })
+
+describe('system 段（##530）', () => {
+  it('system 每轮拼在 messages 最前，且不进 history', async () => {
+    const ports = fakePorts({ replies: ['答'] })
+    const a = createAgent({ ports, system: '你是助手。\n\nAGENTS 内容' })
+    await a.send({ content: '问题' })
+    await waitIdle(a)
+    const first = ports.calls[0] ?? []
+    expect(first[0]).toContain('AGENTS 内容')
+    // 不进 history：history 里只有 user / assistant，没有 system
+    expect(a.history().every((e) => e.role !== 'system')).toBe(true)
+  })
+
+  it('不传 system ⇒ messages 里没有 system（不影响原有行为）', async () => {
+    const ports = fakePorts({ replies: ['答'] })
+    const a = createAgent({ ports })
+    await a.send({ content: '问题' })
+    await waitIdle(a)
+    expect((ports.calls[0] ?? []).some((c) => c.includes('AGENTS'))).toBe(false)
+  })
+})
