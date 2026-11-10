@@ -22,10 +22,10 @@ function snapshot(client: HttpClientBinding, stream?: http2.ClientHttp2Stream) {
 
 async function main() {
   const binding = new HttpServerBinding();
-  binding.on("bidi", api.bidi, async function* () {}); // 远端立即结束下行
+  binding._on("bidi", api.bidi, async function* () {}); // 远端立即结束下行
 
   const server = http2.createServer();
-  server.on('stream', (stream, headers) => {
+  server._on('stream', (stream, headers) => {
     void binding.handleStream(stream, headers);
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));

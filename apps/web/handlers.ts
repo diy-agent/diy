@@ -1,6 +1,6 @@
 // handlers.ts — 把 api.ts 的声明式方法挂到**某一个 binding** 上（每连接一份）。
 //
-// 为什么是「每连接一份」：授权状态属于连接（这条 WebSocket 有没有登录），而 `binding.on()`
+// 为什么是「每连接一份」：授权状态属于连接（这条 WebSocket 有没有登录），而 `binding._on()`
 // 的 handler 拿不到连接上下文 —— 于是 handler 闭包持有本连接的 ConnectionState。
 // 注册本身是廉价的（就是往 binding 的四张表里填条目），一线程一连接完全可接受。
 //
@@ -118,19 +118,19 @@ export function registerWebApi(binding: ServerBinding, peer: WebPeer, deps: WebR
 
     // ── 授权：建立关系（对任何来源开放）────────────────────────────
 
-    binding.on("web.auth.request", webApi.web.auth.request, async ({ input }) => {
+    binding._on("web.auth.request", webApi.web.auth.request, async ({ input }) => {
         const created = auth.request({ subject: input.subject });
         await auth.flush();
         console.info(`[web] 收到连接请求：${input.subject}（${created.requestId}）来自 ${peer.address}`);
         return { requestId: created.requestId, status: created.status, address: deps.address };
     });
 
-    binding.on("web.auth.status", webApi.web.auth.status, ({ input }) => {
+    binding._on("web.auth.status", webApi.web.auth.status, ({ input }) => {
         const view = auth.status(input.requestId);
         return { status: view.status, token: view.token, expiresAt: view.expiresAt };
     });
 
-    binding.on("web.auth.login", webApi.web.auth.login, ({ input }) => {
+    binding._on("web.auth.login", webApi.web.auth.login, ({ input }) => {
         const record = auth.verify(input.token);
         if (record === null) {
             throw new RpcError('UNAUTHENTICATED', '这个 token 无效 / 已撤销 / 已过期：请让副方重新授权');
@@ -140,12 +140,12 @@ export function registerWebApi(binding: ServerBinding, peer: WebPeer, deps: WebR
         return { subject: record.subject, expiresAt: record.expiresAt };
     });
 
-    binding.on("web.auth.logout", webApi.web.auth.logout, () => {
+    binding._on("web.auth.logout", webApi.web.auth.logout, () => {
         connection.token = null;
         return { ok: true };
     });
 
-    binding.on("web.auth.state", webApi.web.auth.state, () => {
+    binding._on("web.auth.state", webApi.web.auth.state, () => {
         const record = connection.token === null ? null : auth.verify(connection.token);
         if (record === null) {
             // logout / revoke / 过期之后主动清掉，避免「以为还连着」
@@ -157,7 +157,7 @@ export function registerWebApi(binding: ServerBinding, peer: WebPeer, deps: WebR
 
     // ── Passkey（##496）：对任何来源开放，能否注册由「有没有主用户」定 ──
 
-    binding.on("web.webauthn.register.options", webApi.web.webauthn.register.options, async ({ input }) => {
+    binding._on("web.webauthn.register.options", webApi.web.webauthn.register.options, async ({ input }) => {
         const created = await webauthn.registrationOptions({
             context: requireContext(),
             ...(input.username === undefined ? {} : { username: input.username }),
@@ -166,7 +166,7 @@ export function registerWebApi(binding: ServerBinding, peer: WebPeer, deps: WebR
         return { options: created.options as unknown as Record<string, unknown> };
     });
 
-    binding.on("web.webauthn.register.verify", webApi.web.webauthn.register.verify, async ({ input }) => {
+    binding._on("web.webauthn.register.verify", webApi.web.webauthn.register.verify, async ({ input }) => {
         const response = asWebAuthnResponse<RegistrationResponseJSON>(input.response, 'response');
         const created = await webauthn.verifyRegistration({
             context: requireContext(),
@@ -179,12 +179,12 @@ export function registerWebApi(binding: ServerBinding, peer: WebPeer, deps: WebR
         return created;
     });
 
-    binding.on("web.webauthn.login.options", webApi.web.webauthn.login.options, async () => {
+    binding._on("web.webauthn.login.options", webApi.web.webauthn.login.options, async () => {
         const created = await webauthn.authenticationOptions({ context: requireContext() });
         return { options: created.options as unknown as Record<string, unknown> };
     });
 
-    binding.on("web.webauthn.login.verify", webApi.web.webauthn.login.verify, async ({ input }) => {
+    binding._on("web.webauthn.login.verify", webApi.web.webauthn.login.verify, async ({ input }) => {
         const response = asWebAuthnResponse<AuthenticationResponseJSON>(input.response, 'response');
         const result = await webauthn.verifyAuthentication({ context: requireContext(), response });
         await webauthn.flush();
@@ -193,7 +193,7 @@ export function registerWebApi(binding: ServerBinding, peer: WebPeer, deps: WebR
         return result;
     });
 
-    binding.on("web.webauthn.me", webApi.web.webauthn.me, () => {
+    binding._on("web.webauthn.me", webApi.web.webauthn.me, () => {
         const user = sessionUser();
         return {
             hasUser: webauthn.hasUser(),
@@ -203,7 +203,7 @@ export function registerWebApi(binding: ServerBinding, peer: WebPeer, deps: WebR
         };
     });
 
-    binding.on("web.webauthn.logout", webApi.web.webauthn.logout, () => {
+    binding._on("web.webauthn.logout", webApi.web.webauthn.logout, () => {
         webauthn.logout(connection.sessionId);
         connection.sessionId = null;
         return { ok: true };
@@ -211,7 +211,7 @@ export function registerWebApi(binding: ServerBinding, peer: WebPeer, deps: WebR
 
     // ── 授权：副方管理面（仅回环）──────────────────────────────────
 
-    binding.on("web.auth.pending", webApi.web.auth.pending, () => {
+    binding._on("web.auth.pending", webApi.web.auth.pending, () => {
         requireOperator();
         return {
             requests: auth.pending().map(({ id, subject, note, requestedAt }) => ({
@@ -223,12 +223,12 @@ export function registerWebApi(binding: ServerBinding, peer: WebPeer, deps: WebR
         };
     });
 
-    binding.on("web.auth.tokens", webApi.web.auth.tokens, () => {
+    binding._on("web.auth.tokens", webApi.web.auth.tokens, () => {
         requireOperator();
         return { tokens: auth.tokens() };
     });
 
-    binding.on("web.auth.approve", webApi.web.auth.approve, async ({ input }) => {
+    binding._on("web.auth.approve", webApi.web.auth.approve, async ({ input }) => {
         requireOperator();
         // 有效期用内核缺省（8h）；「允许一次」这类变体留给下一刀（本轮没有 use-count）
         const approved = auth.approve(input.requestId);
@@ -238,7 +238,7 @@ export function registerWebApi(binding: ServerBinding, peer: WebPeer, deps: WebR
         return approved;
     });
 
-    binding.on("web.auth.deny", webApi.web.auth.deny, async ({ input }) => {
+    binding._on("web.auth.deny", webApi.web.auth.deny, async ({ input }) => {
         requireOperator();
         const denied = auth.deny(input.requestId);
         await auth.flush();
@@ -251,7 +251,7 @@ export function registerWebApi(binding: ServerBinding, peer: WebPeer, deps: WebR
         if (connection.token !== null && auth.verify(connection.token) === null) connection.token = null;
     };
 
-    binding.on("web.auth.revoke", webApi.web.auth.revoke, async ({ input }) => {
+    binding._on("web.auth.revoke", webApi.web.auth.revoke, async ({ input }) => {
         requireOperator();
         const result = auth.revoke({ token: input.token });
         dropIfRevoked();
@@ -260,7 +260,7 @@ export function registerWebApi(binding: ServerBinding, peer: WebPeer, deps: WebR
         return result;
     });
 
-    binding.on("web.auth.revokeAll", webApi.web.auth.revokeAll, async () => {
+    binding._on("web.auth.revokeAll", webApi.web.auth.revokeAll, async () => {
         requireOperator();
         const result = auth.revoke({ all: true });
         dropIfRevoked();
@@ -271,12 +271,12 @@ export function registerWebApi(binding: ServerBinding, peer: WebPeer, deps: WebR
 
     // ── 业务面：页面调用（需要 token 或 Passkey 会话）──────────────
 
-    binding.on("web.page.list", webApi.web.page.list, () => {
+    binding._on("web.page.list", webApi.web.page.list, () => {
         requireClient();
         return pages.list();
     });
 
-    binding.on("web.page.invoke", webApi.web.page.invoke, async ({ input, signal }) => {
+    binding._on("web.page.invoke", webApi.web.page.invoke, async ({ input, signal }) => {
         requireClient();
         stats.pageInvokes += 1;
         return pages.invoke(input.pageId, input.method, input.args, signal);

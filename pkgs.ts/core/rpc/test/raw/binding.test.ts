@@ -27,17 +27,17 @@ const api = RpcSchema.bindNames(RpcSchema.group({ children: {
 } }));
 
 function wireBinding(binding: ServerBinding) {
-  binding.on("greet", api.greet, async ({ input }) => `Hello, ${input.name}!`);
-  binding.on("fail", api.fail, async () => { throw new RpcError('INTERNAL', 'boom'); });
-  binding.on("count", api.count, async function* ({ input }) {
+  binding._on("greet", api.greet, async ({ input }) => `Hello, ${input.name}!`);
+  binding._on("fail", api.fail, async () => { throw new RpcError('INTERNAL', 'boom'); });
+  binding._on("count", api.count, async function* ({ input }) {
     for (let i = 1; i <= input.to; i++) { await sleep(1); yield i; }
   });
-  binding.on("upload", api.upload, async ({ input, stream }) => {
+  binding._on("upload", api.upload, async ({ input, stream }) => {
     const received: string[] = [];
     for await (const c of stream) received.push(c as string);
     return { tag: input.tag, received };
   });
-  binding.on("echo", api.echo, async function* ({ stream }) {
+  binding._on("echo", api.echo, async function* ({ stream }) {
     for await (const m of stream) yield `echo: ${m}`;
   });
 }

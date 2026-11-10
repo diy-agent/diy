@@ -132,7 +132,7 @@ export function defineService<const TRoutes extends _Router | _AnyProcedureMeta>
         }
         // 三参形式：路径与 meta **分开给**，不改原 meta —— 同一个 api 可能被多个
         // service 复用（比如一个模块同时挂在自己的名字下和某个兼容别名下）
-        server.on(`${name}.${path}`, meta, handler as never);
+        server._on(`${name}.${path}`, meta, handler as never);
       }
     },
 

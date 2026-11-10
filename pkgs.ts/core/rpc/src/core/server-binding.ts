@@ -38,6 +38,15 @@ export interface CallOptions {
 export interface ServerBinding {
   /** 注册一个方法；handler 签名随 meta._streamMode 推导 */
   /**
+   * **内部注册原语** —— 业务代码不要用。
+   *
+   * 唯一的生产调用方是 `defineService.bind`（它按 `name + 树内 path` 拼路径）。
+   * 外部想挂 handler，请用 `xxxService.bind(server, handlers)` —— 那样有
+   * **整棵树的静态约束**（少一个方法 / 签名不对都是编译错误）；
+   * 这里只有单个 meta 的约束，且路径是手写字符串（拼错 tsc 看不见）。
+   *
+   * 改名成 `_on` 就是让它在 IDE 补全里靠后、在 code review 里醒目。
+   *
    * 注册一个方法 —— **显式路径**形式。
    *
    * 与下面的两参重载的区别：**不读 `meta.name`**，所以调用方不必先
@@ -50,7 +59,7 @@ export interface ServerBinding {
    * 为什么还要传 meta：handler 的参数类型从它推（`{ input, signal }` 的形状），
    * 运行时还要用它做 zod 校验（`inputSchema`）。
    */
-  on<M extends _AnyProcedureMeta>(path: string, meta: M, handler: _HandlerForProc<M>): void;
+  _on<M extends _AnyProcedureMeta>(path: string, meta: M, handler: _HandlerForProc<M>): void;
   /**
    * 列出**已注册**的全部方法名。
    *

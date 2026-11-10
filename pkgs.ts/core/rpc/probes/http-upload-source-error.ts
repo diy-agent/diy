@@ -14,7 +14,7 @@ async function* brokenChunks() {
 async function main() {
   const { binding, client, dispose } = await httpHarness.start();
   const cli = createTypedClient(client, api);
-  binding.on("collect", api.collect, async ({ stream }) => {
+  binding._on("collect", api.collect, async ({ stream }) => {
     let count = 0;
     for await (const _ of stream) count++;
     return count;

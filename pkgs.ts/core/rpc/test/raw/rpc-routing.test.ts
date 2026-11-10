@@ -81,22 +81,22 @@ async function main() {
 
   // Main 侧：共享来源 binding，本地 + 转发两个后端都注册进它
   const gwBinding = new ChannelServerBinding(gwTx);
-  gwBinding.on((appApiDef.diy.app.ping).name!, appApiDef.diy.app.ping, async ({ input }) => `pong:${input.msg}`); // diy.app.* → 本地
+  gwBinding._on((appApiDef.diy.app.ping).name!, appApiDef.diy.app.ping, async ({ input }) => `pong:${input.msg}`); // diy.app.* → 本地
   gwBinding.onForward(appApiDef.diy.ui, new ChannelClientBinding(main2renderer));       // diy.ui.* → 转发
 
   // Renderer 侧：本地 ui binding（diy.ui.* 直接处理）
   const rendererBinding = new ChannelServerBinding(renderer2main);
-  rendererBinding.on((appApiDef.diy.ui.tree).name!, appApiDef.diy.ui.tree, async ({ input }) => `tree:${input.all ?? false}`);
-  rendererBinding.on((appApiDef.diy.ui.status).name!, appApiDef.diy.ui.status, async () => ({ pid: 42 }));
-  rendererBinding.on((appApiDef.diy.ui.upload).name!, appApiDef.diy.ui.upload, async ({ input, stream }) => {
+  rendererBinding._on((appApiDef.diy.ui.tree).name!, appApiDef.diy.ui.tree, async ({ input }) => `tree:${input.all ?? false}`);
+  rendererBinding._on((appApiDef.diy.ui.status).name!, appApiDef.diy.ui.status, async () => ({ pid: 42 }));
+  rendererBinding._on((appApiDef.diy.ui.upload).name!, appApiDef.diy.ui.upload, async ({ input, stream }) => {
     let sum = 0;
     for await (const v of stream) sum += v as number;
     return { tag: input.tag, sum };
   });
-  rendererBinding.on((appApiDef.diy.ui.echo).name!, appApiDef.diy.ui.echo, async function* ({ stream }) {
+  rendererBinding._on((appApiDef.diy.ui.echo).name!, appApiDef.diy.ui.echo, async function* ({ stream }) {
     for await (const m of stream) yield `echo:${m}`;
   });
-  rendererBinding.on((appApiDef.diy.ui.ticks).name!, appApiDef.diy.ui.ticks, async function* ({ input }) {
+  rendererBinding._on((appApiDef.diy.ui.ticks).name!, appApiDef.diy.ui.ticks, async function* ({ input }) {
     for (let i = 1; i <= input.n; i++) yield i;
   });
 
@@ -135,7 +135,7 @@ async function main() {
   let threw = false;
   // 第二个后端注册同名方法 diy.app.ping → binding 层显式报错
   const clashBinding = new ChannelServerBinding(gwTx);
-  clashBinding.on((appApiDef.diy.app.ping).name!, appApiDef.diy.app.ping, async ({ input }) => `pong:${input.msg}`);
+  clashBinding._on((appApiDef.diy.app.ping).name!, appApiDef.diy.app.ping, async ({ input }) => `pong:${input.msg}`);
   try {
     clashBinding.onForward(appApiDef.diy.app, new ChannelClientBinding(main2renderer));
   } catch (e) {

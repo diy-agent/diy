@@ -28,15 +28,15 @@ function request(
 
 async function main() {
   const binding = new HttpServerBinding();
-  binding.on("unary", api.unary, async ({ input }) => input);
-  binding.on("collect", api.collect, async ({ stream }) => {
+  binding._on("unary", api.unary, async ({ input }) => input);
+  binding._on("collect", api.collect, async ({ stream }) => {
     let count = 0;
     for await (const _ of stream) count++;
     return count;
   });
 
   const server = http2.createServer();
-  server.on('stream', (stream, headers) => { void binding.handleStream(stream, headers); });
+  server._on('stream', (stream, headers) => { void binding.handleStream(stream, headers); });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const session = http2.connect(`http://127.0.0.1:${(server.address() as { port: number }).port}`);
   await new Promise<void>((resolve, reject) => {

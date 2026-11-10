@@ -117,7 +117,8 @@ export function bindAppHandlers(binding: ServerBinding): void {
   bindApp(binding);
 
   // ── doctor ──
-  binding.on("diy.doctor", app.doctor, async () => {
+  // doctor 是**唯一的顶层 unary**（没有 service 可归属）—— 用内部原语 _on
+  binding._on("diy.doctor", app.doctor, async () => {
     const issues = health.runHealthCheck();
     const home = state.diyHome();
     const { existsSync } = await import("node:fs");
