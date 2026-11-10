@@ -149,3 +149,56 @@
 布局          Dockview（分屏 + Tab 拖拽）先做 POC；不合用再自研
 重活          Monaco / xterm.js / TanStack Virtual / TanStack Table
 ```
+
+## 9. 事实核对 + 新型 agent 应用参考（2026-11-10，npm registry 实测）
+
+### 9.1 版本事实（`npm view`，带查询日期）
+
+| 包 | 版本 | 最后更新 | 判定 |
+|---|---|---|---|
+| `@base-ui/react` | **1.9.0** | — | Base UI **已是稳定线**；旧名 `@base-ui-components/react` 停在 `1.0.0-rc.0`（2026-07） |
+| `@mui/base` | 5.0.0-beta.70 | 2026-07-15 | 已冻结/弃用 ✓（两份分析这条对） |
+| `shadcn`（CLI） | 4.23.0 | 2026-10-27 | 活跃；它是**源码分发器**，依赖里没有 base-ui/radix（组件由模板写进项目） |
+| `radix-ui` | 1.8.1 | 2026-10-14 | 活跃（已收敛成单一包） |
+| `react` | 19.3.1 | 2026-11-09 | React 19 线为当前稳定 |
+| `solid-js` | 1.9.18 | 2026-11-04 | 仍是 1.9 线 |
+| `dockview` | 8.9.0 | 2026-11-09 | 活跃（分屏/Tab 拖拽） |
+| `@tanstack/react-virtual` | 3.14.26 | 2026-11-03 | 活跃 |
+| `@mui/material` / `@mui/x-data-grid` | 9.5.0 / 9.17.0 | — | MUI 9 线；X 仍分社区/Pro |
+
+**修正两份分析**：
+1. 「Base UI 1.0+ 已发布」方向对，但**包名要说对**：`@base-ui/react`；`@base-ui-components/react` 是 rc 线，别装错。
+2. 「shadcn 已把 Base UI 设为新项目默认」：CLI 依赖里没有任何 UI 库，**默认值由模板/文档决定**，本次无法离线核实 →
+   标为**未证实**。好在不影响选型：Radix 与 Base UI 都是 headless，shadcn 两种都能生成。
+3. 「Base UI 零运行时 DOM 开销」仍属夸大：headless 只是不带样式。
+
+### 9.2 最值得抄的近邻：dsh（DeepSeek harness，本机 `~/git-ref/deepseek-harness`）
+
+这是**正在生产的新型 agent 桌面应用**（`dsh` CLI 就在 PATH 上，v0.2.2-rc.1），它的前端架构正好是我们 §3/§8 说的那套，
+而且是真码，不是论文：
+
+| 它们的包 | 职责 | 对我们的意义 |
+|---|---|---|
+| `packages/client/store` | **React-free** 的 observable + snapshot store（Immer 更新、浅比较、可选持久化） | 业务状态不依赖 React，正是我们要的「Core 不知道 React 存在」 |
+| `packages/client/ui-slots` | **Slot 注册表 + Component Factory**，类型由 declaration merging 推导；**React-free** | 插件扩展点（同一份思路可替代我们目前手写的「页面注册表」） |
+| `packages/client/ui-renderer` | 把 Slot 数据**绑定成 React 组件**并挂载整棵应用；React 18 | React 只做渲染；订阅/选择器在这一层统一接，业务组件不写订阅 |
+| `packages/client/modules` + `hmr` | 浏览器侧插件模块加载与热更 | 插件化 UI 的落地路径（与 VS Code 扩展同构） |
+
+结论：**「React 只负责投影，运行时与状态层与 React 无关，扩展点用 Slot 注册表」在真实 agent 产品里已被验证。**
+我们 §8 的定稿与之完全一致，可以照这个骨架设计 diy 的 UI Runtime。
+
+### 9.3 其他可对照的 agent 应用/库（活跃度已核对）
+
+| 项目 | 定位 | 版本/活跃 |
+|---|---|---|
+| `@assistant-ui/react` | agent 对话流 UI（消息、工具调用、流式） | 0.15.33（2026-11-08） |
+| `@copilotkit/react-core` | in-app agent 集成（状态共享、动作注册） | 1.85.0（2026-11-09） |
+| `dockview` | Workbench 分屏 / Tab 拖拽 | 8.9.0（2026-11-09） |
+| dsh（DeepSeek） | 完整 agent 桌面产品，Electron + React + 自研 Runtime | 0.2.2-rc.1（本机） |
+
+### 9.4 定稿修订（在 §8 基础上）
+
+- 组件层：**Radix（`radix-ui` 1.8.1）今天可用；Base UI 用 `@base-ui/react` 1.9.0**，可现在就评估，不必等。
+- **UI Runtime 照 dsh 的三件套拆**：`store`（无框架）/ `slots`（扩展点注册表）/ `renderer`（React 绑定）。
+- 对话流可先看 `@assistant-ui/react`（省掉消息/工具调用的自研），但**不要**让它接管全局状态。
+- 工作台分屏先做 `dockview` POC。
