@@ -130,9 +130,9 @@ export function defineService<const TRoutes extends _Router | _AnyProcedureMeta>
           // 类型上已经拦了，这里是运行期兜底（`as never` 绕过、或 api 与 handlers 来自不同版本）
           throw new Error(`defineService(${name}): 缺少 handler —— ${path}`);
         }
-        // 复制一份 meta 再改 name：**不能原地改** —— 同一个 api 可能被多个 service 复用
-        // （比如一个模块同时挂在自己的名字下和某个兼容别名下），原地改会互相覆盖。
-        server.on({ ...meta, name: `${name}.${path}` }, handler as never);
+        // 三参形式：路径与 meta **分开给**，不改原 meta —— 同一个 api 可能被多个
+        // service 复用（比如一个模块同时挂在自己的名字下和某个兼容别名下）
+        server.on(`${name}.${path}`, meta, handler as never);
       }
     },
 

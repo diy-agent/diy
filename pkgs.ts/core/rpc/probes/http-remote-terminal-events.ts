@@ -11,7 +11,7 @@ const api = RpcSchema.bindNames(RpcSchema.group({ children: {
 
 async function main() {
   const binding = new HttpServerBinding();
-  binding.on(api.collect, async () => true);
+  binding.on("collect", api.collect, async () => true);
   const server = http2.createServer();
   server.on('stream', (stream, headers) => { void binding.handleStream(stream, headers); });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));

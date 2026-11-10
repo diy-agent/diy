@@ -28,8 +28,8 @@ function request(
 
 async function main() {
   const binding = new HttpServerBinding();
-  binding.on(api.unary, async ({ input }) => input);
-  binding.on(api.collect, async ({ stream }) => {
+  binding.on("unary", api.unary, async ({ input }) => input);
+  binding.on("collect", api.collect, async ({ stream }) => {
     let count = 0;
     for await (const _ of stream) count++;
     return count;

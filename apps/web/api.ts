@@ -140,7 +140,7 @@ const PageInfoOutput = z.array(z.object({ id: z.string(), title: z.string() }));
 // 而 `z.unknown()` 连 undefined 都拒（nonoptional），所以 args 必须 `.optional()`：无参方法才调得通。
 const InvokeInput = { pageId: z.string().min(1), method: z.string().min(1), args: z.unknown().optional() };
 
-export const webApi = RpcSchema.bindNames(RpcSchema.group({ children: {
+export const webApi = RpcSchema.group({ children: {
     web: RpcSchema.group({
         desc: 'apps/web 宿主（无 Electron 的远程 web UI）',
         children: {
@@ -266,4 +266,4 @@ export const webApi = RpcSchema.bindNames(RpcSchema.group({ children: {
             }),
         },
     }),
-} }));
+} });

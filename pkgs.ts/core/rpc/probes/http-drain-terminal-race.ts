@@ -11,7 +11,7 @@ const api = RpcSchema.bindNames(RpcSchema.group({ children: {
 
 async function main() {
   const binding = new HttpServerBinding();
-  binding.on(api.collect, async () => true); // 远端立即返回，触发 request-side 终态
+  binding.on("collect", api.collect, async () => true); // 远端立即返回，触发 request-side 终态
 
   const server = http2.createServer();
   server.on('stream', (stream, headers) => { void binding.handleStream(stream, headers); });

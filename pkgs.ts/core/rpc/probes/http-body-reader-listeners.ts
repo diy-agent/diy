@@ -30,7 +30,7 @@ class FakeStream extends EventEmitter {
 
 async function main() {
   const binding = new HttpServerBinding();
-  binding.on(api.collect, async ({ stream }) => {
+  binding.on("collect", api.collect, async ({ stream }) => {
     let seen = 0;
     for await (const _ of stream) seen++;
     return seen;

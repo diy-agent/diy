@@ -60,9 +60,6 @@ export interface ServerBinding {
    */
   listRegistered(): string[];
 
-  /** 注册一个方法 —— 两参形式：路径从 `meta.name` 读（需要先 `bindNames`）。 */
-  on<M extends _AnyProcedureMeta>(meta: M, handler: _HandlerForProc<M>): void;
-
   destroy(): void;
 }
 

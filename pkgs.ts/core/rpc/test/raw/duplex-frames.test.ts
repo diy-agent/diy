@@ -43,12 +43,12 @@ it('同 transport 双挂 server+client：双向调用互不串台、无错误帧
 
   // A 端：server（处理 b）+ client（调 b… 实际调对端的 a）
   const aServer = new ChannelServerBinding(txA);
-  aServer.on(api.b, async () => ({ from: 'A' }));
+  aServer.on("b", api.b, async () => ({ from: 'A' }));
   const aClient = new ChannelClientBinding(txA);
 
   // B 端：server（处理 a）+ client（反向调 A 的 b）
   const bServer = new ChannelServerBinding(txB);
-  bServer.on(api.a, async () => ({ from: 'B' }));
+  bServer.on("a", api.a, async () => ({ from: 'B' }));
   const bClient = new ChannelClientBinding(txB);
 
   // A→B：正向调用
@@ -71,10 +71,10 @@ it('同 transport 双挂 server+client：双向调用互不串台、无错误帧
 it('请求帧（带 method）不会被同端 client 当响应 settle', async () => {
   const [txA, txB] = duplexPair();
   const aServer = new ChannelServerBinding(txA);
-  aServer.on(api.b, async () => ({ from: 'A' }));
+  aServer.on("b", api.b, async () => ({ from: 'A' }));
   const aClient = new ChannelClientBinding(txA);
   const bServer = new ChannelServerBinding(txB);
-  bServer.on(api.a, async () => ({ from: 'B' }));
+  bServer.on("a", api.a, async () => ({ from: 'B' }));
   const bClient = new ChannelClientBinding(txB);
 
   // B 的 client 发起调用（请求帧 id=1 会到达 A 端 client；A 端 client 若误处理，

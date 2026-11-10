@@ -44,19 +44,19 @@ describe('http-server-binding 协议特有', () => {
     let csCancelled: string | null = null;
 
     const server = httpRaw;
-    server.on(api.diy.app.greet, async ({ input }) => `Hello, ${input.name}!`);
-    server.on(api.diy.app.fail, async () => { throw new RpcError('PERMISSION_DENIED', 'no access'); });
-    server.on(api.diy.app.invalid, async () => {
+    server.on("diy.app.greet", api.diy.app.greet, async ({ input }) => `Hello, ${input.name}!`);
+    server.on("diy.app.fail", api.diy.app.fail, async () => { throw new RpcError('PERMISSION_DENIED', 'no access'); });
+    server.on("diy.app.invalid", api.diy.app.invalid, async () => {
       throw new RpcError('INVALID_ARGUMENT', 'Invalid input', { details: [{ path: ['name'], message: 'bad' }] });
     });
-    server.on(api.diy.app.count, async function* ({ input }) {
+    server.on("diy.app.count", api.diy.app.count, async function* ({ input }) {
       for (let i = 1; i <= input.to; i++) yield i;
     });
-    server.on(api.diy.app.slow, async function* () {
+    server.on("diy.app.slow", api.diy.app.slow, async function* () {
       try { for (let i = 0; ; i++) { yield i; await sleep(1); } }
       finally { slowCleanup = true; }
     });
-    server.on(api.diy.app.recv, async ({ stream }) => {
+    server.on("diy.app.recv", api.diy.app.recv, async ({ stream }) => {
       try { for await (const _ of stream) {} }
       catch (e: unknown) { csCancelled = (e as RpcError).code ?? null; }
       return { errCode: csCancelled };
@@ -149,9 +149,9 @@ describe('http-server-binding 协议特有', () => {
       uni: RpcSchema.unary({ input: {}, output: z.unknown() }),
       strict: RpcSchema.clientStream({ input: {}, chunkIn: z.unknown(), output: z.number() }),
     } }));
-    httpRaw.on(rapi.uni, async ({ input }) => input);
+    httpRaw.on((rapi.uni).name!, rapi.uni, async ({ input }) => input);
     // 不吞输入错误的 consumer：非法 chunk 必须让 handler 以错误落定（伪成功防线）
-    httpRaw.on(rapi.strict, async ({ stream }) => {
+    httpRaw.on((rapi.strict).name!, rapi.strict, async ({ stream }) => {
       let n = 0;
       for await (const _ of stream) n++;
       return n;
