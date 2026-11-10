@@ -26,6 +26,7 @@ import { renderBlocks } from './block-renderers.js';
 import { ensureChatStyle } from './style.js';
 import { createChatStore, type ChatState, type ChatStore } from './store.js';
 import { createChatClient, type ChatClient } from './client.js';
+import type { ChatViewContribution } from './views.js';
 import { Button } from './ui/button.js';
 import { Input } from './ui/input.js';
 import { Textarea } from './ui/textarea.js';
@@ -36,10 +37,17 @@ export { registerBlockRenderer, renderBlock, renderBlocks } from './block-render
 
 const { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, memo, useCallback } = React;
 
-export const chatPageView: PageView = {
-    id: 'chat',
-    title: '聊天',
-    render(root: HTMLElement, ctx: PageContext): () => void {
+/**
+ * 造一个聊天页（##539：tab 插槽）。
+ *
+ * 不传 `views` 时与从前完全一致（只有「标准」一个 tab）。`apps/chat/renderer.ts`
+ * 用它在装配层追加别的视图 —— 核心文件不需要改。
+ */
+export function chatPageViewWith(views: readonly ChatViewContribution[]): PageView {
+    return {
+        id: 'chat',
+        title: '聊天',
+        render: (root: HTMLElement, ctx: PageContext): (() => void) => {
         ensureChatStyle(root.ownerDocument);
         const store = createChatStore();
         const client = createChatClient(ctx);
@@ -48,13 +56,21 @@ export const chatPageView: PageView = {
         // （切页时紧接着就可能量位置 / 找元素；异步首帧会让这些读到空树，happy-dom 里的
         //  单测也拿不到 .chat-input）。
         flushSync(() => {
-            reactRoot.render(<ChatApp store={store} client={client} />);
+            reactRoot.render(<ChatApp store={store} client={client} views={views} />);
         });
-        return () => {
+        return (): void => {
             reactRoot.unmount();
         };
-    },
-};
+        },
+    };
+}
+
+/** 缺省页（只有「标准」一个视图）—— 与 ##539 之前的行为一致 */
+export const chatPageView: PageView = chatPageViewWith([]);
+
+/** 「调试」视图的惰性加载入口（##539）—— `apps/chat/renderer.ts` 用它拼 views */
+export const devtoolsViewLoad = (): Promise<{ default: React.ComponentType<{ state: ChatState; client: ChatClient }> }> =>
+    import('./views/devtools.js') as unknown as Promise<{ default: React.ComponentType<{ state: ChatState; client: ChatClient }> }>;
 
 export default chatPageView;
 
@@ -63,6 +79,8 @@ export default chatPageView;
 interface Deps {
     readonly store: ChatStore;
     readonly client: ChatClient;
+    /** tab 插槽（##539）：缺省只有一个「标准」视图 */
+    readonly views: readonly ChatViewContribution[];
 }
 
 /** 右侧 panel（viewset）的状态：`null` = 收起 */
@@ -80,7 +98,7 @@ interface CardState {
     readonly left: number;
 }
 
-function ChatApp({ store, client }: Deps): React.ReactElement {
+function ChatApp({ store, client, views }: Deps): React.ReactElement {
     const state = useSyncExternalStore(store.subscribe, store.get, store.get);
     const [viewset, setViewset] = useState<ViewsetState | null>(null);
     const [firstBoot, setFirstBoot] = useState(false);
@@ -330,7 +348,7 @@ function ChatApp({ store, client }: Deps): React.ReactElement {
                     </div>
                     <div className="chat-body">
                         <div className="chat-stream">
-                            <MessageList state={state} />
+                            <ViewTabs views={views} state={state} client={client} fallback={<MessageList state={state} />} />
                             <FootBar
                                 state={state}
                                 busySince={busySince}
@@ -444,6 +462,71 @@ function BotsPane({
 }
 
 // ── 消息列表 ────────────────────────────────────────────
+
+/**
+ * tab 插槽（##539）：切到哪个 tab 才 `load()` 它。
+ *
+ * `views` 为空 ⇒ 直接渲染 `fallback`（与从前完全一致）。
+ * 懒加载结果缓存在 `loaded` 里 —— 切回来不重新加载，也不丢各自的滚动位置（内容不卸载，
+ * 只是用 `display:none` 藏起来）。
+ */
+function ViewTabs({
+    views,
+    state,
+    client,
+    fallback,
+}: {
+    views: readonly ChatViewContribution[];
+    state: ChatState;
+    client: ChatClient;
+    fallback: React.ReactElement;
+}): React.ReactElement {
+    const sorted = useMemo(() => [...views].sort((a, b) => (a.order ?? 100) - (b.order ?? 100)), [views]);
+    const [active, setActive] = useState<string>(sorted[0]?.id ?? '');
+    const [loaded, setLoaded] = useState<Record<string, React.ComponentType<{ state: ChatState; client: ChatClient }>>>({});
+    useEffect(() => {
+        const hit = sorted.find((v) => v.id === active);
+        if (hit === undefined || loaded[active] !== undefined) return;
+        let cancelled = false;
+        void hit.load().then((mod) => {
+            if (!cancelled) setLoaded((prev) => ({ ...prev, [active]: mod.default }));
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [active, sorted, loaded]);
+
+    if (sorted.length === 0) return fallback;
+    return (
+        <div className="chat-views">
+            <div className="chat-view-tabs" role="tablist">
+                {sorted.map((v) => (
+                    <button
+                        key={v.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={v.id === active}
+                        className={v.id === active ? 'chat-view-tab active' : 'chat-view-tab'}
+                        onClick={() => setActive(v.id)}
+                    >
+                        {v.label}
+                    </button>
+                ))}
+            </div>
+            <div className="chat-view-body">
+                {sorted.map((v) => {
+                    const Comp = loaded[v.id];
+                    if (v.id !== active || Comp === undefined) return null;
+                    return (
+                        <div key={v.id} className="chat-view-pane">
+                            <Comp state={state} client={client} />
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
 
 function MessageList({ state }: { state: ChatState }): React.ReactElement {
     const listRef = useRef<HTMLOListElement>(null);
