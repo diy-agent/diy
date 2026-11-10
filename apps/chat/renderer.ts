@@ -1,8 +1,9 @@
 // renderer.ts — renderer 入口：注册页面实现，然后挂骨架（页面实现构建期装进，不做动态 import）。
 
 import { installTestHooks, mountWorkbench, registerPage, type WorkbenchGateway } from "@diy-agent/workbench-ui";
-// ##468：两版并存；换这一行 + rebuild 就切「裸 DOM 版 / diyui 版」。
-import { chatPageView } from "@diy-agent/chat-page/renderer-diui";
+// ##468 / ##526：三版并存；换这一行 + rebuild 就切「裸 DOM 版 / diyui 版 / React 版」。
+// ##526 起缺省是 React 版（shadcn + M3 令牌，见 docs/ui-architecture.md）。
+import { chatPageView } from "@diy-agent/chat-page/renderer-react";
 // ##467：模型配置页（独立插件，删掉这行就没有配置入口）
 import { modelConfigPageView } from "@diy-agent/model-config-page/renderer";
 // ##474：Bot 配置页（同构独立插件）

@@ -1,0 +1,63 @@
+/* react.css —— 聊天页 React 版样式入口（tailwind v4 + M3 令牌 + shadcn 令牌桥）。
+ *
+ * 三层，自下而上：
+ *   1. tailwind v4：只借它的工具类（shadcn 组件的类名就是工具类）；
+ *   2. M3 令牌：直接吃 diy 仓 design 包的生成物（seed 决定 49 个语义角色）；
+ *   3. shadcn 令牌桥：把组件吃的 `--background / --primary / --border …` 指到 M3 语义角色。
+ *
+ * 布局仍是 style.ts 里的 `.chat-*` 规则（**无 layer**）：无 layer 的规则永远赢过
+ * @layer utilities 里的工具类，所以两套样式能共存 —— shadcn 组件只在这些类没覆盖到
+ * 的地方（边框 / 焦点环 / 禁用态）露出来。
+ *
+ * ⚠️ @source 由**使用方**声明：写在库里会按库文件位置解析，扫不到使用方组件。
+ */
+
+@import 'tailwindcss';
+
+/* M3 令牌（生成物 + 我们自己的密度覆盖） */
+@import '../../design/src/index.css';
+@import '../../design/src/diy/tailwind.css';
+
+@source "./";
+
+@theme inline {
+    /* ── shadcn 语义位 → M3 语义角色 ─────────────────────── */
+    --color-background: var(--md-sys-color-surface);
+    --color-foreground: var(--md-sys-color-on-surface);
+
+    --color-card: var(--md-sys-color-surface-container-low);
+    --color-card-foreground: var(--md-sys-color-on-surface);
+
+    --color-popover: var(--md-sys-color-surface-container);
+    --color-popover-foreground: var(--md-sys-color-on-surface);
+
+    --color-primary: var(--md-sys-color-primary);
+    --color-primary-foreground: var(--md-sys-color-on-primary);
+
+    --color-secondary: var(--md-sys-color-secondary-container);
+    --color-secondary-foreground: var(--md-sys-color-on-secondary-container);
+
+    --color-muted: var(--md-sys-color-surface-container-high);
+    --color-muted-foreground: var(--md-sys-color-on-surface-variant);
+
+    --color-accent: var(--md-sys-color-secondary-container);
+    --color-accent-foreground: var(--md-sys-color-on-secondary-container);
+
+    --color-destructive: var(--md-sys-color-error);
+    --color-destructive-foreground: var(--md-sys-color-on-error);
+
+    --color-border: var(--md-sys-color-outline-variant);
+    --color-input: var(--md-sys-color-outline);
+    --color-ring: var(--md-sys-color-primary);
+
+    /* IDE 类界面的缺省密度（与 style.ts 的 28px 行同一档） */
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --radius-lg: 10px;
+    --radius-xl: 14px;
+}
+
+/* shadcn 组件的 `text-sm` 在聊天页要更小一档（compact 密度）：只动本页作用域 */
+.chat-page {
+    font-size: 13px;
+}

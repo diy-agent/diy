@@ -71,8 +71,12 @@ build-preload() {
 build-renderer() {
   local d; d="$(_build_dir)"
   run npx esbuild renderer.ts --bundle --platform=browser --format=iife --target=es2022 \
+    --jsx=automatic \
     --outfile="$d/renderer/index.js"
   run mkdir -p "$d/renderer"
+  # ##526：React 版的样式（tailwind v4 工具类 + M3 令牌桥）。源在 chat-page 包里，
+  # 产物跟 esbuild 的输出放一起；页面用 <link> 引它（style.ts 的 .chat-* 规则另走运行时注入）。
+  run npx @tailwindcss/cli -i ../../pkgs.ts/ui/chat-page/src/react.css -o "$d/renderer/renderer.css" --minify
   run cp index.html "$d/renderer/index.html"
 }
 
