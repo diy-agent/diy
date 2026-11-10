@@ -13,10 +13,14 @@ export interface ChatState {
     readonly multi: boolean;
     readonly bots: readonly BotView[];
     readonly bot: BotView | null;
+    /**
+     * 模型目录：**按需拉的缓存**，不是快照的一部分（##526）。
+     * 打开配置面板 / 首启引导时调 `client.models()` 填它；切 bot 不碰。
+     */
     readonly models: readonly ModelChoice[];
     readonly messages: readonly WireMessage[];
     readonly metrics: ChatMetrics | null;
-    /** 新建 bot 的缺省模型 `providerId/modelId` */
+    /** 新建 bot 的缺省模型（三段式 key；随 models 一起拿到） */
     readonly selectedModel: string;
     /** 一轮在飞：输入框与发送按钮禁用 */
     readonly busy: boolean;

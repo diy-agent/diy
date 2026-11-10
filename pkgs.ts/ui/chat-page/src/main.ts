@@ -23,6 +23,7 @@ import type {
     BotChatSnapshot,
     CompactInfo,
     FirstBotInput,
+    ModelChoices,
     SendArgs,
     SendResult,
 } from "./shared.js";
@@ -53,6 +54,8 @@ export function createPage(config?: unknown): PageContribution {
             group: "对话",
             methods: {
                 snapshot: (): Promise<BotChatSnapshot> => host.snapshot(),
+                // ##526：模型目录按需拉（配模型 / 新建 bot 时才要），不再搭快照的车
+                models: (): Promise<ModelChoices> => host.models(),
                 // ##497：首启/补选模型（没有这两步，聊天页面在 bots 为空时无从下手）
                 createFirstBot: (args: unknown): Promise<BotChatSnapshot> => host.createFirstBot(firstBotInputOf(args)),
                 // ##498：新增的是 **bot**（不是会话）；建好即选中

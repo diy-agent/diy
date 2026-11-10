@@ -5,7 +5,7 @@
 // 这里只做「字符串 → 有类型的方法」，不做缓存、不做重试 —— 那些是页面的事。
 
 import type { PageContext } from '@diy-agent/workbench-ui';
-import type { BotChatSnapshot, CompactInfo } from './shared.js';
+import type { BotChatSnapshot, CompactInfo, ModelChoices } from './shared.js';
 
 /** 新建 / 修改 bot 的表单载荷（与主进程 botDraftInputOf 同形） */
 export interface BotDraft {
@@ -27,6 +27,8 @@ export interface FirstBotDraft {
 
 export interface ChatClient {
     readonly snapshot: () => Promise<BotChatSnapshot>;
+    /** 模型目录（**按需拉**：配模型 / 新建 bot 时才要；##526 起不在快照里） */
+    readonly models: () => Promise<ModelChoices>;
     readonly selectBot: (id: string) => Promise<BotChatSnapshot>;
     readonly createBot: (draft: BotDraft) => Promise<BotChatSnapshot>;
     readonly updateBot: (draft: BotUpdate) => Promise<BotChatSnapshot>;
@@ -40,6 +42,7 @@ export interface ChatClient {
 export function createChatClient(ctx: PageContext): ChatClient {
     return {
         snapshot: () => ctx.invoke<BotChatSnapshot>('snapshot'),
+        models: () => ctx.invoke<ModelChoices>('models'),
         selectBot: (id) => ctx.invoke<BotChatSnapshot>('selectBot', { id }),
         createBot: (draft) => ctx.invoke<BotChatSnapshot>('createBot', draft),
         updateBot: (draft) => ctx.invoke<BotChatSnapshot>('updateBot', draft),

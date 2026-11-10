@@ -90,11 +90,18 @@ function primaryOf(home: string, botId = "bot-1"): string | undefined {
 
 describe("bot 对话宿主（##505）", () => {
     it("模型目录来自 model.yaml / providers.custom.yaml（provider×model）", async () => {
-        const snapshot = await host(makeHome()).snapshot();
-        expect(snapshot.models.map((choice) => `${choice.providerId}/${choice.modelId}`)).toEqual([
+        const chat = host(makeHome());
+        // ##526：目录走独立的 models()，不再搭快照的车
+        const catalog = await chat.models();
+        expect(catalog.choices.map((choice) => `${choice.providerId}/${choice.modelId}`)).toEqual([
             "test/echo-1",
             "test/echo-2",
         ]);
+        // 缺省模型 = 目录第一个的三段式 key（有 account 就带上前缀）
+        expect(catalog.defaultModel).toBe("main@test/echo-1");
+        const snapshot = await chat.snapshot();
+        // 快照里**没有**模型目录（切 bot 不该为配模型付费）
+        expect("models" in snapshot).toBe(false);
         expect(snapshot.bots).toEqual([]);
         // 判据 8：bots 为空 ⇒ bot = null（UI 走首启引导，不进聊天）
         expect(snapshot.bot).toBeNull();

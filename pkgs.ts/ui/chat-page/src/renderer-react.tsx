@@ -95,6 +95,23 @@ function ChatApp({ store, client }: Deps): React.ReactElement {
     const demoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     /**
+     * 模型目录：**按需拉**（##526）。只有「配模型 / 新建 bot / 首启」需要它 ——
+     * 之前它跟着每条快照走，于是切一次 bot 就重算一遍模型目录（4.6 MB 的 spec 快照），
+     * 实测 400+ms。已经有缓存就不重复拉（模型改过的场景由 `refreshModels` 强刷）。
+     */
+    const loadModels = useCallback(
+        async (force = false): Promise<void> => {
+            if (!force && store.get().models.length > 0) return;
+            const next = await client.models();
+            store.patch({
+                models: next.choices,
+                selectedModel: next.defaultModel ?? firstKey(next.choices),
+            });
+        },
+        [client, store],
+    );
+
+    /**
      * 唯一的状态入口：从核心层**重新取整份快照**（concurrency-actor 判据 5）。
      * 单调化：并发刷新时先发出的可能后到，旧状态不许盖新状态。
      */
@@ -112,22 +129,32 @@ function ChatApp({ store, client }: Deps): React.ReactElement {
                 multi: true,
                 bots: next.bots,
                 bot: next.bot,
-                models: next.models,
                 messages: next.messages,
                 metrics: next.metrics,
-                selectedModel: next.selectedModel ?? firstKey(next.models),
                 emptyText: next.bot === null ? '先建一个 bot（引导页）' : '还没有消息，说一句话开始。',
             });
-            // 首启 / 存量缺模型 ⇒ 强制拦在配置页（关不掉），不许静默用「宿主缺省」
+            // 首启 / 存量缺模型 ⇒ 强制拦在配置页（关不掉），不许静默用「宿主缺省」。
+            // ##526：面板里要用模型目录，**等目录到手再开** —— 否则下拉是空的，
+            // 用户直接点「创建」就提交空 model（实测报「必须先选一个模型」）。
             if (next.bot === null) {
-                setFirstBoot(true);
+                setFirstBoot(false);
                 setViewset(null);
+                void loadModels()
+                    .catch(() => undefined)
+                    .then(() => {
+                        setFirstBoot(true);
+                    });
             } else if (next.bot.needsModel) {
                 setFirstBoot(false);
-                setViewset({ mode: 'config', bot: next.bot, forced: true });
+                const bot = next.bot;
+                void loadModels()
+                    .catch(() => undefined)
+                    .then(() => {
+                        setViewset({ mode: 'config', bot, forced: true });
+                    });
             }
         },
-        [store],
+        [loadModels, store],
     );
 
     const appendError = useCallback(
@@ -245,16 +272,33 @@ function ChatApp({ store, client }: Deps): React.ReactElement {
         [cancelHideCard],
     );
 
-    const openConfig = useCallback((bot: BotView, forced = false): void => {
-        setCard(null);
-        setFirstBoot(false);
-        setViewset({ mode: 'config', bot, forced });
-    }, []);
+    /**
+     * 打开配置 / 新建面板：**先拉目录再开**（每次强刷 —— 用户可能刚在「模型配置」里改过）。
+     * 面板晚几百毫秒出现，好过让用户对着空下拉点「创建」。
+     */
+    const openViewset = useCallback(
+        (next: ViewsetState): void => {
+            setCard(null);
+            setFirstBoot(false);
+            void loadModels(true)
+                .catch((cause: unknown) => {
+                    appendError(`读模型目录失败：${messageOf(cause)}`);
+                })
+                .then(() => {
+                    setViewset(next);
+                });
+        },
+        [appendError, loadModels],
+    );
+    const openConfig = useCallback(
+        (bot: BotView, forced = false): void => {
+            openViewset({ mode: 'config', bot, forced });
+        },
+        [openViewset],
+    );
     const openCreate = useCallback((): void => {
-        setCard(null);
-        setFirstBoot(false);
-        setViewset({ mode: 'create', bot: null, forced: false });
-    }, []);
+        openViewset({ mode: 'create', bot: null, forced: false });
+    }, [openViewset]);
     const closeViewset = useCallback((): void => {
         setViewset((current) => (current !== null && current.forced ? current : null));
     }, []);
@@ -791,6 +835,12 @@ function Viewset({
         nameRef.current?.focus();
     }, []);
 
+    // ##526：模型目录是按需异步拉的 —— 面板先挂上、目录后到，这里把缺省模型补进去
+    // （否则用户没动下拉就直接「创建」，提交的是空 model ⇒ "必须先选一个模型"）
+    useEffect(() => {
+        if (model === '' && selectedModel !== '') setModel(selectedModel);
+    }, [selectedModel, model]);
+
     const groups = useMemo(() => groupModels(models, search), [models, search]);
 
     const submit = async (): Promise<void> => {
@@ -979,6 +1029,11 @@ function FirstBoot({
     useEffect(() => {
         nameRef.current?.focus();
     }, []);
+
+    // ##526：目录异步到达后补缺省模型（同 Viewset）
+    useEffect(() => {
+        if (model === '' && selectedModel !== '') setModel(selectedModel);
+    }, [selectedModel, model]);
 
     const submit = async (): Promise<void> => {
         if (model === '') {

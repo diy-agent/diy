@@ -143,12 +143,22 @@ export interface BotChatSnapshot {
     readonly bots: readonly BotView[];
     /** 当前 bot；`null` = 还没有 bot（首启 ⇒ 显示引导页，不进聊天） */
     readonly bot: BotView | null;
-    readonly models: readonly ModelChoice[];
     readonly messages: readonly WireMessage[];
     /** 底部指标；没东西可报 = null */
     readonly metrics: ChatMetrics | null;
-    /** 新建 bot 的缺省模型（模型目录第一个） */
-    readonly selectedModel: string | null;
+}
+
+/**
+ * 模型目录（`models` 方法的结果）。
+ *
+ * ##526：**不再塞进快照**。模型目录来自 model.yaml + providers.custom.yaml + models.dev.json
+ * （4.6 MB 的 spec 快照），只有「配模型 / 新建 bot」时才需要，而切 bot 是高频动作 ——
+ * 两者放在同一条快照里，等于每次切 bot 都为一件不相干的事付费。
+ */
+export interface ModelChoices {
+    readonly choices: readonly ModelChoice[];
+    /** 新建 bot 的缺省模型（目录第一个，三段式 `account@provider/model`）；目录空 = null */
+    readonly defaultModel: string | null;
 }
 
 /** `send` 的参数（#498：会话由当前 bot 决定，所以只带正文） */
@@ -188,6 +198,8 @@ export interface BotUpdateInput {
  */
 export interface BotChatHost {
     snapshot(): Promise<BotChatSnapshot>;
+    /** 模型目录（**按需拉**，不进快照：见 ModelChoices 的注释） */
+    models(): Promise<ModelChoices>;
     /** 首启：建第一个 bot（已有 bot 就抛）；#497 */
     createFirstBot(input: FirstBotInput): Promise<BotChatSnapshot>;
     /** 新建 bot（`+ 新 bot`）；建好即选中 */
