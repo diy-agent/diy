@@ -16,6 +16,7 @@ export default defineConfig({
         'pkgs.ts/agent/agents-chain',
         'pkgs.ts/agent/skills',
         'pkgs.ts/core/kb',
+        'pkgs.ts/core/traffic',
         'pkgs.ts/flow',
         'pkgs.ts/agent/session',
         'pkgs.ts/agent/tools',
