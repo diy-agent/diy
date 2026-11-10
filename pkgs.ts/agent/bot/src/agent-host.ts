@@ -103,9 +103,14 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
                 sessionId: bot.primarySessionId ?? `bot:${bot.id}`,
             }))
 
-    /** 该 bot 对应的模型目录项（找不到 = undefined） */
-    const choiceOf = (bot: BotConfig) => {
-        for (const c of opts.models()) {
+    /**
+     * 该 bot 对应的模型目录项（找不到 = undefined）。
+     *
+     * `models` 由调用方传进来：模型目录是**每条快照算一次就够**的东西，
+     * 之前这里每问一次就重算一遍（窗口 / 价目 / 列表各一次 ⇒ 一次切 bot 算 3 遍，##526 实测 400+ ms）。
+     */
+    const choiceOfIn = (models: readonly ModelChoice[], bot: BotConfig) => {
+        for (const c of models) {
             const key = `${c.account === undefined ? "" : `${c.account}@`}${c.providerId}/${c.modelId}`
             if (key === bot.model) return c
         }
@@ -113,13 +118,16 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
     }
 
     /** 该 bot 模型的窗口上限（模型目录里有 contextWindow 才算；没有 ⇒ null = 永不自动压） */
-    const windowOf = (bot: BotConfig): number | null => {
-        for (const c of opts.models()) {
+    const windowOfIn = (models: readonly ModelChoice[], bot: BotConfig): number | null => {
+        for (const c of models) {
             const key = `${c.account === undefined ? "" : `${c.account}@`}${c.providerId}/${c.modelId}`
             if (key === bot.model) return c.contextWindow ?? null
         }
         return null
     }
+
+    /** 窗口上限的单点版本（建 agent / 压缩面板用；快照里走 windowOfIn 复用同一份目录） */
+    const windowOf = (bot: BotConfig): number | null => windowOfIn(opts.models(), bot)
 
     const agentOf = (bot: BotConfig): Agent => {
         const hit = agents.get(bot.id)
@@ -160,19 +168,21 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
     }
 
     const snapshot = async (): Promise<BotChatSnapshot> => {
+        // 模型目录**每条快照只算一次**（见 choiceOfIn 的注释）
+        const models = opts.models()
         const all = await opts.botStore.list()
         const bots = await Promise.all(all.map(viewOf))
         const bot = await currentBot()
         if (bot === null) {
-            return { bots: [], bot: null, models: opts.models(), messages: [], metrics: null, selectedModel: null }
+            return { bots: [], bot: null, models, messages: [], metrics: null, selectedModel: null }
         }
         const agent = agentOf(bot)
         const messages = agent.history().map(wireMessageOf)
         const st = agent.snapshot()
-        const w = windowOf(bot)
+        const w = windowOfIn(models, bot)
         // 本轮花费（USD）：按模型目录的价目算；目录没价目 ⇒ 缺席（**不写 0**，那会被当成"免费"）。
         // 口径与 diy-app 一致：input 含缓存读（模型只有 input/output 两档价目时就这么算，偏保守）。
-        const rates = choiceOf(bot)?.cost
+        const rates = choiceOfIn(models, bot)?.cost
         const cost =
             rates === undefined || st.usage === undefined
                 ? undefined
@@ -192,10 +202,10 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
         return {
             bots,
             bot: await viewOf(bot),
-            models: opts.models(),
+            models,
             messages,
             metrics,
-            selectedModel: bot.model === "" ? (opts.models()[0]?.modelId ?? null) : bot.model,
+            selectedModel: bot.model === "" ? (models[0]?.modelId ?? null) : bot.model,
         }
     }
 

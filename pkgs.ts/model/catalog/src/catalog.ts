@@ -8,7 +8,7 @@
 //
 // ⚠️ 账号的 `data.value`（key）**只被 readAccountValue 读取**，目录与列表里永远只有名字。
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { load as loadYaml } from "js-yaml";
@@ -385,10 +385,28 @@ function loadSnapshot(home: string, options?: CatalogOptions): Record<string, Ra
     return null;
 }
 
+/**
+ * YAML / JSON 解析缓存（按 **路径 + mtime + 大小** 判新旧）。
+ *
+ * 为什么必须有：`models.dev.json` 是 4.6 MB / 199 个 provider，JSON.parse 一次 ~75 ms；
+ * 而 `loadCatalog()` 每个快照要被调 2~3 次（选模型 / 窗口 / 价目各一趟），实测切一次 bot
+ * 光这里就 400+ ms（##526）。文件没变就没必要重解析 —— mtime 变了自动失效，
+ * 所以「改 model.yaml → 界面立刻变」的语义不变。
+ *
+ * 缓存的是**解析结果**（不可变只读对象）；调用方不许改它。
+ */
+const yamlCache = new Map<string, { stamp: string; value: unknown }>();
+
 function readYaml(path: string): unknown {
     if (!existsSync(path)) return null;
+    const stat = statSync(path);
+    const stamp = `${String(stat.mtimeMs)}:${String(stat.size)}`;
+    const hit = yamlCache.get(path);
+    if (hit !== undefined && hit.stamp === stamp) return hit.value;
     try {
-        return loadYaml(readFileSync(path, "utf-8"));
+        const value = loadYaml(readFileSync(path, "utf-8"));
+        yamlCache.set(path, { stamp, value });
+        return value;
     } catch (cause) {
         const message = cause instanceof Error ? cause.message : String(cause);
         throw new CatalogError("catalog/invalid-config", `${path} 解析失败：${message}`, path);
