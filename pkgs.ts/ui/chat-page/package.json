@@ -2,7 +2,7 @@
   "name": "@diy-agent/chat-page",
   "version": "0.1.1",
   "private": true,
-  "description": "聊天页面插件：主进程侧用 @diy-agent/session + 假 LlmPort；renderer 两版并存（裸 DOM / React+shadcn）；入口分工：`.` = 主进程（方法表），`./renderer` = 浏览器（纯 DOM）",
+  "description": "聊天页面插件：主进程侧用 @diy-agent/session + 假 LlmPort；renderer 只有 React 19 + shadcn 一版；入口分工：`.` = 主进程（方法表），`./renderer-react` = 浏览器，`./react.css` = 样式",
   "files": [
     "src/"
   ],
@@ -38,14 +38,22 @@
   "dependencies": {
     "@diy-agent/bot": "*",
     "@diy-agent/session": "*",
+    "@diy-agent/ui-design": "^0.1.0",
     "@diy-agent/workbench": "*",
-    "@diy-agent/workbench-ui": "*"
+    "@diy-agent/workbench-ui": "*",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "tailwind-merge": "^3.7.0"
   },
   "devDependencies": {
+    "@diy-agent/test-llm": "0.1.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "oxfmt": "^0.57.0",
     "oxlint": "^1.72.0",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.10",
-    "@diy-agent/test-llm": "0.1.0"
+    "vitest": "^4.1.10"
   }
 }
