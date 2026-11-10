@@ -17,11 +17,11 @@ source "$SCRIPT_DIR/../../../vendor/sha/sha.bash"
 # 缺了会直接让整条根命令中止：`ERROR: unknown command [clean]`
 ####################################################################################
 
-#: 清生成中间目录
-#: 只删 .gen/（esbuild 打的中间产物，已 gitignore）；src/gen/*.css 是**提交的**派生物，
-#: 删了要重跑 gen 才有，且 `./sha.sh check` 还依赖它作基线 ⇒ 不在这里删。
+#: 清构建目录
+#: build/ 里只有 esbuild 打的中间产物（根 .gitignore 已忽略）；src/gen/*.css 是**提交的**
+#: 派生物，删了要重跑 gen 才有，且 `./sha.sh check` 还依赖它作基线 ⇒ 不在这里删。
 clean() {
-  run rm -rf ./.gen
+  run rm -rf ./build
 }
 
 #: 本包无外部依赖可同步（material-color-utilities 由根 npm i 装）
@@ -30,8 +30,8 @@ sync() { :; }
 #: 从 seed 重新生成 src/gen/*.css（material-color-utilities → CSS）
 #: 为什么要 esbuild 先打一遍：那个包发的是**无扩展名 ESM**，node 直接跑会 ERR_MODULE_NOT_FOUND。
 gen() {
-  run npx esbuild scripts/gen.mts --bundle --platform=node --format=esm --outfile=.gen/gen.mjs
-  run node .gen/gen.mjs
+  run npx esbuild scripts/gen.mts --bundle --platform=node --format=esm --outfile=build/gen.mjs
+  run node build/gen.mjs
 }
 
 #: 生成物是否与脚本一致（生成到临时目录再逐字节比；不一致 ⇒ 退出码 1）
