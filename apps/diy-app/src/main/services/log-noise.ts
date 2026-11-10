@@ -30,13 +30,14 @@ export interface NoiseRule {
  *
  * ResizeObserver 两条是 Chromium 自产的布局循环告警：某次布局里没能消化完通知就再触发，
  * 超限则丢弃剩余通知并抛 error 级事件。功能无影响（下一次布局照常回调），
- * 真正的修法是回调里别同步写布局（见 renderer_solid/lib/frame-batch.ts）。
+ * 根治要动那几处 RO 回调的写法（把写挪出回调）——试过一版「帧批延后写」，反而把
+ * 「比真实用户可见的抖动」放大成了持续重排（##522 回归，已撤回）；先按噪音登记处理。
  */
 export const RENDERER_NOISE: readonly NoiseRule[] = [
   {
     pattern: "ResizeObserver loop completed with undelivered notifications",
     kind: "resize-observer-loop",
-    why: "Chromium 布局循环告警：RO 回调里同步写布局导致同帧反复投递；不影响功能，源头修法见 frame-batch.ts",
+    why: "Chromium 布局循环告警：RO 回调里同步写布局导致同帧反复投递；不影响功能（丢弃的只是这一帧多余的投递）",
   },
   {
     pattern: "ResizeObserver loop limit exceeded",
