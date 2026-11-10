@@ -32,21 +32,21 @@ const apiDef = RpcSchema.bindNames(RpcSchema.group({ children: {
 function startBinding(txSrv: EnvelopeTransport): ServerBinding {
   const binding = new ChannelServerBinding(txSrv);
   // meta/handle 分离：RpcSchema 纯定义，handler 逐个 binding.on 挂载
-  binding.on("math.add", apiDef.math.add, async ({ input }) => input.a + input.b);
-  binding.on("greet", apiDef.greet, async ({ input }) => `Hello, ${input.name}!`);
-  binding.on("slow", apiDef.slow, async ({ input }) => {
+  binding._on("math.add", apiDef.math.add, async ({ input }) => input.a + input.b);
+  binding._on("greet", apiDef.greet, async ({ input }) => `Hello, ${input.name}!`);
+  binding._on("slow", apiDef.slow, async ({ input }) => {
     await sleep(input.delay);
     return { id: input.id };
   });
-  binding.on("count", apiDef.count, async function* ({ input }) {
+  binding._on("count", apiDef.count, async function* ({ input }) {
     for (let i = 0; i < input.n; i++) { await sleep(1); yield i; }
   });
-  binding.on("upload", apiDef.upload, async ({ input, stream }) => {
+  binding._on("upload", apiDef.upload, async ({ input, stream }) => {
     let sum = 0;
     for await (const v of stream) sum += v;
     return { tag: input.tag, sum };
   });
-  binding.on("chat", apiDef.chat, async function* ({ input, stream }) {
+  binding._on("chat", apiDef.chat, async function* ({ input, stream }) {
     for await (const msg of stream) yield `[${input.room}] ${msg}`;
   });
   return binding;
@@ -120,7 +120,7 @@ describe('meta/handle 分离 + createTypedClient', () => {
     // 同步派发多次）。
     // 此前客户端要等 `await` ack 之后才登记 streams，首个 data 落在登记之前
     // → `streams.get(...)?.push()` 静默丢弃（实测：ws 下 count(3) 偶发只收到 [2,3]）。
-    binding.on("count", apiDef.count, async function* ({ input }) {
+    binding._on("count", apiDef.count, async function* ({ input }) {
       for (let i = 0; i < input.n; i++) yield i;
     });
     const cli = createTypedClient(new ChannelClientBinding(txCli), apiDef);

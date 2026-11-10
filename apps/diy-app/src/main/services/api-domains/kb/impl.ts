@@ -82,7 +82,7 @@ function ensureFrontmatter(body: string, desc: string | undefined, today: string
 }
 
 export function bindKb(server: ServerBinding): void {
-    server.on("diy.kb.write", kbService.api.write, async ({ input }) => {
+    server._on("diy.kb.write", kbService.api.write, async ({ input }) => {
         const root = await resolveRoot(input.dir, input.cwd ?? process.cwd());
         const body = await readBody(input.bodyFile, input.cwd ?? process.cwd());
         const content = ensureFrontmatter(body, input.desc, new Date().toISOString().slice(0, 10));
@@ -93,19 +93,19 @@ export function bindKb(server: ServerBinding): void {
         return { path: r.path, bytes: r.bytes };
     });
 
-    server.on("diy.kb.check", kbService.api.check, async ({ input }) => {
+    server._on("diy.kb.check", kbService.api.check, async ({ input }) => {
         const root = await resolveRoot(input.dir, input.cwd ?? process.cwd());
         const scan = scanKb(root);
         return { root: scan.root, entries: [...scan.entries], problems: [...scan.problems] };
     });
 
-    server.on("diy.kb.index", kbService.api.index, async ({ input }) => {
+    server._on("diy.kb.index", kbService.api.index, async ({ input }) => {
         const root = await resolveRoot(input.dir, input.cwd ?? process.cwd());
         const r = writeIndex(root, input.label ?? "");
         return { path: r.path, entries: r.entries, problems: [...r.problems] };
     });
 
-    server.on("diy.kb.move", kbService.api.move, async ({ input }) => {
+    server._on("diy.kb.move", kbService.api.move, async ({ input }) => {
         const root = await resolveRoot(input.dir, input.cwd ?? process.cwd());
         const r = moveEntry(root, input.from, input.to);
         await writeIndex(root, "");

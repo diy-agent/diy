@@ -30,10 +30,10 @@ function readSnapshot(client: HttpClientBinding, stream?: http2.ClientHttp2Strea
 
 async function main() {
   const binding = new HttpServerBinding();
-  binding.on("collect", api.collect, async () => true); // 远端不消费输入，立即返回 result
+  binding._on("collect", api.collect, async () => true); // 远端不消费输入，立即返回 result
 
   const server = http2.createServer();
-  server.on('stream', (stream, headers) => {
+  server._on('stream', (stream, headers) => {
     void binding.handleStream(stream, headers);
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));

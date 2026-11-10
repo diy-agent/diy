@@ -11,10 +11,10 @@ const api = RpcSchema.bindNames(RpcSchema.group({ children: {
 async function main() {
   const binding = new HttpServerBinding();
   // handler 不返回，模拟请求流先 close/error、RPC response 尚未正常终态。
-  binding.on("collect", api.collect, async () => new Promise<boolean>(() => {}));
+  binding._on("collect", api.collect, async () => new Promise<boolean>(() => {}));
 
   const server = http2.createServer();
-  server.on('stream', (stream, headers) => { void binding.handleStream(stream, headers); });
+  server._on('stream', (stream, headers) => { void binding.handleStream(stream, headers); });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
 
   const port = (server.address() as { port: number }).port;
