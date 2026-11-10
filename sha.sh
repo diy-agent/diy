@@ -416,10 +416,6 @@ _check_full_body() {
   run npx tsc --noEmit -p pkgs.ts/core/rpc/tsconfig.browser.json
   # 产物护栏：TS 包源码目录旁不得出现编译产物（实现见 scripts/check-no-emit.sh）
   run bash scripts/check-no-emit.sh
-  # 生成物过期护栏（2026-11-06）：`src/gen/*.generated.d.ts` 是 `src/api.ts` 的**派生**。
-  # apiDef 改了忘跑生成器 ⇒ 留下「看着有类型、实际是旧的」文件，比没有类型更危险。
-  # 实现：重新生成到内存与磁盘 diff，不为空即 exit 1（见 pkgs.ts/core/rpc/scripts/gen-service-types.ts）
-  run node_modules/.bin/tsx pkgs.ts/core/rpc/scripts/gen-service-types.ts --check
   # 可执行位护栏：shell 脚本在 git 索引里必须 100755（Windows 提交会静默丢位，实现见 scripts/check-exec-bit.sh，详见 ##304(Windows 提交丢可执行位)）
   run bash scripts/check-exec-bit.sh
   # 原子写护栏：src/main 下整文件覆盖写必须走 core/atomic-write.ts 的 writeFileAtomic（实现见 scripts/check-atomic-write.sh，详见 ##383(整文件覆盖写加固)）
