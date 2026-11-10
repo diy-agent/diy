@@ -107,3 +107,45 @@
 2. **保底 MUI + MUI X**：如果时间紧、需要马上有 DataGrid / TreeView，用它换开发速度，代价是给 M3 主题做一层映射。
 3. **@material/web 不是必选项**：M3 观感可以靠令牌 + 自长组件达成；保留 WA 只为我们确实需要它的成品件（card / split-panel）。
 4. 不变的是**分层**：组件层只依赖令牌与 CSS，不依赖具体库 —— 这样将来换库的代价局限在组件层。
+
+## 8. 复核两份外部评估（ChatGPT / Gemini，2026-11 组件库选型）
+
+两份都指向同一方向，与我们 §7 的结论一致（headless 原语 + 自有设计系统），差异在细节与可信度。
+
+### 8.1 共识（可信，采纳）
+
+1. **分层：行为 / 视觉 / 布局三件事分开**。headless（Base UI / Radix / React Aria）管行为与 a11y；
+   shadcn 是**源码分发**（组件代码落进自己仓库，可改）；Workbench 布局（分屏 / Tab 拖拽）另找专门方案。
+2. **不要指望任何组件库给出现成的 IDE 工作台**：Tree / Tabs / Command Palette / 分屏必须自研或拼装。
+3. **密度是 Token**，不是到处写 `p-2`：Compact / Comfortable / Spacious 三档，业务 View 只写语义组件。
+4. **重活交专用件**：编辑器 Monaco、终端 xterm.js、大列表 TanStack Virtual。
+
+### 8.2 需要打折扣 / 待核实
+
+| 说法 | 评价 |
+|---|---|
+| 「shadcn 已把 Base UI 设为新项目默认」 | 方向可信，**版本事实待核实**（不影响结论：两者都是 headless，可替换） |
+| 「Base UI 零运行时 DOM 开销」 | 夸大。headless 只是不带样式，JS 照样跑 |
+| 「shadcn 在极致高频 Mount/Unmount 下不如 Base UI 轻量」 | 无数据支撑，属推测；桌面工具的真实开销不在这一层 |
+| 「AI 写 shadcn 代码准确率最高」 | **可信且权重高**：我们的「LLM/单人可维护性」占 25% |
+| 「几十万行数据必须上 AG Grid Enterprise」 | 过度。IDE 里这类区域通常是日志/表格，TanStack Table + Virtual 足够；AG Grid 留作最后手段 |
+
+### 8.3 两份都漏掉的、对我们最关键的两点
+
+1. **视觉真源归属**：我们已经有一套**自己生成的 M3 令牌**（`pkgs.ts/ui/design`，seed → CSS）。
+   选组件库的第一判据是「它是否允许令牌说了算」——
+   shadcn 的默认视觉是 zinc + Tailwind 调色板，必须**换掉**：把 `@theme inline` 映射到 `--md-sys-color-*`
+   （`design/src/diy/tailwind.css` 已经有这一层），否则就是两套设计语言互相打架。
+   带自建主题系统的（MUI / Mantine / AntD）在这条上天然吃亏。
+2. **卡顿与组件库无关**：主进程 146 处同步 fs（含 274MB `readFileSync`）才是我们实测的病根。
+   换任何组件库都不改善首屏与交互延迟。
+
+### 8.4 定稿（React 路线下的组件层）
+
+```
+行为/无障碍   Radix（今天）→ 迁移到 Base UI（生态稳定后）   ※ shadcn 源码模式，组件落自己仓库
+视觉          M3 令牌（生成物）+ Tailwind @theme 映射；禁用组件库自带调色板
+密度          compact / comfortable / spacious 三档 Token
+布局          Dockview（分屏 + Tab 拖拽）先做 POC；不合用再自研
+重活          Monaco / xterm.js / TanStack Virtual / TanStack Table
+```
