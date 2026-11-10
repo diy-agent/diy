@@ -16,12 +16,17 @@
 import { chmodSync, cpSync, existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { publishDir, releaseManifest, workspacePackages } from './npm-publish-common.mjs';
+import { REPO_ROOT } from './workspace-dirs.mjs';
 
 const args = process.argv.slice(2);
 const flag = (name) => args.includes(`--${name}`);
+// 取值同时接受 `--x=v` 与 `--x v` 两种写法：只认等号形式时，`--variant app` 会被
+// 静默当成没传，回落到缺省值（2026-11-10 发布时就是这个「参数传了却不生效」，##522）
 const opt = (name, fallback) => {
-    const hit = args.find((a) => a.startsWith(`--${name}=`));
-    return hit ? hit.slice(name.length + 3) : fallback;
+    const eq = args.find((a) => a.startsWith(`--${name}=`));
+    if (eq) return eq.slice(name.length + 3);
+    const i = args.indexOf(`--${name}`);
+    return i >= 0 && args[i + 1] !== undefined ? args[i + 1] : fallback;
 };
 
 const appDirArg = args.find((a) => !a.startsWith('-'));
@@ -59,7 +64,8 @@ for (const entry of Object.values(pkg.bin ?? {})) {
     chmodSync(file, statSync(file).mode | 0o111);
 }
 
-const versions = workspacePackages(path.resolve(appDir, '../..'));
+// 同 npm-publish.mjs：仓根用唯一口径 REPO_ROOT，不靠 `../..` 推（##512 两层布局后不可靠）
+const versions = workspacePackages(REPO_ROOT);
 const manifest = releaseManifest(pkg, versions);
 manifest.main = './build/main/index.mjs';
 manifest.bin = pkg.bin;

@@ -132,7 +132,10 @@ fmt-fix() { run npx oxfmt --write .; }
 # 发行形态 = bin/（CLI 入口）+ build/（esbuild 产物）+ 生成的 package.json，由
 # scripts/npm-publish-app.mjs 组装到 dist/；仓内 package.json 的 private:true 只是护栏。
 # publish：build → 组装 dist → npm publish（--dry-run 只演练）
-dist() { build; run node ../../scripts/npm-publish-app.mjs . --prepare-only --variant "$DIY_VARIANT" "$@"; }
-publish() { build; run node ../../scripts/npm-publish-app.mjs . --variant "$DIY_VARIANT" "$@"; }
+# 变体参数取**构建目录名**（`build/app` → `app`），不取 `$DIY_VARIANT`：
+# 2026-11-05 起本 app 的产物与变体解耦（只有 build/app 一份），再按 lab/prod 找就会
+# 报「build/lab 不完整 —— 先 build」而这种错刚 build 完也照样出现（##522）。
+dist() { build; run node ../../scripts/npm-publish-app.mjs . --prepare-only --variant="$(basename "$(_build_dir)")" "$@"; }
+publish() { build; run node ../../scripts/npm-publish-app.mjs . --variant="$(basename "$(_build_dir)")" "$@"; }
 
 sha "$@"
