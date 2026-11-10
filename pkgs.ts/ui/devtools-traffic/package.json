@@ -1,0 +1,25 @@
+{
+    "name": "@diy-agent/devtools-traffic",
+    "version": "0.1.0",
+    "private": true,
+    "description": "devtools 插件：raw request log（应用发出去的每个 HTTP 请求 / 收到的响应）。只读；纯 rpc 客户端，宿主只需提供 invoke",
+    "type": "module",
+    "main": "./src/renderer-react.js",
+    "types": "./src/renderer-react.ts",
+    "exports": {
+        ".": {
+            "types": "./src/index.ts",
+            "default": "./src/index.js"
+        },
+        "./renderer-react": {
+            "types": "./src/renderer-react.ts",
+            "default": "./src/renderer-react.js"
+        }
+    },
+    "scripts": { "test": "vitest run" },
+    "dependencies": {
+        "@diy-agent/workbench-ui": "file:../workbench-ui"
+    },
+    "peerDependencies": { "react": "^19.0.0", "react-dom": "^19.0.0" },
+    "devDependencies": { "vitest": "^4.1.10" }
+}
