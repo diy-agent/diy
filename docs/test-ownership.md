@@ -76,6 +76,24 @@
 `single-instance`（锁的三态判定） · `compaction*` / `context*`（压缩与上下文的纯算法，上层造不出来） ·
 `model-pricing` / `cost-windows`（钱不能算错）。
 
+## 3.4 范本：`pkgs.ts/ui/chat-page/tests/intent/chat.intent.test.tsx`
+
+公共仓里可直接照抄的 UI 意图样板（4 条，**392 ms**）：
+
+| 写法 | 为什么 |
+|---|---|
+| `getByRole("textbox")` / `getByRole("button", { name })` | 按用户/可访问名找元素；找不到就说明用户也找不到 |
+| `userEvent.type` / `{Enter}` | 走真事件链（受控输入必须这样，直接赋 `value` React 不认） |
+| 只断言两件事：**界面文本** + **发出去的 rpc**（`calls`） | 重构改 class / 结构不会假红 |
+| 没给 handler 的方法**一调就抛** | 静默失败变成显式失败 |
+| 失败路径也测（发送报错 ⇒ 出现「出错了」、输入不丢） | 意图不只是「顺利时对」 |
+
+配套设置：`vitest.config.ts` 的 `include` 要收 `.tsx`，并开 `esbuild.jsx = "automatic"`；
+根 devDeps 需要 `@testing-library/dom` + `@testing-library/user-event`（happy-dom 已有）。
+
+> 私有仓（`_diy`）里的 dev-ui 测试**不能**当公共范例：它 import 私有包。
+> 两个仓的写法要一致，但样板以 `diy` 仓这份为准。
+
 ## 4. 复核工具（不靠记忆，靠跑）
 
 ```bash
