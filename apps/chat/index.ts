@@ -102,7 +102,7 @@ function chatConfig(home: string | undefined, sessions: unknown, botStore: BotSt
             // 工具能力：与旧宿主同一份 buildTools（cwd = bot 工作目录、自杀护栏同源）
             toolsFor: (bot) => botToolsFor(home, bot.id).tools,
             // system 段（##530）：AGENTS.md 链 + 知识库 + 技能，建 agent 时算一次
-            systemFor: (bot) => systemForBot(home, bot.id, bot.instructions ?? ""),
+            systemFor: (bot) => systemForBot(home, bot),
         }),
     };
 }
@@ -116,24 +116,34 @@ function chatConfig(home: string | undefined, sessions: unknown, botStore: BotSt
  * ⚠ 只有 `chain` / `kb` / `skills` 三个 + 必需的 `diy` / `cwd`：
  * context 包的 schema 对这几个是必填的，少一个 `assembleFromProviders` 就抛。
  */
-function systemForBot(home: string, botId: string, instructions: string): string {
-    const workspace = workspaceOf(home, botId);
+function systemForBot(home: string, bot: { id: string; instructions?: string; projectRoot?: string }): string {
+    const workspace = workspaceOf(home, bot.id);
+    /**
+     * 找文件用的根（##538）：**不是** workspace。
+     *
+     * workspace（`~/.diy2/bots/<id>`）是数据目录，从它向上只能找到 `~/AGENTS.md`；
+     * 而仓库的 AGENTS.md 与 `.diy/knowledge` 都在**项目根**下。优先级：
+     *   bot.json 的 projectRoot（UI 可配）
+     *   > DIY_PROJECT_ROOT（命令行启动时是 cwd）
+     *   > workspace（兜底：至少还能拿到 `~/AGENTS.md`）
+     */
+    const projectRoot = bot.projectRoot ?? process.env["DIY_PROJECT_ROOT"] ?? workspace;
     return systemOf({
-        instructions,
+        instructions: bot.instructions ?? "",
         providers: [
             { key: "diy", provide: () => ({ cli: "", home }) },
             {
                 key: "cwd",
                 provide: () => ({ path: workspace, note: "", isFallback: false, isTaskDir: false, isAppDir: false }),
             },
-            { key: "chain", provide: () => agentsChain({ appHome: join(home, "__no_app__"), cwd: workspace }) },
+            { key: "chain", provide: () => agentsChain({ appHome: join(home, "__no_app__"), cwd: projectRoot }) },
             {
                 key: "kb",
                 provide: () => {
                     const byPath = new Map<string, { path: string; desc: string; sections: number; scope: string }>();
                     for (const { dir, scope } of [
                         { dir: join(home, "knowledge"), scope: "global" },
-                        { dir: kbRootOf(workspace), scope: "project" },
+                        { dir: kbRootOf(projectRoot), scope: "project" },
                     ]) {
                         for (const e of scanKb(dir).entries) {
                             byPath.set(e.path, { path: e.path, desc: e.desc, sections: e.sections, scope });
@@ -142,7 +152,7 @@ function systemForBot(home: string, botId: string, instructions: string): string
                     return byPath.size === 0 ? undefined : { entries: [...byPath.values()] };
                 },
             },
-            { key: "skills", provide: () => skillsOf({ cwd: workspace, globalRoot: join(homedir(), ".agents") }) },
+            { key: "skills", provide: () => skillsOf({ cwd: projectRoot, globalRoot: join(homedir(), ".agents") }) },
         ] as never,
     });
 }
