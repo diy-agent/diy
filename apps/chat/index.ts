@@ -8,7 +8,11 @@ import * as botConfigPageMain from "@diy-agent/bot-config-page";
 import * as chatPageMain from "@diy-agent/chat-page/main";
 import * as modelConfigPageMain from "@diy-agent/model-config-page";
 import type { PluginEntry } from "@diy-agent/workbench";
-import { asToolSet, createAgentHost, createFileBotStore, modelChoices, workspaceOf, type BotStore } from "@diy-agent/bot";
+import { asToolSet, createAgentHost, createFileBotStore, modelChoices, systemOf, workspaceOf, type BotStore } from "@diy-agent/bot";
+import { agentsChain } from "@diy-agent/agents-chain";
+import { kbRootOf, scanKb } from "@diy-agent/kb";
+import { skillsOf } from "@diy-agent/skills";
+import { homedir } from "node:os";
 import { collectSelfInfo, judgeSelfKill } from "@diy-agent/tools";
 import { os } from "@diy-agent/os";
 import { RunRegistry, makeJobTool } from "@diy-agent/jobs/node";
@@ -82,8 +86,50 @@ function chatConfig(home: string | undefined, sessions: unknown, botStore: BotSt
             models: () => modelChoices(home),
             // 工具能力：与旧宿主同一份 buildTools（cwd = bot 工作目录、自杀护栏同源）
             toolsFor: (bot) => botToolsFor(home, bot.id).tools,
+            // system 段（##530）：AGENTS.md 链 + 知识库 + 技能，建 agent 时算一次
+            systemFor: (bot) => systemForBot(home, bot.id, bot.instructions ?? ""),
         }),
     };
+}
+
+/**
+ * 一个 bot 的 system 段（##530）。
+ *
+ * 为什么在宿主算而不是 `@diy-agent/bot` 里算：`home` / `workspace` 是宿主概念，
+ * bot 包不该知道 diy 的目录约定（沿用 `systemOf` 的「providers 由调用方给」那条边界）。
+ *
+ * ⚠ 只有 `chain` / `kb` / `skills` 三个 + 必需的 `diy` / `cwd`：
+ * context 包的 schema 对这几个是必填的，少一个 `assembleFromProviders` 就抛。
+ */
+function systemForBot(home: string, botId: string, instructions: string): string {
+    const workspace = workspaceOf(home, botId);
+    return systemOf({
+        instructions,
+        providers: [
+            { key: "diy", provide: () => ({ cli: "", home }) },
+            {
+                key: "cwd",
+                provide: () => ({ path: workspace, note: "", isFallback: false, isTaskDir: false, isAppDir: false }),
+            },
+            { key: "chain", provide: () => agentsChain({ appHome: join(home, "__no_app__"), cwd: workspace }) },
+            {
+                key: "kb",
+                provide: () => {
+                    const byPath = new Map<string, { path: string; desc: string; sections: number; scope: string }>();
+                    for (const { dir, scope } of [
+                        { dir: join(home, "knowledge"), scope: "global" },
+                        { dir: kbRootOf(workspace), scope: "project" },
+                    ]) {
+                        for (const e of scanKb(dir).entries) {
+                            byPath.set(e.path, { path: e.path, desc: e.desc, sections: e.sections, scope });
+                        }
+                    }
+                    return byPath.size === 0 ? undefined : { entries: [...byPath.values()] };
+                },
+            },
+            { key: "skills", provide: () => skillsOf({ cwd: workspace, globalRoot: join(homedir(), ".agents") }) },
+        ] as never,
+    });
 }
 
 /**

@@ -129,6 +129,15 @@ export interface CreateAgentOptions {
    */
   tools?: unknown
   maxSteps?: number
+  /**
+   * system 段（##530）：**每轮**拼在这轮 messages 最前面，不进历史。
+   *
+   * 为什么不进 history：history 是「对话」的呈现（UI 按条渲染、压缩按轮切），
+   * 塞一条 20KB 的 system 进去会让界面和压缩判据都失真。而 provider 侧（ai-sdk）
+   * 本来就要求 system 作为 messages[0] 传 —— 每轮现拼正好与「段首快照」语义一致：
+   * 内容由调用方在会话建立时算好，这里只负责每轮带上。
+   */
+  system?: string
 }
 
 export interface Agent {
@@ -291,12 +300,17 @@ export function createAgent(opts: CreateAgentOptions): Agent {
       }
     }
 
-    const visible = delivered()
+    const wire = delivered()
       .filter((e) => e.kind === 'message' || e.kind === 'checkpoint')
       .map((e) => ({
         role: e.kind === 'checkpoint' ? 'user' : (e.role ?? 'user'),
         content: e.content ?? '',
       }))
+    // system 每轮现拼在最前（不进历史，见 `CreateAgentOptions.system` 的注释）
+    const visible =
+      opts.system === undefined || opts.system === ''
+        ? wire
+        : [{ role: 'system', content: opts.system }, ...wire]
 
     let text = ''
     // ⚠️ LLM 执行**不占**状态队列：这期间 post() 仍能立即更新状态
