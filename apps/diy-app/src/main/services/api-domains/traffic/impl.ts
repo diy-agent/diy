@@ -8,14 +8,39 @@ import type { ServerBinding } from "@diy-agent/rpc";
 import { traffic } from "../../../core/traffic";
 import { openUrlWith } from "../../../core/open-url";
 import { trafficService } from "./api";
+import { clearTraffic, recentTraffic, trafficStats } from "../../../core/traffic-log";
+
+/** 内存窗口查询：entries + 窗口计数一起回（界面要显示「N/500」） */
+function recentWindow(q: Parameters<typeof recentTraffic>[0]): {
+    entries: Record<string, unknown>[];
+    count: number;
+    bytes: number;
+    dropped: number;
+} {
+    const st = trafficStats();
+    return {
+        entries: recentTraffic(q) as unknown as Record<string, unknown>[],
+        count: st.count,
+        bytes: st.bytes,
+        dropped: st.dropped,
+    };
+}
 
 export function bindTraffic(server: ServerBinding): void {
     trafficService.bind(server, {
         snapshot: async ({ input }) => traffic.snapshot(input.withRecords ?? true),
         clear: async () => {
             traffic.clear();
+            clearTraffic();
             return { status: "ok" };
         },
+        recent: async ({ input }) =>
+            recentWindow({
+                ...(input.n === undefined ? {} : { n: input.n }),
+                ...(input.kind === undefined ? {} : { kind: input.kind }),
+                ...(input.taskUri === undefined ? {} : { taskUri: input.taskUri }),
+                ...(input.since === undefined ? {} : { since: input.since }),
+            }),
         setFullCapture: async ({ input }) => {
             traffic.setFullCapture(input.on);
             return traffic.snapshot();

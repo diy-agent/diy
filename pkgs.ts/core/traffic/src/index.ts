@@ -201,6 +201,13 @@ export class TrafficStore {
         return out.reverse();
     }
 
+    /** 清空内存窗口（文件不动）。`traffic.clear` 用它 —— 界面清屏不该删磁盘账本。 */
+    clear(): void {
+        this.ring.length = 0;
+        this.sizes.length = 0;
+        this.bytes = 0;
+    }
+
     /** 当前窗口的计数（给 UI 状态栏 / `traffic stats`） */
     stats(): TrafficStats {
         return {

@@ -18,6 +18,7 @@
 
 import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { join } from "node:path";
+import { TrafficStore, type RecentQuery, type TrafficEntry, type TrafficStats } from "@diy-agent/traffic";
 import { diyHome } from "./state";
 
 /** 当前写入格式版本。改结构时：加字段不动它，改语义/删字段才进位大版本。 */
@@ -138,9 +139,54 @@ class Writer {
 
 const writer = new Writer();
 
+/**
+ * 内存窗口 + 订阅（##532）。
+ *
+ * `persist: false` 是刻意的：文件那一层仍由上面的 `Writer` 负责 ——
+ * `LogLoc` 的 `offset` 来自 `writeSync` 的返回值（按位置随机读要用），
+ * 而 `TrafficStore` 的落盘是按天整行追加，拿不到 offset。等 `readLog` 改成
+ * 「先查窗口、超窗才回文件」之后，这两层才能合并（见 ##533 的遗留）。
+ *
+ * 现在它提供的是**另外两件**事：µs 级的 `recent()`（agent 查刚发那步）
+ * 与 `subscribe()`（UI 状态栏 / 未来的 `diy traffic tail -f`）。
+ */
+const store = new TrafficStore({ persist: false });
+
+/** 内存窗口里最近的一批（同步、µs 级） */
+export function recentTraffic(query: RecentQuery = {}): TrafficEntry[] {
+    return store.recent(query);
+}
+
+/** 订阅新记录（同步推，cb 不许阻塞）；返回取消函数 */
+export function subscribeTraffic(cb: (e: TrafficEntry) => void): () => void {
+    return store.subscribe(cb);
+}
+
+/** 清空内存窗口（文件不动 —— 界面清屏不该删磁盘账本） */
+export function clearTraffic(): void {
+    store.clear();
+}
+
+/** 窗口计数（给 UI 状态栏用） */
+export function trafficStats(): TrafficStats {
+    return store.stats();
+}
+
 /** 追加一条记录（调用方保证 payload 可 JSON 序列化；失败会抛，由调用方兜底） */
 export function appendRecord(payload: unknown): LogLoc {
-    return writer.append(payload);
+    const loc = writer.append(payload);
+    // 文件写成功了才进内存窗口（反过来的话，写失败那几条会在 recent 里"幽灵存在"）
+    try {
+        const p = payload as Record<string, unknown>;
+        store.push({
+            ...p,
+            kind: typeof p['kind'] === 'string' ? p['kind'] : 'http',
+            at: typeof p['ts'] === 'number' ? p['ts'] : Date.now(),
+        });
+    } catch {
+        /* 内存层的失败不该让一条已经落盘的记录报错 */
+    }
+    return loc;
 }
 
 /**
