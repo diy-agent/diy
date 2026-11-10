@@ -22,6 +22,17 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { TITLE } from "./title.js";
 
+const TRAFFIC = new Map<string, TrafficStore>();
+
+/** 每个数据根一个 TrafficStore（同 `home` 重复进来必须拿到同一个实例，否则订阅与窗口各持一份） */
+function trafficFor(home: string): TrafficStore {
+    const hit = TRAFFIC.get(home);
+    if (hit !== undefined) return hit;
+    const store = new TrafficStore({ persist: true, dir: join(home, "log", "network") });
+    TRAFFIC.set(home, store);
+    return store;
+}
+
 const SHELLS = detectShells(); // 本机 shell 能力（探测一次；shell 路径不会变）
 // 后台 run 表：一个数据根一张（进程内）。**不传 notifier = silent**（只落账不通知）——
 // bot 目前没有「下一轮唤醒」通道，模型靠 `job wait` 同步等（##515 3b 口径）。
@@ -94,17 +105,6 @@ function chatConfig(home: string | undefined, sessions: unknown, botStore: BotSt
             systemFor: (bot) => systemForBot(home, bot.id, bot.instructions ?? ""),
         }),
     };
-}
-
-const TRAFFIC = new Map<string, TrafficStore>();
-
-/** 每个数据根一个 TrafficStore（同 `home` 重复进来必须拿到同一个实例，否则订阅与窗口各持一份） */
-function trafficFor(home: string): TrafficStore {
-    const hit = TRAFFIC.get(home);
-    if (hit !== undefined) return hit;
-    const store = new TrafficStore({ persist: true, dir: join(home, "log", "network") });
-    TRAFFIC.set(home, store);
-    return store;
 }
 
 /**
