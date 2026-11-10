@@ -235,6 +235,7 @@ async function main() {
       name: "diy",
       version: APP_VERSION,
       router: apiDef.diy,
+      rpcPrefix: "diy.",
       transport,
       // 路径参数（如 tool read 的 path）按**调用者**目录解析：入口脚本已 cd 到应用目录，
       // 进程 cwd 不再可信，故由 DIY_CALLER_CWD 显式带过来（见 diy.sh / bin/diy）。
