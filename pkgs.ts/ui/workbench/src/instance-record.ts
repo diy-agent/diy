@@ -207,6 +207,37 @@ export function writeSelfRecord(options: SelfRecordOptions): string {
 }
 
 /** 退出清理；不存在不算错 */
+/**
+ * 回填本实例记录里的运行期字段（端口等）—— **就地改、原子写**。
+ *
+ * 为什么要单独一个函数：端口只有 bind 之后才知道，而记录是启动瞬间写的（那时候还没端口）。
+ * 以前 diy-app 自己有一份 `updateRecord`，dev 没有 ⇒ 注册表里 dev 的 `port` 永远 null，
+ * 远程发现器只可能靠 `/ping` 看到它，连不上。这里把「回填」收成共用的一份。
+ */
+export function updateSelfRecord(
+    patch: { port?: number | null; pingPort?: number | null; name?: string | null },
+    dir: string = registryDir(),
+    pid: number = process.pid,
+): boolean {
+    const file = recordPath(dir, pid);
+    let raw: string;
+    try {
+        raw = readFileSync(file, "utf-8");
+    } catch {
+        return false; // 记录还没写（或已被清）—— 回填不是关键路径，静默跳过
+    }
+    let current: Record<string, unknown>;
+    try {
+        current = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+        return false; // 坏文件不在这里修，交给读侧
+    }
+    const next = { ...current, ...patch, updatedAt: localISOString() };
+    writeFileSync(`${file}.tmp`, `${JSON.stringify(next, null, 2)}\n`);
+    renameSync(`${file}.tmp`, file);
+    return true;
+}
+
 export function removeSelfRecord(dir: string = registryDir(), pid: number = process.pid): void {
     try {
         unlinkSync(recordPath(dir, pid));

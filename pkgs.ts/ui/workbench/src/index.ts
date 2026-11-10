@@ -29,7 +29,7 @@ export { WorkbenchError } from "./errors.js";
 export { orderPlugins, loadPages } from "./loader.js";
 export { PAGE_INVOKE_CHANNEL, PAGE_LIST_CHANNEL, RPC_CHANNEL } from "./channels.js";
 export { sidecarWindowOptions, type DisplayLike, type WorkArea } from "./window.js";
-export { registryDir, writeSelfRecord, removeSelfRecord, repoRootOf, instanceUri, instanceWindowTitle } from "./instance-record.js";
+export { registryDir, writeSelfRecord, updateSelfRecord, removeSelfRecord, repoRootOf, instanceUri, instanceWindowTitle } from "./instance-record.js";
 export { cdpSwitchValue, readDevToolsUrl, readDevToolsPort, waitDevToolsPort } from "./cdp.js";
 export { acquireSingleInstance, configureUserData, userDataDirOf } from "./instance-home.js";
 export type { PluginEntry } from "./loader.js";
