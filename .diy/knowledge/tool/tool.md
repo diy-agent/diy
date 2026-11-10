@@ -93,7 +93,9 @@ TS 用 npm workspaces（`package.json` + `package-lock.json`）；Python 遗留�
 
 ## publish
 
-npm 发布（`@diy-agent`）：根 `./sha.sh publish [--dry-run]`，认证 `NPM_PUBLISH_TOKEN`；仓内 `package.json` 恒指 `src/*.ts` 且留 `private:true`（护栏）
+npm 发布（`@diy-agent`）：根 `./sha.sh publish [--dry-run]`，认证 `NPM_PUBLISH_TOKEN`；仓内 `package.json` 恒指 `src/*.ts` 且留 `private:true`（护栏）。
+
+**改版本用 `./sha.sh release`**（##522）：`release status` 看本地 vs registry；`release bump patch|minor|major [--only a,b] [--set 包=版本]` 一处决定、三处同步（包 `package.json` / 指向它的内部依赖范围 / `package-lock.json`），并重写 sync 印记。它**只改文件不提交**，发布仍走 `publish`。可发布清单唯一来源 = `scripts/publish-targets.mjs`（`publish` 与 `release` 共用，别再往 sha.sh 里加名字）。
 
 ## py-script
 

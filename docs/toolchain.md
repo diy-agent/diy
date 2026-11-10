@@ -54,7 +54,8 @@ build / check / test / lab 入口先跑只读快检：workspace 链接缺失或�
 
 ## publish — npm（`@diy-agent` scope）
 
-- 根 `./sha.sh publish [--dry-run]` → 清单 `_npm_publish_pkgs`（**顺序 = 依赖在前**）：`diy-rpc` / `diy-ui` / session / session-store-jsonl / workbench / workbench-ui / model-catalog / model-config-page / llm-provider / bot / chat-page / workbench-plugin / **apps/chat**。
+- 根 `./sha.sh publish [--dry-run]` → 清单 **`scripts/publish-targets.mjs`**（唯一来源；`release` 工具共用）：`diy-rpc` / `diy-ui` / session / session-store-jsonl / workbench / workbench-ui / model-catalog / model-config-page / llm-provider / bot / chat-page / workbench-plugin / dev-paths / **apps/chat**。
+- **改版本**：`./sha.sh release status`（本地 vs registry）/ `release bump patch|minor|major [--only a,b] [--set 包=版本]`（改包版本 + 同步内部依赖范围 + `package-lock.json` + sync 印记；**不提交、不发包**）——见 `scripts/release.mjs`。
 - 能力包 publish = `tsc -p tsconfig.build.json` + `scripts/npm-publish.mjs`：在 `lib/` 生成发行版 `package.json`（`exports` 指 `*.js` + `.d.ts`）→ `npm publish lib`。
 - app publish = `apps/chat/sha.sh publish` → `scripts/npm-publish-app.mjs` 把 `bin/` + `build/<variant>/` 组装到 `dist/`（`main` = `build/main/index.mjs`，`bin` = `diy2`）→ `npm publish dist`。
 - 仓内 `package.json` 恒指 `src/*.ts` 且留 `private:true`（护栏，别为了让 publish 通过而改）；发行物由脚本剥离。

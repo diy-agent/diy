@@ -681,16 +681,18 @@ ci() {
     run ls -lh ./dist/
 }
 
-# 发布到 npm（@diy-agent scope）。清单单列：**只有**做了 npm 分发准备的包才有 publish 子命令，
-# 不能沿用 _ws_run（其余 workspace 包会以「未知命令」中止）。
-_npm_publish_pkgs=(
-  pkgs.ts/core/rpc pkgs.ts/ui/core pkgs.ts/agent/session pkgs.ts/agent/store-jsonl
-  pkgs.ts/ui/workbench pkgs.ts/ui/workbench-ui pkgs.ts/model/catalog pkgs.ts/ui/model-config
-  pkgs.ts/model/provider pkgs.ts/agent/bot pkgs.ts/ui/chat-page pkgs.ts/ui/workbench-plugin apps/chat
-  pkgs.ts/core/dev-paths
-)
+# 发布到 npm（@diy-agent scope）。清单**只在一处**（scripts/publish-targets.mjs）：
+# 发版工具 release.mjs 也要用它挑 bump 对象，两份必漂。
+# 为什么不用 _ws_run：只有做过 npm 分发准备的包才有 publish 子命令，其余包会「未知命令」中止。
+
+# 发版工具（##522）：bump 版本 + 同步仓内引用 + 看谁还没发。改文件不提交，发布仍走 publish。
+sha.def "release" --desc "发版工具：status | bump patch|minor|major [--only a,b] [--set 包=版本] [--dry-run] | self-test"
+release() { run node scripts/release.mjs "$@"; }
 
 publish() {
+  # 清单懒加载（每个子命令都起一个 node 进程不值）：只在真发布时才读。
+  local -a _npm_publish_pkgs
+  readarray -t _npm_publish_pkgs < <(node scripts/publish-targets.mjs)
   # CI（github-actions-cicd）里没有 ~/.bashrc 与 token ⇒ 跳过而非报错；本地有 token 照发
   if [[ -z "${NPM_PUBLISH_TOKEN:-}" ]] && ! grep -q '^export NPM_PUBLISH_TOKEN=' "$HOME/.bashrc" 2>/dev/null; then
     echo "${warning}跳过 npm 发布：未找到 NPM_PUBLISH_TOKEN（环境变量或 ~/.bashrc）${reset}"
