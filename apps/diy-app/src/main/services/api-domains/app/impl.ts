@@ -5,6 +5,7 @@
  */
 import { arch, platform, release, totalmem, freemem } from "node:os";
 import type { ServerBinding } from "@diy-agent/rpc";
+import { readDevToolsUrl } from "@diy-agent/workbench";
 import { AppConfig } from "../../../core/app-config";
 import * as state from "../../../core/state";
 import { currentGitBranch, homeDisplayOf, repoDisplayOf } from "../../../core/instance-identity";
@@ -24,18 +25,10 @@ export function bindApp(server: ServerBinding): void {
             // CDP 连接地址：Electron 以 `--remote-debugging-port=0` 启动，实际端口写进
             // `userData/DevToolsActivePort`（首行端口、次行 path）—— renderer 读不到文件系统，
             // 只能由 main 侧读出来回给「复制调试信息」（口径与 CLI 的 printCdpHint 同源）。
-            const cdp = await (async () => {
-                const { readFileSync } = await import("node:fs");
-                const { join } = await import("node:path");
-                try {
-                    const [port, path] = readFileSync(join(ac.electronUserData, "DevToolsActivePort"), "utf-8")
-                        .split("\n")
-                        .map((x) => x.trim());
-                    return port && path ? `ws://127.0.0.1:${port}${path}` : "";
-                } catch {
-                    return ""; // CDP 未启用 / serve 模式无此文件
-                }
-            })();
+            // CDP 连接地址：口径收在 `@diy-agent/workbench` 的 cdp.ts（与 dev 同一份实现）——
+            // Electron 以 `--remote-debugging-port=0` 启动，实际端口由 Chromium 写进
+            // `userData/DevToolsActivePort`；renderer 读不到文件系统，只能 main 侧读了回给 UI。
+            const cdp = readDevToolsUrl(ac.electronUserData) ?? "";
             return {
                     pid: process.pid,
                     uptime: process.uptime(),
