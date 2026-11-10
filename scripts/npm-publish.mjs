@@ -22,6 +22,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { publishDir, releaseManifest, workspacePackages } from './npm-publish-common.mjs';
+import { REPO_ROOT } from './workspace-dirs.mjs';
 
 const args = process.argv.slice(2);
 const outFlag = args.find((a) => a.startsWith('--out='));
@@ -71,7 +72,10 @@ for (const [key, value] of Object.entries(pkg.exports)) {
     };
 }
 
-const versions = workspacePackages(path.resolve(pkgDir, '../..'));
+// 仓根**不能**用 `path.resolve(pkgDir, '../..')` 推：##512 把包布局改成 pkgs.ts/<组>/<包>（两层）后，
+// 那个表达式对 pkgs.ts/agent/session 得到的是 pkgs.ts —— 于是 versions 为空，任何 `@diy-agent/*`
+// 依赖都报「在仓内找不到对应 workspace 包」（2026-11-10 发布就倒在这里）。用唯一口径 REPO_ROOT。
+const versions = workspacePackages(REPO_ROOT);
 const out = releaseManifest(pkg, versions);
 const rootEntry = distExports['.'];
 out.main = rootEntry.default;

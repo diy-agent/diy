@@ -27,6 +27,8 @@ const bot: BotView = {
     needsModel: false,
     sessionCount: 0,
     createdAt: '2026-11-10T00:00:00.000Z',
+    // ##526 起 BotView 有 updatedAt（必填）：快照投影里两者同源，夹具跟上
+    updatedAt: '2026-11-10T00:00:00.000Z',
 };
 const snap = (over: Partial<BotChatSnapshot> = {}): BotChatSnapshot => ({
     bots: [bot],
