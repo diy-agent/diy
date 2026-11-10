@@ -182,6 +182,7 @@ function persistable(config: BotConfig): Record<string, unknown> {
         ...(config.primarySessionId === undefined ? {} : { primarySessionId: config.primarySessionId }),
         ...(config.reasoningEffort === undefined ? {} : { reasoningEffort: config.reasoningEffort }),
         ...(config.maxOutputTokens === undefined ? {} : { maxOutputTokens: config.maxOutputTokens }),
+        ...(config.projectRoot === undefined ? {} : { projectRoot: config.projectRoot }),
         createdAt: config.createdAt,
         updatedAt: config.updatedAt,
     };

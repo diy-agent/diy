@@ -165,6 +165,9 @@ export async function main(argv = process.argv.slice(2)) {
                 ...process.env,
                 DIY_CLI: process.argv[1] ?? "diy2",
                 DIY_HOME: process.env["DIY_HOME"] ?? join(homedir(), ".diy2"),
+                // 项目根（##538）：bot 的 workspace 是数据目录，项目知识库在 `<repo>/.diy/knowledge`。
+                // 从命令行启动时 cwd 就是仓库；从 Finder 启动时没有 cwd，靠 bot.json 的 projectRoot。
+                ...(process.env["DIY_PROJECT_ROOT"] === undefined ? { DIY_PROJECT_ROOT: process.cwd() } : {}),
             },
         });
         child.on("error", (cause) => {

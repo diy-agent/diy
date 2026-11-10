@@ -29,6 +29,14 @@ export interface BotConfig {
      * UI 见到它就拦住，要求补选模型；补选后写回时自然消失。
      */
     readonly needsModel?: boolean;
+    /**
+     * 这个 bot 在哪个仓库干活（绝对路径）。缺省 = 走 `DIY_PROJECT_ROOT` 或 workspace。
+     *
+     * 为什么需要它（##538）：bot 的 `workspace` 是**数据目录**（`~/.diy2/bots/<id>`），
+     * 而项目知识库在 `<repo>/.diy/knowledge` —— 从数据目录向上找永远找不到仓库，
+     * 于是 kb 节一直是空的（实测 system 8461 字，没有一条别 `## <aspect>` 条目）。
+     */
+    readonly projectRoot?: string;
     /** 推理强度档位；未指定 = 跟随模型缺省 */
     readonly reasoningEffort?: string;
     /** 输出软上限（tokens）；未指定 = 跟随场景缺省 */

@@ -184,6 +184,17 @@ export interface CliConfig<TRouter extends _Router | _AnyProcedureMeta> {
    */
   cliRootPath?: string | string[];
   /**
+   * RPC 方法名的**根前缀**（如 `"diy."`）。
+   *
+   * 为什么需要：`router` 一般由 `apiDef.diy` 这棵**子树**传入，`proc.path` 因此是相对路径
+   * （`app.info`）。而 binding 注册的是全名（`diy.app.info`）—— 漏了这层前缀，
+   * CLI 会回 `Unknown method: app.info`。
+   *
+   * 2026-11 之前靠 `RpcSchema.bindNames` 回写的 `meta.name` 兜住；`bindNames` 退役后
+   * 必须由调用方显式给出。
+   */
+  rpcPrefix?: string;
+  /**
    * 解析路径参数（`resolvePath` 标记）的基准目录。
    * 必须由入口传**调用者**的 cwd —— 入口脚本普遍先 cd 到应用目录再 exec
    * （diy.sh / bin/diy 都这样），那时 process.cwd() 已不是用户敲命令的目录。
@@ -358,7 +369,7 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
     const desc = procDesc(def);
     // 路由键用 RPC 全名（def.name，router() 回写）。当 router 是最外层 group（如 diy）被解包时，
     // proc.path 会丢失 "diy." 前缀，与 binding 注册的全名不匹配，故路由一律用 def.name。
-    const rpcName = def.name ?? proc.path;
+    const rpcName = def.name ?? `${this.config.rpcPrefix ?? ''}${proc.path}`;
 
     /**
      * 结果派生的退出码：在 try **之外**退出。
