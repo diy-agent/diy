@@ -5,6 +5,7 @@ import { getRendererActions, type LayoutChanges } from "./renderer-actions";
 import type { ToastType } from "../store/notificationStore";
 import { personaDrawerStore } from "../store/personaDrawerStore";
 import { apiDef } from "../../main/services/api-def";
+import { uiService } from "../../main/services/api-domains/ui/api";
 import { diyService } from "./rpc";
 import { editTask } from "./task-edit";
 import { taskStore } from "../store/taskStore";
@@ -30,7 +31,10 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
   const binding = new ChannelServerBinding(transport);
   const ui = apiDef.diy.ui;
 
-  binding._on("diy.ui.component.list", ui.component.list, async () => {
+  // 全部 handler 一次性交给 `uiService.bind` —— 形状与 `diy.ui` 子树同构。
+  uiService.bind(binding, {
+    component: {
+      list: async () => {
     // TODO: 动态扫描注册的组件
     return {
       status: "ok",
@@ -42,65 +46,75 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
         ],
       },
     };
-  });
-
-  binding._on("diy.ui.component.status", ui.component.status, async () => {
+  },
+      status: async () => {
     // TODO: 从组件 Store 读取真实状态
     return {
       status: "ok",
       data: { visible: true, state: "ready" },
     };
-  });
-
-  binding._on("diy.ui.page.info", ui.page.info, async () => ({
+  }
+    },
+    page: {
+      info: async () => ({
     status: "ok",
     data: {
       title: document.title,
       url: window.location.href,
       ready: document.readyState === "complete",
     },
-  }));
-
-  binding._on("diy.ui.page.navigate", ui.page.navigate, async ({ input }) => {
+  }),
+      navigate: async ({ input }) => {
     const nav = getRendererActions().navigate;
     if (!nav) return { status: "error", data: { reason: "renderer actions 未就绪" } };
     nav(input.page);
     const snap = currentSnapshot();
     return { status: "ok", data: { rev: snap.rev, uiRev: snap.uiRev, active: snap.active } };
-  });
-
-  binding._on("diy.ui.page.focus", ui.page.focus, async ({ input }) => {
+  },
+      focus: async ({ input }) => {
     getRendererActions().focus?.(input.uri);
     return { status: "ok" };
-  });
-
-  // view 内部折叠框的展开/折叠（与 viewarea 开合是两件事）
-  binding._on("diy.ui.view.expand", ui.view.expand, async ({ input }) => {
+  },
+      toast: async ({ input }) => {
+    getRendererActions().toast?.(input.message, (input.level as ToastType) ?? "info");
+    return { status: "ok" };
+  }
+    },
+    view: {
+      expand: async ({ input }) => {
     getRendererActions().setView?.(input.key, input.open !== "closed");
     return { status: "ok" };
-  });
-
-  // 人物编辑抽屉（##518）：状态在 personaDrawerStore，rpc 只转发
-  binding._on("diy.ui.persona.open", ui.persona.open, async ({ input }) => {
+  },
+      set: async ({ input }) => {
+    const pageId = input.page ?? "task-run";
+    const ctx = input.ctx ?? null;
+    // 依赖倒置的代价：写错 view/page/ctx 没有类型错误，只能运行时拦（判据与渲染层共用）
+    const bad = checkViewTarget(input.view, pageId, ctx);
+    if (bad) throw new Error(bad);
+    getRendererActions().setViewVisible?.(pageId, input.view, ctx, input.open !== "closed");
+    return { status: "ok" };
+  }
+    },
+    persona: {
+      open: async ({ input }) => {
     personaDrawerStore.open(input.id);
     return { status: "ok" };
-  });
-  binding._on("diy.ui.persona.close", ui.persona.close, async () => {
+  },
+      close: async () => {
     personaDrawerStore.close();
     return { status: "ok" };
-  });
-  binding._on("diy.ui.persona.state", ui.persona.state, async () => {
+  },
+      state: async () => {
     return { status: "ok", data: { open: personaDrawerStore.isOpen(), id: personaDrawerStore.target() } };
-  });
-
-  // 布局读 / 写 / 复位（CLI 操纵 UI 状态的第一种测试能力）
-  binding._on("diy.ui.layout.get", ui.layout.get, async ({ input }) => {
+  }
+    },
+    layout: {
+      get: async ({ input }) => {
     const snap = getRendererActions().getLayout?.(input.page, input.ctx ?? null);
     if (!snap) throw new Error(`未知 page: ${input.page}`);
     return { status: "ok", data: { ...snap, layout: snap.layout as never } };
-  });
-
-  binding._on("diy.ui.layout.set", ui.layout.set, async ({ input }) => {
+  },
+      set: async ({ input }) => {
     const changes: LayoutChanges = {};
     // cols/rows 在 renderer 侧解析成 TrackSize[]（CLI 只传简写串）
     if (input.cols !== undefined) {
@@ -118,33 +132,21 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
     if (input.maximize !== undefined) changes.maximize = input.maximize || null;
     getRendererActions().setLayout?.(input.page, changes);
     return { status: "ok" };
-  });
-
-  binding._on("diy.ui.layout.reset", ui.layout.reset, async ({ input }) => {
+  },
+      reset: async ({ input }) => {
     getRendererActions().resetLayout?.(input.page);
     return { status: "ok" };
-  });
-
-  // view 级隐藏/显示（第三件事：某 view 实例在 area 里的去留）
-  binding._on("diy.ui.view.set", ui.view.set, async ({ input }) => {
-    const pageId = input.page ?? "task-run";
-    const ctx = input.ctx ?? null;
-    // 依赖倒置的代价：写错 view/page/ctx 没有类型错误，只能运行时拦（判据与渲染层共用）
-    const bad = checkViewTarget(input.view, pageId, ctx);
-    if (bad) throw new Error(bad);
-    getRendererActions().setViewVisible?.(pageId, input.view, ctx, input.open !== "closed");
-    return { status: "ok" };
-  });
-
-  // viewarea（面板）开合：有几何语义、无身份语义
-  binding._on("diy.ui.viewarea.set", ui.viewarea.set, async ({ input }) => {
+  }
+    },
+    viewarea: {
+      set: async ({ input }) => {
     // pageId 由调用方给出（同一 area 名在不同 page 上是不同的东西）
     getRendererActions().setViewArea?.(input.page ?? "task-run", input.area, input.open !== "closed");
     return { status: "ok" };
-  });
-
-  // 任务 tab：打开/关闭/切换/列举（打开 = 我现在要做它，与任务状态无关）
-  binding._on("diy.ui.tab.open", ui.tab.open, async ({ input }) => {
+  }
+    },
+    tab: {
+      open: async ({ input }) => {
     // 两种写法：`<任务 URI>`（= 任务执行页）或 `<pageId>:<任务 URI>`（如 `lab:projects/1/tasks/1`）
     const m = input.uri.match(/^([a-z][a-z0-9-]*):(.+)$/);
     const pageId = m ? m[1]! : "task-run";
@@ -160,74 +162,57 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
     const snap = currentSnapshot();
     const ok = snap.tabs.some((t) => t.key === tabKey);
     return { status: ok ? "ok" : "error", data: { uri: input.uri, rev: snap.rev, uiRev: snap.uiRev, active: snap.active, reason: ok ? undefined : "打开后未在快照中看到该 tab" } };
-  });
-
-  binding._on("diy.ui.tab.close", ui.tab.close, async ({ input }) => {
+  },
+      close: async ({ input }) => {
     const closeTab = getRendererActions().closeTab;
     if (!closeTab) return { status: "error", data: { uri: input.uri, reason: "renderer actions 未就绪" } };
     closeTab(input.uri);
     const snap = currentSnapshot();
     const ok = !snap.tabs.some((t) => t.key === input.uri);
     return { status: ok ? "ok" : "error", data: { uri: input.uri, rev: snap.rev, uiRev: snap.uiRev, reason: ok ? undefined : "关闭后该 tab 仍在快照中" } };
-  });
-
-  binding._on("diy.ui.tab.active", ui.tab.active, async ({ input }) => {
+  },
+      active: async ({ input }) => {
     const activate = getRendererActions().activateTab;
     if (!activate) return { status: "error", data: { uri: input.uri, reason: "renderer actions 未就绪" } };
     activate(input.uri);
     const snap = currentSnapshot();
     const ok = snap.active === input.uri;
     return { status: ok ? "ok" : "error", data: { uri: input.uri, rev: snap.rev, uiRev: snap.uiRev, reason: ok ? undefined : `激活后 active=${snap.active}` } };
-  });
-
-  binding._on("diy.ui.tab.list", ui.tab.list, async () => {
+  },
+      list: async () => {
     // opened 的顺序由任务层次现算：读之前确保树含所有已开 tab 的 ctx（缺则按需重载一次）
     await taskStore.ensureTasks(tabStore.opened.map((t) => t.ctx));
     // 契约保持字符串数组（CLI/测试都按字符串用）：opened = tab key 列表
     return { status: "ok", data: { opened: tabStore.opened.map((t) => t.key), active: tabStore.active } };
-  });
-
-  binding._on("diy.ui.page.toast", ui.page.toast, async ({ input }) => {
-    getRendererActions().toast?.(input.message, (input.level as ToastType) ?? "info");
-    return { status: "ok" };
-  });
-
-  // diy.ui.tree — 反向调 main 的 diy.loadTaskTree 取结构化数据
-  binding._on("diy.ui.tree", ui.tree, async ({ input }) => {
+  }
+    },
+    tree: async ({ input }) => {
     return diyService.diy.task.tree({ allTasks: input.all ?? false });
-  });
-
-  // diy.ui.status — 进程数据反向调 main 的 diy.app.info（旧 getAppStatus 已并入）
-  // 字段名保持 ui.status 的老口径（memory 是字节），不与 app.info 的 heapUsed 混
-  binding._on("diy.ui.status", ui.status, async () => {
+  },
+    status: async () => {
     const s = await diyService.diy.app.info({});
     return { status: 'ok', data: { pid: s.pid, uptime: s.uptime, memory: s.heapUsed } };
-  });
-
-  // diy.ui.project.create — 与 UI「创建项目」按钮共用同一入口
-  binding._on("diy.ui.project.create", ui.project.create, async ({ input }) => {
+  },
+    project: {
+      create: async ({ input }) => {
     const id = await createProjectViaUi(input.path, input.label, input.desc);
     return { status: "ok", data: { id } };
-  });
-
-  // diy.ui.project.remove — 与项目行「🗑」按钮共用同一入口（##352；连带其下全部任务）
-  binding._on("diy.ui.project.remove", ui.project.remove, async ({ input }) => {
+  },
+      remove: async ({ input }) => {
     await removeProjectViaUi(input.id);
     return { status: "ok", data: { id: input.id } };
-  });
-
-  // diy.ui.task.create — 与 UI「项目行 ＋ 添加任务」按钮共用同一入口
-  binding._on("diy.ui.task.create", ui.task.create, async ({ input }) => {
+  }
+    },
+    task: {
+      create: async ({ input }) => {
     const uri = await createTaskViaUi({
       title: input.title,
       project: input.project,
       parent: input.parent,
     });
     return { status: "ok", data: { uri } };
-  });
-
-  // diy.ui.task.update — 编辑任务（标题 / 详情 / 正文），反向调 main + 刷新树 + toast
-  binding._on("diy.ui.task.update", ui.task.update, async ({ input }) => {
+  },
+      update: async ({ input }) => {
     const { uri, ...changes } = input;
     await editTask(uri, changes);
     await taskStore.loadTree();
@@ -236,24 +221,19 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
     }
     getRendererActions().toast?.("任务已更新", "success");
     return { status: "ok", data: { uri } };
-  });
-
-  // diy.ui.task.delete — 与任务行「🗑」按钮共用同一入口（##352；仅删本条，子任务失父升为一级）
-  binding._on("diy.ui.task.delete", ui.task.delete, async ({ input }) => {
+  },
+      delete: async ({ input }) => {
     await deleteTaskViaUi(input.uri);
     return { status: "ok", data: { uri: input.uri } };
-  });
-
-  // diy.ui.task.setState — 在 tree 中直接修改任务状态
-  binding._on("diy.ui.task.setState", ui.task.setState, async ({ input }) => {
+  },
+      setState: async ({ input }) => {
     await editTask(input.uri, { state: input.state });
     await taskStore.loadTree();
     notificationStore.addToast("success", `状态已改为 ${input.state}`, taskStateNotice({ uri: input.uri, state: input.state }));
     return { status: "ok", data: { uri: input.uri } };
-  });
-
-  // diy.ui.inspect — 遍历 DOM 生成无障碍树（agent 了解 UI 全貌的入口）
-  binding._on("diy.ui.inspect", ui.inspect, async () => {
+  }
+    },
+    inspect: async () => {
     const tree = buildA11yTree(document.body);
     // 剥离内部字段（_count/_visible），保持输出干净
     const clean = stripInternal(tree);
@@ -264,19 +244,18 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
         stats: { totalNodes: tree?._count || 0, visibleNodes: tree?._visible || 0 },
       },
     };
-  });
-
-  // diy.ui.state —— UI 状态单读（与流同形状）。用于「读现状 → 操作 → 再读」的一次性调用。
-  binding._on("diy.ui.state", ui.state, async () => ({ status: "ok", data: currentSnapshot() }));
-
-  // diy.ui.watch.uiState —— 业务级 UI 快照流（renderer 侧事件源，见 lib/ui-watch.ts）
-  binding._on("diy.ui.watch.uiState", ui.watch.uiState, async function* () {
+  },
+    state: async () => ({ status: "ok", data: currentSnapshot() }),
+    watch: {
+      uiState: async function* () {
     for await (const snap of uiWatchStream()) {
       yield { status: "ok", data: snap };
     }
+  }
+    }
   });
 
-return binding;
+  return binding;
 }
 
 /** 无障碍树节点（含内部统计字段） */
