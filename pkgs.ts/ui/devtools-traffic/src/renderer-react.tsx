@@ -141,6 +141,8 @@ function TrafficView(props: { client: TrafficClient }) {
  * `render` 是同步挂载 + 返回销毁函数（与 workbench 的页面生命周期对齐）。
  */
 export const trafficPageView: PageView = {
+    id: "devtools-traffic",
+    title: "请求",
     render(container: HTMLElement, ctx: PageContext): () => void {
         const client = createTrafficClient({ invoke: (m, a) => ctx.invoke(m, a) as Promise<never> });
         const root = createRoot(container);
