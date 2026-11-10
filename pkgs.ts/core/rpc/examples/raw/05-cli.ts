@@ -10,7 +10,7 @@
 import { z } from "zod";
 import { RpcSchema, defineService } from "../../src/index";
 
-const routes = RpcSchema.bindNames(RpcSchema.group({ children: {
+const routes = RpcSchema.group({ children: {
     math: RpcSchema.group({ children: {
         add: RpcSchema.unary({
             input: { a: z.number(), b: z.number() },
@@ -28,7 +28,7 @@ const routes = RpcSchema.bindNames(RpcSchema.group({ children: {
             desc: "列任务（可按状态过滤）",
         }),
     } }),
-} }));
+} });
 
 export const demoService = defineService({ name: "demo", api: routes });
 

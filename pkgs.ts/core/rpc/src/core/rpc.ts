@@ -112,30 +112,8 @@ export class RpcSchema {
     _flattenChildren(meta as unknown as _Router);
     return meta as ProcedureMeta<unknown, unknown, never, never, 'group'> & TChildren;
   }
-
-  /**
-   * **把方法全名写回每个 meta.name**（相对路径），供 `binding.on(meta, handler)` 用。
-   *
-   * 这是原 `router()` 剩下的唯一职责 —— 摊平已移进 `group()`（2026-11-06）。
-   *
-   * ⚠️ 为什么还不能删：`binding.on` 拿 **meta 对象本身**当查找键，所以 meta 必须预先知道
-   * 自己的路径。`defineService.bind` 内部会拼（且不改原对象），但**直接 `binding.on` 的
-   * 调用点还有 279 处**（`api-impl.ts` 2191 行 + probes + test/raw）。
-   * 等它们都迁到 `defineService` 之后，这个函数才能退休。
-   *
-   * @param root 根 group 或纯对象。**根 group 会先取它的 children** ——
-   *   group 的键混着 `desc` / `title` 等元字段，直接遍历会把它们当子节点。
-   */
-  static bindNames<T extends _Router | _AnyProcedureMeta>(root: T): T {
-    // 根是 group ⇒ 取它的 children（group 的键混着 desc/title 等元字段，不能直接遍历）
-    const tree = (root as { _streamMode?: string })._streamMode === 'group'
-      ? ((root as unknown as { children: _Router }).children)
-      : (root as _Router);
-    _assignNames(tree, '');
-    return root;
-  }
-
 }
+
 
 
 
@@ -220,23 +198,3 @@ export type { TypedClient } from './typed-client.js';
  * 模块名由 `defineService` 在注册时拼（`${name}.${path}`）。两件事分开，同一棵树才能
  * 挂到不同模块名下。
  */
-function _assignNames(node: _Router, prefix: string): void {
-  for (const [key, val] of Object.entries(node)) {
-    // 元字段（group 摊平后 `desc` / `title` 等混在键里）—— `typeof string` 直接跳过
-    if (val === null || typeof val !== 'object') continue;
-    const meta = val as _AnyProcedureMeta;
-    const path = prefix ? `${prefix}.${key}` : key;
-
-    if (meta._type === 'procedure') {
-      (meta as { name?: string }).name = path;
-      // group 有 children（嵌套结构）；叶子没有
-      if (meta.children && typeof meta.children === 'object') {
-        _assignNames(meta.children as _Router, path);
-      }
-    } else {
-      // **裸对象层**（既不是 procedure 也不是 group）：它只是个容器，
-      // 自己不需要 name，直接递归下去。`{ math: { add: unary } }` 里的 math 就是这种。
-      _assignNames(val as _Router, path);
-    }
-  }
-}

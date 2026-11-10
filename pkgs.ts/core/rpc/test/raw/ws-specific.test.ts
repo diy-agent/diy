@@ -13,11 +13,11 @@ import { WsTransport } from '../../src/transport/ws';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-const api = RpcSchema.bindNames(RpcSchema.group({ children: {
+const api = RpcSchema.group({ children: {
   ping: RpcSchema.unary({ input: { msg: z.string() }, output: z.string() }),
   slow: RpcSchema.unary({ input: { delay: z.number(), id: z.number() }, output: z.object({ id: z.number() }) }),
   count: RpcSchema.serverStream({ input: { n: z.number() }, output: z.number() }),
-} }));
+} });
 
 function connect(url: string): Promise<WebSocket> {
   const ws = new WebSocket(url);

@@ -7,12 +7,12 @@ import { z } from "zod";
 import { RpcSchema, defineService, ChannelServerBinding, ChannelClientBinding } from "../../src/index";
 import { createMemTransportPair } from "../../test/helpers";
 
-const routes = RpcSchema.bindNames(RpcSchema.group({ children: {
+const routes = RpcSchema.group({ children: {
     echo: RpcSchema.unary({
         input: { name: z.string().min(1), age: z.number().int().positive() },
         output: z.string(),
     }),
-} }));
+} });
 const service = defineService({ name: "demo.echo", api: routes });
 
 async function main(): Promise<void> {

@@ -8,7 +8,7 @@ import { RpcSchema, createTypedClient } from '../../src/core';
 import { it } from 'vitest';
 import { z } from 'zod';
 
-const api = RpcSchema.bindNames(RpcSchema.group({ children: {
+const api = RpcSchema.group({ children: {
   greet: RpcSchema.unary({ input: { name: z.string() }, output: z.string() }),
   count: RpcSchema.serverStream({ input: { to: z.number() }, output: z.object({ val: z.number() }) }),
   upload: RpcSchema.clientStream({
@@ -16,7 +16,7 @@ const api = RpcSchema.bindNames(RpcSchema.group({ children: {
     output: z.object({ tag: z.string(), items: z.array(z.string()) }),
   }),
   echo: RpcSchema.bidiStream({ input: { prefix: z.string() }, chunkIn: z.string(), chunkOut: z.string() }),
-} as const }));
+} as const });
 
 // ═══════════════════════════════════════════════════
 //  传输层录制器
@@ -264,7 +264,7 @@ async function testRpcLayerEnvelopes() {
   console.log('\n── RPC 层信封序列 ──');
   const { serverTx, clientTx, logs } = createLoggedMemTransportPair();
 
-  const app = RpcSchema.bindNames(RpcSchema.group({ children: {
+  const app = RpcSchema.group({ children: {
     ping: RpcSchema.unary({
       input: { msg: z.string() },
       output: z.string(),
@@ -275,7 +275,7 @@ async function testRpcLayerEnvelopes() {
       chunkIn: z.number(),
       output: z.object({ tag: z.string(), sum: z.number() }),
     }),
-  } }));
+  } });
 
   // 本测试只验证线格式：binding.on 注册 handler
   //

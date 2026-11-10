@@ -18,7 +18,7 @@ import { createMemTransportPair } from '../helpers';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-const apiDef = RpcSchema.bindNames(RpcSchema.group({ children: {
+const apiDef = RpcSchema.group({ children: {
   math: { add: RpcSchema.unary({ input: { a: z.number(), b: z.number() }, output: z.number() }) },
   greet: RpcSchema.unary({ input: { name: z.string() }, output: z.string() }),
   slow: RpcSchema.unary({ input: { delay: z.number(), id: z.number() }, output: z.object({ id: z.number() }) }),
@@ -27,7 +27,7 @@ const apiDef = RpcSchema.bindNames(RpcSchema.group({ children: {
     input: { tag: z.string() }, chunkIn: z.number(), output: z.object({ tag: z.string(), sum: z.number() }),
   }),
   chat: RpcSchema.bidiStream({ input: { room: z.string() }, chunkIn: z.string(), chunkOut: z.string() }),
-} }));
+} });
 
 function startBinding(txSrv: EnvelopeTransport): ServerBinding {
   const binding = new ChannelServerBinding(txSrv);

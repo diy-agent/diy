@@ -21,7 +21,7 @@ const stubTransport = {
   dispose: vi.fn(),
 } as unknown as ClientBinding;
 
-const apiDef = RpcSchema.bindNames(RpcSchema.group({ children: {
+const apiDef = RpcSchema.group({ children: {
   task: RpcSchema.group({
     desc: "任务管理",
     children: {
@@ -51,7 +51,7 @@ const apiDef = RpcSchema.bindNames(RpcSchema.group({ children: {
       }),
     },
   }),
-} }));
+} });
 
 // capture console.log 输出
 function captureLog(fn: () => void): string {
@@ -134,7 +134,7 @@ describe("CliApp.showNodeHelp", () => {
 });
 
 describe("CliApp.exitCodeOf", () => {
-  const getApi = RpcSchema.bindNames(RpcSchema.group({ children: {
+  const getApi = RpcSchema.group({ children: {
     facts: RpcSchema.group({
       desc: "事实库",
       children: {
@@ -145,7 +145,7 @@ describe("CliApp.exitCodeOf", () => {
         }),
       },
     }),
-  } }));
+  } });
 
   async function run(result: unknown, exitCodeOf?: (a: { rpcName: string; result: unknown }) => number | undefined) {
     const out: string[] = [];
@@ -202,7 +202,7 @@ describe("CliApp.exitCodeOf", () => {
 
 // `callerCwd` 字段（##430）：parser 自动注入调用方 cwd，不是用户可敲的选项。
 describe("callerCwd 自动注入", () => {
-  const api = RpcSchema.bindNames(RpcSchema.group({ children: {
+  const api = RpcSchema.group({ children: {
     task: RpcSchema.group({
       desc: "任务管理",
       children: {
@@ -218,7 +218,7 @@ describe("callerCwd 自动注入", () => {
         }),
       },
     }),
-  } }));
+  } });
 
   function make() {
     const out: string[] = [];

@@ -3,10 +3,10 @@ import { z } from 'zod';
 import { RpcSchema } from '../src/index';
 import { HttpServerBinding } from '../src/transport/http/http-server-binding';
 
-const api = RpcSchema.bindNames(RpcSchema.group({ children: {
+const api = RpcSchema.group({ children: {
   unary: RpcSchema.unary({ input: {}, output: z.unknown() }),
   collect: RpcSchema.clientStream({ input: {}, chunkIn: z.number(), output: z.number() }),
-} }));
+} });
 
 function request(
   session: http2.ClientHttp2Session,

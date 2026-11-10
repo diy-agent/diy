@@ -34,7 +34,7 @@ import type { EnvelopeTransport, _Envelope } from '../../src/core/types';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-const api = RpcSchema.bindNames(RpcSchema.group({ children: {
+const api = RpcSchema.group({ children: {
   tick: RpcSchema.serverStream({ input: {}, output: z.number() }),
   /** 产出一次后挂在长 await：用于区分「只设取消标志」与「真正终结生成器」 */
   slow: RpcSchema.serverStream({ input: {}, output: z.number() }),
@@ -51,7 +51,7 @@ const api = RpcSchema.bindNames(RpcSchema.group({ children: {
   drain: RpcSchema.clientStream({ input: {}, chunkIn: z.number(), output: z.number() }),
   /** bidi：回显输入，输入结束后继续产出（半关 ≠ 取消） */
   echo: RpcSchema.bidiStream({ input: {}, chunkIn: z.number(), chunkOut: z.number() }),
-} }));
+} });
 
 interface TickState {
   finallyRan: boolean;
