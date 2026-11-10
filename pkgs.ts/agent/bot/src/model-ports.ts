@@ -36,7 +36,14 @@ export function llmPorts(provider: LlmPort, opts: { sessionId?: string } = {}): 
                 ...(opts.sessionId === undefined ? {} : { sessionId: opts.sessionId }),
                 ...(completeOpts?.tools === undefined
                     ? {}
-                    : { tools: completeOpts.tools, maxSteps: completeOpts.maxSteps ?? 8 }),
+                    : {
+                          tools: completeOpts.tools,
+                          // 2026-11-10 用户：「把 diy2 的 8 次限制去掉」。
+                          // provider 侧用 stopWhen: stepCountIs(maxSteps)；maxSteps 为 undefined 时
+                          // **根本不传 stopWhen**（model/provider/src/openai.ts:158）⇒ 不限步数。
+                          // 原来这里写死 8，让每个会话最多 8 轮工具调用，长活（重构、批量改）会硬停。
+                          ...(completeOpts.maxSteps === undefined ? {} : { maxSteps: completeOpts.maxSteps }),
+                      }),
             };
             for await (const delta of provider.chat(wire, Object.keys(chatOpts).length === 0 ? undefined : chatOpts)) {
                 if (delta.type === "text") yield delta.text;
