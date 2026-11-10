@@ -116,14 +116,20 @@ export abstract class ServerBindingCore {
   /**
    * 注册转发：把 router 子树（裸 _Router 或 RpcSchema.group 子树）下的每个方法注册为转发
    * handler——收到调用后经 client 发到远端（如 ipcTransport → renderer），拿回结果/逐块回写。
-   * def.name 必须是全名（router() 已回写），client 连远端进程。group 子树自动解包 children。
+   * `prefix` 是**远端注册时用的名字前缀**（如 `"diy.ui."`）。转发必须用与远端
+   * **同一个全名**，否则 `client.invoke(full, ...)` 在远端找不到方法。
+   *
+   * ⚠️ 2026-11：以前这里读 `meta.name`（要靠 `RpcSchema.bindNames` 回写），
+   * 现在 `on` 是显式路径、`bindNames` 已退役 —— 改成**显式传 prefix**。
+   * 漏传 prefix 的症状：main 注册成 `component.list`，renderer 是 `diy.ui.component.list`，
+   * 跨进程调用一律 `Unknown method`。
    */
-  onForward(router: _Router | _AnyProcedureMeta, client: ClientBinding): void {
+  onForward(router: _Router | _AnyProcedureMeta, client: ClientBinding, prefix = ''): void {
     const subtree = _isProcedure(router) && router._streamMode === 'group'
       ? (router.children as _Router)
       : (router as _Router);
     for (const [name, def] of Object.entries(_flattenRouter(subtree))) {
-      const full = (def as { name?: string }).name ?? name;
+      const full = prefix + name;
       const mode = def._streamMode;
 
       if (mode === 'unary') {
