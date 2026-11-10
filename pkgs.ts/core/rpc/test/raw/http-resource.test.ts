@@ -65,7 +65,7 @@ describe('HTTP 资源收束（实现级，review R12/R13）', () => {
   it('clientStream：远端终态后 request stream 收敛（不半开滞留）', async () => {
     const { binding, client, dispose } = await httpHarness.start();
     const cli = createTypedClient(client, api);
-    binding.on("collect", api.collect, async () => ({ tag: 'x', sum: 0 }));
+    binding._on("collect", api.collect, async () => ({ tag: 'x', sum: 0 }));
     // 上游永挂：调用落定不得依赖上传完成
     const s = { next: 0, ret: 0 };
     const iter = trackedUpstream<number>(s, () => ({ done: false, value: HANG as unknown as number }));
@@ -80,7 +80,7 @@ describe('HTTP 资源收束（实现级，review R12/R13）', () => {
   it('bidiStream：远端终态后 request stream 收敛（不半开滞留）', async () => {
     const { binding, client, dispose } = await httpHarness.start();
     const cli = createTypedClient(client, api);
-    binding.on("chat", api.chat, async function* () {
+    binding._on("chat", api.chat, async function* () {
       /* 立即结束 */
     });
     const s = { next: 0, ret: 0 };
@@ -99,7 +99,7 @@ describe('HTTP 资源收束（实现级，review R12/R13）', () => {
   it('背压（write 返回 false）后远端终态：流收敛且上游收到终止通知', async () => {
     const { binding, client, dispose } = await httpHarness.start();
     const cli = createTypedClient(client, api);
-    binding.on("collect", api.collect, async () => ({ tag: 'bp', sum: 0 }));
+    binding._on("collect", api.collect, async () => ({ tag: 'bp', sum: 0 }));
     const s = { next: 0, ret: 0 };
     const big = 'x'.repeat(8192);
     // 快速产出填满流控窗口 → write 返回 false → 上传协程挂在 drain 等待
@@ -117,7 +117,7 @@ describe('HTTP 资源收束（实现级，review R12/R13）', () => {
   it('R16：write=false 后永无 drain，远端终态唤醒 → 不得再拉取上游', async () => {
     const { binding, client, dispose } = await httpHarness.start();
     const cli = createTypedClient(client, api);
-    binding.on("collect", api.collect, async () => ({ tag: 'x', sum: 0 }));
+    binding._on("collect", api.collect, async () => ({ tag: 'x', sum: 0 }));
     // 强制第一次大写入返回 false 且永无 drain：唤醒只能来自远端终态的 close。
     // 未修复实现：onceDrain 被 close 唤醒后回到 for 顶部再次 upstream.next()，
     // 第二次拉取永挂 → 后台上传协程悬挂（R16 P1）。
@@ -163,7 +163,7 @@ describe('HTTP 资源收束（实现级，review R12/R13）', () => {
     // 远端 handler 永不返回：没有正常响应终态，唤醒只能来自传输 close/error。
     // 未修复实现：onceDrain 被 close 唤醒后 remoteSettled 仍为 false（拒绝传播
     // 尚未走到 finally），顶部门控放行 → 再次 upstream.next() 永挂（R18 probe 实测 next=2）。
-    binding.on("collect", api.collect, () => new Promise<{ tag: string; sum: number }>(() => { /* 永不返回 */ }));
+    binding._on("collect", api.collect, () => new Promise<{ tag: string; sum: number }>(() => { /* 永不返回 */ }));
     const state = { forced: 0 };
     const runtime = client as unknown as {
       request: (...args: unknown[]) => http2.ClientHttp2Stream;

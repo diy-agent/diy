@@ -45,11 +45,11 @@ function delayedChunks() {
 
 async function startServer() {
   const binding = new HttpServerBinding();
-  binding.on("collect", api.collect, async () => true);
-  binding.on("bidi", api.bidi, async function* () {});
+  binding._on("collect", api.collect, async () => true);
+  binding._on("bidi", api.bidi, async function* () {});
 
   const server = http2.createServer();
-  server.on('stream', (stream, headers) => {
+  server._on('stream', (stream, headers) => {
     void binding.handleStream(stream, headers);
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));

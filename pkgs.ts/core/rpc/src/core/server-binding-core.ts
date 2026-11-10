@@ -76,7 +76,7 @@ export abstract class ServerBindingCore {
   }
 
   /** 注册一个方法：按 meta._streamMode 存到对应表；重复注册（多后端 scope 冲突的实质）显式报错 */
-  on<M extends _AnyProcedureMeta>(path: string, meta: M, handler: _HandlerForProc<M>): void {
+  _on<M extends _AnyProcedureMeta>(path: string, meta: M, handler: _HandlerForProc<M>): void {
     const name = path;
     if (!name) throw new Error('[ServerBinding] on: path 不能为空');
     this._assertNotRegistered(name);
@@ -127,17 +127,17 @@ export abstract class ServerBindingCore {
       const mode = def._streamMode;
 
       if (mode === 'unary') {
-        this.on(full, def as _AnyProcedureMeta, ((opts: { input: unknown; meta: unknown; signal: AbortSignal }) =>
+        this._on(full, def as _AnyProcedureMeta, ((opts: { input: unknown; meta: unknown; signal: AbortSignal }) =>
           client.invoke(full, { input: opts.input, meta: opts.meta }, { signal: opts.signal })) as any);
       } else if (mode === 'server') {
-        this.on(full, def as _AnyProcedureMeta, ((opts: { input: unknown; meta: unknown; signal: AbortSignal }) =>
+        this._on(full, def as _AnyProcedureMeta, ((opts: { input: unknown; meta: unknown; signal: AbortSignal }) =>
           this._forwardServerStream(client, full, opts)) as any);
       } else if (mode === 'client') {
         // 来源 incoming 流原样桥接给远端（StreamHandle 即 AsyncIterable）
-        this.on(full, def as _AnyProcedureMeta, ((opts: { input: unknown; meta: unknown; stream?: unknown; signal: AbortSignal }) =>
+        this._on(full, def as _AnyProcedureMeta, ((opts: { input: unknown; meta: unknown; stream?: unknown; signal: AbortSignal }) =>
           client.clientStream(full, { input: opts.input, meta: opts.meta }, opts.stream as AsyncIterable<unknown>, { signal: opts.signal })) as any);
       } else if (mode === 'bidi') {
-        this.on(full, def as _AnyProcedureMeta, ((opts: { input: unknown; meta: unknown; stream?: unknown; signal: AbortSignal }) =>
+        this._on(full, def as _AnyProcedureMeta, ((opts: { input: unknown; meta: unknown; stream?: unknown; signal: AbortSignal }) =>
           this._forwardBidiStream(client, full, opts)) as any);
       } else {
         throw new Error(`[ServerBinding] ${full}: 未知 stream mode ${mode}`);
