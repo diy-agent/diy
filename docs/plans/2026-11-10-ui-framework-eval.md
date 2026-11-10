@@ -83,3 +83,27 @@
   这时 Solid 反超；
 - 若插件 UI 要走「宿主渲染插件产出的数据树」这条深水区（即插件完全不能有 DOM）：需要先把
   Spec 运行时做成产品级，这会抵消 React 的生态优势，此时框架选择退居第二位，运行时协议才是主轴。
+
+## 7. 复核：组件层不该被 Solid 时代的选择绑住（2026-11-10 用户指出）
+
+§5 把 `@material/web + Web Awesome` 写进推荐栈，但那是**当时为了绕开「Solid / diy-ui 不能用 JSX 生态」**
+才做的选择：Web Components 是唯一能跨框架复用的组件 ABI。如果壳换成 React，这条约束消失，组件层要重挑。
+
+重挑的关键事实：**React 19 已原生支持 custom elements**（props 直接写 property、事件走 on*、SSR 可用），
+所以「WC 在 React 里别扭」这个理由不再成立 —— M3 组件库仍是候选，而不是默认。
+
+| 方案 | 上手/密度 | 表格/树 | 与 M3 观感 | 生态/人才 | 风险 |
+|---|---|---|---|---|---|
+| **Radix + Tailwind + M3 令牌**（shadcn 路线） | 高（自己长，密度随便调） | TanStack Table / Virtual 自接 | 高（令牌一出即为 M3 皮肤） | 极强 | 组件要自己长，前 2 周慢 |
+| **MUI + MUI X** | 中（默认密度偏松，需 theme 压） | 最强（DataGrid / TreeView 商业级） | 中（MD2 血统，M3 要改主题） | 极强 | Pro 版收费；主题改造有成本 |
+| **@material/web + Web Awesome** | 中 | WA 有 card/tree，无数据表 | 高（就是 M3） | 中 | WC 调试链路长；表格仍缺 |
+| **Mantine** | 高（密度可调） | 中（自接 TanStack） | 中（需重皮） | 强 | 生态比 Radix 小 |
+| **Ant Design** | 高（企业级密集） | 强（Table/Tree 原生） | 低（不是 M3，重改观感成本高） | 极强 | 观感与 M3 目标冲突 |
+
+结论（仅当壳=React）：
+
+1. **首选 Radix + Tailwind + M3 令牌**：组件是 headless 的，密度/观感全由 M3 令牌决定（令牌已经是我们自己的生成物），
+   不需要为了视觉去对抗组件库默认值；表格用 TanStack Table + Virtual（IDE 类必须虚拟化）。
+2. **保底 MUI + MUI X**：如果时间紧、需要马上有 DataGrid / TreeView，用它换开发速度，代价是给 M3 主题做一层映射。
+3. **@material/web 不是必选项**：M3 观感可以靠令牌 + 自长组件达成；保留 WA 只为我们确实需要它的成品件（card / split-panel）。
+4. 不变的是**分层**：组件层只依赖令牌与 CSS，不依赖具体库 —— 这样将来换库的代价局限在组件层。
