@@ -423,7 +423,18 @@ async function main(): Promise<void> {
     if ((await page.locator(".chat-bot").count()) !== botsBefore + 1) fail("「+ 新 bot」没有新增一行");
     await send(page, "新 bot 的第一条");
     // 切回第一个 bot（点当前没选中的那一行）
-    await page.locator('.chat-bot[data-active="false"]').first().click();
+    const target = page.locator('.chat-bot[data-active="false"]').first();
+    const targetName = (await target.locator(".chat-bot-name").textContent()) ?? "";
+    await target.click();
+    // 等**这次切换真的落地**：只看「行数 > 0」会被切换前的旧行满足，于是后面的 /demo-tool
+    // 会被紧接着到达的快照抹掉（##526 实测：快照从 1.5s 掉到 ~20ms 后这个竞态暴露出来）
+    await page.waitForFunction(
+        (name) => document.querySelector('.chat-bot[data-active="true"] .chat-bot-name')?.textContent === name,
+        targetName,
+        { timeout: 30_000 },
+    );
+    // 切换会触发一次快照刷新：等它跑完再动手，别让 demo 消息被抹掉
+    await page.waitForTimeout(300);
     await page.waitForFunction(() => document.querySelectorAll(".chat-row").length > 0, undefined, { timeout: 30_000 });
     const shellKept = await page.evaluate(() => {
         const win = window as unknown as { __list?: Element };
