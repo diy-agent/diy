@@ -28,7 +28,7 @@
     "@diy-agent/bot": "^0.1.0",
     "@diy-agent/compaction": "^0.1.0",
     "@diy-agent/context": "^0.1.0",
-    "@diy-agent/dev-paths": "^0.1.0",
+    "@diy-agent/dev-paths": "^0.1.1",
     "@diy-agent/facts": "^0.1.0",
     "@diy-agent/flow": "^0.1.0",
     "@diy-agent/hub": "^0.1.0",
