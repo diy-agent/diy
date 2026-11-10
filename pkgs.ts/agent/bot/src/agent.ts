@@ -134,8 +134,11 @@ export function createBotAgent(opts: BotAgentOptions): BotAgent {
         ...(opts.initialMessages === undefined ? {} : { initialMessages: opts.initialMessages }),
         ...(opts.compact === undefined ? {} : { compact: opts.compact }),
         // system 在**建会话时**算一次就固定下来（段首快照语义，见文件头）。
-        // ⚠ 只在**空会话**时传：老会话的历史里已经有一条 system，再传会追加第二条。
-        ...((opts.initialMessages ?? []).length > 0 ? {} : { system: systemOf(opts) }),
+        // ⚠ 判据是「历史里有没有 system」，**不是「历史空不空」**（2026-11-10 修）：
+        // 原来的写法（判断历史长度大于 0）会让**任何有历史的会话永远补不上 system** ——
+        // 升级后老会话（system 是旧版本 / 压根没有）看不到新 provider（chain / kb 全丢）。
+        // 现在：历史里已有 system 就尊重它（不重复追加），没有就补一条。
+        ...((opts.initialMessages ?? []).some((m) => m.role === "system") ? {} : { system: systemOf(opts) }),
         model: opts.model,
     });
 
