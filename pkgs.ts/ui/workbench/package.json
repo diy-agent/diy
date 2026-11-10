@@ -33,6 +33,10 @@
         "./preload": {
             "types": "./src/preload.ts",
             "default": "./dist/preload.js"
+        },
+        "./single-instance": {
+            "types": "./src/single-instance.ts",
+            "default": "./dist/single-instance.js"
         }
     },
     "scripts": {
