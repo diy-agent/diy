@@ -38,6 +38,14 @@ export interface AgentHostOptions {
     readonly models: () => readonly ModelChoice[]
     /** 给一个 bot 造 port；缺省 = 按它的 model 解析真 provider */
     readonly portsFor?: (bot: BotConfig) => AgentPorts
+    /**
+     * 给一个 bot 算 system 段（##530）：**每次建 agent 时算一次**，之后每轮原样带上。
+     *
+     * 不传 = 没有 system（测试 / 无上下文场景）。装配层（`apps/chat`）在这里接
+     * AGENTS.md 链 / 知识库 / 技能 —— 那些 provider 必须在建会话时就位，否则
+     * 老会话永远补不上（`initialMessages` 判据那个坑，见 `agent.ts` 的注释）。
+     */
+    readonly systemFor?: (bot: BotConfig) => string
     /** 每个 bot 的快照目录；缺省 `<home>/agents/<botId>` */
     readonly dirFor?: (botId: BotId) => string
     /**
@@ -110,8 +118,10 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
     const agentOf = (bot: BotConfig): Agent => {
         const hit = agents.get(bot.id)
         if (hit) return hit
+        const system = opts.systemFor?.(bot)
         const created = createAgent({
             id: bot.id,
+            ...(system === undefined || system === '' ? {} : { system }),
             ports: portsFor(bot),
             persist: filePersist(dirFor(bot.id)),
             autoCompact: { windowTokens: windowOf(bot) },

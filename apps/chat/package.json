@@ -35,7 +35,10 @@
         "@diy-agent/session": "*",
         "@diy-agent/tools": "file:../../pkgs.ts/agent/tools",
         "@diy-agent/jobs": "file:../../pkgs.ts/agent/jobs",
-        "@diy-agent/rpc": "0.2.0"
+        "@diy-agent/rpc": "0.2.0",
+        "@diy-agent/agents-chain": "*",
+        "@diy-agent/kb": "*",
+        "@diy-agent/skills": "*"
     },
     "devDependencies": {
         "@types/node": "^26.1.0",
