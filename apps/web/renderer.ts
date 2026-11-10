@@ -15,7 +15,7 @@
 // startAuthentication → 回传响应，验签全在服务端（webauthn.ts）。
 
 import { mountWorkbench, registerPage, type WorkbenchFrame, type WorkbenchGateway } from '@diy-agent/workbench-ui';
-import { chatPageView } from '@diy-agent/chat-page/renderer-diui';
+import { chatPageView } from '@diy-agent/chat-page/renderer-react';
 import {
     startAuthentication,
     startRegistration,

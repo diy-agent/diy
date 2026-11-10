@@ -23,6 +23,7 @@ import type {
     BotChatSnapshot,
     CompactInfo,
     FirstBotInput,
+    ModelChoices,
     SendArgs,
     SendResult,
 } from "./shared.js";
@@ -53,6 +54,8 @@ export function createPage(config?: unknown): PageContribution {
             group: "对话",
             methods: {
                 snapshot: (): Promise<BotChatSnapshot> => host.snapshot(),
+                // ##526：模型目录按需拉（配模型 / 新建 bot 时才要），不再搭快照的车
+                models: (): Promise<ModelChoices> => host.models(),
                 // ##497：首启/补选模型（没有这两步，聊天页面在 bots 为空时无从下手）
                 createFirstBot: (args: unknown): Promise<BotChatSnapshot> => host.createFirstBot(firstBotInputOf(args)),
                 // ##498：新增的是 **bot**（不是会话）；建好即选中
@@ -93,10 +96,9 @@ export function createPage(config?: unknown): PageContribution {
         group: "对话",
         methods: {
             async send(args: unknown): Promise<SendResult> {
-                const text = typeof args === "string" ? args : "";
-                if (text.trim().length === 0) {
-                    throw new ChatPageError("chat/empty-text", "消息正文为空");
-                }
+                // ##526：两种模式的 send 收**同一个形状**（`{ text }` 或裸字符串都认，见 sendArgsOf）。
+                // 之前单会话模式只认裸字符串，多 bot 模式只认 `{ text }` ⇒ 渲染层得按模式换载荷。
+                const { text } = sendArgsOf(args);
                 // 把流读完：增量与最终消息都由 session 记账，这里只要结束后的消息线
                 for await (const _delta of session.send(text)) {
                     // 第一刀不消费增量（真模型接入时在这里往 renderer 推进度）

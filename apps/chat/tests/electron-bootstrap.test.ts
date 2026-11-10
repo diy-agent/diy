@@ -263,7 +263,7 @@ describe("locateElectronBinary（--check 的判据：只查不下载）", () => 
     });
 });
 
-describe("diy-chat 入口（单 bin + 子命令，##478 补充决策）", () => {
+describe("diy2 入口（单 bin + 子命令，##478 补充决策）", () => {
     it("无参数 = 启动应用；其余参数原样转给 electron", () => {
         expect(parseArgs([])).toEqual({ kind: "launch", check: false, passthrough: [] });
         expect(parseArgs(["--remote-debugging-port=9000"]).passthrough).toEqual(["--remote-debugging-port=9000"]);
@@ -286,11 +286,12 @@ describe("diy-chat 入口（单 bin + 子命令，##478 补充决策）", () => 
         expect(parseArgs(["electron", "--help"]).kind).toBe("help");
     });
 
-    it("通过软链执行（= npm 装出来的 <prefix>/bin/diy-chat）也能跑到 main", () => {
+    it("通过软链执行（= npm 装出来的 <prefix>/bin/diy2）也能跑到 main", () => {
         // npm 的 bin 一律是软链；入口判据若直接比 pathToFileURL(argv[1]) 就会「运行什么都不发生」
-        const link = join(makeDir("bin-link-"), "diy-chat");
+        // ##525：bin 从 diy-chat 改名 diy2 —— 这条用例当时没跟着改，一直是红的
+        const link = join(makeDir("bin-link-"), "diy2");
         try {
-            symlinkSync(join(import.meta.dirname, "..", "bin", "diy-chat.mjs"), link);
+            symlinkSync(join(import.meta.dirname, "..", "bin", "diy2.mjs"), link);
         } catch {
             // Windows 默认不允许建软链（EPERM，需管理员 / 开发者模式）：跳过，不把环境限制当断言失败
             return;
@@ -300,10 +301,10 @@ describe("diy-chat 入口（单 bin + 子命令，##478 补充决策）", () => 
         expect(r.stdout).toContain("@diy-agent/app-chat");
     });
 
-    it("包里只有一个 bin：diy-chat（多入口 bin 明确不做）", () => {
+    it("包里只有一个 bin：diy2（多入口 bin 明确不做）", () => {
         const pkg = JSON.parse(readFileSync(join(import.meta.dirname, "..", "package.json"), "utf8")) as {
             bin: Record<string, string>;
         };
-        expect(Object.keys(pkg.bin)).toEqual(["diy-chat"]);
+        expect(Object.keys(pkg.bin)).toEqual(["diy2"]);
     });
 });

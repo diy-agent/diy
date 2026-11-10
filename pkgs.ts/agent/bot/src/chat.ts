@@ -64,6 +64,7 @@ import {
     type ChatMetrics,
     type FirstBotInput,
     type ModelChoice,
+    type ModelChoices,
     type WireMessage,
     type CompactInfo,
 } from "./protocol.js";
@@ -617,43 +618,19 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
         const configs = await botStore.list();
         const bots = await Promise.all(configs.map(botView));
         // 缺省选中 = 列表第一项（带 account，和 choices 同一套拼法）
-        const selectedModel = choices()[0] === undefined
-            ? null
-            : `${choices()[0]!.account === undefined ? "" : `${choices()[0]!.account}@`}${choices()[0]!.providerId}/${choices()[0]!.modelId}`;
         const active = configs.length === 0 ? null : ((await activeConfig()) ?? configs[0]!);
         if (active === null) {
-            return {
-                bots: [],
-                bot: null,
-                models: choices(),
-                messages: [],
-                metrics: null,
-                selectedModel,
-            };
+            return { bots: [], bot: null, messages: [], metrics: null };
         }
         // 存量 bot 没选过模型（##497）：UI 要先拦到配置页 —— 这里也不能替它开会话
         if (active.needsModel === true || active.model.trim() === "") {
-            return {
-                bots,
-                bot: await botView(active),
-                models: choices(),
-                messages: [],
-                metrics: null,
-                selectedModel,
-            };
+            return { bots, bot: await botView(active), messages: [], metrics: null };
         }
         // 长期会话：第一次进来才建（幂等；建过就一直是它 —— 判据 3/4）
         const ref = await handleOf(active).primary();
         const current = await opened(ref.id);
         const messages: readonly WireMessage[] = wireOf(current.session.messages);
-        return {
-            bots,
-            bot: await botView(active),
-            models: choices(),
-            messages,
-            metrics: metricsOf(active, ref.id, current.session.usage),
-            selectedModel,
-        };
+        return { bots, bot: await botView(active), messages, metrics: metricsOf(active, ref.id, current.session.usage) };
     };
 
     /** 模型必须是目录里的（##497：没有「跟随宿主缺省」这条路） */
@@ -683,6 +660,19 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
          * 「写操作返回前自己取一次新快照」（`createBot` 等内部直接调 `snapshotNow()`）覆盖。
          */
         snapshot: () => withSnapshotGuard(snapshotNow),
+
+        /** 模型目录：按需拉（##526）。快照里不再带它 */
+        async models(): Promise<ModelChoices> {
+            const list = choices();
+            const first = list[0];
+            return {
+                choices: list,
+                defaultModel:
+                    first === undefined
+                        ? null
+                        : `${first.account === undefined ? "" : `${first.account}@`}${first.providerId}/${first.modelId}`,
+            };
+        },
 
         /** 首启建 bot（##497：必须有 model；已存在则报错） */
         createFirstBot(input: FirstBotInput): Promise<BotChatSnapshot> {

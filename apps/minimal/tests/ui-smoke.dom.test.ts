@@ -8,7 +8,7 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import { mountWorkbench, registerPage, resetPages } from "@diy-agent/workbench-ui";
-import { chatPageView, registerBlockRenderer, renderBlock } from "@diy-agent/chat-page/renderer";
+import { chatPageView, registerBlockRenderer, renderBlock } from "@diy-agent/chat-page/renderer-react";
 import { createPage, FAKE_REPLY } from "@diy-agent/chat-page";
 import type { WorkbenchGateway } from "@diy-agent/workbench-ui";
 
@@ -22,6 +22,17 @@ const gateway: WorkbenchGateway = {
         return page.methods!["send"]!(args);
     },
 };
+
+/**
+ * 往受控输入框里「打字」。
+ * ##526：输入框是 React 受控组件 —— 直接赋 `input.value` 不会让 React 的 state 跟着变
+ * （提交时读到的是空串）。必须走原生 setter + `input` 事件，跟真用户敲键同一条路。
+ */
+function typeInto(input: HTMLInputElement, text: string): void {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    setter?.call(input, text);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+}
 
 beforeEach(() => {
     resetPages();
@@ -44,7 +55,7 @@ describe("UI 链路（happy-dom）", () => {
         const form = host.querySelector<HTMLFormElement>(".chat-composer");
         expect(input).toBeTruthy();
         expect(form).toBeTruthy();
-        input!.value = "你好";
+        typeInto(input!, "你好");
         form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
 
         await waitFor(() => host.querySelectorAll(".chat-row").length >= 2);
@@ -121,7 +132,7 @@ describe("UI 链路（happy-dom）", () => {
         await mountWorkbench(host, custom, { title: "测试工作台" });
 
         const input = host.querySelector<HTMLInputElement>(".chat-input")!;
-        input.value = "触发";
+        typeInto(input, "触发");
         host.querySelector<HTMLFormElement>(".chat-composer")!.dispatchEvent(
             new Event("submit", { bubbles: true, cancelable: true }),
         );

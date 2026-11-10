@@ -14,23 +14,27 @@
 | 层 | 是什么 | 放哪 | 依赖方向 |
 |---|---|---|---|
 | **页面/装配** | 窗口、preload、index.html、打包入口 | `apps/<app>/`（**只装配，不写业务 UI**） | → UI 包 → core（仅类型） |
-| **UI 包** | React 组件、无框架 store、Slot 注册表、领域 rpc 客户端 | `pkgs/dev-ui/`（dev 现状）；新 app 照此建 `<app>-ui` | → core **只 import 类型** |
+| **UI 包** | React 组件、无框架 store、领域 rpc 客户端 | 主仓 `pkgs.ts/ui/chat-page`（= diy2 的 UI 包）；dev 参照实现在 `~/git/diy/_diy/pkgs/dev-ui` | → core **只 import 类型** |
 | **外壳** | 窗口与页面宿主、实例注册、单实例锁、CDP、`/ping` | `pkgs.ts/ui/workbench` | ← apps 用，不反向依赖 |
 | **core** | 数据与规则（快照、启停、git/fs 编排） | `pkgs/dev-core`、`pkgs.ts/ui/*/api.ts` | 不知道 React 存在 |
 
 参照实现：DeepSeek harness（本机 `~/git-ref/deepseek-harness`）的 `packages/client/{store,ui-slots,ui-renderer}`
 就是同一套三层拆分，已在生产验证。
 
+⚠️ 路径注意（##526）：本文 §2 / §5.1 里的 `apps/<app>/`、`pkgs/dev-ui`、`pkgs/dev-core` 描述的是
+**dev 启动器**（另一个 checkout：`~/git/diy/_diy`）。主仓 `diy/` 里只有 `apps/chat`，它的 UI 包是
+`pkgs.ts/ui/chat-page`（`src/{store.ts,client.ts,renderer-react.tsx,ui/*.tsx,react.css}`）。
+
 ### 2.1 UI 包内部的固定三件套
 
 ```
 <app>-ui/src
-├── store.ts      无框架快照仓库：不可变快照 / 切片浅相等去重 / 微任务合批
-├── slots.ts      扩展点注册表：命名挂载点 + 贡献（id 重复直接抛）
+├── store.ts      无框架快照仓库：不可变快照 / 整体替换 / 变更广播
 ├── client.ts     **领域式 rpc 客户端**：方法名与入参形状只在这一个文件里
-├── chrome.tsx    workbench 外壳：标题栏 / 页面导航 / 通知 / 状态栏
-├── app.tsx       页面投影（组件只谈业务语义，不写订阅）
-└── main.tsx      挂载：建 store/slots/client，轮询灌快照，注册扩展点
+├── renderer-react.tsx  页面投影（订阅 store；组件只谈业务语义，不写 rpc 字符串）
+├── ui/*.tsx      shadcn 组件（源码引入）
+├── react.css     tailwind 入口 + M3 令牌桥（@source 由使用方声明）
+└── slots.ts      扩展点注册表（只有需要插件 UI 的 app 才有）
 ```
 
 **组件里不许出现 `invoke("start", …)` 这类字符串方法名** —— 一律走 `client.ts`。理由：core 改协议时
@@ -47,6 +51,16 @@
 | 密度 | compact / comfortable / spacious 三档 Token（IDE 类界面缺省 compact） |
 | 重活 | Monaco（编辑）、xterm.js（终端）、TanStack Table + Virtual（大表）、dockview（分屏，待 POC） |
 | 过渡期可选件 | `@material/web`（M3 控件）、Web Awesome（card/tree/split-panel）——**已引入但不作默认**，只为省掉个别成品件 |
+
+### 3.1 shadcn 怎么接（##526 落地）
+
+- 组件**源码进仓**（`chat-page/src/ui/*.tsx`，`base-nova` = Base UI 变体），不装成套库；
+- 需要 `cn()`（`clsx` + `tailwind-merge`）与 tailwind 工具类 —— 构建见 §2.1 的 `react.css`；
+- **令牌桥**是唯一定制点：`react.css` 的 `@theme inline` 把 shadcn 的
+  `--background / --primary / --border / --ring / --radius-*` 指到 `--md-sys-color-*`，
+  组件源码不动就套上 M3；
+- 坑：包内没有 `@/` alias（esbuild 不解析 tsconfig paths）⇒ 组件间一律相对 import；
+  shadcn 默认 `h-9 px-4` 是 comfortable 密度，IDE 类界面用 `size="xs"`（h-7）那一档。
 
 > 标注：`@material/web` + Web Awesome 的组合，最初是「Solid / diy-ui 用不了 JSX 生态」时代的折中。
 > React 19 已原生支持 custom elements，这条约束消失 —— 新页面**优先** base-ui + 自有组件，
@@ -110,8 +124,11 @@
 | `dev` 的 `/ping` + 注册表回填 + CDP 端口 0 + 数据根级单实例 | ✅ 已落地 |
 | `dev` 的 h2c RPC 端口（`port` 字段） | ⏳ 未做；`page:invoke` 仍只走 Electron IPC，`diy remote` 还不能把 dev 当远端操作 |
 | `diy-app`（44k 行 SolidJS） | 🔒 **冻结**，不重写；等自然大改时再谈 |
-| `diy2`（`apps/chat`，无框架 + workbench-ui） | 🔒 保持；新页面按本文档写 React UI 包 |
+| `diy2`（`apps/chat`） | ✅ ##526 已换 React 19 + shadcn 组件（`chat-page/src/renderer-react.tsx`，CDP 判据 1–6 全过） |
+| diy2 的 renderer 版本冗余 | ✅ 已删裸 DOM / diyui 两版；`@diy-agent/ui` 依赖一并去掉，三个宿主（chat / minimal / web）都指向 `renderer-react` |
+| diy2 的 tailwind 构建 | ✅ `apps/chat/sha.sh build-renderer` 里跑 `@tailwindcss/cli`（入口 `chat-page/src/react.css`） |
 | `@material/web` / Web Awesome 在 `dev` 的残留依赖 | ⏳ 组件替换后清理 |
+| `@diy-agent/ui`（diy-ui 运行时：Signal / GenApp / DOM DSL） | ⏳ **已无使用方**（##526 删掉 diyui 版后）。要么明确留作插件/终端渲染的公开包并写清用途，要么冻结下架 —— 别让它半活 |
 | dockview 分屏 POC | ⏳ 未做 |
 
 ## 7. 新 app 的落地清单

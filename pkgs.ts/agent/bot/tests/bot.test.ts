@@ -200,7 +200,15 @@ describe("边界（判据 4）", () => {
         // ##517：上下文压缩（compaction.ts）也是同一侧 —— 它算的就是会话消息线与摘要调用。
         // agent.ts：把「上下文树 → system → 一轮 LLM 调用」收成一个对象（2026-11-05），
         // 它天生就要用 session 的 send / lastRequest —— 与 chat.ts 同属「对话编排」这一侧。
-        const conversational = new Set(["chat.ts", "protocol.ts", "tools.ts", "compaction.ts", "agent.ts"]);
+        // model-ports.ts：把 bot 的模型配置接成 session 的 `LlmPort`（只 import 类型）
+        const conversational = new Set([
+            "chat.ts",
+            "protocol.ts",
+            "tools.ts",
+            "compaction.ts",
+            "agent.ts",
+            "model-ports.ts",
+        ]);
         for (const name of files) {
             const text = readFileSync(join(dir, name), "utf-8");
             expect(text.toLowerCase()).not.toContain("room");

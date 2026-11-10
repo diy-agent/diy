@@ -27,6 +27,7 @@ import type {
     ChatMetrics,
     FirstBotInput,
     ModelChoice,
+    ModelChoices,
     WireMessage,
 } from "./protocol.js";
 import type { BotConfig, BotId, BotStore } from "./types.js";
@@ -103,9 +104,14 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
                 sessionId: bot.primarySessionId ?? `bot:${bot.id}`,
             }))
 
-    /** 该 bot 对应的模型目录项（找不到 = undefined） */
-    const choiceOf = (bot: BotConfig) => {
-        for (const c of opts.models()) {
+    /**
+     * 该 bot 对应的模型目录项（找不到 = undefined）。
+     *
+     * `models` 由调用方传进来：模型目录是**每个 bot 算一次就够**的东西，
+     * 之前这里每问一次就重算一遍（窗口 / 价目 / 列表各一次 ⇒ 一次切 bot 算 3 遍，##526 实测 400+ ms）。
+     */
+    const choiceOfIn = (models: readonly ModelChoice[], bot: BotConfig) => {
+        for (const c of models) {
             const key = `${c.account === undefined ? "" : `${c.account}@`}${c.providerId}/${c.modelId}`
             if (key === bot.model) return c
         }
@@ -113,12 +119,36 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
     }
 
     /** 该 bot 模型的窗口上限（模型目录里有 contextWindow 才算；没有 ⇒ null = 永不自动压） */
-    const windowOf = (bot: BotConfig): number | null => {
-        for (const c of opts.models()) {
+    const windowOfIn = (models: readonly ModelChoice[], bot: BotConfig): number | null => {
+        for (const c of models) {
             const key = `${c.account === undefined ? "" : `${c.account}@`}${c.providerId}/${c.modelId}`
             if (key === bot.model) return c.contextWindow ?? null
         }
         return null
+    }
+
+    /**
+     * 该 bot 的「模型事实」（窗口上限 + 价目）：**建 agent 时算一次，之后复用**。
+     *
+     * ##526：bot 列表 / 底部指标跟模型目录没关系 —— 模型变了才需要重算
+     * （`updateBot` 改 model 时清掉，下次建 agent 再算）。
+     */
+    interface ModelFacts {
+        readonly windowTokens: number | null
+        readonly cost?: ModelChoice["cost"]
+    }
+    const facts = new Map<BotId, ModelFacts>()
+    const factsFor = (bot: BotConfig): ModelFacts => {
+        const hit = facts.get(bot.id)
+        if (hit !== undefined) return hit
+        const models = opts.models()
+        const choice = choiceOfIn(models, bot)
+        const value: ModelFacts = {
+            windowTokens: windowOfIn(models, bot),
+            ...(choice?.cost === undefined ? {} : { cost: choice.cost }),
+        }
+        facts.set(bot.id, value)
+        return value
     }
 
     const agentOf = (bot: BotConfig): Agent => {
@@ -130,7 +160,7 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
             ...(system === undefined || system === '' ? {} : { system }),
             ports: portsFor(bot),
             persist: filePersist(dirFor(bot.id)),
-            autoCompact: { windowTokens: windowOf(bot) },
+            autoCompact: { windowTokens: factsFor(bot).windowTokens },
             ...(opts.toolsFor === undefined ? {} : { tools: opts.toolsFor(bot) }),
         })
         agents.set(bot.id, created)
@@ -160,19 +190,22 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
     }
 
     const snapshot = async (): Promise<BotChatSnapshot> => {
+        // ##526：快照里**不含模型目录**（那是「配模型」才发现的东西，见 ModelChoices 的注释）。
+        // 窗口 / 价目走 factsFor 的每 bot 缓存 —— 模型没变就不碰 model.yaml / models.dev.json。
         const all = await opts.botStore.list()
         const bots = await Promise.all(all.map(viewOf))
         const bot = await currentBot()
         if (bot === null) {
-            return { bots: [], bot: null, models: opts.models(), messages: [], metrics: null, selectedModel: null }
+            return { bots: [], bot: null, messages: [], metrics: null }
         }
         const agent = agentOf(bot)
         const messages = agent.history().map(wireMessageOf)
         const st = agent.snapshot()
-        const w = windowOf(bot)
+        const fact = factsFor(bot)
+        const w = fact.windowTokens
         // 本轮花费（USD）：按模型目录的价目算；目录没价目 ⇒ 缺席（**不写 0**，那会被当成"免费"）。
         // 口径与 diy-app 一致：input 含缓存读（模型只有 input/output 两档价目时就这么算，偏保守）。
-        const rates = choiceOf(bot)?.cost
+        const rates = fact.cost
         const cost =
             rates === undefined || st.usage === undefined
                 ? undefined
@@ -189,14 +222,7 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
             ...(w === null ? {} : { contextWindow: w }),
             ...(cost === undefined ? {} : { cost }),
         }
-        return {
-            bots,
-            bot: await viewOf(bot),
-            models: opts.models(),
-            messages,
-            metrics,
-            selectedModel: bot.model === "" ? (opts.models()[0]?.modelId ?? null) : bot.model,
-        }
+        return { bots, bot: await viewOf(bot), messages, metrics }
     }
 
     const touch = async (bot: BotConfig, patch: Partial<BotConfig>): Promise<BotConfig> => {
@@ -207,6 +233,19 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
 
     return {
         snapshot,
+
+        /** 模型目录：**按需拉**（配模型 / 新建 bot 时）。不进快照，见 protocol.ts 的 ModelChoices */
+        async models(): Promise<ModelChoices> {
+            const choices = opts.models()
+            const first = choices[0]
+            return {
+                choices,
+                defaultModel:
+                    first === undefined
+                        ? null
+                        : `${first.account === undefined ? '' : `${first.account}@`}${first.providerId}/${first.modelId}`,
+            }
+        },
 
         async createFirstBot(input: FirstBotInput): Promise<BotChatSnapshot> {
             const existing = await opts.botStore.list()
@@ -255,7 +294,10 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
             }
             const next = await touch(bot, patch)
             // 模型变了 ⇒ 旧 agent 的 port 还是旧模型，丢掉让它按新配置重建（快照仍在盘上，不丢历史）
-            if (next.model !== bot.model) agents.delete(bot.id)
+            if (next.model !== bot.model) {
+                agents.delete(bot.id)
+                facts.delete(bot.id)
+            }
             return snapshot()
         },
 
@@ -291,7 +333,7 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
                     title: (e.content ?? "").replace(/\s+/g, " ").slice(0, 40),
                     kept: true,
                 }))
-            const w = windowOf(bot)
+            const w = factsFor(bot).windowTokens
             return {
                 rounds: keptRows,
                 droppedCount: allUser.length - keptRows.length,

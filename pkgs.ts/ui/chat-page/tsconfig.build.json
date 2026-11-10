@@ -7,6 +7,7 @@
         "module": "NodeNext",
         "moduleResolution": "NodeNext",
         "target": "ES2022",
+        "jsx": "react-jsx",
         "lib": ["ES2022", "DOM", "DOM.Iterable"],
         "rootDir": "src",
         "outDir": "dist",
@@ -22,7 +23,6 @@
   "references": [
     { "path": "../../agent/bot/tsconfig.build.json" },
     { "path": "../../agent/session/tsconfig.build.json" },
-    { "path": "../core/tsconfig.build.json" },
     { "path": "../workbench/tsconfig.build.json" },
     { "path": "../workbench-ui/tsconfig.build.json" }
   ]

@@ -2,6 +2,8 @@
     "extends": "../../tsconfig.base.json",
     "compilerOptions": {
         "composite": true,
+        // ##526：renderer 侧 import 的是 chat-page 的 .tsx（类型走源码）
+        "jsx": "react-jsx",
         "noEmit": true,
         "lib": ["ES2022", "DOM", "DOM.Iterable"]
     },

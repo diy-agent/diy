@@ -75,6 +75,8 @@ const SOURCES = [
     'server.ts',
     'webauthn.ts',
     'index.html',
+    // ##526：React 渲染层的样式源（任一改了都要重出 renderer.css）
+    '../pkgs.ts/ui/chat-page/src/react.css',
 ];
 
 /** 源码里有比 stamp 更新的文件 ⇒ 需要重编 */
@@ -112,9 +114,17 @@ async function build() {
         format: 'esm',
         target: 'es2022',
         outfile: join(STATIC, 'index.js'),
+        // ##526：renderer 装的是 React 版页面（renderer-react.tsx）
+        jsx: 'automatic',
         logLevel: 'warning',
         // 浏览器入口只许纯核（core 是浏览器安全的）；这里显式挡掉 node 内建，出错就早失败
         banner: { js: '// apps/web renderer（esbuild bundle）' },
+    });
+
+    // ##526：React 渲染层的样式（tailwind 工具类 + M3 令牌桥）—— 与 apps/chat 同一份实现
+    execFileSync(process.execPath, [join(REPO, 'scripts', 'build-react-css.mjs'), join(STATIC, 'renderer.css')], {
+        stdio: 'inherit',
+        cwd: REPO,
     });
 
     copyFileSync(join(HERE, 'index.html'), join(STATIC, 'index.html'));

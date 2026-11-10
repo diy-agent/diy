@@ -13,11 +13,24 @@ const chatPageSrc = join(appDir, "..", "..", "pkgs.ts", "ui", "chat-page", "src"
 // ##505：actor 队列与 bot 领域逻辑在 @diy-agent/bot（apps/chat 只剩装配）
 const botChatSrc = join(appDir, "..", "..", "pkgs.ts", "agent", "bot", "src", "chat.ts");
 
-/** 渲染层文件（会在浏览器里跑的）：chat-page 的 renderer* / style / 块渲染器 + apps/chat 的 renderer.ts */
+/**
+ * 渲染层文件（会在浏览器里跑的）：chat-page 的 renderer* / store / client / style / 块渲染器 +
+ * ui/*.tsx（shadcn 组件）+ apps/chat 的 renderer.ts。
+ * ##526：React 版把渲染层拆成了 .tsx 与子目录，扩展名与目录都得跟着扫。
+ */
 function rendererSources(): { file: string; text: string }[] {
-    const files = readdirSync(chatPageSrc)
-        .filter((name) => /^(renderer|style|block-renderers|shared|blocks)\.ts$/.test(name) || /^renderer-/.test(name))
+    const top = readdirSync(chatPageSrc)
+        .filter(
+            (name) =>
+                /^(renderer|style|block-renderers|shared|blocks|store|client)\.tsx?$/.test(name) ||
+                name.startsWith("renderer-"),
+        )
         .map((name) => join(chatPageSrc, name));
+    const uiDir = join(chatPageSrc, "ui");
+    const ui = readdirSync(uiDir)
+        .filter((name) => name.endsWith(".tsx") || name.endsWith(".ts"))
+        .map((name) => join(uiDir, name));
+    const files = [...top, ...ui];
     files.push(join(appDir, "renderer.ts"));
     return files.map((file) => ({ file, text: readFileSync(file, "utf-8") }));
 }

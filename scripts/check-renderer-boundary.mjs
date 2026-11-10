@@ -42,7 +42,6 @@ const BUILTIN = new Set([...builtinModules, ...builtinModules.map((m) => "node:"
 const ENTRIES = [
     "apps/diy-app/src/renderer_solid/main.tsx",
     "apps/diy-app/src/renderer_solid/index.tsx",
-    "pkgs.ts/ui/chat-page/src/renderer-diui.ts",
     "pkgs.ts/ui/chat-page/src/renderer.ts",
     "pkgs.ts/ui/bot-config/src/renderer.ts",
 ];

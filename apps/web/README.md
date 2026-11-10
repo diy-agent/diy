@@ -118,7 +118,7 @@ Touch ID 注册一个 Passkey，之后用它登录。`web.auth.*`（token 授权
 
 ## 装配复用（页面一行不改）
 
-- 页面：`@diy-agent/chat-page`（renderer 用它的 `renderer-diui` 入口，与 apps/chat 一致）
+- 页面：`@diy-agent/chat-page`（renderer 用它的 `renderer-react` 入口，与 apps/chat 一致）
 - bot 对话宿主：`@diy-agent/bot` 的 `createBotChat({ home })`（##505 起不再从 apps/chat 取）
 - 装配器：`@diy-agent/workbench/loader` 的 `loadPages`（纯装配、不含 electron；为此给 workbench
   加了 `"./loader"` 子路径 —— `main` 入口要 electron，Node 侧起不来）
