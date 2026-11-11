@@ -34,13 +34,19 @@ import { Label } from './ui/label.js';
 // 2026-11-11：消息流换 AI Elements（##526 遗留 ③ 的正式接入）。
 // Conversation = 贴底滚动容器（StickToBottom，自带「回到底部」按钮）；
 // Message = 一行消息；BlocksView = text→Streamdown / think→Reasoning / tool→Tool。
+// 滚动容器同样换官方 base-nova 的 MessageScroller（贴底 / 自动滚动 / 跳转按钮都在原语里）
 import {
-    Conversation,
-    ConversationContent,
-    ConversationEmptyState,
-    ConversationScrollButton,
-} from './ai-elements/conversation.js';
-import { Message, MessageContent } from './ai-elements/message.js';
+    MessageScroller,
+    MessageScrollerButton,
+    MessageScrollerContent,
+    MessageScrollerItem,
+    MessageScrollerProvider,
+    MessageScrollerViewport,
+} from './ui/message-scroller.js';
+// 2026-11-11：消息行/气泡/思考/工具一律用 shadcn 官方的 AI Elements 原语
+// （base-nova：Message / Bubble / Trace / CodeBlock —— 与 docs/ai-elements/base 范例同一套）。
+import { Message, MessageContent } from './ui/message.js';
+import { Bubble, BubbleContent } from './ui/bubble.js';
 import { BlocksView } from './ai-elements/block-view.js';
 
 // ##499：与另两版同一份注册表（插件自造 kind 从这里登记）
@@ -545,39 +551,57 @@ function ViewTabs({
 
 function MessageList({ state }: { state: ChatState }): React.ReactElement {
     if (state.messages.length === 0) {
-        return <ConversationEmptyState title={state.emptyText} description="" />;
+        return <div className="chat-empty flex size-full items-center justify-center p-8 text-sm text-muted-foreground">{state.emptyText}</div>;
     }
     return (
-        <Conversation className="chat-conversation">
-            <ConversationContent className="chat-conversation-content">
-                {state.messages.map((message, index) => {
-                    // 指纹 = 块内容本身：tool 块从 running → ok 时只有那一行重画
-                    const fingerprint = message.blocks
-                        .map((block) => `${block.kind}:${block.id}:${JSON.stringify(block.data)}`)
-                        .join('\n');
-                    return (
-                        <MessageRow
-                            key={`${String(index)}:${message.role}:${String(hash(fingerprint))}`}
-                            message={message}
-                            fingerprint={fingerprint}
-                        />
-                    );
-                })}
-            </ConversationContent>
-            <ConversationScrollButton />
-        </Conversation>
+        <MessageScrollerProvider>
+            <MessageScroller className="chat-conversation">
+                <MessageScrollerViewport>
+                    <MessageScrollerContent className="gap-6 px-6 py-4">
+                        {state.messages.map((message, index) => {
+                            // 指纹 = 块内容本身：tool 块从 running → ok 时只有那一行重画
+                            const fingerprint = message.blocks
+                                .map((block) => `${block.kind}:${block.id}:${JSON.stringify(block.data)}`)
+                                .join('\n');
+                            return (
+                                <MessageScrollerItem
+                                    key={`${String(index)}:${message.role}:${String(hash(fingerprint))}`}
+                                    messageId={`${String(index)}-${String(hash(fingerprint))}`}
+                                    scrollAnchor={message.role === 'user'}
+                                >
+                                    <MessageRow message={message} fingerprint={fingerprint} />
+                                </MessageScrollerItem>
+                            );
+                        })}
+                    </MessageScrollerContent>
+                </MessageScrollerViewport>
+                <MessageScrollerButton />
+            </MessageScroller>
+        </MessageScrollerProvider>
     );
 }
 
-/**
- * 一行消息。memo 的判据是**内容指纹**（不是对象身份）：快照每次都是新对象，
- * 按身份比会把整表重画（那就退化成裸 DOM 版的毛病了）。
- */
 const MessageRow = memo(
     function MessageRow({ message, fingerprint }: { message: WireMessage; fingerprint: string }): React.ReactElement {
+        // 用户消息 = 右对齐气泡（Bubble variant=muted），助手消息 = 左对齐多块
+        if (message.role === 'user') {
+            const text = message.blocks
+                .filter((block) => block.kind === 'text')
+                .map((block) => String((block.data as { text?: string }).text ?? ''))
+                .join('\n');
+            return (
+                <Message align="end" data-role={message.role}>
+                    <MessageContent>
+                        <Bubble align="end" variant="muted">
+                            <BubbleContent className="whitespace-pre-wrap">{text}</BubbleContent>
+                        </Bubble>
+                    </MessageContent>
+                </Message>
+            );
+        }
         return (
-            <Message from={message.role === 'user' ? 'user' : 'assistant'} data-role={message.role}>
-                <MessageContent className="chat-message-content">
+            <Message data-role={message.role}>
+                <MessageContent className="gap-4">
                     <BlocksView blocks={message.blocks} />
                 </MessageContent>
             </Message>

@@ -65,3 +65,52 @@
 .chat-page {
     font-size: 13px;
 }
+
+/* ── shadcn base-nova 组件用到的自定义 utility ─────────────────────────
+ * 官方把它们放在 registry 的 theme css 里；我们没装 shadcn 的 css 层，
+ * 这里按同一语义补上（Trace 的 running 态 shimmer、CodeBlock / MessageScroller
+ * 的滚动渐隐与细滚动条）。
+ */
+
+/* 思考中/运行中的流光文字（TraceLine status=running 时作用于 trace-title） */
+@utility shimmer {
+    background-image: linear-gradient(
+        90deg,
+        color-mix(in oklab, currentColor 25%, transparent) 0%,
+        currentColor 50%,
+        color-mix(in oklab, currentColor 25%, transparent) 100%
+    );
+    background-size: 200% 100%;
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+    animation: diy-shimmer 1.8s linear infinite;
+}
+
+@keyframes diy-shimmer {
+    from {
+        background-position: 200% 0;
+    }
+    to {
+        background-position: -200% 0;
+    }
+}
+
+/* 可滚动区的边缘渐隐（scroll-fade-x / -y / -b 三档，官方用 mask 实现） */
+@utility scroll-fade-x {
+    mask-image: linear-gradient(to right, transparent, #000 16px, #000 calc(100% - 16px), transparent);
+}
+@utility scroll-fade-y {
+    mask-image: linear-gradient(to bottom, transparent, #000 16px, #000 calc(100% - 16px), transparent);
+}
+@utility scroll-fade-b {
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent);
+}
+
+/* 细滚动条（跨平台：Firefox 走 scrollbar-width，WebKit 走伪元素） */
+@utility scrollbar-thin {
+    scrollbar-width: thin;
+}
+@utility scrollbar-gutter-stable {
+    scrollbar-gutter: stable;
+}

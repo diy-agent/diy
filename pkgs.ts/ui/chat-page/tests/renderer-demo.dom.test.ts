@@ -51,24 +51,25 @@ describe('/demo-tool（端到端）', () => {
         // ##526：React 的更新是异步批处理的（不在 act 里也算）—— 等一个宏任务再看 DOM
         await sleep(0);
 
-        // 2026-11-11：tool 块的渲染换成 AI Elements 的 Tool（Base UI Collapsible）——
-        // 断言口径跟随：找包含工具名的折叠容器，看状态徽章的文案。
-        const toolRow = (): Element | undefined =>
-            [...root.querySelectorAll('[data-slot="collapsible"]')].find((el) => el.textContent?.includes('read_file'));
+        // 2026-11-11：tool 块改用 shadcn AI Elements 的 Trace（base-nova 版）——
+        // 断言口径跟随：一行 TraceLine（标题=工具名，status=running 时带 data-status），
+        // 跑完 status 消失，点开 Trigger 后能看到 CodeBlock 里的输出。
+        const target = (): Element | undefined =>
+            [...document.querySelectorAll('[data-slot="trace-title"]')].find((el) => el.textContent?.includes('read_file'));
 
-        // ① 立刻：一条 user + 一条 tool；tool 在跑（状态徽章 Running）
-        expect(toolRow()?.textContent).toContain('Running');
-        // 演示消息不进核心层：输入框被清空，且没有「出错了」
+        // ① 立刻：tool 行在，且是 running（TraceLine data-status="running" → shimmer）
+        expect(target()).toBeTruthy();
+        expect(root.querySelector('[data-status="running"]')).toBeTruthy();
         expect(input.value).toBe('');
         expect(root.textContent).not.toContain('出错了');
 
-        // ② 900ms 后：同一位置变 ok（Completed + 输出可见）
+        // ② 900ms 后：不再 running，点开 trigger 能展开输出
         await sleep(1_100);
-        expect(toolRow()?.textContent).toContain('Completed');
-        // 收起态看不到输出（Base UI Panel 关闭时不渲染内容）—— 点开再看
-        (toolRow()?.querySelector('[data-slot="collapsible-trigger"]') as HTMLElement | null)?.click();
+        expect(target()).toBeTruthy();
+        expect(root.querySelector('[data-slot="trace-title"]')?.closest('[data-status="running"]')).toBeNull();
+        (target()?.closest('[data-slot="trace-line"]')?.parentElement as HTMLElement | null)?.click();
         await sleep(0);
-        expect(toolRow()?.textContent).toContain('演示输出');
+        expect(root.textContent).toContain('演示输出');
     });
 
     it('普通文本不会被当成命令（照常走 send，报错显示在消息线里）', async () => {
@@ -77,7 +78,7 @@ describe('/demo-tool（端到端）', () => {
         typeInto(input, '普通一句话');
         form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
         await sleep(50);
-        expect([...root.querySelectorAll('[data-slot="collapsible"]')].some((el) => el.textContent?.includes('read_file'))).toBe(false);
+        expect([...root.querySelectorAll('[data-slot="trace-title"]')].some((el) => el.textContent?.includes('read_file'))).toBe(false);
         expect(root.textContent).toContain('出错了');
     });
 });
