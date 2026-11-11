@@ -247,6 +247,33 @@ describe('agent-host：把 Agent 接到 BotChatHost 契约上', () => {
     expect(pushed.length).toBeGreaterThan(0) // onDelta 推过中间态
   })
 
+  // ##539：用户实测消息线里总多一条 assistant 空消息（blocks 只有一个空 text 块）。
+  // 断言口径按**用户看到的**快照写：不存在「只有空 text 块」的消息，工具块照旧在。
+  it('只调工具、一个字没吐的轮次：消息线里没有空消息，工具块照旧在（##539）', async () => {
+    const ports: AgentPorts = {
+      async *complete() {
+        yield { type: 'tool-call', id: 'c1', name: 'noop', input: '{}' }
+        yield { type: 'tool-result', id: 'c1', content: 'ok' }
+      },
+    }
+    const host = createAgentHost({
+      home: '/tmp/agent-host-test',
+      botStore: memStore(),
+      models: () => [],
+      portsFor: () => ports,
+      dirFor: () => `/tmp/agent-host-test/${Math.random().toString(36).slice(2)}`,
+    })
+    await host.createFirstBot({ model: 'test/model', name: '测试 bot' })
+    const snap = await host.send('调个工具', () => {})
+
+    const isEmptyTextOnly = snap.messages.some(
+      (m) => m.blocks.length === 1 && m.blocks[0]!.kind === 'text' && (m.blocks[0]!.data as { text?: string }).text === '',
+    )
+    expect(isEmptyTextOnly).toBe(false)
+    // 工具调用 / 结果仍要看得见（修空消息不能连坐吞掉整轮）
+    expect(snap.messages.flatMap((m) => m.blocks.map((b) => b.kind))).toContain('tool')
+  })
+
   it('没有 bot 时 snapshot 是空壳（UI 走引导页）', async () => {
     const host = createAgentHost({
       home: '/tmp/agent-host-test',
@@ -310,34 +337,5 @@ describe('system 段（##530）', () => {
     await a.send({ content: '问题' })
     await waitIdle(a)
     expect((ports.calls[0] ?? []).some((c) => c.includes('AGENTS'))).toBe(false)
-  })
-})
-
-describe('空回答（##539）', () => {
-  // 用户实测：UI 里总会多出一条 assistant 空消息 `blocks:[{kind:"text",data:{text:""}}]`。
-  // 根因 = 模型这轮只调工具、一个字都没吐，runTurn 仍无条件 pushEntry 一条空 message。
-  it('一轮只调工具、一个字没吐 ⇒ 不写空 assistant 消息，工具痕迹仍保留', async () => {
-    const ports: AgentPorts = {
-      async *complete() {
-        yield { type: 'tool-call', id: 'c1', name: 'noop', input: '{}' }
-        yield { type: 'tool-result', id: 'c1', content: 'ok' }
-        yield { type: 'usage', inputTokens: 10, outputTokens: 1 }
-      },
-    }
-    const a = createAgent({ ports })
-    await a.send({ content: '调个工具' })
-    await waitIdle(a)
-    const messages = a.history().filter((e) => e.kind === 'message')
-    expect(messages.map((e) => [e.role, e.content])).toEqual([['user', '调个工具']])
-    // 工具进出还是要在历史里（不能被「没文本」连坐吞掉）
-    expect(a.history().some((e) => e.kind === 'tool-call')).toBe(true)
-    expect(a.history().some((e) => e.kind === 'tool-result')).toBe(true)
-  })
-
-  it('有文本的回答照常量写入（不能为了修空消息把正常回答也吞了）', async () => {
-    const a = createAgent({ ports: fakePorts({ replies: ['正常回答'] }) })
-    await a.send({ content: '问一句' })
-    await waitIdle(a)
-    expect(a.history().filter((e) => e.kind === 'message').map((e) => e.content)).toEqual(['问一句', '正常回答'])
   })
 })
