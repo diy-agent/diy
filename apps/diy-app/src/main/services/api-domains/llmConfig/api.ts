@@ -97,3 +97,10 @@ export const llmConfigRoutes = RpcSchema.group({desc: `模型 provider 配置（
         },});
 
 export const llmConfigService = defineService({ name: "diy.llmConfig", api: llmConfigRoutes });
+
+/**
+ * 新模型（##87）：模块自带模块层，app 前缀由宿主给。
+ * `server.use({ prefix: "diy", api: llmConfigApi, handlers: { llmConfig: … } })`
+ * 与上面的 `llmConfigService` 完全等价（后者 = prefix "diy" + 模块层 "llmConfig"）。
+ */
+export const llmConfigApi = RpcSchema.group({ children: { llmConfig: llmConfigRoutes } });

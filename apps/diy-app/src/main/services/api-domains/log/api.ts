@@ -23,3 +23,10 @@ export const logRoutes = RpcSchema.group({desc: `日志`,
         },});
 
 export const logService = defineService({ name: "diy.log", api: logRoutes });
+
+/**
+ * 新模型（##87）：模块自带模块层，app 前缀由宿主给。
+ * `server.use({ prefix: "diy", api: logApi, handlers: { log: … } })`
+ * 与上面的 `logService` 完全等价（后者 = prefix "diy" + 模块层 "log"）。
+ */
+export const logApi = RpcSchema.group({ children: { log: logRoutes } });

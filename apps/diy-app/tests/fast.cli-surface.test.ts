@@ -18,6 +18,8 @@ import { CliApp } from "@diy-agent/rpc/cli";
 import { bindAppHandlers } from "../src/main/services/api-impl";
 import { apiDef } from "../src/main/services/api-def";
 import { globalOptions } from "../src/cli/global-options";
+import { domainApis } from "../src/main/services/domain-apis";
+import { createScopedClient } from "@diy-agent/rpc";
 
 // ── 环境：每次一个临时 DIY_HOME（task list 等会读 state） ──
 let home: string;
@@ -47,10 +49,9 @@ async function run(argv: string[], client: ChannelClientBinding): Promise<RunRes
         await new CliApp({
             name: "diy",
             version: "0.0.0-test",
-            router: apiDef.diy,
-            rpcPrefix: "diy.",
+            // 与 CLI 入口一致（##87 新模型）：各域 api + app 前缀 "diy"
+            clients: domainApis.map((api) => createScopedClient({ api, client, prefix: "diy" })),
             globalOptions,
-            transport: client,
             cwd: process.cwd(),
             out: (line) => void out.push(line),
             err: (line) => void err.push(line),

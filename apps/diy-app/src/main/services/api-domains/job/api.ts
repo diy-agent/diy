@@ -114,3 +114,10 @@ export const jobRoutes = RpcSchema.group({desc: `后台 run 的管理（**\`job\
         },});
 
 export const jobService = defineService({ name: "diy.job", api: jobRoutes });
+
+/**
+ * 新模型（##87）：模块自带模块层，app 前缀由宿主给。
+ * `server.use({ prefix: "diy", api: jobApi, handlers: { job: … } })`
+ * 与上面的 `jobService` 完全等价（后者 = prefix "diy" + 模块层 "job"）。
+ */
+export const jobApi = RpcSchema.group({ children: { job: jobRoutes } });

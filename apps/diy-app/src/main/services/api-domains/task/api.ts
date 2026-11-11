@@ -305,3 +305,10 @@ export const taskRoutes = RpcSchema.group({desc: `任务管理`,
         },});
 
 export const taskService = defineService({ name: "diy.task", api: taskRoutes });
+
+/**
+ * 新模型（##87）：模块自带模块层，app 前缀由宿主给。
+ * `server.use({ prefix: "diy", api: taskApi, handlers: { task: … } })`
+ * 与上面的 `taskService` 完全等价（后者 = prefix "diy" + 模块层 "task"）。
+ */
+export const taskApi = RpcSchema.group({ children: { task: taskRoutes } });

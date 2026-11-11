@@ -76,3 +76,10 @@ candidates: RpcSchema.unary({
         },});
 
 export const contextService = defineService({ name: "diy.context", api: contextRoutes });
+
+/**
+ * 新模型（##87）：模块自带模块层，app 前缀由宿主给。
+ * `server.use({ prefix: "diy", api: contextApi, handlers: { context: … } })`
+ * 与上面的 `contextService` 完全等价（后者 = prefix "diy" + 模块层 "context"）。
+ */
+export const contextApi = RpcSchema.group({ children: { context: contextRoutes } });

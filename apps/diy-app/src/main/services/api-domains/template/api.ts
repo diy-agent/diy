@@ -55,3 +55,10 @@ export const templateRoutes = RpcSchema.group({desc: `提示词模版（内置�
         },});
 
 export const templateService = defineService({ name: "diy.template", api: templateRoutes });
+
+/**
+ * 新模型（##87）：模块自带模块层，app 前缀由宿主给。
+ * `server.use({ prefix: "diy", api: templateApi, handlers: { template: … } })`
+ * 与上面的 `templateService` 完全等价（后者 = prefix "diy" + 模块层 "template"）。
+ */
+export const templateApi = RpcSchema.group({ children: { template: templateRoutes } });

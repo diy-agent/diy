@@ -55,3 +55,10 @@ export const remoteRoutes = RpcSchema.group({desc: `远程实例（本机 /ping 
         },});
 
 export const remoteService = defineService({ name: "diy.remote", api: remoteRoutes });
+
+/**
+ * 新模型（##87）：模块自带模块层，app 前缀由宿主给。
+ * `server.use({ prefix: "diy", api: remoteApi, handlers: { remote: … } })`
+ * 与上面的 `remoteService` 完全等价（后者 = prefix "diy" + 模块层 "remote"）。
+ */
+export const remoteApi = RpcSchema.group({ children: { remote: remoteRoutes } });

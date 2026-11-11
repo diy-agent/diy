@@ -405,3 +405,10 @@ export const uiRoutes = RpcSchema.group({desc: `Renderer 进程域`,
         },});
 
 export const uiService = defineService({ name: "diy.ui", api: uiRoutes });
+
+/**
+ * 新模型（##87）：模块自带模块层，app 前缀由宿主给。
+ * `server.use({ prefix: "diy", api: uiApi, handlers: { ui: … } })`
+ * 与上面的 `uiService` 完全等价（后者 = prefix "diy" + 模块层 "ui"）。
+ */
+export const uiApi = RpcSchema.group({ children: { ui: uiRoutes } });

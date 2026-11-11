@@ -19,3 +19,10 @@ export const watchRoutes = RpcSchema.group({desc: `文件系统监控（projects
         },});
 
 export const watchService = defineService({ name: "diy.watch", api: watchRoutes });
+
+/**
+ * 新模型（##87）：模块自带模块层，app 前缀由宿主给。
+ * `server.use({ prefix: "diy", api: watchApi, handlers: { watch: … } })`
+ * 与上面的 `watchService` 完全等价（后者 = prefix "diy" + 模块层 "watch"）。
+ */
+export const watchApi = RpcSchema.group({ children: { watch: watchRoutes } });

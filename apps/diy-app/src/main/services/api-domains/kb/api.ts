@@ -102,3 +102,10 @@ export const kbRoutes = RpcSchema.group({
 });
 
 export const kbService = defineService({ name: "diy.kb", api: kbRoutes });
+
+/**
+ * 新模型（##87）：模块自带模块层，app 前缀由宿主给。
+ * `server.use({ prefix: "diy", api: kbApi, handlers: { kb: … } })`
+ * 与上面的 `kbService` 完全等价（后者 = prefix "diy" + 模块层 "kb"）。
+ */
+export const kbApi = RpcSchema.group({ children: { kb: kbRoutes } });

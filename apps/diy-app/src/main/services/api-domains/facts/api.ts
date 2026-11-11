@@ -132,3 +132,10 @@ export const factsRoutes = RpcSchema.group({desc:
         },});
 
 export const factsService = defineService({ name: "diy.facts", api: factsRoutes });
+
+/**
+ * 新模型（##87）：模块自带模块层，app 前缀由宿主给。
+ * `server.use({ prefix: "diy", api: factsApi, handlers: { facts: … } })`
+ * 与上面的 `factsService` 完全等价（后者 = prefix "diy" + 模块层 "facts"）。
+ */
+export const factsApi = RpcSchema.group({ children: { facts: factsRoutes } });

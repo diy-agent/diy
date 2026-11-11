@@ -92,3 +92,10 @@ export const envRoutes = RpcSchema.group({desc: `环境感知通知（磁盘满 
         },});
 
 export const envService = defineService({ name: "diy.env", api: envRoutes });
+
+/**
+ * 新模型（##87）：模块自带模块层，app 前缀由宿主给。
+ * `server.use({ prefix: "diy", api: envApi, handlers: { env: … } })`
+ * 与上面的 `envService` 完全等价（后者 = prefix "diy" + 模块层 "env"）。
+ */
+export const envApi = RpcSchema.group({ children: { env: envRoutes } });

@@ -163,3 +163,10 @@ export const hubRoutes = RpcSchema.group({desc: `Hub 配对（邀请码 + Owner 
         },});
 
 export const hubService = defineService({ name: "diy.hub", api: hubRoutes });
+
+/**
+ * 新模型（##87）：模块自带模块层，app 前缀由宿主给。
+ * `server.use({ prefix: "diy", api: hubApi, handlers: { hub: … } })`
+ * 与上面的 `hubService` 完全等价（后者 = prefix "diy" + 模块层 "hub"）。
+ */
+export const hubApi = RpcSchema.group({ children: { hub: hubRoutes } });

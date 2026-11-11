@@ -231,3 +231,10 @@ export const flowRoutes = RpcSchema.group({desc: `工作流实例（与任务绑
         },});
 
 export const flowService = defineService({ name: "diy.flow", api: flowRoutes });
+
+/**
+ * 新模型（##87）：模块自带模块层，app 前缀由宿主给。
+ * `server.use({ prefix: "diy", api: flowApi, handlers: { flow: … } })`
+ * 与上面的 `flowService` 完全等价（后者 = prefix "diy" + 模块层 "flow"）。
+ */
+export const flowApi = RpcSchema.group({ children: { flow: flowRoutes } });

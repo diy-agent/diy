@@ -15,9 +15,10 @@ import { fileURLToPath } from "node:url";
 import { spawn, type ChildProcess } from "node:child_process";
 import electronPath from "electron";
 import { HttpClientBinding } from "@diy-agent/rpc/http";
+import { createScopedClient } from "@diy-agent/rpc";
+import { domainApis } from "../main/services/domain-apis";
 import { probeInstance } from "./probe-instance";
 import { CliApp } from "@diy-agent/rpc/cli";
-import { apiDef } from "../main/services/api-def";
 import { readRuntimeConfig, type RuntimeConfig } from "../runtime";
 import { resolveAppRoot } from "../main/core/app-root";
 import { AppConfig } from "../main/core/app-config";
@@ -235,11 +236,11 @@ async function main() {
     await new CliApp({
       name: "diy",
       version: APP_VERSION,
-      router: apiDef.diy,
-      rpcPrefix: "diy.",
+      // 新模型（##87）：模块自带模块层，app 前缀由这里给 —— 不再需要 router/rpcPrefix，
+      // 命令树 = 各域模块层（task / agent / …），线上名 = "diy." + 模块层 + 方法
+      clients: domainApis.map((api) => createScopedClient({ api, client: transport, prefix: "diy" })),
       // 全局选项（进程级）的单一真源：与 /cli 端点共用一份，见 global-options.ts
       globalOptions,
-      transport,
       // 路径参数（如 tool read 的 path）按**调用者**目录解析：入口脚本已 cd 到应用目录，
       // 进程 cwd 不再可信，故由 DIY_CALLER_CWD 显式带过来（见 diy.sh / bin/diy）。
       cwd: process.env["DIY_CALLER_CWD"] || process.cwd(),

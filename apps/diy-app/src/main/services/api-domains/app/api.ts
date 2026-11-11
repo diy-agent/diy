@@ -43,3 +43,10 @@ export const appRoutes = RpcSchema.group({
 });
 
 export const appService = defineService({ name: "diy.app", api: appRoutes });
+
+/**
+ * 新模型（##87）：模块自带模块层，app 前缀由宿主给。
+ * `server.use({ prefix: "diy", api: appApi, handlers: { app: … } })`
+ * 与上面的 `appService` 完全等价（后者 = prefix "diy" + 模块层 "app"）。
+ */
+export const appApi = RpcSchema.group({ children: { app: appRoutes } });

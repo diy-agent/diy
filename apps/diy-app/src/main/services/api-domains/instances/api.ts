@@ -51,3 +51,10 @@ export const instancesRoutes = RpcSchema.group({desc: `实例大盘（扫描本�
         },});
 
 export const instancesService = defineService({ name: "diy.instances", api: instancesRoutes });
+
+/**
+ * 新模型（##87）：模块自带模块层，app 前缀由宿主给。
+ * `server.use({ prefix: "diy", api: instancesApi, handlers: { instances: … } })`
+ * 与上面的 `instancesService` 完全等价（后者 = prefix "diy" + 模块层 "instances"）。
+ */
+export const instancesApi = RpcSchema.group({ children: { instances: instancesRoutes } });

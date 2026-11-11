@@ -27,3 +27,10 @@ export const llmProxyRoutes = RpcSchema.group({desc: `LLM 代理`,
         },});
 
 export const llmProxyService = defineService({ name: "diy.llmProxy", api: llmProxyRoutes });
+
+/**
+ * 新模型（##87）：模块自带模块层，app 前缀由宿主给。
+ * `server.use({ prefix: "diy", api: llmProxyApi, handlers: { llmProxy: … } })`
+ * 与上面的 `llmProxyService` 完全等价（后者 = prefix "diy" + 模块层 "llmProxy"）。
+ */
+export const llmProxyApi = RpcSchema.group({ children: { llmProxy: llmProxyRoutes } });

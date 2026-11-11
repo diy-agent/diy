@@ -89,3 +89,10 @@ export const journalRoutes = RpcSchema.group({desc: `任务日志（##404）：*
         },});
 
 export const journalService = defineService({ name: "diy.journal", api: journalRoutes });
+
+/**
+ * 新模型（##87）：模块自带模块层，app 前缀由宿主给。
+ * `server.use({ prefix: "diy", api: journalApi, handlers: { journal: … } })`
+ * 与上面的 `journalService` 完全等价（后者 = prefix "diy" + 模块层 "journal"）。
+ */
+export const journalApi = RpcSchema.group({ children: { journal: journalRoutes } });

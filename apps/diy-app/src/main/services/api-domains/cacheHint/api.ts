@@ -72,3 +72,10 @@ export const cacheHintRoutes = RpcSchema.group({desc: `冷缓存提示（safePoi
         },});
 
 export const cacheHintService = defineService({ name: "diy.cacheHint", api: cacheHintRoutes });
+
+/**
+ * 新模型（##87）：模块自带模块层，app 前缀由宿主给。
+ * `server.use({ prefix: "diy", api: cacheHintApi, handlers: { cacheHint: … } })`
+ * 与上面的 `cacheHintService` 完全等价（后者 = prefix "diy" + 模块层 "cacheHint"）。
+ */
+export const cacheHintApi = RpcSchema.group({ children: { cacheHint: cacheHintRoutes } });

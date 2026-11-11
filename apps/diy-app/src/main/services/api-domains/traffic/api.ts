@@ -155,3 +155,10 @@ export const trafficRoutes = RpcSchema.group({desc: `流量（应用发出去的
         },});
 
 export const trafficService = defineService({ name: "diy.traffic", api: trafficRoutes });
+
+/**
+ * 新模型（##87）：模块自带模块层，app 前缀由宿主给。
+ * `server.use({ prefix: "diy", api: trafficApi, handlers: { traffic: … } })`
+ * 与上面的 `trafficService` 完全等价（后者 = prefix "diy" + 模块层 "traffic"）。
+ */
+export const trafficApi = RpcSchema.group({ children: { traffic: trafficRoutes } });

@@ -21,3 +21,10 @@ export const docsRoutes = RpcSchema.group({desc: `仓库文档索引（##404）�
         },});
 
 export const docsService = defineService({ name: "diy.docs", api: docsRoutes });
+
+/**
+ * 新模型（##87）：模块自带模块层，app 前缀由宿主给。
+ * `server.use({ prefix: "diy", api: docsApi, handlers: { docs: … } })`
+ * 与上面的 `docsService` 完全等价（后者 = prefix "diy" + 模块层 "docs"）。
+ */
+export const docsApi = RpcSchema.group({ children: { docs: docsRoutes } });

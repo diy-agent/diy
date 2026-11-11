@@ -30,3 +30,10 @@ export const toolRoutes = RpcSchema.group({desc: `工具（文件读取：行窗
         },});
 
 export const toolService = defineService({ name: "diy.tool", api: toolRoutes });
+
+/**
+ * 新模型（##87）：模块自带模块层，app 前缀由宿主给。
+ * `server.use({ prefix: "diy", api: toolApi, handlers: { tool: … } })`
+ * 与上面的 `toolService` 完全等价（后者 = prefix "diy" + 模块层 "tool"）。
+ */
+export const toolApi = RpcSchema.group({ children: { tool: toolRoutes } });
