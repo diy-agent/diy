@@ -18,6 +18,10 @@
 @import '../../design/src/index.css';
 @import '../../design/src/diy/tailwind.css';
 
+/* Streamdown（AI Elements 的 Markdown 渲染器）：自带 .sd-* 的排版/代码块样式 */
+@import 'streamdown/styles.css';
+
+/* AI Elements 的组件源码也在这个包里，统一让 tailwind 扫到（否则工具类被裁掉） */
 @source "./";
 
 @theme inline {

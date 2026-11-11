@@ -74,11 +74,13 @@ describe('/demo-tool 演示数据（手点看到的就是这两段）', () => {
     });
 
     it('running 段 = 展开的黄点；ok 段 = 收起的绿点 + 摘要 + 输出', () => {
-        const running = renderBlock(demoToolMessage('running').blocks[0]!) as HTMLDetailsElement;
+        // 2026-11-11：演示消息里多了一个 think 块（AI Elements 的 Reasoning 演示），tool 不再是 blocks[0]
+        const toolOf = (m: ReturnType<typeof demoToolMessage>) => m.blocks.find((b) => b.kind === 'tool')!;
+        const running = renderBlock(toolOf(demoToolMessage('running'))) as HTMLDetailsElement;
         expect(running.open).toBe(true);
         expect(running.dataset['state']).toBe('running');
 
-        const ok = renderBlock(demoToolMessage('ok').blocks[0]!) as HTMLDetailsElement;
+        const ok = renderBlock(toolOf(demoToolMessage('ok'))) as HTMLDetailsElement;
         expect(ok.open).toBe(false);
         expect(ok.dataset['state']).toBe('ok');
         expect(ok.querySelector('.chat-tool-summary')?.textContent).toBe('读取 6.0 KB');

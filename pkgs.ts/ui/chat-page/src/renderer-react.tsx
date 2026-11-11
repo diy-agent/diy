@@ -31,6 +31,17 @@ import { Button } from './ui/button.js';
 import { Input } from './ui/input.js';
 import { Textarea } from './ui/textarea.js';
 import { Label } from './ui/label.js';
+// 2026-11-11：消息流换 AI Elements（##526 遗留 ③ 的正式接入）。
+// Conversation = 贴底滚动容器（StickToBottom，自带「回到底部」按钮）；
+// Message = 一行消息；BlocksView = text→Streamdown / think→Reasoning / tool→Tool。
+import {
+    Conversation,
+    ConversationContent,
+    ConversationEmptyState,
+    ConversationScrollButton,
+} from './ai-elements/conversation.js';
+import { Message, MessageContent } from './ai-elements/message.js';
+import { BlocksView } from './ai-elements/block-view.js';
 
 // ##499：与另两版同一份注册表（插件自造 kind 从这里登记）
 export { registerBlockRenderer, renderBlock, renderBlocks } from './block-renderers.js';
@@ -533,29 +544,13 @@ function ViewTabs({
 }
 
 function MessageList({ state }: { state: ChatState }): React.ReactElement {
-    const listRef = useRef<HTMLOListElement>(null);
-    /** 贴底就跟到底，否则原地不动（判据 3：新消息不把用户拽走） */
-    const stickRef = useRef(true);
-
-    useLayoutEffect(() => {
-        const list = listRef.current;
-        if (list === null) return;
-        if (stickRef.current) list.scrollTop = list.scrollHeight;
-    }, [state.messages]);
-
+    if (state.messages.length === 0) {
+        return <ConversationEmptyState title={state.emptyText} description="" />;
+    }
     return (
-        <ol
-            className="chat-list"
-            ref={listRef}
-            onScroll={(event) => {
-                const list = event.currentTarget;
-                stickRef.current = list.scrollHeight - list.scrollTop - list.clientHeight < 32;
-            }}
-        >
-            {state.messages.length === 0 ? (
-                <li className="chat-empty">{state.emptyText}</li>
-            ) : (
-                state.messages.map((message, index) => {
+        <Conversation className="chat-conversation">
+            <ConversationContent className="chat-conversation-content">
+                {state.messages.map((message, index) => {
                     // 指纹 = 块内容本身：tool 块从 running → ok 时只有那一行重画
                     const fingerprint = message.blocks
                         .map((block) => `${block.kind}:${block.id}:${JSON.stringify(block.data)}`)
@@ -567,9 +562,10 @@ function MessageList({ state }: { state: ChatState }): React.ReactElement {
                             fingerprint={fingerprint}
                         />
                     );
-                })
-            )}
-        </ol>
+                })}
+            </ConversationContent>
+            <ConversationScrollButton />
+        </Conversation>
     );
 }
 
@@ -580,36 +576,15 @@ function MessageList({ state }: { state: ChatState }): React.ReactElement {
 const MessageRow = memo(
     function MessageRow({ message, fingerprint }: { message: WireMessage; fingerprint: string }): React.ReactElement {
         return (
-            <li className="chat-row" data-role={message.role}>
-                <span className="chat-role">{message.role === 'user' ? '我' : '助手'}</span>
-                <BlockList blocks={message.blocks} fingerprint={fingerprint} />
-            </li>
+            <Message from={message.role === 'user' ? 'user' : 'assistant'} data-role={message.role}>
+                <MessageContent className="chat-message-content">
+                    <BlocksView blocks={message.blocks} />
+                </MessageContent>
+            </Message>
         );
     },
     (prev, next) => prev.fingerprint === next.fingerprint,
 );
-
-/**
- * 一条消息的全部 Block。渲染走注册表（`block-renderers.ts`，产真实 DOM），
- * 所以这里只用 layout effect 按指纹换 children —— 不把 Block 形状塞进 React 的 diff。
- */
-function BlockList({
-    blocks,
-    fingerprint,
-}: {
-    blocks: readonly WireMessage['blocks'][number][];
-    fingerprint: string;
-}): React.ReactElement {
-    const ref = useRef<HTMLDivElement>(null);
-    const latest = useRef(blocks);
-    latest.current = blocks;
-    useLayoutEffect(() => {
-        const node = ref.current;
-        if (node === null) return;
-        node.replaceChildren(...renderBlocks(latest.current));
-    }, [fingerprint]);
-    return <div className="chat-blocks" ref={ref} />;
-}
 
 // ── 底部：bot 名 + 指标（一行）+ 输入框 ───────────────────
 
