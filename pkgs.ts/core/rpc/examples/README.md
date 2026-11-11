@@ -9,12 +9,17 @@ examples/
 │   ├── 01-basic/     { src/api.ts, src/gen/*.d.ts, run.ts }
 │   ├── 02-stream/    同构
 │   └── 03-cancel/    同构
-└── raw/        ← 底层：binding.on(meta, handler) + createTypedClient 直用
-    ├── 01-basic.ts
-    ├── 02-runtime-validation.ts
-    ├── 03-stream.ts
-    ├── 04-cancel.ts
-    └── 05-cli.ts
+├── raw/        ← 底层：binding.on(meta, handler) + createTypedClient 直用
+│   ├── 01-basic.ts
+│   ├── 02-runtime-validation.ts
+│   ├── 03-stream.ts
+│   └── 04-cancel.ts
+（原来这里有个 05-cli.ts，已拆成 `cli/` 整个目录，见下）
+└── cli/        ← CLI（`@diy-agent/rpc/cli`）：同一棵树变成命令，逐个可跑
+    ├── 01-single-module/    一个模块 → 一棵命令树
+    ├── 02-multi-module-root/ 多模块合并成同一个根命令（diy 的形态）
+    ├── 03-global-options/   全局选项表：声明/解析/help 同源
+    └── 04-root-pitfalls/    根命令的四个坑（rpcPrefix / 多一层 / cliRootPath）
 ```
 
 ## 推荐写法（`service/`）—— 一个目录一个例子
