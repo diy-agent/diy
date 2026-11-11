@@ -74,90 +74,13 @@ type MetaField =
 type IsGroup<T> = T extends { _streamMode: 'group' } ? true : false;
 
 /** `defineService` 的入参 */
-export interface ServiceDef<TRoutes extends _Router | _AnyProcedureMeta> {
-  /**
-   * 模块名 —— **跨进程的协议标识**，不是包名。
-   *
-   * 为什么手写而不是从 package.json 读：包可能改名，而已经发出去的协议路径不能跟着变
-   * （老客户端会立刻全挂）。名字一旦写进 service 就是契约的一部分。
-   */
-  readonly name: string;
-  /** 路由树（`RpcSchema.group({ children: ... })` 的返回值，形状不变） */
-  readonly api: TRoutes;
-}
-
-/** `defineService` 的返回：两端入口 + 原样的 name / api */
-export interface Service<TRoutes extends _Router | _AnyProcedureMeta> {
-  readonly name: string;
-  readonly api: TRoutes;
-  /** 服务端：把 handlers 挂到 `name.*` 前缀下 */
-  bind(server: ServerBinding, handlers: HandlersOf<TRoutes>): void;
-  /** 客户端：取回**只有这个模块**的强类型调用端 */
-  use(client: ClientBinding): TypedClient<TRoutes>;
-}
-
-// ═══════════════════════════════════════════════════
-//  实现
-// ═══════════════════════════════════════════════════
-
-/** 按 `a.b.c` 取嵌套对象里的 handler（`handlers.page.list`） */
-function pickHandler(handlers: unknown, path: string): unknown {
-  let cur: unknown = handlers;
-  for (const seg of path.split('.')) {
-    if (cur === null || typeof cur !== 'object') return undefined;
-    cur = (cur as Record<string, unknown>)[seg];
-  }
-  return cur;
-}
-
-export function defineService<const TRoutes extends _Router | _AnyProcedureMeta>(
-  def: ServiceDef<TRoutes>,
-): Service<TRoutes> {
-  const { name, api } = def;
-  if (name === '') {
-    // 空名字会让所有路径变成 `.page.list`，比报错更难查 —— 定义时就拒
-    throw new Error('defineService: name 不能为空');
-  }
-
-  return {
-    name,
-    api,
-
-    bind(server, handlers) {
-      for (const [path, meta] of Object.entries(_flattenRouter(api))) {
-        const handler = pickHandler(handlers, path);
-        if (typeof handler !== 'function') {
-          // 类型上已经拦了，这里是运行期兜底（`as never` 绕过、或 api 与 handlers 来自不同版本）
-          throw new Error(`defineService(${name}): 缺少 handler —— ${path}`);
-        }
-        // 三参形式：路径与 meta **分开给**，不改原 meta —— 同一个 api 可能被多个
-        // service 复用（比如一个模块同时挂在自己的名字下和某个兼容别名下）
-        server._on(`${name}.${path}`, meta, handler as never);
-      }
-    },
-
-    use(client) {
-      return createTypedClient(client, api, { prefix: name });
-    },
-  };
-}
-
 /**
- * 装配完整性对账 —— **双向**：
- *
- * · apiDef 里声明了、binding 上没绑 ⇒ 运行期才回 `Unknown method: diy.xxx`
- *   （2026-11-09 就栽过：`app.info` 的 meta 在、handler 漏了，CLI 探活因此失败、
- *   报「启动超时」还杀掉自己）
- * · binding 上绑了、apiDef 里没有 ⇒ 客户端永远调不到，属死代码（多半是改名漏改）
- *
- * **必须在启动时跑**，不能等第一条请求 —— 那时已经分不清是「没实现」还是
- * 「实现里抛了」。
- *
- * @param binding 已装配的 ServerBinding
- * @param root    期望被绑的总树（通常是 `apiDef.diy`）；路径前缀从它的 key 开始算
- * @param label   报错时的场签名（如 `diy-app`）
- * @throws 任一方向不一致时报错，列出全部分歧（不是只报第一条 —— 一次修完）
+ * 2026-11 删除了 `defineService` / `Service`：
+ * 它把「模块」与「部署位置」焊死（`name` 写死在模块里），已由 `scope.ts` 取代 ——
+ * 模块自带模块层（api 的 children），app 前缀由宿主给（`server.use` / `createScopedClient`）。
+ * 本文件只保留 `HandlersOf`（两侧共用的 handlers 形状推导）。
  */
+
 export function assertFullyBound(
   binding: { listRegistered(): string[] },
   root: object,

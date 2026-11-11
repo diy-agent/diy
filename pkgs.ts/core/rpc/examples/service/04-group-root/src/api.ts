@@ -12,7 +12,7 @@
  * 跑：`npx tsx pkgs.ts/core/rpc/examples/service/04-group-root/run.ts`
  */
 import { z } from 'zod';
-import { RpcSchema, defineService } from '../../../../src/index';
+import { RpcSchema } from '../../../../src/index';
 
 export const calcRoutes = RpcSchema.group({
     desc: '计算器示例',
@@ -32,4 +32,3 @@ export const calcRoutes = RpcSchema.group({
     },
 });
 
-export const calcService = defineService({ name: 'demo', api: calcRoutes });

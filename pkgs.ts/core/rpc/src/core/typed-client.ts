@@ -36,9 +36,17 @@ export type TypedClient<T> = {
     : T[K] extends { _type: 'procedure'; _streamMode: 'server' }
       ? (input: ProcInput<T[K]>, options?: CallOptions) => Promise<StreamHandle<ProcOutput<T[K]>>>
       : T[K] extends { _type: 'procedure'; _streamMode: 'client' }
-        ? (input: ProcInput<T[K]>, chunks: ProcChunks<T[K]>, options?: CallOptions) => Promise<ProcOutput<T[K]>>
+        ? (
+            input: ProcInput<T[K]>,
+            chunks: ProcChunks<T[K]>,
+            options?: CallOptions,
+          ) => Promise<ProcOutput<T[K]>>
         : T[K] extends { _type: 'procedure'; _streamMode: 'bidi' }
-          ? (input: ProcInput<T[K]>, chunks: ProcChunks<T[K]>, options?: CallOptions) => Promise<StreamHandle<ProcChunkOut<T[K]>>>
+          ? (
+              input: ProcInput<T[K]>,
+              chunks: ProcChunks<T[K]>,
+              options?: CallOptions,
+            ) => Promise<StreamHandle<ProcChunkOut<T[K]>>>
           : T[K] extends { _type: 'procedure'; _streamMode: 'group' }
             ? TypedClient<T[K]>
             : T[K] extends Record<string, unknown>
@@ -92,26 +100,43 @@ export function createTypedClient<const T>(
     return sc.input ? sc.input.parse(input) : input;
   };
 
-  const buildProxy = (base: string): any => new Proxy({} as any, {
-    get(_, method: string) {
-      const name = base ? `${base}.${method}` : method;
-      const m = modes[name];
-      if (!m) return buildProxy(name);
+  const buildProxy = (base: string): any =>
+    new Proxy({} as any, {
+      get(_, method: string | symbol) {
+        // Symbol 键不是方法名：`Object.assign` 拷贝、`inspect` / `Symbol.toStringTag`、
+        // thenable 探测都会读它们。不拦的话 `${base}.${String(method)}` 直接抛
+        // `Cannot convert a Symbol value to a string`（##87 实测：包一层部署信息就炸）。
+        if (typeof method !== 'string') return undefined;
+        const name = base ? `${base}.${method}` : method;
+        const m = modes[name];
+        if (!m) return buildProxy(name);
 
-      if (m === 'server') {
-        return (input: any, options?: CallOptions) => binding.serverStream(name, { input: validate(name, input), meta: {} }, options);
-      }
-      if (m === 'client') {
-        return (input: any, chunks: any, options?: CallOptions) =>
-          binding.clientStream(name, { input: validate(name, input), meta: {} }, resolveChunks(chunks), options);
-      }
-      if (m === 'bidi') {
-        return (input: any, chunks: any, options?: CallOptions) =>
-          binding.bidiStream(name, { input: validate(name, input), meta: {} }, resolveChunks(chunks), options);
-      }
-      return (input: any, options?: CallOptions) => binding.invoke(name, { input: validate(name, input), meta: {} }, options);
-    },
-  });
+        if (m === 'server') {
+          return (input: any, options?: CallOptions) =>
+            binding.serverStream(name, { input: validate(name, input), meta: {} }, options);
+        }
+        if (m === 'client') {
+          return (input: any, chunks: any, options?: CallOptions) =>
+            binding.clientStream(
+              name,
+              { input: validate(name, input), meta: {} },
+              resolveChunks(chunks),
+              options,
+            );
+        }
+        if (m === 'bidi') {
+          return (input: any, chunks: any, options?: CallOptions) =>
+            binding.bidiStream(
+              name,
+              { input: validate(name, input), meta: {} },
+              resolveChunks(chunks),
+              options,
+            );
+        }
+        return (input: any, options?: CallOptions) =>
+          binding.invoke(name, { input: validate(name, input), meta: {} }, options);
+      },
+    });
 
   return buildProxy(prefix) as TypedClient<T>;
 }

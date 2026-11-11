@@ -11,7 +11,8 @@
 
 import type { StreamHandle } from './types.js';
 import type { _ErrorPayload, _ErrorProtocolExt } from './error.js';
-import type { _AnyProcedureMeta, _HandlerForProc } from './meta.js';
+import type { _AnyProcedureMeta, _HandlerForProc, _Router } from './meta.js';
+import type { HandlersOf } from './service.js';
 
 // ═══════════════════════════════════════════════════
 //  CallOptions — 通用调用选项（取消/超时）
@@ -60,6 +61,22 @@ export interface ServerBinding {
    * 运行时还要用它做 zod 校验（`inputSchema`）。
    */
   _on<M extends _AnyProcedureMeta>(path: string, meta: M, handler: _HandlerForProc<M>): void;
+  /**
+   * **挂载一个模块**：前缀由调用方（宿主）给，模块自己不知道名字。
+   *
+   * ```ts
+   * server.use({ prefix: 'diy.task', api: taskApi, handlers: { list, create } });
+   * ```
+   *
+   * 与 `defineService.bind` 的差别只有一处：前缀是参数 ⇒ 同一个 api 能挂到
+   * 不同前缀（多租户 / 兼容别名），换部署位置不用改模块源码。
+   * `handlers` 与 api 同构（`HandlersOf<typeof api>`）：少一个方法就是编译错误。
+   */
+  use<T extends _Router | _AnyProcedureMeta>(options: {
+    readonly prefix: string;
+    readonly api: T;
+    readonly handlers: HandlersOf<T>;
+  }): void;
   /**
    * 列出**已注册**的全部方法名。
    *

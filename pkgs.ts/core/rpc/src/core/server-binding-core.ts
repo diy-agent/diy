@@ -8,15 +8,34 @@
 
 import type { StreamHandle } from './types.js';
 import type { ClientBinding } from './server-binding.js';
-import { _validateInput, type _AnyProcedureMeta, type _HandlerForProc, type _Router } from './meta.js';
+import {
+  _validateInput,
+  type _AnyProcedureMeta,
+  type _HandlerForProc,
+  type _Router,
+} from './meta.js';
 import { _flattenRouter, _isProcedure } from './_tree.js';
+import { mountService } from './scope.js';
 
 type UnaryHandler = (params: unknown, signal: AbortSignal) => unknown;
 type ServerStreamHandler = (params: unknown, signal: AbortSignal) => AsyncGenerator<unknown>;
-type ClientStreamHandler = (params: unknown, chunks: StreamHandle<unknown>, signal: AbortSignal) => Promise<unknown>;
-type BidiStreamHandler = (params: unknown, incoming: StreamHandle<unknown>, signal: AbortSignal) => AsyncGenerator<unknown>;
+type ClientStreamHandler = (
+  params: unknown,
+  chunks: StreamHandle<unknown>,
+  signal: AbortSignal,
+) => Promise<unknown>;
+type BidiStreamHandler = (
+  params: unknown,
+  incoming: StreamHandle<unknown>,
+  signal: AbortSignal,
+) => AsyncGenerator<unknown>;
 /** 各 onXxx 内部 handler 形态：收 { input, meta, stream?, signal }（与 _HandlerForProc 一致） */
-type HandlerFn = (opts: { input: unknown; meta: unknown; stream?: unknown; signal: AbortSignal }) => unknown;
+type HandlerFn = (opts: {
+  input: unknown;
+  meta: unknown;
+  stream?: unknown;
+  signal: AbortSignal;
+}) => unknown;
 
 /** 从 envelope params 解包出 { input, meta, stream?, signal }，并对 input 做 zod 校验 */
 function unwrap(
@@ -82,23 +101,39 @@ export abstract class ServerBindingCore {
     this._assertNotRegistered(name);
     const mode = meta._streamMode;
     if (mode === 'unary') {
-      this._unaries.set(name, (params, signal) => (handler as HandlerFn)(unwrap(meta, params, undefined, signal)));
+      this._unaries.set(name, (params, signal) =>
+        (handler as HandlerFn)(unwrap(meta, params, undefined, signal)),
+      );
     } else if (mode === 'server') {
       this._serverStreams.set(
         name,
-        (params, signal) => (handler as HandlerFn)(unwrap(meta, params, undefined, signal)) as AsyncGenerator<unknown>,
+        (params, signal) =>
+          (handler as HandlerFn)(
+            unwrap(meta, params, undefined, signal),
+          ) as AsyncGenerator<unknown>,
       );
     } else if (mode === 'client') {
       this._clientStreams.set(
         name,
-        (params, chunks, signal) => (handler as HandlerFn)(unwrap(meta, params, chunks, signal)) as Promise<unknown>,
+        (params, chunks, signal) =>
+          (handler as HandlerFn)(unwrap(meta, params, chunks, signal)) as Promise<unknown>,
       );
     } else if (mode === 'bidi') {
       this._bidiStreams.set(
         name,
-        (params, incoming, signal) => (handler as HandlerFn)(unwrap(meta, params, incoming, signal)) as AsyncGenerator<unknown>,
+        (params, incoming, signal) =>
+          (handler as HandlerFn)(unwrap(meta, params, incoming, signal)) as AsyncGenerator<unknown>,
       );
     }
+  }
+
+  /** 挂载一个模块到指定前缀（前缀由宿主给，见 scope.ts） */
+  use<T extends _Router | _AnyProcedureMeta>(options: {
+    readonly prefix: string;
+    readonly api: T;
+    readonly handlers: unknown;
+  }): void {
+    mountService(this as never, options as never);
   }
 
   /** 清空所有注册表（子类 destroy 复用） */
@@ -125,26 +160,52 @@ export abstract class ServerBindingCore {
    * 跨进程调用一律 `Unknown method`。
    */
   onForward(router: _Router | _AnyProcedureMeta, client: ClientBinding, prefix = ''): void {
-    const subtree = _isProcedure(router) && router._streamMode === 'group'
-      ? (router.children as _Router)
-      : (router as _Router);
+    const subtree =
+      _isProcedure(router) && router._streamMode === 'group'
+        ? (router.children as _Router)
+        : (router as _Router);
     for (const [name, def] of Object.entries(_flattenRouter(subtree))) {
       const full = prefix + name;
       const mode = def._streamMode;
 
       if (mode === 'unary') {
-        this._on(full, def as _AnyProcedureMeta, ((opts: { input: unknown; meta: unknown; signal: AbortSignal }) =>
-          client.invoke(full, { input: opts.input, meta: opts.meta }, { signal: opts.signal })) as any);
+        this._on(
+          full,
+          def as _AnyProcedureMeta,
+          ((opts: { input: unknown; meta: unknown; signal: AbortSignal }) =>
+            client.invoke(
+              full,
+              { input: opts.input, meta: opts.meta },
+              { signal: opts.signal },
+            )) as any,
+        );
       } else if (mode === 'server') {
-        this._on(full, def as _AnyProcedureMeta, ((opts: { input: unknown; meta: unknown; signal: AbortSignal }) =>
-          this._forwardServerStream(client, full, opts)) as any);
+        this._on(
+          full,
+          def as _AnyProcedureMeta,
+          ((opts: { input: unknown; meta: unknown; signal: AbortSignal }) =>
+            this._forwardServerStream(client, full, opts)) as any,
+        );
       } else if (mode === 'client') {
         // 来源 incoming 流原样桥接给远端（StreamHandle 即 AsyncIterable）
-        this._on(full, def as _AnyProcedureMeta, ((opts: { input: unknown; meta: unknown; stream?: unknown; signal: AbortSignal }) =>
-          client.clientStream(full, { input: opts.input, meta: opts.meta }, opts.stream as AsyncIterable<unknown>, { signal: opts.signal })) as any);
+        this._on(
+          full,
+          def as _AnyProcedureMeta,
+          ((opts: { input: unknown; meta: unknown; stream?: unknown; signal: AbortSignal }) =>
+            client.clientStream(
+              full,
+              { input: opts.input, meta: opts.meta },
+              opts.stream as AsyncIterable<unknown>,
+              { signal: opts.signal },
+            )) as any,
+        );
       } else if (mode === 'bidi') {
-        this._on(full, def as _AnyProcedureMeta, ((opts: { input: unknown; meta: unknown; stream?: unknown; signal: AbortSignal }) =>
-          this._forwardBidiStream(client, full, opts)) as any);
+        this._on(
+          full,
+          def as _AnyProcedureMeta,
+          ((opts: { input: unknown; meta: unknown; stream?: unknown; signal: AbortSignal }) =>
+            this._forwardBidiStream(client, full, opts)) as any,
+        );
       } else {
         throw new Error(`[ServerBinding] ${full}: 未知 stream mode ${mode}`);
       }
@@ -156,7 +217,11 @@ export abstract class ServerBindingCore {
     full: string,
     opts: { input: unknown; meta: unknown; signal?: AbortSignal },
   ): AsyncGenerator<unknown> {
-    const handle = await client.serverStream(full, { input: opts.input, meta: opts.meta }, { signal: opts.signal });
+    const handle = await client.serverStream(
+      full,
+      { input: opts.input, meta: opts.meta },
+      { signal: opts.signal },
+    );
     for await (const chunk of handle) yield chunk;
   }
 
@@ -165,7 +230,12 @@ export abstract class ServerBindingCore {
     full: string,
     opts: { input: unknown; meta: unknown; stream?: unknown; signal?: AbortSignal },
   ): AsyncGenerator<unknown> {
-    const handle = await client.bidiStream(full, { input: opts.input, meta: opts.meta }, opts.stream as AsyncIterable<unknown>, { signal: opts.signal });
+    const handle = await client.bidiStream(
+      full,
+      { input: opts.input, meta: opts.meta },
+      opts.stream as AsyncIterable<unknown>,
+      { signal: opts.signal },
+    );
     for await (const chunk of handle) yield chunk;
   }
 

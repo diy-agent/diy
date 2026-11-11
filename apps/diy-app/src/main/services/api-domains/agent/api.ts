@@ -12,7 +12,7 @@
  * └── usage.ts    ← token 用量（单条 unary，不是子组）
  * ```
  */
-import { RpcSchema, defineService } from "@diy-agent/rpc";
+import { RpcSchema } from "@diy-agent/rpc";
 import { personaRoutes } from "./persona";
 import { localRoutes } from "./local";
 import { usageRoute } from "./usage";
@@ -26,4 +26,10 @@ export const agentRoutes = RpcSchema.group({
     },
 });
 
-export const agentService = defineService({ name: "diy.agent", api: agentRoutes });
+
+/**
+ * 新模型（##87）：模块自带模块层，app 前缀由宿主给。
+ * `server.use({ prefix: "diy", api: agentApi, handlers: { agent: … } })`
+ * 与上面的 `agentService` 完全等价（后者 = prefix "diy" + 模块层 "agent"）。
+ */
+export const agentApi = RpcSchema.group({ children: { agent: agentRoutes } });

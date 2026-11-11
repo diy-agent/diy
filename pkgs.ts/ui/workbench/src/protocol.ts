@@ -15,11 +15,4 @@
 
 // 2026-11-06：契约本体全部搬到 `./api.js`（`gen-service-types` 扫 `<pkg>/src/api.ts`）。
 // 本文件只留**历史说明**与 re-export —— 保住既有的 `from "./protocol.js"` 引用。
-export {
-    workbenchService,
-    workbenchRoutes,
-    rendererService,
-    rendererRoutes,
-    type WorkbenchApi,
-    type RendererApi,
-} from "./api.js";
+export { workbenchRoutes, rendererRoutes, type WorkbenchApi, type RendererApi } from './api.js';

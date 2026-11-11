@@ -5,7 +5,7 @@ import { getRendererActions, type LayoutChanges } from "./renderer-actions";
 import type { ToastType } from "../store/notificationStore";
 import { personaDrawerStore } from "../store/personaDrawerStore";
 import { apiDef } from "../../main/services/api-def";
-import { uiService } from "../../main/services/api-domains/ui/api";
+import { uiApi } from "../../main/services/api-domains/ui/api";
 import { diyService } from "./rpc";
 import { editTask } from "./task-edit";
 import { taskStore } from "../store/taskStore";
@@ -28,256 +28,314 @@ import { uiWatchStream, currentSnapshot } from "./ui-watch";
  */
 
 export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
-  const binding = new ChannelServerBinding(transport);
-  const ui = apiDef.diy.ui;
+    const binding = new ChannelServerBinding(transport);
+    const ui = apiDef.diy.ui;
 
-  // 全部 handler 一次性交给 `uiService.bind` —— 形状与 `diy.ui` 子树同构。
-  uiService.bind(binding, {
-    component: {
-      list: async () => {
-    // TODO: 动态扫描注册的组件
-    return {
-      status: "ok",
-      data: {
-        components: [
-          { name: "taskTree", label: "任务树", description: "任务层级树形展示" },
-          { name: "logPanel", label: "日志面板", description: "实时日志输出面板" },
-          { name: "agentChat", label: "Agent 对话", description: "AI 代理对话面板" },
-        ],
-      },
-    };
-  },
-      status: async () => {
-    // TODO: 从组件 Store 读取真实状态
-    return {
-      status: "ok",
-      data: { visible: true, state: "ready" },
-    };
-  }
-    },
-    page: {
-      info: async () => ({
-    status: "ok",
-    data: {
-      title: document.title,
-      url: window.location.href,
-      ready: document.readyState === "complete",
-    },
-  }),
-      navigate: async ({ input }) => {
-    const nav = getRendererActions().navigate;
-    if (!nav) return { status: "error", data: { reason: "renderer actions 未就绪" } };
-    nav(input.page);
-    const snap = currentSnapshot();
-    return { status: "ok", data: { rev: snap.rev, uiRev: snap.uiRev, active: snap.active } };
-  },
-      focus: async ({ input }) => {
-    getRendererActions().focus?.(input.uri);
-    return { status: "ok" };
-  },
-      toast: async ({ input }) => {
-    getRendererActions().toast?.(input.message, (input.level as ToastType) ?? "info");
-    return { status: "ok" };
-  }
-    },
-    view: {
-      expand: async ({ input }) => {
-    getRendererActions().setView?.(input.key, input.open !== "closed");
-    return { status: "ok" };
-  },
-      set: async ({ input }) => {
-    const pageId = input.page ?? "task-run";
-    const ctx = input.ctx ?? null;
-    // 依赖倒置的代价：写错 view/page/ctx 没有类型错误，只能运行时拦（判据与渲染层共用）
-    const bad = checkViewTarget(input.view, pageId, ctx);
-    if (bad) throw new Error(bad);
-    getRendererActions().setViewVisible?.(pageId, input.view, ctx, input.open !== "closed");
-    return { status: "ok" };
-  }
-    },
-    persona: {
-      open: async ({ input }) => {
-    personaDrawerStore.open(input.id);
-    return { status: "ok" };
-  },
-      close: async () => {
-    personaDrawerStore.close();
-    return { status: "ok" };
-  },
-      state: async () => {
-    return { status: "ok", data: { open: personaDrawerStore.isOpen(), id: personaDrawerStore.target() } };
-  }
-    },
-    layout: {
-      get: async ({ input }) => {
-    const snap = getRendererActions().getLayout?.(input.page, input.ctx ?? null);
-    if (!snap) throw new Error(`未知 page: ${input.page}`);
-    return { status: "ok", data: { ...snap, layout: snap.layout as never } };
-  },
-      set: async ({ input }) => {
-    const changes: LayoutChanges = {};
-    // cols/rows 在 renderer 侧解析成 TrackSize[]（CLI 只传简写串）
-    if (input.cols !== undefined) {
-      const t = parseTracks(input.cols);
-      if (!t) throw new Error(`--cols 格式非法: ${input.cols}（数字=px，*=fr，逗号分隔）`);
-      changes.cols = t;
-    }
-    if (input.rows !== undefined) {
-      const t = parseTracks(input.rows);
-      if (!t) throw new Error(`--rows 格式非法: ${input.rows}`);
-      changes.rows = t;
-    }
-    if (input.hide) changes.hide = input.hide.split(",").map((x) => x.trim()).filter(Boolean);
-    if (input.show) changes.show = input.show.split(",").map((x) => x.trim()).filter(Boolean);
-    if (input.maximize !== undefined) changes.maximize = input.maximize || null;
-    getRendererActions().setLayout?.(input.page, changes);
-    return { status: "ok" };
-  },
-      reset: async ({ input }) => {
-    getRendererActions().resetLayout?.(input.page);
-    return { status: "ok" };
-  }
-    },
-    viewarea: {
-      set: async ({ input }) => {
-    // pageId 由调用方给出（同一 area 名在不同 page 上是不同的东西）
-    getRendererActions().setViewArea?.(input.page ?? "task-run", input.area, input.open !== "closed");
-    return { status: "ok" };
-  }
-    },
-    tab: {
-      open: async ({ input }) => {
-    // 两种写法：`<任务 URI>`（= 任务执行页）或 `<pageId>:<任务 URI>`（如 `lab:projects/1/tasks/1`）
-    const m = input.uri.match(/^([a-z][a-z0-9-]*):(.+)$/);
-    const pageId = m ? m[1]! : "task-run";
-    const ctx = m ? m[2]! : input.uri;
-    const tabKey = `${pageId}:${ctx}`;
-    const openTab = getRendererActions().openTab;
-    if (!openTab) return { status: "error", data: { uri: input.uri, reason: "renderer actions 未就绪" } };
-    // 顺序/缩进依赖任务层次：先确保树里有这个 ctx（缺则按需重载一次，覆盖 fileChange 防抖窗口）
-    await taskStore.ensureTasks([ctx]);
-    openTab(pageId, ctx);
-    // 写后回读：本地 UI 写是同步 flush，这里立刻能读到后置状态。把「是否真的达到该状态」
-    // 回给调用方（原实现无条件 return ok，写没生效也报 ok，调用方无法自检）。
-    const snap = currentSnapshot();
-    const ok = snap.tabs.some((t) => t.key === tabKey);
-    return { status: ok ? "ok" : "error", data: { uri: input.uri, rev: snap.rev, uiRev: snap.uiRev, active: snap.active, reason: ok ? undefined : "打开后未在快照中看到该 tab" } };
-  },
-      close: async ({ input }) => {
-    const closeTab = getRendererActions().closeTab;
-    if (!closeTab) return { status: "error", data: { uri: input.uri, reason: "renderer actions 未就绪" } };
-    closeTab(input.uri);
-    const snap = currentSnapshot();
-    const ok = !snap.tabs.some((t) => t.key === input.uri);
-    return { status: ok ? "ok" : "error", data: { uri: input.uri, rev: snap.rev, uiRev: snap.uiRev, reason: ok ? undefined : "关闭后该 tab 仍在快照中" } };
-  },
-      active: async ({ input }) => {
-    const activate = getRendererActions().activateTab;
-    if (!activate) return { status: "error", data: { uri: input.uri, reason: "renderer actions 未就绪" } };
-    activate(input.uri);
-    const snap = currentSnapshot();
-    const ok = snap.active === input.uri;
-    return { status: ok ? "ok" : "error", data: { uri: input.uri, rev: snap.rev, uiRev: snap.uiRev, reason: ok ? undefined : `激活后 active=${snap.active}` } };
-  },
-      list: async () => {
-    // opened 的顺序由任务层次现算：读之前确保树含所有已开 tab 的 ctx（缺则按需重载一次）
-    await taskStore.ensureTasks(tabStore.opened.map((t) => t.ctx));
-    // 契约保持字符串数组（CLI/测试都按字符串用）：opened = tab key 列表
-    return { status: "ok", data: { opened: tabStore.opened.map((t) => t.key), active: tabStore.active } };
-  }
-    },
-    tree: async ({ input }) => {
-    return diyService.diy.task.tree({ allTasks: input.all ?? false });
-  },
-    status: async () => {
-    const s = await diyService.diy.app.info({});
-    return { status: 'ok', data: { pid: s.pid, uptime: s.uptime, memory: s.heapUsed } };
-  },
-    project: {
-      create: async ({ input }) => {
-    const id = await createProjectViaUi(input.path, input.label, input.desc);
-    return { status: "ok", data: { id } };
-  },
-      remove: async ({ input }) => {
-    await removeProjectViaUi(input.id);
-    return { status: "ok", data: { id: input.id } };
-  }
-    },
-    task: {
-      create: async ({ input }) => {
-    const uri = await createTaskViaUi({
-      title: input.title,
-      project: input.project,
-      parent: input.parent,
-    });
-    return { status: "ok", data: { uri } };
-  },
-      update: async ({ input }) => {
-    const { uri, ...changes } = input;
-    await editTask(uri, changes);
-    await taskStore.loadTree();
-    if (taskStore.selectedUri === uri) {
-      await taskStore.selectTask(uri);
-    }
-    getRendererActions().toast?.("任务已更新", "success");
-    return { status: "ok", data: { uri } };
-  },
-      delete: async ({ input }) => {
-    await deleteTaskViaUi(input.uri);
-    return { status: "ok", data: { uri: input.uri } };
-  },
-      setState: async ({ input }) => {
-    await editTask(input.uri, { state: input.state });
-    await taskStore.loadTree();
-    notificationStore.addToast("success", `状态已改为 ${input.state}`, taskStateNotice({ uri: input.uri, state: input.state }));
-    return { status: "ok", data: { uri: input.uri } };
-  }
-    },
-    inspect: async () => {
-    const tree = buildA11yTree(document.body);
-    // 剥离内部字段（_count/_visible），保持输出干净
-    const clean = stripInternal(tree);
-    return {
-      status: "ok",
-      data: {
-        tree: clean,
-        stats: { totalNodes: tree?._count || 0, visibleNodes: tree?._visible || 0 },
-      },
-    };
-  },
-    state: async () => ({ status: "ok", data: currentSnapshot() }),
-    watch: {
-      uiState: async function* () {
-    for await (const snap of uiWatchStream()) {
-      yield { status: "ok", data: snap };
-    }
-  }
-    }
-  });
+    // 全部 handler 一次性交给 `uiService.bind` —— 形状与 `diy.ui` 子树同构。
+    // TODO(##87): HandlersOf 对 ui 域的推导仍是 any（待查根因），先显式断言避免 22 处隐式 any
+    // TODO(##87): HandlersOf 对 ui 域的推导会丢上下文类型（22 处隐式 any），暂时用 any 兜住，待查根因
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const handlers: any = {
+            ui: {
+                ui: {
+                    component: {
+                        list: async () => {
+                            // TODO: 动态扫描注册的组件
+                            return {
+                                status: "ok",
+                                data: {
+                                    components: [
+                                        { name: "taskTree", label: "任务树", description: "任务层级树形展示" },
+                                        { name: "logPanel", label: "日志面板", description: "实时日志输出面板" },
+                                        { name: "agentChat", label: "Agent 对话", description: "AI 代理对话面板" },
+                                    ],
+                                },
+                            };
+                        },
+                        status: async () => {
+                            // TODO: 从组件 Store 读取真实状态
+                            return {
+                                status: "ok",
+                                data: { visible: true, state: "ready" },
+                            };
+                        },
+                    },
+                    page: {
+                        info: async () => ({
+                            status: "ok",
+                            data: {
+                                title: document.title,
+                                url: window.location.href,
+                                ready: document.readyState === "complete",
+                            },
+                        }),
+                        navigate: async ({ input }: any) => {
+                            const nav = getRendererActions().navigate;
+                            if (!nav) return { status: "error", data: { reason: "renderer actions 未就绪" } };
+                            nav(input.page);
+                            const snap = currentSnapshot();
+                            return { status: "ok", data: { rev: snap.rev, uiRev: snap.uiRev, active: snap.active } };
+                        },
+                        focus: async ({ input }: any) => {
+                            getRendererActions().focus?.(input.uri);
+                            return { status: "ok" };
+                        },
+                        toast: async ({ input }: any) => {
+                            getRendererActions().toast?.(input.message, (input.level as ToastType) ?? "info");
+                            return { status: "ok" };
+                        },
+                    },
+                    view: {
+                        expand: async ({ input }: any) => {
+                            getRendererActions().setView?.(input.key, input.open !== "closed");
+                            return { status: "ok" };
+                        },
+                        set: async ({ input }: any) => {
+                            const pageId = input.page ?? "task-run";
+                            const ctx = input.ctx ?? null;
+                            // 依赖倒置的代价：写错 view/page/ctx 没有类型错误，只能运行时拦（判据与渲染层共用）
+                            const bad = checkViewTarget(input.view, pageId, ctx);
+                            if (bad) throw new Error(bad);
+                            getRendererActions().setViewVisible?.(pageId, input.view, ctx, input.open !== "closed");
+                            return { status: "ok" };
+                        },
+                    },
+                    persona: {
+                        open: async ({ input }: any) => {
+                            personaDrawerStore.open(input.id);
+                            return { status: "ok" };
+                        },
+                        close: async () => {
+                            personaDrawerStore.close();
+                            return { status: "ok" };
+                        },
+                        state: async () => {
+                            return {
+                                status: "ok",
+                                data: { open: personaDrawerStore.isOpen(), id: personaDrawerStore.target() },
+                            };
+                        },
+                    },
+                    layout: {
+                        get: async ({ input }: any) => {
+                            const snap = getRendererActions().getLayout?.(input.page, input.ctx ?? null);
+                            if (!snap) throw new Error(`未知 page: ${input.page}`);
+                            return { status: "ok", data: { ...snap, layout: snap.layout as never } };
+                        },
+                        set: async ({ input }: any) => {
+                            const changes: LayoutChanges = {};
+                            // cols/rows 在 renderer 侧解析成 TrackSize[]（CLI 只传简写串）
+                            if (input.cols !== undefined) {
+                                const t = parseTracks(input.cols);
+                                if (!t) throw new Error(`--cols 格式非法: ${input.cols}（数字=px，*=fr，逗号分隔）`);
+                                changes.cols = t;
+                            }
+                            if (input.rows !== undefined) {
+                                const t = parseTracks(input.rows);
+                                if (!t) throw new Error(`--rows 格式非法: ${input.rows}`);
+                                changes.rows = t;
+                            }
+                            if (input.hide)
+                                changes.hide = input.hide
+                                    .split(",")
+                                    .map((x: any) => x.trim())
+                                    .filter(Boolean);
+                            if (input.show)
+                                changes.show = input.show
+                                    .split(",")
+                                    .map((x: any) => x.trim())
+                                    .filter(Boolean);
+                            if (input.maximize !== undefined) changes.maximize = input.maximize || null;
+                            getRendererActions().setLayout?.(input.page, changes);
+                            return { status: "ok" };
+                        },
+                        reset: async ({ input }: any) => {
+                            getRendererActions().resetLayout?.(input.page);
+                            return { status: "ok" };
+                        },
+                    },
+                    viewarea: {
+                        set: async ({ input }: any) => {
+                            // pageId 由调用方给出（同一 area 名在不同 page 上是不同的东西）
+                            getRendererActions().setViewArea?.(
+                                input.page ?? "task-run",
+                                input.area,
+                                input.open !== "closed",
+                            );
+                            return { status: "ok" };
+                        },
+                    },
+                    tab: {
+                        open: async ({ input }: any) => {
+                            // 两种写法：`<任务 URI>`（= 任务执行页）或 `<pageId>:<任务 URI>`（如 `lab:projects/1/tasks/1`）
+                            const m = input.uri.match(/^([a-z][a-z0-9-]*):(.+)$/);
+                            const pageId = m ? m[1]! : "task-run";
+                            const ctx = m ? m[2]! : input.uri;
+                            const tabKey = `${pageId}:${ctx}`;
+                            const openTab = getRendererActions().openTab;
+                            if (!openTab)
+                                return { status: "error", data: { uri: input.uri, reason: "renderer actions 未就绪" } };
+                            // 顺序/缩进依赖任务层次：先确保树里有这个 ctx（缺则按需重载一次，覆盖 fileChange 防抖窗口）
+                            await taskStore.ensureTasks([ctx]);
+                            openTab(pageId, ctx);
+                            // 写后回读：本地 UI 写是同步 flush，这里立刻能读到后置状态。把「是否真的达到该状态」
+                            // 回给调用方（原实现无条件 return ok，写没生效也报 ok，调用方无法自检）。
+                            const snap = currentSnapshot();
+                            const ok = snap.tabs.some((t) => t.key === tabKey);
+                            return {
+                                status: ok ? "ok" : "error",
+                                data: {
+                                    uri: input.uri,
+                                    rev: snap.rev,
+                                    uiRev: snap.uiRev,
+                                    active: snap.active,
+                                    reason: ok ? undefined : "打开后未在快照中看到该 tab",
+                                },
+                            };
+                        },
+                        close: async ({ input }: any) => {
+                            const closeTab = getRendererActions().closeTab;
+                            if (!closeTab)
+                                return { status: "error", data: { uri: input.uri, reason: "renderer actions 未就绪" } };
+                            closeTab(input.uri);
+                            const snap = currentSnapshot();
+                            const ok = !snap.tabs.some((t) => t.key === input.uri);
+                            return {
+                                status: ok ? "ok" : "error",
+                                data: {
+                                    uri: input.uri,
+                                    rev: snap.rev,
+                                    uiRev: snap.uiRev,
+                                    reason: ok ? undefined : "关闭后该 tab 仍在快照中",
+                                },
+                            };
+                        },
+                        active: async ({ input }: any) => {
+                            const activate = getRendererActions().activateTab;
+                            if (!activate)
+                                return { status: "error", data: { uri: input.uri, reason: "renderer actions 未就绪" } };
+                            activate(input.uri);
+                            const snap = currentSnapshot();
+                            const ok = snap.active === input.uri;
+                            return {
+                                status: ok ? "ok" : "error",
+                                data: {
+                                    uri: input.uri,
+                                    rev: snap.rev,
+                                    uiRev: snap.uiRev,
+                                    reason: ok ? undefined : `激活后 active=${snap.active}`,
+                                },
+                            };
+                        },
+                        list: async () => {
+                            // opened 的顺序由任务层次现算：读之前确保树含所有已开 tab 的 ctx（缺则按需重载一次）
+                            await taskStore.ensureTasks(tabStore.opened.map((t) => t.ctx));
+                            // 契约保持字符串数组（CLI/测试都按字符串用）：opened = tab key 列表
+                            return {
+                                status: "ok",
+                                data: { opened: tabStore.opened.map((t) => t.key), active: tabStore.active },
+                            };
+                        },
+                    },
+                    tree: async ({ input }: any) => {
+                        return diyService.diy.task.tree({ allTasks: input.all ?? false });
+                    },
+                    status: async () => {
+                        const s = await diyService.diy.app.info({});
+                        return { status: "ok", data: { pid: s.pid, uptime: s.uptime, memory: s.heapUsed } };
+                    },
+                    project: {
+                        create: async ({ input }: any) => {
+                            const id = await createProjectViaUi(input.path, input.label, input.desc);
+                            return { status: "ok", data: { id } };
+                        },
+                        remove: async ({ input }: any) => {
+                            await removeProjectViaUi(input.id);
+                            return { status: "ok", data: { id: input.id } };
+                        },
+                    },
+                    task: {
+                        create: async ({ input }: any) => {
+                            const uri = await createTaskViaUi({
+                                title: input.title,
+                                project: input.project,
+                                parent: input.parent,
+                            });
+                            return { status: "ok", data: { uri } };
+                        },
+                        update: async ({ input }: any) => {
+                            const { uri, ...changes } = input;
+                            await editTask(uri, changes);
+                            await taskStore.loadTree();
+                            if (taskStore.selectedUri === uri) {
+                                await taskStore.selectTask(uri);
+                            }
+                            getRendererActions().toast?.("任务已更新", "success");
+                            return { status: "ok", data: { uri } };
+                        },
+                        delete: async ({ input }: any) => {
+                            await deleteTaskViaUi(input.uri);
+                            return { status: "ok", data: { uri: input.uri } };
+                        },
+                        setState: async ({ input }: any) => {
+                            await editTask(input.uri, { state: input.state });
+                            await taskStore.loadTree();
+                            notificationStore.addToast(
+                                "success",
+                                `状态已改为 ${input.state}`,
+                                taskStateNotice({ uri: input.uri, state: input.state }),
+                            );
+                            return { status: "ok", data: { uri: input.uri } };
+                        },
+                    },
+                    inspect: async () => {
+                        const tree = buildA11yTree(document.body);
+                        // 剥离内部字段（_count/_visible），保持输出干净
+                        const clean = stripInternal(tree);
+                        return {
+                            status: "ok",
+                            data: {
+                                tree: clean,
+                                stats: { totalNodes: tree?._count || 0, visibleNodes: tree?._visible || 0 },
+                            },
+                        };
+                    },
+                    state: async () => ({ status: "ok", data: currentSnapshot() }),
+                    watch: {
+                        uiState: async function* () {
+                            for await (const snap of uiWatchStream()) {
+                                yield { status: "ok", data: snap };
+                            }
+                        },
+                    },
+                },
+            },
+        };
+    binding.use({ prefix: "diy", api: uiApi, handlers });
 
-  return binding;
+    return binding;
 }
 
 /** 无障碍树节点（含内部统计字段） */
 interface A11yNode {
-  role: string;
-  text: string;
-  value?: string;
-  rect?: { x: number; y: number; w: number; h: number };
-  children?: A11yNode[];
-  _count: number;
-  _visible: number;
+    role: string;
+    text: string;
+    value?: string;
+    rect?: { x: number; y: number; w: number; h: number };
+    children?: A11yNode[];
+    _count: number;
+    _visible: number;
 }
 
 /** 递归移除节点上的内部辅助字段（下划线前缀），仅输出对 agent 有用的字段 */
 function stripInternal(node: A11yNode | null): Omit<A11yNode, "_count" | "_visible"> | null {
-  if (!node) return null;
-  const clean: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(node)) {
-    if (k.startsWith("_")) continue;
-    clean[k] = Array.isArray(v) ? v.map((c) => stripInternal(c as A11yNode | null)) : v;
-  }
-  return clean as Omit<A11yNode, "_count" | "_visible">;
+    if (!node) return null;
+    const clean: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(node)) {
+        if (k.startsWith("_")) continue;
+        clean[k] = Array.isArray(v) ? v.map((c) => stripInternal(c as A11yNode | null)) : v;
+    }
+    return clean as Omit<A11yNode, "_count" | "_visible">;
 }
 
 /**
@@ -285,75 +343,106 @@ function stripInternal(node: A11yNode | null): Omit<A11yNode, "_count" | "_visib
  * 返回结构化对象供 agent 消费：{ role, text, children[], rect, visible }
  */
 function buildA11yTree(el: Element): A11yNode | null {
-  const style = getComputedStyle(el);
-  const isHidden = style.display === "none" || style.visibility === "hidden" || style.opacity === "0";
-  if (isHidden) return null;
+    const style = getComputedStyle(el);
+    const isHidden = style.display === "none" || style.visibility === "hidden" || style.opacity === "0";
+    if (isHidden) return null;
 
-  const tag = el.tagName.toLowerCase();
-  const role =
-    el.getAttribute("role") ||
-    (tag === "button" ? "button" : tag === "input" || tag === "textarea" || tag === "select" ? "input" :
-     tag === "table" ? "table" : tag === "tr" ? "row" : tag === "td" || tag === "th" ? "cell" :
-     tag === "h1" || tag === "h2" || tag === "h3" || tag === "h4" || tag === "h5" || tag === "h6" ? "heading" :
-     tag === "a" ? "link" : tag === "img" ? "img" : tag === "ul" || tag === "ol" ? "list" :
-     tag === "li" ? "listitem" : tag === "nav" ? "navigation" : tag === "main" ? "main" :
-     tag === "header" ? "banner" : tag === "footer" ? "contentinfo" : tag === "aside" ? "complementary" :
-     tag === "dialog" ? "dialog" : "generic");
+    const tag = el.tagName.toLowerCase();
+    const role =
+        el.getAttribute("role") ||
+        (tag === "button"
+            ? "button"
+            : tag === "input" || tag === "textarea" || tag === "select"
+              ? "input"
+              : tag === "table"
+                ? "table"
+                : tag === "tr"
+                  ? "row"
+                  : tag === "td" || tag === "th"
+                    ? "cell"
+                    : tag === "h1" || tag === "h2" || tag === "h3" || tag === "h4" || tag === "h5" || tag === "h6"
+                      ? "heading"
+                      : tag === "a"
+                        ? "link"
+                        : tag === "img"
+                          ? "img"
+                          : tag === "ul" || tag === "ol"
+                            ? "list"
+                            : tag === "li"
+                              ? "listitem"
+                              : tag === "nav"
+                                ? "navigation"
+                                : tag === "main"
+                                  ? "main"
+                                  : tag === "header"
+                                    ? "banner"
+                                    : tag === "footer"
+                                      ? "contentinfo"
+                                      : tag === "aside"
+                                        ? "complementary"
+                                        : tag === "dialog"
+                                          ? "dialog"
+                                          : "generic");
 
-  // 文本内容：只取直接文本节点
-  let text = "";
-  for (const child of el.childNodes) {
-    if (child.nodeType === 3) {
-      const t = child.textContent?.trim() || "";
-      if (t) text += (text ? " " : "") + t;
+    // 文本内容：只取直接文本节点
+    let text = "";
+    for (const child of el.childNodes) {
+        if (child.nodeType === 3) {
+            const t = child.textContent?.trim() || "";
+            if (t) text += (text ? " " : "") + t;
+        }
     }
-  }
-  // aria-label / title / placeholder 也取
-  const ariaLabel = el.getAttribute("aria-label") || "";
-  const title = el.getAttribute("title") || "";
-  const placeholder = (el as HTMLInputElement).placeholder || "";
-  if (!text && ariaLabel) text = ariaLabel;
-  else if (!text && title) text = title;
-  else if (!text && placeholder) text = `[placeholder: ${placeholder}]`;
-  text = text.substring(0, 80);
+    // aria-label / title / placeholder 也取
+    const ariaLabel = el.getAttribute("aria-label") || "";
+    const title = el.getAttribute("title") || "";
+    const placeholder = (el as HTMLInputElement).placeholder || "";
+    if (!text && ariaLabel) text = ariaLabel;
+    else if (!text && title) text = title;
+    else if (!text && placeholder) text = `[placeholder: ${placeholder}]`;
+    text = text.substring(0, 80);
 
-  // 输入框的值
-  let value = "";
-  if (tag === "input" || tag === "textarea") {
-    value = (el as HTMLInputElement).value || "";
-    if (value) value = value.substring(0, 50);
-  }
-  if (tag === "select") {
-    const sel = el as HTMLSelectElement;
-    value = sel.options[sel.selectedIndex]?.text || "";
-  }
-
-  // 位置/尺寸
-  const rect = el.getBoundingClientRect();
-
-  // 子节点
-  const children: A11yNode[] = [];
-  let count = 1;
-  let visible = 1;
-  for (const child of el.children) {
-    const childTree = buildA11yTree(child);
-    if (childTree) {
-      children.push(childTree);
-      count += childTree._count || 0;
-      visible += childTree._visible || 0;
+    // 输入框的值
+    let value = "";
+    if (tag === "input" || tag === "textarea") {
+        value = (el as HTMLInputElement).value || "";
+        if (value) value = value.substring(0, 50);
     }
-  }
+    if (tag === "select") {
+        const sel = el as HTMLSelectElement;
+        value = sel.options[sel.selectedIndex]?.text || "";
+    }
 
-  // 精简：如果 role 是 generic 且无文本无子节点，跳过
-  if (role === "generic" && !text && children.length === 0) return null;
-  // 精简：跳过 InlineTextBox / StaticText 等纯文本包装
-  if (tag === "span" && children.length === 0 && !text) return null;
+    // 位置/尺寸
+    const rect = el.getBoundingClientRect();
 
-  const node: A11yNode = { role, text, _count: count, _visible: visible };
-  if (value) node.value = value;
-  if (rect.width > 0 && rect.height > 0) {
-    node.rect = { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) };
-  }
-  if (children.length > 0) node.children = children;
-  return node;
+    // 子节点
+    const children: A11yNode[] = [];
+    let count = 1;
+    let visible = 1;
+    for (const child of el.children) {
+        const childTree = buildA11yTree(child);
+        if (childTree) {
+            children.push(childTree);
+            count += childTree._count || 0;
+            visible += childTree._visible || 0;
+        }
+    }
+
+    // 精简：如果 role 是 generic 且无文本无子节点，跳过
+    if (role === "generic" && !text && children.length === 0) return null;
+    // 精简：跳过 InlineTextBox / StaticText 等纯文本包装
+    if (tag === "span" && children.length === 0 && !text) return null;
+
+    const node: A11yNode = { role, text, _count: count, _visible: visible };
+    if (value) node.value = value;
+    if (rect.width > 0 && rect.height > 0) {
+        node.rect = {
+            x: Math.round(rect.x),
+            y: Math.round(rect.y),
+            w: Math.round(rect.width),
+            h: Math.round(rect.height),
+        };
+    }
+    if (children.length > 0) node.children = children;
+    return node;
 }

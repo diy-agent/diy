@@ -4,22 +4,32 @@
  * import 待手工补（各域依赖不同）。
  */
 import { z } from "zod";
-import { RpcSchema, defineService } from "@diy-agent/rpc";
+import { RpcSchema } from "@diy-agent/rpc";
 
-export const logRoutes = RpcSchema.group({desc: `日志`,
-        children: {
-          read: RpcSchema.unary({
+export const logRoutes = RpcSchema.group({
+    desc: `日志`,
+    children: {
+        read: RpcSchema.unary({
             desc: `读取日志`,
             input: {
-              limit: z.number().optional().cliOption({ desc: "返回条目数" }),
+                limit: z.number().optional().cliOption({ desc: "返回条目数" }),
             },
-            output: z.array(z.object({
-              timestamp: z.string().optional(),
-              level: z.string().optional(),
-              message: z.string().optional(),
-              raw: z.string().optional(),
-            })),
-          }),
-        },});
+            output: z.array(
+                z.object({
+                    timestamp: z.string().optional(),
+                    level: z.string().optional(),
+                    message: z.string().optional(),
+                    raw: z.string().optional(),
+                }),
+            ),
+        }),
+    },
+});
 
-export const logService = defineService({ name: "diy.log", api: logRoutes });
+
+/**
+ * 新模型（##87）：模块自带模块层，app 前缀由宿主给。
+ * `server.use({ prefix: "diy", api: logApi, handlers: { log: … } })`
+ * 与上面的 `logService` 完全等价（后者 = prefix "diy" + 模块层 "log"）。
+ */
+export const logApi = RpcSchema.group({ children: { log: logRoutes } });

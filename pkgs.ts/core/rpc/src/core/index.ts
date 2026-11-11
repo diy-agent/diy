@@ -32,12 +32,12 @@ export { ChannelServerBinding } from './channel-server-binding.js';
 export { ChannelClientBinding } from './channel-client-binding.js';
 export { createMemTransportPair } from './mem.js';
 // 第3层语义 API
-export {
-  RpcSchema,
-  createTypedClient,
-} from './rpc.js';
+export { RpcSchema, createTypedClient } from './rpc.js';
 export type { TypedClient } from './rpc.js';
 
 // 模块化的 API 单元（defineService / HandlersOf）
 export * from './service.js';
 
+// 挂载点（prefix）与模块（api）分离：同一个 api 能挂到多个前缀，换部署位置不改模块源码
+export { mountService, createScopedClient } from './scope.js';
+export type { ScopedClient } from './scope.js';

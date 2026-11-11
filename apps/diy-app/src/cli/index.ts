@@ -15,14 +15,16 @@ import { fileURLToPath } from "node:url";
 import { spawn, type ChildProcess } from "node:child_process";
 import electronPath from "electron";
 import { HttpClientBinding } from "@diy-agent/rpc/http";
+import { createScopedClient } from "@diy-agent/rpc";
+import { domainApis } from "../main/services/domain-apis";
 import { probeInstance } from "./probe-instance";
 import { CliApp } from "@diy-agent/rpc/cli";
-import { apiDef } from "../main/services/api-def";
 import { readRuntimeConfig, type RuntimeConfig } from "../runtime";
 import { resolveAppRoot } from "../main/core/app-root";
 import { AppConfig } from "../main/core/app-config";
 import { factsGetExitCode } from "../shared/facts";
 import { APP_VERSION } from "../shared/app-version";
+import { globalOptions } from "./global-options";
 import { installDiagnostics } from "../main/services/diagnostics";
 import { SINGLETON_LOCK, classifyLock, lockAdvice, readLock } from "../main/core/single-instance";
 /** app 就绪等待上限 */
@@ -31,68 +33,68 @@ const APP_READY_TIMEOUT_MS = 30_000;
 const POLL_INTERVAL_MS = 200;
 
 function readPort(cfg: RuntimeConfig): number | null {
-  return new AppConfig(cfg.home).readPort();
+    return new AppConfig(cfg.home).readPort();
 }
 
 function delay(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+    return new Promise((r) => setTimeout(r, ms));
 }
 
 /** 端口被别的实例占着：把「谁是谁」说清楚（走 stderr，不污染 --json 的 stdout） */
 function reportForeignInstance(
-  cfg: RuntimeConfig,
-  hit: { port: number; diyHome: string; env: string; pid: number },
+    cfg: RuntimeConfig,
+    hit: { port: number; diyHome: string; env: string; pid: number },
 ): void {
-  console.error(
-    `[diy] 端口 ${hit.port}（记在 ${cfg.home}/app.port）上运行的是**另一个实例**：` +
-      `数据根 ${hit.diyHome}、env=${hit.env}、pid=${hit.pid}`,
-  );
-  console.error(`[diy] 不复用它（两边数据根不同，连上去就是串台），接着启动 ${cfg.home} 自己的实例。`);
+    console.error(
+        `[diy] 端口 ${hit.port}（记在 ${cfg.home}/app.port）上运行的是**另一个实例**：` +
+            `数据根 ${hit.diyHome}、env=${hit.env}、pid=${hit.pid}`,
+    );
+    console.error(`[diy] 不复用它（两边数据根不同，连上去就是串台），接着启动 ${cfg.home} 自己的实例。`);
 }
 
 /** 定位包根（build/ 的父目录）。**别数 dirname**：源码模式 `src/cli/index.ts` 与产物模式
  * `build/<variant>/cli/index.js` 深度不同（固定 4 次只对产物成立，tsx 直跑会算到 pkgs.ts/）。
  * 判据在 core/app-root.ts（按包标记上溯），理由与实测见该文件头注。 */
 function appRoot(): string {
-  return resolveAppRoot(fileURLToPath(import.meta.url));
+    return resolveAppRoot(fileURLToPath(import.meta.url));
 }
 
 /** 产物变体根（prod|test|lab）：入口脚本经 DIY_VARIANT 注入，缺省 prod。
  * 决定 spawn 哪个 build/<variant>/main/index.mjs（测试=test、lab 独占）。 */
 function variant(): string {
-  return process.env["DIY_VARIANT"] ?? "prod";
+    return process.env["DIY_VARIANT"] ?? "prod";
 }
 
 function mainEntry(): string {
-  return join(appRoot(), "build", variant(), "main", "index.mjs");
+    return join(appRoot(), "build", variant(), "main", "index.mjs");
 }
 
 /** 启动 diy 管控台（Electron 主进程产物），作为独立进程持续运行 */
 function launchApp(cfg: RuntimeConfig): ChildProcess {
-  const main = mainEntry();
-  if (!existsSync(main)) {
-    throw new Error(`diy 管控台未构建: ${main}（先 ./sha.sh build）`);
-  }
+    const main = mainEntry();
+    if (!existsSync(main)) {
+        throw new Error(`diy 管控台未构建: ${main}（先 ./sha.sh build）`);
+    }
 
-  // 副屏定位等 dev/test 专属能力由 DIY_ENV 派生（src/runtime.ts）：入口脚本声明环境，
-  // CLI 仅透传 process.env；生产入口 bin/diy 注入 production → 窗口默认落主屏，不切 iPad。
-  // --remote-debugging-port=0: 暴露 CDP，支持 playwright-cli attach
-  // Chromium 开关（disable-features=RustPng / use-gl=angle）由 src/main/index.ts 经
-  // app.commandLine.appendSwitch 生效，跟在 app 路径后传 argv 无效，故此处不传。
-  //
-  // stdio 必须保持 inherit/ignore：本进程 detached+unref，CLI 随即退出，
-  // 一旦把 stdout/stderr 接成 pipe，读端消失后管道缓冲写满会反向阻塞
-  // Electron 主进程事件循环（表现为 RPC/CDP 全挂 + 系统「未响应」弹框）。
-  // CDP 地址改由 DevToolsActivePort 文件获取，见 printCdpHint()。
-  const child = spawn(String(electronPath), [main, "--remote-debugging-port=0"], {
-    cwd: appRoot(),
-    env: { ...process.env },
-    stdio: ["ignore", "ignore", "inherit"],
-    detached: true,
-  });
+    // 副屏定位等 dev/test 专属能力由 DIY_ENV 派生（src/runtime.ts）：入口脚本声明环境，
+    // CLI 仅透传 process.env；生产入口 bin/diy 注入 production → 窗口默认落主屏，不切 iPad。
+    // --remote-debugging-port=0: 暴露 CDP，支持 playwright-cli attach
+    // Chromium 开关（disable-features=RustPng / use-gl=angle）由 src/main/index.ts 经
+    // app.commandLine.appendSwitch 生效，跟在 app 路径后传 argv 无效，故此处不传。
+    //
+    // stdio 必须保持 inherit/ignore：本进程 detached+unref，CLI 随即退出，
+    // 一旦把 stdout/stderr 接成 pipe，读端消失后管道缓冲写满会反向阻塞
+    // Electron 主进程事件循环（表现为 RPC/CDP 全挂 + 系统「未响应」弹框）。
+    // CDP 地址改由 DevToolsActivePort 文件获取，见 printCdpHint()。
+    const child = spawn(String(electronPath), [main, "--remote-debugging-port=0"], {
+        cwd: appRoot(),
+        env: { ...process.env },
+        stdio: ["ignore", "ignore", "inherit"],
+        detached: true,
+    });
 
-  child.unref();
-  return child;
+    child.unref();
+    return child;
 }
 
 /**
@@ -100,14 +102,14 @@ function launchApp(cfg: RuntimeConfig): ChildProcess {
  * 静默失败：CDP 未启用 / 文件未生成时不打扰正常输出，且绝不写 stdout 污染 --json。
  */
 function printCdpHint(cfg: RuntimeConfig): void {
-  try {
-    const raw = readFileSync(join(cfg.home, "electron_user_data", "DevToolsActivePort"), "utf-8");
-    const [port, path] = raw.split("\n").map((s) => s.trim());
-    if (!port || !path) return;
-    console.error(`[diy] CDP: playwright-cli attach --cdp=ws://127.0.0.1:${port}${path}`);
-  } catch {
-    /* CDP 未启用，忽略 */
-  }
+    try {
+        const raw = readFileSync(join(cfg.home, "electron_user_data", "DevToolsActivePort"), "utf-8");
+        const [port, path] = raw.split("\n").map((s) => s.trim());
+        if (!port || !path) return;
+        console.error(`[diy] CDP: playwright-cli attach --cdp=ws://127.0.0.1:${port}${path}`);
+    } catch {
+        /* CDP 未启用，忽略 */
+    }
 }
 
 /**
@@ -119,62 +121,70 @@ function printCdpHint(cfg: RuntimeConfig): void {
  * 起不来则报错（不再回退本地内存执行）。
  */
 async function ensureAppPort(cfg: RuntimeConfig): Promise<number> {
-  const recorded = readPort(cfg);
-  if (recorded !== null) {
-    const hit = await probeInstance(recorded, cfg.home);
-    if (hit.kind === "mine") return recorded;
-    if (hit.kind === "other") reportForeignInstance(cfg, hit);
-  }
-
-  // 测试环境：只允许复用，不允许自建。测试用 startElectronTest 启动实例并持有句柄，
-  // 此处若在探测超时（如并发抢 CPU 让 probePort 的 1500ms 落空）时另起 detached 实例，
-  // 该实例不在测试的句柄集合里，teardown 永远回收不到 → 泄露。
-  // 报错而非静默继续：把「app 未就绪」暴露成测试失败，而不是留一个没人管的进程。
-  if (cfg.noLaunch) {
-    throw new Error(
-      `DIY_NO_LAUNCH=1：app 未在 ${cfg.home} 就绪（app.port=${recorded ?? "缺失"}）。` +
-        `测试环境禁止 CLI 自动拉起实例；请确认 startElectronTest() 已成功启动并传入了同一个 HOME。`,
-    );
-  }
-
-  const child = launchApp(cfg);
-  // spawn 失败（ENOENT 等）只发 error 事件，回调内 throw 无法进外层 catch；
-  // 用 Promise 监听快速失败，避免空转 30s 才超时。
-  const spawnError = new Promise<never>((_, reject) => {
-    child.once("error", reject);
-  });
-
-  const deadline = Date.now() + APP_READY_TIMEOUT_MS;
-  try {
-    while (Date.now() < deadline) {
-      const p = readPort(cfg);
-      if (p !== null) {
-        // 等待期同样要验身份：新实例还没写好 app.port 时，读到的是**旧值**，
-        // 那个端口上可能站着别人（##328(实例身份只靠端口) 的串台就这样在等待循环里发生）
-        const hit = await Promise.race([probeInstance(p, cfg.home), spawnError]);
-        if (hit.kind === "mine") {
-          printCdpHint(cfg);
-          return hit.port;
-        }
-      }
-      await Promise.race([delay(POLL_INTERVAL_MS), spawnError]);
+    const recorded = readPort(cfg);
+    if (recorded !== null) {
+        const hit = await probeInstance(recorded, cfg.home);
+        if (hit.kind === "mine") return recorded;
+        if (hit.kind === "other") reportForeignInstance(cfg, hit);
     }
-  } catch (e) {
-    // 启动期 spawn 失败，尝试清理孤儿进程
-    try { child.kill(); } catch { /* ignore */ }
-    throw e;
-  }
-  try { child.kill(); } catch { /* ignore */ }
-  // 「启动超时」对任何成因（陈旧锁/端口被占/构建缺失/hang）都是黑盒 → 按处境给下一步。
-  // 锁诊断复用 core/single-instance（dev 与 main 同一套判定）。
-  const lockPath = join(new AppConfig(cfg.home).electronUserData, SINGLETON_LOCK);
-  const situation = classifyLock(readLock(lockPath));
-  throw new Error(
-    `diy 管控台启动超时（${APP_READY_TIMEOUT_MS}ms）` +
-      (situation.kind === "free"
-        ? `。不是单实例锁问题。下一步：看 $DIY_HOME/log/main.log（端口/构建/hang 任一种）`
-        : `。${lockAdvice(situation, lockPath).replace(/\n/g, " ")}`),
-  );
+
+    // 测试环境：只允许复用，不允许自建。测试用 startElectronTest 启动实例并持有句柄，
+    // 此处若在探测超时（如并发抢 CPU 让 probePort 的 1500ms 落空）时另起 detached 实例，
+    // 该实例不在测试的句柄集合里，teardown 永远回收不到 → 泄露。
+    // 报错而非静默继续：把「app 未就绪」暴露成测试失败，而不是留一个没人管的进程。
+    if (cfg.noLaunch) {
+        throw new Error(
+            `DIY_NO_LAUNCH=1：app 未在 ${cfg.home} 就绪（app.port=${recorded ?? "缺失"}）。` +
+                `测试环境禁止 CLI 自动拉起实例；请确认 startElectronTest() 已成功启动并传入了同一个 HOME。`,
+        );
+    }
+
+    const child = launchApp(cfg);
+    // spawn 失败（ENOENT 等）只发 error 事件，回调内 throw 无法进外层 catch；
+    // 用 Promise 监听快速失败，避免空转 30s 才超时。
+    const spawnError = new Promise<never>((_, reject) => {
+        child.once("error", reject);
+    });
+
+    const deadline = Date.now() + APP_READY_TIMEOUT_MS;
+    try {
+        while (Date.now() < deadline) {
+            const p = readPort(cfg);
+            if (p !== null) {
+                // 等待期同样要验身份：新实例还没写好 app.port 时，读到的是**旧值**，
+                // 那个端口上可能站着别人（##328(实例身份只靠端口) 的串台就这样在等待循环里发生）
+                const hit = await Promise.race([probeInstance(p, cfg.home), spawnError]);
+                if (hit.kind === "mine") {
+                    printCdpHint(cfg);
+                    return hit.port;
+                }
+            }
+            await Promise.race([delay(POLL_INTERVAL_MS), spawnError]);
+        }
+    } catch (e) {
+        // 启动期 spawn 失败，尝试清理孤儿进程
+        try {
+            child.kill();
+        } catch {
+            /* ignore */
+        }
+        throw e;
+    }
+    try {
+        child.kill();
+    } catch {
+        /* ignore */
+    }
+    // 「启动超时」对任何成因（陈旧锁/端口被占/构建缺失/hang）都是黑盒 → 按处境给下一步。
+    // 锁诊断复用 core/single-instance（dev 与 main 同一套判定）。
+    const lockPath = join(new AppConfig(cfg.home).electronUserData, SINGLETON_LOCK);
+    const situation = classifyLock(readLock(lockPath));
+    throw new Error(
+        `diy 管控台启动超时（${APP_READY_TIMEOUT_MS}ms）` +
+            (situation.kind === "free"
+                ? `。不是单实例锁问题。下一步：看 $DIY_HOME/log/main.log（端口/构建/hang 任一种）`
+                : `。${lockAdvice(situation, lockPath).replace(/\n/g, " ")}`),
+    );
 }
 
 /**
@@ -185,14 +195,14 @@ async function ensureAppPort(cfg: RuntimeConfig): Promise<number> {
  * 重定向到文件时是同步写，所以只有管道才暴露。
  */
 async function flushStream(stream: NodeJS.WriteStream): Promise<void> {
-  if (stream.writableLength === 0) return;
-  await new Promise<void>((resolve) => {
-    const t = setTimeout(resolve, 2000); // 兜底：管道另一端不读时别挂死
-    stream.once("drain", () => {
-      clearTimeout(t);
-      resolve();
+    if (stream.writableLength === 0) return;
+    await new Promise<void>((resolve) => {
+        const t = setTimeout(resolve, 2000); // 兜底：管道另一端不读时别挂死
+        stream.once("drain", () => {
+            clearTimeout(t);
+            resolve();
+        });
     });
-  });
 }
 
 /**
@@ -204,7 +214,7 @@ async function flushStream(stream: NodeJS.WriteStream): Promise<void> {
  * `_exit` → `process.exit`，不等待在途字节（此前只给 stdout 的正常返回路径做了 flush）。
  */
 async function flushStreams(): Promise<void> {
-  await Promise.all([flushStream(process.stdout), flushStream(process.stderr)]);
+    await Promise.all([flushStream(process.stdout), flushStream(process.stderr)]);
 }
 
 /**
@@ -212,57 +222,59 @@ async function flushStreams(): Promise<void> {
  * `_exit` 的契约要求钩子「不返回」——抛异常即最自然的「不返回」。
  */
 class CliExit extends Error {
-  constructor(readonly code: number) {
-    super(`cli exit ${code}`);
-    this.name = "CliExit";
-  }
+    constructor(readonly code: number) {
+        super(`cli exit ${code}`);
+        this.name = "CliExit";
+    }
 }
 
 async function main() {
-  const cfg = readRuntimeConfig();
-  // CLI 也走同一套诊断：stdout/stderr 断线不再升级成未捕获异常（父进程/终端消失时），
-  // 输出镜像到 <DIY_HOME>/log/cli.log，便于事后还原某次调用的真实行为。
-  installDiagnostics(cfg.home, "cli");
-  const argv = process.argv.slice(2);
+    const cfg = readRuntimeConfig();
+    // CLI 也走同一套诊断：stdout/stderr 断线不再升级成未捕获异常（父进程/终端消失时），
+    // 输出镜像到 <DIY_HOME>/log/cli.log，便于事后还原某次调用的真实行为。
+    installDiagnostics(cfg.home, "cli");
+    const argv = process.argv.slice(2);
 
-  const port = await ensureAppPort(cfg);
-  const transport = new HttpClientBinding(`http://127.0.0.1:${port}`);
-  await transport.ready();
+    const port = await ensureAppPort(cfg);
+    const transport = new HttpClientBinding(`http://127.0.0.1:${port}`);
+    await transport.ready();
 
-  let exitCode = 0;
-  try {
-    await new CliApp({
-      name: "diy",
-      version: APP_VERSION,
-      router: apiDef.diy,
-      rpcPrefix: "diy.",
-      transport,
-      // 路径参数（如 tool read 的 path）按**调用者**目录解析：入口脚本已 cd 到应用目录，
-      // 进程 cwd 不再可信，故由 DIY_CALLER_CWD 显式带过来（见 diy.sh / bin/diy）。
-      cwd: process.env["DIY_CALLER_CWD"] || process.cwd(),
-      // 按名取实体查不到 ⇒ 退出码 1（`diy facts get X && ...` 不许对不存在的 claim 说通过）；
-      // 搜索 / 列举类命令不受影响（判据只在 factsGetExitCode 里，按 rpcName 分派）。
-      exitCodeOf: factsGetExitCode,
-      // 错误路径（用法错误 exit=2 / 运行错误 exit=1）也走这里：不直接 exit，先让 main 排空两条流
-      exit: (code: number): never => {
-        throw new CliExit(code);
-      },
-    }).parse(argv);
-  } catch (e) {
-    if (e instanceof CliExit) exitCode = e.code;
-    else throw e;
-  }
+    let exitCode = 0;
+    try {
+        await new CliApp({
+            name: "diy",
+            version: APP_VERSION,
+            // 新模型（##87）：模块自带模块层，app 前缀由这里给 —— 不再需要 router/rpcPrefix，
+            // 命令树 = 各域模块层（task / agent / …），线上名 = "diy." + 模块层 + 方法
+            clients: domainApis.map((api) => createScopedClient({ api, client: transport, prefix: "diy" })),
+            // 全局选项（进程级）的单一真源：与 /cli 端点共用一份，见 global-options.ts
+            globalOptions,
+            // 路径参数（如 tool read 的 path）按**调用者**目录解析：入口脚本已 cd 到应用目录，
+            // 进程 cwd 不再可信，故由 DIY_CALLER_CWD 显式带过来（见 diy.sh / bin/diy）。
+            cwd: process.env["DIY_CALLER_CWD"] || process.cwd(),
+            // 按名取实体查不到 ⇒ 退出码 1（`diy facts get X && ...` 不许对不存在的 claim 说通过）；
+            // 搜索 / 列举类命令不受影响（判据只在 factsGetExitCode 里，按 rpcName 分派）。
+            exitCodeOf: factsGetExitCode,
+            // 错误路径（用法错误 exit=2 / 运行错误 exit=1）也走这里：不直接 exit，先让 main 排空两条流
+            exit: (code: number): never => {
+                throw new CliExit(code);
+            },
+        }).parse(argv);
+    } catch (e) {
+        if (e instanceof CliExit) exitCode = e.code;
+        else throw e;
+    }
 
-  // 清理：关闭 RPC 连接，允许进程正常退出（app 保持运行）
-  transport.dispose();
-  // 退出前把两条流都排空 —— 否则错误信息/大输出会被 process.exit 丢掉（见 flushStreams 注释）
-  await flushStreams();
-  process.exit(exitCode);
+    // 清理：关闭 RPC 连接，允许进程正常退出（app 保持运行）
+    transport.dispose();
+    // 退出前把两条流都排空 —— 否则错误信息/大输出会被 process.exit 丢掉（见 flushStreams 注释）
+    await flushStreams();
+    process.exit(exitCode);
 }
 
 main().catch(async (e) => {
-  const msg = e instanceof Error ? e.message : String(e);
-  console.error(`致命错误: ${msg}`);
-  await flushStreams();
-  process.exit(1);
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`致命错误: ${msg}`);
+    await flushStreams();
+    process.exit(1);
 });

@@ -15,7 +15,7 @@
  * 但这里路径正是 `apps/diy-app/src/...`，会被扫到。
  */
 import { z } from "zod";
-import { RpcSchema, defineService } from "@diy-agent/rpc";
+import { RpcSchema } from "@diy-agent/rpc";
 import { FALLBACK_MODEL } from "../../../../shared/model-default";
 import { SeedReportSchema } from "../../../../shared/model-config";
 
@@ -30,4 +30,10 @@ export const seedRoutes = RpcSchema.group({
     },
 });
 
-export const seedService = defineService({ name: "diy.seed", api: seedRoutes });
+
+/**
+ * 新模型（##87）：模块自带模块层，app 前缀由宿主给。
+ * `server.use({ prefix: "diy", api: seedApi, handlers: { seed: … } })`
+ * 与上面的 `seedService` 完全等价（后者 = prefix "diy" + 模块层 "seed"）。
+ */
+export const seedApi = RpcSchema.group({ children: { seed: seedRoutes } });

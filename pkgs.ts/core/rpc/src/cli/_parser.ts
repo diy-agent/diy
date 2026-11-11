@@ -24,7 +24,8 @@ function inferTypeName(schema: z.ZodTypeAny): string {
   if (inner instanceof z.ZodString) return 'string';
   if (inner instanceof z.ZodNumber) return 'number';
   if (inner instanceof z.ZodBoolean) return 'boolean';
-  if (inner instanceof z.ZodArray) return `${inferTypeName((inner as any).element ?? (inner as any)._def.type)}[]`;
+  if (inner instanceof z.ZodArray)
+    return `${inferTypeName((inner as any).element ?? (inner as any)._def.type)}[]`;
   if (inner instanceof z.ZodEnum) return ((inner as any)._def as any).values?.join('|') ?? 'enum';
   return 'value';
 }
@@ -71,12 +72,16 @@ export interface ParseArgvOptions {
  * 让用户去猜"这个选项是大写还是小写、有没有连字符"是不必要的认知负担。故**两种写法都接受**，
  * help 里统一显示 kebab。已有的下划线命名（`change_type`）不受影响（只转大写字母）。
  */
-function kebabOf(key: string): string {
+export function kebabOf(key: string): string {
   return key.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
 }
 
 /** @internal */
-export function parseArgv(def: _AnyProcedureMeta, argv: string[], opts: ParseArgvOptions = {}): ParsedInput {
+export function parseArgv(
+  def: _AnyProcedureMeta,
+  argv: string[],
+  opts: ParseArgvOptions = {},
+): ParsedInput {
   const schema = def.inputSchema;
   if (!(schema instanceof z.ZodObject)) {
     throw new CliParseError('Procedure has no input schema');
@@ -84,14 +89,14 @@ export function parseArgv(def: _AnyProcedureMeta, argv: string[], opts: ParseArg
 
   const shape = (schema as any).shape as Record<string, z.ZodTypeAny>;
 
-  if (argv.some(a => a === '--help' || a === '-h')) {
+  if (argv.some((a) => a === '--help' || a === '-h')) {
     return { input: {}, helpRequested: true };
   }
 
   // 收集 arg 和 option 信息
-  const optionNames = new Map<string, string>();  // --name → fieldKey
+  const optionNames = new Map<string, string>(); // --name → fieldKey
   const shortAliases = new Map<string, string>(); // -x → fieldKey
-  const argOrder: string[] = [];                   // 位置参数顺序
+  const argOrder: string[] = []; // 位置参数顺序
 
   for (const [key, field] of Object.entries(shape)) {
     const optMeta = _getCliOptionMeta(field);
@@ -122,6 +127,12 @@ export function parseArgv(def: _AnyProcedureMeta, argv: string[], opts: ParseArg
     const arg = argv[i];
     let key: string | undefined;
     let value: string | undefined;
+
+    // `--`：终止选项解析，其后一律当位置参数（与全局选项扫描器同一语义）
+    if (arg === '--') {
+      positional.push(...argv.slice(i + 1));
+      break;
+    }
 
     if (arg.startsWith('--')) {
       const eqIdx = arg.indexOf('=');
@@ -175,14 +186,19 @@ export function parseArgv(def: _AnyProcedureMeta, argv: string[], opts: ParseArg
     } else if (unwrap(field) instanceof z.ZodBoolean) {
       input[key] = val === 'true' || val === '1';
     } else if (unwrap(field) instanceof z.ZodArray) {
-      try { input[key] = JSON.parse(val); } catch { /* 保留原字符串，让 zod 报错 */ }
+      try {
+        input[key] = JSON.parse(val);
+      } catch {
+        /* 保留原字符串，让 zod 报错 */
+      }
     } else if (_getCliOptionMeta(field)?.inlineText) {
       // 「必须是内联文本」的选项（`_CliOptionMeta.inlineText`，##338）：形如单行文件路径的值一律拒绝，
       // 并在报错里给出正确写法。解析期在这里做（不是 handler）—— handler 跑在 app 进程，
       // cwd 不是用户敲命令的目录，相对路径的存在性判不出来。
       const meta = _getCliOptionMeta(field)!;
       const hit = pathLikeValue(val, opts.cwd ?? process.cwd());
-      if (hit) throw new CliParseError(inlineTextError(`--${kebabOf(key)}`, val, hit, meta.inlineText!));
+      if (hit)
+        throw new CliParseError(inlineTextError(`--${kebabOf(key)}`, val, hit, meta.inlineText!));
     } else if (_getCliOptionMeta(field)?.readFile || _getCliArgMeta(field)?.readFile) {
       // 值来自文件：`-` = stdin，其余按调用方 cwd 解析成绝对路径后读。
       // 为什么在 parser 里读（而不是 handler）：handler 跑在 app 进程 —— 它的 stdin 不是用户的
@@ -206,7 +222,7 @@ export function parseArgv(def: _AnyProcedureMeta, argv: string[], opts: ParseArg
     return { input: validated, helpRequested: false };
   } catch (err: unknown) {
     if (err instanceof z.ZodError) {
-      const msgs = err.issues.map(i => `  ${i.path.join('.')}: ${i.message}`).join('\n');
+      const msgs = err.issues.map((i) => `  ${i.path.join('.')}: ${i.message}`).join('\n');
       throw new CliParseError(`Validation errors:\n${msgs}`);
     }
     throw err;
@@ -243,7 +259,12 @@ export function pathLikeValue(raw: string, cwd: string): { abs: string; exists: 
 }
 
 /** `inlineText` 命中时的报错文案：说清"错在哪 + 该怎么写"（##338） */
-function inlineTextError(opt: string, raw: string, hit: { abs: string; exists: boolean }, names: { fileOpt: string; textOpt: string }): string {
+function inlineTextError(
+  opt: string,
+  raw: string,
+  hit: { abs: string; exists: boolean },
+  names: { fileOpt: string; textOpt: string },
+): string {
   const where = hit.exists ? `该文件确实存在：${hit.abs}` : `该路径不存在：${raw}`;
   return [
     `${opt} 只收**内联正文**，但收到的值形如文件路径 —— ${where}`,
@@ -289,7 +310,11 @@ export function fmtUsageArgs(def: _AnyProcedureMeta): string {
 }
 
 /** @internal */
-export function generateHelp(def: _AnyProcedureMeta, cmdName: string, description?: string): string {
+export function generateHelp(
+  def: _AnyProcedureMeta,
+  cmdName: string,
+  description?: string,
+): string {
   const schema = def.inputSchema;
   if (!(schema instanceof z.ZodObject)) return '';
 
@@ -301,42 +326,48 @@ export function generateHelp(def: _AnyProcedureMeta, cmdName: string, descriptio
   if (cmdDesc) lines.push(cmdDesc, '');
 
   // 位置参数 — 占位符默认用字段名（语义），可选加类型后缀
-  const args: [string, ReturnType<typeof _getCliArgMeta>][] =
-    Object.entries(shape).map(([k, f]) => [k, _getCliArgMeta(f)] as any)
-      .filter(([, m]) => m);
+  const args: [string, ReturnType<typeof _getCliArgMeta>][] = Object.entries(shape)
+    .map(([k, f]) => [k, _getCliArgMeta(f)] as any)
+    .filter(([, m]) => m);
 
   if (args.length > 0) {
     lines.push('Arguments:');
-    _emitAligned(lines, args.map(([key, meta]) => {
-      const typeName = inferTypeName(shape[key]);
-      const ph = meta!.placeholder ?? key;
-      const opt = isOptional(shape[key]) ? `[${ph}]` : `<${ph}>`;
-      const typeHint = typeName !== 'value' && typeName !== ph ? ` (${typeName})` : '';
-      return [`${opt}${typeHint}`, meta!.desc ?? ''];
-    }));
+    _emitAligned(
+      lines,
+      args.map(([key, meta]) => {
+        const typeName = inferTypeName(shape[key]);
+        const ph = meta!.placeholder ?? key;
+        const opt = isOptional(shape[key]) ? `[${ph}]` : `<${ph}>`;
+        const typeHint = typeName !== 'value' && typeName !== ph ? ` (${typeName})` : '';
+        return [`${opt}${typeHint}`, meta!.desc ?? ''];
+      }),
+    );
     lines.push('');
   }
 
   // 命名选项（`callerCwd` 是自动注入的内部字段，不给人看）
-  const opts: [string, ReturnType<typeof _getCliOptionMeta>][] =
-    Object.entries(shape).map(([k, f]) => [k, _getCliOptionMeta(f)] as any)
-      .filter(([, m]) => m && !m.callerCwd);
+  const opts: [string, ReturnType<typeof _getCliOptionMeta>][] = Object.entries(shape)
+    .map(([k, f]) => [k, _getCliOptionMeta(f)] as any)
+    .filter(([, m]) => m && !m.callerCwd);
 
   if (opts.length > 0) {
     lines.push('Options:');
-    _emitAligned(lines, opts.map(([key, meta]) => {
-      const field = shape[key];
-      const alias = meta!.short ? `-${meta!.short}, ` : '    ';
-      const long = key.length > 1 ? `--${kebabOf(key)}` : `-${key}`;
-      const ph = meta!.placeholder ?? key;
-      const isBool = unwrap(field) instanceof z.ZodBoolean;
-      const argDisplay = isBool ? '' : ` ${ph}`;
-      const defVal = inferDefault(field);
-      const defStr = defVal !== undefined ? `(default: ${JSON.stringify(defVal)})` : '';
-      const req = !isOptional(field) && defVal === undefined ? '[required]' : '';
-      const right = [req, defStr, meta!.desc ?? ''].filter(Boolean).join(' ');
-      return [`${alias}${long}${argDisplay}`, right];
-    }));
+    _emitAligned(
+      lines,
+      opts.map(([key, meta]) => {
+        const field = shape[key];
+        const alias = meta!.short ? `-${meta!.short}, ` : '    ';
+        const long = key.length > 1 ? `--${kebabOf(key)}` : `-${key}`;
+        const ph = meta!.placeholder ?? key;
+        const isBool = unwrap(field) instanceof z.ZodBoolean;
+        const argDisplay = isBool ? '' : ` ${ph}`;
+        const defVal = inferDefault(field);
+        const defStr = defVal !== undefined ? `(default: ${JSON.stringify(defVal)})` : '';
+        const req = !isOptional(field) && defVal === undefined ? '[required]' : '';
+        const right = [req, defStr, meta!.desc ?? ''].filter(Boolean).join(' ');
+        return [`${alias}${long}${argDisplay}`, right];
+      }),
+    );
     lines.push('');
   }
 
@@ -349,4 +380,199 @@ function _emitAligned(lines: string[], rows: [string, string][]): void {
   for (const [c, r] of rows) {
     lines.push(r ? `  ${c.padEnd(w)}  ${r}` : `  ${c}`);
   }
+}
+
+// ═══════════════════════════════════════════════════
+//  全局选项（进程级 flag：与 procedure input 分开，不进 RPC）
+// ═══════════════════════════════════════════════════
+
+/**
+ * 一条全局选项的反射结果。
+ *
+ * 声明方式与 procedure 的 input **完全同一套**：一个 `z.object({...})`，
+ * 字段上用 `.cliOption({ short, desc })` 标长短名与说明。
+ * 不引入第二套 DSL（`opt.boolean(...)` 那种），否则 help / 解析 / 类型推导要各写一份，
+ * 迟早「表里有、代码里没有」（##518 的教训）。
+ */
+export interface GlobalOption {
+  /** zod 字段名（值对象的 key） */
+  key: string;
+  /** 长名（kebab，如 `by-agent`） */
+  long: string;
+  /** 短名（单字符，如 `x`） */
+  short?: string;
+  schema: z.ZodTypeAny;
+  isBool: boolean;
+  /** z.array(...) 声明的选项可重复出现（`--tag a --tag b`），收集成数组；否则重复即报错 */
+  multiple: boolean;
+}
+
+/** 从 zod object 反射出全局选项表（只取标了 `.cliOption()` 的字段） */
+export function globalOptionTable(schema?: z.ZodObject<z.ZodRawShape>): GlobalOption[] {
+  if (!schema) return [];
+  const shape = (schema as any).shape as Record<string, z.ZodTypeAny>;
+  const out: GlobalOption[] = [];
+  for (const [key, field] of Object.entries(shape)) {
+    const meta = _getCliOptionMeta(field);
+    if (!meta) continue;
+    out.push({
+      key,
+      long: kebabOf(key),
+      short: meta.short,
+      schema: field,
+      isBool: unwrap(field) instanceof z.ZodBoolean,
+      multiple: unwrap(field) instanceof z.ZodArray,
+    });
+  }
+  return out;
+}
+
+/** 单个选项值的类型转换（number / boolean / JSON 数组；其余保持字符串交 zod 校验） */
+function coerceGlobalValue(spec: GlobalOption, raw: string | undefined): unknown {
+  if (spec.isBool) {
+    if (raw === undefined) return true;
+    if (raw === 'true' || raw === '1') return true;
+    if (raw === 'false' || raw === '0') return false;
+    throw new CliParseError(`--${spec.long} 只接受 true/false，收到: ${raw}`);
+  }
+  if (raw === undefined) throw new CliParseError(`--${spec.long} 需要一个值`);
+  const inner = unwrap(spec.schema);
+  if (inner instanceof z.ZodNumber) {
+    const n = Number(raw);
+    if (Number.isNaN(n)) throw new CliParseError(`--${spec.long} 需要数字，收到: ${raw}`);
+    return n;
+  }
+  if (inner instanceof z.ZodArray) {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return raw;
+    }
+  }
+  return raw;
+}
+
+/**
+ * 扫描并剥离**全局选项**：命令段之前或之后都接受。
+ *
+ * 为什么能任意位置：全局表与命令段无关 —— 只要有 `-` 开头的 token 就查这张表，
+ * 命中就吃掉（含它的值），没命中的 token **原样留下**（交给后面的命令匹配/报错）。
+ * 因为不命中时不动 token 顺序，剩下的数组与「全局选项写在末尾」的写法完全一样，
+ * 后面照旧走 `_routeResolve` + `parseArgv`，命令侧一行都不用改。
+ *
+ * 规则（与 GNU 惯例一致，除了子树级选项：那类必须写在其命令段之后，见 scan 的 `--` 说明）：
+ *   --x=v / --x v / -x v / -x=v   都认
+ *   boolean 选项不吃值：`--json task list` 里 `task` 不会被当值吃掉
+ *   短名聚合 `-jv`：只有**全部**是 boolean 才展开（否则报错，避免歧义）
+ *   `--` 之后全部当位置参数（含 `--` 本身不含）
+ *   未知的 `-` token 原样留下（后面按 Unknown option / Unknown command 报）
+ */
+export function scanGlobalOptions(
+  table: GlobalOption[],
+  argv: string[],
+): { values: Record<string, unknown>; rest: string[] } {
+  const values: Record<string, unknown> = {};
+  const rest: string[] = [];
+  if (table.length === 0) return { values, rest: argv.slice() };
+
+  const byLong = new Map<string, GlobalOption>();
+  const byShort = new Map<string, GlobalOption>();
+  for (const o of table) {
+    byLong.set(o.long, o);
+    if (o.short) byShort.set(o.short, o);
+  }
+
+  const assign = (spec: GlobalOption, raw: string | undefined) => {
+    const v = coerceGlobalValue(spec, raw);
+    if (spec.multiple) {
+      const prev = values[spec.key];
+      values[spec.key] = Array.isArray(prev) ? [...prev, v] : [v];
+    } else if (spec.key in values) {
+      throw new CliParseError(
+        `--${spec.long} 重复出现（不支持的选项要在声明里用 z.array 标 multiple）`,
+      );
+    } else {
+      values[spec.key] = v;
+    }
+  };
+
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]!;
+    if (a === '--') {
+      // 终止解析：`--` 之后的 token 一律当位置参数（连 `--` 一起留给 parseArgv 处理）
+      rest.push('--', ...argv.slice(i + 1));
+      break;
+    }
+    if (!a.startsWith('-') || a === '-' || a === '--') {
+      rest.push(a);
+      continue;
+    }
+
+    if (a.startsWith('--')) {
+      const eq = a.indexOf('=');
+      const name = eq === -1 ? a.slice(2) : a.slice(2, eq);
+      const spec = byLong.get(name);
+      if (!spec) {
+        rest.push(a);
+        continue;
+      }
+      if (eq !== -1) assign(spec, a.slice(eq + 1));
+      else if (spec.isBool) assign(spec, undefined);
+      else assign(spec, argv[++i]);
+      continue;
+    }
+
+    // 短名：`-x` / `-x=v` / `-x v` / `-jv`（聚合）
+    const body = a.slice(1);
+    if (body.includes('=')) {
+      const eq = body.indexOf('=');
+      const spec = byShort.get(body.slice(0, eq));
+      if (!spec) {
+        rest.push(a);
+        continue;
+      }
+      assign(spec, body.slice(eq + 1));
+      continue;
+    }
+    if (body.length > 1) {
+      const specs: GlobalOption[] = [];
+      for (const ch of body) {
+        const s = byShort.get(ch);
+        if (!s) break;
+        specs.push(s);
+      }
+      if (specs.length !== body.length || specs.some((s) => !s.isBool)) {
+        rest.push(a); // 不是可展开的 boolean 聚合：原样留下（后面会报 Unknown option）
+        continue;
+      }
+      for (const s of specs) assign(s, undefined);
+      continue;
+    }
+    const spec = byShort.get(body);
+    if (!spec) {
+      rest.push(a);
+      continue;
+    }
+    if (spec.isBool) assign(spec, undefined);
+    else assign(spec, argv[++i]);
+  }
+
+  return { values, rest };
+}
+
+/**
+ * 全局选项的 help 行（`[左列, 右列]`）：与解析同源，同一张表渲染 ——
+ * 杜绝「解析里有、help 里没有」（`--json` 以前就是这样漏的）。
+ */
+export function renderGlobalOptions(table: GlobalOption[]): [string, string][] {
+  return table.map((o) => {
+    const meta = _getCliOptionMeta(o.schema);
+    const alias = o.short ? `-${o.short}, ` : '    ';
+    const ph = meta?.placeholder ?? o.key;
+    const argDisplay = o.isBool ? '' : ` <${ph}>`;
+    const defVal = inferDefault(o.schema);
+    const defStr = defVal !== undefined ? `(default: ${JSON.stringify(defVal)})` : '';
+    const right = [defStr, meta?.desc ?? ''].filter(Boolean).join(' ');
+    return [`${alias}--${o.long}${argDisplay}`, right];
+  });
 }

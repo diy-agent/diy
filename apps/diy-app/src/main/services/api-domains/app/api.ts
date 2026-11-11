@@ -10,7 +10,7 @@
  * 合并后拆成 `heapUsed`（字节，程序判据）与 `systemMemory`（人读），语义不再混淆。
  */
 import { z } from "zod";
-import { RpcSchema, defineService } from "@diy-agent/rpc";
+import { RpcSchema } from "@diy-agent/rpc";
 
 export const appRoutes = RpcSchema.group({
     desc: `应用自述（进程 / 环境 / 版本）`,
@@ -20,26 +20,32 @@ export const appRoutes = RpcSchema.group({
             input: {},
             // 形状与老 `getAppInfo` 1:1：**不包** {status, data}（那个 wrapper 是给成对命令用的）
             output: z.object({
-                    pid: z.number(),
-                    uptime: z.number().describe("进程已运行秒数"),
-                    heapUsed: z.number().describe("进程堆占用（字节；程序判据用它，人读用 systemMemory）"),
-                    port: z.number().describe("RPC 端口（0 = 未起）"),
-                    diyHome: z.string(),
-                    diyHomeDisplay: z.string().describe("家目录缩写后的展示形式"),
-                    repoDisplay: z.string().describe("代码仓展示形式（哪个 worktree / 分支）"),
-                    env: z.string().describe("DIY_ENV：production / development / test"),
-                    branch: z.string().describe("当前运行代码所在 git 分支（拿不到时空串）"),
-                    cache: z.string(),
-                    userData: z.string().describe("Electron userData 目录（非 Electron 时给占位）"),
-                    cdp: z.string().describe("CDP 调试地址（未启用 / serve 模式为空串）"),
-                    electron: z.string().describe("非 Electron 环境给可读占位而不是 undefined"),
-                    node: z.string(),
-                    chrome: z.string(),
-                    platform: z.string(),
-                    systemMemory: z.object({ totalGb: z.string(), freeGb: z.string() }),
+                pid: z.number(),
+                uptime: z.number().describe("进程已运行秒数"),
+                heapUsed: z.number().describe("进程堆占用（字节；程序判据用它，人读用 systemMemory）"),
+                port: z.number().describe("RPC 端口（0 = 未起）"),
+                diyHome: z.string(),
+                diyHomeDisplay: z.string().describe("家目录缩写后的展示形式"),
+                repoDisplay: z.string().describe("代码仓展示形式（哪个 worktree / 分支）"),
+                env: z.string().describe("DIY_ENV：production / development / test"),
+                branch: z.string().describe("当前运行代码所在 git 分支（拿不到时空串）"),
+                cache: z.string(),
+                userData: z.string().describe("Electron userData 目录（非 Electron 时给占位）"),
+                cdp: z.string().describe("CDP 调试地址（未启用 / serve 模式为空串）"),
+                electron: z.string().describe("非 Electron 环境给可读占位而不是 undefined"),
+                node: z.string(),
+                chrome: z.string(),
+                platform: z.string(),
+                systemMemory: z.object({ totalGb: z.string(), freeGb: z.string() }),
             }),
         }),
     },
 });
 
-export const appService = defineService({ name: "diy.app", api: appRoutes });
+
+/**
+ * 新模型（##87）：模块自带模块层，app 前缀由宿主给。
+ * `server.use({ prefix: "diy", api: appApi, handlers: { app: … } })`
+ * 与上面的 `appService` 完全等价（后者 = prefix "diy" + 模块层 "app"）。
+ */
+export const appApi = RpcSchema.group({ children: { app: appRoutes } });

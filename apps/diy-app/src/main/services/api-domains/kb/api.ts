@@ -13,7 +13,7 @@
  *   kb/impl.ts   ← handler 绑定
  */
 import { z } from "zod";
-import { RpcSchema, defineService } from "@diy-agent/rpc";
+import { RpcSchema } from "@diy-agent/rpc";
 
 /** 库根：缺省 = cwd 下 `.diy/knowledge`；`global` = `$DIY_HOME/knowledge` */
 const RootInput = {
@@ -55,7 +55,9 @@ export const kbRoutes = RpcSchema.group({
                 `写一条知识（覆盖）。**根目录散文件会被拒** —— 多级目录是铁律，这是唯一的强制点。` +
                 `\n\n正文从 stdin 读（--body-file -）或 --body-file 路径；updated 由工具自动补`,
             input: {
-                path: z.string().cliArg({ desc: "相对库根的路径，必须含子目录且以 .md 结尾（如 `rules/通用硬约束.md`）" }),
+                path: z
+                    .string()
+                    .cliArg({ desc: "相对库根的路径，必须含子目录且以 .md 结尾（如 `rules/通用硬约束.md`）" }),
                 bodyFile: z.string().cliOption({ desc: "正文来源：`-` = stdin，或文件路径" }),
                 desc: z.string().cliOption({ desc: "yaml 头的 desc（一行说明，进 INDEX）" }),
                 ...RootInput,
@@ -101,4 +103,10 @@ export const kbRoutes = RpcSchema.group({
     },
 });
 
-export const kbService = defineService({ name: "diy.kb", api: kbRoutes });
+
+/**
+ * 新模型（##87）：模块自带模块层，app 前缀由宿主给。
+ * `server.use({ prefix: "diy", api: kbApi, handlers: { kb: … } })`
+ * 与上面的 `kbService` 完全等价（后者 = prefix "diy" + 模块层 "kb"）。
+ */
+export const kbApi = RpcSchema.group({ children: { kb: kbRoutes } });
