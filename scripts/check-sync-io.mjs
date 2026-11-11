@@ -116,7 +116,7 @@ const LEGACY_SYNC_IO_BASELINE = new Map(Object.entries({
   "apps/diy-app/src/main/services/local-ops-seek.ts": 14,
   "apps/diy-app/src/main/services/ops-feed.ts": 8,
   "apps/diy-app/src/main/services/plan-store.ts": 7,
-  "apps/diy-app/src/main/services/prompt-registry.ts": 16,
+  "apps/diy-app/src/main/services/prompt-registry.ts": 11,
   "apps/diy-app/src/main/services/tool-output.ts": 3,
 }));
 

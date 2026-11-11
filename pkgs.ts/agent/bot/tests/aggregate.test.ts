@@ -312,3 +312,32 @@ describe('system 段（##530）', () => {
     expect((ports.calls[0] ?? []).some((c) => c.includes('AGENTS'))).toBe(false)
   })
 })
+
+describe('空回答（##539）', () => {
+  // 用户实测：UI 里总会多出一条 assistant 空消息 `blocks:[{kind:"text",data:{text:""}}]`。
+  // 根因 = 模型这轮只调工具、一个字都没吐，runTurn 仍无条件 pushEntry 一条空 message。
+  it('一轮只调工具、一个字没吐 ⇒ 不写空 assistant 消息，工具痕迹仍保留', async () => {
+    const ports: AgentPorts = {
+      async *complete() {
+        yield { type: 'tool-call', id: 'c1', name: 'noop', input: '{}' }
+        yield { type: 'tool-result', id: 'c1', content: 'ok' }
+        yield { type: 'usage', inputTokens: 10, outputTokens: 1 }
+      },
+    }
+    const a = createAgent({ ports })
+    await a.send({ content: '调个工具' })
+    await waitIdle(a)
+    const messages = a.history().filter((e) => e.kind === 'message')
+    expect(messages.map((e) => [e.role, e.content])).toEqual([['user', '调个工具']])
+    // 工具进出还是要在历史里（不能被「没文本」连坐吞掉）
+    expect(a.history().some((e) => e.kind === 'tool-call')).toBe(true)
+    expect(a.history().some((e) => e.kind === 'tool-result')).toBe(true)
+  })
+
+  it('有文本的回答照常量写入（不能为了修空消息把正常回答也吞了）', async () => {
+    const a = createAgent({ ports: fakePorts({ replies: ['正常回答'] }) })
+    await a.send({ content: '问一句' })
+    await waitIdle(a)
+    expect(a.history().filter((e) => e.kind === 'message').map((e) => e.content)).toEqual(['问一句', '正常回答'])
+  })
+})

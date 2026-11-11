@@ -97,7 +97,8 @@ const brokenSummaryLlm: LlmPort = {
     },
 };
 
-const hostWith = (home: string, llm: LlmPort): BotChatHost => createBotChat({ home, llmFor: () => llm });
+// 本文件验的是**落盘**语义（compaction.json 存盘 / 重启后同一套切分），createBotChat 缺省内存做不到
+const hostWith = (home: string, llm: LlmPort): BotChatHost => createBotChat({ home, llmFor: () => llm, persist: true });
 
 describe("bot 上下文压缩（##517）", () => {
     it("判据 ①②③：撑到 80% 窗口后下一轮自动压，消息流里有 notice，之后对话继续", async () => {
