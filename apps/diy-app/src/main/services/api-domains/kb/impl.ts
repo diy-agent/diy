@@ -49,7 +49,9 @@ async function resolveRoot(dir: string | undefined, cwd: string): Promise<string
 /** 正文来源：`-` = stdin，或文件路径 */
 async function readBody(bodyFile: string | undefined, cwd: string): Promise<string> {
     if (bodyFile === undefined || bodyFile === "") {
-        throw new Error("kb: 缺少正文（用 --body-file - 从 stdin 读，或给文件路径）", { cause: { code: "kb/no-body" } });
+        throw new Error("kb: 缺少正文（用 --body-file - 从 stdin 读，或给文件路径）", {
+            cause: { code: "kb/no-body" },
+        });
     }
     if (bodyFile === "-") {
         // 异步 readFile 不接 fd，stdin 只能这样读（同步 readFileSync(0) 会被 check-sync-io 拦）
@@ -90,33 +92,34 @@ export function bindKb(server: ServerBinding): void {
         // 模块层由模块自己声明（kb）：与 defineService(name: "diy.kb") 等价
         handlers: {
             kb: {
-            write: async ({ input }) => {
-                const root = await resolveRoot(input.dir, input.cwd ?? process.cwd());
-                const body = await readBody(input.bodyFile, input.cwd ?? process.cwd());
-                const content = ensureFrontmatter(body, input.desc, new Date().toISOString().slice(0, 10));
-                const r = writeEntry(root, input.path, content);
-                // INDEX 跟着写 —— 用户 2026-11-07：「index 是自动生成的吧？每次写入更新？」
-                // 让每条写操作都带着索引一起落地，就不存在「写了但索引里没有」的中间态
-                await writeIndex(root, "");
-                return { path: r.path, bytes: r.bytes };
+                write: async ({ input }) => {
+                    const root = await resolveRoot(input.dir, input.cwd ?? process.cwd());
+                    const body = await readBody(input.bodyFile, input.cwd ?? process.cwd());
+                    const content = ensureFrontmatter(body, input.desc, new Date().toISOString().slice(0, 10));
+                    const r = writeEntry(root, input.path, content);
+                    // INDEX 跟着写 —— 用户 2026-11-07：「index 是自动生成的吧？每次写入更新？」
+                    // 让每条写操作都带着索引一起落地，就不存在「写了但索引里没有」的中间态
+                    await writeIndex(root, "");
+                    return { path: r.path, bytes: r.bytes };
+                },
+                check: async ({ input }) => {
+                    const root = await resolveRoot(input.dir, input.cwd ?? process.cwd());
+                    const scan = scanKb(root);
+                    return { root: scan.root, entries: [...scan.entries], problems: [...scan.problems] };
+                },
+                index: async ({ input }) => {
+                    const root = await resolveRoot(input.dir, input.cwd ?? process.cwd());
+                    const r = writeIndex(root, input.label ?? "");
+                    return { path: r.path, entries: r.entries, problems: [...r.problems] };
+                },
+                move: async ({ input }) => {
+                    const root = await resolveRoot(input.dir, input.cwd ?? process.cwd());
+                    const r = moveEntry(root, input.from, input.to);
+                    await writeIndex(root, "");
+                    return { from: r.from, to: r.to };
+                },
             },
-            check: async ({ input }) => {
-                const root = await resolveRoot(input.dir, input.cwd ?? process.cwd());
-                const scan = scanKb(root);
-                return { root: scan.root, entries: [...scan.entries], problems: [...scan.problems] };
-            },
-            index: async ({ input }) => {
-                const root = await resolveRoot(input.dir, input.cwd ?? process.cwd());
-                const r = writeIndex(root, input.label ?? "");
-                return { path: r.path, entries: r.entries, problems: [...r.problems] };
-            },
-            move: async ({ input }) => {
-                const root = await resolveRoot(input.dir, input.cwd ?? process.cwd());
-                const r = moveEntry(root, input.from, input.to);
-                await writeIndex(root, "");
-                return { from: r.from, to: r.to };
-            },
-        } },
+        },
     });
 }
 

@@ -16,20 +16,21 @@ export function bindNotice(server: ServerBinding): void {
         // 模块层由模块自己声明（notice）：与 defineService(name: "diy.notice") 等价
         handlers: {
             notice: {
-            list: async () => modelNoticeHub.list(),
-            dismiss: async ({ input }) => {
-                modelNoticeHub.dismiss(input.id);
-                return { status: "ok" };
-            },
-            watch: async function* ({ signal }) {
-                for await (const n of modelNoticeHub.subscribe(signal)) yield n;
-            },
-            inbox: {
-                list: async ({ input }) => inboxHub.list({ taskUri: input.taskUri, limit: input.limit }),
+                list: async () => modelNoticeHub.list(),
+                dismiss: async ({ input }) => {
+                    modelNoticeHub.dismiss(input.id);
+                    return { status: "ok" };
+                },
                 watch: async function* ({ signal }) {
-                    for await (const e of inboxHub.subscribe(signal)) yield e;
+                    for await (const n of modelNoticeHub.subscribe(signal)) yield n;
+                },
+                inbox: {
+                    list: async ({ input }) => inboxHub.list({ taskUri: input.taskUri, limit: input.limit }),
+                    watch: async function* ({ signal }) {
+                        for await (const e of inboxHub.subscribe(signal)) yield e;
+                    },
                 },
             },
-        } },
+        },
     });
 }

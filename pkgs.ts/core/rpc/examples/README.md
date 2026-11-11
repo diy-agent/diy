@@ -41,11 +41,11 @@ npx tsx pkgs.ts/core/rpc/examples/service/01-basic/run.ts
 # version = 1.0.0
 ```
 
-| 目录 | 演示 | 实测输出 |
-|---|---|---|
-| `01-basic` | 定义 → bind → use | `2 + 3 = 5` / `version = 1.0.0` |
-| `02-stream` | 服务端流（`serverStream`）| 3 块逐条到达 |
-| `03-cancel` | 取消传到服务端 | `服务端观察到 abort: true` |
+| 目录        | 演示                       | 实测输出                        |
+| ----------- | -------------------------- | ------------------------------- |
+| `01-basic`  | 定义 → bind → use          | `2 + 3 = 5` / `version = 1.0.0` |
+| `02-stream` | 服务端流（`serverStream`） | 3 块逐条到达                    |
+| `03-cancel` | 取消传到服务端             | `服务端观察到 abort: true`      |
 
 **目录结构和真实包同构**（`<pkg>/src/api.ts`）—— 照着建包，生成器直接能扫到。
 
@@ -58,6 +58,7 @@ npx tsx pkgs.ts/core/rpc/examples/raw/01-basic.ts
 ```
 
 **什么时候看它**：
+
 - 想知道 `defineService.bind` 内部做了什么
 - 测传输 / 协议层行为（`test/raw/` 也在这个抽象层）
 - 排查「是不是 `defineService` 这层的问题」
@@ -69,8 +70,8 @@ npx tsx pkgs.ts/core/rpc/examples/raw/01-basic.ts
 **① `input` 是对象，永不摊平**
 
 ```ts
-await math.math.add({ a: 2, b: 3 });   // ✓
-await math.math.add(2, 3);             // ✗
+await math.math.add({ a: 2, b: 3 }); // ✓
+await math.math.add(2, 3); // ✗
 ```
 
 tRPC / gRPC / JSON-RPC / AWS SDK 全都这样。理由：加字段不破坏老客户端、可选参数不用占位、
@@ -79,8 +80,8 @@ tRPC / gRPC / JSON-RPC / AWS SDK 全都这样。理由：加字段不破坏老�
 **② 空 input 也要传 `{}`**
 
 ```ts
-version: RpcSchema.unary({ input: {}, output: z.string() })
-await c.math.version({});    // 不能写 version()，zod 会拒 undefined
+version: RpcSchema.unary({ input: {}, output: z.string() });
+await c.math.version({}); // 不能写 version()，zod 会拒 undefined
 ```
 
 **③ `serverStream` 是 async 方法**
@@ -96,8 +97,8 @@ for await (const x of stream) { ... }
 
 ```ts
 mathService.bind(server, {
-    math: { add: ({ input }) => input.a + input.b },
-    //     ^^^^^^^^^^^^^^^^^^^^^^^ 不是 (a, b)
+  math: { add: ({ input }) => input.a + input.b },
+  //     ^^^^^^^^^^^^^^^^^^^^^^^ 不是 (a, b)
 });
 ```
 

@@ -28,12 +28,13 @@ export function bindSeed(server: ServerBinding): void {
         // 模块层由模块自己声明（seed）：与 defineService(name: "diy.seed") 等价
         handlers: {
             seed: {
-            run: async () => {
-                const r = seedHome(state.diyHome());
-                // 种子可能新写了 model.yaml → 重装目录，让 UI 立刻看到模型
-                refreshModelRuntime(state.diyHome());
-                return r;
+                run: async () => {
+                    const r = seedHome(state.diyHome());
+                    // 种子可能新写了 model.yaml → 重装目录，让 UI 立刻看到模型
+                    refreshModelRuntime(state.diyHome());
+                    return r;
+                },
             },
-        } },
+        },
     });
 }

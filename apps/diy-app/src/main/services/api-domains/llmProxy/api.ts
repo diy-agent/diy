@@ -7,24 +7,26 @@ import { z } from "zod";
 import { StatusOk } from "../../../../shared/status";
 import { RpcSchema, defineService } from "@diy-agent/rpc";
 
-export const llmProxyRoutes = RpcSchema.group({desc: `LLM 代理`,
-        children: {
-          status: RpcSchema.unary({
+export const llmProxyRoutes = RpcSchema.group({
+    desc: `LLM 代理`,
+    children: {
+        status: RpcSchema.unary({
             desc: `查询 LLM 代理状态`,
             input: {},
             output: z.object({ running: z.boolean(), port: z.number() }),
-          }),
-          start: RpcSchema.unary({
+        }),
+        start: RpcSchema.unary({
             desc: `启动 LLM 代理`,
             input: {},
             output: StatusOk,
-          }),
-          stop: RpcSchema.unary({
+        }),
+        stop: RpcSchema.unary({
             desc: `停止 LLM 代理`,
             input: {},
             output: StatusOk,
-          }),
-        },});
+        }),
+    },
+});
 
 export const llmProxyService = defineService({ name: "diy.llmProxy", api: llmProxyRoutes });
 

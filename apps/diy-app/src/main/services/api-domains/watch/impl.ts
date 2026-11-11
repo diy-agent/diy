@@ -11,12 +11,13 @@ export function bindWatch(server: ServerBinding): void {
         // 模块层由模块自己声明（watch）：与 defineService(name: "diy.watch") 等价
         handlers: {
             watch: {
-            fileChange: async function* ({ signal }) {
-                const { fileWatcher } = await import("../../file-watcher");
-                for await (const change of fileWatcher.subscribe(signal)) {
-                    yield change;
-                }
+                fileChange: async function* ({ signal }) {
+                    const { fileWatcher } = await import("../../file-watcher");
+                    for await (const change of fileWatcher.subscribe(signal)) {
+                        yield change;
+                    }
+                },
             },
-        } },
+        },
     });
 }

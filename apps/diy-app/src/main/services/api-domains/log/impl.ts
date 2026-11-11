@@ -12,25 +12,26 @@ export function bindLog(server: ServerBinding): void {
         // 模块层由模块自己声明（log）：与 defineService(name: "diy.log") 等价
         handlers: {
             log: {
-          read: async ({ input }) => {
-            const { existsSync, readFileSync } = await import("node:fs");
-            const { join } = await import("node:path");
-            const logPath = join(state.diyHome(), "app.log");
-            if (!existsSync(logPath)) return [];
-            const raw = readFileSync(logPath, "utf-8");
-            return raw
-              .split("\n")
-              .filter(Boolean)
-              .reverse()
-              .slice(0, input.limit ?? 200)
-              .map((line: string) => {
-                try {
-                  return JSON.parse(line) as Record<string, unknown>;
-                } catch {
-                  return { raw: line };
-                }
-              });
-          },
-        } },
+                read: async ({ input }) => {
+                    const { existsSync, readFileSync } = await import("node:fs");
+                    const { join } = await import("node:path");
+                    const logPath = join(state.diyHome(), "app.log");
+                    if (!existsSync(logPath)) return [];
+                    const raw = readFileSync(logPath, "utf-8");
+                    return raw
+                        .split("\n")
+                        .filter(Boolean)
+                        .reverse()
+                        .slice(0, input.limit ?? 200)
+                        .map((line: string) => {
+                            try {
+                                return JSON.parse(line) as Record<string, unknown>;
+                            } catch {
+                                return { raw: line };
+                            }
+                        });
+                },
+            },
+        },
     });
 }

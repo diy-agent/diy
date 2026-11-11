@@ -18,20 +18,21 @@ export function bindLlmProxy(server: ServerBinding): void {
         // 模块层由模块自己声明（llmProxy）：与 defineService(name: "diy.llmProxy") 等价
         handlers: {
             llmProxy: {
-            status: async () => {
-                const proxy = await getLlmProxy();
-                return { running: proxy.isRunning, port: 8000 };
+                status: async () => {
+                    const proxy = await getLlmProxy();
+                    return { running: proxy.isRunning, port: 8000 };
+                },
+                start: async () => {
+                    const proxy = await getLlmProxy();
+                    proxy.start();
+                    return { status: "ok" };
+                },
+                stop: async () => {
+                    const proxy = await getLlmProxy();
+                    proxy.stop();
+                    return { status: "ok" };
+                },
             },
-            start: async () => {
-                const proxy = await getLlmProxy();
-                proxy.start();
-                return { status: "ok" };
-            },
-            stop: async () => {
-                const proxy = await getLlmProxy();
-                proxy.stop();
-                return { status: "ok" };
-            },
-        } },
+        },
     });
 }

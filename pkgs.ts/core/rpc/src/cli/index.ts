@@ -1,12 +1,12 @@
-import type { _Router, _AnyProcedureMeta } from "../core/meta.js";
+import type { _Router, _AnyProcedureMeta } from '../core/meta.js';
 import {
   _buildRouteTree,
   _flattenRouter,
   _routeResolve,
   type _RouteNode,
   type _RouterNode,
-} from "../core/_tree.js";
-import type { ClientBinding } from "../core/server-binding.js";
+} from '../core/_tree.js';
+import type { ClientBinding } from '../core/server-binding.js';
 import {
   parseArgv,
   generateHelp,
@@ -16,26 +16,23 @@ import {
   scanGlobalOptions,
   renderGlobalOptions,
   type GlobalOption,
-} from "./_parser.js";
-import { z } from "zod";
-import { RpcSchema } from "../core/rpc.js";
-import { createScopedClient, mountService, type ScopedClient } from "../core/scope.js";
-import { ChannelClientBinding, ChannelServerBinding } from "../core/index.js";
-import { createMemTransportPair } from "../core/mem.js";
+} from './_parser.js';
+import { z } from 'zod';
+import { RpcSchema } from '../core/rpc.js';
+import { createScopedClient, mountService, type ScopedClient } from '../core/scope.js';
+import { ChannelClientBinding, ChannelServerBinding } from '../core/index.js';
+import { createMemTransportPair } from '../core/mem.js';
 
-import "../core/_cli-meta.js";
+import '../core/_cli-meta.js';
 
 /** 按点分路径查找 _RouterNode（如 'diy.app' → diy 下 app 节点），找不到返回 null */
-function findNodeByPath(
-  root: _RouterNode,
-  path: string,
-): _RouterNode | null {
-  const segs = path.split(".").filter(Boolean);
+function findNodeByPath(root: _RouterNode, path: string): _RouterNode | null {
+  const segs = path.split('.').filter(Boolean);
   let node: _RouterNode = root;
   for (const seg of segs) {
     const child = node.children.find((c) => c.name === seg);
     if (!child) return null;
-    if (child.kind === "proc") return null; // cliRootPath 必须指向 router 层
+    if (child.kind === 'proc') return null; // cliRootPath 必须指向 router 层
     node = child;
   }
   return node;
@@ -50,28 +47,33 @@ function findNodeByPath(
  *    - `!` 前缀路径（如 '!diy.ui'）→ 保留该层命名空间为顶层组（命令 `ui status`）
  * 每个子树的 proc 直接复用（path 仍是完整全名，_routeResolve 按 name 匹配）。
  */
-function resolveCliTree(
-  root: _RouterNode,
-  cliRootPath?: string | string[],
-): _RouterNode {
+function resolveCliTree(root: _RouterNode, cliRootPath?: string | string[]): _RouterNode {
   if (!cliRootPath) return root;
   const paths = Array.isArray(cliRootPath) ? cliRootPath : [cliRootPath];
   const flattened: _RouteNode[] = [];
   for (const p of paths) {
-    const keepNs = p.startsWith("!");
+    const keepNs = p.startsWith('!');
     const segPath = keepNs ? p.slice(1) : p;
     const sub = findNodeByPath(root, segPath);
     if (!sub) continue;
     if (keepNs) {
       // 保留命名空间：包成一层 router（name = 子树最后一段，如 ui），并把该层的 desc（group 的 desc）透传
-      const nsName = segPath.split(".").pop() ?? segPath;
-      flattened.push({ kind: "router", name: nsName, path: segPath, parent: null, desc: sub.desc, title: sub.title, children: sub.children });
+      const nsName = segPath.split('.').pop() ?? segPath;
+      flattened.push({
+        kind: 'router',
+        name: nsName,
+        path: segPath,
+        parent: null,
+        desc: sub.desc,
+        title: sub.title,
+        children: sub.children,
+      });
     } else {
       flattened.push(...sub.children);
     }
   }
   if (flattened.length === 0) return root;
-  return { kind: "router", name: "", path: "", parent: null, children: flattened };
+  return { kind: 'router', name: '', path: '', parent: null, children: flattened };
 }
 
 /**
@@ -86,18 +88,18 @@ function commandName(proc: _RouteNode): string {
     segs.unshift(node.name);
     node = node.parent;
   }
-  return segs.join(" ");
+  return segs.join(' ');
 }
 
 /** 叶子命令描述（ProcedureMeta.desc） */
 function procDesc(def: _AnyProcedureMeta): string {
-  return def.desc ?? "";
+  return def.desc ?? '';
 }
 
 /** 命令节点的单行简介：叶子用 meta.title，父命令用 router 节点.title（均 = desc 首行） */
 function nodeTitle(node: _RouteNode): string {
-  if (node.kind === "proc") return node.def.title ?? "";
-  return node.title ?? "";
+  if (node.kind === 'proc') return node.def.title ?? '';
+  return node.title ?? '';
 }
 
 /** 对齐输出命令列表：命令名列 padEnd 到最宽，描述列统一起列；无描述的条目不补尾随空格。 */
@@ -110,7 +112,8 @@ function emitCommandList(lines: string[], items: { name: string; desc: string }[
 
 /** Levenshtein 编辑距离（用于 did-you-mean 拼写建议） */
 function editDistance(a: string, b: string): number {
-  const m = a.length, n = b.length;
+  const m = a.length,
+    n = b.length;
   if (m === 0) return n;
   if (n === 0) return m;
   const dp: number[] = Array.from({ length: n + 1 }, (_, j) => j);
@@ -120,8 +123,8 @@ function editDistance(a: string, b: string): number {
     for (let j = 1; j <= n; j++) {
       const tmp = dp[j];
       dp[j] = Math.min(
-        dp[j] + 1,                    // 删除
-        dp[j - 1] + 1,                // 插入
+        dp[j] + 1, // 删除
+        dp[j - 1] + 1, // 插入
         prev + (a[i - 1] === b[j - 1] ? 0 : 1), // 替换
       );
       prev = tmp;
@@ -153,15 +156,12 @@ function suggestCommand(siblings: _RouteNode[], input: string): string[] {
  * 报错必须报到这里 —— 否则 `diy ui view open …`（view 下只有 expand/set、没有 open）
  * 会退化成 "Unknown command: ui"（argv[0]），把合法的前缀段当成未知命令（任务 205）。
  */
-function firstUnmatched(
-  root: _RouterNode,
-  args: string[],
-): { idx: number; parent: _RouterNode } {
+function firstUnmatched(root: _RouterNode, args: string[]): { idx: number; parent: _RouterNode } {
   let node = root;
   for (let i = 0; i < args.length; i++) {
     const child = node.children.find((c) => c.name === args[i]);
     if (!child) return { idx: i, parent: node };
-    if (child.kind === "proc") {
+    if (child.kind === 'proc') {
       // 叶子后跟的是参数而非命令段；_routeResolve 遇 proc 直接返回（不会走到 null），
       // 走到这里说明 resolved 异常 —— 按该段失败处理
       return { idx: i, parent: node };
@@ -173,11 +173,11 @@ function firstUnmatched(
 }
 
 async function* stdinAsync(): AsyncGenerator<string> {
-  const { createInterface } = await import("node:readline");
+  const { createInterface } = await import('node:readline');
   const rl = createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: process.stdin.isTTY ? "> " : undefined,
+    prompt: process.stdin.isTTY ? '> ' : undefined,
   });
   if (process.stdin.isTTY) rl.prompt();
   for await (const line of rl) yield line;
@@ -289,11 +289,11 @@ function collectAliases(
   for (const [path, meta] of Object.entries(_flattenRouter(router as _Router))) {
     const m = meta as { alias?: string | readonly string[]; deprecated?: string };
     if (m.alias === undefined) continue;
-    const segs = path.split(".");
+    const segs = path.split('.');
     const aliases = Array.isArray(m.alias) ? m.alias : [m.alias as string];
     for (const alias of aliases) {
-      out.set([...segs.slice(0, -1), alias].join(" "), {
-        to: segs.join(" "),
+      out.set([...segs.slice(0, -1), alias].join(' '), {
+        to: segs.join(' '),
         isDeprecated: m.deprecated !== undefined,
       });
     }
@@ -309,13 +309,15 @@ export interface InProcessCli {
   readonly app: CliApp<any>;
   readonly server: ChannelServerBinding;
   /** 跑一条命令：返回退出码与两路输出（按行，便于断言） */
-  run(argv: string[], opts?: { json?: boolean }): Promise<{ code: number; out: string[]; err: string[] }>;
+  run(
+    argv: string[],
+    opts?: { json?: boolean },
+  ): Promise<{ code: number; out: string[]; err: string[] }>;
   listRegistered(): string[];
   dispose(): void;
 }
 
 export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
-
   // ── 输出/退出注入（server 内嵌 /cli 端点用；缺省 = 原行为，直连 CLI 不变）──
   /** stdout 写入点：缺省 console.log；注入方负责补行尾换行（契约见 CliConfig.out） */
   private _print(line: string): void {
@@ -341,7 +343,7 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
       return schema.parse(values) as Record<string, unknown>;
     } catch (e) {
       if (e instanceof z.ZodError) {
-        const msgs = e.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`).join("\n");
+        const msgs = e.issues.map((i) => `  ${i.path.join('.')}: ${i.message}`).join('\n');
         throw new CliParseError(`全局选项取值错误:\n${msgs}`);
       }
       throw e;
@@ -372,8 +374,8 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
       const merged: Record<string, unknown> = {};
       for (const c of config.clients) {
         const api = c.api as any;
-        if (api?._streamMode !== "group") {
-          throw new Error("CliApp: clients 模式要求每个 api 是 RpcSchema.group（自带模块层）");
+        if (api?._streamMode !== 'group') {
+          throw new Error('CliApp: clients 模式要求每个 api 是 RpcSchema.group（自带模块层）');
         }
         for (const [seg, child] of Object.entries(api.children as Record<string, unknown>)) {
           if (seg in merged) {
@@ -388,9 +390,9 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
       }
       router = merged;
     }
-    if (!router) throw new Error("CliApp: 需要 router 或 clients");
+    if (!router) throw new Error('CliApp: 需要 router 或 clients');
     if (!config.transport && !config.clients?.length) {
-      throw new Error("CliApp: router 模式需要 transport（或改用 clients）");
+      throw new Error('CliApp: router 模式需要 transport（或改用 clients）');
     }
     this._router = router as _Router | _AnyProcedureMeta;
     const isTopGroup = (router as any)?._streamMode === 'group';
@@ -406,7 +408,7 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
       // clients 模式下没有"根 group"这回事（顶层是各 scope 的命令段），
       // 取第一个 scope 的 desc 当根描述会把它的说明串到根上 —— 干脆不设。
       if (this._scoped.size === 0) {
-        const topRouter = root.children.find((c) => c.kind === "router");
+        const topRouter = root.children.find((c) => c.kind === 'router');
         this.rootDesc = topRouter ? (topRouter as _RouterNode).desc : undefined;
       }
     }
@@ -414,12 +416,9 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
     this._backfillParent(this.tree, null);
   }
 
-  private _backfillParent(
-    node: _RouteNode,
-    parent: _RouterNode | null,
-  ): void {
+  private _backfillParent(node: _RouteNode, parent: _RouterNode | null): void {
     (node as { parent: _RouterNode | null }).parent = parent;
-    if (node.kind === "router") {
+    if (node.kind === 'router') {
       for (const c of node.children) this._backfillParent(c, node);
     }
   }
@@ -434,11 +433,12 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
     try {
       scanned = hasTable
         ? scanGlobalOptions(this._globalTable, rawArgv)
-        // 未声明表的老宿主：保留原来的 `--json` 特例（行为与之前逐字一致）
-        : { values: {}, rest: rawArgv.filter((a) => a !== "--json") };
-      this._globals = hasTable && this.config.globalOptions
-        ? this._validateGlobals(this.config.globalOptions, scanned.values)
-        : scanned.values;
+        : // 未声明表的老宿主：保留原来的 `--json` 特例（行为与之前逐字一致）
+          { values: {}, rest: rawArgv.filter((a) => a !== '--json') };
+      this._globals =
+        hasTable && this.config.globalOptions
+          ? this._validateGlobals(this.config.globalOptions, scanned.values)
+          : scanned.values;
     } catch (err: unknown) {
       // 全局选项的用法错误：与命令参数同一条出口（打印后 exit 2），不走命令帮助
       if (err instanceof CliParseError) {
@@ -448,51 +448,44 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
       throw err;
     }
     // `--json` 的消费点统一：表里声明了就看值，没表就看老姿势在不在
-    this._jsonFlag = this._globals["json"] === true || rawArgv.includes("--json");
+    this._jsonFlag = this._globals['json'] === true || rawArgv.includes('--json');
     const argv = scanned.rest;
 
     // ── 别名 / 弃用改写（##518）──
     // 表的来源是**命令自己的声明**（meta.alias / meta.deprecated），不是外部配置。
     for (const [from, { to, isDeprecated }] of collectAliases(this._router)) {
-      const fromSegs = from.split(" ").filter(Boolean);
+      const fromSegs = from.split(' ').filter(Boolean);
       if (!fromSegs.every((seg, i) => argv[i] === seg)) continue;
-      argv.splice(0, fromSegs.length, ...to.split(" "));
+      argv.splice(0, fromSegs.length, ...to.split(' '));
       if (isDeprecated) this._printErr(`⚠ 命令已改名：${from} → ${to}（旧名下个版本移除）`);
       break;
     }
 
     // 剥离末尾 --help/-h：`diy <命令> --help` 显示该命令自身帮助（父命令或叶子），非根帮助
     let helpRequested = false;
-    if (argv.length > 1 && (argv[argv.length - 1] === "--help" || argv[argv.length - 1] === "-h")) {
+    if (argv.length > 1 && (argv[argv.length - 1] === '--help' || argv[argv.length - 1] === '-h')) {
       helpRequested = true;
       argv.pop();
     }
 
-    if (
-      argv.length === 0 ||
-      argv[0] === "--help" ||
-      argv[0] === "-h"
-    ) {
+    if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h') {
       this.showHelp();
       return;
     }
-    if (
-      argv[0] === "--version" ||
-      argv[0] === "-V"
-    ) {
+    if (argv[0] === '--version' || argv[0] === '-V') {
       if (this.config.version) this._print(this.config.version);
       return;
     }
-    if (argv[0] === "help" || argv[0] === "--help" || argv[0] === "-h") {
+    if (argv[0] === 'help' || argv[0] === '--help' || argv[0] === '-h') {
       // `diy help <subcommand>` 等价 `diy <subcommand> --help`
-      if (argv[0] === "help" && argv.length > 1) {
+      if (argv[0] === 'help' && argv.length > 1) {
         const rest = argv.slice(1);
         const sub = _routeResolve(this.tree, rest);
         if (sub) {
           this.showNodeHelp(sub);
           return;
         }
-        this._printErr(`Unknown command: ${rest.join(" ")}`);
+        this._printErr(`Unknown command: ${rest.join(' ')}`);
         this.showHelp();
         this._exit(2);
       }
@@ -508,8 +501,8 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
       return;
     }
 
-    if (!resolved || resolved.kind !== "proc") {
-      if (resolved && resolved.kind === "router") {
+    if (!resolved || resolved.kind !== 'proc') {
+      if (resolved && resolved.kind === 'router') {
         // 父命令（group）：无子命令时显示自身帮助（子命令列表），而非根帮助
         this.showNodeHelp(resolved);
         return;
@@ -518,11 +511,11 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
         // 而非 argv[0]：`ui view open …` 中 ui/view 都合法，只有 open 不存在，
         // 报 "Unknown command: ui" 会把合法前缀当未知命令，建议器还会回显自己（任务 205）。
         const { idx, parent } = firstUnmatched(this.tree, argv);
-        const input = argv.slice(0, idx + 1).join(" ");
-        const sugg = suggestCommand(parent.children, argv[idx] ?? "");
+        const input = argv.slice(0, idx + 1).join(' ');
+        const sugg = suggestCommand(parent.children, argv[idx] ?? '');
         if (sugg.length > 0) {
           this._printErr(`Unknown command: ${input}`);
-          this._printErr(`Did you mean: ${sugg.join(", ")}?`);
+          this._printErr(`Did you mean: ${sugg.join(', ')}?`);
         } else {
           this._printErr(`Unknown command: ${input}`);
         }
@@ -537,7 +530,7 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
     // 命令树根本身不消费 argv，不计入。
     let depth = 1;
     let walk: _RouteNode | null = proc;
-    while (walk && walk.parent && walk.parent.path !== "") {
+    while (walk && walk.parent && walk.parent.path !== '') {
       walk = walk.parent;
       depth++;
     }
@@ -551,7 +544,7 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
     const scoped = this._scoped.get(scopeCmd);
     const rpcName = scoped
       ? `${scoped.prefix}.${proc.path}`
-      : def.name ?? `${this.config.rpcPrefix ?? ''}${proc.path}`;
+      : (def.name ?? `${this.config.rpcPrefix ?? ''}${proc.path}`);
 
     /**
      * 结果派生的退出码：在 try **之外**退出。
@@ -566,50 +559,31 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
         // 命令级 Usage 用裁剪后的短命令名（用户实际输入的命令），非 RPC 全名
         const shortCmd = commandName(proc);
         const args = fmtUsageArgs(def);
-        this._print(
-          `Usage: ${this.config.name} ${shortCmd} [options]${args ? ` ${args}` : ""}`,
-        );
+        this._print(`Usage: ${this.config.name} ${shortCmd} [options]${args ? ` ${args}` : ''}`);
         const help = generateHelp(def, shortCmd, desc);
-        if (help) this._print("\n" + help);
+        if (help) this._print('\n' + help);
         return;
       }
 
       const tx = (scoped?.transport ?? this.config.transport)!;
       const mode = def._streamMode as string;
 
-      if (mode === "server") {
+      if (mode === 'server') {
         const handle = await tx.serverStream(rpcName, { input });
         for await (const chunk of handle as any) {
-          const line =
-            typeof chunk === "object"
-              ? JSON.stringify(chunk)
-              : String(chunk);
+          const line = typeof chunk === 'object' ? JSON.stringify(chunk) : String(chunk);
           this._print(line);
         }
-      } else if (mode === "client") {
+      } else if (mode === 'client') {
         const lines = stdinAsync();
-        const result = await tx.clientStream(
-          rpcName,
-          { input },
-          lines as any,
-        );
+        const result = await tx.clientStream(rpcName, { input }, lines as any);
         if (result === undefined) return;
-        const line =
-          typeof result === "object"
-            ? JSON.stringify(result, null, 2)
-            : String(result);
+        const line = typeof result === 'object' ? JSON.stringify(result, null, 2) : String(result);
         this._print(line);
-      } else if (mode === "bidi") {
-        const handle = await tx.bidiStream(
-          rpcName,
-          { input },
-          stdinAsync() as any,
-        );
+      } else if (mode === 'bidi') {
+        const handle = await tx.bidiStream(rpcName, { input }, stdinAsync() as any);
         for await (const chunk of handle as any) {
-          const line =
-            typeof chunk === "object"
-              ? JSON.stringify(chunk)
-              : String(chunk);
+          const line = typeof chunk === 'object' ? JSON.stringify(chunk) : String(chunk);
           this._print(line);
         }
       } else {
@@ -619,9 +593,7 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
           this._print(JSON.stringify({ ok: true, data: result }));
         } else {
           const output =
-            typeof result === "object"
-              ? JSON.stringify(result, null, 2)
-              : String(result);
+            typeof result === 'object' ? JSON.stringify(result, null, 2) : String(result);
           this._print(output);
         }
         // 按名取实体查不到 ⇒ 非零退出（`get X && ...` 不许对不存在的东西说通过）。
@@ -633,12 +605,10 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
         this._printErr(err.message);
         const shortCmd = commandName(proc);
         const help = generateHelp(def, shortCmd, desc);
-        if (help) this._printErr("\n" + help);
+        if (help) this._printErr('\n' + help);
         this._exit(2); // 用法错误（CLIG：usage error = 2）
       }
-      this._printErr(
-        `Error: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      this._printErr(`Error: ${err instanceof Error ? err.message : String(err)}`);
       this._exit(1);
     }
 
@@ -648,22 +618,25 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
 
   /** 单个命令帮助：叶子命令显示参数 help；父命令显示自身 desc + 子命令列表 */
   showNodeHelp(node: _RouteNode): void {
-    if (node.kind === "proc") {
+    if (node.kind === 'proc') {
       const shortCmd = commandName(node);
       const args = fmtUsageArgs(node.def);
-      this._print(`Usage: ${this.config.name} ${shortCmd} [options]${args ? ` ${args}` : ""}`);
+      this._print(`Usage: ${this.config.name} ${shortCmd} [options]${args ? ` ${args}` : ''}`);
       const help = generateHelp(node.def, shortCmd, procDesc(node.def));
-      if (help) this._print("\n" + help);
+      if (help) this._print('\n' + help);
       return;
     }
     // 父命令（router）：显示自身 desc + 子命令列表
     const lines: string[] = [];
     const shortCmd = commandName(node);
     lines.push(`Usage: ${this.config.name} ${shortCmd} <subcommand> [options]`);
-    if (node.desc) lines.push("", node.desc);
-    if (node.children.length > 0) lines.push("", "Commands:");
-    emitCommandList(lines, node.children.map((child) => ({ name: child.name, desc: nodeTitle(child) })));
-    this._print(lines.join("\n"));
+    if (node.desc) lines.push('', node.desc);
+    if (node.children.length > 0) lines.push('', 'Commands:');
+    emitCommandList(
+      lines,
+      node.children.map((child) => ({ name: child.name, desc: nodeTitle(child) })),
+    );
+    this._print(lines.join('\n'));
   }
 
   // ═══════════════════════════════════════════════════
@@ -684,7 +657,7 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
     clients: readonly ScopedClient<any>[];
     json?: boolean;
     cwd?: string;
-    exitCodeOf?: CliConfig<any>["exitCodeOf"];
+    exitCodeOf?: CliConfig<any>['exitCodeOf'];
     out?: (line: string) => void;
     err?: (line: string) => void;
     exit?: (code: number) => void;
@@ -720,7 +693,7 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
     cwd?: string;
     /** 全局选项表（与线上同一份，见 `CliConfig.globalOptions`） */
     globalOptions?: z.ZodObject<z.ZodRawShape>;
-    exitCodeOf?: CliConfig<any>["exitCodeOf"];
+    exitCodeOf?: CliConfig<any>['exitCodeOf'];
   }): InProcessCli {
     const { serverTx, clientTx } = createMemTransportPair();
     const server = new ChannelServerBinding(serverTx);
@@ -762,14 +735,14 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
         out.length = 0;
         err.length = 0;
         code = 0;
-        const prevJson = app["_jsonFlag"] as boolean;
-        if (runOpts?.json !== undefined) app["_jsonFlag"] = runOpts.json;
+        const prevJson = app['_jsonFlag'] as boolean;
+        if (runOpts?.json !== undefined) app['_jsonFlag'] = runOpts.json;
         try {
           await app.parse(argv);
         } catch (e) {
           if (!(e instanceof Exit)) throw e;
         } finally {
-          if (runOpts?.json !== undefined) app["_jsonFlag"] = prevJson;
+          if (runOpts?.json !== undefined) app['_jsonFlag'] = prevJson;
         }
         return { code, out: out.slice(), err: err.slice() };
       },
@@ -783,15 +756,14 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
   showHelp(): void {
     const lines: string[] = [];
     lines.push(`Usage: ${this.config.name} <command> [options]`);
-    if (this.rootDesc)
-      lines.push("", this.rootDesc);
+    if (this.rootDesc) lines.push('', this.rootDesc);
 
     // 顶层直接显示每个子命令（proc 或 router 父命令），desc 取第一行
     const items: { name: string; desc: string; mode: string }[] = [];
 
     for (const child of this.tree.children) {
       const name = child.name;
-      if (child.kind === "proc") {
+      if (child.kind === 'proc') {
         const def = child.def;
         items.push({
           name,
@@ -803,26 +775,29 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
         items.push({
           name,
           desc: nodeTitle(child),
-          mode: "",
+          mode: '',
         });
       }
     }
 
-    if (items.length > 0) lines.push("", "Commands:");
+    if (items.length > 0) lines.push('', 'Commands:');
 
-    emitCommandList(lines, items.map(({ name, desc, mode }) => {
-      const modeTag = mode && mode !== "unary" ? ` (${mode})` : "";
-      return { name: name + modeTag, desc };
-    }));
+    emitCommandList(
+      lines,
+      items.map(({ name, desc, mode }) => {
+        const modeTag = mode && mode !== 'unary' ? ` (${mode})` : '';
+        return { name: name + modeTag, desc };
+      }),
+    );
 
-    lines.push("", "Options:");
+    lines.push('', 'Options:');
     // 全局选项与解析同源（同一张表）：以前 `--json` 解析认、help 不列，就是这么漏的
     const optRows: [string, string][] = renderGlobalOptions(this._globalTable);
-    optRows.push(["-h, --help", "Show help"]);
-    if (this.config.version) optRows.push(["-V, --version", "Show version"]);
+    optRows.push(['-h, --help', 'Show help']);
+    if (this.config.version) optRows.push(['-V, --version', 'Show version']);
     const w = optRows.reduce((m, [l]) => Math.max(m, l.length), 0);
     for (const [l, r] of optRows) lines.push(r ? `  ${l.padEnd(w)}  ${r}` : `  ${l}`);
 
-    this._print(lines.join("\n"));
+    this._print(lines.join('\n'));
   }
 }

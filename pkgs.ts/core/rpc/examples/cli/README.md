@@ -7,12 +7,12 @@
 npx tsx pkgs.ts/core/rpc/examples/cli/01-single-module/run.ts
 ```
 
-| 目录 | 演示 | 对应 diy 的什么 |
-|---|---|---|
-| `01-single-module/` | 一个 `defineService` → 一棵命令树 | 单个域（如只做 `fact`） |
-| `02-multi-module-root/` | **多个模块合并成同一个根命令**（模块无名字，前缀由使用方给；同一 api 可挂多个前缀） | `diy task …` / `diy agent …` |
-| `03-global-options/` | 全局选项表、位置自由、help 同源 | `diy --json` / `diy -C <目录>` |
-| `04-root-pitfalls/` | 根命令的四个坑，逐个可跑（旧 `rpcPrefix` 路线的历史包袱） | `rpcPrefix` 为什么曾经存在 |
+| 目录                    | 演示                                                                                | 对应 diy 的什么                |
+| ----------------------- | ----------------------------------------------------------------------------------- | ------------------------------ |
+| `01-single-module/`     | 一个 `defineService` → 一棵命令树                                                   | 单个域（如只做 `fact`）        |
+| `02-multi-module-root/` | **多个模块合并成同一个根命令**（模块无名字，前缀由使用方给；同一 api 可挂多个前缀） | `diy task …` / `diy agent …`   |
+| `03-global-options/`    | 全局选项表、位置自由、help 同源                                                     | `diy --json` / `diy -C <目录>` |
+| `04-root-pitfalls/`     | 根命令的四个坑，逐个可跑（旧 `rpcPrefix` 路线的历史包袱）                           | `rpcPrefix` 为什么曾经存在     |
 
 ## 一句话回顾（后面例子都靠它）
 
