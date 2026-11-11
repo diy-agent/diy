@@ -209,7 +209,7 @@ export const CHAT_STYLE = `
 .chat-view-tab:hover { background: rgba(0,0,0,.04); }
 .chat-view-tab.active { color: #1a56db; background: rgba(26,86,219,.08); font-weight: 500; }
 .chat-view-body { flex: 1; min-height: 0; display: flex; }
-.chat-view-pane { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.chat-view-pane { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 
 `;
 
