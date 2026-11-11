@@ -5,28 +5,36 @@
  *
  * 形态：
  *
- *   demo task list          ← task 模块（defineService({ name: "demo.task" })）
+ *   demo task list          ← task 模块
  *   demo task create "标题"
- *   demo agent list         ← agent 模块（defineService({ name: "demo.agent" })）
+ *   demo agent list         ← agent 模块
  *
- * 每个模块自带 `defineService`，**没有任何中心化的组装点去改它们的 api**：
- * 根只是把各自的 `routes` 挂到自己的名字下。这就是「模块自己注册」在命令树上的样子。
+ * ## 核心：模块没有名字，前缀是使用方给的
  *
- * ## 根命令的三个坑（本文件末尾会逐个打出来验证）
+ * ```ts
+ * export const taskApi = RpcSchema.group({ ... });          // 模块只提供 api
  *
- * ① **拼名两边各有各的规则**：服务端 `service.name + path`（`demo.task` + `list`），
- *    客户端 `rpcPrefix + 命令路径`（`demo.` + `task.list`）。差一个字符就是 `Unknown method`。
- * ② **根这一层不能执行**：`demo` 只是命名空间，敲 `demo` 应该是 help，不是一个 RPC 调用。
- * ③ **根被当 router 传进来时，命令段会多一层**：直接传 `apiDef`（含 `demo` 那层）→
- *    命令行要敲 `demo demo task list`；所以要传 `apiDef.demo`，或者用 `cliRootPath` 裁掉那层。
+ * server.use({ prefix: 'diy.task', api: taskApi, handlers });  // 部署位置在这里定
+ * const task = createScopedClient({ api: taskApi, client, prefix: 'diy.task', cmd: 'task' });
+ * ```
+ *
+ * 所以同一份 `taskApi` 可以被挂到 `diy.task`，也可以挂到 `diyvideo.task` ——
+ * 换部署位置不用动模块源码（对比：`defineService({ name })` 把它焊死）。
+ *
+ * ## 三个概念（以前混在一起，是根命令所有麻烦的来源）
+ *
+ * | 概念 | 谁定 | 例子 |
+ * |---|---|---|
+ * | 线上名 | `prefix` + 树内 path | `diy.task.list` |
+ * | 命令段 | `cmd` + 树内 path | `task list` |
+ * | 模块 | 模块作者 | `taskApi`（无名字） |
  */
 import { z } from 'zod';
-import { ChannelServerBinding, ChannelClientBinding, RpcSchema, defineService } from '../../../src/index';
-import { createMemTransportPair } from '../../../test/helpers';
+import { RpcSchema } from '../../../src/core/rpc';
 import { CliApp } from '../../../src/cli/index';
 
-// ═══ 模块 A：task ═══
-const taskRoutes = RpcSchema.group({
+// ═══ 模块 A：task（没有名字） ═══
+export const taskApi = RpcSchema.group({
     desc: '任务管理',
     children: {
         list: RpcSchema.unary({
@@ -41,10 +49,9 @@ const taskRoutes = RpcSchema.group({
         }),
     },
 });
-export const taskService = defineService({ name: 'demo.task', api: taskRoutes });
 
-// ═══ 模块 B：agent ═══
-const agentRoutes = RpcSchema.group({
+// ═══ 模块 B：agent（同样没有名字） ═══
+export const agentApi = RpcSchema.group({
     desc: '本地 agent',
     children: {
         list: RpcSchema.unary({
@@ -54,84 +61,63 @@ const agentRoutes = RpcSchema.group({
         }),
     },
 });
-export const agentService = defineService({ name: 'demo.agent', api: agentRoutes });
-
-// ═══ 根：只做挂载，不改任何模块的 api ═══
-export const apiDef = RpcSchema.group({
-    children: {
-        demo: RpcSchema.group({
-            desc: '演示 CLI（多模块合并成一个根）',
-            children: {
-                task: taskRoutes,
-                agent: agentRoutes,
-            },
-        }),
-    },
-});
 
 const TASKS = [{ uri: 'projects/1/tasks/7', title: '示例任务' }];
 
-class CliExit extends Error {
-    constructor(public code: number) { super(`exit ${code}`); }
-}
-
 async function main(): Promise<void> {
-    // ── 服务端：两个模块各自 bind 到自己的名字下 ──
-    const [serverTx, clientTx] = createMemTransportPair();
-    const server = new ChannelServerBinding(serverTx);
-    taskService.bind(server, {
-        list: ({ input }) => (input.state ? TASKS.filter(() => input.state === 'done') : TASKS),
-        create: ({ input }) => ({ uri: `projects/1/tasks/${TASKS.length + 8}（${input.title}）` }),
+    // 一句话：起 mem 通道 + 服务端 + 各 scope 的客户端，返回可运行的 CLI
+    const cli = CliApp.inProcess({
+        name: 'demo',
+        version: '1.0.0',
+        scopes: [
+            {
+                prefix: 'demo.task',
+                cmd: 'task',
+                api: taskApi,
+                handlers: {
+                    list: ({ input }: any) => (input.state ? TASKS.filter(() => input.state === 'done') : TASKS),
+                    create: ({ input }: any) => ({ uri: `projects/1/tasks/${TASKS.length + 8}（${input.title}）` }),
+                },
+            },
+            {
+                prefix: 'demo.agent',
+                cmd: 'agent',
+                api: agentApi,
+                handlers: { list: () => [{ taskUri: 'projects/1/tasks/7', state: 'running' }] },
+            },
+        ],
     });
-    agentService.bind(server, {
-        list: () => [{ taskUri: 'projects/1/tasks/7', state: 'running' }],
-    });
 
-    // 已注册名一览：这就是客户端必须拼出的字符串
-    console.log('服务端注册名:', server.listRegistered().sort().join(', '), '\n');
+    try {
+        // 服务端注册名 = 各 scope 的 prefix + 树内 path
+        console.log('服务端注册名:', cli.listRegistered().sort().join(', '), '\n');
 
-    const client = new ChannelClientBinding(clientTx);
-    const run = async (argv: string[]) => {
-        const out: string[] = [];
-        const err: string[] = [];
-        let code = 0;
-        try {
-            await new CliApp({
-                name: 'demo',
-                version: '1.0.0',
-                // 坑③：传 apiDef.demo（根下面的那棵），命令段就是 `task list`
-                router: apiDef.demo,
-                // 坑①：客户端前缀必须与服务端注册名的前半段逐字相同
-                rpcPrefix: 'demo.',
-                transport: client,
-                out: (l) => void out.push(l),
-                err: (l) => void err.push(l),
-                exit: (c: number): never => { code = c; throw new CliExit(c); },
-            }).parse(argv);
-        } catch (e) {
-            if (!(e instanceof CliExit)) throw e;
-        }
-        return { code, text: out.join('\n'), errText: err.join('\n') };
-    };
+        const show = async (label: string, argv: string[]) => {
+            const r = await cli.run(argv);
+            console.log(`$ ${label}`);
+            console.log(r.out.join('\n') || r.err.join('\n'));
+            console.log();
+        };
 
-    console.log('$ demo --help（坑②：根层不可执行，应是帮助）');
-    console.log((await run(['--help'])).text, '\n');
+        await show('demo --help（根层只是命名空间，打帮助）', ['--help']);
+        await show('demo task list --json', ['task', 'list', '--json']);
+        await show('demo task create "写文档"', ['task', 'create', '写文档']);
+        await show('demo agent list', ['agent', 'list']);
 
-    console.log('$ demo task list --json');
-    console.log((await run(['task', 'list', '--json'])).text, '\n');
-
-    console.log('$ demo task create "写文档"');
-    console.log((await run(['task', 'create', '写文档'])).text, '\n');
-
-    console.log('$ demo agent list');
-    console.log((await run(['agent', 'list'])).text, '\n');
-
-    // ── 坑③ 的反例：传整棵 apiDef，命令就多一层 `demo` ──
-    // （cliRootPath 可以裁掉，见 04-root-pitfalls）
-    console.log('坑③ 反例：router 传整棵 apiDef 时，命令要敲 `demo demo task list`');
-    console.log('       —— 根那层被当成命令段了。传 apiDef.demo 即解决。');
-
-    client.dispose();
+        // ── 同一个模块挂两个前缀：多租户 / 兼容别名 ──
+        console.log('同一个 taskApi 还能挂到 demo.task2（模块源码一行没改）：');
+        const multi = CliApp.inProcess({
+            name: 'demo',
+            scopes: [
+                { prefix: 'demo.task', cmd: 'task', api: taskApi, handlers: { list: () => TASKS, create: () => ({ uri: '' }) } },
+                { prefix: 'demo.task2', cmd: 'task2', api: taskApi, handlers: { list: () => TASKS, create: () => ({ uri: '' }) } },
+            ],
+        });
+        console.log('  注册名:', multi.listRegistered().sort().join(', '));
+        multi.dispose();
+    } finally {
+        cli.dispose();
+    }
 }
 
 void main();

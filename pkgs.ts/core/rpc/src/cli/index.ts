@@ -18,6 +18,10 @@ import {
   type GlobalOption,
 } from "./_parser.js";
 import { z } from "zod";
+import { RpcSchema } from "../core/rpc.js";
+import { createScopedClient, mountService, type ScopedClient } from "../core/scope.js";
+import { ChannelClientBinding, ChannelServerBinding } from "../core/index.js";
+import { createMemTransportPair } from "../core/mem.js";
 
 import "../core/_cli-meta.js";
 
@@ -184,8 +188,23 @@ async function* stdinAsync(): AsyncGenerator<string> {
 export interface CliConfig<TRouter extends _Router | _AnyProcedureMeta> {
   name: string;
   version?: string;
-  router: TRouter;
-  transport: ClientBinding;
+  /**
+   * 命令树来源（二选一）：
+   *   · `router`    —— 一棵 api 树（旧的用法，配合 `rpcPrefix`）
+   *   · `clients`   —— **推荐**：若干 `createScopedClient` 的返回值，
+   *                    每个自带 prefix / cmd / api / transport，CliApp 只做合并与路由
+   */
+  router?: TRouter;
+  /**
+   * 若干**已挂载**的模块客户端（`createScopedClient` 的返回值）。
+   *
+   * 给了它就不需要 `router` / `transport` / `rpcPrefix`：前缀与 api 都在 client 上，
+   * 命令段用各自的 `cmd`，调用直接走各自的 `transport`。
+   * 同一个模块可以出现在多个 scope 里（不同前缀），命令段用 `cmd` 区分。
+   */
+  clients?: readonly ScopedClient<any>[];
+  /** 旧的单连接（`router` 模式必填；`clients` 模式下忽略） */
+  transport?: ClientBinding;
   json?: boolean;
   /**
    * **全局选项表**（进程级 flag：`--json` / `--color` / `-C <dir>` …）。
@@ -282,6 +301,19 @@ function collectAliases(
   return out;
 }
 
+/**
+ * `CliApp.inProcess(...)` 的返回值：除了 app 本身，还给出服务端（要断言
+ * `listRegistered()`）与一次性的 `run`（注入 out/err/exit 哨兵）。
+ */
+export interface InProcessCli {
+  readonly app: CliApp<any>;
+  readonly server: ChannelServerBinding;
+  /** 跑一条命令：返回退出码与两路输出（按行，便于断言） */
+  run(argv: string[], opts?: { json?: boolean }): Promise<{ code: number; out: string[]; err: string[] }>;
+  listRegistered(): string[];
+  dispose(): void;
+}
+
 export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
 
   // ── 输出/退出注入（server 内嵌 /cli 端点用；缺省 = 原行为，直连 CLI 不变）──
@@ -325,10 +357,36 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
   private _globalTable: GlobalOption[] = [];
   /** 全局选项的已校验值（zod parse 后，带默认值）；命令实现读不到它，只有 CLI 自身消费 */
   private _globals: Record<string, unknown> = {};
+  /** clients 模式：顶层命令段 → 对应的 scoped client */
+  private _scoped = new Map<string, ScopedClient<any>>();
+  /** 实际生效的命令树源（clients 模式 = 合并出来的那棵） */
+  private _router!: _Router | _AnyProcedureMeta;
 
   constructor(config: CliConfig<TRouter>) {
     this.config = config;
-    const isTopGroup = (config.router as any)?._streamMode === 'group';
+    // `clients` 模式：把各 scope 的 api 合并成一棵命令树，顶层命令 = 各 client 的 cmd
+    let router: any = config.router;
+    if (config.clients?.length) {
+      const merged: Record<string, unknown> = {};
+      for (const c of config.clients) {
+        if (this._scoped.has(c.cmd)) {
+          throw new Error(`CliApp: 命令段 "${c.cmd}" 被两个 scope 占用（用 cmd 区分）`);
+        }
+        this._scoped.set(c.cmd, c);
+        const isGroupApi = (c.api as any)?._streamMode === "group";
+        merged[c.cmd] = RpcSchema.group({
+          ...(c.desc !== undefined ? { desc: c.desc } : {}),
+          children: isGroupApi ? (c.api as any).children : { [c.cmd]: c.api },
+        });
+      }
+      router = merged;
+    }
+    if (!router) throw new Error("CliApp: 需要 router 或 clients");
+    if (!config.transport && !config.clients?.length) {
+      throw new Error("CliApp: router 模式需要 transport（或改用 clients）");
+    }
+    this._router = router as _Router | _AnyProcedureMeta;
+    const isTopGroup = (router as any)?._streamMode === 'group';
     let root: _RouterNode;
     if (isTopGroup) {
       // 最外层是顶层 group（如 diy）：它即根命令，desc 直接作为根描述，children 作为命令树
@@ -336,7 +394,7 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
       this.rootDesc = group.desc;
       root = _buildRouteTree(group.children as _Router);
     } else {
-      root = _buildRouteTree(config.router as _Router);
+      root = _buildRouteTree(router as _Router);
       // 根命令描述 = 顶层第一个 group/命名空间节点（如 diy）的 desc
       const topRouter = root.children.find((c) => c.kind === "router");
       this.rootDesc = topRouter ? (topRouter as _RouterNode).desc : undefined;
@@ -384,7 +442,7 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
 
     // ── 别名 / 弃用改写（##518）──
     // 表的来源是**命令自己的声明**（meta.alias / meta.deprecated），不是外部配置。
-    for (const [from, { to, isDeprecated }] of collectAliases(this.config.router)) {
+    for (const [from, { to, isDeprecated }] of collectAliases(this._router)) {
       const fromSegs = from.split(" ").filter(Boolean);
       if (!fromSegs.every((seg, i) => argv[i] === seg)) continue;
       argv.splice(0, fromSegs.length, ...to.split(" "));
@@ -477,7 +535,12 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
     const desc = procDesc(def);
     // 路由键用 RPC 全名（def.name，router() 回写）。当 router 是最外层 group（如 diy）被解包时，
     // proc.path 会丢失 "diy." 前缀，与 binding 注册的全名不匹配，故路由一律用 def.name。
-    const rpcName = def.name ?? `${this.config.rpcPrefix ?? ''}${proc.path}`;
+    // clients 模式：命令段第一段是 scope 的 cmd，线上名 = prefix + 树内 path
+    const scopeCmd = proc.path.split('.')[0] ?? '';
+    const scoped = this._scoped.get(scopeCmd);
+    const rpcName = scoped
+      ? `${scoped.prefix}${proc.path.slice(scopeCmd.length)}`
+      : def.name ?? `${this.config.rpcPrefix ?? ''}${proc.path}`;
 
     /**
      * 结果派生的退出码：在 try **之外**退出。
@@ -500,7 +563,7 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
         return;
       }
 
-      const tx = this.config.transport;
+      const tx = (scoped?.transport ?? this.config.transport)!;
       const mode = def._streamMode as string;
 
       if (mode === "server") {
@@ -590,6 +653,120 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
     if (node.children.length > 0) lines.push("", "Commands:");
     emitCommandList(lines, node.children.map((child) => ({ name: child.name, desc: nodeTitle(child) })));
     this._print(lines.join("\n"));
+  }
+
+  // ═══════════════════════════════════════════════════
+  //  工厂：两种部署形态各一个入口（测试里最常用 inProcess）
+  // ═══════════════════════════════════════════════════
+
+  /**
+   * **进程外**（连远端 app）：clients 由调用方建好（`createScopedClient`）。
+   *
+   * ```ts
+   * const cli = CliApp.remote({ name: 'diy', version, clients: [task, agent] });
+   * await cli.parse(process.argv.slice(2));
+   * ```
+   */
+  static remote(opts: {
+    name: string;
+    version?: string;
+    clients: readonly ScopedClient<any>[];
+    json?: boolean;
+    cwd?: string;
+    exitCodeOf?: CliConfig<any>["exitCodeOf"];
+    out?: (line: string) => void;
+    err?: (line: string) => void;
+    exit?: (code: number) => void;
+  }): CliApp<any> {
+    return new CliApp<any>({ ...opts });
+  }
+
+  /**
+   * **进程内**（无网络，测试 / 嵌入式用）：给 api + handlers，内部自己起 mem 通道与服务端。
+   *
+   * ```ts
+   * const cli = CliApp.inProcess({
+   *   name: 'demo',
+   *   scopes: [{ prefix: 'demo.task', cmd: 'task', api: taskApi, handlers: { list, create } }],
+   * });
+   * const r = await cli.run(['task', 'list', '--json']);   // { code, out, err }
+   * ```
+   *
+   * 为什么不直接用 `new CliApp`：那样每个测试都要手写 out/err/exit 三个哨兵，
+   * 还要自己搭 mem 通道和 server —— 这类样板与「要验的行为」无关。
+   */
+  static inProcess(opts: {
+    name: string;
+    version?: string;
+    scopes: readonly {
+      prefix: string;
+      api: any;
+      handlers: any;
+      cmd?: string;
+      desc?: string;
+    }[];
+    json?: boolean;
+    cwd?: string;
+    /** 全局选项表（与线上同一份，见 `CliConfig.globalOptions`） */
+    globalOptions?: z.ZodObject<z.ZodRawShape>;
+    exitCodeOf?: CliConfig<any>["exitCodeOf"];
+  }): InProcessCli {
+    const { serverTx, clientTx } = createMemTransportPair();
+    const server = new ChannelServerBinding(serverTx);
+    const client = new ChannelClientBinding(clientTx);
+    const clients = opts.scopes.map((sc) => {
+      mountService(server, { prefix: sc.prefix, api: sc.api, handlers: sc.handlers });
+      return createScopedClient({ api: sc.api, client, prefix: sc.prefix, cmd: sc.cmd, desc: sc.desc });
+    });
+
+    const out: string[] = [];
+    const err: string[] = [];
+    let code = 0;
+    class Exit extends Error {
+      constructor(public readonly code: number) {
+        super(`cli exit ${code}`);
+      }
+    }
+    const app = new CliApp<any>({
+      name: opts.name,
+      version: opts.version,
+      clients,
+      ...(opts.json !== undefined ? { json: opts.json } : {}),
+      ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
+      ...(opts.globalOptions !== undefined ? { globalOptions: opts.globalOptions } : {}),
+      ...(opts.exitCodeOf !== undefined ? { exitCodeOf: opts.exitCodeOf } : {}),
+      out: (l) => void out.push(l),
+      err: (l) => void err.push(l),
+      exit: (c: number): never => {
+        code = c;
+        throw new Exit(c);
+      },
+    });
+
+    return {
+      app,
+      server,
+      listRegistered: () => server.listRegistered(),
+      run: async (argv: string[], runOpts?: { json?: boolean }) => {
+        out.length = 0;
+        err.length = 0;
+        code = 0;
+        const prevJson = app["_jsonFlag"] as boolean;
+        if (runOpts?.json !== undefined) app["_jsonFlag"] = runOpts.json;
+        try {
+          await app.parse(argv);
+        } catch (e) {
+          if (!(e instanceof Exit)) throw e;
+        } finally {
+          if (runOpts?.json !== undefined) app["_jsonFlag"] = prevJson;
+        }
+        return { code, out: out.slice(), err: err.slice() };
+      },
+      dispose: () => {
+        client.dispose();
+        server.destroy();
+      },
+    };
   }
 
   showHelp(): void {

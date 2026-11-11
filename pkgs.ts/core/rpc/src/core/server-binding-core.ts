@@ -10,6 +10,7 @@ import type { StreamHandle } from './types.js';
 import type { ClientBinding } from './server-binding.js';
 import { _validateInput, type _AnyProcedureMeta, type _HandlerForProc, type _Router } from './meta.js';
 import { _flattenRouter, _isProcedure } from './_tree.js';
+import { mountService } from './scope.js';
 
 type UnaryHandler = (params: unknown, signal: AbortSignal) => unknown;
 type ServerStreamHandler = (params: unknown, signal: AbortSignal) => AsyncGenerator<unknown>;
@@ -99,6 +100,15 @@ export abstract class ServerBindingCore {
         (params, incoming, signal) => (handler as HandlerFn)(unwrap(meta, params, incoming, signal)) as AsyncGenerator<unknown>,
       );
     }
+  }
+
+  /** 挂载一个模块到指定前缀（前缀由宿主给，见 scope.ts） */
+  use<T extends _Router | _AnyProcedureMeta>(options: {
+    readonly prefix: string;
+    readonly api: T;
+    readonly handlers: unknown;
+  }): void {
+    mountService(this as never, options as never);
   }
 
   /** 清空所有注册表（子类 destroy 复用） */
