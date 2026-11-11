@@ -54,8 +54,11 @@ describe('/demo-tool（端到端）', () => {
         // 2026-11-11：tool 块改用 shadcn AI Elements 的 Trace（base-nova 版）——
         // 断言口径跟随：一行 TraceLine（标题=工具名，status=running 时带 data-status），
         // 跑完 status 消失，点开 Trigger 后能看到 CodeBlock 里的输出。
+        // 2026-11-11：Trace 行现在是「读取 <路径>」的人话（不再是 read_file + 原始 JSON）
         const target = (): Element | undefined =>
-            [...document.querySelectorAll('[data-slot="trace-title"]')].find((el) => el.textContent?.includes('read_file'));
+            [...document.querySelectorAll('[data-slot="trace-title"]')].find((el) =>
+                el.textContent?.includes('docs/plans/2026-11-02-concurrency-actor.md'),
+            );
 
         // ① 立刻：tool 行在，且是 running（TraceLine data-status="running" → shimmer）
         expect(target()).toBeTruthy();
@@ -78,7 +81,11 @@ describe('/demo-tool（端到端）', () => {
         typeInto(input, '普通一句话');
         form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
         await sleep(50);
-        expect([...root.querySelectorAll('[data-slot="trace-title"]')].some((el) => el.textContent?.includes('read_file'))).toBe(false);
+        expect(
+            [...root.querySelectorAll('[data-slot="trace-title"]')].some((el) =>
+                el.textContent?.includes('docs/plans/2026-11-02-concurrency-actor.md'),
+            ),
+        ).toBe(false);
         expect(root.textContent).toContain('出错了');
     });
 });
