@@ -68,6 +68,10 @@ export function chatPageViewWith(views: readonly ChatViewContribution[]): PageVi
 /** 缺省页（只有「标准」一个视图）—— 与 ##539 之前的行为一致 */
 export const chatPageView: PageView = chatPageViewWith([]);
 
+/** 「标准」视图的惰性加载入口（##539）—— 不传 views 时是唯一一个；传了也应当排第一 */
+export const standardViewLoad = (): Promise<{ default: React.ComponentType<{ state: ChatState; client: ChatClient }> }> =>
+    Promise.resolve({ default: ({ state }: { state: ChatState }) => <MessageList state={state} /> });
+
 /** 「调试」视图的惰性加载入口（##539）—— `apps/chat/renderer.ts` 用它拼 views */
 export const devtoolsViewLoad = (): Promise<{ default: React.ComponentType<{ state: ChatState; client: ChatClient }> }> =>
     import('./views/devtools.js') as unknown as Promise<{ default: React.ComponentType<{ state: ChatState; client: ChatClient }> }>;

@@ -3,7 +3,7 @@
 import { installTestHooks, mountWorkbench, registerPage, type WorkbenchGateway } from "@diy-agent/workbench-ui";
 // ##468 / ##526：三版并存；换这一行 + rebuild 就切「裸 DOM 版 / diyui 版 / React 版」。
 // ##526 起缺省是 React 版（shadcn + M3 令牌，见 docs/ui-architecture.md）。
-import { chatPageViewWith, devtoolsViewLoad } from "@diy-agent/chat-page/renderer-react";
+import { chatPageViewWith, devtoolsViewLoad, standardViewLoad } from "@diy-agent/chat-page/renderer-react";
 // ##467：模型配置页（独立插件，删掉这行就没有配置入口）
 import { modelConfigPageView } from "@diy-agent/model-config-page/renderer";
 // ##474：Bot 配置页（同构独立插件）
@@ -26,6 +26,7 @@ async function main(): Promise<void> {
     registerPage(
     chatPageViewWith([
         // ##539：tab 插槽 —— 加一个 view 只需在这张表里加一行
+        { id: "standard", label: "标准", order: 10, load: standardViewLoad },
         { id: "devtools", label: "调试", order: 90, load: devtoolsViewLoad },
     ]),
 );
