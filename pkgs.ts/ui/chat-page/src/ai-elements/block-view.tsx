@@ -40,6 +40,49 @@ export function Markdown({ text }: { text: string }): React.ReactElement {
     );
 }
 
+/**
+ * 工具参数 → 一句人话（Trace 行里显示，不铺 JSON）。
+ *
+ * 官方范例是英文的 `Ran git status --short`；这里按中文界面写「运行 pwd」「读取 x.md」。
+ * 认不出的工具退回 `名称 + 紧凑参数`，但仍然是**一行**，不再把整段 JSON 塞进标题。
+ */
+function toolSummary(name: string, args: string): { verb: string; detail: string } {
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(args);
+    } catch {
+        parsed = undefined;
+    }
+    const field = (key: string): string | undefined =>
+        typeof parsed === 'object' && parsed !== null && key in parsed
+            ? String((parsed as Record<string, unknown>)[key] ?? '')
+            : undefined;
+
+    const command = field('command') ?? field('cmd');
+    const path = field('path') ?? field('file') ?? field('filePath') ?? field('file_path');
+    const short = name.split('-')[0] ?? name;
+
+    // 动词按工具名的语义走（中文界面）；认不出就原样用工具名，不猜
+    const verb =
+        /bash|shell|terminal|run|exec/i.test(name) ? '运行'
+        : /read|cat|view|open/i.test(name) ? '读取'
+        : /write|edit|create|apply|patch/i.test(name) ? '写入'
+        : /search|grep|find|glob/i.test(name) ? '搜索'
+        : /fetch|http|web/i.test(name) ? '抓取'
+        : short;
+
+    const detailOf = (value: string | undefined): string => {
+        if (value !== undefined && value !== '') return value;
+        // 参数不是 JSON（很多工具给的是裸路径/裸命令）：去掉引号当明细
+        const plain = args.replace(/^"|"$/g, '').trim();
+        return plain.length > 80 ? `${plain.slice(0, 80)}…` : plain;
+    };
+
+    if (command !== undefined) return { verb: '运行', detail: command };
+    if (path !== undefined) return { verb, detail: path };
+    return { verb, detail: detailOf(undefined) };
+}
+
 /** think 块：一行摘要 + 可展开全文（TraceLine 的 running 态自带 shimmer） */
 function ThinkBlock({ data }: { data: Partial<ThinkBlockData> }): React.ReactElement {
     const running = data.done !== true;
@@ -48,7 +91,7 @@ function ThinkBlock({ data }: { data: Partial<ThinkBlockData> }): React.ReactEle
             <TraceIcon>
                 <BrainIcon />
             </TraceIcon>
-            <TraceTitle>{running ? 'Thinking…' : 'Thought'}</TraceTitle>
+            <TraceTitle>{running ? '思考中…' : '已思考'}</TraceTitle>
         </TraceLine>
     );
     const text = data.text ?? '';
@@ -67,15 +110,16 @@ function ThinkBlock({ data }: { data: Partial<ThinkBlockData> }): React.ReactEle
 function ToolBlock({ data }: { data: Partial<ToolBlockData> }): React.ReactElement {
     const state = data.state ?? 'running';
     const status = state === 'error' ? 'error' : state === 'running' ? 'running' : undefined;
+    const { verb, detail } = toolSummary(data.name ?? 'tool', data.args ?? '');
     const line = (
         <TraceLine status={status}>
             <TraceIcon>
                 <TerminalIcon />
             </TraceIcon>
-            <TraceTitle>{data.name ?? 'tool'}</TraceTitle>
-            {data.args === undefined || data.args === '' ? null : (
-                <span className="truncate font-mono text-xs opacity-70">{data.args}</span>
-            )}
+            <TraceTitle>
+                {verb}
+                {detail === '' ? null : <span className="font-mono opacity-80"> {detail}</span>}
+            </TraceTitle>
         </TraceLine>
     );
     const output = data.output ?? data.summary ?? '';
