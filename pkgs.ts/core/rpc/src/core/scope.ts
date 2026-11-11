@@ -43,14 +43,14 @@ export type ScopedClient<T> = TypedClient<T> & {
   /** 线上前缀（`diy.task`）：调用名 = prefix + '.' + 树内 path */
   readonly prefix: string;
   /**
-   * **命令段**（CLI 里敲的顶层名，如 `task`）。
-   *
-   * 与 prefix 分开：线上叫 `diy.task.list`，命令却要显示成 `diy task list`
-   * —— 两者的转换不该靠「猜前缀必须与程序名对齐」，显式给出最省事。
-   * 缺省 = prefix 的最后一段。
+   * **命令段**（CLI 里敲的顶层名，如 `task`）。缺省 = `prefix` 的最后一段
+   * （`diy.task` → `task`；`diy.task.v2` 这种要命令叫 `task` 时才需要显式覆盖）。
    */
   readonly cmd: string;
-  /** 命令组的一句说明（CLI help 里用） */
+  /**
+   * 命令组的一句说明（CLI help 里用）。缺省 = **api 自己的 desc**（group 上那个），
+   * 所以在模块里写好一次就够了，挂载处不用重复。
+   */
   readonly desc?: string;
   /** 底层连接（CLI 路由器用它发调用；业务代码用上面的强类型方法即可） */
   readonly transport: ClientBinding;
@@ -66,7 +66,9 @@ export function createScopedClient<T extends _Router | _AnyProcedureMeta>(opts: 
   readonly api: T;
   readonly client: ClientBinding;
   readonly prefix: string;
+  /** 缺省 = prefix 最后一段 */
   readonly cmd?: string;
+  /** 缺省 = api 自己的 desc（group 上写的那个） */
   readonly desc?: string;
 }): ScopedClient<T> {
   const { api, client, prefix } = opts;
@@ -81,10 +83,11 @@ export function createScopedClient<T extends _Router | _AnyProcedureMeta>(opts: 
     prefix,
     transport: client,
     cmd: opts.cmd ?? prefix.split('.').pop() ?? prefix,
+    // desc 优先级：显式覆盖 > api 自带的 desc（group 上写的）。
     // **即使是 undefined 也要占位**：不占位时读 `scoped.desc` 会落到 typed 的 Proxy 上，
     // 拿回一个子路径 Proxy（不是 undefined），于是 `if (c.desc !== undefined)` 恒为真，
     // `RpcSchema.group({ desc })` 收到非字符串 → dedent 里 `.replace is not a function`。
-    desc: opts.desc,
+    desc: opts.desc ?? (api as { desc?: string }).desc,
   };
   return new Proxy({} as ScopedClient<T>, {
     get(_target, key) {

@@ -395,9 +395,13 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
       root = _buildRouteTree(group.children as _Router);
     } else {
       root = _buildRouteTree(router as _Router);
-      // 根命令描述 = 顶层第一个 group/命名空间节点（如 diy）的 desc
-      const topRouter = root.children.find((c) => c.kind === "router");
-      this.rootDesc = topRouter ? (topRouter as _RouterNode).desc : undefined;
+      // 根命令描述 = 顶层第一个 group/命名空间节点（如 diy）的 desc。
+      // clients 模式下没有"根 group"这回事（顶层是各 scope 的命令段），
+      // 取第一个 scope 的 desc 当根描述会把它的说明串到根上 —— 干脆不设。
+      if (this._scoped.size === 0) {
+        const topRouter = root.children.find((c) => c.kind === "router");
+        this.rootDesc = topRouter ? (topRouter as _RouterNode).desc : undefined;
+      }
     }
     this.tree = resolveCliTree(root, config.cliRootPath);
     this._backfillParent(this.tree, null);

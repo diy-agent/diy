@@ -14,9 +14,14 @@
  * ```ts
  * export const taskApi = RpcSchema.group({ ... });          // 模块只提供 api
  *
- * server.use({ prefix: 'diy.task', api: taskApi, handlers });  // 部署位置在这里定
- * const task = createScopedClient({ api: taskApi, client, prefix: 'diy.task', cmd: 'task' });
+ * server.use({ prefix: 'diy.task', api: taskApi, handlers });      // 部署位置在这里定
+ * const task = createScopedClient({ api: taskApi, client, prefix: 'diy.task' });
  * ```
+ *
+ * 命令段与说明都**从已有信息推导**，不重复声明：
+ *   · 命令段 = prefix 最后一段（`diy.task` → `task`）
+ *   · 组说明 = api 自己的 desc（group 上写过的那个）
+ * 只有「prefix 末段不适合做命令名」时才显式给 `cmd` 覆盖。
  *
  * 所以同一份 `taskApi` 可以被挂到 `diy.task`，也可以挂到 `diyvideo.task` ——
  * 换部署位置不用动模块源码（对比：`defineService({ name })` 把它焊死）。
@@ -72,7 +77,6 @@ async function main(): Promise<void> {
         scopes: [
             {
                 prefix: 'demo.task',
-                cmd: 'task',
                 api: taskApi,
                 handlers: {
                     list: ({ input }: any) => (input.state ? TASKS.filter(() => input.state === 'done') : TASKS),
@@ -81,7 +85,6 @@ async function main(): Promise<void> {
             },
             {
                 prefix: 'demo.agent',
-                cmd: 'agent',
                 api: agentApi,
                 handlers: { list: () => [{ taskUri: 'projects/1/tasks/7', state: 'running' }] },
             },
