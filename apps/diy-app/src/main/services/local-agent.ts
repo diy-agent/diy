@@ -5315,7 +5315,14 @@ export class LocalAgentManager {
             // 一行「停不掉的工具」，且它会以"未完成"的形状进历史）。这里是**轮次唯一收口**
             // （正常 / 中断 / 生成器被 return 展开三条路都走它），故在此收敛。
             // 正常收尾时本轮没有开口 tool 块 → 恒为空批，不动既有语义。
-            ops.push(...interruptedToolPatchesOfTurn(sess.store, turnId));
+            // ##522：整轮被输出上限截断（max-tokens）时额外打 `haltedBy` —— 这些调用在 ai-sdk 的执行闸门
+            // 就被拦掉（`isToolExecutionAllowedFinishReason` 只放行 stop / tool-calls），**从未派发**，
+            // 所以投影历史时整条不提交；与「用户按停止」分开记（那种可能真执行过，要进历史）。
+            ops.push(
+                ...interruptedToolPatchesOfTurn(sess.store, turnId, {
+                    ...(reason.type === "max-tokens" ? { haltedBy: "max-tokens" } : {}),
+                }),
+            );
             ops.push({ op: "patch", id: turnId, fields: { endReason: reason } });
             // 轮次耗时（该轮事实）：turnId 内嵌开始毫秒（`t${Date.now()}`）→ 收尾此刻
             const durationMs = Date.now() - Number(turnId.slice(1));

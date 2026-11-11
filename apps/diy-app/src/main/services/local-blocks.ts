@@ -217,6 +217,13 @@ const SCHEMA: Record<BlockKind, Record<string, FieldKind>> = {
         output: "Text",
         /** 执行耗时（tool-call → tool-result，ms）；与 think.ms 同一口径 */
         ms: "Flag",
+        // haltedBy（##522 2026-11-11 用户裁决）：这条调用**一次都没跑**，因为整轮被输出上限
+        // 截断（`turn.endReason.type === "max-tokens"`）。与「用户按停止」的中断分开记：
+        //   · 停止 → 指令可能已下达、命令可能真执行过 ⇒ 照样进历史（配上「已中断」结果）；
+        //   · max-tokens → ai-sdk 在执行前就拦掉（`isToolExecutionAllowedFinishReason`），
+        //     从未执行 ⇒ 不进历史（与 dsh 同口径：整轮 tool-call 全部不提交）。
+        // 值域：`"max-tokens"`；省略 = 不是截断造成的。
+        haltedBy: "Flag",
     },
     plan: { items: "List" },
     error: { source: "Flag", message: "Text" },
@@ -271,7 +278,11 @@ export function interruptedToolPatches(store: BlockStore): Op[] {
  * 与 interruptedToolPatches 的取舍：那个挑全库、给加载/开轮用（冷读兜底）；本函数挑本轮、
  * 给轮次收口用（热路径）。两者都幂等：已终态 / 已 stop 的块不再返回。
  */
-export function interruptedToolPatchesOfTurn(store: BlockStore, turnId: string): Op[] {
+export function interruptedToolPatchesOfTurn(
+    store: BlockStore,
+    turnId: string,
+    opts: { haltedBy?: string } = {},
+): Op[] {
     const out: Op[] = [];
     for (const b of store.blocks.values()) {
         if (b.kind !== "tool") continue;
@@ -279,7 +290,17 @@ export function interruptedToolPatchesOfTurn(store: BlockStore, turnId: string):
         const status = String(b.status ?? "");
         if (status === INTERRUPTED_STATUS || status === "done" || status === "error") continue;
         if (b.stopped) continue;
-        out.push({ op: "patch", id: b.id, fields: { status: INTERRUPTED_STATUS, output: INTERRUPTED_TOOL_NOTICE } });
+        out.push({
+            op: "patch",
+            id: b.id,
+            fields: {
+                status: INTERRUPTED_STATUS,
+                output: INTERRUPTED_TOOL_NOTICE,
+                // haltedBy（##522）：整轮被输出上限截断时打标 —— 这些调用**从未派发**（ai-sdk 在执行
+                // 前的闸门就拦掉了），投影历史时整条不提交（见 renderMessage 的 tool 分支）。
+                ...(opts.haltedBy === undefined ? {} : { haltedBy: opts.haltedBy }),
+            },
+        });
         out.push({ op: "stop", id: b.id });
     }
     return out;
@@ -1066,6 +1087,12 @@ export function projectAll(store: BlockStore): LocalModelMessage[] {
             // 用户照旧看得到「这条被截断了」——只是它不再进入发给模型的上下文。
             // 对照组（必须保留）：args 有值但没跑完 = 指令已下达、命令可能真的执行过，
             // 这时靠下面的 INTERRUPTED_TOOL_NOTICE 钉死「已结束、别重试」（任务 92 的教训）。
+            // ##522（2026-11-11 用户裁决）：整轮被输出上限截断时，本轮 tool 调用**一次都没执行**
+            // （ai-sdk `isToolExecutionAllowedFinishReason` 只放行 stop / tool-calls，length 直接 return），
+            // 因此连「tool-call + 已中断」这一对也不提交 —— 与 dsh 同口径：不拿伪造的 result 喂模型，
+            // 免得它以为「我读过了 / 写过了」。判据取自块上的 haltedBy（由收轮时写入，见 local-agent 的
+            // interruptedToolPatchesOfTurn 调用处），不看 endReason：投影是纯函数，只信块。
+            if (b.haltedBy === "max-tokens") return;
             if (b.args == null) return;
             const lead = takePending(); // 同上：推理挂到这条 tool-call 的 assistant 消息上
             out.push({
