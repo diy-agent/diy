@@ -61,7 +61,8 @@ const CASES: readonly (readonly [string, () => Harness])[] = [
         "file",
         () => {
             const home = makeHome();
-            const make = (): BotChatHost => createBotChat({ home, llmFor: () => fakeLlm });
+            // 文件版场景：「重启后记得住」要求会话/ meta 也落盘 —— 缺省内存做不到
+            const make = (): BotChatHost => createBotChat({ home, llmFor: () => fakeLlm, persist: true });
             return { home, chat: make(), reopen: make };
         },
     ],

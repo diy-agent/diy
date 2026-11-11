@@ -73,7 +73,11 @@ const fakeLlm: LlmPort = {
     },
 };
 
-const host = (home: string): BotChatHost => createBotChat({ home, llmFor: () => fakeLlm });
+// 主 describe 全是**文件版**场景（落盘 / 重启后还在），必须显式 persist: true ——
+// createBotChat 缺省内存（##519 用户裁：只有 model 与 bot 配置落盘），
+// 内存模式下「重启后还是同一条会话」根本不可能成立。
+// 纯内存场景见下方 ##505-E（自己建 host，不走这里）。
+const host = (home: string): BotChatHost => createBotChat({ home, llmFor: () => fakeLlm, persist: true });
 
 /** 首启建第一个 bot（##498：bots 为空 ⇒ 必须先建 bot 才有会话） */
 async function firstBot(chat: BotChatHost, model = "test/echo-1") {
@@ -346,8 +350,8 @@ describe("bot 对话宿主（##505）", () => {
         // 直接构造调用，不是 if (strategy === ...) / switch 枚举分派（禁止的字面量拼着写，免得自己命中判据）
         expect(source).not.toMatch(new RegExp(`${"Store"}${"Strategy"}`));
         expect(source).toContain("openJsonlSessionStore({ dir })");
-        // createSession 的入参里必须带 store（从装配器传进去的那个实例）
-        expect(source).toMatch(/createSession\(\{[\s\S]{0,400}?\n\s+store,/);
+        // store 必须一直传到建会话的那一层（##519：会话由 createBotAgent 建，store 是它的入参）
+        expect(source).toMatch(/createBotAgent\(\{[\s\S]{0,600}?\n\s+store,/);
     });
 });
 

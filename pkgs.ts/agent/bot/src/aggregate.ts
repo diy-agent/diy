@@ -378,9 +378,13 @@ export function createAgent(opts: CreateAgentOptions): Agent {
     lastError = undefined
 
     await exec.enqueue(async () => {
-      pushEntry({ kind: 'message', role: 'assistant', content: text })
-      emit('message.delta', { runId: started.rid, delta: text })
-      emit('message.completed', { runId: started.rid, text })
+      // 只发过 tool call、一个字都没吐的轮次：不写历史、不发消息事件。
+      // 否则 UI 会收到一条 `blocks:[{kind:"text",data:{text:""}}]` 的空消息（##539）。
+      if (text.trim() !== '') {
+        pushEntry({ kind: 'message', role: 'assistant', content: text })
+        emit('message.delta', { runId: started.rid, delta: text })
+        emit('message.completed', { runId: started.rid, text })
+      }
       emit('run.completed', { runId: started.rid })
       running = false
       runId = null
