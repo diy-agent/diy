@@ -96,7 +96,7 @@ export const CHAT_STYLE = `
 .chat-card-acts button.chat-primary { background: var(--chat-accent); border-color: var(--chat-accent); color: var(--md-sys-color-on-primary); }
 
 /* ── 主区：消息流（顶天，没有顶部横幅） ── */
-.chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+.chat-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; }
 /* 消息流 + 右侧 panel：pinned 时并排（消息让宽），floating 时 panel 浮在消息上 */
 .chat-body { flex: 1; min-height: 0; display: flex; flex-direction: row; position: relative; }
 .chat-stream { flex: 1; min-width: 0; display: flex; flex-direction: column; }
