@@ -12,6 +12,10 @@
         "rootDir": "src",
         "outDir": "dist",
         "noEmit": false,
+        // shadcn CLI 用（aliases 必须能在 paths 里解析）；TS 7 已移除 baseUrl，
+        // paths 直接相对 tsconfig 目录。emit 不重写路径，所以生成物里的
+        // `@/lib/utils` 提交前改回相对 import（dist 要被 Node 直接加载）
+        "paths": { "@/*": ["./src/*"] },
 
 
         "declaration": true,

@@ -59,8 +59,13 @@
 - **令牌桥**是唯一定制点：`react.css` 的 `@theme inline` 把 shadcn 的
   `--background / --primary / --border / --ring / --radius-*` 指到 `--md-sys-color-*`，
   组件源码不动就套上 M3；
-- 坑：包内没有 `@/` alias（esbuild 不解析 tsconfig paths）⇒ 组件间一律相对 import；
-  shadcn 默认 `h-9 px-4` 是 comfortable 密度，IDE 类界面用 `size="xs"`（h-7）那一档。
+- 拉新件：`chat-page/components.json` 与 tsconfig `paths`（`@/*` → `./src/*`）已就位，
+  `npx shadcn add <件>` 认得出落点（`src/ui/`）与 utils（`@/lib/utils` → `src/lib/utils.ts`）；
+- **但 emit 不重写 paths**：生成物里的 `@/...` 必须改回相对 import（`./cn.js`）—— `dist/` 要被
+  Node 直接加载（`apps/chat` 打包时 `@diy-agent/*` 是 external），这条##526 的规则仍然成立；
+- 本机 npm 12 会拦 CLI 的自动 install（`EALLOWSCRIPTS`）⇒ 依赖手动装（`npm i <包> -w @diy-agent/chat-page`），
+  必要时用 `shadcn add <件> --view <路径>` 取源码手落盘；
+- shadcn 默认 `h-9 px-4` 是 comfortable 密度，IDE 类界面用 `size="xs"`（h-7）那一档。
 
 > 标注：`@material/web` + Web Awesome 的组合，最初是「Solid / diy-ui 用不了 JSX 生态」时代的折中。
 > React 19 已原生支持 custom elements，这条约束消失 —— 新页面**优先** base-ui + 自有组件，
