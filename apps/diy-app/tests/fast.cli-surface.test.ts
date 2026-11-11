@@ -17,6 +17,7 @@ import { ChannelClientBinding, ChannelServerBinding, createMemTransportPair } fr
 import { CliApp } from "@diy-agent/rpc/cli";
 import { bindAppHandlers } from "../src/main/services/api-impl";
 import { apiDef } from "../src/main/services/api-def";
+import { globalOptions } from "../src/cli/global-options";
 
 // ── 环境：每次一个临时 DIY_HOME（task list 等会读 state） ──
 let home: string;
@@ -48,6 +49,7 @@ async function run(argv: string[], client: ChannelClientBinding): Promise<RunRes
             version: "0.0.0-test",
             router: apiDef.diy,
             rpcPrefix: "diy.",
+            globalOptions,
             transport: client,
             cwd: process.cwd(),
             out: (line) => void out.push(line),

@@ -24,6 +24,7 @@ import {
 } from '@diy-agent/rpc';
 import { HttpServerBinding } from '@diy-agent/rpc/http';
 import { CliApp } from '@diy-agent/rpc/cli';
+import { globalOptions } from '../../cli/global-options';
 import type { AppConfig } from '../core/app-config';
 import { apiDef } from './api-def';
 import { factsGetExitCode } from '../../shared/facts';
@@ -253,6 +254,8 @@ export class RpcPortService {
         name: 'diy',
         version: '0.1.0', // 与 src/cli/index.ts main() 保持一致
         router: apiDef.diy,
+        // 与直连 CLI 共用同一张全局选项表（global-options.ts）—— 两边必须逐字一致
+        globalOptions,
         transport: this._cliClient,
         cwd: typeof cwdRaw === 'string' && cwdRaw ? cwdRaw : process.cwd(),
         // 与直连 CLI 同一判据：`facts get` 全空 ⇒ x-diy-exit=1（diy.sh 的 http 模式据此透传）

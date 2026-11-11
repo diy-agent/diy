@@ -7,7 +7,17 @@ import {
   type _RouterNode,
 } from "../core/_tree.js";
 import type { ClientBinding } from "../core/server-binding.js";
-import { parseArgv, generateHelp, fmtUsageArgs, CliParseError } from "./_parser.js";
+import {
+  parseArgv,
+  generateHelp,
+  fmtUsageArgs,
+  CliParseError,
+  globalOptionTable,
+  scanGlobalOptions,
+  renderGlobalOptions,
+  type GlobalOption,
+} from "./_parser.js";
+import { z } from "zod";
 
 import "../core/_cli-meta.js";
 
@@ -178,6 +188,20 @@ export interface CliConfig<TRouter extends _Router | _AnyProcedureMeta> {
   transport: ClientBinding;
   json?: boolean;
   /**
+   * **全局选项表**（进程级 flag：`--json` / `--color` / `-C <dir>` …）。
+   *
+   * 与 procedure 的 `input` 同一套声明方式 —— 一个 zod object + 字段上的
+   * `.cliOption({ short, desc })`，不引入第二套 DSL。声明、解析、help 读同一份 schema，
+   * 所以不会再出现「解析里认、help 里没有」（`--json` 以前就是这样漏的）。
+   *
+   * 注意作用域：全局选项**不会进 RPC 的 input**（命令实现跑在服务端，它看不到）；
+   * 需要在客户端消费的值（输出格式/颜色/路径基准）才是它该放的地方。
+   * 想影响服务端的值属于 procedure 参数或调用级 meta。
+   *
+   * 位置：命令段之前或之后都接受（`diy --json task list` ≡ `diy task list --json`）。
+   */
+  globalOptions?: z.ZodObject<z.ZodRawShape>;
+  /**
    * CLI 根路径裁剪：CLI 命令树从这里开始匹配（如 'diy.app' → 命令 `task show`），
    * 但 RPC 调用方法名仍用完整 path（diy.app.task.show）。
    * 支持数组（如 ['diy.app','diy.ui']）合并多个子树到一个命令树根。
@@ -276,11 +300,31 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
     // 到这里只有两种情况：注入的 exit 实现返回了（不允许）——显式炸，别静默继续
     throw new Error(`[cli] exit(${code}) hook returned normally`);
   }
+  /** 全局选项值校验（默认值/枚举/类型都在这）：错误统一成 CliParseError，退出码同命令用法错 */
+  private _validateGlobals(
+    schema: z.ZodObject<z.ZodRawShape>,
+    values: Record<string, unknown>,
+  ): Record<string, unknown> {
+    try {
+      return schema.parse(values) as Record<string, unknown>;
+    } catch (e) {
+      if (e instanceof z.ZodError) {
+        const msgs = e.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`).join("\n");
+        throw new CliParseError(`全局选项取值错误:\n${msgs}`);
+      }
+      throw e;
+    }
+  }
+
   private config: CliConfig<TRouter>;
   private tree: _RouterNode;
   /** 根命令描述 = router 顶层第一个 group（如 diy）的 desc，替代原 config.desc */
   private rootDesc?: string;
   private _jsonFlag = false;
+  /** 全局选项表（构造期从 globalOptions 反射；空表 = 宿主没声明） */
+  private _globalTable: GlobalOption[] = [];
+  /** 全局选项的已校验值（zod parse 后，带默认值）；命令实现读不到它，只有 CLI 自身消费 */
+  private _globals: Record<string, unknown> = {};
 
   constructor(config: CliConfig<TRouter>) {
     this.config = config;
@@ -312,9 +356,31 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
   }
 
   async parse(rawArgv: string[]): Promise<void> {
-    // 全局 --json flag：任意位置识别，剥离后进入命令解析；输出 JSON
-    this._jsonFlag = rawArgv.includes("--json");
-    const argv = rawArgv.filter((a) => a !== "--json");
+    // ── 全局选项（进程级 flag）：命令段之前或之后都接受 ──
+    // 扫描时只剥命中的 token，未命中原样留下、顺序不变 —— 后面照旧走
+    // _routeResolve + parseArgv，命令侧一行都不用改。
+    this._globalTable = globalOptionTable(this.config.globalOptions);
+    const hasTable = this._globalTable.length > 0;
+    let scanned: { values: Record<string, unknown>; rest: string[] };
+    try {
+      scanned = hasTable
+        ? scanGlobalOptions(this._globalTable, rawArgv)
+        // 未声明表的老宿主：保留原来的 `--json` 特例（行为与之前逐字一致）
+        : { values: {}, rest: rawArgv.filter((a) => a !== "--json") };
+      this._globals = hasTable && this.config.globalOptions
+        ? this._validateGlobals(this.config.globalOptions, scanned.values)
+        : scanned.values;
+    } catch (err: unknown) {
+      // 全局选项的用法错误：与命令参数同一条出口（打印后 exit 2），不走命令帮助
+      if (err instanceof CliParseError) {
+        this._printErr(err.message);
+        this._exit(2);
+      }
+      throw err;
+    }
+    // `--json` 的消费点统一：表里声明了就看值，没表就看老姿势在不在
+    this._jsonFlag = this._globals["json"] === true || rawArgv.includes("--json");
+    const argv = scanned.rest;
 
     // ── 别名 / 弃用改写（##518）──
     // 表的来源是**命令自己的声明**（meta.alias / meta.deprecated），不是外部配置。
@@ -562,8 +628,12 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
     }));
 
     lines.push("", "Options:");
-    lines.push("  -h, --help     Show help");
-    if (this.config.version) lines.push("  -V, --version  Show version");
+    // 全局选项与解析同源（同一张表）：以前 `--json` 解析认、help 不列，就是这么漏的
+    const optRows: [string, string][] = renderGlobalOptions(this._globalTable);
+    optRows.push(["-h, --help", "Show help"]);
+    if (this.config.version) optRows.push(["-V, --version", "Show version"]);
+    const w = optRows.reduce((m, [l]) => Math.max(m, l.length), 0);
+    for (const [l, r] of optRows) lines.push(r ? `  ${l.padEnd(w)}  ${r}` : `  ${l}`);
 
     this._print(lines.join("\n"));
   }

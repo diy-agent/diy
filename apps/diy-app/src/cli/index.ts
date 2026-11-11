@@ -23,6 +23,7 @@ import { resolveAppRoot } from "../main/core/app-root";
 import { AppConfig } from "../main/core/app-config";
 import { factsGetExitCode } from "../shared/facts";
 import { APP_VERSION } from "../shared/app-version";
+import { globalOptions } from "./global-options";
 import { installDiagnostics } from "../main/services/diagnostics";
 import { SINGLETON_LOCK, classifyLock, lockAdvice, readLock } from "../main/core/single-instance";
 /** app 就绪等待上限 */
@@ -236,6 +237,8 @@ async function main() {
       version: APP_VERSION,
       router: apiDef.diy,
       rpcPrefix: "diy.",
+      // 全局选项（进程级）的单一真源：与 /cli 端点共用一份，见 global-options.ts
+      globalOptions,
       transport,
       // 路径参数（如 tool read 的 path）按**调用者**目录解析：入口脚本已 cd 到应用目录，
       // 进程 cwd 不再可信，故由 DIY_CALLER_CWD 显式带过来（见 diy.sh / bin/diy）。
