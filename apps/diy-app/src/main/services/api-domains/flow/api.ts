@@ -102,7 +102,7 @@ export const flowRoutes = RpcSchema.group({
                         uri: z.string().cliArg({ desc: "任务 URI（projects/<pid>/tasks/<tid>）" }),
                         thread: z
                             .string()
-                            .cliOption({ desc: "线程 id（形如 review->implement#2，见 \`flow thread list\`）" }),
+                            .cliOption({ desc: "线程 id（形如 review->implement#2，见 `flow thread list`）" }),
                         text: z.string().cliOption({
                             placeholder: "<file|->",
                             readFile: true,

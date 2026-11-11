@@ -218,7 +218,7 @@ export const taskRoutes = RpcSchema.group({
                         fields: z
                             .array(DraftFieldSchema)
                             .optional()
-                            .cliOption({ desc: `只清指定字段（JSON 数组，如 '[\"title\"]'）` }),
+                            .cliOption({ desc: `只清指定字段（JSON 数组，如 '["title"]'）` }),
                     },
                     output: StatusOk,
                 }),

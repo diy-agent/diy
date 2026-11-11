@@ -105,7 +105,7 @@ export const trafficRoutes = RpcSchema.group({
                     .array(z.string())
                     .optional()
                     .cliOption({
-                        desc: `要删的文件（相对 DIY_HOME），JSON 数组如 '[\"log/network/2026-10-01.jsonl\"]'`,
+                        desc: `要删的文件（相对 DIY_HOME），JSON 数组如 '["log/network/2026-10-01.jsonl"]'`,
                     }),
                 keepDays: z
                     .number()
