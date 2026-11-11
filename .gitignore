@@ -18,10 +18,18 @@ __pycache__/
 .venv/
 
 # Build output
-dist/
-build/
+# 去尾斜杠：`dist/` 只匹配目录，**符号链接不匹配**（同上面 node_modules 那条的坑）。
+# 事故（2026-11-11，b122de82 误提交）：主仓每个包的 dist/lib 都是指向自己绝对路径的死软链
+# （`dist -> /…/pkgs.ts/x/dist`），`git add -A` 照收 → 之后 checkout 出来的全是死链
+# → tsc 报 `mkdir …/dist: file exists` + 大片 TS6305，`./sha.sh build` 全红。
+dist
+build
 # 能力包编译产物（##453：main/exports 指 lib/*.js，Node/Electron 直接加载；产物不入库）
 lib/
+# 同理：**能力包根**上的 lib 也去尾斜杠（软链要拦）。只能限定包根 —— lib 也是正经源码
+# 目录名（scripts/lib、pkgs.ts/ui/core/web/src/lib、renderer_solid/lib），裸 `lib` 会静默吞新文件。
+pkgs.ts/*/lib
+pkgs.ts/*/*/lib
 # 例外：renderer 的 lib/ 是**源码目录**（同名巧合）。没有这条，新加的文件会被静默忽略，
 # git add 不报错也不收录 —— ##522 新增 frame-batch.ts 时踩过（靠 add -f 才发现）
 !apps/diy-app/src/renderer_solid/lib/
