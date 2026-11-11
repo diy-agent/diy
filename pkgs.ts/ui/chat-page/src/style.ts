@@ -204,6 +204,7 @@ export const CHAT_STYLE = `
 .chat-busy[data-slow="1"] { color: #fbbf24; opacity: .9; }
 
 /* ═══ tab 插槽（##539）═══ */
+.chat-views { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .chat-view-tabs { display: flex; gap: 2px; padding: 6px 12px 0; border-bottom: 1px solid var(--outline-variant, #e3e5e8); }
 .chat-view-tab { font: inherit; font-size: 12px; padding: 5px 12px; border: 0; background: transparent; color: #6b7280; cursor: pointer; border-radius: 6px 6px 0 0; }
 .chat-view-tab:hover { background: rgba(0,0,0,.04); }
