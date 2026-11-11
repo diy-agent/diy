@@ -3,7 +3,7 @@
 // ##429 输出预算：**软硬分离**（真发 = min(软上限, 模型硬上限)）+ 覆盖链 + 场景缺省。
 //
 // 这是在钉一条**花钱的判据**，所以每条都要有"反例也算得出来"：
-//   ① 不配任何东西 ⇒ 对话 16384（对齐 pi），摘要 2000，小任务 200
+//   ① 不配任何东西 ⇒ 对话 65536（##522 从 16384 抬高：思考 token 也计入 output），摘要 8000，小任务 200
 //   ② 覆盖链：任务 > 人物 > 全局 > 场景缺省；`layer` 必须报**生效**的那一层
 //   ③ 全局是**天花板**：任务/人物写多大都不得越过它（被压低时 clamped 记原值）
 //   ④ 模型硬上限更小 ⇒ 真发值被模型压低（cappedByModel），反之不压低
@@ -13,18 +13,20 @@
 import { describe, it, expect } from "vitest";
 import {
     OUTPUT_SCENE_DEFAULTS,
+    OUTPUT_WINDOW_FLOOR,
     describeOutputBudget,
+    outputRoomInWindow,
     resolveOutputBudget,
 } from "../../src/shared/output-budget";
 import { DEFAULT_LIMITS, resolveLimits } from "../../src/main/services/local-agent";
 import { DEFAULT_COST_ALARM, costAlarmsOf, newCostAlarmState } from "../../src/shared/cost-alarm";
 
 describe("##429 ① 场景缺省（不配任何东西）", () => {
-    it("对话 16384 / 摘要 2000 / 小任务 200", () => {
-        expect(OUTPUT_SCENE_DEFAULTS).toMatchObject({ chat: 16384, summary: 2000, small: 200 });
+    it("对话 65536 / 摘要 8000 / 小任务 200", () => {
+        expect(OUTPUT_SCENE_DEFAULTS).toMatchObject({ chat: 65536, summary: 8000, small: 200 });
         for (const [scene, want] of [
-            ["chat", 16384],
-            ["summary", 2000],
+            ["chat", 65536],
+            ["summary", 8000],
             ["small", 200],
         ] as const) {
             const b = resolveOutputBudget({ scene });
@@ -34,7 +36,7 @@ describe("##429 ① 场景缺省（不配任何东西）", () => {
         }
     });
 
-    it("DEFAULT_LIMITS 的全局上限 = 对话场景缺省（对齐 pi），且来源标 default", () => {
+    it("DEFAULT_LIMITS 的全局上限 = 对话场景缺省，且来源标 default", () => {
         expect(DEFAULT_LIMITS.maxOutputTokens).toBe(OUTPUT_SCENE_DEFAULTS.chat);
         expect(DEFAULT_LIMITS.maxOutputTokensSource).toBe("default");
     });
@@ -79,24 +81,24 @@ describe("##429 ③ 全局层同时是天花板", () => {
 describe("##429 ④ 模型硬上限只压不抬", () => {
     it("模型 limit.output=8000 ⇒ 真发 8000 并标 cappedByModel", () => {
         const b = resolveOutputBudget({ scene: "chat", modelLimit: 8000 });
-        expect(b).toMatchObject({ tokens: 8000, soft: 16384, cappedByModel: true, modelLimit: 8000 });
+        expect(b).toMatchObject({ tokens: 8000, soft: 65536, cappedByModel: true, modelLimit: 8000 });
     });
 
     it("模型比软上限更宽 ⇒ 真发 = 软上限（不再撞 131072 那种硬上限）", () => {
         const b = resolveOutputBudget({ scene: "chat", modelLimit: 131072 });
-        expect(b.tokens).toBe(16384);
+        expect(b.tokens).toBe(65536);
         expect(b.cappedByModel).toBe(false);
     });
 
     it("模型硬上限未知（null）⇒ 只用软上限，不编一个数", () => {
         const b = resolveOutputBudget({ scene: "chat", modelLimit: null });
-        expect(b).toMatchObject({ tokens: 16384, modelLimit: null, cappedByModel: false });
+        expect(b).toMatchObject({ tokens: 65536, modelLimit: null, cappedByModel: false });
     });
 });
 
 describe("##429 ⑤ 非法值一律当没设（绝不把 0 下发给上游）", () => {
     it("0 / 负数 / NaN 逐层被忽略，退回下一层", () => {
-        expect(resolveOutputBudget({ scene: "chat", task: 0, persona: -1, global: Number.NaN }).tokens).toBe(16384);
+        expect(resolveOutputBudget({ scene: "chat", task: 0, persona: -1, global: Number.NaN }).tokens).toBe(65536);
         expect(resolveOutputBudget({ scene: "chat", task: 0, persona: 4000 }).tokens).toBe(4000);
     });
 });
@@ -146,5 +148,29 @@ describe("##429 ③ 告警阈值可配（limits.json / env）", () => {
         expect(resolveLimits({ costWarnStepUsd: 0.02 }, {}).costWarnStepUsd).toBe(0.02);
         expect(resolveLimits(null, { DIY_LOCAL_COST_WARN_TURN_USD: "0" }).costWarnTurnUsd).toBe(0);
         expect(resolveLimits(null, { DIY_LOCAL_COST_WARN_STEP_USD: "0.3" }).costWarnStepUsd).toBe(0.3);
+    });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// ##522 第三项 min：**窗口剩余**（抄 opencode `outputLimit` 的口径）
+//
+// 真发值 = min(软上限, 模型上限, 窗口剩余)。这一项与"我们愿付多少"无关，
+// 只防两件事：① 输入快撑满时还要 65k ⇒ 上游以「输入+输出>窗口」直接拒；
+// ② 为了防 ① 而把常数压到很小 ⇒ 写作任务天天被他自己的设置掐断。
+// ═══════════════════════════════════════════════════════════════
+describe("##522 窗口剩余", () => {
+    it("窗口未知（null / 0）⇒ null：不施加第三项", () => {
+        expect(outputRoomInWindow(null, 1000)).toBeNull();
+        expect(outputRoomInWindow(0, 1000)).toBeNull();
+    });
+
+    it("窗口宽裕 ⇒ 剩余 = 窗口 − 输入×1.15（低估安全垫）", () => {
+        expect(outputRoomInWindow(1_000_000, 247_000)).toBe(715_950);
+        expect(outputRoomInWindow(1_000_000, null)).toBe(1_000_000);
+    });
+
+    it("输入吃满窗口 ⇒ 落到下限，绝不吐 0 / 负数（否则上游拒 max_tokens<1）", () => {
+        expect(outputRoomInWindow(1_000_000, 900_000)).toBe(OUTPUT_WINDOW_FLOOR);
+        expect(outputRoomInWindow(1000, 1000)).toBe(OUTPUT_WINDOW_FLOOR);
     });
 });
