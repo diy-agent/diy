@@ -15,8 +15,10 @@ import {
   globalOptionTable,
   scanGlobalOptions,
   renderGlobalOptions,
+  kebabOf,
   type GlobalOption,
 } from './_parser.js';
+import { _getCliOptionMeta } from '../core/_cli-meta.js';
 import { z } from 'zod';
 import { RpcSchema } from '../core/rpc.js';
 import { createScopedClient, mountService, type ScopedClient } from '../core/scope.js';
@@ -359,6 +361,8 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
   private _globalTable: GlobalOption[] = [];
   /** 全局选项的已校验值（zod parse 后，带默认值）；命令实现读不到它，只有 CLI 自身消费 */
   private _globals: Record<string, unknown> = {};
+  /** 外部强制的 JSON 输出（`inProcess().run({ json })`）：不写进 argv，也不被 parse 覆盖 */
+  private _forceJson = false;
   /** clients 模式：顶层命令段 → 对应的 scoped client */
   private _scoped = new Map<string, ScopedClient<any>>();
   /** 实际生效的命令树源（clients 模式 = 合并出来的那棵） */
@@ -414,12 +418,43 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
     }
     this.tree = resolveCliTree(root, config.cliRootPath);
     this._backfillParent(this.tree, null);
+    // 全局表在构造期就反射出来：下面的重名检测要用（parse 里会再取一次，幂等）
+    this._globalTable = globalOptionTable(config.globalOptions);
+    this._assertNoGlobalOptionClash();
   }
 
   private _backfillParent(node: _RouteNode, parent: _RouterNode | null): void {
     (node as { parent: _RouterNode | null }).parent = parent;
     if (node.kind === 'router') {
       for (const c of node.children) this._backfillParent(c, node);
+    }
+  }
+
+  /**
+   * 全局选项与**命令级**选项重名检测（构造期，一次）。
+   *
+   * 为什么必须查：`scanGlobalOptions` 在命令解析**之前**跑并吃掉命中的 token ——
+   * 于是命令自己那个同名 option 永远拿不到值，且不报任何错（静默失效）。
+   * 例：将来给全局表加 `-C/--cwd`，`diy flow run --cwd /x` 的 `--cwd` 会被全局吞掉。
+   */
+  private _assertNoGlobalOptionClash(): void {
+    if (this._globalTable.length === 0) return;
+    const globals = new Set(this._globalTable.map((o) => o.long));
+    const clash: string[] = [];
+    for (const [path, meta] of Object.entries(_flattenRouter(this._router))) {
+      const shape = (meta.inputSchema as unknown as { shape?: Record<string, unknown> } | undefined)
+        ?.shape;
+      if (!shape) continue;
+      for (const [key, field] of Object.entries(shape)) {
+        const m = _getCliOptionMeta(field as object);
+        if (!m || m.callerCwd) continue; // callerCwd 不是用户可敲的选项，不占名字
+        if (globals.has(kebabOf(key))) clash.push(`${path} --${kebabOf(key)}`);
+      }
+    }
+    if (clash.length > 0) {
+      throw new Error(
+        `全局选项与命令选项重名（命令端会被全局静默吞掉）：\n  ${clash.join('\n  ')}`,
+      );
     }
   }
 
@@ -447,8 +482,11 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
       }
       throw err;
     }
-    // `--json` 的消费点统一：表里声明了就看值，没表就看老姿势在不在
-    this._jsonFlag = this._globals['json'] === true || rawArgv.includes('--json');
+    // `--json` 的消费点统一：表里声明了就看值，没表就看老姿势在不在。
+    // `_forceJson` 是 `inProcess().run(argv, { json: true })` 用的强制开关 —— 这里必须
+    // 并进来，否则 parse 每次都重算会把外部设定覆盖掉（实测：传了 json:true 仍输出表格）。
+    this._jsonFlag =
+      this._forceJson || this._globals['json'] === true || rawArgv.includes('--json');
     const argv = scanned.rest;
 
     // ── 别名 / 弃用改写（##518）──
@@ -735,14 +773,14 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
         out.length = 0;
         err.length = 0;
         code = 0;
-        const prevJson = app['_jsonFlag'] as boolean;
-        if (runOpts?.json !== undefined) app['_jsonFlag'] = runOpts.json;
+        const prevJson = app['_forceJson'] as boolean;
+        if (runOpts?.json !== undefined) app['_forceJson'] = runOpts.json;
         try {
           await app.parse(argv);
         } catch (e) {
           if (!(e instanceof Exit)) throw e;
         } finally {
-          if (runOpts?.json !== undefined) app['_jsonFlag'] = prevJson;
+          if (runOpts?.json !== undefined) app['_forceJson'] = prevJson;
         }
         return { code, out: out.slice(), err: err.slice() };
       },

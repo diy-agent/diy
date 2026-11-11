@@ -159,4 +159,43 @@ describe('CliApp.inProcess + 模块自带模块层', () => {
       }),
     ).toThrow(/已注册|命令段/);
   });
+
+  it('run(argv, { json: true }) 强制 JSON 输出（不被 parse 重算覆盖）', async () => {
+    const cli = harness();
+    try {
+      const r = await cli.run(['task', 'list'], { json: true });
+      expect(r.code).toBe(0);
+      expect(JSON.parse(r.out.join('\n'))).toMatchObject({ ok: true });
+    } finally {
+      cli.dispose();
+    }
+  });
+
+  it('全局选项与命令级选项重名 → 构造期报错（否则命令端被静默吞掉）', () => {
+    const clashApi = RpcSchema.group({
+      children: {
+        clash: RpcSchema.group({
+          children: {
+            run: RpcSchema.unary({
+              input: { color: z.string().optional().cliOption({ desc: '命令自己的 color' }) },
+              output: z.string(),
+            }),
+          },
+        }),
+      },
+    });
+    expect(() =>
+      CliApp.inProcess({
+        name: 'diy',
+        scopes: [
+          {
+            prefix: 'diy',
+            api: clashApi,
+            handlers: { clash: { run: ({ input }: any) => input.color ?? '' } },
+          },
+        ],
+        globalOptions: z.object({ color: z.string().optional().cliOption({ desc: '全局 color' }) }),
+      }),
+    ).toThrow(/重名/);
+  });
 });

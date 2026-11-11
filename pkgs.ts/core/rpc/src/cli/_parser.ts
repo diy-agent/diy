@@ -72,7 +72,7 @@ export interface ParseArgvOptions {
  * 让用户去猜"这个选项是大写还是小写、有没有连字符"是不必要的认知负担。故**两种写法都接受**，
  * help 里统一显示 kebab。已有的下划线命名（`change_type`）不受影响（只转大写字母）。
  */
-function kebabOf(key: string): string {
+export function kebabOf(key: string): string {
   return key.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
 }
 
