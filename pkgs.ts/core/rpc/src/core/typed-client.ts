@@ -93,7 +93,11 @@ export function createTypedClient<const T>(
   };
 
   const buildProxy = (base: string): any => new Proxy({} as any, {
-    get(_, method: string) {
+    get(_, method: string | symbol) {
+      // Symbol 键不是方法名：`Object.assign` 拷贝、`inspect` / `Symbol.toStringTag`、
+      // thenable 探测都会读它们。不拦的话 `${base}.${String(method)}` 直接抛
+      // `Cannot convert a Symbol value to a string`（##87 实测：包一层部署信息就炸）。
+      if (typeof method !== 'string') return undefined;
       const name = base ? `${base}.${method}` : method;
       const m = modes[name];
       if (!m) return buildProxy(name);

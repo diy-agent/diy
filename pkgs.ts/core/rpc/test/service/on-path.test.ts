@@ -45,13 +45,20 @@ describe('binding._on(path, meta, handler)', () => {
         await dispose();
     });
 
-    it('两参形式仍可用（老路径不破）', async () => {
-        const { binding, client, dispose } = await channelHarness.start();
-        const named = routes;
-        const math = (named as unknown as { math: { add: typeof addMeta } }).math;
-        binding._on((math.add).name!, math.add, ({ input }: { input: { a: number; b: number } }) => input.a * input.b);
-        const { createTypedClient } = await import('../../src/core/index');
-        expect(await createTypedClient(client, named).math.add({ a: 3, b: 4 })).toBe(12);
+    it('两参形式已退役：从 meta.name 猜路径的老写法当场报错，而不是注册成畸形名', async () => {
+        // 2026-11 `bindNames` 退役后，`meta.name` 恒为 undefined。老写法 `_on(meta.name!, meta, h)`
+        // 实际传的是 undefined —— 必须**当场炸**（否则会注册到 `[object Object]` / `undefined`，
+        // 症状是第一条调用 `Unknown method`，而报错里看不出是注册时写错了）。
+        const { binding, dispose } = await channelHarness.start();
+        const math = (routes as unknown as { math: { add: typeof addMeta } }).math;
+        expect((math.add as unknown as { name?: string }).name).toBeUndefined();
+        expect(() =>
+            binding._on(
+                (math.add as unknown as { name?: string }).name!,
+                math.add,
+                ({ input }: { input: { a: number; b: number } }) => input.a * input.b,
+            ),
+        ).toThrow(/path 不能为空/);
         await dispose();
     });
 
