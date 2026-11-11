@@ -25,8 +25,6 @@ lib/
 # 例外：renderer 的 lib/ 是**源码目录**（同名巧合）。没有这条，新加的文件会被静默忽略，
 # git add 不报错也不收录 —— ##522 新增 frame-batch.ts 时踩过（靠 add -f 才发现）
 !apps/diy-app/src/renderer_solid/lib/
-# 例外：chat-page 的 lib/ 是 shadcn 约定的 utils 落点（源码，见 components.json 的 aliases.utils）
-!pkgs.ts/ui/chat-page/src/lib/
 # 能力包运行时目录（##455：scripts/build-runtime.mjs 生成，electron-builder 的 extraResources 源）
 apps/diy-app/runtime/
 
