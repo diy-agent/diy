@@ -92,18 +92,15 @@ describe('mountService / createScopedClient', () => {
         await dispose();
     });
 
-    it('createScopedClient 带回部署信息：cmd 缺省取前缀末段，显式给出则覆盖', async () => {
-        // 会漏的问题：CLI 合并命令树时把 `diy.task` 原样当命令名 ⇒ 用户得敲 `diy diy.task list`。
-        // cmd / prefix / desc 是**调用方读的返回值**（CLI 构建命令树用），不是内部字段。
+    it('createScopedClient 带回部署信息，且元数据不被 Proxy 吞掉', async () => {
+        // 会漏的问题：createTypedClient 返回的是 Proxy（任何键都拼成子路径读回来），
+        // 把 api/prefix/transport 直接 assign 上去会读回 Proxy 而不是值。
         const api = taskApi();
         const { client, dispose } = await channelHarness.start();
-        const byDefault = createScopedClient({ api, client, prefix: 'diy.task' });
-        expect(byDefault.prefix).toBe('diy.task');
-        expect(byDefault.cmd).toBe('task');
-
-        const explicit = createScopedClient({ api, client, prefix: 'diy.task', cmd: 't', desc: '任务' });
-        expect(explicit.cmd).toBe('t');
-        expect(explicit.desc).toBe('任务');
+        const scoped = createScopedClient({ api, client, prefix: 'diy' });
+        expect(scoped.prefix).toBe('diy');
+        expect(scoped.api).toBe(api);
+        expect(scoped.transport).toBe(client);
         await dispose();
     });
 });

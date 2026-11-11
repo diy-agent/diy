@@ -1,74 +1,86 @@
 /**
- * cli-scoped.test.ts — 「挂载点与模块分离」+ `CliApp.inProcess` 一句话构造
+ * cli-scoped.test.ts — 「模块自带模块层 + app 前缀由宿主给」+ `CliApp.inProcess`
  *
- * 验三件事：
- *   1. 模块只有 api，**前缀由使用方给**：同一个 api 能挂到两个不同前缀（多租户）
- *   2. CLI 是纯路由器：命令段来自 client 的 `cmd`，线上名来自 `prefix`
- *   3. `CliApp.inProcess(...)` 一句构造，`run()` 直接拿 `{ code, out, err }`
- *      —— 不用再手写 out/err/exit 哨兵与 mem 通道
+ * 模型只有两层：
+ *
+ *   <app>. <模块层> . <方法>
+ *    diy    task       list
+ *
+ * · 模块层由**模块自己**写进 api（`children: { task: … }`）—— 身份跟着模块走
+ * · app 前缀由**使用方**给（`server.use({ prefix: 'diy' })`）—— 换个 app 不用改模块
+ *
+ * 验：线上名拼接、命令树来自模块层、多模块共存、同模块挂两个 app、命令段冲突在构造期报错。
  */
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
 import { RpcSchema } from '../../src/core/rpc.js';
 import { CliApp } from '../../src/cli/index.js';
 
-// ── 模块：只有 api，没有名字 ──
+// ── 模块 A：task（自己带 `task` 层） ──
 const taskApi = RpcSchema.group({
-    desc: '任务管理',
     children: {
-        list: RpcSchema.unary({
-            desc: '列出任务',
-            input: { state: z.enum(['pending', 'done']).optional().cliOption({ desc: '按状态过滤' }) },
-            output: z.array(z.object({ uri: z.string(), state: z.string() })),
-        }),
-        create: RpcSchema.unary({
-            desc: '创建任务',
-            input: { title: z.string().cliArg({ desc: '标题' }) },
-            output: z.object({ uri: z.string() }),
+        task: RpcSchema.group({
+            desc: '任务管理',
+            children: {
+                list: RpcSchema.unary({
+                    desc: '列出任务',
+                    input: { state: z.enum(['pending', 'done']).optional().cliOption({ desc: '按状态过滤' }) },
+                    output: z.array(z.object({ uri: z.string(), state: z.string() })),
+                }),
+                create: RpcSchema.unary({
+                    desc: '创建任务',
+                    input: { title: z.string().cliArg({ desc: '标题' }) },
+                    output: z.object({ uri: z.string() }),
+                }),
+            },
         }),
     },
 });
 
+// ── 模块 B：agent（自己带 `agent` 层） ──
 const agentApi = RpcSchema.group({
-    desc: '本地 agent',
     children: {
-        list: RpcSchema.unary({
-            desc: '列出会话',
-            input: {},
-            output: z.array(z.object({ taskUri: z.string() })),
+        agent: RpcSchema.group({
+            desc: '本地 agent',
+            children: {
+                list: RpcSchema.unary({
+                    desc: '列出会话',
+                    input: {},
+                    output: z.array(z.object({ taskUri: z.string() })),
+                }),
+            },
         }),
     },
 });
 
 const TASKS = [{ uri: 'projects/1/tasks/7', state: 'pending' }];
 
-function harness() {
+function harness(prefix = 'diy') {
     return CliApp.inProcess({
-        name: 'diy',
+        name: prefix,
         version: '1.0.0',
         scopes: [
             {
-                prefix: 'diy.task',
-                cmd: 'task',
-                desc: '任务管理',
+                prefix,
                 api: taskApi,
                 handlers: {
-                    list: ({ input }: any) => (input.state ? TASKS.filter((t) => t.state === input.state) : TASKS),
-                    create: ({ input }: any) => ({ uri: `projects/1/tasks/9（${input.title}）` }),
+                    task: {
+                        list: ({ input }: any) => (input.state ? TASKS.filter((t) => t.state === input.state) : TASKS),
+                        create: ({ input }: any) => ({ uri: `projects/1/tasks/9（${input.title}）` }),
+                    },
                 },
             },
             {
-                prefix: 'diy.agent',
-                cmd: 'agent',
+                prefix,
                 api: agentApi,
-                handlers: { list: () => [{ taskUri: 'projects/1/tasks/7' }] },
+                handlers: { agent: { list: () => [{ taskUri: 'projects/1/tasks/7' }] } },
             },
         ],
     });
 }
 
-describe('CliApp.inProcess + scoped clients', () => {
-    it('注册名 = prefix + 树内 path（模块自己不知道前缀）', () => {
+describe('CliApp.inProcess + 模块自带模块层', () => {
+    it('注册名 = app 前缀 + 模块层 + 方法', () => {
         const cli = harness();
         try {
             expect(cli.listRegistered().sort()).toEqual([
@@ -81,7 +93,7 @@ describe('CliApp.inProcess + scoped clients', () => {
         }
     });
 
-    it('命令段来自 cmd，调用走向对应 prefix', async () => {
+    it('命令段来自模块层，不是 prefix', async () => {
         const cli = harness();
         try {
             const r = await cli.run(['task', 'list', '--json']);
@@ -92,13 +104,24 @@ describe('CliApp.inProcess + scoped clients', () => {
         }
     });
 
-    it('多个 scope 合成一棵命令树（help 里各有 desc）', async () => {
+    it('多个模块平铺成一棵命令树（各自带 desc）', async () => {
         const cli = harness();
         try {
-            const r = await cli.run(['--help']);
-            expect(r.out.join('\n')).toContain('task');
-            expect(r.out.join('\n')).toContain('agent');
-            expect(r.out.join('\n')).toContain('任务管理');
+            const text = (await cli.run(['--help'])).out.join('\n');
+            expect(text).toContain('task');
+            expect(text).toContain('agent');
+            expect(text).toContain('任务管理');
+        } finally {
+            cli.dispose();
+        }
+    });
+
+    it('同一个模块挂到另一个 app：线上名换前缀，命令段不变', async () => {
+        const cli = harness('diyvideo');
+        try {
+            expect(cli.listRegistered()).toContain('diyvideo.task.list');
+            const r = await cli.run(['task', 'list', '--json']);
+            expect(r.code).toBe(0);
         } finally {
             cli.dispose();
         }
@@ -114,15 +137,15 @@ describe('CliApp.inProcess + scoped clients', () => {
         }
     });
 
-    it('命令段冲突 → 构造期报错（不是运行时撞车）', () => {
+    it('两个模块抢同一个命令段 → 构造期报错', () => {
         expect(() =>
             CliApp.inProcess({
                 name: 'diy',
                 scopes: [
-                    { prefix: 'a.task', cmd: 'task', api: taskApi, handlers: { list: () => [], create: () => ({ uri: '' }) } },
-                    { prefix: 'b.task', cmd: 'task', api: agentApi, handlers: { list: () => [] } },
+                    { prefix: 'diy', api: taskApi, handlers: { task: { list: () => [], create: () => ({ uri: '' }) } } },
+                    { prefix: 'diy', api: taskApi, handlers: { task: { list: () => [], create: () => ({ uri: '' }) } } },
                 ],
             }),
-        ).toThrow(/命令段/);
+        ).toThrow(/已注册|命令段/);
     });
 });

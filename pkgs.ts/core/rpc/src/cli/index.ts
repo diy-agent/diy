@@ -367,17 +367,24 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
     // `clients` 模式：把各 scope 的 api 合并成一棵命令树，顶层命令 = 各 client 的 cmd
     let router: any = config.router;
     if (config.clients?.length) {
+      // 命令树 = 各模块 api 的**小孩直接合并**：模块层（`task` / `agent`）由模块自己写死，
+      // 这里只做平铺，不重新组装层（不做「任意树 merge」——那会让线上名取决于合并顺序）。
       const merged: Record<string, unknown> = {};
       for (const c of config.clients) {
-        if (this._scoped.has(c.cmd)) {
-          throw new Error(`CliApp: 命令段 "${c.cmd}" 被两个 scope 占用（用 cmd 区分）`);
+        const api = c.api as any;
+        if (api?._streamMode !== "group") {
+          throw new Error("CliApp: clients 模式要求每个 api 是 RpcSchema.group（自带模块层）");
         }
-        this._scoped.set(c.cmd, c);
-        const isGroupApi = (c.api as any)?._streamMode === "group";
-        merged[c.cmd] = RpcSchema.group({
-          ...(c.desc !== undefined ? { desc: c.desc } : {}),
-          children: isGroupApi ? (c.api as any).children : { [c.cmd]: c.api },
-        });
+        for (const [seg, child] of Object.entries(api.children as Record<string, unknown>)) {
+          if (seg in merged) {
+            // 同一 app 下两个模块抢同一个命令段：启动期就报，别等运行时撞车
+            throw new Error(
+              `CliApp: 命令段 "${seg}" 被两个模块占用（模块层由模块自己声明，改名请改模块）`,
+            );
+          }
+          merged[seg] = child;
+          this._scoped.set(seg, c);
+        }
       }
       router = merged;
     }
@@ -539,11 +546,11 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
     const desc = procDesc(def);
     // 路由键用 RPC 全名（def.name，router() 回写）。当 router 是最外层 group（如 diy）被解包时，
     // proc.path 会丢失 "diy." 前缀，与 binding 注册的全名不匹配，故路由一律用 def.name。
-    // clients 模式：命令段第一段是 scope 的 cmd，线上名 = prefix + 树内 path
+    // clients 模式：线上名 = app 前缀 + 完整命令路径（模块层就在 path 里）
     const scopeCmd = proc.path.split('.')[0] ?? '';
     const scoped = this._scoped.get(scopeCmd);
     const rpcName = scoped
-      ? `${scoped.prefix}${proc.path.slice(scopeCmd.length)}`
+      ? `${scoped.prefix}.${proc.path}`
       : def.name ?? `${this.config.rpcPrefix ?? ''}${proc.path}`;
 
     /**
@@ -703,11 +710,11 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
     name: string;
     version?: string;
     scopes: readonly {
+      /** 应用前缀（`diy`）：多 app 时同前缀可挂多个模块 */
       prefix: string;
+      /** 模块 api：必须是 group，模块层（`task` / `agent`）写在它里面 */
       api: any;
       handlers: any;
-      cmd?: string;
-      desc?: string;
     }[];
     json?: boolean;
     cwd?: string;
@@ -720,7 +727,7 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
     const client = new ChannelClientBinding(clientTx);
     const clients = opts.scopes.map((sc) => {
       mountService(server, { prefix: sc.prefix, api: sc.api, handlers: sc.handlers });
-      return createScopedClient({ api: sc.api, client, prefix: sc.prefix, cmd: sc.cmd, desc: sc.desc });
+      return createScopedClient({ api: sc.api, client, prefix: sc.prefix });
     });
 
     const out: string[] = [];
