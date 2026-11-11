@@ -13,7 +13,7 @@ import type { ServerBinding } from "@diy-agent/rpc";
 import * as state from "../../../core/state";
 import { seedHome } from "../../../core/seed";
 import { refreshModelRuntime } from "../../../core/model-runtime";
-import { seedService } from "./api";
+import { seedApi } from "./api";
 
 /**
  * 把 `seed` 域挂到 binding 上。
@@ -22,12 +22,18 @@ import { seedService } from "./api";
  * binding 是宿主建的（`api-impl.ts` 里），模块加载时还不存在。
  */
 export function bindSeed(server: ServerBinding): void {
-    seedService.bind(server, {
-        run: async () => {
-            const r = seedHome(state.diyHome());
-            // 种子可能新写了 model.yaml → 重装目录，让 UI 立刻看到模型
-            refreshModelRuntime(state.diyHome());
-            return r;
-        },
+    server.use({
+        prefix: "diy",
+        api: seedApi,
+        // 模块层由模块自己声明（seed）：与 defineService(name: "diy.seed") 等价
+        handlers: {
+            seed: {
+            run: async () => {
+                const r = seedHome(state.diyHome());
+                // 种子可能新写了 model.yaml → 重装目录，让 UI 立刻看到模型
+                refreshModelRuntime(state.diyHome());
+                return r;
+            },
+        } },
     });
 }

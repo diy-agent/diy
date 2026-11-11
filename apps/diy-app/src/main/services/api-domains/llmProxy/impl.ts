@@ -9,23 +9,29 @@
  */
 import type { ServerBinding } from "@diy-agent/rpc";
 import { getLlmProxy } from "../../../core/llm-proxy-instance";
-import { llmProxyService } from "./api";
+import { llmProxyApi } from "./api";
 
 export function bindLlmProxy(server: ServerBinding): void {
-    llmProxyService.bind(server, {
-        status: async () => {
-            const proxy = await getLlmProxy();
-            return { running: proxy.isRunning, port: 8000 };
-        },
-        start: async () => {
-            const proxy = await getLlmProxy();
-            proxy.start();
-            return { status: "ok" };
-        },
-        stop: async () => {
-            const proxy = await getLlmProxy();
-            proxy.stop();
-            return { status: "ok" };
-        },
+    server.use({
+        prefix: "diy",
+        api: llmProxyApi,
+        // 模块层由模块自己声明（llmProxy）：与 defineService(name: "diy.llmProxy") 等价
+        handlers: {
+            llmProxy: {
+            status: async () => {
+                const proxy = await getLlmProxy();
+                return { running: proxy.isRunning, port: 8000 };
+            },
+            start: async () => {
+                const proxy = await getLlmProxy();
+                proxy.start();
+                return { status: "ok" };
+            },
+            stop: async () => {
+                const proxy = await getLlmProxy();
+                proxy.stop();
+                return { status: "ok" };
+            },
+        } },
     });
 }

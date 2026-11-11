@@ -11,7 +11,7 @@ import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import type { ServerBinding } from "@diy-agent/rpc";
 import { moveEntry, scanKb, writeEntry, writeIndex } from "@diy-agent/kb";
-import { kbService } from "./api";
+import { kbApi } from "./api";
 
 /**
  * 把 `dir` 选项解析成绝对路径。
@@ -84,33 +84,39 @@ function ensureFrontmatter(body: string, desc: string | undefined, today: string
 export function bindKb(server: ServerBinding): void {
     // 4 个 handler 一次性交给 `kbService.bind` —— 形状与 `kbRoutes` 同构，
     // 少一个方法 / 签名不对都是编译错误。
-    kbService.bind(server, {
-        write: async ({ input }) => {
-            const root = await resolveRoot(input.dir, input.cwd ?? process.cwd());
-            const body = await readBody(input.bodyFile, input.cwd ?? process.cwd());
-            const content = ensureFrontmatter(body, input.desc, new Date().toISOString().slice(0, 10));
-            const r = writeEntry(root, input.path, content);
-            // INDEX 跟着写 —— 用户 2026-11-07：「index 是自动生成的吧？每次写入更新？」
-            // 让每条写操作都带着索引一起落地，就不存在「写了但索引里没有」的中间态
-            await writeIndex(root, "");
-            return { path: r.path, bytes: r.bytes };
-        },
-        check: async ({ input }) => {
-            const root = await resolveRoot(input.dir, input.cwd ?? process.cwd());
-            const scan = scanKb(root);
-            return { root: scan.root, entries: [...scan.entries], problems: [...scan.problems] };
-        },
-        index: async ({ input }) => {
-            const root = await resolveRoot(input.dir, input.cwd ?? process.cwd());
-            const r = writeIndex(root, input.label ?? "");
-            return { path: r.path, entries: r.entries, problems: [...r.problems] };
-        },
-        move: async ({ input }) => {
-            const root = await resolveRoot(input.dir, input.cwd ?? process.cwd());
-            const r = moveEntry(root, input.from, input.to);
-            await writeIndex(root, "");
-            return { from: r.from, to: r.to };
-        },
+    server.use({
+        prefix: "diy",
+        api: kbApi,
+        // 模块层由模块自己声明（kb）：与 defineService(name: "diy.kb") 等价
+        handlers: {
+            kb: {
+            write: async ({ input }) => {
+                const root = await resolveRoot(input.dir, input.cwd ?? process.cwd());
+                const body = await readBody(input.bodyFile, input.cwd ?? process.cwd());
+                const content = ensureFrontmatter(body, input.desc, new Date().toISOString().slice(0, 10));
+                const r = writeEntry(root, input.path, content);
+                // INDEX 跟着写 —— 用户 2026-11-07：「index 是自动生成的吧？每次写入更新？」
+                // 让每条写操作都带着索引一起落地，就不存在「写了但索引里没有」的中间态
+                await writeIndex(root, "");
+                return { path: r.path, bytes: r.bytes };
+            },
+            check: async ({ input }) => {
+                const root = await resolveRoot(input.dir, input.cwd ?? process.cwd());
+                const scan = scanKb(root);
+                return { root: scan.root, entries: [...scan.entries], problems: [...scan.problems] };
+            },
+            index: async ({ input }) => {
+                const root = await resolveRoot(input.dir, input.cwd ?? process.cwd());
+                const r = writeIndex(root, input.label ?? "");
+                return { path: r.path, entries: r.entries, problems: [...r.problems] };
+            },
+            move: async ({ input }) => {
+                const root = await resolveRoot(input.dir, input.cwd ?? process.cwd());
+                const r = moveEntry(root, input.from, input.to);
+                await writeIndex(root, "");
+                return { from: r.from, to: r.to };
+            },
+        } },
     });
 }
 
