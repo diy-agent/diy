@@ -5,7 +5,7 @@
  */
 import { z } from "zod";
 import { StatusOk } from "../../../../shared/status";
-import { RpcSchema, defineService } from "@diy-agent/rpc";
+import { RpcSchema } from "@diy-agent/rpc";
 import {
     CostUpdateResultSchema,
     ImportEnvResultSchema,
@@ -128,7 +128,6 @@ export const llmConfigRoutes = RpcSchema.group({
     },
 });
 
-export const llmConfigService = defineService({ name: "diy.llmConfig", api: llmConfigRoutes });
 
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。

@@ -4,7 +4,7 @@
  * import 待手工补（各域依赖不同）。
  */
 import { z } from "zod";
-import { RpcSchema, defineService } from "@diy-agent/rpc";
+import { RpcSchema } from "@diy-agent/rpc";
 import {
     EnvSchema,
     FactsAffectedSchema,
@@ -166,7 +166,6 @@ export const factsRoutes = RpcSchema.group({
     },
 });
 
-export const factsService = defineService({ name: "diy.facts", api: factsRoutes });
 
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。

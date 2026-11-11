@@ -4,7 +4,7 @@
  * import 待手工补（各域依赖不同）。
  */
 import { z } from "zod";
-import { RpcSchema, defineService } from "@diy-agent/rpc";
+import { RpcSchema } from "@diy-agent/rpc";
 import { DocsIndexSchema } from "../../../../shared/docs";
 
 export const docsRoutes = RpcSchema.group({
@@ -28,7 +28,6 @@ export const docsRoutes = RpcSchema.group({
     },
 });
 
-export const docsService = defineService({ name: "diy.docs", api: docsRoutes });
 
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。

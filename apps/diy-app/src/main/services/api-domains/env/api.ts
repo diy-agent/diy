@@ -5,7 +5,7 @@
  */
 import { z } from "zod";
 import { StatusOk } from "../../../../shared/status";
-import { RpcSchema, defineService } from "@diy-agent/rpc";
+import { RpcSchema } from "@diy-agent/rpc";
 import { EnvNoticeEventSchema, EnvNoticeSchema } from "../../../../shared/env-watch";
 
 export const envRoutes = RpcSchema.group({
@@ -96,7 +96,6 @@ export const envRoutes = RpcSchema.group({
     },
 });
 
-export const envService = defineService({ name: "diy.env", api: envRoutes });
 
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。

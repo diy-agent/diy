@@ -13,7 +13,7 @@
  *   kb/impl.ts   ← handler 绑定
  */
 import { z } from "zod";
-import { RpcSchema, defineService } from "@diy-agent/rpc";
+import { RpcSchema } from "@diy-agent/rpc";
 
 /** 库根：缺省 = cwd 下 `.diy/knowledge`；`global` = `$DIY_HOME/knowledge` */
 const RootInput = {
@@ -103,7 +103,6 @@ export const kbRoutes = RpcSchema.group({
     },
 });
 
-export const kbService = defineService({ name: "diy.kb", api: kbRoutes });
 
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。

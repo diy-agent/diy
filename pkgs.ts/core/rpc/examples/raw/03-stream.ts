@@ -4,7 +4,7 @@
  * 为什么用它：长任务的**增量**（进度 / 逐块结果），而不是等整轮跑完拿快照。
  */
 import { z } from "zod";
-import { RpcSchema, defineService, ChannelServerBinding, ChannelClientBinding } from "../../src/index";
+import { RpcSchema, ChannelServerBinding, ChannelClientBinding } from "../../src/index";
 import { createMemTransportPair } from "../../test/helpers";
 
 const routes = RpcSchema.group({ children: {

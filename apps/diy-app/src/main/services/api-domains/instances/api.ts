@@ -4,7 +4,7 @@
  * import 待手工补（各域依赖不同）。
  */
 import { z } from "zod";
-import { RpcSchema, defineService } from "@diy-agent/rpc";
+import { RpcSchema } from "@diy-agent/rpc";
 import { InstanceRowSchema, InstanceSelfSchema, RevealResultSchema } from "../../../../shared/instance-row";
 
 export const instancesRoutes = RpcSchema.group({
@@ -52,7 +52,6 @@ export const instancesRoutes = RpcSchema.group({
     },
 });
 
-export const instancesService = defineService({ name: "diy.instances", api: instancesRoutes });
 
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。

@@ -5,7 +5,7 @@
  * 否则服务端继续烧 CPU，客户端只能假装停了。
  */
 import { z } from "zod";
-import { RpcSchema, defineService, ChannelServerBinding, ChannelClientBinding } from "../../src/index";
+import { RpcSchema, ChannelServerBinding, ChannelClientBinding } from "../../src/index";
 import { createMemTransportPair } from "../../test/helpers";
 
 const routes = RpcSchema.group({ children: {

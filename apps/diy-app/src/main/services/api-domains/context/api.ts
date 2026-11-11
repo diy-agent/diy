@@ -4,7 +4,7 @@
  * import 待手工补（各域依赖不同）。
  */
 import { z } from "zod";
-import { RpcSchema, defineService } from "@diy-agent/rpc";
+import { RpcSchema } from "@diy-agent/rpc";
 import {
     ContextDiffSchema,
     ContextLabSchema,
@@ -84,7 +84,6 @@ export const contextRoutes = RpcSchema.group({
     },
 });
 
-export const contextService = defineService({ name: "diy.context", api: contextRoutes });
 
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。

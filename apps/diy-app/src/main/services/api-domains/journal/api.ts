@@ -4,7 +4,7 @@
  * import 待手工补（各域依赖不同）。
  */
 import { z } from "zod";
-import { RpcSchema, defineService } from "@diy-agent/rpc";
+import { RpcSchema } from "@diy-agent/rpc";
 import {
     JournalAddSchema,
     JournalFindSchema,
@@ -105,7 +105,6 @@ export const journalRoutes = RpcSchema.group({
     },
 });
 
-export const journalService = defineService({ name: "diy.journal", api: journalRoutes });
 
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。

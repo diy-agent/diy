@@ -4,7 +4,7 @@
  * import 待手工补（各域依赖不同）。
  */
 import { z } from "zod";
-import { RpcSchema, defineService } from "@diy-agent/rpc";
+import { RpcSchema } from "@diy-agent/rpc";
 
 export const hubRoutes = RpcSchema.group({
     desc: `Hub 配对（邀请码 + Owner 审批 + Token 长连；地址即身份）`,
@@ -176,7 +176,6 @@ export const hubRoutes = RpcSchema.group({
     },
 });
 
-export const hubService = defineService({ name: "diy.hub", api: hubRoutes });
 
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。

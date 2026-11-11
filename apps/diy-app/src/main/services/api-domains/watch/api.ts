@@ -4,7 +4,7 @@
  * import 待手工补（各域依赖不同）。
  */
 import { z } from "zod";
-import { RpcSchema, defineService } from "@diy-agent/rpc";
+import { RpcSchema } from "@diy-agent/rpc";
 
 export const watchRoutes = RpcSchema.group({
     desc: `文件系统监控（projects/ 增删改 → 实时推送）`,
@@ -20,7 +20,6 @@ export const watchRoutes = RpcSchema.group({
     },
 });
 
-export const watchService = defineService({ name: "diy.watch", api: watchRoutes });
 
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。

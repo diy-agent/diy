@@ -4,7 +4,7 @@
  * import 待手工补（各域依赖不同）。
  */
 import { z } from "zod";
-import { RpcSchema, defineService } from "@diy-agent/rpc";
+import { RpcSchema } from "@diy-agent/rpc";
 
 export const jobRoutes = RpcSchema.group({
     desc: `后台 run 的管理（**\`job\` = 后台活的总称，本域装的唯一实体是 run**；只管 \`background\` 起的长活，前台命令不登记 —— 见 ##408 刀 16）`,
@@ -124,7 +124,6 @@ export const jobRoutes = RpcSchema.group({
     },
 });
 
-export const jobService = defineService({ name: "diy.job", api: jobRoutes });
 
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。

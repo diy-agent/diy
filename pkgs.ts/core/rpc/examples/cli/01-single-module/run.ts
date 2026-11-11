@@ -15,7 +15,7 @@
  */
 import { z } from 'zod';
 import { ChannelServerBinding, ChannelClientBinding } from '../../../src/index';
-import { RpcSchema, defineService } from '../../../src/index';
+import { RpcSchema } from '../../../src/index';
 import { createMemTransportPair } from '../../../test/helpers';
 import { CliApp } from '../../../src/cli/index';
 
@@ -41,7 +41,6 @@ const factRoutes = RpcSchema.group({
 });
 
 // name 必须覆盖命令树里的模块段：命令是 `fact list`，注册名就应是 `demo.fact` + `.list`
-export const factService = defineService({ name: 'demo.fact', api: factRoutes });
 
 /**
  * 根：CliApp 拿到的必须是「根 group」。传 `factRoutes` 本身也行 —— 但它会被当成根，
@@ -62,41 +61,28 @@ class CliExit extends Error {
 }
 
 async function main(): Promise<void> {
-  // ── 2. 服务端：同一份 schema 挂 handlers ──
-  const [serverTx, clientTx] = createMemTransportPair();
-  factService.bind(new ChannelServerBinding(serverTx), {
-    list: ({ input }) => (input.limit ? FACTS.slice(0, input.limit) : FACTS),
-    get: ({ input }) => FACTS.find((f) => f.claim === input.claim) ?? null,
-  });
-
-  // ── 3. 客户端：CliApp 吃同一棵树 ──
-  const client = new ChannelClientBinding(clientTx);
-  const run = async (argv: string[]) => {
-    const out: string[] = [];
-    const err: string[] = [];
-    let code = 0;
-    try {
-      await new CliApp({
-        name: 'demo',
-        version: '1.0.0',
-        router: rootRoutes,
-        // 服务端注册名是 `demo.fact.list`；客户端必须拼出同一个字符串
-        rpcPrefix: 'demo.',
-        transport: client,
-        // 按名取实体查不到 ⇒ 退出码 1（`demo fact get X && ...` 不许对不存在的东西说通过）
-        exitCodeOf: ({ rpcName, result }) =>
-          rpcName.endsWith('.get') && result === null ? 1 : undefined,
-        out: (l) => void out.push(l),
-        err: (l) => void err.push(l),
-        exit: (c: number): never => {
-          code = c;
-          throw new CliExit(c);
+  // ── 2. 一句话装配：mem 通道 + 服务端 + 客户端（模块层 fact 由 api 自带）──
+  const cli = CliApp.inProcess({
+    name: 'demo',
+    version: '1.0.0',
+    scopes: [
+      {
+        prefix: 'demo',
+        api: rootRoutes,
+        handlers: {
+          fact: {
+            list: ({ input }: any) => (input.limit ? FACTS.slice(0, input.limit) : FACTS),
+            get: ({ input }: any) => FACTS.find((f) => f.claim === input.claim) ?? null,
+          },
         },
-      }).parse(argv);
-    } catch (e) {
-      if (!(e instanceof CliExit)) throw e;
-    }
-    return { code, text: out.join('\n'), errText: err.join('\n') };
+      },
+    ],
+    // 按名取实体查不到 ⇒ 退出码 1（`demo fact get X && ...` 不许对不存在的东西说通过）
+    exitCodeOf: ({ rpcName, result }) => (rpcName.endsWith('.get') && result === null ? 1 : undefined),
+  });
+  const run = async (argv: string[]) => {
+    const r = await cli.run(argv);
+    return { code: r.code, text: r.out.join('\n'), errText: r.err.join('\n') };
   };
 
   // ── 4. 三种典型用法 ──

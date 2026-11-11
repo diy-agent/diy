@@ -4,7 +4,7 @@
  * 跑：`npx tsx pkgs.ts/core/rpc/examples/01-basic.ts`
  */
 import { z } from "zod";
-import { RpcSchema, defineService, ChannelServerBinding, ChannelClientBinding } from "../../src/index";
+import { RpcSchema, ChannelServerBinding, ChannelClientBinding } from "../../src/index";
 import { createMemTransportPair } from "../../test/helpers";
 
 // ① 定义：纯 schema，没有 handler
@@ -18,7 +18,6 @@ const mathRoutes = RpcSchema.group({ children: {
     } }),
 } });
 
-const mathService = defineService({ name: "demo.math", api: mathRoutes });
 
 async function main(): Promise<void> {
     // ② 建传输（示例用内存对；真实场景换成 http / ws / electron）

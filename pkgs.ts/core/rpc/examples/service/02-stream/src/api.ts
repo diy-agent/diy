@@ -4,7 +4,7 @@
  * 跑：`npx tsx pkgs.ts/core/rpc/examples/service/02-stream/run.ts`
  */
 import { z } from "zod";
-import { RpcSchema, defineService } from "../../../../src/index";
+import { RpcSchema } from "../../../../src/index";
 
 export const jobRoutes = RpcSchema.group({ children: {
     job: RpcSchema.group({ children: {
@@ -16,4 +16,3 @@ export const jobRoutes = RpcSchema.group({ children: {
     } }),
 } });
 
-export const jobService = defineService({ name: "demo.job", api: jobRoutes });

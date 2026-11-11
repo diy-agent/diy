@@ -5,7 +5,7 @@
  */
 import { z } from "zod";
 import { StatusOk } from "../../../../shared/status";
-import { RpcSchema, defineService } from "@diy-agent/rpc";
+import { RpcSchema } from "@diy-agent/rpc";
 import { CacheChannelViewSchema, CacheHintEventSchema, CacheHintSchema } from "../../../../shared/cache-hint";
 
 export const cacheHintRoutes = RpcSchema.group({
@@ -76,7 +76,6 @@ export const cacheHintRoutes = RpcSchema.group({
     },
 });
 
-export const cacheHintService = defineService({ name: "diy.cacheHint", api: cacheHintRoutes });
 
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。

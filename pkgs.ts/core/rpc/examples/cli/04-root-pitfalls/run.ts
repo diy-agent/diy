@@ -39,7 +39,6 @@ const taskRoutes = RpcSchema.group({
     }),
   },
 });
-const taskService = defineService({ name: 'demo.task', api: taskRoutes });
 
 const apiDef = RpcSchema.group({
   children: {
@@ -55,10 +54,13 @@ class CliExit extends Error {
 
 async function main(): Promise<void> {
   const [serverTx, clientTx] = createMemTransportPair();
-  taskService.bind(new ChannelServerBinding(serverTx), {
-    list: () => [{ uri: 'projects/1/tasks/1' }],
+  const server = new ChannelServerBinding(serverTx);
+  server.use({
+    prefix: "demo.task",
+    api: taskRoutes,
+    handlers: { list: () => [{ uri: "projects/1/tasks/1" }] },
   });
-  console.log('服务端注册名:', taskService.name + '.list', '\n');
+  console.log("服务端注册名: demo.task.list", "\n");
 
   const client = new ChannelClientBinding(clientTx);
   /** 每轮换一套 CliApp 配置，跑一次命令，返回输出与退出码 */

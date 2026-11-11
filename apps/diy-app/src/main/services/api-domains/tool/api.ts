@@ -4,7 +4,7 @@
  * import 待手工补（各域依赖不同）。
  */
 import { z } from "zod";
-import { RpcSchema, defineService } from "@diy-agent/rpc";
+import { RpcSchema } from "@diy-agent/rpc";
 
 export const toolRoutes = RpcSchema.group({
     desc: `工具（文件读取：行窗口 + 续读）`,
@@ -31,7 +31,6 @@ export const toolRoutes = RpcSchema.group({
     },
 });
 
-export const toolService = defineService({ name: "diy.tool", api: toolRoutes });
 
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。

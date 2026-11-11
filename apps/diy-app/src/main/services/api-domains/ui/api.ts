@@ -2,7 +2,7 @@
  * api-domains/ui/api.ts —— 从 services/api-def.ts 拆出。
  */
 import { z } from "zod";
-import { RpcSchema, defineService } from "@diy-agent/rpc";
+import { RpcSchema } from "@diy-agent/rpc";
 import { StatusDataUri, StatusDataId } from "../../../../shared/status";
 import { TaskStateSchema } from "../../../core/task-state";
 import { TaskNodeSchema } from "../../../../shared/task-node";
@@ -427,7 +427,6 @@ export const uiRoutes = RpcSchema.group({
     },
 });
 
-export const uiService = defineService({ name: "diy.ui", api: uiRoutes });
 
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。

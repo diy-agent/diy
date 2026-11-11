@@ -1,7 +1,6 @@
 // index.ts — 工作台主进程外壳：开窗口 + 一条 `page:invoke` 通道（转发到插件的方法表）。
 //
 // 用法（宿主装配入口）：
-//   import { app } from 'electron';
 //   import { createWorkbench } from '@diy-agent/workbench';
 //   import * as myPage from '@scope/my-page/main';   // ← 直接 import：tsc 检查包存在
 //   const wb = await createWorkbench({
@@ -14,27 +13,35 @@
 // 边界：本包**不认识任何具体页面**（不 import 页面插件、不读业务数据）。
 // 页面清单来自 plugins 清单，页面行为来自插件导出的 methods —— 加页面不改本包。
 
-import { app, BrowserWindow, screen } from "electron";
-import { ChannelClientBinding, ChannelServerBinding, createTypedClient } from "@diy-agent/rpc";
-import { createMainTransport } from "@diy-agent/rpc/electron/main";
-import { rendererService, workbenchService } from "./protocol.js";
-import { WorkbenchError } from "./errors.js";
-import { loadPages, type PluginEntry } from "./loader.js";
-import type { PageContribution, PageInfo } from "./page.js";
-import { PAGE_INVOKE_CHANNEL, PAGE_LIST_CHANNEL, RPC_CHANNEL, type PageInvokeRequest } from "./channels.js";
-import { instanceWindowTitle, removeSelfRecord, writeSelfRecord } from "./instance-record.js";
-import { sidecarWindowOptions } from "./window.js";
+import { app, BrowserWindow, screen } from 'electron';
+import { ChannelClientBinding, ChannelServerBinding, createScopedClient, createTypedClient } from '@diy-agent/rpc';
+import { createMainTransport } from '@diy-agent/rpc/electron/main';
+import { rendererRoutes, workbenchRoutes } from './protocol.js';
+import { WorkbenchError } from './errors.js';
+import { loadPages, type PluginEntry } from './loader.js';
+import type { PageContribution, PageInfo } from './page.js';
+import { PAGE_INVOKE_CHANNEL, PAGE_LIST_CHANNEL, RPC_CHANNEL, type PageInvokeRequest } from './channels.js';
+import { instanceWindowTitle, removeSelfRecord, writeSelfRecord } from './instance-record.js';
+import { sidecarWindowOptions } from './window.js';
 
-export { WorkbenchError } from "./errors.js";
-export { orderPlugins, loadPages } from "./loader.js";
-export { PAGE_INVOKE_CHANNEL, PAGE_LIST_CHANNEL, RPC_CHANNEL } from "./channels.js";
-export { sidecarWindowOptions, type DisplayLike, type WorkArea } from "./window.js";
-export { registryDir, writeSelfRecord, updateSelfRecord, removeSelfRecord, repoRootOf, instanceUri, instanceWindowTitle } from "./instance-record.js";
-export { cdpSwitchValue, readDevToolsUrl, readDevToolsPort, waitDevToolsPort } from "./cdp.js";
-export { acquireSingleInstance, configureUserData, userDataDirOf } from "./instance-home.js";
-export type { PluginEntry } from "./loader.js";
-export type { PageContribution, PageInfo, PageMethod } from "./page.js";
-export type { PageInvokeRequest, WorkbenchBridge } from "./channels.js";
+export { WorkbenchError } from './errors.js';
+export { orderPlugins, loadPages } from './loader.js';
+export { PAGE_INVOKE_CHANNEL, PAGE_LIST_CHANNEL, RPC_CHANNEL } from './channels.js';
+export { sidecarWindowOptions, type DisplayLike, type WorkArea } from './window.js';
+export {
+    registryDir,
+    writeSelfRecord,
+    updateSelfRecord,
+    removeSelfRecord,
+    repoRootOf,
+    instanceUri,
+    instanceWindowTitle,
+} from './instance-record.js';
+export { cdpSwitchValue, readDevToolsUrl, readDevToolsPort, waitDevToolsPort } from './cdp.js';
+export { acquireSingleInstance, configureUserData, userDataDirOf } from './instance-home.js';
+export type { PluginEntry } from './loader.js';
+export type { PageContribution, PageInfo, PageMethod } from './page.js';
+export type { PageInvokeRequest, WorkbenchBridge } from './channels.js';
 
 export interface CreateWorkbenchOptions {
     /** 窗口标题（与页面标题无关） */
@@ -73,7 +80,7 @@ export interface Workbench {
      * 渲器侧没装钩子（生产）时抛错 —— 别把测试路径混进正常业务。
      */
     ui(command: {
-        type: "fill" | "click" | "waitState" | "readState";
+        type: 'fill' | 'click' | 'waitState' | 'readState';
         selector?: string;
         value?: unknown;
         path?: string;
@@ -100,11 +107,11 @@ export async function createWorkbench(options: CreateWorkbenchOptions): Promise<
     const invoke = async (pageId: string, method: string, args?: unknown): Promise<unknown> => {
         const page = byId.get(pageId);
         if (!page) {
-            throw new WorkbenchError("workbench/unknown-page", `没有这个页面：${pageId}`);
+            throw new WorkbenchError('workbench/unknown-page', `没有这个页面：${pageId}`);
         }
         const fn = page.methods?.[method];
-        if (typeof fn !== "function") {
-            throw new WorkbenchError("workbench/unknown-method", `页面 ${pageId} 没有方法 ${method}`);
+        if (typeof fn !== 'function') {
+            throw new WorkbenchError('workbench/unknown-method', `页面 ${pageId} 没有方法 ${method}`);
         }
         return fn(args);
     };
@@ -113,11 +120,11 @@ export async function createWorkbench(options: CreateWorkbenchOptions): Promise<
 
     const width = options.width ?? 1040;
     const height = options.height ?? 720;
-    const env = process.env["DIY_ENV"] ?? "production";
-    const variant = process.env["DIY_VARIANT"] ?? "lab";
-    const diyHome = process.env["DIY_HOME"];
-    const showInactive = options.showInactive ?? process.env["DIY_NO_FOCUS"] === "1";
-    const sidecar = options.sidecar ?? env !== "production";
+    const env = process.env['DIY_ENV'] ?? 'production';
+    const variant = process.env['DIY_VARIANT'] ?? 'lab';
+    const diyHome = process.env['DIY_HOME'];
+    const showInactive = options.showInactive ?? process.env['DIY_NO_FOCUS'] === '1';
+    const sidecar = options.sidecar ?? env !== 'production';
     const sidecarPos = sidecar
         ? sidecarWindowOptions(screen.getAllDisplays(), screen.getPrimaryDisplay().id, width, height)
         : {};
@@ -126,14 +133,14 @@ export async function createWorkbench(options: CreateWorkbenchOptions): Promise<
     if (shouldRegister && options.app !== undefined && diyHome !== undefined) {
         const file = writeSelfRecord({
             app: options.app,
-            launch: options.launch ?? process.env["DIY_LAUNCH"] ?? null,
+            launch: options.launch ?? process.env['DIY_LAUNCH'] ?? null,
             diyHome,
             variant,
             env,
         });
         console.log(`[workbench] 实例注册：${file}`);
         const drop = (): void => removeSelfRecord();
-        app.once("will-quit", drop);
+        app.once('will-quit', drop);
     }
 
     const win = new BrowserWindow({
@@ -142,7 +149,7 @@ export async function createWorkbench(options: CreateWorkbenchOptions): Promise<
         title: instanceWindowTitle({
             title: options.title,
             app: options.app,
-            launch: options.launch ?? process.env["DIY_LAUNCH"] ?? null,
+            launch: options.launch ?? process.env['DIY_LAUNCH'] ?? null,
             diyHome,
         }),
         width,
@@ -158,12 +165,12 @@ export async function createWorkbench(options: CreateWorkbenchOptions): Promise<
     });
     // 页面自带的 `<title>`（index.html 里写死的「diy 聊天」之类）会盖掉上面的标题：
     // 窗口标题归外壳管（它才知道 instance-id / launch），页面无权改
-    win.on("page-title-updated", (event) => event.preventDefault());
-    win.on("closed", () => {
+    win.on('page-title-updated', (event) => event.preventDefault());
+    win.on('closed', () => {
         removeSelfRecord();
         disposeHandlers();
     });
-    win.once("ready-to-show", () => {
+    win.once('ready-to-show', () => {
         if (showInactive) win.showInactive();
         else win.show();
     });
@@ -177,29 +184,38 @@ export async function createWorkbench(options: CreateWorkbenchOptions): Promise<
     const transport = createMainTransport(() => win.webContents, RPC_CHANNEL);
     const server = new ChannelServerBinding(transport);
     // 一次注册整个模块（路径自动带 `diy.ui.workbench.` 前缀，与 preload 侧的 use() 同源）
-    workbenchService.bind(server, {
-        page: {
-            list: async () => listPages(),
-            invoke: async ({ input }) => invoke(input.pageId, input.method, input.args),
+    // ##87：模块层 = 原 name 的剩余段，行为与 defineService 逐字等价
+    server.use({
+        prefix: 'diy.ui.workbench',
+        api: workbenchRoutes,
+        handlers: {
+            page: {
+                list: async () => listPages(),
+                invoke: async ({ input }: any) => invoke(input.pageId, input.method, input.args),
+            },
         },
     });
 
     // 反方向（main → renderer）：同一条 transport 上 client + server 各挂一个（rpc 支持双向）
-    const uiClient = rendererService.use(new ChannelClientBinding(transport));
-    const ui = async (command: Parameters<Workbench["ui"]>[0]): Promise<unknown> => {
+    const uiClient = createScopedClient({
+        api: rendererRoutes,
+        client: new ChannelClientBinding(transport),
+        prefix: 'diy.ui.renderer',
+    });
+    const ui = async (command: Parameters<Workbench['ui']>[0]): Promise<unknown> => {
         switch (command.type) {
-            case "fill":
-                return uiClient.ui.fill({ selector: command.selector ?? "", value: String(command.value ?? "") });
-            case "click":
-                return uiClient.ui.click({ selector: command.selector ?? "" });
-            case "waitState":
+            case 'fill':
+                return uiClient.ui.fill({ selector: command.selector ?? '', value: String(command.value ?? '') });
+            case 'click':
+                return uiClient.ui.click({ selector: command.selector ?? '' });
+            case 'waitState':
                 return uiClient.ui.waitState({
-                    path: command.path ?? "",
+                    path: command.path ?? '',
                     equals: command.equals,
                     timeoutMs: command.timeoutMs ?? 5000,
                 });
-            case "readState":
-                return uiClient.ui.readState({ path: command.path ?? "" });
+            case 'readState':
+                return uiClient.ui.readState({ path: command.path ?? '' });
         }
     };
 

@@ -2,7 +2,7 @@
  * api-domains/flow/api.ts —— 从 services/api-def.ts 拆出。
  */
 import { z } from "zod";
-import { RpcSchema, defineService } from "@diy-agent/rpc";
+import { RpcSchema } from "@diy-agent/rpc";
 import {
     FlowNodeSchema,
     FlowEdgeSchema,
@@ -245,7 +245,6 @@ export const flowRoutes = RpcSchema.group({
     },
 });
 
-export const flowService = defineService({ name: "diy.flow", api: flowRoutes });
 
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。

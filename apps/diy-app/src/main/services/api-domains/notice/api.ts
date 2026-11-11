@@ -5,7 +5,7 @@
  */
 import { z } from "zod";
 import { StatusOk } from "../../../../shared/status";
-import { RpcSchema, defineService } from "@diy-agent/rpc";
+import { RpcSchema } from "@diy-agent/rpc";
 import { InboxEntrySchema } from "../../../../shared/inbox";
 import { ModelUnavailableNoticeSchema } from "../../../../shared/model-unavailable";
 
@@ -77,7 +77,6 @@ export const noticeRoutes = RpcSchema.group({
     },
 });
 
-export const noticeService = defineService({ name: "diy.notice", api: noticeRoutes });
 
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。

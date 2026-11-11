@@ -33,7 +33,6 @@ const taskRoutes = RpcSchema.group({
     }),
   },
 });
-const taskService = defineService({ name: 'demo.task', api: taskRoutes });
 
 /** 根 group：命令是 `task list`（传 taskRoutes 本身会变成 `list`） */
 const rootRoutes = RpcSchema.group({ children: { task: taskRoutes } });
@@ -53,10 +52,11 @@ class CliExit extends Error {
 
 async function main(): Promise<void> {
   const [serverTx, clientTx] = createMemTransportPair();
-  taskService.bind(new ChannelServerBinding(serverTx), {
+  const server = new ChannelServerBinding(serverTx);
+  server.use({ prefix: "demo", api: rootRoutes, handlers: { task: {
     list: ({ input }) =>
       Array.from({ length: input.limit ?? 2 }, (_, i) => ({ uri: `projects/1/tasks/${i + 1}` })),
-  });
+  } } });
   const client = new ChannelClientBinding(clientTx);
 
   const run = async (argv: string[]) => {

@@ -4,7 +4,7 @@
  * 类型层只有编译期；**运行时**要怎么挡？答：schema.parse 在 invoke 前跑。
  */
 import { z } from "zod";
-import { RpcSchema, defineService, ChannelServerBinding, ChannelClientBinding } from "../../src/index";
+import { RpcSchema, ChannelServerBinding, ChannelClientBinding } from "../../src/index";
 import { createMemTransportPair } from "../../test/helpers";
 
 const routes = RpcSchema.group({ children: {

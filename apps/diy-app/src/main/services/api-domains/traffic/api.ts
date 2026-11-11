@@ -6,7 +6,7 @@
 import { z } from "zod";
 import { StatusOk } from "../../../../shared/status";
 import { TrafficSnapshotSchema } from "../../../../shared/traffic-snapshot";
-import { RpcSchema, defineService } from "@diy-agent/rpc";
+import { RpcSchema } from "@diy-agent/rpc";
 import { TrafficRecordSchema } from "../../../../shared/traffic-record";
 
 export const trafficRoutes = RpcSchema.group({
@@ -158,7 +158,6 @@ export const trafficRoutes = RpcSchema.group({
     },
 });
 
-export const trafficService = defineService({ name: "diy.traffic", api: trafficRoutes });
 
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。

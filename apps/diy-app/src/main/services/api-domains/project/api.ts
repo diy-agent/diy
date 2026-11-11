@@ -4,7 +4,7 @@
  * import 待手工补（各域依赖不同）。
  */
 import { z } from "zod";
-import { RpcSchema, defineService } from "@diy-agent/rpc";
+import { RpcSchema } from "@diy-agent/rpc";
 import { StatusDataId } from "../../../../shared/status";
 export const projectRoutes = RpcSchema.group({
     desc: `项目管理`,
@@ -66,7 +66,6 @@ export const projectRoutes = RpcSchema.group({
     },
 });
 
-export const projectService = defineService({ name: "diy.project", api: projectRoutes });
 
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。

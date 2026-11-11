@@ -10,7 +10,7 @@
  * 合并后拆成 `heapUsed`（字节，程序判据）与 `systemMemory`（人读），语义不再混淆。
  */
 import { z } from "zod";
-import { RpcSchema, defineService } from "@diy-agent/rpc";
+import { RpcSchema } from "@diy-agent/rpc";
 
 export const appRoutes = RpcSchema.group({
     desc: `应用自述（进程 / 环境 / 版本）`,
@@ -42,7 +42,6 @@ export const appRoutes = RpcSchema.group({
     },
 });
 
-export const appService = defineService({ name: "diy.app", api: appRoutes });
 
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。

@@ -4,7 +4,7 @@
  * import 待手工补（各域依赖不同）。
  */
 import { z } from "zod";
-import { RpcSchema, defineService } from "@diy-agent/rpc";
+import { RpcSchema } from "@diy-agent/rpc";
 import {
     DiscoverFailureSchema,
     RemoteDiscoverResultSchema,
@@ -73,7 +73,6 @@ export const remoteRoutes = RpcSchema.group({
     },
 });
 
-export const remoteService = defineService({ name: "diy.remote", api: remoteRoutes });
 
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。

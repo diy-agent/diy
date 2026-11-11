@@ -2,7 +2,7 @@
  * api-domains/task/api.ts —— 从 services/api-def.ts 拆出。
  */
 import { z } from "zod";
-import { RpcSchema, defineService } from "@diy-agent/rpc";
+import { RpcSchema } from "@diy-agent/rpc";
 import { StatusOk, StatusDataUri } from "../../../../shared/status";
 import { ChangeTypeSchema, PrioritySchema } from "../../../core/task-fields";
 import { DraftFieldSchema, DraftsData, TaskDetailSchema } from "../../../../shared/task-detail";
@@ -315,7 +315,6 @@ export const taskRoutes = RpcSchema.group({
     },
 });
 
-export const taskService = defineService({ name: "diy.task", api: taskRoutes });
 
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。

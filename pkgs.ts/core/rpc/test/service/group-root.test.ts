@@ -9,8 +9,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { RpcSchema, defineService } from '../../src/core/index';
-import { channelHarness } from '../harness';
+import { RpcSchema } from '../../src/core/index';
 
 /** 用 group 当根：**每层都有 desc**（CLI help 靠它） */
 function groupTree() {
@@ -49,44 +48,5 @@ describe('RpcSchema.group 当根', () => {
         expect((g as any).math.add.desc).toBe('两数相加');
     });
 
-    it('`defineService` 直接吃 group 树（不经过 router）', async () => {
-        const svc = defineService({ name: 'demo', api: groupTree() });
-        const { binding, client, dispose } = await channelHarness.start();
-
-        // ⚠️ 这是 dev-fs 撞过的点：group 分支以前会被推成 never，`bind` 直接类型报错
-        svc.bind(binding, {
-            math: {
-                add: ({ input }) => input.a + input.b,
-                version: () => '1.0.0',
-            },
-        });
-
-        const c = svc.use(client);
-        expect(await c.math.add({ a: 2, b: 3 })).toBe(5);
-        expect(await c.math.version({})).toBe('1.0.0');
-        await dispose();
-    });
-
-    it('g生成物：group 树能正常出类型（每层 desc 进 JSDoc）', () => {
-        // 只验形状：不抛、路径对
-        const svc = defineService({ name: 'demo', api: groupTree() });
-        expect(svc.name).toBe('demo');
-        expect((svc.api as any).math.add).toBeDefined();
-    });
-});
-
-describe('对比：router 仍可作为根（老路径不破）', () => {
-    it('router({ x: group({...}) }) 照旧可用', async () => {
-        const api = RpcSchema.group({ children: {
-            math: RpcSchema.group({
-                desc: '数学',
-                children: { add: RpcSchema.unary({ input: { a: z.number() }, output: z.number(), desc: '加' }) },
-            }),
-        } });
-        const svc = defineService({ name: 'demo2', api });
-        const { binding, client, dispose } = await channelHarness.start();
-        svc.bind(binding, { math: { add: ({ input }) => input.a } });
-        expect(await svc.use(client).math.add({ a: 7 })).toBe(7);
-        await dispose();
-    });
+    // 2026-11：`defineService` 已删（见 scope.ts），group 当根的装配由 examples/cli 覆盖
 });
