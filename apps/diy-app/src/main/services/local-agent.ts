@@ -274,6 +274,7 @@ import { DEFAULT_COST_ALARM, costAlarmsOf, newCostAlarmState, usdText } from "..
 import {
     OUTPUT_SCENE_DEFAULTS,
     describeOutputBudget,
+    outputRoomInWindow,
     resolveOutputBudget,
     type OutputBudget,
     type OutputScene,
@@ -5839,6 +5840,21 @@ export class LocalAgentManager {
                 statFromStep(step, prevStep?.valueHashes ?? null, taskUri),
             );
             this.noteTraffic(taskUri, turnId, rm, 2);
+            // ##522：`max_tokens` = min(软上限, 模型上限, **窗口剩余**) —— 第三项是这次新加的。
+            // 缺它的后果两个极端：输入快撑满窗口时还要 65k，上游直接拒（输入+输出>窗口）；
+            // 反过来说，不该为了怕撞而把常数压到 16384（写作任务天天撞）。
+            // 输入 token 用估算（`estimateTokensOf`，~4 字符/token）：这里只发一次请求跑完所有步
+            // （`stopWhen: stepCountIs`），拿不到「本步的」实测输入。窗口未知 ⇒ 不施加第三项。
+            const roomForOutput = outputRoomInWindow(
+                contextLimitOf(model),
+                estimateTokensOf(JSON.stringify(sent)) + estimateTokensOf(delivery.text.text),
+            );
+            const outputTokensForStep = roomForOutput === null ? modelMax : Math.min(modelMax, roomForOutput);
+            if (roomForOutput !== null && roomForOutput < modelMax) {
+                console.log(
+                    `[local-agent] 窗口剩余压制输出上限 ${taskUri}：${modelMax} → ${outputTokensForStep} tokens`,
+                );
+            }
             const result = streamText({
                 model: this.modelFor(rm, key),
                 system: delivery.text.text,
@@ -5847,7 +5863,8 @@ export class LocalAgentManager {
                 stopWhen: stepCountIs(L.maxSteps),
                 abortSignal: signal,
                 headers: headersFor(resolveBaseUrl(rm), { sessionId: sessionIdOf(taskUri) }),
-                maxOutputTokens: modelMax, // 按模型硬上限（models.dev），reasoning 模型会先吃一部分
+                // 第三项（窗口剩余）已在上面算好 —— 真发值 = min(软上限, 模型上限, 窗口剩余)
+                maxOutputTokens: outputTokensForStep,
                 // none 用 AI SDK 标准关闭语义；"default"（平台默认）**什么都不发**（交上游默认行为，
                 // 见 shared/model-config.DEFAULT_EFFORT）；其他值由 OpenAI-compatible provider 原样转发。
                 // provider 配置可以提供 minimal/xhigh/max 等非通用值，不能压缩成固定枚举。

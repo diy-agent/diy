@@ -27,10 +27,44 @@ export type OutputScene = (typeof OUTPUT_SCENES)[number];
 
 /** 场景缺省软上限（tokens）。只在**没有更具体的覆盖**时生效（见 `resolveOutputBudget`） */
 export const OUTPUT_SCENE_DEFAULTS: Record<OutputScene, number> = {
-    chat: 16384,
-    summary: 2000,
+    // ##522（2026-11-11 用户拍）：16384 → 65536。16384 是 `pi` 的对话缺省，但那时
+    // 没有把「思考 token 也计入 output」（reasoning 模型先吃一截，正文拿不到 16k），
+    // 症状就是写个大文件就撞上限。65536 只是**允许**多写，不产生额外费用（按真吐的算）。
+    chat: 65536,
+    // 摘要（compaction）是 fail-closed：撞上限 = checkpoint 不完整、整次压缩作废。
+    // 2000 太容易白跑，提到 8000（与 opencode 的 SUMMARY_OUTPUT_MAX=32k 同属"够用"档）。
+    summary: 8000,
     small: 200,
 };
+
+/**
+ * 输出**在窗口里还剩多少额度**（##522）—— 第三个 min 项，跟"我们愿付多少"无关。
+ *
+ * 为什么必须有这一项：`max_tokens` 太大时，上游会因为「输入 + 输出 > 上下文窗口」直接拒；
+ * 而窗口剩多少只取决于本次输入。缺了这一项，就只剩两个选择：要么保守到 16384
+ * （写作任务天天撞），要么无脑拉满（输入快撑满时整轮被拒）。
+ *
+ * 口径抄 opencode（`model-request.ts:88-99`）：输入按 `1 + 15%` 计（它们按 ~4 字符/token
+ * 估，代码这类密文会低估，所以留垫），并设下限 1024（压到 0 等于不让它说话）。
+ *
+ * @param contextLimit 模型窗口（models.dev `limit.context`）；未知 = null（不施加窗口限制）
+ * @param inputTokens 本次输入已占的 token（上一步 provider 报的值；首次请求 = null 当 0）
+ * @returns 可用的输出 token 上限；窗口未知时 null（调用方只用软上限与模型上限）
+ */
+export const OUTPUT_WINDOW_FLOOR = 1024;
+/** 输入侧按比例留的余量（低估修正），与 opencode 的 `ESTIMATE_ERROR = 0.15` 同一口径 */
+export const OUTPUT_INPUT_HEADROOM = 0.15;
+
+export function outputRoomInWindow(
+    contextLimit: number | null | undefined,
+    inputTokens: number | null | undefined,
+): number | null {
+    const ctx = posInt(contextLimit);
+    if (ctx === null) return null;
+    const used = posInt(inputTokens) ?? 0;
+    const room = ctx - Math.ceil(used * (1 + OUTPUT_INPUT_HEADROOM));
+    return Math.max(OUTPUT_WINDOW_FLOOR, room);
+}
 
 /**
  * 软上限是谁定的 —— **必须记下来**（##429 要求 ②：日志可查"这个数是谁拍的"）。
