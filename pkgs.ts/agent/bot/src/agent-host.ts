@@ -41,6 +41,14 @@ export interface AgentHostOptions {
     /** 给一个 bot 造 port；缺省 = 按它的 model 解析真 provider */
     readonly portsFor?: (bot: BotConfig) => AgentPorts
     /**
+     * 一轮里最多跑几步「工具 → 再问模型」（缺省 20，与 createBotChat 的 DEFAULT_MAX_TOOL_STEPS 同值）。
+     *
+     * ⚠️ 必须显式给：ai-sdk 的 streamText 缺省是 `stepCountIs(1)` —— 不传就是**只调一次工具
+     * 就结束**，模型拿不到工具结果、也不会有第二轮文本，界面上就只剩一条工具行，
+     * 看着像「回答被吞了」（##539 之后的实测）。
+     */
+    readonly maxToolSteps?: number
+    /**
      * 给一个 bot 算 system 段（##530）：**每次建 agent 时算一次**，之后每轮原样带上。
      *
      * 不传 = 没有 system（测试 / 无上下文场景）。装配层（`apps/chat`）在这里接
@@ -162,6 +170,7 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
             persist: filePersist(dirFor(bot.id)),
             autoCompact: { windowTokens: factsFor(bot).windowTokens },
             ...(opts.toolsFor === undefined ? {} : { tools: opts.toolsFor(bot) }),
+            maxSteps: opts.maxToolSteps ?? 20,
         })
         agents.set(bot.id, created)
         return created
