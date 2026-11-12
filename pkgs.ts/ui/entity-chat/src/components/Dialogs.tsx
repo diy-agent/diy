@@ -92,7 +92,7 @@ export function CreateBotDialog({
 
     const available: Bot[] = Object.values(state.bots).filter((bot) => !entity.botIds.includes(bot.id));
     const homeName = (bot: Bot): string => {
-        const home = state.entities.find((item) => item.id === bot.entityId);
+        const home = state.entities.find((item) => item.id === bot.homeEntityId);
         if (home === undefined) return '?';
         return `${home.kind === 'project' ? '项目' : '任务'}「${home.name}」`;
     };

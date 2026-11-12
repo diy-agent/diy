@@ -91,7 +91,7 @@ function EntityRow({
 
 function BotRow({ bot, compact }: { bot: Bot; compact: boolean }) {
     const state = useStore();
-    const owner = state.entities.find((e) => e.id === bot.entityId);
+    const owner = state.entities.find((e) => e.id === bot.homeEntityId);
     const active = state.selectedId === bot.id;
 
     if (compact) {
@@ -114,7 +114,7 @@ function BotRow({ bot, compact }: { bot: Bot; compact: boolean }) {
             className={`flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-xs ${
                 active ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60'
             }`}
-            title={`${bot.name} 专属：${owner?.name ?? bot.entityId}`}
+            title={`${bot.name} 专属：${owner?.name ?? bot.homeEntityId}`}
         >
             <span className="size-2 shrink-0 rounded-full" style={{ background: bot.color }} />
             <span className="truncate">{bot.name}</span>

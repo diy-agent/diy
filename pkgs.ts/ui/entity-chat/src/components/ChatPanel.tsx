@@ -1,5 +1,7 @@
 import { AssistantRuntimeProvider, ComposerPrimitive, MessagePrimitive, ThreadPrimitive, useAuiState, useExternalStoreRuntime } from '@assistant-ui/react';
 import { ArrowUp, Square } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import * as React from 'react';
 
 import type { Author } from '../model';
@@ -54,7 +56,15 @@ function ChatMessage() {
                         : 'max-w-[85%] whitespace-pre-wrap rounded-2xl border bg-card px-3 py-2 text-sm'
                 }
             >
-                <MessagePrimitive.Parts components={{ Text: ({ text }) => <>{text}</> }} />
+                <MessagePrimitive.Parts
+                    components={{
+                        Text: ({ text }) => (
+                            <div className="prose-invert max-w-none text-sm leading-relaxed [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-muted [&_pre]:p-3">
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+                            </div>
+                        ),
+                    }}
+                />
             </div>
         </MessagePrimitive.Root>
     );
@@ -62,7 +72,8 @@ function ChatMessage() {
 
 export function ChatPanel({ targetId }: { targetId: string }) {
     const state = useStore();
-    const items = itemsOf(targetId);
+    const rawItems = itemsOf(targetId);
+    const items = React.useMemo(() => [...rawItems].sort((a, b) => a.seq - b.seq), [rawItems]);
     const running = state.running[targetId] === true;
 
     // Item → ThreadMessageLike（每次渲染重算；真实项目里按 item 引用做 memo）

@@ -32,13 +32,15 @@ function EntityHeader({ entity, onAddBot, onPickModel }: { entity: Entity; onAdd
             <div className="flex flex-wrap items-center gap-2">
                 <span className="flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] text-muted-foreground">
                     {entity.kind === 'project' ? <Folder className="size-3 text-sky-400" /> : <ListTodo className="size-3 text-emerald-400" />}
-                    {entity.kind === 'project' ? '项目' : '任务'}
+                    {entity.kind === 'project' ? '项目' : entity.kind === 'task' ? '任务' : 'Bot'}
                 </span>
                 <h1 className="text-sm font-semibold">{entity.name}</h1>
-                <span className="flex items-center gap-1 font-mono text-[11px] text-muted-foreground">
-                    <Folder className="size-3" />
-                    {dirOf(entity, state.entities)}
-                </span>
+                {entity.dir !== undefined && (
+                    <span className="flex items-center gap-1 font-mono text-[11px] text-muted-foreground">
+                        <Folder className="size-3" />
+                        {dirOf(entity, state.entities)}
+                    </span>
+                )}
                 <ModelChip value={entity.modelKey} onClick={onPickModel} />
 
                 <span className="ml-auto flex items-center gap-1.5 text-xs">
@@ -53,9 +55,6 @@ function EntityHeader({ entity, onAddBot, onPickModel }: { entity: Entity; onAdd
                         <span key={bot.id} className="flex items-center gap-1 rounded-full border px-2 py-0.5 text-muted-foreground">
                             <span className="size-2 rounded-full" style={{ background: bot.color }} />
                             {bot.name}
-                            <button onClick={() => actions.removeBot(entity.id, bot.id)} title="移出对话" className="rounded p-0.5 hover:bg-muted">
-                                <X className="size-3" />
-                            </button>
                         </span>
                     ))}
                     <button onClick={onAddBot} className="flex items-center gap-1 rounded-full border px-2 py-0.5 hover:bg-muted">
@@ -65,18 +64,16 @@ function EntityHeader({ entity, onAddBot, onPickModel }: { entity: Entity; onAdd
                 </span>
             </div>
             <p className="mt-1 text-[11px] text-muted-foreground">
-                {entity.botIds.length <= 1
-                    ? '单 agent：这个实体的 bot 直接对话（bot 只属于它）'
-                    : `多 agent：${entity.botIds.length} 个实体专属 bot 各自回复`}
+                {entity.botIds.length <= 1 ? '单 agent：这个实体的 bot 直接对话' : `多 agent：${entity.botIds.length} 个实体专属 bot`}
                 <span className="ml-2">· {contextWindowLabel(entity.modelKey)}</span>
             </p>
         </header>
     );
 }
 
-function BotHeader({ bot, onPickModel }: { bot: Bot; onPickModel: () => void }) {
+function BotHeader({ bot, entity, onPickModel }: { bot: Bot; entity: Entity; onPickModel: () => void }) {
     const state = useStore();
-    const ownerEntity = state.entities.find((entity) => entity.id === bot.entityId);
+    const ownerEntity = state.entities.find((item) => item.id === bot.homeEntityId);
 
     return (
         <header className="border-b px-5 py-3">
@@ -92,24 +89,25 @@ function BotHeader({ bot, onPickModel }: { bot: Bot; onPickModel: () => void }) 
                 <span className="text-[11px] text-muted-foreground">
                     属于 {ownerEntity?.kind === 'project' ? '项目' : '任务'}「{ownerEntity?.name ?? '?'}」
                 </span>
-                <ModelChip value={bot.modelKey} onClick={onPickModel} />
+                <ModelChip value={entity.modelKey} onClick={onPickModel} />
             </div>
-            <p className="mt-1 text-[11px] text-muted-foreground">
-                这是 {bot.name} 的独立对话（与它所属实体的群聊分开）；{bot.persona}
-            </p>
+            <p className="mt-1 text-[11px] text-muted-foreground">这是 {bot.name} 的独立对话；{bot.persona}</p>
         </header>
     );
 }
 
 export function App() {
     const state = useStore();
-    const bot = state.bots[state.selectedId];
     const entity = entityOf(state.selectedId);
+    const bot = entity?.kind === 'bot' ? state.bots[entity.botIds[0] ?? ''] : undefined;
     const [dialog, setDialog] = React.useState<'project' | 'bot' | 'settings' | null>(null);
-    const [modelTarget, setModelTarget] = React.useState<{ kind: 'entity' | 'bot'; id: string } | null>(null);
-    const activeEntity = bot !== undefined ? entityOf(bot.entityId) : entity;
+    const [modelTarget, setModelTarget] = React.useState<string | null>(null);
+    const activeEntity = entity;
 
-    // 侧栏折叠：持久化 + ⌘B
+    React.useEffect(() => {
+        actions.bootstrap();
+    }, []);
+
     const [sidebarOpen, setSidebarOpen] = React.useState<boolean>(() => {
         try {
             return localStorage.getItem('entity-chat:sidebar') !== 'closed';
@@ -150,33 +148,27 @@ export function App() {
             />
 
             <main className="flex min-w-0 flex-1 flex-col">
-                {bot !== undefined ? (
+                {!state.loaded ? (
+                    <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">连接 diy2 后端…</div>
+                ) : entity === undefined ? (
+                    <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">左侧选择一个项目、任务或 bot</div>
+                ) : bot !== undefined ? (
                     <>
-                        <BotHeader bot={bot} onPickModel={() => setModelTarget({ kind: 'bot', id: bot.id })} />
-                        <ChatPanel key={bot.id} targetId={bot.id} />
-                    </>
-                ) : entity !== undefined ? (
-                    <>
-                        <EntityHeader
-                            entity={entity}
-                            onAddBot={() => setDialog('bot')}
-                            onPickModel={() => setModelTarget({ kind: 'entity', id: entity.id })}
-                        />
+                        <BotHeader bot={bot} entity={entity} onPickModel={() => setModelTarget(entity.id)} />
                         <ChatPanel key={entity.id} targetId={entity.id} />
                     </>
                 ) : (
-                    <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">左侧选择一个项目、任务或 bot</div>
+                    <>
+                        <EntityHeader entity={entity} onAddBot={() => setDialog('bot')} onPickModel={() => setModelTarget(entity.id)} />
+                        <ChatPanel key={entity.id} targetId={entity.id} />
+                    </>
+                )}
+                {state.error !== undefined && (
+                    <div className="border-t border-destructive/40 bg-destructive/10 px-3 py-1 text-[11px]">后端：{state.error}</div>
                 )}
             </main>
 
-            {dialog === 'project' && (
-                <CreateProjectDialog
-                    onClose={() => setDialog(null)}
-                    onSubmit={(input) => {
-                        actions.createProject(input);
-                    }}
-                />
-            )}
+            {dialog === 'project' && <CreateProjectDialog onClose={() => setDialog(null)} onSubmit={(input) => actions.createProject(input)} />}
             {dialog === 'bot' && activeEntity !== undefined && (
                 <CreateBotDialog
                     entity={activeEntity}
@@ -186,34 +178,20 @@ export function App() {
                 />
             )}
             {dialog === 'settings' && (
-                <SettingsDialog
-                    defaultModelKey={state.defaultModelKey}
-                    onChangeDefault={(key) => actions.setDefaultModel(key)}
-                    onClose={() => setDialog(null)}
-                />
+                <SettingsDialog defaultModelKey={state.defaultModelKey} onChangeDefault={(key) => actions.setDefaultModel(key)} onClose={() => setDialog(null)} />
             )}
             {modelTarget !== null && (
                 <ModelDialog
-                    title={
-                        modelTarget.kind === 'entity'
-                            ? `「${entityOf(modelTarget.id)?.name ?? ''}」的模型`
-                            : `bot「${state.bots[modelTarget.id]?.name ?? ''}」的模型`
-                    }
-                    value={
-                        modelTarget.kind === 'entity'
-                            ? (entityOf(modelTarget.id)?.modelKey ?? state.defaultModelKey)
-                            : (state.bots[modelTarget.id]?.modelKey ?? state.defaultModelKey)
-                    }
-                    onChange={(key) =>
-                        modelTarget.kind === 'entity' ? actions.setEntityModel(modelTarget.id, key) : actions.setBotModel(modelTarget.id, key)
-                    }
+                    title={`「${entityOf(modelTarget)?.name ?? ''}」的模型`}
+                    value={entityOf(modelTarget)?.modelKey ?? state.defaultModelKey}
+                    onChange={(key) => actions.setEntityModel(modelTarget, key)}
                     onClose={() => setModelTarget(null)}
                 />
             )}
 
             <div className="pointer-events-none fixed bottom-2 right-3 flex items-center gap-1 text-[10px] text-muted-foreground">
                 <BotIcon className="size-3" />
-                entity-chat · 实验骨架
+                diy2 · 切片
             </div>
         </div>
     );

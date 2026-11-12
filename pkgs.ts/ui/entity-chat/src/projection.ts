@@ -33,7 +33,15 @@ export function toThreadMessages(items: Item[]): ThreadMessageLike[] {
 
         const author = item.author;
         const metadata = { custom: { kind: 'chat', author } satisfies CustomMeta };
-        const content = [{ type: 'text' as const, text: item.data.text }];
+        const text =
+            item.type === 'chat'
+                ? item.data.text
+                : item.type === 'tool'
+                  ? `工具 ${item.data.name}（${item.data.state}）`
+                  : item.type === 'error'
+                    ? item.data.message
+                    : '';
+        const content = [{ type: 'text' as const, text }];
 
         // user 消息不允许带 status（assistant-ui 的约束）
         if (author?.role === 'human') {
