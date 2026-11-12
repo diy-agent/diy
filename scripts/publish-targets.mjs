@@ -17,10 +17,8 @@ export const PUBLISH_TARGETS = [
     'pkgs.ts/ui/model-config',
     'pkgs.ts/model/provider',
     'pkgs.ts/agent/bot',
-    'pkgs.ts/ui/chat-page',
     'pkgs.ts/ui/workbench-plugin',
     'pkgs.ts/core/dev-paths',
-    'apps/chat',
 ];
 
 // `node scripts/publish-targets.mjs` ⇒ 一行一个（给 bash 的 mapfile 用）

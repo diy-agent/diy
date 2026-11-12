@@ -62,12 +62,6 @@
       "path": "pkgs.ts/ui/workbench-ui"
     },
     {
-      "path": "pkgs.ts/ui/chat-page"
-    },
-    {
-      "path": "apps/minimal"
-    },
-    {
       "path": "apps/diy-app"
     },
     {
@@ -76,11 +70,5 @@
     {
       "path": "pkgs.ts/model/catalog"
     },
-    {
-      "path": "apps/chat"
-    },
-    {
-      "path": "apps/web"
-    }
-  ]
+    ]
 }
