@@ -74,7 +74,7 @@ export class Projector {
                 const item: Item = {
                     id,
                     seq,
-                    turnId: event.toolCallId,
+                    turnId: event.turnId,
                     at: now,
                     status: 'streaming',
                     author: this.author,

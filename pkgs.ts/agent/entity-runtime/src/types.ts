@@ -61,8 +61,8 @@ export type AgentEvent =
     | { seq: number; type: 'run.started'; turnId: string; messageId: string }
     | { seq: number; type: 'text.delta'; messageId: string; delta: string }
     | { seq: number; type: 'reasoning.delta'; messageId: string; delta: string }
-    | { seq: number; type: 'tool.started'; toolCallId: string; name: string; args?: unknown }
-    | { seq: number; type: 'tool.completed'; toolCallId: string; name: string; result?: unknown; error?: string }
+    | { seq: number; type: 'tool.started'; turnId: string; toolCallId: string; name: string; args?: unknown }
+    | { seq: number; type: 'tool.completed'; turnId: string; toolCallId: string; name: string; result?: unknown; error?: string }
     | { seq: number; type: 'message.completed'; messageId: string }
     | { seq: number; type: 'run.completed'; turnId: string }
     | { seq: number; type: 'run.failed'; turnId: string; message: string };

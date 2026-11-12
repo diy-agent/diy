@@ -1,8 +1,8 @@
-// projection.ts —— Item → ThreadMessageLike（UI 唯一入口）。
+// projection.ts —— Item[] → ThreadMessageLike[]（UI 唯一出口）。
 //
-// 这是本轮讨论里「投影」的最小实现：
-//   真源 Item（type + data）→ 渲染 DTO（assistant-ui 的消息）
-// author / kind 走 metadata.custom，不污染 assistant-ui 的 role。
+// 关键：assistant-ui 的一条消息可以含多个 part（text / tool-call / reasoning）。
+// 我们的 Item 是"事件级"（一条 text、一条 tool 各自一个 Item），所以这里按 turnId
+// 把同一轮的 text 与 tool **合并进同一条消息**——否则会出现两条独立气泡。
 
 import type { ThreadMessageLike } from '@assistant-ui/react';
 
@@ -16,57 +16,88 @@ export interface CustomMeta {
 const completeStatus: ThreadMessageLike['status'] = { type: 'complete', reason: 'stop' };
 const runningStatus: ThreadMessageLike['status'] = { type: 'running' };
 
+type Part = NonNullable<ThreadMessageLike['content']> extends string ? never : Exclude<ThreadMessageLike['content'], string>[number];
+
+function partOf(item: Item): Part | undefined {
+    if (item.type === 'chat') return { type: 'text', text: item.data.text };
+    if (item.type === 'error') return { type: 'text', text: item.data.message };
+    if (item.type === 'tool') {
+        return {
+            type: 'tool-call',
+            toolCallId: item.id,
+            toolName: item.data.name,
+            args: (item.data.args ?? {}) as never,
+            result: item.data.result,
+            isError: item.data.state === 'error',
+        };
+    }
+    return undefined;
+}
+
 export function toThreadMessages(items: Item[]): ThreadMessageLike[] {
-    return items.map((item): ThreadMessageLike => {
+    const out: { turnId: string; message: ThreadMessageLike }[] = [];
+
+    for (const item of items) {
         const createdAt = new Date(item.at);
+        const author = item.author;
 
         if (item.type === 'notice') {
-            return {
-                id: item.id,
-                createdAt,
-                role: 'assistant',
-                content: [{ type: 'text', text: item.data.text }],
-                status: completeStatus,
-                metadata: { custom: { kind: 'notice' } satisfies CustomMeta },
-            };
+            out.push({
+                turnId: item.turnId,
+                message: {
+                    id: item.id,
+                    createdAt,
+                    role: 'assistant',
+                    content: [{ type: 'text', text: item.data.text }],
+                    status: completeStatus,
+                    metadata: { custom: { kind: 'notice' } satisfies CustomMeta },
+                },
+            });
+            continue;
         }
 
-        const author = item.author;
-        const metadata = { custom: { kind: 'chat', author } satisfies CustomMeta };
-        if (item.type === 'tool') {
-            return {
-                id: item.id,
-                createdAt,
-                role: 'assistant',
-                content: [
-                    {
-                        type: 'tool-call',
-                        toolCallId: item.id,
-                        toolName: item.data.name,
-                        args: (item.data.args ?? {}) as never,
-                        result: item.data.result,
-                        isError: item.data.state === 'error',
-                    },
-                ],
-                status: item.status === 'streaming' ? runningStatus : completeStatus,
-                metadata,
-            };
-        }
-
-        const text = item.type === 'chat' ? item.data.text : item.data.message;
-        const content = [{ type: 'text' as const, text }];
-
-        // user 消息不允许带 status（assistant-ui 的约束）
         if (author?.role === 'human') {
-            return { id: item.id, createdAt, role: 'user', content, metadata };
+            out.push({
+                turnId: item.turnId,
+                message: {
+                    id: item.id,
+                    createdAt,
+                    role: 'user',
+                    content: [{ type: 'text', text: item.type === 'chat' ? item.data.text : '' }],
+                    metadata: { custom: { kind: 'chat', author } satisfies CustomMeta },
+                },
+            });
+            continue;
         }
-        return {
-            id: item.id,
-            createdAt,
-            role: 'assistant',
-            content,
-            status: item.status === 'streaming' ? runningStatus : completeStatus,
-            metadata,
-        };
-    });
+
+        const part = partOf(item);
+        if (part === undefined) continue;
+
+        const status = item.status === 'streaming' ? runningStatus : completeStatus;
+        const last = out.at(-1);
+
+        // 同一轮：把 part 追加进上一条 assistant 消息（这就是"工具与文本不分离"）
+        if (last !== undefined && last.turnId === item.turnId && last.message.role === 'assistant') {
+            const content = [...(last.message.content as Part[]), part];
+            out[out.length - 1] = {
+                turnId: last.turnId,
+                message: { ...last.message, content, status },
+            };
+            continue;
+        }
+
+        out.push({
+            turnId: item.turnId,
+            message: {
+                id: item.id,
+                createdAt,
+                role: 'assistant',
+                content: [part],
+                status,
+                metadata: { custom: { kind: 'chat', author } satisfies CustomMeta },
+            },
+        });
+    }
+
+    return out.map((entry) => entry.message);
 }

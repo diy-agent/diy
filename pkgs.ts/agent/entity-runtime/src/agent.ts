@@ -55,15 +55,16 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
                     yield { seq: ++seq, type: 'reasoning.delta', messageId, delta: part.text };
                     break;
                 case 'tool-call':
-                    yield { seq: ++seq, type: 'tool.started', toolCallId: part.toolCallId, name: part.toolName, args: part.input };
+                    yield { seq: ++seq, type: 'tool.started', turnId, toolCallId: part.toolCallId, name: part.toolName, args: part.input };
                     break;
                 case 'tool-result':
-                    yield { seq: ++seq, type: 'tool.completed', toolCallId: part.toolCallId, name: part.toolName, result: part.output };
+                    yield { seq: ++seq, type: 'tool.completed', turnId, toolCallId: part.toolCallId, name: part.toolName, result: part.output };
                     break;
                 case 'tool-error':
                     yield {
                         seq: ++seq,
                         type: 'tool.completed',
+                        turnId,
                         toolCallId: (part as { toolCallId: string }).toolCallId,
                         name: (part as { toolName?: string }).toolName ?? 'tool',
                         error: String((part as { error?: unknown }).error ?? 'tool error'),
