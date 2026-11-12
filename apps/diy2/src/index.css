@@ -1,0 +1,11 @@
+@import 'tailwindcss';
+@import '@diy-agent/entity-chat/styles.css';
+
+@source '../../../pkgs.ts/ui/entity-chat/src';
+@source './';
+
+html,
+body,
+#root {
+    height: 100%;
+}
