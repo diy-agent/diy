@@ -14,7 +14,10 @@ export class Projector {
     private readonly toolIds = new Map<string, string>();
     private seq = 0;
 
-    constructor(private readonly author: Author) {}
+    constructor(
+        private readonly author: Author,
+        private readonly turn: number,
+    ) {}
 
     all(): Item[] {
         return [...this.items.values()].sort((a, b) => a.seq - b.seq);
@@ -36,6 +39,7 @@ export class Projector {
                 const item: Item = {
                     id: event.messageId,
                     seq,
+                    turn: this.turn,
                     turnId: event.turnId,
                     at: now,
                     status: 'streaming',
@@ -74,6 +78,7 @@ export class Projector {
                 const item: Item = {
                     id,
                     seq,
+                    turn: this.turn,
                     turnId: event.turnId,
                     at: now,
                     status: 'streaming',
@@ -106,6 +111,7 @@ export class Projector {
                 const item: Item = {
                     id: nextId('err'),
                     seq,
+                    turn: this.turn,
                     turnId: event.turnId,
                     at: now,
                     status: 'failed',

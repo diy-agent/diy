@@ -12,7 +12,7 @@ import { actions, itemsOf, useStore } from '../store';
 export function ChatPanel({ targetId }: { targetId: string }) {
     const state = useStore();
     const rawItems = itemsOf(targetId);
-    const items = React.useMemo(() => [...rawItems].sort((a, b) => a.seq - b.seq), [rawItems]);
+    const items = React.useMemo(() => [...rawItems].sort((a, b) => (a.turn ?? 0) - (b.turn ?? 0) || a.seq - b.seq), [rawItems]);
     const running = state.running[targetId] === true;
 
     const messages = React.useMemo(() => toThreadMessages(items), [items]);

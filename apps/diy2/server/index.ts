@@ -20,6 +20,14 @@ mkdirSync(dataDir, { recursive: true });
 const store = openStore(join(dataDir, 'diy2.db'));
 const inbox = new Inbox(store.db);
 
+/** 每个实体一条串行链：同一实体的轮次严格按发送顺序执行 */
+const chains = new Map<string, Promise<void>>();
+
+function nextTurn(entityId: string): number {
+    const turns = store.itemsOf(entityId).map((item) => (item as { turn?: number }).turn ?? 0);
+    return Math.max(0, ...turns) + 1;
+}
+
 const COLORS = ['#7cc4ff', '#f7b267', '#a3e635', '#f472b6', '#c084fc', '#38bdf8'];
 
 // ─── 种子：bot 落 sqlite；项目/任务先在内存 ────────────────────────
@@ -228,69 +236,75 @@ const server = createServer((req, res) => {
             const entity = entities.get(id);
             if (entity === undefined) return json(res, 404, { error: 'entity not found' });
 
-            void readBody<{ text?: string }>(req).then(async (body) => {
+            void readBody<{ text?: string }>(req).then((body) => {
                 const text = (body.text ?? '').trim();
                 if (text === '') return json(res, 400, { error: 'text required' });
-                const botId = entity.botIds[0];
-                const bot = botId === undefined ? undefined : store.listBots().find((b) => b.id === botId);
-                if (bot === undefined) return json(res, 400, { error: 'entity has no bot' });
 
-                res.writeHead(200, {
-                    'content-type': 'text/event-stream; charset=utf-8',
-                    'cache-control': 'no-cache',
-                    connection: 'keep-alive',
-                });
+                // 同一实体串行：上一轮没结束，这一轮排队等
+                const run = (chains.get(id) ?? Promise.resolve()).then(async () => {
+                    const botId = entity.botIds[0];
+                    const bot = botId === undefined ? undefined : store.listBots().find((b) => b.id === botId);
+                    if (bot === undefined) {
+                        json(res, 400, { error: 'entity has no bot' });
+                        return;
+                    }
 
-                const now = Date.now();
-                // 1) 用户消息：先落 inbox，再落时间线
-                inbox.post(id, 'chat', { text }, 'now');
-                const claimed = inbox.drain(id);
-                const userItem: Item = {
-                    id: `u-${now.toString(36)}`,
-                    seq: store.seqOf(id) + 1,
-                    turnId: `turn-${now.toString(36)}`,
-                    at: now,
-                    status: 'done',
-                    author: { id: 'human:我', name: '我', color: '#9ca3af', role: 'human' },
-                    type: 'chat',
-                    data: { text },
-                };
-                const savedUser = store.appendItem(id, userItem);
-                sse(res, { kind: 'item', item: savedUser });
+                    res.writeHead(200, {
+                        'content-type': 'text/event-stream; charset=utf-8',
+                        'cache-control': 'no-cache',
+                        connection: 'keep-alive',
+                    });
 
-                // 2) 组装历史（最近 20 条文本）
-                const history = store
-                    .itemsOf(id)
-                    .filter((item) => item.type === 'chat')
-                    .slice(-20)
-                    .map((item) => ({
-                        role: item.author?.role === 'human' ? ('user' as const) : ('assistant' as const),
-                        content: (item.data as { text: string }).text,
-                    }));
+                    const now = Date.now();
+                    const turn = nextTurn(id);
+                    const turnId = `turn-${now.toString(36)}`;
 
-                // 3) 跑 agent，逐事件投影 + 推送
-                const abort = new AbortController();
-                req.on('close', () => abort.abort());
-                const projector = new Projector(authorOf(bot));
-                const persisted = new Set<string>();
+                    const userItem: Item = {
+                        id: `u-${now.toString(36)}`,
+                        seq: store.seqOf(id) + 1,
+                        turn,
+                        turnId,
+                        at: now,
+                        status: 'done',
+                        author: { id: 'human:我', name: '我', color: '#9ca3af', role: 'human' },
+                        type: 'chat',
+                        data: { text },
+                    };
+                    const savedUser = store.appendItem(id, userItem);
+                    sse(res, { kind: 'item', item: savedUser });
 
-                try {
-                    for await (const event of runAgent({ bot, modelKey: bot.modelKey, history, signal: abort.signal })) {
-                        for (const item of projector.apply(event)) {
-                            sse(res, { kind: 'item', item });
-                            if (item.status === 'done' && !persisted.has(item.id)) {
-                                persisted.add(item.id);
-                                store.appendItem(id, item);
+                    const history = store
+                        .itemsOf(id)
+                        .filter((item) => item.type === 'chat')
+                        .slice(-20)
+                        .map((item) => ({
+                            role: item.author?.role === 'human' ? ('user' as const) : ('assistant' as const),
+                            content: (item.data as { text: string }).text,
+                        }));
+
+                    const abort = new AbortController();
+                    req.on('close', () => abort.abort());
+                    const projector = new Projector(authorOf(bot), turn);
+                    const persisted = new Set<string>();
+
+                    try {
+                        for await (const event of runAgent({ bot, modelKey: bot.modelKey, history, signal: abort.signal })) {
+                            for (const item of projector.apply(event)) {
+                                sse(res, { kind: 'item', item });
+                                if (item.status === 'done' && !persisted.has(item.id)) {
+                                    persisted.add(item.id);
+                                    store.appendItem(id, item);
+                                }
                             }
                         }
+                    } catch (error) {
+                        sse(res, { kind: 'error', message: error instanceof Error ? error.message : String(error) });
+                    } finally {
+                        sse(res, { kind: 'done' });
+                        res.end();
                     }
-                } catch (error) {
-                    sse(res, { kind: 'error', message: error instanceof Error ? error.message : String(error) });
-                } finally {
-                    inbox.complete(claimed.map((item) => item.id));
-                    sse(res, { kind: 'done' });
-                    res.end();
-                }
+                });
+                chains.set(id, run.catch(() => undefined));
             });
             return;
         }

@@ -34,6 +34,8 @@ export interface Author {
 interface ItemBase {
     id: string;
     seq: number;
+    /** 会话内的轮次序号（后端在发送时分配；老数据可能没有） */
+    turn?: number;
     turnId: string;
     at: number;
     status: 'pending' | 'streaming' | 'done' | 'failed';
