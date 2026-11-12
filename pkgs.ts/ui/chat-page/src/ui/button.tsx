@@ -24,6 +24,9 @@ const buttonVariants = cva(
                 sm: 'h-8 gap-1.5 rounded-md px-3 has-[>svg]:px-2.5',
                 lg: 'h-10 rounded-md px-6',
                 icon: 'size-9',
+                /** compact 图标档（AI Elements 的 MessageAction 用） */
+                'icon-sm': 'size-7',
+                'icon-xs': 'size-6',
                 /** compact：IDE 类界面的缺省档（高度 28px 与 style.ts 的行高一档） */
                 xs: 'h-7 gap-1 rounded-md px-2.5 text-xs',
             },

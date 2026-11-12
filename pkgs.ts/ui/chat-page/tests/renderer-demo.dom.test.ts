@@ -51,24 +51,28 @@ describe('/demo-tool（端到端）', () => {
         // ##526：React 的更新是异步批处理的（不在 act 里也算）—— 等一个宏任务再看 DOM
         await sleep(0);
 
-        // ① 立刻：一条 user + 一条 tool；tool 是 running、details 展开、黄点
-        const running = root.querySelector<HTMLDetailsElement>('.chat-block-tool')!;
-        expect(running).toBeTruthy();
-        expect(running.open).toBe(true);
-        expect(running.dataset['state']).toBe('running');
-        expect(running.querySelector('.chat-tool-dot')?.getAttribute('data-state')).toBe('running');
-        // 演示消息不进核心层：输入框被清空，且没有「出错了」
-        expect(input.value).toBe('');
-        expect(root.querySelector('.chat-text')?.textContent).not.toContain('出错了');
+        // 2026-11-11：tool 块改用 shadcn AI Elements 的 Trace（base-nova 版）——
+        // 断言口径跟随：一行 TraceLine（标题=工具名，status=running 时带 data-status），
+        // 跑完 status 消失，点开 Trigger 后能看到 CodeBlock 里的输出。
+        // 2026-11-11：Trace 行现在是「读取 <路径>」的人话（不再是 read_file + 原始 JSON）
+        const target = (): Element | undefined =>
+            [...document.querySelectorAll('[data-slot="trace-title"]')].find((el) =>
+                el.textContent?.includes('docs/plans/2026-11-02-concurrency-actor.md'),
+            );
 
-        // ② 900ms 后：同一位置变 ok（收起、绿点、摘要 + 输出）
+        // ① 立刻：tool 行在，且是 running（TraceLine data-status="running" → shimmer）
+        expect(target()).toBeTruthy();
+        expect(root.querySelector('[data-status="running"]')).toBeTruthy();
+        expect(input.value).toBe('');
+        expect(root.textContent).not.toContain('出错了');
+
+        // ② 900ms 后：不再 running，点开 trigger 能展开输出
         await sleep(1_100);
-        const done = root.querySelector<HTMLDetailsElement>('.chat-block-tool')!;
-        expect(done.open).toBe(false);
-        expect(done.dataset['state']).toBe('ok');
-        expect(done.querySelector('.chat-tool-dot')?.getAttribute('data-state')).toBe('ok');
-        expect(done.querySelector('.chat-tool-summary')?.textContent).toBe('读取 6.0 KB');
-        expect(done.querySelector('.chat-tool-output')?.textContent).toContain('演示输出');
+        expect(target()).toBeTruthy();
+        expect(root.querySelector('[data-slot="trace-title"]')?.closest('[data-status="running"]')).toBeNull();
+        (target()?.closest('[data-slot="trace-line"]')?.parentElement as HTMLElement | null)?.click();
+        await sleep(0);
+        expect(root.textContent).toContain('演示输出');
     });
 
     it('普通文本不会被当成命令（照常走 send，报错显示在消息线里）', async () => {
@@ -77,7 +81,11 @@ describe('/demo-tool（端到端）', () => {
         typeInto(input, '普通一句话');
         form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
         await sleep(50);
-        expect(root.querySelector('.chat-block-tool')).toBeNull();
+        expect(
+            [...root.querySelectorAll('[data-slot="trace-title"]')].some((el) =>
+                el.textContent?.includes('docs/plans/2026-11-02-concurrency-actor.md'),
+            ),
+        ).toBe(false);
         expect(root.textContent).toContain('出错了');
     });
 });

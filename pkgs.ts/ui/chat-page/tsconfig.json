@@ -4,7 +4,9 @@
         "composite": true,
         "noEmit": true,
         "lib": ["ES2022", "DOM", "DOM.Iterable"],
-        "jsx": "react-jsx"
+        "jsx": "react-jsx",
+        // shadcn CLI 用：components.json 的 aliases 必须能在 paths 里解析
+        "paths": { "@/*": ["./src/*"] }
     },
     "include": ["src/**/*", "tests/**/*"]
 }

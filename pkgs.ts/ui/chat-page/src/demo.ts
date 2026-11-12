@@ -1,4 +1,4 @@
-// demo.ts — UI 本地演示块（##514 接真工具前，先能看见 tool 块长什么样）。
+// demo.ts — UI 本地演示块（接真工具前，先能看见 tool / think 块长什么样）。
 //
 // 用法：输入框里敲 `/demo-tool` ⇒ 渲染层**本地**插一条假工具块：
 //   先 running（黄色圆点、details 展开，看得到进度）
@@ -32,5 +32,12 @@ export function demoToolMessage(phase: 'running' | 'ok'): WireMessage {
                   summary: '读取 6.0 KB',
                   output: '# 并发架构：单实例 = 单 actor（备忘）\n\n（演示输出，共 6.0 KB）',
               };
-    return { role: 'assistant', blocks: [{ kind: 'tool', id: 'demo-tool', data: { ...data } }] };
+    // 2026-11-11：同一条演示消息里带上一个 think 块 —— 一次能看到 AI Elements 的
+    // Reasoning（折叠 + 时长）与 Tool（状态徽章 + 参数/结果）两种高级效果。
+    const think = {
+        kind: 'think' as const,
+        id: 'demo-think',
+        data: { text: '先确认要读的文件存在，再取全文（演示用的思考过程）。', done: phase === 'ok' },
+    };
+    return { role: 'assistant', blocks: [think, { kind: 'tool', id: 'demo-tool', data: { ...data } }] };
 }

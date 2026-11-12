@@ -31,6 +31,25 @@ import { Button } from './ui/button.js';
 import { Input } from './ui/input.js';
 import { Textarea } from './ui/textarea.js';
 import { Label } from './ui/label.js';
+// 2026-11-11：消息流换 AI Elements（##526 遗留 ③ 的正式接入）。
+// Conversation = 贴底滚动容器（StickToBottom，自带「回到底部」按钮）；
+// Message = 一行消息；BlocksView = text→Streamdown / think→Reasoning / tool→Tool。
+// 滚动容器同样换官方 base-nova 的 MessageScroller（贴底 / 自动滚动 / 跳转按钮都在原语里）
+import {
+    MessageScroller,
+    MessageScrollerButton,
+    MessageScrollerContent,
+    MessageScrollerItem,
+    MessageScrollerProvider,
+    MessageScrollerViewport,
+} from './ui/message-scroller.js';
+// 2026-11-11：消息行/气泡/思考/工具一律用 shadcn 官方的 AI Elements 原语
+// （base-nova：Message / Bubble / Trace / CodeBlock —— 与 docs/ai-elements/base 范例同一套）。
+import { Message, MessageContent } from './ui/message.js';
+import { Bubble, BubbleContent } from './ui/bubble.js';
+import { BlocksView } from './ai-elements/block-view.js';
+import { LoaderCircleIcon } from 'lucide-react';
+import { Trace, TraceIcon, TraceLine, TraceTitle } from './ui/trace.js';
 
 // ##499：与另两版同一份注册表（插件自造 kind 从这里登记）
 export { registerBlockRenderer, renderBlock, renderBlocks } from './block-renderers.js';
@@ -533,83 +552,89 @@ function ViewTabs({
 }
 
 function MessageList({ state }: { state: ChatState }): React.ReactElement {
-    const listRef = useRef<HTMLOListElement>(null);
-    /** 贴底就跟到底，否则原地不动（判据 3：新消息不把用户拽走） */
-    const stickRef = useRef(true);
-
-    useLayoutEffect(() => {
-        const list = listRef.current;
-        if (list === null) return;
-        if (stickRef.current) list.scrollTop = list.scrollHeight;
-    }, [state.messages]);
-
+    if (state.messages.length === 0) {
+        return <div className="chat-empty flex size-full items-center justify-center p-8 text-sm text-muted-foreground">{state.emptyText}</div>;
+    }
     return (
-        <ol
-            className="chat-list"
-            ref={listRef}
-            onScroll={(event) => {
-                const list = event.currentTarget;
-                stickRef.current = list.scrollHeight - list.scrollTop - list.clientHeight < 32;
-            }}
-        >
-            {state.messages.length === 0 ? (
-                <li className="chat-empty">{state.emptyText}</li>
-            ) : (
-                state.messages.map((message, index) => {
-                    // 指纹 = 块内容本身：tool 块从 running → ok 时只有那一行重画
-                    const fingerprint = message.blocks
-                        .map((block) => `${block.kind}:${block.id}:${JSON.stringify(block.data)}`)
-                        .join('\n');
-                    return (
-                        <MessageRow
-                            key={`${String(index)}:${message.role}:${String(hash(fingerprint))}`}
-                            message={message}
-                            fingerprint={fingerprint}
-                        />
-                    );
-                })
-            )}
-        </ol>
+        <MessageScrollerProvider>
+            <MessageScroller className="chat-conversation">
+                <MessageScrollerViewport>
+                    <MessageScrollerContent className="gap-6 px-6 py-4">
+                        {state.messages.map((message, index) => {
+                            // 指纹 = 块内容本身：tool 块从 running → ok 时只有那一行重画
+                            const fingerprint = message.blocks
+                                .map((block) => `${block.kind}:${block.id}:${JSON.stringify(block.data)}`)
+                                .join('\n');
+                            return (
+                                <MessageScrollerItem
+                                    key={`${String(index)}:${message.role}:${String(hash(fingerprint))}`}
+                                    messageId={`${String(index)}-${String(hash(fingerprint))}`}
+                                    scrollAnchor={message.role === 'user'}
+                                >
+                                    <MessageRow message={message} fingerprint={fingerprint} />
+                                </MessageScrollerItem>
+                            );
+                        })}
+                        {/* 本轮在飞、但还没有任何内容可显示时，也要有反馈：
+                            主进程是「一轮结束/事件折叠后」才推快照的，中间这段若什么都不画，
+                            页面就像卡住了。这里用与 Trace 同一套的 running 行（shimmer）。 */}
+                        {state.busy ? (
+                            <MessageScrollerItem messageId="pending-turn" scrollAnchor>
+                                <Message>
+                                    <MessageContent>
+                                        <Trace>
+                                            <TraceLine status="running">
+                                                <TraceIcon>
+                                                    <LoaderCircleIcon className="animate-spin" />
+                                                </TraceIcon>
+                                                <TraceTitle>思考中…</TraceTitle>
+                                            </TraceLine>
+                                        </Trace>
+                                    </MessageContent>
+                                </Message>
+                            </MessageScrollerItem>
+                        ) : null}
+                    </MessageScrollerContent>
+                </MessageScrollerViewport>
+                <MessageScrollerButton />
+            </MessageScroller>
+        </MessageScrollerProvider>
     );
 }
 
-/**
- * 一行消息。memo 的判据是**内容指纹**（不是对象身份）：快照每次都是新对象，
- * 按身份比会把整表重画（那就退化成裸 DOM 版的毛病了）。
- */
 const MessageRow = memo(
     function MessageRow({ message, fingerprint }: { message: WireMessage; fingerprint: string }): React.ReactElement {
+        // 对齐按**内容**判，不只看 role：
+        // 主进程把 tool 结果条目的 role 归一成 "user"（protocol 的历史约定），
+        // 若照 role 画就会变成右侧的空白气泡。所以 tool / think 块一律当助手侧渲染。
+        const toolish = message.blocks.length > 0 && message.blocks.every((block) => block.kind === 'tool' || block.kind === 'think');
+        const isUserText = message.role === 'user' && !toolish;
+        if (isUserText) {
+            const text = message.blocks
+                .filter((block) => block.kind === 'text')
+                .map((block) => String((block.data as { text?: string }).text ?? ''))
+                .join('\n')
+                .trim();
+            return (
+                <Message align="end" data-role={message.role}>
+                    <MessageContent>
+                        <Bubble align="end" variant="muted">
+                            <BubbleContent className="whitespace-pre-wrap">{text}</BubbleContent>
+                        </Bubble>
+                    </MessageContent>
+                </Message>
+            );
+        }
         return (
-            <li className="chat-row" data-role={message.role}>
-                <span className="chat-role">{message.role === 'user' ? '我' : '助手'}</span>
-                <BlockList blocks={message.blocks} fingerprint={fingerprint} />
-            </li>
+            <Message data-role={message.role}>
+                <MessageContent className="gap-4">
+                    <BlocksView blocks={message.blocks} />
+                </MessageContent>
+            </Message>
         );
     },
     (prev, next) => prev.fingerprint === next.fingerprint,
 );
-
-/**
- * 一条消息的全部 Block。渲染走注册表（`block-renderers.ts`，产真实 DOM），
- * 所以这里只用 layout effect 按指纹换 children —— 不把 Block 形状塞进 React 的 diff。
- */
-function BlockList({
-    blocks,
-    fingerprint,
-}: {
-    blocks: readonly WireMessage['blocks'][number][];
-    fingerprint: string;
-}): React.ReactElement {
-    const ref = useRef<HTMLDivElement>(null);
-    const latest = useRef(blocks);
-    latest.current = blocks;
-    useLayoutEffect(() => {
-        const node = ref.current;
-        if (node === null) return;
-        node.replaceChildren(...renderBlocks(latest.current));
-    }, [fingerprint]);
-    return <div className="chat-blocks" ref={ref} />;
-}
 
 // ── 底部：bot 名 + 指标（一行）+ 输入框 ───────────────────
 

@@ -36,16 +36,28 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
+    "@base-ui/react": "^1.9.0",
     "@diy-agent/bot": "*",
     "@diy-agent/session": "*",
     "@diy-agent/ui-design": "^0.1.0",
     "@diy-agent/workbench": "*",
     "@diy-agent/workbench-ui": "*",
+    "@shadcn/react": "^0.3.1",
+    "@streamdown/cjk": "^1.0.4",
+    "@streamdown/code": "^2.0.0",
+    "@streamdown/math": "^1.0.3",
+    "@streamdown/mermaid": "^1.0.3",
+    "ai": "^7.0.169",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "lucide-react": "^1.72.0",
+    "motion": "^14.12.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "tailwind-merge": "^3.7.0"
+    "shiki": "^4.6.0",
+    "streamdown": "^2.7.1",
+    "tailwind-merge": "^3.7.0",
+    "use-stick-to-bottom": "^1.1.6"
   },
   "devDependencies": {
     "@diy-agent/test-llm": "0.1.0",
