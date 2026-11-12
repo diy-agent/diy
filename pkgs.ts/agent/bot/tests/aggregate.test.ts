@@ -274,6 +274,28 @@ describe('agent-host：把 Agent 接到 BotChatHost 契约上', () => {
     expect(snap.messages.flatMap((m) => m.blocks.map((b) => b.kind))).toContain('tool')
   })
 
+  // ##539 后续：ai-sdk 的 streamText **缺省 stepCountIs(1)** —— host 不传 maxSteps 时，
+  // 模型调完工具就结束，再也拿不到工具结果、也没有第二轮文本，界面上只剩一条工具行。
+  it('agent-host 必须把 maxSteps 交给 provider（否则工具结果的回答会被吃掉）', async () => {
+    let seenMaxSteps: number | undefined
+    const ports: AgentPorts = {
+      async *complete(_messages, opts) {
+        seenMaxSteps = opts?.maxSteps
+        yield '好'
+      },
+    }
+    const host = createAgentHost({
+      home: '/tmp/agent-host-test',
+      botStore: memStore(),
+      models: () => [],
+      portsFor: () => ports,
+      dirFor: () => `/tmp/agent-host-test/${Math.random().toString(36).slice(2)}`,
+    })
+    await host.createFirstBot({ model: 'test/model', name: '测试 bot' })
+    await host.send('你好', () => {})
+    expect(seenMaxSteps).toBeGreaterThan(1)
+  })
+
   it('没有 bot 时 snapshot 是空壳（UI 走引导页）', async () => {
     const host = createAgentHost({
       home: '/tmp/agent-host-test',
