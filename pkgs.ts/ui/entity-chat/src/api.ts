@@ -1,6 +1,6 @@
 // api.ts —— 与 diy2 后端的唯一约定（组件不写 URL / 方法名）。
 
-import type { Bot, Entity, Item } from './model';
+import type { Bot, Delivery, Entity, Item } from './model';
 
 const BASE = '/api';
 
@@ -21,6 +21,11 @@ export interface Snapshot {
 export async function fetchSnapshot(): Promise<Snapshot> {
     const [entities, bots] = await Promise.all([jsonFetch<Entity[]>('/entities'), jsonFetch<Bot[]>('/bots')]);
     return { entities, bots: Object.fromEntries(bots.map((bot) => [bot.id, bot])) };
+}
+
+export async function fetchDeliveries(entityId: string): Promise<Delivery[]> {
+    const data = await jsonFetch<{ deliveries: Delivery[] }>(`/entities/${encodeURIComponent(entityId)}/deliveries`);
+    return data.deliveries;
 }
 
 export async function fetchHistory(entityId: string, afterSeq = 0): Promise<Item[]> {
@@ -51,6 +56,7 @@ export async function addBotToEntity(entityId: string, botId: string): Promise<E
 
 export type StreamEvent =
     | { kind: 'item'; item: Item }
+    | { kind: 'delivery'; delivery: Delivery }
     | { kind: 'error'; message: string }
     | { kind: 'done' };
 

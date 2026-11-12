@@ -5,7 +5,7 @@
 import * as React from 'react';
 
 import * as api from './api';
-import type { Bot, Entity, Item } from './model';
+import type { Bot, Delivery, Entity, Item } from './model';
 
 const DEFAULT_MODEL = 'chen56@opencode-go/deepseek-v4.1-flash';
 
@@ -13,6 +13,7 @@ interface State {
     entities: Entity[];
     bots: Record<string, Bot>;
     items: Record<string, Item[]>;
+    deliveries: Record<string, Delivery[]>;
     running: Record<string, boolean>;
     selectedId: string;
     defaultModelKey: string;
@@ -24,6 +25,7 @@ let state: State = {
     entities: [],
     bots: {},
     items: {},
+    deliveries: {},
     running: {},
     selectedId: '',
     defaultModelKey: loadDefaultModel(),
@@ -80,8 +82,15 @@ async function refresh(): Promise<void> {
 }
 
 async function loadHistory(entityId: string): Promise<void> {
-    const items = await api.fetchHistory(entityId);
-    emit({ ...state, items: { ...state.items, [entityId]: items } });
+    const [items, deliveries] = await Promise.all([api.fetchHistory(entityId), api.fetchDeliveries(entityId)]);
+    emit({ ...state, items: { ...state.items, [entityId]: items }, deliveries: { ...state.deliveries, [entityId]: deliveries } });
+}
+
+function upsertDelivery(entityId: string, delivery: Delivery): void {
+    const list = state.deliveries[entityId] ?? [];
+    const index = list.findIndex((item) => item.messageId === delivery.messageId && item.botId === delivery.botId);
+    const next = index < 0 ? [...list, delivery] : list.map((item) => (item === list[index] ? delivery : item));
+    emit({ ...state, deliveries: { ...state.deliveries, [entityId]: next } });
 }
 
 // ─── 命令 ─────────────────────────────────────────────────────────
@@ -103,6 +112,7 @@ export const actions = {
         void api
             .streamChat(targetId, trimmed, (event) => {
                 if (event.kind === 'item') upsertItem(targetId, event.item);
+                if (event.kind === 'delivery') upsertDelivery(targetId, event.delivery);
                 if (event.kind === 'error') emit({ ...state, error: event.message });
             })
             .catch((error: unknown) => emit({ ...state, error: String(error) }))

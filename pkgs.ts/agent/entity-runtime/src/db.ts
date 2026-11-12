@@ -4,13 +4,15 @@
 
 import { DatabaseSync } from 'node:sqlite';
 
-import type { Bot, Item } from './types';
+import type { Bot, Delivery, Item } from './types';
 
 export interface Store {
     readonly db: DatabaseSync;
     listBots(): Bot[];
     upsertBot(bot: Bot): void;
     appendItem(entityId: string, item: Item): Item;
+    setDelivery(delivery: Omit<Delivery, 'updatedAt'>): Delivery;
+    listDeliveries(entityId: string): Delivery[];
     itemsOf(entityId: string, afterSeq?: number): Item[];
     seqOf(entityId: string): number;
 }
@@ -34,6 +36,15 @@ export function openStore(file: string): Store {
             at INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS items_entity ON entity_items(entity_id, seq);
+        CREATE TABLE IF NOT EXISTS deliveries (
+            entity_id TEXT NOT NULL,
+            message_id TEXT NOT NULL,
+            bot_id TEXT NOT NULL,
+            state TEXT NOT NULL,
+            note TEXT,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (entity_id, message_id, bot_id)
+        );
     `);
 
     const toBot = (row: Record<string, unknown>): Bot => ({
@@ -74,6 +85,35 @@ export function openStore(file: string): Store {
                 .prepare('INSERT INTO entity_items (entity_id, item, at) VALUES (?,?,?)')
                 .run(entityId, JSON.stringify(item), item.at);
             return { ...item, seq: Number(result.lastInsertRowid) };
+        },
+        setDelivery(delivery: Omit<Delivery, 'updatedAt'>): Delivery {
+            const updatedAt = Date.now();
+            db.prepare(
+                'INSERT INTO deliveries (entity_id, message_id, bot_id, state, note, updated_at) VALUES (?,?,?,?,?,?) ' +
+                    'ON CONFLICT(entity_id, message_id, bot_id) DO UPDATE SET state=?, note=?, updated_at=?',
+            ).run(
+                delivery.entityId,
+                delivery.messageId,
+                delivery.botId,
+                delivery.state,
+                delivery.note ?? null,
+                updatedAt,
+                delivery.state,
+                delivery.note ?? null,
+                updatedAt,
+            );
+            return { ...delivery, updatedAt };
+        },
+        listDeliveries(entityId: string): Delivery[] {
+            const rows = db.prepare('SELECT * FROM deliveries WHERE entity_id = ? ORDER BY updated_at ASC').all(entityId) as Record<string, unknown>[];
+            return rows.map((row) => ({
+                entityId: String(row['entity_id']),
+                messageId: String(row['message_id']),
+                botId: String(row['bot_id']),
+                state: row['state'] as Delivery['state'],
+                note: row['note'] === null ? undefined : String(row['note']),
+                updatedAt: Number(row['updated_at']),
+            }));
         },
         itemsOf(entityId: string, afterSeq = 0): Item[] {
             const rows = db

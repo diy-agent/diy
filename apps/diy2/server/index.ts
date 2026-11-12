@@ -28,6 +28,26 @@ function nextTurn(entityId: string): number {
     return Math.max(0, ...turns) + 1;
 }
 
+/** 展示顺序：每个实体一个单调计数器（跨 bot 也稳定） */
+const orderCounter = new Map<string, number>();
+function nextOrder(entityId: string): number {
+    if (!orderCounter.has(entityId)) {
+        const orders = store.itemsOf(entityId).map((item) => (item as { order?: number }).order ?? 0);
+        orderCounter.set(entityId, Math.max(0, ...orders));
+    }
+    const next = (orderCounter.get(entityId) ?? 0) + 1;
+    orderCounter.set(entityId, next);
+    return next;
+}
+
+/** 路由：@all / @名字；没有 @ 时默认全体参与者 */
+function route(entity: Entity, bots: Bot[], text: string): Bot[] {
+    const mentioned = [...text.matchAll(/@([^\s@]+)/g)].map((match) => match[1] ?? '');
+    if (mentioned.length === 0 || mentioned.includes('all')) return bots;
+    const picked = bots.filter((bot) => mentioned.includes(bot.name));
+    return picked.length > 0 ? picked : bots;
+}
+
 const COLORS = ['#7cc4ff', '#f7b267', '#a3e635', '#f472b6', '#c084fc', '#38bdf8'];
 
 // ─── 种子：bot 落 sqlite；项目/任务先在内存 ────────────────────────
@@ -230,6 +250,12 @@ const server = createServer((req, res) => {
             return;
         }
 
+        if (req.method === 'GET' && parts[0] === 'api' && parts[1] === 'entities' && parts[3] === 'deliveries') {
+            const id = decodeURIComponent(parts[2] ?? '');
+            json(res, 200, { deliveries: store.listDeliveries(id) });
+            return;
+        }
+
         // /api/entities/:id/chat
         if (req.method === 'POST' && parts[0] === 'api' && parts[1] === 'entities' && parts[3] === 'chat') {
             const id = decodeURIComponent(parts[2] ?? '');
@@ -242,9 +268,10 @@ const server = createServer((req, res) => {
 
                 // 同一实体串行：上一轮没结束，这一轮排队等
                 const run = (chains.get(id) ?? Promise.resolve()).then(async () => {
-                    const botId = entity.botIds[0];
-                    const bot = botId === undefined ? undefined : store.listBots().find((b) => b.id === botId);
-                    if (bot === undefined) {
+                    const participants = entity.botIds
+                        .map((botId) => store.listBots().find((b) => b.id === botId))
+                        .filter((bot): bot is Bot => bot !== undefined);
+                    if (participants.length === 0) {
                         json(res, 400, { error: 'entity has no bot' });
                         return;
                     }
@@ -262,6 +289,7 @@ const server = createServer((req, res) => {
                     const userItem: Item = {
                         id: `u-${now.toString(36)}`,
                         seq: store.seqOf(id) + 1,
+                        order: nextOrder(id),
                         turn,
                         turnId,
                         at: now,
@@ -272,6 +300,14 @@ const server = createServer((req, res) => {
                     };
                     const savedUser = store.appendItem(id, userItem);
                     sse(res, { kind: 'item', item: savedUser });
+
+                    const recipients = route(entity, participants, text);
+
+                    // 路由结果落 outbox：先 queued，再逐条推进
+                    for (const bot of recipients) {
+                        const delivery = store.setDelivery({ entityId: id, messageId: savedUser.id, botId: bot.id, state: 'queued' });
+                        sse(res, { kind: 'delivery', delivery });
+                    }
 
                     const history = store
                         .itemsOf(id)
@@ -284,25 +320,45 @@ const server = createServer((req, res) => {
 
                     const abort = new AbortController();
                     req.on('close', () => abort.abort());
-                    const projector = new Projector(authorOf(bot), turn);
-                    const persisted = new Set<string>();
 
-                    try {
-                        for await (const event of runAgent({ bot, modelKey: bot.modelKey, history, signal: abort.signal })) {
-                            for (const item of projector.apply(event)) {
-                                sse(res, { kind: 'item', item });
-                                if (item.status === 'done' && !persisted.has(item.id)) {
-                                    persisted.add(item.id);
-                                    store.appendItem(id, item);
+                    // 同一轮内：多个 bot 并行；各自一条投影 + 一条 outbox
+                    await Promise.all(
+                        recipients.map(async (bot) => {
+                            const delivering = store.setDelivery({ entityId: id, messageId: savedUser.id, botId: bot.id, state: 'delivering' });
+                            sse(res, { kind: 'delivery', delivery: delivering });
+
+                            const projector = new Projector(authorOf(bot), turn);
+                            const persisted = new Set<string>();
+                            let failed = false;
+
+                            try {
+                                for await (const event of runAgent({ bot, modelKey: bot.modelKey, history, signal: abort.signal })) {
+                                    for (const item of projector.apply(event)) {
+                                        const ordered: Item = item.order === undefined ? { ...item, order: nextOrder(id) } : item;
+                                        sse(res, { kind: 'item', item: ordered });
+                                        if (ordered.status === 'done' && !persisted.has(ordered.id)) {
+                                            persisted.add(ordered.id);
+                                            store.appendItem(id, ordered);
+                                        }
+                                    }
                                 }
+                            } catch (error) {
+                                failed = true;
+                                sse(res, { kind: 'error', message: error instanceof Error ? error.message : String(error) });
+                            } finally {
+                                const done = store.setDelivery({
+                                    entityId: id,
+                                    messageId: savedUser.id,
+                                    botId: bot.id,
+                                    state: failed ? 'failed' : 'delivered',
+                                });
+                                sse(res, { kind: 'delivery', delivery: done });
                             }
-                        }
-                    } catch (error) {
-                        sse(res, { kind: 'error', message: error instanceof Error ? error.message : String(error) });
-                    } finally {
-                        sse(res, { kind: 'done' });
-                        res.end();
-                    }
+                        }),
+                    );
+
+                    sse(res, { kind: 'done' });
+                    res.end();
                 });
                 chains.set(id, run.catch(() => undefined));
             });

@@ -12,10 +12,11 @@ import { actions, itemsOf, useStore } from '../store';
 export function ChatPanel({ targetId }: { targetId: string }) {
     const state = useStore();
     const rawItems = itemsOf(targetId);
-    const items = React.useMemo(() => [...rawItems].sort((a, b) => (a.turn ?? 0) - (b.turn ?? 0) || a.seq - b.seq), [rawItems]);
+    const items = React.useMemo(() => [...rawItems].sort((a, b) => (a.turn ?? 0) - (b.turn ?? 0) || (a.order ?? a.seq) - (b.order ?? b.seq)), [rawItems]);
     const running = state.running[targetId] === true;
 
-    const messages = React.useMemo(() => toThreadMessages(items), [items]);
+    const deliveries = state.deliveries[targetId] ?? [];
+    const messages = React.useMemo(() => toThreadMessages(items, deliveries, state.bots), [items, deliveries, state.bots]);
 
     const runtime = useExternalStoreRuntime({
         messages,

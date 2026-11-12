@@ -15,6 +15,11 @@ UI 用 assistant-ui 官方模板组件（templates/minimal 的 Thread/Composer/M
 - `bots` / `entity_items` 已落盘；项目/任务目前是内存种子（重启重置）
 - 聊天走真实模型（默认 `chen56@opencode-go/deepseek-v4.1-flash`），带一个 `get_time` 工具
 
+多 agent：
+- `route(entity, bots, text)`：`@all` / `@名字`，没有 @ 时默认全体参与者
+- 每个 (message, bot) 一条 outbox 记录（queued → delivering → delivered/failed），落 sqlite
+- 同一轮内多个 bot 并行；轮次之间串行；UI 在用户消息下显示投递 chip
+
 接口：
 
 ```
@@ -24,5 +29,6 @@ PATCH /api/entities/:id             { name?, modelKey? }
 POST /api/entities/:id/bots         { botId }        # 借用已有 bot
 POST /api/bots                      { name, homeEntityId, modelKey? }
 GET  /api/entities/:id/history?afterSeq=
+GET  /api/entities/:id/deliveries
 POST /api/entities/:id/chat         { text } → SSE { kind:'item'|'done'|'error' }
 ```

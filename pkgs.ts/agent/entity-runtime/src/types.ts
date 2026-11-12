@@ -44,6 +44,8 @@ export interface Author {
 interface ItemBase {
     id: string;
     seq: number;
+    /** 展示顺序（服务端在首次出现时分配；跨 bot 也稳定） */
+    order?: number;
     /** 会话内的轮次序号（发送时分配；排序用，跨并发也稳定） */
     turn: number;
     turnId: string;
@@ -70,6 +72,15 @@ export type AgentEvent =
     | { seq: number; type: 'run.failed'; turnId: string; message: string };
 
 export type InboxMode = 'next-turn' | 'next-step' | 'now';
+
+export interface Delivery {
+    entityId: string;
+    messageId: string;
+    botId: string;
+    state: 'queued' | 'delivering' | 'delivered' | 'failed' | 'skipped';
+    note?: string;
+    updatedAt: number;
+}
 
 export interface InboxItem {
     id: string;

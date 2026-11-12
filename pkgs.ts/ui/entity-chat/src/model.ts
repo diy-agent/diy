@@ -34,12 +34,23 @@ export interface Author {
 interface ItemBase {
     id: string;
     seq: number;
+    /** 展示顺序（后端分配） */
+    order?: number;
     /** 会话内的轮次序号（后端在发送时分配；老数据可能没有） */
     turn?: number;
     turnId: string;
     at: number;
     status: 'pending' | 'streaming' | 'done' | 'failed';
     author?: Author;
+}
+
+export interface Delivery {
+    entityId: string;
+    messageId: string;
+    botId: string;
+    state: 'queued' | 'delivering' | 'delivered' | 'failed' | 'skipped';
+    note?: string;
+    updatedAt: number;
 }
 
 export type Item =

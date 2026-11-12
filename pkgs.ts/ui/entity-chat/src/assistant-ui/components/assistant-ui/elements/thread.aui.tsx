@@ -457,7 +457,22 @@ const AssistantActionBar: FC = () => {
   );
 };
 
+const deliveryLabel = (state: string): string => {
+  if (state === "queued") return "排队";
+  if (state === "delivering") return "发送中";
+  if (state === "delivered") return "已收到";
+  if (state === "failed") return "失败";
+  return "跳过";
+};
+
 const UserMessage: FC = () => {
+  const meta = useAuiState(
+    (s) =>
+      (s.message.metadata as unknown as { custom?: CustomMeta } | undefined)
+        ?.custom,
+  );
+  const deliveries = meta?.deliveries ?? [];
+
   return (
     <MessagePrimitive.Root
       data-slot="aui_user-message-root"
@@ -479,6 +494,23 @@ const UserMessage: FC = () => {
         data-slot="aui_user-branch-picker"
         className="col-span-full col-start-1 -me-1 justify-end"
       />
+      {deliveries.length > 0 && (
+        <div className="col-start-2 flex flex-wrap justify-end gap-1.5 pt-0.5">
+          {deliveries.map((delivery) => (
+            <span
+              key={delivery.botId}
+              className="flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] text-muted-foreground"
+            >
+              <span
+                className="size-1.5 rounded-full"
+                style={{ background: delivery.color }}
+              />
+              {delivery.name}
+              <span>{deliveryLabel(delivery.state)}</span>
+            </span>
+          ))}
+        </div>
+      )}
     </MessagePrimitive.Root>
   );
 };

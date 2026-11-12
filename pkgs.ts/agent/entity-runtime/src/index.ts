@@ -9,6 +9,7 @@ export type {
     AgentEvent,
     Author,
     Bot,
+    Delivery,
     Entity,
     EntityKind,
     InboxItem,

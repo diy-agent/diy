@@ -6,11 +6,19 @@
 
 import type { ThreadMessageLike } from '@assistant-ui/react';
 
-import type { Author, Item } from './model';
+import type { Author, Bot, Delivery, Item } from './model';
+
+export interface DeliveryChip {
+    botId: string;
+    name: string;
+    color: string;
+    state: string;
+}
 
 export interface CustomMeta {
     kind: 'chat' | 'notice';
     author?: Author;
+    deliveries?: DeliveryChip[];
 }
 
 const completeStatus: ThreadMessageLike['status'] = { type: 'complete', reason: 'stop' };
@@ -34,7 +42,11 @@ function partOf(item: Item): Part | undefined {
     return undefined;
 }
 
-export function toThreadMessages(items: Item[]): ThreadMessageLike[] {
+export function toThreadMessages(
+    items: Item[],
+    deliveries: readonly Delivery[] = [],
+    bots: Record<string, Bot> = {},
+): ThreadMessageLike[] {
     const out: { turnId: string; message: ThreadMessageLike }[] = [];
 
     for (const item of items) {
@@ -57,6 +69,17 @@ export function toThreadMessages(items: Item[]): ThreadMessageLike[] {
         }
 
         if (author?.role === 'human') {
+            const chips: DeliveryChip[] = deliveries
+                .filter((delivery) => delivery.messageId === item.id)
+                .map((delivery) => {
+                    const bot = bots[delivery.botId];
+                    return {
+                        botId: delivery.botId,
+                        name: bot?.name ?? delivery.botId,
+                        color: bot?.color ?? '#9ca3af',
+                        state: delivery.state,
+                    };
+                });
             out.push({
                 turnId: item.turnId,
                 message: {
@@ -64,7 +87,7 @@ export function toThreadMessages(items: Item[]): ThreadMessageLike[] {
                     createdAt,
                     role: 'user',
                     content: [{ type: 'text', text: item.type === 'chat' ? item.data.text : '' }],
-                    metadata: { custom: { kind: 'chat', author } satisfies CustomMeta },
+                    metadata: { custom: { kind: 'chat', author, ...(chips.length > 0 ? { deliveries: chips } : {}) } satisfies CustomMeta },
                 },
             });
             continue;
