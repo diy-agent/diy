@@ -8,6 +8,9 @@ npm run dev -w @diy-agent/app-diy2        # UI  http://localhost:5190
 npm run dev:server -w @diy-agent/app-diy2 # API http://localhost:5191
 ```
 
+UI 用 assistant-ui 官方模板组件（templates/minimal 的 Thread/Composer/Markdown/ToolFallback，已复制进
+`pkgs.ts/ui/entity-chat/src/assistant-ui/` 并在 AssistantMessage 里加了作者行与 notice 渲染）。
+
 数据：`~/.diy/diy2/diy2.db`（node:sqlite）。
 - `bots` / `entity_items` 已落盘；项目/任务目前是内存种子（重启重置）
 - 聊天走真实模型（默认 `chen56@opencode-go/deepseek-v4.1-flash`），带一个 `get_time` 工具

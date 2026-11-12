@@ -33,14 +33,27 @@ export function toThreadMessages(items: Item[]): ThreadMessageLike[] {
 
         const author = item.author;
         const metadata = { custom: { kind: 'chat', author } satisfies CustomMeta };
-        const text =
-            item.type === 'chat'
-                ? item.data.text
-                : item.type === 'tool'
-                  ? `工具 ${item.data.name}（${item.data.state}）`
-                  : item.type === 'error'
-                    ? item.data.message
-                    : '';
+        if (item.type === 'tool') {
+            return {
+                id: item.id,
+                createdAt,
+                role: 'assistant',
+                content: [
+                    {
+                        type: 'tool-call',
+                        toolCallId: item.id,
+                        toolName: item.data.name,
+                        args: (item.data.args ?? {}) as never,
+                        result: item.data.result,
+                        isError: item.data.state === 'error',
+                    },
+                ],
+                status: item.status === 'streaming' ? runningStatus : completeStatus,
+                metadata,
+            };
+        }
+
+        const text = item.type === 'chat' ? item.data.text : item.data.message;
         const content = [{ type: 'text' as const, text }];
 
         // user 消息不允许带 status（assistant-ui 的约束）
