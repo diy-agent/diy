@@ -4,7 +4,6 @@ import { taskStateNotice } from "./notice-entity";
 import { getRendererActions, type LayoutChanges } from "./renderer-actions";
 import type { ToastType } from "../store/notificationStore";
 import { personaDrawerStore } from "../store/personaDrawerStore";
-import { apiDef } from "../../main/services/api-def";
 import { uiApi } from "../../main/services/api-domains/ui/api";
 import { diyService } from "./rpc";
 import { editTask } from "./task-edit";
@@ -29,15 +28,17 @@ import { uiWatchStream, currentSnapshot } from "./ui-watch";
 
 export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
     const binding = new ChannelServerBinding(transport);
-    const ui = apiDef.diy.ui;
 
-    // 全部 handler 一次性交给 `uiService.bind` —— 形状与 `diy.ui` 子树同构。
+    // 全部 handler 一次性交给 `binding.use` —— 形状与 `uiApi` 的模块层同构：
+    // 前缀 "diy" 由宿主给，模块自带的那层 `ui` 是这里 handlers 的唯一一层。
+    // ⚠️ 多包一层（`{ ui: { ui: … } }`）不会报类型错（handlers 为 any），
+    // 但 `mountService` 按路径 `ui.component.list` 取 handler 会取不到 → 首屏白屏。
+    // 回归测试：tests/fast.renderer-bind.test.ts
     // TODO(##87): HandlersOf 对 ui 域的推导仍是 any（待查根因），先显式断言避免 22 处隐式 any
     // TODO(##87): HandlersOf 对 ui 域的推导会丢上下文类型（22 处隐式 any），暂时用 any 兜住，待查根因
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const handlers: any = {
             ui: {
-                ui: {
                     component: {
                         list: async () => {
                             // TODO: 动态扫描注册的组件
@@ -309,7 +310,6 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
                         },
                     },
                 },
-            },
         };
     binding.use({ prefix: "diy", api: uiApi, handlers });
 
