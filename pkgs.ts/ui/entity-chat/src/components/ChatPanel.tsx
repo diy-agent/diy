@@ -2,8 +2,10 @@ import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui
 import * as React from 'react';
 
 import { Thread } from '../assistant-ui/components/assistant-ui/elements/thread.aui';
+import { MentionBotsProvider, type MentionBot } from '../mentions';
+import { botsOf } from '../model';
 import { toThreadMessages } from '../projection';
-import { actions, itemsOf, useStore } from '../store';
+import { actions, entityOf, itemsOf, useStore } from '../store';
 
 /**
  * 官方组件版：直接用 assistant-ui 模板里的 <Thread />（消息/输入/工具卡/自动滚动/无障碍）。
@@ -17,6 +19,17 @@ export function ChatPanel({ targetId }: { targetId: string }) {
 
     const deliveries = state.deliveries[targetId] ?? [];
     const messages = React.useMemo(() => toThreadMessages(items, deliveries, state.bots), [items, deliveries, state.bots]);
+
+    const entity = entityOf(targetId);
+    const mentionBots: MentionBot[] = React.useMemo(() => {
+        if (entity === undefined) return [];
+        return botsOf(entity, state.bots).map((bot, index) => ({
+            id: bot.id,
+            name: bot.name,
+            color: bot.color,
+            isOwner: index === 0,
+        }));
+    }, [entity, state.bots]);
 
     const runtime = useExternalStoreRuntime({
         messages,
@@ -33,10 +46,12 @@ export function ChatPanel({ targetId }: { targetId: string }) {
     });
 
     return (
-        <AssistantRuntimeProvider runtime={runtime}>
-            <div className="min-h-0 flex-1">
-                <Thread />
-            </div>
-        </AssistantRuntimeProvider>
+        <MentionBotsProvider value={mentionBots}>
+            <AssistantRuntimeProvider runtime={runtime}>
+                <div className="min-h-0 flex-1">
+                    <Thread />
+                </div>
+            </AssistantRuntimeProvider>
+        </MentionBotsProvider>
     );
 }

@@ -19,6 +19,7 @@ import {
   MessagePrimitive,
   SuggestionPrimitive,
   ThreadPrimitive,
+  useAui,
   useAuiState,
 } from "@assistant-ui/react";
 import {
@@ -35,8 +36,9 @@ import {
   RefreshCwIcon,
   SquareIcon,
 } from "lucide-react";
-import type { FC } from "react";
+import { useState, type FC } from "react";
 import type { CustomMeta } from "../../../../projection";
+import { useMentionBots } from "../../../../mentions";
 
 // Startup exposes a loading placeholder thread; treat it as a new chat so
 // the composer mounts centered. Loads after startup keep the docked layout.
@@ -202,8 +204,50 @@ const ThreadSuggestionItem: FC = () => {
 };
 
 const Composer: FC = () => {
+  const bots = useMentionBots();
+  const aui = useAui();
+  const text = useAuiState((s) => s.composer.text);
+  const match = /(^|\s)@([^\s@]*)$/.exec(text);
+  const query = match === null ? null : (match[2] ?? "");
+  const candidates =
+    query === null
+      ? []
+      : bots.filter((bot) =>
+          bot.name.toLowerCase().includes(query.toLowerCase()),
+        );
+
+  const pick = (name: string) => {
+    aui.composer.setText(text.replace(/@([^\s@]*)$/, `@${name} `));
+  };
+
   return (
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
+      {query !== null && candidates.length > 0 && (
+        <div className="bg-popover text-popover-foreground absolute bottom-full left-2 z-20 mb-1 w-60 overflow-hidden rounded-xl border p-1 shadow-lg">
+          {candidates.map((bot) => (
+            <button
+              key={bot.id}
+              type="button"
+              onMouseDown={(event) => {
+                event.preventDefault();
+                pick(bot.name);
+              }}
+              className="hover:bg-accent hover:text-accent-foreground flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm"
+            >
+              <span
+                className="size-2 rounded-full"
+                style={{ background: bot.color }}
+              />
+              <span>{bot.name}</span>
+              {bot.isOwner && (
+                <span className="text-muted-foreground ml-auto text-[10px]">
+                  owner
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
       <ComposerPrimitive.AttachmentDropzone asChild>
         <div
           data-slot="aui_composer-shell"

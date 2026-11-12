@@ -15,8 +15,12 @@ UI 用 assistant-ui 官方模板组件（templates/minimal 的 Thread/Composer/M
 - `bots` / `entity_items` 已落盘；项目/任务目前是内存种子（重启重置）
 - 聊天走真实模型（默认 `chen56@opencode-go/deepseek-v4.1-flash`），带一个 `get_time` 工具
 
-多 agent：
-- `route(entity, bots, text)`：`@all` / `@名字`，没有 @ 时默认全体参与者
+多 agent（容器一个 owner）：
+- 没有 @：**只有 owner 回复**
+- `@名字`：只让命中的 bot 回复（owner 也可以被 @）
+- `@all`：全体回复
+- 输入框里打 `@` 会弹出本容器可 @ 的 bot 列表（owner 带标记）
+- 参与关系（entity_bots）落 sqlite，重启后仍在
 - 每个 (message, bot) 一条 outbox 记录（queued → delivering → delivered/failed），落 sqlite
 - 同一轮内多个 bot 并行；轮次之间串行；UI 在用户消息下显示投递 chip
 

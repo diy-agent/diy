@@ -11,6 +11,8 @@ export interface Store {
     listBots(): Bot[];
     upsertBot(bot: Bot): void;
     appendItem(entityId: string, item: Item): Item;
+    setEntityBots(entityId: string, botIds: string[]): void;
+    entityBots(): Record<string, string[]>;
     setDelivery(delivery: Omit<Delivery, 'updatedAt'>): Delivery;
     listDeliveries(entityId: string): Delivery[];
     itemsOf(entityId: string, afterSeq?: number): Item[];
@@ -36,6 +38,12 @@ export function openStore(file: string): Store {
             at INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS items_entity ON entity_items(entity_id, seq);
+        CREATE TABLE IF NOT EXISTS entity_bots (
+            entity_id TEXT NOT NULL,
+            bot_id TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            PRIMARY KEY (entity_id, bot_id)
+        );
         CREATE TABLE IF NOT EXISTS deliveries (
             entity_id TEXT NOT NULL,
             message_id TEXT NOT NULL,
@@ -85,6 +93,20 @@ export function openStore(file: string): Store {
                 .prepare('INSERT INTO entity_items (entity_id, item, at) VALUES (?,?,?)')
                 .run(entityId, JSON.stringify(item), item.at);
             return { ...item, seq: Number(result.lastInsertRowid) };
+        },
+        setEntityBots(entityId: string, botIds: string[]): void {
+            db.prepare('DELETE FROM entity_bots WHERE entity_id = ?').run(entityId);
+            const insert = db.prepare('INSERT INTO entity_bots (entity_id, bot_id, position) VALUES (?,?,?)');
+            botIds.forEach((botId, index) => insert.run(entityId, botId, index));
+        },
+        entityBots(): Record<string, string[]> {
+            const rows = db.prepare('SELECT entity_id, bot_id FROM entity_bots ORDER BY position ASC').all() as Record<string, unknown>[];
+            const out: Record<string, string[]> = {};
+            for (const row of rows) {
+                const id = String(row['entity_id']);
+                (out[id] ??= []).push(String(row['bot_id']));
+            }
+            return out;
         },
         setDelivery(delivery: Omit<Delivery, 'updatedAt'>): Delivery {
             const updatedAt = Date.now();

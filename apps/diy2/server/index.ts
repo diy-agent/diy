@@ -40,12 +40,19 @@ function nextOrder(entityId: string): number {
     return next;
 }
 
-/** 路由：@all / @名字；没有 @ 时默认全体参与者 */
+/**
+ * 路由：容器只有一个 owner；默认只有 owner 回。
+ *   @all    → 全体（owner + 其他）
+ *   @名字   → 命中的 bot（可以是 owner 或其他）
+ *   没有 @  → 只有 owner
+ */
 function route(entity: Entity, bots: Bot[], text: string): Bot[] {
+    const owner = bots[0];
     const mentioned = [...text.matchAll(/@([^\s@]+)/g)].map((match) => match[1] ?? '');
-    if (mentioned.length === 0 || mentioned.includes('all')) return bots;
+    if (mentioned.includes('all')) return bots;
     const picked = bots.filter((bot) => mentioned.includes(bot.name));
-    return picked.length > 0 ? picked : bots;
+    if (picked.length > 0) return picked;
+    return owner === undefined ? [] : [owner];
 }
 
 const COLORS = ['#7cc4ff', '#f7b267', '#a3e635', '#f472b6', '#c084fc', '#38bdf8'];
@@ -100,6 +107,13 @@ function seed(): Map<string, Entity> {
         botIds: [byName('任务树与多会话')?.id ?? bots[2]!.id],
         modelKey: DEFAULT_MODEL,
     });
+    // 恢复参与关系（重启后 bot 列表与 @ 仍在）
+    const saved = store.entityBots();
+    for (const [id, botIds] of Object.entries(saved)) {
+        const entity = entities.get(id);
+        if (entity !== undefined && botIds.length > 0) entity.botIds = botIds;
+    }
+
     // bot 自己也是实体（独立对话）
     for (const bot of bots) {
         entities.set(`bot:${bot.id}`, {
@@ -174,7 +188,10 @@ const server = createServer((req, res) => {
                     modelKey: bot.modelKey,
                 });
                 const home = entities.get(bot.homeEntityId);
-                if (home !== undefined) home.botIds = [...home.botIds, bot.id];
+                if (home !== undefined) {
+                    home.botIds = [...home.botIds, bot.id];
+                    store.setEntityBots(home.id, home.botIds);
+                }
                 json(res, 200, bot);
             });
             return;
@@ -208,6 +225,7 @@ const server = createServer((req, res) => {
                 };
                 entities.set(id, entity);
                 entities.set(`bot:${bot.id}`, { id: `bot:${bot.id}`, kind: 'bot', name: bot.name, botIds: [bot.id], modelKey: bot.modelKey });
+                store.setEntityBots(id, entity.botIds);
                 json(res, 200, entity);
             });
             return;
@@ -236,7 +254,10 @@ const server = createServer((req, res) => {
             const entity = entities.get(id);
             if (entity === undefined) return json(res, 404, { error: 'entity not found' });
             void readBody<{ botId?: string }>(req).then((body) => {
-                if (body.botId !== undefined && !entity.botIds.includes(body.botId)) entity.botIds = [...entity.botIds, body.botId];
+                if (body.botId !== undefined && !entity.botIds.includes(body.botId)) {
+                    entity.botIds = [...entity.botIds, body.botId];
+                    store.setEntityBots(id, entity.botIds);
+                }
                 json(res, 200, entity);
             });
             return;
