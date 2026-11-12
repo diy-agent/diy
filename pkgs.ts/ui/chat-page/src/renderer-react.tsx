@@ -48,6 +48,8 @@ import {
 import { Message, MessageContent } from './ui/message.js';
 import { Bubble, BubbleContent } from './ui/bubble.js';
 import { BlocksView } from './ai-elements/block-view.js';
+import { LoaderCircleIcon } from 'lucide-react';
+import { Trace, TraceIcon, TraceLine, TraceTitle } from './ui/trace.js';
 
 // ##499：与另两版同一份注册表（插件自造 kind 从这里登记）
 export { registerBlockRenderer, renderBlock, renderBlocks } from './block-renderers.js';
@@ -573,6 +575,25 @@ function MessageList({ state }: { state: ChatState }): React.ReactElement {
                                 </MessageScrollerItem>
                             );
                         })}
+                        {/* 本轮在飞、但还没有任何内容可显示时，也要有反馈：
+                            主进程是「一轮结束/事件折叠后」才推快照的，中间这段若什么都不画，
+                            页面就像卡住了。这里用与 Trace 同一套的 running 行（shimmer）。 */}
+                        {state.busy ? (
+                            <MessageScrollerItem messageId="pending-turn" scrollAnchor>
+                                <Message>
+                                    <MessageContent>
+                                        <Trace>
+                                            <TraceLine status="running">
+                                                <TraceIcon>
+                                                    <LoaderCircleIcon className="animate-spin" />
+                                                </TraceIcon>
+                                                <TraceTitle>思考中…</TraceTitle>
+                                            </TraceLine>
+                                        </Trace>
+                                    </MessageContent>
+                                </Message>
+                            </MessageScrollerItem>
+                        ) : null}
                     </MessageScrollerContent>
                 </MessageScrollerViewport>
                 <MessageScrollerButton />
