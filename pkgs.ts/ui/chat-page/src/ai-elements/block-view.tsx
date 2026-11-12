@@ -110,7 +110,10 @@ function ThinkBlock({ data }: { data: Partial<ThinkBlockData> }): React.ReactEle
 function ToolBlock({ data }: { data: Partial<ToolBlockData> }): React.ReactElement {
     const state = data.state ?? 'running';
     const status = state === 'error' ? 'error' : state === 'running' ? 'running' : undefined;
-    const { verb, detail } = toolSummary(data.name ?? 'tool', data.args ?? '');
+    // tool 结果条目的 data.name 是空的（结果条目的 name 在协议里不填）——
+    // 这时用「工具输出」，否则会渲染出一行只有图标、没有任何文字的 18px 空行。
+    const rawName = (data.name ?? '').trim();
+    const { verb, detail } = toolSummary(rawName === '' ? '工具输出' : rawName, data.args ?? '');
     const line = (
         <TraceLine status={status}>
             <TraceIcon>

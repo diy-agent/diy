@@ -604,12 +604,17 @@ function MessageList({ state }: { state: ChatState }): React.ReactElement {
 
 const MessageRow = memo(
     function MessageRow({ message, fingerprint }: { message: WireMessage; fingerprint: string }): React.ReactElement {
-        // 用户消息 = 右对齐气泡（Bubble variant=muted），助手消息 = 左对齐多块
-        if (message.role === 'user') {
+        // 对齐按**内容**判，不只看 role：
+        // 主进程把 tool 结果条目的 role 归一成 "user"（protocol 的历史约定），
+        // 若照 role 画就会变成右侧的空白气泡。所以 tool / think 块一律当助手侧渲染。
+        const toolish = message.blocks.length > 0 && message.blocks.every((block) => block.kind === 'tool' || block.kind === 'think');
+        const isUserText = message.role === 'user' && !toolish;
+        if (isUserText) {
             const text = message.blocks
                 .filter((block) => block.kind === 'text')
                 .map((block) => String((block.data as { text?: string }).text ?? ''))
-                .join('\n');
+                .join('\n')
+                .trim();
             return (
                 <Message align="end" data-role={message.role}>
                     <MessageContent>
