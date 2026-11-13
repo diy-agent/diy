@@ -38,12 +38,24 @@ export class HttpChatClient implements ChatClient {
         return this.injected ?? fetch;
     }
 
+    /** 拉 JSON：HTTP 错误与"不是 JSON"都转成人能读的错误（别把 SyntaxError 抛给用户） */
+    private async getJson<T>(path: string): Promise<T> {
+        const get = this.fetchImpl;
+        const res = await get(`${this.base}${path}`);
+        if (!res.ok) throw new Error(`加载失败：${path} → HTTP ${res.status}`);
+        const text = await res.text();
+        try {
+            return JSON.parse(text) as T;
+        } catch {
+            throw new Error(`后端没有返回 JSON：${path}（服务可能没起来）`);
+        }
+    }
+
     async load(entityId: string): Promise<Snapshot> {
         const id = encodeURIComponent(entityId);
-        const get = this.fetchImpl;
         const [history, deliveries] = await Promise.all([
-            get(`${this.base}/entities/${id}/history`).then((res) => res.json() as Promise<{ items: Item[] }>),
-            get(`${this.base}/entities/${id}/deliveries`).then((res) => res.json() as Promise<{ deliveries: Delivery[] }>),
+            this.getJson<{ items: Item[] }>(`/entities/${id}/history`),
+            this.getJson<{ deliveries: Delivery[] }>(`/entities/${id}/deliveries`),
         ]);
         return { items: history.items, deliveries: deliveries.deliveries };
     }

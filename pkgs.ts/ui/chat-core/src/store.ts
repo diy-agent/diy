@@ -6,6 +6,11 @@ import type { ChatClient } from './client';
 import { applyEvent, emptyState, fromSnapshot, type ConversationState } from './reduce';
 import { DEFAULT_CAPABILITIES, type Capabilities, type Command } from './types';
 
+/** Error → 人能读的一句话（别把 "Error: ..." 前缀甩给用户） */
+function messageOf(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
 export interface ConversationModel {
     get(): ConversationState;
     subscribe(listener: () => void): () => void;
@@ -45,7 +50,8 @@ export class ConversationStore implements ConversationModel {
         this.emit(applyEvent(this.state, event));
     }
 
-    reload(): void {
+    /** 箭头方法：surface 可以把 reload 直接当回调传（不解绑 this） */
+    reload = (): void => {
         const token = ++this.loadToken;
         void this.client
             .load(this.entityId)
@@ -53,24 +59,24 @@ export class ConversationStore implements ConversationModel {
                 if (token !== this.loadToken) return;
                 this.emit(fromSnapshot(snapshot));
             })
-            .catch((error: unknown) => this.emit({ ...this.state, error: String(error) }));
-    }
+            .catch((error: unknown) => this.emit({ ...this.state, error: messageOf(error) }));
+    };
 
-    private post(command: Command): void {
+    private post = (command: Command): void => {
         this.emit({ ...this.state, error: undefined, running: true });
         void this.client
             .post(this.entityId, command, (event) => this.apply(event))
-            .catch((error: unknown) => this.emit({ ...this.state, error: String(error), running: false }))
+            .catch((error: unknown) => this.emit({ ...this.state, error: messageOf(error), running: false }))
             .finally(() => this.emit({ ...this.state, running: false }));
-    }
+    };
 
-    send(text: string): void {
+    send = (text: string): void => {
         const trimmed = text.trim();
         if (trimmed === '' || this.state.running) return;
         this.post({ kind: 'send', text: trimmed });
-    }
+    };
 
-    cancel(): void {
+    cancel = (): void => {
         this.post({ kind: 'cancel' });
-    }
+    };
 }

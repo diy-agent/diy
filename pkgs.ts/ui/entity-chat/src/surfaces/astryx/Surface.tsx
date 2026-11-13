@@ -8,6 +8,7 @@ import { createStaticSource, type SearchableItem } from '@astryxdesign/core/Type
 import { buildTimeline, type MentionCandidate, type TimelineEntry, type TimelinePart } from '@diy-agent/chat-core';
 import * as React from 'react';
 
+import { ErrorBar } from '../../components/ErrorBar';
 import { useMentionCandidates } from '../../mentions';
 import { conversationOf, useStore } from '../../store';
 
@@ -141,6 +142,7 @@ export function AstryxSurface({ targetId }: { targetId: string }) {
 
     return (
         <div data-astryx-theme="neutral" style={{ display: 'flex', flex: 1, minHeight: 0, flexDirection: 'column' }}>
+            <ErrorBar error={state.error} onRetry={conversation.reload} />
             <ChatLayout
                 composer={
                     <ChatComposer
@@ -157,7 +159,12 @@ export function AstryxSurface({ targetId }: { targetId: string }) {
                     />
                 }
             >
-                <ChatMessageList isStreaming={state.running}>
+                <ChatMessageList
+                    isStreaming={state.running}
+                    emptyState={
+                        <div style={{ padding: 24, opacity: 0.6, fontSize: 13 }}>还没有消息。发一句，或 @ 一个 bot。</div>
+                    }
+                >
                     {entries.map((entry) => (
                         <EntryView key={entry.key} entry={entry} />
                     ))}

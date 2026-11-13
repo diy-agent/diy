@@ -240,3 +240,17 @@ pkgs.ts/ui/entity-chat
 
 **换 diy-rpc 的影响面**：新增 `chat-transport-rpc` 实现 `ChatClient`，
 改 `entity-chat/src/store.tsx` 里 `new HttpChatClient(...)` 一行；core 与两个表面零改动。
+
+### 表面差异决策（逐项定"跟谁"）
+
+| 能力 | 决策 | 理由 |
+|---|---|---|
+| 消息分组 / 作者 / 工具归属 | **跟 chat-core**（唯一实现） | 分叉必出 bug；已由 timeline 测试锁住 |
+| `@` 候选与补全规则 | **跟 chat-core** | 同上；UI 实现各用各的（popover vs triggers） |
+| 会话错误（加载/传输失败） | **跟统一样式**（`components/ErrorBar`） | 之前两边都不显示，失败时界面"什么都没发生" |
+| 空态 | 各用各的 | assistant-ui 有欢迎建议，Astryx 只有一行提示；属于产品风格差异 |
+| 长消息折叠 / 滚动按钮 | 各用各的 | 框架自带能力不同，不影响语义 |
+
+`ConversationModel` 的方法改为箭头属性（`reload/send/cancel`）：surface 可以把
+`conversation.reload` 直接当 `onRetry` 传，不会因为解绑 `this` 静默失败
+（这个 bug 之前让"重试"按钮点了没反应）。
