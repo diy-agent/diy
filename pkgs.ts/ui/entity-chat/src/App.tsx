@@ -1,7 +1,7 @@
 import { Bot as BotIcon, Cpu, Folder, ListTodo, Plus, X } from 'lucide-react';
 import * as React from 'react';
 
-import { ChatPanel } from './components/ChatPanel';
+import { SURFACES } from './surfaces/registry';
 import { CreateBotDialog, CreateProjectDialog, ModelDialog, SettingsDialog } from './components/Dialogs';
 import { Sidebar } from './components/Sidebar';
 import { botsOf, dirOf, ownerOfBot, type Bot, type Entity } from './model';
@@ -101,6 +101,7 @@ export function App() {
     const entity = entityOf(state.selectedId);
     const bot = entity?.kind === 'bot' ? state.bots[entity.botIds[0] ?? ''] : undefined;
     const [dialog, setDialog] = React.useState<'project' | 'bot' | 'settings' | null>(null);
+    const [surfaceId, setSurfaceId] = React.useState<string>(SURFACES[0]!.id);
     const [modelTarget, setModelTarget] = React.useState<string | null>(null);
     const activeEntity = entity;
 
@@ -155,12 +156,14 @@ export function App() {
                 ) : bot !== undefined ? (
                     <>
                         <BotHeader bot={bot} entity={entity} onPickModel={() => setModelTarget(entity.id)} />
-                        <ChatPanel key={entity.id} targetId={entity.id} />
+                        <SurfaceTabs value={surfaceId} onChange={setSurfaceId} />
+                        <SurfaceView surfaceId={surfaceId} targetId={entity.id} />
                     </>
                 ) : (
                     <>
                         <EntityHeader entity={entity} onAddBot={() => setDialog('bot')} onPickModel={() => setModelTarget(entity.id)} />
-                        <ChatPanel key={entity.id} targetId={entity.id} />
+                        <SurfaceTabs value={surfaceId} onChange={setSurfaceId} />
+                        <SurfaceView surfaceId={surfaceId} targetId={entity.id} />
                     </>
                 )}
                 {state.error !== undefined && (
@@ -195,4 +198,31 @@ export function App() {
             </div>
         </div>
     );
+}
+
+
+function SurfaceTabs({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+    return (
+        <div className="flex items-center gap-1 border-b px-4 py-1.5">
+            {SURFACES.map((surface) => (
+                <button
+                    key={surface.id}
+                    onClick={() => onChange(surface.id)}
+                    title={surface.hint}
+                    className={`rounded-md px-2.5 py-1 text-xs ${
+                        value === surface.id ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60'
+                    }`}
+                >
+                    {surface.name}
+                </button>
+            ))}
+            <span className="ml-2 text-[10px] text-muted-foreground">同一份数据，两种表面</span>
+        </div>
+    );
+}
+
+function SurfaceView({ surfaceId, targetId }: { surfaceId: string; targetId: string }) {
+    const surface = SURFACES.find((entry) => entry.id === surfaceId) ?? SURFACES[0]!;
+    const Component = surface.Component;
+    return <Component key={`${surface.id}:${targetId}`} targetId={targetId} />;
 }

@@ -1,0 +1,15 @@
+{
+    "name": "@diy-agent/chat-core",
+    "version": "0.0.1",
+    "private": true,
+    "description": "UI 与后端之间的契约 + 无框架会话状态（model/reducer/client/mock）",
+    "type": "module",
+    "main": "./src/index.ts",
+    "types": "./src/index.ts",
+    "exports": {
+        ".": {
+            "types": "./src/index.ts",
+            "default": "./src/index.ts"
+        }
+    }
+}
