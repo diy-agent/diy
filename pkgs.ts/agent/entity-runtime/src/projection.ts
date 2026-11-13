@@ -108,6 +108,16 @@ export class Projector {
             }
 
             case 'run.failed': {
+                const ops: Item[] = [];
+                const openId = [...this.messageIds.values()].at(-1);
+                if (openId !== undefined) {
+                    const open = this.items.get(openId);
+                    if (open !== undefined && open.status === 'streaming') {
+                        const closed: Item = { ...open, seq, status: 'failed' };
+                        this.items.set(openId, closed);
+                        ops.push(closed);
+                    }
+                }
                 const item: Item = {
                     id: nextId('err'),
                     seq,
@@ -119,7 +129,8 @@ export class Projector {
                     data: { message: event.message },
                 };
                 this.items.set(item.id, item);
-                return [item];
+                ops.push(item);
+                return ops;
             }
 
             default:

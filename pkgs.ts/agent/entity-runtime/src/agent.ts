@@ -43,6 +43,7 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
         messages: options.history,
         tools,
         stopWhen: isStepCount(4),
+        maxRetries: 0,
     });
 
     try {
@@ -72,7 +73,7 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
                     break;
                 case 'error':
                     yield { seq: ++seq, type: 'run.failed', turnId, message: String((part as { error?: unknown }).error ?? 'stream error') };
-                    break;
+                    return;
                 default:
                     break;
             }

@@ -15,7 +15,7 @@ export function ChatPanel({ targetId }: { targetId: string }) {
     const state = useStore();
     const rawItems = itemsOf(targetId);
     const items = React.useMemo(() => [...rawItems].sort((a, b) => (a.turn ?? 0) - (b.turn ?? 0) || (a.order ?? a.seq) - (b.order ?? b.seq)), [rawItems]);
-    const running = state.running[targetId] === true;
+    const running = items.some((item) => item.status === 'streaming');
 
     const deliveries = state.deliveries[targetId] ?? [];
     const messages = React.useMemo(() => toThreadMessages(items, deliveries, state.bots), [items, deliveries, state.bots]);

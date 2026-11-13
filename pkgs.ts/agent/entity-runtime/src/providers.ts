@@ -1,10 +1,17 @@
 // providers.ts —— 模型接入（照 diy 的三段式 key；key 从 env 或 ~/.diy/model.yaml 读）
 
+import { setDefaultResultOrder } from 'node:dns';
 import { readFileSync } from 'node:fs';
+import { setDefaultAutoSelectFamily } from 'node:net';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import type { LanguageModel } from 'ai';
+
+// 本机网络：IPv6 自动选择会挂（fetch/undici 连接超时），强制 IPv4
+setDefaultResultOrder('ipv4first');
+setDefaultAutoSelectFamily(false);
 
 export interface ParsedModelKey {
     account: string;
@@ -49,7 +56,7 @@ function keyFromDiyConfig(provider: string, account: string): string | undefined
     }
 }
 
-export function modelOf(modelKey: string) {
+export function modelOf(modelKey: string): LanguageModel {
     const key = parseModelKey(modelKey);
     const api = PROVIDER_API[key.provider] ?? PROVIDER_API['opencode-go']!;
     const envName = PROVIDER_ENV[key.provider];
@@ -61,5 +68,5 @@ export function modelOf(modelKey: string) {
         apiKey,
         headers: key.provider === 'opencode-go' ? { 'x-opencode-session': `diy2-${Date.now()}` } : {},
     });
-    return provider(key.model);
+    return provider(key.model) as unknown as LanguageModel;
 }

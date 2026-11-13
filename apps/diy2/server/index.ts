@@ -354,10 +354,11 @@ const server = createServer((req, res) => {
 
                             try {
                                 for await (const event of runAgent({ bot, modelKey: bot.modelKey, history, signal: abort.signal })) {
+                                    if (event.type === 'run.failed') failed = true;
                                     for (const item of projector.apply(event)) {
                                         const ordered: Item = item.order === undefined ? { ...item, order: nextOrder(id) } : item;
                                         sse(res, { kind: 'item', item: ordered });
-                                        if (ordered.status === 'done' && !persisted.has(ordered.id)) {
+                                        if ((ordered.status === 'done' || ordered.status === 'failed') && !persisted.has(ordered.id)) {
                                             persisted.add(ordered.id);
                                             store.appendItem(id, ordered);
                                         }
