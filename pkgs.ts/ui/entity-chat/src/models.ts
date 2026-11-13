@@ -107,8 +107,12 @@ export function modelLabel(value: string): string {
     return `${info?.name ?? key.model} · ${key.account}@${key.provider}`;
 }
 
+export function contextWindowOf(value: string): number | undefined {
+    return modelInfoOf(parseModelKey(value))?.contextWindow;
+}
+
 export function contextWindowLabel(value: string): string {
-    const size = modelInfoOf(parseModelKey(value))?.contextWindow;
+    const size = contextWindowOf(value);
     if (size === undefined) return '窗口未知';
     return `${Math.round(size / 1024)}k 上下文`;
 }

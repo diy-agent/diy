@@ -180,3 +180,25 @@ interface TranscriptEntry {
 
 `usage.inputTokens` 与 `stats.chars` 对照：中文 + JSON 结构下约 `chars ≈ 2 × tokens`。
 所以 `maxChars = 24000` 大概对应 12k token 上下文，可按真实窗口再调。
+
+## 压缩入口（UI，2026-11-14）
+
+房间头部多了一个 `上下文 757 / 131.1k (1%)` 的 chip，点开是每个 bot 的上下文面板：
+
+```
+diy   5 条 · ≈381 tok                        [压缩]
+      策略 simple-fold-drop · 压过 2 次 · 已折叠 4 条 · 上次 07:23 · 上轮实测 541 tok
+小满  8 条 · ≈376 tok                        [压缩]
+```
+
+- 能看到：窗口大小（模型元数据）、当前估算占用、每个 bot 的条数 / 估算 token /
+  压缩次数 / 累计丢弃条数 / 上次压缩时刻 / **上一轮实测 token**（用来校准估算）
+- 能改：`保留 N 条`、`预算 M 字符`（默认取后端预算，改了只影响这一次手动压缩）
+- 能压：单个 bot 的「压缩」或「全部压缩」，调 `POST /rooms/:id/sessions/:botId/compact`
+- 结果就地显示：`diy：8 → 5 条（折叠 1，丢弃 4）`
+
+估算口径：`token ≈ chars × 0.78`（diy2 实测 541 tok ↔ 697 chars）；面板同时显示
+实测值，两者差太多说明估算需要调。
+
+前端接线：`ChatClient` 增加**可选**的 `sessions()` / `compact()`，只有 HTTP 传输实现；
+store 的 `actions.refreshSessions()` / `compactSession()` 负责拉取与触发。

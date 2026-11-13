@@ -2,7 +2,7 @@
 //
 // 词表：Room = 容器（项目/任务/股票…），Bot = 身份，BotSession = bot 在某个 room 里的对话（后端概念）。
 
-import { ConversationStore, type Bot, type Room } from '@diy-agent/chat-core';
+import { ConversationStore, type Bot, type CompactOutcome, type Room, type SessionInfo } from '@diy-agent/chat-core';
 import { HttpChatClient } from '@diy-agent/chat-transport-http';
 import * as React from 'react';
 
@@ -32,6 +32,8 @@ interface ShellState {
     selectedId: string;
     defaultModelKey: string;
     loaded: boolean;
+    /** 各房间的上下文概况（每个 bot 的会话 + 最近压缩事件） */
+    sessions: Record<string, SessionInfo[]>;
     error?: string;
 }
 
@@ -41,6 +43,7 @@ let state: ShellState = {
     selectedId: '',
     defaultModelKey: loadDefaultModel(),
     loaded: false,
+    sessions: {},
 };
 const listeners = new Set<() => void>();
 
@@ -140,6 +143,27 @@ export const actions = {
             .then((bot) => jsonFetch(`/rooms/${encodeURIComponent(roomId)}/bots`, { method: 'POST', body: JSON.stringify({ botId: bot.id }) }))
             .then(refresh)
             .catch(() => undefined);
+    },
+
+    /** 拉一次某个房间的上下文概况（面板打开 / 定时刷新时用） */
+    refreshSessions(roomId: string): void {
+        if (client.sessions === undefined) return;
+        void client
+            .sessions(roomId)
+            .then((list) => emit({ ...state, sessions: { ...state.sessions, [roomId]: list } }))
+            .catch(() => undefined);
+    },
+
+    /** 手动压一个 bot 的上下文：只影响它自己，不触发运行 */
+    compactSession(roomId: string, botId: string, options: { keepLast?: number; maxChars?: number } = {}): Promise<CompactOutcome | null> {
+        if (client.compact === undefined) return Promise.resolve(null);
+        return client
+            .compact(roomId, botId, options)
+            .then((outcome) => {
+                actions.refreshSessions(roomId);
+                return outcome;
+            })
+            .catch(() => null);
     },
 
     addExistingBot(roomId: string, botId: string): void {

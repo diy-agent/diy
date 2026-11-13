@@ -47,6 +47,8 @@ export interface TurnResult {
 export interface SessionStats {
     entries: number;
     chars: number;
+    /** 当前生效的默认预算（自动压缩与手动压缩都用它，可被入参覆盖） */
+    budget: CompactionBudget;
     /** 历史累计丢弃条数 */
     collapsed: number;
     compactions: number;
@@ -132,6 +134,7 @@ export class BotSession {
         return {
             entries: entries.length,
             chars: estimateChars(entries),
+            budget: this.budgetWith({}),
             collapsed: this.collapsed,
             compactions: this.events.length,
             ...(this.events.at(-1) === undefined ? {} : { lastCompactAt: this.events.at(-1)!.at }),

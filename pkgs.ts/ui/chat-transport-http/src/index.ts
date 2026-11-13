@@ -3,7 +3,16 @@
 // 这是**临时传输层**：只负责把命令发出去、把事件流读回来。
 // 换成 diy-rpc 时新增 @diy-agent/chat-transport-rpc 即可，chat-core / surface 不用改。
 
-import type { ChatClient, Command, Delivery, Item, Snapshot, StreamEvent } from '@diy-agent/chat-core';
+import type {
+    ChatClient,
+    Command,
+    CompactOutcome,
+    Delivery,
+    Item,
+    SessionInfo,
+    Snapshot,
+    StreamEvent,
+} from '@diy-agent/chat-core';
 
 export interface HttpChatClientOptions {
     /** API 前缀，默认 '/api' */
@@ -58,6 +67,29 @@ export class HttpChatClient implements ChatClient {
             this.getJson<{ deliveries: Delivery[] }>(`/rooms/${id}/deliveries`),
         ]);
         return { items: history.items, deliveries: deliveries.deliveries };
+    }
+
+    async sessions(entityId: string): Promise<SessionInfo[]> {
+        const data = await this.getJson<{ sessions: SessionInfo[] }>(`/rooms/${encodeURIComponent(entityId)}/sessions`);
+        return data.sessions;
+    }
+
+    async compact(
+        entityId: string,
+        botId: string,
+        options: { keepLast?: number; maxChars?: number } = {},
+    ): Promise<CompactOutcome> {
+        const post = this.fetchImpl;
+        const res = await post(
+            `${this.base}/rooms/${encodeURIComponent(entityId)}/sessions/${encodeURIComponent(botId)}/compact`,
+            {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(options),
+            },
+        );
+        if (!res.ok) throw new Error(`压缩失败：HTTP ${res.status}`);
+        return (await res.json()) as CompactOutcome;
     }
 
     async post(

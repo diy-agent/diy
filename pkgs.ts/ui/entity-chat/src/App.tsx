@@ -3,9 +3,10 @@ import * as React from 'react';
 
 import { SURFACES } from './surfaces/registry';
 import { AddMemberDialog, CreateProjectDialog, ModelDialog, SettingsDialog } from './components/Dialogs';
+import { ContextPanel } from './components/ContextPanel';
 import { Sidebar } from './components/Sidebar';
 import { botsOf, dirOf, primaryBotOf, roomTypeLabel, type Room } from './model';
-import { contextWindowLabel, modelLabel } from './models';
+import { modelLabel } from './models';
 import { actions, roomOf, useStore } from './store';
 
 function ModelChip({ value, onClick }: { value: string; onClick: () => void }) {
@@ -71,10 +72,12 @@ function RoomHeader({ room, onAddMember, onPickModel }: { room: Room; onAddMembe
                     </button>
                 </span>
             </div>
-            <p className="mt-1 text-[11px] text-muted-foreground">
-                {bots.length <= 1 ? '只有默认应答，没有 @ 时它自己回' : `${bots.length} 个成员：@名字叫谁谁回，@all 全回（等于开会，token 按人数涨）`}
-                <span className="ml-2">· {contextWindowLabel(room.modelKey)}</span>
-            </p>
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                <span>
+                    {bots.length <= 1 ? '只有默认应答，没有 @ 时它自己回' : `${bots.length} 个成员：@名字叫谁谁回，@all 全回（等于开会，token 按人数涨）`}
+                </span>
+                <ContextPanel room={room} />
+            </div>
         </header>
     );
 }
