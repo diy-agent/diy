@@ -24,6 +24,8 @@ export interface RunOptions {
      *   本步被插入的 steering 用户消息 + 模型产出的 assistant / tool 消息。
      */
     onStepTranscript?: (messages: ModelMessage[]) => void;
+    /** 本轮真实用量（token），用于校准压缩预算 */
+    onUsage?: (usage: { inputTokens: number; outputTokens: number }) => void;
 }
 
 const tools = {
@@ -99,6 +101,13 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
     } catch (error) {
         yield { seq: ++seq, type: 'run.failed', turnId, message: error instanceof Error ? error.message : String(error) };
         return;
+    }
+
+    try {
+        const usage = await result.totalUsage;
+        options.onUsage?.({ inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 });
+    } catch {
+        // 用量拿不到不影响这一轮
     }
 
     yield { seq: ++seq, type: 'message.completed', messageId };

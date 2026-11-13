@@ -11,7 +11,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { BotSession, Inbox, RoomLog, openStore } from '@diy-agent/entity-runtime';
-import type { RoomEntry, TurnResult } from '@diy-agent/entity-runtime';
+import type { CompactEvent, RoomEntry, TurnResult } from '@diy-agent/entity-runtime';
 import type { Author, Bot, Item, Room } from '@diy-agent/protocol';
 
 const PORT = Number(process.env['DIY2_PORT'] ?? 5191);
@@ -105,6 +105,11 @@ function sessionOf(roomId: string, bot: Bot): BotSession {
                 broadcast(roomId, { kind: 'delivery', delivery });
             },
             onTurnEnd: (result) => publishConclusion(roomId, bot, result),
+            onCompact: (event) => logCompact(roomId, bot, event),
+            budget: {
+                keepLast: Number(process.env['DIY2_COMPACT_KEEP'] ?? 12),
+                maxChars: Number(process.env['DIY2_COMPACT_CHARS'] ?? 24000),
+            },
         });
         for (const entry of logOf(roomId).all()) session.ingest(entry);
         sessions.set(actor, session);
@@ -160,6 +165,17 @@ function publishConclusion(roomId: string, bot: Bot, result: TurnResult): void {
         mode: 'next-turn',
         turn: { turn: result.turn, turnId: result.turnId },
     });
+}
+
+/** 压缩是一等事件：改预算前先看这行 */
+function logCompact(roomId: string, bot: Bot, event: CompactEvent): void {
+    const before = `${event.before.entries}msgs/${event.before.chars}c`;
+    const after = `${event.after.entries}msgs/${event.after.chars}c`;
+    const usage = event.usage === undefined ? '' : ` usage=${event.usage.inputTokens}/${event.usage.outputTokens}`;
+    console.log(
+        `[compact] ${bot.name} @${roomId} turn=${event.turn} ${event.strategy} ${before} → ${after} ` +
+            `folded=${event.folded} dropped=${event.dropped} ${event.durationMs}ms${usage}`,
+    );
 }
 
 function participantsOf(roomId: string): Bot[] {
@@ -401,11 +417,37 @@ const server = createServer((req, res) => {
             return;
         }
 
-        if (req.method === 'GET' && parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'sessions') {
+        // GET /api/rooms/:id/sessions —— 每个 bot 的上下文概况 + 最近的压缩事件
+        if (req.method === 'GET' && parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'sessions' && parts.length === 4) {
             const id = decodeURIComponent(parts[2] ?? '');
+            const bots = store.listBots();
             json(res, 200, {
-                sessions: sessionsOf(id).map(({ botId, session }) => ({ botId, messages: session.context() })),
+                sessions: sessionsOf(id).map(({ botId, session }) => ({
+                    botId,
+                    name: bots.find((bot) => bot.id === botId)?.name ?? botId,
+                    stats: session.stats(),
+                    compactions: session.compactions(),
+                })),
             });
+            return;
+        }
+
+        // POST /api/rooms/:id/sessions/:botId/compact —— 手动压一次（只影响这个 bot，不触发运行）
+        if (req.method === 'POST' && parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'sessions' && parts[5] === 'compact') {
+            const id = decodeURIComponent(parts[2] ?? '');
+            const botId = decodeURIComponent(parts[4] ?? '');
+            const bot = participantsOf(id).find((candidate) => candidate.id === botId);
+            if (bot === undefined) return json(res, 404, { error: 'bot not in room' });
+            void readBody<{ keepLast?: number; maxChars?: number }>(req)
+                .catch(() => ({}) as { keepLast?: number; maxChars?: number })
+                .then(async (body) => {
+                    const session = sessionOf(id, bot);
+                    const event = await session.forceCompact({
+                        ...(body.keepLast === undefined ? {} : { keepLast: body.keepLast }),
+                        ...(body.maxChars === undefined ? {} : { maxChars: body.maxChars }),
+                    });
+                    json(res, 200, { event, stats: session.stats() });
+                });
             return;
         }
 

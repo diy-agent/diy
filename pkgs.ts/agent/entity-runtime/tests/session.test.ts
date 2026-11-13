@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { RunOptions } from '../src/agent';
+import type { Compactor, TranscriptEntry } from '../src/compaction';
 import type { RoomEntry } from '../src/room-log';
 import { BotSession, type SessionDeps } from '../src/session';
 import type { AgentEvent, Bot, Item } from '../src/types';
@@ -25,7 +26,13 @@ interface Harness {
 }
 
 function makeSession(
-    options: { bot?: Bot; hangOnAbort?: boolean; seed?: SessionDeps['seed']; compact?: SessionDeps['compact'] } = {},
+    options: {
+        bot?: Bot;
+        hangOnAbort?: boolean;
+        seed?: SessionDeps['seed'];
+        budget?: SessionDeps['budget'];
+        compactor?: Compactor;
+    } = {},
 ): Harness {
     const bot = options.bot ?? BOT_A;
     const runs: string[] = [];
@@ -58,7 +65,8 @@ function makeSession(
         bot,
         modelKey: 'm',
         seed: options.seed,
-        compact: options.compact,
+        budget: options.budget,
+        compactor: options.compactor,
         nextTurn: () => ({ turn: ++turn, turnId: `turn-${turn}` }),
         nextOrder: () => items.length + 1,
         onItem: (item) => items.push(item),
@@ -176,15 +184,15 @@ describe('BotSession', () => {
 
     it('压缩只压自己：a 的 tool 被折叠，b 的上下文一条不少', async () => {
         const long = '工具输出'.repeat(200);
-        const seed = (): RunOptions['messages'] => [
-            { role: 'user', content: '麻烦修改 bug 并提交' },
-            { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 't1', toolName: 'read', input: {} }] },
-            { role: 'tool', content: [{ type: 'tool-result', toolCallId: 't1', toolName: 'read', output: { type: 'text', value: long } }] },
-            { role: 'assistant', content: [{ type: 'text', text: '结论：已修复并提交' }] },
-            { role: 'user', content: '人: 最新一句' },
+        const seed = (): TranscriptEntry[] => [
+            { message: { role: 'user', content: '麻烦修改 bug 并提交' }, origin: 'public', turn: 1 },
+            { message: { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 't1', toolName: 'read', input: {} }] }, origin: 'self', turn: 1 },
+            { message: { role: 'tool', content: [{ type: 'tool-result', toolCallId: 't1', toolName: 'read', output: { type: 'text', value: long } }] }, origin: 'self', turn: 1 },
+            { message: { role: 'assistant', content: [{ type: 'text', text: '结论：已修复并提交' }] }, origin: 'self', turn: 1 },
+            { message: { role: 'user', content: '人: 最新一句' }, origin: 'public', turn: 2 },
         ];
-        const a = makeSession({ seed, compact: { keepLast: 2, maxChars: 200 } });
-        const b = makeSession({ bot: BOT_B, seed, compact: { keepLast: 2, maxChars: 200 } });
+        const a = makeSession({ seed, budget: { keepLast: 2, maxChars: 200 } });
+        const b = makeSession({ bot: BOT_B, seed, budget: { keepLast: 2, maxChars: 200 } });
 
         await a.session.post({ messageId: 'm1', text: '继续' });
 
@@ -204,5 +212,56 @@ describe('BotSession', () => {
         await h.session.post({ messageId: 'm1', text: '你好' });
 
         expect(h.ends).toEqual([{ turn: 1, turnId: 'turn-1', text: 'reply-1', failed: false }]);
+    });
+
+    it('压缩策略可替换：换一个 Compactor，session 一行不改', async () => {
+        const calls: number[] = [];
+        const custom: Compactor = {
+            name: 'test-strategy',
+            compact({ entries }) {
+                calls.push(entries.length);
+                return { entries: [...entries], folded: 0, dropped: 0, summarized: true };
+            },
+        };
+        const h = makeSession({ compactor: custom });
+        await h.session.post({ messageId: 'm1', text: '你好' });
+
+        expect(calls.length).toBeGreaterThan(0);
+        expect(h.session.stats().strategy).toBe('test-strategy');
+        const event = h.session.compactions()[0]!;
+        expect(event.strategy).toBe('test-strategy');
+        expect(event.summarized).toBe(true);
+    });
+
+    it('手动 forceCompact：只压自己、返回事件、不触发运行', async () => {
+        const long = '工具输出'.repeat(200);
+        const seed = (): TranscriptEntry[] => [
+            { message: { role: 'user', content: '早期需求' }, origin: 'public', turn: 1 },
+            { message: { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 't1', toolName: 'read', input: {} }] }, origin: 'self', turn: 1 },
+            { message: { role: 'tool', content: [{ type: 'tool-result', toolCallId: 't1', toolName: 'read', output: { type: 'text', value: long } }] }, origin: 'self', turn: 1 },
+            { message: { role: 'assistant', content: [{ type: 'text', text: '结论：已修复' }] }, origin: 'self', turn: 1 },
+            { message: { role: 'user', content: '最新一句' }, origin: 'public', turn: 2 },
+        ];
+        const h = makeSession({ seed });
+
+        const event = await h.session.forceCompact({ maxChars: 120, keepLast: 1 });
+
+        expect(h.runs).toEqual([]);
+        expect(event).not.toBeNull();
+        expect(event?.folded ?? 0).toBeGreaterThan(0);
+        expect(event?.dropped ?? 0).toBeGreaterThan(0);
+        expect(h.session.stats().collapsed).toBe(event?.dropped);
+        expect(JSON.stringify(h.session.context())).not.toContain('工具输出');
+    });
+
+    it('stats 反映当前规模与真实用量', async () => {
+        const h = makeSession();
+        await h.session.post({ messageId: 'm1', text: '你好' });
+
+        const stats = h.session.stats();
+        expect(stats.entries).toBe(2);
+        expect(stats.chars).toBeGreaterThan(0);
+        expect(stats.compactions).toBe(0);
+        expect(stats.strategy).toBe('simple-fold-drop');
     });
 });

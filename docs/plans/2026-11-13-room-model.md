@@ -131,3 +131,52 @@ system / job 只往 inbox 投事实，没有自己的 BotSession。
 - 重启后 session 上下文清空（`seed` 钩子留着，未接 sqlite 回放）；
 - 房间日志不落盘，重启重置；
 - `inbox` 表仍未接（队列在内存，无崩溃恢复）。
+
+## 压缩：可替换策略 + 可观测（2026-11-14）
+
+### 算法与数据结构分离
+
+```
+BotSession  只负责：什么时候压（开跑前 / 手动）、压完记账、发事件
+Compactor   只负责：怎么压（输入 entries + budget + usage，输出新 entries）
+```
+
+默认挂 `simpleCompactor`（确定性启发式，临时实验用）；将来接 `@diy-agent/compaction`
+的 LLM 摘要版，session 一行不改。
+
+**老库需要的数据结构**：`selectCompactableRange` 只要 `{ role, content, turn? }`，
+`selectKeptBoundary` 只要 `{ tokens, user?, turn? }` —— **不需要 ChatMessage**。
+所以没有重新设计，只补了唯一缺的东西：**每条消息的轮次归属**。
+
+```ts
+interface TranscriptEntry {
+    message: ModelMessage;      // 原样保留（tool/reasoning 都在）
+    origin: 'public' | 'self' | 'note';   // 谁能被折叠
+    turn?: number;              // 切点吸附到轮首用
+}
+```
+
+### 默认策略 `simple-fold-drop`
+
+1. 折叠 `origin='self'` 的 tool 消息与纯工具调用的 assistant（公共层不动）；
+2. 还超预算 → 从最老的**整轮**丢（切点落在轮首，工具对不会被拆开）；
+3. 前面留一条 `[更早的 N 条消息已折叠]`（`origin='note'`，不参与折叠）。
+
+### 可观测
+
+- `SessionStats`：`entries / chars / collapsed / compactions / lastCompactAt / strategy / usage`
+- `CompactEvent`：`before/after`（条数 + 字符）、`folded`、`dropped`、`summarized`、
+  `durationMs`、`budget`、`usage`
+- 控制台一行：`[compact] diy @proj:diy turn=40 simple-fold-drop 8msgs/674c → 5msgs/267c folded=2 dropped=4 0ms usage=522/10`
+- `GET  /api/rooms/:id/sessions` → 每个 bot 的 stats + 最近 10 条压缩事件
+- `POST /api/rooms/:id/sessions/:botId/compact { keepLast, maxChars }` → 手动压一次
+  （只影响这个 bot，不触发运行；返回事件 + 新 stats）
+- 预算可用环境变量临时改：`DIY2_COMPACT_CHARS` / `DIY2_COMPACT_KEEP`
+
+实测：手动压 diy（maxChars=300, keepLast=2）→ `8msgs/674c → 5msgs/267c，folded=2 dropped=4`，
+同一房间的 小满 保持 `8msgs/509c` 不变 —— 压缩确实只影响自己。
+
+### 判据校准
+
+`usage.inputTokens` 与 `stats.chars` 对照：中文 + JSON 结构下约 `chars ≈ 2 × tokens`。
+所以 `maxChars = 24000` 大概对应 12k token 上下文，可按真实窗口再调。
