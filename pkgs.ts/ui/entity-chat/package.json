@@ -31,7 +31,8 @@
         "@diy-agent/chat-core": "*",
         "@astryxdesign/core": "^0.7.15",
         "@astryxdesign/theme-neutral": "^0.7.15",
-        "@stylexjs/stylex": "^0.19.0"
+        "@stylexjs/stylex": "^0.19.0",
+        "@diy-agent/chat-transport-http": "*"
     },
     "devDependencies": {
         "@types/react": "^19.3.0",

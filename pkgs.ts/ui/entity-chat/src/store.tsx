@@ -2,14 +2,16 @@
 //
 // 原则：业务状态在 chat-core，React 只负责订阅；surface 只拿 ConversationModel。
 
-import { ConversationStore, HttpChatClient, type Bot, type Entity } from '@diy-agent/chat-core';
+import { ConversationStore, type Bot, type Entity } from '@diy-agent/chat-core';
+import { HttpChatClient } from '@diy-agent/chat-transport-http';
 import * as React from 'react';
 
 const DEFAULT_MODEL = 'chen56@opencode-go/deepseek-v4.1-flash';
 
 // ─── 会话（chat-core）─────────────────────────────────────────────
 
-const client = new HttpChatClient('/api');
+// 传输层唯一注入点：换 diy-rpc 时只改这一行
+const client = new HttpChatClient({ base: '/api' });
 const conversations = new Map<string, ConversationStore>();
 
 export function conversationOf(entityId: string): ConversationStore {
