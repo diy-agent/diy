@@ -205,3 +205,38 @@ chat-shell
 **UI 失控的根因不是文件多，而是"共享逻辑没有归属 + 表面之间没有边界"。**
 四层（protocol / core / surface / shell）+ 两个机制（边界检查、parity 测试）就能让 UI 继续长大而不互相污染；
 双 tab 只比"画"，数据与交互同源，比较结论才有效。
+
+---
+
+## 9. 实施进度（2026-11-13 晚）
+
+已落地，且与本文档的依赖规则一致：
+
+```
+pkgs.ts/agent/protocol            （仍待抽，当前类型在 chat-core/types）
+pkgs.ts/ui/chat-core
+    types.ts        Item / Bot / Delivery / Command / StreamEvent
+    reduce.ts       StreamEvent → ConversationState（纯函数）
+    timeline.ts     ★ Item[] → TimelineEntry[]：唯一的分组逻辑（parity 锚点）
+    mention.ts      ★ @ 查询/过滤/补全/键盘移动（surface 无关）
+    store.ts        ConversationStore（get/subscribe/send/cancel/reload）
+    client.ts       ChatClient 接口（不认识 HTTP）
+    mock.ts         MockChatClient（同契约）
+pkgs.ts/ui/chat-transport-http    HttpChatClient（唯一认识 HTTP/SSE 的包）
+pkgs.ts/ui/entity-chat
+    mentions.tsx    useMentionCandidates(targetId)：实体参与者 → 候选
+    projection.ts   TimelineEntry[] → ThreadMessageLike（assistant-ui 出口）
+    surfaces/astryx TimelineEntry[] → Astryx Chat 组件
+```
+
+**parity 的机制从"测试比对两棵树"改成"结构上只有一个树"**：
+
+1. 两个 surface 都只读 `buildTimeline` 的输出，消息边界/作者/工具归属不可能分叉；
+2. `@` 规则同样只有一份（`chat-core/mention`），assistant-ui 用 context 注候选、
+   Astryx 用自己的 `ChatComposerInput triggers` 菜单，交互行为一致；
+3. `pkgs.ts/ui/chat-core/tests/` 用固定 fixture 锁语义（多 agent 同轮交错、
+   工具+文本同条、notice/error 独立、失败投递、streaming），在根 vitest projects 里
+   以 `--project @diy-agent/chat-core` 运行。
+
+**换 diy-rpc 的影响面**：新增 `chat-transport-rpc` 实现 `ChatClient`，
+改 `entity-chat/src/store.tsx` 里 `new HttpChatClient(...)` 一行；core 与两个表面零改动。

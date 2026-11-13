@@ -6,10 +6,9 @@ import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui
 import * as React from 'react';
 
 import { Thread } from '../assistant-ui/components/assistant-ui/elements/thread.aui';
-import { MentionBotsProvider, type MentionBot } from '../mentions';
-import { botsOf } from '../model';
+import { MentionBotsProvider, useMentionCandidates } from '../mentions';
 import { toThreadMessages } from '../projection';
-import { conversationOf, entityOf, useStore } from '../store';
+import { conversationOf, useStore } from '../store';
 
 export function ChatPanel({ targetId }: { targetId: string }) {
     const shell = useStore();
@@ -21,16 +20,7 @@ export function ChatPanel({ targetId }: { targetId: string }) {
         [state.items, state.deliveries, shell.bots],
     );
 
-    const entity = entityOf(targetId);
-    const mentionBots: MentionBot[] = React.useMemo(() => {
-        if (entity === undefined) return [];
-        return botsOf(entity, shell.bots).map((bot, index) => ({
-            id: bot.id,
-            name: bot.name,
-            color: bot.color,
-            isOwner: index === 0,
-        }));
-    }, [entity, shell.bots]);
+    const mentionBots = useMentionCandidates(targetId);
 
     const runtime = useExternalStoreRuntime({
         messages,

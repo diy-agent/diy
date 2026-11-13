@@ -1,70 +1,42 @@
-// Astryx surface —— 用 Astryx 的 Chat 组件族渲染同一份 ConversationModel。
+// Astryx surface —— 用 Astryx 的 Chat 组件族渲染同一条时间线。
 //
-// 与 assistant-ui surface 的区别：不引任何聊天 runtime，消息/工具/输入的"状态机"在 chat-core。
-// 这里只做 Item → Astryx 组件 的映射。
+// 与 assistant-ui surface 的分工完全一致：分组在 chat-core.buildTimeline，
+// 这里只做「时间线条目 → Astryx 组件」的映射，不碰状态机、不碰传输。
 
-import { ChatComposer, ChatLayout, ChatMessage, ChatMessageBubble, ChatMessageList, ChatSystemMessage, ChatToolCalls } from '@astryxdesign/core';
+import { ChatComposer, ChatComposerInput, ChatLayout, ChatMessage, ChatMessageBubble, ChatMessageList, ChatSystemMessage, ChatToolCalls } from '@astryxdesign/core';
+import { createStaticSource, type SearchableItem } from '@astryxdesign/core/Typeahead';
+import { buildTimeline, type MentionCandidate, type TimelineEntry, type TimelinePart } from '@diy-agent/chat-core';
 import * as React from 'react';
 
-import type { Author, Bot, Delivery, Item } from '../../model';
+import { useMentionCandidates } from '../../mentions';
 import { conversationOf, useStore } from '../../store';
 
-interface ChatBlock {
-    key: string;
-    author?: Author;
-    texts: string[];
-    tools: { name: string; state: 'running' | 'ok' | 'error'; args?: unknown }[];
-    streaming: boolean;
-}
+type Run = { kind: 'text'; text: string } | { kind: 'tool'; tools: Extract<TimelinePart, { kind: 'tool' }>[] };
 
-type Row = { kind: 'user' | 'notice' | 'error' | 'assistant'; item?: Item; block?: ChatBlock };
-
-/**
- * Item[] → 行。多 agent 并发时同一轮的不同 bot 的 item 会按 order 交错，
- * 所以块必须按 (turnId, authorId) 聚合而不是按相邻性切段——否则同一 bot 会被切成两块。
- * @see projection.ts 的 assistant-ui 投影，规则必须一致。
- */
-function groupItems(items: Item[]): Row[] {
-    const rows: Row[] = [];
-    const blocks = new Map<string, ChatBlock>();
-
-    for (const item of items) {
-        if (item.type === 'notice') {
-            rows.push({ kind: 'notice', item });
-            continue;
+/** 把 parts 压成连续同类块：文本一段、工具一组，保持原有先后 */
+function runsOf(parts: TimelinePart[]): Run[] {
+    const runs: Run[] = [];
+    for (const part of parts) {
+        const last = runs.at(-1);
+        if (part.kind === 'text') {
+            if (last?.kind === 'text') last.text += `\n\n${part.text}`;
+            else runs.push({ kind: 'text', text: part.text });
+        } else if (last?.kind === 'tool') {
+            last.tools.push(part);
+        } else {
+            runs.push({ kind: 'tool', tools: [part] });
         }
-        if (item.type === 'error') {
-            rows.push({ kind: 'error', item });
-            continue;
-        }
-        if (item.author?.role === 'human') {
-            rows.push({ kind: 'user', item });
-            continue;
-        }
-
-        const blockKey = `${item.turnId}:${item.author?.id ?? 'unknown'}`;
-        let block = blocks.get(blockKey);
-        if (block === undefined) {
-            block = { key: blockKey, author: item.author, texts: [], tools: [], streaming: false };
-            blocks.set(blockKey, block);
-            rows.push({ kind: 'assistant', block });
-        }
-        if (item.type === 'chat') {
-            block.texts.push(item.data.text);
-        } else if (item.type === 'tool') {
-            block.tools.push({ name: item.data.name, state: item.data.state, args: item.data.args });
-        }
-        if (item.status === 'streaming') block.streaming = true;
     }
-    return rows;
+    return runs;
 }
 
-function DeliveryChips({ deliveries, bots }: { deliveries: Delivery[]; bots: Record<string, Bot> }) {
-    if (deliveries.length === 0) return null;
+const TOOL_STATUS = { running: 'running', ok: 'complete', error: 'error' } as const;
+
+function DeliveryChips({ entry }: { entry: TimelineEntry }) {
+    if (entry.deliveries.length === 0) return null;
     return (
-        <span className="flex flex-wrap gap-1.5">
-            {deliveries.map((delivery) => {
-                const bot = bots[delivery.botId];
+        <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {entry.deliveries.map((delivery) => {
                 const label =
                     delivery.state === 'delivered'
                         ? '已收到'
@@ -74,14 +46,64 @@ function DeliveryChips({ deliveries, bots }: { deliveries: Delivery[]; bots: Rec
                             ? '发送中'
                             : '排队';
                 return (
-                    <span key={delivery.botId} className="flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] opacity-70">
-                        <span className="size-1.5 rounded-full" style={{ background: bot?.color ?? '#9ca3af' }} />
-                        {bot?.name ?? delivery.botId} {label}
+                    <span
+                        key={delivery.botId}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, opacity: 0.72 }}
+                    >
+                        <span style={{ width: 6, height: 6, borderRadius: 999, background: delivery.color }} />
+                        {delivery.name} {label}
                     </span>
                 );
             })}
         </span>
     );
+}
+
+function EntryView({ entry }: { entry: TimelineEntry }) {
+    if (entry.kind === 'notice' || entry.kind === 'error') {
+        const text = entry.parts.map((part) => (part.kind === 'text' ? part.text : '')).join('');
+        return (
+            <ChatSystemMessage key={entry.key} variant={entry.kind === 'notice' ? 'divider' : 'default'}>
+                {text}
+            </ChatSystemMessage>
+        );
+    }
+
+    if (entry.kind === 'user') {
+        const text = entry.parts.map((part) => (part.kind === 'text' ? part.text : '')).join('');
+        return (
+            <ChatMessage key={entry.key} sender="user" name={entry.author?.name}>
+                <ChatMessageBubble metadata={<DeliveryChips entry={entry} />}>{text}</ChatMessageBubble>
+            </ChatMessage>
+        );
+    }
+
+    return (
+        <ChatMessage key={entry.key} sender="assistant" name={entry.author?.name}>
+            {runsOf(entry.parts).map((run, index) =>
+                run.kind === 'text' ? (
+                    <ChatMessageBubble key={`t${index}`}>
+                        <span style={{ whiteSpace: 'pre-wrap' }}>{run.text}</span>
+                    </ChatMessageBubble>
+                ) : (
+                    <ChatToolCalls
+                        key={`c${index}`}
+                        calls={run.tools.map((tool) => ({
+                            key: tool.id,
+                            name: tool.name,
+                            status: TOOL_STATUS[tool.state],
+                            target: tool.args === undefined ? undefined : JSON.stringify(tool.args).slice(0, 80),
+                        }))}
+                    />
+                ),
+            )}
+        </ChatMessage>
+    );
+}
+
+/** 候选 → Astryx 触发器菜单的条目 */
+function toSearchItems(candidates: MentionCandidate[]): SearchableItem<MentionCandidate>[] {
+    return candidates.map((candidate) => ({ id: candidate.id, label: candidate.name, auxiliaryData: candidate }));
 }
 
 export function AstryxSurface({ targetId }: { targetId: string }) {
@@ -90,69 +112,55 @@ export function AstryxSurface({ targetId }: { targetId: string }) {
     const state = React.useSyncExternalStore(conversation.subscribe, conversation.get, conversation.get);
     const [draft, setDraft] = React.useState('');
 
-    const rows = React.useMemo(() => groupItems(state.items), [state.items]);
+    const entries = React.useMemo(
+        () => buildTimeline(state.items, state.deliveries, shell.bots),
+        [state.items, state.deliveries, shell.bots],
+    );
+
+    const candidates = useMentionCandidates(targetId);
+    const triggers = React.useMemo(
+        () => [
+            {
+                character: '@',
+                searchSource: createStaticSource(toSearchItems(candidates)),
+                renderItem: (item: SearchableItem) => {
+                    const candidate = item.auxiliaryData as MentionCandidate | undefined;
+                    return (
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ width: 6, height: 6, borderRadius: 999, background: candidate?.color ?? '#9ca3af' }} />
+                            <span>{item.label}</span>
+                            {candidate?.isOwner === true && <span style={{ marginLeft: 'auto', fontSize: 10, opacity: 0.6 }}>owner</span>}
+                        </span>
+                    );
+                },
+                onSelect: (item: SearchableItem) => `@${item.label} `,
+            },
+        ],
+        [candidates],
+    );
 
     return (
-        <div data-astryx-theme="neutral" className="flex min-h-0 flex-1 flex-col">
+        <div data-astryx-theme="neutral" style={{ display: 'flex', flex: 1, minHeight: 0, flexDirection: 'column' }}>
             <ChatLayout
                 composer={
                     <ChatComposer
                         value={draft}
                         onChange={setDraft}
-                        placeholder="和这个实体对话…"
+                        placeholder="和这个实体对话…（@ 选 bot）"
                         onSubmit={(value) => {
                             conversation.send(value);
                             setDraft('');
                         }}
                         onStop={() => conversation.cancel()}
                         isStopShown={state.running}
+                        input={<ChatComposerInput triggers={triggers} label="Message input" placeholder="和这个实体对话…（@ 选 bot）" />}
                     />
                 }
             >
-                <ChatMessageList>
-                    {rows.map((row) => {
-                        if (row.kind === 'notice' && row.item?.type === 'notice') {
-                            return (
-                                <ChatSystemMessage key={row.item.id} variant="divider">
-                                    {row.item.data.text}
-                                </ChatSystemMessage>
-                            );
-                        }
-                        if (row.kind === 'error' && row.item?.type === 'error') {
-                            return <ChatSystemMessage key={row.item.id}>{row.item.data.message}</ChatSystemMessage>;
-                        }
-                        if (row.kind === 'user' && row.item !== undefined) {
-                            const userItem = row.item;
-                            const text = userItem.type === 'chat' ? userItem.data.text : '';
-                            const deliveries = state.deliveries.filter((delivery) => delivery.messageId === userItem.id);
-                            return (
-                                <ChatMessage key={userItem.id} sender="user" name={userItem.author?.name}>
-                                    <ChatMessageBubble metadata={<DeliveryChips deliveries={deliveries} bots={shell.bots} />}>{text}</ChatMessageBubble>
-                                </ChatMessage>
-                            );
-                        }
-                        const block = row.block;
-                        if (block === undefined) return null;
-                        return (
-                            <ChatMessage key={block.key} sender="assistant" name={block.author?.name}>
-                                {block.texts.length > 0 && (
-                                    <ChatMessageBubble>
-                                        <span className="whitespace-pre-wrap">{block.texts.join('\n\n')}</span>
-                                    </ChatMessageBubble>
-                                )}
-                                {block.tools.length > 0 && (
-                                    <ChatToolCalls
-                                        calls={block.tools.map((tool, index) => ({
-                                            key: `${block.key}-${index}`,
-                                            name: tool.name,
-                                            status: tool.state === 'running' ? 'running' : tool.state === 'error' ? 'error' : 'complete',
-                                            target: tool.args === undefined ? undefined : JSON.stringify(tool.args).slice(0, 80),
-                                        }))}
-                                    />
-                                )}
-                            </ChatMessage>
-                        );
-                    })}
+                <ChatMessageList isStreaming={state.running}>
+                    {entries.map((entry) => (
+                        <EntryView key={entry.key} entry={entry} />
+                    ))}
                 </ChatMessageList>
             </ChatLayout>
         </div>

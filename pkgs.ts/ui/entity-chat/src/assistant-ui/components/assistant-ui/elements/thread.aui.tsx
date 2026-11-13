@@ -38,6 +38,8 @@ import {
 } from "lucide-react";
 import { useEffect, useState, type FC } from "react";
 import type { CustomMeta } from "../../../../projection";
+import { completeMention, dismissMention, filterMentionCandidates, mentionQuery, moveActive } from "@diy-agent/chat-core";
+
 import { useMentionBots } from "../../../../mentions";
 
 // Startup exposes a loading placeholder thread; treat it as a new chat so
@@ -207,14 +209,10 @@ const Composer: FC = () => {
   const bots = useMentionBots();
   const aui = useAui();
   const text = useAuiState((s) => s.composer.text);
-  const match = /(^|\s)@([^\s@]*)$/.exec(text);
-  const query = match === null ? null : (match[2] ?? "");
+  // @ 规则（查询解析/过滤/补全）在 chat-core，与 Astryx 表面共用同一份
+  const query = mentionQuery(text);
   const candidates =
-    query === null
-      ? []
-      : bots.filter((bot) =>
-          bot.name.toLowerCase().includes(query.toLowerCase()),
-        );
+    query === null ? [] : filterMentionCandidates(bots, query);
 
   // 键盘选择：默认选中第一项
   const [active, setActive] = useState(0);
@@ -223,26 +221,24 @@ const Composer: FC = () => {
   }, [query]);
 
   const pick = (name: string) => {
-    aui.composer.setText(text.replace(/@([^\s@]*)$/, `@${name} `));
+    aui.composer.setText(completeMention(text, name));
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (query === null || candidates.length === 0) return;
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      setActive((index) => (index + 1) % candidates.length);
+      setActive((index) => moveActive(index, 1, candidates.length));
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
-      setActive(
-        (index) => (index - 1 + candidates.length) % candidates.length,
-      );
+      setActive((index) => moveActive(index, -1, candidates.length));
     } else if (event.key === "Enter") {
       event.preventDefault();
       const chosen = candidates[active];
       if (chosen !== undefined) pick(chosen.name);
     } else if (event.key === "Escape") {
       event.preventDefault();
-      aui.composer.setText(text.replace(/@([^\s@]*)$/, ""));
+      aui.composer.setText(dismissMention(text));
     }
   };
 

@@ -2,9 +2,19 @@
 
 export type { ChatClient } from './client';
 export { dirOf, botsOf, ownerOfBot } from './entity';
+export {
+    completeMention,
+    dismissMention,
+    filterMentionCandidates,
+    mentionCandidatesOf,
+    mentionQuery,
+    moveActive,
+    type MentionCandidate,
+} from './mention';
 export { MockChatClient, type MockOptions } from './mock';
 export { applyEvent, emptyState, fromSnapshot, type ConversationState } from './reduce';
 export { ConversationStore, type ConversationModel } from './store';
+export { buildTimeline, type TimelineDelivery, type TimelineEntry, type TimelinePart } from './timeline';
 export {
     DEFAULT_CAPABILITIES,
     type Author,
