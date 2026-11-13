@@ -36,7 +36,7 @@ import {
   RefreshCwIcon,
   SquareIcon,
 } from "lucide-react";
-import { useState, type FC } from "react";
+import { useEffect, useState, type FC } from "react";
 import type { CustomMeta } from "../../../../projection";
 import { useMentionBots } from "../../../../mentions";
 
@@ -216,23 +216,50 @@ const Composer: FC = () => {
           bot.name.toLowerCase().includes(query.toLowerCase()),
         );
 
+  // 键盘选择：默认选中第一项
+  const [active, setActive] = useState(0);
+  useEffect(() => {
+    setActive(0);
+  }, [query]);
+
   const pick = (name: string) => {
     aui.composer.setText(text.replace(/@([^\s@]*)$/, `@${name} `));
+  };
+
+  const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (query === null || candidates.length === 0) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActive((index) => (index + 1) % candidates.length);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActive(
+        (index) => (index - 1 + candidates.length) % candidates.length,
+      );
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      const chosen = candidates[active];
+      if (chosen !== undefined) pick(chosen.name);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      aui.composer.setText(text.replace(/@([^\s@]*)$/, ""));
+    }
   };
 
   return (
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
       {query !== null && candidates.length > 0 && (
         <div className="bg-popover text-popover-foreground absolute bottom-full left-2 z-20 mb-1 w-60 overflow-hidden rounded-xl border p-1 shadow-lg">
-          {candidates.map((bot) => (
+          {candidates.map((bot, index) => (
             <button
               key={bot.id}
               type="button"
+              data-active={index === active ? "true" : undefined}
               onMouseDown={(event) => {
                 event.preventDefault();
                 pick(bot.name);
               }}
-              className="hover:bg-accent hover:text-accent-foreground flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm"
+              className="hover:bg-accent hover:text-accent-foreground data-[active=true]:bg-accent data-[active=true]:text-accent-foreground flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm"
             >
               <span
                 className="size-2 rounded-full"
@@ -255,6 +282,7 @@ const Composer: FC = () => {
         >
           <ComposerAttachments />
           <ComposerPrimitive.Input
+            onKeyDown={onKeyDown}
             placeholder="Send a message..."
             className="aui-composer-input placeholder:text-muted-foreground/60 max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base leading-6 outline-none"
             rows={1}

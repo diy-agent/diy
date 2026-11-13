@@ -342,6 +342,7 @@ const server = createServer((req, res) => {
 
                     const abort = new AbortController();
                     req.on('close', () => abort.abort());
+                    const projectors = new Map<string, Projector>();
 
                     // 同一轮内：多个 bot 并行；各自一条投影 + 一条 outbox
                     await Promise.all(
@@ -350,6 +351,7 @@ const server = createServer((req, res) => {
                             sse(res, { kind: 'delivery', delivery: delivering });
 
                             const projector = new Projector(authorOf(bot), turn);
+                            projectors.set(bot.id, projector);
                             const persisted = new Set<string>();
                             let failed = false;
 
@@ -379,6 +381,67 @@ const server = createServer((req, res) => {
                             }
                         }),
                     );
+
+                    // bot → bot：从回复文本里找 @（只允许单人，@all 忽略），只跳一层
+                    const mentioned = new Set<string>();
+                    for (const bot of recipients) {
+                        const text = projectors
+                            .get(bot.id)
+                            ?.all()
+                            .filter((item) => item.type === 'chat')
+                            .map((item) => (item.type === 'chat' ? item.data.text : ''))
+                            .join(' ') ?? '';
+                        for (const name of [...text.matchAll(/@([^\s@]+)/g)].map((match) => match[1] ?? '')) {
+                            if (name !== 'all') mentioned.add(name);
+                        }
+                    }
+
+                    const already = new Set(recipients.map((bot) => bot.id));
+                    const targets = participants
+                        .filter((bot) => mentioned.has(bot.name) && !already.has(bot.id))
+                        .slice(0, 1);
+
+                    for (const target of targets) {
+                        const notice: Item = {
+                            id: `n-${Date.now().toString(36)}`,
+                            seq: store.seqOf(id) + 1,
+                            order: nextOrder(id),
+                            turn,
+                            turnId,
+                            at: Date.now(),
+                            status: 'done',
+                            type: 'notice',
+                            data: { text: `@${target.name} 被激活`, kind: 'mention' },
+                        };
+                        const savedNotice = store.appendItem(id, notice);
+                        sse(res, { kind: 'item', item: savedNotice });
+
+                        const history2 = store
+                            .itemsOf(id)
+                            .filter((item) => item.type === 'chat')
+                            .slice(-20)
+                            .map((item) => ({
+                                role: item.author?.role === 'human' ? ('user' as const) : ('assistant' as const),
+                                content: (item.data as { text: string }).text,
+                            }));
+
+                        const projector = new Projector(authorOf(target), turn);
+                        const persisted = new Set<string>();
+                        try {
+                            for await (const event of runAgent({ bot: target, modelKey: target.modelKey, history: history2, signal: abort.signal })) {
+                                for (const item of projector.apply(event)) {
+                                    const ordered: Item = item.order === undefined ? { ...item, order: nextOrder(id) } : item;
+                                    sse(res, { kind: 'item', item: ordered });
+                                    if ((ordered.status === 'done' || ordered.status === 'failed') && !persisted.has(ordered.id)) {
+                                        persisted.add(ordered.id);
+                                        store.appendItem(id, ordered);
+                                    }
+                                }
+                            }
+                        } catch (error) {
+                            sse(res, { kind: 'error', message: error instanceof Error ? error.message : String(error) });
+                        }
+                    }
 
                     sse(res, { kind: 'done' });
                     res.end();

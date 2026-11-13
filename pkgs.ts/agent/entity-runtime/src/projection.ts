@@ -1,7 +1,9 @@
-// projection.ts —— AgentEvent → Item（纯内存投影；流式 delta 折进同一条 Item）。
+// projection.ts —— AgentEvent → Item（UI 只消费 Item）。
 //
-// 约定：每次事件返回「发生变化的 Item 列表」，调用方把它们 upsert 给 UI。
-// UI 不需要知道 delta、工具三态这些细节。
+// 关键：**懒创建** assistant 消息。
+//   run.started 不立刻产生一条空消息，否则 UI 会多一个"闪烁圆点"占位，
+//   并触发 assistant-ui 的 optimistic 占位（两个圆点 / 分支 2/2）。
+//   只有真正出现 text / tool 时才落第一条 Item。
 
 import type { AgentEvent, Author, Item } from './types';
 
@@ -13,6 +15,8 @@ export class Projector {
     private readonly messageIds = new Map<string, string>();
     private readonly toolIds = new Map<string, string>();
     private seq = 0;
+    /** run.started 之后、还没有真实内容之前：先记住，别落空消息 */
+    private pending: { messageId: string; turnId: string; at: number } | null = null;
 
     constructor(
         private readonly author: Author,
@@ -23,10 +27,33 @@ export class Projector {
         return [...this.items.values()].sort((a, b) => a.seq - b.seq);
     }
 
-    /** 注入一条非 agent 产生的 Item（用户消息 / notice） */
     add(item: Item): Item {
         this.items.set(item.id, item);
         this.seq = Math.max(this.seq, item.seq);
+        return item;
+    }
+
+    /** 首次出现内容时，才把那条 assistant 消息落下来 */
+    private ensureMessage(seq: number, now: number): Item | null {
+        if (this.pending === null) return null;
+        const existing = this.messageIds.get(this.pending.messageId);
+        if (existing !== undefined) {
+            const current = this.items.get(existing);
+            return current ?? null;
+        }
+        const item: Item = {
+            id: this.pending.messageId,
+            seq,
+            turn: this.turn,
+            turnId: this.pending.turnId,
+            at: this.pending.at ?? now,
+            status: 'streaming',
+            author: this.author,
+            type: 'chat',
+            data: { text: '' },
+        };
+        this.items.set(item.id, item);
+        this.messageIds.set(this.pending.messageId, item.id);
         return item;
     }
 
@@ -36,35 +63,26 @@ export class Projector {
 
         switch (event.type) {
             case 'run.started': {
-                const item: Item = {
-                    id: event.messageId,
-                    seq,
-                    turn: this.turn,
-                    turnId: event.turnId,
-                    at: now,
-                    status: 'streaming',
-                    author: this.author,
-                    type: 'chat',
-                    data: { text: '' },
-                };
-                this.items.set(item.id, item);
-                this.messageIds.set(event.messageId, item.id);
-                return [item];
+                this.pending = { messageId: event.messageId, turnId: event.turnId, at: now };
+                return [];
             }
 
             case 'text.delta': {
+                this.ensureMessage(seq, now);
                 const id = this.messageIds.get(event.messageId);
                 if (id === undefined) return [];
                 const current = this.items.get(id);
                 if (current === undefined || current.type !== 'chat') return [];
-                const next: Item = { ...current, seq, data: { text: current.data.text + event.delta } };
+                const chat = current as Extract<Item, { type: 'chat' }>;
+                const next: Item = { ...chat, seq, data: { text: chat.data.text + event.delta } };
                 this.items.set(id, next);
                 return [next];
             }
 
             case 'message.completed': {
+                const created = this.ensureMessage(seq, now);
                 const id = this.messageIds.get(event.messageId);
-                if (id === undefined) return [];
+                if (id === undefined) return created === null ? [] : [created];
                 const current = this.items.get(id);
                 if (current === undefined) return [];
                 const next: Item = { ...current, seq, status: 'done' };
@@ -74,6 +92,7 @@ export class Projector {
 
             case 'tool.started': {
                 if (this.toolIds.has(event.toolCallId)) return [];
+                const created = this.ensureMessage(seq, now);
                 const id = `tool-${event.toolCallId}`;
                 const item: Item = {
                     id,
@@ -88,7 +107,7 @@ export class Projector {
                 };
                 this.items.set(id, item);
                 this.toolIds.set(event.toolCallId, id);
-                return [item];
+                return created === null ? [item] : [created, item];
             }
 
             case 'tool.completed': {
@@ -118,7 +137,7 @@ export class Projector {
                         ops.push(closed);
                     }
                 }
-                const item: Item = {
+                const err: Item = {
                     id: nextId('err'),
                     seq,
                     turn: this.turn,
@@ -128,8 +147,9 @@ export class Projector {
                     type: 'error',
                     data: { message: event.message },
                 };
-                this.items.set(item.id, item);
-                ops.push(item);
+                this.items.set(err.id, err);
+                ops.push(err);
+                this.pending = null;
                 return ops;
             }
 
