@@ -4,7 +4,14 @@ export { runAgent, type RunOptions } from './agent';
 export { openStore, type Store } from './db';
 export { Inbox } from './inbox';
 export { Projector, nextId } from './projection';
-export { BotSession, type ChatMessage, type SessionDeps } from './session';
+export { RoomLog, toMessage, type RoomEntry, type RoomEntryInput } from './room-log';
+export {
+    BotSession,
+    DEFAULT_COMPACT,
+    type CompactOptions,
+    type SessionDeps,
+    type TurnResult,
+} from './session';
 export { modelOf, parseModelKey } from './providers';
 export type {
     AgentEvent,

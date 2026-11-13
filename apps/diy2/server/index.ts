@@ -10,7 +10,8 @@ import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { BotSession, Inbox, openStore } from '@diy-agent/entity-runtime';
+import { BotSession, Inbox, RoomLog, openStore } from '@diy-agent/entity-runtime';
+import type { RoomEntry, TurnResult } from '@diy-agent/entity-runtime';
 import type { Author, Bot, Item, Room } from '@diy-agent/protocol';
 
 const PORT = Number(process.env['DIY2_PORT'] ?? 5191);
@@ -23,6 +24,8 @@ const inbox = new Inbox(store.db);
 
 /** 每个 (room, bot) 一个 BotSession：各自串行，互不阻塞 */
 const sessions = new Map<string, BotSession>();
+/** 每个房间一份公共日志（内存版，append-only） */
+const roomLogs = new Map<string, RoomLog>();
 /** 房间当前进行中的轮次：运行中再发消息，沿用同一 turn（不然会跳到时间线末尾） */
 const activeTurns = new Map<string, { turn: number; turnId: string }>();
 
@@ -43,8 +46,13 @@ function broadcast(roomId: string, payload: unknown): void {
     for (const res of subscribers.get(roomId) ?? []) sse(res, payload);
 }
 
-/** 收尾：通知并断开这个房间的所有订阅 */
-function finish(roomId: string): void {
+/** 收尾：等这个房间的所有会话都跑完，再通知并断开订阅 */
+function finish(roomId: string, attempt = 0): void {
+    if (sessionsOf(roomId).some(({ session }) => session.busy) && attempt < 600) {
+        // 还有 bot 在跑（@ 唤起 / 排队），等它结束再收尾，免得把它的产出丢在已关闭的连接外
+        setTimeout(() => finish(roomId, attempt + 1), 100);
+        return;
+    }
     activeTurns.delete(roomId);
     for (const res of subscribers.get(roomId) ?? []) {
         sse(res, { kind: 'done' });
@@ -53,7 +61,26 @@ function finish(roomId: string): void {
     subscribers.delete(roomId);
 }
 
-/** 取/建某个 bot 在这个 room 里的 session */
+function logOf(roomId: string): RoomLog {
+    let log = roomLogs.get(roomId);
+    if (log === undefined) {
+        log = new RoomLog();
+        roomLogs.set(roomId, log);
+    }
+    return log;
+}
+
+/** 这个房间里所有已建好的 session（含 botId） */
+function sessionsOf(roomId: string): Array<{ botId: string; session: BotSession }> {
+    const prefix = `${roomId}::`;
+    const out: Array<{ botId: string; session: BotSession }> = [];
+    for (const [actor, session] of sessions) {
+        if (actor.startsWith(prefix)) out.push({ botId: actor.slice(prefix.length), session });
+    }
+    return out;
+}
+
+/** 取/建某个 bot 在这个 room 里的 session；新建时回放公共日志（后加入的成员也能读到此前结论） */
 function sessionOf(roomId: string, bot: Bot): BotSession {
     const actor = `${roomId}::${bot.id}`;
     let session = sessions.get(actor);
@@ -63,7 +90,6 @@ function sessionOf(roomId: string, bot: Bot): BotSession {
             actor,
             bot,
             modelKey: bot.modelKey,
-            history: () => historyOf(roomId),
             nextTurn: () => ({ turn: nextTurn(roomId), turnId: `turn-${Date.now().toString(36)}` }),
             nextOrder: () => nextOrder(roomId),
             onItem: (item) => {
@@ -78,22 +104,69 @@ function sessionOf(roomId: string, bot: Bot): BotSession {
                 const delivery = store.setDelivery({ roomId, messageId, botId: bot.id, state });
                 broadcast(roomId, { kind: 'delivery', delivery });
             },
+            onTurnEnd: (result) => publishConclusion(roomId, bot, result),
         });
+        for (const entry of logOf(roomId).all()) session.ingest(entry);
         sessions.set(actor, session);
     }
     return session;
 }
 
-/** 会话历史：最近 20 条 chat（跨 bot 可见，和之前一致） */
-function historyOf(roomId: string): { role: 'user' | 'assistant'; content: string }[] {
-    return store
-        .itemsOf(roomId)
-        .filter((item) => item.type === 'chat')
-        .slice(-20)
-        .map((item) => ({
-            role: item.author?.role === 'human' ? ('user' as const) : ('assistant' as const),
-            content: (item.data as { text: string }).text,
-        }));
+/**
+ * 结论进公共日志，并复制给房间里其他 session —— **不唤醒任何人**。
+ * 其他 bot 只会在下一次被唤醒时读到它（防乒乓）。
+ * 唯一的例外：结论里显式 @ 了某个 bot，那是"点名"，算唤醒。
+ */
+function publishConclusion(roomId: string, bot: Bot, result: TurnResult): void {
+    if (result.failed || result.text === '') return;
+    const entry = logOf(roomId).append({
+        kind: 'conclusion',
+        botId: bot.id,
+        name: bot.name,
+        color: bot.color,
+        text: result.text,
+        turn: result.turn,
+        turnId: result.turnId,
+    });
+    for (const { botId, session } of sessionsOf(roomId)) {
+        if (botId !== bot.id) session.ingest(entry);
+    }
+
+    // bot 之间只能单人 @；@all 在 bot 侧忽略（防一次结论炸醒全房间）
+    const room = rooms.get(roomId);
+    if (room === undefined) return;
+    const mentioned = [...result.text.matchAll(/@([^\s@]+)/g)].map((match) => match[1] ?? '');
+    const name = mentioned.find((value) => value !== 'all');
+    if (name === undefined) return;
+    const participants = participantsOf(roomId);
+    const target = participants.find((candidate) => candidate.name === name && candidate.id !== bot.id);
+    if (target === undefined) return;
+
+    const notice: Item = {
+        id: `n-${Date.now().toString(36)}`,
+        seq: store.seqOf(roomId) + 1,
+        order: nextOrder(roomId),
+        turn: result.turn,
+        turnId: result.turnId,
+        at: Date.now(),
+        status: 'done',
+        type: 'notice',
+        data: { text: `${bot.name} 在结论里 @${target.name}，已唤起`, kind: 'mention' },
+    };
+    broadcast(roomId, { kind: 'item', item: store.appendItem(roomId, notice) });
+    void sessionOf(roomId, target).post({
+        messageId: notice.id,
+        text: `[${bot.name} 的结论] ${result.text}`,
+        mode: 'next-turn',
+        turn: { turn: result.turn, turnId: result.turnId },
+    });
+}
+
+function participantsOf(roomId: string): Bot[] {
+    const room = rooms.get(roomId);
+    if (room === undefined) return [];
+    const bots = store.listBots();
+    return room.botIds.map((botId) => bots.find((bot) => bot.id === botId)).filter((bot): bot is Bot => bot !== undefined);
 }
 
 function nextTurn(roomId: string): number {
@@ -129,6 +202,8 @@ function route(room: Room, bots: Bot[], text: string): Bot[] {
 }
 
 const COLORS = ['#7cc4ff', '#f7b267', '#a3e635', '#f472b6', '#c084fc', '#38bdf8'];
+
+const HUMAN: Author = { id: 'human:我', name: '我', color: '#9ca3af', role: 'human' };
 
 // ─── 种子：bot 落 sqlite；项目/任务先在内存 ────────────────────────
 
@@ -326,6 +401,14 @@ const server = createServer((req, res) => {
             return;
         }
 
+        if (req.method === 'GET' && parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'sessions') {
+            const id = decodeURIComponent(parts[2] ?? '');
+            json(res, 200, {
+                sessions: sessionsOf(id).map(({ botId, session }) => ({ botId, messages: session.context() })),
+            });
+            return;
+        }
+
         // /api/entities/:id/history
         if (req.method === 'GET' && parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'history') {
             const id = decodeURIComponent(parts[2] ?? '');
@@ -350,9 +433,7 @@ const server = createServer((req, res) => {
                 const text = (body.text ?? '').trim();
                 if (text === '') return json(res, 400, { error: 'text required' });
 
-                const participants = room.botIds
-                    .map((botId) => store.listBots().find((b) => b.id === botId))
-                    .filter((bot): bot is Bot => bot !== undefined);
+                const participants = participantsOf(id);
                 if (participants.length === 0) return json(res, 400, { error: 'room has no bot' });
 
                 res.writeHead(200, {
@@ -379,7 +460,7 @@ const server = createServer((req, res) => {
                     turnId,
                     at: now,
                     status: 'done',
-                    author: { id: 'human:我', name: '我', color: '#9ca3af', role: 'human' },
+                    author: HUMAN,
                     type: 'chat',
                     data: { text },
                 };
@@ -391,6 +472,17 @@ const server = createServer((req, res) => {
                     .map((botId) => participants.find((bot) => bot.id === botId))
                     .filter((bot): bot is Bot => bot !== undefined);
                 const recipients = explicit.length > 0 ? explicit : route(room, participants, text);
+                const recipientIds = new Set(recipients.map((bot) => bot.id));
+
+                // 先把成员 session 建好（新建的会回放日志），再追加这条公共条目，
+                // 否则被 @ 的人会把同一条消息收两遍（日志 + steering）。
+                for (const bot of participants) sessionOf(id, bot);
+                const entry: RoomEntry = logOf(id).append({ kind: 'say', author: HUMAN, text, turn, turnId });
+
+                // 没被点名的成员：只进上下文，不唤醒（下一轮才读到）
+                for (const bot of participants) {
+                    if (!recipientIds.has(bot.id)) sessionOf(id, bot).ingest(entry);
+                }
 
                 for (const bot of recipients) {
                     const delivery = store.setDelivery({ roomId: id, messageId: savedUser.id, botId: bot.id, state: 'queued' });
@@ -399,37 +491,9 @@ const server = createServer((req, res) => {
 
                 const mode = body.mode ?? 'next-step';
                 const posts = recipients.map((bot) =>
-                    sessionOf(id, bot).post({ messageId: savedUser.id, text, mode, turn: { turn, turnId } }),
+                    sessionOf(id, bot).post({ messageId: savedUser.id, text, mode, turn: { turn, turnId }, entry }),
                 );
                 await Promise.all(posts);
-
-                // bot → bot：从本轮回复里找 @（单人；@all 忽略），只跳一层
-                const turnItems = store.itemsOf(id).filter((item) => (item as { turnId?: string }).turnId === turnId);
-                const mentioned = new Set<string>();
-                for (const item of turnItems) {
-                    if (item.type !== 'chat' || item.author?.role !== 'bot') continue;
-                    for (const name of [...item.data.text.matchAll(/@([^\s@]+)/g)].map((match) => match[1] ?? '')) {
-                        if (name !== 'all') mentioned.add(name);
-                    }
-                }
-                const already = new Set(recipients.map((bot) => bot.id));
-                const targets = participants.filter((bot) => mentioned.has(bot.name) && !already.has(bot.id)).slice(0, 1);
-
-                for (const target of targets) {
-                    const notice: Item = {
-                        id: `n-${Date.now().toString(36)}`,
-                        seq: store.seqOf(id) + 1,
-                        order: nextOrder(id),
-                        turn,
-                        turnId,
-                        at: Date.now(),
-                        status: 'done',
-                        type: 'notice',
-                        data: { text: `@${target.name} 被激活`, kind: 'mention' },
-                    };
-                    broadcast(id, { kind: 'item', item: store.appendItem(id, notice) });
-                    await sessionOf(id, target).post({ messageId: `${savedUser.id}:${target.id}`, text, mode: 'next-turn', turn: { turn, turnId } });
-                }
 
                 finish(id);
             });
