@@ -47,7 +47,7 @@ export function toThreadMessages(
     deliveries: readonly Delivery[] = [],
     bots: Record<string, Bot> = {},
 ): ThreadMessageLike[] {
-    const out: { turnId: string; message: ThreadMessageLike }[] = [];
+    const out: { turnId: string; authorId?: string; message: ThreadMessageLike }[] = [];
 
     for (const item of items) {
         const createdAt = new Date(item.at);
@@ -82,6 +82,7 @@ export function toThreadMessages(
                 });
             out.push({
                 turnId: item.turnId,
+                authorId: author.id,
                 message: {
                     id: item.id,
                     createdAt,
@@ -99,11 +100,14 @@ export function toThreadMessages(
         const status = item.status === 'streaming' ? runningStatus : completeStatus;
         const last = out.at(-1);
 
-        // 同一轮：把 part 追加进上一条 assistant 消息（这就是"工具与文本不分离"）
-        if (last !== undefined && last.turnId === item.turnId && last.message.role === 'assistant') {
+        // 同一轮 + 同一个 bot：把 part 追加进上一条 assistant 消息（工具与文本不分离）。
+        // 多 agent 并发时同轮有多个 bot，必须按 author 分开，否则会串成一条气泡。
+        const authorId = author?.id;
+        if (last !== undefined && last.turnId === item.turnId && last.authorId === authorId && last.message.role === 'assistant') {
             const content = [...(last.message.content as Part[]), part];
             out[out.length - 1] = {
                 turnId: last.turnId,
+                authorId,
                 message: { ...last.message, content, status },
             };
             continue;
@@ -111,6 +115,7 @@ export function toThreadMessages(
 
         out.push({
             turnId: item.turnId,
+            authorId,
             message: {
                 id: item.id,
                 createdAt,

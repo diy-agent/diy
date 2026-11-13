@@ -22,7 +22,8 @@
     "vitest": "^4.1.10"
   },
   "allowScripts": {
-    "esbuild@0.28.1": true
+    "esbuild@0.28.1": true,
+    "@astryxdesign/core@0.7.15": true
   },
   "dependencies": {
     "remark-gfm": "^4.0.1",
