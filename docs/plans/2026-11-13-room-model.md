@@ -48,3 +48,23 @@ inbox  = VIEW deliveries WHERE state='queued'
 
 `mode` 只剩投递时机：`next-step`（默认，在 step 边界插入） / `next-turn`（等这一轮结束）。
 system / job 只往 inbox 投事实，没有自己的 BotSession。
+
+## 实现状态（2026-11-13 晚）
+
+**已生效**
+
+- `entity-runtime/src/session.ts`：`BotSession`，每 `(room, bot)` 一个，串行跑 turn；
+- 两个投递时机用的是 AI SDK v7 原生 `experimental_createSteering()`：
+  `steering.steer()` = **next-step**（工具批次结束后、下一次调模型前作为独立 user 消息追加，
+  若本要收尾则多跑一步）；`steering.queue()` 语义对应 **next-turn**；
+- 服务端 `POST /api/rooms/:id/chat` 默认 `next-step`，运行中再发就是插话；
+  `POST /api/rooms/:id/cancel` 停止该房间所有会话（默认丢弃队列，`keepQueue` 保留）；
+- 同一房间用房间级 SSE 广播：多个请求共享同一条事件流；
+- 测试 `entity-runtime/tests/session.test.ts`（5 条）：空闲投递、运行中 next-step 不新开 turn、
+  next-turn 排队、cancel 中止、cancel keepQueue 不丢。
+
+**已知未做**
+
+- `inbox` 表仍然没接：目前队列在内存（进程重启丢失），没做崩溃恢复与 `claimed` 回收；
+- 多 bot 的"结论交叉投递"（开会）还没实现，只有 @ 激活一层；
+- cancel 后未落盘的流式消息不会入库（刷新即丢）。

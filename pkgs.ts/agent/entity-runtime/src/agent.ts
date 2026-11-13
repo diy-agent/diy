@@ -1,6 +1,6 @@
 // agent.ts —— 一次 bot 运行：streamText → AgentEvent（文本 / 推理 / 工具 / 结束）。
 
-import { isStepCount, streamText, tool } from 'ai';
+import { isStepCount, streamText, tool, type Experimental_Steering } from 'ai';
 import { z } from 'zod';
 
 import { modelOf } from './providers';
@@ -11,6 +11,10 @@ export interface RunOptions {
     modelKey: string;
     history: { role: 'user' | 'assistant'; content: string }[];
     signal: AbortSignal;
+    /** 由调用方分配（同 turn 的多个 bot 共享 turnId） */
+    turnId?: string;
+    /** next-step 插入点：SDK 在 step 边界把消息作为独立 user 消息追加 */
+    steering?: Experimental_Steering;
 }
 
 const tools = {
@@ -27,7 +31,7 @@ const tools = {
 
 export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> {
     let seq = 0;
-    const turnId = `turn-${Date.now().toString(36)}`;
+    const turnId = options.turnId ?? `turn-${Date.now().toString(36)}`;
     const messageId = `msg-${Date.now().toString(36)}`;
 
     yield { seq: ++seq, type: 'run.started', turnId, messageId };
@@ -42,8 +46,9 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
         ].join('\n'),
         messages: options.history,
         tools,
-        stopWhen: isStepCount(4),
+        stopWhen: isStepCount(6),
         maxRetries: 0,
+        ...(options.steering === undefined ? {} : { experimental_steering: options.steering }),
     });
 
     try {

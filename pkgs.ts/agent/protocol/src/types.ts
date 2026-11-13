@@ -85,7 +85,7 @@ export interface Delivery {
 
 export type Command =
     | { kind: 'send'; text: string }
-    | { kind: 'cancel'; keepInbox?: boolean };
+    | { kind: 'cancel'; keepQueue?: boolean };
 
 /** 传输层回推给 UI 的事件流（目前是 SSE，将来可能是 diy-rpc 订阅） */
 export type StreamEvent =

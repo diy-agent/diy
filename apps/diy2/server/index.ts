@@ -10,7 +10,7 @@ import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { Inbox, Projector, openStore, runAgent } from '@diy-agent/entity-runtime';
+import { BotSession, Inbox, openStore } from '@diy-agent/entity-runtime';
 import type { Author, Bot, Item, Room } from '@diy-agent/protocol';
 
 const PORT = Number(process.env['DIY2_PORT'] ?? 5191);
@@ -21,8 +21,80 @@ mkdirSync(dataDir, { recursive: true });
 const store = openStore(join(dataDir, 'diy2.db'));
 const inbox = new Inbox(store.db);
 
-/** 每个实体一条串行链：同一实体的轮次严格按发送顺序执行 */
-const chains = new Map<string, Promise<void>>();
+/** 每个 (room, bot) 一个 BotSession：各自串行，互不阻塞 */
+const sessions = new Map<string, BotSession>();
+/** 房间当前进行中的轮次：运行中再发消息，沿用同一 turn（不然会跳到时间线末尾） */
+const activeTurns = new Map<string, { turn: number; turnId: string }>();
+
+/** 房间级的 SSE 订阅者（同一房间的多个请求共享事件流） */
+const subscribers = new Map<string, Set<ServerResponse>>();
+
+function attach(roomId: string, res: ServerResponse): void {
+    let set = subscribers.get(roomId);
+    if (set === undefined) {
+        set = new Set();
+        subscribers.set(roomId, set);
+    }
+    set.add(res);
+    res.on('close', () => set?.delete(res));
+}
+
+function broadcast(roomId: string, payload: unknown): void {
+    for (const res of subscribers.get(roomId) ?? []) sse(res, payload);
+}
+
+/** 收尾：通知并断开这个房间的所有订阅 */
+function finish(roomId: string): void {
+    activeTurns.delete(roomId);
+    for (const res of subscribers.get(roomId) ?? []) {
+        sse(res, { kind: 'done' });
+        res.end();
+    }
+    subscribers.delete(roomId);
+}
+
+/** 取/建某个 bot 在这个 room 里的 session */
+function sessionOf(roomId: string, bot: Bot): BotSession {
+    const actor = `${roomId}::${bot.id}`;
+    let session = sessions.get(actor);
+    if (session === undefined) {
+        const persisted = new Set<string>();
+        session = new BotSession({
+            actor,
+            bot,
+            modelKey: bot.modelKey,
+            history: () => historyOf(roomId),
+            nextTurn: () => ({ turn: nextTurn(roomId), turnId: `turn-${Date.now().toString(36)}` }),
+            nextOrder: () => nextOrder(roomId),
+            onItem: (item) => {
+                broadcast(roomId, { kind: 'item', item });
+                if ((item.status === 'done' || item.status === 'failed') && !persisted.has(item.id)) {
+                    persisted.add(item.id);
+                    store.appendItem(roomId, item);
+                }
+            },
+            onError: (message) => broadcast(roomId, { kind: 'error', message }),
+            onDelivery: (messageId, state) => {
+                const delivery = store.setDelivery({ roomId, messageId, botId: bot.id, state });
+                broadcast(roomId, { kind: 'delivery', delivery });
+            },
+        });
+        sessions.set(actor, session);
+    }
+    return session;
+}
+
+/** 会话历史：最近 20 条 chat（跨 bot 可见，和之前一致） */
+function historyOf(roomId: string): { role: 'user' | 'assistant'; content: string }[] {
+    return store
+        .itemsOf(roomId)
+        .filter((item) => item.type === 'chat')
+        .slice(-20)
+        .map((item) => ({
+            role: item.author?.role === 'human' ? ('user' as const) : ('assistant' as const),
+            content: (item.data as { text: string }).text,
+        }));
+}
 
 function nextTurn(roomId: string): number {
     const turns = store.itemsOf(roomId).map((item) => (item as { turn?: number }).turn ?? 0);
@@ -268,175 +340,111 @@ const server = createServer((req, res) => {
             return;
         }
 
-        // /api/entities/:id/chat
+        // POST /api/rooms/:id/chat —— 投一条消息（next-step），SSE 订阅这个房间的事件
         if (req.method === 'POST' && parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'chat') {
             const id = decodeURIComponent(parts[2] ?? '');
             const room = rooms.get(id);
             if (room === undefined) return json(res, 404, { error: 'room not found' });
 
-            void readBody<{ text?: string }>(req).then((body) => {
+            void readBody<{ text?: string; recipients?: string[]; mode?: 'next-step' | 'next-turn' }>(req).then(async (body) => {
                 const text = (body.text ?? '').trim();
                 if (text === '') return json(res, 400, { error: 'text required' });
 
-                // 同一实体串行：上一轮没结束，这一轮排队等
-                const run = (chains.get(id) ?? Promise.resolve()).then(async () => {
-                    const participants = room.botIds
-                        .map((botId) => store.listBots().find((b) => b.id === botId))
-                        .filter((bot): bot is Bot => bot !== undefined);
-                    if (participants.length === 0) {
-                        json(res, 400, { error: 'room has no bot' });
-                        return;
+                const participants = room.botIds
+                    .map((botId) => store.listBots().find((b) => b.id === botId))
+                    .filter((bot): bot is Bot => bot !== undefined);
+                if (participants.length === 0) return json(res, 400, { error: 'room has no bot' });
+
+                res.writeHead(200, {
+                    'content-type': 'text/event-stream; charset=utf-8',
+                    'cache-control': 'no-cache',
+                    connection: 'keep-alive',
+                });
+                attach(id, res);
+
+                const now = Date.now();
+                const busy = [...sessions].some(([actor, session]) => actor.startsWith(`${id}::`) && session.busy);
+                const turnRef = (busy ? activeTurns.get(id) : undefined) ?? {
+                    turn: nextTurn(id),
+                    turnId: `turn-${now.toString(36)}`,
+                };
+                activeTurns.set(id, turnRef);
+                const { turn, turnId } = turnRef;
+
+                const userItem: Item = {
+                    id: `u-${now.toString(36)}`,
+                    seq: store.seqOf(id) + 1,
+                    order: nextOrder(id),
+                    turn,
+                    turnId,
+                    at: now,
+                    status: 'done',
+                    author: { id: 'human:我', name: '我', color: '#9ca3af', role: 'human' },
+                    type: 'chat',
+                    data: { text },
+                };
+                const savedUser = store.appendItem(id, userItem);
+                broadcast(id, { kind: 'item', item: savedUser });
+
+                // 显式 recipients = 开会；缺省按 @ 规则路由
+                const explicit = (body.recipients ?? [])
+                    .map((botId) => participants.find((bot) => bot.id === botId))
+                    .filter((bot): bot is Bot => bot !== undefined);
+                const recipients = explicit.length > 0 ? explicit : route(room, participants, text);
+
+                for (const bot of recipients) {
+                    const delivery = store.setDelivery({ roomId: id, messageId: savedUser.id, botId: bot.id, state: 'queued' });
+                    broadcast(id, { kind: 'delivery', delivery });
+                }
+
+                const mode = body.mode ?? 'next-step';
+                const posts = recipients.map((bot) =>
+                    sessionOf(id, bot).post({ messageId: savedUser.id, text, mode, turn: { turn, turnId } }),
+                );
+                await Promise.all(posts);
+
+                // bot → bot：从本轮回复里找 @（单人；@all 忽略），只跳一层
+                const turnItems = store.itemsOf(id).filter((item) => (item as { turnId?: string }).turnId === turnId);
+                const mentioned = new Set<string>();
+                for (const item of turnItems) {
+                    if (item.type !== 'chat' || item.author?.role !== 'bot') continue;
+                    for (const name of [...item.data.text.matchAll(/@([^\s@]+)/g)].map((match) => match[1] ?? '')) {
+                        if (name !== 'all') mentioned.add(name);
                     }
+                }
+                const already = new Set(recipients.map((bot) => bot.id));
+                const targets = participants.filter((bot) => mentioned.has(bot.name) && !already.has(bot.id)).slice(0, 1);
 
-                    res.writeHead(200, {
-                        'content-type': 'text/event-stream; charset=utf-8',
-                        'cache-control': 'no-cache',
-                        connection: 'keep-alive',
-                    });
-
-                    const now = Date.now();
-                    const turn = nextTurn(id);
-                    const turnId = `turn-${now.toString(36)}`;
-
-                    const userItem: Item = {
-                        id: `u-${now.toString(36)}`,
+                for (const target of targets) {
+                    const notice: Item = {
+                        id: `n-${Date.now().toString(36)}`,
                         seq: store.seqOf(id) + 1,
                         order: nextOrder(id),
                         turn,
                         turnId,
-                        at: now,
+                        at: Date.now(),
                         status: 'done',
-                        author: { id: 'human:我', name: '我', color: '#9ca3af', role: 'human' },
-                        type: 'chat',
-                        data: { text },
+                        type: 'notice',
+                        data: { text: `@${target.name} 被激活`, kind: 'mention' },
                     };
-                    const savedUser = store.appendItem(id, userItem);
-                    sse(res, { kind: 'item', item: savedUser });
+                    broadcast(id, { kind: 'item', item: store.appendItem(id, notice) });
+                    await sessionOf(id, target).post({ messageId: `${savedUser.id}:${target.id}`, text, mode: 'next-turn', turn: { turn, turnId } });
+                }
 
-                    const recipients = route(room, participants, text);
+                finish(id);
+            });
+            return;
+        }
 
-                    // 路由结果落 outbox：先 queued，再逐条推进
-                    for (const bot of recipients) {
-                        const delivery = store.setDelivery({ roomId: id, messageId: savedUser.id, botId: bot.id, state: 'queued' });
-                        sse(res, { kind: 'delivery', delivery });
-                    }
-
-                    const history = store
-                        .itemsOf(id)
-                        .filter((item) => item.type === 'chat')
-                        .slice(-20)
-                        .map((item) => ({
-                            role: item.author?.role === 'human' ? ('user' as const) : ('assistant' as const),
-                            content: (item.data as { text: string }).text,
-                        }));
-
-                    const abort = new AbortController();
-                    req.on('close', () => abort.abort());
-                    const projectors = new Map<string, Projector>();
-
-                    // 同一轮内：多个 bot 并行；各自一条投影 + 一条 outbox
-                    await Promise.all(
-                        recipients.map(async (bot) => {
-                            const delivering = store.setDelivery({ roomId: id, messageId: savedUser.id, botId: bot.id, state: 'delivering' });
-                            sse(res, { kind: 'delivery', delivery: delivering });
-
-                            const projector = new Projector(authorOf(bot), turn);
-                            projectors.set(bot.id, projector);
-                            const persisted = new Set<string>();
-                            let failed = false;
-
-                            try {
-                                for await (const event of runAgent({ bot, modelKey: bot.modelKey, history, signal: abort.signal })) {
-                                    if (event.type === 'run.failed') failed = true;
-                                    for (const item of projector.apply(event)) {
-                                        const ordered: Item = item.order === undefined ? { ...item, order: nextOrder(id) } : item;
-                                        sse(res, { kind: 'item', item: ordered });
-                                        if ((ordered.status === 'done' || ordered.status === 'failed') && !persisted.has(ordered.id)) {
-                                            persisted.add(ordered.id);
-                                            store.appendItem(id, ordered);
-                                        }
-                                    }
-                                }
-                            } catch (error) {
-                                failed = true;
-                                sse(res, { kind: 'error', message: error instanceof Error ? error.message : String(error) });
-                            } finally {
-                                const done = store.setDelivery({
-                                    roomId: id,
-                                    messageId: savedUser.id,
-                                    botId: bot.id,
-                                    state: failed ? 'failed' : 'delivered',
-                                });
-                                sse(res, { kind: 'delivery', delivery: done });
-                            }
-                        }),
-                    );
-
-                    // bot → bot：从回复文本里找 @（只允许单人，@all 忽略），只跳一层
-                    const mentioned = new Set<string>();
-                    for (const bot of recipients) {
-                        const text = projectors
-                            .get(bot.id)
-                            ?.all()
-                            .filter((item) => item.type === 'chat')
-                            .map((item) => (item.type === 'chat' ? item.data.text : ''))
-                            .join(' ') ?? '';
-                        for (const name of [...text.matchAll(/@([^\s@]+)/g)].map((match) => match[1] ?? '')) {
-                            if (name !== 'all') mentioned.add(name);
-                        }
-                    }
-
-                    const already = new Set(recipients.map((bot) => bot.id));
-                    const targets = participants
-                        .filter((bot) => mentioned.has(bot.name) && !already.has(bot.id))
-                        .slice(0, 1);
-
-                    for (const target of targets) {
-                        const notice: Item = {
-                            id: `n-${Date.now().toString(36)}`,
-                            seq: store.seqOf(id) + 1,
-                            order: nextOrder(id),
-                            turn,
-                            turnId,
-                            at: Date.now(),
-                            status: 'done',
-                            type: 'notice',
-                            data: { text: `@${target.name} 被激活`, kind: 'mention' },
-                        };
-                        const savedNotice = store.appendItem(id, notice);
-                        sse(res, { kind: 'item', item: savedNotice });
-
-                        const history2 = store
-                            .itemsOf(id)
-                            .filter((item) => item.type === 'chat')
-                            .slice(-20)
-                            .map((item) => ({
-                                role: item.author?.role === 'human' ? ('user' as const) : ('assistant' as const),
-                                content: (item.data as { text: string }).text,
-                            }));
-
-                        const projector = new Projector(authorOf(target), turn);
-                        const persisted = new Set<string>();
-                        try {
-                            for await (const event of runAgent({ bot: target, modelKey: target.modelKey, history: history2, signal: abort.signal })) {
-                                for (const item of projector.apply(event)) {
-                                    const ordered: Item = item.order === undefined ? { ...item, order: nextOrder(id) } : item;
-                                    sse(res, { kind: 'item', item: ordered });
-                                    if ((ordered.status === 'done' || ordered.status === 'failed') && !persisted.has(ordered.id)) {
-                                        persisted.add(ordered.id);
-                                        store.appendItem(id, ordered);
-                                    }
-                                }
-                            }
-                        } catch (error) {
-                            sse(res, { kind: 'error', message: error instanceof Error ? error.message : String(error) });
-                        }
-                    }
-
-                    sse(res, { kind: 'done' });
-                    res.end();
-                });
-                chains.set(id, run.catch(() => undefined));
+        // POST /api/rooms/:id/cancel —— 停止这个房间所有在跑的会话
+        if (req.method === 'POST' && parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'cancel') {
+            const id = decodeURIComponent(parts[2] ?? '');
+            void readBody<{ keepQueue?: boolean }>(req).then((body) => {
+                for (const [actor, session] of sessions) {
+                    if (actor.startsWith(`${id}::`)) session.cancel({ keepQueue: body.keepQueue === true });
+                }
+                broadcast(id, { kind: 'done' });
+                json(res, 200, { ok: true });
             });
             return;
         }

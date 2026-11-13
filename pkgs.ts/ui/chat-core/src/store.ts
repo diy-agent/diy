@@ -70,9 +70,10 @@ export class ConversationStore implements ConversationModel {
             .finally(() => this.emit({ ...this.state, running: false }));
     };
 
+    /** 运行中也允许发：后端决定它在哪个边界生效（next-step 默认） */
     send = (text: string): void => {
         const trimmed = text.trim();
-        if (trimmed === '' || this.state.running) return;
+        if (trimmed === '') return;
         this.post({ kind: 'send', text: trimmed });
     };
 

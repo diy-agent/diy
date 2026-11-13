@@ -20,6 +20,10 @@
     },
     "devDependencies": {
         "@types/node": "^26.1.0",
-        "typescript": "^7.0.2"
+        "typescript": "^7.0.2",
+        "vitest": "^4.1.10"
+    },
+    "scripts": {
+        "test": "vitest run"
     }
 }

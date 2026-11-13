@@ -68,6 +68,12 @@ export class HttpChatClient implements ChatClient {
     ): Promise<void> {
         if (command.kind === 'cancel') {
             this.controllers.get(entityId)?.abort();
+            const get = this.fetchImpl;
+            await get(`${this.base}/rooms/${encodeURIComponent(entityId)}/cancel`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ keepQueue: command.keepQueue === true }),
+            }).catch(() => undefined);
             onEvent({ kind: 'done' });
             return;
         }
