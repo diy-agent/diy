@@ -77,7 +77,8 @@ function seed(): Map<string, Entity> {
         const diy = create('diy', 'proj:diy', '项目 bot：工程视角，先结论后理由。');
         const cops = create('cops', 'proj:cops', '项目 bot：产品视角，拆需求、写验收。');
         const task = create('任务树与多会话', 'task:t-001', '任务 bot：运维视角，可观测性与回滚。');
-        bots = [diy, cops, task];
+        const xiaoman = create('小满', 'proj:diy', '产品视角：拆需求、找边界、写验收。');
+        bots = [diy, cops, task, xiaoman];
     }
 
     const byName = (name: string): Bot | undefined => bots.find((bot) => bot.name === name);
@@ -87,7 +88,7 @@ function seed(): Map<string, Entity> {
         kind: 'project',
         name: 'diy',
         dir: '~/git/diy/diy',
-        botIds: [byName('diy')?.id ?? bots[0]!.id],
+        botIds: [byName('diy')?.id ?? bots[0]!.id, ...(byName('小满') === undefined ? [] : [byName('小满')!.id])],
         modelKey: DEFAULT_MODEL,
     });
     entities.set('proj:cops', {
