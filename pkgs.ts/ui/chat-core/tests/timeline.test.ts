@@ -8,8 +8,8 @@ import { describe, expect, it } from 'vitest';
 import { buildTimeline } from '../src/timeline';
 import type { Bot, Delivery, Item } from '../src/types';
 
-const OWNER: Bot = { id: 'bot:owner', name: 'diy', color: '#111', persona: '', homeEntityId: 'proj:x', modelKey: 'm' };
-const HELPER: Bot = { id: 'bot:helper', name: '小满', color: '#222', persona: '', homeEntityId: 'proj:x', modelKey: 'm' };
+const OWNER: Bot = { id: 'bot:owner', name: 'diy', color: '#111', persona: '', homeRoomId: 'proj:x', modelKey: 'm' };
+const HELPER: Bot = { id: 'bot:helper', name: '小满', color: '#222', persona: '', homeRoomId: 'proj:x', modelKey: 'm' };
 const BOTS = { [OWNER.id]: OWNER, [HELPER.id]: HELPER };
 
 const HUMAN = { id: 'human:me', name: '我', color: '#999', role: 'human' as const };

@@ -31,7 +31,7 @@ export class Inbox {
         this.seq = row?.max ?? 0;
     }
 
-    post(actor: string, kind: 'chat' | 'notice', payload: Record<string, unknown>, mode: InboxMode = 'now'): InboxItem {
+    post(actor: string, kind: 'chat' | 'notice', payload: Record<string, unknown>, mode: InboxMode = 'next-step'): InboxItem {
         const item: InboxItem = {
             id: `ib-${Date.now().toString(36)}-${++this.seq}`,
             actor,

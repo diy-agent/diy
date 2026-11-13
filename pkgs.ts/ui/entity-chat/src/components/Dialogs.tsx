@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { DIR_SUGGESTIONS, type Bot, type Entity } from '../model';
+import { DIR_SUGGESTIONS, roomTypeLabel, type Bot, type Room } from '../model';
 import { useStore } from '../store';
 import { ModelPicker } from './ModelPicker';
 
@@ -76,13 +76,13 @@ export function CreateProjectDialog({
     );
 }
 
-export function CreateBotDialog({
-    entity,
+export function AddMemberDialog({
+    room,
     onClose,
     onPickExisting,
     onCreateNew,
 }: {
-    entity: Entity;
+    room: Room;
     onClose: () => void;
     onPickExisting: (botId: string) => void;
     onCreateNew: (name: string) => void;
@@ -90,20 +90,20 @@ export function CreateBotDialog({
     const state = useStore();
     const [name, setName] = React.useState('');
 
-    const available: Bot[] = Object.values(state.bots).filter((bot) => !entity.botIds.includes(bot.id));
+    const available: Bot[] = Object.values(state.bots).filter((bot) => !room.botIds.includes(bot.id));
     const homeName = (bot: Bot): string => {
-        const home = state.entities.find((item) => item.id === bot.homeEntityId);
+        const home = state.rooms.find((item) => item.id === bot.homeRoomId);
         if (home === undefined) return '?';
-        return `${home.kind === 'project' ? '项目' : '任务'}「${home.name}」`;
+        return `${roomTypeLabel(home.type)}「${home.name}」`;
     };
 
     return (
-        <Modal title={`给「${entity.name}」添加 bot`} onClose={onClose}>
+        <Modal title={`给「${room.name}」添加成员`} onClose={onClose}>
             <div className="space-y-4 text-sm">
                 <div>
-                    <div className="mb-1.5 text-xs text-muted-foreground">从现有 bot 里选</div>
+                    <div className="mb-1.5 text-xs text-muted-foreground">从现有成员里选</div>
                     {available.length === 0 ? (
-                        <p className="rounded-lg border border-dashed px-2 py-2 text-xs text-muted-foreground">还没有其他 bot，可以在下面新建一个。</p>
+                        <p className="rounded-lg border border-dashed px-2 py-2 text-xs text-muted-foreground">还没有其他成员，可以在下面新建一个。</p>
                     ) : (
                         <div className="max-h-48 space-y-1 overflow-y-auto">
                             {available.map((bot) => (
@@ -125,7 +125,7 @@ export function CreateBotDialog({
                 </div>
 
                 <div className="border-t pt-3">
-                    <div className="mb-1.5 text-xs text-muted-foreground">或者新建一个 bot</div>
+                    <div className="mb-1.5 text-xs text-muted-foreground">或者新建一个成员 bot</div>
                     <div className="flex gap-2">
                         <input
                             value={name}
@@ -150,7 +150,9 @@ export function CreateBotDialog({
                             新建
                         </button>
                     </div>
-                    <p className="mt-1.5 text-[11px] text-muted-foreground">新建的 bot 归当前{entity.kind === 'project' ? '项目' : '任务'}所有。</p>
+                    <p className="mt-1.5 text-[11px] text-muted-foreground">
+                        新建的 bot 是当前容器的成员；@ 它才会说话，默认仍由「默认应答」回。
+                    </p>
                 </div>
             </div>
 
@@ -206,7 +208,7 @@ export function SettingsDialog({
                 <div className="rounded-lg border border-dashed p-2 text-[11px] leading-relaxed text-muted-foreground">
                     <p className="mb-1 font-medium text-foreground">当前目录（照 diy 的 provider 结构）</p>
                     <p>provider = 端点 + 账户列表 + 模型目录；key = <code>account@provider/model</code>。</p>
-                    <p>每个实体和 bot 都可以在头部单独覆盖模型；这里只改"新建设备"的默认值。</p>
+                    <p>每个容器和 bot 都可以在头部单独覆盖模型；这里只改"新建容器"的默认值。</p>
                 </div>
             </div>
             <div className="mt-4 flex justify-end">

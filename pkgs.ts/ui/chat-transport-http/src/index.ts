@@ -54,8 +54,8 @@ export class HttpChatClient implements ChatClient {
     async load(entityId: string): Promise<Snapshot> {
         const id = encodeURIComponent(entityId);
         const [history, deliveries] = await Promise.all([
-            this.getJson<{ items: Item[] }>(`/entities/${id}/history`),
-            this.getJson<{ deliveries: Delivery[] }>(`/entities/${id}/deliveries`),
+            this.getJson<{ items: Item[] }>(`/rooms/${id}/history`),
+            this.getJson<{ deliveries: Delivery[] }>(`/rooms/${id}/deliveries`),
         ]);
         return { items: history.items, deliveries: deliveries.deliveries };
     }
@@ -80,7 +80,7 @@ export class HttpChatClient implements ChatClient {
 
         try {
             const get = this.fetchImpl;
-            const res = await get(`${this.base}/entities/${encodeURIComponent(entityId)}/chat`, {
+            const res = await get(`${this.base}/rooms/${encodeURIComponent(entityId)}/chat`, {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
                 body: JSON.stringify({ text: command.text }),

@@ -10,13 +10,13 @@ export interface Store {
     readonly db: DatabaseSync;
     listBots(): Bot[];
     upsertBot(bot: Bot): void;
-    appendItem(entityId: string, item: Item): Item;
-    setEntityBots(entityId: string, botIds: string[]): void;
+    appendItem(roomId: string, item: Item): Item;
+    setEntityBots(roomId: string, botIds: string[]): void;
     entityBots(): Record<string, string[]>;
     setDelivery(delivery: Omit<Delivery, 'updatedAt'>): Delivery;
-    listDeliveries(entityId: string): Delivery[];
-    itemsOf(entityId: string, afterSeq?: number): Item[];
-    seqOf(entityId: string): number;
+    listDeliveries(roomId: string): Delivery[];
+    itemsOf(roomId: string, afterSeq?: number): Item[];
+    seqOf(roomId: string): number;
 }
 
 export function openStore(file: string): Store {
@@ -60,7 +60,7 @@ export function openStore(file: string): Store {
         name: String(row['name']),
         color: String(row['color']),
         persona: String(row['persona']),
-        homeEntityId: String(row['home_entity_id']),
+        homeRoomId: String(row['home_entity_id']),
         homeDir: row['home_dir'] === null ? undefined : String(row['home_dir']),
         modelKey: String(row['model_key']),
     });
@@ -79,7 +79,7 @@ export function openStore(file: string): Store {
                 bot.name,
                 bot.color,
                 bot.persona,
-                bot.homeEntityId,
+                bot.homeRoomId,
                 bot.homeDir ?? null,
                 bot.modelKey,
                 bot.name,
@@ -88,16 +88,16 @@ export function openStore(file: string): Store {
                 bot.modelKey,
             );
         },
-        appendItem(entityId: string, item: Item): Item {
+        appendItem(roomId: string, item: Item): Item {
             const result = db
                 .prepare('INSERT INTO entity_items (entity_id, item, at) VALUES (?,?,?)')
-                .run(entityId, JSON.stringify(item), item.at);
+                .run(roomId, JSON.stringify(item), item.at);
             return { ...item, seq: Number(result.lastInsertRowid) };
         },
-        setEntityBots(entityId: string, botIds: string[]): void {
-            db.prepare('DELETE FROM entity_bots WHERE entity_id = ?').run(entityId);
+        setEntityBots(roomId: string, botIds: string[]): void {
+            db.prepare('DELETE FROM entity_bots WHERE entity_id = ?').run(roomId);
             const insert = db.prepare('INSERT INTO entity_bots (entity_id, bot_id, position) VALUES (?,?,?)');
-            botIds.forEach((botId, index) => insert.run(entityId, botId, index));
+            botIds.forEach((botId, index) => insert.run(roomId, botId, index));
         },
         entityBots(): Record<string, string[]> {
             const rows = db.prepare('SELECT entity_id, bot_id FROM entity_bots ORDER BY position ASC').all() as Record<string, unknown>[];
@@ -114,7 +114,7 @@ export function openStore(file: string): Store {
                 'INSERT INTO deliveries (entity_id, message_id, bot_id, state, note, updated_at) VALUES (?,?,?,?,?,?) ' +
                     'ON CONFLICT(entity_id, message_id, bot_id) DO UPDATE SET state=?, note=?, updated_at=?',
             ).run(
-                delivery.entityId,
+                delivery.roomId,
                 delivery.messageId,
                 delivery.botId,
                 delivery.state,
@@ -126,10 +126,10 @@ export function openStore(file: string): Store {
             );
             return { ...delivery, updatedAt };
         },
-        listDeliveries(entityId: string): Delivery[] {
-            const rows = db.prepare('SELECT * FROM deliveries WHERE entity_id = ? ORDER BY updated_at ASC').all(entityId) as Record<string, unknown>[];
+        listDeliveries(roomId: string): Delivery[] {
+            const rows = db.prepare('SELECT * FROM deliveries WHERE entity_id = ? ORDER BY updated_at ASC').all(roomId) as Record<string, unknown>[];
             return rows.map((row) => ({
-                entityId: String(row['entity_id']),
+                roomId: String(row['entity_id']),
                 messageId: String(row['message_id']),
                 botId: String(row['bot_id']),
                 state: row['state'] as Delivery['state'],
@@ -137,14 +137,14 @@ export function openStore(file: string): Store {
                 updatedAt: Number(row['updated_at']),
             }));
         },
-        itemsOf(entityId: string, afterSeq = 0): Item[] {
+        itemsOf(roomId: string, afterSeq = 0): Item[] {
             const rows = db
                 .prepare('SELECT seq, item FROM entity_items WHERE entity_id = ? AND seq > ? ORDER BY seq ASC')
-                .all(entityId, afterSeq) as Record<string, unknown>[];
+                .all(roomId, afterSeq) as Record<string, unknown>[];
             return rows.map((row) => ({ ...(JSON.parse(String(row['item'])) as Item), seq: Number(row['seq']) }));
         },
-        seqOf(entityId: string): number {
-            const row = db.prepare('SELECT MAX(seq) AS max FROM entity_items WHERE entity_id = ?').get(entityId) as
+        seqOf(roomId: string): number {
+            const row = db.prepare('SELECT MAX(seq) AS max FROM entity_items WHERE entity_id = ?').get(roomId) as
                 | { max: number | null }
                 | undefined;
             return row?.max ?? 0;

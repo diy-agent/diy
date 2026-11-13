@@ -1,37 +1,37 @@
 import { Folder, ListPlus, ListTodo, PanelLeftClose, PanelLeftOpen, Plus, Settings } from 'lucide-react';
 import * as React from 'react';
 
-import { botsOf, ownerOfBot, type Bot, type Entity } from '../model';
+import { primaryBotOf, type Room } from '../model';
 import { actions, useStore } from '../store';
 
-function EntityRow({
-    entity,
+function RoomRow({
+    room,
     active,
     compact,
     onCreateTask,
 }: {
-    entity: Entity;
+    room: Room;
     active: boolean;
     compact: boolean;
     onCreateTask?: () => void;
 }) {
     const state = useStore();
     const [editing, setEditing] = React.useState(false);
-    const [draft, setDraft] = React.useState(entity.name);
-    const owner = ownerOfBot(entity, state.bots);
-    const Icon = entity.kind === 'project' ? Folder : ListTodo;
-    const isProject = entity.kind === 'project';
+    const [draft, setDraft] = React.useState(room.name);
+    const primary = primaryBotOf(room, state.bots);
+    const isProject = room.type === 'project';
+    const Icon = isProject ? Folder : ListTodo;
 
     const commit = () => {
-        actions.renameEntity(entity.id, draft);
+        actions.renameRoom(room.id, draft);
         setEditing(false);
     };
 
     if (compact) {
         return (
             <button
-                onClick={() => actions.select(entity.id)}
-                title={`${entity.kind === 'project' ? '项目' : '任务'}：${entity.name}`}
+                onClick={() => actions.select(room.id)}
+                title={`${room.type}：${room.name}`}
                 className={`flex w-full items-center justify-center rounded-lg py-2 ${
                     active ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60'
                 }`}
@@ -58,7 +58,7 @@ function EntityRow({
                     onKeyDown={(event) => {
                         if (event.key === 'Enter') commit();
                         if (event.key === 'Escape') {
-                            setDraft(entity.name);
+                            setDraft(room.name);
                             setEditing(false);
                         }
                     }}
@@ -66,19 +66,21 @@ function EntityRow({
                 />
             ) : (
                 <button
-                    onClick={() => actions.select(entity.id)}
+                    onClick={() => actions.select(room.id)}
                     onDoubleClick={() => {
-                        setDraft(entity.name);
+                        setDraft(room.name);
                         setEditing(true);
                     }}
                     title="双击重命名"
                     className="min-w-0 flex-1 truncate text-left"
                 >
-                    {entity.name}
+                    {room.name}
                 </button>
             )}
 
-            {owner !== undefined && <span className="size-1.5 shrink-0 rounded-full" style={{ background: owner.color }} title={`owner: ${owner.name}`} />}
+            {primary !== undefined && (
+                <span className="size-1.5 shrink-0 rounded-full" style={{ background: primary.color }} title={`默认应答：${primary.name}`} />
+            )}
 
             {isProject && onCreateTask !== undefined && (
                 <button onClick={onCreateTask} title="在本项目下新建任务（并直接对话）" className="shrink-0 rounded p-0.5 opacity-0 hover:bg-muted group-hover:opacity-100">
@@ -89,60 +91,19 @@ function EntityRow({
     );
 }
 
-function BotRow({ bot, compact }: { bot: Bot; compact: boolean }) {
-    const state = useStore();
-    const owner = state.entities.find((e) => e.id === bot.homeEntityId);
-    const active = state.selectedId === bot.id;
-
-    if (compact) {
-        return (
-            <button
-                onClick={() => actions.select(bot.id)}
-                title={`bot：${bot.name}（属于 ${owner?.name ?? '?'}）`}
-                className={`flex w-full items-center justify-center rounded-lg py-1.5 ${
-                    active ? 'bg-accent' : 'hover:bg-muted/60'
-                }`}
-            >
-                <span className="size-2.5 rounded-full" style={{ background: bot.color }} />
-            </button>
-        );
-    }
-
-    return (
-        <button
-            onClick={() => actions.select(bot.id)}
-            className={`flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-xs ${
-                active ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60'
-            }`}
-            title={`${bot.name} 专属：${owner?.name ?? bot.homeEntityId}`}
-        >
-            <span className="size-2 shrink-0 rounded-full" style={{ background: bot.color }} />
-            <span className="truncate">{bot.name}</span>
-            <span className="ml-auto truncate text-[10px] text-muted-foreground/70">{owner?.name ?? '?'}</span>
-        </button>
-    );
-}
-
 export function Sidebar({
     open,
     onToggle,
     onCreateProject,
-    onCreateBot,
     onOpenSettings,
 }: {
     open: boolean;
     onToggle: () => void;
     onCreateProject: () => void;
-    onCreateBot: () => void;
     onOpenSettings: () => void;
 }) {
     const state = useStore();
-    const projects = state.entities.filter((e) => e.kind === 'project');
-    // 同一个 bot 可能被多个实体借用：列表按 bot 去重，只显示它自己的归属
-    const seen = new Set<string>();
-    const allBots = state.entities
-        .flatMap((entity) => botsOf(entity, state.bots))
-        .filter((bot) => (seen.has(bot.id) ? false : (seen.add(bot.id), true)));
+    const projects = state.rooms.filter((room) => room.type === 'project');
 
     return (
         <aside
@@ -153,7 +114,7 @@ export function Sidebar({
                 {open && (
                     <>
                         <span className="text-sm font-semibold">diy</span>
-                        <span className="text-xs text-muted-foreground">实体对话</span>
+                        <span className="text-xs text-muted-foreground">容器对话</span>
                     </>
                 )}
                 <button
@@ -176,45 +137,27 @@ export function Sidebar({
                 )}
 
                 {projects.map((project) => {
-                    const tasks = state.entities.filter((e) => e.projectId === project.id);
+                    const tasks = state.rooms.filter((room) => room.data['projectId'] === project.id);
                     return (
                         <div key={project.id} className={open ? 'mb-2' : 'mb-1'}>
-                            <EntityRow
-                                entity={project}
+                            <RoomRow
+                                room={project}
                                 active={state.selectedId === project.id}
                                 compact={!open}
                                 onCreateTask={() => actions.createTask(project.id)}
                             />
                             {tasks.map((task) => (
                                 <div key={task.id} className={open ? 'ml-4' : ''}>
-                                    <EntityRow entity={task} active={state.selectedId === task.id} compact={!open} />
+                                    <RoomRow room={task} active={state.selectedId === task.id} compact={!open} />
                                 </div>
                             ))}
                         </div>
                     );
                 })}
-
-                <div className={open ? 'mt-3 mb-1 flex items-center justify-between border-t px-2 pt-3 text-[11px] uppercase tracking-wide text-muted-foreground' : 'mt-2 border-t pt-2'}>
-                    {open ? (
-                        <>
-                            Bots（实体专属）
-                            <button onClick={onCreateBot} title="给当前实体新增一个 bot" className="rounded p-0.5 hover:bg-muted">
-                                <Plus className="size-3.5" />
-                            </button>
-                        </>
-                    ) : null}
-                </div>
-                {allBots.map((bot) => (
-                    <BotRow key={bot.id} bot={bot} compact={!open} />
-                ))}
             </div>
 
             <div className={`flex items-center border-t py-2 ${open ? 'justify-between px-3' : 'justify-center'}`}>
-                {open && (
-                    <span className="text-[11px] leading-relaxed text-muted-foreground">
-                        项目 = 本机目录；实体即对话
-                    </span>
-                )}
+                {open && <span className="text-[11px] leading-relaxed text-muted-foreground">容器 = 一条对话；成员在容器内</span>}
                 <button onClick={onOpenSettings} title="模型设置" className="rounded p-1 text-muted-foreground hover:bg-muted">
                     <Settings className="size-4" />
                 </button>

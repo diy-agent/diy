@@ -1,12 +1,12 @@
-import { Bot as BotIcon, Cpu, Folder, ListTodo, Plus, X } from 'lucide-react';
+import { Bot as BotIcon, Cpu, Folder, ListTodo, Plus } from 'lucide-react';
 import * as React from 'react';
 
 import { SURFACES } from './surfaces/registry';
-import { CreateBotDialog, CreateProjectDialog, ModelDialog, SettingsDialog } from './components/Dialogs';
+import { AddMemberDialog, CreateProjectDialog, ModelDialog, SettingsDialog } from './components/Dialogs';
 import { Sidebar } from './components/Sidebar';
-import { botsOf, dirOf, ownerOfBot, type Bot, type Entity } from './model';
+import { botsOf, dirOf, primaryBotOf, roomTypeLabel, type Room } from './model';
 import { contextWindowLabel, modelLabel } from './models';
-import { actions, entityOf, useStore } from './store';
+import { actions, roomOf, useStore } from './store';
 
 function ModelChip({ value, onClick }: { value: string; onClick: () => void }) {
     return (
@@ -21,89 +21,71 @@ function ModelChip({ value, onClick }: { value: string; onClick: () => void }) {
     );
 }
 
-function EntityHeader({ entity, onAddBot, onPickModel }: { entity: Entity; onAddBot: () => void; onPickModel: () => void }) {
+function roomDir(room: Room): string | undefined {
+    const dir = room.data['dir'];
+    return typeof dir === 'string' && dir !== '' ? dir : undefined;
+}
+
+function RoomHeader({ room, onAddMember, onPickModel }: { room: Room; onAddMember: () => void; onPickModel: () => void }) {
     const state = useStore();
-    const bots = botsOf(entity, state.bots);
-    const owner = ownerOfBot(entity, state.bots);
-    const members = bots.slice(1);
+    const bots = botsOf(room, state.bots);
+    const primary = primaryBotOf(room, state.bots);
+    const others = bots.filter((bot) => bot.id !== primary?.id);
+    const isProject = room.type === 'project';
+    const Icon = isProject ? Folder : ListTodo;
 
     return (
         <header className="border-b px-5 py-3">
             <div className="flex flex-wrap items-center gap-2">
                 <span className="flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] text-muted-foreground">
-                    {entity.kind === 'project' ? <Folder className="size-3 text-sky-400" /> : <ListTodo className="size-3 text-emerald-400" />}
-                    {entity.kind === 'project' ? '项目' : entity.kind === 'task' ? '任务' : 'Bot'}
+                    <Icon className={`size-3 ${isProject ? 'text-sky-400' : 'text-emerald-400'}`} />
+                    {roomTypeLabel(room.type)}
                 </span>
-                <h1 className="text-sm font-semibold">{entity.name}</h1>
-                {entity.dir !== undefined && (
+                <h1 className="text-sm font-semibold">{room.name}</h1>
+                {roomDir(room) !== undefined && (
                     <span className="flex items-center gap-1 font-mono text-[11px] text-muted-foreground">
                         <Folder className="size-3" />
-                        {dirOf(entity, state.entities)}
+                        {dirOf(room, state.rooms)}
                     </span>
                 )}
-                <ModelChip value={entity.modelKey} onClick={onPickModel} />
+                <ModelChip value={room.modelKey} onClick={onPickModel} />
 
-                <span className="ml-auto flex items-center gap-1.5 text-xs">
-                    <span className="text-muted-foreground">owner</span>
-                    {owner !== undefined && (
+                <span className="ml-auto flex flex-wrap items-center gap-1.5 text-xs">
+                    <span className="text-muted-foreground">成员</span>
+                    {primary !== undefined && (
                         <span className="flex items-center gap-1 rounded-full border px-2 py-0.5">
-                            <span className="size-2 rounded-full" style={{ background: owner.color }} />
-                            {owner.name}
+                            <span className="size-2 rounded-full" style={{ background: primary.color }} />
+                            {primary.name}
+                            <span className="text-[10px] text-muted-foreground">默认应答</span>
                         </span>
                     )}
-                    {members.map((bot) => (
+                    {others.map((bot) => (
                         <span key={bot.id} className="flex items-center gap-1 rounded-full border px-2 py-0.5 text-muted-foreground">
                             <span className="size-2 rounded-full" style={{ background: bot.color }} />
                             {bot.name}
                         </span>
                     ))}
-                    <button onClick={onAddBot} className="flex items-center gap-1 rounded-full border px-2 py-0.5 hover:bg-muted">
+                    <button onClick={onAddMember} className="flex items-center gap-1 rounded-full border px-2 py-0.5 hover:bg-muted">
                         <Plus className="size-3" />
-                        bot
+                        成员
                     </button>
                 </span>
             </div>
             <p className="mt-1 text-[11px] text-muted-foreground">
-                {entity.botIds.length <= 1 ? '单 agent：这个实体的 bot 直接对话' : `多 agent：${entity.botIds.length} 个实体专属 bot`}
-                <span className="ml-2">· {contextWindowLabel(entity.modelKey)}</span>
+                {bots.length <= 1 ? '只有默认应答，没有 @ 时它自己回' : `${bots.length} 个成员：@名字叫谁谁回，@all 全回（等于开会，token 按人数涨）`}
+                <span className="ml-2">· {contextWindowLabel(room.modelKey)}</span>
             </p>
-        </header>
-    );
-}
-
-function BotHeader({ bot, entity, onPickModel }: { bot: Bot; entity: Entity; onPickModel: () => void }) {
-    const state = useStore();
-    const ownerEntity = state.entities.find((item) => item.id === bot.homeEntityId);
-
-    return (
-        <header className="border-b px-5 py-3">
-            <div className="flex flex-wrap items-center gap-2">
-                <span className="flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] text-muted-foreground">
-                    <BotIcon className="size-3" style={{ color: bot.color }} />
-                    Bot
-                </span>
-                <h1 className="flex items-center gap-2 text-sm font-semibold">
-                    <span className="size-2 rounded-full" style={{ background: bot.color }} />
-                    {bot.name}
-                </h1>
-                <span className="text-[11px] text-muted-foreground">
-                    属于 {ownerEntity?.kind === 'project' ? '项目' : '任务'}「{ownerEntity?.name ?? '?'}」
-                </span>
-                <ModelChip value={entity.modelKey} onClick={onPickModel} />
-            </div>
-            <p className="mt-1 text-[11px] text-muted-foreground">这是 {bot.name} 的独立对话；{bot.persona}</p>
         </header>
     );
 }
 
 export function App() {
     const state = useStore();
-    const entity = entityOf(state.selectedId);
-    const bot = entity?.kind === 'bot' ? state.bots[entity.botIds[0] ?? ''] : undefined;
-    const [dialog, setDialog] = React.useState<'project' | 'bot' | 'settings' | null>(null);
+    const room = roomOf(state.selectedId);
+    const [dialog, setDialog] = React.useState<'project' | 'member' | 'settings' | null>(null);
     const [surfaceId, setSurfaceId] = React.useState<string>(SURFACES[0]!.id);
     const [modelTarget, setModelTarget] = React.useState<string | null>(null);
-    const activeEntity = entity;
+    const activeRoom = room;
 
     React.useEffect(() => {
         actions.bootstrap();
@@ -144,26 +126,19 @@ export function App() {
                 open={sidebarOpen}
                 onToggle={toggleSidebar}
                 onCreateProject={() => setDialog('project')}
-                onCreateBot={() => setDialog('bot')}
                 onOpenSettings={() => setDialog('settings')}
             />
 
             <main className="flex min-w-0 flex-1 flex-col">
                 {!state.loaded ? (
                     <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">连接 diy2 后端…</div>
-                ) : entity === undefined ? (
-                    <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">左侧选择一个项目、任务或 bot</div>
-                ) : bot !== undefined ? (
-                    <>
-                        <BotHeader bot={bot} entity={entity} onPickModel={() => setModelTarget(entity.id)} />
-                        <SurfaceTabs value={surfaceId} onChange={setSurfaceId} />
-                        <SurfaceView surfaceId={surfaceId} targetId={entity.id} />
-                    </>
+                ) : room === undefined ? (
+                    <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">左侧选择一个容器</div>
                 ) : (
                     <>
-                        <EntityHeader entity={entity} onAddBot={() => setDialog('bot')} onPickModel={() => setModelTarget(entity.id)} />
+                        <RoomHeader room={room} onAddMember={() => setDialog('member')} onPickModel={() => setModelTarget(room.id)} />
                         <SurfaceTabs value={surfaceId} onChange={setSurfaceId} />
-                        <SurfaceView surfaceId={surfaceId} targetId={entity.id} />
+                        <SurfaceView surfaceId={surfaceId} targetId={room.id} />
                     </>
                 )}
                 {state.error !== undefined && (
@@ -172,12 +147,12 @@ export function App() {
             </main>
 
             {dialog === 'project' && <CreateProjectDialog onClose={() => setDialog(null)} onSubmit={(input) => actions.createProject(input)} />}
-            {dialog === 'bot' && activeEntity !== undefined && (
-                <CreateBotDialog
-                    entity={activeEntity}
+            {dialog === 'member' && activeRoom !== undefined && (
+                <AddMemberDialog
+                    room={activeRoom}
                     onClose={() => setDialog(null)}
-                    onPickExisting={(botId) => actions.addExistingBot(activeEntity.id, botId)}
-                    onCreateNew={(name) => actions.addBot(activeEntity.id, name)}
+                    onPickExisting={(botId) => actions.addExistingBot(activeRoom.id, botId)}
+                    onCreateNew={(name) => actions.addBot(activeRoom.id, name)}
                 />
             )}
             {dialog === 'settings' && (
@@ -185,9 +160,9 @@ export function App() {
             )}
             {modelTarget !== null && (
                 <ModelDialog
-                    title={`「${entityOf(modelTarget)?.name ?? ''}」的模型`}
-                    value={entityOf(modelTarget)?.modelKey ?? state.defaultModelKey}
-                    onChange={(key) => actions.setEntityModel(modelTarget, key)}
+                    title={`「${roomOf(modelTarget)?.name ?? ''}」的模型`}
+                    value={roomOf(modelTarget)?.modelKey ?? state.defaultModelKey}
+                    onChange={(key) => actions.setRoomModel(modelTarget, key)}
                     onClose={() => setModelTarget(null)}
                 />
             )}
@@ -199,7 +174,6 @@ export function App() {
         </div>
     );
 }
-
 
 function SurfaceTabs({ value, onChange }: { value: string; onChange: (id: string) => void }) {
     return (

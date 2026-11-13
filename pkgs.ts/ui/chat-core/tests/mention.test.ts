@@ -13,8 +13,8 @@ import {
 import type { Bot } from '../src/types';
 
 const bots: Record<string, Bot> = {
-    a: { id: 'a', name: 'diy', color: '#111', persona: '', homeEntityId: 'p', modelKey: 'm' },
-    b: { id: 'b', name: '小满', color: '#222', persona: '', homeEntityId: 'p', modelKey: 'm' },
+    a: { id: 'a', name: 'diy', color: '#111', persona: '', homeRoomId: 'p', modelKey: 'm' },
+    b: { id: 'b', name: '小满', color: '#222', persona: '', homeRoomId: 'p', modelKey: 'm' },
 };
 
 describe('mentionQuery', () => {

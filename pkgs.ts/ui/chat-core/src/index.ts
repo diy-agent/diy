@@ -1,7 +1,7 @@
 // @diy-agent/chat-core —— UI 与后端之间的契约与无框架状态（禁止 React / node / UI kit）
 
 export type { ChatClient } from './client';
-export { dirOf, botsOf, ownerOfBot } from './entity';
+export { botsOf, dirOf, primaryBotOf } from './entity';
 export {
     completeMention,
     dismissMention,
@@ -23,8 +23,7 @@ export {
     type Command,
     type Delivery,
     type DeliveryState,
-    type Entity,
-    type EntityKind,
+    type Room,
     type Item,
     type Snapshot,
     type StreamEvent,

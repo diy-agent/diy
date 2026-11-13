@@ -1,9 +1,9 @@
 // server/index.ts —— diy2 切片后端：实体 / bot / 历史 / 流式对话（SSE）。
 //
-//   GET  /api/entities            实体列表（项目/任务/bot）
+//   GET  /api/rooms            实体列表（项目/任务/bot）
 //   POST /api/bots                新建 bot（落 sqlite）
-//   GET  /api/entities/:id/history?afterSeq=
-//   POST /api/entities/:id/chat   { text } → SSE: { kind:'item'|'done'|'error' }
+//   GET  /api/rooms/:id/history?afterSeq=
+//   POST /api/rooms/:id/chat   { text } → SSE: { kind:'item'|'done'|'error' }
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { mkdirSync } from 'node:fs';
@@ -11,7 +11,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { Inbox, Projector, openStore, runAgent } from '@diy-agent/entity-runtime';
-import type { Author, Bot, Entity, Item } from '@diy-agent/protocol';
+import type { Author, Bot, Item, Room } from '@diy-agent/protocol';
 
 const PORT = Number(process.env['DIY2_PORT'] ?? 5191);
 const DEFAULT_MODEL = 'chen56@opencode-go/deepseek-v4.1-flash';
@@ -24,52 +24,52 @@ const inbox = new Inbox(store.db);
 /** 每个实体一条串行链：同一实体的轮次严格按发送顺序执行 */
 const chains = new Map<string, Promise<void>>();
 
-function nextTurn(entityId: string): number {
-    const turns = store.itemsOf(entityId).map((item) => (item as { turn?: number }).turn ?? 0);
+function nextTurn(roomId: string): number {
+    const turns = store.itemsOf(roomId).map((item) => (item as { turn?: number }).turn ?? 0);
     return Math.max(0, ...turns) + 1;
 }
 
 /** 展示顺序：每个实体一个单调计数器（跨 bot 也稳定） */
 const orderCounter = new Map<string, number>();
-function nextOrder(entityId: string): number {
-    if (!orderCounter.has(entityId)) {
-        const orders = store.itemsOf(entityId).map((item) => (item as { order?: number }).order ?? 0);
-        orderCounter.set(entityId, Math.max(0, ...orders));
+function nextOrder(roomId: string): number {
+    if (!orderCounter.has(roomId)) {
+        const orders = store.itemsOf(roomId).map((item) => (item as { order?: number }).order ?? 0);
+        orderCounter.set(roomId, Math.max(0, ...orders));
     }
-    const next = (orderCounter.get(entityId) ?? 0) + 1;
-    orderCounter.set(entityId, next);
+    const next = (orderCounter.get(roomId) ?? 0) + 1;
+    orderCounter.set(roomId, next);
     return next;
 }
 
 /**
- * 路由：容器只有一个 owner；默认只有 owner 回。
- *   @all    → 全体（owner + 其他）
- *   @名字   → 命中的 bot（可以是 owner 或其他）
- *   没有 @  → 只有 owner
+ * 路由：每个容器有一个 primary bot；默认只有 primary 回。
+ *   @all    → 全体成员（开会）
+ *   @名字   → 命中的 bot
+ *   没有 @  → 只有 primary
  */
-function route(entity: Entity, bots: Bot[], text: string): Bot[] {
-    const owner = bots[0];
+function route(room: Room, bots: Bot[], text: string): Bot[] {
+    const primary = bots.find((bot) => bot.id === room.primaryBotId) ?? bots[0];
     const mentioned = [...text.matchAll(/@([^\s@]+)/g)].map((match) => match[1] ?? '');
     if (mentioned.includes('all')) return bots;
     const picked = bots.filter((bot) => mentioned.includes(bot.name));
     if (picked.length > 0) return picked;
-    return owner === undefined ? [] : [owner];
+    return primary === undefined ? [] : [primary];
 }
 
 const COLORS = ['#7cc4ff', '#f7b267', '#a3e635', '#f472b6', '#c084fc', '#38bdf8'];
 
 // ─── 种子：bot 落 sqlite；项目/任务先在内存 ────────────────────────
 
-function seed(): Map<string, Entity> {
+function seed(): Map<string, Room> {
     let bots = store.listBots();
     if (bots.length === 0) {
-        const create = (name: string, homeEntityId: string, persona: string): Bot => {
+        const create = (name: string, homeRoomId: string, persona: string): Bot => {
             const bot: Bot = {
                 id: `bot-${Date.now().toString(36)}-${bots.length + 1}`,
                 name,
                 color: COLORS[bots.length % COLORS.length]!,
                 persona,
-                homeEntityId,
+                homeRoomId,
                 modelKey: DEFAULT_MODEL,
             };
             store.upsertBot(bot);
@@ -83,53 +83,51 @@ function seed(): Map<string, Entity> {
     }
 
     const byName = (name: string): Bot | undefined => bots.find((bot) => bot.name === name);
-    const entities = new Map<string, Entity>();
-    entities.set('proj:diy', {
+    const rooms = new Map<string, Room>();
+    const diyBots = [byName('diy')?.id ?? bots[0]!.id, ...(byName('小满') === undefined ? [] : [byName('小满')!.id])];
+    rooms.set('proj:diy', {
         id: 'proj:diy',
-        kind: 'project',
+        type: 'project',
         name: 'diy',
-        dir: '~/git/diy/diy',
-        botIds: [byName('diy')?.id ?? bots[0]!.id, ...(byName('小满') === undefined ? [] : [byName('小满')!.id])],
+        data: { dir: '~/git/diy/diy' },
+        botIds: diyBots,
+        primaryBotId: diyBots[0]!,
         modelKey: DEFAULT_MODEL,
     });
-    entities.set('proj:cops', {
+    const copsBots = [byName('cops')?.id ?? bots[1]!.id];
+    rooms.set('proj:cops', {
         id: 'proj:cops',
-        kind: 'project',
+        type: 'project',
         name: 'cops',
-        dir: '~/git/cops',
-        botIds: [byName('cops')?.id ?? bots[1]!.id],
+        data: { dir: '~/git/cops' },
+        botIds: copsBots,
+        primaryBotId: copsBots[0]!,
         modelKey: DEFAULT_MODEL,
     });
-    entities.set('task:t-001', {
+    const taskBots = [byName('任务树与多会话')?.id ?? bots[2]!.id];
+    rooms.set('task:t-001', {
         id: 'task:t-001',
-        kind: 'task',
+        type: 'task',
         name: '任务树与多会话',
-        projectId: 'proj:diy',
-        dir: '~/git/diy/diy',
-        botIds: [byName('任务树与多会话')?.id ?? bots[2]!.id],
+        data: { dir: '~/git/diy/diy', projectId: 'proj:diy' },
+        botIds: taskBots,
+        primaryBotId: taskBots[0]!,
         modelKey: DEFAULT_MODEL,
     });
     // 恢复参与关系（重启后 bot 列表与 @ 仍在）
     const saved = store.entityBots();
     for (const [id, botIds] of Object.entries(saved)) {
-        const entity = entities.get(id);
-        if (entity !== undefined && botIds.length > 0) entity.botIds = botIds;
+        const room = rooms.get(id);
+        if (room !== undefined && botIds.length > 0) {
+            room.botIds = botIds;
+            room.primaryBotId = botIds[0]!;
+        }
     }
 
-    // bot 自己也是实体（独立对话）
-    for (const bot of bots) {
-        entities.set(`bot:${bot.id}`, {
-            id: `bot:${bot.id}`,
-            kind: 'bot',
-            name: bot.name,
-            botIds: [bot.id],
-            modelKey: bot.modelKey,
-        });
-    }
-    return entities;
+    return rooms;
 }
 
-const entities = seed();
+const rooms = seed();
 
 // ─── 工具 ─────────────────────────────────────────────────────────
 
@@ -159,8 +157,8 @@ const server = createServer((req, res) => {
     const parts = url.pathname.split('/').filter(Boolean);
 
     try {
-        if (req.method === 'GET' && url.pathname === '/api/entities') {
-            json(res, 200, [...entities.values()]);
+        if (req.method === 'GET' && url.pathname === '/api/rooms') {
+            json(res, 200, [...rooms.values()]);
             return;
         }
 
@@ -170,26 +168,19 @@ const server = createServer((req, res) => {
         }
 
         if (req.method === 'POST' && url.pathname === '/api/bots') {
-            void readBody<{ name?: string; homeEntityId?: string; modelKey?: string }>(req).then((body) => {
+            void readBody<{ name?: string; homeRoomId?: string; modelKey?: string }>(req).then((body) => {
                 const name = (body.name ?? '').trim();
                 if (name === '') return json(res, 400, { error: 'name required' });
                 const bot: Bot = {
                     id: `bot-${Date.now().toString(36)}`,
                     name,
                     color: COLORS[store.listBots().length % COLORS.length]!,
-                    persona: '实体专属 bot',
-                    homeEntityId: body.homeEntityId ?? 'proj:diy',
+                    persona: 'room 成员 bot',
+                    homeRoomId: body.homeRoomId ?? 'proj:diy',
                     modelKey: body.modelKey ?? DEFAULT_MODEL,
                 };
                 store.upsertBot(bot);
-                entities.set(`bot:${bot.id}`, {
-                    id: `bot:${bot.id}`,
-                    kind: 'bot',
-                    name: bot.name,
-                    botIds: [bot.id],
-                    modelKey: bot.modelKey,
-                });
-                const home = entities.get(bot.homeEntityId);
+                const home = rooms.get(bot.homeRoomId);
                 if (home !== undefined) {
                     home.botIds = [...home.botIds, bot.id];
                     store.setEntityBots(home.id, home.botIds);
@@ -199,91 +190,89 @@ const server = createServer((req, res) => {
             return;
         }
 
-        // POST /api/entities —— 新建项目/任务（owner bot 同名）
-        if (req.method === 'POST' && url.pathname === '/api/entities') {
-            void readBody<{ kind?: 'project' | 'task'; name?: string; dir?: string; projectId?: string }>(req).then((body) => {
+        // POST /api/rooms —— 新建任意类型的容器（默认 bot 同名）
+        if (req.method === 'POST' && url.pathname === '/api/rooms') {
+            void readBody<{ type?: string; name?: string; data?: Record<string, unknown> }>(req).then((body) => {
                 const name = (body.name ?? '').trim();
-                const kind = body.kind ?? 'project';
                 if (name === '') return json(res, 400, { error: 'name required' });
+                const type = body.type ?? 'project';
+                const id = `${type}-${Date.now().toString(36)}`;
                 const bot: Bot = {
                     id: `bot-${Date.now().toString(36)}`,
                     name,
                     color: COLORS[store.listBots().length % COLORS.length]!,
-                    persona: kind === 'project' ? '项目 bot' : '任务 bot',
-                    homeEntityId: '',
+                    persona: `${type} bot`,
+                    homeRoomId: id,
                     modelKey: DEFAULT_MODEL,
                 };
-                const id = kind === 'project' ? `proj:${name}-${Date.now().toString(36)}` : `task:${name}-${Date.now().toString(36)}`;
-                bot.homeEntityId = id;
                 store.upsertBot(bot);
-                const entity: Entity = {
+                const room: Room = {
                     id,
-                    kind,
+                    type,
                     name,
-                    dir: body.dir,
-                    projectId: body.projectId,
+                    data: body.data ?? {},
                     botIds: [bot.id],
+                    primaryBotId: bot.id,
                     modelKey: DEFAULT_MODEL,
                 };
-                entities.set(id, entity);
-                entities.set(`bot:${bot.id}`, { id: `bot:${bot.id}`, kind: 'bot', name: bot.name, botIds: [bot.id], modelKey: bot.modelKey });
-                store.setEntityBots(id, entity.botIds);
-                json(res, 200, entity);
+                rooms.set(id, room);
+                store.setEntityBots(id, room.botIds);
+                json(res, 200, room);
             });
             return;
         }
 
         // PATCH /api/entities/:id —— 改名 / 改模型
-        if (req.method === 'PATCH' && parts[0] === 'api' && parts[1] === 'entities' && parts.length === 3) {
+        if (req.method === 'PATCH' && parts[0] === 'api' && parts[1] === 'rooms' && parts.length === 3) {
             const id = decodeURIComponent(parts[2] ?? '');
-            const entity = entities.get(id);
-            if (entity === undefined) return json(res, 404, { error: 'entity not found' });
+            const room = rooms.get(id);
+            if (room === undefined) return json(res, 404, { error: 'room not found' });
             void readBody<{ name?: string; modelKey?: string }>(req).then((body) => {
                 if (body.name !== undefined && body.name.trim() !== '') {
-                    entity.name = body.name.trim();
-                    const owner = store.listBots().find((bot) => bot.id === entity.botIds[0]);
-                    if (owner !== undefined) store.upsertBot({ ...owner, name: entity.name });
+                    room.name = body.name.trim();
+                    const primary = store.listBots().find((bot) => bot.id === room.primaryBotId);
+                    if (primary !== undefined) store.upsertBot({ ...primary, name: room.name });
                 }
-                if (body.modelKey !== undefined) entity.modelKey = body.modelKey;
-                json(res, 200, entity);
+                if (body.modelKey !== undefined) room.modelKey = body.modelKey;
+                json(res, 200, room);
             });
             return;
         }
 
         // POST /api/entities/:id/bots —— 加入已有 bot（借用）
-        if (req.method === 'POST' && parts[0] === 'api' && parts[1] === 'entities' && parts[3] === 'bots') {
+        if (req.method === 'POST' && parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'bots') {
             const id = decodeURIComponent(parts[2] ?? '');
-            const entity = entities.get(id);
-            if (entity === undefined) return json(res, 404, { error: 'entity not found' });
+            const room = rooms.get(id);
+            if (room === undefined) return json(res, 404, { error: 'room not found' });
             void readBody<{ botId?: string }>(req).then((body) => {
-                if (body.botId !== undefined && !entity.botIds.includes(body.botId)) {
-                    entity.botIds = [...entity.botIds, body.botId];
-                    store.setEntityBots(id, entity.botIds);
+                if (body.botId !== undefined && !room.botIds.includes(body.botId)) {
+                    room.botIds = [...room.botIds, body.botId];
+                    store.setEntityBots(id, room.botIds);
                 }
-                json(res, 200, entity);
+                json(res, 200, room);
             });
             return;
         }
 
         // /api/entities/:id/history
-        if (req.method === 'GET' && parts[0] === 'api' && parts[1] === 'entities' && parts[3] === 'history') {
+        if (req.method === 'GET' && parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'history') {
             const id = decodeURIComponent(parts[2] ?? '');
             const afterSeq = Number(url.searchParams.get('afterSeq') ?? '0');
             json(res, 200, { items: store.itemsOf(id, afterSeq) });
             return;
         }
 
-        if (req.method === 'GET' && parts[0] === 'api' && parts[1] === 'entities' && parts[3] === 'deliveries') {
+        if (req.method === 'GET' && parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'deliveries') {
             const id = decodeURIComponent(parts[2] ?? '');
             json(res, 200, { deliveries: store.listDeliveries(id) });
             return;
         }
 
         // /api/entities/:id/chat
-        if (req.method === 'POST' && parts[0] === 'api' && parts[1] === 'entities' && parts[3] === 'chat') {
+        if (req.method === 'POST' && parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'chat') {
             const id = decodeURIComponent(parts[2] ?? '');
-            const entity = entities.get(id);
-            if (entity === undefined) return json(res, 404, { error: 'entity not found' });
+            const room = rooms.get(id);
+            if (room === undefined) return json(res, 404, { error: 'room not found' });
 
             void readBody<{ text?: string }>(req).then((body) => {
                 const text = (body.text ?? '').trim();
@@ -291,11 +280,11 @@ const server = createServer((req, res) => {
 
                 // 同一实体串行：上一轮没结束，这一轮排队等
                 const run = (chains.get(id) ?? Promise.resolve()).then(async () => {
-                    const participants = entity.botIds
+                    const participants = room.botIds
                         .map((botId) => store.listBots().find((b) => b.id === botId))
                         .filter((bot): bot is Bot => bot !== undefined);
                     if (participants.length === 0) {
-                        json(res, 400, { error: 'entity has no bot' });
+                        json(res, 400, { error: 'room has no bot' });
                         return;
                     }
 
@@ -324,11 +313,11 @@ const server = createServer((req, res) => {
                     const savedUser = store.appendItem(id, userItem);
                     sse(res, { kind: 'item', item: savedUser });
 
-                    const recipients = route(entity, participants, text);
+                    const recipients = route(room, participants, text);
 
                     // 路由结果落 outbox：先 queued，再逐条推进
                     for (const bot of recipients) {
-                        const delivery = store.setDelivery({ entityId: id, messageId: savedUser.id, botId: bot.id, state: 'queued' });
+                        const delivery = store.setDelivery({ roomId: id, messageId: savedUser.id, botId: bot.id, state: 'queued' });
                         sse(res, { kind: 'delivery', delivery });
                     }
 
@@ -348,7 +337,7 @@ const server = createServer((req, res) => {
                     // 同一轮内：多个 bot 并行；各自一条投影 + 一条 outbox
                     await Promise.all(
                         recipients.map(async (bot) => {
-                            const delivering = store.setDelivery({ entityId: id, messageId: savedUser.id, botId: bot.id, state: 'delivering' });
+                            const delivering = store.setDelivery({ roomId: id, messageId: savedUser.id, botId: bot.id, state: 'delivering' });
                             sse(res, { kind: 'delivery', delivery: delivering });
 
                             const projector = new Projector(authorOf(bot), turn);
@@ -373,7 +362,7 @@ const server = createServer((req, res) => {
                                 sse(res, { kind: 'error', message: error instanceof Error ? error.message : String(error) });
                             } finally {
                                 const done = store.setDelivery({
-                                    entityId: id,
+                                    roomId: id,
                                     messageId: savedUser.id,
                                     botId: bot.id,
                                     state: failed ? 'failed' : 'delivered',

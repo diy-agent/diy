@@ -1,8 +1,8 @@
-// store.tsx —— React 适配层：实体/选择（本包）+ 会话状态（chat-core 的 ConversationStore）。
+// store.tsx —— React 适配层：room / 选择（本包）+ 会话状态（chat-core 的 ConversationStore）。
 //
-// 原则：业务状态在 chat-core，React 只负责订阅；surface 只拿 ConversationModel。
+// 词表：Room = 容器（项目/任务/股票…），Bot = 身份，BotSession = bot 在某个 room 里的对话（后端概念）。
 
-import { ConversationStore, type Bot, type Entity } from '@diy-agent/chat-core';
+import { ConversationStore, type Bot, type Room } from '@diy-agent/chat-core';
 import { HttpChatClient } from '@diy-agent/chat-transport-http';
 import * as React from 'react';
 
@@ -14,20 +14,20 @@ const DEFAULT_MODEL = 'chen56@opencode-go/deepseek-v4.1-flash';
 const client = new HttpChatClient({ base: '/api' });
 const conversations = new Map<string, ConversationStore>();
 
-export function conversationOf(entityId: string): ConversationStore {
-    let store = conversations.get(entityId);
+export function conversationOf(roomId: string): ConversationStore {
+    let store = conversations.get(roomId);
     if (store === undefined) {
-        store = new ConversationStore(client, entityId);
-        conversations.set(entityId, store);
+        store = new ConversationStore(client, roomId);
+        conversations.set(roomId, store);
         store.reload();
     }
     return store;
 }
 
-// ─── 实体/选择（这一层只做导航，属于 UI 壳）────────────────────────
+// ─── room / 选择（这一层只做导航，属于 UI 壳）──────────────────────
 
 interface ShellState {
-    entities: Entity[];
+    rooms: Room[];
     bots: Record<string, Bot>;
     selectedId: string;
     defaultModelKey: string;
@@ -36,7 +36,7 @@ interface ShellState {
 }
 
 let state: ShellState = {
-    entities: [],
+    rooms: [],
     bots: {},
     selectedId: '',
     defaultModelKey: loadDefaultModel(),
@@ -62,8 +62,8 @@ export function useShell(): ShellState {
 
 export const useStore = useShell;
 
-export function entityOf(id: string): Entity | undefined {
-    return state.entities.find((entity) => entity.id === id);
+export function roomOf(id: string): Room | undefined {
+    return state.rooms.find((room) => room.id === id);
 }
 
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -73,9 +73,9 @@ async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 async function refresh(): Promise<void> {
-    const [entities, bots] = await Promise.all([jsonFetch<Entity[]>('/entities'), jsonFetch<Bot[]>('/bots')]);
-    const selectedId = state.selectedId === '' ? (entities[0]?.id ?? '') : state.selectedId;
-    emit({ ...state, entities, bots: Object.fromEntries(bots.map((bot) => [bot.id, bot])), loaded: true, selectedId, error: undefined });
+    const [rooms, bots] = await Promise.all([jsonFetch<Room[]>('/rooms'), jsonFetch<Bot[]>('/bots')]);
+    const selectedId = state.selectedId === '' ? (rooms[0]?.id ?? '') : state.selectedId;
+    emit({ ...state, rooms, bots: Object.fromEntries(bots.map((bot) => [bot.id, bot])), loaded: true, selectedId, error: undefined });
 }
 
 export const actions = {
@@ -88,15 +88,15 @@ export const actions = {
         conversationOf(id);
     },
 
-    renameEntity(id: string, name: string): void {
+    renameRoom(id: string, name: string): void {
         if (name.trim() === '') return;
-        void jsonFetch(`/entities/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ name: name.trim() }) })
+        void jsonFetch(`/rooms/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ name: name.trim() }) })
             .then(refresh)
             .catch(() => undefined);
     },
 
-    setEntityModel(id: string, modelKey: string): void {
-        void jsonFetch(`/entities/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ modelKey }) })
+    setRoomModel(id: string, modelKey: string): void {
+        void jsonFetch(`/rooms/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ modelKey }) })
             .then(refresh)
             .catch(() => undefined);
     },
@@ -111,32 +111,39 @@ export const actions = {
     },
 
     createProject(input: { name: string; dir: string }): void {
-        void jsonFetch<Entity>('/entities', { method: 'POST', body: JSON.stringify({ kind: 'project', name: input.name, dir: input.dir }) })
-            .then((entity) => refresh().then(() => emit({ ...state, selectedId: entity.id })))
+        void jsonFetch<Room>('/rooms', {
+            method: 'POST',
+            body: JSON.stringify({ type: 'project', name: input.name, data: { dir: input.dir } }),
+        })
+            .then((room) => refresh().then(() => emit({ ...state, selectedId: room.id })))
             .catch(() => undefined);
     },
 
     createTask(projectId: string): void {
-        const project = entityOf(projectId);
-        const count = state.entities.filter((entity) => entity.projectId === projectId).length + 1;
-        void jsonFetch<Entity>('/entities', {
+        const project = roomOf(projectId);
+        const count = state.rooms.filter((room) => room.data['projectId'] === projectId).length + 1;
+        void jsonFetch<Room>('/rooms', {
             method: 'POST',
-            body: JSON.stringify({ kind: 'task', name: `新任务 ${count}`, projectId, dir: project?.dir }),
+            body: JSON.stringify({
+                type: 'task',
+                name: `新任务 ${count}`,
+                data: { projectId, dir: project?.data['dir'] },
+            }),
         })
-            .then((entity) => refresh().then(() => emit({ ...state, selectedId: entity.id })))
+            .then((room) => refresh().then(() => emit({ ...state, selectedId: room.id })))
             .catch(() => undefined);
     },
 
-    addBot(entityId: string, name: string): void {
+    addBot(roomId: string, name: string): void {
         if (name.trim() === '') return;
-        void jsonFetch<Bot>('/bots', { method: 'POST', body: JSON.stringify({ name: name.trim(), homeEntityId: entityId }) })
-            .then((bot) => jsonFetch(`/entities/${encodeURIComponent(entityId)}/bots`, { method: 'POST', body: JSON.stringify({ botId: bot.id }) }))
+        void jsonFetch<Bot>('/bots', { method: 'POST', body: JSON.stringify({ name: name.trim(), homeRoomId: roomId }) })
+            .then((bot) => jsonFetch(`/rooms/${encodeURIComponent(roomId)}/bots`, { method: 'POST', body: JSON.stringify({ botId: bot.id }) }))
             .then(refresh)
             .catch(() => undefined);
     },
 
-    addExistingBot(entityId: string, botId: string): void {
-        void jsonFetch(`/entities/${encodeURIComponent(entityId)}/bots`, { method: 'POST', body: JSON.stringify({ botId }) })
+    addExistingBot(roomId: string, botId: string): void {
+        void jsonFetch(`/rooms/${encodeURIComponent(roomId)}/bots`, { method: 'POST', body: JSON.stringify({ botId }) })
             .then(refresh)
             .catch(() => undefined);
     },
