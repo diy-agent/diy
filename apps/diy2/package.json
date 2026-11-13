@@ -15,7 +15,8 @@
         "@diy-agent/entity-chat": "*",
         "react": "^19.3.1",
         "react-dom": "^19.3.1",
-        "@diy-agent/entity-runtime": "*"
+        "@diy-agent/entity-runtime": "*",
+        "@diy-agent/protocol": "*"
     },
     "devDependencies": {
         "@tailwindcss/vite": "^4.3.4",

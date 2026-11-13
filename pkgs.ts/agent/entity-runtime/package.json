@@ -15,7 +15,8 @@
     "dependencies": {
         "@ai-sdk/openai-compatible": "^3.0.90",
         "ai": "^7.0.170",
-        "zod": "^4.2.0"
+        "zod": "^4.2.0",
+        "@diy-agent/protocol": "*"
     },
     "devDependencies": {
         "@types/node": "^26.1.0",

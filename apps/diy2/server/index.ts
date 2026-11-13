@@ -10,7 +10,8 @@ import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { Inbox, Projector, openStore, runAgent, type Author, type Bot, type Entity, type Item } from '@diy-agent/entity-runtime';
+import { Inbox, Projector, openStore, runAgent } from '@diy-agent/entity-runtime';
+import type { Author, Bot, Entity, Item } from '@diy-agent/protocol';
 
 const PORT = Number(process.env['DIY2_PORT'] ?? 5191);
 const DEFAULT_MODEL = 'chen56@opencode-go/deepseek-v4.1-flash';

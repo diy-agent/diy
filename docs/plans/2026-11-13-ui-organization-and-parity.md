@@ -213,8 +213,8 @@ chat-shell
 已落地，且与本文档的依赖规则一致：
 
 ```
-pkgs.ts/agent/protocol            （仍待抽，当前类型在 chat-core/types）
-pkgs.ts/ui/chat-core
+pkgs.ts/agent/protocol            纯类型：Item / AgentEvent / Command / StreamEvent / Entity / Bot / Delivery
+pkgs.ts/ui/chat-core              （types.ts 只做再导出）
     types.ts        Item / Bot / Delivery / Command / StreamEvent
     reduce.ts       StreamEvent → ConversationState（纯函数）
     timeline.ts     ★ Item[] → TimelineEntry[]：唯一的分组逻辑（parity 锚点）
