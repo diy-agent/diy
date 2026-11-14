@@ -3,7 +3,19 @@
 // 与 assistant-ui surface 的分工完全一致：分组在 chat-core.buildTimeline，
 // 这里只做「时间线条目 → Astryx 组件」的映射，不碰状态机、不碰传输。
 
-import { ChatComposer, ChatComposerInput, ChatLayout, ChatMessage, ChatMessageBubble, ChatMessageList, ChatSystemMessage, ChatToolCalls } from '@astryxdesign/core';
+import {
+    ChatComposer,
+    ChatComposerInput,
+    ChatLayout,
+    ChatMessage,
+    ChatMessageBubble,
+    ChatMessageList,
+    ChatMessageMetadata,
+    ChatSystemMessage,
+    ChatToolCalls,
+    Markdown,
+    Timestamp,
+} from '@astryxdesign/core';
 import { createStaticSource, type SearchableItem } from '@astryxdesign/core/Typeahead';
 import { buildTimeline, type MentionCandidate, type TimelineEntry, type TimelinePart } from '@diy-agent/chat-core';
 import { BotAvatar } from '../../components/BotAvatar';
@@ -35,6 +47,24 @@ function runsOf(parts: TimelinePart[]): Run[] {
 
 const TOOL_STATUS = { running: 'running', ok: 'complete', error: 'error' } as const;
 
+/** 工具调用的"目标"：path / command 优先，其他参数退化成一行 JSON */
+function toolTargetOf(tool: TimelinePart & { kind: 'tool' }): string | undefined {
+    const args = tool.args;
+    if (args === undefined || args === null) return undefined;
+    if (typeof args === 'object') {
+        const record = args as Record<string, unknown>;
+        for (const key of ['path', 'command', 'question', 'url']) {
+            const value = record[key];
+            if (typeof value === 'string' && value !== '') return value;
+        }
+    }
+    try {
+        return JSON.stringify(args).slice(0, 80);
+    } catch {
+        return undefined;
+    }
+}
+
 function DeliveryChips({ entry, roomId }: { entry: TimelineEntry; roomId: string }) {
     if (entry.deliveries.length === 0) return null;
     return (
@@ -62,6 +92,11 @@ function DeliveryChips({ entry, roomId }: { entry: TimelineEntry; roomId: string
     );
 }
 
+/** 时间戳（Astryx Timestamp 收秒或 ISO；我们的 at 是毫秒） */
+function TimeOf({ at }: { at: number }) {
+    return <Timestamp value={Math.floor(at / 1000)} format="time" />;
+}
+
 function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) {
     if (entry.kind === 'notice' || entry.kind === 'error') {
         const text = entry.parts.map((part) => (part.kind === 'text' ? part.text : '')).join('');
@@ -76,7 +111,16 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
         const text = entry.parts.map((part) => (part.kind === 'text' ? part.text : '')).join('');
         return (
             <ChatMessage key={entry.key} sender="user" name={entry.author?.name} avatar={<BotAvatar author={entry.author} roomId={roomId} size={24} />}>
-                <ChatMessageBubble metadata={<DeliveryChips entry={entry} roomId={roomId} />}>{text}</ChatMessageBubble>
+                <ChatMessageBubble
+                    metadata={
+                        <>
+                            <DeliveryChips entry={entry} roomId={roomId} />
+                            <TimeOf at={entry.at} />
+                        </>
+                    }
+                >
+                    {text}
+                </ChatMessageBubble>
             </ChatMessage>
         );
     }
@@ -93,23 +137,35 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
 
     return (
         <ChatMessage key={entry.key} sender="assistant" name={entry.author?.name} avatar={<BotAvatar author={entry.author} roomId={roomId} size={24} />}>
-            {runsOf(entry.parts).map((run, index) =>
-                run.kind === 'text' ? (
-                    <ChatMessageBubble key={`t${index}`}>
-                        <span style={{ whiteSpace: 'pre-wrap' }}>{run.text}</span>
-                    </ChatMessageBubble>
-                ) : (
+            {runsOf(entry.parts).map((run, index) => {
+                const isLast = index === runsOf(entry.parts).length - 1;
+                if (run.kind === 'text') {
+                    return (
+                        <ChatMessageBubble
+                            key={`t${index}`}
+                            variant="ghost"
+                            metadata={
+                                isLast ? (
+                                    <ChatMessageMetadata timestamp={<TimeOf at={entry.at} />} />
+                                ) : undefined
+                            }
+                        >
+                            <Markdown density="compact">{run.text}</Markdown>
+                        </ChatMessageBubble>
+                    );
+                }
+                return (
                     <ChatToolCalls
                         key={`c${index}`}
                         calls={run.tools.map((tool) => ({
                             key: tool.id,
                             name: tool.name,
                             status: TOOL_STATUS[tool.state],
-                            target: tool.args === undefined ? undefined : JSON.stringify(tool.args).slice(0, 80),
+                            ...(toolTargetOf(tool) === undefined ? {} : { target: toolTargetOf(tool)! }),
                         }))}
                     />
-                ),
-            )}
+                );
+            })}
         </ChatMessage>
     );
 }
