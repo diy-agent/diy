@@ -5,9 +5,13 @@ import { neutralTheme } from '@astryxdesign/theme-neutral/built';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
+// 顺序很重要：Astryx 的 CSS 用 @layer reset/astryx-base/astryx-theme，
+// 层顺序由**首次声明**决定。Tailwind 的 preflight 会重置标题字号、清掉表格边框
+// （border-width: 0），如果它排在 Astryx 之后，Astryx 的排版就被压掉了。
+// 先加载 Tailwind，再加载 Astryx ⇒ Astryx 的层排在后面，优先级更高。
+import './index.css';
 import '@astryxdesign/core/astryx.css';
 import '@astryxdesign/theme-neutral/theme.css';
-import './index.css';
 
 createRoot(document.getElementById('root')!).render(
     <StrictMode>
