@@ -59,21 +59,11 @@ export function askTool(gate: AskGate | undefined): ToolSet[string] | undefined 
             note: z.string().optional().describe('补充说明：背景 / 影响 / 默认建议'),
         }),
         execute: async (input) => {
-            const result = await gate.request(input);
-            if (result.cancelled === true) {
-                return `用户没有回答（${result.reason ?? '已取消'}）。可以换个问法，或先按最保守的方案继续。`;
+            const outcome = await gate.request(input);
+            if (outcome.cancelled === true) {
+                return `用户没有回答（${outcome.reason ?? '已取消'}）。可以换个问法，或先按最保守的方案继续。`;
             }
-            return describeAnswer(
-                {
-                    askId: '',
-                    question: input.question,
-                    kind: input.kind ?? (input.fields === undefined ? 'choice' : 'form'),
-                    options: input.options,
-                    fields: input.fields,
-                    at: 0,
-                },
-                result.answer,
-            );
+            return describeAnswer(outcome.request, outcome.answer);
         },
     }) as ToolSet[string];
 }

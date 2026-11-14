@@ -31,7 +31,9 @@ describe('AskGate', () => {
         expect(h.requests[0]?.kind).toBe('choice');
 
         expect(h.gate.answer(h.requests[0]!.askId, { values: ['b'] })).toBe(true);
-        await expect(pending).resolves.toEqual({ answer: { values: ['b'] } });
+        const outcome = await pending;
+        expect(outcome.answer).toEqual({ values: ['b'] });
+        expect(outcome.request.question).toBe('先做哪个？');
         expect(h.settled[0]?.result.answer).toEqual({ values: ['b'] });
     });
 
@@ -44,7 +46,8 @@ describe('AskGate', () => {
 
         expect(h.requests[0]?.kind).toBe('form');
         h.gate.answer(h.requests[0]!.askId, { fields: { title: 'diy2 发版' } });
-        await expect(pending).resolves.toEqual({ answer: { fields: { title: 'diy2 发版' } } });
+        const outcome = await pending;
+        expect(outcome.answer).toEqual({ fields: { title: 'diy2 发版' } });
     });
 
     it('未知 askId：返回 false，不影响已有提问', () => {
@@ -66,14 +69,28 @@ describe('AskGate', () => {
         expect(h.gate.pendingCount()).toBe(0);
     });
 
-    it('缺省不超时；显式给 timeoutMs 才超时', async () => {
-        const forever = makeGate();
+    it('timeoutMs: 0 = 一直等；显式给值才超时（缺省 10 分钟）', async () => {
+        const forever = makeGate({ timeoutMs: 0 });
         void forever.gate.request({ question: '一直等' });
         expect(forever.gate.pendingCount()).toBe(1);
 
         const timed = makeGate({ timeoutMs: 10 });
         const pending = timed.gate.request({ question: '等一下' });
         await expect(pending).resolves.toMatchObject({ cancelled: true, reason: '等待回答超时' });
+    });
+
+    it('推不到界面上（emit 抛错）：按取消收尾，不留孤儿', async () => {
+        const gate = new AskGate({
+            request: () => {
+                throw new Error('界面已断开');
+            },
+            settle: () => undefined,
+            timeoutMs: 0,
+        });
+        const outcome = await gate.request({ question: 'Q' });
+        expect(outcome.cancelled).toBe(true);
+        expect(outcome.reason).toContain('无法显示提问');
+        expect(gate.pendingCount()).toBe(0);
     });
 
     it('list() 返回挂起中的请求（刷新后恢复卡片用）', () => {

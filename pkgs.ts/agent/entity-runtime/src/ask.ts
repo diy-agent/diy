@@ -24,9 +24,19 @@ export interface AskGateDeps {
     request: (request: AskRequest) => void;
     /** 已回答 / 取消：房间收尾（更新提示、留痕） */
     settle: (request: AskRequest, result: { answer?: AskAnswer; cancelled?: boolean; reason?: string }) => void;
-    /** 等待上限（毫秒）；0 = 一直等（缺省）。取消房间时会被 cancelAll 放掉 */
+    /** 等待上限（毫秒）；缺省 10 分钟；0 = 一直等 */
     timeoutMs?: number;
     now?: () => number;
+}
+
+const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
+
+/** 一次提问的结果（带上 request，调用方不用自己再拼一份） */
+export interface AskOutcome {
+    request: AskRequest;
+    answer?: AskAnswer;
+    cancelled?: boolean;
+    reason?: string;
 }
 
 export class AskGate {
@@ -34,7 +44,7 @@ export class AskGate {
         string,
         {
             request: AskRequest;
-            resolve: (result: { answer?: AskAnswer; cancelled?: boolean; reason?: string }) => void;
+            resolve: (result: AskOutcome) => void;
             timer?: NodeJS.Timeout;
         }
     >();
@@ -43,7 +53,7 @@ export class AskGate {
     constructor(private readonly deps: AskGateDeps) {}
 
     /** 工具一侧调用：挂起直到用户回答 */
-    request(input: AskInput): Promise<{ answer?: AskAnswer; cancelled?: boolean; reason?: string }> {
+    request(input: AskInput): Promise<AskOutcome> {
         const at = this.deps.now?.() ?? Date.now();
         const askId = `ask-${at.toString(36)}-${++this.counter}`;
         const request: AskRequest = {
@@ -57,8 +67,8 @@ export class AskGate {
             at,
         };
 
-        const promise = new Promise<{ answer?: AskAnswer; cancelled?: boolean; reason?: string }>((resolve) => {
-            const timeoutMs = this.deps.timeoutMs ?? 0;
+        const promise = new Promise<AskOutcome>((resolve) => {
+            const timeoutMs = this.deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
             const timer =
                 timeoutMs > 0
                     ? setTimeout(() => this.settle(askId, { cancelled: true, reason: '等待回答超时' }), timeoutMs)
@@ -66,7 +76,13 @@ export class AskGate {
             this.pending.set(askId, { request, resolve, ...(timer === undefined ? {} : { timer }) });
         });
 
-        this.deps.request(request);
+        try {
+            this.deps.request(request);
+        } catch (error) {
+            // 推不到界面上就别让它挂成孤儿：直接按取消收尾
+            const reason = error instanceof Error ? error.message : String(error);
+            this.settle(askId, { cancelled: true, reason: `无法显示提问：${reason}` });
+        }
         return promise;
     }
 
@@ -88,13 +104,13 @@ export class AskGate {
         return [...this.pending.values()].map((entry) => entry.request);
     }
 
-    private settle(askId: string, result: { answer?: AskAnswer; cancelled?: boolean; reason?: string }): boolean {
+    private settle(askId: string, result: Omit<AskOutcome, 'request'>): boolean {
         const entry = this.pending.get(askId);
         if (entry === undefined) return false;
         this.pending.delete(askId);
         if (entry.timer !== undefined) clearTimeout(entry.timer);
         this.deps.settle(entry.request, result);
-        entry.resolve(result);
+        entry.resolve({ request: entry.request, ...result });
         return true;
     }
 }

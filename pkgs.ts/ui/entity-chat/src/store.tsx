@@ -14,17 +14,14 @@ const DEFAULT_MODEL = 'chen56@opencode-go/deepseek-v4.1-flash';
 const client = new HttpChatClient({ base: '/api' });
 const conversations = new Map<string, ConversationStore>();
 
-/** 回答一次挂起的提问（选项 / 表单） */
-export async function answerAsk(askId: string, answer: { values?: string[]; fields?: Record<string, string> }): Promise<void> {
-    if (client.answerAsk === undefined) return;
-    const roomId = currentRoomId();
-    if (roomId === '') return;
-    await client.answerAsk(roomId, askId, answer).catch(() => undefined);
-}
-
-/** 当前选中的房间（answerAsk 用；UI 只有一个活动房间） */
-function currentRoomId(): string {
-    return state.selectedId;
+/** 回答一次挂起的提问（选项 / 表单）。失败会抛，由界面显示原因。 */
+export async function answerAsk(
+    roomId: string,
+    askId: string,
+    answer: { values?: string[]; fields?: Record<string, string> },
+): Promise<void> {
+    if (client.answerAsk === undefined) throw new Error('当前传输不支持回答提问');
+    await client.answerAsk(roomId, askId, answer);
 }
 
 export function conversationOf(roomId: string): ConversationStore {
@@ -33,6 +30,9 @@ export function conversationOf(roomId: string): ConversationStore {
         store = new ConversationStore(client, roomId);
         conversations.set(roomId, store);
         store.reload();
+    } else {
+        // 切走时释放过常驻流，回来要重新挂上
+        store.attach();
     }
     return store;
 }
@@ -100,6 +100,10 @@ export const actions = {
     },
 
     select(id: string): void {
+        // 只让当前房间挂常驻 SSE，其余释放（否则看过的房间各留一条，永远不断）
+        for (const [roomId, store] of conversations) {
+            if (roomId !== id) store.dispose();
+        }
         emit({ ...state, selectedId: id });
         conversationOf(id);
     },

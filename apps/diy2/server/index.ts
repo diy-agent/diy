@@ -311,7 +311,7 @@ const server = createServer((req, res) => {
         }
 
         // GET /api/rooms/:id/events —— 常驻事件流（UI 打开房间时挂一条，后台的 bot 动静也能看到）
-        if (req.method === 'GET' && parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'events') {
+        if (req.method === 'GET' && parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'events' && parts.length === 4) {
             const id = decodeURIComponent(parts[2] ?? '');
             if (roomOf(id) === undefined) return json(res, 404, { error: 'room not found' });
             res.writeHead(200, {
@@ -321,6 +321,9 @@ const server = createServer((req, res) => {
             });
             attach(id, res, true);
             sse(res, { kind: 'ready' });
+            // 心跳：代理 / 浏览器会掐掉长时间无数据的连接，20s 一帧注释
+            const timer = setInterval(() => res.write(': ping\n\n'), 20_000);
+            res.on('close', () => clearInterval(timer));
             return;
         }
 

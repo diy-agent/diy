@@ -70,35 +70,57 @@ export class HttpChatClient implements ChatClient {
         return { items: history.items, deliveries: deliveries.deliveries, asks: asks.asks ?? [] };
     }
 
+    /**
+     * 常驻订阅。断线后指数退避重连（0.5s → 30s 封顶），每次连上都先发一条 `ready`，
+     * 让上层补拉快照 —— 否则断线期间的提问 / 回复就永久丢了。
+     */
     watch(entityId: string, onEvent: (event: StreamEvent) => void): () => void {
-        const controller = new AbortController();
-        void (async () => {
-            try {
-                const get = this.fetchImpl;
-                const res = await get(`${this.base}/rooms/${encodeURIComponent(entityId)}/events`, {
-                    headers: { accept: 'text/event-stream' },
-                    signal: controller.signal,
-                });
-                if (!res.ok || res.body === null) return;
-                const reader = res.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = '';
-                for (;;) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    buffer += decoder.decode(value, { stream: true });
+        let closed = false;
+        let attempt = 0;
+        let controller = new AbortController();
+        const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+        const loop = async (): Promise<void> => {
+            while (!closed) {
+                controller = new AbortController();
+                try {
+                    const get = this.fetchImpl;
+                    const res = await get(`${this.base}/rooms/${encodeURIComponent(entityId)}/events`, {
+                        headers: { accept: 'text/event-stream' },
+                        signal: controller.signal,
+                    });
+                    if (!res.ok || res.body === null) throw new Error(`events → ${res.status}`);
+                    attempt = 0;
+                    onEvent({ kind: 'ready' });
+
+                    const reader = res.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = '';
                     for (;;) {
-                        const index = buffer.indexOf('\n\n');
-                        if (index < 0) break;
-                        parseSseChunk(buffer.slice(0, index), onEvent);
-                        buffer = buffer.slice(index + 2);
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        buffer += decoder.decode(value, { stream: true });
+                        for (;;) {
+                            const index = buffer.indexOf('\n\n');
+                            if (index < 0) break;
+                            parseSseChunk(buffer.slice(0, index), onEvent);
+                            buffer = buffer.slice(index + 2);
+                        }
                     }
+                } catch {
+                    // 落到下面的重连
                 }
-            } catch {
-                // 断线不自动重连：下一次 reload / 切房间会重新挂上
+                if (closed) return;
+                attempt += 1;
+                await sleep(Math.min(30_000, 500 * 2 ** Math.min(attempt, 6)));
             }
-        })();
-        return () => controller.abort();
+        };
+        void loop();
+
+        return () => {
+            closed = true;
+            controller.abort();
+        };
     }
 
     async sessions(entityId: string): Promise<SessionInfo[]> {

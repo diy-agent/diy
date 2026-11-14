@@ -91,10 +91,11 @@ function FormBody({
     );
 }
 
-function AskItem({ request }: { request: AskRequest }) {
+function AskItem({ roomId, request }: { roomId: string; request: AskRequest }) {
     const [selected, setSelected] = React.useState<string[]>([]);
     const [fields, setFields] = React.useState<Record<string, string>>({});
     const [busy, setBusy] = React.useState(false);
+    const [error, setError] = React.useState<string | null>(null);
 
     const toggle = (value: string) => {
         if (request.multiple === true) {
@@ -111,9 +112,16 @@ function AskItem({ request }: { request: AskRequest }) {
 
     const submit = async () => {
         setBusy(true);
-        await answerAsk(request.askId, request.kind === 'form' ? { fields } : { values: selected });
-        // 成功与否都由 SSE 的 ask.answered 把卡片收掉；这里只解除按钮禁用
-        setBusy(false);
+        setError(null);
+        try {
+            await answerAsk(roomId, request.askId, request.kind === 'form' ? { fields } : { values: selected });
+            // 成功后卡片由 SSE 的 ask.answered 收掉
+        } catch (cause) {
+            // 404（run 已结束 / 服务重启）或网络失败：不能静默，否则用户以为点了没反应
+            setError(`${cause instanceof Error ? cause.message : String(cause)}；可以「取消本轮」重新发消息。`);
+        } finally {
+            setBusy(false);
+        }
     };
 
     return (
@@ -136,12 +144,19 @@ function AskItem({ request }: { request: AskRequest }) {
                         >
                             {busy ? '提交中…' : request.kind === 'form' ? '提交' : '就这样'}
                         </button>
-                        {!ready && (
+                        <button
+                            onClick={() => conversationOf(roomId).cancel()}
+                            className="rounded border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
+                        >
+                            取消本轮
+                        </button>
+                        {!ready && error === null && (
                             <span className="text-[10px] text-muted-foreground">
                                 {request.kind === 'form' ? `还有 ${missing.length} 个必填项` : '先选一个'}
                             </span>
                         )}
                     </div>
+                    {error !== null && <p className="mt-1 text-[10px] text-destructive">{error}</p>}
                 </div>
             </div>
         </div>
@@ -157,7 +172,7 @@ export function AskBar({ roomId }: { roomId: string }) {
     return (
         <div>
             {state.asks.map((request) => (
-                <AskItem key={request.askId} request={request} />
+                <AskItem key={request.askId} roomId={roomId} request={request} />
             ))}
         </div>
     );

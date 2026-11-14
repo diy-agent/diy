@@ -17,6 +17,15 @@ export function emptyState(): ConversationState {
     return { items: [], deliveries: [], asks: [], seq: 0, running: false };
 }
 
+const STATUS_RANK: Record<Item['status'], number> = { pending: 0, streaming: 1, done: 2, failed: 2 };
+
+/** 两条流（post 的 + 常驻的）都往这里送，乱序时别让旧事件把新状态回滚 */
+function isStale(current: Item, next: Item): boolean {
+    if (STATUS_RANK[next.status] < STATUS_RANK[current.status]) return true;
+    if (current.type === 'chat' && next.type === 'chat' && next.data.text.length < current.data.text.length) return true;
+    return false;
+}
+
 function sortItems(items: Item[]): Item[] {
     return [...items].sort((a, b) => (a.turn ?? 0) - (b.turn ?? 0) || (a.order ?? a.seq) - (b.order ?? b.seq));
 }
@@ -26,6 +35,9 @@ export function applyEvent(state: ConversationState, event: StreamEvent): Conver
         case 'item': {
             const item = event.item;
             const index = state.items.findIndex((existing) => existing.id === item.id);
+            if (index >= 0 && isStale(state.items[index]!, item)) {
+                return { ...state, seq: Math.max(state.seq, item.seq) };
+            }
             const items = index < 0 ? [...state.items, item] : state.items.map((existing) => (existing.id === item.id ? item : existing));
             const next = sortItems(items);
             return {

@@ -78,9 +78,12 @@ describe('房间工具', () => {
     it('ask：选项题的回答格式化后返回给模型', async () => {
         const asked: string[] = [];
         const gate = {
-            request: async (input: { question: string }) => {
+            request: async (input: { question: string; options?: Array<{ value: string; label: string }> }) => {
                 asked.push(input.question);
-                return { answer: { values: ['b'] } };
+                return {
+                    request: { askId: 'ask-1', question: input.question, kind: 'choice', options: input.options, at: 0 },
+                    answer: { values: ['b'] },
+                };
             },
         } as unknown as NonNullable<Parameters<typeof buildRoomTools>[0]['ask']>;
         const tools = buildRoomTools({ cwd: dir, shell: false, ask: gate });
@@ -97,6 +100,35 @@ describe('房间工具', () => {
         expect(asked).toEqual(['先做哪个？']);
         expect(out).toContain('用户选择');
         expect(out).toContain('方案 B');
+    });
+
+    it('ask 全链路：工具挂起 → 用户回答 → 工具返回可读文本', async () => {
+        const { AskGate } = await import('../src/ask');
+        const seen: string[] = [];
+        const gate = new AskGate({
+            // 真实链路里这是"推到界面"；这里模拟用户立刻点了第一个选项
+            request: (request) => {
+                seen.push(request.question);
+                gate.answer(request.askId, { values: ['test_first'] });
+            },
+            settle: () => undefined,
+            timeoutMs: 0,
+        });
+        const tools = buildRoomTools({ cwd: dir, shell: false, ask: gate });
+
+        const out = String(
+            await toolOf(tools, 'ask').execute({
+                question: '先做哪个？',
+                options: [
+                    { value: 'test_first', label: '先做测试' },
+                    { value: 'feature_first', label: '先做功能' },
+                ],
+            }),
+        );
+
+        expect(seen).toEqual(['先做哪个？']);
+        expect(out).toContain('用户选择：先做测试（test_first）');
+        expect(gate.pendingCount()).toBe(0);
     });
 
     it('bash 非零退出：返回结果而不是抛错（模型靠退出码改命令）', async () => {

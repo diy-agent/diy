@@ -151,6 +151,8 @@ export type StreamEvent =
     | { kind: 'ask'; request: AskRequest }
     /** 已回答（或被取消 / 超时） */
     | { kind: 'ask.answered'; askId: string; answer?: AskAnswer; cancelled?: boolean; reason?: string }
+    /** 常驻流刚连上（含重连成功）：客户端据此补拉快照，填平断线期间丢的事件 */
+    | { kind: 'ready' }
     | { kind: 'done' };
 
 /** 房间自己会发的事件（`done` 属于传输层，不属于领域） */

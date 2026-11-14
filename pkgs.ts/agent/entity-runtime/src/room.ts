@@ -25,7 +25,7 @@ import {
     primaryMemberOf,
 } from '@diy-agent/protocol';
 
-import { AskGate, type AskInput } from './ask';
+import { AskGate, type AskOutcome } from './ask';
 import type { Compactor } from './compaction';
 import type { Store } from './db';
 import { RoomLog, type RoomEntry } from './room-log';
@@ -39,7 +39,7 @@ import {
     type SessionStats,
     type Turn,
 } from './session';
-import type { Author, Bot, Delivery, InboxMode, Item, Room, RoomEvent, RoomMember } from './types';
+import type { AskRequest, Author, Bot, Delivery, InboxMode, Item, Room, RoomEvent, RoomMember } from './types';
 
 export interface SessionInfo {
     botId: string;
@@ -268,10 +268,7 @@ export class RoomActor {
     }
 
     /** 提问解决：广播 + 在时间线留一条痕 */
-    private settleAsk(
-        request: { askId: string; question: string; options?: Array<{ value: string; label: string }>; fields?: Array<{ name: string; label: string }> },
-        result: { answer?: { values?: string[]; fields?: Record<string, string> }; cancelled?: boolean; reason?: string },
-    ): void {
+    private settleAsk(request: AskRequest, result: Omit<AskOutcome, 'request'>): void {
         this.deps.emit({
             kind: 'ask.answered',
             askId: request.askId,
@@ -289,12 +286,13 @@ export class RoomActor {
                 : result.answer?.fields !== undefined
                   ? `已填写：${Object.values(result.answer.fields).filter((value) => value.trim() !== '').length} 项`
                   : `已回答：${labels.join('、')}`;
+        const turnId = this.currentTurn?.turnId;
         const notice: Item = {
             id: `askx-${request.askId}`,
-            seq: this.deps.store.seqOf(this.id) + 1,
+            seq: 0, // appendItem 落库时会用 rowid 覆盖
             order: this.nextOrder(),
-            ...(this.currentTurn === null ? {} : { turn: this.currentTurn.turn, turnId: this.currentTurn.turnId }),
-            turnId: this.currentTurn?.turnId ?? 'turn',
+            ...(this.currentTurn === null ? {} : { turn: this.currentTurn.turn }),
+            turnId: turnId ?? 'turn',
             at: now,
             status: 'done',
             type: 'notice',

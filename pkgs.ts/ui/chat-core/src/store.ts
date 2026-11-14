@@ -27,19 +27,27 @@ export class ConversationStore implements ConversationModel {
 
     readonly capabilities = DEFAULT_CAPABILITIES;
 
-    private readonly detachWatch: (() => void) | undefined;
+    private detachWatch: (() => void) | undefined;
+    private readySeen = false;
 
     constructor(
         private readonly client: ChatClient,
         public readonly entityId: string,
     ) {
-        // 常驻订阅：不依赖"我发过消息"，后台 bot 的提问 / 结论也能实时进来
-        this.detachWatch = client.watch?.(entityId, (event) => this.apply(event));
+        this.attach();
     }
 
-    /** 释放常驻订阅（切换房间 / 卸载时用） */
+    /** 挂上常驻订阅（幂等）。切回房间 / 重连后复用同一个 store 时调它 */
+    attach = (): void => {
+        if (this.detachWatch !== undefined) return;
+        // 常驻订阅：不依赖"我发过消息"，后台 bot 的提问 / 结论也能实时进来
+        this.detachWatch = this.client.watch?.(this.entityId, (event) => this.apply(event));
+    };
+
+    /** 释放常驻订阅（切走房间 / 卸载时用，避免每个看过的房间各挂一条 SSE） */
     dispose = (): void => {
         this.detachWatch?.();
+        this.detachWatch = undefined;
     };
 
     get = (): ConversationState => this.state;
@@ -57,6 +65,12 @@ export class ConversationStore implements ConversationModel {
     }
 
     private apply(event: Parameters<typeof applyEvent>[1]): void {
+        if (event.kind === 'ready') {
+            // 首次连接不清空状态（构造时已经 load 过）；重连后补拉，填平断线期间丢的事件
+            if (this.readySeen) this.reload();
+            this.readySeen = true;
+            return;
+        }
         this.emit(applyEvent(this.state, event));
     }
 
