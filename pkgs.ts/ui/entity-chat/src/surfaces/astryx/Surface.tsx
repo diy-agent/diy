@@ -13,8 +13,10 @@ import {
     ChatMessageMetadata,
     ChatSystemMessage,
     ChatToolCalls,
+    EmptyState,
     Markdown,
     Timestamp,
+    Token,
 } from '@astryxdesign/core';
 import { createStaticSource, type SearchableItem } from '@astryxdesign/core/Typeahead';
 import { buildTimeline, type MentionCandidate, type TimelineEntry, type TimelinePart } from '@diy-agent/chat-core';
@@ -79,13 +81,18 @@ function DeliveryChips({ entry, roomId }: { entry: TimelineEntry; roomId: string
                             ? '发送中'
                             : '排队';
                 return (
-                    <span
+                    <Token
                         key={delivery.botId}
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, opacity: 0.72 }}
-                    >
-                        <BotAvatar author={{ id: delivery.botId, name: delivery.name, color: delivery.color, role: 'bot' }} roomId={roomId} size={14} />
-                        {delivery.name} {label}
-                    </span>
+                        size="sm"
+                        label={`${delivery.name} ${label}`}
+                        icon={
+                            <BotAvatar
+                                author={{ id: delivery.botId, name: delivery.name, color: delivery.color, role: 'bot' }}
+                                roomId={roomId}
+                                size={14}
+                            />
+                        }
+                    />
                 );
             })}
         </span>
@@ -237,9 +244,7 @@ export function AstryxSurface({ targetId }: { targetId: string }) {
                 <ChatMessageList
                     density="spacious"
                     isStreaming={state.running}
-                    emptyState={
-                        <div style={{ padding: 24, opacity: 0.6, fontSize: 13 }}>还没有消息。发一句，或 @ 一个 bot。</div>
-                    }
+                    emptyState={<EmptyState title="还没有消息" description="发一句，或 @ 一个 bot。" />}
                 >
                     {entries.map((entry) => (
                         <EntryView key={entry.key} entry={entry} roomId={targetId} />

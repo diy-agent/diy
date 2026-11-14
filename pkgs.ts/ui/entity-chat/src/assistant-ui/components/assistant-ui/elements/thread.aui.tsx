@@ -101,6 +101,10 @@ export const Thread: FC = () => {
         // "正在输入" 会落在可视区外。聊天场景用经典 "bottom"（始终贴底）。
         turnAnchor="bottom"
         data-slot="aui_thread-viewport"
+        // 无障碍：消息区是 log，流式内容通过 polite 播报（Astryx 的 ChatMessageList 自带同样的语义）
+        role="log"
+        aria-live="polite"
+        aria-relevant="additions text"
         className="relative flex flex-1 flex-col overflow-x-auto overflow-y-scroll scroll-smooth"
       >
         <div
