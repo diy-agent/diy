@@ -58,6 +58,20 @@ describe('Projector', () => {
         expect(timeline[0]?.parts.map((part) => part.kind)).toEqual(['text', 'tool', 'text']);
     });
 
+    it('run.failed：所有还在 streaming 的条目（含工具）都收尾', () => {
+        const items = run([
+            { seq: 1, type: 'run.started', turnId: 't1', messageId: 'm1' },
+            { seq: 2, type: 'text.delta', messageId: 'm1', delta: '先看下文件' },
+            { seq: 3, type: 'tool.started', turnId: 't1', toolCallId: 'c1', name: 'ask' },
+            { seq: 4, type: 'run.failed', turnId: 't1', message: 'aborted' },
+        ]);
+
+        const tool = items.find((item) => item.type === 'tool');
+        expect(tool?.status).toBe('failed');
+        expect(JSON.stringify(tool)).toContain('"state":"error"');
+        expect(items.every((item) => item.status !== 'streaming')).toBe(true);
+    });
+
     it('只有工具、没有文本时，不产生空消息气泡', () => {
         const items = run([
             { seq: 1, type: 'run.started', turnId: 't1', messageId: 'm1' },

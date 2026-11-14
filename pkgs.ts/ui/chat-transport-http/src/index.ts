@@ -149,7 +149,7 @@ export class HttpChatClient implements ChatClient {
     async answerAsk(
         entityId: string,
         askId: string,
-        answer: { values?: string[]; fields?: Record<string, string> },
+        answer: { values?: string[]; fields?: Record<string, string>; text?: string },
     ): Promise<void> {
         const post = this.fetchImpl;
         const res = await post(`${this.base}/rooms/${encodeURIComponent(entityId)}/asks/${encodeURIComponent(askId)}`, {

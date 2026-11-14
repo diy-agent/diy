@@ -18,7 +18,7 @@ const conversations = new Map<string, ConversationStore>();
 export async function answerAsk(
     roomId: string,
     askId: string,
-    answer: { values?: string[]; fields?: Record<string, string> },
+    answer: { values?: string[]; fields?: Record<string, string>; text?: string },
 ): Promise<void> {
     if (client.answerAsk === undefined) throw new Error('当前传输不支持回答提问');
     await client.answerAsk(roomId, askId, answer);

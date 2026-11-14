@@ -150,15 +150,17 @@ export class Projector {
             }
 
             case 'run.failed': {
+                // 中止/失败时把**所有**还在 streaming 的条目收尾：
+                // 之前只关了最后一条 chat，正在跑的工具会永远显示"Running tool: xxx"。
                 const ops: Item[] = [];
-                const openId = [...this.messageIds.values()].at(-1);
-                if (openId !== undefined) {
-                    const open = this.items.get(openId);
-                    if (open !== undefined && open.status === 'streaming') {
-                        const closed: Item = { ...open, seq, status: 'failed' };
-                        this.items.set(openId, closed);
-                        ops.push(closed);
-                    }
+                for (const [id, open] of this.items) {
+                    if (open.status !== 'streaming') continue;
+                    const closed: Item =
+                        open.type === 'tool'
+                            ? { ...open, seq, status: 'failed', data: { ...open.data, state: 'error' } }
+                            : { ...open, seq, status: 'failed' };
+                    this.items.set(id, closed);
+                    ops.push(closed);
                 }
                 const err: Item = {
                     id: nextId('err'),

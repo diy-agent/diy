@@ -12,11 +12,13 @@ import type { AskAnswer, AskField, AskOption, AskRequest } from './types';
 /** 工具侧的提问入参（不含 askId，由闸门分配） */
 export interface AskInput {
     question: string;
-    kind?: 'choice' | 'form';
+    kind?: 'choice' | 'form' | 'text';
     options?: AskOption[];
     fields?: AskField[];
     multiple?: boolean;
+    allowFreeform?: boolean;
     note?: string;
+    toolCallId?: string;
 }
 
 export interface AskGateDeps {
@@ -63,7 +65,9 @@ export class AskGate {
             ...(input.options === undefined ? {} : { options: input.options }),
             ...(input.fields === undefined ? {} : { fields: input.fields }),
             ...(input.multiple === undefined ? {} : { multiple: input.multiple }),
+            ...(input.allowFreeform === undefined ? {} : { allowFreeform: input.allowFreeform }),
             ...(input.note === undefined ? {} : { note: input.note }),
+            ...(input.toolCallId === undefined ? {} : { toolCallId: input.toolCallId }),
             at,
         };
 

@@ -376,10 +376,12 @@ const server = createServer((req, res) => {
             const askId = decodeURIComponent(parts[4] ?? '');
             const actor = roomOf(id);
             if (actor === undefined) return json(res, 404, { error: 'room not found' });
-            void readBody<{ values?: string[]; fields?: Record<string, string> }>(req).then((body) => {
+            void readBody<{ values?: string[]; fields?: Record<string, string>; text?: string }>(req).then((body) => {
                 const hit = actor.answerAsk(askId, {
                     ...(body.values === undefined ? {} : { values: body.values }),
                     ...(body.fields === undefined ? {} : { fields: body.fields }),
+                    // 自由输入：之前漏传输，导致 kind=text 的回答永远是空
+                    ...(body.text === undefined ? {} : { text: body.text }),
                 });
                 json(res, hit ? 200 : 404, hit ? { ok: true } : { error: 'no such pending ask' });
             });

@@ -94,7 +94,12 @@ export class ConversationStore implements ConversationModel {
             .post(this.entityId, command, (event) => this.apply(event))
             // 不在这里置 running=false：谁在说话由服务端的 running 事件决定，
             // 否则多 bot 并行时，先结束的那个会把还在说的那个一起标成空闲
-            .catch((error: unknown) => this.emit({ ...this.state, error: messageOf(error) }));
+            .catch((error: unknown) => {
+                const message = messageOf(error);
+                // 用户点"停止"会 abort 本地流，这不是故障，别弹错误条
+                if (/abort/i.test(message)) return;
+                this.emit({ ...this.state, error: message });
+            });
     };
 
     /** 运行中也允许发：后端决定它在哪个边界生效（next-step 默认） */

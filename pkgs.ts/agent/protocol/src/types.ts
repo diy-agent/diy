@@ -126,14 +126,18 @@ export interface AskField {
 export interface AskRequest {
     askId: string;
     question: string;
-    /** choice = 选项；form = 表单 */
-    kind: 'choice' | 'form';
+    /** choice = 选项；form = 表单；text = 只有一个自由输入框 */
+    kind: 'choice' | 'form' | 'text';
     options?: AskOption[];
     fields?: AskField[];
     /** 选项是否多选 */
     multiple?: boolean;
+    /** 选项之外还允许自由输入（"其他：____"） */
+    allowFreeform?: boolean;
     /** 补充说明（背景、影响） */
     note?: string;
+    /** 触发它的工具调用：界面据此把卡片渲染在正文里那个工具行下面 */
+    toolCallId?: string;
     at: number;
 }
 
@@ -141,6 +145,8 @@ export interface AskRequest {
 export interface AskAnswer {
     values?: string[];
     fields?: Record<string, string>;
+    /** 自由输入（allowFreeform / kind='text'） */
+    text?: string;
 }
 
 /** 传输层回推给 UI 的事件流（目前是 SSE，将来可能是 diy-rpc 订阅） */

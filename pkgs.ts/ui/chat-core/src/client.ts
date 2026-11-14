@@ -74,5 +74,9 @@ export interface ChatClient {
     watch?(entityId: string, onEvent: (event: StreamEvent) => void): () => void;
 
     /** 可选：回答一次挂起的提问（选项 / 表单） */
-    answerAsk?(entityId: string, askId: string, answer: { values?: string[]; fields?: Record<string, string> }): Promise<void>;
+    answerAsk?(
+        entityId: string,
+        askId: string,
+        answer: { values?: string[]; fields?: Record<string, string>; text?: string },
+    ): Promise<void>;
 }

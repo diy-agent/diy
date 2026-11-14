@@ -298,12 +298,15 @@ export class RoomActor {
         const labels = (result.answer?.values ?? []).map(
             (value) => request.options?.find((option) => option.value === value)?.label ?? value,
         );
+        const freeText = result.answer?.text?.trim() ?? '';
         const summary =
             result.cancelled === true
                 ? `未回答${result.reason === undefined ? '' : `（${result.reason}）`}`
-                : result.answer?.fields !== undefined
-                  ? `已填写：${Object.values(result.answer.fields).filter((value) => value.trim() !== '').length} 项`
-                  : `已回答：${labels.join('、')}`;
+                : freeText !== '' && labels.length === 0
+                  ? `已回答：${freeText}`
+                  : result.answer?.fields !== undefined
+                    ? `已填写：${Object.values(result.answer.fields).filter((value) => value.trim() !== '').length} 项`
+                    : `已回答：${labels.join('、')}`;
         const turnId = this.currentTurn?.turnId;
         const notice: Item = {
             id: `askx-${request.askId}`,

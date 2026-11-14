@@ -23,6 +23,7 @@ export default defineConfig({
         'pkgs.ts/agent/store-jsonl',
         'pkgs.ts/room',
         'pkgs.ts/ui/chat-core',
+        'pkgs.ts/ui/entity-chat',
         'pkgs.ts/agent/entity-runtime',
     ],
     // diy-app 的 cli.intent 是真实 Electron + http2 集成测试，diy-rpc 的

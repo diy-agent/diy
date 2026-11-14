@@ -7,7 +7,8 @@ import { MarkdownText } from "../../../components/assistant-ui/elements/markdown
 import { ToolFallback } from "../../../components/assistant-ui/elements/tool-fallback.aui";
 import { ToolGroup } from "../../../components/assistant-ui/elements/tool-group.aui";
 import { BotAvatar } from "../../../../components/BotAvatar";
-import { TypingDots } from "../../../../components/TypingDots";
+import { RunningIndicator } from "../../../../components/RunningIndicator";
+import { AskCard } from "../../../../components/AskCard";
 import { TooltipIconButton } from "../../../components/assistant-ui/elements/tooltip-icon-button";
 import { Button } from "../../../components/ui/button";
 import { cn } from "../../../lib/utils";
@@ -419,16 +420,8 @@ const AssistantMessage: FC = () => {
         data-role="assistant"
         className="fade-in slide-in-from-bottom-1 animate-in relative"
       >
-        <div className="text-foreground px-2 leading-relaxed">
-          {author !== undefined && (
-            <div className="mb-1 flex items-center gap-2 text-xs">
-              <BotAvatar author={author} roomId={meta?.roomId} size={18} />
-              <span className="font-medium" style={{ color: author.color }}>
-                {author.name}
-              </span>
-            </div>
-          )}
-          <TypingDots />
+        <div className="text-foreground flex justify-center px-2 py-1">
+          <RunningIndicator name={author?.name} since={meta.startedAt} />
         </div>
       </MessagePrimitive.Root>
     );
@@ -487,6 +480,14 @@ const AssistantMessage: FC = () => {
                 return <MarkdownText />;
               case "tool-call":
                 return part.toolUI ?? <ToolFallback {...part} />;
+              case "data": {
+                // 投影层用 `data-ask` 传入，运行时规范成 { type: "data", name: "ask" }
+                if (part.name !== "ask") return null;
+                const request = (part.data as { request?: import("@diy-agent/chat-core").AskRequest }).request;
+                return request === undefined ? null : (
+                  <AskCard roomId={meta?.roomId ?? ""} request={request} />
+                );
+              }
               case "indicator":
                 return (
                   <span

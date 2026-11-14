@@ -6,11 +6,13 @@
 //   - 同一 bot 的工具与文本要留在同一条里，且保持原有先后（text → tool → text）
 // surface 只做「时间线 → 自己的组件」，不再各写一遍分组，语义差异从结构上消失。
 
-import type { Author, Bot, Delivery, DeliveryState, Item } from './types';
+import type { AskRequest, Author, Bot, Delivery, DeliveryState, Item } from './types';
 
 export type TimelinePart =
     | { kind: 'text'; text: string }
-    | { kind: 'tool'; id: string; name: string; args?: unknown; result?: unknown; state: 'running' | 'ok' | 'error' };
+    | { kind: 'tool'; id: string; name: string; args?: unknown; result?: unknown; state: 'running' | 'ok' | 'error' }
+    /** 需要用户回答的提问：渲染在触发它的那个工具行下面 */
+    | { kind: 'ask'; request: AskRequest };
 
 export interface TimelineDelivery {
     botId: string;
@@ -70,7 +72,7 @@ export function buildTimeline(
     items: readonly Item[],
     deliveries: readonly Delivery[] = [],
     bots: Record<string, Bot> = {},
-    options: { speaking?: readonly string[] } = {},
+    options: { speaking?: readonly string[]; asks?: readonly AskRequest[] } = {},
 ): TimelineEntry[] {
     const entries: TimelineEntry[] = [];
     const byKey = new Map<string, TimelineEntry>();
@@ -121,7 +123,16 @@ export function buildTimeline(
         const key = `${item.turnId}:${author?.id ?? 'unknown'}`;
         let entry = byKey.get(key);
         if (entry === undefined) {
-            entry = { key, kind: 'assistant', turnId: item.turnId, author, parts: [], streaming: false, deliveries: [], at: item.at };
+            entry = {
+                key,
+                kind: 'assistant',
+                turnId: item.turnId,
+                author,
+                parts: [],
+                streaming: false,
+                deliveries: [],
+                at: item.at,
+            };
             byKey.set(key, entry);
             entries.push(entry);
         }
@@ -130,11 +141,34 @@ export function buildTimeline(
         if (item.status === 'streaming') entry.streaming = true;
     }
 
+    // 待回答的提问：挂到触发它的工具行后面（找不到就挂到最后一条 assistant 条目）
+    for (const ask of options.asks ?? []) {
+        const part: TimelinePart = { kind: 'ask', request: ask };
+        const target =
+            (ask.toolCallId === undefined
+                ? undefined
+                : entries.find((entry) =>
+                      entry.parts.some((candidate) => candidate.kind === 'tool' && candidate.id === `tool-${ask.toolCallId}`),
+                  )) ?? [...entries].reverse().find((entry) => entry.kind === 'assistant');
+        if (target === undefined) continue;
+        const index = target.parts.findIndex(
+            (candidate) => candidate.kind === 'tool' && ask.toolCallId !== undefined && candidate.id === `tool-${ask.toolCallId}`,
+        );
+        if (index >= 0) target.parts.splice(index + 1, 0, part);
+        else target.parts.push(part);
+    }
+
     // 正在跑但还没有任何流式内容的 bot：补一个"正在输入…"占位
     const streamingAuthors = new Set(
         entries.filter((entry) => entry.kind === 'assistant' && entry.streaming).map((entry) => entry.author?.id ?? ''),
     );
-    const turnId = items.at(-1)?.turnId ?? '';
+    const lastItem = items.at(-1);
+    const turnId = lastItem?.turnId ?? '';
+    // "开跑时刻" = 这一轮的**第一条** item（通常就是用户那条消息）。
+    //  - 不能用 Date.now()：每次 rebuild 都变，秒数会来回跳；
+    //  - 也不能用最后一条：工具跑完再进入思考时，秒数会被重置成 0。
+    const turnStart = items.find((item) => item.turnId === turnId);
+    const startedAt = turnStart?.at ?? lastItem?.at ?? Date.now();
     for (const botId of options.speaking ?? []) {
         if (streamingAuthors.has(botId)) continue;
         const bot = bots[botId];
@@ -148,7 +182,7 @@ export function buildTimeline(
             parts: [],
             streaming: true,
             deliveries: [],
-            at: Date.now(),
+            at: startedAt,
         });
     }
 

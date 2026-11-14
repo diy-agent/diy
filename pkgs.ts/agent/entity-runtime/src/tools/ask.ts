@@ -30,6 +30,9 @@ const FIELD_SCHEMA = z.object({
 
 function describeAnswer(request: AskRequest, answer: AskAnswer | undefined): string {
     if (answer === undefined) return '用户没有回答（本轮已取消）。';
+    if (request.kind === 'text') {
+        return `用户回答：${answer.text ?? '（空）'}`;
+    }
     if (request.kind === 'form') {
         const fields = request.fields ?? [];
         const lines = fields.map((field) => `- ${field.label}：${answer.fields?.[field.name] ?? '（未填）'}`);
@@ -41,7 +44,8 @@ function describeAnswer(request: AskRequest, answer: AskAnswer | undefined): str
         const option = request.options?.find((candidate) => candidate.value === value);
         return option === undefined ? value : `${option.label}（${value}）`;
     });
-    return `用户选择：${labels.join('、')}`;
+    const picked = `用户选择：${labels.join('、')}`;
+    return answer.text === undefined || answer.text.trim() === '' ? picked : `${picked}；补充：${answer.text.trim()}`;
 }
 
 export function askTool(gate: AskGate | undefined): ToolSet[string] | undefined {
@@ -52,14 +56,16 @@ export function askTool(gate: AskGate | undefined): ToolSet[string] | undefined 
             '选项题传 options（可 multiple），表单题传 fields。回答会作为工具结果返回给你。',
         inputSchema: z.object({
             question: z.string().describe('一句话说清要用户决定什么'),
-            kind: z.enum(['choice', 'form']).optional().describe('缺省：有 fields 就是 form，否则 choice'),
+            kind: z.enum(['choice', 'form', 'text']).optional().describe('缺省：有 fields 就是 form，有 options 就是 choice，否则 text'),
+            allowFreeform: z.boolean().optional().describe('选项之外还允许自由输入（"其他"）'),
             options: z.array(OPTION_SCHEMA).optional().describe('选项（choice 用）'),
             fields: z.array(FIELD_SCHEMA).optional().describe('表单字段（form 用）'),
             multiple: z.boolean().optional().describe('选项是否多选'),
             note: z.string().optional().describe('补充说明：背景 / 影响 / 默认建议'),
         }),
-        execute: async (input) => {
-            const outcome = await gate.request(input);
+        execute: async (input, options) => {
+            const callId = (options as { toolCallId?: string } | undefined)?.toolCallId;
+            const outcome = await gate.request({ ...input, ...(callId === undefined ? {} : { toolCallId: callId }) });
             if (outcome.cancelled === true) {
                 return `用户没有回答（${outcome.reason ?? '已取消'}）。可以换个问法，或先按最保守的方案继续。`;
             }
