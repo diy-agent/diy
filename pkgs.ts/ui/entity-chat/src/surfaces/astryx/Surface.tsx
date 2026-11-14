@@ -208,7 +208,7 @@ export function AstryxSurface({ targetId }: { targetId: string }) {
                 speaking: state.speaking,
                 asks: state.asks,
             }),
-        [state.items, state.deliveries, shell.bots, state.speaking],
+        [state.items, state.deliveries, shell.bots, state.speaking, state.asks],
     );
 
     const candidates = useMentionCandidates(targetId);
