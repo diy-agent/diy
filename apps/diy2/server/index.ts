@@ -13,7 +13,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { buildRoomTools, RoomActor, openStore } from '@diy-agent/entity-runtime';
-import type { RoomEvent } from '@diy-agent/entity-runtime';
+import type { CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
 import type { Author, Bot, Room, RoomMember } from '@diy-agent/protocol';
 
 const PORT = Number(process.env['DIY2_PORT'] ?? 5191);
@@ -84,13 +84,7 @@ function actorOf(spec: Room): RoomActor {
         const tools =
             cwd === undefined
                 ? undefined
-                : buildRoomTools({
-                      cwd,
-                      shell: process.env['DIY2_TOOLS'] !== 'files',
-                      ...(process.env['DIY2_TOOL_AUDIT'] === '1'
-                          ? { onAudit: (event) => console.log(`[tool] ${event.phase} ${event.path ?? event.command ?? ''}`) }
-                          : {}),
-                  });
+                : buildRoomTools({ cwd, shell: process.env['DIY2_TOOLS'] !== 'files' });
         actor = new RoomActor({
             spec,
             store,

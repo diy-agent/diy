@@ -1,9 +1,12 @@
 // projection.ts —— AgentEvent → Item（UI 只消费 Item）。
 //
-// 关键：**懒创建** assistant 消息。
-//   run.started 不立刻产生一条空消息，否则 UI 会多一个"闪烁圆点"占位，
-//   并触发 assistant-ui 的 optimistic 占位（两个圆点 / 分支 2/2）。
-//   只有真正出现 text / tool 时才落第一条 Item。
+// 关键约定：
+//   · **懒创建** assistant 消息：run.started 不落空消息，否则 UI 会多一个闪烁占位；
+//     只有真的出现 text / tool 时才落第一条 Item。
+//   · **文本分段**：一次 tool 调用会把「说一段 → 调工具 → 再说一段」切成两段。
+//     每段是独立 Item（id = `${messageId}#N`），时间线里才能 text → tool → text 地交错，
+//     而不是把所有文本并成一块、永远排在工具前面。
+//   · 一轮被工具步数上限截断时（run.truncated）落一条 notice，用户能看见"没说完"。
 
 import type { AgentEvent, Author, Item } from './types';
 
@@ -12,11 +15,14 @@ export const nextId = (prefix: string): string => `${prefix}-${++counter}`;
 
 export class Projector {
     private readonly items = new Map<string, Item>();
+    /** `${messageId}#${segment}` → item.id */
     private readonly messageIds = new Map<string, string>();
     private readonly toolIds = new Map<string, string>();
     private seq = 0;
     /** run.started 之后、还没有真实内容之前：先记住，别落空消息 */
     private pending: { messageId: string; turnId: string; at: number } | null = null;
+    /** 同一个 messageId 里的第几段文本（每次工具调用后 +1） */
+    private segment = 0;
 
     constructor(
         private readonly author: Author,
@@ -33,16 +39,20 @@ export class Projector {
         return item;
     }
 
-    /** 首次出现内容时，才把那条 assistant 消息落下来 */
+    /**
+     * 首次出现内容时，才把当前段落的 assistant 消息落下来。
+     * 工具调用之后 segment 会 +1，于是下一段文本是一条新 Item。
+     */
     private ensureMessage(seq: number, now: number): Item | null {
         if (this.pending === null) return null;
-        const existing = this.messageIds.get(this.pending.messageId);
+        const key = `${this.pending.messageId}#${this.segment}`;
+        const existing = this.messageIds.get(key);
         if (existing !== undefined) {
             const current = this.items.get(existing);
             return current ?? null;
         }
         const item: Item = {
-            id: this.pending.messageId,
+            id: this.segment === 0 ? this.pending.messageId : `${this.pending.messageId}#${this.segment}`,
             seq,
             turn: this.turn,
             turnId: this.pending.turnId,
@@ -53,8 +63,20 @@ export class Projector {
             data: { text: '' },
         };
         this.items.set(item.id, item);
-        this.messageIds.set(this.pending.messageId, item.id);
+        this.messageIds.set(key, item.id);
         return item;
+    }
+
+    /** 当前段落收尾（工具开始 / 消息完成时调用） */
+    private closeSegment(seq: number): Item | null {
+        if (this.pending === null) return null;
+        const id = this.messageIds.get(`${this.pending.messageId}#${this.segment}`);
+        if (id === undefined) return null;
+        const current = this.items.get(id);
+        if (current === undefined || current.status !== 'streaming') return null;
+        const next: Item = { ...current, seq, status: 'done' };
+        this.items.set(id, next);
+        return next;
     }
 
     apply(event: AgentEvent, now = Date.now()): Item[] {
@@ -64,12 +86,13 @@ export class Projector {
         switch (event.type) {
             case 'run.started': {
                 this.pending = { messageId: event.messageId, turnId: event.turnId, at: now };
+                this.segment = 0;
                 return [];
             }
 
             case 'text.delta': {
                 this.ensureMessage(seq, now);
-                const id = this.messageIds.get(event.messageId);
+                const id = this.messageIds.get(`${event.messageId}#${this.segment}`);
                 if (id === undefined) return [];
                 const current = this.items.get(id);
                 if (current === undefined || current.type !== 'chat') return [];
@@ -80,19 +103,16 @@ export class Projector {
             }
 
             case 'message.completed': {
-                const created = this.ensureMessage(seq, now);
-                const id = this.messageIds.get(event.messageId);
-                if (id === undefined) return created === null ? [] : [created];
-                const current = this.items.get(id);
-                if (current === undefined) return [];
-                const next: Item = { ...current, seq, status: 'done' };
-                this.items.set(id, next);
-                return [next];
+                const closed = this.closeSegment(seq);
+                return closed === null ? [] : [closed];
             }
 
             case 'tool.started': {
                 if (this.toolIds.has(event.toolCallId)) return [];
-                const created = this.ensureMessage(seq, now);
+                // 先把正在写的这段文本收尾，再落工具块
+                const closed = this.closeSegment(seq);
+                const ops: Item[] = closed === null ? [] : [closed];
+
                 const id = `tool-${event.toolCallId}`;
                 const item: Item = {
                     id,
@@ -107,7 +127,11 @@ export class Projector {
                 };
                 this.items.set(id, item);
                 this.toolIds.set(event.toolCallId, id);
-                return created === null ? [item] : [created, item];
+                ops.push(item);
+
+                // 之后的文本属于新的一段
+                this.segment += 1;
+                return ops;
             }
 
             case 'tool.completed': {
@@ -124,6 +148,26 @@ export class Projector {
                 };
                 this.items.set(id, next);
                 return [next];
+            }
+
+            case 'run.truncated': {
+                const closed = this.closeSegment(seq);
+                const notice: Item = {
+                    id: nextId('notice'),
+                    seq,
+                    turn: this.turn,
+                    turnId: event.turnId,
+                    at: now,
+                    status: 'done',
+                    type: 'notice',
+                    data: {
+                        text: `本轮工具调用达到上限（${event.limit} 步），模型还没给出结论；继续发消息可以让它接着做。`,
+                        kind: 'limit',
+                    },
+                };
+                this.items.set(notice.id, notice);
+                this.pending = null;
+                return closed === null ? [notice] : [closed, notice];
             }
 
             case 'run.failed': {

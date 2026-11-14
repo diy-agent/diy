@@ -397,3 +397,23 @@ server: cwdOf(spec)        // data.dir，任务继承所属项目的 dir
 replaceAll / 未命中、bash 退出码与 cwd、bash 非零退出返回结果不抛。
 
 合计 45 条（room 11 / session 18 / room-log 4 / chat-core 6 / tools 6）。
+
+## 修：工具执行后消息不完整（2026-11-14）
+
+**症状**：模型调了 9 次 bash，界面只剩一堆 `Used tool: bash`，没有文字结论。
+
+**三个原因**（叠加）：
+
+1. **步数上限太低**：`stopWhen: isStepCount(6)`，工具循环还没跑完就被掐断，
+   模型拿不到机会输出最终文本 → 这一轮 empty text → 没有结论。改为默认 20 步，
+   且被掐断时发 `run.truncated`，投影成一条 notice（"达到上限，继续发消息可以让它接着做"）。
+2. **文本没有分段**：一次 run 的所有 `text.delta` 都写进同一个 item，
+   于是「说一段 → 调工具 → 再说一段」在时间线里变成「全部文本 + 一堆工具」，
+   而且文本永远排在工具前面。现在每次 `tool.started` 会把当前文本段收尾，
+   之后的文本是新的 item（`${messageId}#N`），时间线自然还原成 text → tool → text。
+3. **server 没被类型检查**：`apps/diy2/tsconfig.json` 的 include 只有 `src/**/*`，
+   `server/index.ts` 里的两个真错误（隐含 any / 缺 CompactEvent 导入）一直没被发现。
+   已把 `server/**/*` 加进 include。
+
+**测试**：`projection.test.ts` 4 条（分段 / 时间线交错 / 截断 notice / 不产生空气泡），
+合计 49 条。
