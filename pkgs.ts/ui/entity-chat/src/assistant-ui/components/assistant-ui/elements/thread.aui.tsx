@@ -89,7 +89,8 @@ export const Thread: FC = () => {
     <ThreadPrimitive.Root
       className="aui-root aui-thread-root bg-background @container flex h-full flex-col"
       style={{
-        ["--thread-max-width" as string]: "44rem",
+        // 铺满可用宽度（之前 44rem 在宽屏上两侧空太多），靠内边距保持呼吸感
+        ["--thread-max-width" as string]: "100%",
         ["--composer-bg" as string]:
           "color-mix(in oklab, var(--color-muted) 30%, transparent)",
         ["--composer-radius" as string]: "1rem",
@@ -109,7 +110,7 @@ export const Thread: FC = () => {
       >
         <div
           className={cn(
-            "mx-auto flex w-full max-w-(--thread-max-width) flex-1 flex-col px-4 pt-4",
+            "mx-auto flex w-full max-w-(--thread-max-width) flex-1 flex-col px-6 pt-4",
             isEmpty && "justify-center",
           )}
         >
