@@ -64,7 +64,12 @@ export function readTool(cwd: string): ToolSet[string] {
     });
 }
 
-export function writeTool(cwd: string): ToolSet[string] {
+/** 审批守卫：拒绝时抛错（工具失败，模型据此换做法） */
+export type Guard = (args: Record<string, unknown>) => Promise<void>;
+
+const noGuard: Guard = async () => {};
+
+export function writeTool(cwd: string, guard: Guard = noGuard): ToolSet[string] {
     return tool({
         description:
             '整文件写入（新建或覆盖；相对路径按房间目录解析；父目录不存在会自动创建）。' +
@@ -74,6 +79,7 @@ export function writeTool(cwd: string): ToolSet[string] {
             content: z.string().describe('完整文件内容'),
         }),
         execute: async ({ path: filePath, content }) => {
+            await guard({ path: filePath, bytes: Buffer.byteLength(content, 'utf8') });
             if (Buffer.byteLength(content, 'utf8') > WRITE_MAX_BYTES) throw new Error(`[写入失败] 内容超过上限 ${WRITE_MAX_BYTES} 字节`);
             const abs = inside(cwd, filePath);
             const before = await readFile(abs, 'utf8').catch(() => undefined);
@@ -87,7 +93,7 @@ export function writeTool(cwd: string): ToolSet[string] {
     });
 }
 
-export function editTool(cwd: string): ToolSet[string] {
+export function editTool(cwd: string, guard: Guard = noGuard): ToolSet[string] {
     return tool({
         description:
             '对**单个已存在的文件**做局部替换（改几行用它，不要用 write 重写整份）。' +
@@ -106,6 +112,7 @@ export function editTool(cwd: string): ToolSet[string] {
                 .describe('有序的替换列表'),
         }),
         execute: async ({ path: filePath, edits }) => {
+            await guard({ path: filePath, edits: edits.length });
             const abs = inside(cwd, filePath);
             const original = await readFile(abs, 'utf8').catch((error: unknown) => {
                 throw new Error(`[编辑失败] ${error instanceof Error ? error.message : String(error)}`);

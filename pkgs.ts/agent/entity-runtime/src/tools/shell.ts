@@ -11,9 +11,13 @@ import { spawn } from 'node:child_process';
 import { tool, type ToolSet } from 'ai';
 import { z } from 'zod';
 
+import type { Guard } from './files';
+
+const noGuard: Guard = async () => {};
+
 const OUTPUT_MAX = 100_000;
 
-export function bashTool(cwd: string, defaultTimeoutMs = 120_000): ToolSet[string] {
+export function bashTool(cwd: string, defaultTimeoutMs = 120_000, guard: Guard = noGuard): ToolSet[string] {
     return tool({
         description:
             '在房间目录执行 bash 命令并返回输出（查文件、跑命令、看系统信息）。' +
@@ -24,6 +28,7 @@ export function bashTool(cwd: string, defaultTimeoutMs = 120_000): ToolSet[strin
             timeout: z.number().optional().describe('超时毫秒（缺省用房间默认值）'),
         }),
         execute: async ({ command, timeout }) => {
+            await guard({ command });
             const limit = timeout ?? defaultTimeoutMs;
             return await new Promise<string>((resolveResult, reject) => {
                 const child = spawn('bash', ['-lc', command], {

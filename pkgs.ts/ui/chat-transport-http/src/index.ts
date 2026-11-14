@@ -62,11 +62,12 @@ export class HttpChatClient implements ChatClient {
 
     async load(entityId: string): Promise<Snapshot> {
         const id = encodeURIComponent(entityId);
-        const [history, deliveries] = await Promise.all([
+        const [history, deliveries, approvals] = await Promise.all([
             this.getJson<{ items: Item[] }>(`/rooms/${id}/history`),
             this.getJson<{ deliveries: Delivery[] }>(`/rooms/${id}/deliveries`),
+            this.getJson<{ approvals: Snapshot['approvals'] }>(`/rooms/${id}/approvals`).catch(() => ({ approvals: [] })),
         ]);
-        return { items: history.items, deliveries: deliveries.deliveries };
+        return { items: history.items, deliveries: deliveries.deliveries, approvals: approvals.approvals ?? [] };
     }
 
     async sessions(entityId: string): Promise<SessionInfo[]> {
@@ -90,6 +91,19 @@ export class HttpChatClient implements ChatClient {
         );
         if (!res.ok) throw new Error(`压缩失败：HTTP ${res.status}`);
         return (await res.json()) as CompactOutcome;
+    }
+
+    async approve(entityId: string, approvalId: string, approved: boolean, reason?: string): Promise<void> {
+        const post = this.fetchImpl;
+        const res = await post(
+            `${this.base}/rooms/${encodeURIComponent(entityId)}/approvals/${encodeURIComponent(approvalId)}`,
+            {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ approved, ...(reason === undefined ? {} : { reason }) }),
+            },
+        );
+        if (!res.ok) throw new Error(`审批失败：HTTP ${res.status}`);
     }
 
     async post(

@@ -2,6 +2,7 @@
 
 export type {
     AgentEvent,
+    ApprovalRequest,
     Author,
     Bot,
     Delivery,

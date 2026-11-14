@@ -101,11 +101,23 @@ export type Command =
     | { kind: 'send'; text: string }
     | { kind: 'cancel'; keepQueue?: boolean };
 
+/** 工具审批请求（挂起中；UI 显示允许 / 拒绝） */
+export interface ApprovalRequest {
+    approvalId: string;
+    toolName: string;
+    args?: unknown;
+    at: number;
+}
+
 /** 传输层回推给 UI 的事件流（目前是 SSE，将来可能是 diy-rpc 订阅） */
 export type StreamEvent =
     | { kind: 'item'; item: Item }
     | { kind: 'delivery'; delivery: Delivery }
     | { kind: 'error'; message: string }
+    /** 有工具在等审批 */
+    | { kind: 'approval'; request: ApprovalRequest }
+    /** 审批已解决（批准 / 拒绝 / 取消 / 超时） */
+    | { kind: 'approval.settled'; approvalId: string; approved: boolean; reason?: string }
     | { kind: 'done' };
 
 /** 房间自己会发的事件（`done` 属于传输层，不属于领域） */
@@ -114,6 +126,8 @@ export type RoomEvent = Exclude<StreamEvent, { kind: 'done' }>;
 export interface Snapshot {
     items: Item[];
     deliveries: Delivery[];
+    /** 还在等用户点头的工具调用（刷新页面后审批条要能恢复） */
+    approvals?: ApprovalRequest[];
 }
 
 /** capabilities 决定 UI 显示哪些按钮（不要写 surfaceId 分支） */

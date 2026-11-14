@@ -12,7 +12,7 @@ import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { buildRoomTools, RoomActor, openStore } from '@diy-agent/entity-runtime';
+import { RoomActor, openStore } from '@diy-agent/entity-runtime';
 import type { CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
 import type { Author, Bot, Room, RoomMember } from '@diy-agent/protocol';
 
@@ -81,10 +81,6 @@ function actorOf(spec: Room): RoomActor {
     let actor = rooms.get(spec.id);
     if (actor === undefined) {
         const cwd = cwdOf(spec);
-        const tools =
-            cwd === undefined
-                ? undefined
-                : buildRoomTools({ cwd, shell: process.env['DIY2_TOOLS'] !== 'files' });
         actor = new RoomActor({
             spec,
             store,
@@ -92,14 +88,9 @@ function actorOf(spec: Room): RoomActor {
             emit: (event) => broadcast(spec.id, event),
             budget: COMPACT_BUDGET,
             onCompact: (bot, event) => logCompact(spec.id, bot, event),
-            ...(tools === undefined
-                ? {}
-                : {
-                      tools,
-                      toolsHint:
-                          `可以用 read / write / edit 读写文件、用 bash 执行命令；` +
-                          `工作目录是 ${cwd}，相对路径按它解析。改文件优先用 edit（不要整份重写）。`,
-                  }),
+            ...(cwd === undefined ? {} : { cwd }),
+            shell: process.env['DIY2_TOOLS'] !== 'files',
+            ...(process.env['DIY2_APPROVALS'] === 'off' ? { approvals: false } : {}),
         });
         rooms.set(spec.id, actor);
     }
@@ -310,6 +301,15 @@ const server = createServer((req, res) => {
             return;
         }
 
+        // GET /api/rooms/:id/approvals —— 还在等人点头的工具调用
+        if (req.method === 'GET' && parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'approvals' && parts.length === 4) {
+            const id = decodeURIComponent(parts[2] ?? '');
+            const actor = roomOf(id);
+            if (actor === undefined) return json(res, 404, { error: 'room not found' });
+            json(res, 200, { approvals: actor.pendingApprovalRequests() });
+            return;
+        }
+
         // GET /api/rooms/:id/sessions —— 每个成员的上下文概况 + 最近的压缩事件
         if (req.method === 'GET' && parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'sessions' && parts.length === 4) {
             const id = decodeURIComponent(parts[2] ?? '');
@@ -335,6 +335,19 @@ const server = createServer((req, res) => {
                     json(res, 200, { event, stats: actor.sessionsInfo().find((info) => info.botId === botId)?.stats });
                 })
                 .catch((error: unknown) => json(res, 400, { error: String(error) }));
+            return;
+        }
+
+        // POST /api/rooms/:id/approvals/:approvalId —— 工具审批（允许 / 拒绝）
+        if (req.method === 'POST' && parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'approvals') {
+            const id = decodeURIComponent(parts[2] ?? '');
+            const approvalId = decodeURIComponent(parts[4] ?? '');
+            const actor = roomOf(id);
+            if (actor === undefined) return json(res, 404, { error: 'room not found' });
+            void readBody<{ approved?: boolean; reason?: string }>(req).then((body) => {
+                const hit = actor.resolveApproval(approvalId, body.approved === true, body.reason);
+                json(res, hit ? 200 : 404, hit ? { ok: true } : { error: 'no such pending approval' });
+            });
             return;
         }
 

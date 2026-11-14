@@ -25,9 +25,11 @@ import {
     primaryMemberOf,
 } from '@diy-agent/protocol';
 
+import { ApprovalGate, type ApprovalDecision } from './approval';
 import type { Compactor } from './compaction';
 import type { Store } from './db';
 import { RoomLog, type RoomEntry } from './room-log';
+import { buildRoomTools } from './tools/index';
 import type { CompactEvent } from './compaction';
 import {
     BotSession,
@@ -57,9 +59,14 @@ export interface RoomActorDeps {
     run?: SessionDeps['run'];
     compactor?: Compactor;
     budget?: CompactOptions;
-    /** 工具集（房间目录决定 cwd）；不传 = 只用内置 get_time */
-    tools?: ToolSet;
-    toolsHint?: string;
+    /** 房间的工作目录；不传 = 不给文件/命令工具（只用内置 get_time） */
+    cwd?: string;
+    /** 是否开放 shell（缺省开放） */
+    shell?: boolean;
+    /** shell 缺省超时 */
+    bashTimeoutMs?: number;
+    /** 是否要求工具审批（缺省开启：write / edit / bash 都要人点头） */
+    approvals?: boolean;
     /** 压缩事件（日志 / 监控） */
     onCompact?: (bot: Bot, event: CompactEvent) => void;
     now?: () => number;
@@ -78,10 +85,18 @@ export class RoomActor {
     private readonly orderOf = new Map<string, number>();
     /** 已落库的 item id（流式更新会重复发同一条） */
     private readonly persisted = new Set<string>();
+    /** 工具审批：模型写文件 / 执行命令前在这里停住 */
+    private readonly gate: ApprovalGate;
+    private builtTools: ToolSet | undefined;
 
     constructor(private readonly deps: RoomActorDeps) {
         // 公共日志从库里恢复（append-only，seq 接着走）
         this.log = new RoomLog(this.deps.store.roomEntries(this.id));
+        this.gate = new ApprovalGate({
+            request: (request) => this.deps.emit({ kind: 'approval', request }),
+            settle: (request, decision) => this.settleApproval(request.approvalId, request.toolName, decision),
+            now: () => this.deps.now?.() ?? Date.now(),
+        });
         // 成员的 session 一开始就建好：上下文、统计、恢复都不需要等第一条消息
         for (const bot of this.members()) this.sessionOf(bot);
     }
@@ -233,7 +248,50 @@ export class RoomActor {
     }
 
     cancel(options: { keepQueue?: boolean } = {}): void {
+        // 先放掉挂起的审批（否则 execute 还停在 await 上，abort 也退不干净）
+        this.gate.cancelAll('本轮已取消');
         for (const session of this.sessions.values()) session.cancel(options);
+    }
+
+    /** 用户的审批决定；返回是否命中一个待审批请求 */
+    resolveApproval(approvalId: string, approved: boolean, reason?: string): boolean {
+        return this.gate.resolve(approvalId, { approved, ...(reason === undefined ? {} : { reason }) });
+    }
+
+    /** 还有几个工具在等人点头 */
+    pendingApprovals(): number {
+        return this.gate.pendingCount();
+    }
+
+    /** 挂起的审批请求（刷新 / 重连时恢复审批条） */
+    pendingApprovalRequests(): ReturnType<ApprovalGate['list']> {
+        return this.gate.list();
+    }
+
+    /** 审批解决：广播 + 在时间线留一条痕 */
+    private settleApproval(approvalId: string, toolName: string, decision: ApprovalDecision): void {
+        this.deps.emit({
+            kind: 'approval.settled',
+            approvalId,
+            approved: decision.approved,
+            ...(decision.reason === undefined ? {} : { reason: decision.reason }),
+        });
+        const now = this.deps.now?.() ?? Date.now();
+        const notice: Item = {
+            id: `apx-${approvalId}`,
+            seq: this.deps.store.seqOf(this.id) + 1,
+            order: this.nextOrder(),
+            ...(this.currentTurn === null ? {} : { turn: this.currentTurn.turn, turnId: this.currentTurn.turnId }),
+            turnId: this.currentTurn?.turnId ?? 'turn',
+            at: now,
+            status: 'done',
+            type: 'notice',
+            data: {
+                text: `${decision.approved ? '已批准' : '已拒绝'} ${toolName}${decision.reason === undefined ? '' : `（${decision.reason}）`}`,
+                kind: 'approval',
+            },
+        };
+        this.deps.emit({ kind: 'item', item: this.deps.store.appendItem(this.id, notice) });
     }
 
     /** 手动压某个成员的上下文（只影响它自己） */
@@ -304,6 +362,29 @@ export class RoomActor {
         this.turnSeq = Math.max(this.turnSeq, snapshot.turn);
     }
 
+    /** 工具集：房间目录 + 审批闸门（构造一次，所有 session 共用） */
+    private get tools(): ToolSet | undefined {
+        if (this.builtTools === undefined) {
+            const cwd = this.deps.cwd;
+            if (cwd === undefined) return undefined;
+            this.builtTools = buildRoomTools({
+                cwd,
+                ...(this.deps.shell === undefined ? {} : { shell: this.deps.shell }),
+                ...(this.deps.bashTimeoutMs === undefined ? {} : { bashTimeoutMs: this.deps.bashTimeoutMs }),
+                ...(this.deps.approvals === false ? {} : { approve: (input) => this.gate.request(input) }),
+            });
+        }
+        return this.builtTools;
+    }
+
+    private toolsHint(): string {
+        return (
+            '可以用 read / write / edit 读写文件、用 bash 执行命令；' +
+            `工作目录是 ${this.deps.cwd ?? '未设置'}，相对路径按它解析。` +
+            '改文件优先用 edit（不要整份重写）；write / edit / bash 需要用户批准，被拒绝就换个做法。'
+        );
+    }
+
     private inRoom(bot: Bot): Bot {
         return {
             ...bot,
@@ -366,8 +447,8 @@ export class RoomActor {
             ...(this.deps.run === undefined ? {} : { run: this.deps.run }),
             ...(this.deps.compactor === undefined ? {} : { compactor: this.deps.compactor }),
             ...(this.deps.budget === undefined ? {} : { budget: this.deps.budget }),
-            ...(this.deps.tools === undefined ? {} : { tools: this.deps.tools }),
-            ...(this.deps.toolsHint === undefined ? {} : { toolsHint: this.deps.toolsHint }),
+            ...(this.tools === undefined ? {} : { tools: this.tools }),
+            ...(this.tools === undefined ? {} : { toolsHint: this.toolsHint() }),
         });
         // 房间订阅 session 的输出：编号、落库、广播都在这一侧
         session.subscribe((event) => this.onSessionEvent(bot, event));

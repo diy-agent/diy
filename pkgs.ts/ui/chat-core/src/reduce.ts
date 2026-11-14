@@ -1,10 +1,12 @@
 // reduce.ts —— 纯函数：StreamEvent → 状态。UI 与 surface 都不自己拼消息。
 
-import type { Delivery, Item, StreamEvent } from './types';
+import type { ApprovalRequest, Delivery, Item, StreamEvent } from './types';
 
 export interface ConversationState {
     items: Item[];
     deliveries: Delivery[];
+    /** 正在等用户点头的工具调用 */
+    approvals: ApprovalRequest[];
     seq: number;
     error?: string;
     /** 有流式消息即 running（surface 用它显示停止按钮） */
@@ -12,7 +14,7 @@ export interface ConversationState {
 }
 
 export function emptyState(): ConversationState {
-    return { items: [], deliveries: [], seq: 0, running: false };
+    return { items: [], deliveries: [], approvals: [], seq: 0, running: false };
 }
 
 function sortItems(items: Item[]): Item[] {
@@ -46,6 +48,14 @@ export function applyEvent(state: ConversationState, event: StreamEvent): Conver
                       );
             return { ...state, deliveries };
         }
+        case 'approval': {
+            const exists = state.approvals.some((entry) => entry.approvalId === event.request.approvalId);
+            const approvals = exists ? state.approvals : [...state.approvals, event.request];
+            return { ...state, approvals };
+        }
+        case 'approval.settled': {
+            return { ...state, approvals: state.approvals.filter((entry) => entry.approvalId !== event.approvalId) };
+        }
         case 'error':
             return { ...state, error: event.message, running: false };
         case 'done':
@@ -56,10 +66,21 @@ export function applyEvent(state: ConversationState, event: StreamEvent): Conver
 }
 
 /** 历史快照 → 初始状态（按 seq 去重，刷新/重放同一入口） */
-export function fromSnapshot(snapshot: { items: Item[]; deliveries: Delivery[] }): ConversationState {
+export function fromSnapshot(snapshot: {
+    items: Item[];
+    deliveries: Delivery[];
+    approvals?: ApprovalRequest[];
+}): ConversationState {
+    // 同 id 只留最新一条（append-only 更新：重跑的 item 会以新 seq 再写一遍）
+    const latest = new Map<string, Item>();
+    for (const item of snapshot.items) {
+        const existing = latest.get(item.id);
+        if (existing === undefined || item.seq >= existing.seq) latest.set(item.id, item);
+    }
     return {
-        items: sortItems(snapshot.items),
+        items: sortItems([...latest.values()]),
         deliveries: snapshot.deliveries,
+        approvals: snapshot.approvals ?? [],
         seq: Math.max(0, ...snapshot.items.map((item) => item.seq)),
         running: snapshot.items.some((item) => item.status === 'streaming'),
     };

@@ -418,3 +418,36 @@ replaceAll / 未命中、bash 退出码与 cwd、bash 非零退出返回结果�
 
 **测试**：`projection.test.ts` 4 条（分段 / 时间线交错 / 截断 notice / 不产生空气泡），
 合计 49 条。
+
+## 工具审批（2026-11-14）
+
+**谁要审批**：`write` / `edit` / `bash`（改动与执行）；`read` 不需要。
+
+**为什么不用 AI SDK 的 `needsApproval` 暂停-恢复**：那套要求把审批响应重新拼进 messages
+再续跑，和"一轮 SSE 一直开着"的模型不匹配。这里让 `execute` 停在 `await` 上，
+用户的决定通过一次 HTTP 调回来，同一个 run 继续 —— 简单、可取消、可超时（10 分钟）。
+
+### 流程
+
+```
+tools.execute → gate.request()
+  → Room 广播 { kind:'approval', request }
+  → UI 顶部审批条：⚠ 需要批准  bash  {"command":"echo hi"}  [允许][拒绝]
+  → POST /rooms/:id/approvals/:approvalId { approved }
+  → gate.resolve()
+  → 批准：execute 继续；拒绝：抛错 → tool-error，模型据此换做法
+  → 广播 { kind:'approval.settled' } + 时间线留一条「已批准 / 已拒绝 bash」
+```
+
+### 边界
+
+- **拒绝是数据**：抛 `【已拒绝】用户没有批准 bash`，模型看得到原因（实测会解释并停手，不会改用 bash 绕过 write 的拒绝）。
+- **取消**：`Room.cancel()` 先 `gate.cancelAll()`，挂起的 execute 按拒绝收尾，abort 才退得干净。
+- **刷新**：`GET /rooms/:id/approvals` 返回挂起请求，`load()` 一并取回，审批条能恢复。
+- **关掉审批**：`DIY2_APPROVALS=off`（默认开启）。
+
+### 测试
+
+- `approval.test.ts` 5 条：挂起/批准、拒绝带原因、未知 id、cancelAll、超时
+- `tools.test.ts` 2 条：拒绝时抛错、通过时正常执行且 read 不触发审批
+- 合计 55 条。

@@ -66,4 +66,7 @@ export interface ChatClient {
 
     /** 可选：手动压缩某个 bot 的上下文（只影响它自己，不触发运行） */
     compact?(entityId: string, botId: string, options?: { keepLast?: number; maxChars?: number }): Promise<CompactOutcome>;
+
+    /** 可选：工具审批（允许 / 拒绝一次挂起的工具调用） */
+    approve?(entityId: string, approvalId: string, approved: boolean, reason?: string): Promise<void>;
 }

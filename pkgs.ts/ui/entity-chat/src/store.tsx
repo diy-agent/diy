@@ -14,6 +14,12 @@ const DEFAULT_MODEL = 'chen56@opencode-go/deepseek-v4.1-flash';
 const client = new HttpChatClient({ base: '/api' });
 const conversations = new Map<string, ConversationStore>();
 
+/** 工具审批：允许 / 拒绝一次挂起的调用 */
+export async function decideApproval(roomId: string, approvalId: string, approved: boolean): Promise<void> {
+    if (client.approve === undefined) return;
+    await client.approve(roomId, approvalId, approved).catch(() => undefined);
+}
+
 export function conversationOf(roomId: string): ConversationStore {
     let store = conversations.get(roomId);
     if (store === undefined) {

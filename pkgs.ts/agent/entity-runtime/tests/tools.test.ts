@@ -75,6 +75,37 @@ describe('房间工具', () => {
         expect(out).toContain(dir);
     });
 
+    it('审批拒绝 → 工具抛错（模型据此换做法）', async () => {
+        const tools = buildRoomTools({
+            cwd: dir,
+            shell: true,
+            bashTimeoutMs: 10_000,
+            approve: async ({ toolName }) => ({ approved: false, reason: `不许 ${toolName}` }),
+        });
+        await expect(toolOf(tools, 'bash').execute({ command: 'echo nope' })).rejects.toThrow(/已拒绝.*bash/);
+    });
+
+    it('审批通过 → 正常执行；read 不需要审批', async () => {
+        const asked: string[] = [];
+        const tools = buildRoomTools({
+            cwd: dir,
+            shell: true,
+            bashTimeoutMs: 10_000,
+            approve: async ({ toolName }) => {
+                asked.push(toolName);
+                return { approved: true };
+            },
+        });
+        await toolOf(tools, 'write').execute({ path: 'gate.txt', content: 'ok' });
+        const out = String(await toolOf(tools, 'bash').execute({ command: 'echo go' }));
+
+        expect(asked).toEqual(['write', 'bash']);
+        expect(out).toContain('go');
+        // read 不触发审批
+        await toolOf(tools, 'read').execute({ path: 'gate.txt' });
+        expect(asked).toEqual(['write', 'bash']);
+    });
+
     it('bash 非零退出：返回结果而不是抛错（模型靠退出码改命令）', async () => {
         const tools = buildRoomTools({ cwd: dir, shell: true, bashTimeoutMs: 10_000 });
         const out = String(await toolOf(tools, 'bash').execute({ command: 'echo boom >&2; exit 3' }));
