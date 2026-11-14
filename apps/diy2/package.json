@@ -9,7 +9,9 @@
         "build": "vite build",
         "preview": "vite preview",
         "typecheck": "tsc --noEmit",
-        "dev:server": "tsx server/index.ts"
+        "dev:server": "tsx server/index.ts",
+        "dev:all": "./scripts/dev.sh",
+        "stop": "./scripts/stop.sh"
     },
     "dependencies": {
         "@diy-agent/entity-chat": "*",
