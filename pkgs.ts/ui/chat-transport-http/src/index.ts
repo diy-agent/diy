@@ -172,7 +172,10 @@ export class HttpChatClient implements ChatClient {
             await get(`${this.base}/rooms/${encodeURIComponent(entityId)}/cancel`, {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ keepQueue: command.keepQueue === true }),
+                body: JSON.stringify({
+                    keepQueue: command.keepQueue === true,
+                    ...(command.botId === undefined ? {} : { botId: command.botId }),
+                }),
             }).catch(() => undefined);
             onEvent({ kind: 'done' });
             return;

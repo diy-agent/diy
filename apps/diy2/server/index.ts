@@ -417,8 +417,11 @@ const server = createServer((req, res) => {
             const id = decodeURIComponent(parts[2] ?? '');
             const actor = roomOf(id);
             if (actor === undefined) return json(res, 404, { error: 'room not found' });
-            void readBody<{ keepQueue?: boolean }>(req).then((body) => {
-                actor.cancel({ keepQueue: body.keepQueue === true });
+            void readBody<{ keepQueue?: boolean; botId?: string }>(req).then((body) => {
+                actor.cancel({
+                    keepQueue: body.keepQueue === true,
+                    ...(body.botId === undefined ? {} : { botId: body.botId }),
+                });
                 finish(id);
                 json(res, 200, { ok: true });
             });

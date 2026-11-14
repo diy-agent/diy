@@ -9,12 +9,14 @@ export interface ConversationState {
     asks: AskRequest[];
     seq: number;
     error?: string;
-    /** 有流式消息即 running（surface 用它显示停止按钮） */
+    /** 有成员正在跑（surface 用它显示停止按钮） */
     running: boolean;
+    /** 正在说话的成员 id（房间广播，按成员顺序） */
+    speaking: string[];
 }
 
 export function emptyState(): ConversationState {
-    return { items: [], deliveries: [], asks: [], seq: 0, running: false };
+    return { items: [], deliveries: [], asks: [], seq: 0, running: false, speaking: [] };
 }
 
 const STATUS_RANK: Record<Item['status'], number> = { pending: 0, streaming: 1, done: 2, failed: 2 };
@@ -60,6 +62,8 @@ export function applyEvent(state: ConversationState, event: StreamEvent): Conver
                       );
             return { ...state, deliveries };
         }
+        case 'running':
+            return { ...state, speaking: event.botIds, running: event.botIds.length > 0 };
         case 'ask': {
             const exists = state.asks.some((entry) => entry.askId === event.request.askId);
             const asks = exists ? state.asks : [...state.asks, event.request];
@@ -71,7 +75,7 @@ export function applyEvent(state: ConversationState, event: StreamEvent): Conver
         case 'error':
             return { ...state, error: event.message, running: false };
         case 'done':
-            return { ...state, running: false };
+            return { ...state, running: false, speaking: [] };
         default:
             return state;
     }
@@ -89,11 +93,17 @@ export function fromSnapshot(snapshot: {
         const existing = latest.get(item.id);
         if (existing === undefined || item.seq >= existing.seq) latest.set(item.id, item);
     }
+    const items = sortItems([...latest.values()]);
+    // 快照里没有 running 事件：从"还在流式的 bot 条目"倒推一个初值，后续以服务端事件为准
+    const speaking = [
+        ...new Set(items.filter((item) => item.status === 'streaming').map((item) => item.author?.id ?? '')),
+    ].filter((id) => id !== '');
     return {
-        items: sortItems([...latest.values()]),
+        items,
         deliveries: snapshot.deliveries,
         asks: snapshot.asks ?? [],
         seq: Math.max(0, ...snapshot.items.map((item) => item.seq)),
-        running: snapshot.items.some((item) => item.status === 'streaming'),
+        running: speaking.length > 0,
+        speaking,
     };
 }

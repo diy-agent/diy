@@ -99,7 +99,8 @@ export interface Delivery {
 
 export type Command =
     | { kind: 'send'; text: string }
-    | { kind: 'cancel'; keepQueue?: boolean };
+    /** 不传 botId = 停整个房间；传了只停那个成员 */
+    | { kind: 'cancel'; botId?: string; keepQueue?: boolean };
 
 // ── 向用户提问（模型需要人做决定时）────────────────────────────
 
@@ -151,6 +152,8 @@ export type StreamEvent =
     | { kind: 'ask'; request: AskRequest }
     /** 已回答（或被取消 / 超时） */
     | { kind: 'ask.answered'; askId: string; answer?: AskAnswer; cancelled?: boolean; reason?: string }
+    /** 当前正在说话的成员（空数组 = 都停了）。谁是"说话中"由房间说了算，不由 UI 猜 */
+    | { kind: 'running'; botIds: string[] }
     /** 常驻流刚连上（含重连成功）：客户端据此补拉快照，填平断线期间丢的事件 */
     | { kind: 'ready' }
     | { kind: 'done' };

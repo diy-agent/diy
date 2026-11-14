@@ -17,6 +17,8 @@ export interface ConversationModel {
     readonly capabilities: Capabilities;
     send(text: string): void;
     cancel(): void;
+    /** 只停某个成员（开会时用） */
+    stop(botId?: string): void;
     reload(): void;
 }
 
@@ -90,8 +92,9 @@ export class ConversationStore implements ConversationModel {
         this.emit({ ...this.state, error: undefined, running: true });
         void this.client
             .post(this.entityId, command, (event) => this.apply(event))
-            .catch((error: unknown) => this.emit({ ...this.state, error: messageOf(error), running: false }))
-            .finally(() => this.emit({ ...this.state, running: false }));
+            // 不在这里置 running=false：谁在说话由服务端的 running 事件决定，
+            // 否则多 bot 并行时，先结束的那个会把还在说的那个一起标成空闲
+            .catch((error: unknown) => this.emit({ ...this.state, error: messageOf(error) }));
     };
 
     /** 运行中也允许发：后端决定它在哪个边界生效（next-step 默认） */
@@ -103,5 +106,10 @@ export class ConversationStore implements ConversationModel {
 
     cancel = (): void => {
         this.post({ kind: 'cancel' });
+    };
+
+    /** 只停某个成员（开会时用）；不传 = 停整个房间 */
+    stop = (botId?: string): void => {
+        this.post({ kind: 'cancel', ...(botId === undefined ? {} : { botId }) });
     };
 }

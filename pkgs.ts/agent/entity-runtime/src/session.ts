@@ -62,7 +62,9 @@ export type SessionEvent =
     /** 真压了一次 */
     | { type: 'compact'; event: CompactEvent }
     /** 运行失败（条目层面的失败会以 item 形式出现） */
-    | { type: 'error'; message: string };
+    | { type: 'error'; message: string }
+    /** 开始 / 结束一轮（房间据此维护"谁在说话"） */
+    | { type: 'busy'; busy: boolean };
 
 export interface SessionStats {
     entries: number;
@@ -279,6 +281,7 @@ export class BotSession {
     private async pump(): Promise<void> {
         if (this.running) return;
         this.running = true;
+        this.emit({ type: 'busy', busy: true });
         try {
             while (this.queue.length > 0) {
                 const items = this.queue.splice(0, this.queue.length);
@@ -287,6 +290,7 @@ export class BotSession {
         } finally {
             this.running = false;
             this.steering = null;
+            this.emit({ type: 'busy', busy: false });
             const resolvers = this.pendingResolvers.splice(0, this.pendingResolvers.length);
             for (const resolve of resolvers) resolve();
         }

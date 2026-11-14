@@ -87,6 +87,9 @@ export class RoomActor {
     /** 提问闸门：模型需要用户做决定时在这里停住 */
     private readonly gate: AskGate;
     private builtTools: ToolSet | undefined;
+    /** 正在跑一轮的成员（UI 的"谁在说话"用它，不由前端猜） */
+    private readonly speaking = new Set<string>();
+    private lastRunningKey = '';
 
     constructor(private readonly deps: RoomActorDeps) {
         // 公共日志从库里恢复（append-only，seq 接着走）
@@ -246,10 +249,25 @@ export class RoomActor {
         }
     }
 
-    cancel(options: { keepQueue?: boolean } = {}): void {
-        // 先放掉挂起的提问（否则 execute 还停在 await 上，abort 也退不干净）
+    /**
+     * 停止：不给 botId 就停整个房间；给了只停那个成员。
+     * 开会时"谁在说"是分开的，停一个人不该把别人也停掉。
+     */
+    cancel(options: { botId?: string; keepQueue?: boolean } = {}): void {
+        if (options.botId === undefined) {
+            this.gate.cancelAll('本轮已取消');
+            for (const session of this.sessions.values()) session.cancel(options);
+            return;
+        }
         this.gate.cancelAll('本轮已取消');
-        for (const session of this.sessions.values()) session.cancel(options);
+        this.sessions.get(options.botId)?.cancel(options);
+    }
+
+    /** 当前在说话的成员（按成员顺序） */
+    runningBots(): string[] {
+        return this.members()
+            .map((bot) => bot.id)
+            .filter((botId) => this.speaking.has(botId));
     }
 
     /** 用户的回答；返回是否命中一个待回答的提问 */
@@ -353,6 +371,14 @@ export class RoomActor {
     }
 
     // ── 内部 ───────────────────────────────────────────────────
+
+    /** 只在"谁在说话"真的变了时广播 */
+    private syncRunning(): void {
+        const key = this.runningBots().join(',');
+        if (key === this.lastRunningKey) return;
+        this.lastRunningKey = key;
+        this.deps.emit({ kind: 'running', botIds: this.runningBots() });
+    }
 
     /** 追加一条公共条目：内存 + 落库（唯一的写入口） */
     private appendEntry(input: Parameters<RoomLog['append']>[0]): RoomEntry {
@@ -481,6 +507,12 @@ export class RoomActor {
                     this.persisted.add(item.id);
                     this.deps.store.appendItem(this.id, item);
                 }
+                return;
+            }
+            case 'busy': {
+                if (event.busy) this.speaking.add(bot.id);
+                else this.speaking.delete(bot.id);
+                this.syncRunning();
                 return;
             }
             case 'delivery': {

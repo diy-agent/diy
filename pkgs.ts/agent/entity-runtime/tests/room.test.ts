@@ -142,6 +142,31 @@ describe('RoomActor', () => {
         expect(h.runs).toEqual(['diy']);
     });
 
+    it('running 事件：谁在说话由房间广播，结束时清空', async () => {
+        const h = makeRoom();
+        await h.room.say({ text: '说一句', author: HUMAN });
+
+        const running = h.events.filter((event) => event.kind === 'running').map((event) => (event as { botIds: string[] }).botIds);
+        expect(running[0]).toEqual([BOT_A.id]);
+        expect(running.at(-1)).toEqual([]);
+    });
+
+    it('单会话取消：只停指定的成员，另一个继续', async () => {
+        const h = makeRoom({ hang: true });
+        const turn = h.room.say({ text: '@all 都说说', author: HUMAN });
+        await sleep(5);
+        expect(h.room.runningBots().sort()).toEqual([BOT_A.id, BOT_B.id].sort());
+
+        h.room.cancel({ botId: BOT_A.id });
+        await sleep(5);
+        // A 已停，B 还在跑
+        expect(h.room.runningBots()).toEqual([BOT_B.id]);
+
+        h.room.cancel();
+        await turn;
+        expect(h.room.runningBots()).toEqual([]);
+    });
+
     it('新成员加入时回放公共日志（能读到此前结论）', async () => {
         const h = makeRoom();
         await h.room.say({ text: '先讨论一轮', author: HUMAN });

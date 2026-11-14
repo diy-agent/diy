@@ -31,7 +31,10 @@ export class DirectRoomClient implements ChatClient {
         try {
             if (signal?.aborted === true) return;
             if (command.kind === 'cancel') {
-                this.harness.room.cancel({ keepQueue: command.keepQueue === true });
+                this.harness.room.cancel({
+                    keepQueue: command.keepQueue === true,
+                    ...(command.botId === undefined ? {} : { botId: command.botId }),
+                });
                 emit({ kind: 'done' });
                 return;
             }

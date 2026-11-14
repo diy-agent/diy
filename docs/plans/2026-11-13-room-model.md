@@ -531,3 +531,40 @@ transcript 里的那条   459 字符（头尾 + marker）
 
 老库还会把原文落盘并在 marker 里给 resume 路径；diy2 暂不落盘，marker 提示模型
 用 `read` 的 offset 或缩小命令输出重取。等需要"字节保真"时再接落盘。
+
+## 谁在说话 / 单会话取消（2026-11-14）
+
+### 为什么以前表达不了
+
+`state.running` 是**布尔**：一个房间"在跑 / 不在跑"。多人开会时它答不了
+"现在是 diy 在说，还是小满在说"。composer 的停止按钮也只能全停。
+
+（Astryx 的 Chat 模板同样没有这个概念 —— 见下节。）
+
+### 现在
+
+- `BotSession` 在 pump 开始/结束时发 `{ type:'busy', busy }`
+- `RoomActor` 据此维护 `speaking: Set<botId>`，**只在集合变化时**广播
+  `{ kind:'running', botIds }`（按成员顺序，稳定）
+- UI：`SpeakingBar` 显示 `● diy 正在说话… [停]`，每个成员一个独立停止
+- composer 的停止按钮仍是"全停"（`conversation.cancel()`）
+- `Command.cancel` 增加 `botId`，`RoomActor.cancel({ botId })` 只停那个 session
+
+实测（`@all … sleep 8`）：
+
+```
+running: [diy] → [diy, 小满] → (停 diy) → [小满]
+```
+
+### Astryx Chat 的模型（参考）
+
+`@astryxdesign/core` 的 Chat 是**纯展示层**，没有多参与者运行时：
+
+| 概念 | Astryx | diy2 |
+|---|---|---|
+| 谁说的 | `ChatMessage sender: 'user'\|'assistant'\|'system'` + `name` / `avatar` | 一样，`Item.author` |
+| 谁在生成 | 没有；`ChatComposer` 只有 `isStopShown: boolean` + `onStop()` | `running: string[]`（房间广播） |
+| 停止粒度 | 全局一个 | 每个成员一个 + 全局 |
+
+结论：**"sender 是消息的属性，running 是房间的状态"**，两者不能混。
+Astryx 只提供了前者，后者必须由房间提供。
