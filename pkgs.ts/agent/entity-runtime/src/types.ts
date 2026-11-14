@@ -10,8 +10,7 @@ export type {
     Room,
     RoomMember,
     RoomEvent,
-    InboxItem,
-    InboxMode,
     Item,
     ItemStatus,
+    InboxMode,
 } from '@diy-agent/protocol';

@@ -14,7 +14,6 @@ export {
     type TranscriptEntry,
 } from './compaction';
 export { openStore, type Store } from './db';
-export { Inbox } from './inbox';
 export { Projector, nextId } from './projection';
 export { RoomActor, type RoomActorDeps, type SessionInfo as RoomSessionInfo } from './room';
 export { buildRoomTools, type RoomToolsOptions } from './tools/index';
@@ -38,7 +37,6 @@ export type {
     Room,
     RoomMember,
     RoomEvent,
-    InboxItem,
     InboxMode,
     Item,
 } from './types';
