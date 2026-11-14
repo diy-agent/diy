@@ -72,10 +72,22 @@ function actorOf(spec: Room): RoomActor {
             bots: () => store.listBots(),
             emit: (event) => broadcast(spec.id, event),
             budget: COMPACT_BUDGET,
+            onCompact: (bot, event) => logCompact(spec.id, bot, event),
         });
         rooms.set(spec.id, actor);
     }
     return actor;
+}
+
+/** 压缩是一等事件：改预算前先看这行 */
+function logCompact(roomId: string, bot: Bot, event: CompactEvent): void {
+    const before = `${event.before.entries}msgs/${event.before.chars}c`;
+    const after = `${event.after.entries}msgs/${event.after.chars}c`;
+    const usage = event.usage === undefined ? '' : ` usage=${event.usage.inputTokens}/${event.usage.outputTokens}`;
+    console.log(
+        `[compact] ${bot.name} @${roomId} turn=${event.turn} ${event.strategy} ${before} → ${after} ` +
+            `folded=${event.folded} dropped=${event.dropped} ${event.durationMs}ms${usage}`,
+    );
 }
 
 function roomOf(id: string): RoomActor | undefined {

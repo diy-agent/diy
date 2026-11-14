@@ -23,7 +23,9 @@ export {
     DEFAULT_COMPACT,
     type CompactOptions,
     type SessionDeps,
+    type SessionEvent,
     type SessionStats,
+    type Turn,
     type TurnResult,
 } from './session';
 export { modelOf, parseModelKey } from './providers';

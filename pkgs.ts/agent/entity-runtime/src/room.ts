@@ -28,7 +28,15 @@ import {
 import type { Compactor } from './compaction';
 import type { Store } from './db';
 import { RoomLog, type RoomEntry } from './room-log';
-import { BotSession, type CompactOptions, type SessionDeps, type SessionStats } from './session';
+import type { CompactEvent } from './compaction';
+import {
+    BotSession,
+    type CompactOptions,
+    type SessionDeps,
+    type SessionEvent,
+    type SessionStats,
+    type Turn,
+} from './session';
 import type { Author, Bot, Delivery, InboxMode, Item, Room, RoomEvent, RoomMember } from './types';
 
 export interface SessionInfo {
@@ -49,6 +57,8 @@ export interface RoomActorDeps {
     run?: SessionDeps['run'];
     compactor?: Compactor;
     budget?: CompactOptions;
+    /** 压缩事件（日志 / 监控） */
+    onCompact?: (bot: Bot, event: CompactEvent) => void;
     now?: () => number;
 }
 
@@ -59,8 +69,12 @@ export class RoomActor {
     private order = 0;
     /** 回合号 */
     private turnSeq = 0;
-    private currentTurn: { turn: number; turnId: string } | null = null;
+    private currentTurn: Turn | null = null;
     private initialized = false;
+    /** item.id → 展示顺序（同一 id 的流式更新不能换顺序） */
+    private readonly orderOf = new Map<string, number>();
+    /** 已落库的 item id（流式更新会重复发同一条） */
+    private readonly persisted = new Set<string>();
 
     constructor(private readonly deps: RoomActorDeps) {}
 
@@ -126,7 +140,7 @@ export class RoomActor {
         // 否则被 @ 的人会把同一条消息收两遍（日志 + steering）
         for (const bot of participants) this.sessionOf(bot);
 
-        const turn = this.turnFor();
+        const turn = this.currentTurn !== null && this.busy() ? this.currentTurn : this.newTurn();
         const now = this.deps.now?.() ?? Date.now();
         const item: Item = {
             id: `u-${now.toString(36)}-${this.order + 1}`,
@@ -249,9 +263,8 @@ export class RoomActor {
         return primary === undefined ? [] : [primary];
     }
 
-    /** 运行中沿用当前回合；空闲时开新回合 */
-    private turnFor(): { turn: number; turnId: string } {
-        if (this.currentTurn !== null && this.busy()) return this.currentTurn;
+    /** 开一个新回合（唯一分配点） */
+    private newTurn(): Turn {
         this.ensureInit();
         this.turnSeq += 1;
         const now = this.deps.now?.() ?? Date.now();
@@ -279,34 +292,58 @@ export class RoomActor {
         let session = this.sessions.get(bot.id);
         if (session !== undefined) return session;
 
-        const persisted = new Set<string>();
         session = new BotSession({
-            actor: `${this.id}::${bot.id}`,
             bot,
             modelKey: bot.modelKey,
-            nextTurn: () => this.turnFor(),
-            nextOrder: () => this.nextOrder(),
-            onItem: (item) => {
-                this.deps.emit({ kind: 'item', item });
-                if ((item.status === 'done' || item.status === 'failed') && !persisted.has(item.id)) {
-                    persisted.add(item.id);
-                    this.deps.store.appendItem(this.id, item);
-                }
-            },
-            onError: (message) => this.deps.emit({ kind: 'error', message }),
-            onDelivery: (messageId, state) => {
-                const delivery = this.deps.store.setDelivery({ roomId: this.id, messageId, botId: bot.id, state });
-                this.deps.emit({ kind: 'delivery', delivery });
-            },
-            onTurnEnd: (result) => this.publishConclusion(bot, result),
+            allocateTurn: () => this.newTurn(),
             ...(this.deps.run === undefined ? {} : { run: this.deps.run }),
             ...(this.deps.compactor === undefined ? {} : { compactor: this.deps.compactor }),
             ...(this.deps.budget === undefined ? {} : { budget: this.deps.budget }),
         });
+        // 房间订阅 session 的输出：编号、落库、广播都在这一侧
+        session.subscribe((event) => this.onSessionEvent(bot, event));
 
         for (const entry of this.log.all()) session.ingest(entry);
         this.sessions.set(bot.id, session);
         return session;
+    }
+
+    /**
+     * session 的唯一出口：序号与持久化都在这里补齐。
+     */
+    private onSessionEvent(bot: Bot, event: SessionEvent): void {
+        switch (event.type) {
+            case 'item': {
+                const order = this.orderOf.get(event.item.id) ?? this.nextOrder();
+                this.orderOf.set(event.item.id, order);
+                const item: Item = { ...event.item, order };
+                this.deps.emit({ kind: 'item', item });
+                if ((item.status === 'done' || item.status === 'failed') && !this.persisted.has(item.id)) {
+                    this.persisted.add(item.id);
+                    this.deps.store.appendItem(this.id, item);
+                }
+                return;
+            }
+            case 'delivery': {
+                const delivery = this.deps.store.setDelivery({
+                    roomId: this.id,
+                    messageId: event.messageId,
+                    botId: bot.id,
+                    state: event.state,
+                });
+                this.deps.emit({ kind: 'delivery', delivery });
+                return;
+            }
+            case 'turn.end':
+                this.publishConclusion(bot, event.result);
+                return;
+            case 'compact':
+                this.deps.onCompact?.(bot, event.event);
+                return;
+            case 'error':
+                this.deps.emit({ kind: 'error', message: event.message });
+                return;
+        }
     }
 
     /**

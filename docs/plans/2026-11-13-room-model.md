@@ -255,3 +255,49 @@ interface RoomMember { botId; modelKey?; persona?; primary? }
 - 成员覆盖：模型 / 人格按 成员 > 房间 > bot
 - cancel → 会话中止且投递标为 failed
 - 新成员回放公共日志
+
+## Session 事件化（2026-11-14，P3）
+
+### 之前
+
+`SessionDeps` 15 个字段，其中 5 个是房间职责（`nextTurn` / `nextOrder` / `onItem` /
+`onDelivery` / `onTurnEnd`）—— session 知道房间怎么编号、怎么落库、怎么广播。
+
+### 现在
+
+```ts
+interface SessionDeps {
+    bot; modelKey;
+    allocateTurn: () => Turn;      // 唯一必需的房间能力：借一个回合号
+    seed?; run?; compactor?; budget?;   // 注入，测试用
+}
+```
+
+session 只通过 `subscribe()` 输出事件：
+
+```ts
+type SessionEvent =
+  | { type: 'item'; item: Item }                  // order 由房间补
+  | { type: 'delivery'; messageId; state }        // 投递状态
+  | { type: 'turn.end'; result: TurnResult }      // 房间据此写结论
+  | { type: 'compact'; event: CompactEvent }      // 房间据此打日志
+  | { type: 'error'; message }
+```
+
+房间侧 `onSessionEvent()` 负责：分配并固定 `order`（同一 item 的流式更新不再换序）、
+落库（done/failed 去重）、广播、写结论、打压缩日志。
+
+**边界变化**：session 不再产出 UI 之外的副作用；单独 new 一个 BotSession 就能测，
+不需要造整个房间（`session.test.ts` 里加了断言：session 不分配 order）。
+
+### 现在的依赖方向
+
+```
+protocol  ←  entity-runtime  ←  server
+              (RoomActor 订阅 BotSession)
+```
+
+`RoomActor` 是唯一持有房间状态的对象；`BotSession` 是唯一持有对话记忆的对象；
+两者之间只有「借回合号」一个同步调用，其余全是事件。
+
+测试 37 条（room 9 / session 18 / room-log 4 / chat-core 6）。

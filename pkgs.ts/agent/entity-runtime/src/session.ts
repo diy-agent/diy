@@ -1,13 +1,16 @@
 // session.ts —— BotSession：某个 bot 在某个 room 里的那条原生单线对话。
 //
-// 职责：
+// 职责（只有这些）：
 //   · 串行：同一 session 同时只跑一个 turn
 //   · 两个投递时机：next-step（step 边界插入，用 SDK 的 steering） / next-turn（等这轮结束）
 //   · cancel：abort + 清空队列；keepQueue 时降级为 next-turn
 //   · 自己的上下文自己攒：公共条目由房间 ingest 进来，私有过程来自本轮的模型产出
-//   · 压缩：交给可替换的 Compactor（默认 simpleCompactor），**只压自己**，不产生公共产物
+//   · 压缩：交给可替换的 Compactor，**只压自己**
 //
-// 不做：路由、持久化、SSE —— 那些通过回调交给调用方（server / 未来的 kernel）。
+// **不发起任何房间级动作**：投影出的条目、投递状态、回合结束、压缩事件都通过
+// `subscribe()` 交给房间。房间负责编号、持久化、广播、结论发布。
+//
+// 不做：路由、持久化、SSE —— 那些属于 RoomActor。
 
 import { experimental_createSteering, type Experimental_Steering, type ModelMessage } from 'ai';
 
@@ -24,7 +27,7 @@ import {
 } from './compaction';
 import { Projector } from './projection';
 import { toMessage, type RoomEntry } from './room-log';
-import type { AgentEvent, Author, Bot, Item } from './types';
+import type { AgentEvent, Author, Bot, DeliveryState, Item } from './types';
 
 export interface CompactOptions {
     keepLast?: number;
@@ -34,15 +37,31 @@ export interface CompactOptions {
 /** @deprecated 用 DEFAULT_BUDGET；保留导出避免调用方一次改太多 */
 export const DEFAULT_COMPACT = DEFAULT_BUDGET;
 
-export interface TurnResult {
+export interface Turn {
     turn: number;
     turnId: string;
+}
+
+export interface TurnResult extends Turn {
     /** 本轮产出的全部文本（房间层据此写"结论"条目） */
     text: string;
     failed: boolean;
     /** 本轮实测用量（真实 token，可用于校准预算） */
     usage?: TokenUsage;
 }
+
+/** session 对外的全部输出（房间订阅它） */
+export type SessionEvent =
+    /** 投影出的展示条目（order 由房间分配） */
+    | { type: 'item'; item: Item }
+    /** 投递状态变化 */
+    | { type: 'delivery'; messageId: string; state: DeliveryState }
+    /** 一轮结束（房间据此写结论） */
+    | { type: 'turn.end'; result: TurnResult }
+    /** 真压了一次 */
+    | { type: 'compact'; event: CompactEvent }
+    /** 运行失败（条目层面的失败会以 item 形式出现） */
+    | { type: 'error'; message: string };
 
 export interface SessionStats {
     entries: number;
@@ -58,30 +77,17 @@ export interface SessionStats {
 }
 
 export interface SessionDeps {
-    /** `${roomId}::${botId}` */
-    actor: string;
     bot: Bot;
     modelKey: string;
+    /** 房间分配的回合号（唯一来源；session 自己不开新回合） */
+    allocateTurn: () => Turn;
     /** 首次开跑前的种子；内存版不提供（接持久化后用它回放） */
     seed?: () => TranscriptEntry[];
-    /** 分配轮次号 / id（由容器决定，跨 bot 稳定） */
-    nextTurn: () => { turn: number; turnId: string };
-    /** 展示顺序 */
-    nextOrder: () => number;
-    onItem: (item: Item) => void;
-    onError: (message: string) => void;
-    /** 投递状态变化（messageId → delivering/delivered/failed） */
-    onDelivery?: (messageId: string, state: 'delivering' | 'delivered' | 'failed') => void;
-    /** 一轮结束：把结论交给房间层写公共日志（**不唤醒任何人**） */
-    onTurnEnd?: (result: TurnResult) => void;
-    /** 压缩策略；默认 simpleCompactor */
-    compactor?: Compactor;
-    /** 默认预算（策略可自行决定是否使用） */
-    budget?: CompactOptions;
-    /** 每次真的压了都会回调一条事件（日志 / 调试端点用） */
-    onCompact?: (event: CompactEvent) => void;
     /** 便于测试注入；默认用 runAgent（真实模型） */
     run?: (input: RunOptions) => AsyncIterable<AgentEvent>;
+    /** 压缩策略；默认 simpleCompactor */
+    compactor?: Compactor;
+    budget?: CompactOptions;
 }
 
 interface QueueItem {
@@ -89,7 +95,7 @@ interface QueueItem {
     text: string;
     mode: 'next-step' | 'next-turn';
     /** 容器分配的轮次（同一条用户消息的所有 bot 共享） */
-    turn?: { turn: number; turnId: string };
+    turn?: Turn;
     /** 这条消息在房间日志里的条目：steering 没送到时兜底 ingest，避免丢掉 */
     entry?: RoomEntry;
     resolve: () => void;
@@ -97,6 +103,7 @@ interface QueueItem {
 
 export class BotSession {
     private readonly queue: QueueItem[] = [];
+    private readonly listeners = new Set<(event: SessionEvent) => void>();
     /** 自己的原生对话（本轮之前的全部内容） */
     private transcript: TranscriptEntry[];
     /** 已 ingest、还没并进 transcript 的公共条目（运行中到达的要排在本轮产出之后） */
@@ -121,6 +128,24 @@ export class BotSession {
 
     get busy(): boolean {
         return this.running;
+    }
+
+    /** 房间订阅 session 的全部输出 */
+    subscribe(listener: (event: SessionEvent) => void): () => void {
+        this.listeners.add(listener);
+        return () => {
+            this.listeners.delete(listener);
+        };
+    }
+
+    private emit(event: SessionEvent): void {
+        for (const listener of this.listeners) {
+            try {
+                listener(event);
+            } catch {
+                // 订阅者的异常不能打断会话
+            }
+        }
     }
 
     /** 当前上下文快照（调试 / 测试用）：已并入的 + 待并入的 */
@@ -154,10 +179,7 @@ export class BotSession {
         this.pending.push({ message, origin: 'public', ...(entry.turn === undefined ? {} : { turn: entry.turn }) });
     }
 
-    /**
-     * 手动压一次（只影响自己，不触发运行）。方便调参：
-     *   POST /api/rooms/:id/sessions/:botId/compact { keepLast, maxChars }
-     */
+    /** 手动压一次（只影响自己，不触发运行） */
     async forceCompact(options: CompactOptions = {}): Promise<CompactEvent | null> {
         const budget = this.budgetWith(options);
         return this.compact({ force: true, turn: this.turnNow, turnId: `force-${Date.now().toString(36)}`, budget });
@@ -168,7 +190,7 @@ export class BotSession {
         messageId: string;
         text: string;
         mode?: 'next-step' | 'next-turn';
-        turn?: { turn: number; turnId: string };
+        turn?: Turn;
         entry?: RoomEntry;
     }): Promise<void> {
         const mode = input.mode ?? 'next-step';
@@ -176,10 +198,10 @@ export class BotSession {
 
         // 正在跑且是 next-step：直接交给 SDK，在下一个 step 边界插入
         if (this.running && mode === 'next-step' && this.steering !== null) {
-            this.deps.onDelivery?.(input.messageId, 'delivering');
+            this.emit({ type: 'delivery', messageId: input.messageId, state: 'delivering' });
             void this.steering.steer(input.text, { id: input.messageId }).then((outcome) => {
                 if (outcome.type === 'delivered') {
-                    this.deps.onDelivery?.(input.messageId, 'delivered');
+                    this.emit({ type: 'delivery', messageId: input.messageId, state: 'delivered' });
                     return;
                 }
                 if (this.keepOnCancel) {
@@ -189,7 +211,7 @@ export class BotSession {
                 }
                 // 没送进这一轮：至少让公共条目留在自己的上下文里，别静默丢失
                 if (input.entry !== undefined) this.ingest(input.entry);
-                this.deps.onDelivery?.(input.messageId, 'failed');
+                this.emit({ type: 'delivery', messageId: input.messageId, state: 'failed' });
             });
             this.pendingResolvers.push(resolve);
             return promise;
@@ -245,15 +267,15 @@ export class BotSession {
     }
 
     private async runTurn(items: QueueItem[]): Promise<void> {
-        const { turn, turnId } = items[0]?.turn ?? this.deps.nextTurn();
-        this.turnNow = turn;
-        const projector = new Projector(this.authorOf(), turn);
+        const turn = items[0]?.turn ?? this.deps.allocateTurn();
+        this.turnNow = turn.turn;
+        const projector = new Projector(this.authorOf(), turn.turn);
         const abort = new AbortController();
         this.abort = abort;
 
         // 开跑前先把已到的公共条目并进来，再按自己的预算压一次（压不压只看自己）
         this.drainPending();
-        await this.compact({ turn, turnId });
+        await this.compact({ turn: turn.turn, turnId: turn.turnId });
 
         // 本轮要处理的用户消息直接作为 prompt 的一部分（不出现在别处，避免重复记账）
         const userEntries: TranscriptEntry[] = items.map((item) => ({
@@ -265,7 +287,7 @@ export class BotSession {
 
         const steering = experimental_createSteering();
         this.steering = steering;
-        for (const item of items) this.deps.onDelivery?.(item.messageId, 'delivering');
+        for (const item of items) this.emit({ type: 'delivery', messageId: item.messageId, state: 'delivering' });
 
         const produced: TranscriptEntry[] = [];
         let text = '';
@@ -276,11 +298,11 @@ export class BotSession {
                 bot: this.deps.bot,
                 modelKey: this.deps.modelKey,
                 messages,
-                turnId,
+                turnId: turn.turnId,
                 signal: abort.signal,
                 steering,
                 onStepTranscript: (added) => {
-                    for (const message of added) produced.push({ message, origin: 'self', turn });
+                    for (const message of added) produced.push({ message, origin: 'self', turn: turn.turn });
                 },
                 onUsage: (usage) => {
                     this.lastUsage = usage;
@@ -288,36 +310,31 @@ export class BotSession {
             })) {
                 if (event.type === 'run.failed') failed = true;
                 if (event.type === 'text.delta') text += event.delta;
-                for (const item of projector.apply(event)) {
-                    const ordered: Item = item.order === undefined ? { ...item, order: this.deps.nextOrder() } : item;
-                    this.deps.onItem(ordered);
-                }
+                for (const item of projector.apply(event)) this.emit({ type: 'item', item });
             }
         } catch (error) {
             failed = true;
-            this.deps.onError(error instanceof Error ? error.message : String(error));
+            this.emit({ type: 'error', message: error instanceof Error ? error.message : String(error) });
         } finally {
             // 本轮真正发生过的内容（含自己的 tool / reasoning）原样入账
             this.transcript.push(...userEntries, ...produced);
             // 跑的过程中到达的公共条目：排在本轮产出之后，下一轮才被读到
             this.drainPending();
 
-            // 先把结论交给房间层（写公共日志 + 复制给其他 session），再 resolve
             if (!failed) {
-                try {
-                    this.deps.onTurnEnd?.({
-                        turn,
-                        turnId,
+                this.emit({
+                    type: 'turn.end',
+                    result: {
+                        turn: turn.turn,
+                        turnId: turn.turnId,
                         text: text.trim(),
                         failed,
                         ...(this.lastUsage === undefined ? {} : { usage: this.lastUsage }),
-                    });
-                } catch {
-                    // 结论发布失败不该把这一轮判成失败
-                }
+                    },
+                });
             }
 
-            for (const item of items) this.deps.onDelivery?.(item.messageId, failed ? 'failed' : 'delivered');
+            for (const item of items) this.emit({ type: 'delivery', messageId: item.messageId, state: failed ? 'failed' : 'delivered' });
             for (const item of items) item.resolve();
             this.steering = null;
             this.abort = null;
@@ -364,7 +381,7 @@ export class BotSession {
         };
         this.events.push(event);
         if (this.events.length > 10) this.events.shift();
-        this.deps.onCompact?.(event);
+        this.emit({ type: 'compact', event });
         return event;
     }
 

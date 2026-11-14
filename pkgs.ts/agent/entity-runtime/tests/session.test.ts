@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import type { RunOptions } from '../src/agent';
 import type { Compactor, TranscriptEntry } from '../src/compaction';
 import type { RoomEntry } from '../src/room-log';
-import { BotSession, type SessionDeps } from '../src/session';
+import { BotSession, type SessionDeps, type SessionEvent, type Turn } from '../src/session';
 import type { AgentEvent, Bot, Item } from '../src/types';
 
 const BOT_A: Bot = { id: 'bot:a', name: 'diy', color: '#111', persona: '', homeRoomId: 'room:1', modelKey: 'm' };
@@ -23,6 +23,7 @@ interface Harness {
     /** 每次开跑时真正喂给模型的上下文 */
     seen: RunOptions['messages'][];
     ends: Array<{ turn: number; turnId: string; text: string; failed: boolean }>;
+    events: SessionEvent[];
 }
 
 function makeSession(
@@ -40,6 +41,7 @@ function makeSession(
     const deliveries: string[] = [];
     const seen: RunOptions['messages'][] = [];
     const ends: Harness['ends'] = [];
+    const events: SessionEvent[] = [];
     let turn = 0;
 
     const run = (async function* (input: RunOptions): AsyncIterable<AgentEvent> {
@@ -61,22 +63,22 @@ function makeSession(
     }) as (input: RunOptions) => AsyncIterable<AgentEvent>;
 
     const session = new BotSession({
-        actor: `room:1::${bot.id}`,
         bot,
         modelKey: 'm',
         seed: options.seed,
         budget: options.budget,
         compactor: options.compactor,
-        nextTurn: () => ({ turn: ++turn, turnId: `turn-${turn}` }),
-        nextOrder: () => items.length + 1,
-        onItem: (item) => items.push(item),
-        onError: () => undefined,
-        onDelivery: (messageId, state) => deliveries.push(`${messageId}:${state}`),
-        onTurnEnd: (result) => ends.push(result),
+        allocateTurn: (): Turn => ({ turn: ++turn, turnId: `turn-${turn}` }),
         run,
     });
+    session.subscribe((event) => {
+        events.push(event);
+        if (event.type === 'item') items.push(event.item);
+        if (event.type === 'delivery') deliveries.push(`${event.messageId}:${event.state}`);
+        if (event.type === 'turn.end') ends.push(event.result);
+    });
 
-    return { session, runs, items, deliveries, seen, ends };
+    return { session, runs, items, deliveries, seen, ends, events };
 }
 
 const conclusion = (bot: Bot, seq: number, text: string): RoomEntry => ({
@@ -205,6 +207,19 @@ describe('BotSession', () => {
 
         // b 没跑过，也没被 a 的压缩影响
         expect(JSON.stringify(b.session.context())).toContain('工具输出');
+    });
+
+    it('只靠事件观察输出：条目 / 投递 / 回合结束，且不自己分配展示顺序', async () => {
+        const h = makeSession();
+        await h.session.post({ messageId: 'm1', text: '你好' });
+
+        const kinds = new Set(h.events.map((event) => event.type));
+        expect(kinds.has('item')).toBe(true);
+        expect(kinds.has('delivery')).toBe(true);
+        expect(kinds.has('turn.end')).toBe(true);
+
+        // order 是房间的职责，session 不该碰
+        expect(h.items.every((item) => item.order === undefined)).toBe(true);
     });
 
     it('一轮结束报告结论（房间层据此写公共日志）', async () => {
