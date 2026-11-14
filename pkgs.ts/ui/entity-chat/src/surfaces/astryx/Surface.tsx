@@ -117,7 +117,7 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
     if (entry.kind === 'user') {
         const text = entry.parts.map((part) => (part.kind === 'text' ? part.text : '')).join('');
         return (
-            <ChatMessage key={entry.key} sender="user" name={entry.author?.name} avatar={<BotAvatar author={entry.author} roomId={roomId} size={24} />}>
+            <ChatMessage key={entry.key} sender="user" avatar={<BotAvatar author={entry.author} roomId={roomId} size={24} />}>
                 <ChatMessageBubble
                     metadata={
                         <>
@@ -134,7 +134,7 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
 
     if (entry.kind === 'typing') {
         return (
-            <ChatMessage key={entry.key} sender="assistant" name={entry.author?.name} avatar={<BotAvatar author={entry.author} roomId={roomId} size={24} />}>
+            <ChatMessage key={entry.key} sender="assistant" avatar={<BotAvatar author={entry.author} roomId={roomId} size={30} />}>
                 <ChatMessageBubble>
                     <TypingDots />
                 </ChatMessageBubble>
@@ -145,12 +145,15 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
     return (
         <ChatMessage key={entry.key} sender="assistant" name={entry.author?.name} avatar={<BotAvatar author={entry.author} roomId={roomId} size={24} />}>
             {runsOf(entry.parts).map((run, index) => {
-                const isLast = index === runsOf(entry.parts).length - 1;
+                const runs = runsOf(entry.parts);
+                const isLast = index === runs.length - 1;
                 if (run.kind === 'text') {
+                    const isFirstText = runs.findIndex((candidate) => candidate.kind === 'text') === index;
                     return (
                         <ChatMessageBubble
                             key={`t${index}`}
                             variant="ghost"
+                            {...(isFirstText && entry.author !== undefined ? { name: entry.author.name } : {})}
                             metadata={
                                 isLast ? (
                                     <ChatMessageMetadata timestamp={<TimeOf at={entry.at} />} />
