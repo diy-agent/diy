@@ -143,8 +143,6 @@ export type AgentEvent =
     | { seq: number; type: 'tool.completed'; turnId: string; toolCallId: string; name: string; result?: unknown; error?: string }
     | { seq: number; type: 'message.completed'; messageId: string }
     | { seq: number; type: 'run.completed'; turnId: string }
-    /** 达到工具步数上限（模型还在调工具）：这一轮不算完成，但也不报错 */
-    | { seq: number; type: 'run.truncated'; turnId: string; limit: number }
     | { seq: number; type: 'run.failed'; turnId: string; message: string };
 
 // ── actor 收件箱（后端内部，但类型放这里以便将来跨进程）─────────

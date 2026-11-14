@@ -3,13 +3,11 @@
 // 除了"给 UI 看的事件流"，这里还负责把**这一轮真正喂进模型的完整消息**回传给调用方
 // （assistant 带 tool call / tool result / reasoning 都在里面），session 用它维护自己的原生对话。
 
-import { isStepCount, streamText, tool, type Experimental_Steering, type ModelMessage, type ToolSet } from 'ai';
+import { streamText, tool, type Experimental_Steering, type ModelMessage, type ToolSet } from 'ai';
 import { z } from 'zod';
 
 import { modelOf } from './providers';
 import type { AgentEvent, Bot } from './types';
-
-const DEFAULT_MAX_STEPS = 20;
 
 export interface RunOptions {
     bot: Bot;
@@ -23,8 +21,6 @@ export interface RunOptions {
     steering?: Experimental_Steering;
     /** 房间装配的工具；不传 = 只用内置的 get_time（测试 / 无目录房间） */
     tools?: ToolSet;
-    /** 工具步数上限（缺省 20）；达到上限会发 run.truncated，而不是静默截断 */
-    maxSteps?: number;
     /** 系统提示里关于工具的一句话（房间知道自己给了哪些能力） */
     toolsHint?: string;
     /**
@@ -65,7 +61,9 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
         ].join('\n'),
         messages: options.messages,
         tools: options.tools ?? defaultTools,
-        stopWhen: isStepCount(options.maxSteps ?? DEFAULT_MAX_STEPS),
+        // 不设步数上限：模型想调多少次工具就调多少次（AI SDK 缺省是 1 步，必须显式覆盖）。
+        // 唯一的刹车是用户点停止（abort）。
+        stopWhen: () => false,
         maxRetries: 0,
         ...(options.steering === undefined ? {} : { experimental_steering: options.steering }),
         onStepFinish: (step) => {
@@ -109,15 +107,6 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
     } catch (error) {
         yield { seq: ++seq, type: 'run.failed', turnId, message: error instanceof Error ? error.message : String(error) };
         return;
-    }
-
-    try {
-        // 被步数上限截断时模型不会给最终答案 —— 明确说出来，别让 UI 显示一条只有工具的消息
-        if ((await result.finishReason) === 'tool-calls') {
-            yield { seq: ++seq, type: 'run.truncated', turnId, limit: options.maxSteps ?? DEFAULT_MAX_STEPS };
-        }
-    } catch {
-        // 拿不到 finishReason 不影响这一轮
     }
 
     try {

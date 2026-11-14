@@ -58,19 +58,6 @@ describe('Projector', () => {
         expect(timeline[0]?.parts.map((part) => part.kind)).toEqual(['text', 'tool', 'text']);
     });
 
-    it('达到工具步数上限：落一条 notice，而不是只有工具没有结论', () => {
-        const items = run([
-            { seq: 1, type: 'run.started', turnId: 't1', messageId: 'm1' },
-            { seq: 2, type: 'tool.started', turnId: 't1', toolCallId: 'c1', name: 'bash' },
-            { seq: 3, type: 'tool.completed', turnId: 't1', toolCallId: 'c1', name: 'bash', result: 'ok' },
-            { seq: 4, type: 'run.truncated', turnId: 't1', limit: 20 },
-        ]);
-
-        const notice = items.find((item) => item.type === 'notice');
-        expect(notice).toBeDefined();
-        expect(JSON.stringify(notice)).toContain('上限（20 步）');
-    });
-
     it('只有工具、没有文本时，不产生空消息气泡', () => {
         const items = run([
             { seq: 1, type: 'run.started', turnId: 't1', messageId: 'm1' },

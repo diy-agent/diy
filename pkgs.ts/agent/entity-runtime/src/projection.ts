@@ -6,7 +6,6 @@
 //   · **文本分段**：一次 tool 调用会把「说一段 → 调工具 → 再说一段」切成两段。
 //     每段是独立 Item（id = `${messageId}#N`），时间线里才能 text → tool → text 地交错，
 //     而不是把所有文本并成一块、永远排在工具前面。
-//   · 一轮被工具步数上限截断时（run.truncated）落一条 notice，用户能看见"没说完"。
 
 import type { AgentEvent, Author, Item } from './types';
 
@@ -148,26 +147,6 @@ export class Projector {
                 };
                 this.items.set(id, next);
                 return [next];
-            }
-
-            case 'run.truncated': {
-                const closed = this.closeSegment(seq);
-                const notice: Item = {
-                    id: nextId('notice'),
-                    seq,
-                    turn: this.turn,
-                    turnId: event.turnId,
-                    at: now,
-                    status: 'done',
-                    type: 'notice',
-                    data: {
-                        text: `本轮工具调用达到上限（${event.limit} 步），模型还没给出结论；继续发消息可以让它接着做。`,
-                        kind: 'limit',
-                    },
-                };
-                this.items.set(notice.id, notice);
-                this.pending = null;
-                return closed === null ? [notice] : [closed, notice];
             }
 
             case 'run.failed': {
