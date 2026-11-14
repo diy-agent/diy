@@ -419,38 +419,53 @@ replaceAll / 未命中、bash 退出码与 cwd、bash 非零退出返回结果�
 **测试**：`projection.test.ts` 4 条（分段 / 时间线交错 / 截断 notice / 不产生空气泡），
 合计 49 条。
 
-## 工具审批（2026-11-14）
+## 向用户提问（ask，2026-11-14）
 
-**谁要审批**：`write` / `edit` / `bash`（改动与执行）；`read` 不需要。
+> 早先做的"工具审批（允许/拒绝）"已废弃。用户的原话：**不需要审批，只需要提问** ——
+> 遇到需要人决定的事，给选择题或表单，让人填；文字里问容易被大段输出淹掉。
 
-**为什么不用 AI SDK 的 `needsApproval` 暂停-恢复**：那套要求把审批响应重新拼进 messages
-再续跑，和"一轮 SSE 一直开着"的模型不匹配。这里让 `execute` 停在 `await` 上，
-用户的决定通过一次 HTTP 调回来，同一个 run 继续 —— 简单、可取消、可超时（10 分钟）。
+### 模型侧：`ask` 工具
 
-### 流程
-
-```
-tools.execute → gate.request()
-  → Room 广播 { kind:'approval', request }
-  → UI 顶部审批条：⚠ 需要批准  bash  {"command":"echo hi"}  [允许][拒绝]
-  → POST /rooms/:id/approvals/:approvalId { approved }
-  → gate.resolve()
-  → 批准：execute 继续；拒绝：抛错 → tool-error，模型据此换做法
-  → 广播 { kind:'approval.settled' } + 时间线留一条「已批准 / 已拒绝 bash」
+```ts
+ask({
+  question: '先做哪个？',
+  kind: 'choice',                 // 有 fields 时缺省为 form
+  options: [{ value, label, description? }],
+  multiple?: boolean,
+  fields?: [{ name, label, type: 'text'|'textarea'|'number', required? }],
+  note?: '背景 / 影响 / 默认建议',
+})
 ```
 
-### 边界
+系统提示里写死：**需要用户做决定时必须调 ask，不要在正文里提问，也不要在正文里列选项。**
 
-- **拒绝是数据**：抛 `【已拒绝】用户没有批准 bash`，模型看得到原因（实测会解释并停手，不会改用 bash 绕过 write 的拒绝）。
-- **取消**：`Room.cancel()` 先 `gate.cancelAll()`，挂起的 execute 按拒绝收尾，abort 才退得干净。
-- **刷新**：`GET /rooms/:id/approvals` 返回挂起请求，`load()` 一并取回，审批条能恢复。
-- **关掉审批**：`DIY2_APPROVALS=off`（默认开启）。
+回答以文本回给模型：`用户选择：先做测试（test_first）` / `用户已填写：- 标题：…`。
 
-### 测试
+### 界面侧
 
-- `approval.test.ts` 5 条：挂起/批准、拒绝带原因、未知 id、cancelAll、超时
-- `tools.test.ts` 2 条：拒绝时抛错、通过时正常执行且 read 不触发审批
-- 合计 55 条。
+置顶卡片（`AskBar`，壳层，两种 surface 共用）：问题 + 说明 + 选项（radio / checkbox）
+或表单字段；答完才消失，时间线留一条「已回答：A」。
+
+### 传输
+
+```
+StreamEvent: { kind:'ask', request } | { kind:'ask.answered', askId, answer?/cancelled }
+GET  /rooms/:id/asks          挂起中的提问（刷新恢复）
+POST /rooms/:id/asks/:askId   { values } | { fields }
+```
+
+### 顺带补的一条：常驻事件流
+
+之前 UI 只在 `post()` 期间订阅 SSE —— 于是"别处发起的提问"只能靠刷新快照看到，
+回答之后的卡片也不会自己消失（实测踩到）。
+
+现在 `ChatClient.watch()` + `GET /rooms/:id/events`：打开房间就挂一条常驻流，
+后台 bot 的回复、提问、投递状态都能实时进来。`finish()` 只关"请求流"，不动常驻流。
+
+### 闸门语义
+
+- 缺省**不超时**（人可以慢慢想）；取消房间时 `cancelAll` 放掉，run 才能退出
+- 刷新可恢复：`GET /rooms/:id/asks` 与 `load()` 的快照都带
 
 ## 测试分层（2026-11-14）
 

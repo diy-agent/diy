@@ -21,7 +21,7 @@ export class DirectRoomClient implements ChatClient {
         return this.maybe({
             items: this.harness.items(),
             deliveries: this.harness.room.deliveries(),
-            approvals: this.harness.room.pendingApprovalRequests(),
+            asks: this.harness.room.pendingAskRequests(),
         });
     }
 
@@ -44,6 +44,10 @@ export class DirectRoomClient implements ChatClient {
         emit({ kind: 'done' });
     }
 
+    watch(_entityId: string, onEvent: (event: StreamEvent) => void): () => void {
+        return this.harness.subscribe((event) => onEvent(this.maybe(event as unknown as StreamEvent)));
+    }
+
     async sessions(): Promise<SessionInfo[]> {
         return this.maybe(this.harness.room.sessionsInfo() as unknown as SessionInfo[]);
     }
@@ -54,7 +58,11 @@ export class DirectRoomClient implements ChatClient {
         return this.maybe({ event, stats } as unknown as CompactOutcome);
     }
 
-    async approve(_entityId: string, approvalId: string, approved: boolean, reason?: string): Promise<void> {
-        this.harness.room.resolveApproval(approvalId, approved, reason);
+    async answerAsk(
+        _entityId: string,
+        askId: string,
+        answer: { values?: string[]; fields?: Record<string, string> },
+    ): Promise<void> {
+        this.harness.room.answerAsk(askId, answer);
     }
 }

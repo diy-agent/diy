@@ -75,35 +75,28 @@ describe('房间工具', () => {
         expect(out).toContain(dir);
     });
 
-    it('审批拒绝 → 工具抛错（模型据此换做法）', async () => {
-        const tools = buildRoomTools({
-            cwd: dir,
-            shell: true,
-            bashTimeoutMs: 10_000,
-            approve: async ({ toolName }) => ({ approved: false, reason: `不许 ${toolName}` }),
-        });
-        await expect(toolOf(tools, 'bash').execute({ command: 'echo nope' })).rejects.toThrow(/已拒绝.*bash/);
-    });
-
-    it('审批通过 → 正常执行；read 不需要审批', async () => {
+    it('ask：选项题的回答格式化后返回给模型', async () => {
         const asked: string[] = [];
-        const tools = buildRoomTools({
-            cwd: dir,
-            shell: true,
-            bashTimeoutMs: 10_000,
-            approve: async ({ toolName }) => {
-                asked.push(toolName);
-                return { approved: true };
+        const gate = {
+            request: async (input: { question: string }) => {
+                asked.push(input.question);
+                return { answer: { values: ['b'] } };
             },
-        });
-        await toolOf(tools, 'write').execute({ path: 'gate.txt', content: 'ok' });
-        const out = String(await toolOf(tools, 'bash').execute({ command: 'echo go' }));
+        } as unknown as NonNullable<Parameters<typeof buildRoomTools>[0]['ask']>;
+        const tools = buildRoomTools({ cwd: dir, shell: false, ask: gate });
 
-        expect(asked).toEqual(['write', 'bash']);
-        expect(out).toContain('go');
-        // read 不触发审批
-        await toolOf(tools, 'read').execute({ path: 'gate.txt' });
-        expect(asked).toEqual(['write', 'bash']);
+        const out = String(
+            await toolOf(tools, 'ask').execute({
+                question: '先做哪个？',
+                options: [
+                    { value: 'a', label: '方案 A' },
+                    { value: 'b', label: '方案 B' },
+                ],
+            }),
+        );
+        expect(asked).toEqual(['先做哪个？']);
+        expect(out).toContain('用户选择');
+        expect(out).toContain('方案 B');
     });
 
     it('bash 非零退出：返回结果而不是抛错（模型靠退出码改命令）', async () => {

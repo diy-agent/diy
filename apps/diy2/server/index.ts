@@ -33,21 +33,27 @@ const COLORS = ['#7cc4ff', '#f7b267', '#a3e635', '#f472b6', '#c084fc', '#38bdf8'
 
 /** roomId → 聚合根（房间的领域对象） */
 const rooms = new Map<string, RoomActor>();
-/** 房间级 SSE 订阅者：同一房间的多个请求共享一条事件流 */
-const subscribers = new Map<string, Set<ServerResponse>>();
+/** 房间级 SSE 订阅者：请求流的（每次 chat 一个）+ 常驻监听的（UI 打开房间就挂一条） */
+interface Subscriber {
+    res: ServerResponse;
+    /** 常驻订阅不随某次 chat 结束而关闭 */
+    persistent: boolean;
+}
+const subscribers = new Map<string, Set<Subscriber>>();
 
-function attach(roomId: string, res: ServerResponse): void {
+function attach(roomId: string, res: ServerResponse, persistent = false): void {
     let set = subscribers.get(roomId);
     if (set === undefined) {
         set = new Set();
         subscribers.set(roomId, set);
     }
-    set.add(res);
-    res.on('close', () => set?.delete(res));
+    const entry: Subscriber = { res, persistent };
+    set.add(entry);
+    res.on('close', () => set?.delete(entry));
 }
 
 function broadcast(roomId: string, payload: RoomEvent): void {
-    for (const res of subscribers.get(roomId) ?? []) sse(res, payload);
+    for (const entry of subscribers.get(roomId) ?? []) sse(entry.res, payload);
 }
 
 /** 收尾：等这个房间所有会话都跑完，再通知并断开订阅 */
@@ -56,11 +62,15 @@ function finish(roomId: string, attempt = 0): void {
         setTimeout(() => finish(roomId, attempt + 1), 100);
         return;
     }
-    for (const res of subscribers.get(roomId) ?? []) {
-        sse(res, { kind: 'done' });
-        res.end();
+    // 只关"请求流"；常驻监听那条留着，UI 才能继续收到后台 bot 的动静
+    const set = subscribers.get(roomId);
+    for (const entry of [...(set ?? [])]) {
+        if (entry.persistent) continue;
+        sse(entry.res, { kind: 'done' });
+        entry.res.end();
+        set?.delete(entry);
     }
-    subscribers.delete(roomId);
+    if (set !== undefined && set.size === 0) subscribers.delete(roomId);
 }
 
 /** 房间的工作目录：自己的 data.dir，任务则继承所属项目 */
@@ -90,7 +100,6 @@ function actorOf(spec: Room): RoomActor {
             onCompact: (bot, event) => logCompact(spec.id, bot, event),
             ...(cwd === undefined ? {} : { cwd }),
             shell: process.env['DIY2_TOOLS'] !== 'files',
-            ...(process.env['DIY2_APPROVALS'] === 'off' ? { approvals: false } : {}),
         });
         rooms.set(spec.id, actor);
     }
@@ -301,12 +310,26 @@ const server = createServer((req, res) => {
             return;
         }
 
-        // GET /api/rooms/:id/approvals —— 还在等人点头的工具调用
-        if (req.method === 'GET' && parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'approvals' && parts.length === 4) {
+        // GET /api/rooms/:id/events —— 常驻事件流（UI 打开房间时挂一条，后台的 bot 动静也能看到）
+        if (req.method === 'GET' && parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'events') {
+            const id = decodeURIComponent(parts[2] ?? '');
+            if (roomOf(id) === undefined) return json(res, 404, { error: 'room not found' });
+            res.writeHead(200, {
+                'content-type': 'text/event-stream; charset=utf-8',
+                'cache-control': 'no-cache',
+                connection: 'keep-alive',
+            });
+            attach(id, res, true);
+            sse(res, { kind: 'ready' });
+            return;
+        }
+
+        // GET /api/rooms/:id/asks —— 还在等用户回答的提问
+        if (req.method === 'GET' && parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'asks' && parts.length === 4) {
             const id = decodeURIComponent(parts[2] ?? '');
             const actor = roomOf(id);
             if (actor === undefined) return json(res, 404, { error: 'room not found' });
-            json(res, 200, { approvals: actor.pendingApprovalRequests() });
+            json(res, 200, { asks: actor.pendingAskRequests() });
             return;
         }
 
@@ -338,15 +361,18 @@ const server = createServer((req, res) => {
             return;
         }
 
-        // POST /api/rooms/:id/approvals/:approvalId —— 工具审批（允许 / 拒绝）
-        if (req.method === 'POST' && parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'approvals') {
+        // POST /api/rooms/:id/asks/:askId —— 回答一次提问（选项 values / 表单 fields）
+        if (req.method === 'POST' && parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'asks') {
             const id = decodeURIComponent(parts[2] ?? '');
-            const approvalId = decodeURIComponent(parts[4] ?? '');
+            const askId = decodeURIComponent(parts[4] ?? '');
             const actor = roomOf(id);
             if (actor === undefined) return json(res, 404, { error: 'room not found' });
-            void readBody<{ approved?: boolean; reason?: string }>(req).then((body) => {
-                const hit = actor.resolveApproval(approvalId, body.approved === true, body.reason);
-                json(res, hit ? 200 : 404, hit ? { ok: true } : { error: 'no such pending approval' });
+            void readBody<{ values?: string[]; fields?: Record<string, string> }>(req).then((body) => {
+                const hit = actor.answerAsk(askId, {
+                    ...(body.values === undefined ? {} : { values: body.values }),
+                    ...(body.fields === undefined ? {} : { fields: body.fields }),
+                });
+                json(res, hit ? 200 : 404, hit ? { ok: true } : { error: 'no such pending ask' });
             });
             return;
         }

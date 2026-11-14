@@ -62,12 +62,43 @@ export class HttpChatClient implements ChatClient {
 
     async load(entityId: string): Promise<Snapshot> {
         const id = encodeURIComponent(entityId);
-        const [history, deliveries, approvals] = await Promise.all([
+        const [history, deliveries, asks] = await Promise.all([
             this.getJson<{ items: Item[] }>(`/rooms/${id}/history`),
             this.getJson<{ deliveries: Delivery[] }>(`/rooms/${id}/deliveries`),
-            this.getJson<{ approvals: Snapshot['approvals'] }>(`/rooms/${id}/approvals`).catch(() => ({ approvals: [] })),
+            this.getJson<{ asks: Snapshot['asks'] }>(`/rooms/${id}/asks`).catch(() => ({ asks: [] })),
         ]);
-        return { items: history.items, deliveries: deliveries.deliveries, approvals: approvals.approvals ?? [] };
+        return { items: history.items, deliveries: deliveries.deliveries, asks: asks.asks ?? [] };
+    }
+
+    watch(entityId: string, onEvent: (event: StreamEvent) => void): () => void {
+        const controller = new AbortController();
+        void (async () => {
+            try {
+                const get = this.fetchImpl;
+                const res = await get(`${this.base}/rooms/${encodeURIComponent(entityId)}/events`, {
+                    headers: { accept: 'text/event-stream' },
+                    signal: controller.signal,
+                });
+                if (!res.ok || res.body === null) return;
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                for (;;) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    for (;;) {
+                        const index = buffer.indexOf('\n\n');
+                        if (index < 0) break;
+                        parseSseChunk(buffer.slice(0, index), onEvent);
+                        buffer = buffer.slice(index + 2);
+                    }
+                }
+            } catch {
+                // 断线不自动重连：下一次 reload / 切房间会重新挂上
+            }
+        })();
+        return () => controller.abort();
     }
 
     async sessions(entityId: string): Promise<SessionInfo[]> {
@@ -93,17 +124,18 @@ export class HttpChatClient implements ChatClient {
         return (await res.json()) as CompactOutcome;
     }
 
-    async approve(entityId: string, approvalId: string, approved: boolean, reason?: string): Promise<void> {
+    async answerAsk(
+        entityId: string,
+        askId: string,
+        answer: { values?: string[]; fields?: Record<string, string> },
+    ): Promise<void> {
         const post = this.fetchImpl;
-        const res = await post(
-            `${this.base}/rooms/${encodeURIComponent(entityId)}/approvals/${encodeURIComponent(approvalId)}`,
-            {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ approved, ...(reason === undefined ? {} : { reason }) }),
-            },
-        );
-        if (!res.ok) throw new Error(`审批失败：HTTP ${res.status}`);
+        const res = await post(`${this.base}/rooms/${encodeURIComponent(entityId)}/asks/${encodeURIComponent(askId)}`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(answer),
+        });
+        if (!res.ok) throw new Error(`回答失败：HTTP ${res.status}`);
     }
 
     async post(

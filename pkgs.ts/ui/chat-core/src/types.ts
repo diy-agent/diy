@@ -3,7 +3,10 @@
 // 真正的定义在 @diy-agent/protocol：后端 runtime 与前端消费的是同一份类型。
 
 export type {
-    ApprovalRequest,
+    AskAnswer,
+    AskField,
+    AskOption,
+    AskRequest,
     Author,
     Bot,
     Capabilities,

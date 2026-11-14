@@ -27,10 +27,20 @@ export class ConversationStore implements ConversationModel {
 
     readonly capabilities = DEFAULT_CAPABILITIES;
 
+    private readonly detachWatch: (() => void) | undefined;
+
     constructor(
         private readonly client: ChatClient,
         public readonly entityId: string,
-    ) {}
+    ) {
+        // 常驻订阅：不依赖"我发过消息"，后台 bot 的提问 / 结论也能实时进来
+        this.detachWatch = client.watch?.(entityId, (event) => this.apply(event));
+    }
+
+    /** 释放常驻订阅（切换房间 / 卸载时用） */
+    dispose = (): void => {
+        this.detachWatch?.();
+    };
 
     get = (): ConversationState => this.state;
 

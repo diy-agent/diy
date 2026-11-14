@@ -3,7 +3,7 @@ import * as React from 'react';
 
 import { SURFACES } from './surfaces/registry';
 import { AddMemberDialog, CreateProjectDialog, ModelDialog, SettingsDialog } from './components/Dialogs';
-import { ApprovalBar } from './components/ApprovalBar';
+import { AskBar } from './components/AskBar';
 import { ContextPanel } from './components/ContextPanel';
 import { Sidebar } from './components/Sidebar';
 import { botsOf, dirOf, primaryBotOf, roomTypeLabel, type Room } from './model';
@@ -142,7 +142,7 @@ export function App() {
                     <>
                         <RoomHeader room={room} onAddMember={() => setDialog('member')} onPickModel={() => setModelTarget(room.id)} />
                         <SurfaceTabs value={surfaceId} onChange={setSurfaceId} />
-                        <ApprovalBar roomId={room.id} />
+                        <AskBar roomId={room.id} />
                         <SurfaceView surfaceId={surfaceId} targetId={room.id} />
                     </>
                 )}

@@ -2,7 +2,10 @@
 
 export type {
     AgentEvent,
-    ApprovalRequest,
+    AskAnswer,
+    AskField,
+    AskOption,
+    AskRequest,
     Author,
     Bot,
     Delivery,

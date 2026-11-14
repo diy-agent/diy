@@ -75,7 +75,7 @@ describe.each(transports)('ChatClient 端口 / %s', (_name, makeClient) => {
         expect(outcome.event).not.toBeNull();
     });
 
-    it('load 的形状：items / deliveries / approvals 三件套都在', async () => {
+    it('load 的形状：items / deliveries / asks 三件套都在', async () => {
         const h = makeRoom();
         const client = makeClient(h);
         await send(client, '一句话');
@@ -83,8 +83,8 @@ describe.each(transports)('ChatClient 端口 / %s', (_name, makeClient) => {
         const snapshot = await client.load();
         expect(Array.isArray(snapshot.items)).toBe(true);
         expect(Array.isArray(snapshot.deliveries)).toBe(true);
-        expect(Array.isArray(snapshot.approvals)).toBe(true);
-        expect(snapshot.approvals).toEqual([]);
+        expect(Array.isArray(snapshot.asks)).toBe(true);
+        expect(snapshot.asks).toEqual([]);
     });
 
     it('端口只暴露可 JSON 化的载荷（json-wire 下形状不变）', async () => {

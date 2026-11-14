@@ -101,12 +101,45 @@ export type Command =
     | { kind: 'send'; text: string }
     | { kind: 'cancel'; keepQueue?: boolean };
 
-/** 工具审批请求（挂起中；UI 显示允许 / 拒绝） */
-export interface ApprovalRequest {
-    approvalId: string;
-    toolName: string;
-    args?: unknown;
+// ── 向用户提问（模型需要人做决定时）────────────────────────────
+
+export interface AskOption {
+    value: string;
+    label: string;
+    description?: string;
+}
+
+export interface AskField {
+    name: string;
+    label: string;
+    type: 'text' | 'textarea' | 'number';
+    placeholder?: string;
+    required?: boolean;
+}
+
+/**
+ * 一次待回答的提问。
+ * 为什么要走工具而不是让模型在正文里问：正文里的问题会被大段输出淹掉，
+ * 用户看不到"现在需要你决定"；这里渲染成置顶的选项/表单。
+ */
+export interface AskRequest {
+    askId: string;
+    question: string;
+    /** choice = 选项；form = 表单 */
+    kind: 'choice' | 'form';
+    options?: AskOption[];
+    fields?: AskField[];
+    /** 选项是否多选 */
+    multiple?: boolean;
+    /** 补充说明（背景、影响） */
+    note?: string;
     at: number;
+}
+
+/** 用户的回答：choice 用 values，form 用 fields */
+export interface AskAnswer {
+    values?: string[];
+    fields?: Record<string, string>;
 }
 
 /** 传输层回推给 UI 的事件流（目前是 SSE，将来可能是 diy-rpc 订阅） */
@@ -114,10 +147,10 @@ export type StreamEvent =
     | { kind: 'item'; item: Item }
     | { kind: 'delivery'; delivery: Delivery }
     | { kind: 'error'; message: string }
-    /** 有工具在等审批 */
-    | { kind: 'approval'; request: ApprovalRequest }
-    /** 审批已解决（批准 / 拒绝 / 取消 / 超时） */
-    | { kind: 'approval.settled'; approvalId: string; approved: boolean; reason?: string }
+    /** 模型在等用户回答 */
+    | { kind: 'ask'; request: AskRequest }
+    /** 已回答（或被取消 / 超时） */
+    | { kind: 'ask.answered'; askId: string; answer?: AskAnswer; cancelled?: boolean; reason?: string }
     | { kind: 'done' };
 
 /** 房间自己会发的事件（`done` 属于传输层，不属于领域） */
@@ -126,8 +159,8 @@ export type RoomEvent = Exclude<StreamEvent, { kind: 'done' }>;
 export interface Snapshot {
     items: Item[];
     deliveries: Delivery[];
-    /** 还在等用户点头的工具调用（刷新页面后审批条要能恢复） */
-    approvals?: ApprovalRequest[];
+    /** 还在等用户回答的提问（刷新页面后卡片要能恢复） */
+    asks?: AskRequest[];
 }
 
 /** capabilities 决定 UI 显示哪些按钮（不要写 surfaceId 分支） */

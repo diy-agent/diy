@@ -67,6 +67,12 @@ export interface ChatClient {
     /** 可选：手动压缩某个 bot 的上下文（只影响它自己，不触发运行） */
     compact?(entityId: string, botId: string, options?: { keepLast?: number; maxChars?: number }): Promise<CompactOutcome>;
 
-    /** 可选：工具审批（允许 / 拒绝一次挂起的工具调用） */
-    approve?(entityId: string, approvalId: string, approved: boolean, reason?: string): Promise<void>;
+    /**
+     * 可选：常驻订阅这个房间的事件（后台 bot 的回复、提问、投递状态都能实时看到）。
+     * 返回取消订阅。post() 期间的事件仍然走 post 的回调，两条路互不替代。
+     */
+    watch?(entityId: string, onEvent: (event: StreamEvent) => void): () => void;
+
+    /** 可选：回答一次挂起的提问（选项 / 表单） */
+    answerAsk?(entityId: string, askId: string, answer: { values?: string[]; fields?: Record<string, string> }): Promise<void>;
 }

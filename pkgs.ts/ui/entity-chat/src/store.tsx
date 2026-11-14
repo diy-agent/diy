@@ -14,10 +14,17 @@ const DEFAULT_MODEL = 'chen56@opencode-go/deepseek-v4.1-flash';
 const client = new HttpChatClient({ base: '/api' });
 const conversations = new Map<string, ConversationStore>();
 
-/** 工具审批：允许 / 拒绝一次挂起的调用 */
-export async function decideApproval(roomId: string, approvalId: string, approved: boolean): Promise<void> {
-    if (client.approve === undefined) return;
-    await client.approve(roomId, approvalId, approved).catch(() => undefined);
+/** 回答一次挂起的提问（选项 / 表单） */
+export async function answerAsk(askId: string, answer: { values?: string[]; fields?: Record<string, string> }): Promise<void> {
+    if (client.answerAsk === undefined) return;
+    const roomId = currentRoomId();
+    if (roomId === '') return;
+    await client.answerAsk(roomId, askId, answer).catch(() => undefined);
+}
+
+/** 当前选中的房间（answerAsk 用；UI 只有一个活动房间） */
+function currentRoomId(): string {
+    return state.selectedId;
 }
 
 export function conversationOf(roomId: string): ConversationStore {

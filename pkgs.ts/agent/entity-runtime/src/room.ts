@@ -25,7 +25,7 @@ import {
     primaryMemberOf,
 } from '@diy-agent/protocol';
 
-import { ApprovalGate, type ApprovalDecision } from './approval';
+import { AskGate, type AskInput } from './ask';
 import type { Compactor } from './compaction';
 import type { Store } from './db';
 import { RoomLog, type RoomEntry } from './room-log';
@@ -65,8 +65,7 @@ export interface RoomActorDeps {
     shell?: boolean;
     /** shell 缺省超时 */
     bashTimeoutMs?: number;
-    /** 是否要求工具审批（缺省开启：write / edit / bash 都要人点头） */
-    approvals?: boolean;
+
     /** 压缩事件（日志 / 监控） */
     onCompact?: (bot: Bot, event: CompactEvent) => void;
     now?: () => number;
@@ -85,16 +84,16 @@ export class RoomActor {
     private readonly orderOf = new Map<string, number>();
     /** 已落库的 item id（流式更新会重复发同一条） */
     private readonly persisted = new Set<string>();
-    /** 工具审批：模型写文件 / 执行命令前在这里停住 */
-    private readonly gate: ApprovalGate;
+    /** 提问闸门：模型需要用户做决定时在这里停住 */
+    private readonly gate: AskGate;
     private builtTools: ToolSet | undefined;
 
     constructor(private readonly deps: RoomActorDeps) {
         // 公共日志从库里恢复（append-only，seq 接着走）
         this.log = new RoomLog(this.deps.store.roomEntries(this.id));
-        this.gate = new ApprovalGate({
-            request: (request) => this.deps.emit({ kind: 'approval', request }),
-            settle: (request, decision) => this.settleApproval(request.approvalId, request.toolName, decision),
+        this.gate = new AskGate({
+            request: (request) => this.deps.emit({ kind: 'ask', request }),
+            settle: (request, result) => this.settleAsk(request, result),
             now: () => this.deps.now?.() ?? Date.now(),
         });
         // 成员的 session 一开始就建好：上下文、统计、恢复都不需要等第一条消息
@@ -248,37 +247,50 @@ export class RoomActor {
     }
 
     cancel(options: { keepQueue?: boolean } = {}): void {
-        // 先放掉挂起的审批（否则 execute 还停在 await 上，abort 也退不干净）
+        // 先放掉挂起的提问（否则 execute 还停在 await 上，abort 也退不干净）
         this.gate.cancelAll('本轮已取消');
         for (const session of this.sessions.values()) session.cancel(options);
     }
 
-    /** 用户的审批决定；返回是否命中一个待审批请求 */
-    resolveApproval(approvalId: string, approved: boolean, reason?: string): boolean {
-        return this.gate.resolve(approvalId, { approved, ...(reason === undefined ? {} : { reason }) });
+    /** 用户的回答；返回是否命中一个待回答的提问 */
+    answerAsk(askId: string, answer: { values?: string[]; fields?: Record<string, string> }): boolean {
+        return this.gate.answer(askId, answer);
     }
 
-    /** 还有几个工具在等人点头 */
-    pendingApprovals(): number {
+    /** 还有几个提问在等回答 */
+    pendingAsks(): number {
         return this.gate.pendingCount();
     }
 
-    /** 挂起的审批请求（刷新 / 重连时恢复审批条） */
-    pendingApprovalRequests(): ReturnType<ApprovalGate['list']> {
+    /** 挂起的提问（刷新 / 重连时恢复卡片） */
+    pendingAskRequests(): ReturnType<AskGate['list']> {
         return this.gate.list();
     }
 
-    /** 审批解决：广播 + 在时间线留一条痕 */
-    private settleApproval(approvalId: string, toolName: string, decision: ApprovalDecision): void {
+    /** 提问解决：广播 + 在时间线留一条痕 */
+    private settleAsk(
+        request: { askId: string; question: string; options?: Array<{ value: string; label: string }>; fields?: Array<{ name: string; label: string }> },
+        result: { answer?: { values?: string[]; fields?: Record<string, string> }; cancelled?: boolean; reason?: string },
+    ): void {
         this.deps.emit({
-            kind: 'approval.settled',
-            approvalId,
-            approved: decision.approved,
-            ...(decision.reason === undefined ? {} : { reason: decision.reason }),
+            kind: 'ask.answered',
+            askId: request.askId,
+            ...(result.answer === undefined ? {} : { answer: result.answer }),
+            ...(result.cancelled === true ? { cancelled: true } : {}),
+            ...(result.reason === undefined ? {} : { reason: result.reason }),
         });
         const now = this.deps.now?.() ?? Date.now();
+        const labels = (result.answer?.values ?? []).map(
+            (value) => request.options?.find((option) => option.value === value)?.label ?? value,
+        );
+        const summary =
+            result.cancelled === true
+                ? `未回答${result.reason === undefined ? '' : `（${result.reason}）`}`
+                : result.answer?.fields !== undefined
+                  ? `已填写：${Object.values(result.answer.fields).filter((value) => value.trim() !== '').length} 项`
+                  : `已回答：${labels.join('、')}`;
         const notice: Item = {
-            id: `apx-${approvalId}`,
+            id: `askx-${request.askId}`,
             seq: this.deps.store.seqOf(this.id) + 1,
             order: this.nextOrder(),
             ...(this.currentTurn === null ? {} : { turn: this.currentTurn.turn, turnId: this.currentTurn.turnId }),
@@ -286,10 +298,7 @@ export class RoomActor {
             at: now,
             status: 'done',
             type: 'notice',
-            data: {
-                text: `${decision.approved ? '已批准' : '已拒绝'} ${toolName}${decision.reason === undefined ? '' : `（${decision.reason}）`}`,
-                kind: 'approval',
-            },
+            data: { text: summary, kind: 'ask' },
         };
         this.deps.emit({ kind: 'item', item: this.deps.store.appendItem(this.id, notice) });
     }
@@ -371,7 +380,7 @@ export class RoomActor {
                 cwd,
                 ...(this.deps.shell === undefined ? {} : { shell: this.deps.shell }),
                 ...(this.deps.bashTimeoutMs === undefined ? {} : { bashTimeoutMs: this.deps.bashTimeoutMs }),
-                ...(this.deps.approvals === false ? {} : { approve: (input) => this.gate.request(input) }),
+                ask: this.gate,
             });
         }
         return this.builtTools;
@@ -381,7 +390,9 @@ export class RoomActor {
         return (
             '可以用 read / write / edit 读写文件、用 bash 执行命令；' +
             `工作目录是 ${this.deps.cwd ?? '未设置'}，相对路径按它解析。` +
-            '改文件优先用 edit（不要整份重写）；write / edit / bash 需要用户批准，被拒绝就换个做法。'
+            '改文件优先用 edit（不要整份重写）。' +
+            '需要用户做决定时**必须**调用 ask（选项 / 表单）：不要在正文里提问，' +
+            '也不要在正文里列选项让用户挑——那些都会被大段输出淹没。'
         );
     }
 

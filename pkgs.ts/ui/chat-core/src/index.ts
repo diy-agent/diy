@@ -24,6 +24,10 @@ export { ConversationStore, type ConversationModel } from './store';
 export { buildTimeline, type TimelineDelivery, type TimelineEntry, type TimelinePart } from './timeline';
 export {
     DEFAULT_CAPABILITIES,
+    type AskAnswer,
+    type AskField,
+    type AskOption,
+    type AskRequest,
     type Author,
     type Bot,
     type Capabilities,

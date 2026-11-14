@@ -1,12 +1,12 @@
 // reduce.ts —— 纯函数：StreamEvent → 状态。UI 与 surface 都不自己拼消息。
 
-import type { ApprovalRequest, Delivery, Item, StreamEvent } from './types';
+import type { AskRequest, Delivery, Item, StreamEvent } from './types';
 
 export interface ConversationState {
     items: Item[];
     deliveries: Delivery[];
-    /** 正在等用户点头的工具调用 */
-    approvals: ApprovalRequest[];
+    /** 正在等用户回答的提问 */
+    asks: AskRequest[];
     seq: number;
     error?: string;
     /** 有流式消息即 running（surface 用它显示停止按钮） */
@@ -14,7 +14,7 @@ export interface ConversationState {
 }
 
 export function emptyState(): ConversationState {
-    return { items: [], deliveries: [], approvals: [], seq: 0, running: false };
+    return { items: [], deliveries: [], asks: [], seq: 0, running: false };
 }
 
 function sortItems(items: Item[]): Item[] {
@@ -48,13 +48,13 @@ export function applyEvent(state: ConversationState, event: StreamEvent): Conver
                       );
             return { ...state, deliveries };
         }
-        case 'approval': {
-            const exists = state.approvals.some((entry) => entry.approvalId === event.request.approvalId);
-            const approvals = exists ? state.approvals : [...state.approvals, event.request];
-            return { ...state, approvals };
+        case 'ask': {
+            const exists = state.asks.some((entry) => entry.askId === event.request.askId);
+            const asks = exists ? state.asks : [...state.asks, event.request];
+            return { ...state, asks };
         }
-        case 'approval.settled': {
-            return { ...state, approvals: state.approvals.filter((entry) => entry.approvalId !== event.approvalId) };
+        case 'ask.answered': {
+            return { ...state, asks: state.asks.filter((entry) => entry.askId !== event.askId) };
         }
         case 'error':
             return { ...state, error: event.message, running: false };
@@ -69,7 +69,7 @@ export function applyEvent(state: ConversationState, event: StreamEvent): Conver
 export function fromSnapshot(snapshot: {
     items: Item[];
     deliveries: Delivery[];
-    approvals?: ApprovalRequest[];
+    asks?: AskRequest[];
 }): ConversationState {
     // 同 id 只留最新一条（append-only 更新：重跑的 item 会以新 seq 再写一遍）
     const latest = new Map<string, Item>();
@@ -80,7 +80,7 @@ export function fromSnapshot(snapshot: {
     return {
         items: sortItems([...latest.values()]),
         deliveries: snapshot.deliveries,
-        approvals: snapshot.approvals ?? [],
+        asks: snapshot.asks ?? [],
         seq: Math.max(0, ...snapshot.items.map((item) => item.seq)),
         running: snapshot.items.some((item) => item.status === 'streaming'),
     };
