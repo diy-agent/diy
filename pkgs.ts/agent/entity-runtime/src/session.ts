@@ -12,7 +12,7 @@
 //
 // 不做：路由、持久化、SSE —— 那些属于 RoomActor。
 
-import { experimental_createSteering, type Experimental_Steering, type ModelMessage } from 'ai';
+import { experimental_createSteering, type Experimental_Steering, type ModelMessage, type ToolSet } from 'ai';
 
 import { runAgent, type RunOptions } from './agent';
 import {
@@ -97,6 +97,9 @@ export interface SessionDeps {
     /** 压缩策略；默认 simpleCompactor */
     compactor?: Compactor;
     budget?: CompactOptions;
+    /** 房间装配的工具（不传 = 内置 get_time） */
+    tools?: ToolSet;
+    toolsHint?: string;
 }
 
 interface QueueItem {
@@ -323,6 +326,8 @@ export class BotSession {
                 turnId: turn.turnId,
                 signal: abort.signal,
                 steering,
+                ...(this.deps.tools === undefined ? {} : { tools: this.deps.tools }),
+                ...(this.deps.toolsHint === undefined ? {} : { toolsHint: this.deps.toolsHint }),
                 onStepTranscript: (added) => {
                     for (const message of added) produced.push({ message, origin: 'self', turn: turn.turn });
                 },

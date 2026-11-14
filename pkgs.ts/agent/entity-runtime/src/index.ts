@@ -17,6 +17,7 @@ export { openStore, type Store } from './db';
 export { Inbox } from './inbox';
 export { Projector, nextId } from './projection';
 export { RoomActor, type RoomActorDeps, type SessionInfo as RoomSessionInfo } from './room';
+export { buildRoomTools, type RoomToolsOptions } from './tools/index';
 export { RoomLog, toMessage, type RoomEntry, type RoomEntryInput } from './room-log';
 export {
     BotSession,

@@ -16,7 +16,7 @@
 //   4. 压缩只影响自己：没有房间级水位，也没有共享摘要
 //   5. 同一房间运行中再发消息 → 沿用当前 turn（时间线不乱）
 
-import type { ModelMessage } from 'ai';
+import type { ModelMessage, ToolSet } from 'ai';
 
 import {
     effectiveModelOf,
@@ -57,6 +57,9 @@ export interface RoomActorDeps {
     run?: SessionDeps['run'];
     compactor?: Compactor;
     budget?: CompactOptions;
+    /** 工具集（房间目录决定 cwd）；不传 = 只用内置 get_time */
+    tools?: ToolSet;
+    toolsHint?: string;
     /** 压缩事件（日志 / 监控） */
     onCompact?: (bot: Bot, event: CompactEvent) => void;
     now?: () => number;
@@ -363,6 +366,8 @@ export class RoomActor {
             ...(this.deps.run === undefined ? {} : { run: this.deps.run }),
             ...(this.deps.compactor === undefined ? {} : { compactor: this.deps.compactor }),
             ...(this.deps.budget === undefined ? {} : { budget: this.deps.budget }),
+            ...(this.deps.tools === undefined ? {} : { tools: this.deps.tools }),
+            ...(this.deps.toolsHint === undefined ? {} : { toolsHint: this.deps.toolsHint }),
         });
         // 房间订阅 session 的输出：编号、落库、广播都在这一侧
         session.subscribe((event) => this.onSessionEvent(bot, event));

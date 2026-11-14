@@ -12,7 +12,7 @@ import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { RoomActor, openStore } from '@diy-agent/entity-runtime';
+import { buildRoomTools, RoomActor, openStore } from '@diy-agent/entity-runtime';
 import type { RoomEvent } from '@diy-agent/entity-runtime';
 import type { Author, Bot, Room, RoomMember } from '@diy-agent/protocol';
 
@@ -63,9 +63,34 @@ function finish(roomId: string, attempt = 0): void {
     subscribers.delete(roomId);
 }
 
+/** 房间的工作目录：自己的 data.dir，任务则继承所属项目 */
+function cwdOf(spec: Room): string | undefined {
+    const own = spec.data['dir'];
+    if (typeof own === 'string' && own !== '') return expandHome(own);
+    const projectId = spec.data['projectId'];
+    const parent = typeof projectId === 'string' ? [...rooms.values()].find((actor) => actor.spec.id === projectId) : undefined;
+    const parentDir = parent?.spec.data['dir'];
+    return typeof parentDir === 'string' && parentDir !== '' ? expandHome(parentDir) : undefined;
+}
+
+function expandHome(dir: string): string {
+    return dir.startsWith('~/') ? join(homedir(), dir.slice(2)) : dir;
+}
+
 function actorOf(spec: Room): RoomActor {
     let actor = rooms.get(spec.id);
     if (actor === undefined) {
+        const cwd = cwdOf(spec);
+        const tools =
+            cwd === undefined
+                ? undefined
+                : buildRoomTools({
+                      cwd,
+                      shell: process.env['DIY2_TOOLS'] !== 'files',
+                      ...(process.env['DIY2_TOOL_AUDIT'] === '1'
+                          ? { onAudit: (event) => console.log(`[tool] ${event.phase} ${event.path ?? event.command ?? ''}`) }
+                          : {}),
+                  });
         actor = new RoomActor({
             spec,
             store,
@@ -73,6 +98,14 @@ function actorOf(spec: Room): RoomActor {
             emit: (event) => broadcast(spec.id, event),
             budget: COMPACT_BUDGET,
             onCompact: (bot, event) => logCompact(spec.id, bot, event),
+            ...(tools === undefined
+                ? {}
+                : {
+                      tools,
+                      toolsHint:
+                          `可以用 read / write / edit 读写文件、用 bash 执行命令；` +
+                          `工作目录是 ${cwd}，相对路径按它解析。改文件优先用 edit（不要整份重写）。`,
+                  }),
         });
         rooms.set(spec.id, actor);
     }

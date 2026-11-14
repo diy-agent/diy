@@ -350,3 +350,50 @@ openStore
 - 崩溃恢复：手工造一条 `queued` 投递，`recover()` 后真的跑了一轮并置为 `delivered`
 
 合计 39 条（room 11 / session 18 / room-log 4 / chat-core 6）。
+
+## 工具层（2026-11-14）：从 @diy-agent/tools 移植
+
+### 为什么移植而不是直接依赖
+
+`@diy-agent/tools` 的 `main` 指向 `dist/`，而本仓的 build 图（`tsc -b build/tsconfig.build-all.json`）
+在这个 worktree 上是有断链的（context → template → … 的 TS6305，以及 `makeShellTool` 的
+TS2883 声明导出错误）。diy2 是 `tsx` 直跑源码，不能等 dist。
+
+于是把**行为判据**移植过来，实现放在 `entity-runtime/src/tools/`：
+
+| 工具 | 判据（与老包一致） |
+|---|---|
+| `read` | 带行号、offset/limit 续读、单次 200KB/2000 行；路径越界直接抛 |
+| `write` | 整文件写、自动建父目录、返回行数变化；失败抛 |
+| `edit` | 有序 edits、必须唯一命中（除非 `replaceAll`）、未命中抛 |
+| `bash` | cwd = 房间目录；非零退出**返回结果**（退出码是数据）；spawn 失败抛；超时杀进程组并返回已收输出 |
+
+统一约定：**工具失败抛异常**，不返回"失败字符串"——否则 SDK 会记成 done，UI 画 ✓ 且不展开。
+
+工具结果的完整内容会进 transcript（这是"自己的过程要全套"的前提），压缩时按 `origin='self'` 折叠。
+
+### 接线
+
+```
+server: cwdOf(spec)        // data.dir，任务继承所属项目的 dir
+     → buildRoomTools({ cwd, shell, bashTimeoutMs })
+     → RoomActorDeps.tools / toolsHint
+     → BotSessionDeps.tools
+     → runAgent({ tools })
+```
+
+`DIY2_TOOLS=files` 只开文件工具（关掉 bash）。
+
+### 实测
+
+- `read README.md` → 模型正确引用文件内容作答
+- `bash pwd && ls` → cwd 是房间目录（`~/git/diy/diy`）
+- `read ../../etc/passwd` → tool 失败（UI ✗），没有越界读取
+- 两个 surface 都显示 `✓ Used tool: read`
+
+### 测试
+
+`entity-runtime/tests/tools.test.ts`（6 条）：读写回环、越界拒绝、edit 唯一命中 /
+replaceAll / 未命中、bash 退出码与 cwd、bash 非零退出返回结果不抛。
+
+合计 45 条（room 11 / session 18 / room-log 4 / chat-core 6 / tools 6）。
