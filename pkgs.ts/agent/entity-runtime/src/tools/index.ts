@@ -11,6 +11,8 @@ import type { ApprovalDecision } from '../approval';
 import { editTool, readTool, writeTool, type Guard } from './files';
 import { bashTool } from './shell';
 
+export { clipModelMessage, clipToolOutput, DEFAULT_CLIP, type ClipPolicy } from './clip';
+
 export interface RoomToolsOptions {
     /** 房间的工作目录（相对路径的解析基准，也是命令的 cwd） */
     cwd: string;

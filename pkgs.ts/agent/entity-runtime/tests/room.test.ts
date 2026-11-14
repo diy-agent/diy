@@ -5,79 +5,9 @@
 
 import { describe, expect, it } from 'vitest';
 
-import type { RunOptions } from '../src/agent';
-import { openStore, type Store } from '../src/db';
-import { RoomActor } from '../src/room';
-import type { AgentEvent, Bot, Item, Room, RoomEvent } from '../src/types';
-
-const BOT_A: Bot = { id: 'bot:a', name: 'diy', color: '#111', persona: '工程视角', homeRoomId: 'room:1', modelKey: 'm-default' };
-const BOT_B: Bot = { id: 'bot:b', name: 'cops', color: '#222', persona: '产品视角', homeRoomId: 'room:1', modelKey: 'm-default' };
-const HUMAN = { id: 'human:我', name: '我', color: '#999', role: 'human' as const };
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-async function waitFor(check: () => boolean, timeout = 1000): Promise<void> {
-    const startedAt = Date.now();
-    while (!check()) {
-        if (Date.now() - startedAt > timeout) throw new Error('waitFor timeout');
-        await sleep(5);
-    }
-}
-
-interface Harness {
-    room: RoomActor;
-    store: Store;
-    events: RoomEvent[];
-    runs: string[];
-    items(): Item[];
-}
-
-function makeRoom(
-    options: { hang?: boolean; reply?: (bot: Bot) => string; members?: Room['members']; store?: Store } = {},
-): Harness {
-    const store = options.store ?? openStore(':memory:');
-    const bots = [BOT_A, BOT_B];
-    for (const bot of bots) store.upsertBot(bot);
-
-    const spec: Room = {
-        id: 'room:1',
-        type: 'project',
-        name: 'demo',
-        data: {},
-        members: options.members ?? [{ botId: BOT_A.id, primary: true }, { botId: BOT_B.id }],
-        modelKey: 'm-room',
-    };
-    store.setMembers(spec.id, spec.members);
-
-    const events: RoomEvent[] = [];
-    const runs: string[] = [];
-
-    const run = (async function* (input: RunOptions): AsyncIterable<AgentEvent> {
-        runs.push(input.bot.name);
-        const turnId = input.turnId ?? 'turn';
-        yield { seq: 1, type: 'run.started', turnId, messageId: `msg-${runs.length}` };
-        await sleep(5);
-        if (options.hang === true) {
-            while (!input.signal.aborted) await sleep(2);
-            yield { seq: 2, type: 'run.failed', turnId, message: 'aborted' };
-            return;
-        }
-        const text = options.reply?.(input.bot) ?? `${input.bot.name} 的回复`;
-        yield { seq: 2, type: 'text.delta', messageId: `msg-${runs.length}`, delta: text };
-        input.onStepTranscript?.([{ role: 'assistant', content: [{ type: 'text', text }] }]);
-        yield { seq: 3, type: 'message.completed', messageId: `msg-${runs.length}` };
-        yield { seq: 4, type: 'run.completed', turnId };
-    }) as (input: RunOptions) => AsyncIterable<AgentEvent>;
-
-    const room = new RoomActor({
-        spec,
-        store,
-        bots: () => bots,
-        emit: (event) => events.push(event),
-        run,
-    });
-
-    return { room, store, events, runs, items: () => store.itemsOf(spec.id) };
-}
+import { openStore } from '../src/db';
+import type { Item } from '../src/types';
+import { BOT_A, BOT_B, HUMAN, makeRoom, sleep, waitFor } from './support/harness';
 
 describe('RoomActor', () => {
     it('没有 @：只有默认应答跑', async () => {

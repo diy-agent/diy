@@ -8,6 +8,7 @@ import { z } from 'zod';
 
 import { friendlyError } from './errors';
 import { modelOf } from './providers';
+import { clipModelMessage } from './tools/clip';
 import type { AgentEvent, Bot } from './types';
 
 export interface RunOptions {
@@ -70,7 +71,11 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
         ...(options.steering === undefined ? {} : { experimental_steering: options.steering }),
         onStepFinish: (step) => {
             if (options.onStepTranscript === undefined) return;
-            options.onStepTranscript([...(step.experimental_steeringMessages ?? []), ...step.response.messages]);
+            // 工具输出只裁"喂给模型"的那份；UI 的 tool-result 事件仍然是完整输出
+            options.onStepTranscript([
+                ...(step.experimental_steeringMessages ?? []),
+                ...step.response.messages.map((message) => clipModelMessage(message)),
+            ]);
         },
     });
 

@@ -451,3 +451,53 @@ tools.execute → gate.request()
 - `approval.test.ts` 5 条：挂起/批准、拒绝带原因、未知 id、cancelAll、超时
 - `tools.test.ts` 2 条：拒绝时抛错、通过时正常执行且 read 不触发审批
 - 合计 55 条。
+
+## 测试分层（2026-11-14）
+
+不写"按 HTTP 接口形状"的集成测试 —— 传输马上要换成 diy-rpc，锁在线上是浪费。
+
+三层，各答一个问题：
+
+| 层 | 文件 | 回答什么 | 依赖 |
+|---|---|---|---|
+| 领域 | `room.test.ts` / `session.test.ts` | 房间与会话的语义对不对 | 内存 sqlite + 脚本化 run，无网络 |
+| 端口一致性 | `transport-conformance.test.ts` | UI 依赖的 `ChatClient` 契约有没有漂 | 同一套场景跑 N 个实现 |
+| UI | 各 surface 的组件测试（待补） | 渲染与交互 | FakeChatClient，无网络 |
+
+端口一致性用**参数化**跑同一份场景：
+
+```
+in-process   直接调 RoomActor，零网络
+json-wire    同样的调用，但命令/事件都过一次 JSON（模拟序列化边界）
+rpc          将来接 diy-rpc 时加一项，场景一条不改
+```
+
+`json-wire` 不是凑数：它专门抓"载荷里塞了不可序列化的东西"——那正是换传输才会炸的问题。
+另有 `跨传输一致性` 一条：同一输入在两种传输下产出必须逐字段相同。
+
+## 工具输出截断（2026-11-14）
+
+照老方案（`@diy-agent/tools/shell/cap-output` + `@diy-agent/compaction` 的 `clipToolResult`），
+只保留它的**核心判据**：
+
+> **不在 execute 里裁。** execute 的返回值是原文（UI / 日志 / 审计看全量）；
+> 只裁"发给模型的那一份"。
+
+落地位置是 transcript 入账处（`agent.ts` 的 `onStepTranscript` → `clipModelMessage`）：
+
+```
+头 80 行 + 尾 20 行 + marker（省略多少行 / 共多少字符 / 怎么重取）
+单行 > 500 字符先截行
+整体 > 12000 字符再按字符头尾兜底
+未超限逐字符不变（不做归一，避免无谓的缓存失效）
+```
+
+实测（`seq 1 20000`，约 118KB）：
+
+```
+UI 的 tool 条目       118583 字节（完整）
+transcript 里的那条   459 字符（头尾 + marker）
+```
+
+老库还会把原文落盘并在 marker 里给 resume 路径；diy2 暂不落盘，marker 提示模型
+用 `read` 的 offset 或缩小命令输出重取。等需要"字节保真"时再接落盘。
