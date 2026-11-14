@@ -4,7 +4,24 @@
 
 import { DatabaseSync } from 'node:sqlite';
 
-import type { Bot, Delivery, Item, RoomMember } from './types';
+import type { TranscriptEntry, TokenUsage } from './compaction';
+import type { RoomEntry } from './room-log';
+import type { Bot, Delivery, InboxMode, Item, RoomMember } from './types';
+
+/** 一个 bot 在某个房间里的对话快照（持久化单位） */
+export interface SessionSnapshot {
+    turn: number;
+    collapsed: number;
+    entries: TranscriptEntry[];
+    usage?: TokenUsage;
+}
+
+/** 投递时的入队信息：崩溃后据此重新投递 */
+export interface DeliveryInput extends Omit<Delivery, 'updatedAt'> {
+    mode?: InboxMode;
+    turn?: number;
+    turnId?: string;
+}
 
 export interface Store {
     readonly db: DatabaseSync;
@@ -14,8 +31,16 @@ export interface Store {
     setMembers(roomId: string, members: readonly RoomMember[]): void;
     /** roomId → 成员（按 position） */
     members(): Record<string, RoomMember[]>;
-    setDelivery(delivery: Omit<Delivery, 'updatedAt'>): Delivery;
+    setDelivery(delivery: DeliveryInput): Delivery;
     listDeliveries(roomId: string): Delivery[];
+    /** 崩溃恢复：还没送达的投递（queued / delivering） */
+    pendingDeliveries(roomId: string): Array<DeliveryInput & { messageId: string }>;
+    /** 房间还没处理完的消息正文（按 messageId） */
+    textOf(roomId: string, messageId: string): string | undefined;
+    saveSession(roomId: string, botId: string, snapshot: SessionSnapshot): void;
+    loadSession(roomId: string, botId: string): SessionSnapshot | undefined;
+    appendRoomEntry(roomId: string, entry: RoomEntry): void;
+    roomEntries(roomId: string): RoomEntry[];
     itemsOf(roomId: string, afterSeq?: number): Item[];
     seqOf(roomId: string): number;
 }
@@ -39,6 +64,24 @@ export function openStore(file: string): Store {
             at INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS items_entity ON entity_items(entity_id, seq);
+        CREATE TABLE IF NOT EXISTS room_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_id TEXT NOT NULL,
+            seq INTEGER NOT NULL,
+            at INTEGER NOT NULL,
+            entry TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS room_entries_room ON room_entries(entity_id, seq);
+        CREATE TABLE IF NOT EXISTS session_state (
+            entity_id TEXT NOT NULL,
+            bot_id TEXT NOT NULL,
+            turn INTEGER NOT NULL,
+            collapsed INTEGER NOT NULL,
+            entries TEXT NOT NULL,
+            usage TEXT,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (entity_id, bot_id)
+        );
         CREATE TABLE IF NOT EXISTS room_members (
             entity_id TEXT NOT NULL,
             bot_id TEXT NOT NULL,
@@ -77,6 +120,14 @@ export function openStore(file: string): Store {
             }
         }
         db.exec('DROP TABLE entity_bots');
+    }
+
+    // 老库补列：mode / turn / turn_id
+    const columns = new Set(
+        (db.prepare('PRAGMA table_info(deliveries)').all() as Array<Record<string, unknown>>).map((row) => String(row['name'])),
+    );
+    for (const column of ['mode', 'turn', 'turn_id']) {
+        if (!columns.has(column)) db.exec(`ALTER TABLE deliveries ADD COLUMN ${column}`);
     }
 
     const toBot = (row: Record<string, unknown>): Bot => ({
@@ -151,11 +202,12 @@ export function openStore(file: string): Store {
             }
             return out;
         },
-        setDelivery(delivery: Omit<Delivery, 'updatedAt'>): Delivery {
+        setDelivery(delivery: DeliveryInput): Delivery {
             const updatedAt = Date.now();
             db.prepare(
-                'INSERT INTO deliveries (entity_id, message_id, bot_id, state, note, updated_at) VALUES (?,?,?,?,?,?) ' +
-                    'ON CONFLICT(entity_id, message_id, bot_id) DO UPDATE SET state=?, note=?, updated_at=?',
+                'INSERT INTO deliveries (entity_id, message_id, bot_id, state, note, updated_at, mode, turn, turn_id) ' +
+                    'VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(entity_id, message_id, bot_id) DO UPDATE SET ' +
+                    'state=?, note=?, updated_at=?, mode=COALESCE(?, mode), turn=COALESCE(?, turn), turn_id=COALESCE(?, turn_id)',
             ).run(
                 delivery.roomId,
                 delivery.messageId,
@@ -163,9 +215,15 @@ export function openStore(file: string): Store {
                 delivery.state,
                 delivery.note ?? null,
                 updatedAt,
+                delivery.mode ?? null,
+                delivery.turn ?? null,
+                delivery.turnId ?? null,
                 delivery.state,
                 delivery.note ?? null,
                 updatedAt,
+                delivery.mode ?? null,
+                delivery.turn ?? null,
+                delivery.turnId ?? null,
             );
             return { ...delivery, updatedAt };
         },
@@ -179,6 +237,75 @@ export function openStore(file: string): Store {
                 note: row['note'] === null ? undefined : String(row['note']),
                 updatedAt: Number(row['updated_at']),
             }));
+        },
+        pendingDeliveries(roomId: string): Array<DeliveryInput & { messageId: string }> {
+            const rows = db
+                .prepare("SELECT * FROM deliveries WHERE entity_id = ? AND state IN ('queued','delivering') ORDER BY updated_at ASC")
+                .all(roomId) as Array<Record<string, unknown>>;
+            return rows.map((row) => ({
+                roomId: String(row['entity_id']),
+                messageId: String(row['message_id']),
+                botId: String(row['bot_id']),
+                state: row['state'] as Delivery['state'],
+                ...(row['mode'] === null ? {} : { mode: row['mode'] as InboxMode }),
+                ...(row['turn'] === null ? {} : { turn: Number(row['turn']) }),
+                ...(row['turn_id'] === null ? {} : { turnId: String(row['turn_id']) }),
+            }));
+        },
+        textOf(roomId: string, messageId: string): string | undefined {
+            const row = db
+                .prepare('SELECT item FROM entity_items WHERE entity_id = ? ORDER BY seq DESC LIMIT 200')
+                .all(roomId) as Array<Record<string, unknown>>;
+            for (const rowItem of row) {
+                const item = JSON.parse(String(rowItem['item'])) as Item;
+                if (item.id === messageId && item.type === 'chat') return item.data.text;
+            }
+            return undefined;
+        },
+        saveSession(roomId: string, botId: string, snapshot: SessionSnapshot): void {
+            db.prepare(
+                'INSERT INTO session_state (entity_id, bot_id, turn, collapsed, entries, usage, updated_at) VALUES (?,?,?,?,?,?,?) ' +
+                    'ON CONFLICT(entity_id, bot_id) DO UPDATE SET turn=?, collapsed=?, entries=?, usage=?, updated_at=?',
+            ).run(
+                roomId,
+                botId,
+                snapshot.turn,
+                snapshot.collapsed,
+                JSON.stringify(snapshot.entries),
+                snapshot.usage === undefined ? null : JSON.stringify(snapshot.usage),
+                Date.now(),
+                snapshot.turn,
+                snapshot.collapsed,
+                JSON.stringify(snapshot.entries),
+                snapshot.usage === undefined ? null : JSON.stringify(snapshot.usage),
+                Date.now(),
+            );
+        },
+        loadSession(roomId: string, botId: string): SessionSnapshot | undefined {
+            const row = db
+                .prepare('SELECT * FROM session_state WHERE entity_id = ? AND bot_id = ?')
+                .get(roomId, botId) as Record<string, unknown> | undefined;
+            if (row === undefined) return undefined;
+            return {
+                turn: Number(row['turn']),
+                collapsed: Number(row['collapsed']),
+                entries: JSON.parse(String(row['entries'])) as TranscriptEntry[],
+                ...(row['usage'] === null ? {} : { usage: JSON.parse(String(row['usage'])) as TokenUsage }),
+            };
+        },
+        appendRoomEntry(roomId: string, entry: RoomEntry): void {
+            db.prepare('INSERT INTO room_entries (entity_id, seq, at, entry) VALUES (?,?,?,?)').run(
+                roomId,
+                entry.seq,
+                entry.at,
+                JSON.stringify(entry),
+            );
+        },
+        roomEntries(roomId: string): RoomEntry[] {
+            const rows = db
+                .prepare('SELECT entry FROM room_entries WHERE entity_id = ? ORDER BY seq ASC')
+                .all(roomId) as Array<Record<string, unknown>>;
+            return rows.map((row) => JSON.parse(String(row['entry'])) as RoomEntry);
         },
         itemsOf(roomId: string, afterSeq = 0): Item[] {
             const rows = db

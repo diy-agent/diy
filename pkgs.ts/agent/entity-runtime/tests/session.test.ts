@@ -186,13 +186,15 @@ describe('BotSession', () => {
 
     it('压缩只压自己：a 的 tool 被折叠，b 的上下文一条不少', async () => {
         const long = '工具输出'.repeat(200);
-        const seed = (): TranscriptEntry[] => [
-            { message: { role: 'user', content: '麻烦修改 bug 并提交' }, origin: 'public', turn: 1 },
-            { message: { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 't1', toolName: 'read', input: {} }] }, origin: 'self', turn: 1 },
-            { message: { role: 'tool', content: [{ type: 'tool-result', toolCallId: 't1', toolName: 'read', output: { type: 'text', value: long } }] }, origin: 'self', turn: 1 },
-            { message: { role: 'assistant', content: [{ type: 'text', text: '结论：已修复并提交' }] }, origin: 'self', turn: 1 },
-            { message: { role: 'user', content: '人: 最新一句' }, origin: 'public', turn: 2 },
-        ];
+        const seed = () => ({
+            entries: [
+                { message: { role: 'user', content: '麻烦修改 bug 并提交' }, origin: 'public' as const, turn: 1 },
+                { message: { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 't1', toolName: 'read', input: {} }] }, origin: 'self' as const, turn: 1 },
+                { message: { role: 'tool', content: [{ type: 'tool-result', toolCallId: 't1', toolName: 'read', output: { type: 'text', value: long } }] }, origin: 'self' as const, turn: 1 },
+                { message: { role: 'assistant', content: [{ type: 'text', text: '结论：已修复并提交' }] }, origin: 'self' as const, turn: 1 },
+                { message: { role: 'user', content: '人: 最新一句' }, origin: 'public' as const, turn: 2 },
+            ],
+        });
         const a = makeSession({ seed, budget: { keepLast: 2, maxChars: 200 } });
         const b = makeSession({ bot: BOT_B, seed, budget: { keepLast: 2, maxChars: 200 } });
 
@@ -250,13 +252,15 @@ describe('BotSession', () => {
 
     it('手动 forceCompact：只压自己、返回事件、不触发运行', async () => {
         const long = '工具输出'.repeat(200);
-        const seed = (): TranscriptEntry[] => [
-            { message: { role: 'user', content: '早期需求' }, origin: 'public', turn: 1 },
-            { message: { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 't1', toolName: 'read', input: {} }] }, origin: 'self', turn: 1 },
-            { message: { role: 'tool', content: [{ type: 'tool-result', toolCallId: 't1', toolName: 'read', output: { type: 'text', value: long } }] }, origin: 'self', turn: 1 },
-            { message: { role: 'assistant', content: [{ type: 'text', text: '结论：已修复' }] }, origin: 'self', turn: 1 },
-            { message: { role: 'user', content: '最新一句' }, origin: 'public', turn: 2 },
-        ];
+        const seed = () => ({
+            entries: [
+                { message: { role: 'user', content: '早期需求' }, origin: 'public' as const, turn: 1 },
+                { message: { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 't1', toolName: 'read', input: {} }] }, origin: 'self' as const, turn: 1 },
+                { message: { role: 'tool', content: [{ type: 'tool-result', toolCallId: 't1', toolName: 'read', output: { type: 'text', value: long } }] }, origin: 'self' as const, turn: 1 },
+                { message: { role: 'assistant', content: [{ type: 'text', text: '结论：已修复' }] }, origin: 'self' as const, turn: 1 },
+                { message: { role: 'user', content: '最新一句' }, origin: 'public' as const, turn: 2 },
+            ],
+        });
         const h = makeSession({ seed });
 
         const event = await h.session.forceCompact({ maxChars: 120, keepLast: 1 });

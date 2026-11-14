@@ -152,7 +152,7 @@ function seed(): void {
         const members: RoomMember[] | undefined = saved[spec.id];
         if (members !== undefined && members.length > 0) spec.members = members;
         store.setMembers(spec.id, spec.members);
-        actorOf(spec);
+        actorOf(spec).recover();
     }
 }
 

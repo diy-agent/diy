@@ -63,7 +63,7 @@ export interface RoomActorDeps {
 }
 
 export class RoomActor {
-    private readonly log = new RoomLog();
+    private readonly log: RoomLog;
     private readonly sessions = new Map<string, BotSession>();
     /** 展示顺序（跨 bot 稳定） */
     private order = 0;
@@ -76,7 +76,12 @@ export class RoomActor {
     /** 已落库的 item id（流式更新会重复发同一条） */
     private readonly persisted = new Set<string>();
 
-    constructor(private readonly deps: RoomActorDeps) {}
+    constructor(private readonly deps: RoomActorDeps) {
+        // 公共日志从库里恢复（append-only，seq 接着走）
+        this.log = new RoomLog(this.deps.store.roomEntries(this.id));
+        // 成员的 session 一开始就建好：上下文、统计、恢复都不需要等第一条消息
+        for (const bot of this.members()) this.sessionOf(bot);
+    }
 
     get id(): string {
         return this.deps.spec.id;
@@ -157,7 +162,7 @@ export class RoomActor {
         const saved = this.deps.store.appendItem(this.id, item);
         this.deps.emit({ kind: 'item', item: saved });
 
-        const entry = this.log.append({ kind: 'say', author: input.author, text, turn: turn.turn, turnId: turn.turnId });
+        const entry = this.appendEntry({ kind: 'say', author: input.author, text, turn: turn.turn, turnId: turn.turnId });
 
         const recipients = this.route(text, participants, input.recipients);
         const recipientIds = new Set(recipients.map((bot) => bot.id));
@@ -166,7 +171,16 @@ export class RoomActor {
         }
 
         for (const bot of recipients) {
-            const delivery = this.deps.store.setDelivery({ roomId: this.id, messageId: saved.id, botId: bot.id, state: 'queued' });
+            // 入队信息一起落库：崩溃后靠它重新投递
+            const delivery = this.deps.store.setDelivery({
+                roomId: this.id,
+                messageId: saved.id,
+                botId: bot.id,
+                state: 'queued',
+                mode: input.mode ?? 'next-step',
+                turn: turn.turn,
+                turnId: turn.turnId,
+            });
             this.deps.emit({ kind: 'delivery', delivery });
         }
 
@@ -181,6 +195,38 @@ export class RoomActor {
                 }),
             ),
         );
+    }
+
+    /**
+     * 崩溃恢复：把还没送达的投递重新投一遍。
+     * `delivering` 视为未送到（进程中途挂了，模型回复也没落盘）。
+     */
+    recover(): void {
+        for (const delivery of this.deps.store.pendingDeliveries(this.id)) {
+            const bot = this.member(delivery.botId);
+            if (bot === undefined) continue;
+            const text = this.deps.store.textOf(this.id, delivery.messageId);
+            if (text === undefined) {
+                this.deps.store.setDelivery({
+                    roomId: this.id,
+                    messageId: delivery.messageId,
+                    botId: delivery.botId,
+                    state: 'failed',
+                    note: '恢复时找不到原文',
+                });
+                continue;
+            }
+            const turn =
+                delivery.turn === undefined
+                    ? undefined
+                    : { turn: delivery.turn, turnId: delivery.turnId ?? `turn-${delivery.messageId}` };
+            void this.sessionOf(bot).post({
+                messageId: delivery.messageId,
+                text,
+                mode: delivery.mode ?? 'next-step',
+                ...(turn === undefined ? {} : { turn }),
+            });
+        }
     }
 
     cancel(options: { keepQueue?: boolean } = {}): void {
@@ -216,6 +262,7 @@ export class RoomActor {
         // 退出的成员把 session 一并丢掉（再进来会按日志重建）
         const keep = new Set(members.map((member) => member.botId));
         for (const botId of [...this.sessions.keys()]) if (!keep.has(botId)) this.sessions.delete(botId);
+        for (const bot of this.members()) this.sessionOf(bot);
     }
 
     addMember(botId: string): void {
@@ -238,6 +285,21 @@ export class RoomActor {
     }
 
     // ── 内部 ───────────────────────────────────────────────────
+
+    /** 追加一条公共条目：内存 + 落库（唯一的写入口） */
+    private appendEntry(input: Parameters<RoomLog['append']>[0]): RoomEntry {
+        const entry = this.log.append(input);
+        this.deps.store.appendRoomEntry(this.id, entry);
+        return entry;
+    }
+
+    private persistSession(botId: string): void {
+        const session = this.sessions.get(botId);
+        if (session === undefined) return;
+        const snapshot = session.snapshot();
+        this.deps.store.saveSession(this.id, botId, snapshot);
+        this.turnSeq = Math.max(this.turnSeq, snapshot.turn);
+    }
 
     private inRoom(bot: Bot): Bot {
         return {
@@ -292,10 +354,12 @@ export class RoomActor {
         let session = this.sessions.get(bot.id);
         if (session !== undefined) return session;
 
+        const saved = this.deps.store.loadSession(this.id, bot.id);
         session = new BotSession({
             bot,
             modelKey: bot.modelKey,
             allocateTurn: () => this.newTurn(),
+            ...(saved === undefined ? {} : { seed: () => saved }),
             ...(this.deps.run === undefined ? {} : { run: this.deps.run }),
             ...(this.deps.compactor === undefined ? {} : { compactor: this.deps.compactor }),
             ...(this.deps.budget === undefined ? {} : { budget: this.deps.budget }),
@@ -335,9 +399,11 @@ export class RoomActor {
                 return;
             }
             case 'turn.end':
+                this.persistSession(bot.id);
                 this.publishConclusion(bot, event.result);
                 return;
             case 'compact':
+                this.persistSession(bot.id);
                 this.deps.onCompact?.(bot, event.event);
                 return;
             case 'error':
@@ -353,7 +419,7 @@ export class RoomActor {
     private publishConclusion(bot: Bot, result: { turn: number; turnId: string; text: string; failed: boolean }): void {
         if (result.failed || result.text === '') return;
 
-        const entry = this.log.append({
+        const entry = this.appendEntry({
             kind: 'conclusion',
             botId: bot.id,
             name: bot.name,

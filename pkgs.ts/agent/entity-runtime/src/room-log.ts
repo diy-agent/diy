@@ -31,8 +31,14 @@ export type RoomEntryInput =
     | { kind: 'notice'; text: string; turn?: number; turnId?: string };
 
 export class RoomLog {
-    private readonly entries: RoomEntry[] = [];
+    private readonly entries: RoomEntry[];
     private seq = 0;
+
+    /** 可从持久化条目恢复（seq 接着往下走） */
+    constructor(entries: readonly RoomEntry[] = []) {
+        this.entries = [...entries];
+        this.seq = entries.reduce((max, entry) => Math.max(max, entry.seq), 0);
+    }
 
     append(input: RoomEntryInput, now = Date.now()): RoomEntry {
         const entry = { ...input, seq: ++this.seq, at: now } as RoomEntry;

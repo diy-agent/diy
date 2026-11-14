@@ -15,6 +15,14 @@ const BOT_B: Bot = { id: 'bot:b', name: 'cops', color: '#222', persona: '产品�
 const HUMAN = { id: 'human:我', name: '我', color: '#999', role: 'human' as const };
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+async function waitFor(check: () => boolean, timeout = 1000): Promise<void> {
+    const startedAt = Date.now();
+    while (!check()) {
+        if (Date.now() - startedAt > timeout) throw new Error('waitFor timeout');
+        await sleep(5);
+    }
+}
+
 interface Harness {
     room: RoomActor;
     store: Store;
@@ -23,8 +31,10 @@ interface Harness {
     items(): Item[];
 }
 
-function makeRoom(options: { hang?: boolean; reply?: (bot: Bot) => string; members?: Room['members'] } = {}): Harness {
-    const store = openStore(':memory:');
+function makeRoom(
+    options: { hang?: boolean; reply?: (bot: Bot) => string; members?: Room['members']; store?: Store } = {},
+): Harness {
+    const store = options.store ?? openStore(':memory:');
     const bots = [BOT_A, BOT_B];
     for (const bot of bots) store.upsertBot(bot);
 
@@ -153,6 +163,53 @@ describe('RoomActor', () => {
         await h.room.say({ text: '没有 at 的一段话', author: HUMAN, recipients: [BOT_A.id, BOT_B.id] });
 
         expect(h.runs.sort()).toEqual(['cops', 'diy']);
+    });
+
+    it('重启：公共日志、会话上下文都能恢复', async () => {
+        const first = makeRoom();
+        await first.room.say({ text: '先讨论一轮', author: HUMAN });
+        const entries = first.room.entries().length;
+
+        // 同一个库，新建一个 actor = 模拟重启
+        const second = makeRoom({ store: first.store });
+        expect(second.room.entries()).toHaveLength(entries);
+        expect(second.runs).toEqual([]); // 恢复本身不该触发运行
+        // 上下文也回来了（含自己的回复和别人的结论）
+        expect(JSON.stringify(second.room.contextOf(BOT_A.id) ?? [])).toContain('diy 的回复');
+    });
+
+    it('崩溃恢复：未送达的投递重新投一遍', async () => {
+        const store = openStore(':memory:');
+        const bots = [BOT_A, BOT_B];
+        for (const bot of bots) store.upsertBot(bot);
+        const userItem: Item = {
+            id: 'u-crash-1',
+            seq: 1,
+            order: 1,
+            turn: 1,
+            turnId: 'turn-crash',
+            at: Date.now(),
+            status: 'done',
+            author: HUMAN,
+            type: 'chat',
+            data: { text: '崩溃前发出去、还没送达的消息' },
+        };
+        store.appendItem('room:1', userItem);
+        store.setDelivery({
+            roomId: 'room:1',
+            messageId: userItem.id,
+            botId: BOT_A.id,
+            state: 'queued',
+            mode: 'next-step',
+            turn: 1,
+            turnId: 'turn-crash',
+        });
+
+        const h = makeRoom({ store });
+        expect(h.runs).toEqual([]);
+        h.room.recover();
+        await waitFor(() => h.room.deliveries()[0]?.state === 'delivered');
+        expect(h.runs).toEqual(['diy']);
     });
 
     it('新成员加入时回放公共日志（能读到此前结论）', async () => {

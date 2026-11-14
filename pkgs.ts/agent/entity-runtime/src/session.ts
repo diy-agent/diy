@@ -76,13 +76,22 @@ export interface SessionStats {
     usage?: TokenUsage;
 }
 
+/** 恢复一个 session 的持久化状态 */
+export interface SessionSeed {
+    entries: TranscriptEntry[];
+    /** 已折叠掉的条数（占位说明用） */
+    collapsed?: number;
+    /** 上一轮实测用量（压缩判据用） */
+    usage?: TokenUsage;
+}
+
 export interface SessionDeps {
     bot: Bot;
     modelKey: string;
     /** 房间分配的回合号（唯一来源；session 自己不开新回合） */
     allocateTurn: () => Turn;
-    /** 首次开跑前的种子；内存版不提供（接持久化后用它回放） */
-    seed?: () => TranscriptEntry[];
+    /** 从持久化恢复（重启 / 后加入） */
+    seed?: () => SessionSeed;
     /** 便于测试注入；默认用 runAgent（真实模型） */
     run?: (input: RunOptions) => AsyncIterable<AgentEvent>;
     /** 压缩策略；默认 simpleCompactor */
@@ -123,7 +132,10 @@ export class BotSession {
     private turnNow = 0;
 
     constructor(private readonly deps: SessionDeps) {
-        this.transcript = deps.seed?.() ?? [];
+        const seed = deps.seed?.();
+        this.transcript = seed?.entries ?? [];
+        this.collapsed = seed?.collapsed ?? 0;
+        this.lastUsage = seed?.usage;
     }
 
     get busy(): boolean {
@@ -170,6 +182,16 @@ export class BotSession {
 
     compactions(): readonly CompactEvent[] {
         return this.events;
+    }
+
+    /** 持久化快照（房间在每轮结束 / 压缩后落盘） */
+    snapshot(): { turn: number; collapsed: number; entries: TranscriptEntry[]; usage?: TokenUsage } {
+        return {
+            turn: this.turnNow,
+            collapsed: this.collapsed,
+            entries: [...this.transcript],
+            ...(this.lastUsage === undefined ? {} : { usage: this.lastUsage }),
+        };
     }
 
     /** 房间公共条目 → 自己这一侧的一条消息；不触发任何运行 */

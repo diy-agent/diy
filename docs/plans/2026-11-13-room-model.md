@@ -301,3 +301,52 @@ protocol  ←  entity-runtime  ←  server
 两者之间只有「借回合号」一个同步调用，其余全是事件。
 
 测试 37 条（room 9 / session 18 / room-log 4 / chat-core 6）。
+
+## 持久化与崩溃恢复（2026-11-14，P4）
+
+### 存了什么
+
+| 表 | 内容 | 谁写 |
+|---|---|---|
+| `entity_items` | 展示时间线（done/failed） | Room（收到 item 事件时去重落库） |
+| `deliveries` | 消息 × 成员的投递状态 + 入队信息（mode/turn/turnId） | Room |
+| `room_entries` | 公共日志（人话 / 结论 / 通知，append-only） | Room（`appendEntry` 唯一写入口） |
+| `session_state` | 每个 (room, bot) 的对话快照（turn / collapsed / entries / usage） | Room（每轮结束、每次压缩后） |
+| `room_members` | 成员 + 本房间覆盖 | Room |
+| `bots` | 全局身份 | server |
+
+关键取舍：
+
+- **session 存快照，不存 append-only**。压缩会就地折叠 tool 消息，用"前缀 + cutSeq"无法还原；
+  快照（JSON 数组）简单、精确、可回放。代价是每轮重写一份，原型阶段可接受。
+- **没有单独的 inbox 表**。队列 = `deliveries WHERE state IN ('queued','delivering')`，
+  这正是最早设计里写的"inbox 就是 deliveries 的切片"。入队时把 `mode / turn / turnId` 一起写进
+  delivery 行，重启后据此重新投递。
+
+### 恢复流程（server 启动）
+
+```
+openStore
+  → seed()：bot + 房间 spec + 成员
+  → actorOf(spec)：RoomLog 从 room_entries 恢复；成员 session 从 session_state 恢复
+  → actor.recover()：把 queued / delivering 的投递重新投一遍
+```
+
+`recover()` 把 `delivering` 也当未送达（进程可能是跑到一半挂的，模型回复本来就没落盘）；
+找不到原文的投递标 `failed`，不静默丢。
+
+### 实测
+
+```
+发「记住代号：蓝鲸 77」→ 重启服务 → 问「代号是什么」→ 答「蓝鲸 77」
+重启后 diy 恢复 10 条上下文、小满 3 条；旧消息没有被重复投递
+```
+
+### 测试
+
+`room.test.ts` 新增 2 条：
+
+- 重启：同一个库新建 actor，公共日志条数一致、上下文含自己的回复、恢复本身不触发运行
+- 崩溃恢复：手工造一条 `queued` 投递，`recover()` 后真的跑了一轮并置为 `delivered`
+
+合计 39 条（room 11 / session 18 / room-log 4 / chat-core 6）。
