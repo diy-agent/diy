@@ -153,8 +153,9 @@ export function AstryxSurface({ targetId }: { targetId: string }) {
                             conversation.send(value);
                             setDraft('');
                         }}
+                        // 运行中也保持"发送"态：插话是正常操作，停止在 SpeakingBar 上
                         onStop={() => conversation.cancel()}
-                        isStopShown={state.running}
+                        isStopShown={false}
                         input={<ChatComposerInput triggers={triggers} label="Message input" placeholder="和这个实体对话…（@ 选 bot）" />}
                     />
                 }

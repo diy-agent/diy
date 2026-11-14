@@ -199,7 +199,13 @@ async function readBody<T>(req: IncomingMessage): Promise<T> {
 }
 
 function sse(res: ServerResponse, payload: unknown): void {
-    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    // 客户端可能已经断开（刷新 / abort / 切房间）：别往死 socket 上写
+    if (res.destroyed || res.writableEnded) return;
+    try {
+        res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    } catch {
+        // 写失败说明连接没了，交给 close 事件清理
+    }
 }
 
 function newBot(name: string, homeRoomId: string, persona: string): Bot {

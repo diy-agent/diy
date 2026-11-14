@@ -36,7 +36,9 @@ export function ChatPanel({ targetId }: { targetId: string }) {
         onCancel: async () => {
             conversation.cancel();
         },
-        isRunning: state.running,
+        // 不把"有人在跑"映射成 composer 的 running 态：那会禁用输入并把发送换成停止，
+        // 而插话是正常操作。停止在 SpeakingBar（按成员）和这里不用管。
+        isRunning: false,
         convertMessage: (message) => message,
     });
 

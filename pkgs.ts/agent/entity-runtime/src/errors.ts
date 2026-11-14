@@ -12,6 +12,9 @@ export function friendlyError(error: unknown): string {
     if (/fetch failed|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET/i.test(`${raw} ${cause}`)) {
         return '网络请求失败（DNS 或连接被拒）。检查网络后重试。';
     }
+    if (/BodyStreamBuffer|aborted|abort/i.test(`${raw} ${cause}`)) {
+        return '模型响应被中断（连接中止）。重试一次；如果反复出现，检查网络或换模型。';
+    }
     if (/\b401\b|Unauthorized|invalid api key/i.test(raw)) {
         return '模型网关拒绝了请求：API key 无效或过期。';
     }

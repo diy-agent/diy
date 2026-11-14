@@ -36,6 +36,14 @@ export function SpeakingBar({ roomId }: { roomId: string }) {
                     </span>
                 );
             })}
+            <button
+                onClick={() => conversation.cancel()}
+                title="停掉所有人"
+                className="ml-auto flex items-center gap-1 rounded border px-1.5 py-0.5 hover:bg-muted"
+            >
+                <Square className="size-2.5" />
+                全部停止
+            </button>
         </div>
     );
 }
