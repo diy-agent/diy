@@ -143,7 +143,13 @@ export function AstryxSurface({ targetId }: { targetId: string }) {
     return (
         <div data-astryx-theme="neutral" style={{ display: 'flex', flex: 1, minHeight: 0, flexDirection: 'column' }}>
             <ErrorBar error={state.error} onRetry={conversation.reload} />
+            {/* Astryx 的 messageArea 只给 maxWidth，不给 marginInline:auto —— 外面这层负责居中 */}
+            <div style={{ flex: 1, minHeight: 0, display: 'flex', justifyContent: 'center' }}>
+            <div style={{ flex: 1, minHeight: 0, width: '100%', maxWidth: 880, display: 'flex', flexDirection: 'column' }}>
             <ChatLayout
+                // balanced/compact 的 messageArea 是 maxWidth:100% + paddingInline:0，
+                // 在整窗布局里消息会贴着窗口边缘；spacious 才给 800px 居中 + 内边距。
+                density="spacious"
                 composer={
                     <ChatComposer
                         value={draft}
@@ -161,6 +167,7 @@ export function AstryxSurface({ targetId }: { targetId: string }) {
                 }
             >
                 <ChatMessageList
+                    density="spacious"
                     isStreaming={state.running}
                     emptyState={
                         <div style={{ padding: 24, opacity: 0.6, fontSize: 13 }}>还没有消息。发一句，或 @ 一个 bot。</div>
@@ -171,6 +178,8 @@ export function AstryxSurface({ targetId }: { targetId: string }) {
                     ))}
                 </ChatMessageList>
             </ChatLayout>
+            </div>
+            </div>
         </div>
     );
 }

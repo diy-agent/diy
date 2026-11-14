@@ -5,6 +5,7 @@ import {
 } from "../../../components/assistant-ui/elements/attachment.aui";
 import { MarkdownText } from "../../../components/assistant-ui/elements/markdown-text";
 import { ToolFallback } from "../../../components/assistant-ui/elements/tool-fallback.aui";
+import { ToolGroup } from "../../../components/assistant-ui/elements/tool-group.aui";
 import { TooltipIconButton } from "../../../components/assistant-ui/elements/tooltip-icon-button";
 import { Button } from "../../../components/ui/button";
 import { cn } from "../../../lib/utils";
@@ -21,6 +22,7 @@ import {
   ThreadPrimitive,
   useAui,
   useAuiState,
+  groupPartByType,
 } from "@assistant-ui/react";
 import {
   ArrowDownIcon,
@@ -441,14 +443,37 @@ const AssistantMessage: FC = () => {
             <span className="text-muted-foreground">{author.role}</span>
           </div>
         )}
-        <MessagePrimitive.Parts>
-          {({ part }) => {
-            if (part.type === "text") return <MarkdownText />;
-            if (part.type === "tool-call")
-              return part.toolUI ?? <ToolFallback {...part} />;
-            return null;
+        {/* 相邻的工具调用折叠成一组（与 Astryx 的 ChatToolCalls 一个约定） */}
+        <MessagePrimitive.GroupedParts
+          groupBy={groupPartByType({ "tool-call": ["group-tool"] })}
+        >
+          {({ part, children }) => {
+            switch (part.type) {
+              case "group-tool":
+                return part.indices.length <= 1 ? (
+                  <>{children}</>
+                ) : (
+                  <ToolGroup count={part.indices.length}>{children}</ToolGroup>
+                );
+              case "text":
+                return <MarkdownText />;
+              case "tool-call":
+                return part.toolUI ?? <ToolFallback {...part} />;
+              case "indicator":
+                return (
+                  <span
+                    data-slot="aui_assistant-message-indicator"
+                    className="animate-pulse font-sans"
+                    aria-label="Assistant is working"
+                  >
+                    {"●"}
+                  </span>
+                );
+              default:
+                return null;
+            }
           }}
-        </MessagePrimitive.Parts>
+        </MessagePrimitive.GroupedParts>
         <AuiIf
           condition={(s) =>
             s.message.status?.type === "running" && s.message.parts.length === 0
