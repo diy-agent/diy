@@ -6,6 +6,7 @@
 import { streamText, tool, type Experimental_Steering, type ModelMessage, type ToolSet } from 'ai';
 import { z } from 'zod';
 
+import { friendlyError } from './errors';
 import { modelOf } from './providers';
 import type { AgentEvent, Bot } from './types';
 
@@ -64,7 +65,8 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
         // 不设步数上限：模型想调多少次工具就调多少次（AI SDK 缺省是 1 步，必须显式覆盖）。
         // 唯一的刹车是用户点停止（abort）。
         stopWhen: () => false,
-        maxRetries: 0,
+        // 连接超时这类瞬时错误自动重试；不可重试的错误 SDK 自己会跳过
+        maxRetries: 2,
         ...(options.steering === undefined ? {} : { experimental_steering: options.steering }),
         onStepFinish: (step) => {
             if (options.onStepTranscript === undefined) return;
@@ -98,14 +100,14 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
                     };
                     break;
                 case 'error':
-                    yield { seq: ++seq, type: 'run.failed', turnId, message: String((part as { error?: unknown }).error ?? 'stream error') };
+                    yield { seq: ++seq, type: 'run.failed', turnId, message: friendlyError((part as { error?: unknown }).error) };
                     return;
                 default:
                     break;
             }
         }
     } catch (error) {
-        yield { seq: ++seq, type: 'run.failed', turnId, message: error instanceof Error ? error.message : String(error) };
+        yield { seq: ++seq, type: 'run.failed', turnId, message: friendlyError(error) };
         return;
     }
 

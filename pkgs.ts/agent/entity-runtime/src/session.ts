@@ -15,6 +15,7 @@
 import { experimental_createSteering, type Experimental_Steering, type ModelMessage, type ToolSet } from 'ai';
 
 import { runAgent, type RunOptions } from './agent';
+import { friendlyError } from './errors';
 import {
     DEFAULT_BUDGET,
     estimateChars,
@@ -341,7 +342,7 @@ export class BotSession {
             }
         } catch (error) {
             failed = true;
-            this.emit({ type: 'error', message: error instanceof Error ? error.message : String(error) });
+            this.emit({ type: 'error', message: friendlyError(error) });
         } finally {
             // 本轮真正发生过的内容（含自己的 tool / reasoning）原样入账
             this.transcript.push(...userEntries, ...produced);
