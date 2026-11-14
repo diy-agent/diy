@@ -180,6 +180,48 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
     );
 }
 
+/**
+ * 消息列表单独 memo：输入框每敲一个字都会让 Surface 重渲染，
+ * 但整棵消息树（含 Markdown 解析）不该跟着重算 —— 不 memo 的话长会话里输入会明显卡。
+ */
+const MessageList = React.memo(function MessageList({ entries, roomId }: { entries: TimelineEntry[]; roomId: string }) {
+    return (
+        <>
+            {entries.map((entry) => (
+                <EntryView key={entry.key} entry={entry} roomId={roomId} />
+            ))}
+        </>
+    );
+});
+
+/** 输入框独立成组件：draft 状态关在里面，敲字只重渲染输入框本身 */
+function AstryxComposer({
+    conversation,
+    triggers,
+    placeholder,
+}: {
+    conversation: ReturnType<typeof conversationOf>;
+    triggers: React.ComponentProps<typeof ChatComposerInput>['triggers'];
+    placeholder: string;
+}) {
+    const [draft, setDraft] = React.useState('');
+    return (
+        <ChatComposer
+            value={draft}
+            onChange={setDraft}
+            placeholder={placeholder}
+            onSubmit={(value) => {
+                conversation.send(value);
+                setDraft('');
+            }}
+            // 运行中也保持"发送"态：插话是正常操作，停止在 SpeakingBar 上
+            onStop={() => conversation.cancel()}
+            isStopShown={false}
+            input={<ChatComposerInput triggers={triggers} label="Message input" placeholder={placeholder} />}
+        />
+    );
+}
+
 /** 候选 → Astryx 触发器菜单的条目 */
 function toSearchItems(candidates: MentionCandidate[]): SearchableItem<MentionCandidate>[] {
     return candidates.map((candidate) => ({ id: candidate.id, label: candidate.name, auxiliaryData: candidate }));
@@ -189,7 +231,6 @@ export function AstryxSurface({ targetId }: { targetId: string }) {
     const shell = useStore();
     const conversation = conversationOf(targetId);
     const state = React.useSyncExternalStore(conversation.subscribe, conversation.get, conversation.get);
-    const [draft, setDraft] = React.useState('');
 
     const entries = React.useMemo(
         () => buildTimeline(state.items, state.deliveries, shell.bots, { speaking: state.speaking }),
@@ -226,18 +267,10 @@ export function AstryxSurface({ targetId }: { targetId: string }) {
             <ChatLayout
                 density="balanced"
                 composer={
-                    <ChatComposer
-                        value={draft}
-                        onChange={setDraft}
+                    <AstryxComposer
+                        conversation={conversation}
+                        triggers={triggers}
                         placeholder="和这个实体对话…（@ 选 bot）"
-                        onSubmit={(value) => {
-                            conversation.send(value);
-                            setDraft('');
-                        }}
-                        // 运行中也保持"发送"态：插话是正常操作，停止在 SpeakingBar 上
-                        onStop={() => conversation.cancel()}
-                        isStopShown={false}
-                        input={<ChatComposerInput triggers={triggers} label="Message input" placeholder="和这个实体对话…（@ 选 bot）" />}
                     />
                 }
             >
@@ -246,9 +279,7 @@ export function AstryxSurface({ targetId }: { targetId: string }) {
                     isStreaming={state.running}
                     emptyState={<EmptyState title="还没有消息" description="发一句，或 @ 一个 bot。" />}
                 >
-                    {entries.map((entry) => (
-                        <EntryView key={entry.key} entry={entry} roomId={targetId} />
-                    ))}
+                    <MessageList entries={entries} roomId={targetId} />
                 </ChatMessageList>
             </ChatLayout>
             </div>
