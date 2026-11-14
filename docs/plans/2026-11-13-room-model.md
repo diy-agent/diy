@@ -202,3 +202,56 @@ diy   5 条 · ≈381 tok                        [压缩]
 
 前端接线：`ChatClient` 增加**可选**的 `sessions()` / `compact()`，只有 HTTP 传输实现；
 store 的 `actions.refreshSessions()` / `compactSession()` 负责拉取与触发。
+
+## Room 聚合根 + 成员模型（2026-11-14）
+
+### 之前的问题
+
+Room 只是一行配置（7 个字段，0 个方法），它的职责散在 server 的 7 个 Map 和一个 567 行文件里：
+`sessionOf` / `route` / `publishConclusion` / `nextTurn` / `nextOrder` / `logOf` / `finish`。
+`kernel.ts` 里还写着一份 `RoomActor` 契约，但没有任何代码 import 它。
+
+### 现在
+
+`entity-runtime/src/room.ts` → `RoomActor`（聚合根），独占：
+
+| 职责 | 方法 |
+|---|---|
+| 成员与默认应答 | `members()` / `member()` / `primary()` / `setMembers()` / `addMember()` |
+| 时间线 | `items()` / `deliveries()` / `entries()` |
+| 发言与投递 | `say()` / `cancel()` |
+| 会话池 | `sessionOf()`（私有）/ `sessionsInfo()` / `contextOf()` |
+| 回合与顺序 | `turnFor()` / `nextOrder()`（私有，唯一分配点） |
+| 路由（@ 规则） | `route()`（私有，唯一实现） |
+| 结论发布 | `publishConclusion()`（私有） |
+| 压缩 | `compact()` |
+| 改名 / 换模型 | `update()` |
+
+`apps/diy2/server/index.ts` 只剩 HTTP/SSE 适配（约 330 行，领域逻辑 0 行）。
+`kernel.ts` 已删除 —— 被真实实现取代，不再保留第二份契约。
+
+### 成员：RoomMember
+
+```ts
+interface RoomMember { botId; modelKey?; persona?; primary? }
+```
+
+- `Bot` 是全局身份（名字 / 颜色 / 归属），`RoomMember` 是它在这个房间里的面孔；
+- 继承链 **成员 > 房间 > bot 自己**（`effectiveModelOf` / `effectivePersonaOf`）；
+- 修掉了旧问题：UI 改房间模型只改 `room.modelKey`，而 bot 跑的是 `bot.modelKey` —— 现在房间模型真的生效。
+
+### @ 规则只留一份
+
+`protocol/src/room.ts` 的 `mentionsOf()`：路由、结论里的点名、前端补全共用。
+（以前 server 里同一个正则抄了两遍。）
+
+### 测试有了落点
+
+`entity-runtime/tests/room.test.ts`（9 条，内存 sqlite + 脚本化 run，不碰 HTTP / 不碰真模型）：
+
+- 无 @ → 只有默认应答；@名字 → 命中者；@all → 全员；显式 recipients → 开会
+- 结论交叉：A 的结论进 B 的上下文、B 不被唤醒、角色是 user
+- 运行中再发 → 沿用同一 turn
+- 成员覆盖：模型 / 人格按 成员 > 房间 > bot
+- cancel → 会话中止且投递标为 failed
+- 新成员回放公共日志

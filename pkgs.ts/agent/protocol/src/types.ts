@@ -1,10 +1,26 @@
-// @diy-agent/protocol —— 实体对话的协议层：只有类型，没有实现。
+// types.ts —— 实体对话的协议层：只有类型，没有实现。
 //
 // 依赖规则（硬）：禁止 import React / node / 任何 UI kit / 任何 runtime 包。
 // 后端（entity-runtime / server）与前端（chat-core / surface）共用这里的定义，
 // 保证「后端产出的事件」与「前端消费的事件」是同一个类型，不靠约定同步。
 
 // ── 容器 / 参与者 ──────────────────────────────────────────────
+
+/**
+ * 房间里的一名成员：bot 身份在房间里的绑定。
+ *
+ * Bot 是全局身份（名字 / 颜色 / 归属），RoomMember 是它在这个房间里的那副面孔：
+ * 可以覆盖模型与人格 —— 同一个 bot 在造价房间和实验房间里不是同一个人格。
+ */
+export interface RoomMember {
+    botId: string;
+    /** 本房间覆盖的模型；缺省用房间默认 */
+    modelKey?: string;
+    /** 本房间覆盖的人格；缺省用 bot 自己的 */
+    persona?: string;
+    /** 默认应答（每个房间至多一个；没有 @ 时只有它说话） */
+    primary?: boolean;
+}
 
 /**
  * 会话容器（原 Entity）。type 开放：project / task / stock / 任意自定义；
@@ -17,11 +33,9 @@ export interface Room {
     name: string;
     /** 类型特有数据：project/task → { dir, projectId? }；stock → { symbol } */
     data: Record<string, unknown>;
-    /** 参与者；primaryBotId 指向其中一个（默认应答） */
-    botIds: string[];
-    /** 默认应答的 bot：没有 @ 时只有它说话 */
-    primaryBotId: string;
-    /** 默认模型（account@provider/model） */
+    /** 成员：身份 + 本房间的覆盖 */
+    members: RoomMember[];
+    /** 房间默认模型（成员没覆盖时用它） */
     modelKey: string;
 }
 
@@ -37,12 +51,12 @@ export interface Bot {
     modelKey: string;
 }
 
-export interface Author {
+export type Author = {
     id: string;
     name: string;
     color: string;
     role: 'human' | 'bot' | 'system';
-}
+};
 
 // ── 展示条目（UI 只消费这些）────────────────────────────────────
 
@@ -93,6 +107,9 @@ export type StreamEvent =
     | { kind: 'delivery'; delivery: Delivery }
     | { kind: 'error'; message: string }
     | { kind: 'done' };
+
+/** 房间自己会发的事件（`done` 属于传输层，不属于领域） */
+export type RoomEvent = Exclude<StreamEvent, { kind: 'done' }>;
 
 export interface Snapshot {
     items: Item[];

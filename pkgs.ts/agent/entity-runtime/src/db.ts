@@ -4,15 +4,16 @@
 
 import { DatabaseSync } from 'node:sqlite';
 
-import type { Bot, Delivery, Item } from './types';
+import type { Bot, Delivery, Item, RoomMember } from './types';
 
 export interface Store {
     readonly db: DatabaseSync;
     listBots(): Bot[];
     upsertBot(bot: Bot): void;
     appendItem(roomId: string, item: Item): Item;
-    setEntityBots(roomId: string, botIds: string[]): void;
-    entityBots(): Record<string, string[]>;
+    setMembers(roomId: string, members: readonly RoomMember[]): void;
+    /** roomId → 成员（按 position） */
+    members(): Record<string, RoomMember[]>;
     setDelivery(delivery: Omit<Delivery, 'updatedAt'>): Delivery;
     listDeliveries(roomId: string): Delivery[];
     itemsOf(roomId: string, afterSeq?: number): Item[];
@@ -38,10 +39,13 @@ export function openStore(file: string): Store {
             at INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS items_entity ON entity_items(entity_id, seq);
-        CREATE TABLE IF NOT EXISTS entity_bots (
+        CREATE TABLE IF NOT EXISTS room_members (
             entity_id TEXT NOT NULL,
             bot_id TEXT NOT NULL,
             position INTEGER NOT NULL,
+            primary_flag INTEGER NOT NULL DEFAULT 0,
+            model_key TEXT,
+            persona TEXT,
             PRIMARY KEY (entity_id, bot_id)
         );
         CREATE TABLE IF NOT EXISTS deliveries (
@@ -54,6 +58,26 @@ export function openStore(file: string): Store {
             PRIMARY KEY (entity_id, message_id, bot_id)
         );
     `);
+
+    // 迁移：老的 entity_bots（只有 id 列表）→ room_members（第一位为 primary）
+    const legacy = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='entity_bots'").get() as
+        | { name: string }
+        | undefined;
+    if (legacy !== undefined) {
+        const count = (db.prepare('SELECT COUNT(*) AS n FROM room_members').get() as { n: number }).n;
+        if (count === 0) {
+            const rows = db.prepare('SELECT entity_id, bot_id, position FROM entity_bots ORDER BY entity_id, position').all() as Array<
+                Record<string, unknown>
+            >;
+            const insert = db.prepare(
+                'INSERT OR IGNORE INTO room_members (entity_id, bot_id, position, primary_flag) VALUES (?,?,?,?)',
+            );
+            for (const row of rows) {
+                insert.run(String(row['entity_id']), String(row['bot_id']), Number(row['position']), Number(row['position']) === 0 ? 1 : 0);
+            }
+        }
+        db.exec('DROP TABLE entity_bots');
+    }
 
     const toBot = (row: Record<string, unknown>): Bot => ({
         id: String(row['id']),
@@ -94,17 +118,36 @@ export function openStore(file: string): Store {
                 .run(roomId, JSON.stringify(item), item.at);
             return { ...item, seq: Number(result.lastInsertRowid) };
         },
-        setEntityBots(roomId: string, botIds: string[]): void {
-            db.prepare('DELETE FROM entity_bots WHERE entity_id = ?').run(roomId);
-            const insert = db.prepare('INSERT INTO entity_bots (entity_id, bot_id, position) VALUES (?,?,?)');
-            botIds.forEach((botId, index) => insert.run(roomId, botId, index));
+        setMembers(roomId: string, members: readonly RoomMember[]): void {
+            db.prepare('DELETE FROM room_members WHERE entity_id = ?').run(roomId);
+            const insert = db.prepare(
+                'INSERT INTO room_members (entity_id, bot_id, position, primary_flag, model_key, persona) VALUES (?,?,?,?,?,?)',
+            );
+            members.forEach((member, index) => {
+                insert.run(
+                    roomId,
+                    member.botId,
+                    index,
+                    member.primary === true ? 1 : 0,
+                    member.modelKey ?? null,
+                    member.persona ?? null,
+                );
+            });
         },
-        entityBots(): Record<string, string[]> {
-            const rows = db.prepare('SELECT entity_id, bot_id FROM entity_bots ORDER BY position ASC').all() as Record<string, unknown>[];
-            const out: Record<string, string[]> = {};
+        members(): Record<string, RoomMember[]> {
+            const rows = db
+                .prepare('SELECT * FROM room_members ORDER BY entity_id, position ASC')
+                .all() as Array<Record<string, unknown>>;
+            const out: Record<string, RoomMember[]> = {};
             for (const row of rows) {
                 const id = String(row['entity_id']);
-                (out[id] ??= []).push(String(row['bot_id']));
+                const member: RoomMember = {
+                    botId: String(row['bot_id']),
+                    ...(row['primary_flag'] === 1 ? { primary: true } : {}),
+                    ...(row['model_key'] === null ? {} : { modelKey: String(row['model_key']) }),
+                    ...(row['persona'] === null ? {} : { persona: String(row['persona']) }),
+                };
+                (out[id] ??= []).push(member);
             }
             return out;
         },

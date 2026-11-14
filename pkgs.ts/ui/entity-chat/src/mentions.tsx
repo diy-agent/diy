@@ -21,6 +21,7 @@ export function useMentionBots(): readonly MentionBot[] {
 /** 当前容器里可 @ 的 bot（第一个是 owner） */
 export function useMentionCandidates(roomId: string): MentionCandidate[] {
     const shell = useStore();
-    const botIds = shell.rooms.find((room) => room.id === roomId)?.botIds;
-    return useMemo(() => (botIds === undefined ? [] : mentionCandidatesOf(botIds, shell.bots)), [botIds, shell.bots]);
+    const room = shell.rooms.find((entry) => entry.id === roomId);
+    const botIds = useMemo(() => (room === undefined ? [] : room.members.map((member) => member.botId)), [room]);
+    return useMemo(() => mentionCandidatesOf(botIds, shell.bots), [botIds, shell.bots]);
 }

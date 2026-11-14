@@ -16,6 +16,7 @@ export {
 export { openStore, type Store } from './db';
 export { Inbox } from './inbox';
 export { Projector, nextId } from './projection';
+export { RoomActor, type RoomActorDeps, type SessionInfo as RoomSessionInfo } from './room';
 export { RoomLog, toMessage, type RoomEntry, type RoomEntryInput } from './room-log';
 export {
     BotSession,
@@ -32,6 +33,8 @@ export type {
     Bot,
     Delivery,
     Room,
+    RoomMember,
+    RoomEvent,
     InboxItem,
     InboxMode,
     Item,

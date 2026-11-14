@@ -8,7 +8,7 @@ export type {
     SessionStats,
     TokenUsage,
 } from './client';
-export { botsOf, dirOf, primaryBotOf } from './entity';
+export { botsOf, dirOf, memberIdsOf, primaryBotOf } from './entity';
 export {
     completeMention,
     dismissMention,

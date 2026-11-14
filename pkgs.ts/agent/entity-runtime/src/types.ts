@@ -7,6 +7,8 @@ export type {
     Delivery,
     DeliveryState,
     Room,
+    RoomMember,
+    RoomEvent,
     InboxItem,
     InboxMode,
     Item,

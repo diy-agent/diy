@@ -90,7 +90,9 @@ export function AddMemberDialog({
     const state = useStore();
     const [name, setName] = React.useState('');
 
-    const available: Bot[] = Object.values(state.bots).filter((bot) => !room.botIds.includes(bot.id));
+    const available: Bot[] = Object.values(state.bots).filter(
+        (bot) => !room.members.some((member) => member.botId === bot.id),
+    );
     const homeName = (bot: Bot): string => {
         const home = state.rooms.find((item) => item.id === bot.homeRoomId);
         if (home === undefined) return '?';
