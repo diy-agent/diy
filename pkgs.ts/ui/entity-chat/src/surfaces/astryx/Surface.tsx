@@ -6,6 +6,7 @@
 import { ChatComposer, ChatComposerInput, ChatLayout, ChatMessage, ChatMessageBubble, ChatMessageList, ChatSystemMessage, ChatToolCalls } from '@astryxdesign/core';
 import { createStaticSource, type SearchableItem } from '@astryxdesign/core/Typeahead';
 import { buildTimeline, type MentionCandidate, type TimelineEntry, type TimelinePart } from '@diy-agent/chat-core';
+import { BotAvatar } from '../../components/BotAvatar';
 import * as React from 'react';
 
 import { ErrorBar } from '../../components/ErrorBar';
@@ -33,7 +34,7 @@ function runsOf(parts: TimelinePart[]): Run[] {
 
 const TOOL_STATUS = { running: 'running', ok: 'complete', error: 'error' } as const;
 
-function DeliveryChips({ entry }: { entry: TimelineEntry }) {
+function DeliveryChips({ entry, roomId }: { entry: TimelineEntry; roomId: string }) {
     if (entry.deliveries.length === 0) return null;
     return (
         <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -51,7 +52,7 @@ function DeliveryChips({ entry }: { entry: TimelineEntry }) {
                         key={delivery.botId}
                         style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, opacity: 0.72 }}
                     >
-                        <span style={{ width: 6, height: 6, borderRadius: 999, background: delivery.color }} />
+                        <BotAvatar author={{ id: delivery.botId, name: delivery.name, color: delivery.color, role: 'bot' }} roomId={roomId} size={14} />
                         {delivery.name} {label}
                     </span>
                 );
@@ -60,7 +61,7 @@ function DeliveryChips({ entry }: { entry: TimelineEntry }) {
     );
 }
 
-function EntryView({ entry }: { entry: TimelineEntry }) {
+function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) {
     if (entry.kind === 'notice' || entry.kind === 'error') {
         const text = entry.parts.map((part) => (part.kind === 'text' ? part.text : '')).join('');
         return (
@@ -73,14 +74,14 @@ function EntryView({ entry }: { entry: TimelineEntry }) {
     if (entry.kind === 'user') {
         const text = entry.parts.map((part) => (part.kind === 'text' ? part.text : '')).join('');
         return (
-            <ChatMessage key={entry.key} sender="user" name={entry.author?.name}>
-                <ChatMessageBubble metadata={<DeliveryChips entry={entry} />}>{text}</ChatMessageBubble>
+            <ChatMessage key={entry.key} sender="user" name={entry.author?.name} avatar={<BotAvatar author={entry.author} roomId={roomId} size={24} />}>
+                <ChatMessageBubble metadata={<DeliveryChips entry={entry} roomId={roomId} />}>{text}</ChatMessageBubble>
             </ChatMessage>
         );
     }
 
     return (
-        <ChatMessage key={entry.key} sender="assistant" name={entry.author?.name}>
+        <ChatMessage key={entry.key} sender="assistant" name={entry.author?.name} avatar={<BotAvatar author={entry.author} roomId={roomId} size={24} />}>
             {runsOf(entry.parts).map((run, index) =>
                 run.kind === 'text' ? (
                     <ChatMessageBubble key={`t${index}`}>
@@ -174,7 +175,7 @@ export function AstryxSurface({ targetId }: { targetId: string }) {
                     }
                 >
                     {entries.map((entry) => (
-                        <EntryView key={entry.key} entry={entry} />
+                        <EntryView key={entry.key} entry={entry} roomId={targetId} />
                     ))}
                 </ChatMessageList>
             </ChatLayout>

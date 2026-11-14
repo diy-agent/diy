@@ -6,6 +6,7 @@ import {
 import { MarkdownText } from "../../../components/assistant-ui/elements/markdown-text";
 import { ToolFallback } from "../../../components/assistant-ui/elements/tool-fallback.aui";
 import { ToolGroup } from "../../../components/assistant-ui/elements/tool-group.aui";
+import { BotAvatar } from "../../../../components/BotAvatar";
 import { TooltipIconButton } from "../../../components/assistant-ui/elements/tooltip-icon-button";
 import { Button } from "../../../components/ui/button";
 import { cn } from "../../../lib/utils";
@@ -433,10 +434,7 @@ const AssistantMessage: FC = () => {
       >
         {author !== undefined && (
           <div className="mb-1 flex items-center gap-2 text-xs">
-            <span
-              className="size-2 rounded-full"
-              style={{ background: author.color }}
-            />
+            <BotAvatar author={author} roomId={meta?.roomId} size={18} />
             <span className="font-medium" style={{ color: author.color }}>
               {author.name}
             </span>
@@ -594,9 +592,10 @@ const UserMessage: FC = () => {
               key={delivery.botId}
               className="flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] text-muted-foreground"
             >
-              <span
-                className="size-1.5 rounded-full"
-                style={{ background: delivery.color }}
+              <BotAvatar
+                author={{ id: delivery.botId, name: delivery.name, color: delivery.color, role: 'bot' }}
+                roomId={meta?.roomId}
+                size={13}
               />
               {delivery.name}
               <span>{deliveryLabel(delivery.state)}</span>

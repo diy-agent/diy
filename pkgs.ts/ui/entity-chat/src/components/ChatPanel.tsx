@@ -17,8 +17,8 @@ export function ChatPanel({ targetId }: { targetId: string }) {
     const state = React.useSyncExternalStore(conversation.subscribe, conversation.get, conversation.get);
 
     const messages = React.useMemo(
-        () => toThreadMessages(state.items, state.deliveries, shell.bots),
-        [state.items, state.deliveries, shell.bots],
+        () => toThreadMessages(state.items, state.deliveries, shell.bots, targetId),
+        [state.items, state.deliveries, shell.bots, targetId],
     );
 
     const mentionBots = useMentionCandidates(targetId);

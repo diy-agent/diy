@@ -19,6 +19,8 @@ export interface CustomMeta {
     kind: 'chat' | 'notice' | 'error';
     author?: TimelineEntry['author'];
     deliveries?: DeliveryChip[];
+    /** 当前房间：头像按项目/任务取图标 */
+    roomId?: string;
 }
 
 const completeStatus: ThreadMessageLike['status'] = { type: 'complete', reason: 'stop' };
@@ -45,6 +47,7 @@ export function toThreadMessages(
     items: Item[],
     deliveries: readonly Delivery[] = [],
     bots: Record<string, Bot> = {},
+    roomId?: string,
 ): ThreadMessageLike[] {
     return buildTimeline(items, deliveries, bots).map((entry) => {
         const createdAt = new Date(entry.at);
@@ -54,6 +57,7 @@ export function toThreadMessages(
             const custom: CustomMeta = {
                 kind: 'chat',
                 author: entry.author,
+                ...(roomId === undefined ? {} : { roomId }),
                 ...(entry.deliveries.length > 0 ? { deliveries: entry.deliveries } : {}),
             };
             return {
@@ -82,7 +86,7 @@ export function toThreadMessages(
             role: 'assistant',
             content: partsOf(entry),
             status,
-            metadata: { custom: { kind: 'chat', author: entry.author } satisfies CustomMeta },
+            metadata: { custom: { kind: 'chat', author: entry.author, ...(roomId === undefined ? {} : { roomId }) } satisfies CustomMeta },
         };
     });
 }
