@@ -134,7 +134,7 @@ export function App() {
                 onOpenSettings={() => setDialog('settings')}
             />
 
-            <main className="flex min-w-0 flex-1 flex-col">
+            <main className="relative flex min-w-0 flex-1 flex-col">
                 {!state.loaded ? (
                     <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">连接 diy2 后端…</div>
                 ) : room === undefined ? (
@@ -144,8 +144,8 @@ export function App() {
                         <RoomHeader room={room} onAddMember={() => setDialog('member')} onPickModel={() => setModelTarget(room.id)} />
                         <SurfaceTabs value={surfaceId} onChange={setSurfaceId} />
                         <SpeakingBar roomId={room.id} />
-                        <AskBar roomId={room.id} />
                         <SurfaceView surfaceId={surfaceId} targetId={room.id} />
+                        <AskBar roomId={room.id} />
                     </>
                 )}
                 {state.error !== undefined && (

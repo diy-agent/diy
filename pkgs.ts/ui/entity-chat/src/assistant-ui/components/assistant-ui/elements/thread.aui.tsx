@@ -7,6 +7,7 @@ import { MarkdownText } from "../../../components/assistant-ui/elements/markdown
 import { ToolFallback } from "../../../components/assistant-ui/elements/tool-fallback.aui";
 import { ToolGroup } from "../../../components/assistant-ui/elements/tool-group.aui";
 import { BotAvatar } from "../../../../components/BotAvatar";
+import { TypingDots } from "../../../../components/TypingDots";
 import { TooltipIconButton } from "../../../components/assistant-ui/elements/tooltip-icon-button";
 import { Button } from "../../../components/ui/button";
 import { cn } from "../../../lib/utils";
@@ -96,7 +97,9 @@ export const Thread: FC = () => {
       }}
     >
       <ThreadPrimitive.Viewport
-        turnAnchor="top"
+        // 模板默认 "top"：新用户消息锚在顶部，助手回复在下方 —— 发完消息后
+        // "正在输入" 会落在可视区外。聊天场景用经典 "bottom"（始终贴底）。
+        turnAnchor="bottom"
         data-slot="aui_thread-viewport"
         className="relative flex flex-1 flex-col overflow-x-auto overflow-y-scroll scroll-smooth"
       >
@@ -403,6 +406,28 @@ const AssistantMessage: FC = () => {
         ?.custom,
   );
   const author = meta?.author;
+
+  if (meta?.kind === "typing") {
+    return (
+      <MessagePrimitive.Root
+        data-slot="aui_assistant-message-root"
+        data-role="assistant"
+        className="fade-in slide-in-from-bottom-1 animate-in relative"
+      >
+        <div className="text-foreground px-2 leading-relaxed">
+          {author !== undefined && (
+            <div className="mb-1 flex items-center gap-2 text-xs">
+              <BotAvatar author={author} roomId={meta?.roomId} size={18} />
+              <span className="font-medium" style={{ color: author.color }}>
+                {author.name}
+              </span>
+            </div>
+          )}
+          <TypingDots />
+        </div>
+      </MessagePrimitive.Root>
+    );
+  }
 
   if (meta?.kind === "notice") {
     return (

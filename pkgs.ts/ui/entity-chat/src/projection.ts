@@ -16,7 +16,7 @@ export interface DeliveryChip {
 
 export interface CustomMeta {
     [key: string]: unknown;
-    kind: 'chat' | 'notice' | 'error';
+    kind: 'chat' | 'notice' | 'error' | 'typing';
     author?: TimelineEntry['author'];
     deliveries?: DeliveryChip[];
     /** 当前房间：头像按项目/任务取图标 */
@@ -48,8 +48,9 @@ export function toThreadMessages(
     deliveries: readonly Delivery[] = [],
     bots: Record<string, Bot> = {},
     roomId?: string,
+    speaking: readonly string[] = [],
 ): ThreadMessageLike[] {
-    return buildTimeline(items, deliveries, bots).map((entry) => {
+    return buildTimeline(items, deliveries, bots, { speaking }).map((entry) => {
         const createdAt = new Date(entry.at);
         const status = entry.streaming ? runningStatus : completeStatus;
 
@@ -66,6 +67,20 @@ export function toThreadMessages(
                 role: 'user',
                 content: [{ type: 'text', text: entry.parts.map((part) => (part.kind === 'text' ? part.text : '')).join('') }],
                 metadata: { custom },
+            };
+        }
+
+        if (entry.kind === 'typing') {
+            // 空内容 + running：模板的 GroupedParts indicator 会渲染"●"
+            return {
+                id: entry.key,
+                createdAt,
+                role: 'assistant',
+                content: [],
+                status: runningStatus,
+                metadata: {
+                    custom: { kind: 'typing', author: entry.author, ...(roomId === undefined ? {} : { roomId }) } satisfies CustomMeta,
+                },
             };
         }
 

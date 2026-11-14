@@ -125,7 +125,7 @@ function AskItem({ roomId, request }: { roomId: string; request: AskRequest }) {
     };
 
     return (
-        <div className="border-b bg-sky-500/10 px-4 py-2">
+        <div className="border-b border-sky-500/20 bg-sky-500/10 px-4 py-2 last:border-b-0">
             <div className="flex items-start gap-2 text-xs">
                 <HelpCircle className="mt-0.5 size-3.5 shrink-0 text-sky-400" />
                 <div className="min-w-0 flex-1">
@@ -169,11 +169,15 @@ export function AskBar({ roomId }: { roomId: string }) {
 
     if (state.asks.length === 0) return null;
 
+    // 浮在发送框上方：人发完消息是盯着底部的，放顶部等于没提示。
+    // 故意覆盖在 composer 之上（bottom-24 ≈ 96px），不挤占消息区。
     return (
-        <div>
-            {state.asks.map((request) => (
-                <AskItem key={request.askId} roomId={roomId} request={request} />
-            ))}
+        <div className="pointer-events-none absolute inset-x-0 bottom-24 z-30 flex justify-center px-4">
+            <div className="pointer-events-auto w-full max-w-[880px] overflow-hidden rounded-xl border bg-background/95 shadow-xl backdrop-blur">
+                {state.asks.map((request) => (
+                    <AskItem key={request.askId} roomId={roomId} request={request} />
+                ))}
+            </div>
         </div>
     );
 }

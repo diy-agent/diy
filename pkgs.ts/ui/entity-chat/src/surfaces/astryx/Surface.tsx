@@ -7,6 +7,7 @@ import { ChatComposer, ChatComposerInput, ChatLayout, ChatMessage, ChatMessageBu
 import { createStaticSource, type SearchableItem } from '@astryxdesign/core/Typeahead';
 import { buildTimeline, type MentionCandidate, type TimelineEntry, type TimelinePart } from '@diy-agent/chat-core';
 import { BotAvatar } from '../../components/BotAvatar';
+import { TypingDots } from '../../components/TypingDots';
 import * as React from 'react';
 
 import { ErrorBar } from '../../components/ErrorBar';
@@ -80,6 +81,16 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
         );
     }
 
+    if (entry.kind === 'typing') {
+        return (
+            <ChatMessage key={entry.key} sender="assistant" name={entry.author?.name} avatar={<BotAvatar author={entry.author} roomId={roomId} size={24} />}>
+                <ChatMessageBubble>
+                    <TypingDots />
+                </ChatMessageBubble>
+            </ChatMessage>
+        );
+    }
+
     return (
         <ChatMessage key={entry.key} sender="assistant" name={entry.author?.name} avatar={<BotAvatar author={entry.author} roomId={roomId} size={24} />}>
             {runsOf(entry.parts).map((run, index) =>
@@ -115,8 +126,8 @@ export function AstryxSurface({ targetId }: { targetId: string }) {
     const [draft, setDraft] = React.useState('');
 
     const entries = React.useMemo(
-        () => buildTimeline(state.items, state.deliveries, shell.bots),
-        [state.items, state.deliveries, shell.bots],
+        () => buildTimeline(state.items, state.deliveries, shell.bots, { speaking: state.speaking }),
+        [state.items, state.deliveries, shell.bots, state.speaking],
     );
 
     const candidates = useMentionCandidates(targetId);

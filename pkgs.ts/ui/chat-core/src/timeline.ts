@@ -22,7 +22,11 @@ export interface TimelineDelivery {
 export interface TimelineEntry {
     /** 稳定 key（React key / 测试锚点）：用户与提示是 item id，bot 消息是 turnId:authorId */
     key: string;
-    kind: 'user' | 'assistant' | 'notice' | 'error';
+    /**
+     * typing = 这个 bot 已经开跑但还没产出内容（"正在输入…"占位）。
+     * 没有它，用户发完消息只会看到投递 chip，没有任何"bot 收到了"的反馈。
+     */
+    kind: 'user' | 'assistant' | 'notice' | 'error' | 'typing';
     turnId: string;
     author?: Author;
     parts: TimelinePart[];
@@ -66,6 +70,7 @@ export function buildTimeline(
     items: readonly Item[],
     deliveries: readonly Delivery[] = [],
     bots: Record<string, Bot> = {},
+    options: { speaking?: readonly string[] } = {},
 ): TimelineEntry[] {
     const entries: TimelineEntry[] = [];
     const byKey = new Map<string, TimelineEntry>();
@@ -123,6 +128,28 @@ export function buildTimeline(
         const part = partOf(item);
         if (part !== undefined) entry.parts.push(part);
         if (item.status === 'streaming') entry.streaming = true;
+    }
+
+    // 正在跑但还没有任何流式内容的 bot：补一个"正在输入…"占位
+    const streamingAuthors = new Set(
+        entries.filter((entry) => entry.kind === 'assistant' && entry.streaming).map((entry) => entry.author?.id ?? ''),
+    );
+    const turnId = items.at(-1)?.turnId ?? '';
+    for (const botId of options.speaking ?? []) {
+        if (streamingAuthors.has(botId)) continue;
+        const bot = bots[botId];
+        entries.push({
+            key: `typing:${botId}:${turnId}`,
+            kind: 'typing',
+            turnId,
+            ...(bot === undefined
+                ? {}
+                : { author: { id: bot.id, name: bot.name, color: bot.color, role: 'bot' as const } }),
+            parts: [],
+            streaming: true,
+            deliveries: [],
+            at: Date.now(),
+        });
     }
 
     return entries;
