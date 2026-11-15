@@ -8,23 +8,19 @@ import {
     Button,
     ChatComposer,
     ChatComposerInput,
-    ChatLayout,
     ChatMessage,
     ChatMessageBubble,
-    ChatMessageList,
     ChatMessageMetadata,
     ChatSystemMessage,
     ChatToolCalls,
-    EmptyState,
     Markdown,
     Timestamp,
     type ChatMessageStatus,
 } from '@astryxdesign/core';
 import { createStaticSource, type SearchableItem } from '@astryxdesign/core/Typeahead';
+import { ChatVirtualizer } from '@astryxdesign/lab';
 import { buildTimeline, type MentionCandidate, type TimelineEntry, type TimelinePart } from '@diy-agent/chat-core';
 import { AskCard } from '../../components/AskCard';
-import { ShowEarlier } from '../../components/ShowEarlier';
-import { useWindowed } from '../../components/useWindowed';
 import { BotAvatar } from '../../components/BotAvatar';
 import { deliveryFooterOf, deliveryStatusOf, TOOL_STATUS, toolTargetOf } from './mapping';
 import { RunningIndicator } from '../../components/RunningIndicator';
@@ -200,6 +196,13 @@ function AstryxComposer({
     );
 }
 
+/** ChatVirtualizer 的行高估值：偏低无妨（内容长出来时位置仍然有效） */
+function estimateRowHeight(entry: TimelineEntry): number {
+    if (entry.kind === 'user') return 64;
+    if (entry.kind === 'typing' || entry.kind === 'notice' || entry.kind === 'error') return 48;
+    return 180;
+}
+
 /** 候选 → Astryx 触发器菜单的条目 */
 function toSearchItems(candidates: MentionCandidate[]): SearchableItem<MentionCandidate>[] {
     return candidates.map((candidate) => ({ id: candidate.id, label: candidate.name, auxiliaryData: candidate }));
@@ -219,7 +222,6 @@ export function AstryxSurface({ targetId }: { targetId: string }) {
         [state.items, state.deliveries, shell.bots, state.speaking, state.asks],
     );
 
-    const windowed = useWindowed(entries);
     const candidates = useMentionCandidates(targetId);
     const triggers = React.useMemo(
         () => [
@@ -264,27 +266,27 @@ export function AstryxSurface({ targetId }: { targetId: string }) {
                     />
                 </div>
             )}
-            {/* 100% 宽 + 内边距：spacious 的 800px 上限叠在外层 880 壳里会左右不对称 */}
+            {/* 长会话用官方 ChatVirtualizer：只渲染视口附近的条目（1 万条的 story 也是它） */}
             <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', paddingInline: 24 }}>
-                <ChatLayout
-                    density="balanced"
-                    composer={
-                        <AstryxComposer
-                            conversation={conversation}
-                            triggers={triggers}
-                            placeholder="和这个实体对话…（@ 选 bot）"
-                        />
-                    }
-                >
-                    <ChatMessageList
-                        density="balanced"
-                        isStreaming={state.running}
-                        emptyState={<EmptyState title="还没有消息" description="发一句，或 @ 一个 bot。" />}
-                    >
-                        <ShowEarlier hidden={windowed.hidden} onClick={windowed.showMore} />
-                        <MessageList entries={[...windowed.visible]} roomId={targetId} />
-                    </ChatMessageList>
-                </ChatLayout>
+                <ChatVirtualizer
+                    data={entries}
+                    getRowKey={(entry) => entry.key}
+                    getItemType={(entry) => entry.kind}
+                    estimatedItemSize={estimateRowHeight}
+                    renderItem={({ item }) => (
+                        // 行距必须放在 renderItem 内部（容器 gap 不会被测量，行高会累计漂移）
+                        <div style={{ paddingBlock: 6 }}>
+                            <EntryView entry={item} roomId={targetId} />
+                        </div>
+                    )}
+                />
+                <div style={{ flex: '0 0 auto', paddingBlock: 12 }}>
+                    <AstryxComposer
+                        conversation={conversation}
+                        triggers={triggers}
+                        placeholder="和这个实体对话…（@ 选 bot）"
+                    />
+                </div>
             </div>
         </div>
     );
