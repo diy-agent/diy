@@ -1,0 +1,29 @@
+{
+    "name": "@diy-agent/entity-runtime",
+    "version": "0.0.1",
+    "private": true,
+    "description": "实体对话运行时（切片）：Inbox(sqlite) + Agent 事件 + Projection + 消息持久化",
+    "type": "module",
+    "main": "./src/index.ts",
+    "types": "./src/index.ts",
+    "exports": {
+        ".": {
+            "types": "./src/index.ts",
+            "default": "./src/index.ts"
+        }
+    },
+    "dependencies": {
+        "@ai-sdk/openai-compatible": "^3.0.92",
+        "@diy-agent/protocol": "*",
+        "ai": "^7.0.173",
+        "zod": "^4.2.0"
+    },
+    "devDependencies": {
+        "@types/node": "^26.1.0",
+        "typescript": "^7.0.2",
+        "vitest": "^4.1.10"
+    },
+    "scripts": {
+        "test": "vitest run"
+    }
+}

@@ -1,0 +1,18 @@
+{
+    "name": "@diy-agent/chat-transport-http",
+    "version": "0.0.1",
+    "private": true,
+    "description": "ChatClient 的 HTTP/SSE 实现（临时传输层；diy-rpc 落地后换包）",
+    "type": "module",
+    "main": "./src/index.ts",
+    "types": "./src/index.ts",
+    "exports": {
+        ".": {
+            "types": "./src/index.ts",
+            "default": "./src/index.ts"
+        }
+    },
+    "dependencies": {
+        "@diy-agent/chat-core": "*"
+    }
+}

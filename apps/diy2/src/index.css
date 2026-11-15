@@ -1,0 +1,53 @@
+/*
+ * 刻意**不引入 Tailwind 的 preflight**：
+ * 它会把 h1-h6 的字号重置成 inherit、把表格边框清成 0、把 body 背景刷白，
+ * 而 Astryx 的 Markdown/表格/标题排版正是靠这些默认值。两套设计系统共用一页时
+ * 只能留一套 reset —— 这里留 Astryx 的（astryx.css 自带 @layer reset）。
+ *
+ * 我们自己的壳只需要下面这几条中性规则；不要在这里重置 h1-h6 / p / ul / table。
+ */
+@layer theme, base, components, utilities;
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
+@import '@diy-agent/entity-chat/styles.css';
+
+@source '../../../pkgs.ts/ui/entity-chat/src';
+@source './';
+
+@layer base {
+    *,
+    ::before,
+    ::after {
+        box-sizing: border-box;
+    }
+
+    html,
+    body,
+    #root {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+    }
+
+    body {
+        font-family: -apple-system, system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', 'Noto Sans', sans-serif;
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
+    }
+
+    /* 原生控件的字体不会继承，壳里的按钮/输入框需要 */
+    button,
+    input,
+    textarea,
+    select {
+        font: inherit;
+        color: inherit;
+    }
+
+    button {
+        background: none;
+        border: 0;
+        padding: 0;
+        cursor: pointer;
+    }
+}

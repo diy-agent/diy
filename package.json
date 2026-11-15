@@ -1,32 +1,34 @@
 {
-  "name": "diy-monorepo",
-  "private": true,
-  "workspaces": [
-    "pkgs.ts/*/*",
-    "pkgs.ts/flow",
-    "pkgs.ts/room",
-    "apps/*"
-  ],
-  "devDependencies": {
-    "@material/material-color-utilities": "^0.4.0",
-    "@tailwindcss/cli": "^4.3.5",
-    "@testing-library/dom": "^10.4.2",
-    "@testing-library/user-event": "^14.6.9",
-    "js-yaml": "^5.5.0",
-    "knip": "^6.43.0",
-    "oxfmt": "^0.57.0",
-    "oxlint": "^1.72.0",
-    "playwright-core": "^1.63.0",
-    "tailwindcss": "^4.3.5",
-    "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
-  },
-  "allowScripts": {
-    "esbuild@0.28.1": true
-  },
-  "dependencies": {
-    "remark-gfm": "^4.0.1",
-    "shiki": "^4.4.3",
-    "solid-markdown": "^2.1.1"
-  }
+    "name": "diy-monorepo",
+    "private": true,
+    "workspaces": [
+        "pkgs.ts/*/*",
+        "pkgs.ts/flow",
+        "pkgs.ts/room",
+        "apps/*"
+    ],
+    "devDependencies": {
+        "@ai-sdk/provider": "4.0.38",
+        "@material/material-color-utilities": "^0.4.0",
+        "@tailwindcss/cli": "^4.3.5",
+        "@testing-library/dom": "^10.4.2",
+        "@testing-library/user-event": "^14.6.9",
+        "js-yaml": "^5.5.0",
+        "knip": "^6.43.0",
+        "oxfmt": "^0.57.0",
+        "oxlint": "^1.72.0",
+        "playwright-core": "^1.63.0",
+        "tailwindcss": "^4.3.5",
+        "typescript": "^7.0.2",
+        "vitest": "^4.1.10"
+    },
+    "allowScripts": {
+        "esbuild@0.28.1": true,
+        "@astryxdesign/core@0.7.15": true
+    },
+    "dependencies": {
+        "remark-gfm": "^4.0.1",
+        "shiki": "^4.4.3",
+        "solid-markdown": "^2.1.1"
+    }
 }

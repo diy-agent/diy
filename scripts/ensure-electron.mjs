@@ -40,14 +40,13 @@ import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-// Electron 二进制的「并发探测镜像 + 带进度下载」与发行 CLI（apps/chat/bin）**共用一份实现**：
-// 两边都写一遍必然漂移，而 2026-10-30 的事故正是「静默下载 + 单个镜像」（##478）。
+// Electron 二进制的「并发探测镜像 + 带进度下载」实现（原在 apps/chat/bin，di2 清理后归到 scripts）。
 import {
   chooseMirror,
   DEFAULT_MIRRORS,
   downloadZipFile,
   probeMirrors,
-} from '../apps/chat/bin/electron-bootstrap.mjs';
+} from './electron-bootstrap.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // 仓根（`scripts/` 的上一级）；`DIY_ENSURE_ELECTRON_ROOT` 只为可测性留的口子（沙箱树里验行为）

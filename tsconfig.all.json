@@ -62,12 +62,6 @@
       "path": "pkgs.ts/ui/workbench-ui"
     },
     {
-      "path": "pkgs.ts/ui/chat-page"
-    },
-    {
-      "path": "apps/minimal"
-    },
-    {
       "path": "apps/diy-app"
     },
     {
@@ -77,10 +71,22 @@
       "path": "pkgs.ts/model/catalog"
     },
     {
-      "path": "apps/chat"
+      "path": "pkgs.ts/agent/protocol"
     },
     {
-      "path": "apps/web"
-    }
-  ]
+      "path": "pkgs.ts/agent/entity-runtime"
+    },
+    {
+      "path": "pkgs.ts/ui/chat-core"
+    },
+    {
+      "path": "pkgs.ts/ui/chat-transport-http"
+    },
+    {
+      "path": "pkgs.ts/ui/entity-chat"
+    },
+    {
+      "path": "apps/diy2"
+    },
+    ]
 }

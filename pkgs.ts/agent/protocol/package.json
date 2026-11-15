@@ -1,0 +1,15 @@
+{
+    "name": "@diy-agent/protocol",
+    "version": "0.0.1",
+    "private": true,
+    "description": "实体对话协议：纯类型（Item / Event / Command / Entity / Bot / Delivery）。禁止 React / node / UI kit",
+    "type": "module",
+    "main": "./src/index.ts",
+    "types": "./src/index.ts",
+    "exports": {
+        ".": {
+            "types": "./src/index.ts",
+            "default": "./src/index.ts"
+        }
+    }
+}

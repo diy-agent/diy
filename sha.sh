@@ -716,9 +716,7 @@ github-actions-cicd()    {
 }
 
 # lab：HMR 开发实例（人看效果 / agent 实验都用它），独占 build/lab/**，与 test 互不干扰。
-# lab [--app <name>]：缺省起 diy-app（行为不变）；`--app minimal` 起 apps/minimal（##458）
-#   ./sha.sh lab                  → apps/diy-app/sha.sh lab
-#   ./sha.sh lab --app minimal    → apps/minimal/sha.sh lab（lab 变体下拉 CDP 9222）
+# lab [--app <name>]：缺省起 diy-app；其它 app 走 apps/<name>/sha.sh lab
 lab()     {
     local app_name="diy-app"
     while (($#)); do
