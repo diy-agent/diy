@@ -83,7 +83,10 @@ export function roomOf(id: string): Room | undefined {
 }
 
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
-    const res = await fetch(`/api${path}`, { ...init, headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) } });
+    const res = await fetch(`/api${path}`, {
+        ...init,
+        headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
+    });
     if (!res.ok) throw new Error(`${path} → ${res.status}`);
     return (await res.json()) as T;
 }
@@ -91,7 +94,14 @@ async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
 async function refresh(): Promise<void> {
     const [rooms, bots] = await Promise.all([jsonFetch<Room[]>('/rooms'), jsonFetch<Bot[]>('/bots')]);
     const selectedId = state.selectedId === '' ? (rooms[0]?.id ?? '') : state.selectedId;
-    emit({ ...state, rooms, bots: Object.fromEntries(bots.map((bot) => [bot.id, bot])), loaded: true, selectedId, error: undefined });
+    emit({
+        ...state,
+        rooms,
+        bots: Object.fromEntries(bots.map((bot) => [bot.id, bot])),
+        loaded: true,
+        selectedId,
+        error: undefined,
+    });
 }
 
 // ─── 首屏连接：失败就一直退避重试 ────────────────────────────────────
@@ -167,7 +177,10 @@ export const actions = {
 
     renameRoom(id: string, name: string): void {
         if (name.trim() === '') return;
-        void jsonFetch(`/rooms/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ name: name.trim() }) })
+        void jsonFetch(`/rooms/${encodeURIComponent(id)}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ name: name.trim() }),
+        })
             .then(refresh)
             .catch(() => undefined);
     },
@@ -190,7 +203,13 @@ export const actions = {
     createProject(input: { name: string; dir: string }): void {
         void jsonFetch<Room>('/rooms', {
             method: 'POST',
-            body: JSON.stringify({ type: 'project', name: input.name, data: { dir: input.dir } }),
+            // 带上默认模型：SettingsDialog 里"新建的都继承它"才成立
+            body: JSON.stringify({
+                type: 'project',
+                name: input.name,
+                modelKey: state.defaultModelKey,
+                data: { dir: input.dir },
+            }),
         })
             .then((room) => refresh().then(() => emit({ ...state, selectedId: room.id })))
             .catch(() => undefined);
@@ -204,6 +223,7 @@ export const actions = {
             body: JSON.stringify({
                 type: 'task',
                 name: `新任务 ${count}`,
+                modelKey: state.defaultModelKey,
                 data: { projectId, dir: project?.data['dir'] },
             }),
         })
@@ -213,8 +233,16 @@ export const actions = {
 
     addBot(roomId: string, name: string): void {
         if (name.trim() === '') return;
-        void jsonFetch<Bot>('/bots', { method: 'POST', body: JSON.stringify({ name: name.trim(), homeRoomId: roomId }) })
-            .then((bot) => jsonFetch(`/rooms/${encodeURIComponent(roomId)}/bots`, { method: 'POST', body: JSON.stringify({ botId: bot.id }) }))
+        void jsonFetch<Bot>('/bots', {
+            method: 'POST',
+            body: JSON.stringify({ name: name.trim(), homeRoomId: roomId, modelKey: state.defaultModelKey }),
+        })
+            .then((bot) =>
+                jsonFetch(`/rooms/${encodeURIComponent(roomId)}/bots`, {
+                    method: 'POST',
+                    body: JSON.stringify({ botId: bot.id }),
+                }),
+            )
             .then(refresh)
             .catch(() => undefined);
     },
@@ -229,7 +257,11 @@ export const actions = {
     },
 
     /** 手动压一个 bot 的上下文：只影响它自己，不触发运行 */
-    compactSession(roomId: string, botId: string, options: { keepLast?: number; maxChars?: number } = {}): Promise<CompactOutcome | null> {
+    compactSession(
+        roomId: string,
+        botId: string,
+        options: { keepLast?: number; maxChars?: number } = {},
+    ): Promise<CompactOutcome | null> {
         if (client.compact === undefined) return Promise.resolve(null);
         return client
             .compact(roomId, botId, options)

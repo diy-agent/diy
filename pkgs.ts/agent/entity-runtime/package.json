@@ -13,10 +13,10 @@
         }
     },
     "dependencies": {
-        "@ai-sdk/openai-compatible": "^3.0.90",
-        "ai": "^7.0.170",
-        "zod": "^4.2.0",
-        "@diy-agent/protocol": "*"
+        "@ai-sdk/openai-compatible": "^3.0.92",
+        "@diy-agent/protocol": "*",
+        "ai": "^7.0.173",
+        "zod": "^4.2.0"
     },
     "devDependencies": {
         "@types/node": "^26.1.0",

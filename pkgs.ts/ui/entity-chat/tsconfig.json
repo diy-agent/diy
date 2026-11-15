@@ -3,8 +3,17 @@
     "compilerOptions": {
         "composite": true,
         "noEmit": true,
-        "lib": ["ES2022", "DOM", "DOM.Iterable"],
-        "jsx": "react-jsx"
+        "lib": [
+            "ES2022",
+            "DOM",
+            "DOM.Iterable"
+        ],
+        "jsx": "react-jsx",
+        "types": [
+            "vite/client"
+        ]
     },
-    "include": ["src/**/*"]
+    "include": [
+        "src/**/*"
+    ]
 }

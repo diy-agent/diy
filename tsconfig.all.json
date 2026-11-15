@@ -70,5 +70,23 @@
     {
       "path": "pkgs.ts/model/catalog"
     },
+    {
+      "path": "pkgs.ts/agent/protocol"
+    },
+    {
+      "path": "pkgs.ts/agent/entity-runtime"
+    },
+    {
+      "path": "pkgs.ts/ui/chat-core"
+    },
+    {
+      "path": "pkgs.ts/ui/chat-transport-http"
+    },
+    {
+      "path": "pkgs.ts/ui/entity-chat"
+    },
+    {
+      "path": "apps/diy2"
+    },
     ]
 }

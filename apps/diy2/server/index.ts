@@ -78,7 +78,8 @@ function cwdOf(spec: Room): string | undefined {
     const own = spec.data['dir'];
     if (typeof own === 'string' && own !== '') return expandHome(own);
     const projectId = spec.data['projectId'];
-    const parent = typeof projectId === 'string' ? [...rooms.values()].find((actor) => actor.spec.id === projectId) : undefined;
+    const parent =
+        typeof projectId === 'string' ? [...rooms.values()].find((actor) => actor.spec.id === projectId) : undefined;
     const parentDir = parent?.spec.data['dir'];
     return typeof parentDir === 'string' && parentDir !== '' ? expandHome(parentDir) : undefined;
 }
@@ -154,7 +155,10 @@ function seed(): void {
             type: 'project',
             name: 'diy',
             data: { dir: '~/git/diy/diy' },
-            members: [{ botId: byName('diy')?.id ?? bots[0]!.id, primary: true }, { botId: byName('小满')?.id ?? bots[0]!.id }],
+            members: [
+                { botId: byName('diy')?.id ?? bots[0]!.id, primary: true },
+                { botId: byName('小满')?.id ?? bots[0]!.id },
+            ],
             modelKey: DEFAULT_MODEL,
         },
         {
@@ -264,7 +268,11 @@ const server = createServer((req, res) => {
 
     try {
         if (req.method === 'GET' && url.pathname === '/api/rooms') {
-            json(res, 200, [...rooms.values()].map((actor) => actor.spec));
+            json(
+                res,
+                200,
+                [...rooms.values()].map((actor) => actor.spec),
+            );
             return;
         }
 
@@ -287,7 +295,9 @@ const server = createServer((req, res) => {
 
         // POST /api/rooms —— 新建任意类型的容器（默认 bot 同名）
         if (req.method === 'POST' && url.pathname === '/api/rooms') {
-            void readBody<{ type?: string; name?: string; data?: Record<string, unknown> }>(req).then((body) => {
+            void readBody<{ type?: string; name?: string; modelKey?: string; data?: Record<string, unknown> }>(
+                req,
+            ).then((body) => {
                 const name = (body.name ?? '').trim();
                 if (name === '') return json(res, 400, { error: 'name required' });
                 const type = body.type ?? 'project';
@@ -296,8 +306,10 @@ const server = createServer((req, res) => {
                 if (type === 'task' && (typeof projectId !== 'string' || roomOf(projectId) === undefined)) {
                     return json(res, 400, { error: 'task 需要有效的 data.projectId' });
                 }
+                // 默认模型由 UI 传（SettingsDialog 的那份）；没传才用服务端兜底
+                const modelKey = body.modelKey ?? DEFAULT_MODEL;
                 const id = `${type}-${Date.now().toString(36)}`;
-                const bot = newBot(name, id, `${type} bot`);
+                const bot = { ...newBot(name, id, `${type} bot`), modelKey };
                 store.upsertBot(bot);
                 const spec: Room = {
                     id,
@@ -305,7 +317,7 @@ const server = createServer((req, res) => {
                     name,
                     data: body.data ?? {},
                     members: [{ botId: bot.id, primary: true }],
-                    modelKey: DEFAULT_MODEL,
+                    modelKey,
                 };
                 store.setMembers(id, spec.members);
                 actorOf(spec);
@@ -359,7 +371,13 @@ const server = createServer((req, res) => {
         }
 
         // GET /api/rooms/:id/events —— 常驻事件流（UI 打开房间时挂一条，后台的 bot 动静也能看到）
-        if (req.method === 'GET' && parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'events' && parts.length === 4) {
+        if (
+            req.method === 'GET' &&
+            parts[0] === 'api' &&
+            parts[1] === 'rooms' &&
+            parts[3] === 'events' &&
+            parts.length === 4
+        ) {
             const id = decodeURIComponent(parts[2] ?? '');
             if (roomOf(id) === undefined) return json(res, 404, { error: 'room not found' });
             res.writeHead(200, {
@@ -376,7 +394,13 @@ const server = createServer((req, res) => {
         }
 
         // GET /api/rooms/:id/asks —— 还在等用户回答的提问
-        if (req.method === 'GET' && parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'asks' && parts.length === 4) {
+        if (
+            req.method === 'GET' &&
+            parts[0] === 'api' &&
+            parts[1] === 'rooms' &&
+            parts[3] === 'asks' &&
+            parts.length === 4
+        ) {
             const id = decodeURIComponent(parts[2] ?? '');
             const actor = roomOf(id);
             if (actor === undefined) return json(res, 404, { error: 'room not found' });
@@ -385,7 +409,13 @@ const server = createServer((req, res) => {
         }
 
         // GET /api/rooms/:id/sessions —— 每个成员的上下文概况 + 最近的压缩事件
-        if (req.method === 'GET' && parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'sessions' && parts.length === 4) {
+        if (
+            req.method === 'GET' &&
+            parts[0] === 'api' &&
+            parts[1] === 'rooms' &&
+            parts[3] === 'sessions' &&
+            parts.length === 4
+        ) {
             const id = decodeURIComponent(parts[2] ?? '');
             const actor = roomOf(id);
             if (actor === undefined) return json(res, 404, { error: 'room not found' });
@@ -394,7 +424,13 @@ const server = createServer((req, res) => {
         }
 
         // POST /api/rooms/:id/sessions/:botId/compact —— 手动压一次（只影响这个成员）
-        if (req.method === 'POST' && parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'sessions' && parts[5] === 'compact') {
+        if (
+            req.method === 'POST' &&
+            parts[0] === 'api' &&
+            parts[1] === 'rooms' &&
+            parts[3] === 'sessions' &&
+            parts[5] === 'compact'
+        ) {
             const id = decodeURIComponent(parts[2] ?? '');
             const botId = decodeURIComponent(parts[4] ?? '');
             const actor = roomOf(id);
@@ -436,29 +472,31 @@ const server = createServer((req, res) => {
             const actor = roomOf(id);
             if (actor === undefined) return json(res, 404, { error: 'room not found' });
 
-            void readBody<{ text?: string; recipients?: string[]; mode?: 'next-step' | 'next-turn' }>(req).then(async (body) => {
-                const text = (body.text ?? '').trim();
-                if (text === '') return json(res, 400, { error: 'text required' });
+            void readBody<{ text?: string; recipients?: string[]; mode?: 'next-step' | 'next-turn' }>(req).then(
+                async (body) => {
+                    const text = (body.text ?? '').trim();
+                    if (text === '') return json(res, 400, { error: 'text required' });
 
-                res.writeHead(200, {
-                    'content-type': 'text/event-stream; charset=utf-8',
-                    'cache-control': 'no-cache',
-                    connection: 'keep-alive',
-                });
-                attach(id, res);
-
-                try {
-                    await actor.say({
-                        text,
-                        author: HUMAN,
-                        ...(body.recipients === undefined ? {} : { recipients: body.recipients }),
-                        ...(body.mode === undefined ? {} : { mode: body.mode }),
+                    res.writeHead(200, {
+                        'content-type': 'text/event-stream; charset=utf-8',
+                        'cache-control': 'no-cache',
+                        connection: 'keep-alive',
                     });
-                } catch (error) {
-                    sse(res, { kind: 'error', message: error instanceof Error ? error.message : String(error) });
-                }
-                finish(id);
-            });
+                    attach(id, res);
+
+                    try {
+                        await actor.say({
+                            text,
+                            author: HUMAN,
+                            ...(body.recipients === undefined ? {} : { recipients: body.recipients }),
+                            ...(body.mode === undefined ? {} : { mode: body.mode }),
+                        });
+                    } catch (error) {
+                        sse(res, { kind: 'error', message: error instanceof Error ? error.message : String(error) });
+                    }
+                    finish(id);
+                },
+            );
             return;
         }
 
