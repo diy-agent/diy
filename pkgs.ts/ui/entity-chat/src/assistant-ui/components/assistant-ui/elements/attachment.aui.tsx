@@ -8,7 +8,7 @@ import { Dialog, DialogTitle, DialogContent, DialogTrigger } from '../../../comp
 import { Avatar, AvatarImage, AvatarFallback } from '../../../components/ui/avatar';
 import { TooltipIconButton } from '../../../components/assistant-ui/elements/tooltip-icon-button';
 import { useAttachmentState } from './attachment-state';
-import { cn } from '../../../lib/utils';
+import { cn } from '../../../cn';
 
 type AttachmentPreviewProps = {
     src: string;

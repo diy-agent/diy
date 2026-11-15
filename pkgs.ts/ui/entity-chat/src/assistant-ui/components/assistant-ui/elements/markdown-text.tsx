@@ -14,7 +14,7 @@ import { CheckIcon, CopyIcon } from 'lucide-react';
 
 import { TooltipIconButton } from '../../../components/assistant-ui/elements/tooltip-icon-button';
 import { useCopyToClipboard } from '../../../hooks/use-copy-to-clipboard';
-import { cn } from '../../../lib/utils';
+import { cn } from '../../../cn';
 import { highlightCode, languageOf } from '../../../../components/highlight';
 
 const MarkdownTextImpl = () => {

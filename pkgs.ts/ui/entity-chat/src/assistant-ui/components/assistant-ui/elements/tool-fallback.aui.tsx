@@ -15,7 +15,7 @@ import {
     type ToolCallMessagePartStatus,
     type ToolCallMessagePartComponent,
 } from '@assistant-ui/react';
-import { cn } from '../../../lib/utils';
+import { cn } from '../../../cn';
 import { CollapsibleRoot as Collapsible, CollapsibleContent, CollapsibleTrigger } from './collapsible-root';
 import { Button } from '../../../components/ui/button';
 import { Textarea } from '../../../components/ui/textarea';
