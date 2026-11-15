@@ -29,6 +29,21 @@ describe('P0 回归', () => {
         expect(countIn(after, '记住暗号 42')).toBe(1);
     });
 
+    it('A-old. 老库快照没有水位（log_seq = 0）时，重启也不重复', async () => {
+        const h = makeRoom({ reply: () => '收到' });
+        await h.room.say({ text: '记住暗号 43', author: HUMAN });
+        const before = h.room.contextOf(BOT_A.id) ?? [];
+
+        // 模拟升级前的老行：log_seq 是列默认值 0（不是真水位）
+        const snapshot = h.store.loadSession(h.spec.id, BOT_A.id)!;
+        h.store.saveSession(h.spec.id, BOT_A.id, { ...snapshot, logSeq: 0 });
+
+        const restarted = h.rebuild();
+        const after = restarted.room.contextOf(BOT_A.id) ?? [];
+        expect(after).toHaveLength(before.length);
+        expect(countIn(after, '记住暗号 43')).toBe(1);
+    });
+
     it('B. @ 点名的结论只进被点名者一次', async () => {
         const h = makeRoom({
             reply: (bot) => (bot.id === BOT_A.id ? '我说完了 @cops 你接着' : '收到'),

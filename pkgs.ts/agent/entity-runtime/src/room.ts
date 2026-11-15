@@ -514,9 +514,8 @@ export class RoomActor {
         // 房间订阅 session 的输出：编号、落库、广播都在这一侧
         session.subscribe((event) => this.onSessionEvent(bot, event));
 
-        // 回放水位：没有快照（后加入的成员）→ 全量回放；
-        // 老库的快照没有 log_seq（升级前）→ 当作"已全部 ingest 过"，
-        // 否则升级后第一次重启会把整份日志再塞一遍（正是要修的那个 bug）。
+        // 回放水位：没有快照（后加入的成员）→ 全量回放；有快照但没水位（升级前的老库，
+        // log_seq 是列默认值 0，不是真水位）→ 当作已全部 ingest 过，否则第一次启动就翻一倍。
         const from = saved === undefined ? 0 : (saved.logSeq ?? this.log.lastSeq);
         for (const entry of this.log.since(from)) session.ingest(entry);
         this.sessions.set(bot.id, session);

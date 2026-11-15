@@ -257,6 +257,9 @@ export class BotSession {
                         alreadyInContext: input.alreadyInContext,
                         resolve,
                     });
+                    // 这条路径只在 runTurn 退出之后才可能走到，pump 已经停了：
+                    // 不叫一次 pump 的话消息会一直卡在 delivering（要等用户再发一条才动）
+                    void this.pump();
                     return;
                 }
                 // 没送进这一轮：至少让公共条目留在自己的上下文里，别静默丢失

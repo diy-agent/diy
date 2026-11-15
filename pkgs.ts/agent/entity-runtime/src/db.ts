@@ -382,7 +382,9 @@ export function openStore(file: string): Store {
                 collapsed: Number(row['collapsed']),
                 entries: JSON.parse(String(row['entries'])) as TranscriptEntry[],
                 ...(row['usage'] === null ? {} : { usage: JSON.parse(String(row['usage'])) as TokenUsage }),
-                ...(row['log_seq'] === null || row['log_seq'] === undefined ? {} : { logSeq: Number(row['log_seq']) }),
+                ...(row['log_seq'] === null || row['log_seq'] === undefined || Number(row['log_seq']) <= 0
+                    ? {}
+                    : { logSeq: Number(row['log_seq']) }),
             };
         },
         appendRoomEntry(roomId: string, entry: RoomEntry): void {
