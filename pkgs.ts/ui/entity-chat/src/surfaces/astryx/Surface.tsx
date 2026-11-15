@@ -160,7 +160,13 @@ const MessageList = React.memo(function MessageList({ entries, roomId }: { entri
     return (
         <>
             {entries.map((entry) => (
-                <EntryView key={entry.key} entry={entry} roomId={roomId} />
+                // content-visibility：离开视口的条目跳过布局/绘制（assistant-ui 模板同款）
+                <div
+                    key={entry.key}
+                    style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 200px' }}
+                >
+                    <EntryView entry={entry} roomId={roomId} />
+                </div>
             ))}
         </>
     );

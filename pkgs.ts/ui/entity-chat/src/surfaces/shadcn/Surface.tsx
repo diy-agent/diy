@@ -253,7 +253,9 @@ export function ShadcnSurface({ targetId }: { targetId: string }) {
                     <>
                         <ShowEarlier hidden={windowed.hidden} onClick={windowed.showMore} />
                         {windowed.visible.map((entry) => (
-                            <EntryView key={entry.key} entry={entry} roomId={targetId} />
+                            <div key={entry.key} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 200px' }}>
+                                <EntryView entry={entry} roomId={targetId} />
+                            </div>
                         ))}
                     </>
                 )}
