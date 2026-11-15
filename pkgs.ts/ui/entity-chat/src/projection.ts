@@ -104,7 +104,14 @@ export function toThreadMessages(
                 role: 'assistant',
                 content: partsOf(entry),
                 status: completeStatus,
-                metadata: { custom: { kind: entry.kind } satisfies CustomMeta },
+                metadata: {
+                    custom: {
+                        kind: entry.kind,
+                        // 失败要能看出是"谁的回复失败"（notice 没有作者）
+                        ...(entry.author === undefined ? {} : { author: entry.author }),
+                        ...(roomId === undefined ? {} : { roomId }),
+                    } satisfies CustomMeta,
+                },
             };
         }
 

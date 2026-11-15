@@ -40,6 +40,7 @@ import {
   PencilIcon,
   RefreshCwIcon,
   SquareIcon,
+  TriangleAlertIcon,
 } from "lucide-react";
 import { useEffect, useState, type FC } from "react";
 import type { CustomMeta } from "../../../../projection";
@@ -422,6 +423,40 @@ const AssistantMessage: FC = () => {
       >
         <div className="text-foreground flex justify-center px-2 py-1">
           <RunningIndicator name={author?.name} since={meta.startedAt} />
+        </div>
+      </MessagePrimitive.Root>
+    );
+  }
+
+  if (meta?.kind === "error") {
+    // 失败是"某个 bot 的回复失败"：和普通助手消息同一条外壳（头像 + 名字），
+    // 正文换成错误框。系统提示（notice）才用居中分隔线。
+    return (
+      <MessagePrimitive.Root
+        data-slot="aui_assistant-message-root"
+        data-role="assistant"
+        className="fade-in slide-in-from-bottom-1 animate-in relative duration-150"
+      >
+        <div className="px-2">
+          {author !== undefined && (
+            <div className="mb-1 flex items-center gap-2 text-xs">
+              <BotAvatar author={author} roomId={meta?.roomId} size={18} />
+              <span className="font-medium" style={{ color: author.color }}>
+                {author.name}
+              </span>
+              <span className="text-muted-foreground">{author.role}</span>
+            </div>
+          )}
+          <MessagePrimitive.Parts
+            components={{
+              Text: ({ text }: { text: string }) => (
+                <div className="border-destructive/40 bg-destructive/10 text-destructive flex items-start gap-2 rounded-md border px-3 py-2 text-sm">
+                  <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
+                  <span className="min-w-0 break-words">{text}</span>
+                </div>
+              ),
+            }}
+          />
         </div>
       </MessagePrimitive.Root>
     );

@@ -7,7 +7,7 @@
 // 与另外两面的关系：三面共用 buildTimeline（分组语义唯一）和 ConversationStore（状态唯一），
 // 这里只写"怎么画"。
 
-import { ChevronDown, Send, Square } from 'lucide-react';
+import { AlertTriangle, ChevronDown, Send, Square } from 'lucide-react';
 import * as React from 'react';
 
 import { buildTimeline, type TimelineEntry, type TimelinePart } from '@diy-agent/chat-core';
@@ -85,14 +85,37 @@ function ToolRow({ tool }: { tool: TimelinePart & { kind: 'tool' } }) {
 }
 
 function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) {
-    if (entry.kind === 'notice' || entry.kind === 'error') {
+    if (entry.kind === 'notice') {
         const text = entry.parts.map((part) => (part.kind === 'text' ? part.text : '')).join('');
-        const label = entry.kind === 'error' && entry.author !== undefined ? `${entry.author.name} 回复失败：${text}` : text;
         return (
-            <div className={`my-1 flex items-center gap-3 text-[11px] ${entry.kind === 'error' ? 'text-destructive' : 'text-muted-foreground'}`}>
+            <div className="my-1 flex items-center gap-3 text-[11px] text-muted-foreground">
                 <span className="h-px flex-1 bg-border" />
-                <span>{label}</span>
+                <span>{text}</span>
                 <span className="h-px flex-1 bg-border" />
+            </div>
+        );
+    }
+
+    if (entry.kind === 'error') {
+        // 失败是"某个 bot 的回复失败"：沿用助手消息外壳（头像 + 名字），正文换成错误框
+        const text = entry.parts.map((part) => (part.kind === 'text' ? part.text : '')).join('');
+        return (
+            <div className="my-3 flex items-start gap-2">
+                <BotAvatar author={entry.author} roomId={roomId} size={22} style={{ marginTop: 2 }} />
+                <div className="min-w-0 flex-1">
+                    {entry.author !== undefined && (
+                        <div className="mb-1 flex items-center gap-2 text-xs">
+                            <span className="font-medium" style={{ color: entry.author.color }}>
+                                {entry.author.name}
+                            </span>
+                            <span className="text-muted-foreground">{entry.author.role}</span>
+                        </div>
+                    )}
+                    <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] text-destructive">
+                        <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                        <span className="min-w-0 break-words">{text}</span>
+                    </div>
+                </div>
             </div>
         );
     }

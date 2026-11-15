@@ -61,14 +61,33 @@ function TimeOf({ at }: { at: number }) {
 }
 
 function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) {
-    if (entry.kind === 'notice' || entry.kind === 'error') {
+    if (entry.kind === 'notice') {
         const text = entry.parts.map((part) => (part.kind === 'text' ? part.text : '')).join('');
-        // 失败以"那个 bot"的名义展示：消息本身已送达，失败的是它的回复
-        const label = entry.kind === 'error' && entry.author !== undefined ? `${entry.author.name} 回复失败：${text}` : text;
         return (
-            <ChatSystemMessage key={entry.key} variant={entry.kind === 'notice' ? 'divider' : 'default'}>
-                {label}
+            <ChatSystemMessage key={entry.key} variant="divider">
+                {text}
             </ChatSystemMessage>
+        );
+    }
+
+    if (entry.kind === 'error') {
+        // 失败是"某个 bot 的回复失败"：走和普通回复同一条消息外壳（头像 + 名字），
+        // 只是正文换成错误框 —— 归属清楚，又和系统提示（分隔线）区分开。
+        const text = entry.parts.map((part) => (part.kind === 'text' ? part.text : '')).join('');
+        return (
+            <ChatMessage
+                key={entry.key}
+                sender="assistant"
+                avatar={<BotAvatar author={entry.author} roomId={roomId} size={24} />}
+            >
+                <ChatMessageBubble
+                    variant="ghost"
+                    {...(entry.author === undefined ? {} : { name: entry.author.name })}
+                    metadata={<ChatMessageMetadata timestamp={<TimeOf at={entry.at} />} />}
+                >
+                    <Banner status="error" container="section" collapsible={false} title={text} />
+                </ChatMessageBubble>
+            </ChatMessage>
         );
     }
 
@@ -201,7 +220,8 @@ function AstryxComposer({
 /** ChatVirtualizer 的行高估值：偏低无妨（内容长出来时位置仍然有效） */
 function estimateRowHeight(entry: TimelineEntry): number {
     if (entry.kind === 'user') return 64;
-    if (entry.kind === 'typing' || entry.kind === 'notice' || entry.kind === 'error') return 48;
+    if (entry.kind === 'typing' || entry.kind === 'notice') return 48;
+    if (entry.kind === 'error') return 96;
     return 180;
 }
 
