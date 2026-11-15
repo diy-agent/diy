@@ -94,9 +94,66 @@ async function refresh(): Promise<void> {
     emit({ ...state, rooms, bots: Object.fromEntries(bots.map((bot) => [bot.id, bot])), loaded: true, selectedId, error: undefined });
 }
 
+// ─── 首屏连接：失败就一直退避重试 ────────────────────────────────────
+//
+// 之前只试一次：dev 脚本先起 UI、后起 API（tsx 冷启动要几秒），页面先加载就
+// 永久停在"连接 diy2 后端…"，后端起来了也不会自己接上，只能手动刷新。
+//
+// 重试策略：0.5s 起步翻倍、5s 封顶；另外窗口重新可见 / 网络恢复时立刻补一次
+// （最常见的就是切回标签页时后端已经重启完了）。
+let bootTimer: ReturnType<typeof setTimeout> | undefined;
+let bootAttempt = 0;
+
+function scheduleBootstrapRetry(delayMs?: number): void {
+    if (bootTimer !== undefined) return;
+    const delay = delayMs ?? Math.min(5_000, 500 * 2 ** Math.min(bootAttempt, 4));
+    bootAttempt += 1;
+    bootTimer = setTimeout(() => {
+        bootTimer = undefined;
+        void runBootstrap();
+    }, delay);
+}
+
+function messageOf(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
+async function runBootstrap(): Promise<void> {
+    try {
+        await refresh();
+        bootAttempt = 0;
+    } catch (error) {
+        // loaded 保持 false：界面继续显示"连接中"并带上失败原因，而不是变成半死的空壳
+        emit({ ...state, error: messageOf(error) });
+        scheduleBootstrapRetry();
+    }
+}
+
+/** 已经连上之后再失败（后端重启）：留着现有界面，同样排队重试 */
+function bootstrapIfNeeded(): void {
+    if (bootTimer !== undefined) return;
+    if (state.loaded) return;
+    void runBootstrap();
+}
+
+let hooksInstalled = false;
+
+/** 事件兜底：切回标签页 / 网络恢复时补一次（后端重启最常见的就是这两种时机） */
+function installBootstrapHooks(): void {
+    if (hooksInstalled || typeof window === 'undefined') return;
+    hooksInstalled = true;
+    window.addEventListener('online', bootstrapIfNeeded);
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') bootstrapIfNeeded();
+    });
+}
+
 export const actions = {
     bootstrap(): void {
-        void refresh().catch((error: unknown) => emit({ ...state, loaded: true, error: String(error) }));
+        // 首屏：连不上后端就一直退避重试，直到成功（见 runBootstrap）
+        if (bootTimer !== undefined) return;
+        void runBootstrap();
+        installBootstrapHooks();
     },
 
     select(id: string): void {

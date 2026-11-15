@@ -138,7 +138,15 @@ export function App() {
 
             <main className="relative flex min-w-0 flex-1 flex-col">
                 {!state.loaded ? (
-                    <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">连接 diy2 后端…</div>
+                    <div className="flex flex-1 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+                        <span className="flex items-center gap-2">
+                            <span className="size-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                            连接 diy2 后端…
+                        </span>
+                        {state.error !== undefined && (
+                            <span className="text-[11px] text-destructive">上次失败：{state.error}（正在重试）</span>
+                        )}
+                    </div>
                 ) : room === undefined ? (
                     <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">左侧选择一个容器</div>
                 ) : (
@@ -149,7 +157,7 @@ export function App() {
                         <SurfaceViews surfaceId={surfaceId} targetId={room.id} />
                     </>
                 )}
-                {state.error !== undefined && (
+                {state.loaded && state.error !== undefined && (
                     <div className="border-t border-destructive/40 bg-destructive/10 px-3 py-1 text-[11px]">后端：{state.error}</div>
                 )}
             </main>

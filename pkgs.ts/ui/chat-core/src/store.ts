@@ -31,6 +31,8 @@ export class ConversationStore implements ConversationModel {
 
     private detachWatch: (() => void) | undefined;
     private readySeen = false;
+    /** 至少成功拉过一次快照：首次 ready 只在"构造时那次没拉成"的情况下才补拉 */
+    private loadedOnce = false;
 
     constructor(
         private readonly client: ChatClient,
@@ -68,8 +70,9 @@ export class ConversationStore implements ConversationModel {
 
     private apply(event: Parameters<typeof applyEvent>[1]): void {
         if (event.kind === 'ready') {
-            // 首次连接不清空状态（构造时已经 load 过）；重连后补拉，填平断线期间丢的事件
-            if (this.readySeen) this.reload();
+            // 首次连接一般不用重拉（构造时已经 load 过）；但那次也可能失败（后端还没起来），
+            // 所以只在"已经拉成功过"时跳过。重连后一律补拉，填平断线期间丢的事件。
+            if (this.readySeen || !this.loadedOnce) this.reload();
             this.readySeen = true;
             return;
         }
@@ -83,6 +86,7 @@ export class ConversationStore implements ConversationModel {
             .load(this.entityId)
             .then((snapshot) => {
                 if (token !== this.loadToken) return;
+                this.loadedOnce = true;
                 this.emit(fromSnapshot(snapshot));
             })
             .catch((error: unknown) => this.emit({ ...this.state, error: messageOf(error) }));
