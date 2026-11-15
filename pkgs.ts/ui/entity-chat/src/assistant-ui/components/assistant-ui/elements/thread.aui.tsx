@@ -11,7 +11,7 @@ import { RunningIndicator } from '../../../../components/RunningIndicator';
 import { AskCard } from '../../../../components/AskCard';
 import { TooltipIconButton } from '../../../components/assistant-ui/elements/tooltip-icon-button';
 import { Button } from '../../../components/ui/button';
-import { cn } from '../../../lib/utils';
+import { cn } from '../../../cn';
 import {
     ActionBarMorePrimitive,
     ActionBarPrimitive,

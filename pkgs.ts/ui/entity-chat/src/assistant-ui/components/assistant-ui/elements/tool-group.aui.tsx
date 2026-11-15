@@ -7,7 +7,7 @@
 import { ChevronDownIcon, WrenchIcon } from 'lucide-react';
 import type { FC, ReactNode } from 'react';
 
-import { cn } from '../../../lib/utils';
+import { cn } from '../../../cn';
 import { CollapsibleRoot as Collapsible, CollapsibleContent, CollapsibleTrigger } from './collapsible-root';
 
 export const ToolGroup: FC<{ count: number; children: ReactNode }> = ({ count, children }) => (
