@@ -15,6 +15,7 @@ import { CheckIcon, CopyIcon } from "lucide-react";
 import { TooltipIconButton } from "../../../components/assistant-ui/elements/tooltip-icon-button";
 import { useCopyToClipboard } from "../../../hooks/use-copy-to-clipboard";
 import { cn } from "../../../lib/utils";
+import { highlightCode, languageOf } from "../../../../components/highlight";
 
 const MarkdownTextImpl = () => {
   return (
@@ -221,15 +222,29 @@ const defaultComponents = memoizeMarkdownComponents({
       {...props}
     />
   ),
-  code: function Code({ className, ...props }) {
+  code: function Code({ className, children, ...props }) {
     const isCodeBlock = useIsMarkdownCodeBlock();
+    if (!isCodeBlock) {
+      return (
+        <code
+          className={cn(
+            "aui-md-inline-code bg-muted rounded-md px-1.5 py-0.5 font-mono text-[0.85em]",
+            className,
+          )}
+          {...props}
+        >
+          {children}
+        </code>
+      );
+    }
+    // 语法高亮：和另外两个表面共用 highlight.js（Astryx 用自己的 tokenizer）
+    const code = String(children ?? "").replace(/\n$/, "");
     return (
       <code
-        className={cn(
-          !isCodeBlock &&
-            "aui-md-inline-code bg-muted rounded-md px-1.5 py-0.5 font-mono text-[0.85em]",
-          className,
-        )}
+        className={cn("hljs bg-transparent p-0", className)}
+        dangerouslySetInnerHTML={{
+          __html: highlightCode(code, languageOf(className)),
+        }}
         {...props}
       />
     );

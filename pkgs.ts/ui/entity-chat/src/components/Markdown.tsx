@@ -7,6 +7,8 @@ import * as React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
+import { highlightCode, languageOf } from './highlight';
+
 export const Markdown = React.memo(function Markdown({ text }: { text: string }) {
     return (
         <div className="text-[13px] leading-relaxed break-words">
@@ -26,16 +28,32 @@ export const Markdown = React.memo(function Markdown({ text }: { text: string })
                         </a>
                     ),
                     code: ({ className, children }) => {
-                        const isBlock = className?.includes('language-') === true;
-                        return isBlock ? (
-                            <code className="block overflow-x-auto rounded-md bg-muted/60 p-2.5 font-mono text-[12px]">
-                                {children}
-                            </code>
-                        ) : (
-                            <code className="rounded bg-muted/70 px-1 py-0.5 font-mono text-[12px]">{children}</code>
+                        const language = languageOf(className);
+                        if (language === undefined) {
+                            return <code className="rounded bg-muted/70 px-1 py-0.5 font-mono text-[12px]">{children}</code>;
+                        }
+                        const code = String(children ?? '').replace(/\n$/, '');
+                        return (
+                            <div className="my-2 overflow-hidden rounded-md border border-border/60">
+                                <div className="flex items-center justify-between bg-muted/40 px-2.5 py-1 text-[10px] text-muted-foreground">
+                                    <span className="lowercase">{language}</span>
+                                    <button
+                                        onClick={() => void navigator.clipboard?.writeText(code)}
+                                        className="rounded px-1 hover:bg-muted hover:text-foreground"
+                                    >
+                                        复制
+                                    </button>
+                                </div>
+                                <pre className="overflow-x-auto p-2.5 text-[12px] leading-relaxed">
+                                    <code
+                                        className="hljs bg-transparent p-0"
+                                        dangerouslySetInnerHTML={{ __html: highlightCode(code, language) }}
+                                    />
+                                </pre>
+                            </div>
                         );
                     },
-                    pre: ({ children }) => <pre className="my-1.5">{children}</pre>,
+                    pre: ({ children }) => <>{children}</>,
                     blockquote: ({ children }) => (
                         <blockquote className="my-1.5 border-l-2 border-border pl-3 text-muted-foreground">{children}</blockquote>
                     ),

@@ -87,7 +87,10 @@ export function App() {
     const state = useStore();
     const room = roomOf(state.selectedId);
     const [dialog, setDialog] = React.useState<'project' | 'member' | 'settings' | null>(null);
-    const [surfaceId, setSurfaceId] = React.useState<string>(SURFACES[0]!.id);
+    // 默认表面：Astryx（虚拟化 + 自带代码高亮，长会话最稳）
+    const [surfaceId, setSurfaceId] = React.useState<string>(
+        SURFACES.find((surface) => surface.id === 'astryx')?.id ?? SURFACES[0]!.id,
+    );
     const [modelTarget, setModelTarget] = React.useState<string | null>(null);
     const activeRoom = room;
 
