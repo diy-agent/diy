@@ -48,14 +48,16 @@ export class AskGate {
             request: AskRequest;
             resolve: (result: AskOutcome) => void;
             timer?: NodeJS.Timeout;
+            /** 谁问的（成员 id）：按成员停止时只取消他家的提问 */
+            owner?: string;
         }
     >();
     private counter = 0;
 
     constructor(private readonly deps: AskGateDeps) {}
 
-    /** 工具一侧调用：挂起直到用户回答 */
-    request(input: AskInput): Promise<AskOutcome> {
+    /** 工具一侧调用：挂起直到用户回答。owner = 提问的成员（按成员停止时用）。 */
+    request(input: AskInput, owner?: string): Promise<AskOutcome> {
         const at = this.deps.now?.() ?? Date.now();
         const askId = `ask-${at.toString(36)}-${++this.counter}`;
         const request: AskRequest = {
@@ -77,7 +79,12 @@ export class AskGate {
                 timeoutMs > 0
                     ? setTimeout(() => this.settle(askId, { cancelled: true, reason: '等待回答超时' }), timeoutMs)
                     : undefined;
-            this.pending.set(askId, { request, resolve, ...(timer === undefined ? {} : { timer }) });
+            this.pending.set(askId, {
+                request,
+                resolve,
+                ...(timer === undefined ? {} : { timer }),
+                ...(owner === undefined ? {} : { owner }),
+            });
         });
 
         try {
@@ -98,6 +105,19 @@ export class AskGate {
     /** 取消这一轮：所有挂起的提问按"取消"收尾，run 才能退出 */
     cancelAll(reason = '本轮已取消'): void {
         for (const askId of [...this.pending.keys()]) this.settle(askId, { cancelled: true, reason });
+    }
+
+    /**
+     * 只取消某个成员的提问（"停这个 bot"不应该把别人正在等的回答也废掉）。
+     * 返回取消了几个。
+     */
+    cancelFor(owner: string, reason = '本轮已取消'): number {
+        let count = 0;
+        for (const [askId, entry] of [...this.pending]) {
+            if (entry.owner !== owner) continue;
+            if (this.settle(askId, { cancelled: true, reason })) count += 1;
+        }
+        return count;
     }
 
     pendingCount(): number {

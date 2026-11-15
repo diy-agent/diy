@@ -48,7 +48,7 @@ function describeAnswer(request: AskRequest, answer: AskAnswer | undefined): str
     return answer.text === undefined || answer.text.trim() === '' ? picked : `${picked}；补充：${answer.text.trim()}`;
 }
 
-export function askTool(gate: AskGate | undefined): ToolSet[string] | undefined {
+export function askTool(gate: AskGate | undefined, owner?: string): ToolSet[string] | undefined {
     if (gate === undefined) return undefined;
     return tool({
         description:
@@ -68,7 +68,10 @@ export function askTool(gate: AskGate | undefined): ToolSet[string] | undefined 
         }),
         execute: async (input, options) => {
             const callId = (options as { toolCallId?: string } | undefined)?.toolCallId;
-            const outcome = await gate.request({ ...input, ...(callId === undefined ? {} : { toolCallId: callId }) });
+            const outcome = await gate.request(
+                { ...input, ...(callId === undefined ? {} : { toolCallId: callId }) },
+                owner,
+            );
             if (outcome.cancelled === true) {
                 return `用户没有回答（${outcome.reason ?? '已取消'}）。可以换个问法，或先按最保守的方案继续。`;
             }

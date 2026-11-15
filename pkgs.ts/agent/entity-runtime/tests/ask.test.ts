@@ -94,6 +94,20 @@ describe('AskGate', () => {
         expect(gate.pendingCount()).toBe(0);
     });
 
+    it('cancelFor：只取消这个成员的提问，别人的照常在等人回答', async () => {
+        const h = makeGate();
+        const mine = h.gate.request({ question: '我的' }, 'bot:a');
+        const other = h.gate.request({ question: '别人的' }, 'bot:b');
+
+        expect(h.gate.cancelFor('bot:a')).toBe(1);
+        expect((await mine).cancelled).toBe(true);
+        // 别人的还挂着：停一个 bot 不该把另一个 bot 的提问一起废掉
+        expect(h.gate.pendingCount()).toBe(1);
+
+        expect(h.gate.answer(h.gate.list()[0]!.askId, { values: ['x'] })).toBe(true);
+        expect((await other).cancelled).toBeUndefined();
+    });
+
     it('list() 返回挂起中的请求（刷新后恢复卡片用）', () => {
         const h = makeGate();
         void h.gate.request({ question: 'Q1', options: [{ value: 'a', label: 'A' }] });

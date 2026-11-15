@@ -81,7 +81,8 @@ export class RoomActor {
     private readonly persisted = new Set<string>();
     /** 提问闸门：模型需要用户做决定时在这里停住 */
     private readonly gate: AskGate;
-    private builtTools: ToolSet | undefined;
+    /** 每个成员一份工具集：只有 ask 的归属不同（按成员停止时要能分辨） */
+    private readonly toolsByBot = new Map<string, ToolSet | undefined>();
     /** 正在跑一轮的成员（UI 的"谁在说话"用它，不由前端猜） */
     private readonly speaking = new Set<string>();
     private lastRunningKey = '';
@@ -262,7 +263,8 @@ export class RoomActor {
             for (const session of this.sessions.values()) session.cancel(options);
             return;
         }
-        this.gate.cancelAll('本轮已取消');
+        // 只取消这个成员自己的提问：别人正挂在 ask 上等人回答，不该被连坐
+        this.gate.cancelFor(options.botId, '本轮已取消');
         this.sessions.get(options.botId)?.cancel(options);
     }
 
@@ -411,19 +413,27 @@ export class RoomActor {
         this.turnSeq = Math.max(this.turnSeq, snapshot.turn);
     }
 
-    /** 工具集：房间目录 + 审批闸门（构造一次，所有 session 共用） */
-    private get tools(): ToolSet | undefined {
-        if (this.builtTools === undefined) {
-            const cwd = this.deps.cwd;
-            if (cwd === undefined) return undefined;
-            this.builtTools = buildRoomTools({
-                cwd,
-                ...(this.deps.shell === undefined ? {} : { shell: this.deps.shell }),
-                ...(this.deps.bashTimeoutMs === undefined ? {} : { bashTimeoutMs: this.deps.bashTimeoutMs }),
-                ask: this.gate,
-            });
-        }
-        return this.builtTools;
+    /** 工具集：房间目录 + 审批闸门（每个成员一份，ask 带 owner） */
+    private toolsFor(botId: string): ToolSet | undefined {
+        if (this.toolsByBot.has(botId)) return this.toolsByBot.get(botId);
+        const cwd = this.deps.cwd;
+        const tools =
+            cwd === undefined
+                ? undefined
+                : buildRoomTools({
+                      cwd,
+                      ...(this.deps.shell === undefined ? {} : { shell: this.deps.shell }),
+                      ...(this.deps.bashTimeoutMs === undefined ? {} : { bashTimeoutMs: this.deps.bashTimeoutMs }),
+                      ask: this.gate,
+                      askOwner: botId,
+                  });
+        this.toolsByBot.set(botId, tools);
+        return tools;
+    }
+
+    /** 房间是否给成员配了工具（工具提示词据此决定说不说） */
+    private get hasTools(): boolean {
+        return this.deps.cwd !== undefined;
     }
 
     private toolsHint(): string {
@@ -498,8 +508,8 @@ export class RoomActor {
             ...(this.deps.run === undefined ? {} : { run: this.deps.run }),
             ...(this.deps.compactor === undefined ? {} : { compactor: this.deps.compactor }),
             ...(this.deps.budget === undefined ? {} : { budget: this.deps.budget }),
-            ...(this.tools === undefined ? {} : { tools: this.tools }),
-            ...(this.tools === undefined ? {} : { toolsHint: this.toolsHint() }),
+            ...(this.toolsFor(bot.id) === undefined ? {} : { tools: this.toolsFor(bot.id) }),
+            ...(this.hasTools ? { toolsHint: this.toolsHint() } : {}),
         });
         // 房间订阅 session 的输出：编号、落库、广播都在这一侧
         session.subscribe((event) => this.onSessionEvent(bot, event));

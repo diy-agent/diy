@@ -23,6 +23,8 @@ export interface RoomToolsOptions {
     bashTimeoutMs?: number;
     /** 提问闸门；不传 = 没有 ask 工具 */
     ask?: AskGate;
+    /** 提问的归属成员（按成员停止时只取消他家的提问） */
+    askOwner?: string;
 }
 
 /** 给一个房间装配工具集 */
@@ -33,7 +35,7 @@ export function buildRoomTools(options: RoomToolsOptions): ToolSet {
         edit: editTool(options.cwd),
     };
     if (options.shell !== false) tools['bash'] = bashTool(options.cwd, options.bashTimeoutMs ?? 120_000);
-    const ask = askTool(options.ask);
+    const ask = askTool(options.ask, options.askOwner);
     if (ask !== undefined) tools['ask'] = ask;
     return tools;
 }

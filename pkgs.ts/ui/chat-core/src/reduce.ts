@@ -50,7 +50,9 @@ export function applyEvent(state: ConversationState, event: StreamEvent): Conver
                 ...state,
                 items: next,
                 seq: Math.max(state.seq, item.seq),
-                running: next.some((entry) => entry.status === 'streaming'),
+                // running 只认服务端的 running 事件：从 item 推会出错 ——
+                // A 收尾的最后一条 item 一到就算 false，而 B 还在说 → 停止按钮会闪。
+                // （快照初值在 fromSnapshot 里单独推一次，之后以事件为准。）
             };
         }
         case 'delivery': {

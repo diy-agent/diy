@@ -242,11 +242,10 @@ export class BotSession {
         // 正在跑且是 next-step：直接交给 SDK，在下一个 step 边界插入
         if (this.running && mode === 'next-step' && this.steering !== null) {
             this.emit({ type: 'delivery', messageId: input.messageId, state: 'delivering' });
-            void this.steering.steer(input.text, { id: input.messageId }).then((outcome) => {
-                if (outcome.type === 'delivered') {
-                    this.emit({ type: 'delivery', messageId: input.messageId, state: 'delivered' });
-                    return;
-                }
+            // 插话没成功（含 steer 自己抛错）的兜底：能降级就降成下一轮，否则至少把公共条目
+            // 留在上下文里，并 resolve。不 resolve 会把 room.say 的 Promise.all 一起挂死
+            // （/chat 的 SSE 永远不收尾），unhandled rejection 还可能带走进程。
+            const fallback = (): void => {
                 if (this.keepOnCancel) {
                     // 被 cancel 打断：降级为下一轮
                     this.queue.push({
@@ -263,7 +262,18 @@ export class BotSession {
                 // 没送进这一轮：至少让公共条目留在自己的上下文里，别静默丢失
                 if (input.entry !== undefined) this.ingest(input.entry);
                 this.emit({ type: 'delivery', messageId: input.messageId, state: 'failed' });
-            });
+                resolve();
+            };
+            void this.steering
+                .steer(input.text, { id: input.messageId })
+                .then((outcome) => {
+                    if (outcome.type === 'delivered') {
+                        this.emit({ type: 'delivery', messageId: input.messageId, state: 'delivered' });
+                        return;
+                    }
+                    fallback();
+                })
+                .catch(() => fallback());
             this.pendingResolvers.push(resolve);
             return promise;
         }

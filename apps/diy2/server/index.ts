@@ -239,6 +239,19 @@ async function readBody<T>(req: IncomingMessage): Promise<T> {
     return JSON.parse(Buffer.concat(chunks).toString('utf8')) as T;
 }
 
+/**
+ * 读 body 的统一入口：坏 JSON / 读流失败都要有回包。
+ * 之前每个 `void readBody(...).then(...)` 都没 catch —— 客户端发一段坏 JSON
+ * 就是"请求永不响应 + unhandled rejection"，Node 默认把后者当崩溃。
+ */
+function onBody<T>(req: IncomingMessage, res: ServerResponse, handler: (body: T) => void | Promise<void>): void {
+    readBody<T>(req)
+        .then(handler)
+        .catch(() => {
+            if (!res.writableEnded) json(res, 400, { error: 'invalid JSON body' });
+        });
+}
+
 function sse(res: ServerResponse, payload: unknown): void {
     // 客户端可能已经断开（刷新 / abort / 切房间）：别往死 socket 上写
     if (res.destroyed || res.writableEnded) return;
@@ -282,7 +295,7 @@ const server = createServer((req, res) => {
         }
 
         if (req.method === 'POST' && url.pathname === '/api/bots') {
-            void readBody<{ name?: string; homeRoomId?: string; modelKey?: string }>(req).then((body) => {
+            onBody<{ name?: string; homeRoomId?: string; modelKey?: string }>(req, res, (body) => {
                 const name = (body.name ?? '').trim();
                 if (name === '') return json(res, 400, { error: 'name required' });
                 const bot = newBot(name, body.homeRoomId ?? 'proj:diy', 'room 成员 bot');
@@ -295,34 +308,36 @@ const server = createServer((req, res) => {
 
         // POST /api/rooms —— 新建任意类型的容器（默认 bot 同名）
         if (req.method === 'POST' && url.pathname === '/api/rooms') {
-            void readBody<{ type?: string; name?: string; modelKey?: string; data?: Record<string, unknown> }>(
+            onBody<{ type?: string; name?: string; modelKey?: string; data?: Record<string, unknown> }>(
                 req,
-            ).then((body) => {
-                const name = (body.name ?? '').trim();
-                if (name === '') return json(res, 400, { error: 'name required' });
-                const type = body.type ?? 'project';
-                // 任务必须挂在项目下：侧栏按 projectId 分组，没归属的任务等于隐身
-                const projectId = body.data?.['projectId'];
-                if (type === 'task' && (typeof projectId !== 'string' || roomOf(projectId) === undefined)) {
-                    return json(res, 400, { error: 'task 需要有效的 data.projectId' });
-                }
-                // 默认模型由 UI 传（SettingsDialog 的那份）；没传才用服务端兜底
-                const modelKey = body.modelKey ?? DEFAULT_MODEL;
-                const id = `${type}-${Date.now().toString(36)}`;
-                const bot = { ...newBot(name, id, `${type} bot`), modelKey };
-                store.upsertBot(bot);
-                const spec: Room = {
-                    id,
-                    type,
-                    name,
-                    data: body.data ?? {},
-                    members: [{ botId: bot.id, primary: true }],
-                    modelKey,
-                };
-                store.setMembers(id, spec.members);
-                actorOf(spec);
-                json(res, 200, spec);
-            });
+                res,
+                (body) => {
+                    const name = (body.name ?? '').trim();
+                    if (name === '') return json(res, 400, { error: 'name required' });
+                    const type = body.type ?? 'project';
+                    // 任务必须挂在项目下：侧栏按 projectId 分组，没归属的任务等于隐身
+                    const projectId = body.data?.['projectId'];
+                    if (type === 'task' && (typeof projectId !== 'string' || roomOf(projectId) === undefined)) {
+                        return json(res, 400, { error: 'task 需要有效的 data.projectId' });
+                    }
+                    // 默认模型由 UI 传（SettingsDialog 的那份）；没传才用服务端兜底
+                    const modelKey = body.modelKey ?? DEFAULT_MODEL;
+                    const id = `${type}-${Date.now().toString(36)}`;
+                    const bot = { ...newBot(name, id, `${type} bot`), modelKey };
+                    store.upsertBot(bot);
+                    const spec: Room = {
+                        id,
+                        type,
+                        name,
+                        data: body.data ?? {},
+                        members: [{ botId: bot.id, primary: true }],
+                        modelKey,
+                    };
+                    store.setMembers(id, spec.members);
+                    actorOf(spec);
+                    json(res, 200, spec);
+                },
+            );
             return;
         }
 
@@ -331,7 +346,7 @@ const server = createServer((req, res) => {
             const id = decodeURIComponent(parts[2] ?? '');
             const actor = roomOf(id);
             if (actor === undefined) return json(res, 404, { error: 'room not found' });
-            void readBody<{ name?: string; modelKey?: string }>(req).then((body) => {
+            onBody<{ name?: string; modelKey?: string }>(req, res, (body) => {
                 actor.update({
                     ...(body.name === undefined ? {} : { name: body.name }),
                     ...(body.modelKey === undefined ? {} : { modelKey: body.modelKey }),
@@ -346,7 +361,7 @@ const server = createServer((req, res) => {
             const id = decodeURIComponent(parts[2] ?? '');
             const actor = roomOf(id);
             if (actor === undefined) return json(res, 404, { error: 'room not found' });
-            void readBody<{ botId?: string }>(req).then((body) => {
+            onBody<{ botId?: string }>(req, res, (body) => {
                 if (body.botId !== undefined) actor.addMember(body.botId);
                 json(res, 200, actor.spec);
             });
@@ -454,7 +469,7 @@ const server = createServer((req, res) => {
             const askId = decodeURIComponent(parts[4] ?? '');
             const actor = roomOf(id);
             if (actor === undefined) return json(res, 404, { error: 'room not found' });
-            void readBody<{ values?: string[]; fields?: Record<string, string>; text?: string }>(req).then((body) => {
+            onBody<{ values?: string[]; fields?: Record<string, string>; text?: string }>(req, res, (body) => {
                 const hit = actor.answerAsk(askId, {
                     ...(body.values === undefined ? {} : { values: body.values }),
                     ...(body.fields === undefined ? {} : { fields: body.fields }),
@@ -472,7 +487,9 @@ const server = createServer((req, res) => {
             const actor = roomOf(id);
             if (actor === undefined) return json(res, 404, { error: 'room not found' });
 
-            void readBody<{ text?: string; recipients?: string[]; mode?: 'next-step' | 'next-turn' }>(req).then(
+            onBody<{ text?: string; recipients?: string[]; mode?: 'next-step' | 'next-turn' }>(
+                req,
+                res,
                 async (body) => {
                     const text = (body.text ?? '').trim();
                     if (text === '') return json(res, 400, { error: 'text required' });
@@ -505,7 +522,7 @@ const server = createServer((req, res) => {
             const id = decodeURIComponent(parts[2] ?? '');
             const actor = roomOf(id);
             if (actor === undefined) return json(res, 404, { error: 'room not found' });
-            void readBody<{ keepQueue?: boolean; botId?: string }>(req).then((body) => {
+            onBody<{ keepQueue?: boolean; botId?: string }>(req, res, (body) => {
                 actor.cancel({
                     keepQueue: body.keepQueue === true,
                     ...(body.botId === undefined ? {} : { botId: body.botId }),
@@ -522,6 +539,8 @@ const server = createServer((req, res) => {
     }
 });
 
-server.listen(PORT, () => {
+// 只绑本机：这个进程带着 read/write/edit/bash 工具，监听 0.0.0.0 等于把
+// 任意命令执行面暴露给整个局域网（而且没有鉴权）。要远程用请走 SSH 隧道。
+server.listen(PORT, '127.0.0.1', () => {
     console.log(`[diy2] http://localhost:${PORT}  db=${join(dataDir, 'diy2.db')}`);
 });
