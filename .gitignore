@@ -24,15 +24,12 @@ __pycache__/
 # → tsc 报 `mkdir …/dist: file exists` + 大片 TS6305，`./sha.sh build` 全红。
 dist
 build
-# 能力包编译产物（##453：main/exports 指 lib/*.js，Node/Electron 直接加载；产物不入库）
-lib/
-# 同理：**能力包根**上的 lib 也去尾斜杠（软链要拦）。只能限定包根 —— lib 也是正经源码
-# 目录名（scripts/lib、pkgs.ts/ui/core/web/src/lib、renderer_solid/lib），裸 `lib` 会静默吞新文件。
-pkgs.ts/*/lib
-pkgs.ts/*/*/lib
-# 例外：renderer 的 lib/ 是**源码目录**（同名巧合）。没有这条，新加的文件会被静默忽略，
-# git add 不报错也不收录 —— ##522 新增 frame-batch.ts 时踩过（靠 add -f 才发现）
-!apps/diy-app/src/renderer_solid/lib/
+# 编译产物只许落 build/ 或 dist/（临时目录）。
+# 以前还拦过 `lib/`（老的能力包把产物编到 lib/，main/exports 指 lib/*.js），代价是它同时吞
+# 正经的源码目录（scripts/lib、renderer_solid/lib、pkgs.ts/ui/core/web/src/lib）—— 新文件
+# 静默不进 git，##522 加 frame-batch.ts 时踩过。2026-11-15 最后两个包
+# （agent/skills、agent/agents-chain）也迁到 dist/ 之后，这条规则连同例外一起删掉：
+# 以后再有产物落到 lib/，会作为未跟踪文件露出来，而不是被悄悄忽略。
 # 能力包运行时目录（##455：scripts/build-runtime.mjs 生成，electron-builder 的 extraResources 源）
 apps/diy-app/runtime/
 

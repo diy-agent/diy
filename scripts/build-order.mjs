@@ -4,15 +4,15 @@
 // 为什么有这个脚本：`build-pkgs` 原先是手写数组 `_pkg_order`，**两次漏登记新包**
 //   · #465 新增 @diy-agent/model-catalog → 补数组（76ba6f46）
 //   · #469 新增 @diy-agent/bot       → 又漏（本脚本的由来）
-// 漏登记的后果不是「少编一个包」这么直白：build-runtime 收集 main 指 ./lib/ 的包时，
-// 撞见没 lib/index.js 就抛「先跑根 ./sha.sh build」—— 而那条命令正是刚失败的那条，
+// 漏登记的后果不是「少编一个包」这么直白：build-runtime 收集 main 指 ./dist/ 的包时，
+// 撞见没 dist/index.js 就抛「先跑根 ./sha.sh build」—— 而那条命令正是刚失败的那条，
 // 人是被提示引去重跑同一个东西。所以改成机器发现，不再有「登记」这道手工程序。
 //
 // 判据：
-//   · 入选 = pkgs.ts/<dir>/package.json 且 `main` 以 `./dist/` 开头（= 需要编 dist/ 的能力包；老包 ./lib/ 也认）。
+//   · 入选 = pkgs.ts/<dir>/package.json 且 `main` 以 `./dist/` 开头（= 需要编 dist/ 的能力包）。
 //     这不是新口径，正是 diy-app/scripts/build-runtime.mjs 收集 runtime 的那条判据。
 //   · 顺序 = 内部依赖（@diy/* · @diy-agent/*）拓扑序，被依赖方在前。
-//     为什么必须有顺序：各包 tsc 靠被依赖包的 lib/*.d.ts 做类型解析，故不能乱序、也不能并行。
+//     为什么必须有顺序：各包 tsc 靠被依赖包的 dist/*.d.ts 做类型解析，故不能乱序、也不能并行。
 //   · 同一批可编的包之间按目录名字典序 —— 输出稳定，构建日志可 diff。
 //
 // 用法：
@@ -33,7 +33,7 @@ const INTERNAL_SCOPES = ["@diy", "@diy-agent"];
 const isInternal = (name) => INTERNAL_SCOPES.some((scope) => name.startsWith(`${scope}/`));
 const asJson = process.argv.includes("--json");
 
-/** 收集需要编 lib/ 的包：dir → { dir, name, deps } */
+/** 收集需要编 dist/ 的包：dir → { dir, name, deps } */
 function collectPackages() {
     const out = new Map();
     // 包目录 = pkgs.ts/... 的 workspace（##512 起分层：pkgs.ts/<组>/<包>，另有 pkgs.ts/flow、pkgs.ts/room）
@@ -42,7 +42,7 @@ function collectPackages() {
         const pkgPath = join(ROOT, dir, "package.json");
         if (!existsSync(pkgPath)) continue;
         const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
-        if (typeof pkg.main !== "string" || !/^\.\/(dist|lib)\//.test(pkg.main)) continue;
+        if (typeof pkg.main !== "string" || !/^\.\/dist\//.test(pkg.main)) continue;
         const deps = new Set(
             [
                 ...Object.keys(pkg.dependencies ?? {}),
@@ -62,7 +62,7 @@ function topoSort(packages) {
     const indegree = new Map([...byName.keys()].map((n) => [n, 0]));
     for (const pkg of byName.values()) {
         for (const dep of pkg.deps) {
-            if (!byName.has(dep)) continue; // 依赖方不编 lib（如 @diy-agent/ui-kit）⇒ 无顺序约束
+            if (!byName.has(dep)) continue; // 依赖方不编 dist（如 @diy-agent/ui-kit）⇒ 无顺序约束
             dependents.get(dep).push(pkg.name);
             indegree.set(pkg.name, indegree.get(pkg.name) + 1);
         }

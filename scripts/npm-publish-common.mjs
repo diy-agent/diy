@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // scripts/npm-publish-common.mjs — npm 发布的两份脚本（能力包 / app）共用的那一段。
 //
-// 为什么单拆：`npm-publish.mjs`（能力包，lib/ 产物）与 `npm-publish-app.mjs`（app，build/ 产物）
+// 为什么单拆：`npm-publish.mjs`（能力包，dist/ 产物）与 `npm-publish-app.mjs`（app，build/ 产物）
 // 的**产物形态不同**，但「认证 / registry / 临时 userconfig / 内部依赖版本」完全一样：
 // 抄两份必然漂移（##478 的教训：发布脚本不在库里，发出去的包就只能靠人记得改）。
 import { execFileSync } from 'node:child_process';

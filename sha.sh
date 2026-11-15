@@ -16,8 +16,8 @@ shopt -s globstar
 # 只收**真正的 workspace**（有 package.json **且有 sha.sh**）：目录残留不该把整套命令拖死。
 # 实测 ##501 把 diy-dev 迁出主仓后，本地留下的 pkgs.ts/diy-dev/ 只剩 node_modules，
 # glob 仍会命中 → `./sha.sh sync` 报 "No such file or directory" → build 直接 exit 127。
-# ##512 另有一类：旧布局的包目录留下 lib/（含 npm-publish 生成的 package.json），
-# 例如 pkgs.ts/diy-rpc/lib/package.json —— 既会被当成 workspace 跑 sha.sh（不存在 → exit 127），
+# ##512 另有一类：旧布局的包目录留下产物目录（含 npm-publish 生成的 package.json，
+# 2026-11-15 前是 lib/，之后是 dist/）—— 既会被当成 workspace 跑 sha.sh（不存在 → exit 127），
 # 又会被 npm 当成重复 workspace（报 EDUPLICATEWORKSPACE）。sha.sh 是 workspace 目录的标志。
 _pick_workspaces() {
   local w
@@ -362,7 +362,7 @@ _check_changed() {
     else
       echo "${info}相对基线没有任何改动 → 直接全量（--changed ≤ 全量）${reset}"
     fi
-    # 编能力包：各包 exports 指 lib/*.js，类型解析要靠它（#365 前置）
+    # 编能力包：各包 exports 指 dist/*.js，类型解析要靠它（#365 前置）
     build-pkgs
     _check_full_body
     return $?
@@ -378,7 +378,7 @@ _check_changed() {
   done
 
   if [[ "$plan_mode" != data ]]; then
-    # 编能力包：tsc 要靠 lib/*.js 的类型（#365 前置）。data 分支不跑 tsc ⇒ 不编
+    # 编能力包：tsc 要靠 dist/*.js 的类型（#365 前置）。data 分支不跑 tsc ⇒ 不编
     build-pkgs
     # 类型检查：**全图**（不收窄）。理由实测（##452）：tsc -b 自己有增量（.tsbuildinfo
     # 命中就跳过该 project）—— 改一个包内文件后全图 1.9s、只跑受影响包 1.6~4.6s，没差；
@@ -615,12 +615,12 @@ vendor.update() {  run git submodule update --init --recursive --remote --merge;
 ####################################################
 # Python 包发布
 ####################################################
-# 编各能力包的 lib/（Node 可直接 import 的 ESM + .d.ts，##453）。
-# 名单与顺序都由 scripts/build-order.mjs 算：入选 = pkgs.ts/* 里 main 指 ./lib/ 的包；
-# 顺序 = 内部 @diy/* · @diy-agent/* 依赖的拓扑序（各包 tsc 要靠被依赖包的 lib/*.d.ts 做类型
+# 编各能力包的 dist/（Node 可直接 import 的 ESM + .d.ts，##453；产物一律落临时目录）。
+# 名单与顺序都由 scripts/build-order.mjs 算：入选 = pkgs.ts/* 里 main 指 ./dist/ 的包；
+# 顺序 = 内部 @diy/* · @diy-agent/* 依赖的拓扑序（各包 tsc 要靠被依赖包的 dist/*.d.ts 做类型
 # 解析，故不能乱序、也不能并行）。
 # 为什么不再手写数组：这里原先是一行 `_pkg_order=(...)`，**两次漏登记新包**（#465
-# model-catalog、#469 bot）。漏登记的报错长在别处 —— build-runtime 撞见缺 lib/index.js 就喊
+# model-catalog、#469 bot）。漏登记的报错长在别处 —— build-runtime 撞见缺 dist/index.js 就喊
 # 「先跑根 ./sha.sh build」，正是刚失败的那条命令，人被引去原地重跑。
 # 能力包构建：**一次 `tsc -b` 编全部**（单进程 + 增量 + 依赖 DAG）。
 #
@@ -629,7 +629,7 @@ vendor.update() {  run git submodule update --init --recursive --remote --merge;
 # 真正在编译的不到三分之一。改成单进程后：冷 ~4s / 热 ~0.4s，改一个包只重编它与**依赖它的**。
 # 顺序与 references 由 `scripts/gen-tsconfig-build-all.mjs` 生成（幂等；手改漂移由 check 拦）。
 sha.def "build-pkgs" \
-  --desc "只编能力包（pkgs.ts/*）的 lib/ —— 改包后单独跑它最快"
+  --desc "只编能力包（pkgs.ts/*）的 dist/ —— 改包后单独跑它最快"
 
 #: 子模块同步：把 vendor/（sha 脚本框架等）对齐到仓库记录的提交
 #: 用法: ./sha.sh submodule update [--remote]
@@ -660,13 +660,13 @@ build-pkgs() {
 }
 
 sha.def "build" \
-  --desc "全量构建：能力包 lib/ → apps"
+  --desc "全量构建：能力包 dist/ → apps"
 
 build() {
     ensure-sync
-    # ① 先编能力包的 lib/。为什么必须先编：各包 package.json 的 main/exports 已指 lib/*.js，
-    #    类型检查（tsc -b）与 diy-app 打包 resolve 它们时都命中 lib/ ⇒ 缺 lib 就红一片
-    #    （这正是「开发也读 lib」的代价，见 ##453 方案 B）。
+    # ① 先编能力包的 dist/。为什么必须先编：各包 package.json 的 main/exports 已指 dist/*.js，
+    #    类型检查（tsc -b）与 diy-app 打包 resolve 它们时都命中 dist/ ⇒ 缺 dist 就红一片
+    #    （这正是「开发也读产物目录」的代价，见 ##453 方案 B）。
     build-pkgs
     # ② 再构建 diy-app（含 cli 产物），细节见 apps/diy-app/sha.sh build
     run ./apps/diy-app/sha.sh build

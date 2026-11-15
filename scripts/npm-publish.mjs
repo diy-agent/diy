@@ -4,17 +4,17 @@
 // 为什么不直接 `npm publish`：仓内 package.json 的 `main`/`exports` 指 `src/*.ts`
 // （workspace 内部由 vite 直接吃源码，见 apps/diy-app/vite.pkg-deps.ts 的
 // WORKSPACE_TS_DEPS），且带 `private: true` 当防手滑护栏。发行物必须换一份
-// package.json：`exports` 指 `lib/*.js` + `*.d.ts`，去掉 `private`，`*` 依赖改成 `^<仓内版本>`。
+// package.json：`exports` 指 `dist/*.js` + `*.d.ts`，去掉 `private`，`*` 依赖改成 `^<仓内版本>`。
 //
 // 流程（两步都走本脚本）：
-//   --prepare-only  在 <pkg>/lib/ 生成发行版 package.json（不含 private）
-//   默认            先生成，再 `npm publish <pkg>/lib`
+//   --prepare-only  在 <pkg>/dist/ 生成发行版 package.json（不含 private）
+//   默认            先生成，再 `npm publish <pkg>/dist`
 //
 // 用法：node scripts/npm-publish.mjs <pkgDir> [--prepare-only] [--dry-run] [--out=dist]
 //
 // 约定（脚本假设，见各包 tsconfig.build.json）：
-//   * `tsc -p tsconfig.build.json` 的 rootDir = src、outDir = dist（2026-11-06 统一，见 fcf81e24
-//     「各包产物 lib/ → dist/」；更早是 lib）⇒ 产物目录与 src/ 同构，`./src/a/b.ts` 对应 `./a/b.js`。
+//   * `tsc -p tsconfig.build.json` 的 rootDir = src、outDir = dist（2026-11-15 起**所有**包都是
+//     dist/，老包曾是 lib/）⇒ 产物目录与 src/ 同构，`./src/a/b.ts` 对应 `./a/b.js`。
 //   * 产物目录用 `--out=<dir>` 指定（缺省 dist）。⚠️ 各包 sha.sh 的 `--out=` 必须与
 //     tsconfig.build.json 的 outDir 一致 —— 一端 lib 一端 dist 就是「✗ lib 不存在」的假错（##522）。
 //
@@ -43,12 +43,12 @@ if (!existsSync(distDir)) {
     process.exit(1);
 }
 
-/** `./src/index.ts`（或 `./dist/index.js`、老包的 `./lib/index.js`）→ `./index.js`；目录型条目同样成立 */
+/** `./src/index.ts`（或 `./dist/index.js`）→ `./index.js`；目录型条目同样成立 */
 const toDistPath = (spec, ext) => {
     const rel = spec.replace(/^\.\//, '');
-    const m = rel.match(/^(?:src|dist|lib)\/(.+)$/);
+    const m = rel.match(/^(?:src|dist)\/(.+)$/);
     if (!m) {
-        throw new Error(`exports 条目不在 src/、dist/ 或 lib/ 下，无法推导产物路径：${spec}`);
+        throw new Error(`exports 条目不在 src/ 或 dist/ 下，无法推导产物路径：${spec}`);
     }
     return `./${m[1].replace(/\.(ts|js)$/, ext)}`;
 };
